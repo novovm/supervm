@@ -10,7 +10,7 @@ target
 *.pdb
 
 # Local-only tools
-tools/work-logger/
+tools/
 
 # Local-only docs (do not track in this repo)
 docs/
