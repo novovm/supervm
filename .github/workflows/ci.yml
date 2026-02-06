@@ -1,0 +1,144 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  detect:
+    name: Detect project types
+    runs-on: ubuntu-latest
+    outputs:
+      has_rust: ${{ steps.detect.outputs.has_rust }}
+      rust_manifest: ${{ steps.detect.outputs.rust_manifest }}
+      has_python: ${{ steps.detect.outputs.has_python }}
+      has_node: ${{ steps.detect.outputs.has_node }}
+      node_package_json: ${{ steps.detect.outputs.node_package_json }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Detect files
+        id: detect
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          manifest=""
+          if [ -f Cargo.toml ]; then
+            manifest="Cargo.toml"
+          else
+            manifest="$(git ls-files '**/Cargo.toml' | head -n 1 || true)"
+          fi
+          if [ -n "${manifest}" ]; then
+            echo "has_rust=true" >> "$GITHUB_OUTPUT"
+            echo "rust_manifest=${manifest}" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_rust=false" >> "$GITHUB_OUTPUT"
+          fi
+
+          if git ls-files '*.py' | grep -q .; then
+            echo "has_python=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_python=false" >> "$GITHUB_OUTPUT"
+          fi
+
+          node_pkg="$(git ls-files '**/package.json' | head -n 1 || true)"
+          if [ -n "${node_pkg}" ]; then
+            echo "has_node=true" >> "$GITHUB_OUTPUT"
+            echo "node_package_json=${node_pkg}" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_node=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  rust:
+    name: Rust checks
+    needs: detect
+    if: needs.detect.outputs.has_rust == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Format check
+        run: cargo fmt --manifest-path "${{ needs.detect.outputs.rust_manifest }}" --all -- --check
+
+      - name: Clippy
+        run: cargo clippy --manifest-path "${{ needs.detect.outputs.rust_manifest }}" --all-targets -- -D warnings
+
+      - name: Tests
+        run: cargo test --manifest-path "${{ needs.detect.outputs.rust_manifest }}" --all
+
+  python:
+    name: Python syntax check
+    needs: detect
+    if: needs.detect.outputs.has_python == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Compile Python files
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+            import subprocess
+            import sys
+            import py_compile
+
+            files = subprocess.check_output(["git", "ls-files", "*.py"]).decode().splitlines()
+            if not files:
+              print("No Python files to check.")
+              sys.exit(0)
+
+            for path in files:
+              py_compile.compile(path, doraise=True)
+            print(f"Checked {len(files)} Python files.")
+            PY
+
+  node:
+    name: Node checks
+    needs: detect
+    if: needs.detect.outputs.has_node == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - name: Install & Test
+        shell: bash
+        run: |
+          set -euo pipefail
+          pkg="${{ needs.detect.outputs.node_package_json }}"
+          cd "$(dirname "$pkg")"
+          npm ci
+          npm test
