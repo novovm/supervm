@@ -1,5 +1,10 @@
 # Copilot Instructions (SUPERVM)
 
+## Public Language Policy
+- Public-facing files must be English-only and ASCII-only.
+- No Chinese characters in any public file (including documentation under repo root).
+- Keep all public files UTF-8 (no BOM) and ASCII-only.
+
 ## Project Phase
 - This repository is in a migration / bootstrap phase.
 - Prefer correctness, clarity, and minimal changes over completeness or performance.
@@ -7,15 +12,16 @@
 - Automation and CI should tolerate missing components during migration.
 
 ## Language & Encoding Rules (STRICT)
-- **Source code files MUST NOT contain Chinese characters**, including comments.
-- **Source code files must use ASCII only.**
+- **Source code files MUST be ASCII-only and contain no Chinese characters**, including comments.
 	- Applies to: `.rs`, `.py`, `.sh`, `.ps1`, `.yml`, `.toml`, `.json`, `.js`, `.ts`, etc.
 	- All source code and scripts are written for a global developer audience.
-- **Documentation files SHOULD be written in Chinese**:
-	- Applies to: `.md`
-	- Rationale: Markdown documents are primarily for the project owner's understanding and review.
-- Do NOT mix Chinese and English within the same source file.
-- All files must be UTF-8 encoded (no BOM).
+- **Public documentation MUST be English-only and ASCII-only**.
+	- Applies to public `.md` files in the repo.
+- Keep all files UTF-8 (no BOM).
+
+## Local-Only Notes
+- Personal notes or Chinese explanations must live in local-only paths that are ignored by git.
+- Keep those notes outside public paths (e.g., under ignored `docs/` or other local-only directories).
 
 ## Mandatory Copyright & Attribution (STRICT)
 - **All newly created source files MUST include a copyright and attribution header.**
@@ -56,7 +62,7 @@
 
 ## Documentation & INDEX Rules
 
-* `docs/INDEX.md` is a **human-readable project map**, not a full file dump.
+* `docs/INDEX.md` is a human-readable project map, not a full file dump.
 * INDEX exists to help the project owner understand file purpose and structure.
 * Code Map entries must be limited to:
 
