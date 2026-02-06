@@ -1,4 +1,4 @@
-# SuperVM
+# SuperVM v2026
 
 SuperVM is a **decentralized infrastructure operator** for the Web3 era. It provides composable, metered, and verifiable execution and settlement capabilities. It is not “another public blockchain,” but a general-purpose execution infrastructure for a multi-chain, heterogeneous ecosystem.
 
