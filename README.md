@@ -1,15 +1,21 @@
-# SuperVM v2026
+# NOVOVM v2026
 
-SuperVM is a **decentralized infrastructure operator** for the Web3 era. It provides composable, metered, and verifiable execution and settlement capabilities. It is not “another public blockchain,” but a general-purpose execution infrastructure for a multi-chain, heterogeneous ecosystem.
+External brand: `NOVOVM`  
+Technical short name: `NVM`  
+Execution engine: `AOEM Engine` (Powered by AOEM Engine)
+
+Note: `SuperVM` is retained as an internal historical codename only.
+
+NOVOVM is a **decentralized infrastructure operator** for the Web3 era. It provides composable, metered, and verifiable execution and settlement capabilities. It is not “another public blockchain,” but a general-purpose execution infrastructure for a multi-chain, heterogeneous ecosystem.
 
 ## What it is / What it isn’t
 
-**SuperVM is:**
+**NOVOVM is:**
 - A Web3 infrastructure layer that offers execution, verification, settlement, and resource pricing
 - Built around `AOEM`, a high-concurrency execution kernel with stable P99 latency
 - Trust-minimized through `zkVM`-based verifiable execution and proof aggregation
 
-**SuperVM is not:**
+**NOVOVM is not:**
 - A monolithic high‑TPS public blockchain
 - A single‑purpose cross‑chain bridge
 - A network sustained primarily by inflation
@@ -40,7 +46,7 @@ SuperVM is a **decentralized infrastructure operator** for the Web3 era. It prov
 
 ## Verifiable execution path
 
-SuperVM separates execution, proof, and consensus:
+NOVOVM separates execution, proof, and consensus:
 - **Execution** is handled by AOEM
 - **Correctness** is proven via `zkVM`
 - **Consensus** is limited to finality and arbitration
@@ -56,14 +62,14 @@ Verification is **value‑aware**:
 
 ## Governance & evolution
 
-SuperVM is built for long‑term infrastructure evolution:
+NOVOVM is built for long‑term infrastructure evolution:
 - Upgradable protocols
 - Post‑quantum readiness
 - Layered governance
 
 ## Economics: execution‑driven, not inflation‑driven
 
-SuperVM’s economic model is anchored in **real, verifiable execution demand**:
+NOVOVM’s economic model is anchored in **real, verifiable execution demand**:
 - Execution is economic activity
 - Compute, storage, and bandwidth are **settleable labor**
 - Value capture is service‑driven, not speculative
@@ -91,7 +97,7 @@ AOEM’s triple breakthrough toward a distributed execution plane:
 
 ## Developer interface & SDK
 
-SuperVM exposes a **unified Execution API** rather than exposing concrete execution engines.
+NOVOVM exposes a **unified Execution API** rather than exposing concrete execution engines.
 Developers declare:
 - Execution target (function, transaction, or task)
 - Required consistency and security guarantees
@@ -102,7 +108,7 @@ The system automatically handles:
 - Execution and proof generation
 - Settlement and verifiable commitment of results
 
-SuperVM is **WASM‑first** and multi‑language:
+NOVOVM is **WASM‑first** and multi‑language:
 - Rust, C/C++, Zig, AssemblyScript, and more
 - Portable, verifiable execution
 - Reuse of existing high‑performance system code
@@ -117,14 +123,14 @@ Privacy and security are treated as **infrastructure primitives**, not optional 
 
 ## Ecosystem positioning
 
-SuperVM is a **collaborative infrastructure layer**:
+NOVOVM is a **collaborative infrastructure layer**:
 - It does not replace existing chains
 - It augments them with execution, verification, and settlement services
 - Value capture is service‑driven, not sovereignty‑driven
 
 ## Compatibility & chain relationships
 
-SuperVM complements heterogeneous systems rather than competing for their state:
+NOVOVM complements heterogeneous systems rather than competing for their state:
 - **L1 public chains**: execution outsourcing / clearing collaboration
 - **L2 / rollups**: shared execution and proof infrastructure
 - **Specialized chains**: plugin chains / protocol recomposition
@@ -132,4 +138,4 @@ SuperVM complements heterogeneous systems rather than competing for their state:
 
 ## One‑sentence summary
 
-SuperVM is not about building a faster blockchain—it is about building sustainable, verifiable infrastructure for Web3.
+NOVOVM is not about building a faster blockchain—it is about building sustainable, verifiable infrastructure for Web3.

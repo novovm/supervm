@@ -1,0 +1,9 @@
+[package]
+name = "novovm-exec"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = "1"
+aoem-bindings = { path = "../aoem-bindings" }
+serde_json = "1"

@@ -1,19 +1,37 @@
 AOEM beta0.8 installed
 variant=core
-source=D:\WorksArea\AOEM\artifacts\aoem-beta08\20260301-221150
-installed_bin=D:\WorksArea\SUPERVM\aoem\bin
-installed_header=D:\WorksArea\SUPERVM\aoem\include\aoem.h
+source=<aoem-release-bundle>
+installed_bin=aoem/bin
+installed_header=aoem/include/aoem.h
 
-Host should load AOEM library from:
-  D:\WorksArea\SUPERVM\aoem\bin
+Host default load path (repository-relative):
+  aoem/bin/aoem_ffi.dll
 
-After loading the DLL/SO, call aoem_capabilities_json() to verify runtime capabilities.
+Variant naming note:
+  core, persist, wasm all use the same binary name: aoem_ffi.dll.
+  This is intentional ABI naming. Variant identity is determined by:
+    1) install path (aoem/bin vs aoem/variants/*/bin)
+    2) aoem-manifest.json + capabilities check at startup
 
-Recommended one-time probe (persist runtime profile):
-  cargo run --release --example ffi_install_probe -- --dll D:\WorksArea\SUPERVM\aoem\bin\aoem_ffi.dll
+Repository tracking policy (minimal set):
+  tracked:
+    - aoem/bin/aoem_ffi.dll (core)
+    - aoem/include/aoem.h
+    - aoem/manifest/aoem-manifest.json
+    - aoem/INSTALL-INFO.txt
+  optional variants not tracked in git:
+    - aoem/variants/persist/bin/aoem_ffi.dll
+    - aoem/variants/wasm/bin/aoem_ffi.dll
+
+Release distribution policy:
+  full variant package (core + persist + wasm) is distributed as GitHub Releases assets.
+  Always verify SHA256SUMS and aoem-manifest.json before install.
+
+Recommended one-time probe:
+  cargo run --release --example ffi_install_probe -- --dll <repo>/aoem/bin/aoem_ffi.dll
 
 Default runtime profile output:
-  D:\WorksArea\SUPERVM\aoem\config\aoem-runtime-profile.json
+  aoem/config/aoem-runtime-profile.json
 
 Worldline default mode:
   single_engine (threads=1, engine_workers=auto)

@@ -1,5 +1,5 @@
-use aoem_bindings::{AoemDyn, AoemOpV2};
 use anyhow::{bail, Context, Result};
+use aoem_bindings::{AoemDyn, AoemOpV2};
 use std::path::PathBuf;
 use std::time::Instant;
 

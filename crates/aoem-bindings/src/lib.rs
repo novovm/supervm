@@ -95,8 +95,10 @@ pub struct GlobalLaneGuard<'a> {
 }
 
 static GLOBAL_LANE_SCHEDULER: OnceLock<GlobalLaneScheduler> = OnceLock::new();
-static AOEM_RECOMMEND_CACHE: OnceLock<Mutex<HashMap<(u64, u32, u64, u32), usize>>> = OnceLock::new();
-static AOEM_INSTALL_PROFILE_CACHE: OnceLock<Mutex<HashMap<PathBuf, Option<Value>>>> = OnceLock::new();
+static AOEM_RECOMMEND_CACHE: OnceLock<Mutex<HashMap<(u64, u32, u64, u32), usize>>> =
+    OnceLock::new();
+static AOEM_INSTALL_PROFILE_CACHE: OnceLock<Mutex<HashMap<PathBuf, Option<Value>>>> =
+    OnceLock::new();
 static AOEM_MANIFEST_CACHE: OnceLock<Mutex<HashMap<PathBuf, Option<Value>>>> = OnceLock::new();
 
 impl<'a> Drop for AoemHandle<'a> {
@@ -162,7 +164,9 @@ impl AoemDyn {
         if abi != 1 {
             bail!("AOEM ABI mismatch at load: expected 1, got {}", abi);
         }
-        let caps = self.capabilities().context("load-time capabilities json parse failed")?;
+        let caps = self
+            .capabilities()
+            .context("load-time capabilities json parse failed")?;
         let execute_ops_v2 = caps
             .get("execute_ops_v2")
             .and_then(|v| v.as_bool())
@@ -246,7 +250,8 @@ impl AoemDyn {
     }
 
     pub fn version(&self) -> String {
-        unsafe { cstr_to_string((self.version_string)()) }.unwrap_or_else(|| "<invalid>".to_string())
+        unsafe { cstr_to_string((self.version_string)()) }
+            .unwrap_or_else(|| "<invalid>".to_string())
     }
 
     pub fn capabilities(&self) -> Result<Value> {
@@ -401,7 +406,10 @@ pub fn default_manifest_path_for_dll(dll_path: &Path) -> PathBuf {
 }
 
 fn infer_variant_from_dll_path(dll_path: &Path) -> &'static str {
-    let p = dll_path.to_string_lossy().to_ascii_lowercase().replace('\\', "/");
+    let p = dll_path
+        .to_string_lossy()
+        .to_ascii_lowercase()
+        .replace('\\', "/");
     if p.contains("/variants/persist/") {
         "persist"
     } else if p.contains("/variants/wasm/") {
@@ -454,11 +462,9 @@ fn to_hex_lower(data: &[u8]) -> String {
 
 fn json_is_subset(required: &Value, actual: &Value) -> bool {
     match (required, actual) {
-        (Value::Object(r), Value::Object(a)) => r.iter().all(|(k, rv)| {
-            a.get(k)
-                .map(|av| json_is_subset(rv, av))
-                .unwrap_or(false)
-        }),
+        (Value::Object(r), Value::Object(a)) => r
+            .iter()
+            .all(|(k, rv)| a.get(k).map(|av| json_is_subset(rv, av)).unwrap_or(false)),
         (Value::Array(r), Value::Array(a)) => r.iter().all(|rv| a.iter().any(|av| av == rv)),
         _ => required == actual,
     }
@@ -651,7 +657,10 @@ pub fn recommend_threads_auto(hint: &AoemHostHint) -> AoemHostAdaptiveDecision {
     }
 }
 
-pub fn recommend_threads_from_aoem(dynlib: &AoemDyn, hint: &AoemHostHint) -> AoemHostAdaptiveDecision {
+pub fn recommend_threads_from_aoem(
+    dynlib: &AoemDyn,
+    hint: &AoemHostHint,
+) -> AoemHostAdaptiveDecision {
     let hw = hardware_threads();
     let budget = global_parallel_budget().min(hw).max(1);
     if let Some(rec) = recommend_threads_from_install_profile(dynlib, hint, budget) {
@@ -666,11 +675,7 @@ pub fn recommend_threads_from_aoem(dynlib: &AoemDyn, hint: &AoemHostHint) -> Aoe
     let rw_key = (hint.rw.clamp(0.0, 1.0) * 1000.0).round() as u32;
     let key = (hint.txs, hint.batch, hint.key_space, rw_key);
     let cache = AOEM_RECOMMEND_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
-    if let Some(&rec) = cache
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .get(&key)
-    {
+    if let Some(&rec) = cache.lock().unwrap_or_else(|e| e.into_inner()).get(&key) {
         return AoemHostAdaptiveDecision {
             hw_threads: hw,
             budget_threads: budget,
@@ -679,8 +684,7 @@ pub fn recommend_threads_from_aoem(dynlib: &AoemDyn, hint: &AoemHostHint) -> Aoe
         };
     }
 
-    if let Some(rec) = dynlib.recommend_parallelism(hint.txs, hint.batch, hint.key_space, hint.rw)
-    {
+    if let Some(rec) = dynlib.recommend_parallelism(hint.txs, hint.batch, hint.key_space, hint.rw) {
         cache
             .lock()
             .unwrap_or_else(|e| e.into_inner())
@@ -726,10 +730,8 @@ impl<'a> AoemHandle<'a> {
             )
         };
         if rc != 0 {
-            let err =
-                unsafe { cstr_to_string((self.dynlib.last_error)(self.raw)) }.unwrap_or_else(|| {
-                    format!("aoem_execute_ops_v2 failed rc={rc} and no last_error")
-                });
+            let err = unsafe { cstr_to_string((self.dynlib.last_error)(self.raw)) }
+                .unwrap_or_else(|| format!("aoem_execute_ops_v2 failed rc={rc} and no last_error"));
             bail!("aoem_execute_ops_v2 failed: rc={rc}, err={err}");
         }
         Ok(result)

@@ -1,5 +1,5 @@
-use aoem_bindings::{default_runtime_profile_path_for_dll, global_parallel_budget, AoemDyn};
 use anyhow::{bail, Context, Result};
+use aoem_bindings::{default_runtime_profile_path_for_dll, global_parallel_budget, AoemDyn};
 use serde_json::json;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -66,7 +66,9 @@ fn main() -> Result<()> {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs();
-    let capabilities = dynlib.capabilities().unwrap_or_else(|_| json!({"error": "capabilities_unavailable"}));
+    let capabilities = dynlib
+        .capabilities()
+        .unwrap_or_else(|_| json!({"error": "capabilities_unavailable"}));
     let profile = json!({
         "schema": "aoem-runtime-profile/v1",
         "generated_at_unix": now,
@@ -128,4 +130,3 @@ fn main() -> Result<()> {
     );
     Ok(())
 }
-

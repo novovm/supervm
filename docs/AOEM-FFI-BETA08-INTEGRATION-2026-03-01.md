@@ -6,6 +6,11 @@ Base host path:
 
 - `D:\WorksArea\SUPERVM\aoem`
 
+Repository policy:
+
+- Git tracks only minimal host set (`core` dll + header + manifest + install info).
+- Optional variant DLLs (`persist`, `wasm`) are distributed as GitHub Releases assets.
+
 Default variant (for production baseline):
 
 - `D:\WorksArea\SUPERVM\aoem\bin\aoem_ffi.dll`
@@ -16,11 +21,115 @@ Optional variants:
 - `persist`: `D:\WorksArea\SUPERVM\aoem\variants\persist\bin\aoem_ffi.dll`
 - `wasm`: `D:\WorksArea\SUPERVM\aoem\variants\wasm\bin\aoem_ffi.dll`
 
+## Release asset packaging
+
+Use the release pack script to produce auditable assets (core + persist + wasm + checksums):
+
+```powershell
+powershell -File scripts/aoem/package_aoem_beta08.ps1
+```
+
+For full-platform release, build Linux/macOS variant libraries first (run on each target OS host/runner):
+
+```powershell
+# Run on Windows host
+powershell -File scripts/aoem/build_aoem_variants_current_os.ps1 -- `
+  -AoemSourceRoot <path-to-AOEM-source> -Platform windows
+
+# Run on Linux host
+pwsh -File scripts/aoem/build_aoem_variants_current_os.ps1 -- `
+  -AoemSourceRoot <path-to-AOEM-source> -Platform linux
+
+# Run on macOS host
+pwsh -File scripts/aoem/build_aoem_variants_current_os.ps1 -- `
+  -AoemSourceRoot <path-to-AOEM-source> -Platform macos
+```
+
+Native shell option for Linux/macOS hosts:
+
+```bash
+# Run on Linux host
+bash scripts/aoem/build_aoem_variants_current_os.sh \
+  --aoem-source-root <path-to-AOEM-source> \
+  --platform linux
+
+# Run on macOS host
+bash scripts/aoem/build_aoem_variants_current_os.sh \
+  --aoem-source-root <path-to-AOEM-source> \
+  --platform macos
+```
+
+Build prerequisites for `persist` variant (RocksDB):
+
+```bash
+# Ubuntu/Debian
+sudo apt-get update
+sudo apt-get install -y \
+  build-essential clang llvm-dev libclang-dev cmake pkg-config \
+  zlib1g-dev libzstd-dev libbz2-dev
+```
+
+If `clang-sys` still cannot locate clang, set:
+
+```bash
+export LIBCLANG_PATH=/usr/lib/llvm-*/lib
+```
+
+WSL/no-sudo fallback (user-space libclang):
+
+```bash
+# 1) install pip to user site (PEP668-safe override)
+curl -fsSLo ~/get-pip.py https://bootstrap.pypa.io/get-pip.py
+python3 ~/get-pip.py --user --break-system-packages
+
+# 2) install bundled libclang wheel
+/usr/bin/python3 -m pip install --user --break-system-packages libclang
+
+# 3) provide soname expected by some build scripts
+ln -sf ~/.local/lib/python3.12/site-packages/clang/native/libclang.so \
+      ~/.local/lib/python3.12/site-packages/clang/native/libclang.so.18.1
+
+# 4) build persist with explicit bindgen include hints
+LIBCLANG_PATH=~/.local/lib/python3.12/site-packages/clang/native \
+LD_LIBRARY_PATH=~/.local/lib/python3.12/site-packages/clang/native \
+BINDGEN_EXTRA_CLANG_ARGS='-I/usr/lib/gcc/x86_64-linux-gnu/13/include -I/usr/include -I/usr/include/x86_64-linux-gnu' \
+bash scripts/aoem/build_aoem_variants_current_os.sh \
+  --aoem-source-root <path-to-AOEM-source> \
+  --platform linux \
+  --variants persist
+```
+
+macOS host baseline:
+
+```bash
+xcode-select --install
+brew install llvm cmake pkg-config zstd bzip2
+export LIBCLANG_PATH="$(brew --prefix llvm)/lib"
+```
+
+Then package with full-platform gate:
+
+```powershell
+powershell -File scripts/aoem/package_aoem_beta08.ps1 -RequireFullPlatform
+```
+
+If current release intentionally excludes macOS, package Windows+Linux only:
+
+```powershell
+powershell -File scripts/aoem/package_aoem_beta08.ps1 -SkipMacOS
+```
+
+Outputs:
+
+- `artifacts/aoem-beta08/<timestamp>/` (bundle directory)
+- `artifacts/aoem-beta08/aoem-beta0.8-<timestamp>.zip` (release upload artifact)
+- `SHA256SUMS`, `aoem-manifest.json`, `RELEASE-INDEX.md`
+
 Source AOEM bundle:
 
 - `D:\WorksArea\AOEM\artifacts\aoem-beta08\20260301-221150`
 
-## SuperVM binding updates
+## NOVOVM binding updates
 
 Updated crate:
 
@@ -38,7 +147,7 @@ Changes:
   - `aoem_abi_version`
   - `aoem_version_string`
   - `aoem_capabilities_json`
-- SuperVM host binding (clean path):
+- NOVOVM host binding (clean path):
   - `AoemDyn::capabilities()`
   - `AoemDyn::create_handle()`
   - `AoemHandle::execute_ops_v2()` (canonical perf path, typed binary ABI)
@@ -67,7 +176,7 @@ For current measured numbers, use sealed report only:
 
 ## AOEM reference comparison notes
 
-- This benchmark is "SuperVM host -> AOEM FFI -> AOEM engine" with a fixed micro payload (`points=1100`), single caller thread.
+- This benchmark is "NOVOVM host -> AOEM FFI -> AOEM engine" with a fixed micro payload (`points=1100`), single caller thread.
 - `tps_*` here is micro-payload ops/s, including binary envelope encode/decode and FFI call overhead.
 - It is not directly comparable to AOEM kernel worldline throughput in `Flow-Autopsy.md`
   (`A1 full`, `txs=1,000,000`, `threads=16`, ingress batching).
@@ -77,7 +186,7 @@ For current measured numbers, use sealed report only:
 
 - This benchmark is host-to-FFI plan execution smoke, not blockchain E2E throughput.
 - Variant selection should always be validated by `aoem_capabilities_json()` before node startup.
-- Recommended default for immediate SuperVM integration: `core` (or `persist` if durable state path is required now).
+- Recommended default for immediate NOVOVM integration: `core` (or `persist` if durable state path is required now).
 - Throughput is power-sensitive on laptop platforms; always record `PowerOnline` and active power plan with TPS.
 - AOEM FFI production default is binary input path. JSON input is compatibility/debug only.
   - default: `json_input_enabled=false`

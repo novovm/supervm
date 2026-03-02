@@ -322,7 +322,8 @@ fn run_ffi_v2(cfg: &BenchCfg) -> Result<()> {
             if !dynlib.supports_execute_ops_v2() {
                 bail!("loaded AOEM DLL does not expose aoem_execute_ops_v2");
             }
-            let handle = dynlib.create_handle_with_ingress_workers(Some(cfg.engine_workers as u32))?;
+            let handle =
+                dynlib.create_handle_with_ingress_workers(Some(cfg.engine_workers as u32))?;
 
             let mut rng_state = cfg.seed ^ ((tid as u64 + 1) * 0x9E3779B97F4A7C15);
             let mut keys: Vec<[u8; 8]> = Vec::new();
@@ -405,7 +406,13 @@ fn run_ffi_v2(cfg: &BenchCfg) -> Result<()> {
     Ok(())
 }
 
-fn print_result(elapsed_sec: f64, done_ops: u64, done_plans: u64, done_calls: u64, call_label: &str) {
+fn print_result(
+    elapsed_sec: f64,
+    done_ops: u64,
+    done_plans: u64,
+    done_calls: u64,
+    call_label: &str,
+) {
     let ops_tps = if elapsed_sec > 0.0 {
         done_ops as f64 / elapsed_sec
     } else {

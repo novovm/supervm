@@ -11,6 +11,16 @@
 - Do NOT introduce placeholder files, fake code, or temporary artifacts just to satisfy tools or validations.
 - Automation and CI should tolerate missing components during migration.
 
+## Production Release Discipline (STRICT)
+
+* This repository is release-grade. All default development activity targets production quality.
+* Unapproved or unverified experimental functionality MUST NOT be placed in production directories.
+* Experimental work is allowed only in local-only sandbox paths:
+  * `beta_local/`
+  * `experiments_local/`
+* Sandbox paths are non-release, non-audited, and must remain ignored by git.
+* Promote to production directories only after explicit acceptance.
+
 ## Language & Encoding Rules (STRICT)
 - **Source code files MUST be ASCII-only and contain no Chinese characters**, including comments.
 	- Applies to: `.rs`, `.py`, `.sh`, `.ps1`, `.yml`, `.toml`, `.json`, `.js`, `.ts`, etc.
@@ -48,10 +58,18 @@
 
 ## Core Identity (High-level)
 
-* SuperVM is a WASM-first virtual machine system.
+* NOVOVM is a WASM-first virtual machine system.
 * The L0 core is strictly isolated and must not directly import external chain logic.
 * Plugins and adapters are opt-in and must respect architectural boundaries.
 * Architectural correctness is more important than short-term convenience.
+
+## Naming Freeze (STRICT)
+
+* External brand name is `NOVOVM`.
+* Technical short name is `NVM`.
+* Execution kernel must be referenced as `AOEM Engine`.
+* `SuperVM` is an internal historical codename only.
+* New public docs, labels, headings, and examples must use `NOVOVM` naming.
 
 ## Non-Negotiable Engineering Rules
 
@@ -82,6 +100,8 @@
 * For Rust commands, always use `--manifest-path` when `Cargo.toml` may not be at repo root.
 * Avoid `--all-features` unless explicitly asked.
 * Do NOT require cargo, rustc, or build tools to be present unless the repository actually contains Rust code.
+* Rust build outputs must use a single repository-level target directory (`target/` at repo root).
+* Per-crate or ad-hoc target directories are not allowed.
 
 ## Git Hygiene
 
