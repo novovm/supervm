@@ -12,7 +12,7 @@
 - [x] 新建 `crates/novovm-exec`
 - [x] 具备 `open/create_session/execute_ops_v2`
 - [x] 增加主路径提交入口 `submit_ops`（统一返回结果+指标）
-- [ ] 增加统一错误码映射（下一步）
+- [x] 增加统一错误码映射（`submit_ops_report` 输出 `rc/code_name/error`）
 
 ## C. 迁移实施
 
@@ -20,7 +20,7 @@
 - [x] `novovm-node` 首条主路径改为调用门面（`crates/novovm-node/src/main.rs`）
 - [ ] `novovm-node` 其余路径逐步替换
 - [ ] 将 `SVM2026` 已验证能力逐项迁入 `SUPERVM` 对应模块
-- [ ] 去除 AOEM 源码 path 依赖
+- [x] 去除 AOEM 源码 path 依赖（运行时代码不再依赖 `../aoem/crates`）
 - [ ] 统一 core/persist/wasm 配置入口
 
 ## D. 验收

@@ -16,13 +16,13 @@
   - `create_session`
   - `execute_ops_v2`
 
-## Phase 2（进行中）
+## Phase 2（已完成）
 
 - 在 `SUPERVM` 中承接 `SVM2026` 已验证能力，并先迁移 `novovm-node` 主执行路径：
   - [x] 在 `novovm-exec` 增加主路径稳定入口 `submit_ops`（结果+指标）
   - [x] 提供可运行模板 `examples/main_path_template.rs`
   - [x] 先替换一条核心路径（`crates/novovm-node/src/main.rs`，`submit_ops` 主路径）
-  - [ ] 对齐错误处理、指标、返回码
+  - [x] 对齐错误处理、指标、返回码（`submit_ops_report` 统一输出）
 
 ## Phase 3
 

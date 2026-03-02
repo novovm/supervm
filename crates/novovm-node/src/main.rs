@@ -51,9 +51,29 @@ fn run_ffi_v2() -> Result<()> {
         expect_version: u64::MAX,
         plan_id: 1,
     };
-    let out = session.submit_ops(&[op])?;
+    let report = session.submit_ops_report(&[op]);
+    if !report.ok {
+        let err = report
+            .error
+            .as_ref()
+            .map(|e| e.message.as_str())
+            .unwrap_or("unknown");
+        bail!(
+            "mode=ffi_v2 rc={}({}) err={}",
+            report.return_code,
+            report.return_code_name,
+            err
+        );
+    }
+
+    let out = report
+        .output
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("missing output on success report"))?;
     println!(
-        "mode=ffi_v2 submitted={} processed={} success={} writes={} elapsed_us={}",
+        "mode=ffi_v2 rc={}({}) submitted={} processed={} success={} writes={} elapsed_us={}",
+        report.return_code,
+        report.return_code_name,
         out.metrics.submitted_ops,
         out.metrics.processed_ops,
         out.metrics.success_ops,
