@@ -16,11 +16,11 @@ tools/
 # Local-only docs (do not track in this repo)
 docs/temp
 docs/INDEX-DESCRIPTIONS.md
-docs/AOEM-FFI-BETA08-V2-RESEAL-RAW-2026-03-02.csv
+docs/AOEM-FFI/AOEM-FFI-BETA08-V2-RESEAL-RAW-2026-03-02.csv
 docs/INDEX.md
 docs_CN/temp
 docs_CN/INDEX-DESCRIPTIONS.md
-docs_CN/AOEM-FFI-BETA08-V2-RESEAL-RAW-2026-03-02.csv
+docs_CN/AOEM-FFI/AOEM-FFI-BETA08-V2-RESEAL-RAW-2026-03-02.csv
 docs_CN/INDEX.md
 # Local-only VS Code settings
 .vscode/
