@@ -1,0 +1,19 @@
+AOEM beta0.8 installed
+variant=core
+source=D:\WorksArea\AOEM\artifacts\aoem-beta08\20260301-221150
+installed_bin=D:\WorksArea\SUPERVM\aoem\bin
+installed_header=D:\WorksArea\SUPERVM\aoem\include\aoem.h
+
+Host should load AOEM library from:
+  D:\WorksArea\SUPERVM\aoem\bin
+
+After loading the DLL/SO, call aoem_capabilities_json() to verify runtime capabilities.
+
+Recommended one-time probe (persist runtime profile):
+  cargo run --release --example ffi_install_probe -- --dll D:\WorksArea\SUPERVM\aoem\bin\aoem_ffi.dll
+
+Default runtime profile output:
+  D:\WorksArea\SUPERVM\aoem\config\aoem-runtime-profile.json
+
+Worldline default mode:
+  single_engine (threads=1, engine_workers=auto)

@@ -13,10 +13,43 @@ target
 tools/
 
 # Local-only docs (do not track in this repo)
-docs/
-
+docs/temp
+docs/INDEX-DESCRIPTIONS.md
+docs/AOEM-FFI-BETA08-V2-RESEAL-RAW-2026-03-02.csv
+docs/INDEX.md
+docs_CN/temp
+docs_CN/INDEX-DESCRIPTIONS.md
+docs_CN/AOEM-FFI-BETA08-V2-RESEAL-RAW-2026-03-02.csv
+docs_CN/INDEX.md
 # Local-only VS Code settings
 .vscode/
+
+# AOEM runtime data (local benchmark/persistence outputs)
+aoem/data/
+aoem/variants/*/config/aoem-runtime-profile.json
+
+# AOEM bundle: keep a minimal, auditable tracked set only
+aoem/**
+!aoem/
+!aoem/INSTALL-INFO.txt
+!aoem/bin/
+aoem/bin/**
+!aoem/bin/aoem_ffi.dll
+!aoem/include/
+aoem/include/**
+!aoem/include/aoem.h
+!aoem/manifest/
+aoem/manifest/**
+!aoem/manifest/aoem-manifest.json
+
+# Never track local build side-products under AOEM bundle
+aoem/**/*.pdb
+aoem/**/*.lib
+aoem/**/*.exp
+aoem/**/*.d
+
+# Local release pack outputs
+artifacts/
 
 # Runtime/cache/tool state (local only)
 .git/

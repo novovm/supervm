@@ -64,6 +64,8 @@
 
 * `docs/INDEX.md` is a human-readable project map, not a full file dump.
 * INDEX exists to help the project owner understand file purpose and structure.
+* `docs/` is release-facing and must remain English-only.
+* Any document containing Chinese text must be stored under `docs_CN/`, not `docs/`.
 * Code Map entries must be limited to:
 
 	* Entry-point source files (e.g., `main.rs`, `lib.rs`, `mod.rs`)

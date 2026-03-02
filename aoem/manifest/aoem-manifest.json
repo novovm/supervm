@@ -1,0 +1,33 @@
+{
+  "generated_at_utc": "2026-03-02T09:29:05.8767587Z",
+  "aoem_root": "D:\\WorksArea\\SUPERVM\\aoem",
+  "entries": [
+    {
+      "name": "core",
+      "dll": "bin/aoem_ffi.dll",
+      "sha256": "25b95e4773ae24fe55f8432c504c8f2a2ec257520585aa3be75365c8a9bfe389",
+      "abi_expected": 1,
+      "capabilities_required": {
+        "execute_ops_v2": true
+      }
+    },
+    {
+      "name": "persist",
+      "dll": "variants/persist/bin/aoem_ffi.dll",
+      "sha256": "a0d7e8467d1cbaaff7e633c7e1aa62e60027656ced4fac73f97fe6038447ef27",
+      "abi_expected": 1,
+      "capabilities_required": {
+        "execute_ops_v2": true
+      }
+    },
+    {
+      "name": "wasm",
+      "dll": "variants/wasm/bin/aoem_ffi.dll",
+      "sha256": "12c8d010c327b3bb4e3e00475a6d6e78cdad7f72d32ae62ecc05f140bc737d07",
+      "abi_expected": 1,
+      "capabilities_required": {
+        "execute_ops_v2": true
+      }
+    }
+  ]
+}
