@@ -95,8 +95,9 @@ pub struct GlobalLaneGuard<'a> {
 }
 
 static GLOBAL_LANE_SCHEDULER: OnceLock<GlobalLaneScheduler> = OnceLock::new();
-static AOEM_RECOMMEND_CACHE: OnceLock<Mutex<HashMap<(u64, u32, u64, u32), usize>>> =
-    OnceLock::new();
+type RecommendCacheKey = (u64, u32, u64, u32);
+type RecommendCache = HashMap<RecommendCacheKey, usize>;
+static AOEM_RECOMMEND_CACHE: OnceLock<Mutex<RecommendCache>> = OnceLock::new();
 static AOEM_INSTALL_PROFILE_CACHE: OnceLock<Mutex<HashMap<PathBuf, Option<Value>>>> =
     OnceLock::new();
 static AOEM_MANIFEST_CACHE: OnceLock<Mutex<HashMap<PathBuf, Option<Value>>>> = OnceLock::new();

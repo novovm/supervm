@@ -58,7 +58,7 @@ fn main() -> Result<()> {
         .min(budget)
         .max(1);
 
-    let small_txs = recommended.min(4).max(1);
+    let small_txs = recommended.clamp(1, 4);
     let small_batch = (recommended / 2).max(1);
     let high_contention = (recommended * 3 / 4).max(1);
 
