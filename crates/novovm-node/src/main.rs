@@ -3,7 +3,7 @@
 // Author: Xonovo Technology
 
 use anyhow::{bail, Result};
-use novovm_exec::{AoemExecFacade, AoemExecOpenOptions, ExecOpV2};
+use novovm_exec::{AoemExecFacade, AoemRuntimeConfig, ExecOpV2};
 
 fn exec_path_mode() -> String {
     std::env::var("NOVOVM_EXEC_PATH")
@@ -11,29 +11,9 @@ fn exec_path_mode() -> String {
         .unwrap_or_else(|_| "ffi_v2".to_string())
 }
 
-fn aoem_dll_path() -> String {
-    std::env::var("NOVOVM_AOEM_DLL")
-        .or_else(|_| std::env::var("AOEM_DLL"))
-        .unwrap_or_else(|_| "D:\\WorksArea\\SUPERVM\\aoem\\bin\\aoem_ffi.dll".to_string())
-}
-
-fn ingress_workers() -> Option<u32> {
-    let raw = std::env::var("NOVOVM_INGRESS_WORKERS")
-        .or_else(|_| std::env::var("AOEM_INGRESS_WORKERS"));
-    match raw {
-        Ok(v) => v.parse::<u32>().ok(),
-        Err(_) => Some(16),
-    }
-}
-
 fn run_ffi_v2() -> Result<()> {
-    let dll = aoem_dll_path();
-    let facade = AoemExecFacade::open(
-        &dll,
-        AoemExecOpenOptions {
-            ingress_workers: ingress_workers(),
-        },
-    )?;
+    let runtime = AoemRuntimeConfig::from_env()?;
+    let facade = AoemExecFacade::open_with_runtime(&runtime)?;
     let session = facade.create_session()?;
 
     // Phase2 first main-path cutover: host submit goes through novovm-exec facade.
@@ -71,7 +51,9 @@ fn run_ffi_v2() -> Result<()> {
         .as_ref()
         .ok_or_else(|| anyhow::anyhow!("missing output on success report"))?;
     println!(
-        "mode=ffi_v2 rc={}({}) submitted={} processed={} success={} writes={} elapsed_us={}",
+        "mode=ffi_v2 variant={} dll={} rc={}({}) submitted={} processed={} success={} writes={} elapsed_us={}",
+        runtime.variant.as_str(),
+        runtime.dll_path.display(),
         report.return_code,
         report.return_code_name,
         out.metrics.submitted_ops,
@@ -80,16 +62,23 @@ fn run_ffi_v2() -> Result<()> {
         out.metrics.total_writes,
         out.metrics.elapsed_us
     );
+    // Keep AOEM DLL resident for process lifetime to avoid Windows teardown races at process exit.
+    drop(session);
+    std::mem::forget(facade);
     Ok(())
+}
+
+fn run_legacy_compat() -> Result<()> {
+    // Keep legacy entrypoint for one compatibility window and forward to unified FFI V2 path.
+    println!("mode=legacy_compat route=ffi_v2");
+    run_ffi_v2()
 }
 
 fn main() -> Result<()> {
     let mode = exec_path_mode();
     match mode.as_str() {
         "ffi_v2" => run_ffi_v2(),
-        "legacy" => {
-            bail!("legacy exec path is not migrated in SUPERVM skeleton; use NOVOVM_EXEC_PATH=ffi_v2")
-        }
+        "legacy" => run_legacy_compat(),
         _ => bail!("unknown exec path mode: {mode}; valid: ffi_v2|legacy"),
     }
 }

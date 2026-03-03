@@ -359,11 +359,25 @@ pub fn default_runtime_profile_path_for_dll(dll_path: &Path) -> PathBuf {
         .unwrap_or_default()
         .to_ascii_lowercase();
     if parent_name == "bin" {
-        return parent
-            .parent()
-            .unwrap_or(parent)
-            .join("config")
-            .join("aoem-runtime-profile.json");
+        let level1 = parent.parent().unwrap_or(parent);
+        let level1_name = level1
+            .file_name()
+            .and_then(|v| v.to_str())
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+        if level1_name == "persist" || level1_name == "wasm" {
+            let level2 = level1.parent().unwrap_or(level1); // variants
+            let level2_name = level2
+                .file_name()
+                .and_then(|v| v.to_str())
+                .unwrap_or_default()
+                .to_ascii_lowercase();
+            if level2_name == "variants" {
+                let root = level2.parent().unwrap_or(level2);
+                return root.join("config").join("aoem-runtime-profile.json");
+            }
+        }
+        return level1.join("config").join("aoem-runtime-profile.json");
     }
     parent.join("aoem-runtime-profile.json")
 }
@@ -567,6 +581,18 @@ fn profile_recommended_threads(profile: &Value, hint: &AoemHostHint) -> Option<u
         .map(|v| v as usize)
 }
 
+fn select_profile_for_variant<'a>(profile: &'a Value, variant: &str) -> &'a Value {
+    if let Some(variants) = profile.get("variants").and_then(|v| v.as_object()) {
+        if let Some(selected) = variants.get(variant) {
+            return selected;
+        }
+        if let Some(default_selected) = variants.get("default") {
+            return default_selected;
+        }
+    }
+    profile
+}
+
 fn recommend_threads_from_install_profile(
     dynlib: &AoemDyn,
     hint: &AoemHostHint,
@@ -580,7 +606,9 @@ fn recommend_threads_from_install_profile(
         serde_json::from_str::<Value>(&text).ok()
     });
     let parsed = entry.as_ref()?;
-    let rec = profile_recommended_threads(parsed, hint)?;
+    let variant = infer_variant_from_dll_path(dynlib.library_path());
+    let variant_profile = select_profile_for_variant(parsed, variant);
+    let rec = profile_recommended_threads(variant_profile, hint)?;
     Some(rec.min(budget).max(1))
 }
 

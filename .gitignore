@@ -42,6 +42,9 @@ aoem/include/**
 !aoem/manifest/
 aoem/manifest/**
 !aoem/manifest/aoem-manifest.json
+!aoem/config/
+aoem/config/**
+!aoem/config/aoem-runtime-profile.json
 
 # Never track local build side-products under AOEM bundle
 aoem/**/*.pdb

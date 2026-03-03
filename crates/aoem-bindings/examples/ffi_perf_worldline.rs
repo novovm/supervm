@@ -325,7 +325,8 @@ fn run_ffi_v2(cfg: &BenchCfg) -> Result<()> {
             let handle =
                 dynlib.create_handle_with_ingress_workers(Some(cfg.engine_workers as u32))?;
 
-            let mut rng_state = cfg.seed ^ ((tid as u64 + 1) * 0x9E3779B97F4A7C15);
+            let tid_mix = (tid as u64 + 1).wrapping_mul(0x9E3779B97F4A7C15);
+            let mut rng_state = cfg.seed ^ tid_mix;
             let mut keys: Vec<[u8; 8]> = Vec::new();
             let mut values: Vec<[u8; 8]> = Vec::new();
             let mut ops: Vec<AoemOpV2> = Vec::new();

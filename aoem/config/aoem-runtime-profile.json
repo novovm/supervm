@@ -1,0 +1,29 @@
+{
+  "schema": "aoem-runtime-profile/v2",
+  "threads": {
+    "default": 8
+  },
+  "profiles": [
+    {
+      "max_txs": 100000,
+      "threads": 4
+    }
+  ],
+  "variants": {
+    "core": {
+      "threads": {
+        "default": 8
+      }
+    },
+    "persist": {
+      "threads": {
+        "default": 6
+      }
+    },
+    "wasm": {
+      "threads": {
+        "default": 4
+      }
+    }
+  }
+}

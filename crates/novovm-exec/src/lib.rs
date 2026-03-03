@@ -1,11 +1,103 @@
-use anyhow::Result;
+use anyhow::{bail, Result};
 use aoem_bindings::{AoemCreateOptionsV1, AoemDyn, AoemExecV2Result, AoemHandle, AoemOpV2};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 #[derive(Clone, Debug, Default)]
 pub struct AoemExecOpenOptions {
     pub ingress_workers: Option<u32>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AoemRuntimeVariant {
+    Core,
+    Persist,
+    Wasm,
+}
+
+impl AoemRuntimeVariant {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Core => "core",
+            Self::Persist => "persist",
+            Self::Wasm => "wasm",
+        }
+    }
+
+    fn parse(raw: &str) -> Option<Self> {
+        match raw.trim().to_ascii_lowercase().as_str() {
+            "core" => Some(Self::Core),
+            "persist" => Some(Self::Persist),
+            "wasm" => Some(Self::Wasm),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct AoemRuntimeConfig {
+    pub variant: AoemRuntimeVariant,
+    pub aoem_root: PathBuf,
+    pub dll_path: PathBuf,
+    pub manifest_path: PathBuf,
+    pub runtime_profile_path: PathBuf,
+    pub ingress_workers: Option<u32>,
+}
+
+impl AoemRuntimeConfig {
+    pub fn from_env() -> Result<Self> {
+        let variant_raw = std::env::var("NOVOVM_AOEM_VARIANT")
+            .or_else(|_| std::env::var("AOEM_VARIANT"))
+            .unwrap_or_else(|_| "core".to_string());
+        let Some(variant) = AoemRuntimeVariant::parse(&variant_raw) else {
+            bail!("invalid AOEM variant: {variant_raw}; valid: core|persist|wasm");
+        };
+
+        let aoem_root = std::env::var("NOVOVM_AOEM_ROOT")
+            .or_else(|_| std::env::var("AOEM_ROOT"))
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| PathBuf::from(r"D:\WorksArea\SUPERVM\aoem"));
+
+        let dll_path = std::env::var("NOVOVM_AOEM_DLL")
+            .or_else(|_| std::env::var("AOEM_DLL"))
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| default_dll_path(&aoem_root, variant));
+
+        let manifest_path = std::env::var("NOVOVM_AOEM_MANIFEST")
+            .or_else(|_| std::env::var("AOEM_DLL_MANIFEST"))
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| aoem_root.join("manifest").join("aoem-manifest.json"));
+
+        let runtime_profile_path = std::env::var("NOVOVM_AOEM_RUNTIME_PROFILE")
+            .or_else(|_| std::env::var("AOEM_RUNTIME_PROFILE"))
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| aoem_root.join("config").join("aoem-runtime-profile.json"));
+
+        let ingress_workers = parse_u32_env("NOVOVM_INGRESS_WORKERS")
+            .or_else(|| parse_u32_env("AOEM_INGRESS_WORKERS"))
+            .or(Some(16));
+
+        Ok(Self {
+            variant,
+            aoem_root,
+            dll_path,
+            manifest_path,
+            runtime_profile_path,
+            ingress_workers,
+        })
+    }
+
+    pub fn open_options(&self) -> AoemExecOpenOptions {
+        AoemExecOpenOptions {
+            ingress_workers: self.ingress_workers,
+        }
+    }
+
+    pub fn apply_process_env(&self) {
+        std::env::set_var("AOEM_DLL", &self.dll_path);
+        std::env::set_var("AOEM_DLL_MANIFEST", &self.manifest_path);
+        std::env::set_var("AOEM_RUNTIME_PROFILE", &self.runtime_profile_path);
+    }
 }
 
 pub struct AoemExecFacade {
@@ -81,6 +173,18 @@ pub struct AoemSubmitReport {
 }
 
 impl AoemExecFacade {
+    /// Opens AOEM from unified runtime config entry (core/persist/wasm).
+    pub fn open_with_runtime(config: &AoemRuntimeConfig) -> Result<Self> {
+        config.apply_process_env();
+        Self::open(&config.dll_path, config.open_options())
+    }
+
+    /// Opens AOEM by resolving runtime config from environment variables.
+    pub fn open_from_env() -> Result<Self> {
+        let runtime = AoemRuntimeConfig::from_env()?;
+        Self::open_with_runtime(&runtime)
+    }
+
     /// Loads AOEM FFI DLL and validates startup contract (ABI + manifest + capabilities).
     pub fn open(dll_path: impl AsRef<Path>, options: AoemExecOpenOptions) -> Result<Self> {
         let dynlib = unsafe { AoemDyn::load(dll_path.as_ref()) }?;
@@ -199,6 +303,28 @@ fn map_anyhow_error(err: &anyhow::Error) -> AoemExecError {
         code: code.as_u32(),
         code_name: code.as_str().to_string(),
         message: msg,
+    }
+}
+
+fn parse_u32_env(name: &str) -> Option<u32> {
+    std::env::var(name)
+        .ok()
+        .and_then(|v| v.trim().parse::<u32>().ok())
+}
+
+fn default_dll_path(root: &Path, variant: AoemRuntimeVariant) -> PathBuf {
+    match variant {
+        AoemRuntimeVariant::Core => root.join("bin").join("aoem_ffi.dll"),
+        AoemRuntimeVariant::Persist => root
+            .join("variants")
+            .join("persist")
+            .join("bin")
+            .join("aoem_ffi.dll"),
+        AoemRuntimeVariant::Wasm => root
+            .join("variants")
+            .join("wasm")
+            .join("bin")
+            .join("aoem_ffi.dll"),
     }
 }
 

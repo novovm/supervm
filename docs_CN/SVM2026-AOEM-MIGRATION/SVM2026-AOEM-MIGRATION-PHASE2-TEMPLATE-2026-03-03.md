@@ -19,12 +19,10 @@ novovm-exec = { path = "../novovm-exec" }
 2. 进程启动时加载 AOEM 内核并创建 session（只做一次）：
 
 ```rust
-use novovm_exec::{AoemExecFacade, AoemExecOpenOptions};
+use novovm_exec::{AoemExecFacade, AoemRuntimeConfig};
 
-let facade = AoemExecFacade::open(
-    "D:\\WorksArea\\SUPERVM\\aoem\\bin\\aoem_ffi.dll",
-    AoemExecOpenOptions { ingress_workers: Some(16) },
-)?;
+let runtime = AoemRuntimeConfig::from_env()?; // 统一装载 core/persist/wasm 配置入口
+let facade = AoemExecFacade::open_with_runtime(&runtime)?;
 let session = facade.create_session()?;
 ```
 
@@ -40,6 +38,11 @@ let out = session.submit_ops(&ops)?;
 - `NOVOVM_EXEC_PATH=legacy|ffi_v2`
 - 兼容：`SUPERVM_EXEC_PATH=legacy|ffi_v2`
 - 默认 `ffi_v2`
+- 当前实现：`legacy` 入口只作为兼容别名，内部统一转发到 `ffi_v2`
+- AOEM 统一配置入口：
+  - `NOVOVM_AOEM_VARIANT=core|persist|wasm`
+  - `NOVOVM_AOEM_ROOT=D:\WorksArea\SUPERVM\aoem`
+  - 可选覆盖：`NOVOVM_AOEM_DLL` / `NOVOVM_AOEM_MANIFEST` / `NOVOVM_AOEM_RUNTIME_PROFILE`
 
 ## 验收条件
 

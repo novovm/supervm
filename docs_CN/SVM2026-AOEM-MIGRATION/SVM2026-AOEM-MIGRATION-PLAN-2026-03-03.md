@@ -26,13 +26,15 @@
 
 ## Phase 3
 
-- 将 `SVM2026` 的剩余已验证能力继续迁入 `SUPERVM`
-- 删除 `SUPERVM` 中对 AOEM 源码 path 依赖
-- 引入统一配置装载（core/persist/wasm 变体）
+- [ ] 将 `SVM2026` 的剩余已验证能力继续迁入 `SUPERVM`（最后做）
+- [x] 删除 `SUPERVM` 中对 AOEM 源码 path 依赖
+- [x] 引入统一配置装载（core/persist/wasm 变体）
 
 ## Phase 4
 
 - 验收与封盘：
-  - 功能 smoke
-  - TPS 口径矩阵
-  - 稳定性与回归测试
+  - [x] 功能一致性代理脚本（`scripts/migration/run_functional_consistency.ps1`）
+  - [x] TPS 口径采集脚本（`scripts/migration/run_performance_compare.ps1`）
+  - [ ] 导入 `SVM2026` baseline 并完成性能回归判定
+  - [ ] 接入 `state_root` 并完成硬一致性校验
+  - [ ] 稳定性与回归测试封盘

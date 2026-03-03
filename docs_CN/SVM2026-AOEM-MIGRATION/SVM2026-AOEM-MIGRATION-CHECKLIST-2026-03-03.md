@@ -18,14 +18,14 @@
 
 - [x] 提供 `novovm-node` 主路径替换模板（文档+示例）
 - [x] `novovm-node` 首条主路径改为调用门面（`crates/novovm-node/src/main.rs`）
-- [ ] `novovm-node` 其余路径逐步替换
-- [ ] 将 `SVM2026` 已验证能力逐项迁入 `SUPERVM` 对应模块
+- [x] `novovm-node` 其余路径逐步替换（`legacy` 入口兼容转发到 `ffi_v2`）
+- [ ] 将 `SVM2026` 已验证能力逐项迁入 `SUPERVM` 对应模块（最后做）
 - [x] 去除 AOEM 源码 path 依赖（运行时代码不再依赖 `../aoem/crates`）
-- [ ] 统一 core/persist/wasm 配置入口
+- [x] 统一 core/persist/wasm 配置入口（`AoemRuntimeConfig` + `aoem/config/aoem-runtime-profile.json`）
 
 ## D. 验收
 
-- [ ] 功能一致性（前后状态根一致）
-- [ ] 性能对照（迁移前后同口径）
+- [ ] 功能一致性（前后状态根一致；已落地代理脚本 `scripts/migration/run_functional_consistency.ps1`，待接入 state_root 字段）
+- [ ] 性能对照（迁移前后同口径；已落地脚本 `scripts/migration/run_performance_compare.ps1`，待导入 `SVM2026` baseline）
 - [ ] 崩溃恢复与持久化一致性
 - [ ] 文档封盘（迁移版本、回退步骤）
