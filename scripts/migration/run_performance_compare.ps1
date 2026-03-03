@@ -1,14 +1,21 @@
 param(
     [string]$RepoRoot = "D:\WorksArea\SUPERVM",
+    [string]$SvmRoot = "D:\WorksArea\SVM2026",
     [string]$OutputDir = "D:\WorksArea\SUPERVM\artifacts\migration\performance",
     [string]$BaselineJson = "",
+    [switch]$AutoImportSvmBaseline,
+    [string]$BaselineOutputDir = "",
     [string]$Variants = "core",
     [double]$AllowedRegressionPct = -5.0,
     [int64]$Txs = 1000000,
     [int]$KeySpace = 128,
     [double]$Rw = 0.5,
     [int]$Seed = 123,
-    [int]$WarmupCalls = 10
+    [int]$WarmupCalls = 10,
+    [bool]$IncludeCapabilitySnapshot = $true,
+    [ValidateSet("core", "persist", "wasm")]
+    [string]$CapabilityVariant = "core",
+    [string]$CapabilityJson = ""
 )
 
 Set-StrictMode -Version Latest
@@ -85,12 +92,108 @@ function Get-CaseKey {
     return "$Variant|$Preset"
 }
 
+function Get-CapabilitySnapshot {
+    param(
+        [string]$RepoRoot,
+        [string]$Variant,
+        [string]$CapabilityJson
+    )
+
+    $sourceJson = $CapabilityJson
+    if (-not $sourceJson) {
+        $scriptPath = Join-Path $RepoRoot "scripts\migration\dump_capability_contract.ps1"
+        if (-not (Test-Path $scriptPath)) {
+            throw "missing capability dump script: $scriptPath"
+        }
+
+        $capOutputDir = Join-Path $RepoRoot "artifacts\migration\capabilities"
+        New-Item -ItemType Directory -Force -Path $capOutputDir | Out-Null
+
+        & powershell -ExecutionPolicy Bypass -File $scriptPath -RepoRoot $RepoRoot -OutputDir $capOutputDir -Variant $Variant | Out-Null
+        $sourceJson = Join-Path $capOutputDir "capability-contract-$Variant.json"
+    }
+
+    if (-not (Test-Path $sourceJson)) {
+        throw "capability json not found: $sourceJson"
+    }
+
+    $raw = Get-Content -Path $sourceJson -Raw | ConvertFrom-Json
+    if (-not $raw.contract) {
+        throw "invalid capability json (missing contract): $sourceJson"
+    }
+
+    $fallbackCodes = @()
+    if ($null -ne $raw.contract.fallback_reason_codes) {
+        $fallbackCodes = @($raw.contract.fallback_reason_codes)
+    }
+
+    return [ordered]@{
+        source_json = $sourceJson
+        generated_at_utc = [string]$raw.generated_at_utc
+        variant = [string]$raw.variant
+        execute_ops_v2 = [bool]$raw.contract.execute_ops_v2
+        zkvm_prove = [bool]$raw.contract.zkvm_prove
+        zkvm_verify = [bool]$raw.contract.zkvm_verify
+        msm_accel = [bool]$raw.contract.msm_accel
+        msm_backend = [string]$raw.contract.msm_backend
+        fallback_reason_codes = $fallbackCodes
+        inferred_from_legacy_fields = [bool]$raw.contract.inferred_from_legacy_fields
+    }
+}
+
+function Resolve-BaselineJsonPath {
+    param(
+        [string]$RepoRoot,
+        [string]$SvmRoot,
+        [string]$BaselineJson,
+        [switch]$AutoImportSvmBaseline,
+        [string]$BaselineOutputDir,
+        [string]$Variant
+    )
+
+    if ($BaselineJson -and (Test-Path $BaselineJson)) {
+        return $BaselineJson
+    }
+
+    if (-not $AutoImportSvmBaseline.IsPresent) {
+        return ""
+    }
+
+    $scriptPath = Join-Path $RepoRoot "scripts\migration\import_svm2026_baseline.ps1"
+    if (-not (Test-Path $scriptPath)) {
+        throw "missing baseline import script: $scriptPath"
+    }
+
+    $outDir = if ($BaselineOutputDir) { $BaselineOutputDir } else { Join-Path $RepoRoot "artifacts\migration\baseline" }
+    New-Item -ItemType Directory -Force -Path $outDir | Out-Null
+
+    & powershell -ExecutionPolicy Bypass -File $scriptPath `
+        -RepoRoot $RepoRoot `
+        -SvmRoot $SvmRoot `
+        -OutputDir $outDir `
+        -Variant $Variant | Out-Null
+
+    $resolved = Join-Path $outDir "svm2026-baseline-$Variant.json"
+    if (-not (Test-Path $resolved)) {
+        throw "auto-import baseline json not found: $resolved"
+    }
+    return $resolved
+}
+
 New-Item -ItemType Directory -Force -Path $OutputDir | Out-Null
 
 $bindingsDir = Join-Path $RepoRoot "crates\aoem-bindings"
 $aoemRoot = Join-Path $RepoRoot "aoem"
-$variantList = $Variants.Split(",") | ForEach-Object { $_.Trim().ToLower() } | Where-Object { $_ -ne "" }
+$variantList = @($Variants.Split(",") | ForEach-Object { $_.Trim().ToLower() } | Where-Object { $_ -ne "" })
 $presets = @("cpu_parity", "cpu_batch_stress")
+$baselineVariant = if ($variantList.Count -gt 0) { $variantList[0] } else { "core" }
+$baselineJsonResolved = Resolve-BaselineJsonPath `
+    -RepoRoot $RepoRoot `
+    -SvmRoot $SvmRoot `
+    -BaselineJson $BaselineJson `
+    -AutoImportSvmBaseline:$AutoImportSvmBaseline `
+    -BaselineOutputDir $BaselineOutputDir `
+    -Variant $baselineVariant
 
 $items = @()
 foreach ($variant in $variantList) {
@@ -116,8 +219,8 @@ foreach ($variant in $variantList) {
 
 $baselineItems = @{}
 $baselineAvailable = $false
-if ($BaselineJson -and (Test-Path $BaselineJson)) {
-    $baselineRaw = Get-Content -Path $BaselineJson -Raw | ConvertFrom-Json
+if ($baselineJsonResolved -and (Test-Path $baselineJsonResolved)) {
+    $baselineRaw = Get-Content -Path $baselineJsonResolved -Raw | ConvertFrom-Json
     if ($baselineRaw.items) {
         foreach ($b in $baselineRaw.items) {
             $k = Get-CaseKey -Variant $b.variant -Preset $b.preset
@@ -165,9 +268,14 @@ if ($baselineAvailable) {
     }
 }
 
+$capabilitySnapshot = $null
+if ($IncludeCapabilitySnapshot) {
+    $capabilitySnapshot = Get-CapabilitySnapshot -RepoRoot $RepoRoot -Variant $CapabilityVariant -CapabilityJson $CapabilityJson
+}
+
 $result = [ordered]@{
     generated_at_utc = [DateTime]::UtcNow.ToString("o")
-    baseline_json = if ($baselineAvailable) { $BaselineJson } else { "" }
+    baseline_json = if ($baselineAvailable) { $baselineJsonResolved } else { "" }
     baseline_available = $baselineAvailable
     allowed_regression_pct = $AllowedRegressionPct
     params = [ordered]@{
@@ -181,8 +289,10 @@ $result = [ordered]@{
     items = $items
     compare = $compareRows
     compare_pass = if ($baselineAvailable) { $comparePass } else { $null }
+    capability_contract = $capabilitySnapshot
     notes = @(
-        "performance compare is only evaluated when a baseline JSON is provided"
+        "performance compare is only evaluated when a baseline JSON is provided",
+        "capability snapshot records zk/msm readiness at report generation time"
     )
 }
 
@@ -225,6 +335,20 @@ $md += "## Notes"
 $md += ""
 foreach ($n in $result.notes) {
     $md += "- $n"
+}
+
+if ($capabilitySnapshot) {
+    $md += ""
+    $md += "## Capability Snapshot"
+    $md += ""
+    $md += "- source_json: $($capabilitySnapshot.source_json)"
+    $md += "- variant: $($capabilitySnapshot.variant)"
+    $md += "- execute_ops_v2: $($capabilitySnapshot.execute_ops_v2)"
+    $md += "- zkvm_prove: $($capabilitySnapshot.zkvm_prove)"
+    $md += "- zkvm_verify: $($capabilitySnapshot.zkvm_verify)"
+    $md += "- msm_accel: $($capabilitySnapshot.msm_accel)"
+    $md += "- msm_backend: $($capabilitySnapshot.msm_backend)"
+    $md += "- inferred_from_legacy_fields: $($capabilitySnapshot.inferred_from_legacy_fields)"
 }
 
 $md -join "`n" | Set-Content -Path $mdPath -Encoding UTF8

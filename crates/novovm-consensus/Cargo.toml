@@ -1,0 +1,30 @@
+[package]
+name = "novovm-consensus"
+version = "0.1.0"
+edition = "2021"
+authors = ["SuperVM Core Team"]
+description = "NOVOVM consensus migration skeleton from SVM2026"
+
+[dependencies]
+# Cryptography (Ed25519 signatures)
+ed25519-dalek = { version = "2", features = ["rand_core"] }
+rand = "0.8"
+sha2 = "0.10"
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Async runtime (optional, for future network integration)
+tokio = { version = "1", features = ["full"], optional = true }
+
+# Logging
+tracing = "0.1"
+
+[dev-dependencies]
+criterion = "0.5"
+
+[features]
+default = []
+async-runtime = ["tokio"]
+

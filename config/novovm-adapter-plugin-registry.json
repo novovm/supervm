@@ -1,0 +1,14 @@
+{
+  "version": "novovm_adapter_registry_v1",
+  "allowed_abi_versions": [1],
+  "plugins": [
+    {
+      "name": "novovm_adapter_sample_plugin",
+      "path": "novovm_adapter_sample_plugin.dll",
+      "abi": 1,
+      "required_caps": "0x1",
+      "chains": ["novovm", "custom"],
+      "enabled": true
+    }
+  ]
+}

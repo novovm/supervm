@@ -1,0 +1,11 @@
+[package]
+name = "novovm-adapter-novovm"
+version = "0.1.0"
+edition = "2021"
+authors = ["SuperVM Core Team"]
+description = "Native NOVOVM adapter implementation (default native backend)."
+
+[dependencies]
+anyhow = "1"
+sha2 = "0.10"
+novovm-adapter-api = { path = "../novovm-adapter-api" }

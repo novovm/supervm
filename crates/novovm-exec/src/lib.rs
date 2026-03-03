@@ -1,5 +1,6 @@
 use anyhow::{bail, Result};
 use aoem_bindings::{AoemCreateOptionsV1, AoemDyn, AoemExecV2Result, AoemHandle, AoemOpV2};
+use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
@@ -172,6 +173,53 @@ pub struct AoemSubmitReport {
     pub error: Option<AoemExecError>,
 }
 
+/// Stable capability contract consumed by NOVOVM host logic.
+///
+/// `raw` preserves AOEM original capabilities JSON so host can debug future fields
+/// without recompiling this crate.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct AoemCapabilityContract {
+    pub execute_ops_v2: bool,
+    pub zkvm_prove: bool,
+    pub zkvm_verify: bool,
+    pub msm_accel: bool,
+    pub msm_backend: Option<String>,
+    pub fallback_reason_codes: Vec<String>,
+    pub inferred_from_legacy_fields: bool,
+    pub raw: serde_json::Value,
+}
+
+impl AoemCapabilityContract {
+    pub fn from_capabilities_json(raw: serde_json::Value) -> Self {
+        let execute_ops_v2 = capability_bool(&raw, &["execute_ops_v2"]).unwrap_or(false);
+        let zkvm_prove = capability_bool(&raw, &["zkvm_prove", "zkvm.prove"]).unwrap_or(false);
+        let zkvm_verify = capability_bool(&raw, &["zkvm_verify", "zkvm.verify"]).unwrap_or(false);
+
+        // Legacy AOEM capability set only exposed backend path fields.
+        let msm_accel_direct = capability_bool(&raw, &["msm_accel", "msm.accel"]);
+        let msm_accel_legacy = capability_bool(&raw, &["backend_gpu_path"]);
+        let inferred_from_legacy_fields = msm_accel_direct.is_none() && msm_accel_legacy.is_some();
+        let msm_accel = msm_accel_direct.or(msm_accel_legacy).unwrap_or(false);
+
+        let msm_backend = capability_string(&raw, &["msm_backend", "msm.backend"]);
+        let fallback_reason_codes = capability_string_list(
+            &raw,
+            &["fallback_reason_codes", "fallback_reasons", "msm.fallback_reason_codes"],
+        );
+
+        Self {
+            execute_ops_v2,
+            zkvm_prove,
+            zkvm_verify,
+            msm_accel,
+            msm_backend,
+            fallback_reason_codes,
+            inferred_from_legacy_fields,
+            raw,
+        }
+    }
+}
+
 impl AoemExecFacade {
     /// Opens AOEM from unified runtime config entry (core/persist/wasm).
     pub fn open_with_runtime(config: &AoemRuntimeConfig) -> Result<Self> {
@@ -201,6 +249,18 @@ impl AoemExecFacade {
 
     pub fn capabilities_json(&self) -> Result<serde_json::Value> {
         self.dynlib.capabilities()
+    }
+
+    /// Returns normalized capability contract used by NOVOVM migration scripts and runtime checks.
+    pub fn capability_contract(&self) -> Result<AoemCapabilityContract> {
+        let raw = self.capabilities_json()?;
+        Ok(AoemCapabilityContract::from_capabilities_json(raw))
+    }
+
+    /// Convenience wrapper for tools that only need JSON output.
+    pub fn capability_contract_json(&self) -> Result<serde_json::Value> {
+        let contract = self.capability_contract()?;
+        Ok(serde_json::to_value(contract)?)
     }
 
     /// Creates one execution session. Host can keep one session per worker thread.
@@ -328,6 +388,54 @@ fn default_dll_path(root: &Path, variant: AoemRuntimeVariant) -> PathBuf {
     }
 }
 
+fn capability_bool(root: &serde_json::Value, paths: &[&str]) -> Option<bool> {
+    paths.iter().find_map(|p| {
+        let mut cursor = root;
+        for seg in p.split('.') {
+            cursor = cursor.get(seg)?;
+        }
+        cursor.as_bool()
+    })
+}
+
+fn capability_string(root: &serde_json::Value, paths: &[&str]) -> Option<String> {
+    paths.iter().find_map(|p| {
+        let mut cursor = root;
+        for seg in p.split('.') {
+            cursor = cursor.get(seg)?;
+        }
+        cursor.as_str().map(|s| s.to_string())
+    })
+}
+
+fn capability_string_list(root: &serde_json::Value, paths: &[&str]) -> Vec<String> {
+    for p in paths {
+        let mut cursor = root;
+        let mut ok = true;
+        for seg in p.split('.') {
+            if let Some(next) = cursor.get(seg) {
+                cursor = next;
+            } else {
+                ok = false;
+                break;
+            }
+        }
+        if !ok {
+            continue;
+        }
+        if let Some(arr) = cursor.as_array() {
+            let out: Vec<String> = arr
+                .iter()
+                .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                .collect();
+            if !out.is_empty() {
+                return out;
+            }
+        }
+    }
+    Vec::new()
+}
+
 pub use aoem_bindings::acquire_global_lane;
 pub use aoem_bindings::global_parallel_budget;
 pub use aoem_bindings::recommend_threads_auto;
@@ -341,3 +449,46 @@ pub use aoem_bindings::AoemOpV2 as ExecOpV2;
 
 #[allow(dead_code)]
 fn _assert_abi_struct_layout(_v: AoemCreateOptionsV1) {}
+
+#[cfg(test)]
+mod tests {
+    use super::AoemCapabilityContract;
+    use serde_json::json;
+
+    #[test]
+    fn capability_contract_reads_explicit_zk_msm_fields() {
+        let raw = json!({
+            "execute_ops_v2": true,
+            "zkvm": { "prove": true, "verify": true },
+            "msm": {
+                "accel": true,
+                "backend": "bls12_381_gpu",
+                "fallback_reason_codes": ["gpu_unavailable", "invalid_input"]
+            }
+        });
+
+        let c = AoemCapabilityContract::from_capabilities_json(raw);
+        assert!(c.execute_ops_v2);
+        assert!(c.zkvm_prove);
+        assert!(c.zkvm_verify);
+        assert!(c.msm_accel);
+        assert_eq!(c.msm_backend.as_deref(), Some("bls12_381_gpu"));
+        assert_eq!(c.fallback_reason_codes.len(), 2);
+        assert!(!c.inferred_from_legacy_fields);
+    }
+
+    #[test]
+    fn capability_contract_falls_back_to_legacy_gpu_field() {
+        let raw = json!({
+            "execute_ops_v2": true,
+            "backend_gpu_path": true
+        });
+
+        let c = AoemCapabilityContract::from_capabilities_json(raw);
+        assert!(c.execute_ops_v2);
+        assert!(!c.zkvm_prove);
+        assert!(!c.zkvm_verify);
+        assert!(c.msm_accel);
+        assert!(c.inferred_from_legacy_fields);
+    }
+}
