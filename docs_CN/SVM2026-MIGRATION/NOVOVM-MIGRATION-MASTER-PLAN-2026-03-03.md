@@ -122,6 +122,8 @@
 - 已完成：`run_functional_consistency.ps1` 与 `run_performance_compare.ps1` 自动附带能力快照到报告 JSON/MD。
 - 已完成：`state_root` 代理贯通（`state_root_consistency` 字段入报告，当前 `available=false` 时使用 `proxy_digest` 门禁）。
 - 已完成：`SVM2026` baseline 自动导入脚本 `import_svm2026_baseline.ps1`，并接入 `run_performance_compare.ps1`（`-AutoImportSvmBaseline`）。
+- 已完成：性能对照口径冻结，`run_performance_compare.ps1` 默认 `release` + `warmup_calls=5`，并新增 `LineProfile`（`default|seal_single|seal_auto`）；新增唯一性能门禁脚本 `run_performance_gate_seal_single.ps1`（固定 `release + seal_single + AOEM 封盘基线`，按 3-run P50 判定门禁）。
+- 已完成：新增一键迁移验收门禁入口 `run_migration_acceptance_gate.ps1`，串联 `functional_consistency` + `performance_gate_seal_single` 并输出统一 `overall_pass`。
 - 已完成：自动台账回填脚本 `generate_capability_ledger_auto.ps1`，可基于最新报告生成当日台账快照。
 - 已完成：`F-03/F-04` 最小协议骨架 `crates/novovm-protocol`（`ids/messages/wire/protocol_catalog`）迁移起步，可作为网络与共识共享协议类型入口。
 - 已完成：`F-05` 迁移骨架 `crates/novovm-consensus`（来自 `supervm-consensus` 能力迁移起点），已通过本地测试。

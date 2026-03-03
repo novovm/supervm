@@ -26,6 +26,6 @@
 ## D. 验收
 
 - [ ] 功能一致性（前后状态根一致；已落地代理脚本 `scripts/migration/run_functional_consistency.ps1`，待接入 state_root 字段）
-- [ ] 性能对照（迁移前后同口径；已落地脚本 `scripts/migration/run_performance_compare.ps1`，待导入 `SVM2026` baseline）
+- [x] 性能对照（迁移前后同口径；已冻结唯一门禁 `scripts/migration/run_performance_gate_seal_single.ps1`，固定 `release + seal_single + AOEM 封盘基线`，按 3-run P50 判定）
 - [ ] 崩溃恢复与持久化一致性
 - [ ] 文档封盘（迁移版本、回退步骤）

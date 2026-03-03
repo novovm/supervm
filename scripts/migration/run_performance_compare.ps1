@@ -11,7 +11,11 @@ param(
     [int]$KeySpace = 128,
     [double]$Rw = 0.5,
     [int]$Seed = 123,
-    [int]$WarmupCalls = 10,
+    [int]$WarmupCalls = 5,
+    [ValidateSet("default", "seal_single", "seal_auto")]
+    [string]$LineProfile = "default",
+    [ValidateSet("debug", "release")]
+    [string]$BuildProfile = "release",
     [bool]$IncludeCapabilitySnapshot = $true,
     [ValidateSet("core", "persist", "wasm")]
     [string]$CapabilityVariant = "core",
@@ -182,6 +186,10 @@ function Resolve-BaselineJsonPath {
 
 New-Item -ItemType Directory -Force -Path $OutputDir | Out-Null
 
+if ($BuildProfile -eq "debug") {
+    Write-Warning "BuildProfile=debug may produce lower TPS than release-seal metrics."
+}
+
 $bindingsDir = Join-Path $RepoRoot "crates\aoem-bindings"
 $aoemRoot = Join-Path $RepoRoot "aoem"
 $variantList = @($Variants.Split(",") | ForEach-Object { $_.Trim().ToLower() } | Where-Object { $_ -ne "" })
@@ -199,16 +207,34 @@ $items = @()
 foreach ($variant in $variantList) {
     $dll = Get-DllPathForVariant -AoemRoot $aoemRoot -Variant $variant
     foreach ($preset in $presets) {
-        $text = Invoke-Cargo -WorkDir $bindingsDir -CargoArgs @(
-            "run", "--example", "ffi_perf_worldline", "--",
+        $submitOps = if ($preset -eq "cpu_parity") { "1" } else { "1024" }
+        $cargoArgs = @("run")
+        if ($BuildProfile -eq "release") {
+            $cargoArgs += "--release"
+        }
+        $cargoArgs += @(
+            "--example", "ffi_perf_worldline", "--",
             "--preset", $preset,
             "--dll", $dll,
+            "--submit-ops", $submitOps,
             "--txs", "$Txs",
             "--key-space", "$KeySpace",
             "--rw", "$Rw",
             "--seed", "$Seed",
             "--warmup-calls", "$WarmupCalls"
         )
+
+        switch ($LineProfile) {
+            "seal_single" {
+                $cargoArgs += @("--threads", "1", "--engine-workers", "16")
+            }
+            "seal_auto" {
+                $cargoArgs += @("--threads", "auto", "--engine-workers", "auto")
+            }
+            default { }
+        }
+
+        $text = Invoke-Cargo -WorkDir $bindingsDir -CargoArgs $cargoArgs
         $parsed = Parse-WorldlineResult -Text $text
         $parsed["variant"] = $variant
         $parsed["preset"] = $preset
@@ -280,6 +306,8 @@ $result = [ordered]@{
     allowed_regression_pct = $AllowedRegressionPct
     params = [ordered]@{
         variants = @($variantList)
+        build_profile = $BuildProfile
+        line_profile = $LineProfile
         txs = $Txs
         key_space = $KeySpace
         rw = $Rw
@@ -305,6 +333,8 @@ $md = @(
     "# Performance Compare Report"
     ""
     "- generated_at_utc: $($result.generated_at_utc)"
+    "- build_profile: $BuildProfile"
+    "- line_profile: $LineProfile"
     "- baseline_available: $($result.baseline_available)"
     "- allowed_regression_pct: $($result.allowed_regression_pct)"
     "- compare_pass: $($result.compare_pass)"

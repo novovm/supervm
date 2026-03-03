@@ -1,0 +1,3 @@
+# Keep GitHub language stats focused on runtime code.
+# Migration/ops scripts are infrastructure, not the core product language.
+scripts/**/*.ps1 linguist-detectable=false
