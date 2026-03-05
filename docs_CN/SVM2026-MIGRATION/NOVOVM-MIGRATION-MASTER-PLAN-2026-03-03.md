@@ -167,4 +167,16 @@
   - 根因：relative `OutputDir` + child process `cwd` 变化导致 whitelist negative path drift
   - 修复：在 `scripts/migration/run_functional_consistency.ps1` 与 `scripts/migration/run_adapter_stability_gate.ps1` 将 `OutputDir` 归一化为绝对路径
   - 证据：`artifacts/migration/adapter-stability-relfix-smoke/adapter-stability-summary.json`
+- 已完成：经济执行层命名与继承收口：`market_runtime` 统一迁移为 `market_engine`，并复用 `SVM2026/contracts/web30/core` 的 `AMM/CDP/Bond/NAV/TreasuryImpl` 组件作为 NOVOVM 经济执行主链路。
+- 已完成：`run_governance_market_policy_gate.ps1` 新增 `engine_output_pass + treasury_output_pass` 硬门禁，`run_migration_acceptance_gate.ps1` 的 `overall_pass` 已绑定两项子门禁，`run_release_snapshot.ps1` / `run_release_candidate.ps1` 已同步输出这两项关键结果。
+- 已完成：GA 正式发布快照（2026-03-06）：
+  - `artifacts/migration/release-snapshot-ga-2026-03-06-051653/release-snapshot.json`
+  - `profile_name=full_snapshot_ga_v1`，`overall_pass=True`
+  - `key_results.governance_market_policy_engine_pass=True`
+  - `key_results.governance_market_policy_treasury_pass=True`
+- 已完成：GA 正式 RC（`rc_ref=novovm-rc-2026-03-06-ga-v1`）：
+  - `artifacts/migration/release-candidate-novovm-rc-2026-03-06-ga-v1/rc-candidate.json`
+  - `status=ReadyForMerge/SnapshotGreen`
+  - `commit_hash=823a5880e104c96d03e2ab4a8473c9f620ae6413`
+- 状态：`ReadyForMerge / SnapshotGreen`（`full_snapshot_ga_v1` 主线收口）。
 - 待推进：AOEM FFI 正式暴露 `state_root` 后，将代理门禁切换为硬一致性校验。

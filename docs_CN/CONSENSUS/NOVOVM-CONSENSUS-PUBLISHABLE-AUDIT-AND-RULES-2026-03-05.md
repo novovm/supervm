@@ -12,17 +12,17 @@
 
 - `可立即发布（MVP 范围）`：
   - 共识主链路：`weighted quorum + QC anti-tamper + equivocation/slash + view-change + fork-choice + slash policy + unjail cooldown`。
-  - 治理最小闭环（受限范围）：`UpdateSlashPolicy`、`UpdateMempoolFeeFloor`、`UpdateNetworkDosPolicy`、`UpdateTokenEconomicsPolicy`、`TreasurySpend` 的 `proposal -> vote(signature) -> quorum -> apply`。
+  - 治理最小闭环（受限范围）：`UpdateSlashPolicy`、`UpdateMempoolFeeFloor`、`UpdateNetworkDosPolicy`、`UpdateTokenEconomicsPolicy`、`UpdateMarketGovernancePolicy`、`TreasurySpend`、`UpdateGovernanceAccessPolicy`、`UpdateGovernanceCouncilPolicy` 的 `proposal -> vote(signature) -> quorum -> apply`。
   - 治理防重放域分隔：治理签名消息绑定 `proposal_id + proposal_height + proposal_digest + support`。
   - 经济主链路（最小可发布）：`mint/burn + gas/service fee split + treasury spend(governance)`。
   - 交易闭环：`tx wire -> mempool admission -> tx metadata -> block/commit output`。
   - 读查询：`getBlock/getTransaction/getReceipt/getBalance` + RPC rate limit。
   - 网络与活性：`headers-first`、`fast/state sync`（含负向篡改拒绝）、`peer-score/ban`、`pacemaker failover`。
 - `继承可发布但尚未完全迁移到 NOVOVM 主链路`：
-  - 九席位治理结构与完整经济域（AMM/CDP/Bond/Foreign reserve/Buyback）全参数治理。
+  - 完整经济域跨模块执行联动（预言机/清算引擎/NAV 实时结算与回购执行策略）仍未接入 NOVOVM 主链路。
   - 抗量子签名（ML-DSA）与链上治理权限模型。
 - `治理入口当前状态`：
-  - 已具备受限治理执行面：`UpdateSlashPolicy`、`UpdateMempoolFeeFloor`、`UpdateNetworkDosPolicy`、`UpdateTokenEconomicsPolicy`、`TreasurySpend` 可经签名投票 + quorum 生效。
+  - 已具备受限治理执行面：`UpdateSlashPolicy`、`UpdateMempoolFeeFloor`、`UpdateNetworkDosPolicy`、`UpdateTokenEconomicsPolicy`、`UpdateMarketGovernancePolicy`、`TreasurySpend`、`UpdateGovernanceAccessPolicy`、`UpdateGovernanceCouncilPolicy` 可经签名投票 + quorum 生效。
 - `发布边界`：
   - 当前可发布口径是“`MVP+（共识+交易+读查询+最小经济治理）`”，不是“完整主网经济治理版”。
 - `发布策略（当前执行）`：
@@ -95,6 +95,8 @@
 | C-16 | RPC 暴露安全铁律：public/gov 端口分离、`gov rpc` 默认关闭、public 不暴露 `governance_*`、非回环治理端口需 allowlist | `main.rs` (`run_chain_query_rpc_server_mode`, `NOVOVM_ENABLE_GOV_RPC`, `NOVOVM_GOV_RPC_BIND`, `NOVOVM_GOV_RPC_ALLOWLIST`) + `run_rpc_exposure_gate.ps1` | `rpc_exposure_gate.pass=true` | 已迁移（可发布安全默认） |
 | C-17 | 国库治理执行：`TreasurySpend` 经治理投票生效，支持超额支出拒绝 | `types.rs` (`GovernanceOp::TreasurySpend`) + `protocol.rs` (`spend_treasury_tokens`) + `main.rs` (`governance_treasury_spend_probe`) | `governance_treasury_spend_gate.pass=true` | 已迁移（受限范围） |
 | C-18 | 链上治理访问策略：`proposer/executor committee + threshold + timelock`（治理权限由 `GovernanceOp::UpdateGovernanceAccessPolicy` 下发） | `types.rs` (`GovernanceAccessPolicy`, `GovernanceOp::UpdateGovernanceAccessPolicy`) + `protocol.rs` (`submit/execute *_with_approvals`) + `main.rs` (`governance_access_policy_probe`) | `governance_access_policy_gate.pass=true` | 已迁移（受限范围，链上权限模型初版） |
+| C-19 | 九席位治理权重策略：`Founder/TopHolder(0-4)/Team(0-1)/Independent`，按提案类别阈值（`Parameter/Treasury/Protocol/Emergency`）执行治理 | `types.rs` (`GovernanceCouncilPolicy`, `GovernanceCouncilSeat`, `GovernanceOp::UpdateGovernanceCouncilPolicy`) + `protocol.rs` (`execute_governance_proposal_with_executor_approvals`) + `main.rs` (`governance_council_policy_probe`) | `governance_council_policy_gate.pass=true` | 已迁移（受限范围，I-GOV-01 主链路） |
+| C-20 | 经济治理参数族热更新：`AMM/CDP/Bond/Reserve/NAV/Buyback` 统一由 `UpdateMarketGovernancePolicy` 治理下发，并输出 `market_engine + treasury` 执行证据 | `types.rs` (`MarketGovernancePolicy`, `GovernanceOp::UpdateMarketGovernancePolicy`) + `protocol.rs` (`set/governance_market_policy`) + `market_engine.rs` (`Web30MarketEngine`) + `main.rs` (`governance_market_policy_probe`) | `governance_market_policy_gate.pass=true` + `engine_output_pass=true` + `treasury_output_pass=true` | 已迁移（受限范围，I-GOV-02 主链路） |
 
 ### C 系列关键观察
 
@@ -109,6 +111,8 @@
 - 治理执行 gate：`run_governance_execution_gate.ps1`，验证 `executed=true`、`reason_code=ok`、`policy_applied=true`。
 - 治理参数扩展 gate：`run_governance_param2_gate.ps1`，验证 `UpdateMempoolFeeFloor` 的提案/投票/生效闭环。
 - 治理参数扩展 gate：`run_governance_param3_gate.ps1`，验证 `UpdateNetworkDosPolicy` 的提案/投票/生效闭环。
+- 治理参数扩展 gate：`run_governance_market_policy_gate.ps1`，验证 `UpdateMarketGovernancePolicy`（AMM/CDP/Bond/Reserve/NAV/Buyback）的提案/投票/生效闭环。
+- 治理席位权重 gate：`run_governance_council_policy_gate.ps1`，验证 `UpdateGovernanceCouncilPolicy` 的提案/投票/生效闭环，以及 `Parameter/ProtocolUpgrade` 分级阈值拒绝与通过路径。
 - 治理权限模型 gate：`run_governance_access_policy_gate.ps1`，验证 `committee/threshold/timelock` 正向与负向闭环（提案阈值不足拒绝、未到 timelock 拒绝、执行阈值不足拒绝）。
 - 治理参数扩展 gate：`run_governance_token_economics_gate.ps1`，验证 `UpdateTokenEconomicsPolicy` + `mint/burn/fee split` 会计闭环。
 - 治理执行 gate：`run_governance_treasury_spend_gate.ps1`，验证 `TreasurySpend` 的提案/投票/生效闭环与 `overspend` 拒绝。
@@ -163,18 +167,18 @@
 | I-TOKEN-05 | Service fee 路由（provider/treasury/burn） | `mainnet_token_impl.rs` (`on_service_fee_paid`) | 已迁入主链路（门禁通过） |
 | I-TOKEN-06 | 国库治理支出（`TreasurySpend`）与超额拒绝 | `mainnet_token.rs::transfer` + `protocol.rs::spend_treasury_tokens` | 已迁入受限治理主链路（门禁通过） |
 
-补充：NOVOVM 当前已完成 `I-TOKEN` 最小可发布闭环；完整经济域（外汇储备/NAV/回购策略/跨模块经济治理）仍待后续迁移。
+补充：NOVOVM 当前已完成 `I-TOKEN` 最小可发布闭环，并已迁入经济治理参数族（AMM/CDP/Bond/Reserve/NAV/Buyback）热更新入口；但完整跨模块执行联动（清算/预言机/NAV 实时结算）仍待后续迁移。
 
 ## 3.2 治理与投票规则（I-GOV）
 
 | 规则ID | 规则 | 来源 | 当前 NOVOVM 状态 |
 |---|---|---|---|
-| I-GOV-01 | 九席位加权治理模型与提案阈值 | `contracts/web30/core/src/governance.rs` | 未迁入主链路 |
-| I-GOV-02 | 参数治理热更新（AMM/CDP/Bond/Gov） | `src/vm-runtime/src/governance.rs` | 未迁入主链路 |
+| I-GOV-01 | 九席位加权治理模型与提案阈值 | `contracts/web30/core/src/governance.rs` | 已迁入受限主链路：`UpdateGovernanceCouncilPolicy` + 九席位固定结构 + 分类阈值（Parameter/Treasury/Protocol/Emergency） |
+| I-GOV-02 | 参数治理热更新（AMM/CDP/Bond/Gov） | `src/vm-runtime/src/governance.rs` | 已迁入受限主链路：`UpdateMarketGovernancePolicy` 覆盖 `AMM/CDP/Bond/Reserve/NAV/Buyback` 参数治理；`Slash/Mempool/NetworkDos/TokenEconomics/Treasury/AccessPolicy/CouncilPolicy` 亦已可治理 |
 | I-GOV-03 | RPC 治理接口：submit/vote/sign/list | `supervm-node-core/src/rpc/governance_api.rs` | NOVOVM 已接入受限最小面（`submit/sign/vote/execute/get/list/getPolicy/listAuditEvents`），并补齐链上权限模型初版（committee/threshold/timelock）；进程级 allowlist 仍可作为运维防线 |
 | I-GOV-04 | 投票/签名消息校验与抗量子签名验证（ML-DSA） | 同上 | NOVOVM 未接入 |
 
-注：NOVOVM 已具备治理挂点占位、最小执行闭环、第二类参数与受限 RPC 执行面；但完整治理域（多类型提案全量、链上权限治理、链上审计索引）仍未接入主链路。
+注：NOVOVM 已具备治理挂点占位、最小执行闭环、九席位权重阈值模型、第二/三类参数扩展、经济治理参数族扩展（I-GOV-02）与受限 RPC 执行面；但 ML-DSA 与完整跨模块经济执行联动仍未接入主链路。
 
 ---
 
@@ -277,7 +281,7 @@
 
 当前限制：
 
-1. 仅支持当前最小提案族（`UpdateSlashPolicy`、`UpdateMempoolFeeFloor`、`UpdateNetworkDosPolicy`）。
+1. 当前主链路已支持提案族：`UpdateSlashPolicy`、`UpdateMempoolFeeFloor`、`UpdateNetworkDosPolicy`、`UpdateTokenEconomicsPolicy`、`TreasurySpend`、`UpdateGovernanceAccessPolicy`、`UpdateGovernanceCouncilPolicy`。
 2. 权限与审计当前为进程级（allowlist + 内存审计事件），尚未上链。
 
 后续建议继续按继承规则补齐：
@@ -291,7 +295,7 @@
    - vote: `vote:{proposal_id}:{support}`
    - sign: `sign:{proposal_id}`
 3. 验签失败必须拒绝（当前 SVM2026 通过 `QuantumResistantVerifier` 实现）。
-4. 现阶段 NOVOVM 支持受限执行路径：`UpdateSlashPolicy`、`UpdateMempoolFeeFloor`、`UpdateNetworkDosPolicy` 可经签名投票 + quorum 生效；并且签名消息已做域分隔（`proposal_id + proposal_height + proposal_digest + support`）；其余治理类型仍未接线。
+4. 现阶段 NOVOVM 支持受限执行路径：`UpdateSlashPolicy`、`UpdateMempoolFeeFloor`、`UpdateNetworkDosPolicy`、`UpdateTokenEconomicsPolicy`、`TreasurySpend`、`UpdateGovernanceAccessPolicy`、`UpdateGovernanceCouncilPolicy`、`UpdateMarketGovernancePolicy` 可经签名投票 + quorum 生效；签名消息已做域分隔（`proposal_id + proposal_height + proposal_digest + support`）；`AMM/CDP/Bond/Reserve/NAV/Buyback` 已接线并具备 `market_engine + treasury` 门禁证据，当前剩余缺口主要是完整经济治理编排与长期运维治理。
 
 ---
 
@@ -304,12 +308,12 @@
 
 ## 5.2 现在不应对外宣布“已完成”的范围
 
-- 完整主网经济治理版（九席位治理、外汇储备/NAV、回购销毁策略联动、跨模块经济参数全量治理）。
-- 抗量子签名治理面（ML-DSA）与链上权限治理模型。
+- 完整主网经济治理版（跨模块经济参数编排、经济策略持久化审计与恢复、长压运营口径）。
+- 抗量子签名治理面（ML-DSA）与链上权限治理模型高级能力（成员轮换、审计索引持久化、失效恢复）。
 
 ## 5.3 从 MVP 走向完整主网的最短补齐项
 
-1. 从“受限治理参数面”扩展到“完整治理参数族”（AMM/CDP/Bond/Foreign reserve/NAV/Buyback），并保持同级负向门禁。
+1. 从“参数可治理”走向“经济策略可发布”：补齐跨模块经济执行编排（参数 -> 执行 -> 结算 -> 审计）与回滚策略。
 2. 在已上线链上权限模型初版（多签/委员会/时间锁）的基础上，补齐链上持久化审计索引，并逐步降级进程级 allowlist 为运维兜底。
 3. 完成长期运行与生产运维口径（持久化 peer-score/ban、长压回归、参数变更审计追踪）。
 
@@ -348,6 +352,37 @@
   - `parse_pass=true`
   - `input_pass=true`
   - `output_pass=true`
+- 增量快照（九席位治理阈值 gate）：`artifacts/migration/governance-council-policy-gate-local/governance-council-policy-gate-summary.json`
+  - `pass=true`
+  - `parse_pass=true`
+  - `input_pass=true`
+  - `output_pass=true`
+- 增量快照（经济治理参数族 gate）：`artifacts/migration/governance-market-policy-gate-local/governance-market-policy-gate-summary.json`
+  - `pass=true`
+  - `parse_pass=true`
+  - `input_pass=true`
+  - `output_pass=true`
+- 增量快照（经济治理参数族 gate，engine/treasury 硬门禁）：`artifacts/migration/acceptance-gate-market-engine-smoke/acceptance-gate-summary.json`
+  - `overall_pass=true`
+  - `governance_market_policy_pass=true`
+  - `governance_market_policy_engine_pass=true`
+  - `governance_market_policy_treasury_pass=true`
+- 全量快照（GA + 九席位治理）：`artifacts/migration/release-snapshot-ga-council-local/release-snapshot.json`
+  - `overall_pass=true`
+  - `profile_name=full_snapshot_ga_v1`
+  - `enabled_gates.governance_council_policy=true`
+  - `key_results.governance_council_policy_pass=true`
+- RC 产物（GA + 九席位治理）：`artifacts/migration/release-candidate-novovm-rc-2026-03-06-ga-council-local/rc-candidate.json`
+  - `status=ReadyForMerge/SnapshotGreen`
+  - `governance_council_policy_pass=true`
+- 全量快照（GA + market policy）：`artifacts/migration/release-snapshot-ga-market-local/release-snapshot.json`
+  - `overall_pass=true`
+  - `profile_name=full_snapshot_ga_v1`
+  - `enabled_gates.governance_market_policy=true`
+  - `key_results.governance_market_policy_pass=true`
+- RC 产物（GA + market policy）：`artifacts/migration/release-candidate-novovm-rc-2026-03-06-ga-market-local/rc-candidate.json`
+  - `status=ReadyForMerge/SnapshotGreen`
+  - `governance_market_policy_pass=true`
 - 增量快照（治理 RPC 最小面接线）：`artifacts/migration/acceptance-gate-governance-rpc-smoke-v2/acceptance-gate-summary.json`
   - `overall_pass=true`
   - `governance_rpc_pass=true`
@@ -386,11 +421,23 @@
   - `governance_access_policy_pass=true`
   - `governance_token_economics_pass=true`
   - `governance_treasury_spend_pass=true`
+- GA 全量快照（正式产物，含 market_engine/treasury 硬门禁）：
+  - `artifacts/migration/release-snapshot-ga-2026-03-06-051653/release-snapshot.json`
+  - `profile_name=full_snapshot_ga_v1`
+  - `overall_pass=true`
+  - `key_results.governance_market_policy_engine_pass=true`
+  - `key_results.governance_market_policy_treasury_pass=true`
 - RC 全量快照（含 governance access policy + token economics + treasury spend）：
   - `artifacts/migration/release-candidate-novovm-rc-2026-03-06-ga-v1-retryfix/rc-candidate.json`
   - `status=ReadyForMerge/SnapshotGreen`
   - `governance_access_policy_pass=true`
   - `governance_token_economics_pass=true`
   - `governance_treasury_spend_pass=true`
+- RC 全量快照（正式 `rc_ref`）：
+  - `artifacts/migration/release-candidate-novovm-rc-2026-03-06-ga-v1/rc-candidate.json`
+  - `status=ReadyForMerge/SnapshotGreen`
+  - `commit_hash=823a5880e104c96d03e2ab4a8473c9f620ae6413`
+  - `governance_market_policy_engine_pass=true`
+  - `governance_market_policy_treasury_pass=true`
 
 该快照对应结论：当前 NOVOVM “共识+交易+读查询+网络活性防护+最小经济治理（token economics + treasury spend）”链路处于可发布状态；后续缺口集中在完整经济治理域与治理权限模型。

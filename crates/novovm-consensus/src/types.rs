@@ -5,7 +5,7 @@
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 
 /// 节点 ID（验证者标识）
@@ -272,6 +272,81 @@ pub struct TokenEconomicsPolicy {
     pub fee_split: FeeSplit,
 }
 
+/// AMM 治理参数（I-GOV-02 子域）。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AmmGovernanceParams {
+    /// 交换费率（bps，示例 30=0.3%）。
+    pub swap_fee_bp: u16,
+    /// LP 分成比例（bps，treasury=剩余）。
+    pub lp_fee_share_bp: u16,
+}
+
+/// CDP 治理参数（I-GOV-02 子域）。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CdpGovernanceParams {
+    /// 最低抵押率（bps，15000=150%）。
+    pub min_collateral_ratio_bp: u16,
+    /// 清算阈值（bps）。
+    pub liquidation_threshold_bp: u16,
+    /// 清算罚金（bps）。
+    pub liquidation_penalty_bp: u16,
+    /// 稳定费（年化 bps）。
+    pub stability_fee_bp: u16,
+    /// 最大杠杆（x100，300=3x）。
+    pub max_leverage_x100: u16,
+}
+
+/// Bond 治理参数（I-GOV-02 子域）。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct BondGovernanceParams {
+    /// 默认票息（bps）。
+    pub coupon_rate_bp: u16,
+    /// 最大期限（天）。
+    pub max_maturity_days: u16,
+    /// 最低发行价（bps，10500=105% NAV）。
+    pub min_issue_price_bp: u16,
+}
+
+/// 外汇储备治理参数（I-GOV-02 子域）。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ReserveGovernanceParams {
+    /// 最低储备率（bps，5000=50%）。
+    pub min_reserve_ratio_bp: u16,
+    /// NAV 赎回手续费（bps）。
+    pub redemption_fee_bp: u16,
+}
+
+/// NAV 治理参数（I-GOV-02 子域）。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct NavGovernanceParams {
+    /// NAV 赎回结算延迟（epoch）。
+    pub settlement_delay_epochs: u16,
+    /// 每日最大赎回额度（bps）。
+    pub max_daily_redemption_bp: u16,
+}
+
+/// 回购治理参数（I-GOV-02 子域）。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct BuybackGovernanceParams {
+    /// 回购触发折价（bps，相对 NAV）。
+    pub trigger_discount_bp: u16,
+    /// 每 epoch 最大可用国库预算。
+    pub max_treasury_budget_per_epoch: u64,
+    /// 回购后销毁比例（bps）。
+    pub burn_share_bp: u16,
+}
+
+/// 完整经济治理参数族（AMM/CDP/Bond/Reserve/NAV/Buyback）。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct MarketGovernancePolicy {
+    pub amm: AmmGovernanceParams,
+    pub cdp: CdpGovernanceParams,
+    pub bond: BondGovernanceParams,
+    pub reserve: ReserveGovernanceParams,
+    pub nav: NavGovernanceParams,
+    pub buyback: BuybackGovernanceParams,
+}
+
 /// 治理访问控制策略（链上模型）。
 ///
 /// 语义：
@@ -292,6 +367,213 @@ pub struct GovernanceAccessPolicy {
     pub timelock_epochs: u64,
 }
 
+/// SVM2026 九席位治理席位。
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
+pub enum GovernanceCouncilSeat {
+    Founder,
+    TopHolder(u8),
+    Team(u8),
+    Independent,
+}
+
+impl GovernanceCouncilSeat {
+    pub fn validate_shape(&self) -> BFTResult<()> {
+        match self {
+            GovernanceCouncilSeat::TopHolder(idx) if *idx > 4 => Err(BFTError::InvalidProposal(
+                "council seat TopHolder index out of range (expected 0..=4)".to_string(),
+            )),
+            GovernanceCouncilSeat::Team(idx) if *idx > 1 => Err(BFTError::InvalidProposal(
+                "council seat Team index out of range (expected 0..=1)".to_string(),
+            )),
+            _ => Ok(()),
+        }
+    }
+
+    pub fn voting_weight_bp(&self) -> u16 {
+        match self {
+            GovernanceCouncilSeat::Founder => 3500,
+            GovernanceCouncilSeat::TopHolder(_) => 1000,
+            GovernanceCouncilSeat::Team(_) => 500,
+            GovernanceCouncilSeat::Independent => 500,
+        }
+    }
+
+    pub fn category(&self) -> &'static str {
+        match self {
+            GovernanceCouncilSeat::Founder => "Founder",
+            GovernanceCouncilSeat::TopHolder(_) => "TopHolder",
+            GovernanceCouncilSeat::Team(_) => "Team",
+            GovernanceCouncilSeat::Independent => "Independent",
+        }
+    }
+}
+
+/// 九席位治理成员绑定（seat -> node_id）。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct GovernanceCouncilMember {
+    pub seat: GovernanceCouncilSeat,
+    pub node_id: NodeId,
+}
+
+/// 治理提案分类（映射 SVM2026 ProposalType 语义）。
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub enum GovernanceProposalClass {
+    ParameterChange,
+    TreasurySpend,
+    ProtocolUpgrade,
+    EmergencyFreeze,
+}
+
+/// 九席位治理规则配置（I-GOV-01/I-GOV-02）。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct GovernanceCouncilPolicy {
+    /// 是否启用九席位治理权重规则。
+    pub enabled: bool,
+    /// 九席位成员绑定（严格要求 9 个 seat 全覆盖）。
+    pub members: Vec<GovernanceCouncilMember>,
+    /// 参数变更通过阈值（bps）。
+    pub parameter_change_threshold_bp: u16,
+    /// 国库支出通过阈值（bps）。
+    pub treasury_spend_threshold_bp: u16,
+    /// 协议升级通过阈值（bps）。
+    pub protocol_upgrade_threshold_bp: u16,
+    /// 紧急冻结通过阈值（bps）。
+    pub emergency_freeze_threshold_bp: u16,
+    /// 紧急冻结最小席位类别数。
+    pub emergency_min_categories: u8,
+}
+
+impl GovernanceCouncilPolicy {
+    pub fn disabled() -> Self {
+        Self {
+            enabled: false,
+            members: Vec::new(),
+            parameter_change_threshold_bp: 5000,
+            treasury_spend_threshold_bp: 6600,
+            protocol_upgrade_threshold_bp: 7500,
+            emergency_freeze_threshold_bp: 5000,
+            emergency_min_categories: 3,
+        }
+    }
+
+    fn validate_threshold(name: &str, value: u16) -> BFTResult<()> {
+        if value == 0 || value >= 10_000 {
+            return Err(BFTError::InvalidProposal(format!(
+                "{} must be within [1, 9999] basis points",
+                name
+            )));
+        }
+        Ok(())
+    }
+
+    pub fn threshold_for(&self, class: GovernanceProposalClass) -> u16 {
+        match class {
+            GovernanceProposalClass::ParameterChange => self.parameter_change_threshold_bp,
+            GovernanceProposalClass::TreasurySpend => self.treasury_spend_threshold_bp,
+            GovernanceProposalClass::ProtocolUpgrade => self.protocol_upgrade_threshold_bp,
+            GovernanceProposalClass::EmergencyFreeze => self.emergency_freeze_threshold_bp,
+        }
+    }
+
+    pub fn member_weight_map(&self) -> HashMap<NodeId, (u16, &'static str)> {
+        let mut out = HashMap::with_capacity(self.members.len());
+        for member in &self.members {
+            out.insert(
+                member.node_id,
+                (member.seat.voting_weight_bp(), member.seat.category()),
+            );
+        }
+        out
+    }
+
+    pub fn validate(&self) -> BFTResult<()> {
+        Self::validate_threshold(
+            "council parameter_change_threshold_bp",
+            self.parameter_change_threshold_bp,
+        )?;
+        Self::validate_threshold(
+            "council treasury_spend_threshold_bp",
+            self.treasury_spend_threshold_bp,
+        )?;
+        Self::validate_threshold(
+            "council protocol_upgrade_threshold_bp",
+            self.protocol_upgrade_threshold_bp,
+        )?;
+        Self::validate_threshold(
+            "council emergency_freeze_threshold_bp",
+            self.emergency_freeze_threshold_bp,
+        )?;
+        if self.emergency_min_categories == 0 || self.emergency_min_categories > 4 {
+            return Err(BFTError::InvalidProposal(
+                "council emergency_min_categories must be within [1, 4]".to_string(),
+            ));
+        }
+
+        if !self.enabled {
+            return Ok(());
+        }
+
+        if self.members.len() != 9 {
+            return Err(BFTError::InvalidProposal(format!(
+                "council enabled requires exactly 9 members, got {}",
+                self.members.len()
+            )));
+        }
+
+        let mut seat_set = HashSet::with_capacity(self.members.len());
+        let mut node_set = HashSet::with_capacity(self.members.len());
+        let mut weight_sum = 0u16;
+        for member in &self.members {
+            member.seat.validate_shape()?;
+            if !seat_set.insert(member.seat) {
+                return Err(BFTError::InvalidProposal(format!(
+                    "council seat {:?} is duplicated",
+                    member.seat
+                )));
+            }
+            if !node_set.insert(member.node_id) {
+                return Err(BFTError::InvalidProposal(format!(
+                    "council node {} is duplicated across seats",
+                    member.node_id
+                )));
+            }
+            weight_sum = weight_sum
+                .checked_add(member.seat.voting_weight_bp())
+                .ok_or_else(|| {
+                    BFTError::InvalidProposal("council voting weight overflow".to_string())
+                })?;
+        }
+        if weight_sum != 10_000 {
+            return Err(BFTError::InvalidProposal(format!(
+                "council voting weight sum must be 10000 bps, got {}",
+                weight_sum
+            )));
+        }
+
+        let required = [
+            GovernanceCouncilSeat::Founder,
+            GovernanceCouncilSeat::TopHolder(0),
+            GovernanceCouncilSeat::TopHolder(1),
+            GovernanceCouncilSeat::TopHolder(2),
+            GovernanceCouncilSeat::TopHolder(3),
+            GovernanceCouncilSeat::TopHolder(4),
+            GovernanceCouncilSeat::Team(0),
+            GovernanceCouncilSeat::Team(1),
+            GovernanceCouncilSeat::Independent,
+        ];
+        for seat in required {
+            if !seat_set.contains(&seat) {
+                return Err(BFTError::InvalidProposal(format!(
+                    "council enabled is missing required seat: {:?}",
+                    seat
+                )));
+            }
+        }
+
+        Ok(())
+    }
+}
+
 /// 治理操作（受限执行面）。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum GovernanceOp {
@@ -303,14 +585,31 @@ pub enum GovernanceOp {
     UpdateNetworkDosPolicy { policy: NetworkDosPolicy },
     /// 更新 token 经济参数（第四类参数）。
     UpdateTokenEconomicsPolicy { policy: TokenEconomicsPolicy },
+    /// 更新完整经济治理参数族（I-GOV-02）。
+    UpdateMarketGovernancePolicy { policy: MarketGovernancePolicy },
     /// 更新治理访问控制策略（委员会阈值 + 时间锁）。
     UpdateGovernanceAccessPolicy { policy: GovernanceAccessPolicy },
+    /// 更新治理九席位规则（权重/阈值）。
+    UpdateGovernanceCouncilPolicy { policy: GovernanceCouncilPolicy },
     /// 国库支出（由治理执行，资金来源为 treasury 主账户）。
     TreasurySpend {
         to: NodeId,
         amount: u64,
         reason: String,
     },
+}
+
+impl GovernanceOp {
+    pub fn proposal_class(&self) -> GovernanceProposalClass {
+        match self {
+            GovernanceOp::TreasurySpend { .. } => GovernanceProposalClass::TreasurySpend,
+            GovernanceOp::UpdateGovernanceAccessPolicy { .. }
+            | GovernanceOp::UpdateGovernanceCouncilPolicy { .. } => {
+                GovernanceProposalClass::ProtocolUpgrade
+            }
+            _ => GovernanceProposalClass::ParameterChange,
+        }
+    }
 }
 
 /// 治理提案（最小闭环：仅覆盖 slash policy 更新）。
@@ -358,8 +657,28 @@ impl GovernanceProposal {
                 hasher.update(policy.fee_split.service_burn_bp.to_le_bytes());
                 hasher.update(policy.fee_split.service_to_provider_bp.to_le_bytes());
             }
-            GovernanceOp::UpdateGovernanceAccessPolicy { policy } => {
+            GovernanceOp::UpdateMarketGovernancePolicy { policy } => {
                 hasher.update([5u8]);
+                hasher.update(policy.amm.swap_fee_bp.to_le_bytes());
+                hasher.update(policy.amm.lp_fee_share_bp.to_le_bytes());
+                hasher.update(policy.cdp.min_collateral_ratio_bp.to_le_bytes());
+                hasher.update(policy.cdp.liquidation_threshold_bp.to_le_bytes());
+                hasher.update(policy.cdp.liquidation_penalty_bp.to_le_bytes());
+                hasher.update(policy.cdp.stability_fee_bp.to_le_bytes());
+                hasher.update(policy.cdp.max_leverage_x100.to_le_bytes());
+                hasher.update(policy.bond.coupon_rate_bp.to_le_bytes());
+                hasher.update(policy.bond.max_maturity_days.to_le_bytes());
+                hasher.update(policy.bond.min_issue_price_bp.to_le_bytes());
+                hasher.update(policy.reserve.min_reserve_ratio_bp.to_le_bytes());
+                hasher.update(policy.reserve.redemption_fee_bp.to_le_bytes());
+                hasher.update(policy.nav.settlement_delay_epochs.to_le_bytes());
+                hasher.update(policy.nav.max_daily_redemption_bp.to_le_bytes());
+                hasher.update(policy.buyback.trigger_discount_bp.to_le_bytes());
+                hasher.update(policy.buyback.max_treasury_budget_per_epoch.to_le_bytes());
+                hasher.update(policy.buyback.burn_share_bp.to_le_bytes());
+            }
+            GovernanceOp::UpdateGovernanceAccessPolicy { policy } => {
+                hasher.update([6u8]);
                 hasher.update(policy.timelock_epochs.to_le_bytes());
                 hasher.update(policy.proposer_threshold.to_le_bytes());
                 hasher.update(policy.executor_threshold.to_le_bytes());
@@ -372,8 +691,35 @@ impl GovernanceProposal {
                     hasher.update(id.to_le_bytes());
                 }
             }
+            GovernanceOp::UpdateGovernanceCouncilPolicy { policy } => {
+                hasher.update([7u8]);
+                hasher.update([if policy.enabled { 1u8 } else { 0u8 }]);
+                hasher.update(policy.parameter_change_threshold_bp.to_le_bytes());
+                hasher.update(policy.treasury_spend_threshold_bp.to_le_bytes());
+                hasher.update(policy.protocol_upgrade_threshold_bp.to_le_bytes());
+                hasher.update(policy.emergency_freeze_threshold_bp.to_le_bytes());
+                hasher.update(policy.emergency_min_categories.to_le_bytes());
+                hasher.update((policy.members.len() as u32).to_le_bytes());
+                for member in &policy.members {
+                    match member.seat {
+                        GovernanceCouncilSeat::Founder => {
+                            hasher.update([1u8, 0u8]);
+                        }
+                        GovernanceCouncilSeat::TopHolder(idx) => {
+                            hasher.update([2u8, idx]);
+                        }
+                        GovernanceCouncilSeat::Team(idx) => {
+                            hasher.update([3u8, idx]);
+                        }
+                        GovernanceCouncilSeat::Independent => {
+                            hasher.update([4u8, 0u8]);
+                        }
+                    }
+                    hasher.update(member.node_id.to_le_bytes());
+                }
+            }
             GovernanceOp::TreasurySpend { to, amount, reason } => {
-                hasher.update([6u8]);
+                hasher.update([8u8]);
                 hasher.update(to.to_le_bytes());
                 hasher.update(amount.to_le_bytes());
                 hasher.update(reason.as_bytes());
@@ -541,6 +887,120 @@ impl TokenEconomicsPolicy {
     }
 }
 
+impl MarketGovernancePolicy {
+    fn ensure_bp_nonzero(name: &str, value: u16) -> BFTResult<()> {
+        if value == 0 {
+            return Err(BFTError::Internal(format!(
+                "{} must be > 0 basis points",
+                name
+            )));
+        }
+        Ok(())
+    }
+
+    fn ensure_bp_lte_100pct(name: &str, value: u16) -> BFTResult<()> {
+        if value > 10_000 {
+            return Err(BFTError::Internal(format!(
+                "{} must be <= 10000 basis points",
+                name
+            )));
+        }
+        Ok(())
+    }
+
+    pub fn validate(&self) -> BFTResult<()> {
+        Self::ensure_bp_nonzero("market governance amm.swap_fee_bp", self.amm.swap_fee_bp)?;
+        Self::ensure_bp_lte_100pct(
+            "market governance amm.lp_fee_share_bp",
+            self.amm.lp_fee_share_bp,
+        )?;
+
+        if !(10_000..=50_000).contains(&self.cdp.min_collateral_ratio_bp) {
+            return Err(BFTError::Internal(
+                "market governance cdp.min_collateral_ratio_bp must be within [10000, 50000]"
+                    .to_string(),
+            ));
+        }
+        if !(10_000..=50_000).contains(&self.cdp.liquidation_threshold_bp) {
+            return Err(BFTError::Internal(
+                "market governance cdp.liquidation_threshold_bp must be within [10000, 50000]"
+                    .to_string(),
+            ));
+        }
+        if self.cdp.liquidation_threshold_bp > self.cdp.min_collateral_ratio_bp {
+            return Err(BFTError::Internal(
+                "market governance cdp.liquidation_threshold_bp cannot exceed min_collateral_ratio_bp".to_string(),
+            ));
+        }
+        Self::ensure_bp_lte_100pct(
+            "market governance cdp.liquidation_penalty_bp",
+            self.cdp.liquidation_penalty_bp,
+        )?;
+        Self::ensure_bp_lte_100pct(
+            "market governance cdp.stability_fee_bp",
+            self.cdp.stability_fee_bp,
+        )?;
+        if !(100..=2000).contains(&self.cdp.max_leverage_x100) {
+            return Err(BFTError::Internal(
+                "market governance cdp.max_leverage_x100 must be within [100, 2000]".to_string(),
+            ));
+        }
+
+        Self::ensure_bp_lte_100pct(
+            "market governance bond.coupon_rate_bp",
+            self.bond.coupon_rate_bp,
+        )?;
+        if !(30..=3650).contains(&self.bond.max_maturity_days) {
+            return Err(BFTError::Internal(
+                "market governance bond.max_maturity_days must be within [30, 3650]".to_string(),
+            ));
+        }
+        if !(10_000..=20_000).contains(&self.bond.min_issue_price_bp) {
+            return Err(BFTError::Internal(
+                "market governance bond.min_issue_price_bp must be within [10000, 20000]"
+                    .to_string(),
+            ));
+        }
+
+        if !(1_000..=10_000).contains(&self.reserve.min_reserve_ratio_bp) {
+            return Err(BFTError::Internal(
+                "market governance reserve.min_reserve_ratio_bp must be within [1000, 10000]"
+                    .to_string(),
+            ));
+        }
+        Self::ensure_bp_lte_100pct(
+            "market governance reserve.redemption_fee_bp",
+            self.reserve.redemption_fee_bp,
+        )?;
+
+        if self.nav.settlement_delay_epochs == 0 {
+            return Err(BFTError::Internal(
+                "market governance nav.settlement_delay_epochs must be > 0".to_string(),
+            ));
+        }
+        Self::ensure_bp_lte_100pct(
+            "market governance nav.max_daily_redemption_bp",
+            self.nav.max_daily_redemption_bp,
+        )?;
+
+        Self::ensure_bp_lte_100pct(
+            "market governance buyback.trigger_discount_bp",
+            self.buyback.trigger_discount_bp,
+        )?;
+        if self.buyback.max_treasury_budget_per_epoch == 0 {
+            return Err(BFTError::Internal(
+                "market governance buyback.max_treasury_budget_per_epoch must be > 0".to_string(),
+            ));
+        }
+        Self::ensure_bp_lte_100pct(
+            "market governance buyback.burn_share_bp",
+            self.buyback.burn_share_bp,
+        )?;
+
+        Ok(())
+    }
+}
+
 impl GovernanceAccessPolicy {
     pub fn validate(&self) -> BFTResult<()> {
         if self.proposer_committee.is_empty() {
@@ -624,6 +1084,42 @@ impl Default for TokenEconomicsPolicy {
                 // 对齐 SVM2026 示例：service burn=10%, service->provider=40%, treasury=50%
                 service_burn_bp: 1_000,
                 service_to_provider_bp: 4_000,
+            },
+        }
+    }
+}
+
+impl Default for MarketGovernancePolicy {
+    fn default() -> Self {
+        Self {
+            amm: AmmGovernanceParams {
+                swap_fee_bp: 30,
+                lp_fee_share_bp: 8_333,
+            },
+            cdp: CdpGovernanceParams {
+                min_collateral_ratio_bp: 15_000,
+                liquidation_threshold_bp: 12_500,
+                liquidation_penalty_bp: 1_000,
+                stability_fee_bp: 200,
+                max_leverage_x100: 300,
+            },
+            bond: BondGovernanceParams {
+                coupon_rate_bp: 500,
+                max_maturity_days: 365,
+                min_issue_price_bp: 10_500,
+            },
+            reserve: ReserveGovernanceParams {
+                min_reserve_ratio_bp: 5_000,
+                redemption_fee_bp: 50,
+            },
+            nav: NavGovernanceParams {
+                settlement_delay_epochs: 7,
+                max_daily_redemption_bp: 1_000,
+            },
+            buyback: BuybackGovernanceParams {
+                trigger_discount_bp: 500,
+                max_treasury_budget_per_epoch: 100_000,
+                burn_share_bp: 5_000,
             },
         }
     }
@@ -841,6 +1337,18 @@ mod tests {
     }
 
     #[test]
+    fn test_governance_op_update_market_governance_policy_shape() {
+        let op = GovernanceOp::UpdateMarketGovernancePolicy {
+            policy: MarketGovernancePolicy::default(),
+        };
+
+        let encoded = serde_json::to_string(&op).expect("serialize governance op");
+        let decoded: GovernanceOp =
+            serde_json::from_str(&encoded).expect("deserialize governance op");
+        assert_eq!(decoded, op);
+    }
+
+    #[test]
     fn test_governance_op_treasury_spend_shape() {
         let op = GovernanceOp::TreasurySpend {
             to: 42,
@@ -863,6 +1371,63 @@ mod tests {
                 executor_committee: vec![1, 2],
                 executor_threshold: 2,
                 timelock_epochs: 3,
+            },
+        };
+
+        let encoded = serde_json::to_string(&op).expect("serialize governance op");
+        let decoded: GovernanceOp =
+            serde_json::from_str(&encoded).expect("deserialize governance op");
+        assert_eq!(decoded, op);
+    }
+
+    #[test]
+    fn test_governance_op_update_governance_council_policy_shape() {
+        let op = GovernanceOp::UpdateGovernanceCouncilPolicy {
+            policy: GovernanceCouncilPolicy {
+                enabled: true,
+                members: vec![
+                    GovernanceCouncilMember {
+                        seat: GovernanceCouncilSeat::Founder,
+                        node_id: 0,
+                    },
+                    GovernanceCouncilMember {
+                        seat: GovernanceCouncilSeat::TopHolder(0),
+                        node_id: 1,
+                    },
+                    GovernanceCouncilMember {
+                        seat: GovernanceCouncilSeat::TopHolder(1),
+                        node_id: 2,
+                    },
+                    GovernanceCouncilMember {
+                        seat: GovernanceCouncilSeat::TopHolder(2),
+                        node_id: 3,
+                    },
+                    GovernanceCouncilMember {
+                        seat: GovernanceCouncilSeat::TopHolder(3),
+                        node_id: 4,
+                    },
+                    GovernanceCouncilMember {
+                        seat: GovernanceCouncilSeat::TopHolder(4),
+                        node_id: 5,
+                    },
+                    GovernanceCouncilMember {
+                        seat: GovernanceCouncilSeat::Team(0),
+                        node_id: 6,
+                    },
+                    GovernanceCouncilMember {
+                        seat: GovernanceCouncilSeat::Team(1),
+                        node_id: 7,
+                    },
+                    GovernanceCouncilMember {
+                        seat: GovernanceCouncilSeat::Independent,
+                        node_id: 8,
+                    },
+                ],
+                parameter_change_threshold_bp: 5000,
+                treasury_spend_threshold_bp: 6600,
+                protocol_upgrade_threshold_bp: 7500,
+                emergency_freeze_threshold_bp: 5000,
+                emergency_min_categories: 3,
             },
         };
 
@@ -896,6 +1461,24 @@ mod tests {
     }
 
     #[test]
+    fn test_market_governance_policy_validation() {
+        assert!(MarketGovernancePolicy::default().validate().is_ok());
+
+        let mut bad_cdp = MarketGovernancePolicy::default();
+        bad_cdp.cdp.liquidation_threshold_bp = 16_000;
+        bad_cdp.cdp.min_collateral_ratio_bp = 15_000;
+        assert!(bad_cdp.validate().is_err());
+
+        let mut bad_buyback = MarketGovernancePolicy::default();
+        bad_buyback.buyback.burn_share_bp = 10_001;
+        assert!(bad_buyback.validate().is_err());
+
+        let mut bad_nav = MarketGovernancePolicy::default();
+        bad_nav.nav.settlement_delay_epochs = 0;
+        assert!(bad_nav.validate().is_err());
+    }
+
+    #[test]
     fn test_governance_access_policy_validation() {
         let ok = GovernanceAccessPolicy {
             proposer_committee: vec![0, 1],
@@ -922,6 +1505,72 @@ mod tests {
             executor_threshold: 1,
             timelock_epochs: 0,
         };
+        assert!(bad_threshold.validate().is_err());
+    }
+
+    #[test]
+    fn test_governance_council_policy_validation() {
+        let disabled = GovernanceCouncilPolicy::disabled();
+        assert!(disabled.validate().is_ok());
+
+        let enabled = GovernanceCouncilPolicy {
+            enabled: true,
+            members: vec![
+                GovernanceCouncilMember {
+                    seat: GovernanceCouncilSeat::Founder,
+                    node_id: 0,
+                },
+                GovernanceCouncilMember {
+                    seat: GovernanceCouncilSeat::TopHolder(0),
+                    node_id: 1,
+                },
+                GovernanceCouncilMember {
+                    seat: GovernanceCouncilSeat::TopHolder(1),
+                    node_id: 2,
+                },
+                GovernanceCouncilMember {
+                    seat: GovernanceCouncilSeat::TopHolder(2),
+                    node_id: 3,
+                },
+                GovernanceCouncilMember {
+                    seat: GovernanceCouncilSeat::TopHolder(3),
+                    node_id: 4,
+                },
+                GovernanceCouncilMember {
+                    seat: GovernanceCouncilSeat::TopHolder(4),
+                    node_id: 5,
+                },
+                GovernanceCouncilMember {
+                    seat: GovernanceCouncilSeat::Team(0),
+                    node_id: 6,
+                },
+                GovernanceCouncilMember {
+                    seat: GovernanceCouncilSeat::Team(1),
+                    node_id: 7,
+                },
+                GovernanceCouncilMember {
+                    seat: GovernanceCouncilSeat::Independent,
+                    node_id: 8,
+                },
+            ],
+            parameter_change_threshold_bp: 5000,
+            treasury_spend_threshold_bp: 6600,
+            protocol_upgrade_threshold_bp: 7500,
+            emergency_freeze_threshold_bp: 5000,
+            emergency_min_categories: 3,
+        };
+        assert!(enabled.validate().is_ok());
+
+        let mut bad_duplicate_seat = enabled.clone();
+        bad_duplicate_seat.members[8].seat = GovernanceCouncilSeat::TopHolder(4);
+        assert!(bad_duplicate_seat.validate().is_err());
+
+        let mut bad_member_count = enabled.clone();
+        bad_member_count.members.pop();
+        assert!(bad_member_count.validate().is_err());
+
+        let mut bad_threshold = enabled;
+        bad_threshold.protocol_upgrade_threshold_bp = 10000;
         assert!(bad_threshold.validate().is_err());
     }
 

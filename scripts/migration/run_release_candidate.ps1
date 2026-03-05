@@ -134,7 +134,7 @@ if (-not [bool]$snapshot.overall_pass) {
 }
 
 $freezeRule = if ($FullSnapshotProfileGA) {
-    "full_snapshot_v1/v2 semantic is frozen; full_snapshot_ga_v1 adds governance_access_policy + I-TOKEN governance/token-economics/treasury gates"
+    "full_snapshot_v1/v2 semantic is frozen; full_snapshot_ga_v1 adds governance_market_policy + governance_council_policy + governance_access_policy + I-TOKEN governance/token-economics/treasury gates"
 } elseif ($FullSnapshotProfileV2) {
     "full_snapshot_v1 semantic is frozen; full_snapshot_v2 includes rpc exposure gate as additive security profile"
 } else {
@@ -150,6 +150,10 @@ $rcCandidate = [ordered]@{
     snapshot_profile = [string]$snapshot.profile_name
     snapshot_overall_pass = [bool]$snapshot.overall_pass
     governance_param3_pass = [bool]$acceptance.governance_param3_pass
+    governance_market_policy_pass = [bool]$acceptance.governance_market_policy_pass
+    governance_market_policy_engine_pass = [bool]$acceptance.governance_market_policy_engine_pass
+    governance_market_policy_treasury_pass = [bool]$acceptance.governance_market_policy_treasury_pass
+    governance_council_policy_pass = [bool]$acceptance.governance_council_policy_pass
     governance_access_policy_pass = [bool]$acceptance.governance_access_policy_pass
     governance_token_economics_pass = [bool]$acceptance.governance_token_economics_pass
     governance_treasury_spend_pass = [bool]$acceptance.governance_treasury_spend_pass
@@ -175,6 +179,10 @@ $md = @(
     "- snapshot_profile: $($rcCandidate.snapshot_profile)"
     "- snapshot_overall_pass: $($rcCandidate.snapshot_overall_pass)"
     "- governance_param3_pass: $($rcCandidate.governance_param3_pass)"
+    "- governance_market_policy_pass: $($rcCandidate.governance_market_policy_pass)"
+    "- governance_market_policy_engine_pass: $($rcCandidate.governance_market_policy_engine_pass)"
+    "- governance_market_policy_treasury_pass: $($rcCandidate.governance_market_policy_treasury_pass)"
+    "- governance_council_policy_pass: $($rcCandidate.governance_council_policy_pass)"
     "- governance_access_policy_pass: $($rcCandidate.governance_access_policy_pass)"
     "- governance_token_economics_pass: $($rcCandidate.governance_token_economics_pass)"
     "- governance_treasury_spend_pass: $($rcCandidate.governance_treasury_spend_pass)"
@@ -194,6 +202,10 @@ Write-Host "  status: $($rcCandidate.status)"
 Write-Host "  snapshot_profile: $($rcCandidate.snapshot_profile)"
 Write-Host "  snapshot_overall_pass: $($rcCandidate.snapshot_overall_pass)"
 Write-Host "  governance_param3_pass: $($rcCandidate.governance_param3_pass)"
+Write-Host "  governance_market_policy_pass: $($rcCandidate.governance_market_policy_pass)"
+Write-Host "  governance_market_policy_engine_pass: $($rcCandidate.governance_market_policy_engine_pass)"
+Write-Host "  governance_market_policy_treasury_pass: $($rcCandidate.governance_market_policy_treasury_pass)"
+Write-Host "  governance_council_policy_pass: $($rcCandidate.governance_council_policy_pass)"
 Write-Host "  governance_access_policy_pass: $($rcCandidate.governance_access_policy_pass)"
 Write-Host "  governance_token_economics_pass: $($rcCandidate.governance_token_economics_pass)"
 Write-Host "  governance_treasury_spend_pass: $($rcCandidate.governance_treasury_spend_pass)"

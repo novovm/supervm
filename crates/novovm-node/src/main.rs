@@ -9,9 +9,12 @@ use novovm_adapter_api::{
 };
 use novovm_adapter_novovm::{create_native_adapter, supports_native_chain};
 use novovm_consensus::{
-    BFTConfig, BFTEngine, Epoch as ConsensusEpoch, GovernanceAccessPolicy, GovernanceOp,
-    GovernanceProposal, GovernanceVote, HotStuffProtocol, NetworkDosPolicy,
-    NodeId as ConsensusNodeId, SlashMode, SlashPolicy, TokenEconomicsPolicy, ValidatorSet,
+    AmmGovernanceParams, BFTConfig, BFTEngine, BondGovernanceParams, BuybackGovernanceParams,
+    CdpGovernanceParams, Epoch as ConsensusEpoch, GovernanceAccessPolicy, GovernanceCouncilMember,
+    GovernanceCouncilPolicy, GovernanceCouncilSeat, GovernanceOp, GovernanceProposal,
+    GovernanceVote, HotStuffProtocol, MarketGovernancePolicy, NavGovernanceParams,
+    NetworkDosPolicy, NodeId as ConsensusNodeId, ReserveGovernanceParams, SlashMode, SlashPolicy,
+    TokenEconomicsPolicy, ValidatorSet, Web30MarketEngineSnapshot,
 };
 use novovm_exec::{AoemRuntimeConfig, ExecOpV2};
 use novovm_network::{InMemoryTransport, Transport, UdpTransport};
@@ -2910,7 +2913,11 @@ fn param_as_u64_list(params: &serde_json::Value, key: &str) -> Option<Vec<u64>> 
                     let parsed = t.parse::<u64>().ok()?;
                     out.push(parsed);
                 }
-                if out.is_empty() { None } else { Some(out) }
+                if out.is_empty() {
+                    None
+                } else {
+                    Some(out)
+                }
             }
             _ => None,
         }),
@@ -3045,6 +3052,99 @@ fn push_governance_audit_event(
     });
 }
 
+fn governance_council_policy_to_json(policy: &GovernanceCouncilPolicy) -> serde_json::Value {
+    let members: Vec<_> = policy
+        .members
+        .iter()
+        .map(|m| {
+            let seat = match m.seat {
+                GovernanceCouncilSeat::Founder => "founder".to_string(),
+                GovernanceCouncilSeat::TopHolder(idx) => format!("top_holder_{}", idx),
+                GovernanceCouncilSeat::Team(idx) => format!("team_{}", idx),
+                GovernanceCouncilSeat::Independent => "independent".to_string(),
+            };
+            serde_json::json!({
+                "seat": seat,
+                "node_id": m.node_id,
+            })
+        })
+        .collect();
+    serde_json::json!({
+        "enabled": policy.enabled,
+        "members": members,
+        "parameter_change_threshold_bp": policy.parameter_change_threshold_bp,
+        "treasury_spend_threshold_bp": policy.treasury_spend_threshold_bp,
+        "protocol_upgrade_threshold_bp": policy.protocol_upgrade_threshold_bp,
+        "emergency_freeze_threshold_bp": policy.emergency_freeze_threshold_bp,
+        "emergency_min_categories": policy.emergency_min_categories,
+    })
+}
+
+fn market_governance_policy_to_json(policy: &MarketGovernancePolicy) -> serde_json::Value {
+    serde_json::json!({
+        "amm": {
+            "swap_fee_bp": policy.amm.swap_fee_bp,
+            "lp_fee_share_bp": policy.amm.lp_fee_share_bp,
+        },
+        "cdp": {
+            "min_collateral_ratio_bp": policy.cdp.min_collateral_ratio_bp,
+            "liquidation_threshold_bp": policy.cdp.liquidation_threshold_bp,
+            "liquidation_penalty_bp": policy.cdp.liquidation_penalty_bp,
+            "stability_fee_bp": policy.cdp.stability_fee_bp,
+            "max_leverage_x100": policy.cdp.max_leverage_x100,
+        },
+        "bond": {
+            "coupon_rate_bp": policy.bond.coupon_rate_bp,
+            "max_maturity_days": policy.bond.max_maturity_days,
+            "min_issue_price_bp": policy.bond.min_issue_price_bp,
+        },
+        "reserve": {
+            "min_reserve_ratio_bp": policy.reserve.min_reserve_ratio_bp,
+            "redemption_fee_bp": policy.reserve.redemption_fee_bp,
+        },
+        "nav": {
+            "settlement_delay_epochs": policy.nav.settlement_delay_epochs,
+            "max_daily_redemption_bp": policy.nav.max_daily_redemption_bp,
+        },
+        "buyback": {
+            "trigger_discount_bp": policy.buyback.trigger_discount_bp,
+            "max_treasury_budget_per_epoch": policy.buyback.max_treasury_budget_per_epoch,
+            "burn_share_bp": policy.buyback.burn_share_bp,
+        },
+    })
+}
+
+fn market_engine_snapshot_to_json(snapshot: &Web30MarketEngineSnapshot) -> serde_json::Value {
+    serde_json::json!({
+        "amm_swap_fee_bp": snapshot.amm_swap_fee_bp,
+        "amm_lp_fee_share_bp": snapshot.amm_lp_fee_share_bp,
+        "cdp_min_collateral_ratio_bp": snapshot.cdp_min_collateral_ratio_bp,
+        "cdp_liquidation_threshold_bp": snapshot.cdp_liquidation_threshold_bp,
+        "cdp_liquidation_penalty_bp": snapshot.cdp_liquidation_penalty_bp,
+        "cdp_stability_fee_bp": snapshot.cdp_stability_fee_bp,
+        "cdp_max_leverage_x100": snapshot.cdp_max_leverage_x100,
+        "bond_one_year_coupon_bp": snapshot.bond_one_year_coupon_bp,
+        "bond_three_year_coupon_bp": snapshot.bond_three_year_coupon_bp,
+        "bond_five_year_coupon_bp": snapshot.bond_five_year_coupon_bp,
+        "bond_max_maturity_days_policy": snapshot.bond_max_maturity_days_policy,
+        "bond_min_issue_price_bp": snapshot.bond_min_issue_price_bp,
+        "reserve_min_reserve_ratio_bp": snapshot.reserve_min_reserve_ratio_bp,
+        "reserve_redemption_fee_bp": snapshot.reserve_redemption_fee_bp,
+        "nav_settlement_delay_epochs": snapshot.nav_settlement_delay_epochs,
+        "nav_max_daily_redemption_bp": snapshot.nav_max_daily_redemption_bp,
+        "buyback_trigger_discount_bp": snapshot.buyback_trigger_discount_bp,
+        "buyback_max_treasury_budget_per_epoch": snapshot.buyback_max_treasury_budget_per_epoch,
+        "buyback_burn_share_bp": snapshot.buyback_burn_share_bp,
+        "treasury_main_balance": snapshot.treasury_main_balance,
+        "treasury_ecosystem_balance": snapshot.treasury_ecosystem_balance,
+        "treasury_risk_reserve_balance": snapshot.treasury_risk_reserve_balance,
+        "reserve_foreign_usdt_balance": snapshot.reserve_foreign_usdt_balance,
+        "nav_soft_floor_value": snapshot.nav_soft_floor_value,
+        "buyback_last_spent_stable": snapshot.buyback_last_spent_stable,
+        "buyback_last_burned_token": snapshot.buyback_last_burned_token,
+    })
+}
+
 fn governance_op_to_view(op: &GovernanceOp) -> (String, serde_json::Value) {
     match op {
         GovernanceOp::UpdateSlashPolicy { policy } => (
@@ -3082,6 +3182,10 @@ fn governance_op_to_view(op: &GovernanceOp) -> (String, serde_json::Value) {
                 },
             }),
         ),
+        GovernanceOp::UpdateMarketGovernancePolicy { policy } => (
+            "update_market_governance_policy".to_string(),
+            market_governance_policy_to_json(policy),
+        ),
         GovernanceOp::UpdateGovernanceAccessPolicy { policy } => (
             "update_governance_access_policy".to_string(),
             serde_json::json!({
@@ -3091,6 +3195,10 @@ fn governance_op_to_view(op: &GovernanceOp) -> (String, serde_json::Value) {
                 "executor_threshold": policy.executor_threshold,
                 "timelock_epochs": policy.timelock_epochs,
             }),
+        ),
+        GovernanceOp::UpdateGovernanceCouncilPolicy { policy } => (
+            "update_governance_council_policy".to_string(),
+            governance_council_policy_to_json(policy),
         ),
         GovernanceOp::TreasurySpend { to, amount, reason } => (
             "treasury_spend".to_string(),
@@ -3116,6 +3224,61 @@ fn proposal_to_view(
         payload,
         votes_collected,
     }
+}
+
+fn parse_council_seat(raw: &str) -> Result<GovernanceCouncilSeat> {
+    let seat = raw.trim().to_ascii_lowercase();
+    if seat == "founder" {
+        return Ok(GovernanceCouncilSeat::Founder);
+    }
+    if seat == "independent" {
+        return Ok(GovernanceCouncilSeat::Independent);
+    }
+    if let Some(rest) = seat.strip_prefix("top_holder_") {
+        let idx = rest
+            .parse::<u8>()
+            .with_context(|| format!("invalid top_holder index: {}", rest))?;
+        return Ok(GovernanceCouncilSeat::TopHolder(idx));
+    }
+    if let Some(rest) = seat.strip_prefix("team_") {
+        let idx = rest
+            .parse::<u8>()
+            .with_context(|| format!("invalid team index: {}", rest))?;
+        return Ok(GovernanceCouncilSeat::Team(idx));
+    }
+    bail!(
+        "unsupported council seat: {} (expected founder|top_holder_0..4|team_0..1|independent)",
+        raw
+    )
+}
+
+fn parse_governance_council_members(
+    params: &serde_json::Value,
+    field: &str,
+) -> Result<Vec<GovernanceCouncilMember>> {
+    let arr = params
+        .get(field)
+        .and_then(|v| v.as_array())
+        .ok_or_else(|| anyhow::anyhow!("{} must be an array", field))?;
+    let mut out = Vec::with_capacity(arr.len());
+    for (idx, item) in arr.iter().enumerate() {
+        let seat_raw = item
+            .get("seat")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow::anyhow!("{}.{}: seat is required", field, idx))?;
+        let node_id_raw = item
+            .get("node_id")
+            .and_then(|v| v.as_u64())
+            .ok_or_else(|| anyhow::anyhow!("{}.{}: node_id is required", field, idx))?;
+        let node_id = u32::try_from(node_id_raw).map_err(|_| {
+            anyhow::anyhow!("{}.{}: node_id out of range: {}", field, idx, node_id_raw)
+        })?;
+        out.push(GovernanceCouncilMember {
+            seat: parse_council_seat(seat_raw)?,
+            node_id,
+        });
+    }
+    Ok(out)
 }
 
 fn parse_governance_op(params: &serde_json::Value) -> Result<GovernanceOp> {
@@ -3229,6 +3392,177 @@ fn parse_governance_op(params: &serde_json::Value) -> Result<GovernanceOp> {
                 .map_err(|e| anyhow::anyhow!("governance_policy_invalid: {}", e))?;
             Ok(GovernanceOp::UpdateTokenEconomicsPolicy { policy })
         }
+        "update_market_governance_policy" => {
+            let amm_swap_fee_bp_raw = param_as_u64(params, "amm_swap_fee_bp").ok_or_else(|| {
+                anyhow::anyhow!("amm_swap_fee_bp is required for update_market_governance_policy")
+            })?;
+            let amm_swap_fee_bp = u16::try_from(amm_swap_fee_bp_raw)
+                .map_err(|_| anyhow::anyhow!("amm_swap_fee_bp is out of u16 range"))?;
+            let amm_lp_fee_share_bp_raw =
+                param_as_u64(params, "amm_lp_fee_share_bp").ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "amm_lp_fee_share_bp is required for update_market_governance_policy"
+                    )
+                })?;
+            let amm_lp_fee_share_bp = u16::try_from(amm_lp_fee_share_bp_raw)
+                .map_err(|_| anyhow::anyhow!("amm_lp_fee_share_bp is out of u16 range"))?;
+            let cdp_min_collateral_ratio_bp_raw =
+                param_as_u64(params, "cdp_min_collateral_ratio_bp").ok_or_else(|| {
+                    anyhow::anyhow!(
+                    "cdp_min_collateral_ratio_bp is required for update_market_governance_policy"
+                )
+                })?;
+            let cdp_min_collateral_ratio_bp = u16::try_from(cdp_min_collateral_ratio_bp_raw)
+                .map_err(|_| anyhow::anyhow!("cdp_min_collateral_ratio_bp is out of u16 range"))?;
+            let cdp_liquidation_threshold_bp_raw =
+                param_as_u64(params, "cdp_liquidation_threshold_bp").ok_or_else(|| {
+                    anyhow::anyhow!(
+                    "cdp_liquidation_threshold_bp is required for update_market_governance_policy"
+                )
+                })?;
+            let cdp_liquidation_threshold_bp = u16::try_from(cdp_liquidation_threshold_bp_raw)
+                .map_err(|_| anyhow::anyhow!("cdp_liquidation_threshold_bp is out of u16 range"))?;
+            let cdp_liquidation_penalty_bp_raw = param_as_u64(params, "cdp_liquidation_penalty_bp")
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "cdp_liquidation_penalty_bp is required for update_market_governance_policy"
+                    )
+                })?;
+            let cdp_liquidation_penalty_bp = u16::try_from(cdp_liquidation_penalty_bp_raw)
+                .map_err(|_| anyhow::anyhow!("cdp_liquidation_penalty_bp is out of u16 range"))?;
+            let cdp_stability_fee_bp_raw = param_as_u64(params, "cdp_stability_fee_bp")
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "cdp_stability_fee_bp is required for update_market_governance_policy"
+                    )
+                })?;
+            let cdp_stability_fee_bp = u16::try_from(cdp_stability_fee_bp_raw)
+                .map_err(|_| anyhow::anyhow!("cdp_stability_fee_bp is out of u16 range"))?;
+            let cdp_max_leverage_x100_raw = param_as_u64(params, "cdp_max_leverage_x100")
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "cdp_max_leverage_x100 is required for update_market_governance_policy"
+                    )
+                })?;
+            let cdp_max_leverage_x100 = u16::try_from(cdp_max_leverage_x100_raw)
+                .map_err(|_| anyhow::anyhow!("cdp_max_leverage_x100 is out of u16 range"))?;
+            let bond_coupon_rate_bp_raw =
+                param_as_u64(params, "bond_coupon_rate_bp").ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "bond_coupon_rate_bp is required for update_market_governance_policy"
+                    )
+                })?;
+            let bond_coupon_rate_bp = u16::try_from(bond_coupon_rate_bp_raw)
+                .map_err(|_| anyhow::anyhow!("bond_coupon_rate_bp is out of u16 range"))?;
+            let bond_max_maturity_days_raw = param_as_u64(params, "bond_max_maturity_days")
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "bond_max_maturity_days is required for update_market_governance_policy"
+                    )
+                })?;
+            let bond_max_maturity_days = u16::try_from(bond_max_maturity_days_raw)
+                .map_err(|_| anyhow::anyhow!("bond_max_maturity_days is out of u16 range"))?;
+            let bond_min_issue_price_bp_raw = param_as_u64(params, "bond_min_issue_price_bp")
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "bond_min_issue_price_bp is required for update_market_governance_policy"
+                    )
+                })?;
+            let bond_min_issue_price_bp = u16::try_from(bond_min_issue_price_bp_raw)
+                .map_err(|_| anyhow::anyhow!("bond_min_issue_price_bp is out of u16 range"))?;
+            let reserve_min_reserve_ratio_bp_raw =
+                param_as_u64(params, "reserve_min_reserve_ratio_bp").ok_or_else(|| {
+                    anyhow::anyhow!(
+                    "reserve_min_reserve_ratio_bp is required for update_market_governance_policy"
+                )
+                })?;
+            let reserve_min_reserve_ratio_bp = u16::try_from(reserve_min_reserve_ratio_bp_raw)
+                .map_err(|_| anyhow::anyhow!("reserve_min_reserve_ratio_bp is out of u16 range"))?;
+            let reserve_redemption_fee_bp_raw = param_as_u64(params, "reserve_redemption_fee_bp")
+                .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "reserve_redemption_fee_bp is required for update_market_governance_policy"
+                )
+            })?;
+            let reserve_redemption_fee_bp = u16::try_from(reserve_redemption_fee_bp_raw)
+                .map_err(|_| anyhow::anyhow!("reserve_redemption_fee_bp is out of u16 range"))?;
+            let nav_settlement_delay_epochs = param_as_u64(params, "nav_settlement_delay_epochs")
+                .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "nav_settlement_delay_epochs is required for update_market_governance_policy"
+                )
+            })?;
+            let nav_settlement_delay_epochs = u16::try_from(nav_settlement_delay_epochs)
+                .map_err(|_| anyhow::anyhow!("nav_settlement_delay_epochs is out of u16 range"))?;
+            let nav_max_daily_redemption_bp_raw =
+                param_as_u64(params, "nav_max_daily_redemption_bp").ok_or_else(|| {
+                    anyhow::anyhow!(
+                    "nav_max_daily_redemption_bp is required for update_market_governance_policy"
+                )
+                })?;
+            let nav_max_daily_redemption_bp = u16::try_from(nav_max_daily_redemption_bp_raw)
+                .map_err(|_| anyhow::anyhow!("nav_max_daily_redemption_bp is out of u16 range"))?;
+            let buyback_trigger_discount_bp_raw =
+                param_as_u64(params, "buyback_trigger_discount_bp").ok_or_else(|| {
+                    anyhow::anyhow!(
+                    "buyback_trigger_discount_bp is required for update_market_governance_policy"
+                )
+                })?;
+            let buyback_trigger_discount_bp = u16::try_from(buyback_trigger_discount_bp_raw)
+                .map_err(|_| anyhow::anyhow!("buyback_trigger_discount_bp is out of u16 range"))?;
+            let buyback_max_treasury_budget_per_epoch =
+                param_as_u64(params, "buyback_max_treasury_budget_per_epoch").ok_or_else(
+                    || {
+                        anyhow::anyhow!(
+                            "buyback_max_treasury_budget_per_epoch is required for update_market_governance_policy"
+                        )
+                    },
+                )?;
+            let buyback_burn_share_bp_raw = param_as_u64(params, "buyback_burn_share_bp")
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "buyback_burn_share_bp is required for update_market_governance_policy"
+                    )
+                })?;
+            let buyback_burn_share_bp = u16::try_from(buyback_burn_share_bp_raw)
+                .map_err(|_| anyhow::anyhow!("buyback_burn_share_bp is out of u16 range"))?;
+
+            let policy = MarketGovernancePolicy {
+                amm: AmmGovernanceParams {
+                    swap_fee_bp: amm_swap_fee_bp,
+                    lp_fee_share_bp: amm_lp_fee_share_bp,
+                },
+                cdp: CdpGovernanceParams {
+                    min_collateral_ratio_bp: cdp_min_collateral_ratio_bp,
+                    liquidation_threshold_bp: cdp_liquidation_threshold_bp,
+                    liquidation_penalty_bp: cdp_liquidation_penalty_bp,
+                    stability_fee_bp: cdp_stability_fee_bp,
+                    max_leverage_x100: cdp_max_leverage_x100,
+                },
+                bond: BondGovernanceParams {
+                    coupon_rate_bp: bond_coupon_rate_bp,
+                    max_maturity_days: bond_max_maturity_days,
+                    min_issue_price_bp: bond_min_issue_price_bp,
+                },
+                reserve: ReserveGovernanceParams {
+                    min_reserve_ratio_bp: reserve_min_reserve_ratio_bp,
+                    redemption_fee_bp: reserve_redemption_fee_bp,
+                },
+                nav: NavGovernanceParams {
+                    settlement_delay_epochs: nav_settlement_delay_epochs,
+                    max_daily_redemption_bp: nav_max_daily_redemption_bp,
+                },
+                buyback: BuybackGovernanceParams {
+                    trigger_discount_bp: buyback_trigger_discount_bp,
+                    max_treasury_budget_per_epoch: buyback_max_treasury_budget_per_epoch,
+                    burn_share_bp: buyback_burn_share_bp,
+                },
+            };
+            policy
+                .validate()
+                .map_err(|e| anyhow::anyhow!("governance_policy_invalid: {}", e))?;
+            Ok(GovernanceOp::UpdateMarketGovernancePolicy { policy })
+        }
         "update_governance_access_policy" => {
             let proposer_committee_raw = param_as_u64_list(params, "proposer_committee")
                 .ok_or_else(|| {
@@ -3242,20 +3576,32 @@ fn parse_governance_op(params: &serde_json::Value) -> Result<GovernanceOp> {
                         "executor_committee is required for update_governance_access_policy"
                     )
                 })?;
-            let proposer_threshold = param_as_u64(params, "proposer_threshold").ok_or_else(|| {
-                anyhow::anyhow!("proposer_threshold is required for update_governance_access_policy")
-            })? as u32;
-            let executor_threshold = param_as_u64(params, "executor_threshold").ok_or_else(|| {
-                anyhow::anyhow!("executor_threshold is required for update_governance_access_policy")
-            })? as u32;
+            let proposer_threshold =
+                param_as_u64(params, "proposer_threshold").ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "proposer_threshold is required for update_governance_access_policy"
+                    )
+                })? as u32;
+            let executor_threshold =
+                param_as_u64(params, "executor_threshold").ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "executor_threshold is required for update_governance_access_policy"
+                    )
+                })? as u32;
             let timelock_epochs = param_as_u64(params, "timelock_epochs").unwrap_or(0);
             let proposer_committee: Vec<ConsensusNodeId> = proposer_committee_raw
                 .into_iter()
-                .map(|id| u32::try_from(id).map_err(|_| anyhow::anyhow!("proposer committee id out of range: {}", id)))
+                .map(|id| {
+                    u32::try_from(id)
+                        .map_err(|_| anyhow::anyhow!("proposer committee id out of range: {}", id))
+                })
                 .collect::<Result<Vec<_>>>()?;
             let executor_committee: Vec<ConsensusNodeId> = executor_committee_raw
                 .into_iter()
-                .map(|id| u32::try_from(id).map_err(|_| anyhow::anyhow!("executor committee id out of range: {}", id)))
+                .map(|id| {
+                    u32::try_from(id)
+                        .map_err(|_| anyhow::anyhow!("executor committee id out of range: {}", id))
+                })
                 .collect::<Result<Vec<_>>>()?;
             let policy = GovernanceAccessPolicy {
                 proposer_committee,
@@ -3268,6 +3614,70 @@ fn parse_governance_op(params: &serde_json::Value) -> Result<GovernanceOp> {
                 .validate()
                 .map_err(|e| anyhow::anyhow!("governance_policy_invalid: {}", e))?;
             Ok(GovernanceOp::UpdateGovernanceAccessPolicy { policy })
+        }
+        "update_governance_council_policy" => {
+            let enabled = params
+                .get("enabled")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(true);
+            let defaults = GovernanceCouncilPolicy::disabled();
+            let members = if enabled {
+                parse_governance_council_members(params, "members")?
+            } else {
+                params
+                    .get("members")
+                    .and_then(|v| v.as_array())
+                    .map(|_| parse_governance_council_members(params, "members"))
+                    .transpose()?
+                    .unwrap_or_default()
+            };
+            let parameter_change_threshold_bp =
+                match param_as_u64(params, "parameter_change_threshold_bp") {
+                    Some(v) => u16::try_from(v).map_err(|_| {
+                        anyhow::anyhow!("parameter_change_threshold_bp out of u16 range")
+                    })?,
+                    None => defaults.parameter_change_threshold_bp,
+                };
+            let treasury_spend_threshold_bp =
+                match param_as_u64(params, "treasury_spend_threshold_bp") {
+                    Some(v) => u16::try_from(v).map_err(|_| {
+                        anyhow::anyhow!("treasury_spend_threshold_bp out of u16 range")
+                    })?,
+                    None => defaults.treasury_spend_threshold_bp,
+                };
+            let protocol_upgrade_threshold_bp =
+                match param_as_u64(params, "protocol_upgrade_threshold_bp") {
+                    Some(v) => u16::try_from(v).map_err(|_| {
+                        anyhow::anyhow!("protocol_upgrade_threshold_bp out of u16 range")
+                    })?,
+                    None => defaults.protocol_upgrade_threshold_bp,
+                };
+            let emergency_freeze_threshold_bp =
+                match param_as_u64(params, "emergency_freeze_threshold_bp") {
+                    Some(v) => u16::try_from(v).map_err(|_| {
+                        anyhow::anyhow!("emergency_freeze_threshold_bp out of u16 range")
+                    })?,
+                    None => defaults.emergency_freeze_threshold_bp,
+                };
+            let emergency_min_categories = match param_as_u64(params, "emergency_min_categories") {
+                Some(v) => u8::try_from(v)
+                    .map_err(|_| anyhow::anyhow!("emergency_min_categories out of u8 range"))?,
+                None => defaults.emergency_min_categories,
+            };
+
+            let policy = GovernanceCouncilPolicy {
+                enabled,
+                members,
+                parameter_change_threshold_bp,
+                treasury_spend_threshold_bp,
+                protocol_upgrade_threshold_bp,
+                emergency_freeze_threshold_bp,
+                emergency_min_categories,
+            };
+            policy
+                .validate()
+                .map_err(|e| anyhow::anyhow!("governance_policy_invalid: {}", e))?;
+            Ok(GovernanceOp::UpdateGovernanceCouncilPolicy { policy })
         }
         "treasury_spend" => {
             let to = param_as_u64(params, "to")
@@ -3535,7 +3945,10 @@ fn run_governance_rpc(
             let slash = runtime.engine.slash_policy();
             let dos = runtime.engine.governance_network_dos_policy();
             let token = runtime.engine.governance_token_economics_policy();
+            let market = runtime.engine.governance_market_policy();
+            let market_engine = runtime.engine.governance_market_engine_snapshot();
             let access = runtime.engine.governance_access_policy();
+            let council = runtime.engine.governance_council_policy();
             let treasury_balance = runtime.engine.token_treasury_balance();
             let treasury_spent_total = runtime.engine.token_treasury_spent_total();
             push_governance_audit_event(
@@ -3574,6 +3987,7 @@ fn run_governance_rpc(
                     "executor_threshold": access.executor_threshold,
                     "timelock_epochs": access.timelock_epochs,
                 },
+                "governance_council_policy": governance_council_policy_to_json(&council),
                 "token_economics_policy": {
                     "max_supply": token.max_supply,
                     "locked_supply": token.locked_supply,
@@ -3584,6 +3998,9 @@ fn run_governance_rpc(
                         "service_to_provider_bp": token.fee_split.service_to_provider_bp,
                     },
                 },
+                "market_governance_policy": market_governance_policy_to_json(&market),
+                "market_engine_snapshot": market_engine_snapshot_to_json(&market_engine),
+                "market_runtime_snapshot": market_engine_snapshot_to_json(&market_engine),
                 "treasury": {
                     "balance": treasury_balance,
                     "spent_total": treasury_spent_total,
@@ -3646,7 +4063,10 @@ fn run_governance_rpc(
             let slash = runtime.engine.slash_policy();
             let dos = runtime.engine.governance_network_dos_policy();
             let token = runtime.engine.governance_token_economics_policy();
+            let market = runtime.engine.governance_market_policy();
+            let market_engine = runtime.engine.governance_market_engine_snapshot();
             let access = runtime.engine.governance_access_policy();
+            let council = runtime.engine.governance_council_policy();
             let treasury_balance = runtime.engine.token_treasury_balance();
             let treasury_spent_total = runtime.engine.token_treasury_spent_total();
             Ok(serde_json::json!({
@@ -3669,6 +4089,7 @@ fn run_governance_rpc(
                     "executor_threshold": access.executor_threshold,
                     "timelock_epochs": access.timelock_epochs,
                 },
+                "governance_council_policy": governance_council_policy_to_json(&council),
                 "token_economics_policy": {
                     "max_supply": token.max_supply,
                     "locked_supply": token.locked_supply,
@@ -3679,6 +4100,9 @@ fn run_governance_rpc(
                         "service_to_provider_bp": token.fee_split.service_to_provider_bp,
                     },
                 },
+                "market_governance_policy": market_governance_policy_to_json(&market),
+                "market_engine_snapshot": market_engine_snapshot_to_json(&market_engine),
+                "market_runtime_snapshot": market_engine_snapshot_to_json(&market_engine),
                 "treasury": {
                     "balance": treasury_balance,
                     "spent_total": treasury_spent_total,
@@ -5183,6 +5607,111 @@ fn load_governance_token_economics_policy() -> Result<TokenEconomicsPolicy> {
     Ok(policy)
 }
 
+fn load_governance_market_policy() -> Result<MarketGovernancePolicy> {
+    fn parse_u16_env(name: &str, default: u16) -> Result<u16> {
+        match std::env::var(name) {
+            Ok(raw) => {
+                let trimmed = raw.trim();
+                if trimmed.is_empty() {
+                    return Ok(default);
+                }
+                trimmed
+                    .parse::<u16>()
+                    .with_context(|| format!("invalid {} value: {}", name, raw))
+            }
+            Err(_) => Ok(default),
+        }
+    }
+
+    let defaults = MarketGovernancePolicy::default();
+    let policy = MarketGovernancePolicy {
+        amm: AmmGovernanceParams {
+            swap_fee_bp: parse_u16_env(
+                "NOVOVM_GOV_MARKET_AMM_SWAP_FEE_BP",
+                defaults.amm.swap_fee_bp,
+            )?,
+            lp_fee_share_bp: parse_u16_env(
+                "NOVOVM_GOV_MARKET_AMM_LP_FEE_SHARE_BP",
+                defaults.amm.lp_fee_share_bp,
+            )?,
+        },
+        cdp: CdpGovernanceParams {
+            min_collateral_ratio_bp: parse_u16_env(
+                "NOVOVM_GOV_MARKET_CDP_MIN_COLLATERAL_RATIO_BP",
+                defaults.cdp.min_collateral_ratio_bp,
+            )?,
+            liquidation_threshold_bp: parse_u16_env(
+                "NOVOVM_GOV_MARKET_CDP_LIQUIDATION_THRESHOLD_BP",
+                defaults.cdp.liquidation_threshold_bp,
+            )?,
+            liquidation_penalty_bp: parse_u16_env(
+                "NOVOVM_GOV_MARKET_CDP_LIQUIDATION_PENALTY_BP",
+                defaults.cdp.liquidation_penalty_bp,
+            )?,
+            stability_fee_bp: parse_u16_env(
+                "NOVOVM_GOV_MARKET_CDP_STABILITY_FEE_BP",
+                defaults.cdp.stability_fee_bp,
+            )?,
+            max_leverage_x100: parse_u16_env(
+                "NOVOVM_GOV_MARKET_CDP_MAX_LEVERAGE_X100",
+                defaults.cdp.max_leverage_x100,
+            )?,
+        },
+        bond: BondGovernanceParams {
+            coupon_rate_bp: parse_u16_env(
+                "NOVOVM_GOV_MARKET_BOND_COUPON_RATE_BP",
+                defaults.bond.coupon_rate_bp,
+            )?,
+            max_maturity_days: parse_u16_env(
+                "NOVOVM_GOV_MARKET_BOND_MAX_MATURITY_DAYS",
+                defaults.bond.max_maturity_days,
+            )?,
+            min_issue_price_bp: parse_u16_env(
+                "NOVOVM_GOV_MARKET_BOND_MIN_ISSUE_PRICE_BP",
+                defaults.bond.min_issue_price_bp,
+            )?,
+        },
+        reserve: ReserveGovernanceParams {
+            min_reserve_ratio_bp: parse_u16_env(
+                "NOVOVM_GOV_MARKET_RESERVE_MIN_RESERVE_RATIO_BP",
+                defaults.reserve.min_reserve_ratio_bp,
+            )?,
+            redemption_fee_bp: parse_u16_env(
+                "NOVOVM_GOV_MARKET_RESERVE_REDEMPTION_FEE_BP",
+                defaults.reserve.redemption_fee_bp,
+            )?,
+        },
+        nav: NavGovernanceParams {
+            settlement_delay_epochs: parse_u16_env(
+                "NOVOVM_GOV_MARKET_NAV_SETTLEMENT_DELAY_EPOCHS",
+                defaults.nav.settlement_delay_epochs,
+            )?,
+            max_daily_redemption_bp: parse_u16_env(
+                "NOVOVM_GOV_MARKET_NAV_MAX_DAILY_REDEMPTION_BP",
+                defaults.nav.max_daily_redemption_bp,
+            )?,
+        },
+        buyback: BuybackGovernanceParams {
+            trigger_discount_bp: parse_u16_env(
+                "NOVOVM_GOV_MARKET_BUYBACK_TRIGGER_DISCOUNT_BP",
+                defaults.buyback.trigger_discount_bp,
+            )?,
+            max_treasury_budget_per_epoch: u64_env(
+                "NOVOVM_GOV_MARKET_BUYBACK_MAX_TREASURY_BUDGET_PER_EPOCH",
+                defaults.buyback.max_treasury_budget_per_epoch,
+            ),
+            burn_share_bp: parse_u16_env(
+                "NOVOVM_GOV_MARKET_BUYBACK_BURN_SHARE_BP",
+                defaults.buyback.burn_share_bp,
+            )?,
+        },
+    };
+    policy
+        .validate()
+        .map_err(|e| anyhow::anyhow!("governance_policy_invalid: {}", e))?;
+    Ok(policy)
+}
+
 fn parse_node_id_csv(name: &str, raw: &str) -> Result<Vec<ConsensusNodeId>> {
     let mut out = Vec::new();
     for part in raw.split(',') {
@@ -5926,6 +6455,141 @@ fn run_governance_token_economics_probe_mode() -> Result<()> {
     Ok(())
 }
 
+fn run_governance_market_policy_probe_mode() -> Result<()> {
+    let loaded = load_consensus_slash_policy()?;
+    emit_slash_policy_in_signal(&loaded);
+    let market_policy = load_governance_market_policy()?;
+
+    let validator_set = ValidatorSet::new_equal_weight(vec![0, 1, 2]);
+    let required_quorum = validator_set.quorum_size();
+    let signing_keys: Vec<_> = (0..3).map(|_| SigningKey::generate(&mut OsRng)).collect();
+    let mut public_keys = HashMap::new();
+    public_keys.insert(0, signing_keys[0].verifying_key());
+    public_keys.insert(1, signing_keys[1].verifying_key());
+    public_keys.insert(2, signing_keys[2].verifying_key());
+    let engine = BFTEngine::new(
+        BFTConfig::default(),
+        0,
+        signing_keys[0].clone(),
+        validator_set,
+        public_keys,
+    )
+    .context("governance market policy probe: init novovm-consensus engine failed")?;
+    engine
+        .set_slash_policy(loaded.policy.clone())
+        .context("governance market policy probe: set baseline slash policy failed")?;
+    engine.set_governance_execution_enabled(true);
+
+    let proposal = engine
+        .submit_governance_proposal(
+            0,
+            GovernanceOp::UpdateMarketGovernancePolicy {
+                policy: market_policy.clone(),
+            },
+        )
+        .context("governance market policy probe: submit proposal failed")?;
+    let votes = vec![
+        GovernanceVote::new(&proposal, 0, true, &signing_keys[0]),
+        GovernanceVote::new(&proposal, 1, true, &signing_keys[1]),
+    ];
+    println!(
+        "governance_market_in: proposal_id={} op=update_market_governance_policy amm_swap_fee_bp={} cdp_min_collateral_ratio_bp={} bond_coupon_rate_bp={} reserve_min_reserve_ratio_bp={} nav_settlement_delay_epochs={} buyback_trigger_discount_bp={} votes={} quorum={}",
+        proposal.proposal_id,
+        market_policy.amm.swap_fee_bp,
+        market_policy.cdp.min_collateral_ratio_bp,
+        market_policy.bond.coupon_rate_bp,
+        market_policy.reserve.min_reserve_ratio_bp,
+        market_policy.nav.settlement_delay_epochs,
+        market_policy.buyback.trigger_discount_bp,
+        votes.len(),
+        required_quorum
+    );
+
+    let exec_result = engine.execute_governance_proposal(proposal.proposal_id, &votes);
+    let reason_code = match &exec_result {
+        Ok(_) => "ok",
+        Err(err) => {
+            let msg = err.to_string().to_ascii_lowercase();
+            if msg.contains("insufficient votes") {
+                "insufficient_votes"
+            } else if msg.contains("invalid signature") {
+                "invalid_signature"
+            } else if msg.contains("governance not enabled") {
+                "governance_not_enabled"
+            } else {
+                "governance_execution_error"
+            }
+        }
+    };
+    let executed = exec_result.is_ok();
+    let applied_policy = engine.governance_market_policy();
+    let policy_applied = applied_policy == market_policy;
+    let engine_snapshot = engine.governance_market_engine_snapshot();
+    let engine_applied = engine_snapshot.amm_swap_fee_bp == market_policy.amm.swap_fee_bp
+        && engine_snapshot.cdp_min_collateral_ratio_bp == market_policy.cdp.min_collateral_ratio_bp
+        && engine_snapshot.cdp_liquidation_threshold_bp
+            == market_policy.cdp.liquidation_threshold_bp
+        && engine_snapshot.bond_one_year_coupon_bp == market_policy.bond.coupon_rate_bp
+        && engine_snapshot.reserve_min_reserve_ratio_bp
+            == market_policy.reserve.min_reserve_ratio_bp
+        && engine_snapshot.nav_settlement_delay_epochs == market_policy.nav.settlement_delay_epochs
+        && engine_snapshot.buyback_trigger_discount_bp == market_policy.buyback.trigger_discount_bp
+        && engine_snapshot.treasury_main_balance > 0
+        && engine_snapshot.treasury_risk_reserve_balance > 0
+        && engine_snapshot.reserve_foreign_usdt_balance > 0
+        && engine_snapshot.nav_soft_floor_value > 0;
+    println!(
+        "governance_market_out: proposal_id={} executed={} reason_code={} policy_applied={} amm_swap_fee_bp={} cdp_min_collateral_ratio_bp={} bond_coupon_rate_bp={} reserve_min_reserve_ratio_bp={} nav_settlement_delay_epochs={} buyback_trigger_discount_bp={}",
+        proposal.proposal_id,
+        executed,
+        reason_code,
+        policy_applied,
+        applied_policy.amm.swap_fee_bp,
+        applied_policy.cdp.min_collateral_ratio_bp,
+        applied_policy.bond.coupon_rate_bp,
+        applied_policy.reserve.min_reserve_ratio_bp,
+        applied_policy.nav.settlement_delay_epochs,
+        applied_policy.buyback.trigger_discount_bp
+    );
+    println!(
+        "governance_market_engine_out: proposal_id={} engine_applied={} cdp_liquidation_threshold_bp={} bond_one_year_coupon_bp={} nav_max_daily_redemption_bp={}",
+        proposal.proposal_id,
+        engine_applied,
+        engine_snapshot.cdp_liquidation_threshold_bp,
+        engine_snapshot.bond_one_year_coupon_bp,
+        engine_snapshot.nav_max_daily_redemption_bp
+    );
+    println!(
+        "governance_market_runtime_out: proposal_id={} runtime_applied={} cdp_liquidation_threshold_bp={} bond_one_year_coupon_bp={} nav_max_daily_redemption_bp={}",
+        proposal.proposal_id,
+        engine_applied,
+        engine_snapshot.cdp_liquidation_threshold_bp,
+        engine_snapshot.bond_one_year_coupon_bp,
+        engine_snapshot.nav_max_daily_redemption_bp
+    );
+    println!(
+        "governance_market_treasury_out: proposal_id={} treasury_main_balance={} treasury_risk_reserve_balance={} reserve_foreign_usdt_balance={} nav_soft_floor_value={} buyback_last_spent_stable={} buyback_last_burned_token={}",
+        proposal.proposal_id,
+        engine_snapshot.treasury_main_balance,
+        engine_snapshot.treasury_risk_reserve_balance,
+        engine_snapshot.reserve_foreign_usdt_balance,
+        engine_snapshot.nav_soft_floor_value,
+        engine_snapshot.buyback_last_spent_stable,
+        engine_snapshot.buyback_last_burned_token
+    );
+
+    if !executed || !policy_applied || !engine_applied || reason_code != "ok" {
+        bail!(
+            "governance market policy probe failed: executed={} policy_applied={} engine_applied={} reason_code={}",
+            executed,
+            policy_applied,
+            engine_applied,
+            reason_code
+        );
+    }
+    Ok(())
+}
+
 fn run_governance_access_policy_probe_mode() -> Result<()> {
     let loaded = load_consensus_slash_policy()?;
     emit_slash_policy_in_signal(&loaded);
@@ -6000,11 +6664,7 @@ fn run_governance_access_policy_probe_mode() -> Result<()> {
 
     // 3) Timelock must reject first execute.
     let timelock_reject = engine
-        .execute_governance_proposal_with_executor_approvals(
-            proposal.proposal_id,
-            &votes,
-            &[1, 2],
-        )
+        .execute_governance_proposal_with_executor_approvals(proposal.proposal_id, &votes, &[1, 2])
         .is_err();
 
     // 4) Bypass timelock for probe to verify executor multisig behavior.
@@ -6055,11 +6715,219 @@ fn run_governance_access_policy_probe_mode() -> Result<()> {
     Ok(())
 }
 
+fn run_governance_council_policy_probe_mode() -> Result<()> {
+    let loaded = load_consensus_slash_policy()?;
+    emit_slash_policy_in_signal(&loaded);
+
+    let validator_ids: Vec<ConsensusNodeId> = (0..9).collect();
+    let validator_set = ValidatorSet::new_equal_weight(validator_ids.clone());
+    let required_quorum = validator_set.quorum_size();
+    let signing_keys: Vec<_> = (0..validator_ids.len())
+        .map(|_| SigningKey::generate(&mut OsRng))
+        .collect();
+    let mut public_keys = HashMap::new();
+    for (idx, node_id) in validator_ids.iter().enumerate() {
+        public_keys.insert(*node_id, signing_keys[idx].verifying_key());
+    }
+    let engine = BFTEngine::new(
+        BFTConfig::default(),
+        0,
+        signing_keys[0].clone(),
+        validator_set,
+        public_keys,
+    )
+    .context("governance council probe: init novovm-consensus engine failed")?;
+    engine
+        .set_slash_policy(loaded.policy.clone())
+        .context("governance council probe: set baseline slash policy failed")?;
+    engine.set_governance_execution_enabled(true);
+    engine
+        .set_governance_access_policy(GovernanceAccessPolicy {
+            proposer_committee: validator_ids.clone(),
+            proposer_threshold: 1,
+            executor_committee: validator_ids,
+            executor_threshold: 1,
+            timelock_epochs: 0,
+        })
+        .context("governance council probe: set permissive governance access policy failed")?;
+
+    let council_policy = GovernanceCouncilPolicy {
+        enabled: true,
+        members: vec![
+            GovernanceCouncilMember {
+                seat: GovernanceCouncilSeat::Founder,
+                node_id: 0,
+            },
+            GovernanceCouncilMember {
+                seat: GovernanceCouncilSeat::TopHolder(0),
+                node_id: 1,
+            },
+            GovernanceCouncilMember {
+                seat: GovernanceCouncilSeat::TopHolder(1),
+                node_id: 2,
+            },
+            GovernanceCouncilMember {
+                seat: GovernanceCouncilSeat::TopHolder(2),
+                node_id: 3,
+            },
+            GovernanceCouncilMember {
+                seat: GovernanceCouncilSeat::TopHolder(3),
+                node_id: 4,
+            },
+            GovernanceCouncilMember {
+                seat: GovernanceCouncilSeat::TopHolder(4),
+                node_id: 5,
+            },
+            GovernanceCouncilMember {
+                seat: GovernanceCouncilSeat::Team(0),
+                node_id: 6,
+            },
+            GovernanceCouncilMember {
+                seat: GovernanceCouncilSeat::Team(1),
+                node_id: 7,
+            },
+            GovernanceCouncilMember {
+                seat: GovernanceCouncilSeat::Independent,
+                node_id: 8,
+            },
+        ],
+        parameter_change_threshold_bp: 5000,
+        treasury_spend_threshold_bp: 6600,
+        protocol_upgrade_threshold_bp: 7500,
+        emergency_freeze_threshold_bp: 5000,
+        emergency_min_categories: 3,
+    };
+
+    // 1) Enable council policy via governance op (still evaluated by validator quorum before policy is active).
+    let policy_proposal = engine
+        .submit_governance_proposal(
+            0,
+            GovernanceOp::UpdateGovernanceCouncilPolicy {
+                policy: council_policy.clone(),
+            },
+        )
+        .context("governance council probe: submit council policy proposal failed")?;
+    let policy_votes = vec![
+        GovernanceVote::new(&policy_proposal, 0, true, &signing_keys[0]),
+        GovernanceVote::new(&policy_proposal, 1, true, &signing_keys[1]),
+        GovernanceVote::new(&policy_proposal, 2, true, &signing_keys[2]),
+        GovernanceVote::new(&policy_proposal, 3, true, &signing_keys[3]),
+        GovernanceVote::new(&policy_proposal, 4, true, &signing_keys[4]),
+        GovernanceVote::new(&policy_proposal, 5, true, &signing_keys[5]),
+    ];
+    println!(
+        "governance_council_in: proposal_id={} op=update_governance_council_policy members={} parameter_threshold_bp={} protocol_upgrade_threshold_bp={} apply_votes={} quorum={}",
+        policy_proposal.proposal_id,
+        council_policy.members.len(),
+        council_policy.parameter_change_threshold_bp,
+        council_policy.protocol_upgrade_threshold_bp,
+        policy_votes.len(),
+        required_quorum
+    );
+    engine
+        .execute_governance_proposal(policy_proposal.proposal_id, &policy_votes)
+        .context("governance council probe: execute council policy proposal failed")?;
+    let policy_applied = engine.governance_council_policy() == council_policy;
+
+    // 2) ParameterChange threshold (>5000): fail at 4500, pass at 5500.
+    let parameter_proposal = engine
+        .submit_governance_proposal(0, GovernanceOp::UpdateMempoolFeeFloor { fee_floor: 19 })
+        .context("governance council probe: submit parameter proposal failed")?;
+    let parameter_low_votes = vec![
+        GovernanceVote::new(&parameter_proposal, 0, true, &signing_keys[0]), // founder 3500
+        GovernanceVote::new(&parameter_proposal, 1, true, &signing_keys[1]), // +1000 => 4500
+    ];
+    let parameter_reject = engine
+        .execute_governance_proposal(parameter_proposal.proposal_id, &parameter_low_votes)
+        .is_err();
+    let parameter_ok_votes = vec![
+        GovernanceVote::new(&parameter_proposal, 0, true, &signing_keys[0]), // 3500
+        GovernanceVote::new(&parameter_proposal, 1, true, &signing_keys[1]), // +1000
+        GovernanceVote::new(&parameter_proposal, 2, true, &signing_keys[2]), // +1000 => 5500
+    ];
+    let parameter_execute_ok = engine
+        .execute_governance_proposal(parameter_proposal.proposal_id, &parameter_ok_votes)
+        .is_ok();
+    let mempool_fee_floor = engine.governance_mempool_fee_floor();
+
+    // 3) ProtocolUpgrade threshold (>7500): fail at 6500, pass at 8500.
+    let target_access = GovernanceAccessPolicy {
+        proposer_committee: vec![0, 1],
+        proposer_threshold: 2,
+        executor_committee: vec![0, 1, 2],
+        executor_threshold: 2,
+        timelock_epochs: 1,
+    };
+    let protocol_upgrade_proposal = engine
+        .submit_governance_proposal(
+            0,
+            GovernanceOp::UpdateGovernanceAccessPolicy {
+                policy: target_access.clone(),
+            },
+        )
+        .context("governance council probe: submit protocol-upgrade proposal failed")?;
+    let protocol_low_votes = vec![
+        GovernanceVote::new(&protocol_upgrade_proposal, 0, true, &signing_keys[0]), // 3500
+        GovernanceVote::new(&protocol_upgrade_proposal, 1, true, &signing_keys[1]), // +1000
+        GovernanceVote::new(&protocol_upgrade_proposal, 2, true, &signing_keys[2]), // +1000
+        GovernanceVote::new(&protocol_upgrade_proposal, 3, true, &signing_keys[3]), // +1000 => 6500
+    ];
+    let protocol_reject = engine
+        .execute_governance_proposal(protocol_upgrade_proposal.proposal_id, &protocol_low_votes)
+        .is_err();
+    let protocol_ok_votes = vec![
+        GovernanceVote::new(&protocol_upgrade_proposal, 0, true, &signing_keys[0]), // 3500
+        GovernanceVote::new(&protocol_upgrade_proposal, 1, true, &signing_keys[1]), // +1000
+        GovernanceVote::new(&protocol_upgrade_proposal, 2, true, &signing_keys[2]), // +1000
+        GovernanceVote::new(&protocol_upgrade_proposal, 3, true, &signing_keys[3]), // +1000
+        GovernanceVote::new(&protocol_upgrade_proposal, 4, true, &signing_keys[4]), // +1000
+        GovernanceVote::new(&protocol_upgrade_proposal, 5, true, &signing_keys[5]), // +1000 => 8500
+    ];
+    let protocol_execute_ok = engine
+        .execute_governance_proposal(protocol_upgrade_proposal.proposal_id, &protocol_ok_votes)
+        .is_ok();
+    let proposer_threshold = engine.governance_access_policy().proposer_threshold;
+
+    println!(
+        "governance_council_out: policy_applied={} parameter_reject={} parameter_execute_ok={} protocol_reject={} protocol_execute_ok={} mempool_fee_floor={} proposer_threshold={}",
+        policy_applied,
+        parameter_reject,
+        parameter_execute_ok,
+        protocol_reject,
+        protocol_execute_ok,
+        mempool_fee_floor,
+        proposer_threshold
+    );
+
+    if !policy_applied
+        || !parameter_reject
+        || !parameter_execute_ok
+        || !protocol_reject
+        || !protocol_execute_ok
+        || mempool_fee_floor != 19
+        || proposer_threshold != 2
+    {
+        bail!(
+            "governance council probe failed: policy_applied={} parameter_reject={} parameter_execute_ok={} protocol_reject={} protocol_execute_ok={} mempool_fee_floor={} proposer_threshold={}",
+            policy_applied,
+            parameter_reject,
+            parameter_execute_ok,
+            protocol_reject,
+            protocol_execute_ok,
+            mempool_fee_floor,
+            proposer_threshold
+        );
+    }
+
+    Ok(())
+}
+
 fn run_governance_treasury_spend_probe_mode() -> Result<()> {
     let loaded = load_consensus_slash_policy()?;
     emit_slash_policy_in_signal(&loaded);
     let token_policy = load_governance_token_economics_policy()?;
-    let (treasury_to, treasury_amount_requested, treasury_reason) = load_governance_treasury_spend()?;
+    let (treasury_to, treasury_amount_requested, treasury_reason) =
+        load_governance_treasury_spend()?;
 
     let validator_set = ValidatorSet::new_equal_weight(vec![0, 1, 2]);
     let required_quorum = validator_set.quorum_size();
@@ -6103,9 +6971,7 @@ fn run_governance_treasury_spend_probe_mode() -> Result<()> {
     if treasury_before == 0 {
         bail!("governance treasury probe failed: treasury_before is zero");
     }
-    let treasury_amount = treasury_amount_requested
-        .max(1)
-        .min(treasury_before);
+    let treasury_amount = treasury_amount_requested.max(1).min(treasury_before);
     let recipient_before = engine.token_balance(treasury_to);
 
     let proposal = engine
@@ -6469,8 +7335,14 @@ fn main() -> Result<()> {
     if node_mode.eq_ignore_ascii_case("governance_token_economics_probe") {
         return run_governance_token_economics_probe_mode();
     }
+    if node_mode.eq_ignore_ascii_case("governance_market_policy_probe") {
+        return run_governance_market_policy_probe_mode();
+    }
     if node_mode.eq_ignore_ascii_case("governance_access_policy_probe") {
         return run_governance_access_policy_probe_mode();
+    }
+    if node_mode.eq_ignore_ascii_case("governance_council_policy_probe") {
+        return run_governance_council_policy_probe_mode();
     }
     if node_mode.eq_ignore_ascii_case("governance_treasury_spend_probe") {
         return run_governance_treasury_spend_probe_mode();

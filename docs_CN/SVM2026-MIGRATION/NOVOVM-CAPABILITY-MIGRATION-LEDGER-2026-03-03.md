@@ -116,6 +116,22 @@
 - 证据样本：`artifacts/migration/acceptance-gate-governance-param2-smoke/governance-param2-gate/governance-param2-gate-summary.json`（`pass=True`）。
 - 已完成：第三类治理参数扩展：`UpdateNetworkDosPolicy`（治理提案+签名投票+quorum 生效），并新增 `scripts/migration/run_governance_param3_gate.ps1`；该门禁已接入 `scripts/migration/run_migration_acceptance_gate.ps1`（`overall_pass` 新增 `governance_param3_pass` 约束）。
 - 证据样本：`artifacts/migration/governance-param3-gate-smoke/governance-param3-gate-summary.json`（`pass=True`, `parse_pass=True`, `input_pass=True`, `output_pass=True`）。
+- 已完成：九席位治理策略迁移（I-GOV-01）：`novovm-consensus` 新增 `GovernanceCouncilPolicy` / `GovernanceCouncilSeat` / `GovernanceOp::UpdateGovernanceCouncilPolicy`，按提案类别执行权重阈值（`Parameter/Treasury/Protocol/Emergency`），并在启用时改为 council member 提案+投票门禁。
+- 已完成：新增 `scripts/migration/run_governance_council_policy_gate.ps1`；该门禁已接入 `scripts/migration/run_migration_acceptance_gate.ps1`（`overall_pass` 新增 `governance_council_policy_pass` 约束，`FullSnapshotProfileGA` 默认启用）。
+- 证据样本：`artifacts/migration/governance-council-policy-gate-local/governance-council-policy-gate-summary.json`（`pass=True`, `parse_pass=True`, `input_pass=True`, `output_pass=True`）。
+- 证据样本：`artifacts/migration/acceptance-gate-council-local/acceptance-gate-summary.json`（`overall_pass=True`, `governance_council_policy_pass=True`）。
+- 证据样本：`artifacts/migration/release-snapshot-ga-council-local/release-snapshot.json`（`overall_pass=True`, `profile_name=full_snapshot_ga_v1`, `enabled_gates.governance_council_policy=True`）。
+- 证据样本：`artifacts/migration/release-candidate-novovm-rc-2026-03-06-ga-council-local/rc-candidate.json`（`status=ReadyForMerge/SnapshotGreen`, `governance_council_policy_pass=True`）。
+- 已完成：经济治理参数族迁移（I-GOV-02 受限主链路）：`novovm-consensus` 新增 `MarketGovernancePolicy` 与 `GovernanceOp::UpdateMarketGovernancePolicy`，覆盖 `AMM/CDP/Bond/Reserve/NAV/Buyback` 参数热更新。
+- 已完成：`novovm-node` 新增 `NOVOVM_NODE_MODE=governance_market_policy_probe`，并将 `market_governance_policy` 纳入 `governance_getPolicy`/`governance_execute` 输出。
+- 已完成：经济执行层命名与复用收口：`market_runtime` 迁移为 `market_engine`，并复用 `SVM2026/contracts/web30/core` 的 `AMM/CDP/Bond/NAV/TreasuryImpl` 主链路组件。
+- 已完成：新增 `scripts/migration/run_governance_market_policy_gate.ps1`；该门禁已接入 `scripts/migration/run_migration_acceptance_gate.ps1`（`overall_pass` 新增 `governance_market_policy_pass` 约束，`FullSnapshotProfileGA` 默认启用）。
+- 证据样本：`artifacts/migration/governance-market-policy-gate-local/governance-market-policy-gate-summary.json`（`pass=True`, `parse_pass=True`, `input_pass=True`, `output_pass=True`）。
+- 证据样本：`artifacts/migration/acceptance-gate-ga-market-local/acceptance-gate-summary.json`（`overall_pass=True`, `governance_market_policy_pass=True`）。
+- 已完成：`run_governance_market_policy_gate.ps1` 增加硬门禁输出解析：`governance_market_engine_out` + `governance_market_treasury_out`，并将 `engine_output_pass/treasury_output_pass` 绑定到 gate `pass`。
+- 证据样本：`artifacts/migration/acceptance-gate-market-engine-smoke/acceptance-gate-summary.json`（`overall_pass=True`, `governance_market_policy_pass=True`, `governance_market_policy_engine_pass=True`, `governance_market_policy_treasury_pass=True`）。
+- 证据样本：`artifacts/migration/release-snapshot-ga-market-local/release-snapshot.json`（`overall_pass=True`, `profile_name=full_snapshot_ga_v1`, `enabled_gates.governance_market_policy=True`, `key_results.governance_market_policy_pass=True`）。
+- 证据样本：`artifacts/migration/release-candidate-novovm-rc-2026-03-06-ga-market-local/rc-candidate.json`（`status=ReadyForMerge/SnapshotGreen`, `governance_market_policy_pass=True`）。
 - 已完成：治理 RPC 执行面增强：`governance_submitProposal/governance_sign/governance_vote/governance_execute/governance_getProposal/governance_listProposals/governance_listAuditEvents/governance_getPolicy`，并新增进程级权限校验（`NOVOVM_GOVERNANCE_PROPOSER_ALLOWLIST/NOVOVM_GOVERNANCE_EXECUTOR_ALLOWLIST`）与审计事件流（含 reject 事件）。
 - 证据样本：`artifacts/migration/acceptance-gate-governance-rpc-smoke-v2/governance-rpc-gate/governance-rpc-gate-summary.json`（`pass=True`, `sign1_ok=True`, `unauthorized_submit_reject_ok=True`, `audit_ok=True`）。
 - 已完成：治理负向门禁闭环：`unauthorized_submit + invalid_signature + duplicate_vote + insufficient_votes + replay_execute`，并新增 `scripts/migration/run_governance_negative_gate.ps1`；该门禁已接入 `scripts/migration/run_migration_acceptance_gate.ps1`（`overall_pass` 新增 `governance_negative_pass` 约束）。
@@ -131,6 +147,10 @@
 - 证据样本：`artifacts/migration/adapter-stability-relfix-smoke/adapter-stability-summary.json`（`pass=True`, `pass_rate_pct=100`）。
 - 证据样本：`artifacts/migration/release-snapshot-param3-smoke-relfix/release-snapshot.json`（`overall_pass=True`, `profile_name=full_snapshot_v1`, `key_results.governance_pass=True`, `enabled_gates.governance_param3=True`）。
 - 证据样本：`artifacts/migration/release-snapshot-param3-smoke-relfix/acceptance-gate-full/acceptance-gate-summary.json`（`governance_param3_pass=True`, `adapter_stability_pass=True`）。
+- 已完成：GA 正式发布快照（`full_snapshot_ga_v1`）回填：`release-snapshot` 聚合包含 `governance_market_policy_engine_pass` + `governance_market_policy_treasury_pass`，并纳入 `governance_pass` 收口。
+- 证据样本：`artifacts/migration/release-snapshot-ga-2026-03-06-051653/release-snapshot.json`（`overall_pass=True`, `profile_name=full_snapshot_ga_v1`, `key_results.governance_market_policy_engine_pass=True`, `key_results.governance_market_policy_treasury_pass=True`）。
+- 已完成：GA 正式 RC（`rc_ref=novovm-rc-2026-03-06-ga-v1`）回填，状态保持 `ReadyForMerge/SnapshotGreen`。
+- 证据样本：`artifacts/migration/release-candidate-novovm-rc-2026-03-06-ga-v1/rc-candidate.json`（`commit_hash=823a5880e104c96d03e2ab4a8473c9f620ae6413`, `governance_market_policy_engine_pass=True`, `governance_market_policy_treasury_pass=True`）。
 - 已完成：`novovm-consensus` 新增自动解禁窗口（`cooldown_epochs`），`SlashExecution` 输出 `jailed_until_epoch/cooldown_epochs`；`state.height >= jailed_until_epoch` 时自动恢复验证者活跃态。
 - 已完成：新增 `scripts/migration/run_unjail_cooldown_gate.ps1`（正向：jail -> cooldown 到期自动 unjail；负向：未到期拒绝），并接入 `scripts/migration/run_migration_acceptance_gate.ps1`（`overall_pass` 新增 `unjail_cooldown_pass` 约束）。
 - 证据样本：`artifacts/migration/acceptance-gate-unjail-full/unjail-cooldown-gate/unjail-cooldown-gate-summary.json`（`pass=True`）。

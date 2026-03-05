@@ -88,6 +88,7 @@
 
 pub mod bft_engine;
 pub mod epoch;
+pub mod market_engine;
 pub mod protocol;
 pub mod quorum_cert;
 pub mod token_runtime;
@@ -95,10 +96,19 @@ pub mod types;
 
 pub use bft_engine::{BFTConfig, BFTEngine, CommitQcTimings, CommittedEpoch};
 pub use epoch::{Epoch, EpochConfig, EpochManager};
+pub use market_engine::{Web30MarketEngine, Web30MarketEngineSnapshot};
 pub use protocol::{HotStuffProtocol, Phase, ProtocolState};
 pub use quorum_cert::{QuorumCertificate, Vote};
 pub use types::{
-    BFTError, BFTProposal, BFTResult, FeeRoutingOutcome, FeeSplit, GovernanceAccessPolicy,
-    GovernanceOp, GovernanceProposal, GovernanceVote, Hash, Height, NetworkDosPolicy, NodeId,
-    SlashEvidence, SlashExecution, SlashMode, SlashPolicy, TokenEconomicsPolicy, ValidatorSet,
+    AmmGovernanceParams, BFTError, BFTProposal, BFTResult, BondGovernanceParams,
+    BuybackGovernanceParams, CdpGovernanceParams, FeeRoutingOutcome, FeeSplit,
+    GovernanceAccessPolicy, GovernanceCouncilMember, GovernanceCouncilPolicy,
+    GovernanceCouncilSeat, GovernanceOp, GovernanceProposal, GovernanceProposalClass,
+    GovernanceVote, Hash, Height, MarketGovernancePolicy, NavGovernanceParams, NetworkDosPolicy,
+    NodeId, ReserveGovernanceParams, SlashEvidence, SlashExecution, SlashMode, SlashPolicy,
+    TokenEconomicsPolicy, ValidatorSet,
 };
+
+// Compatibility aliases: keep old naming to avoid gate/scripts breakage during transition.
+pub type Web30MarketRuntime = Web30MarketEngine;
+pub type Web30MarketRuntimeSnapshot = Web30MarketEngineSnapshot;

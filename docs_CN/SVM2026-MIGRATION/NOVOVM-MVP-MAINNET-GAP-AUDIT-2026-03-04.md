@@ -113,6 +113,14 @@
   - `status=ReadyForMerge/SnapshotGreen`
   - `governance_access_policy_pass=True`，`governance_token_economics_pass=True`，`governance_treasury_spend_pass=True`
   - `adapter_stability` 已加入定向单次重试稳态修复（registry negative hash-mismatch 抖动场景）
+- GA 正式快照（2026-03-06）：
+  - `artifacts/migration/release-snapshot-ga-2026-03-06-051653/release-snapshot.json`
+  - `profile_name=full_snapshot_ga_v1`，`overall_pass=True`
+  - `governance_market_policy_engine_pass=True`，`governance_market_policy_treasury_pass=True`
+- GA 正式 RC（2026-03-06）：
+  - `artifacts/migration/release-candidate-novovm-rc-2026-03-06-ga-v1/rc-candidate.json`
+  - `status=ReadyForMerge/SnapshotGreen`
+  - `commit_hash=823a5880e104c96d03e2ab4a8473c9f620ae6413`
 
 ---
 

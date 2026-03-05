@@ -24,6 +24,9 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+if (-not (Get-Variable -Name IsWindows -ErrorAction SilentlyContinue)) {
+    $IsWindows = ($env:OS -eq "Windows_NT")
+}
 
 if (-not $RepoRoot) {
     $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path

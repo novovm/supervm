@@ -4,11 +4,13 @@
 // Propose → Vote → PreCommit → Commit
 
 use crate::epoch::Epoch;
+use crate::market_engine::{Web30MarketEngine, Web30MarketEngineSnapshot};
 use crate::quorum_cert::{QuorumCertificate, Vote};
 use crate::token_runtime::Web30TokenRuntime;
 use crate::types::{
-    BFTError, BFTProposal, BFTResult, FeeRoutingOutcome, GovernanceAccessPolicy, GovernanceOp,
-    GovernanceProposal, GovernanceVote, Hash, Height, NetworkDosPolicy, NodeId, SlashEvidence,
+    BFTError, BFTProposal, BFTResult, FeeRoutingOutcome, GovernanceAccessPolicy,
+    GovernanceCouncilPolicy, GovernanceOp, GovernanceProposal, GovernanceProposalClass,
+    GovernanceVote, Hash, Height, MarketGovernancePolicy, NetworkDosPolicy, NodeId, SlashEvidence,
     SlashExecution, SlashMode, SlashPolicy, TokenEconomicsPolicy, ValidatorSet,
 };
 use ed25519_dalek::{SigningKey, VerifyingKey};
@@ -133,6 +135,8 @@ pub struct HotStuffProtocol {
 
     /// 治理访问控制（委员会阈值 + 时间锁）。
     governance_access_policy: GovernanceAccessPolicy,
+    /// 治理投票规则（SVM2026 九席位权重规则，可选启用）。
+    governance_council_policy: GovernanceCouncilPolicy,
 
     /// 治理提案池（最小实现：内存态）。
     governance_proposals: HashMap<u64, GovernanceProposal>,
@@ -148,8 +152,12 @@ pub struct HotStuffProtocol {
 
     /// 治理参数（第四类参数扩展起点）：token economics policy。
     governance_token_economics_policy: TokenEconomicsPolicy,
+    /// 治理参数（第五类参数扩展）：AMM/CDP/Bond/Reserve/NAV/Buyback。
+    governance_market_policy: MarketGovernancePolicy,
     /// 基于 SVM2026 `web30-core` 的 token/economics 运行时。
     token_runtime: Web30TokenRuntime,
+    /// 基于 SVM2026 `web30-core` 的 market engine（AMM/CDP/Bond/NAV）。
+    market_engine: Web30MarketEngine,
 }
 
 impl HotStuffProtocol {
@@ -162,9 +170,12 @@ impl HotStuffProtocol {
         let initial_leader = validator_set.validators[0];
         let governance_access_policy =
             GovernanceAccessPolicy::for_validators(&validator_set.validators)?;
+        let governance_council_policy = GovernanceCouncilPolicy::disabled();
 
         let governance_token_economics_policy = TokenEconomicsPolicy::default();
+        let governance_market_policy = MarketGovernancePolicy::default();
         let token_runtime = Web30TokenRuntime::from_policy(&governance_token_economics_policy)?;
+        let market_engine = Web30MarketEngine::from_policy(&governance_market_policy)?;
         Ok(Self {
             validator_set,
             self_id,
@@ -178,12 +189,15 @@ impl HotStuffProtocol {
             governance_staged_ops: Vec::new(),
             governance_execution_enabled: false,
             governance_access_policy,
+            governance_council_policy,
             governance_proposals: HashMap::new(),
             next_governance_proposal_id: 1,
             governance_mempool_fee_floor: 1,
             governance_network_dos_policy: NetworkDosPolicy::default(),
             governance_token_economics_policy,
+            governance_market_policy,
             token_runtime,
+            market_engine,
         })
     }
 
@@ -200,8 +214,14 @@ impl HotStuffProtocol {
             }
             GovernanceOp::UpdateNetworkDosPolicy { policy } => policy.validate(),
             GovernanceOp::UpdateTokenEconomicsPolicy { policy } => policy.validate(),
+            GovernanceOp::UpdateMarketGovernancePolicy { policy } => policy.validate(),
             GovernanceOp::UpdateGovernanceAccessPolicy { policy } => policy.validate(),
-            GovernanceOp::TreasurySpend { to: _, amount, reason } => {
+            GovernanceOp::UpdateGovernanceCouncilPolicy { policy } => policy.validate(),
+            GovernanceOp::TreasurySpend {
+                to: _,
+                amount,
+                reason,
+            } => {
                 if *amount == 0 {
                     return Err(BFTError::InvalidProposal(
                         "treasury spend amount must be > 0".to_string(),
@@ -715,6 +735,32 @@ impl HotStuffProtocol {
         self.governance_token_economics_policy.clone()
     }
 
+    /// 更新完整经济治理参数（AMM/CDP/Bond/Reserve/NAV/Buyback）。
+    pub fn set_market_governance_policy(
+        &mut self,
+        policy: MarketGovernancePolicy,
+    ) -> BFTResult<()> {
+        policy.validate()?;
+        self.market_engine.reconfigure(&policy)?;
+        self.governance_market_policy = policy;
+        Ok(())
+    }
+
+    /// 读取完整经济治理参数快照。
+    pub fn governance_market_policy(&self) -> MarketGovernancePolicy {
+        self.governance_market_policy.clone()
+    }
+
+    /// 读取 market runtime 生效快照（用于门禁/审计）。
+    pub fn governance_market_engine_snapshot(&self) -> Web30MarketEngineSnapshot {
+        self.market_engine.snapshot()
+    }
+
+    /// Compatibility shim: kept for existing gate/scripts and will be removed after profile update.
+    pub fn governance_market_runtime_snapshot(&self) -> Web30MarketEngineSnapshot {
+        self.governance_market_engine_snapshot()
+    }
+
     /// mint：amount>0、不超过 locked_supply 剩余额度、且不突破 max_supply。
     pub fn mint_tokens(&mut self, account: NodeId, amount: u64) -> BFTResult<()> {
         self.token_runtime.mint(account, amount)
@@ -808,7 +854,10 @@ impl HotStuffProtocol {
     }
 
     /// 更新治理访问策略（委员会阈值 + 时间锁）。
-    pub fn set_governance_access_policy(&mut self, policy: GovernanceAccessPolicy) -> BFTResult<()> {
+    pub fn set_governance_access_policy(
+        &mut self,
+        policy: GovernanceAccessPolicy,
+    ) -> BFTResult<()> {
         policy.validate()?;
         self.governance_access_policy = policy;
         Ok(())
@@ -817,6 +866,22 @@ impl HotStuffProtocol {
     /// 读取治理访问策略快照。
     pub fn governance_access_policy(&self) -> GovernanceAccessPolicy {
         self.governance_access_policy.clone()
+    }
+
+    /// 更新治理九席位规则。
+    pub fn set_governance_council_policy(
+        &mut self,
+        policy: GovernanceCouncilPolicy,
+    ) -> BFTResult<()> {
+        policy.validate()?;
+        self.validate_council_policy_members(&policy)?;
+        self.governance_council_policy = policy;
+        Ok(())
+    }
+
+    /// 读取治理九席位规则快照。
+    pub fn governance_council_policy(&self) -> GovernanceCouncilPolicy {
+        self.governance_council_policy.clone()
     }
 
     fn validate_committee_approvals(
@@ -862,6 +927,29 @@ impl HotStuffProtocol {
         Ok(())
     }
 
+    fn validate_council_member(&self, node_id: NodeId) -> BFTResult<()> {
+        let member_map = self.governance_council_policy.member_weight_map();
+        if !member_map.contains_key(&node_id) {
+            return Err(BFTError::InvalidProposal(format!(
+                "governance council voter {} is not a council member",
+                node_id
+            )));
+        }
+        Ok(())
+    }
+
+    fn validate_council_policy_members(&self, policy: &GovernanceCouncilPolicy) -> BFTResult<()> {
+        if !policy.enabled {
+            return Ok(());
+        }
+        for member in &policy.members {
+            if !self.validator_set.is_validator(member.node_id) {
+                return Err(BFTError::NotValidator(member.node_id));
+            }
+        }
+        Ok(())
+    }
+
     /// 提交治理提案（最小闭环：仅支持 UpdateSlashPolicy）。
     pub fn submit_governance_proposal(
         &mut self,
@@ -896,6 +984,9 @@ impl HotStuffProtocol {
                 "governance proposer {} is not in proposer_approvals",
                 proposer
             )));
+        }
+        if self.governance_council_policy.enabled {
+            self.validate_council_member(proposer)?;
         }
 
         Self::validate_governance_op(&op)?;
@@ -963,9 +1054,16 @@ impl HotStuffProtocol {
             )));
         }
         let proposal_digest = proposal.digest();
+        let council_member_map = if self.governance_council_policy.enabled {
+            Some(self.governance_council_policy.member_weight_map())
+        } else {
+            None
+        };
 
         let mut seen = HashSet::with_capacity(votes.len());
         let mut support_weight = 0u64;
+        let mut council_support_bp = 0u16;
+        let mut council_categories = HashSet::new();
         for vote in votes {
             if vote.proposal_id != proposal_id {
                 return Err(BFTError::InvalidProposal(format!(
@@ -994,6 +1092,14 @@ impl HotStuffProtocol {
                     Err(BFTError::NotValidator(vote.voter_id))
                 };
             }
+            if let Some(member_map) = council_member_map.as_ref() {
+                if !member_map.contains_key(&vote.voter_id) {
+                    return Err(BFTError::InvalidProposal(format!(
+                        "governance council vote from non-member node {}",
+                        vote.voter_id
+                    )));
+                }
+            }
             let key = public_keys
                 .get(&vote.voter_id)
                 .ok_or(BFTError::NotValidator(vote.voter_id))?;
@@ -1004,15 +1110,53 @@ impl HotStuffProtocol {
                     .ok_or_else(|| {
                         BFTError::Internal("governance support weight overflow".to_string())
                     })?;
+                if let Some(member_map) = council_member_map.as_ref() {
+                    let (seat_weight_bp, category) =
+                        member_map.get(&vote.voter_id).copied().ok_or_else(|| {
+                            BFTError::InvalidProposal(format!(
+                                "governance council vote from non-member node {}",
+                                vote.voter_id
+                            ))
+                        })?;
+                    council_support_bp = council_support_bp
+                        .checked_add(seat_weight_bp)
+                        .ok_or_else(|| {
+                            BFTError::Internal(
+                                "governance council support basis points overflow".to_string(),
+                            )
+                        })?;
+                    council_categories.insert(category);
+                }
             }
         }
 
-        let quorum = self.effective_quorum_size();
-        if support_weight < quorum {
-            return Err(BFTError::InsufficientVotes {
-                required: quorum as usize,
-                received: support_weight as usize,
-            });
+        if self.governance_council_policy.enabled {
+            let proposal_class = proposal.op.proposal_class();
+            let threshold_bp = self.governance_council_policy.threshold_for(proposal_class);
+            if council_support_bp <= threshold_bp {
+                return Err(BFTError::InsufficientVotes {
+                    required: (threshold_bp as usize).saturating_add(1),
+                    received: council_support_bp as usize,
+                });
+            }
+            if proposal_class == GovernanceProposalClass::EmergencyFreeze
+                && council_categories.len()
+                    < self.governance_council_policy.emergency_min_categories as usize
+            {
+                return Err(BFTError::InvalidProposal(format!(
+                    "governance emergency diversity not satisfied: required_categories={} got={}",
+                    self.governance_council_policy.emergency_min_categories,
+                    council_categories.len()
+                )));
+            }
+        } else {
+            let quorum = self.effective_quorum_size();
+            if support_weight < quorum {
+                return Err(BFTError::InsufficientVotes {
+                    required: quorum as usize,
+                    received: support_weight as usize,
+                });
+            }
         }
 
         match proposal.op.clone() {
@@ -1026,8 +1170,14 @@ impl HotStuffProtocol {
             GovernanceOp::UpdateTokenEconomicsPolicy { policy } => {
                 self.set_token_economics_policy(policy)?;
             }
+            GovernanceOp::UpdateMarketGovernancePolicy { policy } => {
+                self.set_market_governance_policy(policy)?;
+            }
             GovernanceOp::UpdateGovernanceAccessPolicy { policy } => {
                 self.set_governance_access_policy(policy)?;
+            }
+            GovernanceOp::UpdateGovernanceCouncilPolicy { policy } => {
+                self.set_governance_council_policy(policy)?;
             }
             GovernanceOp::TreasurySpend { to, amount, reason } => {
                 self.spend_treasury_tokens(to, amount, &reason)?;
@@ -1071,6 +1221,7 @@ impl HotStuffProtocol {
 mod tests {
     use super::*;
     use crate::epoch::Epoch;
+    use crate::types::{GovernanceCouncilMember, GovernanceCouncilSeat};
     use ed25519_dalek::VerifyingKey;
     use rand::rngs::OsRng;
     use std::collections::HashMap;
@@ -1676,6 +1827,69 @@ mod tests {
     }
 
     #[test]
+    fn test_governance_execute_update_market_governance_policy() {
+        let validator_set = ValidatorSet::new_equal_weight(vec![0, 1, 2]);
+        let (signing_keys, public_keys) = generate_keys(3);
+        let mut protocol = HotStuffProtocol::new(validator_set, 0).unwrap();
+        protocol.set_governance_execution_enabled(true);
+        let target = MarketGovernancePolicy {
+            amm: crate::types::AmmGovernanceParams {
+                swap_fee_bp: 45,
+                lp_fee_share_bp: 8_200,
+            },
+            cdp: crate::types::CdpGovernanceParams {
+                min_collateral_ratio_bp: 16_000,
+                liquidation_threshold_bp: 13_000,
+                liquidation_penalty_bp: 1_200,
+                stability_fee_bp: 250,
+                max_leverage_x100: 350,
+            },
+            bond: crate::types::BondGovernanceParams {
+                coupon_rate_bp: 650,
+                max_maturity_days: 540,
+                min_issue_price_bp: 10_600,
+            },
+            reserve: crate::types::ReserveGovernanceParams {
+                min_reserve_ratio_bp: 5_200,
+                redemption_fee_bp: 80,
+            },
+            nav: crate::types::NavGovernanceParams {
+                settlement_delay_epochs: 5,
+                max_daily_redemption_bp: 1_200,
+            },
+            buyback: crate::types::BuybackGovernanceParams {
+                trigger_discount_bp: 600,
+                max_treasury_budget_per_epoch: 250_000,
+                burn_share_bp: 6_000,
+            },
+        };
+        let proposal = protocol
+            .submit_governance_proposal(
+                0,
+                GovernanceOp::UpdateMarketGovernancePolicy {
+                    policy: target.clone(),
+                },
+            )
+            .unwrap();
+        let votes = vec![
+            GovernanceVote::new(&proposal, 0, true, &signing_keys[0]),
+            GovernanceVote::new(&proposal, 1, true, &signing_keys[1]),
+        ];
+        let executed = protocol
+            .execute_governance_proposal(proposal.proposal_id, &votes, &public_keys)
+            .unwrap();
+        assert!(executed);
+        assert_eq!(protocol.governance_market_policy(), target);
+        let snap = protocol.governance_market_engine_snapshot();
+        assert_eq!(snap.amm_swap_fee_bp, 45);
+        assert_eq!(snap.cdp_min_collateral_ratio_bp, 16_000);
+        assert_eq!(snap.bond_one_year_coupon_bp, 650);
+        assert_eq!(snap.reserve_min_reserve_ratio_bp, 5_200);
+        assert_eq!(snap.nav_settlement_delay_epochs, 5);
+        assert_eq!(snap.buyback_trigger_discount_bp, 600);
+    }
+
+    #[test]
     fn test_governance_execute_treasury_spend() {
         let validator_set = ValidatorSet::new_equal_weight(vec![0, 1, 2]);
         let (signing_keys, public_keys) = generate_keys(3);
@@ -1735,11 +1949,9 @@ mod tests {
             GovernanceVote::new(&overspend, 0, true, &signing_keys[0]),
             GovernanceVote::new(&overspend, 1, true, &signing_keys[1]),
         ];
-        assert!(
-            protocol
-                .execute_governance_proposal(overspend.proposal_id, &overspend_votes, &public_keys)
-                .is_err()
-        );
+        assert!(protocol
+            .execute_governance_proposal(overspend.proposal_id, &overspend_votes, &public_keys)
+            .is_err());
     }
 
     #[test]
@@ -1986,5 +2198,151 @@ mod tests {
             .unwrap();
         assert!(execute_ok);
         assert_eq!(protocol.governance_mempool_fee_floor(), 9);
+    }
+
+    #[test]
+    fn test_governance_council_weighted_thresholds() {
+        let validator_set = ValidatorSet::new_equal_weight((0..9).collect());
+        let (signing_keys, public_keys) = generate_keys(9);
+        let mut protocol = HotStuffProtocol::new(validator_set, 0).unwrap();
+        protocol.set_governance_execution_enabled(true);
+        protocol
+            .set_governance_access_policy(GovernanceAccessPolicy {
+                proposer_committee: (0..9).collect(),
+                proposer_threshold: 1,
+                executor_committee: (0..9).collect(),
+                executor_threshold: 1,
+                timelock_epochs: 0,
+            })
+            .unwrap();
+        protocol
+            .set_governance_council_policy(GovernanceCouncilPolicy {
+                enabled: true,
+                members: vec![
+                    GovernanceCouncilMember {
+                        seat: GovernanceCouncilSeat::Founder,
+                        node_id: 0,
+                    },
+                    GovernanceCouncilMember {
+                        seat: GovernanceCouncilSeat::TopHolder(0),
+                        node_id: 1,
+                    },
+                    GovernanceCouncilMember {
+                        seat: GovernanceCouncilSeat::TopHolder(1),
+                        node_id: 2,
+                    },
+                    GovernanceCouncilMember {
+                        seat: GovernanceCouncilSeat::TopHolder(2),
+                        node_id: 3,
+                    },
+                    GovernanceCouncilMember {
+                        seat: GovernanceCouncilSeat::TopHolder(3),
+                        node_id: 4,
+                    },
+                    GovernanceCouncilMember {
+                        seat: GovernanceCouncilSeat::TopHolder(4),
+                        node_id: 5,
+                    },
+                    GovernanceCouncilMember {
+                        seat: GovernanceCouncilSeat::Team(0),
+                        node_id: 6,
+                    },
+                    GovernanceCouncilMember {
+                        seat: GovernanceCouncilSeat::Team(1),
+                        node_id: 7,
+                    },
+                    GovernanceCouncilMember {
+                        seat: GovernanceCouncilSeat::Independent,
+                        node_id: 8,
+                    },
+                ],
+                parameter_change_threshold_bp: 5000,
+                treasury_spend_threshold_bp: 6600,
+                protocol_upgrade_threshold_bp: 7500,
+                emergency_freeze_threshold_bp: 5000,
+                emergency_min_categories: 3,
+            })
+            .unwrap();
+
+        // parameter_change threshold: >5000
+        let parameter_proposal = protocol
+            .submit_governance_proposal(0, GovernanceOp::UpdateMempoolFeeFloor { fee_floor: 17 })
+            .unwrap();
+        let parameter_low_votes = vec![
+            GovernanceVote::new(&parameter_proposal, 0, true, &signing_keys[0]), // 3500
+            GovernanceVote::new(&parameter_proposal, 1, true, &signing_keys[1]), // +1000 => 4500
+        ];
+        let parameter_low = protocol.execute_governance_proposal(
+            parameter_proposal.proposal_id,
+            &parameter_low_votes,
+            &public_keys,
+        );
+        assert!(matches!(
+            parameter_low,
+            Err(BFTError::InsufficientVotes { .. })
+        ));
+        let parameter_ok_votes = vec![
+            GovernanceVote::new(&parameter_proposal, 0, true, &signing_keys[0]), // 3500
+            GovernanceVote::new(&parameter_proposal, 1, true, &signing_keys[1]), // +1000
+            GovernanceVote::new(&parameter_proposal, 2, true, &signing_keys[2]), // +1000 => 5500
+        ];
+        let parameter_ok = protocol
+            .execute_governance_proposal(
+                parameter_proposal.proposal_id,
+                &parameter_ok_votes,
+                &public_keys,
+            )
+            .unwrap();
+        assert!(parameter_ok);
+        assert_eq!(protocol.governance_mempool_fee_floor(), 17);
+
+        // protocol_upgrade threshold: >7500
+        let target_access = GovernanceAccessPolicy {
+            proposer_committee: vec![0, 1],
+            proposer_threshold: 2,
+            executor_committee: vec![0, 1, 2],
+            executor_threshold: 2,
+            timelock_epochs: 1,
+        };
+        let upgrade_proposal = protocol
+            .submit_governance_proposal(
+                0,
+                GovernanceOp::UpdateGovernanceAccessPolicy {
+                    policy: target_access.clone(),
+                },
+            )
+            .unwrap();
+        let upgrade_low_votes = vec![
+            GovernanceVote::new(&upgrade_proposal, 0, true, &signing_keys[0]), // 3500
+            GovernanceVote::new(&upgrade_proposal, 1, true, &signing_keys[1]), // +1000
+            GovernanceVote::new(&upgrade_proposal, 2, true, &signing_keys[2]), // +1000
+            GovernanceVote::new(&upgrade_proposal, 3, true, &signing_keys[3]), // +1000 => 6500
+        ];
+        let upgrade_low = protocol.execute_governance_proposal(
+            upgrade_proposal.proposal_id,
+            &upgrade_low_votes,
+            &public_keys,
+        );
+        assert!(matches!(
+            upgrade_low,
+            Err(BFTError::InsufficientVotes { .. })
+        ));
+        let upgrade_ok_votes = vec![
+            GovernanceVote::new(&upgrade_proposal, 0, true, &signing_keys[0]), // 3500
+            GovernanceVote::new(&upgrade_proposal, 1, true, &signing_keys[1]), // +1000
+            GovernanceVote::new(&upgrade_proposal, 2, true, &signing_keys[2]), // +1000
+            GovernanceVote::new(&upgrade_proposal, 3, true, &signing_keys[3]), // +1000
+            GovernanceVote::new(&upgrade_proposal, 4, true, &signing_keys[4]), // +1000
+            GovernanceVote::new(&upgrade_proposal, 5, true, &signing_keys[5]), // +1000 => 8500
+        ];
+        let upgrade_ok = protocol
+            .execute_governance_proposal(
+                upgrade_proposal.proposal_id,
+                &upgrade_ok_votes,
+                &public_keys,
+            )
+            .unwrap();
+        assert!(upgrade_ok);
+        assert_eq!(protocol.governance_access_policy(), target_access);
     }
 }

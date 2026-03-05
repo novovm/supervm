@@ -3,12 +3,14 @@
 // BFT 引擎：协调 Epoch 管理、HotStuff 协议、投票聚合
 
 use crate::epoch::{Epoch, EpochConfig, EpochManager};
+use crate::market_engine::Web30MarketEngineSnapshot;
 use crate::protocol::{HotStuffProtocol, Phase};
 use crate::quorum_cert::{QuorumCertificate, Vote};
 use crate::types::{
-    BFTError, BFTProposal, BFTResult, FeeRoutingOutcome, GovernanceAccessPolicy, GovernanceOp,
-    GovernanceProposal, GovernanceVote, NetworkDosPolicy, NodeId, SlashEvidence, SlashExecution,
-    SlashPolicy, TokenEconomicsPolicy, ValidatorSet,
+    BFTError, BFTProposal, BFTResult, FeeRoutingOutcome, GovernanceAccessPolicy,
+    GovernanceCouncilPolicy, GovernanceOp, GovernanceProposal, GovernanceVote,
+    MarketGovernancePolicy, NetworkDosPolicy, NodeId, SlashEvidence, SlashExecution, SlashPolicy,
+    TokenEconomicsPolicy, ValidatorSet,
 };
 use ed25519_dalek::{SigningKey, VerifyingKey};
 use serde::{Deserialize, Serialize};
@@ -482,6 +484,18 @@ impl BFTEngine {
         protocol.set_governance_access_policy(policy)
     }
 
+    /// 读取治理九席位规则。
+    pub fn governance_council_policy(&self) -> GovernanceCouncilPolicy {
+        let protocol = self.protocol.lock().unwrap();
+        protocol.governance_council_policy()
+    }
+
+    /// 更新治理九席位规则。
+    pub fn set_governance_council_policy(&self, policy: GovernanceCouncilPolicy) -> BFTResult<()> {
+        let mut protocol = self.protocol.lock().unwrap();
+        protocol.set_governance_council_policy(policy)
+    }
+
     /// 读取治理参数：mempool fee floor。
     pub fn governance_mempool_fee_floor(&self) -> u64 {
         let protocol = self.protocol.lock().unwrap();
@@ -500,10 +514,33 @@ impl BFTEngine {
         protocol.governance_token_economics_policy()
     }
 
+    /// 读取治理参数：market governance policy（AMM/CDP/Bond/Reserve/NAV/Buyback）。
+    pub fn governance_market_policy(&self) -> MarketGovernancePolicy {
+        let protocol = self.protocol.lock().unwrap();
+        protocol.governance_market_policy()
+    }
+
+    /// 读取 market runtime 生效快照（用于门禁/审计）。
+    pub fn governance_market_engine_snapshot(&self) -> Web30MarketEngineSnapshot {
+        let protocol = self.protocol.lock().unwrap();
+        protocol.governance_market_engine_snapshot()
+    }
+
+    /// Compatibility shim: kept for existing gate/scripts and will be removed after profile update.
+    pub fn governance_market_runtime_snapshot(&self) -> Web30MarketEngineSnapshot {
+        self.governance_market_engine_snapshot()
+    }
+
     /// 更新 token economics policy（运行期可由治理层下发）。
     pub fn set_token_economics_policy(&self, policy: TokenEconomicsPolicy) -> BFTResult<()> {
         let mut protocol = self.protocol.lock().unwrap();
         protocol.set_token_economics_policy(policy)
+    }
+
+    /// 更新 market governance policy（运行期可由治理层下发）。
+    pub fn set_market_governance_policy(&self, policy: MarketGovernancePolicy) -> BFTResult<()> {
+        let mut protocol = self.protocol.lock().unwrap();
+        protocol.set_market_governance_policy(policy)
     }
 
     /// Token mint（I-TOKEN 最小主链路）。

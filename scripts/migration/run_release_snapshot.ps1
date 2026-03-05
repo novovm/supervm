@@ -109,6 +109,8 @@ $enabledGates = [ordered]@{
     governance_execution = [bool]$acceptance.governance_execution_gate_enabled
     governance_param2 = [bool]$acceptance.governance_param2_gate_enabled
     governance_param3 = [bool]$acceptance.governance_param3_gate_enabled
+    governance_market_policy = [bool]$acceptance.governance_market_policy_gate_enabled
+    governance_council_policy = [bool]$acceptance.governance_council_policy_gate_enabled
     governance_negative = [bool]$acceptance.governance_negative_gate_enabled
     governance_access_policy = [bool]$acceptance.governance_access_policy_gate_enabled
     governance_token_economics = [bool]$acceptance.governance_token_economics_gate_enabled
@@ -124,6 +126,10 @@ $governancePass = [bool](
     $acceptance.governance_execution_pass -and
     $acceptance.governance_param2_pass -and
     $acceptance.governance_param3_pass -and
+    $acceptance.governance_market_policy_pass -and
+    $acceptance.governance_market_policy_engine_pass -and
+    $acceptance.governance_market_policy_treasury_pass -and
+    $acceptance.governance_council_policy_pass -and
     $acceptance.governance_negative_pass -and
     $acceptance.governance_access_policy_pass -and
     $acceptance.governance_token_economics_pass -and
@@ -154,6 +160,10 @@ $keyResults = [ordered]@{
     functional_pass = [bool]$acceptance.functional_pass
     performance_pass = [bool]$acceptance.performance_pass
     governance_rpc_duplicate_reject = [bool]$governanceRpc.duplicate_reject_ok
+    governance_market_policy_pass = [bool]$acceptance.governance_market_policy_pass
+    governance_market_policy_engine_pass = [bool]$acceptance.governance_market_policy_engine_pass
+    governance_market_policy_treasury_pass = [bool]$acceptance.governance_market_policy_treasury_pass
+    governance_council_policy_pass = [bool]$acceptance.governance_council_policy_pass
     governance_access_policy_pass = [bool]$acceptance.governance_access_policy_pass
     governance_token_economics_pass = [bool]$acceptance.governance_token_economics_pass
     governance_treasury_spend_pass = [bool]$acceptance.governance_treasury_spend_pass
@@ -177,6 +187,8 @@ $snapshot = [ordered]@{
         functional_summary_json = $functionalSummaryJson
         performance_summary_json = $performanceSummaryJson
         governance_rpc_summary_json = $governanceRpcSummaryJson
+        governance_market_policy_summary_json = [string]$acceptance.governance_market_policy_report_json
+        governance_council_policy_summary_json = [string]$acceptance.governance_council_policy_report_json
         governance_access_policy_summary_json = [string]$acceptance.governance_access_policy_report_json
         governance_treasury_spend_summary_json = [string]$acceptance.governance_treasury_spend_report_json
         rpc_exposure_summary_json = if ([bool]$acceptance.rpc_exposure_gate_enabled) { $rpcExposureSummaryJson } else { "" }
@@ -209,6 +221,8 @@ $md = @(
     "- functional_summary_json: $($snapshot.evidence.functional_summary_json)",
     "- performance_summary_json: $($snapshot.evidence.performance_summary_json)",
     "- governance_rpc_summary_json: $($snapshot.evidence.governance_rpc_summary_json)",
+    "- governance_market_policy_summary_json: $($snapshot.evidence.governance_market_policy_summary_json)",
+    "- governance_council_policy_summary_json: $($snapshot.evidence.governance_council_policy_summary_json)",
     "- governance_access_policy_summary_json: $($snapshot.evidence.governance_access_policy_summary_json)",
     "- governance_treasury_spend_summary_json: $($snapshot.evidence.governance_treasury_spend_summary_json)",
     "- rpc_exposure_summary_json: $($snapshot.evidence.rpc_exposure_summary_json)",
