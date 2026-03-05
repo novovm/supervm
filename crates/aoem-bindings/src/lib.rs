@@ -208,7 +208,8 @@ impl AoemDyn {
                     .unwrap_or(false)
             })
             .collect();
-        let lib_path_norm = normalize_path_for_match(self.library_path().to_string_lossy().as_ref());
+        let lib_path_norm =
+            normalize_path_for_match(self.library_path().to_string_lossy().as_ref());
         let entry = variant_entries
             .iter()
             .copied()
