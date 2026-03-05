@@ -104,26 +104,21 @@ impl QuorumCertificate {
         if cfg!(test) {
             eprintln!("[QC] verify: begin height={} votes={} total_weight={}", self.height, self.votes.len(), self.total_weight);
         }
+        // 验证投票集合并重新计算权重（不信任声明的 total_weight）。
+        let observed_weight = self.validate_votes_and_weight(validator_set)?;
+
         // 检查是否达到法定人数
         let quorum_size = validator_set.quorum_size();
-        if self.total_weight < quorum_size {
+        if observed_weight < quorum_size {
             return Err(BFTError::InsufficientVotes {
                 required: quorum_size as usize,
-                received: self.total_weight as usize,
+                received: observed_weight as usize,
             });
         }
         if cfg!(test) {
             eprintln!("[QC] verify: quorum ok (required={})", quorum_size);
         }
-        
-        // 检查重复投票
-        let mut voter_ids = std::collections::HashSet::new();
-        for vote in &self.votes {
-            if !voter_ids.insert(vote.voter_id) {
-                return Err(BFTError::DuplicateVote(vote.voter_id));
-            }
-        }
-        
+
         // 批量验证签名（使用 Ed25519 batch verify）
         self.batch_verify_signatures(validator_set, public_keys)?;
         if cfg!(test) {
@@ -131,6 +126,35 @@ impl QuorumCertificate {
         }
         
         Ok(())
+    }
+
+    fn validate_votes_and_weight(&self, validator_set: &ValidatorSet) -> BFTResult<u64> {
+        let mut voter_ids = std::collections::HashSet::new();
+        let mut observed_weight = 0u64;
+
+        for vote in &self.votes {
+            if !validator_set.is_validator(vote.voter_id) {
+                return Err(BFTError::NotValidator(vote.voter_id));
+            }
+            if !voter_ids.insert(vote.voter_id) {
+                return Err(BFTError::DuplicateVote(vote.voter_id));
+            }
+            let weight = validator_set
+                .weight_of(vote.voter_id)
+                .ok_or(BFTError::NotValidator(vote.voter_id))?;
+            observed_weight = observed_weight
+                .checked_add(weight)
+                .ok_or_else(|| BFTError::Internal("qc observed weight overflow".to_string()))?;
+        }
+
+        if observed_weight != self.total_weight {
+            return Err(BFTError::InvalidProposal(format!(
+                "QC total_weight mismatch: declared={} observed={}",
+                self.total_weight, observed_weight
+            )));
+        }
+
+        Ok(observed_weight)
     }
     
     /// 批量验证签名（Phase 4.1 PoC：3.48x-3.90x 加速）
@@ -295,6 +319,47 @@ mod tests {
         } else {
             panic!("Expected DuplicateVote error");
         }
+    }
+
+    #[test]
+    fn test_qc_rejects_total_weight_tamper() {
+        let validator_set = ValidatorSet::new_equal_weight(vec![0, 1, 2, 3]);
+        let signing_keys: Vec<_> = (0..4)
+            .map(|_| SigningKey::generate(&mut OsRng))
+            .collect();
+        let public_keys: HashMap<NodeId, VerifyingKey> = signing_keys
+            .iter()
+            .enumerate()
+            .map(|(i, sk)| (i as NodeId, sk.verifying_key()))
+            .collect();
+
+        let mut qc = QuorumCertificate::new([7u8; 32], 22);
+        for (i, signing_key) in signing_keys.iter().enumerate().take(3) {
+            let vote = Vote::new(i as NodeId, [7u8; 32], 22, signing_key);
+            qc.add_vote(vote, 1);
+        }
+        qc.total_weight = 99; // tamper declared weight
+        let result = qc.verify(&validator_set, &public_keys);
+        assert!(matches!(result, Err(BFTError::InvalidProposal(_))));
+    }
+
+    #[test]
+    fn test_qc_weighted_quorum_passes() {
+        let validator_set = ValidatorSet::new_weighted(vec![(0, 5), (1, 3), (2, 2)]).unwrap();
+        let signing_keys: Vec<_> = (0..3)
+            .map(|_| SigningKey::generate(&mut OsRng))
+            .collect();
+        let public_keys: HashMap<NodeId, VerifyingKey> = signing_keys
+            .iter()
+            .enumerate()
+            .map(|(i, sk)| (i as NodeId, sk.verifying_key()))
+            .collect();
+
+        let mut qc = QuorumCertificate::new([8u8; 32], 33);
+        qc.add_vote(Vote::new(0, [8u8; 32], 33, &signing_keys[0]), 5);
+        qc.add_vote(Vote::new(2, [8u8; 32], 33, &signing_keys[2]), 2);
+        assert_eq!(qc.total_weight, 7);
+        assert!(qc.verify(&validator_set, &public_keys).is_ok()); // quorum=7
     }
 }
 

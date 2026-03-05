@@ -1,4 +1,4 @@
-# NOVOVM 能力迁移执行台账（2026-03-03）
+# NOVOVM 能力迁移执行台账（2026-03-04）
 
 ## 状态约定
 
@@ -12,56 +12,127 @@
 
 | ID | 能力名称 | 来源模块 | 目标模块 | 状态 | 本轮进展 | 下步动作 | 最近更新 |
 |---|---|---|---|---|---|---|---|
-| F-05 | 共识引擎（核验约80%） | `supervm-consensus` | `novovm-consensus` | InProgress | 已完成 `novovm-node` 的 Batch A 闭环接线并升级为真实交易前置链路（`accounts=2`、`fee=1~5`、`demo_txs=8`、`target_batches=2`）：tx ingress -> `tx_codec` -> `mempool_out` -> tx metadata verify -> ops_v2 -> batch partition -> proposal/vote/qc/commit -> block_wire -> block_out -> commit_out；并将本地 tx wire codec 下沉到 `novovm-protocol::tx_wire`（`novovm_local_tx_wire_v1`）、block header wire 下沉到 `novovm-protocol::block_wire`（`novovm_block_header_wire_v1`）；一致性报告已覆盖 `tx_codec_signal` / `mempool_admission_signal` / `tx_metadata_signal` / `batch_a_input_profile` / `batch_a_closure` / `block_wire_signal` / `block_output_signal` / `commit_output_signal`（当前均通过） | 在 AOEM FFI 暴露 `state_root` 后切换为硬一致性门禁，并继续协议化 block/batch wire | 2026-03-03 |
-| F-07 | 网络层（核心完成，生产待收口） | `supervm-network` + `l4-network` | `novovm-network` + `novovm-protocol` | ReadyForMerge | 已在 `novovm-network` 落地 `UdpTransport`，`novovm-node` 探针改为调用网络层；`run_network_two_process.ps1` 已升级为可配置 N 节点 mesh + 多轮探针，当前 `NodeCount=3`、`Rounds=2`、`pairs=6/6`、`directed=12/12` 通过并回填 `network_process_signal`；并新增跨进程 `network_block_wire` 校验（`sync payload`= `novovm_block_header_wire_v1`，接收端执行 `consensus binding` 校验），当前 `block_wire=12/12` 通过；新增 `TamperBlockWireMode` 负例（`hash_mismatch/class_mismatch/codec_corrupt`）并接入 `network_block_wire_negative_signal` 门禁，当前负例口径 `verified=0/2`（预期失败）；同时新增 `udp_transport_mesh_three_nodes_closure` 回归样本 | 进入生产硬化收口：长压、异常恢复、真实同步与观测告警 | 2026-03-03 |
-| F-08 | Chain Adapter 接口 | `supervm-chainlinker-api` | `novovm-adapter-api` + `novovm-adapter-novovm` + `novovm-adapter-sample-plugin` | InProgress | 已完成双后端接线：API 层仅保留 IR + Trait；原生后端 `novovm-adapter-novovm`（`create_native_adapter`）作为默认路径；插件后端 `novovm-adapter-sample-plugin` 通过 C ABI 动态加载；`novovm-node` 支持 `NOVOVM_ADAPTER_BACKEND=auto|native|plugin`、`NOVOVM_ADAPTER_CHAIN`、`NOVOVM_ADAPTER_PLUGIN_PATH`，新增 ABI 门禁 `NOVOVM_ADAPTER_PLUGIN_EXPECT_ABI` / `NOVOVM_ADAPTER_PLUGIN_REQUIRE_CAPS` 与注册表门禁 `NOVOVM_ADAPTER_PLUGIN_REGISTRY_PATH` / `NOVOVM_ADAPTER_PLUGIN_REGISTRY_STRICT` / `NOVOVM_ADAPTER_PLUGIN_REGISTRY_SHA256`（配合 `allowed_abi_versions`）；新增共识绑定 `adapter_consensus`（`plugin_class=consensus` + `consensus_adapter_hash`），并把 `consensus_adapter_hash` 写入 block header，提交阶段执行强校验（不匹配拒块）；功能一致性已覆盖 `adapter_signal`（backend）+ `adapter_plugin_abi_signal`（ABI/caps）+ `adapter_plugin_registry_signal`（strict/hash/abi whitelist）+ `adapter_consensus_binding_signal`（class/hash）+ `adapter_backend_compare_signal`（native/plugin 同输入对照）+ `adapter_plugin_abi_negative_signal`（ABI/caps mismatch 负例必须失败）+ `adapter_plugin_symbol_negative_signal`（坏插件/缺符号负例必须失败）+ `adapter_plugin_registry_negative_signal`（hash/whitelist mismatch 负例必须失败） | 增加插件注册表与版本兼容矩阵，并补齐非 `novovm/custom` 适配实现样本 | 2026-03-03 |
-| F-15 | AOEM ZK 能力契约 | `optional/zkvm-executor` | `novovm-prover` + `novovm-exec` | InProgress | `zkvm_prove/zkvm_verify` 已接入能力快照与自动台账回填，当前探测值 `false/false` | 与 AOEM 侧对齐正式 ZK 开关字段与 fallback 原因码 | 2026-03-03 |
-| F-16 | AOEM MSM 加速契约 | `aoem-engine` + `aoem-ffi` | `novovm-prover` + `novovm-exec` | ReadyForMerge | MSM 能力字段已接入能力快照、性能报告与自动台账（当前 `msm_accel=true`） | 与 AOEM FFI 对齐 `msm_backend/fallback_reason_codes` 正式字段 | 2026-03-03 |
+| F-05 | 共识引擎（核验约80%） | `supervm-consensus` | `novovm-consensus` | ReadyForMerge | Batch A 最小闭环持续通过：`tx_codec_signal` / `mempool_admission_signal` / `tx_metadata_signal` / `batch_a_closure` / `block_wire_signal` / `block_output_signal` / `commit_output_signal`；`state_root` 硬一致性门禁（`state_root.available=True`）与 `consensus_negative_signal`（invalid_signature / duplicate_vote / wrong_epoch，且 `pass` 已绑定 weighted_quorum + equivocation/slash evidence + slash_execution + slash_threshold + slash_observe_only + unjail_cooldown + view_change + fork_choice）均通过；`SlashPolicy` 已外置到 `config/novovm-consensus-policy.json` 并由 `NOVOVM_NODE_MODE=slash_policy_probe` 注入验证，新增 `slash_governance_gate + slash_policy_external_gate + unjail_cooldown_gate` 并接入 acceptance gate | 推进生产级压测口径与罚没参数治理策略，补齐主网上线最后收口 | 2026-03-05 |
+| F-06 | 分布式协调 | `supervm-distributed`/`supervm-dist-coordinator` | `novovm-coordinator` | ReadyForMerge | `novovm-coordinator` 2PC 状态机 + `two_pc_smoke` + `coordinator_negative_smoke` 已接入功能门禁；`coordinator_signal` 与 `coordinator_negative_signal` 均通过并纳入 `overall_pass` | 后续进入持久化/超时重试/恢复策略增强 | 2026-03-04 |
+| F-07 | 网络层（核心完成，生产待收口） | `supervm-network` + `l4-network` | `novovm-network` + `novovm-protocol` | ReadyForMerge | `network_output_signal` + `network_closure_signal` + `network_pacemaker_signal` + `network_process_signal` + `network_block_wire` 持续通过，mesh 口径稳定，`view_sync/new_view` 已形成 UDP 进程级闭环门禁；新增 `header_sync_gate`（headers-first 正向闭环 + tamper 负向拒绝）与 `fast_state_sync_gate`（fast headers + state snapshot verify + tamper 负向拒绝）并接入 acceptance gate；新增 `network_dos_gate`（peer-score/ban + invalid-block-storm 拒绝）与 `pacemaker_failover_gate`（leader 超时失效 -> view-change -> 新 leader 出块提交）并接入 acceptance gate | 长压、多 peer 真同步路径、持久化/恢复语义、观测告警与故障注入收口 | 2026-03-05 |
+| F-08 | Chain Adapter 接口 | `supervm-chainlinker-api` | `novovm-adapter-api` + `novovm-adapter-novovm` + `novovm-adapter-sample-plugin` | ReadyForMerge | 默认门禁已覆盖 `adapter_backend_compare_signal` + `adapter_plugin_abi_negative_signal` + `adapter_plugin_symbol_negative_signal` + `adapter_plugin_registry_negative_signal`，并全部通过（compare 与 3 个负向均 `enabled=True, available=True, pass=True`）；新增 `run_adapter_stability_gate.ps1` 并接入 acceptance gate（`runs=3, pass_rate=100%`） | 继续扩展长压窗口（`runs>=10`）并跟踪 compare 耗时抖动阈值 | 2026-03-04 |
+| F-09 | zk 执行与聚合 | `src/l2-executor` | `novovm-prover` | ReadyForMerge | `contract_schema_smoke` + `contract_schema_negative_smoke` 已接入；`prover_contract_signal` 与 `prover_contract_negative_signal`（missing_formal_fields / empty_reason_codes / normalization_stable）均通过 | AOEM 未完成项冻结：等待 AOEM 1.0 发布后再做 runtime 参数调优 | 2026-03-04 |
+| F-15 | AOEM ZK 能力契约 | `optional/zkvm-executor` | `novovm-prover` + `novovm-exec` | ReadyForMerge | `novovm-exec` 已统一正式字段与兼容字段解析，并规范化 fallback reason codes；`zk_contract_schema_ready=True` 持续稳定 | AOEM 未完成项冻结：等待 AOEM 1.0 发布后再切换 runtime-ready（当前 `zk_runtime_ready=False`） | 2026-03-04 |
+| F-16 | AOEM MSM 加速契约 | `aoem-engine` + `aoem-ffi` | `novovm-prover` + `novovm-exec` | ReadyForMerge | MSM 能力字段与快照链路持续稳定（`msm_accel=True`） | AOEM 未完成项冻结：等待 AOEM 1.0 发布后再对齐 `msm_backend` 细粒度枚举 | 2026-03-04 |
 
 ## 全量扫描快照（F-01 ~ F-16）
 
-来源：`NOVOVM-CAPABILITY-MIGRATION-LEDGER-AUTO-2026-03-03.md` 的 `Full Scan Matrix (F-01~F-16)`（由脚本自动生成）。
+来源：`NOVOVM-CAPABILITY-MIGRATION-LEDGER-AUTO-2026-03-04.md` 的 `Full Scan Matrix (F-01~F-16)`（由脚本自动生成）。
 
 | ID | 状态 | 说明（自动证据摘要） |
 |---|---|---|
 | F-01 | ReadyForMerge | `exec=True, bindings=True, adapter_signal.pass=True` |
 | F-02 | ReadyForMerge | `exec=True, variant_digest.pass=True` |
 | F-03 | ReadyForMerge | `protocol=True, tx_codec=True, block_wire=True, block_out=True, commit_out=True` |
-| F-04 | InProgress | `state_root.available=False, state_root.pass=True` |
-| F-05 | InProgress | `consensus=True, batch_a=True` |
-| F-06 | NotStarted | `coordinator=False` |
-| F-07 | ReadyForMerge | `network=True, process=True, block_wire=True, block_wire_negative=True` |
-| F-08 | InProgress | `adapter=True, abi=True, registry=True, consensus=True, compare=True` |
-| F-09 | InProgress | `prover=False, zk_ready=False` |
+| F-04 | ReadyForMerge | `state_root.available=True, state_root.pass=True` |
+| F-05 | ReadyForMerge | `consensus=True, batch_a=True, consensus_negative.enabled=True, consensus_negative.available=True, consensus_negative.pass=True, slash_threshold=True, slash_observe_only=True, unjail_cooldown=True` |
+| F-06 | ReadyForMerge | `coordinator=True, signal_enabled=True, signal_available=True, signal_pass=True, negative_enabled=True, negative_available=True, negative_pass=True` |
+| F-07 | ReadyForMerge | `network=True, closure=True, pacemaker=True, process=True, block_wire=True, view_sync=True, new_view=True, block_wire_negative=False` |
+| F-08 | ReadyForMerge | `adapter=True, abi=True, registry=True, consensus=True, compare=True, matrix=True, non_novovm_sample=True, abi_negative_enabled=True, abi_negative_pass=True, symbol_negative_enabled=True, symbol_negative_pass=True, registry_negative_enabled=True, registry_negative_pass=True` |
+| F-09 | ReadyForMerge | `prover=True, prover_signal=True, prover_negative_enabled=True, prover_negative_available=True, prover_negative_pass=True, schema_ok=True, reason_norm=True, zk_runtime_ready=False` |
 | F-10 | NotStarted | `storage_service=False` |
 | F-11 | NotStarted | `app_domain=False` |
 | F-12 | NotStarted | `app_defi=False` |
 | F-13 | NotStarted | `adapters_multi=False` |
 | F-14 | InProgress | `protocol=True, consensus=True, network=True, adapter=True, legacy_vm_runtime_present=False` |
-| F-15 | InProgress | `zkvm_prove=False, zkvm_verify=False` |
+| F-15 | ReadyForMerge | `zkvm_prove=False, zkvm_verify=False, schema_ready=True` |
 | F-16 | ReadyForMerge | `msm_accel=True, msm_backend=` |
+
+## 域级状态快照（D0 ~ D3）
+
+来源：`NOVOVM-CAPABILITY-MIGRATION-LEDGER-AUTO-2026-03-04.md` 的 `Domain Scan (D0~D3)`（域级 Done = MVP 口径达成）。
+
+| Domain | 状态 | Done 判定 | 自动证据 |
+|---|---|---|---|
+| D0 AOEM 底座域 | Done | F-01/F-02 = ReadyForMerge | F-01=ReadyForMerge, F-02=ReadyForMerge |
+| D1 执行门面域 | Done | F-01/F-02 = ReadyForMerge + functional_pass=True | F-01=ReadyForMerge, F-02=ReadyForMerge, functional_pass=True |
+| D2 协议核心域 | Done | F-03/F-04 = ReadyForMerge | F-03=ReadyForMerge, F-04=ReadyForMerge |
+| D3 共识网络域 | Done | F-05/F-06/F-07/F-08 = ReadyForMerge | F-05=ReadyForMerge, F-06=ReadyForMerge, F-07=ReadyForMerge, F-08=ReadyForMerge |
 
 ## 自动回填快照
 
-- 快照文档：`docs_CN/SVM2026-MIGRATION/NOVOVM-CAPABILITY-MIGRATION-LEDGER-AUTO-2026-03-03.md`
+- 快照文档：`docs_CN/SVM2026-MIGRATION/NOVOVM-CAPABILITY-MIGRATION-LEDGER-AUTO-2026-03-04.md`
 - 生成脚本：`scripts/migration/generate_capability_ledger_auto.ps1`
 - 关键证据：
-  1. `artifacts/migration/functional-smoke37-native-abi/functional-consistency.json`
-  2. `artifacts/migration/network-two-process-f34/network-two-process.json`
-  3. `artifacts/migration/performance/performance-compare.json`
-  4. `artifacts/migration/capabilities/capability-contract-core.json`
-  5. `artifacts/migration/baseline/svm2026-baseline-core.json`
-  6. `artifacts/migration/functional-smoke38-plugin-abi/functional-consistency.json`
-  7. `artifacts/migration/functional-smoke39-backend-compare-abi/functional-consistency.json`
-  8. `artifacts/migration/functional-smoke40-abi-negative/functional-consistency.json`
-  9. `artifacts/migration/functional-smoke48-protocol-binding/functional-consistency.json`
-  10. `artifacts/migration/functional-smoke49-registry-negative/functional-consistency.json`
-  11. `artifacts/migration/network-two-process-smoke50/network-two-process.json`
-  12. `artifacts/migration/functional-smoke50-network-wire-full/functional-consistency.json`
-  13. `artifacts/migration/network-two-process-smoke51-normal/network-two-process.json`
-  14. `artifacts/migration/network-two-process-smoke51-negative/network-two-process.json`
-  15. `artifacts/migration/functional-smoke51-network-wire-negative/functional-consistency.json`
+  1. `artifacts/migration/acceptance-gate/acceptance-gate-summary.json`
+  2. `artifacts/migration/acceptance-gate/functional/functional-consistency.json`
+  3. `artifacts/migration/acceptance-gate/performance-gate/performance-gate-summary.json`
+  4. `artifacts/migration/acceptance-gate/chain-query-rpc-gate/chain-query-rpc-gate-summary.json`
+  5. `artifacts/migration/acceptance-gate/adapter-stability-gate/adapter-stability-summary.json`
+  6. `artifacts/migration/functional/functional-consistency.json`
+  7. `artifacts/migration/capabilities/capability-contract-core.json`
+  8. `config/novovm-adapter-compatibility-matrix.json`
+
+## 本轮 Acceptance Gate（2026-03-04）
+
+- 结论：`overall_pass=True`（`functional_pass=True`，`performance_pass=True`，`adapter_stability_pass=True`）
+- 域级结论：`D0~D3 = Done`（MVP 口径）；能力项状态仍按台账保持 `ReadyForMerge` / `InProgress` 细分。
+- 运行配置：`release+seal_single`，`performance_runs=3`，`adapter_stability_runs=3`，`allowed_regression_pct=-5`
+- 性能口径（P50）：
+  1. `core/cpu_batch_stress`: baseline `20900563.48` -> current `25317353.02`（`+21.13%`）
+  2. `core/cpu_parity`: baseline `5003439.86` -> current `5985393.25`（`+19.63%`）
 
 ## 当前阻塞项
 
 1. AOEM 仓库 `vendor/curve25519-dalek` 缺失，影响 AOEM 侧完整构建核验。
+2. AOEM 运行时 ZK/MSM 正式能力字段尚未发布，相关 runtime-ready 项统一冻结至 AOEM 1.0 发布后再推进。
+
+## 增量更新（2026-03-05）
+
+- 已完成：`novovm-node` 新增 `NOVOVM_NODE_MODE=rpc_server`，对外暴露 `getBlock/getTransaction/getReceipt/getBalance`（JSON-RPC 风格接口，路径 `/` 与 `/rpc`）。
+- 已完成：RPC 查询服务门禁脚本 `scripts/migration/run_chain_query_rpc_gate.ps1`（含种子数据、4 个正向方法校验 + 1 个负向未知方法校验 + `rate_limit_signal`(429/`-32029`)）。
+- 已完成：`scripts/migration/run_migration_acceptance_gate.ps1` 默认接入 chain-query RPC 门禁，`overall_pass` 现包含 `chain_query_rpc_pass`。
+- 已完成：新增 `scripts/migration/run_header_sync_gate.ps1`（`header_sync_signal` + `header_sync_negative_signal`），并接入 `scripts/migration/run_migration_acceptance_gate.ps1`（`overall_pass` 新增 `header_sync_pass` 约束）。
+- 证据样本：`artifacts/migration/acceptance-gate-header-sync/header-sync-gate/header-sync-gate-summary.json`（`pass=True`）。
+- 已完成：新增 `scripts/migration/run_fast_state_sync_gate.ps1`（`fast_state_sync_signal` + `fast_state_sync_negative_signal`），并接入 `scripts/migration/run_migration_acceptance_gate.ps1`（`overall_pass` 新增 `fast_state_sync_pass` 约束）。
+- 证据样本：`artifacts/migration/acceptance-gate-fast-state/fast-state-sync-gate/fast-state-sync-gate-summary.json`（`pass=True`）。
+- 已完成：新增 `scripts/migration/run_network_dos_gate.ps1`（`network_dos_signal`：peer-score/ban + invalid-block-storm），并接入 `scripts/migration/run_migration_acceptance_gate.ps1`（`overall_pass` 新增 `network_dos_pass` 约束）。
+- 证据样本：`artifacts/migration/acceptance-gate-network-dos/network-dos-gate/network-dos-gate-summary.json`（`pass=True`）。
+- 已完成：`novovm-node` 新增 `NOVOVM_NODE_MODE=pacemaker_failover_probe`（leader 超时失效 -> view-change -> 新 leader 提案/投票/QC/commit），并新增 `scripts/migration/run_pacemaker_failover_gate.ps1`；该门禁已接入 `scripts/migration/run_migration_acceptance_gate.ps1`（`overall_pass` 新增 `pacemaker_failover_pass` 约束）。
+- 证据样本：`artifacts/migration/acceptance-gate-pacemaker-failover-full/pacemaker-failover-gate/pacemaker-failover-gate-summary.json`（`pass=True`）。
+- 已完成：RPC 查询门禁稳健性修复（`run_chain_query_rpc_gate.ps1` 兼容 PowerShell 无 `ConvertFrom-Json -Depth` 参数；`novovm-node` query-db 读取兼容 UTF-8 BOM），默认 acceptance 链路恢复稳定。
+- 证据样本：`artifacts/migration/acceptance-gate-pacemaker-failover-full/chain-query-rpc-gate/chain-query-rpc-gate-summary.json`（`pass=True`）。
+- 证据样本：`artifacts/migration/acceptance-gate-smoke/chain-query-rpc-gate/chain-query-rpc-gate-summary.json`（`pass=True`）。
+- 已完成：`novovm-consensus` 共识主网化增量：stake-weighted quorum 收敛、QC 声明权重防伪（声明值与观测值不一致拒绝）、equivocation（同高度双签）检测与 slash evidence 记录。
+- 已完成：`novovm-consensus` 新增 `SlashPolicy` 参数化治理（`mode=enforce|observe_only` + `equivocation_threshold` + `min_active_validators`），并落地到 `slash execution` 记录（含 `policy_mode/evidence_count/threshold`）。
+- 已完成：`consensus_negative_smoke` 的 `pass` 已绑定 `weighted_quorum + equivocation + slash_execution + slash_threshold + slash_observe_only + unjail_cooldown + view_change + fork_choice` 子项，功能一致性门禁通过（`artifacts/migration/acceptance-gate-unjail-full/functional/functional-consistency.json`，`overall_pass=True`）。
+- 已完成：新增 `scripts/migration/run_slash_governance_gate.ps1` 并接入 `scripts/migration/run_migration_acceptance_gate.ps1`（`overall_pass` 新增 `slash_governance_pass` 约束）。
+- 证据样本：`artifacts/migration/acceptance-gate-slash-governance-full/slash-governance-gate/slash-governance-gate-summary.json`（`pass=True`）。
+- 已完成：新增 `config/novovm-consensus-policy.json`，`novovm-node` 启动时默认读取并输出 `slash_policy_in`（`source/path/mode/threshold/min_validators`），缺省回落 `SlashPolicy::default`；policy 文件解析支持 UTF-8 BOM。
+- 已完成：`novovm-node` 新增 `NOVOVM_NODE_MODE=slash_policy_probe`，可独立验证 `SlashPolicy` 注入 `BFTEngine`（`slash_policy_probe_out: injected=true`）。
+- 已完成：新增 `scripts/migration/run_slash_policy_external_gate.ps1`（正向：外置 policy 生效 + 注入成功；负向：非法 policy 命中 `policy_invalid/policy_parse_failed`；并联 `consensus_negative_ext.slash_threshold=true`），并接入 `scripts/migration/run_migration_acceptance_gate.ps1`（`overall_pass` 新增 `slash_policy_external_pass` 约束）。
+- 证据样本：`artifacts/migration/acceptance-gate-slash-policy-external-full/slash-policy-external-gate/slash-policy-external-gate-summary.json`（`pass=True`）。
+- 证据样本：`artifacts/migration/acceptance-gate-slash-policy-external-full/acceptance-gate-summary.json`（`overall_pass=True`，含 `slash_policy_external_pass=True`）。
+- 已完成：新增治理入口预留 `GovernanceOp::UpdateSlashPolicy`（`novovm-consensus` staged-only，不启链上执行）与 `NOVOVM_NODE_MODE=governance_hook_probe`，并新增 `scripts/migration/run_governance_hook_gate.ps1`；该门禁已接入 `scripts/migration/run_migration_acceptance_gate.ps1`（`overall_pass` 新增 `governance_hook_pass` 约束）。
+- 证据样本：`artifacts/migration/acceptance-gate-governance-smoke/governance-hook-gate/governance-hook-gate-summary.json`（`pass=True`）。
+- 已完成：治理执行最小闭环（仅 `UpdateSlashPolicy`）：`proposal -> vote(signature) -> quorum -> apply`，并新增 `scripts/migration/run_governance_execution_gate.ps1`；该门禁已接入 `scripts/migration/run_migration_acceptance_gate.ps1`（`overall_pass` 新增 `governance_execution_pass` 约束）。
+- 证据样本：`artifacts/migration/acceptance-gate-governance-exec-smoke/governance-execution-gate/governance-execution-gate-summary.json`（`pass=True`）。
+- 已完成：第二类治理参数扩展：`UpdateMempoolFeeFloor`（治理提案+签名投票+quorum 生效），并新增 `scripts/migration/run_governance_param2_gate.ps1`；该门禁已接入 `scripts/migration/run_migration_acceptance_gate.ps1`（`overall_pass` 新增 `governance_param2_pass` 约束）。
+- 证据样本：`artifacts/migration/acceptance-gate-governance-param2-smoke/governance-param2-gate/governance-param2-gate-summary.json`（`pass=True`）。
+- 已完成：第三类治理参数扩展：`UpdateNetworkDosPolicy`（治理提案+签名投票+quorum 生效），并新增 `scripts/migration/run_governance_param3_gate.ps1`；该门禁已接入 `scripts/migration/run_migration_acceptance_gate.ps1`（`overall_pass` 新增 `governance_param3_pass` 约束）。
+- 证据样本：`artifacts/migration/governance-param3-gate-smoke/governance-param3-gate-summary.json`（`pass=True`, `parse_pass=True`, `input_pass=True`, `output_pass=True`）。
+- 已完成：治理 RPC 执行面增强：`governance_submitProposal/governance_sign/governance_vote/governance_execute/governance_getProposal/governance_listProposals/governance_listAuditEvents/governance_getPolicy`，并新增进程级权限校验（`NOVOVM_GOVERNANCE_PROPOSER_ALLOWLIST/NOVOVM_GOVERNANCE_EXECUTOR_ALLOWLIST`）与审计事件流（含 reject 事件）。
+- 证据样本：`artifacts/migration/acceptance-gate-governance-rpc-smoke-v2/governance-rpc-gate/governance-rpc-gate-summary.json`（`pass=True`, `sign1_ok=True`, `unauthorized_submit_reject_ok=True`, `audit_ok=True`）。
+- 已完成：治理负向门禁闭环：`unauthorized_submit + invalid_signature + duplicate_vote + insufficient_votes + replay_execute`，并新增 `scripts/migration/run_governance_negative_gate.ps1`；该门禁已接入 `scripts/migration/run_migration_acceptance_gate.ps1`（`overall_pass` 新增 `governance_negative_pass` 约束）。
+- 已完成：治理签名防重放域分隔：`GovernanceVote` 签名消息绑定 `proposal_id + proposal_height + proposal_digest + support`，执行时强校验 `proposal_height/proposal_digest` 一致性，拒绝跨提案/跨高度重放。
+- 证据样本：`artifacts/migration/acceptance-gate-governance-negative-smoke/governance-negative-gate/governance-negative-gate-summary.json`（`pass=True`）。
+- 证据样本：`artifacts/migration/acceptance-gate-governance-negative-smoke-v2/governance-negative-gate/governance-negative-gate-summary.json`（`pass=True`）。
+- 证据样本：`artifacts/migration/acceptance-gate-governance-param2-smoke/acceptance-gate-summary.json`（`overall_pass=True`，含 `governance_hook_pass/governance_execution_pass/governance_param2_pass/governance_negative_pass=True`）。
+- 证据样本：`artifacts/migration/acceptance-gate-governance-rpc-smoke-v2/acceptance-gate-summary.json`（`overall_pass=True`，含 `governance_rpc_pass/governance_hook_pass/governance_execution_pass/governance_param2_pass/governance_param3_pass/governance_negative_pass=True`）。
+- 已完成：全量门禁发布快照（`full_snapshot_v1`）一次性跑通，新增 `scripts/migration/run_release_snapshot.ps1` 并生成 `release-snapshot.json/md` 聚合产物（`date/overall_pass/enabled_gates/key_results/allowed_regression_pct`）。
+- 证据样本：`artifacts/migration/release-snapshot-2026-03-05/release-snapshot.json`（`overall_pass=True`, `profile_name=full_snapshot_v1`, `enabled_gates.*=True`）。
+- 已完成：门禁稳定性 relfix（relative `OutputDir` -> child `cwd` 导致 whitelist negative path drift），`OutputDir` 统一绝对化后 `adapter_stability` 与 full snapshot 恢复稳定。
+- 状态：`ReadyForMerge / SnapshotGreen`（relfix 后恢复稳定）。
+- 证据样本：`artifacts/migration/adapter-stability-relfix-smoke/adapter-stability-summary.json`（`pass=True`, `pass_rate_pct=100`）。
+- 证据样本：`artifacts/migration/release-snapshot-param3-smoke-relfix/release-snapshot.json`（`overall_pass=True`, `profile_name=full_snapshot_v1`, `key_results.governance_pass=True`, `enabled_gates.governance_param3=True`）。
+- 证据样本：`artifacts/migration/release-snapshot-param3-smoke-relfix/acceptance-gate-full/acceptance-gate-summary.json`（`governance_param3_pass=True`, `adapter_stability_pass=True`）。
+- 已完成：`novovm-consensus` 新增自动解禁窗口（`cooldown_epochs`），`SlashExecution` 输出 `jailed_until_epoch/cooldown_epochs`；`state.height >= jailed_until_epoch` 时自动恢复验证者活跃态。
+- 已完成：新增 `scripts/migration/run_unjail_cooldown_gate.ps1`（正向：jail -> cooldown 到期自动 unjail；负向：未到期拒绝），并接入 `scripts/migration/run_migration_acceptance_gate.ps1`（`overall_pass` 新增 `unjail_cooldown_pass` 约束）。
+- 证据样本：`artifacts/migration/acceptance-gate-unjail-full/unjail-cooldown-gate/unjail-cooldown-gate-summary.json`（`pass=True`）。
+- 证据样本：`artifacts/migration/acceptance-gate-unjail-full/acceptance-gate-summary.json`（`overall_pass=True`，含 `unjail_cooldown_pass=True`）。
+- 已完成：`view-change`（超时换主）与 `fork-choice`（高度/权重优先）已接入 `novovm-consensus` 与 `consensus_negative_smoke`，功能一致性门禁通过（`artifacts/migration/functional-smoke-consensus-view-fork/functional-consistency.json`，`consensus_negative_signal.view_change=True`，`fork_choice=True`）。

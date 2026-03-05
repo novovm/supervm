@@ -1,6 +1,6 @@
 use anyhow::Result;
 use novovm_adapter_api::{default_chain_id, ChainConfig, ChainType, SerializationFormat, StateIR, TxIR, TxType};
-use novovm_adapter_novovm::create_native_adapter;
+use novovm_adapter_novovm::{create_native_adapter, supports_native_chain};
 
 fn encode_address(seed: u64) -> Vec<u8> {
     let mut out = vec![0u8; 20];
@@ -60,6 +60,38 @@ fn native_adapter_rejects_wrong_chain_id() -> Result<()> {
     let tx = sample_transfer(chain_id + 1, 0, 3);
     assert!(!adapter.verify_transaction(&tx)?);
 
+    adapter.shutdown()?;
+    Ok(())
+}
+
+#[test]
+fn native_adapter_supports_non_novovm_samples() {
+    assert!(supports_native_chain(ChainType::NovoVM));
+    assert!(supports_native_chain(ChainType::EVM));
+    assert!(supports_native_chain(ChainType::BNB));
+    assert!(supports_native_chain(ChainType::Custom));
+    assert!(!supports_native_chain(ChainType::Solana));
+}
+
+#[test]
+fn native_adapter_accepts_evm_chain_config() -> Result<()> {
+    let chain_id = default_chain_id(ChainType::EVM);
+    let cfg = ChainConfig {
+        chain_type: ChainType::EVM,
+        chain_id,
+        name: "EVM".to_string(),
+        enabled: true,
+        custom_config: None,
+    };
+    let mut adapter = create_native_adapter(cfg)?;
+    adapter.initialize()?;
+
+    let tx = sample_transfer(chain_id, 0, 9);
+    assert!(adapter.verify_transaction(&tx)?);
+
+    let mut state = StateIR::new();
+    adapter.execute_transaction(&tx, &mut state)?;
+    assert_eq!(adapter.get_balance(&encode_address(2000))?, 9);
     adapter.shutdown()?;
     Ok(())
 }

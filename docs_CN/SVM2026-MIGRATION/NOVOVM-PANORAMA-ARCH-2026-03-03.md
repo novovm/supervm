@@ -76,6 +76,18 @@
 
 达到上述形态后，再进入历史能力逐项迁入阶段。
 
+## 6.1 域级状态（2026-03-04）
+
+口径说明：
+- 这里的 `Done` 指 **D0~D3 的 MVP 完成态**（可持续运行 + 门禁通过），不等同于全部能力项的生产封盘 Done。
+
+| Domain | 状态 | 判定依据 |
+|---|---|---|
+| D0 AOEM 底座域 | Done | AOEM core/persist 可用，manifest 校验启用，F-01/F-02 为 ReadyForMerge |
+| D1 执行门面域 | Done | `submit_ops` + 统一错误码/指标输出稳定，functional gate 持续通过 |
+| D2 协议核心域 | Done | 交易生命周期/状态根/回执标准化稳定，F-03/F-04 为 ReadyForMerge |
+| D3 共识网络域 | Done | 共识+网络+协调+Adapter 主链路闭环稳定，F-05/F-06/F-07/F-08 为 ReadyForMerge |
+
 ## 7. ZK+MSM 落位说明
 
 - `ZK` 与 `MSM` 都是区块链生产必需能力。

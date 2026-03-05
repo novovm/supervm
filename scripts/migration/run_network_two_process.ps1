@@ -1,6 +1,6 @@
 param(
-    [string]$RepoRoot = "D:\WorksArea\SUPERVM",
-    [string]$OutputDir = "D:\WorksArea\SUPERVM\artifacts\migration\network-two-process",
+    [string]$RepoRoot = "",
+    [string]$OutputDir = "",
     [int]$TimeoutSeconds = 15,
     [ValidateRange(1, 50)]
     [int]$Rounds = 1,
@@ -14,6 +14,15 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+
+if (-not $RepoRoot) {
+    $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
+} else {
+    $RepoRoot = (Resolve-Path $RepoRoot).Path
+}
+if (-not $OutputDir) {
+    $OutputDir = Join-Path $RepoRoot "artifacts\migration\network-two-process"
+}
 
 function Invoke-Cargo {
     param(
@@ -86,7 +95,7 @@ function Parse-NetworkProbeLine {
 
     $m = [regex]::Match(
         $line,
-        "^network_probe_out:\s+transport=(?<transport>\w+)\s+node=(?<node>\d+)\s+listen=(?<listen>\S+)\s+peer=(?<peer>\S+)\s+sent=(?<sent>\d+)\s+received=(?<received>\d+)\s+discovery=(?<discovery>true|false)\s+gossip=(?<gossip>true|false)\s+sync=(?<sync>true|false)$"
+        "^network_probe_out:\s+transport=(?<transport>\w+)\s+node=(?<node>\d+)\s+listen=(?<listen>\S+)\s+peer=(?<peer>\S+)\s+sent=(?<sent>\d+)\s+received=(?<received>\d+)\s+discovery=(?<discovery>true|false)\s+gossip=(?<gossip>true|false)\s+sync=(?<sync>true|false)(?:\s+view_sync=(?<view_sync>true|false)\s+new_view=(?<new_view>true|false))?$"
     )
     if (-not $m.Success) {
         return [ordered]@{
@@ -95,6 +104,8 @@ function Parse-NetworkProbeLine {
         }
     }
 
+    $viewSyncAvailable = $m.Groups["view_sync"].Success
+    $newViewAvailable = $m.Groups["new_view"].Success
     return [ordered]@{
         parse_ok = $true
         transport = $m.Groups["transport"].Value
@@ -106,6 +117,10 @@ function Parse-NetworkProbeLine {
         discovery = [bool]::Parse($m.Groups["discovery"].Value)
         gossip = [bool]::Parse($m.Groups["gossip"].Value)
         sync = [bool]::Parse($m.Groups["sync"].Value)
+        view_sync_available = $viewSyncAvailable
+        view_sync = if ($viewSyncAvailable) { [bool]::Parse($m.Groups["view_sync"].Value) } else { $null }
+        new_view_available = $newViewAvailable
+        new_view = if ($newViewAvailable) { [bool]::Parse($m.Groups["new_view"].Value) } else { $null }
         raw = $line
     }
 }
@@ -120,7 +135,7 @@ function Parse-NetworkProbeGraphLine {
 
     $m = [regex]::Match(
         $line,
-        "^network_probe_graph:\s+node=(?<node>\d+)\s+peers=(?<peers>\d+)\s+discovery_ok=(?<d_ok>\d+)\/(?<d_total>\d+)\s+gossip_ok=(?<g_ok>\d+)\/(?<g_total>\d+)\s+sync_ok=(?<s_ok>\d+)\/(?<s_total>\d+)\s+edge_ok=(?<e_ok>\d+)\/(?<e_total>\d+)$"
+        "^network_probe_graph:\s+node=(?<node>\d+)\s+peers=(?<peers>\d+)\s+discovery_ok=(?<d_ok>\d+)\/(?<d_total>\d+)\s+gossip_ok=(?<g_ok>\d+)\/(?<g_total>\d+)\s+sync_ok=(?<s_ok>\d+)\/(?<s_total>\d+)(?:\s+view_sync_ok=(?<vs_ok>\d+)\/(?<vs_total>\d+)\s+new_view_ok=(?<nv_ok>\d+)\/(?<nv_total>\d+))?\s+edge_ok=(?<e_ok>\d+)\/(?<e_total>\d+)$"
     )
     if (-not $m.Success) {
         return [ordered]@{
@@ -129,6 +144,8 @@ function Parse-NetworkProbeGraphLine {
         }
     }
 
+    $viewSyncAvailable = $m.Groups["vs_ok"].Success -and $m.Groups["vs_total"].Success
+    $newViewAvailable = $m.Groups["nv_ok"].Success -and $m.Groups["nv_total"].Success
     return [ordered]@{
         parse_ok = $true
         node = [int]$m.Groups["node"].Value
@@ -139,6 +156,12 @@ function Parse-NetworkProbeGraphLine {
         gossip_total = [int]$m.Groups["g_total"].Value
         sync_ok = [int]$m.Groups["s_ok"].Value
         sync_total = [int]$m.Groups["s_total"].Value
+        view_sync_available = $viewSyncAvailable
+        view_sync_ok = if ($viewSyncAvailable) { [int]$m.Groups["vs_ok"].Value } else { 0 }
+        view_sync_total = if ($viewSyncAvailable) { [int]$m.Groups["vs_total"].Value } else { 0 }
+        new_view_available = $newViewAvailable
+        new_view_ok = if ($newViewAvailable) { [int]$m.Groups["nv_ok"].Value } else { 0 }
+        new_view_total = if ($newViewAvailable) { [int]$m.Groups["nv_total"].Value } else { 0 }
         edge_ok = [int]$m.Groups["e_ok"].Value
         edge_total = [int]$m.Groups["e_total"].Value
         raw = $line
@@ -236,13 +259,25 @@ function Test-ProbePass {
     if (-not $Parsed -or -not $Parsed.parse_ok -or -not $BlockWire -or -not $BlockWire.parse_ok) {
         return $false
     }
+    $viewSyncPass = if ($null -ne $Parsed.view_sync_available -and [bool]$Parsed.view_sync_available) {
+        [bool]$Parsed.view_sync
+    } else {
+        $true
+    }
+    $newViewPass = if ($null -ne $Parsed.new_view_available -and [bool]$Parsed.new_view_available) {
+        [bool]$Parsed.new_view
+    } else {
+        $true
+    }
     return (
         $Parsed.transport -eq "udp" -and
-        $Parsed.sent -ge 3 -and
-        $Parsed.received -ge 3 -and
+        $Parsed.sent -ge 5 -and
+        $Parsed.received -ge 5 -and
         $Parsed.discovery -and
         $Parsed.gossip -and
         $Parsed.sync -and
+        $viewSyncPass -and
+        $newViewPass -and
         $BlockWire.pass -and
         $BlockWire.verified -eq $BlockWire.total -and
         $BlockWire.total -ge 1
@@ -344,10 +379,22 @@ function Get-NodeResult {
     $probePass = Test-ProbePass -Parsed $probe -BlockWire $blockWire
     $graphPass = $false
     if ($graph -and $graph.parse_ok) {
+        $viewSyncGraphPass = if ($null -ne $graph.view_sync_available -and [bool]$graph.view_sync_available) {
+            $graph.view_sync_ok -eq $graph.view_sync_total
+        } else {
+            $true
+        }
+        $newViewGraphPass = if ($null -ne $graph.new_view_available -and [bool]$graph.new_view_available) {
+            $graph.new_view_ok -eq $graph.new_view_total
+        } else {
+            $true
+        }
         $graphPass = (
             $graph.discovery_ok -eq $graph.discovery_total -and
             $graph.gossip_ok -eq $graph.gossip_total -and
             $graph.sync_ok -eq $graph.sync_total -and
+            $viewSyncGraphPass -and
+            $newViewGraphPass -and
             $graph.edge_ok -eq $graph.edge_total
         )
     }
@@ -474,10 +521,15 @@ function Invoke-ProbeRound {
     $directedEdgesUp = 0
     $directedEdgeRatio = 0.0
     $blockWireSamples = @()
+    $probeSamples = @()
     $blockWireAvailable = $false
     $blockWirePass = $false
     $blockWireVerified = 0
     $blockWireTotal = 0
+    $viewSyncAvailable = $false
+    $viewSyncPass = $false
+    $newViewAvailable = $false
+    $newViewPass = $false
 
     if ($ProbeMode -eq "pair_matrix") {
         $pairIndex = 0
@@ -502,6 +554,8 @@ function Invoke-ProbeRound {
         foreach ($p in $pairResults) {
             if ($p.left -and $p.left.block_wire) { $blockWireSamples += $p.left.block_wire }
             if ($p.right -and $p.right.block_wire) { $blockWireSamples += $p.right.block_wire }
+            if ($p.left -and $p.left.parsed) { $probeSamples += $p.left.parsed }
+            if ($p.right -and $p.right.parsed) { $probeSamples += $p.right.parsed }
         }
         $totalPairs = $pairResults.Count
         $passedPairs = ($pairResults | Where-Object { $_.pass } | Measure-Object).Count
@@ -580,6 +634,9 @@ function Invoke-ProbeRound {
             if ($n.block_wire) {
                 $blockWireSamples += $n.block_wire
             }
+            if ($n.parsed) {
+                $probeSamples += $n.parsed
+            }
         }
     }
 
@@ -601,6 +658,24 @@ function Invoke-ProbeRound {
         $blockWirePass = ($blockWireAvailable -and $passCount -eq $blockWireSamples.Count)
     }
 
+    $expectedProbeSamples = $expectedBlockWireSamples
+    if ($probeSamples.Count -gt 0) {
+        $probeParsed = @($probeSamples | Where-Object { $_.parse_ok })
+        $probeParsedCount = $probeParsed.Count
+
+        $viewSyncFlags = @($probeParsed | Where-Object { $_.view_sync_available })
+        if ($viewSyncFlags.Count -eq $probeParsedCount -and $probeParsedCount -ge $expectedProbeSamples) {
+            $viewSyncAvailable = $true
+            $viewSyncPass = ((@($probeParsed | Where-Object { $_.view_sync }) | Measure-Object).Count -eq $probeParsedCount)
+        }
+
+        $newViewFlags = @($probeParsed | Where-Object { $_.new_view_available })
+        if ($newViewFlags.Count -eq $probeParsedCount -and $probeParsedCount -ge $expectedProbeSamples) {
+            $newViewAvailable = $true
+            $newViewPass = ((@($probeParsed | Where-Object { $_.new_view }) | Measure-Object).Count -eq $probeParsedCount)
+        }
+    }
+
     $overallPass = ($totalPairs -gt 0 -and $passedPairs -eq $totalPairs)
     if ($ProbeMode -eq "mesh") {
         $allNodePass = (
@@ -609,7 +684,7 @@ function Invoke-ProbeRound {
         )
         $overallPass = ($overallPass -and $allNodePass)
     }
-    $overallPass = ($overallPass -and $blockWirePass)
+    $overallPass = ($overallPass -and $blockWirePass -and $viewSyncPass -and $newViewPass)
     $firstNode = $nodeResults | Select-Object -First 1
     $secondNode = $nodeResults | Select-Object -Skip 1 -First 1
 
@@ -629,6 +704,10 @@ function Invoke-ProbeRound {
         block_wire_pass = $blockWirePass
         block_wire_verified = $blockWireVerified
         block_wire_total = $blockWireTotal
+        view_sync_available = $viewSyncAvailable
+        view_sync_pass = $viewSyncPass
+        new_view_available = $newViewAvailable
+        new_view_pass = $newViewPass
         pass = $overallPass
         node_a = $firstNode
         node_b = $secondNode
@@ -671,6 +750,10 @@ $blockWireVerified = 0
 $blockWireTotal = 0
 $blockWireRoundsPassed = 0
 $blockWireRoundsAvailable = 0
+$viewSyncRoundsPassed = 0
+$viewSyncRoundsAvailable = 0
+$newViewRoundsPassed = 0
+$newViewRoundsAvailable = 0
 $roundsPassed = 0
 foreach ($r in $roundResults) {
     $totalPairs += [int]$r.total_pairs
@@ -684,6 +767,18 @@ foreach ($r in $roundResults) {
     }
     if ($r.block_wire_pass) {
         $blockWireRoundsPassed++
+    }
+    if ($r.view_sync_available) {
+        $viewSyncRoundsAvailable++
+    }
+    if ($r.view_sync_pass) {
+        $viewSyncRoundsPassed++
+    }
+    if ($r.new_view_available) {
+        $newViewRoundsAvailable++
+    }
+    if ($r.new_view_pass) {
+        $newViewRoundsPassed++
     }
     if ($r.pass) {
         $roundsPassed++
@@ -715,9 +810,29 @@ $blockWireVerifiedRatio = if ($blockWireTotal -gt 0) {
 } else {
     0.0
 }
+$viewSyncPassRatio = if ($Rounds -gt 0) {
+    [Math]::Round(($viewSyncRoundsPassed / $Rounds), 4)
+} else {
+    0.0
+}
+$newViewPassRatio = if ($Rounds -gt 0) {
+    [Math]::Round(($newViewRoundsPassed / $Rounds), 4)
+} else {
+    0.0
+}
 $blockWireAvailable = ($blockWireRoundsAvailable -eq $Rounds -and $Rounds -gt 0)
 $blockWirePass = ($blockWireRoundsPassed -eq $Rounds -and $Rounds -gt 0)
-$overallPass = ($totalPairs -gt 0 -and $passedPairs -eq $totalPairs -and $blockWirePass)
+$viewSyncAvailable = ($viewSyncRoundsAvailable -eq $Rounds -and $Rounds -gt 0)
+$viewSyncPass = ($viewSyncRoundsPassed -eq $Rounds -and $Rounds -gt 0)
+$newViewAvailable = ($newViewRoundsAvailable -eq $Rounds -and $Rounds -gt 0)
+$newViewPass = ($newViewRoundsPassed -eq $Rounds -and $Rounds -gt 0)
+$overallPass = (
+    $totalPairs -gt 0 -and
+    $passedPairs -eq $totalPairs -and
+    $blockWirePass -and
+    $viewSyncPass -and
+    $newViewPass
+)
 
 $latestRound = $roundResults | Select-Object -Last 1
 $firstNode = if ($latestRound) { $latestRound.node_a } else { $null }
@@ -747,6 +862,14 @@ $result = [ordered]@{
     block_wire_verified = $blockWireVerified
     block_wire_total = $blockWireTotal
     block_wire_verified_ratio = $blockWireVerifiedRatio
+    view_sync_available = $viewSyncAvailable
+    view_sync_pass = $viewSyncPass
+    view_sync_rounds_passed = $viewSyncRoundsPassed
+    view_sync_pass_ratio = $viewSyncPassRatio
+    new_view_available = $newViewAvailable
+    new_view_pass = $newViewPass
+    new_view_rounds_passed = $newViewRoundsPassed
+    new_view_pass_ratio = $newViewPassRatio
     pass = $overallPass
     node_a = $firstNode
     node_b = $secondNode
@@ -760,6 +883,7 @@ $result = [ordered]@{
         "strict mode is enabled in probe processes",
         "pair stats use undirected edge closure; directed edge ratio is reported separately",
         "network_block_wire requires block_header_wire_v1 payload decode + consensus binding verification on UDP probe path",
+        "network pacemaker requires view_sync/new_view closure on UDP probe path",
         "node_a/node_b/pair_results/node_results expose latest round for compatibility"
     )
 }
@@ -795,6 +919,14 @@ $md = @(
     "- block_wire_verified: $($result.block_wire_verified)"
     "- block_wire_total: $($result.block_wire_total)"
     "- block_wire_verified_ratio: $($result.block_wire_verified_ratio)"
+    "- view_sync_available: $($result.view_sync_available)"
+    "- view_sync_pass: $($result.view_sync_pass)"
+    "- view_sync_rounds_passed: $($result.view_sync_rounds_passed)"
+    "- view_sync_pass_ratio: $($result.view_sync_pass_ratio)"
+    "- new_view_available: $($result.new_view_available)"
+    "- new_view_pass: $($result.new_view_pass)"
+    "- new_view_rounds_passed: $($result.new_view_rounds_passed)"
+    "- new_view_pass_ratio: $($result.new_view_pass_ratio)"
     ""
     "## Pair Results"
     ""

@@ -1,0 +1,177 @@
+# NOVOVM MVP 能力与主网差距审计（对 ChatGPT 结论复核）- 2026-03-04
+
+## 0. 审计范围与基线
+
+- 审计对象：
+  - `NOVOVM` 当前迁移态（以 2026-03-04 自动台账为准）
+  - `SVM2026` 现有实现与路线图
+- 复核目标：
+  - A. 「已经具备的能力」是否成立
+  - B. 「生产主网扩展项」是否仍缺
+  - C. 「下一阶段自然演进」是否合理
+- 关键证据：
+  - `SUPERVM/docs_CN/SVM2026-MIGRATION/NOVOVM-CAPABILITY-MIGRATION-LEDGER-AUTO-2026-03-04.md`
+  - `SUPERVM/docs_CN/SVM2026-MIGRATION/NOVOVM-FUNCTION-CATALOG-2026-03-03.md`
+  - `SVM2026/supervm-node/src/main.rs`
+  - `SVM2026/supervm-node-core/src/rpc/*`
+  - `SVM2026/supervm-consensus/src/*`
+  - `SVM2026/src/vm-runtime/src/economic_context.rs`
+  - `SVM2026/ROADMAP.md`
+
+---
+
+## 1. 对 ChatGPT 结论的审计结论
+
+## A. 「已经具备的能力」
+
+| 子项 | 审计结论 | 说明 |
+|---|---|---|
+| 可跑交易/执行/出块/传播 | 成立（MVP 口径） | `D2/D3=Done`，`F-03~F-08=ReadyForMerge`；功能门禁含 `tx_codec/mempool/block/commit/network/consensus`。 |
+| 可做标准链查询（`getBlock/getTransaction/getReceipt/getBalance`） | 成立（MVP + 读 RPC 服务口径） | `novovm-node` 已新增 `chain_query` + `rpc_server` 模式：提交后落盘 `query-state`，并通过 JSON-RPC 风格接口（`/`/`/rpc`）暴露四个查询方法；已纳入 `run_chain_query_rpc_gate.ps1` 门禁。 |
+| 可发币/资产发行 | 条件成立 | `SVM2026` 有 `MainnetTokenImpl` / `mint` / `burn` / gas fee split；但 `NOVOVM` 迁移批次里 `E(RPC/CLI/DevEx)=NotStarted`，未证明已迁入主链路。 |
+
+**A 总结**：`交易闭环 + 最小查询闭环 + 读 RPC 服务化` 已成立；“发币能力主链路迁入”与其余生产化能力仍未完成。
+
+## B. 「生产主网还需要扩展项」
+
+| 子项 | 审计结论 | 说明 |
+|---|---|---|
+| 完整共识（validator/stake/slash/view-change/fork choice） | 基本正确（主闭环已具备） | 已具备 `ValidatorSet + QC + 投票`，并新增 stake-weighted quorum、equivocation slash-evidence、slash execution、view-change、fork-choice；`slash execution` 已参数化为 `SlashPolicy(mode/threshold/min_active/cooldown_epochs)`，默认可由 `config/novovm-consensus-policy.json` 外置输入并通过 `slash_governance_gate + slash_policy_external_gate + unjail_cooldown_gate` 门禁；网络级 `view_sync/new_view` pacemaker 已从“消息闭环”升级为 `pacemaker_failover_gate`（leader 超时失效 -> 换主 -> 提交）硬门禁，后续主要是生产参数化与治理策略收口。 |
+| 完整同步（header/fast/state sync） | 部分正确（仍缺） | 已新增 `header_sync_gate`（headers-first）与 `fast_state_sync_gate`（fast headers + state snapshot verify）并接入 acceptance gate，且均含篡改负向拒绝；`fast/state sync` 的生产多 peer/持久化恢复链路仍缺。 |
+| DoS 防护（tx spam/peer flood/invalid block storm） | 部分正确（仍缺） | 已有 RPC ingress rate-limit（429 / `-32029`）门禁，且新增网络级 `peer-score/ban + invalid-block-storm` 门禁（`network_dos_gate`）；仍缺生产级持久化惩罚、跨节点信誉传播与灰度恢复策略。 |
+| 经济参数（gas pricing/burn/inflation/treasury） | 基本正确（SVM2026 有实现，NOVOVM 未完成迁移） | `SVM2026` 经济模块较完整，但部分指标仍有 TODO；NOVOVM 迁移批次 E 尚未启动。 |
+| ZK runtime（F-15） | 正确（当前受 AOEM 约束） | 台账明确 `zk_runtime_ready=False`、`zkvm_prove/verify=False`，等待 AOEM 1.0。 |
+
+## C. 「下一阶段（自然演进）」
+
+该方向判断**正确**，且与当前状态匹配：
+
+| 阶段项 | 现状判定 |
+|---|---|
+| 钱包 / RPC / SDK | 部分完成（SVM2026 有局部 SDK/CLI/RPC，NOVOVM 已完成本地查询闭环 + 读 RPC 服务化门禁） |
+| Genesis + Tokenomics | 部分完成（有模型与模块，但落地一致性仍有缺口） |
+| Validator 网络 | 部分完成（有示例/骨架，不是生产验证者网络） |
+| Testnet 启动 | 规划态/建议态为主，未见统一“已正式启动”证据闭环 |
+| ZK Runtime | 受 AOEM runtime 就绪状态阻塞 |
+| 性能调优 | 完成度高（SVM2026 侧有大量基准与优化报告） |
+
+---
+
+## 2. 进度看板（你可直接据此决策）
+
+## 2.1 生产主网扩展项（B）进度
+
+| 项目 | NOVOVM（2026-03-04） | SVM2026 原实现 | 进度判定 |
+|---|---|---|---|
+| 完整共识机制 | MVP 通过（~80%核验口径） | 已有验证者集合/QC + stake-weighted quorum + equivocation slash-evidence + slash execution + slash-policy(threshold/observe-only/min-active) + view-change + fork-choice + 网络级 view-sync/new-view pacemaker + failover（超时换主后继续出块提交）；剩余是生产参数化罚没/治理策略 | 部分完成 |
+| 完整同步 | MVP 网络闭环通过 | 已补 headers-first + fast/state 最小门禁闭环；仍缺 fast/state sync 生产闭环 | 部分完成 |
+| DoS 防护体系 | 已形成入口+网络最小门禁项 | RPC ingress 侧 rate-limit 已门禁化；网络侧 `peer-score/ban + invalid-block-storm` 已门禁化，生产级长期信誉治理仍待补 | 部分完成 |
+| 经济参数闭环 | 不在当前已完成迁移批次 | 模块实现较多，但有 TODO/部署集成待补 | 部分完成 |
+| ZK runtime ready | `False`（台账明确） | 原仓有 ZK 能力沉淀，但 NOVOVM 运行态受 AOEM 约束 | 阻塞中 |
+
+**B 汇总**：`0 项完全完成 / 4 项部分完成 / 1 项阻塞`。
+
+## 2.2 自然演进项（C）进度
+
+| 项目 | 进度判定 | 备注 |
+|---|---|---|
+| 钱包/RPC/SDK | 部分完成 | 读查询 RPC 已服务化并接入门禁；钱包/SDK/写接口仍待推进。 |
+| Genesis+Tokenomics | 部分完成 | 代码与文档都有，但迁移闭环未形成。 |
+| Validator 网络 | 部分完成 | 有 demo/harness，不等于生产网络。 |
+| Testnet 启动 | 未完成 | 多为计划/建议部署测试网。 |
+| ZK Runtime | 阻塞中 | 等 AOEM 1.0 后切 runtime-ready。 |
+| 性能调优 | 完成度高 | 可作为迁移期基线优势。 |
+
+**C 汇总**：`1 高完成 / 3 部分完成 / 1 未完成 / 1 阻塞`。
+
+---
+
+## 2.3 发布快照（2026-03-05，全量门禁）
+
+- 快照脚本：`scripts/migration/run_release_snapshot.ps1`
+- 一键全开 profile：`run_migration_acceptance_gate.ps1 -FullSnapshotProfile`（`profile_name=full_snapshot_v1`）
+- 快照产物：
+  - `artifacts/migration/release-snapshot-2026-03-05/release-snapshot.json`
+  - `artifacts/migration/release-snapshot-2026-03-05/release-snapshot.md`
+- 快照结论：
+  - `overall_pass=True`
+  - `enabled_gates` 全部为 `true`（chain_query_rpc / governance_rpc / header_sync / fast_state_sync / network_dos / pacemaker_failover / slash_governance / slash_policy_external / governance_hook / governance_execution / governance_param2 / governance_param3 / governance_negative / unjail_cooldown / adapter_stability）
+  - `allowed_regression_pct=-5.0`
+  - `key_results`：
+    - `tps_p50.core/cpu_batch_stress=24607691.87`
+    - `tps_p50.core/cpu_parity=5947527.35`
+    - `rpc_pass/governance_pass/sync_pass/adapter_pass/dos_pass/consensus_pass=True`
+- relfix 快照（同日回归）：
+  - `artifacts/migration/release-snapshot-param3-smoke-relfix/release-snapshot.json`
+  - `profile_name=full_snapshot_v1`，`overall_pass=True`，`governance_param3_pass=True`，`adapter_stability_pass=True`
+
+---
+
+## 3. 关键证据摘录（便于快速复核）
+
+- NOVOVM 域级完成：
+  - `D2=Done`、`D3=Done`，且 `F-03~F-08=ReadyForMerge`（自动台账）。
+- NOVOVM 读 RPC 服务化门禁：
+  - `novovm-node` 支持 `NOVOVM_NODE_MODE=rpc_server`；
+  - `scripts/migration/run_chain_query_rpc_gate.ps1`（4 个正向查询 + 1 个负向方法 + `rate_limit_signal`(429/`-32029`)）已接入 acceptance gate（并已修复 PowerShell 兼容与 BOM 读取问题）。
+- NOVOVM 同步门禁：
+  - `novovm-node` 支持 `NOVOVM_NODE_MODE=header_sync_probe`；
+  - `novovm-node` 支持 `NOVOVM_NODE_MODE=fast_state_sync_probe`；
+  - `scripts/migration/run_header_sync_gate.ps1`（`header_sync_signal` + `header_sync_negative_signal`）与 `scripts/migration/run_fast_state_sync_gate.ps1`（`fast_state_sync_signal` + `fast_state_sync_negative_signal`）均已接入 acceptance gate。
+- NOVOVM 抗 DoS 门禁：
+  - `novovm-node` 支持 `NOVOVM_NODE_MODE=network_dos_probe`；
+  - `scripts/migration/run_network_dos_gate.ps1`（`network_dos_signal`）已接入 acceptance gate，覆盖 `peer-score/ban + invalid-block-storm` 最小闭环。
+- NOVOVM pacemaker failover 门禁：
+  - `novovm-node` 支持 `NOVOVM_NODE_MODE=pacemaker_failover_probe`；
+  - `scripts/migration/run_pacemaker_failover_gate.ps1` 已接入 acceptance gate，覆盖 `leader timeout -> view-change -> new leader commit` 活性闭环。
+- NOVOVM 共识主网化增量门禁：
+  - `novovm-consensus` 已启用 stake-weighted quorum 收敛（不再按票数个数收敛）；
+  - `QC` 校验新增声明权重防伪（`total_weight` 与观测权重不一致会拒绝）；
+  - 同高度双签（equivocation）会返回 `EquivocationDetected` 并落 slash evidence；
+  - `view-change`（超时换主）与 `fork-choice`（高度/权重优先）已接入协议层与门禁；
+  - `consensus_negative_smoke` 的 `pass` 已绑定上述能力（`weighted_quorum + equivocation + slash_execution + slash_threshold + slash_observe_only + view_change + fork_choice`）。
+- NOVOVM Slash 治理门禁：
+  - `scripts/migration/run_slash_governance_gate.ps1` 已接入 acceptance gate；
+  - 覆盖 `SlashPolicy(mode=enforce/observe_only, threshold, min_active_validators)` 的行为断言。
+- NOVOVM Slash 策略外置化门禁：
+  - `config/novovm-consensus-policy.json` 作为默认外置入口；
+  - `novovm-node` 支持 `NOVOVM_NODE_MODE=slash_policy_probe`，输出 `slash_policy_in` 与 `slash_policy_probe_out`；
+  - `scripts/migration/run_slash_policy_external_gate.ps1` 已接入 acceptance gate，覆盖正向注入与负向 `policy_invalid/policy_parse_failed` 断言。
+- NOVOVM Unjail/Cooldown 门禁：
+  - `novovm-consensus` 已接入 `cooldown_epochs` 自动解禁窗口（`SlashExecution` 含 `jailed_until_epoch/cooldown_epochs`）；
+  - `scripts/migration/run_unjail_cooldown_gate.ps1` 已接入 acceptance gate，覆盖“未到期拒绝 + 到期自动解禁”。
+- NOVOVM 未完与阻塞：
+  - `F-15: zkvm_prove=False, zkvm_verify=False`
+  - 批次表：`E | RPC/CLI/DevEx | NotStarted`
+- SVM2026 共识现状：
+  - `supervm-node` 注释明确为 `Single-validator BFT engine for smoke / wiring demo`
+  - `supervm-consensus` 有 `ValidatorSet/QC`，但未检出 `slash/view-change/fork_choice` 主链路实现。
+- SVM2026 RPC 暴露范围：
+  - `server.rs` 注册 `governance + metrics`；
+  - 未检出 `getBlock/getTransaction/getReceipt/getBalance`。
+- SVM2026 经济模块：
+  - `economic_context.rs` 包含 `charge_gas`、`burn/treasury` 路由与测试断言（20/30/50 分配）。
+  - `financial_metrics.rs` 仍存在 `TODO: Query from treasury`。
+- SVM2026 路线图中的未完信号：
+  - `L3.3 开发者工具 v0 = 0%`
+  - `SDK进行中`
+  - `headers-first + fast/state` 已新增最小门禁闭环，生产级多 peer/持久化恢复语义待办项仍在。
+
+---
+
+## 4. 建议的下一步（按优先级）
+
+1. （已完成，2026-03-05）`NOVOVM Batch E` 第 2 步（RPC 服务化暴露）  
+结果：`getBlock/getTransaction/getReceipt/getBalance` 已形成服务接口并纳入门禁（`chain_query_rpc_pass`）。
+
+2. 共识主网化收口（剩余：参数化罚没与治理策略）  
+目标：在已完成 stake/quorum/slash-evidence/slash-execution/view-change/fork-choice + 网络级 pacemaker 门禁基础上，补齐生产参数化与治理闭环。
+
+3. 同步与抗 DoS 并行推进  
+目标：在已完成 `headers-first + fast/state` 最小门禁基础上，补齐生产级 `fast/state sync`（多 peer + 持久化恢复）与 `rate-limit/peer-score/ban`，避免只在理想网络可用。
+
+4. 经济模块迁移收口（基于 SVM2026 已有实现）  
+目标：把 SVM2026 的经济参数能力搬到 NOVOVM 主链路并加门禁。
+
+5. ZK runtime 继续按你当前策略冻结  
+目标：等待 AOEM 1.0 后再切 `runtime-ready`，避免反复返工。

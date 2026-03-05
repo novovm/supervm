@@ -1,6 +1,6 @@
 param(
-    [string]$RepoRoot = "D:\WorksArea\SUPERVM",
-    [string]$OutputDir = "D:\WorksArea\SUPERVM\artifacts\migration\performance-gate\seal-single",
+    [string]$RepoRoot = "",
+    [string]$OutputDir = "",
     [double]$AllowedRegressionPct = -5.0,
     [ValidateRange(1, 9)]
     [int]$Runs = 3,
@@ -15,6 +15,15 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+
+if (-not $RepoRoot) {
+    $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
+} else {
+    $RepoRoot = (Resolve-Path $RepoRoot).Path
+}
+if (-not $OutputDir) {
+    $OutputDir = Join-Path $RepoRoot "artifacts\migration\performance-gate\seal-single"
+}
 
 function Get-Median {
     param([double[]]$Values)

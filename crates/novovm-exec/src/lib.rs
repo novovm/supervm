@@ -45,6 +45,33 @@ pub struct AoemRuntimeConfig {
     pub ingress_workers: Option<u32>,
 }
 
+fn find_aoem_root_near(start: &Path) -> Option<PathBuf> {
+    for dir in start.ancestors() {
+        let candidate = dir.join("aoem");
+        if candidate.join("bin").join("aoem_ffi.dll").exists()
+            || candidate.join("manifest").join("aoem-manifest.json").exists()
+        {
+            return Some(candidate);
+        }
+    }
+    None
+}
+
+fn default_aoem_root() -> PathBuf {
+    if let Ok(current_dir) = std::env::current_dir() {
+        if let Some(found) = find_aoem_root_near(&current_dir) {
+            return found;
+        }
+    }
+
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    if let Some(found) = find_aoem_root_near(&manifest_dir) {
+        return found;
+    }
+
+    manifest_dir.join("..").join("..").join("aoem")
+}
+
 impl AoemRuntimeConfig {
     pub fn from_env() -> Result<Self> {
         let variant_raw = std::env::var("NOVOVM_AOEM_VARIANT")
@@ -57,7 +84,7 @@ impl AoemRuntimeConfig {
         let aoem_root = std::env::var("NOVOVM_AOEM_ROOT")
             .or_else(|_| std::env::var("AOEM_ROOT"))
             .map(PathBuf::from)
-            .unwrap_or_else(|_| PathBuf::from(r"D:\WorksArea\SUPERVM\aoem"));
+            .unwrap_or_else(|_| default_aoem_root());
 
         let dll_path = std::env::var("NOVOVM_AOEM_DLL")
             .or_else(|_| std::env::var("AOEM_DLL"))
@@ -182,8 +209,10 @@ pub struct AoemCapabilityContract {
     pub execute_ops_v2: bool,
     pub zkvm_prove: bool,
     pub zkvm_verify: bool,
+    pub zk_formal_fields_present: bool,
     pub msm_accel: bool,
     pub msm_backend: Option<String>,
+    pub fallback_reason: Option<String>,
     pub fallback_reason_codes: Vec<String>,
     pub inferred_from_legacy_fields: bool,
     pub raw: serde_json::Value,
@@ -192,8 +221,30 @@ pub struct AoemCapabilityContract {
 impl AoemCapabilityContract {
     pub fn from_capabilities_json(raw: serde_json::Value) -> Self {
         let execute_ops_v2 = capability_bool(&raw, &["execute_ops_v2"]).unwrap_or(false);
-        let zkvm_prove = capability_bool(&raw, &["zkvm_prove", "zkvm.prove"]).unwrap_or(false);
-        let zkvm_verify = capability_bool(&raw, &["zkvm_verify", "zkvm.verify"]).unwrap_or(false);
+        let zkvm_prove = capability_bool(
+            &raw,
+            &[
+                "zkvm_prove",
+                "zkvm.prove",
+                "zkvm.prove_enabled",
+                "zk.prove",
+                "zk.prove_enabled",
+            ],
+        )
+        .unwrap_or(false);
+        let zkvm_verify = capability_bool(
+            &raw,
+            &[
+                "zkvm_verify",
+                "zkvm.verify",
+                "zkvm.verify_enabled",
+                "zk.verify",
+                "zk.verify_enabled",
+            ],
+        )
+        .unwrap_or(false);
+        let zk_formal_fields_present =
+            capability_exists(&raw, &["zkvm.prove", "zkvm.verify", "zkvm.prove_enabled", "zkvm.verify_enabled"]);
 
         // Legacy AOEM capability set only exposed backend path fields.
         let msm_accel_direct = capability_bool(&raw, &["msm_accel", "msm.accel"]);
@@ -201,18 +252,47 @@ impl AoemCapabilityContract {
         let inferred_from_legacy_fields = msm_accel_direct.is_none() && msm_accel_legacy.is_some();
         let msm_accel = msm_accel_direct.or(msm_accel_legacy).unwrap_or(false);
 
-        let msm_backend = capability_string(&raw, &["msm_backend", "msm.backend"]);
-        let fallback_reason_codes = capability_string_list(
+        let msm_backend = capability_string(
             &raw,
-            &["fallback_reason_codes", "fallback_reasons", "msm.fallback_reason_codes"],
+            &[
+                "msm_backend",
+                "msm.backend",
+                "msm.path_backend",
+                "aoem.msm.backend",
+            ],
         );
+        let fallback_reason_codes_raw = capability_string_list(
+            &raw,
+            &[
+                "fallback_reason_codes",
+                "fallback_reasons",
+                "fallback.reason_codes",
+                "fallback.reasons",
+                "zkvm.fallback_reason_codes",
+                "zkvm.reason_codes",
+                "msm.fallback_reason_codes",
+                "aoem.fallback_reason_codes",
+            ],
+        );
+        let fallback_reason = capability_string(
+            &raw,
+            &["fallback_reason", "fallback.reason", "zkvm.fallback_reason", "msm.fallback_reason"],
+        );
+        let fallback_reason_codes =
+            normalize_reason_codes(fallback_reason_codes_raw, fallback_reason.as_deref());
+        let fallback_reason = fallback_reason
+            .as_deref()
+            .and_then(normalize_reason_code)
+            .or_else(|| fallback_reason_codes.first().cloned());
 
         Self {
             execute_ops_v2,
             zkvm_prove,
             zkvm_verify,
+            zk_formal_fields_present,
             msm_accel,
             msm_backend,
+            fallback_reason,
             fallback_reason_codes,
             inferred_from_legacy_fields,
             raw,
@@ -398,6 +478,20 @@ fn capability_bool(root: &serde_json::Value, paths: &[&str]) -> Option<bool> {
     })
 }
 
+fn capability_exists(root: &serde_json::Value, paths: &[&str]) -> bool {
+    paths.iter().any(|p| {
+        let mut cursor = root;
+        for seg in p.split('.') {
+            if let Some(next) = cursor.get(seg) {
+                cursor = next;
+            } else {
+                return false;
+            }
+        }
+        true
+    })
+}
+
 fn capability_string(root: &serde_json::Value, paths: &[&str]) -> Option<String> {
     paths.iter().find_map(|p| {
         let mut cursor = root;
@@ -436,6 +530,55 @@ fn capability_string_list(root: &serde_json::Value, paths: &[&str]) -> Vec<Strin
     Vec::new()
 }
 
+fn normalize_reason_codes(codes: Vec<String>, single_reason: Option<&str>) -> Vec<String> {
+    let mut out = Vec::new();
+    for c in codes {
+        if let Some(v) = normalize_reason_code(&c) {
+            if !out.contains(&v) {
+                out.push(v);
+            }
+        }
+    }
+    if let Some(single) = single_reason.and_then(normalize_reason_code) {
+        if !out.contains(&single) {
+            out.push(single);
+        }
+    }
+    out
+}
+
+fn normalize_reason_code(input: &str) -> Option<String> {
+    let raw = input.trim();
+    if raw.is_empty() {
+        return None;
+    }
+    let mut out = String::with_capacity(raw.len());
+    let mut prev_underscore = false;
+    for ch in raw.chars() {
+        let mapped = if ch.is_ascii_alphanumeric() {
+            ch.to_ascii_lowercase()
+        } else {
+            '_'
+        };
+        if mapped == '_' {
+            if prev_underscore {
+                continue;
+            }
+            prev_underscore = true;
+            out.push(mapped);
+        } else {
+            prev_underscore = false;
+            out.push(mapped);
+        }
+    }
+    let trimmed = out.trim_matches('_').to_string();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed)
+    }
+}
+
 pub use aoem_bindings::acquire_global_lane;
 pub use aoem_bindings::global_parallel_budget;
 pub use aoem_bindings::recommend_threads_auto;
@@ -471,9 +614,11 @@ mod tests {
         assert!(c.execute_ops_v2);
         assert!(c.zkvm_prove);
         assert!(c.zkvm_verify);
+        assert!(c.zk_formal_fields_present);
         assert!(c.msm_accel);
         assert_eq!(c.msm_backend.as_deref(), Some("bls12_381_gpu"));
         assert_eq!(c.fallback_reason_codes.len(), 2);
+        assert_eq!(c.fallback_reason.as_deref(), Some("gpu_unavailable"));
         assert!(!c.inferred_from_legacy_fields);
     }
 
@@ -488,7 +633,38 @@ mod tests {
         assert!(c.execute_ops_v2);
         assert!(!c.zkvm_prove);
         assert!(!c.zkvm_verify);
+        assert!(!c.zk_formal_fields_present);
         assert!(c.msm_accel);
+        assert!(c.fallback_reason.is_none());
         assert!(c.inferred_from_legacy_fields);
+    }
+
+    #[test]
+    fn capability_contract_normalizes_reason_codes_and_alias_fields() {
+        let raw = json!({
+            "execute_ops_v2": true,
+            "zk": {
+                "prove_enabled": true,
+                "verify_enabled": false
+            },
+            "fallback": {
+                "reason_codes": ["GPU Unavailable", "gpu-unavailable", "ffi missing fallback"]
+            },
+            "fallback_reason": "  invalid input  "
+        });
+
+        let c = AoemCapabilityContract::from_capabilities_json(raw);
+        assert!(c.execute_ops_v2);
+        assert!(c.zkvm_prove);
+        assert!(!c.zkvm_verify);
+        assert_eq!(
+            c.fallback_reason_codes,
+            vec![
+                "gpu_unavailable".to_string(),
+                "ffi_missing_fallback".to_string(),
+                "invalid_input".to_string()
+            ]
+        );
+        assert_eq!(c.fallback_reason.as_deref(), Some("invalid_input"));
     }
 }

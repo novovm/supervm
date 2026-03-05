@@ -2,7 +2,10 @@
 //
 // BFT 引擎：协调 Epoch 管理、HotStuff 协议、投票聚合
 
-use crate::types::{BFTProposal, BFTResult, BFTError, ValidatorSet, NodeId};
+use crate::types::{
+    BFTError, BFTProposal, BFTResult, GovernanceOp, GovernanceProposal, GovernanceVote, NodeId,
+    NetworkDosPolicy, SlashEvidence, SlashExecution, SlashPolicy, ValidatorSet,
+};
 use crate::epoch::{Epoch, EpochConfig, EpochManager};
 use crate::quorum_cert::{QuorumCertificate, Vote};
 use crate::protocol::{HotStuffProtocol, Phase};
@@ -285,6 +288,12 @@ impl BFTEngine {
         protocol.current_height()
     }
 
+    /// 获取当前 view（同高度换主计数）
+    pub fn current_view(&self) -> u64 {
+        let protocol = self.protocol.lock().unwrap();
+        protocol.current_view()
+    }
+
     /// 获取法定人数大小（用于协调器早期判断是否可达成法定票数）
     pub fn quorum_size(&self) -> u64 {
         let protocol = self.protocol.lock().unwrap();
@@ -295,6 +304,148 @@ impl BFTEngine {
     pub fn is_leader(&self) -> bool {
         let protocol = self.protocol.lock().unwrap();
         protocol.is_leader()
+    }
+
+    /// 触发超时换主（view-change）
+    pub fn trigger_view_change(&self) -> BFTResult<NodeId> {
+        let mut protocol = self.protocol.lock().unwrap();
+        protocol.trigger_view_change()
+    }
+
+    /// Fork-choice：在候选 QC 中过滤无效项后，选择最佳 QC。
+    pub fn select_best_qc(&self, candidates: &[QuorumCertificate]) -> BFTResult<QuorumCertificate> {
+        if candidates.is_empty() {
+            return Err(BFTError::Internal(
+                "fork choice candidates cannot be empty".to_string(),
+            ));
+        }
+
+        let protocol = self.protocol.lock().unwrap();
+        let validator_set = protocol.validator_set().clone();
+        let mut valid_candidates = Vec::new();
+        for qc in candidates {
+            if qc.verify(&validator_set, &self.public_keys).is_ok() {
+                valid_candidates.push(qc.clone());
+            }
+        }
+        if valid_candidates.is_empty() {
+            return Err(BFTError::Internal(
+                "fork choice has no valid qc candidate".to_string(),
+            ));
+        }
+        let selected = protocol.select_fork_choice(&valid_candidates)?;
+        drop(protocol);
+        Ok(selected)
+    }
+
+    /// 获取协议已记录的 slash 证据。
+    pub fn slash_evidences(&self) -> Vec<SlashEvidence> {
+        let protocol = self.protocol.lock().unwrap();
+        protocol.slash_evidences().to_vec()
+    }
+
+    /// 获取已执行的 slash 记录（evidence -> jailed/weight 生效）。
+    pub fn slash_executions(&self) -> Vec<SlashExecution> {
+        let protocol = self.protocol.lock().unwrap();
+        protocol.slash_executions().to_vec()
+    }
+
+    /// 查询验证者是否已被 jailed。
+    pub fn is_validator_jailed(&self, node_id: NodeId) -> bool {
+        let protocol = self.protocol.lock().unwrap();
+        protocol.is_validator_jailed(node_id)
+    }
+
+    /// 查询验证者当前 jail 自动解禁高度（仅当仍在 jailed 状态时返回）。
+    pub fn validator_jailed_until_epoch(&self, node_id: NodeId) -> Option<u64> {
+        let protocol = self.protocol.lock().unwrap();
+        protocol.validator_jailed_until_epoch(node_id)
+    }
+
+    /// 当前活跃验证者法定权重（动态扣除已 jailed 验证者）。
+    pub fn active_quorum_size(&self) -> u64 {
+        let protocol = self.protocol.lock().unwrap();
+        protocol.active_quorum_size()
+    }
+
+    /// 更新罚没治理策略（参数化 slash execution）。
+    pub fn set_slash_policy(&self, policy: SlashPolicy) -> BFTResult<()> {
+        let mut protocol = self.protocol.lock().unwrap();
+        protocol.set_slash_policy(policy)
+    }
+
+    /// 获取当前罚没治理策略。
+    pub fn slash_policy(&self) -> SlashPolicy {
+        let protocol = self.protocol.lock().unwrap();
+        protocol.slash_policy()
+    }
+
+    /// 治理操作挂点（当前 staged-only，不启用链上执行）。
+    pub fn stage_governance_op(&self, op: GovernanceOp) -> BFTResult<()> {
+        let mut protocol = self.protocol.lock().unwrap();
+        protocol.stage_governance_op(op)
+    }
+
+    /// 查询 staged 治理操作列表。
+    pub fn staged_governance_ops(&self) -> Vec<GovernanceOp> {
+        let protocol = self.protocol.lock().unwrap();
+        protocol.staged_governance_ops().to_vec()
+    }
+
+    /// 开关治理执行（默认关闭）。
+    pub fn set_governance_execution_enabled(&self, enabled: bool) {
+        let mut protocol = self.protocol.lock().unwrap();
+        protocol.set_governance_execution_enabled(enabled);
+    }
+
+    /// 查询治理执行是否已开启。
+    pub fn governance_execution_enabled(&self) -> bool {
+        let protocol = self.protocol.lock().unwrap();
+        protocol.governance_execution_enabled()
+    }
+
+    /// 提交治理提案（最小闭环）。
+    pub fn submit_governance_proposal(
+        &self,
+        proposer: NodeId,
+        op: GovernanceOp,
+    ) -> BFTResult<GovernanceProposal> {
+        let mut protocol = self.protocol.lock().unwrap();
+        protocol.submit_governance_proposal(proposer, op)
+    }
+
+    /// 执行治理提案（签名投票 + weighted quorum）。
+    pub fn execute_governance_proposal(
+        &self,
+        proposal_id: u64,
+        votes: &[GovernanceVote],
+    ) -> BFTResult<bool> {
+        let mut protocol = self.protocol.lock().unwrap();
+        protocol.execute_governance_proposal(proposal_id, votes, &self.public_keys)
+    }
+
+    /// 读取治理参数：mempool fee floor。
+    pub fn governance_mempool_fee_floor(&self) -> u64 {
+        let protocol = self.protocol.lock().unwrap();
+        protocol.governance_mempool_fee_floor()
+    }
+
+    /// 读取治理参数：network dos policy。
+    pub fn governance_network_dos_policy(&self) -> NetworkDosPolicy {
+        let protocol = self.protocol.lock().unwrap();
+        protocol.governance_network_dos_policy()
+    }
+
+    /// 查询单个待执行治理提案。
+    pub fn governance_pending_proposal(&self, proposal_id: u64) -> Option<GovernanceProposal> {
+        let protocol = self.protocol.lock().unwrap();
+        protocol.governance_pending_proposal(proposal_id)
+    }
+
+    /// 查询全部待执行治理提案。
+    pub fn governance_pending_proposals(&self) -> Vec<GovernanceProposal> {
+        let protocol = self.protocol.lock().unwrap();
+        protocol.governance_pending_proposals()
     }
     
     /// 获取当前阶段
@@ -478,6 +629,246 @@ mod tests {
             .unwrap();
 
         assert_eq!(proposal.state_delta_hash, override_root);
+    }
+
+    #[test]
+    fn test_view_change_moves_leader_by_view() {
+        let validator_set = ValidatorSet::new_equal_weight(vec![0, 1, 2, 3]);
+        let signing_keys: Vec<_> = (0..4)
+            .map(|_| SigningKey::generate(&mut OsRng))
+            .collect();
+        let public_keys: HashMap<NodeId, VerifyingKey> = signing_keys
+            .iter()
+            .enumerate()
+            .map(|(i, sk)| (i as NodeId, sk.verifying_key()))
+            .collect();
+
+        let engine = BFTEngine::new(
+            BFTConfig::default(),
+            0,
+            signing_keys[0].clone(),
+            validator_set,
+            public_keys,
+        )
+        .unwrap();
+        assert!(engine.is_leader());
+        assert_eq!(engine.current_view(), 0);
+
+        let next = engine.trigger_view_change().unwrap();
+        assert_eq!(next, 1);
+        assert!(!engine.is_leader());
+        assert_eq!(engine.current_view(), 1);
+    }
+
+    #[test]
+    fn test_select_best_qc_prefers_highest_valid_height() {
+        let validator_set = ValidatorSet::new_equal_weight(vec![0, 1, 2, 3]);
+        let signing_keys: Vec<_> = (0..4)
+            .map(|_| SigningKey::generate(&mut OsRng))
+            .collect();
+        let public_keys: HashMap<NodeId, VerifyingKey> = signing_keys
+            .iter()
+            .enumerate()
+            .map(|(i, sk)| (i as NodeId, sk.verifying_key()))
+            .collect();
+
+        let engine = BFTEngine::new(
+            BFTConfig::default(),
+            0,
+            signing_keys[0].clone(),
+            validator_set.clone(),
+            public_keys.clone(),
+        )
+        .unwrap();
+
+        let mut qc_low = QuorumCertificate::new([3u8; 32], 10);
+        for i in 0..3usize {
+            let vote = Vote::new(i as NodeId, [3u8; 32], 10, &signing_keys[i]);
+            qc_low.add_vote(vote, 1);
+        }
+
+        let mut qc_high = QuorumCertificate::new([7u8; 32], 11);
+        for i in 0..3usize {
+            let vote = Vote::new(i as NodeId, [7u8; 32], 11, &signing_keys[i]);
+            qc_high.add_vote(vote, 1);
+        }
+
+        let mut qc_invalid = qc_high.clone();
+        qc_invalid.total_weight = 99; // declared weight tamper -> invalid
+
+        // protocol fork-choice会先选更高高度项；engine 会对选中项再次校验签名/权重。
+        let best = engine.select_best_qc(&[qc_low.clone(), qc_high.clone()]).unwrap();
+        assert_eq!(best.height, 11);
+        assert_eq!(best.total_weight, 3);
+
+        let fallback_best = engine.select_best_qc(&[qc_low.clone(), qc_invalid]).unwrap();
+        assert_eq!(fallback_best.height, 10);
+        assert_eq!(fallback_best.total_weight, 3);
+
+        // 手动调用协议层选择后，组合一个仅含有效候选的路径仍然可用。
+        assert!(qc_low.verify(&validator_set, &public_keys).is_ok());
+    }
+
+    #[test]
+    fn test_stage_governance_op_is_staged_only() {
+        let validator_set = ValidatorSet::new_equal_weight(vec![0, 1]);
+        let signing_keys: Vec<_> = (0..2)
+            .map(|_| SigningKey::generate(&mut OsRng))
+            .collect();
+        let public_keys: HashMap<NodeId, VerifyingKey> = signing_keys
+            .iter()
+            .enumerate()
+            .map(|(i, sk)| (i as NodeId, sk.verifying_key()))
+            .collect();
+
+        let engine = BFTEngine::new(
+            BFTConfig::default(),
+            0,
+            signing_keys[0].clone(),
+            validator_set,
+            public_keys,
+        )
+        .unwrap();
+        let before = engine.slash_policy();
+        let op = GovernanceOp::UpdateSlashPolicy {
+            policy: SlashPolicy {
+                mode: crate::types::SlashMode::ObserveOnly,
+                equivocation_threshold: 3,
+                min_active_validators: 1,
+                cooldown_epochs: 8,
+            },
+        };
+        let staged = engine.stage_governance_op(op.clone());
+        assert!(matches!(
+            staged,
+            Err(BFTError::GovernanceNotEnabled(_))
+        ));
+        assert_eq!(engine.staged_governance_ops(), vec![op]);
+        assert_eq!(engine.slash_policy(), before);
+    }
+
+    #[test]
+    fn test_execute_governance_update_slash_policy() {
+        let validator_set = ValidatorSet::new_equal_weight(vec![0, 1, 2]);
+        let signing_keys: Vec<_> = (0..3)
+            .map(|_| SigningKey::generate(&mut OsRng))
+            .collect();
+        let public_keys: HashMap<NodeId, VerifyingKey> = signing_keys
+            .iter()
+            .enumerate()
+            .map(|(i, sk)| (i as NodeId, sk.verifying_key()))
+            .collect();
+        let engine = BFTEngine::new(
+            BFTConfig::default(),
+            0,
+            signing_keys[0].clone(),
+            validator_set,
+            public_keys,
+        )
+        .unwrap();
+
+        engine.set_governance_execution_enabled(true);
+        assert!(engine.governance_execution_enabled());
+        let target_policy = SlashPolicy {
+            mode: crate::types::SlashMode::ObserveOnly,
+            equivocation_threshold: 3,
+            min_active_validators: 2,
+            cooldown_epochs: 4,
+        };
+        let proposal = engine
+            .submit_governance_proposal(
+                0,
+                GovernanceOp::UpdateSlashPolicy {
+                    policy: target_policy.clone(),
+                },
+            )
+            .unwrap();
+        let votes = vec![
+            GovernanceVote::new(&proposal, 0, true, &signing_keys[0]),
+            GovernanceVote::new(&proposal, 1, true, &signing_keys[1]),
+        ];
+        let executed = engine
+            .execute_governance_proposal(proposal.proposal_id, &votes)
+            .unwrap();
+        assert!(executed);
+        assert_eq!(engine.slash_policy(), target_policy);
+    }
+
+    #[test]
+    fn test_execute_governance_update_mempool_fee_floor() {
+        let validator_set = ValidatorSet::new_equal_weight(vec![0, 1, 2]);
+        let signing_keys: Vec<_> = (0..3)
+            .map(|_| SigningKey::generate(&mut OsRng))
+            .collect();
+        let public_keys: HashMap<NodeId, VerifyingKey> = signing_keys
+            .iter()
+            .enumerate()
+            .map(|(i, sk)| (i as NodeId, sk.verifying_key()))
+            .collect();
+        let engine = BFTEngine::new(
+            BFTConfig::default(),
+            0,
+            signing_keys[0].clone(),
+            validator_set,
+            public_keys,
+        )
+        .unwrap();
+        engine.set_governance_execution_enabled(true);
+        let proposal = engine
+            .submit_governance_proposal(0, GovernanceOp::UpdateMempoolFeeFloor { fee_floor: 11 })
+            .unwrap();
+        let votes = vec![
+            GovernanceVote::new(&proposal, 0, true, &signing_keys[0]),
+            GovernanceVote::new(&proposal, 1, true, &signing_keys[1]),
+        ];
+        let executed = engine
+            .execute_governance_proposal(proposal.proposal_id, &votes)
+            .unwrap();
+        assert!(executed);
+        assert_eq!(engine.governance_mempool_fee_floor(), 11);
+    }
+
+    #[test]
+    fn test_execute_governance_update_network_dos_policy() {
+        let validator_set = ValidatorSet::new_equal_weight(vec![0, 1, 2]);
+        let signing_keys: Vec<_> = (0..3)
+            .map(|_| SigningKey::generate(&mut OsRng))
+            .collect();
+        let public_keys: HashMap<NodeId, VerifyingKey> = signing_keys
+            .iter()
+            .enumerate()
+            .map(|(i, sk)| (i as NodeId, sk.verifying_key()))
+            .collect();
+        let engine = BFTEngine::new(
+            BFTConfig::default(),
+            0,
+            signing_keys[0].clone(),
+            validator_set,
+            public_keys,
+        )
+        .unwrap();
+        engine.set_governance_execution_enabled(true);
+        let target = NetworkDosPolicy {
+            rpc_rate_limit_per_ip: 80,
+            peer_ban_threshold: -7,
+        };
+        let proposal = engine
+            .submit_governance_proposal(
+                0,
+                GovernanceOp::UpdateNetworkDosPolicy {
+                    policy: target.clone(),
+                },
+            )
+            .unwrap();
+        let votes = vec![
+            GovernanceVote::new(&proposal, 0, true, &signing_keys[0]),
+            GovernanceVote::new(&proposal, 1, true, &signing_keys[1]),
+        ];
+        let executed = engine
+            .execute_governance_proposal(proposal.proposal_id, &votes)
+            .unwrap();
+        assert!(executed);
+        assert_eq!(engine.governance_network_dos_policy(), target);
     }
 }
 

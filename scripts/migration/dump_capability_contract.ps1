@@ -1,12 +1,21 @@
 param(
-    [string]$RepoRoot = "D:\WorksArea\SUPERVM",
-    [string]$OutputDir = "D:\WorksArea\SUPERVM\artifacts\migration\capabilities",
+    [string]$RepoRoot = "",
+    [string]$OutputDir = "",
     [ValidateSet("core", "persist", "wasm")]
     [string]$Variant = "core"
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+
+if (-not $RepoRoot) {
+    $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
+} else {
+    $RepoRoot = (Resolve-Path $RepoRoot).Path
+}
+if (-not $OutputDir) {
+    $OutputDir = Join-Path $RepoRoot "artifacts\migration\capabilities"
+}
 
 function Invoke-CargoStdout {
     param(
@@ -42,19 +51,48 @@ function Invoke-CargoStdout {
 New-Item -ItemType Directory -Force -Path $OutputDir | Out-Null
 
 $execDir = Join-Path $RepoRoot "crates\novovm-exec"
+$aoemRoot = Join-Path $RepoRoot "aoem"
+$aoemDll = Join-Path $aoemRoot "bin\aoem_ffi.dll"
+$aoemManifest = Join-Path $aoemRoot "manifest\aoem-manifest.json"
+$aoemRuntimeProfile = Join-Path $aoemRoot "config\aoem-runtime-profile.json"
 $jsonText = Invoke-CargoStdout -WorkDir $execDir -CargoArgs @(
     "run", "--quiet", "--example", "capability_contract_dump"
 ) -EnvVars @{
     NOVOVM_AOEM_VARIANT = $Variant
+    NOVOVM_AOEM_ROOT = $aoemRoot
+    NOVOVM_AOEM_DLL = $aoemDll
+    NOVOVM_AOEM_MANIFEST = $aoemManifest
+    NOVOVM_AOEM_RUNTIME_PROFILE = $aoemRuntimeProfile
 }
 
 $contract = $jsonText | ConvertFrom-Json
+$proverContract = $null
+$proverError = ""
+try {
+    $proverDir = Join-Path $RepoRoot "crates\novovm-prover"
+    if (Test-Path (Join-Path $proverDir "Cargo.toml")) {
+        $proverText = Invoke-CargoStdout -WorkDir $proverDir -CargoArgs @(
+            "run", "--quiet", "--example", "capability_bridge_dump"
+        ) -EnvVars @{
+            NOVOVM_AOEM_VARIANT = $Variant
+            NOVOVM_AOEM_ROOT = $aoemRoot
+            NOVOVM_AOEM_DLL = $aoemDll
+            NOVOVM_AOEM_MANIFEST = $aoemManifest
+            NOVOVM_AOEM_RUNTIME_PROFILE = $aoemRuntimeProfile
+        }
+        $proverContract = $proverText | ConvertFrom-Json
+    }
+} catch {
+    $proverError = $_.Exception.Message
+}
 $generatedAt = [DateTime]::UtcNow.ToString("o")
 
 $result = [ordered]@{
     generated_at_utc = $generatedAt
     variant = $Variant
     contract = $contract
+    prover_contract = $proverContract
+    prover_contract_error = $proverError
 }
 
 $jsonPath = Join-Path $OutputDir "capability-contract-$Variant.json"
@@ -72,7 +110,12 @@ $md = @(
     "- zkvm_verify: $($contract.zkvm_verify)"
     "- msm_accel: $($contract.msm_accel)"
     "- msm_backend: $($contract.msm_backend)"
+    "- fallback_reason: $($contract.fallback_reason)"
+    "- fallback_reason_codes: $((@($contract.fallback_reason_codes) -join ', '))"
+    "- zk_formal_fields_present: $($contract.zk_formal_fields_present)"
     "- inferred_from_legacy_fields: $($contract.inferred_from_legacy_fields)"
+    "- prover_contract_ready: $($null -ne $proverContract)"
+    "- prover_contract_error: $proverError"
     ""
     "## Raw Capabilities"
     ""

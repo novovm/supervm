@@ -1,12 +1,17 @@
 param(
-    [string]$RepoRoot = "D:\WorksArea\SUPERVM",
-    [string]$OutputDir = "D:\WorksArea\SUPERVM\artifacts\migration\functional",
+    [string]$RepoRoot = "",
+    [string]$OutputDir = "",
     [int]$Rounds = 200,
     [int]$Points = 1024,
     [int]$KeySpace = 251,
     [double]$Rw = 0.5,
     [int]$Seed = 123,
     [bool]$IncludeCapabilitySnapshot = $true,
+    [bool]$IncludeCoordinatorSignal = $true,
+    [bool]$IncludeCoordinatorNegativeSignal = $true,
+    [bool]$IncludeProverContractSignal = $true,
+    [bool]$IncludeProverContractNegativeSignal = $true,
+    [bool]$IncludeConsensusNegativeSignal = $true,
     [bool]$IncludeNetworkProcessSignal = $true,
     [ValidateSet("core", "persist", "wasm")]
     [string]$CapabilityVariant = "core",
@@ -34,18 +39,30 @@ param(
     [string]$AdapterPluginRegistryPath = "",
     [bool]$AdapterPluginRegistryStrict = $false,
     [string]$AdapterPluginRegistrySha256 = "",
-    [bool]$IncludeAdapterBackendCompare = $false,
+    [bool]$IncludeAdapterBackendCompare = $true,
     [string]$AdapterComparePluginPath = "",
-    [bool]$IncludeAdapterPluginAbiNegative = $false,
+    [bool]$IncludeAdapterPluginAbiNegative = $true,
     [string]$AdapterNegativePluginPath = "",
-    [bool]$IncludeAdapterPluginSymbolNegative = $false,
+    [bool]$IncludeAdapterPluginSymbolNegative = $true,
     [string]$AdapterSymbolNegativePluginPath = "",
-    [bool]$IncludeAdapterPluginRegistryNegative = $false,
+    [bool]$IncludeAdapterPluginRegistryNegative = $true,
     [bool]$IncludeNetworkBlockWireNegative = $false
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+
+if (-not $RepoRoot) {
+    $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
+} else {
+    $RepoRoot = (Resolve-Path $RepoRoot).Path
+}
+if (-not $OutputDir) {
+    $OutputDir = Join-Path $RepoRoot "artifacts\migration\functional"
+} elseif (-not [System.IO.Path]::IsPathRooted($OutputDir)) {
+    $OutputDir = Join-Path $RepoRoot $OutputDir
+}
+$OutputDir = [System.IO.Path]::GetFullPath($OutputDir)
 
 function Invoke-Cargo {
     param(
@@ -109,6 +126,85 @@ function Invoke-CargoAllowFailure {
         exit_code = [int]$proc.ExitCode
         output = $text
     }
+}
+
+function Resolve-RepoPath {
+    param(
+        [string]$RepoRoot,
+        [string]$PathText
+    )
+
+    if (-not $PathText) {
+        return ""
+    }
+    if (Test-Path $PathText) {
+        return (Resolve-Path $PathText).Path
+    }
+    $repoRelative = Join-Path $RepoRoot $PathText
+    if (Test-Path $repoRelative) {
+        return (Resolve-Path $repoRelative).Path
+    }
+    return $PathText
+}
+
+function Resolve-AdapterPluginPath {
+    param(
+        [string]$RepoRoot,
+        [string]$PathText,
+        [bool]$AllowBuild = $false
+    )
+
+    $resolvedExplicitPath = Resolve-RepoPath -RepoRoot $RepoRoot -PathText $PathText
+    if ($resolvedExplicitPath) {
+        return $resolvedExplicitPath
+    }
+
+    $pluginNames = @(
+        "novovm_adapter_sample_plugin.dll",
+        "novovm_adapter_sample_plugin.so",
+        "novovm_adapter_sample_plugin.dylib",
+        "libnovovm_adapter_sample_plugin.so",
+        "libnovovm_adapter_sample_plugin.dylib"
+    )
+    $pluginCrateDir = Join-Path $RepoRoot "crates\novovm-adapter-sample-plugin"
+    $searchDirs = @(
+        (Join-Path $RepoRoot "target\debug"),
+        (Join-Path $RepoRoot "target\release"),
+        (Join-Path $pluginCrateDir "target\debug"),
+        (Join-Path $pluginCrateDir "target\release")
+    )
+
+    foreach ($dir in $searchDirs) {
+        foreach ($name in $pluginNames) {
+            $candidate = Join-Path $dir $name
+            if (Test-Path $candidate) {
+                return (Resolve-Path $candidate).Path
+            }
+        }
+    }
+
+    if (-not $AllowBuild) {
+        return ""
+    }
+    if (-not (Test-Path (Join-Path $pluginCrateDir "Cargo.toml"))) {
+        return ""
+    }
+
+    $buildProbe = Invoke-CargoAllowFailure -WorkDir $pluginCrateDir -CargoArgs @("build", "--quiet") -EnvVars @{}
+    if ($buildProbe.exit_code -ne 0) {
+        Write-Warning "failed to build sample adapter plugin (exit=$($buildProbe.exit_code))"
+        return ""
+    }
+
+    foreach ($dir in $searchDirs) {
+        foreach ($name in $pluginNames) {
+            $candidate = Join-Path $dir $name
+            if (Test-Path $candidate) {
+                return (Resolve-Path $candidate).Path
+            }
+        }
+    }
+    return ""
 }
 
 function Parse-NodeReportLine {
@@ -551,6 +647,176 @@ function Parse-NetworkClosureLine {
     }
 }
 
+function Parse-NetworkPacemakerLine {
+    param([string]$Text)
+    $line = ($Text -split "`r?`n" | Where-Object { $_ -match "^network_pacemaker:" } | Select-Object -Last 1)
+    if (-not $line) {
+        return $null
+    }
+    $m = [regex]::Match(
+        $line,
+        "^network_pacemaker:\s+view_sync=(?<view_sync>true|false)\s+new_view=(?<new_view>true|false)$"
+    )
+    if (-not $m.Success) {
+        return [ordered]@{
+            parse_ok = $false
+            raw = $line
+        }
+    }
+    return [ordered]@{
+        parse_ok = $true
+        view_sync = [bool]::Parse($m.Groups["view_sync"].Value)
+        new_view = [bool]::Parse($m.Groups["new_view"].Value)
+        raw = $line
+    }
+}
+
+function Parse-CoordinatorOutLine {
+    param([string]$Text)
+    $line = ($Text -split "`r?`n" | Where-Object { $_ -match "^coordinator_out:" } | Select-Object -Last 1)
+    if (-not $line) {
+        throw "coordinator output missing line"
+    }
+    $m = [regex]::Match(
+        $line,
+        "^coordinator_out:\s+tx_id=(?<tx_id>\d+)\s+participants=(?<participants>\d+)\s+votes=(?<votes>\d+)\s+decided=(?<decided>true|false)\s+commit=(?<commit>true|false)$"
+    )
+    if (-not $m.Success) {
+        throw "cannot parse coordinator line: $line"
+    }
+    return [ordered]@{
+        parse_ok = $true
+        tx_id = [int64]$m.Groups["tx_id"].Value
+        participants = [int]$m.Groups["participants"].Value
+        votes = [int]$m.Groups["votes"].Value
+        decided = [bool]::Parse($m.Groups["decided"].Value)
+        commit = [bool]::Parse($m.Groups["commit"].Value)
+        raw = $line
+    }
+}
+
+function Parse-CoordinatorNegativeOutLine {
+    param([string]$Text)
+    $line = ($Text -split "`r?`n" | Where-Object { $_ -match "^coordinator_negative_out:" } | Select-Object -Last 1)
+    if (-not $line) {
+        throw "coordinator negative output missing line"
+    }
+    $m = [regex]::Match(
+        $line,
+        "^coordinator_negative_out:\s+unknown_prepare=(?<unknown_prepare>true|false)\s+non_participant_vote=(?<non_participant_vote>true|false)\s+vote_after_decide=(?<vote_after_decide>true|false)\s+duplicate_tx=(?<duplicate_tx>true|false)\s+pass=(?<pass>true|false)$"
+    )
+    if (-not $m.Success) {
+        throw "cannot parse coordinator negative line: $line"
+    }
+    return [ordered]@{
+        parse_ok = $true
+        unknown_prepare = [bool]::Parse($m.Groups["unknown_prepare"].Value)
+        non_participant_vote = [bool]::Parse($m.Groups["non_participant_vote"].Value)
+        vote_after_decide = [bool]::Parse($m.Groups["vote_after_decide"].Value)
+        duplicate_tx = [bool]::Parse($m.Groups["duplicate_tx"].Value)
+        pass = [bool]::Parse($m.Groups["pass"].Value)
+        raw = $line
+    }
+}
+
+function Parse-ProverContractOutLine {
+    param([string]$Text)
+    $line = ($Text -split "`r?`n" | Where-Object { $_ -match "^prover_contract_out:" } | Select-Object -Last 1)
+    if (-not $line) {
+        throw "prover contract output missing line"
+    }
+    $m = [regex]::Match(
+        $line,
+        "^prover_contract_out:\s+schema_ok=(?<schema_ok>true|false)\s+normalized_reason_codes=(?<normalized>true|false)\s+fallback_codes=(?<fallback_codes>\d+)\s+prover_ready=(?<prover_ready>true|false)\s+zk_ready=(?<zk_ready>true|false)\s+msm_backend=(?<msm_backend>.*)$"
+    )
+    if (-not $m.Success) {
+        throw "cannot parse prover contract line: $line"
+    }
+    return [ordered]@{
+        parse_ok = $true
+        schema_ok = [bool]::Parse($m.Groups["schema_ok"].Value)
+        normalized_reason_codes = [bool]::Parse($m.Groups["normalized"].Value)
+        fallback_codes = [int]$m.Groups["fallback_codes"].Value
+        prover_ready = [bool]::Parse($m.Groups["prover_ready"].Value)
+        zk_ready = [bool]::Parse($m.Groups["zk_ready"].Value)
+        msm_backend = $m.Groups["msm_backend"].Value.Trim()
+        raw = $line
+    }
+}
+
+function Parse-ProverContractNegativeOutLine {
+    param([string]$Text)
+    $line = ($Text -split "`r?`n" | Where-Object { $_ -match "^prover_contract_negative_out:" } | Select-Object -Last 1)
+    if (-not $line) {
+        throw "prover contract negative output missing line"
+    }
+    $m = [regex]::Match(
+        $line,
+        "^prover_contract_negative_out:\s+missing_formal_fields=(?<missing_formal_fields>true|false)\s+empty_reason_codes=(?<empty_reason_codes>true|false)\s+reason_normalization_stable=(?<reason_normalization_stable>true|false)\s+pass=(?<pass>true|false)$"
+    )
+    if (-not $m.Success) {
+        throw "cannot parse prover contract negative line: $line"
+    }
+    return [ordered]@{
+        parse_ok = $true
+        missing_formal_fields = [bool]::Parse($m.Groups["missing_formal_fields"].Value)
+        empty_reason_codes = [bool]::Parse($m.Groups["empty_reason_codes"].Value)
+        reason_normalization_stable = [bool]::Parse($m.Groups["reason_normalization_stable"].Value)
+        pass = [bool]::Parse($m.Groups["pass"].Value)
+        raw = $line
+    }
+}
+
+function Parse-ConsensusNegativeOutLine {
+    param([string]$Text)
+    $line = ($Text -split "`r?`n" | Where-Object { $_ -match "^consensus_negative_out:" } | Select-Object -Last 1)
+    if (-not $line) {
+        throw "consensus negative output missing line"
+    }
+    $m = [regex]::Match(
+        $line,
+        "^consensus_negative_out:\s+invalid_signature=(?<invalid_signature>true|false)\s+duplicate_vote=(?<duplicate_vote>true|false)\s+wrong_epoch=(?<wrong_epoch>true|false)\s+pass=(?<pass>true|false)$"
+    )
+    if (-not $m.Success) {
+        throw "cannot parse consensus negative line: $line"
+    }
+    return [ordered]@{
+        parse_ok = $true
+        invalid_signature = [bool]::Parse($m.Groups["invalid_signature"].Value)
+        duplicate_vote = [bool]::Parse($m.Groups["duplicate_vote"].Value)
+        wrong_epoch = [bool]::Parse($m.Groups["wrong_epoch"].Value)
+        pass = [bool]::Parse($m.Groups["pass"].Value)
+        raw = $line
+    }
+}
+
+function Parse-ConsensusNegativeExtLine {
+    param([string]$Text)
+    $line = ($Text -split "`r?`n" | Where-Object { $_ -match "^consensus_negative_ext:" } | Select-Object -Last 1)
+    if (-not $line) {
+        throw "consensus negative ext output missing line"
+    }
+    $m = [regex]::Match(
+        $line,
+        "^consensus_negative_ext:\s+weighted_quorum=(?<weighted_quorum>true|false)\s+equivocation=(?<equivocation>true|false)(?:\s+slash_execution=(?<slash_execution>true|false))?(?:\s+slash_threshold=(?<slash_threshold>true|false))?(?:\s+slash_observe_only=(?<slash_observe_only>true|false))?(?:\s+unjail_cooldown=(?<unjail_cooldown>true|false))?\s+view_change=(?<view_change>true|false)\s+fork_choice=(?<fork_choice>true|false)$"
+    )
+    if (-not $m.Success) {
+        throw "cannot parse consensus negative ext line: $line"
+    }
+    return [ordered]@{
+        parse_ok = $true
+        weighted_quorum = [bool]::Parse($m.Groups["weighted_quorum"].Value)
+        equivocation = [bool]::Parse($m.Groups["equivocation"].Value)
+        slash_execution = if ($m.Groups["slash_execution"].Success) { [bool]::Parse($m.Groups["slash_execution"].Value) } else { $false }
+        slash_threshold = if ($m.Groups["slash_threshold"].Success) { [bool]::Parse($m.Groups["slash_threshold"].Value) } else { $false }
+        slash_observe_only = if ($m.Groups["slash_observe_only"].Success) { [bool]::Parse($m.Groups["slash_observe_only"].Value) } else { $false }
+        unjail_cooldown = if ($m.Groups["unjail_cooldown"].Success) { [bool]::Parse($m.Groups["unjail_cooldown"].Value) } else { $false }
+        view_change = [bool]::Parse($m.Groups["view_change"].Value)
+        fork_choice = [bool]::Parse($m.Groups["fork_choice"].Value)
+        raw = $line
+    }
+}
+
 function Parse-ConsistencyDigestLine {
     param([string]$Text)
     $line = ($Text -split "`r?`n" | Where-Object { $_ -match "^consistency:" } | Select-Object -Last 1)
@@ -621,6 +887,18 @@ function Get-CapabilitySnapshot {
     if ($null -ne $raw.contract.fallback_reason_codes) {
         $fallbackCodes = @($raw.contract.fallback_reason_codes)
     }
+    $fallbackReason = ""
+    if ($null -ne $raw.contract.fallback_reason) {
+        $fallbackReason = [string]$raw.contract.fallback_reason
+    }
+    $zkFormalFieldsPresent = $false
+    if ($null -ne $raw.contract.zk_formal_fields_present) {
+        $zkFormalFieldsPresent = [bool]$raw.contract.zk_formal_fields_present
+    }
+    $proverReady = $false
+    if ($raw.prover_contract -and $null -ne $raw.prover_contract.prover_ready) {
+        $proverReady = [bool]$raw.prover_contract.prover_ready
+    }
 
     return [ordered]@{
         source_json = $sourceJson
@@ -629,9 +907,12 @@ function Get-CapabilitySnapshot {
         execute_ops_v2 = [bool]$raw.contract.execute_ops_v2
         zkvm_prove = [bool]$raw.contract.zkvm_prove
         zkvm_verify = [bool]$raw.contract.zkvm_verify
+        zk_formal_fields_present = $zkFormalFieldsPresent
         msm_accel = [bool]$raw.contract.msm_accel
         msm_backend = [string]$raw.contract.msm_backend
+        fallback_reason = $fallbackReason
         fallback_reason_codes = $fallbackCodes
+        prover_ready = $proverReady
         inferred_from_legacy_fields = [bool]$raw.contract.inferred_from_legacy_fields
     }
 }
@@ -662,6 +943,14 @@ function Get-NetworkProcessSignal {
             block_wire_verified = 0
             block_wire_total = 0
             block_wire_verified_ratio = 0.0
+            view_sync_available = $false
+            view_sync_pass = $false
+            view_sync_rounds_passed = 0
+            view_sync_pass_ratio = 0.0
+            new_view_available = $false
+            new_view_pass = $false
+            new_view_rounds_passed = 0
+            new_view_pass_ratio = 0.0
             reason = "missing script: $scriptPath"
         }
     }
@@ -687,11 +976,28 @@ function Get-NetworkProcessSignal {
             block_wire_verified = 0
             block_wire_total = 0
             block_wire_verified_ratio = 0.0
+            view_sync_available = $false
+            view_sync_pass = $false
+            view_sync_rounds_passed = 0
+            view_sync_pass_ratio = 0.0
+            new_view_available = $false
+            new_view_pass = $false
+            new_view_rounds_passed = 0
+            new_view_pass_ratio = 0.0
             reason = "network two-process json not found"
         }
     }
 
     $raw = Get-Content -Path $sourceJson -Raw | ConvertFrom-Json
+    $hasViewSyncAvailable = $raw.PSObject.Properties.Name -contains "view_sync_available"
+    $hasViewSyncPass = $raw.PSObject.Properties.Name -contains "view_sync_pass"
+    $hasViewSyncRoundsPassed = $raw.PSObject.Properties.Name -contains "view_sync_rounds_passed"
+    $hasViewSyncPassRatio = $raw.PSObject.Properties.Name -contains "view_sync_pass_ratio"
+    $hasNewViewAvailable = $raw.PSObject.Properties.Name -contains "new_view_available"
+    $hasNewViewPass = $raw.PSObject.Properties.Name -contains "new_view_pass"
+    $hasNewViewRoundsPassed = $raw.PSObject.Properties.Name -contains "new_view_rounds_passed"
+    $hasNewViewPassRatio = $raw.PSObject.Properties.Name -contains "new_view_pass_ratio"
+
     return [ordered]@{
         available = $true
         pass = [bool]$raw.pass
@@ -714,6 +1020,14 @@ function Get-NetworkProcessSignal {
         block_wire_verified = if ($null -ne $raw.block_wire_verified) { [int]$raw.block_wire_verified } else { 0 }
         block_wire_total = if ($null -ne $raw.block_wire_total) { [int]$raw.block_wire_total } else { 0 }
         block_wire_verified_ratio = if ($null -ne $raw.block_wire_verified_ratio) { [double]$raw.block_wire_verified_ratio } else { 0.0 }
+        view_sync_available = if ($hasViewSyncAvailable -and $null -ne $raw.view_sync_available) { [bool]$raw.view_sync_available } else { $false }
+        view_sync_pass = if ($hasViewSyncPass -and $null -ne $raw.view_sync_pass) { [bool]$raw.view_sync_pass } else { $false }
+        view_sync_rounds_passed = if ($hasViewSyncRoundsPassed -and $null -ne $raw.view_sync_rounds_passed) { [int]$raw.view_sync_rounds_passed } else { 0 }
+        view_sync_pass_ratio = if ($hasViewSyncPassRatio -and $null -ne $raw.view_sync_pass_ratio) { [double]$raw.view_sync_pass_ratio } else { 0.0 }
+        new_view_available = if ($hasNewViewAvailable -and $null -ne $raw.new_view_available) { [bool]$raw.new_view_available } else { $false }
+        new_view_pass = if ($hasNewViewPass -and $null -ne $raw.new_view_pass) { [bool]$raw.new_view_pass } else { $false }
+        new_view_rounds_passed = if ($hasNewViewRoundsPassed -and $null -ne $raw.new_view_rounds_passed) { [int]$raw.new_view_rounds_passed } else { 0 }
+        new_view_pass_ratio = if ($hasNewViewPassRatio -and $null -ne $raw.new_view_pass_ratio) { [double]$raw.new_view_pass_ratio } else { 0.0 }
         node_a_exit_code = if ($raw.node_a -and $null -ne $raw.node_a.exit_code) { [int]$raw.node_a.exit_code } else { $null }
         node_b_exit_code = if ($raw.node_b -and $null -ne $raw.node_b.exit_code) { [int]$raw.node_b.exit_code } else { $null }
         reason = $null
@@ -794,14 +1108,40 @@ function Get-NetworkBlockWireNegativeSignal {
 $aoemRoot = Join-Path $RepoRoot "aoem"
 $nodeDir = Join-Path $RepoRoot "crates\novovm-node"
 $bindingsDir = Join-Path $RepoRoot "crates\aoem-bindings"
+$coordinatorDir = Join-Path $RepoRoot "crates\novovm-coordinator"
+$proverDir = Join-Path $RepoRoot "crates\novovm-prover"
+$consensusDir = Join-Path $RepoRoot "crates\novovm-consensus"
 $adapterPluginRequiredCapsNormalized = Normalize-HexMask -Text $AdapterPluginRequiredCaps
+$adapterPluginPathResolved = Resolve-AdapterPluginPath -RepoRoot $RepoRoot -PathText $AdapterPluginPath -AllowBuild ($IncludeAdapterBackendCompare -or $IncludeAdapterPluginAbiNegative -or $IncludeAdapterPluginRegistryNegative -or ($AdapterBackend -eq "plugin"))
+$adapterComparePluginPathResolved = Resolve-AdapterPluginPath -RepoRoot $RepoRoot -PathText $AdapterComparePluginPath -AllowBuild $IncludeAdapterBackendCompare
+if (-not $adapterComparePluginPathResolved) {
+    $adapterComparePluginPathResolved = $adapterPluginPathResolved
+}
+$adapterNegativePluginPathResolved = Resolve-AdapterPluginPath -RepoRoot $RepoRoot -PathText $AdapterNegativePluginPath -AllowBuild $IncludeAdapterPluginAbiNegative
+if (-not $adapterNegativePluginPathResolved) {
+    $adapterNegativePluginPathResolved = $adapterComparePluginPathResolved
+}
+if (-not $adapterNegativePluginPathResolved) {
+    $adapterNegativePluginPathResolved = $adapterPluginPathResolved
+}
 $adapterPluginRegistryPathResolved = ""
 if ($AdapterPluginRegistryPath) {
-    $adapterPluginRegistryPathResolved = $AdapterPluginRegistryPath
+    $candidateRegistryPath = $AdapterPluginRegistryPath
+    if (-not (Test-Path $candidateRegistryPath)) {
+        $repoRelativeRegistryPath = Join-Path $RepoRoot $AdapterPluginRegistryPath
+        if (Test-Path $repoRelativeRegistryPath) {
+            $candidateRegistryPath = $repoRelativeRegistryPath
+        }
+    }
+    if (Test-Path $candidateRegistryPath) {
+        $adapterPluginRegistryPathResolved = (Resolve-Path $candidateRegistryPath).Path
+    } else {
+        $adapterPluginRegistryPathResolved = $AdapterPluginRegistryPath
+    }
 } else {
     $defaultRegistryPath = Join-Path $RepoRoot "config\novovm-adapter-plugin-registry.json"
     if (Test-Path $defaultRegistryPath) {
-        $adapterPluginRegistryPathResolved = $defaultRegistryPath
+        $adapterPluginRegistryPathResolved = (Resolve-Path $defaultRegistryPath).Path
     }
 }
 $adapterPluginRegistryExpectedEnabled = [bool]($adapterPluginRegistryPathResolved)
@@ -821,7 +1161,7 @@ $nodeFfiText = Invoke-Cargo -WorkDir $nodeDir -CargoArgs @("run") -EnvVars @{
     NOVOVM_BATCH_A_BATCHES = "$BatchABatchCount"
     NOVOVM_MEMPOOL_FEE_FLOOR = "$BatchAMempoolFeeFloor"
     NOVOVM_ADAPTER_BACKEND = "$AdapterBackend"
-    NOVOVM_ADAPTER_PLUGIN_PATH = "$AdapterPluginPath"
+    NOVOVM_ADAPTER_PLUGIN_PATH = "$adapterPluginPathResolved"
     NOVOVM_ADAPTER_CHAIN = "$AdapterExpectedChain"
     NOVOVM_ADAPTER_PLUGIN_EXPECT_ABI = "$AdapterPluginExpectedAbi"
     NOVOVM_ADAPTER_PLUGIN_REQUIRE_CAPS = "$adapterPluginRequiredCapsNormalized"
@@ -836,7 +1176,7 @@ $nodeLegacyText = Invoke-Cargo -WorkDir $nodeDir -CargoArgs @("run") -EnvVars @{
     NOVOVM_BATCH_A_BATCHES = "$BatchABatchCount"
     NOVOVM_MEMPOOL_FEE_FLOOR = "$BatchAMempoolFeeFloor"
     NOVOVM_ADAPTER_BACKEND = "$AdapterBackend"
-    NOVOVM_ADAPTER_PLUGIN_PATH = "$AdapterPluginPath"
+    NOVOVM_ADAPTER_PLUGIN_PATH = "$adapterPluginPathResolved"
     NOVOVM_ADAPTER_CHAIN = "$AdapterExpectedChain"
     NOVOVM_ADAPTER_PLUGIN_EXPECT_ABI = "$AdapterPluginExpectedAbi"
     NOVOVM_ADAPTER_PLUGIN_REQUIRE_CAPS = "$adapterPluginRequiredCapsNormalized"
@@ -873,8 +1213,257 @@ $networkOutFfi = Parse-NetworkOutLine -Text $nodeFfiText
 $networkOutLegacy = Parse-NetworkOutLine -Text $nodeLegacyText
 $networkClosureFfi = Parse-NetworkClosureLine -Text $nodeFfiText
 $networkClosureLegacy = Parse-NetworkClosureLine -Text $nodeLegacyText
+$networkPacemakerFfi = Parse-NetworkPacemakerLine -Text $nodeFfiText
+$networkPacemakerLegacy = Parse-NetworkPacemakerLine -Text $nodeLegacyText
 
 $expectedBatchMin = [Math]::Min($BatchABatchCount, $BatchADemoTxs)
+
+$coordinatorSignal = [ordered]@{
+    enabled = $IncludeCoordinatorSignal
+    available = $false
+    pass = $false
+    tx_id = 0
+    participants = 0
+    votes = 0
+    decided = $false
+    commit = $false
+    reason = "disabled"
+}
+if ($IncludeCoordinatorSignal) {
+    if (Test-Path (Join-Path $coordinatorDir "Cargo.toml")) {
+        $probe = Invoke-CargoAllowFailure -WorkDir $coordinatorDir -CargoArgs @("run", "--quiet", "--example", "two_pc_smoke") -EnvVars @{}
+        if ($probe.exit_code -eq 0) {
+            try {
+                $parsed = Parse-CoordinatorOutLine -Text $probe.output
+                $coordinatorPass = (
+                    $parsed.parse_ok -and
+                    $parsed.decided -and
+                    $parsed.commit -and
+                    $parsed.votes -eq $parsed.participants
+                )
+                $coordinatorSignal = [ordered]@{
+                    enabled = $true
+                    available = $true
+                    pass = $coordinatorPass
+                    tx_id = $parsed.tx_id
+                    participants = $parsed.participants
+                    votes = $parsed.votes
+                    decided = $parsed.decided
+                    commit = $parsed.commit
+                    reason = if ($coordinatorPass) { $null } else { "coordinator smoke output check failed" }
+                }
+            } catch {
+                $coordinatorSignal.reason = "coordinator output parse failed: $($_.Exception.Message)"
+            }
+        } else {
+            $coordinatorSignal.reason = "coordinator smoke command failed (exit=$($probe.exit_code))"
+        }
+    } else {
+        $coordinatorSignal.reason = "coordinator crate missing"
+    }
+}
+
+$coordinatorNegativeSignal = [ordered]@{
+    enabled = $IncludeCoordinatorNegativeSignal
+    available = $false
+    pass = $false
+    unknown_prepare = $false
+    non_participant_vote = $false
+    vote_after_decide = $false
+    duplicate_tx = $false
+    reason = "disabled"
+}
+if ($IncludeCoordinatorNegativeSignal) {
+    if (Test-Path (Join-Path $coordinatorDir "Cargo.toml")) {
+        $probe = Invoke-CargoAllowFailure -WorkDir $coordinatorDir -CargoArgs @("run", "--quiet", "--example", "coordinator_negative_smoke") -EnvVars @{}
+        if ($probe.exit_code -eq 0) {
+            try {
+                $parsed = Parse-CoordinatorNegativeOutLine -Text $probe.output
+                $coordinatorNegativePass = (
+                    $parsed.parse_ok -and
+                    $parsed.unknown_prepare -and
+                    $parsed.non_participant_vote -and
+                    $parsed.vote_after_decide -and
+                    $parsed.duplicate_tx -and
+                    $parsed.pass
+                )
+                $coordinatorNegativeSignal = [ordered]@{
+                    enabled = $true
+                    available = $true
+                    pass = $coordinatorNegativePass
+                    unknown_prepare = $parsed.unknown_prepare
+                    non_participant_vote = $parsed.non_participant_vote
+                    vote_after_decide = $parsed.vote_after_decide
+                    duplicate_tx = $parsed.duplicate_tx
+                    reason = if ($coordinatorNegativePass) { $null } else { "coordinator negative smoke output check failed" }
+                }
+            } catch {
+                $coordinatorNegativeSignal.reason = "coordinator negative output parse failed: $($_.Exception.Message)"
+            }
+        } else {
+            $coordinatorNegativeSignal.reason = "coordinator negative smoke command failed (exit=$($probe.exit_code))"
+        }
+    } else {
+        $coordinatorNegativeSignal.reason = "coordinator crate missing"
+    }
+}
+
+$proverContractSignal = [ordered]@{
+    enabled = $IncludeProverContractSignal
+    available = $false
+    pass = $false
+    schema_ok = $false
+    normalized_reason_codes = $false
+    fallback_codes = 0
+    prover_ready = $false
+    zk_ready = $false
+    msm_backend = ""
+    reason = "disabled"
+}
+if ($IncludeProverContractSignal) {
+    if (Test-Path (Join-Path $proverDir "Cargo.toml")) {
+        $probe = Invoke-CargoAllowFailure -WorkDir $proverDir -CargoArgs @("run", "--quiet", "--example", "contract_schema_smoke") -EnvVars @{}
+        if ($probe.exit_code -eq 0) {
+            try {
+                $parsed = Parse-ProverContractOutLine -Text $probe.output
+                $proverPass = (
+                    $parsed.parse_ok -and
+                    $parsed.schema_ok -and
+                    $parsed.normalized_reason_codes -and
+                    $parsed.fallback_codes -gt 0
+                )
+                $proverContractSignal = [ordered]@{
+                    enabled = $true
+                    available = $true
+                    pass = $proverPass
+                    schema_ok = $parsed.schema_ok
+                    normalized_reason_codes = $parsed.normalized_reason_codes
+                    fallback_codes = $parsed.fallback_codes
+                    prover_ready = $parsed.prover_ready
+                    zk_ready = $parsed.zk_ready
+                    msm_backend = $parsed.msm_backend
+                    reason = if ($proverPass) { $null } else { "prover contract smoke output check failed" }
+                }
+            } catch {
+                $proverContractSignal.reason = "prover contract output parse failed: $($_.Exception.Message)"
+            }
+        } else {
+            $proverContractSignal.reason = "prover contract smoke command failed (exit=$($probe.exit_code))"
+        }
+    } else {
+        $proverContractSignal.reason = "prover crate missing"
+    }
+}
+
+$proverContractNegativeSignal = [ordered]@{
+    enabled = $IncludeProverContractNegativeSignal
+    available = $false
+    pass = $false
+    missing_formal_fields = $false
+    empty_reason_codes = $false
+    reason_normalization_stable = $false
+    reason = "disabled"
+}
+if ($IncludeProverContractNegativeSignal) {
+    if (Test-Path (Join-Path $proverDir "Cargo.toml")) {
+        $probe = Invoke-CargoAllowFailure -WorkDir $proverDir -CargoArgs @("run", "--quiet", "--example", "contract_schema_negative_smoke") -EnvVars @{}
+        if ($probe.exit_code -eq 0) {
+            try {
+                $parsed = Parse-ProverContractNegativeOutLine -Text $probe.output
+                $proverNegativePass = (
+                    $parsed.parse_ok -and
+                    $parsed.missing_formal_fields -and
+                    $parsed.empty_reason_codes -and
+                    $parsed.reason_normalization_stable -and
+                    $parsed.pass
+                )
+                $proverContractNegativeSignal = [ordered]@{
+                    enabled = $true
+                    available = $true
+                    pass = $proverNegativePass
+                    missing_formal_fields = $parsed.missing_formal_fields
+                    empty_reason_codes = $parsed.empty_reason_codes
+                    reason_normalization_stable = $parsed.reason_normalization_stable
+                    reason = if ($proverNegativePass) { $null } else { "prover contract negative smoke output check failed" }
+                }
+            } catch {
+                $proverContractNegativeSignal.reason = "prover contract negative output parse failed: $($_.Exception.Message)"
+            }
+        } else {
+            $proverContractNegativeSignal.reason = "prover contract negative smoke command failed (exit=$($probe.exit_code))"
+        }
+    } else {
+        $proverContractNegativeSignal.reason = "prover crate missing"
+    }
+}
+
+$consensusNegativeSignal = [ordered]@{
+    enabled = $IncludeConsensusNegativeSignal
+    available = $false
+    pass = $false
+    invalid_signature = $false
+    duplicate_vote = $false
+    wrong_epoch = $false
+    weighted_quorum = $false
+    equivocation = $false
+    slash_execution = $false
+    slash_threshold = $false
+    slash_observe_only = $false
+    unjail_cooldown = $false
+    view_change = $false
+    fork_choice = $false
+    reason = "disabled"
+}
+if ($IncludeConsensusNegativeSignal) {
+    if (Test-Path (Join-Path $consensusDir "Cargo.toml")) {
+        $probe = Invoke-CargoAllowFailure -WorkDir $consensusDir -CargoArgs @("run", "--quiet", "--example", "consensus_negative_smoke") -EnvVars @{}
+        if ($probe.exit_code -eq 0) {
+            try {
+                $parsed = Parse-ConsensusNegativeOutLine -Text $probe.output
+                $parsedExt = Parse-ConsensusNegativeExtLine -Text $probe.output
+                $consensusNegativePass = (
+                    $parsed.parse_ok -and
+                    $parsed.invalid_signature -and
+                    $parsed.duplicate_vote -and
+                    $parsed.wrong_epoch -and
+                    $parsedExt.parse_ok -and
+                    $parsedExt.weighted_quorum -and
+                    $parsedExt.equivocation -and
+                    $parsedExt.slash_execution -and
+                    $parsedExt.slash_threshold -and
+                    $parsedExt.slash_observe_only -and
+                    $parsedExt.unjail_cooldown -and
+                    $parsedExt.view_change -and
+                    $parsedExt.fork_choice -and
+                    $parsed.pass
+                )
+                $consensusNegativeSignal = [ordered]@{
+                    enabled = $true
+                    available = $true
+                    pass = $consensusNegativePass
+                    invalid_signature = $parsed.invalid_signature
+                    duplicate_vote = $parsed.duplicate_vote
+                    wrong_epoch = $parsed.wrong_epoch
+                    weighted_quorum = $parsedExt.weighted_quorum
+                    equivocation = $parsedExt.equivocation
+                    slash_execution = $parsedExt.slash_execution
+                    slash_threshold = $parsedExt.slash_threshold
+                    slash_observe_only = $parsedExt.slash_observe_only
+                    unjail_cooldown = $parsedExt.unjail_cooldown
+                    view_change = $parsedExt.view_change
+                    fork_choice = $parsedExt.fork_choice
+                    reason = if ($consensusNegativePass) { $null } else { "consensus negative smoke output check failed" }
+                }
+            } catch {
+                $consensusNegativeSignal.reason = "consensus negative output parse failed: $($_.Exception.Message)"
+            }
+        } else {
+            $consensusNegativeSignal.reason = "consensus negative smoke command failed (exit=$($probe.exit_code))"
+        }
+    } else {
+        $consensusNegativeSignal.reason = "consensus crate missing"
+    }
+}
 
 $nodeCompatPass = (
     $nodeFfi.rc -eq 0 -and
@@ -1054,7 +1643,7 @@ if ($adapterConsensusAvailable) {
     )
 }
 
-$adapterComparePluginPath = if ($AdapterComparePluginPath) { $AdapterComparePluginPath } else { $AdapterPluginPath }
+$adapterComparePluginPath = $adapterComparePluginPathResolved
 $adapterBackendCompareSignal = [ordered]@{
     enabled = $IncludeAdapterBackendCompare
     available = $false
@@ -1218,13 +1807,7 @@ if ($IncludeAdapterBackendCompare) {
     }
 }
 
-$adapterNegativePluginPath = if ($AdapterNegativePluginPath) {
-    $AdapterNegativePluginPath
-} elseif ($AdapterComparePluginPath) {
-    $AdapterComparePluginPath
-} else {
-    $AdapterPluginPath
-}
+$adapterNegativePluginPath = $adapterNegativePluginPathResolved
 $adapterPluginAbiNegativeSignal = [ordered]@{
     enabled = $IncludeAdapterPluginAbiNegative
     available = $false
@@ -1359,12 +1942,12 @@ if ($IncludeAdapterPluginSymbolNegative) {
     }
 }
 
-$adapterRegistryNegativePluginPath = if ($AdapterPluginPath) {
-    $AdapterPluginPath
-} elseif ($AdapterComparePluginPath) {
-    $AdapterComparePluginPath
+$adapterRegistryNegativePluginPath = if ($adapterPluginPathResolved) {
+    $adapterPluginPathResolved
+} elseif ($adapterComparePluginPathResolved) {
+    $adapterComparePluginPathResolved
 } else {
-    $AdapterNegativePluginPath
+    $adapterNegativePluginPathResolved
 }
 $adapterPluginRegistryNegativeSignal = [ordered]@{
     enabled = $IncludeAdapterPluginRegistryNegative
@@ -1422,7 +2005,8 @@ if ($IncludeAdapterPluginRegistryNegative) {
         $registryNegativeWhitelistPath = Join-Path $OutputDir "adapter-registry-whitelist-negative.json"
         $registryNegativeWhitelist = Get-Content -Path $adapterPluginRegistryPathResolved -Raw | ConvertFrom-Json
         $registryNegativeWhitelist.allowed_abi_versions = @([int]($AdapterPluginExpectedAbi + 99))
-        $registryNegativeWhitelist | ConvertTo-Json -Depth 20 | Set-Content -Path $registryNegativeWhitelistPath -Encoding UTF8
+        $registryNegativeWhitelistJson = $registryNegativeWhitelist | ConvertTo-Json -Depth 20
+        [System.IO.File]::WriteAllText($registryNegativeWhitelistPath, $registryNegativeWhitelistJson, [System.Text.UTF8Encoding]::new($false))
         $registryNegativeWhitelistHash = (Get-FileHash -Path $registryNegativeWhitelistPath -Algorithm SHA256).Hash.ToLowerInvariant()
 
         $whitelistMismatchEnv = @{}
@@ -1559,6 +2143,19 @@ if ($networkClosureAvailable) {
     )
 }
 
+$networkPacemakerAvailable = ($null -ne $networkPacemakerFfi -and $null -ne $networkPacemakerLegacy)
+$networkPacemakerPass = $false
+if ($networkPacemakerAvailable) {
+    $networkPacemakerPass = (
+        $networkPacemakerFfi.parse_ok -and
+        $networkPacemakerLegacy.parse_ok -and
+        $networkPacemakerFfi.view_sync -and
+        $networkPacemakerLegacy.view_sync -and
+        $networkPacemakerFfi.new_view -and
+        $networkPacemakerLegacy.new_view
+    )
+}
+
 $variants = @("core", "persist", "wasm")
 $digests = @()
 foreach ($variant in $variants) {
@@ -1581,20 +2178,75 @@ foreach ($variant in $variants) {
 $coreDigest = ($digests | Where-Object { $_.variant -eq "core" } | Select-Object -First 1).digest
 $crossVariantPass = ($digests | Where-Object { $_.digest -ne $coreDigest } | Measure-Object).Count -eq 0
 
-$stateRootConsistency = [ordered]@{
-    available = $false
-    pass = $crossVariantPass
-    method = "deterministic_digest_proxy"
-    root_field = "state_root"
-    value = $null
-    proxy_digest = $coreDigest
-    compared_variants = @($variants)
-    reason = "aoem_execute_ops_v2 result does not expose state_root in current AOEM FFI ABI"
+$stateRootHardAvailable = (
+    $null -ne $adapterFfi -and $null -ne $adapterLegacy -and
+    $null -ne $batchAffi -and $null -ne $batchAlegacy -and
+    $null -ne $blockOutFfi -and $null -ne $blockOutLegacy -and
+    $null -ne $commitOutFfi -and $null -ne $commitOutLegacy
+)
+$stateRootHardPass = $false
+$stateRootHardValue = $null
+if ($stateRootHardAvailable) {
+    $stateRootHardPass = (
+        $adapterFfi.parse_ok -and
+        $adapterLegacy.parse_ok -and
+        $batchAffi.parse_ok -and
+        $batchAlegacy.parse_ok -and
+        $blockOutFfi.parse_ok -and
+        $blockOutLegacy.parse_ok -and
+        $commitOutFfi.parse_ok -and
+        $commitOutLegacy.parse_ok -and
+        $adapterFfi.state_root -eq $adapterLegacy.state_root -and
+        $batchAffi.state_root -eq $batchAlegacy.state_root -and
+        $blockOutFfi.state_root -eq $blockOutLegacy.state_root -and
+        $commitOutFfi.state_root -eq $commitOutLegacy.state_root -and
+        $adapterFfi.state_root -eq $batchAffi.state_root -and
+        $adapterFfi.state_root -eq $blockOutFfi.state_root -and
+        $adapterFfi.state_root -eq $commitOutFfi.state_root
+    )
+    if ($adapterFfi.parse_ok) {
+        $stateRootHardValue = $adapterFfi.state_root
+    }
+}
+
+if ($stateRootHardAvailable) {
+    $stateRootConsistency = [ordered]@{
+        available = $true
+        pass = $stateRootHardPass
+        method = "hard_state_root_parity"
+        root_field = "state_root"
+        value = $stateRootHardValue
+        proxy_digest = $coreDigest
+        compared_variants = @($variants)
+        reason = if ($stateRootHardPass) {
+            "hard parity check across adapter/batch/block/commit (ffi_v2 vs legacy_compat)"
+        } else {
+            "state_root mismatch across hard path signals"
+        }
+    }
+} else {
+    $stateRootConsistency = [ordered]@{
+        available = $false
+        pass = $crossVariantPass
+        method = "deterministic_digest_proxy"
+        root_field = "state_root"
+        value = $null
+        proxy_digest = $coreDigest
+        compared_variants = @($variants)
+        reason = "hard state_root signals are incomplete; fallback to deterministic digest proxy"
+    }
 }
 
 $capabilitySnapshot = $null
+$capabilitySnapshotNote = "capability_contract snapshot is disabled for this run"
 if ($IncludeCapabilitySnapshot) {
-    $capabilitySnapshot = Get-CapabilitySnapshot -RepoRoot $RepoRoot -Variant $CapabilityVariant -CapabilityJson $CapabilityJson
+    try {
+        $capabilitySnapshot = Get-CapabilitySnapshot -RepoRoot $RepoRoot -Variant $CapabilityVariant -CapabilityJson $CapabilityJson
+        $capabilitySnapshotNote = "capability_contract snapshot loaded (variant=$CapabilityVariant)"
+    } catch {
+        $capabilitySnapshot = $null
+        $capabilitySnapshotNote = "capability_contract snapshot failed and was skipped: $($_.Exception.Message)"
+    }
 }
 
 $networkProcessSignal = [ordered]@{
@@ -1619,6 +2271,14 @@ $networkProcessSignal = [ordered]@{
     block_wire_verified = $null
     block_wire_total = $null
     block_wire_verified_ratio = $null
+    view_sync_available = $null
+    view_sync_pass = $null
+    view_sync_rounds_passed = $null
+    view_sync_pass_ratio = $null
+    new_view_available = $null
+    new_view_pass = $null
+    new_view_rounds_passed = $null
+    new_view_pass_ratio = $null
     node_a_exit_code = $null
     node_b_exit_code = $null
     reason = "disabled"
@@ -1649,7 +2309,11 @@ $overallPass = (
     $adapterConsensusAvailable -and
     $adapterConsensusPass -and
     $blockWireAvailable -and
-    $blockWirePass
+    $blockWirePass -and
+    $networkClosureAvailable -and
+    $networkClosurePass -and
+    $networkPacemakerAvailable -and
+    $networkPacemakerPass
 )
 if ($IncludeNetworkProcessSignal) {
     $overallPass = ($overallPass -and $networkProcessSignal.available -and $networkProcessSignal.pass)
@@ -1668,6 +2332,21 @@ if ($IncludeAdapterPluginRegistryNegative) {
 }
 if ($IncludeNetworkBlockWireNegative) {
     $overallPass = ($overallPass -and $networkBlockWireNegativeSignal.available -and $networkBlockWireNegativeSignal.pass)
+}
+if ($IncludeCoordinatorSignal) {
+    $overallPass = ($overallPass -and $coordinatorSignal.available -and $coordinatorSignal.pass)
+}
+if ($IncludeCoordinatorNegativeSignal) {
+    $overallPass = ($overallPass -and $coordinatorNegativeSignal.available -and $coordinatorNegativeSignal.pass)
+}
+if ($IncludeProverContractSignal) {
+    $overallPass = ($overallPass -and $proverContractSignal.available -and $proverContractSignal.pass)
+}
+if ($IncludeProverContractNegativeSignal) {
+    $overallPass = ($overallPass -and $proverContractNegativeSignal.available -and $proverContractNegativeSignal.pass)
+}
+if ($IncludeConsensusNegativeSignal) {
+    $overallPass = ($overallPass -and $consensusNegativeSignal.available -and $consensusNegativeSignal.pass)
 }
 
 $adapterPluginAbiNote = "adapter_plugin_abi_signal validates ABI/version/capability compatibility (expected_abi=$AdapterPluginExpectedAbi, required_caps=$adapterPluginRequiredCapsNormalized)"
@@ -1698,6 +2377,31 @@ $networkBlockWireNegativeNote = if ($IncludeNetworkBlockWireNegative) {
     "network_block_wire_negative_signal validates tampered block_header_wire_v1 payload fails with consensus binding mismatch in UDP process probe"
 } else {
     "network_block_wire_negative_signal is disabled for this run"
+}
+$coordinatorNote = if ($IncludeCoordinatorSignal) {
+    "coordinator_signal validates novovm-coordinator 2PC smoke (propose/prepare/vote/decide) deterministically"
+} else {
+    "coordinator_signal is disabled for this run"
+}
+$coordinatorNegativeNote = if ($IncludeCoordinatorNegativeSignal) {
+    "coordinator_negative_signal validates unknown-tx / non-participant / post-decide / duplicate-tx rejection gates in novovm-coordinator"
+} else {
+    "coordinator_negative_signal is disabled for this run"
+}
+$proverContractNote = if ($IncludeProverContractSignal) {
+    "prover_contract_signal validates novovm-prover contract schema and fallback reason-code normalization"
+} else {
+    "prover_contract_signal is disabled for this run"
+}
+$proverContractNegativeNote = if ($IncludeProverContractNegativeSignal) {
+    "prover_contract_negative_signal validates schema guardrails (missing formal fields / empty reason codes) and reason-code normalization stability"
+} else {
+    "prover_contract_negative_signal is disabled for this run"
+}
+$consensusNegativeNote = if ($IncludeConsensusNegativeSignal) {
+    "consensus_negative_signal validates invalid-signature / duplicate-vote / wrong-epoch and enforces weighted-quorum + equivocation(slashing evidence) + slash-execution + slash-threshold-policy + slash-observe-only-policy + view-change + fork-choice gates in novovm-consensus"
+} else {
+    "consensus_negative_signal is disabled for this run"
 }
 
 $result = [ordered]@{
@@ -1798,6 +2502,12 @@ $result = [ordered]@{
         ffi_v2 = $networkClosureFfi
         legacy_compat = $networkClosureLegacy
     }
+    network_pacemaker_signal = [ordered]@{
+        available = $networkPacemakerAvailable
+        pass = $networkPacemakerPass
+        ffi_v2 = $networkPacemakerFfi
+        legacy_compat = $networkPacemakerLegacy
+    }
     variant_digest_consistency = [ordered]@{
         rounds = $Rounds
         points = $Points
@@ -1809,6 +2519,11 @@ $result = [ordered]@{
     }
     state_root_consistency = $stateRootConsistency
     capability_contract = $capabilitySnapshot
+    coordinator_signal = $coordinatorSignal
+    coordinator_negative_signal = $coordinatorNegativeSignal
+    prover_contract_signal = $proverContractSignal
+    prover_contract_negative_signal = $proverContractNegativeSignal
+    consensus_negative_signal = $consensusNegativeSignal
     network_process_signal = $networkProcessSignal
     batch_a_input_profile = [ordered]@{
         demo_txs = $BatchADemoTxs
@@ -1820,7 +2535,7 @@ $result = [ordered]@{
     adapter_expected_backend = $AdapterExpectedBackend.ToLowerInvariant()
     overall_pass = $overallPass
     notes = @(
-        "state_root field is recorded as unavailable and validated through deterministic digest proxy",
+        "state_root_consistency uses hard parity across adapter/batch/block/commit when available; otherwise fallback digest proxy is used",
         "tx_codec_signal validates novovm_local_tx_wire_v1 encode/decode parity across ffi_v2 and legacy_compat routes",
         "mempool_admission_signal validates basic mempool policy (fee floor / nonce / signature) across ffi_v2 and legacy_compat routes",
         "tx_metadata_signal validates account/nonce/fee/signature metadata parity across ffi_v2 and legacy_compat routes",
@@ -1833,13 +2548,20 @@ $result = [ordered]@{
         $adapterPluginSymbolNegativeNote,
         $adapterPluginRegistryNegativeNote,
         $networkBlockWireNegativeNote,
+        $coordinatorNote,
+        $coordinatorNegativeNote,
+        $proverContractNote,
+        $proverContractNegativeNote,
+        $consensusNegativeNote,
+        $capabilitySnapshotNote,
         "batch_a_closure is reported as an execution-to-consensus integration signal and is not a hard gate yet",
         $blockWireNote,
         "block_output_signal compares deterministic block_hash output across ffi_v2 and legacy_compat routes",
         "commit_output_signal compares commit records from in-memory block store across ffi_v2 and legacy_compat routes",
         "network_output_signal compares in-memory transport delivery signal across ffi_v2 and legacy_compat routes",
         "network_closure_signal validates two-node discovery/gossip/sync closure across ffi_v2 and legacy_compat routes",
-        "network_process_signal validates mesh/pair-matrix process probe over UDP transport with block_header_wire_v1 payload decode + consensus binding verification (rounds=$NetworkProcessRounds)",
+        "network_pacemaker_signal validates two-node view_sync/new_view closure across ffi_v2 and legacy_compat routes",
+        "network_process_signal validates mesh/pair-matrix process probe over UDP transport with block_header_wire_v1 payload decode + consensus binding verification + pacemaker(view_sync/new_view) closure (rounds=$NetworkProcessRounds)",
         "capability snapshot records zk/msm readiness at report generation time"
     )
 }
@@ -1891,6 +2613,17 @@ $md = @(
     "- network_block_wire_negative_signal.enabled: $($result.network_block_wire_negative_signal.enabled)"
     "- network_block_wire_negative_signal.available: $($result.network_block_wire_negative_signal.available)"
     "- network_block_wire_negative_signal.pass: $($result.network_block_wire_negative_signal.pass)"
+    "- consensus_negative_signal.enabled: $($result.consensus_negative_signal.enabled)"
+    "- consensus_negative_signal.available: $($result.consensus_negative_signal.available)"
+    "- consensus_negative_signal.pass: $($result.consensus_negative_signal.pass)"
+    "- consensus_negative_signal.weighted_quorum: $($result.consensus_negative_signal.weighted_quorum)"
+    "- consensus_negative_signal.equivocation: $($result.consensus_negative_signal.equivocation)"
+    "- consensus_negative_signal.slash_execution: $($result.consensus_negative_signal.slash_execution)"
+    "- consensus_negative_signal.slash_threshold: $($result.consensus_negative_signal.slash_threshold)"
+    "- consensus_negative_signal.slash_observe_only: $($result.consensus_negative_signal.slash_observe_only)"
+    "- consensus_negative_signal.unjail_cooldown: $($result.consensus_negative_signal.unjail_cooldown)"
+    "- consensus_negative_signal.view_change: $($result.consensus_negative_signal.view_change)"
+    "- consensus_negative_signal.fork_choice: $($result.consensus_negative_signal.fork_choice)"
     "- adapter_expected_chain: $($result.adapter_expected_chain)"
     "- adapter_expected_backend: $($result.adapter_expected_backend)"
     "- batch_a_input_profile.demo_txs: $($result.batch_a_input_profile.demo_txs)"
@@ -1909,6 +2642,8 @@ $md = @(
     "- network_output_signal.pass: $($result.network_output_signal.pass)"
     "- network_closure_signal.available: $($result.network_closure_signal.available)"
     "- network_closure_signal.pass: $($result.network_closure_signal.pass)"
+    "- network_pacemaker_signal.available: $($result.network_pacemaker_signal.available)"
+    "- network_pacemaker_signal.pass: $($result.network_pacemaker_signal.pass)"
     "- network_process_signal.available: $($result.network_process_signal.available)"
     "- network_process_signal.pass: $($result.network_process_signal.pass)"
     "- network_process_signal.rounds: $($result.network_process_signal.rounds)"
@@ -1917,6 +2652,24 @@ $md = @(
     "- network_process_signal.block_wire_available: $($result.network_process_signal.block_wire_available)"
     "- network_process_signal.block_wire_pass: $($result.network_process_signal.block_wire_pass)"
     "- network_process_signal.block_wire_pass_ratio: $($result.network_process_signal.block_wire_pass_ratio)"
+    "- network_process_signal.view_sync_available: $($result.network_process_signal.view_sync_available)"
+    "- network_process_signal.view_sync_pass: $($result.network_process_signal.view_sync_pass)"
+    "- network_process_signal.view_sync_pass_ratio: $($result.network_process_signal.view_sync_pass_ratio)"
+    "- network_process_signal.new_view_available: $($result.network_process_signal.new_view_available)"
+    "- network_process_signal.new_view_pass: $($result.network_process_signal.new_view_pass)"
+    "- network_process_signal.new_view_pass_ratio: $($result.network_process_signal.new_view_pass_ratio)"
+    "- coordinator_signal.enabled: $($result.coordinator_signal.enabled)"
+    "- coordinator_signal.available: $($result.coordinator_signal.available)"
+    "- coordinator_signal.pass: $($result.coordinator_signal.pass)"
+    "- coordinator_negative_signal.enabled: $($result.coordinator_negative_signal.enabled)"
+    "- coordinator_negative_signal.available: $($result.coordinator_negative_signal.available)"
+    "- coordinator_negative_signal.pass: $($result.coordinator_negative_signal.pass)"
+    "- prover_contract_signal.enabled: $($result.prover_contract_signal.enabled)"
+    "- prover_contract_signal.available: $($result.prover_contract_signal.available)"
+    "- prover_contract_signal.pass: $($result.prover_contract_signal.pass)"
+    "- prover_contract_negative_signal.enabled: $($result.prover_contract_negative_signal.enabled)"
+    "- prover_contract_negative_signal.available: $($result.prover_contract_negative_signal.available)"
+    "- prover_contract_negative_signal.pass: $($result.prover_contract_negative_signal.pass)"
     "- variant_digest_consistency.pass: $($result.variant_digest_consistency.pass)"
     "- state_root_consistency.available: $($result.state_root_consistency.available)"
     "- state_root_consistency.pass: $($result.state_root_consistency.pass)"
@@ -1997,6 +2750,24 @@ $md = @(
     "- available: $($result.network_block_wire_negative_signal.available)"
     "- pass: $($result.network_block_wire_negative_signal.pass)"
     ""
+    "## Consensus Negative Signal"
+    ""
+    "- enabled: $($result.consensus_negative_signal.enabled)"
+    "- available: $($result.consensus_negative_signal.available)"
+    "- pass: $($result.consensus_negative_signal.pass)"
+    ""
+    "## Coordinator Negative Signal"
+    ""
+    "- enabled: $($result.coordinator_negative_signal.enabled)"
+    "- available: $($result.coordinator_negative_signal.available)"
+    "- pass: $($result.coordinator_negative_signal.pass)"
+    ""
+    "## Prover Contract Negative Signal"
+    ""
+    "- enabled: $($result.prover_contract_negative_signal.enabled)"
+    "- available: $($result.prover_contract_negative_signal.available)"
+    "- pass: $($result.prover_contract_negative_signal.pass)"
+    ""
     "## Batch A Closure Signal"
     ""
     "- available: $($result.batch_a_closure.available)"
@@ -2027,12 +2798,21 @@ $md = @(
     "- available: $($result.network_closure_signal.available)"
     "- pass: $($result.network_closure_signal.pass)"
     ""
+    "## Network Pacemaker Signal"
+    ""
+    "- available: $($result.network_pacemaker_signal.available)"
+    "- pass: $($result.network_pacemaker_signal.pass)"
+    ""
     "## Network Process Signal"
     ""
     "- available: $($result.network_process_signal.available)"
     "- pass: $($result.network_process_signal.pass)"
     "- block_wire_available: $($result.network_process_signal.block_wire_available)"
     "- block_wire_pass: $($result.network_process_signal.block_wire_pass)"
+    "- view_sync_available: $($result.network_process_signal.view_sync_available)"
+    "- view_sync_pass: $($result.network_process_signal.view_sync_pass)"
+    "- new_view_available: $($result.network_process_signal.new_view_available)"
+    "- new_view_pass: $($result.network_process_signal.new_view_pass)"
     ""
     "## Variant Digest Consistency"
     ""
@@ -2308,6 +3088,90 @@ if ($result.network_block_wire_negative_signal.available) {
     $md += "- reason: $($result.network_block_wire_negative_signal.reason)"
 }
 
+if ($result.consensus_negative_signal.available) {
+    $md += ""
+    $md += "Consensus negative signal:"
+    $md += ""
+    $md += "- invalid_signature: $($result.consensus_negative_signal.invalid_signature)"
+    $md += "- duplicate_vote: $($result.consensus_negative_signal.duplicate_vote)"
+    $md += "- wrong_epoch: $($result.consensus_negative_signal.wrong_epoch)"
+    $md += "- weighted_quorum: $($result.consensus_negative_signal.weighted_quorum)"
+    $md += "- equivocation: $($result.consensus_negative_signal.equivocation)"
+    $md += "- slash_execution: $($result.consensus_negative_signal.slash_execution)"
+    $md += "- slash_threshold: $($result.consensus_negative_signal.slash_threshold)"
+    $md += "- slash_observe_only: $($result.consensus_negative_signal.slash_observe_only)"
+    $md += "- unjail_cooldown: $($result.consensus_negative_signal.unjail_cooldown)"
+    $md += "- view_change: $($result.consensus_negative_signal.view_change)"
+    $md += "- fork_choice: $($result.consensus_negative_signal.fork_choice)"
+} elseif ($result.consensus_negative_signal.enabled) {
+    $md += ""
+    $md += "Consensus negative signal reason:"
+    $md += ""
+    $md += "- reason: $($result.consensus_negative_signal.reason)"
+}
+
+if ($result.coordinator_signal.available) {
+    $md += ""
+    $md += "Coordinator signal:"
+    $md += ""
+    $md += "- tx_id: $($result.coordinator_signal.tx_id)"
+    $md += "- participants: $($result.coordinator_signal.participants)"
+    $md += "- votes: $($result.coordinator_signal.votes)"
+    $md += "- decided: $($result.coordinator_signal.decided)"
+    $md += "- commit: $($result.coordinator_signal.commit)"
+} elseif ($result.coordinator_signal.enabled) {
+    $md += ""
+    $md += "Coordinator signal reason:"
+    $md += ""
+    $md += "- reason: $($result.coordinator_signal.reason)"
+}
+
+if ($result.coordinator_negative_signal.available) {
+    $md += ""
+    $md += "Coordinator negative signal:"
+    $md += ""
+    $md += "- unknown_prepare: $($result.coordinator_negative_signal.unknown_prepare)"
+    $md += "- non_participant_vote: $($result.coordinator_negative_signal.non_participant_vote)"
+    $md += "- vote_after_decide: $($result.coordinator_negative_signal.vote_after_decide)"
+    $md += "- duplicate_tx: $($result.coordinator_negative_signal.duplicate_tx)"
+} elseif ($result.coordinator_negative_signal.enabled) {
+    $md += ""
+    $md += "Coordinator negative signal reason:"
+    $md += ""
+    $md += "- reason: $($result.coordinator_negative_signal.reason)"
+}
+
+if ($result.prover_contract_signal.available) {
+    $md += ""
+    $md += "Prover contract signal:"
+    $md += ""
+    $md += "- schema_ok: $($result.prover_contract_signal.schema_ok)"
+    $md += "- normalized_reason_codes: $($result.prover_contract_signal.normalized_reason_codes)"
+    $md += "- fallback_codes: $($result.prover_contract_signal.fallback_codes)"
+    $md += "- prover_ready: $($result.prover_contract_signal.prover_ready)"
+    $md += "- zk_ready: $($result.prover_contract_signal.zk_ready)"
+    $md += "- msm_backend: $($result.prover_contract_signal.msm_backend)"
+} elseif ($result.prover_contract_signal.enabled) {
+    $md += ""
+    $md += "Prover contract signal reason:"
+    $md += ""
+    $md += "- reason: $($result.prover_contract_signal.reason)"
+}
+
+if ($result.prover_contract_negative_signal.available) {
+    $md += ""
+    $md += "Prover contract negative signal:"
+    $md += ""
+    $md += "- missing_formal_fields: $($result.prover_contract_negative_signal.missing_formal_fields)"
+    $md += "- empty_reason_codes: $($result.prover_contract_negative_signal.empty_reason_codes)"
+    $md += "- reason_normalization_stable: $($result.prover_contract_negative_signal.reason_normalization_stable)"
+} elseif ($result.prover_contract_negative_signal.enabled) {
+    $md += ""
+    $md += "Prover contract negative signal reason:"
+    $md += ""
+    $md += "- reason: $($result.prover_contract_negative_signal.reason)"
+}
+
 if ($result.batch_a_closure.available -and $result.batch_a_closure.ffi_v2.parse_ok -and $result.batch_a_closure.legacy_compat.parse_ok) {
     $md += ""
     $md += "Batch A state roots:"
@@ -2364,6 +3228,14 @@ if ($result.network_closure_signal.available -and $result.network_closure_signal
     $md += "- legacy_compat: nodes=$($result.network_closure_signal.legacy_compat.nodes), discovery=$($result.network_closure_signal.legacy_compat.discovery), gossip=$($result.network_closure_signal.legacy_compat.gossip), sync=$($result.network_closure_signal.legacy_compat.sync)"
 }
 
+if ($result.network_pacemaker_signal.available -and $result.network_pacemaker_signal.ffi_v2.parse_ok -and $result.network_pacemaker_signal.legacy_compat.parse_ok) {
+    $md += ""
+    $md += "Network pacemaker signal:"
+    $md += ""
+    $md += "- ffi_v2: view_sync=$($result.network_pacemaker_signal.ffi_v2.view_sync), new_view=$($result.network_pacemaker_signal.ffi_v2.new_view)"
+    $md += "- legacy_compat: view_sync=$($result.network_pacemaker_signal.legacy_compat.view_sync), new_view=$($result.network_pacemaker_signal.legacy_compat.new_view)"
+}
+
 if ($result.network_process_signal.available) {
     $md += ""
     $md += "Network process signal:"
@@ -2387,6 +3259,14 @@ if ($result.network_process_signal.available) {
     $md += "- block_wire_verified: $($result.network_process_signal.block_wire_verified)"
     $md += "- block_wire_total: $($result.network_process_signal.block_wire_total)"
     $md += "- block_wire_verified_ratio: $($result.network_process_signal.block_wire_verified_ratio)"
+    $md += "- view_sync_available: $($result.network_process_signal.view_sync_available)"
+    $md += "- view_sync_pass: $($result.network_process_signal.view_sync_pass)"
+    $md += "- view_sync_rounds_passed: $($result.network_process_signal.view_sync_rounds_passed)"
+    $md += "- view_sync_pass_ratio: $($result.network_process_signal.view_sync_pass_ratio)"
+    $md += "- new_view_available: $($result.network_process_signal.new_view_available)"
+    $md += "- new_view_pass: $($result.network_process_signal.new_view_pass)"
+    $md += "- new_view_rounds_passed: $($result.network_process_signal.new_view_rounds_passed)"
+    $md += "- new_view_pass_ratio: $($result.network_process_signal.new_view_pass_ratio)"
     $md += "- node_a_exit_code: $($result.network_process_signal.node_a_exit_code)"
     $md += "- node_b_exit_code: $($result.network_process_signal.node_b_exit_code)"
 }
@@ -2416,8 +3296,12 @@ if ($capabilitySnapshot) {
     $md += "- execute_ops_v2: $($capabilitySnapshot.execute_ops_v2)"
     $md += "- zkvm_prove: $($capabilitySnapshot.zkvm_prove)"
     $md += "- zkvm_verify: $($capabilitySnapshot.zkvm_verify)"
+    $md += "- zk_formal_fields_present: $($capabilitySnapshot.zk_formal_fields_present)"
+    $md += "- prover_ready: $($capabilitySnapshot.prover_ready)"
     $md += "- msm_accel: $($capabilitySnapshot.msm_accel)"
     $md += "- msm_backend: $($capabilitySnapshot.msm_backend)"
+    $md += "- fallback_reason: $($capabilitySnapshot.fallback_reason)"
+    $md += "- fallback_reason_codes: $((@($capabilitySnapshot.fallback_reason_codes) -join ', '))"
     $md += "- inferred_from_legacy_fields: $($capabilitySnapshot.inferred_from_legacy_fields)"
 }
 

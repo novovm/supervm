@@ -1,0 +1,10 @@
+[package]
+name = "novovm-coordinator"
+version = "0.1.0"
+edition = "2021"
+authors = ["SuperVM Core Team"]
+description = "NOVOVM distributed coordinator migration skeleton (2PC control plane)."
+
+[dependencies]
+anyhow = "1"
+novovm-protocol = { path = "../novovm-protocol" }

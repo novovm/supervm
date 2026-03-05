@@ -124,13 +124,47 @@
 - 已完成：`SVM2026` baseline 自动导入脚本 `import_svm2026_baseline.ps1`，并接入 `run_performance_compare.ps1`（`-AutoImportSvmBaseline`）。
 - 已完成：性能对照口径冻结，`run_performance_compare.ps1` 默认 `release` + `warmup_calls=5`，并新增 `LineProfile`（`default|seal_single|seal_auto`）；新增唯一性能门禁脚本 `run_performance_gate_seal_single.ps1`（固定 `release + seal_single + AOEM 封盘基线`，按 3-run P50 判定门禁）。
 - 已完成：新增一键迁移验收门禁入口 `run_migration_acceptance_gate.ps1`，串联 `functional_consistency` + `performance_gate_seal_single` 并输出统一 `overall_pass`。
+- 已完成：`novovm-node` 增加 `NOVOVM_NODE_MODE=rpc_server`（读查询 RPC：`getBlock/getTransaction/getReceipt/getBalance`），并新增 `run_chain_query_rpc_gate.ps1`；该门禁已接入 `run_migration_acceptance_gate.ps1`（`overall_pass` 新增 `chain_query_rpc_pass` 约束，且包含 `rate_limit_signal`(429/`-32029`)）。
+- 已完成：`novovm-node` 增加 `NOVOVM_NODE_MODE=header_sync_probe`（headers-first 同步探针），并新增 `run_header_sync_gate.ps1`（`header_sync_signal` + `header_sync_negative_signal`）；该门禁已接入 `run_migration_acceptance_gate.ps1`（`overall_pass` 新增 `header_sync_pass` 约束）。
+- 已完成：`novovm-node` 增加 `NOVOVM_NODE_MODE=fast_state_sync_probe`（fast headers + state snapshot verify），并新增 `run_fast_state_sync_gate.ps1`（`fast_state_sync_signal` + `fast_state_sync_negative_signal`）；该门禁已接入 `run_migration_acceptance_gate.ps1`（`overall_pass` 新增 `fast_state_sync_pass` 约束）。
+- 已完成：`novovm-node` 增加 `NOVOVM_NODE_MODE=network_dos_probe`（peer-score/ban + invalid-block-storm 模拟），并新增 `run_network_dos_gate.ps1`（`network_dos_signal`）；该门禁已接入 `run_migration_acceptance_gate.ps1`（`overall_pass` 新增 `network_dos_pass` 约束）。
+- 已完成：`novovm-node` 增加 `NOVOVM_NODE_MODE=pacemaker_failover_probe`（leader 超时失效 -> view-change -> 新 leader 提案/投票/QC/commit），并新增 `run_pacemaker_failover_gate.ps1`；该门禁已接入 `run_migration_acceptance_gate.ps1`（`overall_pass` 新增 `pacemaker_failover_pass` 约束）。
+- 已完成：新增 `run_slash_governance_gate.ps1` 并接入 `run_migration_acceptance_gate.ps1`（`overall_pass` 新增 `slash_governance_pass` 约束），用于验证 `SlashPolicy(mode/threshold/min_active)` 策略行为。
+- 已完成：新增默认外置配置 `config/novovm-consensus-policy.json`，`novovm-node` 启动时读取并输出 `slash_policy_in`（缺失时回落默认策略，支持 UTF-8 BOM）。
+- 已完成：`novovm-node` 增加 `NOVOVM_NODE_MODE=slash_policy_probe`，用于验证外置 `SlashPolicy` 注入到 `BFTEngine`（输出 `slash_policy_probe_out: injected=true`）。
+- 已完成：新增 `run_slash_policy_external_gate.ps1` 并接入 `run_migration_acceptance_gate.ps1`（`overall_pass` 新增 `slash_policy_external_pass` 约束），覆盖 policy 外置化正向与 `policy_invalid/policy_parse_failed` 负向门禁。
+- 已完成：`novovm-consensus` 罚没恢复最小闭环：`SlashPolicy.cooldown_epochs` + 自动解禁（`state.height >= jailed_until_epoch`），`SlashExecution` 已输出 `jailed_until_epoch/cooldown_epochs`。
+- 已完成：新增 `run_unjail_cooldown_gate.ps1` 并接入 `run_migration_acceptance_gate.ps1`（`overall_pass` 新增 `unjail_cooldown_pass` 约束），覆盖“未到期拒绝 + 到期自动解禁”门禁。
+- 已完成：RPC 查询门禁稳健性修复：`run_chain_query_rpc_gate.ps1` 兼容 PowerShell 无 `ConvertFrom-Json -Depth` 参数；`novovm-node` query-db 读取兼容 UTF-8 BOM，默认 acceptance 全链路恢复稳定。
 - 已完成：自动台账回填脚本 `generate_capability_ledger_auto.ps1`，可基于最新报告生成当日台账快照。
 - 已完成：`F-03/F-04` 最小协议骨架 `crates/novovm-protocol`（`ids/messages/wire/protocol_catalog`）迁移起步，可作为网络与共识共享协议类型入口。
 - 已完成：`F-05` 迁移骨架 `crates/novovm-consensus`（来自 `supervm-consensus` 能力迁移起点），已通过本地测试。
+- 已完成：`F-05` 主网化增量门禁：stake-weighted quorum（按权重收敛）+ QC 声明权重防伪 + equivocation 检测与 slash evidence 记录，且已纳入 `consensus_negative_smoke` 的 `pass` 判定。
+- 已完成：`F-05` 继续收口：`view-change`（超时换主）+ `fork-choice`（高度/权重优先）已接入 `novovm-consensus`，并纳入 `consensus_negative_smoke` 的 `pass` 判定。
+- 已完成：`F-05` 罚没执行策略（slash execution）已接入（含 jailed + active quorum 重算 + 被罚节点投票/提案拒绝），并纳入 `consensus_negative_smoke` 的 `pass` 判定（`weighted_quorum + equivocation + slash_execution + view_change + fork_choice`）。
+- 已完成：`F-05` 罚没治理参数化收口：`SlashPolicy` 已接入 `novovm-consensus`（`mode=enforce|observe_only`、`equivocation_threshold`、`min_active_validators`、`cooldown_epochs`），`slash execution` 已输出治理元数据（`policy_mode/evidence_count/threshold/jailed_until_epoch/cooldown_epochs`）；`consensus_negative_smoke` 的 `pass` 已扩展绑定 `slash_threshold + slash_observe_only + unjail_cooldown` 子项。
 - 已完成：`F-05` 交易编解码契约收口到 `novovm-protocol::tx_wire`（`novovm_local_tx_wire_v1`），`novovm-node` 已改为通过协议层 codec 执行 tx wire roundtrip。
 - 已完成：`novovm-node` 接入 Batch A 闭环并升级为“真实交易编解码 + mempool 准入 + 多批次输入”（tx ingress -> `tx_codec` -> `mempool_out` -> tx metadata verify -> ops_v2 -> batch partition -> proposal -> vote -> QC -> commit -> block_out -> commit_out），并在功能一致性报告增加 `tx_codec_signal` / `mempool_admission_signal` / `tx_metadata_signal` / `batch_a_input_profile` / `batch_a_closure` / `block_output_signal` / `commit_output_signal` 观测字段（最新口径：`accounts=2`、`fee=1~5`、`demo_txs=8`、`target_batches=2`、`block_out.batches=2`）。
 - 已完成：`F-07` 的 `l4-network` 文档测试收口（`cargo test -p l4-network --doc` 与全量测试通过）。
 - 已完成：`F-07` 迁移骨架 `crates/novovm-network`（来自 `supervm-network`），并新增 `UdpTransport`；`novovm-node` 的网络探针已改为调用网络层 UDP 传输，且 `run_network_two_process.ps1` 已升级为 N 节点 mesh 探针（`NodeCount=3`，`Rounds=2`，`pairs=6/6`，`directed=12/12`）；`novovm-network` 新增 `udp_transport_mesh_three_nodes_closure` 回归样本，功能一致性报告 `network_process_signal` 已覆盖该口径（`functional-smoke33-native` / `functional-smoke34-plugin` 均通过）；并新增跨进程 `network_block_wire` 验证（`sync payload`= `novovm_block_header_wire_v1`，接收端执行 `consensus binding` 校验），证据 `network-two-process-smoke50` 通过（`block_wire=12/12`）。
 - 已完成：`F-07` 网络层 `block wire` 负例门禁（`smoke51`）：`run_network_two_process.ps1` 新增 `TamperBlockWireMode`（`hash_mismatch/class_mismatch/codec_corrupt`），`run_functional_consistency.ps1` 新增 `network_block_wire_negative_signal`；当前证据显示正常路径通过（`network-two-process-smoke51-normal`）且篡改路径必失败（`network-two-process-smoke51-negative`，`block_wire=0/2`），并已纳入功能一致性总门禁（`functional-smoke51-network-wire-negative` 通过）。
+- 已完成：`F-07` 网络级 pacemaker 收口：`novovm-protocol` 新增 `Pacemaker(ViewSync/NewView)`，`novovm-node` 的 in-memory/UDP 网络探针均接入 `view_sync/new_view` 收敛；`run_network_two_process.ps1` 与 `run_functional_consistency.ps1` 已把 `network_pacemaker_signal`、`view_sync/new_view` 通过率纳入 `pass` 判定（证据：`artifacts/migration/network-two-process-pacemaker/network-two-process.json`、`artifacts/migration/functional-pacemaker/functional-consistency.json`）。
 - 已完成：`F-08` 迁移为双后端（native-first + plugin-optional）：`novovm-adapter-api` 仅保留 IR + Trait 契约；新增原生后端 crate `novovm-adapter-novovm`（`create_native_adapter`）与插件样例 crate `novovm-adapter-sample-plugin`（C ABI: `novovm_adapter_plugin_*`）；`novovm-node` 的 `adapter_out` 已改为按 `NOVOVM_ADAPTER_BACKEND=auto|native|plugin` + `NOVOVM_ADAPTER_CHAIN` 选择执行，并可通过 `NOVOVM_ADAPTER_PLUGIN_PATH` 加载插件；新增插件 ABI 门禁配置 `NOVOVM_ADAPTER_PLUGIN_EXPECT_ABI` / `NOVOVM_ADAPTER_PLUGIN_REQUIRE_CAPS`，并新增注册表门禁 `NOVOVM_ADAPTER_PLUGIN_REGISTRY_PATH` / `NOVOVM_ADAPTER_PLUGIN_REGISTRY_STRICT` / `NOVOVM_ADAPTER_PLUGIN_REGISTRY_SHA256`（配合 registry `allowed_abi_versions` 白名单）；新增共识绑定 `adapter_consensus`（`plugin_class=consensus` + `consensus_adapter_hash`），并把 `consensus_adapter_hash` 写入 `block header`（`block_consensus`），提交阶段执行强校验（`commit_consensus`，不匹配拒块）；一致性报告新增 `adapter_consensus_binding_signal`，并补齐 `adapter_plugin_registry_negative_signal`（hash/whitelist mismatch 负例必须失败）；按顺序证据 `smoke48`（protocol 下沉 + 统一验证函数）与 `smoke49`（registry 两类负例）均为通过态。
+- 已完成：域级里程碑 `D0~D3 = Done`（MVP 口径），证据见自动台账 `Domain Scan (D0~D3)` 与 acceptance gate（functional/performance/adapter-stability 全通过）。
+- 已完成：`run_migration_acceptance_gate.ps1` 新增一键全开参数 `-FullSnapshotProfile`（profile=`full_snapshot_v1`），可显式开启全部 Include* 门禁并输出 profile 字段到 acceptance summary。
+- 已完成：新增发布快照聚合脚本 `scripts/migration/run_release_snapshot.ps1`，产出 `release-snapshot.json/md`（包含 `overall_pass`、`enabled_gates`、`key_results.tps_p50`、`allowed_regression_pct` 与证据路径）。
+- 已完成：新增发布候选脚本 `scripts/migration/run_release_candidate.ps1`，以 `rc_ref(tag/hash)` 固定一次 `full_snapshot_v1` 复现流程，并输出 `rc-candidate.json/md`（`ReadyForMerge/SnapshotGreen` 状态单据）。
+- 已完成：全量门禁发布快照（2026-03-05）：
+  - `artifacts/migration/release-snapshot-2026-03-05/release-snapshot.json`
+  - `overall_pass=True`，`profile_name=full_snapshot_v1`
+  - 关键口径：`core/cpu_batch_stress.p50=24607691.87`，`core/cpu_parity.p50=5947527.35`
+  - 关键闭环：`rpc_pass/governance_pass/sync_pass/adapter_pass/dos_pass/consensus_pass=True`
+- 已完成：全量门禁发布快照 relfix（2026-03-05，param3 + adapter stability 回归）：
+  - `artifacts/migration/release-snapshot-param3-smoke-relfix/release-snapshot.json`
+  - `profile_name=full_snapshot_v1`，`overall_pass=True`
+  - 关键 gate：`governance_param3_pass=True`，`adapter_stability_pass=True`
+  - 状态：`ReadyForMerge / SnapshotGreen`（relfix 后恢复稳定）
+  - 根因：relative `OutputDir` + child process `cwd` 变化导致 whitelist negative path drift
+  - 修复：在 `scripts/migration/run_functional_consistency.ps1` 与 `scripts/migration/run_adapter_stability_gate.ps1` 将 `OutputDir` 归一化为绝对路径
+  - 证据：`artifacts/migration/adapter-stability-relfix-smoke/adapter-stability-summary.json`
 - 待推进：AOEM FFI 正式暴露 `state_root` 后，将代理门禁切换为硬一致性校验。

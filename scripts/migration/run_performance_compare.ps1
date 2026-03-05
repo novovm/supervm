@@ -1,7 +1,7 @@
 param(
-    [string]$RepoRoot = "D:\WorksArea\SUPERVM",
-    [string]$SvmRoot = "D:\WorksArea\SVM2026",
-    [string]$OutputDir = "D:\WorksArea\SUPERVM\artifacts\migration\performance",
+    [string]$RepoRoot = "",
+    [string]$SvmRoot = "",
+    [string]$OutputDir = "",
     [string]$BaselineJson = "",
     [switch]$AutoImportSvmBaseline,
     [string]$BaselineOutputDir = "",
@@ -24,6 +24,23 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+
+if (-not $RepoRoot) {
+    $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
+} else {
+    $RepoRoot = (Resolve-Path $RepoRoot).Path
+}
+if (-not $OutputDir) {
+    $OutputDir = Join-Path $RepoRoot "artifacts\migration\performance"
+}
+if (-not $SvmRoot) {
+    $sibling = Join-Path (Split-Path $RepoRoot -Parent) "SVM2026"
+    if (Test-Path $sibling) {
+        $SvmRoot = $sibling
+    } else {
+        $SvmRoot = "D:\WorksArea\SVM2026"
+    }
+}
 
 function Invoke-Cargo {
     param(
@@ -130,6 +147,18 @@ function Get-CapabilitySnapshot {
     if ($null -ne $raw.contract.fallback_reason_codes) {
         $fallbackCodes = @($raw.contract.fallback_reason_codes)
     }
+    $fallbackReason = ""
+    if ($null -ne $raw.contract.fallback_reason) {
+        $fallbackReason = [string]$raw.contract.fallback_reason
+    }
+    $zkFormalFieldsPresent = $false
+    if ($null -ne $raw.contract.zk_formal_fields_present) {
+        $zkFormalFieldsPresent = [bool]$raw.contract.zk_formal_fields_present
+    }
+    $proverReady = $false
+    if ($raw.prover_contract -and $null -ne $raw.prover_contract.prover_ready) {
+        $proverReady = [bool]$raw.prover_contract.prover_ready
+    }
 
     return [ordered]@{
         source_json = $sourceJson
@@ -138,9 +167,12 @@ function Get-CapabilitySnapshot {
         execute_ops_v2 = [bool]$raw.contract.execute_ops_v2
         zkvm_prove = [bool]$raw.contract.zkvm_prove
         zkvm_verify = [bool]$raw.contract.zkvm_verify
+        zk_formal_fields_present = $zkFormalFieldsPresent
         msm_accel = [bool]$raw.contract.msm_accel
         msm_backend = [string]$raw.contract.msm_backend
+        fallback_reason = $fallbackReason
         fallback_reason_codes = $fallbackCodes
+        prover_ready = $proverReady
         inferred_from_legacy_fields = [bool]$raw.contract.inferred_from_legacy_fields
     }
 }
@@ -295,8 +327,15 @@ if ($baselineAvailable) {
 }
 
 $capabilitySnapshot = $null
+$capabilitySnapshotNote = "capability snapshot is disabled for this run"
 if ($IncludeCapabilitySnapshot) {
-    $capabilitySnapshot = Get-CapabilitySnapshot -RepoRoot $RepoRoot -Variant $CapabilityVariant -CapabilityJson $CapabilityJson
+    try {
+        $capabilitySnapshot = Get-CapabilitySnapshot -RepoRoot $RepoRoot -Variant $CapabilityVariant -CapabilityJson $CapabilityJson
+        $capabilitySnapshotNote = "capability snapshot loaded (variant=$CapabilityVariant)"
+    } catch {
+        $capabilitySnapshot = $null
+        $capabilitySnapshotNote = "capability snapshot failed and was skipped: $($_.Exception.Message)"
+    }
 }
 
 $result = [ordered]@{
@@ -320,7 +359,8 @@ $result = [ordered]@{
     capability_contract = $capabilitySnapshot
     notes = @(
         "performance compare is only evaluated when a baseline JSON is provided",
-        "capability snapshot records zk/msm readiness at report generation time"
+        "capability snapshot records zk/msm readiness at report generation time",
+        $capabilitySnapshotNote
     )
 }
 
@@ -376,8 +416,12 @@ if ($capabilitySnapshot) {
     $md += "- execute_ops_v2: $($capabilitySnapshot.execute_ops_v2)"
     $md += "- zkvm_prove: $($capabilitySnapshot.zkvm_prove)"
     $md += "- zkvm_verify: $($capabilitySnapshot.zkvm_verify)"
+    $md += "- zk_formal_fields_present: $($capabilitySnapshot.zk_formal_fields_present)"
+    $md += "- prover_ready: $($capabilitySnapshot.prover_ready)"
     $md += "- msm_accel: $($capabilitySnapshot.msm_accel)"
     $md += "- msm_backend: $($capabilitySnapshot.msm_backend)"
+    $md += "- fallback_reason: $($capabilitySnapshot.fallback_reason)"
+    $md += "- fallback_reason_codes: $((@($capabilitySnapshot.fallback_reason_codes) -join ', '))"
     $md += "- inferred_from_legacy_fields: $($capabilitySnapshot.inferred_from_legacy_fields)"
 }
 

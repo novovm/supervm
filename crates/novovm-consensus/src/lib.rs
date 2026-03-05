@@ -97,6 +97,8 @@ pub use epoch::{Epoch, EpochConfig, EpochManager};
 pub use protocol::{HotStuffProtocol, Phase, ProtocolState};
 pub use quorum_cert::{QuorumCertificate, Vote};
 pub use types::{
-    BFTError, BFTProposal, BFTResult, Hash, Height, NodeId, ValidatorSet,
+    BFTError, BFTProposal, BFTResult, GovernanceOp, GovernanceProposal, GovernanceVote, Hash,
+    Height, NetworkDosPolicy, NodeId, SlashEvidence, SlashExecution, SlashMode, SlashPolicy,
+    ValidatorSet,
 };
 

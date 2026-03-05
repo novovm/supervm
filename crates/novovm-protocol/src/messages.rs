@@ -52,12 +52,32 @@ pub enum GossipMessage {
     PeerList { from: NodeId, peers: Vec<NodeId> },
 }
 
+/// Pacemaker / view-sync plane messages (network-level liveness).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum PacemakerMessage {
+    /// Timeout-driven view sync notice.
+    ViewSync {
+        from: NodeId,
+        height: u64,
+        view: u64,
+        leader: NodeId,
+    },
+    /// New-view notification carrying a high QC height hint.
+    NewView {
+        from: NodeId,
+        height: u64,
+        view: u64,
+        high_qc_height: u64,
+    },
+}
+
 /// Unified protocol message.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ProtocolMessage {
     TwoPc(TwoPcMessage),
     Finality(FinalityMessage),
     Gossip(GossipMessage),
+    Pacemaker(PacemakerMessage),
     /// 分布式 OCCC 兼容 gossip（结构化消息，用于迁移期与回归对齐）。
     DistributedOcccGossip(protocol_catalog::distributed_occc::gossip::GossipMessage),
 }

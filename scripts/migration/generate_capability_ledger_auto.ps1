@@ -1,14 +1,35 @@
 param(
-    [string]$RepoRoot = "D:\WorksArea\SUPERVM",
-    [string]$OutputPath = "D:\WorksArea\SUPERVM\docs_CN\SVM2026-MIGRATION\NOVOVM-CAPABILITY-MIGRATION-LEDGER-AUTO-2026-03-03.md",
-    [string]$FunctionalJson = "D:\WorksArea\SUPERVM\artifacts\migration\functional\functional-consistency.json",
-    [string]$PerformanceJson = "D:\WorksArea\SUPERVM\artifacts\migration\performance\performance-compare.json",
-    [string]$CapabilityJson = "D:\WorksArea\SUPERVM\artifacts\migration\capabilities\capability-contract-core.json",
-    [string]$BaselineJson = "D:\WorksArea\SUPERVM\artifacts\migration\baseline\svm2026-baseline-core.json"
+    [string]$RepoRoot = "",
+    [string]$OutputPath = "",
+    [string]$FunctionalJson = "",
+    [string]$PerformanceJson = "",
+    [string]$CapabilityJson = "",
+    [string]$BaselineJson = ""
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+
+if (-not $RepoRoot) {
+    $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
+} else {
+    $RepoRoot = (Resolve-Path $RepoRoot).Path
+}
+if (-not $OutputPath) {
+    $OutputPath = Join-Path $RepoRoot "docs_CN\SVM2026-MIGRATION\NOVOVM-CAPABILITY-MIGRATION-LEDGER-AUTO-2026-03-03.md"
+}
+if (-not $FunctionalJson) {
+    $FunctionalJson = Join-Path $RepoRoot "artifacts\migration\functional\functional-consistency.json"
+}
+if (-not $PerformanceJson) {
+    $PerformanceJson = Join-Path $RepoRoot "artifacts\migration\performance\performance-compare.json"
+}
+if (-not $CapabilityJson) {
+    $CapabilityJson = Join-Path $RepoRoot "artifacts\migration\capabilities\capability-contract-core.json"
+}
+if (-not $BaselineJson) {
+    $BaselineJson = Join-Path $RepoRoot "artifacts\migration\baseline\svm2026-baseline-core.json"
+}
 
 function Read-JsonOrNull {
     param([string]$Path)
@@ -136,6 +157,8 @@ $networkOutAvailable = if ($functional -and $functional.network_output_signal) {
 $networkOutPass = if ($functional -and $functional.network_output_signal) { [bool]$functional.network_output_signal.pass } else { $false }
 $networkClosureAvailable = if ($functional -and $functional.network_closure_signal) { [bool]$functional.network_closure_signal.available } else { $false }
 $networkClosurePass = if ($functional -and $functional.network_closure_signal) { [bool]$functional.network_closure_signal.pass } else { $false }
+$networkPacemakerAvailable = if ($functional -and ($functional.PSObject.Properties.Name -contains "network_pacemaker_signal") -and $functional.network_pacemaker_signal -and $null -ne $functional.network_pacemaker_signal.available) { [bool]$functional.network_pacemaker_signal.available } else { $false }
+$networkPacemakerPass = if ($functional -and ($functional.PSObject.Properties.Name -contains "network_pacemaker_signal") -and $functional.network_pacemaker_signal -and $null -ne $functional.network_pacemaker_signal.pass) { [bool]$functional.network_pacemaker_signal.pass } else { $false }
 $networkProcessAvailable = if ($functional -and $functional.network_process_signal) { [bool]$functional.network_process_signal.available } else { $false }
 $networkProcessPass = if ($functional -and $functional.network_process_signal) { [bool]$functional.network_process_signal.pass } else { $false }
 $networkProcessRounds = if ($functional -and $functional.network_process_signal -and $null -ne $functional.network_process_signal.rounds) { [int]$functional.network_process_signal.rounds } else { 1 }
@@ -155,11 +178,69 @@ $networkBlockWirePassRatio = if ($functional -and $functional.network_process_si
 $networkBlockWireVerified = if ($functional -and $functional.network_process_signal -and $null -ne $functional.network_process_signal.block_wire_verified) { [int]$functional.network_process_signal.block_wire_verified } else { 0 }
 $networkBlockWireTotal = if ($functional -and $functional.network_process_signal -and $null -ne $functional.network_process_signal.block_wire_total) { [int]$functional.network_process_signal.block_wire_total } else { 0 }
 $networkBlockWireVerifiedRatio = if ($functional -and $functional.network_process_signal -and $null -ne $functional.network_process_signal.block_wire_verified_ratio) { [double]$functional.network_process_signal.block_wire_verified_ratio } else { 0.0 }
+$networkViewSyncAvailable = if ($functional -and $functional.network_process_signal -and (($functional.network_process_signal.PSObject.Properties.Name -contains "view_sync_available") -and $null -ne $functional.network_process_signal.view_sync_available)) { [bool]$functional.network_process_signal.view_sync_available } else { $false }
+$networkViewSyncPass = if ($functional -and $functional.network_process_signal -and (($functional.network_process_signal.PSObject.Properties.Name -contains "view_sync_pass") -and $null -ne $functional.network_process_signal.view_sync_pass)) { [bool]$functional.network_process_signal.view_sync_pass } else { $false }
+$networkViewSyncPassRatio = if ($functional -and $functional.network_process_signal -and (($functional.network_process_signal.PSObject.Properties.Name -contains "view_sync_pass_ratio") -and $null -ne $functional.network_process_signal.view_sync_pass_ratio)) { [double]$functional.network_process_signal.view_sync_pass_ratio } else { 0.0 }
+$networkNewViewAvailable = if ($functional -and $functional.network_process_signal -and (($functional.network_process_signal.PSObject.Properties.Name -contains "new_view_available") -and $null -ne $functional.network_process_signal.new_view_available)) { [bool]$functional.network_process_signal.new_view_available } else { $false }
+$networkNewViewPass = if ($functional -and $functional.network_process_signal -and (($functional.network_process_signal.PSObject.Properties.Name -contains "new_view_pass") -and $null -ne $functional.network_process_signal.new_view_pass)) { [bool]$functional.network_process_signal.new_view_pass } else { $false }
+$networkNewViewPassRatio = if ($functional -and $functional.network_process_signal -and (($functional.network_process_signal.PSObject.Properties.Name -contains "new_view_pass_ratio") -and $null -ne $functional.network_process_signal.new_view_pass_ratio)) { [double]$functional.network_process_signal.new_view_pass_ratio } else { 0.0 }
+$coordinatorSignalEnabled = if ($functional -and $functional.coordinator_signal -and $null -ne $functional.coordinator_signal.enabled) { [bool]$functional.coordinator_signal.enabled } else { $false }
+$coordinatorSignalAvailable = if ($functional -and $functional.coordinator_signal -and $null -ne $functional.coordinator_signal.available) { [bool]$functional.coordinator_signal.available } else { $false }
+$coordinatorSignalPass = if ($functional -and $functional.coordinator_signal -and $null -ne $functional.coordinator_signal.pass) { [bool]$functional.coordinator_signal.pass } else { $false }
+$coordinatorSignalReason = if ($functional -and $functional.coordinator_signal -and $null -ne $functional.coordinator_signal.reason) { [string]$functional.coordinator_signal.reason } else { "" }
+$coordinatorNegativeEnabled = if ($functional -and $functional.coordinator_negative_signal -and $null -ne $functional.coordinator_negative_signal.enabled) { [bool]$functional.coordinator_negative_signal.enabled } else { $false }
+$coordinatorNegativeAvailable = if ($functional -and $functional.coordinator_negative_signal -and $null -ne $functional.coordinator_negative_signal.available) { [bool]$functional.coordinator_negative_signal.available } else { $false }
+$coordinatorNegativePass = if ($functional -and $functional.coordinator_negative_signal -and $null -ne $functional.coordinator_negative_signal.pass) { [bool]$functional.coordinator_negative_signal.pass } else { $false }
+$coordinatorNegativeUnknownPrepare = if ($functional -and $functional.coordinator_negative_signal -and $null -ne $functional.coordinator_negative_signal.unknown_prepare) { [bool]$functional.coordinator_negative_signal.unknown_prepare } else { $false }
+$coordinatorNegativeNonParticipant = if ($functional -and $functional.coordinator_negative_signal -and $null -ne $functional.coordinator_negative_signal.non_participant_vote) { [bool]$functional.coordinator_negative_signal.non_participant_vote } else { $false }
+$coordinatorNegativeVoteAfterDecide = if ($functional -and $functional.coordinator_negative_signal -and $null -ne $functional.coordinator_negative_signal.vote_after_decide) { [bool]$functional.coordinator_negative_signal.vote_after_decide } else { $false }
+$coordinatorNegativeDuplicateTx = if ($functional -and $functional.coordinator_negative_signal -and $null -ne $functional.coordinator_negative_signal.duplicate_tx) { [bool]$functional.coordinator_negative_signal.duplicate_tx } else { $false }
+$coordinatorNegativeReason = if ($functional -and $functional.coordinator_negative_signal -and $null -ne $functional.coordinator_negative_signal.reason) { [string]$functional.coordinator_negative_signal.reason } else { "" }
+$proverContractSignalEnabled = if ($functional -and $functional.prover_contract_signal -and $null -ne $functional.prover_contract_signal.enabled) { [bool]$functional.prover_contract_signal.enabled } else { $false }
+$proverContractSignalAvailable = if ($functional -and $functional.prover_contract_signal -and $null -ne $functional.prover_contract_signal.available) { [bool]$functional.prover_contract_signal.available } else { $false }
+$proverContractSignalPass = if ($functional -and $functional.prover_contract_signal -and $null -ne $functional.prover_contract_signal.pass) { [bool]$functional.prover_contract_signal.pass } else { $false }
+$proverContractSchemaOk = if ($functional -and $functional.prover_contract_signal -and $null -ne $functional.prover_contract_signal.schema_ok) { [bool]$functional.prover_contract_signal.schema_ok } else { $false }
+$proverContractReasonNorm = if ($functional -and $functional.prover_contract_signal -and $null -ne $functional.prover_contract_signal.normalized_reason_codes) { [bool]$functional.prover_contract_signal.normalized_reason_codes } else { $false }
+$proverContractFallbackCodes = if ($functional -and $functional.prover_contract_signal -and $null -ne $functional.prover_contract_signal.fallback_codes) { [int]$functional.prover_contract_signal.fallback_codes } else { 0 }
+$proverContractReason = if ($functional -and $functional.prover_contract_signal -and $null -ne $functional.prover_contract_signal.reason) { [string]$functional.prover_contract_signal.reason } else { "" }
+$proverContractNegativeEnabled = if ($functional -and $functional.prover_contract_negative_signal -and $null -ne $functional.prover_contract_negative_signal.enabled) { [bool]$functional.prover_contract_negative_signal.enabled } else { $false }
+$proverContractNegativeAvailable = if ($functional -and $functional.prover_contract_negative_signal -and $null -ne $functional.prover_contract_negative_signal.available) { [bool]$functional.prover_contract_negative_signal.available } else { $false }
+$proverContractNegativePass = if ($functional -and $functional.prover_contract_negative_signal -and $null -ne $functional.prover_contract_negative_signal.pass) { [bool]$functional.prover_contract_negative_signal.pass } else { $false }
+$proverContractNegativeMissingFormal = if ($functional -and $functional.prover_contract_negative_signal -and $null -ne $functional.prover_contract_negative_signal.missing_formal_fields) { [bool]$functional.prover_contract_negative_signal.missing_formal_fields } else { $false }
+$proverContractNegativeEmptyReasons = if ($functional -and $functional.prover_contract_negative_signal -and $null -ne $functional.prover_contract_negative_signal.empty_reason_codes) { [bool]$functional.prover_contract_negative_signal.empty_reason_codes } else { $false }
+$proverContractNegativeNormStable = if ($functional -and $functional.prover_contract_negative_signal -and $null -ne $functional.prover_contract_negative_signal.reason_normalization_stable) { [bool]$functional.prover_contract_negative_signal.reason_normalization_stable } else { $false }
+$proverContractNegativeReason = if ($functional -and $functional.prover_contract_negative_signal -and $null -ne $functional.prover_contract_negative_signal.reason) { [string]$functional.prover_contract_negative_signal.reason } else { "" }
+$consensusNegativeEnabled = if ($functional -and $functional.consensus_negative_signal -and $null -ne $functional.consensus_negative_signal.enabled) { [bool]$functional.consensus_negative_signal.enabled } else { $false }
+$consensusNegativeAvailable = if ($functional -and $functional.consensus_negative_signal -and $null -ne $functional.consensus_negative_signal.available) { [bool]$functional.consensus_negative_signal.available } else { $false }
+$consensusNegativePass = if ($functional -and $functional.consensus_negative_signal -and $null -ne $functional.consensus_negative_signal.pass) { [bool]$functional.consensus_negative_signal.pass } else { $false }
+$consensusNegativeInvalidSignature = if ($functional -and $functional.consensus_negative_signal -and $null -ne $functional.consensus_negative_signal.invalid_signature) { [bool]$functional.consensus_negative_signal.invalid_signature } else { $false }
+$consensusNegativeDuplicateVote = if ($functional -and $functional.consensus_negative_signal -and $null -ne $functional.consensus_negative_signal.duplicate_vote) { [bool]$functional.consensus_negative_signal.duplicate_vote } else { $false }
+$consensusNegativeWrongEpoch = if ($functional -and $functional.consensus_negative_signal -and $null -ne $functional.consensus_negative_signal.wrong_epoch) { [bool]$functional.consensus_negative_signal.wrong_epoch } else { $false }
+$consensusNegativeWeightedQuorum = if ($functional -and $functional.consensus_negative_signal -and (($functional.consensus_negative_signal.PSObject.Properties.Name -contains "weighted_quorum") -and $null -ne $functional.consensus_negative_signal.weighted_quorum)) { [bool]$functional.consensus_negative_signal.weighted_quorum } else { $false }
+$consensusNegativeEquivocation = if ($functional -and $functional.consensus_negative_signal -and (($functional.consensus_negative_signal.PSObject.Properties.Name -contains "equivocation") -and $null -ne $functional.consensus_negative_signal.equivocation)) { [bool]$functional.consensus_negative_signal.equivocation } else { $false }
+$consensusNegativeSlashExecution = if ($functional -and $functional.consensus_negative_signal -and (($functional.consensus_negative_signal.PSObject.Properties.Name -contains "slash_execution") -and $null -ne $functional.consensus_negative_signal.slash_execution)) { [bool]$functional.consensus_negative_signal.slash_execution } else { $false }
+$consensusNegativeSlashThreshold = if ($functional -and $functional.consensus_negative_signal -and (($functional.consensus_negative_signal.PSObject.Properties.Name -contains "slash_threshold") -and $null -ne $functional.consensus_negative_signal.slash_threshold)) { [bool]$functional.consensus_negative_signal.slash_threshold } else { $false }
+$consensusNegativeSlashObserveOnly = if ($functional -and $functional.consensus_negative_signal -and (($functional.consensus_negative_signal.PSObject.Properties.Name -contains "slash_observe_only") -and $null -ne $functional.consensus_negative_signal.slash_observe_only)) { [bool]$functional.consensus_negative_signal.slash_observe_only } else { $false }
+$consensusNegativeUnjailCooldown = if ($functional -and $functional.consensus_negative_signal -and (($functional.consensus_negative_signal.PSObject.Properties.Name -contains "unjail_cooldown") -and $null -ne $functional.consensus_negative_signal.unjail_cooldown)) { [bool]$functional.consensus_negative_signal.unjail_cooldown } else { $false }
+$consensusNegativeViewChange = if ($functional -and $functional.consensus_negative_signal -and (($functional.consensus_negative_signal.PSObject.Properties.Name -contains "view_change") -and $null -ne $functional.consensus_negative_signal.view_change)) { [bool]$functional.consensus_negative_signal.view_change } else { $false }
+$consensusNegativeForkChoice = if ($functional -and $functional.consensus_negative_signal -and (($functional.consensus_negative_signal.PSObject.Properties.Name -contains "fork_choice") -and $null -ne $functional.consensus_negative_signal.fork_choice)) { [bool]$functional.consensus_negative_signal.fork_choice } else { $false }
+$consensusNegativeReason = if ($functional -and $functional.consensus_negative_signal -and $null -ne $functional.consensus_negative_signal.reason) { [string]$functional.consensus_negative_signal.reason } else { "" }
 $capContract = if ($capability) { $capability.contract } else { $null }
 $zkProve = if ($capContract) { [bool]$capContract.zkvm_prove } else { $false }
 $zkVerify = if ($capContract) { [bool]$capContract.zkvm_verify } else { $false }
+$zkFormalFieldsPresent = if ($capContract -and $null -ne $capContract.zk_formal_fields_present) { [bool]$capContract.zk_formal_fields_present } else { $false }
 $msmAccel = if ($capContract) { [bool]$capContract.msm_accel } else { $false }
 $msmBackend = if ($capContract) { [string]$capContract.msm_backend } else { "" }
+$fallbackReason = if ($capContract -and $null -ne $capContract.fallback_reason) { [string]$capContract.fallback_reason } else { "" }
+$fallbackReasonCodes = if ($capContract -and $null -ne $capContract.fallback_reason_codes) { @($capContract.fallback_reason_codes) } else { @() }
+$capPropNames = @()
+if ($capContract) { $capPropNames = @($capContract.PSObject.Properties.Name) }
+$capHasFallbackReason = $capPropNames -contains "fallback_reason"
+$capHasFallbackReasonCodes = $capPropNames -contains "fallback_reason_codes"
+$capHasZkFormalFlag = $capPropNames -contains "zk_formal_fields_present"
+$zkContractSchemaReady = ($capHasFallbackReason -and $capHasFallbackReasonCodes -and $capHasZkFormalFlag)
+$proverCap = if ($capability -and $capability.prover_contract) { $capability.prover_contract } else { $null }
+$proverReady = if ($proverCap -and $null -ne $proverCap.prover_ready) { [bool]$proverCap.prover_ready } else { $false }
 $zkReady = ($zkProve -or $zkVerify)
 $msmReady = $msmAccel
 $baselineReady = $null -ne $baseline
@@ -171,6 +252,51 @@ $networkSkeletonReady = Test-Path (Join-Path $RepoRoot "crates\novovm-network\Ca
 $adapterSkeletonReady = Test-Path (Join-Path $RepoRoot "crates\novovm-adapter-api\Cargo.toml")
 $adapterNativeReady = Test-Path (Join-Path $RepoRoot "crates\novovm-adapter-novovm\Cargo.toml")
 $adapterPluginReady = Test-Path (Join-Path $RepoRoot "crates\novovm-adapter-sample-plugin\Cargo.toml")
+$adapterCompatMatrixPath = Join-Path $RepoRoot "config\novovm-adapter-compatibility-matrix.json"
+$adapterCompatMatrixReady = Test-Path $adapterCompatMatrixPath
+$adapterCompatHasEvm = $false
+$adapterCompatHasBnb = $false
+if ($adapterCompatMatrixReady) {
+    try {
+        $adapterCompat = Get-Content -Path $adapterCompatMatrixPath -Raw | ConvertFrom-Json
+        $compatChains = @()
+        if ($adapterCompat.chains) {
+            $compatChains = @($adapterCompat.chains | ForEach-Object { [string]$_ })
+        }
+        $adapterCompatHasEvm = $compatChains -contains "evm"
+        $adapterCompatHasBnb = $compatChains -contains "bnb"
+    } catch {
+        $adapterCompatMatrixReady = $false
+    }
+}
+$adapterRegistryConfigPath = Join-Path $RepoRoot "config\novovm-adapter-plugin-registry.json"
+$adapterRegistryHasEvm = $false
+$adapterRegistryHasBnb = $false
+if (Test-Path $adapterRegistryConfigPath) {
+    try {
+        $registryJson = Get-Content -Path $adapterRegistryConfigPath -Raw | ConvertFrom-Json
+        $allChains = @()
+        if ($registryJson.plugins) {
+            foreach ($plugin in $registryJson.plugins) {
+                if ($plugin.chains) {
+                    $allChains += @($plugin.chains | ForEach-Object { [string]$_ })
+                }
+            }
+        }
+        $adapterRegistryHasEvm = $allChains -contains "evm"
+        $adapterRegistryHasBnb = $allChains -contains "bnb"
+    } catch {
+        $adapterRegistryHasEvm = $false
+        $adapterRegistryHasBnb = $false
+    }
+}
+$adapterNonNovoSampleReady = (
+    $adapterCompatMatrixReady -and
+    $adapterCompatHasEvm -and
+    $adapterCompatHasBnb -and
+    $adapterRegistryHasEvm -and
+    $adapterRegistryHasBnb
+)
 $coordinatorSkeletonReady = Test-Path (Join-Path $RepoRoot "crates\novovm-coordinator\Cargo.toml")
 $proverSkeletonReady = Test-Path (Join-Path $RepoRoot "crates\novovm-prover\Cargo.toml")
 $appStorageSkeletonReady = Test-Path (Join-Path $RepoRoot "crates\novovm-storage-service\Cargo.toml")
@@ -184,12 +310,32 @@ $variantDigestPass = if ($functional -and $functional.variant_digest_consistency
 $f02Status = if ($execSkeletonReady -and $variantDigestPass) { "ReadyForMerge" } elseif ($execSkeletonReady) { "InProgress" } else { "NotStarted" }
 $f03Status = if ($protocolSkeletonReady -and $txCodecPass -and $blockWirePass -and $blockOutPass -and $commitOutPass) { "ReadyForMerge" } elseif ($protocolSkeletonReady) { "InProgress" } else { "NotStarted" }
 $f04Status = if ($stateRootAvailable -and $stateRootPass) { "ReadyForMerge" } elseif ($protocolSkeletonReady -and $stateRootPass) { "InProgress" } else { "NotStarted" }
-$f05Status = if ($consensusSkeletonReady -and $functionalPass) { "InProgress" } elseif ($consensusSkeletonReady) { "InProgress" } else { "NotStarted" }
-$f06Status = if ($coordinatorSkeletonReady) { "InProgress" } else { "NotStarted" }
+$f05ReadyForMerge = (
+    $consensusSkeletonReady -and
+    $batchAPass -and
+    $functionalPass -and
+    (
+        (-not $consensusNegativeEnabled) -or
+        ($consensusNegativeAvailable -and $consensusNegativePass)
+    )
+)
+$f05Status = if ($f05ReadyForMerge) { "ReadyForMerge" } elseif ($consensusSkeletonReady) { "InProgress" } else { "NotStarted" }
+$f06ReadyForMerge = (
+    $coordinatorSkeletonReady -and
+    $coordinatorSignalAvailable -and
+    $coordinatorSignalPass -and
+    $functionalPass -and
+    (
+        (-not $coordinatorNegativeEnabled) -or
+        ($coordinatorNegativeAvailable -and $coordinatorNegativePass)
+    )
+)
+$f06Status = if ($f06ReadyForMerge) { "ReadyForMerge" } elseif ($coordinatorSkeletonReady) { "InProgress" } else { "NotStarted" }
 $f07ReadyForMerge = (
     $networkSkeletonReady -and
     $networkOutPass -and
     $networkClosurePass -and
+    $networkPacemakerPass -and
     $networkProcessPass -and
     $networkBlockWirePass -and
     (
@@ -198,15 +344,57 @@ $f07ReadyForMerge = (
     )
 )
 $f07Status = if ($f07ReadyForMerge) { "ReadyForMerge" } elseif ($networkSkeletonReady) { "InProgress" } else { "NotStarted" }
-$f08Status = if ($adapterSkeletonReady) { "InProgress" } else { "NotStarted" }
-$f09Status = if ($proverSkeletonReady -and $zkReady -and $functionalPass) { "ReadyForMerge" } elseif ($proverSkeletonReady -or $capContract) { "InProgress" } else { "NotStarted" }
+$f08ReadyForMerge = (
+    $adapterSkeletonReady -and
+    $adapterNativeReady -and
+    $adapterPluginReady -and
+    $adapterPluginAbiPass -and
+    $adapterPluginRegistryPass -and
+    $adapterConsensusPass -and
+    $adapterComparePass -and
+    $adapterNonNovoSampleReady -and
+    (
+        (-not $adapterPluginAbiNegativeEnabled) -or
+        ($adapterPluginAbiNegativeAvailable -and $adapterPluginAbiNegativePass)
+    ) -and
+    (
+        (-not $adapterPluginSymbolNegativeEnabled) -or
+        ($adapterPluginSymbolNegativeAvailable -and $adapterPluginSymbolNegativePass)
+    ) -and
+    (
+        (-not $adapterPluginRegistryNegativeEnabled) -or
+        ($adapterPluginRegistryNegativeAvailable -and $adapterPluginRegistryNegativePass)
+    )
+)
+$f08Status = if ($f08ReadyForMerge) { "ReadyForMerge" } elseif ($adapterSkeletonReady) { "InProgress" } else { "NotStarted" }
+$f09ReadyForMerge = (
+    $proverSkeletonReady -and
+    $proverContractSignalAvailable -and
+    $proverContractSignalPass -and
+    $functionalPass -and
+    (
+        (-not $proverContractNegativeEnabled) -or
+        ($proverContractNegativeAvailable -and $proverContractNegativePass)
+    )
+)
+$f09Status = if ($f09ReadyForMerge) { "ReadyForMerge" } elseif ($proverSkeletonReady -or $capContract) { "InProgress" } else { "NotStarted" }
 $f10Status = if ($appStorageSkeletonReady) { "InProgress" } else { "NotStarted" }
 $f11Status = if ($appDomainSkeletonReady) { "InProgress" } else { "NotStarted" }
 $f12Status = if ($appDefiSkeletonReady) { "InProgress" } else { "NotStarted" }
 $f13Status = if ($adaptersMultiSkeletonReady) { "InProgress" } else { "NotStarted" }
 $f14Status = if ($protocolSkeletonReady -and $consensusSkeletonReady -and $networkSkeletonReady -and $adapterSkeletonReady) { "InProgress" } elseif ($legacyVmRuntimePresent) { "NotStarted" } else { "NotStarted" }
-$f15Status = if ($zkReady -and $functionalPass) { "ReadyForMerge" } elseif ($capContract) { "InProgress" } else { "NotStarted" }
+$f15Status = if ($zkContractSchemaReady -and $proverContractSignalPass -and $functionalPass) { "ReadyForMerge" } elseif ($capContract) { "InProgress" } else { "NotStarted" }
 $f16Status = if ($msmReady -and $functionalPass) { "ReadyForMerge" } elseif ($capContract) { "InProgress" } else { "NotStarted" }
+
+$domainD0Done = ($f01Status -eq "ReadyForMerge" -and $f02Status -eq "ReadyForMerge")
+$domainD1Done = ($f01Status -eq "ReadyForMerge" -and $f02Status -eq "ReadyForMerge" -and $functionalPass)
+$domainD2Done = ($f03Status -eq "ReadyForMerge" -and $f04Status -eq "ReadyForMerge")
+$domainD3Done = ($f05Status -eq "ReadyForMerge" -and $f06Status -eq "ReadyForMerge" -and $f07Status -eq "ReadyForMerge" -and $f08Status -eq "ReadyForMerge")
+
+$domainD0Status = if ($domainD0Done) { "Done" } elseif ($f01Status -ne "NotStarted" -or $f02Status -ne "NotStarted") { "InProgress" } else { "NotStarted" }
+$domainD1Status = if ($domainD1Done) { "Done" } elseif ($f01Status -ne "NotStarted" -or $f02Status -ne "NotStarted") { "InProgress" } else { "NotStarted" }
+$domainD2Status = if ($domainD2Done) { "Done" } elseif ($f03Status -ne "NotStarted" -or $f04Status -ne "NotStarted") { "InProgress" } else { "NotStarted" }
+$domainD3Status = if ($domainD3Done) { "Done" } elseif ($f05Status -ne "NotStarted" -or $f06Status -ne "NotStarted" -or $f07Status -ne "NotStarted" -or $f08Status -ne "NotStarted") { "InProgress" } else { "NotStarted" }
 $adapterEvidence = if ($adapterAvailable) { $FunctionalJson } else { Join-Path $RepoRoot "crates\novovm-adapter-api" }
 $networkDirectedSummary = "{0}/{1}:{2}" -f $networkDirectedUp, $networkDirectedTotal, $networkDirectedRatio
 $networkBlockWireSummary = "{0}/{1}:{2}" -f $networkBlockWireVerified, $networkBlockWireTotal, $networkBlockWireVerifiedRatio
@@ -218,6 +406,12 @@ $adapterCompareSummary = if ($adapterCompareEnabled) {
 $adapterPluginAbiSummary = "plugin_abi(pass=$adapterPluginAbiPass, enabled=$adapterPluginAbiEnabled, compatible=$adapterPluginAbiCompatible, expected=$adapterPluginAbiExpected, required=$adapterPluginAbiRequired)"
 $adapterPluginRegistrySummary = "plugin_registry(pass=$adapterPluginRegistryPass, enabled=$adapterPluginRegistryEnabled, matched=$adapterPluginRegistryMatched, strict=$adapterPluginRegistryStrict, chain_allowed=$adapterPluginRegistryChainAllowed, hash_check=$adapterPluginRegistryHashCheck/$adapterPluginRegistryHashMatch, abi_whitelist=$adapterPluginRegistryAbiWhitelist/$adapterPluginRegistryAbiAllowed)"
 $adapterConsensusSummary = "consensus_binding(pass=$adapterConsensusPass, available=$adapterConsensusAvailable, class=$adapterConsensusClass/$adapterConsensusClassCode)"
+$adapterMatrixSummary = "compat_matrix(ready=$adapterCompatMatrixReady, evm=$adapterCompatHasEvm, bnb=$adapterCompatHasBnb, registry_evm=$adapterRegistryHasEvm, registry_bnb=$adapterRegistryHasBnb, non_novovm_sample=$adapterNonNovoSampleReady)"
+$coordinatorSummary = "coordinator_signal(enabled=$coordinatorSignalEnabled, available=$coordinatorSignalAvailable, pass=$coordinatorSignalPass, reason=$coordinatorSignalReason)"
+$coordinatorNegativeSummary = "coordinator_negative_signal(enabled=$coordinatorNegativeEnabled, available=$coordinatorNegativeAvailable, pass=$coordinatorNegativePass, unknown_prepare=$coordinatorNegativeUnknownPrepare, non_participant_vote=$coordinatorNegativeNonParticipant, vote_after_decide=$coordinatorNegativeVoteAfterDecide, duplicate_tx=$coordinatorNegativeDuplicateTx, reason=$coordinatorNegativeReason)"
+$proverContractSummary = "prover_contract_signal(enabled=$proverContractSignalEnabled, available=$proverContractSignalAvailable, pass=$proverContractSignalPass, schema_ok=$proverContractSchemaOk, reason_norm=$proverContractReasonNorm, fallback_codes=$proverContractFallbackCodes, reason=$proverContractReason)"
+$proverContractNegativeSummary = "prover_contract_negative_signal(enabled=$proverContractNegativeEnabled, available=$proverContractNegativeAvailable, pass=$proverContractNegativePass, missing_formal_fields=$proverContractNegativeMissingFormal, empty_reason_codes=$proverContractNegativeEmptyReasons, normalization_stable=$proverContractNegativeNormStable, reason=$proverContractNegativeReason)"
+$consensusNegativeSummary = "consensus_negative_signal(enabled=$consensusNegativeEnabled, available=$consensusNegativeAvailable, pass=$consensusNegativePass, invalid_signature=$consensusNegativeInvalidSignature, duplicate_vote=$consensusNegativeDuplicateVote, wrong_epoch=$consensusNegativeWrongEpoch, weighted_quorum=$consensusNegativeWeightedQuorum, equivocation=$consensusNegativeEquivocation, slash_execution=$consensusNegativeSlashExecution, slash_threshold=$consensusNegativeSlashThreshold, slash_observe_only=$consensusNegativeSlashObserveOnly, unjail_cooldown=$consensusNegativeUnjailCooldown, view_change=$consensusNegativeViewChange, fork_choice=$consensusNegativeForkChoice, reason=$consensusNegativeReason)"
 $adapterPluginAbiNegativeSummary = if ($adapterPluginAbiNegativeEnabled) {
     "plugin_abi_negative(pass=$adapterPluginAbiNegativePass, available=$adapterPluginAbiNegativeAvailable, abi_fail=$adapterPluginAbiNegativeAbiFail/$adapterPluginAbiNegativeAbiReason, cap_fail=$adapterPluginAbiNegativeCapFail/$adapterPluginAbiNegativeCapReason)"
 } else {
@@ -253,7 +447,7 @@ $md = @(
     "- functional_overall_pass: $functionalPass"
     "- performance_compare_pass: $performancePass"
     "- state_root_available: $stateRootAvailable"
-    "- state_root_proxy_pass: $stateRootPass"
+    "- state_root_pass: $stateRootPass"
     "- tx_codec_signal_available: $txCodecAvailable"
     "- tx_codec_signal_pass: $txCodecPass"
     "- tx_codec_bytes: $txCodecBytes"
@@ -292,6 +486,12 @@ $md = @(
     "- adapter_plugin_registry_expected_hash_check: $adapterPluginRegistryExpectedHashCheck"
     "- adapter_plugin_registry_expected_sha256: $adapterPluginRegistryExpectedSha256"
     "- adapter_plugin_registry_source: $adapterPluginRegistrySource"
+    "- adapter_compat_matrix_ready: $adapterCompatMatrixReady"
+    "- adapter_compat_matrix_has_evm: $adapterCompatHasEvm"
+    "- adapter_compat_matrix_has_bnb: $adapterCompatHasBnb"
+    "- adapter_registry_has_evm: $adapterRegistryHasEvm"
+    "- adapter_registry_has_bnb: $adapterRegistryHasBnb"
+    "- adapter_non_novovm_sample_ready: $adapterNonNovoSampleReady"
     "- adapter_consensus_binding_available: $adapterConsensusAvailable"
     "- adapter_consensus_binding_pass: $adapterConsensusPass"
     "- adapter_consensus_binding_class: $adapterConsensusClass"
@@ -356,6 +556,8 @@ $md = @(
     "- network_output_signal_pass: $networkOutPass"
     "- network_closure_signal_available: $networkClosureAvailable"
     "- network_closure_signal_pass: $networkClosurePass"
+    "- network_pacemaker_signal_available: $networkPacemakerAvailable"
+    "- network_pacemaker_signal_pass: $networkPacemakerPass"
     "- network_process_signal_available: $networkProcessAvailable"
     "- network_process_signal_pass: $networkProcessPass"
     "- network_process_rounds: $networkProcessRounds"
@@ -375,7 +577,62 @@ $md = @(
     "- network_block_wire_verified: $networkBlockWireVerified"
     "- network_block_wire_total: $networkBlockWireTotal"
     "- network_block_wire_verified_ratio: $networkBlockWireVerifiedRatio"
+    "- network_view_sync_available: $networkViewSyncAvailable"
+    "- network_view_sync_pass: $networkViewSyncPass"
+    "- network_view_sync_pass_ratio: $networkViewSyncPassRatio"
+    "- network_new_view_available: $networkNewViewAvailable"
+    "- network_new_view_pass: $networkNewViewPass"
+    "- network_new_view_pass_ratio: $networkNewViewPassRatio"
+    "- coordinator_signal_enabled: $coordinatorSignalEnabled"
+    "- coordinator_signal_available: $coordinatorSignalAvailable"
+    "- coordinator_signal_pass: $coordinatorSignalPass"
+    "- coordinator_signal_reason: $coordinatorSignalReason"
+    "- coordinator_negative_signal_enabled: $coordinatorNegativeEnabled"
+    "- coordinator_negative_signal_available: $coordinatorNegativeAvailable"
+    "- coordinator_negative_signal_pass: $coordinatorNegativePass"
+    "- coordinator_negative_unknown_prepare: $coordinatorNegativeUnknownPrepare"
+    "- coordinator_negative_non_participant_vote: $coordinatorNegativeNonParticipant"
+    "- coordinator_negative_vote_after_decide: $coordinatorNegativeVoteAfterDecide"
+    "- coordinator_negative_duplicate_tx: $coordinatorNegativeDuplicateTx"
+    "- coordinator_negative_reason: $coordinatorNegativeReason"
+    "- prover_contract_signal_enabled: $proverContractSignalEnabled"
+    "- prover_contract_signal_available: $proverContractSignalAvailable"
+    "- prover_contract_signal_pass: $proverContractSignalPass"
+    "- prover_contract_signal_schema_ok: $proverContractSchemaOk"
+    "- prover_contract_signal_reason_norm: $proverContractReasonNorm"
+    "- prover_contract_signal_fallback_codes: $proverContractFallbackCodes"
+    "- prover_contract_signal_reason: $proverContractReason"
+    "- prover_contract_negative_enabled: $proverContractNegativeEnabled"
+    "- prover_contract_negative_available: $proverContractNegativeAvailable"
+    "- prover_contract_negative_pass: $proverContractNegativePass"
+    "- prover_contract_negative_missing_formal_fields: $proverContractNegativeMissingFormal"
+    "- prover_contract_negative_empty_reason_codes: $proverContractNegativeEmptyReasons"
+    "- prover_contract_negative_normalization_stable: $proverContractNegativeNormStable"
+    "- prover_contract_negative_reason: $proverContractNegativeReason"
+    "- consensus_negative_signal_enabled: $consensusNegativeEnabled"
+    "- consensus_negative_signal_available: $consensusNegativeAvailable"
+    "- consensus_negative_signal_pass: $consensusNegativePass"
+    "- consensus_negative_signal_invalid_signature: $consensusNegativeInvalidSignature"
+    "- consensus_negative_signal_duplicate_vote: $consensusNegativeDuplicateVote"
+    "- consensus_negative_signal_wrong_epoch: $consensusNegativeWrongEpoch"
+    "- consensus_negative_signal_weighted_quorum: $consensusNegativeWeightedQuorum"
+    "- consensus_negative_signal_equivocation: $consensusNegativeEquivocation"
+    "- consensus_negative_signal_slash_execution: $consensusNegativeSlashExecution"
+    "- consensus_negative_signal_slash_threshold: $consensusNegativeSlashThreshold"
+    "- consensus_negative_signal_slash_observe_only: $consensusNegativeSlashObserveOnly"
+    "- consensus_negative_signal_unjail_cooldown: $consensusNegativeUnjailCooldown"
+    "- consensus_negative_signal_view_change: $consensusNegativeViewChange"
+    "- consensus_negative_signal_fork_choice: $consensusNegativeForkChoice"
+    "- consensus_negative_signal_reason: $consensusNegativeReason"
     "- zk_ready: $zkReady"
+    "- zk_formal_fields_present: $zkFormalFieldsPresent"
+    "- prover_ready: $proverReady"
+    "- zk_contract_schema_ready: $zkContractSchemaReady"
+    "- cap_has_fallback_reason: $capHasFallbackReason"
+    "- cap_has_fallback_reason_codes: $capHasFallbackReasonCodes"
+    "- cap_has_zk_formal_flag: $capHasZkFormalFlag"
+    "- fallback_reason: $fallbackReason"
+    "- fallback_reason_codes: $($fallbackReasonCodes -join ',')"
     "- msm_ready: $msmReady"
     "- baseline_ready: $baselineReady"
     "- consensus_skeleton_ready: $consensusSkeletonReady"
@@ -399,6 +656,19 @@ $md = @(
     "- full_scan_f14_status: $f14Status"
     "- full_scan_f15_status: $f15Status"
     "- full_scan_f16_status: $f16Status"
+    "- domain_d0_status: $domainD0Status"
+    "- domain_d1_status: $domainD1Status"
+    "- domain_d2_status: $domainD2Status"
+    "- domain_d3_status: $domainD3Status"
+    ""
+    "## Domain Scan (D0~D3)"
+    ""
+    "| Domain | Status | Done Criteria | Auto Evidence |"
+    "|---|---|---|---|"
+    "| D0 AOEM Foundation Domain | $domainD0Status | F-01/F-02 = ReadyForMerge | F-01=$f01Status, F-02=$f02Status |"
+    "| D1 Execution Facade Domain | $domainD1Status | F-01/F-02 = ReadyForMerge + functional_pass=True | F-01=$f01Status, F-02=$f02Status, functional_pass=$functionalPass |"
+    "| D2 Protocol Core Domain | $domainD2Status | F-03/F-04 = ReadyForMerge | F-03=$f03Status, F-04=$f04Status |"
+    "| D3 Consensus Network Domain | $domainD3Status | F-05/F-06/F-07/F-08 = ReadyForMerge | F-05=$f05Status, F-06=$f06Status, F-07=$f07Status, F-08=$f08Status |"
     ""
     "## Full Scan Matrix (F-01~F-16)"
     ""
@@ -408,33 +678,35 @@ $md = @(
     "| F-02 | AOEM runtime config | $f02Status | exec=$execSkeletonReady, variant_digest.pass=$variantDigestPass |"
     "| F-03 | Execution receipt standard | $f03Status | protocol=$protocolSkeletonReady, tx_codec=$txCodecPass, block_wire=$blockWirePass, block_out=$blockOutPass, commit_out=$commitOutPass |"
     "| F-04 | State root consistency | $f04Status | state_root.available=$stateRootAvailable, state_root.pass=$stateRootPass |"
-    "| F-05 | Consensus engine | $f05Status | consensus=$consensusSkeletonReady, batch_a=$batchAPass |"
-    "| F-06 | Distributed coordinator | $f06Status | coordinator=$coordinatorSkeletonReady |"
-    "| F-07 | Network layer | $f07Status | network=$networkSkeletonReady, process=$networkProcessPass, block_wire=$networkBlockWirePass, block_wire_negative=$networkBlockWireNegativePass |"
-    "| F-08 | Chain adapter interface | $f08Status | adapter=$adapterSkeletonReady, abi=$adapterPluginAbiPass, registry=$adapterPluginRegistryPass, consensus=$adapterConsensusPass, compare=$adapterComparePass |"
-    "| F-09 | zk execution/aggregation | $f09Status | prover=$proverSkeletonReady, zk_ready=$zkReady |"
+    "| F-05 | Consensus engine | $f05Status | consensus=$consensusSkeletonReady, batch_a=$batchAPass, consensus_negative.enabled=$consensusNegativeEnabled, consensus_negative.available=$consensusNegativeAvailable, consensus_negative.pass=$consensusNegativePass, weighted_quorum=$consensusNegativeWeightedQuorum, equivocation=$consensusNegativeEquivocation, slash_execution=$consensusNegativeSlashExecution, slash_threshold=$consensusNegativeSlashThreshold, slash_observe_only=$consensusNegativeSlashObserveOnly, unjail_cooldown=$consensusNegativeUnjailCooldown, view_change=$consensusNegativeViewChange, fork_choice=$consensusNegativeForkChoice |"
+    "| F-06 | Distributed coordinator | $f06Status | coordinator=$coordinatorSkeletonReady, signal_enabled=$coordinatorSignalEnabled, signal_available=$coordinatorSignalAvailable, signal_pass=$coordinatorSignalPass, negative_enabled=$coordinatorNegativeEnabled, negative_available=$coordinatorNegativeAvailable, negative_pass=$coordinatorNegativePass |"
+    "| F-07 | Network layer | $f07Status | network=$networkSkeletonReady, closure=$networkClosurePass, pacemaker=$networkPacemakerPass, process=$networkProcessPass, block_wire=$networkBlockWirePass, view_sync=$networkViewSyncPass, new_view=$networkNewViewPass, block_wire_negative=$networkBlockWireNegativePass |"
+    "| F-08 | Chain adapter interface | $f08Status | adapter=$adapterSkeletonReady, abi=$adapterPluginAbiPass, registry=$adapterPluginRegistryPass, consensus=$adapterConsensusPass, compare=$adapterComparePass, matrix=$adapterCompatMatrixReady, non_novovm_sample=$adapterNonNovoSampleReady, abi_negative_enabled=$adapterPluginAbiNegativeEnabled, abi_negative_pass=$adapterPluginAbiNegativePass, symbol_negative_enabled=$adapterPluginSymbolNegativeEnabled, symbol_negative_pass=$adapterPluginSymbolNegativePass, registry_negative_enabled=$adapterPluginRegistryNegativeEnabled, registry_negative_pass=$adapterPluginRegistryNegativePass |"
+    "| F-09 | zk execution/aggregation | $f09Status | prover=$proverSkeletonReady, prover_signal=$proverContractSignalPass, prover_negative_enabled=$proverContractNegativeEnabled, prover_negative_available=$proverContractNegativeAvailable, prover_negative_pass=$proverContractNegativePass, schema_ok=$proverContractSchemaOk, reason_norm=$proverContractReasonNorm, zk_runtime_ready=$zkReady |"
     "| F-10 | Web3 storage service | $f10Status | storage_service=$appStorageSkeletonReady |"
     "| F-11 | Domain system | $f11Status | app_domain=$appDomainSkeletonReady |"
     "| F-12 | DeFi core | $f12Status | app_defi=$appDefiSkeletonReady |"
     "| F-13 | Multi-chain plugin capability | $f13Status | adapters_multi=$adaptersMultiSkeletonReady |"
     "| F-14 | vm-runtime split migration | $f14Status | protocol=$protocolSkeletonReady, consensus=$consensusSkeletonReady, network=$networkSkeletonReady, adapter=$adapterSkeletonReady, legacy_vm_runtime_present=$legacyVmRuntimePresent |"
-    "| F-15 | AOEM ZK capability contract | $f15Status | zkvm_prove=$zkProve, zkvm_verify=$zkVerify |"
+    "| F-15 | AOEM ZK capability contract | $f15Status | zkvm_prove=$zkProve, zkvm_verify=$zkVerify, zk_formal_fields_present=$zkFormalFieldsPresent, schema_ready=$zkContractSchemaReady, fallback_reason=$fallbackReason |"
     "| F-16 | AOEM MSM acceleration contract | $f16Status | msm_accel=$msmAccel, msm_backend=$msmBackend |"
     ""
     "## Ledger"
     ""
     "| ID | Capability | Status | Auto Progress | Evidence Path | Updated |"
     "|---|---|---|---|---|---|"
-    "| F-05 | Consensus engine (~80% verified) | $f05Status | novovm-consensus skeleton + tx_codec_signal(pass=$txCodecPass, bytes=$txCodecBytes) + mempool_admission_signal(pass=$mempoolPass, accepted=$mempoolAccepted, rejected=$mempoolRejected, fee_floor=$mempoolFeeFloor) + tx_metadata_signal(pass=$txMetaPass, accounts=$txMetaAccounts, fee=$txMetaMinFee-$txMetaMaxFee) + batch_a_closure(pass=$batchAPass, txs=$batchADemoTxs, target_batches=$batchATargetBatches, expected_min_batches=$batchAExpectedMinBatches) + block_wire_signal(pass=$blockWirePass, codec=$blockWireCodec, bytes=$blockWireBytes) + block_output_signal(pass=$blockOutPass, batches=$blockOutBatches, txs=$blockOutTxs) + commit_output_signal(pass=$commitOutPass) are available | $FunctionalJson | $today |"
-    "| F-07 | Network layer (core-complete, production hardening pending) | $f07Status | novovm-network skeleton + network_output_signal(pass=$networkOutPass) + network_closure_signal(pass=$networkClosurePass) + network_process_signal(pass=$networkProcessPass, mode=$networkProcessMode, rounds=$networkProcessRoundsPassed/$networkProcessRounds, round_ratio=$networkProcessRoundPassRatio, nodes=$networkProcessNodeCount, pairs=$networkProcessPassedPairs/$networkProcessTotalPairs, ratio=$networkProcessPassRatio, directed=$networkDirectedSummary, block_wire=$networkBlockWirePass($networkBlockWireSummary), block_wire_round_ratio=$networkBlockWirePassRatio) + $networkBlockWireNegativeSummary are available | $FunctionalJson | $today |"
-    "| F-08 | Chain adapter API interface | $f08Status | novovm-adapter-api + native/plugin backends + adapter_signal(pass=$adapterPass, backend=$adapterBackend, chain=$adapterChain, txs=$adapterTxs, accounts=$adapterAccounts) + $adapterPluginAbiSummary + $adapterPluginRegistrySummary + $adapterConsensusSummary + $adapterPluginAbiNegativeSummary + $adapterPluginSymbolNegativeSummary + $adapterPluginRegistryNegativeSummary + $adapterCompareSummary are available | $adapterEvidence | $today |"
-    "| F-15 | AOEM ZK capability contract | $f15Status | zkvm_prove=$zkProve / zkvm_verify=$zkVerify | $CapabilityJson | $today |"
+    "| F-05 | Consensus engine (~80% verified) | $f05Status | novovm-consensus skeleton + tx_codec_signal(pass=$txCodecPass, bytes=$txCodecBytes) + mempool_admission_signal(pass=$mempoolPass, accepted=$mempoolAccepted, rejected=$mempoolRejected, fee_floor=$mempoolFeeFloor) + tx_metadata_signal(pass=$txMetaPass, accounts=$txMetaAccounts, fee=$txMetaMinFee-$txMetaMaxFee) + batch_a_closure(pass=$batchAPass, txs=$batchADemoTxs, target_batches=$batchATargetBatches, expected_min_batches=$batchAExpectedMinBatches) + block_wire_signal(pass=$blockWirePass, codec=$blockWireCodec, bytes=$blockWireBytes) + block_output_signal(pass=$blockOutPass, batches=$blockOutBatches, txs=$blockOutTxs) + commit_output_signal(pass=$commitOutPass) + $consensusNegativeSummary are available | $FunctionalJson | $today |"
+    "| F-06 | Distributed coordinator | $f06Status | novovm-coordinator skeleton + $coordinatorSummary + $coordinatorNegativeSummary | $FunctionalJson | $today |"
+    "| F-07 | Network layer (core-complete, production hardening pending) | $f07Status | novovm-network skeleton + network_output_signal(pass=$networkOutPass) + network_closure_signal(pass=$networkClosurePass) + network_pacemaker_signal(pass=$networkPacemakerPass) + network_process_signal(pass=$networkProcessPass, mode=$networkProcessMode, rounds=$networkProcessRoundsPassed/$networkProcessRounds, round_ratio=$networkProcessRoundPassRatio, nodes=$networkProcessNodeCount, pairs=$networkProcessPassedPairs/$networkProcessTotalPairs, ratio=$networkProcessPassRatio, directed=$networkDirectedSummary, block_wire=$networkBlockWirePass($networkBlockWireSummary), block_wire_round_ratio=$networkBlockWirePassRatio, view_sync=$networkViewSyncPass($networkViewSyncPassRatio), new_view=$networkNewViewPass($networkNewViewPassRatio)) + $networkBlockWireNegativeSummary are available | $FunctionalJson | $today |"
+    "| F-08 | Chain adapter API interface | $f08Status | novovm-adapter-api + native/plugin backends + adapter_signal(pass=$adapterPass, backend=$adapterBackend, chain=$adapterChain, txs=$adapterTxs, accounts=$adapterAccounts) + $adapterPluginAbiSummary + $adapterPluginRegistrySummary + $adapterConsensusSummary + $adapterMatrixSummary + $adapterPluginAbiNegativeSummary + $adapterPluginSymbolNegativeSummary + $adapterPluginRegistryNegativeSummary + $adapterCompareSummary are available | $adapterEvidence | $today |"
+    "| F-09 | zk execution/aggregation | $f09Status | novovm-prover skeleton + $proverContractSummary + $proverContractNegativeSummary + zk_runtime_ready=$zkReady | $FunctionalJson | $today |"
+    "| F-15 | AOEM ZK capability contract | $f15Status | zkvm_prove=$zkProve / zkvm_verify=$zkVerify / zk_formal_fields_present=$zkFormalFieldsPresent / schema_ready=$zkContractSchemaReady / fallback_reason=$fallbackReason | $CapabilityJson | $today |"
     "| F-16 | AOEM MSM acceleration contract | $f16Status | msm_accel=$msmAccel / msm_backend=$msmBackend | $CapabilityJson | $today |"
     ""
     "## Notes"
     ""
     "- This file is auto-generated and does not replace the manual ledger."
-    "- When state_root_available=false, proxy_digest consistency is used as a temporary gate."
+    "- state_root consistency uses hard parity when state_root_available=true; otherwise it falls back to proxy digest."
     "- When baseline_ready=true and performance_compare_pass has a value, it can be used for regression threshold checks."
 )
 

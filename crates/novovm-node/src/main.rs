@@ -8,26 +8,33 @@ use novovm_adapter_api::{
     default_chain_id, ChainConfig, ChainType, SerializationFormat, StateIR, TxIR, TxType,
 };
 use novovm_adapter_novovm::{create_native_adapter, supports_native_chain};
-use novovm_consensus::{BFTEngine, BFTConfig, ValidatorSet};
-use novovm_exec::{AoemExecOutput, AoemRuntimeConfig, ExecOpV2};
+use novovm_consensus::{
+    BFTConfig, BFTEngine, Epoch as ConsensusEpoch, GovernanceOp, GovernanceProposal,
+    GovernanceVote, HotStuffProtocol, NetworkDosPolicy, NodeId as ConsensusNodeId, SlashMode,
+    SlashPolicy, ValidatorSet,
+};
+use novovm_exec::{AoemRuntimeConfig, ExecOpV2};
 use novovm_network::{InMemoryTransport, Transport, UdpTransport};
 use novovm_protocol::{
-    decode_block_header_wire_v1, encode_block_header_wire_v1, BlockHeaderWireV1,
-    BLOCK_HEADER_WIRE_V1_CODEC, LOCAL_PLUGIN_CLASS_CODE,
-    decode_local_tx_wire_v1 as decode_tx_wire_v1, encode_local_tx_wire_v1 as encode_tx_wire_v1,
-    plugin_class_name as protocol_plugin_class_name, verify_consensus_plugin_binding,
-    ConsensusPluginBindingV1, CONSENSUS_PLUGIN_CLASS_CODE,
+    decode_block_header_wire_v1, decode_local_tx_wire_v1 as decode_tx_wire_v1,
+    encode_block_header_wire_v1, encode_local_tx_wire_v1 as encode_tx_wire_v1,
+    plugin_class_name as protocol_plugin_class_name,
     protocol_catalog::distributed_occc::gossip::{
         GossipMessage as DistributedGossipMessage, MessageType as DistributedMessageType,
     },
-    GossipMessage as ProtocolGossipMessage, LocalTxWireV1, NodeId, ProtocolMessage, ShardId,
+    verify_consensus_plugin_binding, BlockHeaderWireV1, ConsensusPluginBindingV1,
+    GossipMessage as ProtocolGossipMessage, LocalTxWireV1, NodeId,
+    PacemakerMessage as ProtocolPacemakerMessage, ProtocolMessage, ShardId,
+    BLOCK_HEADER_WIRE_V1_CODEC, CONSENSUS_PLUGIN_CLASS_CODE, LOCAL_PLUGIN_CLASS_CODE,
     LOCAL_TX_WIRE_V1_CODEC,
 };
 use rand::rngs::OsRng;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
 use std::fs;
+use std::io::Read;
+use std::net::{IpAddr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
@@ -48,6 +55,37 @@ fn bool_env(name: &str) -> bool {
                 || v.eq_ignore_ascii_case("yes")
         })
         .unwrap_or(false)
+}
+
+fn bool_env_default(name: &str, default: bool) -> bool {
+    match std::env::var(name) {
+        Ok(v) => {
+            let v = v.trim();
+            v == "1"
+                || v.eq_ignore_ascii_case("true")
+                || v.eq_ignore_ascii_case("on")
+                || v.eq_ignore_ascii_case("yes")
+        }
+        Err(_) => default,
+    }
+}
+
+fn string_env_nonempty(name: &str) -> Option<String> {
+    std::env::var(name).ok().and_then(|raw| {
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        }
+    })
+}
+
+fn u32_env_allow_zero(name: &str, default: u32) -> u32 {
+    std::env::var(name)
+        .ok()
+        .and_then(|s| s.trim().parse::<u32>().ok())
+        .unwrap_or(default)
 }
 
 fn u32_env(name: &str, default: u32) -> u32 {
@@ -162,7 +200,129 @@ fn parse_sha256_env(name: &str) -> Result<Option<String>> {
     }
 }
 
-fn parse_network_probe_peers(node_id: u64, fallback_peer_addr: &str) -> Result<Vec<(NodeId, String)>> {
+fn resolve_consensus_policy_path() -> (Option<PathBuf>, bool) {
+    if let Ok(raw) = std::env::var("NOVOVM_CONSENSUS_POLICY_PATH") {
+        let trimmed = raw.trim();
+        if !trimmed.is_empty() {
+            return (Some(PathBuf::from(trimmed)), true);
+        }
+    }
+
+    let default = PathBuf::from(CONSENSUS_POLICY_PATH_DEFAULT);
+    if default.exists() {
+        return (Some(default), false);
+    }
+    let alt = PathBuf::from(CONSENSUS_POLICY_PATH_ALT);
+    if alt.exists() {
+        return (Some(alt), false);
+    }
+    (None, false)
+}
+
+fn parse_slash_mode(raw: &str) -> Result<SlashMode> {
+    let normalized = raw.trim().to_ascii_lowercase();
+    match normalized.as_str() {
+        "enforce" => Ok(SlashMode::Enforce),
+        "observe_only" => Ok(SlashMode::ObserveOnly),
+        _ => bail!(
+            "policy_invalid: unsupported mode={}, valid: enforce|observe_only",
+            raw
+        ),
+    }
+}
+
+fn parse_consensus_policy_file(path: &Path) -> Result<LoadedSlashPolicy> {
+    let bytes = fs::read(path).with_context(|| {
+        format!(
+            "policy_parse_failed: read slash policy failed: {}",
+            path.display()
+        )
+    })?;
+    let text = String::from_utf8(bytes).with_context(|| {
+        format!(
+            "policy_parse_failed: slash policy is not valid utf-8: {}",
+            path.display()
+        )
+    })?;
+    let normalized = text.trim_start_matches('\u{feff}');
+    let parsed: ConsensusPolicyFile = serde_json::from_str(normalized).with_context(|| {
+        format!(
+            "policy_parse_failed: parse slash policy json failed: {}",
+            path.display()
+        )
+    })?;
+
+    let mode_raw = parsed
+        .mode
+        .as_deref()
+        .ok_or_else(|| anyhow::anyhow!("policy_invalid: missing mode"))?;
+    let equivocation_threshold = parsed
+        .equivocation_threshold
+        .ok_or_else(|| anyhow::anyhow!("policy_invalid: missing equivocation_threshold"))?;
+    let min_active_validators = parsed
+        .min_active_validators
+        .ok_or_else(|| anyhow::anyhow!("policy_invalid: missing min_active_validators"))?;
+    let mode = parse_slash_mode(mode_raw)?;
+    let policy = SlashPolicy {
+        mode,
+        equivocation_threshold,
+        min_active_validators,
+        cooldown_epochs: parsed.cooldown_epochs.unwrap_or(0),
+    };
+    policy
+        .validate()
+        .map_err(|e| anyhow::anyhow!("policy_invalid: {}", e))?;
+
+    Ok(LoadedSlashPolicy {
+        source: "file",
+        path: Some(path.to_path_buf()),
+        cooldown_epochs: policy.cooldown_epochs,
+        policy,
+    })
+}
+
+fn load_consensus_slash_policy() -> Result<LoadedSlashPolicy> {
+    let (path, explicit_path) = resolve_consensus_policy_path();
+    if let Some(path) = path {
+        if explicit_path && !path.exists() {
+            bail!(
+                "policy_parse_failed: slash policy path not found: {}",
+                path.display()
+            );
+        }
+        return parse_consensus_policy_file(&path);
+    }
+
+    let default_policy = SlashPolicy::default();
+    Ok(LoadedSlashPolicy {
+        source: "default",
+        path: None,
+        cooldown_epochs: default_policy.cooldown_epochs,
+        policy: default_policy,
+    })
+}
+
+fn emit_slash_policy_in_signal(loaded: &LoadedSlashPolicy) {
+    let path = loaded
+        .path
+        .as_ref()
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|| "-".to_string());
+    println!(
+        "slash_policy_in: source={} path={} mode={} threshold={} min_validators={} cooldown_epochs={}",
+        loaded.source,
+        path,
+        loaded.policy.mode.as_str(),
+        loaded.policy.equivocation_threshold,
+        loaded.policy.min_active_validators,
+        loaded.cooldown_epochs
+    );
+}
+
+fn parse_network_probe_peers(
+    node_id: u64,
+    fallback_peer_addr: &str,
+) -> Result<Vec<(NodeId, String)>> {
     if let Ok(spec) = std::env::var("NOVOVM_NET_PEERS") {
         let spec = spec.trim();
         if !spec.is_empty() {
@@ -172,9 +332,9 @@ fn parse_network_probe_peers(node_id: u64, fallback_peer_addr: &str) -> Result<V
                 if item.is_empty() {
                     continue;
                 }
-                let (id_raw, addr_raw) = item
-                    .split_once('@')
-                    .ok_or_else(|| anyhow::anyhow!("invalid NOVOVM_NET_PEERS item: {item} (expected id@addr)"))?;
+                let (id_raw, addr_raw) = item.split_once('@').ok_or_else(|| {
+                    anyhow::anyhow!("invalid NOVOVM_NET_PEERS item: {item} (expected id@addr)")
+                })?;
                 let peer_id = id_raw
                     .trim()
                     .parse::<u64>()
@@ -191,14 +351,20 @@ fn parse_network_probe_peers(node_id: u64, fallback_peer_addr: &str) -> Result<V
             out.sort_by_key(|(id, _)| id.0);
             out.dedup_by_key(|(id, _)| id.0);
             if out.is_empty() {
-                bail!("NOVOVM_NET_PEERS resolved to zero peers for node {}", node_id);
+                bail!(
+                    "NOVOVM_NET_PEERS resolved to zero peers for node {}",
+                    node_id
+                );
             }
             return Ok(out);
         }
     }
 
     let fallback_peer_id = if node_id == 0 { 1 } else { 0 };
-    Ok(vec![(NodeId(fallback_peer_id), fallback_peer_addr.to_string())])
+    Ok(vec![(
+        NodeId(fallback_peer_id),
+        fallback_peer_addr.to_string(),
+    )])
 }
 
 fn join_ids(ids: &[u64]) -> String {
@@ -246,15 +412,12 @@ fn build_network_probe_block_wire_payload(
     };
     match tamper_mode {
         "class_mismatch" => {
-            header.consensus_binding.plugin_class_code = if header
-                .consensus_binding
-                .plugin_class_code
-                == CONSENSUS_PLUGIN_CLASS_CODE
-            {
-                LOCAL_PLUGIN_CLASS_CODE
-            } else {
-                CONSENSUS_PLUGIN_CLASS_CODE
-            };
+            header.consensus_binding.plugin_class_code =
+                if header.consensus_binding.plugin_class_code == CONSENSUS_PLUGIN_CLASS_CODE {
+                    LOCAL_PLUGIN_CLASS_CODE
+                } else {
+                    CONSENSUS_PLUGIN_CLASS_CODE
+                };
         }
         "hash_mismatch" => {
             header.consensus_binding.adapter_hash[0] ^= 0x80;
@@ -365,8 +528,11 @@ type PluginApplyFn = unsafe extern "C" fn(
 
 const ADAPTER_PLUGIN_EXPECTED_ABI_DEFAULT: u32 = 1;
 const ADAPTER_PLUGIN_REQUIRED_CAPS_DEFAULT: u64 = 0x1;
-const ADAPTER_PLUGIN_REGISTRY_PATH_DEFAULT: &str = "..\\..\\config\\novovm-adapter-plugin-registry.json";
+const ADAPTER_PLUGIN_REGISTRY_PATH_DEFAULT: &str =
+    "..\\..\\config\\novovm-adapter-plugin-registry.json";
 const ADAPTER_PLUGIN_REGISTRY_PATH_ALT: &str = "config\\novovm-adapter-plugin-registry.json";
+const CONSENSUS_POLICY_PATH_DEFAULT: &str = "..\\..\\config\\novovm-consensus-policy.json";
+const CONSENSUS_POLICY_PATH_ALT: &str = "config\\novovm-consensus-policy.json";
 const PLUGIN_CLASS_CONSENSUS: u8 = CONSENSUS_PLUGIN_CLASS_CODE;
 const ADAPTER_NATIVE_RULESET_ID: &str = "novovm_adapter_native_ruleset_v1";
 
@@ -401,6 +567,22 @@ struct AdapterPluginRegistrySummary {
     whitelist_match: bool,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+struct ConsensusPolicyFile {
+    mode: Option<String>,
+    equivocation_threshold: Option<u32>,
+    min_active_validators: Option<u32>,
+    cooldown_epochs: Option<u64>,
+}
+
+#[derive(Debug, Clone)]
+struct LoadedSlashPolicy {
+    source: &'static str,
+    path: Option<PathBuf>,
+    policy: SlashPolicy,
+    cooldown_epochs: u64,
+}
+
 #[derive(Debug, Clone)]
 struct LocalBatch {
     id: u64,
@@ -427,6 +609,49 @@ struct LocalBlock {
     block_hash: [u8; 32],
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct QueryBlockRecord {
+    height: u64,
+    epoch_id: u64,
+    parent_hash: String,
+    state_root: String,
+    tx_count: u64,
+    batch_count: u32,
+    proposal_hash: String,
+    block_hash: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct QueryTxRecord {
+    tx_hash: String,
+    block_height: u64,
+    block_hash: String,
+    account: u64,
+    key: u64,
+    value: u64,
+    nonce: u64,
+    fee: u64,
+    success: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct QueryReceiptRecord {
+    tx_hash: String,
+    block_height: u64,
+    block_hash: String,
+    success: bool,
+    gas_used: u64,
+    state_root: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+struct QueryStateDb {
+    blocks: Vec<QueryBlockRecord>,
+    txs: HashMap<String, QueryTxRecord>,
+    receipts: HashMap<String, QueryReceiptRecord>,
+    balances: HashMap<String, u64>,
+}
+
 #[derive(Debug, Clone)]
 struct BatchAClosureOutput {
     epoch_id: u64,
@@ -449,6 +674,86 @@ struct NetworkSignal {
     discovery: bool,
     gossip: bool,
     sync: bool,
+    view_sync: bool,
+    new_view: bool,
+}
+
+#[derive(Debug, Clone)]
+struct HeaderSyncSignal {
+    mode: &'static str,
+    codec: &'static str,
+    remote_tip: u64,
+    local_tip_before: u64,
+    fetched: u64,
+    applied: u64,
+    local_tip_after: u64,
+    complete: bool,
+    pass: bool,
+    tamper_at: u64,
+    reason: String,
+}
+
+#[derive(Debug, Clone)]
+struct HeaderChainEntry {
+    header: BlockHeaderWireV1,
+    block_hash: [u8; 32],
+}
+
+#[derive(Debug, Clone)]
+struct FastStateSyncSignal {
+    mode: &'static str,
+    codec: &'static str,
+    remote_tip: u64,
+    local_tip_before: u64,
+    fetched_headers: u64,
+    applied_headers: u64,
+    local_tip_after: u64,
+    fast_complete: bool,
+    snapshot_height: u64,
+    snapshot_accounts: u64,
+    snapshot_verified: bool,
+    state_complete: bool,
+    pass: bool,
+    tamper_snapshot_at: u64,
+    reason: String,
+}
+
+#[derive(Debug, Clone)]
+struct NetworkDosSignal {
+    mode: &'static str,
+    codec: &'static str,
+    peers: u64,
+    invalid_peers: u64,
+    invalid_burst: u64,
+    ban_after: u64,
+    invalid_detected: u64,
+    bans: u64,
+    storm_rejected: u64,
+    healthy_accepts: u64,
+    pass: bool,
+    reason: String,
+}
+
+#[derive(Debug, Clone)]
+struct PacemakerFailoverSignal {
+    mode: &'static str,
+    transport: &'static str,
+    nodes: u64,
+    failed_leader: u64,
+    initial_view: u64,
+    next_view: u64,
+    next_leader: u64,
+    timeout_votes: u64,
+    timeout_quorum: u64,
+    timeout_cert: bool,
+    local_view_advanced: u64,
+    view_sync_votes: u64,
+    new_view_votes: u64,
+    qc_formed: bool,
+    committed: bool,
+    committed_height: u64,
+    pass: bool,
+    reason: String,
 }
 
 #[derive(Debug, Default)]
@@ -502,6 +807,7 @@ struct ExecBatchBuffer {
 }
 
 const LOCAL_TX_SIG_DOMAIN: &[u8] = b"novovm_local_tx_v1";
+const LOCAL_TX_HASH_DOMAIN: &[u8] = b"novovm_local_tx_hash_v1";
 
 fn compute_local_tx_signature_parts(
     account: u64,
@@ -532,8 +838,7 @@ fn build_local_tx(account: u64, key: u64, value: u64, nonce: u64, fee: u64) -> L
 }
 
 fn verify_local_tx_signature(tx: &LocalTx) -> bool {
-    tx.signature
-        == compute_local_tx_signature_parts(tx.account, tx.key, tx.value, tx.nonce, tx.fee)
+    tx.signature == compute_local_tx_signature_parts(tx.account, tx.key, tx.value, tx.nonce, tx.fee)
 }
 
 fn to_tx_wire_v1(tx: &LocalTx) -> LocalTxWireV1 {
@@ -656,7 +961,11 @@ fn validate_and_summarize_txs(txs: &[LocalTx]) -> Result<TxMetaSummary> {
 
     for tx in txs {
         if tx.fee == 0 {
-            bail!("tx fee must be > 0 (account={}, nonce={})", tx.account, tx.nonce);
+            bail!(
+                "tx fee must be > 0 (account={}, nonce={})",
+                tx.account,
+                tx.nonce
+            );
         }
         if !verify_local_tx_signature(tx) {
             bail!(
@@ -772,7 +1081,8 @@ fn compute_consensus_adapter_hash(
     hasher.update(required_caps.to_le_bytes());
 
     if backend == "plugin" {
-        let path = plugin_path.ok_or_else(|| anyhow::anyhow!("plugin backend requires plugin path"))?;
+        let path =
+            plugin_path.ok_or_else(|| anyhow::anyhow!("plugin backend requires plugin path"))?;
         let plugin_bytes = fs::read(path)
             .with_context(|| format!("read adapter plugin bytes failed: {}", path.display()))?;
         let plugin_bin_hash = Sha256::digest(plugin_bytes);
@@ -819,7 +1129,10 @@ fn load_adapter_plugin_registry(path: &Path) -> Result<(AdapterPluginRegistryFil
     let parsed: AdapterPluginRegistryFile = serde_json::from_str(&text)
         .with_context(|| format!("parse plugin registry json failed: {}", path.display()))?;
     if parsed.plugins.is_empty() {
-        bail!("adapter plugin registry has zero plugins: {}", path.display());
+        bail!(
+            "adapter plugin registry has zero plugins: {}",
+            path.display()
+        );
     }
     Ok((parsed, registry_sha256))
 }
@@ -831,7 +1144,9 @@ fn path_matches_registry_entry(entry_path: &str, actual_path: &Path) -> bool {
     }
     let entry = Path::new(entry_trimmed);
     if entry.is_absolute() {
-        if let (Ok(entry_canon), Ok(actual_canon)) = (entry.canonicalize(), actual_path.canonicalize()) {
+        if let (Ok(entry_canon), Ok(actual_canon)) =
+            (entry.canonicalize(), actual_path.canonicalize())
+        {
             return entry_canon == actual_canon;
         }
         return entry == actual_path;
@@ -1000,6 +1315,8 @@ fn resolve_adapter_plugin_registry_summary(
 fn chain_type_to_plugin_code(chain: ChainType) -> Option<u32> {
     match chain {
         ChainType::NovoVM => Some(0),
+        ChainType::EVM => Some(1),
+        ChainType::BNB => Some(6),
         ChainType::Custom => Some(13),
         _ => None,
     }
@@ -1103,8 +1420,9 @@ fn run_plugin_adapter_signal(
     required_caps: u64,
     registry: AdapterPluginRegistrySummary,
 ) -> Result<AdapterSignalSummary> {
-    let chain_code = chain_type_to_plugin_code(chain)
-        .ok_or_else(|| anyhow::anyhow!("plugin backend does not support chain={}", chain.as_str()))?;
+    let chain_code = chain_type_to_plugin_code(chain).ok_or_else(|| {
+        anyhow::anyhow!("plugin backend does not support chain={}", chain.as_str())
+    })?;
     let tx_bytes = bincode::serialize(tx_irs).context("serialize tx_irs for plugin failed")?;
 
     let lib = unsafe { libloading::Library::new(plugin_path) }
@@ -1207,7 +1525,10 @@ fn run_adapter_bridge_signal(txs: &[LocalTx]) -> Result<AdapterSignalSummary> {
         plugin_expected_abi,
         plugin_required_caps,
     )?;
-    let tx_irs: Vec<TxIR> = txs.iter().map(|tx| to_adapter_tx_ir(tx, chain_id)).collect();
+    let tx_irs: Vec<TxIR> = txs
+        .iter()
+        .map(|tx| to_adapter_tx_ir(tx, chain_id))
+        .collect();
 
     match backend_mode {
         AdapterBackendMode::Native => run_native_adapter_signal(
@@ -1220,9 +1541,7 @@ fn run_adapter_bridge_signal(txs: &[LocalTx]) -> Result<AdapterSignalSummary> {
         ),
         AdapterBackendMode::Plugin => {
             let path = plugin_path.as_deref().ok_or_else(|| {
-                anyhow::anyhow!(
-                    "NOVOVM_ADAPTER_BACKEND=plugin requires NOVOVM_ADAPTER_PLUGIN_PATH"
-                )
+                anyhow::anyhow!("NOVOVM_ADAPTER_BACKEND=plugin requires NOVOVM_ADAPTER_PLUGIN_PATH")
             })?;
             let plugin_registry = resolve_adapter_plugin_registry_summary(
                 chain,
@@ -1384,7 +1703,8 @@ fn encode_ops_v2_buffer(txs: &[LocalTx]) -> ExecBatchBuffer {
     }
 }
 
-fn build_proxy_state_root(out: &AoemExecOutput) -> [u8; 32] {
+#[cfg(test)]
+fn build_proxy_state_root(out: &novovm_exec::AoemExecOutput) -> [u8; 32] {
     let mut hasher = Sha256::new();
     hasher.update(out.result.processed.to_le_bytes());
     hasher.update(out.result.success.to_le_bytes());
@@ -1395,8 +1715,7 @@ fn build_proxy_state_root(out: &AoemExecOutput) -> [u8; 32] {
     hasher.finalize().into()
 }
 
-fn build_batch_proxy_state_root(out: &AoemExecOutput, batch: &LocalBatch) -> [u8; 32] {
-    let base = build_proxy_state_root(out);
+fn build_batch_state_root(base: [u8; 32], batch: &LocalBatch) -> [u8; 32] {
     let mut hasher = Sha256::new();
     hasher.update(base);
     hasher.update(batch.id.to_le_bytes());
@@ -1405,24 +1724,6 @@ fn build_batch_proxy_state_root(out: &AoemExecOutput, batch: &LocalBatch) -> [u8
         hasher.update(hash_local_tx(tx));
     }
     hasher.finalize().into()
-}
-
-fn build_epoch_proxy_state_root(
-    out: &AoemExecOutput,
-    batches: &[LocalBatch],
-    batch_results: &HashMap<u64, [u8; 32]>,
-) -> Result<[u8; 32]> {
-    let base = build_proxy_state_root(out);
-    let mut hasher = Sha256::new();
-    hasher.update(base);
-    for batch in batches {
-        let root = batch_results
-            .get(&batch.id)
-            .ok_or_else(|| anyhow::anyhow!("missing batch proxy root: {}", batch.id))?;
-        hasher.update(batch.id.to_le_bytes());
-        hasher.update(root);
-    }
-    Ok(hasher.finalize().into())
 }
 
 fn hash_local_tx(tx: &LocalTx) -> [u8; 32] {
@@ -1490,6 +1791,694 @@ fn to_block_header_wire_v1(header: &LocalBlockHeader) -> BlockHeaderWireV1 {
     }
 }
 
+fn synthetic_state_root(height: u64) -> [u8; 32] {
+    let mut hasher = Sha256::new();
+    hasher.update(b"novovm_header_sync_state_root_v1");
+    hasher.update(height.to_le_bytes());
+    hasher.finalize().into()
+}
+
+fn compute_header_wire_hash(header: &BlockHeaderWireV1) -> [u8; 32] {
+    let mut hasher = Sha256::new();
+    hasher.update(b"novovm_header_sync_hash_v1");
+    hasher.update(header.height.to_le_bytes());
+    hasher.update(header.epoch_id.to_le_bytes());
+    hasher.update(header.parent_hash);
+    hasher.update(header.state_root);
+    hasher.update(header.tx_count.to_le_bytes());
+    hasher.update(header.batch_count.to_le_bytes());
+    hasher.update(header.consensus_binding.plugin_class_code.to_le_bytes());
+    hasher.update(header.consensus_binding.adapter_hash);
+    hasher.finalize().into()
+}
+
+fn build_synthetic_header_chain(
+    total_headers: u64,
+    binding: ConsensusPluginBindingV1,
+) -> Vec<HeaderChainEntry> {
+    let mut chain = Vec::with_capacity(total_headers as usize);
+    let mut parent_hash = [0u8; 32];
+    for height in 0..total_headers {
+        let header = BlockHeaderWireV1 {
+            height,
+            epoch_id: 1,
+            parent_hash,
+            state_root: synthetic_state_root(height),
+            tx_count: height.saturating_add(1),
+            batch_count: 1,
+            consensus_binding: binding,
+        };
+        let block_hash = compute_header_wire_hash(&header);
+        parent_hash = block_hash;
+        chain.push(HeaderChainEntry { header, block_hash });
+    }
+    chain
+}
+
+fn run_header_sync_probe(
+    remote_headers: u64,
+    local_headers: u64,
+    fetch_limit: u64,
+    tamper_parent_at: u64,
+) -> Result<HeaderSyncSignal> {
+    if remote_headers < 1 {
+        bail!("remote_headers must be >= 1");
+    }
+    if local_headers < 1 {
+        bail!("local_headers must be >= 1");
+    }
+    if local_headers > remote_headers {
+        bail!(
+            "local_headers ({}) cannot exceed remote_headers ({})",
+            local_headers,
+            remote_headers
+        );
+    }
+    if fetch_limit < 1 {
+        bail!("fetch_limit must be >= 1");
+    }
+
+    let binding = network_probe_consensus_binding();
+    let remote_chain = build_synthetic_header_chain(remote_headers, binding);
+    let remote_tip = remote_headers.saturating_sub(1);
+    let local_tip_before = local_headers.saturating_sub(1);
+
+    let mut local_tip_height = local_tip_before;
+    let mut local_tip_hash = remote_chain[local_tip_height as usize].block_hash;
+    let mut fetched = 0u64;
+    let mut applied = 0u64;
+    let mut reason = "ok".to_string();
+
+    let start = local_headers;
+    let end_exclusive = std::cmp::min(remote_headers, start.saturating_add(fetch_limit));
+    for idx in start..end_exclusive {
+        let entry = &remote_chain[idx as usize];
+        let mut outbound = entry.header;
+        if tamper_parent_at > 0 && outbound.height == tamper_parent_at {
+            outbound.parent_hash[0] ^= 0xA5;
+        }
+
+        fetched = fetched.saturating_add(1);
+        let wire = encode_block_header_wire_v1(&outbound);
+        let decoded = decode_block_header_wire_v1(&wire).with_context(|| {
+            format!("decode synced header failed at height {}", outbound.height)
+        })?;
+
+        let expected_height = local_tip_height.saturating_add(1);
+        if decoded.height != expected_height {
+            reason = format!(
+                "height_mismatch_at_{}_expected_{}",
+                decoded.height, expected_height
+            );
+            break;
+        }
+        if decoded.parent_hash != local_tip_hash {
+            reason = format!("parent_hash_mismatch_at_{}", decoded.height);
+            break;
+        }
+        if let Err(err) = verify_consensus_plugin_binding(binding, decoded.consensus_binding) {
+            reason = format!("consensus_binding_mismatch_at_{}_{}", decoded.height, err);
+            break;
+        }
+
+        local_tip_height = decoded.height;
+        local_tip_hash = compute_header_wire_hash(&decoded);
+        applied = applied.saturating_add(1);
+    }
+
+    let complete = local_tip_height == remote_tip;
+    let pass = complete;
+    if pass {
+        reason = "ok".to_string();
+    } else if reason == "ok" {
+        reason = "incomplete_sync".to_string();
+    }
+
+    Ok(HeaderSyncSignal {
+        mode: "headers_first",
+        codec: BLOCK_HEADER_WIRE_V1_CODEC,
+        remote_tip,
+        local_tip_before,
+        fetched,
+        applied,
+        local_tip_after: local_tip_height,
+        complete,
+        pass,
+        tamper_at: tamper_parent_at,
+        reason,
+    })
+}
+
+fn build_synthetic_snapshot_state(height: u64) -> Vec<(u64, u64)> {
+    vec![
+        (1001, 10 + height),
+        (1002, 20 + height.saturating_mul(2)),
+        (1003, 30 + height.saturating_mul(3)),
+        (1004, 40 + height.saturating_mul(4)),
+    ]
+}
+
+fn compute_snapshot_root(entries: &[(u64, u64)]) -> [u8; 32] {
+    let mut sorted = entries.to_vec();
+    sorted.sort_by_key(|(k, _)| *k);
+    let mut hasher = Sha256::new();
+    hasher.update(b"novovm_state_sync_snapshot_root_v1");
+    for (k, v) in sorted {
+        hasher.update(k.to_le_bytes());
+        hasher.update(v.to_le_bytes());
+    }
+    hasher.finalize().into()
+}
+
+fn build_snapshot_header_chain(
+    total_headers: u64,
+    binding: ConsensusPluginBindingV1,
+) -> Vec<HeaderChainEntry> {
+    let mut chain = Vec::with_capacity(total_headers as usize);
+    let mut parent_hash = [0u8; 32];
+    for height in 0..total_headers {
+        let snapshot = build_synthetic_snapshot_state(height);
+        let header = BlockHeaderWireV1 {
+            height,
+            epoch_id: 1,
+            parent_hash,
+            state_root: compute_snapshot_root(&snapshot),
+            tx_count: height.saturating_add(1),
+            batch_count: 1,
+            consensus_binding: binding,
+        };
+        let block_hash = compute_header_wire_hash(&header);
+        parent_hash = block_hash;
+        chain.push(HeaderChainEntry { header, block_hash });
+    }
+    chain
+}
+
+fn run_fast_state_sync_probe(
+    remote_headers: u64,
+    local_headers: u64,
+    fetch_limit: u64,
+    tamper_snapshot_at: u64,
+) -> Result<FastStateSyncSignal> {
+    if remote_headers < 1 {
+        bail!("remote_headers must be >= 1");
+    }
+    if local_headers < 1 {
+        bail!("local_headers must be >= 1");
+    }
+    if local_headers > remote_headers {
+        bail!(
+            "local_headers ({}) cannot exceed remote_headers ({})",
+            local_headers,
+            remote_headers
+        );
+    }
+    if fetch_limit < 1 {
+        bail!("fetch_limit must be >= 1");
+    }
+
+    let binding = network_probe_consensus_binding();
+    let remote_chain = build_snapshot_header_chain(remote_headers, binding);
+    let remote_tip = remote_headers.saturating_sub(1);
+    let local_tip_before = local_headers.saturating_sub(1);
+
+    let mut local_tip_height = local_tip_before;
+    let mut local_tip_hash = remote_chain[local_tip_height as usize].block_hash;
+    let mut fetched_headers = 0u64;
+    let mut applied_headers = 0u64;
+    let mut reason = "ok".to_string();
+
+    let start = local_headers;
+    let end_exclusive = std::cmp::min(remote_headers, start.saturating_add(fetch_limit));
+    for idx in start..end_exclusive {
+        let entry = &remote_chain[idx as usize];
+        fetched_headers = fetched_headers.saturating_add(1);
+        let wire = encode_block_header_wire_v1(&entry.header);
+        let decoded = decode_block_header_wire_v1(&wire).with_context(|| {
+            format!(
+                "decode fast-sync header failed at height {}",
+                entry.header.height
+            )
+        })?;
+
+        let expected_height = local_tip_height.saturating_add(1);
+        if decoded.height != expected_height {
+            reason = format!(
+                "height_mismatch_at_{}_expected_{}",
+                decoded.height, expected_height
+            );
+            break;
+        }
+        if decoded.parent_hash != local_tip_hash {
+            reason = format!("parent_hash_mismatch_at_{}", decoded.height);
+            break;
+        }
+        if let Err(err) = verify_consensus_plugin_binding(binding, decoded.consensus_binding) {
+            reason = format!("consensus_binding_mismatch_at_{}_{}", decoded.height, err);
+            break;
+        }
+
+        local_tip_height = decoded.height;
+        local_tip_hash = compute_header_wire_hash(&decoded);
+        applied_headers = applied_headers.saturating_add(1);
+    }
+
+    let fast_complete = local_tip_height == remote_tip;
+    if !fast_complete && reason == "ok" {
+        reason = "fast_sync_incomplete".to_string();
+    }
+
+    let snapshot_height = local_tip_height;
+    let mut snapshot = build_synthetic_snapshot_state(snapshot_height);
+    if tamper_snapshot_at > 0 && snapshot_height == tamper_snapshot_at && !snapshot.is_empty() {
+        snapshot[0].1 = snapshot[0].1.saturating_add(999);
+    }
+    let snapshot_accounts = snapshot.len() as u64;
+    let snapshot_root = compute_snapshot_root(&snapshot);
+    let expected_root = remote_chain[snapshot_height as usize].header.state_root;
+    let snapshot_verified = snapshot_root == expected_root;
+    if !snapshot_verified && reason == "ok" {
+        reason = format!("snapshot_root_mismatch_at_{}", snapshot_height);
+    }
+
+    let state_complete = fast_complete && snapshot_verified;
+    let pass = state_complete;
+    if pass {
+        reason = "ok".to_string();
+    }
+
+    Ok(FastStateSyncSignal {
+        mode: "fast_state_sync",
+        codec: BLOCK_HEADER_WIRE_V1_CODEC,
+        remote_tip,
+        local_tip_before,
+        fetched_headers,
+        applied_headers,
+        local_tip_after: local_tip_height,
+        fast_complete,
+        snapshot_height,
+        snapshot_accounts,
+        snapshot_verified,
+        state_complete,
+        pass,
+        tamper_snapshot_at,
+        reason,
+    })
+}
+
+fn run_network_dos_probe(
+    invalid_peers: u64,
+    invalid_burst: u64,
+    ban_after: u64,
+) -> Result<NetworkDosSignal> {
+    if invalid_peers < 1 {
+        bail!("invalid_peers must be >= 1");
+    }
+    if invalid_burst < 1 {
+        bail!("invalid_burst must be >= 1");
+    }
+    if ban_after < 1 {
+        bail!("ban_after must be >= 1");
+    }
+
+    #[derive(Clone, Copy)]
+    struct PeerState {
+        offenses: u64,
+        banned: bool,
+    }
+
+    let local = NodeId(0);
+    let total_peers = invalid_peers.saturating_add(1); // one healthy peer
+    let healthy_peer_id = total_peers;
+    let binding = network_probe_consensus_binding();
+    let mut peer_state: HashMap<u64, PeerState> = HashMap::new();
+    for pid in 1..=total_peers {
+        peer_state.insert(
+            pid,
+            PeerState {
+                offenses: 0,
+                banned: false,
+            },
+        );
+    }
+
+    let mut invalid_detected = 0u64;
+    let mut bans = 0u64;
+    let mut storm_rejected = 0u64;
+    let mut healthy_accepts = 0u64;
+    let mut reason = "ok".to_string();
+
+    // invalid-block-storm from invalid peers
+    for pid in 1..=invalid_peers {
+        for _ in 0..invalid_burst {
+            let state = peer_state
+                .get_mut(&pid)
+                .ok_or_else(|| anyhow::anyhow!("missing peer state: {}", pid))?;
+            if state.banned {
+                // banned peer traffic is rejected before decode/verify
+                storm_rejected = storm_rejected.saturating_add(1);
+                continue;
+            }
+
+            let payload = build_network_probe_block_wire_payload(
+                NodeId(pid),
+                local,
+                binding,
+                "hash_mismatch",
+            );
+            if let Ok(header) = decode_block_header_wire_v1(&payload) {
+                if verify_consensus_plugin_binding(binding, header.consensus_binding).is_err() {
+                    invalid_detected = invalid_detected.saturating_add(1);
+                    state.offenses = state.offenses.saturating_add(1);
+                    if state.offenses >= ban_after {
+                        state.banned = true;
+                        bans = bans.saturating_add(1);
+                    }
+                }
+            }
+        }
+
+        // try one valid payload after storm; banned peers should be rejected.
+        let state = peer_state
+            .get(&pid)
+            .ok_or_else(|| anyhow::anyhow!("missing peer state: {}", pid))?;
+        if state.banned {
+            storm_rejected = storm_rejected.saturating_add(1);
+        }
+    }
+
+    // healthy peer sends valid payload and must pass
+    let valid_payload =
+        build_network_probe_block_wire_payload(NodeId(healthy_peer_id), local, binding, "");
+    let valid_header = decode_block_header_wire_v1(&valid_payload)
+        .context("decode valid block wire in dos probe failed")?;
+    if verify_consensus_plugin_binding(binding, valid_header.consensus_binding).is_ok() {
+        healthy_accepts = healthy_accepts.saturating_add(1);
+    } else {
+        reason = "healthy_binding_failed".to_string();
+    }
+
+    let pass = bans == invalid_peers
+        && healthy_accepts >= 1
+        && storm_rejected >= invalid_peers
+        && invalid_detected >= invalid_peers.saturating_mul(ban_after);
+    if !pass && reason == "ok" {
+        reason = "dos_gate_assertion_failed".to_string();
+    }
+
+    Ok(NetworkDosSignal {
+        mode: "peer_score_ban",
+        codec: BLOCK_HEADER_WIRE_V1_CODEC,
+        peers: total_peers,
+        invalid_peers,
+        invalid_burst,
+        ban_after,
+        invalid_detected,
+        bans,
+        storm_rejected,
+        healthy_accepts,
+        pass,
+        reason,
+    })
+}
+
+fn run_pacemaker_failover_probe(nodes: u64, failed_leader: u64) -> Result<PacemakerFailoverSignal> {
+    if nodes < 4 {
+        bail!(
+            "pacemaker failover requires at least 4 validators (got {})",
+            nodes
+        );
+    }
+    if nodes > (u32::MAX as u64).saturating_add(1) {
+        bail!("nodes exceeds u32 range: {}", nodes);
+    }
+    if failed_leader >= nodes {
+        bail!(
+            "failed_leader ({}) must be in [0, {})",
+            failed_leader,
+            nodes
+        );
+    }
+    // Current probe assumes initial leader is validator-0 (protocol default).
+    if failed_leader != 0 {
+        bail!(
+            "pacemaker failover probe currently supports failed_leader=0 only (got {})",
+            failed_leader
+        );
+    }
+
+    let failed_leader_u32 = failed_leader as u32;
+    let validator_ids: Vec<u32> = (0..nodes).map(|id| id as u32).collect();
+    let active_ids: Vec<u32> = validator_ids
+        .iter()
+        .copied()
+        .filter(|id| *id != failed_leader_u32)
+        .collect();
+    if active_ids.len() < 3 {
+        bail!("active validator count must be >= 3 after failover");
+    }
+    let active_set: HashSet<u32> = active_ids.iter().copied().collect();
+    let validator_set = ValidatorSet::new_equal_weight(validator_ids.clone());
+    let timeout_quorum = validator_set.quorum_size();
+    if (active_ids.len() as u64) < timeout_quorum {
+        bail!(
+            "active validators ({}) cannot form quorum ({}) after leader failure",
+            active_ids.len(),
+            timeout_quorum
+        );
+    }
+
+    let mut signing_keys = Vec::with_capacity(nodes as usize);
+    for _ in 0..nodes {
+        signing_keys.push(SigningKey::generate(&mut OsRng));
+    }
+
+    let initial_view = 0u64;
+    let mut bootstrap = HotStuffProtocol::new(validator_set.clone(), 0u32)
+        .context("create bootstrap protocol failed")?;
+    let next_leader = bootstrap
+        .trigger_view_change()
+        .context("bootstrap view-change failed")?;
+    let next_view = bootstrap.current_view();
+    if next_view != initial_view.saturating_add(1) {
+        bail!(
+            "unexpected next view: expected {}, got {}",
+            initial_view.saturating_add(1),
+            next_view
+        );
+    }
+    if next_leader == failed_leader_u32 {
+        bail!("view-change selected failed leader again: {}", next_leader);
+    }
+
+    let transport = InMemoryTransport::new(512);
+    for id in &validator_ids {
+        transport.register(NodeId(u64::from(*id)));
+    }
+
+    let mut local_view_advanced = 0u64;
+    let mut reason = "ok".to_string();
+
+    // Active validators timeout on failed leader and locally advance to next view/leader.
+    for id in &active_ids {
+        let mut protocol = HotStuffProtocol::new(validator_set.clone(), *id)
+            .with_context(|| format!("create protocol failed for validator {}", id))?;
+        let rotated = protocol
+            .trigger_view_change()
+            .with_context(|| format!("trigger view-change failed for validator {}", id))?;
+        let state = protocol.get_state();
+        if rotated == next_leader && state.view == next_view && state.leader_id == next_leader {
+            local_view_advanced = local_view_advanced.saturating_add(1);
+        }
+
+        let view_sync = ProtocolMessage::Pacemaker(ProtocolPacemakerMessage::ViewSync {
+            from: NodeId(u64::from(*id)),
+            height: state.height,
+            view: state.view,
+            leader: NodeId(u64::from(state.leader_id)),
+        });
+        transport
+            .send(NodeId(u64::from(next_leader)), view_sync)
+            .with_context(|| format!("send view-sync failed from validator {}", id))?;
+
+        let new_view = ProtocolMessage::Pacemaker(ProtocolPacemakerMessage::NewView {
+            from: NodeId(u64::from(*id)),
+            height: state.height,
+            view: state.view,
+            high_qc_height: state.height,
+        });
+        transport
+            .send(NodeId(u64::from(next_leader)), new_view)
+            .with_context(|| format!("send new-view failed from validator {}", id))?;
+    }
+
+    let mut view_sync_from: HashSet<u32> = HashSet::new();
+    let mut new_view_from: HashSet<u32> = HashSet::new();
+    let mut timeout_votes = 0u64;
+    loop {
+        let msg = transport
+            .try_recv(NodeId(u64::from(next_leader)))
+            .context("receive pacemaker failover message failed")?;
+        let Some(msg) = msg else {
+            break;
+        };
+        match msg {
+            ProtocolMessage::Pacemaker(ProtocolPacemakerMessage::ViewSync {
+                from,
+                height,
+                view,
+                leader,
+            }) => {
+                if let Ok(src) = u32::try_from(from.0) {
+                    if active_set.contains(&src)
+                        && height == 0
+                        && view == next_view
+                        && leader == NodeId(u64::from(next_leader))
+                        && view_sync_from.insert(src)
+                    {
+                        timeout_votes = timeout_votes.saturating_add(1);
+                    }
+                }
+            }
+            ProtocolMessage::Pacemaker(ProtocolPacemakerMessage::NewView {
+                from,
+                height,
+                view,
+                high_qc_height,
+            }) => {
+                if let Ok(src) = u32::try_from(from.0) {
+                    if active_set.contains(&src)
+                        && height == 0
+                        && view == next_view
+                        && high_qc_height <= height
+                    {
+                        new_view_from.insert(src);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let timeout_cert = timeout_votes >= timeout_quorum;
+    let view_sync_votes = view_sync_from.len() as u64;
+    let new_view_votes = new_view_from.len() as u64;
+
+    let mut qc_formed = false;
+    let mut committed = false;
+    let mut committed_height = 0u64;
+
+    if timeout_cert
+        && local_view_advanced >= timeout_quorum
+        && view_sync_votes >= timeout_quorum
+        && new_view_votes >= timeout_quorum
+    {
+        let mut leader_protocol = HotStuffProtocol::new(validator_set.clone(), next_leader)
+            .context("create next-leader protocol failed")?;
+        let rotated = leader_protocol
+            .trigger_view_change()
+            .context("next-leader trigger view-change failed")?;
+        if rotated != next_leader {
+            reason = "next_leader_rotation_mismatch".to_string();
+        } else {
+            let mut epoch = ConsensusEpoch::new(0, leader_protocol.current_height(), next_leader);
+            epoch.add_batch(1, 64);
+            let mut batch_results = HashMap::new();
+            batch_results.insert(1, synthetic_state_root(1));
+            epoch
+                .compute_state_root(&batch_results)
+                .context("compute epoch state root in failover probe failed")?;
+
+            let proposal = leader_protocol
+                .propose(&epoch)
+                .context("failover probe proposal failed")?;
+            let leader_state = leader_protocol.get_state();
+
+            let mut qc_opt = None;
+            for voter_id in &active_ids {
+                let mut voter = HotStuffProtocol::new(validator_set.clone(), *voter_id)
+                    .with_context(|| {
+                        format!("create voter protocol failed for validator {}", voter_id)
+                    })?;
+                let _ = voter
+                    .trigger_view_change()
+                    .with_context(|| format!("voter {} trigger view-change failed", voter_id))?;
+                voter.sync_state(leader_state.clone());
+                let vote = voter
+                    .vote(&proposal, &signing_keys[*voter_id as usize])
+                    .with_context(|| format!("voter {} vote failed", voter_id))?;
+                if let Some(qc) = leader_protocol
+                    .collect_vote(vote)
+                    .with_context(|| format!("collect vote from {} failed", voter_id))?
+                {
+                    qc_opt = Some(qc);
+                    break;
+                }
+            }
+
+            if let Some(qc) = qc_opt {
+                qc_formed = true;
+                leader_protocol
+                    .pre_commit(&qc)
+                    .context("failover probe pre-commit failed")?;
+                leader_protocol
+                    .commit()
+                    .context("failover probe commit failed")?;
+                committed = true;
+                committed_height = leader_protocol.current_height();
+            }
+        }
+    }
+
+    let pass = timeout_cert
+        && local_view_advanced >= timeout_quorum
+        && view_sync_votes >= timeout_quorum
+        && new_view_votes >= timeout_quorum
+        && qc_formed
+        && committed
+        && committed_height >= 1
+        && u64::from(next_leader) != failed_leader;
+
+    if !pass && reason == "ok" {
+        reason = if !timeout_cert {
+            "timeout_cert_not_formed".to_string()
+        } else if local_view_advanced < timeout_quorum {
+            "local_view_change_not_quorum".to_string()
+        } else if view_sync_votes < timeout_quorum {
+            "view_sync_quorum_not_met".to_string()
+        } else if new_view_votes < timeout_quorum {
+            "new_view_quorum_not_met".to_string()
+        } else if !qc_formed {
+            "qc_not_formed_after_failover".to_string()
+        } else if !committed || committed_height < 1 {
+            "post_failover_commit_failed".to_string()
+        } else {
+            "pacemaker_failover_assertion_failed".to_string()
+        };
+    }
+
+    Ok(PacemakerFailoverSignal {
+        mode: "timeout_view_sync_new_view_failover",
+        transport: "in_memory",
+        nodes,
+        failed_leader,
+        initial_view,
+        next_view,
+        next_leader: u64::from(next_leader),
+        timeout_votes,
+        timeout_quorum,
+        timeout_cert,
+        local_view_advanced,
+        view_sync_votes,
+        new_view_votes,
+        qc_formed,
+        committed,
+        committed_height,
+        pass,
+        reason,
+    })
+}
+
 fn to_hex(bytes: &[u8]) -> String {
     let mut out = String::with_capacity(bytes.len() * 2);
     for b in bytes {
@@ -1499,10 +2488,117 @@ fn to_hex(bytes: &[u8]) -> String {
     out
 }
 
+fn chain_query_db_path() -> PathBuf {
+    std::env::var("NOVOVM_CHAIN_QUERY_DB")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from("artifacts/novovm-chain-query-db.json"))
+}
+
+fn local_tx_hash(tx: &LocalTx) -> [u8; 32] {
+    let mut hasher = Sha256::new();
+    hasher.update(LOCAL_TX_HASH_DOMAIN);
+    hasher.update(tx.account.to_le_bytes());
+    hasher.update(tx.key.to_le_bytes());
+    hasher.update(tx.value.to_le_bytes());
+    hasher.update(tx.nonce.to_le_bytes());
+    hasher.update(tx.fee.to_le_bytes());
+    hasher.update(tx.signature);
+    hasher.finalize().into()
+}
+
+fn load_query_state_db(path: &Path) -> Result<QueryStateDb> {
+    if !path.exists() {
+        return Ok(QueryStateDb::default());
+    }
+    let raw = fs::read_to_string(path)
+        .with_context(|| format!("read query db failed: {}", path.display()))?;
+    let normalized = raw.trim_start_matches('\u{feff}');
+    if normalized.trim().is_empty() {
+        return Ok(QueryStateDb::default());
+    }
+    let parsed: QueryStateDb = serde_json::from_str(normalized)
+        .with_context(|| format!("parse query db failed: {}", path.display()))?;
+    Ok(parsed)
+}
+
+fn save_query_state_db(path: &Path, db: &QueryStateDb) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        if !parent.as_os_str().is_empty() {
+            fs::create_dir_all(parent).with_context(|| {
+                format!("create query db parent dir failed: {}", parent.display())
+            })?;
+        }
+    }
+    let serialized = serde_json::to_string_pretty(db).context("serialize query db json failed")?;
+    fs::write(path, serialized)
+        .with_context(|| format!("write query db failed: {}", path.display()))?;
+    Ok(())
+}
+
+fn apply_block_to_query_db(db: &mut QueryStateDb, block: &LocalBlock) {
+    let block_hash = to_hex(&block.block_hash);
+    let state_root = to_hex(&block.header.state_root);
+    let block_record = QueryBlockRecord {
+        height: block.header.height,
+        epoch_id: block.header.epoch_id,
+        parent_hash: to_hex(&block.header.parent_hash),
+        state_root: state_root.clone(),
+        tx_count: block.header.tx_count,
+        batch_count: block.header.batch_count,
+        proposal_hash: to_hex(&block.proposal_hash),
+        block_hash: block_hash.clone(),
+    };
+    db.blocks.push(block_record);
+
+    for batch in &block.batches {
+        for tx in &batch.txs {
+            let tx_hash = to_hex(&local_tx_hash(tx));
+            let account = tx.account.to_string();
+            db.balances.insert(account, tx.value);
+
+            db.txs.insert(
+                tx_hash.clone(),
+                QueryTxRecord {
+                    tx_hash: tx_hash.clone(),
+                    block_height: block.header.height,
+                    block_hash: block_hash.clone(),
+                    account: tx.account,
+                    key: tx.key,
+                    value: tx.value,
+                    nonce: tx.nonce,
+                    fee: tx.fee,
+                    success: true,
+                },
+            );
+
+            db.receipts.insert(
+                tx_hash.clone(),
+                QueryReceiptRecord {
+                    tx_hash,
+                    block_height: block.header.height,
+                    block_hash: block_hash.clone(),
+                    success: true,
+                    gas_used: tx.fee,
+                    state_root: state_root.clone(),
+                },
+            );
+        }
+    }
+}
+
+fn persist_query_state_for_block(block: &LocalBlock) -> Result<(PathBuf, QueryStateDb)> {
+    let path = chain_query_db_path();
+    let mut db = load_query_state_db(&path)?;
+    apply_block_to_query_db(&mut db, block);
+    save_query_state_db(&path, &db)?;
+    Ok((path, db))
+}
+
 fn run_batch_a_minimal_closure(
-    out: &AoemExecOutput,
     batches: &[LocalBatch],
     consensus_binding: ConsensusPluginBindingV1,
+    execution_state_root: [u8; 32],
+    slash_policy: &SlashPolicy,
 ) -> Result<LocalBlock> {
     // Single-validator closure for Batch A:
     // execute -> proposal -> vote -> QC -> commit.
@@ -1523,6 +2619,16 @@ fn run_batch_a_minimal_closure(
         public_keys,
     )
     .context("init novovm-consensus engine failed")?;
+    engine
+        .set_slash_policy(slash_policy.clone())
+        .context("set slash policy failed")?;
+    let applied_policy = engine.slash_policy();
+    println!(
+        "slash_policy_bind: mode={} threshold={} min_validators={}",
+        applied_policy.mode.as_str(),
+        applied_policy.equivocation_threshold,
+        applied_policy.min_active_validators
+    );
 
     engine.start_epoch().context("start epoch failed")?;
     for batch in batches {
@@ -1533,12 +2639,14 @@ fn run_batch_a_minimal_closure(
 
     let mut batch_results = HashMap::new();
     for batch in batches {
-        batch_results.insert(batch.id, build_batch_proxy_state_root(out, batch));
+        batch_results.insert(
+            batch.id,
+            build_batch_state_root(execution_state_root, batch),
+        );
     }
-    let proxy_state_root = build_epoch_proxy_state_root(out, batches, &batch_results)?;
 
     let proposal = engine
-        .propose_epoch_with_state_root(&batch_results, proxy_state_root)
+        .propose_epoch_with_state_root(&batch_results, execution_state_root)
         .context("propose epoch failed")?;
 
     let vote = engine
@@ -1623,11 +2731,16 @@ fn commit_block_in_memory(
     store.commit_block(block)?;
     let latest = store
         .latest()
+        .cloned()
         .ok_or_else(|| anyhow::anyhow!("missing latest block after commit"))?;
+    let total_blocks = store.total_blocks();
+    drop(store);
+
+    let (query_db_path, query_db) = persist_query_state_for_block(&latest)?;
     println!(
         "commit_out: store=in_memory committed=true height={} total_blocks={} block_hash={} state_root={}",
         latest.header.height,
-        store.total_blocks(),
+        total_blocks,
         to_hex(&latest.block_hash),
         to_hex(&latest.header.state_root)
     );
@@ -1635,6 +2748,1489 @@ fn commit_block_in_memory(
         "commit_consensus: plugin_class={} plugin_hash={} pass=true",
         plugin_class_name(latest.header.consensus_binding.plugin_class_code),
         to_hex(&latest.header.consensus_binding.adapter_hash)
+    );
+    println!(
+        "query_state_out: db={} blocks={} txs={} receipts={} balances={}",
+        query_db_path.display(),
+        query_db.blocks.len(),
+        query_db.txs.len(),
+        query_db.receipts.len(),
+        query_db.balances.len()
+    );
+    Ok(())
+}
+
+#[derive(Debug, Clone, Copy)]
+struct RpcRateCounter {
+    window_sec: u64,
+    count: u32,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct GovernanceRpcProposalView {
+    proposal_id: u64,
+    proposer: u32,
+    created_height: u64,
+    op: String,
+    payload: serde_json::Value,
+    votes_collected: usize,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct GovernanceRpcAuditEvent {
+    seq: u64,
+    ts_sec: u64,
+    action: String,
+    proposal_id: u64,
+    actor: Option<u32>,
+    outcome: String,
+    detail: String,
+}
+
+struct GovernanceRpcRuntime {
+    engine: BFTEngine,
+    signers: HashMap<ConsensusNodeId, SigningKey>,
+    votes: HashMap<u64, Vec<GovernanceVote>>,
+    signed_votes: HashMap<(u64, ConsensusNodeId, bool), Vec<u8>>,
+    proposer_allowlist: HashSet<ConsensusNodeId>,
+    executor_allowlist: HashSet<ConsensusNodeId>,
+    audit_events: Vec<GovernanceRpcAuditEvent>,
+    next_audit_seq: u64,
+}
+
+fn value_to_u64(v: &serde_json::Value) -> Option<u64> {
+    match v {
+        serde_json::Value::Number(n) => n.as_u64(),
+        serde_json::Value::String(s) => s.trim().parse::<u64>().ok(),
+        _ => None,
+    }
+}
+
+fn value_to_i64(v: &serde_json::Value) -> Option<i64> {
+    match v {
+        serde_json::Value::Number(n) => n.as_i64(),
+        serde_json::Value::String(s) => s.trim().parse::<i64>().ok(),
+        _ => None,
+    }
+}
+
+fn param_as_u64(params: &serde_json::Value, key: &str) -> Option<u64> {
+    match params {
+        serde_json::Value::Object(map) => map.get(key).and_then(value_to_u64),
+        serde_json::Value::Array(arr) => {
+            if key == "height" {
+                arr.first().and_then(value_to_u64)
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
+fn param_as_i64(params: &serde_json::Value, key: &str) -> Option<i64> {
+    match params {
+        serde_json::Value::Object(map) => map.get(key).and_then(value_to_i64),
+        _ => None,
+    }
+}
+
+fn value_to_string(v: &serde_json::Value) -> Option<String> {
+    match v {
+        serde_json::Value::String(s) => Some(s.trim().to_string()),
+        serde_json::Value::Number(n) => Some(n.to_string()),
+        _ => None,
+    }
+}
+
+fn param_as_string(params: &serde_json::Value, key: &str) -> Option<String> {
+    match params {
+        serde_json::Value::Object(map) => map.get(key).and_then(value_to_string),
+        serde_json::Value::Array(arr) => {
+            if key == "tx_hash" || key == "account" {
+                arr.first().and_then(value_to_string)
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
+fn value_to_bool(v: &serde_json::Value) -> Option<bool> {
+    match v {
+        serde_json::Value::Bool(b) => Some(*b),
+        serde_json::Value::String(s) => {
+            let t = s.trim();
+            if t.eq_ignore_ascii_case("true") || t == "1" {
+                Some(true)
+            } else if t.eq_ignore_ascii_case("false") || t == "0" {
+                Some(false)
+            } else {
+                None
+            }
+        }
+        serde_json::Value::Number(n) => n.as_u64().map(|v| v != 0),
+        _ => None,
+    }
+}
+
+fn param_as_bool(params: &serde_json::Value, key: &str) -> Option<bool> {
+    match params {
+        serde_json::Value::Object(map) => map.get(key).and_then(value_to_bool),
+        serde_json::Value::Array(arr) => {
+            if key == "support" {
+                arr.first().and_then(value_to_bool)
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
+fn parse_node_id_allowlist_env(
+    name: &str,
+    default_ids: &[ConsensusNodeId],
+) -> Result<HashSet<ConsensusNodeId>> {
+    match std::env::var(name) {
+        Ok(raw) => {
+            let trimmed = raw.trim();
+            if trimmed.is_empty() {
+                return Ok(default_ids.iter().copied().collect());
+            }
+            let mut out = HashSet::new();
+            for part in trimmed.split(',') {
+                let token = part.trim();
+                if token.is_empty() {
+                    continue;
+                }
+                let parsed = token
+                    .parse::<u32>()
+                    .with_context(|| format!("invalid {} node id: {}", name, token))?;
+                out.insert(parsed);
+            }
+            if out.is_empty() {
+                bail!("{} resolved to empty allowlist", name);
+            }
+            Ok(out)
+        }
+        Err(_) => Ok(default_ids.iter().copied().collect()),
+    }
+}
+
+fn parse_ip_allowlist_env(name: &str) -> Result<HashSet<IpAddr>> {
+    match std::env::var(name) {
+        Ok(raw) => {
+            let trimmed = raw.trim();
+            if trimmed.is_empty() {
+                return Ok(HashSet::new());
+            }
+            let mut out = HashSet::new();
+            for part in trimmed.split(',') {
+                let token = part.trim();
+                if token.is_empty() {
+                    continue;
+                }
+                let ip = token
+                    .parse::<IpAddr>()
+                    .with_context(|| format!("invalid {} ip: {}", name, token))?;
+                out.insert(ip);
+            }
+            Ok(out)
+        }
+        Err(_) => Ok(HashSet::new()),
+    }
+}
+
+fn bind_is_loopback(bind: &str) -> bool {
+    if let Ok(addr) = bind.parse::<SocketAddr>() {
+        return addr.ip().is_loopback();
+    }
+    if let Some((host_raw, _)) = bind.rsplit_once(':') {
+        let host = host_raw
+            .trim()
+            .trim_start_matches('[')
+            .trim_end_matches(']');
+        return host.eq_ignore_ascii_case("localhost")
+            || host.eq_ignore_ascii_case("::1")
+            || host.starts_with("127.");
+    }
+    false
+}
+
+fn binds_conflict(lhs: &str, rhs: &str) -> bool {
+    let a = lhs.trim();
+    let b = rhs.trim();
+    if a.eq_ignore_ascii_case(b) {
+        return true;
+    }
+    match (a.parse::<SocketAddr>(), b.parse::<SocketAddr>()) {
+        (Ok(x), Ok(y)) => x == y,
+        _ => false,
+    }
+}
+
+fn decode_hex_bytes(raw: &str, field: &str) -> Result<Vec<u8>> {
+    let normalized = raw.trim().strip_prefix("0x").unwrap_or(raw.trim());
+    if normalized.is_empty() {
+        bail!("{} is empty", field);
+    }
+    if normalized.len() % 2 != 0 {
+        bail!("{} must have even hex length", field);
+    }
+    if !normalized.bytes().all(|b| b.is_ascii_hexdigit()) {
+        bail!("{} must be hex", field);
+    }
+    let mut out = Vec::with_capacity(normalized.len() / 2);
+    let bytes = normalized.as_bytes();
+    let mut idx = 0usize;
+    while idx < bytes.len() {
+        let pair = std::str::from_utf8(&bytes[idx..idx + 2])
+            .with_context(|| format!("{} contains invalid utf8", field))?;
+        let v = u8::from_str_radix(pair, 16)
+            .with_context(|| format!("{} contains invalid hex byte {}", field, pair))?;
+        out.push(v);
+        idx += 2;
+    }
+    Ok(out)
+}
+
+fn push_governance_audit_event(
+    runtime: &mut GovernanceRpcRuntime,
+    action: &str,
+    proposal_id: u64,
+    actor: Option<ConsensusNodeId>,
+    outcome: &str,
+    detail: impl Into<String>,
+) {
+    runtime.next_audit_seq = runtime.next_audit_seq.saturating_add(1);
+    runtime.audit_events.push(GovernanceRpcAuditEvent {
+        seq: runtime.next_audit_seq,
+        ts_sec: now_unix_sec(),
+        action: action.to_string(),
+        proposal_id,
+        actor,
+        outcome: outcome.to_string(),
+        detail: detail.into(),
+    });
+}
+
+fn governance_op_to_view(op: &GovernanceOp) -> (String, serde_json::Value) {
+    match op {
+        GovernanceOp::UpdateSlashPolicy { policy } => (
+            "update_slash_policy".to_string(),
+            serde_json::json!({
+                "mode": policy.mode.as_str(),
+                "equivocation_threshold": policy.equivocation_threshold,
+                "min_active_validators": policy.min_active_validators,
+                "cooldown_epochs": policy.cooldown_epochs,
+            }),
+        ),
+        GovernanceOp::UpdateMempoolFeeFloor { fee_floor } => (
+            "update_mempool_fee_floor".to_string(),
+            serde_json::json!({
+                "fee_floor": fee_floor,
+            }),
+        ),
+        GovernanceOp::UpdateNetworkDosPolicy { policy } => (
+            "update_network_dos_policy".to_string(),
+            serde_json::json!({
+                "rpc_rate_limit_per_ip": policy.rpc_rate_limit_per_ip,
+                "peer_ban_threshold": policy.peer_ban_threshold,
+            }),
+        ),
+    }
+}
+
+fn proposal_to_view(
+    proposal: &GovernanceProposal,
+    votes_collected: usize,
+) -> GovernanceRpcProposalView {
+    let (op, payload) = governance_op_to_view(&proposal.op);
+    GovernanceRpcProposalView {
+        proposal_id: proposal.proposal_id,
+        proposer: proposal.proposer,
+        created_height: proposal.created_height,
+        op,
+        payload,
+        votes_collected,
+    }
+}
+
+fn parse_governance_op(params: &serde_json::Value) -> Result<GovernanceOp> {
+    let op = param_as_string(params, "op")
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    if op.is_empty() {
+        bail!("op is required for governance_submitProposal");
+    }
+    match op.as_str() {
+        "update_slash_policy" => {
+            let mode_raw =
+                param_as_string(params, "mode").unwrap_or_else(|| "observe_only".to_string());
+            let mode = parse_slash_mode(&mode_raw)?;
+            let equivocation_threshold =
+                param_as_u64(params, "equivocation_threshold").ok_or_else(|| {
+                    anyhow::anyhow!("equivocation_threshold is required for update_slash_policy")
+                })? as u32;
+            let min_active_validators =
+                param_as_u64(params, "min_active_validators").ok_or_else(|| {
+                    anyhow::anyhow!("min_active_validators is required for update_slash_policy")
+                })? as u32;
+            let cooldown_epochs = param_as_u64(params, "cooldown_epochs").unwrap_or(0);
+            let policy = SlashPolicy {
+                mode,
+                equivocation_threshold,
+                min_active_validators,
+                cooldown_epochs,
+            };
+            policy
+                .validate()
+                .map_err(|e| anyhow::anyhow!("governance_policy_invalid: {}", e))?;
+            Ok(GovernanceOp::UpdateSlashPolicy { policy })
+        }
+        "update_mempool_fee_floor" => {
+            let fee_floor = param_as_u64(params, "fee_floor").ok_or_else(|| {
+                anyhow::anyhow!("fee_floor is required for update_mempool_fee_floor")
+            })?;
+            if fee_floor == 0 {
+                bail!("fee_floor must be > 0");
+            }
+            Ok(GovernanceOp::UpdateMempoolFeeFloor { fee_floor })
+        }
+        "update_network_dos_policy" => {
+            let rpc_rate_limit_per_ip =
+                param_as_u64(params, "rpc_rate_limit_per_ip").ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "rpc_rate_limit_per_ip is required for update_network_dos_policy"
+                    )
+                })? as u32;
+            let peer_ban_threshold_raw = param_as_i64(params, "peer_ban_threshold").ok_or_else(|| {
+                anyhow::anyhow!("peer_ban_threshold is required for update_network_dos_policy")
+            })?;
+            let peer_ban_threshold = i32::try_from(peer_ban_threshold_raw)
+                .map_err(|_| anyhow::anyhow!("peer_ban_threshold is out of i32 range"))?;
+            let policy = NetworkDosPolicy {
+                rpc_rate_limit_per_ip,
+                peer_ban_threshold,
+            };
+            policy
+                .validate()
+                .map_err(|e| anyhow::anyhow!("governance_policy_invalid: {}", e))?;
+            Ok(GovernanceOp::UpdateNetworkDosPolicy { policy })
+        }
+        _ => bail!("unsupported governance op: {}", op),
+    }
+}
+
+fn init_governance_rpc_runtime(slash_policy: &SlashPolicy) -> Result<GovernanceRpcRuntime> {
+    let validator_ids: Vec<ConsensusNodeId> = vec![0, 1, 2];
+    let proposer_allowlist =
+        parse_node_id_allowlist_env("NOVOVM_GOVERNANCE_PROPOSER_ALLOWLIST", &validator_ids)?;
+    let executor_allowlist =
+        parse_node_id_allowlist_env("NOVOVM_GOVERNANCE_EXECUTOR_ALLOWLIST", &validator_ids)?;
+    let validator_set = ValidatorSet::new_equal_weight(validator_ids.clone());
+    let signing_keys: Vec<_> = (0..validator_ids.len())
+        .map(|_| SigningKey::generate(&mut OsRng))
+        .collect();
+    let mut public_keys = HashMap::new();
+    let mut signers = HashMap::new();
+    for (idx, node_id) in validator_ids.iter().enumerate() {
+        public_keys.insert(*node_id, signing_keys[idx].verifying_key());
+        signers.insert(*node_id, signing_keys[idx].clone());
+    }
+
+    let engine = BFTEngine::new(
+        BFTConfig::default(),
+        0,
+        signing_keys[0].clone(),
+        validator_set,
+        public_keys,
+    )
+    .context("init governance rpc consensus engine failed")?;
+    engine
+        .set_slash_policy(slash_policy.clone())
+        .context("set governance rpc slash policy failed")?;
+    engine.set_governance_execution_enabled(true);
+
+    Ok(GovernanceRpcRuntime {
+        engine,
+        signers,
+        votes: HashMap::new(),
+        signed_votes: HashMap::new(),
+        proposer_allowlist,
+        executor_allowlist,
+        audit_events: Vec::new(),
+        next_audit_seq: 0,
+    })
+}
+
+fn run_governance_rpc(
+    runtime: &mut GovernanceRpcRuntime,
+    method: &str,
+    params: &serde_json::Value,
+) -> Result<serde_json::Value> {
+    match method {
+        "governance_submitProposal" => {
+            let proposer = param_as_u64(params, "proposer")
+                .ok_or_else(|| anyhow::anyhow!("proposer is required for governance_submitProposal"))?
+                as ConsensusNodeId;
+            if !runtime.proposer_allowlist.contains(&proposer) {
+                push_governance_audit_event(
+                    runtime,
+                    "submit",
+                    0,
+                    Some(proposer),
+                    "reject",
+                    format!("unauthorized proposer {}", proposer),
+                );
+                bail!("unauthorized proposer: {}", proposer);
+            }
+            let op = parse_governance_op(params)?;
+            let proposal = runtime
+                .engine
+                .submit_governance_proposal(proposer, op)?;
+            let view = proposal_to_view(&proposal, 0);
+            push_governance_audit_event(
+                runtime,
+                "submit",
+                proposal.proposal_id,
+                Some(proposer),
+                "ok",
+                view.op.clone(),
+            );
+            Ok(serde_json::json!({
+                "method": method,
+                "submitted": true,
+                "proposal": view,
+            }))
+        }
+        "governance_sign" => {
+            let proposal_id = param_as_u64(params, "proposal_id")
+                .ok_or_else(|| anyhow::anyhow!("proposal_id is required for governance_sign"))?;
+            let signer_id = param_as_u64(params, "signer_id")
+                .ok_or_else(|| anyhow::anyhow!("signer_id is required for governance_sign"))?
+                as ConsensusNodeId;
+            let support = param_as_bool(params, "support").unwrap_or(true);
+            let signer = runtime
+                .signers
+                .get(&signer_id)
+                .ok_or_else(|| anyhow::anyhow!("unknown signer_id: {}", signer_id))?;
+            let proposal = runtime
+                .engine
+                .governance_pending_proposal(proposal_id)
+                .ok_or_else(|| anyhow::anyhow!("proposal not found: {}", proposal_id))?;
+            let vote = GovernanceVote::new(&proposal, signer_id, support, signer);
+            let signature_hex = to_hex(&vote.signature);
+            runtime
+                .signed_votes
+                .insert((proposal_id, signer_id, support), vote.signature);
+            push_governance_audit_event(
+                runtime,
+                "sign",
+                proposal_id,
+                Some(signer_id),
+                "ok",
+                format!("support={}", support),
+            );
+            Ok(serde_json::json!({
+                "method": method,
+                "proposal_id": proposal_id,
+                "signer_id": signer_id,
+                "support": support,
+                "signature": signature_hex,
+            }))
+        }
+        "governance_vote" => {
+            let proposal_id = param_as_u64(params, "proposal_id")
+                .ok_or_else(|| anyhow::anyhow!("proposal_id is required for governance_vote"))?;
+            let voter_id = param_as_u64(params, "voter_id")
+                .ok_or_else(|| anyhow::anyhow!("voter_id is required for governance_vote"))?
+                as ConsensusNodeId;
+            let support = param_as_bool(params, "support").unwrap_or(true);
+            let signer = runtime
+                .signers
+                .get(&voter_id)
+                .ok_or_else(|| anyhow::anyhow!("unknown voter_id: {}", voter_id))?;
+            let proposal = runtime
+                .engine
+                .governance_pending_proposal(proposal_id)
+                .ok_or_else(|| anyhow::anyhow!("proposal not found: {}", proposal_id))?;
+
+            let duplicate_vote = runtime
+                .votes
+                .get(&proposal_id)
+                .map(|entry| entry.iter().any(|v| v.voter_id == voter_id))
+                .unwrap_or(false);
+            if duplicate_vote {
+                push_governance_audit_event(
+                    runtime,
+                    "vote",
+                    proposal_id,
+                    Some(voter_id),
+                    "reject",
+                    "duplicate governance vote",
+                );
+                bail!("duplicate governance vote from voter {}", voter_id);
+            }
+            let signature = if let Some(signature_hex) = param_as_string(params, "signature") {
+                decode_hex_bytes(&signature_hex, "signature")?
+            } else if let Some(sig) = runtime
+                .signed_votes
+                .remove(&(proposal_id, voter_id, support))
+            {
+                sig
+            } else {
+                GovernanceVote::new(&proposal, voter_id, support, signer).signature
+            };
+            let vote = GovernanceVote {
+                proposal_id,
+                proposal_height: proposal.created_height,
+                proposal_digest: proposal.digest(),
+                voter_id,
+                support,
+                signature,
+            };
+            let votes_collected = {
+                let entry = runtime.votes.entry(proposal_id).or_default();
+                entry.push(vote);
+                entry.len()
+            };
+            push_governance_audit_event(
+                runtime,
+                "vote",
+                proposal_id,
+                Some(voter_id),
+                "ok",
+                format!("support={} votes_collected={}", support, votes_collected),
+            );
+            Ok(serde_json::json!({
+                "method": method,
+                "proposal_id": proposal_id,
+                "voter_id": voter_id,
+                "support": support,
+                "votes_collected": votes_collected,
+            }))
+        }
+        "governance_execute" => {
+            let proposal_id = param_as_u64(params, "proposal_id")
+                .ok_or_else(|| anyhow::anyhow!("proposal_id is required for governance_execute"))?;
+            let executor = param_as_u64(params, "executor")
+                .ok_or_else(|| anyhow::anyhow!("executor is required for governance_execute"))?
+                as ConsensusNodeId;
+            if !runtime.executor_allowlist.contains(&executor) {
+                push_governance_audit_event(
+                    runtime,
+                    "execute",
+                    proposal_id,
+                    Some(executor),
+                    "reject",
+                    format!("unauthorized executor {}", executor),
+                );
+                bail!("unauthorized executor: {}", executor);
+            }
+            let votes = runtime
+                .votes
+                .get(&proposal_id)
+                .cloned()
+                .unwrap_or_default();
+            let executed = runtime
+                .engine
+                .execute_governance_proposal(proposal_id, &votes)?;
+            if executed {
+                runtime.votes.remove(&proposal_id);
+            }
+            let slash = runtime.engine.slash_policy();
+            let dos = runtime.engine.governance_network_dos_policy();
+            push_governance_audit_event(
+                runtime,
+                "execute",
+                proposal_id,
+                Some(executor),
+                "ok",
+                format!("executed={}", executed),
+            );
+            Ok(serde_json::json!({
+                "method": method,
+                "proposal_id": proposal_id,
+                "executor": executor,
+                "executed": executed,
+                "slash_policy": {
+                    "mode": slash.mode.as_str(),
+                    "equivocation_threshold": slash.equivocation_threshold,
+                    "min_active_validators": slash.min_active_validators,
+                    "cooldown_epochs": slash.cooldown_epochs,
+                },
+                "mempool_fee_floor": runtime.engine.governance_mempool_fee_floor(),
+                "network_dos_policy": {
+                    "rpc_rate_limit_per_ip": dos.rpc_rate_limit_per_ip,
+                    "peer_ban_threshold": dos.peer_ban_threshold,
+                },
+            }))
+        }
+        "governance_getProposal" => {
+            let proposal_id = param_as_u64(params, "proposal_id")
+                .ok_or_else(|| anyhow::anyhow!("proposal_id is required for governance_getProposal"))?;
+            let proposal = runtime.engine.governance_pending_proposal(proposal_id);
+            let votes_collected = runtime
+                .votes
+                .get(&proposal_id)
+                .map(|v| v.len())
+                .unwrap_or(0);
+            Ok(serde_json::json!({
+                "method": method,
+                "proposal_id": proposal_id,
+                "found": proposal.is_some(),
+                "proposal": proposal.map(|p| proposal_to_view(&p, votes_collected)),
+            }))
+        }
+        "governance_listProposals" => {
+            let proposals: Vec<_> = runtime
+                .engine
+                .governance_pending_proposals()
+                .into_iter()
+                .map(|p| {
+                    let votes_collected = runtime.votes.get(&p.proposal_id).map(|v| v.len()).unwrap_or(0);
+                    proposal_to_view(&p, votes_collected)
+                })
+                .collect();
+            Ok(serde_json::json!({
+                "method": method,
+                "count": proposals.len(),
+                "proposals": proposals,
+            }))
+        }
+        "governance_listAuditEvents" => {
+            let proposal_id_filter = param_as_u64(params, "proposal_id");
+            let limit = param_as_u64(params, "limit").unwrap_or(50).clamp(1, 200) as usize;
+            let mut events: Vec<GovernanceRpcAuditEvent> = runtime
+                .audit_events
+                .iter()
+                .filter(|event| proposal_id_filter.map(|id| event.proposal_id == id).unwrap_or(true))
+                .cloned()
+                .collect();
+            if events.len() > limit {
+                let start = events.len().saturating_sub(limit);
+                events = events[start..].to_vec();
+            }
+            Ok(serde_json::json!({
+                "method": method,
+                "count": events.len(),
+                "proposal_id_filter": proposal_id_filter,
+                "events": events,
+            }))
+        }
+        "governance_getPolicy" => {
+            let slash = runtime.engine.slash_policy();
+            let dos = runtime.engine.governance_network_dos_policy();
+            Ok(serde_json::json!({
+                "method": method,
+                "slash_policy": {
+                    "mode": slash.mode.as_str(),
+                    "equivocation_threshold": slash.equivocation_threshold,
+                    "min_active_validators": slash.min_active_validators,
+                    "cooldown_epochs": slash.cooldown_epochs,
+                },
+                "mempool_fee_floor": runtime.engine.governance_mempool_fee_floor(),
+                "network_dos_policy": {
+                    "rpc_rate_limit_per_ip": dos.rpc_rate_limit_per_ip,
+                    "peer_ban_threshold": dos.peer_ban_threshold,
+                },
+                "governance_execution_enabled": runtime.engine.governance_execution_enabled(),
+            }))
+        }
+        _ => bail!(
+            "unknown governance method: {}; valid: governance_submitProposal|governance_sign|governance_vote|governance_execute|governance_getProposal|governance_listProposals|governance_listAuditEvents|governance_getPolicy",
+            method
+        ),
+    }
+}
+
+fn run_chain_query(
+    db: &QueryStateDb,
+    method: &str,
+    params: &serde_json::Value,
+) -> Result<serde_json::Value> {
+    let response = match method {
+        "getBlock" => {
+            let height = param_as_u64(params, "height");
+            let block = match height {
+                Some(h) => db.blocks.iter().find(|b| b.height == h).cloned(),
+                None => db.blocks.last().cloned(),
+            };
+            serde_json::json!({
+                "method": "getBlock",
+                "requested_height": height,
+                "found": block.is_some(),
+                "block": block,
+            })
+        }
+        "getTransaction" => {
+            let tx_hash = param_as_string(params, "tx_hash")
+                .or_else(|| param_as_string(params, "hash"))
+                .unwrap_or_default()
+                .to_ascii_lowercase();
+            if tx_hash.is_empty() {
+                bail!("tx_hash is required for getTransaction");
+            }
+            let tx = db.txs.get(&tx_hash).cloned();
+            serde_json::json!({
+                "method": "getTransaction",
+                "tx_hash": tx_hash,
+                "found": tx.is_some(),
+                "transaction": tx,
+            })
+        }
+        "getReceipt" => {
+            let tx_hash = param_as_string(params, "tx_hash")
+                .or_else(|| param_as_string(params, "hash"))
+                .unwrap_or_default()
+                .to_ascii_lowercase();
+            if tx_hash.is_empty() {
+                bail!("tx_hash is required for getReceipt");
+            }
+            let receipt = db.receipts.get(&tx_hash).cloned();
+            serde_json::json!({
+                "method": "getReceipt",
+                "tx_hash": tx_hash,
+                "found": receipt.is_some(),
+                "receipt": receipt,
+            })
+        }
+        "getBalance" => {
+            let account = param_as_string(params, "account").unwrap_or_default();
+            let trimmed = account.trim();
+            if trimmed.is_empty() {
+                bail!("account is required for getBalance");
+            }
+            let balance = db.balances.get(trimmed).copied().unwrap_or(0);
+            serde_json::json!({
+                "method": "getBalance",
+                "account": trimmed,
+                "found": db.balances.contains_key(trimmed),
+                "balance": balance,
+            })
+        }
+        _ => bail!(
+            "unknown method: {}; valid: getBlock|getTransaction|getReceipt|getBalance",
+            method
+        ),
+    };
+    Ok(response)
+}
+
+fn now_unix_sec() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_else(|_| Duration::from_secs(0))
+        .as_secs()
+}
+
+fn is_rate_limited(
+    counters: &mut HashMap<String, RpcRateCounter>,
+    remote: &str,
+    max_per_sec: u32,
+) -> bool {
+    if max_per_sec == 0 {
+        return false;
+    }
+    let now_sec = now_unix_sec();
+    let entry = counters
+        .entry(remote.to_string())
+        .or_insert(RpcRateCounter {
+            window_sec: now_sec,
+            count: 0,
+        });
+    if entry.window_sec != now_sec {
+        entry.window_sec = now_sec;
+        entry.count = 0;
+    }
+    if entry.count >= max_per_sec {
+        return true;
+    }
+    entry.count = entry.count.saturating_add(1);
+    false
+}
+
+fn respond_json_http(
+    request: tiny_http::Request,
+    status: u16,
+    body: &serde_json::Value,
+) -> Result<()> {
+    let payload = serde_json::to_string(body).context("serialize rpc response json failed")?;
+    let mut response =
+        tiny_http::Response::from_string(payload).with_status_code(tiny_http::StatusCode(status));
+    if let Ok(header) =
+        tiny_http::Header::from_bytes(b"Content-Type".to_vec(), b"application/json".to_vec())
+    {
+        response = response.with_header(header);
+    }
+    request
+        .respond(response)
+        .map_err(|e| anyhow::anyhow!("rpc response send failed: {e}"))?;
+    Ok(())
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RpcServerRole {
+    Public,
+    Governance,
+}
+
+impl RpcServerRole {
+    fn as_str(self) -> &'static str {
+        match self {
+            RpcServerRole::Public => "public",
+            RpcServerRole::Governance => "governance",
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+struct RpcServerExit {
+    role: RpcServerRole,
+    bind: String,
+    processed: u32,
+    max_requests: u32,
+}
+
+fn run_rpc_server_instance(
+    role: RpcServerRole,
+    bind: String,
+    db_path: PathBuf,
+    max_body_bytes: usize,
+    rate_limit_per_ip: u32,
+    max_requests: u32,
+    gov_allowlist: HashSet<IpAddr>,
+    governance_slash_policy: Option<SlashPolicy>,
+) -> Result<RpcServerExit> {
+    let mut governance_runtime = match role {
+        RpcServerRole::Governance => {
+            let slash_policy = governance_slash_policy
+                .ok_or_else(|| anyhow::anyhow!("missing governance slash policy"))?;
+            Some(init_governance_rpc_runtime(&slash_policy)?)
+        }
+        RpcServerRole::Public => None,
+    };
+
+    let server = tiny_http::Server::http(&bind).map_err(|e| {
+        anyhow::anyhow!(
+            "start {} rpc server failed on {}: {}",
+            role.as_str(),
+            bind,
+            e
+        )
+    })?;
+    println!(
+        "rpc_server_in: role={} bind={} db={} max_body={} rate_limit_per_ip={} max_requests={} gov_allowlist_count={} governance_execution_enabled={}",
+        role.as_str(),
+        bind,
+        db_path.display(),
+        max_body_bytes,
+        rate_limit_per_ip,
+        max_requests,
+        gov_allowlist.len(),
+        governance_runtime
+            .as_ref()
+            .map(|runtime| runtime.engine.governance_execution_enabled())
+            .unwrap_or(false)
+    );
+
+    let mut processed = 0u32;
+    let mut rate_counters: HashMap<String, RpcRateCounter> = HashMap::new();
+    loop {
+        let mut request = server
+            .recv()
+            .map_err(|e| anyhow::anyhow!("{} rpc recv failed: {e}", role.as_str()))?;
+        let remote_addr = request.remote_addr();
+        let remote = remote_addr
+            .map(|addr| addr.ip().to_string())
+            .unwrap_or_else(|| "unknown".to_string());
+
+        if role == RpcServerRole::Governance && !gov_allowlist.is_empty() {
+            let allowed = remote_addr
+                .map(|addr| gov_allowlist.contains(&addr.ip()))
+                .unwrap_or(false);
+            if !allowed {
+                let resp = serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": serde_json::Value::Null,
+                    "error": {
+                        "code": -32023,
+                        "message": format!("governance rpc caller ip not in allowlist: {}", remote),
+                    }
+                });
+                respond_json_http(request, 403, &resp)?;
+                processed = processed.saturating_add(1);
+                if max_requests > 0 && processed >= max_requests {
+                    break;
+                }
+                continue;
+            }
+        }
+
+        if is_rate_limited(&mut rate_counters, &remote, rate_limit_per_ip) {
+            let resp = serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": serde_json::Value::Null,
+                "error": {
+                    "code": -32029,
+                    "message": format!("rate limit exceeded for {}", remote),
+                }
+            });
+            respond_json_http(request, 429, &resp)?;
+            processed = processed.saturating_add(1);
+            if max_requests > 0 && processed >= max_requests {
+                break;
+            }
+            continue;
+        }
+
+        if request.method() != &tiny_http::Method::Post {
+            let resp = serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": serde_json::Value::Null,
+                "error": {
+                    "code": -32600,
+                    "message": "only POST is supported",
+                }
+            });
+            respond_json_http(request, 405, &resp)?;
+            processed = processed.saturating_add(1);
+            if max_requests > 0 && processed >= max_requests {
+                break;
+            }
+            continue;
+        }
+
+        let path = request.url().to_string();
+        if path != "/" && path != "/rpc" {
+            let resp = serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": serde_json::Value::Null,
+                "error": {
+                    "code": -32601,
+                    "message": format!("unsupported path: {}", path),
+                }
+            });
+            respond_json_http(request, 404, &resp)?;
+            processed = processed.saturating_add(1);
+            if max_requests > 0 && processed >= max_requests {
+                break;
+            }
+            continue;
+        }
+
+        let mut body = String::new();
+        request
+            .as_reader()
+            .take(max_body_bytes as u64 + 1)
+            .read_to_string(&mut body)
+            .context("read rpc request body failed")?;
+
+        if body.len() > max_body_bytes {
+            let resp = serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": serde_json::Value::Null,
+                "error": {
+                    "code": -32600,
+                    "message": format!("request body exceeds {} bytes", max_body_bytes),
+                }
+            });
+            respond_json_http(request, 413, &resp)?;
+            processed = processed.saturating_add(1);
+            if max_requests > 0 && processed >= max_requests {
+                break;
+            }
+            continue;
+        }
+
+        let payload: serde_json::Value = match serde_json::from_str(&body) {
+            Ok(v) => v,
+            Err(e) => {
+                let resp = serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": serde_json::Value::Null,
+                    "error": {
+                        "code": -32700,
+                        "message": format!("parse error: {}", e),
+                    }
+                });
+                respond_json_http(request, 400, &resp)?;
+                processed = processed.saturating_add(1);
+                if max_requests > 0 && processed >= max_requests {
+                    break;
+                }
+                continue;
+            }
+        };
+
+        let request_id = payload.get("id").cloned().unwrap_or(serde_json::Value::Null);
+        let method = payload
+            .get("method")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        let params = payload
+            .get("params")
+            .cloned()
+            .unwrap_or_else(|| serde_json::json!({}));
+
+        if method.is_empty() {
+            let resp = serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": request_id,
+                "error": {
+                    "code": -32600,
+                    "message": "missing method",
+                }
+            });
+            respond_json_http(request, 400, &resp)?;
+            processed = processed.saturating_add(1);
+            if max_requests > 0 && processed >= max_requests {
+                break;
+            }
+            continue;
+        }
+
+        if role == RpcServerRole::Public && method.starts_with("governance_") {
+            let resp = serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": request_id,
+                "error": {
+                    "code": -32601,
+                    "message": format!("method not found on public rpc: {}", method),
+                }
+            });
+            respond_json_http(request, 200, &resp)?;
+            processed = processed.saturating_add(1);
+            if max_requests > 0 && processed >= max_requests {
+                break;
+            }
+            continue;
+        }
+
+        if role == RpcServerRole::Governance && !method.starts_with("governance_") {
+            let resp = serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": request_id,
+                "error": {
+                    "code": -32601,
+                    "message": format!("method not found on governance rpc: {}", method),
+                }
+            });
+            respond_json_http(request, 200, &resp)?;
+            processed = processed.saturating_add(1);
+            if max_requests > 0 && processed >= max_requests {
+                break;
+            }
+            continue;
+        }
+
+        let result = match role {
+            RpcServerRole::Public => {
+                let db = load_query_state_db(&db_path)?;
+                run_chain_query(&db, &method, &params)
+            }
+            RpcServerRole::Governance => run_governance_rpc(
+                governance_runtime
+                    .as_mut()
+                    .ok_or_else(|| anyhow::anyhow!("missing governance runtime"))?,
+                &method,
+                &params,
+            ),
+        };
+        let response = match result {
+            Ok(out) => serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": request_id,
+                "result": out,
+            }),
+            Err(e) => serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": request_id,
+                "error": {
+                    "code": -32602,
+                    "message": e.to_string(),
+                }
+            }),
+        };
+        respond_json_http(request, 200, &response)?;
+
+        processed = processed.saturating_add(1);
+        if max_requests > 0 && processed >= max_requests {
+            break;
+        }
+    }
+
+    println!(
+        "rpc_server_out: role={} bind={} processed={} max_requests={}",
+        role.as_str(),
+        bind,
+        processed,
+        max_requests
+    );
+    if role == RpcServerRole::Public {
+        println!(
+            "chain_query_rpc_server_out: bind={} processed={} max_requests={}",
+            bind, processed, max_requests
+        );
+    } else {
+        println!(
+            "governance_rpc_server_out: bind={} processed={} max_requests={}",
+            bind, processed, max_requests
+        );
+    }
+
+    Ok(RpcServerExit {
+        role,
+        bind,
+        processed,
+        max_requests,
+    })
+}
+
+fn run_chain_query_mode() -> Result<()> {
+    let db_path = chain_query_db_path();
+    let db = load_query_state_db(&db_path)?;
+    let method = string_env("NOVOVM_CHAIN_QUERY_METHOD", "")
+        .trim()
+        .to_string();
+    if method.is_empty() {
+        bail!(
+            "missing NOVOVM_CHAIN_QUERY_METHOD; valid: getBlock|getTransaction|getReceipt|getBalance"
+        );
+    }
+
+    let mut params = serde_json::Map::new();
+    if let Ok(v) = std::env::var("NOVOVM_CHAIN_QUERY_HEIGHT") {
+        if !v.trim().is_empty() {
+            params.insert("height".to_string(), serde_json::Value::String(v));
+        }
+    }
+    if let Ok(v) = std::env::var("NOVOVM_CHAIN_QUERY_TX_HASH") {
+        if !v.trim().is_empty() {
+            params.insert("tx_hash".to_string(), serde_json::Value::String(v));
+        }
+    }
+    if let Ok(v) = std::env::var("NOVOVM_CHAIN_QUERY_ACCOUNT") {
+        if !v.trim().is_empty() {
+            params.insert("account".to_string(), serde_json::Value::String(v));
+        }
+    }
+
+    let response = run_chain_query(&db, &method, &serde_json::Value::Object(params))?;
+    println!(
+        "chain_query_out: db={} method={} blocks={} txs={} receipts={} balances={}",
+        db_path.display(),
+        method,
+        db.blocks.len(),
+        db.txs.len(),
+        db.receipts.len(),
+        db.balances.len()
+    );
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&response).context("serialize chain query response failed")?
+    );
+    Ok(())
+}
+
+fn run_chain_query_rpc_server_mode() -> Result<()> {
+    let legacy_bind = string_env("NOVOVM_RPC_BIND", "127.0.0.1:8899");
+    let public_bind = string_env_nonempty("NOVOVM_PUBLIC_RPC_BIND")
+        .unwrap_or_else(|| legacy_bind.clone());
+    let gov_bind =
+        string_env_nonempty("NOVOVM_GOV_RPC_BIND").unwrap_or_else(|| "127.0.0.1:8901".to_string());
+
+    let enable_public = bool_env_default("NOVOVM_ENABLE_PUBLIC_RPC", true);
+    let enable_gov = bool_env_default("NOVOVM_ENABLE_GOV_RPC", false);
+    if !enable_public && !enable_gov {
+        bail!("rpc server invalid config: both public and governance rpc are disabled");
+    }
+    if enable_public && enable_gov && binds_conflict(&public_bind, &gov_bind) {
+        bail!(
+            "rpc server invalid config: public and governance binds conflict ({})",
+            public_bind
+        );
+    }
+
+    let gov_allowlist = parse_ip_allowlist_env("NOVOVM_GOV_RPC_ALLOWLIST")?;
+    if enable_gov && !bind_is_loopback(&gov_bind) && gov_allowlist.is_empty() {
+        bail!(
+            "rpc server invalid config: governance rpc bind {} is non-loopback and NOVOVM_GOV_RPC_ALLOWLIST is empty",
+            gov_bind
+        );
+    }
+
+    let default_max_body_bytes = u64_env("NOVOVM_RPC_MAX_BODY_BYTES", 64 * 1024);
+    let public_max_body_bytes =
+        u64_env("NOVOVM_PUBLIC_RPC_MAX_BODY_BYTES", default_max_body_bytes) as usize;
+    let gov_max_body_bytes = u64_env("NOVOVM_GOV_RPC_MAX_BODY_BYTES", default_max_body_bytes)
+        as usize;
+
+    let default_rate_limit_per_ip = u32_env("NOVOVM_RPC_RATE_LIMIT_PER_IP", 30);
+    let public_rate_limit_per_ip =
+        u32_env("NOVOVM_PUBLIC_RPC_RATE_LIMIT_PER_IP", default_rate_limit_per_ip);
+    let gov_rate_limit_per_ip =
+        u32_env("NOVOVM_GOV_RPC_RATE_LIMIT_PER_IP", default_rate_limit_per_ip);
+
+    let legacy_max_requests = u32_env_allow_zero("NOVOVM_RPC_MAX_REQUESTS", 0);
+    let public_max_requests =
+        u32_env_allow_zero("NOVOVM_PUBLIC_RPC_MAX_REQUESTS", legacy_max_requests);
+    let gov_max_requests = u32_env_allow_zero("NOVOVM_GOV_RPC_MAX_REQUESTS", legacy_max_requests);
+
+    let db_path = chain_query_db_path();
+    let governance_slash_policy = if enable_gov {
+        Some(load_consensus_slash_policy()?.policy)
+    } else {
+        None
+    };
+
+    println!(
+        "rpc_server_mode: public_enabled={} public_bind={} public_max_requests={} gov_enabled={} gov_bind={} gov_max_requests={} gov_allowlist_count={} db={}",
+        enable_public,
+        public_bind,
+        public_max_requests,
+        enable_gov,
+        gov_bind,
+        gov_max_requests,
+        gov_allowlist.len(),
+        db_path.display()
+    );
+
+    let mut handles = Vec::new();
+    if enable_public {
+        let public_db_path = db_path.clone();
+        let public_bind_cloned = public_bind.clone();
+        handles.push((
+            RpcServerRole::Public,
+            std::thread::spawn(move || {
+                run_rpc_server_instance(
+                    RpcServerRole::Public,
+                    public_bind_cloned,
+                    public_db_path,
+                    public_max_body_bytes,
+                    public_rate_limit_per_ip,
+                    public_max_requests,
+                    HashSet::new(),
+                    None,
+                )
+            }),
+        ));
+    }
+
+    if enable_gov {
+        let gov_db_path = db_path.clone();
+        let gov_bind_cloned = gov_bind.clone();
+        let gov_allowlist_cloned = gov_allowlist.clone();
+        let slash_policy = governance_slash_policy
+            .clone()
+            .ok_or_else(|| anyhow::anyhow!("missing governance slash policy"))?;
+        handles.push((
+            RpcServerRole::Governance,
+            std::thread::spawn(move || {
+                run_rpc_server_instance(
+                    RpcServerRole::Governance,
+                    gov_bind_cloned,
+                    gov_db_path,
+                    gov_max_body_bytes,
+                    gov_rate_limit_per_ip,
+                    gov_max_requests,
+                    gov_allowlist_cloned,
+                    Some(slash_policy),
+                )
+            }),
+        ));
+    }
+
+    let mut exits: Vec<RpcServerExit> = Vec::new();
+    for (role, handle) in handles {
+        let joined = handle
+            .join()
+            .map_err(|_| anyhow::anyhow!("{} rpc server thread panicked", role.as_str()))?;
+        let exit = joined.with_context(|| format!("{} rpc server failed", role.as_str()))?;
+        exits.push(exit);
+    }
+
+    let public_processed = exits
+        .iter()
+        .find(|entry| entry.role == RpcServerRole::Public)
+        .map(|entry| entry.processed)
+        .unwrap_or(0);
+    let gov_processed = exits
+        .iter()
+        .find(|entry| entry.role == RpcServerRole::Governance)
+        .map(|entry| entry.processed)
+        .unwrap_or(0);
+    let public_bind_out = exits
+        .iter()
+        .find(|entry| entry.role == RpcServerRole::Public)
+        .map(|entry| entry.bind.as_str())
+        .unwrap_or("-");
+    let gov_bind_out = exits
+        .iter()
+        .find(|entry| entry.role == RpcServerRole::Governance)
+        .map(|entry| entry.bind.as_str())
+        .unwrap_or("-");
+    let public_max_requests_out = exits
+        .iter()
+        .find(|entry| entry.role == RpcServerRole::Public)
+        .map(|entry| entry.max_requests)
+        .unwrap_or(0);
+    let gov_max_requests_out = exits
+        .iter()
+        .find(|entry| entry.role == RpcServerRole::Governance)
+        .map(|entry| entry.max_requests)
+        .unwrap_or(0);
+    println!(
+        "rpc_server_mode_out: public_bind={} public_processed={} public_max_requests={} gov_bind={} gov_processed={} gov_max_requests={}",
+        public_bind_out,
+        public_processed,
+        public_max_requests_out,
+        gov_bind_out,
+        gov_processed,
+        gov_max_requests_out
+    );
+
+    Ok(())
+}
+
+fn run_header_sync_probe_mode() -> Result<()> {
+    let remote_headers = parse_u32_env("NOVOVM_HEADER_SYNC_REMOTE_HEADERS", 8)? as u64;
+    let local_headers = parse_u32_env("NOVOVM_HEADER_SYNC_LOCAL_HEADERS", 3)? as u64;
+    let fetch_limit = parse_u32_env("NOVOVM_HEADER_SYNC_FETCH_LIMIT", 64)? as u64;
+    let tamper_parent_at = std::env::var("NOVOVM_HEADER_SYNC_TAMPER_PARENT_AT")
+        .ok()
+        .map(|raw| raw.trim().to_string())
+        .filter(|raw| !raw.is_empty())
+        .map(|raw| {
+            raw.parse::<u64>()
+                .with_context(|| format!("invalid NOVOVM_HEADER_SYNC_TAMPER_PARENT_AT: {}", raw))
+        })
+        .transpose()?
+        .unwrap_or(0);
+
+    let signal =
+        run_header_sync_probe(remote_headers, local_headers, fetch_limit, tamper_parent_at)?;
+    println!(
+        "header_sync_out: mode={} codec={} remote_tip={} local_tip_before={} fetched={} applied={} local_tip_after={} complete={} pass={} tamper_at={} reason={}",
+        signal.mode,
+        signal.codec,
+        signal.remote_tip,
+        signal.local_tip_before,
+        signal.fetched,
+        signal.applied,
+        signal.local_tip_after,
+        signal.complete,
+        signal.pass,
+        signal.tamper_at,
+        signal.reason
+    );
+    Ok(())
+}
+
+fn run_fast_state_sync_probe_mode() -> Result<()> {
+    let remote_headers = parse_u32_env("NOVOVM_FAST_SYNC_REMOTE_HEADERS", 16)? as u64;
+    let local_headers = parse_u32_env("NOVOVM_FAST_SYNC_LOCAL_HEADERS", 3)? as u64;
+    let fetch_limit = parse_u32_env("NOVOVM_FAST_SYNC_FETCH_LIMIT", 128)? as u64;
+    let tamper_snapshot_at = std::env::var("NOVOVM_STATE_SYNC_TAMPER_SNAPSHOT_AT")
+        .ok()
+        .map(|raw| raw.trim().to_string())
+        .filter(|raw| !raw.is_empty())
+        .map(|raw| {
+            raw.parse::<u64>()
+                .with_context(|| format!("invalid NOVOVM_STATE_SYNC_TAMPER_SNAPSHOT_AT: {}", raw))
+        })
+        .transpose()?
+        .unwrap_or(0);
+
+    let signal = run_fast_state_sync_probe(
+        remote_headers,
+        local_headers,
+        fetch_limit,
+        tamper_snapshot_at,
+    )?;
+    println!(
+        "fast_state_sync_out: mode={} codec={} remote_tip={} local_tip_before={} fetched_headers={} applied_headers={} local_tip_after={} fast_complete={} snapshot_height={} snapshot_accounts={} snapshot_verified={} state_complete={} pass={} tamper_snapshot_at={} reason={}",
+        signal.mode,
+        signal.codec,
+        signal.remote_tip,
+        signal.local_tip_before,
+        signal.fetched_headers,
+        signal.applied_headers,
+        signal.local_tip_after,
+        signal.fast_complete,
+        signal.snapshot_height,
+        signal.snapshot_accounts,
+        signal.snapshot_verified,
+        signal.state_complete,
+        signal.pass,
+        signal.tamper_snapshot_at,
+        signal.reason
+    );
+    Ok(())
+}
+
+fn run_network_dos_probe_mode() -> Result<()> {
+    let invalid_peers = parse_u32_env("NOVOVM_NET_DOS_INVALID_PEERS", 2)? as u64;
+    let invalid_burst = parse_u32_env("NOVOVM_NET_DOS_INVALID_BURST", 6)? as u64;
+    let ban_after = parse_u32_env("NOVOVM_NET_DOS_BAN_AFTER", 3)? as u64;
+
+    let signal = run_network_dos_probe(invalid_peers, invalid_burst, ban_after)?;
+    println!(
+        "network_dos_out: mode={} codec={} peers={} invalid_peers={} invalid_burst={} ban_after={} invalid_detected={} bans={} storm_rejected={} healthy_accepts={} pass={} reason={}",
+        signal.mode,
+        signal.codec,
+        signal.peers,
+        signal.invalid_peers,
+        signal.invalid_burst,
+        signal.ban_after,
+        signal.invalid_detected,
+        signal.bans,
+        signal.storm_rejected,
+        signal.healthy_accepts,
+        signal.pass,
+        signal.reason
+    );
+    Ok(())
+}
+
+fn run_pacemaker_failover_probe_mode() -> Result<()> {
+    let nodes = parse_u32_env("NOVOVM_PACEMAKER_NODES", 4)? as u64;
+    let failed_leader = std::env::var("NOVOVM_PACEMAKER_FAILED_LEADER")
+        .ok()
+        .map(|raw| raw.trim().to_string())
+        .filter(|raw| !raw.is_empty())
+        .map(|raw| {
+            raw.parse::<u64>()
+                .with_context(|| format!("invalid NOVOVM_PACEMAKER_FAILED_LEADER: {}", raw))
+        })
+        .transpose()?
+        .unwrap_or(0);
+    let signal = run_pacemaker_failover_probe(nodes, failed_leader)?;
+    println!(
+        "pacemaker_failover_out: mode={} transport={} nodes={} failed_leader={} initial_view={} next_view={} next_leader={} timeout_votes={} timeout_quorum={} timeout_cert={} local_view_advanced={} view_sync_votes={} new_view_votes={} qc_formed={} committed={} committed_height={} pass={} reason={}",
+        signal.mode,
+        signal.transport,
+        signal.nodes,
+        signal.failed_leader,
+        signal.initial_view,
+        signal.next_view,
+        signal.next_leader,
+        signal.timeout_votes,
+        signal.timeout_quorum,
+        signal.timeout_cert,
+        signal.local_view_advanced,
+        signal.view_sync_votes,
+        signal.new_view_votes,
+        signal.qc_formed,
+        signal.committed,
+        signal.committed_height,
+        signal.pass,
+        signal.reason
     );
     Ok(())
 }
@@ -1662,17 +4258,32 @@ fn run_network_smoke(tx_count: u64) -> Result<NetworkSignal> {
         .send(from, discovery_b)
         .context("network discovery send B->A failed")?;
 
-    // gossip: heartbeat
-    let heartbeat = ProtocolMessage::Gossip(ProtocolGossipMessage::Heartbeat {
+    // gossip: heartbeat (both directions)
+    let heartbeat_a = ProtocolMessage::Gossip(ProtocolGossipMessage::Heartbeat {
         from,
         shard: ShardId((tx_count as u32) % 1024),
     });
+    let heartbeat_b = ProtocolMessage::Gossip(ProtocolGossipMessage::Heartbeat {
+        from: to,
+        shard: ShardId(((tx_count as u32) + 1) % 1024),
+    });
     transport
-        .send(to, heartbeat)
-        .context("network gossip send failed")?;
+        .send(to, heartbeat_a)
+        .context("network gossip send A->B failed")?;
+    transport
+        .send(from, heartbeat_b)
+        .context("network gossip send B->A failed")?;
 
-    // sync: distributed occc state sync message
-    let sync = ProtocolMessage::DistributedOcccGossip(DistributedGossipMessage {
+    // sync: distributed occc state sync message (both directions)
+    let sync_a = ProtocolMessage::DistributedOcccGossip(DistributedGossipMessage {
+        from: from.0 as u32,
+        to: to.0 as u32,
+        msg_type: DistributedMessageType::StateSync,
+        payload: tx_count.to_le_bytes().to_vec(),
+        timestamp: 0,
+        seq: tx_count,
+    });
+    let sync_b = ProtocolMessage::DistributedOcccGossip(DistributedGossipMessage {
         from: to.0 as u32,
         to: from.0 as u32,
         msg_type: DistributedMessageType::StateSync,
@@ -1681,57 +4292,179 @@ fn run_network_smoke(tx_count: u64) -> Result<NetworkSignal> {
         seq: tx_count,
     });
     transport
-        .send(from, sync)
-        .context("network sync send failed")?;
+        .send(to, sync_a)
+        .context("network sync send A->B failed")?;
+    transport
+        .send(from, sync_b)
+        .context("network sync send B->A failed")?;
 
-    let recv_b_1 = transport
-        .try_recv(to)
-        .context("network recv on node B (slot 1) failed")?;
-    let recv_a_1 = transport
-        .try_recv(from)
-        .context("network recv on node A (slot 1) failed")?;
-    let recv_b_2 = transport
-        .try_recv(to)
-        .context("network recv on node B (slot 2) failed")?;
-    let recv_a_2 = transport
-        .try_recv(from)
-        .context("network recv on node A (slot 2) failed")?;
+    // pacemaker: view-sync + new-view
+    let view_sync_a = ProtocolMessage::Pacemaker(ProtocolPacemakerMessage::ViewSync {
+        from,
+        height: tx_count.saturating_add(1),
+        view: 1,
+        leader: to,
+    });
+    let view_sync_b = ProtocolMessage::Pacemaker(ProtocolPacemakerMessage::ViewSync {
+        from: to,
+        height: tx_count.saturating_add(1),
+        view: 1,
+        leader: to,
+    });
+    let new_view_a = ProtocolMessage::Pacemaker(ProtocolPacemakerMessage::NewView {
+        from,
+        height: tx_count.saturating_add(1),
+        view: 2,
+        high_qc_height: tx_count,
+    });
+    let new_view_b = ProtocolMessage::Pacemaker(ProtocolPacemakerMessage::NewView {
+        from: to,
+        height: tx_count.saturating_add(1),
+        view: 2,
+        high_qc_height: tx_count,
+    });
+    transport
+        .send(to, view_sync_a)
+        .context("network pacemaker view-sync send A->B failed")?;
+    transport
+        .send(from, view_sync_b)
+        .context("network pacemaker view-sync send B->A failed")?;
+    transport
+        .send(to, new_view_a)
+        .context("network pacemaker new-view send A->B failed")?;
+    transport
+        .send(from, new_view_b)
+        .context("network pacemaker new-view send B->A failed")?;
 
-    let discovery = matches!(
-        recv_b_1.as_ref(),
-        Some(ProtocolMessage::Gossip(ProtocolGossipMessage::PeerList { .. }))
-    ) && matches!(
-        recv_a_1.as_ref(),
-        Some(ProtocolMessage::Gossip(ProtocolGossipMessage::PeerList { .. }))
-    );
-    let gossip = matches!(
-        recv_b_2.as_ref(),
-        Some(ProtocolMessage::Gossip(ProtocolGossipMessage::Heartbeat { .. }))
-    );
-    let sync = matches!(
-        recv_a_2.as_ref(),
-        Some(ProtocolMessage::DistributedOcccGossip(DistributedGossipMessage {
-            msg_type: DistributedMessageType::StateSync,
-            ..
-        }))
-    );
+    let mut discovery_from_a = false;
+    let mut discovery_from_b = false;
+    let mut gossip_from_a = false;
+    let mut gossip_from_b = false;
+    let mut sync_from_a = false;
+    let mut sync_from_b = false;
+    let mut view_sync_from_a = false;
+    let mut view_sync_from_b = false;
+    let mut new_view_from_a = false;
+    let mut new_view_from_b = false;
+    let mut received = 0u64;
 
-    let received = [recv_b_1, recv_a_1, recv_b_2, recv_a_2]
-        .iter()
-        .filter(|m| m.is_some())
-        .count() as u64;
+    loop {
+        let mut progressed = false;
+
+        if let Some(msg) = transport
+            .try_recv(to)
+            .context("network recv on node B failed")?
+        {
+            progressed = true;
+            received = received.saturating_add(1);
+            match msg {
+                ProtocolMessage::Gossip(ProtocolGossipMessage::PeerList { from: src, .. }) => {
+                    if src == from {
+                        discovery_from_a = true;
+                    }
+                }
+                ProtocolMessage::Gossip(ProtocolGossipMessage::Heartbeat { from: src, .. }) => {
+                    if src == from {
+                        gossip_from_a = true;
+                    }
+                }
+                ProtocolMessage::DistributedOcccGossip(DistributedGossipMessage {
+                    from: src,
+                    msg_type: DistributedMessageType::StateSync,
+                    ..
+                }) => {
+                    if src as u64 == from.0 {
+                        sync_from_a = true;
+                    }
+                }
+                ProtocolMessage::Pacemaker(ProtocolPacemakerMessage::ViewSync {
+                    from: src,
+                    ..
+                }) => {
+                    if src == from {
+                        view_sync_from_a = true;
+                    }
+                }
+                ProtocolMessage::Pacemaker(ProtocolPacemakerMessage::NewView {
+                    from: src, ..
+                }) => {
+                    if src == from {
+                        new_view_from_a = true;
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        if let Some(msg) = transport
+            .try_recv(from)
+            .context("network recv on node A failed")?
+        {
+            progressed = true;
+            received = received.saturating_add(1);
+            match msg {
+                ProtocolMessage::Gossip(ProtocolGossipMessage::PeerList { from: src, .. }) => {
+                    if src == to {
+                        discovery_from_b = true;
+                    }
+                }
+                ProtocolMessage::Gossip(ProtocolGossipMessage::Heartbeat { from: src, .. }) => {
+                    if src == to {
+                        gossip_from_b = true;
+                    }
+                }
+                ProtocolMessage::DistributedOcccGossip(DistributedGossipMessage {
+                    from: src,
+                    msg_type: DistributedMessageType::StateSync,
+                    ..
+                }) => {
+                    if src as u64 == to.0 {
+                        sync_from_b = true;
+                    }
+                }
+                ProtocolMessage::Pacemaker(ProtocolPacemakerMessage::ViewSync {
+                    from: src,
+                    ..
+                }) => {
+                    if src == to {
+                        view_sync_from_b = true;
+                    }
+                }
+                ProtocolMessage::Pacemaker(ProtocolPacemakerMessage::NewView {
+                    from: src, ..
+                }) => {
+                    if src == to {
+                        new_view_from_b = true;
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        if !progressed {
+            break;
+        }
+    }
+
+    let discovery = discovery_from_a && discovery_from_b;
+    let gossip = gossip_from_a && gossip_from_b;
+    let sync = sync_from_a && sync_from_b;
+    let view_sync = view_sync_from_a && view_sync_from_b;
+    let new_view = new_view_from_a && new_view_from_b;
 
     Ok(NetworkSignal {
         transport: "in_memory",
         from: from.0,
         to: to.0,
         nodes: 2,
-        sent: 4,
+        sent: 10,
         received,
-        msg_kind: "two_node_discovery_gossip_sync",
+        msg_kind: "two_node_discovery_gossip_sync_pacemaker",
         discovery,
         gossip,
         sync,
+        view_sync,
+        new_view,
     })
 }
 
@@ -1758,6 +4491,17 @@ fn run_network_probe_mode() -> Result<()> {
     let expected_peer_ids: Vec<NodeId> = peers.iter().map(|(id, _)| *id).collect();
     let expected_set: HashSet<u64> = expected_peer_ids.iter().map(|id| id.0).collect();
     let expected_count = expected_set.len();
+    let mut view_roster = expected_peer_ids.clone();
+    view_roster.push(from);
+    view_roster.sort_by_key(|id| id.0);
+    view_roster.dedup_by_key(|id| id.0);
+    if view_roster.is_empty() {
+        bail!("network probe has empty view roster");
+    }
+    let view_sync_height = 1u64;
+    let view_sync_view = 1u64;
+    let new_view_view = 2u64;
+    let view_sync_leader = view_roster[(view_sync_view as usize) % view_roster.len()];
     let tamper_mode = string_env("NOVOVM_NET_TAMPER_BLOCK_WIRE", "").to_ascii_lowercase();
     if !tamper_mode.is_empty()
         && tamper_mode != "class_mismatch"
@@ -1808,6 +4552,8 @@ fn run_network_probe_mode() -> Result<()> {
     let mut discovery_from: HashSet<u64> = HashSet::new();
     let mut gossip_from: HashSet<u64> = HashSet::new();
     let mut sync_from: HashSet<u64> = HashSet::new();
+    let mut view_sync_from: HashSet<u64> = HashSet::new();
+    let mut new_view_from: HashSet<u64> = HashSet::new();
     let mut block_wire_from: HashSet<u64> = HashSet::new();
     let mut block_wire_min_bytes = usize::MAX;
     let mut block_wire_max_bytes = 0usize;
@@ -1844,7 +4590,25 @@ fn run_network_probe_mode() -> Result<()> {
                 transport
                     .send(*to, sync)
                     .context("udp transport send sync failed")?;
-                sent = sent.saturating_add(3);
+                let view_sync = ProtocolMessage::Pacemaker(ProtocolPacemakerMessage::ViewSync {
+                    from,
+                    height: view_sync_height,
+                    view: view_sync_view,
+                    leader: view_sync_leader,
+                });
+                transport
+                    .send(*to, view_sync)
+                    .context("udp transport send pacemaker view-sync failed")?;
+                let new_view = ProtocolMessage::Pacemaker(ProtocolPacemakerMessage::NewView {
+                    from,
+                    height: view_sync_height,
+                    view: new_view_view,
+                    high_qc_height: 0,
+                });
+                transport
+                    .send(*to, new_view)
+                    .context("udp transport send pacemaker new-view failed")?;
+                sent = sent.saturating_add(5);
             }
             last_send = Instant::now();
         }
@@ -1856,12 +4620,16 @@ fn run_network_probe_mode() -> Result<()> {
             Some(msg) => {
                 received = received.saturating_add(1);
                 match msg {
-                    ProtocolMessage::Gossip(ProtocolGossipMessage::PeerList { from: src, .. }) => {
+                    ProtocolMessage::Gossip(ProtocolGossipMessage::PeerList {
+                        from: src, ..
+                    }) => {
                         if expected_set.contains(&src.0) {
                             discovery_from.insert(src.0);
                         }
                     }
-                    ProtocolMessage::Gossip(ProtocolGossipMessage::Heartbeat { from: src, .. }) => {
+                    ProtocolMessage::Gossip(ProtocolGossipMessage::Heartbeat {
+                        from: src, ..
+                    }) => {
                         if expected_set.contains(&src.0) {
                             gossip_from.insert(src.0);
                         }
@@ -1890,6 +4658,36 @@ fn run_network_probe_mode() -> Result<()> {
                             }
                         }
                     }
+                    ProtocolMessage::Pacemaker(ProtocolPacemakerMessage::ViewSync {
+                        from: src,
+                        height,
+                        view,
+                        leader,
+                    }) => {
+                        let src_id = src.0;
+                        if expected_set.contains(&src_id)
+                            && height == view_sync_height
+                            && view == view_sync_view
+                            && leader == view_sync_leader
+                        {
+                            view_sync_from.insert(src_id);
+                        }
+                    }
+                    ProtocolMessage::Pacemaker(ProtocolPacemakerMessage::NewView {
+                        from: src,
+                        height,
+                        view,
+                        high_qc_height,
+                    }) => {
+                        let src_id = src.0;
+                        if expected_set.contains(&src_id)
+                            && height == view_sync_height
+                            && view == new_view_view
+                            && high_qc_height <= height
+                        {
+                            new_view_from.insert(src_id);
+                        }
+                    }
                     _ => {}
                 }
             }
@@ -1901,6 +4699,8 @@ fn run_network_probe_mode() -> Result<()> {
         if discovery_from.len() == expected_count
             && gossip_from.len() == expected_count
             && sync_from.len() == expected_count
+            && view_sync_from.len() == expected_count
+            && new_view_from.len() == expected_count
             && block_wire_from.len() == expected_count
             && started_at.elapsed() >= Duration::from_millis(min_runtime_ms)
         {
@@ -1914,6 +4714,8 @@ fn run_network_probe_mode() -> Result<()> {
         if discovery_from.contains(id)
             && gossip_from.contains(id)
             && sync_from.contains(id)
+            && view_sync_from.contains(id)
+            && new_view_from.contains(id)
             && block_wire_from.contains(id)
         {
             edge_ok_ids.push(*id);
@@ -1926,6 +4728,8 @@ fn run_network_probe_mode() -> Result<()> {
     let got_discovery = discovery_from.len() == expected_count;
     let got_gossip = gossip_from.len() == expected_count;
     let got_sync = sync_from.len() == expected_count;
+    let got_view_sync = view_sync_from.len() == expected_count;
+    let got_new_view = new_view_from.len() == expected_count;
     let got_block_wire = block_wire_from.len() == expected_count;
     let block_wire_min = if block_wire_min_bytes == usize::MAX {
         0
@@ -1934,11 +4738,11 @@ fn run_network_probe_mode() -> Result<()> {
     };
 
     println!(
-        "network_probe_out: transport=udp node={} listen={} peer={} sent={} received={} discovery={} gossip={} sync={}",
-        node_id, listen, peer_label, sent, received, got_discovery, got_gossip, got_sync
+        "network_probe_out: transport=udp node={} listen={} peer={} sent={} received={} discovery={} gossip={} sync={} view_sync={} new_view={}",
+        node_id, listen, peer_label, sent, received, got_discovery, got_gossip, got_sync, got_view_sync, got_new_view
     );
     println!(
-        "network_probe_graph: node={} peers={} discovery_ok={}/{} gossip_ok={}/{} sync_ok={}/{} edge_ok={}/{}",
+        "network_probe_graph: node={} peers={} discovery_ok={}/{} gossip_ok={}/{} sync_ok={}/{} view_sync_ok={}/{} new_view_ok={}/{} edge_ok={}/{}",
         node_id,
         expected_count,
         discovery_from.len(),
@@ -1946,6 +4750,10 @@ fn run_network_probe_mode() -> Result<()> {
         gossip_from.len(),
         expected_count,
         sync_from.len(),
+        expected_count,
+        view_sync_from.len(),
+        expected_count,
+        new_view_from.len(),
         expected_count,
         edge_ok_ids.len(),
         expected_count
@@ -1980,13 +4788,20 @@ fn run_network_probe_mode() -> Result<()> {
     );
 
     if bool_env("NOVOVM_NETWORK_STRICT")
-        && (!got_discovery || !got_gossip || !got_sync || !got_block_wire)
+        && (!got_discovery
+            || !got_gossip
+            || !got_sync
+            || !got_view_sync
+            || !got_new_view
+            || !got_block_wire)
     {
         bail!(
-            "network probe closure incomplete: discovery={} gossip={} sync={} block_wire={} node={}",
+            "network probe closure incomplete: discovery={} gossip={} sync={} view_sync={} new_view={} block_wire={} node={}",
             got_discovery,
             got_gossip,
             got_sync,
+            got_view_sync,
+            got_new_view,
             got_block_wire,
             node_id
         );
@@ -1995,7 +4810,596 @@ fn run_network_probe_mode() -> Result<()> {
     Ok(())
 }
 
+fn run_slash_policy_probe_mode() -> Result<()> {
+    let loaded = load_consensus_slash_policy()?;
+    emit_slash_policy_in_signal(&loaded);
+
+    // Probe mode only checks policy injection into consensus, without AOEM runtime dependency.
+    let validator_set = ValidatorSet::new_equal_weight(vec![0, 1]);
+    let signing_key = SigningKey::generate(&mut OsRng);
+    let peer_signing_key = SigningKey::generate(&mut OsRng);
+    let mut public_keys = HashMap::new();
+    public_keys.insert(0, signing_key.verifying_key());
+    public_keys.insert(1, peer_signing_key.verifying_key());
+    let engine = BFTEngine::new(
+        BFTConfig::default(),
+        0,
+        signing_key,
+        validator_set,
+        public_keys,
+    )
+    .context("slash policy probe: init novovm-consensus engine failed")?;
+    engine
+        .set_slash_policy(loaded.policy.clone())
+        .context("slash policy probe: set slash policy failed")?;
+    let applied = engine.slash_policy();
+    let injected = applied == loaded.policy;
+    println!(
+        "slash_policy_probe_out: injected={} mode={} threshold={} min_validators={} cooldown_epochs={}",
+        injected,
+        applied.mode.as_str(),
+        applied.equivocation_threshold,
+        applied.min_active_validators,
+        loaded.cooldown_epochs
+    );
+    if !injected {
+        bail!(
+            "slash policy probe mismatch: expect mode={} threshold={} min_validators={}, got mode={} threshold={} min_validators={}",
+            loaded.policy.mode.as_str(),
+            loaded.policy.equivocation_threshold,
+            loaded.policy.min_active_validators,
+            applied.mode.as_str(),
+            applied.equivocation_threshold,
+            applied.min_active_validators
+        );
+    }
+
+    Ok(())
+}
+
+fn load_governance_update_slash_policy() -> Result<SlashPolicy> {
+    let mode_raw =
+        std::env::var("NOVOVM_GOV_SLASH_MODE").unwrap_or_else(|_| "observe_only".to_string());
+    let mode = parse_slash_mode(&mode_raw)?;
+    let policy = SlashPolicy {
+        mode,
+        equivocation_threshold: u32_env("NOVOVM_GOV_SLASH_THRESHOLD", 3),
+        min_active_validators: u32_env("NOVOVM_GOV_SLASH_MIN_VALIDATORS", 2),
+        cooldown_epochs: u64_env("NOVOVM_GOV_SLASH_COOLDOWN_EPOCHS", 6),
+    };
+    policy
+        .validate()
+        .map_err(|e| anyhow::anyhow!("governance_policy_invalid: {}", e))?;
+    Ok(policy)
+}
+
+fn load_governance_mempool_fee_floor() -> Result<u64> {
+    let fee_floor = u64_env("NOVOVM_GOV_MEMPOOL_FEE_FLOOR", 9);
+    if fee_floor == 0 {
+        bail!("governance_policy_invalid: mempool fee floor must be > 0");
+    }
+    Ok(fee_floor)
+}
+
+fn load_governance_network_dos_policy() -> Result<NetworkDosPolicy> {
+    let rpc_rate_limit_per_ip = u32_env("NOVOVM_GOV_NETWORK_DOS_RATE_LIMIT_PER_IP", 96);
+    let peer_ban_threshold_raw = std::env::var("NOVOVM_GOV_NETWORK_DOS_PEER_BAN_THRESHOLD")
+        .ok()
+        .and_then(|v| v.trim().parse::<i32>().ok())
+        .unwrap_or(-6);
+    let policy = NetworkDosPolicy {
+        rpc_rate_limit_per_ip,
+        peer_ban_threshold: peer_ban_threshold_raw,
+    };
+    policy
+        .validate()
+        .map_err(|e| anyhow::anyhow!("governance_policy_invalid: {}", e))?;
+    Ok(policy)
+}
+
+fn run_governance_hook_probe_mode() -> Result<()> {
+    let loaded = load_consensus_slash_policy()?;
+    emit_slash_policy_in_signal(&loaded);
+    let governance_policy = load_governance_update_slash_policy()?;
+    println!(
+        "governance_op_in: op=update_slash_policy mode={} threshold={} min_validators={} cooldown_epochs={}",
+        governance_policy.mode.as_str(),
+        governance_policy.equivocation_threshold,
+        governance_policy.min_active_validators,
+        governance_policy.cooldown_epochs
+    );
+
+    // Probe mode only verifies governance hook behavior, without enabling governance execution.
+    let validator_set = ValidatorSet::new_equal_weight(vec![0, 1]);
+    let signing_key = SigningKey::generate(&mut OsRng);
+    let peer_signing_key = SigningKey::generate(&mut OsRng);
+    let mut public_keys = HashMap::new();
+    public_keys.insert(0, signing_key.verifying_key());
+    public_keys.insert(1, peer_signing_key.verifying_key());
+    let engine = BFTEngine::new(
+        BFTConfig::default(),
+        0,
+        signing_key,
+        validator_set,
+        public_keys,
+    )
+    .context("governance hook probe: init novovm-consensus engine failed")?;
+    engine
+        .set_slash_policy(loaded.policy.clone())
+        .context("governance hook probe: set baseline slash policy failed")?;
+    let policy_before = engine.slash_policy();
+
+    let staged_result = engine.stage_governance_op(GovernanceOp::UpdateSlashPolicy {
+        policy: governance_policy.clone(),
+    });
+    let reason_code = match &staged_result {
+        Err(err) => {
+            let msg = err.to_string().to_ascii_lowercase();
+            if msg.contains("governance not enabled") {
+                "governance_not_enabled"
+            } else {
+                "governance_hook_error"
+            }
+        }
+        Ok(_) => "executed_unexpectedly",
+    };
+
+    let policy_after = engine.slash_policy();
+    let policy_unchanged = policy_after == policy_before;
+    let staged_ops = engine.staged_governance_ops();
+    let staged_match = staged_ops
+        .last()
+        .map(|op| {
+            matches!(
+                op,
+                GovernanceOp::UpdateSlashPolicy { policy } if policy == &governance_policy
+            )
+        })
+        .unwrap_or(false);
+    let staged = !staged_ops.is_empty();
+    let executed = staged_result.is_ok() || !policy_unchanged;
+    println!(
+        "governance_op_hook_out: staged={} executed={} reason_code={} policy_unchanged={} staged_ops={} staged_match={}",
+        staged,
+        executed,
+        reason_code,
+        policy_unchanged,
+        staged_ops.len(),
+        staged_match
+    );
+
+    if !staged
+        || executed
+        || !policy_unchanged
+        || !staged_match
+        || reason_code != "governance_not_enabled"
+    {
+        bail!(
+            "governance hook probe failed: staged={} executed={} reason_code={} policy_unchanged={} staged_match={} staged_ops={}",
+            staged,
+            executed,
+            reason_code,
+            policy_unchanged,
+            staged_match,
+            staged_ops.len()
+        );
+    }
+    Ok(())
+}
+
+fn run_governance_execute_probe_mode() -> Result<()> {
+    let loaded = load_consensus_slash_policy()?;
+    emit_slash_policy_in_signal(&loaded);
+    let governance_policy = load_governance_update_slash_policy()?;
+
+    let validator_set = ValidatorSet::new_equal_weight(vec![0, 1, 2]);
+    let required_quorum = validator_set.quorum_size();
+    let signing_keys: Vec<_> = (0..3).map(|_| SigningKey::generate(&mut OsRng)).collect();
+    let mut public_keys = HashMap::new();
+    public_keys.insert(0, signing_keys[0].verifying_key());
+    public_keys.insert(1, signing_keys[1].verifying_key());
+    public_keys.insert(2, signing_keys[2].verifying_key());
+
+    let engine = BFTEngine::new(
+        BFTConfig::default(),
+        0,
+        signing_keys[0].clone(),
+        validator_set,
+        public_keys,
+    )
+    .context("governance execute probe: init novovm-consensus engine failed")?;
+    engine
+        .set_slash_policy(loaded.policy.clone())
+        .context("governance execute probe: set baseline slash policy failed")?;
+    engine.set_governance_execution_enabled(true);
+
+    let proposal = engine
+        .submit_governance_proposal(
+            0,
+            GovernanceOp::UpdateSlashPolicy {
+                policy: governance_policy.clone(),
+            },
+        )
+        .context("governance execute probe: submit proposal failed")?;
+    let votes = vec![
+        GovernanceVote::new(&proposal, 0, true, &signing_keys[0]),
+        GovernanceVote::new(&proposal, 1, true, &signing_keys[1]),
+    ];
+    println!(
+        "governance_execute_in: proposal_id={} op=update_slash_policy mode={} threshold={} min_validators={} cooldown_epochs={} votes={} quorum={}",
+        proposal.proposal_id,
+        governance_policy.mode.as_str(),
+        governance_policy.equivocation_threshold,
+        governance_policy.min_active_validators,
+        governance_policy.cooldown_epochs,
+        votes.len(),
+        required_quorum
+    );
+
+    let exec_result = engine.execute_governance_proposal(proposal.proposal_id, &votes);
+    let reason_code = match &exec_result {
+        Ok(_) => "ok",
+        Err(err) => {
+            let msg = err.to_string().to_ascii_lowercase();
+            if msg.contains("insufficient votes") {
+                "insufficient_votes"
+            } else if msg.contains("invalid signature") {
+                "invalid_signature"
+            } else if msg.contains("governance not enabled") {
+                "governance_not_enabled"
+            } else {
+                "governance_execution_error"
+            }
+        }
+    };
+    let executed = exec_result.is_ok();
+    let applied = engine.slash_policy() == governance_policy;
+    println!(
+        "governance_execute_out: proposal_id={} executed={} reason_code={} policy_applied={} mode={} threshold={} min_validators={} cooldown_epochs={}",
+        proposal.proposal_id,
+        executed,
+        reason_code,
+        applied,
+        engine.slash_policy().mode.as_str(),
+        engine.slash_policy().equivocation_threshold,
+        engine.slash_policy().min_active_validators,
+        engine.slash_policy().cooldown_epochs
+    );
+
+    if !executed || !applied || reason_code != "ok" {
+        bail!(
+            "governance execute probe failed: executed={} applied={} reason_code={}",
+            executed,
+            applied,
+            reason_code
+        );
+    }
+    Ok(())
+}
+
+fn run_governance_negative_probe_mode() -> Result<()> {
+    let loaded = load_consensus_slash_policy()?;
+    emit_slash_policy_in_signal(&loaded);
+    let governance_policy = load_governance_update_slash_policy()?;
+
+    let validator_set = ValidatorSet::new_equal_weight(vec![0, 1, 2]);
+    let signing_keys: Vec<_> = (0..3).map(|_| SigningKey::generate(&mut OsRng)).collect();
+    let mut public_keys = HashMap::new();
+    public_keys.insert(0, signing_keys[0].verifying_key());
+    public_keys.insert(1, signing_keys[1].verifying_key());
+    public_keys.insert(2, signing_keys[2].verifying_key());
+
+    let engine = BFTEngine::new(
+        BFTConfig::default(),
+        0,
+        signing_keys[0].clone(),
+        validator_set,
+        public_keys,
+    )
+    .context("governance negative probe: init novovm-consensus engine failed")?;
+    engine
+        .set_slash_policy(loaded.policy.clone())
+        .context("governance negative probe: set baseline slash policy failed")?;
+    engine.set_governance_execution_enabled(true);
+
+    let unauthorized_submit = matches!(
+        engine.submit_governance_proposal(
+            99,
+            GovernanceOp::UpdateSlashPolicy {
+                policy: governance_policy.clone(),
+            }
+        ),
+        Err(novovm_consensus::BFTError::NotValidator(99))
+    );
+
+    let invalid_sig_proposal = engine
+        .submit_governance_proposal(
+            0,
+            GovernanceOp::UpdateSlashPolicy {
+                policy: governance_policy.clone(),
+            },
+        )
+        .context("governance negative probe: submit invalid-signature proposal failed")?;
+    let invalid_sig_votes = vec![
+        GovernanceVote::new(&invalid_sig_proposal, 0, true, &signing_keys[0]),
+        // voter_id=1 but signed by key[2], should fail verification.
+        GovernanceVote::new(&invalid_sig_proposal, 1, true, &signing_keys[2]),
+    ];
+    let invalid_signature = matches!(
+        engine.execute_governance_proposal(invalid_sig_proposal.proposal_id, &invalid_sig_votes),
+        Err(novovm_consensus::BFTError::InvalidSignature(_))
+    );
+
+    let duplicate_vote_proposal = engine
+        .submit_governance_proposal(
+            0,
+            GovernanceOp::UpdateSlashPolicy {
+                policy: governance_policy.clone(),
+            },
+        )
+        .context("governance negative probe: submit duplicate-vote proposal failed")?;
+    let duplicate_vote_votes = vec![
+        GovernanceVote::new(&duplicate_vote_proposal, 0, true, &signing_keys[0]),
+        GovernanceVote::new(&duplicate_vote_proposal, 0, true, &signing_keys[0]),
+    ];
+    let duplicate_vote = matches!(
+        engine.execute_governance_proposal(
+            duplicate_vote_proposal.proposal_id,
+            &duplicate_vote_votes
+        ),
+        Err(novovm_consensus::BFTError::DuplicateVote(0))
+    );
+
+    let insufficient_votes_proposal = engine
+        .submit_governance_proposal(
+            0,
+            GovernanceOp::UpdateSlashPolicy {
+                policy: governance_policy.clone(),
+            },
+        )
+        .context("governance negative probe: submit insufficient-votes proposal failed")?;
+    let insufficient_votes_set = vec![GovernanceVote::new(
+        &insufficient_votes_proposal,
+        0,
+        true,
+        &signing_keys[0],
+    )];
+    let insufficient_votes = matches!(
+        engine.execute_governance_proposal(
+            insufficient_votes_proposal.proposal_id,
+            &insufficient_votes_set
+        ),
+        Err(novovm_consensus::BFTError::InsufficientVotes { .. })
+    );
+
+    let replay_proposal = engine
+        .submit_governance_proposal(
+            0,
+            GovernanceOp::UpdateSlashPolicy {
+                policy: governance_policy.clone(),
+            },
+        )
+        .context("governance negative probe: submit replay proposal failed")?;
+    let replay_votes = vec![
+        GovernanceVote::new(&replay_proposal, 0, true, &signing_keys[0]),
+        GovernanceVote::new(&replay_proposal, 1, true, &signing_keys[1]),
+    ];
+    let first_exec_ok = engine
+        .execute_governance_proposal(replay_proposal.proposal_id, &replay_votes)
+        .is_ok();
+    let replay_execute =
+        match engine.execute_governance_proposal(replay_proposal.proposal_id, &replay_votes) {
+            Err(novovm_consensus::BFTError::Internal(msg)) => {
+                msg.to_ascii_lowercase().contains("not found")
+            }
+            _ => false,
+        };
+
+    println!(
+        "governance_negative_out: unauthorized_submit={} invalid_signature={} duplicate_vote={} insufficient_votes={} replay_execute={} first_exec_ok={}",
+        unauthorized_submit,
+        invalid_signature,
+        duplicate_vote,
+        insufficient_votes,
+        replay_execute,
+        first_exec_ok
+    );
+
+    if !unauthorized_submit
+        || !invalid_signature
+        || !duplicate_vote
+        || !insufficient_votes
+        || !first_exec_ok
+        || !replay_execute
+    {
+        bail!(
+            "governance negative probe failed: unauthorized_submit={} invalid_signature={} duplicate_vote={} insufficient_votes={} replay_execute={} first_exec_ok={}",
+            unauthorized_submit,
+            invalid_signature,
+            duplicate_vote,
+            insufficient_votes,
+            replay_execute,
+            first_exec_ok
+        );
+    }
+
+    Ok(())
+}
+
+fn run_governance_param2_probe_mode() -> Result<()> {
+    let loaded = load_consensus_slash_policy()?;
+    emit_slash_policy_in_signal(&loaded);
+    let mempool_fee_floor = load_governance_mempool_fee_floor()?;
+
+    let validator_set = ValidatorSet::new_equal_weight(vec![0, 1, 2]);
+    let required_quorum = validator_set.quorum_size();
+    let signing_keys: Vec<_> = (0..3).map(|_| SigningKey::generate(&mut OsRng)).collect();
+    let mut public_keys = HashMap::new();
+    public_keys.insert(0, signing_keys[0].verifying_key());
+    public_keys.insert(1, signing_keys[1].verifying_key());
+    public_keys.insert(2, signing_keys[2].verifying_key());
+    let engine = BFTEngine::new(
+        BFTConfig::default(),
+        0,
+        signing_keys[0].clone(),
+        validator_set,
+        public_keys,
+    )
+    .context("governance param2 probe: init novovm-consensus engine failed")?;
+    engine
+        .set_slash_policy(loaded.policy.clone())
+        .context("governance param2 probe: set baseline slash policy failed")?;
+    engine.set_governance_execution_enabled(true);
+
+    let proposal = engine
+        .submit_governance_proposal(
+            0,
+            GovernanceOp::UpdateMempoolFeeFloor {
+                fee_floor: mempool_fee_floor,
+            },
+        )
+        .context("governance param2 probe: submit proposal failed")?;
+    let votes = vec![
+        GovernanceVote::new(&proposal, 0, true, &signing_keys[0]),
+        GovernanceVote::new(&proposal, 1, true, &signing_keys[1]),
+    ];
+    println!(
+        "governance_param2_in: proposal_id={} op=update_mempool_fee_floor fee_floor={} votes={} quorum={}",
+        proposal.proposal_id,
+        mempool_fee_floor,
+        votes.len(),
+        required_quorum
+    );
+    let exec_result = engine.execute_governance_proposal(proposal.proposal_id, &votes);
+    let reason_code = match &exec_result {
+        Ok(_) => "ok",
+        Err(err) => {
+            let msg = err.to_string().to_ascii_lowercase();
+            if msg.contains("insufficient votes") {
+                "insufficient_votes"
+            } else if msg.contains("invalid signature") {
+                "invalid_signature"
+            } else if msg.contains("governance not enabled") {
+                "governance_not_enabled"
+            } else {
+                "governance_execution_error"
+            }
+        }
+    };
+    let executed = exec_result.is_ok();
+    let applied = engine.governance_mempool_fee_floor() == mempool_fee_floor;
+    println!(
+        "governance_param2_out: proposal_id={} executed={} reason_code={} fee_floor_applied={} fee_floor={}",
+        proposal.proposal_id,
+        executed,
+        reason_code,
+        applied,
+        engine.governance_mempool_fee_floor()
+    );
+
+    if !executed || !applied || reason_code != "ok" {
+        bail!(
+            "governance param2 probe failed: executed={} applied={} reason_code={} fee_floor={}",
+            executed,
+            applied,
+            reason_code,
+            engine.governance_mempool_fee_floor()
+        );
+    }
+    Ok(())
+}
+
+fn run_governance_param3_probe_mode() -> Result<()> {
+    let loaded = load_consensus_slash_policy()?;
+    emit_slash_policy_in_signal(&loaded);
+    let network_dos_policy = load_governance_network_dos_policy()?;
+
+    let validator_set = ValidatorSet::new_equal_weight(vec![0, 1, 2]);
+    let required_quorum = validator_set.quorum_size();
+    let signing_keys: Vec<_> = (0..3).map(|_| SigningKey::generate(&mut OsRng)).collect();
+    let mut public_keys = HashMap::new();
+    public_keys.insert(0, signing_keys[0].verifying_key());
+    public_keys.insert(1, signing_keys[1].verifying_key());
+    public_keys.insert(2, signing_keys[2].verifying_key());
+    let engine = BFTEngine::new(
+        BFTConfig::default(),
+        0,
+        signing_keys[0].clone(),
+        validator_set,
+        public_keys,
+    )
+    .context("governance param3 probe: init novovm-consensus engine failed")?;
+    engine
+        .set_slash_policy(loaded.policy.clone())
+        .context("governance param3 probe: set baseline slash policy failed")?;
+    engine.set_governance_execution_enabled(true);
+
+    let proposal = engine
+        .submit_governance_proposal(
+            0,
+            GovernanceOp::UpdateNetworkDosPolicy {
+                policy: network_dos_policy.clone(),
+            },
+        )
+        .context("governance param3 probe: submit proposal failed")?;
+    let votes = vec![
+        GovernanceVote::new(&proposal, 0, true, &signing_keys[0]),
+        GovernanceVote::new(&proposal, 1, true, &signing_keys[1]),
+    ];
+    println!(
+        "governance_param3_in: proposal_id={} op=update_network_dos_policy rpc_rate_limit_per_ip={} peer_ban_threshold={} votes={} quorum={}",
+        proposal.proposal_id,
+        network_dos_policy.rpc_rate_limit_per_ip,
+        network_dos_policy.peer_ban_threshold,
+        votes.len(),
+        required_quorum
+    );
+    let exec_result = engine.execute_governance_proposal(proposal.proposal_id, &votes);
+    let reason_code = match &exec_result {
+        Ok(_) => "ok",
+        Err(err) => {
+            let msg = err.to_string().to_ascii_lowercase();
+            if msg.contains("insufficient votes") {
+                "insufficient_votes"
+            } else if msg.contains("invalid signature") {
+                "invalid_signature"
+            } else if msg.contains("governance not enabled") {
+                "governance_not_enabled"
+            } else {
+                "governance_execution_error"
+            }
+        }
+    };
+    let executed = exec_result.is_ok();
+    let applied = engine.governance_network_dos_policy() == network_dos_policy;
+    let applied_policy = engine.governance_network_dos_policy();
+    println!(
+        "governance_param3_out: proposal_id={} executed={} reason_code={} policy_applied={} rpc_rate_limit_per_ip={} peer_ban_threshold={}",
+        proposal.proposal_id,
+        executed,
+        reason_code,
+        applied,
+        applied_policy.rpc_rate_limit_per_ip,
+        applied_policy.peer_ban_threshold
+    );
+
+    if !executed || !applied || reason_code != "ok" {
+        bail!(
+            "governance param3 probe failed: executed={} applied={} reason_code={} rpc_rate_limit_per_ip={} peer_ban_threshold={}",
+            executed,
+            applied,
+            reason_code,
+            applied_policy.rpc_rate_limit_per_ip,
+            applied_policy.peer_ban_threshold
+        );
+    }
+    Ok(())
+}
+
 fn run_ffi_v2() -> Result<()> {
+    let slash_policy_loaded = load_consensus_slash_policy()?;
+    emit_slash_policy_in_signal(&slash_policy_loaded);
+
     let runtime = AoemRuntimeConfig::from_env()?;
     let facade = novovm_exec::AoemExecFacade::open_with_runtime(&runtime)?;
     let session = facade.create_session()?;
@@ -2015,11 +5419,7 @@ fn run_ffi_v2() -> Result<()> {
     let (admitted_txs, mempool) = admit_mempool_basic(&decoded_txs, fee_floor)?;
     println!(
         "mempool_out: policy=basic accepted={} rejected={} fee_floor={} nonce_ok={} sig_ok={}",
-        mempool.accepted,
-        mempool.rejected,
-        mempool.fee_floor,
-        mempool.nonce_ok,
-        mempool.sig_ok
+        mempool.accepted, mempool.rejected, mempool.fee_floor, mempool.nonce_ok, mempool.sig_ok
     );
 
     let tx_meta = validate_and_summarize_txs(&admitted_txs)?;
@@ -2123,9 +5523,10 @@ fn run_ffi_v2() -> Result<()> {
         adapter_hash: adapter_signal.consensus_adapter_hash,
     };
     match run_batch_a_minimal_closure(
-        out,
         &local_batches,
         consensus_binding,
+        adapter_signal.state_root,
+        &slash_policy_loaded.policy,
     ) {
         Ok(block) => {
             if let Err(e) = commit_block_in_memory(block, consensus_binding) {
@@ -2157,17 +5558,26 @@ fn run_ffi_v2() -> Result<()> {
             );
             println!(
                 "network_closure: nodes={} discovery={} gossip={} sync={}",
-                signal.nodes,
-                signal.discovery,
-                signal.gossip,
-                signal.sync
+                signal.nodes, signal.discovery, signal.gossip, signal.sync
             );
-            if strict_network && (!signal.discovery || !signal.gossip || !signal.sync) {
+            println!(
+                "network_pacemaker: view_sync={} new_view={}",
+                signal.view_sync, signal.new_view
+            );
+            if strict_network
+                && (!signal.discovery
+                    || !signal.gossip
+                    || !signal.sync
+                    || !signal.view_sync
+                    || !signal.new_view)
+            {
                 bail!(
-                    "network closure incomplete: discovery={} gossip={} sync={}",
+                    "network closure incomplete: discovery={} gossip={} sync={} view_sync={} new_view={}",
                     signal.discovery,
                     signal.gossip,
-                    signal.sync
+                    signal.sync,
+                    signal.view_sync,
+                    signal.new_view
                 );
             }
         }
@@ -2207,6 +5617,42 @@ fn main() -> Result<()> {
     if node_mode.eq_ignore_ascii_case("network_probe") {
         return run_network_probe_mode();
     }
+    if node_mode.eq_ignore_ascii_case("header_sync_probe") {
+        return run_header_sync_probe_mode();
+    }
+    if node_mode.eq_ignore_ascii_case("fast_state_sync_probe") {
+        return run_fast_state_sync_probe_mode();
+    }
+    if node_mode.eq_ignore_ascii_case("network_dos_probe") {
+        return run_network_dos_probe_mode();
+    }
+    if node_mode.eq_ignore_ascii_case("pacemaker_failover_probe") {
+        return run_pacemaker_failover_probe_mode();
+    }
+    if node_mode.eq_ignore_ascii_case("slash_policy_probe") {
+        return run_slash_policy_probe_mode();
+    }
+    if node_mode.eq_ignore_ascii_case("governance_hook_probe") {
+        return run_governance_hook_probe_mode();
+    }
+    if node_mode.eq_ignore_ascii_case("governance_execute_probe") {
+        return run_governance_execute_probe_mode();
+    }
+    if node_mode.eq_ignore_ascii_case("governance_negative_probe") {
+        return run_governance_negative_probe_mode();
+    }
+    if node_mode.eq_ignore_ascii_case("governance_param2_probe") {
+        return run_governance_param2_probe_mode();
+    }
+    if node_mode.eq_ignore_ascii_case("governance_param3_probe") {
+        return run_governance_param3_probe_mode();
+    }
+    if node_mode.eq_ignore_ascii_case("chain_query") {
+        return run_chain_query_mode();
+    }
+    if node_mode.eq_ignore_ascii_case("rpc_server") {
+        return run_chain_query_rpc_server_mode();
+    }
 
     let mode = exec_path_mode();
     match mode.as_str() {
@@ -2220,7 +5666,7 @@ fn main() -> Result<()> {
 mod tests {
     use super::*;
     use aoem_bindings::AoemExecV2Result;
-    use novovm_exec::{AoemExecMetrics, AoemExecReturnCode};
+    use novovm_exec::{AoemExecMetrics, AoemExecOutput, AoemExecReturnCode};
 
     fn test_tx(account: u64, key: u64, value: u64, nonce: u64, fee: u64) -> LocalTx {
         build_local_tx(account, key, value, nonce, fee)
@@ -2359,6 +5805,15 @@ mod tests {
     }
 
     #[test]
+    fn adapter_plugin_chain_code_mapping_is_stable() {
+        assert_eq!(chain_type_to_plugin_code(ChainType::NovoVM), Some(0));
+        assert_eq!(chain_type_to_plugin_code(ChainType::EVM), Some(1));
+        assert_eq!(chain_type_to_plugin_code(ChainType::BNB), Some(6));
+        assert_eq!(chain_type_to_plugin_code(ChainType::Custom), Some(13));
+        assert_eq!(chain_type_to_plugin_code(ChainType::Solana), None);
+    }
+
+    #[test]
     fn tx_wire_codec_roundtrip_passes() {
         let txs = vec![test_tx(1000, 1, 10, 0, 1), test_tx(1001, 2, 20, 0, 2)];
         let (decoded, summary) =
@@ -2463,15 +5918,232 @@ mod tests {
     }
 
     #[test]
+    fn local_tx_hash_is_deterministic() {
+        let tx = test_tx(1000, 7, 11, 2, 3);
+        let a = local_tx_hash(&tx);
+        let b = local_tx_hash(&tx);
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn query_state_db_tracks_block_tx_receipt_balance() {
+        let txs = vec![test_tx(1000, 1, 10, 0, 2), test_tx(1001, 2, 20, 0, 3)];
+        let closure = BatchAClosureOutput {
+            epoch_id: 3,
+            height: 5,
+            txs: 2,
+            state_root: [4u8; 32],
+            proposal_hash: [5u8; 32],
+            consensus_binding: ConsensusPluginBindingV1 {
+                plugin_class_code: PLUGIN_CLASS_CONSENSUS,
+                adapter_hash: [9u8; 32],
+            },
+        };
+        let batches = build_local_batches_from_txs(&txs, 1);
+        let block = build_local_block(&closure, &batches);
+
+        let mut db = QueryStateDb::default();
+        apply_block_to_query_db(&mut db, &block);
+
+        assert_eq!(db.blocks.len(), 1);
+        assert_eq!(db.txs.len(), 2);
+        assert_eq!(db.receipts.len(), 2);
+        assert_eq!(db.balances.get("1000"), Some(&10));
+        assert_eq!(db.balances.get("1001"), Some(&20));
+    }
+
+    #[test]
+    fn chain_query_methods_return_expected_records() {
+        let txs = vec![test_tx(1000, 1, 10, 0, 2), test_tx(1001, 2, 20, 0, 3)];
+        let closure = BatchAClosureOutput {
+            epoch_id: 3,
+            height: 5,
+            txs: 2,
+            state_root: [4u8; 32],
+            proposal_hash: [5u8; 32],
+            consensus_binding: ConsensusPluginBindingV1 {
+                plugin_class_code: PLUGIN_CLASS_CONSENSUS,
+                adapter_hash: [9u8; 32],
+            },
+        };
+        let batches = build_local_batches_from_txs(&txs, 1);
+        let block = build_local_block(&closure, &batches);
+        let mut db = QueryStateDb::default();
+        apply_block_to_query_db(&mut db, &block);
+
+        let block_resp = run_chain_query(&db, "getBlock", &serde_json::json!({"height": 5}))
+            .expect("getBlock should succeed");
+        assert_eq!(block_resp["found"].as_bool(), Some(true));
+        assert_eq!(block_resp["block"]["height"].as_u64(), Some(5));
+
+        let tx_hash = db
+            .txs
+            .keys()
+            .next()
+            .expect("tx hash should exist")
+            .to_string();
+        let tx_resp = run_chain_query(
+            &db,
+            "getTransaction",
+            &serde_json::json!({"tx_hash": tx_hash}),
+        )
+        .expect("getTransaction should succeed");
+        assert_eq!(tx_resp["found"].as_bool(), Some(true));
+
+        let receipt_hash = db
+            .receipts
+            .keys()
+            .next()
+            .expect("receipt hash should exist")
+            .to_string();
+        let receipt_resp = run_chain_query(
+            &db,
+            "getReceipt",
+            &serde_json::json!({"tx_hash": receipt_hash}),
+        )
+        .expect("getReceipt should succeed");
+        assert_eq!(receipt_resp["found"].as_bool(), Some(true));
+
+        let balance_resp =
+            run_chain_query(&db, "getBalance", &serde_json::json!({"account": "1001"}))
+                .expect("getBalance should succeed");
+        assert_eq!(balance_resp["found"].as_bool(), Some(true));
+        assert_eq!(balance_resp["balance"].as_u64(), Some(20));
+    }
+
+    #[test]
     fn network_smoke_closes_two_node_flow() {
         let signal = run_network_smoke(3).expect("network smoke should succeed");
         assert_eq!(signal.transport, "in_memory");
         assert_eq!(signal.nodes, 2);
-        assert_eq!(signal.sent, 4);
-        assert_eq!(signal.received, 4);
-        assert_eq!(signal.msg_kind, "two_node_discovery_gossip_sync");
+        assert_eq!(signal.sent, 10);
+        assert_eq!(signal.received, 10);
+        assert_eq!(signal.msg_kind, "two_node_discovery_gossip_sync_pacemaker");
         assert!(signal.discovery);
         assert!(signal.gossip);
         assert!(signal.sync);
+        assert!(signal.view_sync);
+        assert!(signal.new_view);
+    }
+
+    #[test]
+    fn header_sync_probe_completes_headers_first() {
+        let signal = run_header_sync_probe(8, 3, 64, 0).expect("header sync probe should succeed");
+        assert!(signal.pass);
+        assert!(signal.complete);
+        assert_eq!(signal.local_tip_before, 2);
+        assert_eq!(signal.local_tip_after, 7);
+        assert_eq!(signal.fetched, 5);
+        assert_eq!(signal.applied, 5);
+        assert_eq!(signal.reason, "ok");
+    }
+
+    #[test]
+    fn header_sync_probe_detects_tampered_parent_hash() {
+        let signal = run_header_sync_probe(8, 3, 64, 5).expect("header sync probe should run");
+        assert!(!signal.pass);
+        assert!(!signal.complete);
+        assert!(signal.reason.starts_with("parent_hash_mismatch_at_"));
+        assert_eq!(signal.local_tip_before, 2);
+        assert_eq!(signal.local_tip_after, 4);
+        assert_eq!(signal.applied, 2);
+        assert_eq!(signal.fetched, 3);
+    }
+
+    #[test]
+    fn fast_state_sync_probe_completes_and_verifies_snapshot() {
+        let signal =
+            run_fast_state_sync_probe(16, 3, 128, 0).expect("fast/state sync probe should succeed");
+        assert!(signal.pass);
+        assert!(signal.fast_complete);
+        assert!(signal.snapshot_verified);
+        assert!(signal.state_complete);
+        assert_eq!(signal.local_tip_before, 2);
+        assert_eq!(signal.local_tip_after, 15);
+        assert_eq!(signal.snapshot_height, 15);
+        assert_eq!(signal.reason, "ok");
+    }
+
+    #[test]
+    fn fast_state_sync_probe_detects_tampered_snapshot() {
+        let signal =
+            run_fast_state_sync_probe(16, 3, 128, 15).expect("fast/state sync probe should run");
+        assert!(!signal.pass);
+        assert!(signal.fast_complete);
+        assert!(!signal.snapshot_verified);
+        assert!(!signal.state_complete);
+        assert!(signal.reason.starts_with("snapshot_root_mismatch_at_"));
+    }
+
+    #[test]
+    fn network_dos_probe_bans_invalid_peers_and_keeps_healthy_peer() {
+        let signal = run_network_dos_probe(2, 6, 3).expect("network dos probe should run");
+        assert!(signal.pass);
+        assert_eq!(signal.invalid_peers, 2);
+        assert_eq!(signal.bans, 2);
+        assert!(signal.invalid_detected >= 6);
+        assert!(signal.storm_rejected >= 2);
+        assert!(signal.healthy_accepts >= 1);
+        assert_eq!(signal.reason, "ok");
+    }
+
+    #[test]
+    fn pacemaker_failover_probe_rotates_and_commits_after_timeout() {
+        let signal =
+            run_pacemaker_failover_probe(4, 0).expect("pacemaker failover probe should run");
+        assert_eq!(signal.mode, "timeout_view_sync_new_view_failover");
+        assert_eq!(signal.nodes, 4);
+        assert_eq!(signal.failed_leader, 0);
+        assert_eq!(signal.initial_view, 0);
+        assert_eq!(signal.next_view, 1);
+        assert_eq!(signal.next_leader, 1);
+        assert!(signal.timeout_cert);
+        assert!(signal.local_view_advanced >= signal.timeout_quorum);
+        assert!(signal.view_sync_votes >= signal.timeout_quorum);
+        assert!(signal.new_view_votes >= signal.timeout_quorum);
+        assert!(signal.qc_formed);
+        assert!(signal.committed);
+        assert!(signal.committed_height >= 1);
+        assert!(signal.pass);
+        assert_eq!(signal.reason, "ok");
+    }
+
+    #[test]
+    fn slash_mode_parser_accepts_supported_values() {
+        assert_eq!(
+            parse_slash_mode("enforce").expect("parse enforce").as_str(),
+            "enforce"
+        );
+        assert_eq!(
+            parse_slash_mode("observe_only")
+                .expect("parse observe_only")
+                .as_str(),
+            "observe_only"
+        );
+        assert!(parse_slash_mode("bad_mode").is_err());
+    }
+
+    #[test]
+    fn parse_consensus_policy_file_accepts_utf8_bom() {
+        let mut path = std::env::temp_dir();
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock should be >= epoch")
+            .as_nanos();
+        path.push(format!("novovm-consensus-policy-bom-{}.json", nonce));
+
+        let mut bytes = vec![0xEF, 0xBB, 0xBF];
+        bytes.extend_from_slice(
+            br#"{"mode":"enforce","equivocation_threshold":2,"min_active_validators":1,"cooldown_epochs":9}"#,
+        );
+        fs::write(&path, bytes).expect("write policy file");
+
+        let loaded = parse_consensus_policy_file(&path).expect("parse policy with bom");
+        assert_eq!(loaded.policy.mode.as_str(), "enforce");
+        assert_eq!(loaded.policy.equivocation_threshold, 2);
+        assert_eq!(loaded.policy.min_active_validators, 1);
+        assert_eq!(loaded.cooldown_epochs, 9);
+
+        let _ = fs::remove_file(&path);
     }
 }

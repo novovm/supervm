@@ -245,14 +245,19 @@ impl ChainAdapter for NovoVmAdapter {
 
 #[must_use]
 pub fn supports_native_chain(chain: ChainType) -> bool {
-    matches!(chain, ChainType::NovoVM | ChainType::Custom)
+    matches!(
+        chain,
+        ChainType::NovoVM | ChainType::EVM | ChainType::BNB | ChainType::Custom
+    )
 }
 
 pub fn create_native_adapter(config: ChainConfig) -> Result<Box<dyn ChainAdapter>> {
     match config.chain_type {
-        ChainType::NovoVM | ChainType::Custom => Ok(Box::new(NovoVmAdapter::new(config))),
+        ChainType::NovoVM | ChainType::EVM | ChainType::BNB | ChainType::Custom => {
+            Ok(Box::new(NovoVmAdapter::new(config)))
+        }
         other => bail!(
-            "native adapter backend only supports novovm/custom currently, got {}",
+            "native adapter backend only supports novovm/evm/bnb/custom currently, got {}",
             other.as_str()
         ),
     }

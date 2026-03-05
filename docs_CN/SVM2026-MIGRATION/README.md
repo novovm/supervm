@@ -20,6 +20,8 @@
    - 能力迁移执行台账（实际推进状态）。
 8. `NOVOVM-CAPABILITY-MIGRATION-LEDGER-AUTO-2026-03-03.md`
    - 自动回填台账快照（由迁移报告脚本生成）。
+9. `NOVOVM-RELEASE-RC-RUNBOOK-2026-03-05.md`
+   - 发布候选（RC）流程手册，固定 `full_snapshot_v1` 复现口径，并新增治理 RPC 安全发布铁律与 `full_snapshot_v2`（含 RPC 暴露门禁）入口。
 
 ## 建议阅读顺序
 

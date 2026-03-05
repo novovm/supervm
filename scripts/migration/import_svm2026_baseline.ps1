@@ -1,7 +1,7 @@
 param(
-    [string]$RepoRoot = "D:\WorksArea\SUPERVM",
-    [string]$SvmRoot = "D:\WorksArea\SVM2026",
-    [string]$OutputDir = "D:\WorksArea\SUPERVM\artifacts\migration\baseline",
+    [string]$RepoRoot = "",
+    [string]$SvmRoot = "",
+    [string]$OutputDir = "",
     [ValidateSet("core", "persist", "wasm")]
     [string]$Variant = "core",
     [string]$SourceFile = "",
@@ -11,6 +11,21 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+
+if (-not $RepoRoot) {
+    $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
+}
+if (-not $OutputDir) {
+    $OutputDir = Join-Path $RepoRoot "artifacts\migration\baseline"
+}
+if (-not $SvmRoot) {
+    $sibling = Join-Path (Split-Path $RepoRoot -Parent) "SVM2026"
+    if (Test-Path $sibling) {
+        $SvmRoot = $sibling
+    } else {
+        $SvmRoot = "D:\WorksArea\SVM2026"
+    }
+}
 
 function Parse-TpsValue {
     param([string]$Text)

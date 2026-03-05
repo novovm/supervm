@@ -1,0 +1,68 @@
+{
+  "version": "novovm_adapter_compat_matrix_v1",
+  "abi_versions": [1],
+  "chains": ["novovm", "evm", "bnb", "custom"],
+  "entries": [
+    {
+      "backend": "native",
+      "crate": "novovm-adapter-novovm",
+      "chain": "novovm",
+      "supported": true,
+      "notes": "default production path"
+    },
+    {
+      "backend": "native",
+      "crate": "novovm-adapter-novovm",
+      "chain": "evm",
+      "supported": true,
+      "notes": "sample compatibility path for migration"
+    },
+    {
+      "backend": "native",
+      "crate": "novovm-adapter-novovm",
+      "chain": "bnb",
+      "supported": true,
+      "notes": "sample compatibility path for migration"
+    },
+    {
+      "backend": "native",
+      "crate": "novovm-adapter-novovm",
+      "chain": "custom",
+      "supported": true,
+      "notes": "fallback/custom chain integration"
+    },
+    {
+      "backend": "plugin",
+      "crate": "novovm-adapter-sample-plugin",
+      "chain": "novovm",
+      "supported": true,
+      "abi": 1,
+      "required_caps": "0x1"
+    },
+    {
+      "backend": "plugin",
+      "crate": "novovm-adapter-sample-plugin",
+      "chain": "evm",
+      "supported": true,
+      "abi": 1,
+      "required_caps": "0x1"
+    },
+    {
+      "backend": "plugin",
+      "crate": "novovm-adapter-sample-plugin",
+      "chain": "bnb",
+      "supported": true,
+      "abi": 1,
+      "required_caps": "0x1"
+    },
+    {
+      "backend": "plugin",
+      "crate": "novovm-adapter-sample-plugin",
+      "chain": "custom",
+      "supported": true,
+      "abi": 1,
+      "required_caps": "0x1"
+    }
+  ]
+}
+

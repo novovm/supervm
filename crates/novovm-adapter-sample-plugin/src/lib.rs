@@ -30,6 +30,8 @@ fn normalize_root32(root: &[u8]) -> [u8; 32] {
 fn chain_type_from_code(code: u32) -> Option<ChainType> {
     Some(match code {
         0 => ChainType::NovoVM,
+        1 => ChainType::EVM,
+        6 => ChainType::BNB,
         13 => ChainType::Custom,
         _ => return None,
     })
@@ -166,5 +168,14 @@ mod tests {
         assert_eq!(result.applied, 1);
         assert_eq!(result.txs, 2);
         assert!(result.accounts >= 2);
+    }
+
+    #[test]
+    fn chain_code_mapping_supports_non_novovm_samples() {
+        assert_eq!(chain_type_from_code(0), Some(ChainType::NovoVM));
+        assert_eq!(chain_type_from_code(1), Some(ChainType::EVM));
+        assert_eq!(chain_type_from_code(6), Some(ChainType::BNB));
+        assert_eq!(chain_type_from_code(13), Some(ChainType::Custom));
+        assert_eq!(chain_type_from_code(999), None);
     }
 }
