@@ -3,13 +3,14 @@
 // 简化版 HotStuff-2 协议（3-chain rule）
 // Propose → Vote → PreCommit → Commit
 
-use crate::types::{
-    BFTProposal, BFTResult, BFTError, Hash, Height, NodeId, SlashEvidence, SlashExecution,
-    GovernanceOp, GovernanceProposal, GovernanceVote, NetworkDosPolicy, SlashMode, SlashPolicy,
-    ValidatorSet,
-};
-use crate::quorum_cert::{QuorumCertificate, Vote};
 use crate::epoch::Epoch;
+use crate::quorum_cert::{QuorumCertificate, Vote};
+use crate::token_runtime::Web30TokenRuntime;
+use crate::types::{
+    BFTError, BFTProposal, BFTResult, FeeRoutingOutcome, GovernanceAccessPolicy, GovernanceOp,
+    GovernanceProposal, GovernanceVote, Hash, Height, NetworkDosPolicy, NodeId, SlashEvidence,
+    SlashExecution, SlashMode, SlashPolicy, TokenEconomicsPolicy, ValidatorSet,
+};
 use ed25519_dalek::{SigningKey, VerifyingKey};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -25,13 +26,13 @@ struct JailRecord {
 pub enum Phase {
     /// 提案阶段（Leader 提出新 Epoch）
     Propose,
-    
+
     /// 投票阶段（Validators 投票）
     Vote,
-    
+
     /// 预提交阶段（形成 QC）
     PreCommit,
-    
+
     /// 提交阶段（最终确认）
     Commit,
 }
@@ -41,22 +42,22 @@ pub enum Phase {
 pub struct ProtocolState {
     /// 当前阶段
     pub phase: Phase,
-    
+
     /// 当前高度
     pub height: Height,
 
     /// 当前 view（用于超时换主）
     pub view: u64,
-    
+
     /// 当前 Leader ID
     pub leader_id: NodeId,
-    
+
     /// 活跃的提案
     pub active_proposal: Option<BFTProposal>,
-    
+
     /// 收集的投票
     pub votes: Vec<Vote>,
-    
+
     /// 最新的 QC
     pub last_qc: Option<QuorumCertificate>,
 }
@@ -74,7 +75,7 @@ impl ProtocolState {
             last_qc: None,
         }
     }
-    
+
     /// 进入下一个高度
     pub fn advance_height(&mut self, new_leader: NodeId) {
         self.height += 1;
@@ -99,10 +100,10 @@ impl ProtocolState {
 pub struct HotStuffProtocol {
     /// 验证者集合
     validator_set: ValidatorSet,
-    
+
     /// 本节点 ID
     self_id: NodeId,
-    
+
     /// 协议状态
     state: ProtocolState,
 
@@ -130,6 +131,9 @@ pub struct HotStuffProtocol {
     /// 是否启用治理执行（默认关闭；未开启时仅允许 staged-only 挂点）。
     governance_execution_enabled: bool,
 
+    /// 治理访问控制（委员会阈值 + 时间锁）。
+    governance_access_policy: GovernanceAccessPolicy,
+
     /// 治理提案池（最小实现：内存态）。
     governance_proposals: HashMap<u64, GovernanceProposal>,
 
@@ -141,20 +145,26 @@ pub struct HotStuffProtocol {
 
     /// 治理参数（第三类参数扩展起点）：network dos policy。
     governance_network_dos_policy: NetworkDosPolicy,
+
+    /// 治理参数（第四类参数扩展起点）：token economics policy。
+    governance_token_economics_policy: TokenEconomicsPolicy,
+    /// 基于 SVM2026 `web30-core` 的 token/economics 运行时。
+    token_runtime: Web30TokenRuntime,
 }
 
 impl HotStuffProtocol {
     /// 创建新的协议实例
-    pub fn new(
-        validator_set: ValidatorSet,
-        self_id: NodeId,
-    ) -> BFTResult<Self> {
+    pub fn new(validator_set: ValidatorSet, self_id: NodeId) -> BFTResult<Self> {
         if !validator_set.is_validator(self_id) {
             return Err(BFTError::NotValidator(self_id));
         }
-        
+
         let initial_leader = validator_set.validators[0];
-        
+        let governance_access_policy =
+            GovernanceAccessPolicy::for_validators(&validator_set.validators)?;
+
+        let governance_token_economics_policy = TokenEconomicsPolicy::default();
+        let token_runtime = Web30TokenRuntime::from_policy(&governance_token_economics_policy)?;
         Ok(Self {
             validator_set,
             self_id,
@@ -167,10 +177,13 @@ impl HotStuffProtocol {
             slash_counters: HashMap::new(),
             governance_staged_ops: Vec::new(),
             governance_execution_enabled: false,
+            governance_access_policy,
             governance_proposals: HashMap::new(),
             next_governance_proposal_id: 1,
             governance_mempool_fee_floor: 1,
             governance_network_dos_policy: NetworkDosPolicy::default(),
+            governance_token_economics_policy,
+            token_runtime,
         })
     }
 
@@ -186,14 +199,35 @@ impl HotStuffProtocol {
                 Ok(())
             }
             GovernanceOp::UpdateNetworkDosPolicy { policy } => policy.validate(),
+            GovernanceOp::UpdateTokenEconomicsPolicy { policy } => policy.validate(),
+            GovernanceOp::UpdateGovernanceAccessPolicy { policy } => policy.validate(),
+            GovernanceOp::TreasurySpend { to: _, amount, reason } => {
+                if *amount == 0 {
+                    return Err(BFTError::InvalidProposal(
+                        "treasury spend amount must be > 0".to_string(),
+                    ));
+                }
+                let reason = reason.trim();
+                if reason.is_empty() {
+                    return Err(BFTError::InvalidProposal(
+                        "treasury spend reason cannot be empty".to_string(),
+                    ));
+                }
+                if reason.len() > 128 {
+                    return Err(BFTError::InvalidProposal(
+                        "treasury spend reason too long (max 128)".to_string(),
+                    ));
+                }
+                Ok(())
+            }
         }
     }
-    
+
     /// 检查是否是当前 Leader
     pub fn is_leader(&self) -> bool {
         self.state.leader_id == self.self_id && self.is_active_validator(self.self_id)
     }
-    
+
     /// 获取当前高度
     pub fn current_height(&self) -> Height {
         self.state.height
@@ -208,7 +242,7 @@ impl HotStuffProtocol {
     pub fn current_leader(&self) -> NodeId {
         self.state.leader_id
     }
-    
+
     /// 获取当前阶段
     pub fn current_phase(&self) -> Phase {
         self.state.phase
@@ -283,7 +317,8 @@ impl HotStuffProtocol {
             .copied()
             .unwrap_or(0);
         let evidence_count = current_count.saturating_add(1);
-        self.slash_counters.insert(evidence.voter_id, evidence_count);
+        self.slash_counters
+            .insert(evidence.voter_id, evidence_count);
 
         let threshold = self.slash_policy.equivocation_threshold.max(1);
         let threshold_reached = evidence_count >= threshold;
@@ -337,31 +372,31 @@ impl HotStuffProtocol {
         self.slash_executions.push(execution.clone());
         execution
     }
-    
+
     /// Propose 阶段：Leader 提出新提案
     pub fn propose(&mut self, epoch: &Epoch) -> BFTResult<BFTProposal> {
         if self.is_jailed_validator(self.self_id) {
             return Err(BFTError::SlashedValidator(self.self_id));
         }
         if !self.is_leader() {
-            return Err(BFTError::Internal(
-                "Only leader can propose".to_string()
-            ));
+            return Err(BFTError::Internal("Only leader can propose".to_string()));
         }
-        
+
         if self.state.phase != Phase::Propose {
             return Err(BFTError::Internal(format!(
                 "Cannot propose in phase {:?}",
                 self.state.phase
             )));
         }
-        
+
         // 获取前一个 QC 的哈希
-        let prev_qc_hash = self.state.last_qc
+        let prev_qc_hash = self
+            .state
+            .last_qc
             .as_ref()
             .map(|qc| qc.hash())
             .unwrap_or([0u8; 32]);
-        
+
         // 创建提案
         let proposal = BFTProposal {
             epoch_id: epoch.id,
@@ -372,19 +407,15 @@ impl HotStuffProtocol {
             prev_qc_hash,
             timestamp: epoch.start_time,
         };
-        
+
         self.state.active_proposal = Some(proposal.clone());
         self.state.phase = Phase::Vote;
-        
+
         Ok(proposal)
     }
-    
+
     /// Vote 阶段：验证者对提案投票
-    pub fn vote(
-        &mut self,
-        proposal: &BFTProposal,
-        signing_key: &SigningKey,
-    ) -> BFTResult<Vote> {
+    pub fn vote(&mut self, proposal: &BFTProposal, signing_key: &SigningKey) -> BFTResult<Vote> {
         if self.is_jailed_validator(self.self_id) {
             return Err(BFTError::SlashedValidator(self.self_id));
         }
@@ -394,17 +425,17 @@ impl HotStuffProtocol {
                 self.state.phase
             )));
         }
-        
+
         // 验证提案
         self.validate_proposal(proposal)?;
-        
+
         // 创建投票
         let proposal_hash = proposal.hash();
         let vote = Vote::new(self.self_id, proposal_hash, proposal.height, signing_key);
-        
+
         Ok(vote)
     }
-    
+
     /// 收集投票（Leader 执行）
     pub fn collect_vote(&mut self, vote: Vote) -> BFTResult<Option<QuorumCertificate>> {
         if self.is_jailed_validator(vote.voter_id) {
@@ -435,25 +466,27 @@ impl HotStuffProtocol {
         }
 
         // 检查投票是否针对当前提案
-        let proposal = self.state.active_proposal
+        let proposal = self
+            .state
+            .active_proposal
             .as_ref()
             .ok_or_else(|| BFTError::Internal("No active proposal".to_string()))?;
-        
+
         let proposal_hash = proposal.hash();
         if vote.proposal_hash != proposal_hash {
             return Err(BFTError::InvalidProposal(
-                "Vote for wrong proposal".to_string()
+                "Vote for wrong proposal".to_string(),
             ));
         }
-        
+
         // 检查是否已投票
         if self.state.votes.iter().any(|v| v.voter_id == vote.voter_id) {
             return Err(BFTError::DuplicateVote(vote.voter_id));
         }
-        
+
         self.observed_votes.insert(observed_key, vote.proposal_hash);
         self.state.votes.push(vote);
-        
+
         // 检查是否达到法定人数（按权重）
         let mut collected_weight = 0u64;
         for item in &self.state.votes {
@@ -473,16 +506,16 @@ impl HotStuffProtocol {
                     .ok_or(BFTError::NotValidator(vote.voter_id))?;
                 qc.add_vote(vote.clone(), weight);
             }
-            
+
             self.state.phase = Phase::PreCommit;
             self.state.last_qc = Some(qc.clone());
-            
+
             Ok(Some(qc))
         } else {
             Ok(None)
         }
     }
-    
+
     /// PreCommit 阶段：验证 QC 并准备提交
     pub fn pre_commit(&mut self, qc: &QuorumCertificate) -> BFTResult<()> {
         if self.state.phase != Phase::PreCommit {
@@ -491,7 +524,7 @@ impl HotStuffProtocol {
                 self.state.phase
             )));
         }
-        
+
         // 验证 QC（简化版：假设已验证）
         if qc.height != self.state.height {
             return Err(BFTError::HeightMismatch {
@@ -499,11 +532,11 @@ impl HotStuffProtocol {
                 got: qc.height,
             });
         }
-        
+
         self.state.phase = Phase::Commit;
         Ok(())
     }
-    
+
     /// Commit 阶段：最终提交
     pub fn commit(&mut self) -> BFTResult<()> {
         if self.state.phase != Phase::Commit {
@@ -512,14 +545,14 @@ impl HotStuffProtocol {
                 self.state.phase
             )));
         }
-        
+
         // 选择下一个 Leader（Round-robin，跳过 jailed 验证者）
         let next_height = self.state.height.saturating_add(1);
         let next_leader = self.leader_for_round(next_height, 0);
-        
+
         self.state.advance_height(next_leader);
         self.observed_votes.clear();
-        
+
         Ok(())
     }
 
@@ -537,10 +570,13 @@ impl HotStuffProtocol {
     }
 
     /// Fork-choice：在候选 QC 中选择“最高高度 -> 更高权重 -> 更大哈希”。
-    pub fn select_fork_choice(&self, candidates: &[QuorumCertificate]) -> BFTResult<QuorumCertificate> {
-        let first = candidates
-            .first()
-            .ok_or_else(|| BFTError::Internal("fork choice candidates cannot be empty".to_string()))?;
+    pub fn select_fork_choice(
+        &self,
+        candidates: &[QuorumCertificate],
+    ) -> BFTResult<QuorumCertificate> {
+        let first = candidates.first().ok_or_else(|| {
+            BFTError::Internal("fork choice candidates cannot be empty".to_string())
+        })?;
         let mut best = first.clone();
 
         for qc in candidates.iter().skip(1) {
@@ -552,13 +588,16 @@ impl HotStuffProtocol {
                 best = qc.clone();
                 continue;
             }
-            if qc.height == best.height && qc.total_weight == best.total_weight && qc.hash() > best.hash() {
+            if qc.height == best.height
+                && qc.total_weight == best.total_weight
+                && qc.hash() > best.hash()
+            {
                 best = qc.clone();
             }
         }
         Ok(best)
     }
-    
+
     /// 验证提案
     fn validate_proposal(&self, proposal: &BFTProposal) -> BFTResult<()> {
         // 检查高度
@@ -591,7 +630,7 @@ impl HotStuffProtocol {
                 proposal.proposer
             )));
         }
-        
+
         // 检查 Leader
         if proposal.proposer != self.state.leader_id {
             return Err(BFTError::InvalidProposal(format!(
@@ -599,33 +638,33 @@ impl HotStuffProtocol {
                 self.state.leader_id, proposal.proposer
             )));
         }
-        
+
         // 检查前置 QC
         if let Some(last_qc) = &self.state.last_qc {
             if proposal.prev_qc_hash != last_qc.hash() {
                 return Err(BFTError::MissingPreviousQC);
             }
         }
-        
+
         Ok(())
     }
-    
+
     /// 获取当前的 QC（如果已达法定人数）
     pub fn get_quorum_certificate(&self) -> Option<QuorumCertificate> {
         self.state.last_qc.clone()
     }
-    
+
     /// 获取验证者集合
     pub fn validator_set(&self) -> &ValidatorSet {
         &self.validator_set
     }
-    
+
     /// 同步协议状态（用于测试/模拟）
     pub fn sync_state(&mut self, state: ProtocolState) {
         self.state = state;
         self.observed_votes.clear();
     }
-    
+
     /// 获取协议状态（用于测试/模拟）
     pub fn get_state(&self) -> ProtocolState {
         self.state.clone()
@@ -663,6 +702,87 @@ impl HotStuffProtocol {
         self.slash_policy.clone()
     }
 
+    /// 更新 token economics policy（运行期可由治理层下发）。
+    pub fn set_token_economics_policy(&mut self, policy: TokenEconomicsPolicy) -> BFTResult<()> {
+        policy.validate()?;
+        self.token_runtime.reconfigure(&policy)?;
+        self.governance_token_economics_policy = policy;
+        Ok(())
+    }
+
+    /// 读取当前 token economics policy。
+    pub fn governance_token_economics_policy(&self) -> TokenEconomicsPolicy {
+        self.governance_token_economics_policy.clone()
+    }
+
+    /// mint：amount>0、不超过 locked_supply 剩余额度、且不突破 max_supply。
+    pub fn mint_tokens(&mut self, account: NodeId, amount: u64) -> BFTResult<()> {
+        self.token_runtime.mint(account, amount)
+    }
+
+    /// burn：先扣余额，再销毁总量。
+    pub fn burn_tokens(&mut self, account: NodeId, amount: u64) -> BFTResult<()> {
+        self.token_runtime.burn(account, amount)
+    }
+
+    /// gas fee 路由：provider / treasury / burn。
+    pub fn charge_gas_fee(&mut self, payer: NodeId, amount: u64) -> BFTResult<FeeRoutingOutcome> {
+        self.token_runtime.charge_gas_fee(payer, amount)
+    }
+
+    /// service fee 路由：provider / treasury / burn。
+    pub fn charge_service_fee(
+        &mut self,
+        payer: NodeId,
+        amount: u64,
+    ) -> BFTResult<FeeRoutingOutcome> {
+        self.token_runtime.charge_service_fee(payer, amount)
+    }
+
+    /// treasury spend（治理执行面）：从 treasury 主账户转账给目标账户。
+    pub fn spend_treasury_tokens(
+        &mut self,
+        to: NodeId,
+        amount: u64,
+        _reason: &str,
+    ) -> BFTResult<()> {
+        self.token_runtime.spend_treasury(to, amount)
+    }
+
+    pub fn token_balance(&self, account: NodeId) -> u64 {
+        self.token_runtime.balance(account).unwrap_or(0)
+    }
+
+    pub fn token_total_supply(&self) -> u64 {
+        self.token_runtime.total_supply().unwrap_or(0)
+    }
+
+    pub fn token_locked_minted(&self) -> u64 {
+        self.token_runtime.locked_minted_total()
+    }
+
+    pub fn token_treasury_balance(&self) -> u64 {
+        self.token_runtime.treasury_balance().unwrap_or(0)
+    }
+
+    pub fn token_burned_total(&self) -> u64 {
+        self.token_runtime.burned_total()
+    }
+
+    pub fn token_treasury_spent_total(&self) -> u64 {
+        self.token_runtime.treasury_spent_total()
+    }
+
+    pub fn token_gas_provider_fee_pool(&self) -> u64 {
+        self.token_runtime.gas_provider_pool_balance().unwrap_or(0)
+    }
+
+    pub fn token_service_provider_fee_pool(&self) -> u64 {
+        self.token_runtime
+            .service_provider_pool_balance()
+            .unwrap_or(0)
+    }
+
     /// 接收治理操作挂点（当前仅做结构校验与留痕，不启用执行）。
     pub fn stage_governance_op(&mut self, op: GovernanceOp) -> BFTResult<()> {
         Self::validate_governance_op(&op)?;
@@ -687,10 +807,75 @@ impl HotStuffProtocol {
         self.governance_execution_enabled
     }
 
+    /// 更新治理访问策略（委员会阈值 + 时间锁）。
+    pub fn set_governance_access_policy(&mut self, policy: GovernanceAccessPolicy) -> BFTResult<()> {
+        policy.validate()?;
+        self.governance_access_policy = policy;
+        Ok(())
+    }
+
+    /// 读取治理访问策略快照。
+    pub fn governance_access_policy(&self) -> GovernanceAccessPolicy {
+        self.governance_access_policy.clone()
+    }
+
+    fn validate_committee_approvals(
+        &self,
+        approvals: &[NodeId],
+        committee: &[NodeId],
+        threshold: u32,
+        phase: &str,
+    ) -> BFTResult<()> {
+        if approvals.is_empty() {
+            return Err(BFTError::InvalidProposal(format!(
+                "{} approvals cannot be empty",
+                phase
+            )));
+        }
+        let committee_set: HashSet<NodeId> = committee.iter().copied().collect();
+        let mut unique = HashSet::with_capacity(approvals.len());
+        for member in approvals {
+            if !unique.insert(*member) {
+                return Err(BFTError::DuplicateVote(*member));
+            }
+            if !committee_set.contains(member) {
+                return Err(BFTError::InvalidProposal(format!(
+                    "{} approval member {} is not in committee",
+                    phase, member
+                )));
+            }
+            if !self.is_active_validator(*member) {
+                return if self.validator_set.is_validator(*member) {
+                    Err(BFTError::SlashedValidator(*member))
+                } else {
+                    Err(BFTError::NotValidator(*member))
+                };
+            }
+        }
+
+        if unique.len() < threshold as usize {
+            return Err(BFTError::InsufficientVotes {
+                required: threshold as usize,
+                received: unique.len(),
+            });
+        }
+        Ok(())
+    }
+
     /// 提交治理提案（最小闭环：仅支持 UpdateSlashPolicy）。
     pub fn submit_governance_proposal(
         &mut self,
         proposer: NodeId,
+        op: GovernanceOp,
+    ) -> BFTResult<GovernanceProposal> {
+        self.submit_governance_proposal_with_approvals(proposer, &[proposer], op)
+    }
+
+    /// 提交治理提案（委员会阈值模型）。
+    pub fn submit_governance_proposal_with_approvals(
+        &mut self,
+        proposer: NodeId,
+        proposer_approvals: &[NodeId],
         op: GovernanceOp,
     ) -> BFTResult<GovernanceProposal> {
         if !self.is_active_validator(proposer) {
@@ -699,6 +884,18 @@ impl HotStuffProtocol {
             } else {
                 Err(BFTError::NotValidator(proposer))
             };
+        }
+        self.validate_committee_approvals(
+            proposer_approvals,
+            &self.governance_access_policy.proposer_committee,
+            self.governance_access_policy.proposer_threshold,
+            "governance proposer",
+        )?;
+        if !proposer_approvals.contains(&proposer) {
+            return Err(BFTError::InvalidProposal(format!(
+                "governance proposer {} is not in proposer_approvals",
+                proposer
+            )));
         }
 
         Self::validate_governance_op(&op)?;
@@ -722,6 +919,22 @@ impl HotStuffProtocol {
         votes: &[GovernanceVote],
         public_keys: &HashMap<NodeId, VerifyingKey>,
     ) -> BFTResult<bool> {
+        self.execute_governance_proposal_with_executor_approvals(
+            proposal_id,
+            votes,
+            public_keys,
+            &[self.self_id],
+        )
+    }
+
+    /// 执行治理提案（委员会阈值 + 时间锁 + 投票签名）。
+    pub fn execute_governance_proposal_with_executor_approvals(
+        &mut self,
+        proposal_id: u64,
+        votes: &[GovernanceVote],
+        public_keys: &HashMap<NodeId, VerifyingKey>,
+        executor_approvals: &[NodeId],
+    ) -> BFTResult<bool> {
         if !self.governance_execution_enabled {
             return Err(BFTError::GovernanceNotEnabled(
                 "governance_execution_disabled".to_string(),
@@ -731,7 +944,24 @@ impl HotStuffProtocol {
             .governance_proposals
             .get(&proposal_id)
             .cloned()
-            .ok_or_else(|| BFTError::Internal(format!("governance proposal not found: {}", proposal_id)))?;
+            .ok_or_else(|| {
+                BFTError::Internal(format!("governance proposal not found: {}", proposal_id))
+            })?;
+        self.validate_committee_approvals(
+            executor_approvals,
+            &self.governance_access_policy.executor_committee,
+            self.governance_access_policy.executor_threshold,
+            "governance executor",
+        )?;
+        let earliest_execute_height = proposal
+            .created_height
+            .saturating_add(self.governance_access_policy.timelock_epochs);
+        if self.state.height < earliest_execute_height {
+            return Err(BFTError::InvalidProposal(format!(
+                "governance timelock not satisfied: current_height={} required_height={}",
+                self.state.height, earliest_execute_height
+            )));
+        }
         let proposal_digest = proposal.digest();
 
         let mut seen = HashSet::with_capacity(votes.len());
@@ -771,7 +1001,9 @@ impl HotStuffProtocol {
             if vote.support {
                 support_weight = support_weight
                     .checked_add(self.active_weight_of(vote.voter_id).unwrap_or(0))
-                    .ok_or_else(|| BFTError::Internal("governance support weight overflow".to_string()))?;
+                    .ok_or_else(|| {
+                        BFTError::Internal("governance support weight overflow".to_string())
+                    })?;
             }
         }
 
@@ -790,6 +1022,15 @@ impl HotStuffProtocol {
             }
             GovernanceOp::UpdateNetworkDosPolicy { policy } => {
                 self.governance_network_dos_policy = policy;
+            }
+            GovernanceOp::UpdateTokenEconomicsPolicy { policy } => {
+                self.set_token_economics_policy(policy)?;
+            }
+            GovernanceOp::UpdateGovernanceAccessPolicy { policy } => {
+                self.set_governance_access_policy(policy)?;
+            }
+            GovernanceOp::TreasurySpend { to, amount, reason } => {
+                self.spend_treasury_tokens(to, amount, &reason)?;
             }
         }
         self.governance_proposals.remove(&proposal_id);
@@ -820,9 +1061,9 @@ impl HotStuffProtocol {
 
     /// 查询验证者的 jail 自动解禁高度（仅当当前仍处于 jailed 状态时返回）。
     pub fn validator_jailed_until_epoch(&self, node_id: NodeId) -> Option<Height> {
-        self.jailed_validators
-            .get(&node_id)
-            .and_then(|rec| (self.state.height < rec.jailed_until_epoch).then_some(rec.jailed_until_epoch))
+        self.jailed_validators.get(&node_id).and_then(|rec| {
+            (self.state.height < rec.jailed_until_epoch).then_some(rec.jailed_until_epoch)
+        })
     }
 }
 
@@ -850,40 +1091,40 @@ mod tests {
     fn test_protocol_full_round() {
         // 4 个验证者
         let validator_set = ValidatorSet::new_equal_weight(vec![0, 1, 2, 3]);
-        
+
         // 生成密钥
-        let signing_keys: Vec<_> = (0..4)
-            .map(|_| SigningKey::generate(&mut OsRng))
-            .collect();
-        
+        let signing_keys: Vec<_> = (0..4).map(|_| SigningKey::generate(&mut OsRng)).collect();
+
         // 创建协议实例（节点 0 是初始 Leader）
         let mut leader_protocol = HotStuffProtocol::new(validator_set.clone(), 0).unwrap();
         assert!(leader_protocol.is_leader());
-        
+
         // 创建 Epoch
         let mut epoch = Epoch::new(0, 0, 0);
         epoch.add_batch(1, 100);
         epoch.add_batch(2, 150);
-        
+
         let mut batch_results = HashMap::new();
         batch_results.insert(1, [1u8; 32]);
         batch_results.insert(2, [2u8; 32]);
         epoch.compute_state_root(&batch_results).unwrap();
-        
+
         // Leader 提出提案
         let proposal = leader_protocol.propose(&epoch).unwrap();
         assert_eq!(leader_protocol.current_phase(), Phase::Vote);
-        
+
         // 其他验证者投票
         let mut votes = Vec::new();
         for i in 0..4 {
             let mut voter_protocol = HotStuffProtocol::new(validator_set.clone(), i).unwrap();
             voter_protocol.state = leader_protocol.state.clone(); // 同步状态
-            
-            let vote = voter_protocol.vote(&proposal, &signing_keys[i as usize]).unwrap();
+
+            let vote = voter_protocol
+                .vote(&proposal, &signing_keys[i as usize])
+                .unwrap();
             votes.push(vote);
         }
-        
+
         // Leader 收集投票
         let mut qc_opt = None;
         for vote in votes {
@@ -892,15 +1133,15 @@ mod tests {
                 break;
             }
         }
-        
+
         assert!(qc_opt.is_some());
         assert_eq!(leader_protocol.current_phase(), Phase::PreCommit);
-        
+
         // PreCommit
         let qc = qc_opt.unwrap();
         leader_protocol.pre_commit(&qc).unwrap();
         assert_eq!(leader_protocol.current_phase(), Phase::Commit);
-        
+
         // Commit
         leader_protocol.commit().unwrap();
         assert_eq!(leader_protocol.current_height(), 1);
@@ -911,9 +1152,7 @@ mod tests {
     fn test_weighted_quorum_is_based_on_stake_weight() {
         // two validators with asymmetric stake: total=10, quorum=7.
         let validator_set = ValidatorSet::new_weighted(vec![(0, 6), (1, 4)]).unwrap();
-        let signing_keys: Vec<_> = (0..2)
-            .map(|_| SigningKey::generate(&mut OsRng))
-            .collect();
+        let signing_keys: Vec<_> = (0..2).map(|_| SigningKey::generate(&mut OsRng)).collect();
 
         let mut leader_protocol = HotStuffProtocol::new(validator_set.clone(), 0).unwrap();
         let mut epoch = Epoch::new(0, 0, 0);
@@ -937,9 +1176,7 @@ mod tests {
     #[test]
     fn test_equivocation_detection_records_slash_evidence() {
         let validator_set = ValidatorSet::new_equal_weight(vec![0, 1, 2]);
-        let signing_keys: Vec<_> = (0..3)
-            .map(|_| SigningKey::generate(&mut OsRng))
-            .collect();
+        let signing_keys: Vec<_> = (0..3).map(|_| SigningKey::generate(&mut OsRng)).collect();
         let mut leader_protocol = HotStuffProtocol::new(validator_set.clone(), 0).unwrap();
 
         let mut epoch = Epoch::new(0, 0, 0);
@@ -1049,7 +1286,9 @@ mod tests {
         low.total_weight = 4;
         let mut high = QuorumCertificate::new([2u8; 32], 11);
         high.total_weight = 3;
-        let best = protocol.select_fork_choice(&[low.clone(), high.clone()]).unwrap();
+        let best = protocol
+            .select_fork_choice(&[low.clone(), high.clone()])
+            .unwrap();
         assert_eq!(best.height, 11);
 
         let mut same_height_low_weight = QuorumCertificate::new([3u8; 32], 12);
@@ -1189,11 +1428,21 @@ mod tests {
 
         // height=0 收敛并提交到 height=1（仍在 cooldown）。
         assert!(leader_protocol
-            .collect_vote(Vote::new(2, proposal0.hash(), proposal0.height, &signing_keys[2]))
+            .collect_vote(Vote::new(
+                2,
+                proposal0.hash(),
+                proposal0.height,
+                &signing_keys[2]
+            ))
             .unwrap()
             .is_none());
         let qc0 = leader_protocol
-            .collect_vote(Vote::new(0, proposal0.hash(), proposal0.height, &signing_keys[0]))
+            .collect_vote(Vote::new(
+                0,
+                proposal0.hash(),
+                proposal0.height,
+                &signing_keys[0],
+            ))
             .unwrap()
             .expect("height0 should form qc");
         leader_protocol.pre_commit(&qc0).unwrap();
@@ -1218,11 +1467,21 @@ mod tests {
 
         // 再提交一个高度到 height=2，触发自动解禁。
         assert!(leader_protocol
-            .collect_vote(Vote::new(2, proposal1.hash(), proposal1.height, &signing_keys[2]))
+            .collect_vote(Vote::new(
+                2,
+                proposal1.hash(),
+                proposal1.height,
+                &signing_keys[2]
+            ))
             .unwrap()
             .is_none());
         let qc1 = leader_protocol
-            .collect_vote(Vote::new(0, proposal1.hash(), proposal1.height, &signing_keys[0]))
+            .collect_vote(Vote::new(
+                0,
+                proposal1.hash(),
+                proposal1.height,
+                &signing_keys[0],
+            ))
             .unwrap()
             .expect("height1 should form qc");
         leader_protocol.pre_commit(&qc1).unwrap();
@@ -1261,18 +1520,13 @@ mod tests {
         let result = protocol.stage_governance_op(GovernanceOp::UpdateSlashPolicy {
             policy: candidate.clone(),
         });
-        assert!(matches!(
-            result,
-            Err(BFTError::GovernanceNotEnabled(_))
-        ));
+        assert!(matches!(result, Err(BFTError::GovernanceNotEnabled(_))));
 
         let staged = protocol.staged_governance_ops();
         assert_eq!(staged.len(), 1);
         assert_eq!(
             staged[0],
-            GovernanceOp::UpdateSlashPolicy {
-                policy: candidate
-            }
+            GovernanceOp::UpdateSlashPolicy { policy: candidate }
         );
         // 未启用治理执行链路时，运行期策略应保持不变。
         assert_eq!(protocol.slash_policy(), before);
@@ -1332,11 +1586,9 @@ mod tests {
             GovernanceVote::new(&proposal, 0, true, &signing_keys[0]),
             GovernanceVote::new(&proposal, 1, true, &signing_keys[1]),
         ];
-        let result = protocol.execute_governance_proposal(proposal.proposal_id, &votes, &public_keys);
-        assert!(matches!(
-            result,
-            Err(BFTError::GovernanceNotEnabled(_))
-        ));
+        let result =
+            protocol.execute_governance_proposal(proposal.proposal_id, &votes, &public_keys);
+        assert!(matches!(result, Err(BFTError::GovernanceNotEnabled(_))));
     }
 
     #[test]
@@ -1346,10 +1598,7 @@ mod tests {
         let mut protocol = HotStuffProtocol::new(validator_set, 0).unwrap();
         protocol.set_governance_execution_enabled(true);
         let proposal = protocol
-            .submit_governance_proposal(
-                0,
-                GovernanceOp::UpdateMempoolFeeFloor { fee_floor: 9 },
-            )
+            .submit_governance_proposal(0, GovernanceOp::UpdateMempoolFeeFloor { fee_floor: 9 })
             .unwrap();
         let votes = vec![
             GovernanceVote::new(&proposal, 0, true, &signing_keys[0]),
@@ -1392,6 +1641,159 @@ mod tests {
     }
 
     #[test]
+    fn test_governance_execute_update_token_economics_policy() {
+        let validator_set = ValidatorSet::new_equal_weight(vec![0, 1, 2]);
+        let (signing_keys, public_keys) = generate_keys(3);
+        let mut protocol = HotStuffProtocol::new(validator_set, 0).unwrap();
+        protocol.set_governance_execution_enabled(true);
+        let target = TokenEconomicsPolicy {
+            max_supply: 2_000_000,
+            locked_supply: 1_000_000,
+            fee_split: crate::types::FeeSplit {
+                gas_base_burn_bp: 2_000,
+                gas_to_node_bp: 3_000,
+                service_burn_bp: 1_000,
+                service_to_provider_bp: 4_000,
+            },
+        };
+        let proposal = protocol
+            .submit_governance_proposal(
+                0,
+                GovernanceOp::UpdateTokenEconomicsPolicy {
+                    policy: target.clone(),
+                },
+            )
+            .unwrap();
+        let votes = vec![
+            GovernanceVote::new(&proposal, 0, true, &signing_keys[0]),
+            GovernanceVote::new(&proposal, 1, true, &signing_keys[1]),
+        ];
+        let executed = protocol
+            .execute_governance_proposal(proposal.proposal_id, &votes, &public_keys)
+            .unwrap();
+        assert!(executed);
+        assert_eq!(protocol.governance_token_economics_policy(), target);
+    }
+
+    #[test]
+    fn test_governance_execute_treasury_spend() {
+        let validator_set = ValidatorSet::new_equal_weight(vec![0, 1, 2]);
+        let (signing_keys, public_keys) = generate_keys(3);
+        let mut protocol = HotStuffProtocol::new(validator_set, 0).unwrap();
+        protocol.set_governance_execution_enabled(true);
+        protocol
+            .set_token_economics_policy(TokenEconomicsPolicy {
+                max_supply: 1_000,
+                locked_supply: 600,
+                fee_split: crate::types::FeeSplit {
+                    gas_base_burn_bp: 2_000,
+                    gas_to_node_bp: 3_000,
+                    service_burn_bp: 1_000,
+                    service_to_provider_bp: 4_000,
+                },
+            })
+            .unwrap();
+
+        protocol.mint_tokens(42, 500).unwrap();
+        protocol.charge_gas_fee(42, 100).unwrap();
+        protocol.charge_service_fee(42, 100).unwrap();
+        assert_eq!(protocol.token_treasury_balance(), 100);
+
+        let proposal = protocol
+            .submit_governance_proposal(
+                0,
+                GovernanceOp::TreasurySpend {
+                    to: 7,
+                    amount: 80,
+                    reason: "ecosystem_grant".to_string(),
+                },
+            )
+            .unwrap();
+        let votes = vec![
+            GovernanceVote::new(&proposal, 0, true, &signing_keys[0]),
+            GovernanceVote::new(&proposal, 1, true, &signing_keys[1]),
+        ];
+        let executed = protocol
+            .execute_governance_proposal(proposal.proposal_id, &votes, &public_keys)
+            .unwrap();
+        assert!(executed);
+        assert_eq!(protocol.token_treasury_balance(), 20);
+        assert_eq!(protocol.token_balance(7), 80);
+        assert_eq!(protocol.token_treasury_spent_total(), 80);
+
+        let overspend = protocol
+            .submit_governance_proposal(
+                0,
+                GovernanceOp::TreasurySpend {
+                    to: 8,
+                    amount: 999,
+                    reason: "overspend_reject".to_string(),
+                },
+            )
+            .unwrap();
+        let overspend_votes = vec![
+            GovernanceVote::new(&overspend, 0, true, &signing_keys[0]),
+            GovernanceVote::new(&overspend, 1, true, &signing_keys[1]),
+        ];
+        assert!(
+            protocol
+                .execute_governance_proposal(overspend.proposal_id, &overspend_votes, &public_keys)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn test_token_mint_burn_and_fee_routing_rules() {
+        let validator_set = ValidatorSet::new_equal_weight(vec![0, 1, 2]);
+        let mut protocol = HotStuffProtocol::new(validator_set, 0).unwrap();
+        protocol
+            .set_token_economics_policy(TokenEconomicsPolicy {
+                max_supply: 1_000,
+                locked_supply: 600,
+                fee_split: crate::types::FeeSplit {
+                    gas_base_burn_bp: 2_000,
+                    gas_to_node_bp: 3_000,
+                    service_burn_bp: 1_000,
+                    service_to_provider_bp: 4_000,
+                },
+            })
+            .unwrap();
+
+        assert!(protocol.mint_tokens(42, 0).is_err());
+        protocol.mint_tokens(42, 500).unwrap();
+        assert_eq!(protocol.token_total_supply(), 500);
+        assert_eq!(protocol.token_locked_minted(), 500);
+        assert_eq!(protocol.token_balance(42), 500);
+        assert!(protocol.mint_tokens(42, 200).is_err()); // exceed locked remaining (100)
+
+        let gas = protocol.charge_gas_fee(42, 100).unwrap();
+        assert_eq!(gas.provider_amount, 30);
+        assert_eq!(gas.treasury_amount, 50);
+        assert_eq!(gas.burn_amount, 20);
+        assert_eq!(protocol.token_balance(42), 400);
+        assert_eq!(protocol.token_treasury_balance(), 50);
+        assert_eq!(protocol.token_gas_provider_fee_pool(), 30);
+        assert_eq!(protocol.token_burned_total(), 20);
+        assert_eq!(protocol.token_total_supply(), 480);
+
+        let service = protocol.charge_service_fee(42, 100).unwrap();
+        assert_eq!(service.provider_amount, 40);
+        assert_eq!(service.treasury_amount, 50);
+        assert_eq!(service.burn_amount, 10);
+        assert_eq!(protocol.token_balance(42), 300);
+        assert_eq!(protocol.token_treasury_balance(), 100);
+        assert_eq!(protocol.token_service_provider_fee_pool(), 40);
+        assert_eq!(protocol.token_burned_total(), 30);
+        assert_eq!(protocol.token_total_supply(), 470);
+
+        protocol.burn_tokens(42, 100).unwrap();
+        assert_eq!(protocol.token_balance(42), 200);
+        assert_eq!(protocol.token_total_supply(), 370);
+        assert_eq!(protocol.token_burned_total(), 130);
+        assert!(protocol.burn_tokens(42, 300).is_err());
+    }
+
+    #[test]
     fn test_governance_execute_rejects_invalid_signature_and_duplicate_vote() {
         let validator_set = ValidatorSet::new_equal_weight(vec![0, 1, 2]);
         let (signing_keys, public_keys) = generate_keys(3);
@@ -1415,14 +1817,19 @@ mod tests {
             GovernanceVote::new(&proposal, 0, true, &signing_keys[0]),
             GovernanceVote::new(&proposal, 1, true, &signing_keys[2]),
         ];
-        let bad_sig = protocol.execute_governance_proposal(proposal.proposal_id, &bad_sig_votes, &public_keys);
+        let bad_sig = protocol.execute_governance_proposal(
+            proposal.proposal_id,
+            &bad_sig_votes,
+            &public_keys,
+        );
         assert!(matches!(bad_sig, Err(BFTError::InvalidSignature(_))));
 
         let dup_votes = vec![
             GovernanceVote::new(&proposal, 0, true, &signing_keys[0]),
             GovernanceVote::new(&proposal, 0, true, &signing_keys[0]),
         ];
-        let dup = protocol.execute_governance_proposal(proposal.proposal_id, &dup_votes, &public_keys);
+        let dup =
+            protocol.execute_governance_proposal(proposal.proposal_id, &dup_votes, &public_keys);
         assert!(matches!(dup, Err(BFTError::DuplicateVote(0))));
     }
 
@@ -1453,7 +1860,8 @@ mod tests {
             .execute_governance_proposal(proposal.proposal_id, &votes, &public_keys)
             .unwrap();
         assert!(first);
-        let replay = protocol.execute_governance_proposal(proposal.proposal_id, &votes, &public_keys);
+        let replay =
+            protocol.execute_governance_proposal(proposal.proposal_id, &votes, &public_keys);
         assert!(matches!(replay, Err(BFTError::Internal(_))));
     }
 
@@ -1503,5 +1911,80 @@ mod tests {
         );
         assert!(matches!(bad_digest, Err(BFTError::InvalidProposal(_))));
     }
-}
 
+    #[test]
+    fn test_governance_access_policy_multisig_and_timelock() {
+        let validator_set = ValidatorSet::new_equal_weight(vec![0, 1, 2]);
+        let (signing_keys, public_keys) = generate_keys(3);
+        let mut protocol = HotStuffProtocol::new(validator_set, 0).unwrap();
+        protocol.set_governance_execution_enabled(true);
+        protocol
+            .set_governance_access_policy(GovernanceAccessPolicy {
+                proposer_committee: vec![0, 1],
+                proposer_threshold: 2,
+                executor_committee: vec![1, 2],
+                executor_threshold: 2,
+                timelock_epochs: 2,
+            })
+            .unwrap();
+
+        // proposer multisig must satisfy threshold=2
+        let submit_fail = protocol.submit_governance_proposal_with_approvals(
+            0,
+            &[0],
+            GovernanceOp::UpdateMempoolFeeFloor { fee_floor: 9 },
+        );
+        assert!(submit_fail.is_err());
+
+        let proposal = protocol
+            .submit_governance_proposal_with_approvals(
+                0,
+                &[0, 1],
+                GovernanceOp::UpdateMempoolFeeFloor { fee_floor: 9 },
+            )
+            .unwrap();
+        let votes = vec![
+            GovernanceVote::new(&proposal, 0, true, &signing_keys[0]),
+            GovernanceVote::new(&proposal, 1, true, &signing_keys[1]),
+        ];
+
+        // timelock blocks execution at current height
+        let timelock_fail = protocol.execute_governance_proposal_with_executor_approvals(
+            proposal.proposal_id,
+            &votes,
+            &public_keys,
+            &[1, 2],
+        );
+        assert!(matches!(timelock_fail, Err(BFTError::InvalidProposal(_))));
+
+        // relax timelock, keep executor multisig
+        protocol
+            .set_governance_access_policy(GovernanceAccessPolicy {
+                proposer_committee: vec![0, 1],
+                proposer_threshold: 2,
+                executor_committee: vec![1, 2],
+                executor_threshold: 2,
+                timelock_epochs: 0,
+            })
+            .unwrap();
+
+        let execute_fail = protocol.execute_governance_proposal_with_executor_approvals(
+            proposal.proposal_id,
+            &votes,
+            &public_keys,
+            &[1],
+        );
+        assert!(execute_fail.is_err());
+
+        let execute_ok = protocol
+            .execute_governance_proposal_with_executor_approvals(
+                proposal.proposal_id,
+                &votes,
+                &public_keys,
+                &[1, 2],
+            )
+            .unwrap();
+        assert!(execute_ok);
+        assert_eq!(protocol.governance_mempool_fee_floor(), 9);
+    }
+}

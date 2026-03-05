@@ -6,7 +6,8 @@ param(
     [int]$PerformanceRuns = 3,
     [ValidateRange(2, 20)]
     [int]$AdapterStabilityRuns = 3,
-    [switch]$FullSnapshotProfileV2
+    [switch]$FullSnapshotProfileV2,
+    [switch]$FullSnapshotProfileGA
 )
 
 Set-StrictMode -Version Latest
@@ -30,7 +31,15 @@ if (-not (Test-Path $acceptanceScript)) {
 }
 
 $acceptanceOutputDir = Join-Path $OutputDir "acceptance-gate-full"
-if ($FullSnapshotProfileV2) {
+if ($FullSnapshotProfileGA) {
+    & $acceptanceScript `
+        -RepoRoot $RepoRoot `
+        -OutputDir $acceptanceOutputDir `
+        -AllowedRegressionPct $AllowedRegressionPct `
+        -PerformanceRuns $PerformanceRuns `
+        -AdapterStabilityRuns $AdapterStabilityRuns `
+        -FullSnapshotProfileGA | Out-Null
+} elseif ($FullSnapshotProfileV2) {
     & $acceptanceScript `
         -RepoRoot $RepoRoot `
         -OutputDir $acceptanceOutputDir `
@@ -101,6 +110,9 @@ $enabledGates = [ordered]@{
     governance_param2 = [bool]$acceptance.governance_param2_gate_enabled
     governance_param3 = [bool]$acceptance.governance_param3_gate_enabled
     governance_negative = [bool]$acceptance.governance_negative_gate_enabled
+    governance_access_policy = [bool]$acceptance.governance_access_policy_gate_enabled
+    governance_token_economics = [bool]$acceptance.governance_token_economics_gate_enabled
+    governance_treasury_spend = [bool]$acceptance.governance_treasury_spend_gate_enabled
     rpc_exposure = [bool]$acceptance.rpc_exposure_gate_enabled
     unjail_cooldown = [bool]$acceptance.unjail_cooldown_gate_enabled
     adapter_stability = [bool]$acceptance.adapter_stability_enabled
@@ -112,7 +124,10 @@ $governancePass = [bool](
     $acceptance.governance_execution_pass -and
     $acceptance.governance_param2_pass -and
     $acceptance.governance_param3_pass -and
-    $acceptance.governance_negative_pass
+    $acceptance.governance_negative_pass -and
+    $acceptance.governance_access_policy_pass -and
+    $acceptance.governance_token_economics_pass -and
+    $acceptance.governance_treasury_spend_pass
 )
 
 $syncPass = [bool](
@@ -139,6 +154,9 @@ $keyResults = [ordered]@{
     functional_pass = [bool]$acceptance.functional_pass
     performance_pass = [bool]$acceptance.performance_pass
     governance_rpc_duplicate_reject = [bool]$governanceRpc.duplicate_reject_ok
+    governance_access_policy_pass = [bool]$acceptance.governance_access_policy_pass
+    governance_token_economics_pass = [bool]$acceptance.governance_token_economics_pass
+    governance_treasury_spend_pass = [bool]$acceptance.governance_treasury_spend_pass
     rpc_exposure_pass = if ([bool]$acceptance.rpc_exposure_gate_enabled) { [bool]$acceptance.rpc_exposure_pass } else { $true }
     rpc_exposure_default_safe_pass = if ($rpcExposure) { [bool]$rpcExposure.default_safe_pass } else { $true }
     rpc_exposure_controlled_open_pass = if ($rpcExposure) { [bool]$rpcExposure.controlled_open_pass } else { $true }
@@ -159,6 +177,8 @@ $snapshot = [ordered]@{
         functional_summary_json = $functionalSummaryJson
         performance_summary_json = $performanceSummaryJson
         governance_rpc_summary_json = $governanceRpcSummaryJson
+        governance_access_policy_summary_json = [string]$acceptance.governance_access_policy_report_json
+        governance_treasury_spend_summary_json = [string]$acceptance.governance_treasury_spend_report_json
         rpc_exposure_summary_json = if ([bool]$acceptance.rpc_exposure_gate_enabled) { $rpcExposureSummaryJson } else { "" }
     }
 }
@@ -189,6 +209,8 @@ $md = @(
     "- functional_summary_json: $($snapshot.evidence.functional_summary_json)",
     "- performance_summary_json: $($snapshot.evidence.performance_summary_json)",
     "- governance_rpc_summary_json: $($snapshot.evidence.governance_rpc_summary_json)",
+    "- governance_access_policy_summary_json: $($snapshot.evidence.governance_access_policy_summary_json)",
+    "- governance_treasury_spend_summary_json: $($snapshot.evidence.governance_treasury_spend_summary_json)",
     "- rpc_exposure_summary_json: $($snapshot.evidence.rpc_exposure_summary_json)",
     "- snapshot_json: $snapshotJsonPath"
 )

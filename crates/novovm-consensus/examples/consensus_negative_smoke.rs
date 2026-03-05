@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use ed25519_dalek::{SigningKey, VerifyingKey};
 use novovm_consensus::{
-    BFTConfig, BFTError, BFTEngine, Epoch, HotStuffProtocol, NodeId, SlashMode, SlashPolicy,
+    BFTConfig, BFTEngine, BFTError, Epoch, HotStuffProtocol, NodeId, SlashMode, SlashPolicy,
     ValidatorSet, Vote,
 };
 use rand::rngs::OsRng;
@@ -52,7 +52,10 @@ fn invalid_signature_case() -> bool {
                 proposal.height,
                 &signing_keys[node_id],
             );
-            if let Some(qc) = leader_engine.collect_vote(vote).map_err(|e| e.to_string())? {
+            if let Some(qc) = leader_engine
+                .collect_vote(vote)
+                .map_err(|e| e.to_string())?
+            {
                 qc_opt = Some(qc);
                 break;
             }
@@ -132,7 +135,8 @@ fn wrong_epoch_case() -> bool {
         let mut wrong_epoch_proposal = proposal.clone();
         wrong_epoch_proposal.epoch_id = proposal.epoch_id.saturating_add(1);
 
-        let got_epoch_mismatch = match voter_protocol.vote(&wrong_epoch_proposal, &signing_keys[1]) {
+        let got_epoch_mismatch = match voter_protocol.vote(&wrong_epoch_proposal, &signing_keys[1])
+        {
             Err(BFTError::InvalidProposal(msg)) => msg.contains("Epoch mismatch"),
             Err(_) => false,
             Ok(_) => false,
@@ -238,12 +242,15 @@ fn slash_execution_case() -> bool {
         let proposal = leader_protocol.propose(&epoch).map_err(|e| e.to_string())?;
         let leader_state = leader_protocol.get_state();
 
-        let mut voter1 = HotStuffProtocol::new(validator_set.clone(), 1).map_err(|e| e.to_string())?;
+        let mut voter1 =
+            HotStuffProtocol::new(validator_set.clone(), 1).map_err(|e| e.to_string())?;
         voter1.sync_state(leader_state.clone());
         let vote1 = voter1
             .vote(&proposal, &signing_keys[1])
             .map_err(|e| e.to_string())?;
-        let _ = leader_protocol.collect_vote(vote1).map_err(|e| e.to_string())?;
+        let _ = leader_protocol
+            .collect_vote(vote1)
+            .map_err(|e| e.to_string())?;
 
         // conflicting vote -> slash execution
         let mut other_hash = proposal.hash();
@@ -305,7 +312,9 @@ fn slash_policy_threshold_case() -> bool {
         let vote1 = voter1
             .vote(&proposal, &signing_keys[1])
             .map_err(|e| e.to_string())?;
-        let _ = leader_protocol.collect_vote(vote1).map_err(|e| e.to_string())?;
+        let _ = leader_protocol
+            .collect_vote(vote1)
+            .map_err(|e| e.to_string())?;
 
         let mut hash_a = proposal.hash();
         hash_a[0] ^= 0x19;
@@ -337,7 +346,10 @@ fn slash_policy_threshold_case() -> bool {
     };
 
     run().unwrap_or_else(|err| {
-        eprintln!("consensus_negative_case=slash_policy_threshold error={}", err);
+        eprintln!(
+            "consensus_negative_case=slash_policy_threshold error={}",
+            err
+        );
         false
     })
 }
@@ -362,13 +374,14 @@ fn slash_policy_observe_only_case() -> bool {
         let proposal = leader_protocol.propose(&epoch).map_err(|e| e.to_string())?;
         let leader_state = leader_protocol.get_state();
 
-        let mut voter1 =
-            HotStuffProtocol::new(validator_set, 1).map_err(|e| e.to_string())?;
+        let mut voter1 = HotStuffProtocol::new(validator_set, 1).map_err(|e| e.to_string())?;
         voter1.sync_state(leader_state);
         let vote1 = voter1
             .vote(&proposal, &signing_keys[1])
             .map_err(|e| e.to_string())?;
-        let _ = leader_protocol.collect_vote(vote1).map_err(|e| e.to_string())?;
+        let _ = leader_protocol
+            .collect_vote(vote1)
+            .map_err(|e| e.to_string())?;
 
         let mut hash_a = proposal.hash();
         hash_a[0] ^= 0x31;
@@ -418,18 +431,26 @@ fn unjail_cooldown_case() -> UnjailCooldownSignal {
                 cooldown_epochs: 2,
             })
             .map_err(|e| e.to_string())?;
-        let _ = leader_protocol.trigger_view_change().map_err(|e| e.to_string())?;
-        let _ = leader_protocol.trigger_view_change().map_err(|e| e.to_string())?;
+        let _ = leader_protocol
+            .trigger_view_change()
+            .map_err(|e| e.to_string())?;
+        let _ = leader_protocol
+            .trigger_view_change()
+            .map_err(|e| e.to_string())?;
         if leader_protocol.current_leader() != 2 {
             return Err("failed to rotate leader to node-2 for cooldown probe".to_string());
         }
 
         let mut epoch0 = Epoch::new(0, 0, 0);
         epoch0.add_batch(1, 10);
-        let proposal0 = leader_protocol.propose(&epoch0).map_err(|e| e.to_string())?;
+        let proposal0 = leader_protocol
+            .propose(&epoch0)
+            .map_err(|e| e.to_string())?;
 
         let vote1 = Vote::new(1, proposal0.hash(), proposal0.height, &signing_keys[1]);
-        let _ = leader_protocol.collect_vote(vote1).map_err(|e| e.to_string())?;
+        let _ = leader_protocol
+            .collect_vote(vote1)
+            .map_err(|e| e.to_string())?;
         let mut conflicting_hash = proposal0.hash();
         conflicting_hash[0] ^= 0x5A;
         let _ = leader_protocol
@@ -445,10 +466,20 @@ fn unjail_cooldown_case() -> UnjailCooldownSignal {
         let until = leader_protocol.validator_jailed_until_epoch(1).unwrap_or(0);
 
         let _ = leader_protocol
-            .collect_vote(Vote::new(2, proposal0.hash(), proposal0.height, &signing_keys[2]))
+            .collect_vote(Vote::new(
+                2,
+                proposal0.hash(),
+                proposal0.height,
+                &signing_keys[2],
+            ))
             .map_err(|e| e.to_string())?;
         let qc0 = leader_protocol
-            .collect_vote(Vote::new(0, proposal0.hash(), proposal0.height, &signing_keys[0]))
+            .collect_vote(Vote::new(
+                0,
+                proposal0.hash(),
+                proposal0.height,
+                &signing_keys[0],
+            ))
             .map_err(|e| e.to_string())?
             .ok_or_else(|| "qc0 not formed".to_string())?;
         leader_protocol
@@ -458,7 +489,9 @@ fn unjail_cooldown_case() -> UnjailCooldownSignal {
 
         let mut epoch1 = Epoch::new(1, 1, 0);
         epoch1.add_batch(1, 11);
-        let proposal1 = leader_protocol.propose(&epoch1).map_err(|e| e.to_string())?;
+        let proposal1 = leader_protocol
+            .propose(&epoch1)
+            .map_err(|e| e.to_string())?;
         let premature_rejected = matches!(
             leader_protocol.collect_vote(Vote::new(
                 1,
@@ -470,10 +503,20 @@ fn unjail_cooldown_case() -> UnjailCooldownSignal {
         );
 
         let _ = leader_protocol
-            .collect_vote(Vote::new(2, proposal1.hash(), proposal1.height, &signing_keys[2]))
+            .collect_vote(Vote::new(
+                2,
+                proposal1.hash(),
+                proposal1.height,
+                &signing_keys[2],
+            ))
             .map_err(|e| e.to_string())?;
         let qc1 = leader_protocol
-            .collect_vote(Vote::new(0, proposal1.hash(), proposal1.height, &signing_keys[0]))
+            .collect_vote(Vote::new(
+                0,
+                proposal1.hash(),
+                proposal1.height,
+                &signing_keys[0],
+            ))
             .map_err(|e| e.to_string())?
             .ok_or_else(|| "qc1 not formed".to_string())?;
         leader_protocol
@@ -496,7 +539,9 @@ fn unjail_cooldown_case() -> UnjailCooldownSignal {
 
         let mut epoch2 = Epoch::new(2, 2, 0);
         epoch2.add_batch(1, 12);
-        let proposal2 = leader_protocol.propose(&epoch2).map_err(|e| e.to_string())?;
+        let proposal2 = leader_protocol
+            .propose(&epoch2)
+            .map_err(|e| e.to_string())?;
         let recovered_vote_accepted = leader_protocol
             .collect_vote(Vote::new(
                 1,
@@ -508,7 +553,12 @@ fn unjail_cooldown_case() -> UnjailCooldownSignal {
             .unwrap_or(false);
 
         Ok(UnjailCooldownSignal {
-            pass: jailed && until == 2 && premature_rejected && unjailed && at == 2 && recovered_vote_accepted,
+            pass: jailed
+                && until == 2
+                && premature_rejected
+                && unjailed
+                && at == 2
+                && recovered_vote_accepted,
             jailed,
             until,
             unjailed,

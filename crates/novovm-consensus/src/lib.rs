@@ -90,15 +90,15 @@ pub mod bft_engine;
 pub mod epoch;
 pub mod protocol;
 pub mod quorum_cert;
+pub mod token_runtime;
 pub mod types;
 
-pub use bft_engine::{BFTEngine, BFTConfig, CommitQcTimings, CommittedEpoch};
+pub use bft_engine::{BFTConfig, BFTEngine, CommitQcTimings, CommittedEpoch};
 pub use epoch::{Epoch, EpochConfig, EpochManager};
 pub use protocol::{HotStuffProtocol, Phase, ProtocolState};
 pub use quorum_cert::{QuorumCertificate, Vote};
 pub use types::{
-    BFTError, BFTProposal, BFTResult, GovernanceOp, GovernanceProposal, GovernanceVote, Hash,
-    Height, NetworkDosPolicy, NodeId, SlashEvidence, SlashExecution, SlashMode, SlashPolicy,
-    ValidatorSet,
+    BFTError, BFTProposal, BFTResult, FeeRoutingOutcome, FeeSplit, GovernanceAccessPolicy,
+    GovernanceOp, GovernanceProposal, GovernanceVote, Hash, Height, NetworkDosPolicy, NodeId,
+    SlashEvidence, SlashExecution, SlashMode, SlashPolicy, TokenEconomicsPolicy, ValidatorSet,
 };
-

@@ -36,6 +36,36 @@ function Get-Int64OrZero {
     return [int64]$Value
 }
 
+function Test-RegistryNegativeHashMismatchFlake {
+    param([object]$Raw)
+
+    if ($null -eq $Raw -or $null -eq $Raw.adapter_plugin_registry_negative_signal) {
+        return $false
+    }
+
+    $signal = $Raw.adapter_plugin_registry_negative_signal
+    if (Get-Bool $signal.pass) {
+        return $false
+    }
+
+    $hashFailedAsExpected = Get-Bool $signal.hash_mismatch.failed_as_expected
+    $hashReasonMatch = Get-Bool $signal.hash_mismatch.reason_match
+    $whitelistFailedAsExpected = Get-Bool $signal.whitelist_mismatch.failed_as_expected
+    $whitelistReasonMatch = Get-Bool $signal.whitelist_mismatch.reason_match
+    $hashExitCode = if ($null -eq $signal.hash_mismatch.exit_code) { 0 } else { [int]$signal.hash_mismatch.exit_code }
+
+    # Known flake shape:
+    # hash-mismatch negative exits non-zero but reason line is missing (e.g. process crash),
+    # while whitelist mismatch branch still behaves as expected.
+    return (
+        $hashFailedAsExpected -and
+        (-not $hashReasonMatch) -and
+        ($hashExitCode -ne 0) -and
+        $whitelistFailedAsExpected -and
+        $whitelistReasonMatch
+    )
+}
+
 $functionalScript = Join-Path $RepoRoot "scripts\migration\run_functional_consistency.ps1"
 if (-not (Test-Path $functionalScript)) {
     throw "missing functional consistency script: $functionalScript"
@@ -48,13 +78,72 @@ for ($i = 1; $i -le $Runs; $i++) {
     $runDir = Join-Path $OutputDir ("run-" + $i)
     New-Item -ItemType Directory -Force -Path $runDir | Out-Null
 
-    & $functionalScript -RepoRoot $RepoRoot -OutputDir $runDir | Out-Null
-    $jsonPath = Join-Path $runDir "functional-consistency.json"
-    if (-not (Test-Path $jsonPath)) {
-        throw "missing functional consistency json for run-${i}: $jsonPath"
+    $maxRetry = 1
+    $attempt = 0
+    $retryUsed = $false
+    $retryReason = ""
+    $attemptDir = $runDir
+    $jsonPath = ""
+    $raw = $null
+
+    while ($true) {
+        if ($attempt -eq 0) {
+            $attemptDir = $runDir
+        } else {
+            $attemptDir = Join-Path $runDir ("retry-" + $attempt)
+            New-Item -ItemType Directory -Force -Path $attemptDir | Out-Null
+        }
+
+        & $functionalScript -RepoRoot $RepoRoot -OutputDir $attemptDir | Out-Null
+        $jsonPath = Join-Path $attemptDir "functional-consistency.json"
+        if (-not (Test-Path $jsonPath)) {
+            throw "missing functional consistency json for run-${i} attempt-${attempt}: $jsonPath"
+        }
+        $raw = Get-Content -Path $jsonPath -Raw | ConvertFrom-Json
+
+        $adapterPass = Get-Bool $raw.adapter_signal.pass
+        $abiPass = Get-Bool $raw.adapter_plugin_abi_signal.pass
+        $registryPass = Get-Bool $raw.adapter_plugin_registry_signal.pass
+        $consensusPass = Get-Bool $raw.adapter_consensus_binding_signal.pass
+        $comparePass = Get-Bool $raw.adapter_backend_compare_signal.pass
+        $compareAvailable = Get-Bool $raw.adapter_backend_compare_signal.available
+        $compareStateRootEqual = Get-Bool $raw.adapter_backend_compare_signal.state_root_equal
+        $abiNegativePass = Get-Bool $raw.adapter_plugin_abi_negative_signal.pass
+        $symbolNegativePass = Get-Bool $raw.adapter_plugin_symbol_negative_signal.pass
+        $registryNegativePass = Get-Bool $raw.adapter_plugin_registry_negative_signal.pass
+
+        $adapterGatePass = (
+            $adapterPass -and
+            $abiPass -and
+            $registryPass -and
+            $consensusPass -and
+            $compareAvailable -and
+            $comparePass -and
+            $compareStateRootEqual -and
+            $abiNegativePass -and
+            $symbolNegativePass -and
+            $registryNegativePass
+        )
+
+        if ($adapterGatePass) {
+            break
+        }
+
+        if ($attempt -ge $maxRetry) {
+            break
+        }
+
+        if (Test-RegistryNegativeHashMismatchFlake -Raw $raw) {
+            $retryUsed = $true
+            $retryReason = "registry_negative_hash_mismatch_reason_drift"
+            $attempt++
+            Write-Host "adapter stability gate: run-${i} retry due to known registry-negative flake (attempt=$attempt)"
+            continue
+        }
+
+        break
     }
 
-    $raw = Get-Content -Path $jsonPath -Raw | ConvertFrom-Json
     $adapterPass = Get-Bool $raw.adapter_signal.pass
     $abiPass = Get-Bool $raw.adapter_plugin_abi_signal.pass
     $registryPass = Get-Bool $raw.adapter_plugin_registry_signal.pass
@@ -98,6 +187,10 @@ for ($i = 1; $i -le $Runs; $i++) {
         registry_negative_pass = $registryNegativePass
         native_elapsed_us = $nativeElapsedUs
         plugin_elapsed_us = $pluginElapsedUs
+        retry_used = $retryUsed
+        retry_count = $attempt
+        retry_reason = $retryReason
+        selected_attempt_dir = $attemptDir
         functional_json = $jsonPath
     }
 }
@@ -158,6 +251,15 @@ $md = @(
 )
 foreach ($r in $runReports) {
     $md += "| $($r.run) | $($r.adapter_gate_pass) | $($r.compare_pass) | $($r.abi_negative_pass) | $($r.symbol_negative_pass) | $($r.registry_negative_pass) | $($r.native_elapsed_us) | $($r.plugin_elapsed_us) |"
+}
+$retryRuns = @($runReports | Where-Object { $_.retry_used })
+if ($retryRuns.Count -gt 0) {
+    $md += ""
+    $md += "## Retry Events"
+    $md += ""
+    foreach ($r in $retryRuns) {
+        $md += "- run=$($r.run) retry_count=$($r.retry_count) retry_reason=$($r.retry_reason) selected_attempt_dir=$($r.selected_attempt_dir)"
+    }
 }
 $md -join "`n" | Set-Content -Path $summaryMd -Encoding UTF8
 

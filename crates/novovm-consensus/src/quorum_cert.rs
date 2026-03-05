@@ -3,7 +3,7 @@
 // QC = 法定人数的投票聚合
 // 使用 Ed25519 签名（Phase 4.1 已完成 batch verify PoC）
 
-use crate::types::{Hash, Height, NodeId, BFTResult, BFTError, ValidatorSet};
+use crate::types::{BFTError, BFTResult, Hash, Height, NodeId, ValidatorSet};
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -13,13 +13,13 @@ use std::collections::HashMap;
 pub struct Vote {
     /// 投票者 ID
     pub voter_id: NodeId,
-    
+
     /// 投票的提案哈希
     pub proposal_hash: Hash,
-    
+
     /// 区块高度
     pub height: Height,
-    
+
     /// Ed25519 签名
     pub signature: Vec<u8>,
 }
@@ -34,7 +34,7 @@ impl Vote {
     ) -> Self {
         let message = Self::construct_message(&proposal_hash, height);
         let signature = signing_key.sign(&message).to_bytes().to_vec();
-        
+
         Self {
             voter_id,
             proposal_hash,
@@ -42,20 +42,20 @@ impl Vote {
             signature,
         }
     }
-    
+
     /// 验证投票签名
     pub fn verify(&self, verifying_key: &VerifyingKey) -> BFTResult<()> {
         let message = Self::construct_message(&self.proposal_hash, self.height);
         let signature = Signature::from_slice(&self.signature)
             .map_err(|e| BFTError::InvalidSignature(format!("Invalid signature format: {}", e)))?;
-        
+
         verifying_key
             .verify(&message, &signature)
             .map_err(|e| BFTError::InvalidSignature(format!("Verification failed: {}", e)))?;
-        
+
         Ok(())
     }
-    
+
     /// 构造签名消息
     fn construct_message(proposal_hash: &Hash, height: Height) -> Vec<u8> {
         let mut message = Vec::new();
@@ -71,13 +71,13 @@ impl Vote {
 pub struct QuorumCertificate {
     /// 提案哈希
     pub proposal_hash: Hash,
-    
+
     /// 区块高度
     pub height: Height,
-    
+
     /// 投票列表
     pub votes: Vec<Vote>,
-    
+
     /// 投票权重总和
     pub total_weight: u64,
 }
@@ -92,17 +92,26 @@ impl QuorumCertificate {
             total_weight: 0,
         }
     }
-    
+
     /// 添加投票
     pub fn add_vote(&mut self, vote: Vote, weight: u64) {
         self.votes.push(vote);
         self.total_weight += weight;
     }
-    
+
     /// 验证 QC（批量验证所有签名）
-    pub fn verify(&self, validator_set: &ValidatorSet, public_keys: &HashMap<NodeId, VerifyingKey>) -> BFTResult<()> {
+    pub fn verify(
+        &self,
+        validator_set: &ValidatorSet,
+        public_keys: &HashMap<NodeId, VerifyingKey>,
+    ) -> BFTResult<()> {
         if cfg!(test) {
-            eprintln!("[QC] verify: begin height={} votes={} total_weight={}", self.height, self.votes.len(), self.total_weight);
+            eprintln!(
+                "[QC] verify: begin height={} votes={} total_weight={}",
+                self.height,
+                self.votes.len(),
+                self.total_weight
+            );
         }
         // 验证投票集合并重新计算权重（不信任声明的 total_weight）。
         let observed_weight = self.validate_votes_and_weight(validator_set)?;
@@ -124,7 +133,7 @@ impl QuorumCertificate {
         if cfg!(test) {
             eprintln!("[QC] verify: signatures ok");
         }
-        
+
         Ok(())
     }
 
@@ -156,7 +165,7 @@ impl QuorumCertificate {
 
         Ok(observed_weight)
     }
-    
+
     /// 批量验证签名（Phase 4.1 PoC：3.48x-3.90x 加速）
     fn batch_verify_signatures(
         &self,
@@ -165,13 +174,13 @@ impl QuorumCertificate {
     ) -> BFTResult<()> {
         // TODO: 使用 ed25519_dalek::verify_batch() 进行批量验证
         // 当前实现：逐个验证（Phase 4.2 Week 3 优化）
-        
+
         for vote in &self.votes {
             // 检查是否是验证者
             if !validator_set.is_validator(vote.voter_id) {
                 return Err(BFTError::NotValidator(vote.voter_id));
             }
-            
+
             // 检查高度匹配
             if vote.height != self.height {
                 return Err(BFTError::HeightMismatch {
@@ -179,28 +188,28 @@ impl QuorumCertificate {
                     got: vote.height,
                 });
             }
-            
+
             // 检查提案哈希匹配
             if vote.proposal_hash != self.proposal_hash {
                 return Err(BFTError::InvalidProposal(
-                    "Proposal hash mismatch in vote".to_string()
+                    "Proposal hash mismatch in vote".to_string(),
                 ));
             }
-            
+
             // 验证签名
             let public_key = public_keys
                 .get(&vote.voter_id)
                 .ok_or(BFTError::NotValidator(vote.voter_id))?;
-            
+
             vote.verify(public_key)?;
         }
-        
+
         Ok(())
     }
-    
+
     /// 计算 QC 的哈希
     pub fn hash(&self) -> Hash {
-        use sha2::{Sha256, Digest};
+        use sha2::{Digest, Sha256};
         let mut hasher = Sha256::new();
         hasher.update(self.proposal_hash);
         hasher.update(self.height.to_le_bytes());
@@ -218,13 +227,13 @@ mod tests {
     fn test_vote_creation_and_verification() {
         let signing_key = SigningKey::generate(&mut OsRng);
         let verifying_key = signing_key.verifying_key();
-        
+
         let proposal_hash = [42u8; 32];
         let height = 100;
-        
+
         // 创建投票
         let vote = Vote::new(0, proposal_hash, height, &signing_key);
-        
+
         // 验证投票
         assert!(vote.verify(&verifying_key).is_ok());
     }
@@ -233,12 +242,12 @@ mod tests {
     fn test_vote_verification_fails_with_wrong_key() {
         let signing_key = SigningKey::generate(&mut OsRng);
         let wrong_key = SigningKey::generate(&mut OsRng);
-        
+
         let proposal_hash = [42u8; 32];
         let height = 100;
-        
+
         let vote = Vote::new(0, proposal_hash, height, &signing_key);
-        
+
         // 使用错误的公钥验证
         assert!(vote.verify(&wrong_key.verifying_key()).is_err());
     }
@@ -247,37 +256,35 @@ mod tests {
     fn test_qc_quorum_check() {
         let validator_set = ValidatorSet::new_equal_weight(vec![0, 1, 2, 3]);
         let _quorum_size = validator_set.quorum_size(); // 3
-        
+
         // 生成密钥
-        let signing_keys: Vec<_> = (0..4)
-            .map(|_| SigningKey::generate(&mut OsRng))
-            .collect();
-        
+        let signing_keys: Vec<_> = (0..4).map(|_| SigningKey::generate(&mut OsRng)).collect();
+
         let public_keys: HashMap<NodeId, VerifyingKey> = signing_keys
             .iter()
             .enumerate()
             .map(|(i, sk)| (i as NodeId, sk.verifying_key()))
             .collect();
-        
+
         let proposal_hash = [1u8; 32];
         let height = 10;
-        
+
         // 创建 QC
         let mut qc = QuorumCertificate::new(proposal_hash, height);
-        
+
         // 添加 2 个投票（不足法定人数）
         for (i, signing_key) in signing_keys.iter().enumerate().take(2) {
             let vote = Vote::new(i as NodeId, proposal_hash, height, signing_key);
             qc.add_vote(vote, 1);
         }
-        
+
         // 验证失败（2/3 不足）
         assert!(qc.verify(&validator_set, &public_keys).is_err());
-        
+
         // 添加第 3 个投票（达到法定人数）
         let vote = Vote::new(2, proposal_hash, height, &signing_keys[2]);
         qc.add_vote(vote, 1);
-        
+
         // 验证成功（3/3）
         assert!(qc.verify(&validator_set, &public_keys).is_ok());
     }
@@ -285,32 +292,30 @@ mod tests {
     #[test]
     fn test_qc_duplicate_vote_detection() {
         let validator_set = ValidatorSet::new_equal_weight(vec![0, 1, 2, 3]);
-        
-        let signing_keys: Vec<_> = (0..4)
-            .map(|_| SigningKey::generate(&mut OsRng))
-            .collect();
-        
+
+        let signing_keys: Vec<_> = (0..4).map(|_| SigningKey::generate(&mut OsRng)).collect();
+
         let public_keys: HashMap<NodeId, VerifyingKey> = signing_keys
             .iter()
             .enumerate()
             .map(|(i, sk)| (i as NodeId, sk.verifying_key()))
             .collect();
-        
+
         let proposal_hash = [1u8; 32];
         let height = 10;
-        
+
         let mut qc = QuorumCertificate::new(proposal_hash, height);
-        
+
         // 添加投票
         for (i, signing_key) in signing_keys.iter().enumerate().take(3) {
             let vote = Vote::new(i as NodeId, proposal_hash, height, signing_key);
             qc.add_vote(vote, 1);
         }
-        
+
         // 添加重复投票（节点 0 重复投票）
         let duplicate_vote = Vote::new(0, proposal_hash, height, &signing_keys[0]);
         qc.add_vote(duplicate_vote, 1);
-        
+
         // 验证失败（检测到重复投票）
         let result = qc.verify(&validator_set, &public_keys);
         assert!(result.is_err());
@@ -324,9 +329,7 @@ mod tests {
     #[test]
     fn test_qc_rejects_total_weight_tamper() {
         let validator_set = ValidatorSet::new_equal_weight(vec![0, 1, 2, 3]);
-        let signing_keys: Vec<_> = (0..4)
-            .map(|_| SigningKey::generate(&mut OsRng))
-            .collect();
+        let signing_keys: Vec<_> = (0..4).map(|_| SigningKey::generate(&mut OsRng)).collect();
         let public_keys: HashMap<NodeId, VerifyingKey> = signing_keys
             .iter()
             .enumerate()
@@ -346,9 +349,7 @@ mod tests {
     #[test]
     fn test_qc_weighted_quorum_passes() {
         let validator_set = ValidatorSet::new_weighted(vec![(0, 5), (1, 3), (2, 2)]).unwrap();
-        let signing_keys: Vec<_> = (0..3)
-            .map(|_| SigningKey::generate(&mut OsRng))
-            .collect();
+        let signing_keys: Vec<_> = (0..3).map(|_| SigningKey::generate(&mut OsRng)).collect();
         let public_keys: HashMap<NodeId, VerifyingKey> = signing_keys
             .iter()
             .enumerate()
@@ -362,4 +363,3 @@ mod tests {
         assert!(qc.verify(&validator_set, &public_keys).is_ok()); // quorum=7
     }
 }
-

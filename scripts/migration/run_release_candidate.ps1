@@ -7,7 +7,8 @@ param(
     [int]$PerformanceRuns = 3,
     [ValidateRange(2, 20)]
     [int]$AdapterStabilityRuns = 3,
-    [switch]$FullSnapshotProfileV2
+    [switch]$FullSnapshotProfileV2,
+    [switch]$FullSnapshotProfileGA
 )
 
 Set-StrictMode -Version Latest
@@ -85,9 +86,17 @@ if (-not (Test-Path $snapshotScript)) {
     throw "missing release snapshot script: $snapshotScript"
 }
 
-$expectedProfile = if ($FullSnapshotProfileV2) { "full_snapshot_v2" } else { "full_snapshot_v1" }
+$expectedProfile = if ($FullSnapshotProfileGA) { "full_snapshot_ga_v1" } elseif ($FullSnapshotProfileV2) { "full_snapshot_v2" } else { "full_snapshot_v1" }
 $snapshotOutputDir = Join-Path $OutputDir "snapshot"
-if ($FullSnapshotProfileV2) {
+if ($FullSnapshotProfileGA) {
+    & $snapshotScript `
+        -RepoRoot $RepoRoot `
+        -OutputDir $snapshotOutputDir `
+        -AllowedRegressionPct $AllowedRegressionPct `
+        -PerformanceRuns $PerformanceRuns `
+        -AdapterStabilityRuns $AdapterStabilityRuns `
+        -FullSnapshotProfileGA | Out-Null
+} elseif ($FullSnapshotProfileV2) {
     & $snapshotScript `
         -RepoRoot $RepoRoot `
         -OutputDir $snapshotOutputDir `
@@ -124,7 +133,9 @@ if (-not [bool]$snapshot.overall_pass) {
     throw "release candidate snapshot is not green: overall_pass=false"
 }
 
-$freezeRule = if ($FullSnapshotProfileV2) {
+$freezeRule = if ($FullSnapshotProfileGA) {
+    "full_snapshot_v1/v2 semantic is frozen; full_snapshot_ga_v1 adds governance_access_policy + I-TOKEN governance/token-economics/treasury gates"
+} elseif ($FullSnapshotProfileV2) {
     "full_snapshot_v1 semantic is frozen; full_snapshot_v2 includes rpc exposure gate as additive security profile"
 } else {
     "full_snapshot_v1 semantic is frozen; additive capability changes must use full_snapshot_v2"
@@ -139,7 +150,10 @@ $rcCandidate = [ordered]@{
     snapshot_profile = [string]$snapshot.profile_name
     snapshot_overall_pass = [bool]$snapshot.overall_pass
     governance_param3_pass = [bool]$acceptance.governance_param3_pass
-    rpc_exposure_pass = if ($expectedProfile -eq "full_snapshot_v2") { [bool]$acceptance.rpc_exposure_pass } else { $false }
+    governance_access_policy_pass = [bool]$acceptance.governance_access_policy_pass
+    governance_token_economics_pass = [bool]$acceptance.governance_token_economics_pass
+    governance_treasury_spend_pass = [bool]$acceptance.governance_treasury_spend_pass
+    rpc_exposure_pass = if ($expectedProfile -eq "full_snapshot_v2" -or $expectedProfile -eq "full_snapshot_ga_v1") { [bool]$acceptance.rpc_exposure_pass } else { $false }
     adapter_stability_pass = [bool]$acceptance.adapter_stability_pass
     snapshot_json = $snapshotJson
     snapshot_md = $snapshotMd
@@ -161,6 +175,9 @@ $md = @(
     "- snapshot_profile: $($rcCandidate.snapshot_profile)"
     "- snapshot_overall_pass: $($rcCandidate.snapshot_overall_pass)"
     "- governance_param3_pass: $($rcCandidate.governance_param3_pass)"
+    "- governance_access_policy_pass: $($rcCandidate.governance_access_policy_pass)"
+    "- governance_token_economics_pass: $($rcCandidate.governance_token_economics_pass)"
+    "- governance_treasury_spend_pass: $($rcCandidate.governance_treasury_spend_pass)"
     "- rpc_exposure_pass: $($rcCandidate.rpc_exposure_pass)"
     "- adapter_stability_pass: $($rcCandidate.adapter_stability_pass)"
     "- snapshot_json: $($rcCandidate.snapshot_json)"
@@ -177,6 +194,9 @@ Write-Host "  status: $($rcCandidate.status)"
 Write-Host "  snapshot_profile: $($rcCandidate.snapshot_profile)"
 Write-Host "  snapshot_overall_pass: $($rcCandidate.snapshot_overall_pass)"
 Write-Host "  governance_param3_pass: $($rcCandidate.governance_param3_pass)"
+Write-Host "  governance_access_policy_pass: $($rcCandidate.governance_access_policy_pass)"
+Write-Host "  governance_token_economics_pass: $($rcCandidate.governance_token_economics_pass)"
+Write-Host "  governance_treasury_spend_pass: $($rcCandidate.governance_treasury_spend_pass)"
 Write-Host "  rpc_exposure_pass: $($rcCandidate.rpc_exposure_pass)"
 Write-Host "  adapter_stability_pass: $($rcCandidate.adapter_stability_pass)"
 Write-Host "  rc_json: $rcJson"

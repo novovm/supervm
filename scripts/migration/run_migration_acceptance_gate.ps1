@@ -6,6 +6,7 @@ param(
     [int]$PerformanceRuns = 3,
     [switch]$FullSnapshotProfile,
     [switch]$FullSnapshotProfileV2,
+    [switch]$FullSnapshotProfileGA,
     [bool]$IncludeChainQueryRpcGate = $true,
     [string]$ChainQueryRpcBind = "127.0.0.1:8899",
     [ValidateRange(1, 32)]
@@ -25,6 +26,9 @@ param(
     [bool]$IncludeGovernanceParam2Gate = $true,
     [bool]$IncludeGovernanceParam3Gate = $true,
     [bool]$IncludeGovernanceNegativeGate = $true,
+    [bool]$IncludeGovernanceAccessPolicyGate = $false,
+    [bool]$IncludeGovernanceTokenEconomicsGate = $false,
+    [bool]$IncludeGovernanceTreasurySpendGate = $false,
     [bool]$IncludeRpcExposureGate = $false,
     [string]$RpcExposurePublicBind = "127.0.0.1:8899",
     [string]$RpcExposureGovBind = "127.0.0.1:8901",
@@ -42,7 +46,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 $profileName = "default"
-if ($FullSnapshotProfile -or $FullSnapshotProfileV2) {
+if ($FullSnapshotProfile -or $FullSnapshotProfileV2 -or $FullSnapshotProfileGA) {
     $IncludeChainQueryRpcGate = $true
     $IncludeGovernanceRpcGate = $true
     $IncludeHeaderSyncGate = $true
@@ -56,14 +60,23 @@ if ($FullSnapshotProfile -or $FullSnapshotProfileV2) {
     $IncludeGovernanceParam2Gate = $true
     $IncludeGovernanceParam3Gate = $true
     $IncludeGovernanceNegativeGate = $true
+    $IncludeGovernanceAccessPolicyGate = $false
     $IncludeUnjailCooldownGate = $true
     $IncludeAdapterStabilityGate = $true
+    $IncludeGovernanceTokenEconomicsGate = $false
+    $IncludeGovernanceTreasurySpendGate = $false
     $IncludeRpcExposureGate = $false
     $profileName = "full_snapshot_v1"
 }
-if ($FullSnapshotProfileV2) {
+if ($FullSnapshotProfileV2 -or $FullSnapshotProfileGA) {
     $IncludeRpcExposureGate = $true
     $profileName = "full_snapshot_v2"
+}
+if ($FullSnapshotProfileGA) {
+    $IncludeGovernanceAccessPolicyGate = $true
+    $IncludeGovernanceTokenEconomicsGate = $true
+    $IncludeGovernanceTreasurySpendGate = $true
+    $profileName = "full_snapshot_ga_v1"
 }
 
 if (-not $RepoRoot) {
@@ -97,6 +110,9 @@ $governanceExecutionGateScript = Join-Path $RepoRoot "scripts\migration\run_gove
 $governanceParam2GateScript = Join-Path $RepoRoot "scripts\migration\run_governance_param2_gate.ps1"
 $governanceParam3GateScript = Join-Path $RepoRoot "scripts\migration\run_governance_param3_gate.ps1"
 $governanceNegativeGateScript = Join-Path $RepoRoot "scripts\migration\run_governance_negative_gate.ps1"
+$governanceAccessPolicyGateScript = Join-Path $RepoRoot "scripts\migration\run_governance_access_policy_gate.ps1"
+$governanceTokenEconomicsGateScript = Join-Path $RepoRoot "scripts\migration\run_governance_token_economics_gate.ps1"
+$governanceTreasurySpendGateScript = Join-Path $RepoRoot "scripts\migration\run_governance_treasury_spend_gate.ps1"
 $rpcExposureGateScript = Join-Path $RepoRoot "scripts\migration\run_rpc_exposure_gate.ps1"
 $unjailCooldownGateScript = Join-Path $RepoRoot "scripts\migration\run_unjail_cooldown_gate.ps1"
 $adapterStabilityScript = Join-Path $RepoRoot "scripts\migration\run_adapter_stability_gate.ps1"
@@ -141,6 +157,15 @@ if ($IncludeGovernanceParam3Gate) {
 if ($IncludeGovernanceNegativeGate) {
     Require-Path -Path $governanceNegativeGateScript -Name "governance negative gate script"
 }
+if ($IncludeGovernanceAccessPolicyGate) {
+    Require-Path -Path $governanceAccessPolicyGateScript -Name "governance access policy gate script"
+}
+if ($IncludeGovernanceTokenEconomicsGate) {
+    Require-Path -Path $governanceTokenEconomicsGateScript -Name "governance token economics gate script"
+}
+if ($IncludeGovernanceTreasurySpendGate) {
+    Require-Path -Path $governanceTreasurySpendGateScript -Name "governance treasury spend gate script"
+}
 if ($IncludeRpcExposureGate) {
     Require-Path -Path $rpcExposureGateScript -Name "rpc exposure gate script"
 }
@@ -167,6 +192,9 @@ $governanceExecutionOutputDir = Join-Path $OutputDir "governance-execution-gate"
 $governanceParam2OutputDir = Join-Path $OutputDir "governance-param2-gate"
 $governanceParam3OutputDir = Join-Path $OutputDir "governance-param3-gate"
 $governanceNegativeOutputDir = Join-Path $OutputDir "governance-negative-gate"
+$governanceAccessPolicyOutputDir = Join-Path $OutputDir "governance-access-policy-gate"
+$governanceTokenEconomicsOutputDir = Join-Path $OutputDir "governance-token-economics-gate"
+$governanceTreasurySpendOutputDir = Join-Path $OutputDir "governance-treasury-spend-gate"
 $rpcExposureOutputDir = Join-Path $OutputDir "rpc-exposure-gate"
 $unjailCooldownOutputDir = Join-Path $OutputDir "unjail-cooldown-gate"
 $adapterStabilityOutputDir = Join-Path $OutputDir "adapter-stability-gate"
@@ -210,6 +238,15 @@ if ($IncludeGovernanceParam3Gate) {
 }
 if ($IncludeGovernanceNegativeGate) {
     New-Item -ItemType Directory -Force -Path $governanceNegativeOutputDir | Out-Null
+}
+if ($IncludeGovernanceAccessPolicyGate) {
+    New-Item -ItemType Directory -Force -Path $governanceAccessPolicyOutputDir | Out-Null
+}
+if ($IncludeGovernanceTokenEconomicsGate) {
+    New-Item -ItemType Directory -Force -Path $governanceTokenEconomicsOutputDir | Out-Null
+}
+if ($IncludeGovernanceTreasurySpendGate) {
+    New-Item -ItemType Directory -Force -Path $governanceTreasurySpendOutputDir | Out-Null
 }
 if ($IncludeRpcExposureGate) {
     New-Item -ItemType Directory -Force -Path $rpcExposureOutputDir | Out-Null
@@ -328,6 +365,27 @@ if ($IncludeGovernanceNegativeGate) {
         -OutputDir $governanceNegativeOutputDir | Out-Null
 }
 
+if ($IncludeGovernanceAccessPolicyGate) {
+    Write-Host "acceptance gate: governance access policy gate ..."
+    & $governanceAccessPolicyGateScript `
+        -RepoRoot $RepoRoot `
+        -OutputDir $governanceAccessPolicyOutputDir | Out-Null
+}
+
+if ($IncludeGovernanceTokenEconomicsGate) {
+    Write-Host "acceptance gate: governance token economics gate ..."
+    & $governanceTokenEconomicsGateScript `
+        -RepoRoot $RepoRoot `
+        -OutputDir $governanceTokenEconomicsOutputDir | Out-Null
+}
+
+if ($IncludeGovernanceTreasurySpendGate) {
+    Write-Host "acceptance gate: governance treasury spend gate ..."
+    & $governanceTreasurySpendGateScript `
+        -RepoRoot $RepoRoot `
+        -OutputDir $governanceTreasurySpendOutputDir | Out-Null
+}
+
 if ($IncludeRpcExposureGate) {
     Write-Host "acceptance gate: rpc exposure gate ..."
     & $rpcExposureGateScript `
@@ -393,6 +451,15 @@ if ($IncludeGovernanceParam3Gate) {
 if ($IncludeGovernanceNegativeGate) {
     $governanceNegativeJson = Join-Path $governanceNegativeOutputDir "governance-negative-gate-summary.json"
 }
+if ($IncludeGovernanceAccessPolicyGate) {
+    $governanceAccessPolicyJson = Join-Path $governanceAccessPolicyOutputDir "governance-access-policy-gate-summary.json"
+}
+if ($IncludeGovernanceTokenEconomicsGate) {
+    $governanceTokenEconomicsJson = Join-Path $governanceTokenEconomicsOutputDir "governance-token-economics-gate-summary.json"
+}
+if ($IncludeGovernanceTreasurySpendGate) {
+    $governanceTreasurySpendJson = Join-Path $governanceTreasurySpendOutputDir "governance-treasury-spend-gate-summary.json"
+}
 if ($IncludeRpcExposureGate) {
     $rpcExposureJson = Join-Path $rpcExposureOutputDir "rpc-exposure-gate-summary.json"
 }
@@ -442,6 +509,15 @@ if ($IncludeGovernanceParam3Gate) {
 }
 if ($IncludeGovernanceNegativeGate) {
     Require-Path -Path $governanceNegativeJson -Name "governance negative gate summary json"
+}
+if ($IncludeGovernanceAccessPolicyGate) {
+    Require-Path -Path $governanceAccessPolicyJson -Name "governance access policy gate summary json"
+}
+if ($IncludeGovernanceTokenEconomicsGate) {
+    Require-Path -Path $governanceTokenEconomicsJson -Name "governance token economics gate summary json"
+}
+if ($IncludeGovernanceTreasurySpendGate) {
+    Require-Path -Path $governanceTreasurySpendJson -Name "governance treasury spend gate summary json"
 }
 if ($IncludeRpcExposureGate) {
     Require-Path -Path $rpcExposureJson -Name "rpc exposure gate summary json"
@@ -493,6 +569,15 @@ if ($IncludeGovernanceParam3Gate) {
 }
 if ($IncludeGovernanceNegativeGate) {
     $governanceNegative = Get-Content -Path $governanceNegativeJson -Raw | ConvertFrom-Json
+}
+if ($IncludeGovernanceAccessPolicyGate) {
+    $governanceAccessPolicy = Get-Content -Path $governanceAccessPolicyJson -Raw | ConvertFrom-Json
+}
+if ($IncludeGovernanceTokenEconomicsGate) {
+    $governanceTokenEconomics = Get-Content -Path $governanceTokenEconomicsJson -Raw | ConvertFrom-Json
+}
+if ($IncludeGovernanceTreasurySpendGate) {
+    $governanceTreasurySpend = Get-Content -Path $governanceTreasurySpendJson -Raw | ConvertFrom-Json
 }
 if ($IncludeRpcExposureGate) {
     $rpcExposure = Get-Content -Path $rpcExposureJson -Raw | ConvertFrom-Json
@@ -571,6 +656,21 @@ if ($IncludeGovernanceNegativeGate) {
 } else {
     $governanceNegativePass = $true
 }
+if ($IncludeGovernanceAccessPolicyGate) {
+    $governanceAccessPolicyPass = [bool]$governanceAccessPolicy.pass
+} else {
+    $governanceAccessPolicyPass = $true
+}
+if ($IncludeGovernanceTokenEconomicsGate) {
+    $governanceTokenEconomicsPass = [bool]$governanceTokenEconomics.pass
+} else {
+    $governanceTokenEconomicsPass = $true
+}
+if ($IncludeGovernanceTreasurySpendGate) {
+    $governanceTreasurySpendPass = [bool]$governanceTreasurySpend.pass
+} else {
+    $governanceTreasurySpendPass = $true
+}
 if ($IncludeRpcExposureGate) {
     $rpcExposurePass = [bool]$rpcExposure.pass
 } else {
@@ -586,7 +686,7 @@ if ($IncludeAdapterStabilityGate) {
 } else {
     $adapterStabilityPass = $true
 }
-$overallPass = ($functionalPass -and $performancePass -and $chainQueryRpcPass -and $governanceRpcPass -and $headerSyncPass -and $fastStateSyncPass -and $networkDosPass -and $pacemakerFailoverPass -and $slashGovernancePass -and $slashPolicyExternalPass -and $governanceHookPass -and $governanceExecutionPass -and $governanceParam2Pass -and $governanceParam3Pass -and $governanceNegativePass -and $rpcExposurePass -and $unjailCooldownPass -and $adapterStabilityPass)
+$overallPass = ($functionalPass -and $performancePass -and $chainQueryRpcPass -and $governanceRpcPass -and $headerSyncPass -and $fastStateSyncPass -and $networkDosPass -and $pacemakerFailoverPass -and $slashGovernancePass -and $slashPolicyExternalPass -and $governanceHookPass -and $governanceExecutionPass -and $governanceParam2Pass -and $governanceParam3Pass -and $governanceNegativePass -and $governanceAccessPolicyPass -and $governanceTokenEconomicsPass -and $governanceTreasurySpendPass -and $rpcExposurePass -and $unjailCooldownPass -and $adapterStabilityPass)
 
 $summary = [ordered]@{
     generated_at_utc = [DateTime]::UtcNow.ToString("o")
@@ -622,6 +722,12 @@ $summary = [ordered]@{
     governance_param3_pass = $governanceParam3Pass
     governance_negative_gate_enabled = $IncludeGovernanceNegativeGate
     governance_negative_pass = $governanceNegativePass
+    governance_access_policy_gate_enabled = $IncludeGovernanceAccessPolicyGate
+    governance_access_policy_pass = $governanceAccessPolicyPass
+    governance_token_economics_gate_enabled = $IncludeGovernanceTokenEconomicsGate
+    governance_token_economics_pass = $governanceTokenEconomicsPass
+    governance_treasury_spend_gate_enabled = $IncludeGovernanceTreasurySpendGate
+    governance_treasury_spend_pass = $governanceTreasurySpendPass
     rpc_exposure_gate_enabled = $IncludeRpcExposureGate
     rpc_exposure_pass = $rpcExposurePass
     unjail_cooldown_gate_enabled = $IncludeUnjailCooldownGate
@@ -643,6 +749,9 @@ $summary = [ordered]@{
     governance_param2_report_json = if ($IncludeGovernanceParam2Gate) { $governanceParam2Json } else { "" }
     governance_param3_report_json = if ($IncludeGovernanceParam3Gate) { $governanceParam3Json } else { "" }
     governance_negative_report_json = if ($IncludeGovernanceNegativeGate) { $governanceNegativeJson } else { "" }
+    governance_access_policy_report_json = if ($IncludeGovernanceAccessPolicyGate) { $governanceAccessPolicyJson } else { "" }
+    governance_token_economics_report_json = if ($IncludeGovernanceTokenEconomicsGate) { $governanceTokenEconomicsJson } else { "" }
+    governance_treasury_spend_report_json = if ($IncludeGovernanceTreasurySpendGate) { $governanceTreasurySpendJson } else { "" }
     rpc_exposure_report_json = if ($IncludeRpcExposureGate) { $rpcExposureJson } else { "" }
     unjail_cooldown_report_json = if ($IncludeUnjailCooldownGate) { $unjailCooldownJson } else { "" }
     adapter_stability_report_json = if ($IncludeAdapterStabilityGate) { $adapterStabilityJson } else { "" }
@@ -705,6 +814,12 @@ $md = @(
     "- governance_param3_pass: $($summary.governance_param3_pass)"
     "- governance_negative_gate_enabled: $($summary.governance_negative_gate_enabled)"
     "- governance_negative_pass: $($summary.governance_negative_pass)"
+    "- governance_access_policy_gate_enabled: $($summary.governance_access_policy_gate_enabled)"
+    "- governance_access_policy_pass: $($summary.governance_access_policy_pass)"
+    "- governance_token_economics_gate_enabled: $($summary.governance_token_economics_gate_enabled)"
+    "- governance_token_economics_pass: $($summary.governance_token_economics_pass)"
+    "- governance_treasury_spend_gate_enabled: $($summary.governance_treasury_spend_gate_enabled)"
+    "- governance_treasury_spend_pass: $($summary.governance_treasury_spend_pass)"
     "- rpc_exposure_gate_enabled: $($summary.rpc_exposure_gate_enabled)"
     "- rpc_exposure_pass: $($summary.rpc_exposure_pass)"
     "- rpc_exposure_public_bind: $($summary.rpc_exposure_public_bind)"
@@ -731,6 +846,9 @@ $md = @(
     "- governance_param2_report_json: $($summary.governance_param2_report_json)"
     "- governance_param3_report_json: $($summary.governance_param3_report_json)"
     "- governance_negative_report_json: $($summary.governance_negative_report_json)"
+    "- governance_access_policy_report_json: $($summary.governance_access_policy_report_json)"
+    "- governance_token_economics_report_json: $($summary.governance_token_economics_report_json)"
+    "- governance_treasury_spend_report_json: $($summary.governance_treasury_spend_report_json)"
     "- rpc_exposure_report_json: $($summary.rpc_exposure_report_json)"
     "- unjail_cooldown_report_json: $($summary.unjail_cooldown_report_json)"
     "- adapter_stability_report_json: $($summary.adapter_stability_report_json)"
@@ -783,6 +901,15 @@ if ($IncludeGovernanceParam3Gate) {
 if ($IncludeGovernanceNegativeGate) {
     Write-Host "  governance_negative_report: $governanceNegativeJson"
 }
+if ($IncludeGovernanceAccessPolicyGate) {
+    Write-Host "  governance_access_policy_report: $governanceAccessPolicyJson"
+}
+if ($IncludeGovernanceTokenEconomicsGate) {
+    Write-Host "  governance_token_economics_report: $governanceTokenEconomicsJson"
+}
+if ($IncludeGovernanceTreasurySpendGate) {
+    Write-Host "  governance_treasury_spend_report: $governanceTreasurySpendJson"
+}
 if ($IncludeRpcExposureGate) {
     Write-Host "  rpc_exposure_report: $rpcExposureJson"
 }
@@ -795,7 +922,7 @@ if ($IncludeAdapterStabilityGate) {
 Write-Host "  summary_json: $summaryJson"
 
 if (-not $overallPass) {
-    throw "migration acceptance gate FAILED (functional_pass=$functionalPass, performance_pass=$performancePass, chain_query_rpc_pass=$chainQueryRpcPass, governance_rpc_pass=$governanceRpcPass, header_sync_pass=$headerSyncPass, fast_state_sync_pass=$fastStateSyncPass, network_dos_pass=$networkDosPass, pacemaker_failover_pass=$pacemakerFailoverPass, slash_governance_pass=$slashGovernancePass, slash_policy_external_pass=$slashPolicyExternalPass, governance_hook_pass=$governanceHookPass, governance_execution_pass=$governanceExecutionPass, governance_param2_pass=$governanceParam2Pass, governance_param3_pass=$governanceParam3Pass, governance_negative_pass=$governanceNegativePass, rpc_exposure_pass=$rpcExposurePass, unjail_cooldown_pass=$unjailCooldownPass, adapter_stability_pass=$adapterStabilityPass)"
+    throw "migration acceptance gate FAILED (functional_pass=$functionalPass, performance_pass=$performancePass, chain_query_rpc_pass=$chainQueryRpcPass, governance_rpc_pass=$governanceRpcPass, header_sync_pass=$headerSyncPass, fast_state_sync_pass=$fastStateSyncPass, network_dos_pass=$networkDosPass, pacemaker_failover_pass=$pacemakerFailoverPass, slash_governance_pass=$slashGovernancePass, slash_policy_external_pass=$slashPolicyExternalPass, governance_hook_pass=$governanceHookPass, governance_execution_pass=$governanceExecutionPass, governance_param2_pass=$governanceParam2Pass, governance_param3_pass=$governanceParam3Pass, governance_negative_pass=$governanceNegativePass, governance_access_policy_pass=$governanceAccessPolicyPass, governance_token_economics_pass=$governanceTokenEconomicsPass, governance_treasury_spend_pass=$governanceTreasurySpendPass, rpc_exposure_pass=$rpcExposurePass, unjail_cooldown_pass=$unjailCooldownPass, adapter_stability_pass=$adapterStabilityPass)"
 }
 
 Write-Host "migration acceptance gate PASS"

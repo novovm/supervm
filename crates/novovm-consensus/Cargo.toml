@@ -20,6 +20,7 @@ tokio = { version = "1", features = ["full"], optional = true }
 
 # Logging
 tracing = "0.1"
+web30-core = { path = "../../../SVM2026/contracts/web30/core" }
 
 [dev-dependencies]
 criterion = "0.5"

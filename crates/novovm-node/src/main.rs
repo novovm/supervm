@@ -9,9 +9,9 @@ use novovm_adapter_api::{
 };
 use novovm_adapter_novovm::{create_native_adapter, supports_native_chain};
 use novovm_consensus::{
-    BFTConfig, BFTEngine, Epoch as ConsensusEpoch, GovernanceOp, GovernanceProposal,
-    GovernanceVote, HotStuffProtocol, NetworkDosPolicy, NodeId as ConsensusNodeId, SlashMode,
-    SlashPolicy, ValidatorSet,
+    BFTConfig, BFTEngine, Epoch as ConsensusEpoch, GovernanceAccessPolicy, GovernanceOp,
+    GovernanceProposal, GovernanceVote, HotStuffProtocol, NetworkDosPolicy,
+    NodeId as ConsensusNodeId, SlashMode, SlashPolicy, TokenEconomicsPolicy, ValidatorSet,
 };
 use novovm_exec::{AoemRuntimeConfig, ExecOpV2};
 use novovm_network::{InMemoryTransport, Transport, UdpTransport};
@@ -2889,6 +2889,35 @@ fn param_as_bool(params: &serde_json::Value, key: &str) -> Option<bool> {
     }
 }
 
+fn param_as_u64_list(params: &serde_json::Value, key: &str) -> Option<Vec<u64>> {
+    match params {
+        serde_json::Value::Object(map) => map.get(key).and_then(|v| match v {
+            serde_json::Value::Array(items) => {
+                let mut out = Vec::with_capacity(items.len());
+                for item in items {
+                    let value = value_to_u64(item)?;
+                    out.push(value);
+                }
+                Some(out)
+            }
+            serde_json::Value::String(s) => {
+                let mut out = Vec::new();
+                for token in s.split(',') {
+                    let t = token.trim();
+                    if t.is_empty() {
+                        continue;
+                    }
+                    let parsed = t.parse::<u64>().ok()?;
+                    out.push(parsed);
+                }
+                if out.is_empty() { None } else { Some(out) }
+            }
+            _ => None,
+        }),
+        _ => None,
+    }
+}
+
 fn parse_node_id_allowlist_env(
     name: &str,
     default_ids: &[ConsensusNodeId],
@@ -3040,6 +3069,37 @@ fn governance_op_to_view(op: &GovernanceOp) -> (String, serde_json::Value) {
                 "peer_ban_threshold": policy.peer_ban_threshold,
             }),
         ),
+        GovernanceOp::UpdateTokenEconomicsPolicy { policy } => (
+            "update_token_economics_policy".to_string(),
+            serde_json::json!({
+                "max_supply": policy.max_supply,
+                "locked_supply": policy.locked_supply,
+                "fee_split": {
+                    "gas_base_burn_bp": policy.fee_split.gas_base_burn_bp,
+                    "gas_to_node_bp": policy.fee_split.gas_to_node_bp,
+                    "service_burn_bp": policy.fee_split.service_burn_bp,
+                    "service_to_provider_bp": policy.fee_split.service_to_provider_bp,
+                },
+            }),
+        ),
+        GovernanceOp::UpdateGovernanceAccessPolicy { policy } => (
+            "update_governance_access_policy".to_string(),
+            serde_json::json!({
+                "proposer_committee": policy.proposer_committee,
+                "proposer_threshold": policy.proposer_threshold,
+                "executor_committee": policy.executor_committee,
+                "executor_threshold": policy.executor_threshold,
+                "timelock_epochs": policy.timelock_epochs,
+            }),
+        ),
+        GovernanceOp::TreasurySpend { to, amount, reason } => (
+            "treasury_spend".to_string(),
+            serde_json::json!({
+                "to": to,
+                "amount": amount,
+                "reason": reason,
+            }),
+        ),
     }
 }
 
@@ -3106,9 +3166,10 @@ fn parse_governance_op(params: &serde_json::Value) -> Result<GovernanceOp> {
                         "rpc_rate_limit_per_ip is required for update_network_dos_policy"
                     )
                 })? as u32;
-            let peer_ban_threshold_raw = param_as_i64(params, "peer_ban_threshold").ok_or_else(|| {
-                anyhow::anyhow!("peer_ban_threshold is required for update_network_dos_policy")
-            })?;
+            let peer_ban_threshold_raw =
+                param_as_i64(params, "peer_ban_threshold").ok_or_else(|| {
+                    anyhow::anyhow!("peer_ban_threshold is required for update_network_dos_policy")
+                })?;
             let peer_ban_threshold = i32::try_from(peer_ban_threshold_raw)
                 .map_err(|_| anyhow::anyhow!("peer_ban_threshold is out of i32 range"))?;
             let policy = NetworkDosPolicy {
@@ -3119,6 +3180,113 @@ fn parse_governance_op(params: &serde_json::Value) -> Result<GovernanceOp> {
                 .validate()
                 .map_err(|e| anyhow::anyhow!("governance_policy_invalid: {}", e))?;
             Ok(GovernanceOp::UpdateNetworkDosPolicy { policy })
+        }
+        "update_token_economics_policy" => {
+            let max_supply = param_as_u64(params, "max_supply").ok_or_else(|| {
+                anyhow::anyhow!("max_supply is required for update_token_economics_policy")
+            })?;
+            let locked_supply = param_as_u64(params, "locked_supply").ok_or_else(|| {
+                anyhow::anyhow!("locked_supply is required for update_token_economics_policy")
+            })?;
+            let gas_base_burn_bp_raw =
+                param_as_u64(params, "gas_base_burn_bp").ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "gas_base_burn_bp is required for update_token_economics_policy"
+                    )
+                })?;
+            let gas_base_burn_bp = u16::try_from(gas_base_burn_bp_raw)
+                .map_err(|_| anyhow::anyhow!("gas_base_burn_bp is out of u16 range"))?;
+            let gas_to_node_bp_raw = param_as_u64(params, "gas_to_node_bp").ok_or_else(|| {
+                anyhow::anyhow!("gas_to_node_bp is required for update_token_economics_policy")
+            })?;
+            let gas_to_node_bp = u16::try_from(gas_to_node_bp_raw)
+                .map_err(|_| anyhow::anyhow!("gas_to_node_bp is out of u16 range"))?;
+            let service_burn_bp_raw = param_as_u64(params, "service_burn_bp").ok_or_else(|| {
+                anyhow::anyhow!("service_burn_bp is required for update_token_economics_policy")
+            })?;
+            let service_burn_bp = u16::try_from(service_burn_bp_raw)
+                .map_err(|_| anyhow::anyhow!("service_burn_bp is out of u16 range"))?;
+            let service_to_provider_bp_raw = param_as_u64(params, "service_to_provider_bp")
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "service_to_provider_bp is required for update_token_economics_policy"
+                    )
+                })?;
+            let service_to_provider_bp = u16::try_from(service_to_provider_bp_raw)
+                .map_err(|_| anyhow::anyhow!("service_to_provider_bp is out of u16 range"))?;
+            let policy = TokenEconomicsPolicy {
+                max_supply,
+                locked_supply,
+                fee_split: novovm_consensus::FeeSplit {
+                    gas_base_burn_bp,
+                    gas_to_node_bp,
+                    service_burn_bp,
+                    service_to_provider_bp,
+                },
+            };
+            policy
+                .validate()
+                .map_err(|e| anyhow::anyhow!("governance_policy_invalid: {}", e))?;
+            Ok(GovernanceOp::UpdateTokenEconomicsPolicy { policy })
+        }
+        "update_governance_access_policy" => {
+            let proposer_committee_raw = param_as_u64_list(params, "proposer_committee")
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "proposer_committee is required for update_governance_access_policy"
+                    )
+                })?;
+            let executor_committee_raw = param_as_u64_list(params, "executor_committee")
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "executor_committee is required for update_governance_access_policy"
+                    )
+                })?;
+            let proposer_threshold = param_as_u64(params, "proposer_threshold").ok_or_else(|| {
+                anyhow::anyhow!("proposer_threshold is required for update_governance_access_policy")
+            })? as u32;
+            let executor_threshold = param_as_u64(params, "executor_threshold").ok_or_else(|| {
+                anyhow::anyhow!("executor_threshold is required for update_governance_access_policy")
+            })? as u32;
+            let timelock_epochs = param_as_u64(params, "timelock_epochs").unwrap_or(0);
+            let proposer_committee: Vec<ConsensusNodeId> = proposer_committee_raw
+                .into_iter()
+                .map(|id| u32::try_from(id).map_err(|_| anyhow::anyhow!("proposer committee id out of range: {}", id)))
+                .collect::<Result<Vec<_>>>()?;
+            let executor_committee: Vec<ConsensusNodeId> = executor_committee_raw
+                .into_iter()
+                .map(|id| u32::try_from(id).map_err(|_| anyhow::anyhow!("executor committee id out of range: {}", id)))
+                .collect::<Result<Vec<_>>>()?;
+            let policy = GovernanceAccessPolicy {
+                proposer_committee,
+                proposer_threshold,
+                executor_committee,
+                executor_threshold,
+                timelock_epochs,
+            };
+            policy
+                .validate()
+                .map_err(|e| anyhow::anyhow!("governance_policy_invalid: {}", e))?;
+            Ok(GovernanceOp::UpdateGovernanceAccessPolicy { policy })
+        }
+        "treasury_spend" => {
+            let to = param_as_u64(params, "to")
+                .ok_or_else(|| anyhow::anyhow!("to is required for treasury_spend"))?
+                as ConsensusNodeId;
+            let amount = param_as_u64(params, "amount")
+                .ok_or_else(|| anyhow::anyhow!("amount is required for treasury_spend"))?;
+            let reason = param_as_string(params, "reason").unwrap_or_default();
+            let reason = reason.trim().to_string();
+            if amount == 0 {
+                bail!("governance_policy_invalid: treasury spend amount must be > 0");
+            }
+            if reason.is_empty() {
+                bail!("governance_policy_invalid: treasury spend reason cannot be empty");
+            }
+            if reason.len() > 128 {
+                bail!("governance_policy_invalid: treasury spend reason too long (max 128)");
+            }
+            Ok(GovernanceOp::TreasurySpend { to, amount, reason })
         }
         _ => bail!("unsupported governance op: {}", op),
     }
@@ -3188,9 +3356,18 @@ fn run_governance_rpc(
                 bail!("unauthorized proposer: {}", proposer);
             }
             let op = parse_governance_op(params)?;
+            let proposer_approvals_raw =
+                param_as_u64_list(params, "proposer_approvals").unwrap_or_else(|| vec![proposer as u64]);
+            let proposer_approvals: Vec<ConsensusNodeId> = proposer_approvals_raw
+                .into_iter()
+                .map(|id| {
+                    u32::try_from(id)
+                        .map_err(|_| anyhow::anyhow!("proposer_approvals id out of range: {}", id))
+                })
+                .collect::<Result<Vec<_>>>()?;
             let proposal = runtime
                 .engine
-                .submit_governance_proposal(proposer, op)?;
+                .submit_governance_proposal_with_approvals(proposer, &proposer_approvals, op)?;
             let view = proposal_to_view(&proposal, 0);
             push_governance_audit_event(
                 runtime,
@@ -3198,11 +3375,12 @@ fn run_governance_rpc(
                 proposal.proposal_id,
                 Some(proposer),
                 "ok",
-                view.op.clone(),
+                format!("{} proposer_approvals={}", view.op, proposer_approvals.len()),
             );
             Ok(serde_json::json!({
                 "method": method,
                 "submitted": true,
+                "proposer_approvals": proposer_approvals,
                 "proposal": view,
             }))
         }
@@ -3335,26 +3513,48 @@ fn run_governance_rpc(
                 .get(&proposal_id)
                 .cloned()
                 .unwrap_or_default();
+            let executors_raw =
+                param_as_u64_list(params, "executor_approvals").unwrap_or_else(|| vec![executor as u64]);
+            let executor_approvals: Vec<ConsensusNodeId> = executors_raw
+                .into_iter()
+                .map(|id| {
+                    u32::try_from(id)
+                        .map_err(|_| anyhow::anyhow!("executor_approvals id out of range: {}", id))
+                })
+                .collect::<Result<Vec<_>>>()?;
             let executed = runtime
                 .engine
-                .execute_governance_proposal(proposal_id, &votes)?;
+                .execute_governance_proposal_with_executor_approvals(
+                    proposal_id,
+                    &votes,
+                    &executor_approvals,
+                )?;
             if executed {
                 runtime.votes.remove(&proposal_id);
             }
             let slash = runtime.engine.slash_policy();
             let dos = runtime.engine.governance_network_dos_policy();
+            let token = runtime.engine.governance_token_economics_policy();
+            let access = runtime.engine.governance_access_policy();
+            let treasury_balance = runtime.engine.token_treasury_balance();
+            let treasury_spent_total = runtime.engine.token_treasury_spent_total();
             push_governance_audit_event(
                 runtime,
                 "execute",
                 proposal_id,
                 Some(executor),
                 "ok",
-                format!("executed={}", executed),
+                format!(
+                    "executed={} executor_approvals={}",
+                    executed,
+                    executor_approvals.len()
+                ),
             );
             Ok(serde_json::json!({
                 "method": method,
                 "proposal_id": proposal_id,
                 "executor": executor,
+                "executor_approvals": executor_approvals,
                 "executed": executed,
                 "slash_policy": {
                     "mode": slash.mode.as_str(),
@@ -3366,6 +3566,27 @@ fn run_governance_rpc(
                 "network_dos_policy": {
                     "rpc_rate_limit_per_ip": dos.rpc_rate_limit_per_ip,
                     "peer_ban_threshold": dos.peer_ban_threshold,
+                },
+                "governance_access_policy": {
+                    "proposer_committee": access.proposer_committee,
+                    "proposer_threshold": access.proposer_threshold,
+                    "executor_committee": access.executor_committee,
+                    "executor_threshold": access.executor_threshold,
+                    "timelock_epochs": access.timelock_epochs,
+                },
+                "token_economics_policy": {
+                    "max_supply": token.max_supply,
+                    "locked_supply": token.locked_supply,
+                    "fee_split": {
+                        "gas_base_burn_bp": token.fee_split.gas_base_burn_bp,
+                        "gas_to_node_bp": token.fee_split.gas_to_node_bp,
+                        "service_burn_bp": token.fee_split.service_burn_bp,
+                        "service_to_provider_bp": token.fee_split.service_to_provider_bp,
+                    },
+                },
+                "treasury": {
+                    "balance": treasury_balance,
+                    "spent_total": treasury_spent_total,
                 },
             }))
         }
@@ -3424,6 +3645,10 @@ fn run_governance_rpc(
         "governance_getPolicy" => {
             let slash = runtime.engine.slash_policy();
             let dos = runtime.engine.governance_network_dos_policy();
+            let token = runtime.engine.governance_token_economics_policy();
+            let access = runtime.engine.governance_access_policy();
+            let treasury_balance = runtime.engine.token_treasury_balance();
+            let treasury_spent_total = runtime.engine.token_treasury_spent_total();
             Ok(serde_json::json!({
                 "method": method,
                 "slash_policy": {
@@ -3436,6 +3661,27 @@ fn run_governance_rpc(
                 "network_dos_policy": {
                     "rpc_rate_limit_per_ip": dos.rpc_rate_limit_per_ip,
                     "peer_ban_threshold": dos.peer_ban_threshold,
+                },
+                "governance_access_policy": {
+                    "proposer_committee": access.proposer_committee,
+                    "proposer_threshold": access.proposer_threshold,
+                    "executor_committee": access.executor_committee,
+                    "executor_threshold": access.executor_threshold,
+                    "timelock_epochs": access.timelock_epochs,
+                },
+                "token_economics_policy": {
+                    "max_supply": token.max_supply,
+                    "locked_supply": token.locked_supply,
+                    "fee_split": {
+                        "gas_base_burn_bp": token.fee_split.gas_base_burn_bp,
+                        "gas_to_node_bp": token.fee_split.gas_to_node_bp,
+                        "service_burn_bp": token.fee_split.service_burn_bp,
+                        "service_to_provider_bp": token.fee_split.service_to_provider_bp,
+                    },
+                },
+                "treasury": {
+                    "balance": treasury_balance,
+                    "spent_total": treasury_spent_total,
                 },
                 "governance_execution_enabled": runtime.engine.governance_execution_enabled(),
             }))
@@ -3766,7 +4012,10 @@ fn run_rpc_server_instance(
             }
         };
 
-        let request_id = payload.get("id").cloned().unwrap_or(serde_json::Value::Null);
+        let request_id = payload
+            .get("id")
+            .cloned()
+            .unwrap_or(serde_json::Value::Null);
         let method = payload
             .get("method")
             .and_then(|v| v.as_str())
@@ -3940,8 +4189,8 @@ fn run_chain_query_mode() -> Result<()> {
 
 fn run_chain_query_rpc_server_mode() -> Result<()> {
     let legacy_bind = string_env("NOVOVM_RPC_BIND", "127.0.0.1:8899");
-    let public_bind = string_env_nonempty("NOVOVM_PUBLIC_RPC_BIND")
-        .unwrap_or_else(|| legacy_bind.clone());
+    let public_bind =
+        string_env_nonempty("NOVOVM_PUBLIC_RPC_BIND").unwrap_or_else(|| legacy_bind.clone());
     let gov_bind =
         string_env_nonempty("NOVOVM_GOV_RPC_BIND").unwrap_or_else(|| "127.0.0.1:8901".to_string());
 
@@ -3968,14 +4217,18 @@ fn run_chain_query_rpc_server_mode() -> Result<()> {
     let default_max_body_bytes = u64_env("NOVOVM_RPC_MAX_BODY_BYTES", 64 * 1024);
     let public_max_body_bytes =
         u64_env("NOVOVM_PUBLIC_RPC_MAX_BODY_BYTES", default_max_body_bytes) as usize;
-    let gov_max_body_bytes = u64_env("NOVOVM_GOV_RPC_MAX_BODY_BYTES", default_max_body_bytes)
-        as usize;
+    let gov_max_body_bytes =
+        u64_env("NOVOVM_GOV_RPC_MAX_BODY_BYTES", default_max_body_bytes) as usize;
 
     let default_rate_limit_per_ip = u32_env("NOVOVM_RPC_RATE_LIMIT_PER_IP", 30);
-    let public_rate_limit_per_ip =
-        u32_env("NOVOVM_PUBLIC_RPC_RATE_LIMIT_PER_IP", default_rate_limit_per_ip);
-    let gov_rate_limit_per_ip =
-        u32_env("NOVOVM_GOV_RPC_RATE_LIMIT_PER_IP", default_rate_limit_per_ip);
+    let public_rate_limit_per_ip = u32_env(
+        "NOVOVM_PUBLIC_RPC_RATE_LIMIT_PER_IP",
+        default_rate_limit_per_ip,
+    );
+    let gov_rate_limit_per_ip = u32_env(
+        "NOVOVM_GOV_RPC_RATE_LIMIT_PER_IP",
+        default_rate_limit_per_ip,
+    );
 
     let legacy_max_requests = u32_env_allow_zero("NOVOVM_RPC_MAX_REQUESTS", 0);
     let public_max_requests =
@@ -4897,6 +5150,97 @@ fn load_governance_network_dos_policy() -> Result<NetworkDosPolicy> {
     Ok(policy)
 }
 
+fn load_governance_token_economics_policy() -> Result<TokenEconomicsPolicy> {
+    fn parse_bp(name: &str, default: u16) -> Result<u16> {
+        match std::env::var(name) {
+            Ok(raw) => {
+                let trimmed = raw.trim();
+                if trimmed.is_empty() {
+                    return Ok(default);
+                }
+                let parsed = trimmed
+                    .parse::<u16>()
+                    .with_context(|| format!("invalid {} value: {}", name, raw))?;
+                Ok(parsed)
+            }
+            Err(_) => Ok(default),
+        }
+    }
+
+    let policy = TokenEconomicsPolicy {
+        max_supply: u64_env("NOVOVM_GOV_TOKEN_MAX_SUPPLY", 1_000_000),
+        locked_supply: u64_env("NOVOVM_GOV_TOKEN_LOCKED_SUPPLY", 300_000),
+        fee_split: novovm_consensus::FeeSplit {
+            gas_base_burn_bp: parse_bp("NOVOVM_GOV_TOKEN_GAS_BASE_BURN_BP", 2_000)?,
+            gas_to_node_bp: parse_bp("NOVOVM_GOV_TOKEN_GAS_TO_NODE_BP", 3_000)?,
+            service_burn_bp: parse_bp("NOVOVM_GOV_TOKEN_SERVICE_BURN_BP", 1_000)?,
+            service_to_provider_bp: parse_bp("NOVOVM_GOV_TOKEN_SERVICE_TO_PROVIDER_BP", 4_000)?,
+        },
+    };
+    policy
+        .validate()
+        .map_err(|e| anyhow::anyhow!("governance_policy_invalid: {}", e))?;
+    Ok(policy)
+}
+
+fn parse_node_id_csv(name: &str, raw: &str) -> Result<Vec<ConsensusNodeId>> {
+    let mut out = Vec::new();
+    for part in raw.split(',') {
+        let token = part.trim();
+        if token.is_empty() {
+            continue;
+        }
+        let parsed = token
+            .parse::<u32>()
+            .with_context(|| format!("invalid {} node id: {}", name, token))?;
+        out.push(parsed);
+    }
+    if out.is_empty() {
+        bail!("{} resolved to empty list", name);
+    }
+    Ok(out)
+}
+
+fn load_governance_access_policy() -> Result<GovernanceAccessPolicy> {
+    let proposer_raw =
+        std::env::var("NOVOVM_GOV_ACCESS_PROPOSER_COMMITTEE").unwrap_or_else(|_| "0,1".to_string());
+    let executor_raw =
+        std::env::var("NOVOVM_GOV_ACCESS_EXECUTOR_COMMITTEE").unwrap_or_else(|_| "1,2".to_string());
+    let proposer_committee =
+        parse_node_id_csv("NOVOVM_GOV_ACCESS_PROPOSER_COMMITTEE", &proposer_raw)?;
+    let executor_committee =
+        parse_node_id_csv("NOVOVM_GOV_ACCESS_EXECUTOR_COMMITTEE", &executor_raw)?;
+    let policy = GovernanceAccessPolicy {
+        proposer_committee,
+        proposer_threshold: u32_env("NOVOVM_GOV_ACCESS_PROPOSER_THRESHOLD", 2),
+        executor_committee,
+        executor_threshold: u32_env("NOVOVM_GOV_ACCESS_EXECUTOR_THRESHOLD", 2),
+        timelock_epochs: u64_env("NOVOVM_GOV_ACCESS_TIMELOCK_EPOCHS", 1),
+    };
+    policy
+        .validate()
+        .map_err(|e| anyhow::anyhow!("governance_policy_invalid: {}", e))?;
+    Ok(policy)
+}
+
+fn load_governance_treasury_spend() -> Result<(ConsensusNodeId, u64, String)> {
+    let to = u64_env("NOVOVM_GOV_TREASURY_TO", 7) as ConsensusNodeId;
+    let amount = u64_env("NOVOVM_GOV_TREASURY_AMOUNT", 60);
+    let reason = std::env::var("NOVOVM_GOV_TREASURY_REASON")
+        .unwrap_or_else(|_| "ecosystem_grant".to_string());
+    let reason = reason.trim().to_string();
+    if amount == 0 {
+        bail!("governance_policy_invalid: treasury spend amount must be > 0");
+    }
+    if reason.is_empty() {
+        bail!("governance_policy_invalid: treasury spend reason cannot be empty");
+    }
+    if reason.len() > 128 {
+        bail!("governance_policy_invalid: treasury spend reason too long (max 128)");
+    }
+    Ok((to, amount, reason))
+}
+
 fn run_governance_hook_probe_mode() -> Result<()> {
     let loaded = load_consensus_slash_policy()?;
     emit_slash_policy_in_signal(&loaded);
@@ -5396,6 +5740,481 @@ fn run_governance_param3_probe_mode() -> Result<()> {
     Ok(())
 }
 
+fn run_governance_token_economics_probe_mode() -> Result<()> {
+    let loaded = load_consensus_slash_policy()?;
+    emit_slash_policy_in_signal(&loaded);
+    let token_policy = load_governance_token_economics_policy()?;
+
+    let validator_set = ValidatorSet::new_equal_weight(vec![0, 1, 2]);
+    let required_quorum = validator_set.quorum_size();
+    let signing_keys: Vec<_> = (0..3).map(|_| SigningKey::generate(&mut OsRng)).collect();
+    let mut public_keys = HashMap::new();
+    public_keys.insert(0, signing_keys[0].verifying_key());
+    public_keys.insert(1, signing_keys[1].verifying_key());
+    public_keys.insert(2, signing_keys[2].verifying_key());
+    let engine = BFTEngine::new(
+        BFTConfig::default(),
+        0,
+        signing_keys[0].clone(),
+        validator_set,
+        public_keys,
+    )
+    .context("governance token probe: init novovm-consensus engine failed")?;
+    engine
+        .set_slash_policy(loaded.policy.clone())
+        .context("governance token probe: set baseline slash policy failed")?;
+    engine.set_governance_execution_enabled(true);
+
+    let proposal = engine
+        .submit_governance_proposal(
+            0,
+            GovernanceOp::UpdateTokenEconomicsPolicy {
+                policy: token_policy.clone(),
+            },
+        )
+        .context("governance token probe: submit proposal failed")?;
+    let votes = vec![
+        GovernanceVote::new(&proposal, 0, true, &signing_keys[0]),
+        GovernanceVote::new(&proposal, 1, true, &signing_keys[1]),
+    ];
+    println!(
+        "governance_token_in: proposal_id={} op=update_token_economics_policy max_supply={} locked_supply={} gas_base_burn_bp={} gas_to_node_bp={} service_burn_bp={} service_to_provider_bp={} votes={} quorum={}",
+        proposal.proposal_id,
+        token_policy.max_supply,
+        token_policy.locked_supply,
+        token_policy.fee_split.gas_base_burn_bp,
+        token_policy.fee_split.gas_to_node_bp,
+        token_policy.fee_split.service_burn_bp,
+        token_policy.fee_split.service_to_provider_bp,
+        votes.len(),
+        required_quorum
+    );
+
+    let exec_result = engine.execute_governance_proposal(proposal.proposal_id, &votes);
+    let reason_code = match &exec_result {
+        Ok(_) => "ok",
+        Err(err) => {
+            let msg = err.to_string().to_ascii_lowercase();
+            if msg.contains("insufficient votes") {
+                "insufficient_votes"
+            } else if msg.contains("invalid signature") {
+                "invalid_signature"
+            } else if msg.contains("governance not enabled") {
+                "governance_not_enabled"
+            } else {
+                "governance_execution_error"
+            }
+        }
+    };
+    let executed = exec_result.is_ok();
+    let applied_policy = engine.governance_token_economics_policy();
+    let policy_applied = applied_policy == token_policy;
+    println!(
+        "governance_token_out: proposal_id={} executed={} reason_code={} policy_applied={} max_supply={} locked_supply={}",
+        proposal.proposal_id,
+        executed,
+        reason_code,
+        policy_applied,
+        applied_policy.max_supply,
+        applied_policy.locked_supply
+    );
+    if !executed || !policy_applied || reason_code != "ok" {
+        bail!(
+            "governance token probe failed at governance apply: executed={} policy_applied={} reason_code={}",
+            executed,
+            policy_applied,
+            reason_code
+        );
+    }
+
+    let account: ConsensusNodeId = 42;
+    let mint_amount = std::cmp::max(100, token_policy.locked_supply / 5);
+    let gas_fee = std::cmp::max(10, mint_amount / 5);
+    let service_fee = std::cmp::max(5, mint_amount / 10);
+    let burn_amount = std::cmp::max(1, mint_amount / 20);
+
+    engine
+        .mint_tokens(account, mint_amount)
+        .context("governance token probe: mint failed")?;
+    let mint_zero_reject = engine.mint_tokens(account, 0).is_err();
+    let mint_locked_reject = engine
+        .mint_tokens(account, token_policy.locked_supply)
+        .is_err();
+
+    let gas_out = engine
+        .charge_gas_fee(account, gas_fee)
+        .context("governance token probe: gas fee routing failed")?;
+    let service_out = engine
+        .charge_service_fee(account, service_fee)
+        .context("governance token probe: service fee routing failed")?;
+    let burn_overdraft_reject = engine.burn_tokens(account, mint_amount).is_err();
+    engine
+        .burn_tokens(account, burn_amount)
+        .context("governance token probe: burn failed")?;
+
+    let expected_total_supply = mint_amount
+        .saturating_sub(gas_out.burn_amount)
+        .saturating_sub(service_out.burn_amount)
+        .saturating_sub(burn_amount);
+    let expected_balance = mint_amount
+        .saturating_sub(gas_fee)
+        .saturating_sub(service_fee)
+        .saturating_sub(burn_amount);
+    let expected_treasury = gas_out
+        .treasury_amount
+        .saturating_add(service_out.treasury_amount);
+    let expected_burned = gas_out
+        .burn_amount
+        .saturating_add(service_out.burn_amount)
+        .saturating_add(burn_amount);
+
+    let total_supply = engine.token_total_supply();
+    let balance = engine.token_balance(account);
+    let treasury = engine.token_treasury_balance();
+    let burned = engine.token_burned_total();
+    let gas_provider_pool = engine.token_gas_provider_fee_pool();
+    let service_provider_pool = engine.token_service_provider_fee_pool();
+
+    println!(
+        "token_econ_out: account={} mint={} gas_fee={} service_fee={} burn={} total_supply={} balance={} treasury={} burned={} gas_provider_pool={} service_provider_pool={} mint_zero_reject={} mint_locked_reject={} burn_overdraft_reject={} expected_total_supply={} expected_balance={} expected_treasury={} expected_burned={}",
+        account,
+        mint_amount,
+        gas_fee,
+        service_fee,
+        burn_amount,
+        total_supply,
+        balance,
+        treasury,
+        burned,
+        gas_provider_pool,
+        service_provider_pool,
+        mint_zero_reject,
+        mint_locked_reject,
+        burn_overdraft_reject,
+        expected_total_supply,
+        expected_balance,
+        expected_treasury,
+        expected_burned
+    );
+
+    if !mint_zero_reject || !mint_locked_reject || !burn_overdraft_reject {
+        bail!(
+            "governance token probe negative checks failed: mint_zero_reject={} mint_locked_reject={} burn_overdraft_reject={}",
+            mint_zero_reject,
+            mint_locked_reject,
+            burn_overdraft_reject
+        );
+    }
+    if total_supply != expected_total_supply
+        || balance != expected_balance
+        || treasury != expected_treasury
+        || burned != expected_burned
+    {
+        bail!(
+            "governance token probe accounting mismatch: total_supply={}/{} balance={}/{} treasury={}/{} burned={}/{}",
+            total_supply,
+            expected_total_supply,
+            balance,
+            expected_balance,
+            treasury,
+            expected_treasury,
+            burned,
+            expected_burned
+        );
+    }
+
+    Ok(())
+}
+
+fn run_governance_access_policy_probe_mode() -> Result<()> {
+    let loaded = load_consensus_slash_policy()?;
+    emit_slash_policy_in_signal(&loaded);
+    let access_policy = load_governance_access_policy()?;
+
+    let validator_set = ValidatorSet::new_equal_weight(vec![0, 1, 2]);
+    let required_quorum = validator_set.quorum_size();
+    let signing_keys: Vec<_> = (0..3).map(|_| SigningKey::generate(&mut OsRng)).collect();
+    let mut public_keys = HashMap::new();
+    public_keys.insert(0, signing_keys[0].verifying_key());
+    public_keys.insert(1, signing_keys[1].verifying_key());
+    public_keys.insert(2, signing_keys[2].verifying_key());
+    let engine = BFTEngine::new(
+        BFTConfig::default(),
+        0,
+        signing_keys[0].clone(),
+        validator_set,
+        public_keys,
+    )
+    .context("governance access probe: init novovm-consensus engine failed")?;
+    engine
+        .set_slash_policy(loaded.policy.clone())
+        .context("governance access probe: set baseline slash policy failed")?;
+    engine.set_governance_execution_enabled(true);
+
+    // 1) Apply governance access policy via governance op.
+    let policy_proposal = engine
+        .submit_governance_proposal(
+            0,
+            GovernanceOp::UpdateGovernanceAccessPolicy {
+                policy: access_policy.clone(),
+            },
+        )
+        .context("governance access probe: submit access policy proposal failed")?;
+    let policy_votes = vec![
+        GovernanceVote::new(&policy_proposal, 0, true, &signing_keys[0]),
+        GovernanceVote::new(&policy_proposal, 1, true, &signing_keys[1]),
+    ];
+    println!(
+        "governance_access_in: proposal_id={} op=update_governance_access_policy proposer_threshold={} executor_threshold={} timelock_epochs={} votes={} quorum={}",
+        policy_proposal.proposal_id,
+        access_policy.proposer_threshold,
+        access_policy.executor_threshold,
+        access_policy.timelock_epochs,
+        policy_votes.len(),
+        required_quorum
+    );
+    engine
+        .execute_governance_proposal(policy_proposal.proposal_id, &policy_votes)
+        .context("governance access probe: execute access policy proposal failed")?;
+    let policy_applied = engine.governance_access_policy() == access_policy;
+
+    // 2) Proposer multisig reject and pass.
+    let submit_reject = engine
+        .submit_governance_proposal_with_approvals(
+            0,
+            &[0],
+            GovernanceOp::UpdateMempoolFeeFloor { fee_floor: 17 },
+        )
+        .is_err();
+    let proposal = engine
+        .submit_governance_proposal_with_approvals(
+            0,
+            &[0, 1],
+            GovernanceOp::UpdateMempoolFeeFloor { fee_floor: 17 },
+        )
+        .context("governance access probe: submit protected proposal failed")?;
+    let votes = vec![
+        GovernanceVote::new(&proposal, 0, true, &signing_keys[0]),
+        GovernanceVote::new(&proposal, 1, true, &signing_keys[1]),
+    ];
+
+    // 3) Timelock must reject first execute.
+    let timelock_reject = engine
+        .execute_governance_proposal_with_executor_approvals(
+            proposal.proposal_id,
+            &votes,
+            &[1, 2],
+        )
+        .is_err();
+
+    // 4) Bypass timelock for probe to verify executor multisig behavior.
+    let no_timelock_policy = GovernanceAccessPolicy {
+        timelock_epochs: 0,
+        ..access_policy.clone()
+    };
+    engine
+        .set_governance_access_policy(no_timelock_policy)
+        .context("governance access probe: set no-timelock policy failed")?;
+    let executor_threshold_reject = engine
+        .execute_governance_proposal_with_executor_approvals(proposal.proposal_id, &votes, &[1])
+        .is_err();
+    let execute_ok = engine
+        .execute_governance_proposal_with_executor_approvals(proposal.proposal_id, &votes, &[1, 2])
+        .is_ok();
+    let mempool_fee_floor = engine.governance_mempool_fee_floor();
+
+    println!(
+        "governance_access_out: proposal_id={} policy_applied={} submit_reject={} timelock_reject={} executor_threshold_reject={} execute_ok={} mempool_fee_floor={}",
+        proposal.proposal_id,
+        policy_applied,
+        submit_reject,
+        timelock_reject,
+        executor_threshold_reject,
+        execute_ok,
+        mempool_fee_floor
+    );
+
+    if !policy_applied
+        || !submit_reject
+        || !timelock_reject
+        || !executor_threshold_reject
+        || !execute_ok
+        || mempool_fee_floor != 17
+    {
+        bail!(
+            "governance access probe failed: policy_applied={} submit_reject={} timelock_reject={} executor_threshold_reject={} execute_ok={} mempool_fee_floor={}",
+            policy_applied,
+            submit_reject,
+            timelock_reject,
+            executor_threshold_reject,
+            execute_ok,
+            mempool_fee_floor
+        );
+    }
+
+    Ok(())
+}
+
+fn run_governance_treasury_spend_probe_mode() -> Result<()> {
+    let loaded = load_consensus_slash_policy()?;
+    emit_slash_policy_in_signal(&loaded);
+    let token_policy = load_governance_token_economics_policy()?;
+    let (treasury_to, treasury_amount_requested, treasury_reason) = load_governance_treasury_spend()?;
+
+    let validator_set = ValidatorSet::new_equal_weight(vec![0, 1, 2]);
+    let required_quorum = validator_set.quorum_size();
+    let signing_keys: Vec<_> = (0..3).map(|_| SigningKey::generate(&mut OsRng)).collect();
+    let mut public_keys = HashMap::new();
+    public_keys.insert(0, signing_keys[0].verifying_key());
+    public_keys.insert(1, signing_keys[1].verifying_key());
+    public_keys.insert(2, signing_keys[2].verifying_key());
+    let engine = BFTEngine::new(
+        BFTConfig::default(),
+        0,
+        signing_keys[0].clone(),
+        validator_set,
+        public_keys,
+    )
+    .context("governance treasury probe: init novovm-consensus engine failed")?;
+    engine
+        .set_slash_policy(loaded.policy.clone())
+        .context("governance treasury probe: set baseline slash policy failed")?;
+    engine
+        .set_token_economics_policy(token_policy)
+        .context("governance treasury probe: set token economics policy failed")?;
+    engine.set_governance_execution_enabled(true);
+
+    // Build treasury balance first: mint -> gas fee -> service fee.
+    let payer: ConsensusNodeId = 42;
+    let mint_amount = 500u64;
+    let gas_fee = 100u64;
+    let service_fee = 100u64;
+    engine
+        .mint_tokens(payer, mint_amount)
+        .context("governance treasury probe: mint failed")?;
+    engine
+        .charge_gas_fee(payer, gas_fee)
+        .context("governance treasury probe: gas fee routing failed")?;
+    engine
+        .charge_service_fee(payer, service_fee)
+        .context("governance treasury probe: service fee routing failed")?;
+
+    let treasury_before = engine.token_treasury_balance();
+    if treasury_before == 0 {
+        bail!("governance treasury probe failed: treasury_before is zero");
+    }
+    let treasury_amount = treasury_amount_requested
+        .max(1)
+        .min(treasury_before);
+    let recipient_before = engine.token_balance(treasury_to);
+
+    let proposal = engine
+        .submit_governance_proposal(
+            0,
+            GovernanceOp::TreasurySpend {
+                to: treasury_to,
+                amount: treasury_amount,
+                reason: treasury_reason.clone(),
+            },
+        )
+        .context("governance treasury probe: submit proposal failed")?;
+    let votes = vec![
+        GovernanceVote::new(&proposal, 0, true, &signing_keys[0]),
+        GovernanceVote::new(&proposal, 1, true, &signing_keys[1]),
+    ];
+    println!(
+        "governance_treasury_in: proposal_id={} op=treasury_spend to={} amount={} reason={} votes={} quorum={} treasury_before={} recipient_before={}",
+        proposal.proposal_id,
+        treasury_to,
+        treasury_amount,
+        treasury_reason,
+        votes.len(),
+        required_quorum,
+        treasury_before,
+        recipient_before
+    );
+
+    let exec_result = engine.execute_governance_proposal(proposal.proposal_id, &votes);
+    let reason_code = match &exec_result {
+        Ok(_) => "ok",
+        Err(err) => {
+            let msg = err.to_string().to_ascii_lowercase();
+            if msg.contains("insufficient votes") {
+                "insufficient_votes"
+            } else if msg.contains("invalid signature") {
+                "invalid_signature"
+            } else if msg.contains("governance not enabled") {
+                "governance_not_enabled"
+            } else {
+                "governance_execution_error"
+            }
+        }
+    };
+    let executed = exec_result.is_ok();
+    let treasury_after = engine.token_treasury_balance();
+    let recipient_after = engine.token_balance(treasury_to);
+    let spent_total = engine.token_treasury_spent_total();
+    let spend_applied = treasury_after
+        .saturating_add(treasury_amount)
+        .eq(&treasury_before)
+        && recipient_after.eq(&recipient_before.saturating_add(treasury_amount));
+
+    // Negative: overspend must be rejected.
+    let overspend_amount = treasury_after.saturating_add(1);
+    let overspend_reject = if overspend_amount == 0 {
+        true
+    } else {
+        let overspend = engine
+            .submit_governance_proposal(
+                0,
+                GovernanceOp::TreasurySpend {
+                    to: treasury_to,
+                    amount: overspend_amount,
+                    reason: "overspend_reject".to_string(),
+                },
+            )
+            .context("governance treasury probe: submit overspend proposal failed")?;
+        let overspend_votes = vec![
+            GovernanceVote::new(&overspend, 0, true, &signing_keys[0]),
+            GovernanceVote::new(&overspend, 1, true, &signing_keys[1]),
+        ];
+        engine
+            .execute_governance_proposal(overspend.proposal_id, &overspend_votes)
+            .is_err()
+    };
+
+    println!(
+        "governance_treasury_out: proposal_id={} executed={} reason_code={} spend_applied={} treasury_before={} treasury_after={} recipient_before={} recipient_after={} spent_total={} overspend_reject={}",
+        proposal.proposal_id,
+        executed,
+        reason_code,
+        spend_applied,
+        treasury_before,
+        treasury_after,
+        recipient_before,
+        recipient_after,
+        spent_total,
+        overspend_reject
+    );
+
+    if !executed || reason_code != "ok" || !spend_applied || !overspend_reject {
+        bail!(
+            "governance treasury probe failed: executed={} reason_code={} spend_applied={} overspend_reject={} treasury_before={} treasury_after={} recipient_before={} recipient_after={} spent_total={}",
+            executed,
+            reason_code,
+            spend_applied,
+            overspend_reject,
+            treasury_before,
+            treasury_after,
+            recipient_before,
+            recipient_after,
+            spent_total
+        );
+    }
+
+    Ok(())
+}
+
 fn run_ffi_v2() -> Result<()> {
     let slash_policy_loaded = load_consensus_slash_policy()?;
     emit_slash_policy_in_signal(&slash_policy_loaded);
@@ -5646,6 +6465,15 @@ fn main() -> Result<()> {
     }
     if node_mode.eq_ignore_ascii_case("governance_param3_probe") {
         return run_governance_param3_probe_mode();
+    }
+    if node_mode.eq_ignore_ascii_case("governance_token_economics_probe") {
+        return run_governance_token_economics_probe_mode();
+    }
+    if node_mode.eq_ignore_ascii_case("governance_access_policy_probe") {
+        return run_governance_access_policy_probe_mode();
+    }
+    if node_mode.eq_ignore_ascii_case("governance_treasury_spend_probe") {
+        return run_governance_treasury_spend_probe_mode();
     }
     if node_mode.eq_ignore_ascii_case("chain_query") {
         return run_chain_query_mode();

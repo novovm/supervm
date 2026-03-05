@@ -28,9 +28,9 @@
 |---|---|---|
 | 可跑交易/执行/出块/传播 | 成立（MVP 口径） | `D2/D3=Done`，`F-03~F-08=ReadyForMerge`；功能门禁含 `tx_codec/mempool/block/commit/network/consensus`。 |
 | 可做标准链查询（`getBlock/getTransaction/getReceipt/getBalance`） | 成立（MVP + 读 RPC 服务口径） | `novovm-node` 已新增 `chain_query` + `rpc_server` 模式：提交后落盘 `query-state`，并通过 JSON-RPC 风格接口（`/`/`/rpc`）暴露四个查询方法；已纳入 `run_chain_query_rpc_gate.ps1` 门禁。 |
-| 可发币/资产发行 | 条件成立 | `SVM2026` 有 `MainnetTokenImpl` / `mint` / `burn` / gas fee split；但 `NOVOVM` 迁移批次里 `E(RPC/CLI/DevEx)=NotStarted`，未证明已迁入主链路。 |
+| 可发币/资产发行 | 成立（最小经济治理口径） | `NOVOVM` 已复用 `SVM2026 web30-core` 的 `MainnetTokenImpl`，并通过治理 `UpdateTokenEconomicsPolicy` 与 `TreasurySpend` 完成最小经济主链路门禁闭环。 |
 
-**A 总结**：`交易闭环 + 最小查询闭环 + 读 RPC 服务化` 已成立；“发币能力主链路迁入”与其余生产化能力仍未完成。
+**A 总结**：`交易闭环 + 最小查询闭环 + 读 RPC 服务化 + 最小经济治理闭环` 已成立；后续主要是“完整经济治理域”的生产化收口。
 
 ## B. 「生产主网还需要扩展项」
 
@@ -39,7 +39,7 @@
 | 完整共识（validator/stake/slash/view-change/fork choice） | 基本正确（主闭环已具备） | 已具备 `ValidatorSet + QC + 投票`，并新增 stake-weighted quorum、equivocation slash-evidence、slash execution、view-change、fork-choice；`slash execution` 已参数化为 `SlashPolicy(mode/threshold/min_active/cooldown_epochs)`，默认可由 `config/novovm-consensus-policy.json` 外置输入并通过 `slash_governance_gate + slash_policy_external_gate + unjail_cooldown_gate` 门禁；网络级 `view_sync/new_view` pacemaker 已从“消息闭环”升级为 `pacemaker_failover_gate`（leader 超时失效 -> 换主 -> 提交）硬门禁，后续主要是生产参数化与治理策略收口。 |
 | 完整同步（header/fast/state sync） | 部分正确（仍缺） | 已新增 `header_sync_gate`（headers-first）与 `fast_state_sync_gate`（fast headers + state snapshot verify）并接入 acceptance gate，且均含篡改负向拒绝；`fast/state sync` 的生产多 peer/持久化恢复链路仍缺。 |
 | DoS 防护（tx spam/peer flood/invalid block storm） | 部分正确（仍缺） | 已有 RPC ingress rate-limit（429 / `-32029`）门禁，且新增网络级 `peer-score/ban + invalid-block-storm` 门禁（`network_dos_gate`）；仍缺生产级持久化惩罚、跨节点信誉传播与灰度恢复策略。 |
-| 经济参数（gas pricing/burn/inflation/treasury） | 基本正确（SVM2026 有实现，NOVOVM 未完成迁移） | `SVM2026` 经济模块较完整，但部分指标仍有 TODO；NOVOVM 迁移批次 E 尚未启动。 |
+| 经济参数（gas pricing/burn/inflation/treasury） | 部分正确（最小闭环已迁移，完整域未完成） | `NOVOVM` 已迁入 `mint/burn/gas-service split/treasury spend` 最小闭环并门禁化；完整经济治理域（外汇储备/NAV/回购/跨模块参数）仍待迁移。 |
 | ZK runtime（F-15） | 正确（当前受 AOEM 约束） | 台账明确 `zk_runtime_ready=False`、`zkvm_prove/verify=False`，等待 AOEM 1.0。 |
 
 ## C. 「下一阶段（自然演进）」
@@ -49,7 +49,7 @@
 | 阶段项 | 现状判定 |
 |---|---|
 | 钱包 / RPC / SDK | 部分完成（SVM2026 有局部 SDK/CLI/RPC，NOVOVM 已完成本地查询闭环 + 读 RPC 服务化门禁） |
-| Genesis + Tokenomics | 部分完成（有模型与模块，但落地一致性仍有缺口） |
+| Genesis + Tokenomics | 部分完成（最小主链路完成，完整域待补） |
 | Validator 网络 | 部分完成（有示例/骨架，不是生产验证者网络） |
 | Testnet 启动 | 规划态/建议态为主，未见统一“已正式启动”证据闭环 |
 | ZK Runtime | 受 AOEM runtime 就绪状态阻塞 |
@@ -66,7 +66,7 @@
 | 完整共识机制 | MVP 通过（~80%核验口径） | 已有验证者集合/QC + stake-weighted quorum + equivocation slash-evidence + slash execution + slash-policy(threshold/observe-only/min-active) + view-change + fork-choice + 网络级 view-sync/new-view pacemaker + failover（超时换主后继续出块提交）；剩余是生产参数化罚没/治理策略 | 部分完成 |
 | 完整同步 | MVP 网络闭环通过 | 已补 headers-first + fast/state 最小门禁闭环；仍缺 fast/state sync 生产闭环 | 部分完成 |
 | DoS 防护体系 | 已形成入口+网络最小门禁项 | RPC ingress 侧 rate-limit 已门禁化；网络侧 `peer-score/ban + invalid-block-storm` 已门禁化，生产级长期信誉治理仍待补 | 部分完成 |
-| 经济参数闭环 | 不在当前已完成迁移批次 | 模块实现较多，但有 TODO/部署集成待补 | 部分完成 |
+| 经济参数闭环 | 最小闭环已完成，完整域待补 | 已完成 `UpdateTokenEconomicsPolicy + TreasurySpend` 门禁闭环；完整经济治理域仍在后续计划 | 部分完成 |
 | ZK runtime ready | `False`（台账明确） | 原仓有 ZK 能力沉淀，但 NOVOVM 运行态受 AOEM 约束 | 阻塞中 |
 
 **B 汇总**：`0 项完全完成 / 4 项部分完成 / 1 项阻塞`。
@@ -76,7 +76,7 @@
 | 项目 | 进度判定 | 备注 |
 |---|---|---|
 | 钱包/RPC/SDK | 部分完成 | 读查询 RPC 已服务化并接入门禁；钱包/SDK/写接口仍待推进。 |
-| Genesis+Tokenomics | 部分完成 | 代码与文档都有，但迁移闭环未形成。 |
+| Genesis+Tokenomics | 部分完成 | 最小迁移闭环已形成（token economics + treasury spend），完整经济域仍待补。 |
 | Validator 网络 | 部分完成 | 有 demo/harness，不等于生产网络。 |
 | Testnet 启动 | 未完成 | 多为计划/建议部署测试网。 |
 | ZK Runtime | 阻塞中 | 等 AOEM 1.0 后切 runtime-ready。 |
@@ -104,6 +104,15 @@
 - relfix 快照（同日回归）：
   - `artifacts/migration/release-snapshot-param3-smoke-relfix/release-snapshot.json`
   - `profile_name=full_snapshot_v1`，`overall_pass=True`，`governance_param3_pass=True`，`adapter_stability_pass=True`
+- GA 经济治理快照（2026-03-06）：
+  - `artifacts/migration/release-snapshot-ga-smoke-treasury/release-snapshot.json`
+  - `profile_name=full_snapshot_ga_v1`，`overall_pass=True`
+  - `governance_access_policy_pass=True`，`governance_token_economics_pass=True`，`governance_treasury_spend_pass=True`
+- GA RC 候选快照（2026-03-06）：
+  - `artifacts/migration/release-candidate-novovm-rc-2026-03-06-ga-v1-retryfix/rc-candidate.json`
+  - `status=ReadyForMerge/SnapshotGreen`
+  - `governance_access_policy_pass=True`，`governance_token_economics_pass=True`，`governance_treasury_spend_pass=True`
+  - `adapter_stability` 已加入定向单次重试稳态修复（registry negative hash-mismatch 抖动场景）
 
 ---
 

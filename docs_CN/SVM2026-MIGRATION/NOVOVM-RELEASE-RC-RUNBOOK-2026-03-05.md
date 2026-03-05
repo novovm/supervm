@@ -2,7 +2,7 @@
 
 ## 1. 目标
 
-- 把 `full_snapshot_v1` 固化为可重复执行的发布候选口径。
+- 把 `full_snapshot_v1/v2/ga_v1` 固化为可重复执行的发布候选口径。
 - 用单一 `rc_ref`（tag 或 commit-hash）关联一次完整快照，形成可追溯证据。
 
 ## 2. 冻结规则（必须遵守）
@@ -34,10 +34,13 @@ Get-Content artifacts/migration/release-candidate-novovm-rc-2026-03-05-relfix/rc
   - `snapshot_overall_pass=true`
   - `governance_param3_pass=true`
   - `adapter_stability_pass=true`
+  - （GA profile）`governance_access_policy_pass=true`、`governance_token_economics_pass=true`、`governance_treasury_spend_pass=true`
 
-## 5. 对外/对团队统一口径
+## 5. 发布口径（GA-only）
 
-> full_snapshot_v1（含 governance_param3）在 relfix 后已恢复全绿并固化，主线 ReadyForMerge / SnapshotGreen。
+- RC（含 `full_snapshot_v1/v2`）仅用于内部工程基线与回归锚点，不作为对外发布版本。
+- 对外只发布 GA（完整主网经济治理版），避免中间版本造成口径混淆。
+- RC 目录与 tag 继续保留，作为可追溯证据，不作为对外可用承诺。
 
 ## 6. 治理 RPC 安全发布铁律（默认行为）
 
@@ -69,3 +72,13 @@ powershell -ExecutionPolicy Bypass -File scripts/migration/run_release_candidate
 - `rc_ref`: `novovm-rc-2026-03-05-v2`
 - `commit_hash`: `6d4bcf467f31f2de91d093e122c8390bc6a27e43`
 - 产物入口：`artifacts/migration/release-candidate-novovm-rc-2026-03-05-v2/rc-candidate.json`
+
+## 8. 正式 RC GA v1 指针（2026-03-06）
+
+- `rc_ref`: `novovm-rc-2026-03-06-ga-v1-retryfix`
+- `commit_hash`: `69a7742b733c7fb21399b5159aeec2dc66b3d815`
+- `snapshot_profile`: `full_snapshot_ga_v1`
+- `status`: `ReadyForMerge/SnapshotGreen`
+- 关键门禁：`governance_access_policy_pass=true`、`governance_token_economics_pass=true`、`governance_treasury_spend_pass=true`、`rpc_exposure_pass=true`
+- 产物入口：`artifacts/migration/release-candidate-novovm-rc-2026-03-06-ga-v1-retryfix/rc-candidate.json`
+- 稳态说明：`scripts/migration/run_adapter_stability_gate.ps1` 已对 `registry_negative hash_mismatch reason_drift` 增加定向单次重试。
