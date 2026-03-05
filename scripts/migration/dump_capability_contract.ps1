@@ -48,11 +48,54 @@ function Invoke-CargoStdout {
     return $stdout.Trim()
 }
 
+function Get-DynlibNameCandidates {
+    if ($IsWindows) {
+        return @("aoem_ffi.dll")
+    }
+    if ($IsMacOS) {
+        return @("libaoem_ffi.dylib")
+    }
+    return @("libaoem_ffi.so")
+}
+
+function Get-AoemVariantBinDir {
+    param([string]$AoemRoot, [string]$Variant)
+    switch ($Variant) {
+        "core" { return Join-Path $AoemRoot "bin" }
+        "persist" { return Join-Path $AoemRoot "variants\persist\bin" }
+        "wasm" { return Join-Path $AoemRoot "variants\wasm\bin" }
+        default { throw "invalid variant: $Variant" }
+    }
+}
+
+function Get-DllPathForVariant {
+    param(
+        [string]$AoemRoot,
+        [string]$Variant,
+        [bool]$RequireExists = $false
+    )
+
+    $binDir = Get-AoemVariantBinDir -AoemRoot $AoemRoot -Variant $Variant
+    $candidates = Get-DynlibNameCandidates
+    foreach ($name in $candidates) {
+        $candidate = Join-Path $binDir $name
+        if (Test-Path $candidate) {
+            return (Resolve-Path $candidate).Path
+        }
+    }
+
+    $fallback = Join-Path $binDir $candidates[0]
+    if ($RequireExists) {
+        throw "aoem dynlib not found for variant=$Variant under $binDir (tried: $($candidates -join ', '))"
+    }
+    return $fallback
+}
+
 New-Item -ItemType Directory -Force -Path $OutputDir | Out-Null
 
 $execDir = Join-Path $RepoRoot "crates\novovm-exec"
 $aoemRoot = Join-Path $RepoRoot "aoem"
-$aoemDll = Join-Path $aoemRoot "bin\aoem_ffi.dll"
+$aoemDll = Get-DllPathForVariant -AoemRoot $aoemRoot -Variant $Variant -RequireExists $true
 $aoemManifest = Join-Path $aoemRoot "manifest\aoem-manifest.json"
 $aoemRuntimeProfile = Join-Path $aoemRoot "config\aoem-runtime-profile.json"
 $jsonText = Invoke-CargoStdout -WorkDir $execDir -CargoArgs @(

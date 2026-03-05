@@ -159,13 +159,13 @@ function Resolve-AdapterPluginPath {
         return $resolvedExplicitPath
     }
 
-    $pluginNames = @(
-        "novovm_adapter_sample_plugin.dll",
-        "novovm_adapter_sample_plugin.so",
-        "novovm_adapter_sample_plugin.dylib",
-        "libnovovm_adapter_sample_plugin.so",
-        "libnovovm_adapter_sample_plugin.dylib"
-    )
+    $pluginNames = if ($IsWindows) {
+        @("novovm_adapter_sample_plugin.dll")
+    } elseif ($IsMacOS) {
+        @("libnovovm_adapter_sample_plugin.dylib", "novovm_adapter_sample_plugin.dylib")
+    } else {
+        @("libnovovm_adapter_sample_plugin.so", "novovm_adapter_sample_plugin.so")
+    }
     $pluginCrateDir = Join-Path $RepoRoot "crates\novovm-adapter-sample-plugin"
     $searchDirs = @(
         (Join-Path $RepoRoot "target\debug"),
@@ -843,14 +843,47 @@ function Parse-ConsistencyDigestLine {
     }
 }
 
-function Get-DllPathForVariant {
+function Get-DynlibNameCandidates {
+    if ($IsWindows) {
+        return @("aoem_ffi.dll")
+    }
+    if ($IsMacOS) {
+        return @("libaoem_ffi.dylib")
+    }
+    return @("libaoem_ffi.so")
+}
+
+function Get-AoemVariantBinDir {
     param([string]$AoemRoot, [string]$Variant)
     switch ($Variant) {
-        "core" { return Join-Path $AoemRoot "bin\aoem_ffi.dll" }
-        "persist" { return Join-Path $AoemRoot "variants\persist\bin\aoem_ffi.dll" }
-        "wasm" { return Join-Path $AoemRoot "variants\wasm\bin\aoem_ffi.dll" }
+        "core" { return Join-Path $AoemRoot "bin" }
+        "persist" { return Join-Path $AoemRoot "variants\persist\bin" }
+        "wasm" { return Join-Path $AoemRoot "variants\wasm\bin" }
         default { throw "invalid variant: $Variant" }
     }
+}
+
+function Get-DllPathForVariant {
+    param(
+        [string]$AoemRoot,
+        [string]$Variant,
+        [bool]$RequireExists = $false
+    )
+
+    $binDir = Get-AoemVariantBinDir -AoemRoot $AoemRoot -Variant $Variant
+    $candidates = Get-DynlibNameCandidates
+    foreach ($name in $candidates) {
+        $candidate = Join-Path $binDir $name
+        if (Test-Path $candidate) {
+            return (Resolve-Path $candidate).Path
+        }
+    }
+
+    $fallback = Join-Path $binDir $candidates[0]
+    if ($RequireExists) {
+        throw "aoem dynlib not found for variant=$Variant under $binDir (tried: $($candidates -join ', '))"
+    }
+    return $fallback
 }
 
 function Get-CapabilitySnapshot {
@@ -1885,9 +1918,19 @@ if ($IncludeAdapterPluginAbiNegative) {
 $adapterSymbolNegativePluginPath = if ($AdapterSymbolNegativePluginPath) {
     $AdapterSymbolNegativePluginPath
 } else {
-    $candidateAoem = Join-Path $aoemRoot "bin\aoem_ffi.dll"
+    $candidateAoem = Get-DllPathForVariant -AoemRoot $aoemRoot -Variant "core"
     if (Test-Path $candidateAoem) {
         $candidateAoem
+    } elseif ($IsMacOS -and (Test-Path "/usr/lib/libSystem.B.dylib")) {
+        "/usr/lib/libSystem.B.dylib"
+    } elseif ($IsLinux -and (Test-Path "/usr/lib/x86_64-linux-gnu/libc.so.6")) {
+        "/usr/lib/x86_64-linux-gnu/libc.so.6"
+    } elseif ($IsLinux -and (Test-Path "/lib/x86_64-linux-gnu/libc.so.6")) {
+        "/lib/x86_64-linux-gnu/libc.so.6"
+    } elseif ($IsLinux -and (Test-Path "/usr/lib64/libc.so.6")) {
+        "/usr/lib64/libc.so.6"
+    } elseif ($IsLinux -and (Test-Path "/lib64/libc.so.6")) {
+        "/lib64/libc.so.6"
     } else {
         Join-Path $env:WINDIR "System32\kernel32.dll"
     }
@@ -2159,7 +2202,7 @@ if ($networkPacemakerAvailable) {
 $variants = @("core", "persist", "wasm")
 $digests = @()
 foreach ($variant in $variants) {
-    $dll = Get-DllPathForVariant -AoemRoot $aoemRoot -Variant $variant
+    $dll = Get-DllPathForVariant -AoemRoot $aoemRoot -Variant $variant -RequireExists $true
     $text = Invoke-Cargo -WorkDir $bindingsDir -CargoArgs @(
         "run", "--example", "ffi_consistency_digest", "--",
         "--dll", $dll,

@@ -48,9 +48,14 @@ pub struct AoemRuntimeConfig {
 fn find_aoem_root_near(start: &Path) -> Option<PathBuf> {
     for dir in start.ancestors() {
         let candidate = dir.join("aoem");
-        if candidate.join("bin").join("aoem_ffi.dll").exists()
-            || candidate.join("manifest").join("aoem-manifest.json").exists()
-        {
+        if candidate.join("manifest").join("aoem-manifest.json").exists() {
+            return Some(candidate);
+        }
+        if dynlib_names_by_preference().iter().any(|name| {
+            candidate.join("bin").join(name).exists()
+                || candidate.join("variants").join("persist").join("bin").join(name).exists()
+                || candidate.join("variants").join("wasm").join("bin").join(name).exists()
+        }) {
             return Some(candidate);
         }
     }
@@ -452,20 +457,33 @@ fn parse_u32_env(name: &str) -> Option<u32> {
         .and_then(|v| v.trim().parse::<u32>().ok())
 }
 
-fn default_dll_path(root: &Path, variant: AoemRuntimeVariant) -> PathBuf {
-    match variant {
-        AoemRuntimeVariant::Core => root.join("bin").join("aoem_ffi.dll"),
-        AoemRuntimeVariant::Persist => root
-            .join("variants")
-            .join("persist")
-            .join("bin")
-            .join("aoem_ffi.dll"),
-        AoemRuntimeVariant::Wasm => root
-            .join("variants")
-            .join("wasm")
-            .join("bin")
-            .join("aoem_ffi.dll"),
+fn dynlib_names_by_preference() -> &'static [&'static str] {
+    if cfg!(target_os = "windows") {
+        &["aoem_ffi.dll"]
+    } else if cfg!(target_os = "macos") {
+        &["libaoem_ffi.dylib"]
+    } else {
+        &["libaoem_ffi.so"]
     }
+}
+
+fn variant_bin_dir(root: &Path, variant: AoemRuntimeVariant) -> PathBuf {
+    match variant {
+        AoemRuntimeVariant::Core => root.join("bin"),
+        AoemRuntimeVariant::Persist => root.join("variants").join("persist").join("bin"),
+        AoemRuntimeVariant::Wasm => root.join("variants").join("wasm").join("bin"),
+    }
+}
+
+fn default_dll_path(root: &Path, variant: AoemRuntimeVariant) -> PathBuf {
+    let bin_dir = variant_bin_dir(root, variant);
+    for name in dynlib_names_by_preference() {
+        let candidate = bin_dir.join(name);
+        if candidate.exists() {
+            return candidate;
+        }
+    }
+    bin_dir.join(dynlib_names_by_preference()[0])
 }
 
 fn capability_bool(root: &serde_json::Value, paths: &[&str]) -> Option<bool> {
@@ -595,8 +613,21 @@ fn _assert_abi_struct_layout(_v: AoemCreateOptionsV1) {}
 
 #[cfg(test)]
 mod tests {
-    use super::AoemCapabilityContract;
+    use super::{default_dll_path, dynlib_names_by_preference, variant_bin_dir, AoemCapabilityContract, AoemRuntimeVariant};
     use serde_json::json;
+    use std::fs;
+    use std::path::PathBuf;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn temp_dir(name: &str) -> PathBuf {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("time")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("novovm-exec-{name}-{nonce}"));
+        fs::create_dir_all(&dir).expect("create temp dir");
+        dir
+    }
 
     #[test]
     fn capability_contract_reads_explicit_zk_msm_fields() {
@@ -666,5 +697,42 @@ mod tests {
             ]
         );
         assert_eq!(c.fallback_reason.as_deref(), Some("invalid_input"));
+    }
+
+    #[test]
+    fn default_dll_path_prefers_host_name_when_present() {
+        let root = temp_dir("default-dll-prefer-host");
+        let bin = variant_bin_dir(&root, AoemRuntimeVariant::Core);
+        fs::create_dir_all(&bin).expect("create bin dir");
+
+        let host_name = dynlib_names_by_preference()[0];
+        let host_path = bin.join(host_name);
+        fs::write(&host_path, b"stub").expect("write host dylib");
+
+        let selected = default_dll_path(&root, AoemRuntimeVariant::Core);
+        assert_eq!(selected, host_path);
+
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn default_dll_path_uses_host_default_when_host_binary_missing() {
+        let root = temp_dir("default-dll-fallback");
+        let bin = variant_bin_dir(&root, AoemRuntimeVariant::Core);
+        fs::create_dir_all(&bin).expect("create bin dir");
+
+        let dll = bin.join("aoem_ffi.dll");
+        fs::write(&dll, b"stub").expect("write dll");
+
+        let selected = default_dll_path(&root, AoemRuntimeVariant::Core);
+        if cfg!(target_os = "windows") {
+            assert_eq!(selected, dll);
+        } else {
+            let expected = bin.join(dynlib_names_by_preference()[0]);
+            assert_eq!(selected, expected);
+            assert_ne!(selected, dll);
+        }
+
+        fs::remove_dir_all(root).expect("cleanup");
     }
 }

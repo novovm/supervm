@@ -199,12 +199,31 @@ impl AoemDyn {
         };
 
         let variant = infer_variant_from_dll_path(self.library_path());
-        let entry = entries.iter().find(|item| {
-            item.get("name")
-                .and_then(|v| v.as_str())
-                .map(|s| s.eq_ignore_ascii_case(variant))
-                .unwrap_or(false)
-        });
+        let variant_entries: Vec<&Value> = entries
+            .iter()
+            .filter(|item| {
+                item.get("name")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.eq_ignore_ascii_case(variant))
+                    .unwrap_or(false)
+            })
+            .collect();
+        let lib_path_norm = normalize_path_for_match(self.library_path().to_string_lossy().as_ref());
+        let entry = variant_entries
+            .iter()
+            .copied()
+            .find(|item| {
+                item.get("dll")
+                    .and_then(|v| v.as_str())
+                    .map(|dll| {
+                        let rel = normalize_path_for_match(dll);
+                        !rel.is_empty()
+                            && (lib_path_norm.ends_with(&rel)
+                                || lib_path_norm.ends_with(&format!("/{rel}")))
+                    })
+                    .unwrap_or(false)
+            })
+            .or_else(|| variant_entries.first().copied());
         let Some(entry) = entry else {
             if required {
                 bail!("manifest entry not found for variant={variant}");
@@ -421,10 +440,7 @@ pub fn default_manifest_path_for_dll(dll_path: &Path) -> PathBuf {
 }
 
 fn infer_variant_from_dll_path(dll_path: &Path) -> &'static str {
-    let p = dll_path
-        .to_string_lossy()
-        .to_ascii_lowercase()
-        .replace('\\', "/");
+    let p = normalize_path_for_match(dll_path.to_string_lossy().as_ref());
     if p.contains("/variants/persist/") {
         "persist"
     } else if p.contains("/variants/wasm/") {
@@ -432,6 +448,10 @@ fn infer_variant_from_dll_path(dll_path: &Path) -> &'static str {
     } else {
         "core"
     }
+}
+
+fn normalize_path_for_match(path: &str) -> String {
+    path.to_ascii_lowercase().replace('\\', "/")
 }
 
 fn load_manifest_json(path: &Path) -> Result<Value> {

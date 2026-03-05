@@ -98,14 +98,47 @@ function Parse-WorldlineResult {
     }
 }
 
-function Get-DllPathForVariant {
+function Get-DynlibNameCandidates {
+    if ($IsWindows) {
+        return @("aoem_ffi.dll")
+    }
+    if ($IsMacOS) {
+        return @("libaoem_ffi.dylib")
+    }
+    return @("libaoem_ffi.so")
+}
+
+function Get-AoemVariantBinDir {
     param([string]$AoemRoot, [string]$Variant)
     switch ($Variant) {
-        "core" { return Join-Path $AoemRoot "bin\aoem_ffi.dll" }
-        "persist" { return Join-Path $AoemRoot "variants\persist\bin\aoem_ffi.dll" }
-        "wasm" { return Join-Path $AoemRoot "variants\wasm\bin\aoem_ffi.dll" }
+        "core" { return Join-Path $AoemRoot "bin" }
+        "persist" { return Join-Path $AoemRoot "variants\persist\bin" }
+        "wasm" { return Join-Path $AoemRoot "variants\wasm\bin" }
         default { throw "invalid variant: $Variant" }
     }
+}
+
+function Get-DllPathForVariant {
+    param(
+        [string]$AoemRoot,
+        [string]$Variant,
+        [bool]$RequireExists = $false
+    )
+
+    $binDir = Get-AoemVariantBinDir -AoemRoot $AoemRoot -Variant $Variant
+    $candidates = Get-DynlibNameCandidates
+    foreach ($name in $candidates) {
+        $candidate = Join-Path $binDir $name
+        if (Test-Path $candidate) {
+            return (Resolve-Path $candidate).Path
+        }
+    }
+
+    $fallback = Join-Path $binDir $candidates[0]
+    if ($RequireExists) {
+        throw "aoem dynlib not found for variant=$Variant under $binDir (tried: $($candidates -join ', '))"
+    }
+    return $fallback
 }
 
 function Get-CaseKey {
@@ -237,7 +270,7 @@ $baselineJsonResolved = Resolve-BaselineJsonPath `
 
 $items = @()
 foreach ($variant in $variantList) {
-    $dll = Get-DllPathForVariant -AoemRoot $aoemRoot -Variant $variant
+    $dll = Get-DllPathForVariant -AoemRoot $aoemRoot -Variant $variant -RequireExists $true
     foreach ($preset in $presets) {
         $submitOps = if ($preset -eq "cpu_parity") { "1" } else { "1024" }
         $cargoArgs = @("run")
