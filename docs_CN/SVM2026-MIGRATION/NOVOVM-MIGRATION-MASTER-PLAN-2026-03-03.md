@@ -167,17 +167,32 @@
   - 根因：relative `OutputDir` + child process `cwd` 变化导致 whitelist negative path drift
   - 修复：在 `scripts/migration/run_functional_consistency.ps1` 与 `scripts/migration/run_adapter_stability_gate.ps1` 将 `OutputDir` 归一化为绝对路径
   - 证据：`artifacts/migration/adapter-stability-relfix-smoke/adapter-stability-summary.json`
+- 已完成：`chain_query_rpc_gate` rate-limit retryfix（2026-03-06）：根因是节点限流按 Unix 秒窗口计数，原 gate 的 3 次 probe 偶发跨秒，导致首轮 `limited_ok=False` 抖动；修复为在 `scripts/migration/run_chain_query_rpc_gate.ps1` 中将 rate-limit probe 对齐到下一个秒窗口，并加入小次数自动重试。
+- 证据：
+  - `artifacts/migration/chain-query-rpc-gate-retryfix-run-1/chain-query-rpc-gate-summary.json` 至 `artifacts/migration/chain-query-rpc-gate-retryfix-run-10/chain-query-rpc-gate-summary.json`（10/10 全绿，`attempts_used=1`）
+  - `artifacts/migration/release-snapshot-chain-query-retryfix-run-1/release-snapshot.json`（`overall_pass=True`）
+  - `artifacts/migration/release-snapshot-chain-query-retryfix-run-2/release-snapshot.json`（`overall_pass=True`）
 - 已完成：经济执行层命名与继承收口：`market_runtime` 统一迁移为 `market_engine`，并复用 `SVM2026/contracts/web30/core` 的 `AMM/CDP/Bond/NAV/TreasuryImpl` 组件作为 NOVOVM 经济执行主链路。
-- 已完成：`run_governance_market_policy_gate.ps1` 新增 `engine_output_pass + treasury_output_pass` 硬门禁，`run_migration_acceptance_gate.ps1` 的 `overall_pass` 已绑定两项子门禁，`run_release_snapshot.ps1` / `run_release_candidate.ps1` 已同步输出这两项关键结果。
+- 已完成：`run_governance_market_policy_gate.ps1` 新增 `engine_output_pass + treasury_output_pass + orchestration_output_pass` 硬门禁，`run_migration_acceptance_gate.ps1` 的 `overall_pass` 已绑定三项子门禁，`run_release_snapshot.ps1` / `run_release_candidate.ps1` 已同步输出关键结果。
 - 已完成：GA 正式发布快照（2026-03-06）：
   - `artifacts/migration/release-snapshot-ga-2026-03-06-051653/release-snapshot.json`
   - `profile_name=full_snapshot_ga_v1`，`overall_pass=True`
   - `key_results.governance_market_policy_engine_pass=True`
   - `key_results.governance_market_policy_treasury_pass=True`
+  - `key_results.governance_market_policy_orchestration_pass=True`
 - 已完成：GA 正式 RC（`rc_ref=novovm-rc-2026-03-06-ga-v1`）：
   - `artifacts/migration/release-candidate-novovm-rc-2026-03-06-ga-v1/rc-candidate.json`
   - `status=ReadyForMerge/SnapshotGreen`
   - `commit_hash=823a5880e104c96d03e2ab4a8473c9f620ae6413`
+- 已完成：GA orchfix 复核快照（2026-03-06）：
+  - `artifacts/migration/release-candidate-novovm-rc-2026-03-06-ga-orchfix/snapshot/release-snapshot.json`
+  - `profile_name=full_snapshot_ga_v1`，`overall_pass=True`
+  - `key_results.governance_market_policy_orchestration_pass=True`
+- 已完成：GA orchfix 复核 RC（`rc_ref=novovm-rc-2026-03-06-ga-orchfix`）：
+  - `artifacts/migration/release-candidate-novovm-rc-2026-03-06-ga-orchfix/rc-candidate.json`
+  - `status=ReadyForMerge/SnapshotGreen`
+  - `commit_hash=bac3763192258d5fcb89fc129e2b675d56dbb317`
+  - `governance_market_policy_orchestration_pass=True`
 - 已完成：治理审计持久化索引（I-GOV 审计可追溯增强）：`novovm-node` 引入 `NOVOVM_GOVERNANCE_AUDIT_DB` + `GovernanceRpcAuditStore(next_seq/events)`，`run_governance_rpc_gate.ps1` 新增 `audit_persist_ok`，并接入 acceptance。
 - 证据：
   - `artifacts/migration/governance-rpc-gate-audit-persist-smoke/governance-rpc-gate-summary.json`（`audit_persist_ok=True`）
@@ -185,17 +200,44 @@
 - 已完成：发布快照/RC 已纳入治理审计持久化字段：
   - `artifacts/migration/release-snapshot-audit-persist-smoke/release-snapshot.json`（`key_results.governance_rpc_audit_persist_pass=True`）
   - `artifacts/migration/release-candidate-novovm-rc-2026-03-06-governance-audit-persist-smoke/rc-candidate.json`（`governance_rpc_audit_persist_pass=True`）
+- 已完成：治理链内审计索引（I-GOV 审计下沉 + 恢复）：`novovm-consensus` 新增 `GovernanceChainAuditEvent` 并在 `submit/execute/stage` 写入，RPC 提供 `governance_listChainAuditEvents`；节点层新增 `NOVOVM_GOVERNANCE_CHAIN_AUDIT_DB` 持久化并在重启后恢复到共识引擎。
+- 已完成：`run_governance_rpc_gate.ps1` 新增 `chain_audit_ok + chain_audit_persist_ok + chain_audit_restart_ok` 强门禁，并保持 acceptance/snapshot/rc 聚合口径（`governance_rpc_chain_audit_pass`）。
+- 已完成：治理链审计 root proof 收口：`governance_getPolicy` 与 `governance_listChainAuditEvents` 同步输出 `head_seq/root`，并在 gate 中强校验 `policy_chain_audit_consistency_ok + chain_audit_root_ok + chain_audit_persist_root_ok + chain_audit_restart_root_ok`；acceptance/snapshot/rc 新增聚合字段 `governance_rpc_chain_audit_root_proof_pass`。
+- 已完成：治理链审计 root 区块路径锚定：`novovm-protocol::BlockHeaderWireV1` 新增 `governance_chain_audit_root`，`novovm-node` 的 `block_out/commit_out` 已输出该字段；`run_functional_consistency.ps1` 新增跨 `ffi_v2/legacy_compat` 的 root 一致性断言，`run_migration_acceptance_gate.ps1` / `run_release_snapshot.ps1` / `run_release_candidate.ps1` 新增聚合字段 `governance_chain_audit_root_parity_pass`。
+- 证据：
+  - `artifacts/migration/governance-rpc-gate-chain-audit-smoke/governance-rpc-gate-summary.json`（`chain_audit_ok=True`）
+  - `artifacts/migration/governance-rpc-gate-chain-audit-persist-smoke/governance-rpc-gate-summary.json`（`chain_audit_persist_ok=True`, `chain_audit_restart_ok=True`）
+  - `artifacts/migration/governance-rpc-gate-chain-audit-root-smoke/governance-rpc-gate-summary.json`（`policy_chain_audit_consistency_ok=True`, `chain_audit_root_ok=True`, `chain_audit_persist_root_ok=True`, `chain_audit_restart_root_ok=True`）
+  - `artifacts/migration/release-snapshot-chain-audit-smoke/release-snapshot.json`（`key_results.governance_rpc_chain_audit_pass=True`）
+  - `artifacts/migration/release-snapshot-chain-audit-persist-smoke/release-snapshot.json`（`key_results.governance_rpc_chain_audit_persist_pass=True`, `key_results.governance_rpc_chain_audit_restart_pass=True`）
+  - `artifacts/migration/release-snapshot-chain-audit-root-smoke/release-snapshot.json`（`key_results.governance_rpc_chain_audit_root_proof_pass=True`）
+  - `artifacts/migration/release-candidate-novovm-rc-2026-03-06-chain-audit-smoke/rc-candidate.json`（`governance_rpc_chain_audit_pass=True`）
+  - `artifacts/migration/release-candidate-novovm-rc-2026-03-06-chain-audit-persist-smoke/rc-candidate.json`（`governance_rpc_chain_audit_persist_pass=True`, `governance_rpc_chain_audit_restart_pass=True`）
+  - `artifacts/migration/release-candidate-novovm-rc-2026-03-06-chain-audit-root-smoke/rc-candidate.json`（`governance_rpc_chain_audit_root_proof_pass=True`）
+  - `artifacts/migration/release-snapshot-governance-chain-audit-root-smoke/release-snapshot.json`（`key_results.governance_chain_audit_root_parity_pass=True`）
+  - `artifacts/migration/release-candidate-novovm-rc-2026-03-06-governance-chain-audit-root-anchor-smoke/rc-candidate.json`（`status=ReadyForMerge/SnapshotGreen`, `governance_chain_audit_root_parity_pass=True`）
 - 已完成：治理签名算法 staged 抽象（I-GOV-04 staged-only）：`governance_sign/governance_vote` 支持 `signature_scheme` 参数，当前仅 `ed25519` 启用；`mldsa87` 请求明确拒绝并落审计事件，形成固定负向门禁；`novovm-consensus` 已新增 `GovernanceVoteVerifier` execute-hook（默认 `ed25519`）并接入治理执行主链路；`novovm-node` 启动新增 `NOVOVM_GOVERNANCE_VOTE_VERIFIER`（`mldsa87` 目前启动即拒绝）。
 - 已完成：治理验签器启动门禁收口：`run_governance_rpc_gate.ps1` 新增 `vote_verifier_startup_ok`（默认 `ed25519` 启动配置生效）与 `vote_verifier_staged_reject_ok`（`mldsa87` 启动拒绝）并接入 acceptance/snapshot/rc 聚合。
 - 已完成：CI 门禁接线：`.github/workflows/ci.yml` 新增 `governance_rpc_gate`（windows）并将 `vote_verifier_startup_ok + vote_verifier_staged_reject_ok` 设为硬失败条件。
 - 已完成：分支保护自动化脚本：`scripts/migration/set_branch_protection_required_checks.ps1`，可将 `Rust checks + Governance RPC gate (vote verifier)` 设为 `main` 必需检查（required checks）。
 - 已完成：I-GOV-04 staged 结构下沉：`governance vote verifier` 的 `scheme parse + factory + staged reject` 已从节点层下沉到 `novovm-consensus::governance_verifier`，节点层改为仅调用 `BFTEngine::set_governance_vote_verifier_by_scheme`。
 - 已完成：I-GOV-04 staged 二段下沉：`governance_sign/governance_vote` 的 `signature_scheme` 支持判定不再由节点层硬编码，改为调用 `BFTEngine::governance_signature_scheme_supported` + `governance_vote_verifier_scheme`（以共识 active verifier 为准）。
+- 已完成：I-GOV-04 staged 三段下沉：`novovm-consensus` 执行治理投票改用 `GovernanceVoteVerifier::verify_with_report`，并将 `verifier/scheme` 写入 `execute=applied` 链内审计事件；`governance_execute` 返回 active `vote_verifier(name/signature_scheme)`。
+- 已完成：I-GOV-04 三段下沉聚合收口：`run_migration_acceptance_gate.ps1` 新增 `governance_rpc_vote_verifier_execute_pass` + `governance_rpc_chain_audit_execute_verifier_proof_pass`，并同步到 `run_release_snapshot.ps1` / `run_release_candidate.ps1` 产物。
+- 已完成：I-GOV-04 optional execute 接线：新增 `NOVOVM_GOVERNANCE_MLDSA_MODE=aoem_ffi` 可选路径，`mldsa87` 在显式启用时可通过 AOEM-FFI 动态库验签（默认仍 staged-only 拒绝）；启动阶段增加 `aoem_abi_version==1` 与 `aoem_mldsa_supported==1` 校验，动态库默认名按 OS：Windows `aoem_ffi.dll` / Linux `libaoem_ffi.so` / macOS `libaoem_ffi.dylib`。
+- 已完成：I-GOV-04 optional execute 门禁化：新增 `run_governance_rpc_mldsa_ffi_gate.ps1`，验证 `submit -> vote(mldsa87) -> execute -> getPolicy` 主链路、`governance_sign(mldsa87)` 本地签名拒绝、AOEM-FFI 启动校验；`run_migration_acceptance_gate.ps1` 已支持 `IncludeGovernanceRpcMldsaFfiGate`，聚合字段 `governance_rpc_mldsa_ffi_pass` / `governance_rpc_mldsa_ffi_startup_pass`。
+- 已完成：发布快照/RC 增补 I-GOV-04 可选聚合入口：`run_release_snapshot.ps1` / `run_release_candidate.ps1` 新增 `-IncludeGovernanceRpcMldsaFfiGate` 与 AOEM 路径参数透传，`release-snapshot.json.key_results` 与 `rc-candidate.json` 新增 `governance_rpc_mldsa_ffi_*` 字段（可选开启，不改变默认 `full_snapshot_*` 语义）。
+- 证据：
+  - `artifacts/migration/release-snapshot-mldsa-optional-smoke/release-snapshot.json`（`enabled_gates.governance_rpc_mldsa_ffi=True`, `key_results.governance_rpc_mldsa_ffi_pass=True`）
+  - `artifacts/migration/release-candidate-novovm-rc-2026-03-06-mldsa-optional-smoke/rc-candidate.json`（`governance_rpc_mldsa_ffi_gate_enabled=True`, `governance_rpc_mldsa_ffi_pass=True`）
 - 证据：
   - `artifacts/migration/governance-rpc-gate-vote-verifier-smoke/governance-rpc-gate-summary.json`（`vote_verifier_startup_ok=True`, `vote_verifier_staged_reject_ok=True`）
   - `artifacts/migration/governance-rpc-gate-downsink-scheme-smoke/governance-rpc-gate-summary.json`（`pass=True`, `sign_unsupported_scheme_reject_ok=True`）
+  - `artifacts/migration/governance-rpc-gate-verifier-exec-proof-smoke/governance-rpc-gate-summary.json`（`execute_vote_verifier_ok=True`, `chain_audit_has_execute_applied_verifier=True`, `chain_audit_persist_has_execute_applied_verifier=True`, `chain_audit_restart_has_execute_applied_verifier=True`）
   - `artifacts/migration/release-snapshot-vote-verifier-smoke/release-snapshot.json`（`key_results.governance_rpc_vote_verifier_startup_pass=True`, `key_results.governance_rpc_vote_verifier_staged_reject_pass=True`）
   - `artifacts/migration/release-candidate-novovm-rc-2026-03-06-vote-verifier-smoke/rc-candidate.json`（`governance_rpc_vote_verifier_startup_pass=True`, `governance_rpc_vote_verifier_staged_reject_pass=True`）
+  - `artifacts/migration/release-snapshot-governance-verifier-exec-proof-smoke/release-snapshot.json`（`key_results.governance_rpc_vote_verifier_execute_pass=True`, `key_results.governance_rpc_chain_audit_execute_verifier_proof_pass=True`）
+  - `artifacts/migration/release-candidate-novovm-rc-2026-03-06-governance-verifier-exec-proof-smoke/rc-candidate.json`（`status=ReadyForMerge/SnapshotGreen`, `governance_rpc_vote_verifier_execute_pass=True`, `governance_rpc_chain_audit_execute_verifier_proof_pass=True`）
 - 证据：
   - `artifacts/migration/governance-rpc-gate-signature-scheme-smoke/governance-rpc-gate-summary.json`（`sign_unsupported_scheme_reject_ok=True`）
   - `artifacts/migration/acceptance-gate-governance-signature-scheme-smoke/acceptance-gate-summary.json`（`governance_rpc_signature_scheme_reject_pass=True`）

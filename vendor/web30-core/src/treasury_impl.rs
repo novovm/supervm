@@ -1,0 +1,415 @@
+//! SuperVM Treasury 参考实现
+//!
+//! 职责:
+//! - 管理三类国库账户余额 (Main/Ecosystem/RiskReserve)
+//! - 接收协议费用收入 (Gas/服务费路由过来的部分)
+//! - 执行治理授权的支出 (生态投资/团队补贴等)
+//! - 提供回购+销毁策略执行接口
+//! - 外汇归集与矿工 Token 支付记录
+//! - NAV 计算桩 (用于双轨定价机制的软下限)
+
+use std::collections::HashMap;
+
+use anyhow::{bail, Result};
+
+use crate::{
+    treasury::{Treasury, TreasuryAccountKind, TreasuryEvent},
+    types::Address,
+};
+
+/// Treasury 初始化配置
+pub struct TreasuryConfig {
+    /// 初始余额分配 (账户类型 -> 金额)
+    pub initial_balances: HashMap<TreasuryAccountKind, u128>,
+    /// 治理控制者地址 (可为多签/DAO 合约)
+    pub controller: Address,
+    /// NAV 计算相关参数
+    pub nav_config: NavConfig,
+}
+
+/// NAV 计算配置 (占位结构,后续扩展)
+#[derive(Debug, Clone)]
+pub struct NavConfig {
+    /// 最小 NAV 倍数 (相对初始价格, 基点)
+    pub min_nav_multiplier_bp: u16,
+    /// 储备资产价值估算来源 (预留,后续对接 Oracle/AMM)
+    pub reserve_valuation_source: String,
+}
+
+impl Default for NavConfig {
+    fn default() -> Self {
+        Self {
+            min_nav_multiplier_bp: 5000, // 0.5x 初始价格作为最低 NAV
+            reserve_valuation_source: "placeholder".into(),
+        }
+    }
+}
+
+/// Treasury 实现
+pub struct TreasuryImpl {
+    /// 各账户余额 (单位: 主链 Token 最小单位)
+    balances: HashMap<TreasuryAccountKind, u128>,
+    /// 治理控制者
+    controller: Address,
+    /// NAV 配置
+    nav_config: NavConfig,
+    /// 累计收入统计 (各账户)
+    total_income: HashMap<TreasuryAccountKind, u128>,
+    /// 累计支出统计 (各账户)
+    total_spent: HashMap<TreasuryAccountKind, u128>,
+    /// 外汇储备统计 (币种 -> 金额, 单位: 各币种最小单位)
+    foreign_reserves: HashMap<String, u128>,
+    /// 已支付矿工的 Token 总量
+    total_miner_paid: u128,
+}
+
+impl TreasuryImpl {
+    /// 创建新实例
+    pub fn new(config: TreasuryConfig) -> Self {
+        let mut balances = HashMap::new();
+        let mut total_income = HashMap::new();
+
+        for (kind, amount) in config.initial_balances {
+            balances.insert(kind, amount);
+            total_income.insert(kind, amount);
+        }
+
+        Self {
+            balances,
+            controller: config.controller,
+            nav_config: config.nav_config,
+            total_income,
+            total_spent: HashMap::new(),
+            foreign_reserves: HashMap::new(),
+            total_miner_paid: 0,
+        }
+    }
+
+    /// 检查控制者权限
+    #[allow(dead_code)]
+    fn require_controller(&self, caller: &Address) -> Result<()> {
+        if *caller != self.controller {
+            bail!("Caller is not the treasury controller");
+        }
+        Ok(())
+    }
+
+    /// 计算当前 NAV (占位实现)
+    ///
+    /// 实际 NAV 计算公式 (双轨定价文档):
+    /// NAV = (储备资产总价值 + 主国库余额 × Token 价格) / M1 流通量
+    ///
+    /// 当前返回一个简化的"软下限"估算值,用于后续回购/刚性兑付参考。
+    /// 后续需要:
+    /// - 对接 AMM/Oracle 获取外汇储备实时价值
+    /// - 从 MainnetToken 读取 M1 流通量
+    /// - 引入时间加权/移动平均平滑 NAV 波动
+    pub fn calculate_nav(&self) -> u128 {
+        // 占位: 返回主国库余额 × 最小倍数
+        let main_balance = self
+            .balances
+            .get(&TreasuryAccountKind::Main)
+            .copied()
+            .unwrap_or(0);
+        let multiplier = self.nav_config.min_nav_multiplier_bp as u128;
+        main_balance * multiplier / 10_000
+    }
+
+    /// 记录外汇收入
+    pub fn collect_foreign_currency(
+        &mut self,
+        currency: String,
+        amount: u128,
+    ) -> Result<TreasuryEvent> {
+        if amount == 0 {
+            bail!("Amount must be > 0");
+        }
+
+        let entry = self.foreign_reserves.entry(currency.clone()).or_insert(0);
+        *entry = entry.saturating_add(amount);
+
+        Ok(TreasuryEvent::ForeignCurrencyCollected {
+            currency,
+            amount,
+            reserve_pool: "Main".into(), // 占位,后续可分池管理
+        })
+    }
+
+    /// 记录矿工 Token 支付
+    pub fn record_miner_payment(
+        &mut self,
+        miner: Address,
+        token_amount: u128,
+        equivalent_foreign: u128,
+        foreign_currency: String,
+    ) -> Result<TreasuryEvent> {
+        if token_amount == 0 {
+            bail!("Token amount must be > 0");
+        }
+
+        self.total_miner_paid = self.total_miner_paid.saturating_add(token_amount);
+
+        Ok(TreasuryEvent::MinerPaidInToken {
+            miner,
+            token_amount,
+            equivalent_foreign,
+            foreign_currency,
+        })
+    }
+
+    /// 查询外汇储备
+    pub fn foreign_reserve(&self, currency: &str) -> u128 {
+        self.foreign_reserves.get(currency).copied().unwrap_or(0)
+    }
+
+    /// 查询已支付矿工总量
+    pub fn total_miner_paid(&self) -> u128 {
+        self.total_miner_paid
+    }
+}
+
+impl Treasury for TreasuryImpl {
+    fn balance_of(&self, kind: TreasuryAccountKind) -> u128 {
+        self.balances.get(&kind).copied().unwrap_or(0)
+    }
+
+    fn on_income(
+        &mut self,
+        from: &Address,
+        amount: u128,
+        kind: TreasuryAccountKind,
+    ) -> Result<TreasuryEvent> {
+        if amount == 0 {
+            return Ok(TreasuryEvent::Income {
+                from: *from,
+                amount: 0,
+                account: kind,
+            });
+        }
+
+        let balance = self.balances.entry(kind).or_insert(0);
+        *balance = balance.saturating_add(amount);
+
+        let total = self.total_income.entry(kind).or_insert(0);
+        *total = total.saturating_add(amount);
+
+        Ok(TreasuryEvent::Income {
+            from: *from,
+            amount,
+            account: kind,
+        })
+    }
+
+    fn spend(
+        &mut self,
+        to: &Address,
+        amount: u128,
+        kind: TreasuryAccountKind,
+        reason: &str,
+    ) -> Result<TreasuryEvent> {
+        // 注意: 实际调用时需要从 Runtime 传入调用者地址并验证权限
+        // 这里暂时跳过调用者检查,仅做余额验证
+        // self.require_controller(&caller)?;
+
+        if amount == 0 {
+            bail!("Spend amount must be > 0");
+        }
+
+        let balance = self.balances.get(&kind).copied().unwrap_or(0);
+        if balance < amount {
+            bail!(
+                "Insufficient treasury balance: has {}, need {}",
+                balance,
+                amount
+            );
+        }
+
+        self.balances.insert(kind, balance - amount);
+
+        let total = self.total_spent.entry(kind).or_insert(0);
+        *total = total.saturating_add(amount);
+
+        Ok(TreasuryEvent::Spend {
+            to: *to,
+            amount,
+            account: kind,
+            reason: reason.to_string(),
+        })
+    }
+
+    fn execute_buyback_and_burn(&mut self, _max_stable_to_spend: u128) -> Result<TreasuryEvent> {
+        // 占位实现: 需要对接 AMM 池子查询汇率,计算可买回的 Token 数量
+        // 实际流程:
+        // 1. 从 Main 账户划出稳定资产预算 (max_stable_to_spend)
+        // 2. 调用 AMM swap: stable -> Token
+        // 3. 销毁买回的 Token (调用 MainnetToken::burn)
+        // 4. 返回实际花费的稳定资产和销毁的 Token 数量
+
+        // 当前返回占位事件
+        Ok(TreasuryEvent::BuybackAndBurn {
+            spent_stable: 0,
+            burned_token: 0,
+        })
+    }
+
+    fn controller(&self) -> Address {
+        self.controller
+    }
+
+    fn set_controller(&mut self, controller: Address) -> Result<()> {
+        // 实际部署时需要验证调用者是当前 controller 或治理合约
+        self.controller = controller;
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn addr(id: u8) -> Address {
+        Address::from_bytes([id; 32])
+    }
+
+    fn build_treasury() -> TreasuryImpl {
+        let mut initial_balances = HashMap::new();
+        initial_balances.insert(TreasuryAccountKind::Main, 10_000_000);
+        initial_balances.insert(TreasuryAccountKind::Ecosystem, 5_000_000);
+        initial_balances.insert(TreasuryAccountKind::RiskReserve, 2_000_000);
+
+        TreasuryImpl::new(TreasuryConfig {
+            initial_balances,
+            controller: addr(100),
+            nav_config: NavConfig::default(),
+        })
+    }
+
+    #[test]
+    fn test_treasury_balances() {
+        let treasury = build_treasury();
+        assert_eq!(treasury.balance_of(TreasuryAccountKind::Main), 10_000_000);
+        assert_eq!(
+            treasury.balance_of(TreasuryAccountKind::Ecosystem),
+            5_000_000
+        );
+        assert_eq!(
+            treasury.balance_of(TreasuryAccountKind::RiskReserve),
+            2_000_000
+        );
+    }
+
+    #[test]
+    fn test_income_routing() {
+        let mut treasury = build_treasury();
+        let from = addr(1);
+
+        let event = treasury
+            .on_income(&from, 1_000_000, TreasuryAccountKind::Main)
+            .expect("income");
+
+        if let TreasuryEvent::Income { amount, .. } = event {
+            assert_eq!(amount, 1_000_000);
+        } else {
+            panic!("unexpected event");
+        }
+
+        assert_eq!(treasury.balance_of(TreasuryAccountKind::Main), 11_000_000);
+    }
+
+    #[test]
+    fn test_spend() {
+        let mut treasury = build_treasury();
+        let to = addr(2);
+
+        let event = treasury
+            .spend(&to, 500_000, TreasuryAccountKind::Ecosystem, "Grant")
+            .expect("spend");
+
+        if let TreasuryEvent::Spend { amount, reason, .. } = event {
+            assert_eq!(amount, 500_000);
+            assert_eq!(reason, "Grant");
+        } else {
+            panic!("unexpected event");
+        }
+
+        assert_eq!(
+            treasury.balance_of(TreasuryAccountKind::Ecosystem),
+            4_500_000
+        );
+    }
+
+    #[test]
+    fn test_insufficient_balance() {
+        let mut treasury = build_treasury();
+        let to = addr(3);
+
+        let result = treasury.spend(&to, 20_000_000, TreasuryAccountKind::Main, "Too much");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_foreign_currency_collection() {
+        let mut treasury = build_treasury();
+
+        let event = treasury
+            .collect_foreign_currency("BTC".into(), 100_000_000)
+            .expect("collect");
+
+        if let TreasuryEvent::ForeignCurrencyCollected {
+            currency, amount, ..
+        } = event
+        {
+            assert_eq!(currency, "BTC");
+            assert_eq!(amount, 100_000_000);
+        } else {
+            panic!("unexpected event");
+        }
+
+        assert_eq!(treasury.foreign_reserve("BTC"), 100_000_000);
+        assert_eq!(treasury.foreign_reserve("ETH"), 0);
+    }
+
+    #[test]
+    fn test_miner_payment_record() {
+        let mut treasury = build_treasury();
+        let miner = addr(50);
+
+        let event = treasury
+            .record_miner_payment(miner, 5_000_000, 100_000, "USDT".into())
+            .expect("miner payment");
+
+        if let TreasuryEvent::MinerPaidInToken {
+            token_amount,
+            equivalent_foreign,
+            foreign_currency,
+            ..
+        } = event
+        {
+            assert_eq!(token_amount, 5_000_000);
+            assert_eq!(equivalent_foreign, 100_000);
+            assert_eq!(foreign_currency, "USDT");
+        } else {
+            panic!("unexpected event");
+        }
+
+        assert_eq!(treasury.total_miner_paid(), 5_000_000);
+    }
+
+    #[test]
+    fn test_nav_calculation() {
+        let treasury = build_treasury();
+        let nav = treasury.calculate_nav();
+        // 占位实现: main_balance * min_nav_multiplier_bp / 10_000
+        // 10_000_000 * 5000 / 10_000 = 5_000_000
+        assert_eq!(nav, 5_000_000);
+    }
+
+    #[test]
+    fn test_controller_management() {
+        let mut treasury = build_treasury();
+        assert_eq!(treasury.controller(), addr(100));
+
+        treasury.set_controller(addr(101)).expect("set controller");
+        assert_eq!(treasury.controller(), addr(101));
+    }
+}

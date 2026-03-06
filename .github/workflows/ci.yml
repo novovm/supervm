@@ -110,7 +110,7 @@ jobs:
           & ".\scripts\migration\run_governance_rpc_gate.ps1" `
             -RepoRoot $repoRoot `
             -OutputDir $outputDir `
-            -ExpectedRequests 14
+            -ExpectedRequests 16
 
       - name: Enforce vote verifier hard gates
         shell: pwsh

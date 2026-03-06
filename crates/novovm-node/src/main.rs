@@ -9,12 +9,14 @@ use novovm_adapter_api::{
 };
 use novovm_adapter_novovm::{create_native_adapter, supports_native_chain};
 use novovm_consensus::{
-    AmmGovernanceParams, BFTConfig, BFTEngine, BondGovernanceParams, BuybackGovernanceParams,
-    CdpGovernanceParams, Epoch as ConsensusEpoch, GovernanceAccessPolicy, GovernanceCouncilMember,
-    GovernanceCouncilPolicy, GovernanceCouncilSeat, GovernanceOp, GovernanceProposal,
-    GovernanceVote, GovernanceVoteVerifierScheme, HotStuffProtocol, MarketGovernancePolicy,
-    NavGovernanceParams, NetworkDosPolicy, NodeId as ConsensusNodeId, ReserveGovernanceParams,
-    SlashMode, SlashPolicy, TokenEconomicsPolicy, ValidatorSet, Web30MarketEngineSnapshot,
+    AmmGovernanceParams, BFTConfig, BFTEngine, BFTError as ConsensusBftError, BondGovernanceParams,
+    BuybackGovernanceParams, CdpGovernanceParams, Epoch as ConsensusEpoch, GovernanceAccessPolicy,
+    GovernanceChainAuditEvent, GovernanceCouncilMember, GovernanceCouncilPolicy,
+    GovernanceCouncilSeat, GovernanceOp, GovernanceProposal, GovernanceVote, GovernanceVoteVerifier,
+    GovernanceVoteVerifierScheme, HotStuffProtocol, MarketGovernancePolicy, NavGovernanceParams,
+    NetworkDosPolicy,
+    NodeId as ConsensusNodeId, ReserveGovernanceParams, SlashMode, SlashPolicy,
+    TokenEconomicsPolicy, ValidatorSet, Web30MarketEngineSnapshot,
 };
 use novovm_exec::{AoemRuntimeConfig, ExecOpV2};
 use novovm_network::{InMemoryTransport, Transport, UdpTransport};
@@ -39,7 +41,7 @@ use std::fs;
 use std::io::Read;
 use std::net::{IpAddr, SocketAddr};
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 fn exec_path_mode() -> String {
@@ -404,11 +406,18 @@ fn build_network_probe_block_wire_payload(
     root_hasher.update(to.0.to_le_bytes());
     root_hasher.update(consensus_binding.adapter_hash);
     let state_root: [u8; 32] = root_hasher.finalize().into();
+    let mut governance_root_hasher = Sha256::new();
+    governance_root_hasher.update(b"novovm_network_probe_governance_chain_audit_root_v1");
+    governance_root_hasher.update(from.0.to_le_bytes());
+    governance_root_hasher.update(to.0.to_le_bytes());
+    governance_root_hasher.update(consensus_binding.adapter_hash);
+    let governance_chain_audit_root: [u8; 32] = governance_root_hasher.finalize().into();
     let mut header = BlockHeaderWireV1 {
         height: from.0.saturating_add(1),
         epoch_id: 1,
         parent_hash,
         state_root,
+        governance_chain_audit_root,
         tx_count: 1,
         batch_count: 1,
         consensus_binding,
@@ -599,6 +608,7 @@ struct LocalBlockHeader {
     epoch_id: u64,
     parent_hash: [u8; 32],
     state_root: [u8; 32],
+    governance_chain_audit_root: [u8; 32],
     tx_count: u64,
     batch_count: u32,
     consensus_binding: ConsensusPluginBindingV1,
@@ -618,6 +628,8 @@ struct QueryBlockRecord {
     epoch_id: u64,
     parent_hash: String,
     state_root: String,
+    #[serde(default)]
+    governance_chain_audit_root: String,
     tx_count: u64,
     batch_count: u32,
     proposal_hash: String,
@@ -661,6 +673,7 @@ struct BatchAClosureOutput {
     height: u64,
     txs: u64,
     state_root: [u8; 32],
+    governance_chain_audit_root: [u8; 32],
     proposal_hash: [u8; 32],
     consensus_binding: ConsensusPluginBindingV1,
 }
@@ -1746,6 +1759,7 @@ fn compute_block_hash(header: &LocalBlockHeader, batches: &[LocalBatch]) -> [u8;
     hasher.update(header.epoch_id.to_le_bytes());
     hasher.update(header.parent_hash);
     hasher.update(header.state_root);
+    hasher.update(header.governance_chain_audit_root);
     hasher.update(header.tx_count.to_le_bytes());
     hasher.update(header.batch_count.to_le_bytes());
     hasher.update(header.consensus_binding.plugin_class_code.to_le_bytes());
@@ -1768,6 +1782,7 @@ fn build_local_block(closure: &BatchAClosureOutput, batches: &[LocalBatch]) -> L
         epoch_id: closure.epoch_id,
         parent_hash: [0u8; 32],
         state_root: closure.state_root,
+        governance_chain_audit_root: closure.governance_chain_audit_root,
         tx_count,
         batch_count: batches.len() as u32,
         consensus_binding: closure.consensus_binding,
@@ -1788,6 +1803,7 @@ fn to_block_header_wire_v1(header: &LocalBlockHeader) -> BlockHeaderWireV1 {
         epoch_id: header.epoch_id,
         parent_hash: header.parent_hash,
         state_root: header.state_root,
+        governance_chain_audit_root: header.governance_chain_audit_root,
         tx_count: header.tx_count,
         batch_count: header.batch_count,
         consensus_binding: header.consensus_binding,
@@ -1801,6 +1817,13 @@ fn synthetic_state_root(height: u64) -> [u8; 32] {
     hasher.finalize().into()
 }
 
+fn synthetic_governance_chain_audit_root(height: u64) -> [u8; 32] {
+    let mut hasher = Sha256::new();
+    hasher.update(b"novovm_header_sync_governance_chain_audit_root_v1");
+    hasher.update(height.to_le_bytes());
+    hasher.finalize().into()
+}
+
 fn compute_header_wire_hash(header: &BlockHeaderWireV1) -> [u8; 32] {
     let mut hasher = Sha256::new();
     hasher.update(b"novovm_header_sync_hash_v1");
@@ -1808,6 +1831,7 @@ fn compute_header_wire_hash(header: &BlockHeaderWireV1) -> [u8; 32] {
     hasher.update(header.epoch_id.to_le_bytes());
     hasher.update(header.parent_hash);
     hasher.update(header.state_root);
+    hasher.update(header.governance_chain_audit_root);
     hasher.update(header.tx_count.to_le_bytes());
     hasher.update(header.batch_count.to_le_bytes());
     hasher.update(header.consensus_binding.plugin_class_code.to_le_bytes());
@@ -1827,6 +1851,7 @@ fn build_synthetic_header_chain(
             epoch_id: 1,
             parent_hash,
             state_root: synthetic_state_root(height),
+            governance_chain_audit_root: synthetic_governance_chain_audit_root(height),
             tx_count: height.saturating_add(1),
             batch_count: 1,
             consensus_binding: binding,
@@ -1966,6 +1991,7 @@ fn build_snapshot_header_chain(
             epoch_id: 1,
             parent_hash,
             state_root: compute_snapshot_root(&snapshot),
+            governance_chain_audit_root: synthetic_governance_chain_audit_root(height),
             tx_count: height.saturating_add(1),
             batch_count: 1,
             consensus_binding: binding,
@@ -2509,6 +2535,18 @@ fn governance_audit_db_path(query_db_path: &Path) -> PathBuf {
     PathBuf::from("artifacts/novovm-governance-audit-events.json")
 }
 
+fn governance_chain_audit_db_path(query_db_path: &Path) -> PathBuf {
+    if let Some(custom) = string_env_nonempty("NOVOVM_GOVERNANCE_CHAIN_AUDIT_DB") {
+        return PathBuf::from(custom);
+    }
+    if let Some(parent) = query_db_path.parent() {
+        if !parent.as_os_str().is_empty() {
+            return parent.join("governance-chain-audit-events.json");
+        }
+    }
+    PathBuf::from("artifacts/novovm-governance-chain-audit-events.json")
+}
+
 fn local_tx_hash(tx: &LocalTx) -> [u8; 32] {
     let mut hasher = Sha256::new();
     hasher.update(LOCAL_TX_HASH_DOMAIN);
@@ -2591,14 +2629,59 @@ fn save_governance_audit_store(
     Ok(())
 }
 
+fn load_governance_chain_audit_store(path: &Path) -> Result<GovernanceChainAuditStore> {
+    if !path.exists() {
+        return Ok(GovernanceChainAuditStore::default());
+    }
+    let raw = fs::read_to_string(path)
+        .with_context(|| format!("read governance chain audit store failed: {}", path.display()))?;
+    let normalized = raw.trim_start_matches('\u{feff}');
+    if normalized.trim().is_empty() {
+        return Ok(GovernanceChainAuditStore::default());
+    }
+    let parsed: GovernanceChainAuditStore = serde_json::from_str(normalized)
+        .with_context(|| format!("parse governance chain audit store failed: {}", path.display()))?;
+    Ok(parsed)
+}
+
+fn save_governance_chain_audit_store(
+    path: &Path,
+    events: &[GovernanceChainAuditEvent],
+    root: [u8; 32],
+) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        if !parent.as_os_str().is_empty() {
+            fs::create_dir_all(parent).with_context(|| {
+                format!(
+                    "create governance chain audit store parent dir failed: {}",
+                    parent.display()
+                )
+            })?;
+        }
+    }
+    let head_seq = events.last().map(|event| event.seq).unwrap_or(0);
+    let store = GovernanceChainAuditStore {
+        events: events.to_vec(),
+        head_seq,
+        root_hex: to_hex(&root),
+    };
+    let serialized = serde_json::to_string_pretty(&store)
+        .context("serialize governance chain audit store failed")?;
+    fs::write(path, serialized)
+        .with_context(|| format!("write governance chain audit store failed: {}", path.display()))?;
+    Ok(())
+}
+
 fn apply_block_to_query_db(db: &mut QueryStateDb, block: &LocalBlock) {
     let block_hash = to_hex(&block.block_hash);
     let state_root = to_hex(&block.header.state_root);
+    let governance_chain_audit_root = to_hex(&block.header.governance_chain_audit_root);
     let block_record = QueryBlockRecord {
         height: block.header.height,
         epoch_id: block.header.epoch_id,
         parent_hash: to_hex(&block.header.parent_hash),
         state_root: state_root.clone(),
+        governance_chain_audit_root,
         tx_count: block.header.tx_count,
         batch_count: block.header.batch_count,
         proposal_hash: to_hex(&block.proposal_hash),
@@ -2715,6 +2798,7 @@ fn run_batch_a_minimal_closure(
     let committed = engine.commit_qc(qc).context("commit qc failed")?;
 
     let committed_root = engine.last_committed_state_root().unwrap_or([0u8; 32]);
+    let governance_chain_audit_root = engine.governance_chain_audit_root();
     let proposal_hash = proposal.hash();
     println!(
         "batch_a: epoch={} height={} committed=true txs={} state_root={} proposal_hash={}",
@@ -2736,6 +2820,7 @@ fn run_batch_a_minimal_closure(
         height: committed.epoch.height,
         txs: committed.epoch.total_txs,
         state_root: committed_root,
+        governance_chain_audit_root,
         proposal_hash,
         consensus_binding,
     };
@@ -2749,13 +2834,14 @@ fn run_batch_a_minimal_closure(
     }
     let block = build_local_block(&closure, batches);
     println!(
-        "block_out: height={} epoch={} batches={} txs={} block_hash={} state_root={} proposal_hash={}",
+        "block_out: height={} epoch={} batches={} txs={} block_hash={} state_root={} governance_chain_audit_root={} proposal_hash={}",
         block.header.height,
         block.header.epoch_id,
         block.batches.len(),
         block.header.tx_count,
         to_hex(&block.block_hash),
         to_hex(&block.header.state_root),
+        to_hex(&block.header.governance_chain_audit_root),
         to_hex(&block.proposal_hash)
     );
     println!(
@@ -2794,11 +2880,12 @@ fn commit_block_in_memory(
 
     let (query_db_path, query_db) = persist_query_state_for_block(&latest)?;
     println!(
-        "commit_out: store=in_memory committed=true height={} total_blocks={} block_hash={} state_root={}",
+        "commit_out: store=in_memory committed=true height={} total_blocks={} block_hash={} state_root={} governance_chain_audit_root={}",
         latest.header.height,
         total_blocks,
         to_hex(&latest.block_hash),
-        to_hex(&latest.header.state_root)
+        to_hex(&latest.header.state_root),
+        to_hex(&latest.header.governance_chain_audit_root)
     );
     println!(
         "commit_consensus: plugin_class={} plugin_hash={} pass=true",
@@ -2827,6 +2914,7 @@ struct GovernanceRpcProposalView {
     proposal_id: u64,
     proposer: u32,
     created_height: u64,
+    proposal_digest: String,
     op: String,
     payload: serde_json::Value,
     votes_collected: usize,
@@ -2853,12 +2941,23 @@ struct GovernanceRpcRuntime {
     audit_events: Vec<GovernanceRpcAuditEvent>,
     next_audit_seq: u64,
     audit_store_path: PathBuf,
+    chain_audit_store_path: PathBuf,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 struct GovernanceRpcAuditStore {
     next_seq: u64,
     events: Vec<GovernanceRpcAuditEvent>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+struct GovernanceChainAuditStore {
+    #[serde(default)]
+    events: Vec<GovernanceChainAuditEvent>,
+    #[serde(default)]
+    head_seq: u64,
+    #[serde(default)]
+    root_hex: String,
 }
 
 fn value_to_u64(v: &serde_json::Value) -> Option<u64> {
@@ -3021,22 +3120,332 @@ fn load_governance_vote_verifier_config_from_env() -> Result<GovernanceVoteVerif
     parse_governance_vote_verifier_config(configured.as_deref())
 }
 
+const GOVERNANCE_MLDSA87_ENVELOPE_MAGIC: &[u8] = b"MLDSA87\0";
+const GOVERNANCE_MLDSA87_LEVEL: u32 = 87;
+const GOVERNANCE_AOEM_FFI_ABI_VERSION: u32 = 1;
+
+type AoemAbiVersionFn = unsafe extern "C" fn() -> u32;
+type AoemMldsaSupportedFn = unsafe extern "C" fn() -> u32;
+type AoemMldsaPubkeySizeFn = unsafe extern "C" fn(level: u32) -> u32;
+type AoemMldsaSignatureSizeFn = unsafe extern "C" fn(level: u32) -> u32;
+type AoemMldsaVerifyFn = unsafe extern "C" fn(
+    level: u32,
+    pubkey_ptr: *const u8,
+    pubkey_len: usize,
+    message_ptr: *const u8,
+    message_len: usize,
+    signature_ptr: *const u8,
+    signature_len: usize,
+    out_valid: *mut u32,
+) -> i32;
+
+fn governance_vote_message_bytes(vote: &GovernanceVote) -> Vec<u8> {
+    let mut message = Vec::with_capacity(8 + 8 + 8 + 32 + 1);
+    message.extend_from_slice(b"GOV_VOTE_V1:");
+    message.extend_from_slice(&vote.proposal_id.to_le_bytes());
+    message.extend_from_slice(&vote.proposal_height.to_le_bytes());
+    message.extend_from_slice(&vote.proposal_digest);
+    message.push(if vote.support { 1 } else { 0 });
+    message
+}
+
+fn encode_mldsa87_vote_signature_envelope(pubkey: &[u8], signature: &[u8]) -> Result<Vec<u8>> {
+    if pubkey.is_empty() {
+        bail!("mldsa_pubkey is empty");
+    }
+    if signature.is_empty() {
+        bail!("signature is empty");
+    }
+    if pubkey.len() > u16::MAX as usize {
+        bail!("mldsa_pubkey too large: {}", pubkey.len());
+    }
+    if signature.len() > u16::MAX as usize {
+        bail!("signature too large: {}", signature.len());
+    }
+    let mut out = Vec::with_capacity(
+        GOVERNANCE_MLDSA87_ENVELOPE_MAGIC.len() + 2 + 2 + pubkey.len() + signature.len(),
+    );
+    out.extend_from_slice(GOVERNANCE_MLDSA87_ENVELOPE_MAGIC);
+    out.extend_from_slice(&(pubkey.len() as u16).to_le_bytes());
+    out.extend_from_slice(&(signature.len() as u16).to_le_bytes());
+    out.extend_from_slice(pubkey);
+    out.extend_from_slice(signature);
+    Ok(out)
+}
+
+fn decode_mldsa87_vote_signature_envelope(raw: &[u8]) -> Result<(&[u8], &[u8])> {
+    let min = GOVERNANCE_MLDSA87_ENVELOPE_MAGIC.len() + 2 + 2;
+    if raw.len() < min {
+        bail!("mldsa87 signature envelope too short");
+    }
+    if &raw[..GOVERNANCE_MLDSA87_ENVELOPE_MAGIC.len()] != GOVERNANCE_MLDSA87_ENVELOPE_MAGIC {
+        bail!("invalid mldsa87 signature envelope magic");
+    }
+    let mut offset = GOVERNANCE_MLDSA87_ENVELOPE_MAGIC.len();
+    let pubkey_len = u16::from_le_bytes([raw[offset], raw[offset + 1]]) as usize;
+    offset += 2;
+    let signature_len = u16::from_le_bytes([raw[offset], raw[offset + 1]]) as usize;
+    offset += 2;
+    if pubkey_len == 0 || signature_len == 0 {
+        bail!("mldsa87 signature envelope has empty pubkey or signature");
+    }
+    if raw.len() != offset + pubkey_len + signature_len {
+        bail!("mldsa87 signature envelope length mismatch");
+    }
+    let pubkey = &raw[offset..offset + pubkey_len];
+    let signature = &raw[offset + pubkey_len..];
+    Ok((pubkey, signature))
+}
+
+fn parse_governance_mldsa87_pubkeys_from_env() -> Result<HashMap<ConsensusNodeId, Vec<u8>>> {
+    let raw = std::env::var("NOVOVM_GOVERNANCE_MLDSA87_PUBKEYS").map_err(|_| {
+        anyhow::anyhow!(
+            "NOVOVM_GOVERNANCE_MLDSA87_PUBKEYS is required when NOVOVM_GOVERNANCE_VOTE_VERIFIER=mldsa87 and NOVOVM_GOVERNANCE_MLDSA_MODE=aoem_ffi"
+        )
+    })?;
+    let mut out = HashMap::new();
+    for token in raw.split(',') {
+        let entry = token.trim();
+        if entry.is_empty() {
+            continue;
+        }
+        let mut parts = entry.splitn(2, ':');
+        let id_raw = parts
+            .next()
+            .ok_or_else(|| anyhow::anyhow!("invalid mldsa pubkey mapping entry: {}", entry))?;
+        let pubkey_hex = parts
+            .next()
+            .ok_or_else(|| anyhow::anyhow!("invalid mldsa pubkey mapping entry: {}", entry))?;
+        let voter_id = id_raw
+            .trim()
+            .parse::<ConsensusNodeId>()
+            .with_context(|| format!("invalid mldsa voter id in mapping: {}", id_raw.trim()))?;
+        let pubkey = decode_hex_bytes(pubkey_hex.trim(), "mldsa_pubkey")?;
+        out.insert(voter_id, pubkey);
+    }
+    if out.is_empty() {
+        bail!("NOVOVM_GOVERNANCE_MLDSA87_PUBKEYS resolved to empty mapping");
+    }
+    Ok(out)
+}
+
+fn default_aoem_ffi_library_name() -> &'static str {
+    #[cfg(target_os = "windows")]
+    {
+        return "aoem_ffi.dll";
+    }
+    #[cfg(target_os = "macos")]
+    {
+        return "libaoem_ffi.dylib";
+    }
+    #[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
+    {
+        "libaoem_ffi.so"
+    }
+}
+
+fn resolve_aoem_ffi_library_path() -> PathBuf {
+    string_env_nonempty("NOVOVM_AOEM_FFI_LIB_PATH")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(default_aoem_ffi_library_name()))
+}
+
+struct AoemFfiMldsa87GovernanceVoteVerifier {
+    verify_fn: AoemMldsaVerifyFn,
+    expected_pubkey_size: usize,
+    expected_signature_size: usize,
+    voter_pubkeys: HashMap<ConsensusNodeId, Vec<u8>>,
+}
+
+impl GovernanceVoteVerifier for AoemFfiMldsa87GovernanceVoteVerifier {
+    fn name(&self) -> &'static str {
+        "mldsa87_aoem_ffi"
+    }
+
+    fn scheme(&self) -> GovernanceVoteVerifierScheme {
+        GovernanceVoteVerifierScheme::MlDsa87
+    }
+
+    fn verify(
+        &self,
+        vote: &GovernanceVote,
+        _key: &ed25519_dalek::VerifyingKey,
+    ) -> std::result::Result<(), ConsensusBftError> {
+        let (pubkey, signature) =
+            decode_mldsa87_vote_signature_envelope(&vote.signature).map_err(|e| {
+                ConsensusBftError::InvalidSignature(format!("invalid mldsa87 envelope: {}", e))
+            })?;
+        if pubkey.len() != self.expected_pubkey_size {
+            return Err(ConsensusBftError::InvalidSignature(format!(
+                "mldsa87 pubkey size mismatch: expected {} got {}",
+                self.expected_pubkey_size,
+                pubkey.len()
+            )));
+        }
+        if signature.len() != self.expected_signature_size {
+            return Err(ConsensusBftError::InvalidSignature(format!(
+                "mldsa87 signature size mismatch: expected {} got {}",
+                self.expected_signature_size,
+                signature.len()
+            )));
+        }
+        let expected_pubkey = self.voter_pubkeys.get(&vote.voter_id).ok_or_else(|| {
+            ConsensusBftError::InvalidSignature(format!(
+                "missing registered mldsa87 pubkey for voter {}",
+                vote.voter_id
+            ))
+        })?;
+        if expected_pubkey.as_slice() != pubkey {
+            return Err(ConsensusBftError::InvalidSignature(format!(
+                "mldsa87 pubkey mismatch for voter {}",
+                vote.voter_id
+            )));
+        }
+
+        let message = governance_vote_message_bytes(vote);
+        let mut out_valid = 0u32;
+        let rc = unsafe {
+            (self.verify_fn)(
+                GOVERNANCE_MLDSA87_LEVEL,
+                pubkey.as_ptr(),
+                pubkey.len(),
+                message.as_ptr(),
+                message.len(),
+                signature.as_ptr(),
+                signature.len(),
+                &mut out_valid as *mut u32,
+            )
+        };
+        if rc != 0 {
+            return Err(ConsensusBftError::InvalidSignature(format!(
+                "aoem ffi mldsa verify failed: rc={}",
+                rc
+            )));
+        }
+        if out_valid != 1 {
+            return Err(ConsensusBftError::InvalidSignature(
+                "aoem ffi mldsa verify returned invalid".to_string(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+fn build_aoem_ffi_mldsa87_vote_verifier() -> Result<Arc<dyn GovernanceVoteVerifier>> {
+    let lib_path = resolve_aoem_ffi_library_path();
+    let lib = unsafe { libloading::Library::new(&lib_path) }.with_context(|| {
+        format!(
+            "load AOEM FFI library failed: {} (set NOVOVM_AOEM_FFI_LIB_PATH or ensure library name on PATH/LD_LIBRARY_PATH/DYLD_LIBRARY_PATH)",
+            lib_path.display()
+        )
+    })?;
+    let lib = Box::leak(Box::new(lib));
+
+    let (abi_version_fn, supported_fn, pubkey_size_fn, signature_size_fn, verify_fn) = unsafe {
+        let abi_version_fn: libloading::Symbol<AoemAbiVersionFn> =
+            lib.get(b"aoem_abi_version\0")
+                .context("resolve aoem_abi_version failed")?;
+        let supported_fn: libloading::Symbol<AoemMldsaSupportedFn> = lib
+            .get(b"aoem_mldsa_supported\0")
+            .context("resolve aoem_mldsa_supported failed")?;
+        let pubkey_size_fn: libloading::Symbol<AoemMldsaPubkeySizeFn> = lib
+            .get(b"aoem_mldsa_pubkey_size\0")
+            .context("resolve aoem_mldsa_pubkey_size failed")?;
+        let signature_size_fn: libloading::Symbol<AoemMldsaSignatureSizeFn> = lib
+            .get(b"aoem_mldsa_signature_size\0")
+            .context("resolve aoem_mldsa_signature_size failed")?;
+        let verify_fn: libloading::Symbol<AoemMldsaVerifyFn> = lib
+            .get(b"aoem_mldsa_verify\0")
+            .context("resolve aoem_mldsa_verify failed")?;
+        (
+            *abi_version_fn,
+            *supported_fn,
+            *pubkey_size_fn,
+            *signature_size_fn,
+            *verify_fn,
+        )
+    };
+
+    let abi_version = unsafe { abi_version_fn() };
+    if abi_version != GOVERNANCE_AOEM_FFI_ABI_VERSION {
+        bail!(
+            "unsupported AOEM FFI ABI version: expected {} got {}",
+            GOVERNANCE_AOEM_FFI_ABI_VERSION,
+            abi_version
+        );
+    }
+    let mldsa_supported = unsafe { supported_fn() };
+    if mldsa_supported != 1 {
+        bail!("AOEM FFI library reports mldsa capability disabled");
+    }
+
+    let expected_pubkey_size = unsafe { pubkey_size_fn(GOVERNANCE_MLDSA87_LEVEL) } as usize;
+    let expected_signature_size = unsafe { signature_size_fn(GOVERNANCE_MLDSA87_LEVEL) } as usize;
+    if expected_pubkey_size == 0 || expected_signature_size == 0 {
+        bail!(
+            "AOEM FFI returned invalid mldsa87 sizes: pubkey_size={} signature_size={}",
+            expected_pubkey_size,
+            expected_signature_size
+        );
+    }
+
+    let mut voter_pubkeys = parse_governance_mldsa87_pubkeys_from_env()?;
+    for (voter, pubkey) in voter_pubkeys.iter() {
+        if pubkey.len() != expected_pubkey_size {
+            bail!(
+                "registered mldsa87 pubkey size mismatch for voter {}: expected {} got {}",
+                voter,
+                expected_pubkey_size,
+                pubkey.len()
+            );
+        }
+    }
+    // Keep deterministic behavior for logs/debug.
+    voter_pubkeys.shrink_to_fit();
+
+    Ok(Arc::new(AoemFfiMldsa87GovernanceVoteVerifier {
+        verify_fn,
+        expected_pubkey_size,
+        expected_signature_size,
+        voter_pubkeys,
+    }))
+}
+
 fn apply_governance_vote_verifier(
     engine: &BFTEngine,
     verifier: GovernanceVoteVerifierScheme,
 ) -> Result<()> {
-    engine
-        .set_governance_vote_verifier_by_scheme(verifier)
-        .map_err(|e| anyhow::anyhow!("{}", e))
+    match verifier {
+        GovernanceVoteVerifierScheme::Ed25519 => engine
+            .set_governance_vote_verifier_by_scheme(verifier)
+            .map_err(|e| anyhow::anyhow!("{}", e)),
+        GovernanceVoteVerifierScheme::MlDsa87 => {
+            let mode = string_env_nonempty("NOVOVM_GOVERNANCE_MLDSA_MODE")
+                .unwrap_or_else(|| "staged".to_string());
+            if mode.eq_ignore_ascii_case("aoem_ffi") {
+                let custom = build_aoem_ffi_mldsa87_vote_verifier()?;
+                engine.set_governance_vote_verifier(custom);
+                Ok(())
+            } else {
+                bail!(
+                    "unsupported governance vote verifier: mldsa87 (staged-only, set NOVOVM_GOVERNANCE_MLDSA_MODE=aoem_ffi + AOEM FFI library to enable)"
+                );
+            }
+        }
+    }
 }
 
 fn configure_governance_vote_verifier(engine: &BFTEngine) -> Result<()> {
     let verifier = load_governance_vote_verifier_config_from_env()?;
     apply_governance_vote_verifier(engine, verifier)?;
+    let mode =
+        string_env_nonempty("NOVOVM_GOVERNANCE_MLDSA_MODE").unwrap_or_else(|| "staged".to_string());
     println!(
-        "governance_vote_verifier_in: source=env key=NOVOVM_GOVERNANCE_VOTE_VERIFIER configured={} active={}",
+        "governance_vote_verifier_in: source=env key=NOVOVM_GOVERNANCE_VOTE_VERIFIER configured={} active={} active_scheme={} mldsa_mode={}",
         verifier.as_str(),
-        engine.governance_vote_verifier_name()
+        engine.governance_vote_verifier_name(),
+        engine.governance_vote_verifier_scheme().as_str(),
+        mode
     );
     Ok(())
 }
@@ -3297,6 +3706,16 @@ fn market_engine_snapshot_to_json(snapshot: &Web30MarketEngineSnapshot) -> serde
         "nav_soft_floor_value": snapshot.nav_soft_floor_value,
         "buyback_last_spent_stable": snapshot.buyback_last_spent_stable,
         "buyback_last_burned_token": snapshot.buyback_last_burned_token,
+        "oracle_price_before": snapshot.oracle_price_before,
+        "oracle_price_after": snapshot.oracle_price_after,
+        "cdp_liquidation_candidates": snapshot.cdp_liquidation_candidates,
+        "cdp_liquidations_executed": snapshot.cdp_liquidations_executed,
+        "cdp_liquidation_penalty_routed": snapshot.cdp_liquidation_penalty_routed,
+        "nav_snapshot_day": snapshot.nav_snapshot_day,
+        "nav_latest_value": snapshot.nav_latest_value,
+        "nav_redemptions_submitted": snapshot.nav_redemptions_submitted,
+        "nav_redemptions_executed": snapshot.nav_redemptions_executed,
+        "nav_executed_stable_total": snapshot.nav_executed_stable_total,
     })
 }
 
@@ -3375,6 +3794,7 @@ fn proposal_to_view(
         proposal_id: proposal.proposal_id,
         proposer: proposal.proposer,
         created_height: proposal.created_height,
+        proposal_digest: to_hex(&proposal.digest()),
         op,
         payload,
         votes_collected,
@@ -3860,6 +4280,7 @@ fn parse_governance_op(params: &serde_json::Value) -> Result<GovernanceOp> {
 fn init_governance_rpc_runtime(
     slash_policy: &SlashPolicy,
     audit_store_path: PathBuf,
+    chain_audit_store_path: PathBuf,
 ) -> Result<GovernanceRpcRuntime> {
     let validator_ids: Vec<ConsensusNodeId> = vec![0, 1, 2];
     let proposer_allowlist =
@@ -3899,6 +4320,52 @@ fn init_governance_rpc_runtime(
         audit_store.events.len(),
         audit_store.next_seq
     );
+    let chain_audit_store = load_governance_chain_audit_store(&chain_audit_store_path)?;
+    let chain_head_seq = chain_audit_store
+        .events
+        .last()
+        .map(|event| event.seq)
+        .unwrap_or(0);
+    let persisted_head_seq = chain_audit_store.head_seq;
+    let persisted_root_hex = chain_audit_store.root_hex.trim().to_ascii_lowercase();
+    println!(
+        "governance_chain_audit_store_in: path={} events={} head_seq={} persisted_head_seq={} persisted_root={}",
+        chain_audit_store_path.display(),
+        chain_audit_store.events.len(),
+        chain_head_seq,
+        persisted_head_seq,
+        if persisted_root_hex.is_empty() {
+            "-"
+        } else {
+            persisted_root_hex.as_str()
+        }
+    );
+    engine.restore_governance_chain_audit_events(chain_audit_store.events.clone());
+    let restored_root_hex = to_hex(&engine.governance_chain_audit_root());
+    let restored_head_seq = engine
+        .governance_chain_audit_events()
+        .last()
+        .map(|event| event.seq)
+        .unwrap_or(0);
+    if persisted_head_seq > 0 && persisted_head_seq != restored_head_seq {
+        bail!(
+            "governance chain audit store head_seq mismatch: persisted={} restored={}",
+            persisted_head_seq,
+            restored_head_seq
+        );
+    }
+    if !persisted_root_hex.is_empty() && persisted_root_hex != restored_root_hex {
+        bail!(
+            "governance chain audit store root mismatch: persisted={} restored={}",
+            persisted_root_hex,
+            restored_root_hex
+        );
+    }
+    println!(
+        "governance_chain_audit_store_restore_out: head_seq={} root={}",
+        restored_head_seq,
+        restored_root_hex
+    );
 
     Ok(GovernanceRpcRuntime {
         engine,
@@ -3910,6 +4377,7 @@ fn init_governance_rpc_runtime(
         audit_events: audit_store.events,
         next_audit_seq: audit_store.next_seq,
         audit_store_path,
+        chain_audit_store_path,
     })
 }
 
@@ -3971,6 +4439,26 @@ fn run_governance_rpc(
                 as ConsensusNodeId;
             let support = param_as_bool(params, "support").unwrap_or(true);
             let signature_scheme = parse_governance_signature_scheme(params)?;
+            if signature_scheme == GovernanceVoteVerifierScheme::MlDsa87 {
+                ensure_governance_signature_scheme_supported(
+                    runtime,
+                    "sign",
+                    proposal_id,
+                    signer_id,
+                    signature_scheme,
+                )?;
+                push_governance_audit_event(
+                    runtime,
+                    "sign",
+                    proposal_id,
+                    Some(signer_id),
+                    "reject",
+                    "mldsa87 local signing is not supported; provide external mldsa signature via governance_vote(signature,mldsa_pubkey)",
+                )?;
+                bail!(
+                    "governance_sign does not support local mldsa87 signing; use governance_vote with external signature and mldsa_pubkey"
+                );
+            }
             ensure_governance_signature_scheme_supported(
                 runtime,
                 "sign",
@@ -4052,7 +4540,23 @@ fn run_governance_rpc(
                 )?;
                 bail!("duplicate governance vote from voter {}", voter_id);
             }
-            let signature = if let Some(signature_hex) = param_as_string(params, "signature") {
+            let signature = if signature_scheme == GovernanceVoteVerifierScheme::MlDsa87 {
+                let signature_hex = param_as_string(params, "signature").ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "signature is required for governance_vote when signature_scheme=mldsa87"
+                    )
+                })?;
+                let mldsa_signature = decode_hex_bytes(&signature_hex, "signature")?;
+                let pubkey_hex = param_as_string(params, "mldsa_pubkey")
+                    .or_else(|| param_as_string(params, "pubkey"))
+                    .ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "mldsa_pubkey is required for governance_vote when signature_scheme=mldsa87"
+                        )
+                    })?;
+                let mldsa_pubkey = decode_hex_bytes(&pubkey_hex, "mldsa_pubkey")?;
+                encode_mldsa87_vote_signature_envelope(&mldsa_pubkey, &mldsa_signature)?
+            } else if let Some(signature_hex) = param_as_string(params, "signature") {
                 decode_hex_bytes(&signature_hex, "signature")?
             } else if let Some(sig) = runtime
                 .signed_votes
@@ -4145,6 +4649,8 @@ fn run_governance_rpc(
             let market_engine = runtime.engine.governance_market_engine_snapshot();
             let access = runtime.engine.governance_access_policy();
             let council = runtime.engine.governance_council_policy();
+            let vote_verifier_name = runtime.engine.governance_vote_verifier_name();
+            let vote_verifier_scheme = runtime.engine.governance_vote_verifier_scheme();
             let treasury_balance = runtime.engine.token_treasury_balance();
             let treasury_spent_total = runtime.engine.token_treasury_spent_total();
             push_governance_audit_event(
@@ -4154,9 +4660,11 @@ fn run_governance_rpc(
                 Some(executor),
                 "ok",
                 format!(
-                    "executed={} executor_approvals={}",
+                    "executed={} executor_approvals={} verifier={} signature_scheme={}",
                     executed,
-                    executor_approvals.len()
+                    executor_approvals.len(),
+                    vote_verifier_name,
+                    vote_verifier_scheme.as_str()
                 ),
             )?;
             Ok(serde_json::json!({
@@ -4165,6 +4673,10 @@ fn run_governance_rpc(
                 "executor": executor,
                 "executor_approvals": executor_approvals,
                 "executed": executed,
+                "vote_verifier": {
+                    "name": vote_verifier_name,
+                    "signature_scheme": vote_verifier_scheme.as_str(),
+                },
                 "slash_policy": {
                     "mode": slash.mode.as_str(),
                     "equivocation_threshold": slash.equivocation_threshold,
@@ -4255,6 +4767,33 @@ fn run_governance_rpc(
                 "events": events,
             }))
         }
+        "governance_listChainAuditEvents" => {
+            let proposal_id_filter = param_as_u64(params, "proposal_id");
+            let since_seq = param_as_u64(params, "since_seq").unwrap_or(0);
+            let limit = param_as_u64(params, "limit").unwrap_or(50).clamp(1, 200) as usize;
+            let chain_audit_root = to_hex(&runtime.engine.governance_chain_audit_root());
+            let mut all_events = runtime.engine.governance_chain_audit_events();
+            let head_seq = all_events.last().map(|event| event.seq).unwrap_or(0);
+            all_events.retain(|event| {
+                event.seq > since_seq
+                    && proposal_id_filter
+                        .map(|proposal_id| event.proposal_id == proposal_id)
+                        .unwrap_or(true)
+            });
+            if all_events.len() > limit {
+                let start = all_events.len().saturating_sub(limit);
+                all_events = all_events[start..].to_vec();
+            }
+            Ok(serde_json::json!({
+                "method": method,
+                "count": all_events.len(),
+                "proposal_id_filter": proposal_id_filter,
+                "since_seq": since_seq,
+                "head_seq": head_seq,
+                "root": chain_audit_root,
+                "events": all_events,
+            }))
+        }
         "governance_getPolicy" => {
             let slash = runtime.engine.slash_policy();
             let dos = runtime.engine.governance_network_dos_policy();
@@ -4265,6 +4804,9 @@ fn run_governance_rpc(
             let council = runtime.engine.governance_council_policy();
             let treasury_balance = runtime.engine.token_treasury_balance();
             let treasury_spent_total = runtime.engine.token_treasury_spent_total();
+            let chain_audit_events = runtime.engine.governance_chain_audit_events();
+            let chain_audit_head_seq = chain_audit_events.last().map(|event| event.seq).unwrap_or(0);
+            let chain_audit_root = to_hex(&runtime.engine.governance_chain_audit_root());
             Ok(serde_json::json!({
                 "method": method,
                 "slash_policy": {
@@ -4303,11 +4845,16 @@ fn run_governance_rpc(
                     "balance": treasury_balance,
                     "spent_total": treasury_spent_total,
                 },
+                "governance_chain_audit": {
+                    "count": chain_audit_events.len(),
+                    "head_seq": chain_audit_head_seq,
+                    "root": chain_audit_root,
+                },
                 "governance_execution_enabled": runtime.engine.governance_execution_enabled(),
             }))
         }
         _ => bail!(
-            "unknown governance method: {}; valid: governance_submitProposal|governance_sign|governance_vote|governance_execute|governance_getProposal|governance_listProposals|governance_listAuditEvents|governance_getPolicy",
+            "unknown governance method: {}; valid: governance_submitProposal|governance_sign|governance_vote|governance_execute|governance_getProposal|governance_listProposals|governance_listAuditEvents|governance_listChainAuditEvents|governance_getPolicy",
             method
         ),
     }
@@ -4476,9 +5023,11 @@ fn run_rpc_server_instance(
             let slash_policy = governance_slash_policy
                 .ok_or_else(|| anyhow::anyhow!("missing governance slash policy"))?;
             let audit_store_path = governance_audit_db_path(&db_path);
+            let chain_audit_store_path = governance_chain_audit_db_path(&db_path);
             Some(init_governance_rpc_runtime(
                 &slash_policy,
                 audit_store_path,
+                chain_audit_store_path,
             )?)
         }
         RpcServerRole::Public => None,
@@ -4487,6 +5036,10 @@ fn run_rpc_server_instance(
     let governance_audit_db = governance_runtime
         .as_ref()
         .map(|runtime| runtime.audit_store_path.display().to_string())
+        .unwrap_or_else(|| "-".to_string());
+    let governance_chain_audit_db = governance_runtime
+        .as_ref()
+        .map(|runtime| runtime.chain_audit_store_path.display().to_string())
         .unwrap_or_else(|| "-".to_string());
 
     let server = tiny_http::Server::http(&bind).map_err(|e| {
@@ -4498,7 +5051,7 @@ fn run_rpc_server_instance(
         )
     })?;
     println!(
-        "rpc_server_in: role={} bind={} db={} max_body={} rate_limit_per_ip={} max_requests={} gov_allowlist_count={} governance_audit_db={} governance_execution_enabled={}",
+        "rpc_server_in: role={} bind={} db={} max_body={} rate_limit_per_ip={} max_requests={} gov_allowlist_count={} governance_audit_db={} governance_chain_audit_db={} governance_execution_enabled={}",
         role.as_str(),
         bind,
         db_path.display(),
@@ -4507,6 +5060,7 @@ fn run_rpc_server_instance(
         max_requests,
         gov_allowlist.len(),
         governance_audit_db,
+        governance_chain_audit_db,
         governance_runtime
             .as_ref()
             .map(|runtime| runtime.engine.governance_execution_enabled())
@@ -4713,13 +5267,36 @@ fn run_rpc_server_instance(
                 let db = load_query_state_db(&db_path)?;
                 run_chain_query(&db, &method, &params)
             }
-            RpcServerRole::Governance => run_governance_rpc(
-                governance_runtime
+            RpcServerRole::Governance => {
+                let runtime = governance_runtime
                     .as_mut()
-                    .ok_or_else(|| anyhow::anyhow!("missing governance runtime"))?,
-                &method,
-                &params,
-            ),
+                    .ok_or_else(|| anyhow::anyhow!("missing governance runtime"))?;
+                let before_head_seq = runtime
+                    .engine
+                    .governance_chain_audit_events()
+                    .last()
+                    .map(|event| event.seq)
+                    .unwrap_or(0);
+                let mut governance_result = run_governance_rpc(runtime, &method, &params);
+                let chain_events = runtime.engine.governance_chain_audit_events();
+                let chain_root = runtime.engine.governance_chain_audit_root();
+                let after_head_seq = chain_events.last().map(|event| event.seq).unwrap_or(0);
+                if after_head_seq > before_head_seq {
+                    if let Err(persist_err) =
+                        save_governance_chain_audit_store(
+                            &runtime.chain_audit_store_path,
+                            &chain_events,
+                            chain_root,
+                        )
+                    {
+                        if governance_result.is_ok() {
+                            governance_result =
+                                Err(persist_err.context("persist governance chain audit store failed"));
+                        }
+                    }
+                }
+                governance_result
+            }
         };
         let response = match result {
             Ok(out) => serde_json::json!({
@@ -6743,7 +7320,16 @@ fn run_governance_market_policy_probe_mode() -> Result<()> {
         && engine_snapshot.treasury_main_balance > 0
         && engine_snapshot.treasury_risk_reserve_balance > 0
         && engine_snapshot.reserve_foreign_usdt_balance > 0
-        && engine_snapshot.nav_soft_floor_value > 0;
+        && engine_snapshot.nav_soft_floor_value > 0
+        && engine_snapshot.oracle_price_before > engine_snapshot.oracle_price_after
+        && engine_snapshot.cdp_liquidation_candidates > 0
+        && engine_snapshot.cdp_liquidations_executed > 0
+        && engine_snapshot.cdp_liquidation_penalty_routed > 0
+        && engine_snapshot.nav_snapshot_day > 0
+        && engine_snapshot.nav_latest_value > 0
+        && engine_snapshot.nav_redemptions_submitted > 0
+        && engine_snapshot.nav_redemptions_executed > 0
+        && engine_snapshot.nav_executed_stable_total > 0;
     println!(
         "governance_market_out: proposal_id={} executed={} reason_code={} policy_applied={} amm_swap_fee_bp={} cdp_min_collateral_ratio_bp={} bond_coupon_rate_bp={} reserve_min_reserve_ratio_bp={} nav_settlement_delay_epochs={} buyback_trigger_discount_bp={}",
         proposal.proposal_id,
@@ -6782,6 +7368,20 @@ fn run_governance_market_policy_probe_mode() -> Result<()> {
         engine_snapshot.nav_soft_floor_value,
         engine_snapshot.buyback_last_spent_stable,
         engine_snapshot.buyback_last_burned_token
+    );
+    println!(
+        "governance_market_orchestration_out: proposal_id={} oracle_price_before={} oracle_price_after={} cdp_liquidation_candidates={} cdp_liquidations_executed={} cdp_liquidation_penalty_routed={} nav_snapshot_day={} nav_latest_value={} nav_redemptions_submitted={} nav_redemptions_executed={} nav_executed_stable_total={}",
+        proposal.proposal_id,
+        engine_snapshot.oracle_price_before,
+        engine_snapshot.oracle_price_after,
+        engine_snapshot.cdp_liquidation_candidates,
+        engine_snapshot.cdp_liquidations_executed,
+        engine_snapshot.cdp_liquidation_penalty_routed,
+        engine_snapshot.nav_snapshot_day,
+        engine_snapshot.nav_latest_value,
+        engine_snapshot.nav_redemptions_submitted,
+        engine_snapshot.nav_redemptions_executed,
+        engine_snapshot.nav_executed_stable_total
     );
 
     if !executed || !policy_applied || !engine_applied || reason_code != "ok" {
@@ -7638,6 +8238,7 @@ mod tests {
             height: 9,
             txs: 2,
             state_root: [3u8; 32],
+            governance_chain_audit_root: [6u8; 32],
             proposal_hash: [9u8; 32],
             consensus_binding: ConsensusPluginBindingV1 {
                 plugin_class_code: PLUGIN_CLASS_CONSENSUS,
@@ -7777,6 +8378,7 @@ mod tests {
             height: 0,
             txs: 1,
             state_root: [1u8; 32],
+            governance_chain_audit_root: [5u8; 32],
             proposal_hash: [2u8; 32],
             consensus_binding: ConsensusPluginBindingV1 {
                 plugin_class_code: PLUGIN_CLASS_CONSENSUS,
@@ -7793,6 +8395,7 @@ mod tests {
             height: 1,
             txs: 1,
             state_root: [3u8; 32],
+            governance_chain_audit_root: [6u8; 32],
             proposal_hash: [4u8; 32],
             consensus_binding: ConsensusPluginBindingV1 {
                 plugin_class_code: PLUGIN_CLASS_CONSENSUS,
@@ -7815,6 +8418,7 @@ mod tests {
             height: 0,
             txs: 1,
             state_root: [1u8; 32],
+            governance_chain_audit_root: [5u8; 32],
             proposal_hash: [2u8; 32],
             consensus_binding: ConsensusPluginBindingV1 {
                 plugin_class_code: PLUGIN_CLASS_CONSENSUS,
@@ -7831,6 +8435,7 @@ mod tests {
             height: 1,
             txs: 1,
             state_root: [3u8; 32],
+            governance_chain_audit_root: [6u8; 32],
             proposal_hash: [4u8; 32],
             consensus_binding: ConsensusPluginBindingV1 {
                 plugin_class_code: PLUGIN_CLASS_CONSENSUS,
@@ -7860,6 +8465,7 @@ mod tests {
             height: 5,
             txs: 2,
             state_root: [4u8; 32],
+            governance_chain_audit_root: [7u8; 32],
             proposal_hash: [5u8; 32],
             consensus_binding: ConsensusPluginBindingV1 {
                 plugin_class_code: PLUGIN_CLASS_CONSENSUS,
@@ -7887,6 +8493,7 @@ mod tests {
             height: 5,
             txs: 2,
             state_root: [4u8; 32],
+            governance_chain_audit_root: [7u8; 32],
             proposal_hash: [5u8; 32],
             consensus_binding: ConsensusPluginBindingV1 {
                 plugin_class_code: PLUGIN_CLASS_CONSENSUS,
@@ -8093,6 +8700,9 @@ mod tests {
 
     #[test]
     fn apply_governance_vote_verifier_rejects_mldsa87_staged_only() {
+        std::env::remove_var("NOVOVM_GOVERNANCE_MLDSA_MODE");
+        std::env::remove_var("NOVOVM_GOVERNANCE_MLDSA87_PUBKEYS");
+        std::env::remove_var("NOVOVM_AOEM_FFI_LIB_PATH");
         let engine = build_test_governance_engine();
         assert_eq!(engine.governance_vote_verifier_name(), "ed25519");
         apply_governance_vote_verifier(&engine, GovernanceVoteVerifierScheme::Ed25519)
@@ -8102,5 +8712,17 @@ mod tests {
             .to_string();
         assert!(err.contains("staged-only"));
         assert_eq!(engine.governance_vote_verifier_name(), "ed25519");
+    }
+
+    #[test]
+    fn mldsa87_signature_envelope_roundtrip() {
+        let pubkey = vec![0x11; 12];
+        let signature = vec![0x22; 20];
+        let encoded = encode_mldsa87_vote_signature_envelope(&pubkey, &signature)
+            .expect("encode mldsa envelope");
+        let (decoded_pubkey, decoded_signature) =
+            decode_mldsa87_vote_signature_envelope(&encoded).expect("decode mldsa envelope");
+        assert_eq!(decoded_pubkey, pubkey.as_slice());
+        assert_eq!(decoded_signature, signature.as_slice());
     }
 }

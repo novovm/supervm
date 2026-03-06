@@ -7,6 +7,11 @@ param(
     [int]$PerformanceRuns = 3,
     [ValidateRange(2, 20)]
     [int]$AdapterStabilityRuns = 3,
+    [switch]$IncludeGovernanceRpcMldsaFfiGate,
+    [string]$GovernanceRpcMldsaFfiAoemRoot = "",
+    [string]$GovernanceRpcMldsaFfiBind = "127.0.0.1:8902",
+    [ValidateRange(1, 64)]
+    [int]$GovernanceRpcMldsaFfiExpectedRequests = 9,
     [switch]$FullSnapshotProfileV2,
     [switch]$FullSnapshotProfileGA
 )
@@ -95,6 +100,10 @@ if ($FullSnapshotProfileGA) {
         -AllowedRegressionPct $AllowedRegressionPct `
         -PerformanceRuns $PerformanceRuns `
         -AdapterStabilityRuns $AdapterStabilityRuns `
+        -IncludeGovernanceRpcMldsaFfiGate:$IncludeGovernanceRpcMldsaFfiGate `
+        -GovernanceRpcMldsaFfiAoemRoot $GovernanceRpcMldsaFfiAoemRoot `
+        -GovernanceRpcMldsaFfiBind $GovernanceRpcMldsaFfiBind `
+        -GovernanceRpcMldsaFfiExpectedRequests $GovernanceRpcMldsaFfiExpectedRequests `
         -FullSnapshotProfileGA | Out-Null
 } elseif ($FullSnapshotProfileV2) {
     & $snapshotScript `
@@ -103,6 +112,10 @@ if ($FullSnapshotProfileGA) {
         -AllowedRegressionPct $AllowedRegressionPct `
         -PerformanceRuns $PerformanceRuns `
         -AdapterStabilityRuns $AdapterStabilityRuns `
+        -IncludeGovernanceRpcMldsaFfiGate:$IncludeGovernanceRpcMldsaFfiGate `
+        -GovernanceRpcMldsaFfiAoemRoot $GovernanceRpcMldsaFfiAoemRoot `
+        -GovernanceRpcMldsaFfiBind $GovernanceRpcMldsaFfiBind `
+        -GovernanceRpcMldsaFfiExpectedRequests $GovernanceRpcMldsaFfiExpectedRequests `
         -FullSnapshotProfileV2 | Out-Null
 } else {
     & $snapshotScript `
@@ -110,7 +123,11 @@ if ($FullSnapshotProfileGA) {
         -OutputDir $snapshotOutputDir `
         -AllowedRegressionPct $AllowedRegressionPct `
         -PerformanceRuns $PerformanceRuns `
-        -AdapterStabilityRuns $AdapterStabilityRuns | Out-Null
+        -AdapterStabilityRuns $AdapterStabilityRuns `
+        -IncludeGovernanceRpcMldsaFfiGate:$IncludeGovernanceRpcMldsaFfiGate `
+        -GovernanceRpcMldsaFfiAoemRoot $GovernanceRpcMldsaFfiAoemRoot `
+        -GovernanceRpcMldsaFfiBind $GovernanceRpcMldsaFfiBind `
+        -GovernanceRpcMldsaFfiExpectedRequests $GovernanceRpcMldsaFfiExpectedRequests | Out-Null
 }
 
 $snapshotJson = Join-Path $snapshotOutputDir "release-snapshot.json"
@@ -153,10 +170,24 @@ $rcCandidate = [ordered]@{
     governance_rpc_signature_scheme_reject_pass = [bool]$acceptance.governance_rpc_signature_scheme_reject_pass
     governance_rpc_vote_verifier_startup_pass = [bool]$acceptance.governance_rpc_vote_verifier_startup_pass
     governance_rpc_vote_verifier_staged_reject_pass = [bool]$acceptance.governance_rpc_vote_verifier_staged_reject_pass
+    governance_rpc_vote_verifier_execute_pass = [bool]$acceptance.governance_rpc_vote_verifier_execute_pass
+    governance_rpc_chain_audit_pass = [bool]$acceptance.governance_rpc_chain_audit_pass
+    governance_rpc_chain_audit_persist_pass = [bool]$acceptance.governance_rpc_chain_audit_persist_pass
+    governance_rpc_chain_audit_restart_pass = [bool]$acceptance.governance_rpc_chain_audit_restart_pass
+    governance_rpc_chain_audit_execute_verifier_pass = [bool]$acceptance.governance_rpc_chain_audit_execute_verifier_pass
+    governance_rpc_chain_audit_persist_execute_verifier_pass = [bool]$acceptance.governance_rpc_chain_audit_persist_execute_verifier_pass
+    governance_rpc_chain_audit_restart_execute_verifier_pass = [bool]$acceptance.governance_rpc_chain_audit_restart_execute_verifier_pass
+    governance_rpc_chain_audit_execute_verifier_proof_pass = [bool]$acceptance.governance_rpc_chain_audit_execute_verifier_proof_pass
+    governance_rpc_chain_audit_root_proof_pass = [bool]$acceptance.governance_rpc_chain_audit_root_proof_pass
+    governance_rpc_mldsa_ffi_gate_enabled = [bool]$acceptance.governance_rpc_mldsa_ffi_gate_enabled
+    governance_rpc_mldsa_ffi_pass = if ([bool]$acceptance.governance_rpc_mldsa_ffi_gate_enabled) { [bool]$acceptance.governance_rpc_mldsa_ffi_pass } else { $true }
+    governance_rpc_mldsa_ffi_startup_pass = if ([bool]$acceptance.governance_rpc_mldsa_ffi_gate_enabled) { [bool]$acceptance.governance_rpc_mldsa_ffi_startup_pass } else { $true }
+    governance_chain_audit_root_parity_pass = [bool]$acceptance.governance_chain_audit_root_parity_pass
     governance_param3_pass = [bool]$acceptance.governance_param3_pass
     governance_market_policy_pass = [bool]$acceptance.governance_market_policy_pass
     governance_market_policy_engine_pass = [bool]$acceptance.governance_market_policy_engine_pass
     governance_market_policy_treasury_pass = [bool]$acceptance.governance_market_policy_treasury_pass
+    governance_market_policy_orchestration_pass = [bool]$acceptance.governance_market_policy_orchestration_pass
     governance_council_policy_pass = [bool]$acceptance.governance_council_policy_pass
     governance_access_policy_pass = [bool]$acceptance.governance_access_policy_pass
     governance_token_economics_pass = [bool]$acceptance.governance_token_economics_pass
@@ -186,10 +217,24 @@ $md = @(
     "- governance_rpc_signature_scheme_reject_pass: $($rcCandidate.governance_rpc_signature_scheme_reject_pass)"
     "- governance_rpc_vote_verifier_startup_pass: $($rcCandidate.governance_rpc_vote_verifier_startup_pass)"
     "- governance_rpc_vote_verifier_staged_reject_pass: $($rcCandidate.governance_rpc_vote_verifier_staged_reject_pass)"
+    "- governance_rpc_vote_verifier_execute_pass: $($rcCandidate.governance_rpc_vote_verifier_execute_pass)"
+    "- governance_rpc_chain_audit_pass: $($rcCandidate.governance_rpc_chain_audit_pass)"
+    "- governance_rpc_chain_audit_persist_pass: $($rcCandidate.governance_rpc_chain_audit_persist_pass)"
+    "- governance_rpc_chain_audit_restart_pass: $($rcCandidate.governance_rpc_chain_audit_restart_pass)"
+    "- governance_rpc_chain_audit_execute_verifier_pass: $($rcCandidate.governance_rpc_chain_audit_execute_verifier_pass)"
+    "- governance_rpc_chain_audit_persist_execute_verifier_pass: $($rcCandidate.governance_rpc_chain_audit_persist_execute_verifier_pass)"
+    "- governance_rpc_chain_audit_restart_execute_verifier_pass: $($rcCandidate.governance_rpc_chain_audit_restart_execute_verifier_pass)"
+    "- governance_rpc_chain_audit_execute_verifier_proof_pass: $($rcCandidate.governance_rpc_chain_audit_execute_verifier_proof_pass)"
+    "- governance_rpc_chain_audit_root_proof_pass: $($rcCandidate.governance_rpc_chain_audit_root_proof_pass)"
+    "- governance_rpc_mldsa_ffi_gate_enabled: $($rcCandidate.governance_rpc_mldsa_ffi_gate_enabled)"
+    "- governance_rpc_mldsa_ffi_pass: $($rcCandidate.governance_rpc_mldsa_ffi_pass)"
+    "- governance_rpc_mldsa_ffi_startup_pass: $($rcCandidate.governance_rpc_mldsa_ffi_startup_pass)"
+    "- governance_chain_audit_root_parity_pass: $($rcCandidate.governance_chain_audit_root_parity_pass)"
     "- governance_param3_pass: $($rcCandidate.governance_param3_pass)"
     "- governance_market_policy_pass: $($rcCandidate.governance_market_policy_pass)"
     "- governance_market_policy_engine_pass: $($rcCandidate.governance_market_policy_engine_pass)"
     "- governance_market_policy_treasury_pass: $($rcCandidate.governance_market_policy_treasury_pass)"
+    "- governance_market_policy_orchestration_pass: $($rcCandidate.governance_market_policy_orchestration_pass)"
     "- governance_council_policy_pass: $($rcCandidate.governance_council_policy_pass)"
     "- governance_access_policy_pass: $($rcCandidate.governance_access_policy_pass)"
     "- governance_token_economics_pass: $($rcCandidate.governance_token_economics_pass)"
@@ -213,10 +258,24 @@ Write-Host "  governance_rpc_audit_persist_pass: $($rcCandidate.governance_rpc_a
 Write-Host "  governance_rpc_signature_scheme_reject_pass: $($rcCandidate.governance_rpc_signature_scheme_reject_pass)"
 Write-Host "  governance_rpc_vote_verifier_startup_pass: $($rcCandidate.governance_rpc_vote_verifier_startup_pass)"
 Write-Host "  governance_rpc_vote_verifier_staged_reject_pass: $($rcCandidate.governance_rpc_vote_verifier_staged_reject_pass)"
+Write-Host "  governance_rpc_vote_verifier_execute_pass: $($rcCandidate.governance_rpc_vote_verifier_execute_pass)"
+Write-Host "  governance_rpc_chain_audit_pass: $($rcCandidate.governance_rpc_chain_audit_pass)"
+Write-Host "  governance_rpc_chain_audit_persist_pass: $($rcCandidate.governance_rpc_chain_audit_persist_pass)"
+Write-Host "  governance_rpc_chain_audit_restart_pass: $($rcCandidate.governance_rpc_chain_audit_restart_pass)"
+Write-Host "  governance_rpc_chain_audit_execute_verifier_pass: $($rcCandidate.governance_rpc_chain_audit_execute_verifier_pass)"
+Write-Host "  governance_rpc_chain_audit_persist_execute_verifier_pass: $($rcCandidate.governance_rpc_chain_audit_persist_execute_verifier_pass)"
+Write-Host "  governance_rpc_chain_audit_restart_execute_verifier_pass: $($rcCandidate.governance_rpc_chain_audit_restart_execute_verifier_pass)"
+Write-Host "  governance_rpc_chain_audit_execute_verifier_proof_pass: $($rcCandidate.governance_rpc_chain_audit_execute_verifier_proof_pass)"
+Write-Host "  governance_rpc_chain_audit_root_proof_pass: $($rcCandidate.governance_rpc_chain_audit_root_proof_pass)"
+Write-Host "  governance_rpc_mldsa_ffi_gate_enabled: $($rcCandidate.governance_rpc_mldsa_ffi_gate_enabled)"
+Write-Host "  governance_rpc_mldsa_ffi_pass: $($rcCandidate.governance_rpc_mldsa_ffi_pass)"
+Write-Host "  governance_rpc_mldsa_ffi_startup_pass: $($rcCandidate.governance_rpc_mldsa_ffi_startup_pass)"
+Write-Host "  governance_chain_audit_root_parity_pass: $($rcCandidate.governance_chain_audit_root_parity_pass)"
 Write-Host "  governance_param3_pass: $($rcCandidate.governance_param3_pass)"
 Write-Host "  governance_market_policy_pass: $($rcCandidate.governance_market_policy_pass)"
 Write-Host "  governance_market_policy_engine_pass: $($rcCandidate.governance_market_policy_engine_pass)"
 Write-Host "  governance_market_policy_treasury_pass: $($rcCandidate.governance_market_policy_treasury_pass)"
+Write-Host "  governance_market_policy_orchestration_pass: $($rcCandidate.governance_market_policy_orchestration_pass)"
 Write-Host "  governance_council_policy_pass: $($rcCandidate.governance_council_policy_pass)"
 Write-Host "  governance_access_policy_pass: $($rcCandidate.governance_access_policy_pass)"
 Write-Host "  governance_token_economics_pass: $($rcCandidate.governance_token_economics_pass)"

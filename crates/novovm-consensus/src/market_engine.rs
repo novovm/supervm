@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use web30_core::amm::AMMManager;
 use web30_core::bonds::BondManager;
-use web30_core::cdp::CdpManager;
+use web30_core::cdp::{CdpManager, CollateralType};
 use web30_core::nav_redemption::NavRedemptionManager;
 use web30_core::treasury::{Treasury, TreasuryAccountKind, TreasuryEvent};
 use web30_core::treasury_impl::{NavConfig, TreasuryConfig, TreasuryImpl};
@@ -12,6 +12,8 @@ use web30_core::types::Address as Web30Address;
 const ADDR_DOMAIN_SYSTEM: u8 = 0xC1;
 const SYS_ADDR_TREASURY_CONTROLLER: u8 = 0xE0;
 const SYS_ADDR_TREASURY_INGRESS: u8 = 0xE1;
+const SYS_ADDR_MARKET_ORACLE: u8 = 0xE2;
+const SYS_ADDR_NAV_REDEEMER: u8 = 0xE3;
 
 fn system_address(tag: u8) -> Web30Address {
     let mut bytes = [0u8; 32];
@@ -26,6 +28,20 @@ fn from_web30_error(ctx: &str, err: impl std::fmt::Display) -> BFTError {
 
 fn to_u64(value: u128, ctx: &str) -> BFTResult<u64> {
     u64::try_from(value).map_err(|_| BFTError::Internal(format!("{} out of u64 range", ctx)))
+}
+
+#[derive(Debug, Clone)]
+struct MarketOrchestrationOutcome {
+    oracle_price_before: u128,
+    oracle_price_after: u128,
+    cdp_liquidation_candidates: u32,
+    cdp_liquidations_executed: u32,
+    cdp_liquidation_penalty_routed: u128,
+    nav_snapshot_day: u64,
+    nav_latest_value: u128,
+    nav_redemptions_submitted: u32,
+    nav_redemptions_executed: u32,
+    nav_executed_stable_total: u128,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -56,6 +72,16 @@ pub struct Web30MarketEngineSnapshot {
     pub nav_soft_floor_value: u64,
     pub buyback_last_spent_stable: u64,
     pub buyback_last_burned_token: u64,
+    pub oracle_price_before: u64,
+    pub oracle_price_after: u64,
+    pub cdp_liquidation_candidates: u32,
+    pub cdp_liquidations_executed: u32,
+    pub cdp_liquidation_penalty_routed: u64,
+    pub nav_snapshot_day: u64,
+    pub nav_latest_value: u64,
+    pub nav_redemptions_submitted: u32,
+    pub nav_redemptions_executed: u32,
+    pub nav_executed_stable_total: u64,
 }
 
 pub struct Web30MarketEngine {
@@ -69,12 +95,24 @@ pub struct Web30MarketEngine {
     nav: NavRedemptionManager,
     treasury: TreasuryImpl,
     #[allow(dead_code)]
+    market_oracle: Web30Address,
+    nav_redeemer: Web30Address,
+    #[allow(dead_code)]
     treasury_controller: Web30Address,
     treasury_ingress: Web30Address,
+    orchestration_day: u64,
     snapshot: Web30MarketEngineSnapshot,
 }
 
 impl Web30MarketEngine {
+    fn id_with_prefix(prefix: u8, day: u64) -> [u8; 32] {
+        let mut out = [0u8; 32];
+        out[0] = prefix;
+        out[1..9].copy_from_slice(&day.to_le_bytes());
+        out[31] = ADDR_DOMAIN_SYSTEM;
+        out
+    }
+
     fn build_treasury(
         policy: &MarketGovernancePolicy,
         controller: Web30Address,
@@ -106,6 +144,8 @@ impl Web30MarketEngine {
         Self::validate_runtime_bounds(policy)?;
         let treasury_controller = system_address(SYS_ADDR_TREASURY_CONTROLLER);
         let treasury_ingress = system_address(SYS_ADDR_TREASURY_INGRESS);
+        let market_oracle = system_address(SYS_ADDR_MARKET_ORACLE);
+        let nav_redeemer = system_address(SYS_ADDR_NAV_REDEEMER);
 
         let mut runtime = Self {
             amm: AMMManager::new(),
@@ -117,8 +157,11 @@ impl Web30MarketEngine {
                 u64::from(policy.nav.settlement_delay_epochs),
             ),
             treasury: Self::build_treasury(policy, treasury_controller, None),
+            market_oracle,
+            nav_redeemer,
             treasury_controller,
             treasury_ingress,
+            orchestration_day: 0,
             snapshot: Web30MarketEngineSnapshot {
                 amm_swap_fee_bp: 0,
                 amm_lp_fee_share_bp: 0,
@@ -146,6 +189,16 @@ impl Web30MarketEngine {
                 nav_soft_floor_value: 0,
                 buyback_last_spent_stable: 0,
                 buyback_last_burned_token: 0,
+                oracle_price_before: 0,
+                oracle_price_after: 0,
+                cdp_liquidation_candidates: 0,
+                cdp_liquidations_executed: 0,
+                cdp_liquidation_penalty_routed: 0,
+                nav_snapshot_day: 0,
+                nav_latest_value: 0,
+                nav_redemptions_submitted: 0,
+                nav_redemptions_executed: 0,
+                nav_executed_stable_total: 0,
             },
         };
         runtime.reconfigure(policy)?;
@@ -217,6 +270,8 @@ impl Web30MarketEngine {
                 u128::from(policy.reserve.min_reserve_ratio_bp),
             )
             .map_err(|e| from_web30_error("market engine reserve foreign collection", e))?;
+        self.orchestration_day = self.orchestration_day.saturating_add(1);
+        let orchestration = self.run_cross_module_orchestration(policy, self.orchestration_day)?;
         let nav_soft_floor_value = self.treasury.calculate_nav();
         let buyback_event = self
             .treasury
@@ -281,8 +336,157 @@ impl Web30MarketEngine {
                 buyback_last_burned_token,
                 "buyback_last_burned_token",
             )?,
+            oracle_price_before: to_u64(orchestration.oracle_price_before, "oracle_price_before")?,
+            oracle_price_after: to_u64(orchestration.oracle_price_after, "oracle_price_after")?,
+            cdp_liquidation_candidates: orchestration.cdp_liquidation_candidates,
+            cdp_liquidations_executed: orchestration.cdp_liquidations_executed,
+            cdp_liquidation_penalty_routed: to_u64(
+                orchestration.cdp_liquidation_penalty_routed,
+                "cdp_liquidation_penalty_routed",
+            )?,
+            nav_snapshot_day: orchestration.nav_snapshot_day,
+            nav_latest_value: to_u64(orchestration.nav_latest_value, "nav_latest_value")?,
+            nav_redemptions_submitted: orchestration.nav_redemptions_submitted,
+            nav_redemptions_executed: orchestration.nav_redemptions_executed,
+            nav_executed_stable_total: to_u64(
+                orchestration.nav_executed_stable_total,
+                "nav_executed_stable_total",
+            )?,
         };
         Ok(())
+    }
+
+    fn run_cross_module_orchestration(
+        &mut self,
+        policy: &MarketGovernancePolicy,
+        day: u64,
+    ) -> BFTResult<MarketOrchestrationOutcome> {
+        let debt: u128 = 10_000_000;
+        let min_ratio_bp = u128::from(policy.cdp.min_collateral_ratio_bp.max(10_000));
+        let oracle_price_before = (debt.saturating_mul(min_ratio_bp) / 10_000).saturating_add(1_000_000);
+        let cdp_id = Self::id_with_prefix(0xA1, day);
+        self.cdp
+            .open_cdp(
+                cdp_id,
+                self.market_oracle,
+                CollateralType::MainnetToken,
+                1_000_000,
+                oracle_price_before,
+                debt,
+                day,
+            )
+            .map_err(|e| from_web30_error("market engine cdp open", e))?;
+
+        let treasury_balance_for_nav = self
+            .treasury
+            .balance_of(TreasuryAccountKind::Main)
+            .saturating_add(self.treasury.balance_of(TreasuryAccountKind::Ecosystem))
+            .saturating_add(self.treasury.balance_of(TreasuryAccountKind::RiskReserve));
+        let reserve_ratio_bp = u128::from(policy.reserve.min_reserve_ratio_bp.max(1));
+        let reserve_ratio_den = 10_000u128.saturating_sub(reserve_ratio_bp).max(1);
+        let min_reserve_for_nav = treasury_balance_for_nav
+            .saturating_mul(reserve_ratio_bp)
+            .saturating_add(reserve_ratio_den.saturating_sub(1))
+            / reserve_ratio_den;
+        let reserve_value = min_reserve_for_nav
+            .max(self.treasury.foreign_reserve("USDT"))
+            .max(1);
+        let total_value_for_nav = reserve_value.saturating_add(treasury_balance_for_nav);
+        let daily_quota = u128::from(policy.nav.max_daily_redemption_bp.max(1));
+        let min_supply_for_quota = total_value_for_nav
+            .saturating_add(daily_quota.saturating_sub(1))
+            / daily_quota;
+        let circulating_supply = self
+            .cdp
+            .total_supply()
+            .max(min_supply_for_quota)
+            .max(1);
+        let nav_snapshot = self
+            .nav
+            .record_nav_snapshot(day, reserve_value, treasury_balance_for_nav, circulating_supply)
+            .map_err(|e| from_web30_error("market engine nav snapshot", e))?;
+        let nav_value = nav_snapshot.nav_value.max(1);
+        let mut redemption_token_amount = (1_000_000u128
+            .saturating_add(nav_value)
+            .saturating_sub(1))
+            / nav_value;
+        if redemption_token_amount == 0 {
+            redemption_token_amount = 1;
+        }
+        let mut redemption_expected_stable = redemption_token_amount
+            .saturating_mul(nav_value)
+            / 1_000_000;
+        if redemption_expected_stable == 0 {
+            redemption_token_amount = redemption_token_amount.saturating_add(1);
+            redemption_expected_stable = redemption_token_amount
+                .saturating_mul(nav_value)
+                / 1_000_000;
+        }
+        if redemption_expected_stable > daily_quota {
+            redemption_token_amount = daily_quota
+                .saturating_mul(1_000_000)
+                / nav_value;
+            if redemption_token_amount == 0 {
+                redemption_token_amount = 1;
+            }
+        }
+        let redemption_id = Self::id_with_prefix(0xB1, day);
+        self.nav
+            .submit_redemption(redemption_id, self.nav_redeemer, redemption_token_amount, day)
+            .map_err(|e| from_web30_error("market engine nav redemption submit", e))?;
+        let nav_redemptions_submitted = 1u32;
+        let redemption_exec_day = day.saturating_add(u64::from(policy.nav.settlement_delay_epochs));
+        let executed_redemptions = self
+            .nav
+            .process_redemptions(redemption_exec_day)
+            .map_err(|e| from_web30_error("market engine nav redemption execute", e))?;
+        let nav_executed_stable_total: u128 =
+            executed_redemptions.iter().map(|req| req.expected_stable).sum();
+        let nav_redemptions_executed = u32::try_from(executed_redemptions.len())
+            .map_err(|_| BFTError::Internal("nav_redemptions_executed overflow".to_string()))?;
+
+        let liquidation_threshold_bp = u128::from(policy.cdp.liquidation_threshold_bp.max(10_000));
+        let oracle_price_after =
+            (debt.saturating_mul(liquidation_threshold_bp.saturating_sub(1)) / 10_000).max(1);
+        self.cdp
+            .update_collateral_price(cdp_id, oracle_price_after)
+            .map_err(|e| from_web30_error("market engine oracle price update", e))?;
+
+        let liquidatable = self.cdp.find_liquidatable_cdps();
+        let cdp_liquidation_candidates = u32::try_from(liquidatable.len())
+            .map_err(|_| BFTError::Internal("cdp_liquidation_candidates overflow".to_string()))?;
+        let mut cdp_liquidation_penalty_routed = 0u128;
+        let mut cdp_liquidations_executed = 0u32;
+        for liquidatable_id in liquidatable {
+            let (_seized, penalty) = self
+                .cdp
+                .liquidate_cdp(liquidatable_id)
+                .map_err(|e| from_web30_error("market engine cdp liquidation", e))?;
+            cdp_liquidation_penalty_routed = cdp_liquidation_penalty_routed.saturating_add(penalty);
+            cdp_liquidations_executed = cdp_liquidations_executed.saturating_add(1);
+        }
+        if cdp_liquidation_penalty_routed > 0 {
+            self.treasury
+                .on_income(
+                    &self.treasury_ingress,
+                    cdp_liquidation_penalty_routed,
+                    TreasuryAccountKind::RiskReserve,
+                )
+                .map_err(|e| from_web30_error("market engine liquidation penalty route", e))?;
+        }
+
+        Ok(MarketOrchestrationOutcome {
+            oracle_price_before,
+            oracle_price_after,
+            cdp_liquidation_candidates,
+            cdp_liquidations_executed,
+            cdp_liquidation_penalty_routed,
+            nav_snapshot_day: nav_snapshot.day,
+            nav_latest_value: nav_snapshot.nav_value,
+            nav_redemptions_submitted,
+            nav_redemptions_executed,
+            nav_executed_stable_total,
+        })
     }
 
     pub fn snapshot(&self) -> Web30MarketEngineSnapshot {
@@ -320,6 +524,15 @@ mod tests {
         assert!(snap.treasury_risk_reserve_balance > 0);
         assert!(snap.reserve_foreign_usdt_balance > 0);
         assert!(snap.nav_soft_floor_value > 0);
+        assert!(snap.oracle_price_before > snap.oracle_price_after);
+        assert!(snap.cdp_liquidation_candidates > 0);
+        assert!(snap.cdp_liquidations_executed > 0);
+        assert!(snap.cdp_liquidation_penalty_routed > 0);
+        assert!(snap.nav_snapshot_day > 0);
+        assert!(snap.nav_latest_value > 0);
+        assert!(snap.nav_redemptions_submitted > 0);
+        assert!(snap.nav_redemptions_executed > 0);
+        assert!(snap.nav_executed_stable_total > 0);
     }
 
     #[test]
@@ -342,6 +555,8 @@ mod tests {
         assert_eq!(snap.nav_settlement_delay_epochs, 5);
         assert!(snap.treasury_main_balance > 0);
         assert!(snap.nav_soft_floor_value > 0);
+        assert!(snap.cdp_liquidations_executed > 0);
+        assert!(snap.nav_redemptions_executed > 0);
     }
 
     #[test]

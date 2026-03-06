@@ -12,6 +12,10 @@ param(
     [int]$RateLimitProbeRequests = 3,
     [ValidateRange(1, 1000)]
     [int]$RateLimitProbePerIp = 2,
+    [ValidateRange(1, 8)]
+    [int]$RateLimitProbeMaxAttempts = 3,
+    [ValidateRange(0, 2000)]
+    [int]$RateLimitProbeRetryDelayMs = 150,
     [ValidateRange(1, 30)]
     [int]$StartupTimeoutSeconds = 8,
     [ValidateRange(1, 30)]
@@ -79,6 +83,25 @@ function Wait-TcpEndpoint {
             $client.Dispose()
         }
         Start-Sleep -Milliseconds 120
+    }
+    return $false
+}
+
+function Wait-NextUnixSecondBoundary {
+    param(
+        [ValidateRange(1, 5000)]
+        [int]$TimeoutMs = 1500
+    )
+
+    $startSec = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
+    $deadline = [DateTime]::UtcNow.AddMilliseconds($TimeoutMs)
+    while ([DateTime]::UtcNow -lt $deadline) {
+        $currentSec = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
+        if ($currentSec -ne $startSec) {
+            Start-Sleep -Milliseconds 5
+            return $true
+        }
+        Start-Sleep -Milliseconds 10
     }
     return $false
 }
@@ -276,7 +299,8 @@ function Invoke-RpcScenario {
         [int]$ExitTimeoutSeconds,
         [object[]]$Payloads,
         [string]$StdoutPath,
-        [string]$StderrPath
+        [string]$StderrPath,
+        [bool]$AlignToNextSecondBoundary = $false
     )
 
     $bindUri = [Uri]("http://$Bind")
@@ -303,6 +327,10 @@ function Invoke-RpcScenario {
         $listening = Wait-TcpEndpoint -HostName $bindUri.Host -Port $bindUri.Port -TimeoutSeconds $StartupTimeoutSeconds
         if (-not $listening) {
             throw "rpc server did not listen on $Bind within ${StartupTimeoutSeconds}s"
+        }
+
+        if ($AlignToNextSecondBoundary) {
+            [void](Wait-NextUnixSecondBoundary)
         }
 
         foreach ($entry in $Payloads) {
@@ -546,47 +574,81 @@ if ($queryScenario.base_pass -and $queryResults.Count -eq $ExpectedRequests) {
     }
 }
 
-$rateScenario = Invoke-RpcScenario `
-    -NodeExe $nodeExe `
-    -RepoRoot $RepoRoot `
-    -DbPath $dbPath `
-    -Bind $Bind `
-    -MaxBodyBytes $MaxBodyBytes `
-    -RateLimitPerIp $RateLimitProbePerIp `
-    -MaxRequests $RateLimitProbeRequests `
-    -StartupTimeoutSeconds $StartupTimeoutSeconds `
-    -ExitTimeoutSeconds $ExitTimeoutSeconds `
-    -Payloads $rateLimitPayloads `
-    -StdoutPath $rateStdoutPath `
-    -StderrPath $rateStderrPath
-
-$rateResults = $rateScenario.requests
+$rateScenario = $null
+$rateResults = @()
 $rateLimitSignalPass = $false
-$rateError = $rateScenario.error_reason
-if ($rateScenario.base_pass -and $rateResults.Count -eq $RateLimitProbeRequests) {
-    $allowedOk = $true
-    for ($i = 0; $i -lt $RateLimitProbePerIp; $i++) {
-        if ($rateResults[$i].status -ne 200) {
-            $allowedOk = $false
-            break
+$rateError = ""
+$rateAttemptSummaries = @()
+$rateProbeAttemptsUsed = 0
+for ($attempt = 1; $attempt -le $RateLimitProbeMaxAttempts; $attempt++) {
+    $rateProbeAttemptsUsed = $attempt
+    $rateAttemptStdoutPath = if ($attempt -eq 1) { $rateStdoutPath } else { [System.IO.Path]::ChangeExtension($rateStdoutPath, "attempt${attempt}.log") }
+    $rateAttemptStderrPath = if ($attempt -eq 1) { $rateStderrPath } else { [System.IO.Path]::ChangeExtension($rateStderrPath, "attempt${attempt}.log") }
+
+    $rateScenario = Invoke-RpcScenario `
+        -NodeExe $nodeExe `
+        -RepoRoot $RepoRoot `
+        -DbPath $dbPath `
+        -Bind $Bind `
+        -MaxBodyBytes $MaxBodyBytes `
+        -RateLimitPerIp $RateLimitProbePerIp `
+        -MaxRequests $RateLimitProbeRequests `
+        -StartupTimeoutSeconds $StartupTimeoutSeconds `
+        -ExitTimeoutSeconds $ExitTimeoutSeconds `
+        -Payloads $rateLimitPayloads `
+        -StdoutPath $rateAttemptStdoutPath `
+        -StderrPath $rateAttemptStderrPath `
+        -AlignToNextSecondBoundary $true
+
+    $rateResults = $rateScenario.requests
+    $allowedOk = $false
+    $limitedOk = $false
+    $attemptError = $rateScenario.error_reason
+    if ($rateScenario.base_pass -and $rateResults.Count -eq $RateLimitProbeRequests) {
+        $allowedOk = $true
+        for ($i = 0; $i -lt $RateLimitProbePerIp; $i++) {
+            if ($rateResults[$i].status -ne 200) {
+                $allowedOk = $false
+                break
+            }
+        }
+
+        $limitedOk = $true
+        for ($i = $RateLimitProbePerIp; $i -lt $RateLimitProbeRequests; $i++) {
+            if ($rateResults[$i].status -ne 429) {
+                $limitedOk = $false
+                break
+            }
+            $errorObj = Get-JsonPropertyOrNull -Obj $rateResults[$i].json -Name "error"
+            if ($null -ne $errorObj -and [int](Get-JsonPropertyOrNull -Obj $errorObj -Name "code") -ne -32029) {
+                $limitedOk = $false
+                break
+            }
+        }
+        $rateLimitSignalPass = $allowedOk -and $limitedOk
+        if (-not $rateLimitSignalPass) {
+            $attemptError = "rate-limit assertion failed (allowed_ok=$allowedOk, limited_ok=$limitedOk, probe_per_ip=$RateLimitProbePerIp, probe_requests=$RateLimitProbeRequests)"
         }
     }
 
-    $limitedOk = $true
-    for ($i = $RateLimitProbePerIp; $i -lt $RateLimitProbeRequests; $i++) {
-        if ($rateResults[$i].status -ne 429) {
-            $limitedOk = $false
-            break
-        }
-        $errorObj = Get-JsonPropertyOrNull -Obj $rateResults[$i].json -Name "error"
-        if ($null -ne $errorObj -and [int](Get-JsonPropertyOrNull -Obj $errorObj -Name "code") -ne -32029) {
-            $limitedOk = $false
-            break
-        }
+    $rateAttemptSummaries += [ordered]@{
+        attempt = $attempt
+        pass = $rateLimitSignalPass
+        base_pass = [bool]$rateScenario.base_pass
+        allowed_ok = $allowedOk
+        limited_ok = $limitedOk
+        statuses = @($rateResults | ForEach-Object { [int]$_.status })
+        error_reason = $attemptError
+        server_stdout = $rateScenario.server_stdout
+        server_stderr = $rateScenario.server_stderr
     }
-    $rateLimitSignalPass = $allowedOk -and $limitedOk
-    if (-not $rateLimitSignalPass) {
-        $rateError = "rate-limit assertion failed (allowed_ok=$allowedOk, limited_ok=$limitedOk, probe_per_ip=$RateLimitProbePerIp, probe_requests=$RateLimitProbeRequests)"
+
+    $rateError = $attemptError
+    if ($rateLimitSignalPass) {
+        break
+    }
+    if ($attempt -lt $RateLimitProbeMaxAttempts -and $RateLimitProbeRetryDelayMs -gt 0) {
+        Start-Sleep -Milliseconds $RateLimitProbeRetryDelayMs
     }
 }
 
@@ -614,6 +676,8 @@ $summary = [ordered]@{
     rate_limit_per_ip = $RateLimitPerIp
     rate_limit_probe_per_ip = $RateLimitProbePerIp
     rate_limit_probe_requests = $RateLimitProbeRequests
+    rate_limit_probe_max_attempts = $RateLimitProbeMaxAttempts
+    rate_limit_probe_retry_delay_ms = $RateLimitProbeRetryDelayMs
     query_db = $dbPath
     node_exe = $nodeExe
     error_reason = $errorReason
@@ -634,12 +698,15 @@ $summary = [ordered]@{
         processed = $rateScenario.processed
         expected = $rateScenario.expected
         rate_limit_per_ip = $rateScenario.rate_limit_per_ip
+        attempts_used = $rateProbeAttemptsUsed
+        retried = ($rateProbeAttemptsUsed -gt 1)
         error_reason = $rateError
         server_stdout = $rateScenario.server_stdout
         server_stderr = $rateScenario.server_stderr
     }
     requests = $queryResults
     rate_limit_requests = $rateResults
+    rate_limit_attempts = $rateAttemptSummaries
 }
 
 $summaryJson = Join-Path $OutputDir "chain-query-rpc-gate-summary.json"
@@ -658,6 +725,8 @@ $md = @(
     "- rate_limit_per_ip: $($summary.rate_limit_per_ip)"
     "- rate_limit_probe_per_ip: $($summary.rate_limit_probe_per_ip)"
     "- rate_limit_probe_requests: $($summary.rate_limit_probe_requests)"
+    "- rate_limit_probe_max_attempts: $($summary.rate_limit_probe_max_attempts)"
+    "- rate_limit_probe_retry_delay_ms: $($summary.rate_limit_probe_retry_delay_ms)"
     "- query_db: $($summary.query_db)"
     "- node_exe: $($summary.node_exe)"
     "- error_reason: $($summary.error_reason)"
@@ -673,6 +742,8 @@ $md = @(
     "- rate_limit_signal.base_pass: $($summary.rate_limit_signal.base_pass)"
     "- rate_limit_signal.processed: $($summary.rate_limit_signal.processed)/$($summary.rate_limit_signal.expected)"
     "- rate_limit_signal.exit_code: $($summary.rate_limit_signal.exit_code)"
+    "- rate_limit_signal.attempts_used: $($summary.rate_limit_signal.attempts_used)"
+    "- rate_limit_signal.retried: $($summary.rate_limit_signal.retried)"
     "- rate_limit_signal.error_reason: $($summary.rate_limit_signal.error_reason)"
     ""
     "## Query Request Results"

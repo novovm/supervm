@@ -184,6 +184,35 @@ function Parse-GovernanceMarketTreasuryOutLine {
     }
 }
 
+function Parse-GovernanceMarketOrchestrationOutLine {
+    param([string]$Text)
+
+    $line = ($Text -split "`r?`n" | Where-Object { $_ -match "^governance_market_orchestration_out:" } | Select-Object -Last 1)
+    if (-not $line) { return $null }
+    $m = [regex]::Match(
+        $line,
+        "^governance_market_orchestration_out:\s+proposal_id=(?<proposal_id>\d+)\s+oracle_price_before=(?<oracle_price_before>\d+)\s+oracle_price_after=(?<oracle_price_after>\d+)\s+cdp_liquidation_candidates=(?<cdp_liquidation_candidates>\d+)\s+cdp_liquidations_executed=(?<cdp_liquidations_executed>\d+)\s+cdp_liquidation_penalty_routed=(?<cdp_liquidation_penalty_routed>\d+)\s+nav_snapshot_day=(?<nav_snapshot_day>\d+)\s+nav_latest_value=(?<nav_latest_value>\d+)\s+nav_redemptions_submitted=(?<nav_redemptions_submitted>\d+)\s+nav_redemptions_executed=(?<nav_redemptions_executed>\d+)\s+nav_executed_stable_total=(?<nav_executed_stable_total>\d+)$"
+    )
+    if (-not $m.Success) {
+        return [ordered]@{ parse_ok = $false; raw = $line }
+    }
+    return [ordered]@{
+        parse_ok = $true
+        proposal_id = [int64]$m.Groups["proposal_id"].Value
+        oracle_price_before = [int64]$m.Groups["oracle_price_before"].Value
+        oracle_price_after = [int64]$m.Groups["oracle_price_after"].Value
+        cdp_liquidation_candidates = [int64]$m.Groups["cdp_liquidation_candidates"].Value
+        cdp_liquidations_executed = [int64]$m.Groups["cdp_liquidations_executed"].Value
+        cdp_liquidation_penalty_routed = [int64]$m.Groups["cdp_liquidation_penalty_routed"].Value
+        nav_snapshot_day = [int64]$m.Groups["nav_snapshot_day"].Value
+        nav_latest_value = [int64]$m.Groups["nav_latest_value"].Value
+        nav_redemptions_submitted = [int64]$m.Groups["nav_redemptions_submitted"].Value
+        nav_redemptions_executed = [int64]$m.Groups["nav_redemptions_executed"].Value
+        nav_executed_stable_total = [int64]$m.Groups["nav_executed_stable_total"].Value
+        raw = $line
+    }
+}
+
 New-Item -ItemType Directory -Force -Path $OutputDir | Out-Null
 
 $nodeCrateDir = Join-Path $RepoRoot "crates\novovm-node"
@@ -242,6 +271,7 @@ $inLine = Parse-GovernanceMarketInLine -Text $probe.output
 $outLine = Parse-GovernanceMarketOutLine -Text $probe.output
 $engineOutLine = Parse-GovernanceMarketEngineOutLine -Text $probe.output
 $treasuryOutLine = Parse-GovernanceMarketTreasuryOutLine -Text $probe.output
+$orchestrationOutLine = Parse-GovernanceMarketOrchestrationOutLine -Text $probe.output
 $parsePass = [bool](
     $inLine -and
     $inLine.parse_ok -and
@@ -250,7 +280,9 @@ $parsePass = [bool](
     $engineOutLine -and
     $engineOutLine.parse_ok -and
     $treasuryOutLine -and
-    $treasuryOutLine.parse_ok
+    $treasuryOutLine.parse_ok -and
+    $orchestrationOutLine -and
+    $orchestrationOutLine.parse_ok
 )
 
 $inputPass = [bool](
@@ -299,7 +331,21 @@ $treasuryOutputPass = [bool](
     $treasuryOutLine.buyback_last_burned_token -ge 0
 )
 
-$pass = [bool]($probe.exit_code -eq 0 -and $inputPass -and $outputPass -and $engineOutputPass -and $treasuryOutputPass)
+$orchestrationOutputPass = [bool](
+    $parsePass -and
+    $orchestrationOutLine.proposal_id -eq $inLine.proposal_id -and
+    $orchestrationOutLine.oracle_price_before -gt $orchestrationOutLine.oracle_price_after -and
+    $orchestrationOutLine.cdp_liquidation_candidates -gt 0 -and
+    $orchestrationOutLine.cdp_liquidations_executed -gt 0 -and
+    $orchestrationOutLine.cdp_liquidation_penalty_routed -gt 0 -and
+    $orchestrationOutLine.nav_snapshot_day -gt 0 -and
+    $orchestrationOutLine.nav_latest_value -gt 0 -and
+    $orchestrationOutLine.nav_redemptions_submitted -gt 0 -and
+    $orchestrationOutLine.nav_redemptions_executed -gt 0 -and
+    $orchestrationOutLine.nav_executed_stable_total -gt 0
+)
+
+$pass = [bool]($probe.exit_code -eq 0 -and $inputPass -and $outputPass -and $engineOutputPass -and $treasuryOutputPass -and $orchestrationOutputPass)
 $errorReason = ""
 if (-not $parsePass) {
     $errorReason = "missing_or_unparseable_governance_market_signal"
@@ -313,6 +359,8 @@ if (-not $parsePass) {
     $errorReason = "governance_market_engine_out_assertion_failed"
 } elseif (-not $treasuryOutputPass) {
     $errorReason = "governance_market_treasury_out_assertion_failed"
+} elseif (-not $orchestrationOutputPass) {
+    $errorReason = "governance_market_orchestration_out_assertion_failed"
 }
 
 $summary = [ordered]@{
@@ -323,12 +371,14 @@ $summary = [ordered]@{
     output_pass = $outputPass
     engine_output_pass = $engineOutputPass
     treasury_output_pass = $treasuryOutputPass
+    orchestration_output_pass = $orchestrationOutputPass
     error_reason = $errorReason
     expected = $expected
     governance_market_in = $inLine
     governance_market_out = $outLine
     governance_market_engine_out = $engineOutLine
     governance_market_treasury_out = $treasuryOutLine
+    governance_market_orchestration_out = $orchestrationOutLine
     probe_exit_code = [int]$probe.exit_code
     stdout_log = $stdoutPath
     stderr_log = $stderrPath
@@ -348,6 +398,7 @@ $md = @(
     "- output_pass: $($summary.output_pass)"
     "- engine_output_pass: $($summary.engine_output_pass)"
     "- treasury_output_pass: $($summary.treasury_output_pass)"
+    "- orchestration_output_pass: $($summary.orchestration_output_pass)"
     "- error_reason: $($summary.error_reason)"
     "- probe_exit_code: $($summary.probe_exit_code)"
     "- stdout_log: $($summary.stdout_log)"
@@ -363,6 +414,7 @@ Write-Host "  input_pass: $($summary.input_pass)"
 Write-Host "  output_pass: $($summary.output_pass)"
 Write-Host "  engine_output_pass: $($summary.engine_output_pass)"
 Write-Host "  treasury_output_pass: $($summary.treasury_output_pass)"
+Write-Host "  orchestration_output_pass: $($summary.orchestration_output_pass)"
 Write-Host "  summary_json: $summaryJson"
 
 if (-not $pass) {

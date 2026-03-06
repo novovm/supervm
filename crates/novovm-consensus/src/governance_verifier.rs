@@ -14,6 +14,26 @@ pub trait GovernanceVoteVerifier: Send + Sync {
 
     /// 校验单个治理投票签名。
     fn verify(&self, vote: &GovernanceVote, key: &VerifyingKey) -> BFTResult<()>;
+
+    /// 校验并返回可审计的验签报告（默认实现）。
+    fn verify_with_report(
+        &self,
+        vote: &GovernanceVote,
+        key: &VerifyingKey,
+    ) -> BFTResult<GovernanceVoteVerificationReport> {
+        self.verify(vote, key)?;
+        Ok(GovernanceVoteVerificationReport {
+            verifier_name: self.name(),
+            scheme: self.scheme(),
+        })
+    }
+}
+
+/// 治理投票验签报告（用于共识层审计输出）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GovernanceVoteVerificationReport {
+    pub verifier_name: &'static str,
+    pub scheme: GovernanceVoteVerifierScheme,
 }
 
 /// 默认治理投票签名校验器（ed25519）。

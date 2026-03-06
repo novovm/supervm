@@ -82,3 +82,20 @@ powershell -ExecutionPolicy Bypass -File scripts/migration/run_release_candidate
 - 关键门禁：`governance_access_policy_pass=true`、`governance_token_economics_pass=true`、`governance_treasury_spend_pass=true`、`rpc_exposure_pass=true`
 - 产物入口：`artifacts/migration/release-candidate-novovm-rc-2026-03-06-ga-v1-retryfix/rc-candidate.json`
 - 稳态说明：`scripts/migration/run_adapter_stability_gate.ps1` 已对 `registry_negative hash_mismatch reason_drift` 增加定向单次重试。
+
+## 9. 可选：I-GOV-04（ML-DSA AOEM-FFI）纳入快照/RC
+
+当需要把 `governance_rpc_mldsa_ffi_pass` 一并写入 `release-snapshot/rc-candidate` 时，使用以下参数：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/migration/run_release_candidate.ps1 `
+  -RepoRoot . `
+  -RcRef novovm-rc-2026-03-06-ga-v1-mldsa `
+  -FullSnapshotProfileGA `
+  -IncludeGovernanceRpcMldsaFfiGate `
+  -GovernanceRpcMldsaFfiAoemRoot ..\AOEM
+```
+
+说明：
+- 该模式会把 `governance_rpc_mldsa_ffi_gate_enabled/pass/startup_pass` 写入 `snapshot.key_results` 与 `rc-candidate.json`。
+- 若不启用该参数，`full_snapshot_*` 默认语义保持不变（ML-DSA 仍属于可选执行能力，不强制进入默认发布面）。

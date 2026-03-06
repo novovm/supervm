@@ -129,7 +129,10 @@
 - 证据样本：`artifacts/migration/governance-market-policy-gate-local/governance-market-policy-gate-summary.json`（`pass=True`, `parse_pass=True`, `input_pass=True`, `output_pass=True`）。
 - 证据样本：`artifacts/migration/acceptance-gate-ga-market-local/acceptance-gate-summary.json`（`overall_pass=True`, `governance_market_policy_pass=True`）。
 - 已完成：`run_governance_market_policy_gate.ps1` 增加硬门禁输出解析：`governance_market_engine_out` + `governance_market_treasury_out`，并将 `engine_output_pass/treasury_output_pass` 绑定到 gate `pass`。
+- 已完成：经济跨模块编排主链路接线：`market_engine` 新增 `oracle price update -> CDP liquidation -> NAV redemption settle -> treasury penalty route`，并输出 `governance_market_orchestration_out`。
+- 已完成：`run_governance_market_policy_gate.ps1` 新增 `orchestration_output_pass` 并绑定 gate `pass`；`run_migration_acceptance_gate.ps1` / `run_release_snapshot.ps1` / `run_release_candidate.ps1` 已同步聚合 `governance_market_policy_orchestration_pass`。
 - 证据样本：`artifacts/migration/acceptance-gate-market-engine-smoke/acceptance-gate-summary.json`（`overall_pass=True`, `governance_market_policy_pass=True`, `governance_market_policy_engine_pass=True`, `governance_market_policy_treasury_pass=True`）。
+- 证据样本：`artifacts/migration/governance-market-policy-gate/governance-market-policy-gate-summary.json`（`pass=True`, `orchestration_output_pass=True`）。
 - 证据样本：`artifacts/migration/release-snapshot-ga-market-local/release-snapshot.json`（`overall_pass=True`, `profile_name=full_snapshot_ga_v1`, `enabled_gates.governance_market_policy=True`, `key_results.governance_market_policy_pass=True`）。
 - 证据样本：`artifacts/migration/release-candidate-novovm-rc-2026-03-06-ga-market-local/rc-candidate.json`（`status=ReadyForMerge/SnapshotGreen`, `governance_market_policy_pass=True`）。
 - 已完成：治理 RPC 执行面增强：`governance_submitProposal/governance_sign/governance_vote/governance_execute/governance_getProposal/governance_listProposals/governance_listAuditEvents/governance_getPolicy`，并新增进程级权限校验（`NOVOVM_GOVERNANCE_PROPOSER_ALLOWLIST/NOVOVM_GOVERNANCE_EXECUTOR_ALLOWLIST`）与审计事件流（含 reject 事件）。
@@ -137,15 +140,38 @@
 - 已完成：治理审计持久化索引：`novovm-node` 新增 `NOVOVM_GOVERNANCE_AUDIT_DB`，`governance_listAuditEvents` 对应事件流落盘到 `GovernanceRpcAuditStore(next_seq/events)`，并在 `run_governance_rpc_gate.ps1` 增加 `audit_persist_ok` 校验。
 - 证据样本：`artifacts/migration/governance-rpc-gate-audit-persist-smoke/governance-rpc-gate-summary.json`（`pass=True`, `audit_ok=True`, `audit_persist_ok=True`, `audit_persist_count=10`）。
 - 证据样本：`artifacts/migration/acceptance-gate-governance-audit-persist-smoke/acceptance-gate-summary.json`（`overall_pass=True`, `governance_rpc_pass=True`, `governance_rpc_audit_persist_pass=True`）。
+- 已完成：治理链内审计索引持久化与重启恢复：新增 `NOVOVM_GOVERNANCE_CHAIN_AUDIT_DB`，`governance_listChainAuditEvents` 的链内事件会落盘并在 RPC 节点重启时恢复到 `BFTEngine`。
+- 证据样本：`artifacts/migration/governance-rpc-gate-chain-audit-persist-smoke/governance-rpc-gate-summary.json`（`pass=True`, `chain_audit_ok=True`, `chain_audit_persist_ok=True`, `chain_audit_restart_ok=True`）。
+- 证据样本：`artifacts/migration/release-snapshot-chain-audit-persist-smoke/release-snapshot.json`（`overall_pass=True`, `key_results.governance_rpc_chain_audit_persist_pass=True`, `key_results.governance_rpc_chain_audit_restart_pass=True`）。
+- 证据样本：`artifacts/migration/release-candidate-novovm-rc-2026-03-06-chain-audit-persist-smoke/rc-candidate.json`（`status=ReadyForMerge/SnapshotGreen`, `governance_rpc_chain_audit_persist_pass=True`, `governance_rpc_chain_audit_restart_pass=True`）。
+- 已完成：治理链审计 root proof（可验证化）收口：`governance_getPolicy` 与 `governance_listChainAuditEvents` 的 `head_seq/root` 同步一致校验，并纳入 acceptance/snapshot/rc 聚合字段 `governance_rpc_chain_audit_root_proof_pass`。
+- 证据样本：`artifacts/migration/governance-rpc-gate-chain-audit-root-smoke/governance-rpc-gate-summary.json`（`pass=True`, `policy_chain_audit_consistency_ok=True`, `chain_audit_root_ok=True`, `chain_audit_persist_root_ok=True`, `chain_audit_restart_root_ok=True`）。
+- 证据样本：`artifacts/migration/release-snapshot-chain-audit-root-smoke/release-snapshot.json`（`overall_pass=True`, `key_results.governance_rpc_chain_audit_root_proof_pass=True`）。
+- 证据样本：`artifacts/migration/release-candidate-novovm-rc-2026-03-06-chain-audit-root-smoke/rc-candidate.json`（`status=ReadyForMerge/SnapshotGreen`, `governance_rpc_chain_audit_root_proof_pass=True`）。
+- 已完成：治理链审计 root 区块路径锚定：`block_header_wire_v1` + `block_out/commit_out` 已携带 `governance_chain_audit_root`，并新增聚合门禁 `governance_chain_audit_root_parity_pass`（`ffi_v2/legacy_compat` 一致性）。
+- 证据样本：`artifacts/migration/acceptance-governance-chain-audit-root/acceptance-gate-summary.json`（`overall_pass=True`, `governance_chain_audit_root_parity_pass=True`）。
+- 证据样本：`artifacts/migration/release-snapshot-governance-chain-audit-root-smoke/release-snapshot.json`（`overall_pass=True`, `key_results.governance_chain_audit_root_parity_pass=True`）。
+- 证据样本：`artifacts/migration/release-candidate-novovm-rc-2026-03-06-governance-chain-audit-root-anchor-smoke/rc-candidate.json`（`status=ReadyForMerge/SnapshotGreen`, `governance_chain_audit_root_parity_pass=True`）。
 - 已完成：治理签名算法 staged 抽象：`governance_sign/governance_vote` 新增 `signature_scheme` 参数；当前仅 `ed25519` 启用，`mldsa87`（及别名）明确拒绝并写入审计事件（I-GOV-04 staged-only）；`novovm-consensus` 已新增 `GovernanceVoteVerifier` execute-hook（默认 `ed25519`）并接入治理执行链路；`novovm-node` 启动新增 `NOVOVM_GOVERNANCE_VOTE_VERIFIER` 并对 `mldsa87` 执行 staged-only 拒绝。
 - 已完成：治理验签器启动门禁：`run_governance_rpc_gate.ps1` 新增 `vote_verifier_startup_ok` + `vote_verifier_staged_reject_ok`，并接入 acceptance/snapshot/rc 聚合。
 - 已完成：CI 门禁硬化：`.github/workflows/ci.yml` 新增 `governance_rpc_gate` job，`vote_verifier_startup_ok` 与 `vote_verifier_staged_reject_ok` 任一失败即阻断 PR。
 - 已完成：分支保护自动化脚本：`scripts/migration/set_branch_protection_required_checks.ps1`，支持一键把 `Rust checks` 与 `Governance RPC gate (vote verifier)` 设为 `main` required checks。
 - 已完成：I-GOV-04 staged 结构下沉：`novovm-consensus` 新增 `governance_verifier.rs`（`GovernanceVoteVerifier` / `GovernanceVoteVerifierScheme` / `build_governance_vote_verifier`），`BFTEngine` 新增 `set_governance_vote_verifier_by_scheme`，`novovm-node` 移除本地 verifier 工厂逻辑并改为调用共识层接口。
 - 已完成：I-GOV-04 staged 二段下沉：`governance_sign/governance_vote` 的 `signature_scheme` 支持判定改为调用 `BFTEngine::governance_signature_scheme_supported`（并由 `governance_vote_verifier_scheme` 给出 active scheme），节点层不再硬编码 `ed25519`。
+- 已完成：I-GOV-04 staged 三段下沉：治理执行路径改用 `GovernanceVoteVerifier::verify_with_report`，`governance_execute` 输出 active `vote_verifier(name/signature_scheme)`，并将 `verifier/scheme` 固化到链内审计 `execute=applied` 事件（含持久化与重启恢复路径）。
+- 已完成：I-GOV-04 三段下沉聚合收口：`run_migration_acceptance_gate.ps1` / `run_release_snapshot.ps1` / `run_release_candidate.ps1` 新增 `governance_rpc_vote_verifier_execute_pass` 与 `governance_rpc_chain_audit_execute_verifier_proof_pass`。
+- 已完成：I-GOV-04 optional execute 接线：新增 `NOVOVM_GOVERNANCE_MLDSA_MODE=aoem_ffi` 可选路径，`mldsa87` 在显式启用时通过 AOEM-FFI 验签（默认仍 staged-only）；启动阶段校验 `aoem_abi_version==1`、`aoem_mldsa_supported==1`，并支持跨平台库名解析（Windows `aoem_ffi.dll` / Linux `libaoem_ffi.so` / macOS `libaoem_ffi.dylib`）。
+- 已完成：I-GOV-04 optional execute 门禁化：新增 `scripts/migration/run_governance_rpc_mldsa_ffi_gate.ps1`（真实 ML-DSA 外部签名 + AOEM-FFI 验签 + 治理执行闭环），并接入 `run_migration_acceptance_gate.ps1` 可选聚合字段：`governance_rpc_mldsa_ffi_pass`、`governance_rpc_mldsa_ffi_startup_pass`。
+- 已完成：`run_release_snapshot.ps1` / `run_release_candidate.ps1` 新增 I-GOV-04 可选聚合透传参数（`-IncludeGovernanceRpcMldsaFfiGate`、`-GovernanceRpcMldsaFfiAoemRoot` 等），并输出 `governance_rpc_mldsa_ffi_gate_enabled/pass/startup_pass` 到发布产物。
+- 证据样本：`artifacts/migration/release-snapshot-mldsa-optional-smoke/release-snapshot.json`（`overall_pass=True`, `enabled_gates.governance_rpc_mldsa_ffi=True`, `key_results.governance_rpc_mldsa_ffi_pass=True`）。
+- 证据样本：`artifacts/migration/release-candidate-novovm-rc-2026-03-06-mldsa-optional-smoke/rc-candidate.json`（`status=ReadyForMerge/SnapshotGreen`, `governance_rpc_mldsa_ffi_gate_enabled=True`, `governance_rpc_mldsa_ffi_pass=True`）。
 - 证据样本：`artifacts/migration/governance-rpc-gate-vote-verifier-smoke/governance-rpc-gate-summary.json`（`vote_verifier_startup_ok=True`, `vote_verifier_staged_reject_ok=True`）。
 - 证据样本：`artifacts/migration/governance-rpc-gate-downsink-scheme-smoke/governance-rpc-gate-summary.json`（`pass=True`, `sign_unsupported_scheme_reject_ok=True`）。
+- 证据样本：`artifacts/migration/governance-rpc-gate-verifier-exec-proof-smoke/governance-rpc-gate-summary.json`（`pass=True`, `execute_vote_verifier_ok=True`, `chain_audit_has_execute_applied_verifier=True`, `chain_audit_persist_has_execute_applied_verifier=True`, `chain_audit_restart_has_execute_applied_verifier=True`）。
 - 证据样本：`artifacts/migration/acceptance-gate-vote-verifier-smoke/acceptance-gate-summary.json`（`overall_pass=True`, `governance_rpc_vote_verifier_startup_pass=True`, `governance_rpc_vote_verifier_staged_reject_pass=True`）。
+- 证据样本：`artifacts/migration/acceptance-gate-verifier-exec-proof-smoke/acceptance-gate-summary.json`（`overall_pass=True`, `governance_rpc_vote_verifier_execute_pass=True`, `governance_rpc_chain_audit_execute_verifier_proof_pass=True`）。
+- 证据样本：`artifacts/migration/release-snapshot-governance-verifier-exec-proof-smoke/release-snapshot.json`（`overall_pass=True`, `key_results.governance_rpc_vote_verifier_execute_pass=True`, `key_results.governance_rpc_chain_audit_execute_verifier_proof_pass=True`）。
+- 证据样本：`artifacts/migration/release-candidate-novovm-rc-2026-03-06-governance-verifier-exec-proof-smoke/rc-candidate.json`（`status=ReadyForMerge/SnapshotGreen`, `governance_rpc_vote_verifier_execute_pass=True`, `governance_rpc_chain_audit_execute_verifier_proof_pass=True`）。
 - 证据样本：`artifacts/migration/governance-rpc-gate-signature-scheme-smoke/governance-rpc-gate-summary.json`（`pass=True`, `sign_unsupported_scheme_reject_ok=True`, `audit_has_sign_reject_unsupported_scheme=True`）。
 - 证据样本：`artifacts/migration/acceptance-gate-governance-signature-scheme-smoke/acceptance-gate-summary.json`（`overall_pass=True`, `governance_rpc_signature_scheme_reject_pass=True`）。
 - 已完成：治理负向门禁闭环：`unauthorized_submit + invalid_signature + duplicate_vote + insufficient_votes + replay_execute`，并新增 `scripts/migration/run_governance_negative_gate.ps1`；该门禁已接入 `scripts/migration/run_migration_acceptance_gate.ps1`（`overall_pass` 新增 `governance_negative_pass` 约束）。
@@ -161,6 +187,11 @@
 - 证据样本：`artifacts/migration/adapter-stability-relfix-smoke/adapter-stability-summary.json`（`pass=True`, `pass_rate_pct=100`）。
 - 证据样本：`artifacts/migration/release-snapshot-param3-smoke-relfix/release-snapshot.json`（`overall_pass=True`, `profile_name=full_snapshot_v1`, `key_results.governance_pass=True`, `enabled_gates.governance_param3=True`）。
 - 证据样本：`artifacts/migration/release-snapshot-param3-smoke-relfix/acceptance-gate-full/acceptance-gate-summary.json`（`governance_param3_pass=True`, `adapter_stability_pass=True`）。
+- 已完成：`chain_query_rpc_gate` rate-limit retryfix（Unix 秒窗口抖动修复）：`run_chain_query_rpc_gate.ps1` 现将 rate-limit probe 对齐到下一个秒窗口，并在 `limited_ok=False` 时做小次数自动重试，避免发布链路首轮跨秒误判。
+- 状态：`ReadyForMerge / SnapshotGreen`（retryfix 后连续回归稳定）。
+- 证据样本：`artifacts/migration/chain-query-rpc-gate-retryfix-run-1/chain-query-rpc-gate-summary.json` 至 `artifacts/migration/chain-query-rpc-gate-retryfix-run-10/chain-query-rpc-gate-summary.json`（10/10 `pass=True`, `attempts_used=1`）。
+- 证据样本：`artifacts/migration/release-snapshot-chain-query-retryfix-run-1/release-snapshot.json`（`overall_pass=True`）。
+- 证据样本：`artifacts/migration/release-snapshot-chain-query-retryfix-run-2/release-snapshot.json`（`overall_pass=True`）。
 - 已完成：GA 正式发布快照（`full_snapshot_ga_v1`）回填：`release-snapshot` 聚合包含 `governance_market_policy_engine_pass` + `governance_market_policy_treasury_pass`，并纳入 `governance_pass` 收口。
 - 证据样本：`artifacts/migration/release-snapshot-ga-2026-03-06-051653/release-snapshot.json`（`overall_pass=True`, `profile_name=full_snapshot_ga_v1`, `key_results.governance_market_policy_engine_pass=True`, `key_results.governance_market_policy_treasury_pass=True`）。
 - 已完成：`release-snapshot` 聚合新增治理审计持久化口径 `key_results.governance_rpc_audit_persist_pass`，并纳入治理总门禁。
@@ -169,6 +200,10 @@
 - 证据样本：`artifacts/migration/release-snapshot-signature-scheme-smoke/release-snapshot.json`（`overall_pass=True`, `profile_name=full_snapshot_v1`, `key_results.governance_rpc_signature_scheme_reject_pass=True`）。
 - 已完成：GA 正式 RC（`rc_ref=novovm-rc-2026-03-06-ga-v1`）回填，状态保持 `ReadyForMerge/SnapshotGreen`。
 - 证据样本：`artifacts/migration/release-candidate-novovm-rc-2026-03-06-ga-v1/rc-candidate.json`（`commit_hash=823a5880e104c96d03e2ab4a8473c9f620ae6413`, `governance_market_policy_engine_pass=True`, `governance_market_policy_treasury_pass=True`）。
+- 已完成：GA orchfix 复核快照回填（`full_snapshot_ga_v1`），保持全量门禁绿色。
+- 证据样本：`artifacts/migration/release-candidate-novovm-rc-2026-03-06-ga-orchfix/snapshot/release-snapshot.json`（`overall_pass=True`, `key_results.governance_market_policy_orchestration_pass=True`）。
+- 已完成：GA orchfix 复核 RC（`rc_ref=novovm-rc-2026-03-06-ga-orchfix`）回填，状态保持 `ReadyForMerge/SnapshotGreen`。
+- 证据样本：`artifacts/migration/release-candidate-novovm-rc-2026-03-06-ga-orchfix/rc-candidate.json`（`commit_hash=bac3763192258d5fcb89fc129e2b675d56dbb317`, `governance_market_policy_orchestration_pass=True`）。
 - 证据样本：`artifacts/migration/release-candidate-novovm-rc-2026-03-06-governance-audit-persist-smoke/rc-candidate.json`（`status=ReadyForMerge/SnapshotGreen`, `governance_rpc_audit_persist_pass=True`）。
 - 证据样本：`artifacts/migration/release-candidate-novovm-rc-2026-03-06-signature-scheme-smoke/rc-candidate.json`（`status=ReadyForMerge/SnapshotGreen`, `governance_rpc_signature_scheme_reject_pass=True`）。
 - 已完成：`novovm-consensus` 新增自动解禁窗口（`cooldown_epochs`），`SlashExecution` 输出 `jailed_until_epoch/cooldown_epochs`；`state.height >= jailed_until_epoch` 时自动恢复验证者活跃态。

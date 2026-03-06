@@ -1,0 +1,34 @@
+[package]
+name = "web30-core"
+version = "0.1.0"
+edition = "2021"
+authors = ["SuperVM Team"]
+description = "WEB30 Token Standard - Next-gen fungible token with MVCC, cross-chain, and privacy"
+license = "MIT"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+anyhow = "1.0"
+thiserror = "1.0"
+
+# SuperVM Runtime (可选，用于实际部署)
+# vm-runtime = { path = "../../../src/vm-runtime" }
+
+# 隐私功能
+curve25519-dalek = "4.1"
+sha2 = "0.10"
+rand = "0.8"
+
+[dev-dependencies]
+tokio = { version = "1.0", features = ["full"] }
+proptest = "1.0"
+
+[features]
+default = ["privacy"]
+privacy = []  # 隐私转账功能
+cross-chain = []  # 跨链转账功能
+governance = []  # DAO 治理功能

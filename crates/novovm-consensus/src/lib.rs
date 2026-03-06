@@ -99,7 +99,7 @@ pub use bft_engine::{BFTConfig, BFTEngine, CommitQcTimings, CommittedEpoch};
 pub use epoch::{Epoch, EpochConfig, EpochManager};
 pub use governance_verifier::{
     build_governance_vote_verifier, Ed25519GovernanceVoteVerifier, GovernanceVoteVerifier,
-    GovernanceVoteVerifierScheme,
+    GovernanceVoteVerificationReport, GovernanceVoteVerifierScheme,
 };
 pub use market_engine::{Web30MarketEngine, Web30MarketEngineSnapshot};
 pub use protocol::{HotStuffProtocol, Phase, ProtocolState};
@@ -107,6 +107,7 @@ pub use quorum_cert::{QuorumCertificate, Vote};
 pub use types::{
     AmmGovernanceParams, BFTError, BFTProposal, BFTResult, BondGovernanceParams,
     BuybackGovernanceParams, CdpGovernanceParams, FeeRoutingOutcome, FeeSplit,
+    GovernanceChainAuditEvent,
     GovernanceAccessPolicy, GovernanceCouncilMember, GovernanceCouncilPolicy,
     GovernanceCouncilSeat, GovernanceOp, GovernanceProposal, GovernanceProposalClass,
     GovernanceVote, Hash, Height, MarketGovernancePolicy, NavGovernanceParams, NetworkDosPolicy,

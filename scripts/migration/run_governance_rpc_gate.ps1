@@ -9,7 +9,7 @@ param(
     [ValidateRange(1, 1000)]
     [int]$RateLimitPerIp = 128,
     [ValidateRange(1, 64)]
-    [int]$ExpectedRequests = 14,
+    [int]$ExpectedRequests = 16,
     [ValidateRange(1, 30)]
     [int]$StartupTimeoutSeconds = 8,
     [ValidateRange(1, 30)]
@@ -263,6 +263,7 @@ function Start-RpcServerProcess {
         [string]$RepoRoot,
         [string]$DbPath,
         [string]$AuditDbPath,
+        [string]$ChainAuditDbPath,
         [string]$Bind,
         [string]$VoteVerifier,
         [int]$MaxBodyBytes,
@@ -280,6 +281,7 @@ function Start-RpcServerProcess {
     $psi.Environment["NOVOVM_NODE_MODE"] = "rpc_server"
     $psi.Environment["NOVOVM_CHAIN_QUERY_DB"] = $DbPath
     $psi.Environment["NOVOVM_GOVERNANCE_AUDIT_DB"] = $AuditDbPath
+    $psi.Environment["NOVOVM_GOVERNANCE_CHAIN_AUDIT_DB"] = $ChainAuditDbPath
     $psi.Environment["NOVOVM_ENABLE_PUBLIC_RPC"] = "0"
     $psi.Environment["NOVOVM_ENABLE_GOV_RPC"] = "1"
     $psi.Environment["NOVOVM_GOV_RPC_BIND"] = $Bind
@@ -336,6 +338,10 @@ $auditDbPath = Join-Path $OutputDir "governance-audit-events.json"
 if (Test-Path $auditDbPath) {
     Remove-Item -Path $auditDbPath -Force
 }
+$chainAuditDbPath = Join-Path $OutputDir "governance-chain-audit-events.json"
+if (Test-Path $chainAuditDbPath) {
+    Remove-Item -Path $chainAuditDbPath -Force
+}
 
 $bindUri = [Uri]("http://$Bind")
 $rpcEndpoint = "http://$Bind/rpc"
@@ -357,6 +363,17 @@ $voteVerifierRejectExitCode = 0
 $voteVerifierRejectErrorMessage = ""
 $voteVerifierRejectStdoutPath = Join-Path $OutputDir "governance-rpc-reject.stdout.log"
 $voteVerifierRejectStderrPath = Join-Path $OutputDir "governance-rpc-reject.stderr.log"
+$chainAuditRestartOk = $false
+$chainAuditRestartCount = 0
+$chainAuditRestartHeadSeq = 0
+$chainAuditRestartRoot = ""
+$chainAuditRestartRootOk = $false
+$chainAuditRestartHasSubmitAccepted = $false
+$chainAuditRestartHasExecuteApplied = $false
+$chainAuditRestartErrorMessage = ""
+$chainAuditRestartStdoutPath = Join-Path $OutputDir "governance-rpc-restart.stdout.log"
+$chainAuditRestartStderrPath = Join-Path $OutputDir "governance-rpc-restart.stderr.log"
+$chainAuditRoot = ""
 
 try {
     $proc = Start-RpcServerProcess `
@@ -364,6 +381,7 @@ try {
         -RepoRoot $RepoRoot `
         -DbPath $dbPath `
         -AuditDbPath $auditDbPath `
+        -ChainAuditDbPath $chainAuditDbPath `
         -Bind $Bind `
         -VoteVerifier $GovernanceVoteVerifier `
         -MaxBodyBytes $MaxBodyBytes `
@@ -422,6 +440,12 @@ try {
     $policyResp = Invoke-JsonPost -Uri $rpcEndpoint -Body (Build-RpcBody -Id 6 -Method "governance_getPolicy" -Params @{})
     $requests += [ordered]@{ step = "policy_after_execute"; resp = $policyResp }
 
+    $chainAuditAfterExecuteResp = Invoke-JsonPost -Uri $rpcEndpoint -Body (Build-RpcBody -Id 61 -Method "governance_listChainAuditEvents" -Params @{
+        proposal_id = 1
+        limit = 50
+    })
+    $requests += [ordered]@{ step = "list_chain_audit_events_after_execute"; resp = $chainAuditAfterExecuteResp }
+
     $unauthorizedSubmitResp = Invoke-JsonPost -Uri $rpcEndpoint -Body (Build-RpcBody -Id 7 -Method "governance_submitProposal" -Params @{
         proposer = 2
         op = "update_mempool_fee_floor"
@@ -469,6 +493,12 @@ try {
     $listResp = Invoke-JsonPost -Uri $rpcEndpoint -Body (Build-RpcBody -Id 13 -Method "governance_listProposals" -Params @{})
     $requests += [ordered]@{ step = "list_proposals"; resp = $listResp }
 
+    $chainAuditResp = Invoke-JsonPost -Uri $rpcEndpoint -Body (Build-RpcBody -Id 14 -Method "governance_listChainAuditEvents" -Params @{
+        proposal_id = 1
+        limit = 50
+    })
+    $requests += [ordered]@{ step = "list_chain_audit_events"; resp = $chainAuditResp }
+
     if (-not $proc.WaitForExit($ExitTimeoutSeconds * 1000)) {
         try { $proc.Kill() } catch {}
         throw "governance rpc server did not exit within ${ExitTimeoutSeconds}s"
@@ -498,6 +528,90 @@ try {
     }
 }
 
+$restartProc = $null
+try {
+    $restartProc = Start-RpcServerProcess `
+        -NodeExe $nodeExe `
+        -RepoRoot $RepoRoot `
+        -DbPath $dbPath `
+        -AuditDbPath $auditDbPath `
+        -ChainAuditDbPath $chainAuditDbPath `
+        -Bind $Bind `
+        -VoteVerifier $GovernanceVoteVerifier `
+        -MaxBodyBytes $MaxBodyBytes `
+        -RateLimitPerIp $RateLimitPerIp `
+        -MaxRequests 1
+
+    $restartListening = Wait-TcpEndpoint -HostName $bindUri.Host -Port $bindUri.Port -TimeoutSeconds $StartupTimeoutSeconds
+    if (-not $restartListening) {
+        throw "chain audit restart probe did not listen on $Bind within ${StartupTimeoutSeconds}s"
+    }
+
+    $chainAuditRestartResp = Invoke-JsonPost -Uri $rpcEndpoint -Body (Build-RpcBody -Id 31 -Method "governance_listChainAuditEvents" -Params @{
+        proposal_id = 1
+        limit = 50
+    })
+
+    if (-not $restartProc.WaitForExit($ExitTimeoutSeconds * 1000)) {
+        try { $restartProc.Kill() } catch {}
+        throw "chain audit restart probe did not exit within ${ExitTimeoutSeconds}s"
+    }
+
+    $chainAuditRestartErr = Get-PropertyOrNull -InputObject (Get-PropertyOrNull -InputObject $chainAuditRestartResp -Name "json") -Name "error"
+    $chainAuditRestartResult = Get-PropertyOrNull -InputObject (Get-PropertyOrNull -InputObject $chainAuditRestartResp -Name "json") -Name "result"
+    $chainAuditRestartCountRaw = Get-PropertyOrNull -InputObject $chainAuditRestartResult -Name "count"
+    if ($null -ne $chainAuditRestartCountRaw -and "$chainAuditRestartCountRaw" -ne "") {
+        $chainAuditRestartCount = [int]$chainAuditRestartCountRaw
+    }
+    $chainAuditRestartHeadSeqRaw = Get-PropertyOrNull -InputObject $chainAuditRestartResult -Name "head_seq"
+    if ($null -ne $chainAuditRestartHeadSeqRaw -and "$chainAuditRestartHeadSeqRaw" -ne "") {
+        $chainAuditRestartHeadSeq = [int]$chainAuditRestartHeadSeqRaw
+    }
+    $chainAuditRestartRootRaw = Get-PropertyOrNull -InputObject $chainAuditRestartResult -Name "root"
+    if ($null -ne $chainAuditRestartRootRaw) {
+        $chainAuditRestartRoot = ([string]$chainAuditRestartRootRaw).Trim().ToLowerInvariant()
+    }
+    $chainAuditRestartRootOk = ($chainAuditRestartRoot -match '^[0-9a-f]{64}$')
+    $chainAuditRestartEvents = Get-PropertyOrNull -InputObject $chainAuditRestartResult -Name "events"
+    if ($null -ne $chainAuditRestartEvents) {
+        foreach ($event in $chainAuditRestartEvents) {
+            $action = [string](Get-PropertyOrNull -InputObject $event -Name "action")
+            $outcome = [string](Get-PropertyOrNull -InputObject $event -Name "outcome")
+            if ($action -eq "submit" -and $outcome -eq "accepted") { $chainAuditRestartHasSubmitAccepted = $true }
+            if ($action -eq "execute" -and $outcome -eq "applied") { $chainAuditRestartHasExecuteApplied = $true }
+        }
+    }
+
+    $chainAuditRestartOk = (
+        $chainAuditRestartResp.status -eq 200 -and
+        $null -eq $chainAuditRestartErr -and
+        $chainAuditRestartCount -ge 2 -and
+        $chainAuditRestartHeadSeq -ge $chainAuditRestartCount -and
+        $chainAuditRestartRootOk -and
+        $chainAuditRestartHasSubmitAccepted -and
+        $chainAuditRestartHasExecuteApplied
+    )
+} catch {
+    $chainAuditRestartErrorMessage = $_.Exception.Message
+    $chainAuditRestartOk = $false
+} finally {
+    if ($restartProc) {
+        if (-not $restartProc.HasExited) {
+            try { $restartProc.Kill() } catch {}
+        }
+        $restartStdout = $restartProc.StandardOutput.ReadToEnd()
+        $restartStderr = $restartProc.StandardError.ReadToEnd()
+        $restartStdout | Set-Content -Path $chainAuditRestartStdoutPath -Encoding UTF8
+        $restartStderr | Set-Content -Path $chainAuditRestartStderrPath -Encoding UTF8
+    }
+    if (-not (Test-Path $chainAuditRestartStdoutPath)) {
+        "" | Set-Content -Path $chainAuditRestartStdoutPath -Encoding UTF8
+    }
+    if (-not (Test-Path $chainAuditRestartStderrPath)) {
+        "" | Set-Content -Path $chainAuditRestartStderrPath -Encoding UTF8
+    }
+}
+
 $rejectProc = $null
 try {
     $rejectProc = Start-RpcServerProcess `
@@ -505,6 +619,7 @@ try {
         -RepoRoot $RepoRoot `
         -DbPath $dbPath `
         -AuditDbPath $auditDbPath `
+        -ChainAuditDbPath $chainAuditDbPath `
         -Bind $Bind `
         -VoteVerifier "mldsa87" `
         -MaxBodyBytes $MaxBodyBytes `
@@ -565,6 +680,8 @@ $slashVote0Resp = $stepMap["slash_vote0"]
 $duplicateResp = $stepMap["slash_vote0_duplicate"]
 $auditResp = $stepMap["list_audit_events"]
 $listResp = $stepMap["list_proposals"]
+$chainAuditResp = $stepMap["list_chain_audit_events"]
+$chainAuditAfterExecuteResp = $stepMap["list_chain_audit_events_after_execute"]
 
 $submitParam2Err = Get-PropertyOrNull -InputObject (Get-PropertyOrNull -InputObject $submitParam2Resp -Name "json") -Name "error"
 $sign1Err = Get-PropertyOrNull -InputObject (Get-PropertyOrNull -InputObject $sign1Resp -Name "json") -Name "error"
@@ -578,6 +695,8 @@ $slashSignErr = Get-PropertyOrNull -InputObject (Get-PropertyOrNull -InputObject
 $slashVote0Err = Get-PropertyOrNull -InputObject (Get-PropertyOrNull -InputObject $slashVote0Resp -Name "json") -Name "error"
 $auditErr = Get-PropertyOrNull -InputObject (Get-PropertyOrNull -InputObject $auditResp -Name "json") -Name "error"
 $listErr = Get-PropertyOrNull -InputObject (Get-PropertyOrNull -InputObject $listResp -Name "json") -Name "error"
+$chainAuditErr = Get-PropertyOrNull -InputObject (Get-PropertyOrNull -InputObject $chainAuditResp -Name "json") -Name "error"
+$chainAuditAfterExecuteErr = Get-PropertyOrNull -InputObject (Get-PropertyOrNull -InputObject $chainAuditAfterExecuteResp -Name "json") -Name "error"
 
 $submitParam2Ok = ($submitParam2Resp.status -eq 200 -and $null -eq $submitParam2Err)
 $sign1Sig = Get-PropertyOrNull -InputObject (Get-PropertyOrNull -InputObject (Get-PropertyOrNull -InputObject $sign1Resp -Name "json") -Name "result") -Name "signature"
@@ -591,13 +710,56 @@ $signUnsupportedSchemeRejectOk = ($signUnsupportedSchemeResp.status -eq 200 -and
 $vote0Ok = ($vote0Resp.status -eq 200 -and $null -eq $vote0Err)
 $vote1SignedOk = ($vote1SignedResp.status -eq 200 -and $null -eq $vote1SignedErr)
 $executeOk = ($executeResp.status -eq 200 -and $null -eq $executeErr)
+$executeVoteVerifierName = ""
+$executeVoteVerifierScheme = ""
+$executeResult = Get-PropertyOrNull -InputObject (Get-PropertyOrNull -InputObject $executeResp -Name "json") -Name "result"
+$executeVoteVerifier = Get-PropertyOrNull -InputObject $executeResult -Name "vote_verifier"
+$executeVoteVerifierNameRaw = Get-PropertyOrNull -InputObject $executeVoteVerifier -Name "name"
+if ($null -ne $executeVoteVerifierNameRaw) {
+    $executeVoteVerifierName = [string]$executeVoteVerifierNameRaw
+}
+$executeVoteVerifierSchemeRaw = Get-PropertyOrNull -InputObject $executeVoteVerifier -Name "signature_scheme"
+if ($null -ne $executeVoteVerifierSchemeRaw) {
+    $executeVoteVerifierScheme = ([string]$executeVoteVerifierSchemeRaw).Trim().ToLowerInvariant()
+}
+$executeVoteVerifierOk = (
+    $executeOk -and
+    -not [string]::IsNullOrWhiteSpace($executeVoteVerifierName) -and
+    $executeVoteVerifierScheme -eq $voteVerifierActive.ToLowerInvariant()
+)
 $policyFee = 0
+$policyChainAuditHeadSeq = 0
+$policyChainAuditRoot = ""
+$policyChainAuditRootOk = $false
 $policyResult = Get-PropertyOrNull -InputObject (Get-PropertyOrNull -InputObject $policyResp -Name "json") -Name "result"
 $policyFeeRaw = Get-PropertyOrNull -InputObject $policyResult -Name "mempool_fee_floor"
 if ($null -ne $policyFeeRaw -and "$policyFeeRaw" -ne "") {
     $policyFee = [int64]$policyFeeRaw
 }
-$policyOk = ($policyResp.status -eq 200 -and $policyFee -eq 17)
+$policyChainAudit = Get-PropertyOrNull -InputObject $policyResult -Name "governance_chain_audit"
+$policyChainAuditHeadSeqRaw = Get-PropertyOrNull -InputObject $policyChainAudit -Name "head_seq"
+if ($null -ne $policyChainAuditHeadSeqRaw -and "$policyChainAuditHeadSeqRaw" -ne "") {
+    $policyChainAuditHeadSeq = [int]$policyChainAuditHeadSeqRaw
+}
+$policyChainAuditRootRaw = Get-PropertyOrNull -InputObject $policyChainAudit -Name "root"
+if ($null -ne $policyChainAuditRootRaw) {
+    $policyChainAuditRoot = ([string]$policyChainAuditRootRaw).Trim().ToLowerInvariant()
+}
+$policyChainAuditRootOk = ($policyChainAuditRoot -match '^[0-9a-f]{64}$')
+$policyOk = ($policyResp.status -eq 200 -and $policyFee -eq 17 -and $policyChainAuditRootOk)
+$chainAuditAfterExecuteHeadSeq = 0
+$chainAuditAfterExecuteRoot = ""
+$chainAuditAfterExecuteRootOk = $false
+$chainAuditAfterExecuteResult = Get-PropertyOrNull -InputObject (Get-PropertyOrNull -InputObject $chainAuditAfterExecuteResp -Name "json") -Name "result"
+$chainAuditAfterExecuteHeadSeqRaw = Get-PropertyOrNull -InputObject $chainAuditAfterExecuteResult -Name "head_seq"
+if ($null -ne $chainAuditAfterExecuteHeadSeqRaw -and "$chainAuditAfterExecuteHeadSeqRaw" -ne "") {
+    $chainAuditAfterExecuteHeadSeq = [int]$chainAuditAfterExecuteHeadSeqRaw
+}
+$chainAuditAfterExecuteRootRaw = Get-PropertyOrNull -InputObject $chainAuditAfterExecuteResult -Name "root"
+if ($null -ne $chainAuditAfterExecuteRootRaw) {
+    $chainAuditAfterExecuteRoot = ([string]$chainAuditAfterExecuteRootRaw).Trim().ToLowerInvariant()
+}
+$chainAuditAfterExecuteRootOk = ($chainAuditAfterExecuteRoot -match '^[0-9a-f]{64}$')
 $unauthorizedSubmitErrMsg = ""
 $unauthorizedSubmitErrMsgRaw = Get-PropertyOrNull -InputObject $unauthorizedSubmitErr -Name "message"
 if ($null -ne $unauthorizedSubmitErrMsgRaw) {
@@ -682,6 +844,145 @@ $auditPersistOk = (
     $auditPersistHasSignRejectUnsupportedScheme
 )
 $listOk = ($listResp.status -eq 200 -and $null -eq $listErr)
+$chainAuditCount = 0
+$chainAuditHeadSeq = 0
+$chainAuditRoot = ""
+$chainAuditRootOk = $false
+$chainAuditHasSubmitAccepted = $false
+$chainAuditHasExecuteApplied = $false
+$chainAuditHasExecuteAppliedVerifier = $false
+$chainAuditResult = Get-PropertyOrNull -InputObject (Get-PropertyOrNull -InputObject $chainAuditResp -Name "json") -Name "result"
+$chainAuditCountRaw = Get-PropertyOrNull -InputObject $chainAuditResult -Name "count"
+if ($null -ne $chainAuditCountRaw -and "$chainAuditCountRaw" -ne "") {
+    $chainAuditCount = [int]$chainAuditCountRaw
+}
+$chainAuditHeadSeqRaw = Get-PropertyOrNull -InputObject $chainAuditResult -Name "head_seq"
+if ($null -ne $chainAuditHeadSeqRaw -and "$chainAuditHeadSeqRaw" -ne "") {
+    $chainAuditHeadSeq = [int]$chainAuditHeadSeqRaw
+}
+$chainAuditRootRaw = Get-PropertyOrNull -InputObject $chainAuditResult -Name "root"
+if ($null -ne $chainAuditRootRaw) {
+    $chainAuditRoot = ([string]$chainAuditRootRaw).Trim().ToLowerInvariant()
+}
+$chainAuditRootOk = ($chainAuditRoot -match '^[0-9a-f]{64}$')
+$chainAuditEvents = Get-PropertyOrNull -InputObject $chainAuditResult -Name "events"
+if ($null -ne $chainAuditEvents) {
+    foreach ($event in $chainAuditEvents) {
+        $action = [string](Get-PropertyOrNull -InputObject $event -Name "action")
+        $outcome = [string](Get-PropertyOrNull -InputObject $event -Name "outcome")
+        $detail = [string](Get-PropertyOrNull -InputObject $event -Name "detail")
+        if ($action -eq "submit" -and $outcome -eq "accepted") { $chainAuditHasSubmitAccepted = $true }
+        if ($action -eq "execute" -and $outcome -eq "applied") {
+            $chainAuditHasExecuteApplied = $true
+            $detailLower = $detail.ToLowerInvariant()
+            if (
+                $detailLower.Contains("verifier=") -and
+                $detailLower.Contains("signature_scheme=")
+            ) {
+                $chainAuditHasExecuteAppliedVerifier = $true
+            }
+        }
+    }
+}
+$chainAuditOk = (
+    $chainAuditResp.status -eq 200 -and
+    $null -eq $chainAuditErr -and
+    $chainAuditCount -ge 2 -and
+    $chainAuditHeadSeq -ge $chainAuditCount -and
+    $chainAuditRootOk -and
+    $chainAuditHasSubmitAccepted -and
+    $chainAuditHasExecuteApplied -and
+    $chainAuditHasExecuteAppliedVerifier
+)
+$policyChainAuditConsistencyOk = (
+    $chainAuditAfterExecuteResp.status -eq 200 -and
+    $null -eq $chainAuditAfterExecuteErr -and
+    $chainAuditAfterExecuteRootOk -and
+    $policyChainAuditRootOk -and
+    $policyChainAuditRoot -eq $chainAuditAfterExecuteRoot -and
+    $policyChainAuditHeadSeq -eq $chainAuditAfterExecuteHeadSeq
+)
+$chainAuditPersistCount = 0
+$chainAuditPersistHeadSeq = 0
+$chainAuditPersistRoot = ""
+$chainAuditPersistRootOk = $false
+$chainAuditPersistHasSubmitAccepted = $false
+$chainAuditPersistHasExecuteApplied = $false
+$chainAuditPersistHasExecuteAppliedVerifier = $false
+$chainAuditPersistOk = $false
+$chainAuditPersistJson = Read-JsonFile -Path $chainAuditDbPath
+if ($null -ne $chainAuditPersistJson) {
+    $chainAuditPersistRootRaw = Get-PropertyOrNull -InputObject $chainAuditPersistJson -Name "root_hex"
+    if ($null -ne $chainAuditPersistRootRaw) {
+        $chainAuditPersistRoot = ([string]$chainAuditPersistRootRaw).Trim().ToLowerInvariant()
+    }
+    $chainAuditPersistRootOk = (
+        $chainAuditPersistRoot -match '^[0-9a-f]{64}$' -and
+        ($chainAuditRoot -eq "" -or $chainAuditPersistRoot -eq $chainAuditRoot)
+    )
+    $chainPersistEvents = Get-PropertyOrNull -InputObject $chainAuditPersistJson -Name "events"
+    if ($null -ne $chainPersistEvents) {
+        $chainAuditPersistCount = @($chainPersistEvents).Count
+        foreach ($event in $chainPersistEvents) {
+            $seqRaw = Get-PropertyOrNull -InputObject $event -Name "seq"
+            if ($null -ne $seqRaw -and "$seqRaw" -ne "") {
+                $seq = [int]$seqRaw
+                if ($seq -gt $chainAuditPersistHeadSeq) {
+                    $chainAuditPersistHeadSeq = $seq
+                }
+            }
+            $action = [string](Get-PropertyOrNull -InputObject $event -Name "action")
+            $outcome = [string](Get-PropertyOrNull -InputObject $event -Name "outcome")
+            $detail = [string](Get-PropertyOrNull -InputObject $event -Name "detail")
+            if ($action -eq "submit" -and $outcome -eq "accepted") { $chainAuditPersistHasSubmitAccepted = $true }
+            if ($action -eq "execute" -and $outcome -eq "applied") {
+                $chainAuditPersistHasExecuteApplied = $true
+                $detailLower = $detail.ToLowerInvariant()
+                if (
+                    $detailLower.Contains("verifier=") -and
+                    $detailLower.Contains("signature_scheme=")
+                ) {
+                    $chainAuditPersistHasExecuteAppliedVerifier = $true
+                }
+            }
+        }
+    }
+}
+$chainAuditPersistOk = (
+    (Test-Path $chainAuditDbPath) -and
+    $chainAuditPersistCount -ge 2 -and
+    $chainAuditPersistHeadSeq -ge $chainAuditPersistCount -and
+    $chainAuditPersistRootOk -and
+    $chainAuditPersistHasSubmitAccepted -and
+    $chainAuditPersistHasExecuteApplied -and
+    $chainAuditPersistHasExecuteAppliedVerifier
+)
+$chainAuditRestartRootOk = (
+    $chainAuditRestartRootOk -and
+    ($chainAuditRoot -eq "" -or $chainAuditRestartRoot -eq $chainAuditRoot)
+)
+$chainAuditRestartHasExecuteAppliedVerifier = $false
+$chainAuditRestartJson = Read-JsonFile -Path $chainAuditDbPath
+if ($null -ne $chainAuditRestartJson) {
+    $restartEvents = Get-PropertyOrNull -InputObject $chainAuditRestartJson -Name "events"
+    if ($null -ne $restartEvents) {
+        foreach ($event in $restartEvents) {
+            $action = [string](Get-PropertyOrNull -InputObject $event -Name "action")
+            $outcome = [string](Get-PropertyOrNull -InputObject $event -Name "outcome")
+            if ($action -eq "execute" -and $outcome -eq "applied") {
+                $detail = [string](Get-PropertyOrNull -InputObject $event -Name "detail")
+                $detailLower = $detail.ToLowerInvariant()
+                if (
+                    $detailLower.Contains("verifier=") -and
+                    $detailLower.Contains("signature_scheme=")
+                ) {
+                    $chainAuditRestartHasExecuteAppliedVerifier = $true
+                }
+            }
+        }
+    }
+}
+$chainAuditRestartOk = ($chainAuditRestartOk -and $chainAuditRestartRootOk)
 $processedOk = ($processed -eq $ExpectedRequests)
 
 $pass = [bool](
@@ -693,7 +994,9 @@ $pass = [bool](
     $vote0Ok -and
     $vote1SignedOk -and
     $executeOk -and
+    $executeVoteVerifierOk -and
     $policyOk -and
+    $policyChainAuditConsistencyOk -and
     $unauthorizedSubmitRejectOk -and
     $submitSlashOk -and
     $slashSignOk -and
@@ -702,6 +1005,10 @@ $pass = [bool](
     $auditOk -and
     $auditPersistOk -and
     $listOk -and
+    $chainAuditOk -and
+    $chainAuditPersistOk -and
+    $chainAuditRestartOk -and
+    $chainAuditRestartHasExecuteAppliedVerifier -and
     $processedOk
 )
 
@@ -713,7 +1020,9 @@ elseif (-not $signUnsupportedSchemeRejectOk) { $errorReason = "sign_unsupported_
 elseif (-not $vote0Ok) { $errorReason = "vote0_failed" }
 elseif (-not $vote1SignedOk) { $errorReason = "vote1_signed_failed" }
 elseif (-not $executeOk) { $errorReason = "execute_param2_failed" }
+elseif (-not $executeVoteVerifierOk) { $errorReason = "execute_vote_verifier_missing" }
 elseif (-not $policyOk) { $errorReason = "policy_not_applied" }
+elseif (-not $policyChainAuditConsistencyOk) { $errorReason = "policy_chain_audit_mismatch" }
 elseif (-not $unauthorizedSubmitRejectOk) { $errorReason = "unauthorized_submit_not_rejected" }
 elseif (-not $submitSlashOk) { $errorReason = "submit_slash_failed" }
 elseif (-not $slashSignOk) { $errorReason = "slash_sign_failed" }
@@ -722,6 +1031,10 @@ elseif (-not $duplicateRejectOk) { $errorReason = "duplicate_vote_not_rejected" 
 elseif (-not $auditOk) { $errorReason = "audit_events_invalid" }
 elseif (-not $auditPersistOk) { $errorReason = "audit_events_not_persisted" }
 elseif (-not $listOk) { $errorReason = "list_proposals_failed" }
+elseif (-not $chainAuditOk) { $errorReason = "chain_audit_events_invalid" }
+elseif (-not $chainAuditPersistOk) { $errorReason = "chain_audit_events_not_persisted" }
+elseif (-not $chainAuditRestartOk) { $errorReason = "chain_audit_restart_probe_failed" }
+elseif (-not $chainAuditRestartHasExecuteAppliedVerifier) { $errorReason = "chain_audit_restart_missing_execute_verifier" }
 elseif (-not $processedOk) { $errorReason = "processed_count_mismatch" }
 
 $summary = [ordered]@{
@@ -746,7 +1059,17 @@ $summary = [ordered]@{
     vote0_ok = $vote0Ok
     vote1_signed_ok = $vote1SignedOk
     execute_ok = $executeOk
+    execute_vote_verifier_name = $executeVoteVerifierName
+    execute_vote_verifier_scheme = $executeVoteVerifierScheme
+    execute_vote_verifier_ok = $executeVoteVerifierOk
     policy_ok = $policyOk
+    policy_chain_audit_consistency_ok = $policyChainAuditConsistencyOk
+    policy_chain_audit_head_seq = $policyChainAuditHeadSeq
+    policy_chain_audit_root = $policyChainAuditRoot
+    policy_chain_audit_root_ok = $policyChainAuditRootOk
+    chain_audit_after_execute_head_seq = $chainAuditAfterExecuteHeadSeq
+    chain_audit_after_execute_root = $chainAuditAfterExecuteRoot
+    chain_audit_after_execute_root_ok = $chainAuditAfterExecuteRootOk
     unauthorized_submit_reject_ok = $unauthorizedSubmitRejectOk
     submit_slash_ok = $submitSlashOk
     slash_sign_ok = $slashSignOk
@@ -767,6 +1090,34 @@ $summary = [ordered]@{
     audit_persist_has_sign_reject_unsupported_scheme = $auditPersistHasSignRejectUnsupportedScheme
     audit_persist_path = $auditDbPath
     list_ok = $listOk
+    chain_audit_ok = $chainAuditOk
+    chain_audit_count = $chainAuditCount
+    chain_audit_head_seq = $chainAuditHeadSeq
+    chain_audit_root = $chainAuditRoot
+    chain_audit_root_ok = $chainAuditRootOk
+    chain_audit_has_submit_accepted = $chainAuditHasSubmitAccepted
+    chain_audit_has_execute_applied = $chainAuditHasExecuteApplied
+    chain_audit_has_execute_applied_verifier = $chainAuditHasExecuteAppliedVerifier
+    chain_audit_persist_ok = $chainAuditPersistOk
+    chain_audit_persist_count = $chainAuditPersistCount
+    chain_audit_persist_head_seq = $chainAuditPersistHeadSeq
+    chain_audit_persist_root = $chainAuditPersistRoot
+    chain_audit_persist_root_ok = $chainAuditPersistRootOk
+    chain_audit_persist_has_submit_accepted = $chainAuditPersistHasSubmitAccepted
+    chain_audit_persist_has_execute_applied = $chainAuditPersistHasExecuteApplied
+    chain_audit_persist_has_execute_applied_verifier = $chainAuditPersistHasExecuteAppliedVerifier
+    chain_audit_persist_path = $chainAuditDbPath
+    chain_audit_restart_ok = $chainAuditRestartOk
+    chain_audit_restart_count = $chainAuditRestartCount
+    chain_audit_restart_head_seq = $chainAuditRestartHeadSeq
+    chain_audit_restart_root = $chainAuditRestartRoot
+    chain_audit_restart_root_ok = $chainAuditRestartRootOk
+    chain_audit_restart_has_submit_accepted = $chainAuditRestartHasSubmitAccepted
+    chain_audit_restart_has_execute_applied = $chainAuditRestartHasExecuteApplied
+    chain_audit_restart_has_execute_applied_verifier = $chainAuditRestartHasExecuteAppliedVerifier
+    chain_audit_restart_error_message = $chainAuditRestartErrorMessage
+    chain_audit_restart_stdout_log = $chainAuditRestartStdoutPath
+    chain_audit_restart_stderr_log = $chainAuditRestartStderrPath
     stdout_log = $stdoutPath
     stderr_log = $stderrPath
     policy_fee_after_execute = $policyFee
@@ -803,6 +1154,9 @@ $md = @(
     "- vote0_ok: $($summary.vote0_ok)"
     "- vote1_signed_ok: $($summary.vote1_signed_ok)"
     "- execute_ok: $($summary.execute_ok)"
+    "- execute_vote_verifier_name: $($summary.execute_vote_verifier_name)"
+    "- execute_vote_verifier_scheme: $($summary.execute_vote_verifier_scheme)"
+    "- execute_vote_verifier_ok: $($summary.execute_vote_verifier_ok)"
     "- policy_ok: $($summary.policy_ok)"
     "- unauthorized_submit_reject_ok: $($summary.unauthorized_submit_reject_ok)"
     "- submit_slash_ok: $($summary.submit_slash_ok)"
@@ -824,6 +1178,28 @@ $md = @(
     "- audit_persist_has_sign_reject_unsupported_scheme: $($summary.audit_persist_has_sign_reject_unsupported_scheme)"
     "- audit_persist_path: $($summary.audit_persist_path)"
     "- list_ok: $($summary.list_ok)"
+    "- chain_audit_ok: $($summary.chain_audit_ok)"
+    "- chain_audit_count: $($summary.chain_audit_count)"
+    "- chain_audit_head_seq: $($summary.chain_audit_head_seq)"
+    "- chain_audit_has_submit_accepted: $($summary.chain_audit_has_submit_accepted)"
+    "- chain_audit_has_execute_applied: $($summary.chain_audit_has_execute_applied)"
+    "- chain_audit_has_execute_applied_verifier: $($summary.chain_audit_has_execute_applied_verifier)"
+    "- chain_audit_persist_ok: $($summary.chain_audit_persist_ok)"
+    "- chain_audit_persist_count: $($summary.chain_audit_persist_count)"
+    "- chain_audit_persist_head_seq: $($summary.chain_audit_persist_head_seq)"
+    "- chain_audit_persist_has_submit_accepted: $($summary.chain_audit_persist_has_submit_accepted)"
+    "- chain_audit_persist_has_execute_applied: $($summary.chain_audit_persist_has_execute_applied)"
+    "- chain_audit_persist_has_execute_applied_verifier: $($summary.chain_audit_persist_has_execute_applied_verifier)"
+    "- chain_audit_persist_path: $($summary.chain_audit_persist_path)"
+    "- chain_audit_restart_ok: $($summary.chain_audit_restart_ok)"
+    "- chain_audit_restart_count: $($summary.chain_audit_restart_count)"
+    "- chain_audit_restart_head_seq: $($summary.chain_audit_restart_head_seq)"
+    "- chain_audit_restart_has_submit_accepted: $($summary.chain_audit_restart_has_submit_accepted)"
+    "- chain_audit_restart_has_execute_applied: $($summary.chain_audit_restart_has_execute_applied)"
+    "- chain_audit_restart_has_execute_applied_verifier: $($summary.chain_audit_restart_has_execute_applied_verifier)"
+    "- chain_audit_restart_error_message: $($summary.chain_audit_restart_error_message)"
+    "- chain_audit_restart_stdout_log: $($summary.chain_audit_restart_stdout_log)"
+    "- chain_audit_restart_stderr_log: $($summary.chain_audit_restart_stderr_log)"
     "- policy_fee_after_execute: $($summary.policy_fee_after_execute)"
     "- unauthorized_submit_error_message: $($summary.unauthorized_submit_error_message)"
     "- duplicate_error_message: $($summary.duplicate_error_message)"

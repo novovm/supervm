@@ -11,9 +11,9 @@ use crate::protocol::{HotStuffProtocol, Phase};
 use crate::quorum_cert::{QuorumCertificate, Vote};
 use crate::types::{
     BFTError, BFTProposal, BFTResult, FeeRoutingOutcome, GovernanceAccessPolicy,
-    GovernanceCouncilPolicy, GovernanceOp, GovernanceProposal, GovernanceVote,
-    MarketGovernancePolicy, NetworkDosPolicy, NodeId, SlashEvidence, SlashExecution, SlashPolicy,
-    TokenEconomicsPolicy, ValidatorSet,
+    GovernanceChainAuditEvent, GovernanceCouncilPolicy, GovernanceOp, GovernanceProposal,
+    GovernanceVote, Hash, MarketGovernancePolicy, NetworkDosPolicy, NodeId, SlashEvidence,
+    SlashExecution, SlashPolicy, TokenEconomicsPolicy, ValidatorSet,
 };
 use ed25519_dalek::{SigningKey, VerifyingKey};
 use serde::{Deserialize, Serialize};
@@ -664,6 +664,24 @@ impl BFTEngine {
         protocol.governance_pending_proposals()
     }
 
+    /// 查询链上治理审计事件快照（seq 递增）。
+    pub fn governance_chain_audit_events(&self) -> Vec<GovernanceChainAuditEvent> {
+        let protocol = self.protocol.lock().unwrap();
+        protocol.governance_chain_audit_events()
+    }
+
+    /// 查询治理链审计根（确定性哈希）。
+    pub fn governance_chain_audit_root(&self) -> Hash {
+        let protocol = self.protocol.lock().unwrap();
+        protocol.governance_chain_audit_root()
+    }
+
+    /// 恢复治理链审计事件（用于节点重启后恢复查询索引）。
+    pub fn restore_governance_chain_audit_events(&self, events: Vec<GovernanceChainAuditEvent>) {
+        let mut protocol = self.protocol.lock().unwrap();
+        protocol.restore_governance_chain_audit_events(events);
+    }
+
     /// 获取当前阶段
     pub fn current_phase(&self) -> Phase {
         let protocol = self.protocol.lock().unwrap();
@@ -1031,6 +1049,92 @@ mod tests {
             .unwrap();
         assert!(executed);
         assert_eq!(engine.governance_mempool_fee_floor(), 11);
+    }
+
+    #[test]
+    fn test_governance_chain_audit_events_exposed_by_engine() {
+        let validator_set = ValidatorSet::new_equal_weight(vec![0, 1, 2]);
+        let signing_keys: Vec<_> = (0..3).map(|_| SigningKey::generate(&mut OsRng)).collect();
+        let public_keys: HashMap<NodeId, VerifyingKey> = signing_keys
+            .iter()
+            .enumerate()
+            .map(|(i, sk)| (i as NodeId, sk.verifying_key()))
+            .collect();
+        let engine = BFTEngine::new(
+            BFTConfig::default(),
+            0,
+            signing_keys[0].clone(),
+            validator_set,
+            public_keys,
+        )
+        .unwrap();
+        engine.set_governance_execution_enabled(true);
+        let proposal = engine
+            .submit_governance_proposal(0, GovernanceOp::UpdateMempoolFeeFloor { fee_floor: 21 })
+            .unwrap();
+        let votes = vec![
+            GovernanceVote::new(&proposal, 0, true, &signing_keys[0]),
+            GovernanceVote::new(&proposal, 1, true, &signing_keys[1]),
+        ];
+        let executed = engine
+            .execute_governance_proposal(proposal.proposal_id, &votes)
+            .unwrap();
+        assert!(executed);
+        let events = engine.governance_chain_audit_events();
+        assert!(events.iter().any(|event| {
+            event.proposal_id == proposal.proposal_id
+                && event.action == "submit"
+                && event.outcome == "accepted"
+        }));
+        assert!(events.iter().any(|event| {
+            event.proposal_id == proposal.proposal_id
+                && event.action == "execute"
+                && event.outcome == "applied"
+        }));
+    }
+
+    #[test]
+    fn test_restore_governance_chain_audit_events_via_engine() {
+        let validator_set = ValidatorSet::new_equal_weight(vec![0, 1, 2]);
+        let signing_keys: Vec<_> = (0..3).map(|_| SigningKey::generate(&mut OsRng)).collect();
+        let public_keys: HashMap<NodeId, VerifyingKey> = signing_keys
+            .iter()
+            .enumerate()
+            .map(|(i, sk)| (i as NodeId, sk.verifying_key()))
+            .collect();
+        let engine = BFTEngine::new(
+            BFTConfig::default(),
+            0,
+            signing_keys[0].clone(),
+            validator_set,
+            public_keys,
+        )
+        .unwrap();
+        engine.restore_governance_chain_audit_events(vec![
+            GovernanceChainAuditEvent {
+                seq: 7,
+                height: 3,
+                proposal_id: 2,
+                action: "submit".to_string(),
+                actor: Some(0),
+                outcome: "accepted".to_string(),
+                detail: "restored".to_string(),
+            },
+            GovernanceChainAuditEvent {
+                seq: 9,
+                height: 4,
+                proposal_id: 2,
+                action: "execute".to_string(),
+                actor: Some(0),
+                outcome: "applied".to_string(),
+                detail: "restored".to_string(),
+            },
+        ]);
+        let events = engine.governance_chain_audit_events();
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0].seq, 7);
+        assert_eq!(events[1].seq, 9);
+        assert_ne!(engine.governance_chain_audit_root(), [0u8; 32]);
     }
 
     #[test]

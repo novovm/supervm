@@ -522,7 +522,7 @@ function Parse-BlockOutLine {
     }
     $m = [regex]::Match(
         $line,
-        "^block_out:\s+height=(?<height>\d+)\s+epoch=(?<epoch>\d+)\s+batches=(?<batches>\d+)\s+txs=(?<txs>\d+)\s+block_hash=(?<block_hash>[0-9a-f]+)\s+state_root=(?<state_root>[0-9a-f]+)\s+proposal_hash=(?<proposal_hash>[0-9a-f]+)$"
+        "^block_out:\s+height=(?<height>\d+)\s+epoch=(?<epoch>\d+)\s+batches=(?<batches>\d+)\s+txs=(?<txs>\d+)\s+block_hash=(?<block_hash>[0-9a-f]+)\s+state_root=(?<state_root>[0-9a-f]+)(?:\s+governance_chain_audit_root=(?<governance_chain_audit_root>[0-9a-f]+))?\s+proposal_hash=(?<proposal_hash>[0-9a-f]+)$"
     )
     if (-not $m.Success) {
         return [ordered]@{
@@ -538,6 +538,7 @@ function Parse-BlockOutLine {
         txs = [int64]$m.Groups["txs"].Value
         block_hash = $m.Groups["block_hash"].Value
         state_root = $m.Groups["state_root"].Value
+        governance_chain_audit_root = $m.Groups["governance_chain_audit_root"].Value
         proposal_hash = $m.Groups["proposal_hash"].Value
         raw = $line
     }
@@ -576,7 +577,7 @@ function Parse-CommitOutLine {
     }
     $m = [regex]::Match(
         $line,
-        "^commit_out:\s+store=(?<store>\w+)\s+committed=(?<committed>true|false)\s+height=(?<height>\d+)\s+total_blocks=(?<total_blocks>\d+)\s+block_hash=(?<block_hash>[0-9a-f]+)\s+state_root=(?<state_root>[0-9a-f]+)$"
+        "^commit_out:\s+store=(?<store>\w+)\s+committed=(?<committed>true|false)\s+height=(?<height>\d+)\s+total_blocks=(?<total_blocks>\d+)\s+block_hash=(?<block_hash>[0-9a-f]+)\s+state_root=(?<state_root>[0-9a-f]+)(?:\s+governance_chain_audit_root=(?<governance_chain_audit_root>[0-9a-f]+))?$"
     )
     if (-not $m.Success) {
         return [ordered]@{
@@ -592,6 +593,7 @@ function Parse-CommitOutLine {
         total_blocks = [int64]$m.Groups["total_blocks"].Value
         block_hash = $m.Groups["block_hash"].Value
         state_root = $m.Groups["state_root"].Value
+        governance_chain_audit_root = $m.Groups["governance_chain_audit_root"].Value
         raw = $line
     }
 }
@@ -2128,7 +2130,10 @@ if ($blockOutAvailable) {
         $blockOutFfi.txs -eq $blockOutLegacy.txs -and
         $blockOutFfi.txs -eq $BatchADemoTxs -and
         $blockOutFfi.block_hash -eq $blockOutLegacy.block_hash -and
-        $blockOutFfi.state_root -eq $blockOutLegacy.state_root
+        $blockOutFfi.state_root -eq $blockOutLegacy.state_root -and
+        -not [string]::IsNullOrWhiteSpace($blockOutFfi.governance_chain_audit_root) -and
+        -not [string]::IsNullOrWhiteSpace($blockOutLegacy.governance_chain_audit_root) -and
+        $blockOutFfi.governance_chain_audit_root -eq $blockOutLegacy.governance_chain_audit_root
     )
 }
 
@@ -2155,7 +2160,10 @@ if ($commitOutAvailable) {
         $commitOutFfi.committed -and
         $commitOutLegacy.committed -and
         $commitOutFfi.block_hash -eq $commitOutLegacy.block_hash -and
-        $commitOutFfi.state_root -eq $commitOutLegacy.state_root
+        $commitOutFfi.state_root -eq $commitOutLegacy.state_root -and
+        -not [string]::IsNullOrWhiteSpace($commitOutFfi.governance_chain_audit_root) -and
+        -not [string]::IsNullOrWhiteSpace($commitOutLegacy.governance_chain_audit_root) -and
+        $commitOutFfi.governance_chain_audit_root -eq $commitOutLegacy.governance_chain_audit_root
     )
 }
 
@@ -2602,8 +2610,8 @@ $result = [ordered]@{
         $capabilitySnapshotNote,
         "batch_a_closure is reported as an execution-to-consensus integration signal and is not a hard gate yet",
         $blockWireNote,
-        "block_output_signal compares deterministic block_hash output across ffi_v2 and legacy_compat routes",
-        "commit_output_signal compares commit records from in-memory block store across ffi_v2 and legacy_compat routes",
+        "block_output_signal compares deterministic block_hash and governance_chain_audit_root output across ffi_v2 and legacy_compat routes",
+        "commit_output_signal compares commit records (including governance_chain_audit_root) from in-memory block store across ffi_v2 and legacy_compat routes",
         "network_output_signal compares in-memory transport delivery signal across ffi_v2 and legacy_compat routes",
         "network_closure_signal validates two-node discovery/gossip/sync closure across ffi_v2 and legacy_compat routes",
         "network_pacemaker_signal validates two-node view_sync/new_view closure across ffi_v2 and legacy_compat routes",
@@ -3248,6 +3256,8 @@ if ($result.block_output_signal.available -and $result.block_output_signal.ffi_v
     $md += "- legacy_compat.txs: $($result.block_output_signal.legacy_compat.txs)"
     $md += "- ffi_v2.block_hash: $($result.block_output_signal.ffi_v2.block_hash)"
     $md += "- legacy_compat.block_hash: $($result.block_output_signal.legacy_compat.block_hash)"
+    $md += "- ffi_v2.governance_chain_audit_root: $($result.block_output_signal.ffi_v2.governance_chain_audit_root)"
+    $md += "- legacy_compat.governance_chain_audit_root: $($result.block_output_signal.legacy_compat.governance_chain_audit_root)"
 }
 
 if ($result.commit_output_signal.available -and $result.commit_output_signal.ffi_v2.parse_ok -and $result.commit_output_signal.legacy_compat.parse_ok) {
@@ -3256,6 +3266,8 @@ if ($result.commit_output_signal.available -and $result.commit_output_signal.ffi
     $md += ""
     $md += "- ffi_v2.block_hash: $($result.commit_output_signal.ffi_v2.block_hash)"
     $md += "- legacy_compat.block_hash: $($result.commit_output_signal.legacy_compat.block_hash)"
+    $md += "- ffi_v2.governance_chain_audit_root: $($result.commit_output_signal.ffi_v2.governance_chain_audit_root)"
+    $md += "- legacy_compat.governance_chain_audit_root: $($result.commit_output_signal.legacy_compat.governance_chain_audit_root)"
 }
 
 if ($result.network_output_signal.available -and $result.network_output_signal.ffi_v2.parse_ok -and $result.network_output_signal.legacy_compat.parse_ok) {

@@ -39,7 +39,7 @@
 | 完整共识（validator/stake/slash/view-change/fork choice） | 基本正确（主闭环已具备） | 已具备 `ValidatorSet + QC + 投票`，并新增 stake-weighted quorum、equivocation slash-evidence、slash execution、view-change、fork-choice；`slash execution` 已参数化为 `SlashPolicy(mode/threshold/min_active/cooldown_epochs)`，默认可由 `config/novovm-consensus-policy.json` 外置输入并通过 `slash_governance_gate + slash_policy_external_gate + unjail_cooldown_gate` 门禁；网络级 `view_sync/new_view` pacemaker 已从“消息闭环”升级为 `pacemaker_failover_gate`（leader 超时失效 -> 换主 -> 提交）硬门禁，后续主要是生产参数化与治理策略收口。 |
 | 完整同步（header/fast/state sync） | 部分正确（仍缺） | 已新增 `header_sync_gate`（headers-first）与 `fast_state_sync_gate`（fast headers + state snapshot verify）并接入 acceptance gate，且均含篡改负向拒绝；`fast/state sync` 的生产多 peer/持久化恢复链路仍缺。 |
 | DoS 防护（tx spam/peer flood/invalid block storm） | 部分正确（仍缺） | 已有 RPC ingress rate-limit（429 / `-32029`）门禁，且新增网络级 `peer-score/ban + invalid-block-storm` 门禁（`network_dos_gate`）；仍缺生产级持久化惩罚、跨节点信誉传播与灰度恢复策略。 |
-| 经济参数（gas pricing/burn/inflation/treasury） | 部分正确（最小闭环已迁移，完整域未完成） | `NOVOVM` 已迁入 `mint/burn/gas-service split/treasury spend` 最小闭环并门禁化；完整经济治理域（外汇储备/NAV/回购/跨模块参数）仍待迁移。 |
+| 经济参数（gas pricing/burn/inflation/treasury） | 部分正确（主链路已迁移，生产化策略待补） | `NOVOVM` 已迁入 `mint/burn/gas-service split/treasury spend`，并补齐经济跨模块主链路（预言机价格驱动/CDP 清算/NAV 结算/回购编排）门禁化；剩余缺口主要在长期运维与策略持久化。 |
 | ZK runtime（F-15） | 正确（当前受 AOEM 约束） | 台账明确 `zk_runtime_ready=False`、`zkvm_prove/verify=False`，等待 AOEM 1.0。 |
 
 ## C. 「下一阶段（自然演进）」
@@ -66,7 +66,7 @@
 | 完整共识机制 | MVP 通过（~80%核验口径） | 已有验证者集合/QC + stake-weighted quorum + equivocation slash-evidence + slash execution + slash-policy(threshold/observe-only/min-active) + view-change + fork-choice + 网络级 view-sync/new-view pacemaker + failover（超时换主后继续出块提交）；剩余是生产参数化罚没/治理策略 | 部分完成 |
 | 完整同步 | MVP 网络闭环通过 | 已补 headers-first + fast/state 最小门禁闭环；仍缺 fast/state sync 生产闭环 | 部分完成 |
 | DoS 防护体系 | 已形成入口+网络最小门禁项 | RPC ingress 侧 rate-limit 已门禁化；网络侧 `peer-score/ban + invalid-block-storm` 已门禁化，生产级长期信誉治理仍待补 | 部分完成 |
-| 经济参数闭环 | 最小闭环已完成，完整域待补 | 已完成 `UpdateTokenEconomicsPolicy + TreasurySpend` 门禁闭环；完整经济治理域仍在后续计划 | 部分完成 |
+| 经济参数闭环 | 主链路已完成，生产策略待补 | 已完成 `UpdateTokenEconomicsPolicy + TreasurySpend + UpdateMarketGovernancePolicy`，并新增跨模块编排门禁（oracle/liquidation/nav/buyback）；生产策略与长期运营治理仍在后续计划 | 部分完成 |
 | ZK runtime ready | `False`（台账明确） | 原仓有 ZK 能力沉淀，但 NOVOVM 运行态受 AOEM 约束 | 阻塞中 |
 
 **B 汇总**：`0 项完全完成 / 4 项部分完成 / 1 项阻塞`。
@@ -76,7 +76,7 @@
 | 项目 | 进度判定 | 备注 |
 |---|---|---|
 | 钱包/RPC/SDK | 部分完成 | 读查询 RPC 已服务化并接入门禁；钱包/SDK/写接口仍待推进。 |
-| Genesis+Tokenomics | 部分完成 | 最小迁移闭环已形成（token economics + treasury spend），完整经济域仍待补。 |
+| Genesis+Tokenomics | 部分完成 | 迁移闭环已形成（token economics + treasury spend + market governance orchestration），仍待补生产参数编排与发布运营策略。 |
 | Validator 网络 | 部分完成 | 有 demo/harness，不等于生产网络。 |
 | Testnet 启动 | 未完成 | 多为计划/建议部署测试网。 |
 | ZK Runtime | 阻塞中 | 等 AOEM 1.0 后切 runtime-ready。 |
@@ -121,6 +121,14 @@
   - `artifacts/migration/release-candidate-novovm-rc-2026-03-06-ga-v1/rc-candidate.json`
   - `status=ReadyForMerge/SnapshotGreen`
   - `commit_hash=823a5880e104c96d03e2ab4a8473c9f620ae6413`
+- GA orchfix 复核快照（2026-03-06）：
+  - `artifacts/migration/release-candidate-novovm-rc-2026-03-06-ga-orchfix/snapshot/release-snapshot.json`
+  - `profile_name=full_snapshot_ga_v1`，`overall_pass=True`
+  - `governance_market_policy_orchestration_pass=True`
+- GA orchfix 复核 RC（2026-03-06）：
+  - `artifacts/migration/release-candidate-novovm-rc-2026-03-06-ga-orchfix/rc-candidate.json`
+  - `status=ReadyForMerge/SnapshotGreen`
+  - `commit_hash=bac3763192258d5fcb89fc129e2b675d56dbb317`
 - 治理审计持久化回归快照（2026-03-06）：
   - `artifacts/migration/release-snapshot-audit-persist-smoke/release-snapshot.json`
   - `key_results.governance_rpc_audit_persist_pass=True`
@@ -135,6 +143,13 @@
   - `artifacts/migration/release-candidate-novovm-rc-2026-03-06-signature-scheme-smoke/rc-candidate.json`
   - `status=ReadyForMerge/SnapshotGreen`
   - `governance_rpc_signature_scheme_reject_pass=True`
+- 治理链审计 root 区块路径锚定回归快照（2026-03-06）：
+  - `artifacts/migration/release-snapshot-governance-chain-audit-root-smoke/release-snapshot.json`
+  - `key_results.governance_chain_audit_root_parity_pass=True`
+- 治理链审计 root 区块路径锚定回归 RC（2026-03-06）：
+  - `artifacts/migration/release-candidate-novovm-rc-2026-03-06-governance-chain-audit-root-anchor-smoke/rc-candidate.json`
+  - `status=ReadyForMerge/SnapshotGreen`
+  - `governance_chain_audit_root_parity_pass=True`
 
 ---
 

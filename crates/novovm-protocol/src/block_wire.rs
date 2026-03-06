@@ -13,6 +13,7 @@ pub struct BlockHeaderWireV1 {
     pub epoch_id: u64,
     pub parent_hash: [u8; 32],
     pub state_root: [u8; 32],
+    pub governance_chain_audit_root: [u8; 32],
     pub tx_count: u64,
     pub batch_count: u32,
     pub consensus_binding: ConsensusPluginBindingV1,
@@ -29,13 +30,14 @@ pub enum BlockWireError {
 }
 
 pub fn encode_block_header_wire_v1(header: &BlockHeaderWireV1) -> Vec<u8> {
-    let mut out = Vec::with_capacity(4 + 1 + 8 + 8 + 32 + 32 + 8 + 4 + 1 + 32);
+    let mut out = Vec::with_capacity(4 + 1 + 8 + 8 + 32 + 32 + 32 + 8 + 4 + 1 + 32);
     out.extend_from_slice(BLOCK_HEADER_WIRE_MAGIC);
     out.push(BLOCK_HEADER_WIRE_VERSION);
     out.extend_from_slice(&header.height.to_le_bytes());
     out.extend_from_slice(&header.epoch_id.to_le_bytes());
     out.extend_from_slice(&header.parent_hash);
     out.extend_from_slice(&header.state_root);
+    out.extend_from_slice(&header.governance_chain_audit_root);
     out.extend_from_slice(&header.tx_count.to_le_bytes());
     out.extend_from_slice(&header.batch_count.to_le_bytes());
     out.push(header.consensus_binding.plugin_class_code);
@@ -44,7 +46,7 @@ pub fn encode_block_header_wire_v1(header: &BlockHeaderWireV1) -> Vec<u8> {
 }
 
 pub fn decode_block_header_wire_v1(bytes: &[u8]) -> Result<BlockHeaderWireV1, BlockWireError> {
-    let expected_len = 4 + 1 + 8 + 8 + 32 + 32 + 8 + 4 + 1 + 32;
+    let expected_len = 4 + 1 + 8 + 8 + 32 + 32 + 32 + 8 + 4 + 1 + 32;
     if bytes.len() != expected_len {
         return Err(BlockWireError::LengthMismatch {
             expected: expected_len,
@@ -85,6 +87,7 @@ pub fn decode_block_header_wire_v1(bytes: &[u8]) -> Result<BlockHeaderWireV1, Bl
     let epoch_id = read_u64(bytes, &mut off);
     let parent_hash = read_hash32(bytes, &mut off);
     let state_root = read_hash32(bytes, &mut off);
+    let governance_chain_audit_root = read_hash32(bytes, &mut off);
     let tx_count = read_u64(bytes, &mut off);
     let batch_count = read_u32(bytes, &mut off);
     let plugin_class_code = bytes[off];
@@ -96,6 +99,7 @@ pub fn decode_block_header_wire_v1(bytes: &[u8]) -> Result<BlockHeaderWireV1, Bl
         epoch_id,
         parent_hash,
         state_root,
+        governance_chain_audit_root,
         tx_count,
         batch_count,
         consensus_binding: ConsensusPluginBindingV1 {
@@ -116,11 +120,12 @@ mod tests {
             epoch_id: 11,
             parent_hash: [1u8; 32],
             state_root: [2u8; 32],
+            governance_chain_audit_root: [4u8; 32],
             tx_count: 9,
             batch_count: 3,
             consensus_binding: ConsensusPluginBindingV1 {
                 plugin_class_code: 1,
-                adapter_hash: [3u8; 32],
+                adapter_hash: [5u8; 32],
             },
         };
         let wire = encode_block_header_wire_v1(&header);
@@ -135,6 +140,7 @@ mod tests {
             epoch_id: 2,
             parent_hash: [0u8; 32],
             state_root: [0u8; 32],
+            governance_chain_audit_root: [0u8; 32],
             tx_count: 3,
             batch_count: 1,
             consensus_binding: ConsensusPluginBindingV1 {

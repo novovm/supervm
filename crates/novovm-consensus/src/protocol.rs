@@ -5,19 +5,22 @@
 
 use crate::epoch::Epoch;
 use crate::governance_verifier::{
-    Ed25519GovernanceVoteVerifier, GovernanceVoteVerifier, GovernanceVoteVerifierScheme,
+    Ed25519GovernanceVoteVerifier, GovernanceVoteVerificationReport, GovernanceVoteVerifier,
+    GovernanceVoteVerifierScheme,
 };
 use crate::market_engine::{Web30MarketEngine, Web30MarketEngineSnapshot};
 use crate::quorum_cert::{QuorumCertificate, Vote};
 use crate::token_runtime::Web30TokenRuntime;
 use crate::types::{
     BFTError, BFTProposal, BFTResult, FeeRoutingOutcome, GovernanceAccessPolicy,
-    GovernanceCouncilPolicy, GovernanceOp, GovernanceProposal, GovernanceProposalClass,
-    GovernanceVote, Hash, Height, MarketGovernancePolicy, NetworkDosPolicy, NodeId, SlashEvidence,
-    SlashExecution, SlashMode, SlashPolicy, TokenEconomicsPolicy, ValidatorSet,
+    GovernanceChainAuditEvent, GovernanceCouncilPolicy, GovernanceOp, GovernanceProposal,
+    GovernanceProposalClass, GovernanceVote, Hash, Height, MarketGovernancePolicy,
+    NetworkDosPolicy, NodeId, SlashEvidence, SlashExecution, SlashMode, SlashPolicy,
+    TokenEconomicsPolicy, ValidatorSet,
 };
 use ed25519_dalek::{SigningKey, VerifyingKey};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
@@ -148,6 +151,15 @@ pub struct HotStuffProtocol {
     /// 自增提案 ID。
     next_governance_proposal_id: u64,
 
+    /// 链上治理审计事件（共识状态机内索引，按 seq 递增）。
+    governance_chain_audit_events: Vec<GovernanceChainAuditEvent>,
+
+    /// 治理审计自增序号。
+    next_governance_chain_audit_seq: u64,
+
+    /// 治理链审计根（确定性哈希，供重启恢复与一致性校验）。
+    governance_chain_audit_root: Hash,
+
     /// 治理参数（第二类参数扩展起点）：mempool fee floor。
     governance_mempool_fee_floor: u64,
 
@@ -198,6 +210,9 @@ impl HotStuffProtocol {
             governance_council_policy,
             governance_proposals: HashMap::new(),
             next_governance_proposal_id: 1,
+            governance_chain_audit_events: Vec::new(),
+            next_governance_chain_audit_seq: 0,
+            governance_chain_audit_root: Self::compute_governance_chain_audit_root(&[]),
             governance_mempool_fee_floor: 1,
             governance_network_dos_policy: NetworkDosPolicy::default(),
             governance_token_economics_policy,
@@ -221,6 +236,68 @@ impl HotStuffProtocol {
     /// 当前治理投票签名校验器方案（用于能力判定）。
     pub fn governance_vote_verifier_scheme(&self) -> GovernanceVoteVerifierScheme {
         self.governance_vote_verifier.scheme()
+    }
+
+    fn record_governance_chain_audit_event(
+        &mut self,
+        action: &str,
+        proposal_id: u64,
+        actor: Option<NodeId>,
+        outcome: &str,
+        detail: impl Into<String>,
+    ) {
+        const GOVERNANCE_CHAIN_AUDIT_MAX_EVENTS: usize = 4096;
+
+        self.next_governance_chain_audit_seq =
+            self.next_governance_chain_audit_seq.saturating_add(1);
+        self.governance_chain_audit_events
+            .push(GovernanceChainAuditEvent {
+                seq: self.next_governance_chain_audit_seq,
+                height: self.state.height,
+                proposal_id,
+                action: action.to_string(),
+                actor,
+                outcome: outcome.to_string(),
+                detail: detail.into(),
+            });
+
+        if self.governance_chain_audit_events.len() > GOVERNANCE_CHAIN_AUDIT_MAX_EVENTS {
+            let overflow = self
+                .governance_chain_audit_events
+                .len()
+                .saturating_sub(GOVERNANCE_CHAIN_AUDIT_MAX_EVENTS);
+            self.governance_chain_audit_events.drain(0..overflow);
+        }
+        self.governance_chain_audit_root =
+            Self::compute_governance_chain_audit_root(&self.governance_chain_audit_events);
+    }
+
+    fn hash_chain_audit_string(hasher: &mut Sha256, value: &str) {
+        let bytes = value.as_bytes();
+        hasher.update((bytes.len() as u64).to_le_bytes());
+        hasher.update(bytes);
+    }
+
+    fn compute_governance_chain_audit_root(events: &[GovernanceChainAuditEvent]) -> Hash {
+        let mut hasher = Sha256::new();
+        hasher.update(b"NOVOVM_GOV_CHAIN_AUDIT_ROOT_V1");
+        hasher.update((events.len() as u64).to_le_bytes());
+        for event in events {
+            hasher.update(event.seq.to_le_bytes());
+            hasher.update(event.height.to_le_bytes());
+            hasher.update(event.proposal_id.to_le_bytes());
+            match event.actor {
+                Some(actor) => {
+                    hasher.update([1u8]);
+                    hasher.update(actor.to_le_bytes());
+                }
+                None => hasher.update([0u8]),
+            }
+            Self::hash_chain_audit_string(&mut hasher, &event.action);
+            Self::hash_chain_audit_string(&mut hasher, &event.outcome);
+            Self::hash_chain_audit_string(&mut hasher, &event.detail);
+        }
+        hasher.finalize().into()
     }
 
     fn validate_governance_op(op: &GovernanceOp) -> BFTResult<()> {
@@ -854,6 +931,13 @@ impl HotStuffProtocol {
     /// 接收治理操作挂点（当前仅做结构校验与留痕，不启用执行）。
     pub fn stage_governance_op(&mut self, op: GovernanceOp) -> BFTResult<()> {
         Self::validate_governance_op(&op)?;
+        self.record_governance_chain_audit_event(
+            "stage",
+            0,
+            Some(self.self_id),
+            "staged_only",
+            "governance_op_staged_only",
+        );
         self.governance_staged_ops.push(op);
         Err(BFTError::GovernanceNotEnabled(
             "governance_op_staged_only".to_string(),
@@ -1022,6 +1106,18 @@ impl HotStuffProtocol {
         self.next_governance_proposal_id = self.next_governance_proposal_id.saturating_add(1);
         self.governance_proposals
             .insert(proposal.proposal_id, proposal.clone());
+        let proposal_class = proposal.op.proposal_class();
+        self.record_governance_chain_audit_event(
+            "submit",
+            proposal.proposal_id,
+            Some(proposer),
+            "accepted",
+            format!(
+                "class={:?}; proposer_approvals={}",
+                proposal_class,
+                proposer_approvals.len()
+            ),
+        );
         Ok(proposal)
     }
 
@@ -1081,11 +1177,14 @@ impl HotStuffProtocol {
         } else {
             None
         };
+        let active_verifier_name = self.governance_vote_verifier.name();
+        let active_verifier_scheme = self.governance_vote_verifier.scheme();
 
         let mut seen = HashSet::with_capacity(votes.len());
         let mut support_weight = 0u64;
         let mut council_support_bp = 0u16;
         let mut council_categories = HashSet::new();
+        let mut verification_report: Option<GovernanceVoteVerificationReport> = None;
         for vote in votes {
             if vote.proposal_id != proposal_id {
                 return Err(BFTError::InvalidProposal(format!(
@@ -1125,7 +1224,29 @@ impl HotStuffProtocol {
             let key = public_keys
                 .get(&vote.voter_id)
                 .ok_or(BFTError::NotValidator(vote.voter_id))?;
-            self.governance_vote_verifier.verify(vote, key)?;
+            let report = match self.governance_vote_verifier.verify_with_report(vote, key) {
+                Ok(report) => report,
+                Err(err) => {
+                    let reason = err.to_string().replace('\n', " ");
+                    self.record_governance_chain_audit_event(
+                        "execute",
+                        proposal_id,
+                        Some(vote.voter_id),
+                        "reject",
+                        format!(
+                            "vote_verifier_reject voter={} verifier={} signature_scheme={} reason={}",
+                            vote.voter_id,
+                            active_verifier_name,
+                            active_verifier_scheme.as_str(),
+                            reason
+                        ),
+                    );
+                    return Err(err);
+                }
+            };
+            if verification_report.is_none() {
+                verification_report = Some(report);
+            }
             if vote.support {
                 support_weight = support_weight
                     .checked_add(self.active_weight_of(vote.voter_id).unwrap_or(0))
@@ -1206,6 +1327,28 @@ impl HotStuffProtocol {
             }
         }
         self.governance_proposals.remove(&proposal_id);
+        let verification_detail = if let Some(report) = verification_report {
+            format!(
+                "support_votes={} verifier={} signature_scheme={}",
+                seen.len(),
+                report.verifier_name,
+                report.scheme.as_str()
+            )
+        } else {
+            format!(
+                "support_votes={} verifier={} signature_scheme={}",
+                seen.len(),
+                active_verifier_name,
+                active_verifier_scheme.as_str()
+            )
+        };
+        self.record_governance_chain_audit_event(
+            "execute",
+            proposal_id,
+            executor_approvals.first().copied(),
+            "applied",
+            verification_detail,
+        );
         Ok(true)
     }
 
@@ -1229,6 +1372,37 @@ impl HotStuffProtocol {
         let mut items: Vec<_> = self.governance_proposals.values().cloned().collect();
         items.sort_by_key(|p| p.proposal_id);
         items
+    }
+
+    /// 查询链上治理审计事件快照（seq 递增）。
+    pub fn governance_chain_audit_events(&self) -> Vec<GovernanceChainAuditEvent> {
+        self.governance_chain_audit_events.clone()
+    }
+
+    /// 查询治理链审计根（确定性哈希）。
+    pub fn governance_chain_audit_root(&self) -> Hash {
+        self.governance_chain_audit_root
+    }
+
+    /// 从外部持久化快照恢复治理链审计事件（重启恢复入口）。
+    pub fn restore_governance_chain_audit_events(
+        &mut self,
+        mut events: Vec<GovernanceChainAuditEvent>,
+    ) {
+        const GOVERNANCE_CHAIN_AUDIT_MAX_EVENTS: usize = 4096;
+
+        events.sort_by_key(|event| event.seq);
+        events.dedup_by_key(|event| event.seq);
+        if events.len() > GOVERNANCE_CHAIN_AUDIT_MAX_EVENTS {
+            let start = events
+                .len()
+                .saturating_sub(GOVERNANCE_CHAIN_AUDIT_MAX_EVENTS);
+            events = events[start..].to_vec();
+        }
+        self.next_governance_chain_audit_seq = events.last().map(|event| event.seq).unwrap_or(0);
+        self.governance_chain_audit_events = events;
+        self.governance_chain_audit_root =
+            Self::compute_governance_chain_audit_root(&self.governance_chain_audit_events);
     }
 
     /// 查询验证者的 jail 自动解禁高度（仅当当前仍处于 jailed 状态时返回）。
@@ -1801,6 +1975,106 @@ mod tests {
             .unwrap();
         assert!(executed);
         assert_eq!(protocol.governance_mempool_fee_floor(), 9);
+    }
+
+    #[test]
+    fn test_governance_chain_audit_records_submit_and_execute() {
+        let validator_set = ValidatorSet::new_equal_weight(vec![0, 1, 2]);
+        let (signing_keys, public_keys) = generate_keys(3);
+        let mut protocol = HotStuffProtocol::new(validator_set, 0).unwrap();
+        protocol.set_governance_execution_enabled(true);
+        let proposal = protocol
+            .submit_governance_proposal(0, GovernanceOp::UpdateMempoolFeeFloor { fee_floor: 13 })
+            .unwrap();
+        let votes = vec![
+            GovernanceVote::new(&proposal, 0, true, &signing_keys[0]),
+            GovernanceVote::new(&proposal, 1, true, &signing_keys[1]),
+        ];
+        let executed = protocol
+            .execute_governance_proposal(proposal.proposal_id, &votes, &public_keys)
+            .unwrap();
+        assert!(executed);
+
+        let events = protocol.governance_chain_audit_events();
+        let submit = events
+            .iter()
+            .find(|event| event.proposal_id == proposal.proposal_id && event.action == "submit")
+            .expect("missing submit chain audit event");
+        assert_eq!(submit.outcome, "accepted");
+        let execute = events
+            .iter()
+            .find(|event| event.proposal_id == proposal.proposal_id && event.action == "execute")
+            .expect("missing execute chain audit event");
+        assert_eq!(execute.outcome, "applied");
+        assert!(execute.seq > submit.seq);
+        let root = protocol.governance_chain_audit_root();
+        assert_ne!(root, [0u8; 32]);
+    }
+
+    #[test]
+    fn test_restore_governance_chain_audit_events_restores_head_seq() {
+        let validator_set = ValidatorSet::new_equal_weight(vec![0, 1, 2]);
+        let mut protocol = HotStuffProtocol::new(validator_set, 0).unwrap();
+        protocol.restore_governance_chain_audit_events(vec![
+            GovernanceChainAuditEvent {
+                seq: 3,
+                height: 2,
+                proposal_id: 9,
+                action: "execute".to_string(),
+                actor: Some(0),
+                outcome: "applied".to_string(),
+                detail: "ok".to_string(),
+            },
+            GovernanceChainAuditEvent {
+                seq: 1,
+                height: 1,
+                proposal_id: 9,
+                action: "submit".to_string(),
+                actor: Some(0),
+                outcome: "accepted".to_string(),
+                detail: "ok".to_string(),
+            },
+            GovernanceChainAuditEvent {
+                seq: 1,
+                height: 1,
+                proposal_id: 9,
+                action: "submit".to_string(),
+                actor: Some(0),
+                outcome: "accepted".to_string(),
+                detail: "dup".to_string(),
+            },
+        ]);
+        let events = protocol.governance_chain_audit_events();
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0].seq, 1);
+        assert_eq!(events[1].seq, 3);
+        assert_eq!(events[1].action, "execute");
+        assert_ne!(protocol.governance_chain_audit_root(), [0u8; 32]);
+    }
+
+    #[test]
+    fn test_restore_governance_chain_audit_events_keeps_same_root() {
+        let validator_set = ValidatorSet::new_equal_weight(vec![0, 1, 2]);
+        let (signing_keys, public_keys) = generate_keys(3);
+        let mut protocol = HotStuffProtocol::new(validator_set.clone(), 0).unwrap();
+        protocol.set_governance_execution_enabled(true);
+        let proposal = protocol
+            .submit_governance_proposal(0, GovernanceOp::UpdateMempoolFeeFloor { fee_floor: 15 })
+            .unwrap();
+        let votes = vec![
+            GovernanceVote::new(&proposal, 0, true, &signing_keys[0]),
+            GovernanceVote::new(&proposal, 1, true, &signing_keys[1]),
+        ];
+        let executed = protocol
+            .execute_governance_proposal(proposal.proposal_id, &votes, &public_keys)
+            .unwrap();
+        assert!(executed);
+        let events = protocol.governance_chain_audit_events();
+        let root = protocol.governance_chain_audit_root();
+
+        let mut restored = HotStuffProtocol::new(validator_set, 0).unwrap();
+        restored.restore_governance_chain_audit_events(events);
+        assert_eq!(restored.governance_chain_audit_root(), root);
     }
 
     #[test]

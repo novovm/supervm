@@ -798,6 +798,25 @@ impl GovernanceVote {
     }
 }
 
+/// 链上治理审计事件（共识状态机内索引，按 seq 递增）。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct GovernanceChainAuditEvent {
+    /// 审计序号（单调递增）。
+    pub seq: u64,
+    /// 记录该事件时的链高度。
+    pub height: Height,
+    /// 关联提案 ID；`0` 表示非具体提案事件（例如 staged hook）。
+    pub proposal_id: u64,
+    /// 事件动作：`stage|submit|execute`。
+    pub action: String,
+    /// 触发节点（可空）。
+    pub actor: Option<NodeId>,
+    /// 事件结果：`staged_only|accepted|applied`。
+    pub outcome: String,
+    /// 简要明细（用于审计检索）。
+    pub detail: String,
+}
+
 impl SlashPolicy {
     pub fn validate(&self) -> BFTResult<()> {
         if self.equivocation_threshold == 0 {
