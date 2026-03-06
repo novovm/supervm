@@ -121,6 +121,20 @@
   - `artifacts/migration/release-candidate-novovm-rc-2026-03-06-ga-v1/rc-candidate.json`
   - `status=ReadyForMerge/SnapshotGreen`
   - `commit_hash=823a5880e104c96d03e2ab4a8473c9f620ae6413`
+- 治理审计持久化回归快照（2026-03-06）：
+  - `artifacts/migration/release-snapshot-audit-persist-smoke/release-snapshot.json`
+  - `key_results.governance_rpc_audit_persist_pass=True`
+- 治理审计持久化回归 RC（2026-03-06）：
+  - `artifacts/migration/release-candidate-novovm-rc-2026-03-06-governance-audit-persist-smoke/rc-candidate.json`
+  - `status=ReadyForMerge/SnapshotGreen`
+  - `governance_rpc_audit_persist_pass=True`
+- 治理签名算法 staged 回归快照（2026-03-06）：
+  - `artifacts/migration/release-snapshot-signature-scheme-smoke/release-snapshot.json`
+  - `key_results.governance_rpc_signature_scheme_reject_pass=True`
+- 治理签名算法 staged 回归 RC（2026-03-06）：
+  - `artifacts/migration/release-candidate-novovm-rc-2026-03-06-signature-scheme-smoke/rc-candidate.json`
+  - `status=ReadyForMerge/SnapshotGreen`
+  - `governance_rpc_signature_scheme_reject_pass=True`
 
 ---
 

@@ -12,9 +12,9 @@ use novovm_consensus::{
     AmmGovernanceParams, BFTConfig, BFTEngine, BondGovernanceParams, BuybackGovernanceParams,
     CdpGovernanceParams, Epoch as ConsensusEpoch, GovernanceAccessPolicy, GovernanceCouncilMember,
     GovernanceCouncilPolicy, GovernanceCouncilSeat, GovernanceOp, GovernanceProposal,
-    GovernanceVote, HotStuffProtocol, MarketGovernancePolicy, NavGovernanceParams,
-    NetworkDosPolicy, NodeId as ConsensusNodeId, ReserveGovernanceParams, SlashMode, SlashPolicy,
-    TokenEconomicsPolicy, ValidatorSet, Web30MarketEngineSnapshot,
+    GovernanceVote, GovernanceVoteVerifierScheme, HotStuffProtocol, MarketGovernancePolicy,
+    NavGovernanceParams, NetworkDosPolicy, NodeId as ConsensusNodeId, ReserveGovernanceParams,
+    SlashMode, SlashPolicy, TokenEconomicsPolicy, ValidatorSet, Web30MarketEngineSnapshot,
 };
 use novovm_exec::{AoemRuntimeConfig, ExecOpV2};
 use novovm_network::{InMemoryTransport, Transport, UdpTransport};
@@ -2497,6 +2497,18 @@ fn chain_query_db_path() -> PathBuf {
         .unwrap_or_else(|_| PathBuf::from("artifacts/novovm-chain-query-db.json"))
 }
 
+fn governance_audit_db_path(query_db_path: &Path) -> PathBuf {
+    if let Some(custom) = string_env_nonempty("NOVOVM_GOVERNANCE_AUDIT_DB") {
+        return PathBuf::from(custom);
+    }
+    if let Some(parent) = query_db_path.parent() {
+        if !parent.as_os_str().is_empty() {
+            return parent.join("governance-audit-events.json");
+        }
+    }
+    PathBuf::from("artifacts/novovm-governance-audit-events.json")
+}
+
 fn local_tx_hash(tx: &LocalTx) -> [u8; 32] {
     let mut hasher = Sha256::new();
     hasher.update(LOCAL_TX_HASH_DOMAIN);
@@ -2535,6 +2547,47 @@ fn save_query_state_db(path: &Path, db: &QueryStateDb) -> Result<()> {
     let serialized = serde_json::to_string_pretty(db).context("serialize query db json failed")?;
     fs::write(path, serialized)
         .with_context(|| format!("write query db failed: {}", path.display()))?;
+    Ok(())
+}
+
+fn load_governance_audit_store(path: &Path) -> Result<GovernanceRpcAuditStore> {
+    if !path.exists() {
+        return Ok(GovernanceRpcAuditStore::default());
+    }
+    let raw = fs::read_to_string(path)
+        .with_context(|| format!("read governance audit store failed: {}", path.display()))?;
+    let normalized = raw.trim_start_matches('\u{feff}');
+    if normalized.trim().is_empty() {
+        return Ok(GovernanceRpcAuditStore::default());
+    }
+    let parsed: GovernanceRpcAuditStore = serde_json::from_str(normalized)
+        .with_context(|| format!("parse governance audit store failed: {}", path.display()))?;
+    Ok(parsed)
+}
+
+fn save_governance_audit_store(
+    path: &Path,
+    next_seq: u64,
+    events: &[GovernanceRpcAuditEvent],
+) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        if !parent.as_os_str().is_empty() {
+            fs::create_dir_all(parent).with_context(|| {
+                format!(
+                    "create governance audit store parent dir failed: {}",
+                    parent.display()
+                )
+            })?;
+        }
+    }
+    let store = GovernanceRpcAuditStore {
+        next_seq,
+        events: events.to_vec(),
+    };
+    let serialized =
+        serde_json::to_string_pretty(&store).context("serialize governance audit store failed")?;
+    fs::write(path, serialized)
+        .with_context(|| format!("write governance audit store failed: {}", path.display()))?;
     Ok(())
 }
 
@@ -2779,7 +2832,7 @@ struct GovernanceRpcProposalView {
     votes_collected: usize,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct GovernanceRpcAuditEvent {
     seq: u64,
     ts_sec: u64,
@@ -2799,6 +2852,13 @@ struct GovernanceRpcRuntime {
     executor_allowlist: HashSet<ConsensusNodeId>,
     audit_events: Vec<GovernanceRpcAuditEvent>,
     next_audit_seq: u64,
+    audit_store_path: PathBuf,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+struct GovernanceRpcAuditStore {
+    next_seq: u64,
+    events: Vec<GovernanceRpcAuditEvent>,
 }
 
 fn value_to_u64(v: &serde_json::Value) -> Option<u64> {
@@ -2925,6 +2985,95 @@ fn param_as_u64_list(params: &serde_json::Value, key: &str) -> Option<Vec<u64>> 
     }
 }
 
+fn parse_governance_signature_scheme(
+    params: &serde_json::Value,
+) -> Result<GovernanceVoteVerifierScheme> {
+    let raw = param_as_string(params, "signature_scheme")
+        .or_else(|| param_as_string(params, "sig_alg"))
+        .or_else(|| param_as_string(params, "scheme"));
+    match raw {
+        Some(value) => GovernanceVoteVerifierScheme::parse(&value).ok_or_else(|| {
+            anyhow::anyhow!(
+                "unsupported governance signature scheme: {} (valid: ed25519, mldsa87)",
+                value
+            )
+        }),
+        None => Ok(GovernanceVoteVerifierScheme::Ed25519),
+    }
+}
+
+fn parse_governance_vote_verifier_config(
+    raw: Option<&str>,
+) -> Result<GovernanceVoteVerifierScheme> {
+    match raw {
+        Some(value) => GovernanceVoteVerifierScheme::parse(value).ok_or_else(|| {
+            anyhow::anyhow!(
+                "unsupported NOVOVM_GOVERNANCE_VOTE_VERIFIER: {} (valid: ed25519, mldsa87)",
+                value
+            )
+        }),
+        None => Ok(GovernanceVoteVerifierScheme::Ed25519),
+    }
+}
+
+fn load_governance_vote_verifier_config_from_env() -> Result<GovernanceVoteVerifierScheme> {
+    let configured = string_env_nonempty("NOVOVM_GOVERNANCE_VOTE_VERIFIER");
+    parse_governance_vote_verifier_config(configured.as_deref())
+}
+
+fn apply_governance_vote_verifier(
+    engine: &BFTEngine,
+    verifier: GovernanceVoteVerifierScheme,
+) -> Result<()> {
+    engine
+        .set_governance_vote_verifier_by_scheme(verifier)
+        .map_err(|e| anyhow::anyhow!("{}", e))
+}
+
+fn configure_governance_vote_verifier(engine: &BFTEngine) -> Result<()> {
+    let verifier = load_governance_vote_verifier_config_from_env()?;
+    apply_governance_vote_verifier(engine, verifier)?;
+    println!(
+        "governance_vote_verifier_in: source=env key=NOVOVM_GOVERNANCE_VOTE_VERIFIER configured={} active={}",
+        verifier.as_str(),
+        engine.governance_vote_verifier_name()
+    );
+    Ok(())
+}
+
+fn ensure_governance_signature_scheme_supported(
+    runtime: &mut GovernanceRpcRuntime,
+    action: &str,
+    proposal_id: u64,
+    actor: ConsensusNodeId,
+    requested_scheme: GovernanceVoteVerifierScheme,
+) -> Result<()> {
+    if runtime
+        .engine
+        .governance_signature_scheme_supported(requested_scheme)
+    {
+        return Ok(());
+    }
+    let active_scheme = runtime.engine.governance_vote_verifier_scheme();
+    push_governance_audit_event(
+        runtime,
+        action,
+        proposal_id,
+        Some(actor),
+        "reject",
+        format!(
+            "unsupported signature scheme {} (staged-only, current enabled: {})",
+            requested_scheme.as_str(),
+            active_scheme.as_str()
+        ),
+    )?;
+    bail!(
+        "unsupported governance signature scheme: {} (current enabled: {})",
+        requested_scheme.as_str(),
+        active_scheme.as_str()
+    );
+}
+
 fn parse_node_id_allowlist_env(
     name: &str,
     default_ids: &[ConsensusNodeId],
@@ -3039,7 +3188,7 @@ fn push_governance_audit_event(
     actor: Option<ConsensusNodeId>,
     outcome: &str,
     detail: impl Into<String>,
-) {
+) -> Result<()> {
     runtime.next_audit_seq = runtime.next_audit_seq.saturating_add(1);
     runtime.audit_events.push(GovernanceRpcAuditEvent {
         seq: runtime.next_audit_seq,
@@ -3050,6 +3199,12 @@ fn push_governance_audit_event(
         outcome: outcome.to_string(),
         detail: detail.into(),
     });
+    save_governance_audit_store(
+        &runtime.audit_store_path,
+        runtime.next_audit_seq,
+        &runtime.audit_events,
+    )?;
+    Ok(())
 }
 
 fn governance_council_policy_to_json(policy: &GovernanceCouncilPolicy) -> serde_json::Value {
@@ -3702,7 +3857,10 @@ fn parse_governance_op(params: &serde_json::Value) -> Result<GovernanceOp> {
     }
 }
 
-fn init_governance_rpc_runtime(slash_policy: &SlashPolicy) -> Result<GovernanceRpcRuntime> {
+fn init_governance_rpc_runtime(
+    slash_policy: &SlashPolicy,
+    audit_store_path: PathBuf,
+) -> Result<GovernanceRpcRuntime> {
     let validator_ids: Vec<ConsensusNodeId> = vec![0, 1, 2];
     let proposer_allowlist =
         parse_node_id_allowlist_env("NOVOVM_GOVERNANCE_PROPOSER_ALLOWLIST", &validator_ids)?;
@@ -3727,10 +3885,20 @@ fn init_governance_rpc_runtime(slash_policy: &SlashPolicy) -> Result<GovernanceR
         public_keys,
     )
     .context("init governance rpc consensus engine failed")?;
+    configure_governance_vote_verifier(&engine)
+        .context("configure governance vote verifier failed")?;
     engine
         .set_slash_policy(slash_policy.clone())
         .context("set governance rpc slash policy failed")?;
     engine.set_governance_execution_enabled(true);
+
+    let audit_store = load_governance_audit_store(&audit_store_path)?;
+    println!(
+        "governance_audit_store_in: path={} events={} next_seq={}",
+        audit_store_path.display(),
+        audit_store.events.len(),
+        audit_store.next_seq
+    );
 
     Ok(GovernanceRpcRuntime {
         engine,
@@ -3739,8 +3907,9 @@ fn init_governance_rpc_runtime(slash_policy: &SlashPolicy) -> Result<GovernanceR
         signed_votes: HashMap::new(),
         proposer_allowlist,
         executor_allowlist,
-        audit_events: Vec::new(),
-        next_audit_seq: 0,
+        audit_events: audit_store.events,
+        next_audit_seq: audit_store.next_seq,
+        audit_store_path,
     })
 }
 
@@ -3762,7 +3931,7 @@ fn run_governance_rpc(
                     Some(proposer),
                     "reject",
                     format!("unauthorized proposer {}", proposer),
-                );
+                )?;
                 bail!("unauthorized proposer: {}", proposer);
             }
             let op = parse_governance_op(params)?;
@@ -3786,7 +3955,7 @@ fn run_governance_rpc(
                 Some(proposer),
                 "ok",
                 format!("{} proposer_approvals={}", view.op, proposer_approvals.len()),
-            );
+            )?;
             Ok(serde_json::json!({
                 "method": method,
                 "submitted": true,
@@ -3801,6 +3970,14 @@ fn run_governance_rpc(
                 .ok_or_else(|| anyhow::anyhow!("signer_id is required for governance_sign"))?
                 as ConsensusNodeId;
             let support = param_as_bool(params, "support").unwrap_or(true);
+            let signature_scheme = parse_governance_signature_scheme(params)?;
+            ensure_governance_signature_scheme_supported(
+                runtime,
+                "sign",
+                proposal_id,
+                signer_id,
+                signature_scheme,
+            )?;
             let signer = runtime
                 .signers
                 .get(&signer_id)
@@ -3820,13 +3997,18 @@ fn run_governance_rpc(
                 proposal_id,
                 Some(signer_id),
                 "ok",
-                format!("support={}", support),
-            );
+                format!(
+                    "support={} signature_scheme={}",
+                    support,
+                    signature_scheme.as_str()
+                ),
+            )?;
             Ok(serde_json::json!({
                 "method": method,
                 "proposal_id": proposal_id,
                 "signer_id": signer_id,
                 "support": support,
+                "signature_scheme": signature_scheme.as_str(),
                 "signature": signature_hex,
             }))
         }
@@ -3837,6 +4019,14 @@ fn run_governance_rpc(
                 .ok_or_else(|| anyhow::anyhow!("voter_id is required for governance_vote"))?
                 as ConsensusNodeId;
             let support = param_as_bool(params, "support").unwrap_or(true);
+            let signature_scheme = parse_governance_signature_scheme(params)?;
+            ensure_governance_signature_scheme_supported(
+                runtime,
+                "vote",
+                proposal_id,
+                voter_id,
+                signature_scheme,
+            )?;
             let signer = runtime
                 .signers
                 .get(&voter_id)
@@ -3859,7 +4049,7 @@ fn run_governance_rpc(
                     Some(voter_id),
                     "reject",
                     "duplicate governance vote",
-                );
+                )?;
                 bail!("duplicate governance vote from voter {}", voter_id);
             }
             let signature = if let Some(signature_hex) = param_as_string(params, "signature") {
@@ -3891,13 +4081,19 @@ fn run_governance_rpc(
                 proposal_id,
                 Some(voter_id),
                 "ok",
-                format!("support={} votes_collected={}", support, votes_collected),
-            );
+                format!(
+                    "support={} votes_collected={} signature_scheme={}",
+                    support,
+                    votes_collected,
+                    signature_scheme.as_str()
+                ),
+            )?;
             Ok(serde_json::json!({
                 "method": method,
                 "proposal_id": proposal_id,
                 "voter_id": voter_id,
                 "support": support,
+                "signature_scheme": signature_scheme.as_str(),
                 "votes_collected": votes_collected,
             }))
         }
@@ -3915,7 +4111,7 @@ fn run_governance_rpc(
                     Some(executor),
                     "reject",
                     format!("unauthorized executor {}", executor),
-                );
+                )?;
                 bail!("unauthorized executor: {}", executor);
             }
             let votes = runtime
@@ -3962,7 +4158,7 @@ fn run_governance_rpc(
                     executed,
                     executor_approvals.len()
                 ),
-            );
+            )?;
             Ok(serde_json::json!({
                 "method": method,
                 "proposal_id": proposal_id,
@@ -4279,10 +4475,19 @@ fn run_rpc_server_instance(
         RpcServerRole::Governance => {
             let slash_policy = governance_slash_policy
                 .ok_or_else(|| anyhow::anyhow!("missing governance slash policy"))?;
-            Some(init_governance_rpc_runtime(&slash_policy)?)
+            let audit_store_path = governance_audit_db_path(&db_path);
+            Some(init_governance_rpc_runtime(
+                &slash_policy,
+                audit_store_path,
+            )?)
         }
         RpcServerRole::Public => None,
     };
+
+    let governance_audit_db = governance_runtime
+        .as_ref()
+        .map(|runtime| runtime.audit_store_path.display().to_string())
+        .unwrap_or_else(|| "-".to_string());
 
     let server = tiny_http::Server::http(&bind).map_err(|e| {
         anyhow::anyhow!(
@@ -4293,7 +4498,7 @@ fn run_rpc_server_instance(
         )
     })?;
     println!(
-        "rpc_server_in: role={} bind={} db={} max_body={} rate_limit_per_ip={} max_requests={} gov_allowlist_count={} governance_execution_enabled={}",
+        "rpc_server_in: role={} bind={} db={} max_body={} rate_limit_per_ip={} max_requests={} gov_allowlist_count={} governance_audit_db={} governance_execution_enabled={}",
         role.as_str(),
         bind,
         db_path.display(),
@@ -4301,6 +4506,7 @@ fn run_rpc_server_instance(
         rate_limit_per_ip,
         max_requests,
         gov_allowlist.len(),
+        governance_audit_db,
         governance_runtime
             .as_ref()
             .map(|runtime| runtime.engine.governance_execution_enabled())
@@ -7367,9 +7573,30 @@ mod tests {
     use super::*;
     use aoem_bindings::AoemExecV2Result;
     use novovm_exec::{AoemExecMetrics, AoemExecOutput, AoemExecReturnCode};
+    use std::collections::HashMap;
 
     fn test_tx(account: u64, key: u64, value: u64, nonce: u64, fee: u64) -> LocalTx {
         build_local_tx(account, key, value, nonce, fee)
+    }
+
+    fn build_test_governance_engine() -> BFTEngine {
+        let validator_ids: Vec<ConsensusNodeId> = vec![0, 1, 2];
+        let validator_set = ValidatorSet::new_equal_weight(validator_ids.clone());
+        let signing_keys: Vec<_> = (0..validator_ids.len())
+            .map(|_| SigningKey::generate(&mut OsRng))
+            .collect();
+        let mut public_keys: HashMap<ConsensusNodeId, ed25519_dalek::VerifyingKey> = HashMap::new();
+        for (idx, node_id) in validator_ids.iter().enumerate() {
+            public_keys.insert(*node_id, signing_keys[idx].verifying_key());
+        }
+        BFTEngine::new(
+            BFTConfig::default(),
+            0,
+            signing_keys[0].clone(),
+            validator_set,
+            public_keys,
+        )
+        .expect("build test governance engine")
     }
 
     #[test]
@@ -7845,5 +8072,35 @@ mod tests {
         assert_eq!(loaded.cooldown_epochs, 9);
 
         let _ = fs::remove_file(&path);
+    }
+
+    #[test]
+    fn governance_vote_verifier_config_parser_accepts_supported_values() {
+        assert_eq!(
+            parse_governance_vote_verifier_config(None).expect("default verifier"),
+            GovernanceVoteVerifierScheme::Ed25519
+        );
+        assert_eq!(
+            parse_governance_vote_verifier_config(Some("ed25519")).expect("ed25519"),
+            GovernanceVoteVerifierScheme::Ed25519
+        );
+        assert_eq!(
+            parse_governance_vote_verifier_config(Some("ml-dsa-87")).expect("ml-dsa alias"),
+            GovernanceVoteVerifierScheme::MlDsa87
+        );
+        assert!(parse_governance_vote_verifier_config(Some("bad-scheme")).is_err());
+    }
+
+    #[test]
+    fn apply_governance_vote_verifier_rejects_mldsa87_staged_only() {
+        let engine = build_test_governance_engine();
+        assert_eq!(engine.governance_vote_verifier_name(), "ed25519");
+        apply_governance_vote_verifier(&engine, GovernanceVoteVerifierScheme::Ed25519)
+            .expect("ed25519 should apply");
+        let err = apply_governance_vote_verifier(&engine, GovernanceVoteVerifierScheme::MlDsa87)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("staged-only"));
+        assert_eq!(engine.governance_vote_verifier_name(), "ed25519");
     }
 }

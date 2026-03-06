@@ -122,6 +122,10 @@ $enabledGates = [ordered]@{
 
 $governancePass = [bool](
     $acceptance.governance_rpc_pass -and
+    $acceptance.governance_rpc_audit_persist_pass -and
+    $acceptance.governance_rpc_signature_scheme_reject_pass -and
+    $acceptance.governance_rpc_vote_verifier_startup_pass -and
+    $acceptance.governance_rpc_vote_verifier_staged_reject_pass -and
     $acceptance.governance_hook_pass -and
     $acceptance.governance_execution_pass -and
     $acceptance.governance_param2_pass -and
@@ -160,6 +164,10 @@ $keyResults = [ordered]@{
     functional_pass = [bool]$acceptance.functional_pass
     performance_pass = [bool]$acceptance.performance_pass
     governance_rpc_duplicate_reject = [bool]$governanceRpc.duplicate_reject_ok
+    governance_rpc_audit_persist_pass = [bool]$acceptance.governance_rpc_audit_persist_pass
+    governance_rpc_signature_scheme_reject_pass = [bool]$acceptance.governance_rpc_signature_scheme_reject_pass
+    governance_rpc_vote_verifier_startup_pass = [bool]$acceptance.governance_rpc_vote_verifier_startup_pass
+    governance_rpc_vote_verifier_staged_reject_pass = [bool]$acceptance.governance_rpc_vote_verifier_staged_reject_pass
     governance_market_policy_pass = [bool]$acceptance.governance_market_policy_pass
     governance_market_policy_engine_pass = [bool]$acceptance.governance_market_policy_engine_pass
     governance_market_policy_treasury_pass = [bool]$acceptance.governance_market_policy_treasury_pass

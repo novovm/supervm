@@ -14,7 +14,7 @@ param(
     [bool]$IncludeGovernanceRpcGate = $true,
     [string]$GovernanceRpcBind = "127.0.0.1:8901",
     [ValidateRange(1, 64)]
-    [int]$GovernanceRpcExpectedRequests = 13,
+    [int]$GovernanceRpcExpectedRequests = 14,
     [bool]$IncludeHeaderSyncGate = $true,
     [bool]$IncludeFastStateSyncGate = $true,
     [bool]$IncludeNetworkDosGate = $true,
@@ -652,8 +652,23 @@ if ($IncludeChainQueryRpcGate) {
 }
 if ($IncludeGovernanceRpcGate) {
     $governanceRpcPass = [bool]$governanceRpc.pass
+    $governanceRpcAuditPersistPass = [bool]$governanceRpc.audit_persist_ok
+    $governanceRpcSignatureSchemeRejectPass = [bool]$governanceRpc.sign_unsupported_scheme_reject_ok
+    $governanceRpcVoteVerifierStartupPass = [bool]$governanceRpc.vote_verifier_startup_ok
+    $governanceRpcVoteVerifierStagedRejectPass = [bool]$governanceRpc.vote_verifier_staged_reject_ok
+    $governanceRpcPass = [bool](
+        $governanceRpcPass -and
+        $governanceRpcAuditPersistPass -and
+        $governanceRpcSignatureSchemeRejectPass -and
+        $governanceRpcVoteVerifierStartupPass -and
+        $governanceRpcVoteVerifierStagedRejectPass
+    )
 } else {
     $governanceRpcPass = $true
+    $governanceRpcAuditPersistPass = $true
+    $governanceRpcSignatureSchemeRejectPass = $true
+    $governanceRpcVoteVerifierStartupPass = $true
+    $governanceRpcVoteVerifierStagedRejectPass = $true
 }
 if ($IncludeHeaderSyncGate) {
     $headerSyncPass = [bool]$headerSync.pass
@@ -759,7 +774,7 @@ if ($IncludeAdapterStabilityGate) {
 } else {
     $adapterStabilityPass = $true
 }
-$overallPass = ($functionalPass -and $performancePass -and $chainQueryRpcPass -and $governanceRpcPass -and $headerSyncPass -and $fastStateSyncPass -and $networkDosPass -and $pacemakerFailoverPass -and $slashGovernancePass -and $slashPolicyExternalPass -and $governanceHookPass -and $governanceExecutionPass -and $governanceParam2Pass -and $governanceParam3Pass -and $governanceMarketPolicyPass -and $governanceMarketPolicyEnginePass -and $governanceMarketPolicyTreasuryPass -and $governanceCouncilPolicyPass -and $governanceNegativePass -and $governanceAccessPolicyPass -and $governanceTokenEconomicsPass -and $governanceTreasurySpendPass -and $rpcExposurePass -and $unjailCooldownPass -and $adapterStabilityPass)
+$overallPass = ($functionalPass -and $performancePass -and $chainQueryRpcPass -and $governanceRpcPass -and $governanceRpcAuditPersistPass -and $governanceRpcSignatureSchemeRejectPass -and $governanceRpcVoteVerifierStartupPass -and $governanceRpcVoteVerifierStagedRejectPass -and $headerSyncPass -and $fastStateSyncPass -and $networkDosPass -and $pacemakerFailoverPass -and $slashGovernancePass -and $slashPolicyExternalPass -and $governanceHookPass -and $governanceExecutionPass -and $governanceParam2Pass -and $governanceParam3Pass -and $governanceMarketPolicyPass -and $governanceMarketPolicyEnginePass -and $governanceMarketPolicyTreasuryPass -and $governanceCouncilPolicyPass -and $governanceNegativePass -and $governanceAccessPolicyPass -and $governanceTokenEconomicsPass -and $governanceTreasurySpendPass -and $rpcExposurePass -and $unjailCooldownPass -and $adapterStabilityPass)
 
 $summary = [ordered]@{
     generated_at_utc = [DateTime]::UtcNow.ToString("o")
@@ -773,6 +788,10 @@ $summary = [ordered]@{
     chain_query_rpc_pass = $chainQueryRpcPass
     governance_rpc_gate_enabled = $IncludeGovernanceRpcGate
     governance_rpc_pass = $governanceRpcPass
+    governance_rpc_audit_persist_pass = $governanceRpcAuditPersistPass
+    governance_rpc_signature_scheme_reject_pass = $governanceRpcSignatureSchemeRejectPass
+    governance_rpc_vote_verifier_startup_pass = $governanceRpcVoteVerifierStartupPass
+    governance_rpc_vote_verifier_staged_reject_pass = $governanceRpcVoteVerifierStagedRejectPass
     header_sync_gate_enabled = $IncludeHeaderSyncGate
     header_sync_pass = $headerSyncPass
     fast_state_sync_gate_enabled = $IncludeFastStateSyncGate
@@ -869,6 +888,10 @@ $md = @(
     "- chain_query_rpc_bind: $($summary.chain_query_rpc_bind)"
     "- governance_rpc_gate_enabled: $($summary.governance_rpc_gate_enabled)"
     "- governance_rpc_pass: $($summary.governance_rpc_pass)"
+    "- governance_rpc_audit_persist_pass: $($summary.governance_rpc_audit_persist_pass)"
+    "- governance_rpc_signature_scheme_reject_pass: $($summary.governance_rpc_signature_scheme_reject_pass)"
+    "- governance_rpc_vote_verifier_startup_pass: $($summary.governance_rpc_vote_verifier_startup_pass)"
+    "- governance_rpc_vote_verifier_staged_reject_pass: $($summary.governance_rpc_vote_verifier_staged_reject_pass)"
     "- governance_rpc_expected_requests: $($summary.governance_rpc_expected_requests)"
     "- governance_rpc_bind: $($summary.governance_rpc_bind)"
     "- header_sync_gate_enabled: $($summary.header_sync_gate_enabled)"
@@ -1017,7 +1040,7 @@ if ($IncludeAdapterStabilityGate) {
 Write-Host "  summary_json: $summaryJson"
 
 if (-not $overallPass) {
-    throw "migration acceptance gate FAILED (functional_pass=$functionalPass, performance_pass=$performancePass, chain_query_rpc_pass=$chainQueryRpcPass, governance_rpc_pass=$governanceRpcPass, header_sync_pass=$headerSyncPass, fast_state_sync_pass=$fastStateSyncPass, network_dos_pass=$networkDosPass, pacemaker_failover_pass=$pacemakerFailoverPass, slash_governance_pass=$slashGovernancePass, slash_policy_external_pass=$slashPolicyExternalPass, governance_hook_pass=$governanceHookPass, governance_execution_pass=$governanceExecutionPass, governance_param2_pass=$governanceParam2Pass, governance_param3_pass=$governanceParam3Pass, governance_market_policy_pass=$governanceMarketPolicyPass, governance_market_policy_engine_pass=$governanceMarketPolicyEnginePass, governance_market_policy_treasury_pass=$governanceMarketPolicyTreasuryPass, governance_council_policy_pass=$governanceCouncilPolicyPass, governance_negative_pass=$governanceNegativePass, governance_access_policy_pass=$governanceAccessPolicyPass, governance_token_economics_pass=$governanceTokenEconomicsPass, governance_treasury_spend_pass=$governanceTreasurySpendPass, rpc_exposure_pass=$rpcExposurePass, unjail_cooldown_pass=$unjailCooldownPass, adapter_stability_pass=$adapterStabilityPass)"
+    throw "migration acceptance gate FAILED (functional_pass=$functionalPass, performance_pass=$performancePass, chain_query_rpc_pass=$chainQueryRpcPass, governance_rpc_pass=$governanceRpcPass, governance_rpc_audit_persist_pass=$governanceRpcAuditPersistPass, governance_rpc_signature_scheme_reject_pass=$governanceRpcSignatureSchemeRejectPass, governance_rpc_vote_verifier_startup_pass=$governanceRpcVoteVerifierStartupPass, governance_rpc_vote_verifier_staged_reject_pass=$governanceRpcVoteVerifierStagedRejectPass, header_sync_pass=$headerSyncPass, fast_state_sync_pass=$fastStateSyncPass, network_dos_pass=$networkDosPass, pacemaker_failover_pass=$pacemakerFailoverPass, slash_governance_pass=$slashGovernancePass, slash_policy_external_pass=$slashPolicyExternalPass, governance_hook_pass=$governanceHookPass, governance_execution_pass=$governanceExecutionPass, governance_param2_pass=$governanceParam2Pass, governance_param3_pass=$governanceParam3Pass, governance_market_policy_pass=$governanceMarketPolicyPass, governance_market_policy_engine_pass=$governanceMarketPolicyEnginePass, governance_market_policy_treasury_pass=$governanceMarketPolicyTreasuryPass, governance_council_policy_pass=$governanceCouncilPolicyPass, governance_negative_pass=$governanceNegativePass, governance_access_policy_pass=$governanceAccessPolicyPass, governance_token_economics_pass=$governanceTokenEconomicsPass, governance_treasury_spend_pass=$governanceTreasurySpendPass, rpc_exposure_pass=$rpcExposurePass, unjail_cooldown_pass=$unjailCooldownPass, adapter_stability_pass=$adapterStabilityPass)"
 }
 
 Write-Host "migration acceptance gate PASS"

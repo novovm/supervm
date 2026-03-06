@@ -90,13 +90,14 @@
 | C-11 | 治理负向规则：非验证者提案拒绝、签名错误拒绝、重复投票拒绝、票数不足拒绝、重复执行拒绝 + 投票域分隔（height/digest mismatch 拒绝） | `protocol.rs` (`submit_governance_proposal`, `execute_governance_proposal`) + `main.rs` (`governance_negative_probe`) | `governance_negative_gate.pass=true` | 已迁移（受限范围） |
 | C-12 | 第二类治理参数：`UpdateMempoolFeeFloor` 经治理投票生效 | `types.rs` (`GovernanceOp::UpdateMempoolFeeFloor`) + `protocol.rs` (`governance_mempool_fee_floor`) + `main.rs` (`governance_param2_probe`) | `governance_param2_gate.pass=true` | 已迁移（受限范围） |
 | C-13 | 治理 RPC 执行面：`submit/sign/vote/execute/getProposal/listProposals/listAuditEvents/getPolicy`（受限执行面） | `main.rs` (`run_governance_rpc`, `run_chain_query_rpc_server_mode`) + `run_governance_rpc_gate.ps1` | `governance_rpc_gate.pass=true` | 已迁移（受限范围） |
-| C-14 | 治理权限与审计：`proposer/executor allowlist` + 审计事件流（含 reject 事件） | `main.rs` (`NOVOVM_GOVERNANCE_*_ALLOWLIST`, `GovernanceRpcAuditEvent`) + `run_governance_rpc_gate.ps1` | `unauthorized_submit_reject_ok=true`, `audit_ok=true` | 已迁移（受限范围） |
+| C-14 | 治理权限与审计：`proposer/executor allowlist` + 审计事件流（含 reject 事件）+ 审计持久化索引（`NOVOVM_GOVERNANCE_AUDIT_DB`） | `main.rs` (`NOVOVM_GOVERNANCE_*_ALLOWLIST`, `GovernanceRpcAuditEvent`, `GovernanceRpcAuditStore`) + `run_governance_rpc_gate.ps1` | `unauthorized_submit_reject_ok=true`, `audit_ok=true`, `audit_persist_ok=true` | 已迁移（受限范围） |
 | C-15 | 第三类治理参数：`UpdateNetworkDosPolicy` 经治理投票生效 | `types.rs` (`GovernanceOp::UpdateNetworkDosPolicy`, `NetworkDosPolicy`) + `protocol.rs` (`governance_network_dos_policy`) + `main.rs` (`governance_param3_probe`) | `governance_param3_gate.pass=true` | 已迁移（受限范围） |
 | C-16 | RPC 暴露安全铁律：public/gov 端口分离、`gov rpc` 默认关闭、public 不暴露 `governance_*`、非回环治理端口需 allowlist | `main.rs` (`run_chain_query_rpc_server_mode`, `NOVOVM_ENABLE_GOV_RPC`, `NOVOVM_GOV_RPC_BIND`, `NOVOVM_GOV_RPC_ALLOWLIST`) + `run_rpc_exposure_gate.ps1` | `rpc_exposure_gate.pass=true` | 已迁移（可发布安全默认） |
 | C-17 | 国库治理执行：`TreasurySpend` 经治理投票生效，支持超额支出拒绝 | `types.rs` (`GovernanceOp::TreasurySpend`) + `protocol.rs` (`spend_treasury_tokens`) + `main.rs` (`governance_treasury_spend_probe`) | `governance_treasury_spend_gate.pass=true` | 已迁移（受限范围） |
 | C-18 | 链上治理访问策略：`proposer/executor committee + threshold + timelock`（治理权限由 `GovernanceOp::UpdateGovernanceAccessPolicy` 下发） | `types.rs` (`GovernanceAccessPolicy`, `GovernanceOp::UpdateGovernanceAccessPolicy`) + `protocol.rs` (`submit/execute *_with_approvals`) + `main.rs` (`governance_access_policy_probe`) | `governance_access_policy_gate.pass=true` | 已迁移（受限范围，链上权限模型初版） |
 | C-19 | 九席位治理权重策略：`Founder/TopHolder(0-4)/Team(0-1)/Independent`，按提案类别阈值（`Parameter/Treasury/Protocol/Emergency`）执行治理 | `types.rs` (`GovernanceCouncilPolicy`, `GovernanceCouncilSeat`, `GovernanceOp::UpdateGovernanceCouncilPolicy`) + `protocol.rs` (`execute_governance_proposal_with_executor_approvals`) + `main.rs` (`governance_council_policy_probe`) | `governance_council_policy_gate.pass=true` | 已迁移（受限范围，I-GOV-01 主链路） |
 | C-20 | 经济治理参数族热更新：`AMM/CDP/Bond/Reserve/NAV/Buyback` 统一由 `UpdateMarketGovernancePolicy` 治理下发，并输出 `market_engine + treasury` 执行证据 | `types.rs` (`MarketGovernancePolicy`, `GovernanceOp::UpdateMarketGovernancePolicy`) + `protocol.rs` (`set/governance_market_policy`) + `market_engine.rs` (`Web30MarketEngine`) + `main.rs` (`governance_market_policy_probe`) | `governance_market_policy_gate.pass=true` + `engine_output_pass=true` + `treasury_output_pass=true` | 已迁移（受限范围，I-GOV-02 主链路） |
+| C-21 | 治理签名算法 staged 抽象：RPC 层 `signature_scheme` + 共识执行层 `governance_vote_verifier` 钩子均已接线；`novovm-node` 启动支持 `NOVOVM_GOVERNANCE_VOTE_VERIFIER`（默认 `ed25519`）；`mldsa87` 明确拒绝并落审计（不启 ML-DSA 验签执行） | `main.rs` (`parse_governance_signature_scheme`, `configure_governance_vote_verifier`, `ensure_governance_signature_scheme_supported`) + `governance_verifier.rs` (`GovernanceVoteVerifier`, `GovernanceVoteVerifierScheme`, `build_governance_vote_verifier`) + `protocol.rs` (`governance_vote_verifier_scheme`) + `bft_engine.rs` (`set_governance_vote_verifier_by_scheme`, `governance_vote_verifier_scheme`, `governance_signature_scheme_supported`) + `run_governance_rpc_gate.ps1` | `sign_unsupported_scheme_reject_ok=true` + `vote_verifier_startup_ok=true` + `vote_verifier_staged_reject_ok=true` + `governance_rpc_signature_scheme_reject_pass=true` + `governance_rpc_vote_verifier_startup_pass=true` + `governance_rpc_vote_verifier_staged_reject_pass=true` + `test_governance_execute_uses_configurable_vote_verifier_hook` + `build_governance_vote_verifier_rejects_mldsa87_staged_only` | 已迁移（staged-only，I-GOV-04 预接线） |
 
 ### C 系列关键观察
 
@@ -118,7 +119,14 @@
 - 治理执行 gate：`run_governance_treasury_spend_gate.ps1`，验证 `TreasurySpend` 的提案/投票/生效闭环与 `overspend` 拒绝。
 - 治理负向 gate：`run_governance_negative_gate.ps1`，验证 `unauthorized_submit/invalid_signature/duplicate_vote/insufficient_votes/replay_execute` 全部拒绝。
 - 投票域分隔校验：执行时强校验 `proposal_height/proposal_digest` 与提案一致，不一致直接拒绝。
-- 治理 RPC gate：`run_governance_rpc_gate.ps1`，验证 `submit -> sign -> vote -> execute -> getPolicy` 正向闭环、`unauthorized proposer` 拒绝、重复投票拒绝、`listAuditEvents` 审计可观测；已接入 acceptance gate 的 `governance_rpc_pass`。
+- 治理验签执行钩子：`novovm-consensus` 已提供 `GovernanceVoteVerifier`（默认 `ed25519`），治理执行路径改为通过 verifier 调用，后续 ML-DSA 只需注入实现，不需要重写执行主链路。
+- 启动配置入口：`novovm-node` 支持 `NOVOVM_GOVERNANCE_VOTE_VERIFIER`（默认 `ed25519`）；若配置为 `mldsa87` 当前会在启动阶段拒绝（staged-only 保护），避免误以为已启用 ML-DSA 验签。
+- 结构下沉完成：`scheme parse + verifier factory + staged reject` 已下沉到 `novovm-consensus::governance_verifier`；节点层只保留配置读取与调用 `BFTEngine::set_governance_vote_verifier_by_scheme`。
+- 继续下沉完成：`governance_sign/governance_vote` 对 `signature_scheme` 的支持判定已改为调用共识层 `BFTEngine::governance_signature_scheme_supported`（并通过 `governance_vote_verifier_scheme` 返回 active scheme），节点层不再硬编码 `ed25519`。
+- CI 强门禁：`.github/workflows/ci.yml` 新增 `governance_rpc_gate` job，要求 `vote_verifier_startup_ok=true` 且 `vote_verifier_staged_reject_ok=true`，否则 PR 直接失败。
+- 分支保护自动化脚本：`scripts/migration/set_branch_protection_required_checks.ps1`（将 `Rust checks` + `Governance RPC gate (vote verifier)` 设为 `main` 的 required checks，支持 `-DryRun` 预览）。
+- 治理 RPC gate：`run_governance_rpc_gate.ps1`，验证 `submit -> sign -> vote -> execute -> getPolicy` 正向闭环、`unauthorized proposer` 拒绝、重复投票拒绝、`listAuditEvents` 审计可观测、`signature_scheme=mldsa87` 拒绝（staged-only）；已接入 acceptance gate 的 `governance_rpc_pass`。
+- 新增证据（下沉后回归）：`artifacts/migration/governance-rpc-gate-downsink-scheme-smoke/governance-rpc-gate-summary.json`（`pass=true`, `sign_unsupported_scheme_reject_ok=true`）。
 - RPC 暴露 gate：`run_rpc_exposure_gate.ps1`，验证默认安全态（public 拒绝 `governance_*` + gov 端口关闭）与受控开启态（gov 本地端口可用、public 仍拒绝）。
 - 治理权限入口（RPC 进程级）：`NOVOVM_GOVERNANCE_PROPOSER_ALLOWLIST`、`NOVOVM_GOVERNANCE_EXECUTOR_ALLOWLIST`。
 - 治理权限入口（链上策略初版）：`NOVOVM_GOV_ACCESS_PROPOSER_COMMITTEE`、`NOVOVM_GOV_ACCESS_PROPOSER_THRESHOLD`、`NOVOVM_GOV_ACCESS_EXECUTOR_COMMITTEE`、`NOVOVM_GOV_ACCESS_EXECUTOR_THRESHOLD`、`NOVOVM_GOV_ACCESS_TIMELOCK_EPOCHS`。
@@ -176,9 +184,9 @@
 | I-GOV-01 | 九席位加权治理模型与提案阈值 | `contracts/web30/core/src/governance.rs` | 已迁入受限主链路：`UpdateGovernanceCouncilPolicy` + 九席位固定结构 + 分类阈值（Parameter/Treasury/Protocol/Emergency） |
 | I-GOV-02 | 参数治理热更新（AMM/CDP/Bond/Gov） | `src/vm-runtime/src/governance.rs` | 已迁入受限主链路：`UpdateMarketGovernancePolicy` 覆盖 `AMM/CDP/Bond/Reserve/NAV/Buyback` 参数治理；`Slash/Mempool/NetworkDos/TokenEconomics/Treasury/AccessPolicy/CouncilPolicy` 亦已可治理 |
 | I-GOV-03 | RPC 治理接口：submit/vote/sign/list | `supervm-node-core/src/rpc/governance_api.rs` | NOVOVM 已接入受限最小面（`submit/sign/vote/execute/get/list/getPolicy/listAuditEvents`），并补齐链上权限模型初版（committee/threshold/timelock）；进程级 allowlist 仍可作为运维防线 |
-| I-GOV-04 | 投票/签名消息校验与抗量子签名验证（ML-DSA） | 同上 | NOVOVM 未接入 |
+| I-GOV-04 | 投票/签名消息校验与抗量子签名验证（ML-DSA） | 同上 | NOVOVM staged-only：已接入双层抽象（RPC `signature_scheme` + 共识执行 `governance_vote_verifier` hook），当前仅 `ed25519` 启用；`mldsa87` 明确拒绝并写入审计，ML-DSA 验签执行链路未启用 |
 
-注：NOVOVM 已具备治理挂点占位、最小执行闭环、九席位权重阈值模型、第二/三类参数扩展、经济治理参数族扩展（I-GOV-02）与受限 RPC 执行面；但 ML-DSA 与完整跨模块经济执行联动仍未接入主链路。
+注：NOVOVM 已具备治理挂点占位、最小执行闭环、九席位权重阈值模型、第二/三类参数扩展、经济治理参数族扩展（I-GOV-02）与受限 RPC 执行面；ML-DSA 当前为 staged-only（算法标识接线与拒绝门禁已完成，验签执行链路未启用）；完整跨模块经济执行联动仍未接入主链路。
 
 ---
 
@@ -309,12 +317,12 @@
 ## 5.2 现在不应对外宣布“已完成”的范围
 
 - 完整主网经济治理版（跨模块经济参数编排、经济策略持久化审计与恢复、长压运营口径）。
-- 抗量子签名治理面（ML-DSA）与链上权限治理模型高级能力（成员轮换、审计索引持久化、失效恢复）。
+- 抗量子签名治理面（ML-DSA）与链上权限治理模型高级能力（成员轮换、链上审计索引、失效恢复）。
 
 ## 5.3 从 MVP 走向完整主网的最短补齐项
 
 1. 从“参数可治理”走向“经济策略可发布”：补齐跨模块经济执行编排（参数 -> 执行 -> 结算 -> 审计）与回滚策略。
-2. 在已上线链上权限模型初版（多签/委员会/时间锁）的基础上，补齐链上持久化审计索引，并逐步降级进程级 allowlist 为运维兜底。
+2. 在已上线链上权限模型初版（多签/委员会/时间锁）的基础上，从“节点侧审计持久化”升级到“链上持久化审计索引”，并逐步降级进程级 allowlist 为运维兜底。
 3. 完成长期运行与生产运维口径（持久化 peer-score/ban、长压回归、参数变更审计追踪）。
 
 ---
@@ -392,6 +400,23 @@
   - `governance_param2_pass=true`
   - `governance_param3_pass=true`
   - `governance_negative_pass=true`
+- 增量快照（治理审计持久化索引）：`artifacts/migration/governance-rpc-gate-audit-persist-smoke/governance-rpc-gate-summary.json`
+  - `pass=true`
+  - `audit_ok=true`
+  - `audit_persist_ok=true`
+  - `audit_persist_count=10`
+- 增量快照（治理审计持久化接入 acceptance）：`artifacts/migration/acceptance-gate-governance-audit-persist-smoke/acceptance-gate-summary.json`
+  - `overall_pass=true`
+  - `governance_rpc_pass=true`
+  - `governance_rpc_audit_persist_pass=true`
+- 增量快照（治理签名算法 staged 门禁）：`artifacts/migration/governance-rpc-gate-signature-scheme-smoke/governance-rpc-gate-summary.json`
+  - `pass=true`
+  - `sign_unsupported_scheme_reject_ok=true`
+  - `audit_has_sign_reject_unsupported_scheme=true`
+- 增量快照（治理签名算法 staged 接入 acceptance）：`artifacts/migration/acceptance-gate-governance-signature-scheme-smoke/acceptance-gate-summary.json`
+  - `overall_pass=true`
+  - `governance_rpc_pass=true`
+  - `governance_rpc_signature_scheme_reject_pass=true`
 - 全量发布快照（full gates）：`artifacts/migration/release-snapshot-2026-03-05/release-snapshot.json`
   - `overall_pass=true`
   - `profile_name=full_snapshot_v1`
@@ -439,5 +464,23 @@
   - `commit_hash=823a5880e104c96d03e2ab4a8473c9f620ae6413`
   - `governance_market_policy_engine_pass=true`
   - `governance_market_policy_treasury_pass=true`
+- 全量发布快照（治理审计持久化接线回归）：
+  - `artifacts/migration/release-snapshot-audit-persist-smoke/release-snapshot.json`
+  - `profile_name=full_snapshot_v1`
+  - `overall_pass=true`
+  - `key_results.governance_rpc_audit_persist_pass=true`
+- RC 快照（治理审计持久化接线回归）：
+  - `artifacts/migration/release-candidate-novovm-rc-2026-03-06-governance-audit-persist-smoke/rc-candidate.json`
+  - `status=ReadyForMerge/SnapshotGreen`
+  - `governance_rpc_audit_persist_pass=true`
+- 全量发布快照（治理签名算法 staged 回归）：
+  - `artifacts/migration/release-snapshot-signature-scheme-smoke/release-snapshot.json`
+  - `profile_name=full_snapshot_v1`
+  - `overall_pass=true`
+  - `key_results.governance_rpc_signature_scheme_reject_pass=true`
+- RC 快照（治理签名算法 staged 回归）：
+  - `artifacts/migration/release-candidate-novovm-rc-2026-03-06-signature-scheme-smoke/rc-candidate.json`
+  - `status=ReadyForMerge/SnapshotGreen`
+  - `governance_rpc_signature_scheme_reject_pass=true`
 
 该快照对应结论：当前 NOVOVM “共识+交易+读查询+网络活性防护+最小经济治理（token economics + treasury spend）”链路处于可发布状态；后续缺口集中在完整经济治理域与治理权限模型。

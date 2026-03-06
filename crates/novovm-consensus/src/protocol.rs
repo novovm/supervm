@@ -4,6 +4,9 @@
 // Propose → Vote → PreCommit → Commit
 
 use crate::epoch::Epoch;
+use crate::governance_verifier::{
+    Ed25519GovernanceVoteVerifier, GovernanceVoteVerifier, GovernanceVoteVerifierScheme,
+};
 use crate::market_engine::{Web30MarketEngine, Web30MarketEngineSnapshot};
 use crate::quorum_cert::{QuorumCertificate, Vote};
 use crate::token_runtime::Web30TokenRuntime;
@@ -16,6 +19,7 @@ use crate::types::{
 use ed25519_dalek::{SigningKey, VerifyingKey};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct JailRecord {
@@ -158,6 +162,8 @@ pub struct HotStuffProtocol {
     token_runtime: Web30TokenRuntime,
     /// 基于 SVM2026 `web30-core` 的 market engine（AMM/CDP/Bond/NAV）。
     market_engine: Web30MarketEngine,
+    /// 治理投票签名校验器（默认 ed25519，可注入其他方案）。
+    governance_vote_verifier: Arc<dyn GovernanceVoteVerifier>,
 }
 
 impl HotStuffProtocol {
@@ -198,7 +204,23 @@ impl HotStuffProtocol {
             governance_market_policy,
             token_runtime,
             market_engine,
+            governance_vote_verifier: Arc::new(Ed25519GovernanceVoteVerifier),
         })
+    }
+
+    /// 设置治理投票签名校验器（I-GOV-04 execute-hook 预留）。
+    pub fn set_governance_vote_verifier(&mut self, verifier: Arc<dyn GovernanceVoteVerifier>) {
+        self.governance_vote_verifier = verifier;
+    }
+
+    /// 当前治理投票签名校验器名称（用于审计/调试）。
+    pub fn governance_vote_verifier_name(&self) -> &'static str {
+        self.governance_vote_verifier.name()
+    }
+
+    /// 当前治理投票签名校验器方案（用于能力判定）。
+    pub fn governance_vote_verifier_scheme(&self) -> GovernanceVoteVerifierScheme {
+        self.governance_vote_verifier.scheme()
     }
 
     fn validate_governance_op(op: &GovernanceOp) -> BFTResult<()> {
@@ -1103,7 +1125,7 @@ impl HotStuffProtocol {
             let key = public_keys
                 .get(&vote.voter_id)
                 .ok_or(BFTError::NotValidator(vote.voter_id))?;
-            vote.verify(key)?;
+            self.governance_vote_verifier.verify(vote, key)?;
             if vote.support {
                 support_weight = support_weight
                     .checked_add(self.active_weight_of(vote.voter_id).unwrap_or(0))
@@ -1225,6 +1247,25 @@ mod tests {
     use ed25519_dalek::VerifyingKey;
     use rand::rngs::OsRng;
     use std::collections::HashMap;
+    use std::sync::Arc;
+
+    struct RejectAllGovernanceVoteVerifier;
+
+    impl GovernanceVoteVerifier for RejectAllGovernanceVoteVerifier {
+        fn name(&self) -> &'static str {
+            "test_reject_all"
+        }
+
+        fn scheme(&self) -> GovernanceVoteVerifierScheme {
+            GovernanceVoteVerifierScheme::Ed25519
+        }
+
+        fn verify(&self, _vote: &GovernanceVote, _key: &VerifyingKey) -> BFTResult<()> {
+            Err(BFTError::InvalidSignature(
+                "test governance verifier rejected vote".to_string(),
+            ))
+        }
+    }
 
     fn generate_keys(count: usize) -> (Vec<SigningKey>, HashMap<NodeId, VerifyingKey>) {
         let signing_keys: Vec<_> = (0..count)
@@ -2043,6 +2084,47 @@ mod tests {
         let dup =
             protocol.execute_governance_proposal(proposal.proposal_id, &dup_votes, &public_keys);
         assert!(matches!(dup, Err(BFTError::DuplicateVote(0))));
+    }
+
+    #[test]
+    fn test_governance_execute_uses_configurable_vote_verifier_hook() {
+        let validator_set = ValidatorSet::new_equal_weight(vec![0, 1, 2]);
+        let (signing_keys, public_keys) = generate_keys(3);
+        let mut protocol = HotStuffProtocol::new(validator_set, 0).unwrap();
+        protocol.set_governance_execution_enabled(true);
+        assert_eq!(protocol.governance_vote_verifier_name(), "ed25519");
+        assert_eq!(
+            protocol.governance_vote_verifier_scheme(),
+            GovernanceVoteVerifierScheme::Ed25519
+        );
+        protocol.set_governance_vote_verifier(Arc::new(RejectAllGovernanceVoteVerifier));
+        assert_eq!(protocol.governance_vote_verifier_name(), "test_reject_all");
+        assert_eq!(
+            protocol.governance_vote_verifier_scheme(),
+            GovernanceVoteVerifierScheme::Ed25519
+        );
+
+        let proposal = protocol
+            .submit_governance_proposal(
+                0,
+                GovernanceOp::UpdateSlashPolicy {
+                    policy: SlashPolicy {
+                        mode: SlashMode::ObserveOnly,
+                        equivocation_threshold: 3,
+                        min_active_validators: 2,
+                        cooldown_epochs: 4,
+                    },
+                },
+            )
+            .unwrap();
+        let votes = vec![
+            GovernanceVote::new(&proposal, 0, true, &signing_keys[0]),
+            GovernanceVote::new(&proposal, 1, true, &signing_keys[1]),
+        ];
+
+        let result =
+            protocol.execute_governance_proposal(proposal.proposal_id, &votes, &public_keys);
+        assert!(matches!(result, Err(BFTError::InvalidSignature(_))));
     }
 
     #[test]

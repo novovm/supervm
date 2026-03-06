@@ -2,12 +2,14 @@ param(
     [string]$RepoRoot = "",
     [string]$OutputDir = "",
     [string]$Bind = "127.0.0.1:8901",
+    [ValidateSet("ed25519")]
+    [string]$GovernanceVoteVerifier = "ed25519",
     [ValidateRange(1024, 1048576)]
     [int]$MaxBodyBytes = 65536,
     [ValidateRange(1, 1000)]
     [int]$RateLimitPerIp = 128,
     [ValidateRange(1, 64)]
-    [int]$ExpectedRequests = 13,
+    [int]$ExpectedRequests = 14,
     [ValidateRange(1, 30)]
     [int]$StartupTimeoutSeconds = 8,
     [ValidateRange(1, 30)]
@@ -177,6 +179,24 @@ function Get-PropertyOrNull {
     return $null
 }
 
+function Read-JsonFile {
+    param([string]$Path)
+
+    if (-not (Test-Path $Path)) {
+        return $null
+    }
+    $raw = Get-Content -Path $Path -Raw
+    if ([string]::IsNullOrWhiteSpace($raw)) {
+        return $null
+    }
+    $convertFromJsonCmd = Get-Command ConvertFrom-Json -ErrorAction Stop
+    $hasJsonDepth = $convertFromJsonCmd.Parameters.ContainsKey("Depth")
+    if ($hasJsonDepth) {
+        return ($raw | ConvertFrom-Json -Depth 64)
+    }
+    return ($raw | ConvertFrom-Json)
+}
+
 function Parse-ProcessedCount {
     param([string]$StdoutText)
 
@@ -198,12 +218,53 @@ function Parse-ProcessedCount {
     return 0
 }
 
+function Parse-GovernanceVoteVerifierStatus {
+    param([string]$StdoutText)
+
+    if (-not $StdoutText) {
+        return [ordered]@{
+            line = ""
+            configured = ""
+            active = ""
+        }
+    }
+    $line = (
+        $StdoutText -split "`r?`n" |
+            Where-Object { $_ -match "^governance_vote_verifier_in:" } |
+            Select-Object -Last 1
+    )
+    if (-not $line) {
+        return [ordered]@{
+            line = ""
+            configured = ""
+            active = ""
+        }
+    }
+    $configured = ""
+    $active = ""
+    $configuredMatch = [regex]::Match($line, "configured=(?<configured>\S+)")
+    if ($configuredMatch.Success) {
+        $configured = [string]$configuredMatch.Groups["configured"].Value
+    }
+    $activeMatch = [regex]::Match($line, "active=(?<active>\S+)")
+    if ($activeMatch.Success) {
+        $active = [string]$activeMatch.Groups["active"].Value
+    }
+    return [ordered]@{
+        line = [string]$line
+        configured = $configured
+        active = $active
+    }
+}
+
 function Start-RpcServerProcess {
     param(
         [string]$NodeExe,
         [string]$RepoRoot,
         [string]$DbPath,
+        [string]$AuditDbPath,
         [string]$Bind,
+        [string]$VoteVerifier,
         [int]$MaxBodyBytes,
         [int]$RateLimitPerIp,
         [int]$MaxRequests
@@ -218,6 +279,7 @@ function Start-RpcServerProcess {
     $psi.CreateNoWindow = $true
     $psi.Environment["NOVOVM_NODE_MODE"] = "rpc_server"
     $psi.Environment["NOVOVM_CHAIN_QUERY_DB"] = $DbPath
+    $psi.Environment["NOVOVM_GOVERNANCE_AUDIT_DB"] = $AuditDbPath
     $psi.Environment["NOVOVM_ENABLE_PUBLIC_RPC"] = "0"
     $psi.Environment["NOVOVM_ENABLE_GOV_RPC"] = "1"
     $psi.Environment["NOVOVM_GOV_RPC_BIND"] = $Bind
@@ -227,6 +289,7 @@ function Start-RpcServerProcess {
     $psi.Environment["NOVOVM_GOV_RPC_ALLOWLIST"] = "127.0.0.1"
     $psi.Environment["NOVOVM_GOVERNANCE_PROPOSER_ALLOWLIST"] = "0"
     $psi.Environment["NOVOVM_GOVERNANCE_EXECUTOR_ALLOWLIST"] = "0"
+    $psi.Environment["NOVOVM_GOVERNANCE_VOTE_VERIFIER"] = $VoteVerifier
     return [System.Diagnostics.Process]::Start($psi)
 }
 
@@ -269,6 +332,10 @@ if (-not $nodeExe) {
 
 $dbPath = Join-Path $OutputDir "query-db.json"
 '{"blocks":[],"txs":{},"receipts":{},"balances":{}}' | Set-Content -Path $dbPath -Encoding UTF8
+$auditDbPath = Join-Path $OutputDir "governance-audit-events.json"
+if (Test-Path $auditDbPath) {
+    Remove-Item -Path $auditDbPath -Force
+}
 
 $bindUri = [Uri]("http://$Bind")
 $rpcEndpoint = "http://$Bind/rpc"
@@ -279,13 +346,26 @@ $requests = @()
 $errorReason = ""
 $pass = $false
 $processed = 0
+$stdoutText = ""
+$stderrText = ""
+$voteVerifierConfigured = ""
+$voteVerifierActive = ""
+$voteVerifierStartupOk = $false
+$voteVerifierLine = ""
+$voteVerifierStagedRejectOk = $false
+$voteVerifierRejectExitCode = 0
+$voteVerifierRejectErrorMessage = ""
+$voteVerifierRejectStdoutPath = Join-Path $OutputDir "governance-rpc-reject.stdout.log"
+$voteVerifierRejectStderrPath = Join-Path $OutputDir "governance-rpc-reject.stderr.log"
 
 try {
     $proc = Start-RpcServerProcess `
         -NodeExe $nodeExe `
         -RepoRoot $RepoRoot `
         -DbPath $dbPath `
+        -AuditDbPath $auditDbPath `
         -Bind $Bind `
+        -VoteVerifier $GovernanceVoteVerifier `
         -MaxBodyBytes $MaxBodyBytes `
         -RateLimitPerIp $RateLimitPerIp `
         -MaxRequests $ExpectedRequests
@@ -309,6 +389,14 @@ try {
     })
     $requests += [ordered]@{ step = "sign1"; resp = $sign1Resp }
     $sign1Sig = Get-PropertyOrNull -InputObject (Get-PropertyOrNull -InputObject (Get-PropertyOrNull -InputObject $sign1Resp -Name "json") -Name "result") -Name "signature"
+
+    $signUnsupportedSchemeResp = Invoke-JsonPost -Uri $rpcEndpoint -Body (Build-RpcBody -Id 21 -Method "governance_sign" -Params @{
+        proposal_id = 1
+        signer_id = 1
+        support = $true
+        signature_scheme = "mldsa87"
+    })
+    $requests += [ordered]@{ step = "sign_unsupported_scheme"; resp = $signUnsupportedSchemeResp }
 
     $vote0Resp = Invoke-JsonPost -Uri $rpcEndpoint -Body (Build-RpcBody -Id 3 -Method "governance_vote" -Params @{
         proposal_id = 1
@@ -395,9 +483,66 @@ try {
         $stdoutText | Set-Content -Path $stdoutPath -Encoding UTF8
         $stderrText | Set-Content -Path $stderrPath -Encoding UTF8
         $processed = Parse-ProcessedCount -StdoutText $stdoutText
+        $voteVerifierStatus = Parse-GovernanceVoteVerifierStatus -StdoutText $stdoutText
+        $voteVerifierLine = [string]$voteVerifierStatus.line
+        $voteVerifierConfigured = [string]$voteVerifierStatus.configured
+        $voteVerifierActive = [string]$voteVerifierStatus.active
+        $voteVerifierStartupOk = (
+            -not [string]::IsNullOrWhiteSpace($voteVerifierLine) -and
+            $voteVerifierConfigured.ToLowerInvariant() -eq $GovernanceVoteVerifier.ToLowerInvariant() -and
+            $voteVerifierActive.ToLowerInvariant() -eq "ed25519"
+        )
     } else {
         "" | Set-Content -Path $stdoutPath -Encoding UTF8
         "" | Set-Content -Path $stderrPath -Encoding UTF8
+    }
+}
+
+$rejectProc = $null
+try {
+    $rejectProc = Start-RpcServerProcess `
+        -NodeExe $nodeExe `
+        -RepoRoot $RepoRoot `
+        -DbPath $dbPath `
+        -AuditDbPath $auditDbPath `
+        -Bind $Bind `
+        -VoteVerifier "mldsa87" `
+        -MaxBodyBytes $MaxBodyBytes `
+        -RateLimitPerIp $RateLimitPerIp `
+        -MaxRequests 1
+
+    if (-not $rejectProc.WaitForExit($StartupTimeoutSeconds * 1000)) {
+        try { $rejectProc.Kill() } catch {}
+        throw "staged verifier reject probe timed out (mldsa87 did not exit)"
+    }
+
+    $rejectStdout = $rejectProc.StandardOutput.ReadToEnd()
+    $rejectStderr = $rejectProc.StandardError.ReadToEnd()
+    $rejectStdout | Set-Content -Path $voteVerifierRejectStdoutPath -Encoding UTF8
+    $rejectStderr | Set-Content -Path $voteVerifierRejectStderrPath -Encoding UTF8
+    $voteVerifierRejectExitCode = [int]$rejectProc.ExitCode
+    $rejectCombined = ($rejectStdout + $rejectStderr)
+    $voteVerifierRejectErrorMessage = $rejectCombined.Trim()
+    $rejectLower = $rejectCombined.ToLowerInvariant()
+    $voteVerifierStagedRejectOk = (
+        $voteVerifierRejectExitCode -ne 0 -and
+        $rejectLower.Contains("unsupported governance vote verifier") -and
+        $rejectLower.Contains("staged-only")
+    )
+} catch {
+    $voteVerifierRejectErrorMessage = $_.Exception.Message
+    $voteVerifierStagedRejectOk = $false
+} finally {
+    if ($rejectProc) {
+        if (-not $rejectProc.HasExited) {
+            try { $rejectProc.Kill() } catch {}
+        }
+    }
+    if (-not (Test-Path $voteVerifierRejectStdoutPath)) {
+        "" | Set-Content -Path $voteVerifierRejectStdoutPath -Encoding UTF8
+    }
+    if (-not (Test-Path $voteVerifierRejectStderrPath)) {
+        "" | Set-Content -Path $voteVerifierRejectStderrPath -Encoding UTF8
     }
 }
 
@@ -408,6 +553,7 @@ foreach ($item in $requests) {
 
 $submitParam2Resp = $stepMap["submit_param2"]
 $sign1Resp = $stepMap["sign1"]
+$signUnsupportedSchemeResp = $stepMap["sign_unsupported_scheme"]
 $vote0Resp = $stepMap["vote0"]
 $vote1SignedResp = $stepMap["vote1_signed"]
 $executeResp = $stepMap["execute_param2"]
@@ -422,6 +568,7 @@ $listResp = $stepMap["list_proposals"]
 
 $submitParam2Err = Get-PropertyOrNull -InputObject (Get-PropertyOrNull -InputObject $submitParam2Resp -Name "json") -Name "error"
 $sign1Err = Get-PropertyOrNull -InputObject (Get-PropertyOrNull -InputObject $sign1Resp -Name "json") -Name "error"
+$signUnsupportedSchemeErr = Get-PropertyOrNull -InputObject (Get-PropertyOrNull -InputObject $signUnsupportedSchemeResp -Name "json") -Name "error"
 $vote0Err = Get-PropertyOrNull -InputObject (Get-PropertyOrNull -InputObject $vote0Resp -Name "json") -Name "error"
 $vote1SignedErr = Get-PropertyOrNull -InputObject (Get-PropertyOrNull -InputObject $vote1SignedResp -Name "json") -Name "error"
 $executeErr = Get-PropertyOrNull -InputObject (Get-PropertyOrNull -InputObject $executeResp -Name "json") -Name "error"
@@ -435,6 +582,12 @@ $listErr = Get-PropertyOrNull -InputObject (Get-PropertyOrNull -InputObject $lis
 $submitParam2Ok = ($submitParam2Resp.status -eq 200 -and $null -eq $submitParam2Err)
 $sign1Sig = Get-PropertyOrNull -InputObject (Get-PropertyOrNull -InputObject (Get-PropertyOrNull -InputObject $sign1Resp -Name "json") -Name "result") -Name "signature"
 $sign1Ok = ($sign1Resp.status -eq 200 -and $null -eq $sign1Err -and -not [string]::IsNullOrWhiteSpace([string]$sign1Sig))
+$signUnsupportedSchemeErrMsg = ""
+$signUnsupportedSchemeErrMsgRaw = Get-PropertyOrNull -InputObject $signUnsupportedSchemeErr -Name "message"
+if ($null -ne $signUnsupportedSchemeErrMsgRaw) {
+    $signUnsupportedSchemeErrMsg = [string]$signUnsupportedSchemeErrMsgRaw
+}
+$signUnsupportedSchemeRejectOk = ($signUnsupportedSchemeResp.status -eq 200 -and $signUnsupportedSchemeErrMsg.ToLowerInvariant().Contains("unsupported governance signature scheme"))
 $vote0Ok = ($vote0Resp.status -eq 200 -and $null -eq $vote0Err)
 $vote1SignedOk = ($vote1SignedResp.status -eq 200 -and $null -eq $vote1SignedErr)
 $executeOk = ($executeResp.status -eq 200 -and $null -eq $executeErr)
@@ -466,6 +619,7 @@ $auditCount = 0
 $auditHasSignOk = $false
 $auditHasExecuteOk = $false
 $auditHasSubmitReject = $false
+$auditHasSignRejectUnsupportedScheme = $false
 $auditResult = Get-PropertyOrNull -InputObject (Get-PropertyOrNull -InputObject $auditResp -Name "json") -Name "result"
 $auditCountRaw = Get-PropertyOrNull -InputObject $auditResult -Name "count"
 if ($null -ne $auditCountRaw -and "$auditCountRaw" -ne "") {
@@ -476,18 +630,66 @@ if ($null -ne $auditEvents) {
     foreach ($event in $auditEvents) {
         $action = [string](Get-PropertyOrNull -InputObject $event -Name "action")
         $outcome = [string](Get-PropertyOrNull -InputObject $event -Name "outcome")
+        $detail = [string](Get-PropertyOrNull -InputObject $event -Name "detail")
         if ($action -eq "sign" -and $outcome -eq "ok") { $auditHasSignOk = $true }
         if ($action -eq "execute" -and $outcome -eq "ok") { $auditHasExecuteOk = $true }
         if ($action -eq "submit" -and $outcome -eq "reject") { $auditHasSubmitReject = $true }
+        if ($action -eq "sign" -and $outcome -eq "reject" -and $detail.ToLowerInvariant().Contains("unsupported signature scheme")) {
+            $auditHasSignRejectUnsupportedScheme = $true
+        }
     }
 }
-$auditOk = ($auditResp.status -eq 200 -and $null -eq $auditErr -and $auditCount -ge 5 -and $auditHasSignOk -and $auditHasExecuteOk -and $auditHasSubmitReject)
+$auditOk = ($auditResp.status -eq 200 -and $null -eq $auditErr -and $auditCount -ge 6 -and $auditHasSignOk -and $auditHasExecuteOk -and $auditHasSubmitReject -and $auditHasSignRejectUnsupportedScheme)
+$auditPersistCount = 0
+$auditPersistNextSeq = 0
+$auditPersistHasSignOk = $false
+$auditPersistHasExecuteOk = $false
+$auditPersistHasSubmitReject = $false
+$auditPersistHasSignRejectUnsupportedScheme = $false
+$auditPersistOk = $false
+$auditPersistJson = Read-JsonFile -Path $auditDbPath
+if ($null -ne $auditPersistJson) {
+    $auditPersistCountRaw = Get-PropertyOrNull -InputObject $auditPersistJson -Name "events"
+    if ($null -ne $auditPersistCountRaw) {
+        $auditPersistCount = @($auditPersistCountRaw).Count
+    }
+    $auditPersistNextSeqRaw = Get-PropertyOrNull -InputObject $auditPersistJson -Name "next_seq"
+    if ($null -ne $auditPersistNextSeqRaw -and "$auditPersistNextSeqRaw" -ne "") {
+        $auditPersistNextSeq = [int]$auditPersistNextSeqRaw
+    }
+    $persistEvents = Get-PropertyOrNull -InputObject $auditPersistJson -Name "events"
+    if ($null -ne $persistEvents) {
+        foreach ($event in $persistEvents) {
+            $action = [string](Get-PropertyOrNull -InputObject $event -Name "action")
+            $outcome = [string](Get-PropertyOrNull -InputObject $event -Name "outcome")
+            $detail = [string](Get-PropertyOrNull -InputObject $event -Name "detail")
+            if ($action -eq "sign" -and $outcome -eq "ok") { $auditPersistHasSignOk = $true }
+            if ($action -eq "execute" -and $outcome -eq "ok") { $auditPersistHasExecuteOk = $true }
+            if ($action -eq "submit" -and $outcome -eq "reject") { $auditPersistHasSubmitReject = $true }
+            if ($action -eq "sign" -and $outcome -eq "reject" -and $detail.ToLowerInvariant().Contains("unsupported signature scheme")) {
+                $auditPersistHasSignRejectUnsupportedScheme = $true
+            }
+        }
+    }
+}
+$auditPersistOk = (
+    (Test-Path $auditDbPath) -and
+    $auditPersistCount -ge $auditCount -and
+    $auditPersistNextSeq -ge $auditPersistCount -and
+    $auditPersistHasSignOk -and
+    $auditPersistHasExecuteOk -and
+    $auditPersistHasSubmitReject -and
+    $auditPersistHasSignRejectUnsupportedScheme
+)
 $listOk = ($listResp.status -eq 200 -and $null -eq $listErr)
 $processedOk = ($processed -eq $ExpectedRequests)
 
 $pass = [bool](
+    $voteVerifierStartupOk -and
+    $voteVerifierStagedRejectOk -and
     $submitParam2Ok -and
     $sign1Ok -and
+    $signUnsupportedSchemeRejectOk -and
     $vote0Ok -and
     $vote1SignedOk -and
     $executeOk -and
@@ -498,12 +700,16 @@ $pass = [bool](
     $slashVote0Ok -and
     $duplicateRejectOk -and
     $auditOk -and
+    $auditPersistOk -and
     $listOk -and
     $processedOk
 )
 
-if (-not $submitParam2Ok) { $errorReason = "submit_param2_failed" }
+if (-not $voteVerifierStartupOk) { $errorReason = "vote_verifier_startup_invalid" }
+elseif (-not $voteVerifierStagedRejectOk) { $errorReason = "vote_verifier_staged_reject_failed" }
+elseif (-not $submitParam2Ok) { $errorReason = "submit_param2_failed" }
 elseif (-not $sign1Ok) { $errorReason = "sign1_failed" }
+elseif (-not $signUnsupportedSchemeRejectOk) { $errorReason = "sign_unsupported_scheme_not_rejected" }
 elseif (-not $vote0Ok) { $errorReason = "vote0_failed" }
 elseif (-not $vote1SignedOk) { $errorReason = "vote1_signed_failed" }
 elseif (-not $executeOk) { $errorReason = "execute_param2_failed" }
@@ -514,6 +720,7 @@ elseif (-not $slashSignOk) { $errorReason = "slash_sign_failed" }
 elseif (-not $slashVote0Ok) { $errorReason = "slash_vote0_failed" }
 elseif (-not $duplicateRejectOk) { $errorReason = "duplicate_vote_not_rejected" }
 elseif (-not $auditOk) { $errorReason = "audit_events_invalid" }
+elseif (-not $auditPersistOk) { $errorReason = "audit_events_not_persisted" }
 elseif (-not $listOk) { $errorReason = "list_proposals_failed" }
 elseif (-not $processedOk) { $errorReason = "processed_count_mismatch" }
 
@@ -524,8 +731,18 @@ $summary = [ordered]@{
     bind = $Bind
     expected_requests = $ExpectedRequests
     processed_requests = $processed
+    vote_verifier_configured = $voteVerifierConfigured
+    vote_verifier_active = $voteVerifierActive
+    vote_verifier_startup_ok = $voteVerifierStartupOk
+    vote_verifier_startup_line = $voteVerifierLine
+    vote_verifier_staged_reject_ok = $voteVerifierStagedRejectOk
+    vote_verifier_staged_reject_exit_code = $voteVerifierRejectExitCode
+    vote_verifier_staged_reject_error_message = $voteVerifierRejectErrorMessage
+    vote_verifier_staged_reject_stdout_log = $voteVerifierRejectStdoutPath
+    vote_verifier_staged_reject_stderr_log = $voteVerifierRejectStderrPath
     submit_param2_ok = $submitParam2Ok
     sign1_ok = $sign1Ok
+    sign_unsupported_scheme_reject_ok = $signUnsupportedSchemeRejectOk
     vote0_ok = $vote0Ok
     vote1_signed_ok = $vote1SignedOk
     execute_ok = $executeOk
@@ -540,12 +757,22 @@ $summary = [ordered]@{
     audit_has_sign_ok = $auditHasSignOk
     audit_has_execute_ok = $auditHasExecuteOk
     audit_has_submit_reject = $auditHasSubmitReject
+    audit_has_sign_reject_unsupported_scheme = $auditHasSignRejectUnsupportedScheme
+    audit_persist_ok = $auditPersistOk
+    audit_persist_count = $auditPersistCount
+    audit_persist_next_seq = $auditPersistNextSeq
+    audit_persist_has_sign_ok = $auditPersistHasSignOk
+    audit_persist_has_execute_ok = $auditPersistHasExecuteOk
+    audit_persist_has_submit_reject = $auditPersistHasSubmitReject
+    audit_persist_has_sign_reject_unsupported_scheme = $auditPersistHasSignRejectUnsupportedScheme
+    audit_persist_path = $auditDbPath
     list_ok = $listOk
     stdout_log = $stdoutPath
     stderr_log = $stderrPath
     policy_fee_after_execute = $policyFee
     unauthorized_submit_error_message = $unauthorizedSubmitErrMsg
     duplicate_error_message = $duplicateErrMsg
+    sign_unsupported_scheme_error_message = $signUnsupportedSchemeErrMsg
 }
 
 $summaryJson = Join-Path $OutputDir "governance-rpc-gate-summary.json"
@@ -561,8 +788,18 @@ $md = @(
     "- bind: $($summary.bind)"
     "- expected_requests: $($summary.expected_requests)"
     "- processed_requests: $($summary.processed_requests)"
+    "- vote_verifier_configured: $($summary.vote_verifier_configured)"
+    "- vote_verifier_active: $($summary.vote_verifier_active)"
+    "- vote_verifier_startup_ok: $($summary.vote_verifier_startup_ok)"
+    "- vote_verifier_startup_line: $($summary.vote_verifier_startup_line)"
+    "- vote_verifier_staged_reject_ok: $($summary.vote_verifier_staged_reject_ok)"
+    "- vote_verifier_staged_reject_exit_code: $($summary.vote_verifier_staged_reject_exit_code)"
+    "- vote_verifier_staged_reject_error_message: $($summary.vote_verifier_staged_reject_error_message)"
+    "- vote_verifier_staged_reject_stdout_log: $($summary.vote_verifier_staged_reject_stdout_log)"
+    "- vote_verifier_staged_reject_stderr_log: $($summary.vote_verifier_staged_reject_stderr_log)"
     "- submit_param2_ok: $($summary.submit_param2_ok)"
     "- sign1_ok: $($summary.sign1_ok)"
+    "- sign_unsupported_scheme_reject_ok: $($summary.sign_unsupported_scheme_reject_ok)"
     "- vote0_ok: $($summary.vote0_ok)"
     "- vote1_signed_ok: $($summary.vote1_signed_ok)"
     "- execute_ok: $($summary.execute_ok)"
@@ -577,10 +814,20 @@ $md = @(
     "- audit_has_sign_ok: $($summary.audit_has_sign_ok)"
     "- audit_has_execute_ok: $($summary.audit_has_execute_ok)"
     "- audit_has_submit_reject: $($summary.audit_has_submit_reject)"
+    "- audit_has_sign_reject_unsupported_scheme: $($summary.audit_has_sign_reject_unsupported_scheme)"
+    "- audit_persist_ok: $($summary.audit_persist_ok)"
+    "- audit_persist_count: $($summary.audit_persist_count)"
+    "- audit_persist_next_seq: $($summary.audit_persist_next_seq)"
+    "- audit_persist_has_sign_ok: $($summary.audit_persist_has_sign_ok)"
+    "- audit_persist_has_execute_ok: $($summary.audit_persist_has_execute_ok)"
+    "- audit_persist_has_submit_reject: $($summary.audit_persist_has_submit_reject)"
+    "- audit_persist_has_sign_reject_unsupported_scheme: $($summary.audit_persist_has_sign_reject_unsupported_scheme)"
+    "- audit_persist_path: $($summary.audit_persist_path)"
     "- list_ok: $($summary.list_ok)"
     "- policy_fee_after_execute: $($summary.policy_fee_after_execute)"
     "- unauthorized_submit_error_message: $($summary.unauthorized_submit_error_message)"
     "- duplicate_error_message: $($summary.duplicate_error_message)"
+    "- sign_unsupported_scheme_error_message: $($summary.sign_unsupported_scheme_error_message)"
     "- stdout_log: $($summary.stdout_log)"
     "- stderr_log: $($summary.stderr_log)"
     "- summary_json: $summaryJson"

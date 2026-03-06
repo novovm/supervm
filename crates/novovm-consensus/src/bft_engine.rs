@@ -3,6 +3,9 @@
 // BFT 引擎：协调 Epoch 管理、HotStuff 协议、投票聚合
 
 use crate::epoch::{Epoch, EpochConfig, EpochManager};
+use crate::governance_verifier::{
+    build_governance_vote_verifier, GovernanceVoteVerifier, GovernanceVoteVerifierScheme,
+};
 use crate::market_engine::Web30MarketEngineSnapshot;
 use crate::protocol::{HotStuffProtocol, Phase};
 use crate::quorum_cert::{QuorumCertificate, Vote};
@@ -420,6 +423,42 @@ impl BFTEngine {
     pub fn governance_execution_enabled(&self) -> bool {
         let protocol = self.protocol.lock().unwrap();
         protocol.governance_execution_enabled()
+    }
+
+    /// 设置治理投票签名校验器（I-GOV-04 execute-hook 预留）。
+    pub fn set_governance_vote_verifier(&self, verifier: Arc<dyn GovernanceVoteVerifier>) {
+        let mut protocol = self.protocol.lock().unwrap();
+        protocol.set_governance_vote_verifier(verifier);
+    }
+
+    /// 按方案设置治理投票签名校验器（staged：当前仅 ed25519 启用）。
+    pub fn set_governance_vote_verifier_by_scheme(
+        &self,
+        scheme: GovernanceVoteVerifierScheme,
+    ) -> BFTResult<()> {
+        let verifier = build_governance_vote_verifier(scheme)?;
+        self.set_governance_vote_verifier(verifier);
+        Ok(())
+    }
+
+    /// 当前治理投票签名校验器名称（用于审计/调试）。
+    pub fn governance_vote_verifier_name(&self) -> &'static str {
+        let protocol = self.protocol.lock().unwrap();
+        protocol.governance_vote_verifier_name()
+    }
+
+    /// 当前治理投票签名校验器方案（用于能力判定）。
+    pub fn governance_vote_verifier_scheme(&self) -> GovernanceVoteVerifierScheme {
+        let protocol = self.protocol.lock().unwrap();
+        protocol.governance_vote_verifier_scheme()
+    }
+
+    /// 判断指定治理签名方案是否由当前共识验签器支持。
+    pub fn governance_signature_scheme_supported(
+        &self,
+        scheme: GovernanceVoteVerifierScheme,
+    ) -> bool {
+        self.governance_vote_verifier_scheme() == scheme
     }
 
     /// 提交治理提案（最小闭环）。
@@ -1033,5 +1072,53 @@ mod tests {
             .unwrap();
         assert!(executed);
         assert_eq!(engine.governance_network_dos_policy(), target);
+    }
+
+    #[test]
+    fn test_set_governance_vote_verifier_by_scheme_staged() {
+        let validator_set = ValidatorSet::new_equal_weight(vec![0, 1, 2]);
+        let signing_keys: Vec<_> = (0..3).map(|_| SigningKey::generate(&mut OsRng)).collect();
+        let public_keys: HashMap<NodeId, VerifyingKey> = signing_keys
+            .iter()
+            .enumerate()
+            .map(|(i, sk)| (i as NodeId, sk.verifying_key()))
+            .collect();
+        let engine = BFTEngine::new(
+            BFTConfig::default(),
+            0,
+            signing_keys[0].clone(),
+            validator_set,
+            public_keys,
+        )
+        .unwrap();
+
+        assert_eq!(engine.governance_vote_verifier_name(), "ed25519");
+        assert_eq!(
+            engine.governance_vote_verifier_scheme(),
+            crate::governance_verifier::GovernanceVoteVerifierScheme::Ed25519
+        );
+        assert!(engine.governance_signature_scheme_supported(
+            crate::governance_verifier::GovernanceVoteVerifierScheme::Ed25519
+        ));
+        assert!(!engine.governance_signature_scheme_supported(
+            crate::governance_verifier::GovernanceVoteVerifierScheme::MlDsa87
+        ));
+        engine
+            .set_governance_vote_verifier_by_scheme(
+                crate::governance_verifier::GovernanceVoteVerifierScheme::Ed25519,
+            )
+            .unwrap();
+        assert_eq!(engine.governance_vote_verifier_name(), "ed25519");
+
+        let err = engine
+            .set_governance_vote_verifier_by_scheme(
+                crate::governance_verifier::GovernanceVoteVerifierScheme::MlDsa87,
+            )
+            .unwrap_err()
+            .to_string()
+            .to_lowercase();
+        assert!(err.contains("unsupported governance vote verifier"));
+        assert!(err.contains("staged-only"));
+        assert_eq!(engine.governance_vote_verifier_name(), "ed25519");
     }
 }

@@ -88,6 +88,7 @@
 
 pub mod bft_engine;
 pub mod epoch;
+pub mod governance_verifier;
 pub mod market_engine;
 pub mod protocol;
 pub mod quorum_cert;
@@ -96,6 +97,10 @@ pub mod types;
 
 pub use bft_engine::{BFTConfig, BFTEngine, CommitQcTimings, CommittedEpoch};
 pub use epoch::{Epoch, EpochConfig, EpochManager};
+pub use governance_verifier::{
+    build_governance_vote_verifier, Ed25519GovernanceVoteVerifier, GovernanceVoteVerifier,
+    GovernanceVoteVerifierScheme,
+};
 pub use market_engine::{Web30MarketEngine, Web30MarketEngineSnapshot};
 pub use protocol::{HotStuffProtocol, Phase, ProtocolState};
 pub use quorum_cert::{QuorumCertificate, Vote};

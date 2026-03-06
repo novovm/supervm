@@ -178,5 +178,29 @@
   - `artifacts/migration/release-candidate-novovm-rc-2026-03-06-ga-v1/rc-candidate.json`
   - `status=ReadyForMerge/SnapshotGreen`
   - `commit_hash=823a5880e104c96d03e2ab4a8473c9f620ae6413`
+- 已完成：治理审计持久化索引（I-GOV 审计可追溯增强）：`novovm-node` 引入 `NOVOVM_GOVERNANCE_AUDIT_DB` + `GovernanceRpcAuditStore(next_seq/events)`，`run_governance_rpc_gate.ps1` 新增 `audit_persist_ok`，并接入 acceptance。
+- 证据：
+  - `artifacts/migration/governance-rpc-gate-audit-persist-smoke/governance-rpc-gate-summary.json`（`audit_persist_ok=True`）
+  - `artifacts/migration/acceptance-gate-governance-audit-persist-smoke/acceptance-gate-summary.json`（`governance_rpc_audit_persist_pass=True`）
+- 已完成：发布快照/RC 已纳入治理审计持久化字段：
+  - `artifacts/migration/release-snapshot-audit-persist-smoke/release-snapshot.json`（`key_results.governance_rpc_audit_persist_pass=True`）
+  - `artifacts/migration/release-candidate-novovm-rc-2026-03-06-governance-audit-persist-smoke/rc-candidate.json`（`governance_rpc_audit_persist_pass=True`）
+- 已完成：治理签名算法 staged 抽象（I-GOV-04 staged-only）：`governance_sign/governance_vote` 支持 `signature_scheme` 参数，当前仅 `ed25519` 启用；`mldsa87` 请求明确拒绝并落审计事件，形成固定负向门禁；`novovm-consensus` 已新增 `GovernanceVoteVerifier` execute-hook（默认 `ed25519`）并接入治理执行主链路；`novovm-node` 启动新增 `NOVOVM_GOVERNANCE_VOTE_VERIFIER`（`mldsa87` 目前启动即拒绝）。
+- 已完成：治理验签器启动门禁收口：`run_governance_rpc_gate.ps1` 新增 `vote_verifier_startup_ok`（默认 `ed25519` 启动配置生效）与 `vote_verifier_staged_reject_ok`（`mldsa87` 启动拒绝）并接入 acceptance/snapshot/rc 聚合。
+- 已完成：CI 门禁接线：`.github/workflows/ci.yml` 新增 `governance_rpc_gate`（windows）并将 `vote_verifier_startup_ok + vote_verifier_staged_reject_ok` 设为硬失败条件。
+- 已完成：分支保护自动化脚本：`scripts/migration/set_branch_protection_required_checks.ps1`，可将 `Rust checks + Governance RPC gate (vote verifier)` 设为 `main` 必需检查（required checks）。
+- 已完成：I-GOV-04 staged 结构下沉：`governance vote verifier` 的 `scheme parse + factory + staged reject` 已从节点层下沉到 `novovm-consensus::governance_verifier`，节点层改为仅调用 `BFTEngine::set_governance_vote_verifier_by_scheme`。
+- 已完成：I-GOV-04 staged 二段下沉：`governance_sign/governance_vote` 的 `signature_scheme` 支持判定不再由节点层硬编码，改为调用 `BFTEngine::governance_signature_scheme_supported` + `governance_vote_verifier_scheme`（以共识 active verifier 为准）。
+- 证据：
+  - `artifacts/migration/governance-rpc-gate-vote-verifier-smoke/governance-rpc-gate-summary.json`（`vote_verifier_startup_ok=True`, `vote_verifier_staged_reject_ok=True`）
+  - `artifacts/migration/governance-rpc-gate-downsink-scheme-smoke/governance-rpc-gate-summary.json`（`pass=True`, `sign_unsupported_scheme_reject_ok=True`）
+  - `artifacts/migration/release-snapshot-vote-verifier-smoke/release-snapshot.json`（`key_results.governance_rpc_vote_verifier_startup_pass=True`, `key_results.governance_rpc_vote_verifier_staged_reject_pass=True`）
+  - `artifacts/migration/release-candidate-novovm-rc-2026-03-06-vote-verifier-smoke/rc-candidate.json`（`governance_rpc_vote_verifier_startup_pass=True`, `governance_rpc_vote_verifier_staged_reject_pass=True`）
+- 证据：
+  - `artifacts/migration/governance-rpc-gate-signature-scheme-smoke/governance-rpc-gate-summary.json`（`sign_unsupported_scheme_reject_ok=True`）
+  - `artifacts/migration/acceptance-gate-governance-signature-scheme-smoke/acceptance-gate-summary.json`（`governance_rpc_signature_scheme_reject_pass=True`）
+- 已完成：发布快照/RC 已纳入治理签名 staged 字段：
+  - `artifacts/migration/release-snapshot-signature-scheme-smoke/release-snapshot.json`（`key_results.governance_rpc_signature_scheme_reject_pass=True`）
+  - `artifacts/migration/release-candidate-novovm-rc-2026-03-06-signature-scheme-smoke/rc-candidate.json`（`governance_rpc_signature_scheme_reject_pass=True`）
 - 状态：`ReadyForMerge / SnapshotGreen`（`full_snapshot_ga_v1` 主线收口）。
 - 待推进：AOEM FFI 正式暴露 `state_root` 后，将代理门禁切换为硬一致性校验。

@@ -149,6 +149,10 @@ $rcCandidate = [ordered]@{
     status = "ReadyForMerge/SnapshotGreen"
     snapshot_profile = [string]$snapshot.profile_name
     snapshot_overall_pass = [bool]$snapshot.overall_pass
+    governance_rpc_audit_persist_pass = [bool]$acceptance.governance_rpc_audit_persist_pass
+    governance_rpc_signature_scheme_reject_pass = [bool]$acceptance.governance_rpc_signature_scheme_reject_pass
+    governance_rpc_vote_verifier_startup_pass = [bool]$acceptance.governance_rpc_vote_verifier_startup_pass
+    governance_rpc_vote_verifier_staged_reject_pass = [bool]$acceptance.governance_rpc_vote_verifier_staged_reject_pass
     governance_param3_pass = [bool]$acceptance.governance_param3_pass
     governance_market_policy_pass = [bool]$acceptance.governance_market_policy_pass
     governance_market_policy_engine_pass = [bool]$acceptance.governance_market_policy_engine_pass
@@ -178,6 +182,10 @@ $md = @(
     "- status: $($rcCandidate.status)"
     "- snapshot_profile: $($rcCandidate.snapshot_profile)"
     "- snapshot_overall_pass: $($rcCandidate.snapshot_overall_pass)"
+    "- governance_rpc_audit_persist_pass: $($rcCandidate.governance_rpc_audit_persist_pass)"
+    "- governance_rpc_signature_scheme_reject_pass: $($rcCandidate.governance_rpc_signature_scheme_reject_pass)"
+    "- governance_rpc_vote_verifier_startup_pass: $($rcCandidate.governance_rpc_vote_verifier_startup_pass)"
+    "- governance_rpc_vote_verifier_staged_reject_pass: $($rcCandidate.governance_rpc_vote_verifier_staged_reject_pass)"
     "- governance_param3_pass: $($rcCandidate.governance_param3_pass)"
     "- governance_market_policy_pass: $($rcCandidate.governance_market_policy_pass)"
     "- governance_market_policy_engine_pass: $($rcCandidate.governance_market_policy_engine_pass)"
@@ -201,6 +209,10 @@ Write-Host "  commit_hash: $($rcCandidate.commit_hash)"
 Write-Host "  status: $($rcCandidate.status)"
 Write-Host "  snapshot_profile: $($rcCandidate.snapshot_profile)"
 Write-Host "  snapshot_overall_pass: $($rcCandidate.snapshot_overall_pass)"
+Write-Host "  governance_rpc_audit_persist_pass: $($rcCandidate.governance_rpc_audit_persist_pass)"
+Write-Host "  governance_rpc_signature_scheme_reject_pass: $($rcCandidate.governance_rpc_signature_scheme_reject_pass)"
+Write-Host "  governance_rpc_vote_verifier_startup_pass: $($rcCandidate.governance_rpc_vote_verifier_startup_pass)"
+Write-Host "  governance_rpc_vote_verifier_staged_reject_pass: $($rcCandidate.governance_rpc_vote_verifier_staged_reject_pass)"
 Write-Host "  governance_param3_pass: $($rcCandidate.governance_param3_pass)"
 Write-Host "  governance_market_policy_pass: $($rcCandidate.governance_market_policy_pass)"
 Write-Host "  governance_market_policy_engine_pass: $($rcCandidate.governance_market_policy_engine_pass)"

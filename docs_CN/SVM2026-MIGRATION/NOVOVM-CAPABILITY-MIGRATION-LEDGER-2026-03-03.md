@@ -134,6 +134,20 @@
 - 证据样本：`artifacts/migration/release-candidate-novovm-rc-2026-03-06-ga-market-local/rc-candidate.json`（`status=ReadyForMerge/SnapshotGreen`, `governance_market_policy_pass=True`）。
 - 已完成：治理 RPC 执行面增强：`governance_submitProposal/governance_sign/governance_vote/governance_execute/governance_getProposal/governance_listProposals/governance_listAuditEvents/governance_getPolicy`，并新增进程级权限校验（`NOVOVM_GOVERNANCE_PROPOSER_ALLOWLIST/NOVOVM_GOVERNANCE_EXECUTOR_ALLOWLIST`）与审计事件流（含 reject 事件）。
 - 证据样本：`artifacts/migration/acceptance-gate-governance-rpc-smoke-v2/governance-rpc-gate/governance-rpc-gate-summary.json`（`pass=True`, `sign1_ok=True`, `unauthorized_submit_reject_ok=True`, `audit_ok=True`）。
+- 已完成：治理审计持久化索引：`novovm-node` 新增 `NOVOVM_GOVERNANCE_AUDIT_DB`，`governance_listAuditEvents` 对应事件流落盘到 `GovernanceRpcAuditStore(next_seq/events)`，并在 `run_governance_rpc_gate.ps1` 增加 `audit_persist_ok` 校验。
+- 证据样本：`artifacts/migration/governance-rpc-gate-audit-persist-smoke/governance-rpc-gate-summary.json`（`pass=True`, `audit_ok=True`, `audit_persist_ok=True`, `audit_persist_count=10`）。
+- 证据样本：`artifacts/migration/acceptance-gate-governance-audit-persist-smoke/acceptance-gate-summary.json`（`overall_pass=True`, `governance_rpc_pass=True`, `governance_rpc_audit_persist_pass=True`）。
+- 已完成：治理签名算法 staged 抽象：`governance_sign/governance_vote` 新增 `signature_scheme` 参数；当前仅 `ed25519` 启用，`mldsa87`（及别名）明确拒绝并写入审计事件（I-GOV-04 staged-only）；`novovm-consensus` 已新增 `GovernanceVoteVerifier` execute-hook（默认 `ed25519`）并接入治理执行链路；`novovm-node` 启动新增 `NOVOVM_GOVERNANCE_VOTE_VERIFIER` 并对 `mldsa87` 执行 staged-only 拒绝。
+- 已完成：治理验签器启动门禁：`run_governance_rpc_gate.ps1` 新增 `vote_verifier_startup_ok` + `vote_verifier_staged_reject_ok`，并接入 acceptance/snapshot/rc 聚合。
+- 已完成：CI 门禁硬化：`.github/workflows/ci.yml` 新增 `governance_rpc_gate` job，`vote_verifier_startup_ok` 与 `vote_verifier_staged_reject_ok` 任一失败即阻断 PR。
+- 已完成：分支保护自动化脚本：`scripts/migration/set_branch_protection_required_checks.ps1`，支持一键把 `Rust checks` 与 `Governance RPC gate (vote verifier)` 设为 `main` required checks。
+- 已完成：I-GOV-04 staged 结构下沉：`novovm-consensus` 新增 `governance_verifier.rs`（`GovernanceVoteVerifier` / `GovernanceVoteVerifierScheme` / `build_governance_vote_verifier`），`BFTEngine` 新增 `set_governance_vote_verifier_by_scheme`，`novovm-node` 移除本地 verifier 工厂逻辑并改为调用共识层接口。
+- 已完成：I-GOV-04 staged 二段下沉：`governance_sign/governance_vote` 的 `signature_scheme` 支持判定改为调用 `BFTEngine::governance_signature_scheme_supported`（并由 `governance_vote_verifier_scheme` 给出 active scheme），节点层不再硬编码 `ed25519`。
+- 证据样本：`artifacts/migration/governance-rpc-gate-vote-verifier-smoke/governance-rpc-gate-summary.json`（`vote_verifier_startup_ok=True`, `vote_verifier_staged_reject_ok=True`）。
+- 证据样本：`artifacts/migration/governance-rpc-gate-downsink-scheme-smoke/governance-rpc-gate-summary.json`（`pass=True`, `sign_unsupported_scheme_reject_ok=True`）。
+- 证据样本：`artifacts/migration/acceptance-gate-vote-verifier-smoke/acceptance-gate-summary.json`（`overall_pass=True`, `governance_rpc_vote_verifier_startup_pass=True`, `governance_rpc_vote_verifier_staged_reject_pass=True`）。
+- 证据样本：`artifacts/migration/governance-rpc-gate-signature-scheme-smoke/governance-rpc-gate-summary.json`（`pass=True`, `sign_unsupported_scheme_reject_ok=True`, `audit_has_sign_reject_unsupported_scheme=True`）。
+- 证据样本：`artifacts/migration/acceptance-gate-governance-signature-scheme-smoke/acceptance-gate-summary.json`（`overall_pass=True`, `governance_rpc_signature_scheme_reject_pass=True`）。
 - 已完成：治理负向门禁闭环：`unauthorized_submit + invalid_signature + duplicate_vote + insufficient_votes + replay_execute`，并新增 `scripts/migration/run_governance_negative_gate.ps1`；该门禁已接入 `scripts/migration/run_migration_acceptance_gate.ps1`（`overall_pass` 新增 `governance_negative_pass` 约束）。
 - 已完成：治理签名防重放域分隔：`GovernanceVote` 签名消息绑定 `proposal_id + proposal_height + proposal_digest + support`，执行时强校验 `proposal_height/proposal_digest` 一致性，拒绝跨提案/跨高度重放。
 - 证据样本：`artifacts/migration/acceptance-gate-governance-negative-smoke/governance-negative-gate/governance-negative-gate-summary.json`（`pass=True`）。
@@ -149,8 +163,14 @@
 - 证据样本：`artifacts/migration/release-snapshot-param3-smoke-relfix/acceptance-gate-full/acceptance-gate-summary.json`（`governance_param3_pass=True`, `adapter_stability_pass=True`）。
 - 已完成：GA 正式发布快照（`full_snapshot_ga_v1`）回填：`release-snapshot` 聚合包含 `governance_market_policy_engine_pass` + `governance_market_policy_treasury_pass`，并纳入 `governance_pass` 收口。
 - 证据样本：`artifacts/migration/release-snapshot-ga-2026-03-06-051653/release-snapshot.json`（`overall_pass=True`, `profile_name=full_snapshot_ga_v1`, `key_results.governance_market_policy_engine_pass=True`, `key_results.governance_market_policy_treasury_pass=True`）。
+- 已完成：`release-snapshot` 聚合新增治理审计持久化口径 `key_results.governance_rpc_audit_persist_pass`，并纳入治理总门禁。
+- 证据样本：`artifacts/migration/release-snapshot-audit-persist-smoke/release-snapshot.json`（`overall_pass=True`, `profile_name=full_snapshot_v1`, `key_results.governance_rpc_audit_persist_pass=True`）。
+- 已完成：`release-snapshot` 聚合新增治理签名算法 staged 口径 `key_results.governance_rpc_signature_scheme_reject_pass`，并纳入治理总门禁。
+- 证据样本：`artifacts/migration/release-snapshot-signature-scheme-smoke/release-snapshot.json`（`overall_pass=True`, `profile_name=full_snapshot_v1`, `key_results.governance_rpc_signature_scheme_reject_pass=True`）。
 - 已完成：GA 正式 RC（`rc_ref=novovm-rc-2026-03-06-ga-v1`）回填，状态保持 `ReadyForMerge/SnapshotGreen`。
 - 证据样本：`artifacts/migration/release-candidate-novovm-rc-2026-03-06-ga-v1/rc-candidate.json`（`commit_hash=823a5880e104c96d03e2ab4a8473c9f620ae6413`, `governance_market_policy_engine_pass=True`, `governance_market_policy_treasury_pass=True`）。
+- 证据样本：`artifacts/migration/release-candidate-novovm-rc-2026-03-06-governance-audit-persist-smoke/rc-candidate.json`（`status=ReadyForMerge/SnapshotGreen`, `governance_rpc_audit_persist_pass=True`）。
+- 证据样本：`artifacts/migration/release-candidate-novovm-rc-2026-03-06-signature-scheme-smoke/rc-candidate.json`（`status=ReadyForMerge/SnapshotGreen`, `governance_rpc_signature_scheme_reject_pass=True`）。
 - 已完成：`novovm-consensus` 新增自动解禁窗口（`cooldown_epochs`），`SlashExecution` 输出 `jailed_until_epoch/cooldown_epochs`；`state.height >= jailed_until_epoch` 时自动恢复验证者活跃态。
 - 已完成：新增 `scripts/migration/run_unjail_cooldown_gate.ps1`（正向：jail -> cooldown 到期自动 unjail；负向：未到期拒绝），并接入 `scripts/migration/run_migration_acceptance_gate.ps1`（`overall_pass` 新增 `unjail_cooldown_pass` 约束）。
 - 证据样本：`artifacts/migration/acceptance-gate-unjail-full/unjail-cooldown-gate/unjail-cooldown-gate-summary.json`（`pass=True`）。
