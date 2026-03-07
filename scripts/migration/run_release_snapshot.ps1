@@ -141,10 +141,16 @@ $enabledGates = [ordered]@{
     governance_access_policy = [bool]$acceptance.governance_access_policy_gate_enabled
     governance_token_economics = [bool]$acceptance.governance_token_economics_gate_enabled
     governance_treasury_spend = [bool]$acceptance.governance_treasury_spend_gate_enabled
+    economic_infra_dedicated = [bool]$acceptance.economic_infra_dedicated_gate_enabled
+    market_engine_treasury_negative = [bool]$acceptance.market_engine_treasury_negative_gate_enabled
+    foreign_rate_source = [bool]$acceptance.foreign_rate_source_gate_enabled
+    nav_valuation_source = [bool]$acceptance.nav_valuation_source_gate_enabled
+    dividend_balance_source = [bool]$acceptance.dividend_balance_source_gate_enabled
     governance_rpc_mldsa_ffi = [bool]$acceptance.governance_rpc_mldsa_ffi_gate_enabled
     rpc_exposure = [bool]$acceptance.rpc_exposure_gate_enabled
     unjail_cooldown = [bool]$acceptance.unjail_cooldown_gate_enabled
     adapter_stability = [bool]$acceptance.adapter_stability_enabled
+    vm_runtime_split = [bool]$acceptance.vm_runtime_split_gate_enabled
 }
 
 $governanceMldsaPass = if ([bool]$acceptance.governance_rpc_mldsa_ffi_gate_enabled) {
@@ -172,11 +178,21 @@ $governancePass = [bool](
     $acceptance.governance_market_policy_engine_pass -and
     $acceptance.governance_market_policy_treasury_pass -and
     $acceptance.governance_market_policy_orchestration_pass -and
+    $acceptance.governance_market_policy_dividend_pass -and
+    $acceptance.governance_market_policy_foreign_payment_pass -and
     $acceptance.governance_council_policy_pass -and
     $acceptance.governance_negative_pass -and
     $acceptance.governance_access_policy_pass -and
     $acceptance.governance_token_economics_pass -and
     $acceptance.governance_treasury_spend_pass
+)
+
+$economicPass = [bool](
+    ((-not [bool]$acceptance.economic_infra_dedicated_gate_enabled) -or [bool]$acceptance.economic_infra_dedicated_pass) -and
+    ((-not [bool]$acceptance.market_engine_treasury_negative_gate_enabled) -or [bool]$acceptance.market_engine_treasury_negative_pass) -and
+    ((-not [bool]$acceptance.foreign_rate_source_gate_enabled) -or [bool]$acceptance.foreign_rate_source_pass) -and
+    ((-not [bool]$acceptance.nav_valuation_source_gate_enabled) -or [bool]$acceptance.nav_valuation_source_pass) -and
+    ((-not [bool]$acceptance.dividend_balance_source_gate_enabled) -or [bool]$acceptance.dividend_balance_source_pass)
 )
 
 $syncPass = [bool](
@@ -235,10 +251,18 @@ $keyResults = [ordered]@{
     governance_market_policy_engine_pass = [bool]$acceptance.governance_market_policy_engine_pass
     governance_market_policy_treasury_pass = [bool]$acceptance.governance_market_policy_treasury_pass
     governance_market_policy_orchestration_pass = [bool]$acceptance.governance_market_policy_orchestration_pass
+    governance_market_policy_dividend_pass = [bool]$acceptance.governance_market_policy_dividend_pass
+    governance_market_policy_foreign_payment_pass = [bool]$acceptance.governance_market_policy_foreign_payment_pass
     governance_council_policy_pass = [bool]$acceptance.governance_council_policy_pass
     governance_access_policy_pass = [bool]$acceptance.governance_access_policy_pass
     governance_token_economics_pass = [bool]$acceptance.governance_token_economics_pass
     governance_treasury_spend_pass = [bool]$acceptance.governance_treasury_spend_pass
+    economic_pass = $economicPass
+    economic_infra_dedicated_pass = if ([bool]$acceptance.economic_infra_dedicated_gate_enabled) { [bool]$acceptance.economic_infra_dedicated_pass } else { $true }
+    market_engine_treasury_negative_pass = if ([bool]$acceptance.market_engine_treasury_negative_gate_enabled) { [bool]$acceptance.market_engine_treasury_negative_pass } else { $true }
+    foreign_rate_source_pass = if ([bool]$acceptance.foreign_rate_source_gate_enabled) { [bool]$acceptance.foreign_rate_source_pass } else { $true }
+    nav_valuation_source_pass = if ([bool]$acceptance.nav_valuation_source_gate_enabled) { [bool]$acceptance.nav_valuation_source_pass } else { $true }
+    dividend_balance_source_pass = if ([bool]$acceptance.dividend_balance_source_gate_enabled) { [bool]$acceptance.dividend_balance_source_pass } else { $true }
     rpc_exposure_pass = if ([bool]$acceptance.rpc_exposure_gate_enabled) { [bool]$acceptance.rpc_exposure_pass } else { $true }
     rpc_exposure_default_safe_pass = if ($rpcExposure) { [bool]$rpcExposure.default_safe_pass } else { $true }
     rpc_exposure_controlled_open_pass = if ($rpcExposure) { [bool]$rpcExposure.controlled_open_pass } else { $true }
@@ -264,6 +288,11 @@ $snapshot = [ordered]@{
         governance_council_policy_summary_json = [string]$acceptance.governance_council_policy_report_json
         governance_access_policy_summary_json = [string]$acceptance.governance_access_policy_report_json
         governance_treasury_spend_summary_json = [string]$acceptance.governance_treasury_spend_report_json
+        economic_infra_dedicated_summary_json = [string]$acceptance.economic_infra_dedicated_report_json
+        market_engine_treasury_negative_summary_json = [string]$acceptance.market_engine_treasury_negative_report_json
+        foreign_rate_source_summary_json = [string]$acceptance.foreign_rate_source_report_json
+        nav_valuation_source_summary_json = [string]$acceptance.nav_valuation_source_report_json
+        dividend_balance_source_summary_json = [string]$acceptance.dividend_balance_source_report_json
         rpc_exposure_summary_json = if ([bool]$acceptance.rpc_exposure_gate_enabled) { $rpcExposureSummaryJson } else { "" }
     }
 }
@@ -300,6 +329,11 @@ $md = @(
     "- governance_council_policy_summary_json: $($snapshot.evidence.governance_council_policy_summary_json)",
     "- governance_access_policy_summary_json: $($snapshot.evidence.governance_access_policy_summary_json)",
     "- governance_treasury_spend_summary_json: $($snapshot.evidence.governance_treasury_spend_summary_json)",
+    "- economic_infra_dedicated_summary_json: $($snapshot.evidence.economic_infra_dedicated_summary_json)",
+    "- market_engine_treasury_negative_summary_json: $($snapshot.evidence.market_engine_treasury_negative_summary_json)",
+    "- foreign_rate_source_summary_json: $($snapshot.evidence.foreign_rate_source_summary_json)",
+    "- nav_valuation_source_summary_json: $($snapshot.evidence.nav_valuation_source_summary_json)",
+    "- dividend_balance_source_summary_json: $($snapshot.evidence.dividend_balance_source_summary_json)",
     "- rpc_exposure_summary_json: $($snapshot.evidence.rpc_exposure_summary_json)",
     "- snapshot_json: $snapshotJsonPath"
 )

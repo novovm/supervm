@@ -251,6 +251,16 @@
   - 关键 gate：`governance_market_policy_pass=True`，`governance_market_policy_engine_pass=True`，`governance_market_policy_treasury_pass=True`，`governance_market_policy_orchestration_pass=True`
   - 关键治理扩展：`governance_token_economics_pass=True`，`governance_treasury_spend_pass=True`
   - 性能口径：`core/cpu_batch_stress.p50=23565675.18`，`core/cpu_parity.p50=5797524.92`
+- 已完成：GA 多源签名回归快照（2026-03-07，multisig）：
+  - `artifacts/migration/release-snapshot-ga-multisig-2026-03-07/release-snapshot.json`
+  - `profile_name=full_snapshot_ga_v1`，`overall_pass=True`
+  - 治理扩展：`governance_market_policy_dividend_pass=True`，`governance_market_policy_foreign_payment_pass=True`
+  - 经济聚合：`economic_pass=True`，`economic_infra_dedicated_pass=True`，`market_engine_treasury_negative_pass=True`，`foreign_rate_source_pass=True`，`nav_valuation_source_pass=True`，`dividend_balance_source_pass=True`
+- 已完成：GA 多源签名正式 RC（2026-03-07）：
+  - `artifacts/migration/release-candidate-novovm-rc-2026-03-07-ga-multisig/rc-candidate.json`
+  - `status=ReadyForMerge/SnapshotGreen`
+  - `snapshot_profile=full_snapshot_ga_v1`，`snapshot_overall_pass=True`
+  - `commit_hash=b72fdd987cf1c61163830bda4d46e4dd34020ecf`
 - 已完成：`governance_market_policy` 回归修复（同日重复 `reconfigure` 的 dividend claim 抖动）：
   - 根因：单地址同日重复 claim 导致 `dividend_claims_executed` 偶发为 0，触发 `engine_applied/dividend_output_pass` 抖动。
   - 修复：`novovm-consensus::market_engine` 改为地址环探针（按 `day` 轮转 claim 地址），在保留 `dividend_claims_executed > 0` 严格门禁下恢复稳定。

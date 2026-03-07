@@ -262,15 +262,31 @@ impl AoemCapabilityContract {
             ],
         )
         .unwrap_or(false);
-        let zk_formal_fields_present = capability_exists(
+        let zk_formal_fields_present = capability_bool(
             &raw,
             &[
-                "zkvm.prove",
-                "zkvm.verify",
-                "zkvm.prove_enabled",
-                "zkvm.verify_enabled",
+                "zk_formal_fields_present",
+                "zk.formal_fields_present",
+                "zkvm.formal_fields_present",
             ],
-        );
+        )
+        .unwrap_or_else(|| {
+            capability_exists(
+                &raw,
+                &[
+                    "zkvm_prove",
+                    "zkvm_verify",
+                    "zk.prove",
+                    "zk.verify",
+                    "zk.prove_enabled",
+                    "zk.verify_enabled",
+                    "zkvm.prove",
+                    "zkvm.verify",
+                    "zkvm.prove_enabled",
+                    "zkvm.verify_enabled",
+                ],
+            )
+        });
 
         // Legacy AOEM capability set only exposed backend path fields.
         let msm_accel_direct = capability_bool(&raw, &["msm_accel", "msm.accel"]);
@@ -697,6 +713,20 @@ mod tests {
         assert!(c.msm_accel);
         assert!(c.fallback_reason.is_none());
         assert!(c.inferred_from_legacy_fields);
+    }
+
+    #[test]
+    fn capability_contract_treats_flat_zk_fields_as_formal() {
+        let raw = json!({
+            "execute_ops_v2": true,
+            "zkvm_prove": true,
+            "zkvm_verify": false
+        });
+
+        let c = AoemCapabilityContract::from_capabilities_json(raw);
+        assert!(c.zkvm_prove);
+        assert!(!c.zkvm_verify);
+        assert!(c.zk_formal_fields_present);
     }
 
     #[test]

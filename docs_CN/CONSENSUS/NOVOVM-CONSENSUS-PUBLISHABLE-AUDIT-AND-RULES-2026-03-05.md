@@ -130,6 +130,9 @@
 - 经济子域接线证据：`governance_market_dividend_out` 与 `governance_market_foreign_out` 已纳入 `run_governance_market_policy_gate.ps1`，对应 `dividend_output_pass=true`、`foreign_payment_output_pass=true`。
 - WEB30 同源迁移证据：`run_web30_core_parity_gate.ps1` 已验证 `SVM2026 contracts/web30/core/src` 与 `SUPERVM vendor/web30-core/src` 哈希一致（`19` 个完全一致，`1` 个允许漂移：`dividend_pool.rs` 安全修复）。
 - 2026-03-07 回归快照证据：`full_snapshot_ga_v1` post-fix 全绿，`governance_market_policy_pass + engine/treasury/orchestration + token_economics + treasury_spend` 全部为 `true`（`artifacts/migration/release-snapshot-ga-post-fix-2026-03-07/release-snapshot.json`）。
+- 2026-03-07 多源签名回归快照证据：`full_snapshot_ga_v1`（`artifacts/migration/release-snapshot-ga-multisig-2026-03-07/release-snapshot.json`）`overall_pass=true`，并新增发布聚合字段：`governance_market_policy_dividend_pass=true`、`governance_market_policy_foreign_payment_pass=true`、`economic_pass=true`。
+- 2026-03-07 多源签名 RC 证据：`artifacts/migration/release-candidate-novovm-rc-2026-03-07-ga-multisig/rc-candidate.json`，`status=ReadyForMerge/SnapshotGreen`，`snapshot_profile=full_snapshot_ga_v1`，`snapshot_overall_pass=true`，`commit_hash=b72fdd987cf1c61163830bda4d46e4dd34020ecf`。
+- 发布脚本聚合字段已扩展：`run_release_snapshot.ps1` / `run_release_candidate.ps1` 已写入 `economic_infra_dedicated_pass`、`market_engine_treasury_negative_pass`、`foreign_rate_source_pass`、`nav_valuation_source_pass`、`dividend_balance_source_pass`，用于 GA 证据面统一追踪。
 - 2026-03-07 抖动修复口径：`market_engine` 将 dividend probe 调整为按 `day` 轮转地址环，修复同日重复 `reconfigure` 的 claim 冲突，保持严格门禁 `dividend_claims_executed > 0` 不降级。
 - 治理席位权重 gate：`run_governance_council_policy_gate.ps1`，验证 `UpdateGovernanceCouncilPolicy` 的提案/投票/生效闭环，以及 `Parameter/ProtocolUpgrade` 分级阈值拒绝与通过路径。
 - 治理权限模型 gate：`run_governance_access_policy_gate.ps1`，验证 `committee/threshold/timelock` 正向与负向闭环（提案阈值不足拒绝、未到 timelock 拒绝、执行阈值不足拒绝）。
@@ -505,6 +508,24 @@
   - `status=ReadyForMerge/SnapshotGreen`
   - `commit_hash=bac3763192258d5fcb89fc129e2b675d56dbb317`
   - `governance_market_policy_orchestration_pass=true`
+- GA 全量快照（multisig 复核）：
+  - `artifacts/migration/release-snapshot-ga-multisig-2026-03-07/release-snapshot.json`
+  - `profile_name=full_snapshot_ga_v1`
+  - `overall_pass=true`
+  - `key_results.governance_market_policy_dividend_pass=true`
+  - `key_results.governance_market_policy_foreign_payment_pass=true`
+  - `key_results.economic_pass=true`
+  - `key_results.economic_infra_dedicated_pass=true`
+  - `key_results.market_engine_treasury_negative_pass=true`
+  - `key_results.foreign_rate_source_pass=true`
+  - `key_results.nav_valuation_source_pass=true`
+  - `key_results.dividend_balance_source_pass=true`
+- RC 全量快照（multisig 正式产物）：
+  - `artifacts/migration/release-candidate-novovm-rc-2026-03-07-ga-multisig/rc-candidate.json`
+  - `status=ReadyForMerge/SnapshotGreen`
+  - `snapshot_profile=full_snapshot_ga_v1`
+  - `snapshot_overall_pass=true`
+  - `commit_hash=b72fdd987cf1c61163830bda4d46e4dd34020ecf`
 - 全量发布快照（治理审计持久化接线回归）：
   - `artifacts/migration/release-snapshot-audit-persist-smoke/release-snapshot.json`
   - `profile_name=full_snapshot_v1`

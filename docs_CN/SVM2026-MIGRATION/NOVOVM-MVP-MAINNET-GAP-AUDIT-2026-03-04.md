@@ -129,6 +129,16 @@
   - `artifacts/migration/release-candidate-novovm-rc-2026-03-06-ga-orchfix/rc-candidate.json`
   - `status=ReadyForMerge/SnapshotGreen`
   - `commit_hash=bac3763192258d5fcb89fc129e2b675d56dbb317`
+- GA 多源签名回归快照（2026-03-07）：
+  - `artifacts/migration/release-snapshot-ga-multisig-2026-03-07/release-snapshot.json`
+  - `profile_name=full_snapshot_ga_v1`，`overall_pass=True`
+  - `governance_market_policy_dividend_pass=True`，`governance_market_policy_foreign_payment_pass=True`
+  - `economic_pass=True`，`economic_infra_dedicated_pass=True`，`market_engine_treasury_negative_pass=True`，`foreign_rate_source_pass=True`，`nav_valuation_source_pass=True`，`dividend_balance_source_pass=True`
+- GA 多源签名正式 RC（2026-03-07）：
+  - `artifacts/migration/release-candidate-novovm-rc-2026-03-07-ga-multisig/rc-candidate.json`
+  - `status=ReadyForMerge/SnapshotGreen`
+  - `snapshot_profile=full_snapshot_ga_v1`，`snapshot_overall_pass=True`
+  - `commit_hash=b72fdd987cf1c61163830bda4d46e4dd34020ecf`
 - 治理审计持久化回归快照（2026-03-06）：
   - `artifacts/migration/release-snapshot-audit-persist-smoke/release-snapshot.json`
   - `key_results.governance_rpc_audit_persist_pass=True`

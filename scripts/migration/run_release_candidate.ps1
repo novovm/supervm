@@ -188,10 +188,17 @@ $rcCandidate = [ordered]@{
     governance_market_policy_engine_pass = [bool]$acceptance.governance_market_policy_engine_pass
     governance_market_policy_treasury_pass = [bool]$acceptance.governance_market_policy_treasury_pass
     governance_market_policy_orchestration_pass = [bool]$acceptance.governance_market_policy_orchestration_pass
+    governance_market_policy_dividend_pass = [bool]$acceptance.governance_market_policy_dividend_pass
+    governance_market_policy_foreign_payment_pass = [bool]$acceptance.governance_market_policy_foreign_payment_pass
     governance_council_policy_pass = [bool]$acceptance.governance_council_policy_pass
     governance_access_policy_pass = [bool]$acceptance.governance_access_policy_pass
     governance_token_economics_pass = [bool]$acceptance.governance_token_economics_pass
     governance_treasury_spend_pass = [bool]$acceptance.governance_treasury_spend_pass
+    economic_infra_dedicated_pass = [bool]$acceptance.economic_infra_dedicated_pass
+    market_engine_treasury_negative_pass = [bool]$acceptance.market_engine_treasury_negative_pass
+    foreign_rate_source_pass = [bool]$acceptance.foreign_rate_source_pass
+    nav_valuation_source_pass = [bool]$acceptance.nav_valuation_source_pass
+    dividend_balance_source_pass = [bool]$acceptance.dividend_balance_source_pass
     rpc_exposure_pass = if ($expectedProfile -eq "full_snapshot_v2" -or $expectedProfile -eq "full_snapshot_ga_v1") { [bool]$acceptance.rpc_exposure_pass } else { $false }
     adapter_stability_pass = [bool]$acceptance.adapter_stability_pass
     snapshot_json = $snapshotJson
@@ -235,10 +242,17 @@ $md = @(
     "- governance_market_policy_engine_pass: $($rcCandidate.governance_market_policy_engine_pass)"
     "- governance_market_policy_treasury_pass: $($rcCandidate.governance_market_policy_treasury_pass)"
     "- governance_market_policy_orchestration_pass: $($rcCandidate.governance_market_policy_orchestration_pass)"
+    "- governance_market_policy_dividend_pass: $($rcCandidate.governance_market_policy_dividend_pass)"
+    "- governance_market_policy_foreign_payment_pass: $($rcCandidate.governance_market_policy_foreign_payment_pass)"
     "- governance_council_policy_pass: $($rcCandidate.governance_council_policy_pass)"
     "- governance_access_policy_pass: $($rcCandidate.governance_access_policy_pass)"
     "- governance_token_economics_pass: $($rcCandidate.governance_token_economics_pass)"
     "- governance_treasury_spend_pass: $($rcCandidate.governance_treasury_spend_pass)"
+    "- economic_infra_dedicated_pass: $($rcCandidate.economic_infra_dedicated_pass)"
+    "- market_engine_treasury_negative_pass: $($rcCandidate.market_engine_treasury_negative_pass)"
+    "- foreign_rate_source_pass: $($rcCandidate.foreign_rate_source_pass)"
+    "- nav_valuation_source_pass: $($rcCandidate.nav_valuation_source_pass)"
+    "- dividend_balance_source_pass: $($rcCandidate.dividend_balance_source_pass)"
     "- rpc_exposure_pass: $($rcCandidate.rpc_exposure_pass)"
     "- adapter_stability_pass: $($rcCandidate.adapter_stability_pass)"
     "- snapshot_json: $($rcCandidate.snapshot_json)"
