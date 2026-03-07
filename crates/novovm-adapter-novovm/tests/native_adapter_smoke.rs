@@ -1,5 +1,7 @@
 use anyhow::Result;
-use novovm_adapter_api::{default_chain_id, ChainConfig, ChainType, SerializationFormat, StateIR, TxIR, TxType};
+use novovm_adapter_api::{
+    default_chain_id, ChainConfig, ChainType, SerializationFormat, StateIR, TxIR, TxType,
+};
 use novovm_adapter_novovm::{create_native_adapter, supports_native_chain};
 
 fn encode_address(seed: u64) -> Vec<u8> {

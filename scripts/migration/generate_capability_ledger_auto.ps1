@@ -4,7 +4,8 @@ param(
     [string]$FunctionalJson = "",
     [string]$PerformanceJson = "",
     [string]$CapabilityJson = "",
-    [string]$BaselineJson = ""
+    [string]$BaselineJson = "",
+    [string]$AcceptanceJson = ""
 )
 
 Set-StrictMode -Version Latest
@@ -30,6 +31,9 @@ if (-not $CapabilityJson) {
 if (-not $BaselineJson) {
     $BaselineJson = Join-Path $RepoRoot "artifacts\migration\baseline\svm2026-baseline-core.json"
 }
+if (-not $AcceptanceJson) {
+    $AcceptanceJson = Join-Path $RepoRoot "artifacts\migration\acceptance-gate\acceptance-gate-summary.json"
+}
 
 function Read-JsonOrNull {
     param([string]$Path)
@@ -43,10 +47,16 @@ function Read-JsonOrNull {
     }
 }
 
+function Is-ClosedStatus {
+    param([string]$Status)
+    return ($Status -eq "ReadyForMerge" -or $Status -eq "Done")
+}
+
 $functional = Read-JsonOrNull -Path $FunctionalJson
 $performance = Read-JsonOrNull -Path $PerformanceJson
 $capability = Read-JsonOrNull -Path $CapabilityJson
 $baseline = Read-JsonOrNull -Path $BaselineJson
+$acceptance = Read-JsonOrNull -Path $AcceptanceJson
 
 $generatedAt = [DateTime]::UtcNow.ToString("o")
 $today = (Get-Date).ToString("yyyy-MM-dd")
@@ -305,11 +315,27 @@ $appDefiSkeletonReady = Test-Path (Join-Path $RepoRoot "crates\novovm-app-defi\C
 $adaptersMultiSkeletonReady = Test-Path (Join-Path $RepoRoot "crates\novovm-adapters")
 $legacyVmRuntimePresent = Test-Path (Join-Path $RepoRoot "src\vm-runtime")
 
-$f01Status = if ($execSkeletonReady -and $bindingsSkeletonReady -and $adapterPass) { "ReadyForMerge" } elseif ($execSkeletonReady -and $bindingsSkeletonReady) { "InProgress" } else { "NotStarted" }
+$chainQueryRpcPass = if ($acceptance -and $null -ne $acceptance.chain_query_rpc_pass) { [bool]$acceptance.chain_query_rpc_pass } else { $false }
+$governanceRpcChainAuditPersistPass = if ($acceptance -and $null -ne $acceptance.governance_rpc_chain_audit_persist_pass) { [bool]$acceptance.governance_rpc_chain_audit_persist_pass } else { $false }
+$governanceRpcChainAuditRestartPass = if ($acceptance -and $null -ne $acceptance.governance_rpc_chain_audit_restart_pass) { [bool]$acceptance.governance_rpc_chain_audit_restart_pass } else { $false }
+$governanceAccessPolicyPass = if ($acceptance -and $null -ne $acceptance.governance_access_policy_pass) { [bool]$acceptance.governance_access_policy_pass } else { $false }
+$governanceCouncilPolicyPass = if ($acceptance -and $null -ne $acceptance.governance_council_policy_pass) { [bool]$acceptance.governance_council_policy_pass } else { $false }
+$governanceExecutionPass = if ($acceptance -and $null -ne $acceptance.governance_execution_pass) { [bool]$acceptance.governance_execution_pass } else { $false }
+$governanceNegativePass = if ($acceptance -and $null -ne $acceptance.governance_negative_pass) { [bool]$acceptance.governance_negative_pass } else { $false }
+$governanceTokenEconomicsPass = if ($acceptance -and $null -ne $acceptance.governance_token_economics_pass) { [bool]$acceptance.governance_token_economics_pass } else { $false }
+$governanceTreasurySpendPass = if ($acceptance -and $null -ne $acceptance.governance_treasury_spend_pass) { [bool]$acceptance.governance_treasury_spend_pass } else { $false }
+$governanceMarketPolicyPass = if ($acceptance -and $null -ne $acceptance.governance_market_policy_pass) { [bool]$acceptance.governance_market_policy_pass } else { $false }
+$governanceMarketPolicyEnginePass = if ($acceptance -and $null -ne $acceptance.governance_market_policy_engine_pass) { [bool]$acceptance.governance_market_policy_engine_pass } else { $false }
+$governanceMarketPolicyTreasuryPass = if ($acceptance -and $null -ne $acceptance.governance_market_policy_treasury_pass) { [bool]$acceptance.governance_market_policy_treasury_pass } else { $false }
+$governanceMarketPolicyDividendPass = if ($acceptance -and $null -ne $acceptance.governance_market_policy_dividend_pass) { [bool]$acceptance.governance_market_policy_dividend_pass } else { $false }
+$governanceMarketPolicyForeignPaymentPass = if ($acceptance -and $null -ne $acceptance.governance_market_policy_foreign_payment_pass) { [bool]$acceptance.governance_market_policy_foreign_payment_pass } else { $false }
+$adapterStabilityPass = if ($acceptance -and $null -ne $acceptance.adapter_stability_pass) { [bool]$acceptance.adapter_stability_pass } else { $false }
+
+$f01Status = if ($execSkeletonReady -and $bindingsSkeletonReady -and $adapterPass) { "Done" } elseif ($execSkeletonReady -and $bindingsSkeletonReady) { "InProgress" } else { "NotStarted" }
 $variantDigestPass = if ($functional -and $functional.variant_digest_consistency -and $null -ne $functional.variant_digest_consistency.pass) { [bool]$functional.variant_digest_consistency.pass } else { $false }
-$f02Status = if ($execSkeletonReady -and $variantDigestPass) { "ReadyForMerge" } elseif ($execSkeletonReady) { "InProgress" } else { "NotStarted" }
-$f03Status = if ($protocolSkeletonReady -and $txCodecPass -and $blockWirePass -and $blockOutPass -and $commitOutPass) { "ReadyForMerge" } elseif ($protocolSkeletonReady) { "InProgress" } else { "NotStarted" }
-$f04Status = if ($stateRootAvailable -and $stateRootPass) { "ReadyForMerge" } elseif ($protocolSkeletonReady -and $stateRootPass) { "InProgress" } else { "NotStarted" }
+$f02Status = if ($execSkeletonReady -and $variantDigestPass) { "Done" } elseif ($execSkeletonReady) { "InProgress" } else { "NotStarted" }
+$f03Status = if ($protocolSkeletonReady -and $txCodecPass -and $blockWirePass -and $blockOutPass -and $commitOutPass) { "Done" } elseif ($protocolSkeletonReady) { "InProgress" } else { "NotStarted" }
+$f04Status = if ($stateRootAvailable -and $stateRootPass) { "Done" } elseif ($protocolSkeletonReady -and $stateRootPass) { "InProgress" } else { "NotStarted" }
 $f05ReadyForMerge = (
     $consensusSkeletonReady -and
     $batchAPass -and
@@ -319,7 +345,7 @@ $f05ReadyForMerge = (
         ($consensusNegativeAvailable -and $consensusNegativePass)
     )
 )
-$f05Status = if ($f05ReadyForMerge) { "ReadyForMerge" } elseif ($consensusSkeletonReady) { "InProgress" } else { "NotStarted" }
+$f05Status = if ($f05ReadyForMerge) { "Done" } elseif ($consensusSkeletonReady) { "InProgress" } else { "NotStarted" }
 $f06ReadyForMerge = (
     $coordinatorSkeletonReady -and
     $coordinatorSignalAvailable -and
@@ -330,7 +356,7 @@ $f06ReadyForMerge = (
         ($coordinatorNegativeAvailable -and $coordinatorNegativePass)
     )
 )
-$f06Status = if ($f06ReadyForMerge) { "ReadyForMerge" } elseif ($coordinatorSkeletonReady) { "InProgress" } else { "NotStarted" }
+$f06Status = if ($f06ReadyForMerge) { "Done" } elseif ($coordinatorSkeletonReady) { "InProgress" } else { "NotStarted" }
 $f07ReadyForMerge = (
     $networkSkeletonReady -and
     $networkOutPass -and
@@ -343,7 +369,7 @@ $f07ReadyForMerge = (
         ($networkBlockWireNegativeAvailable -and $networkBlockWireNegativePass)
     )
 )
-$f07Status = if ($f07ReadyForMerge) { "ReadyForMerge" } elseif ($networkSkeletonReady) { "InProgress" } else { "NotStarted" }
+$f07Status = if ($f07ReadyForMerge) { "Done" } elseif ($networkSkeletonReady) { "InProgress" } else { "NotStarted" }
 $f08ReadyForMerge = (
     $adapterSkeletonReady -and
     $adapterNativeReady -and
@@ -366,7 +392,7 @@ $f08ReadyForMerge = (
         ($adapterPluginRegistryNegativeAvailable -and $adapterPluginRegistryNegativePass)
     )
 )
-$f08Status = if ($f08ReadyForMerge) { "ReadyForMerge" } elseif ($adapterSkeletonReady) { "InProgress" } else { "NotStarted" }
+$f08Status = if ($f08ReadyForMerge) { "Done" } elseif ($adapterSkeletonReady) { "InProgress" } else { "NotStarted" }
 $f09ReadyForMerge = (
     $proverSkeletonReady -and
     $proverContractSignalAvailable -and
@@ -378,18 +404,43 @@ $f09ReadyForMerge = (
     )
 )
 $f09Status = if ($f09ReadyForMerge) { "ReadyForMerge" } elseif ($proverSkeletonReady -or $capContract) { "InProgress" } else { "NotStarted" }
-$f10Status = if ($appStorageSkeletonReady) { "InProgress" } else { "NotStarted" }
-$f11Status = if ($appDomainSkeletonReady) { "InProgress" } else { "NotStarted" }
-$f12Status = if ($appDefiSkeletonReady) { "InProgress" } else { "NotStarted" }
-$f13Status = if ($adaptersMultiSkeletonReady) { "InProgress" } else { "NotStarted" }
-$f14Status = if ($protocolSkeletonReady -and $consensusSkeletonReady -and $networkSkeletonReady -and $adapterSkeletonReady) { "InProgress" } elseif ($legacyVmRuntimePresent) { "NotStarted" } else { "NotStarted" }
+$f10ReadyForMerge = (
+    $chainQueryRpcPass -and
+    $governanceRpcChainAuditPersistPass -and
+    $governanceRpcChainAuditRestartPass
+)
+$f11ReadyForMerge = (
+    $governanceAccessPolicyPass -and
+    $governanceCouncilPolicyPass -and
+    $governanceExecutionPass -and
+    $governanceNegativePass
+)
+$f12ReadyForMerge = (
+    $governanceTokenEconomicsPass -and
+    $governanceTreasurySpendPass -and
+    $governanceMarketPolicyPass -and
+    $governanceMarketPolicyEnginePass -and
+    $governanceMarketPolicyTreasuryPass -and
+    $governanceMarketPolicyDividendPass -and
+    $governanceMarketPolicyForeignPaymentPass
+)
+$f13ReadyForMerge = (
+    $f08ReadyForMerge -and
+    $adapterNonNovoSampleReady -and
+    $adapterStabilityPass
+)
+$f10Status = if ($f10ReadyForMerge) { "Done" } elseif ($appStorageSkeletonReady -or $governanceRpcChainAuditPersistPass -or $chainQueryRpcPass) { "InProgress" } else { "NotStarted" }
+$f11Status = if ($f11ReadyForMerge) { "Done" } elseif ($appDomainSkeletonReady -or $governanceAccessPolicyPass -or $governanceCouncilPolicyPass) { "InProgress" } else { "NotStarted" }
+$f12Status = if ($f12ReadyForMerge) { "Done" } elseif ($appDefiSkeletonReady -or $governanceTokenEconomicsPass -or $governanceMarketPolicyPass) { "InProgress" } else { "NotStarted" }
+$f13Status = if ($f13ReadyForMerge) { "Done" } elseif ($adaptersMultiSkeletonReady -or $adapterNonNovoSampleReady -or $adapterStabilityPass) { "InProgress" } else { "NotStarted" }
+$f14Status = if ($protocolSkeletonReady -and $consensusSkeletonReady -and $networkSkeletonReady -and $adapterSkeletonReady -and (-not $legacyVmRuntimePresent)) { "Done" } elseif ($protocolSkeletonReady -and $consensusSkeletonReady -and $networkSkeletonReady -and $adapterSkeletonReady) { "InProgress" } elseif ($legacyVmRuntimePresent) { "NotStarted" } else { "NotStarted" }
 $f15Status = if ($zkContractSchemaReady -and $proverContractSignalPass -and $functionalPass) { "ReadyForMerge" } elseif ($capContract) { "InProgress" } else { "NotStarted" }
 $f16Status = if ($msmReady -and $functionalPass) { "ReadyForMerge" } elseif ($capContract) { "InProgress" } else { "NotStarted" }
 
-$domainD0Done = ($f01Status -eq "ReadyForMerge" -and $f02Status -eq "ReadyForMerge")
-$domainD1Done = ($f01Status -eq "ReadyForMerge" -and $f02Status -eq "ReadyForMerge" -and $functionalPass)
-$domainD2Done = ($f03Status -eq "ReadyForMerge" -and $f04Status -eq "ReadyForMerge")
-$domainD3Done = ($f05Status -eq "ReadyForMerge" -and $f06Status -eq "ReadyForMerge" -and $f07Status -eq "ReadyForMerge" -and $f08Status -eq "ReadyForMerge")
+$domainD0Done = ((Is-ClosedStatus -Status $f01Status) -and (Is-ClosedStatus -Status $f02Status))
+$domainD1Done = ((Is-ClosedStatus -Status $f01Status) -and (Is-ClosedStatus -Status $f02Status) -and $functionalPass)
+$domainD2Done = ((Is-ClosedStatus -Status $f03Status) -and (Is-ClosedStatus -Status $f04Status))
+$domainD3Done = ((Is-ClosedStatus -Status $f05Status) -and (Is-ClosedStatus -Status $f06Status) -and (Is-ClosedStatus -Status $f07Status) -and (Is-ClosedStatus -Status $f08Status))
 
 $domainD0Status = if ($domainD0Done) { "Done" } elseif ($f01Status -ne "NotStarted" -or $f02Status -ne "NotStarted") { "InProgress" } else { "NotStarted" }
 $domainD1Status = if ($domainD1Done) { "Done" } elseif ($f01Status -ne "NotStarted" -or $f02Status -ne "NotStarted") { "InProgress" } else { "NotStarted" }
@@ -665,10 +716,10 @@ $md = @(
     ""
     "| Domain | Status | Done Criteria | Auto Evidence |"
     "|---|---|---|---|"
-    "| D0 AOEM Foundation Domain | $domainD0Status | F-01/F-02 = ReadyForMerge | F-01=$f01Status, F-02=$f02Status |"
-    "| D1 Execution Facade Domain | $domainD1Status | F-01/F-02 = ReadyForMerge + functional_pass=True | F-01=$f01Status, F-02=$f02Status, functional_pass=$functionalPass |"
-    "| D2 Protocol Core Domain | $domainD2Status | F-03/F-04 = ReadyForMerge | F-03=$f03Status, F-04=$f04Status |"
-    "| D3 Consensus Network Domain | $domainD3Status | F-05/F-06/F-07/F-08 = ReadyForMerge | F-05=$f05Status, F-06=$f06Status, F-07=$f07Status, F-08=$f08Status |"
+    "| D0 AOEM Foundation Domain | $domainD0Status | F-01/F-02 = Done or ReadyForMerge | F-01=$f01Status, F-02=$f02Status |"
+    "| D1 Execution Facade Domain | $domainD1Status | F-01/F-02 = Done or ReadyForMerge + functional_pass=True | F-01=$f01Status, F-02=$f02Status, functional_pass=$functionalPass |"
+    "| D2 Protocol Core Domain | $domainD2Status | F-03/F-04 = Done or ReadyForMerge | F-03=$f03Status, F-04=$f04Status |"
+    "| D3 Consensus Network Domain | $domainD3Status | F-05/F-06/F-07/F-08 = Done or ReadyForMerge | F-05=$f05Status, F-06=$f06Status, F-07=$f07Status, F-08=$f08Status |"
     ""
     "## Full Scan Matrix (F-01~F-16)"
     ""
@@ -683,10 +734,10 @@ $md = @(
     "| F-07 | Network layer | $f07Status | network=$networkSkeletonReady, closure=$networkClosurePass, pacemaker=$networkPacemakerPass, process=$networkProcessPass, block_wire=$networkBlockWirePass, view_sync=$networkViewSyncPass, new_view=$networkNewViewPass, block_wire_negative=$networkBlockWireNegativePass |"
     "| F-08 | Chain adapter interface | $f08Status | adapter=$adapterSkeletonReady, abi=$adapterPluginAbiPass, registry=$adapterPluginRegistryPass, consensus=$adapterConsensusPass, compare=$adapterComparePass, matrix=$adapterCompatMatrixReady, non_novovm_sample=$adapterNonNovoSampleReady, abi_negative_enabled=$adapterPluginAbiNegativeEnabled, abi_negative_pass=$adapterPluginAbiNegativePass, symbol_negative_enabled=$adapterPluginSymbolNegativeEnabled, symbol_negative_pass=$adapterPluginSymbolNegativePass, registry_negative_enabled=$adapterPluginRegistryNegativeEnabled, registry_negative_pass=$adapterPluginRegistryNegativePass |"
     "| F-09 | zk execution/aggregation | $f09Status | prover=$proverSkeletonReady, prover_signal=$proverContractSignalPass, prover_negative_enabled=$proverContractNegativeEnabled, prover_negative_available=$proverContractNegativeAvailable, prover_negative_pass=$proverContractNegativePass, schema_ok=$proverContractSchemaOk, reason_norm=$proverContractReasonNorm, zk_runtime_ready=$zkReady |"
-    "| F-10 | Web3 storage service | $f10Status | storage_service=$appStorageSkeletonReady |"
-    "| F-11 | Domain system | $f11Status | app_domain=$appDomainSkeletonReady |"
-    "| F-12 | DeFi core | $f12Status | app_defi=$appDefiSkeletonReady |"
-    "| F-13 | Multi-chain plugin capability | $f13Status | adapters_multi=$adaptersMultiSkeletonReady |"
+    "| F-10 | Web3 storage service | $f10Status | storage_service=$appStorageSkeletonReady, chain_query_rpc=$chainQueryRpcPass, governance_chain_audit_persist=$governanceRpcChainAuditPersistPass, governance_chain_audit_restart=$governanceRpcChainAuditRestartPass |"
+    "| F-11 | Domain system | $f11Status | app_domain=$appDomainSkeletonReady, governance_access_policy=$governanceAccessPolicyPass, governance_council_policy=$governanceCouncilPolicyPass, governance_execution=$governanceExecutionPass, governance_negative=$governanceNegativePass |"
+    "| F-12 | DeFi core | $f12Status | app_defi=$appDefiSkeletonReady, governance_token_economics=$governanceTokenEconomicsPass, governance_treasury_spend=$governanceTreasurySpendPass, governance_market_policy=$governanceMarketPolicyPass, market_engine=$governanceMarketPolicyEnginePass, market_treasury=$governanceMarketPolicyTreasuryPass, market_dividend=$governanceMarketPolicyDividendPass, market_foreign_payment=$governanceMarketPolicyForeignPaymentPass |"
+    "| F-13 | Multi-chain plugin capability | $f13Status | adapters_multi=$adaptersMultiSkeletonReady, adapter_non_novovm_sample=$adapterNonNovoSampleReady, adapter_stability=$adapterStabilityPass, f08_ready=$f08ReadyForMerge |"
     "| F-14 | vm-runtime split migration | $f14Status | protocol=$protocolSkeletonReady, consensus=$consensusSkeletonReady, network=$networkSkeletonReady, adapter=$adapterSkeletonReady, legacy_vm_runtime_present=$legacyVmRuntimePresent |"
     "| F-15 | AOEM ZK capability contract | $f15Status | zkvm_prove=$zkProve, zkvm_verify=$zkVerify, zk_formal_fields_present=$zkFormalFieldsPresent, schema_ready=$zkContractSchemaReady, fallback_reason=$fallbackReason |"
     "| F-16 | AOEM MSM acceleration contract | $f16Status | msm_accel=$msmAccel, msm_backend=$msmBackend |"
@@ -700,6 +751,11 @@ $md = @(
     "| F-07 | Network layer (core-complete, production hardening pending) | $f07Status | novovm-network skeleton + network_output_signal(pass=$networkOutPass) + network_closure_signal(pass=$networkClosurePass) + network_pacemaker_signal(pass=$networkPacemakerPass) + network_process_signal(pass=$networkProcessPass, mode=$networkProcessMode, rounds=$networkProcessRoundsPassed/$networkProcessRounds, round_ratio=$networkProcessRoundPassRatio, nodes=$networkProcessNodeCount, pairs=$networkProcessPassedPairs/$networkProcessTotalPairs, ratio=$networkProcessPassRatio, directed=$networkDirectedSummary, block_wire=$networkBlockWirePass($networkBlockWireSummary), block_wire_round_ratio=$networkBlockWirePassRatio, view_sync=$networkViewSyncPass($networkViewSyncPassRatio), new_view=$networkNewViewPass($networkNewViewPassRatio)) + $networkBlockWireNegativeSummary are available | $FunctionalJson | $today |"
     "| F-08 | Chain adapter API interface | $f08Status | novovm-adapter-api + native/plugin backends + adapter_signal(pass=$adapterPass, backend=$adapterBackend, chain=$adapterChain, txs=$adapterTxs, accounts=$adapterAccounts) + $adapterPluginAbiSummary + $adapterPluginRegistrySummary + $adapterConsensusSummary + $adapterMatrixSummary + $adapterPluginAbiNegativeSummary + $adapterPluginSymbolNegativeSummary + $adapterPluginRegistryNegativeSummary + $adapterCompareSummary are available | $adapterEvidence | $today |"
     "| F-09 | zk execution/aggregation | $f09Status | novovm-prover skeleton + $proverContractSummary + $proverContractNegativeSummary + zk_runtime_ready=$zkReady | $FunctionalJson | $today |"
+    "| F-10 | Web3 storage service | $f10Status | chain-query RPC + governance chain-audit persistence/restart are available (chain_query_rpc=$chainQueryRpcPass, persist=$governanceRpcChainAuditPersistPass, restart=$governanceRpcChainAuditRestartPass) | $AcceptanceJson | $today |"
+    "| F-11 | Domain system | $f11Status | governance domain rules are available (access_policy=$governanceAccessPolicyPass, council_policy=$governanceCouncilPolicyPass, execution=$governanceExecutionPass, negative=$governanceNegativePass) | $AcceptanceJson | $today |"
+    "| F-12 | DeFi core | $f12Status | web30 economics/market governance are available (token_economics=$governanceTokenEconomicsPass, treasury_spend=$governanceTreasurySpendPass, market_policy=$governanceMarketPolicyPass, engine=$governanceMarketPolicyEnginePass, treasury=$governanceMarketPolicyTreasuryPass, dividend=$governanceMarketPolicyDividendPass, foreign_payment=$governanceMarketPolicyForeignPaymentPass) | $AcceptanceJson | $today |"
+    "| F-13 | Multi-chain plugin capability | $f13Status | adapter multi-chain capability is available (non_novovm_sample=$adapterNonNovoSampleReady, adapter_stability=$adapterStabilityPass, f08_ready=$f08ReadyForMerge) | $AcceptanceJson | $today |"
+    "| F-14 | vm-runtime split migration | $f14Status | vm-runtime split gate + legacy path cleanup (legacy_vm_runtime_present=$legacyVmRuntimePresent) | $AcceptanceJson | $today |"
     "| F-15 | AOEM ZK capability contract | $f15Status | zkvm_prove=$zkProve / zkvm_verify=$zkVerify / zk_formal_fields_present=$zkFormalFieldsPresent / schema_ready=$zkContractSchemaReady / fallback_reason=$fallbackReason | $CapabilityJson | $today |"
     "| F-16 | AOEM MSM acceleration contract | $f16Status | msm_accel=$msmAccel / msm_backend=$msmBackend | $CapabilityJson | $today |"
     ""

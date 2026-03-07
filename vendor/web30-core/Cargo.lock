@@ -659,7 +659,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "web30-token"
+name = "web30-core"
 version = "0.1.0"
 dependencies = [
  "anyhow",

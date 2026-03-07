@@ -2,8 +2,8 @@
 
 use anyhow::{bail, Result};
 use novovm_adapter_api::{
-    AccountState, BlockIR, ChainAdapter, ChainConfig, ChainType, SerializationFormat, StateIR, TxIR,
-    TxType,
+    AccountState, BlockIR, ChainAdapter, ChainConfig, ChainType, SerializationFormat, StateIR,
+    TxIR, TxType,
 };
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
@@ -50,7 +50,11 @@ impl NovoVmAdapter {
         key
     }
 
-    fn apply_transfer(tx: &TxIR, state: &mut StateIR, kv: &mut HashMap<Vec<u8>, Vec<u8>>) -> Result<()> {
+    fn apply_transfer(
+        tx: &TxIR,
+        state: &mut StateIR,
+        kv: &mut HashMap<Vec<u8>, Vec<u8>>,
+    ) -> Result<()> {
         let to = tx
             .to
             .as_ref()
@@ -231,10 +235,7 @@ impl ChainAdapter for NovoVmAdapter {
 
     fn get_balance(&self, address: &[u8]) -> Result<u128> {
         self.ensure_initialized()?;
-        Ok(self
-            .state
-            .get_account(address)
-            .map_or(0, |acc| acc.balance))
+        Ok(self.state.get_account(address).map_or(0, |acc| acc.balance))
     }
 
     fn get_nonce(&self, address: &[u8]) -> Result<u64> {

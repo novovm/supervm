@@ -431,7 +431,9 @@ impl BFTEngine {
         protocol.set_governance_vote_verifier(verifier);
     }
 
-    /// 按方案设置治理投票签名校验器（staged：当前仅 ed25519 启用）。
+    /// 按方案设置治理投票签名校验器。
+    ///
+    /// `mldsa87` 需要外部注入 verifier（例如 AOEM-FFI），此入口仅覆盖默认方案。
     pub fn set_governance_vote_verifier_by_scheme(
         &self,
         scheme: GovernanceVoteVerifierScheme,
@@ -580,6 +582,30 @@ impl BFTEngine {
     pub fn set_market_governance_policy(&self, policy: MarketGovernancePolicy) -> BFTResult<()> {
         let mut protocol = self.protocol.lock().unwrap();
         protocol.set_market_governance_policy(policy)
+    }
+
+    /// 配置 NAV 估值源为 external feed（source_name 仅用于审计标识）。
+    pub fn set_market_nav_valuation_source_external(&self, source_name: &str) -> BFTResult<()> {
+        let mut protocol = self.protocol.lock().unwrap();
+        protocol.set_market_nav_valuation_source_external(source_name)
+    }
+
+    /// 配置 NAV external feed 最新报价（bp，10000=1.0）。
+    pub fn set_market_nav_external_price_bp(&self, price_bp: u32) -> BFTResult<()> {
+        let mut protocol = self.protocol.lock().unwrap();
+        protocol.set_market_nav_external_price_bp(price_bp)
+    }
+
+    /// 配置外币汇率源名称（用于审计标识）。
+    pub fn set_market_foreign_rate_source_name(&self, source_name: &str) -> BFTResult<()> {
+        let mut protocol = self.protocol.lock().unwrap();
+        protocol.set_market_foreign_rate_source_name(source_name)
+    }
+
+    /// 应用外币汇率 quote spec（`BTC:rate:slippage,ETH:rate:slippage,USDT:rate:slippage`）。
+    pub fn apply_market_foreign_quote_spec(&self, quote_spec: &str) -> BFTResult<()> {
+        let mut protocol = self.protocol.lock().unwrap();
+        protocol.apply_market_foreign_quote_spec(quote_spec)
     }
 
     /// Token mint（I-TOKEN 最小主链路）。
@@ -1179,7 +1205,7 @@ mod tests {
     }
 
     #[test]
-    fn test_set_governance_vote_verifier_by_scheme_staged() {
+    fn test_set_governance_vote_verifier_by_scheme_requires_external_injection_for_mldsa() {
         let validator_set = ValidatorSet::new_equal_weight(vec![0, 1, 2]);
         let signing_keys: Vec<_> = (0..3).map(|_| SigningKey::generate(&mut OsRng)).collect();
         let public_keys: HashMap<NodeId, VerifyingKey> = signing_keys
@@ -1222,7 +1248,7 @@ mod tests {
             .to_string()
             .to_lowercase();
         assert!(err.contains("unsupported governance vote verifier"));
-        assert!(err.contains("staged-only"));
+        assert!(err.contains("policy-gated"));
         assert_eq!(engine.governance_vote_verifier_name(), "ed25519");
     }
 }

@@ -122,9 +122,14 @@ jobs:
           }
           $summary = Get-Content -Path $summaryPath -Raw | ConvertFrom-Json
           $failed = @()
+          $policyRejectOk = if ($summary.PSObject.Properties.Name -contains "vote_verifier_policy_reject_ok") {
+            [bool]$summary.vote_verifier_policy_reject_ok
+          } else {
+            [bool]$summary.vote_verifier_staged_reject_ok
+          }
           if (-not [bool]$summary.pass) { $failed += "pass=false" }
           if (-not [bool]$summary.vote_verifier_startup_ok) { $failed += "vote_verifier_startup_ok=false" }
-          if (-not [bool]$summary.vote_verifier_staged_reject_ok) { $failed += "vote_verifier_staged_reject_ok=false" }
+          if (-not $policyRejectOk) { $failed += "vote_verifier_policy_reject_ok=false" }
           if ($failed.Count -gt 0) {
             throw "governance rpc ci gate failed: $($failed -join ', ')"
           }

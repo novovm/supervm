@@ -213,6 +213,54 @@ function Parse-GovernanceMarketOrchestrationOutLine {
     }
 }
 
+function Parse-GovernanceMarketDividendOutLine {
+    param([string]$Text)
+
+    $line = ($Text -split "`r?`n" | Where-Object { $_ -match "^governance_market_dividend_out:" } | Select-Object -Last 1)
+    if (-not $line) { return $null }
+    $m = [regex]::Match(
+        $line,
+        "^governance_market_dividend_out:\s+proposal_id=(?<proposal_id>\d+)\s+dividend_income_received=(?<dividend_income_received>\d+)\s+dividend_snapshot_created=(?<dividend_snapshot_created>\d+)\s+dividend_claims_executed=(?<dividend_claims_executed>\d+)\s+dividend_pool_balance=(?<dividend_pool_balance>\d+)$"
+    )
+    if (-not $m.Success) {
+        return [ordered]@{ parse_ok = $false; raw = $line }
+    }
+    return [ordered]@{
+        parse_ok = $true
+        proposal_id = [int64]$m.Groups["proposal_id"].Value
+        dividend_income_received = [int64]$m.Groups["dividend_income_received"].Value
+        dividend_snapshot_created = [int64]$m.Groups["dividend_snapshot_created"].Value
+        dividend_claims_executed = [int64]$m.Groups["dividend_claims_executed"].Value
+        dividend_pool_balance = [int64]$m.Groups["dividend_pool_balance"].Value
+        raw = $line
+    }
+}
+
+function Parse-GovernanceMarketForeignOutLine {
+    param([string]$Text)
+
+    $line = ($Text -split "`r?`n" | Where-Object { $_ -match "^governance_market_foreign_out:" } | Select-Object -Last 1)
+    if (-not $line) { return $null }
+    $m = [regex]::Match(
+        $line,
+        "^governance_market_foreign_out:\s+proposal_id=(?<proposal_id>\d+)\s+foreign_payments_processed=(?<foreign_payments_processed>\d+)\s+foreign_token_paid_total=(?<foreign_token_paid_total>\d+)\s+foreign_reserve_btc=(?<foreign_reserve_btc>\d+)\s+foreign_reserve_eth=(?<foreign_reserve_eth>\d+)\s+foreign_payment_reserve_usdt=(?<foreign_payment_reserve_usdt>\d+)\s+foreign_swap_out_total=(?<foreign_swap_out_total>\d+)$"
+    )
+    if (-not $m.Success) {
+        return [ordered]@{ parse_ok = $false; raw = $line }
+    }
+    return [ordered]@{
+        parse_ok = $true
+        proposal_id = [int64]$m.Groups["proposal_id"].Value
+        foreign_payments_processed = [int64]$m.Groups["foreign_payments_processed"].Value
+        foreign_token_paid_total = [int64]$m.Groups["foreign_token_paid_total"].Value
+        foreign_reserve_btc = [int64]$m.Groups["foreign_reserve_btc"].Value
+        foreign_reserve_eth = [int64]$m.Groups["foreign_reserve_eth"].Value
+        foreign_payment_reserve_usdt = [int64]$m.Groups["foreign_payment_reserve_usdt"].Value
+        foreign_swap_out_total = [int64]$m.Groups["foreign_swap_out_total"].Value
+        raw = $line
+    }
+}
+
 New-Item -ItemType Directory -Force -Path $OutputDir | Out-Null
 
 $nodeCrateDir = Join-Path $RepoRoot "crates\novovm-node"
@@ -272,6 +320,8 @@ $outLine = Parse-GovernanceMarketOutLine -Text $probe.output
 $engineOutLine = Parse-GovernanceMarketEngineOutLine -Text $probe.output
 $treasuryOutLine = Parse-GovernanceMarketTreasuryOutLine -Text $probe.output
 $orchestrationOutLine = Parse-GovernanceMarketOrchestrationOutLine -Text $probe.output
+$dividendOutLine = Parse-GovernanceMarketDividendOutLine -Text $probe.output
+$foreignOutLine = Parse-GovernanceMarketForeignOutLine -Text $probe.output
 $parsePass = [bool](
     $inLine -and
     $inLine.parse_ok -and
@@ -282,7 +332,11 @@ $parsePass = [bool](
     $treasuryOutLine -and
     $treasuryOutLine.parse_ok -and
     $orchestrationOutLine -and
-    $orchestrationOutLine.parse_ok
+    $orchestrationOutLine.parse_ok -and
+    $dividendOutLine -and
+    $dividendOutLine.parse_ok -and
+    $foreignOutLine -and
+    $foreignOutLine.parse_ok
 )
 
 $inputPass = [bool](
@@ -344,8 +398,35 @@ $orchestrationOutputPass = [bool](
     $orchestrationOutLine.nav_redemptions_executed -gt 0 -and
     $orchestrationOutLine.nav_executed_stable_total -gt 0
 )
+$dividendOutputPass = [bool](
+    $parsePass -and
+    $dividendOutLine.proposal_id -eq $inLine.proposal_id -and
+    $dividendOutLine.dividend_income_received -gt 0 -and
+    $dividendOutLine.dividend_snapshot_created -gt 0 -and
+    $dividendOutLine.dividend_claims_executed -gt 0 -and
+    $dividendOutLine.dividend_pool_balance -gt 0
+)
+$foreignOutputPass = [bool](
+    $parsePass -and
+    $foreignOutLine.proposal_id -eq $inLine.proposal_id -and
+    $foreignOutLine.foreign_payments_processed -gt 0 -and
+    $foreignOutLine.foreign_token_paid_total -gt 0 -and
+    $foreignOutLine.foreign_reserve_btc -gt 0 -and
+    $foreignOutLine.foreign_reserve_eth -gt 0 -and
+    $foreignOutLine.foreign_payment_reserve_usdt -gt 0 -and
+    $foreignOutLine.foreign_swap_out_total -gt 0
+)
 
-$pass = [bool]($probe.exit_code -eq 0 -and $inputPass -and $outputPass -and $engineOutputPass -and $treasuryOutputPass -and $orchestrationOutputPass)
+$pass = [bool](
+    $probe.exit_code -eq 0 -and
+    $inputPass -and
+    $outputPass -and
+    $engineOutputPass -and
+    $treasuryOutputPass -and
+    $orchestrationOutputPass -and
+    $dividendOutputPass -and
+    $foreignOutputPass
+)
 $errorReason = ""
 if (-not $parsePass) {
     $errorReason = "missing_or_unparseable_governance_market_signal"
@@ -361,6 +442,10 @@ if (-not $parsePass) {
     $errorReason = "governance_market_treasury_out_assertion_failed"
 } elseif (-not $orchestrationOutputPass) {
     $errorReason = "governance_market_orchestration_out_assertion_failed"
+} elseif (-not $dividendOutputPass) {
+    $errorReason = "governance_market_dividend_out_assertion_failed"
+} elseif (-not $foreignOutputPass) {
+    $errorReason = "governance_market_foreign_out_assertion_failed"
 }
 
 $summary = [ordered]@{
@@ -372,6 +457,8 @@ $summary = [ordered]@{
     engine_output_pass = $engineOutputPass
     treasury_output_pass = $treasuryOutputPass
     orchestration_output_pass = $orchestrationOutputPass
+    dividend_output_pass = $dividendOutputPass
+    foreign_payment_output_pass = $foreignOutputPass
     error_reason = $errorReason
     expected = $expected
     governance_market_in = $inLine
@@ -379,6 +466,8 @@ $summary = [ordered]@{
     governance_market_engine_out = $engineOutLine
     governance_market_treasury_out = $treasuryOutLine
     governance_market_orchestration_out = $orchestrationOutLine
+    governance_market_dividend_out = $dividendOutLine
+    governance_market_foreign_out = $foreignOutLine
     probe_exit_code = [int]$probe.exit_code
     stdout_log = $stdoutPath
     stderr_log = $stderrPath
@@ -399,6 +488,8 @@ $md = @(
     "- engine_output_pass: $($summary.engine_output_pass)"
     "- treasury_output_pass: $($summary.treasury_output_pass)"
     "- orchestration_output_pass: $($summary.orchestration_output_pass)"
+    "- dividend_output_pass: $($summary.dividend_output_pass)"
+    "- foreign_payment_output_pass: $($summary.foreign_payment_output_pass)"
     "- error_reason: $($summary.error_reason)"
     "- probe_exit_code: $($summary.probe_exit_code)"
     "- stdout_log: $($summary.stdout_log)"
@@ -415,6 +506,8 @@ Write-Host "  output_pass: $($summary.output_pass)"
 Write-Host "  engine_output_pass: $($summary.engine_output_pass)"
 Write-Host "  treasury_output_pass: $($summary.treasury_output_pass)"
 Write-Host "  orchestration_output_pass: $($summary.orchestration_output_pass)"
+Write-Host "  dividend_output_pass: $($summary.dividend_output_pass)"
+Write-Host "  foreign_payment_output_pass: $($summary.foreign_payment_output_pass)"
 Write-Host "  summary_json: $summaryJson"
 
 if (-not $pass) {

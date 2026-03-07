@@ -12,11 +12,10 @@ use novovm_consensus::{
     AmmGovernanceParams, BFTConfig, BFTEngine, BFTError as ConsensusBftError, BondGovernanceParams,
     BuybackGovernanceParams, CdpGovernanceParams, Epoch as ConsensusEpoch, GovernanceAccessPolicy,
     GovernanceChainAuditEvent, GovernanceCouncilMember, GovernanceCouncilPolicy,
-    GovernanceCouncilSeat, GovernanceOp, GovernanceProposal, GovernanceVote, GovernanceVoteVerifier,
-    GovernanceVoteVerifierScheme, HotStuffProtocol, MarketGovernancePolicy, NavGovernanceParams,
-    NetworkDosPolicy,
-    NodeId as ConsensusNodeId, ReserveGovernanceParams, SlashMode, SlashPolicy,
-    TokenEconomicsPolicy, ValidatorSet, Web30MarketEngineSnapshot,
+    GovernanceCouncilSeat, GovernanceOp, GovernanceProposal, GovernanceVote,
+    GovernanceVoteVerifier, GovernanceVoteVerifierScheme, HotStuffProtocol, MarketGovernancePolicy,
+    NavGovernanceParams, NetworkDosPolicy, NodeId as ConsensusNodeId, ReserveGovernanceParams,
+    SlashMode, SlashPolicy, TokenEconomicsPolicy, ValidatorSet, Web30MarketEngineSnapshot,
 };
 use novovm_exec::{AoemRuntimeConfig, ExecOpV2};
 use novovm_network::{InMemoryTransport, Transport, UdpTransport};
@@ -38,8 +37,8 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
 use std::fs;
-use std::io::Read;
-use std::net::{IpAddr, SocketAddr};
+use std::io::{Read, Write};
+use std::net::{IpAddr, SocketAddr, TcpStream, ToSocketAddrs};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
@@ -84,6 +83,25 @@ fn string_env_nonempty(name: &str) -> Option<String> {
             Some(trimmed.to_string())
         }
     })
+}
+
+fn string_list_env_nonempty(name: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut seen = HashSet::new();
+    let Some(raw) = string_env_nonempty(name) else {
+        return out;
+    };
+    for token in raw.split(',') {
+        let trimmed = token.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let value = trimmed.to_string();
+        if seen.insert(value.clone()) {
+            out.push(value);
+        }
+    }
+    out
 }
 
 fn u32_env_allow_zero(name: &str, default: u32) -> u32 {
@@ -545,6 +563,9 @@ const ADAPTER_PLUGIN_REGISTRY_PATH_DEFAULT: &str =
 const ADAPTER_PLUGIN_REGISTRY_PATH_ALT: &str = "config\\novovm-adapter-plugin-registry.json";
 const CONSENSUS_POLICY_PATH_DEFAULT: &str = "..\\..\\config\\novovm-consensus-policy.json";
 const CONSENSUS_POLICY_PATH_ALT: &str = "config\\novovm-consensus-policy.json";
+const FOREIGN_RATE_DEFAULT_SOURCE_NAME: &str = "market_policy_config_v1";
+const NAV_VALUATION_DEFAULT_PRICE_BP: u32 = 10_000;
+const NAV_VALUATION_MAX_PRICE_BP: u32 = 1_000_000;
 const PLUGIN_CLASS_CONSENSUS: u8 = CONSENSUS_PLUGIN_CLASS_CODE;
 const ADAPTER_NATIVE_RULESET_ID: &str = "novovm_adapter_native_ruleset_v1";
 
@@ -593,6 +614,62 @@ struct LoadedSlashPolicy {
     path: Option<PathBuf>,
     policy: SlashPolicy,
     cooldown_epochs: u64,
+}
+
+#[derive(Debug, Clone)]
+struct NavFeedHttpEndpoint {
+    host: String,
+    host_header: String,
+    port: u16,
+    path_and_query: String,
+}
+
+#[derive(Debug, Clone)]
+struct LoadedNavValuationSource {
+    mode: String,
+    source_name: String,
+    configured_url: String,
+    configured_sources: u32,
+    strict: bool,
+    timeout_ms: u64,
+    fetched: bool,
+    fetched_sources: u32,
+    min_sources: u32,
+    signature_required: bool,
+    signature_verified: bool,
+    fallback_to_deterministic: bool,
+    price_bp: u32,
+    reason_code: String,
+}
+
+#[derive(Debug, Clone)]
+struct NavFeedFetchResult {
+    price_bp: u32,
+    signature_verified: bool,
+}
+
+#[derive(Debug, Clone)]
+struct LoadedForeignRateSource {
+    mode: String,
+    source_name: String,
+    configured_url: String,
+    configured_sources: u32,
+    strict: bool,
+    timeout_ms: u64,
+    fetched: bool,
+    fetched_sources: u32,
+    min_sources: u32,
+    signature_required: bool,
+    signature_verified: bool,
+    quote_spec_applied: bool,
+    fallback_to_deterministic: bool,
+    reason_code: String,
+}
+
+#[derive(Debug, Clone)]
+struct ForeignRateFeedFetchResult {
+    quote_spec: String,
+    signature_verified: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -2633,14 +2710,23 @@ fn load_governance_chain_audit_store(path: &Path) -> Result<GovernanceChainAudit
     if !path.exists() {
         return Ok(GovernanceChainAuditStore::default());
     }
-    let raw = fs::read_to_string(path)
-        .with_context(|| format!("read governance chain audit store failed: {}", path.display()))?;
+    let raw = fs::read_to_string(path).with_context(|| {
+        format!(
+            "read governance chain audit store failed: {}",
+            path.display()
+        )
+    })?;
     let normalized = raw.trim_start_matches('\u{feff}');
     if normalized.trim().is_empty() {
         return Ok(GovernanceChainAuditStore::default());
     }
-    let parsed: GovernanceChainAuditStore = serde_json::from_str(normalized)
-        .with_context(|| format!("parse governance chain audit store failed: {}", path.display()))?;
+    let parsed: GovernanceChainAuditStore =
+        serde_json::from_str(normalized).with_context(|| {
+            format!(
+                "parse governance chain audit store failed: {}",
+                path.display()
+            )
+        })?;
     Ok(parsed)
 }
 
@@ -2667,8 +2753,12 @@ fn save_governance_chain_audit_store(
     };
     let serialized = serde_json::to_string_pretty(&store)
         .context("serialize governance chain audit store failed")?;
-    fs::write(path, serialized)
-        .with_context(|| format!("write governance chain audit store failed: {}", path.display()))?;
+    fs::write(path, serialized).with_context(|| {
+        format!(
+            "write governance chain audit store failed: {}",
+            path.display()
+        )
+    })?;
     Ok(())
 }
 
@@ -3411,6 +3501,13 @@ fn build_aoem_ffi_mldsa87_vote_verifier() -> Result<Arc<dyn GovernanceVoteVerifi
     }))
 }
 
+fn governance_mldsa_mode() -> String {
+    string_env_nonempty("NOVOVM_GOVERNANCE_MLDSA_MODE")
+        .unwrap_or_else(|| "disabled".to_string())
+        .trim()
+        .to_ascii_lowercase()
+}
+
 fn apply_governance_vote_verifier(
     engine: &BFTEngine,
     verifier: GovernanceVoteVerifierScheme,
@@ -3420,16 +3517,20 @@ fn apply_governance_vote_verifier(
             .set_governance_vote_verifier_by_scheme(verifier)
             .map_err(|e| anyhow::anyhow!("{}", e)),
         GovernanceVoteVerifierScheme::MlDsa87 => {
-            let mode = string_env_nonempty("NOVOVM_GOVERNANCE_MLDSA_MODE")
-                .unwrap_or_else(|| "staged".to_string());
-            if mode.eq_ignore_ascii_case("aoem_ffi") {
-                let custom = build_aoem_ffi_mldsa87_vote_verifier()?;
-                engine.set_governance_vote_verifier(custom);
-                Ok(())
-            } else {
-                bail!(
-                    "unsupported governance vote verifier: mldsa87 (staged-only, set NOVOVM_GOVERNANCE_MLDSA_MODE=aoem_ffi + AOEM FFI library to enable)"
-                );
+            let mode = governance_mldsa_mode();
+            match mode.as_str() {
+                "aoem_ffi" => {
+                    let custom = build_aoem_ffi_mldsa87_vote_verifier()?;
+                    engine.set_governance_vote_verifier(custom);
+                    Ok(())
+                }
+                "disabled" => bail!(
+                    "unsupported governance vote verifier: mldsa87 (disabled-by-policy, set NOVOVM_GOVERNANCE_MLDSA_MODE=aoem_ffi + AOEM FFI library to enable)"
+                ),
+                other => bail!(
+                    "invalid NOVOVM_GOVERNANCE_MLDSA_MODE={} (valid: disabled, aoem_ffi)",
+                    other
+                ),
             }
         }
     }
@@ -3438,8 +3539,7 @@ fn apply_governance_vote_verifier(
 fn configure_governance_vote_verifier(engine: &BFTEngine) -> Result<()> {
     let verifier = load_governance_vote_verifier_config_from_env()?;
     apply_governance_vote_verifier(engine, verifier)?;
-    let mode =
-        string_env_nonempty("NOVOVM_GOVERNANCE_MLDSA_MODE").unwrap_or_else(|| "staged".to_string());
+    let mode = governance_mldsa_mode();
     println!(
         "governance_vote_verifier_in: source=env key=NOVOVM_GOVERNANCE_VOTE_VERIFIER configured={} active={} active_scheme={} mldsa_mode={}",
         verifier.as_str(),
@@ -3471,7 +3571,7 @@ fn ensure_governance_signature_scheme_supported(
         Some(actor),
         "reject",
         format!(
-            "unsupported signature scheme {} (staged-only, current enabled: {})",
+            "unsupported signature scheme {} (policy-gated, current enabled: {})",
             requested_scheme.as_str(),
             active_scheme.as_str()
         ),
@@ -3590,6 +3690,798 @@ fn decode_hex_bytes(raw: &str, field: &str) -> Result<Vec<u8>> {
     Ok(out)
 }
 
+fn parse_nav_feed_http_endpoint(raw: &str) -> Result<NavFeedHttpEndpoint> {
+    let trimmed = raw.trim();
+    let rest = trimmed.strip_prefix("http://").ok_or_else(|| {
+        anyhow::anyhow!("unsupported NAV feed url scheme (only http://): {}", raw)
+    })?;
+    if rest.is_empty() {
+        bail!("NAV feed url is empty: {}", raw);
+    }
+
+    let (authority, path_tail) = match rest.find('/') {
+        Some(pos) => (&rest[..pos], &rest[pos..]),
+        None => (rest, "/"),
+    };
+    if authority.is_empty() {
+        bail!("NAV feed url missing host: {}", raw);
+    }
+
+    let (host, port) = if authority.starts_with('[') {
+        let end = authority
+            .find(']')
+            .ok_or_else(|| anyhow::anyhow!("NAV feed ipv6 host missing ']': {}", raw))?;
+        let host_inner = &authority[1..end];
+        if host_inner.is_empty() {
+            bail!("NAV feed host cannot be empty: {}", raw);
+        }
+        let tail = &authority[end + 1..];
+        let port = if tail.is_empty() {
+            80u16
+        } else if let Some(port_raw) = tail.strip_prefix(':') {
+            port_raw
+                .parse::<u16>()
+                .with_context(|| format!("invalid NAV feed port in url: {}", raw))?
+        } else {
+            bail!("invalid NAV feed ipv6 authority: {}", raw);
+        };
+        (host_inner.to_string(), port)
+    } else {
+        match authority.rsplit_once(':') {
+            Some((h, p))
+                if !h.is_empty() && !h.contains(':') && p.chars().all(|ch| ch.is_ascii_digit()) =>
+            {
+                (
+                    h.to_string(),
+                    p.parse::<u16>()
+                        .with_context(|| format!("invalid NAV feed port in url: {}", raw))?,
+                )
+            }
+            _ => (authority.to_string(), 80u16),
+        }
+    };
+
+    let path_and_query = if path_tail.is_empty() { "/" } else { path_tail };
+    if !path_and_query.starts_with('/') {
+        bail!("NAV feed url path must start with '/': {}", raw);
+    }
+
+    let host_header = if host.contains(':') {
+        if port == 80 {
+            format!("[{}]", host)
+        } else {
+            format!("[{}]:{}", host, port)
+        }
+    } else if port == 80 {
+        host.clone()
+    } else {
+        format!("{}:{}", host, port)
+    };
+
+    Ok(NavFeedHttpEndpoint {
+        host,
+        host_header,
+        port,
+        path_and_query: path_and_query.to_string(),
+    })
+}
+
+fn parse_nav_price_bp_json(payload: &serde_json::Value) -> Option<u64> {
+    fn parse_scalar(value: &serde_json::Value) -> Option<u64> {
+        match value {
+            serde_json::Value::Number(num) => num.as_u64(),
+            serde_json::Value::String(raw) => raw.trim().parse::<u64>().ok(),
+            _ => None,
+        }
+    }
+
+    if let Some(v) = payload.get("price_bp").and_then(parse_scalar) {
+        return Some(v);
+    }
+    if let Some(v) = payload.get("priceBp").and_then(parse_scalar) {
+        return Some(v);
+    }
+    if let Some(data) = payload.get("data") {
+        if let Some(v) = data.get("price_bp").and_then(parse_scalar) {
+            return Some(v);
+        }
+        if let Some(v) = data.get("priceBp").and_then(parse_scalar) {
+            return Some(v);
+        }
+    }
+    None
+}
+
+fn parse_feed_signature_sha256_json(payload: &serde_json::Value) -> Option<String> {
+    fn parse_scalar(value: &serde_json::Value) -> Option<String> {
+        match value {
+            serde_json::Value::String(raw) => {
+                let trimmed = raw.trim();
+                if trimmed.is_empty() {
+                    None
+                } else {
+                    Some(trimmed.to_string())
+                }
+            }
+            _ => None,
+        }
+    }
+
+    for key in ["signature_sha256", "signatureSha256", "signature"] {
+        if let Some(sig) = payload.get(key).and_then(parse_scalar) {
+            return Some(sig);
+        }
+    }
+    if let Some(data) = payload.get("data") {
+        for key in ["signature_sha256", "signatureSha256", "signature"] {
+            if let Some(sig) = data.get(key).and_then(parse_scalar) {
+                return Some(sig);
+            }
+        }
+    }
+    None
+}
+
+fn compute_feed_signature_sha256(domain: &str, message: &str, key: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(domain.as_bytes());
+    hasher.update(b"|");
+    hasher.update(message.as_bytes());
+    hasher.update(b"|");
+    hasher.update(key.as_bytes());
+    to_hex(&hasher.finalize())
+}
+
+fn parse_feed_urls_with_compat(list_env: &str, single_env: &str) -> Vec<String> {
+    let mut urls = string_list_env_nonempty(list_env);
+    if urls.is_empty() {
+        if let Some(single) = string_env_nonempty(single_env) {
+            urls.push(single);
+        }
+    }
+    urls
+}
+
+fn fetch_nav_price_bp_from_http_feed(
+    url: &str,
+    timeout_ms: u64,
+    signature_required: bool,
+    signature_key: Option<&str>,
+) -> Result<NavFeedFetchResult> {
+    let endpoint = parse_nav_feed_http_endpoint(url)?;
+    let timeout = Duration::from_millis(timeout_ms.max(1));
+    let addr = (endpoint.host.as_str(), endpoint.port)
+        .to_socket_addrs()
+        .with_context(|| format!("resolve NAV feed host failed: {}", url))?
+        .next()
+        .ok_or_else(|| anyhow::anyhow!("resolve NAV feed host returned empty set: {}", url))?;
+    let mut stream = TcpStream::connect_timeout(&addr, timeout)
+        .with_context(|| format!("connect NAV feed failed: {}", url))?;
+    stream
+        .set_read_timeout(Some(timeout))
+        .context("set NAV feed read timeout failed")?;
+    stream
+        .set_write_timeout(Some(timeout))
+        .context("set NAV feed write timeout failed")?;
+
+    let request = format!(
+        "GET {} HTTP/1.1\r\nHost: {}\r\nAccept: application/json\r\nConnection: close\r\nUser-Agent: novovm-node-nav-feed/1.0\r\n\r\n",
+        endpoint.path_and_query, endpoint.host_header
+    );
+    stream
+        .write_all(request.as_bytes())
+        .context("write NAV feed request failed")?;
+    stream.flush().context("flush NAV feed request failed")?;
+
+    let mut bytes = Vec::new();
+    stream
+        .read_to_end(&mut bytes)
+        .context("read NAV feed response failed")?;
+    let response = String::from_utf8(bytes).context("NAV feed response is not valid utf-8")?;
+
+    let (head, body) = if let Some(idx) = response.find("\r\n\r\n") {
+        (&response[..idx], &response[idx + 4..])
+    } else if let Some(idx) = response.find("\n\n") {
+        (&response[..idx], &response[idx + 2..])
+    } else {
+        bail!("NAV feed malformed response (missing header separator)");
+    };
+    let status_line = head.lines().next().unwrap_or("");
+    if !status_line.contains(" 200 ") {
+        bail!("NAV feed non-200 response: {}", status_line);
+    }
+
+    let payload: serde_json::Value = serde_json::from_str(body)
+        .context("NAV feed body is not valid json or cannot be parsed")?;
+    let price_bp = parse_nav_price_bp_json(&payload)
+        .ok_or_else(|| anyhow::anyhow!("NAV feed json missing price_bp field"))?;
+    if price_bp == 0 || price_bp > u64::from(NAV_VALUATION_MAX_PRICE_BP) {
+        bail!(
+            "NAV feed price_bp must be in [1..{}], got {}",
+            NAV_VALUATION_MAX_PRICE_BP,
+            price_bp
+        );
+    }
+    let signature_verified = if signature_required {
+        let signature_key = signature_key
+            .filter(|v| !v.is_empty())
+            .ok_or_else(|| anyhow::anyhow!("NAV feed signature key is required"))?;
+        let signature = parse_feed_signature_sha256_json(&payload)
+            .ok_or_else(|| anyhow::anyhow!("NAV feed json missing signature_sha256 field"))?;
+        let signature = normalize_sha256_hex(&signature, "NAV feed signature_sha256")?;
+        let expected = compute_feed_signature_sha256(
+            "nav_feed_v1",
+            &format!("price_bp={}", price_bp),
+            signature_key,
+        );
+        if signature != expected {
+            bail!("NAV feed signature mismatch");
+        }
+        true
+    } else {
+        false
+    };
+
+    Ok(NavFeedFetchResult {
+        price_bp: price_bp as u32,
+        signature_verified,
+    })
+}
+
+fn load_market_nav_valuation_source(engine: &BFTEngine) -> Result<LoadedNavValuationSource> {
+    let mode_raw = string_env("NOVOVM_GOV_MARKET_NAV_VALUATION_MODE", "deterministic");
+    let mode = mode_raw.trim().to_ascii_lowercase();
+    if mode.is_empty() || mode == "deterministic" {
+        return Ok(LoadedNavValuationSource {
+            mode: "deterministic".to_string(),
+            source_name: "deterministic_v1".to_string(),
+            configured_url: String::new(),
+            configured_sources: 0,
+            strict: false,
+            timeout_ms: 0,
+            fetched: false,
+            fetched_sources: 0,
+            min_sources: 0,
+            signature_required: false,
+            signature_verified: false,
+            fallback_to_deterministic: false,
+            price_bp: NAV_VALUATION_DEFAULT_PRICE_BP,
+            reason_code: "deterministic_default".to_string(),
+        });
+    }
+    if mode != "external_feed" {
+        bail!(
+            "governance_policy_invalid: NOVOVM_GOV_MARKET_NAV_VALUATION_MODE unsupported value: {} (valid: deterministic|external_feed)",
+            mode_raw
+        );
+    }
+
+    let source_name = string_env_nonempty("NOVOVM_GOV_MARKET_NAV_VALUATION_SOURCE_NAME")
+        .unwrap_or_else(|| "external_feed_v1".to_string());
+    engine
+        .set_market_nav_valuation_source_external(&source_name)
+        .map_err(|e| {
+            anyhow::anyhow!(
+                "governance_policy_invalid: set market nav valuation source failed: {}",
+                e
+            )
+        })?;
+
+    let strict = bool_env_default("NOVOVM_GOV_MARKET_NAV_FEED_STRICT", false);
+    let timeout_ms = u64_env("NOVOVM_GOV_MARKET_NAV_FEED_TIMEOUT_MS", 1500).max(1);
+    let configured_urls = parse_feed_urls_with_compat(
+        "NOVOVM_GOV_MARKET_NAV_FEED_URLS",
+        "NOVOVM_GOV_MARKET_NAV_FEED_URL",
+    );
+    let configured_sources = configured_urls.len() as u32;
+    let configured_url = configured_urls.join(",");
+    let min_sources = if configured_sources == 0 {
+        0
+    } else {
+        parse_u32_env("NOVOVM_GOV_MARKET_NAV_FEED_MIN_SOURCES", 1)?
+    };
+    if configured_sources > 0 && min_sources > configured_sources {
+        bail!(
+            "governance_policy_invalid: NOVOVM_GOV_MARKET_NAV_FEED_MIN_SOURCES={} exceeds configured sources={}",
+            min_sources,
+            configured_sources
+        );
+    }
+    let signature_required =
+        bool_env_default("NOVOVM_GOV_MARKET_NAV_FEED_SIGNATURE_REQUIRED", false);
+    let signature_key = string_env_nonempty("NOVOVM_GOV_MARKET_NAV_FEED_SIGNATURE_KEY");
+    if signature_required && signature_key.is_none() {
+        bail!(
+            "governance_policy_invalid: NOVOVM_GOV_MARKET_NAV_FEED_SIGNATURE_KEY is required when NOVOVM_GOV_MARKET_NAV_FEED_SIGNATURE_REQUIRED=1"
+        );
+    }
+    let direct_price_raw = string_env_nonempty("NOVOVM_GOV_MARKET_NAV_EXTERNAL_PRICE_BP");
+
+    if let Some(raw) = direct_price_raw {
+        let direct_price = raw
+            .parse::<u32>()
+            .with_context(|| format!("invalid NOVOVM_GOV_MARKET_NAV_EXTERNAL_PRICE_BP: {}", raw))?;
+        engine
+            .set_market_nav_external_price_bp(direct_price)
+            .map_err(|e| {
+                anyhow::anyhow!(
+                "governance_policy_invalid: invalid NOVOVM_GOV_MARKET_NAV_EXTERNAL_PRICE_BP: {}",
+                e
+            )
+            })?;
+        return Ok(LoadedNavValuationSource {
+            mode: "external_feed".to_string(),
+            source_name,
+            configured_url,
+            configured_sources,
+            strict,
+            timeout_ms,
+            fetched: true,
+            fetched_sources: 0,
+            min_sources,
+            signature_required,
+            signature_verified: false,
+            fallback_to_deterministic: false,
+            price_bp: direct_price,
+            reason_code: "direct_env_price".to_string(),
+        });
+    }
+
+    if configured_sources > 0 {
+        let mut fetched_prices = Vec::new();
+        let mut fetch_errors = Vec::new();
+        let mut signature_verified = true;
+        for url in &configured_urls {
+            match fetch_nav_price_bp_from_http_feed(
+                url,
+                timeout_ms,
+                signature_required,
+                signature_key.as_deref(),
+            ) {
+                Ok(result) => {
+                    fetched_prices.push(result.price_bp);
+                    if signature_required && !result.signature_verified {
+                        signature_verified = false;
+                    }
+                }
+                Err(err) => fetch_errors.push(format!("{} => {}", url, err)),
+            }
+        }
+
+        let fetched_sources = fetched_prices.len() as u32;
+        if fetched_sources >= min_sources && fetched_sources > 0 {
+            fetched_prices.sort_unstable();
+            let mid = fetched_prices.len() / 2;
+            let price_bp = if fetched_prices.len() % 2 == 1 {
+                fetched_prices[mid]
+            } else {
+                ((u64::from(fetched_prices[mid - 1]) + u64::from(fetched_prices[mid])) / 2) as u32
+            };
+            engine
+                .set_market_nav_external_price_bp(price_bp)
+                .map_err(|e| {
+                    anyhow::anyhow!(
+                        "governance_policy_invalid: nav feed quote out of range: {}",
+                        e
+                    )
+                })?;
+            let reason_code = if fetched_sources == configured_sources {
+                "feed_quote_ok"
+            } else {
+                "feed_quote_partial_ok"
+            };
+            return Ok(LoadedNavValuationSource {
+                mode: "external_feed".to_string(),
+                source_name,
+                configured_url,
+                configured_sources,
+                strict,
+                timeout_ms,
+                fetched: true,
+                fetched_sources,
+                min_sources,
+                signature_required,
+                signature_verified,
+                fallback_to_deterministic: false,
+                price_bp,
+                reason_code: reason_code.to_string(),
+            });
+        }
+        if strict {
+            let detail = if fetch_errors.is_empty() {
+                "none".to_string()
+            } else {
+                fetch_errors.join("; ")
+            };
+            bail!(
+                "nav_feed_fetch_failed: insufficient valid sources fetched={} min_sources={} configured_sources={} errors={}",
+                fetched_sources,
+                min_sources,
+                configured_sources,
+                detail
+            );
+        }
+        return Ok(LoadedNavValuationSource {
+            mode: "external_feed".to_string(),
+            source_name,
+            configured_url,
+            configured_sources,
+            strict,
+            timeout_ms,
+            fetched: false,
+            fetched_sources,
+            min_sources,
+            signature_required,
+            signature_verified: false,
+            fallback_to_deterministic: true,
+            price_bp: NAV_VALUATION_DEFAULT_PRICE_BP,
+            reason_code: "feed_quote_insufficient_sources_fallback".to_string(),
+        });
+    }
+
+    if strict {
+        bail!(
+            "nav_feed_fetch_failed: strict mode requires NOVOVM_GOV_MARKET_NAV_FEED_URL(S) or NOVOVM_GOV_MARKET_NAV_EXTERNAL_PRICE_BP"
+        );
+    }
+    Ok(LoadedNavValuationSource {
+        mode: "external_feed".to_string(),
+        source_name,
+        configured_url,
+        configured_sources,
+        strict,
+        timeout_ms,
+        fetched: false,
+        fetched_sources: 0,
+        min_sources,
+        signature_required,
+        signature_verified: false,
+        fallback_to_deterministic: true,
+        price_bp: NAV_VALUATION_DEFAULT_PRICE_BP,
+        reason_code: "external_mode_no_quote_fallback".to_string(),
+    })
+}
+
+fn parse_foreign_quote_spec_json(payload: &serde_json::Value) -> Option<String> {
+    fn parse_scalar(value: &serde_json::Value) -> Option<String> {
+        match value {
+            serde_json::Value::String(raw) => {
+                let trimmed = raw.trim();
+                if trimmed.is_empty() {
+                    None
+                } else {
+                    Some(trimmed.to_string())
+                }
+            }
+            _ => None,
+        }
+    }
+
+    if let Some(spec) = payload.get("quote_spec").and_then(parse_scalar) {
+        return Some(spec);
+    }
+    if let Some(spec) = payload.get("quoteSpec").and_then(parse_scalar) {
+        return Some(spec);
+    }
+    if let Some(data) = payload.get("data") {
+        if let Some(spec) = data.get("quote_spec").and_then(parse_scalar) {
+            return Some(spec);
+        }
+        if let Some(spec) = data.get("quoteSpec").and_then(parse_scalar) {
+            return Some(spec);
+        }
+    }
+    None
+}
+
+fn fetch_foreign_quote_spec_from_http_feed(
+    url: &str,
+    timeout_ms: u64,
+    signature_required: bool,
+    signature_key: Option<&str>,
+) -> Result<ForeignRateFeedFetchResult> {
+    let endpoint = parse_nav_feed_http_endpoint(url)?;
+    let timeout = Duration::from_millis(timeout_ms.max(1));
+    let addr = (endpoint.host.as_str(), endpoint.port)
+        .to_socket_addrs()
+        .with_context(|| format!("resolve foreign rate feed host failed: {}", url))?
+        .next()
+        .ok_or_else(|| {
+            anyhow::anyhow!("resolve foreign rate feed host returned empty set: {}", url)
+        })?;
+    let mut stream = TcpStream::connect_timeout(&addr, timeout)
+        .with_context(|| format!("connect foreign rate feed failed: {}", url))?;
+    stream
+        .set_read_timeout(Some(timeout))
+        .context("set foreign rate feed read timeout failed")?;
+    stream
+        .set_write_timeout(Some(timeout))
+        .context("set foreign rate feed write timeout failed")?;
+
+    let request = format!(
+        "GET {} HTTP/1.1\r\nHost: {}\r\nAccept: application/json\r\nConnection: close\r\nUser-Agent: novovm-node-foreign-rate-feed/1.0\r\n\r\n",
+        endpoint.path_and_query, endpoint.host_header
+    );
+    stream
+        .write_all(request.as_bytes())
+        .context("write foreign rate feed request failed")?;
+    stream
+        .flush()
+        .context("flush foreign rate feed request failed")?;
+
+    let mut bytes = Vec::new();
+    stream
+        .read_to_end(&mut bytes)
+        .context("read foreign rate feed response failed")?;
+    let response =
+        String::from_utf8(bytes).context("foreign rate feed response is not valid utf-8")?;
+
+    let (head, body) = if let Some(idx) = response.find("\r\n\r\n") {
+        (&response[..idx], &response[idx + 4..])
+    } else if let Some(idx) = response.find("\n\n") {
+        (&response[..idx], &response[idx + 2..])
+    } else {
+        bail!("foreign rate feed malformed response (missing header separator)");
+    };
+    let status_line = head.lines().next().unwrap_or("");
+    if !status_line.contains(" 200 ") {
+        bail!("foreign rate feed non-200 response: {}", status_line);
+    }
+
+    let payload: serde_json::Value = serde_json::from_str(body)
+        .context("foreign rate feed body is not valid json or cannot be parsed")?;
+    let quote_spec = parse_foreign_quote_spec_json(&payload)
+        .ok_or_else(|| anyhow::anyhow!("foreign rate feed json missing quote_spec field"))?;
+    let signature_verified = if signature_required {
+        let signature_key = signature_key
+            .filter(|v| !v.is_empty())
+            .ok_or_else(|| anyhow::anyhow!("foreign rate feed signature key is required"))?;
+        let signature = parse_feed_signature_sha256_json(&payload).ok_or_else(|| {
+            anyhow::anyhow!("foreign rate feed json missing signature_sha256 field")
+        })?;
+        let signature = normalize_sha256_hex(&signature, "foreign rate feed signature_sha256")?;
+        let expected = compute_feed_signature_sha256(
+            "foreign_rate_feed_v1",
+            &format!("quote_spec={}", quote_spec),
+            signature_key,
+        );
+        if signature != expected {
+            bail!("foreign rate feed signature mismatch");
+        }
+        true
+    } else {
+        false
+    };
+    Ok(ForeignRateFeedFetchResult {
+        quote_spec,
+        signature_verified,
+    })
+}
+
+fn aggregate_quote_spec_majority(specs: &[String]) -> Option<String> {
+    let mut counts: HashMap<String, u32> = HashMap::new();
+    for spec in specs {
+        *counts.entry(spec.clone()).or_insert(0) += 1;
+    }
+    let mut best: Option<(String, u32)> = None;
+    for (spec, count) in counts {
+        match &best {
+            None => best = Some((spec, count)),
+            Some((best_spec, best_count)) => {
+                if count > *best_count || (count == *best_count && spec < *best_spec) {
+                    best = Some((spec, count));
+                }
+            }
+        }
+    }
+    best.map(|(spec, _)| spec)
+}
+
+fn load_market_foreign_rate_source(engine: &BFTEngine) -> Result<LoadedForeignRateSource> {
+    let mode_raw = string_env("NOVOVM_GOV_MARKET_FOREIGN_RATE_MODE", "deterministic");
+    let mode = mode_raw.trim().to_ascii_lowercase();
+    if mode.is_empty() || mode == "deterministic" {
+        return Ok(LoadedForeignRateSource {
+            mode: "deterministic".to_string(),
+            source_name: FOREIGN_RATE_DEFAULT_SOURCE_NAME.to_string(),
+            configured_url: String::new(),
+            configured_sources: 0,
+            strict: false,
+            timeout_ms: 0,
+            fetched: false,
+            fetched_sources: 0,
+            min_sources: 0,
+            signature_required: false,
+            signature_verified: false,
+            quote_spec_applied: false,
+            fallback_to_deterministic: false,
+            reason_code: "deterministic_default".to_string(),
+        });
+    }
+    if mode != "external_feed" {
+        bail!(
+            "governance_policy_invalid: NOVOVM_GOV_MARKET_FOREIGN_RATE_MODE unsupported value: {} (valid: deterministic|external_feed)",
+            mode_raw
+        );
+    }
+
+    let source_name = string_env_nonempty("NOVOVM_GOV_MARKET_FOREIGN_RATE_SOURCE_NAME")
+        .unwrap_or_else(|| "foreign_external_feed_v1".to_string());
+    engine
+        .set_market_foreign_rate_source_name(&source_name)
+        .map_err(|e| {
+            anyhow::anyhow!(
+                "governance_policy_invalid: set market foreign rate source failed: {}",
+                e
+            )
+        })?;
+
+    let strict = bool_env_default("NOVOVM_GOV_MARKET_FOREIGN_RATE_FEED_STRICT", false);
+    let timeout_ms = u64_env("NOVOVM_GOV_MARKET_FOREIGN_RATE_FEED_TIMEOUT_MS", 1500).max(1);
+    let configured_urls = parse_feed_urls_with_compat(
+        "NOVOVM_GOV_MARKET_FOREIGN_RATE_FEED_URLS",
+        "NOVOVM_GOV_MARKET_FOREIGN_RATE_FEED_URL",
+    );
+    let configured_sources = configured_urls.len() as u32;
+    let configured_url = configured_urls.join(",");
+    let min_sources = if configured_sources == 0 {
+        0
+    } else {
+        parse_u32_env("NOVOVM_GOV_MARKET_FOREIGN_RATE_FEED_MIN_SOURCES", 1)?
+    };
+    if configured_sources > 0 && min_sources > configured_sources {
+        bail!(
+            "governance_policy_invalid: NOVOVM_GOV_MARKET_FOREIGN_RATE_FEED_MIN_SOURCES={} exceeds configured sources={}",
+            min_sources,
+            configured_sources
+        );
+    }
+    let signature_required = bool_env_default(
+        "NOVOVM_GOV_MARKET_FOREIGN_RATE_FEED_SIGNATURE_REQUIRED",
+        false,
+    );
+    let signature_key = string_env_nonempty("NOVOVM_GOV_MARKET_FOREIGN_RATE_FEED_SIGNATURE_KEY");
+    if signature_required && signature_key.is_none() {
+        bail!(
+            "governance_policy_invalid: NOVOVM_GOV_MARKET_FOREIGN_RATE_FEED_SIGNATURE_KEY is required when NOVOVM_GOV_MARKET_FOREIGN_RATE_FEED_SIGNATURE_REQUIRED=1"
+        );
+    }
+    let direct_quote_spec = string_env_nonempty("NOVOVM_GOV_MARKET_FOREIGN_QUOTE_SPEC");
+
+    if let Some(spec) = direct_quote_spec {
+        engine.apply_market_foreign_quote_spec(&spec).map_err(|e| {
+            anyhow::anyhow!(
+                "governance_policy_invalid: invalid NOVOVM_GOV_MARKET_FOREIGN_QUOTE_SPEC: {}",
+                e
+            )
+        })?;
+        return Ok(LoadedForeignRateSource {
+            mode: "external_feed".to_string(),
+            source_name,
+            configured_url,
+            configured_sources,
+            strict,
+            timeout_ms,
+            fetched: true,
+            fetched_sources: 0,
+            min_sources,
+            signature_required,
+            signature_verified: false,
+            quote_spec_applied: true,
+            fallback_to_deterministic: false,
+            reason_code: "direct_env_quote_spec".to_string(),
+        });
+    }
+
+    if configured_sources > 0 {
+        let mut fetched_specs = Vec::new();
+        let mut fetch_errors = Vec::new();
+        let mut signature_verified = true;
+        for url in &configured_urls {
+            match fetch_foreign_quote_spec_from_http_feed(
+                url,
+                timeout_ms,
+                signature_required,
+                signature_key.as_deref(),
+            ) {
+                Ok(result) => {
+                    fetched_specs.push(result.quote_spec);
+                    if signature_required && !result.signature_verified {
+                        signature_verified = false;
+                    }
+                }
+                Err(err) => fetch_errors.push(format!("{} => {}", url, err)),
+            }
+        }
+        let fetched_sources = fetched_specs.len() as u32;
+        if fetched_sources >= min_sources && fetched_sources > 0 {
+            let aggregated_spec = aggregate_quote_spec_majority(&fetched_specs)
+                .ok_or_else(|| anyhow::anyhow!("foreign quote aggregation result is empty"))?;
+            engine
+                .apply_market_foreign_quote_spec(&aggregated_spec)
+                .map_err(|e| {
+                    anyhow::anyhow!(
+                        "governance_policy_invalid: foreign quote spec invalid: {}",
+                        e
+                    )
+                })?;
+            let reason_code = if fetched_sources == configured_sources {
+                "feed_quote_ok"
+            } else {
+                "feed_quote_partial_ok"
+            };
+            return Ok(LoadedForeignRateSource {
+                mode: "external_feed".to_string(),
+                source_name,
+                configured_url,
+                configured_sources,
+                strict,
+                timeout_ms,
+                fetched: true,
+                fetched_sources,
+                min_sources,
+                signature_required,
+                signature_verified,
+                quote_spec_applied: true,
+                fallback_to_deterministic: false,
+                reason_code: reason_code.to_string(),
+            });
+        }
+        if strict {
+            let detail = if fetch_errors.is_empty() {
+                "none".to_string()
+            } else {
+                fetch_errors.join("; ")
+            };
+            bail!(
+                "foreign_rate_feed_fetch_failed: insufficient valid sources fetched={} min_sources={} configured_sources={} errors={}",
+                fetched_sources,
+                min_sources,
+                configured_sources,
+                detail
+            );
+        }
+        return Ok(LoadedForeignRateSource {
+            mode: "external_feed".to_string(),
+            source_name,
+            configured_url,
+            configured_sources,
+            strict,
+            timeout_ms,
+            fetched: false,
+            fetched_sources,
+            min_sources,
+            signature_required,
+            signature_verified: false,
+            quote_spec_applied: false,
+            fallback_to_deterministic: true,
+            reason_code: "feed_quote_insufficient_sources_fallback".to_string(),
+        });
+    }
+
+    if strict {
+        bail!(
+            "foreign_rate_feed_fetch_failed: strict mode requires NOVOVM_GOV_MARKET_FOREIGN_RATE_FEED_URL(S) or NOVOVM_GOV_MARKET_FOREIGN_QUOTE_SPEC"
+        );
+    }
+    Ok(LoadedForeignRateSource {
+        mode: "external_feed".to_string(),
+        source_name,
+        configured_url,
+        configured_sources,
+        strict,
+        timeout_ms,
+        fetched: false,
+        fetched_sources: 0,
+        min_sources,
+        signature_required,
+        signature_verified: false,
+        quote_spec_applied: false,
+        fallback_to_deterministic: true,
+        reason_code: "external_mode_no_quote_fallback".to_string(),
+    })
+}
+
 fn push_governance_audit_event(
     runtime: &mut GovernanceRpcRuntime,
     action: &str,
@@ -3679,44 +4571,169 @@ fn market_governance_policy_to_json(policy: &MarketGovernancePolicy) -> serde_js
 }
 
 fn market_engine_snapshot_to_json(snapshot: &Web30MarketEngineSnapshot) -> serde_json::Value {
-    serde_json::json!({
-        "amm_swap_fee_bp": snapshot.amm_swap_fee_bp,
-        "amm_lp_fee_share_bp": snapshot.amm_lp_fee_share_bp,
-        "cdp_min_collateral_ratio_bp": snapshot.cdp_min_collateral_ratio_bp,
-        "cdp_liquidation_threshold_bp": snapshot.cdp_liquidation_threshold_bp,
-        "cdp_liquidation_penalty_bp": snapshot.cdp_liquidation_penalty_bp,
-        "cdp_stability_fee_bp": snapshot.cdp_stability_fee_bp,
-        "cdp_max_leverage_x100": snapshot.cdp_max_leverage_x100,
-        "bond_one_year_coupon_bp": snapshot.bond_one_year_coupon_bp,
-        "bond_three_year_coupon_bp": snapshot.bond_three_year_coupon_bp,
-        "bond_five_year_coupon_bp": snapshot.bond_five_year_coupon_bp,
-        "bond_max_maturity_days_policy": snapshot.bond_max_maturity_days_policy,
-        "bond_min_issue_price_bp": snapshot.bond_min_issue_price_bp,
-        "reserve_min_reserve_ratio_bp": snapshot.reserve_min_reserve_ratio_bp,
-        "reserve_redemption_fee_bp": snapshot.reserve_redemption_fee_bp,
-        "nav_settlement_delay_epochs": snapshot.nav_settlement_delay_epochs,
-        "nav_max_daily_redemption_bp": snapshot.nav_max_daily_redemption_bp,
-        "buyback_trigger_discount_bp": snapshot.buyback_trigger_discount_bp,
-        "buyback_max_treasury_budget_per_epoch": snapshot.buyback_max_treasury_budget_per_epoch,
-        "buyback_burn_share_bp": snapshot.buyback_burn_share_bp,
-        "treasury_main_balance": snapshot.treasury_main_balance,
-        "treasury_ecosystem_balance": snapshot.treasury_ecosystem_balance,
-        "treasury_risk_reserve_balance": snapshot.treasury_risk_reserve_balance,
-        "reserve_foreign_usdt_balance": snapshot.reserve_foreign_usdt_balance,
-        "nav_soft_floor_value": snapshot.nav_soft_floor_value,
-        "buyback_last_spent_stable": snapshot.buyback_last_spent_stable,
-        "buyback_last_burned_token": snapshot.buyback_last_burned_token,
-        "oracle_price_before": snapshot.oracle_price_before,
-        "oracle_price_after": snapshot.oracle_price_after,
-        "cdp_liquidation_candidates": snapshot.cdp_liquidation_candidates,
-        "cdp_liquidations_executed": snapshot.cdp_liquidations_executed,
-        "cdp_liquidation_penalty_routed": snapshot.cdp_liquidation_penalty_routed,
-        "nav_snapshot_day": snapshot.nav_snapshot_day,
-        "nav_latest_value": snapshot.nav_latest_value,
-        "nav_redemptions_submitted": snapshot.nav_redemptions_submitted,
-        "nav_redemptions_executed": snapshot.nav_redemptions_executed,
-        "nav_executed_stable_total": snapshot.nav_executed_stable_total,
-    })
+    let mut out = serde_json::Map::new();
+    macro_rules! put {
+        ($k:literal, $v:expr) => {
+            out.insert($k.to_string(), serde_json::json!($v));
+        };
+    }
+    put!("amm_swap_fee_bp", snapshot.amm_swap_fee_bp);
+    put!("amm_lp_fee_share_bp", snapshot.amm_lp_fee_share_bp);
+    put!(
+        "cdp_min_collateral_ratio_bp",
+        snapshot.cdp_min_collateral_ratio_bp
+    );
+    put!(
+        "cdp_liquidation_threshold_bp",
+        snapshot.cdp_liquidation_threshold_bp
+    );
+    put!(
+        "cdp_liquidation_penalty_bp",
+        snapshot.cdp_liquidation_penalty_bp
+    );
+    put!("cdp_stability_fee_bp", snapshot.cdp_stability_fee_bp);
+    put!("cdp_max_leverage_x100", snapshot.cdp_max_leverage_x100);
+    put!("bond_one_year_coupon_bp", snapshot.bond_one_year_coupon_bp);
+    put!(
+        "bond_three_year_coupon_bp",
+        snapshot.bond_three_year_coupon_bp
+    );
+    put!(
+        "bond_five_year_coupon_bp",
+        snapshot.bond_five_year_coupon_bp
+    );
+    put!(
+        "bond_max_maturity_days_policy",
+        snapshot.bond_max_maturity_days_policy
+    );
+    put!("bond_min_issue_price_bp", snapshot.bond_min_issue_price_bp);
+    put!(
+        "reserve_min_reserve_ratio_bp",
+        snapshot.reserve_min_reserve_ratio_bp
+    );
+    put!(
+        "reserve_redemption_fee_bp",
+        snapshot.reserve_redemption_fee_bp
+    );
+    put!(
+        "nav_settlement_delay_epochs",
+        snapshot.nav_settlement_delay_epochs
+    );
+    put!(
+        "nav_max_daily_redemption_bp",
+        snapshot.nav_max_daily_redemption_bp
+    );
+    put!(
+        "buyback_trigger_discount_bp",
+        snapshot.buyback_trigger_discount_bp
+    );
+    put!(
+        "buyback_max_treasury_budget_per_epoch",
+        snapshot.buyback_max_treasury_budget_per_epoch
+    );
+    put!("buyback_burn_share_bp", snapshot.buyback_burn_share_bp);
+    put!("treasury_main_balance", snapshot.treasury_main_balance);
+    put!(
+        "treasury_ecosystem_balance",
+        snapshot.treasury_ecosystem_balance
+    );
+    put!(
+        "treasury_risk_reserve_balance",
+        snapshot.treasury_risk_reserve_balance
+    );
+    put!(
+        "reserve_foreign_usdt_balance",
+        snapshot.reserve_foreign_usdt_balance
+    );
+    put!("nav_soft_floor_value", snapshot.nav_soft_floor_value);
+    put!(
+        "buyback_last_spent_stable",
+        snapshot.buyback_last_spent_stable
+    );
+    put!(
+        "buyback_last_burned_token",
+        snapshot.buyback_last_burned_token
+    );
+    put!("oracle_price_before", snapshot.oracle_price_before);
+    put!("oracle_price_after", snapshot.oracle_price_after);
+    put!(
+        "cdp_liquidation_candidates",
+        snapshot.cdp_liquidation_candidates
+    );
+    put!(
+        "cdp_liquidations_executed",
+        snapshot.cdp_liquidations_executed
+    );
+    put!(
+        "cdp_liquidation_penalty_routed",
+        snapshot.cdp_liquidation_penalty_routed
+    );
+    put!("nav_snapshot_day", snapshot.nav_snapshot_day);
+    put!("nav_latest_value", snapshot.nav_latest_value);
+    put!("nav_valuation_source", snapshot.nav_valuation_source);
+    put!("nav_valuation_price_bp", snapshot.nav_valuation_price_bp);
+    put!(
+        "nav_valuation_fallback_used",
+        snapshot.nav_valuation_fallback_used
+    );
+    put!(
+        "nav_redemptions_submitted",
+        snapshot.nav_redemptions_submitted
+    );
+    put!(
+        "nav_redemptions_executed",
+        snapshot.nav_redemptions_executed
+    );
+    put!(
+        "nav_executed_stable_total",
+        snapshot.nav_executed_stable_total
+    );
+    put!(
+        "dividend_income_received",
+        snapshot.dividend_income_received
+    );
+    put!(
+        "dividend_runtime_balance_accounts",
+        snapshot.dividend_runtime_balance_accounts
+    );
+    put!(
+        "dividend_eligible_accounts",
+        snapshot.dividend_eligible_accounts
+    );
+    put!(
+        "dividend_snapshot_created",
+        snapshot.dividend_snapshot_created
+    );
+    put!(
+        "dividend_claims_executed",
+        snapshot.dividend_claims_executed
+    );
+    put!("dividend_pool_balance", snapshot.dividend_pool_balance);
+    put!(
+        "foreign_payments_processed",
+        snapshot.foreign_payments_processed
+    );
+    put!("foreign_rate_source", snapshot.foreign_rate_source);
+    put!(
+        "foreign_rate_quote_spec_applied",
+        snapshot.foreign_rate_quote_spec_applied
+    );
+    put!(
+        "foreign_rate_fallback_used",
+        snapshot.foreign_rate_fallback_used
+    );
+    put!(
+        "foreign_token_paid_total",
+        snapshot.foreign_token_paid_total
+    );
+    put!("foreign_reserve_btc", snapshot.foreign_reserve_btc);
+    put!("foreign_reserve_eth", snapshot.foreign_reserve_eth);
+    put!(
+        "foreign_payment_reserve_usdt",
+        snapshot.foreign_payment_reserve_usdt
+    );
+    put!("foreign_swap_out_total", snapshot.foreign_swap_out_total);
+    serde_json::Value::Object(out)
 }
 
 fn governance_op_to_view(op: &GovernanceOp) -> (String, serde_json::Value) {
@@ -4363,8 +5380,7 @@ fn init_governance_rpc_runtime(
     }
     println!(
         "governance_chain_audit_store_restore_out: head_seq={} root={}",
-        restored_head_seq,
-        restored_root_hex
+        restored_head_seq, restored_root_hex
     );
 
     Ok(GovernanceRpcRuntime {
@@ -5282,16 +6298,15 @@ fn run_rpc_server_instance(
                 let chain_root = runtime.engine.governance_chain_audit_root();
                 let after_head_seq = chain_events.last().map(|event| event.seq).unwrap_or(0);
                 if after_head_seq > before_head_seq {
-                    if let Err(persist_err) =
-                        save_governance_chain_audit_store(
-                            &runtime.chain_audit_store_path,
-                            &chain_events,
-                            chain_root,
-                        )
-                    {
+                    if let Err(persist_err) = save_governance_chain_audit_store(
+                        &runtime.chain_audit_store_path,
+                        &chain_events,
+                        chain_root,
+                    ) {
                         if governance_result.is_ok() {
                             governance_result =
-                                Err(persist_err.context("persist governance chain audit store failed"));
+                                Err(persist_err
+                                    .context("persist governance chain audit store failed"));
                         }
                     }
                 }
@@ -7262,6 +8277,54 @@ fn run_governance_market_policy_probe_mode() -> Result<()> {
         .set_slash_policy(loaded.policy.clone())
         .context("governance market policy probe: set baseline slash policy failed")?;
     engine.set_governance_execution_enabled(true);
+    let foreign_rate_loaded = load_market_foreign_rate_source(&engine)
+        .context("governance market policy probe: load foreign rate source failed")?;
+    let foreign_feed_url_out = if foreign_rate_loaded.configured_url.is_empty() {
+        "-"
+    } else {
+        foreign_rate_loaded.configured_url.as_str()
+    };
+    println!(
+        "governance_market_foreign_source_in: mode={} source={} url={} strict={} timeout_ms={} configured_sources={} fetched={} fetched_sources={} min_sources={} signature_required={} signature_verified={} quote_spec_applied={} fallback_to_deterministic={} reason_code={}",
+        foreign_rate_loaded.mode,
+        foreign_rate_loaded.source_name,
+        foreign_feed_url_out,
+        foreign_rate_loaded.strict,
+        foreign_rate_loaded.timeout_ms,
+        foreign_rate_loaded.configured_sources,
+        foreign_rate_loaded.fetched,
+        foreign_rate_loaded.fetched_sources,
+        foreign_rate_loaded.min_sources,
+        foreign_rate_loaded.signature_required,
+        foreign_rate_loaded.signature_verified,
+        foreign_rate_loaded.quote_spec_applied,
+        foreign_rate_loaded.fallback_to_deterministic,
+        foreign_rate_loaded.reason_code
+    );
+    let nav_valuation_loaded = load_market_nav_valuation_source(&engine)
+        .context("governance market policy probe: load nav valuation source failed")?;
+    let nav_feed_url_out = if nav_valuation_loaded.configured_url.is_empty() {
+        "-"
+    } else {
+        nav_valuation_loaded.configured_url.as_str()
+    };
+    println!(
+        "governance_market_nav_source_in: mode={} source={} url={} strict={} timeout_ms={} configured_sources={} fetched={} fetched_sources={} min_sources={} signature_required={} signature_verified={} price_bp={} fallback_to_deterministic={} reason_code={}",
+        nav_valuation_loaded.mode,
+        nav_valuation_loaded.source_name,
+        nav_feed_url_out,
+        nav_valuation_loaded.strict,
+        nav_valuation_loaded.timeout_ms,
+        nav_valuation_loaded.configured_sources,
+        nav_valuation_loaded.fetched,
+        nav_valuation_loaded.fetched_sources,
+        nav_valuation_loaded.min_sources,
+        nav_valuation_loaded.signature_required,
+        nav_valuation_loaded.signature_verified,
+        nav_valuation_loaded.price_bp,
+        nav_valuation_loaded.fallback_to_deterministic,
+        nav_valuation_loaded.reason_code
+    );
 
     let proposal = engine
         .submit_governance_proposal(
@@ -7327,9 +8390,28 @@ fn run_governance_market_policy_probe_mode() -> Result<()> {
         && engine_snapshot.cdp_liquidation_penalty_routed > 0
         && engine_snapshot.nav_snapshot_day > 0
         && engine_snapshot.nav_latest_value > 0
+        && engine_snapshot.nav_valuation_source == nav_valuation_loaded.source_name
+        && engine_snapshot.nav_valuation_price_bp == nav_valuation_loaded.price_bp
+        && engine_snapshot.nav_valuation_fallback_used
+            == nav_valuation_loaded.fallback_to_deterministic
         && engine_snapshot.nav_redemptions_submitted > 0
         && engine_snapshot.nav_redemptions_executed > 0
-        && engine_snapshot.nav_executed_stable_total > 0;
+        && engine_snapshot.nav_executed_stable_total > 0
+        && engine_snapshot.dividend_income_received > 0
+        && engine_snapshot.dividend_snapshot_created > 0
+        && engine_snapshot.dividend_claims_executed > 0
+        && engine_snapshot.dividend_pool_balance > 0
+        && engine_snapshot.foreign_payments_processed > 0
+        && engine_snapshot.foreign_rate_source == foreign_rate_loaded.source_name
+        && engine_snapshot.foreign_rate_quote_spec_applied
+            == foreign_rate_loaded.quote_spec_applied
+        && engine_snapshot.foreign_rate_fallback_used
+            == foreign_rate_loaded.fallback_to_deterministic
+        && engine_snapshot.foreign_token_paid_total > 0
+        && engine_snapshot.foreign_reserve_btc > 0
+        && engine_snapshot.foreign_reserve_eth > 0
+        && engine_snapshot.foreign_payment_reserve_usdt > 0
+        && engine_snapshot.foreign_swap_out_total > 0;
     println!(
         "governance_market_out: proposal_id={} executed={} reason_code={} policy_applied={} amm_swap_fee_bp={} cdp_min_collateral_ratio_bp={} bond_coupon_rate_bp={} reserve_min_reserve_ratio_bp={} nav_settlement_delay_epochs={} buyback_trigger_discount_bp={}",
         proposal.proposal_id,
@@ -7382,6 +8464,69 @@ fn run_governance_market_policy_probe_mode() -> Result<()> {
         engine_snapshot.nav_redemptions_submitted,
         engine_snapshot.nav_redemptions_executed,
         engine_snapshot.nav_executed_stable_total
+    );
+    let nav_source_applied = engine_snapshot.nav_valuation_source
+        == nav_valuation_loaded.source_name
+        && engine_snapshot.nav_valuation_price_bp == nav_valuation_loaded.price_bp
+        && engine_snapshot.nav_valuation_fallback_used
+            == nav_valuation_loaded.fallback_to_deterministic;
+    println!(
+        "governance_market_nav_source_out: proposal_id={} nav_source_applied={} source={} price_bp={} fallback_used={} fetched={} fetched_sources={} configured_sources={} min_sources={} signature_required={} signature_verified={} reason_code={} strict={} mode={}",
+        proposal.proposal_id,
+        nav_source_applied,
+        engine_snapshot.nav_valuation_source,
+        engine_snapshot.nav_valuation_price_bp,
+        engine_snapshot.nav_valuation_fallback_used,
+        nav_valuation_loaded.fetched,
+        nav_valuation_loaded.fetched_sources,
+        nav_valuation_loaded.configured_sources,
+        nav_valuation_loaded.min_sources,
+        nav_valuation_loaded.signature_required,
+        nav_valuation_loaded.signature_verified,
+        nav_valuation_loaded.reason_code,
+        nav_valuation_loaded.strict,
+        nav_valuation_loaded.mode
+    );
+    println!(
+        "governance_market_dividend_out: proposal_id={} dividend_income_received={} dividend_snapshot_created={} dividend_claims_executed={} dividend_pool_balance={}",
+        proposal.proposal_id,
+        engine_snapshot.dividend_income_received,
+        engine_snapshot.dividend_snapshot_created,
+        engine_snapshot.dividend_claims_executed,
+        engine_snapshot.dividend_pool_balance
+    );
+    println!(
+        "governance_market_foreign_out: proposal_id={} foreign_payments_processed={} foreign_token_paid_total={} foreign_reserve_btc={} foreign_reserve_eth={} foreign_payment_reserve_usdt={} foreign_swap_out_total={}",
+        proposal.proposal_id,
+        engine_snapshot.foreign_payments_processed,
+        engine_snapshot.foreign_token_paid_total,
+        engine_snapshot.foreign_reserve_btc,
+        engine_snapshot.foreign_reserve_eth,
+        engine_snapshot.foreign_payment_reserve_usdt,
+        engine_snapshot.foreign_swap_out_total
+    );
+    let foreign_source_applied = engine_snapshot.foreign_rate_source
+        == foreign_rate_loaded.source_name
+        && engine_snapshot.foreign_rate_quote_spec_applied
+            == foreign_rate_loaded.quote_spec_applied
+        && engine_snapshot.foreign_rate_fallback_used
+            == foreign_rate_loaded.fallback_to_deterministic;
+    println!(
+        "governance_market_foreign_source_out: proposal_id={} foreign_source_applied={} source={} quote_spec_applied={} fallback_used={} fetched={} fetched_sources={} configured_sources={} min_sources={} signature_required={} signature_verified={} reason_code={} strict={} mode={}",
+        proposal.proposal_id,
+        foreign_source_applied,
+        engine_snapshot.foreign_rate_source,
+        engine_snapshot.foreign_rate_quote_spec_applied,
+        engine_snapshot.foreign_rate_fallback_used,
+        foreign_rate_loaded.fetched,
+        foreign_rate_loaded.fetched_sources,
+        foreign_rate_loaded.configured_sources,
+        foreign_rate_loaded.min_sources,
+        foreign_rate_loaded.signature_required,
+        foreign_rate_loaded.signature_verified,
+        foreign_rate_loaded.reason_code,
+        foreign_rate_loaded.strict,
+        foreign_rate_loaded.mode
     );
 
     if !executed || !policy_applied || !engine_applied || reason_code != "ok" {
@@ -8699,7 +9844,7 @@ mod tests {
     }
 
     #[test]
-    fn apply_governance_vote_verifier_rejects_mldsa87_staged_only() {
+    fn apply_governance_vote_verifier_rejects_mldsa87_when_disabled_by_policy() {
         std::env::remove_var("NOVOVM_GOVERNANCE_MLDSA_MODE");
         std::env::remove_var("NOVOVM_GOVERNANCE_MLDSA87_PUBKEYS");
         std::env::remove_var("NOVOVM_AOEM_FFI_LIB_PATH");
@@ -8710,7 +9855,7 @@ mod tests {
         let err = apply_governance_vote_verifier(&engine, GovernanceVoteVerifierScheme::MlDsa87)
             .unwrap_err()
             .to_string();
-        assert!(err.contains("staged-only"));
+        assert!(err.contains("disabled-by-policy"));
         assert_eq!(engine.governance_vote_verifier_name(), "ed25519");
     }
 

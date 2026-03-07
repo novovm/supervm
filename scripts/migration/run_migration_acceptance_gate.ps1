@@ -36,6 +36,11 @@ param(
     [bool]$IncludeGovernanceAccessPolicyGate = $false,
     [bool]$IncludeGovernanceTokenEconomicsGate = $false,
     [bool]$IncludeGovernanceTreasurySpendGate = $false,
+    [bool]$IncludeEconomicInfraDedicatedGate = $false,
+    [bool]$IncludeMarketEngineTreasuryNegativeGate = $false,
+    [bool]$IncludeForeignRateSourceGate = $false,
+    [bool]$IncludeNavValuationSourceGate = $false,
+    [bool]$IncludeDividendBalanceSourceGate = $false,
     [bool]$IncludeRpcExposureGate = $false,
     [string]$RpcExposurePublicBind = "127.0.0.1:8899",
     [string]$RpcExposureGovBind = "127.0.0.1:8901",
@@ -45,6 +50,7 @@ param(
     [ValidateRange(0, 999)]
     [int]$PacemakerFailoverFailedLeader = 0,
     [bool]$IncludeAdapterStabilityGate = $true,
+    [bool]$IncludeVmRuntimeSplitGate = $true,
     [ValidateRange(2, 20)]
     [int]$AdapterStabilityRuns = 3
 )
@@ -72,8 +78,14 @@ if ($FullSnapshotProfile -or $FullSnapshotProfileV2 -or $FullSnapshotProfileGA) 
     $IncludeGovernanceAccessPolicyGate = $false
     $IncludeUnjailCooldownGate = $true
     $IncludeAdapterStabilityGate = $true
+    $IncludeVmRuntimeSplitGate = $true
     $IncludeGovernanceTokenEconomicsGate = $false
     $IncludeGovernanceTreasurySpendGate = $false
+    $IncludeEconomicInfraDedicatedGate = $false
+    $IncludeMarketEngineTreasuryNegativeGate = $false
+    $IncludeForeignRateSourceGate = $false
+    $IncludeNavValuationSourceGate = $false
+    $IncludeDividendBalanceSourceGate = $false
     $IncludeRpcExposureGate = $false
     $profileName = "full_snapshot_v1"
 }
@@ -87,6 +99,11 @@ if ($FullSnapshotProfileGA) {
     $IncludeGovernanceTreasurySpendGate = $true
     $IncludeGovernanceMarketPolicyGate = $true
     $IncludeGovernanceCouncilPolicyGate = $true
+    $IncludeEconomicInfraDedicatedGate = $true
+    $IncludeMarketEngineTreasuryNegativeGate = $true
+    $IncludeForeignRateSourceGate = $true
+    $IncludeNavValuationSourceGate = $true
+    $IncludeDividendBalanceSourceGate = $true
     $profileName = "full_snapshot_ga_v1"
 }
 
@@ -127,9 +144,15 @@ $governanceNegativeGateScript = Join-Path $RepoRoot "scripts\migration\run_gover
 $governanceAccessPolicyGateScript = Join-Path $RepoRoot "scripts\migration\run_governance_access_policy_gate.ps1"
 $governanceTokenEconomicsGateScript = Join-Path $RepoRoot "scripts\migration\run_governance_token_economics_gate.ps1"
 $governanceTreasurySpendGateScript = Join-Path $RepoRoot "scripts\migration\run_governance_treasury_spend_gate.ps1"
+$economicInfraDedicatedGateScript = Join-Path $RepoRoot "scripts\migration\run_economic_infra_dedicated_gate.ps1"
+$marketEngineTreasuryNegativeGateScript = Join-Path $RepoRoot "scripts\migration\run_market_engine_treasury_negative_gate.ps1"
+$foreignRateSourceGateScript = Join-Path $RepoRoot "scripts\migration\run_foreign_rate_source_gate.ps1"
+$navValuationSourceGateScript = Join-Path $RepoRoot "scripts\migration\run_nav_valuation_source_gate.ps1"
+$dividendBalanceSourceGateScript = Join-Path $RepoRoot "scripts\migration\run_dividend_balance_source_gate.ps1"
 $rpcExposureGateScript = Join-Path $RepoRoot "scripts\migration\run_rpc_exposure_gate.ps1"
 $unjailCooldownGateScript = Join-Path $RepoRoot "scripts\migration\run_unjail_cooldown_gate.ps1"
 $adapterStabilityScript = Join-Path $RepoRoot "scripts\migration\run_adapter_stability_gate.ps1"
+$vmRuntimeSplitScript = Join-Path $RepoRoot "scripts\migration\run_vm_runtime_split_gate.ps1"
 Require-Path -Path $functionalScript -Name "functional script"
 Require-Path -Path $performanceGateScript -Name "performance gate script"
 if ($IncludeChainQueryRpcGate) {
@@ -189,6 +212,21 @@ if ($IncludeGovernanceTokenEconomicsGate) {
 if ($IncludeGovernanceTreasurySpendGate) {
     Require-Path -Path $governanceTreasurySpendGateScript -Name "governance treasury spend gate script"
 }
+if ($IncludeEconomicInfraDedicatedGate) {
+    Require-Path -Path $economicInfraDedicatedGateScript -Name "economic infra dedicated gate script"
+}
+if ($IncludeMarketEngineTreasuryNegativeGate) {
+    Require-Path -Path $marketEngineTreasuryNegativeGateScript -Name "market engine treasury negative gate script"
+}
+if ($IncludeForeignRateSourceGate) {
+    Require-Path -Path $foreignRateSourceGateScript -Name "foreign rate source gate script"
+}
+if ($IncludeNavValuationSourceGate) {
+    Require-Path -Path $navValuationSourceGateScript -Name "nav valuation source gate script"
+}
+if ($IncludeDividendBalanceSourceGate) {
+    Require-Path -Path $dividendBalanceSourceGateScript -Name "dividend balance source gate script"
+}
 if ($IncludeRpcExposureGate) {
     Require-Path -Path $rpcExposureGateScript -Name "rpc exposure gate script"
 }
@@ -197,6 +235,9 @@ if ($IncludeUnjailCooldownGate) {
 }
 if ($IncludeAdapterStabilityGate) {
     Require-Path -Path $adapterStabilityScript -Name "adapter stability gate script"
+}
+if ($IncludeVmRuntimeSplitGate) {
+    Require-Path -Path $vmRuntimeSplitScript -Name "vm-runtime split gate script"
 }
 
 New-Item -ItemType Directory -Force -Path $OutputDir | Out-Null
@@ -221,9 +262,15 @@ $governanceNegativeOutputDir = Join-Path $OutputDir "governance-negative-gate"
 $governanceAccessPolicyOutputDir = Join-Path $OutputDir "governance-access-policy-gate"
 $governanceTokenEconomicsOutputDir = Join-Path $OutputDir "governance-token-economics-gate"
 $governanceTreasurySpendOutputDir = Join-Path $OutputDir "governance-treasury-spend-gate"
+$economicInfraDedicatedOutputDir = Join-Path $OutputDir "economic-infra-dedicated-gate"
+$marketEngineTreasuryNegativeOutputDir = Join-Path $OutputDir "market-engine-treasury-negative-gate"
+$foreignRateSourceOutputDir = Join-Path $OutputDir "foreign-rate-source-gate"
+$navValuationSourceOutputDir = Join-Path $OutputDir "nav-valuation-source-gate"
+$dividendBalanceSourceOutputDir = Join-Path $OutputDir "dividend-balance-source-gate"
 $rpcExposureOutputDir = Join-Path $OutputDir "rpc-exposure-gate"
 $unjailCooldownOutputDir = Join-Path $OutputDir "unjail-cooldown-gate"
 $adapterStabilityOutputDir = Join-Path $OutputDir "adapter-stability-gate"
+$vmRuntimeSplitOutputDir = Join-Path $OutputDir "vm-runtime-split-gate"
 New-Item -ItemType Directory -Force -Path $functionalOutputDir | Out-Null
 New-Item -ItemType Directory -Force -Path $performanceOutputDir | Out-Null
 if ($IncludeChainQueryRpcGate) {
@@ -283,6 +330,21 @@ if ($IncludeGovernanceTokenEconomicsGate) {
 if ($IncludeGovernanceTreasurySpendGate) {
     New-Item -ItemType Directory -Force -Path $governanceTreasurySpendOutputDir | Out-Null
 }
+if ($IncludeEconomicInfraDedicatedGate) {
+    New-Item -ItemType Directory -Force -Path $economicInfraDedicatedOutputDir | Out-Null
+}
+if ($IncludeMarketEngineTreasuryNegativeGate) {
+    New-Item -ItemType Directory -Force -Path $marketEngineTreasuryNegativeOutputDir | Out-Null
+}
+if ($IncludeForeignRateSourceGate) {
+    New-Item -ItemType Directory -Force -Path $foreignRateSourceOutputDir | Out-Null
+}
+if ($IncludeNavValuationSourceGate) {
+    New-Item -ItemType Directory -Force -Path $navValuationSourceOutputDir | Out-Null
+}
+if ($IncludeDividendBalanceSourceGate) {
+    New-Item -ItemType Directory -Force -Path $dividendBalanceSourceOutputDir | Out-Null
+}
 if ($IncludeRpcExposureGate) {
     New-Item -ItemType Directory -Force -Path $rpcExposureOutputDir | Out-Null
 }
@@ -291,6 +353,9 @@ if ($IncludeUnjailCooldownGate) {
 }
 if ($IncludeAdapterStabilityGate) {
     New-Item -ItemType Directory -Force -Path $adapterStabilityOutputDir | Out-Null
+}
+if ($IncludeVmRuntimeSplitGate) {
+    New-Item -ItemType Directory -Force -Path $vmRuntimeSplitOutputDir | Out-Null
 }
 
 Write-Host "acceptance gate: functional consistency ..."
@@ -453,6 +518,59 @@ if ($IncludeGovernanceTreasurySpendGate) {
         -OutputDir $governanceTreasurySpendOutputDir | Out-Null
 }
 
+if ($IncludeEconomicInfraDedicatedGate) {
+    Write-Host "acceptance gate: economic infra dedicated gate ..."
+    $useExistingEconomicInfraSubGates = [bool](
+        $IncludeGovernanceMarketPolicyGate -and
+        $IncludeGovernanceTokenEconomicsGate -and
+        $IncludeGovernanceTreasurySpendGate
+    )
+    if ($useExistingEconomicInfraSubGates) {
+        $governanceMarketPolicySummaryForEconomicInfra = Join-Path $governanceMarketPolicyOutputDir "governance-market-policy-gate-summary.json"
+        $governanceTokenEconomicsSummaryForEconomicInfra = Join-Path $governanceTokenEconomicsOutputDir "governance-token-economics-gate-summary.json"
+        $governanceTreasurySpendSummaryForEconomicInfra = Join-Path $governanceTreasurySpendOutputDir "governance-treasury-spend-gate-summary.json"
+        & $economicInfraDedicatedGateScript `
+            -RepoRoot $RepoRoot `
+            -OutputDir $economicInfraDedicatedOutputDir `
+            -RunSubGates $false `
+            -GovernanceMarketPolicySummaryJson $governanceMarketPolicySummaryForEconomicInfra `
+            -GovernanceTokenEconomicsSummaryJson $governanceTokenEconomicsSummaryForEconomicInfra `
+            -GovernanceTreasurySpendSummaryJson $governanceTreasurySpendSummaryForEconomicInfra | Out-Null
+    } else {
+        & $economicInfraDedicatedGateScript `
+            -RepoRoot $RepoRoot `
+            -OutputDir $economicInfraDedicatedOutputDir | Out-Null
+    }
+}
+
+if ($IncludeMarketEngineTreasuryNegativeGate) {
+    Write-Host "acceptance gate: market engine treasury negative gate ..."
+    & $marketEngineTreasuryNegativeGateScript `
+        -RepoRoot $RepoRoot `
+        -OutputDir $marketEngineTreasuryNegativeOutputDir | Out-Null
+}
+
+if ($IncludeForeignRateSourceGate) {
+    Write-Host "acceptance gate: foreign rate source gate ..."
+    & $foreignRateSourceGateScript `
+        -RepoRoot $RepoRoot `
+        -OutputDir $foreignRateSourceOutputDir | Out-Null
+}
+
+if ($IncludeNavValuationSourceGate) {
+    Write-Host "acceptance gate: nav valuation source gate ..."
+    & $navValuationSourceGateScript `
+        -RepoRoot $RepoRoot `
+        -OutputDir $navValuationSourceOutputDir | Out-Null
+}
+
+if ($IncludeDividendBalanceSourceGate) {
+    Write-Host "acceptance gate: dividend balance source gate ..."
+    & $dividendBalanceSourceGateScript `
+        -RepoRoot $RepoRoot `
+        -OutputDir $dividendBalanceSourceOutputDir | Out-Null
+}
+
 if ($IncludeRpcExposureGate) {
     Write-Host "acceptance gate: rpc exposure gate ..."
     & $rpcExposureGateScript `
@@ -475,6 +593,12 @@ if ($IncludeAdapterStabilityGate) {
         -RepoRoot $RepoRoot `
         -OutputDir $adapterStabilityOutputDir `
         -Runs $AdapterStabilityRuns | Out-Null
+}
+if ($IncludeVmRuntimeSplitGate) {
+    Write-Host "acceptance gate: vm-runtime split gate ..."
+    & $vmRuntimeSplitScript `
+        -RepoRoot $RepoRoot `
+        -OutputDir $vmRuntimeSplitOutputDir | Out-Null
 }
 
 $functionalJson = Join-Path $functionalOutputDir "functional-consistency.json"
@@ -536,6 +660,21 @@ if ($IncludeGovernanceTokenEconomicsGate) {
 if ($IncludeGovernanceTreasurySpendGate) {
     $governanceTreasurySpendJson = Join-Path $governanceTreasurySpendOutputDir "governance-treasury-spend-gate-summary.json"
 }
+if ($IncludeEconomicInfraDedicatedGate) {
+    $economicInfraDedicatedJson = Join-Path $economicInfraDedicatedOutputDir "economic-infra-dedicated-gate-summary.json"
+}
+if ($IncludeMarketEngineTreasuryNegativeGate) {
+    $marketEngineTreasuryNegativeJson = Join-Path $marketEngineTreasuryNegativeOutputDir "market-engine-treasury-negative-gate-summary.json"
+}
+if ($IncludeForeignRateSourceGate) {
+    $foreignRateSourceJson = Join-Path $foreignRateSourceOutputDir "foreign-rate-source-gate-summary.json"
+}
+if ($IncludeNavValuationSourceGate) {
+    $navValuationSourceJson = Join-Path $navValuationSourceOutputDir "nav-valuation-source-gate-summary.json"
+}
+if ($IncludeDividendBalanceSourceGate) {
+    $dividendBalanceSourceJson = Join-Path $dividendBalanceSourceOutputDir "dividend-balance-source-gate-summary.json"
+}
 if ($IncludeRpcExposureGate) {
     $rpcExposureJson = Join-Path $rpcExposureOutputDir "rpc-exposure-gate-summary.json"
 }
@@ -544,6 +683,9 @@ if ($IncludeUnjailCooldownGate) {
 }
 if ($IncludeAdapterStabilityGate) {
     $adapterStabilityJson = Join-Path $adapterStabilityOutputDir "adapter-stability-summary.json"
+}
+if ($IncludeVmRuntimeSplitGate) {
+    $vmRuntimeSplitJson = Join-Path $vmRuntimeSplitOutputDir "vm-runtime-split-gate-summary.json"
 }
 Require-Path -Path $functionalJson -Name "functional report json"
 Require-Path -Path $performanceJson -Name "performance gate summary json"
@@ -604,6 +746,21 @@ if ($IncludeGovernanceTokenEconomicsGate) {
 if ($IncludeGovernanceTreasurySpendGate) {
     Require-Path -Path $governanceTreasurySpendJson -Name "governance treasury spend gate summary json"
 }
+if ($IncludeEconomicInfraDedicatedGate) {
+    Require-Path -Path $economicInfraDedicatedJson -Name "economic infra dedicated gate summary json"
+}
+if ($IncludeMarketEngineTreasuryNegativeGate) {
+    Require-Path -Path $marketEngineTreasuryNegativeJson -Name "market engine treasury negative gate summary json"
+}
+if ($IncludeForeignRateSourceGate) {
+    Require-Path -Path $foreignRateSourceJson -Name "foreign rate source gate summary json"
+}
+if ($IncludeNavValuationSourceGate) {
+    Require-Path -Path $navValuationSourceJson -Name "nav valuation source gate summary json"
+}
+if ($IncludeDividendBalanceSourceGate) {
+    Require-Path -Path $dividendBalanceSourceJson -Name "dividend balance source gate summary json"
+}
 if ($IncludeRpcExposureGate) {
     Require-Path -Path $rpcExposureJson -Name "rpc exposure gate summary json"
 }
@@ -612,6 +769,9 @@ if ($IncludeUnjailCooldownGate) {
 }
 if ($IncludeAdapterStabilityGate) {
     Require-Path -Path $adapterStabilityJson -Name "adapter stability summary json"
+}
+if ($IncludeVmRuntimeSplitGate) {
+    Require-Path -Path $vmRuntimeSplitJson -Name "vm-runtime split gate summary json"
 }
 
 $functional = Get-Content -Path $functionalJson -Raw | ConvertFrom-Json
@@ -673,6 +833,21 @@ if ($IncludeGovernanceTokenEconomicsGate) {
 if ($IncludeGovernanceTreasurySpendGate) {
     $governanceTreasurySpend = Get-Content -Path $governanceTreasurySpendJson -Raw | ConvertFrom-Json
 }
+if ($IncludeEconomicInfraDedicatedGate) {
+    $economicInfraDedicated = Get-Content -Path $economicInfraDedicatedJson -Raw | ConvertFrom-Json
+}
+if ($IncludeMarketEngineTreasuryNegativeGate) {
+    $marketEngineTreasuryNegative = Get-Content -Path $marketEngineTreasuryNegativeJson -Raw | ConvertFrom-Json
+}
+if ($IncludeForeignRateSourceGate) {
+    $foreignRateSource = Get-Content -Path $foreignRateSourceJson -Raw | ConvertFrom-Json
+}
+if ($IncludeNavValuationSourceGate) {
+    $navValuationSource = Get-Content -Path $navValuationSourceJson -Raw | ConvertFrom-Json
+}
+if ($IncludeDividendBalanceSourceGate) {
+    $dividendBalanceSource = Get-Content -Path $dividendBalanceSourceJson -Raw | ConvertFrom-Json
+}
 if ($IncludeRpcExposureGate) {
     $rpcExposure = Get-Content -Path $rpcExposureJson -Raw | ConvertFrom-Json
 }
@@ -681,6 +856,9 @@ if ($IncludeUnjailCooldownGate) {
 }
 if ($IncludeAdapterStabilityGate) {
     $adapterStability = Get-Content -Path $adapterStabilityJson -Raw | ConvertFrom-Json
+}
+if ($IncludeVmRuntimeSplitGate) {
+    $vmRuntimeSplit = Get-Content -Path $vmRuntimeSplitJson -Raw | ConvertFrom-Json
 }
 
 $functionalPass = [bool]$functional.overall_pass
@@ -825,17 +1003,23 @@ if ($IncludeGovernanceMarketPolicyGate) {
     $governanceMarketPolicyEnginePass = [bool]$governanceMarketPolicy.engine_output_pass
     $governanceMarketPolicyTreasuryPass = [bool]$governanceMarketPolicy.treasury_output_pass
     $governanceMarketPolicyOrchestrationPass = [bool]$governanceMarketPolicy.orchestration_output_pass
+    $governanceMarketPolicyDividendPass = [bool]$governanceMarketPolicy.dividend_output_pass
+    $governanceMarketPolicyForeignPass = [bool]$governanceMarketPolicy.foreign_payment_output_pass
     $governanceMarketPolicyPass = [bool](
         $governanceMarketPolicyPass -and
         $governanceMarketPolicyEnginePass -and
         $governanceMarketPolicyTreasuryPass -and
-        $governanceMarketPolicyOrchestrationPass
+        $governanceMarketPolicyOrchestrationPass -and
+        $governanceMarketPolicyDividendPass -and
+        $governanceMarketPolicyForeignPass
     )
 } else {
     $governanceMarketPolicyPass = $true
     $governanceMarketPolicyEnginePass = $true
     $governanceMarketPolicyTreasuryPass = $true
     $governanceMarketPolicyOrchestrationPass = $true
+    $governanceMarketPolicyDividendPass = $true
+    $governanceMarketPolicyForeignPass = $true
 }
 if ($IncludeGovernanceCouncilPolicyGate) {
     $governanceCouncilPolicyPass = [bool]$governanceCouncilPolicy.pass
@@ -862,6 +1046,61 @@ if ($IncludeGovernanceTreasurySpendGate) {
 } else {
     $governanceTreasurySpendPass = $true
 }
+if ($IncludeEconomicInfraDedicatedGate) {
+    $economicInfraDedicatedPass = [bool]$economicInfraDedicated.pass
+    $economicInfraDedicatedTokenPass = [bool]$economicInfraDedicated.token_system_pass
+    $economicInfraDedicatedAmmPass = [bool]$economicInfraDedicated.amm_pass
+    $economicInfraDedicatedNavPass = [bool]$economicInfraDedicated.nav_redemption_pass
+    $economicInfraDedicatedCdpPass = [bool]$economicInfraDedicated.cdp_pass
+    $economicInfraDedicatedBondPass = [bool]$economicInfraDedicated.bond_pass
+    $economicInfraDedicatedTreasuryPass = [bool]$economicInfraDedicated.treasury_pass
+    $economicInfraDedicatedGovernancePass = [bool]$economicInfraDedicated.governance_system_pass
+    $economicInfraDedicatedDividendPass = [bool]$economicInfraDedicated.dividend_pool_pass
+    $economicInfraDedicatedForeignPass = [bool]$economicInfraDedicated.foreign_payment_pass
+    $economicInfraDedicatedPass = [bool](
+        $economicInfraDedicatedPass -and
+        $economicInfraDedicatedTokenPass -and
+        $economicInfraDedicatedAmmPass -and
+        $economicInfraDedicatedNavPass -and
+        $economicInfraDedicatedCdpPass -and
+        $economicInfraDedicatedBondPass -and
+        $economicInfraDedicatedTreasuryPass -and
+        $economicInfraDedicatedGovernancePass -and
+        $economicInfraDedicatedDividendPass -and
+        $economicInfraDedicatedForeignPass
+    )
+} else {
+    $economicInfraDedicatedPass = $true
+    $economicInfraDedicatedTokenPass = $true
+    $economicInfraDedicatedAmmPass = $true
+    $economicInfraDedicatedNavPass = $true
+    $economicInfraDedicatedCdpPass = $true
+    $economicInfraDedicatedBondPass = $true
+    $economicInfraDedicatedTreasuryPass = $true
+    $economicInfraDedicatedGovernancePass = $true
+    $economicInfraDedicatedDividendPass = $true
+    $economicInfraDedicatedForeignPass = $true
+}
+if ($IncludeMarketEngineTreasuryNegativeGate) {
+    $marketEngineTreasuryNegativePass = [bool]$marketEngineTreasuryNegative.pass
+} else {
+    $marketEngineTreasuryNegativePass = $true
+}
+if ($IncludeForeignRateSourceGate) {
+    $foreignRateSourcePass = [bool]$foreignRateSource.pass
+} else {
+    $foreignRateSourcePass = $true
+}
+if ($IncludeNavValuationSourceGate) {
+    $navValuationSourcePass = [bool]$navValuationSource.pass
+} else {
+    $navValuationSourcePass = $true
+}
+if ($IncludeDividendBalanceSourceGate) {
+    $dividendBalanceSourcePass = [bool]$dividendBalanceSource.pass
+} else {
+    $dividendBalanceSourcePass = $true
+}
 if ($IncludeRpcExposureGate) {
     $rpcExposurePass = [bool]$rpcExposure.pass
 } else {
@@ -877,7 +1116,12 @@ if ($IncludeAdapterStabilityGate) {
 } else {
     $adapterStabilityPass = $true
 }
-$overallPass = ($functionalPass -and $governanceChainAuditRootParityPass -and $performancePass -and $chainQueryRpcPass -and $governanceRpcPass -and $governanceRpcAuditPersistPass -and $governanceRpcSignatureSchemeRejectPass -and $governanceRpcVoteVerifierStartupPass -and $governanceRpcVoteVerifierStagedRejectPass -and $governanceRpcVoteVerifierExecutePass -and $governanceRpcChainAuditExecuteVerifierProofPass -and $governanceRpcChainAuditRootProofPass -and $governanceRpcMldsaFfiPass -and $governanceRpcMldsaFfiStartupPass -and $headerSyncPass -and $fastStateSyncPass -and $networkDosPass -and $pacemakerFailoverPass -and $slashGovernancePass -and $slashPolicyExternalPass -and $governanceHookPass -and $governanceExecutionPass -and $governanceParam2Pass -and $governanceParam3Pass -and $governanceMarketPolicyPass -and $governanceMarketPolicyEnginePass -and $governanceMarketPolicyTreasuryPass -and $governanceCouncilPolicyPass -and $governanceNegativePass -and $governanceAccessPolicyPass -and $governanceTokenEconomicsPass -and $governanceTreasurySpendPass -and $rpcExposurePass -and $unjailCooldownPass -and $adapterStabilityPass)
+if ($IncludeVmRuntimeSplitGate) {
+    $vmRuntimeSplitPass = [bool]$vmRuntimeSplit.pass
+} else {
+    $vmRuntimeSplitPass = $true
+}
+$overallPass = ($functionalPass -and $governanceChainAuditRootParityPass -and $performancePass -and $chainQueryRpcPass -and $governanceRpcPass -and $governanceRpcAuditPersistPass -and $governanceRpcSignatureSchemeRejectPass -and $governanceRpcVoteVerifierStartupPass -and $governanceRpcVoteVerifierStagedRejectPass -and $governanceRpcVoteVerifierExecutePass -and $governanceRpcChainAuditExecuteVerifierProofPass -and $governanceRpcChainAuditRootProofPass -and $governanceRpcMldsaFfiPass -and $governanceRpcMldsaFfiStartupPass -and $headerSyncPass -and $fastStateSyncPass -and $networkDosPass -and $pacemakerFailoverPass -and $slashGovernancePass -and $slashPolicyExternalPass -and $governanceHookPass -and $governanceExecutionPass -and $governanceParam2Pass -and $governanceParam3Pass -and $governanceMarketPolicyPass -and $governanceMarketPolicyEnginePass -and $governanceMarketPolicyTreasuryPass -and $governanceMarketPolicyOrchestrationPass -and $governanceMarketPolicyDividendPass -and $governanceMarketPolicyForeignPass -and $governanceCouncilPolicyPass -and $governanceNegativePass -and $governanceAccessPolicyPass -and $governanceTokenEconomicsPass -and $governanceTreasurySpendPass -and $economicInfraDedicatedPass -and $economicInfraDedicatedTokenPass -and $economicInfraDedicatedAmmPass -and $economicInfraDedicatedNavPass -and $economicInfraDedicatedCdpPass -and $economicInfraDedicatedBondPass -and $economicInfraDedicatedTreasuryPass -and $economicInfraDedicatedGovernancePass -and $economicInfraDedicatedDividendPass -and $economicInfraDedicatedForeignPass -and $marketEngineTreasuryNegativePass -and $foreignRateSourcePass -and $navValuationSourcePass -and $dividendBalanceSourcePass -and $rpcExposurePass -and $unjailCooldownPass -and $adapterStabilityPass -and $vmRuntimeSplitPass)
 
 $summary = [ordered]@{
     generated_at_utc = [DateTime]::UtcNow.ToString("o")
@@ -937,6 +1181,8 @@ $summary = [ordered]@{
     governance_market_policy_engine_pass = $governanceMarketPolicyEnginePass
     governance_market_policy_treasury_pass = $governanceMarketPolicyTreasuryPass
     governance_market_policy_orchestration_pass = $governanceMarketPolicyOrchestrationPass
+    governance_market_policy_dividend_pass = $governanceMarketPolicyDividendPass
+    governance_market_policy_foreign_payment_pass = $governanceMarketPolicyForeignPass
     governance_council_policy_gate_enabled = $IncludeGovernanceCouncilPolicyGate
     governance_council_policy_pass = $governanceCouncilPolicyPass
     governance_negative_gate_enabled = $IncludeGovernanceNegativeGate
@@ -947,12 +1193,33 @@ $summary = [ordered]@{
     governance_token_economics_pass = $governanceTokenEconomicsPass
     governance_treasury_spend_gate_enabled = $IncludeGovernanceTreasurySpendGate
     governance_treasury_spend_pass = $governanceTreasurySpendPass
+    economic_infra_dedicated_gate_enabled = $IncludeEconomicInfraDedicatedGate
+    economic_infra_dedicated_pass = $economicInfraDedicatedPass
+    economic_infra_dedicated_token_system_pass = $economicInfraDedicatedTokenPass
+    economic_infra_dedicated_amm_pass = $economicInfraDedicatedAmmPass
+    economic_infra_dedicated_nav_redemption_pass = $economicInfraDedicatedNavPass
+    economic_infra_dedicated_cdp_pass = $economicInfraDedicatedCdpPass
+    economic_infra_dedicated_bond_pass = $economicInfraDedicatedBondPass
+    economic_infra_dedicated_treasury_pass = $economicInfraDedicatedTreasuryPass
+    economic_infra_dedicated_governance_system_pass = $economicInfraDedicatedGovernancePass
+    economic_infra_dedicated_dividend_pool_pass = $economicInfraDedicatedDividendPass
+    economic_infra_dedicated_foreign_payment_pass = $economicInfraDedicatedForeignPass
+    market_engine_treasury_negative_gate_enabled = $IncludeMarketEngineTreasuryNegativeGate
+    market_engine_treasury_negative_pass = $marketEngineTreasuryNegativePass
+    foreign_rate_source_gate_enabled = $IncludeForeignRateSourceGate
+    foreign_rate_source_pass = $foreignRateSourcePass
+    nav_valuation_source_gate_enabled = $IncludeNavValuationSourceGate
+    nav_valuation_source_pass = $navValuationSourcePass
+    dividend_balance_source_gate_enabled = $IncludeDividendBalanceSourceGate
+    dividend_balance_source_pass = $dividendBalanceSourcePass
     rpc_exposure_gate_enabled = $IncludeRpcExposureGate
     rpc_exposure_pass = $rpcExposurePass
     unjail_cooldown_gate_enabled = $IncludeUnjailCooldownGate
     unjail_cooldown_pass = $unjailCooldownPass
     adapter_stability_enabled = $IncludeAdapterStabilityGate
     adapter_stability_pass = $adapterStabilityPass
+    vm_runtime_split_gate_enabled = $IncludeVmRuntimeSplitGate
+    vm_runtime_split_pass = $vmRuntimeSplitPass
     functional_report_json = $functionalJson
     performance_report_json = $performanceJson
     chain_query_rpc_report_json = if ($IncludeChainQueryRpcGate) { $chainQueryRpcJson } else { "" }
@@ -974,9 +1241,15 @@ $summary = [ordered]@{
     governance_access_policy_report_json = if ($IncludeGovernanceAccessPolicyGate) { $governanceAccessPolicyJson } else { "" }
     governance_token_economics_report_json = if ($IncludeGovernanceTokenEconomicsGate) { $governanceTokenEconomicsJson } else { "" }
     governance_treasury_spend_report_json = if ($IncludeGovernanceTreasurySpendGate) { $governanceTreasurySpendJson } else { "" }
+    economic_infra_dedicated_report_json = if ($IncludeEconomicInfraDedicatedGate) { $economicInfraDedicatedJson } else { "" }
+    market_engine_treasury_negative_report_json = if ($IncludeMarketEngineTreasuryNegativeGate) { $marketEngineTreasuryNegativeJson } else { "" }
+    foreign_rate_source_report_json = if ($IncludeForeignRateSourceGate) { $foreignRateSourceJson } else { "" }
+    nav_valuation_source_report_json = if ($IncludeNavValuationSourceGate) { $navValuationSourceJson } else { "" }
+    dividend_balance_source_report_json = if ($IncludeDividendBalanceSourceGate) { $dividendBalanceSourceJson } else { "" }
     rpc_exposure_report_json = if ($IncludeRpcExposureGate) { $rpcExposureJson } else { "" }
     unjail_cooldown_report_json = if ($IncludeUnjailCooldownGate) { $unjailCooldownJson } else { "" }
     adapter_stability_report_json = if ($IncludeAdapterStabilityGate) { $adapterStabilityJson } else { "" }
+    vm_runtime_split_report_json = if ($IncludeVmRuntimeSplitGate) { $vmRuntimeSplitJson } else { "" }
     performance_runs = $PerformanceRuns
     chain_query_rpc_expected_requests = if ($IncludeChainQueryRpcGate) { $ChainQueryRpcExpectedRequests } else { 0 }
     chain_query_rpc_bind = if ($IncludeChainQueryRpcGate) { $ChainQueryRpcBind } else { "" }
@@ -1064,6 +1337,8 @@ $md = @(
     "- governance_market_policy_engine_pass: $($summary.governance_market_policy_engine_pass)"
     "- governance_market_policy_treasury_pass: $($summary.governance_market_policy_treasury_pass)"
     "- governance_market_policy_orchestration_pass: $($summary.governance_market_policy_orchestration_pass)"
+    "- governance_market_policy_dividend_pass: $($summary.governance_market_policy_dividend_pass)"
+    "- governance_market_policy_foreign_payment_pass: $($summary.governance_market_policy_foreign_payment_pass)"
     "- governance_council_policy_gate_enabled: $($summary.governance_council_policy_gate_enabled)"
     "- governance_council_policy_pass: $($summary.governance_council_policy_pass)"
     "- governance_negative_gate_enabled: $($summary.governance_negative_gate_enabled)"
@@ -1074,6 +1349,25 @@ $md = @(
     "- governance_token_economics_pass: $($summary.governance_token_economics_pass)"
     "- governance_treasury_spend_gate_enabled: $($summary.governance_treasury_spend_gate_enabled)"
     "- governance_treasury_spend_pass: $($summary.governance_treasury_spend_pass)"
+    "- economic_infra_dedicated_gate_enabled: $($summary.economic_infra_dedicated_gate_enabled)"
+    "- economic_infra_dedicated_pass: $($summary.economic_infra_dedicated_pass)"
+    "- economic_infra_dedicated_token_system_pass: $($summary.economic_infra_dedicated_token_system_pass)"
+    "- economic_infra_dedicated_amm_pass: $($summary.economic_infra_dedicated_amm_pass)"
+    "- economic_infra_dedicated_nav_redemption_pass: $($summary.economic_infra_dedicated_nav_redemption_pass)"
+    "- economic_infra_dedicated_cdp_pass: $($summary.economic_infra_dedicated_cdp_pass)"
+    "- economic_infra_dedicated_bond_pass: $($summary.economic_infra_dedicated_bond_pass)"
+    "- economic_infra_dedicated_treasury_pass: $($summary.economic_infra_dedicated_treasury_pass)"
+    "- economic_infra_dedicated_governance_system_pass: $($summary.economic_infra_dedicated_governance_system_pass)"
+    "- economic_infra_dedicated_dividend_pool_pass: $($summary.economic_infra_dedicated_dividend_pool_pass)"
+    "- economic_infra_dedicated_foreign_payment_pass: $($summary.economic_infra_dedicated_foreign_payment_pass)"
+    "- market_engine_treasury_negative_gate_enabled: $($summary.market_engine_treasury_negative_gate_enabled)"
+    "- market_engine_treasury_negative_pass: $($summary.market_engine_treasury_negative_pass)"
+    "- foreign_rate_source_gate_enabled: $($summary.foreign_rate_source_gate_enabled)"
+    "- foreign_rate_source_pass: $($summary.foreign_rate_source_pass)"
+    "- nav_valuation_source_gate_enabled: $($summary.nav_valuation_source_gate_enabled)"
+    "- nav_valuation_source_pass: $($summary.nav_valuation_source_pass)"
+    "- dividend_balance_source_gate_enabled: $($summary.dividend_balance_source_gate_enabled)"
+    "- dividend_balance_source_pass: $($summary.dividend_balance_source_pass)"
     "- rpc_exposure_gate_enabled: $($summary.rpc_exposure_gate_enabled)"
     "- rpc_exposure_pass: $($summary.rpc_exposure_pass)"
     "- rpc_exposure_public_bind: $($summary.rpc_exposure_public_bind)"
@@ -1082,6 +1376,8 @@ $md = @(
     "- unjail_cooldown_pass: $($summary.unjail_cooldown_pass)"
     "- adapter_stability_enabled: $($summary.adapter_stability_enabled)"
     "- adapter_stability_pass: $($summary.adapter_stability_pass)"
+    "- vm_runtime_split_gate_enabled: $($summary.vm_runtime_split_gate_enabled)"
+    "- vm_runtime_split_pass: $($summary.vm_runtime_split_pass)"
     "- performance_runs: $($summary.performance_runs)"
     "- adapter_stability_runs: $($summary.adapter_stability_runs)"
     "- allowed_regression_pct: $($summary.allowed_regression_pct)"
@@ -1106,9 +1402,15 @@ $md = @(
     "- governance_access_policy_report_json: $($summary.governance_access_policy_report_json)"
     "- governance_token_economics_report_json: $($summary.governance_token_economics_report_json)"
     "- governance_treasury_spend_report_json: $($summary.governance_treasury_spend_report_json)"
+    "- economic_infra_dedicated_report_json: $($summary.economic_infra_dedicated_report_json)"
+    "- market_engine_treasury_negative_report_json: $($summary.market_engine_treasury_negative_report_json)"
+    "- foreign_rate_source_report_json: $($summary.foreign_rate_source_report_json)"
+    "- nav_valuation_source_report_json: $($summary.nav_valuation_source_report_json)"
+    "- dividend_balance_source_report_json: $($summary.dividend_balance_source_report_json)"
     "- rpc_exposure_report_json: $($summary.rpc_exposure_report_json)"
     "- unjail_cooldown_report_json: $($summary.unjail_cooldown_report_json)"
     "- adapter_stability_report_json: $($summary.adapter_stability_report_json)"
+    "- vm_runtime_split_report_json: $($summary.vm_runtime_split_report_json)"
 )
 $md -join "`n" | Set-Content -Path $summaryMd -Encoding UTF8
 
@@ -1176,6 +1478,21 @@ if ($IncludeGovernanceTokenEconomicsGate) {
 if ($IncludeGovernanceTreasurySpendGate) {
     Write-Host "  governance_treasury_spend_report: $governanceTreasurySpendJson"
 }
+if ($IncludeEconomicInfraDedicatedGate) {
+    Write-Host "  economic_infra_dedicated_report: $economicInfraDedicatedJson"
+}
+if ($IncludeMarketEngineTreasuryNegativeGate) {
+    Write-Host "  market_engine_treasury_negative_report: $marketEngineTreasuryNegativeJson"
+}
+if ($IncludeForeignRateSourceGate) {
+    Write-Host "  foreign_rate_source_report: $foreignRateSourceJson"
+}
+if ($IncludeNavValuationSourceGate) {
+    Write-Host "  nav_valuation_source_report: $navValuationSourceJson"
+}
+if ($IncludeDividendBalanceSourceGate) {
+    Write-Host "  dividend_balance_source_report: $dividendBalanceSourceJson"
+}
 if ($IncludeRpcExposureGate) {
     Write-Host "  rpc_exposure_report: $rpcExposureJson"
 }
@@ -1185,10 +1502,13 @@ if ($IncludeUnjailCooldownGate) {
 if ($IncludeAdapterStabilityGate) {
     Write-Host "  adapter_stability_report: $adapterStabilityJson"
 }
+if ($IncludeVmRuntimeSplitGate) {
+    Write-Host "  vm_runtime_split_report: $vmRuntimeSplitJson"
+}
 Write-Host "  summary_json: $summaryJson"
 
 if (-not $overallPass) {
-    throw "migration acceptance gate FAILED (functional_pass=$functionalPass, governance_chain_audit_root_parity_pass=$governanceChainAuditRootParityPass, performance_pass=$performancePass, chain_query_rpc_pass=$chainQueryRpcPass, governance_rpc_pass=$governanceRpcPass, governance_rpc_audit_persist_pass=$governanceRpcAuditPersistPass, governance_rpc_signature_scheme_reject_pass=$governanceRpcSignatureSchemeRejectPass, governance_rpc_vote_verifier_startup_pass=$governanceRpcVoteVerifierStartupPass, governance_rpc_vote_verifier_staged_reject_pass=$governanceRpcVoteVerifierStagedRejectPass, governance_rpc_vote_verifier_execute_pass=$governanceRpcVoteVerifierExecutePass, governance_rpc_chain_audit_pass=$governanceRpcChainAuditPass, governance_rpc_chain_audit_persist_pass=$governanceRpcChainAuditPersistPass, governance_rpc_chain_audit_restart_pass=$governanceRpcChainAuditRestartPass, governance_rpc_chain_audit_execute_verifier_pass=$governanceRpcChainAuditExecuteVerifierPass, governance_rpc_chain_audit_persist_execute_verifier_pass=$governanceRpcChainAuditPersistExecuteVerifierPass, governance_rpc_chain_audit_restart_execute_verifier_pass=$governanceRpcChainAuditRestartExecuteVerifierPass, governance_rpc_chain_audit_execute_verifier_proof_pass=$governanceRpcChainAuditExecuteVerifierProofPass, governance_rpc_policy_chain_audit_consistency_pass=$governanceRpcPolicyChainAuditConsistencyPass, governance_rpc_chain_audit_root_pass=$governanceRpcChainAuditRootPass, governance_rpc_chain_audit_persist_root_pass=$governanceRpcChainAuditPersistRootPass, governance_rpc_chain_audit_restart_root_pass=$governanceRpcChainAuditRestartRootPass, governance_rpc_chain_audit_root_proof_pass=$governanceRpcChainAuditRootProofPass, governance_rpc_mldsa_ffi_pass=$governanceRpcMldsaFfiPass, governance_rpc_mldsa_ffi_startup_pass=$governanceRpcMldsaFfiStartupPass, header_sync_pass=$headerSyncPass, fast_state_sync_pass=$fastStateSyncPass, network_dos_pass=$networkDosPass, pacemaker_failover_pass=$pacemakerFailoverPass, slash_governance_pass=$slashGovernancePass, slash_policy_external_pass=$slashPolicyExternalPass, governance_hook_pass=$governanceHookPass, governance_execution_pass=$governanceExecutionPass, governance_param2_pass=$governanceParam2Pass, governance_param3_pass=$governanceParam3Pass, governance_market_policy_pass=$governanceMarketPolicyPass, governance_market_policy_engine_pass=$governanceMarketPolicyEnginePass, governance_market_policy_treasury_pass=$governanceMarketPolicyTreasuryPass, governance_market_policy_orchestration_pass=$governanceMarketPolicyOrchestrationPass, governance_council_policy_pass=$governanceCouncilPolicyPass, governance_negative_pass=$governanceNegativePass, governance_access_policy_pass=$governanceAccessPolicyPass, governance_token_economics_pass=$governanceTokenEconomicsPass, governance_treasury_spend_pass=$governanceTreasurySpendPass, rpc_exposure_pass=$rpcExposurePass, unjail_cooldown_pass=$unjailCooldownPass, adapter_stability_pass=$adapterStabilityPass)"
+    throw "migration acceptance gate FAILED (functional_pass=$functionalPass, governance_chain_audit_root_parity_pass=$governanceChainAuditRootParityPass, performance_pass=$performancePass, chain_query_rpc_pass=$chainQueryRpcPass, governance_rpc_pass=$governanceRpcPass, governance_rpc_audit_persist_pass=$governanceRpcAuditPersistPass, governance_rpc_signature_scheme_reject_pass=$governanceRpcSignatureSchemeRejectPass, governance_rpc_vote_verifier_startup_pass=$governanceRpcVoteVerifierStartupPass, governance_rpc_vote_verifier_staged_reject_pass=$governanceRpcVoteVerifierStagedRejectPass, governance_rpc_vote_verifier_execute_pass=$governanceRpcVoteVerifierExecutePass, governance_rpc_chain_audit_pass=$governanceRpcChainAuditPass, governance_rpc_chain_audit_persist_pass=$governanceRpcChainAuditPersistPass, governance_rpc_chain_audit_restart_pass=$governanceRpcChainAuditRestartPass, governance_rpc_chain_audit_execute_verifier_pass=$governanceRpcChainAuditExecuteVerifierPass, governance_rpc_chain_audit_persist_execute_verifier_pass=$governanceRpcChainAuditPersistExecuteVerifierPass, governance_rpc_chain_audit_restart_execute_verifier_pass=$governanceRpcChainAuditRestartExecuteVerifierPass, governance_rpc_chain_audit_execute_verifier_proof_pass=$governanceRpcChainAuditExecuteVerifierProofPass, governance_rpc_policy_chain_audit_consistency_pass=$governanceRpcPolicyChainAuditConsistencyPass, governance_rpc_chain_audit_root_pass=$governanceRpcChainAuditRootPass, governance_rpc_chain_audit_persist_root_pass=$governanceRpcChainAuditPersistRootPass, governance_rpc_chain_audit_restart_root_pass=$governanceRpcChainAuditRestartRootPass, governance_rpc_chain_audit_root_proof_pass=$governanceRpcChainAuditRootProofPass, governance_rpc_mldsa_ffi_pass=$governanceRpcMldsaFfiPass, governance_rpc_mldsa_ffi_startup_pass=$governanceRpcMldsaFfiStartupPass, header_sync_pass=$headerSyncPass, fast_state_sync_pass=$fastStateSyncPass, network_dos_pass=$networkDosPass, pacemaker_failover_pass=$pacemakerFailoverPass, slash_governance_pass=$slashGovernancePass, slash_policy_external_pass=$slashPolicyExternalPass, governance_hook_pass=$governanceHookPass, governance_execution_pass=$governanceExecutionPass, governance_param2_pass=$governanceParam2Pass, governance_param3_pass=$governanceParam3Pass, governance_market_policy_pass=$governanceMarketPolicyPass, governance_market_policy_engine_pass=$governanceMarketPolicyEnginePass, governance_market_policy_treasury_pass=$governanceMarketPolicyTreasuryPass, governance_market_policy_orchestration_pass=$governanceMarketPolicyOrchestrationPass, governance_market_policy_dividend_pass=$governanceMarketPolicyDividendPass, governance_market_policy_foreign_payment_pass=$governanceMarketPolicyForeignPass, governance_council_policy_pass=$governanceCouncilPolicyPass, governance_negative_pass=$governanceNegativePass, governance_access_policy_pass=$governanceAccessPolicyPass, governance_token_economics_pass=$governanceTokenEconomicsPass, governance_treasury_spend_pass=$governanceTreasurySpendPass, economic_infra_dedicated_pass=$economicInfraDedicatedPass, economic_infra_dedicated_token_system_pass=$economicInfraDedicatedTokenPass, economic_infra_dedicated_amm_pass=$economicInfraDedicatedAmmPass, economic_infra_dedicated_nav_redemption_pass=$economicInfraDedicatedNavPass, economic_infra_dedicated_cdp_pass=$economicInfraDedicatedCdpPass, economic_infra_dedicated_bond_pass=$economicInfraDedicatedBondPass, economic_infra_dedicated_treasury_pass=$economicInfraDedicatedTreasuryPass, economic_infra_dedicated_governance_system_pass=$economicInfraDedicatedGovernancePass, economic_infra_dedicated_dividend_pool_pass=$economicInfraDedicatedDividendPass, economic_infra_dedicated_foreign_payment_pass=$economicInfraDedicatedForeignPass, market_engine_treasury_negative_pass=$marketEngineTreasuryNegativePass, foreign_rate_source_pass=$foreignRateSourcePass, nav_valuation_source_pass=$navValuationSourcePass, dividend_balance_source_pass=$dividendBalanceSourcePass, rpc_exposure_pass=$rpcExposurePass, unjail_cooldown_pass=$unjailCooldownPass, adapter_stability_pass=$adapterStabilityPass, vm_runtime_split_pass=$vmRuntimeSplitPass)"
 }
 
 Write-Host "migration acceptance gate PASS"

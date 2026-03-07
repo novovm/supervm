@@ -51,16 +51,37 @@ WEB30 协议族群定位在应用/经济治理层，位于共识内核之上：
 - `SVM2026-REFERENCE/README.md` -> `WEB30-README.md`
 - `SVM2026-REFERENCE/TROUBLESHOOTING.md` -> `WEB30-SDK-TROUBLESHOOTING.md`
 
-## 4. 主链路迁移状态（代码）
+## 4. 标准规范迁移（权威设计源）
 
-截至 2026-03-05：
+源目录：
+
+- `D:\WEB3_AI\SVM2026\standards`
+
+目标目录：
+
+- `D:\WEB3_AI\SUPERVM\docs_CN\WEB30-PROTOCOL\SVM2026-REFERENCE\standards`
+
+状态：
+
+- 共 15 份标准文档已迁入。
+- 详细清单见：`SVM2026-REFERENCE/STANDARDS-INDEX.md`
+
+## 5. 标准到功能域映射（新增）
+
+- 映射文档：`NOVOVM-WEB30-STANDARDS-F10-F13-MAPPING-2026-03-07.md`
+- 用途：把 `SVM2026/standards` 逐项映射到 `F-10~F-13` 并展示当前进度。
+
+## 6. 主链路迁移状态（代码）
+
+截至 2026-03-07：
 
 - WEB30 参考文档已迁入 `SUPERVM/docs_CN/WEB30-PROTOCOL`。
+- WEB30 标准规范（`SVM2026/standards`）已迁入参考区。
 - NOVOVM 主链路中，WEB30 对应能力（`F-10~F-13`）仍处于未完成迁移阶段。
 - 因此发布口径仍为“共识主干可发布”，不是“完整主网经济治理版已全量迁移”。
 
-## 5. 下一步（建议）
+## 7. 下一步（建议）
 
-1. 为 `F-10~F-13` 建立最小骨架 crate 与 RPC/CLI 接口草图，先打通路由与门禁。
-2. 迁入 `web30/core` 的规则语义（token/governance/defi）时保持“结构先行、执行后置”。
+1. 以 `SVM2026-REFERENCE/standards` 为语义基线，给 `F-10~F-13` 建立标准到能力的映射矩阵。
+2. 为 `F-10~F-13` 建立最小骨架 crate 与 RPC/CLI 接口草图，先打通路由与门禁。
 3. 对每个子域增加正/负向门禁，纳入统一 acceptance gate 汇总。

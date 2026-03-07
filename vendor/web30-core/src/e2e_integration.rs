@@ -11,7 +11,7 @@ use crate::{
     mainnet_token::{FeeSplit, MainnetToken, MainnetTokenEvent},
     mainnet_token_impl::{MainnetTokenConfig, MainnetTokenImpl},
     treasury::{Treasury, TreasuryAccountKind, TreasuryEvent},
-    treasury_impl::{NavConfig, TreasuryConfig, TreasuryImpl},
+    treasury_impl::{BuybackConfig, NavConfig, TreasuryConfig, TreasuryImpl},
     types::Address,
 };
 use std::collections::HashMap;
@@ -69,6 +69,7 @@ impl E2ETestHarness {
         let treasury = TreasuryImpl::new(TreasuryConfig {
             initial_balances: treasury_balances,
             controller: addr(100),
+            buyback_config: BuybackConfig::default(),
             nav_config: NavConfig::default(),
         });
 

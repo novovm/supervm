@@ -48,13 +48,27 @@ pub struct AoemRuntimeConfig {
 fn find_aoem_root_near(start: &Path) -> Option<PathBuf> {
     for dir in start.ancestors() {
         let candidate = dir.join("aoem");
-        if candidate.join("manifest").join("aoem-manifest.json").exists() {
+        if candidate
+            .join("manifest")
+            .join("aoem-manifest.json")
+            .exists()
+        {
             return Some(candidate);
         }
         if dynlib_names_by_preference().iter().any(|name| {
             candidate.join("bin").join(name).exists()
-                || candidate.join("variants").join("persist").join("bin").join(name).exists()
-                || candidate.join("variants").join("wasm").join("bin").join(name).exists()
+                || candidate
+                    .join("variants")
+                    .join("persist")
+                    .join("bin")
+                    .join(name)
+                    .exists()
+                || candidate
+                    .join("variants")
+                    .join("wasm")
+                    .join("bin")
+                    .join(name)
+                    .exists()
         }) {
             return Some(candidate);
         }
@@ -248,8 +262,15 @@ impl AoemCapabilityContract {
             ],
         )
         .unwrap_or(false);
-        let zk_formal_fields_present =
-            capability_exists(&raw, &["zkvm.prove", "zkvm.verify", "zkvm.prove_enabled", "zkvm.verify_enabled"]);
+        let zk_formal_fields_present = capability_exists(
+            &raw,
+            &[
+                "zkvm.prove",
+                "zkvm.verify",
+                "zkvm.prove_enabled",
+                "zkvm.verify_enabled",
+            ],
+        );
 
         // Legacy AOEM capability set only exposed backend path fields.
         let msm_accel_direct = capability_bool(&raw, &["msm_accel", "msm.accel"]);
@@ -281,7 +302,12 @@ impl AoemCapabilityContract {
         );
         let fallback_reason = capability_string(
             &raw,
-            &["fallback_reason", "fallback.reason", "zkvm.fallback_reason", "msm.fallback_reason"],
+            &[
+                "fallback_reason",
+                "fallback.reason",
+                "zkvm.fallback_reason",
+                "msm.fallback_reason",
+            ],
         );
         let fallback_reason_codes =
             normalize_reason_codes(fallback_reason_codes_raw, fallback_reason.as_deref());
@@ -613,7 +639,10 @@ fn _assert_abi_struct_layout(_v: AoemCreateOptionsV1) {}
 
 #[cfg(test)]
 mod tests {
-    use super::{default_dll_path, dynlib_names_by_preference, variant_bin_dir, AoemCapabilityContract, AoemRuntimeVariant};
+    use super::{
+        default_dll_path, dynlib_names_by_preference, variant_bin_dir, AoemCapabilityContract,
+        AoemRuntimeVariant,
+    };
     use serde_json::json;
     use std::fs;
     use std::path::PathBuf;

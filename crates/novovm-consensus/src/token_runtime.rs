@@ -333,4 +333,23 @@ impl Web30TokenRuntime {
             "service provider pool balance",
         )
     }
+
+    /// 导出可用于分红快照的账户余额（按地址字典序稳定排序）。
+    pub fn dividend_eligible_balances(&self, min_balance: u128) -> Vec<(Web30Address, u128)> {
+        let mut balances: Vec<(Web30Address, u128)> = self
+            .tracked_accounts
+            .iter()
+            .copied()
+            .filter_map(|account| {
+                let balance = self.token.balance_of(&account);
+                if balance >= min_balance {
+                    Some((account, balance))
+                } else {
+                    None
+                }
+            })
+            .collect();
+        balances.sort_by(|(left, _), (right, _)| left.as_bytes().cmp(right.as_bytes()));
+        balances
+    }
 }

@@ -193,7 +193,8 @@ impl HotStuffProtocol {
         let governance_token_economics_policy = TokenEconomicsPolicy::default();
         let governance_market_policy = MarketGovernancePolicy::default();
         let token_runtime = Web30TokenRuntime::from_policy(&governance_token_economics_policy)?;
-        let market_engine = Web30MarketEngine::from_policy(&governance_market_policy)?;
+        let mut market_engine = Web30MarketEngine::from_policy(&governance_market_policy)?;
+        market_engine.set_dividend_runtime_balances(token_runtime.dividend_eligible_balances(100));
         Ok(Self {
             validator_set,
             self_id,
@@ -825,6 +826,8 @@ impl HotStuffProtocol {
     pub fn set_token_economics_policy(&mut self, policy: TokenEconomicsPolicy) -> BFTResult<()> {
         policy.validate()?;
         self.token_runtime.reconfigure(&policy)?;
+        self.market_engine
+            .set_dividend_runtime_balances(self.token_runtime.dividend_eligible_balances(100));
         self.governance_token_economics_policy = policy;
         Ok(())
     }
@@ -840,9 +843,32 @@ impl HotStuffProtocol {
         policy: MarketGovernancePolicy,
     ) -> BFTResult<()> {
         policy.validate()?;
+        self.market_engine
+            .set_dividend_runtime_balances(self.token_runtime.dividend_eligible_balances(100));
         self.market_engine.reconfigure(&policy)?;
         self.governance_market_policy = policy;
         Ok(())
+    }
+
+    /// 配置 NAV 估值源为 external feed（source_name 仅用于审计标识）。
+    pub fn set_market_nav_valuation_source_external(&mut self, source_name: &str) -> BFTResult<()> {
+        self.market_engine
+            .set_nav_valuation_source_external(source_name)
+    }
+
+    /// 配置 NAV external feed 最新报价（bp，10000=1.0）。
+    pub fn set_market_nav_external_price_bp(&mut self, price_bp: u32) -> BFTResult<()> {
+        self.market_engine.set_nav_external_price_bp(price_bp)
+    }
+
+    /// 配置外币汇率源名称（用于审计标识）。
+    pub fn set_market_foreign_rate_source_name(&mut self, source_name: &str) -> BFTResult<()> {
+        self.market_engine.set_foreign_rate_source_name(source_name)
+    }
+
+    /// 应用外币汇率 quote spec（`BTC:rate:slippage,ETH:rate:slippage,USDT:rate:slippage`）。
+    pub fn apply_market_foreign_quote_spec(&mut self, quote_spec: &str) -> BFTResult<()> {
+        self.market_engine.apply_foreign_quote_spec(quote_spec)
     }
 
     /// 读取完整经济治理参数快照。
@@ -2202,6 +2228,19 @@ mod tests {
         assert_eq!(snap.reserve_min_reserve_ratio_bp, 5_200);
         assert_eq!(snap.nav_settlement_delay_epochs, 5);
         assert_eq!(snap.buyback_trigger_discount_bp, 600);
+    }
+
+    #[test]
+    fn test_market_policy_reconfigure_syncs_dividend_runtime_balances() {
+        let validator_set = ValidatorSet::new_equal_weight(vec![0, 1, 2]);
+        let mut protocol = HotStuffProtocol::new(validator_set, 0).unwrap();
+        protocol.mint_tokens(42, 500).unwrap();
+        protocol
+            .set_market_governance_policy(MarketGovernancePolicy::default())
+            .unwrap();
+        let snap = protocol.governance_market_engine_snapshot();
+        assert!(snap.dividend_runtime_balance_accounts >= 1);
+        assert!(snap.dividend_eligible_accounts >= 1);
     }
 
     #[test]

@@ -1,8 +1,6 @@
 use anyhow::Result;
 
-use novovm_adapter_api::ir::{
-    AccountState, BlockIR, SerializationFormat, StateIR, TxIR, TxType,
-};
+use novovm_adapter_api::ir::{AccountState, BlockIR, SerializationFormat, StateIR, TxIR, TxType};
 
 #[test]
 fn tx_hash_and_bincode_roundtrip() -> Result<()> {

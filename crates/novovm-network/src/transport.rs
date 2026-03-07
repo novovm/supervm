@@ -1,7 +1,9 @@
 #![forbid(unsafe_code)]
 
 use dashmap::DashMap;
-use novovm_protocol::{decode as protocol_decode, encode as protocol_encode, NodeId, ProtocolMessage};
+use novovm_protocol::{
+    decode as protocol_decode, encode as protocol_encode, NodeId, ProtocolMessage,
+};
 use std::collections::VecDeque;
 use std::net::{SocketAddr, UdpSocket};
 use std::sync::Arc;
@@ -129,10 +131,7 @@ impl UdpTransport {
 
 impl Transport for UdpTransport {
     fn send(&self, to: NodeId, msg: ProtocolMessage) -> Result<(), NetworkError> {
-        let peer = self
-            .peers
-            .get(&to)
-            .ok_or(NetworkError::PeerNotFound(to))?;
+        let peer = self.peers.get(&to).ok_or(NetworkError::PeerNotFound(to))?;
         let encoded = protocol_encode(&msg).map_err(|e| NetworkError::Encode(e.to_string()))?;
         let sent = self
             .socket
@@ -256,39 +255,37 @@ mod tests {
         t2.register_peer(n0, &a0.to_string()).unwrap();
         t2.register_peer(n1, &a1.to_string()).unwrap();
 
-        let send_triplet = |from: NodeId,
-                            to: NodeId,
-                            transport: &UdpTransport,
-                            peers: Vec<NodeId>| {
-            transport
-                .send(
-                    to,
-                    ProtocolMessage::Gossip(GossipMessage::PeerList { from, peers }),
-                )
-                .unwrap();
-            transport
-                .send(
-                    to,
-                    ProtocolMessage::Gossip(GossipMessage::Heartbeat {
-                        from,
-                        shard: ShardId((from.0 as u32).saturating_add(1)),
-                    }),
-                )
-                .unwrap();
-            transport
-                .send(
-                    to,
-                    ProtocolMessage::DistributedOcccGossip(DistributedGossipMessage {
-                        from: from.0 as u32,
-                        to: to.0 as u32,
-                        msg_type: DistributedMessageType::StateSync,
-                        payload: vec![from.0 as u8, to.0 as u8],
-                        timestamp: 0,
-                        seq: from.0,
-                    }),
-                )
-                .unwrap();
-        };
+        let send_triplet =
+            |from: NodeId, to: NodeId, transport: &UdpTransport, peers: Vec<NodeId>| {
+                transport
+                    .send(
+                        to,
+                        ProtocolMessage::Gossip(GossipMessage::PeerList { from, peers }),
+                    )
+                    .unwrap();
+                transport
+                    .send(
+                        to,
+                        ProtocolMessage::Gossip(GossipMessage::Heartbeat {
+                            from,
+                            shard: ShardId((from.0 as u32).saturating_add(1)),
+                        }),
+                    )
+                    .unwrap();
+                transport
+                    .send(
+                        to,
+                        ProtocolMessage::DistributedOcccGossip(DistributedGossipMessage {
+                            from: from.0 as u32,
+                            to: to.0 as u32,
+                            msg_type: DistributedMessageType::StateSync,
+                            payload: vec![from.0 as u8, to.0 as u8],
+                            timestamp: 0,
+                            seq: from.0,
+                        }),
+                    )
+                    .unwrap();
+            };
 
         send_triplet(n0, n1, &t0, vec![n1, n2]);
         send_triplet(n0, n2, &t0, vec![n1, n2]);

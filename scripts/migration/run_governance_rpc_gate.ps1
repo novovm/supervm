@@ -309,7 +309,36 @@ function Build-RpcBody {
     } | ConvertTo-Json -Depth 20 -Compress)
 }
 
+function Assert-CargoPathDependencyHygiene {
+    param([string]$RepoRoot)
+
+    $forbiddenPattern = [regex]"SVM2026[\\/]+contracts[\\/]+web30[\\/]+core"
+
+    $vendorManifest = Join-Path $RepoRoot "vendor\web30-core\Cargo.toml"
+    if (-not (Test-Path $vendorManifest)) {
+        throw "missing vendor dependency manifest: $vendorManifest"
+    }
+
+    $cargoTomls = Get-ChildItem -Path $RepoRoot -Recurse -Filter Cargo.toml -File
+    foreach ($manifest in $cargoTomls) {
+        $text = Get-Content -Path $manifest.FullName -Raw
+        if ($forbiddenPattern.IsMatch($text)) {
+            throw "forbidden external path dependency found in $($manifest.FullName): do not reference SVM2026/contracts/web30/core directly; use vendor/web30-core"
+        }
+    }
+
+    $cargoLocks = Get-ChildItem -Path $RepoRoot -Recurse -Filter Cargo.lock -File
+    $forbiddenLockPattern = [regex]"path\+file:///.+SVM2026[\\/]+contracts[\\/]+web30[\\/]+core"
+    foreach ($lock in $cargoLocks) {
+        $text = Get-Content -Path $lock.FullName -Raw
+        if ($forbiddenLockPattern.IsMatch($text)) {
+            throw "forbidden absolute lockfile source found in $($lock.FullName): regenerate lockfile against vendor/web30-core"
+        }
+    }
+}
+
 New-Item -ItemType Directory -Force -Path $OutputDir | Out-Null
+Assert-CargoPathDependencyHygiene -RepoRoot $RepoRoot
 
 $nodeCrateDir = Join-Path $RepoRoot "crates\novovm-node"
 if (-not (Test-Path (Join-Path $nodeCrateDir "Cargo.toml"))) {
@@ -628,7 +657,7 @@ try {
 
     if (-not $rejectProc.WaitForExit($StartupTimeoutSeconds * 1000)) {
         try { $rejectProc.Kill() } catch {}
-        throw "staged verifier reject probe timed out (mldsa87 did not exit)"
+        throw "vote verifier reject probe timed out (mldsa87 did not exit)"
     }
 
     $rejectStdout = $rejectProc.StandardOutput.ReadToEnd()
@@ -642,7 +671,11 @@ try {
     $voteVerifierStagedRejectOk = (
         $voteVerifierRejectExitCode -ne 0 -and
         $rejectLower.Contains("unsupported governance vote verifier") -and
-        $rejectLower.Contains("staged-only")
+        (
+            $rejectLower.Contains("disabled-by-policy") -or
+            $rejectLower.Contains("policy-gated") -or
+            $rejectLower.Contains("staged-only")
+        )
     )
 } catch {
     $voteVerifierRejectErrorMessage = $_.Exception.Message
@@ -1013,7 +1046,7 @@ $pass = [bool](
 )
 
 if (-not $voteVerifierStartupOk) { $errorReason = "vote_verifier_startup_invalid" }
-elseif (-not $voteVerifierStagedRejectOk) { $errorReason = "vote_verifier_staged_reject_failed" }
+elseif (-not $voteVerifierStagedRejectOk) { $errorReason = "vote_verifier_policy_reject_failed" }
 elseif (-not $submitParam2Ok) { $errorReason = "submit_param2_failed" }
 elseif (-not $sign1Ok) { $errorReason = "sign1_failed" }
 elseif (-not $signUnsupportedSchemeRejectOk) { $errorReason = "sign_unsupported_scheme_not_rejected" }
@@ -1048,6 +1081,11 @@ $summary = [ordered]@{
     vote_verifier_active = $voteVerifierActive
     vote_verifier_startup_ok = $voteVerifierStartupOk
     vote_verifier_startup_line = $voteVerifierLine
+    vote_verifier_policy_reject_ok = $voteVerifierStagedRejectOk
+    vote_verifier_policy_reject_exit_code = $voteVerifierRejectExitCode
+    vote_verifier_policy_reject_error_message = $voteVerifierRejectErrorMessage
+    vote_verifier_policy_reject_stdout_log = $voteVerifierRejectStdoutPath
+    vote_verifier_policy_reject_stderr_log = $voteVerifierRejectStderrPath
     vote_verifier_staged_reject_ok = $voteVerifierStagedRejectOk
     vote_verifier_staged_reject_exit_code = $voteVerifierRejectExitCode
     vote_verifier_staged_reject_error_message = $voteVerifierRejectErrorMessage
@@ -1143,6 +1181,11 @@ $md = @(
     "- vote_verifier_active: $($summary.vote_verifier_active)"
     "- vote_verifier_startup_ok: $($summary.vote_verifier_startup_ok)"
     "- vote_verifier_startup_line: $($summary.vote_verifier_startup_line)"
+    "- vote_verifier_policy_reject_ok: $($summary.vote_verifier_policy_reject_ok)"
+    "- vote_verifier_policy_reject_exit_code: $($summary.vote_verifier_policy_reject_exit_code)"
+    "- vote_verifier_policy_reject_error_message: $($summary.vote_verifier_policy_reject_error_message)"
+    "- vote_verifier_policy_reject_stdout_log: $($summary.vote_verifier_policy_reject_stdout_log)"
+    "- vote_verifier_policy_reject_stderr_log: $($summary.vote_verifier_policy_reject_stderr_log)"
     "- vote_verifier_staged_reject_ok: $($summary.vote_verifier_staged_reject_ok)"
     "- vote_verifier_staged_reject_exit_code: $($summary.vote_verifier_staged_reject_exit_code)"
     "- vote_verifier_staged_reject_error_message: $($summary.vote_verifier_staged_reject_error_message)"

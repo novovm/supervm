@@ -2,9 +2,9 @@ use crate::types::{BFTError, BFTResult, GovernanceVote};
 use ed25519_dalek::VerifyingKey;
 use std::sync::Arc;
 
-/// 治理投票签名校验器（I-GOV-04 execute-hook 预留）。
+/// 治理投票签名校验器（I-GOV-04 execute-hook）。
 ///
-/// 默认实现为 `ed25519`，后续可注入其他方案（例如 ML-DSA staged）。
+/// 默认实现为 `ed25519`，其他方案（例如 ML-DSA）通过外部注入。
 pub trait GovernanceVoteVerifier: Send + Sync {
     /// 校验器名称（用于审计/调试输出）。
     fn name(&self) -> &'static str;
@@ -53,7 +53,7 @@ impl GovernanceVoteVerifier for Ed25519GovernanceVoteVerifier {
     }
 }
 
-/// 治理验签器方案（staged：当前仅 ed25519 启用）。
+/// 治理验签器方案。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GovernanceVoteVerifierScheme {
     Ed25519,
@@ -80,14 +80,17 @@ impl GovernanceVoteVerifierScheme {
     }
 }
 
-/// 构造治理验签器实例（staged：当前仅返回 ed25519）。
+/// 构造治理验签器实例。
+///
+/// 说明：`mldsa87` 需要由调用方注入外部 verifier（例如 AOEM-FFI 路径），
+/// 因此这里仅提供默认 `ed25519` 构造。
 pub fn build_governance_vote_verifier(
     scheme: GovernanceVoteVerifierScheme,
 ) -> BFTResult<Arc<dyn GovernanceVoteVerifier>> {
     match scheme {
         GovernanceVoteVerifierScheme::Ed25519 => Ok(Arc::new(Ed25519GovernanceVoteVerifier)),
         GovernanceVoteVerifierScheme::MlDsa87 => Err(BFTError::InvalidProposal(
-            "unsupported governance vote verifier: mldsa87 (staged-only, current enabled: ed25519)"
+            "unsupported governance vote verifier: mldsa87 (policy-gated, requires external verifier injection)"
                 .to_string(),
         )),
     }
@@ -115,18 +118,18 @@ mod tests {
     }
 
     #[test]
-    fn build_governance_vote_verifier_rejects_mldsa87_staged_only() {
+    fn build_governance_vote_verifier_rejects_mldsa87_without_external_injection() {
         let ok = build_governance_vote_verifier(GovernanceVoteVerifierScheme::Ed25519);
         assert!(ok.is_ok());
 
         let err = match build_governance_vote_verifier(GovernanceVoteVerifierScheme::MlDsa87) {
-            Ok(_) => panic!("mldsa87 should be staged-only rejected"),
+            Ok(_) => panic!("mldsa87 should require external verifier injection"),
             Err(e) => e,
         };
         assert!(err
             .to_string()
             .to_lowercase()
             .contains("unsupported governance vote verifier"));
-        assert!(err.to_string().to_lowercase().contains("staged-only"));
+        assert!(err.to_string().to_lowercase().contains("policy-gated"));
     }
 }

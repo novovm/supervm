@@ -1,7 +1,7 @@
 #![forbid(unsafe_code)]
 
-pub mod transport;
 pub mod gossip;
+pub mod transport;
 
-pub use transport::*;
 pub use gossip::*;
+pub use transport::*;

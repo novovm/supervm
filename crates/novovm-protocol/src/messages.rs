@@ -31,18 +31,39 @@ pub struct TxEnvelope {
 /// 2PC coordinator messages (protocol-level only).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum TwoPcMessage {
-    Propose { tx: TxEnvelope },
-    Prepare { tx_id: TxId },
-    Vote { tx_id: TxId, shard: ShardId, yes: bool },
-    Decide { tx_id: TxId, commit: bool },
+    Propose {
+        tx: TxEnvelope,
+    },
+    Prepare {
+        tx_id: TxId,
+    },
+    Vote {
+        tx_id: TxId,
+        shard: ShardId,
+        yes: bool,
+    },
+    Decide {
+        tx_id: TxId,
+        commit: bool,
+    },
 }
 
 /// Finality plane messages (minimal skeleton).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum FinalityMessage {
-    CheckpointPropose { id: CheckpointId, payload: Vec<u8> },
-    Vote { id: CheckpointId, from: NodeId, sig: Vec<u8> },
-    Cert { id: CheckpointId, sigs: Vec<Vec<u8>> },
+    CheckpointPropose {
+        id: CheckpointId,
+        payload: Vec<u8>,
+    },
+    Vote {
+        id: CheckpointId,
+        from: NodeId,
+        sig: Vec<u8>,
+    },
+    Cert {
+        id: CheckpointId,
+        sigs: Vec<Vec<u8>>,
+    },
 }
 
 /// Gossip plane messages (minimal).

@@ -134,6 +134,10 @@ pub struct DividendPoolImpl {
     current_pool: u128,
     /// Minimum balance requirement (anti-dust)
     min_balance: u128,
+    /// Account balance snapshot source (injected by runtime/token layer)
+    account_balances: HashMap<Address, u128>,
+    /// Reentrancy guard for claim path
+    claim_in_progress: bool,
 }
 
 impl DividendPoolImpl {
@@ -146,7 +150,31 @@ impl DividendPoolImpl {
             total_claimed: 0,
             current_pool: 0,
             min_balance,
+            account_balances: HashMap::new(),
+            claim_in_progress: false,
         }
+    }
+
+    /// Inject a full account-balance snapshot from runtime/token layer.
+    /// This keeps dividend module decoupled from token storage internals.
+    pub fn set_account_balances<I>(&mut self, balances: I)
+    where
+        I: IntoIterator<Item = (Address, u128)>,
+    {
+        self.account_balances.clear();
+        for (addr, amount) in balances {
+            self.account_balances.insert(addr, amount);
+        }
+    }
+
+    /// Set or update one account balance.
+    pub fn set_account_balance(&mut self, addr: Address, amount: u128) {
+        self.account_balances.insert(addr, amount);
+    }
+
+    /// Clear injected account balances.
+    pub fn clear_account_balances(&mut self) {
+        self.account_balances.clear();
     }
 
     /// Internal helper: get current timestamp (seconds)
@@ -207,13 +235,16 @@ impl DividendPool for DividendPoolImpl {
         let today = self.current_day();
         let last_claimed = self.last_claimed.get(user).copied().unwrap_or(0);
 
-        // Claimable range: [last_claimed + 1, today - 1]
-        // (today's snapshot not included)
+        // Claimable range: [last_claimed + 1, today]
+        // Runtime is expected to call snapshot before claim flow in the same day window.
         let mut total_claimable = 0u128;
         let mut days_count = 0u64;
 
-        for day in (last_claimed + 1)..today {
+        for day in (last_claimed + 1)..=today {
             if let Some(snapshot) = self.snapshots.get(&day) {
+                if snapshot.total_circulating == 0 {
+                    continue;
+                }
                 if let Some(&user_balance) = snapshot.balances.get(user) {
                     if user_balance >= self.min_balance {
                         // Compute daily share: (user_balance / total) × income
@@ -230,6 +261,10 @@ impl DividendPool for DividendPoolImpl {
     }
 
     fn claim(&mut self, user: &Address) -> Result<DividendEvent> {
+        if self.claim_in_progress {
+            return Err(anyhow!("Reentrant claim blocked"));
+        }
+
         let (claimable, cumulative_days) = self.get_claimable(user)?;
 
         if claimable == 0 {
@@ -245,27 +280,31 @@ impl DividendPool for DividendPoolImpl {
             }
         }
 
-        // 更新领取记录
-        self.last_claimed.insert(*user, today);
-        self.total_claimed += claimable;
+        self.claim_in_progress = true;
+        let result = (|| {
+            // Effects before interactions (CEI).
+            self.last_claimed.insert(*user, today);
+            self.total_claimed += claimable;
+            self.claim_history.push(ClaimRecord {
+                claimer: *user,
+                day: today,
+                amount: claimable,
+                timestamp: self.now(),
+            });
 
-        // Append to history
-        self.claim_history.push(ClaimRecord {
-            claimer: *user,
-            day: today,
-            amount: claimable,
-            timestamp: self.now(),
-        });
+            // In production, call MainnetToken.transfer to pay user.
+            // Keep this after state updates to avoid reentrancy double-claim.
+            // transfer(dividend_pool_address, user, claimable)?;
 
-        // In production, call MainnetToken.transfer to pay user
-        // transfer(dividend_pool_address, user, claimable)?;
-
-        Ok(DividendEvent::Claimed {
-            claimer: *user,
-            day: today,
-            amount: claimable,
-            cumulative_days,
-        })
+            Ok(DividendEvent::Claimed {
+                claimer: *user,
+                day: today,
+                amount: claimable,
+                cumulative_days,
+            })
+        })();
+        self.claim_in_progress = false;
+        result
     }
 
     fn receive_income(&mut self, from: &Address, amount: u128) -> Result<DividendEvent> {
@@ -300,12 +339,23 @@ impl DividendPoolImpl {
     /// Internal helper: collect all eligible balances
     /// In production, read from MainnetToken state
     fn collect_eligible_balances(&self) -> Result<HashMap<Address, u128>> {
-        // Placeholder implementation
-        // Required in production:
-        // 1. Iterate all MainnetToken accounts
-        // 2. Filter balance >= min_balance
-        // 3. Return HashMap
-        Ok(HashMap::new())
+        let eligible: HashMap<Address, u128> = self
+            .account_balances
+            .iter()
+            .filter_map(|(addr, amount)| {
+                if *amount >= self.min_balance {
+                    Some((*addr, *amount))
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        if eligible.is_empty() {
+            return Err(anyhow!("No eligible holders for snapshot"));
+        }
+
+        Ok(eligible)
     }
 }
 
@@ -335,5 +385,35 @@ mod tests {
     fn test_claimable_calculation() {
         // Requires a full integration environment
         // including MainnetToken balance state
+    }
+
+    #[test]
+    fn test_claim_reentrancy_guard_blocks_nested_entry() {
+        let mut pool = DividendPoolImpl::new(100);
+        pool.claim_in_progress = true;
+        let user = Address::from_bytes([2u8; 32]);
+        let err = pool.claim(&user).unwrap_err().to_string();
+        assert!(err.contains("Reentrant claim blocked"));
+    }
+
+    #[test]
+    fn test_snapshot_and_claim_with_injected_balances() {
+        let mut pool = DividendPoolImpl::new(100);
+        let treasury = Address::from_bytes([1u8; 32]);
+        let user = Address::from_bytes([2u8; 32]);
+        let other = Address::from_bytes([3u8; 32]);
+
+        pool.set_account_balance(user, 1_000);
+        pool.set_account_balance(other, 1_000);
+        pool.receive_income(&treasury, 10_000).expect("income");
+        pool.take_daily_snapshot().expect("snapshot");
+
+        let event = pool.claim(&user).expect("claim");
+        match event {
+            DividendEvent::Claimed { amount, .. } => {
+                assert_eq!(amount, 5_000);
+            }
+            _ => panic!("Unexpected event"),
+        }
     }
 }

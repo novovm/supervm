@@ -12,12 +12,13 @@
 - `F-13` 多链插件能力
 - 以及发币/治理规则在 NOVOVM 主链路的迁移说明
 
-## 2. 当前状态（2026-03-05）
+## 2. 当前状态（2026-03-07）
 
 - 参考文档：已从 `SVM2026/contracts/web30` 迁入本目录快照区。
+- 协议标准：已从 `SVM2026/standards` 迁入 `SVM2026-REFERENCE/standards/`（15 份）。
 - NOVOVM 主链路代码：未完成迁移（仍以 `MVP 共识+交易+查询` 为发布口径）。
 
 详见：
 
 - `WEB30-PROTOCOL-MIGRATION-INDEX-2026-03-05.md`
-
+- `SVM2026-REFERENCE/STANDARDS-INDEX.md`

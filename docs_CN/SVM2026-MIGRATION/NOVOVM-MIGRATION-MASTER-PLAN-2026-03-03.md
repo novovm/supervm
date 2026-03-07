@@ -71,7 +71,7 @@
 
 - 先迁共识/网络/协议接口能力（F-05~F-10）与 `ZK/MSM` 契约能力（F-15/F-16）。
 - 每迁一项即完成同项回归与回退验证。
-- 不引入应用生态能力（F-11~F-13）。
+- 应用生态能力（F-11~F-13）以受限主链路迁入（治理+门禁收口，默认安全策略不放宽）。
 
 出口门槛：
 
@@ -245,4 +245,40 @@
   - `artifacts/migration/release-snapshot-signature-scheme-smoke/release-snapshot.json`（`key_results.governance_rpc_signature_scheme_reject_pass=True`）
   - `artifacts/migration/release-candidate-novovm-rc-2026-03-06-signature-scheme-smoke/rc-candidate.json`（`governance_rpc_signature_scheme_reject_pass=True`）
 - 状态：`ReadyForMerge / SnapshotGreen`（`full_snapshot_ga_v1` 主线收口）。
+- 已完成：GA 主线回归快照（2026-03-07，post-fix）：
+  - `artifacts/migration/release-snapshot-ga-post-fix-2026-03-07/release-snapshot.json`
+  - `profile_name=full_snapshot_ga_v1`，`overall_pass=True`
+  - 关键 gate：`governance_market_policy_pass=True`，`governance_market_policy_engine_pass=True`，`governance_market_policy_treasury_pass=True`，`governance_market_policy_orchestration_pass=True`
+  - 关键治理扩展：`governance_token_economics_pass=True`，`governance_treasury_spend_pass=True`
+  - 性能口径：`core/cpu_batch_stress.p50=23565675.18`，`core/cpu_parity.p50=5797524.92`
+- 已完成：`governance_market_policy` 回归修复（同日重复 `reconfigure` 的 dividend claim 抖动）：
+  - 根因：单地址同日重复 claim 导致 `dividend_claims_executed` 偶发为 0，触发 `engine_applied/dividend_output_pass` 抖动。
+  - 修复：`novovm-consensus::market_engine` 改为地址环探针（按 `day` 轮转 claim 地址），在保留 `dividend_claims_executed > 0` 严格门禁下恢复稳定。
+  - 证据：`artifacts/migration/release-snapshot-ga-post-fix-2026-03-07/acceptance-gate-full/governance-market-policy-gate/governance-market-policy-gate-summary.json`（`dividend_output_pass=True`）。
+- 已完成：分红余额源主链路收口（2026-03-07）：
+  - `token_runtime` 新增 `dividend_eligible_balances(min_balance)`，`protocol.set_market_governance_policy` 下发到 `market_engine.set_dividend_runtime_balances`。
+  - `market_engine` 的 dividend 路径改为“运行态余额注入 + deterministic probe fallback”双轨，新增快照字段 `dividend_runtime_balance_accounts/dividend_eligible_accounts`。
+  - 新增专项门禁 `scripts/migration/run_dividend_balance_source_gate.ps1`，并接入 acceptance 聚合字段 `dividend_balance_source_pass`。
+  - 证据：`artifacts/migration/dividend-balance-source-gate-2026-03-07/dividend-balance-source-gate-summary.json`（`pass=True`）与 `artifacts/migration/acceptance-economic-dividend-source-smoke-2026-03-07/acceptance-gate-summary.json`（`overall_pass=True`, `dividend_balance_source_pass=True`）。
+- 已完成：NAV 估值源主链路收口（2026-03-07）：
+  - `market_engine` 新增 `ConfigurableNavValuationSource`，支持 `deterministic/external_feed` 模式、`price_bp` 校验与缺失报价 fallback。
+  - `novovm-node` 新增外部 NAV feed 主链路接入：支持 `NOVOVM_GOV_MARKET_NAV_FEED_URL(S)` 多源配置、`NOVOVM_GOV_MARKET_NAV_FEED_MIN_SOURCES` 聚合阈值（中位数）、`NOVOVM_GOV_MARKET_NAV_FEED_SIGNATURE_REQUIRED/KEY` 签名校验，以及 strict/fallback。
+  - NAV 快照新增 `nav_valuation_source/nav_valuation_price_bp/nav_valuation_fallback_used`，估值链路可追溯。
+  - 新增专项门禁 `scripts/migration/run_nav_valuation_source_gate.ps1`，并接入 acceptance 聚合字段 `nav_valuation_source_pass`。
+  - 证据：`artifacts/migration/nav-valuation-source-gate-2026-03-07/nav-valuation-source-gate-summary.json`（`pass=True`）、`artifacts/migration/nav-valuation-source-gate-remote-smoke-2026-03-07/nav-valuation-source-gate-summary.json`（`pass=True`）、`artifacts/migration/nav-valuation-source-gate-multisig-smoke-2026-03-07/nav-valuation-source-gate-summary.json`（`pass=True`）与 `artifacts/migration/acceptance-economic-navfx-dividend-smoke-2026-03-07/acceptance-gate-summary.json`（`overall_pass=True`, `nav_valuation_source_pass=True`）。
+- 已完成：ForeignPayment 远端汇率源主链路收口（2026-03-07）：
+  - `novovm-node` 新增外部汇率 feed 接入：支持 `NOVOVM_GOV_MARKET_FOREIGN_RATE_FEED_URL(S)` 多源配置、`NOVOVM_GOV_MARKET_FOREIGN_RATE_FEED_MIN_SOURCES` 聚合阈值（多数聚合）、`NOVOVM_GOV_MARKET_FOREIGN_RATE_FEED_SIGNATURE_REQUIRED/KEY` 签名校验，以及 strict/fallback。
+  - `market_engine` 快照新增 `foreign_rate_source/foreign_rate_quote_spec_applied/foreign_rate_fallback_used`，并纳入 `governance_market_policy_probe` 输出信号。
+  - `run_foreign_rate_source_gate.ps1` 升级覆盖：远端正向、fallback 正向、strict 负向（含 bad-signature 拒绝）。
+  - 证据：`artifacts/migration/foreign-rate-source-gate-remote-smoke-2026-03-07/foreign-rate-source-gate-summary.json`（`pass=True`）、`artifacts/migration/foreign-rate-source-gate-multisig-smoke-2026-03-07/foreign-rate-source-gate-summary.json`（`pass=True`）与 `artifacts/migration/governance-market-policy-gate-forex-smoke-2026-03-07/governance-market-policy-gate-summary.json`（`pass=True`）。
+- 已完成：`F-10~F-14` 主线收口并提升为 `Done`（2026-03-07）：
+  - `F-10 Web3 storage service`：`chain_query_rpc_pass=True` + `governance_rpc_chain_audit_persist_pass=True` + `governance_rpc_chain_audit_restart_pass=True`
+  - `F-11 Domain system`：`governance_access_policy_pass=True` + `governance_council_policy_pass=True` + `governance_execution_pass=True` + `governance_negative_pass=True`
+  - `F-12 DeFi core`：`governance_token_economics_pass=True` + `governance_treasury_spend_pass=True` + `governance_market_policy_pass=True`
+  - `F-13 adapters multi`：`adapter_non_novovm_sample=True` + `adapter_stability_pass=True` + `F-08 Done`
+  - `F-14 vm-runtime split`：`vm_runtime_split_pass=True` + `legacy_vm_runtime_present=False`
+  - 证据：`docs_CN/SVM2026-MIGRATION/NOVOVM-CAPABILITY-MIGRATION-LEDGER-AUTO-2026-03-04.md`（`Full Scan Matrix` + `Ledger`）
+- 已完成：`F-01~F-08` 由 `ReadyForMerge` 提升为 `Done`（2026-03-07）：
+  - 依据：全量 acceptance（`full_snapshot_ga_v1`）持续通过，且核心门禁（functional/performance/rpc/consensus/network/adapter）均 `pass=True`。
+  - 证据：`docs_CN/SVM2026-MIGRATION/NOVOVM-CAPABILITY-MIGRATION-LEDGER-AUTO-2026-03-04.md`（`Full Scan Matrix` + `Domain Scan`）。
 - 待推进：AOEM FFI 正式暴露 `state_root` 后，将代理门禁切换为硬一致性校验。

@@ -14,7 +14,9 @@ pub struct ConsensusPluginBindingV1 {
 
 #[derive(Debug, Error, Clone, Copy, PartialEq, Eq)]
 pub enum ConsensusPluginBindingError {
-    #[error("plugin class mismatch: expected={expected}({expected_name}) got={actual}({actual_name})")]
+    #[error(
+        "plugin class mismatch: expected={expected}({expected_name}) got={actual}({actual_name})"
+    )]
     ClassMismatch {
         expected: u8,
         expected_name: &'static str,

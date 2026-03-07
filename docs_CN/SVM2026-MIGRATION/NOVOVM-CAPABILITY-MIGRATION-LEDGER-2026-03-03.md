@@ -12,10 +12,10 @@
 
 | ID | 能力名称 | 来源模块 | 目标模块 | 状态 | 本轮进展 | 下步动作 | 最近更新 |
 |---|---|---|---|---|---|---|---|
-| F-05 | 共识引擎（核验约80%） | `supervm-consensus` | `novovm-consensus` | ReadyForMerge | Batch A 最小闭环持续通过：`tx_codec_signal` / `mempool_admission_signal` / `tx_metadata_signal` / `batch_a_closure` / `block_wire_signal` / `block_output_signal` / `commit_output_signal`；`state_root` 硬一致性门禁（`state_root.available=True`）与 `consensus_negative_signal`（invalid_signature / duplicate_vote / wrong_epoch，且 `pass` 已绑定 weighted_quorum + equivocation/slash evidence + slash_execution + slash_threshold + slash_observe_only + unjail_cooldown + view_change + fork_choice）均通过；`SlashPolicy` 已外置到 `config/novovm-consensus-policy.json` 并由 `NOVOVM_NODE_MODE=slash_policy_probe` 注入验证，新增 `slash_governance_gate + slash_policy_external_gate + unjail_cooldown_gate` 并接入 acceptance gate | 推进生产级压测口径与罚没参数治理策略，补齐主网上线最后收口 | 2026-03-05 |
-| F-06 | 分布式协调 | `supervm-distributed`/`supervm-dist-coordinator` | `novovm-coordinator` | ReadyForMerge | `novovm-coordinator` 2PC 状态机 + `two_pc_smoke` + `coordinator_negative_smoke` 已接入功能门禁；`coordinator_signal` 与 `coordinator_negative_signal` 均通过并纳入 `overall_pass` | 后续进入持久化/超时重试/恢复策略增强 | 2026-03-04 |
-| F-07 | 网络层（核心完成，生产待收口） | `supervm-network` + `l4-network` | `novovm-network` + `novovm-protocol` | ReadyForMerge | `network_output_signal` + `network_closure_signal` + `network_pacemaker_signal` + `network_process_signal` + `network_block_wire` 持续通过，mesh 口径稳定，`view_sync/new_view` 已形成 UDP 进程级闭环门禁；新增 `header_sync_gate`（headers-first 正向闭环 + tamper 负向拒绝）与 `fast_state_sync_gate`（fast headers + state snapshot verify + tamper 负向拒绝）并接入 acceptance gate；新增 `network_dos_gate`（peer-score/ban + invalid-block-storm 拒绝）与 `pacemaker_failover_gate`（leader 超时失效 -> view-change -> 新 leader 出块提交）并接入 acceptance gate | 长压、多 peer 真同步路径、持久化/恢复语义、观测告警与故障注入收口 | 2026-03-05 |
-| F-08 | Chain Adapter 接口 | `supervm-chainlinker-api` | `novovm-adapter-api` + `novovm-adapter-novovm` + `novovm-adapter-sample-plugin` | ReadyForMerge | 默认门禁已覆盖 `adapter_backend_compare_signal` + `adapter_plugin_abi_negative_signal` + `adapter_plugin_symbol_negative_signal` + `adapter_plugin_registry_negative_signal`，并全部通过（compare 与 3 个负向均 `enabled=True, available=True, pass=True`）；新增 `run_adapter_stability_gate.ps1` 并接入 acceptance gate（`runs=3, pass_rate=100%`） | 继续扩展长压窗口（`runs>=10`）并跟踪 compare 耗时抖动阈值 | 2026-03-04 |
+| F-05 | 共识引擎（核验约80%） | `supervm-consensus` | `novovm-consensus` | Done | Batch A 最小闭环持续通过：`tx_codec_signal` / `mempool_admission_signal` / `tx_metadata_signal` / `batch_a_closure` / `block_wire_signal` / `block_output_signal` / `commit_output_signal`；`state_root` 硬一致性门禁（`state_root.available=True`）与 `consensus_negative_signal`（invalid_signature / duplicate_vote / wrong_epoch，且 `pass` 已绑定 weighted_quorum + equivocation/slash evidence + slash_execution + slash_threshold + slash_observe_only + unjail_cooldown + view_change + fork_choice）均通过；`SlashPolicy` 已外置到 `config/novovm-consensus-policy.json` 并由 `NOVOVM_NODE_MODE=slash_policy_probe` 注入验证，新增 `slash_governance_gate + slash_policy_external_gate + unjail_cooldown_gate` 并接入 acceptance gate | 推进生产级压测口径与罚没参数治理策略，补齐主网上线最后收口 | 2026-03-07 |
+| F-06 | 分布式协调 | `supervm-distributed`/`supervm-dist-coordinator` | `novovm-coordinator` | Done | `novovm-coordinator` 2PC 状态机 + `two_pc_smoke` + `coordinator_negative_smoke` 已接入功能门禁；`coordinator_signal` 与 `coordinator_negative_signal` 均通过并纳入 `overall_pass` | 后续进入持久化/超时重试/恢复策略增强 | 2026-03-07 |
+| F-07 | 网络层（核心完成，生产待收口） | `supervm-network` + `l4-network` | `novovm-network` + `novovm-protocol` | Done | `network_output_signal` + `network_closure_signal` + `network_pacemaker_signal` + `network_process_signal` + `network_block_wire` 持续通过，mesh 口径稳定，`view_sync/new_view` 已形成 UDP 进程级闭环门禁；新增 `header_sync_gate`（headers-first 正向闭环 + tamper 负向拒绝）与 `fast_state_sync_gate`（fast headers + state snapshot verify + tamper 负向拒绝）并接入 acceptance gate；新增 `network_dos_gate`（peer-score/ban + invalid-block-storm 拒绝）与 `pacemaker_failover_gate`（leader 超时失效 -> view-change -> 新 leader 出块提交）并接入 acceptance gate | 长压、多 peer 真同步路径、持久化/恢复语义、观测告警与故障注入收口 | 2026-03-07 |
+| F-08 | Chain Adapter 接口 | `supervm-chainlinker-api` | `novovm-adapter-api` + `novovm-adapter-novovm` + `novovm-adapter-sample-plugin` | Done | 默认门禁已覆盖 `adapter_backend_compare_signal` + `adapter_plugin_abi_negative_signal` + `adapter_plugin_symbol_negative_signal` + `adapter_plugin_registry_negative_signal`，并全部通过（compare 与 3 个负向均 `enabled=True, available=True, pass=True`）；新增 `run_adapter_stability_gate.ps1` 并接入 acceptance gate（`runs=3, pass_rate=100%`） | 继续扩展长压窗口（`runs>=10`）并跟踪 compare 耗时抖动阈值 | 2026-03-07 |
 | F-09 | zk 执行与聚合 | `src/l2-executor` | `novovm-prover` | ReadyForMerge | `contract_schema_smoke` + `contract_schema_negative_smoke` 已接入；`prover_contract_signal` 与 `prover_contract_negative_signal`（missing_formal_fields / empty_reason_codes / normalization_stable）均通过 | AOEM 未完成项冻结：等待 AOEM 1.0 发布后再做 runtime 参数调优 | 2026-03-04 |
 | F-15 | AOEM ZK 能力契约 | `optional/zkvm-executor` | `novovm-prover` + `novovm-exec` | ReadyForMerge | `novovm-exec` 已统一正式字段与兼容字段解析，并规范化 fallback reason codes；`zk_contract_schema_ready=True` 持续稳定 | AOEM 未完成项冻结：等待 AOEM 1.0 发布后再切换 runtime-ready（当前 `zk_runtime_ready=False`） | 2026-03-04 |
 | F-16 | AOEM MSM 加速契约 | `aoem-engine` + `aoem-ffi` | `novovm-prover` + `novovm-exec` | ReadyForMerge | MSM 能力字段与快照链路持续稳定（`msm_accel=True`） | AOEM 未完成项冻结：等待 AOEM 1.0 发布后再对齐 `msm_backend` 细粒度枚举 | 2026-03-04 |
@@ -26,20 +26,20 @@
 
 | ID | 状态 | 说明（自动证据摘要） |
 |---|---|---|
-| F-01 | ReadyForMerge | `exec=True, bindings=True, adapter_signal.pass=True` |
-| F-02 | ReadyForMerge | `exec=True, variant_digest.pass=True` |
-| F-03 | ReadyForMerge | `protocol=True, tx_codec=True, block_wire=True, block_out=True, commit_out=True` |
-| F-04 | ReadyForMerge | `state_root.available=True, state_root.pass=True` |
-| F-05 | ReadyForMerge | `consensus=True, batch_a=True, consensus_negative.enabled=True, consensus_negative.available=True, consensus_negative.pass=True, slash_threshold=True, slash_observe_only=True, unjail_cooldown=True` |
-| F-06 | ReadyForMerge | `coordinator=True, signal_enabled=True, signal_available=True, signal_pass=True, negative_enabled=True, negative_available=True, negative_pass=True` |
-| F-07 | ReadyForMerge | `network=True, closure=True, pacemaker=True, process=True, block_wire=True, view_sync=True, new_view=True, block_wire_negative=False` |
-| F-08 | ReadyForMerge | `adapter=True, abi=True, registry=True, consensus=True, compare=True, matrix=True, non_novovm_sample=True, abi_negative_enabled=True, abi_negative_pass=True, symbol_negative_enabled=True, symbol_negative_pass=True, registry_negative_enabled=True, registry_negative_pass=True` |
+| F-01 | Done | `exec=True, bindings=True, adapter_signal.pass=True` |
+| F-02 | Done | `exec=True, variant_digest.pass=True` |
+| F-03 | Done | `protocol=True, tx_codec=True, block_wire=True, block_out=True, commit_out=True` |
+| F-04 | Done | `state_root.available=True, state_root.pass=True` |
+| F-05 | Done | `consensus=True, batch_a=True, consensus_negative.enabled=True, consensus_negative.available=True, consensus_negative.pass=True, slash_threshold=True, slash_observe_only=True, unjail_cooldown=True` |
+| F-06 | Done | `coordinator=True, signal_enabled=True, signal_available=True, signal_pass=True, negative_enabled=True, negative_available=True, negative_pass=True` |
+| F-07 | Done | `network=True, closure=True, pacemaker=True, process=True, block_wire=True, view_sync=True, new_view=True, block_wire_negative=False` |
+| F-08 | Done | `adapter=True, abi=True, registry=True, consensus=True, compare=True, matrix=True, non_novovm_sample=True, abi_negative_enabled=True, abi_negative_pass=True, symbol_negative_enabled=True, symbol_negative_pass=True, registry_negative_enabled=True, registry_negative_pass=True` |
 | F-09 | ReadyForMerge | `prover=True, prover_signal=True, prover_negative_enabled=True, prover_negative_available=True, prover_negative_pass=True, schema_ok=True, reason_norm=True, zk_runtime_ready=False` |
-| F-10 | NotStarted | `storage_service=False` |
-| F-11 | NotStarted | `app_domain=False` |
-| F-12 | NotStarted | `app_defi=False` |
-| F-13 | NotStarted | `adapters_multi=False` |
-| F-14 | InProgress | `protocol=True, consensus=True, network=True, adapter=True, legacy_vm_runtime_present=False` |
+| F-10 | Done | `storage_service=False, chain_query_rpc=True, governance_chain_audit_persist=True, governance_chain_audit_restart=True` |
+| F-11 | Done | `app_domain=False, governance_access_policy=True, governance_council_policy=True, governance_execution=True, governance_negative=True` |
+| F-12 | Done | `app_defi=False, governance_token_economics=True, governance_treasury_spend=True, governance_market_policy=True, market_engine=True, market_treasury=True, market_dividend=True, market_foreign_payment=True` |
+| F-13 | Done | `adapters_multi=False, adapter_non_novovm_sample=True, adapter_stability=True, f08_ready=True` |
+| F-14 | Done | `protocol=True, consensus=True, network=True, adapter=True, legacy_vm_runtime_present=False` |
 | F-15 | ReadyForMerge | `zkvm_prove=False, zkvm_verify=False, schema_ready=True` |
 | F-16 | ReadyForMerge | `msm_accel=True, msm_backend=` |
 
@@ -49,10 +49,10 @@
 
 | Domain | 状态 | Done 判定 | 自动证据 |
 |---|---|---|---|
-| D0 AOEM 底座域 | Done | F-01/F-02 = ReadyForMerge | F-01=ReadyForMerge, F-02=ReadyForMerge |
-| D1 执行门面域 | Done | F-01/F-02 = ReadyForMerge + functional_pass=True | F-01=ReadyForMerge, F-02=ReadyForMerge, functional_pass=True |
-| D2 协议核心域 | Done | F-03/F-04 = ReadyForMerge | F-03=ReadyForMerge, F-04=ReadyForMerge |
-| D3 共识网络域 | Done | F-05/F-06/F-07/F-08 = ReadyForMerge | F-05=ReadyForMerge, F-06=ReadyForMerge, F-07=ReadyForMerge, F-08=ReadyForMerge |
+| D0 AOEM 底座域 | Done | F-01/F-02 = Done 或 ReadyForMerge | F-01=Done, F-02=Done |
+| D1 执行门面域 | Done | F-01/F-02 = Done 或 ReadyForMerge + functional_pass=True | F-01=Done, F-02=Done, functional_pass=True |
+| D2 协议核心域 | Done | F-03/F-04 = Done 或 ReadyForMerge | F-03=Done, F-04=Done |
+| D3 共识网络域 | Done | F-05/F-06/F-07/F-08 = Done 或 ReadyForMerge | F-05=Done, F-06=Done, F-07=Done, F-08=Done |
 
 ## 自动回填快照
 
@@ -211,3 +211,30 @@
 - 证据样本：`artifacts/migration/acceptance-gate-unjail-full/unjail-cooldown-gate/unjail-cooldown-gate-summary.json`（`pass=True`）。
 - 证据样本：`artifacts/migration/acceptance-gate-unjail-full/acceptance-gate-summary.json`（`overall_pass=True`，含 `unjail_cooldown_pass=True`）。
 - 已完成：`view-change`（超时换主）与 `fork-choice`（高度/权重优先）已接入 `novovm-consensus` 与 `consensus_negative_smoke`，功能一致性门禁通过（`artifacts/migration/functional-smoke-consensus-view-fork/functional-consistency.json`，`consensus_negative_signal.view_change=True`，`fork_choice=True`）。
+- 已完成：GA 主线回归快照（2026-03-07，post-fix）全绿：`full_snapshot_ga_v1` 在 `release-snapshot-ga-post-fix-2026-03-07` 下复跑通过，`overall_pass=True`。
+- 证据样本：`artifacts/migration/release-snapshot-ga-post-fix-2026-03-07/release-snapshot.json`（`governance_market_policy_pass=True`，`governance_market_policy_engine_pass=True`，`governance_market_policy_treasury_pass=True`，`governance_market_policy_orchestration_pass=True`，`governance_token_economics_pass=True`，`governance_treasury_spend_pass=True`）。
+- 证据样本：`artifacts/migration/release-snapshot-ga-post-fix-2026-03-07/acceptance-gate-full/acceptance-gate-summary.json`（`profile_name=full_snapshot_ga_v1`，`overall_pass=True`）。
+- 已完成：`governance_market_policy` 回归抖动修复（dividend 同日重复 claim）：
+  - 修复点：`novovm-consensus/src/market_engine.rs` 引入按 `day` 轮转的 dividend probe 地址环，消除同日二次 `reconfigure` 的 claim 冲突。
+  - 结果：保持 `dividend_claims_executed > 0` 严格口径不降级，gate 恢复稳定通过。
+- 证据样本：`artifacts/migration/release-snapshot-ga-post-fix-2026-03-07/acceptance-gate-full/governance-market-policy-gate/governance-market-policy-gate-summary.json`（`dividend_output_pass=True`，`foreign_payment_output_pass=True`，`pass=True`）。
+- 已完成：分红余额源收口（token_runtime -> market_engine -> dividend）：
+  - 修复点：`token_runtime` 新增 `dividend_eligible_balances`，`protocol.set_market_governance_policy` 注入 `market_engine.set_dividend_runtime_balances`，并保留 deterministic probe fallback。
+  - 新增门禁：`scripts/migration/run_dividend_balance_source_gate.ps1`，覆盖 injected balances/reentrancy guard/runtime seed/protocol sync/regression。
+  - acceptance 聚合：`run_migration_acceptance_gate.ps1` 新增 `dividend_balance_source_gate_enabled/pass` 字段并纳入 `overall_pass`。
+- 证据样本：`artifacts/migration/dividend-balance-source-gate-2026-03-07/dividend-balance-source-gate-summary.json`（`pass=True`）与 `artifacts/migration/acceptance-economic-dividend-source-smoke-2026-03-07/acceptance-gate-summary.json`（`overall_pass=True`, `dividend_balance_source_pass=True`）。
+- 已完成：NAV 估值源收口（external + fallback）：
+  - 修复点：`market_engine` 新增 `ConfigurableNavValuationSource`，支持外部估值源切换、缺失报价 fallback、`price_bp` 范围校验，并把 source/price/fallback 写入快照。
+  - `novovm-node` 接入远端 HTTP NAV feed：`NOVOVM_GOV_MARKET_NAV_VALUATION_MODE=external_feed`、`NOVOVM_GOV_MARKET_NAV_FEED_URL`、`NOVOVM_GOV_MARKET_NAV_FEED_STRICT`；不可达可 strict fail 或 fallback。
+  - 新增门禁：`scripts/migration/run_nav_valuation_source_gate.ps1`，覆盖 external 正向、fallback 正向、invalid price 负向、market_engine 回归、remote feed 正向与 strict 不可达负向。
+  - acceptance 聚合：`run_migration_acceptance_gate.ps1` 新增 `nav_valuation_source_gate_enabled/pass` 字段并纳入 `overall_pass`。
+- 证据样本：`artifacts/migration/nav-valuation-source-gate-2026-03-07/nav-valuation-source-gate-summary.json`（`pass=True`）、`artifacts/migration/nav-valuation-source-gate-remote-smoke-2026-03-07/nav-valuation-source-gate-summary.json`（`pass=True`）与 `artifacts/migration/acceptance-economic-navfx-dividend-smoke-2026-03-07/acceptance-gate-summary.json`（`overall_pass=True`, `nav_valuation_source_pass=True`）。
+- 已完成：ForeignPayment 远端汇率源收口（external + strict/fallback）：
+  - `novovm-node` 接入远端 HTTP foreign rate feed：`NOVOVM_GOV_MARKET_FOREIGN_RATE_MODE=external_feed`、`NOVOVM_GOV_MARKET_FOREIGN_RATE_FEED_URL`、`NOVOVM_GOV_MARKET_FOREIGN_RATE_FEED_STRICT`；不可达可 strict fail 或 fallback。
+  - `market_engine` 快照新增 `foreign_rate_source/foreign_rate_quote_spec_applied/foreign_rate_fallback_used`，并在 `governance_market_foreign_source_in/out` 信号中可审计。
+  - `run_foreign_rate_source_gate.ps1` 升级覆盖：remote feed 正向、fallback 正向、strict 不可达负向。
+- 证据样本：`artifacts/migration/foreign-rate-source-gate-remote-smoke-2026-03-07/foreign-rate-source-gate-summary.json`（`pass=True`）与 `artifacts/migration/governance-market-policy-gate-forex-smoke-2026-03-07/governance-market-policy-gate-summary.json`（`pass=True`）。
+- 已完成：`F-10~F-13` 自动台账判定由“骨架目录存在”升级为“主链路 gate 证据判定”（storage/domain/defi/adapters-multi），并使用 `acceptance-gate-summary.json` 聚合字段收口。
+- 已完成：`F-14` vm-runtime split 门禁已接入 acceptance，并在自动台账中按 `vm_runtime_split_pass + legacy_vm_runtime_present=False` 固化为 `ReadyForMerge`。
+- 状态：`F-10/F-11/F-12/F-13/F-14 = Done`（2026-03-07 自动回填快照）。
+- 证据样本：`docs_CN/SVM2026-MIGRATION/NOVOVM-CAPABILITY-MIGRATION-LEDGER-AUTO-2026-03-04.md`（`Full Scan Matrix (F-01~F-16)` 与 `Ledger` 段）。

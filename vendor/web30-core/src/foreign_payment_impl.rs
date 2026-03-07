@@ -23,34 +23,182 @@ pub trait ExchangeRateProvider {
     fn get_exchange_rate(&self, currency: &str) -> Result<(f64, u16)>;
 }
 
+/// 可配置汇率提供器（主链路默认使用）
+///
+/// spec 格式：
+/// `BTC:100000:80,ETH:5000:60,USDT:10:30`
+/// 含义：`currency:rate:slippage_bps`
+pub struct ConfigurableExchangeRateProvider {
+    source_name: String,
+    rates: HashMap<String, f64>,
+    slippage_bps: HashMap<String, u16>,
+}
+
+impl ConfigurableExchangeRateProvider {
+    pub fn deterministic_v1() -> Self {
+        let mut rates = HashMap::new();
+        let mut slippage_bps = HashMap::new();
+        rates.insert("BTC".to_string(), 100_000.0);
+        rates.insert("ETH".to_string(), 5_000.0);
+        rates.insert("USDT".to_string(), 10.0);
+        slippage_bps.insert("BTC".to_string(), 80);
+        slippage_bps.insert("ETH".to_string(), 60);
+        slippage_bps.insert("USDT".to_string(), 30);
+        Self {
+            source_name: "deterministic_v1".to_string(),
+            rates,
+            slippage_bps,
+        }
+    }
+
+    pub fn source_name(&self) -> &str {
+        &self.source_name
+    }
+
+    pub fn set_source_name(&mut self, source_name: &str) -> Result<()> {
+        let name = source_name.trim();
+        if name.is_empty() {
+            return Err(anyhow::anyhow!("source_name cannot be empty"));
+        }
+        self.source_name = name.to_string();
+        Ok(())
+    }
+
+    pub fn set_rate_with_slippage(
+        &mut self,
+        currency: &str,
+        rate: f64,
+        slippage_bp: u16,
+    ) -> Result<()> {
+        let key = currency.trim().to_ascii_uppercase();
+        if key.is_empty() {
+            return Err(anyhow::anyhow!("currency cannot be empty"));
+        }
+        if !rate.is_finite() || rate <= 0.0 {
+            return Err(anyhow::anyhow!(
+                "invalid exchange rate for {}: {}",
+                key,
+                rate
+            ));
+        }
+        if slippage_bp > 10_000 {
+            return Err(anyhow::anyhow!(
+                "invalid slippage_bps for {}: {}",
+                key,
+                slippage_bp
+            ));
+        }
+        self.rates.insert(key.clone(), rate);
+        self.slippage_bps.insert(key, slippage_bp);
+        Ok(())
+    }
+
+    pub fn set_rate(&mut self, currency: &str, rate: f64) -> Result<()> {
+        let key = currency.trim().to_ascii_uppercase();
+        let slippage = self.slippage_bps.get(&key).copied().unwrap_or(50);
+        self.set_rate_with_slippage(currency, rate, slippage)
+    }
+
+    pub fn apply_quote_spec(&mut self, spec: &str) -> Result<()> {
+        let trimmed = spec.trim();
+        if trimmed.is_empty() {
+            return Err(anyhow::anyhow!("quote spec cannot be empty"));
+        }
+
+        for entry in trimmed.split(',') {
+            let raw = entry.trim();
+            if raw.is_empty() {
+                continue;
+            }
+            let mut parts = raw.split(':').map(|p| p.trim());
+            let currency = parts
+                .next()
+                .ok_or_else(|| anyhow::anyhow!("invalid quote entry: {}", raw))?;
+            let rate_str = parts
+                .next()
+                .ok_or_else(|| anyhow::anyhow!("invalid quote entry: {}", raw))?;
+            let slippage_str = parts
+                .next()
+                .ok_or_else(|| anyhow::anyhow!("invalid quote entry: {}", raw))?;
+            if parts.next().is_some() {
+                return Err(anyhow::anyhow!("invalid quote entry: {}", raw));
+            }
+            let rate = rate_str
+                .parse::<f64>()
+                .map_err(|_| anyhow::anyhow!("invalid rate in quote entry: {}", raw))?;
+            let slippage = slippage_str
+                .parse::<u16>()
+                .map_err(|_| anyhow::anyhow!("invalid slippage in quote entry: {}", raw))?;
+            self.set_rate_with_slippage(currency, rate, slippage)?;
+        }
+
+        Ok(())
+    }
+}
+
+impl ExchangeRateProvider for ConfigurableExchangeRateProvider {
+    fn get_exchange_rate(&self, currency: &str) -> Result<(f64, u16)> {
+        let key = currency.to_ascii_uppercase();
+        let rate = self
+            .rates
+            .get(&key)
+            .copied()
+            .ok_or_else(|| anyhow::anyhow!("Unsupported currency: {}", currency))?;
+        let slippage = self.slippage_bps.get(&key).copied().unwrap_or(50);
+        Ok((rate, slippage))
+    }
+}
+
+impl Default for ConfigurableExchangeRateProvider {
+    fn default() -> Self {
+        Self::deterministic_v1()
+    }
+}
+
 /// Simple fixed-rate provider (test/placeholder)
 pub struct MockExchangeRateProvider {
     rates: HashMap<String, f64>,
+    slippage_bps: HashMap<String, u16>,
 }
 
 impl MockExchangeRateProvider {
     pub fn new() -> Self {
         let mut rates = HashMap::new();
+        let mut slippage_bps = HashMap::new();
         // Placeholder rates: 1 BTC = 100,000 Token, 1 ETH = 5,000 Token, 1 USDT = 10 Token
         rates.insert("BTC".to_string(), 100_000.0);
         rates.insert("ETH".to_string(), 5_000.0);
         rates.insert("USDT".to_string(), 10.0);
-        Self { rates }
+        slippage_bps.insert("BTC".to_string(), 80);
+        slippage_bps.insert("ETH".to_string(), 60);
+        slippage_bps.insert("USDT".to_string(), 30);
+        Self {
+            rates,
+            slippage_bps,
+        }
     }
 
     pub fn set_rate(&mut self, currency: &str, rate: f64) {
-        self.rates.insert(currency.to_string(), rate);
+        self.rates.insert(currency.to_ascii_uppercase(), rate);
+    }
+
+    pub fn set_rate_with_slippage(&mut self, currency: &str, rate: f64, slippage_bp: u16) {
+        self.rates.insert(currency.to_ascii_uppercase(), rate);
+        self.slippage_bps
+            .insert(currency.to_ascii_uppercase(), slippage_bp);
     }
 }
 
 impl ExchangeRateProvider for MockExchangeRateProvider {
     fn get_exchange_rate(&self, currency: &str) -> Result<(f64, u16)> {
+        let key = currency.to_ascii_uppercase();
         let rate = self
             .rates
-            .get(currency)
+            .get(&key)
             .copied()
             .ok_or_else(|| anyhow::anyhow!("Unsupported currency: {}", currency))?;
-        Ok((rate, 50)) // 0.5% slippage range
+        let slippage = self.slippage_bps.get(&key).copied().unwrap_or(50);
+        Ok((rate, slippage))
     }
 }
 
@@ -81,6 +229,8 @@ pub struct ForeignPaymentProcessorImpl<R: ExchangeRateProvider> {
 }
 
 impl<R: ExchangeRateProvider> ForeignPaymentProcessorImpl<R> {
+    const RATE_SCALE: u128 = 1_000_000;
+
     pub fn new(config: ForeignPaymentConfig<R>) -> Self {
         Self {
             rate_provider: config.rate_provider,
@@ -102,6 +252,37 @@ impl<R: ExchangeRateProvider> ForeignPaymentProcessorImpl<R> {
     /// 查询统计数据
     pub fn stats(&self) -> &ForeignPaymentStats {
         &self.stats
+    }
+
+    fn rate_to_scaled(rate: f64) -> Result<u128, String> {
+        if !rate.is_finite() || rate <= 0.0 {
+            return Err(format!("Invalid exchange rate: {}", rate));
+        }
+        let scaled = (rate * Self::RATE_SCALE as f64).round();
+        if scaled <= 0.0 {
+            return Err(format!("Invalid scaled exchange rate: {}", scaled));
+        }
+        if scaled > u128::MAX as f64 {
+            return Err("Exchange rate out of range".to_string());
+        }
+        Ok(scaled as u128)
+    }
+}
+
+impl ForeignPaymentProcessorImpl<ConfigurableExchangeRateProvider> {
+    /// Read current configured foreign rate source name.
+    pub fn rate_source_name(&self) -> &str {
+        self.rate_provider.source_name()
+    }
+
+    /// Set foreign rate source name for audit / policy trace.
+    pub fn set_rate_source_name(&mut self, source_name: &str) -> Result<()> {
+        self.rate_provider.set_source_name(source_name)
+    }
+
+    /// Apply quote spec in format: `BTC:120000:90,ETH:6000:70,USDT:10:20`.
+    pub fn apply_quote_spec(&mut self, spec: &str) -> Result<()> {
+        self.rate_provider.apply_quote_spec(spec)
     }
 }
 
@@ -125,15 +306,10 @@ impl<R: ExchangeRateProvider> ForeignPaymentProcessor for ForeignPaymentProcesso
             .calculate_token_equivalent(&payment.currency, payment.amount)
             .map_err(|e| e.to_string())?;
 
-        // 4. Pay Token to miner (would call MainnetToken::transfer or mint)
-        // Record payment only; actual transfer handled by upper layer
+        let payment_record = self.pay_miner_in_token(miner, token_amount, payment)?;
         let payment_record = MinerPayment {
-            miner,
-            token_amount,
-            equivalent_foreign: payment.amount,
-            foreign_currency: payment.currency.clone(),
             exchange_rate,
-            timestamp: self.now(),
+            ..payment_record
         };
 
         // 5. Update stats
@@ -152,9 +328,10 @@ impl<R: ExchangeRateProvider> ForeignPaymentProcessor for ForeignPaymentProcesso
             .get_exchange_rate(currency)
             .map_err(|e| e.to_string())?;
 
-        // token_amount = foreign_amount * rate
-        // Note: precision conversion needed in production
-        let token_amount = (foreign_amount as f64 * rate) as u128;
+        let rate_scaled = Self::rate_to_scaled(rate)?;
+        let token_amount = foreign_amount
+            .saturating_mul(rate_scaled)
+            .saturating_div(Self::RATE_SCALE);
 
         Ok((token_amount, rate))
     }
@@ -273,8 +450,8 @@ impl<R: ExchangeRateProvider> ForeignPaymentProcessor for ForeignPaymentProcesso
             .get_exchange_rate(target_currency)
             .map_err(|e| e.to_string())?;
 
-        // foreign_amount = token_amount / rate
-        let foreign_amount = (token_amount as f64 / rate) as u128;
+        let rate_scaled = Self::rate_to_scaled(rate)?;
+        let foreign_amount = token_amount.saturating_mul(Self::RATE_SCALE) / rate_scaled;
 
         Ok((foreign_amount, rate))
     }
@@ -296,6 +473,77 @@ mod tests {
             treasury_address: addr(200),
             m0_pool_address: addr(201),
         })
+    }
+
+    fn build_configured_processor() -> ForeignPaymentProcessorImpl<ConfigurableExchangeRateProvider>
+    {
+        let rate_provider = ConfigurableExchangeRateProvider::deterministic_v1();
+        ForeignPaymentProcessorImpl::new(ForeignPaymentConfig {
+            rate_provider,
+            treasury_address: addr(210),
+            m0_pool_address: addr(211),
+        })
+    }
+
+    #[test]
+    fn test_configurable_rate_provider_apply_quote_spec_ok() {
+        let mut provider = ConfigurableExchangeRateProvider::deterministic_v1();
+        provider
+            .set_source_name("configured_file_v1")
+            .expect("set source");
+        provider
+            .apply_quote_spec("BTC:120000:90,ETH:6000:70,USDT:9.8:20")
+            .expect("apply spec");
+        let (btc_rate, btc_slippage) = provider.get_exchange_rate("BTC").expect("btc quote");
+        let (eth_rate, eth_slippage) = provider.get_exchange_rate("ETH").expect("eth quote");
+        let (usdt_rate, usdt_slippage) = provider.get_exchange_rate("USDT").expect("usdt quote");
+
+        assert_eq!(provider.source_name(), "configured_file_v1");
+        assert!((btc_rate - 120_000.0).abs() < f64::EPSILON);
+        assert_eq!(btc_slippage, 90);
+        assert!((eth_rate - 6_000.0).abs() < f64::EPSILON);
+        assert_eq!(eth_slippage, 70);
+        assert!((usdt_rate - 9.8).abs() < f64::EPSILON);
+        assert_eq!(usdt_slippage, 20);
+    }
+
+    #[test]
+    fn test_configurable_rate_provider_reject_invalid_rate() {
+        let mut provider = ConfigurableExchangeRateProvider::deterministic_v1();
+        let err = provider
+            .apply_quote_spec("BTC:0:50")
+            .expect_err("rate=0 should be rejected");
+        assert!(err.to_string().contains("invalid exchange rate"));
+    }
+
+    #[test]
+    fn test_configurable_rate_provider_reject_invalid_slippage() {
+        let mut provider = ConfigurableExchangeRateProvider::deterministic_v1();
+        let err = provider
+            .apply_quote_spec("BTC:100000:10001")
+            .expect_err("slippage > 10000 should be rejected");
+        assert!(err.to_string().contains("invalid slippage_bps"));
+    }
+
+    #[test]
+    fn test_foreign_payment_processing_with_configured_provider() {
+        let mut processor = build_configured_processor();
+        let miner = addr(55);
+
+        let payment = ForeignPayment {
+            currency: "USDT".to_string(),
+            amount: 2_000_000, // 2 USDT
+            payer: "0xuser".to_string(),
+            service_type: ServiceType::Gas,
+        };
+
+        let result = processor
+            .process_foreign_payment(payment, miner)
+            .expect("process");
+
+        // deterministic_v1: 1 USDT = 10 token
+        assert_eq!(result.token_amount, 20_000_000);
+        assert!((result.exchange_rate - 10.0).abs() < f64::EPSILON);
     }
 
     #[test]
