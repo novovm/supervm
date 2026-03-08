@@ -12,6 +12,7 @@ param(
     [string]$GovernanceRpcMldsaFfiBind = "127.0.0.1:8902",
     [ValidateRange(1, 64)]
     [int]$GovernanceRpcMldsaFfiExpectedRequests = 9,
+    [switch]$IncludeUnifiedAccountGate,
     [switch]$FullSnapshotProfileV2,
     [switch]$FullSnapshotProfileGA
 )
@@ -104,6 +105,7 @@ if ($FullSnapshotProfileGA) {
         -GovernanceRpcMldsaFfiAoemRoot $GovernanceRpcMldsaFfiAoemRoot `
         -GovernanceRpcMldsaFfiBind $GovernanceRpcMldsaFfiBind `
         -GovernanceRpcMldsaFfiExpectedRequests $GovernanceRpcMldsaFfiExpectedRequests `
+        -IncludeUnifiedAccountGate:$IncludeUnifiedAccountGate `
         -FullSnapshotProfileGA | Out-Null
 } elseif ($FullSnapshotProfileV2) {
     & $snapshotScript `
@@ -116,6 +118,7 @@ if ($FullSnapshotProfileGA) {
         -GovernanceRpcMldsaFfiAoemRoot $GovernanceRpcMldsaFfiAoemRoot `
         -GovernanceRpcMldsaFfiBind $GovernanceRpcMldsaFfiBind `
         -GovernanceRpcMldsaFfiExpectedRequests $GovernanceRpcMldsaFfiExpectedRequests `
+        -IncludeUnifiedAccountGate:$IncludeUnifiedAccountGate `
         -FullSnapshotProfileV2 | Out-Null
 } else {
     & $snapshotScript `
@@ -127,7 +130,8 @@ if ($FullSnapshotProfileGA) {
         -IncludeGovernanceRpcMldsaFfiGate:$IncludeGovernanceRpcMldsaFfiGate `
         -GovernanceRpcMldsaFfiAoemRoot $GovernanceRpcMldsaFfiAoemRoot `
         -GovernanceRpcMldsaFfiBind $GovernanceRpcMldsaFfiBind `
-        -GovernanceRpcMldsaFfiExpectedRequests $GovernanceRpcMldsaFfiExpectedRequests | Out-Null
+        -GovernanceRpcMldsaFfiExpectedRequests $GovernanceRpcMldsaFfiExpectedRequests `
+        -IncludeUnifiedAccountGate:$IncludeUnifiedAccountGate | Out-Null
 }
 
 $snapshotJson = Join-Path $snapshotOutputDir "release-snapshot.json"
@@ -157,6 +161,13 @@ $freezeRule = if ($FullSnapshotProfileGA) {
 } else {
     "full_snapshot_v1 semantic is frozen; additive capability changes must use full_snapshot_v2"
 }
+
+$snapshotHasUaBlockMerge = $null -ne $snapshot.key_results -and $snapshot.key_results.PSObject.Properties.Match("unified_account_block_merge_pass").Count -gt 0
+$snapshotHasUaBlockRelease = $null -ne $snapshot.key_results -and $snapshot.key_results.PSObject.Properties.Match("unified_account_block_release_pass").Count -gt 0
+$snapshotHasUaSummaryJson = $null -ne $snapshot.evidence -and $snapshot.evidence.PSObject.Properties.Match("unified_account_summary_json").Count -gt 0
+$unifiedAccountBlockMergePass = if ($snapshotHasUaBlockMerge) { [bool]$snapshot.key_results.unified_account_block_merge_pass } else { $true }
+$unifiedAccountBlockReleasePass = if ($snapshotHasUaBlockRelease) { [bool]$snapshot.key_results.unified_account_block_release_pass } else { $true }
+$unifiedAccountSummaryJson = if ($snapshotHasUaSummaryJson) { [string]$snapshot.evidence.unified_account_summary_json } else { "" }
 
 $rcCandidate = [ordered]@{
     generated_at_utc = [DateTime]::UtcNow.ToString("o")
@@ -199,6 +210,30 @@ $rcCandidate = [ordered]@{
     foreign_rate_source_pass = [bool]$acceptance.foreign_rate_source_pass
     nav_valuation_source_pass = [bool]$acceptance.nav_valuation_source_pass
     dividend_balance_source_pass = [bool]$acceptance.dividend_balance_source_pass
+    unified_account_gate_enabled = [bool]$acceptance.unified_account_gate_enabled
+    unified_account_pass = [bool]$acceptance.unified_account_pass
+    unified_account_block_merge_pass = $unifiedAccountBlockMergePass
+    unified_account_block_release_pass = $unifiedAccountBlockReleasePass
+    unified_account_summary_json = $unifiedAccountSummaryJson
+    evm_chain_profile_signal_gate_enabled = [bool]$acceptance.evm_chain_profile_signal_gate_enabled
+    evm_chain_profile_signal_pass = if ([bool]$acceptance.evm_chain_profile_signal_gate_enabled) { [bool]$acceptance.evm_chain_profile_signal_pass } else { $true }
+    evm_chain_profile_signal_report_json = [string]$acceptance.evm_chain_profile_signal_report_json
+    evm_tx_type_signal_gate_enabled = [bool]$acceptance.evm_tx_type_signal_gate_enabled
+    evm_tx_type_signal_pass = if ([bool]$acceptance.evm_tx_type_signal_gate_enabled) { [bool]$acceptance.evm_tx_type_signal_pass } else { $true }
+    evm_tx_type_signal_report_json = [string]$acceptance.evm_tx_type_signal_report_json
+    overlap_router_signal_gate_enabled = [bool]$acceptance.overlap_router_signal_gate_enabled
+    overlap_router_signal_pass = if ([bool]$acceptance.overlap_router_signal_gate_enabled) { [bool]$acceptance.overlap_router_signal_pass } else { $true }
+    overlap_router_signal_report_json = [string]$acceptance.overlap_router_signal_report_json
+    evm_backend_compare_gate_enabled = [bool]$acceptance.evm_backend_compare_gate_enabled
+    evm_backend_compare_pass = if ([bool]$acceptance.evm_backend_compare_gate_enabled) { [bool]$acceptance.evm_backend_compare_pass } else { $true }
+    evm_backend_compare_evm_pass = if ([bool]$acceptance.evm_backend_compare_gate_enabled) { [bool]$acceptance.evm_backend_compare_evm_pass } else { $true }
+    evm_backend_compare_polygon_pass = if ([bool]$acceptance.evm_backend_compare_gate_enabled) { [bool]$acceptance.evm_backend_compare_polygon_pass } else { $true }
+    evm_backend_compare_bnb_pass = if ([bool]$acceptance.evm_backend_compare_gate_enabled) { [bool]$acceptance.evm_backend_compare_bnb_pass } else { $true }
+    evm_backend_compare_avalanche_pass = if ([bool]$acceptance.evm_backend_compare_gate_enabled) { [bool]$acceptance.evm_backend_compare_avalanche_pass } else { $true }
+    evm_backend_compare_evm_report_json = [string]$acceptance.evm_backend_compare_evm_report_json
+    evm_backend_compare_polygon_report_json = [string]$acceptance.evm_backend_compare_polygon_report_json
+    evm_backend_compare_bnb_report_json = [string]$acceptance.evm_backend_compare_bnb_report_json
+    evm_backend_compare_avalanche_report_json = [string]$acceptance.evm_backend_compare_avalanche_report_json
     rpc_exposure_pass = if ($expectedProfile -eq "full_snapshot_v2" -or $expectedProfile -eq "full_snapshot_ga_v1") { [bool]$acceptance.rpc_exposure_pass } else { $false }
     adapter_stability_pass = [bool]$acceptance.adapter_stability_pass
     snapshot_json = $snapshotJson
@@ -253,6 +288,30 @@ $md = @(
     "- foreign_rate_source_pass: $($rcCandidate.foreign_rate_source_pass)"
     "- nav_valuation_source_pass: $($rcCandidate.nav_valuation_source_pass)"
     "- dividend_balance_source_pass: $($rcCandidate.dividend_balance_source_pass)"
+    "- unified_account_gate_enabled: $($rcCandidate.unified_account_gate_enabled)"
+    "- unified_account_pass: $($rcCandidate.unified_account_pass)"
+    "- unified_account_block_merge_pass: $($rcCandidate.unified_account_block_merge_pass)"
+    "- unified_account_block_release_pass: $($rcCandidate.unified_account_block_release_pass)"
+    "- unified_account_summary_json: $($rcCandidate.unified_account_summary_json)"
+    "- evm_chain_profile_signal_gate_enabled: $($rcCandidate.evm_chain_profile_signal_gate_enabled)"
+    "- evm_chain_profile_signal_pass: $($rcCandidate.evm_chain_profile_signal_pass)"
+    "- evm_chain_profile_signal_report_json: $($rcCandidate.evm_chain_profile_signal_report_json)"
+    "- evm_tx_type_signal_gate_enabled: $($rcCandidate.evm_tx_type_signal_gate_enabled)"
+    "- evm_tx_type_signal_pass: $($rcCandidate.evm_tx_type_signal_pass)"
+    "- evm_tx_type_signal_report_json: $($rcCandidate.evm_tx_type_signal_report_json)"
+    "- overlap_router_signal_gate_enabled: $($rcCandidate.overlap_router_signal_gate_enabled)"
+    "- overlap_router_signal_pass: $($rcCandidate.overlap_router_signal_pass)"
+    "- overlap_router_signal_report_json: $($rcCandidate.overlap_router_signal_report_json)"
+    "- evm_backend_compare_gate_enabled: $($rcCandidate.evm_backend_compare_gate_enabled)"
+    "- evm_backend_compare_pass: $($rcCandidate.evm_backend_compare_pass)"
+    "- evm_backend_compare_evm_pass: $($rcCandidate.evm_backend_compare_evm_pass)"
+    "- evm_backend_compare_polygon_pass: $($rcCandidate.evm_backend_compare_polygon_pass)"
+    "- evm_backend_compare_bnb_pass: $($rcCandidate.evm_backend_compare_bnb_pass)"
+    "- evm_backend_compare_avalanche_pass: $($rcCandidate.evm_backend_compare_avalanche_pass)"
+    "- evm_backend_compare_evm_report_json: $($rcCandidate.evm_backend_compare_evm_report_json)"
+    "- evm_backend_compare_polygon_report_json: $($rcCandidate.evm_backend_compare_polygon_report_json)"
+    "- evm_backend_compare_bnb_report_json: $($rcCandidate.evm_backend_compare_bnb_report_json)"
+    "- evm_backend_compare_avalanche_report_json: $($rcCandidate.evm_backend_compare_avalanche_report_json)"
     "- rpc_exposure_pass: $($rcCandidate.rpc_exposure_pass)"
     "- adapter_stability_pass: $($rcCandidate.adapter_stability_pass)"
     "- snapshot_json: $($rcCandidate.snapshot_json)"
@@ -294,6 +353,30 @@ Write-Host "  governance_council_policy_pass: $($rcCandidate.governance_council_
 Write-Host "  governance_access_policy_pass: $($rcCandidate.governance_access_policy_pass)"
 Write-Host "  governance_token_economics_pass: $($rcCandidate.governance_token_economics_pass)"
 Write-Host "  governance_treasury_spend_pass: $($rcCandidate.governance_treasury_spend_pass)"
+Write-Host "  unified_account_gate_enabled: $($rcCandidate.unified_account_gate_enabled)"
+Write-Host "  unified_account_pass: $($rcCandidate.unified_account_pass)"
+Write-Host "  unified_account_block_merge_pass: $($rcCandidate.unified_account_block_merge_pass)"
+Write-Host "  unified_account_block_release_pass: $($rcCandidate.unified_account_block_release_pass)"
+Write-Host "  unified_account_summary_json: $($rcCandidate.unified_account_summary_json)"
+Write-Host "  evm_chain_profile_signal_gate_enabled: $($rcCandidate.evm_chain_profile_signal_gate_enabled)"
+Write-Host "  evm_chain_profile_signal_pass: $($rcCandidate.evm_chain_profile_signal_pass)"
+Write-Host "  evm_chain_profile_signal_report_json: $($rcCandidate.evm_chain_profile_signal_report_json)"
+Write-Host "  evm_tx_type_signal_gate_enabled: $($rcCandidate.evm_tx_type_signal_gate_enabled)"
+Write-Host "  evm_tx_type_signal_pass: $($rcCandidate.evm_tx_type_signal_pass)"
+Write-Host "  evm_tx_type_signal_report_json: $($rcCandidate.evm_tx_type_signal_report_json)"
+Write-Host "  overlap_router_signal_gate_enabled: $($rcCandidate.overlap_router_signal_gate_enabled)"
+Write-Host "  overlap_router_signal_pass: $($rcCandidate.overlap_router_signal_pass)"
+Write-Host "  overlap_router_signal_report_json: $($rcCandidate.overlap_router_signal_report_json)"
+Write-Host "  evm_backend_compare_gate_enabled: $($rcCandidate.evm_backend_compare_gate_enabled)"
+Write-Host "  evm_backend_compare_pass: $($rcCandidate.evm_backend_compare_pass)"
+Write-Host "  evm_backend_compare_evm_pass: $($rcCandidate.evm_backend_compare_evm_pass)"
+Write-Host "  evm_backend_compare_polygon_pass: $($rcCandidate.evm_backend_compare_polygon_pass)"
+Write-Host "  evm_backend_compare_bnb_pass: $($rcCandidate.evm_backend_compare_bnb_pass)"
+Write-Host "  evm_backend_compare_avalanche_pass: $($rcCandidate.evm_backend_compare_avalanche_pass)"
+Write-Host "  evm_backend_compare_evm_report_json: $($rcCandidate.evm_backend_compare_evm_report_json)"
+Write-Host "  evm_backend_compare_polygon_report_json: $($rcCandidate.evm_backend_compare_polygon_report_json)"
+Write-Host "  evm_backend_compare_bnb_report_json: $($rcCandidate.evm_backend_compare_bnb_report_json)"
+Write-Host "  evm_backend_compare_avalanche_report_json: $($rcCandidate.evm_backend_compare_avalanche_report_json)"
 Write-Host "  rpc_exposure_pass: $($rcCandidate.rpc_exposure_pass)"
 Write-Host "  adapter_stability_pass: $($rcCandidate.adapter_stability_pass)"
 Write-Host "  rc_json: $rcJson"

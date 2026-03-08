@@ -4,6 +4,8 @@ param(
     [double]$AllowedRegressionPct = -5.0,
     [ValidateRange(1, 9)]
     [int]$Runs = 3,
+    [ValidateRange(0, 30)]
+    [int]$PresetCooldownSec = 2,
     [ValidateSet("core", "persist", "wasm")]
     [string]$Variant = "core",
     [string]$BaselineJson = "",
@@ -71,6 +73,7 @@ $compareParams = @{
     BuildProfile = "release"
     LineProfile = "seal_single"
     WarmupCalls = 5
+    PresetCooldownSec = $PresetCooldownSec
     IncludeCapabilitySnapshot = $IncludeCapabilitySnapshot
     CapabilityVariant = $CapabilityVariant
 }
@@ -160,6 +163,7 @@ $summary = [ordered]@{
     baseline_json = $baselinePath
     allowed_regression_pct = $AllowedRegressionPct
     runs = $Runs
+    preset_cooldown_sec = $PresetCooldownSec
     variant = $Variant
     run_reports = $runReports
     compare = $rows
@@ -177,6 +181,7 @@ $md = @(
     "- gate_profile: $($summary.gate_profile)"
     "- baseline_json: $($summary.baseline_json)"
     "- runs: $($summary.runs)"
+    "- preset_cooldown_sec: $($summary.preset_cooldown_sec)"
     "- allowed_regression_pct: $($summary.allowed_regression_pct)"
     "- pass: $($summary.pass)"
     ""
@@ -194,6 +199,7 @@ $md -join "`n" | Set-Content -Path $summaryMd -Encoding UTF8
 Write-Host "performance gate summary:"
 Write-Host "  profile: release + seal_single"
 Write-Host "  baseline: $baselinePath"
+Write-Host "  preset_cooldown_sec: $PresetCooldownSec"
 Write-Host "  summary:  $summaryJson"
 foreach ($row in $rows) {
     Write-Host ("  {0}/{1}: baseline={2} p50={3} delta={4}% pass={5} samples=[{6}]" -f `

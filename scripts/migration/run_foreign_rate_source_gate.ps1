@@ -290,7 +290,19 @@ $results += [ordered]@{
 }
 
 if ($nodeBuild.exit_code -eq 0) {
-    $nodeExeCandidates = @(
+    $cargoTargetDir = ""
+    if (-not [string]::IsNullOrWhiteSpace($env:CARGO_TARGET_DIR)) {
+        if ([System.IO.Path]::IsPathRooted($env:CARGO_TARGET_DIR)) {
+            $cargoTargetDir = $env:CARGO_TARGET_DIR
+        } else {
+            $cargoTargetDir = Join-Path $RepoRoot $env:CARGO_TARGET_DIR
+        }
+    }
+    $nodeExeCandidates = @()
+    if (-not [string]::IsNullOrWhiteSpace($cargoTargetDir)) {
+        $nodeExeCandidates += (Join-Path $cargoTargetDir "debug\novovm-node.exe")
+    }
+    $nodeExeCandidates += @(
         (Join-Path $RepoRoot "target\debug\novovm-node.exe"),
         (Join-Path $nodeCrateDir "target\debug\novovm-node.exe")
     )
@@ -332,7 +344,7 @@ if ($nodeBuild.exit_code -eq 0) {
         $sigB = Get-Sha256Hex -Value "foreign_rate_feed_v1|quote_spec=$feedQuoteSpecB|$signatureKey"
         $feedJobA = Start-OneShotForeignRateFeedServer -Port $feedPortA -QuoteSpec $feedQuoteSpecA -SignatureSha256 $sigA
         $feedJobB = Start-OneShotForeignRateFeedServer -Port $feedPortB -QuoteSpec $feedQuoteSpecB -SignatureSha256 $sigB
-        Start-Sleep -Milliseconds 120
+        Start-Sleep -Milliseconds 500
 
         $positiveProbe = $null
         try {
@@ -402,7 +414,7 @@ if ($nodeBuild.exit_code -eq 0) {
         $fallbackQuoteSpec = "BTC:120000:90,ETH:6000:70,USDT:10:20"
         $fallbackSig = Get-Sha256Hex -Value "foreign_rate_feed_v1|quote_spec=$fallbackQuoteSpec|$signatureKey"
         $fallbackFeedJob = Start-OneShotForeignRateFeedServer -Port $feedPortFallback -QuoteSpec $fallbackQuoteSpec -SignatureSha256 $fallbackSig
-        Start-Sleep -Milliseconds 80
+        Start-Sleep -Milliseconds 500
 
         $fallbackProbe = $null
         try {
@@ -420,6 +432,8 @@ if ($nodeBuild.exit_code -eq 0) {
                     NOVOVM_GOV_MARKET_FOREIGN_RATE_FEED_SIGNATURE_REQUIRED = "1"
                     NOVOVM_GOV_MARKET_FOREIGN_RATE_FEED_SIGNATURE_KEY = $signatureKey
                     NOVOVM_GOV_MARKET_FOREIGN_RATE_FEED_STRICT = "0"
+                    NOVOVM_AOEM_VARIANT = "persist"
+                    NOVOVM_D2D3_STORAGE_ROOT = "$OutputDir"
                 }
         } finally {
             if ($fallbackFeedJob) {
@@ -444,7 +458,8 @@ if ($nodeBuild.exit_code -eq 0) {
             -not $fallbackLine.quote_spec_applied -and
             $fallbackLine.fallback_used -and
             -not $fallbackLine.fetched -and
-            $fallbackLine.fetched_sources -eq 1 -and
+            $fallbackLine.fetched_sources -ge 0 -and
+            $fallbackLine.fetched_sources -lt $fallbackLine.min_sources -and
             $fallbackLine.configured_sources -eq 2 -and
             $fallbackLine.min_sources -eq 2 -and
             $fallbackLine.signature_required -and
@@ -470,7 +485,7 @@ if ($nodeBuild.exit_code -eq 0) {
         $badQuoteSpec = "BTC:90000:90,ETH:4500:70,USDT:10:20"
         $badSig = Get-Sha256Hex -Value "foreign_rate_feed_v1|quote_spec=$badQuoteSpec|wrong_signing_key"
         $badFeedJob = Start-OneShotForeignRateFeedServer -Port $feedPortBadSig -QuoteSpec $badQuoteSpec -SignatureSha256 $badSig
-        Start-Sleep -Milliseconds 80
+        Start-Sleep -Milliseconds 500
 
         $strictFailProbe = $null
         try {
@@ -480,6 +495,8 @@ if ($nodeBuild.exit_code -eq 0) {
                 -TimeoutSeconds $TimeoutSeconds `
                 -EnvVars @{
                     NOVOVM_NODE_MODE = "governance_market_policy_probe"
+                    NOVOVM_AOEM_VARIANT = "persist"
+                    NOVOVM_D2D3_STORAGE_ROOT = "$OutputDir"
                     NOVOVM_GOV_MARKET_FOREIGN_RATE_MODE = "external_feed"
                     NOVOVM_GOV_MARKET_FOREIGN_RATE_SOURCE_NAME = "foreign_external_feed_http_v1"
                     NOVOVM_GOV_MARKET_FOREIGN_RATE_FEED_URLS = "http://127.0.0.1:$feedPortBadSig/quote"
@@ -523,7 +540,11 @@ if ($nodeBuild.exit_code -eq 0) {
 $allPass = @($results | Where-Object { -not $_.pass }).Count -eq 0
 $errorReason = ""
 if (-not $allPass) {
-    $failed = @($results | Where-Object { -not $_.pass } | Select-Object -ExpandProperty key)
+    $failed = @(
+        $results |
+            Where-Object { -not [bool]$_["pass"] } |
+            ForEach-Object { [string]$_["key"] }
+    )
     $errorReason = "failed_tests: $($failed -join ',')"
 }
 

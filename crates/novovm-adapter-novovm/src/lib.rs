@@ -2,11 +2,18 @@
 
 use anyhow::{bail, Result};
 use novovm_adapter_api::{
-    AccountState, BlockIR, ChainAdapter, ChainConfig, ChainType, SerializationFormat, StateIR,
-    TxIR, TxType,
+    AccountRole, AccountState, BlockIR, ChainAdapter, ChainConfig, ChainType, PersonaAddress,
+    PersonaType, ProtocolKind, RouteDecision, RouteRequest, SerializationFormat, StateIR, TxIR,
+    TxType, UnifiedAccountError, UnifiedAccountRouter,
 };
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
+use std::time::{SystemTime, UNIX_EPOCH};
+
+const ADAPTER_UCA_ID_PREFIX: &str = "uca:adapter:";
+const ADAPTER_UA_INGRESS_GUARD_ENV: &str = "NOVOVM_UNIFIED_ACCOUNT_ADAPTER_INGRESS_GUARD";
+const ADAPTER_UA_AUTOPROVISION_ENV: &str = "NOVOVM_UNIFIED_ACCOUNT_ADAPTER_AUTOPROVISION";
+const ADAPTER_UA_SIGNATURE_DOMAIN_ENV: &str = "NOVOVM_UNIFIED_ACCOUNT_ADAPTER_SIGNATURE_DOMAIN";
 
 #[derive(Debug)]
 pub struct NovoVmAdapter {
@@ -14,6 +21,7 @@ pub struct NovoVmAdapter {
     initialized: bool,
     state: StateIR,
     kv: HashMap<Vec<u8>, Vec<u8>>,
+    unified_account_router: UnifiedAccountRouter,
 }
 
 impl NovoVmAdapter {
@@ -24,7 +32,17 @@ impl NovoVmAdapter {
             initialized: false,
             state: StateIR::new(),
             kv: HashMap::new(),
+            unified_account_router: UnifiedAccountRouter::new(),
         }
+    }
+
+    #[must_use]
+    pub fn unified_account_router(&self) -> &UnifiedAccountRouter {
+        &self.unified_account_router
+    }
+
+    pub fn unified_account_router_mut(&mut self) -> &mut UnifiedAccountRouter {
+        &mut self.unified_account_router
     }
 
     fn ensure_initialized(&self) -> Result<()> {
@@ -48,6 +66,153 @@ impl NovoVmAdapter {
         key.extend_from_slice(address);
         key.extend_from_slice(&nonce.to_le_bytes());
         key
+    }
+
+    fn bool_env_default(name: &str, default: bool) -> bool {
+        match std::env::var(name) {
+            Ok(v) => {
+                let v = v.trim();
+                v == "1"
+                    || v.eq_ignore_ascii_case("true")
+                    || v.eq_ignore_ascii_case("on")
+                    || v.eq_ignore_ascii_case("yes")
+            }
+            Err(_) => default,
+        }
+    }
+
+    fn string_env_nonempty(name: &str) -> Option<String> {
+        std::env::var(name).ok().and_then(|raw| {
+            let trimmed = raw.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_string())
+            }
+        })
+    }
+
+    fn now_unix_sec() -> u64 {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0)
+    }
+
+    fn to_hex(bytes: &[u8]) -> String {
+        const HEX: &[u8; 16] = b"0123456789abcdef";
+        let mut out = String::with_capacity(bytes.len() * 2);
+        for b in bytes {
+            out.push(HEX[(b >> 4) as usize] as char);
+            out.push(HEX[(b & 0x0f) as usize] as char);
+        }
+        out
+    }
+
+    fn unified_account_guard_enabled(&self) -> bool {
+        Self::bool_env_default(ADAPTER_UA_INGRESS_GUARD_ENV, true)
+    }
+
+    fn unified_account_autoprovision_enabled(&self) -> bool {
+        Self::bool_env_default(ADAPTER_UA_AUTOPROVISION_ENV, true)
+    }
+
+    fn unified_account_signature_domain(&self, chain_id: u64) -> String {
+        Self::string_env_nonempty(ADAPTER_UA_SIGNATURE_DOMAIN_ENV)
+            .unwrap_or_else(|| format!("evm:{chain_id}"))
+    }
+
+    fn adapter_uca_id(&self, from: &[u8]) -> String {
+        format!("{ADAPTER_UCA_ID_PREFIX}{}", Self::to_hex(from))
+    }
+
+    fn adapter_persona(&self, tx: &TxIR) -> PersonaAddress {
+        PersonaAddress {
+            persona_type: PersonaType::Evm,
+            chain_id: tx.chain_id,
+            external_address: tx.from.clone(),
+        }
+    }
+
+    fn route_transaction_through_unified_account(&mut self, tx: &TxIR) -> Result<()> {
+        if !self.unified_account_guard_enabled() {
+            return Ok(());
+        }
+
+        let now = Self::now_unix_sec();
+        let uca_id = self.adapter_uca_id(&tx.from);
+        let persona = self.adapter_persona(tx);
+
+        if self.unified_account_autoprovision_enabled() {
+            match self
+                .unified_account_router
+                .create_uca(uca_id.clone(), tx.from.clone(), now)
+            {
+                Ok(()) | Err(UnifiedAccountError::UcaAlreadyExists { .. }) => {}
+                Err(err) => {
+                    bail!(
+                        "unified account adapter ingress create failed (uca_id={}): {}",
+                        uca_id,
+                        err
+                    );
+                }
+            }
+            match self.unified_account_router.add_binding(
+                &uca_id,
+                AccountRole::Owner,
+                persona.clone(),
+                now,
+            ) {
+                Ok(()) | Err(UnifiedAccountError::BindingAlreadyExists) => {}
+                Err(err) => {
+                    bail!(
+                        "unified account adapter ingress bind failed (uca_id={}, chain_id={}): {}",
+                        uca_id,
+                        persona.chain_id,
+                        err
+                    );
+                }
+            }
+        }
+
+        let route = self
+            .unified_account_router
+            .route(RouteRequest {
+                uca_id: uca_id.clone(),
+                persona: persona.clone(),
+                role: AccountRole::Owner,
+                protocol: ProtocolKind::Eth,
+                signature_domain: self.unified_account_signature_domain(tx.chain_id),
+                nonce: tx.nonce,
+                wants_cross_chain_atomic: matches!(
+                    tx.tx_type,
+                    TxType::CrossChainTransfer | TxType::CrossChainCall
+                ),
+                tx_type4: false,
+                session_expires_at: None,
+                now,
+            })
+            .map_err(|err| {
+                anyhow::anyhow!(
+                    "unified account adapter ingress route rejected (uca_id={}, chain_id={}, nonce={}): {}",
+                    uca_id,
+                    tx.chain_id,
+                    tx.nonce,
+                    err
+                )
+            })?;
+
+        if let RouteDecision::Adapter { chain_id } = route {
+            if chain_id != tx.chain_id {
+                bail!(
+                    "unified account adapter ingress chain mismatch: routed={} tx_chain={}",
+                    chain_id,
+                    tx.chain_id
+                );
+            }
+        }
+
+        Ok(())
     }
 
     fn apply_transfer(
@@ -171,6 +336,7 @@ impl ChainAdapter for NovoVmAdapter {
         if !self.verify_transaction(tx)? {
             bail!("transaction verification failed");
         }
+        self.route_transaction_through_unified_account(tx)?;
         Self::apply_transfer(tx, state, &mut self.kv)?;
         Self::apply_transfer(tx, &mut self.state, &mut self.kv)?;
         let root = Self::compute_state_root(state, &self.kv);
@@ -248,18 +414,41 @@ impl ChainAdapter for NovoVmAdapter {
 pub fn supports_native_chain(chain: ChainType) -> bool {
     matches!(
         chain,
-        ChainType::NovoVM | ChainType::EVM | ChainType::BNB | ChainType::Custom
+        ChainType::NovoVM
+            | ChainType::EVM
+            | ChainType::BNB
+            | ChainType::Polygon
+            | ChainType::Avalanche
+            | ChainType::Custom
     )
 }
 
 pub fn create_native_adapter(config: ChainConfig) -> Result<Box<dyn ChainAdapter>> {
     match config.chain_type {
-        ChainType::NovoVM | ChainType::EVM | ChainType::BNB | ChainType::Custom => {
-            Ok(Box::new(NovoVmAdapter::new(config)))
-        }
+        ChainType::NovoVM
+        | ChainType::EVM
+        | ChainType::BNB
+        | ChainType::Polygon
+        | ChainType::Avalanche
+        | ChainType::Custom => Ok(Box::new(NovoVmAdapter::new(config))),
         other => bail!(
-            "native adapter backend only supports novovm/evm/bnb/custom currently, got {}",
+            "native adapter backend only supports novovm/evm/bnb/polygon/avalanche/custom currently, got {}",
             other.as_str()
         ),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn supports_native_chain_includes_polygon_and_avalanche() {
+        assert!(supports_native_chain(ChainType::NovoVM));
+        assert!(supports_native_chain(ChainType::EVM));
+        assert!(supports_native_chain(ChainType::BNB));
+        assert!(supports_native_chain(ChainType::Polygon));
+        assert!(supports_native_chain(ChainType::Avalanche));
+        assert!(!supports_native_chain(ChainType::Solana));
     }
 }

@@ -66,6 +66,56 @@ if (-not $OutputDir) {
     $OutputDir = Join-Path $RepoRoot $OutputDir
 }
 $OutputDir = [System.IO.Path]::GetFullPath($OutputDir)
+$script:functionalNodePersistSeq = 0
+$script:functionalNodePersistBase = $null
+$script:functionalNodePersistSession = ([Guid]::NewGuid().ToString("N")).Substring(0, 8)
+
+function Get-OutputDirHash {
+    param([Parameter(Mandatory=$true)][string]$Value)
+
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $bytes = [System.Text.Encoding]::UTF8.GetBytes($Value)
+        $hash = $sha.ComputeHash($bytes)
+        return ([System.BitConverter]::ToString($hash) -replace "-", "").ToLowerInvariant()
+    } finally {
+        $sha.Dispose()
+    }
+}
+
+function Resolve-FunctionalNodePersistBase {
+    if ($script:functionalNodePersistBase) {
+        return $script:functionalNodePersistBase
+    }
+
+    $tmpRoot = [System.IO.Path]::GetTempPath()
+    $hash = Get-OutputDirHash -Value $OutputDir
+    $bucket = $hash.Substring(0, 12)
+    $base = Join-Path $tmpRoot ("novovm-d2d3-" + $bucket + "-" + $script:functionalNodePersistSession)
+    New-Item -ItemType Directory -Force -Path $base | Out-Null
+    $script:functionalNodePersistBase = [System.IO.Path]::GetFullPath($base)
+    return $script:functionalNodePersistBase
+}
+
+function Resolve-FunctionalNodePersistRoot {
+    param(
+        [string]$WorkDir,
+        [hashtable]$EnvVars
+    )
+
+    if ((Split-Path -Leaf $WorkDir) -ne "novovm-node") {
+        return $null
+    }
+    if ($null -ne $EnvVars -and $EnvVars.ContainsKey("NOVOVM_D2D3_STORAGE_ROOT")) {
+        return [string]$EnvVars["NOVOVM_D2D3_STORAGE_ROOT"]
+    }
+
+    $script:functionalNodePersistSeq += 1
+    $base = Resolve-FunctionalNodePersistBase
+    $root = Join-Path $base ("run-{0:D3}" -f $script:functionalNodePersistSeq)
+    New-Item -ItemType Directory -Force -Path $root | Out-Null
+    return $root
+}
 
 function Invoke-Cargo {
     param(
@@ -82,6 +132,10 @@ function Invoke-Cargo {
     $psi.RedirectStandardError = $true
     $psi.CreateNoWindow = $true
     $psi.Arguments = (($CargoArgs | ForEach-Object { '"' + ($_ -replace '"', '\"') + '"' }) -join " ")
+    $nodePersistRoot = Resolve-FunctionalNodePersistRoot -WorkDir $WorkDir -EnvVars $EnvVars
+    if ($nodePersistRoot) {
+        $psi.Environment["NOVOVM_D2D3_STORAGE_ROOT"] = [string]$nodePersistRoot
+    }
 
     foreach ($k in $EnvVars.Keys) {
         $psi.Environment[$k] = [string]$EnvVars[$k]
@@ -114,6 +168,10 @@ function Invoke-CargoAllowFailure {
     $psi.RedirectStandardError = $true
     $psi.CreateNoWindow = $true
     $psi.Arguments = (($CargoArgs | ForEach-Object { '"' + ($_ -replace '"', '\"') + '"' }) -join " ")
+    $nodePersistRoot = Resolve-FunctionalNodePersistRoot -WorkDir $WorkDir -EnvVars $EnvVars
+    if ($nodePersistRoot) {
+        $psi.Environment["NOVOVM_D2D3_STORAGE_ROOT"] = [string]$nodePersistRoot
+    }
 
     foreach ($k in $EnvVars.Keys) {
         $psi.Environment[$k] = [string]$EnvVars[$k]
@@ -1194,7 +1252,7 @@ New-Item -ItemType Directory -Force -Path $OutputDir | Out-Null
 
 $nodeFfiText = Invoke-Cargo -WorkDir $nodeDir -CargoArgs @("run") -EnvVars @{
     NOVOVM_EXEC_PATH = "ffi_v2"
-    NOVOVM_AOEM_VARIANT = "core"
+    NOVOVM_AOEM_VARIANT = "$CapabilityVariant"
     NOVOVM_DEMO_TXS = "$BatchADemoTxs"
     NOVOVM_BATCH_A_BATCHES = "$BatchABatchCount"
     NOVOVM_MEMPOOL_FEE_FLOOR = "$BatchAMempoolFeeFloor"
@@ -1209,7 +1267,7 @@ $nodeFfiText = Invoke-Cargo -WorkDir $nodeDir -CargoArgs @("run") -EnvVars @{
 }
 $nodeLegacyText = Invoke-Cargo -WorkDir $nodeDir -CargoArgs @("run") -EnvVars @{
     NOVOVM_EXEC_PATH = "legacy"
-    NOVOVM_AOEM_VARIANT = "core"
+    NOVOVM_AOEM_VARIANT = "$CapabilityVariant"
     NOVOVM_DEMO_TXS = "$BatchADemoTxs"
     NOVOVM_BATCH_A_BATCHES = "$BatchABatchCount"
     NOVOVM_MEMPOOL_FEE_FLOOR = "$BatchAMempoolFeeFloor"
@@ -1703,7 +1761,7 @@ if ($IncludeAdapterBackendCompare) {
         try {
             $compareNativeText = Invoke-Cargo -WorkDir $nodeDir -CargoArgs @("run") -EnvVars @{
                 NOVOVM_EXEC_PATH = "ffi_v2"
-                NOVOVM_AOEM_VARIANT = "core"
+                NOVOVM_AOEM_VARIANT = "$CapabilityVariant"
                 NOVOVM_DEMO_TXS = "$BatchADemoTxs"
                 NOVOVM_BATCH_A_BATCHES = "$BatchABatchCount"
                 NOVOVM_MEMPOOL_FEE_FLOOR = "$BatchAMempoolFeeFloor"
@@ -1718,7 +1776,7 @@ if ($IncludeAdapterBackendCompare) {
             }
             $comparePluginText = Invoke-Cargo -WorkDir $nodeDir -CargoArgs @("run") -EnvVars @{
                 NOVOVM_EXEC_PATH = "ffi_v2"
-                NOVOVM_AOEM_VARIANT = "core"
+                NOVOVM_AOEM_VARIANT = "$CapabilityVariant"
                 NOVOVM_DEMO_TXS = "$BatchADemoTxs"
                 NOVOVM_BATCH_A_BATCHES = "$BatchABatchCount"
                 NOVOVM_MEMPOOL_FEE_FLOOR = "$BatchAMempoolFeeFloor"
@@ -1868,7 +1926,7 @@ if ($IncludeAdapterPluginAbiNegative) {
 
         $commonNegativeEnv = @{
             NOVOVM_EXEC_PATH = "ffi_v2"
-            NOVOVM_AOEM_VARIANT = "core"
+            NOVOVM_AOEM_VARIANT = "$CapabilityVariant"
             NOVOVM_DEMO_TXS = "$BatchADemoTxs"
             NOVOVM_BATCH_A_BATCHES = "$BatchABatchCount"
             NOVOVM_MEMPOOL_FEE_FLOOR = "$BatchAMempoolFeeFloor"
@@ -1956,7 +2014,7 @@ if ($IncludeAdapterPluginSymbolNegative) {
     } else {
         $symbolNegativeEnv = @{
             NOVOVM_EXEC_PATH = "ffi_v2"
-            NOVOVM_AOEM_VARIANT = "core"
+            NOVOVM_AOEM_VARIANT = "$CapabilityVariant"
             NOVOVM_DEMO_TXS = "$BatchADemoTxs"
             NOVOVM_BATCH_A_BATCHES = "$BatchABatchCount"
             NOVOVM_MEMPOOL_FEE_FLOOR = "$BatchAMempoolFeeFloor"
@@ -2030,7 +2088,7 @@ if ($IncludeAdapterPluginRegistryNegative) {
 
         $commonRegistryNegativeEnv = @{
             NOVOVM_EXEC_PATH = "ffi_v2"
-            NOVOVM_AOEM_VARIANT = "core"
+            NOVOVM_AOEM_VARIANT = "$CapabilityVariant"
             NOVOVM_DEMO_TXS = "$BatchADemoTxs"
             NOVOVM_BATCH_A_BATCHES = "$BatchABatchCount"
             NOVOVM_MEMPOOL_FEE_FLOOR = "$BatchAMempoolFeeFloor"

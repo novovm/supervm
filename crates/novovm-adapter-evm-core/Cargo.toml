@@ -1,0 +1,10 @@
+[package]
+name = "novovm-adapter-evm-core"
+version = "0.1.0"
+edition = "2021"
+authors = ["SuperVM Core Team"]
+description = "Shared EVM semantics core for NOVOVM adapters/plugins."
+
+[dependencies]
+anyhow = "1"
+novovm-adapter-api = { path = "../novovm-adapter-api" }

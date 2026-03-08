@@ -3,6 +3,7 @@ use novovm_adapter_novovm::create_native_adapter;
 
 pub const NOVOVM_ADAPTER_PLUGIN_ABI_V1: u32 = 1;
 pub const NOVOVM_ADAPTER_PLUGIN_CAP_APPLY_IR_V1: u64 = 0x1;
+pub const NOVOVM_ADAPTER_PLUGIN_CAP_UA_SELF_GUARD_V1: u64 = 0x2;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default)]
@@ -31,7 +32,9 @@ fn chain_type_from_code(code: u32) -> Option<ChainType> {
     Some(match code {
         0 => ChainType::NovoVM,
         1 => ChainType::EVM,
+        5 => ChainType::Polygon,
         6 => ChainType::BNB,
+        7 => ChainType::Avalanche,
         13 => ChainType::Custom,
         _ => return None,
     })
@@ -87,7 +90,7 @@ pub extern "C" fn novovm_adapter_plugin_version() -> u32 {
 
 #[no_mangle]
 pub extern "C" fn novovm_adapter_plugin_capabilities() -> u64 {
-    NOVOVM_ADAPTER_PLUGIN_CAP_APPLY_IR_V1
+    NOVOVM_ADAPTER_PLUGIN_CAP_APPLY_IR_V1 | NOVOVM_ADAPTER_PLUGIN_CAP_UA_SELF_GUARD_V1
 }
 
 #[no_mangle]
@@ -174,8 +177,17 @@ mod tests {
     fn chain_code_mapping_supports_non_novovm_samples() {
         assert_eq!(chain_type_from_code(0), Some(ChainType::NovoVM));
         assert_eq!(chain_type_from_code(1), Some(ChainType::EVM));
+        assert_eq!(chain_type_from_code(5), Some(ChainType::Polygon));
         assert_eq!(chain_type_from_code(6), Some(ChainType::BNB));
+        assert_eq!(chain_type_from_code(7), Some(ChainType::Avalanche));
         assert_eq!(chain_type_from_code(13), Some(ChainType::Custom));
         assert_eq!(chain_type_from_code(999), None);
+    }
+
+    #[test]
+    fn plugin_capabilities_include_ua_self_guard_contract_bit() {
+        let caps = novovm_adapter_plugin_capabilities();
+        assert!(caps & NOVOVM_ADAPTER_PLUGIN_CAP_APPLY_IR_V1 != 0);
+        assert!(caps & NOVOVM_ADAPTER_PLUGIN_CAP_UA_SELF_GUARD_V1 != 0);
     }
 }

@@ -12,6 +12,8 @@ param(
     [double]$Rw = 0.5,
     [int]$Seed = 123,
     [int]$WarmupCalls = 5,
+    [ValidateRange(0, 30)]
+    [int]$PresetCooldownSec = 0,
     [ValidateSet("default", "seal_single", "seal_auto")]
     [string]$LineProfile = "default",
     [ValidateSet("debug", "release")]
@@ -274,7 +276,8 @@ $baselineJsonResolved = Resolve-BaselineJsonPath `
 $items = @()
 foreach ($variant in $variantList) {
     $dll = Get-DllPathForVariant -AoemRoot $aoemRoot -Variant $variant -RequireExists $true
-    foreach ($preset in $presets) {
+    for ($presetIndex = 0; $presetIndex -lt $presets.Count; $presetIndex++) {
+        $preset = $presets[$presetIndex]
         $submitOps = if ($preset -eq "cpu_parity") { "1" } else { "1024" }
         $cargoArgs = @("run")
         if ($BuildProfile -eq "release") {
@@ -294,7 +297,7 @@ foreach ($variant in $variantList) {
 
         switch ($LineProfile) {
             "seal_single" {
-                $cargoArgs += @("--threads", "1", "--engine-workers", "16")
+                $cargoArgs += @("--threads", "1", "--engine-workers", "4")
             }
             "seal_auto" {
                 $cargoArgs += @("--threads", "auto", "--engine-workers", "auto")
@@ -308,6 +311,10 @@ foreach ($variant in $variantList) {
         $parsed["preset"] = $preset
         $parsed["dll"] = $dll
         $items += [pscustomobject]$parsed
+
+        if ($PresetCooldownSec -gt 0 -and $presetIndex -lt ($presets.Count - 1)) {
+            Start-Sleep -Seconds $PresetCooldownSec
+        }
     }
 }
 
@@ -388,6 +395,7 @@ $result = [ordered]@{
         rw = $Rw
         seed = $Seed
         warmup_calls = $WarmupCalls
+        preset_cooldown_sec = $PresetCooldownSec
     }
     items = $items
     compare = $compareRows

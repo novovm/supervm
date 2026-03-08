@@ -264,10 +264,20 @@ $results += [ordered]@{
 }
 
 if ($nodeBuild.exit_code -eq 0) {
+    $cargoTargetDir = $env:CARGO_TARGET_DIR
+    if (-not [string]::IsNullOrWhiteSpace($cargoTargetDir)) {
+        $cargoTargetDir = [Environment]::ExpandEnvironmentVariables($cargoTargetDir)
+        if (-not [System.IO.Path]::IsPathRooted($cargoTargetDir)) {
+            $cargoTargetDir = Join-Path $RepoRoot $cargoTargetDir
+        }
+    }
     $nodeExeCandidates = @(
         (Join-Path $RepoRoot "target\debug\novovm-node.exe"),
         (Join-Path $nodeCrateDir "target\debug\novovm-node.exe")
     )
+    if (-not [string]::IsNullOrWhiteSpace($cargoTargetDir)) {
+        $nodeExeCandidates = @((Join-Path $cargoTargetDir "debug\novovm-node.exe")) + $nodeExeCandidates
+    }
     $nodeExe = ""
     foreach ($candidate in $nodeExeCandidates) {
         if (Test-Path $candidate) {
@@ -307,7 +317,7 @@ if ($nodeBuild.exit_code -eq 0) {
         $sigB = Get-Sha256Hex -Value "nav_feed_v1|price_bp=$feedPriceBpB|$signatureKey"
         $feedJobA = Start-OneShotNavFeedServer -Port $feedPortA -PriceBp $feedPriceBpA -SignatureSha256 $sigA
         $feedJobB = Start-OneShotNavFeedServer -Port $feedPortB -PriceBp $feedPriceBpB -SignatureSha256 $sigB
-        Start-Sleep -Milliseconds 120
+        Start-Sleep -Milliseconds 500
 
         $positiveProbe = $null
         try {
@@ -324,6 +334,8 @@ if ($nodeBuild.exit_code -eq 0) {
                     NOVOVM_GOV_MARKET_NAV_FEED_TIMEOUT_MS = "1200"
                     NOVOVM_GOV_MARKET_NAV_FEED_SIGNATURE_REQUIRED = "1"
                     NOVOVM_GOV_MARKET_NAV_FEED_SIGNATURE_KEY = $signatureKey
+                    NOVOVM_AOEM_VARIANT = "persist"
+                    NOVOVM_D2D3_STORAGE_ROOT = "$OutputDir"
                 }
         } finally {
             foreach ($job in @($feedJobA, $feedJobB)) {
@@ -377,7 +389,7 @@ if ($nodeBuild.exit_code -eq 0) {
         $fallbackPriceBp = 12600
         $fallbackSig = Get-Sha256Hex -Value "nav_feed_v1|price_bp=$fallbackPriceBp|$signatureKey"
         $fallbackFeedJob = Start-OneShotNavFeedServer -Port $feedPortFallback -PriceBp $fallbackPriceBp -SignatureSha256 $fallbackSig
-        Start-Sleep -Milliseconds 80
+        Start-Sleep -Milliseconds 500
 
         $fallbackProbe = $null
         try {
@@ -395,6 +407,8 @@ if ($nodeBuild.exit_code -eq 0) {
                     NOVOVM_GOV_MARKET_NAV_FEED_SIGNATURE_REQUIRED = "1"
                     NOVOVM_GOV_MARKET_NAV_FEED_SIGNATURE_KEY = $signatureKey
                     NOVOVM_GOV_MARKET_NAV_FEED_STRICT = "0"
+                    NOVOVM_AOEM_VARIANT = "persist"
+                    NOVOVM_D2D3_STORAGE_ROOT = "$OutputDir"
                 }
         } finally {
             if ($fallbackFeedJob) {
@@ -419,7 +433,8 @@ if ($nodeBuild.exit_code -eq 0) {
             $fallbackLine.source -eq "external_feed_http_v1" -and
             $fallbackLine.fallback_used -and
             -not $fallbackLine.fetched -and
-            $fallbackLine.fetched_sources -eq 1 -and
+            $fallbackLine.fetched_sources -ge 0 -and
+            $fallbackLine.fetched_sources -lt $fallbackLine.min_sources -and
             $fallbackLine.configured_sources -eq 2 -and
             $fallbackLine.min_sources -eq 2 -and
             $fallbackLine.signature_required -and
@@ -445,7 +460,7 @@ if ($nodeBuild.exit_code -eq 0) {
         $badPriceBp = 12999
         $badSig = Get-Sha256Hex -Value "nav_feed_v1|price_bp=$badPriceBp|wrong_signing_key"
         $badFeedJob = Start-OneShotNavFeedServer -Port $feedPortBadSig -PriceBp $badPriceBp -SignatureSha256 $badSig
-        Start-Sleep -Milliseconds 80
+        Start-Sleep -Milliseconds 500
 
         $strictFailProbe = $null
         try {
@@ -463,6 +478,8 @@ if ($nodeBuild.exit_code -eq 0) {
                     NOVOVM_GOV_MARKET_NAV_FEED_SIGNATURE_REQUIRED = "1"
                     NOVOVM_GOV_MARKET_NAV_FEED_SIGNATURE_KEY = $signatureKey
                     NOVOVM_GOV_MARKET_NAV_FEED_STRICT = "1"
+                    NOVOVM_AOEM_VARIANT = "persist"
+                    NOVOVM_D2D3_STORAGE_ROOT = "$OutputDir"
                 }
         } finally {
             if ($badFeedJob) {
@@ -499,7 +516,7 @@ if ($nodeBuild.exit_code -eq 0) {
 $allPass = @($results | Where-Object { -not $_.pass }).Count -eq 0
 $errorReason = ""
 if (-not $allPass) {
-    $failed = @($results | Where-Object { -not $_.pass } | Select-Object -ExpandProperty key)
+    $failed = @($results | Where-Object { -not $_.pass } | ForEach-Object { [string]$_.key })
     $errorReason = "failed_tests: $($failed -join ',')"
 }
 

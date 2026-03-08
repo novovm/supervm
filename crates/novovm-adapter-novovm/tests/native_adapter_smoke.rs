@@ -97,3 +97,27 @@ fn native_adapter_accepts_evm_chain_config() -> Result<()> {
     adapter.shutdown()?;
     Ok(())
 }
+
+#[test]
+fn native_adapter_unified_account_guard_rejects_replay_nonce() -> Result<()> {
+    let chain_id = default_chain_id(ChainType::NovoVM);
+    let mut adapter = create_native_adapter(ChainConfig::novovm(chain_id))?;
+    adapter.initialize()?;
+
+    let mut state = StateIR::new();
+    let first = sample_transfer(chain_id, 0, 5);
+    adapter.execute_transaction(&first, &mut state)?;
+
+    let replay = sample_transfer(chain_id, 0, 3);
+    let err = adapter
+        .execute_transaction(&replay, &mut state)
+        .expect_err("replay nonce should be rejected by unified account ingress guard");
+    assert!(
+        err.to_string().contains("nonce rejected"),
+        "unexpected replay error: {}",
+        err
+    );
+
+    adapter.shutdown()?;
+    Ok(())
+}

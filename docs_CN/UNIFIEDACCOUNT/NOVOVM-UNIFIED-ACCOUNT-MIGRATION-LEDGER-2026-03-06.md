@@ -64,7 +64,20 @@
 
 ---
 
-## 6. 更新规则
+## 6. 2026-03-07 落地进展快照
+
+| Item | Status | Evidence | Notes |
+|---|---|---|---|
+| UA-G01~UA-G16 自动化门禁 | Done | `artifacts/migration/release-candidate-novovm-rc-2026-03-07-ua-ga-next-rerun10/snapshot/acceptance-gate-full/unified-account-gate/unified-account-gate-summary.json` | `passed_cases=16/16` |
+| full_snapshot_ga_v1 严格口径 RC | ReadyForMerge | `artifacts/migration/release-candidate-novovm-rc-2026-03-07-ua-ga-next-rerun10/rc-candidate.json` | `overall_pass=true` |
+| full_snapshot_ga_v1 本机稳定口径 RC（-7%） | Done | `artifacts/migration/release-candidate-novovm-rc-2026-03-07-ua-ga-next-local-perf7/rc-candidate.json` | 用于本地持续开发联调 |
+| foreign/nav 外部源门禁 | Done | `foreign-rate-source-gate-summary.json` / `nav-valuation-source-gate-summary.json`（同上 acceptance 目录） | fallback 竞态与聚合脚本问题已修复 |
+| adapter stability | Done | `artifacts/migration/release-candidate-novovm-rc-2026-03-07-ua-ga-next-rerun10/snapshot/acceptance-gate-full/adapter-stability-gate/adapter-stability-summary.json` | 已加入已知抖动重试 |
+| D2/D3 持久化路径稳定性 | Done | `scripts/migration/run_functional_consistency.ps1` | 短路径 + per-run session，避免 Windows 路径过长与状态串扰 |
+| full_snapshot_v2 严格口径 RC（UA plugin self-guard + rocksdb 场景） | ReadyForMerge | `artifacts/migration/rc-ua-selfguard-rocksdb-20260308-000948/rc-candidate.json` | `overall_pass=true`，并覆盖四链 compare + UA gate + strict performance |
+| plugin-side standalone self-guard rocksdb 冒烟 | Done | `artifacts/migration/unifiedaccount/plugin-selfguard-standalone-smoke-20260308-001323/plugin-selfguard-standalone-smoke-summary.json` | `tests::plugin_apply_v2_self_guard_rejects_replay_nonce` 通过，store/audit rocksdb 均落盘 |
+
+## 7. 更新规则
 
 1. 每次完成 UA-Axx，必须同步更新 `Status/Owner/Dependency/Deliverable/Evidence`。
 2. 门禁证据统一落盘：`artifacts/migration/unifiedaccount/`。

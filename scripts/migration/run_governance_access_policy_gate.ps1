@@ -134,7 +134,19 @@ if (-not (Test-Path (Join-Path $nodeCrateDir "Cargo.toml"))) {
 }
 Invoke-Cargo -WorkDir $nodeCrateDir -CargoArgs @("build", "--quiet", "--bin", "novovm-node") | Out-Null
 
-$nodeExeCandidates = @(
+$cargoTargetDir = ""
+if (-not [string]::IsNullOrWhiteSpace($env:CARGO_TARGET_DIR)) {
+    if ([System.IO.Path]::IsPathRooted($env:CARGO_TARGET_DIR)) {
+        $cargoTargetDir = $env:CARGO_TARGET_DIR
+    } else {
+        $cargoTargetDir = Join-Path $RepoRoot $env:CARGO_TARGET_DIR
+    }
+}
+$nodeExeCandidates = @()
+if (-not [string]::IsNullOrWhiteSpace($cargoTargetDir)) {
+    $nodeExeCandidates += (Join-Path $cargoTargetDir "debug\novovm-node.exe")
+}
+$nodeExeCandidates += @(
     (Join-Path $RepoRoot "target\debug\novovm-node.exe"),
     (Join-Path $nodeCrateDir "target\debug\novovm-node.exe")
 )
@@ -161,6 +173,8 @@ $probe = Invoke-NodeProbe `
     -WorkDir $RepoRoot `
     -EnvVars @{
         NOVOVM_NODE_MODE = "governance_access_policy_probe"
+        NOVOVM_AOEM_VARIANT = "persist"
+        NOVOVM_D2D3_STORAGE_ROOT = "$OutputDir"
         NOVOVM_GOV_ACCESS_PROPOSER_COMMITTEE = "0,1"
         NOVOVM_GOV_ACCESS_PROPOSER_THRESHOLD = "$($expected.proposer_threshold)"
         NOVOVM_GOV_ACCESS_EXECUTOR_COMMITTEE = "1,2"

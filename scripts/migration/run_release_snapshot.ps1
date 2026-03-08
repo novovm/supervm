@@ -11,6 +11,7 @@ param(
     [string]$GovernanceRpcMldsaFfiBind = "127.0.0.1:8902",
     [ValidateRange(1, 64)]
     [int]$GovernanceRpcMldsaFfiExpectedRequests = 9,
+    [switch]$IncludeUnifiedAccountGate,
     [switch]$FullSnapshotProfileV2,
     [switch]$FullSnapshotProfileGA
 )
@@ -47,6 +48,7 @@ if ($FullSnapshotProfileGA) {
         -GovernanceRpcMldsaFfiAoemRoot $GovernanceRpcMldsaFfiAoemRoot `
         -GovernanceRpcMldsaFfiBind $GovernanceRpcMldsaFfiBind `
         -GovernanceRpcMldsaFfiExpectedRequests $GovernanceRpcMldsaFfiExpectedRequests `
+        -IncludeUnifiedAccountGate:$IncludeUnifiedAccountGate `
         -FullSnapshotProfileGA | Out-Null
 } elseif ($FullSnapshotProfileV2) {
     & $acceptanceScript `
@@ -59,6 +61,7 @@ if ($FullSnapshotProfileGA) {
         -GovernanceRpcMldsaFfiAoemRoot $GovernanceRpcMldsaFfiAoemRoot `
         -GovernanceRpcMldsaFfiBind $GovernanceRpcMldsaFfiBind `
         -GovernanceRpcMldsaFfiExpectedRequests $GovernanceRpcMldsaFfiExpectedRequests `
+        -IncludeUnifiedAccountGate:$IncludeUnifiedAccountGate `
         -FullSnapshotProfileV2 | Out-Null
 } else {
     & $acceptanceScript `
@@ -71,6 +74,7 @@ if ($FullSnapshotProfileGA) {
         -GovernanceRpcMldsaFfiAoemRoot $GovernanceRpcMldsaFfiAoemRoot `
         -GovernanceRpcMldsaFfiBind $GovernanceRpcMldsaFfiBind `
         -GovernanceRpcMldsaFfiExpectedRequests $GovernanceRpcMldsaFfiExpectedRequests `
+        -IncludeUnifiedAccountGate:$IncludeUnifiedAccountGate `
         -FullSnapshotProfile | Out-Null
 }
 
@@ -84,6 +88,7 @@ $performanceSummaryJson = [string]$acceptance.performance_report_json
 $functionalSummaryJson = [string]$acceptance.functional_report_json
 $governanceRpcSummaryJson = [string]$acceptance.governance_rpc_report_json
 $governanceRpcMldsaFfiSummaryJson = [string]$acceptance.governance_rpc_mldsa_ffi_report_json
+$unifiedAccountSummaryJson = [string]$acceptance.unified_account_report_json
 $rpcExposureSummaryJson = [string]$acceptance.rpc_exposure_report_json
 
 if (-not (Test-Path $performanceSummaryJson)) {
@@ -98,6 +103,9 @@ if (-not (Test-Path $governanceRpcSummaryJson)) {
 if ([bool]$acceptance.governance_rpc_mldsa_ffi_gate_enabled -and -not (Test-Path $governanceRpcMldsaFfiSummaryJson)) {
     throw "missing governance rpc mldsa ffi summary json: $governanceRpcMldsaFfiSummaryJson"
 }
+if ([bool]$acceptance.unified_account_gate_enabled -and -not (Test-Path $unifiedAccountSummaryJson)) {
+    throw "missing unified account summary json: $unifiedAccountSummaryJson"
+}
 if ([bool]$acceptance.rpc_exposure_gate_enabled -and -not (Test-Path $rpcExposureSummaryJson)) {
     throw "missing rpc exposure summary json: $rpcExposureSummaryJson"
 }
@@ -107,6 +115,11 @@ $functional = Get-Content -Path $functionalSummaryJson -Raw | ConvertFrom-Json
 $governanceRpc = Get-Content -Path $governanceRpcSummaryJson -Raw | ConvertFrom-Json
 $governanceRpcMldsaFfi = if ([bool]$acceptance.governance_rpc_mldsa_ffi_gate_enabled) {
     Get-Content -Path $governanceRpcMldsaFfiSummaryJson -Raw | ConvertFrom-Json
+} else {
+    $null
+}
+$unifiedAccount = if ([bool]$acceptance.unified_account_gate_enabled) {
+    Get-Content -Path $unifiedAccountSummaryJson -Raw | ConvertFrom-Json
 } else {
     $null
 }
@@ -147,10 +160,15 @@ $enabledGates = [ordered]@{
     nav_valuation_source = [bool]$acceptance.nav_valuation_source_gate_enabled
     dividend_balance_source = [bool]$acceptance.dividend_balance_source_gate_enabled
     governance_rpc_mldsa_ffi = [bool]$acceptance.governance_rpc_mldsa_ffi_gate_enabled
+    unified_account = [bool]$acceptance.unified_account_gate_enabled
     rpc_exposure = [bool]$acceptance.rpc_exposure_gate_enabled
     unjail_cooldown = [bool]$acceptance.unjail_cooldown_gate_enabled
     adapter_stability = [bool]$acceptance.adapter_stability_enabled
     vm_runtime_split = [bool]$acceptance.vm_runtime_split_gate_enabled
+    evm_chain_profile_signal = [bool]$acceptance.evm_chain_profile_signal_gate_enabled
+    evm_tx_type_signal = [bool]$acceptance.evm_tx_type_signal_gate_enabled
+    overlap_router_signal = [bool]$acceptance.overlap_router_signal_gate_enabled
+    evm_backend_compare = [bool]$acceptance.evm_backend_compare_gate_enabled
 }
 
 $governanceMldsaPass = if ([bool]$acceptance.governance_rpc_mldsa_ffi_gate_enabled) {
@@ -263,9 +281,21 @@ $keyResults = [ordered]@{
     foreign_rate_source_pass = if ([bool]$acceptance.foreign_rate_source_gate_enabled) { [bool]$acceptance.foreign_rate_source_pass } else { $true }
     nav_valuation_source_pass = if ([bool]$acceptance.nav_valuation_source_gate_enabled) { [bool]$acceptance.nav_valuation_source_pass } else { $true }
     dividend_balance_source_pass = if ([bool]$acceptance.dividend_balance_source_gate_enabled) { [bool]$acceptance.dividend_balance_source_pass } else { $true }
+    unified_account_gate_enabled = [bool]$acceptance.unified_account_gate_enabled
+    unified_account_pass = if ([bool]$acceptance.unified_account_gate_enabled) { [bool]$acceptance.unified_account_pass } else { $true }
+    unified_account_block_merge_pass = if ($unifiedAccount) { [bool]$unifiedAccount.block_merge_pass } else { $true }
+    unified_account_block_release_pass = if ($unifiedAccount) { [bool]$unifiedAccount.block_release_pass } else { $true }
     rpc_exposure_pass = if ([bool]$acceptance.rpc_exposure_gate_enabled) { [bool]$acceptance.rpc_exposure_pass } else { $true }
     rpc_exposure_default_safe_pass = if ($rpcExposure) { [bool]$rpcExposure.default_safe_pass } else { $true }
     rpc_exposure_controlled_open_pass = if ($rpcExposure) { [bool]$rpcExposure.controlled_open_pass } else { $true }
+    evm_chain_profile_signal_pass = if ([bool]$acceptance.evm_chain_profile_signal_gate_enabled) { [bool]$acceptance.evm_chain_profile_signal_pass } else { $true }
+    evm_tx_type_signal_pass = if ([bool]$acceptance.evm_tx_type_signal_gate_enabled) { [bool]$acceptance.evm_tx_type_signal_pass } else { $true }
+    overlap_router_signal_pass = if ([bool]$acceptance.overlap_router_signal_gate_enabled) { [bool]$acceptance.overlap_router_signal_pass } else { $true }
+    evm_backend_compare_pass = if ([bool]$acceptance.evm_backend_compare_gate_enabled) { [bool]$acceptance.evm_backend_compare_pass } else { $true }
+    evm_backend_compare_evm_pass = if ([bool]$acceptance.evm_backend_compare_gate_enabled) { [bool]$acceptance.evm_backend_compare_evm_pass } else { $true }
+    evm_backend_compare_polygon_pass = if ([bool]$acceptance.evm_backend_compare_gate_enabled) { [bool]$acceptance.evm_backend_compare_polygon_pass } else { $true }
+    evm_backend_compare_bnb_pass = if ([bool]$acceptance.evm_backend_compare_gate_enabled) { [bool]$acceptance.evm_backend_compare_bnb_pass } else { $true }
+    evm_backend_compare_avalanche_pass = if ([bool]$acceptance.evm_backend_compare_gate_enabled) { [bool]$acceptance.evm_backend_compare_avalanche_pass } else { $true }
 }
 
 $snapshot = [ordered]@{
@@ -293,7 +323,15 @@ $snapshot = [ordered]@{
         foreign_rate_source_summary_json = [string]$acceptance.foreign_rate_source_report_json
         nav_valuation_source_summary_json = [string]$acceptance.nav_valuation_source_report_json
         dividend_balance_source_summary_json = [string]$acceptance.dividend_balance_source_report_json
+        unified_account_summary_json = if ([bool]$acceptance.unified_account_gate_enabled) { $unifiedAccountSummaryJson } else { "" }
         rpc_exposure_summary_json = if ([bool]$acceptance.rpc_exposure_gate_enabled) { $rpcExposureSummaryJson } else { "" }
+        evm_chain_profile_signal_summary_json = [string]$acceptance.evm_chain_profile_signal_report_json
+        evm_tx_type_signal_summary_json = [string]$acceptance.evm_tx_type_signal_report_json
+        overlap_router_signal_summary_json = [string]$acceptance.overlap_router_signal_report_json
+        evm_backend_compare_evm_summary_json = [string]$acceptance.evm_backend_compare_evm_report_json
+        evm_backend_compare_polygon_summary_json = [string]$acceptance.evm_backend_compare_polygon_report_json
+        evm_backend_compare_bnb_summary_json = [string]$acceptance.evm_backend_compare_bnb_report_json
+        evm_backend_compare_avalanche_summary_json = [string]$acceptance.evm_backend_compare_avalanche_report_json
     }
 }
 
@@ -319,6 +357,14 @@ $md = @(
     "- dos_pass: $($snapshot.key_results.dos_pass)",
     "- consensus_pass: $($snapshot.key_results.consensus_pass)",
     "- governance_chain_audit_root_parity_pass: $($snapshot.key_results.governance_chain_audit_root_parity_pass)",
+    "- evm_chain_profile_signal_pass: $($snapshot.key_results.evm_chain_profile_signal_pass)",
+    "- evm_tx_type_signal_pass: $($snapshot.key_results.evm_tx_type_signal_pass)",
+    "- overlap_router_signal_pass: $($snapshot.key_results.overlap_router_signal_pass)",
+    "- evm_backend_compare_pass: $($snapshot.key_results.evm_backend_compare_pass)",
+    "- evm_backend_compare_evm_pass: $($snapshot.key_results.evm_backend_compare_evm_pass)",
+    "- evm_backend_compare_polygon_pass: $($snapshot.key_results.evm_backend_compare_polygon_pass)",
+    "- evm_backend_compare_bnb_pass: $($snapshot.key_results.evm_backend_compare_bnb_pass)",
+    "- evm_backend_compare_avalanche_pass: $($snapshot.key_results.evm_backend_compare_avalanche_pass)",
     "- tps_p50: $(($snapshot.key_results.tps_p50 | ConvertTo-Json -Compress))",
     "- acceptance_summary_json: $($snapshot.evidence.acceptance_summary_json)",
     "- functional_summary_json: $($snapshot.evidence.functional_summary_json)",
@@ -334,7 +380,15 @@ $md = @(
     "- foreign_rate_source_summary_json: $($snapshot.evidence.foreign_rate_source_summary_json)",
     "- nav_valuation_source_summary_json: $($snapshot.evidence.nav_valuation_source_summary_json)",
     "- dividend_balance_source_summary_json: $($snapshot.evidence.dividend_balance_source_summary_json)",
+    "- unified_account_summary_json: $($snapshot.evidence.unified_account_summary_json)",
     "- rpc_exposure_summary_json: $($snapshot.evidence.rpc_exposure_summary_json)",
+    "- evm_chain_profile_signal_summary_json: $($snapshot.evidence.evm_chain_profile_signal_summary_json)",
+    "- evm_tx_type_signal_summary_json: $($snapshot.evidence.evm_tx_type_signal_summary_json)",
+    "- overlap_router_signal_summary_json: $($snapshot.evidence.overlap_router_signal_summary_json)",
+    "- evm_backend_compare_evm_summary_json: $($snapshot.evidence.evm_backend_compare_evm_summary_json)",
+    "- evm_backend_compare_polygon_summary_json: $($snapshot.evidence.evm_backend_compare_polygon_summary_json)",
+    "- evm_backend_compare_bnb_summary_json: $($snapshot.evidence.evm_backend_compare_bnb_summary_json)",
+    "- evm_backend_compare_avalanche_summary_json: $($snapshot.evidence.evm_backend_compare_avalanche_summary_json)",
     "- snapshot_json: $snapshotJsonPath"
 )
 $md -join "`n" | Set-Content -Path $snapshotMdPath -Encoding UTF8

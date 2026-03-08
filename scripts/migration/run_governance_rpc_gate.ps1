@@ -279,6 +279,11 @@ function Start-RpcServerProcess {
     $psi.RedirectStandardError = $true
     $psi.CreateNoWindow = $true
     $psi.Environment["NOVOVM_NODE_MODE"] = "rpc_server"
+    $psi.Environment["NOVOVM_AOEM_VARIANT"] = "persist"
+    $storageRoot = Split-Path -Parent $DbPath
+    if (-not [string]::IsNullOrWhiteSpace($storageRoot)) {
+        $psi.Environment["NOVOVM_D2D3_STORAGE_ROOT"] = $storageRoot
+    }
     $psi.Environment["NOVOVM_CHAIN_QUERY_DB"] = $DbPath
     $psi.Environment["NOVOVM_GOVERNANCE_AUDIT_DB"] = $AuditDbPath
     $psi.Environment["NOVOVM_GOVERNANCE_CHAIN_AUDIT_DB"] = $ChainAuditDbPath
@@ -346,7 +351,19 @@ if (-not (Test-Path (Join-Path $nodeCrateDir "Cargo.toml"))) {
 }
 Invoke-Cargo -WorkDir $nodeCrateDir -CargoArgs @("build", "--quiet", "--bin", "novovm-node") | Out-Null
 
-$nodeExeCandidates = @(
+$cargoTargetDir = ""
+if (-not [string]::IsNullOrWhiteSpace($env:CARGO_TARGET_DIR)) {
+    if ([System.IO.Path]::IsPathRooted($env:CARGO_TARGET_DIR)) {
+        $cargoTargetDir = $env:CARGO_TARGET_DIR
+    } else {
+        $cargoTargetDir = Join-Path $RepoRoot $env:CARGO_TARGET_DIR
+    }
+}
+$nodeExeCandidates = @()
+if (-not [string]::IsNullOrWhiteSpace($cargoTargetDir)) {
+    $nodeExeCandidates += (Join-Path $cargoTargetDir "debug\novovm-node.exe")
+}
+$nodeExeCandidates += @(
     (Join-Path $RepoRoot "target\debug\novovm-node.exe"),
     (Join-Path $nodeCrateDir "target\debug\novovm-node.exe")
 )

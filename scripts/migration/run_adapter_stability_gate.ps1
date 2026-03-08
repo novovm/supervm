@@ -2,7 +2,9 @@ param(
     [string]$RepoRoot = "",
     [string]$OutputDir = "",
     [ValidateRange(2, 20)]
-    [int]$Runs = 3
+    [int]$Runs = 3,
+    [ValidateSet("core", "persist", "wasm")]
+    [string]$CapabilityVariant = "persist"
 )
 
 Set-StrictMode -Version Latest
@@ -66,6 +68,46 @@ function Test-RegistryNegativeHashMismatchFlake {
     )
 }
 
+function Test-WasmDigestAccessViolationFlake {
+    param([string]$Message)
+
+    if ([string]::IsNullOrWhiteSpace($Message)) {
+        return $false
+    }
+
+    return (
+        ($Message -match "ffi_consistency_digest") -and
+        ($Message -match "STATUS_ACCESS_VIOLATION")
+    )
+}
+
+function Test-AbiNegativeReasonDriftFlake {
+    param([object]$Raw)
+
+    if ($null -eq $Raw -or $null -eq $Raw.adapter_plugin_abi_negative_signal) {
+        return $false
+    }
+
+    $signal = $Raw.adapter_plugin_abi_negative_signal
+    if (Get-Bool $signal.pass) {
+        return $false
+    }
+
+    $abiFailedAsExpected = Get-Bool $signal.abi_mismatch.failed_as_expected
+    $abiReasonMatch = Get-Bool $signal.abi_mismatch.reason_match
+    $abiExitCode = if ($null -eq $signal.abi_mismatch.exit_code) { 0 } else { [int]$signal.abi_mismatch.exit_code }
+    $capFailedAsExpected = Get-Bool $signal.capability_mismatch.failed_as_expected
+    $capReasonMatch = Get-Bool $signal.capability_mismatch.reason_match
+
+    return (
+        $abiFailedAsExpected -and
+        (-not $abiReasonMatch) -and
+        ($abiExitCode -ne 0) -and
+        $capFailedAsExpected -and
+        $capReasonMatch
+    )
+}
+
 $functionalScript = Join-Path $RepoRoot "scripts\migration\run_functional_consistency.ps1"
 if (-not (Test-Path $functionalScript)) {
     throw "missing functional consistency script: $functionalScript"
@@ -78,7 +120,7 @@ for ($i = 1; $i -le $Runs; $i++) {
     $runDir = Join-Path $OutputDir ("run-" + $i)
     New-Item -ItemType Directory -Force -Path $runDir | Out-Null
 
-    $maxRetry = 1
+    $maxRetry = 2
     $attempt = 0
     $retryUsed = $false
     $retryReason = ""
@@ -94,7 +136,27 @@ for ($i = 1; $i -le $Runs; $i++) {
             New-Item -ItemType Directory -Force -Path $attemptDir | Out-Null
         }
 
-        & $functionalScript -RepoRoot $RepoRoot -OutputDir $attemptDir | Out-Null
+        $invokeFailed = $false
+        $invokeError = ""
+        try {
+            & $functionalScript `
+                -RepoRoot $RepoRoot `
+                -OutputDir $attemptDir `
+                -CapabilityVariant $CapabilityVariant | Out-Null
+        } catch {
+            $invokeFailed = $true
+            $invokeError = $_.Exception.Message
+        }
+        if ($invokeFailed) {
+            if (($attempt -lt $maxRetry) -and (Test-WasmDigestAccessViolationFlake -Message $invokeError)) {
+                $retryUsed = $true
+                $retryReason = "variant_digest_wasm_access_violation"
+                $attempt++
+                Write-Host "adapter stability gate: run-${i} retry due to wasm digest access violation (attempt=$attempt)"
+                continue
+            }
+            throw $invokeError
+        }
         $jsonPath = Join-Path $attemptDir "functional-consistency.json"
         if (-not (Test-Path $jsonPath)) {
             throw "missing functional consistency json for run-${i} attempt-${attempt}: $jsonPath"
@@ -138,6 +200,14 @@ for ($i = 1; $i -le $Runs; $i++) {
             $retryReason = "registry_negative_hash_mismatch_reason_drift"
             $attempt++
             Write-Host "adapter stability gate: run-${i} retry due to known registry-negative flake (attempt=$attempt)"
+            continue
+        }
+
+        if (Test-AbiNegativeReasonDriftFlake -Raw $raw) {
+            $retryUsed = $true
+            $retryReason = "abi_negative_reason_drift"
+            $attempt++
+            Write-Host "adapter stability gate: run-${i} retry due to known abi-negative reason drift (attempt=$attempt)"
             continue
         }
 

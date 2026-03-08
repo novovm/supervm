@@ -99,3 +99,131 @@ powershell -ExecutionPolicy Bypass -File scripts/migration/run_release_candidate
 说明：
 - 该模式会把 `governance_rpc_mldsa_ffi_gate_enabled/pass/startup_pass` 写入 `snapshot.key_results` 与 `rc-candidate.json`。
 - 若不启用该参数，`full_snapshot_*` 默认语义保持不变（ML-DSA 仍属于可选执行能力，不强制进入默认发布面）。
+
+## 10. 可选：统一账户（UA-Gx）纳入快照/RC
+
+当需要把统一账户 gate（UA-G01~UA-G16）结果写入 `release-snapshot/rc-candidate` 时，使用以下参数：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/migration/run_release_candidate.ps1 `
+  -RepoRoot . `
+  -RcRef novovm-rc-2026-03-07-ua-gate `
+  -FullSnapshotProfileGA `
+  -IncludeUnifiedAccountGate
+```
+
+说明：
+- 该模式会把 `unified_account_gate_enabled/pass` 写入 `acceptance-gate-summary.json`。
+- `release-snapshot.json` 会额外包含：
+  - `enabled_gates.unified_account`
+  - `key_results.unified_account_pass`
+  - `key_results.unified_account_block_merge_pass`
+  - `key_results.unified_account_block_release_pass`
+  - `evidence.unified_account_summary_json`
+- `rc-candidate.json` 会同步包含：
+  - `unified_account_gate_enabled`
+  - `unified_account_pass`
+  - `unified_account_block_merge_pass`
+  - `unified_account_block_release_pass`
+  - `unified_account_summary_json`
+
+## 11. EVM Overlap Router（A15）信号接线
+
+- `run_migration_acceptance_gate.ps1` 已增加 `overlap_router_signal`（默认开启），并写入：
+  - `overlap_router_signal_gate_enabled`
+  - `overlap_router_signal_pass`
+  - `overlap_router_signal_report_json`
+- `release-snapshot.json` 已同步增加：
+  - `enabled_gates.overlap_router_signal`
+  - `key_results.overlap_router_signal_pass`
+  - `evidence.overlap_router_signal_summary_json`
+- `rc-candidate.json` 已同步增加：
+  - `overlap_router_signal_gate_enabled`
+  - `overlap_router_signal_pass`
+  - `overlap_router_signal_report_json`
+
+## 12. EVM Chain Profile（A09）信号接线
+
+- `run_migration_acceptance_gate.ps1` 已增加 `evm_chain_profile_signal`（默认开启），并写入：
+  - `evm_chain_profile_signal_gate_enabled`
+  - `evm_chain_profile_signal_pass`
+  - `evm_chain_profile_signal_report_json`
+- `release-snapshot.json` 已同步增加：
+  - `enabled_gates.evm_chain_profile_signal`
+  - `key_results.evm_chain_profile_signal_pass`
+  - `evidence.evm_chain_profile_signal_summary_json`
+- `rc-candidate.json` 已同步增加：
+  - `evm_chain_profile_signal_gate_enabled`
+  - `evm_chain_profile_signal_pass`
+  - `evm_chain_profile_signal_report_json`
+
+## 13. EVM 四链 + 严格性能口径 RC 指针（2026-03-07）
+
+- `rc_ref`: `rc-evm-next-step-4chain-strict-v2-20260307`
+- `commit_hash`: `85486236ab14d6939fa06f9e165863fd704da20c`
+- `snapshot_profile`: `full_snapshot_v2`
+- `status`: `ReadyForMerge/SnapshotGreen`
+- 四链 compare：
+  - `evm_backend_compare_evm_pass=true`
+  - `evm_backend_compare_polygon_pass=true`
+  - `evm_backend_compare_bnb_pass=true`
+  - `evm_backend_compare_avalanche_pass=true`
+- 严格性能口径（`AllowedRegressionPct=-5`）：
+  - `cpu_batch_stress delta=+2.17% pass=true`
+  - `cpu_parity delta=-4.49% pass=true`
+  - `preset_cooldown_sec=2`
+- 产物入口：
+  - `artifacts/migration/release-candidate-next-step-4chain-strict-v2/rc-candidate.json`
+  - `artifacts/migration/release-candidate-next-step-4chain-strict-v2/snapshot/release-snapshot.json`
+  - `artifacts/migration/release-candidate-next-step-4chain-strict-v2/snapshot/acceptance-gate-full/acceptance-gate-summary.json`
+  - `artifacts/migration/release-candidate-next-step-4chain-strict-v2/snapshot/acceptance-gate-full/performance-gate/performance-gate-summary.json`
+
+## 14. 严格口径复现命令（推荐）
+
+先单跑严格性能门禁：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/migration/run_performance_gate_seal_single.ps1 `
+  -RepoRoot . `
+  -OutputDir artifacts/migration/perf-gate-strict-manual `
+  -AllowedRegressionPct -5 `
+  -Runs 3
+```
+
+再跑严格 RC（默认 `AllowedRegressionPct=-5`）：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/migration/run_release_candidate.ps1 `
+  -RepoRoot . `
+  -RcRef rc-evm-next-step-4chain-strict-v2-20260307 `
+  -OutputDir artifacts/migration/release-candidate-next-step-4chain-strict-v2 `
+  -FullSnapshotProfileV2
+```
+
+说明：
+- `run_performance_compare.ps1` 在 `seal_single` 下已固定 `threads=1, engine-workers=4`。
+- preset 间默认冷却 `2s`（`PresetCooldownSec`），用于降低连续采样热耦合。
+
+## 15. EVM+UA（plugin self-guard + rocksdb）严格 RC 指针（2026-03-08）
+
+- `rc_ref`: `rc-evm-ua-selfguard-rocksdb-20260308-000948`
+- `commit_hash`: `85486236ab14d6939fa06f9e165863fd704da20c`
+- `snapshot_profile`: `full_snapshot_v2`
+- `status`: `ReadyForMerge/SnapshotGreen`
+- 关键结果：
+  - `snapshot_overall_pass=true`
+  - `unified_account_pass=true`
+  - `evm_tx_type_signal_pass=true`
+  - `evm_backend_compare_{evm,polygon,bnb,avalanche}_pass=true`
+  - strict performance（`AllowedRegressionPct=-5`）：
+    - `cpu_batch_stress delta=-0.68% pass=true`
+    - `cpu_parity delta=-2.24% pass=true`
+- 产物入口：
+  - `artifacts/migration/rc-ua-selfguard-rocksdb-20260308-000948/rc-candidate.json`
+  - `artifacts/migration/rc-ua-selfguard-rocksdb-20260308-000948/snapshot/acceptance-gate-full/acceptance-gate-summary.json`
+  - `artifacts/migration/rc-ua-selfguard-rocksdb-20260308-000948/snapshot/acceptance-gate-full/performance-gate/performance-gate-summary.json`
+- plugin-side standalone 证据：
+  - `artifacts/migration/unifiedaccount/plugin-selfguard-standalone-smoke-20260308-001323/plugin-selfguard-standalone-smoke-summary.json`
+
+补充：
+- `run_evm_backend_compare_signal.ps1` 已增加 Windows 短路径状态目录策略（默认 `artifacts/migration/evm/backend-compare-state`），并支持 `NOVOVM_EVM_BACKEND_COMPARE_STATE_ROOT` 覆盖，避免 rocksdb 在深路径下创建 `OPTIONS-*.dbtmp` 失败。

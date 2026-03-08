@@ -5,7 +5,12 @@
 use anyhow::{bail, Context, Result};
 use ed25519_dalek::SigningKey;
 use novovm_adapter_api::{
-    default_chain_id, ChainConfig, ChainType, SerializationFormat, StateIR, TxIR, TxType,
+    default_chain_id, AccountAuditEvent, AccountPolicy, AccountRole, ChainConfig, ChainType,
+    NonceScope, PersonaAddress, PersonaType, ProtocolKind, RouteDecision, RouteRequest,
+    SerializationFormat, StateIR, TxIR, TxType, UnifiedAccountError, UnifiedAccountRouter,
+};
+use novovm_adapter_evm_core::{
+    translate_raw_evm_tx_fields_m0, tx_ir_from_raw_fields_m0, EvmRawTxFieldsM0,
 };
 use novovm_adapter_novovm::{create_native_adapter, supports_native_chain};
 use novovm_consensus::{
@@ -17,7 +22,7 @@ use novovm_consensus::{
     NavGovernanceParams, NetworkDosPolicy, NodeId as ConsensusNodeId, ReserveGovernanceParams,
     SlashMode, SlashPolicy, TokenEconomicsPolicy, ValidatorSet, Web30MarketEngineSnapshot,
 };
-use novovm_exec::{AoemRuntimeConfig, ExecOpV2};
+use novovm_exec::{AoemExecFacade, AoemRuntimeConfig, AoemRuntimeVariant, ExecOpV2};
 use novovm_network::{InMemoryTransport, Transport, UdpTransport};
 use novovm_protocol::{
     decode_block_header_wire_v1, decode_local_tx_wire_v1 as decode_tx_wire_v1,
@@ -33,13 +38,14 @@ use novovm_protocol::{
     LOCAL_TX_WIRE_V1_CODEC,
 };
 use rand::rngs::OsRng;
+use rocksdb::{Options as RocksDbOptions, WriteBatch as RocksDbWriteBatch, DB as RocksDb};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
-use std::fs;
-use std::io::{Read, Write};
+use std::fs::{self, OpenOptions};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{IpAddr, SocketAddr, TcpStream, ToSocketAddrs};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
@@ -528,6 +534,70 @@ struct AdapterSignalSummary {
     consensus_adapter_hash: [u8; 32],
 }
 
+#[derive(Debug, Clone, Copy, Default)]
+struct UnifiedAccountExecGuardSummary {
+    checked: usize,
+    routed: usize,
+    created_ucas: usize,
+    added_bindings: usize,
+    decision_fast_path: usize,
+    decision_adapter: usize,
+}
+
+#[derive(Debug)]
+struct UnifiedAccountStoreSnapshot {
+    router: UnifiedAccountRouter,
+    flushed_event_count: u64,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct UnifiedAccountStoreEnvelopeV1 {
+    version: u32,
+    router: UnifiedAccountRouter,
+    flushed_event_count: u64,
+}
+
+#[derive(Debug, Clone)]
+enum UnifiedAccountStoreBackend {
+    BincodeFile { path: PathBuf },
+    RocksDb { path: PathBuf },
+}
+
+#[derive(Debug)]
+struct UnifiedAccountRuntime {
+    store: UnifiedAccountStoreBackend,
+    snapshot: UnifiedAccountStoreSnapshot,
+    audit_sink: UnifiedAccountAuditSinkBackend,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct UnifiedAccountAuditSinkRecord {
+    at: u64,
+    source: String,
+    method: String,
+    success: bool,
+    router_changed: bool,
+    event_cursor_from: u64,
+    event_cursor_to: u64,
+    router_events: Vec<AccountAuditEvent>,
+    params: serde_json::Value,
+    error: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+enum UnifiedAccountAuditSinkBackend {
+    JsonlFile { path: PathBuf },
+    RocksDb { path: PathBuf },
+}
+
+#[derive(Debug, Clone)]
+struct D1PersistenceBinding {
+    enforce: bool,
+    variant: AoemRuntimeVariant,
+    rocksdb_persistence: bool,
+    persistence_root: PathBuf,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum AdapterBackendMode {
     Auto,
@@ -546,6 +616,12 @@ struct PluginApplyResultV1 {
     error_code: i32,
 }
 
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default)]
+struct PluginApplyOptionsV1 {
+    flags: u64,
+}
+
 type PluginVersionFn = unsafe extern "C" fn() -> u32;
 type PluginCapabilitiesFn = unsafe extern "C" fn() -> u64;
 type PluginApplyFn = unsafe extern "C" fn(
@@ -555,9 +631,20 @@ type PluginApplyFn = unsafe extern "C" fn(
     tx_ir_len: usize,
     out_result: *mut PluginApplyResultV1,
 ) -> i32;
+type PluginApplyV2Fn = unsafe extern "C" fn(
+    chain_type_code: u32,
+    chain_id: u64,
+    tx_ir_ptr: *const u8,
+    tx_ir_len: usize,
+    options_ptr: *const PluginApplyOptionsV1,
+    out_result: *mut PluginApplyResultV1,
+) -> i32;
 
 const ADAPTER_PLUGIN_EXPECTED_ABI_DEFAULT: u32 = 1;
-const ADAPTER_PLUGIN_REQUIRED_CAPS_DEFAULT: u64 = 0x1;
+const ADAPTER_PLUGIN_CAP_APPLY_IR_V1: u64 = 0x1;
+const ADAPTER_PLUGIN_CAP_UA_SELF_GUARD_V1: u64 = 0x2;
+const ADAPTER_PLUGIN_APPLY_FLAG_UA_SELF_GUARD_V1: u64 = 0x1;
+const ADAPTER_PLUGIN_REQUIRED_CAPS_DEFAULT: u64 = ADAPTER_PLUGIN_CAP_APPLY_IR_V1;
 const ADAPTER_PLUGIN_REGISTRY_PATH_DEFAULT: &str =
     "..\\..\\config\\novovm-adapter-plugin-registry.json";
 const ADAPTER_PLUGIN_REGISTRY_PATH_ALT: &str = "config\\novovm-adapter-plugin-registry.json";
@@ -888,6 +975,7 @@ impl InMemoryBlockStore {
 }
 
 static BLOCK_STORE: OnceLock<Mutex<InMemoryBlockStore>> = OnceLock::new();
+static D1_PERSISTENCE_BINDING: OnceLock<Result<D1PersistenceBinding, String>> = OnceLock::new();
 
 fn global_block_store() -> &'static Mutex<InMemoryBlockStore> {
     BLOCK_STORE.get_or_init(|| Mutex::new(InMemoryBlockStore::default()))
@@ -901,6 +989,29 @@ struct ExecBatchBuffer {
 
 const LOCAL_TX_SIG_DOMAIN: &[u8] = b"novovm_local_tx_v1";
 const LOCAL_TX_HASH_DOMAIN: &[u8] = b"novovm_local_tx_hash_v1";
+const LOCAL_TX_UCA_PRIMARY_KEY_DOMAIN: &[u8] = b"novovm_local_uca_primary_key_ref_v1";
+const LOCAL_TX_UCA_ID_PREFIX: &str = "uca:local:";
+const UNIFIED_ACCOUNT_STORE_ENVELOPE_VERSION: u32 = 1;
+const UNIFIED_ACCOUNT_STORE_BACKEND_FILE: &str = "bincode_file";
+const UNIFIED_ACCOUNT_STORE_BACKEND_ROCKSDB: &str = "rocksdb";
+const UNIFIED_ACCOUNT_STORE_ROCKSDB_CF_STATE: &str = "ua_store_state_v2";
+const UNIFIED_ACCOUNT_STORE_ROCKSDB_CF_AUDIT: &str = "ua_store_audit_v2";
+const UNIFIED_ACCOUNT_STORE_ROCKSDB_KEY_SNAPSHOT: &[u8] = b"unified_account:snapshot:v1";
+const UNIFIED_ACCOUNT_STORE_ROCKSDB_KEY_STATE_ROUTER: &[u8] = b"ua_store:state:router:v2";
+const UNIFIED_ACCOUNT_STORE_ROCKSDB_KEY_AUDIT_CURSOR: &[u8] =
+    b"ua_store:audit:flushed_event_count:v1";
+const UNIFIED_ACCOUNT_AUDIT_BACKEND_JSONL: &str = "jsonl";
+const UNIFIED_ACCOUNT_AUDIT_BACKEND_ROCKSDB: &str = "rocksdb";
+const UNIFIED_ACCOUNT_AUDIT_LOG_NAME: &str = "ua-account-audit-events.jsonl";
+const UNIFIED_ACCOUNT_AUDIT_DB_NAME: &str = "ua-account-audit-events.rocksdb";
+const UNIFIED_ACCOUNT_AUDIT_ROCKSDB_KEY_SEQ: &[u8] = b"ua_audit:seq";
+const UNIFIED_ACCOUNT_AUDIT_ROCKSDB_KEY_EVENT_PREFIX: &[u8] = b"ua_audit:event:";
+const UNIFIED_ACCOUNT_PLUGIN_INGRESS_GUARD_ENV: &str =
+    "NOVOVM_UNIFIED_ACCOUNT_PLUGIN_INGRESS_GUARD";
+const UNIFIED_ACCOUNT_PLUGIN_PREFER_SELF_GUARD_ENV: &str =
+    "NOVOVM_UNIFIED_ACCOUNT_PLUGIN_PREFER_SELF_GUARD";
+const EVM_OVERLAP_ROUTER_P1_COMPARE_READY_ENV: &str = "NOVOVM_EVM_OVERLAP_P1_COMPARE_READY";
+const EVM_OVERLAP_ROUTER_P2_FORCE_PLUGIN_ENV: &str = "NOVOVM_EVM_OVERLAP_P2_FORCE_PLUGIN";
 
 fn compute_local_tx_signature_parts(
     account: u64,
@@ -1409,7 +1520,9 @@ fn chain_type_to_plugin_code(chain: ChainType) -> Option<u32> {
     match chain {
         ChainType::NovoVM => Some(0),
         ChainType::EVM => Some(1),
+        ChainType::Polygon => Some(5),
         ChainType::BNB => Some(6),
+        ChainType::Avalanche => Some(7),
         ChainType::Custom => Some(13),
         _ => None,
     }
@@ -1511,6 +1624,7 @@ fn run_plugin_adapter_signal(
     plugin_path: &Path,
     expected_abi: u32,
     required_caps: u64,
+    prefer_plugin_self_guard: bool,
     registry: AdapterPluginRegistrySummary,
 ) -> Result<AdapterSignalSummary> {
     let chain_code = chain_type_to_plugin_code(chain).ok_or_else(|| {
@@ -1550,13 +1664,30 @@ fn run_plugin_adapter_signal(
         }
 
         let mut out = PluginApplyResultV1::default();
-        let rc = apply_fn(
-            chain_code,
-            chain_id,
-            tx_bytes.as_ptr(),
-            tx_bytes.len(),
-            &mut out as *mut PluginApplyResultV1,
-        );
+        let rc = if prefer_plugin_self_guard {
+            let apply_v2_fn: libloading::Symbol<PluginApplyV2Fn> = lib
+                .get(b"novovm_adapter_plugin_apply_v2\0")
+                .context("resolve novovm_adapter_plugin_apply_v2 failed in self-guard mode")?;
+            let options = PluginApplyOptionsV1 {
+                flags: ADAPTER_PLUGIN_APPLY_FLAG_UA_SELF_GUARD_V1,
+            };
+            apply_v2_fn(
+                chain_code,
+                chain_id,
+                tx_bytes.as_ptr(),
+                tx_bytes.len(),
+                &options as *const PluginApplyOptionsV1,
+                &mut out as *mut PluginApplyResultV1,
+            )
+        } else {
+            apply_fn(
+                chain_code,
+                chain_id,
+                tx_bytes.as_ptr(),
+                tx_bytes.len(),
+                &mut out as *mut PluginApplyResultV1,
+            )
+        };
         if rc != 0 {
             bail!("adapter plugin apply failed: rc={}", rc);
         }
@@ -1602,7 +1733,158 @@ fn run_plugin_adapter_signal(
     }
 }
 
-fn run_adapter_bridge_signal(txs: &[LocalTx]) -> Result<AdapterSignalSummary> {
+fn unified_account_plugin_ingress_guard_enabled() -> bool {
+    bool_env_default(UNIFIED_ACCOUNT_PLUGIN_INGRESS_GUARD_ENV, true)
+}
+
+fn unified_account_plugin_prefer_self_guard_enabled() -> bool {
+    bool_env_default(UNIFIED_ACCOUNT_PLUGIN_PREFER_SELF_GUARD_ENV, false)
+}
+
+fn guard_plugin_adapter_ingress_via_unified_account(
+    txs: &[LocalTx],
+    chain_id: u64,
+) -> Result<()> {
+    let query_db_path = chain_query_db_path();
+    let ua_store = resolve_unified_account_store(&query_db_path)?;
+    let mut ua_snapshot = ua_store.load_snapshot()?;
+    let signature_domain = string_env_nonempty("NOVOVM_UNIFIED_ACCOUNT_EXEC_SIGNATURE_DOMAIN")
+        .unwrap_or_else(|| format!("evm:{chain_id}"));
+    let auto_provision = bool_env_default("NOVOVM_UNIFIED_ACCOUNT_EXEC_AUTOPROVISION", true);
+    let _ = route_local_txs_through_unified_account(
+        txs,
+        &mut ua_snapshot.router,
+        chain_id,
+        &signature_domain,
+        now_unix_sec(),
+        auto_provision,
+    )?;
+    ua_store.save_snapshot(&ua_snapshot)?;
+    Ok(())
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum EvmOverlapClass {
+    P0,
+    P1,
+    P2,
+}
+
+impl EvmOverlapClass {
+    fn as_str(self) -> &'static str {
+        match self {
+            EvmOverlapClass::P0 => "p0",
+            EvmOverlapClass::P1 => "p1",
+            EvmOverlapClass::P2 => "p2",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum EvmOverlapAutoOrder {
+    NativeFirst,
+    PluginFirst,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct EvmOverlapAutoPolicy {
+    class: EvmOverlapClass,
+    order: EvmOverlapAutoOrder,
+    policy: &'static str,
+    p1_compare_ready: bool,
+}
+
+fn classify_evm_overlap_batch(chain: ChainType, tx_irs: &[TxIR]) -> Option<EvmOverlapClass> {
+    if !matches!(
+        chain,
+        ChainType::EVM | ChainType::BNB | ChainType::Polygon | ChainType::Avalanche
+    ) {
+        return None;
+    }
+    if tx_irs.is_empty() {
+        return Some(EvmOverlapClass::P0);
+    }
+    if tx_irs
+        .iter()
+        .any(|tx| tx.source_chain.is_some() || tx.target_chain.is_some())
+    {
+        return Some(EvmOverlapClass::P2);
+    }
+    if tx_irs.iter().any(|tx| {
+        tx.tx_type != TxType::Transfer
+            || tx.to.is_none()
+            || !tx.data.is_empty()
+            || tx.gas_limit > 21_000
+    }) {
+        return Some(EvmOverlapClass::P1);
+    }
+    Some(EvmOverlapClass::P0)
+}
+
+fn resolve_evm_overlap_auto_policy_with_flags(
+    chain: ChainType,
+    tx_irs: &[TxIR],
+    plugin_available: bool,
+    p1_compare_ready: bool,
+    p2_force_plugin: bool,
+) -> Option<EvmOverlapAutoPolicy> {
+    let class = classify_evm_overlap_batch(chain, tx_irs)?;
+    let (order, policy) = match class {
+        EvmOverlapClass::P0 => (EvmOverlapAutoOrder::NativeFirst, "p0_supervm_first"),
+        EvmOverlapClass::P1 => {
+            if p1_compare_ready {
+                (
+                    EvmOverlapAutoOrder::NativeFirst,
+                    "p1_compare_green_supervm_first",
+                )
+            } else if plugin_available {
+                (
+                    EvmOverlapAutoOrder::PluginFirst,
+                    "p1_compare_pending_plugin_first",
+                )
+            } else {
+                (
+                    EvmOverlapAutoOrder::NativeFirst,
+                    "p1_plugin_missing_native_fallback",
+                )
+            }
+        }
+        EvmOverlapClass::P2 => {
+            if p2_force_plugin && plugin_available {
+                (EvmOverlapAutoOrder::PluginFirst, "p2_plugin_only")
+            } else {
+                (EvmOverlapAutoOrder::NativeFirst, "p2_native_fallback")
+            }
+        }
+    };
+    Some(EvmOverlapAutoPolicy {
+        class,
+        order,
+        policy,
+        p1_compare_ready,
+    })
+}
+
+fn resolve_evm_overlap_auto_policy(
+    chain: ChainType,
+    tx_irs: &[TxIR],
+    plugin_available: bool,
+) -> Option<EvmOverlapAutoPolicy> {
+    let p1_compare_ready = bool_env_default(EVM_OVERLAP_ROUTER_P1_COMPARE_READY_ENV, false);
+    let p2_force_plugin = bool_env_default(EVM_OVERLAP_ROUTER_P2_FORCE_PLUGIN_ENV, true);
+    resolve_evm_overlap_auto_policy_with_flags(
+        chain,
+        tx_irs,
+        plugin_available,
+        p1_compare_ready,
+        p2_force_plugin,
+    )
+}
+
+fn run_adapter_bridge_signal_with_options(
+    txs: &[LocalTx],
+    plugin_ingress_pre_guarded: bool,
+) -> Result<AdapterSignalSummary> {
     if txs.is_empty() {
         bail!("adapter bridge requires at least one tx");
     }
@@ -1611,7 +1893,16 @@ fn run_adapter_bridge_signal(txs: &[LocalTx]) -> Result<AdapterSignalSummary> {
     let chain_id = default_chain_id(chain);
     let backend_mode = resolve_adapter_backend_mode()?;
     let plugin_path = resolve_adapter_plugin_path();
-    let (plugin_expected_abi, plugin_required_caps) = resolve_adapter_plugin_requirements()?;
+    let (plugin_expected_abi, mut plugin_required_caps) = resolve_adapter_plugin_requirements()?;
+    let prefer_plugin_self_guard = !plugin_ingress_pre_guarded
+        && unified_account_plugin_prefer_self_guard_enabled();
+    let host_plugin_guard_enabled = !plugin_ingress_pre_guarded
+        && unified_account_plugin_ingress_guard_enabled()
+        && !prefer_plugin_self_guard;
+    if prefer_plugin_self_guard {
+        // Performance mode: rely on plugin-side UA guard and avoid host duplicate guard.
+        plugin_required_caps |= ADAPTER_PLUGIN_CAP_UA_SELF_GUARD_V1;
+    }
     let native_registry = resolve_adapter_plugin_registry_summary(
         chain,
         None,
@@ -1622,98 +1913,127 @@ fn run_adapter_bridge_signal(txs: &[LocalTx]) -> Result<AdapterSignalSummary> {
         .iter()
         .map(|tx| to_adapter_tx_ir(tx, chain_id))
         .collect();
-
-    match backend_mode {
-        AdapterBackendMode::Native => run_native_adapter_signal(
+    let overlap_auto_policy = if backend_mode == AdapterBackendMode::Auto {
+        resolve_evm_overlap_auto_policy(chain, &tx_irs, plugin_path.is_some())
+    } else {
+        None
+    };
+    if let Some(policy) = overlap_auto_policy {
+        println!(
+            "overlap_router_out: chain={} class={} policy={} order={} p1_compare_ready={} plugin_available={} backend_mode=auto",
+            chain.as_str(),
+            policy.class.as_str(),
+            policy.policy,
+            match policy.order {
+                EvmOverlapAutoOrder::NativeFirst => "native_first",
+                EvmOverlapAutoOrder::PluginFirst => "plugin_first",
+            },
+            policy.p1_compare_ready,
+            plugin_path.is_some()
+        );
+    }
+    let run_plugin = |path: &Path| -> Result<AdapterSignalSummary> {
+        let plugin_registry = resolve_adapter_plugin_registry_summary(
+            chain,
+            Some(path),
+            plugin_expected_abi,
+            plugin_required_caps,
+        )?;
+        if host_plugin_guard_enabled {
+            guard_plugin_adapter_ingress_via_unified_account(txs, chain_id).context(
+                "plugin adapter ingress unified account guard failed before plugin apply",
+            )?;
+        }
+        run_plugin_adapter_signal(
+            chain,
+            chain_id,
+            &tx_irs,
+            path,
+            plugin_expected_abi,
+            plugin_required_caps,
+            prefer_plugin_self_guard,
+            plugin_registry,
+        )
+    };
+    let run_native = || {
+        run_native_adapter_signal(
             chain,
             chain_id,
             &tx_irs,
             plugin_expected_abi,
             plugin_required_caps,
             native_registry,
-        ),
+        )
+    };
+
+    match backend_mode {
+        AdapterBackendMode::Native => run_native(),
         AdapterBackendMode::Plugin => {
             let path = plugin_path.as_deref().ok_or_else(|| {
                 anyhow::anyhow!("NOVOVM_ADAPTER_BACKEND=plugin requires NOVOVM_ADAPTER_PLUGIN_PATH")
             })?;
-            let plugin_registry = resolve_adapter_plugin_registry_summary(
-                chain,
-                Some(path),
-                plugin_expected_abi,
-                plugin_required_caps,
-            )?;
-            run_plugin_adapter_signal(
-                chain,
-                chain_id,
-                &tx_irs,
-                path,
-                plugin_expected_abi,
-                plugin_required_caps,
-                plugin_registry,
-            )
+            run_plugin(path)
         }
         AdapterBackendMode::Auto => {
-            if supports_native_chain(chain) {
-                match run_native_adapter_signal(
-                    chain,
-                    chain_id,
-                    &tx_irs,
-                    plugin_expected_abi,
-                    plugin_required_caps,
-                    native_registry,
-                ) {
-                    Ok(signal) => Ok(signal),
-                    Err(native_err) => {
-                        if let Some(path) = plugin_path.as_deref() {
-                            let plugin_registry = resolve_adapter_plugin_registry_summary(
-                                chain,
-                                Some(path),
-                                plugin_expected_abi,
-                                plugin_required_caps,
-                            )?;
-                            eprintln!(
-                                "adapter_warn: native backend failed ({}), fallback plugin={}",
-                                native_err,
-                                path.display()
-                            );
-                            run_plugin_adapter_signal(
-                                chain,
-                                chain_id,
-                                &tx_irs,
-                                path,
-                                plugin_expected_abi,
-                                plugin_required_caps,
-                                plugin_registry,
-                            )
-                        } else {
-                            Err(native_err)
+            let plugin_first = overlap_auto_policy
+                .map(|policy| policy.order == EvmOverlapAutoOrder::PluginFirst)
+                .unwrap_or(false);
+            if plugin_first {
+                if let Some(path) = plugin_path.as_deref() {
+                    match run_plugin(path) {
+                        Ok(signal) => Ok(signal),
+                        Err(plugin_err) => {
+                            if supports_native_chain(chain) {
+                                eprintln!(
+                                    "adapter_warn: plugin backend failed ({}), fallback native",
+                                    plugin_err
+                                );
+                                run_native()
+                            } else {
+                                Err(plugin_err)
+                            }
                         }
                     }
+                } else if supports_native_chain(chain) {
+                    run_native()
+                } else {
+                    bail!(
+                        "adapter backend auto cannot resolve chain={} without plugin path",
+                        chain.as_str()
+                    )
                 }
-            } else if let Some(path) = plugin_path.as_deref() {
-                let plugin_registry = resolve_adapter_plugin_registry_summary(
-                    chain,
-                    Some(path),
-                    plugin_expected_abi,
-                    plugin_required_caps,
-                )?;
-                run_plugin_adapter_signal(
-                    chain,
-                    chain_id,
-                    &tx_irs,
-                    path,
-                    plugin_expected_abi,
-                    plugin_required_caps,
-                    plugin_registry,
-                )
             } else {
-                bail!(
-                    "adapter backend auto cannot resolve chain={} without plugin path",
-                    chain.as_str()
-                )
+                if supports_native_chain(chain) {
+                    match run_native() {
+                        Ok(signal) => Ok(signal),
+                        Err(native_err) => {
+                            if let Some(path) = plugin_path.as_deref() {
+                                eprintln!(
+                                    "adapter_warn: native backend failed ({}), fallback plugin={}",
+                                    native_err,
+                                    path.display()
+                                );
+                                run_plugin(path)
+                            } else {
+                                Err(native_err)
+                            }
+                        }
+                    }
+                } else if let Some(path) = plugin_path.as_deref() {
+                    run_plugin(path)
+                } else {
+                    bail!(
+                        "adapter backend auto cannot resolve chain={} without plugin path",
+                        chain.as_str()
+                    )
+                }
             }
         }
     }
+}
+
+fn run_adapter_bridge_signal(txs: &[LocalTx]) -> Result<AdapterSignalSummary> {
+    run_adapter_bridge_signal_with_options(txs, false)
 }
 
 fn build_demo_txs() -> Vec<LocalTx> {
@@ -2594,10 +2914,147 @@ fn to_hex(bytes: &[u8]) -> String {
     out
 }
 
+fn d2d3_enforce_d1_persistence() -> bool {
+    bool_env_default("NOVOVM_D2D3_ENFORCE_D1_PERSIST", true)
+}
+
+fn d2d3_storage_root_path() -> PathBuf {
+    if let Some(custom) = string_env_nonempty("NOVOVM_D2D3_STORAGE_ROOT") {
+        return PathBuf::from(custom);
+    }
+    if let Some(aoem_root) = string_env_nonempty("AOEM_PERSISTENCE_PATH")
+        .or_else(|| string_env_nonempty("NOVOVM_AOEM_PERSISTENCE_PATH"))
+    {
+        return PathBuf::from(aoem_root).join("novovm-host");
+    }
+    PathBuf::from("artifacts")
+}
+
+fn normalize_lexical_path(path: &Path) -> PathBuf {
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                let _ = normalized.pop();
+            }
+            _ => normalized.push(component.as_os_str()),
+        }
+    }
+    normalized
+}
+
+fn absolute_normalized_path(path: &Path) -> Result<PathBuf> {
+    let absolute = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .context("resolve current directory for D2/D3 persistence policy failed")?
+            .join(path)
+    };
+    Ok(normalize_lexical_path(&absolute))
+}
+
+fn ensure_d2d3_path_under_d1_root(label: &str, path: &Path, root: &Path) -> Result<()> {
+    let root_abs = absolute_normalized_path(root)?;
+    let path_abs = absolute_normalized_path(path)?;
+    if !path_abs.starts_with(&root_abs) {
+        bail!(
+            "D2/D3 persistence path {}={} is outside D1 root {}; keep D2/D3 persistence under D1",
+            label,
+            path_abs.display(),
+            root_abs.display()
+        );
+    }
+    Ok(())
+}
+
+fn ensure_d2d3_persistence_paths_under_d1_root(root: &Path, enforce: bool) -> Result<()> {
+    if !enforce {
+        return Ok(());
+    }
+    let query_db_path = chain_query_db_path();
+    let governance_audit_path = governance_audit_db_path(&query_db_path);
+    let governance_chain_audit_path = governance_chain_audit_db_path(&query_db_path);
+    let unified_account_backend = unified_account_store_backend_kind();
+    let unified_account_store_path =
+        unified_account_store_path_for_backend(&query_db_path, &unified_account_backend);
+    let unified_account_audit_backend = unified_account_audit_backend_kind();
+    let unified_account_audit_path =
+        unified_account_audit_path_for_backend(&query_db_path, &unified_account_audit_backend);
+    ensure_d2d3_path_under_d1_root("chain_query_db", &query_db_path, root)?;
+    ensure_d2d3_path_under_d1_root("governance_audit_db", &governance_audit_path, root)?;
+    ensure_d2d3_path_under_d1_root(
+        "governance_chain_audit_db",
+        &governance_chain_audit_path,
+        root,
+    )?;
+    ensure_d2d3_path_under_d1_root("unified_account_db", &unified_account_store_path, root)?;
+    ensure_d2d3_path_under_d1_root(
+        "unified_account_audit_log",
+        &unified_account_audit_path,
+        root,
+    )?;
+    Ok(())
+}
+
+fn ensure_d2d3_persistence_through_d1() -> Result<&'static D1PersistenceBinding> {
+    let cached = D1_PERSISTENCE_BINDING.get_or_init(|| {
+        let enforce = d2d3_enforce_d1_persistence();
+        let runtime =
+            AoemRuntimeConfig::from_env().map_err(|e| format!("resolve AOEM runtime failed: {e}"))?;
+        let persistence_root = d2d3_storage_root_path();
+        ensure_d2d3_persistence_paths_under_d1_root(&persistence_root, enforce)
+            .map_err(|e| format!("validate D2/D3 persistence paths failed: {e}"))?;
+
+        if !enforce {
+            return Ok(D1PersistenceBinding {
+                enforce,
+                variant: runtime.variant,
+                rocksdb_persistence: false,
+                persistence_root,
+            });
+        }
+        if runtime.variant != AoemRuntimeVariant::Persist {
+            return Err(format!(
+                "D2/D3 persistence requires AOEM persist variant through D1: set NOVOVM_AOEM_VARIANT=persist (current={})",
+                runtime.variant.as_str()
+            ));
+        }
+        let facade = AoemExecFacade::open_with_runtime(&runtime)
+            .map_err(|e| format!("open AOEM runtime for D2/D3 persistence check failed: {e}"))?;
+        let capability = facade
+            .capability_contract()
+            .map_err(|e| format!("load AOEM capability contract failed: {e}"))?;
+        let rocksdb_persistence = capability
+            .raw
+            .get("rocksdb_persistence")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        if !rocksdb_persistence {
+            return Err(
+                "D2/D3 persistence requires AOEM rocksdb_persistence=true on persist variant"
+                    .to_string(),
+            );
+        }
+        Ok(D1PersistenceBinding {
+            enforce,
+            variant: runtime.variant,
+            rocksdb_persistence,
+            persistence_root,
+        })
+    });
+
+    match cached {
+        Ok(binding) => Ok(binding),
+        Err(msg) => bail!("{msg}"),
+    }
+}
+
 fn chain_query_db_path() -> PathBuf {
     std::env::var("NOVOVM_CHAIN_QUERY_DB")
         .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from("artifacts/novovm-chain-query-db.json"))
+        .unwrap_or_else(|_| d2d3_storage_root_path().join("novovm-chain-query-db.json"))
 }
 
 fn governance_audit_db_path(query_db_path: &Path) -> PathBuf {
@@ -2624,6 +3081,868 @@ fn governance_chain_audit_db_path(query_db_path: &Path) -> PathBuf {
     PathBuf::from("artifacts/novovm-governance-chain-audit-events.json")
 }
 
+fn unified_account_store_path_for_backend(query_db_path: &Path, backend: &str) -> PathBuf {
+    if let Some(custom) = string_env_nonempty("NOVOVM_UNIFIED_ACCOUNT_DB") {
+        return PathBuf::from(custom);
+    }
+    let default_name = match backend {
+        UNIFIED_ACCOUNT_STORE_BACKEND_ROCKSDB => "novovm-unified-account-router.rocksdb",
+        _ => "novovm-unified-account-router.bin",
+    };
+    if let Some(parent) = query_db_path.parent() {
+        if !parent.as_os_str().is_empty() {
+            return parent.join(default_name);
+        }
+    }
+    PathBuf::from("artifacts").join(default_name)
+}
+
+fn unified_account_store_backend_kind() -> String {
+    string_env(
+        "NOVOVM_UNIFIED_ACCOUNT_STORE_BACKEND",
+        UNIFIED_ACCOUNT_STORE_BACKEND_ROCKSDB,
+    )
+    .trim()
+    .to_ascii_lowercase()
+}
+
+fn resolve_unified_account_store(query_db_path: &Path) -> Result<UnifiedAccountStoreBackend> {
+    let backend = unified_account_store_backend_kind();
+    let path = unified_account_store_path_for_backend(query_db_path, &backend);
+    match backend.as_str() {
+        "bincode_file" | "file" | "bincode" => Ok(UnifiedAccountStoreBackend::BincodeFile { path }),
+        "rocksdb" => Ok(UnifiedAccountStoreBackend::RocksDb { path }),
+        _ => bail!(
+            "invalid NOVOVM_UNIFIED_ACCOUNT_STORE_BACKEND={}; valid: rocksdb|bincode_file|file|bincode",
+            backend
+        ),
+    }
+}
+
+impl UnifiedAccountStoreBackend {
+    fn backend_name(&self) -> &'static str {
+        match self {
+            UnifiedAccountStoreBackend::BincodeFile { .. } => UNIFIED_ACCOUNT_STORE_BACKEND_FILE,
+            UnifiedAccountStoreBackend::RocksDb { .. } => UNIFIED_ACCOUNT_STORE_BACKEND_ROCKSDB,
+        }
+    }
+
+    fn path(&self) -> &Path {
+        match self {
+            UnifiedAccountStoreBackend::BincodeFile { path } => path.as_path(),
+            UnifiedAccountStoreBackend::RocksDb { path } => path.as_path(),
+        }
+    }
+
+    fn load_snapshot(&self) -> Result<UnifiedAccountStoreSnapshot> {
+        match self {
+            UnifiedAccountStoreBackend::BincodeFile { path } => {
+                if !path.exists() {
+                    return Ok(empty_unified_account_snapshot());
+                }
+                let raw = fs::read(path).with_context(|| {
+                    format!("read unified account db failed: {}", path.display())
+                })?;
+                decode_unified_account_snapshot(&raw, path)
+            }
+            UnifiedAccountStoreBackend::RocksDb { path } => {
+                let db = open_unified_account_rocksdb(path)?;
+                let state_cf = db.cf_handle(UNIFIED_ACCOUNT_STORE_ROCKSDB_CF_STATE).ok_or_else(
+                    || {
+                        anyhow::anyhow!(
+                            "missing unified account rocksdb column family '{}' for {}",
+                            UNIFIED_ACCOUNT_STORE_ROCKSDB_CF_STATE,
+                            path.display()
+                        )
+                    },
+                )?;
+                let audit_cf = db.cf_handle(UNIFIED_ACCOUNT_STORE_ROCKSDB_CF_AUDIT).ok_or_else(
+                    || {
+                        anyhow::anyhow!(
+                            "missing unified account rocksdb column family '{}' for {}",
+                            UNIFIED_ACCOUNT_STORE_ROCKSDB_CF_AUDIT,
+                            path.display()
+                        )
+                    },
+                )?;
+
+                let mut router_raw = db
+                    .get_cf(state_cf, UNIFIED_ACCOUNT_STORE_ROCKSDB_KEY_STATE_ROUTER)
+                    .with_context(|| {
+                        format!(
+                            "read unified account rocksdb state key from cf '{}' failed: {}",
+                            UNIFIED_ACCOUNT_STORE_ROCKSDB_CF_STATE,
+                            path.display()
+                        )
+                    })?;
+                let mut cursor_raw = db
+                    .get_cf(audit_cf, UNIFIED_ACCOUNT_STORE_ROCKSDB_KEY_AUDIT_CURSOR)
+                    .with_context(|| {
+                        format!(
+                            "read unified account rocksdb audit cursor key from cf '{}' failed: {}",
+                            UNIFIED_ACCOUNT_STORE_ROCKSDB_CF_AUDIT,
+                            path.display()
+                        )
+                    })?;
+
+                // Backward compatibility: load v2 namespace keys from default CF if dedicated
+                // CF storage is not present yet.
+                if router_raw.is_none() && cursor_raw.is_none() {
+                    router_raw = db
+                        .get(UNIFIED_ACCOUNT_STORE_ROCKSDB_KEY_STATE_ROUTER)
+                        .with_context(|| {
+                            format!(
+                                "read unified account rocksdb state key from default cf failed: {}",
+                                path.display()
+                            )
+                        })?;
+                    cursor_raw = db
+                        .get(UNIFIED_ACCOUNT_STORE_ROCKSDB_KEY_AUDIT_CURSOR)
+                        .with_context(|| {
+                            format!(
+                                "read unified account rocksdb audit cursor key from default cf failed: {}",
+                                path.display()
+                            )
+                        })?;
+                }
+
+                if let Some(router_bytes) = router_raw {
+                    let router: UnifiedAccountRouter =
+                        bincode::deserialize(&router_bytes).with_context(|| {
+                            format!(
+                                "decode unified account rocksdb state router failed: {}",
+                                path.display()
+                            )
+                        })?;
+                    let flushed_event_count = match cursor_raw {
+                        Some(bytes) => decode_u64_be(&bytes).with_context(|| {
+                            format!(
+                                "decode unified account rocksdb audit cursor failed: {}",
+                                path.display()
+                            )
+                        })?,
+                        None => router.events().len() as u64,
+                    };
+                    return Ok(UnifiedAccountStoreSnapshot {
+                        router,
+                        flushed_event_count,
+                    });
+                }
+                if cursor_raw.is_some() {
+                    bail!(
+                        "invalid unified account rocksdb namespace: audit cursor exists but router state missing: {}",
+                        path.display()
+                    );
+                }
+                let raw = db
+                    .get(UNIFIED_ACCOUNT_STORE_ROCKSDB_KEY_SNAPSHOT)
+                    .with_context(|| {
+                        format!(
+                            "read unified account rocksdb legacy snapshot key failed: {}",
+                            path.display()
+                        )
+                    })?;
+                match raw {
+                    Some(bytes) => decode_unified_account_snapshot(&bytes, path),
+                    None => Ok(empty_unified_account_snapshot()),
+                }
+            }
+        }
+    }
+
+    fn save_snapshot(&self, snapshot: &UnifiedAccountStoreSnapshot) -> Result<()> {
+        match self {
+            UnifiedAccountStoreBackend::BincodeFile { path } => {
+                let encoded = encode_unified_account_snapshot(snapshot)?;
+                ensure_parent_dir(path, "unified account db")?;
+                fs::write(path, encoded).with_context(|| {
+                    format!("write unified account db failed: {}", path.display())
+                })?;
+                Ok(())
+            }
+            UnifiedAccountStoreBackend::RocksDb { path } => {
+                let db = open_unified_account_rocksdb(path)?;
+                let state_cf = db.cf_handle(UNIFIED_ACCOUNT_STORE_ROCKSDB_CF_STATE).ok_or_else(
+                    || {
+                        anyhow::anyhow!(
+                            "missing unified account rocksdb column family '{}' for {}",
+                            UNIFIED_ACCOUNT_STORE_ROCKSDB_CF_STATE,
+                            path.display()
+                        )
+                    },
+                )?;
+                let audit_cf = db.cf_handle(UNIFIED_ACCOUNT_STORE_ROCKSDB_CF_AUDIT).ok_or_else(
+                    || {
+                        anyhow::anyhow!(
+                            "missing unified account rocksdb column family '{}' for {}",
+                            UNIFIED_ACCOUNT_STORE_ROCKSDB_CF_AUDIT,
+                            path.display()
+                        )
+                    },
+                )?;
+                let router_encoded = bincode::serialize(&snapshot.router).with_context(|| {
+                    format!(
+                        "serialize unified account rocksdb state router failed: {}",
+                        path.display()
+                    )
+                })?;
+                let legacy_encoded = encode_unified_account_snapshot(snapshot)?;
+                let mut batch = RocksDbWriteBatch::default();
+                batch.put_cf(
+                    state_cf,
+                    UNIFIED_ACCOUNT_STORE_ROCKSDB_KEY_STATE_ROUTER,
+                    router_encoded.as_slice(),
+                );
+                batch.put_cf(
+                    audit_cf,
+                    UNIFIED_ACCOUNT_STORE_ROCKSDB_KEY_AUDIT_CURSOR,
+                    snapshot.flushed_event_count.to_be_bytes(),
+                );
+                // Keep default-CF namespace keys for backward compatibility with pre-CF readers.
+                batch.put(
+                    UNIFIED_ACCOUNT_STORE_ROCKSDB_KEY_STATE_ROUTER,
+                    router_encoded.as_slice(),
+                );
+                batch.put(
+                    UNIFIED_ACCOUNT_STORE_ROCKSDB_KEY_AUDIT_CURSOR,
+                    snapshot.flushed_event_count.to_be_bytes(),
+                );
+                // Keep legacy snapshot key for rollback compatibility.
+                batch.put(UNIFIED_ACCOUNT_STORE_ROCKSDB_KEY_SNAPSHOT, legacy_encoded);
+                db.write(batch).with_context(|| {
+                    format!(
+                        "write unified account rocksdb namespace batch failed: {}",
+                        path.display()
+                    )
+                })?;
+                Ok(())
+            }
+        }
+    }
+}
+
+fn ensure_parent_dir(path: &Path, label: &str) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        if !parent.as_os_str().is_empty() {
+            fs::create_dir_all(parent).with_context(|| {
+                format!("create {} parent dir failed: {}", label, parent.display())
+            })?;
+        }
+    }
+    Ok(())
+}
+
+fn open_unified_account_rocksdb(path: &Path) -> Result<RocksDb> {
+    ensure_parent_dir(path, "unified account rocksdb")?;
+    let mut opts = RocksDbOptions::default();
+    opts.create_if_missing(true);
+    opts.create_missing_column_families(true);
+
+    let mut cf_names = match RocksDb::list_cf(&opts, path) {
+        Ok(existing) => existing,
+        Err(_) => vec!["default".to_string()],
+    };
+    if cf_names.is_empty() {
+        cf_names.push("default".to_string());
+    }
+    for required in [
+        UNIFIED_ACCOUNT_STORE_ROCKSDB_CF_STATE,
+        UNIFIED_ACCOUNT_STORE_ROCKSDB_CF_AUDIT,
+    ] {
+        if !cf_names.iter().any(|name| name == required) {
+            cf_names.push(required.to_string());
+        }
+    }
+
+    RocksDb::open_cf(&opts, path, cf_names)
+        .with_context(|| format!("open unified account rocksdb failed: {}", path.display()))
+}
+
+fn open_unified_account_audit_rocksdb(path: &Path) -> Result<RocksDb> {
+    ensure_parent_dir(path, "unified account audit rocksdb")?;
+    let mut opts = RocksDbOptions::default();
+    opts.create_if_missing(true);
+    RocksDb::open(&opts, path).with_context(|| {
+        format!(
+            "open unified account audit rocksdb failed: {}",
+            path.display()
+        )
+    })
+}
+
+fn empty_unified_account_snapshot() -> UnifiedAccountStoreSnapshot {
+    UnifiedAccountStoreSnapshot {
+        router: UnifiedAccountRouter::new(),
+        flushed_event_count: 0,
+    }
+}
+
+fn decode_unified_account_snapshot(raw: &[u8], path: &Path) -> Result<UnifiedAccountStoreSnapshot> {
+    if raw.is_empty() {
+        return Ok(empty_unified_account_snapshot());
+    }
+    if let Ok(envelope) = bincode::deserialize::<UnifiedAccountStoreEnvelopeV1>(raw) {
+        if envelope.version != UNIFIED_ACCOUNT_STORE_ENVELOPE_VERSION {
+            bail!(
+                "unsupported unified account db version {} at {}",
+                envelope.version,
+                path.display()
+            );
+        }
+        return Ok(UnifiedAccountStoreSnapshot {
+            router: envelope.router,
+            flushed_event_count: envelope.flushed_event_count,
+        });
+    }
+    // Backward compatibility: old format stored UnifiedAccountRouter directly.
+    let legacy_router: UnifiedAccountRouter = bincode::deserialize(raw)
+        .with_context(|| format!("parse unified account db failed: {}", path.display()))?;
+    Ok(UnifiedAccountStoreSnapshot {
+        flushed_event_count: legacy_router.events().len() as u64,
+        router: legacy_router,
+    })
+}
+
+fn encode_unified_account_snapshot(snapshot: &UnifiedAccountStoreSnapshot) -> Result<Vec<u8>> {
+    #[derive(Serialize)]
+    struct UnifiedAccountStoreEnvelopeRef<'a> {
+        version: u32,
+        router: &'a UnifiedAccountRouter,
+        flushed_event_count: u64,
+    }
+    let envelope = UnifiedAccountStoreEnvelopeRef {
+        version: UNIFIED_ACCOUNT_STORE_ENVELOPE_VERSION,
+        router: &snapshot.router,
+        flushed_event_count: snapshot.flushed_event_count,
+    };
+    bincode::serialize(&envelope).context("serialize unified account router failed")
+}
+
+fn unified_account_audit_log_path(query_db_path: &Path) -> PathBuf {
+    if let Some(custom) = string_env_nonempty("NOVOVM_UNIFIED_ACCOUNT_AUDIT_LOG") {
+        return PathBuf::from(custom);
+    }
+    if let Some(custom_dir) = string_env_nonempty("NOVOVM_UNIFIED_ACCOUNT_AUDIT_DIR") {
+        return PathBuf::from(custom_dir).join(UNIFIED_ACCOUNT_AUDIT_LOG_NAME);
+    }
+    if let Some(parent) = query_db_path.parent() {
+        if !parent.as_os_str().is_empty() {
+            return parent
+                .join("migration")
+                .join("unifiedaccount")
+                .join(UNIFIED_ACCOUNT_AUDIT_LOG_NAME);
+        }
+    }
+    PathBuf::from("artifacts/migration/unifiedaccount").join(UNIFIED_ACCOUNT_AUDIT_LOG_NAME)
+}
+
+fn unified_account_audit_db_path(query_db_path: &Path) -> PathBuf {
+    if let Some(custom) = string_env_nonempty("NOVOVM_UNIFIED_ACCOUNT_AUDIT_DB") {
+        return PathBuf::from(custom);
+    }
+    if let Some(custom_dir) = string_env_nonempty("NOVOVM_UNIFIED_ACCOUNT_AUDIT_DIR") {
+        return PathBuf::from(custom_dir).join(UNIFIED_ACCOUNT_AUDIT_DB_NAME);
+    }
+    if let Some(parent) = query_db_path.parent() {
+        if !parent.as_os_str().is_empty() {
+            return parent
+                .join("migration")
+                .join("unifiedaccount")
+                .join(UNIFIED_ACCOUNT_AUDIT_DB_NAME);
+        }
+    }
+    PathBuf::from("artifacts/migration/unifiedaccount").join(UNIFIED_ACCOUNT_AUDIT_DB_NAME)
+}
+
+fn unified_account_audit_backend_kind() -> String {
+    string_env(
+        "NOVOVM_UNIFIED_ACCOUNT_AUDIT_BACKEND",
+        UNIFIED_ACCOUNT_AUDIT_BACKEND_ROCKSDB,
+    )
+    .trim()
+    .to_ascii_lowercase()
+}
+
+fn unified_account_audit_path_for_backend(query_db_path: &Path, backend: &str) -> PathBuf {
+    match backend {
+        UNIFIED_ACCOUNT_AUDIT_BACKEND_ROCKSDB => unified_account_audit_db_path(query_db_path),
+        _ => unified_account_audit_log_path(query_db_path),
+    }
+}
+
+fn resolve_unified_account_audit_sink_with_backend(
+    query_db_path: &Path,
+    backend: &str,
+) -> Result<UnifiedAccountAuditSinkBackend> {
+    let path = unified_account_audit_path_for_backend(query_db_path, &backend);
+    match backend {
+        "rocksdb" => Ok(UnifiedAccountAuditSinkBackend::RocksDb { path }),
+        "jsonl" | "file" => Ok(UnifiedAccountAuditSinkBackend::JsonlFile { path }),
+        _ => bail!(
+            "invalid NOVOVM_UNIFIED_ACCOUNT_AUDIT_BACKEND={}; valid: rocksdb|jsonl|file",
+            backend
+        ),
+    }
+}
+
+fn resolve_unified_account_audit_sink(
+    query_db_path: &Path,
+) -> Result<UnifiedAccountAuditSinkBackend> {
+    let backend = unified_account_audit_backend_kind();
+    resolve_unified_account_audit_sink_with_backend(query_db_path, &backend)
+}
+
+impl UnifiedAccountAuditSinkBackend {
+    fn backend_name(&self) -> &'static str {
+        match self {
+            UnifiedAccountAuditSinkBackend::JsonlFile { .. } => UNIFIED_ACCOUNT_AUDIT_BACKEND_JSONL,
+            UnifiedAccountAuditSinkBackend::RocksDb { .. } => UNIFIED_ACCOUNT_AUDIT_BACKEND_ROCKSDB,
+        }
+    }
+
+    fn path(&self) -> &Path {
+        match self {
+            UnifiedAccountAuditSinkBackend::JsonlFile { path } => path.as_path(),
+            UnifiedAccountAuditSinkBackend::RocksDb { path } => path.as_path(),
+        }
+    }
+
+    fn append_record(&self, record: &UnifiedAccountAuditSinkRecord) -> Result<()> {
+        match self {
+            UnifiedAccountAuditSinkBackend::JsonlFile { path } => {
+                append_unified_account_audit_record(path, record)
+            }
+            UnifiedAccountAuditSinkBackend::RocksDb { path } => {
+                append_unified_account_audit_record_rocksdb(path, record)
+            }
+        }
+    }
+}
+
+fn decode_unified_account_audit_record_json(
+    raw: &[u8],
+    path: &Path,
+    seq: u64,
+) -> Result<UnifiedAccountAuditSinkRecord> {
+    serde_json::from_slice(raw).with_context(|| {
+        format!(
+            "decode unified account audit record failed: path={} seq={}",
+            path.display(),
+            seq
+        )
+    })
+}
+
+fn unified_account_audit_record_to_json(
+    seq: u64,
+    record: &UnifiedAccountAuditSinkRecord,
+) -> Result<serde_json::Value> {
+    let mut value = serde_json::to_value(record)
+        .context("serialize unified account audit record to json failed")?;
+    if let serde_json::Value::Object(map) = &mut value {
+        map.insert("seq".to_string(), serde_json::json!(seq));
+        return Ok(value);
+    }
+    Ok(serde_json::json!({
+        "seq": seq,
+        "record": value,
+    }))
+}
+
+fn unified_account_audit_rocksdb_head_seq(path: &Path) -> Result<u64> {
+    let db = open_unified_account_audit_rocksdb(path)?;
+    let raw = db
+        .get(UNIFIED_ACCOUNT_AUDIT_ROCKSDB_KEY_SEQ)
+        .with_context(|| {
+            format!(
+                "read unified account audit rocksdb sequence failed: {}",
+                path.display()
+            )
+        })?;
+    match raw {
+        Some(bytes) => decode_u64_be(&bytes).with_context(|| {
+            format!(
+                "decode unified account audit rocksdb sequence failed: {}",
+                path.display()
+            )
+        }),
+        None => Ok(0),
+    }
+}
+
+fn unified_account_audit_jsonl_head_seq(path: &Path) -> Result<u64> {
+    if !path.exists() {
+        return Ok(0);
+    }
+    let file = fs::File::open(path).with_context(|| {
+        format!(
+            "open unified account audit jsonl failed: {}",
+            path.display()
+        )
+    })?;
+    let reader = BufReader::new(file);
+    let mut seq = 0u64;
+    for line in reader.lines() {
+        let line = line.with_context(|| {
+            format!(
+                "read unified account audit jsonl line failed: {}",
+                path.display()
+            )
+        })?;
+        if line.trim().is_empty() {
+            continue;
+        }
+        seq = seq.saturating_add(1);
+    }
+    Ok(seq)
+}
+
+fn unified_account_audit_sink_head_seq(sink: &UnifiedAccountAuditSinkBackend) -> Result<u64> {
+    match sink {
+        UnifiedAccountAuditSinkBackend::JsonlFile { path } => {
+            unified_account_audit_jsonl_head_seq(path)
+        }
+        UnifiedAccountAuditSinkBackend::RocksDb { path } => {
+            unified_account_audit_rocksdb_head_seq(path)
+        }
+    }
+}
+
+fn load_unified_account_audit_records_all(
+    sink: &UnifiedAccountAuditSinkBackend,
+) -> Result<Vec<(u64, UnifiedAccountAuditSinkRecord)>> {
+    match sink {
+        UnifiedAccountAuditSinkBackend::JsonlFile { path } => {
+            if !path.exists() {
+                return Ok(Vec::new());
+            }
+            let file = fs::File::open(path).with_context(|| {
+                format!(
+                    "open unified account audit jsonl for full load failed: {}",
+                    path.display()
+                )
+            })?;
+            let reader = BufReader::new(file);
+            let mut seq = 0u64;
+            let mut out = Vec::new();
+            for line in reader.lines() {
+                let line = line.with_context(|| {
+                    format!(
+                        "read unified account audit jsonl line failed: {}",
+                        path.display()
+                    )
+                })?;
+                if line.trim().is_empty() {
+                    continue;
+                }
+                seq = seq.saturating_add(1);
+                let record = decode_unified_account_audit_record_json(line.as_bytes(), path, seq)?;
+                out.push((seq, record));
+            }
+            Ok(out)
+        }
+        UnifiedAccountAuditSinkBackend::RocksDb { path } => {
+            let db = open_unified_account_audit_rocksdb(path)?;
+            let head_seq =
+                match db
+                    .get(UNIFIED_ACCOUNT_AUDIT_ROCKSDB_KEY_SEQ)
+                    .with_context(|| {
+                        format!(
+                            "read unified account audit rocksdb sequence failed: {}",
+                            path.display()
+                        )
+                    })? {
+                    Some(bytes) => decode_u64_be(&bytes).with_context(|| {
+                        format!(
+                            "decode unified account audit rocksdb sequence failed: {}",
+                            path.display()
+                        )
+                    })?,
+                    None => 0,
+                };
+            if head_seq == 0 {
+                return Ok(Vec::new());
+            }
+            let mut out = Vec::new();
+            for seq in 1..=head_seq {
+                let key = unified_account_audit_rocksdb_event_key(seq);
+                if let Some(raw) = db.get(&key).with_context(|| {
+                    format!(
+                        "read unified account audit rocksdb event failed: {} seq={}",
+                        path.display(),
+                        seq
+                    )
+                })? {
+                    let record = decode_unified_account_audit_record_json(&raw, path, seq)?;
+                    out.push((seq, record));
+                }
+            }
+            Ok(out)
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+struct UnifiedAccountAuditQueryFilter {
+    method: Option<String>,
+    source: Option<String>,
+    success: Option<bool>,
+}
+
+impl UnifiedAccountAuditQueryFilter {
+    fn from_rpc_params(params: &serde_json::Value) -> Self {
+        let method = param_as_string(params, "filter_method")
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty());
+        let source = param_as_string(params, "filter_source")
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty());
+        let success = param_as_bool(params, "filter_success");
+        Self {
+            method,
+            source,
+            success,
+        }
+    }
+
+    fn matches(&self, record: &UnifiedAccountAuditSinkRecord) -> bool {
+        if let Some(method) = &self.method {
+            if !record.method.eq_ignore_ascii_case(method) {
+                return false;
+            }
+        }
+        if let Some(source) = &self.source {
+            if !record.source.eq_ignore_ascii_case(source) {
+                return false;
+            }
+        }
+        if let Some(success) = self.success {
+            if record.success != success {
+                return false;
+            }
+        }
+        true
+    }
+
+    fn to_json(&self) -> serde_json::Value {
+        serde_json::json!({
+            "method": self.method,
+            "source": self.source,
+            "success": self.success,
+        })
+    }
+}
+
+fn load_unified_account_audit_records_for_rpc(
+    sink: &UnifiedAccountAuditSinkBackend,
+    since_seq: u64,
+    limit: usize,
+    filter: &UnifiedAccountAuditQueryFilter,
+) -> Result<(u64, Vec<serde_json::Value>)> {
+    let records = load_unified_account_audit_records_all(sink)?;
+    let head_seq = records.last().map(|(seq, _)| *seq).unwrap_or(0);
+    let mut filtered = Vec::new();
+    for (seq, record) in records {
+        if seq <= since_seq {
+            continue;
+        }
+        if !filter.matches(&record) {
+            continue;
+        }
+        filtered.push(unified_account_audit_record_to_json(seq, &record)?);
+    }
+    if filtered.len() > limit {
+        let start = filtered.len().saturating_sub(limit);
+        filtered = filtered[start..].to_vec();
+    }
+    Ok((head_seq, filtered))
+}
+
+fn migrate_unified_account_audit_records(
+    source: &UnifiedAccountAuditSinkBackend,
+    target: &UnifiedAccountAuditSinkBackend,
+) -> Result<(u64, u64, u64, u64)> {
+    let source_norm = absolute_normalized_path(source.path())?;
+    let target_norm = absolute_normalized_path(target.path())?;
+    if source.backend_name() == target.backend_name() && source_norm == target_norm {
+        bail!(
+            "invalid ua audit migrate config: source and target are the same sink ({}, {})",
+            source.backend_name(),
+            source_norm.display()
+        );
+    }
+    let source_records = load_unified_account_audit_records_all(source)?;
+    let source_head = source_records.last().map(|(seq, _)| *seq).unwrap_or(0);
+    let target_head_before = unified_account_audit_sink_head_seq(target)?;
+    let mut appended = 0u64;
+    for (seq, record) in source_records {
+        if seq <= target_head_before {
+            continue;
+        }
+        target.append_record(&record)?;
+        appended = appended.saturating_add(1);
+    }
+    let target_head_after = unified_account_audit_sink_head_seq(target)?;
+    Ok((source_head, target_head_before, appended, target_head_after))
+}
+
+fn is_unified_account_eth_route_method(method: &str) -> bool {
+    method == "eth_sendRawTransaction" || method == "eth_sendTransaction"
+}
+
+fn is_unified_account_eth_persona_query_method(method: &str) -> bool {
+    method == "eth_getTransactionCount"
+}
+
+fn is_unified_account_web30_route_method(method: &str) -> bool {
+    method == "web30_sendTransaction" || method == "web30_sendRawTransaction"
+}
+
+fn is_eth_filter_or_reorg_method_m0(method: &str) -> bool {
+    matches!(
+        method,
+        "eth_newFilter"
+            | "eth_newBlockFilter"
+            | "eth_newPendingTransactionFilter"
+            | "eth_getFilterChanges"
+            | "eth_getFilterLogs"
+            | "eth_uninstallFilter"
+            | "eth_getLogs"
+            | "eth_subscribe"
+            | "eth_unsubscribe"
+    )
+}
+
+fn is_unified_account_method(method: &str) -> bool {
+    method.starts_with("ua_")
+        || is_unified_account_eth_route_method(method)
+        || is_unified_account_eth_persona_query_method(method)
+        || is_unified_account_web30_route_method(method)
+}
+
+fn public_rpc_error_code_for_method(method: &str, message: &str) -> i64 {
+    if is_unified_account_eth_route_method(method) {
+        if message.contains("unsupported eth tx type: blob") {
+            return -32031;
+        }
+        if message.contains("unsupported typed tx envelope")
+            || message.contains("invalid tx envelope prefix")
+            || message.contains("raw tx is empty")
+        {
+            return -32032;
+        }
+        if message.contains("chain_id mismatch")
+            || message.contains("nonce mismatch")
+            || message.contains("tx_type mismatch")
+        {
+            return -32033;
+        }
+        if message.contains("intrinsic gas too low") {
+            return -32034;
+        }
+        if message.contains("type4 transaction cannot be used") {
+            return -32035;
+        }
+    }
+    if method.starts_with("eth_") && message.contains("unsupported eth filter/reorg method in M0")
+    {
+        return -32036;
+    }
+    -32602
+}
+
+fn unified_account_events_since(
+    router: &UnifiedAccountRouter,
+    cursor: u64,
+) -> (Vec<AccountAuditEvent>, u64) {
+    let events = router.events();
+    let start = (cursor as usize).min(events.len());
+    let out = events[start..].to_vec();
+    (out, events.len() as u64)
+}
+
+fn append_unified_account_audit_record(
+    path: &Path,
+    record: &UnifiedAccountAuditSinkRecord,
+) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        if !parent.as_os_str().is_empty() {
+            fs::create_dir_all(parent).with_context(|| {
+                format!(
+                    "create unified account audit parent dir failed: {}",
+                    parent.display()
+                )
+            })?;
+        }
+    }
+    let mut file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .with_context(|| format!("open unified account audit log failed: {}", path.display()))?;
+    let encoded =
+        serde_json::to_string(record).context("serialize unified account audit record")?;
+    writeln!(file, "{encoded}")
+        .with_context(|| format!("write unified account audit log failed: {}", path.display()))?;
+    Ok(())
+}
+
+fn decode_u64_be(bytes: &[u8]) -> Result<u64> {
+    if bytes.len() != 8 {
+        bail!("invalid u64 bytes length: expected 8, got {}", bytes.len());
+    }
+    let mut out = [0u8; 8];
+    out.copy_from_slice(bytes);
+    Ok(u64::from_be_bytes(out))
+}
+
+fn unified_account_audit_rocksdb_event_key(seq: u64) -> Vec<u8> {
+    let mut out = Vec::with_capacity(UNIFIED_ACCOUNT_AUDIT_ROCKSDB_KEY_EVENT_PREFIX.len() + 8);
+    out.extend_from_slice(UNIFIED_ACCOUNT_AUDIT_ROCKSDB_KEY_EVENT_PREFIX);
+    out.extend_from_slice(&seq.to_be_bytes());
+    out
+}
+
+fn append_unified_account_audit_record_rocksdb(
+    path: &Path,
+    record: &UnifiedAccountAuditSinkRecord,
+) -> Result<()> {
+    let db = open_unified_account_audit_rocksdb(path)?;
+    let current_seq = match db
+        .get(UNIFIED_ACCOUNT_AUDIT_ROCKSDB_KEY_SEQ)
+        .with_context(|| {
+            format!(
+                "read unified account audit rocksdb sequence failed: {}",
+                path.display()
+            )
+        })? {
+        Some(raw) => decode_u64_be(&raw).with_context(|| {
+            format!(
+                "decode unified account audit rocksdb sequence failed: {}",
+                path.display()
+            )
+        })?,
+        None => 0,
+    };
+    let next_seq = current_seq.saturating_add(1);
+    let event_key = unified_account_audit_rocksdb_event_key(next_seq);
+    let event_value = serde_json::to_vec(record)
+        .context("serialize unified account audit record for rocksdb failed")?;
+    let mut batch = RocksDbWriteBatch::default();
+    batch.put(
+        UNIFIED_ACCOUNT_AUDIT_ROCKSDB_KEY_SEQ,
+        next_seq.to_be_bytes(),
+    );
+    batch.put(event_key, event_value);
+    db.write(batch).with_context(|| {
+        format!(
+            "write unified account audit rocksdb batch failed: {}",
+            path.display()
+        )
+    })?;
+    Ok(())
+}
+
 fn local_tx_hash(tx: &LocalTx) -> [u8; 32] {
     let mut hasher = Sha256::new();
     hasher.update(LOCAL_TX_HASH_DOMAIN);
@@ -2634,6 +3953,114 @@ fn local_tx_hash(tx: &LocalTx) -> [u8; 32] {
     hasher.update(tx.fee.to_le_bytes());
     hasher.update(tx.signature);
     hasher.finalize().into()
+}
+
+fn local_tx_uca_id(account: u64) -> String {
+    format!("{LOCAL_TX_UCA_ID_PREFIX}{account}")
+}
+
+fn local_tx_uca_primary_key_ref(account: u64) -> Vec<u8> {
+    let mut hasher = Sha256::new();
+    hasher.update(LOCAL_TX_UCA_PRIMARY_KEY_DOMAIN);
+    hasher.update(account.to_le_bytes());
+    hasher.finalize().to_vec()
+}
+
+fn local_tx_persona(tx: &LocalTx, chain_id: u64) -> PersonaAddress {
+    PersonaAddress {
+        persona_type: PersonaType::Evm,
+        chain_id,
+        external_address: encode_adapter_address(tx.account),
+    }
+}
+
+fn route_local_txs_through_unified_account(
+    txs: &[LocalTx],
+    router: &mut UnifiedAccountRouter,
+    chain_id: u64,
+    signature_domain: &str,
+    now: u64,
+    auto_provision: bool,
+) -> Result<UnifiedAccountExecGuardSummary> {
+    if txs.is_empty() {
+        bail!("unified account execution guard requires at least one tx");
+    }
+
+    let mut summary = UnifiedAccountExecGuardSummary::default();
+    for tx in txs {
+        summary.checked = summary.checked.saturating_add(1);
+        let uca_id = local_tx_uca_id(tx.account);
+        let persona = local_tx_persona(tx, chain_id);
+
+        if auto_provision {
+            match router.create_uca(
+                uca_id.clone(),
+                local_tx_uca_primary_key_ref(tx.account),
+                now,
+            ) {
+                Ok(()) => {
+                    summary.created_ucas = summary.created_ucas.saturating_add(1);
+                }
+                Err(UnifiedAccountError::UcaAlreadyExists { .. }) => {}
+                Err(err) => {
+                    bail!(
+                        "unified account auto-provision create failed (account={}, uca_id={}): {}",
+                        tx.account,
+                        uca_id,
+                        err
+                    );
+                }
+            }
+            match router.add_binding(&uca_id, AccountRole::Owner, persona.clone(), now) {
+                Ok(()) => {
+                    summary.added_bindings = summary.added_bindings.saturating_add(1);
+                }
+                Err(UnifiedAccountError::BindingAlreadyExists) => {}
+                Err(err) => {
+                    bail!(
+                        "unified account auto-provision bind failed (account={}, uca_id={}, chain_id={}): {}",
+                        tx.account,
+                        uca_id,
+                        chain_id,
+                        err
+                    );
+                }
+            }
+        }
+
+        let request = RouteRequest {
+            uca_id,
+            persona,
+            role: AccountRole::Owner,
+            protocol: ProtocolKind::Eth,
+            signature_domain: signature_domain.to_string(),
+            nonce: tx.nonce,
+            wants_cross_chain_atomic: false,
+            tx_type4: false,
+            session_expires_at: None,
+            now,
+        };
+        let decision = router.route(request).map_err(|err| {
+            anyhow::anyhow!(
+                "unified account execution route rejected (account={}, nonce={}, chain_id={}): {}",
+                tx.account,
+                tx.nonce,
+                chain_id,
+                err
+            )
+        })?;
+        summary.routed = summary.routed.saturating_add(1);
+        match decision {
+            RouteDecision::FastPath => {
+                summary.decision_fast_path = summary.decision_fast_path.saturating_add(1);
+            }
+            RouteDecision::Adapter { .. } => {
+                summary.decision_adapter = summary.decision_adapter.saturating_add(1);
+            }
+        }
+    }
+
+    Ok(summary)
 }
 
 fn load_query_state_db(path: &Path) -> Result<QueryStateDb> {
@@ -3053,8 +4480,52 @@ struct GovernanceChainAuditStore {
 fn value_to_u64(v: &serde_json::Value) -> Option<u64> {
     match v {
         serde_json::Value::Number(n) => n.as_u64(),
-        serde_json::Value::String(s) => s.trim().parse::<u64>().ok(),
+        serde_json::Value::String(s) => parse_u64_decimal_or_hex(s),
         _ => None,
+    }
+}
+
+fn parse_u64_decimal_or_hex(raw: &str) -> Option<u64> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    if let Some(hex) = trimmed
+        .strip_prefix("0x")
+        .or_else(|| trimmed.strip_prefix("0X"))
+    {
+        if hex.is_empty() {
+            return Some(0);
+        }
+        u64::from_str_radix(hex, 16).ok()
+    } else {
+        trimmed.parse::<u64>().ok()
+    }
+}
+
+fn value_to_u128(v: &serde_json::Value) -> Option<u128> {
+    match v {
+        serde_json::Value::Number(n) => n.as_u64().map(|v| v as u128),
+        serde_json::Value::String(s) => parse_u128_decimal_or_hex(s),
+        _ => None,
+    }
+}
+
+fn parse_u128_decimal_or_hex(raw: &str) -> Option<u128> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    if let Some(hex) = trimmed
+        .strip_prefix("0x")
+        .or_else(|| trimmed.strip_prefix("0X"))
+    {
+        if hex.is_empty() {
+            return Some(0);
+        }
+        u128::from_str_radix(hex, 16).ok()
+    } else {
+        trimmed.parse::<u128>().ok()
     }
 }
 
@@ -3076,6 +4547,13 @@ fn param_as_u64(params: &serde_json::Value, key: &str) -> Option<u64> {
                 None
             }
         }
+        _ => None,
+    }
+}
+
+fn param_as_u128(params: &serde_json::Value, key: &str) -> Option<u128> {
+    match params {
+        serde_json::Value::Object(map) => map.get(key).and_then(value_to_u128),
         _ => None,
     }
 }
@@ -3172,6 +4650,207 @@ fn param_as_u64_list(params: &serde_json::Value, key: &str) -> Option<Vec<u64>> 
         }),
         _ => None,
     }
+}
+
+#[derive(Debug, Clone)]
+struct EthRawTxTypeHint {
+    raw_tx: Vec<u8>,
+    fields: EvmRawTxFieldsM0,
+}
+
+fn extract_eth_raw_tx_param(params: &serde_json::Value) -> Option<String> {
+    match params {
+        serde_json::Value::Object(map) => {
+            const CANDIDATE_KEYS: &[&str] = &[
+                "raw_tx",
+                "rawTransaction",
+                "raw_transaction",
+                "raw",
+                "signed_tx",
+            ];
+            for key in CANDIDATE_KEYS {
+                if let Some(value) = map.get(*key).and_then(value_to_string) {
+                    let trimmed = value.trim().to_string();
+                    if !trimmed.is_empty() {
+                        return Some(trimmed);
+                    }
+                }
+            }
+            None
+        }
+        serde_json::Value::Array(arr) => arr.first().and_then(value_to_string),
+        _ => None,
+    }
+}
+
+fn extract_eth_persona_address_param(params: &serde_json::Value) -> Option<String> {
+    match params {
+        serde_json::Value::Object(map) => {
+            const CANDIDATE_KEYS: &[&str] = &["external_address", "from", "address"];
+            for key in CANDIDATE_KEYS {
+                if let Some(value) = map.get(*key).and_then(value_to_string) {
+                    let trimmed = value.trim().to_string();
+                    if !trimmed.is_empty() {
+                        return Some(trimmed);
+                    }
+                }
+            }
+            None
+        }
+        serde_json::Value::Array(arr) => arr.first().and_then(value_to_string),
+        _ => None,
+    }
+}
+
+fn infer_eth_raw_tx_type_hint(params: &serde_json::Value) -> Result<Option<EthRawTxTypeHint>> {
+    let Some(raw_tx_hex) = extract_eth_raw_tx_param(params) else {
+        return Ok(None);
+    };
+    let raw_tx = decode_hex_bytes(&raw_tx_hex, "raw_tx")?;
+    let fields = translate_raw_evm_tx_fields_m0(&raw_tx)?;
+    Ok(Some(EthRawTxTypeHint { raw_tx, fields }))
+}
+
+fn param_as_u64_any(params: &serde_json::Value, keys: &[&str]) -> Option<u64> {
+    for key in keys {
+        if let Some(value) = param_as_u64(params, key) {
+            return Some(value);
+        }
+    }
+    None
+}
+
+fn param_as_u128_any(params: &serde_json::Value, keys: &[&str]) -> Option<u128> {
+    for key in keys {
+        if let Some(value) = param_as_u128(params, key) {
+            return Some(value);
+        }
+    }
+    None
+}
+
+fn parse_eth_send_transaction_ir(
+    params: &serde_json::Value,
+    from: Vec<u8>,
+    chain_id: u64,
+    nonce: u64,
+    tx_type4: bool,
+) -> Result<TxIR> {
+    let to = match param_as_string(params, "to") {
+        Some(raw_to) => {
+            let trimmed = raw_to.trim();
+            if trimmed.is_empty() || trimmed.eq_ignore_ascii_case("0x") {
+                None
+            } else {
+                Some(decode_hex_bytes(trimmed, "to")?)
+            }
+        }
+        None => None,
+    };
+    let data = match param_as_string(params, "data").or_else(|| param_as_string(params, "input")) {
+        Some(raw_data) => {
+            let trimmed = raw_data.trim();
+            if trimmed.is_empty() || trimmed.eq_ignore_ascii_case("0x") {
+                Vec::new()
+            } else {
+                decode_hex_bytes(trimmed, "data")?
+            }
+        }
+        None => Vec::new(),
+    };
+    let value = param_as_u128_any(params, &["value"]).unwrap_or(0);
+    let gas_limit = param_as_u64_any(params, &["gas_limit", "gasLimit", "gas"]).unwrap_or(21_000);
+    let gas_price = param_as_u64_any(
+        params,
+        &[
+            "gas_price",
+            "gasPrice",
+            "max_fee_per_gas",
+            "maxFeePerGas",
+            "max_priority_fee_per_gas",
+            "maxPriorityFeePerGas",
+        ],
+    )
+    .unwrap_or(1);
+    let tx_type = if tx_type4 {
+        TxType::ContractCall
+    } else if to.is_none() {
+        TxType::ContractDeploy
+    } else if data.is_empty() {
+        TxType::Transfer
+    } else {
+        TxType::ContractCall
+    };
+
+    let mut tx = TxIR {
+        hash: Vec::new(),
+        from,
+        to,
+        value,
+        gas_limit,
+        gas_price,
+        nonce,
+        data,
+        signature: Vec::new(),
+        chain_id,
+        tx_type,
+        source_chain: None,
+        target_chain: None,
+    };
+    tx.compute_hash();
+    Ok(tx)
+}
+
+fn tx_type_label(tx_type: TxType) -> &'static str {
+    match tx_type {
+        TxType::Transfer => "transfer",
+        TxType::ContractCall => "contract_call",
+        TxType::ContractDeploy => "contract_deploy",
+        TxType::Privacy => "privacy",
+        TxType::CrossShard => "cross_shard",
+        TxType::CrossChainTransfer => "cross_chain_transfer",
+        TxType::CrossChainCall => "cross_chain_call",
+    }
+}
+
+fn parse_account_role(params: &serde_json::Value) -> Result<AccountRole> {
+    let raw = param_as_string(params, "role")
+        .unwrap_or_else(|| "owner".to_string())
+        .to_ascii_lowercase();
+    match raw.as_str() {
+        "owner" => Ok(AccountRole::Owner),
+        "delegate" => Ok(AccountRole::Delegate),
+        "session" | "sessionkey" | "session_key" => Ok(AccountRole::SessionKey),
+        _ => bail!("invalid role: {}; valid: owner|delegate|session_key", raw),
+    }
+}
+
+fn parse_persona_type(params: &serde_json::Value, key: &str) -> Result<PersonaType> {
+    let raw = param_as_string(params, key)
+        .ok_or_else(|| anyhow::anyhow!("{} is required", key))?
+        .to_ascii_lowercase();
+    Ok(match raw.as_str() {
+        "web30" => PersonaType::Web30,
+        "evm" => PersonaType::Evm,
+        "bitcoin" | "btc" => PersonaType::Bitcoin,
+        "solana" | "sol" => PersonaType::Solana,
+        other => PersonaType::Other(other.to_string()),
+    })
+}
+
+fn parse_external_address(params: &serde_json::Value, key: &str) -> Result<Vec<u8>> {
+    let raw = param_as_string(params, key).ok_or_else(|| anyhow::anyhow!("{} is required", key))?;
+    decode_hex_bytes(&raw, key)
+}
+
+fn parse_primary_key_ref(params: &serde_json::Value, uca_id: &str) -> Result<Vec<u8>> {
+    if let Some(raw) = param_as_string(params, "primary_key_ref") {
+        return decode_hex_bytes(&raw, "primary_key_ref");
+    }
+    let mut hasher = Sha256::new();
+    hasher.update(b"uca-primary-key-ref-v1");
+    hasher.update(uca_id.as_bytes());
+    Ok(hasher.finalize().to_vec())
 }
 
 fn parse_governance_signature_scheme(
@@ -5911,6 +7590,22 @@ fn run_chain_query(
                 "transaction": tx,
             })
         }
+        "eth_getTransactionByHash" => {
+            let tx_hash = param_as_string(params, "tx_hash")
+                .or_else(|| param_as_string(params, "hash"))
+                .unwrap_or_default()
+                .to_ascii_lowercase();
+            if tx_hash.is_empty() {
+                bail!("tx_hash is required for eth_getTransactionByHash");
+            }
+            let tx = db.txs.get(&tx_hash).cloned();
+            serde_json::json!({
+                "method": "eth_getTransactionByHash",
+                "tx_hash": tx_hash,
+                "found": tx.is_some(),
+                "transaction": tx,
+            })
+        }
         "getReceipt" => {
             let tx_hash = param_as_string(params, "tx_hash")
                 .or_else(|| param_as_string(params, "hash"))
@@ -5922,6 +7617,22 @@ fn run_chain_query(
             let receipt = db.receipts.get(&tx_hash).cloned();
             serde_json::json!({
                 "method": "getReceipt",
+                "tx_hash": tx_hash,
+                "found": receipt.is_some(),
+                "receipt": receipt,
+            })
+        }
+        "eth_getTransactionReceipt" => {
+            let tx_hash = param_as_string(params, "tx_hash")
+                .or_else(|| param_as_string(params, "hash"))
+                .unwrap_or_default()
+                .to_ascii_lowercase();
+            if tx_hash.is_empty() {
+                bail!("tx_hash is required for eth_getTransactionReceipt");
+            }
+            let receipt = db.receipts.get(&tx_hash).cloned();
+            serde_json::json!({
+                "method": "eth_getTransactionReceipt",
                 "tx_hash": tx_hash,
                 "found": receipt.is_some(),
                 "receipt": receipt,
@@ -5947,6 +7658,473 @@ fn run_chain_query(
         ),
     };
     Ok(response)
+}
+
+fn run_unified_account_rpc(
+    router: &mut UnifiedAccountRouter,
+    audit_sink: Option<&UnifiedAccountAuditSinkBackend>,
+    method: &str,
+    params: &serde_json::Value,
+) -> Result<(serde_json::Value, bool)> {
+    match method {
+        "ua_createUca" => {
+            let uca_id = param_as_string(params, "uca_id")
+                .ok_or_else(|| anyhow::anyhow!("uca_id is required for ua_createUca"))?;
+            let now = param_as_u64(params, "now").unwrap_or_else(now_unix_sec);
+            let primary_key_ref = parse_primary_key_ref(params, &uca_id)?;
+            router.create_uca(uca_id.clone(), primary_key_ref, now)?;
+            Ok((
+                serde_json::json!({
+                    "method": method,
+                    "created": true,
+                    "uca_id": uca_id,
+                }),
+                true,
+            ))
+        }
+        "ua_rotatePrimaryKey" => {
+            let uca_id = param_as_string(params, "uca_id")
+                .ok_or_else(|| anyhow::anyhow!("uca_id is required for ua_rotatePrimaryKey"))?;
+            let role = parse_account_role(params)?;
+            let now = param_as_u64(params, "now").unwrap_or_else(now_unix_sec);
+            let next_primary_key_ref = if let Some(raw) = param_as_string(params, "next_primary_key_ref")
+            {
+                decode_hex_bytes(&raw, "next_primary_key_ref")?
+            } else {
+                parse_primary_key_ref(params, &format!("{}:rotated:{}", uca_id, now))?
+            };
+            router.rotate_primary_key(&uca_id, role, next_primary_key_ref, now)?;
+            Ok((
+                serde_json::json!({
+                    "method": method,
+                    "rotated": true,
+                    "uca_id": uca_id,
+                }),
+                true,
+            ))
+        }
+        "ua_setPolicy" => {
+            let uca_id = param_as_string(params, "uca_id")
+                .ok_or_else(|| anyhow::anyhow!("uca_id is required for ua_setPolicy"))?;
+            let role = parse_account_role(params)?;
+            let nonce_scope = match param_as_string(params, "nonce_scope")
+                .unwrap_or_else(|| "persona".to_string())
+                .to_ascii_lowercase()
+                .as_str()
+            {
+                "persona" => NonceScope::Persona,
+                "chain" => NonceScope::Chain,
+                "global" => NonceScope::Global,
+                other => bail!("invalid nonce_scope: {}; valid: persona|chain|global", other),
+            };
+            let allow_type4_with_delegate_or_session =
+                param_as_bool(params, "allow_type4_with_delegate_or_session").unwrap_or(false);
+            let now = param_as_u64(params, "now").unwrap_or_else(now_unix_sec);
+            let policy = AccountPolicy {
+                nonce_scope,
+                allow_type4_with_delegate_or_session,
+            };
+            router.update_policy(&uca_id, role, policy, now)?;
+            Ok((
+                serde_json::json!({
+                    "method": method,
+                    "updated": true,
+                    "uca_id": uca_id,
+                    "nonce_scope": match nonce_scope {
+                        NonceScope::Persona => "persona",
+                        NonceScope::Chain => "chain",
+                        NonceScope::Global => "global",
+                    },
+                    "allow_type4_with_delegate_or_session": allow_type4_with_delegate_or_session,
+                }),
+                true,
+            ))
+        }
+        "ua_bindPersona" => {
+            let uca_id = param_as_string(params, "uca_id")
+                .ok_or_else(|| anyhow::anyhow!("uca_id is required for ua_bindPersona"))?;
+            let role = parse_account_role(params)?;
+            let persona_type = parse_persona_type(params, "persona_type")?;
+            let chain_id = param_as_u64(params, "chain_id")
+                .ok_or_else(|| anyhow::anyhow!("chain_id is required for ua_bindPersona"))?;
+            let external_address = parse_external_address(params, "external_address")?;
+            let now = param_as_u64(params, "now").unwrap_or_else(now_unix_sec);
+            let persona = PersonaAddress {
+                persona_type,
+                chain_id,
+                external_address,
+            };
+            router.add_binding(&uca_id, role, persona.clone(), now)?;
+            Ok((
+                serde_json::json!({
+                    "method": method,
+                    "bound": true,
+                    "uca_id": uca_id,
+                    "persona_type": persona.persona_type.as_str(),
+                    "chain_id": persona.chain_id,
+                }),
+                true,
+            ))
+        }
+        "ua_revokePersona" => {
+            let uca_id = param_as_string(params, "uca_id")
+                .ok_or_else(|| anyhow::anyhow!("uca_id is required for ua_revokePersona"))?;
+            let role = parse_account_role(params)?;
+            let persona_type = parse_persona_type(params, "persona_type")?;
+            let chain_id = param_as_u64(params, "chain_id")
+                .ok_or_else(|| anyhow::anyhow!("chain_id is required for ua_revokePersona"))?;
+            let external_address = parse_external_address(params, "external_address")?;
+            let cooldown_seconds = param_as_u64(params, "cooldown_seconds").unwrap_or(0);
+            let now = param_as_u64(params, "now").unwrap_or_else(now_unix_sec);
+            let persona = PersonaAddress {
+                persona_type,
+                chain_id,
+                external_address,
+            };
+            router.revoke_binding(&uca_id, role, persona.clone(), cooldown_seconds, now)?;
+            Ok((
+                serde_json::json!({
+                    "method": method,
+                    "revoked": true,
+                    "uca_id": uca_id,
+                    "persona_type": persona.persona_type.as_str(),
+                    "chain_id": persona.chain_id,
+                    "cooldown_seconds": cooldown_seconds,
+                }),
+                true,
+            ))
+        }
+        "ua_getBindingOwner" => {
+            let persona_type = parse_persona_type(params, "persona_type")?;
+            let chain_id = param_as_u64(params, "chain_id")
+                .ok_or_else(|| anyhow::anyhow!("chain_id is required for ua_getBindingOwner"))?;
+            let external_address = parse_external_address(params, "external_address")?;
+            let persona = PersonaAddress {
+                persona_type,
+                chain_id,
+                external_address,
+            };
+            let owner = router.resolve_binding_owner(&persona).map(str::to_string);
+            Ok((
+                serde_json::json!({
+                    "method": method,
+                    "found": owner.is_some(),
+                    "owner_uca_id": owner,
+                    "persona_type": persona.persona_type.as_str(),
+                    "chain_id": persona.chain_id,
+                }),
+                false,
+            ))
+        }
+        "ua_getAuditEvents" => {
+            let source = param_as_string(params, "source")
+                .unwrap_or_else(|| {
+                    if audit_sink.is_some() {
+                        "sink".to_string()
+                    } else {
+                        "router".to_string()
+                    }
+                })
+                .to_ascii_lowercase();
+            let limit = param_as_u64(params, "limit").unwrap_or(50).clamp(1, 500) as usize;
+            if source == "router" {
+                let clear = param_as_bool(params, "clear").unwrap_or(false);
+                let mut events: Vec<_> = if clear {
+                    router.take_events()
+                } else {
+                    router.events().to_vec()
+                };
+                if events.len() > limit {
+                    let start = events.len().saturating_sub(limit);
+                    events = events[start..].to_vec();
+                }
+                return Ok((
+                    serde_json::json!({
+                        "method": method,
+                        "source": "router",
+                        "count": events.len(),
+                        "clear": clear,
+                        "events": events,
+                    }),
+                    clear,
+                ));
+            }
+            if source == "sink" {
+                let sink = audit_sink.ok_or_else(|| {
+                    anyhow::anyhow!("audit sink is not available for ua_getAuditEvents")
+                })?;
+                let since_seq = param_as_u64(params, "since_seq").unwrap_or(0);
+                let filter = UnifiedAccountAuditQueryFilter::from_rpc_params(params);
+                let (head_seq, events) =
+                    load_unified_account_audit_records_for_rpc(sink, since_seq, limit, &filter)?;
+                return Ok((
+                    serde_json::json!({
+                        "method": method,
+                        "source": "sink",
+                        "backend": sink.backend_name(),
+                        "path": sink.path().display().to_string(),
+                        "since_seq": since_seq,
+                        "filter": filter.to_json(),
+                        "head_seq": head_seq,
+                        "count": events.len(),
+                        "events": events,
+                    }),
+                    false,
+                ));
+            }
+            bail!(
+                "invalid source for ua_getAuditEvents: {}; valid: router|sink",
+                source
+            );
+        }
+        "eth_getTransactionCount" => {
+            let chain_id = param_as_u64(params, "chain_id").unwrap_or(1);
+            let address_raw = extract_eth_persona_address_param(params)
+                .ok_or_else(|| anyhow::anyhow!("address (or from/external_address) is required"))?;
+            let external_address = decode_hex_bytes(&address_raw, "address")?;
+            let persona = PersonaAddress {
+                persona_type: PersonaType::Evm,
+                chain_id,
+                external_address: external_address.clone(),
+            };
+            let owner = router.resolve_binding_owner(&persona).map(str::to_string);
+            let explicit_uca_id = param_as_string(params, "uca_id");
+            let uca_id = match (explicit_uca_id, owner) {
+                (Some(explicit), Some(owner_id)) => {
+                    if explicit != owner_id {
+                        bail!(
+                            "uca_id mismatch for address binding: explicit={} binding_owner={}",
+                            explicit,
+                            owner_id
+                        );
+                    }
+                    explicit
+                }
+                (Some(explicit), None) => {
+                    bail!(
+                        "binding not found for address on chain_id={} (uca_id={})",
+                        chain_id,
+                        explicit
+                    );
+                }
+                (None, Some(owner_id)) => owner_id,
+                (None, None) => {
+                    bail!("binding not found for address on chain_id={}", chain_id);
+                }
+            };
+            let nonce = router.next_nonce_for_persona(&uca_id, &persona)?;
+            Ok((
+                serde_json::json!({
+                    "method": method,
+                    "uca_id": uca_id,
+                    "chain_id": chain_id,
+                    "address": format!("0x{}", to_hex(&external_address)),
+                    "nonce": nonce,
+                    "nonce_hex": format!("0x{:x}", nonce),
+                }),
+                false,
+            ))
+        }
+        m if m == "ua_route"
+            || is_unified_account_eth_route_method(m)
+            || is_unified_account_web30_route_method(m) =>
+        {
+            let uca_id = param_as_string(params, "uca_id").ok_or_else(|| {
+                anyhow::anyhow!("uca_id is required for route methods (ua_route/eth/web30)")
+            })?;
+            let role = parse_account_role(params)?;
+            let is_eth_alias = is_unified_account_eth_route_method(method);
+            let is_eth_raw_alias = method == "eth_sendRawTransaction";
+            let inferred_eth_tx_type = if is_eth_alias && is_eth_raw_alias {
+                infer_eth_raw_tx_type_hint(params)?
+            } else {
+                None
+            };
+            let explicit_chain_id = param_as_u64(params, "chain_id");
+            let inferred_chain_id = inferred_eth_tx_type
+                .as_ref()
+                .and_then(|hint| hint.fields.chain_id);
+            if let (Some(explicit), Some(inferred)) = (explicit_chain_id, inferred_chain_id) {
+                if explicit != inferred {
+                    bail!(
+                        "chain_id mismatch: explicit={} inferred_from_raw={}",
+                        explicit,
+                        inferred
+                    );
+                }
+            }
+            let chain_id = explicit_chain_id
+                .or(inferred_chain_id)
+                .ok_or_else(|| anyhow::anyhow!("chain_id is required for route methods"))?;
+            let is_web30_alias = is_unified_account_web30_route_method(method);
+            let persona_type = if is_eth_alias {
+                PersonaType::Evm
+            } else if is_web30_alias {
+                PersonaType::Web30
+            } else if param_as_string(params, "persona_type").is_some() {
+                parse_persona_type(params, "persona_type")?
+            } else {
+                PersonaType::Other("unknown".to_string())
+            };
+            let external_address_raw = param_as_string(params, "external_address")
+                .or_else(|| param_as_string(params, "from"))
+                .ok_or_else(|| {
+                    anyhow::anyhow!("external_address (or from) is required for route methods")
+                })?;
+            let external_address = decode_hex_bytes(&external_address_raw, "external_address")?;
+            let protocol = if is_eth_alias {
+                ProtocolKind::Eth
+            } else if is_web30_alias {
+                ProtocolKind::Web30
+            } else {
+                match param_as_string(params, "protocol")
+                    .unwrap_or_else(|| "other".to_string())
+                    .to_ascii_lowercase()
+                    .as_str()
+                {
+                    "eth" => ProtocolKind::Eth,
+                    "web30" => ProtocolKind::Web30,
+                    other => ProtocolKind::Other(other.to_string()),
+                }
+            };
+            let signature_domain = param_as_string(params, "signature_domain").unwrap_or_else(|| {
+                match protocol {
+                    ProtocolKind::Eth => format!("evm:{}", chain_id),
+                    ProtocolKind::Web30 => "web30:mainnet".to_string(),
+                    ProtocolKind::Other(_) => format!("{}:{}", persona_type.as_str(), chain_id),
+                }
+            });
+            let explicit_nonce = param_as_u64(params, "nonce");
+            let inferred_nonce = inferred_eth_tx_type
+                .as_ref()
+                .and_then(|hint| hint.fields.nonce);
+            if let (Some(explicit), Some(inferred)) = (explicit_nonce, inferred_nonce) {
+                if explicit != inferred {
+                    bail!(
+                        "nonce mismatch: explicit={} inferred_from_raw={}",
+                        explicit,
+                        inferred
+                    );
+                }
+            }
+            let nonce = explicit_nonce
+                .or(inferred_nonce)
+                .ok_or_else(|| anyhow::anyhow!("nonce is required for route methods"))?;
+            let wants_cross_chain_atomic =
+                param_as_bool(params, "wants_cross_chain_atomic").unwrap_or(false);
+            let explicit_tx_type = param_as_u64(params, "tx_type");
+            let inferred_tx_type = inferred_eth_tx_type
+                .as_ref()
+                .map(|hint| hint.fields.hint.tx_type_number as u64);
+            if let (Some(explicit), Some(inferred)) = (explicit_tx_type, inferred_tx_type) {
+                if explicit != inferred {
+                    bail!(
+                        "tx_type mismatch: explicit={} inferred_from_raw={}",
+                        explicit,
+                        inferred
+                    );
+                }
+            }
+            let tx_type = explicit_tx_type.or(inferred_tx_type);
+            let gas_limit = param_as_u64_any(params, &["gas_limit", "gasLimit", "gas"])
+                .or(inferred_eth_tx_type.as_ref().and_then(|hint| hint.fields.gas_limit));
+            let tx_type4 = param_as_bool(params, "tx_type4").unwrap_or(false)
+                || explicit_tx_type.map(|v| v == 4).unwrap_or(false)
+                || inferred_eth_tx_type
+                    .as_ref()
+                    .map(|hint| hint.fields.hint.tx_type4)
+                    .unwrap_or(false);
+            let inferred_eth_tx_ir = if is_eth_alias {
+                if is_eth_raw_alias {
+                    inferred_eth_tx_type.as_ref().map(|hint| {
+                        tx_ir_from_raw_fields_m0(
+                            &hint.fields,
+                            &hint.raw_tx,
+                            external_address.clone(),
+                            chain_id,
+                        )
+                    })
+                } else {
+                    Some(parse_eth_send_transaction_ir(
+                        params,
+                        external_address.clone(),
+                        chain_id,
+                        nonce,
+                        tx_type4,
+                    )?)
+                }
+            } else {
+                None
+            };
+            let inferred_eth_tx_ir_type = inferred_eth_tx_ir
+                .as_ref()
+                .map(|tx| tx_type_label(tx.tx_type));
+            let inferred_eth_tx_ir_data_len = inferred_eth_tx_ir
+                .as_ref()
+                .map(|tx| tx.data.len() as u64);
+            let session_expires_at = param_as_u64(params, "session_expires_at");
+            let now = param_as_u64(params, "now").unwrap_or_else(now_unix_sec);
+
+            let request = RouteRequest {
+                uca_id: uca_id.clone(),
+                persona: PersonaAddress {
+                    persona_type: persona_type.clone(),
+                    chain_id,
+                    external_address,
+                },
+                role,
+                protocol,
+                signature_domain: signature_domain.clone(),
+                nonce,
+                wants_cross_chain_atomic,
+                tx_type4,
+                session_expires_at,
+                now,
+            };
+            let decision = router.route(request)?;
+            Ok((
+                serde_json::json!({
+                    "method": method,
+                    "accepted": true,
+                    "uca_id": uca_id,
+                    "decision": match decision {
+                        RouteDecision::FastPath => serde_json::json!({"kind": "fast_path"}),
+                        RouteDecision::Adapter { chain_id } => serde_json::json!({"kind": "adapter", "chain_id": chain_id}),
+                    },
+                    "signature_domain": signature_domain,
+                    "nonce": nonce,
+                    "gas_limit": gas_limit,
+                    "tx_type": tx_type,
+                    "tx_type4": tx_type4,
+                    "tx_ir_type": inferred_eth_tx_ir_type,
+                    "tx_ir_data_len": inferred_eth_tx_ir_data_len,
+                    "session_expires_at": session_expires_at,
+                }),
+                true,
+            ))
+        }
+        _ => bail!(
+            "unknown unified account method: {}; valid: ua_createUca|ua_rotatePrimaryKey|ua_setPolicy|ua_bindPersona|ua_revokePersona|ua_getBindingOwner|ua_getAuditEvents|ua_route|eth_sendRawTransaction|eth_sendTransaction|eth_getTransactionCount|web30_sendTransaction|web30_sendRawTransaction",
+            method
+        ),
+    }
+}
+
+fn run_public_rpc(
+    db: &QueryStateDb,
+    router: &mut UnifiedAccountRouter,
+    audit_sink: Option<&UnifiedAccountAuditSinkBackend>,
+    method: &str,
+    params: &serde_json::Value,
+) -> Result<(serde_json::Value, bool)> {
+    if is_unified_account_method(method) {
+        return run_unified_account_rpc(router, audit_sink, method, params);
+    }
+    if is_eth_filter_or_reorg_method_m0(method) {
+        bail!("unsupported eth filter/reorg method in M0: {}", method);
+    }
+    let out = run_chain_query(db, method, params)?;
+    Ok((out, false))
 }
 
 fn now_unix_sec() -> u64 {
@@ -6048,6 +8226,23 @@ fn run_rpc_server_instance(
         }
         RpcServerRole::Public => None,
     };
+    let public_db = match role {
+        RpcServerRole::Public => Some(load_query_state_db(&db_path)?),
+        RpcServerRole::Governance => None,
+    };
+    let mut public_unified_account_runtime = match role {
+        RpcServerRole::Public => {
+            let store = resolve_unified_account_store(&db_path)?;
+            let snapshot = store.load_snapshot()?;
+            let audit_sink = resolve_unified_account_audit_sink(&db_path)?;
+            Some(UnifiedAccountRuntime {
+                store,
+                snapshot,
+                audit_sink,
+            })
+        }
+        RpcServerRole::Governance => None,
+    };
 
     let governance_audit_db = governance_runtime
         .as_ref()
@@ -6056,6 +8251,22 @@ fn run_rpc_server_instance(
     let governance_chain_audit_db = governance_runtime
         .as_ref()
         .map(|runtime| runtime.chain_audit_store_path.display().to_string())
+        .unwrap_or_else(|| "-".to_string());
+    let ua_store_backend = public_unified_account_runtime
+        .as_ref()
+        .map(|runtime| runtime.store.backend_name().to_string())
+        .unwrap_or_else(|| "-".to_string());
+    let ua_db_display = public_unified_account_runtime
+        .as_ref()
+        .map(|runtime| runtime.store.path().display().to_string())
+        .unwrap_or_else(|| "-".to_string());
+    let ua_audit_backend = public_unified_account_runtime
+        .as_ref()
+        .map(|runtime| runtime.audit_sink.backend_name().to_string())
+        .unwrap_or_else(|| "-".to_string());
+    let ua_audit_display = public_unified_account_runtime
+        .as_ref()
+        .map(|runtime| runtime.audit_sink.path().display().to_string())
         .unwrap_or_else(|| "-".to_string());
 
     let server = tiny_http::Server::http(&bind).map_err(|e| {
@@ -6067,10 +8278,14 @@ fn run_rpc_server_instance(
         )
     })?;
     println!(
-        "rpc_server_in: role={} bind={} db={} max_body={} rate_limit_per_ip={} max_requests={} gov_allowlist_count={} governance_audit_db={} governance_chain_audit_db={} governance_execution_enabled={}",
+        "rpc_server_in: role={} bind={} db={} ua_store={} ua_db={} ua_audit_backend={} ua_audit={} max_body={} rate_limit_per_ip={} max_requests={} gov_allowlist_count={} governance_audit_db={} governance_chain_audit_db={} governance_execution_enabled={}",
         role.as_str(),
         bind,
         db_path.display(),
+        ua_store_backend,
+        ua_db_display,
+        ua_audit_backend,
+        ua_audit_display,
         max_body_bytes,
         rate_limit_per_ip,
         max_requests,
@@ -6280,8 +8495,62 @@ fn run_rpc_server_instance(
 
         let result = match role {
             RpcServerRole::Public => {
-                let db = load_query_state_db(&db_path)?;
-                run_chain_query(&db, &method, &params)
+                let db = public_db
+                    .as_ref()
+                    .ok_or_else(|| anyhow::anyhow!("missing public query db"))?;
+                let runtime = public_unified_account_runtime
+                    .as_mut()
+                    .ok_or_else(|| anyhow::anyhow!("missing unified account runtime"))?;
+
+                let before_event_count = runtime.snapshot.router.events().len() as u64;
+                let before_flushed_event_count = runtime.snapshot.flushed_event_count;
+                let public_result = run_public_rpc(
+                    db,
+                    &mut runtime.snapshot.router,
+                    Some(&runtime.audit_sink),
+                    &method,
+                    &params,
+                );
+                let after_event_count = runtime.snapshot.router.events().len() as u64;
+                let mut router_changed = match &public_result {
+                    Ok((_, changed)) => *changed,
+                    Err(_) => false,
+                };
+                if after_event_count != before_event_count {
+                    router_changed = true;
+                }
+
+                if is_unified_account_method(&method) {
+                    let (router_events, next_cursor) = unified_account_events_since(
+                        &runtime.snapshot.router,
+                        runtime.snapshot.flushed_event_count,
+                    );
+                    let audit_record = UnifiedAccountAuditSinkRecord {
+                        at: now_unix_sec(),
+                        source: "public_rpc".to_string(),
+                        method: method.clone(),
+                        success: public_result.is_ok(),
+                        router_changed,
+                        event_cursor_from: runtime.snapshot.flushed_event_count,
+                        event_cursor_to: next_cursor,
+                        router_events,
+                        params: params.clone(),
+                        error: public_result.as_ref().err().map(|err| err.to_string()),
+                    };
+                    runtime.audit_sink.append_record(&audit_record)?;
+                    runtime.snapshot.flushed_event_count = next_cursor;
+                }
+
+                if router_changed
+                    || runtime.snapshot.flushed_event_count != before_flushed_event_count
+                {
+                    runtime.store.save_snapshot(&runtime.snapshot)?;
+                }
+
+                match public_result {
+                    Ok((result, _)) => Ok(result),
+                    Err(err) => Err(err),
+                }
             }
             RpcServerRole::Governance => {
                 let runtime = governance_runtime
@@ -6319,14 +8588,22 @@ fn run_rpc_server_instance(
                 "id": request_id,
                 "result": out,
             }),
-            Err(e) => serde_json::json!({
-                "jsonrpc": "2.0",
-                "id": request_id,
-                "error": {
-                    "code": -32602,
-                    "message": e.to_string(),
-                }
-            }),
+            Err(e) => {
+                let message = e.to_string();
+                let code = if role == RpcServerRole::Public {
+                    public_rpc_error_code_for_method(&method, &message)
+                } else {
+                    -32602
+                };
+                serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": request_id,
+                    "error": {
+                        "code": code,
+                        "message": message,
+                    }
+                })
+            }
         };
         respond_json_http(request, 200, &response)?;
 
@@ -6363,7 +8640,45 @@ fn run_rpc_server_instance(
     })
 }
 
+fn run_unified_account_audit_migrate_mode() -> Result<()> {
+    let persistence = ensure_d2d3_persistence_through_d1()?;
+    let query_db_path = chain_query_db_path();
+    let from_backend = string_env(
+        "NOVOVM_UA_AUDIT_MIGRATE_FROM",
+        UNIFIED_ACCOUNT_AUDIT_BACKEND_JSONL,
+    )
+    .trim()
+    .to_ascii_lowercase();
+    let to_backend = string_env(
+        "NOVOVM_UA_AUDIT_MIGRATE_TO",
+        UNIFIED_ACCOUNT_AUDIT_BACKEND_ROCKSDB,
+    )
+    .trim()
+    .to_ascii_lowercase();
+    let source = resolve_unified_account_audit_sink_with_backend(&query_db_path, &from_backend)?;
+    let target = resolve_unified_account_audit_sink_with_backend(&query_db_path, &to_backend)?;
+    let (source_head, target_head_before, appended, target_head_after) =
+        migrate_unified_account_audit_records(&source, &target)?;
+    println!(
+        "ua_audit_migrate_out: from_backend={} from_path={} from_head={} to_backend={} to_path={} target_head_before={} appended={} target_head_after={} d1_enforce={} d1_variant={} d1_rocksdb={} d1_root={}",
+        source.backend_name(),
+        source.path().display(),
+        source_head,
+        target.backend_name(),
+        target.path().display(),
+        target_head_before,
+        appended,
+        target_head_after,
+        persistence.enforce,
+        persistence.variant.as_str(),
+        persistence.rocksdb_persistence,
+        persistence.persistence_root.display()
+    );
+    Ok(())
+}
+
 fn run_chain_query_mode() -> Result<()> {
+    let persistence = ensure_d2d3_persistence_through_d1()?;
     let db_path = chain_query_db_path();
     let db = load_query_state_db(&db_path)?;
     let method = string_env("NOVOVM_CHAIN_QUERY_METHOD", "")
@@ -6394,13 +8709,17 @@ fn run_chain_query_mode() -> Result<()> {
 
     let response = run_chain_query(&db, &method, &serde_json::Value::Object(params))?;
     println!(
-        "chain_query_out: db={} method={} blocks={} txs={} receipts={} balances={}",
+        "chain_query_out: db={} method={} blocks={} txs={} receipts={} balances={} d1_enforce={} d1_variant={} d1_rocksdb={} d1_root={}",
         db_path.display(),
         method,
         db.blocks.len(),
         db.txs.len(),
         db.receipts.len(),
-        db.balances.len()
+        db.balances.len(),
+        persistence.enforce,
+        persistence.variant.as_str(),
+        persistence.rocksdb_persistence,
+        persistence.persistence_root.display()
     );
     println!(
         "{}",
@@ -6410,6 +8729,7 @@ fn run_chain_query_mode() -> Result<()> {
 }
 
 fn run_chain_query_rpc_server_mode() -> Result<()> {
+    let persistence = ensure_d2d3_persistence_through_d1()?;
     let legacy_bind = string_env("NOVOVM_RPC_BIND", "127.0.0.1:8899");
     let public_bind =
         string_env_nonempty("NOVOVM_PUBLIC_RPC_BIND").unwrap_or_else(|| legacy_bind.clone());
@@ -6465,7 +8785,7 @@ fn run_chain_query_rpc_server_mode() -> Result<()> {
     };
 
     println!(
-        "rpc_server_mode: public_enabled={} public_bind={} public_max_requests={} gov_enabled={} gov_bind={} gov_max_requests={} gov_allowlist_count={} db={}",
+        "rpc_server_mode: public_enabled={} public_bind={} public_max_requests={} gov_enabled={} gov_bind={} gov_max_requests={} gov_allowlist_count={} db={} d1_enforce={} d1_variant={} d1_rocksdb={} d1_root={}",
         enable_public,
         public_bind,
         public_max_requests,
@@ -6473,7 +8793,11 @@ fn run_chain_query_rpc_server_mode() -> Result<()> {
         gov_bind,
         gov_max_requests,
         gov_allowlist.len(),
-        db_path.display()
+        db_path.display(),
+        persistence.enforce,
+        persistence.variant.as_str(),
+        persistence.rocksdb_persistence,
+        persistence.persistence_root.display()
     );
 
     let mut handles = Vec::new();
@@ -9035,6 +11359,14 @@ fn run_governance_treasury_spend_probe_mode() -> Result<()> {
 fn run_ffi_v2() -> Result<()> {
     let slash_policy_loaded = load_consensus_slash_policy()?;
     emit_slash_policy_in_signal(&slash_policy_loaded);
+    let persistence = ensure_d2d3_persistence_through_d1()?;
+    println!(
+        "d2d3_persistence_bind: enforce={} variant={} rocksdb_persistence={} root={}",
+        persistence.enforce,
+        persistence.variant.as_str(),
+        persistence.rocksdb_persistence,
+        persistence.persistence_root.display()
+    );
 
     let runtime = AoemRuntimeConfig::from_env()?;
     let facade = novovm_exec::AoemExecFacade::open_with_runtime(&runtime)?;
@@ -9087,7 +11419,76 @@ fn run_ffi_v2() -> Result<()> {
         tx_meta.nonce_ok,
         tx_meta.sig_ok
     );
-    let adapter_signal = run_adapter_bridge_signal(&admitted_txs)?;
+    let ua_exec_guard_enabled = bool_env_default("NOVOVM_UNIFIED_ACCOUNT_EXEC_GUARD", true);
+    if ua_exec_guard_enabled {
+        let query_db_path = chain_query_db_path();
+        let ua_store = resolve_unified_account_store(&query_db_path)?;
+        let mut ua_snapshot = ua_store.load_snapshot()?;
+        let ua_audit_sink = resolve_unified_account_audit_sink(&query_db_path)?;
+        let chain_id = default_chain_id(resolve_adapter_chain()?);
+        let signature_domain = string_env_nonempty("NOVOVM_UNIFIED_ACCOUNT_EXEC_SIGNATURE_DOMAIN")
+            .unwrap_or_else(|| format!("evm:{}", chain_id));
+        let auto_provision = bool_env_default("NOVOVM_UNIFIED_ACCOUNT_EXEC_AUTOPROVISION", true);
+        let route_now = now_unix_sec();
+        let before_flushed_event_count = ua_snapshot.flushed_event_count;
+        let ua_summary_result = route_local_txs_through_unified_account(
+            &admitted_txs,
+            &mut ua_snapshot.router,
+            chain_id,
+            &signature_domain,
+            route_now,
+            auto_provision,
+        );
+        let (router_events, next_cursor) =
+            unified_account_events_since(&ua_snapshot.router, ua_snapshot.flushed_event_count);
+        let audit_record = UnifiedAccountAuditSinkRecord {
+            at: route_now,
+            source: "ffi_v2_exec_guard".to_string(),
+            method: "ua_exec_guard".to_string(),
+            success: ua_summary_result.is_ok(),
+            router_changed: ua_summary_result.is_ok() || !router_events.is_empty(),
+            event_cursor_from: ua_snapshot.flushed_event_count,
+            event_cursor_to: next_cursor,
+            router_events,
+            params: serde_json::json!({
+                "txs": admitted_txs.len(),
+                "chain_id": chain_id,
+                "signature_domain": signature_domain,
+                "auto_provision": auto_provision,
+            }),
+            error: ua_summary_result.as_ref().err().map(|err| err.to_string()),
+        };
+        ua_audit_sink.append_record(&audit_record)?;
+        ua_snapshot.flushed_event_count = next_cursor;
+        if ua_summary_result.is_ok()
+            || ua_snapshot.flushed_event_count != before_flushed_event_count
+        {
+            ua_store.save_snapshot(&ua_snapshot)?;
+        }
+        let ua_summary = ua_summary_result?;
+        println!(
+            "ua_exec_guard_out: enabled=true checked={} routed={} created_ucas={} added_bindings={} fast_path={} adapter={} chain_id={} signature_domain={} auto_provision={} ua_store={} ua_db={} ua_audit_backend={} ua_audit={}",
+            ua_summary.checked,
+            ua_summary.routed,
+            ua_summary.created_ucas,
+            ua_summary.added_bindings,
+            ua_summary.decision_fast_path,
+            ua_summary.decision_adapter,
+            chain_id,
+            signature_domain,
+            auto_provision,
+            ua_store.backend_name(),
+            ua_store.path().display(),
+            ua_audit_sink.backend_name(),
+            ua_audit_sink.path().display()
+        );
+    } else {
+        println!(
+            "ua_exec_guard_out: enabled=false checked=0 routed=0 created_ucas=0 added_bindings=0 fast_path=0 adapter=0"
+        );
+    }
+    let adapter_signal =
+        run_adapter_bridge_signal_with_options(&admitted_txs, ua_exec_guard_enabled)?;
     println!(
         "adapter_out: backend={} chain={} txs={} verified={} applied={} accounts={} state_root={}",
         adapter_signal.backend,
@@ -9304,6 +11705,9 @@ fn main() -> Result<()> {
     if node_mode.eq_ignore_ascii_case("rpc_server") {
         return run_chain_query_rpc_server_mode();
     }
+    if node_mode.eq_ignore_ascii_case("ua_audit_migrate") {
+        return run_unified_account_audit_migrate_mode();
+    }
 
     let mode = exec_path_mode();
     match mode.as_str() {
@@ -9474,6 +11878,8 @@ mod tests {
         assert_eq!(default_chain_id(ChainType::NovoVM), 20260303);
         assert_eq!(default_chain_id(ChainType::EVM), 1);
         assert_eq!(default_chain_id(ChainType::BNB), 56);
+        assert_eq!(default_chain_id(ChainType::Polygon), 137);
+        assert_eq!(default_chain_id(ChainType::Avalanche), 43114);
         assert_eq!(default_chain_id(ChainType::Custom), 9_999_999);
     }
 
@@ -9481,9 +11887,53 @@ mod tests {
     fn adapter_plugin_chain_code_mapping_is_stable() {
         assert_eq!(chain_type_to_plugin_code(ChainType::NovoVM), Some(0));
         assert_eq!(chain_type_to_plugin_code(ChainType::EVM), Some(1));
+        assert_eq!(chain_type_to_plugin_code(ChainType::Polygon), Some(5));
         assert_eq!(chain_type_to_plugin_code(ChainType::BNB), Some(6));
+        assert_eq!(chain_type_to_plugin_code(ChainType::Avalanche), Some(7));
         assert_eq!(chain_type_to_plugin_code(ChainType::Custom), Some(13));
         assert_eq!(chain_type_to_plugin_code(ChainType::Solana), None);
+    }
+
+    #[test]
+    fn evm_overlap_classifies_transfer_batch_as_p0() {
+        let tx = test_tx(1000, 1, 10, 0, 2);
+        let ir = to_adapter_tx_ir(&tx, 1);
+        let class = classify_evm_overlap_batch(ChainType::EVM, &[ir]).expect("evm class");
+        assert_eq!(class, EvmOverlapClass::P0);
+    }
+
+    #[test]
+    fn evm_overlap_classifies_polygon_transfer_batch_as_p0() {
+        let tx = test_tx(1000, 1, 10, 0, 2);
+        let ir = to_adapter_tx_ir(&tx, 137);
+        let class = classify_evm_overlap_batch(ChainType::Polygon, &[ir]).expect("polygon class");
+        assert_eq!(class, EvmOverlapClass::P0);
+    }
+
+    #[test]
+    fn evm_overlap_policy_prefers_plugin_for_p1_before_compare_green() {
+        let tx = test_tx(1000, 1, 10, 0, 2);
+        let mut ir = to_adapter_tx_ir(&tx, 1);
+        ir.gas_limit = 30_000;
+        let policy =
+            resolve_evm_overlap_auto_policy_with_flags(ChainType::EVM, &[ir], true, false, true)
+                .expect("policy");
+        assert_eq!(policy.class, EvmOverlapClass::P1);
+        assert_eq!(policy.order, EvmOverlapAutoOrder::PluginFirst);
+        assert_eq!(policy.policy, "p1_compare_pending_plugin_first");
+    }
+
+    #[test]
+    fn evm_overlap_policy_prefers_native_for_p1_after_compare_green() {
+        let tx = test_tx(1000, 1, 10, 0, 2);
+        let mut ir = to_adapter_tx_ir(&tx, 1);
+        ir.gas_limit = 30_000;
+        let policy =
+            resolve_evm_overlap_auto_policy_with_flags(ChainType::EVM, &[ir], true, true, true)
+                .expect("policy");
+        assert_eq!(policy.class, EvmOverlapClass::P1);
+        assert_eq!(policy.order, EvmOverlapAutoOrder::NativeFirst);
+        assert_eq!(policy.policy, "p1_compare_green_supervm_first");
     }
 
     #[test]
@@ -9668,6 +12118,13 @@ mod tests {
         )
         .expect("getTransaction should succeed");
         assert_eq!(tx_resp["found"].as_bool(), Some(true));
+        let tx_resp_eth = run_chain_query(
+            &db,
+            "eth_getTransactionByHash",
+            &serde_json::json!([tx_hash]),
+        )
+        .expect("eth_getTransactionByHash should succeed");
+        assert_eq!(tx_resp_eth["found"].as_bool(), Some(true));
 
         let receipt_hash = db
             .receipts
@@ -9682,12 +12139,1901 @@ mod tests {
         )
         .expect("getReceipt should succeed");
         assert_eq!(receipt_resp["found"].as_bool(), Some(true));
+        let receipt_resp_eth = run_chain_query(
+            &db,
+            "eth_getTransactionReceipt",
+            &serde_json::json!([receipt_hash]),
+        )
+        .expect("eth_getTransactionReceipt should succeed");
+        assert_eq!(receipt_resp_eth["found"].as_bool(), Some(true));
 
         let balance_resp =
             run_chain_query(&db, "getBalance", &serde_json::json!({"account": "1001"}))
                 .expect("getBalance should succeed");
         assert_eq!(balance_resp["found"].as_bool(), Some(true));
         assert_eq!(balance_resp["balance"].as_u64(), Some(20));
+    }
+
+    #[test]
+    fn unified_account_public_rpc_flow_routes_and_rejects_replay() {
+        let db = QueryStateDb::default();
+        let mut router = UnifiedAccountRouter::new();
+        let addr_hex = format!("0x{}", "11".repeat(20));
+
+        let (create_resp, create_changed) = run_public_rpc(
+            &db,
+            &mut router,
+            None,
+            "ua_createUca",
+            &serde_json::json!({
+                "uca_id": "uca-test",
+                "primary_key_ref": format!("0x{}", "22".repeat(32)),
+                "now": 10,
+            }),
+        )
+        .expect("ua_createUca should succeed");
+        assert!(create_changed);
+        assert_eq!(create_resp["created"].as_bool(), Some(true));
+
+        let (bind_resp, bind_changed) = run_public_rpc(
+            &db,
+            &mut router,
+            None,
+            "ua_bindPersona",
+            &serde_json::json!({
+                "uca_id": "uca-test",
+                "role": "owner",
+                "persona_type": "evm",
+                "chain_id": 1,
+                "external_address": addr_hex,
+                "now": 11,
+            }),
+        )
+        .expect("ua_bindPersona should succeed");
+        assert!(bind_changed);
+        assert_eq!(bind_resp["bound"].as_bool(), Some(true));
+
+        let (route_resp, route_changed) = run_public_rpc(
+            &db,
+            &mut router,
+            None,
+            "eth_sendRawTransaction",
+            &serde_json::json!({
+                "uca_id": "uca-test",
+                "role": "owner",
+                "chain_id": 1,
+                "from": format!("0x{}", "11".repeat(20)),
+                "nonce": 0,
+                "tx_type4": false,
+                "now": 12,
+            }),
+        )
+        .expect("eth_sendRawTransaction should route");
+        assert!(route_changed);
+        assert_eq!(route_resp["accepted"].as_bool(), Some(true));
+        assert_eq!(route_resp["decision"]["kind"].as_str(), Some("adapter"));
+        assert_eq!(route_resp["decision"]["chain_id"].as_u64(), Some(1));
+
+        let replay_err = run_public_rpc(
+            &db,
+            &mut router,
+            None,
+            "eth_sendRawTransaction",
+            &serde_json::json!({
+                "uca_id": "uca-test",
+                "role": "owner",
+                "chain_id": 1,
+                "from": format!("0x{}", "11".repeat(20)),
+                "nonce": 0,
+                "tx_type4": false,
+                "now": 13,
+            }),
+        )
+        .expect_err("replay nonce should be rejected")
+        .to_string();
+        assert!(replay_err.contains("nonce rejected"));
+    }
+
+    #[test]
+    fn unified_account_public_rpc_eth_send_transaction_alias_routes() {
+        let db = QueryStateDb::default();
+        let mut router = UnifiedAccountRouter::new();
+        let addr_hex = format!("0x{}", "21".repeat(20));
+        let to_hex = format!("0x{}", "22".repeat(20));
+
+        run_public_rpc(
+            &db,
+            &mut router,
+            None,
+            "ua_createUca",
+            &serde_json::json!({
+                "uca_id": "uca-eth-alias",
+                "primary_key_ref": format!("0x{}", "31".repeat(32)),
+                "now": 10,
+            }),
+        )
+        .expect("ua_createUca should succeed");
+
+        run_public_rpc(
+            &db,
+            &mut router,
+            None,
+            "ua_bindPersona",
+            &serde_json::json!({
+                "uca_id": "uca-eth-alias",
+                "role": "owner",
+                "persona_type": "evm",
+                "chain_id": 1,
+                "external_address": addr_hex,
+                "now": 11,
+            }),
+        )
+        .expect("ua_bindPersona should succeed");
+
+        let (route_resp, route_changed) = run_public_rpc(
+            &db,
+            &mut router,
+            None,
+            "eth_sendTransaction",
+            &serde_json::json!({
+                "uca_id": "uca-eth-alias",
+                "role": "owner",
+                "chain_id": 1,
+                "from": format!("0x{}", "21".repeat(20)),
+                "nonce": 0,
+                "to": to_hex,
+                "value": "0x01",
+                "gas": "0x5208",
+                "tx_type4": false,
+                "now": 12,
+            }),
+        )
+        .expect("eth_sendTransaction should route via unified account");
+        assert!(route_changed);
+        assert_eq!(route_resp["accepted"].as_bool(), Some(true));
+        assert_eq!(route_resp["decision"]["kind"].as_str(), Some("adapter"));
+        assert_eq!(route_resp["decision"]["chain_id"].as_u64(), Some(1));
+        assert_eq!(route_resp["gas_limit"].as_u64(), Some(21_000));
+        assert_eq!(route_resp["tx_ir_type"].as_str(), Some("transfer"));
+        assert_eq!(route_resp["tx_ir_data_len"].as_u64(), Some(0));
+    }
+
+    #[test]
+    fn unified_account_public_rpc_eth_send_transaction_alias_contract_call_ir() {
+        let db = QueryStateDb::default();
+        let mut router = UnifiedAccountRouter::new();
+        let addr_hex = format!("0x{}", "23".repeat(20));
+        let to_hex = format!("0x{}", "24".repeat(20));
+
+        run_public_rpc(
+            &db,
+            &mut router,
+            None,
+            "ua_createUca",
+            &serde_json::json!({
+                "uca_id": "uca-eth-alias-call",
+                "primary_key_ref": format!("0x{}", "33".repeat(32)),
+                "now": 10,
+            }),
+        )
+        .expect("ua_createUca should succeed");
+
+        run_public_rpc(
+            &db,
+            &mut router,
+            None,
+            "ua_bindPersona",
+            &serde_json::json!({
+                "uca_id": "uca-eth-alias-call",
+                "role": "owner",
+                "persona_type": "evm",
+                "chain_id": 1,
+                "external_address": addr_hex,
+                "now": 11,
+            }),
+        )
+        .expect("ua_bindPersona should succeed");
+
+        let (route_resp, route_changed) = run_public_rpc(
+            &db,
+            &mut router,
+            None,
+            "eth_sendTransaction",
+            &serde_json::json!({
+                "uca_id": "uca-eth-alias-call",
+                "role": "owner",
+                "chain_id": 1,
+                "from": format!("0x{}", "23".repeat(20)),
+                "nonce": "0x0",
+                "to": to_hex,
+                "data": "0xdeadbeef",
+                "gasPrice": "0x2",
+                "gas": "0x7530",
+                "now": 12,
+            }),
+        )
+        .expect("eth_sendTransaction call tx should route via unified account");
+        assert!(route_changed);
+        assert_eq!(route_resp["accepted"].as_bool(), Some(true));
+        assert_eq!(route_resp["decision"]["kind"].as_str(), Some("adapter"));
+        assert_eq!(route_resp["decision"]["chain_id"].as_u64(), Some(1));
+        assert_eq!(route_resp["gas_limit"].as_u64(), Some(30_000));
+        assert_eq!(route_resp["tx_ir_type"].as_str(), Some("contract_call"));
+        assert_eq!(route_resp["tx_ir_data_len"].as_u64(), Some(4));
+    }
+
+    #[test]
+    fn unified_account_public_rpc_eth_get_transaction_count_alias_tracks_next_nonce() {
+        let db = QueryStateDb::default();
+        let mut router = UnifiedAccountRouter::new();
+        let addr_hex = format!("0x{}", "25".repeat(20));
+        let to_hex = format!("0x{}", "26".repeat(20));
+
+        run_public_rpc(
+            &db,
+            &mut router,
+            None,
+            "ua_createUca",
+            &serde_json::json!({
+                "uca_id": "uca-eth-nonce",
+                "primary_key_ref": format!("0x{}", "35".repeat(32)),
+                "now": 10,
+            }),
+        )
+        .expect("ua_createUca should succeed");
+
+        run_public_rpc(
+            &db,
+            &mut router,
+            None,
+            "ua_bindPersona",
+            &serde_json::json!({
+                "uca_id": "uca-eth-nonce",
+                "role": "owner",
+                "persona_type": "evm",
+                "chain_id": 1,
+                "external_address": addr_hex,
+                "now": 11,
+            }),
+        )
+        .expect("ua_bindPersona should succeed");
+
+        run_public_rpc(
+            &db,
+            &mut router,
+            None,
+            "eth_sendTransaction",
+            &serde_json::json!({
+                "uca_id": "uca-eth-nonce",
+                "role": "owner",
+                "chain_id": 1,
+                "from": format!("0x{}", "25".repeat(20)),
+                "to": to_hex,
+                "nonce": 0,
+                "gas": "0x5208",
+                "now": 12,
+            }),
+        )
+        .expect("eth_sendTransaction should route");
+
+        let (resp, changed) = run_public_rpc(
+            &db,
+            &mut router,
+            None,
+            "eth_getTransactionCount",
+            &serde_json::json!({
+                "address": format!("0x{}", "25".repeat(20)),
+                "chain_id": 1,
+            }),
+        )
+        .expect("eth_getTransactionCount should resolve nonce");
+        assert!(!changed);
+        assert_eq!(resp["uca_id"].as_str(), Some("uca-eth-nonce"));
+        assert_eq!(resp["nonce"].as_u64(), Some(1));
+        assert_eq!(resp["nonce_hex"].as_str(), Some("0x1"));
+    }
+
+    #[test]
+    fn unified_account_public_rpc_eth_get_transaction_count_rejects_uca_mismatch() {
+        let db = QueryStateDb::default();
+        let mut router = UnifiedAccountRouter::new();
+        let addr_hex = format!("0x{}", "27".repeat(20));
+
+        run_public_rpc(
+            &db,
+            &mut router,
+            None,
+            "ua_createUca",
+            &serde_json::json!({
+                "uca_id": "uca-eth-owner",
+                "primary_key_ref": format!("0x{}", "37".repeat(32)),
+                "now": 10,
+            }),
+        )
+        .expect("ua_createUca should succeed");
+        run_public_rpc(
+            &db,
+            &mut router,
+            None,
+            "ua_bindPersona",
+            &serde_json::json!({
+                "uca_id": "uca-eth-owner",
+                "role": "owner",
+                "persona_type": "evm",
+                "chain_id": 1,
+                "external_address": addr_hex,
+                "now": 11,
+            }),
+        )
+        .expect("ua_bindPersona should succeed");
+
+        let err = run_public_rpc(
+            &db,
+            &mut router,
+            None,
+            "eth_getTransactionCount",
+            &serde_json::json!({
+                "uca_id": "uca-other",
+                "address": format!("0x{}", "27".repeat(20)),
+                "chain_id": 1,
+            }),
+        )
+        .expect_err("uca mismatch should reject")
+        .to_string();
+        assert!(err.contains("uca_id mismatch for address binding"));
+    }
+
+    #[test]
+    fn unified_account_public_rpc_eth_get_transaction_count_array_params_supported() {
+        let db = QueryStateDb::default();
+        let mut router = UnifiedAccountRouter::new();
+        let addr_hex = format!("0x{}", "28".repeat(20));
+
+        run_public_rpc(
+            &db,
+            &mut router,
+            None,
+            "ua_createUca",
+            &serde_json::json!({
+                "uca_id": "uca-eth-array",
+                "primary_key_ref": format!("0x{}", "38".repeat(32)),
+                "now": 10,
+            }),
+        )
+        .expect("ua_createUca should succeed");
+        run_public_rpc(
+            &db,
+            &mut router,
+            None,
+            "ua_bindPersona",
+            &serde_json::json!({
+                "uca_id": "uca-eth-array",
+                "role": "owner",
+                "persona_type": "evm",
+                "chain_id": 1,
+                "external_address": addr_hex,
+                "now": 11,
+            }),
+        )
+        .expect("ua_bindPersona should succeed");
+
+        let (resp, changed) = run_public_rpc(
+            &db,
+            &mut router,
+            None,
+            "eth_getTransactionCount",
+            &serde_json::json!([
+                format!("0x{}", "28".repeat(20)),
+                "latest",
+            ]),
+        )
+        .expect("eth_getTransactionCount array params should pass");
+        assert!(!changed);
+        assert_eq!(resp["uca_id"].as_str(), Some("uca-eth-array"));
+        assert_eq!(resp["nonce"].as_u64(), Some(0));
+    }
+
+    #[test]
+    fn unified_account_public_rpc_web30_send_raw_transaction_alias_routes() {
+        let db = QueryStateDb::default();
+        let mut router = UnifiedAccountRouter::new();
+        let addr_hex = format!("0x{}", "41".repeat(20));
+
+        run_public_rpc(
+            &db,
+            &mut router,
+            None,
+            "ua_createUca",
+            &serde_json::json!({
+                "uca_id": "uca-web30-alias",
+                "primary_key_ref": format!("0x{}", "51".repeat(32)),
+                "now": 10,
+            }),
+        )
+        .expect("ua_createUca should succeed");
+
+        run_public_rpc(
+            &db,
+            &mut router,
+            None,
+            "ua_bindPersona",
+            &serde_json::json!({
+                "uca_id": "uca-web30-alias",
+                "role": "owner",
+                "persona_type": "web30",
+                "chain_id": 20260303,
+                "external_address": addr_hex,
+                "now": 11,
+            }),
+        )
+        .expect("ua_bindPersona should succeed");
+
+        let (route_resp, route_changed) = run_public_rpc(
+            &db,
+            &mut router,
+            None,
+            "web30_sendRawTransaction",
+            &serde_json::json!({
+                "uca_id": "uca-web30-alias",
+                "role": "owner",
+                "chain_id": 20260303,
+                "from": format!("0x{}", "41".repeat(20)),
+                "nonce": 0,
+                "tx_type4": false,
+                "now": 12,
+            }),
+        )
+        .expect("web30_sendRawTransaction should route via unified account");
+        assert!(route_changed);
+        assert_eq!(route_resp["accepted"].as_bool(), Some(true));
+        assert_eq!(route_resp["decision"]["kind"].as_str(), Some("fast_path"));
+    }
+
+    #[test]
+    fn unified_account_exec_guard_rejects_replay_before_adapter_execution() {
+        let mut router = UnifiedAccountRouter::new();
+        let txs = vec![test_tx(1000, 1, 10, 0, 2)];
+
+        let first =
+            route_local_txs_through_unified_account(&txs, &mut router, 1, "evm:1", 10, true)
+                .expect("first execution guard routing should pass");
+        assert_eq!(first.checked, 1);
+        assert_eq!(first.routed, 1);
+        assert_eq!(first.created_ucas, 1);
+        assert_eq!(first.added_bindings, 1);
+        assert_eq!(first.decision_adapter, 1);
+
+        let replay_err =
+            route_local_txs_through_unified_account(&txs, &mut router, 1, "evm:1", 11, true)
+                .expect_err("execution guard should reject replay nonce")
+                .to_string();
+        assert!(replay_err.contains("nonce rejected"));
+    }
+
+    #[test]
+    fn unified_account_exec_guard_rejects_domain_mismatch_before_adapter_execution() {
+        let mut router = UnifiedAccountRouter::new();
+        let txs = vec![test_tx(1000, 1, 10, 0, 2)];
+
+        let err = route_local_txs_through_unified_account(
+            &txs,
+            &mut router,
+            1,
+            "web30:mainnet",
+            10,
+            true,
+        )
+        .expect_err("execution guard should reject mismatched signature domain")
+        .to_string();
+        assert!(err.contains("domain mismatch"));
+    }
+
+    #[test]
+    fn unified_account_store_snapshot_roundtrip_and_legacy_decode() {
+        let mut path = std::env::temp_dir();
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock should be >= epoch")
+            .as_nanos();
+        path.push(format!("novovm-ua-store-{}.bin", nonce));
+        let store = UnifiedAccountStoreBackend::BincodeFile { path: path.clone() };
+
+        let mut router = UnifiedAccountRouter::new();
+        router
+            .create_uca("uca-roundtrip", vec![7u8; 32], 1)
+            .expect("create uca for roundtrip");
+        let expected_events = router.events().len();
+        let legacy_raw = bincode::serialize(&router).expect("serialize legacy router");
+        let snapshot = UnifiedAccountStoreSnapshot {
+            router,
+            flushed_event_count: 1,
+        };
+        store
+            .save_snapshot(&snapshot)
+            .expect("save ua snapshot should succeed");
+        let loaded = store
+            .load_snapshot()
+            .expect("load ua snapshot should succeed");
+        assert_eq!(loaded.flushed_event_count, 1);
+        assert_eq!(loaded.router.events().len(), expected_events);
+
+        fs::write(&path, legacy_raw).expect("write legacy router payload");
+        let loaded_legacy = store
+            .load_snapshot()
+            .expect("load legacy router payload should succeed");
+        assert_eq!(loaded_legacy.flushed_event_count, expected_events as u64);
+        assert_eq!(loaded_legacy.router.events().len(), expected_events);
+
+        let _ = fs::remove_file(&path);
+    }
+
+    #[test]
+    fn unified_account_store_snapshot_roundtrip_rocksdb() {
+        let mut path = std::env::temp_dir();
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock should be >= epoch")
+            .as_nanos();
+        path.push(format!("novovm-ua-store-{}.rocksdb", nonce));
+        let store = UnifiedAccountStoreBackend::RocksDb { path: path.clone() };
+
+        let mut router = UnifiedAccountRouter::new();
+        router
+            .create_uca("uca-rocksdb", vec![9u8; 32], 1)
+            .expect("create uca for rocksdb roundtrip");
+        let expected_events = router.events().len();
+        let snapshot = UnifiedAccountStoreSnapshot {
+            router,
+            flushed_event_count: 2,
+        };
+        store
+            .save_snapshot(&snapshot)
+            .expect("save ua rocksdb snapshot should succeed");
+        let loaded = store
+            .load_snapshot()
+            .expect("load ua rocksdb snapshot should succeed");
+        assert_eq!(loaded.flushed_event_count, 2);
+        assert_eq!(loaded.router.events().len(), expected_events);
+
+        let db = open_unified_account_rocksdb(&path).expect("open rocksdb store for verify");
+        let state_cf = db
+            .cf_handle(UNIFIED_ACCOUNT_STORE_ROCKSDB_CF_STATE)
+            .expect("state cf should exist");
+        let audit_cf = db
+            .cf_handle(UNIFIED_ACCOUNT_STORE_ROCKSDB_CF_AUDIT)
+            .expect("audit cf should exist");
+        assert!(
+            db.get_cf(state_cf, UNIFIED_ACCOUNT_STORE_ROCKSDB_KEY_STATE_ROUTER)
+                .expect("read ua rocksdb state key from state cf")
+                .is_some()
+        );
+        assert!(
+            db.get_cf(audit_cf, UNIFIED_ACCOUNT_STORE_ROCKSDB_KEY_AUDIT_CURSOR)
+                .expect("read ua rocksdb audit cursor key from audit cf")
+                .is_some()
+        );
+        assert!(
+            db.get(UNIFIED_ACCOUNT_STORE_ROCKSDB_KEY_STATE_ROUTER)
+                .expect("read ua rocksdb state key from default cf")
+                .is_some()
+        );
+        assert!(
+            db.get(UNIFIED_ACCOUNT_STORE_ROCKSDB_KEY_AUDIT_CURSOR)
+                .expect("read ua rocksdb audit cursor key from default cf")
+                .is_some()
+        );
+        db.delete(UNIFIED_ACCOUNT_STORE_ROCKSDB_KEY_STATE_ROUTER)
+            .expect("delete default-cf ua state key");
+        db.delete(UNIFIED_ACCOUNT_STORE_ROCKSDB_KEY_AUDIT_CURSOR)
+            .expect("delete default-cf ua audit cursor key");
+        db.delete(UNIFIED_ACCOUNT_STORE_ROCKSDB_KEY_SNAPSHOT)
+            .expect("delete legacy ua snapshot key");
+        drop(db);
+
+        let loaded_v2_only = store
+            .load_snapshot()
+            .expect("load ua rocksdb snapshot from split namespace should succeed");
+        assert_eq!(loaded_v2_only.flushed_event_count, 2);
+        assert_eq!(loaded_v2_only.router.events().len(), expected_events);
+
+        let _ = fs::remove_dir_all(&path);
+    }
+
+    #[test]
+    fn unified_account_store_snapshot_namespace_only_rocksdb_decode() {
+        let mut path = std::env::temp_dir();
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock should be >= epoch")
+            .as_nanos();
+        path.push(format!("novovm-ua-store-namespace-only-{}.rocksdb", nonce));
+        let store = UnifiedAccountStoreBackend::RocksDb { path: path.clone() };
+
+        let mut router = UnifiedAccountRouter::new();
+        router
+            .create_uca("uca-namespace-only", vec![7u8; 32], 1)
+            .expect("create uca for namespace-only rocksdb decode");
+        let expected_events = router.events().len();
+        let router_encoded =
+            bincode::serialize(&router).expect("serialize router for namespace-only write");
+        let db =
+            open_unified_account_rocksdb(&path).expect("open rocksdb store for namespace write");
+        db.put(UNIFIED_ACCOUNT_STORE_ROCKSDB_KEY_STATE_ROUTER, router_encoded)
+            .expect("write default-cf state key");
+        db.put(
+            UNIFIED_ACCOUNT_STORE_ROCKSDB_KEY_AUDIT_CURSOR,
+            4u64.to_be_bytes(),
+        )
+        .expect("write default-cf audit cursor key");
+        drop(db);
+
+        let loaded = store
+            .load_snapshot()
+            .expect("namespace-only ua rocksdb decode should succeed");
+        assert_eq!(loaded.flushed_event_count, 4);
+        assert_eq!(loaded.router.events().len(), expected_events);
+
+        let _ = fs::remove_dir_all(&path);
+    }
+
+    #[test]
+    fn unified_account_store_snapshot_legacy_only_rocksdb_decode() {
+        let mut path = std::env::temp_dir();
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock should be >= epoch")
+            .as_nanos();
+        path.push(format!("novovm-ua-store-legacy-only-{}.rocksdb", nonce));
+        let store = UnifiedAccountStoreBackend::RocksDb { path: path.clone() };
+
+        let mut router = UnifiedAccountRouter::new();
+        router
+            .create_uca("uca-legacy-only", vec![8u8; 32], 1)
+            .expect("create uca for legacy-only rocksdb decode");
+        let expected_events = router.events().len();
+        let snapshot = UnifiedAccountStoreSnapshot {
+            router,
+            flushed_event_count: 3,
+        };
+        let legacy_encoded = encode_unified_account_snapshot(&snapshot)
+            .expect("encode legacy ua snapshot should succeed");
+        let db = open_unified_account_rocksdb(&path).expect("open rocksdb store for legacy write");
+        db.put(UNIFIED_ACCOUNT_STORE_ROCKSDB_KEY_SNAPSHOT, legacy_encoded)
+            .expect("write legacy ua snapshot key");
+        drop(db);
+
+        let loaded = store
+            .load_snapshot()
+            .expect("legacy-only ua rocksdb decode should succeed");
+        assert_eq!(loaded.flushed_event_count, 3);
+        assert_eq!(loaded.router.events().len(), expected_events);
+
+        let _ = fs::remove_dir_all(&path);
+    }
+
+    #[test]
+    fn unified_account_audit_sink_appends_jsonl_records() {
+        let mut path = std::env::temp_dir();
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock should be >= epoch")
+            .as_nanos();
+        path.push(format!("novovm-ua-audit-{}.jsonl", nonce));
+        let record = UnifiedAccountAuditSinkRecord {
+            at: 1,
+            source: "test".to_string(),
+            method: "ua_route".to_string(),
+            success: true,
+            router_changed: true,
+            event_cursor_from: 0,
+            event_cursor_to: 1,
+            router_events: vec![],
+            params: serde_json::json!({"k":"v"}),
+            error: None,
+        };
+        append_unified_account_audit_record(&path, &record).expect("append audit record");
+        append_unified_account_audit_record(&path, &record).expect("append audit record again");
+
+        let raw = fs::read_to_string(&path).expect("read audit file");
+        let lines: Vec<_> = raw.lines().collect();
+        assert_eq!(lines.len(), 2);
+        assert!(lines[0].contains("\"method\":\"ua_route\""));
+        assert!(lines[0].contains("\"source\":\"test\""));
+
+        let _ = fs::remove_file(&path);
+    }
+
+    #[test]
+    fn unified_account_audit_sink_appends_rocksdb_records() {
+        let mut path = std::env::temp_dir();
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock should be >= epoch")
+            .as_nanos();
+        path.push(format!("novovm-ua-audit-{}.rocksdb", nonce));
+        let sink = UnifiedAccountAuditSinkBackend::RocksDb { path: path.clone() };
+        let record = UnifiedAccountAuditSinkRecord {
+            at: 2,
+            source: "test".to_string(),
+            method: "ua_route".to_string(),
+            success: true,
+            router_changed: true,
+            event_cursor_from: 0,
+            event_cursor_to: 1,
+            router_events: vec![],
+            params: serde_json::json!({"k":"v"}),
+            error: None,
+        };
+        sink.append_record(&record)
+            .expect("append rocksdb audit record");
+        sink.append_record(&record)
+            .expect("append rocksdb audit record again");
+
+        let db = open_unified_account_audit_rocksdb(&path).expect("open rocksdb audit for verify");
+        let seq_raw = db
+            .get(UNIFIED_ACCOUNT_AUDIT_ROCKSDB_KEY_SEQ)
+            .expect("read rocksdb audit seq")
+            .expect("rocksdb audit seq should exist");
+        let seq = decode_u64_be(&seq_raw).expect("decode rocksdb audit seq");
+        assert_eq!(seq, 2);
+
+        let event1_raw = db
+            .get(unified_account_audit_rocksdb_event_key(1))
+            .expect("read rocksdb audit event1")
+            .expect("rocksdb audit event1 should exist");
+        let event2_raw = db
+            .get(unified_account_audit_rocksdb_event_key(2))
+            .expect("read rocksdb audit event2")
+            .expect("rocksdb audit event2 should exist");
+        let event1: serde_json::Value =
+            serde_json::from_slice(&event1_raw).expect("decode event1 json");
+        let event2: serde_json::Value =
+            serde_json::from_slice(&event2_raw).expect("decode event2 json");
+        assert_eq!(event1["method"].as_str(), Some("ua_route"));
+        assert_eq!(event2["source"].as_str(), Some("test"));
+
+        drop(db);
+        let _ = fs::remove_dir_all(&path);
+    }
+
+    #[test]
+    fn unified_account_public_rpc_get_audit_events_from_sink() {
+        let db = QueryStateDb::default();
+        let mut router = UnifiedAccountRouter::new();
+        let mut path = std::env::temp_dir();
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock should be >= epoch")
+            .as_nanos();
+        path.push(format!("novovm-ua-audit-rpc-{}.rocksdb", nonce));
+        let sink = UnifiedAccountAuditSinkBackend::RocksDb { path: path.clone() };
+        let record = UnifiedAccountAuditSinkRecord {
+            at: 3,
+            source: "test".to_string(),
+            method: "ua_route".to_string(),
+            success: true,
+            router_changed: true,
+            event_cursor_from: 0,
+            event_cursor_to: 1,
+            router_events: vec![],
+            params: serde_json::json!({"k":"v"}),
+            error: None,
+        };
+        sink.append_record(&record)
+            .expect("append rocksdb audit record");
+        sink.append_record(&record)
+            .expect("append rocksdb audit record again");
+
+        let (resp, changed) = run_public_rpc(
+            &db,
+            &mut router,
+            Some(&sink),
+            "ua_getAuditEvents",
+            &serde_json::json!({
+                "source": "sink",
+                "since_seq": 0,
+                "limit": 10,
+            }),
+        )
+        .expect("ua_getAuditEvents should read sink");
+        assert!(!changed);
+        assert_eq!(resp["source"].as_str(), Some("sink"));
+        assert_eq!(resp["backend"].as_str(), Some("rocksdb"));
+        assert_eq!(resp["count"].as_u64(), Some(2));
+        assert_eq!(resp["events"][0]["seq"].as_u64(), Some(1));
+        assert_eq!(resp["events"][1]["seq"].as_u64(), Some(2));
+
+        let _ = fs::remove_dir_all(&path);
+    }
+
+    #[test]
+    fn unified_account_public_rpc_get_audit_events_from_sink_supports_filters() {
+        let db = QueryStateDb::default();
+        let mut router = UnifiedAccountRouter::new();
+        let mut path = std::env::temp_dir();
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock should be >= epoch")
+            .as_nanos();
+        path.push(format!("novovm-ua-audit-rpc-filter-{}.rocksdb", nonce));
+        let sink = UnifiedAccountAuditSinkBackend::RocksDb { path: path.clone() };
+        sink.append_record(&UnifiedAccountAuditSinkRecord {
+            at: 10,
+            source: "public_rpc".to_string(),
+            method: "ua_route".to_string(),
+            success: true,
+            router_changed: true,
+            event_cursor_from: 0,
+            event_cursor_to: 1,
+            router_events: vec![],
+            params: serde_json::json!({"idx":1}),
+            error: None,
+        })
+        .expect("append filter record #1");
+        sink.append_record(&UnifiedAccountAuditSinkRecord {
+            at: 11,
+            source: "ffi_v2_exec_guard".to_string(),
+            method: "ua_exec_guard".to_string(),
+            success: false,
+            router_changed: false,
+            event_cursor_from: 1,
+            event_cursor_to: 1,
+            router_events: vec![],
+            params: serde_json::json!({"idx":2}),
+            error: Some("x".to_string()),
+        })
+        .expect("append filter record #2");
+        sink.append_record(&UnifiedAccountAuditSinkRecord {
+            at: 12,
+            source: "public_rpc".to_string(),
+            method: "ua_route".to_string(),
+            success: false,
+            router_changed: false,
+            event_cursor_from: 1,
+            event_cursor_to: 2,
+            router_events: vec![],
+            params: serde_json::json!({"idx":3}),
+            error: Some("y".to_string()),
+        })
+        .expect("append filter record #3");
+
+        let (resp, changed) = run_public_rpc(
+            &db,
+            &mut router,
+            Some(&sink),
+            "ua_getAuditEvents",
+            &serde_json::json!({
+                "source": "sink",
+                "since_seq": 0,
+                "limit": 10,
+                "filter_method": "ua_route",
+                "filter_source": "public_rpc",
+                "filter_success": true
+            }),
+        )
+        .expect("ua_getAuditEvents sink filter should succeed");
+        assert!(!changed);
+        assert_eq!(resp["count"].as_u64(), Some(1));
+        assert_eq!(resp["events"][0]["seq"].as_u64(), Some(1));
+        assert_eq!(resp["events"][0]["method"].as_str(), Some("ua_route"));
+        assert_eq!(resp["events"][0]["source"].as_str(), Some("public_rpc"));
+        assert_eq!(resp["events"][0]["success"].as_bool(), Some(true));
+
+        let _ = fs::remove_dir_all(&path);
+    }
+
+    #[test]
+    fn unified_account_audit_migration_jsonl_to_rocksdb_is_incremental() {
+        let mut src_path = std::env::temp_dir();
+        let mut dst_path = std::env::temp_dir();
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock should be >= epoch")
+            .as_nanos();
+        src_path.push(format!("novovm-ua-audit-src-{}.jsonl", nonce));
+        dst_path.push(format!("novovm-ua-audit-dst-{}.rocksdb", nonce));
+        let source = UnifiedAccountAuditSinkBackend::JsonlFile {
+            path: src_path.clone(),
+        };
+        let target = UnifiedAccountAuditSinkBackend::RocksDb {
+            path: dst_path.clone(),
+        };
+        let record = UnifiedAccountAuditSinkRecord {
+            at: 4,
+            source: "test".to_string(),
+            method: "ua_route".to_string(),
+            success: true,
+            router_changed: true,
+            event_cursor_from: 0,
+            event_cursor_to: 1,
+            router_events: vec![],
+            params: serde_json::json!({"k":"v"}),
+            error: None,
+        };
+        source
+            .append_record(&record)
+            .expect("append source audit record #1");
+        source
+            .append_record(&record)
+            .expect("append source audit record #2");
+        source
+            .append_record(&record)
+            .expect("append source audit record #3");
+        target
+            .append_record(&record)
+            .expect("append target pre-existing audit record #1");
+
+        let (source_head, target_head_before, appended, target_head_after) =
+            migrate_unified_account_audit_records(&source, &target)
+                .expect("migrate jsonl to rocksdb");
+        assert_eq!(source_head, 3);
+        assert_eq!(target_head_before, 1);
+        assert_eq!(appended, 2);
+        assert_eq!(target_head_after, 3);
+
+        let (_, _, appended_again, target_head_after_again) =
+            migrate_unified_account_audit_records(&source, &target)
+                .expect("second migrate should be idempotent by seq");
+        assert_eq!(appended_again, 0);
+        assert_eq!(target_head_after_again, 3);
+
+        let _ = fs::remove_file(&src_path);
+        let _ = fs::remove_dir_all(&dst_path);
+    }
+
+    fn ua_hex(byte: u8, bytes: usize) -> String {
+        format!("0x{}", format!("{:02x}", byte).repeat(bytes))
+    }
+
+    fn ua_create(db: &QueryStateDb, router: &mut UnifiedAccountRouter, uca_id: &str, now: u64) {
+        let (resp, changed) = run_public_rpc(
+            db,
+            router,
+            None,
+            "ua_createUca",
+            &serde_json::json!({
+                "uca_id": uca_id,
+                "now": now,
+                "primary_key_ref": ua_hex(0x66, 32),
+            }),
+        )
+        .expect("ua_createUca should succeed");
+        assert!(changed);
+        assert_eq!(resp["created"].as_bool(), Some(true));
+        assert_eq!(resp["uca_id"].as_str(), Some(uca_id));
+    }
+
+    fn ua_bind(
+        db: &QueryStateDb,
+        router: &mut UnifiedAccountRouter,
+        uca_id: &str,
+        role: &str,
+        persona_type: &str,
+        chain_id: u64,
+        external_address: &str,
+        now: u64,
+    ) {
+        let (resp, changed) = run_public_rpc(
+            db,
+            router,
+            None,
+            "ua_bindPersona",
+            &serde_json::json!({
+                "uca_id": uca_id,
+                "role": role,
+                "persona_type": persona_type,
+                "chain_id": chain_id,
+                "external_address": external_address,
+                "now": now,
+            }),
+        )
+        .expect("ua_bindPersona should succeed");
+        assert!(changed);
+        assert_eq!(resp["bound"].as_bool(), Some(true));
+    }
+
+    #[test]
+    fn unified_account_gate_ua_g01_mapping_bind_success() {
+        let db = QueryStateDb::default();
+        let mut router = UnifiedAccountRouter::new();
+        let evm_addr = ua_hex(0x11, 20);
+        ua_create(&db, &mut router, "uca-a", 10);
+        ua_bind(&db, &mut router, "uca-a", "owner", "evm", 1, &evm_addr, 11);
+        assert!(router.events().iter().any(|event| {
+            matches!(
+                event,
+                AccountAuditEvent::BindingAdded { uca_id, .. } if uca_id == "uca-a"
+            )
+        }));
+    }
+
+    #[test]
+    fn unified_account_gate_ua_g02_mapping_conflict_rejected() {
+        let db = QueryStateDb::default();
+        let mut router = UnifiedAccountRouter::new();
+        let evm_addr = ua_hex(0x12, 20);
+        ua_create(&db, &mut router, "uca-a", 10);
+        ua_create(&db, &mut router, "uca-b", 10);
+        ua_bind(&db, &mut router, "uca-a", "owner", "evm", 1, &evm_addr, 11);
+
+        let err = run_public_rpc(
+            &db,
+            &mut router,
+            None,
+            "ua_bindPersona",
+            &serde_json::json!({
+                "uca_id": "uca-b",
+                "role": "owner",
+                "persona_type": "evm",
+                "chain_id": 1,
+                "external_address": evm_addr,
+                "now": 12,
+            }),
+        )
+        .expect_err("binding conflict should be rejected")
+        .to_string();
+        assert!(err.contains("binding conflict"));
+        assert!(router.events().iter().any(|event| {
+            matches!(
+                event,
+                AccountAuditEvent::BindingConflictRejected {
+                    request_uca_id,
+                    existing_uca_id,
+                    ..
+                } if request_uca_id == "uca-b" && existing_uca_id == "uca-a"
+            )
+        }));
+    }
+
+    #[test]
+    fn unified_account_gate_ua_g03_mapping_cooldown_rejects_rebind() {
+        let db = QueryStateDb::default();
+        let mut router = UnifiedAccountRouter::new();
+        let evm_addr = ua_hex(0x13, 20);
+        ua_create(&db, &mut router, "uca-a", 10);
+        ua_bind(&db, &mut router, "uca-a", "owner", "evm", 1, &evm_addr, 11);
+        run_public_rpc(
+            &db,
+            &mut router,
+            None,
+            "ua_revokePersona",
+            &serde_json::json!({
+                "uca_id": "uca-a",
+                "role": "owner",
+                "persona_type": "evm",
+                "chain_id": 1,
+                "external_address": evm_addr,
+                "cooldown_seconds": 60,
+                "now": 20,
+            }),
+        )
+        .expect("ua_revokePersona should succeed");
+
+        let err = run_public_rpc(
+            &db,
+            &mut router,
+            None,
+            "ua_bindPersona",
+            &serde_json::json!({
+                "uca_id": "uca-a",
+                "role": "owner",
+                "persona_type": "evm",
+                "chain_id": 1,
+                "external_address": evm_addr,
+                "now": 21,
+            }),
+        )
+        .expect_err("cooldown window should reject")
+        .to_string();
+        assert!(err.contains("cooldown active"));
+    }
+
+    #[test]
+    fn unified_account_gate_ua_g04_signature_domain_mismatch_rejected() {
+        let db = QueryStateDb::default();
+        let mut router = UnifiedAccountRouter::new();
+        let evm_addr = ua_hex(0x14, 20);
+        ua_create(&db, &mut router, "uca-a", 10);
+        ua_bind(&db, &mut router, "uca-a", "owner", "evm", 1, &evm_addr, 11);
+
+        let err = run_public_rpc(
+            &db,
+            &mut router,
+            None,
+            "eth_sendRawTransaction",
+            &serde_json::json!({
+                "uca_id": "uca-a",
+                "role": "owner",
+                "chain_id": 1,
+                "from": evm_addr,
+                "signature_domain": "web30:mainnet",
+                "nonce": 0,
+                "tx_type4": false,
+                "now": 12,
+            }),
+        )
+        .expect_err("domain mismatch should reject")
+        .to_string();
+        assert!(err.contains("domain mismatch"));
+        assert!(router.events().iter().any(|event| {
+            matches!(event, AccountAuditEvent::DomainMismatchRejected { uca_id, .. } if uca_id == "uca-a")
+        }));
+    }
+
+    #[test]
+    fn unified_account_gate_ua_g05_signature_domain_eip712_wrong_chain_rejected() {
+        let db = QueryStateDb::default();
+        let mut router = UnifiedAccountRouter::new();
+        let evm_addr = ua_hex(0x15, 20);
+        ua_create(&db, &mut router, "uca-a", 10);
+        ua_bind(&db, &mut router, "uca-a", "owner", "evm", 1, &evm_addr, 11);
+
+        let err = run_public_rpc(
+            &db,
+            &mut router,
+            None,
+            "eth_sendRawTransaction",
+            &serde_json::json!({
+                "uca_id": "uca-a",
+                "role": "owner",
+                "chain_id": 1,
+                "from": evm_addr,
+                "signature_domain": "eip712:10:demo-app",
+                "nonce": 0,
+                "tx_type4": false,
+                "now": 12,
+            }),
+        )
+        .expect_err("wrong chain eip712 domain should reject")
+        .to_string();
+        assert!(err.contains("domain mismatch"));
+    }
+
+    #[test]
+    fn unified_account_gate_ua_g06_nonce_replay_rejected() {
+        let db = QueryStateDb::default();
+        let mut router = UnifiedAccountRouter::new();
+        let evm_addr = ua_hex(0x16, 20);
+        ua_create(&db, &mut router, "uca-a", 10);
+        ua_bind(&db, &mut router, "uca-a", "owner", "evm", 1, &evm_addr, 11);
+
+        run_public_rpc(
+            &db,
+            &mut router,
+            None,
+            "eth_sendRawTransaction",
+            &serde_json::json!({
+                "uca_id": "uca-a",
+                "role": "owner",
+                "chain_id": 1,
+                "from": evm_addr,
+                "nonce": 0,
+                "tx_type4": false,
+                "now": 12,
+            }),
+        )
+        .expect("first nonce should pass");
+
+        let err = run_public_rpc(
+            &db,
+            &mut router,
+            None,
+            "eth_sendRawTransaction",
+            &serde_json::json!({
+                "uca_id": "uca-a",
+                "role": "owner",
+                "chain_id": 1,
+                "from": evm_addr,
+                "nonce": 0,
+                "tx_type4": false,
+                "now": 13,
+            }),
+        )
+        .expect_err("replay nonce should reject")
+        .to_string();
+        assert!(err.contains("nonce rejected"));
+        assert!(router.events().iter().any(|event| {
+            matches!(
+                event,
+                AccountAuditEvent::NonceReplayRejected { uca_id, .. } if uca_id == "uca-a"
+            )
+        }));
+    }
+
+    #[test]
+    fn unified_account_gate_ua_g07_nonce_reverse_order_rejected() {
+        let db = QueryStateDb::default();
+        let mut router = UnifiedAccountRouter::new();
+        let evm_addr = ua_hex(0x17, 20);
+        ua_create(&db, &mut router, "uca-a", 10);
+        ua_bind(&db, &mut router, "uca-a", "owner", "evm", 1, &evm_addr, 11);
+
+        run_public_rpc(
+            &db,
+            &mut router,
+            None,
+            "eth_sendRawTransaction",
+            &serde_json::json!({
+                "uca_id": "uca-a",
+                "role": "owner",
+                "chain_id": 1,
+                "from": evm_addr,
+                "nonce": 0,
+                "tx_type4": false,
+                "now": 12,
+            }),
+        )
+        .expect("nonce=0 should pass");
+        run_public_rpc(
+            &db,
+            &mut router,
+            None,
+            "eth_sendRawTransaction",
+            &serde_json::json!({
+                "uca_id": "uca-a",
+                "role": "owner",
+                "chain_id": 1,
+                "from": evm_addr,
+                "nonce": 1,
+                "tx_type4": false,
+                "now": 13,
+            }),
+        )
+        .expect("nonce=1 should pass");
+
+        let err = run_public_rpc(
+            &db,
+            &mut router,
+            None,
+            "eth_sendRawTransaction",
+            &serde_json::json!({
+                "uca_id": "uca-a",
+                "role": "owner",
+                "chain_id": 1,
+                "from": evm_addr,
+                "nonce": 0,
+                "tx_type4": false,
+                "now": 14,
+            }),
+        )
+        .expect_err("reverse nonce should reject")
+        .to_string();
+        assert!(err.contains("nonce rejected"));
+    }
+
+    #[test]
+    fn unified_account_gate_ua_g08_permission_delegate_cannot_update_policy() {
+        let db = QueryStateDb::default();
+        let mut router = UnifiedAccountRouter::new();
+        ua_create(&db, &mut router, "uca-a", 10);
+        let err = run_public_rpc(
+            &db,
+            &mut router,
+            None,
+            "ua_setPolicy",
+            &serde_json::json!({
+                "uca_id": "uca-a",
+                "role": "delegate",
+                "nonce_scope": "global",
+                "allow_type4_with_delegate_or_session": false,
+                "now": 11,
+            }),
+        )
+        .expect_err("delegate should not update policy")
+        .to_string();
+        assert!(err.contains("permission denied"));
+        assert!(router.events().iter().any(|event| {
+            matches!(
+                event,
+                AccountAuditEvent::PermissionDenied {
+                    uca_id,
+                    role: AccountRole::Delegate,
+                    ..
+                } if uca_id == "uca-a"
+            )
+        }));
+    }
+
+    #[test]
+    fn unified_account_gate_ua_g09_permission_expired_session_key_rejected() {
+        let db = QueryStateDb::default();
+        let mut router = UnifiedAccountRouter::new();
+        let evm_addr = ua_hex(0x19, 20);
+        ua_create(&db, &mut router, "uca-a", 10);
+        ua_bind(&db, &mut router, "uca-a", "owner", "evm", 1, &evm_addr, 11);
+
+        let err = run_public_rpc(
+            &db,
+            &mut router,
+            None,
+            "eth_sendRawTransaction",
+            &serde_json::json!({
+                "uca_id": "uca-a",
+                "role": "session_key",
+                "chain_id": 1,
+                "from": evm_addr,
+                "nonce": 0,
+                "tx_type4": false,
+                "session_expires_at": 100,
+                "now": 101,
+            }),
+        )
+        .expect_err("expired session key should reject")
+        .to_string();
+        assert!(err.contains("session key expired"));
+        assert!(router.events().iter().any(|event| {
+            matches!(
+                event,
+                AccountAuditEvent::SessionKeyExpired {
+                    uca_id,
+                    expires_at,
+                    now,
+                    ..
+                } if uca_id == "uca-a" && *expires_at == 100 && *now == 101
+            )
+        }));
+    }
+
+    #[test]
+    fn unified_account_gate_ua_g10_boundary_eth_cross_chain_atomic_rejected() {
+        let db = QueryStateDb::default();
+        let mut router = UnifiedAccountRouter::new();
+        let evm_addr = ua_hex(0x1A, 20);
+        ua_create(&db, &mut router, "uca-a", 10);
+        ua_bind(&db, &mut router, "uca-a", "owner", "evm", 1, &evm_addr, 11);
+
+        let err = run_public_rpc(
+            &db,
+            &mut router,
+            None,
+            "eth_sendRawTransaction",
+            &serde_json::json!({
+                "uca_id": "uca-a",
+                "role": "owner",
+                "chain_id": 1,
+                "from": evm_addr,
+                "nonce": 0,
+                "tx_type4": false,
+                "wants_cross_chain_atomic": true,
+                "now": 12,
+            }),
+        )
+        .expect_err("eth cross-chain atomic should reject")
+        .to_string();
+        assert!(err.contains("cross-chain atomic"));
+    }
+
+    #[test]
+    fn unified_account_gate_ua_g11_boundary_web30_single_chain_passes_without_eth_pollution() {
+        let db = QueryStateDb::default();
+        let mut router = UnifiedAccountRouter::new();
+        let web30_addr = ua_hex(0x1B, 20);
+        let evm_addr = ua_hex(0x2B, 20);
+        ua_create(&db, &mut router, "uca-a", 10);
+        ua_bind(
+            &db,
+            &mut router,
+            "uca-a",
+            "owner",
+            "web30",
+            100,
+            &web30_addr,
+            11,
+        );
+        ua_bind(&db, &mut router, "uca-a", "owner", "evm", 1, &evm_addr, 12);
+
+        let (web30_resp, web30_changed) = run_public_rpc(
+            &db,
+            &mut router,
+            None,
+            "web30_sendTransaction",
+            &serde_json::json!({
+                "uca_id": "uca-a",
+                "role": "owner",
+                "chain_id": 100,
+                "from": web30_addr,
+                "nonce": 0,
+                "tx_type4": false,
+                "now": 13,
+            }),
+        )
+        .expect("web30 route should pass");
+        assert!(web30_changed);
+        assert_eq!(web30_resp["accepted"].as_bool(), Some(true));
+        assert_eq!(web30_resp["decision"]["kind"].as_str(), Some("fast_path"));
+
+        let (eth_resp, eth_changed) = run_public_rpc(
+            &db,
+            &mut router,
+            None,
+            "eth_sendRawTransaction",
+            &serde_json::json!({
+                "uca_id": "uca-a",
+                "role": "owner",
+                "chain_id": 1,
+                "from": evm_addr,
+                "nonce": 0,
+                "tx_type4": false,
+                "now": 14,
+            }),
+        )
+        .expect("eth route should still pass on its own persona nonce");
+        assert!(eth_changed);
+        assert_eq!(eth_resp["accepted"].as_bool(), Some(true));
+        assert_eq!(eth_resp["decision"]["kind"].as_str(), Some("adapter"));
+    }
+
+    #[test]
+    fn unified_account_gate_ua_g12_type4_supported_mode_passes() {
+        let db = QueryStateDb::default();
+        let mut router = UnifiedAccountRouter::new();
+        let evm_addr = ua_hex(0x1C, 20);
+        ua_create(&db, &mut router, "uca-a", 10);
+        ua_bind(&db, &mut router, "uca-a", "owner", "evm", 1, &evm_addr, 11);
+        run_public_rpc(
+            &db,
+            &mut router,
+            None,
+            "ua_setPolicy",
+            &serde_json::json!({
+                "uca_id": "uca-a",
+                "role": "owner",
+                "nonce_scope": "persona",
+                "allow_type4_with_delegate_or_session": true,
+                "now": 12,
+            }),
+        )
+        .expect("owner should update policy");
+
+        let (resp, changed) = run_public_rpc(
+            &db,
+            &mut router,
+            None,
+            "eth_sendRawTransaction",
+            &serde_json::json!({
+                "uca_id": "uca-a",
+                "role": "delegate",
+                "chain_id": 1,
+                "from": evm_addr,
+                "nonce": 0,
+                "tx_type4": true,
+                "now": 13,
+            }),
+        )
+        .expect("type4 should pass in supported mode");
+        assert!(changed);
+        assert_eq!(resp["accepted"].as_bool(), Some(true));
+        assert_eq!(resp["tx_type4"].as_bool(), Some(true));
+    }
+
+    #[test]
+    fn unified_account_gate_ua_g13_type4_reject_mode_returns_fixed_error() {
+        let db = QueryStateDb::default();
+        let mut router = UnifiedAccountRouter::new();
+        let evm_addr = ua_hex(0x1D, 20);
+        ua_create(&db, &mut router, "uca-a", 10);
+        ua_bind(&db, &mut router, "uca-a", "owner", "evm", 1, &evm_addr, 11);
+
+        let err = run_public_rpc(
+            &db,
+            &mut router,
+            None,
+            "eth_sendRawTransaction",
+            &serde_json::json!({
+                "uca_id": "uca-a",
+                "role": "delegate",
+                "chain_id": 1,
+                "from": evm_addr,
+                "nonce": 0,
+                "tx_type4": true,
+                "now": 12,
+            }),
+        )
+        .expect_err("type4 reject mode should fail")
+        .to_string();
+        assert!(
+            err.contains("type4 transaction cannot be used with delegate/session role by policy")
+        );
+        assert!(router.events().iter().any(|event| {
+            matches!(
+                event,
+                AccountAuditEvent::Type4PolicyRejected {
+                    uca_id,
+                    role: AccountRole::Delegate,
+                    ..
+                } if uca_id == "uca-a"
+            )
+        }));
+    }
+
+    #[test]
+    fn unified_account_gate_ua_g14_type4_with_session_key_rejected_by_policy() {
+        let db = QueryStateDb::default();
+        let mut router = UnifiedAccountRouter::new();
+        let evm_addr = ua_hex(0x1E, 20);
+        ua_create(&db, &mut router, "uca-a", 10);
+        ua_bind(&db, &mut router, "uca-a", "owner", "evm", 1, &evm_addr, 11);
+
+        let err = run_public_rpc(
+            &db,
+            &mut router,
+            None,
+            "eth_sendRawTransaction",
+            &serde_json::json!({
+                "uca_id": "uca-a",
+                "role": "session_key",
+                "chain_id": 1,
+                "from": evm_addr,
+                "nonce": 0,
+                "tx_type4": true,
+                "session_expires_at": 9999,
+                "now": 12,
+            }),
+        )
+        .expect_err("type4 + session should reject by default policy")
+        .to_string();
+        assert!(
+            err.contains("type4 transaction cannot be used with delegate/session role by policy")
+        );
+        assert!(router.events().iter().any(|event| {
+            matches!(
+                event,
+                AccountAuditEvent::Type4PolicyRejected {
+                    uca_id,
+                    role: AccountRole::SessionKey,
+                    ..
+                } if uca_id == "uca-a"
+            )
+        }));
+    }
+
+    #[test]
+    fn unified_account_public_rpc_eth_send_raw_blob_type3_rejected_in_m0() {
+        let db = QueryStateDb::default();
+        let mut router = UnifiedAccountRouter::new();
+        let evm_addr = ua_hex(0x2E, 20);
+        ua_create(&db, &mut router, "uca-a", 10);
+        ua_bind(&db, &mut router, "uca-a", "owner", "evm", 1, &evm_addr, 11);
+
+        let err = run_public_rpc(
+            &db,
+            &mut router,
+            None,
+            "eth_sendRawTransaction",
+            &serde_json::json!({
+                "uca_id": "uca-a",
+                "role": "owner",
+                "chain_id": 1,
+                "from": evm_addr,
+                "nonce": 0,
+                "raw_tx": "0x03c0",
+                "now": 12,
+            }),
+        )
+        .expect_err("type3 blob write path should reject in M0")
+        .to_string();
+        assert!(err.contains("blob (type 3) write path disabled in M0"));
+    }
+
+    #[test]
+    fn unified_account_public_rpc_eth_send_raw_type4_inferred_from_envelope() {
+        let db = QueryStateDb::default();
+        let mut router = UnifiedAccountRouter::new();
+        let evm_addr = ua_hex(0x3E, 20);
+        ua_create(&db, &mut router, "uca-a", 10);
+        ua_bind(&db, &mut router, "uca-a", "owner", "evm", 1, &evm_addr, 11);
+
+        let err = run_public_rpc(
+            &db,
+            &mut router,
+            None,
+            "eth_sendRawTransaction",
+            &serde_json::json!({
+                "uca_id": "uca-a",
+                "role": "delegate",
+                "chain_id": 1,
+                "from": evm_addr,
+                "nonce": 0,
+                "raw_tx": "0x04c0",
+                "now": 12,
+            }),
+        )
+        .expect_err("type4 should be inferred from raw envelope")
+        .to_string();
+        assert!(err.contains("type4 transaction cannot be used with delegate/session role by policy"));
+    }
+
+    #[test]
+    fn unified_account_public_rpc_eth_send_raw_type2_inferred_and_routes() {
+        let db = QueryStateDb::default();
+        let mut router = UnifiedAccountRouter::new();
+        let evm_addr = ua_hex(0x4E, 20);
+        ua_create(&db, &mut router, "uca-a", 10);
+        ua_bind(&db, &mut router, "uca-a", "owner", "evm", 1, &evm_addr, 11);
+
+        let (resp, changed) = run_public_rpc(
+            &db,
+            &mut router,
+            None,
+            "eth_sendRawTransaction",
+            &serde_json::json!({
+                "uca_id": "uca-a",
+                "role": "owner",
+                "chain_id": 1,
+                "from": evm_addr,
+                "raw_tx": "0x02e20180021e827530944e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e0480c0010101",
+                "now": 12,
+            }),
+        )
+        .expect("type2 raw tx should be inferred and routed");
+        assert!(changed);
+        assert_eq!(resp["accepted"].as_bool(), Some(true));
+        assert_eq!(resp["nonce"].as_u64(), Some(0));
+        assert_eq!(resp["gas_limit"].as_u64(), Some(30_000));
+        assert_eq!(resp["tx_type"].as_u64(), Some(2));
+        assert_eq!(resp["tx_type4"].as_bool(), Some(false));
+        assert_eq!(resp["tx_ir_type"].as_str(), Some("transfer"));
+        assert_eq!(resp["tx_ir_data_len"].as_u64(), Some(0));
+    }
+
+    #[test]
+    fn unified_account_public_rpc_eth_send_raw_type2_contract_call_inferred_ir_type() {
+        let db = QueryStateDb::default();
+        let mut router = UnifiedAccountRouter::new();
+        let evm_addr = ua_hex(0x5E, 20);
+        ua_create(&db, &mut router, "uca-a", 10);
+        ua_bind(&db, &mut router, "uca-a", "owner", "evm", 1, &evm_addr, 11);
+
+        let (resp, changed) = run_public_rpc(
+            &db,
+            &mut router,
+            None,
+            "eth_sendRawTransaction",
+            &serde_json::json!({
+                "uca_id": "uca-a",
+                "role": "owner",
+                "chain_id": 1,
+                "from": evm_addr,
+                "raw_tx": "0x02e30180021e827530945e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e0481aac0010101",
+                "now": 12,
+            }),
+        )
+        .expect("type2 raw tx with call data should be inferred and routed");
+        assert!(changed);
+        assert_eq!(resp["accepted"].as_bool(), Some(true));
+        assert_eq!(resp["nonce"].as_u64(), Some(0));
+        assert_eq!(resp["tx_type"].as_u64(), Some(2));
+        assert_eq!(resp["tx_ir_type"].as_str(), Some("contract_call"));
+        assert_eq!(resp["tx_ir_data_len"].as_u64(), Some(1));
+    }
+
+    #[test]
+    fn unified_account_public_rpc_eth_send_raw_type2_chain_id_mismatch_rejected() {
+        let db = QueryStateDb::default();
+        let mut router = UnifiedAccountRouter::new();
+        let evm_addr = ua_hex(0x4E, 20);
+        ua_create(&db, &mut router, "uca-a", 10);
+        ua_bind(&db, &mut router, "uca-a", "owner", "evm", 1, &evm_addr, 11);
+
+        let err = run_public_rpc(
+            &db,
+            &mut router,
+            None,
+            "eth_sendRawTransaction",
+            &serde_json::json!({
+                "uca_id": "uca-a",
+                "role": "owner",
+                "chain_id": 56,
+                "from": evm_addr,
+                "raw_tx": "0x02e20109021e827530944e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e0480c0010101",
+                "now": 12,
+            }),
+        )
+        .expect_err("chain_id mismatch should reject")
+        .to_string();
+        assert!(err.contains("chain_id mismatch"));
+    }
+
+    #[test]
+    fn public_rpc_error_code_maps_eth_blob_and_mismatch_cases() {
+        assert_eq!(
+            public_rpc_error_code_for_method(
+                "eth_sendRawTransaction",
+                "unsupported eth tx type: blob (type 3) write path disabled in M0"
+            ),
+            -32031
+        );
+        assert_eq!(
+            public_rpc_error_code_for_method(
+                "eth_sendRawTransaction",
+                "nonce mismatch: explicit=0 inferred_from_raw=9"
+            ),
+            -32033
+        );
+        assert_eq!(
+            public_rpc_error_code_for_method("eth_sendRawTransaction", "intrinsic gas too low"),
+            -32034
+        );
+        assert_eq!(
+            public_rpc_error_code_for_method(
+                "eth_getLogs",
+                "unsupported eth filter/reorg method in M0: eth_getLogs"
+            ),
+            -32036
+        );
+    }
+
+    #[test]
+    fn unified_account_public_rpc_eth_filter_reorg_methods_rejected_in_m0() {
+        let db = QueryStateDb::default();
+        let mut router = UnifiedAccountRouter::new();
+        let err = run_public_rpc(
+            &db,
+            &mut router,
+            None,
+            "eth_getLogs",
+            &serde_json::json!({}),
+        )
+        .expect_err("eth_getLogs must be rejected in M0")
+        .to_string();
+        assert!(err.contains("unsupported eth filter/reorg method in M0"));
+    }
+
+    #[test]
+    fn unified_account_gate_ua_g15_uniqueness_conflict_signal_blocks_second_owner() {
+        let db = QueryStateDb::default();
+        let mut router = UnifiedAccountRouter::new();
+        let evm_addr = ua_hex(0x1F, 20);
+        ua_create(&db, &mut router, "uca-a", 10);
+        ua_create(&db, &mut router, "uca-b", 10);
+        ua_bind(&db, &mut router, "uca-a", "owner", "evm", 1, &evm_addr, 11);
+
+        let err = run_public_rpc(
+            &db,
+            &mut router,
+            None,
+            "ua_bindPersona",
+            &serde_json::json!({
+                "uca_id": "uca-b",
+                "role": "owner",
+                "persona_type": "evm",
+                "chain_id": 1,
+                "external_address": evm_addr,
+                "now": 12,
+            }),
+        )
+        .expect_err("second owner bind should reject")
+        .to_string();
+        assert!(err.contains("binding conflict"));
+
+        let (owner_resp, changed) = run_public_rpc(
+            &db,
+            &mut router,
+            None,
+            "ua_getBindingOwner",
+            &serde_json::json!({
+                "persona_type": "evm",
+                "chain_id": 1,
+                "external_address": evm_addr,
+            }),
+        )
+        .expect("ua_getBindingOwner should succeed");
+        assert!(!changed);
+        assert_eq!(owner_resp["found"].as_bool(), Some(true));
+        assert_eq!(owner_resp["owner_uca_id"].as_str(), Some("uca-a"));
+    }
+
+    #[test]
+    fn unified_account_gate_ua_g16_recovery_rotate_then_revoke_emits_events() {
+        let db = QueryStateDb::default();
+        let mut router = UnifiedAccountRouter::new();
+        let evm_addr = ua_hex(0x2A, 20);
+        ua_create(&db, &mut router, "uca-a", 10);
+        ua_bind(&db, &mut router, "uca-a", "owner", "evm", 1, &evm_addr, 11);
+
+        let (rotate_resp, rotate_changed) = run_public_rpc(
+            &db,
+            &mut router,
+            None,
+            "ua_rotatePrimaryKey",
+            &serde_json::json!({
+                "uca_id": "uca-a",
+                "role": "owner",
+                "next_primary_key_ref": ua_hex(0x55, 32),
+                "now": 12,
+            }),
+        )
+        .expect("ua_rotatePrimaryKey should succeed");
+        assert!(rotate_changed);
+        assert_eq!(rotate_resp["rotated"].as_bool(), Some(true));
+
+        let (revoke_resp, revoke_changed) = run_public_rpc(
+            &db,
+            &mut router,
+            None,
+            "ua_revokePersona",
+            &serde_json::json!({
+                "uca_id": "uca-a",
+                "role": "owner",
+                "persona_type": "evm",
+                "chain_id": 1,
+                "external_address": evm_addr,
+                "cooldown_seconds": 30,
+                "now": 13,
+            }),
+        )
+        .expect("ua_revokePersona should succeed");
+        assert!(revoke_changed);
+        assert_eq!(revoke_resp["revoked"].as_bool(), Some(true));
+
+        let (owner_resp, changed) = run_public_rpc(
+            &db,
+            &mut router,
+            None,
+            "ua_getBindingOwner",
+            &serde_json::json!({
+                "persona_type": "evm",
+                "chain_id": 1,
+                "external_address": evm_addr,
+            }),
+        )
+        .expect("owner lookup should succeed");
+        assert!(!changed);
+        assert_eq!(owner_resp["found"].as_bool(), Some(false));
+
+        assert!(router.events().iter().any(|event| {
+            matches!(event, AccountAuditEvent::KeyRotated { uca_id, .. } if uca_id == "uca-a")
+        }));
+        assert!(router.events().iter().any(|event| {
+            matches!(event, AccountAuditEvent::BindingRevoked { uca_id, .. } if uca_id == "uca-a")
+        }));
+    }
+
+    #[test]
+    fn d2d3_persistence_path_guard_accepts_path_under_root() {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock should be >= epoch")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("novovm-d1-root-{}", nonce));
+        let path = root.join("query").join("novovm-chain-query-db.json");
+        ensure_d2d3_path_under_d1_root("chain_query_db", &path, &root)
+            .expect("path under D1 root should pass");
+    }
+
+    #[test]
+    fn d2d3_persistence_path_guard_rejects_path_outside_root() {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock should be >= epoch")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("novovm-d1-root-{}", nonce));
+        let outside = std::env::temp_dir()
+            .join(format!("novovm-d1-outside-{}", nonce))
+            .join("novovm-chain-query-db.json");
+        let err = ensure_d2d3_path_under_d1_root("chain_query_db", &outside, &root)
+            .expect_err("path outside D1 root should fail")
+            .to_string();
+        assert!(err.contains("outside D1 root"));
+    }
+
+    #[test]
+    fn d2d3_persistence_path_guard_rejects_relative_escape() {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock should be >= epoch")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("novovm-d1-root-{}", nonce));
+        let escaped = root
+            .join("query")
+            .join("..")
+            .join("..")
+            .join("novovm-outside")
+            .join("novovm-chain-query-db.json");
+        let err = ensure_d2d3_path_under_d1_root("chain_query_db", &escaped, &root)
+            .expect_err("relative escape should fail")
+            .to_string();
+        assert!(err.contains("outside D1 root"));
     }
 
     #[test]
