@@ -31,6 +31,10 @@ impl ExecBatchBuffer {
     pub fn len(&self) -> usize {
         self.ops.len()
     }
+
+    pub fn is_empty(&self) -> bool {
+        self.ops.is_empty()
+    }
 }
 
 pub type OpsWirePayload = EncodedOpsWire;
@@ -54,7 +58,7 @@ fn load_tx_wire_bytes(path: &Path) -> Result<Vec<u8>> {
     if bytes.is_empty() {
         bail!("tx wire ingress file is empty: {}", path.display());
     }
-    if bytes.len() % LOCAL_TX_WIRE_V1_BYTES != 0 {
+    if !bytes.len().is_multiple_of(LOCAL_TX_WIRE_V1_BYTES) {
         bail!(
             "tx wire ingress size mismatch: bytes={} not multiple of record_len={} (path={})",
             bytes.len(),
@@ -108,7 +112,7 @@ fn encode_local_tx_wire_v1_write_u64le_v1(
     if payload.is_empty() {
         bail!("tx wire payload is empty");
     }
-    if payload.len() % LOCAL_TX_WIRE_V1_BYTES != 0 {
+    if !payload.len().is_multiple_of(LOCAL_TX_WIRE_V1_BYTES) {
         bail!(
             "tx wire payload size mismatch: bytes={} not multiple of record_len={}",
             payload.len(),

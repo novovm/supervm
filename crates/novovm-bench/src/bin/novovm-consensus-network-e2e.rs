@@ -3,6 +3,7 @@
 // Author: Xonovo Technology
 
 #![forbid(unsafe_code)]
+#![allow(clippy::needless_range_loop, clippy::vec_init_then_push)]
 
 use anyhow::{bail, Context, Result};
 use ed25519_dalek::{SigningKey, VerifyingKey};

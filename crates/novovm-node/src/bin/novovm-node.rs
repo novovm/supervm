@@ -185,7 +185,7 @@ fn main() -> Result<()> {
             bail!("NOVOVM_D1_CODEC requires ops_wire_v1 ingress; current selected mode=ops_v2");
         }
         let ingress_path = tx_wire_path.as_ref().expect("tx wire path must exist");
-        let payload = load_exec_batch_from_wire_file(&ingress_path, |_, rec| {
+        let payload = load_exec_batch_from_wire_file(ingress_path, |_, rec| {
             (rec.account << 32) | rec.nonce.saturating_add(1)
         })?;
         let path_mode = if ingress_mode == D1IngressMode::Auto && !supports_wire_v1 {

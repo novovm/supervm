@@ -3,6 +3,7 @@
 // Author: Xonovo Technology
 
 #![forbid(unsafe_code)]
+#![allow(clippy::large_enum_variant)]
 
 use anyhow::{bail, Context, Result};
 use ed25519_dalek::{SigningKey, VerifyingKey};

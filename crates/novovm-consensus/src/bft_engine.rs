@@ -948,14 +948,14 @@ mod tests {
         .unwrap();
 
         let mut qc_low = QuorumCertificate::new([3u8; 32], 10);
-        for i in 0..3usize {
-            let vote = Vote::new(i as NodeId, [3u8; 32], 10, &signing_keys[i]);
+        for (i, sk) in signing_keys.iter().enumerate().take(3usize) {
+            let vote = Vote::new(i as NodeId, [3u8; 32], 10, sk);
             qc_low.add_vote(vote, 1);
         }
 
         let mut qc_high = QuorumCertificate::new([7u8; 32], 11);
-        for i in 0..3usize {
-            let vote = Vote::new(i as NodeId, [7u8; 32], 11, &signing_keys[i]);
+        for (i, sk) in signing_keys.iter().enumerate().take(3usize) {
+            let vote = Vote::new(i as NodeId, [7u8; 32], 11, sk);
             qc_high.add_vote(vote, 1);
         }
 

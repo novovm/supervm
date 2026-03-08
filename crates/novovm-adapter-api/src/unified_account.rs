@@ -528,7 +528,7 @@ impl UnifiedAccountRouter {
         let owner = self
             .binding_owner
             .get(&key)
-            .ok_or_else(|| UnifiedAccountError::BindingNotFound)?;
+            .ok_or(UnifiedAccountError::BindingNotFound)?;
         if owner != &request.uca_id {
             return Err(UnifiedAccountError::BindingNotOwnedByUca);
         }

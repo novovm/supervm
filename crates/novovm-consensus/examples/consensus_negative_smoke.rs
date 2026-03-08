@@ -45,13 +45,8 @@ fn invalid_signature_case() -> bool {
         let proposal_hash = proposal.hash();
 
         let mut qc_opt = None;
-        for node_id in 0..4 {
-            let vote = Vote::new(
-                node_id as NodeId,
-                proposal_hash,
-                proposal.height,
-                &signing_keys[node_id],
-            );
+        for (node_id, sk) in signing_keys.iter().enumerate().take(4) {
+            let vote = Vote::new(node_id as NodeId, proposal_hash, proposal.height, sk);
             if let Some(qc) = leader_engine
                 .collect_vote(vote)
                 .map_err(|e| e.to_string())?
@@ -615,14 +610,14 @@ fn fork_choice_case() -> bool {
         .map_err(|e| e.to_string())?;
 
         let mut qc_low = novovm_consensus::QuorumCertificate::new([1u8; 32], 10);
-        for i in 0..3usize {
-            let vote = Vote::new(i as NodeId, [1u8; 32], 10, &signing_keys[i]);
+        for (i, sk) in signing_keys.iter().enumerate().take(3usize) {
+            let vote = Vote::new(i as NodeId, [1u8; 32], 10, sk);
             qc_low.add_vote(vote, 1);
         }
 
         let mut qc_high = novovm_consensus::QuorumCertificate::new([2u8; 32], 11);
-        for i in 0..3usize {
-            let vote = Vote::new(i as NodeId, [2u8; 32], 11, &signing_keys[i]);
+        for (i, sk) in signing_keys.iter().enumerate().take(3usize) {
+            let vote = Vote::new(i as NodeId, [2u8; 32], 11, sk);
             qc_high.add_vote(vote, 1);
         }
 

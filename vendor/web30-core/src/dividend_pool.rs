@@ -281,7 +281,7 @@ impl DividendPool for DividendPoolImpl {
         }
 
         self.claim_in_progress = true;
-        let result = (|| {
+        let result = {
             // Effects before interactions (CEI).
             self.last_claimed.insert(*user, today);
             self.total_claimed += claimable;
@@ -302,7 +302,7 @@ impl DividendPool for DividendPoolImpl {
                 amount: claimable,
                 cumulative_days,
             })
-        })();
+        };
         self.claim_in_progress = false;
         result
     }

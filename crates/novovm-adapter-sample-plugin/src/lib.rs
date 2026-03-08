@@ -94,6 +94,12 @@ pub extern "C" fn novovm_adapter_plugin_capabilities() -> u64 {
 }
 
 #[no_mangle]
+/// Apply a serialized `Vec<TxIR>` batch through the native adapter plugin ABI.
+///
+/// # Safety
+/// - `tx_ir_ptr` must point to a readable buffer of `tx_ir_len` bytes for the full call.
+/// - `out_result` must be a valid, writable pointer to `NovovmAdapterPluginApplyResultV1`.
+/// - The pointed memory regions must not alias in a way that violates Rust aliasing rules.
 pub unsafe extern "C" fn novovm_adapter_plugin_apply_v1(
     chain_type_code: u32,
     chain_id: u64,
