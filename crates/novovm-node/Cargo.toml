@@ -22,3 +22,15 @@ tiny_http = "0.12"
 
 [dev-dependencies]
 aoem-bindings = { path = "../aoem-bindings" }
+
+[[bin]]
+name = "novovm-node"
+path = "src/bin/novovm-node.rs"
+
+[[bin]]
+name = "novovm-txgen"
+path = "src/bin/novovm-txgen.rs"
+
+[[bin]]
+name = "novovm-consensus-network-e2e"
+path = "src/bin/novovm-consensus-network-e2e.rs"

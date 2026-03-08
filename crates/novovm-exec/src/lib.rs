@@ -4,6 +4,8 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
+mod ingress_codec;
+
 #[derive(Clone, Debug, Default)]
 pub struct AoemExecOpenOptions {
     pub ingress_workers: Option<u32>,
@@ -42,6 +44,11 @@ pub struct AoemRuntimeConfig {
     pub dll_path: PathBuf,
     pub manifest_path: PathBuf,
     pub runtime_profile_path: PathBuf,
+    pub plugin_dir: Option<PathBuf>,
+    pub persist_backend: String,
+    pub wasm_runtime: String,
+    pub zkvm_mode: String,
+    pub mldsa_mode: String,
     pub ingress_workers: Option<u32>,
 }
 
@@ -57,18 +64,6 @@ fn find_aoem_root_near(start: &Path) -> Option<PathBuf> {
         }
         if dynlib_names_by_preference().iter().any(|name| {
             candidate.join("bin").join(name).exists()
-                || candidate
-                    .join("variants")
-                    .join("persist")
-                    .join("bin")
-                    .join(name)
-                    .exists()
-                || candidate
-                    .join("variants")
-                    .join("wasm")
-                    .join("bin")
-                    .join(name)
-                    .exists()
         }) {
             return Some(candidate);
         }
@@ -110,6 +105,52 @@ impl AoemRuntimeConfig {
             .map(PathBuf::from)
             .unwrap_or_else(|_| default_dll_path(&aoem_root, variant));
 
+        let plugin_dir = std::env::var("NOVOVM_AOEM_PLUGIN_DIR")
+            .or_else(|_| std::env::var("AOEM_FFI_PLUGIN_DIR"))
+            .ok()
+            .map(PathBuf::from)
+            .or_else(|| default_plugin_dir(&aoem_root, variant));
+
+        let persist_backend = std::env::var("NOVOVM_AOEM_PERSIST_BACKEND")
+            .or_else(|_| std::env::var("AOEM_FFI_PERSIST_BACKEND"))
+            .unwrap_or_else(|_| match variant {
+                AoemRuntimeVariant::Persist => "rocksdb".to_string(),
+                _ => "none".to_string(),
+            });
+
+        let wasm_runtime = std::env::var("NOVOVM_AOEM_WASM_RUNTIME")
+            .or_else(|_| std::env::var("AOEM_FFI_WASM_RUNTIME"))
+            .unwrap_or_else(|_| match variant {
+                AoemRuntimeVariant::Wasm => "wasmtime".to_string(),
+                _ => "none".to_string(),
+            });
+
+        let zkvm_mode = std::env::var("NOVOVM_AOEM_ZKVM_MODE")
+            .or_else(|_| std::env::var("AOEM_FFI_ZKVM_MODE"))
+            .unwrap_or_else(|_| {
+                if parse_bool_env("NOVOVM_AOEM_ENABLE_ZKVM")
+                    .or_else(|| parse_bool_env("AOEM_FFI_ENABLE_ZKVM"))
+                    .unwrap_or(false)
+                {
+                    "executor".to_string()
+                } else {
+                    "none".to_string()
+                }
+            });
+
+        let mldsa_mode = std::env::var("NOVOVM_AOEM_MLDSA_MODE")
+            .or_else(|_| std::env::var("AOEM_FFI_MLDSA_MODE"))
+            .unwrap_or_else(|_| {
+                if parse_bool_env("NOVOVM_AOEM_ENABLE_MLDSA")
+                    .or_else(|| parse_bool_env("AOEM_FFI_ENABLE_MLDSA"))
+                    .unwrap_or(false)
+                {
+                    "enabled".to_string()
+                } else {
+                    "none".to_string()
+                }
+            });
+
         let manifest_path = std::env::var("NOVOVM_AOEM_MANIFEST")
             .or_else(|_| std::env::var("AOEM_DLL_MANIFEST"))
             .map(PathBuf::from)
@@ -130,6 +171,11 @@ impl AoemRuntimeConfig {
             dll_path,
             manifest_path,
             runtime_profile_path,
+            plugin_dir,
+            persist_backend,
+            wasm_runtime,
+            zkvm_mode,
+            mldsa_mode,
             ingress_workers,
         })
     }
@@ -144,6 +190,17 @@ impl AoemRuntimeConfig {
         std::env::set_var("AOEM_DLL", &self.dll_path);
         std::env::set_var("AOEM_DLL_MANIFEST", &self.manifest_path);
         std::env::set_var("AOEM_RUNTIME_PROFILE", &self.runtime_profile_path);
+        std::env::set_var("AOEM_FFI_PERSIST_BACKEND", &self.persist_backend);
+        std::env::set_var("AOEM_FFI_WASM_RUNTIME", &self.wasm_runtime);
+        std::env::set_var("AOEM_FFI_ZKVM_MODE", &self.zkvm_mode);
+        std::env::set_var("AOEM_FFI_MLDSA_MODE", &self.mldsa_mode);
+        if let Some(dir) = &self.plugin_dir {
+            std::env::set_var("AOEM_FFI_PLUGIN_DIR", dir);
+            std::env::set_var("AOEM_FFI_PERSIST_PLUGIN_DIR", dir);
+            std::env::set_var("AOEM_FFI_WASM_PLUGIN_DIR", dir);
+            std::env::set_var("AOEM_FFI_ZKVM_PLUGIN_DIR", dir);
+            std::env::set_var("AOEM_FFI_MLDSA_PLUGIN_DIR", dir);
+        }
     }
 }
 
@@ -228,9 +285,12 @@ pub struct AoemCapabilityContract {
     pub execute_ops_v2: bool,
     pub zkvm_prove: bool,
     pub zkvm_verify: bool,
+    pub zkvm_probe_api_present: bool,
+    pub zkvm_symbol_supported: Option<bool>,
     pub zk_formal_fields_present: bool,
     pub msm_accel: bool,
     pub msm_backend: Option<String>,
+    pub mldsa_verify: bool,
     pub fallback_reason: Option<String>,
     pub fallback_reason_codes: Vec<String>,
     pub inferred_from_legacy_fields: bool,
@@ -303,6 +363,8 @@ impl AoemCapabilityContract {
                 "aoem.msm.backend",
             ],
         );
+        let mldsa_verify =
+            capability_bool(&raw, &["mldsa_verify", "mldsa.verify"]).unwrap_or(false);
         let fallback_reason_codes_raw = capability_string_list(
             &raw,
             &[
@@ -336,9 +398,12 @@ impl AoemCapabilityContract {
             execute_ops_v2,
             zkvm_prove,
             zkvm_verify,
+            zkvm_probe_api_present: false,
+            zkvm_symbol_supported: None,
             zk_formal_fields_present,
             msm_accel,
             msm_backend,
+            mldsa_verify,
             fallback_reason,
             fallback_reason_codes,
             inferred_from_legacy_fields,
@@ -381,13 +446,32 @@ impl AoemExecFacade {
     /// Returns normalized capability contract used by NOVOVM migration scripts and runtime checks.
     pub fn capability_contract(&self) -> Result<AoemCapabilityContract> {
         let raw = self.capabilities_json()?;
-        Ok(AoemCapabilityContract::from_capabilities_json(raw))
+        let mut contract = AoemCapabilityContract::from_capabilities_json(raw);
+        contract.zkvm_probe_api_present = self.dynlib.supports_zkvm_probe();
+        contract.zkvm_symbol_supported = self.dynlib.zkvm_supported_flag();
+        Ok(contract)
     }
 
     /// Convenience wrapper for tools that only need JSON output.
     pub fn capability_contract_json(&self) -> Result<serde_json::Value> {
         let contract = self.capability_contract()?;
         Ok(serde_json::to_value(contract)?)
+    }
+
+    /// AOEM-exported zkVM capability bit via symbol (`aoem_zkvm_supported`).
+    /// `None` means loaded AOEM library does not export this symbol.
+    pub fn zkvm_supported_by_symbol(&self) -> Option<bool> {
+        self.dynlib.zkvm_supported_flag()
+    }
+
+    /// AOEM built-in Trace/Fibonacci zkVM prove+verify probe.
+    /// Returns raw AOEM rc; fails only when symbol is not exported.
+    pub fn zkvm_trace_fib_probe(&self, rounds: u32, witness_a: u64, witness_b: u64) -> Result<i32> {
+        self.dynlib
+            .zkvm_trace_fib_probe_rc(rounds, witness_a, witness_b)
+            .ok_or_else(|| {
+                anyhow::anyhow!("aoem_zkvm_trace_fib_prove_verify not exported by loaded AOEM FFI")
+            })
     }
 
     /// Creates one execution session. Host can keep one session per worker thread.
@@ -397,11 +481,19 @@ impl AoemExecFacade {
             .create_handle_with_ingress_workers(self.options.ingress_workers)?;
         Ok(AoemExecSession { handle })
     }
+
+    pub fn supports_ops_wire_v1(&self) -> bool {
+        self.dynlib.supports_execute_ops_wire_v1()
+    }
 }
 
 impl<'a> AoemExecSession<'a> {
     pub fn execute_ops_v2(&self, ops: &[AoemOpV2]) -> Result<AoemExecV2Result> {
         self.handle.execute_ops_v2(ops)
+    }
+
+    pub fn execute_ops_wire_v1(&self, input: &[u8]) -> Result<AoemExecV2Result> {
+        self.handle.execute_ops_wire_v1(input)
     }
 
     /// Host main-path stable entry: execute typed ops and return result+metrics in one object.
@@ -453,6 +545,55 @@ impl<'a> AoemExecSession<'a> {
             }
         }
     }
+
+    /// Host main-path stable entry for generic binary ingress wire.
+    pub fn submit_ops_wire(&self, input: &[u8]) -> Result<AoemExecOutput> {
+        if input.is_empty() {
+            anyhow::bail!("invalid wire slice: input_len must be > 0");
+        }
+        let t0 = Instant::now();
+        let result = self.execute_ops_wire_v1(input)?;
+        let elapsed_us = t0.elapsed().as_micros() as u64;
+        let code = classify_result_code(result.processed, &result);
+        let metrics = AoemExecMetrics {
+            elapsed_us,
+            submitted_ops: result.processed,
+            processed_ops: result.processed,
+            success_ops: result.success,
+            total_writes: result.total_writes,
+            failed_index: if result.failed_index == u32::MAX {
+                None
+            } else {
+                Some(result.failed_index)
+            },
+            return_code: code.as_u32(),
+            return_code_name: code.as_str().to_string(),
+            error_code: None,
+        };
+        Ok(AoemExecOutput { result, metrics })
+    }
+
+    pub fn submit_ops_wire_report(&self, input: &[u8]) -> AoemSubmitReport {
+        match self.submit_ops_wire(input) {
+            Ok(out) => AoemSubmitReport {
+                return_code: out.metrics.return_code,
+                return_code_name: out.metrics.return_code_name.clone(),
+                ok: out.metrics.return_code == AoemExecReturnCode::Ok.as_u32(),
+                output: Some(out),
+                error: None,
+            },
+            Err(err) => {
+                let mapped = map_anyhow_error(&err);
+                AoemSubmitReport {
+                    return_code: mapped.code,
+                    return_code_name: mapped.code_name.clone(),
+                    ok: false,
+                    output: None,
+                    error: Some(mapped),
+                }
+            }
+        }
+    }
 }
 
 fn classify_result_code(submitted_ops: u32, result: &AoemExecV2Result) -> AoemExecReturnCode {
@@ -482,6 +623,10 @@ fn map_anyhow_error(err: &anyhow::Error) -> AoemExecError {
         AoemExecReturnCode::StartupContractFailed
     } else if lower.contains("aoem_execute_ops_v2 failed") || lower.contains("execute_ops_v2") {
         AoemExecReturnCode::EngineExecFailed
+    } else if lower.contains("aoem_execute_ops_wire_v1 failed")
+        || lower.contains("execute_ops_wire_v1")
+    {
+        AoemExecReturnCode::EngineExecFailed
     } else {
         AoemExecReturnCode::Unknown
     };
@@ -499,6 +644,16 @@ fn parse_u32_env(name: &str) -> Option<u32> {
         .and_then(|v| v.trim().parse::<u32>().ok())
 }
 
+fn parse_bool_env(name: &str) -> Option<bool> {
+    let raw = std::env::var(name).ok()?;
+    let value = raw.trim().to_ascii_lowercase();
+    match value.as_str() {
+        "1" | "true" | "on" | "yes" => Some(true),
+        "0" | "false" | "off" | "no" => Some(false),
+        _ => None,
+    }
+}
+
 fn dynlib_names_by_preference() -> &'static [&'static str] {
     if cfg!(target_os = "windows") {
         &["aoem_ffi.dll"]
@@ -512,20 +667,66 @@ fn dynlib_names_by_preference() -> &'static [&'static str] {
 fn variant_bin_dir(root: &Path, variant: AoemRuntimeVariant) -> PathBuf {
     match variant {
         AoemRuntimeVariant::Core => root.join("bin"),
-        AoemRuntimeVariant::Persist => root.join("variants").join("persist").join("bin"),
-        AoemRuntimeVariant::Wasm => root.join("variants").join("wasm").join("bin"),
+        AoemRuntimeVariant::Persist => root.join("bin"),
+        AoemRuntimeVariant::Wasm => root.join("bin"),
     }
 }
 
-fn default_dll_path(root: &Path, variant: AoemRuntimeVariant) -> PathBuf {
-    let bin_dir = variant_bin_dir(root, variant);
+fn plugin_names_for_variant(variant: AoemRuntimeVariant) -> &'static [&'static str] {
+    match variant {
+        AoemRuntimeVariant::Core => &[],
+        AoemRuntimeVariant::Persist => {
+            if cfg!(target_os = "windows") {
+                &["aoem_ffi_persist_rocksdb.dll"]
+            } else if cfg!(target_os = "macos") {
+                &["libaoem_ffi_persist_rocksdb.dylib"]
+            } else {
+                &["libaoem_ffi_persist_rocksdb.so"]
+            }
+        }
+        AoemRuntimeVariant::Wasm => {
+            if cfg!(target_os = "windows") {
+                &["aoem_ffi_runtime_wasm_wasmtime.dll"]
+            } else if cfg!(target_os = "macos") {
+                &["libaoem_ffi_runtime_wasm_wasmtime.dylib"]
+            } else {
+                &["libaoem_ffi_runtime_wasm_wasmtime.so"]
+            }
+        }
+    }
+}
+
+fn default_plugin_dir(root: &Path, variant: AoemRuntimeVariant) -> Option<PathBuf> {
+    if variant == AoemRuntimeVariant::Core {
+        return None;
+    }
+    let plugin_names = plugin_names_for_variant(variant);
+    if plugin_names.is_empty() {
+        return None;
+    }
+    let candidates = [
+        root.join("plugins"),
+        root.join("bin").join("plugins"),
+        root.join("bin"),
+    ];
+    for dir in candidates {
+        if plugin_names.iter().any(|name| dir.join(name).exists()) {
+            return Some(dir);
+        }
+    }
+    None
+}
+
+fn default_dll_path(root: &Path, _variant: AoemRuntimeVariant) -> PathBuf {
+    // Unified AOEM runtime: all variants load core dynlib and compose sidecars.
+    let core_bin = variant_bin_dir(root, AoemRuntimeVariant::Core);
     for name in dynlib_names_by_preference() {
-        let candidate = bin_dir.join(name);
+        let candidate = core_bin.join(name);
         if candidate.exists() {
             return candidate;
         }
     }
-    bin_dir.join(dynlib_names_by_preference()[0])
+    core_bin.join(dynlib_names_by_preference()[0])
 }
 
 fn capability_bool(root: &serde_json::Value, paths: &[&str]) -> Option<bool> {
@@ -649,6 +850,13 @@ pub use aoem_bindings::AoemExecV2Result as ExecResultV2;
 pub use aoem_bindings::AoemHostAdaptiveDecision;
 pub use aoem_bindings::AoemHostHint;
 pub use aoem_bindings::AoemOpV2 as ExecOpV2;
+pub use ingress_codec::EncodedOpsWire;
+pub use ingress_codec::IngressCodecRegistry;
+pub use ingress_codec::OpsWireOp;
+pub use ingress_codec::OpsWireV1Builder;
+pub use ingress_codec::RawIngressCodecRegistry;
+pub use ingress_codec::AOEM_OPS_WIRE_V1_MAGIC;
+pub use ingress_codec::AOEM_OPS_WIRE_V1_VERSION;
 
 #[allow(dead_code)]
 fn _assert_abi_struct_layout(_v: AoemCreateOptionsV1) {}
@@ -690,9 +898,12 @@ mod tests {
         assert!(c.execute_ops_v2);
         assert!(c.zkvm_prove);
         assert!(c.zkvm_verify);
+        assert!(!c.zkvm_probe_api_present);
+        assert!(c.zkvm_symbol_supported.is_none());
         assert!(c.zk_formal_fields_present);
         assert!(c.msm_accel);
         assert_eq!(c.msm_backend.as_deref(), Some("bls12_381_gpu"));
+        assert!(!c.mldsa_verify);
         assert_eq!(c.fallback_reason_codes.len(), 2);
         assert_eq!(c.fallback_reason.as_deref(), Some("gpu_unavailable"));
         assert!(!c.inferred_from_legacy_fields);
@@ -709,8 +920,11 @@ mod tests {
         assert!(c.execute_ops_v2);
         assert!(!c.zkvm_prove);
         assert!(!c.zkvm_verify);
+        assert!(!c.zkvm_probe_api_present);
+        assert!(c.zkvm_symbol_supported.is_none());
         assert!(!c.zk_formal_fields_present);
         assert!(c.msm_accel);
+        assert!(!c.mldsa_verify);
         assert!(c.fallback_reason.is_none());
         assert!(c.inferred_from_legacy_fields);
     }
@@ -726,7 +940,10 @@ mod tests {
         let c = AoemCapabilityContract::from_capabilities_json(raw);
         assert!(c.zkvm_prove);
         assert!(!c.zkvm_verify);
+        assert!(!c.zkvm_probe_api_present);
+        assert!(c.zkvm_symbol_supported.is_none());
         assert!(c.zk_formal_fields_present);
+        assert!(!c.mldsa_verify);
     }
 
     #[test]
@@ -756,6 +973,22 @@ mod tests {
             ]
         );
         assert_eq!(c.fallback_reason.as_deref(), Some("invalid_input"));
+    }
+
+    #[test]
+    fn capability_contract_reads_mldsa_flag() {
+        let raw = json!({
+            "execute_ops_v2": true,
+            "zkvm_prove": false,
+            "zkvm_verify": false,
+            "mldsa_verify": true
+        });
+
+        let c = AoemCapabilityContract::from_capabilities_json(raw);
+        assert!(c.execute_ops_v2);
+        assert!(!c.zkvm_probe_api_present);
+        assert!(c.zkvm_symbol_supported.is_none());
+        assert!(c.mldsa_verify);
     }
 
     #[test]

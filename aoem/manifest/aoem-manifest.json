@@ -1,96 +1,16 @@
 {
-  "generated_at_utc": "2026-03-05T16:39:57.1333660Z",
-  "aoem_root": "/Users/aoem-a2/Downloads/dev_project/vsCode/WorksArea/SUPERVM/aoem",
-  "entries": [
-    {
-      "name": "core",
-      "platform": "windows",
-      "dll": "bin/aoem_ffi.dll",
-      "sha256": "25b95e4773ae24fe55f8432c504c8f2a2ec257520585aa3be75365c8a9bfe389",
-      "abi_expected": 1,
-      "capabilities_required": {
-        "execute_ops_v2": true
-      }
-    },
-    {
-      "name": "core",
-      "platform": "linux",
-      "dll": "bin/libaoem_ffi.so",
-      "sha256": "866374b4eea88d356b1c3934fe1122e95a503433cd02353873bf2eac073bbad1",
-      "abi_expected": 1,
-      "capabilities_required": {
-        "execute_ops_v2": true
-      }
-    },
-    {
-      "name": "core",
-      "platform": "macos",
-      "dll": "bin/libaoem_ffi.dylib",
-      "sha256": "a47f82ff658220967f514de12b223547eab5df88203ffacf1e399f989a87c74a",
-      "abi_expected": 1,
-      "capabilities_required": {
-        "execute_ops_v2": true
-      }
-    },
-    {
-      "name": "persist",
-      "platform": "windows",
-      "dll": "variants/persist/bin/aoem_ffi.dll",
-      "sha256": "a0d7e8467d1cbaaff7e633c7e1aa62e60027656ced4fac73f97fe6038447ef27",
-      "abi_expected": 1,
-      "capabilities_required": {
-        "execute_ops_v2": true
-      }
-    },
-    {
-      "name": "persist",
-      "platform": "linux",
-      "dll": "variants/persist/bin/libaoem_ffi.so",
-      "sha256": "0656c0543152239eeabbcaa50b2084208a3727a5eabd2979faed96afe28dc383",
-      "abi_expected": 1,
-      "capabilities_required": {
-        "execute_ops_v2": true
-      }
-    },
-    {
-      "name": "persist",
-      "platform": "macos",
-      "dll": "variants/persist/bin/libaoem_ffi.dylib",
-      "sha256": "a47f82ff658220967f514de12b223547eab5df88203ffacf1e399f989a87c74a",
-      "abi_expected": 1,
-      "capabilities_required": {
-        "execute_ops_v2": true
-      }
-    },
-    {
-      "name": "wasm",
-      "platform": "windows",
-      "dll": "variants/wasm/bin/aoem_ffi.dll",
-      "sha256": "12c8d010c327b3bb4e3e00475a6d6e78cdad7f72d32ae62ecc05f140bc737d07",
-      "abi_expected": 1,
-      "capabilities_required": {
-        "execute_ops_v2": true
-      }
-    },
-    {
-      "name": "wasm",
-      "platform": "linux",
-      "dll": "variants/wasm/bin/libaoem_ffi.so",
-      "sha256": "e7a222d6834824ca6ff923460273c899c8001c91c7287d4ea31db9f6b4c3d060",
-      "abi_expected": 1,
-      "capabilities_required": {
-        "execute_ops_v2": true
-      }
-    },
-    {
-      "name": "wasm",
-      "platform": "macos",
-      "dll": "variants/wasm/bin/libaoem_ffi.dylib",
-      "sha256": "a47f82ff658220967f514de12b223547eab5df88203ffacf1e399f989a87c74a",
-      "abi_expected": 1,
-      "capabilities_required": {
-        "execute_ops_v2": true
-      }
-    }
-  ]
+    "generated_at_utc":  "2026-03-08T08:10:38.7983496Z",
+    "aoem_root":  "D:\\WEB3_AI\\SUPERVM\\aoem",
+    "entries":  [
+                    {
+                        "name":  "core",
+                        "platform":  "windows",
+                        "dll":  "bin/aoem_ffi.dll",
+                        "sha256":  "0cd13b12fa2d516ce6bf4f7ba39718907a605bf03b00082f752e09c5a9f6d4ae",
+                        "abi_expected":  1,
+                        "capabilities_required":  {
+                                                      "execute_ops_v2":  true
+                                                  }
+                    }
+                ]
 }
