@@ -622,9 +622,9 @@ fn map_anyhow_error(err: &anyhow::Error) -> AoemExecError {
         || lower.contains("capabilities")
     {
         AoemExecReturnCode::StartupContractFailed
-    } else if lower.contains("aoem_execute_ops_v2 failed") || lower.contains("execute_ops_v2") {
-        AoemExecReturnCode::EngineExecFailed
-    } else if lower.contains("aoem_execute_ops_wire_v1 failed")
+    } else if lower.contains("aoem_execute_ops_v2 failed")
+        || lower.contains("execute_ops_v2")
+        || lower.contains("aoem_execute_ops_wire_v1 failed")
         || lower.contains("execute_ops_wire_v1")
     {
         AoemExecReturnCode::EngineExecFailed
@@ -710,12 +710,9 @@ fn default_plugin_dir(root: &Path, variant: AoemRuntimeVariant) -> Option<PathBu
         root.join("bin").join("plugins"),
         root.join("bin"),
     ];
-    for dir in candidates {
-        if plugin_names.iter().any(|name| dir.join(name).exists()) {
-            return Some(dir);
-        }
-    }
-    None
+    candidates
+        .into_iter()
+        .find(|dir| plugin_names.iter().any(|name| dir.join(name).exists()))
 }
 
 fn default_dll_path(root: &Path, _variant: AoemRuntimeVariant) -> PathBuf {
