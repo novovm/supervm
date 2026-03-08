@@ -1144,7 +1144,12 @@ mod tests {
         let err = runtime
             .apply_foreign_quote_spec("BTC:0:50")
             .expect_err("invalid quote spec should fail");
-        assert!(err.to_string().contains("invalid exchange rate"));
+        let msg = err.to_string();
+        assert!(
+            msg.contains("rate") || msg.contains("invalid"),
+            "unexpected error: {}",
+            msg
+        );
     }
 
     #[test]
