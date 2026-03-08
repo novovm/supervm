@@ -23,7 +23,7 @@ if (-not $SvmRoot) {
     if (Test-Path $sibling) {
         $SvmRoot = $sibling
     } else {
-        $SvmRoot = "D:\WorksArea\SVM2026"
+        throw "SvmRoot not found. Pass -SvmRoot explicitly or place sibling SVM2026 repo."
     }
 }
 

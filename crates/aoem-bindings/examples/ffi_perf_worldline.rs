@@ -121,6 +121,44 @@ fn parse_usize_arg(raw: &str, key: &str) -> Result<usize> {
         .with_context(|| format!("invalid {key} value: {raw}"))
 }
 
+fn platform_dll_name() -> &'static str {
+    #[cfg(target_os = "windows")]
+    {
+        "aoem_ffi.dll"
+    }
+    #[cfg(target_os = "linux")]
+    {
+        "libaoem_ffi.so"
+    }
+    #[cfg(target_os = "macos")]
+    {
+        "libaoem_ffi.dylib"
+    }
+}
+
+fn resolve_default_dll_arg() -> Option<String> {
+    for env_name in ["NOVOVM_AOEM_DLL", "AOEM_FFI_DLL"] {
+        if let Ok(raw) = std::env::var(env_name) {
+            let trimmed = raw.trim();
+            if !trimmed.is_empty() {
+                return Some(trimmed.to_string());
+            }
+        }
+    }
+    let dll_name = platform_dll_name();
+    let candidates = [
+        PathBuf::from("aoem").join("bin").join(dll_name),
+        PathBuf::from("bin").join(dll_name),
+        PathBuf::from(dll_name),
+    ];
+    for candidate in candidates {
+        if candidate.exists() {
+            return Some(candidate.to_string_lossy().into_owned());
+        }
+    }
+    None
+}
+
 fn load_cfg() -> Result<BenchCfg> {
     let args: Vec<String> = std::env::args().collect();
     let preset = match parse_arg(&args, "--preset", Some("cpu_parity"))?
@@ -155,11 +193,8 @@ fn load_cfg() -> Result<BenchCfg> {
     };
     let seed: u64 = parse_arg(&args, "--seed", Some("123"))?.parse()?;
     let warmup_calls: u32 = parse_arg(&args, "--warmup-calls", Some(warmup_default))?.parse()?;
-    let dll_path = PathBuf::from(parse_arg(
-        &args,
-        "--dll",
-        Some("D:\\WorksArea\\SUPERVM\\aoem\\bin\\aoem_ffi.dll"),
-    )?);
+    let dll_default = resolve_default_dll_arg();
+    let dll_path = PathBuf::from(parse_arg(&args, "--dll", dll_default.as_deref())?);
 
     if !(0.0..=1.0).contains(&rw) {
         bail!("rw must be in [0,1]");

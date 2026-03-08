@@ -33,7 +33,10 @@ pub struct EconomicSystem {
 impl EconomicSystem {
     /// 创建新的经济系统
     pub fn new() -> Self {
-        let amm = AMMManager::new();
+        let mut amm = AMMManager::new();
+        // Integration demo keeps historical auto-create behavior;
+        // production AMMManager default remains hardened (auto_create_pool=false).
+        amm.set_auto_create_pool(true);
 
         let nav_redemption = NavRedemptionManager::new(
             1_000_000, // 每日 1M 配额

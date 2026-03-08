@@ -7,5 +7,6 @@ description = "Native NOVOVM adapter implementation (default native backend)."
 
 [dependencies]
 anyhow = "1"
+ed25519-dalek = "2"
 sha2 = "0.10"
 novovm-adapter-api = { path = "../novovm-adapter-api" }

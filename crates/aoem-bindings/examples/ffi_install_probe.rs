@@ -23,16 +23,55 @@ fn hardware_threads() -> usize {
         .unwrap_or(8)
 }
 
+fn platform_dll_name() -> &'static str {
+    #[cfg(target_os = "windows")]
+    {
+        "aoem_ffi.dll"
+    }
+    #[cfg(target_os = "linux")]
+    {
+        "libaoem_ffi.so"
+    }
+    #[cfg(target_os = "macos")]
+    {
+        "libaoem_ffi.dylib"
+    }
+}
+
+fn resolve_default_dll_arg() -> Option<String> {
+    for env_name in ["NOVOVM_AOEM_DLL", "AOEM_FFI_DLL"] {
+        if let Ok(raw) = std::env::var(env_name) {
+            let trimmed = raw.trim();
+            if !trimmed.is_empty() {
+                return Some(trimmed.to_string());
+            }
+        }
+    }
+
+    let dll_name = platform_dll_name();
+    let candidates = [
+        PathBuf::from("aoem").join("bin").join(dll_name),
+        PathBuf::from("bin").join(dll_name),
+        PathBuf::from(dll_name),
+    ];
+    for candidate in candidates {
+        if candidate.exists() {
+            return Some(candidate.to_string_lossy().into_owned());
+        }
+    }
+    None
+}
+
 fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().collect();
-    let dll = parse_arg(
-        &args,
-        "--dll",
-        Some("D:\\WorksArea\\SUPERVM\\aoem\\bin\\aoem_ffi.dll"),
-    )?;
+    let dll_default = resolve_default_dll_arg();
+    let dll = parse_arg(&args, "--dll", dll_default.as_deref())?;
     let dll_path = PathBuf::from(&dll);
     if !dll_path.exists() {
-        bail!("dll not found: {}", dll_path.display());
+        bail!(
+            "dll not found: {} (pass --dll or set NOVOVM_AOEM_DLL/AOEM_FFI_DLL)",
+            dll_path.display()
+        );
     }
 
     let out_path = {

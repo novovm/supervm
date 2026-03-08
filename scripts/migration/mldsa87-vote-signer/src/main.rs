@@ -46,7 +46,8 @@ fn usage() -> String {
     [
         "mldsa87-vote-signer usage:",
         "  keygen",
-        "  sign --message-hex <hex> --secret-hex <hex>",
+        "  sign --message-hex <hex> --secret-env <ENV_NAME>",
+        "  sign --message-hex <hex> --secret-hex <hex> --allow-insecure-secret-arg",
     ]
     .join("\n")
 }
@@ -64,6 +65,8 @@ fn run_keygen() -> Result<()> {
 fn run_sign(args: &[String]) -> Result<()> {
     let mut message_hex = String::new();
     let mut secret_hex = String::new();
+    let mut secret_env = String::new();
+    let mut allow_insecure_secret_arg = false;
     let mut i = 0usize;
     while i < args.len() {
         match args[i].as_str() {
@@ -81,17 +84,44 @@ fn run_sign(args: &[String]) -> Result<()> {
                 }
                 secret_hex = args[i].clone();
             }
+            "--secret-env" => {
+                i += 1;
+                if i >= args.len() {
+                    bail!("missing value for --secret-env");
+                }
+                secret_env = args[i].clone();
+            }
+            "--allow-insecure-secret-arg" => {
+                allow_insecure_secret_arg = true;
+            }
             token => bail!("unknown argument: {}", token),
         }
         i += 1;
     }
 
-    if message_hex.is_empty() || secret_hex.is_empty() {
+    if message_hex.is_empty() {
         bail!("{}", usage());
+    }
+    if !secret_hex.is_empty() && !secret_env.is_empty() {
+        bail!("use only one secret source: --secret-env or --secret-hex");
+    }
+    if secret_hex.is_empty() && secret_env.is_empty() {
+        bail!("{}", usage());
+    }
+    if !secret_hex.is_empty() && !allow_insecure_secret_arg {
+        bail!(
+            "refusing insecure --secret-hex argument; use --secret-env or pass --allow-insecure-secret-arg explicitly"
+        );
     }
 
     let message = decode_hex(&message_hex).context("decode message_hex failed")?;
-    let secret_bytes = decode_hex(&secret_hex).context("decode secret_hex failed")?;
+    let secret_raw = if !secret_env.is_empty() {
+        env::var(&secret_env)
+            .with_context(|| format!("missing secret in env var {}", secret_env))?
+    } else {
+        secret_hex
+    };
+    let secret_bytes = decode_hex(&secret_raw).context("decode secret failed")?;
     let secret_key = dilithium5::SecretKey::from_bytes(&secret_bytes)
         .map_err(|_| anyhow::anyhow!("invalid ML-DSA-87 secret key bytes"))?;
     let signature = dilithium5::detached_sign(&message, &secret_key);

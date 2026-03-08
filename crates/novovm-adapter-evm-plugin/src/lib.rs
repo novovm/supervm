@@ -739,6 +739,8 @@ pub unsafe extern "C" fn novovm_adapter_plugin_apply_v2(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use novovm_adapter_novovm::{address_from_seed_v1, signature_payload_with_seed_v1};
+    const TEST_SIGN_SEED: [u8; 32] = [13u8; 32];
 
     fn encode_address(seed: u64) -> Vec<u8> {
         let mut out = vec![0u8; 20];
@@ -749,20 +751,21 @@ mod tests {
     fn sample_tx(chain_id: u64, nonce: u64) -> TxIR {
         let mut tx = TxIR {
             hash: Vec::new(),
-            from: encode_address(1000),
+            from: address_from_seed_v1(TEST_SIGN_SEED),
             to: Some(encode_address(2000)),
             value: 5,
             gas_limit: 21_000,
             gas_price: 1,
             nonce,
             data: Vec::new(),
-            signature: vec![2u8; 32],
+            signature: Vec::new(),
             chain_id,
             tx_type: TxType::Transfer,
             source_chain: None,
             target_chain: None,
         };
         tx.compute_hash();
+        tx.signature = signature_payload_with_seed_v1(&tx, TEST_SIGN_SEED);
         tx
     }
 

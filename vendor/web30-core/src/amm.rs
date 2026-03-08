@@ -8,9 +8,37 @@
 
 use std::collections::HashMap;
 
-use anyhow::{bail, Result};
+use anyhow::{anyhow, bail, Result};
 
 use crate::types::Address;
+
+fn integer_sqrt(value: u128) -> u128 {
+    if value < 2 {
+        return value;
+    }
+    let mut x0 = value;
+    let mut x1 = (x0 + value / x0) / 2;
+    while x1 < x0 {
+        x0 = x1;
+        x1 = (x0 + value / x0) / 2;
+    }
+    x0
+}
+
+fn checked_mul(a: u128, b: u128, ctx: &str) -> Result<u128> {
+    a.checked_mul(b)
+        .ok_or_else(|| anyhow!("overflow in {}", ctx))
+}
+
+fn checked_add(a: u128, b: u128, ctx: &str) -> Result<u128> {
+    a.checked_add(b)
+        .ok_or_else(|| anyhow!("overflow in {}", ctx))
+}
+
+fn checked_sub(a: u128, b: u128, ctx: &str) -> Result<u128> {
+    a.checked_sub(b)
+        .ok_or_else(|| anyhow!("underflow in {}", ctx))
+}
 
 /// Liquidity pool
 #[derive(Debug, Clone)]
@@ -48,8 +76,12 @@ impl LiquidityPool {
             bail!("Fee exceeds 100%");
         }
 
-        // Initial LP = sqrt(x * y)
-        let lp_supply = (initial_a as f64 * initial_b as f64).sqrt() as u128;
+        // Initial LP = sqrt(x * y), integer-only to keep deterministic transitions.
+        let k = checked_mul(initial_a, initial_b, "pool init k")?;
+        let lp_supply = integer_sqrt(k);
+        if lp_supply == 0 {
+            bail!("Initial LP supply underflow");
+        }
 
         Ok(Self {
             pool_id,
@@ -79,11 +111,15 @@ impl LiquidityPool {
         }
 
         // Deduct fee
-        let amount_in_with_fee = amount_in * (10_000 - self.fee_bps as u128) / 10_000;
+        let amount_in_with_fee = checked_mul(
+            amount_in,
+            10_000 - self.fee_bps as u128,
+            "amount_in_with_fee numerator",
+        )? / 10_000;
 
         // dy = y * dx / (x + dx)
-        let numerator = amount_in_with_fee * reserve_out;
-        let denominator = reserve_in + amount_in_with_fee;
+        let numerator = checked_mul(amount_in_with_fee, reserve_out, "amount_out numerator")?;
+        let denominator = checked_add(reserve_in, amount_in_with_fee, "amount_out denominator")?;
 
         Ok(numerator / denominator)
     }
@@ -106,8 +142,17 @@ impl LiquidityPool {
         }
 
         // dx = x * dy / ((y - dy) * (1 - fee))
-        let numerator = reserve_in * amount_out * 10_000;
-        let denominator = (reserve_out - amount_out) * (10_000 - self.fee_bps as u128);
+        let numerator = checked_mul(
+            checked_mul(reserve_in, amount_out, "amount_in numerator x*y")?,
+            10_000,
+            "amount_in numerator * 10000",
+        )?;
+        let reserve_out_after = checked_sub(reserve_out, amount_out, "amount_in reserve_out-dy")?;
+        let denominator = checked_mul(
+            reserve_out_after,
+            10_000 - self.fee_bps as u128,
+            "amount_in denominator",
+        )?;
 
         Ok(numerator / denominator + 1) // +1 round up
     }
@@ -128,17 +173,27 @@ impl LiquidityPool {
 
         // Compute LP tokens to mint
         let lp_minted = if self.lp_total_supply == 0 {
-            (amount_a as f64 * amount_b as f64).sqrt() as u128
+            let k = checked_mul(amount_a, amount_b, "add_liquidity init k")?;
+            integer_sqrt(k)
         } else {
             // min(amount_a / reserve_a, amount_b / reserve_b) * lp_supply
-            let lp_a = amount_a * self.lp_total_supply / self.reserve_a;
-            let lp_b = amount_b * self.lp_total_supply / self.reserve_b;
+            let lp_a =
+                checked_mul(amount_a, self.lp_total_supply, "add_liquidity lp_a")? / self.reserve_a;
+            let lp_b =
+                checked_mul(amount_b, self.lp_total_supply, "add_liquidity lp_b")? / self.reserve_b;
             lp_a.min(lp_b)
         };
+        if lp_minted == 0 {
+            bail!("LP mint result is zero");
+        }
 
-        self.reserve_a += amount_a;
-        self.reserve_b += amount_b;
-        self.lp_total_supply += lp_minted;
+        self.reserve_a = checked_add(self.reserve_a, amount_a, "reserve_a + amount_a")?;
+        self.reserve_b = checked_add(self.reserve_b, amount_b, "reserve_b + amount_b")?;
+        self.lp_total_supply = checked_add(
+            self.lp_total_supply,
+            lp_minted,
+            "lp_total_supply + lp_minted",
+        )?;
 
         Ok(lp_minted)
     }
@@ -153,12 +208,24 @@ impl LiquidityPool {
         }
 
         // amount_a = lp_amount * reserve_a / lp_supply
-        let amount_a = lp_amount * self.reserve_a / self.lp_total_supply;
-        let amount_b = lp_amount * self.reserve_b / self.lp_total_supply;
+        let amount_a = checked_mul(
+            lp_amount,
+            self.reserve_a,
+            "remove_liquidity amount_a numerator",
+        )? / self.lp_total_supply;
+        let amount_b = checked_mul(
+            lp_amount,
+            self.reserve_b,
+            "remove_liquidity amount_b numerator",
+        )? / self.lp_total_supply;
 
-        self.reserve_a -= amount_a;
-        self.reserve_b -= amount_b;
-        self.lp_total_supply -= lp_amount;
+        self.reserve_a = checked_sub(self.reserve_a, amount_a, "reserve_a - amount_a")?;
+        self.reserve_b = checked_sub(self.reserve_b, amount_b, "reserve_b - amount_b")?;
+        self.lp_total_supply = checked_sub(
+            self.lp_total_supply,
+            lp_amount,
+            "lp_total_supply - lp_amount",
+        )?;
 
         Ok((amount_a, amount_b))
     }
@@ -167,13 +234,13 @@ impl LiquidityPool {
     pub fn swap(&mut self, amount_in: u128, is_a_to_b: bool) -> Result<u128> {
         let amount_out = if is_a_to_b {
             let out = self.get_amount_out(amount_in, self.reserve_a, self.reserve_b)?;
-            self.reserve_a += amount_in;
-            self.reserve_b -= out;
+            self.reserve_a = checked_add(self.reserve_a, amount_in, "swap a2b reserve_a + in")?;
+            self.reserve_b = checked_sub(self.reserve_b, out, "swap a2b reserve_b - out")?;
             out
         } else {
             let out = self.get_amount_out(amount_in, self.reserve_b, self.reserve_a)?;
-            self.reserve_b += amount_in;
-            self.reserve_a -= out;
+            self.reserve_b = checked_add(self.reserve_b, amount_in, "swap b2a reserve_b + in")?;
+            self.reserve_a = checked_sub(self.reserve_a, out, "swap b2a reserve_a - out")?;
             out
         };
 
@@ -182,17 +249,50 @@ impl LiquidityPool {
 }
 
 /// AMM manager
-#[derive(Default)]
 pub struct AMMManager {
     /// All pools
     pools: HashMap<[u8; 32], LiquidityPool>,
     /// User LP balances
     lp_balances: HashMap<(Address, [u8; 32]), u128>,
+    /// Whether add_liquidity may auto-create missing pools.
+    auto_create_pool: bool,
+    /// Hard cap for total pool count.
+    max_pools: usize,
+}
+
+impl Default for AMMManager {
+    fn default() -> Self {
+        Self {
+            pools: HashMap::new(),
+            lp_balances: HashMap::new(),
+            auto_create_pool: false,
+            max_pools: 1024,
+        }
+    }
 }
 
 impl AMMManager {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    pub fn set_auto_create_pool(&mut self, allow: bool) {
+        self.auto_create_pool = allow;
+    }
+
+    pub fn set_max_pools(&mut self, max_pools: usize) -> Result<()> {
+        if max_pools == 0 {
+            bail!("max_pools must be > 0");
+        }
+        if max_pools < self.pools.len() {
+            bail!(
+                "max_pools={} below current pool count={}",
+                max_pools,
+                self.pools.len()
+            );
+        }
+        self.max_pools = max_pools;
+        Ok(())
     }
 
     /// Set global fee bps for all pools
@@ -231,6 +331,9 @@ impl AMMManager {
         if self.pools.contains_key(&pool_id) {
             bail!("Pool already exists");
         }
+        if self.pools.len() >= self.max_pools {
+            bail!("Pool limit reached: max_pools={}", self.max_pools);
+        }
 
         let pool = LiquidityPool::new(pool_id, token_a, token_b, initial_a, initial_b, fee_bps)?;
         let lp_supply = pool.lp_total_supply;
@@ -264,6 +367,9 @@ impl AMMManager {
     ) -> Result<u128> {
         // If pool missing, create with default 0.3% fee
         if !self.pools.contains_key(pool_id) {
+            if !self.auto_create_pool {
+                bail!("Pool not found and auto-create is disabled");
+            }
             self.create_pool(
                 *pool_id,
                 "TOKEN_A".to_string(),
@@ -284,7 +390,7 @@ impl AMMManager {
         let lp_minted = pool.add_liquidity(amount_a, amount_b)?;
 
         let entry = self.lp_balances.entry((provider, *pool_id)).or_insert(0);
-        *entry += lp_minted;
+        *entry = checked_add(*entry, lp_minted, "lp balance + minted")?;
 
         Ok(lp_minted)
     }
@@ -308,7 +414,7 @@ impl AMMManager {
         let (amount_a, amount_b) = pool.remove_liquidity(lp_amount)?;
 
         let entry = self.lp_balances.entry((provider, *pool_id)).or_insert(0);
-        *entry -= lp_amount;
+        *entry = checked_sub(*entry, lp_amount, "lp balance - burned")?;
 
         Ok((amount_a, amount_b))
     }
@@ -506,5 +612,29 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains("Slippage exceeded"));
+    }
+
+    #[test]
+    fn test_pool_auto_create_disabled_by_default() {
+        let mut manager = AMMManager::new();
+        let pid = pool_id(9);
+        let err = manager
+            .add_liquidity(&pid, addr(1), 1_000, 1_000)
+            .expect_err("auto-create must be disabled by default");
+        assert!(err.to_string().contains("auto-create is disabled"));
+    }
+
+    #[test]
+    fn test_pool_limit_enforced() {
+        let mut manager = AMMManager::new();
+        manager.set_max_pools(1).expect("set max pools");
+        manager.set_auto_create_pool(true);
+        manager
+            .add_liquidity(&pool_id(1), addr(1), 1_000, 1_000)
+            .expect("create first pool");
+        let err = manager
+            .add_liquidity(&pool_id(2), addr(2), 1_000, 1_000)
+            .expect_err("second pool should exceed limit");
+        assert!(err.to_string().contains("Pool limit reached"));
     }
 }

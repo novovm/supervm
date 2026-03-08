@@ -16,11 +16,93 @@ use crate::{
     types::Address,
 };
 
+const FOREIGN_RATE_SCALE: u128 = 1_000_000;
+
+fn scaled_to_rate_f64(rate_scaled: u128) -> f64 {
+    rate_scaled as f64 / FOREIGN_RATE_SCALE as f64
+}
+
+fn rate_to_scaled_f64(rate: f64) -> Result<u128> {
+    if !rate.is_finite() || rate <= 0.0 {
+        return Err(anyhow::anyhow!("invalid exchange rate: {}", rate));
+    }
+    let scaled = (rate * FOREIGN_RATE_SCALE as f64).round();
+    if scaled <= 0.0 || scaled > u128::MAX as f64 {
+        return Err(anyhow::anyhow!("invalid scaled exchange rate: {}", scaled));
+    }
+    Ok(scaled as u128)
+}
+
+fn parse_rate_str_to_scaled(raw: &str) -> Result<u128> {
+    let value = raw.trim();
+    if value.is_empty() {
+        return Err(anyhow::anyhow!("rate cannot be empty"));
+    }
+    if value.starts_with('-') {
+        return Err(anyhow::anyhow!("rate must be > 0"));
+    }
+    let mut parts = value.split('.');
+    let int_part = parts.next().unwrap_or("");
+    let frac_part = parts.next();
+    if parts.next().is_some() {
+        return Err(anyhow::anyhow!("invalid decimal rate: {}", raw));
+    }
+    if int_part.is_empty() || !int_part.chars().all(|c| c.is_ascii_digit()) {
+        return Err(anyhow::anyhow!("invalid integer part in rate: {}", raw));
+    }
+    let int_num = int_part
+        .parse::<u128>()
+        .map_err(|_| anyhow::anyhow!("rate integer part overflow: {}", raw))?;
+    let int_scaled = int_num
+        .checked_mul(FOREIGN_RATE_SCALE)
+        .ok_or_else(|| anyhow::anyhow!("rate overflow: {}", raw))?;
+
+    let frac_scaled = if let Some(frac) = frac_part {
+        if frac.is_empty() || !frac.chars().all(|c| c.is_ascii_digit()) {
+            return Err(anyhow::anyhow!("invalid fractional part in rate: {}", raw));
+        }
+        if frac.len() > 6 {
+            return Err(anyhow::anyhow!(
+                "rate precision exceeds 6 decimals (scale={}): {}",
+                FOREIGN_RATE_SCALE,
+                raw
+            ));
+        }
+        let frac_num = frac
+            .parse::<u128>()
+            .map_err(|_| anyhow::anyhow!("rate fractional part overflow: {}", raw))?;
+        let pad = 6usize.saturating_sub(frac.len());
+        let mut scale = 1u128;
+        for _ in 0..pad {
+            scale = scale.saturating_mul(10);
+        }
+        frac_num
+            .checked_mul(scale)
+            .ok_or_else(|| anyhow::anyhow!("rate fractional scaling overflow: {}", raw))?
+    } else {
+        0
+    };
+
+    let total = int_scaled
+        .checked_add(frac_scaled)
+        .ok_or_else(|| anyhow::anyhow!("rate total overflow: {}", raw))?;
+    if total == 0 {
+        return Err(anyhow::anyhow!("rate must be > 0"));
+    }
+    Ok(total)
+}
+
 /// AMM exchange rate adapter (placeholder, will connect to real AMM)
 pub trait ExchangeRateProvider {
-    /// Query foreign → Token rate
-    /// Returns: (Tokens per foreign unit, slippage bps)
-    fn get_exchange_rate(&self, currency: &str) -> Result<(f64, u16)>;
+    /// Query foreign → Token rate (scaled integer, deterministic).
+    /// Returns: (tokens_per_foreign_unit_scaled, slippage_bps)
+    fn get_exchange_rate_scaled(&self, currency: &str) -> Result<(u128, u16)>;
+
+    /// Compatibility/display API.
+    fn get_exchange_rate(&self, currency: &str) -> Result<(f64, u16)> {
+        let (rate_scaled, slippage_bps) = self.get_exchange_rate_scaled(currency)?;
+        Ok((scaled_to_rate_f64(rate_scaled), slippage_bps))
+    }
 }
 
 /// 可配置汇率提供器（主链路默认使用）
@@ -30,23 +112,23 @@ pub trait ExchangeRateProvider {
 /// 含义：`currency:rate:slippage_bps`
 pub struct ConfigurableExchangeRateProvider {
     source_name: String,
-    rates: HashMap<String, f64>,
+    rates_scaled: HashMap<String, u128>,
     slippage_bps: HashMap<String, u16>,
 }
 
 impl ConfigurableExchangeRateProvider {
     pub fn deterministic_v1() -> Self {
-        let mut rates = HashMap::new();
+        let mut rates_scaled = HashMap::new();
         let mut slippage_bps = HashMap::new();
-        rates.insert("BTC".to_string(), 100_000.0);
-        rates.insert("ETH".to_string(), 5_000.0);
-        rates.insert("USDT".to_string(), 10.0);
+        rates_scaled.insert("BTC".to_string(), 100_000 * FOREIGN_RATE_SCALE);
+        rates_scaled.insert("ETH".to_string(), 5_000 * FOREIGN_RATE_SCALE);
+        rates_scaled.insert("USDT".to_string(), 10 * FOREIGN_RATE_SCALE);
         slippage_bps.insert("BTC".to_string(), 80);
         slippage_bps.insert("ETH".to_string(), 60);
         slippage_bps.insert("USDT".to_string(), 30);
         Self {
             source_name: "deterministic_v1".to_string(),
-            rates,
+            rates_scaled,
             slippage_bps,
         }
     }
@@ -74,13 +156,7 @@ impl ConfigurableExchangeRateProvider {
         if key.is_empty() {
             return Err(anyhow::anyhow!("currency cannot be empty"));
         }
-        if !rate.is_finite() || rate <= 0.0 {
-            return Err(anyhow::anyhow!(
-                "invalid exchange rate for {}: {}",
-                key,
-                rate
-            ));
-        }
+        let rate_scaled = rate_to_scaled_f64(rate)?;
         if slippage_bp > 10_000 {
             return Err(anyhow::anyhow!(
                 "invalid slippage_bps for {}: {}",
@@ -88,7 +164,7 @@ impl ConfigurableExchangeRateProvider {
                 slippage_bp
             ));
         }
-        self.rates.insert(key.clone(), rate);
+        self.rates_scaled.insert(key.clone(), rate_scaled);
         self.slippage_bps.insert(key, slippage_bp);
         Ok(())
     }
@@ -123,13 +199,23 @@ impl ConfigurableExchangeRateProvider {
             if parts.next().is_some() {
                 return Err(anyhow::anyhow!("invalid quote entry: {}", raw));
             }
-            let rate = rate_str
-                .parse::<f64>()
-                .map_err(|_| anyhow::anyhow!("invalid rate in quote entry: {}", raw))?;
+            let rate_scaled = parse_rate_str_to_scaled(rate_str)?;
             let slippage = slippage_str
                 .parse::<u16>()
                 .map_err(|_| anyhow::anyhow!("invalid slippage in quote entry: {}", raw))?;
-            self.set_rate_with_slippage(currency, rate, slippage)?;
+            let key = currency.trim().to_ascii_uppercase();
+            if key.is_empty() {
+                return Err(anyhow::anyhow!("currency cannot be empty"));
+            }
+            if slippage > 10_000 {
+                return Err(anyhow::anyhow!(
+                    "invalid slippage_bps for {}: {}",
+                    key,
+                    slippage
+                ));
+            }
+            self.rates_scaled.insert(key.clone(), rate_scaled);
+            self.slippage_bps.insert(key, slippage);
         }
 
         Ok(())
@@ -137,15 +223,15 @@ impl ConfigurableExchangeRateProvider {
 }
 
 impl ExchangeRateProvider for ConfigurableExchangeRateProvider {
-    fn get_exchange_rate(&self, currency: &str) -> Result<(f64, u16)> {
+    fn get_exchange_rate_scaled(&self, currency: &str) -> Result<(u128, u16)> {
         let key = currency.to_ascii_uppercase();
-        let rate = self
-            .rates
+        let rate_scaled = self
+            .rates_scaled
             .get(&key)
             .copied()
             .ok_or_else(|| anyhow::anyhow!("Unsupported currency: {}", currency))?;
         let slippage = self.slippage_bps.get(&key).copied().unwrap_or(50);
-        Ok((rate, slippage))
+        Ok((rate_scaled, slippage))
     }
 }
 
@@ -157,48 +243,53 @@ impl Default for ConfigurableExchangeRateProvider {
 
 /// Simple fixed-rate provider (test/placeholder)
 pub struct MockExchangeRateProvider {
-    rates: HashMap<String, f64>,
+    rates_scaled: HashMap<String, u128>,
     slippage_bps: HashMap<String, u16>,
 }
 
 impl MockExchangeRateProvider {
     pub fn new() -> Self {
-        let mut rates = HashMap::new();
+        let mut rates_scaled = HashMap::new();
         let mut slippage_bps = HashMap::new();
         // Placeholder rates: 1 BTC = 100,000 Token, 1 ETH = 5,000 Token, 1 USDT = 10 Token
-        rates.insert("BTC".to_string(), 100_000.0);
-        rates.insert("ETH".to_string(), 5_000.0);
-        rates.insert("USDT".to_string(), 10.0);
+        rates_scaled.insert("BTC".to_string(), 100_000 * FOREIGN_RATE_SCALE);
+        rates_scaled.insert("ETH".to_string(), 5_000 * FOREIGN_RATE_SCALE);
+        rates_scaled.insert("USDT".to_string(), 10 * FOREIGN_RATE_SCALE);
         slippage_bps.insert("BTC".to_string(), 80);
         slippage_bps.insert("ETH".to_string(), 60);
         slippage_bps.insert("USDT".to_string(), 30);
         Self {
-            rates,
+            rates_scaled,
             slippage_bps,
         }
     }
 
     pub fn set_rate(&mut self, currency: &str, rate: f64) {
-        self.rates.insert(currency.to_ascii_uppercase(), rate);
+        if let Ok(rate_scaled) = rate_to_scaled_f64(rate) {
+            self.rates_scaled
+                .insert(currency.to_ascii_uppercase(), rate_scaled);
+        }
     }
 
     pub fn set_rate_with_slippage(&mut self, currency: &str, rate: f64, slippage_bp: u16) {
-        self.rates.insert(currency.to_ascii_uppercase(), rate);
-        self.slippage_bps
-            .insert(currency.to_ascii_uppercase(), slippage_bp);
+        let key = currency.to_ascii_uppercase();
+        if let Ok(rate_scaled) = rate_to_scaled_f64(rate) {
+            self.rates_scaled.insert(key.clone(), rate_scaled);
+            self.slippage_bps.insert(key, slippage_bp);
+        }
     }
 }
 
 impl ExchangeRateProvider for MockExchangeRateProvider {
-    fn get_exchange_rate(&self, currency: &str) -> Result<(f64, u16)> {
+    fn get_exchange_rate_scaled(&self, currency: &str) -> Result<(u128, u16)> {
         let key = currency.to_ascii_uppercase();
-        let rate = self
-            .rates
+        let rate_scaled = self
+            .rates_scaled
             .get(&key)
             .copied()
             .ok_or_else(|| anyhow::anyhow!("Unsupported currency: {}", currency))?;
         let slippage = self.slippage_bps.get(&key).copied().unwrap_or(50);
-        Ok((rate, slippage))
+        Ok((rate_scaled, slippage))
     }
 }
 
@@ -229,7 +320,7 @@ pub struct ForeignPaymentProcessorImpl<R: ExchangeRateProvider> {
 }
 
 impl<R: ExchangeRateProvider> ForeignPaymentProcessorImpl<R> {
-    const RATE_SCALE: u128 = 1_000_000;
+    const RATE_SCALE: u128 = FOREIGN_RATE_SCALE;
 
     pub fn new(config: ForeignPaymentConfig<R>) -> Self {
         Self {
@@ -252,20 +343,6 @@ impl<R: ExchangeRateProvider> ForeignPaymentProcessorImpl<R> {
     /// 查询统计数据
     pub fn stats(&self) -> &ForeignPaymentStats {
         &self.stats
-    }
-
-    fn rate_to_scaled(rate: f64) -> Result<u128, String> {
-        if !rate.is_finite() || rate <= 0.0 {
-            return Err(format!("Invalid exchange rate: {}", rate));
-        }
-        let scaled = (rate * Self::RATE_SCALE as f64).round();
-        if scaled <= 0.0 {
-            return Err(format!("Invalid scaled exchange rate: {}", scaled));
-        }
-        if scaled > u128::MAX as f64 {
-            return Err("Exchange rate out of range".to_string());
-        }
-        Ok(scaled as u128)
     }
 }
 
@@ -323,17 +400,16 @@ impl<R: ExchangeRateProvider> ForeignPaymentProcessor for ForeignPaymentProcesso
         currency: &str,
         foreign_amount: u128,
     ) -> Result<(u128, f64), String> {
-        let (rate, _slippage) = self
+        let (rate_scaled, _slippage) = self
             .rate_provider
-            .get_exchange_rate(currency)
+            .get_exchange_rate_scaled(currency)
             .map_err(|e| e.to_string())?;
 
-        let rate_scaled = Self::rate_to_scaled(rate)?;
         let token_amount = foreign_amount
             .saturating_mul(rate_scaled)
             .saturating_div(Self::RATE_SCALE);
 
-        Ok((token_amount, rate))
+        Ok((token_amount, scaled_to_rate_f64(rate_scaled)))
     }
 
     fn collect_to_reserve(&mut self, payment: ForeignPayment) -> Result<(), String> {
@@ -445,15 +521,17 @@ impl<R: ExchangeRateProvider> ForeignPaymentProcessor for ForeignPaymentProcesso
         token_amount: u128,
         target_currency: &str,
     ) -> Result<(u128, f64), String> {
-        let (rate, _slippage) = self
+        let (rate_scaled, _slippage) = self
             .rate_provider
-            .get_exchange_rate(target_currency)
+            .get_exchange_rate_scaled(target_currency)
             .map_err(|e| e.to_string())?;
 
-        let rate_scaled = Self::rate_to_scaled(rate)?;
+        if rate_scaled == 0 {
+            return Err("invalid rate: zero".to_string());
+        }
         let foreign_amount = token_amount.saturating_mul(Self::RATE_SCALE) / rate_scaled;
 
-        Ok((foreign_amount, rate))
+        Ok((foreign_amount, scaled_to_rate_f64(rate_scaled)))
     }
 }
 
@@ -499,11 +577,11 @@ mod tests {
         let (usdt_rate, usdt_slippage) = provider.get_exchange_rate("USDT").expect("usdt quote");
 
         assert_eq!(provider.source_name(), "configured_file_v1");
-        assert!((btc_rate - 120_000.0).abs() < f64::EPSILON);
+        assert!((btc_rate - 120_000.0).abs() < 1e-9);
         assert_eq!(btc_slippage, 90);
-        assert!((eth_rate - 6_000.0).abs() < f64::EPSILON);
+        assert!((eth_rate - 6_000.0).abs() < 1e-9);
         assert_eq!(eth_slippage, 70);
-        assert!((usdt_rate - 9.8).abs() < f64::EPSILON);
+        assert!((usdt_rate - 9.8).abs() < 1e-9);
         assert_eq!(usdt_slippage, 20);
     }
 
@@ -513,7 +591,12 @@ mod tests {
         let err = provider
             .apply_quote_spec("BTC:0:50")
             .expect_err("rate=0 should be rejected");
-        assert!(err.to_string().contains("invalid exchange rate"));
+        let msg = err.to_string();
+        assert!(
+            msg.contains("rate") || msg.contains("invalid"),
+            "unexpected error: {}",
+            msg
+        );
     }
 
     #[test]
@@ -543,7 +626,7 @@ mod tests {
 
         // deterministic_v1: 1 USDT = 10 token
         assert_eq!(result.token_amount, 20_000_000);
-        assert!((result.exchange_rate - 10.0).abs() < f64::EPSILON);
+        assert!((result.exchange_rate - 10.0).abs() < 1e-9);
     }
 
     #[test]

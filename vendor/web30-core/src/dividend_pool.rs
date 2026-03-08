@@ -187,6 +187,11 @@ impl DividendPoolImpl {
             .unwrap()
             .as_secs()
     }
+
+    fn checked_add_u128(lhs: u128, rhs: u128, ctx: &str) -> Result<u128> {
+        lhs.checked_add(rhs)
+            .ok_or_else(|| anyhow!("overflow in {}", ctx))
+    }
 }
 
 impl DividendPool for DividendPoolImpl {
@@ -250,7 +255,8 @@ impl DividendPool for DividendPoolImpl {
                         // Compute daily share: (user_balance / total) × income
                         let user_share =
                             (user_balance * snapshot.pool_income) / snapshot.total_circulating;
-                        total_claimable += user_share;
+                        total_claimable =
+                            Self::checked_add_u128(total_claimable, user_share, "claimable sum")?;
                         days_count += 1;
                     }
                 }
@@ -284,7 +290,8 @@ impl DividendPool for DividendPoolImpl {
         let result = {
             // Effects before interactions (CEI).
             self.last_claimed.insert(*user, today);
-            self.total_claimed += claimable;
+            self.total_claimed =
+                Self::checked_add_u128(self.total_claimed, claimable, "total_claimed + claimable")?;
             self.claim_history.push(ClaimRecord {
                 claimer: *user,
                 day: today,
@@ -308,8 +315,10 @@ impl DividendPool for DividendPoolImpl {
     }
 
     fn receive_income(&mut self, from: &Address, amount: u128) -> Result<DividendEvent> {
-        self.total_income += amount;
-        self.current_pool += amount;
+        self.total_income =
+            Self::checked_add_u128(self.total_income, amount, "total_income + amount")?;
+        self.current_pool =
+            Self::checked_add_u128(self.current_pool, amount, "current_pool + amount")?;
 
         Ok(DividendEvent::IncomeReceived {
             from: *from,

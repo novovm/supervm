@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 
 use anyhow::{bail, Result};
+use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use novovm_adapter_api::{
     AccountRole, AccountState, BlockIR, ChainAdapter, ChainConfig, ChainType, PersonaAddress,
     PersonaType, ProtocolKind, RouteDecision, RouteRequest, SerializationFormat, StateIR, TxIR,
@@ -14,6 +15,7 @@ const ADAPTER_UCA_ID_PREFIX: &str = "uca:adapter:";
 const ADAPTER_UA_INGRESS_GUARD_ENV: &str = "NOVOVM_UNIFIED_ACCOUNT_ADAPTER_INGRESS_GUARD";
 const ADAPTER_UA_AUTOPROVISION_ENV: &str = "NOVOVM_UNIFIED_ACCOUNT_ADAPTER_AUTOPROVISION";
 const ADAPTER_UA_SIGNATURE_DOMAIN_ENV: &str = "NOVOVM_UNIFIED_ACCOUNT_ADAPTER_SIGNATURE_DOMAIN";
+const ADAPTER_TX_SIG_DOMAIN: &[u8] = b"novovm_adapter_tx_sig_v1";
 
 #[derive(Debug)]
 pub struct NovoVmAdapter {
@@ -289,6 +291,102 @@ impl NovoVmAdapter {
     }
 }
 
+fn tx_type_tag(tx_type: TxType) -> u8 {
+    match tx_type {
+        TxType::Transfer => 0,
+        TxType::ContractCall => 1,
+        TxType::ContractDeploy => 2,
+        TxType::Privacy => 3,
+        TxType::CrossShard => 4,
+        TxType::CrossChainTransfer => 5,
+        TxType::CrossChainCall => 6,
+    }
+}
+
+fn compute_tx_ir_hash(tx: &TxIR) -> Vec<u8> {
+    let mut hasher = Sha256::new();
+    hasher.update(&tx.from);
+    if let Some(to) = &tx.to {
+        hasher.update(to);
+    }
+    hasher.update(tx.value.to_le_bytes());
+    hasher.update(tx.nonce.to_le_bytes());
+    hasher.update(&tx.data);
+    hasher.finalize().to_vec()
+}
+
+pub fn tx_signing_message_v1(tx: &TxIR) -> [u8; 32] {
+    let mut hasher = Sha256::new();
+    hasher.update(ADAPTER_TX_SIG_DOMAIN);
+    hasher.update(tx.chain_id.to_le_bytes());
+    hasher.update([tx_type_tag(tx.tx_type)]);
+    hasher.update(tx.nonce.to_le_bytes());
+    hasher.update(tx.value.to_le_bytes());
+    hasher.update(tx.gas_limit.to_le_bytes());
+    hasher.update(tx.gas_price.to_le_bytes());
+    hasher.update(&tx.from);
+    if let Some(to) = &tx.to {
+        hasher.update([1u8]);
+        hasher.update(to);
+    } else {
+        hasher.update([0u8]);
+    }
+    hasher.update(&tx.data);
+    hasher.update(&tx.hash);
+    hasher.finalize().into()
+}
+
+pub fn address_from_pubkey_v1(pubkey: &VerifyingKey) -> Vec<u8> {
+    let digest: [u8; 32] = Sha256::digest(pubkey.as_bytes()).into();
+    digest[12..32].to_vec()
+}
+
+pub fn address_from_seed_v1(seed: [u8; 32]) -> Vec<u8> {
+    let signing_key = SigningKey::from_bytes(&seed);
+    address_from_pubkey_v1(&signing_key.verifying_key())
+}
+
+pub fn signature_payload_with_seed_v1(tx: &TxIR, seed: [u8; 32]) -> Vec<u8> {
+    let signing_key = SigningKey::from_bytes(&seed);
+    let verify_key = signing_key.verifying_key();
+    let msg = tx_signing_message_v1(tx);
+    let sig = signing_key.sign(&msg);
+    let mut payload = Vec::with_capacity(32 + 64);
+    payload.extend_from_slice(verify_key.as_bytes());
+    payload.extend_from_slice(&sig.to_bytes());
+    payload
+}
+
+fn verify_tx_signature_v1(tx: &TxIR) -> Result<bool> {
+    if tx.signature.len() != 96 {
+        return Ok(false);
+    }
+    let mut pubkey_bytes = [0u8; 32];
+    pubkey_bytes.copy_from_slice(&tx.signature[..32]);
+    let mut sig_bytes = [0u8; 64];
+    sig_bytes.copy_from_slice(&tx.signature[32..96]);
+
+    let verifying_key = match VerifyingKey::from_bytes(&pubkey_bytes) {
+        Ok(v) => v,
+        Err(_) => return Ok(false),
+    };
+    let signature = Signature::from_bytes(&sig_bytes);
+    let msg = tx_signing_message_v1(tx);
+    if verifying_key.verify(&msg, &signature).is_err() {
+        return Ok(false);
+    }
+
+    let expected_from = address_from_pubkey_v1(&verifying_key);
+    let from_matches = if tx.from.len() == 20 {
+        tx.from == expected_from
+    } else if tx.from.len() == 32 {
+        tx.from == pubkey_bytes
+    } else {
+        false
+    };
+    Ok(from_matches)
+}
+
 impl ChainAdapter for NovoVmAdapter {
     fn chain_type(&self) -> ChainType {
         self.config.chain_type
@@ -328,6 +426,12 @@ impl ChainAdapter for NovoVmAdapter {
         if tx.to.is_none() || tx.hash.is_empty() || tx.signature.is_empty() {
             return Ok(false);
         }
+        if tx.hash != compute_tx_ir_hash(tx) {
+            return Ok(false);
+        }
+        if !verify_tx_signature_v1(tx)? {
+            return Ok(false);
+        }
         Ok(true)
     }
 
@@ -357,13 +461,15 @@ impl ChainAdapter for NovoVmAdapter {
 
     fn verify_block(&self, block: &BlockIR) -> Result<bool> {
         self.ensure_initialized()?;
-        if block.number == 0 {
+        if block.number == 0 && block.transactions.is_empty() {
             return Ok(true);
         }
-        Ok(block
-            .transactions
-            .iter()
-            .all(|tx| tx.chain_id == self.config.chain_id && tx.tx_type == TxType::Transfer))
+        for tx in &block.transactions {
+            if !self.verify_transaction(tx)? {
+                return Ok(false);
+            }
+        }
+        Ok(true)
     }
 
     fn apply_block(&mut self, block: &BlockIR, state: &mut StateIR) -> Result<()> {

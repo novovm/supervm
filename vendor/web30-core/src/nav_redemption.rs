@@ -140,7 +140,10 @@ impl NavRedemptionManager {
         let total_value = snapshot
             .reserve_value
             .saturating_add(snapshot.treasury_balance);
-        let reserve_ratio = (snapshot.reserve_value as f64 / total_value as f64 * 10_000.0) as u16;
+        let reserve_ratio = snapshot
+            .reserve_value
+            .saturating_mul(10_000)
+            .saturating_div(total_value) as u16;
 
         Ok(reserve_ratio >= self.min_reserve_ratio_bp)
     }

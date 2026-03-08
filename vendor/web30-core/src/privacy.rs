@@ -3,6 +3,22 @@
 use crate::types::*;
 use anyhow::Result;
 use sha2::{Digest, Sha256};
+use std::env;
+
+const PRIVACY_RING_SIG_PLACEHOLDER_ALLOW_ENV: &str =
+    "NOVOVM_WEB30_PRIVACY_RING_SIG_PLACEHOLDER_ALLOW";
+
+fn placeholder_ring_sig_allowed() -> bool {
+    env::var(PRIVACY_RING_SIG_PLACEHOLDER_ALLOW_ENV)
+        .map(|v| {
+            let v = v.trim();
+            v == "1"
+                || v.eq_ignore_ascii_case("true")
+                || v.eq_ignore_ascii_case("on")
+                || v.eq_ignore_ascii_case("yes")
+        })
+        .unwrap_or(false)
+}
 
 /// 生成隐身地址
 pub fn generate_stealth_address(
@@ -31,11 +47,13 @@ pub fn generate_stealth_address(
 /// 验证环签名
 pub fn verify_ring_signature(
     signature: &RingSignature,
-    _message: &[u8],
-    _amount: u128,
+    message: &[u8],
+    amount: u128,
 ) -> Result<bool> {
-    // 简化实现
-    // 实际需要完整的环签名验证逻辑（如 Monero 的 MLSAG）
+    // 安全默认：占位实现在生产环境禁用，避免“永真”验签被利用。
+    if !placeholder_ring_sig_allowed() {
+        return Ok(false);
+    }
 
     if signature.ring_members.is_empty() {
         return Ok(false);
@@ -49,7 +67,16 @@ pub fn verify_ring_signature(
         return Ok(false);
     }
 
-    // TODO: 实现完整的环签名验证
+    // 占位校验：至少约束 challenge 与消息/金额绑定，避免任意垃圾输入直接通过。
+    // 注意：这不是完整环签名验证，仅用于受控测试场景。
+    let mut challenge_hasher = Sha256::new();
+    challenge_hasher.update(message);
+    challenge_hasher.update(amount.to_le_bytes());
+    let expected_c: [u8; 32] = challenge_hasher.finalize().into();
+    if signature.c.iter().any(|c| c != &expected_c) {
+        return Ok(false);
+    }
+
     Ok(true)
 }
 
@@ -120,7 +147,29 @@ mod tests {
         let signature = generate_ring_signature(&private_key, &ring_members, message, 1)
             .expect("Failed to generate signature");
 
+        // 默认禁用占位验签，防止生产误用。
         let is_valid = verify_ring_signature(&signature, message, 1000).expect("Failed to verify");
-        assert!(is_valid);
+        assert!(!is_valid);
+    }
+
+    #[test]
+    fn test_ring_signature_placeholder_requires_explicit_env_enable() {
+        let private_key = [9u8; 32];
+        let ring_members = vec![
+            Address::from_bytes([11u8; 32]),
+            Address::from_bytes([12u8; 32]),
+        ];
+        let message = b"msg";
+        let amount = 123u128;
+
+        let signature = generate_ring_signature(&private_key, &ring_members, message, 0)
+            .expect("Failed to generate signature");
+        std::env::set_var(PRIVACY_RING_SIG_PLACEHOLDER_ALLOW_ENV, "1");
+        let enabled_result =
+            verify_ring_signature(&signature, message, amount).expect("verify failed");
+        std::env::remove_var(PRIVACY_RING_SIG_PLACEHOLDER_ALLOW_ENV);
+        // generate_ring_signature() uses challenge=hash(message), while verifier binds (message, amount).
+        // This ensures placeholder verifier is never trivially "always true".
+        assert!(!enabled_result);
     }
 }

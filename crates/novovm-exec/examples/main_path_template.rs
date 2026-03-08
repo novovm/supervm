@@ -1,10 +1,54 @@
 use anyhow::Result;
 use novovm_exec::{AoemExecFacade, AoemExecOpenOptions, ExecOpV2};
+use std::path::PathBuf;
+
+fn platform_dll_name() -> &'static str {
+    #[cfg(target_os = "windows")]
+    {
+        "aoem_ffi.dll"
+    }
+    #[cfg(target_os = "linux")]
+    {
+        "libaoem_ffi.so"
+    }
+    #[cfg(target_os = "macos")]
+    {
+        "libaoem_ffi.dylib"
+    }
+}
+
+fn resolve_default_dll_arg() -> Option<String> {
+    for env_name in ["NOVOVM_AOEM_DLL", "AOEM_FFI_DLL"] {
+        if let Ok(raw) = std::env::var(env_name) {
+            let trimmed = raw.trim();
+            if !trimmed.is_empty() {
+                return Some(trimmed.to_string());
+            }
+        }
+    }
+    let dll_name = platform_dll_name();
+    let candidates = [
+        PathBuf::from("aoem").join("bin").join(dll_name),
+        PathBuf::from("bin").join(dll_name),
+        PathBuf::from(dll_name),
+    ];
+    for candidate in candidates {
+        if candidate.exists() {
+            return Some(candidate.to_string_lossy().into_owned());
+        }
+    }
+    None
+}
 
 fn main() -> Result<()> {
     let dll = std::env::args()
         .nth(1)
-        .unwrap_or_else(|| "D:\\WorksArea\\SUPERVM\\aoem\\bin\\aoem_ffi.dll".to_string());
+        .or_else(resolve_default_dll_arg)
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "missing AOEM dll path: pass argv[1] or set NOVOVM_AOEM_DLL/AOEM_FFI_DLL"
+            )
+        })?;
 
     let facade = AoemExecFacade::open(
         &dll,
