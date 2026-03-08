@@ -17,7 +17,7 @@
 ## C. 迁移实施
 
 - [x] 提供 `novovm-node` 主路径替换模板（文档+示例）
-- [x] `novovm-node` 首条主路径改为调用门面（`crates/novovm-node/src/main.rs`）
+- [x] `novovm-node` 首条主路径改为调用门面（`crates/novovm-node/src/bin/novovm-node.rs`）
 - [x] `novovm-node` 其余路径逐步替换（`legacy` 入口兼容转发到 `ffi_v2`）
 - [ ] 将 `SVM2026` 已验证能力逐项迁入 `SUPERVM` 对应模块（最后做）
 - [x] 去除 AOEM 源码 path 依赖（运行时代码不再依赖 `../aoem/crates`）
@@ -29,3 +29,4 @@
 - [x] 性能对照（迁移前后同口径；已冻结唯一门禁 `scripts/migration/run_performance_gate_seal_single.ps1`，固定 `release + seal_single + AOEM 封盘基线`，按 3-run P50 判定）
 - [ ] 崩溃恢复与持久化一致性
 - [ ] 文档封盘（迁移版本、回退步骤）
+

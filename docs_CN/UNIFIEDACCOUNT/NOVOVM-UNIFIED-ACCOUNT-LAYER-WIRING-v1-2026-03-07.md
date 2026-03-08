@@ -48,7 +48,7 @@
   - exposes immutable/mutable accessor for upper-layer wiring.
 
 - Added public RPC ingress wiring:
-  - file: `crates/novovm-node/src/main.rs`
+  - file: `crates/novovm-node/src/bin/novovm-node.rs`
   - methods:
     - `ua_createUca`
     - `ua_rotatePrimaryKey`
@@ -89,7 +89,7 @@
         - legacy key `unified_account:snapshot:v1` still dual-write（兼容 rollback）
 
 - Added execution pre-guard wiring (`run_ffi_v2` real execution path):
-  - file: `crates/novovm-node/src/main.rs`
+  - file: `crates/novovm-node/src/bin/novovm-node.rs`
   - behavior:
     - before `run_adapter_bridge_signal`, each admitted tx is normalized into `RouteRequest` and passed to `UnifiedAccountRouter`.
     - default mapping: `LocalTx.account -> uca:local:<account>`, `persona=evm:<chain_id>:<account-address>`.
@@ -115,7 +115,7 @@
     - `NOVOVM_UNIFIED_ACCOUNT_ADAPTER_SIGNATURE_DOMAIN` (override default `evm:<chain_id>`)
 
 - Added plugin adapter ingress pre-guard wiring（host-side）:
-  - file: `crates/novovm-node/src/main.rs`
+  - file: `crates/novovm-node/src/bin/novovm-node.rs`
   - hook point:
     - `run_adapter_bridge_signal` plugin branch now runs unified-account route guard before plugin apply.
   - behavior:
@@ -159,8 +159,8 @@
     - `NOVOVM_UA_AUDIT_MIGRATE_TO=rocksdb|jsonl` (default `rocksdb`)
     - migration is incremental by sequence number (re-run will not duplicate already migrated prefix)
 
-- Added UA-Gxx gate automation and evidence output:
-  - node test matrix: `unified_account_gate_ua_g01...ua_g16` in `crates/novovm-node/src/main.rs`
+- Added UA-Gxx gate automation and evidence output（legacy verification, non-mainline）:
+  - node test matrix: `unified_account_gate_ua_g01...ua_g16` in `crates/novovm-node/src/main.rs`（历史验证入口；生产主线不依赖）
   - gate runner: `scripts/migration/run_unified_account_gate.ps1`
   - evidence root: `artifacts/migration/unifiedaccount/`
   - generated summaries:
@@ -180,3 +180,4 @@
      - `NOVOVM_ADAPTER_PLUGIN_UA_AUDIT_PATH=<path>`
    - default performance profile:
      - 默认 `memory + none`，不引入额外磁盘 I/O 路径。
+

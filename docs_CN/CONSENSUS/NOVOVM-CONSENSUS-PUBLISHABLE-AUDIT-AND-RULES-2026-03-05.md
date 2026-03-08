@@ -41,7 +41,7 @@
   - `crates/novovm-consensus/src/quorum_cert.rs`
   - `crates/novovm-consensus/src/bft_engine.rs`
 - 节点实现：
-  - `crates/novovm-node/src/main.rs`
+  - `crates/novovm-node/src/bin/novovm-node.rs`
   - `config/novovm-consensus-policy.json`
 - 门禁聚合：
   - `scripts/migration/run_migration_acceptance_gate.ps1`
@@ -652,3 +652,4 @@
   - `d1_input_source`
   - `d1_codec`
   - `aoem_ingress_path`
+

@@ -30,11 +30,11 @@
 | UA-A05 | 签名域隔离 | InProgress | Security | UA-A01 | Signature Domain 规范 | 跨域验签必失败 | `ua_signature_domain_signal` | Spec v1 | 2026-03-06 |
 | UA-A06 | Nonce/Replay 策略 | InProgress | Runtime | UA-A01 | Nonce Policy 规范 | Persona 级 nonce + replay 拒绝 | `ua_nonce_replay_signal` | Spec v1 | 2026-03-06 |
 | UA-A07 | 权限与授权模型 | InProgress | Security | UA-A01 | Permission 规范 | Owner/Delegate/SessionKey 权限边界冻结 | `ua_permission_signal` | Spec v1 | 2026-03-06 |
-| UA-A08 | 原子协调边界 | NotStarted | Protocol | UA-A01 | 边界策略说明 | `eth_*` 不承载跨链原子语义 | `ua_persona_boundary_signal` | 迁移方案 | 2026-03-06 |
+| UA-A08 | 原子协调边界 | ReadyForMerge | Protocol | UA-A01 | 边界策略说明 | `eth_*` 不承载跨链原子语义 | `ua_persona_boundary_signal` | `artifacts/migration/release-candidate-novovm-rc-2026-03-07-ua-ga-next-rerun10/snapshot/acceptance-gate-full/unified-account-gate/unified-account-gate-summary.json`（UA-G10/UA-G11 通过） | 2026-03-09 |
 | UA-A09 | Type 4（7702）账户约束 | NotStarted | Protocol + Security | UA-A05/UA-A07 | Type4 Policy 文档 | 明确输入受理、签名校验、拒绝错误码、降级策略、与代理/会话密钥混用限制 | `ua_type4_policy_signal` | EVM 文档联动 | 2026-03-06 |
 | UA-A10 | 存储键空间规范 | NotStarted | Runtime | UA-A01/UA-A02 | Storage Key 规范 | 账户键空间与链状态键空间分离 | `ua_storage_key_signal` | SVM2026 审计 | 2026-03-06 |
 | UA-A11 | 与 EVM WP-10 联动 | InProgress | Architecture | UA-A01~A09 | 依赖闭环记录 | WP 依赖状态一致 | `ua_dependency_signal` | EVM PLAN/LEDGER | 2026-03-06 |
-| UA-A12 | RC 收口 | NotStarted | Release | UA-A01~A11 | RC 候选包 | 门禁通过且兼容声明完成 | `ua_rc_candidate_gate` | 待生成 | 2026-03-06 |
+| UA-A12 | RC 收口 | ReadyForMerge | Release | UA-A01~A11 | RC 候选包 | 门禁通过且兼容声明完成 | `ua_rc_candidate_gate` | `artifacts/migration/rc-ua-selfguard-rocksdb-20260308-000948/rc-candidate.json`（`overall_pass=true`） | 2026-03-09 |
 | UA-A13 | 唯一性与冲突约束 | InProgress | Security + Runtime | UA-A01/UA-A02 | Unique/Conflict 规范 | `1 PersonaAddress -> 1 UCA` 强约束 + 冲突拒绝与事件闭环 | `ua_uniqueness_conflict_signal` | Spec v1 | 2026-03-06 |
 
 ---
@@ -61,6 +61,7 @@
 | 2026-03-06 | 审计快照完成 | 明确 SUPERVM 未落地、SVM2026 为设计资产来源 | 审计快照文档 | Accepted |
 | 2026-03-06 | 方案文档冻结（v1） | 采用“迁模型，不迁实验实现” | 迁移方案文档 | Accepted |
 | 2026-03-06 | 规范文档创建（Spec v1） | 冻结统一账户核心约束草案 | Spec v1 文档 | Accepted |
+| 2026-03-09 | UA-A08/UA-A12 状态收口 | 以 `ua_persona_boundary_signal` 与严格 RC 证据将两项升级到 `ReadyForMerge` | `unified-account-gate-summary.json` + `rc-ua-selfguard-rocksdb-20260308-000948/rc-candidate.json` | Accepted |
 
 ---
 

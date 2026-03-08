@@ -10,7 +10,7 @@
 - [ ] EVM plugin chain code 映射已包含 `polygon=5`、`avalanche=7`  
   - `crates/novovm-adapter-evm-plugin/src/lib.rs`
 - [ ] Node host chain code 映射已包含 `polygon=5`、`avalanche=7`  
-  - `crates/novovm-node/src/main.rs`
+  - `crates/novovm-node/src/bin/novovm-node.rs`
 - [ ] Registry / matrix 已包含四链 allowlist  
   - `config/novovm-adapter-plugin-registry.json`
   - `config/novovm-adapter-compatibility-matrix.json`
@@ -74,3 +74,4 @@ powershell -ExecutionPolicy Bypass -File scripts/migration/run_release_candidate
 - `evm_backend_compare_bnb_pass`: `true`
 - `evm_backend_compare_avalanche_pass`: `true`
 - 严格性能门禁：`pass=true`
+
