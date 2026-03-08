@@ -7,7 +7,7 @@ use crate::governance_verifier::{
     build_governance_vote_verifier, GovernanceVoteVerifier, GovernanceVoteVerifierScheme,
 };
 use crate::market_engine::Web30MarketEngineSnapshot;
-use crate::protocol::{HotStuffProtocol, Phase};
+use crate::protocol::{HotStuffProtocol, Phase, ProtocolState};
 use crate::quorum_cert::{QuorumCertificate, Vote};
 use crate::types::{
     BFTError, BFTProposal, BFTResult, FeeRoutingOutcome, GovernanceAccessPolicy,
@@ -712,6 +712,18 @@ impl BFTEngine {
     pub fn current_phase(&self) -> Phase {
         let protocol = self.protocol.lock().unwrap();
         protocol.current_phase()
+    }
+
+    /// 导出当前协议状态快照（用于仿真器/基准场景同步）。
+    pub fn protocol_state_snapshot(&self) -> ProtocolState {
+        let protocol = self.protocol.lock().unwrap();
+        protocol.get_state()
+    }
+
+    /// 同步协议状态（用于仿真器/基准场景，非生产主路径调用）。
+    pub fn sync_protocol_state(&self, state: ProtocolState) {
+        let mut protocol = self.protocol.lock().unwrap();
+        protocol.sync_state(state);
     }
 
     /// 获取已提交 Epoch 总数

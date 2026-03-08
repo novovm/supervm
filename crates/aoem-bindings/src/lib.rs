@@ -5,6 +5,7 @@ use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::ffi::{c_char, c_void, CStr};
 use std::fs;
+use std::mem::ManuallyDrop;
 use std::path::{Path, PathBuf};
 use std::ptr;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -12,8 +13,11 @@ use std::sync::{Condvar, Mutex, OnceLock};
 
 pub type AoemAbiVersion = unsafe extern "C" fn() -> u32;
 pub type AoemVersionString = unsafe extern "C" fn() -> *const c_char;
+pub type AoemGlobalInit = unsafe extern "C" fn() -> i32;
 pub type AoemCapabilitiesJson = unsafe extern "C" fn() -> *const c_char;
 pub type AoemRecommendParallelism = unsafe extern "C" fn(u64, u32, u64, f64) -> u32;
+pub type AoemZkvmSupported = unsafe extern "C" fn() -> u32;
+pub type AoemZkvmTraceFibProveVerify = unsafe extern "C" fn(u32, u64, u64) -> i32;
 #[repr(C)]
 pub struct AoemCreateOptionsV1 {
     pub abi_version: u32,
@@ -48,19 +52,26 @@ pub type AoemCreateWithOptions = unsafe extern "C" fn(*const AoemCreateOptionsV1
 pub type AoemDestroy = unsafe extern "C" fn(*mut c_void);
 pub type AoemExecuteOpsV2 =
     unsafe extern "C" fn(*mut c_void, *const AoemOpV2, u32, *mut AoemExecV2Result) -> i32;
+pub type AoemExecuteOpsWireV1 =
+    unsafe extern "C" fn(*mut c_void, *const u8, usize, *mut AoemExecV2Result) -> i32;
 pub type AoemLastError = unsafe extern "C" fn(*mut c_void) -> *const c_char;
 
 pub struct AoemDyn {
-    _lib: Library,
+    _lib: ManuallyDrop<Library>,
+    unload_on_drop: bool,
     library_path: PathBuf,
     abi_version: AoemAbiVersion,
     version_string: AoemVersionString,
+    global_init: Option<AoemGlobalInit>,
     capabilities_json: AoemCapabilitiesJson,
     recommend_parallelism: Option<AoemRecommendParallelism>,
+    zkvm_supported: Option<AoemZkvmSupported>,
+    zkvm_trace_fib_prove_verify: Option<AoemZkvmTraceFibProveVerify>,
     create: AoemCreate,
     create_with_options: Option<AoemCreateWithOptions>,
     destroy: AoemDestroy,
     execute_ops_v2: Option<AoemExecuteOpsV2>,
+    execute_ops_wire_v1: Option<AoemExecuteOpsWireV1>,
     last_error: AoemLastError,
 }
 
@@ -122,10 +133,22 @@ impl AoemDyn {
         let abi_version: AoemAbiVersion = *lib.get::<AoemAbiVersion>(b"aoem_abi_version")?;
         let version_string: AoemVersionString =
             *lib.get::<AoemVersionString>(b"aoem_version_string")?;
+        let global_init: Option<AoemGlobalInit> = lib
+            .get::<AoemGlobalInit>(b"aoem_global_init")
+            .ok()
+            .map(|f| *f);
         let capabilities_json: AoemCapabilitiesJson =
             *lib.get::<AoemCapabilitiesJson>(b"aoem_capabilities_json")?;
         let recommend_parallelism: Option<AoemRecommendParallelism> = lib
             .get::<AoemRecommendParallelism>(b"aoem_recommend_parallelism")
+            .ok()
+            .map(|f| *f);
+        let zkvm_supported: Option<AoemZkvmSupported> = lib
+            .get::<AoemZkvmSupported>(b"aoem_zkvm_supported")
+            .ok()
+            .map(|f| *f);
+        let zkvm_trace_fib_prove_verify: Option<AoemZkvmTraceFibProveVerify> = lib
+            .get::<AoemZkvmTraceFibProveVerify>(b"aoem_zkvm_trace_fib_prove_verify")
             .ok()
             .map(|f| *f);
         let create: AoemCreate = *lib.get::<AoemCreate>(b"aoem_create")?;
@@ -138,25 +161,45 @@ impl AoemDyn {
             .get::<AoemExecuteOpsV2>(b"aoem_execute_ops_v2")
             .ok()
             .map(|f| *f);
+        let execute_ops_wire_v1: Option<AoemExecuteOpsWireV1> = lib
+            .get::<AoemExecuteOpsWireV1>(b"aoem_execute_ops_wire_v1")
+            .ok()
+            .map(|f| *f);
         let last_error: AoemLastError = *lib.get::<AoemLastError>(b"aoem_last_error")?;
 
         let dynlib = Self {
-            _lib: lib,
+            _lib: ManuallyDrop::new(lib),
+            unload_on_drop: should_unload_dll_on_drop(),
             library_path,
             abi_version,
             version_string,
+            global_init,
             capabilities_json,
             recommend_parallelism,
+            zkvm_supported,
+            zkvm_trace_fib_prove_verify,
             create,
             create_with_options,
             destroy,
             execute_ops_v2,
+            execute_ops_wire_v1,
             last_error,
         };
 
+        dynlib.run_global_init()?;
         // Startup hard gate: reject non-V1 ABI or non-V2-capable DLL immediately.
         dynlib.verify_startup_contract()?;
         Ok(dynlib)
+    }
+
+    fn run_global_init(&self) -> Result<()> {
+        if let Some(f) = self.global_init {
+            let rc = unsafe { f() };
+            if rc != 0 {
+                bail!("AOEM global init failed: rc={rc}");
+            }
+        }
+        Ok(())
     }
 
     fn verify_startup_contract(&self) -> Result<()> {
@@ -322,6 +365,33 @@ impl AoemDyn {
         self.execute_ops_v2.is_some()
     }
 
+    pub fn supports_execute_ops_wire_v1(&self) -> bool {
+        self.execute_ops_wire_v1.is_some()
+    }
+
+    /// True when AOEM FFI exports both zkVM probe symbols.
+    pub fn supports_zkvm_probe(&self) -> bool {
+        self.zkvm_supported.is_some() && self.zkvm_trace_fib_prove_verify.is_some()
+    }
+
+    /// Returns AOEM-provided zkVM capability bit from exported symbol.
+    /// `None` means the loaded AOEM library does not export this symbol.
+    pub fn zkvm_supported_flag(&self) -> Option<bool> {
+        self.zkvm_supported.map(|f| unsafe { f() != 0 })
+    }
+
+    /// Executes AOEM built-in Trace/Fibonacci prove+verify probe and returns raw rc.
+    /// `None` means the loaded AOEM library does not export this symbol.
+    pub fn zkvm_trace_fib_probe_rc(
+        &self,
+        rounds: u32,
+        witness_a: u64,
+        witness_b: u64,
+    ) -> Option<i32> {
+        self.zkvm_trace_fib_prove_verify
+            .map(|f| unsafe { f(rounds, witness_a, witness_b) })
+    }
+
     pub fn recommend_parallelism(
         &self,
         txs: u64,
@@ -361,6 +431,16 @@ impl AoemDyn {
             "failed_index": res.failed_index,
             "total_writes": res.total_writes
         }))
+    }
+}
+
+impl Drop for AoemDyn {
+    fn drop(&mut self) {
+        if self.unload_on_drop {
+            unsafe {
+                ManuallyDrop::drop(&mut self._lib);
+            }
+        }
     }
 }
 
@@ -478,6 +558,13 @@ fn parse_bool_env(name: &str) -> Option<bool> {
             None
         }
     })
+}
+
+fn should_unload_dll_on_drop() -> bool {
+    if let Some(v) = parse_bool_env("AOEM_FFI_UNLOAD_DLL") {
+        return v;
+    }
+    !cfg!(windows)
 }
 
 fn file_sha256(path: &Path) -> Result<String> {
@@ -783,6 +870,36 @@ impl<'a> AoemHandle<'a> {
             let err = unsafe { cstr_to_string((self.dynlib.last_error)(self.raw)) }
                 .unwrap_or_else(|| format!("aoem_execute_ops_v2 failed rc={rc} and no last_error"));
             bail!("aoem_execute_ops_v2 failed: rc={rc}, err={err}");
+        }
+        Ok(result)
+    }
+
+    pub fn execute_ops_wire_v1(&self, input: &[u8]) -> Result<AoemExecV2Result> {
+        let Some(exec_wire_v1) = self.dynlib.execute_ops_wire_v1 else {
+            bail!(
+                "aoem_execute_ops_wire_v1 not found in loaded DLL (requires AOEM FFI wire ABI build)"
+            );
+        };
+        if input.is_empty() {
+            bail!("aoem_execute_ops_wire_v1 input must not be empty");
+        }
+        let mut result = AoemExecV2Result {
+            failed_index: u32::MAX,
+            ..AoemExecV2Result::default()
+        };
+        let rc = unsafe {
+            exec_wire_v1(
+                self.raw,
+                input.as_ptr(),
+                input.len(),
+                &mut result as *mut AoemExecV2Result,
+            )
+        };
+        if rc != 0 {
+            let err = unsafe { cstr_to_string((self.dynlib.last_error)(self.raw)) }.unwrap_or_else(
+                || format!("aoem_execute_ops_wire_v1 failed rc={rc} and no last_error"),
+            );
+            bail!("aoem_execute_ops_wire_v1 failed: rc={rc}, err={err}");
         }
         Ok(result)
     }

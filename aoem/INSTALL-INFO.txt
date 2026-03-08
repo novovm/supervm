@@ -9,22 +9,25 @@ Host default load path (repository-relative):
 
 Variant naming note:
   core, persist, wasm all use the same binary name: aoem_ffi.dll.
-  This is intentional ABI naming. Variant identity is determined by:
-    1) install path (aoem/bin vs aoem/variants/*/bin)
-    2) aoem-manifest.json + capabilities check at startup
+  This is intentional ABI naming. Runtime identity is determined by:
+    1) core dynlib: aoem/bin/aoem_ffi.dll
+    2) sidecar plugins in aoem/plugins
+    3) aoem-manifest.json + capabilities check at startup
 
 Repository tracking policy (minimal set):
   tracked:
-    - aoem/bin/aoem_ffi.dll (core)
+    - aoem/bin/aoem_ffi.dll (core runtime)
     - aoem/include/aoem.h
     - aoem/manifest/aoem-manifest.json
     - aoem/INSTALL-INFO.txt
-  optional variants not tracked in git:
-    - aoem/variants/persist/bin/aoem_ffi.dll
-    - aoem/variants/wasm/bin/aoem_ffi.dll
+  optional sidecars not tracked in git:
+    - aoem/plugins/aoem_ffi_persist_rocksdb.dll
+    - aoem/plugins/aoem_ffi_runtime_wasm_wasmtime.dll
+    - aoem/plugins/aoem_ffi_zkvm_executor.dll
+    - aoem/plugins/aoem_ffi_crypto_mldsa.dll
 
 Release distribution policy:
-  full variant package (core + persist + wasm) is distributed as GitHub Releases assets.
+  composed package (core + sidecar plugins) is distributed as GitHub Releases assets.
   Always verify SHA256SUMS and aoem-manifest.json before install.
 
 Recommended one-time probe:

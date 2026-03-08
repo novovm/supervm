@@ -24,3 +24,7 @@ rocksdb = { version = "0.22", default-features = false }
 
 [dev-dependencies]
 aoem-bindings = { path = "../aoem-bindings" }
+
+[[bin]]
+name = "novovm-node"
+path = "src/bin/novovm-node.rs"

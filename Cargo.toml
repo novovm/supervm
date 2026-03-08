@@ -1,0 +1,17 @@
+[workspace]
+members = [
+    "crates/aoem-bindings",
+    "crates/novovm-adapter-api",
+    "crates/novovm-adapter-novovm",
+    "crates/novovm-adapter-sample-plugin",
+    "crates/novovm-bench",
+    "crates/novovm-consensus",
+    "crates/novovm-coordinator",
+    "crates/novovm-exec",
+    "crates/novovm-network",
+    "crates/novovm-node",
+    "crates/novovm-protocol",
+    "crates/novovm-prover",
+    "vendor/web30-core",
+]
+resolver = "2"

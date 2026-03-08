@@ -81,7 +81,8 @@ fn classify_fallback_kind(code: &str) -> ProverFallbackKind {
     let c = code.trim().to_ascii_lowercase();
     if c.contains("invalid") || c.contains("bad_input") || c.contains("unsupported_op") {
         ProverFallbackKind::InvalidInput
-    } else if c.contains("ffi_missing") || c.contains("engine_missing") || c.contains("not_linked") {
+    } else if c.contains("ffi_missing") || c.contains("engine_missing") || c.contains("not_linked")
+    {
         ProverFallbackKind::EngineUnavailable
     } else if c.contains("disabled") || c.contains("feature_off") || c.contains("no_zkvm") {
         ProverFallbackKind::FeatureDisabled
@@ -123,7 +124,10 @@ mod tests {
             prover.fallback_reasons[0].kind,
             ProverFallbackKind::ResourceUnavailable
         );
-        assert_eq!(prover.fallback_reasons[1].kind, ProverFallbackKind::InvalidInput);
+        assert_eq!(
+            prover.fallback_reasons[1].kind,
+            ProverFallbackKind::InvalidInput
+        );
     }
 
     #[test]
@@ -137,4 +141,3 @@ mod tests {
         assert!(!prover.prover_ready);
     }
 }
-

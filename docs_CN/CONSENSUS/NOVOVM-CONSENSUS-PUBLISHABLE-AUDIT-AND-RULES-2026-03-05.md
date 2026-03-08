@@ -614,3 +614,41 @@
   - `governance_rpc_mldsa_ffi_startup_pass=true`
 
 该快照对应结论：当前 NOVOVM “共识+交易+读查询+网络活性防护+经济治理跨模块主链路（token economics + treasury spend + market orchestration）”处于可发布状态；后续缺口集中在链上治理长期运维与生产参数治理策略。
+
+- 2026-03-08 全量 acceptance 回填（`full_snapshot_v2`）：
+  - `artifacts/migration/acceptance-gate-full-v2-2026-03-08/acceptance-gate-summary.json`
+  - `overall_pass=true`
+  - `governance_param3_pass=true`
+  - `rpc_exposure_pass=true`
+  - `adapter_stability_pass=true`
+  - `vm_runtime_split_pass=true`
+  - `performance_gate.pass=true`（见 `artifacts/migration/acceptance-gate-full-v2-2026-03-08/performance-gate/performance-gate-summary.json`）
+- 2026-03-08 AOEM core+sidecar 基线回填（含 Network+Consensus matrix）：
+  - `artifacts/migration/aoem-tps-core-sidecar-2026-03-08-baseline/aoem-core-sidecar-tps-summary.json`
+  - `docs_CN/AOEM-FFI/AOEM-FFI-CORE-SIDECAR-TPS-SEAL-2026-03-08.md`
+  - `docs_CN/AOEM-FFI/AOEM-FFI-CORE-SIDECAR-TPS-RAW-2026-03-08.csv`
+  - `cpu_batch_stress_single`（ops/s）：
+    - `core p50/p90/p99 = 22739572.77 / 24221285.67 / 24221285.67`
+    - `persist p50/p90/p99 = 22212152.71 / 22244070.84 / 22244070.84`
+    - `wasm p50/p90/p99 = 22307735.21 / 22580958.38 / 22580958.38`
+  - `network_two_process recv_tps`（E2E, pair_matrix）：
+    - `core p50/p90/p99 = 37.41 / 37.45 / 37.45`
+    - `persist p50/p90/p99 = 37.45 / 37.50 / 37.50`
+    - `wasm p50/p90/p99 = 37.45 / 37.50 / 37.50`
+
+## D1 Ingress Freeze Rules (2026-03-08)
+
+- 目标：固定 D1 为统一封送层，禁止宿主入口为单业务再次分叉。
+- 规则：
+  - D1 只做 ingress 标准化，输出统一 `ops_wire_v1`；不做执行语义、排序、聚合、冲突判断。
+  - 新业务优先直接产出 `ops_wire_v1`。
+  - 无法直接产出时，只允许新增 codec；禁止修改 `novovm-node` 主入口执行流程。
+  - `ops_v2` 仅作为 ABI 兼容回退路径（`ops_v2_fallback/ops_v2_forced`），不是新业务主路径。
+- 生产入口契约（强制机读）：
+  - `d1_ingress_contract: mode=<...> source=<...> codec=<...> aoem_ingress_path=<...>`
+  - 该行由 `novovm-node` 输出，`run_prod_node_e2e_tps.ps1` 与 `run_prod_node_steady_tps.ps1` 必须解析并入报告。
+- 报告字段冻结：
+  - `d1_ingress_mode`
+  - `d1_input_source`
+  - `d1_codec`
+  - `aoem_ingress_path`

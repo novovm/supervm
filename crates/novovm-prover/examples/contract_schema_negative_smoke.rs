@@ -46,11 +46,7 @@ fn case_reason_normalization_stable() -> bool {
     });
     let aoem = AoemCapabilityContract::from_capabilities_json(raw);
     let prover = ProverCapabilityContract::from_aoem(&aoem);
-    prover.fallback_reason_codes
-        == vec![
-            "gpu_unavailable".to_string(),
-            "invalid_input".to_string(),
-        ]
+    prover.fallback_reason_codes == vec!["gpu_unavailable".to_string(), "invalid_input".to_string()]
 }
 
 fn main() -> Result<()> {
