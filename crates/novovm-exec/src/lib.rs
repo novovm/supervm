@@ -62,9 +62,10 @@ fn find_aoem_root_near(start: &Path) -> Option<PathBuf> {
         {
             return Some(candidate);
         }
-        if dynlib_names_by_preference().iter().any(|name| {
-            candidate.join("bin").join(name).exists()
-        }) {
+        if dynlib_names_by_preference()
+            .iter()
+            .any(|name| candidate.join("bin").join(name).exists())
+        {
             return Some(candidate);
         }
     }

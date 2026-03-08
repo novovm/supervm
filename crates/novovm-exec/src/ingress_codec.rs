@@ -53,10 +53,7 @@ impl OpsWireV1Builder {
         write_u32(&mut self.bytes, op.key.len() as u32);
         write_u32(&mut self.bytes, op.value.len() as u32);
         write_i64(&mut self.bytes, op.delta);
-        write_u64(
-            &mut self.bytes,
-            op.expect_version.unwrap_or(u64::MAX),
-        );
+        write_u64(&mut self.bytes, op.expect_version.unwrap_or(u64::MAX));
         write_u64(&mut self.bytes, op.plan_id);
         self.bytes.extend_from_slice(op.key);
         self.bytes.extend_from_slice(op.value);

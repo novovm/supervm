@@ -8,7 +8,7 @@ use anyhow::{bail, Context, Result};
 use ed25519_dalek::{SigningKey, VerifyingKey};
 use novovm_consensus::{BFTConfig, BFTEngine, BFTProposal, NodeId as CNodeId, ValidatorSet, Vote};
 use novovm_exec::AoemRuntimeConfig;
-use novovm_network::{InMemoryTransport, Transport};
+use novovm_network::{InMemoryTransport, Transport, UdpTransport};
 use novovm_node::tx_ingress::{
     build_exec_batch_from_records, build_ops_wire_v1_from_records, load_tx_records_from_wire_file,
     TxIngressRecord,
@@ -22,8 +22,8 @@ use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
-use std::time::{SystemTime, UNIX_EPOCH};
 use std::time::Instant;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 enum BenchFinalityPayload {
@@ -39,6 +39,11 @@ struct E2eSummary {
     d1_input_source: String,
     d1_codec: String,
     aoem_ingress_path: String,
+    network_transport: String,
+    repeat_count: usize,
+    warm_excludes_first_repeat: bool,
+    txs_total_per_repeat: usize,
+    txs_total_all_repeats: usize,
     validators: usize,
     txs_total: usize,
     batches: usize,
@@ -54,6 +59,33 @@ struct E2eSummary {
     aoem_kernel_tps_p99: f64,
     network_message_count: u64,
     network_message_bytes: u64,
+    repeat_wall_tps_p50: f64,
+    repeat_wall_tps_p90: f64,
+    repeat_wall_tps_p99: f64,
+    repeat_loop_ms_p50: f64,
+    repeat_loop_ms_p90: f64,
+    repeat_loop_ms_p99: f64,
+    warm_wall_tps_p50: f64,
+    warm_wall_tps_p90: f64,
+    warm_wall_tps_p99: f64,
+    warm_loop_ms_p50: f64,
+    warm_loop_ms_p90: f64,
+    warm_loop_ms_p99: f64,
+    runtime_total_ms: f64,
+    tx_wire_load_ms: f64,
+    setup_ms: f64,
+    loop_total_ms: f64,
+    stage_batch_admission_ms: f64,
+    stage_ingress_pack_ms: f64,
+    stage_aoem_submit_ms: f64,
+    stage_proposal_build_ms: f64,
+    stage_proposal_broadcast_ms: f64,
+    stage_state_sync_ms: f64,
+    stage_follower_vote_ms: f64,
+    stage_qc_collect_ms: f64,
+    stage_commit_resync_ms: f64,
+    stage_other_ms: f64,
+    qc_poll_iters_total: u64,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -61,6 +93,17 @@ enum D1IngressMode {
     Auto,
     OpsWireV1,
     OpsV2,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum NetworkTransportMode {
+    InMemory,
+    UdpLoopback,
+}
+
+enum NetworkHarness {
+    InMemory(InMemoryTransport),
+    UdpLoopback(Vec<UdpTransport>),
 }
 
 fn env_usize(name: &str, default: usize) -> Result<usize> {
@@ -97,8 +140,49 @@ fn ingress_mode_env() -> Result<D1IngressMode> {
     }
 }
 
+fn network_transport_env() -> Result<NetworkTransportMode> {
+    let raw =
+        std::env::var("NOVOVM_E2E_NETWORK_TRANSPORT").unwrap_or_else(|_| "inmemory".to_string());
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "inmemory" | "memory" => Ok(NetworkTransportMode::InMemory),
+        "udp_loopback" | "udp" => Ok(NetworkTransportMode::UdpLoopback),
+        _ => bail!("invalid NOVOVM_E2E_NETWORK_TRANSPORT={raw}; valid: inmemory|udp_loopback"),
+    }
+}
+
 fn pnode(id: CNodeId) -> PNodeId {
     PNodeId(id as u64)
+}
+
+impl NetworkHarness {
+    fn mode_name(&self) -> &'static str {
+        match self {
+            Self::InMemory(_) => "inmemory",
+            Self::UdpLoopback(_) => "udp_loopback",
+        }
+    }
+
+    fn send(&self, from_idx: usize, to_idx: usize, msg: ProtocolMessage) -> Result<()> {
+        match self {
+            Self::InMemory(t) => t
+                .send(pnode(to_idx as CNodeId), msg)
+                .context("inmemory send failed"),
+            Self::UdpLoopback(transports) => transports[from_idx]
+                .send(pnode(to_idx as CNodeId), msg)
+                .context("udp loopback send failed"),
+        }
+    }
+
+    fn try_recv(&self, node_idx: usize) -> Result<Option<ProtocolMessage>> {
+        match self {
+            Self::InMemory(t) => t
+                .try_recv(pnode(node_idx as CNodeId))
+                .context("inmemory recv failed"),
+            Self::UdpLoopback(transports) => transports[node_idx]
+                .try_recv(pnode(node_idx as CNodeId))
+                .context("udp loopback recv failed"),
+        }
+    }
 }
 
 fn quantile(values: &[f64], q: f64) -> f64 {
@@ -129,18 +213,23 @@ fn batch_digest(round: usize, txs: &[TxIngressRecord]) -> [u8; 32] {
 }
 
 fn main() -> Result<()> {
+    let runtime_start = Instant::now();
+
+    let load_start = Instant::now();
     let tx_wire_path = env_string_nonempty("NOVOVM_TX_WIRE_FILE")
         .context("NOVOVM_TX_WIRE_FILE is required for consensus network e2e")?;
     let txs_all = load_tx_records_from_wire_file(Path::new(&tx_wire_path))?;
     if txs_all.is_empty() {
         bail!("tx wire has zero txs");
     }
+    let tx_wire_load_ms = load_start.elapsed().as_secs_f64() * 1000.0;
 
     let batch_size = env_usize("NOVOVM_E2E_BATCH_SIZE", 1000)?.max(1);
     let validators = env_usize("NOVOVM_E2E_VALIDATORS", 4)?.max(4);
     let max_batches = env_usize("NOVOVM_E2E_MAX_BATCHES", usize::MAX)?;
     let summary_out = env_string_nonempty("NOVOVM_E2E_SUMMARY_OUT");
 
+    let setup_start = Instant::now();
     let runtime = AoemRuntimeConfig::from_env()?;
     let facade = novovm_exec::AoemExecFacade::open_with_runtime(&runtime)?;
     let session = facade.create_session()?;
@@ -196,16 +285,63 @@ fn main() -> Result<()> {
         )?);
     }
 
-    let transport = InMemoryTransport::new(1_000_000);
-    for id in &validator_ids {
-        transport.register(pnode(*id));
-    }
+    let network_transport_mode = network_transport_env()?;
+    let transport = match network_transport_mode {
+        NetworkTransportMode::InMemory => {
+            let t = InMemoryTransport::new(1_000_000);
+            for id in &validator_ids {
+                t.register(pnode(*id));
+            }
+            NetworkHarness::InMemory(t)
+        }
+        NetworkTransportMode::UdpLoopback => {
+            let mut transports = Vec::with_capacity(validators);
+            for i in 0..validators {
+                let t = UdpTransport::bind(pnode(i as CNodeId), "127.0.0.1:0")
+                    .with_context(|| format!("udp bind failed for node={i}"))?;
+                transports.push(t);
+            }
+            let mut addrs = Vec::with_capacity(validators);
+            for i in 0..validators {
+                let addr = transports[i]
+                    .local_addr()
+                    .with_context(|| format!("udp local_addr failed for node={i}"))?;
+                addrs.push(addr.to_string());
+            }
+            for i in 0..validators {
+                for j in 0..validators {
+                    if i == j {
+                        continue;
+                    }
+                    transports[i]
+                        .register_peer(pnode(j as CNodeId), &addrs[j])
+                        .with_context(|| {
+                            format!("udp register_peer failed from={i} to={j} addr={}", addrs[j])
+                        })?;
+                }
+            }
+            NetworkHarness::UdpLoopback(transports)
+        }
+    };
+    let setup_ms = setup_start.elapsed().as_secs_f64() * 1000.0;
 
     let mut latency_ms_samples = Vec::new();
     let mut e2e_tps_samples = Vec::new();
     let mut kernel_tps_samples = Vec::new();
     let mut network_message_count: u64 = 0;
     let mut network_message_bytes: u64 = 0;
+    let mut qc_poll_iters_total: u64 = 0;
+
+    let loop_start = Instant::now();
+    let mut stage_batch_admission_ms = 0.0f64;
+    let mut stage_ingress_pack_ms = 0.0f64;
+    let mut stage_aoem_submit_ms = 0.0f64;
+    let mut stage_proposal_build_ms = 0.0f64;
+    let mut stage_proposal_broadcast_ms = 0.0f64;
+    let mut stage_state_sync_ms = 0.0f64;
+    let mut stage_follower_vote_ms = 0.0f64;
+    let mut stage_qc_collect_ms = 0.0f64;
+    let mut stage_commit_resync_ms = 0.0f64;
 
     let mut batch_index = 0usize;
     for chunk in txs_all.chunks(batch_size) {
@@ -217,20 +353,32 @@ fn main() -> Result<()> {
         let leader_idx = 0usize;
         let leader_id = leader_idx as CNodeId;
 
+        let stage_start = Instant::now();
         engines[leader_idx].start_epoch()?;
         let batch_id = (batch_index + 1) as u64;
         engines[leader_idx].add_batch(batch_id, chunk.len() as u64)?;
+        stage_batch_admission_ms += stage_start.elapsed().as_secs_f64() * 1000.0;
 
         let exec_report = if use_wire_v1 {
+            let pack_start = Instant::now();
             let payload = build_ops_wire_v1_from_records(chunk, |i, _| {
                 (batch_id << 32).saturating_add(i as u64 + 1)
             });
-            session.submit_ops_wire_report(&payload.bytes)
+            stage_ingress_pack_ms += pack_start.elapsed().as_secs_f64() * 1000.0;
+            let submit_start = Instant::now();
+            let report = session.submit_ops_wire_report(&payload.bytes);
+            stage_aoem_submit_ms += submit_start.elapsed().as_secs_f64() * 1000.0;
+            report
         } else {
+            let pack_start = Instant::now();
             let exec_batch = build_exec_batch_from_records(chunk, |i, _| {
                 (batch_id << 32).saturating_add(i as u64 + 1)
             });
-            session.submit_ops_report(&exec_batch.ops)
+            stage_ingress_pack_ms += pack_start.elapsed().as_secs_f64() * 1000.0;
+            let submit_start = Instant::now();
+            let report = session.submit_ops_report(&exec_batch.ops);
+            stage_aoem_submit_ms += submit_start.elapsed().as_secs_f64() * 1000.0;
+            report
         };
         if !exec_report.ok {
             let msg = exec_report
@@ -250,14 +398,18 @@ fn main() -> Result<()> {
             kernel_tps_samples.push(ktps);
         }
 
+        let stage_start = Instant::now();
         let mut batch_results = HashMap::new();
         batch_results.insert(batch_id, batch_digest(batch_index, chunk));
         let override_root = batch_digest(batch_index + 1024, chunk);
         let proposal =
             engines[leader_idx].propose_epoch_with_state_root(&batch_results, override_root)?;
+        stage_proposal_build_ms += stage_start.elapsed().as_secs_f64() * 1000.0;
 
-        let proposal_payload = bincode::serialize(&BenchFinalityPayload::Proposal(proposal.clone()))
-            .context("serialize proposal payload failed")?;
+        let stage_start = Instant::now();
+        let proposal_payload =
+            bincode::serialize(&BenchFinalityPayload::Proposal(proposal.clone()))
+                .context("serialize proposal payload failed")?;
         for i in 0..validators {
             if i == leader_idx {
                 continue;
@@ -270,10 +422,12 @@ fn main() -> Result<()> {
             network_message_count = network_message_count.saturating_add(1);
             network_message_bytes = network_message_bytes.saturating_add(encoded.len() as u64);
             transport
-                .send(pnode(i as CNodeId), msg)
+                .send(leader_idx, i, msg)
                 .context("transport send proposal failed")?;
         }
+        stage_proposal_broadcast_ms += stage_start.elapsed().as_secs_f64() * 1000.0;
 
+        let stage_start = Instant::now();
         let leader_state = engines[leader_idx].protocol_state_snapshot();
         for i in 0..validators {
             if i == leader_idx {
@@ -281,7 +435,9 @@ fn main() -> Result<()> {
             }
             engines[i].sync_protocol_state(leader_state.clone());
         }
+        stage_state_sync_ms += stage_start.elapsed().as_secs_f64() * 1000.0;
 
+        let stage_start = Instant::now();
         let mut pending_votes = Vec::new();
         pending_votes.push(engines[leader_idx].vote_for_proposal(&proposal)?);
         for i in 0..validators {
@@ -289,9 +445,12 @@ fn main() -> Result<()> {
                 continue;
             }
             let recv = transport
-                .try_recv(pnode(i as CNodeId))
+                .try_recv(i)
                 .context("transport recv proposal failed")?;
-            let Some(ProtocolMessage::Finality(FinalityMessage::CheckpointPropose { payload, .. })) = recv else {
+            let Some(ProtocolMessage::Finality(FinalityMessage::CheckpointPropose {
+                payload, ..
+            })) = recv
+            else {
                 bail!("follower {i} did not receive proposal message");
             };
             let decoded: BenchFinalityPayload =
@@ -311,10 +470,12 @@ fn main() -> Result<()> {
             network_message_count = network_message_count.saturating_add(1);
             network_message_bytes = network_message_bytes.saturating_add(encoded.len() as u64);
             transport
-                .send(pnode(leader_id), msg)
+                .send(i, leader_id as usize, msg)
                 .context("transport send vote failed")?;
         }
+        stage_follower_vote_ms += stage_start.elapsed().as_secs_f64() * 1000.0;
 
+        let stage_start = Instant::now();
         let mut qc_opt = None;
         for vote in pending_votes {
             if let Some(qc) = engines[leader_idx].collect_vote(vote)? {
@@ -329,9 +490,10 @@ fn main() -> Result<()> {
                 bail!("leader vote collection timed out on batch {batch_id}");
             }
             let recv = transport
-                .try_recv(pnode(leader_id))
+                .try_recv(leader_id as usize)
                 .context("transport recv vote failed")?;
-            let Some(ProtocolMessage::Finality(FinalityMessage::Vote { id, sig, .. })) = recv else {
+            let Some(ProtocolMessage::Finality(FinalityMessage::Vote { id, sig, .. })) = recv
+            else {
                 std::thread::yield_now();
                 continue;
             };
@@ -348,6 +510,10 @@ fn main() -> Result<()> {
                 qc_opt = Some(qc);
             }
         }
+        qc_poll_iters_total = qc_poll_iters_total.saturating_add(poll_iters);
+        stage_qc_collect_ms += stage_start.elapsed().as_secs_f64() * 1000.0;
+
+        let stage_start = Instant::now();
         let qc = qc_opt.ok_or_else(|| anyhow::anyhow!("qc not formed on batch {batch_id}"))?;
         engines[leader_idx].commit_qc(qc)?;
 
@@ -364,6 +530,7 @@ fn main() -> Result<()> {
             engines[i].sync_protocol_state(synced_state.clone());
         }
         engines[leader_idx].sync_protocol_state(synced_state);
+        stage_commit_resync_ms += stage_start.elapsed().as_secs_f64() * 1000.0;
 
         let latency_ms = round_start.elapsed().as_secs_f64() * 1000.0;
         let tps = if latency_ms > 0.0 {
@@ -381,6 +548,19 @@ fn main() -> Result<()> {
         bail!("no batch executed (check tx wire and batch size)");
     }
 
+    let loop_total_ms = loop_start.elapsed().as_secs_f64() * 1000.0;
+    let runtime_total_ms = runtime_start.elapsed().as_secs_f64() * 1000.0;
+    let measured_stage_ms = stage_batch_admission_ms
+        + stage_ingress_pack_ms
+        + stage_aoem_submit_ms
+        + stage_proposal_build_ms
+        + stage_proposal_broadcast_ms
+        + stage_state_sync_ms
+        + stage_follower_vote_ms
+        + stage_qc_collect_ms
+        + stage_commit_resync_ms;
+    let stage_other_ms = (loop_total_ms - measured_stage_ms).max(0.0);
+
     let summary = E2eSummary {
         generated_at_utc: format!(
             "{}",
@@ -394,6 +574,11 @@ fn main() -> Result<()> {
         d1_input_source: input_source,
         d1_codec,
         aoem_ingress_path,
+        network_transport: transport.mode_name().to_string(),
+        repeat_count: 1,
+        warm_excludes_first_repeat: false,
+        txs_total_per_repeat: txs_all.len(),
+        txs_total_all_repeats: txs_all.len(),
         validators,
         txs_total: txs_all.len(),
         batches: batch_index,
@@ -409,6 +594,33 @@ fn main() -> Result<()> {
         aoem_kernel_tps_p99: quantile(&kernel_tps_samples, 0.99),
         network_message_count,
         network_message_bytes,
+        repeat_wall_tps_p50: quantile(&e2e_tps_samples, 0.50),
+        repeat_wall_tps_p90: quantile(&e2e_tps_samples, 0.90),
+        repeat_wall_tps_p99: quantile(&e2e_tps_samples, 0.99),
+        repeat_loop_ms_p50: (loop_total_ms * 100.0).round() / 100.0,
+        repeat_loop_ms_p90: (loop_total_ms * 100.0).round() / 100.0,
+        repeat_loop_ms_p99: (loop_total_ms * 100.0).round() / 100.0,
+        warm_wall_tps_p50: quantile(&e2e_tps_samples, 0.50),
+        warm_wall_tps_p90: quantile(&e2e_tps_samples, 0.90),
+        warm_wall_tps_p99: quantile(&e2e_tps_samples, 0.99),
+        warm_loop_ms_p50: (loop_total_ms * 100.0).round() / 100.0,
+        warm_loop_ms_p90: (loop_total_ms * 100.0).round() / 100.0,
+        warm_loop_ms_p99: (loop_total_ms * 100.0).round() / 100.0,
+        runtime_total_ms: (runtime_total_ms * 100.0).round() / 100.0,
+        tx_wire_load_ms: (tx_wire_load_ms * 100.0).round() / 100.0,
+        setup_ms: (setup_ms * 100.0).round() / 100.0,
+        loop_total_ms: (loop_total_ms * 100.0).round() / 100.0,
+        stage_batch_admission_ms: (stage_batch_admission_ms * 100.0).round() / 100.0,
+        stage_ingress_pack_ms: (stage_ingress_pack_ms * 100.0).round() / 100.0,
+        stage_aoem_submit_ms: (stage_aoem_submit_ms * 100.0).round() / 100.0,
+        stage_proposal_build_ms: (stage_proposal_build_ms * 100.0).round() / 100.0,
+        stage_proposal_broadcast_ms: (stage_proposal_broadcast_ms * 100.0).round() / 100.0,
+        stage_state_sync_ms: (stage_state_sync_ms * 100.0).round() / 100.0,
+        stage_follower_vote_ms: (stage_follower_vote_ms * 100.0).round() / 100.0,
+        stage_qc_collect_ms: (stage_qc_collect_ms * 100.0).round() / 100.0,
+        stage_commit_resync_ms: (stage_commit_resync_ms * 100.0).round() / 100.0,
+        stage_other_ms: (stage_other_ms * 100.0).round() / 100.0,
+        qc_poll_iters_total,
     };
 
     let text = serde_json::to_string_pretty(&summary)?;
@@ -416,5 +628,6 @@ fn main() -> Result<()> {
         fs::write(&path, &text).with_context(|| format!("write summary failed: {path}"))?;
     }
     println!("{text}");
+
     Ok(())
 }

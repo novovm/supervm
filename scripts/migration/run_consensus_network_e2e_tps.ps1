@@ -15,6 +15,8 @@ param(
     [int]$MaxBatches = 1000,
     [ValidateSet("core", "persist", "wasm")]
     [string]$AoemVariant = "persist",
+    [ValidateSet("inmemory", "udp_loopback")]
+    [string]$NetworkTransport = "inmemory",
     [string]$AoemPluginDir = "",
     [ValidateSet("auto", "ops_wire_v1", "ops_v2")]
     [string]$D1IngressMode = "auto",
@@ -94,13 +96,13 @@ function Invoke-Cargo {
     return $stdout
 }
 
-$nodeDir = Join-Path $RepoRoot "crates\novovm-node"
+$benchDir = Join-Path $RepoRoot "crates\novovm-bench"
 if (-not $SkipBuild.IsPresent) {
     Write-Host ("consensus network e2e: building binaries ({0}) ..." -f $BuildProfile)
     $buildArgs = @("build")
     if ($BuildProfile -eq "release") { $buildArgs += "--release" }
     $buildArgs += @("--bin", "novovm-txgen", "--bin", "novovm-consensus-network-e2e")
-    Invoke-Cargo -WorkDir $nodeDir -CargoArgs $buildArgs | Out-Null
+    Invoke-Cargo -WorkDir $benchDir -CargoArgs $buildArgs | Out-Null
 }
 
 $isWindowsHost = $env:OS -eq "Windows_NT"
@@ -113,7 +115,7 @@ if (-not (Test-Path $benchPath)) { throw "bench executable not found: $benchPath
 
 $txWirePath = Join-Path $OutputDir "consensus-network-e2e.txwire.bin"
 Write-Host ("consensus network e2e: generating tx wire (txs={0}, accounts={1}) ..." -f $Txs, $Accounts)
-Invoke-Cargo -WorkDir $nodeDir -CargoArgs @("run", "--quiet", "--bin", "novovm-txgen", "--", "--out", $txWirePath, "--txs", "$Txs", "--accounts", "$Accounts") | Out-Null
+Invoke-Cargo -WorkDir $benchDir -CargoArgs @("run", "--quiet", "--bin", "novovm-txgen", "--", "--out", $txWirePath, "--txs", "$Txs", "--accounts", "$Accounts") | Out-Null
 if (-not (Test-Path $txWirePath)) {
     throw "tx wire file not generated: $txWirePath"
 }
@@ -131,6 +133,7 @@ $envMap = @{
     NOVOVM_AOEM_VARIANT = $AoemVariant
     NOVOVM_AOEM_PLUGIN_DIR = $AoemPluginDir
     NOVOVM_D1_INGRESS_MODE = $D1IngressMode
+    NOVOVM_E2E_NETWORK_TRANSPORT = $NetworkTransport
     NOVOVM_E2E_BATCH_SIZE = "$BatchSize"
     NOVOVM_E2E_VALIDATORS = "$Validators"
     NOVOVM_E2E_MAX_BATCHES = "$MaxBatches"
@@ -177,11 +180,14 @@ try {
 
 $stdoutText = if (Test-Path $stdoutPath) { Get-Content $stdoutPath -Raw } else { "" }
 $stderrText = if (Test-Path $stderrPath) { Get-Content $stderrPath -Raw } else { "" }
-if ($exitCode -ne 0) {
+if (($exitCode -ne 0) -and (-not (Test-Path $summaryJsonPath))) {
     throw "consensus network e2e failed: exit=$exitCode`n$stderrText"
 }
 if (-not (Test-Path $summaryJsonPath)) {
     throw "summary json missing: $summaryJsonPath`n$stdoutText"
+}
+if ($exitCode -ne 0) {
+    Write-Warning "consensus-network-e2e exited with code $exitCode, but summary json exists; continuing with captured metrics"
 }
 
 $summary = Get-Content $summaryJsonPath -Raw | ConvertFrom-Json
@@ -194,6 +200,7 @@ $csvRows = @(
         d1_input_source = $summary.d1_input_source
         d1_codec = $summary.d1_codec
         aoem_ingress_path = $summary.aoem_ingress_path
+        network_transport = $summary.network_transport
         validators = $summary.validators
         txs_total = $summary.txs_total
         batches = $summary.batches
@@ -209,6 +216,22 @@ $csvRows = @(
         aoem_kernel_tps_p99 = $summary.aoem_kernel_tps_p99
         network_message_count = $summary.network_message_count
         network_message_bytes = $summary.network_message_bytes
+        runtime_total_ms = $summary.runtime_total_ms
+        tx_wire_load_ms = $summary.tx_wire_load_ms
+        setup_ms = $summary.setup_ms
+        loop_total_ms = $summary.loop_total_ms
+        stage_batch_admission_ms = $summary.stage_batch_admission_ms
+        stage_ingress_pack_ms = $summary.stage_ingress_pack_ms
+        stage_aoem_submit_ms = $summary.stage_aoem_submit_ms
+        stage_proposal_build_ms = $summary.stage_proposal_build_ms
+        stage_proposal_broadcast_ms = $summary.stage_proposal_broadcast_ms
+        stage_state_sync_ms = $summary.stage_state_sync_ms
+        stage_follower_vote_ms = $summary.stage_follower_vote_ms
+        stage_qc_collect_ms = $summary.stage_qc_collect_ms
+        stage_commit_resync_ms = $summary.stage_commit_resync_ms
+        stage_other_ms = $summary.stage_other_ms
+        qc_poll_iters_total = $summary.qc_poll_iters_total
+        process_exit_code = $exitCode
         wall_ms = [Math]::Round($sw.Elapsed.TotalMilliseconds, 2)
     }
 )
@@ -224,10 +247,12 @@ $md += "- d1_ingress_mode: $($summary.d1_ingress_mode)"
 $md += "- d1_input_source: $($summary.d1_input_source)"
 $md += "- d1_codec: $($summary.d1_codec)"
 $md += "- aoem_ingress_path: $($summary.aoem_ingress_path)"
+$md += "- network_transport: $($summary.network_transport)"
 $md += "- txs_total: $($summary.txs_total)"
 $md += "- validators: $($summary.validators)"
 $md += "- batches: $($summary.batches)"
 $md += "- batch_size: $($summary.batch_size)"
+$md += "- process_exit_code: $exitCode"
 $md += "- wall_ms: $([Math]::Round($sw.Elapsed.TotalMilliseconds, 2))"
 $md += ""
 $md += "## TPS / Latency"
@@ -237,6 +262,24 @@ $md += "- consensus_network_e2e_latency_ms p50/p90/p99: $($summary.consensus_net
 $md += "- aoem_kernel_tps p50/p90/p99: $($summary.aoem_kernel_tps_p50) / $($summary.aoem_kernel_tps_p90) / $($summary.aoem_kernel_tps_p99)"
 $md += "- network_message_count: $($summary.network_message_count)"
 $md += "- network_message_bytes: $($summary.network_message_bytes)"
+$md += "- runtime_total_ms: $($summary.runtime_total_ms)"
+$md += "- tx_wire_load_ms: $($summary.tx_wire_load_ms)"
+$md += "- setup_ms: $($summary.setup_ms)"
+$md += "- loop_total_ms: $($summary.loop_total_ms)"
+$md += ""
+$md += "## Wall Breakdown (inside consensus-network-e2e process)"
+$md += ""
+$md += "- stage_batch_admission_ms: $($summary.stage_batch_admission_ms)"
+$md += "- stage_ingress_pack_ms: $($summary.stage_ingress_pack_ms)"
+$md += "- stage_aoem_submit_ms: $($summary.stage_aoem_submit_ms)"
+$md += "- stage_proposal_build_ms: $($summary.stage_proposal_build_ms)"
+$md += "- stage_proposal_broadcast_ms: $($summary.stage_proposal_broadcast_ms)"
+$md += "- stage_state_sync_ms: $($summary.stage_state_sync_ms)"
+$md += "- stage_follower_vote_ms: $($summary.stage_follower_vote_ms)"
+$md += "- stage_qc_collect_ms: $($summary.stage_qc_collect_ms)"
+$md += "- stage_commit_resync_ms: $($summary.stage_commit_resync_ms)"
+$md += "- stage_other_ms: $($summary.stage_other_ms)"
+$md += "- qc_poll_iters_total: $($summary.qc_poll_iters_total)"
 $md += ""
 $md += "## Artifacts"
 $md += ""

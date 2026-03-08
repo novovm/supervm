@@ -5,8 +5,10 @@ use novovm_protocol::{
     decode as protocol_decode, encode as protocol_encode, NodeId, ProtocolMessage,
 };
 use std::collections::VecDeque;
-use std::net::{SocketAddr, UdpSocket};
+use std::io::{Read, Write};
+use std::net::{SocketAddr, TcpListener, TcpStream, UdpSocket};
 use std::sync::Arc;
+use std::time::Duration;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -92,6 +94,62 @@ pub struct UdpTransport {
     max_packet_size: usize,
 }
 
+/// TCP transport for multi-process / multi-host cluster probes.
+///
+/// This implementation intentionally prefers simplicity over throughput:
+/// each `send` opens a short-lived TCP connection and sends a single frame.
+#[derive(Debug, Clone)]
+pub struct TcpTransport {
+    node: NodeId,
+    listener: Arc<TcpListener>,
+    peers: Arc<DashMap<NodeId, SocketAddr>>,
+    max_packet_size: usize,
+    connect_timeout_ms: u64,
+}
+
+impl TcpTransport {
+    pub fn bind(node: NodeId, listen_addr: &str) -> Result<Self, NetworkError> {
+        Self::bind_with_packet_size(node, listen_addr, 64 * 1024)
+    }
+
+    pub fn bind_with_packet_size(
+        node: NodeId,
+        listen_addr: &str,
+        max_packet_size: usize,
+    ) -> Result<Self, NetworkError> {
+        let listener =
+            TcpListener::bind(listen_addr).map_err(|e| NetworkError::Io(e.to_string()))?;
+        listener
+            .set_nonblocking(true)
+            .map_err(|e| NetworkError::Io(e.to_string()))?;
+        Ok(Self {
+            node,
+            listener: Arc::new(listener),
+            peers: Arc::new(DashMap::new()),
+            max_packet_size: max_packet_size.max(1024),
+            connect_timeout_ms: 500,
+        })
+    }
+
+    pub fn register_peer(&self, node: NodeId, addr: &str) -> Result<(), NetworkError> {
+        let parsed: SocketAddr = addr
+            .parse()
+            .map_err(|e: std::net::AddrParseError| NetworkError::AddressParse(e.to_string()))?;
+        self.peers.insert(node, parsed);
+        Ok(())
+    }
+
+    pub fn local_addr(&self) -> Result<SocketAddr, NetworkError> {
+        self.listener
+            .local_addr()
+            .map_err(|e| NetworkError::Io(e.to_string()))
+    }
+
+    pub fn set_connect_timeout_ms(&mut self, timeout_ms: u64) {
+        self.connect_timeout_ms = timeout_ms.max(1);
+    }
+}
+
 impl UdpTransport {
     pub fn bind(node: NodeId, listen_addr: &str) -> Result<Self, NetworkError> {
         Self::bind_with_packet_size(node, listen_addr, 64 * 1024)
@@ -168,6 +226,89 @@ impl Transport for UdpTransport {
             }
             Err(e) => Err(NetworkError::Io(e.to_string())),
         }
+    }
+}
+
+impl Transport for TcpTransport {
+    fn send(&self, to: NodeId, msg: ProtocolMessage) -> Result<(), NetworkError> {
+        let peer = self.peers.get(&to).ok_or(NetworkError::PeerNotFound(to))?;
+        let encoded = protocol_encode(&msg).map_err(|e| NetworkError::Encode(e.to_string()))?;
+        let len_u32 = u32::try_from(encoded.len())
+            .map_err(|_| NetworkError::Encode("tcp frame too large".to_string()))?;
+        let mut last_err = None;
+        let mut stream_opt = None;
+        for _ in 0..5 {
+            match TcpStream::connect_timeout(&peer, Duration::from_millis(self.connect_timeout_ms))
+            {
+                Ok(s) => {
+                    stream_opt = Some(s);
+                    break;
+                }
+                Err(e) => {
+                    last_err = Some(e.to_string());
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+            }
+        }
+        let mut stream = stream_opt.ok_or_else(|| {
+            NetworkError::Io(format!(
+                "tcp connect failed after retries: {}",
+                last_err.unwrap_or_else(|| "unknown".to_string())
+            ))
+        })?;
+        stream
+            .set_nodelay(true)
+            .map_err(|e| NetworkError::Io(e.to_string()))?;
+        let len = len_u32.to_le_bytes();
+        stream
+            .write_all(&len)
+            .map_err(|e| NetworkError::Io(e.to_string()))?;
+        stream
+            .write_all(&encoded)
+            .map_err(|e| NetworkError::Io(e.to_string()))?;
+        Ok(())
+    }
+
+    fn try_recv(&self, me: NodeId) -> Result<Option<ProtocolMessage>, NetworkError> {
+        if me != self.node {
+            return Err(NetworkError::LocalNodeMismatch {
+                expected: self.node,
+                got: me,
+            });
+        }
+
+        let (mut stream, _addr) = match self.listener.accept() {
+            Ok(v) => v,
+            Err(e)
+                if e.kind() == std::io::ErrorKind::WouldBlock
+                    || e.kind() == std::io::ErrorKind::TimedOut =>
+            {
+                return Ok(None);
+            }
+            Err(e) => return Err(NetworkError::Io(e.to_string())),
+        };
+        stream
+            .set_nonblocking(false)
+            .map_err(|e| NetworkError::Io(e.to_string()))?;
+
+        let mut len_buf = [0u8; 4];
+        stream
+            .read_exact(&mut len_buf)
+            .map_err(|e| NetworkError::Io(e.to_string()))?;
+        let frame_len = u32::from_le_bytes(len_buf) as usize;
+        if frame_len == 0 || frame_len > self.max_packet_size {
+            return Err(NetworkError::Decode(format!(
+                "invalid tcp frame len={frame_len}, max={}",
+                self.max_packet_size
+            )));
+        }
+        let mut payload = vec![0u8; frame_len];
+        stream
+            .read_exact(&mut payload)
+            .map_err(|e| NetworkError::Io(e.to_string()))?;
+        protocol_decode(&payload)
+            .map(Some)
+            .map_err(|e| NetworkError::Decode(e.to_string()))
     }
 }
 

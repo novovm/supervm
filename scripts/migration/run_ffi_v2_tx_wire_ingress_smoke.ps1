@@ -53,6 +53,7 @@ function Invoke-Cargo {
 }
 
 $nodeDir = Join-Path $RepoRoot "crates\novovm-node"
+$benchDir = Join-Path $RepoRoot "crates\novovm-bench"
 if ($BuildProfile -eq "release") {
     Invoke-Cargo -WorkDir $nodeDir -CargoArgs @("build", "--quiet", "--release", "--bin", "novovm-node")
 } else {
@@ -73,7 +74,7 @@ if (-not (Test-Path $exePath)) {
 }
 
 $txWirePath = Join-Path $OutputDir "ingress.txwire.bin"
-Invoke-Cargo -WorkDir $nodeDir -CargoArgs @("run", "--quiet", "--bin", "novovm-txgen", "--", "--out", $txWirePath, "--txs", "$Txs", "--accounts", "$Accounts")
+Invoke-Cargo -WorkDir $benchDir -CargoArgs @("run", "--quiet", "--bin", "novovm-txgen", "--", "--out", $txWirePath, "--txs", "$Txs", "--accounts", "$Accounts")
 if (-not (Test-Path $txWirePath)) {
     throw "tx wire ingress file not generated: $txWirePath"
 }

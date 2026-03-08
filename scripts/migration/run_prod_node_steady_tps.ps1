@@ -133,12 +133,17 @@ function Parse-IngressContractLine {
 }
 
 $nodeDir = Join-Path $RepoRoot "crates\novovm-node"
+$benchDir = Join-Path $RepoRoot "crates\novovm-bench"
 if (-not $SkipBuild.IsPresent) {
-    Write-Host ("steady tps: building novovm-node/novovm-txgen ({0}) ..." -f $BuildProfile)
+    Write-Host ("steady tps: building novovm-node + novovm-bench::novovm-txgen ({0}) ..." -f $BuildProfile)
     $buildArgs = @("build")
     if ($BuildProfile -eq "release") { $buildArgs += "--release" }
-    $buildArgs += @("--bin", "novovm-node", "--bin", "novovm-txgen")
+    $buildArgs += @("--bin", "novovm-node")
     Invoke-Cargo -WorkDir $nodeDir -CargoArgs $buildArgs
+    $txBuildArgs = @("build")
+    if ($BuildProfile -eq "release") { $txBuildArgs += "--release" }
+    $txBuildArgs += @("--bin", "novovm-txgen")
+    Invoke-Cargo -WorkDir $benchDir -CargoArgs $txBuildArgs
 }
 
 $isWindowsHost = $env:OS -eq "Windows_NT"
@@ -150,7 +155,7 @@ if (-not (Test-Path $exePath)) {
 
 $txWirePath = Join-Path $OutputDir "steady.txwire.bin"
 Write-Host ("steady tps: generating tx wire (txs={0}, accounts={1}) ..." -f $Txs, $Accounts)
-Invoke-Cargo -WorkDir $nodeDir -CargoArgs @("run", "--quiet", "--bin", "novovm-txgen", "--", "--out", $txWirePath, "--txs", "$Txs", "--accounts", "$Accounts")
+Invoke-Cargo -WorkDir $benchDir -CargoArgs @("run", "--quiet", "--bin", "novovm-txgen", "--", "--out", $txWirePath, "--txs", "$Txs", "--accounts", "$Accounts")
 if (-not (Test-Path $txWirePath)) {
     throw "tx wire file not generated: $txWirePath"
 }

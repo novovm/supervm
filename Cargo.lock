@@ -644,6 +644,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "novovm-bench"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bincode",
+ "ed25519-dalek",
+ "novovm-consensus",
+ "novovm-exec",
+ "novovm-network",
+ "novovm-node",
+ "novovm-protocol",
+ "rand 0.8.5",
+ "serde",
+ "serde_json",
+ "sha2",
+]
+
+[[package]]
 name = "novovm-consensus"
 version = "0.1.0"
 dependencies = [

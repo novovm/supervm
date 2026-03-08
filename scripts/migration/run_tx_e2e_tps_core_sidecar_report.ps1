@@ -377,6 +377,7 @@ function Invoke-TxE2ERun {
 }
 
 $nodeDir = Join-Path $RepoRoot "crates\novovm-node"
+$benchDir = Join-Path $RepoRoot "crates\novovm-bench"
 if ($BuildProfile -eq "release") {
     Invoke-Cargo -WorkDir $nodeDir -CargoArgs @("build", "--quiet", "--release", "--bin", "novovm-node")
 } else {
@@ -384,7 +385,7 @@ if ($BuildProfile -eq "release") {
 }
 
 $txGenArgs = @("run", "--quiet", "--bin", "novovm-txgen", "--", "--out", (Join-Path $OutputDir "ingress.txwire.bin"), "--txs", "$Txs", "--accounts", "$Accounts")
-Invoke-Cargo -WorkDir $nodeDir -CargoArgs $txGenArgs
+Invoke-Cargo -WorkDir $benchDir -CargoArgs $txGenArgs
 $txWirePath = Join-Path $OutputDir "ingress.txwire.bin"
 if (-not (Test-Path $txWirePath)) {
     throw "tx wire ingress file not generated: $txWirePath"

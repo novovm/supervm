@@ -1,6 +1,6 @@
 use anyhow::Result;
 use novovm_coordinator::{Coordinator, CoordinatorConfig};
-use novovm_protocol::{NodeId, OperationClass, ShardId, TxEnvelope, TxId, TwoPcMessage};
+use novovm_protocol::{NodeId, OperationClass, ShardId, TwoPcMessage, TxEnvelope, TxId};
 
 fn main() -> Result<()> {
     let tx_id = TxId(20260304);
@@ -44,4 +44,3 @@ fn main() -> Result<()> {
 
     Ok(())
 }
-

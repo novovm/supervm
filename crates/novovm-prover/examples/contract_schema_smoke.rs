@@ -20,10 +20,10 @@ fn main() -> Result<()> {
     let aoem = AoemCapabilityContract::from_capabilities_json(raw);
     let prover = ProverCapabilityContract::from_aoem(&aoem);
 
-    let normalized = prover
-        .fallback_reason_codes
-        .iter()
-        .all(|c| c.chars().all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '_'));
+    let normalized = prover.fallback_reason_codes.iter().all(|c| {
+        c.chars()
+            .all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '_')
+    });
     let schema_ok = aoem.zk_formal_fields_present && !prover.fallback_reason_codes.is_empty();
 
     println!(
@@ -38,4 +38,3 @@ fn main() -> Result<()> {
 
     Ok(())
 }
-

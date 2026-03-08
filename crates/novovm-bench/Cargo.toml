@@ -1,0 +1,18 @@
+[package]
+name = "novovm-bench"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = "1"
+bincode = "1.3"
+ed25519-dalek = { version = "2", features = ["rand_core"] }
+novovm-consensus = { path = "../novovm-consensus" }
+novovm-exec = { path = "../novovm-exec" }
+novovm-network = { path = "../novovm-network" }
+novovm-node = { path = "../novovm-node" }
+novovm-protocol = { path = "../novovm-protocol" }
+rand = "0.8"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"

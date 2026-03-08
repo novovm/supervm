@@ -4,6 +4,7 @@ members = [
     "crates/novovm-adapter-api",
     "crates/novovm-adapter-novovm",
     "crates/novovm-adapter-sample-plugin",
+    "crates/novovm-bench",
     "crates/novovm-consensus",
     "crates/novovm-coordinator",
     "crates/novovm-exec",
@@ -14,4 +15,3 @@ members = [
     "vendor/web30-core",
 ]
 resolver = "2"
-

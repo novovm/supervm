@@ -251,17 +251,24 @@ function Invoke-NodeRun {
 }
 
 $nodeDir = Join-Path $RepoRoot "crates\novovm-node"
+$benchDir = Join-Path $RepoRoot "crates\novovm-bench"
 $buildLabel = if ($BuildProfile -eq "release") { "release" } else { "debug" }
 if ($SkipBuild.IsPresent) {
     Write-Host ("prod e2e: skip build requested ({0})" -f $buildLabel)
 } else {
-    Write-Host ("prod e2e: building novovm-node/novovm-txgen ({0}) ..." -f $buildLabel)
+    Write-Host ("prod e2e: building novovm-node + novovm-bench::novovm-txgen ({0}) ..." -f $buildLabel)
     $buildArgs = @("build")
     if ($BuildProfile -eq "release") {
         $buildArgs += "--release"
     }
-    $buildArgs += @("--bin", "novovm-node", "--bin", "novovm-txgen")
+    $buildArgs += @("--bin", "novovm-node")
     Invoke-Cargo -WorkDir $nodeDir -CargoArgs $buildArgs | Out-Null
+    $txBuildArgs = @("build")
+    if ($BuildProfile -eq "release") {
+        $txBuildArgs += "--release"
+    }
+    $txBuildArgs += @("--bin", "novovm-txgen")
+    Invoke-Cargo -WorkDir $benchDir -CargoArgs $txBuildArgs | Out-Null
 }
 
 $isWindowsHost = $env:OS -eq "Windows_NT"
@@ -273,7 +280,7 @@ if (-not (Test-Path $exePath)) {
 
 $txWirePath = Join-Path $OutputDir "prod-e2e.txwire.bin"
 Write-Host ("prod e2e: generating tx wire (txs={0}, accounts={1}) ..." -f $Txs, $Accounts)
-Invoke-Cargo -WorkDir $nodeDir -CargoArgs @("run", "--quiet", "--bin", "novovm-txgen", "--", "--out", $txWirePath, "--txs", "$Txs", "--accounts", "$Accounts") | Out-Null
+Invoke-Cargo -WorkDir $benchDir -CargoArgs @("run", "--quiet", "--bin", "novovm-txgen", "--", "--out", $txWirePath, "--txs", "$Txs", "--accounts", "$Accounts") | Out-Null
 if (-not (Test-Path $txWirePath)) {
     throw "tx wire file not generated: $txWirePath"
 }

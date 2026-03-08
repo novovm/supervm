@@ -75,9 +75,7 @@ fn repeat_count_env() -> Result<usize> {
 fn main() -> Result<()> {
     let node_mode = std::env::var("NOVOVM_NODE_MODE").unwrap_or_else(|_| "full".to_string());
     if !node_mode.eq_ignore_ascii_case("full") {
-        bail!(
-            "non-full node_mode is disabled: novovm-node keeps only production path"
-        );
+        bail!("non-full node_mode is disabled: novovm-node keeps only production path");
     }
 
     let mode = exec_path_mode();
@@ -112,7 +110,9 @@ fn main() -> Result<()> {
     let tx_wire_path = string_env_nonempty("NOVOVM_TX_WIRE_FILE").map(PathBuf::from);
     let ops_wire_path = string_env_nonempty("NOVOVM_OPS_WIRE_FILE").map(PathBuf::from);
     if tx_wire_path.is_some() && ops_wire_path.is_some() {
-        bail!("ingress source conflict: set only one of NOVOVM_TX_WIRE_FILE or NOVOVM_OPS_WIRE_FILE");
+        bail!(
+            "ingress source conflict: set only one of NOVOVM_TX_WIRE_FILE or NOVOVM_OPS_WIRE_FILE"
+        );
     }
     if tx_wire_path.is_none() && ops_wire_path.is_none() {
         bail!("no ingress supplied for production path: set NOVOVM_OPS_WIRE_FILE=<path> or NOVOVM_TX_WIRE_FILE=<path>");
@@ -168,11 +168,15 @@ fn main() -> Result<()> {
         };
         println!(
             "d1_ingress_mode: selected=ops_wire_v1 requested={:?} auto_supported={} codec={}",
-            ingress_mode,
-            supports_wire_v1,
-            codec
+            ingress_mode, supports_wire_v1, codec
         );
-        (payload.op_count, EitherBatch::Wire(payload.bytes), source, codec, path_mode)
+        (
+            payload.op_count,
+            EitherBatch::Wire(payload.bytes),
+            source,
+            codec,
+            path_mode,
+        )
     } else {
         if ops_wire_path.is_some() {
             bail!("NOVOVM_OPS_WIRE_FILE requires ops_wire_v1 path; current selected mode=ops_v2");

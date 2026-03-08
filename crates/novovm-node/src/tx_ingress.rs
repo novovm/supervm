@@ -36,8 +36,7 @@ impl ExecBatchBuffer {
 pub type OpsWirePayload = EncodedOpsWire;
 
 pub const LOCAL_TX_WIRE_CODEC_WRITE_U64LE_V1: &str = "local_tx_wire_v1_write_u64le_v1";
-static LOCAL_TX_RECORD_CODEC_REGISTRY: OnceLock<RawIngressCodecRegistry> =
-    OnceLock::new();
+static LOCAL_TX_RECORD_CODEC_REGISTRY: OnceLock<RawIngressCodecRegistry> = OnceLock::new();
 
 #[inline]
 fn from_tx_wire_v1(wire: &LocalTxWireV1) -> TxIngressRecord {
@@ -67,8 +66,8 @@ fn load_tx_wire_bytes(path: &Path) -> Result<Vec<u8>> {
 }
 
 pub fn load_payload_bytes(path: &Path) -> Result<Vec<u8>> {
-    let bytes =
-        fs::read(path).with_context(|| format!("failed to read ingress file {}", path.display()))?;
+    let bytes = fs::read(path)
+        .with_context(|| format!("failed to read ingress file {}", path.display()))?;
     if bytes.is_empty() {
         bail!("ingress file is empty: {}", path.display());
     }
@@ -90,9 +89,7 @@ fn parse_ops_wire_v1_op_count(bytes: &[u8]) -> Result<usize> {
     let version = u16::from_le_bytes([bytes[cursor], bytes[cursor + 1]]);
     cursor += 2;
     if version != AOEM_OPS_WIRE_V1_VERSION {
-        bail!(
-            "ops-wire version mismatch: got={version}, expected={AOEM_OPS_WIRE_V1_VERSION}"
-        );
+        bail!("ops-wire version mismatch: got={version}, expected={AOEM_OPS_WIRE_V1_VERSION}");
     }
     cursor += 2; // flags
     let count = u32::from_le_bytes([
@@ -189,7 +186,10 @@ pub fn load_tx_records_from_wire_file(path: &Path) -> Result<Vec<TxIngressRecord
     Ok(txs)
 }
 
-pub fn build_exec_batch_from_records<F>(records: &[TxIngressRecord], mut plan_id_for: F) -> ExecBatchBuffer
+pub fn build_exec_batch_from_records<F>(
+    records: &[TxIngressRecord],
+    mut plan_id_for: F,
+) -> ExecBatchBuffer
 where
     F: FnMut(usize, &TxIngressRecord) -> u64,
 {
@@ -265,7 +265,10 @@ where
     })
 }
 
-pub fn build_ops_wire_v1_from_records<F>(records: &[TxIngressRecord], mut plan_id_for: F) -> OpsWirePayload
+pub fn build_ops_wire_v1_from_records<F>(
+    records: &[TxIngressRecord],
+    mut plan_id_for: F,
+) -> OpsWirePayload
 where
     F: FnMut(usize, &TxIngressRecord) -> u64,
 {

@@ -5,6 +5,7 @@ use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::ffi::{c_char, c_void, CStr};
 use std::fs;
+use std::mem::ManuallyDrop;
 use std::path::{Path, PathBuf};
 use std::ptr;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -56,7 +57,8 @@ pub type AoemExecuteOpsWireV1 =
 pub type AoemLastError = unsafe extern "C" fn(*mut c_void) -> *const c_char;
 
 pub struct AoemDyn {
-    _lib: Library,
+    _lib: ManuallyDrop<Library>,
+    unload_on_drop: bool,
     library_path: PathBuf,
     abi_version: AoemAbiVersion,
     version_string: AoemVersionString,
@@ -166,7 +168,8 @@ impl AoemDyn {
         let last_error: AoemLastError = *lib.get::<AoemLastError>(b"aoem_last_error")?;
 
         let dynlib = Self {
-            _lib: lib,
+            _lib: ManuallyDrop::new(lib),
+            unload_on_drop: should_unload_dll_on_drop(),
             library_path,
             abi_version,
             version_string,
@@ -431,6 +434,16 @@ impl AoemDyn {
     }
 }
 
+impl Drop for AoemDyn {
+    fn drop(&mut self) {
+        if self.unload_on_drop {
+            unsafe {
+                ManuallyDrop::drop(&mut self._lib);
+            }
+        }
+    }
+}
+
 pub fn default_runtime_profile_path_for_dll(dll_path: &Path) -> PathBuf {
     if let Ok(override_path) = std::env::var("AOEM_RUNTIME_PROFILE") {
         let trimmed = override_path.trim();
@@ -545,6 +558,13 @@ fn parse_bool_env(name: &str) -> Option<bool> {
             None
         }
     })
+}
+
+fn should_unload_dll_on_drop() -> bool {
+    if let Some(v) = parse_bool_env("AOEM_FFI_UNLOAD_DLL") {
+        return v;
+    }
+    !cfg!(windows)
 }
 
 fn file_sha256(path: &Path) -> Result<String> {

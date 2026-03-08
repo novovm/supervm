@@ -14,4 +14,3 @@ fn main() -> Result<()> {
     std::mem::forget(facade);
     Ok(())
 }
-
