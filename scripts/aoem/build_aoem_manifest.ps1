@@ -82,5 +82,7 @@ $manifest = [pscustomobject]@{
   entries = $entries
 }
 
-$manifest | ConvertTo-Json -Depth 6 | Set-Content -Path $OutManifest -Encoding UTF8
+$manifestJson = $manifest | ConvertTo-Json -Depth 6
+$utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+[System.IO.File]::WriteAllText($OutManifest, $manifestJson, $utf8NoBom)
 Write-Output "manifest_written=$OutManifest entries=$($entries.Count)"

@@ -11,6 +11,8 @@ param(
     [string]$GovernanceRpcMldsaFfiBind = "127.0.0.1:8902",
     [ValidateRange(1, 64)]
     [int]$GovernanceRpcMldsaFfiExpectedRequests = 9,
+    [string]$AoemPluginDir = "",
+    [bool]$PreferComposedAoemRuntime = $true,
     [switch]$FullSnapshotProfileV2,
     [switch]$FullSnapshotProfileGA
 )
@@ -43,6 +45,8 @@ if ($FullSnapshotProfileGA) {
         -AllowedRegressionPct $AllowedRegressionPct `
         -PerformanceRuns $PerformanceRuns `
         -AdapterStabilityRuns $AdapterStabilityRuns `
+        -AoemPluginDir $AoemPluginDir `
+        -PreferComposedAoemRuntime:$PreferComposedAoemRuntime `
         -IncludeGovernanceRpcMldsaFfiGate:$IncludeGovernanceRpcMldsaFfiGate `
         -GovernanceRpcMldsaFfiAoemRoot $GovernanceRpcMldsaFfiAoemRoot `
         -GovernanceRpcMldsaFfiBind $GovernanceRpcMldsaFfiBind `
@@ -55,6 +59,8 @@ if ($FullSnapshotProfileGA) {
         -AllowedRegressionPct $AllowedRegressionPct `
         -PerformanceRuns $PerformanceRuns `
         -AdapterStabilityRuns $AdapterStabilityRuns `
+        -AoemPluginDir $AoemPluginDir `
+        -PreferComposedAoemRuntime:$PreferComposedAoemRuntime `
         -IncludeGovernanceRpcMldsaFfiGate:$IncludeGovernanceRpcMldsaFfiGate `
         -GovernanceRpcMldsaFfiAoemRoot $GovernanceRpcMldsaFfiAoemRoot `
         -GovernanceRpcMldsaFfiBind $GovernanceRpcMldsaFfiBind `
@@ -67,6 +73,8 @@ if ($FullSnapshotProfileGA) {
         -AllowedRegressionPct $AllowedRegressionPct `
         -PerformanceRuns $PerformanceRuns `
         -AdapterStabilityRuns $AdapterStabilityRuns `
+        -AoemPluginDir $AoemPluginDir `
+        -PreferComposedAoemRuntime:$PreferComposedAoemRuntime `
         -IncludeGovernanceRpcMldsaFfiGate:$IncludeGovernanceRpcMldsaFfiGate `
         -GovernanceRpcMldsaFfiAoemRoot $GovernanceRpcMldsaFfiAoemRoot `
         -GovernanceRpcMldsaFfiBind $GovernanceRpcMldsaFfiBind `

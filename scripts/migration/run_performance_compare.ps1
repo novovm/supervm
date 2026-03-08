@@ -6,6 +6,8 @@ param(
     [switch]$AutoImportSvmBaseline,
     [string]$BaselineOutputDir = "",
     [string]$Variants = "core",
+    [string]$AoemPluginDir = "",
+    [bool]$PreferComposedAoemRuntime = $true,
     [double]$AllowedRegressionPct = -5.0,
     [int64]$Txs = 1000000,
     [int]$KeySpace = 128,
@@ -48,7 +50,8 @@ if (-not $SvmRoot) {
 function Invoke-Cargo {
     param(
         [string]$WorkDir,
-        [string[]]$CargoArgs
+        [string[]]$CargoArgs,
+        [hashtable]$EnvVars = @{}
     )
 
     $psi = [System.Diagnostics.ProcessStartInfo]::new()
@@ -59,6 +62,9 @@ function Invoke-Cargo {
     $psi.RedirectStandardError = $true
     $psi.CreateNoWindow = $true
     $psi.Arguments = (($CargoArgs | ForEach-Object { '"' + ($_ -replace '"', '\"') + '"' }) -join " ")
+    foreach ($k in $EnvVars.Keys) {
+        $psi.Environment[$k] = [string]$EnvVars[$k]
+    }
 
     $proc = [System.Diagnostics.Process]::Start($psi)
     $stdout = $proc.StandardOutput.ReadToEnd()
@@ -115,8 +121,8 @@ function Get-AoemVariantBinDir {
     param([string]$AoemRoot, [string]$Variant)
     switch ($Variant) {
         "core" { return Join-Path $AoemRoot "bin" }
-        "persist" { return Join-Path $AoemRoot "variants\persist\bin" }
-        "wasm" { return Join-Path $AoemRoot "variants\wasm\bin" }
+        "persist" { return Join-Path $AoemRoot "bin" }
+        "wasm" { return Join-Path $AoemRoot "bin" }
         default { throw "invalid variant: $Variant" }
     }
 }
@@ -144,6 +150,103 @@ function Get-DllPathForVariant {
     return $fallback
 }
 
+function Get-AoemPluginNameCandidatesForVariant {
+    param([string]$Variant)
+    switch ($Variant) {
+        "persist" {
+            if ($IsWindows) { return @("aoem_ffi_persist_rocksdb.dll") }
+            if ($IsMacOS) { return @("libaoem_ffi_persist_rocksdb.dylib") }
+            return @("libaoem_ffi_persist_rocksdb.so")
+        }
+        "wasm" {
+            if ($IsWindows) { return @("aoem_ffi_runtime_wasm_wasmtime.dll") }
+            if ($IsMacOS) { return @("libaoem_ffi_runtime_wasm_wasmtime.dylib") }
+            return @("libaoem_ffi_runtime_wasm_wasmtime.so")
+        }
+        default { return @() }
+    }
+}
+
+function Resolve-AoemRuntimeForVariant {
+    param(
+        [string]$AoemRoot,
+        [string]$Variant,
+        [string]$AoemPluginDir,
+        [bool]$PreferComposed = $true,
+        [bool]$RequireExists = $false
+    )
+
+    $coreDll = Get-DllPathForVariant -AoemRoot $AoemRoot -Variant "core" -RequireExists:$false
+
+    if ($Variant -eq "core") {
+        if ($RequireExists -and -not (Test-Path $coreDll)) {
+            throw "aoem core dynlib not found: $coreDll"
+        }
+        return [ordered]@{
+            dll = $coreDll
+            mode = "core"
+            env = @{}
+        }
+    }
+
+    if ($PreferComposed -and (Test-Path $coreDll)) {
+        $pluginNames = Get-AoemPluginNameCandidatesForVariant -Variant $Variant
+        $candidateDirs = @()
+        if ($AoemPluginDir) {
+            $candidateDirs += $AoemPluginDir
+            $candidateDirs += (Join-Path $AoemRoot $AoemPluginDir)
+        }
+        $candidateDirs += @(
+            (Join-Path $AoemRoot "plugins"),
+            (Join-Path $AoemRoot "bin\plugins"),
+            (Join-Path $AoemRoot "bin")
+        )
+        $pluginDirFound = ""
+        foreach ($dir in $candidateDirs) {
+            if (-not $dir -or -not (Test-Path $dir)) { continue }
+            foreach ($name in $pluginNames) {
+                if (Test-Path (Join-Path $dir $name)) {
+                    $pluginDirFound = (Resolve-Path $dir).Path
+                    break
+                }
+            }
+            if ($pluginDirFound) { break }
+        }
+
+        if ($pluginDirFound) {
+            $envVars = @{
+                AOEM_FFI_PLUGIN_DIR = $pluginDirFound
+                AOEM_FFI_PERSIST_BACKEND = "none"
+                AOEM_FFI_WASM_RUNTIME = "none"
+                AOEM_FFI_ZKVM_MODE = "none"
+                AOEM_FFI_MLDSA_MODE = "none"
+            }
+            if ($Variant -eq "persist") {
+                $envVars["AOEM_FFI_PERSIST_BACKEND"] = "rocksdb"
+                $envVars["AOEM_FFI_PERSIST_PLUGIN_DIR"] = $pluginDirFound
+            } elseif ($Variant -eq "wasm") {
+                $envVars["AOEM_FFI_WASM_RUNTIME"] = "wasmtime"
+                $envVars["AOEM_FFI_WASM_PLUGIN_DIR"] = $pluginDirFound
+            }
+            return [ordered]@{
+                dll = $coreDll
+                mode = "composed_plugin_sidecar"
+                env = $envVars
+            }
+        }
+    }
+
+    if ($RequireExists) {
+        throw "aoem sidecar plugin not found for variant=$Variant (core=$coreDll); require core+sidecar mode"
+    }
+
+    return [ordered]@{
+        dll = $coreDll
+        mode = "sidecar_missing"
+        env = @{}
+    }
+}
+
 function Get-CaseKey {
     param([string]$Variant, [string]$Preset)
     return "$Variant|$Preset"
@@ -153,7 +256,9 @@ function Get-CapabilitySnapshot {
     param(
         [string]$RepoRoot,
         [string]$Variant,
-        [string]$CapabilityJson
+        [string]$CapabilityJson,
+        [string]$AoemPluginDir,
+        [bool]$PreferComposedAoemRuntime
     )
 
     $sourceJson = $CapabilityJson
@@ -166,7 +271,11 @@ function Get-CapabilitySnapshot {
         $capOutputDir = Join-Path $RepoRoot "artifacts\migration\capabilities"
         New-Item -ItemType Directory -Force -Path $capOutputDir | Out-Null
 
-        & powershell -ExecutionPolicy Bypass -File $scriptPath -RepoRoot $RepoRoot -OutputDir $capOutputDir -Variant $Variant | Out-Null
+        if ($AoemPluginDir) {
+            & powershell -ExecutionPolicy Bypass -File $scriptPath -RepoRoot $RepoRoot -OutputDir $capOutputDir -Variant $Variant -AoemPluginDir $AoemPluginDir | Out-Null
+        } else {
+            & powershell -ExecutionPolicy Bypass -File $scriptPath -RepoRoot $RepoRoot -OutputDir $capOutputDir -Variant $Variant | Out-Null
+        }
         $sourceJson = Join-Path $capOutputDir "capability-contract-$Variant.json"
     }
 
@@ -203,9 +312,12 @@ function Get-CapabilitySnapshot {
         execute_ops_v2 = [bool]$raw.contract.execute_ops_v2
         zkvm_prove = [bool]$raw.contract.zkvm_prove
         zkvm_verify = [bool]$raw.contract.zkvm_verify
+        zkvm_probe_api_present = [bool]$raw.contract.zkvm_probe_api_present
+        zkvm_symbol_supported = if ($null -ne $raw.contract.zkvm_symbol_supported) { [bool]$raw.contract.zkvm_symbol_supported } else { $null }
         zk_formal_fields_present = $zkFormalFieldsPresent
         msm_accel = [bool]$raw.contract.msm_accel
         msm_backend = [string]$raw.contract.msm_backend
+        mldsa_verify = [bool]$raw.contract.mldsa_verify
         fallback_reason = $fallbackReason
         fallback_reason_codes = $fallbackCodes
         prover_ready = $proverReady
@@ -273,7 +385,10 @@ $baselineJsonResolved = Resolve-BaselineJsonPath `
 
 $items = @()
 foreach ($variant in $variantList) {
-    $dll = Get-DllPathForVariant -AoemRoot $aoemRoot -Variant $variant -RequireExists $true
+    $runtime = Resolve-AoemRuntimeForVariant -AoemRoot $aoemRoot -Variant $variant -AoemPluginDir $AoemPluginDir -PreferComposed:$PreferComposedAoemRuntime -RequireExists $true
+    $dll = [string]$runtime.dll
+    $envVars = @{}
+    foreach ($k in $runtime.env.Keys) { $envVars[$k] = $runtime.env[$k] }
     foreach ($preset in $presets) {
         $submitOps = if ($preset -eq "cpu_parity") { "1" } else { "1024" }
         $cargoArgs = @("run")
@@ -302,11 +417,12 @@ foreach ($variant in $variantList) {
             default { }
         }
 
-        $text = Invoke-Cargo -WorkDir $bindingsDir -CargoArgs $cargoArgs
+        $text = Invoke-Cargo -WorkDir $bindingsDir -CargoArgs $cargoArgs -EnvVars $envVars
         $parsed = Parse-WorldlineResult -Text $text
         $parsed["variant"] = $variant
         $parsed["preset"] = $preset
         $parsed["dll"] = $dll
+        $parsed["runtime_mode"] = [string]$runtime.mode
         $items += [pscustomobject]$parsed
     }
 }
@@ -366,7 +482,7 @@ $capabilitySnapshot = $null
 $capabilitySnapshotNote = "capability snapshot is disabled for this run"
 if ($IncludeCapabilitySnapshot) {
     try {
-        $capabilitySnapshot = Get-CapabilitySnapshot -RepoRoot $RepoRoot -Variant $CapabilityVariant -CapabilityJson $CapabilityJson
+        $capabilitySnapshot = Get-CapabilitySnapshot -RepoRoot $RepoRoot -Variant $CapabilityVariant -CapabilityJson $CapabilityJson -AoemPluginDir $AoemPluginDir -PreferComposedAoemRuntime:$PreferComposedAoemRuntime
         $capabilitySnapshotNote = "capability snapshot loaded (variant=$CapabilityVariant)"
     } catch {
         $capabilitySnapshot = $null
@@ -417,12 +533,12 @@ $md = @(
     ""
     "## Current Metrics"
     ""
-    "| variant | preset | tps(ops/s) | elapsed_sec | done_ops |"
-    "|---|---|---:|---:|---:|"
+    "| variant | preset | runtime_mode | tps(ops/s) | elapsed_sec | done_ops |"
+    "|---|---|---|---:|---:|---:|"
 )
 
 foreach ($item in $items) {
-    $md += "| $($item.variant) | $($item.preset) | $([Math]::Round($item.tps,2)) | $([Math]::Round($item.elapsed_sec,3)) | $($item.done_ops) |"
+    $md += "| $($item.variant) | $($item.preset) | $($item.runtime_mode) | $([Math]::Round($item.tps,2)) | $([Math]::Round($item.elapsed_sec,3)) | $($item.done_ops) |"
 }
 
 if ($baselineAvailable) {
@@ -452,10 +568,13 @@ if ($capabilitySnapshot) {
     $md += "- execute_ops_v2: $($capabilitySnapshot.execute_ops_v2)"
     $md += "- zkvm_prove: $($capabilitySnapshot.zkvm_prove)"
     $md += "- zkvm_verify: $($capabilitySnapshot.zkvm_verify)"
+    $md += "- zkvm_probe_api_present: $($capabilitySnapshot.zkvm_probe_api_present)"
+    $md += "- zkvm_symbol_supported: $($capabilitySnapshot.zkvm_symbol_supported)"
     $md += "- zk_formal_fields_present: $($capabilitySnapshot.zk_formal_fields_present)"
     $md += "- prover_ready: $($capabilitySnapshot.prover_ready)"
     $md += "- msm_accel: $($capabilitySnapshot.msm_accel)"
     $md += "- msm_backend: $($capabilitySnapshot.msm_backend)"
+    $md += "- mldsa_verify: $($capabilitySnapshot.mldsa_verify)"
     $md += "- fallback_reason: $($capabilitySnapshot.fallback_reason)"
     $md += "- fallback_reason_codes: $((@($capabilitySnapshot.fallback_reason_codes) -join ', '))"
     $md += "- inferred_from_legacy_fields: $($capabilitySnapshot.inferred_from_legacy_fields)"

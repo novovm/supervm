@@ -292,3 +292,14 @@
   - 依据：全量 acceptance（`full_snapshot_ga_v1`）持续通过，且核心门禁（functional/performance/rpc/consensus/network/adapter）均 `pass=True`。
   - 证据：`docs_CN/SVM2026-MIGRATION/NOVOVM-CAPABILITY-MIGRATION-LEDGER-AUTO-2026-03-04.md`（`Full Scan Matrix` + `Domain Scan`）。
 - 待推进：AOEM FFI 正式暴露 `state_root` 后，将代理门禁切换为硬一致性校验。
+- 已完成：`full_snapshot_v2` 全量 acceptance 回填（2026-03-08）：
+  - `artifacts/migration/acceptance-gate-full-v2-2026-03-08/acceptance-gate-summary.json`
+  - `profile_name=full_snapshot_v2`，`overall_pass=True`
+  - 关键门禁：`governance_param3_pass=True`、`rpc_exposure_pass=True`、`adapter_stability_pass=True`、`vm_runtime_split_pass=True`
+  - 性能门禁：`artifacts/migration/acceptance-gate-full-v2-2026-03-08/performance-gate/performance-gate-summary.json`（`pass=True`，`cpu_batch_stress.p50=22974773.70`，`cpu_parity.p50=5011122.19`）
+- 已完成：AOEM core + sidecar 基线（含 Network+Consensus Matrix）回填（2026-03-08）：
+  - `artifacts/migration/aoem-tps-core-sidecar-2026-03-08-baseline/aoem-core-sidecar-tps-summary.json`
+  - `docs_CN/AOEM-FFI/AOEM-FFI-CORE-SIDECAR-TPS-SEAL-2026-03-08.md`
+  - `docs_CN/AOEM-FFI/AOEM-FFI-CORE-SIDECAR-TPS-RAW-2026-03-08.csv`
+  - `cpu_batch_stress_single` 口径（ops/s）：`core p50/p90/p99=22739572.77/24221285.67/24221285.67`，`persist p50/p90/p99=22212152.71/22244070.84/22244070.84`，`wasm p50/p90/p99=22307735.21/22580958.38/22580958.38`
+  - Network+Consensus E2E TPS（recv）口径：`core p50/p90/p99=37.41/37.45/37.45`，`persist p50/p90/p99=37.45/37.50/37.50`，`wasm p50/p90/p99=37.45/37.50/37.50`（`network-two-process.json`）

@@ -10,7 +10,9 @@ param(
     [bool]$IncludeCapabilitySnapshot = $true,
     [ValidateSet("core", "persist", "wasm")]
     [string]$CapabilityVariant = "core",
-    [string]$CapabilityJson = ""
+    [string]$CapabilityJson = "",
+    [string]$AoemPluginDir = "",
+    [bool]$PreferComposedAoemRuntime = $true
 )
 
 Set-StrictMode -Version Latest
@@ -77,6 +79,10 @@ $compareParams = @{
 if ($CapabilityJson) {
     $compareParams["CapabilityJson"] = $CapabilityJson
 }
+if ($AoemPluginDir) {
+    $compareParams["AoemPluginDir"] = $AoemPluginDir
+}
+$compareParams["PreferComposedAoemRuntime"] = $PreferComposedAoemRuntime
 
 for ($run = 1; $run -le $Runs; $run++) {
     $runDir = Join-Path $OutputDir ("run-" + $run)
