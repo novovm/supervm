@@ -155,7 +155,10 @@ pub fn supports_evm_family(chain_type: ChainType) -> bool {
     )
 }
 
-pub fn resolve_evm_profile(chain_type: ChainType, chain_id: u64) -> anyhow::Result<EvmChainProfile> {
+pub fn resolve_evm_profile(
+    chain_type: ChainType,
+    chain_id: u64,
+) -> anyhow::Result<EvmChainProfile> {
     match chain_type {
         ChainType::EVM => Ok(EvmChainProfile {
             kind: EvmChainProfileKind::EthereumMainnet,
@@ -380,7 +383,10 @@ fn rlp_item_as_address(item: &RlpItem<'_>, field: &str) -> anyhow::Result<Option
     Ok(Some(raw.to_vec()))
 }
 
-fn tx_fields_from_legacy_list(items: &[RlpItem<'_>], hint: EvmRawTxRouteHint) -> anyhow::Result<EvmRawTxFieldsM0> {
+fn tx_fields_from_legacy_list(
+    items: &[RlpItem<'_>],
+    hint: EvmRawTxRouteHint,
+) -> anyhow::Result<EvmRawTxFieldsM0> {
     if items.len() < 6 {
         bail!("legacy tx rlp list too short: expected >=6 fields");
     }
@@ -415,7 +421,10 @@ fn tx_fields_from_legacy_list(items: &[RlpItem<'_>], hint: EvmRawTxRouteHint) ->
     })
 }
 
-fn tx_fields_from_type1_list(items: &[RlpItem<'_>], hint: EvmRawTxRouteHint) -> anyhow::Result<EvmRawTxFieldsM0> {
+fn tx_fields_from_type1_list(
+    items: &[RlpItem<'_>],
+    hint: EvmRawTxRouteHint,
+) -> anyhow::Result<EvmRawTxFieldsM0> {
     if items.len() < 8 {
         bail!("type1 tx rlp list too short: expected >=8 fields");
     }
@@ -438,7 +447,10 @@ fn tx_fields_from_type1_list(items: &[RlpItem<'_>], hint: EvmRawTxRouteHint) -> 
     })
 }
 
-fn tx_fields_from_type2_list(items: &[RlpItem<'_>], hint: EvmRawTxRouteHint) -> anyhow::Result<EvmRawTxFieldsM0> {
+fn tx_fields_from_type2_list(
+    items: &[RlpItem<'_>],
+    hint: EvmRawTxRouteHint,
+) -> anyhow::Result<EvmRawTxFieldsM0> {
     if items.len() < 9 {
         bail!("type2 tx rlp list too short: expected >=9 fields");
     }
@@ -682,7 +694,10 @@ mod tests {
             return enc_bytes(&[]);
         }
         let bytes = v.to_be_bytes();
-        let first_non_zero = bytes.iter().position(|b| *b != 0).unwrap_or(bytes.len() - 1);
+        let first_non_zero = bytes
+            .iter()
+            .position(|b| *b != 0)
+            .unwrap_or(bytes.len() - 1);
         enc_bytes(&bytes[first_non_zero..])
     }
 
@@ -691,7 +706,10 @@ mod tests {
             return enc_bytes(&[]);
         }
         let bytes = v.to_be_bytes();
-        let first_non_zero = bytes.iter().position(|b| *b != 0).unwrap_or(bytes.len() - 1);
+        let first_non_zero = bytes
+            .iter()
+            .position(|b| *b != 0)
+            .unwrap_or(bytes.len() - 1);
         enc_bytes(&bytes[first_non_zero..])
     }
 
@@ -758,10 +776,7 @@ mod tests {
         assert_eq!(polygon.kind, EvmChainProfileKind::PolygonMainnet);
         let avalanche =
             resolve_evm_profile(ChainType::Avalanche, 43114).expect("avalanche profile");
-        assert_eq!(
-            avalanche.kind,
-            EvmChainProfileKind::AvalancheCChainMainnet
-        );
+        assert_eq!(avalanche.kind, EvmChainProfileKind::AvalancheCChainMainnet);
     }
 
     #[test]
