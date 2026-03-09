@@ -831,6 +831,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "novovm-edge-gateway"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bincode",
+ "novovm-adapter-api",
+ "novovm-adapter-evm-core",
+ "novovm-exec",
+ "rocksdb",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tiny_http",
+]
+
+[[package]]
 name = "novovm-exec"
 version = "0.1.0"
 dependencies = [

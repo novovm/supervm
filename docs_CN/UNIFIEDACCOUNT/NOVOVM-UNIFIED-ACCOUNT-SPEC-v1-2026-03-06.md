@@ -130,6 +130,16 @@
 | 降级语义 | 降级执行时必须记录 `type4_degraded` 事件并返回降级标记 |
 | 混用约束 | Type 4 与 `SessionKey/Delegate` 混用是否允许必须显式声明；默认禁止 |
 
+### 9.2 存储键空间契约（最小要求）
+
+| 策略项 | 要求 |
+|---|---|
+| 键空间隔离 | 统一账户状态不得与链状态共享同一业务键前缀，必须使用 `ua_store:*` 专属前缀 |
+| RocksDB 分层 | UA 状态/审计应优先落在 dedicated CF：`ua_store_state_v2` / `ua_store_audit_v2` |
+| 兼容策略 | 可保留 default-CF 与 legacy key 兼容读取，但不得破坏 dedicated CF 为主的主路径 |
+| 审计游标 | 审计游标必须独立键（`ua_store:audit:flushed_event_count:v1`），禁止复用链状态游标 |
+| 冲突约束 | 任一链状态键（如 `chain:*`）不得出现在 UA 专用 CF 中；冲突视为阻断级错误 |
+
 ## 10. 版本治理
 
 - 本规范版本：`v1`。

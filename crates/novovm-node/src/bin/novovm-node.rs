@@ -11,7 +11,8 @@ use novovm_node::tx_ingress::{
     load_ops_wire_v1_from_tx_wire_file, load_ops_wire_v1_payload_file,
     LOCAL_TX_WIRE_CODEC_WRITE_U64LE_V1,
 };
-use std::path::PathBuf;
+use std::fs;
+use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -72,7 +73,52 @@ fn repeat_count_env() -> Result<usize> {
     Ok(parsed)
 }
 
+fn list_ops_wire_files(dir: &Path) -> Result<Vec<PathBuf>> {
+    if !dir.exists() {
+        bail!("NOVOVM_OPS_WIRE_DIR does not exist: {}", dir.display());
+    }
+    if !dir.is_dir() {
+        bail!("NOVOVM_OPS_WIRE_DIR is not a directory: {}", dir.display());
+    }
+    let mut files = Vec::new();
+    for entry in fs::read_dir(dir)
+        .with_context(|| format!("read NOVOVM_OPS_WIRE_DIR failed: {}", dir.display()))?
+    {
+        let entry = entry
+            .with_context(|| format!("iterate NOVOVM_OPS_WIRE_DIR failed: {}", dir.display()))?;
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        let Some(ext) = path.extension().and_then(|v| v.to_str()) else {
+            continue;
+        };
+        if ext.eq_ignore_ascii_case("opsw1") {
+            files.push(path);
+        }
+    }
+    files.sort_by(|a, b| {
+        let a_name = a
+            .file_name()
+            .map(|v| v.to_string_lossy().to_string())
+            .unwrap_or_default();
+        let b_name = b
+            .file_name()
+            .map(|v| v.to_string_lossy().to_string())
+            .unwrap_or_default();
+        a_name.cmp(&b_name)
+    });
+    Ok(files)
+}
+
+struct PreparedBatch {
+    tx_count: usize,
+    batch: EitherBatch,
+    source_detail: String,
+}
+
 fn main() -> Result<()> {
+    let verbose = bool_env("NOVOVM_NODE_VERBOSE");
     let node_mode = std::env::var("NOVOVM_NODE_MODE").unwrap_or_else(|_| "full".to_string());
     if !node_mode.eq_ignore_ascii_case("full") {
         bail!("non-full node_mode is disabled: novovm-node keeps only production path");
@@ -90,32 +136,34 @@ fn main() -> Result<()> {
     let runtime = AoemRuntimeConfig::from_env()?;
     let facade = novovm_exec::AoemExecFacade::open_with_runtime(&runtime)?;
     let session = facade.create_session()?;
-    let runtime_plugin_dir = runtime
-        .plugin_dir
-        .as_ref()
-        .map(|p| p.display().to_string())
-        .unwrap_or_else(|| "-".to_string());
-    println!(
-        "aoem_runtime_in: variant={} dll={} persist_backend={} wasm_runtime={} zkvm_mode={} mldsa_mode={} ingress_workers={} plugin_dir={}",
-        runtime.variant.as_str(),
-        runtime.dll_path.display(),
-        runtime.persist_backend,
-        runtime.wasm_runtime,
-        runtime.zkvm_mode,
-        runtime.mldsa_mode,
-        runtime.ingress_workers.unwrap_or(0),
-        runtime_plugin_dir
-    );
+    if verbose {
+        let runtime_plugin_dir = runtime
+            .plugin_dir
+            .as_ref()
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|| "-".to_string());
+        println!(
+            "aoem_runtime_in: variant={} dll={} persist_backend={} wasm_runtime={} zkvm_mode={} mldsa_mode={} ingress_workers={} plugin_dir={}",
+            runtime.variant.as_str(),
+            runtime.dll_path.display(),
+            runtime.persist_backend,
+            runtime.wasm_runtime,
+            runtime.zkvm_mode,
+            runtime.mldsa_mode,
+            runtime.ingress_workers.unwrap_or(0),
+            runtime_plugin_dir
+        );
+    }
 
     let tx_wire_path = string_env_nonempty("NOVOVM_TX_WIRE_FILE").map(PathBuf::from);
     let ops_wire_path = string_env_nonempty("NOVOVM_OPS_WIRE_FILE").map(PathBuf::from);
-    if tx_wire_path.is_some() && ops_wire_path.is_some() {
+    let ops_wire_dir = string_env_nonempty("NOVOVM_OPS_WIRE_DIR").map(PathBuf::from);
+    let source_count =
+        tx_wire_path.iter().count() + ops_wire_path.iter().count() + ops_wire_dir.iter().count();
+    if source_count != 1 {
         bail!(
-            "ingress source conflict: set only one of NOVOVM_TX_WIRE_FILE or NOVOVM_OPS_WIRE_FILE"
+            "ingress source conflict: set exactly one of NOVOVM_TX_WIRE_FILE | NOVOVM_OPS_WIRE_FILE | NOVOVM_OPS_WIRE_DIR"
         );
-    }
-    if tx_wire_path.is_none() && ops_wire_path.is_none() {
-        bail!("no ingress supplied for production path: set NOVOVM_OPS_WIRE_FILE=<path> or NOVOVM_TX_WIRE_FILE=<path>");
     }
     let selected_codec = string_env_nonempty("NOVOVM_D1_CODEC");
     let ingress_mode = ingress_mode_env()?;
@@ -130,19 +178,39 @@ fn main() -> Result<()> {
         }
         D1IngressMode::OpsV2 => false,
     };
-
-    let (tx_count, batch, input_source, d1_codec, aoem_ingress_path) = if use_wire_v1 {
-        let payload = if let Some(path) = ops_wire_path.as_ref() {
-            if selected_codec.is_some() {
-                bail!("NOVOVM_D1_CODEC is not allowed with NOVOVM_OPS_WIRE_FILE (already encoded ops wire)");
+    let mut prepared_batches = Vec::new();
+    let (input_source, d1_codec, aoem_ingress_path) = if use_wire_v1 {
+        if selected_codec.is_some() && (ops_wire_path.is_some() || ops_wire_dir.is_some()) {
+            bail!("NOVOVM_D1_CODEC is only allowed with NOVOVM_TX_WIRE_FILE (raw tx payload mode)");
+        }
+        let source = if let Some(path) = ops_wire_path.as_ref() {
+            let payload = load_ops_wire_v1_file(path)?;
+            prepared_batches.push(PreparedBatch {
+                tx_count: payload.op_count,
+                batch: EitherBatch::Wire(payload.bytes),
+                source_detail: path.display().to_string(),
+            });
+            "ops_wire_v1".to_string()
+        } else if let Some(dir) = ops_wire_dir.as_ref() {
+            let files = list_ops_wire_files(dir)?;
+            if files.is_empty() {
+                bail!("NOVOVM_OPS_WIRE_DIR has no .opsw1 files: {}", dir.display());
             }
-            load_ops_wire_v1_file(path)?
+            for path in files {
+                let payload = load_ops_wire_v1_file(&path)?;
+                prepared_batches.push(PreparedBatch {
+                    tx_count: payload.op_count,
+                    batch: EitherBatch::Wire(payload.bytes),
+                    source_detail: path.display().to_string(),
+                });
+            }
+            "ops_wire_dir".to_string()
         } else {
             let path = tx_wire_path.as_ref().expect("tx wire path must exist");
             let codec = selected_codec
                 .clone()
                 .unwrap_or_else(|| LOCAL_TX_WIRE_CODEC_WRITE_U64LE_V1.to_string());
-            if selected_codec.is_some() {
+            let payload = if selected_codec.is_some() {
                 load_ops_wire_v1_payload_file(path, &codec).with_context(|| {
                     format!(
                         "encode ingress payload with codec={codec} failed; available={:?}",
@@ -151,35 +219,33 @@ fn main() -> Result<()> {
                 })?
             } else {
                 load_ops_wire_v1_from_tx_wire_file(path)?
-            }
+            };
+            prepared_batches.push(PreparedBatch {
+                tx_count: payload.op_count,
+                batch: EitherBatch::Wire(payload.bytes),
+                source_detail: path.display().to_string(),
+            });
+            "tx_wire".to_string()
         };
-        let codec = if ops_wire_path.is_some() {
-            "-".to_string()
-        } else {
+        let codec = if tx_wire_path.is_some() {
             selected_codec
                 .clone()
                 .unwrap_or_else(|| LOCAL_TX_WIRE_CODEC_WRITE_U64LE_V1.to_string())
-        };
-        let path_mode = "ops_wire_v1".to_string();
-        let source = if ops_wire_path.is_some() {
-            "ops_wire_v1".to_string()
         } else {
-            "tx_wire".to_string()
+            "-".to_string()
         };
-        println!(
-            "d1_ingress_mode: selected=ops_wire_v1 requested={:?} auto_supported={} codec={}",
-            ingress_mode, supports_wire_v1, codec
-        );
-        (
-            payload.op_count,
-            EitherBatch::Wire(payload.bytes),
-            source,
-            codec,
-            path_mode,
-        )
+        if verbose {
+            println!(
+                "d1_ingress_mode: selected=ops_wire_v1 requested={:?} auto_supported={} codec={}",
+                ingress_mode, supports_wire_v1, codec
+            );
+        }
+        (source, codec, "ops_wire_v1".to_string())
     } else {
-        if ops_wire_path.is_some() {
-            bail!("NOVOVM_OPS_WIRE_FILE requires ops_wire_v1 path; current selected mode=ops_v2");
+        if ops_wire_path.is_some() || ops_wire_dir.is_some() {
+            bail!(
+                "NOVOVM_OPS_WIRE_FILE/NOVOVM_OPS_WIRE_DIR require ops_wire_v1 path; current selected mode=ops_v2"
+            );
         }
         if selected_codec.is_some() {
             bail!("NOVOVM_D1_CODEC requires ops_wire_v1 ingress; current selected mode=ops_v2");
@@ -188,35 +254,45 @@ fn main() -> Result<()> {
         let payload = load_exec_batch_from_wire_file(ingress_path, |_, rec| {
             (rec.account << 32) | rec.nonce.saturating_add(1)
         })?;
+        prepared_batches.push(PreparedBatch {
+            tx_count: payload.len(),
+            batch: EitherBatch::Ops(payload.ops),
+            source_detail: ingress_path.display().to_string(),
+        });
         let path_mode = if ingress_mode == D1IngressMode::Auto && !supports_wire_v1 {
             "ops_v2_fallback".to_string()
         } else {
             "ops_v2_forced".to_string()
         };
-        println!(
-            "d1_ingress_mode: selected=ops_v2 requested={:?} auto_supported={}",
-            ingress_mode, supports_wire_v1
-        );
-        (
-            payload.len(),
-            EitherBatch::Ops(payload.ops),
-            "tx_wire".to_string(),
-            "-".to_string(),
-            path_mode,
-        )
+        if verbose {
+            println!(
+                "d1_ingress_mode: selected=ops_v2 requested={:?} auto_supported={}",
+                ingress_mode, supports_wire_v1
+            );
+        }
+        ("tx_wire".to_string(), "-".to_string(), path_mode)
     };
-    println!(
-        "d1_ingress_contract: mode={} source={} codec={} aoem_ingress_path={}",
-        if use_wire_v1 { "ops_wire_v1" } else { "ops_v2" },
-        input_source,
-        d1_codec,
-        aoem_ingress_path
-    );
-    println!(
-        "tx_ingress_source: mode={} txs={} host_admission=false",
-        input_source, tx_count
-    );
+    if verbose {
+        let total_txs: usize = prepared_batches.iter().map(|b| b.tx_count).sum();
+        println!(
+            "d1_ingress_contract: mode={} source={} codec={} aoem_ingress_path={} batches={}",
+            if use_wire_v1 { "ops_wire_v1" } else { "ops_v2" },
+            input_source,
+            d1_codec,
+            aoem_ingress_path,
+            prepared_batches.len()
+        );
+        println!(
+            "tx_ingress_source: mode={} batches={} txs={} host_admission=false",
+            input_source,
+            prepared_batches.len(),
+            total_txs
+        );
+    }
     let repeat_count = repeat_count_env()?;
+    if ops_wire_dir.is_some() && repeat_count != 1 {
+        bail!("NOVOVM_TX_REPEAT_COUNT must be 1 when NOVOVM_OPS_WIRE_DIR is used");
+    }
 
     let exec_loop_sw = Instant::now();
     let mut submitted_total: u64 = 0;
@@ -225,77 +301,52 @@ fn main() -> Result<()> {
     let mut writes_total: u64 = 0;
     let mut aoem_exec_us_total: u64 = 0;
 
-    for idx in 0..repeat_count {
-        let iter_sw = Instant::now();
-        let report = match &batch {
-            EitherBatch::Ops(ops) => session.submit_ops_report(ops),
-            EitherBatch::Wire(wire) => session.submit_ops_wire_report(wire),
-        };
-        let host_elapsed_us = iter_sw.elapsed().as_micros() as u64;
-        if !report.ok {
-            let err = report
-                .error
+    for (batch_idx, prepared) in prepared_batches.iter().enumerate() {
+        for idx in 0..repeat_count {
+            let report = match &prepared.batch {
+                EitherBatch::Ops(ops) => session.submit_ops_report(ops),
+                EitherBatch::Wire(wire) => session.submit_ops_wire_report(wire),
+            };
+            if !report.ok {
+                let err = report
+                    .error
+                    .as_ref()
+                    .map(|e| e.message.as_str())
+                    .unwrap_or("unknown");
+                bail!(
+                    "mode=ffi_v2 batch={}/{} run={}/{} source={} rc={}({}) err={}",
+                    batch_idx + 1,
+                    prepared_batches.len(),
+                    idx + 1,
+                    repeat_count,
+                    prepared.source_detail,
+                    report.return_code,
+                    report.return_code_name,
+                    err
+                );
+            }
+
+            let out = report
+                .output
                 .as_ref()
-                .map(|e| e.message.as_str())
-                .unwrap_or("unknown");
-            bail!(
-                "mode=ffi_v2 run={}/{} rc={}({}) err={}",
-                idx + 1,
-                repeat_count,
-                report.return_code,
-                report.return_code_name,
-                err
-            );
-        }
+                .ok_or_else(|| anyhow::anyhow!("missing output on success report"))?;
 
-        let out = report
-            .output
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("missing output on success report"))?;
-
-        submitted_total = submitted_total.saturating_add(out.metrics.submitted_ops as u64);
-        processed_total = processed_total.saturating_add(out.metrics.processed_ops as u64);
-        success_total = success_total.saturating_add(out.metrics.success_ops as u64);
-        writes_total = writes_total.saturating_add(out.metrics.total_writes);
-        aoem_exec_us_total = aoem_exec_us_total.saturating_add(out.metrics.elapsed_us);
-
-        if repeat_count == 1 {
-            println!(
-                "mode=ffi_v2 variant={} dll={} rc={}({}) submitted={} processed={} success={} writes={} elapsed_us={}",
-                runtime.variant.as_str(),
-                runtime.dll_path.display(),
-                report.return_code,
-                report.return_code_name,
-                out.metrics.submitted_ops,
-                out.metrics.processed_ops,
-                out.metrics.success_ops,
-                out.metrics.total_writes,
-                out.metrics.elapsed_us
-            );
-        } else {
-            println!(
-                "mode=ffi_v2 run={}/{} variant={} dll={} rc={}({}) submitted={} processed={} success={} writes={} elapsed_us={} host_elapsed_us={}",
-                idx + 1,
-                repeat_count,
-                runtime.variant.as_str(),
-                runtime.dll_path.display(),
-                report.return_code,
-                report.return_code_name,
-                out.metrics.submitted_ops,
-                out.metrics.processed_ops,
-                out.metrics.success_ops,
-                out.metrics.total_writes,
-                out.metrics.elapsed_us,
-                host_elapsed_us
-            );
+            if verbose {
+                submitted_total = submitted_total.saturating_add(out.metrics.submitted_ops as u64);
+                processed_total = processed_total.saturating_add(out.metrics.processed_ops as u64);
+                success_total = success_total.saturating_add(out.metrics.success_ops as u64);
+                writes_total = writes_total.saturating_add(out.metrics.total_writes);
+                aoem_exec_us_total = aoem_exec_us_total.saturating_add(out.metrics.elapsed_us);
+            }
         }
     }
-    let host_exec_us = exec_loop_sw.elapsed().as_micros() as u64;
-    if repeat_count > 1 {
+    if verbose {
+        let host_exec_us = exec_loop_sw.elapsed().as_micros() as u64;
         println!(
-            "mode=ffi_v2_aggregate variant={} dll={} rc=0(ok) repeats={} submitted_total={} processed_total={} success_total={} writes_total={} host_exec_us={} aoem_exec_us={}",
+            "mode=ffi_v2_aggregate variant={} dll={} rc=0(ok) batches={} repeats={} submitted_total={} processed_total={} success_total={} writes_total={} host_exec_us={} aoem_exec_us={}",
             runtime.variant.as_str(),
             runtime.dll_path.display(),
+            prepared_batches.len(),
             repeat_count,
             submitted_total,
             processed_total,

@@ -1,0 +1,18 @@
+{
+  "name": "gateway_eth_nonraw_array_params_regression_v1",
+  "method": "eth_sendTransaction",
+  "params": [
+    {
+      "chainId": 1,
+      "nonce": 5,
+      "signature_domain": "evm:1",
+      "type": "0x0",
+      "from": "__EXTERNAL_ADDRESS__",
+      "to": "__EXTERNAL_ADDRESS__",
+      "value": "0x5",
+      "gas": "0x5208",
+      "gasPrice": "0x1",
+      "input": "0x"
+    }
+  ]
+}

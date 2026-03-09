@@ -32,6 +32,19 @@
   `NOVOVM-ETHEREUM-PROFILE-2026-COMPAT-BASELINE-2026-03-06.md`
   - 含：profile 必填字段、tx type 0/1/2/3/4、M0~M2 兼容阶段与 gate 基线。
 
+- 外部入口边界与二进制流水线架构约束  
+  `NOVOVM-EXTERNAL-INGRESS-BOUNDARY-AND-BINARY-PIPELINE-ARCH-2026-03-09.md`
+  - 含：`HTTP/JSON-RPC` 仅外部边界层可用；`D1/D2/D3/AOEM` 内部统一二进制流水线；插件接入不修改主入口。
+  - 含：`novovm-node` 支持 `NOVOVM_OPS_WIRE_DIR` 批量消费 `.opsw1`，用于承接边界层二进制落盘队列。
+
+- 生产路径一键脚本（边界网关 -> 主线二进制消费）  
+  `scripts/migration/run_gateway_node_pipeline.ps1`
+  - 含：启动 `novovm-edge-gateway`、轮询 `spool`、调用 `novovm-node` 消费 `.opsw1`，成功/失败分流归档。
+
+- 最小真实链路冒烟脚本（3 请求产出 `.opsw1`）  
+  `scripts/migration/run_gateway_node_smoke.ps1`
+  - 含：`ua_createUca -> ua_bindPersona -> eth_sendRawTransaction` 最小链路，验证边界层产线输出。
+
 ## 备注
 
 - `TEMP-LOG/` 用于临时沟通记录与短期笔记，不作为正式发布文档。

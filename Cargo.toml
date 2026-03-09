@@ -3,6 +3,7 @@ members = [
     "crates/aoem-bindings",
     "crates/novovm-adapter-api",
     "crates/novovm-adapter-novovm",
+    "crates/novovm-edge-gateway",
     "crates/novovm-adapter-sample-plugin",
     "crates/novovm-bench",
     "crates/novovm-consensus",

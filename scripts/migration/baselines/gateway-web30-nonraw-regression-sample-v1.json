@@ -1,0 +1,17 @@
+{
+  "name": "gateway_web30_nonraw_regression_v1",
+  "method": "web30_sendTransaction",
+  "params": {
+    "chain_id": 1000,
+    "nonce": 1,
+    "signature_domain": "web30:mainnet",
+    "wants_cross_chain_atomic": false,
+    "tx": {
+      "kind": "transfer",
+      "asset": "NOVO",
+      "to": "__EXTERNAL_ADDRESS__",
+      "amount": "1",
+      "memo": "regression-sample-v1"
+    }
+  }
+}
