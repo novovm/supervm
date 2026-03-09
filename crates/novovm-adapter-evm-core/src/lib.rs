@@ -633,15 +633,26 @@ pub fn validate_tx_semantics_m0(profile: &EvmChainProfile, tx: &TxIR) -> anyhow:
         );
     }
 
-    if tx.tx_type != TxType::Transfer {
-        bail!(
-            "unsupported tx_type in M0 boundary: {:?} (expected Transfer)",
-            tx.tx_type
-        );
-    }
-
-    if tx.to.is_none() {
-        bail!("transfer tx missing recipient");
+    match tx.tx_type {
+        TxType::Transfer | TxType::ContractCall => {
+            if tx.to.is_none() {
+                bail!("tx missing recipient for {:?}", tx.tx_type);
+            }
+        }
+        TxType::ContractDeploy => {
+            if tx.to.is_some() {
+                bail!("contract deploy tx must not set recipient");
+            }
+            if tx.data.is_empty() {
+                bail!("contract deploy tx missing init code");
+            }
+        }
+        _ => {
+            bail!(
+                "unsupported tx_type in M0 boundary: {:?} (expected Transfer|ContractCall|ContractDeploy)",
+                tx.tx_type
+            );
+        }
     }
 
     if tx.signature.is_empty() {
@@ -799,6 +810,27 @@ mod tests {
         let profile = resolve_evm_profile(ChainType::EVM, 1).expect("profile");
         let tx = sample_tx(1);
         validate_tx_semantics_m0(&profile, &tx).expect("valid transfer");
+    }
+
+    #[test]
+    fn validate_tx_m0_accepts_contract_call() {
+        let profile = resolve_evm_profile(ChainType::EVM, 1).expect("profile");
+        let mut tx = sample_tx(1);
+        tx.tx_type = TxType::ContractCall;
+        tx.data = vec![1, 2, 3];
+        tx.gas_limit = 22_000;
+        validate_tx_semantics_m0(&profile, &tx).expect("valid contract call");
+    }
+
+    #[test]
+    fn validate_tx_m0_accepts_contract_deploy() {
+        let profile = resolve_evm_profile(ChainType::EVM, 1).expect("profile");
+        let mut tx = sample_tx(1);
+        tx.tx_type = TxType::ContractDeploy;
+        tx.to = None;
+        tx.data = vec![0x60, 0x00, 0x60, 0x00];
+        tx.gas_limit = 22_000;
+        validate_tx_semantics_m0(&profile, &tx).expect("valid contract deploy");
     }
 
     #[test]

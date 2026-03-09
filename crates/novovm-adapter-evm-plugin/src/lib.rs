@@ -6,7 +6,7 @@ use novovm_adapter_evm_core::{
     active_precompile_set_m0, resolve_evm_profile, validate_tx_semantics_m0,
 };
 use novovm_adapter_novovm::create_native_adapter;
-use rocksdb::Options;
+use rocksdb::Options as RocksDbOptions;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::fs::{self, OpenOptions};
@@ -18,12 +18,28 @@ pub const NOVOVM_ADAPTER_PLUGIN_ABI_V1: u32 = 1;
 pub const NOVOVM_ADAPTER_PLUGIN_CAP_APPLY_IR_V1: u64 = 0x1;
 pub const NOVOVM_ADAPTER_PLUGIN_CAP_UA_SELF_GUARD_V1: u64 = 0x2;
 pub const NOVOVM_ADAPTER_PLUGIN_APPLY_FLAG_UA_SELF_GUARD_V1: u64 = 0x1;
+// Stable FFI return codes (external contract):
+//  0=ok, -1=invalid_arg, -2=unsupported_chain, -3=decode_failed,
+// -4=empty_batch, -5=unsupported_tx_type, -6=apply_failed,
+// -7=ua_self_guard_failed, -8=payload_too_large, -9=batch_too_large.
+pub const NOVOVM_ADAPTER_PLUGIN_RC_OK: i32 = 0;
+pub const NOVOVM_ADAPTER_PLUGIN_RC_INVALID_ARG: i32 = -1;
+pub const NOVOVM_ADAPTER_PLUGIN_RC_UNSUPPORTED_CHAIN: i32 = -2;
+pub const NOVOVM_ADAPTER_PLUGIN_RC_DECODE_FAILED: i32 = -3;
+pub const NOVOVM_ADAPTER_PLUGIN_RC_EMPTY_BATCH: i32 = -4;
+pub const NOVOVM_ADAPTER_PLUGIN_RC_UNSUPPORTED_TX_TYPE: i32 = -5;
+pub const NOVOVM_ADAPTER_PLUGIN_RC_APPLY_FAILED: i32 = -6;
+pub const NOVOVM_ADAPTER_PLUGIN_RC_UA_SELF_GUARD_FAILED: i32 = -7;
+pub const NOVOVM_ADAPTER_PLUGIN_RC_PAYLOAD_TOO_LARGE: i32 = -8;
+pub const NOVOVM_ADAPTER_PLUGIN_RC_BATCH_TOO_LARGE: i32 = -9;
 
 const UA_PLUGIN_STORE_VERSION_V1: u32 = 1;
 const UA_PLUGIN_STORE_KEY_V1: &[u8] = b"ua_plugin:store:router:v1";
 const UA_PLUGIN_AUDIT_HEAD_KEY_V1: &[u8] = b"ua_plugin:audit:head:v1";
 const UA_PLUGIN_AUDIT_SEQ_KEY_PREFIX_V1: &str = "ua_plugin:audit:seq:v1:";
 const UA_PLUGIN_ARTIFACTS_SUBDIR: &str = "artifacts/migration/unifiedaccount";
+const MAX_PLUGIN_TX_IR_BYTES: usize = 16 * 1024 * 1024;
+const MAX_PLUGIN_TX_COUNT: usize = 100_000;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default)]
@@ -234,7 +250,7 @@ fn open_rocksdb(path: &Path) -> anyhow::Result<rocksdb::DB> {
         fs::create_dir_all(parent)
             .map_err(|e| anyhow::anyhow!("create rocksdb parent dir failed: {e}"))?;
     }
-    let mut opts = Options::default();
+    let mut opts = RocksDbOptions::default();
     opts.create_if_missing(true);
     rocksdb::DB::open(&opts, path)
         .map_err(|e| anyhow::anyhow!("open rocksdb failed: {} ({})", path.display(), e))
@@ -592,26 +608,35 @@ fn decode_plugin_apply_inputs(
     tx_ir_len: usize,
 ) -> Result<(ChainType, Vec<TxIR>), i32> {
     if tx_ir_ptr.is_null() || tx_ir_len == 0 {
-        return Err(-1);
+        return Err(NOVOVM_ADAPTER_PLUGIN_RC_INVALID_ARG);
+    }
+    if tx_ir_len > MAX_PLUGIN_TX_IR_BYTES || tx_ir_len > isize::MAX as usize {
+        return Err(NOVOVM_ADAPTER_PLUGIN_RC_PAYLOAD_TOO_LARGE);
     }
 
     let chain_type = match chain_type_from_code(chain_type_code) {
         Some(v) => v,
-        None => return Err(-2),
+        None => return Err(NOVOVM_ADAPTER_PLUGIN_RC_UNSUPPORTED_CHAIN),
     };
 
     let tx_bytes = unsafe { std::slice::from_raw_parts(tx_ir_ptr, tx_ir_len) };
     let txs: Vec<TxIR> = match bincode::deserialize(tx_bytes) {
         Ok(v) => v,
-        Err(_) => return Err(-3),
+        Err(_) => return Err(NOVOVM_ADAPTER_PLUGIN_RC_DECODE_FAILED),
     };
     if txs.is_empty() {
-        return Err(-4);
+        return Err(NOVOVM_ADAPTER_PLUGIN_RC_EMPTY_BATCH);
     }
-    // Phase-1 EVM plugin keeps the existing Transfer-only IR boundary
-    // for predictable performance while we migrate full EVM semantics.
-    if !txs.iter().all(|tx| tx.tx_type == TxType::Transfer) {
-        return Err(-5);
+    if txs.len() > MAX_PLUGIN_TX_COUNT {
+        return Err(NOVOVM_ADAPTER_PLUGIN_RC_BATCH_TOO_LARGE);
+    }
+    if !txs.iter().all(|tx| {
+        matches!(
+            tx.tx_type,
+            TxType::Transfer | TxType::ContractCall | TxType::ContractDeploy
+        )
+    }) {
+        return Err(NOVOVM_ADAPTER_PLUGIN_RC_UNSUPPORTED_TX_TYPE);
     }
     Ok((chain_type, txs))
 }
@@ -674,6 +699,12 @@ pub extern "C" fn novovm_adapter_plugin_capabilities() -> u64 {
 }
 
 #[no_mangle]
+/// Apply a serialized TxIR batch through the EVM adapter plugin (ABI v1).
+///
+/// # Safety
+/// - `tx_ir_ptr` must be valid for reads of `tx_ir_len` bytes for the duration of this call.
+/// - `out_result` must be a valid, writable pointer to `NovovmAdapterPluginApplyResultV1`.
+/// - The memory behind `tx_ir_ptr` must contain a bincode-encoded `Vec<TxIR>`.
 pub unsafe extern "C" fn novovm_adapter_plugin_apply_v1(
     chain_type_code: u32,
     chain_id: u64,
@@ -682,7 +713,7 @@ pub unsafe extern "C" fn novovm_adapter_plugin_apply_v1(
     out_result: *mut NovovmAdapterPluginApplyResultV1,
 ) -> i32 {
     if out_result.is_null() {
-        return -1;
+        return NOVOVM_ADAPTER_PLUGIN_RC_INVALID_ARG;
     }
     let (chain_type, txs) = match decode_plugin_apply_inputs(chain_type_code, tx_ir_ptr, tx_ir_len)
     {
@@ -692,14 +723,21 @@ pub unsafe extern "C" fn novovm_adapter_plugin_apply_v1(
 
     let result = match apply_ir_batch(chain_type, chain_id, &txs) {
         Ok(v) => v,
-        Err(_) => return -6,
+        Err(_) => return NOVOVM_ADAPTER_PLUGIN_RC_APPLY_FAILED,
     };
 
     *out_result = result;
-    0
+    NOVOVM_ADAPTER_PLUGIN_RC_OK
 }
 
 #[no_mangle]
+/// Apply a serialized TxIR batch through the EVM adapter plugin (ABI v2 with options).
+///
+/// # Safety
+/// - `tx_ir_ptr` must be valid for reads of `tx_ir_len` bytes for the duration of this call.
+/// - `options_ptr` may be null; when non-null it must point to a valid `NovovmAdapterPluginApplyOptionsV1`.
+/// - `out_result` must be a valid, writable pointer to `NovovmAdapterPluginApplyResultV1`.
+/// - The memory behind `tx_ir_ptr` must contain a bincode-encoded `Vec<TxIR>`.
 pub unsafe extern "C" fn novovm_adapter_plugin_apply_v2(
     chain_type_code: u32,
     chain_id: u64,
@@ -709,7 +747,7 @@ pub unsafe extern "C" fn novovm_adapter_plugin_apply_v2(
     out_result: *mut NovovmAdapterPluginApplyResultV1,
 ) -> i32 {
     if out_result.is_null() {
-        return -1;
+        return NOVOVM_ADAPTER_PLUGIN_RC_INVALID_ARG;
     }
     let (chain_type, txs) = match decode_plugin_apply_inputs(chain_type_code, tx_ir_ptr, tx_ir_len)
     {
@@ -721,19 +759,19 @@ pub unsafe extern "C" fn novovm_adapter_plugin_apply_v2(
     } else {
         (*options_ptr).flags
     };
-    if flags & NOVOVM_ADAPTER_PLUGIN_APPLY_FLAG_UA_SELF_GUARD_V1 != 0 {
-        if route_txs_via_plugin_ua_self_guard(chain_id, &txs).is_err() {
-            return -7;
-        }
+    if flags & NOVOVM_ADAPTER_PLUGIN_APPLY_FLAG_UA_SELF_GUARD_V1 != 0
+        && route_txs_via_plugin_ua_self_guard(chain_id, &txs).is_err()
+    {
+        return NOVOVM_ADAPTER_PLUGIN_RC_UA_SELF_GUARD_FAILED;
     }
 
     let result = match apply_ir_batch(chain_type, chain_id, &txs) {
         Ok(v) => v,
-        Err(_) => return -6,
+        Err(_) => return NOVOVM_ADAPTER_PLUGIN_RC_APPLY_FAILED,
     };
 
     *out_result = result;
-    0
+    NOVOVM_ADAPTER_PLUGIN_RC_OK
 }
 
 #[cfg(test)]
@@ -769,6 +807,27 @@ mod tests {
         tx
     }
 
+    fn sample_contract_call_tx(chain_id: u64, nonce: u64) -> TxIR {
+        let mut tx = sample_tx(chain_id, nonce);
+        tx.tx_type = TxType::ContractCall;
+        tx.data = vec![0xab, 0xcd, 0xef];
+        tx.gas_limit = 24_000;
+        tx.compute_hash();
+        tx.signature = signature_payload_with_seed_v1(&tx, TEST_SIGN_SEED);
+        tx
+    }
+
+    fn sample_contract_deploy_tx(chain_id: u64, nonce: u64) -> TxIR {
+        let mut tx = sample_tx(chain_id, nonce);
+        tx.tx_type = TxType::ContractDeploy;
+        tx.to = None;
+        tx.data = vec![0x60, 0x00, 0x60, 0x00];
+        tx.gas_limit = 60_000;
+        tx.compute_hash();
+        tx.signature = signature_payload_with_seed_v1(&tx, TEST_SIGN_SEED);
+        tx
+    }
+
     #[test]
     fn apply_ir_batch_smoke_for_evm_chain() {
         let txs = vec![sample_tx(1, 0), sample_tx(1, 1)];
@@ -788,6 +847,19 @@ mod tests {
     }
 
     #[test]
+    fn apply_ir_batch_accepts_contract_call_and_deploy() {
+        let txs = vec![
+            sample_contract_call_tx(1, 0),
+            sample_contract_deploy_tx(1, 1),
+        ];
+        let result = apply_ir_batch(ChainType::EVM, 1, &txs).expect("apply should pass");
+        assert_eq!(result.verified, 1);
+        assert_eq!(result.applied, 1);
+        assert_eq!(result.txs, 2);
+        assert!(result.accounts >= 2);
+    }
+
+    #[test]
     fn chain_code_mapping_supports_only_evm_family() {
         assert_eq!(chain_type_from_code(1), Some(ChainType::EVM));
         assert_eq!(chain_type_from_code(5), Some(ChainType::Polygon));
@@ -802,6 +874,106 @@ mod tests {
         let caps = novovm_adapter_plugin_capabilities();
         assert!(caps & NOVOVM_ADAPTER_PLUGIN_CAP_APPLY_IR_V1 != 0);
         assert!(caps & NOVOVM_ADAPTER_PLUGIN_CAP_UA_SELF_GUARD_V1 != 0);
+    }
+
+    #[test]
+    fn plugin_return_codes_are_stable_contract() {
+        assert_eq!(NOVOVM_ADAPTER_PLUGIN_RC_OK, 0);
+        assert_eq!(NOVOVM_ADAPTER_PLUGIN_RC_INVALID_ARG, -1);
+        assert_eq!(NOVOVM_ADAPTER_PLUGIN_RC_UNSUPPORTED_CHAIN, -2);
+        assert_eq!(NOVOVM_ADAPTER_PLUGIN_RC_DECODE_FAILED, -3);
+        assert_eq!(NOVOVM_ADAPTER_PLUGIN_RC_EMPTY_BATCH, -4);
+        assert_eq!(NOVOVM_ADAPTER_PLUGIN_RC_UNSUPPORTED_TX_TYPE, -5);
+        assert_eq!(NOVOVM_ADAPTER_PLUGIN_RC_APPLY_FAILED, -6);
+        assert_eq!(NOVOVM_ADAPTER_PLUGIN_RC_UA_SELF_GUARD_FAILED, -7);
+        assert_eq!(NOVOVM_ADAPTER_PLUGIN_RC_PAYLOAD_TOO_LARGE, -8);
+        assert_eq!(NOVOVM_ADAPTER_PLUGIN_RC_BATCH_TOO_LARGE, -9);
+    }
+
+    #[test]
+    fn plugin_apply_v1_rejects_invalid_chain_type() {
+        let txs = vec![sample_tx(1, 0)];
+        let tx_bytes = bincode::serialize(&txs).expect("tx encode");
+        let mut out = NovovmAdapterPluginApplyResultV1::default();
+        let rc = unsafe {
+            novovm_adapter_plugin_apply_v1(
+                0,
+                1,
+                tx_bytes.as_ptr(),
+                tx_bytes.len(),
+                &mut out as *mut NovovmAdapterPluginApplyResultV1,
+            )
+        };
+        assert_eq!(rc, NOVOVM_ADAPTER_PLUGIN_RC_UNSUPPORTED_CHAIN);
+    }
+
+    #[test]
+    fn plugin_apply_v1_rejects_malformed_payload() {
+        let payload = [1u8, 2u8, 3u8];
+        let mut out = NovovmAdapterPluginApplyResultV1::default();
+        let rc = unsafe {
+            novovm_adapter_plugin_apply_v1(
+                1,
+                1,
+                payload.as_ptr(),
+                payload.len(),
+                &mut out as *mut NovovmAdapterPluginApplyResultV1,
+            )
+        };
+        assert_eq!(rc, NOVOVM_ADAPTER_PLUGIN_RC_DECODE_FAILED);
+    }
+
+    #[test]
+    fn plugin_apply_v1_rejects_empty_batch() {
+        let txs: Vec<TxIR> = Vec::new();
+        let tx_bytes = bincode::serialize(&txs).expect("tx encode");
+        let mut out = NovovmAdapterPluginApplyResultV1::default();
+        let rc = unsafe {
+            novovm_adapter_plugin_apply_v1(
+                1,
+                1,
+                tx_bytes.as_ptr(),
+                tx_bytes.len(),
+                &mut out as *mut NovovmAdapterPluginApplyResultV1,
+            )
+        };
+        assert_eq!(rc, NOVOVM_ADAPTER_PLUGIN_RC_EMPTY_BATCH);
+    }
+
+    #[test]
+    fn plugin_apply_v1_rejects_unsupported_tx_type() {
+        let mut tx = sample_tx(1, 0);
+        tx.tx_type = TxType::Privacy;
+        let tx_bytes = bincode::serialize(&vec![tx]).expect("tx encode");
+        let mut out = NovovmAdapterPluginApplyResultV1::default();
+        let rc = unsafe {
+            novovm_adapter_plugin_apply_v1(
+                1,
+                1,
+                tx_bytes.as_ptr(),
+                tx_bytes.len(),
+                &mut out as *mut NovovmAdapterPluginApplyResultV1,
+            )
+        };
+        assert_eq!(rc, NOVOVM_ADAPTER_PLUGIN_RC_UNSUPPORTED_TX_TYPE);
+    }
+
+    #[test]
+    fn plugin_apply_v1_maps_engine_failure_to_apply_failed() {
+        let mut tx = sample_tx(1, 0);
+        tx.gas_limit = 20_999;
+        let tx_bytes = bincode::serialize(&vec![tx]).expect("tx encode");
+        let mut out = NovovmAdapterPluginApplyResultV1::default();
+        let rc = unsafe {
+            novovm_adapter_plugin_apply_v1(
+                1,
+                1,
+                tx_bytes.as_ptr(),
+                tx_bytes.len(),
+                &mut out as *mut NovovmAdapterPluginApplyResultV1,
+            )
+        };
+        assert_eq!(rc, NOVOVM_ADAPTER_PLUGIN_RC_APPLY_FAILED);
     }
 
     #[test]
@@ -823,7 +995,7 @@ mod tests {
                 &mut out as *mut NovovmAdapterPluginApplyResultV1,
             )
         };
-        assert_eq!(rc_first, 0);
+        assert_eq!(rc_first, NOVOVM_ADAPTER_PLUGIN_RC_OK);
 
         let rc_second = unsafe {
             novovm_adapter_plugin_apply_v2(
@@ -835,6 +1007,22 @@ mod tests {
                 &mut out as *mut NovovmAdapterPluginApplyResultV1,
             )
         };
-        assert_eq!(rc_second, -7);
+        assert_eq!(rc_second, NOVOVM_ADAPTER_PLUGIN_RC_UA_SELF_GUARD_FAILED);
+    }
+
+    #[test]
+    fn plugin_apply_v1_rejects_oversized_payload_before_decode() {
+        let mut out = NovovmAdapterPluginApplyResultV1::default();
+        let marker = [0u8; 1];
+        let rc = unsafe {
+            novovm_adapter_plugin_apply_v1(
+                1,
+                1,
+                marker.as_ptr(),
+                MAX_PLUGIN_TX_IR_BYTES + 1,
+                &mut out as *mut NovovmAdapterPluginApplyResultV1,
+            )
+        };
+        assert_eq!(rc, NOVOVM_ADAPTER_PLUGIN_RC_PAYLOAD_TOO_LARGE);
     }
 }

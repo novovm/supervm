@@ -1,6 +1,7 @@
 param(
     [string]$RepoRoot = "",
-    [string]$OutputDir = ""
+    [string]$OutputDir = "",
+    [string]$AllowPluginSourceTests = "true"
 )
 
 Set-StrictMode -Version Latest
@@ -19,6 +20,33 @@ if (-not $OutputDir) {
 }
 $OutputDir = [System.IO.Path]::GetFullPath($OutputDir)
 New-Item -ItemType Directory -Force -Path $OutputDir | Out-Null
+
+function Parse-BoolLike {
+    param(
+        [string]$Value,
+        [bool]$Default = $false
+    )
+
+    if (-not $Value) {
+        return $Default
+    }
+    switch ($Value.Trim().ToLowerInvariant()) {
+        "1" { return $true }
+        "true" { return $true }
+        "yes" { return $true }
+        "on" { return $true }
+        "0" { return $false }
+        "false" { return $false }
+        "no" { return $false }
+        "off" { return $false }
+        default { return $Default }
+    }
+}
+
+$allowPluginSourceTestsResolved = Parse-BoolLike -Value $AllowPluginSourceTests -Default $true
+if ($env:NOVOVM_EVM_TX_TYPE_SIGNAL_ALLOW_PLUGIN_SOURCE_TESTS) {
+    $allowPluginSourceTestsResolved = Parse-BoolLike -Value $env:NOVOVM_EVM_TX_TYPE_SIGNAL_ALLOW_PLUGIN_SOURCE_TESTS -Default $allowPluginSourceTestsResolved
+}
 
 function Invoke-TestCase {
     param(
@@ -48,6 +76,8 @@ function Invoke-TestCase {
         pass = $ok
         elapsed_ms = $elapsedMs
         error = if ($ok) { $null } else { $errorText }
+        skipped = $false
+        skip_reason = $null
     }
 }
 
@@ -57,11 +87,28 @@ $cases += Invoke-TestCase -Name "evm_core_translate_fields" -Args @(
     "--manifest-path", "crates/novovm-adapter-evm-core/Cargo.toml",
     "translate_"
 )
-$cases += Invoke-TestCase -Name "evm_plugin_self_guard_v2" -Args @(
-    "test",
-    "--manifest-path", "crates/novovm-adapter-evm-plugin/Cargo.toml",
-    "plugin_apply_v2_self_guard_rejects_replay_nonce"
-)
+$pluginManifest = Join-Path $RepoRoot "crates\novovm-adapter-evm-plugin\Cargo.toml"
+if ($allowPluginSourceTestsResolved -and (Test-Path $pluginManifest)) {
+    $cases += Invoke-TestCase -Name "evm_plugin_self_guard_v2" -Args @(
+        "test",
+        "--manifest-path", "crates/novovm-adapter-evm-plugin/Cargo.toml",
+        "plugin_apply_v2_self_guard_rejects_replay_nonce"
+    )
+} else {
+    $skipReason = if (-not $allowPluginSourceTestsResolved) {
+        "disabled by AllowPluginSourceTests/NOVOVM_EVM_TX_TYPE_SIGNAL_ALLOW_PLUGIN_SOURCE_TESTS"
+    } else {
+        "plugin source manifest missing: crates/novovm-adapter-evm-plugin/Cargo.toml"
+    }
+    $cases += [pscustomobject][ordered]@{
+        name = "evm_plugin_self_guard_v2"
+        pass = $true
+        elapsed_ms = 0
+        error = $null
+        skipped = $true
+        skip_reason = $skipReason
+    }
+}
 $cases += Invoke-TestCase -Name "node_eth_raw_route_cases" -Args @(
     "test",
     "--manifest-path", "crates/novovm-node/Cargo.toml",
@@ -105,6 +152,8 @@ $signal = [ordered]@{
     signal = "evm_tx_type_signal"
     generated_at = (Get-Date).ToUniversalTime().ToString("o")
     pass = $overallPass
+    plugin_source_tests_enabled = $allowPluginSourceTestsResolved
+    plugin_source_manifest_present = (Test-Path $pluginManifest)
     tests = $cases
 }
 

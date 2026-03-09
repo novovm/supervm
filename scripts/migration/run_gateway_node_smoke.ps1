@@ -161,7 +161,7 @@ if (Test-Path $gwErr) { Remove-Item -Force $gwErr }
 $envMap = @{
     "NOVOVM_GATEWAY_BIND" = $GatewayBind
     "NOVOVM_GATEWAY_SPOOL_DIR" = $SpoolDir
-    "NOVOVM_GATEWAY_MAX_REQUESTS" = "15"
+    "NOVOVM_GATEWAY_MAX_REQUESTS" = "19"
 }
 
 $envState = Push-ProcessEnv -Environment $envMap
@@ -492,6 +492,84 @@ try {
         throw "eth_chainId/net_version mismatch: chainId=$chainIdDec net_version=$netVersionDec"
     }
 
+    $req16Object = [ordered]@{
+        jsonrpc = "2.0"
+        id = 16
+        method = "eth_gasPrice"
+        params = @()
+    }
+    $req16 = $req16Object | ConvertTo-Json -Compress -Depth 32
+    $r16 = Invoke-RestMethod -Uri $url -Method Post -ContentType "application/json" -Body $req16
+    $r16ResultProp = $r16.PSObject.Properties["result"]
+    if ($null -eq $r16ResultProp) {
+        throw "eth_gasPrice response missing result: $($r16 | ConvertTo-Json -Compress)"
+    }
+    $gasPriceHex = [string]$r16ResultProp.Value
+    if (-not $gasPriceHex -or -not $gasPriceHex.StartsWith("0x")) {
+        throw "eth_gasPrice returned invalid result: $gasPriceHex"
+    }
+    $null = [Convert]::ToUInt64($gasPriceHex.Substring(2), 16)
+
+    $req17Object = [ordered]@{
+        jsonrpc = "2.0"
+        id = 17
+        method = "eth_estimateGas"
+        params = [ordered]@{
+            chain_id = 1
+            from = $addr
+            to = $addr
+            data = "0x010203"
+        }
+    }
+    $req17 = $req17Object | ConvertTo-Json -Compress -Depth 32
+    $r17 = Invoke-RestMethod -Uri $url -Method Post -ContentType "application/json" -Body $req17
+    $r17ResultProp = $r17.PSObject.Properties["result"]
+    if ($null -eq $r17ResultProp) {
+        throw "eth_estimateGas response missing result: $($r17 | ConvertTo-Json -Compress)"
+    }
+    $estimateGasHex = [string]$r17ResultProp.Value
+    if (-not $estimateGasHex -or -not $estimateGasHex.StartsWith("0x")) {
+        throw "eth_estimateGas returned invalid result: $estimateGasHex"
+    }
+    $estimateGasDec = [Convert]::ToUInt64($estimateGasHex.Substring(2), 16)
+    if ($estimateGasDec -ne 21048) {
+        throw "eth_estimateGas mismatch: expected=21048 got=$estimateGasDec (hex=$estimateGasHex)"
+    }
+
+    $req18Object = [ordered]@{
+        jsonrpc = "2.0"
+        id = 18
+        method = "eth_getCode"
+        params = @($addr, "latest")
+    }
+    $req18 = $req18Object | ConvertTo-Json -Compress -Depth 32
+    $r18 = Invoke-RestMethod -Uri $url -Method Post -ContentType "application/json" -Body $req18
+    $r18ResultProp = $r18.PSObject.Properties["result"]
+    if ($null -eq $r18ResultProp) {
+        throw "eth_getCode response missing result: $($r18 | ConvertTo-Json -Compress)"
+    }
+    $codeHex = [string]$r18ResultProp.Value
+    if ($codeHex -ne "0x") {
+        throw "eth_getCode mismatch: expected=0x got=$codeHex"
+    }
+
+    $req19Object = [ordered]@{
+        jsonrpc = "2.0"
+        id = 19
+        method = "eth_getStorageAt"
+        params = @($addr, "0x0", "latest")
+    }
+    $req19 = $req19Object | ConvertTo-Json -Compress -Depth 32
+    $r19 = Invoke-RestMethod -Uri $url -Method Post -ContentType "application/json" -Body $req19
+    $r19ResultProp = $r19.PSObject.Properties["result"]
+    if ($null -eq $r19ResultProp) {
+        throw "eth_getStorageAt response missing result: $($r19 | ConvertTo-Json -Compress)"
+    }
+    $storageHex = [string]$r19ResultProp.Value
+    if ($storageHex -ne "0x0000000000000000000000000000000000000000000000000000000000000000") {
+        throw "eth_getStorageAt mismatch: expected=32-byte-zero got=$storageHex"
+    }
+
     Wait-Process -Id $gatewayProc.Id -Timeout 10
 
     $files = @(Get-ChildItem -Path $SpoolDir -File -Filter *.opsw1)
@@ -508,7 +586,11 @@ try {
             "r12=$($r12 | ConvertTo-Json -Compress)",
             "r13=$($r13 | ConvertTo-Json -Compress)",
             "r14=$($r14 | ConvertTo-Json -Compress)",
-            "r15=$($r15 | ConvertTo-Json -Compress)"
+            "r15=$($r15 | ConvertTo-Json -Compress)",
+            "r16=$($r16 | ConvertTo-Json -Compress)",
+            "r17=$($r17 | ConvertTo-Json -Compress)",
+            "r18=$($r18 | ConvertTo-Json -Compress)",
+            "r19=$($r19 | ConvertTo-Json -Compress)"
         ) -join " | "
         throw "expected >=8 opsw1 records in smoke spool (eth raw + eth nonraw + eth nonraw tx-object + eth contract-call + eth contract-deploy + eth nonraw array + web30 raw + web30 nonraw), got $($files.Count); responses: $diag"
     }
@@ -555,7 +637,11 @@ try {
             ($r12 | ConvertTo-Json -Compress),
             ($r13 | ConvertTo-Json -Compress),
             ($r14 | ConvertTo-Json -Compress),
-            ($r15 | ConvertTo-Json -Compress)
+            ($r15 | ConvertTo-Json -Compress),
+            ($r16 | ConvertTo-Json -Compress),
+            ($r17 | ConvertTo-Json -Compress),
+            ($r18 | ConvertTo-Json -Compress),
+            ($r19 | ConvertTo-Json -Compress)
         )
         opsw1_count = $files.Count
         opsw1_files = @($files | ForEach-Object { $_.FullName })

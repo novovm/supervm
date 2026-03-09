@@ -11,7 +11,8 @@ param(
     [int]$BatchCount = 2,
     [ValidateRange(1, 1000000)]
     [int64]$FeeFloor = 1,
-    [string]$PluginPath = ""
+    [string]$PluginPath = "",
+    [string]$AllowPluginBuild = "true"
 )
 
 Set-StrictMode -Version Latest
@@ -52,6 +53,28 @@ function Resolve-RepoPath {
     return $PathText
 }
 
+function Parse-BoolLike {
+    param(
+        [string]$Value,
+        [bool]$Default = $false
+    )
+
+    if (-not $Value) {
+        return $Default
+    }
+    switch ($Value.Trim().ToLowerInvariant()) {
+        "1" { return $true }
+        "true" { return $true }
+        "yes" { return $true }
+        "on" { return $true }
+        "0" { return $false }
+        "false" { return $false }
+        "no" { return $false }
+        "off" { return $false }
+        default { return $Default }
+    }
+}
+
 function Invoke-CargoAllowFailure {
     param(
         [string]$WorkDir,
@@ -81,6 +104,38 @@ function Invoke-CargoAllowFailure {
     }
 }
 
+function Get-EvmPluginSearchDirs {
+    param(
+        [string]$RepoRootValue,
+        [string]$PluginCrateDir
+    )
+
+    $roots = @(
+        (Join-Path $RepoRootValue "target"),
+        (Join-Path $PluginCrateDir "target"),
+        (Join-Path $RepoRootValue "plugins"),
+        (Join-Path $RepoRootValue "plugins\adapters"),
+        (Join-Path $RepoRootValue "plugins\adapters\evm"),
+        (Join-Path $RepoRootValue "artifacts\plugins"),
+        (Join-Path $RepoRootValue "artifacts\plugins\evm")
+    )
+    if ($env:CARGO_TARGET_DIR) {
+        $roots += $env:CARGO_TARGET_DIR
+    }
+    $roots = $roots | Where-Object { $_ -and (Test-Path $_) } | Select-Object -Unique
+
+    $searchDirs = @()
+    foreach ($root in $roots) {
+        $searchDirs += $root
+        $searchDirs += (Join-Path $root "debug")
+        $searchDirs += (Join-Path $root "release")
+        $searchDirs += (Join-Path $root "debug\deps")
+        $searchDirs += (Join-Path $root "release\deps")
+    }
+    $searchDirs = $searchDirs | Where-Object { Test-Path $_ } | Select-Object -Unique
+    return @($searchDirs)
+}
+
 function Resolve-EvmPluginPath {
     param(
         [string]$RepoRootValue,
@@ -90,7 +145,21 @@ function Resolve-EvmPluginPath {
 
     $explicit = Resolve-RepoPath -RepoRootValue $RepoRootValue -PathText $PluginPathText
     if ($explicit) {
+        if (Test-Path $explicit) {
+            return (Resolve-Path $explicit).Path
+        }
         return $explicit
+    }
+
+    $envPathCandidates = @(
+        $env:NOVOVM_EVM_PLUGIN_PATH,
+        $env:NOVOVM_ADAPTER_PLUGIN_PATH
+    )
+    foreach ($envPath in $envPathCandidates) {
+        $resolved = Resolve-RepoPath -RepoRootValue $RepoRootValue -PathText $envPath
+        if ($resolved -and (Test-Path $resolved)) {
+            return (Resolve-Path $resolved).Path
+        }
     }
 
     $pluginNames = if ($IsWindows) {
@@ -102,22 +171,7 @@ function Resolve-EvmPluginPath {
     }
 
     $pluginCrateDir = Join-Path $RepoRootValue "crates\novovm-adapter-evm-plugin"
-    $targetRoots = @(
-        (Join-Path $RepoRootValue "target"),
-        (Join-Path $pluginCrateDir "target")
-    )
-    if ($env:CARGO_TARGET_DIR) {
-        $targetRoots += $env:CARGO_TARGET_DIR
-    }
-    $targetRoots = $targetRoots | Where-Object { $_ -and (Test-Path $_) } | Select-Object -Unique
-    $searchDirs = @()
-    foreach ($root in $targetRoots) {
-        $searchDirs += (Join-Path $root "debug")
-        $searchDirs += (Join-Path $root "release")
-        $searchDirs += (Join-Path $root "debug\deps")
-        $searchDirs += (Join-Path $root "release\deps")
-    }
-    $searchDirs = $searchDirs | Where-Object { Test-Path $_ } | Select-Object -Unique
+    $searchDirs = Get-EvmPluginSearchDirs -RepoRootValue $RepoRootValue -PluginCrateDir $pluginCrateDir
 
     foreach ($dir in $searchDirs) {
         foreach ($name in $pluginNames) {
@@ -145,6 +199,7 @@ function Resolve-EvmPluginPath {
         throw "failed to build evm plugin: $($buildResult.output)"
     }
 
+    $searchDirs = Get-EvmPluginSearchDirs -RepoRootValue $RepoRootValue -PluginCrateDir $pluginCrateDir
     foreach ($dir in $searchDirs) {
         foreach ($name in $pluginNames) {
             $candidate = Join-Path $dir $name
@@ -319,9 +374,19 @@ function Resolve-BackendCompareStateBase {
     return (Join-Path $OutputDirValue "backend-compare-state")
 }
 
-$resolvedPluginPath = Resolve-EvmPluginPath -RepoRootValue $RepoRoot -PluginPathText $PluginPath -AllowBuild $true
+$allowPluginBuildResolved = Parse-BoolLike -Value $AllowPluginBuild -Default $true
+if ($env:NOVOVM_EVM_PLUGIN_ALLOW_BUILD) {
+    $allowPluginBuildResolved = Parse-BoolLike -Value $env:NOVOVM_EVM_PLUGIN_ALLOW_BUILD -Default $allowPluginBuildResolved
+}
+
+$resolvedPluginPath = Resolve-EvmPluginPath -RepoRootValue $RepoRoot -PluginPathText $PluginPath -AllowBuild $allowPluginBuildResolved
 if (-not $resolvedPluginPath) {
-    throw "unable to resolve EVM plugin path; pass -PluginPath"
+    $buildHint = if ($allowPluginBuildResolved) {
+        "auto-build enabled but plugin source was unavailable"
+    } else {
+        "auto-build disabled"
+    }
+    throw "unable to resolve EVM plugin path; pass -PluginPath (or NOVOVM_EVM_PLUGIN_PATH/NOVOVM_ADAPTER_PLUGIN_PATH). $buildHint"
 }
 if (-not (Test-Path $resolvedPluginPath)) {
     throw "evm plugin path not found: $resolvedPluginPath"

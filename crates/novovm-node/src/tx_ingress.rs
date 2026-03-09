@@ -22,8 +22,10 @@ pub struct TxIngressRecord {
 
 #[derive(Debug)]
 pub struct ExecBatchBuffer {
-    _keys: Vec<[u8; 8]>,
-    _values: Vec<[u8; 8]>,
+    // Keep key/value payloads heap-pinned so ExecOpV2 raw pointers remain valid
+    // even if the backing Vec containers are moved.
+    _keys: Vec<Box<[u8; 8]>>,
+    _values: Vec<Box<[u8; 8]>>,
     pub ops: Vec<ExecOpV2>,
 }
 
@@ -197,21 +199,30 @@ pub fn build_exec_batch_from_records<F>(
 where
     F: FnMut(usize, &TxIngressRecord) -> u64,
 {
-    let mut keys = vec![[0u8; 8]; records.len()];
-    let mut values = vec![[0u8; 8]; records.len()];
+    let mut keys: Vec<Box<[u8; 8]>> = records
+        .iter()
+        .map(|rec| Box::new(rec.key.to_le_bytes()))
+        .collect();
+    let mut values: Vec<Box<[u8; 8]>> = records
+        .iter()
+        .map(|rec| Box::new(rec.value.to_le_bytes()))
+        .collect();
     let mut ops = Vec::with_capacity(records.len());
 
-    for (i, rec) in records.iter().enumerate() {
-        keys[i] = rec.key.to_le_bytes();
-        values[i] = rec.value.to_le_bytes();
+    for (i, ((key, value), rec)) in keys
+        .iter_mut()
+        .zip(values.iter_mut())
+        .zip(records.iter())
+        .enumerate()
+    {
         ops.push(ExecOpV2 {
             opcode: 2,
             flags: 0,
             reserved: 0,
-            key_ptr: keys[i].as_mut_ptr(),
-            key_len: keys[i].len() as u32,
-            value_ptr: values[i].as_mut_ptr(),
-            value_len: values[i].len() as u32,
+            key_ptr: key.as_mut_ptr(),
+            key_len: key.len() as u32,
+            value_ptr: value.as_mut_ptr(),
+            value_len: value.len() as u32,
             delta: 0,
             expect_version: u64::MAX,
             plan_id: plan_id_for(i, rec),
@@ -229,44 +240,10 @@ pub fn load_exec_batch_from_wire_file<F>(path: &Path, mut plan_id_for: F) -> Res
 where
     F: FnMut(usize, &TxIngressRecord) -> u64,
 {
-    let bytes = load_tx_wire_bytes(path)?;
-
-    let tx_count = bytes.len() / LOCAL_TX_WIRE_V1_BYTES;
-    let mut keys = vec![[0u8; 8]; tx_count];
-    let mut values = vec![[0u8; 8]; tx_count];
-    let mut ops = Vec::with_capacity(tx_count);
-
-    for (idx, chunk) in bytes.chunks_exact(LOCAL_TX_WIRE_V1_BYTES).enumerate() {
-        let wire = decode_tx_wire_v1(chunk)
-            .with_context(|| format!("decode tx wire failed at record={idx}"))?;
-        let rec = from_tx_wire_v1(&wire);
-        keys[idx] = rec.key.to_le_bytes();
-        values[idx] = rec.value.to_le_bytes();
-        ops.push(ExecOpV2 {
-            opcode: 2,
-            flags: 0,
-            reserved: 0,
-            key_ptr: keys[idx].as_mut_ptr(),
-            key_len: keys[idx].len() as u32,
-            value_ptr: values[idx].as_mut_ptr(),
-            value_len: values[idx].len() as u32,
-            delta: 0,
-            expect_version: u64::MAX,
-            plan_id: plan_id_for(idx, &rec),
-        });
-    }
-    if ops.is_empty() {
-        bail!(
-            "tx wire ingress decoded zero transactions: {}",
-            path.display()
-        );
-    }
-
-    Ok(ExecBatchBuffer {
-        _keys: keys,
-        _values: values,
-        ops,
-    })
+    let records = load_tx_records_from_wire_file(path)?;
+    Ok(build_exec_batch_from_records(&records, |idx, rec| {
+        plan_id_for(idx, rec)
+    }))
 }
 
 pub fn build_ops_wire_v1_from_records<F>(

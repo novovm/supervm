@@ -769,6 +769,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "novovm-adapter-evm-plugin"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bincode",
+ "novovm-adapter-api",
+ "novovm-adapter-evm-core",
+ "novovm-adapter-novovm",
+ "rocksdb",
+ "serde",
+ "serde_json",
+ "sha2",
+]
+
+[[package]]
 name = "novovm-adapter-novovm"
 version = "0.1.0"
 dependencies = [

@@ -3,9 +3,11 @@
 use anyhow::{bail, Context, Result};
 use novovm_adapter_api::{
     AccountPolicy, AccountRole, NonceScope, PersonaAddress, PersonaType, ProtocolKind,
-    RouteDecision, RouteRequest, UnifiedAccountRouter,
+    RouteDecision, RouteRequest, TxIR, TxType, UnifiedAccountRouter,
 };
-use novovm_adapter_evm_core::{translate_raw_evm_tx_fields_m0, tx_ir_from_raw_fields_m0};
+use novovm_adapter_evm_core::{
+    estimate_intrinsic_gas_m0, translate_raw_evm_tx_fields_m0, tx_ir_from_raw_fields_m0,
+};
 use novovm_exec::{OpsWireOp, OpsWireV1Builder};
 use rocksdb::{
     ColumnFamilyDescriptor, Options as RocksDbOptions, DB as RocksDb, DEFAULT_COLUMN_FAMILY_NAME,
@@ -640,12 +642,98 @@ fn run_gateway_method(
     params: &serde_json::Value,
     spool_dir: &Path,
 ) -> Result<(serde_json::Value, bool)> {
+    let eth_default_gas_price = u64_env("NOVOVM_GATEWAY_ETH_DEFAULT_GAS_PRICE", 1);
     match method {
         "eth_chainId" => Ok((
             serde_json::Value::String(format!("0x{:x}", eth_default_chain_id)),
             false,
         )),
         "net_version" => Ok((serde_json::Value::String(eth_default_chain_id.to_string()), false)),
+        "eth_gasPrice" => Ok((
+            serde_json::Value::String(format!("0x{:x}", eth_default_gas_price)),
+            false,
+        )),
+        "eth_estimateGas" => {
+            let chain_id =
+                param_as_u64_any_with_tx(params, &["chain_id", "chainId"]).unwrap_or(eth_default_chain_id);
+            let from = match extract_eth_persona_address_param(params) {
+                Some(raw_from) => decode_hex_bytes(&raw_from, "from")?,
+                None => vec![0u8; 20],
+            };
+            let to = match param_as_string_any_with_tx(params, &["to"]) {
+                Some(raw_to) => {
+                    let trimmed = raw_to.trim();
+                    if trimmed.is_empty() || trimmed.eq_ignore_ascii_case("0x") {
+                        None
+                    } else {
+                        Some(decode_hex_bytes(trimmed, "to")?)
+                    }
+                }
+                None => None,
+            };
+            let data = match param_as_string_any_with_tx(params, &["data", "input"]) {
+                Some(raw_data) => {
+                    let trimmed = raw_data.trim();
+                    if trimmed.is_empty() || trimmed.eq_ignore_ascii_case("0x") {
+                        Vec::new()
+                    } else {
+                        decode_hex_bytes(trimmed, "data")?
+                    }
+                }
+                None => Vec::new(),
+            };
+            let value = param_as_u128_any_with_tx(params, &["value"]).unwrap_or(0);
+            let tx_type = if to.is_some() {
+                if data.is_empty() {
+                    TxType::Transfer
+                } else {
+                    TxType::ContractCall
+                }
+            } else {
+                TxType::ContractDeploy
+            };
+            let tx_ir = TxIR {
+                hash: Vec::new(),
+                from,
+                to,
+                value,
+                gas_limit: u64::MAX,
+                gas_price: eth_default_gas_price,
+                nonce: 0,
+                data,
+                signature: Vec::new(),
+                chain_id,
+                tx_type,
+                source_chain: None,
+                target_chain: None,
+            };
+            let intrinsic = estimate_intrinsic_gas_m0(&tx_ir);
+            Ok((serde_json::Value::String(format!("0x{:x}", intrinsic)), false))
+        }
+        "eth_getCode" => {
+            let address_raw = extract_eth_persona_address_param(params)
+                .ok_or_else(|| anyhow::anyhow!("address is required for eth_getCode"))?;
+            let _address = decode_hex_bytes(&address_raw, "address")?;
+            // Boundary compatibility method: keep external JSON-RPC surface stable while
+            // internal execution remains binary pipeline only.
+            Ok((serde_json::Value::String("0x".to_string()), false))
+        }
+        "eth_getStorageAt" => {
+            let address_raw = extract_eth_persona_address_param(params)
+                .ok_or_else(|| anyhow::anyhow!("address is required for eth_getStorageAt"))?;
+            let _address = decode_hex_bytes(&address_raw, "address")?;
+            let slot_raw = extract_eth_storage_slot_param(params)
+                .ok_or_else(|| anyhow::anyhow!("slot/position is required for eth_getStorageAt"))?;
+            if parse_u128_hex_or_dec(&slot_raw).is_none() {
+                bail!("invalid slot/position for eth_getStorageAt: {}", slot_raw);
+            }
+            Ok((
+                serde_json::Value::String(
+                    "0x0000000000000000000000000000000000000000000000000000000000000000".to_string(),
+                ),
+                false,
+            ))
+        }
         "ua_createUca" => {
             let uca_id = param_as_string(params, "uca_id")
                 .ok_or_else(|| anyhow::anyhow!("uca_id is required for ua_createUca"))?;
@@ -1259,7 +1347,7 @@ fn run_gateway_method(
             ))
         }
         _ => bail!(
-            "unknown method: {}; valid: ua_createUca|ua_rotatePrimaryKey|ua_bindPersona|ua_revokePersona|ua_getBindingOwner|ua_setPolicy|eth_chainId|net_version|eth_sendRawTransaction|eth_sendTransaction|eth_getTransactionCount|eth_getTransactionByHash|eth_getTransactionReceipt|web30_sendRawTransaction|web30_sendTransaction",
+            "unknown method: {}; valid: ua_createUca|ua_rotatePrimaryKey|ua_bindPersona|ua_revokePersona|ua_getBindingOwner|ua_setPolicy|eth_chainId|net_version|eth_gasPrice|eth_estimateGas|eth_getCode|eth_getStorageAt|eth_sendRawTransaction|eth_sendTransaction|eth_getTransactionCount|eth_getTransactionByHash|eth_getTransactionReceipt|web30_sendRawTransaction|web30_sendTransaction",
             method
         ),
     }
@@ -1433,6 +1521,27 @@ fn gateway_error_code_for_method(method: &str, message: &str) -> i64 {
             || lower.contains("uca_id mismatch")
             || lower.contains("nonce")
             || lower.contains("chain_id"))
+    {
+        return -32033;
+    }
+    if method == "eth_estimateGas"
+        && (lower.contains("from")
+            || lower.contains("to")
+            || lower.contains("data")
+            || lower.contains("input")
+            || lower.contains("hex")
+            || lower.contains("chain_id"))
+    {
+        return -32033;
+    }
+    if method == "eth_getCode" && (lower.contains("address") || lower.contains("hex")) {
+        return -32033;
+    }
+    if method == "eth_getStorageAt"
+        && (lower.contains("address")
+            || lower.contains("slot")
+            || lower.contains("position")
+            || lower.contains("hex"))
     {
         return -32033;
     }
@@ -1945,6 +2054,42 @@ fn extract_eth_persona_address_param(params: &serde_json::Value) -> Option<Strin
             None => None,
         },
         _ => None,
+    }
+}
+
+fn extract_eth_storage_slot_param(params: &serde_json::Value) -> Option<String> {
+    const CANDIDATE_KEYS: &[&str] = &["position", "slot", "index", "storage_slot", "storageSlot"];
+    match params {
+        serde_json::Value::Object(map) => pick_first_nonempty_string(map, CANDIDATE_KEYS),
+        serde_json::Value::Array(arr) => match arr.get(1) {
+            Some(serde_json::Value::Object(map)) => pick_first_nonempty_string(map, CANDIDATE_KEYS),
+            Some(value) => value_to_string(value).and_then(|s| {
+                let trimmed = s.trim();
+                if trimmed.is_empty() {
+                    None
+                } else {
+                    Some(trimmed.to_string())
+                }
+            }),
+            None => None,
+        },
+        _ => None,
+    }
+}
+
+fn parse_u128_hex_or_dec(raw: &str) -> Option<u128> {
+    let trimmed = raw.trim();
+    if let Some(hex) = trimmed
+        .strip_prefix("0x")
+        .or_else(|| trimmed.strip_prefix("0X"))
+    {
+        if hex.is_empty() {
+            Some(0)
+        } else {
+            u128::from_str_radix(hex, 16).ok()
+        }
+    } else {
+        trimmed.parse::<u128>().ok()
     }
 }
 

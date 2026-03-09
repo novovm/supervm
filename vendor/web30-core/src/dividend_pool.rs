@@ -138,6 +138,8 @@ pub struct DividendPoolImpl {
     account_balances: HashMap<Address, u128>,
     /// Reentrancy guard for claim path
     claim_in_progress: bool,
+    /// Optional deterministic day override (for consensus/runtime wiring).
+    current_day_override: Option<u64>,
 }
 
 impl DividendPoolImpl {
@@ -152,6 +154,7 @@ impl DividendPoolImpl {
             min_balance,
             account_balances: HashMap::new(),
             claim_in_progress: false,
+            current_day_override: None,
         }
     }
 
@@ -177,26 +180,38 @@ impl DividendPoolImpl {
         self.account_balances.clear();
     }
 
-    /// Internal helper: get current timestamp (seconds)
-    fn now(&self) -> u64 {
-        // In production, fetch from VM/Runtime block timestamp
-        // Example only
+    /// Override day source for deterministic runtime/consensus execution.
+    pub fn set_current_day_override(&mut self, day: u64) {
+        self.current_day_override = Some(day);
+    }
+
+    /// Clear deterministic day override and fallback to system clock day.
+    pub fn clear_current_day_override(&mut self) {
+        self.current_day_override = None;
+    }
+
+    fn system_day() -> u64 {
         use std::time::{SystemTime, UNIX_EPOCH};
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs()
+        match SystemTime::now().duration_since(UNIX_EPOCH) {
+            Ok(duration) => duration.as_secs() / 86400,
+            Err(_) => 0,
+        }
     }
 
     fn checked_add_u128(lhs: u128, rhs: u128, ctx: &str) -> Result<u128> {
         lhs.checked_add(rhs)
             .ok_or_else(|| anyhow!("overflow in {}", ctx))
     }
+
+    fn checked_mul_u128(lhs: u128, rhs: u128, ctx: &str) -> Result<u128> {
+        lhs.checked_mul(rhs)
+            .ok_or_else(|| anyhow!("overflow in {}", ctx))
+    }
 }
 
 impl DividendPool for DividendPoolImpl {
     fn current_day(&self) -> u64 {
-        self.now() / 86400
+        self.current_day_override.unwrap_or_else(Self::system_day)
     }
 
     fn take_daily_snapshot(&mut self) -> Result<DividendEvent> {
@@ -253,8 +268,12 @@ impl DividendPool for DividendPoolImpl {
                 if let Some(&user_balance) = snapshot.balances.get(user) {
                     if user_balance >= self.min_balance {
                         // Compute daily share: (user_balance / total) × income
-                        let user_share =
-                            (user_balance * snapshot.pool_income) / snapshot.total_circulating;
+                        let share_numerator = Self::checked_mul_u128(
+                            user_balance,
+                            snapshot.pool_income,
+                            "claimable numerator",
+                        )?;
+                        let user_share = share_numerator / snapshot.total_circulating;
                         total_claimable =
                             Self::checked_add_u128(total_claimable, user_share, "claimable sum")?;
                         days_count += 1;
@@ -296,7 +315,8 @@ impl DividendPool for DividendPoolImpl {
                 claimer: *user,
                 day: today,
                 amount: claimable,
-                timestamp: self.now(),
+                // Use day-derived timestamp to keep claim records deterministic.
+                timestamp: today.saturating_mul(86400),
             });
 
             // In production, call MainnetToken.transfer to pay user.

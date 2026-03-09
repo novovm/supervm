@@ -1,7 +1,7 @@
 //! 隐私转账功能
 
 use crate::types::*;
-use anyhow::Result;
+use anyhow::{bail, Result};
 use sha2::{Digest, Sha256};
 use std::env;
 
@@ -115,37 +115,8 @@ pub fn generate_ring_signature(
     message: &[u8],
     _signer_index: usize,
 ) -> Result<RingSignature> {
-    // 简化实现
-    let key_image = {
-        let mut hasher = Sha256::new();
-        hasher.update(private_key);
-        hasher.finalize().into()
-    };
-
-    let c: Vec<[u8; 32]> = ring_members
-        .iter()
-        .map(|_| {
-            let mut h = Sha256::new();
-            h.update(message);
-            h.finalize().into()
-        })
-        .collect();
-
-    let r: Vec<[u8; 32]> = ring_members
-        .iter()
-        .map(|_| {
-            let mut h = Sha256::new();
-            h.update(private_key);
-            h.finalize().into()
-        })
-        .collect();
-
-    Ok(RingSignature {
-        ring_members: ring_members.to_vec(),
-        key_image,
-        c,
-        r,
-    })
+    let _ = (private_key, ring_members, message);
+    bail!("ring signature generation backend is unavailable in this build");
 }
 
 #[cfg(test)]
@@ -164,19 +135,29 @@ mod tests {
 
     #[test]
     fn test_ring_signature() {
-        let private_key = [42u8; 32];
         let ring_members = vec![
             Address::from_bytes([1u8; 32]),
             Address::from_bytes([2u8; 32]),
             Address::from_bytes([3u8; 32]),
         ];
         let message = b"test message";
-
-        let signature = generate_ring_signature(&private_key, &ring_members, message, 1)
-            .expect("Failed to generate signature");
+        let signature = RingSignature {
+            ring_members: ring_members.clone(),
+            key_image: [0u8; 32],
+            c: vec![[0u8; 32]; ring_members.len()],
+            r: vec![[0u8; 32]; ring_members.len()],
+        };
 
         // 默认使用 AOEM FFI 验签；若 AOEM 未配置，则 fail-closed。
         let is_valid = verify_ring_signature(&signature, message, 1000).expect("Failed to verify");
         assert!(!is_valid);
+    }
+
+    #[test]
+    fn test_ring_signature_generation_is_disabled_without_backend() {
+        let private_key = [42u8; 32];
+        let ring_members = vec![Address::from_bytes([1u8; 32])];
+        let message = b"test message";
+        assert!(generate_ring_signature(&private_key, &ring_members, message, 0).is_err());
     }
 }

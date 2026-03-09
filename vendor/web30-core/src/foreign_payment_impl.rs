@@ -12,26 +12,12 @@ use std::collections::HashMap;
 use anyhow::Result;
 
 use crate::{
-    foreign_payment::{ForeignPayment, ForeignPaymentProcessor, ForeignPaymentStats, MinerPayment},
+    foreign_payment::{
+        ForeignPayment, ForeignPaymentProcessor, ForeignPaymentStats, MinerPayment,
+        FOREIGN_RATE_SCALE,
+    },
     types::Address,
 };
-
-const FOREIGN_RATE_SCALE: u128 = 1_000_000;
-
-fn scaled_to_rate_f64(rate_scaled: u128) -> f64 {
-    rate_scaled as f64 / FOREIGN_RATE_SCALE as f64
-}
-
-fn rate_to_scaled_f64(rate: f64) -> Result<u128> {
-    if !rate.is_finite() || rate <= 0.0 {
-        return Err(anyhow::anyhow!("invalid exchange rate: {}", rate));
-    }
-    let scaled = (rate * FOREIGN_RATE_SCALE as f64).round();
-    if scaled <= 0.0 || scaled > u128::MAX as f64 {
-        return Err(anyhow::anyhow!("invalid scaled exchange rate: {}", scaled));
-    }
-    Ok(scaled as u128)
-}
 
 fn parse_rate_str_to_scaled(raw: &str) -> Result<u128> {
     let value = raw.trim();
@@ -97,12 +83,6 @@ pub trait ExchangeRateProvider {
     /// Query foreign → Token rate (scaled integer, deterministic).
     /// Returns: (tokens_per_foreign_unit_scaled, slippage_bps)
     fn get_exchange_rate_scaled(&self, currency: &str) -> Result<(u128, u16)>;
-
-    /// Compatibility/display API.
-    fn get_exchange_rate(&self, currency: &str) -> Result<(f64, u16)> {
-        let (rate_scaled, slippage_bps) = self.get_exchange_rate_scaled(currency)?;
-        Ok((scaled_to_rate_f64(rate_scaled), slippage_bps))
-    }
 }
 
 /// 可配置汇率提供器（主链路默认使用）
@@ -146,17 +126,22 @@ impl ConfigurableExchangeRateProvider {
         Ok(())
     }
 
-    pub fn set_rate_with_slippage(
+    pub fn set_rate_scaled_with_slippage(
         &mut self,
         currency: &str,
-        rate: f64,
+        rate_scaled: u128,
         slippage_bp: u16,
     ) -> Result<()> {
         let key = currency.trim().to_ascii_uppercase();
         if key.is_empty() {
             return Err(anyhow::anyhow!("currency cannot be empty"));
         }
-        let rate_scaled = rate_to_scaled_f64(rate)?;
+        if rate_scaled == 0 {
+            return Err(anyhow::anyhow!(
+                "invalid exchange rate scaled: {}",
+                rate_scaled
+            ));
+        }
         if slippage_bp > 10_000 {
             return Err(anyhow::anyhow!(
                 "invalid slippage_bps for {}: {}",
@@ -169,10 +154,10 @@ impl ConfigurableExchangeRateProvider {
         Ok(())
     }
 
-    pub fn set_rate(&mut self, currency: &str, rate: f64) -> Result<()> {
+    pub fn set_rate_scaled(&mut self, currency: &str, rate_scaled: u128) -> Result<()> {
         let key = currency.trim().to_ascii_uppercase();
         let slippage = self.slippage_bps.get(&key).copied().unwrap_or(50);
-        self.set_rate_with_slippage(currency, rate, slippage)
+        self.set_rate_scaled_with_slippage(currency, rate_scaled, slippage)
     }
 
     pub fn apply_quote_spec(&mut self, spec: &str) -> Result<()> {
@@ -264,19 +249,26 @@ impl MockExchangeRateProvider {
         }
     }
 
-    pub fn set_rate(&mut self, currency: &str, rate: f64) {
-        if let Ok(rate_scaled) = rate_to_scaled_f64(rate) {
-            self.rates_scaled
-                .insert(currency.to_ascii_uppercase(), rate_scaled);
+    pub fn set_rate_scaled(&mut self, currency: &str, rate_scaled: u128) {
+        if rate_scaled == 0 {
+            return;
         }
+        self.rates_scaled
+            .insert(currency.to_ascii_uppercase(), rate_scaled);
     }
 
-    pub fn set_rate_with_slippage(&mut self, currency: &str, rate: f64, slippage_bp: u16) {
-        let key = currency.to_ascii_uppercase();
-        if let Ok(rate_scaled) = rate_to_scaled_f64(rate) {
-            self.rates_scaled.insert(key.clone(), rate_scaled);
-            self.slippage_bps.insert(key, slippage_bp);
+    pub fn set_rate_scaled_with_slippage(
+        &mut self,
+        currency: &str,
+        rate_scaled: u128,
+        slippage_bp: u16,
+    ) {
+        if rate_scaled == 0 {
+            return;
         }
+        let key = currency.to_ascii_uppercase();
+        self.rates_scaled.insert(key.clone(), rate_scaled);
+        self.slippage_bps.insert(key, slippage_bp);
     }
 }
 
@@ -379,13 +371,13 @@ impl<R: ExchangeRateProvider> ForeignPaymentProcessor for ForeignPaymentProcesso
             .map_err(|e| e.to_string())?;
 
         // 3. Compute equivalent Token amount
-        let (token_amount, exchange_rate) = self
+        let (token_amount, exchange_rate_scaled) = self
             .calculate_token_equivalent(&payment.currency, payment.amount)
             .map_err(|e| e.to_string())?;
 
         let payment_record = self.pay_miner_in_token(miner, token_amount, payment)?;
         let payment_record = MinerPayment {
-            exchange_rate,
+            exchange_rate_scaled,
             ..payment_record
         };
 
@@ -399,7 +391,7 @@ impl<R: ExchangeRateProvider> ForeignPaymentProcessor for ForeignPaymentProcesso
         &self,
         currency: &str,
         foreign_amount: u128,
-    ) -> Result<(u128, f64), String> {
+    ) -> Result<(u128, u128), String> {
         let (rate_scaled, _slippage) = self
             .rate_provider
             .get_exchange_rate_scaled(currency)
@@ -409,7 +401,7 @@ impl<R: ExchangeRateProvider> ForeignPaymentProcessor for ForeignPaymentProcesso
             .saturating_mul(rate_scaled)
             .saturating_div(Self::RATE_SCALE);
 
-        Ok((token_amount, scaled_to_rate_f64(rate_scaled)))
+        Ok((token_amount, rate_scaled))
     }
 
     fn collect_to_reserve(&mut self, payment: ForeignPayment) -> Result<(), String> {
@@ -447,9 +439,9 @@ impl<R: ExchangeRateProvider> ForeignPaymentProcessor for ForeignPaymentProcesso
         // 2. Call MainnetToken::transfer or mint
         // 3. Record payment event
 
-        let (exchange_rate, _slippage) = self
+        let (exchange_rate_scaled, _slippage) = self
             .rate_provider
-            .get_exchange_rate(&payment_info.currency)
+            .get_exchange_rate_scaled(&payment_info.currency)
             .map_err(|e| e.to_string())?;
 
         Ok(MinerPayment {
@@ -457,7 +449,7 @@ impl<R: ExchangeRateProvider> ForeignPaymentProcessor for ForeignPaymentProcesso
             token_amount: amount,
             equivalent_foreign: payment_info.amount,
             foreign_currency: payment_info.currency,
-            exchange_rate,
+            exchange_rate_scaled,
             timestamp: self.now(),
         })
     }
@@ -470,7 +462,8 @@ impl<R: ExchangeRateProvider> ForeignPaymentProcessor for ForeignPaymentProcesso
         min_receive: u128,
     ) -> Result<u128, String> {
         // 1. Query rate
-        let (swappable_amount, _rate) = self.get_swappable_amount(token_amount, target_currency)?;
+        let (swappable_amount, _rate_scaled) =
+            self.get_swappable_amount(token_amount, target_currency)?;
 
         // 2. Slippage protection
         if swappable_amount < min_receive {
@@ -520,7 +513,7 @@ impl<R: ExchangeRateProvider> ForeignPaymentProcessor for ForeignPaymentProcesso
         &self,
         token_amount: u128,
         target_currency: &str,
-    ) -> Result<(u128, f64), String> {
+    ) -> Result<(u128, u128), String> {
         let (rate_scaled, _slippage) = self
             .rate_provider
             .get_exchange_rate_scaled(target_currency)
@@ -531,7 +524,7 @@ impl<R: ExchangeRateProvider> ForeignPaymentProcessor for ForeignPaymentProcesso
         }
         let foreign_amount = token_amount.saturating_mul(Self::RATE_SCALE) / rate_scaled;
 
-        Ok((foreign_amount, scaled_to_rate_f64(rate_scaled)))
+        Ok((foreign_amount, rate_scaled))
     }
 }
 
@@ -572,16 +565,20 @@ mod tests {
         provider
             .apply_quote_spec("BTC:120000:90,ETH:6000:70,USDT:9.8:20")
             .expect("apply spec");
-        let (btc_rate, btc_slippage) = provider.get_exchange_rate("BTC").expect("btc quote");
-        let (eth_rate, eth_slippage) = provider.get_exchange_rate("ETH").expect("eth quote");
-        let (usdt_rate, usdt_slippage) = provider.get_exchange_rate("USDT").expect("usdt quote");
+        let (btc_rate_scaled, btc_slippage) =
+            provider.get_exchange_rate_scaled("BTC").expect("btc quote");
+        let (eth_rate_scaled, eth_slippage) =
+            provider.get_exchange_rate_scaled("ETH").expect("eth quote");
+        let (usdt_rate_scaled, usdt_slippage) = provider
+            .get_exchange_rate_scaled("USDT")
+            .expect("usdt quote");
 
         assert_eq!(provider.source_name(), "configured_file_v1");
-        assert!((btc_rate - 120_000.0).abs() < 1e-9);
+        assert_eq!(btc_rate_scaled, 120_000 * FOREIGN_RATE_SCALE);
         assert_eq!(btc_slippage, 90);
-        assert!((eth_rate - 6_000.0).abs() < 1e-9);
+        assert_eq!(eth_rate_scaled, 6_000 * FOREIGN_RATE_SCALE);
         assert_eq!(eth_slippage, 70);
-        assert!((usdt_rate - 9.8).abs() < 1e-9);
+        assert_eq!(usdt_rate_scaled, 9_800_000);
         assert_eq!(usdt_slippage, 20);
     }
 
@@ -626,7 +623,7 @@ mod tests {
 
         // deterministic_v1: 1 USDT = 10 token
         assert_eq!(result.token_amount, 20_000_000);
-        assert!((result.exchange_rate - 10.0).abs() < 1e-9);
+        assert_eq!(result.exchange_rate_scaled, 10 * FOREIGN_RATE_SCALE);
     }
 
     #[test]
@@ -648,7 +645,7 @@ mod tests {
         // 1 BTC = 100,000 Token (按占位汇率)
         assert_eq!(result.token_amount, 10_000_000_000_000);
         assert_eq!(result.foreign_currency, "BTC");
-        assert_eq!(result.exchange_rate, 100_000.0);
+        assert_eq!(result.exchange_rate_scaled, 100_000 * FOREIGN_RATE_SCALE);
     }
 
     #[test]
@@ -689,12 +686,12 @@ mod tests {
         let processor = build_processor();
 
         // 1 USDT = 10 Token
-        let (token_amount, rate) = processor
+        let (token_amount, rate_scaled) = processor
             .calculate_token_equivalent("USDT", 1_000_000) // 1 USDT (6 decimals)
             .expect("calculate");
 
         assert_eq!(token_amount, 10_000_000);
-        assert_eq!(rate, 10.0);
+        assert_eq!(rate_scaled, 10 * FOREIGN_RATE_SCALE);
     }
 
     #[test]
@@ -802,8 +799,8 @@ mod tests {
             .expect("swap");
 
         // 储备率 = 8 / 10 = 80%
-        let ratio = processor.stats().calculate_reserve_ratio("ETH");
-        assert!((ratio - 0.8).abs() < 0.01);
+        let ratio_scaled = processor.stats().calculate_reserve_ratio_scaled("ETH");
+        assert_eq!(ratio_scaled, 800_000);
     }
 
     #[test]
@@ -825,7 +822,7 @@ mod tests {
             .expect("swap");
 
         // 持有倾向 = 1 - (20 / 100) = 80%
-        let preference = processor.stats().calculate_hold_preference("USDT");
-        assert!((preference - 0.8).abs() < 0.01);
+        let preference_scaled = processor.stats().calculate_hold_preference_scaled("USDT");
+        assert_eq!(preference_scaled, 800_000);
     }
 }

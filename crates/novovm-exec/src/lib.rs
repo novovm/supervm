@@ -110,6 +110,10 @@ impl AoemRuntimeConfig {
             .or_else(|_| std::env::var("AOEM_FFI_PLUGIN_DIR"))
             .ok()
             .map(PathBuf::from)
+            .or_else(|| {
+                let dirs = plugin_dirs_from_env_list();
+                pick_plugin_dir_from_candidates(variant, &dirs)
+            })
             .or_else(|| default_plugin_dir(&aoem_root, variant));
 
         let persist_backend = std::env::var("NOVOVM_AOEM_PERSIST_BACKEND")
@@ -673,6 +677,85 @@ fn variant_bin_dir(root: &Path, variant: AoemRuntimeVariant) -> PathBuf {
     }
 }
 
+fn split_plugin_dir_list(raw: &str) -> Vec<PathBuf> {
+    raw.split([';', ','])
+        .filter_map(|item| {
+            let trimmed = item.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(PathBuf::from(trimmed))
+            }
+        })
+        .collect()
+}
+
+fn plugin_dirs_from_env_list() -> Vec<PathBuf> {
+    std::env::var("NOVOVM_AOEM_PLUGIN_DIRS")
+        .or_else(|_| std::env::var("AOEM_FFI_PLUGIN_DIRS"))
+        .map(|raw| split_plugin_dir_list(&raw))
+        .unwrap_or_default()
+}
+
+fn plugin_dir_match_score(dir: &Path, plugin_names: &[&str]) -> Option<(usize, u128)> {
+    if plugin_names.is_empty() {
+        return None;
+    }
+    let mut matched = 0usize;
+    let mut latest_mtime_ns = 0u128;
+    for name in plugin_names {
+        let path = dir.join(name);
+        if !path.exists() {
+            continue;
+        }
+        matched = matched.saturating_add(1);
+        if let Ok(meta) = std::fs::metadata(&path) {
+            if let Ok(modified) = meta.modified() {
+                if let Ok(delta) = modified.duration_since(std::time::UNIX_EPOCH) {
+                    let ts = delta.as_nanos();
+                    if ts > latest_mtime_ns {
+                        latest_mtime_ns = ts;
+                    }
+                }
+            }
+        }
+    }
+    if matched == 0 {
+        None
+    } else {
+        Some((matched, latest_mtime_ns))
+    }
+}
+
+fn pick_plugin_dir_from_candidates(
+    variant: AoemRuntimeVariant,
+    candidates: &[PathBuf],
+) -> Option<PathBuf> {
+    let plugin_names = plugin_names_for_variant(variant);
+    if plugin_names.is_empty() {
+        return None;
+    }
+    let mut best: Option<(PathBuf, usize, u128)> = None;
+    for dir in candidates {
+        let Some((matched, latest_mtime_ns)) = plugin_dir_match_score(dir, plugin_names) else {
+            continue;
+        };
+        match &best {
+            None => {
+                best = Some((dir.clone(), matched, latest_mtime_ns));
+            }
+            Some((_, best_matched, best_mtime)) => {
+                if matched > *best_matched
+                    || (matched == *best_matched && latest_mtime_ns > *best_mtime)
+                {
+                    best = Some((dir.clone(), matched, latest_mtime_ns));
+                }
+            }
+        }
+    }
+    best.map(|(path, _, _)| path)
+}
+
 fn plugin_names_for_variant(variant: AoemRuntimeVariant) -> &'static [&'static str] {
     match variant {
         AoemRuntimeVariant::Core => &[],
@@ -701,18 +784,15 @@ fn default_plugin_dir(root: &Path, variant: AoemRuntimeVariant) -> Option<PathBu
     if variant == AoemRuntimeVariant::Core {
         return None;
     }
-    let plugin_names = plugin_names_for_variant(variant);
-    if plugin_names.is_empty() {
-        return None;
-    }
-    let candidates = [
+    let variant_name = variant.as_str();
+    let candidates = vec![
+        root.join("plugins").join(variant_name),
         root.join("plugins"),
+        root.join("bin").join("plugins").join(variant_name),
         root.join("bin").join("plugins"),
         root.join("bin"),
     ];
-    candidates
-        .into_iter()
-        .find(|dir| plugin_names.iter().any(|name| dir.join(name).exists()))
+    pick_plugin_dir_from_candidates(variant, &candidates)
 }
 
 fn default_dll_path(root: &Path, _variant: AoemRuntimeVariant) -> PathBuf {
@@ -862,12 +942,15 @@ fn _assert_abi_struct_layout(_v: AoemCreateOptionsV1) {}
 #[cfg(test)]
 mod tests {
     use super::{
-        default_dll_path, dynlib_names_by_preference, variant_bin_dir, AoemCapabilityContract,
-        AoemRuntimeVariant,
+        default_dll_path, default_plugin_dir, dynlib_names_by_preference,
+        pick_plugin_dir_from_candidates, plugin_names_for_variant, split_plugin_dir_list,
+        variant_bin_dir, AoemCapabilityContract, AoemRuntimeVariant,
     };
     use serde_json::json;
     use std::fs;
     use std::path::PathBuf;
+    use std::thread;
+    use std::time::Duration;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     fn temp_dir(name: &str) -> PathBuf {
@@ -1022,6 +1105,55 @@ mod tests {
             assert_eq!(selected, expected);
             assert_ne!(selected, dll);
         }
+
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn split_plugin_dir_list_parses_semicolon_and_comma() {
+        let dirs = split_plugin_dir_list("C:\\p1; C:\\p2, C:\\p3 ,, ;");
+        assert_eq!(dirs.len(), 3);
+        assert_eq!(dirs[0], PathBuf::from("C:\\p1"));
+        assert_eq!(dirs[1], PathBuf::from("C:\\p2"));
+        assert_eq!(dirs[2], PathBuf::from("C:\\p3"));
+    }
+
+    #[test]
+    fn pick_plugin_dir_prefers_newest_when_match_count_equal() {
+        let root = temp_dir("plugin-dir-pick");
+        let d1 = root.join("plugins_a");
+        let d2 = root.join("plugins_b");
+        fs::create_dir_all(&d1).expect("create d1");
+        fs::create_dir_all(&d2).expect("create d2");
+        let name = plugin_names_for_variant(AoemRuntimeVariant::Persist)[0];
+        fs::write(d1.join(name), b"old").expect("write d1 plugin");
+        thread::sleep(Duration::from_millis(5));
+        fs::write(d2.join(name), b"new").expect("write d2 plugin");
+
+        let picked =
+            pick_plugin_dir_from_candidates(AoemRuntimeVariant::Persist, &[d1.clone(), d2.clone()])
+                .expect("pick plugin dir");
+        assert_eq!(picked, d2);
+
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn default_plugin_dir_prefers_variant_subdir() {
+        let root = temp_dir("plugin-default-variant-subdir");
+        let variant_subdir = root
+            .join("plugins")
+            .join(AoemRuntimeVariant::Persist.as_str());
+        fs::create_dir_all(&variant_subdir).expect("create variant subdir");
+        let fallback_subdir = root.join("plugins");
+        fs::create_dir_all(&fallback_subdir).expect("create fallback subdir");
+        let name = plugin_names_for_variant(AoemRuntimeVariant::Persist)[0];
+        fs::write(fallback_subdir.join(name), b"fallback").expect("write fallback plugin");
+        thread::sleep(Duration::from_millis(5));
+        fs::write(variant_subdir.join(name), b"variant").expect("write variant plugin");
+
+        let picked = default_plugin_dir(&root, AoemRuntimeVariant::Persist).expect("pick default");
+        assert_eq!(picked, variant_subdir);
 
         fs::remove_dir_all(root).expect("cleanup");
     }

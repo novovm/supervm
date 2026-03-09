@@ -7,6 +7,10 @@
 /// 4. 矿主可选择持有或通过AMM兑换外币
 use crate::types::Address;
 
+/// Fixed-point scale used for foreign exchange rates and ratio metrics.
+/// 1.0 == 1_000_000
+pub const FOREIGN_RATE_SCALE: u128 = 1_000_000;
+
 /// 外币支付信息
 #[derive(Debug, Clone)]
 pub struct ForeignPayment {
@@ -44,8 +48,8 @@ pub struct MinerPayment {
     pub equivalent_foreign: u128,
     /// 外币币种
     pub foreign_currency: String,
-    /// 支付时的汇率(Token/ForeignCurrency)
-    pub exchange_rate: f64,
+    /// 支付时的汇率(Token/ForeignCurrency, fixed-point scaled by FOREIGN_RATE_SCALE)
+    pub exchange_rate_scaled: u128,
     /// 支付时间戳
     pub timestamp: u64,
 }
@@ -80,12 +84,12 @@ pub trait ForeignPaymentProcessor {
     /// - currency: 外币币种
     /// - foreign_amount: 外币金额
     ///
-    /// 返回: (Token数量, 当前汇率)
+    /// 返回: (Token数量, 当前汇率(定点))
     fn calculate_token_equivalent(
         &self,
         currency: &str,
         foreign_amount: u128,
-    ) -> Result<(u128, f64), String>;
+    ) -> Result<(u128, u128), String>;
 
     /// 归集外币到储备池
     ///
@@ -128,7 +132,7 @@ pub trait ForeignPaymentProcessor {
         &self,
         token_amount: u128,
         target_currency: &str,
-    ) -> Result<(u128, f64), String>; // (可兑换外币数量, 当前汇率)
+    ) -> Result<(u128, u128), String>; // (可兑换外币数量, 当前汇率(定点))
 }
 
 /// 外币支付统计
@@ -147,33 +151,45 @@ pub struct ForeignPaymentStats {
 impl ForeignPaymentStats {
     /// 计算储备利用率
     ///
-    /// reserve_ratio = current_reserves / total_collected
+    /// reserve_ratio_scaled = current_reserves / total_collected (scaled by FOREIGN_RATE_SCALE)
     /// 越高说明矿主更倾向持有Token(看好生态)
-    pub fn calculate_reserve_ratio(&self, currency: &str) -> f64 {
+    pub fn calculate_reserve_ratio_scaled(&self, currency: &str) -> u128 {
         let total = self.total_collected.get(currency).unwrap_or(&0);
         let current = self.current_reserves.get(currency).unwrap_or(&0);
 
         if *total == 0 {
-            return 0.0;
+            return 0;
         }
 
-        (*current as f64) / (*total as f64)
+        scale_ratio(*current, *total)
     }
 
     /// 计算Token持有倾向
     ///
-    /// hold_preference = 1.0 - (total_swapped / total_collected)
+    /// hold_preference_scaled = 1.0 - (total_swapped / total_collected), scaled by FOREIGN_RATE_SCALE
     /// 越高说明矿主更愿意持有Token而非兑换
-    pub fn calculate_hold_preference(&self, currency: &str) -> f64 {
+    pub fn calculate_hold_preference_scaled(&self, currency: &str) -> u128 {
         let total = self.total_collected.get(currency).unwrap_or(&0);
         let swapped = self.total_swapped_out.get(currency).unwrap_or(&0);
 
         if *total == 0 {
-            return 0.0;
+            return 0;
         }
 
-        1.0 - ((*swapped as f64) / (*total as f64))
+        let swapped_ratio = scale_ratio(*swapped, *total).min(FOREIGN_RATE_SCALE);
+        FOREIGN_RATE_SCALE.saturating_sub(swapped_ratio)
     }
+}
+
+fn scale_ratio(numerator: u128, denominator: u128) -> u128 {
+    if denominator == 0 {
+        return 0;
+    }
+    let whole = numerator / denominator;
+    let rem = numerator % denominator;
+    let whole_scaled = whole.saturating_mul(FOREIGN_RATE_SCALE);
+    let rem_scaled = rem.saturating_mul(FOREIGN_RATE_SCALE) / denominator;
+    whole_scaled.saturating_add(rem_scaled)
 }
 
 #[cfg(test)]
@@ -186,8 +202,8 @@ mod tests {
         stats.total_collected.insert("BTC".to_string(), 1000000); // 0.01 BTC
         stats.current_reserves.insert("BTC".to_string(), 800000); // 0.008 BTC
 
-        let ratio = stats.calculate_reserve_ratio("BTC");
-        assert_eq!(ratio, 0.8); // 80%储备率
+        let ratio_scaled = stats.calculate_reserve_ratio_scaled("BTC");
+        assert_eq!(ratio_scaled, 800_000); // 80%储备率
     }
 
     #[test]
@@ -200,7 +216,7 @@ mod tests {
             .total_swapped_out
             .insert("ETH".to_string(), 2_000_000_000_000_000_000); // 2 ETH
 
-        let preference = stats.calculate_hold_preference("ETH");
-        assert_eq!(preference, 0.8); // 80%矿主选择持有
+        let preference_scaled = stats.calculate_hold_preference_scaled("ETH");
+        assert_eq!(preference_scaled, 800_000); // 80%矿主选择持有
     }
 }

@@ -157,12 +157,25 @@ impl LiquidityPool {
         Ok(numerator / denominator + 1) // +1 round up
     }
 
-    /// Current price (B/A)
-    pub fn price(&self) -> f64 {
+    /// Current price as ratio (B/A), integer deterministic.
+    pub fn price_ratio(&self) -> Option<(u128, u128)> {
         if self.reserve_a == 0 {
-            return 0.0;
+            return None;
         }
-        self.reserve_b as f64 / self.reserve_a as f64
+        Some((self.reserve_b, self.reserve_a))
+    }
+
+    /// Current price scaled by caller-provided factor.
+    /// Example: scale=1_000_000 => 1.0 is represented as 1_000_000.
+    pub fn price_scaled(&self, scale: u128) -> Result<u128> {
+        if scale == 0 {
+            bail!("price scale must be > 0");
+        }
+        let (numerator, denominator) = self
+            .price_ratio()
+            .ok_or_else(|| anyhow!("price unavailable: reserve_a is zero"))?;
+        let scaled_numerator = checked_mul(numerator, scale, "price scaled numerator")?;
+        Ok(scaled_numerator / denominator)
     }
 
     /// Add liquidity
@@ -579,13 +592,13 @@ mod tests {
         )
         .expect("create pool");
 
-        let initial_price = pool.price(); // 10_000 / 1_000_000 = 0.01
+        let initial_price_scaled = pool.price_scaled(1_000_000).expect("initial price");
 
         // Large swap causes price impact
         pool.swap(100_000, true).expect("swap");
 
-        let new_price = pool.price();
-        assert!(new_price < initial_price); // SVM devalues relative to USDT
+        let new_price_scaled = pool.price_scaled(1_000_000).expect("new price");
+        assert!(new_price_scaled < initial_price_scaled); // SVM devalues relative to USDT
     }
 
     #[test]

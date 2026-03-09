@@ -1246,12 +1246,199 @@ fn resolve_adapter_backend_mode() -> Result<AdapterBackendMode> {
     }
 }
 
-fn resolve_adapter_plugin_path() -> Option<PathBuf> {
-    std::env::var("NOVOVM_ADAPTER_PLUGIN_PATH")
+fn split_plugin_dir_list(raw: &str) -> Vec<PathBuf> {
+    raw.split([';', ','])
+        .filter_map(|part| {
+            let trimmed = part.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(PathBuf::from(trimmed))
+            }
+        })
+        .collect()
+}
+
+fn path_like_eq(a: &Path, b: &Path) -> bool {
+    if let (Ok(a_canon), Ok(b_canon)) = (a.canonicalize(), b.canonicalize()) {
+        return a_canon == b_canon;
+    }
+    if cfg!(target_os = "windows") {
+        a.to_string_lossy()
+            .eq_ignore_ascii_case(&b.to_string_lossy())
+    } else {
+        a == b
+    }
+}
+
+fn push_unique_path(paths: &mut Vec<PathBuf>, path: PathBuf) {
+    if path.as_os_str().is_empty() {
+        return;
+    }
+    if paths.iter().any(|existing| path_like_eq(existing, &path)) {
+        return;
+    }
+    paths.push(path);
+}
+
+fn resolve_adapter_plugin_search_dirs(registry_path: Option<&Path>) -> Vec<PathBuf> {
+    let mut dirs = Vec::new();
+    for key in [
+        "NOVOVM_ADAPTER_PLUGIN_DIRS",
+        "NOVOVM_AOEM_PLUGIN_DIRS",
+        "AOEM_FFI_PLUGIN_DIRS",
+    ] {
+        if let Some(raw) = string_env_nonempty(key) {
+            for dir in split_plugin_dir_list(&raw) {
+                push_unique_path(&mut dirs, dir);
+            }
+        }
+    }
+    for key in [
+        "NOVOVM_ADAPTER_PLUGIN_DIR",
+        "NOVOVM_AOEM_PLUGIN_DIR",
+        "AOEM_FFI_PLUGIN_DIR",
+    ] {
+        if let Some(raw) = string_env_nonempty(key) {
+            push_unique_path(&mut dirs, PathBuf::from(raw));
+        }
+    }
+    if let Some(parent) = registry_path.and_then(Path::parent) {
+        push_unique_path(&mut dirs, parent.to_path_buf());
+    }
+    if let Ok(cwd) = std::env::current_dir() {
+        push_unique_path(&mut dirs, cwd);
+    }
+    dirs
+}
+
+fn file_mtime_nanos(path: &Path) -> u128 {
+    fs::metadata(path)
         .ok()
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-        .map(PathBuf::from)
+        .and_then(|m| m.modified().ok())
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_nanos())
+        .unwrap_or(0)
+}
+
+fn collect_registry_entry_candidate_paths(
+    entry: &AdapterPluginRegistryEntry,
+    search_dirs: &[PathBuf],
+) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    let raw_path = PathBuf::from(entry.path.trim());
+    if raw_path.is_absolute() {
+        if raw_path.exists() {
+            push_unique_path(&mut out, raw_path);
+        }
+        return out;
+    }
+
+    if raw_path.exists() {
+        push_unique_path(&mut out, raw_path.clone());
+    }
+    for dir in search_dirs {
+        let candidate = dir.join(&raw_path);
+        if candidate.exists() {
+            push_unique_path(&mut out, candidate);
+        }
+    }
+    out
+}
+
+fn pick_adapter_plugin_from_registry(
+    registry: &AdapterPluginRegistryFile,
+    chain: ChainType,
+    expected_abi: u32,
+    required_caps: u64,
+    search_dirs: &[PathBuf],
+) -> Result<Option<PathBuf>> {
+    #[derive(Clone)]
+    struct Candidate {
+        path: PathBuf,
+        chain_span: usize,
+        chain_name_hint: bool,
+        mtime_ns: u128,
+    }
+
+    let chain_name = chain.as_str().to_ascii_lowercase();
+    let mut best: Option<Candidate> = None;
+    for entry in &registry.plugins {
+        if entry.enabled == Some(false) {
+            continue;
+        }
+        if !chain_allowed_in_registry(entry, chain) {
+            continue;
+        }
+        if entry.abi != expected_abi {
+            continue;
+        }
+        let entry_required_caps =
+            parse_u64_mask_str(&entry.required_caps, "registry.required_caps")?;
+        if entry_required_caps != required_caps {
+            continue;
+        }
+
+        let candidates = collect_registry_entry_candidate_paths(entry, search_dirs);
+        if candidates.is_empty() {
+            continue;
+        }
+        let chain_name_hint = entry.name.to_ascii_lowercase().contains(&chain_name)
+            || entry.path.to_ascii_lowercase().contains(&chain_name);
+        let chain_span = entry.chains.len();
+        for path in candidates {
+            let candidate = Candidate {
+                mtime_ns: file_mtime_nanos(&path),
+                path,
+                chain_span,
+                chain_name_hint,
+            };
+            match &best {
+                None => best = Some(candidate),
+                Some(current) => {
+                    let better = if candidate.chain_name_hint != current.chain_name_hint {
+                        candidate.chain_name_hint && !current.chain_name_hint
+                    } else if candidate.chain_span != current.chain_span {
+                        candidate.chain_span < current.chain_span
+                    } else if candidate.mtime_ns != current.mtime_ns {
+                        candidate.mtime_ns > current.mtime_ns
+                    } else {
+                        candidate.path.to_string_lossy() < current.path.to_string_lossy()
+                    };
+                    if better {
+                        best = Some(candidate);
+                    }
+                }
+            }
+        }
+    }
+    Ok(best.map(|c| c.path))
+}
+
+fn resolve_adapter_plugin_path(
+    chain: ChainType,
+    expected_abi: u32,
+    required_caps: u64,
+) -> Result<Option<PathBuf>> {
+    for key in ["NOVOVM_ADAPTER_PLUGIN_PATH", "NOVOVM_EVM_PLUGIN_PATH"] {
+        if let Some(raw) = string_env_nonempty(key) {
+            return Ok(Some(PathBuf::from(raw)));
+        }
+    }
+
+    let registry_path = resolve_adapter_plugin_registry_path();
+    let Some(registry_path) = registry_path.as_ref() else {
+        return Ok(None);
+    };
+    let (registry, _sha256) = load_adapter_plugin_registry(registry_path)?;
+    let search_dirs = resolve_adapter_plugin_search_dirs(Some(registry_path));
+    pick_adapter_plugin_from_registry(
+        &registry,
+        chain,
+        expected_abi,
+        required_caps,
+        &search_dirs,
+    )
 }
 
 fn resolve_adapter_plugin_requirements() -> Result<(u32, u64)> {
@@ -1892,8 +2079,8 @@ fn run_adapter_bridge_signal_with_options(
     let chain = resolve_adapter_chain()?;
     let chain_id = default_chain_id(chain);
     let backend_mode = resolve_adapter_backend_mode()?;
-    let plugin_path = resolve_adapter_plugin_path();
     let (plugin_expected_abi, mut plugin_required_caps) = resolve_adapter_plugin_requirements()?;
+    let plugin_path = resolve_adapter_plugin_path(chain, plugin_expected_abi, plugin_required_caps)?;
     let prefer_plugin_self_guard = !plugin_ingress_pre_guarded
         && unified_account_plugin_prefer_self_guard_enabled();
     let host_plugin_guard_enabled = !plugin_ingress_pre_guarded
@@ -1970,7 +2157,9 @@ fn run_adapter_bridge_signal_with_options(
         AdapterBackendMode::Native => run_native(),
         AdapterBackendMode::Plugin => {
             let path = plugin_path.as_deref().ok_or_else(|| {
-                anyhow::anyhow!("NOVOVM_ADAPTER_BACKEND=plugin requires NOVOVM_ADAPTER_PLUGIN_PATH")
+                anyhow::anyhow!(
+                    "NOVOVM_ADAPTER_BACKEND=plugin requires adapter plugin path (set NOVOVM_ADAPTER_PLUGIN_PATH/NOVOVM_EVM_PLUGIN_PATH or provide registry + plugin dirs)"
+                )
             })?;
             run_plugin(path)
         }
@@ -11892,6 +12081,124 @@ mod tests {
         assert_eq!(chain_type_to_plugin_code(ChainType::Avalanche), Some(7));
         assert_eq!(chain_type_to_plugin_code(ChainType::Custom), Some(13));
         assert_eq!(chain_type_to_plugin_code(ChainType::Solana), None);
+    }
+
+    #[test]
+    fn adapter_plugin_auto_pick_prefers_chain_specialized_entry() {
+        let mut dir = std::env::temp_dir();
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock >= epoch")
+            .as_nanos();
+        dir.push(format!("novovm-adapter-plugin-auto-pick-{}", nonce));
+        fs::create_dir_all(&dir).expect("create temp plugin dir");
+
+        let sample_path = dir.join("sample-plugin.bin");
+        let evm_path = dir.join("evm-plugin.bin");
+        fs::write(&sample_path, b"sample").expect("write sample plugin file");
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        fs::write(&evm_path, b"evm").expect("write evm plugin file");
+
+        let registry = AdapterPluginRegistryFile {
+            version: Some("novovm_adapter_registry_v1".to_string()),
+            allowed_abi_versions: Some(vec![1]),
+            plugins: vec![
+                AdapterPluginRegistryEntry {
+                    name: "sample".to_string(),
+                    path: "sample-plugin.bin".to_string(),
+                    abi: 1,
+                    required_caps: "0x1".to_string(),
+                    chains: vec![
+                        "novovm".to_string(),
+                        "evm".to_string(),
+                        "polygon".to_string(),
+                        "bnb".to_string(),
+                        "avalanche".to_string(),
+                        "custom".to_string(),
+                    ],
+                    enabled: Some(true),
+                },
+                AdapterPluginRegistryEntry {
+                    name: "evm_specialized".to_string(),
+                    path: "evm-plugin.bin".to_string(),
+                    abi: 1,
+                    required_caps: "0x1".to_string(),
+                    chains: vec![
+                        "evm".to_string(),
+                        "polygon".to_string(),
+                        "bnb".to_string(),
+                        "avalanche".to_string(),
+                    ],
+                    enabled: Some(true),
+                },
+            ],
+        };
+
+        let picked = pick_adapter_plugin_from_registry(
+            &registry,
+            ChainType::EVM,
+            1,
+            ADAPTER_PLUGIN_CAP_APPLY_IR_V1,
+            &[dir.clone()],
+        )
+        .expect("pick plugin from registry should succeed")
+        .expect("plugin should be selected");
+        assert_eq!(picked, evm_path);
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn adapter_plugin_auto_pick_prefers_newer_binary_when_tie() {
+        let mut dir = std::env::temp_dir();
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock >= epoch")
+            .as_nanos();
+        dir.push(format!("novovm-adapter-plugin-auto-pick-tie-{}", nonce));
+        fs::create_dir_all(&dir).expect("create temp plugin dir");
+
+        let old_path = dir.join("plugin-old.bin");
+        let new_path = dir.join("plugin-new.bin");
+        fs::write(&old_path, b"old").expect("write old plugin file");
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        fs::write(&new_path, b"new").expect("write new plugin file");
+
+        let registry = AdapterPluginRegistryFile {
+            version: Some("novovm_adapter_registry_v1".to_string()),
+            allowed_abi_versions: Some(vec![1]),
+            plugins: vec![
+                AdapterPluginRegistryEntry {
+                    name: "plugin_old".to_string(),
+                    path: "plugin-old.bin".to_string(),
+                    abi: 1,
+                    required_caps: "0x1".to_string(),
+                    chains: vec!["evm".to_string()],
+                    enabled: Some(true),
+                },
+                AdapterPluginRegistryEntry {
+                    name: "plugin_new".to_string(),
+                    path: "plugin-new.bin".to_string(),
+                    abi: 1,
+                    required_caps: "0x1".to_string(),
+                    chains: vec!["evm".to_string()],
+                    enabled: Some(true),
+                },
+            ],
+        };
+
+        let picked = pick_adapter_plugin_from_registry(
+            &registry,
+            ChainType::EVM,
+            1,
+            ADAPTER_PLUGIN_CAP_APPLY_IR_V1,
+            &[dir.clone()],
+        )
+        .expect("pick plugin from registry should succeed")
+        .expect("plugin should be selected");
+        assert_eq!(picked, new_path);
+
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]

@@ -5,7 +5,9 @@ use web30_core::amm::AMMManager;
 use web30_core::bonds::BondManager;
 use web30_core::cdp::{CdpManager, CollateralType};
 use web30_core::dividend_pool::{DividendEvent, DividendPool, DividendPoolImpl};
-use web30_core::foreign_payment::{ForeignPayment, ForeignPaymentProcessor, ServiceType};
+use web30_core::foreign_payment::{
+    ForeignPayment, ForeignPaymentProcessor, ServiceType, FOREIGN_RATE_SCALE,
+};
 use web30_core::foreign_payment_impl::{
     ConfigurableExchangeRateProvider, ForeignPaymentConfig, ForeignPaymentProcessorImpl,
 };
@@ -244,7 +246,7 @@ impl Web30MarketEngine {
         let usdt_slippage =
             (u32::from(policy.reserve.redemption_fee_bp) / 10).clamp(10, 500) as u16;
         provider
-            .set_rate_with_slippage("USDT", 10.0, usdt_slippage)
+            .set_rate_scaled_with_slippage("USDT", 10u128 * FOREIGN_RATE_SCALE, usdt_slippage)
             .map_err(|e| from_web30_error("market engine foreign usdt quote", e))?;
         Ok(provider)
     }
@@ -663,6 +665,9 @@ impl Web30MarketEngine {
         policy: &MarketGovernancePolicy,
         day: u64,
     ) -> BFTResult<MarketOrchestrationOutcome> {
+        // Force dividend module to use consensus day source, not host clock.
+        self.dividend.set_current_day_override(day);
+
         let debt: u128 = 10_000_000;
         let min_ratio_bp = u128::from(policy.cdp.min_collateral_ratio_bp.max(10_000));
         let oracle_price_before =

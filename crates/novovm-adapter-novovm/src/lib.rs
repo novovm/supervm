@@ -70,6 +70,15 @@ impl NovoVmAdapter {
         key
     }
 
+    fn derive_contract_address(from: &[u8], nonce: u64) -> Vec<u8> {
+        let mut hasher = Sha256::new();
+        hasher.update(b"novovm_contract_address_v1");
+        hasher.update(from);
+        hasher.update(nonce.to_le_bytes());
+        let digest: [u8; 32] = hasher.finalize().into();
+        digest[12..32].to_vec()
+    }
+
     fn bool_env_default(name: &str, default: bool) -> bool {
         match std::env::var(name) {
             Ok(v) => {
@@ -249,6 +258,73 @@ impl NovoVmAdapter {
         Ok(())
     }
 
+    fn apply_contract_call(
+        tx: &TxIR,
+        state: &mut StateIR,
+        kv: &mut HashMap<Vec<u8>, Vec<u8>>,
+    ) -> Result<()> {
+        let to = tx
+            .to
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("contract call tx missing target address"))?;
+
+        let mut from_account = state
+            .get_account(&tx.from)
+            .cloned()
+            .unwrap_or_else(Self::default_account);
+        from_account.nonce = from_account.nonce.max(tx.nonce.saturating_add(1));
+        state.set_account(tx.from.clone(), from_account);
+
+        let mut to_account = state
+            .get_account(to)
+            .cloned()
+            .unwrap_or_else(Self::default_account);
+        to_account.balance = to_account.balance.saturating_add(tx.value);
+        state.set_account(to.clone(), to_account);
+
+        let slot = tx.nonce.to_le_bytes().to_vec();
+        state.set_storage(to.clone(), slot.clone(), tx.hash.clone());
+        kv.insert(Self::append_nonce_key(&tx.from, tx.nonce), tx.hash.clone());
+        Ok(())
+    }
+
+    fn apply_contract_deploy(
+        tx: &TxIR,
+        state: &mut StateIR,
+        kv: &mut HashMap<Vec<u8>, Vec<u8>>,
+    ) -> Result<()> {
+        if tx.to.is_some() {
+            bail!("contract deploy tx must not set target address");
+        }
+        if tx.data.is_empty() {
+            bail!("contract deploy tx missing init code");
+        }
+
+        let mut from_account = state
+            .get_account(&tx.from)
+            .cloned()
+            .unwrap_or_else(Self::default_account);
+        from_account.nonce = from_account.nonce.max(tx.nonce.saturating_add(1));
+        state.set_account(tx.from.clone(), from_account);
+
+        let contract_address = Self::derive_contract_address(&tx.from, tx.nonce);
+        let mut contract_account = state
+            .get_account(&contract_address)
+            .cloned()
+            .unwrap_or_else(Self::default_account);
+        contract_account.balance = contract_account.balance.saturating_add(tx.value);
+        let code_hash: [u8; 32] = Sha256::digest(&tx.data).into();
+        contract_account.code_hash = Some(code_hash.to_vec());
+        state.set_account(contract_address.clone(), contract_account);
+        state.set_storage(
+            contract_address.clone(),
+            b"deploy:init_code_hash".to_vec(),
+            code_hash.to_vec(),
+        );
+        kv.insert(Self::append_nonce_key(&tx.from, tx.nonce), contract_address);
+        Ok(())
+    }
+
     fn compute_state_root(state: &StateIR, kv: &HashMap<Vec<u8>, Vec<u8>>) -> Vec<u8> {
         let mut hasher = Sha256::new();
 
@@ -420,10 +496,12 @@ impl ChainAdapter for NovoVmAdapter {
         if tx.chain_id != self.config.chain_id {
             return Ok(false);
         }
-        if tx.tx_type != TxType::Transfer {
-            return Ok(false);
-        }
-        if tx.to.is_none() || tx.hash.is_empty() || tx.signature.is_empty() {
+        let tx_shape_ok = match tx.tx_type {
+            TxType::Transfer | TxType::ContractCall => tx.to.is_some(),
+            TxType::ContractDeploy => tx.to.is_none() && !tx.data.is_empty(),
+            _ => false,
+        };
+        if !tx_shape_ok || tx.hash.is_empty() || tx.signature.is_empty() {
             return Ok(false);
         }
         if tx.hash != compute_tx_ir_hash(tx) {
@@ -441,8 +519,21 @@ impl ChainAdapter for NovoVmAdapter {
             bail!("transaction verification failed");
         }
         self.route_transaction_through_unified_account(tx)?;
-        Self::apply_transfer(tx, state, &mut self.kv)?;
-        Self::apply_transfer(tx, &mut self.state, &mut self.kv)?;
+        match tx.tx_type {
+            TxType::Transfer => {
+                Self::apply_transfer(tx, state, &mut self.kv)?;
+                Self::apply_transfer(tx, &mut self.state, &mut self.kv)?;
+            }
+            TxType::ContractCall => {
+                Self::apply_contract_call(tx, state, &mut self.kv)?;
+                Self::apply_contract_call(tx, &mut self.state, &mut self.kv)?;
+            }
+            TxType::ContractDeploy => {
+                Self::apply_contract_deploy(tx, state, &mut self.kv)?;
+                Self::apply_contract_deploy(tx, &mut self.state, &mut self.kv)?;
+            }
+            _ => bail!("unsupported tx_type for native adapter: {:?}", tx.tx_type),
+        }
         let root = Self::compute_state_root(state, &self.kv);
         state.state_root = root.clone();
         self.state.state_root = root;
@@ -556,5 +647,55 @@ mod tests {
         assert!(supports_native_chain(ChainType::Polygon));
         assert!(supports_native_chain(ChainType::Avalanche));
         assert!(!supports_native_chain(ChainType::Solana));
+    }
+
+    fn sample_tx(tx_type: TxType) -> TxIR {
+        let seed = [7u8; 32];
+        let from = address_from_seed_v1(seed);
+        let mut tx = TxIR {
+            hash: Vec::new(),
+            from,
+            to: Some(vec![3u8; 20]),
+            value: 1,
+            gas_limit: 21_000,
+            gas_price: 1,
+            nonce: 0,
+            data: Vec::new(),
+            signature: Vec::new(),
+            chain_id: 1,
+            tx_type,
+            source_chain: None,
+            target_chain: None,
+        };
+        if tx_type == TxType::ContractDeploy {
+            tx.to = None;
+            tx.data = vec![0x60, 0x00, 0x60, 0x00];
+        }
+        if tx_type == TxType::ContractCall {
+            tx.data = vec![0xaa, 0xbb];
+        }
+        tx.hash = compute_tx_ir_hash(&tx);
+        tx.signature = signature_payload_with_seed_v1(&tx, seed);
+        tx
+    }
+
+    #[test]
+    fn verify_transaction_accepts_contract_call_and_deploy() {
+        let mut adapter = NovoVmAdapter::new(ChainConfig {
+            chain_type: ChainType::EVM,
+            chain_id: 1,
+            name: "test".to_string(),
+            enabled: true,
+            custom_config: None,
+        });
+        adapter.initialize().expect("init");
+
+        let call_tx = sample_tx(TxType::ContractCall);
+        assert!(adapter.verify_transaction(&call_tx).expect("verify call"));
+
+        let deploy_tx = sample_tx(TxType::ContractDeploy);
+        assert!(adapter
+            .verify_transaction(&deploy_tx)
+            .expect("verify deploy"));
     }
 }

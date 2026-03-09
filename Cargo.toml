@@ -5,6 +5,7 @@ members = [
     "crates/novovm-adapter-novovm",
     "crates/novovm-edge-gateway",
     "crates/novovm-adapter-sample-plugin",
+    "crates/novovm-adapter-evm-plugin",
     "crates/novovm-bench",
     "crates/novovm-consensus",
     "crates/novovm-coordinator",
