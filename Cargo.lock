@@ -1690,7 +1690,9 @@ name = "web30-core"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "aoem-bindings",
  "curve25519-dalek",
+ "once_cell",
  "proptest",
  "rand 0.8.5",
  "serde",

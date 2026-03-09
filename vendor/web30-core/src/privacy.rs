@@ -5,19 +5,49 @@ use anyhow::Result;
 use sha2::{Digest, Sha256};
 use std::env;
 
-const PRIVACY_RING_SIG_PLACEHOLDER_ALLOW_ENV: &str =
-    "NOVOVM_WEB30_PRIVACY_RING_SIG_PLACEHOLDER_ALLOW";
+#[cfg(feature = "aoem-ring-ffi")]
+use aoem_bindings::AoemDyn;
 
-fn placeholder_ring_sig_allowed() -> bool {
-    env::var(PRIVACY_RING_SIG_PLACEHOLDER_ALLOW_ENV)
-        .map(|v| {
-            let v = v.trim();
-            v == "1"
-                || v.eq_ignore_ascii_case("true")
-                || v.eq_ignore_ascii_case("on")
-                || v.eq_ignore_ascii_case("yes")
-        })
-        .unwrap_or(false)
+const PRIVACY_RING_SIG_BACKEND_ENV: &str = "NOVOVM_WEB30_PRIVACY_RING_SIG_BACKEND";
+
+fn ring_sig_backend() -> &'static str {
+    match env::var(PRIVACY_RING_SIG_BACKEND_ENV) {
+        Ok(raw) if raw.trim().eq_ignore_ascii_case("none") => "none",
+        _ => "aoem_ffi",
+    }
+}
+
+#[cfg(feature = "aoem-ring-ffi")]
+fn resolve_aoem_dll_path() -> Option<String> {
+    for key in ["NOVOVM_AOEM_DLL", "AOEM_DLL", "AOEM_FFI_DLL"] {
+        if let Ok(value) = env::var(key) {
+            let trimmed = value.trim();
+            if !trimmed.is_empty() {
+                return Some(trimmed.to_string());
+            }
+        }
+    }
+    None
+}
+
+#[cfg(feature = "aoem-ring-ffi")]
+fn verify_ring_signature_via_aoem(
+    signature: &RingSignature,
+    message: &[u8],
+    amount: u128,
+) -> Result<bool> {
+    let Some(dll_path) = resolve_aoem_dll_path() else {
+        return Ok(false);
+    };
+    let dynlib = unsafe { AoemDyn::load(&dll_path) }?;
+    if !dynlib.supports_ring_signature_verify() {
+        return Ok(false);
+    }
+    if dynlib.ring_signature_supported_flag() != Some(true) {
+        return Ok(false);
+    }
+    let payload = serde_json::to_vec(signature)?;
+    dynlib.ring_signature_verify_web30_v1(payload.as_slice(), message, amount)
 }
 
 /// 生成隐身地址
@@ -50,11 +80,6 @@ pub fn verify_ring_signature(
     message: &[u8],
     amount: u128,
 ) -> Result<bool> {
-    // 安全默认：占位实现在生产环境禁用，避免“永真”验签被利用。
-    if !placeholder_ring_sig_allowed() {
-        return Ok(false);
-    }
-
     if signature.ring_members.is_empty() {
         return Ok(false);
     }
@@ -67,17 +92,20 @@ pub fn verify_ring_signature(
         return Ok(false);
     }
 
-    // 占位校验：至少约束 challenge 与消息/金额绑定，避免任意垃圾输入直接通过。
-    // 注意：这不是完整环签名验证，仅用于受控测试场景。
-    let mut challenge_hasher = Sha256::new();
-    challenge_hasher.update(message);
-    challenge_hasher.update(amount.to_le_bytes());
-    let expected_c: [u8; 32] = challenge_hasher.finalize().into();
-    if signature.c.iter().any(|c| c != &expected_c) {
+    if ring_sig_backend() == "none" {
         return Ok(false);
     }
 
-    Ok(true)
+    #[cfg(feature = "aoem-ring-ffi")]
+    {
+        return verify_ring_signature_via_aoem(signature, message, amount);
+    }
+
+    #[cfg(not(feature = "aoem-ring-ffi"))]
+    {
+        let _ = (signature, message, amount);
+        Ok(false)
+    }
 }
 
 /// 生成环签名
@@ -147,29 +175,8 @@ mod tests {
         let signature = generate_ring_signature(&private_key, &ring_members, message, 1)
             .expect("Failed to generate signature");
 
-        // 默认禁用占位验签，防止生产误用。
+        // 默认使用 AOEM FFI 验签；若 AOEM 未配置，则 fail-closed。
         let is_valid = verify_ring_signature(&signature, message, 1000).expect("Failed to verify");
         assert!(!is_valid);
-    }
-
-    #[test]
-    fn test_ring_signature_placeholder_requires_explicit_env_enable() {
-        let private_key = [9u8; 32];
-        let ring_members = vec![
-            Address::from_bytes([11u8; 32]),
-            Address::from_bytes([12u8; 32]),
-        ];
-        let message = b"msg";
-        let amount = 123u128;
-
-        let signature = generate_ring_signature(&private_key, &ring_members, message, 0)
-            .expect("Failed to generate signature");
-        std::env::set_var(PRIVACY_RING_SIG_PLACEHOLDER_ALLOW_ENV, "1");
-        let enabled_result =
-            verify_ring_signature(&signature, message, amount).expect("verify failed");
-        std::env::remove_var(PRIVACY_RING_SIG_PLACEHOLDER_ALLOW_ENV);
-        // generate_ring_signature() uses challenge=hash(message), while verifier binds (message, amount).
-        // This ensures placeholder verifier is never trivially "always true".
-        assert!(!enabled_result);
     }
 }

@@ -3,6 +3,9 @@ use pqcrypto_dilithium::dilithium5;
 use pqcrypto_traits::sign::{DetachedSignature as _, PublicKey as _, SecretKey as _};
 use serde_json::json;
 use std::env;
+use std::fs;
+use std::io::{self, Read};
+use std::process::Command;
 
 fn encode_hex(bytes: &[u8]) -> String {
     const HEX: &[u8; 16] = b"0123456789abcdef";
@@ -47,6 +50,10 @@ fn usage() -> String {
         "mldsa87-vote-signer usage:",
         "  keygen",
         "  sign --message-hex <hex> --secret-env <ENV_NAME>",
+        "  sign --message-hex <hex> --secret-file <PATH>",
+        "  sign --message-hex <hex> --secret-stdin",
+        "  sign --message-hex <hex> --provider-cmd <COMMAND_LINE>",
+        "       (aliases: --kms-cmd / --hsm-cmd; receives MLDSA_MESSAGE_HEX env, returns signature_hex)",
         "  sign --message-hex <hex> --secret-hex <hex> --allow-insecure-secret-arg",
     ]
     .join("\n")
@@ -66,6 +73,9 @@ fn run_sign(args: &[String]) -> Result<()> {
     let mut message_hex = String::new();
     let mut secret_hex = String::new();
     let mut secret_env = String::new();
+    let mut secret_file = String::new();
+    let mut secret_stdin = false;
+    let mut provider_cmd = String::new();
     let mut allow_insecure_secret_arg = false;
     let mut i = 0usize;
     while i < args.len() {
@@ -91,6 +101,23 @@ fn run_sign(args: &[String]) -> Result<()> {
                 }
                 secret_env = args[i].clone();
             }
+            "--secret-file" => {
+                i += 1;
+                if i >= args.len() {
+                    bail!("missing value for --secret-file");
+                }
+                secret_file = args[i].clone();
+            }
+            "--secret-stdin" => {
+                secret_stdin = true;
+            }
+            "--provider-cmd" | "--kms-cmd" | "--hsm-cmd" => {
+                i += 1;
+                if i >= args.len() {
+                    bail!("missing value for {}", args[i - 1]);
+                }
+                provider_cmd = args[i].clone();
+            }
             "--allow-insecure-secret-arg" => {
                 allow_insecure_secret_arg = true;
             }
@@ -102,11 +129,24 @@ fn run_sign(args: &[String]) -> Result<()> {
     if message_hex.is_empty() {
         bail!("{}", usage());
     }
-    if !secret_hex.is_empty() && !secret_env.is_empty() {
-        bail!("use only one secret source: --secret-env or --secret-hex");
+    let mut secret_sources = 0u32;
+    if !secret_hex.is_empty() {
+        secret_sources += 1;
     }
-    if secret_hex.is_empty() && secret_env.is_empty() {
-        bail!("{}", usage());
+    if !secret_env.is_empty() {
+        secret_sources += 1;
+    }
+    if !secret_file.is_empty() {
+        secret_sources += 1;
+    }
+    if secret_stdin {
+        secret_sources += 1;
+    }
+    if !provider_cmd.is_empty() {
+        secret_sources += 1;
+    }
+    if secret_sources != 1 {
+        bail!("use exactly one key source: --secret-env|--secret-file|--secret-stdin|--provider-cmd|--secret-hex");
     }
     if !secret_hex.is_empty() && !allow_insecure_secret_arg {
         bail!(
@@ -115,9 +155,33 @@ fn run_sign(args: &[String]) -> Result<()> {
     }
 
     let message = decode_hex(&message_hex).context("decode message_hex failed")?;
+    if !provider_cmd.is_empty() {
+        let signature_hex = run_external_provider(provider_cmd.as_str(), message_hex.as_str())
+            .context("provider-cmd sign failed")?;
+        let signature_bytes = decode_hex(signature_hex.as_str()).context("decode signature failed")?;
+        let _ = dilithium5::DetachedSignature::from_bytes(&signature_bytes)
+            .map_err(|_| anyhow::anyhow!("invalid ML-DSA-87 signature bytes from provider"))?;
+        let value = json!({
+            "signature_hex": encode_hex(&signature_bytes),
+        });
+        println!("{}", value);
+        return Ok(());
+    }
+
     let secret_raw = if !secret_env.is_empty() {
         env::var(&secret_env)
             .with_context(|| format!("missing secret in env var {}", secret_env))?
+    } else if !secret_file.is_empty() {
+        fs::read_to_string(&secret_file)
+            .with_context(|| format!("failed to read secret file {}", secret_file))?
+            .trim()
+            .to_string()
+    } else if secret_stdin {
+        let mut input = String::new();
+        io::stdin()
+            .read_to_string(&mut input)
+            .context("failed to read secret from stdin")?;
+        input.trim().to_string()
     } else {
         secret_hex
     };
@@ -130,6 +194,39 @@ fn run_sign(args: &[String]) -> Result<()> {
     });
     println!("{}", value);
     Ok(())
+}
+
+fn run_external_provider(command_line: &str, message_hex: &str) -> Result<String> {
+    if command_line.trim().is_empty() {
+        bail!("provider command line is empty");
+    }
+    let output = if cfg!(windows) {
+        Command::new("cmd")
+            .args(["/C", command_line])
+            .env("MLDSA_MESSAGE_HEX", message_hex)
+            .output()
+            .context("failed to spawn provider command")?
+    } else {
+        Command::new("sh")
+            .args(["-c", command_line])
+            .env("MLDSA_MESSAGE_HEX", message_hex)
+            .output()
+            .context("failed to spawn provider command")?
+    };
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        bail!("provider command failed: {}", stderr.trim());
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if stdout.is_empty() {
+        bail!("provider command returned empty output");
+    }
+    if let Ok(value) = serde_json::from_str::<serde_json::Value>(&stdout) {
+        if let Some(sig) = value.get("signature_hex").and_then(|v| v.as_str()) {
+            return Ok(sig.trim().to_string());
+        }
+    }
+    Ok(stdout)
 }
 
 fn main() {

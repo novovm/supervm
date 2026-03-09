@@ -18,6 +18,9 @@ pub type AoemCapabilitiesJson = unsafe extern "C" fn() -> *const c_char;
 pub type AoemRecommendParallelism = unsafe extern "C" fn(u64, u32, u64, f64) -> u32;
 pub type AoemZkvmSupported = unsafe extern "C" fn() -> u32;
 pub type AoemZkvmTraceFibProveVerify = unsafe extern "C" fn(u32, u64, u64) -> i32;
+pub type AoemRingSignatureSupported = unsafe extern "C" fn() -> u32;
+pub type AoemRingSignatureVerifyWeb30V1 =
+    unsafe extern "C" fn(*const u8, usize, *const u8, usize, u64, u64, *mut u32) -> i32;
 #[repr(C)]
 pub struct AoemCreateOptionsV1 {
     pub abi_version: u32,
@@ -67,6 +70,8 @@ pub struct AoemDyn {
     recommend_parallelism: Option<AoemRecommendParallelism>,
     zkvm_supported: Option<AoemZkvmSupported>,
     zkvm_trace_fib_prove_verify: Option<AoemZkvmTraceFibProveVerify>,
+    ring_signature_supported: Option<AoemRingSignatureSupported>,
+    ring_signature_verify_web30_v1: Option<AoemRingSignatureVerifyWeb30V1>,
     create: AoemCreate,
     create_with_options: Option<AoemCreateWithOptions>,
     destroy: AoemDestroy,
@@ -151,6 +156,14 @@ impl AoemDyn {
             .get::<AoemZkvmTraceFibProveVerify>(b"aoem_zkvm_trace_fib_prove_verify")
             .ok()
             .map(|f| *f);
+        let ring_signature_supported: Option<AoemRingSignatureSupported> = lib
+            .get::<AoemRingSignatureSupported>(b"aoem_ring_signature_supported")
+            .ok()
+            .map(|f| *f);
+        let ring_signature_verify_web30_v1: Option<AoemRingSignatureVerifyWeb30V1> = lib
+            .get::<AoemRingSignatureVerifyWeb30V1>(b"aoem_ring_signature_verify_web30_v1")
+            .ok()
+            .map(|f| *f);
         let create: AoemCreate = *lib.get::<AoemCreate>(b"aoem_create")?;
         let create_with_options: Option<AoemCreateWithOptions> = lib
             .get::<AoemCreateWithOptions>(b"aoem_create_with_options")
@@ -178,6 +191,8 @@ impl AoemDyn {
             recommend_parallelism,
             zkvm_supported,
             zkvm_trace_fib_prove_verify,
+            ring_signature_supported,
+            ring_signature_verify_web30_v1,
             create,
             create_with_options,
             destroy,
@@ -374,6 +389,11 @@ impl AoemDyn {
         self.zkvm_supported.is_some() && self.zkvm_trace_fib_prove_verify.is_some()
     }
 
+    /// True when AOEM FFI exports both ring-signature probe and verify symbols.
+    pub fn supports_ring_signature_verify(&self) -> bool {
+        self.ring_signature_supported.is_some() && self.ring_signature_verify_web30_v1.is_some()
+    }
+
     /// Returns AOEM-provided zkVM capability bit from exported symbol.
     /// `None` means the loaded AOEM library does not export this symbol.
     pub fn zkvm_supported_flag(&self) -> Option<bool> {
@@ -390,6 +410,48 @@ impl AoemDyn {
     ) -> Option<i32> {
         self.zkvm_trace_fib_prove_verify
             .map(|f| unsafe { f(rounds, witness_a, witness_b) })
+    }
+
+    /// Returns AOEM-provided ring signature capability bit from exported symbol.
+    /// `None` means the loaded AOEM library does not export this symbol.
+    pub fn ring_signature_supported_flag(&self) -> Option<bool> {
+        self.ring_signature_supported.map(|f| unsafe { f() != 0 })
+    }
+
+    /// Verifies a web30 ring-signature payload via AOEM FFI.
+    /// Signature payload must be JSON bytes following AOEM web30 schema.
+    pub fn ring_signature_verify_web30_v1(
+        &self,
+        signature_json: &[u8],
+        message: &[u8],
+        amount: u128,
+    ) -> Result<bool> {
+        let Some(verify_fn) = self.ring_signature_verify_web30_v1 else {
+            bail!(
+                "aoem_ring_signature_verify_web30_v1 not found in loaded DLL (requires AOEM ring-signature ABI build)"
+            );
+        };
+        if signature_json.is_empty() {
+            bail!("ring-signature payload must not be empty");
+        }
+        let mut out_valid = 0u32;
+        let amount_lo = amount as u64;
+        let amount_hi = (amount >> 64) as u64;
+        let rc = unsafe {
+            verify_fn(
+                signature_json.as_ptr(),
+                signature_json.len(),
+                message.as_ptr(),
+                message.len(),
+                amount_lo,
+                amount_hi,
+                &mut out_valid as *mut u32,
+            )
+        };
+        if rc != 0 {
+            bail!("aoem_ring_signature_verify_web30_v1 failed: rc={rc}");
+        }
+        Ok(out_valid != 0)
     }
 
     pub fn recommend_parallelism(
