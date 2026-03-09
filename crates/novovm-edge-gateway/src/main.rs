@@ -24,6 +24,11 @@ const GATEWAY_UA_STORE_BACKEND_FILE: &str = "bincode_file";
 const GATEWAY_UA_STORE_BACKEND_ROCKSDB: &str = "rocksdb";
 const GATEWAY_UA_STORE_ROCKSDB_CF_STATE: &str = "ua_gateway_state_v1";
 const GATEWAY_UA_STORE_ROCKSDB_KEY_ROUTER: &[u8] = b"ua_gateway:router:v1";
+const GATEWAY_ETH_TX_INDEX_RECORD_VERSION: u32 = 1;
+const GATEWAY_ETH_TX_INDEX_BACKEND_MEMORY: &str = "memory";
+const GATEWAY_ETH_TX_INDEX_BACKEND_ROCKSDB: &str = "rocksdb";
+const GATEWAY_ETH_TX_INDEX_ROCKSDB_CF_STATE: &str = "eth_tx_index_state_v1";
+const GATEWAY_ETH_TX_INDEX_ROCKSDB_KEY_PREFIX: &[u8] = b"gateway:eth:tx:index:v1:";
 const GATEWAY_UA_PRIMARY_KEY_DOMAIN: &[u8] = b"novovm_gateway_uca_primary_key_ref_v1";
 const GATEWAY_INGRESS_RECORD_VERSION: u16 = 1;
 const GATEWAY_INGRESS_PROTOCOL_ETH: u8 = 1;
@@ -40,6 +45,12 @@ struct GatewayUaStoreEnvelopeV1 {
 #[derive(Debug, Clone)]
 enum GatewayUaStoreBackend {
     BincodeFile { path: PathBuf },
+    RocksDb { path: PathBuf },
+}
+
+#[derive(Debug, Clone)]
+enum GatewayEthTxIndexStoreBackend {
+    Memory,
     RocksDb { path: PathBuf },
 }
 
@@ -106,7 +117,7 @@ struct GatewayEthTxHashInput<'a> {
     wants_cross_chain_atomic: bool,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct GatewayEthTxIndexEntry {
     tx_hash: [u8; 32],
     uca_id: String,
@@ -121,13 +132,21 @@ struct GatewayEthTxIndexEntry {
     input: Vec<u8>,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+struct GatewayEthTxIndexRecordV1 {
+    version: u32,
+    entry: GatewayEthTxIndexEntry,
+}
+
 #[derive(Debug)]
 struct GatewayRuntime {
     bind: String,
     spool_dir: PathBuf,
     max_body_bytes: usize,
     max_requests: u32,
+    eth_default_chain_id: u64,
     ua_store: GatewayUaStoreBackend,
+    eth_tx_index_store: GatewayEthTxIndexStoreBackend,
     eth_tx_index: HashMap<[u8; 32], GatewayEthTxIndexEntry>,
     router: UnifiedAccountRouter,
 }
@@ -135,13 +154,16 @@ struct GatewayRuntime {
 fn main() -> Result<()> {
     let mut runtime = GatewayRuntime::from_env()?;
     println!(
-        "gateway_in: bind={} spool_dir={} max_body={} max_requests={} ua_store_backend={} ua_store_path={} internal_ingress=ops_wire_v1",
+        "gateway_in: bind={} spool_dir={} max_body={} max_requests={} eth_default_chain_id={} ua_store_backend={} ua_store_path={} eth_tx_index_backend={} eth_tx_index_path={} internal_ingress=ops_wire_v1",
         runtime.bind,
         runtime.spool_dir.display(),
         runtime.max_body_bytes,
         runtime.max_requests,
+        runtime.eth_default_chain_id,
         runtime.ua_store.backend_name(),
-        runtime.ua_store.path().display()
+        runtime.ua_store.path().display(),
+        runtime.eth_tx_index_store.backend_name(),
+        runtime.eth_tx_index_store.path().display(),
     );
 
     let server = tiny_http::Server::http(&runtime.bind)
@@ -170,14 +192,18 @@ impl GatewayRuntime {
         ));
         let max_body_bytes = u64_env("NOVOVM_GATEWAY_MAX_BODY_BYTES", 64 * 1024) as usize;
         let max_requests = u32_env_allow_zero("NOVOVM_GATEWAY_MAX_REQUESTS", 0);
+        let eth_default_chain_id = u64_env("NOVOVM_GATEWAY_ETH_DEFAULT_CHAIN_ID", 1);
         let ua_store = resolve_gateway_ua_store_backend()?;
+        let eth_tx_index_store = resolve_gateway_eth_tx_index_store_backend()?;
         let router = ua_store.load_router()?;
         Ok(Self {
             bind,
             spool_dir,
             max_body_bytes,
             max_requests,
+            eth_default_chain_id,
             ua_store,
+            eth_tx_index_store,
             eth_tx_index: HashMap::new(),
             router,
         })
@@ -329,6 +355,104 @@ impl GatewayUaStoreBackend {
     }
 }
 
+impl GatewayEthTxIndexStoreBackend {
+    fn backend_name(&self) -> &'static str {
+        match self {
+            GatewayEthTxIndexStoreBackend::Memory => GATEWAY_ETH_TX_INDEX_BACKEND_MEMORY,
+            GatewayEthTxIndexStoreBackend::RocksDb { .. } => GATEWAY_ETH_TX_INDEX_BACKEND_ROCKSDB,
+        }
+    }
+
+    fn path(&self) -> &Path {
+        match self {
+            GatewayEthTxIndexStoreBackend::Memory => Path::new("memory"),
+            GatewayEthTxIndexStoreBackend::RocksDb { path } => path.as_path(),
+        }
+    }
+
+    fn load_eth_tx(&self, tx_hash: &[u8; 32]) -> Result<Option<GatewayEthTxIndexEntry>> {
+        match self {
+            GatewayEthTxIndexStoreBackend::Memory => Ok(None),
+            GatewayEthTxIndexStoreBackend::RocksDb { path } => {
+                let db = open_gateway_eth_tx_index_rocksdb(path)?;
+                let cf = db
+                    .cf_handle(GATEWAY_ETH_TX_INDEX_ROCKSDB_CF_STATE)
+                    .ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "missing eth tx index rocksdb column family '{}' for {}",
+                            GATEWAY_ETH_TX_INDEX_ROCKSDB_CF_STATE,
+                            path.display()
+                        )
+                    })?;
+                let key = gateway_eth_tx_index_key(tx_hash);
+                let raw = db.get_cf(cf, &key).with_context(|| {
+                    format!(
+                        "read eth tx index from cf '{}' failed: {}",
+                        GATEWAY_ETH_TX_INDEX_ROCKSDB_CF_STATE,
+                        path.display()
+                    )
+                })?;
+                let Some(raw) = raw else {
+                    return Ok(None);
+                };
+                if raw.is_empty() {
+                    return Ok(None);
+                }
+                if let Ok(record) = bincode::deserialize::<GatewayEthTxIndexRecordV1>(&raw) {
+                    if record.version != GATEWAY_ETH_TX_INDEX_RECORD_VERSION {
+                        bail!(
+                            "unsupported eth tx index record version {} at {}",
+                            record.version,
+                            path.display()
+                        );
+                    }
+                    return Ok(Some(record.entry));
+                }
+                let legacy_entry: GatewayEthTxIndexEntry = bincode::deserialize(&raw)
+                    .with_context(|| {
+                        format!(
+                            "decode legacy eth tx index record failed: {}",
+                            path.display()
+                        )
+                    })?;
+                Ok(Some(legacy_entry))
+            }
+        }
+    }
+
+    fn save_eth_tx(&self, entry: &GatewayEthTxIndexEntry) -> Result<()> {
+        match self {
+            GatewayEthTxIndexStoreBackend::Memory => Ok(()),
+            GatewayEthTxIndexStoreBackend::RocksDb { path } => {
+                let db = open_gateway_eth_tx_index_rocksdb(path)?;
+                let cf = db
+                    .cf_handle(GATEWAY_ETH_TX_INDEX_ROCKSDB_CF_STATE)
+                    .ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "missing eth tx index rocksdb column family '{}' for {}",
+                            GATEWAY_ETH_TX_INDEX_ROCKSDB_CF_STATE,
+                            path.display()
+                        )
+                    })?;
+                let key = gateway_eth_tx_index_key(&entry.tx_hash);
+                let value = bincode::serialize(&GatewayEthTxIndexRecordV1 {
+                    version: GATEWAY_ETH_TX_INDEX_RECORD_VERSION,
+                    entry: entry.clone(),
+                })
+                .context("serialize eth tx index record failed")?;
+                db.put_cf(cf, key, value).with_context(|| {
+                    format!(
+                        "write eth tx index into cf '{}' failed: {}",
+                        GATEWAY_ETH_TX_INDEX_ROCKSDB_CF_STATE,
+                        path.display()
+                    )
+                })?;
+                Ok(())
+            }
+        }
+    }
+}
+
 fn resolve_gateway_ua_store_backend() -> Result<GatewayUaStoreBackend> {
     let backend = string_env(
         "NOVOVM_GATEWAY_UA_STORE_BACKEND",
@@ -356,6 +480,31 @@ fn resolve_gateway_ua_store_backend() -> Result<GatewayUaStoreBackend> {
     }
 }
 
+fn resolve_gateway_eth_tx_index_store_backend() -> Result<GatewayEthTxIndexStoreBackend> {
+    let backend = string_env(
+        "NOVOVM_GATEWAY_ETH_TX_INDEX_BACKEND",
+        GATEWAY_ETH_TX_INDEX_BACKEND_MEMORY,
+    )
+    .trim()
+    .to_ascii_lowercase();
+    match backend.as_str() {
+        "memory" => Ok(GatewayEthTxIndexStoreBackend::Memory),
+        "rocksdb" => {
+            let path = if let Some(custom) = string_env_nonempty("NOVOVM_GATEWAY_ETH_TX_INDEX_PATH")
+            {
+                PathBuf::from(custom)
+            } else {
+                PathBuf::from("artifacts/gateway/eth-tx-index.rocksdb")
+            };
+            Ok(GatewayEthTxIndexStoreBackend::RocksDb { path })
+        }
+        _ => bail!(
+            "invalid NOVOVM_GATEWAY_ETH_TX_INDEX_BACKEND={}; valid: memory|rocksdb",
+            backend
+        ),
+    }
+}
+
 fn open_gateway_ua_rocksdb(path: &Path) -> Result<RocksDb> {
     ensure_parent_dir(path, "gateway ua rocksdb")?;
     let mut opts = RocksDbOptions::default();
@@ -367,6 +516,26 @@ fn open_gateway_ua_rocksdb(path: &Path) -> Result<RocksDb> {
     ];
     RocksDb::open_cf_descriptors(&opts, path, cf_descriptors)
         .with_context(|| format!("open gateway ua rocksdb failed: {}", path.display()))
+}
+
+fn open_gateway_eth_tx_index_rocksdb(path: &Path) -> Result<RocksDb> {
+    ensure_parent_dir(path, "gateway eth tx index rocksdb")?;
+    let mut opts = RocksDbOptions::default();
+    opts.create_if_missing(true);
+    opts.create_missing_column_families(true);
+    let cf_descriptors = vec![
+        ColumnFamilyDescriptor::new(DEFAULT_COLUMN_FAMILY_NAME, RocksDbOptions::default()),
+        ColumnFamilyDescriptor::new(
+            GATEWAY_ETH_TX_INDEX_ROCKSDB_CF_STATE,
+            RocksDbOptions::default(),
+        ),
+    ];
+    RocksDb::open_cf_descriptors(&opts, path, cf_descriptors).with_context(|| {
+        format!(
+            "open gateway eth tx index rocksdb failed: {}",
+            path.display()
+        )
+    })
 }
 
 fn handle_gateway_request(
@@ -432,6 +601,8 @@ fn handle_gateway_request(
     match run_gateway_method(
         &mut runtime.router,
         &mut runtime.eth_tx_index,
+        &runtime.eth_tx_index_store,
+        runtime.eth_default_chain_id,
         method,
         &params,
         &runtime.spool_dir,
@@ -463,11 +634,18 @@ fn handle_gateway_request(
 fn run_gateway_method(
     router: &mut UnifiedAccountRouter,
     eth_tx_index: &mut HashMap<[u8; 32], GatewayEthTxIndexEntry>,
+    eth_tx_index_store: &GatewayEthTxIndexStoreBackend,
+    eth_default_chain_id: u64,
     method: &str,
     params: &serde_json::Value,
     spool_dir: &Path,
 ) -> Result<(serde_json::Value, bool)> {
     match method {
+        "eth_chainId" => Ok((
+            serde_json::Value::String(format!("0x{:x}", eth_default_chain_id)),
+            false,
+        )),
+        "net_version" => Ok((serde_json::Value::String(eth_default_chain_id.to_string()), false)),
         "ua_createUca" => {
             let uca_id = param_as_string(params, "uca_id")
                 .ok_or_else(|| anyhow::anyhow!("uca_id is required for ua_createUca"))?;
@@ -581,7 +759,7 @@ fn run_gateway_method(
             ))
         }
         "eth_getTransactionCount" => {
-            let chain_id = param_as_u64(params, "chain_id").unwrap_or(1);
+            let chain_id = param_as_u64(params, "chain_id").unwrap_or(eth_default_chain_id);
             let address_raw = extract_eth_persona_address_param(params)
                 .ok_or_else(|| anyhow::anyhow!("address (or from/external_address) is required"))?;
             let external_address = decode_hex_bytes(&address_raw, "address")?;
@@ -616,17 +794,7 @@ fn run_gateway_method(
                 }
             };
             let nonce = router.next_nonce_for_persona(&uca_id, &persona)?;
-            Ok((
-                serde_json::json!({
-                    "method": method,
-                    "uca_id": uca_id,
-                    "chain_id": chain_id,
-                    "address": format!("0x{}", to_hex(&external_address)),
-                    "nonce": nonce,
-                    "nonce_hex": format!("0x{:x}", nonce),
-                }),
-                false,
-            ))
+            Ok((serde_json::Value::String(format!("0x{:x}", nonce)), false))
         }
         "eth_getTransactionByHash" => {
             let tx_hash_raw = extract_eth_tx_hash_query_param(params)
@@ -635,6 +803,10 @@ fn run_gateway_method(
             let tx_hash = vec_to_32(&tx_hash_bytes, "tx_hash")?;
             if let Some(entry) = eth_tx_index.get(&tx_hash) {
                 Ok((gateway_eth_tx_by_hash_json(entry), false))
+            } else if let Ok(Some(entry)) = eth_tx_index_store.load_eth_tx(&tx_hash) {
+                let response = gateway_eth_tx_by_hash_json(&entry);
+                eth_tx_index.insert(tx_hash, entry);
+                Ok((response, false))
             } else {
                 Ok((serde_json::Value::Null, false))
             }
@@ -646,6 +818,10 @@ fn run_gateway_method(
             let tx_hash = vec_to_32(&tx_hash_bytes, "tx_hash")?;
             if let Some(entry) = eth_tx_index.get(&tx_hash) {
                 Ok((gateway_eth_tx_receipt_json(entry), false))
+            } else if let Ok(Some(entry)) = eth_tx_index_store.load_eth_tx(&tx_hash) {
+                let response = gateway_eth_tx_receipt_json(&entry);
+                eth_tx_index.insert(tx_hash, entry);
+                Ok((response, false))
             } else {
                 Ok((serde_json::Value::Null, false))
             }
@@ -739,7 +915,7 @@ fn run_gateway_method(
             let session_expires_at = param_as_u64(params, "session_expires_at");
             let now = param_as_u64(params, "now").unwrap_or_else(now_unix_sec);
 
-            let decision = router.route(RouteRequest {
+            let _decision = router.route(RouteRequest {
                 uca_id: uca_id.clone(),
                 persona: PersonaAddress {
                     persona_type: PersonaType::Evm,
@@ -776,26 +952,11 @@ fn run_gateway_method(
                 signature_domain: signature_domain.clone(),
             };
             let wire = encode_gateway_ingress_ops_wire_v1_eth(&record)?;
-            let spool_file = write_spool_ops_wire_v1(spool_dir, &wire)?;
-            upsert_gateway_eth_tx_index(eth_tx_index, &record);
+            write_spool_ops_wire_v1(spool_dir, &wire)?;
+            upsert_gateway_eth_tx_index(eth_tx_index, eth_tx_index_store, &record);
 
             Ok((
-                serde_json::json!({
-                    "method": method,
-                    "accepted": true,
-                    "uca_id": uca_id,
-                    "decision": match decision {
-                        RouteDecision::FastPath => serde_json::json!({"kind": "fast_path"}),
-                        RouteDecision::Adapter { chain_id } => serde_json::json!({"kind": "adapter", "chain_id": chain_id}),
-                    },
-                    "signature_domain": signature_domain,
-                    "nonce": nonce,
-                    "tx_type": fields.hint.tx_type_number,
-                    "tx_type4": fields.hint.tx_type4,
-                    "tx_hash": format!("0x{}", to_hex(&tx_hash)),
-                    "spool_file": spool_file.display().to_string(),
-                    "ingress_codec": "ops_wire_v1",
-                }),
+                serde_json::Value::String(format!("0x{}", to_hex(&tx_hash))),
                 true,
             ))
         }
@@ -874,7 +1035,7 @@ fn run_gateway_method(
             let session_expires_at = param_as_u64(params, "session_expires_at");
             let now = param_as_u64(params, "now").unwrap_or_else(now_unix_sec);
 
-            let decision = router.route(RouteRequest {
+            let _decision = router.route(RouteRequest {
                 uca_id: uca_id.clone(),
                 persona: PersonaAddress {
                     persona_type: PersonaType::Evm,
@@ -925,26 +1086,11 @@ fn run_gateway_method(
                 signature_domain: signature_domain.clone(),
             };
             let wire = encode_gateway_ingress_ops_wire_v1_eth(&record)?;
-            let spool_file = write_spool_ops_wire_v1(spool_dir, &wire)?;
-            upsert_gateway_eth_tx_index(eth_tx_index, &record);
+            write_spool_ops_wire_v1(spool_dir, &wire)?;
+            upsert_gateway_eth_tx_index(eth_tx_index, eth_tx_index_store, &record);
 
             Ok((
-                serde_json::json!({
-                    "method": method,
-                    "accepted": true,
-                    "uca_id": uca_id,
-                    "decision": match decision {
-                        RouteDecision::FastPath => serde_json::json!({"kind": "fast_path"}),
-                        RouteDecision::Adapter { chain_id } => serde_json::json!({"kind": "adapter", "chain_id": chain_id}),
-                    },
-                    "signature_domain": signature_domain,
-                    "nonce": nonce,
-                    "tx_type": tx_type,
-                    "tx_type4": tx_type4,
-                    "tx_hash": format!("0x{}", to_hex(&record.tx_hash)),
-                    "spool_file": spool_file.display().to_string(),
-                    "ingress_codec": "ops_wire_v1",
-                }),
+                serde_json::Value::String(format!("0x{}", to_hex(&record.tx_hash))),
                 true,
             ))
         }
@@ -1113,7 +1259,7 @@ fn run_gateway_method(
             ))
         }
         _ => bail!(
-            "unknown method: {}; valid: ua_createUca|ua_rotatePrimaryKey|ua_bindPersona|ua_revokePersona|ua_getBindingOwner|ua_setPolicy|eth_sendRawTransaction|eth_sendTransaction|eth_getTransactionCount|eth_getTransactionByHash|eth_getTransactionReceipt|web30_sendRawTransaction|web30_sendTransaction",
+            "unknown method: {}; valid: ua_createUca|ua_rotatePrimaryKey|ua_bindPersona|ua_revokePersona|ua_getBindingOwner|ua_setPolicy|eth_chainId|net_version|eth_sendRawTransaction|eth_sendTransaction|eth_getTransactionCount|eth_getTransactionByHash|eth_getTransactionReceipt|web30_sendRawTransaction|web30_sendTransaction",
             method
         ),
     }
@@ -1168,8 +1314,16 @@ fn gateway_ingress_key(protocol: u8, tx_hash: &[u8; 32]) -> Vec<u8> {
     out
 }
 
+fn gateway_eth_tx_index_key(tx_hash: &[u8; 32]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(GATEWAY_ETH_TX_INDEX_ROCKSDB_KEY_PREFIX.len() + tx_hash.len());
+    out.extend_from_slice(GATEWAY_ETH_TX_INDEX_ROCKSDB_KEY_PREFIX);
+    out.extend_from_slice(tx_hash);
+    out
+}
+
 fn upsert_gateway_eth_tx_index(
     eth_tx_index: &mut HashMap<[u8; 32], GatewayEthTxIndexEntry>,
+    eth_tx_index_store: &GatewayEthTxIndexStoreBackend,
     record: &GatewayIngressEthRecordV1,
 ) {
     let entry = GatewayEthTxIndexEntry {
@@ -1185,7 +1339,15 @@ fn upsert_gateway_eth_tx_index(
         gas_price: record.gas_price,
         input: record.data.clone(),
     };
-    eth_tx_index.insert(record.tx_hash, entry);
+    eth_tx_index.insert(record.tx_hash, entry.clone());
+    if let Err(e) = eth_tx_index_store.save_eth_tx(&entry) {
+        eprintln!(
+            "gateway_warn: persist eth tx index failed for hash=0x{} backend={} err={}",
+            to_hex(&record.tx_hash),
+            eth_tx_index_store.backend_name(),
+            e
+        );
+    }
 }
 
 fn gateway_eth_tx_by_hash_json(entry: &GatewayEthTxIndexEntry) -> serde_json::Value {

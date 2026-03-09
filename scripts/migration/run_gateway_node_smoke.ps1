@@ -85,6 +85,36 @@ function Pop-ProcessEnv {
     }
 }
 
+function Resolve-TxHashFromResult {
+    param(
+        [Parameter(Mandatory = $true)]
+        [AllowNull()]
+        $Result,
+        [string]$Context = "rpc result"
+    )
+    if ($null -eq $Result) {
+        throw "$Context is null"
+    }
+    if ($Result -is [string]) {
+        $raw = $Result.Trim()
+        if (-not $raw) {
+            throw "$Context tx hash string is empty"
+        }
+        return $raw
+    }
+    if ($Result -is [psobject]) {
+        $txHashProp = $Result.PSObject.Properties["tx_hash"]
+        if ($null -ne $txHashProp -and -not [string]::IsNullOrWhiteSpace([string]$txHashProp.Value)) {
+            return ([string]$txHashProp.Value).Trim()
+        }
+        $hashProp = $Result.PSObject.Properties["hash"]
+        if ($null -ne $hashProp -and -not [string]::IsNullOrWhiteSpace([string]$hashProp.Value)) {
+            return ([string]$hashProp.Value).Trim()
+        }
+    }
+    throw "$Context missing tx hash (expected string result, or object.tx_hash/hash)"
+}
+
 $RepoRoot = Resolve-RootPath -Root $RepoRoot
 $SpoolDir = Resolve-FullPath -Root $RepoRoot -Value $SpoolDir
 $LogDir = Resolve-FullPath -Root $RepoRoot -Value "artifacts/ingress/logs"
@@ -131,7 +161,7 @@ if (Test-Path $gwErr) { Remove-Item -Force $gwErr }
 $envMap = @{
     "NOVOVM_GATEWAY_BIND" = $GatewayBind
     "NOVOVM_GATEWAY_SPOOL_DIR" = $SpoolDir
-    "NOVOVM_GATEWAY_MAX_REQUESTS" = "13"
+    "NOVOVM_GATEWAY_MAX_REQUESTS" = "15"
 }
 
 $envState = Push-ProcessEnv -Environment $envMap
@@ -384,7 +414,7 @@ try {
     $req11 = $req11Object | ConvertTo-Json -Compress -Depth 32
     $r11 = Invoke-RestMethod -Uri $url -Method Post -ContentType "application/json" -Body $req11
 
-    $ethArrayTxHash = [string]$r9.result.tx_hash
+    $ethArrayTxHash = Resolve-TxHashFromResult -Result $r9.result -Context "eth_sendTransaction(array)"
     if (-not $ethArrayTxHash) {
         throw "eth non-raw array request missing tx_hash"
     }
@@ -420,6 +450,48 @@ try {
         throw "eth_getTransactionReceipt hash mismatch: expected=$ethArrayTxHash got=$([string]$r13.result.transactionHash)"
     }
 
+    $req14Object = [ordered]@{
+        jsonrpc = "2.0"
+        id = 14
+        method = "eth_chainId"
+        params = @()
+    }
+    $req14 = $req14Object | ConvertTo-Json -Compress -Depth 32
+    $r14 = Invoke-RestMethod -Uri $url -Method Post -ContentType "application/json" -Body $req14
+    $r14ResultProp = $r14.PSObject.Properties["result"]
+    if ($null -eq $r14ResultProp) {
+        throw "eth_chainId response missing result: $($r14 | ConvertTo-Json -Compress)"
+    }
+    $chainIdHex = [string]$r14ResultProp.Value
+    if (-not $chainIdHex -or -not $chainIdHex.StartsWith("0x")) {
+        throw "eth_chainId returned invalid result: $chainIdHex"
+    }
+    $chainIdDec = [Convert]::ToUInt64($chainIdHex.Substring(2), 16)
+
+    $req15Object = [ordered]@{
+        jsonrpc = "2.0"
+        id = 15
+        method = "net_version"
+        params = @()
+    }
+    $req15 = $req15Object | ConvertTo-Json -Compress -Depth 32
+    $r15 = Invoke-RestMethod -Uri $url -Method Post -ContentType "application/json" -Body $req15
+    $r15ResultProp = $r15.PSObject.Properties["result"]
+    if ($null -eq $r15ResultProp) {
+        throw "net_version response missing result: $($r15 | ConvertTo-Json -Compress)"
+    }
+    $netVersion = [string]$r15ResultProp.Value
+    if (-not $netVersion) {
+        throw "net_version returned empty result"
+    }
+    [UInt64]$netVersionDec = 0
+    if (-not [UInt64]::TryParse($netVersion, [ref]$netVersionDec)) {
+        throw "net_version returned non-decimal result: $netVersion"
+    }
+    if ($netVersionDec -ne $chainIdDec) {
+        throw "eth_chainId/net_version mismatch: chainId=$chainIdDec net_version=$netVersionDec"
+    }
+
     Wait-Process -Id $gatewayProc.Id -Timeout 10
 
     $files = @(Get-ChildItem -Path $SpoolDir -File -Filter *.opsw1)
@@ -434,7 +506,9 @@ try {
             "r10=$($r10 | ConvertTo-Json -Compress)",
             "r11=$($r11 | ConvertTo-Json -Compress)",
             "r12=$($r12 | ConvertTo-Json -Compress)",
-            "r13=$($r13 | ConvertTo-Json -Compress)"
+            "r13=$($r13 | ConvertTo-Json -Compress)",
+            "r14=$($r14 | ConvertTo-Json -Compress)",
+            "r15=$($r15 | ConvertTo-Json -Compress)"
         ) -join " | "
         throw "expected >=8 opsw1 records in smoke spool (eth raw + eth nonraw + eth nonraw tx-object + eth contract-call + eth contract-deploy + eth nonraw array + web30 raw + web30 nonraw), got $($files.Count); responses: $diag"
     }
@@ -479,7 +553,9 @@ try {
             ($r10 | ConvertTo-Json -Compress),
             ($r11 | ConvertTo-Json -Compress),
             ($r12 | ConvertTo-Json -Compress),
-            ($r13 | ConvertTo-Json -Compress)
+            ($r13 | ConvertTo-Json -Compress),
+            ($r14 | ConvertTo-Json -Compress),
+            ($r15 | ConvertTo-Json -Compress)
         )
         opsw1_count = $files.Count
         opsw1_files = @($files | ForEach-Object { $_.FullName })

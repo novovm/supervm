@@ -98,7 +98,7 @@ pub fn verify_ring_signature(
 
     #[cfg(feature = "aoem-ring-ffi")]
     {
-        return verify_ring_signature_via_aoem(signature, message, amount);
+        verify_ring_signature_via_aoem(signature, message, amount)
     }
 
     #[cfg(not(feature = "aoem-ring-ffi"))]
