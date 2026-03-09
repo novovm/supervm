@@ -22,10 +22,9 @@ pub struct TxIngressRecord {
 
 #[derive(Debug)]
 pub struct ExecBatchBuffer {
-    // Keep key/value payloads heap-pinned so ExecOpV2 raw pointers remain valid
-    // even if the backing Vec containers are moved.
-    _keys: Vec<Box<[u8; 8]>>,
-    _values: Vec<Box<[u8; 8]>>,
+    // Keep key/value payloads alive so ExecOpV2 raw pointers remain valid.
+    _keys: Vec<[u8; 8]>,
+    _values: Vec<[u8; 8]>,
     pub ops: Vec<ExecOpV2>,
 }
 
@@ -199,14 +198,8 @@ pub fn build_exec_batch_from_records<F>(
 where
     F: FnMut(usize, &TxIngressRecord) -> u64,
 {
-    let mut keys: Vec<Box<[u8; 8]>> = records
-        .iter()
-        .map(|rec| Box::new(rec.key.to_le_bytes()))
-        .collect();
-    let mut values: Vec<Box<[u8; 8]>> = records
-        .iter()
-        .map(|rec| Box::new(rec.value.to_le_bytes()))
-        .collect();
+    let mut keys: Vec<[u8; 8]> = records.iter().map(|rec| rec.key.to_le_bytes()).collect();
+    let mut values: Vec<[u8; 8]> = records.iter().map(|rec| rec.value.to_le_bytes()).collect();
     let mut ops = Vec::with_capacity(records.len());
 
     for (i, ((key, value), rec)) in keys
