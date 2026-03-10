@@ -10,6 +10,11 @@ use novovm_adapter_api::{
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
+use web30_core::privacy::verify_ring_signature;
+use web30_core::types::{
+    Address as Web30Address, RingSignature as Web30RingSignature,
+    StealthAddress as Web30StealthAddress,
+};
 
 const ADAPTER_UCA_ID_PREFIX: &str = "uca:adapter:";
 const ADAPTER_UA_INGRESS_GUARD_ENV: &str = "NOVOVM_UNIFIED_ACCOUNT_ADAPTER_INGRESS_GUARD";
@@ -77,6 +82,13 @@ impl NovoVmAdapter {
         hasher.update(nonce.to_le_bytes());
         let digest: [u8; 32] = hasher.finalize().into();
         digest[12..32].to_vec()
+    }
+
+    fn privacy_key_image_key(key_image: &[u8; 32]) -> Vec<u8> {
+        let mut key = Vec::with_capacity(18 + key_image.len());
+        key.extend_from_slice(b"privacy:key_image:");
+        key.extend_from_slice(key_image);
+        key
     }
 
     fn bool_env_default(name: &str, default: bool) -> bool {
@@ -226,6 +238,42 @@ impl NovoVmAdapter {
         Ok(())
     }
 
+    fn decode_privacy_signature(tx: &TxIR) -> Result<Web30RingSignature> {
+        serde_json::from_slice(&tx.signature)
+            .map_err(|e| anyhow::anyhow!("privacy tx ring signature decode failed: {e}"))
+    }
+
+    fn decode_privacy_stealth_address(tx: &TxIR) -> Result<Web30StealthAddress> {
+        bincode::deserialize(&tx.data)
+            .map_err(|e| anyhow::anyhow!("privacy tx stealth address decode failed: {e}"))
+    }
+
+    fn privacy_member_matches_tx_from(member: &Web30Address, from: &[u8]) -> bool {
+        if from.len() == 32 {
+            member.as_bytes().as_slice() == from
+        } else if from.len() == 20 {
+            &member.as_bytes()[12..32] == from
+        } else {
+            false
+        }
+    }
+
+    fn verify_privacy_tx_signature_v1(tx: &TxIR) -> Result<bool> {
+        let signature = match Self::decode_privacy_signature(tx) {
+            Ok(v) => v,
+            Err(_) => return Ok(false),
+        };
+        if !signature
+            .ring_members
+            .iter()
+            .any(|member| Self::privacy_member_matches_tx_from(member, &tx.from))
+        {
+            return Ok(false);
+        }
+        let message = tx_signing_message_v1(tx);
+        verify_ring_signature(&signature, &message, tx.value)
+    }
+
     fn apply_transfer(
         tx: &TxIR,
         state: &mut StateIR,
@@ -322,6 +370,61 @@ impl NovoVmAdapter {
             code_hash.to_vec(),
         );
         kv.insert(Self::append_nonce_key(&tx.from, tx.nonce), contract_address);
+        Ok(())
+    }
+
+    fn apply_privacy_transfer(
+        tx: &TxIR,
+        state: &mut StateIR,
+        kv: &mut HashMap<Vec<u8>, Vec<u8>>,
+        record_key_image: bool,
+    ) -> Result<()> {
+        let stealth_address = Self::decode_privacy_stealth_address(tx)?;
+        let ring_signature = Self::decode_privacy_signature(tx)?;
+        let key_image_key = Self::privacy_key_image_key(&ring_signature.key_image);
+        if record_key_image && kv.contains_key(&key_image_key) {
+            bail!("privacy tx key image already spent");
+        }
+
+        let mut from_account = state
+            .get_account(&tx.from)
+            .cloned()
+            .unwrap_or_else(Self::default_account);
+        if from_account.balance < tx.value {
+            bail!("privacy tx insufficient balance");
+        }
+        from_account.balance -= tx.value;
+        from_account.nonce = from_account.nonce.max(tx.nonce.saturating_add(1));
+        state.set_account(tx.from.clone(), from_account);
+
+        let recipient = stealth_address.spend_key.to_vec();
+        let mut to_account = state
+            .get_account(&recipient)
+            .cloned()
+            .unwrap_or_else(Self::default_account);
+        to_account.balance = to_account.balance.saturating_add(tx.value);
+        state.set_account(recipient.clone(), to_account);
+
+        state.set_storage(
+            recipient.clone(),
+            b"privacy:view_key".to_vec(),
+            stealth_address.view_key.to_vec(),
+        );
+        state.set_storage(
+            recipient.clone(),
+            b"privacy:key_image".to_vec(),
+            ring_signature.key_image.to_vec(),
+        );
+        state.set_storage(
+            tx.from.clone(),
+            tx.nonce.to_le_bytes().to_vec(),
+            tx.hash.clone(),
+        );
+
+        if record_key_image {
+            kv.insert(key_image_key, tx.hash.clone());
+        }
+        kv.insert(Self::append_nonce_key(&tx.from, tx.nonce), tx.hash.clone());
         Ok(())
     }
 
@@ -433,6 +536,82 @@ pub fn signature_payload_with_seed_v1(tx: &TxIR, seed: [u8; 32]) -> Vec<u8> {
     payload
 }
 
+pub fn privacy_stealth_payload_v1(stealth_address: &Web30StealthAddress) -> Result<Vec<u8>> {
+    bincode::serialize(stealth_address)
+        .map_err(|e| anyhow::anyhow!("encode privacy stealth address failed: {e}"))
+}
+
+pub fn privacy_signature_payload_with_secret_v1(
+    tx: &TxIR,
+    ring_members: &[Web30Address],
+    signer_index: usize,
+    private_key: [u8; 32],
+) -> Result<Vec<u8>> {
+    let message = tx_signing_message_v1(tx);
+    let signature = web30_core::privacy::generate_ring_signature_with_amount(
+        &private_key,
+        ring_members,
+        &message,
+        tx.value,
+        signer_index,
+    )?;
+    serde_json::to_vec(&signature)
+        .map_err(|e| anyhow::anyhow!("encode privacy ring signature payload failed: {e}"))
+}
+
+#[derive(Debug, Clone)]
+pub struct PrivacyTxEnvelopeV1 {
+    pub from: Vec<u8>,
+    pub stealth_address: Web30StealthAddress,
+    pub value: u128,
+    pub nonce: u64,
+    pub chain_id: u64,
+    pub gas_limit: u64,
+    pub gas_price: u64,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct PrivacyTxSignerV1<'a> {
+    pub ring_members: &'a [Web30Address],
+    pub signer_index: usize,
+    pub private_key: [u8; 32],
+}
+
+pub fn build_privacy_tx_ir_unsigned_v1(envelope: &PrivacyTxEnvelopeV1) -> Result<TxIR> {
+    let data = privacy_stealth_payload_v1(&envelope.stealth_address)?;
+    let mut tx = TxIR {
+        hash: Vec::new(),
+        from: envelope.from.clone(),
+        to: None,
+        value: envelope.value,
+        gas_limit: envelope.gas_limit,
+        gas_price: envelope.gas_price,
+        nonce: envelope.nonce,
+        data,
+        signature: Vec::new(),
+        chain_id: envelope.chain_id,
+        tx_type: TxType::Privacy,
+        source_chain: None,
+        target_chain: None,
+    };
+    tx.hash = compute_tx_ir_hash(&tx);
+    Ok(tx)
+}
+
+pub fn build_privacy_tx_ir_signed_v1(
+    envelope: &PrivacyTxEnvelopeV1,
+    signer: PrivacyTxSignerV1<'_>,
+) -> Result<TxIR> {
+    let mut tx = build_privacy_tx_ir_unsigned_v1(envelope)?;
+    tx.signature = privacy_signature_payload_with_secret_v1(
+        &tx,
+        signer.ring_members,
+        signer.signer_index,
+        signer.private_key,
+    )?;
+    Ok(tx)
+}
+
 fn verify_tx_signature_v1(tx: &TxIR) -> Result<bool> {
     if tx.signature.len() != 96 {
         return Ok(false);
@@ -499,6 +678,7 @@ impl ChainAdapter for NovoVmAdapter {
         let tx_shape_ok = match tx.tx_type {
             TxType::Transfer | TxType::ContractCall => tx.to.is_some(),
             TxType::ContractDeploy => tx.to.is_none() && !tx.data.is_empty(),
+            TxType::Privacy => tx.to.is_none() && !tx.data.is_empty(),
             _ => false,
         };
         if !tx_shape_ok || tx.hash.is_empty() || tx.signature.is_empty() {
@@ -507,7 +687,24 @@ impl ChainAdapter for NovoVmAdapter {
         if tx.hash != compute_tx_ir_hash(tx) {
             return Ok(false);
         }
-        if !verify_tx_signature_v1(tx)? {
+        let signature_ok = match tx.tx_type {
+            TxType::Privacy => {
+                if Self::decode_privacy_stealth_address(tx).is_err() {
+                    return Ok(false);
+                }
+                let signature = match Self::decode_privacy_signature(tx) {
+                    Ok(v) => v,
+                    Err(_) => return Ok(false),
+                };
+                let key_image_key = Self::privacy_key_image_key(&signature.key_image);
+                if self.kv.contains_key(&key_image_key) {
+                    return Ok(false);
+                }
+                Self::verify_privacy_tx_signature_v1(tx)?
+            }
+            _ => verify_tx_signature_v1(tx)?,
+        };
+        if !signature_ok {
             return Ok(false);
         }
         Ok(true)
@@ -531,6 +728,10 @@ impl ChainAdapter for NovoVmAdapter {
             TxType::ContractDeploy => {
                 Self::apply_contract_deploy(tx, state, &mut self.kv)?;
                 Self::apply_contract_deploy(tx, &mut self.state, &mut self.kv)?;
+            }
+            TxType::Privacy => {
+                Self::apply_privacy_transfer(tx, state, &mut self.kv, false)?;
+                Self::apply_privacy_transfer(tx, &mut self.state, &mut self.kv, true)?;
             }
             _ => bail!("unsupported tx_type for native adapter: {:?}", tx.tx_type),
         }
@@ -638,6 +839,7 @@ pub fn create_native_adapter(config: ChainConfig) -> Result<Box<dyn ChainAdapter
 #[cfg(test)]
 mod tests {
     use super::*;
+    use web30_core::privacy::generate_ring_keypair;
 
     #[test]
     fn supports_native_chain_includes_polygon_and_avalanche() {
@@ -679,6 +881,53 @@ mod tests {
         tx
     }
 
+    fn sample_privacy_tx_with_invalid_signature() -> TxIR {
+        let envelope = PrivacyTxEnvelopeV1 {
+            from: vec![7u8; 32],
+            stealth_address: Web30StealthAddress {
+                view_key: [9u8; 32],
+                spend_key: [8u8; 32],
+            },
+            value: 3,
+            nonce: 0,
+            chain_id: 1,
+            gas_limit: 21_000,
+            gas_price: 1,
+        };
+        let mut tx = build_privacy_tx_ir_unsigned_v1(&envelope).expect("build unsigned privacy tx");
+        tx.signature = br#"{"bad":"ring"}"#.to_vec();
+        tx
+    }
+
+    #[test]
+    fn build_privacy_tx_unsigned_sets_expected_shape() {
+        let envelope = PrivacyTxEnvelopeV1 {
+            from: vec![0x11u8; 32],
+            stealth_address: Web30StealthAddress {
+                view_key: [0x31u8; 32],
+                spend_key: [0x52u8; 32],
+            },
+            value: 9,
+            nonce: 2,
+            chain_id: 20260303,
+            gas_limit: 90_000,
+            gas_price: 3,
+        };
+        let tx = build_privacy_tx_ir_unsigned_v1(&envelope).expect("build unsigned privacy tx");
+        assert_eq!(tx.tx_type, TxType::Privacy);
+        assert!(tx.to.is_none());
+        assert_eq!(tx.value, 9);
+        assert_eq!(tx.nonce, 2);
+        assert_eq!(tx.chain_id, 20260303);
+        assert_eq!(tx.gas_limit, 90_000);
+        assert_eq!(tx.gas_price, 3);
+        assert!(!tx.hash.is_empty());
+        let decoded: Web30StealthAddress =
+            bincode::deserialize(&tx.data).expect("decode stealth payload");
+        assert_eq!(decoded.view_key, envelope.stealth_address.view_key);
+        assert_eq!(decoded.spend_key, envelope.stealth_address.spend_key);
+    }
+
     #[test]
     fn verify_transaction_accepts_contract_call_and_deploy() {
         let mut adapter = NovoVmAdapter::new(ChainConfig {
@@ -697,5 +946,94 @@ mod tests {
         assert!(adapter
             .verify_transaction(&deploy_tx)
             .expect("verify deploy"));
+    }
+
+    #[test]
+    fn verify_transaction_rejects_malformed_privacy_signature() {
+        let mut adapter = NovoVmAdapter::new(ChainConfig {
+            chain_type: ChainType::NovoVM,
+            chain_id: 1,
+            name: "test".to_string(),
+            enabled: true,
+            custom_config: None,
+        });
+        adapter.initialize().expect("init");
+
+        let tx = sample_privacy_tx_with_invalid_signature();
+        assert!(!adapter.verify_transaction(&tx).expect("verify privacy"));
+    }
+
+    #[test]
+    fn execute_transaction_rejects_replayed_privacy_key_image_when_aoem_available() {
+        let Some(_) = NovoVmAdapter::string_env_nonempty("NOVOVM_AOEM_DLL")
+            .or_else(|| NovoVmAdapter::string_env_nonempty("AOEM_DLL"))
+            .or_else(|| NovoVmAdapter::string_env_nonempty("AOEM_FFI_DLL"))
+        else {
+            return;
+        };
+
+        let (decoy_pub, _decoy_secret) = match generate_ring_keypair() {
+            Ok(v) => v,
+            Err(_) => return,
+        };
+        let (real_pub, real_secret) = match generate_ring_keypair() {
+            Ok(v) => v,
+            Err(_) => return,
+        };
+
+        let ring_members = vec![
+            Web30Address::from_bytes(decoy_pub),
+            Web30Address::from_bytes(real_pub),
+        ];
+        let envelope = PrivacyTxEnvelopeV1 {
+            from: real_pub.to_vec(),
+            stealth_address: Web30StealthAddress {
+                view_key: [5u8; 32],
+                spend_key: [6u8; 32],
+            },
+            value: 7,
+            nonce: 0,
+            chain_id: 1,
+            gas_limit: 21_000,
+            gas_price: 1,
+        };
+        let tx = build_privacy_tx_ir_signed_v1(
+            &envelope,
+            PrivacyTxSignerV1 {
+                ring_members: &ring_members,
+                signer_index: 1,
+                private_key: real_secret,
+            },
+        )
+        .expect("privacy sign");
+
+        let mut adapter = NovoVmAdapter::new(ChainConfig {
+            chain_type: ChainType::NovoVM,
+            chain_id: 1,
+            name: "test".to_string(),
+            enabled: true,
+            custom_config: None,
+        });
+        adapter.initialize().expect("init");
+
+        let funded = AccountState {
+            balance: 100,
+            nonce: 0,
+            code_hash: None,
+            storage_root: vec![0u8; 32],
+        };
+        adapter.state.set_account(tx.from.clone(), funded.clone());
+        let mut runtime_state = StateIR::new();
+        runtime_state.set_account(tx.from.clone(), funded);
+
+        adapter
+            .execute_transaction(&tx, &mut runtime_state)
+            .expect("first privacy tx must pass");
+        assert!(
+            adapter
+                .execute_transaction(&tx, &mut runtime_state)
+                .is_err(),
+            "replayed privacy tx must fail due to spent key image"
+        );
     }
 }

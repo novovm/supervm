@@ -19,6 +19,23 @@ pub type AoemRecommendParallelism = unsafe extern "C" fn(u64, u32, u64, f64) -> 
 pub type AoemZkvmSupported = unsafe extern "C" fn() -> u32;
 pub type AoemZkvmTraceFibProveVerify = unsafe extern "C" fn(u32, u64, u64) -> i32;
 pub type AoemRingSignatureSupported = unsafe extern "C" fn() -> u32;
+pub type AoemRingSignatureKeygenV1 =
+    unsafe extern "C" fn(*mut *mut u8, *mut usize, *mut *mut u8, *mut usize) -> i32;
+pub type AoemRingSignatureSignWeb30V1 = unsafe extern "C" fn(
+    *const u8,
+    usize,
+    u32,
+    *const u8,
+    usize,
+    *const u8,
+    usize,
+    *const u8,
+    usize,
+    u64,
+    u64,
+    *mut *mut u8,
+    *mut usize,
+) -> i32;
 pub type AoemRingSignatureVerifyWeb30V1 =
     unsafe extern "C" fn(*const u8, usize, *const u8, usize, u64, u64, *mut u32) -> i32;
 pub type AoemRingSignatureVerifyBatchWeb30V1 =
@@ -63,6 +80,7 @@ pub struct AoemExecV2Result {
 pub type AoemCreate = unsafe extern "C" fn() -> *mut c_void;
 pub type AoemCreateWithOptions = unsafe extern "C" fn(*const AoemCreateOptionsV1) -> *mut c_void;
 pub type AoemDestroy = unsafe extern "C" fn(*mut c_void);
+pub type AoemFree = unsafe extern "C" fn(*mut u8, usize);
 pub type AoemExecuteOpsV2 =
     unsafe extern "C" fn(*mut c_void, *const AoemOpV2, u32, *mut AoemExecV2Result) -> i32;
 pub type AoemExecuteOpsWireV1 =
@@ -81,6 +99,8 @@ pub struct AoemDyn {
     zkvm_supported: Option<AoemZkvmSupported>,
     zkvm_trace_fib_prove_verify: Option<AoemZkvmTraceFibProveVerify>,
     ring_signature_supported: Option<AoemRingSignatureSupported>,
+    ring_signature_keygen_v1: Option<AoemRingSignatureKeygenV1>,
+    ring_signature_sign_web30_v1: Option<AoemRingSignatureSignWeb30V1>,
     ring_signature_verify_web30_v1: Option<AoemRingSignatureVerifyWeb30V1>,
     ring_signature_verify_batch_web30_v1: Option<AoemRingSignatureVerifyBatchWeb30V1>,
     bulletproof_prove_batch_v1: Option<AoemBulletproofProveBatchV1>,
@@ -90,6 +110,7 @@ pub struct AoemDyn {
     create: AoemCreate,
     create_with_options: Option<AoemCreateWithOptions>,
     destroy: AoemDestroy,
+    free: Option<AoemFree>,
     execute_ops_v2: Option<AoemExecuteOpsV2>,
     execute_ops_wire_v1: Option<AoemExecuteOpsWireV1>,
     last_error: AoemLastError,
@@ -175,12 +196,20 @@ impl AoemDyn {
             .get::<AoemRingSignatureSupported>(b"aoem_ring_signature_supported")
             .ok()
             .map(|f| *f);
+        let ring_signature_keygen_v1: Option<AoemRingSignatureKeygenV1> = lib
+            .get::<AoemRingSignatureKeygenV1>(b"aoem_ring_signature_keygen_v1")
+            .ok()
+            .map(|f| *f);
+        let ring_signature_sign_web30_v1: Option<AoemRingSignatureSignWeb30V1> = lib
+            .get::<AoemRingSignatureSignWeb30V1>(b"aoem_ring_signature_sign_web30_v1")
+            .ok()
+            .map(|f| *f);
         let ring_signature_verify_web30_v1: Option<AoemRingSignatureVerifyWeb30V1> = lib
             .get::<AoemRingSignatureVerifyWeb30V1>(b"aoem_ring_signature_verify_web30_v1")
             .ok()
             .map(|f| *f);
-        let ring_signature_verify_batch_web30_v1: Option<AoemRingSignatureVerifyBatchWeb30V1> =
-            lib.get::<AoemRingSignatureVerifyBatchWeb30V1>(
+        let ring_signature_verify_batch_web30_v1: Option<AoemRingSignatureVerifyBatchWeb30V1> = lib
+            .get::<AoemRingSignatureVerifyBatchWeb30V1>(
                 b"aoem_ring_signature_verify_batch_web30_v1",
             )
             .ok()
@@ -207,6 +236,7 @@ impl AoemDyn {
             .ok()
             .map(|f| *f);
         let destroy: AoemDestroy = *lib.get::<AoemDestroy>(b"aoem_destroy")?;
+        let free: Option<AoemFree> = lib.get::<AoemFree>(b"aoem_free").ok().map(|f| *f);
         let execute_ops_v2: Option<AoemExecuteOpsV2> = lib
             .get::<AoemExecuteOpsV2>(b"aoem_execute_ops_v2")
             .ok()
@@ -229,6 +259,8 @@ impl AoemDyn {
             zkvm_supported,
             zkvm_trace_fib_prove_verify,
             ring_signature_supported,
+            ring_signature_keygen_v1,
+            ring_signature_sign_web30_v1,
             ring_signature_verify_web30_v1,
             ring_signature_verify_batch_web30_v1,
             bulletproof_prove_batch_v1,
@@ -238,6 +270,7 @@ impl AoemDyn {
             create,
             create_with_options,
             destroy,
+            free,
             execute_ops_v2,
             execute_ops_wire_v1,
             last_error,
@@ -436,6 +469,15 @@ impl AoemDyn {
         self.ring_signature_supported.is_some() && self.ring_signature_verify_web30_v1.is_some()
     }
 
+    pub fn supports_ring_signature_keygen_v1(&self) -> bool {
+        self.ring_signature_keygen_v1.is_some() && self.free.is_some()
+    }
+
+    /// True when AOEM FFI exports Web30-compatible ring-signature sign symbols.
+    pub fn supports_ring_signature_sign_web30_v1(&self) -> bool {
+        self.ring_signature_sign_web30_v1.is_some() && self.free.is_some()
+    }
+
     pub fn supports_ring_signature_verify_batch_web30_v1(&self) -> bool {
         self.ring_signature_verify_batch_web30_v1.is_some()
     }
@@ -476,6 +518,94 @@ impl AoemDyn {
     /// `None` means the loaded AOEM library does not export this symbol.
     pub fn ring_signature_supported_flag(&self) -> Option<bool> {
         self.ring_signature_supported.map(|f| unsafe { f() != 0 })
+    }
+
+    fn copy_aoem_owned_bytes(&self, ptr: *mut u8, len: usize, ctx: &str) -> Result<Vec<u8>> {
+        if ptr.is_null() {
+            bail!("{ctx} returned null buffer");
+        }
+        let free_fn = self
+            .free
+            .ok_or_else(|| anyhow!("aoem_free not found in loaded DLL"))?;
+        let out = unsafe { std::slice::from_raw_parts(ptr as *const u8, len) }.to_vec();
+        unsafe { free_fn(ptr, len) };
+        Ok(out)
+    }
+
+    /// Generates a ring-signature public/secret keypair via AOEM FFI.
+    pub fn ring_signature_keygen_v1(&self) -> Result<(Vec<u8>, Vec<u8>)> {
+        let Some(keygen_fn) = self.ring_signature_keygen_v1 else {
+            bail!("aoem_ring_signature_keygen_v1 not found in loaded DLL");
+        };
+        let mut public_key_ptr: *mut u8 = ptr::null_mut();
+        let mut public_key_len = 0usize;
+        let mut secret_key_ptr: *mut u8 = ptr::null_mut();
+        let mut secret_key_len = 0usize;
+        let rc = unsafe {
+            keygen_fn(
+                &mut public_key_ptr as *mut *mut u8,
+                &mut public_key_len as *mut usize,
+                &mut secret_key_ptr as *mut *mut u8,
+                &mut secret_key_len as *mut usize,
+            )
+        };
+        if rc != 0 {
+            bail!("aoem_ring_signature_keygen_v1 failed: rc={rc}");
+        }
+        let public_key =
+            self.copy_aoem_owned_bytes(public_key_ptr, public_key_len, "ring keygen public key")?;
+        let secret_key =
+            self.copy_aoem_owned_bytes(secret_key_ptr, secret_key_len, "ring keygen secret key")?;
+        Ok((public_key, secret_key))
+    }
+
+    /// Signs a Web30 ring-signature payload via AOEM FFI and returns JSON bytes.
+    pub fn ring_signature_sign_web30_v1(
+        &self,
+        ring_json: &[u8],
+        secret_index: u32,
+        secret_key: &[u8],
+        public_key: &[u8],
+        message: &[u8],
+        amount: u128,
+    ) -> Result<Vec<u8>> {
+        let Some(sign_fn) = self.ring_signature_sign_web30_v1 else {
+            bail!("aoem_ring_signature_sign_web30_v1 not found in loaded DLL");
+        };
+        if ring_json.is_empty() {
+            bail!("ring-signature ring_json must not be empty");
+        }
+        if secret_key.is_empty() {
+            bail!("ring-signature secret_key must not be empty");
+        }
+        if public_key.is_empty() {
+            bail!("ring-signature public_key must not be empty");
+        }
+        let mut signature_ptr: *mut u8 = ptr::null_mut();
+        let mut signature_len = 0usize;
+        let amount_lo = amount as u64;
+        let amount_hi = (amount >> 64) as u64;
+        let rc = unsafe {
+            sign_fn(
+                ring_json.as_ptr(),
+                ring_json.len(),
+                secret_index,
+                secret_key.as_ptr(),
+                secret_key.len(),
+                public_key.as_ptr(),
+                public_key.len(),
+                message.as_ptr(),
+                message.len(),
+                amount_lo,
+                amount_hi,
+                &mut signature_ptr as *mut *mut u8,
+                &mut signature_len as *mut usize,
+            )
+        };
+        if rc != 0 {
+            bail!("aoem_ring_signature_sign_web30_v1 failed: rc={rc}");
+        }
+        self.copy_aoem_owned_bytes(signature_ptr, signature_len, "ring sign signature")
     }
 
     /// Verifies a web30 ring-signature payload via AOEM FFI.

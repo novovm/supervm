@@ -788,9 +788,12 @@ name = "novovm-adapter-novovm"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "bincode",
  "ed25519-dalek",
  "novovm-adapter-api",
+ "serde_json",
  "sha2",
+ "web30-core",
 ]
 
 [[package]]

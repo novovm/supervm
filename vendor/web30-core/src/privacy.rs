@@ -50,6 +50,68 @@ fn verify_ring_signature_via_aoem(
     dynlib.ring_signature_verify_web30_v1(payload.as_slice(), message, amount)
 }
 
+#[cfg(feature = "aoem-ring-ffi")]
+fn generate_ring_signature_via_aoem(
+    private_key: &[u8; 32],
+    ring_members: &[Address],
+    message: &[u8],
+    amount: u128,
+    signer_index: usize,
+) -> Result<RingSignature> {
+    if signer_index >= ring_members.len() {
+        bail!("signer_index out of range for ring_members");
+    }
+    let Some(dll_path) = resolve_aoem_dll_path() else {
+        bail!("AOEM DLL path is not configured");
+    };
+    let dynlib = unsafe { AoemDyn::load(&dll_path) }?;
+    if !dynlib.supports_ring_signature_sign_web30_v1() {
+        bail!("loaded AOEM DLL does not export ring-signature sign ABI");
+    }
+    if dynlib.ring_signature_supported_flag() != Some(true) {
+        bail!("loaded AOEM DLL reports ring-signature capability disabled");
+    }
+    let ring_json = serde_json::to_vec(
+        &ring_members
+            .iter()
+            .map(|member| *member.as_bytes())
+            .collect::<Vec<[u8; 32]>>(),
+    )?;
+    let public_key = ring_members[signer_index].as_bytes();
+    let signature_json = dynlib.ring_signature_sign_web30_v1(
+        ring_json.as_slice(),
+        signer_index as u32,
+        private_key,
+        public_key,
+        message,
+        amount,
+    )?;
+    serde_json::from_slice::<RingSignature>(signature_json.as_slice())
+        .map_err(|e| anyhow::anyhow!("decode AOEM ring-signature payload failed: {e}"))
+}
+
+#[cfg(feature = "aoem-ring-ffi")]
+fn generate_ring_keypair_via_aoem() -> Result<([u8; 32], [u8; 32])> {
+    let Some(dll_path) = resolve_aoem_dll_path() else {
+        bail!("AOEM DLL path is not configured");
+    };
+    let dynlib = unsafe { AoemDyn::load(&dll_path) }?;
+    if !dynlib.supports_ring_signature_keygen_v1() {
+        bail!("loaded AOEM DLL does not export ring-signature keygen ABI");
+    }
+    if dynlib.ring_signature_supported_flag() != Some(true) {
+        bail!("loaded AOEM DLL reports ring-signature capability disabled");
+    }
+    let (public_key, secret_key) = dynlib.ring_signature_keygen_v1()?;
+    let public_key: [u8; 32] = public_key
+        .try_into()
+        .map_err(|_| anyhow::anyhow!("AOEM ring public key length must be 32 bytes"))?;
+    let secret_key: [u8; 32] = secret_key
+        .try_into()
+        .map_err(|_| anyhow::anyhow!("AOEM ring secret key length must be 32 bytes"))?;
+    Ok((public_key, secret_key))
+}
+
 /// 生成隐身地址
 pub fn generate_stealth_address(
     view_key: &[u8; 32],
@@ -113,10 +175,57 @@ pub fn generate_ring_signature(
     private_key: &[u8; 32],
     ring_members: &[Address],
     message: &[u8],
-    _signer_index: usize,
+    signer_index: usize,
 ) -> Result<RingSignature> {
-    let _ = (private_key, ring_members, message);
-    bail!("ring signature generation backend is unavailable in this build");
+    let _ = (private_key, ring_members, message, signer_index);
+    bail!("ring signature generation requires amount; use generate_ring_signature_with_amount")
+}
+
+/// 生成环签名（显式绑定 amount，供 AOEM Web30 FFI 使用）
+pub fn generate_ring_signature_with_amount(
+    private_key: &[u8; 32],
+    ring_members: &[Address],
+    message: &[u8],
+    amount: u128,
+    signer_index: usize,
+) -> Result<RingSignature> {
+    if ring_members.is_empty() {
+        bail!("ring_members must not be empty");
+    }
+    if signer_index >= ring_members.len() {
+        bail!("signer_index out of range for ring_members");
+    }
+    if ring_sig_backend() == "none" {
+        bail!("ring-signature backend disabled");
+    }
+
+    #[cfg(feature = "aoem-ring-ffi")]
+    {
+        generate_ring_signature_via_aoem(private_key, ring_members, message, amount, signer_index)
+    }
+
+    #[cfg(not(feature = "aoem-ring-ffi"))]
+    {
+        let _ = (private_key, ring_members, message, amount, signer_index);
+        bail!("ring signature generation backend is unavailable in this build")
+    }
+}
+
+/// 生成环签名密钥对
+pub fn generate_ring_keypair() -> Result<([u8; 32], [u8; 32])> {
+    if ring_sig_backend() == "none" {
+        bail!("ring-signature backend disabled");
+    }
+
+    #[cfg(feature = "aoem-ring-ffi")]
+    {
+        generate_ring_keypair_via_aoem()
+    }
+
+    #[cfg(not(feature = "aoem-ring-ffi"))]
+    {
+        bail!("ring signature keygen backend is unavailable in this build")
+    }
 }
 
 #[cfg(test)]
@@ -159,5 +268,20 @@ mod tests {
         let ring_members = vec![Address::from_bytes([1u8; 32])];
         let message = b"test message";
         assert!(generate_ring_signature(&private_key, &ring_members, message, 0).is_err());
+    }
+
+    #[test]
+    fn test_ring_signature_with_amount_rejects_invalid_signer_index() {
+        let private_key = [42u8; 32];
+        let ring_members = vec![Address::from_bytes([1u8; 32])];
+        let message = b"test message";
+        let err = generate_ring_signature_with_amount(&private_key, &ring_members, message, 1, 1)
+            .expect_err("invalid signer index must fail");
+        assert!(err.to_string().contains("signer_index"));
+    }
+
+    #[test]
+    fn test_ring_signature_keygen_is_disabled_without_backend() {
+        assert!(generate_ring_keypair().is_err());
     }
 }
