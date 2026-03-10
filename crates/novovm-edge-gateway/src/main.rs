@@ -3,10 +3,13 @@
 use anyhow::{bail, Context, Result};
 use novovm_adapter_api::{
     AccountPolicy, AccountRole, NonceScope, PersonaAddress, PersonaType, ProtocolKind,
-    RouteDecision, RouteRequest, TxIR, TxType, UnifiedAccountRouter,
+    RouteDecision, RouteRequest, SerializationFormat, TxIR, TxType, UnifiedAccountRouter,
 };
 use novovm_adapter_evm_core::{
     estimate_intrinsic_gas_m0, translate_raw_evm_tx_fields_m0, tx_ir_from_raw_fields_m0,
+};
+use novovm_adapter_novovm::{
+    build_privacy_tx_ir_signed_from_raw_v1, PrivacyTxRawEnvelopeV1, PrivacyTxRawSignerV1,
 };
 use novovm_exec::{OpsWireOp, OpsWireV1Builder};
 use rocksdb::{
@@ -100,6 +103,18 @@ struct GatewayWeb30TxHashInput<'a> {
     signature_domain: &'a str,
     is_raw: bool,
     wants_cross_chain_atomic: bool,
+}
+
+#[derive(Debug, Clone)]
+struct GatewayWeb30PrivacyTxPlan {
+    value: u128,
+    gas_limit: u64,
+    gas_price: u64,
+    stealth_view_key: [u8; 32],
+    stealth_spend_key: [u8; 32],
+    ring_members: Vec<[u8; 32]>,
+    signer_index: usize,
+    private_key: [u8; 32],
 }
 
 struct GatewayEthTxHashInput<'a> {
@@ -1278,7 +1293,7 @@ fn run_gateway_method(
                 anyhow::anyhow!("external_address (or from/address) is required for web30_sendTransaction")
             })?;
             let from = decode_hex_bytes(&from_raw, "external_address")?;
-            let payload = extract_web30_tx_payload(params)?;
+            let privacy_plan = parse_gateway_web30_privacy_plan(params)?;
             let signature_domain = param_as_string(params, "signature_domain")
                 .unwrap_or_else(|| "web30:mainnet".to_string());
             let wants_cross_chain_atomic =
@@ -1302,16 +1317,61 @@ fn run_gateway_method(
                 session_expires_at,
                 now,
             })?;
-            let tx_hash = compute_gateway_web30_tx_hash(&GatewayWeb30TxHashInput {
-                uca_id: &uca_id,
-                chain_id,
-                nonce,
-                from: &from,
-                payload: &payload,
-                signature_domain: &signature_domain,
-                is_raw: false,
-                wants_cross_chain_atomic,
-            });
+            let (payload, tx_hash, payload_kind, tx_ir_type) = if let Some(plan) = privacy_plan {
+                if from.len() != 32 {
+                    bail!(
+                        "privacy web30_sendTransaction requires 32-byte from/external_address, got {}",
+                        from.len()
+                    );
+                }
+                if !plan
+                    .ring_members
+                    .iter()
+                    .any(|member| member.as_slice() == from.as_slice())
+                {
+                    bail!("privacy.ring_members must include from/external_address");
+                }
+                let tx_ir = build_privacy_tx_ir_signed_from_raw_v1(
+                    &PrivacyTxRawEnvelopeV1 {
+                        from: from.clone(),
+                        stealth_view_key: plan.stealth_view_key,
+                        stealth_spend_key: plan.stealth_spend_key,
+                        value: plan.value,
+                        nonce,
+                        chain_id,
+                        gas_limit: plan.gas_limit,
+                        gas_price: plan.gas_price,
+                    },
+                    PrivacyTxRawSignerV1 {
+                        ring_members: &plan.ring_members,
+                        signer_index: plan.signer_index,
+                        private_key: plan.private_key,
+                    },
+                )?;
+                let payload = tx_ir
+                    .serialize(SerializationFormat::Bincode)
+                    .context("serialize privacy tx ir payload failed")?;
+                let tx_hash = vec_to_32(&tx_ir.hash, "privacy_tx_hash")?;
+                (
+                    payload,
+                    tx_hash,
+                    "signed_privacy_tx_ir_bincode_v1",
+                    Some("privacy"),
+                )
+            } else {
+                let payload = extract_web30_tx_payload(params)?;
+                let tx_hash = compute_gateway_web30_tx_hash(&GatewayWeb30TxHashInput {
+                    uca_id: &uca_id,
+                    chain_id,
+                    nonce,
+                    from: &from,
+                    payload: &payload,
+                    signature_domain: &signature_domain,
+                    is_raw: false,
+                    wants_cross_chain_atomic,
+                });
+                (payload, tx_hash, "generic_web30_payload_v1", None)
+            };
             let record = GatewayIngressWeb30RecordV1 {
                 version: GATEWAY_INGRESS_RECORD_VERSION,
                 protocol: GATEWAY_INGRESS_PROTOCOL_WEB30,
@@ -1342,6 +1402,8 @@ fn run_gateway_method(
                     "tx_hash": format!("0x{}", to_hex(&record.tx_hash)),
                     "spool_file": spool_file.display().to_string(),
                     "ingress_codec": "ops_wire_v1",
+                    "payload_kind": payload_kind,
+                    "tx_ir_type": tx_ir_type,
                 }),
                 true,
             ))
@@ -1561,7 +1623,11 @@ fn gateway_error_code_for_method(method: &str, message: &str) -> i64 {
             || lower.contains("nonce")
             || lower.contains("address")
             || lower.contains("external_address")
-            || lower.contains("payload"))
+            || lower.contains("payload")
+            || lower.contains("privacy")
+            || lower.contains("ring_members")
+            || lower.contains("signer_index")
+            || lower.contains("stealth"))
     {
         return -32033;
     }
@@ -1924,6 +1990,137 @@ fn extract_web30_tx_payload(params: &serde_json::Value) -> Result<Vec<u8>> {
     serde_json::to_vec(params).context("serialize web30 transaction params payload failed")
 }
 
+fn param_privacy_object(
+    params: &serde_json::Value,
+) -> Option<&serde_json::Map<String, serde_json::Value>> {
+    let map = params_primary_object(params)?;
+    if let Some(privacy) = map.get("privacy").and_then(serde_json::Value::as_object) {
+        return Some(privacy);
+    }
+    let tx = map.get("tx").and_then(serde_json::Value::as_object)?;
+    tx.get("privacy").and_then(serde_json::Value::as_object)
+}
+
+fn parse_hex32_from_string(raw: &str, field: &str) -> Result<[u8; 32]> {
+    let bytes = decode_hex_bytes(raw, field)?;
+    vec_to_32(&bytes, field)
+}
+
+fn parse_gateway_web30_privacy_plan(
+    params: &serde_json::Value,
+) -> Result<Option<GatewayWeb30PrivacyTxPlan>> {
+    let Some(privacy) = param_privacy_object(params) else {
+        return Ok(None);
+    };
+
+    let value = privacy
+        .get("value")
+        .and_then(value_to_u128)
+        .or_else(|| param_as_u128_any_with_tx(params, &["value"]))
+        .unwrap_or(0);
+    let gas_limit = privacy
+        .get("gas_limit")
+        .or_else(|| privacy.get("gasLimit"))
+        .or_else(|| privacy.get("gas"))
+        .and_then(value_to_u64)
+        .or_else(|| param_as_u64_any_with_tx(params, &["gas_limit", "gasLimit", "gas"]))
+        .unwrap_or(21_000);
+    let gas_price = privacy
+        .get("gas_price")
+        .or_else(|| privacy.get("gasPrice"))
+        .or_else(|| privacy.get("max_fee_per_gas"))
+        .or_else(|| privacy.get("maxFeePerGas"))
+        .or_else(|| privacy.get("max_priority_fee_per_gas"))
+        .or_else(|| privacy.get("maxPriorityFeePerGas"))
+        .and_then(value_to_u64)
+        .or_else(|| {
+            param_as_u64_any_with_tx(
+                params,
+                &[
+                    "gas_price",
+                    "gasPrice",
+                    "max_fee_per_gas",
+                    "maxFeePerGas",
+                    "max_priority_fee_per_gas",
+                    "maxPriorityFeePerGas",
+                ],
+            )
+        })
+        .unwrap_or(1);
+    let view_key_raw = privacy
+        .get("view_key")
+        .or_else(|| privacy.get("stealth_view_key"))
+        .and_then(value_to_string)
+        .ok_or_else(|| anyhow::anyhow!("privacy.view_key (or stealth_view_key) is required"))?;
+    let stealth_view_key = parse_hex32_from_string(&view_key_raw, "privacy.view_key")?;
+    let spend_key_raw = privacy
+        .get("spend_key")
+        .or_else(|| privacy.get("stealth_spend_key"))
+        .and_then(value_to_string)
+        .ok_or_else(|| anyhow::anyhow!("privacy.spend_key (or stealth_spend_key) is required"))?;
+    let stealth_spend_key = parse_hex32_from_string(&spend_key_raw, "privacy.spend_key")?;
+    let signer_index = privacy
+        .get("signer_index")
+        .or_else(|| privacy.get("signerIndex"))
+        .and_then(value_to_u64)
+        .unwrap_or(0) as usize;
+    let ring_members_value = privacy
+        .get("ring_members")
+        .or_else(|| privacy.get("ringMembers"))
+        .or_else(|| privacy.get("members"))
+        .ok_or_else(|| anyhow::anyhow!("privacy.ring_members (or ringMembers) is required"))?;
+    let ring_members_array = ring_members_value
+        .as_array()
+        .ok_or_else(|| anyhow::anyhow!("privacy.ring_members must be an array"))?;
+    if ring_members_array.is_empty() {
+        bail!("privacy.ring_members must not be empty");
+    }
+    let mut ring_members = Vec::with_capacity(ring_members_array.len());
+    for (idx, raw) in ring_members_array.iter().enumerate() {
+        let text = value_to_string(raw)
+            .ok_or_else(|| anyhow::anyhow!("privacy.ring_members[{idx}] must be hex string"))?;
+        let parsed = parse_hex32_from_string(&text, &format!("privacy.ring_members[{idx}]"))?;
+        ring_members.push(parsed);
+    }
+    if signer_index >= ring_members.len() {
+        bail!(
+            "privacy.signer_index out of range: {} >= {}",
+            signer_index,
+            ring_members.len()
+        );
+    }
+    let private_key_raw = if let Some(raw) = privacy
+        .get("private_key")
+        .or_else(|| privacy.get("secret_key"))
+        .and_then(value_to_string)
+    {
+        raw
+    } else if let Some(env_name) = privacy
+        .get("private_key_env")
+        .or_else(|| privacy.get("secret_key_env"))
+        .and_then(value_to_string)
+    {
+        string_env_nonempty(&env_name)
+            .ok_or_else(|| anyhow::anyhow!("privacy private_key_env not set: {}", env_name))?
+    } else {
+        string_env_nonempty("NOVOVM_GATEWAY_WEB30_PRIVACY_SIGNER_SECRET_HEX").ok_or_else(|| {
+            anyhow::anyhow!("privacy.private_key (or secret_key/private_key_env) is required")
+        })?
+    };
+    let private_key = parse_hex32_from_string(&private_key_raw, "privacy.private_key")?;
+
+    Ok(Some(GatewayWeb30PrivacyTxPlan {
+        value,
+        gas_limit,
+        gas_price,
+        stealth_view_key,
+        stealth_spend_key,
+        ring_members,
+        signer_index,
+        private_key,
+    }))
+}
+
 fn compute_gateway_web30_tx_hash(input: &GatewayWeb30TxHashInput<'_>) -> [u8; 32] {
     let mut hasher = Sha256::new();
     hasher.update(b"novovm_gateway_web30_tx_hash_v1");
@@ -2171,4 +2368,180 @@ fn now_unix_millis() -> u128 {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_else(|_| Duration::from_secs(0))
         .as_millis()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use web30_core::privacy::generate_ring_keypair;
+
+    fn decode_single_ops_wire_value(bytes: &[u8]) -> Result<Vec<u8>> {
+        const HEADER_LEN: usize = 5 + 2 + 2 + 4;
+        if bytes.len() < HEADER_LEN {
+            bail!("ops-wire too short");
+        }
+        if &bytes[..5] != b"AOV2\0" {
+            bail!("ops-wire magic mismatch");
+        }
+        let op_count = u32::from_le_bytes([bytes[9], bytes[10], bytes[11], bytes[12]]) as usize;
+        if op_count != 1 {
+            bail!("expected exactly one op, got {}", op_count);
+        }
+        let mut off = HEADER_LEN;
+        if bytes.len() < off + 36 {
+            bail!("ops-wire op header too short");
+        }
+        let key_len = u32::from_le_bytes([
+            bytes[off + 4],
+            bytes[off + 5],
+            bytes[off + 6],
+            bytes[off + 7],
+        ]) as usize;
+        let value_len = u32::from_le_bytes([
+            bytes[off + 8],
+            bytes[off + 9],
+            bytes[off + 10],
+            bytes[off + 11],
+        ]) as usize;
+        off += 36;
+        if bytes.len() < off + key_len + value_len {
+            bail!(
+                "ops-wire payload truncated: off={} key_len={} value_len={} bytes={}",
+                off,
+                key_len,
+                value_len,
+                bytes.len()
+            );
+        }
+        off += key_len;
+        Ok(bytes[off..off + value_len].to_vec())
+    }
+
+    fn aoem_privacy_env_available() -> bool {
+        string_env_nonempty("NOVOVM_AOEM_DLL")
+            .or_else(|| string_env_nonempty("AOEM_DLL"))
+            .or_else(|| string_env_nonempty("AOEM_FFI_DLL"))
+            .is_some()
+    }
+
+    #[test]
+    fn parse_gateway_web30_privacy_plan_reads_required_fields() {
+        let params = serde_json::json!({
+            "privacy": {
+                "value": "0x11",
+                "gas_limit": "0x5208",
+                "gas_price": "0x2",
+                "view_key": format!("0x{}", "11".repeat(32)),
+                "spend_key": format!("0x{}", "22".repeat(32)),
+                "ring_members": [
+                    format!("0x{}", "33".repeat(32))
+                ],
+                "signer_index": 0,
+                "private_key": format!("0x{}", "44".repeat(32)),
+            }
+        });
+        let plan = parse_gateway_web30_privacy_plan(&params)
+            .expect("parse privacy plan")
+            .expect("privacy plan should exist");
+        assert_eq!(plan.value, 0x11);
+        assert_eq!(plan.gas_limit, 0x5208);
+        assert_eq!(plan.gas_price, 0x2);
+        assert_eq!(plan.ring_members.len(), 1);
+        assert_eq!(plan.signer_index, 0);
+    }
+
+    #[test]
+    fn web30_send_transaction_privacy_spools_signed_tx_ir_when_aoem_available() {
+        if !aoem_privacy_env_available() {
+            return;
+        }
+        let (decoy_pub, _decoy_secret) = match generate_ring_keypair() {
+            Ok(v) => v,
+            Err(_) => return,
+        };
+        let (real_pub, real_secret) = match generate_ring_keypair() {
+            Ok(v) => v,
+            Err(_) => return,
+        };
+        let from_hex = format!("0x{}", to_hex(&real_pub));
+        let decoy_hex = format!("0x{}", to_hex(&decoy_pub));
+        let real_hex = format!("0x{}", to_hex(&real_pub));
+        let secret_hex = format!("0x{}", to_hex(&real_secret));
+        let mut router = UnifiedAccountRouter::new();
+        router
+            .create_uca("uca-privacy".to_string(), vec![0xabu8; 32], 10)
+            .expect("create uca");
+        router
+            .add_binding(
+                "uca-privacy",
+                AccountRole::Owner,
+                PersonaAddress {
+                    persona_type: PersonaType::Web30,
+                    chain_id: 20260303,
+                    external_address: real_pub.to_vec(),
+                },
+                11,
+            )
+            .expect("bind web30 persona");
+        let mut eth_tx_index = HashMap::new();
+        let spool_dir = std::env::temp_dir().join(format!(
+            "novovm-gateway-privacy-{}-{}",
+            std::process::id(),
+            now_unix_millis()
+        ));
+        fs::create_dir_all(&spool_dir).expect("create spool dir");
+        let params = serde_json::json!({
+            "uca_id": "uca-privacy",
+            "role": "owner",
+            "chain_id": 20260303u64,
+            "nonce": 0u64,
+            "external_address": from_hex,
+            "privacy": {
+                "value": "0x9",
+                "gas_limit": "0x5208",
+                "gas_price": "0x1",
+                "view_key": format!("0x{}", "55".repeat(32)),
+                "spend_key": format!("0x{}", "66".repeat(32)),
+                "ring_members": [decoy_hex, real_hex],
+                "signer_index": 1u64,
+                "private_key": secret_hex,
+            }
+        });
+        let (response, changed) = run_gateway_method(
+            &mut router,
+            &mut eth_tx_index,
+            &GatewayEthTxIndexStoreBackend::Memory,
+            1,
+            "web30_sendTransaction",
+            &params,
+            &spool_dir,
+        )
+        .expect("web30 privacy send should succeed");
+        assert!(changed);
+        assert_eq!(
+            response["payload_kind"].as_str(),
+            Some("signed_privacy_tx_ir_bincode_v1")
+        );
+        assert_eq!(response["tx_ir_type"].as_str(), Some("privacy"));
+        let spool_file = PathBuf::from(
+            response["spool_file"]
+                .as_str()
+                .expect("spool_file should be present"),
+        );
+        let wire = fs::read(&spool_file).expect("read spool ops-wire");
+        let value = decode_single_ops_wire_value(&wire).expect("decode ops-wire value");
+        let record: GatewayIngressWeb30RecordV1 =
+            bincode::deserialize(&value).expect("decode web30 ingress record");
+        let tx = TxIR::deserialize(&record.payload, SerializationFormat::Bincode)
+            .expect("decode signed privacy tx ir");
+        assert_eq!(tx.tx_type, TxType::Privacy);
+        assert!(tx.to.is_none());
+        assert!(!tx.signature.is_empty());
+        assert_eq!(tx.chain_id, 20260303);
+        assert_eq!(tx.nonce, 0);
+        assert_eq!(tx.value, 9);
+        assert_eq!(record.tx_hash.to_vec(), tx.hash);
+        let _ = fs::remove_file(&spool_file);
+        let _ = fs::remove_dir_all(&spool_dir);
+    }
 }

@@ -577,6 +577,25 @@ pub struct PrivacyTxSignerV1<'a> {
     pub private_key: [u8; 32],
 }
 
+#[derive(Debug, Clone)]
+pub struct PrivacyTxRawEnvelopeV1 {
+    pub from: Vec<u8>,
+    pub stealth_view_key: [u8; 32],
+    pub stealth_spend_key: [u8; 32],
+    pub value: u128,
+    pub nonce: u64,
+    pub chain_id: u64,
+    pub gas_limit: u64,
+    pub gas_price: u64,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct PrivacyTxRawSignerV1<'a> {
+    pub ring_members: &'a [[u8; 32]],
+    pub signer_index: usize,
+    pub private_key: [u8; 32],
+}
+
 pub fn build_privacy_tx_ir_unsigned_v1(envelope: &PrivacyTxEnvelopeV1) -> Result<TxIR> {
     let data = privacy_stealth_payload_v1(&envelope.stealth_address)?;
     let mut tx = TxIR {
@@ -610,6 +629,38 @@ pub fn build_privacy_tx_ir_signed_v1(
         signer.private_key,
     )?;
     Ok(tx)
+}
+
+pub fn build_privacy_tx_ir_signed_from_raw_v1(
+    envelope: &PrivacyTxRawEnvelopeV1,
+    signer: PrivacyTxRawSignerV1<'_>,
+) -> Result<TxIR> {
+    let envelope = PrivacyTxEnvelopeV1 {
+        from: envelope.from.clone(),
+        stealth_address: Web30StealthAddress {
+            view_key: envelope.stealth_view_key,
+            spend_key: envelope.stealth_spend_key,
+        },
+        value: envelope.value,
+        nonce: envelope.nonce,
+        chain_id: envelope.chain_id,
+        gas_limit: envelope.gas_limit,
+        gas_price: envelope.gas_price,
+    };
+    let ring_member_addrs: Vec<Web30Address> = signer
+        .ring_members
+        .iter()
+        .copied()
+        .map(Web30Address::from_bytes)
+        .collect();
+    build_privacy_tx_ir_signed_v1(
+        &envelope,
+        PrivacyTxSignerV1 {
+            ring_members: &ring_member_addrs,
+            signer_index: signer.signer_index,
+            private_key: signer.private_key,
+        },
+    )
 }
 
 fn verify_tx_signature_v1(tx: &TxIR) -> Result<bool> {
@@ -1035,5 +1086,45 @@ mod tests {
                 .is_err(),
             "replayed privacy tx must fail due to spent key image"
         );
+    }
+
+    #[test]
+    fn build_privacy_tx_from_raw_signs_and_marks_privacy_type() {
+        let Some(_) = NovoVmAdapter::string_env_nonempty("NOVOVM_AOEM_DLL")
+            .or_else(|| NovoVmAdapter::string_env_nonempty("AOEM_DLL"))
+            .or_else(|| NovoVmAdapter::string_env_nonempty("AOEM_FFI_DLL"))
+        else {
+            return;
+        };
+        let (decoy_pub, _decoy_secret) = match generate_ring_keypair() {
+            Ok(v) => v,
+            Err(_) => return,
+        };
+        let (real_pub, real_secret) = match generate_ring_keypair() {
+            Ok(v) => v,
+            Err(_) => return,
+        };
+        let ring_members = [decoy_pub, real_pub];
+        let tx = build_privacy_tx_ir_signed_from_raw_v1(
+            &PrivacyTxRawEnvelopeV1 {
+                from: real_pub.to_vec(),
+                stealth_view_key: [0x11u8; 32],
+                stealth_spend_key: [0x22u8; 32],
+                value: 9,
+                nonce: 3,
+                chain_id: 20260303,
+                gas_limit: 90_000,
+                gas_price: 7,
+            },
+            PrivacyTxRawSignerV1 {
+                ring_members: &ring_members,
+                signer_index: 1,
+                private_key: real_secret,
+            },
+        )
+        .expect("build privacy tx from raw");
+        assert_eq!(tx.tx_type, TxType::Privacy);
+        assert!(tx.to.is_none());
+        assert!(!tx.signature.is_empty());
     }
 }
