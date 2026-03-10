@@ -21,6 +21,16 @@ pub type AoemZkvmTraceFibProveVerify = unsafe extern "C" fn(u32, u64, u64) -> i3
 pub type AoemRingSignatureSupported = unsafe extern "C" fn() -> u32;
 pub type AoemRingSignatureVerifyWeb30V1 =
     unsafe extern "C" fn(*const u8, usize, *const u8, usize, u64, u64, *mut u32) -> i32;
+pub type AoemRingSignatureVerifyBatchWeb30V1 =
+    unsafe extern "C" fn(*const u8, usize, *mut *mut u8, *mut usize, *mut u32) -> i32;
+pub type AoemBulletproofProveBatchV1 =
+    unsafe extern "C" fn(*const u8, usize, *mut *mut u8, *mut usize) -> i32;
+pub type AoemBulletproofVerifyBatchV1 =
+    unsafe extern "C" fn(*const u8, usize, *mut *mut u8, *mut usize, *mut u32) -> i32;
+pub type AoemRingctProveBatchV1 =
+    unsafe extern "C" fn(*const u8, usize, *mut *mut u8, *mut usize) -> i32;
+pub type AoemRingctVerifyBatchV1 =
+    unsafe extern "C" fn(*const u8, usize, *mut *mut u8, *mut usize, *mut u32) -> i32;
 #[repr(C)]
 pub struct AoemCreateOptionsV1 {
     pub abi_version: u32,
@@ -72,6 +82,11 @@ pub struct AoemDyn {
     zkvm_trace_fib_prove_verify: Option<AoemZkvmTraceFibProveVerify>,
     ring_signature_supported: Option<AoemRingSignatureSupported>,
     ring_signature_verify_web30_v1: Option<AoemRingSignatureVerifyWeb30V1>,
+    ring_signature_verify_batch_web30_v1: Option<AoemRingSignatureVerifyBatchWeb30V1>,
+    bulletproof_prove_batch_v1: Option<AoemBulletproofProveBatchV1>,
+    bulletproof_verify_batch_v1: Option<AoemBulletproofVerifyBatchV1>,
+    ringct_prove_batch_v1: Option<AoemRingctProveBatchV1>,
+    ringct_verify_batch_v1: Option<AoemRingctVerifyBatchV1>,
     create: AoemCreate,
     create_with_options: Option<AoemCreateWithOptions>,
     destroy: AoemDestroy,
@@ -164,6 +179,28 @@ impl AoemDyn {
             .get::<AoemRingSignatureVerifyWeb30V1>(b"aoem_ring_signature_verify_web30_v1")
             .ok()
             .map(|f| *f);
+        let ring_signature_verify_batch_web30_v1: Option<AoemRingSignatureVerifyBatchWeb30V1> =
+            lib.get::<AoemRingSignatureVerifyBatchWeb30V1>(
+                b"aoem_ring_signature_verify_batch_web30_v1",
+            )
+            .ok()
+            .map(|f| *f);
+        let bulletproof_prove_batch_v1: Option<AoemBulletproofProveBatchV1> = lib
+            .get::<AoemBulletproofProveBatchV1>(b"aoem_bulletproof_prove_batch_v1")
+            .ok()
+            .map(|f| *f);
+        let bulletproof_verify_batch_v1: Option<AoemBulletproofVerifyBatchV1> = lib
+            .get::<AoemBulletproofVerifyBatchV1>(b"aoem_bulletproof_verify_batch_v1")
+            .ok()
+            .map(|f| *f);
+        let ringct_prove_batch_v1: Option<AoemRingctProveBatchV1> = lib
+            .get::<AoemRingctProveBatchV1>(b"aoem_ringct_prove_batch_v1")
+            .ok()
+            .map(|f| *f);
+        let ringct_verify_batch_v1: Option<AoemRingctVerifyBatchV1> = lib
+            .get::<AoemRingctVerifyBatchV1>(b"aoem_ringct_verify_batch_v1")
+            .ok()
+            .map(|f| *f);
         let create: AoemCreate = *lib.get::<AoemCreate>(b"aoem_create")?;
         let create_with_options: Option<AoemCreateWithOptions> = lib
             .get::<AoemCreateWithOptions>(b"aoem_create_with_options")
@@ -193,6 +230,11 @@ impl AoemDyn {
             zkvm_trace_fib_prove_verify,
             ring_signature_supported,
             ring_signature_verify_web30_v1,
+            ring_signature_verify_batch_web30_v1,
+            bulletproof_prove_batch_v1,
+            bulletproof_verify_batch_v1,
+            ringct_prove_batch_v1,
+            ringct_verify_batch_v1,
             create,
             create_with_options,
             destroy,
@@ -392,6 +434,24 @@ impl AoemDyn {
     /// True when AOEM FFI exports both ring-signature probe and verify symbols.
     pub fn supports_ring_signature_verify(&self) -> bool {
         self.ring_signature_supported.is_some() && self.ring_signature_verify_web30_v1.is_some()
+    }
+
+    pub fn supports_ring_signature_verify_batch_web30_v1(&self) -> bool {
+        self.ring_signature_verify_batch_web30_v1.is_some()
+    }
+
+    pub fn supports_bulletproof_batch_v1(&self) -> bool {
+        self.bulletproof_prove_batch_v1.is_some() && self.bulletproof_verify_batch_v1.is_some()
+    }
+
+    pub fn supports_ringct_batch_v1(&self) -> bool {
+        self.ringct_prove_batch_v1.is_some() && self.ringct_verify_batch_v1.is_some()
+    }
+
+    pub fn supports_privacy_batch_v1(&self) -> bool {
+        self.supports_ring_signature_verify_batch_web30_v1()
+            && self.supports_bulletproof_batch_v1()
+            && self.supports_ringct_batch_v1()
     }
 
     /// Returns AOEM-provided zkVM capability bit from exported symbol.

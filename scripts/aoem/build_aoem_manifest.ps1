@@ -1,6 +1,7 @@
 param(
   [string]$AoemRoot = "$(Join-Path $PSScriptRoot '..\..\aoem')",
-  [string]$OutManifest = "$(Join-Path $PSScriptRoot '..\..\aoem\manifest\aoem-manifest.json')"
+  [string]$OutManifest = "$(Join-Path $PSScriptRoot '..\..\aoem\manifest\aoem-manifest.json')",
+  [string]$ReleaseVersion = "Beta 0.8"
 )
 
 $ErrorActionPreference = 'Stop'
@@ -69,15 +70,36 @@ function Add-Entry([string]$Name) {
   }
 }
 
+function Add-LinuxCoreEntry {
+  $rel = "linux/bin/libaoem_ffi.so"
+  $abs = Join-Path $aoemRoot $rel
+  if (-not (Test-Path $abs)) {
+    return
+  }
+  $hash = (Get-FileHash -Algorithm SHA256 -Path $abs).Hash.ToLowerInvariant()
+  $script:entries += [pscustomobject]@{
+    name = "core"
+    platform = "linux"
+    dll = $rel
+    sha256 = $hash
+    abi_expected = 1
+    capabilities_required = [pscustomobject]@{
+      execute_ops_v2 = $true
+    }
+  }
+}
+
 Add-Entry -Name 'core'
 Add-Entry -Name 'persist'
 Add-Entry -Name 'wasm'
+Add-LinuxCoreEntry
 
 $outDir = Split-Path -Parent $OutManifest
 New-Item -ItemType Directory -Force -Path $outDir | Out-Null
 
 $manifest = [pscustomobject]@{
   generated_at_utc = (Get-Date).ToUniversalTime().ToString('o')
+  release_version = $ReleaseVersion
   aoem_root = $aoemRoot.Replace('\\','/')
   entries = $entries
 }

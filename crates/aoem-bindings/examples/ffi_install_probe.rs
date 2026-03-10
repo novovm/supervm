@@ -108,6 +108,16 @@ fn main() -> Result<()> {
     let capabilities = dynlib
         .capabilities()
         .unwrap_or_else(|_| json!({"error": "capabilities_unavailable"}));
+    let ffi_symbol_contract = json!({
+        "execute_ops_v2": dynlib.supports_execute_ops_v2(),
+        "execute_ops_wire_v1": dynlib.supports_execute_ops_wire_v1(),
+        "zkvm_probe": dynlib.supports_zkvm_probe(),
+        "ring_signature_verify_web30_v1": dynlib.supports_ring_signature_verify(),
+        "ring_signature_verify_batch_web30_v1": dynlib.supports_ring_signature_verify_batch_web30_v1(),
+        "bulletproof_batch_v1": dynlib.supports_bulletproof_batch_v1(),
+        "ringct_batch_v1": dynlib.supports_ringct_batch_v1(),
+        "privacy_batch_v1_all": dynlib.supports_privacy_batch_v1()
+    });
     let profile = json!({
         "schema": "aoem-runtime-profile/v1",
         "generated_at_unix": now,
@@ -150,6 +160,7 @@ fn main() -> Result<()> {
                 "threads": recommended
             }
         ],
+        "ffi_symbol_contract": ffi_symbol_contract,
         "capabilities": capabilities
     });
 

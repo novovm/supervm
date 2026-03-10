@@ -86,3 +86,5 @@ This avoids cold-start noise polluting production TPS.
   - `scripts/migration/run_prod_node_steady_tps.ps1`
 - Consensus + network + AOEM multi-node simulation e2e:
   - `scripts/migration/run_consensus_network_e2e_tps.ps1`
+- D1 宿主参数与 FFI 调用契约（含 privacy batch）：
+  - `docs_CN/AOEM-FFI/AOEM-FFI-D1-HOST-CALL-PARAMS-V1-2026-03-10.md`
