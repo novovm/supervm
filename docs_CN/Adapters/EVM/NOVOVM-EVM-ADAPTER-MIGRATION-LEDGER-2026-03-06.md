@@ -12,6 +12,10 @@
 
 ## 2. 当前主线能力状态（只看生产路径）
 
+- 总体进度（EVM 生产主线）：`87%`
+- 当前阶段进度（P07 全功能镜像主线）：`91%`
+- 本轮收口进度（提交状态广播语义）：`100%`
+
 | ID | 能力 | 当前状态 | 生产代码锚点 | 说明 |
 |---|---|---|---|---|
 | EVM-P01 | EVM 外部入口归一化（raw+non-raw） | InProgress | `crates/novovm-edge-gateway/src/main.rs` | `eth_sendRawTransaction`、`eth_sendTransaction`、`web30_sendTransaction` 已接到统一编码与主线消费路径；gateway 已接入插件 txpool 接收摘要判定，若被丢弃则直接失败并阻止 `.opsw1` 继续入主线，并按插件摘要 `reason/reasons`（统一枚举）返回稳定 JSON-RPC 码（underpriced/nonce-too-low/nonce-gap/capacity）与 geth 风格错误文案，同时在 `error.data` 返回结构化拒绝原因与计数。`eth_sendRawTransaction` + `eth_sendTransaction` 现共用可配置公网广播执行主路径（`NOVOVM_GATEWAY_ETH_PUBLIC_BROADCAST_EXEC`）；执行器请求统一携带 `tx_ir_bincode`（`raw` 路径同时附带 `raw_tx`），配置后广播失败即直接拒绝写入并返回稳定错误语义（`public broadcast failed`）。 |
@@ -111,6 +115,15 @@
 - 本轮继续收口 logs pending 边界：`eth_getLogs(blockHash)` 的 pending 回退已统一为 runtime-only（无 runtime pending 时不再构造空 pending 块参与匹配）；`eth_getFilterChanges` 在 `fromBlock=latest,toBlock=pending` 且当前无 runtime pending 时不再把游标推进到 `latest+1`，避免后续新确认块被跳过，并新增回归覆盖该场景。
 - 本轮补 `txpool_contentFrom` / `txpool_inspectFrom` / `txpool_statusFrom` 生产入口（按地址查看 txpool 视图）：均已接到 runtime txpool 数据面（pending/queued），不回退已确认索引交易；并补对象参数与混排数组参数兼容回归（`chain_id/chainId + address`）。
 - 本轮继续收口 receipt/syncing 边界：`eth_getBlockReceipts` 与 `eth_getTransactionReceipt` 的 pending 回执构造已统一到同一函数路径（确保 `pending/status/blockHash/blockNumber/transactionIndex/cumulativeGasUsed` 同源一致）；`eth_syncing` 的 pending 边界计算改为与查询面同源的 latest 解析路径，避免口径漂移，并补回归断言锁定“一笔 pending tx 的 hash 回执 == pending block 回执项”。
+- 本轮补公网广播执行参数的按链覆盖：`NOVOVM_GATEWAY_ETH_PUBLIC_BROADCAST_EXEC_RETRY`、`NOVOVM_GATEWAY_ETH_PUBLIC_BROADCAST_EXEC_TIMEOUT_MS`、`NOVOVM_GATEWAY_ETH_PUBLIC_BROADCAST_EXEC_RETRY_BACKOFF_MS` 均已支持链级键（`*_CHAIN_<dec>` / `*_CHAIN_0x<hex>`）并回退全局键，保持多链共节点时每条链可独立调优广播执行策略。
+- 本轮补原子广播执行器参数的按链覆盖：`NOVOVM_GATEWAY_EVM_ATOMIC_BROADCAST_EXEC`、`NOVOVM_GATEWAY_EVM_ATOMIC_BROADCAST_EXEC_RETRY`、`NOVOVM_GATEWAY_EVM_ATOMIC_BROADCAST_EXEC_TIMEOUT_MS`、`NOVOVM_GATEWAY_EVM_ATOMIC_BROADCAST_EXEC_RETRY_BACKOFF_MS` 现已支持链级键（`*_CHAIN_<dec>` / `*_CHAIN_0x<hex>`）并回退全局键；`evm_executeAtomicBroadcast` 与 `evm_executePendingAtomicBroadcasts` 已接入按 ticket 链 ID 的默认参数解析，确保多链同节点下执行器配置不串链。
+- 本轮补 logs 入口嵌套参数兼容：`parse_eth_logs_query_from_params`、`parse_eth_logs_address_filters`、`parse_eth_logs_topic_filters` 已支持 `filter` 嵌套对象（如 `[{chainId}, "logs", {filter:{...}}]`）；`eth_subscribe/logs` 与 `eth_newFilter/eth_getLogs` 共用该解析路径，已补回归锁定混排数组 + 嵌套 filter 的生产语义。
+- 本轮补 `eth_subscribe` 对象风格兼容：新增订阅类型解析（`kind/subscription/type/event`），支持对象参数形态（如 `{kind:\"logs\", chainId, filter:{...}}`）与原数组形态并存；已补回归锁定对象参数 + 嵌套 filter 的 `logs` 订阅路径。
+- 本轮补公网广播必达与提交后直连语义：`eth_sendRawTransaction` / `eth_sendTransaction` 新增请求级 `require_public_broadcast/requirePublicBroadcast`（可覆盖链级默认要求）；新增 `return_detail/returnDetail` 可选返回（`accepted/pending/onchain/broadcast`），保持默认返回 tx hash 不变；广播执行信息（`mode/attempts/executor/executor_output`）可直接被上层消费。
+- 本轮补提交状态直连查询：新增 `evm_getTxSubmitStatus`，统一返回 `accepted/pending/onchain/receipt/error_code/error_reason`，将 runtime pending、索引命中、未命中三类状态收口到一个可直接消费的稳定接口。
+- 本轮补订阅 ID 兼容：`eth_unsubscribe/eth_uninstallFilter` 的 id 解析已支持 `subscription/subscription_id/subscriptionId/sub_id/subId`（含原 `filter_id/filterId/id`），降低上游客户端适配成本。
+- 本轮补直连入口（无额外包装层）：新增 `evm_sendRawTransaction` / `evm_sendTransaction` / `evm_getLogs` / `evm_getTransactionReceipt`。其中 `evm_send*` 内部直接复用生产 `eth_send*` 主路径并强制 `require_public_broadcast=true + return_detail=true`，便于上游直接消费“公网广播+提交回执”语义；`evm_getLogs/evm_getTransactionReceipt` 直接复用同源查询语义，避免重复实现。
+- 本轮补提交状态广播语义直出：`evm_getTxSubmitStatus` 已增加 `broadcast` 字段（`mode/attempts/executor/executor_output/updated_at_unix_ms`）；`evm_sendRawTransaction` / `evm_sendTransaction` 的广播结果会在网关进程内轻量状态表中同步更新，供上游在提交后查询时直接消费。
 
 ## 4. 下一阶段（按优先级）
 

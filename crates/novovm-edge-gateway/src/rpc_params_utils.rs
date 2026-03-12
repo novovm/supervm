@@ -146,6 +146,43 @@ pub(super) fn params_object_with_any_keys<'a>(
     }
 }
 
+pub(super) fn params_object_with_any_keys_or_nested_filter<'a>(
+    params: &'a serde_json::Value,
+    keys: &[&str],
+) -> Option<&'a serde_json::Map<String, serde_json::Value>> {
+    let matches_filter_keys = |map: &'a serde_json::Map<String, serde_json::Value>| {
+        keys.is_empty() || keys.iter().any(|key| map.contains_key(*key))
+    };
+    match params {
+        serde_json::Value::Object(map) => {
+            if matches_filter_keys(map) {
+                return Some(map);
+            }
+            map.get("filter")
+                .and_then(serde_json::Value::as_object)
+                .filter(|nested| matches_filter_keys(nested))
+        }
+        serde_json::Value::Array(arr) => arr.iter().find_map(|item| {
+            let map = item.as_object()?;
+            if matches_filter_keys(map) {
+                return Some(map);
+            }
+            map.get("filter")
+                .and_then(serde_json::Value::as_object)
+                .filter(|nested| matches_filter_keys(nested))
+        }),
+        _ => None,
+    }
+}
+
+pub(super) fn parse_eth_subscribe_kind(params: &serde_json::Value) -> Option<String> {
+    param_as_string(params, "kind")
+        .or_else(|| param_as_string(params, "subscription"))
+        .or_else(|| param_as_string(params, "type"))
+        .or_else(|| param_as_string(params, "event"))
+        .or_else(|| non_object_param_at(params, 0).and_then(value_to_string))
+}
+
 pub(super) fn first_address_like_scalar_param_string(params: &serde_json::Value) -> Option<String> {
     params.as_array().and_then(|arr| {
         arr.iter().find_map(|v| match v {
@@ -653,7 +690,9 @@ pub(super) fn extract_eth_persona_address_param(params: &serde_json::Value) -> O
 pub(super) fn parse_eth_logs_address_filters(
     params: &serde_json::Value,
 ) -> Result<Option<Vec<Vec<u8>>>> {
-    let Some(filter) = params_object_with_any_keys(params, &["address", "addresses"]) else {
+    let Some(filter) =
+        params_object_with_any_keys_or_nested_filter(params, &["address", "addresses"])
+    else {
         return Ok(None);
     };
     let Some(raw) = filter.get("address").or_else(|| filter.get("addresses")) else {
@@ -684,7 +723,7 @@ pub(super) fn parse_eth_logs_address_filters(
 pub(super) fn parse_eth_logs_topic_filters(
     params: &serde_json::Value,
 ) -> Result<Option<GatewayEthTopicFilterSlots>> {
-    let Some(filter) = params_object_with_any_keys(params, &["topics"]) else {
+    let Some(filter) = params_object_with_any_keys_or_nested_filter(params, &["topics"]) else {
         return Ok(None);
     };
     let Some(raw_topics) = filter.get("topics") else {
@@ -731,7 +770,7 @@ pub(super) fn parse_eth_logs_query_from_params(
     params: &serde_json::Value,
     latest: u64,
 ) -> Result<GatewayEthLogsQuery> {
-    let filter_obj = params_object_with_any_keys(
+    let filter_obj = params_object_with_any_keys_or_nested_filter(
         params,
         &[
             "block_hash",
@@ -957,6 +996,11 @@ pub(super) fn parse_eth_filter_id(params: &serde_json::Value) -> Option<u64> {
         let from_object = map
             .get("filter_id")
             .or_else(|| map.get("filterId"))
+            .or_else(|| map.get("subscription"))
+            .or_else(|| map.get("subscription_id"))
+            .or_else(|| map.get("subscriptionId"))
+            .or_else(|| map.get("sub_id"))
+            .or_else(|| map.get("subId"))
             .or_else(|| map.get("id"))
             .and_then(value_to_string)
             .and_then(|raw| parse_u64_decimal_or_hex(&raw));
@@ -1176,6 +1220,7 @@ pub(super) fn to_hex(raw: &[u8]) -> String {
     out
 }
 
+#[cfg(test)]
 pub(super) fn gateway_env_mutex() -> &'static std::sync::Mutex<()> {
     static ENV_LOCK: OnceLock<std::sync::Mutex<()>> = OnceLock::new();
     ENV_LOCK.get_or_init(|| std::sync::Mutex::new(()))

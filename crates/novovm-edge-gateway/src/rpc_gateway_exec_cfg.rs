@@ -1,19 +1,38 @@
 use super::*;
 
-pub(super) fn gateway_evm_atomic_broadcast_exec_path() -> Option<PathBuf> {
-    string_env_nonempty("NOVOVM_GATEWAY_EVM_ATOMIC_BROADCAST_EXEC").map(PathBuf::from)
+pub(super) fn gateway_evm_atomic_broadcast_exec_path(chain_id: u64) -> Option<PathBuf> {
+    let chain_key_dec = format!("NOVOVM_GATEWAY_EVM_ATOMIC_BROADCAST_EXEC_CHAIN_{chain_id}");
+    let chain_key_hex = format!(
+        "NOVOVM_GATEWAY_EVM_ATOMIC_BROADCAST_EXEC_CHAIN_0x{:x}",
+        chain_id
+    );
+    string_env_nonempty(&chain_key_dec)
+        .or_else(|| string_env_nonempty(&chain_key_hex))
+        .or_else(|| string_env_nonempty("NOVOVM_GATEWAY_EVM_ATOMIC_BROADCAST_EXEC"))
+        .map(PathBuf::from)
 }
 
-pub(super) fn gateway_evm_atomic_broadcast_exec_retry_default() -> u64 {
-    u64_env(
+fn gateway_evm_atomic_broadcast_chain_u64_env(chain_id: u64, base_key: &str, default: u64) -> u64 {
+    let chain_key_dec = format!("{base_key}_CHAIN_{chain_id}");
+    let chain_key_hex = format!("{base_key}_CHAIN_0x{:x}", chain_id);
+    string_env_nonempty(&chain_key_dec)
+        .or_else(|| string_env_nonempty(&chain_key_hex))
+        .and_then(|raw| raw.trim().parse::<u64>().ok())
+        .unwrap_or_else(|| u64_env(base_key, default))
+}
+
+pub(super) fn gateway_evm_atomic_broadcast_exec_retry_default(chain_id: u64) -> u64 {
+    gateway_evm_atomic_broadcast_chain_u64_env(
+        chain_id,
         "NOVOVM_GATEWAY_EVM_ATOMIC_BROADCAST_EXEC_RETRY",
         GATEWAY_EVM_ATOMIC_BROADCAST_EXEC_RETRY_DEFAULT,
     )
     .min(16)
 }
 
-pub(super) fn gateway_evm_atomic_broadcast_exec_timeout_ms_default() -> u64 {
-    let timeout_ms = u64_env(
+pub(super) fn gateway_evm_atomic_broadcast_exec_timeout_ms_default(chain_id: u64) -> u64 {
+    let timeout_ms = gateway_evm_atomic_broadcast_chain_u64_env(
+        chain_id,
         "NOVOVM_GATEWAY_EVM_ATOMIC_BROADCAST_EXEC_TIMEOUT_MS",
         GATEWAY_EVM_ATOMIC_BROADCAST_EXEC_TIMEOUT_MS_DEFAULT,
     );
@@ -24,8 +43,9 @@ pub(super) fn gateway_evm_atomic_broadcast_exec_timeout_ms_default() -> u64 {
     }
 }
 
-pub(super) fn gateway_evm_atomic_broadcast_exec_retry_backoff_ms_default() -> u64 {
-    u64_env(
+pub(super) fn gateway_evm_atomic_broadcast_exec_retry_backoff_ms_default(chain_id: u64) -> u64 {
+    gateway_evm_atomic_broadcast_chain_u64_env(
+        chain_id,
         "NOVOVM_GATEWAY_EVM_ATOMIC_BROADCAST_EXEC_RETRY_BACKOFF_MS",
         GATEWAY_EVM_ATOMIC_BROADCAST_EXEC_RETRY_BACKOFF_MS_DEFAULT,
     )
@@ -61,20 +81,59 @@ pub(super) fn gateway_atomic_broadcast_use_external_executor(params: &serde_json
         .unwrap_or(false)
 }
 
-pub(super) fn gateway_eth_public_broadcast_exec_path() -> Option<PathBuf> {
-    string_env_nonempty("NOVOVM_GATEWAY_ETH_PUBLIC_BROADCAST_EXEC").map(PathBuf::from)
+pub(super) fn gateway_eth_public_broadcast_exec_path(chain_id: u64) -> Option<PathBuf> {
+    let chain_key_dec = format!("NOVOVM_GATEWAY_ETH_PUBLIC_BROADCAST_EXEC_CHAIN_{chain_id}");
+    let chain_key_hex = format!(
+        "NOVOVM_GATEWAY_ETH_PUBLIC_BROADCAST_EXEC_CHAIN_0x{:x}",
+        chain_id
+    );
+    string_env_nonempty(&chain_key_dec)
+        .or_else(|| string_env_nonempty(&chain_key_hex))
+        .or_else(|| string_env_nonempty("NOVOVM_GATEWAY_ETH_PUBLIC_BROADCAST_EXEC"))
+        .map(PathBuf::from)
 }
 
-pub(super) fn gateway_eth_public_broadcast_exec_retry_default() -> u64 {
-    u64_env(
+pub(super) fn gateway_eth_public_broadcast_required(chain_id: u64) -> bool {
+    let chain_key_dec = format!("NOVOVM_GATEWAY_ETH_PUBLIC_BROADCAST_REQUIRED_CHAIN_{chain_id}");
+    let chain_key_hex = format!(
+        "NOVOVM_GATEWAY_ETH_PUBLIC_BROADCAST_REQUIRED_CHAIN_0x{:x}",
+        chain_id
+    );
+    string_env_nonempty(&chain_key_dec)
+        .or_else(|| string_env_nonempty(&chain_key_hex))
+        .or_else(|| string_env_nonempty("NOVOVM_GATEWAY_ETH_PUBLIC_BROADCAST_REQUIRED"))
+        .and_then(|raw| {
+            let v = raw.trim().to_ascii_lowercase();
+            match v.as_str() {
+                "1" | "true" | "yes" | "on" => Some(true),
+                "0" | "false" | "no" | "off" => Some(false),
+                _ => None,
+            }
+        })
+        .unwrap_or(false)
+}
+
+fn gateway_eth_public_broadcast_chain_u64_env(chain_id: u64, base_key: &str, default: u64) -> u64 {
+    let chain_key_dec = format!("{base_key}_CHAIN_{chain_id}");
+    let chain_key_hex = format!("{base_key}_CHAIN_0x{:x}", chain_id);
+    string_env_nonempty(&chain_key_dec)
+        .or_else(|| string_env_nonempty(&chain_key_hex))
+        .and_then(|raw| raw.trim().parse::<u64>().ok())
+        .unwrap_or_else(|| u64_env(base_key, default))
+}
+
+pub(super) fn gateway_eth_public_broadcast_exec_retry_default(chain_id: u64) -> u64 {
+    gateway_eth_public_broadcast_chain_u64_env(
+        chain_id,
         "NOVOVM_GATEWAY_ETH_PUBLIC_BROADCAST_EXEC_RETRY",
         GATEWAY_ETH_PUBLIC_BROADCAST_EXEC_RETRY_DEFAULT,
     )
     .min(16)
 }
 
-pub(super) fn gateway_eth_public_broadcast_exec_timeout_ms_default() -> u64 {
-    let timeout_ms = u64_env(
+pub(super) fn gateway_eth_public_broadcast_exec_timeout_ms_default(chain_id: u64) -> u64 {
+    let timeout_ms = gateway_eth_public_broadcast_chain_u64_env(
+        chain_id,
         "NOVOVM_GATEWAY_ETH_PUBLIC_BROADCAST_EXEC_TIMEOUT_MS",
         GATEWAY_ETH_PUBLIC_BROADCAST_EXEC_TIMEOUT_MS_DEFAULT,
     );
@@ -85,8 +144,9 @@ pub(super) fn gateway_eth_public_broadcast_exec_timeout_ms_default() -> u64 {
     }
 }
 
-pub(super) fn gateway_eth_public_broadcast_exec_retry_backoff_ms_default() -> u64 {
-    u64_env(
+pub(super) fn gateway_eth_public_broadcast_exec_retry_backoff_ms_default(chain_id: u64) -> u64 {
+    gateway_eth_public_broadcast_chain_u64_env(
+        chain_id,
         "NOVOVM_GATEWAY_ETH_PUBLIC_BROADCAST_EXEC_RETRY_BACKOFF_MS",
         GATEWAY_ETH_PUBLIC_BROADCAST_EXEC_RETRY_BACKOFF_MS_DEFAULT,
     )
@@ -319,13 +379,21 @@ pub(super) fn maybe_execute_gateway_eth_public_broadcast(
     chain_id: u64,
     tx_hash: &[u8; 32],
     payload: GatewayEthPublicBroadcastPayload<'_>,
+    required_override: bool,
 ) -> Result<Option<(String, u64, String)>> {
-    let Some(exec_path) = gateway_eth_public_broadcast_exec_path() else {
+    let Some(exec_path) = gateway_eth_public_broadcast_exec_path(chain_id) else {
+        if required_override || gateway_eth_public_broadcast_required(chain_id) {
+            bail!(
+                "public broadcast failed: chain_id={} tx_hash=0x{} reason=executor_not_configured",
+                chain_id,
+                to_hex(tx_hash),
+            );
+        }
         return Ok(None);
     };
-    let retry = gateway_eth_public_broadcast_exec_retry_default();
-    let timeout_ms = gateway_eth_public_broadcast_exec_timeout_ms_default();
-    let retry_backoff_ms = gateway_eth_public_broadcast_exec_retry_backoff_ms_default();
+    let retry = gateway_eth_public_broadcast_exec_retry_default(chain_id);
+    let timeout_ms = gateway_eth_public_broadcast_exec_timeout_ms_default(chain_id);
+    let retry_backoff_ms = gateway_eth_public_broadcast_exec_retry_backoff_ms_default(chain_id);
     match execute_gateway_eth_public_broadcast_with_retry(
         exec_path.as_path(),
         chain_id,

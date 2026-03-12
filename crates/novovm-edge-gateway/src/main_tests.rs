@@ -4233,6 +4233,198 @@ fn mixed_array_object_selection_supports_second_object_payload() {
         logs_query.topic_filters.as_ref().map(std::vec::Vec::len),
         Some(1)
     );
+
+    let nested_filter_params = serde_json::json!([
+        {
+            "chainId": 1u64
+        },
+        "logs",
+        {
+            "filter": {
+                "address": format!("0x{}", "55".repeat(20)),
+                "topics": [format!("0x{}", "66".repeat(32))],
+                "fromBlock": "0x2",
+                "toBlock": "pending"
+            }
+        }
+    ]);
+    let nested_logs_query =
+        parse_eth_logs_query_from_params(&nested_filter_params, 10).expect("parse nested logs");
+    assert_eq!(
+        nested_logs_query
+            .address_filters
+            .as_ref()
+            .map(std::vec::Vec::len),
+        Some(1)
+    );
+    assert_eq!(nested_logs_query.from_block, Some(2));
+    assert_eq!(nested_logs_query.to_block, Some(11));
+    assert!(nested_logs_query.include_pending_block);
+    assert_eq!(
+        nested_logs_query
+            .topic_filters
+            .as_ref()
+            .map(std::vec::Vec::len),
+        Some(1)
+    );
+}
+
+#[test]
+fn eth_subscribe_logs_accepts_nested_filter_mixed_array_params() {
+    let backend = GatewayEthTxIndexStoreBackend::Memory;
+    let mut router = UnifiedAccountRouter::new();
+    let mut eth_tx_index = HashMap::new();
+    let mut evm_settlement_index_by_id = HashMap::new();
+    let mut evm_settlement_index_by_tx = HashMap::new();
+    let mut evm_pending_payout_by_settlement = HashMap::new();
+    let spool_dir = std::env::temp_dir().join(format!(
+        "novovm-gateway-subscribe-nested-filter-{}-{}",
+        std::process::id(),
+        now_unix_millis()
+    ));
+    fs::create_dir_all(&spool_dir).expect("create spool dir");
+    let mut eth_filters = GatewayEthFilterState::default();
+    let mut ctx = GatewayMethodContext {
+        eth_tx_index_store: &backend,
+        eth_default_chain_id: 1,
+        spool_dir: &spool_dir,
+        eth_filters: &mut eth_filters,
+    };
+
+    let (sub_id_raw, changed) = run_gateway_method(
+        &mut router,
+        &mut eth_tx_index,
+        &mut evm_settlement_index_by_id,
+        &mut evm_settlement_index_by_tx,
+        &mut evm_pending_payout_by_settlement,
+        &mut ctx,
+        "eth_subscribe",
+        &serde_json::json!([
+            {"chainId": 137u64},
+            "logs",
+            {
+                "filter": {
+                    "address": format!("0x{}", "77".repeat(20)),
+                    "topics": [format!("0x{}", "88".repeat(32))]
+                }
+            }
+        ]),
+    )
+    .expect("eth_subscribe logs with nested filter should work");
+    assert!(!changed);
+    let sub_id = parse_u64_decimal_or_hex(
+        sub_id_raw
+            .as_str()
+            .expect("subscription id should be string"),
+    )
+    .expect("decode subscription id");
+    let stored = eth_filters
+        .filters
+        .get(&sub_id)
+        .cloned()
+        .expect("stored subscription filter should exist");
+    match stored {
+        GatewayEthFilterKind::Logs(log_filter) => {
+            assert_eq!(log_filter.chain_id, 137u64);
+            assert_eq!(
+                log_filter
+                    .query
+                    .address_filters
+                    .as_ref()
+                    .map(std::vec::Vec::len),
+                Some(1)
+            );
+            assert_eq!(
+                log_filter
+                    .query
+                    .topic_filters
+                    .as_ref()
+                    .map(std::vec::Vec::len),
+                Some(1)
+            );
+        }
+        _ => panic!("subscription should be logs filter"),
+    }
+    let _ = fs::remove_dir_all(&spool_dir);
+}
+
+#[test]
+fn eth_subscribe_logs_accepts_object_kind_with_nested_filter() {
+    let backend = GatewayEthTxIndexStoreBackend::Memory;
+    let mut router = UnifiedAccountRouter::new();
+    let mut eth_tx_index = HashMap::new();
+    let mut evm_settlement_index_by_id = HashMap::new();
+    let mut evm_settlement_index_by_tx = HashMap::new();
+    let mut evm_pending_payout_by_settlement = HashMap::new();
+    let spool_dir = std::env::temp_dir().join(format!(
+        "novovm-gateway-subscribe-object-kind-filter-{}-{}",
+        std::process::id(),
+        now_unix_millis()
+    ));
+    fs::create_dir_all(&spool_dir).expect("create spool dir");
+    let mut eth_filters = GatewayEthFilterState::default();
+    let mut ctx = GatewayMethodContext {
+        eth_tx_index_store: &backend,
+        eth_default_chain_id: 1,
+        spool_dir: &spool_dir,
+        eth_filters: &mut eth_filters,
+    };
+
+    let (sub_id_raw, changed) = run_gateway_method(
+        &mut router,
+        &mut eth_tx_index,
+        &mut evm_settlement_index_by_id,
+        &mut evm_settlement_index_by_tx,
+        &mut evm_pending_payout_by_settlement,
+        &mut ctx,
+        "eth_subscribe",
+        &serde_json::json!({
+            "kind": "logs",
+            "chainId": 10u64,
+            "filter": {
+                "address": format!("0x{}", "99".repeat(20)),
+                "topics": [format!("0x{}", "aa".repeat(32))],
+                "fromBlock": "earliest",
+                "toBlock": "latest",
+            }
+        }),
+    )
+    .expect("eth_subscribe logs object-kind with nested filter should work");
+    assert!(!changed);
+    let sub_id = parse_u64_decimal_or_hex(
+        sub_id_raw
+            .as_str()
+            .expect("subscription id should be string"),
+    )
+    .expect("decode subscription id");
+    let stored = eth_filters
+        .filters
+        .get(&sub_id)
+        .cloned()
+        .expect("stored subscription filter should exist");
+    match stored {
+        GatewayEthFilterKind::Logs(log_filter) => {
+            assert_eq!(log_filter.chain_id, 10u64);
+            assert_eq!(
+                log_filter
+                    .query
+                    .address_filters
+                    .as_ref()
+                    .map(std::vec::Vec::len),
+                Some(1)
+            );
+            assert_eq!(
+                log_filter
+                    .query
+                    .topic_filters
+                    .as_ref()
+                    .map(std::vec::Vec::len),
+                Some(1)
+            );
+        }
+        _ => panic!("subscription should be logs filter"),
+    }
+    let _ = fs::remove_dir_all(&spool_dir);
 }
 
 #[test]
@@ -4695,6 +4887,82 @@ fn eth_syncing_chain_scoped_status_path_overrides_global_status_path() {
         std::env::remove_var("NOVOVM_GATEWAY_ETH_SYNC_STATUS_PATH_CHAIN_137");
     }
     let _ = fs::remove_dir_all(&spool_dir);
+}
+
+#[test]
+fn evm_atomic_broadcast_chain_scoped_exec_env_overrides_take_precedence() {
+    let _guard = env_test_guard();
+    let env_keys = [
+        "NOVOVM_GATEWAY_EVM_ATOMIC_BROADCAST_EXEC",
+        "NOVOVM_GATEWAY_EVM_ATOMIC_BROADCAST_EXEC_CHAIN_137",
+        "NOVOVM_GATEWAY_EVM_ATOMIC_BROADCAST_EXEC_CHAIN_0x89",
+        "NOVOVM_GATEWAY_EVM_ATOMIC_BROADCAST_EXEC_RETRY",
+        "NOVOVM_GATEWAY_EVM_ATOMIC_BROADCAST_EXEC_RETRY_CHAIN_137",
+        "NOVOVM_GATEWAY_EVM_ATOMIC_BROADCAST_EXEC_TIMEOUT_MS",
+        "NOVOVM_GATEWAY_EVM_ATOMIC_BROADCAST_EXEC_TIMEOUT_MS_CHAIN_137",
+        "NOVOVM_GATEWAY_EVM_ATOMIC_BROADCAST_EXEC_RETRY_BACKOFF_MS",
+        "NOVOVM_GATEWAY_EVM_ATOMIC_BROADCAST_EXEC_RETRY_BACKOFF_MS_CHAIN_0x89",
+    ];
+    let saved_env = capture_env_vars(&env_keys);
+    for key in env_keys {
+        std::env::remove_var(key);
+    }
+
+    std::env::set_var("NOVOVM_GATEWAY_EVM_ATOMIC_BROADCAST_EXEC", "global-exec");
+    std::env::set_var(
+        "NOVOVM_GATEWAY_EVM_ATOMIC_BROADCAST_EXEC_CHAIN_137",
+        "chain-137-exec",
+    );
+    std::env::set_var("NOVOVM_GATEWAY_EVM_ATOMIC_BROADCAST_EXEC_RETRY", "2");
+    std::env::set_var(
+        "NOVOVM_GATEWAY_EVM_ATOMIC_BROADCAST_EXEC_RETRY_CHAIN_137",
+        "5",
+    );
+    std::env::set_var(
+        "NOVOVM_GATEWAY_EVM_ATOMIC_BROADCAST_EXEC_TIMEOUT_MS",
+        "3000",
+    );
+    std::env::set_var(
+        "NOVOVM_GATEWAY_EVM_ATOMIC_BROADCAST_EXEC_TIMEOUT_MS_CHAIN_137",
+        "4500",
+    );
+    std::env::set_var(
+        "NOVOVM_GATEWAY_EVM_ATOMIC_BROADCAST_EXEC_RETRY_BACKOFF_MS",
+        "20",
+    );
+    std::env::set_var(
+        "NOVOVM_GATEWAY_EVM_ATOMIC_BROADCAST_EXEC_RETRY_BACKOFF_MS_CHAIN_0x89",
+        "35",
+    );
+
+    assert_eq!(
+        gateway_evm_atomic_broadcast_exec_path(1),
+        Some(PathBuf::from("global-exec"))
+    );
+    assert_eq!(
+        gateway_evm_atomic_broadcast_exec_path(137),
+        Some(PathBuf::from("chain-137-exec"))
+    );
+    assert_eq!(gateway_evm_atomic_broadcast_exec_retry_default(1), 2);
+    assert_eq!(gateway_evm_atomic_broadcast_exec_retry_default(137), 5);
+    assert_eq!(
+        gateway_evm_atomic_broadcast_exec_timeout_ms_default(1),
+        3000
+    );
+    assert_eq!(
+        gateway_evm_atomic_broadcast_exec_timeout_ms_default(137),
+        4500
+    );
+    assert_eq!(
+        gateway_evm_atomic_broadcast_exec_retry_backoff_ms_default(1),
+        20
+    );
+    assert_eq!(
+        gateway_evm_atomic_broadcast_exec_retry_backoff_ms_default(137),
+        35
+    );
+
+    restore_env_vars(&saved_env);
 }
 
 #[test]

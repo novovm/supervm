@@ -204,12 +204,17 @@ pub(super) fn gateway_error_code_for_method(method: &str, message: &str) -> i64 
         return -32033;
     }
     if (method == "eth_newFilter"
+        || method == "eth_subscribe"
+        || method == "eth_unsubscribe"
         || method == "eth_newBlockFilter"
         || method == "eth_newPendingTransactionFilter"
         || method == "eth_getFilterChanges"
         || method == "eth_getFilterLogs"
         || method == "eth_uninstallFilter")
         && (lower.contains("filter")
+            || lower.contains("subscription")
+            || lower.contains("subscribe")
+            || lower.contains("unsubscribe")
             || lower.contains("id")
             || lower.contains("block")
             || lower.contains("hash")
