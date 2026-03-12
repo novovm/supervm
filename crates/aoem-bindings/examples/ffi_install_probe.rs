@@ -114,6 +114,9 @@ fn main() -> Result<()> {
         "zkvm_probe": dynlib.supports_zkvm_probe(),
         "ring_signature_verify_web30_v1": dynlib.supports_ring_signature_verify(),
         "ring_signature_verify_batch_web30_v1": dynlib.supports_ring_signature_verify_batch_web30_v1(),
+        "groth16_prove_v1": dynlib.supports_groth16_prove_v1(),
+        "groth16_prove_batch_v1": dynlib.supports_groth16_prove_batch_v1(),
+        "groth16_prove_auto_path": dynlib.supports_groth16_prove_auto_path(),
         "bulletproof_batch_v1": dynlib.supports_bulletproof_batch_v1(),
         "ringct_batch_v1": dynlib.supports_ringct_batch_v1(),
         "privacy_batch_v1_all": dynlib.supports_privacy_batch_v1()

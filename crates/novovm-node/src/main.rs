@@ -18,9 +18,10 @@ use novovm_consensus::{
     BuybackGovernanceParams, CdpGovernanceParams, Epoch as ConsensusEpoch, GovernanceAccessPolicy,
     GovernanceChainAuditEvent, GovernanceCouncilMember, GovernanceCouncilPolicy,
     GovernanceCouncilSeat, GovernanceOp, GovernanceProposal, GovernanceVote,
-    GovernanceVoteVerifier, GovernanceVoteVerifierScheme, HotStuffProtocol, MarketGovernancePolicy,
-    NavGovernanceParams, NetworkDosPolicy, NodeId as ConsensusNodeId, ReserveGovernanceParams,
-    SlashMode, SlashPolicy, TokenEconomicsPolicy, ValidatorSet, Web30MarketEngineSnapshot,
+    GovernanceVoteVerificationInput, GovernanceVoteVerificationReport, GovernanceVoteVerifier,
+    GovernanceVoteVerifierScheme, HotStuffProtocol, MarketGovernancePolicy, NavGovernanceParams,
+    NetworkDosPolicy, NodeId as ConsensusNodeId, ReserveGovernanceParams, SlashMode, SlashPolicy,
+    TokenEconomicsPolicy, ValidatorSet, Web30MarketEngineSnapshot,
 };
 use novovm_exec::{AoemExecFacade, AoemRuntimeConfig, AoemRuntimeVariant, ExecOpV2};
 use novovm_network::{InMemoryTransport, Transport, UdpTransport};
@@ -5086,6 +5087,7 @@ type AoemAbiVersionFn = unsafe extern "C" fn() -> u32;
 type AoemMldsaSupportedFn = unsafe extern "C" fn() -> u32;
 type AoemMldsaPubkeySizeFn = unsafe extern "C" fn(level: u32) -> u32;
 type AoemMldsaSignatureSizeFn = unsafe extern "C" fn(level: u32) -> u32;
+type AoemFreeFn = unsafe extern "C" fn(*mut u8, usize);
 type AoemMldsaVerifyFn = unsafe extern "C" fn(
     level: u32,
     pubkey_ptr: *const u8,
@@ -5095,6 +5097,24 @@ type AoemMldsaVerifyFn = unsafe extern "C" fn(
     signature_ptr: *const u8,
     signature_len: usize,
     out_valid: *mut u32,
+) -> i32;
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct AoemMldsaVerifyItemV1 {
+    level: u32,
+    pubkey_ptr: *const u8,
+    pubkey_len: usize,
+    message_ptr: *const u8,
+    message_len: usize,
+    signature_ptr: *const u8,
+    signature_len: usize,
+}
+type AoemMldsaVerifyBatchFn = unsafe extern "C" fn(
+    items_ptr: *const AoemMldsaVerifyItemV1,
+    item_count: usize,
+    out_results_ptr: *mut *mut u8,
+    out_results_len: *mut usize,
+    out_valid_count: *mut u32,
 ) -> i32;
 
 fn governance_vote_message_bytes(vote: &GovernanceVote) -> Vec<u8> {
@@ -5210,6 +5230,8 @@ fn resolve_aoem_ffi_library_path() -> PathBuf {
 
 struct AoemFfiMldsa87GovernanceVoteVerifier {
     verify_fn: AoemMldsaVerifyFn,
+    verify_batch_fn: Option<AoemMldsaVerifyBatchFn>,
+    free_fn: Option<AoemFreeFn>,
     expected_pubkey_size: usize,
     expected_signature_size: usize,
     voter_pubkeys: HashMap<ConsensusNodeId, Vec<u8>>,
@@ -5287,6 +5309,149 @@ impl GovernanceVoteVerifier for AoemFfiMldsa87GovernanceVoteVerifier {
         }
         Ok(())
     }
+
+    fn verify_batch_with_report(
+        &self,
+        inputs: &[GovernanceVoteVerificationInput<'_>],
+    ) -> std::result::Result<Vec<GovernanceVoteVerificationReport>, ConsensusBftError> {
+        if inputs.is_empty() {
+            return Ok(Vec::new());
+        }
+        let Some(verify_batch_fn) = self.verify_batch_fn else {
+            let mut out = Vec::with_capacity(inputs.len());
+            for input in inputs {
+                self.verify(input.vote, input.key)?;
+                out.push(GovernanceVoteVerificationReport {
+                    verifier_name: self.name(),
+                    scheme: self.scheme(),
+                });
+            }
+            return Ok(out);
+        };
+        let Some(free_fn) = self.free_fn else {
+            let mut out = Vec::with_capacity(inputs.len());
+            for input in inputs {
+                self.verify(input.vote, input.key)?;
+                out.push(GovernanceVoteVerificationReport {
+                    verifier_name: self.name(),
+                    scheme: self.scheme(),
+                });
+            }
+            return Ok(out);
+        };
+
+        let mut pubkeys = Vec::with_capacity(inputs.len());
+        let mut signatures = Vec::with_capacity(inputs.len());
+        let mut messages = Vec::with_capacity(inputs.len());
+        let mut items = Vec::with_capacity(inputs.len());
+        let mut voter_ids = Vec::with_capacity(inputs.len());
+        for input in inputs {
+            let vote = input.vote;
+            let (pubkey, signature) =
+                decode_mldsa87_vote_signature_envelope(&vote.signature).map_err(|e| {
+                    ConsensusBftError::InvalidSignature(format!("invalid mldsa87 envelope: {}", e))
+                })?;
+            if pubkey.len() != self.expected_pubkey_size {
+                return Err(ConsensusBftError::InvalidSignature(format!(
+                    "mldsa87 pubkey size mismatch: expected {} got {}",
+                    self.expected_pubkey_size,
+                    pubkey.len()
+                )));
+            }
+            if signature.len() != self.expected_signature_size {
+                return Err(ConsensusBftError::InvalidSignature(format!(
+                    "mldsa87 signature size mismatch: expected {} got {}",
+                    self.expected_signature_size,
+                    signature.len()
+                )));
+            }
+            let expected_pubkey = self.voter_pubkeys.get(&vote.voter_id).ok_or_else(|| {
+                ConsensusBftError::InvalidSignature(format!(
+                    "missing registered mldsa87 pubkey for voter {}",
+                    vote.voter_id
+                ))
+            })?;
+            if expected_pubkey.as_slice() != pubkey {
+                return Err(ConsensusBftError::InvalidSignature(format!(
+                    "mldsa87 pubkey mismatch for voter {}",
+                    vote.voter_id
+                )));
+            }
+            voter_ids.push(vote.voter_id);
+            pubkeys.push(pubkey.to_vec());
+            signatures.push(signature.to_vec());
+            messages.push(governance_vote_message_bytes(vote));
+        }
+        for idx in 0..inputs.len() {
+            items.push(AoemMldsaVerifyItemV1 {
+                level: GOVERNANCE_MLDSA87_LEVEL,
+                pubkey_ptr: pubkeys[idx].as_ptr(),
+                pubkey_len: pubkeys[idx].len(),
+                message_ptr: messages[idx].as_ptr(),
+                message_len: messages[idx].len(),
+                signature_ptr: signatures[idx].as_ptr(),
+                signature_len: signatures[idx].len(),
+            });
+        }
+
+        let mut out_results_ptr: *mut u8 = ptr::null_mut();
+        let mut out_results_len: usize = 0;
+        let mut out_valid_count: u32 = 0;
+        let rc = unsafe {
+            verify_batch_fn(
+                items.as_ptr(),
+                items.len(),
+                &mut out_results_ptr as *mut *mut u8,
+                &mut out_results_len as *mut usize,
+                &mut out_valid_count as *mut u32,
+            )
+        };
+        if rc != 0 {
+            return Err(ConsensusBftError::InvalidSignature(format!(
+                "aoem ffi mldsa verify batch failed: rc={}",
+                rc
+            )));
+        }
+        if out_results_ptr.is_null() {
+            return Err(ConsensusBftError::InvalidSignature(
+                "aoem ffi mldsa verify batch returned null results".to_string(),
+            ));
+        }
+        let out_results = unsafe { std::slice::from_raw_parts(out_results_ptr, out_results_len) };
+        if out_results_len != inputs.len() {
+            unsafe { free_fn(out_results_ptr, out_results_len) };
+            return Err(ConsensusBftError::InvalidSignature(format!(
+                "aoem ffi mldsa verify batch result size mismatch: expected {} got {}",
+                inputs.len(),
+                out_results_len
+            )));
+        }
+        if out_valid_count as usize > inputs.len() {
+            unsafe { free_fn(out_results_ptr, out_results_len) };
+            return Err(ConsensusBftError::InvalidSignature(format!(
+                "aoem ffi mldsa verify batch valid_count out of range: {}",
+                out_valid_count
+            )));
+        }
+        for (idx, b) in out_results.iter().enumerate() {
+            if *b == 1 {
+                continue;
+            }
+            unsafe { free_fn(out_results_ptr, out_results_len) };
+            return Err(ConsensusBftError::InvalidSignature(format!(
+                "aoem ffi mldsa verify batch returned invalid for voter {}",
+                voter_ids[idx]
+            )));
+        }
+        unsafe { free_fn(out_results_ptr, out_results_len) };
+        Ok(inputs
+            .iter()
+            .map(|_| GovernanceVoteVerificationReport {
+                verifier_name: self.name(),
+                scheme: self.scheme(),
+            })
+            .collect())
+    }
 }
 
 fn build_aoem_ffi_mldsa87_vote_verifier() -> Result<Arc<dyn GovernanceVoteVerifier>> {
@@ -5299,7 +5464,15 @@ fn build_aoem_ffi_mldsa87_vote_verifier() -> Result<Arc<dyn GovernanceVoteVerifi
     })?;
     let lib = Box::leak(Box::new(lib));
 
-    let (abi_version_fn, supported_fn, pubkey_size_fn, signature_size_fn, verify_fn) = unsafe {
+    let (
+        abi_version_fn,
+        supported_fn,
+        pubkey_size_fn,
+        signature_size_fn,
+        verify_fn,
+        verify_batch_fn,
+        free_fn,
+    ) = unsafe {
         let abi_version_fn: libloading::Symbol<AoemAbiVersionFn> =
             lib.get(b"aoem_abi_version\0")
                 .context("resolve aoem_abi_version failed")?;
@@ -5315,12 +5488,17 @@ fn build_aoem_ffi_mldsa87_vote_verifier() -> Result<Arc<dyn GovernanceVoteVerifi
         let verify_fn: libloading::Symbol<AoemMldsaVerifyFn> = lib
             .get(b"aoem_mldsa_verify\0")
             .context("resolve aoem_mldsa_verify failed")?;
+        let verify_batch_fn: Option<libloading::Symbol<AoemMldsaVerifyBatchFn>> =
+            lib.get(b"aoem_mldsa_verify_batch_v1\0").ok();
+        let free_fn: Option<libloading::Symbol<AoemFreeFn>> = lib.get(b"aoem_free\0").ok();
         (
             *abi_version_fn,
             *supported_fn,
             *pubkey_size_fn,
             *signature_size_fn,
             *verify_fn,
+            verify_batch_fn.map(|f| *f),
+            free_fn.map(|f| *f),
         )
     };
 
@@ -5363,6 +5541,8 @@ fn build_aoem_ffi_mldsa87_vote_verifier() -> Result<Arc<dyn GovernanceVoteVerifi
 
     Ok(Arc::new(AoemFfiMldsa87GovernanceVoteVerifier {
         verify_fn,
+        verify_batch_fn,
+        free_fn,
         expected_pubkey_size,
         expected_signature_size,
         voter_pubkeys,

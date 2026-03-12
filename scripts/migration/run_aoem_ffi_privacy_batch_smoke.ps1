@@ -104,6 +104,7 @@ $manifestSkipPath = Join-Path $OutputDir "__manifest_skip__.json"
 
 $bindingsDir = Join-Path $RepoRoot "crates\aoem-bindings"
 $probeProfilePath = Join-Path $OutputDir "ffi-install-probe-profile.json"
+$groth16BatchSmokePath = Join-Path $OutputDir "groth16-prove-batch-smoke.json"
 
 $probe = Invoke-CargoStdout -WorkDir $bindingsDir -CargoArgs @(
     "run", "--quiet", "--example", "ffi_install_probe", "--",
@@ -114,8 +115,24 @@ $probe = Invoke-CargoStdout -WorkDir $bindingsDir -CargoArgs @(
     AOEM_DLL_MANIFEST_REQUIRED = "0"
 }
 
+$groth16BatchSmoke = Invoke-CargoStdout -WorkDir $bindingsDir -CargoArgs @(
+    "run", "--quiet", "--example", "groth16_prove_batch_smoke", "--",
+    "--dll", $dllPath,
+    "--out", $groth16BatchSmokePath
+) -EnvVars @{
+    AOEM_DLL_MANIFEST = $manifestSkipPath
+    AOEM_DLL_MANIFEST_REQUIRED = "0"
+}
+
 if (-not (Test-Path $probeProfilePath)) {
     throw "ffi_install_probe profile not generated: $probeProfilePath"
+}
+$groth16BatchSmoke.stderr | Set-Content -Path (Join-Path $OutputDir "groth16-prove-batch-smoke.stderr.log") -Encoding UTF8
+$groth16BatchSmoke.stdout | Set-Content -Path (Join-Path $OutputDir "groth16-prove-batch-smoke.stdout.log") -Encoding UTF8
+$groth16BatchSummary = if (Test-Path $groth16BatchSmokePath) {
+    Get-Content -Path $groth16BatchSmokePath -Raw | ConvertFrom-Json
+} else {
+    $null
 }
 $probeProfile = Get-Content -Path $probeProfilePath -Raw | ConvertFrom-Json
 $sym = $probeProfile.ffi_symbol_contract
@@ -140,6 +157,9 @@ $contractJson = $contract.stdout | ConvertFrom-Json
 $raw = $contractJson.raw
 
 $symbolRingBatch = Get-BoolField -Obj $sym -Name "ring_signature_verify_batch_web30_v1"
+$symbolGroth16Prove = Get-BoolField -Obj $sym -Name "groth16_prove_v1"
+$symbolGroth16ProveBatch = Get-BoolField -Obj $sym -Name "groth16_prove_batch_v1"
+$symbolGroth16ProveAuto = Get-BoolField -Obj $sym -Name "groth16_prove_auto_path"
 $symbolBulletBatch = Get-BoolField -Obj $sym -Name "bulletproof_batch_v1"
 $symbolRingctBatch = Get-BoolField -Obj $sym -Name "ringct_batch_v1"
 $symbolAll = Get-BoolField -Obj $sym -Name "privacy_batch_v1_all"
@@ -148,7 +168,12 @@ $capRingBatch = Get-BoolField -Obj $raw -Name "ring_signature_batch_verify"
 $capBulletBatch = Get-BoolField -Obj $raw -Name "bulletproof_batch_verify"
 $capRingctBatch = Get-BoolField -Obj $raw -Name "ringct_batch_verify"
 
-$pass = ($symbolRingBatch -and $symbolBulletBatch -and $symbolRingctBatch -and $symbolAll -and $capRingBatch -and $capBulletBatch -and $capRingctBatch)
+$groth16BatchPass = $false
+if ($null -ne $groth16BatchSummary) {
+    $groth16BatchPass = [bool]$groth16BatchSummary.pass
+}
+
+$pass = ($symbolRingBatch -and $symbolBulletBatch -and $symbolRingctBatch -and $symbolAll -and $capRingBatch -and $capBulletBatch -and $capRingctBatch -and $groth16BatchPass)
 
 $summary = [ordered]@{
     schema = "aoem_ffi_privacy_batch_smoke_v1"
@@ -157,10 +182,14 @@ $summary = [ordered]@{
     aoem_variant = $AoemVariant
     aoem_dll = $dllPath
     probe_profile_json = $probeProfilePath
+    groth16_prove_batch_smoke_json = $groth16BatchSmokePath
     capability_contract_json = $contractOutPath
     manifest_check_mode = "skip_for_symbol_probe"
     ffi_symbol_contract = [ordered]@{
         ring_signature_verify_batch_web30_v1 = $symbolRingBatch
+        groth16_prove_v1 = $symbolGroth16Prove
+        groth16_prove_batch_v1 = $symbolGroth16ProveBatch
+        groth16_prove_auto_path = $symbolGroth16ProveAuto
         bulletproof_batch_v1 = $symbolBulletBatch
         ringct_batch_v1 = $symbolRingctBatch
         privacy_batch_v1_all = $symbolAll
@@ -169,6 +198,11 @@ $summary = [ordered]@{
         ring_signature_batch_verify = $capRingBatch
         bulletproof_batch_verify = $capBulletBatch
         ringct_batch_verify = $capRingctBatch
+    }
+    groth16_batch_smoke = [ordered]@{
+        pass = $groth16BatchPass
+        witness_count = if ($null -ne $groth16BatchSummary) { $groth16BatchSummary.witness_count } else { 0 }
+        elapsed_us = if ($null -ne $groth16BatchSummary) { $groth16BatchSummary.elapsed_us } else { 0 }
     }
 }
 
@@ -183,11 +217,15 @@ $md = @(
     "- aoem_variant: $AoemVariant",
     "- aoem_dll: $dllPath",
     "- probe_profile_json: $probeProfilePath",
+    "- groth16_prove_batch_smoke_json: $groth16BatchSmokePath",
     "- capability_contract_json: $contractOutPath",
     "",
     "## FFI Symbol Contract",
     "",
     "- ring_signature_verify_batch_web30_v1: $symbolRingBatch",
+    "- groth16_prove_v1: $symbolGroth16Prove",
+    "- groth16_prove_batch_v1: $symbolGroth16ProveBatch",
+    "- groth16_prove_auto_path: $symbolGroth16ProveAuto",
     "- bulletproof_batch_v1: $symbolBulletBatch",
     "- ringct_batch_v1: $symbolRingctBatch",
     "- privacy_batch_v1_all: $symbolAll",
@@ -197,6 +235,12 @@ $md = @(
     "- ring_signature_batch_verify: $capRingBatch",
     "- bulletproof_batch_verify: $capBulletBatch",
     "- ringct_batch_verify: $capRingctBatch"
+    "",
+    "## Groth16 Prove Batch Smoke",
+    "",
+    "- pass: $groth16BatchPass",
+    "- witness_count: $($summary.groth16_batch_smoke.witness_count)",
+    "- elapsed_us: $($summary.groth16_batch_smoke.elapsed_us)"
 )
 $md | Set-Content -Path $summaryMdPath -Encoding UTF8
 

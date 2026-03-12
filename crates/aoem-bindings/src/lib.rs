@@ -44,6 +44,26 @@ pub type AoemBulletproofProveBatchV1 =
     unsafe extern "C" fn(*const u8, usize, *mut *mut u8, *mut usize) -> i32;
 pub type AoemBulletproofVerifyBatchV1 =
     unsafe extern "C" fn(*const u8, usize, *mut *mut u8, *mut usize, *mut u32) -> i32;
+pub type AoemGroth16ProveV1 = unsafe extern "C" fn(
+    *const u8,
+    usize,
+    *mut *mut u8,
+    *mut usize,
+    *mut *mut u8,
+    *mut usize,
+    *mut *mut u8,
+    *mut usize,
+) -> i32;
+pub type AoemGroth16ProveBatchV1 = unsafe extern "C" fn(
+    *const u8,
+    usize,
+    *mut *mut u8,
+    *mut usize,
+    *mut *mut u8,
+    *mut usize,
+    *mut *mut u8,
+    *mut usize,
+) -> i32;
 pub type AoemRingctProveBatchV1 =
     unsafe extern "C" fn(*const u8, usize, *mut *mut u8, *mut usize) -> i32;
 pub type AoemRingctVerifyBatchV1 =
@@ -103,6 +123,8 @@ pub struct AoemDyn {
     ring_signature_sign_web30_v1: Option<AoemRingSignatureSignWeb30V1>,
     ring_signature_verify_web30_v1: Option<AoemRingSignatureVerifyWeb30V1>,
     ring_signature_verify_batch_web30_v1: Option<AoemRingSignatureVerifyBatchWeb30V1>,
+    groth16_prove_v1: Option<AoemGroth16ProveV1>,
+    groth16_prove_batch_v1: Option<AoemGroth16ProveBatchV1>,
     bulletproof_prove_batch_v1: Option<AoemBulletproofProveBatchV1>,
     bulletproof_verify_batch_v1: Option<AoemBulletproofVerifyBatchV1>,
     ringct_prove_batch_v1: Option<AoemRingctProveBatchV1>,
@@ -214,6 +236,14 @@ impl AoemDyn {
             )
             .ok()
             .map(|f| *f);
+        let groth16_prove_v1: Option<AoemGroth16ProveV1> = lib
+            .get::<AoemGroth16ProveV1>(b"aoem_groth16_prove_v1")
+            .ok()
+            .map(|f| *f);
+        let groth16_prove_batch_v1: Option<AoemGroth16ProveBatchV1> = lib
+            .get::<AoemGroth16ProveBatchV1>(b"aoem_groth16_prove_batch_v1")
+            .ok()
+            .map(|f| *f);
         let bulletproof_prove_batch_v1: Option<AoemBulletproofProveBatchV1> = lib
             .get::<AoemBulletproofProveBatchV1>(b"aoem_bulletproof_prove_batch_v1")
             .ok()
@@ -263,6 +293,8 @@ impl AoemDyn {
             ring_signature_sign_web30_v1,
             ring_signature_verify_web30_v1,
             ring_signature_verify_batch_web30_v1,
+            groth16_prove_v1,
+            groth16_prove_batch_v1,
             bulletproof_prove_batch_v1,
             bulletproof_verify_batch_v1,
             ringct_prove_batch_v1,
@@ -482,6 +514,18 @@ impl AoemDyn {
         self.ring_signature_verify_batch_web30_v1.is_some()
     }
 
+    pub fn supports_groth16_prove_v1(&self) -> bool {
+        self.groth16_prove_v1.is_some()
+    }
+
+    pub fn supports_groth16_prove_batch_v1(&self) -> bool {
+        self.groth16_prove_batch_v1.is_some()
+    }
+
+    pub fn supports_groth16_prove_auto_path(&self) -> bool {
+        self.groth16_prove_batch_v1.is_some() || self.groth16_prove_v1.is_some()
+    }
+
     pub fn supports_bulletproof_batch_v1(&self) -> bool {
         self.bulletproof_prove_batch_v1.is_some() && self.bulletproof_verify_batch_v1.is_some()
     }
@@ -529,6 +573,68 @@ impl AoemDyn {
             .ok_or_else(|| anyhow!("aoem_free not found in loaded DLL"))?;
         let out = unsafe { std::slice::from_raw_parts(ptr as *const u8, len) }.to_vec();
         unsafe { free_fn(ptr, len) };
+        Ok(out)
+    }
+
+    fn decode_len_prefixed_blob_list_wire_v1<'b>(
+        &self,
+        input: &'b [u8],
+        label: &str,
+    ) -> Result<Vec<&'b [u8]>> {
+        if input.len() < 4 {
+            bail!("{label} wire too short");
+        }
+        let mut cursor = 0usize;
+        let count = u32::from_le_bytes([input[0], input[1], input[2], input[3]]) as usize;
+        cursor += 4;
+        if count == 0 {
+            bail!("{label} wire has zero items");
+        }
+        let mut out = Vec::with_capacity(count);
+        for _ in 0..count {
+            if cursor + 4 > input.len() {
+                bail!("{label} wire truncated on length prefix");
+            }
+            let len = u32::from_le_bytes([
+                input[cursor],
+                input[cursor + 1],
+                input[cursor + 2],
+                input[cursor + 3],
+            ]) as usize;
+            cursor += 4;
+            if len == 0 {
+                bail!("{label} wire contains empty item");
+            }
+            if cursor + len > input.len() {
+                bail!("{label} wire truncated on payload");
+            }
+            out.push(&input[cursor..cursor + len]);
+            cursor += len;
+        }
+        if cursor != input.len() {
+            bail!("{label} wire has trailing bytes");
+        }
+        Ok(out)
+    }
+
+    fn encode_len_prefixed_blob_list_wire_v1(
+        &self,
+        items: &[Vec<u8>],
+        label: &str,
+    ) -> Result<Vec<u8>> {
+        if items.is_empty() {
+            bail!("{label} wire requires at least one item");
+        }
+        let mut out =
+            Vec::with_capacity(4 + items.iter().map(|item| 4 + item.len()).sum::<usize>());
+        out.extend_from_slice(&(items.len() as u32).to_le_bytes());
+        for item in items {
+            if item.is_empty() {
+                bail!("{label} wire does not allow empty item");
+            }
+            out.extend_from_slice(&(item.len() as u32).to_le_bytes());
+            out.extend_from_slice(item);
+        }
         Ok(out)
     }
 
@@ -642,6 +748,117 @@ impl AoemDyn {
             bail!("aoem_ring_signature_verify_web30_v1 failed: rc={rc}");
         }
         Ok(out_valid != 0)
+    }
+
+    /// Groth16 batch prove entry for host-side high-throughput usage.
+    /// Input wire format:
+    /// - [count:u32_le][len:u32_le][witness_bytes]...
+    /// - witness bytes are same as single prove: 24 bytes [a:u64][b:u64][c:u64].
+    ///
+    /// Return:
+    /// - vk bytes (shared)
+    /// - proofs wire: [count:u32_le][len:u32_le][proof]...
+    /// - public inputs wire: [count:u32_le][len:u32_le][FR_VEC_WIRE_V1]...
+    ///
+    /// Auto-path behavior:
+    /// - Prefer `aoem_groth16_prove_batch_v1` when exported by DLL.
+    /// - Fallback to `aoem_groth16_prove_v1` loop when batch symbol is missing.
+    pub fn groth16_prove_batch_v1(
+        &self,
+        witnesses_wire: &[u8],
+    ) -> Result<(Vec<u8>, Vec<u8>, Vec<u8>)> {
+        if witnesses_wire.is_empty() {
+            bail!("groth16 witnesses wire must not be empty");
+        }
+
+        if let Some(batch_fn) = self.groth16_prove_batch_v1 {
+            let mut vk_ptr: *mut u8 = ptr::null_mut();
+            let mut vk_len = 0usize;
+            let mut proofs_wire_ptr: *mut u8 = ptr::null_mut();
+            let mut proofs_wire_len = 0usize;
+            let mut inputs_wire_ptr: *mut u8 = ptr::null_mut();
+            let mut inputs_wire_len = 0usize;
+            let rc = unsafe {
+                batch_fn(
+                    witnesses_wire.as_ptr(),
+                    witnesses_wire.len(),
+                    &mut vk_ptr as *mut *mut u8,
+                    &mut vk_len as *mut usize,
+                    &mut proofs_wire_ptr as *mut *mut u8,
+                    &mut proofs_wire_len as *mut usize,
+                    &mut inputs_wire_ptr as *mut *mut u8,
+                    &mut inputs_wire_len as *mut usize,
+                )
+            };
+            if rc != 0 {
+                bail!("aoem_groth16_prove_batch_v1 failed: rc={rc}");
+            }
+            let vk = self.copy_aoem_owned_bytes(vk_ptr, vk_len, "groth16 batch vk")?;
+            let proofs_wire = self.copy_aoem_owned_bytes(
+                proofs_wire_ptr,
+                proofs_wire_len,
+                "groth16 batch proofs wire",
+            )?;
+            let public_inputs_wire = self.copy_aoem_owned_bytes(
+                inputs_wire_ptr,
+                inputs_wire_len,
+                "groth16 batch public inputs wire",
+            )?;
+            return Ok((vk, proofs_wire, public_inputs_wire));
+        }
+
+        let Some(single_fn) = self.groth16_prove_v1 else {
+            bail!("aoem_groth16_prove_batch_v1/aoem_groth16_prove_v1 not found in loaded DLL");
+        };
+
+        let witness_items =
+            self.decode_len_prefixed_blob_list_wire_v1(witnesses_wire, "groth16 witness batch")?;
+        let mut shared_vk: Option<Vec<u8>> = None;
+        let mut proofs = Vec::with_capacity(witness_items.len());
+        let mut inputs = Vec::with_capacity(witness_items.len());
+        for witness in witness_items {
+            let mut vk_ptr: *mut u8 = ptr::null_mut();
+            let mut vk_len = 0usize;
+            let mut proof_ptr: *mut u8 = ptr::null_mut();
+            let mut proof_len = 0usize;
+            let mut input_ptr: *mut u8 = ptr::null_mut();
+            let mut input_len = 0usize;
+            let rc = unsafe {
+                single_fn(
+                    witness.as_ptr(),
+                    witness.len(),
+                    &mut vk_ptr as *mut *mut u8,
+                    &mut vk_len as *mut usize,
+                    &mut proof_ptr as *mut *mut u8,
+                    &mut proof_len as *mut usize,
+                    &mut input_ptr as *mut *mut u8,
+                    &mut input_len as *mut usize,
+                )
+            };
+            if rc != 0 {
+                bail!("aoem_groth16_prove_v1 fallback failed: rc={rc}");
+            }
+            let vk = self.copy_aoem_owned_bytes(vk_ptr, vk_len, "groth16 fallback vk")?;
+            if shared_vk.is_none() {
+                shared_vk = Some(vk);
+            }
+            proofs.push(self.copy_aoem_owned_bytes(
+                proof_ptr,
+                proof_len,
+                "groth16 fallback proof",
+            )?);
+            inputs.push(self.copy_aoem_owned_bytes(
+                input_ptr,
+                input_len,
+                "groth16 fallback inputs",
+            )?);
+        }
+        let vk = shared_vk.ok_or_else(|| anyhow!("groth16 witness batch is empty"))?;
+        let proofs_wire =
+            self.encode_len_prefixed_blob_list_wire_v1(&proofs, "groth16 proofs batch")?;
+        let public_inputs_wire =
+            self.encode_len_prefixed_blob_list_wire_v1(&inputs, "groth16 public inputs batch")?;
+        Ok((vk, proofs_wire, public_inputs_wire))
     }
 
     pub fn recommend_parallelism(

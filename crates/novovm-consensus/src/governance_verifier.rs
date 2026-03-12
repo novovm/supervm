@@ -2,6 +2,9 @@ use crate::types::{BFTError, BFTResult, GovernanceVote};
 use ed25519_dalek::VerifyingKey;
 use std::sync::Arc;
 
+/// Minimum vote count to prefer batch verification over per-vote verification.
+pub const GOVERNANCE_VOTE_VERIFY_BATCH_MIN: usize = 8;
+
 /// 治理投票签名校验器（I-GOV-04 execute-hook）。
 ///
 /// 默认实现为 `ed25519`，其他方案（例如 ML-DSA）通过外部注入。
@@ -27,6 +30,18 @@ pub trait GovernanceVoteVerifier: Send + Sync {
             scheme: self.scheme(),
         })
     }
+
+    /// 批量校验治理投票签名（默认逐条调用 `verify_with_report`）。
+    fn verify_batch_with_report(
+        &self,
+        inputs: &[GovernanceVoteVerificationInput<'_>],
+    ) -> BFTResult<Vec<GovernanceVoteVerificationReport>> {
+        let mut out = Vec::with_capacity(inputs.len());
+        for input in inputs {
+            out.push(self.verify_with_report(input.vote, input.key)?);
+        }
+        Ok(out)
+    }
 }
 
 /// 治理投票验签报告（用于共识层审计输出）。
@@ -34,6 +49,13 @@ pub trait GovernanceVoteVerifier: Send + Sync {
 pub struct GovernanceVoteVerificationReport {
     pub verifier_name: &'static str,
     pub scheme: GovernanceVoteVerifierScheme,
+}
+
+/// 批量治理投票验签输入。
+#[derive(Clone, Copy)]
+pub struct GovernanceVoteVerificationInput<'a> {
+    pub vote: &'a GovernanceVote,
+    pub key: &'a VerifyingKey,
 }
 
 /// 默认治理投票签名校验器（ed25519）。

@@ -195,6 +195,31 @@ AOEM_API int32_t aoem_mldsa_verify_auto(
   size_t signature_len,
   uint32_t* out_valid
 );
+typedef struct aoem_mldsa_verify_item_v1 {
+  // 0 => auto-detect by pubkey length; otherwise 44/65/87 (legacy 2/3/5 accepted).
+  uint32_t level;
+  const uint8_t* pubkey_ptr;
+  size_t pubkey_len;
+  const uint8_t* message_ptr;
+  size_t message_len;
+  const uint8_t* signature_ptr;
+  size_t signature_len;
+} aoem_mldsa_verify_item_v1;
+// Batch ML-DSA verify.
+// - out_results is a byte array with length=item_count; each byte is 0/1.
+// - output memory is allocated by AOEM and must be released with aoem_free.
+// return code:
+//  0 = call succeeded
+// -2 = invalid argument
+// -4 = verify input/format error
+// -5 = capability not built (mldsa feature disabled and plugin unavailable)
+AOEM_API int32_t aoem_mldsa_verify_batch_v1(
+  const aoem_mldsa_verify_item_v1* items_ptr,
+  size_t item_count,
+  uint8_t** out_results_ptr,
+  size_t* out_results_len,
+  uint32_t* out_valid_count
+);
 // Ring-signature verification (Web30-compatible payload).
 // signature_json payload schema:
 // {
@@ -305,6 +330,29 @@ AOEM_API int32_t aoem_groth16_prove_v1(
   uint8_t** out_public_inputs_ptr,
   size_t* out_public_inputs_len
 );
+// Groth16 batch prove (FFI high-throughput contract).
+// Input:
+// - witnesses wire: [count:u32_le][len:u32_le][bytes...][len:u32_le][bytes...]...
+// - each witness item bytes: same as aoem_groth16_prove_v1 witness wire (24 bytes [a][b][c]).
+// Outputs:
+// - out_vk: PreparedVerifyingKey<Bls12_381> bytes (shared for batch, arkworks uncompressed wire)
+// - out_proofs_wire: len-prefixed blob list wire of proof bytes (same count as input)
+// - out_public_inputs_wire: len-prefixed blob list wire of FR_VEC_WIRE_V1 payloads (same count as input)
+// return code:
+//  0 = call succeeded
+// -2 = invalid argument / malformed witness wire
+// -4 = prove/encode/self-verify error
+// -5 = capability not built (privacy-verify feature disabled)
+AOEM_API int32_t aoem_groth16_prove_batch_v1(
+  const uint8_t* witnesses_wire_ptr,
+  size_t witnesses_wire_len,
+  uint8_t** out_vk_ptr,
+  size_t* out_vk_len,
+  uint8_t** out_proofs_wire_ptr,
+  size_t* out_proofs_wire_len,
+  uint8_t** out_public_inputs_wire_ptr,
+  size_t* out_public_inputs_wire_len
+);
 // Groth16 single-proof verify (verify-only FFI).
 // Input contracts:
 // - vk_ptr/vk_len: PreparedVerifyingKey<Bls12_381> bytes (arkworks uncompressed unchecked wire).
@@ -324,6 +372,32 @@ AOEM_API int32_t aoem_groth16_verify_v1(
   const uint8_t* public_inputs_ptr,
   size_t public_inputs_len,
   uint32_t* out_valid
+);
+// Groth16 batch verify (verify-only FFI, binary wire).
+// Shared verifying key:
+// - vk_ptr/vk_len: PreparedVerifyingKey<Bls12_381> bytes (arkworks uncompressed unchecked wire)
+// Batch wire for proofs/public-inputs (both are required, same count):
+// - [count:u32_le][len:u32_le][bytes...][len:u32_le][bytes...]...
+// - proofs wire item bytes: Proof<Bls12_381> bytes (arkworks uncompressed unchecked wire)
+// - public_inputs wire item bytes: FR_VEC_WIRE_V1
+// Output:
+// - out_results: byte bitmap in input order (1=valid, 0=invalid)
+// - out_valid_count: count(valid)
+// return code:
+//  0 = call succeeded
+// -2 = invalid argument / count mismatch
+// -4 = decode/verify error
+// -5 = capability not built (privacy-verify feature disabled)
+AOEM_API int32_t aoem_groth16_verify_batch_v1(
+  const uint8_t* vk_ptr,
+  size_t vk_len,
+  const uint8_t* proofs_wire_ptr,
+  size_t proofs_wire_len,
+  const uint8_t* public_inputs_wire_ptr,
+  size_t public_inputs_wire_len,
+  uint8_t** out_results_ptr,
+  size_t* out_results_len,
+  uint32_t* out_valid_count
 );
 // Bulletproof range prove (FFI baseline contract).
 // Input:

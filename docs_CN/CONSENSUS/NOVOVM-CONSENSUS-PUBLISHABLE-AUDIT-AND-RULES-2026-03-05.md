@@ -160,6 +160,7 @@
 - 治理 RPC gate 已新增链内审计校验：`chain_audit_ok=true`（至少覆盖 `submit=accepted` + `execute=applied`）+ `policy_chain_audit_consistency_ok=true` + `chain_audit_root_ok/persist_root_ok/restart_root_ok=true`。
 - 区块路径锚定：`governance_chain_audit_root` 已写入 `block_header_wire_v1`，并由 `block_out/commit_out` 在 `ffi_v2` 与 `legacy_compat` 路径做一致性强校验（`governance_chain_audit_root_parity_pass=true`）。
 - 治理 RPC gate（ML-DSA + AOEM-FFI execute）：`run_governance_rpc_mldsa_ffi_gate.ps1`，验证 `submit -> vote(mldsa87) -> execute -> getPolicy` 正向闭环、`governance_sign(mldsa87)` 本地签名拒绝、AOEM-FFI 验签生效；可按需接入 acceptance gate 的 `governance_rpc_mldsa_ffi_pass`，并可通过 `run_release_snapshot.ps1` / `run_release_candidate.ps1` 的 `-IncludeGovernanceRpcMldsaFfiGate` 把结果写入发布产物。
+- I-GOV-04 批验签性能封盘（非生产路径，仅基准脚本）：`run_governance_mldsa_verify_batch_perf.ps1`（`1k/10k/100k`，`p50/p90/p99` + `AOEM_MLDSA_VERIFY_BATCH_PAR_MIN` 对比）；最近一次证据：`artifacts/migration/governance-mldsa-batch-perf-2026-03-12-030935/governance-mldsa-verify-batch-perf-summary.{json,md}`，结论为 `1k/10k` 偏向 `par_min=1`，`100k` 偏向 `par_min=64`。
 - 新增证据（下沉后回归）：`artifacts/migration/governance-rpc-gate-downsink-scheme-smoke/governance-rpc-gate-summary.json`（`pass=true`, `sign_unsupported_scheme_reject_ok=true`）。
 - 新增证据（三段下沉收口）：`artifacts/migration/governance-rpc-gate-verifier-exec-proof-smoke/governance-rpc-gate-summary.json`（`pass=true`, `execute_vote_verifier_ok=true`, `chain_audit_*_has_execute_applied_verifier=true`）。
 - RPC 暴露 gate：`run_rpc_exposure_gate.ps1`，验证默认安全态（public 拒绝 `governance_*` + gov 端口关闭）与受控开启态（gov 本地端口可用、public 仍拒绝）。

@@ -1,5 +1,5 @@
 {
-    "generated_at_utc":  "2026-03-10T09:15:48.0341511Z",
+    "generated_at_utc":  "2026-03-12T01:31:54.6554824Z",
     "release_version":  "Beta 0.8",
     "aoem_root":  "D:\\WEB3_AI\\SUPERVM\\aoem",
     "entries":  [
@@ -7,7 +7,7 @@
                         "name":  "core",
                         "platform":  "windows",
                         "dll":  "bin/aoem_ffi.dll",
-                        "sha256":  "8a9f03aa9626eca7d5d4c7005f5cfcf57fc6908d77d5ba4f3bda0dc4c4a4082d",
+                        "sha256":  "351c199b7f3668cce56150d9eae305cca42f72fb4a07c26e02cbdc554eb7fa48",
                         "abi_expected":  1,
                         "capabilities_required":  {
                                                       "execute_ops_v2":  true
@@ -17,7 +17,7 @@
                         "name":  "core",
                         "platform":  "linux",
                         "dll":  "linux/bin/libaoem_ffi.so",
-                        "sha256":  "5726d2d6ac86b7b104fa11d6fc16a62d6bcb7075d37ac8421ef8248a534ebd26",
+                        "sha256":  "bcfa31d74378caf786f3d4879b2876ab3ab552b428cbdc29959ff1805cd6e279",
                         "abi_expected":  1,
                         "capabilities_required":  {
                                                       "execute_ops_v2":  true

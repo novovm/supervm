@@ -98,8 +98,9 @@ pub mod types;
 pub use bft_engine::{BFTConfig, BFTEngine, CommitQcTimings, CommittedEpoch};
 pub use epoch::{Epoch, EpochConfig, EpochManager};
 pub use governance_verifier::{
-    build_governance_vote_verifier, Ed25519GovernanceVoteVerifier,
+    build_governance_vote_verifier, Ed25519GovernanceVoteVerifier, GovernanceVoteVerificationInput,
     GovernanceVoteVerificationReport, GovernanceVoteVerifier, GovernanceVoteVerifierScheme,
+    GOVERNANCE_VOTE_VERIFY_BATCH_MIN,
 };
 pub use market_engine::{Web30MarketEngine, Web30MarketEngineSnapshot};
 pub use protocol::{HotStuffProtocol, Phase, ProtocolState};

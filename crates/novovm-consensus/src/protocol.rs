@@ -5,8 +5,9 @@
 
 use crate::epoch::Epoch;
 use crate::governance_verifier::{
-    Ed25519GovernanceVoteVerifier, GovernanceVoteVerificationReport, GovernanceVoteVerifier,
-    GovernanceVoteVerifierScheme,
+    Ed25519GovernanceVoteVerifier, GovernanceVoteVerificationInput,
+    GovernanceVoteVerificationReport, GovernanceVoteVerifier, GovernanceVoteVerifierScheme,
+    GOVERNANCE_VOTE_VERIFY_BATCH_MIN,
 };
 use crate::market_engine::{Web30MarketEngine, Web30MarketEngineSnapshot};
 use crate::quorum_cert::{QuorumCertificate, Vote};
@@ -1207,10 +1208,7 @@ impl HotStuffProtocol {
         let active_verifier_scheme = self.governance_vote_verifier.scheme();
 
         let mut seen = HashSet::with_capacity(votes.len());
-        let mut support_weight = 0u64;
-        let mut council_support_bp = 0u16;
-        let mut council_categories = HashSet::new();
-        let mut verification_report: Option<GovernanceVoteVerificationReport> = None;
+        let mut validated_votes = Vec::with_capacity(votes.len());
         for vote in votes {
             if vote.proposal_id != proposal_id {
                 return Err(BFTError::InvalidProposal(format!(
@@ -1250,28 +1248,103 @@ impl HotStuffProtocol {
             let key = public_keys
                 .get(&vote.voter_id)
                 .ok_or(BFTError::NotValidator(vote.voter_id))?;
-            let report = match self.governance_vote_verifier.verify_with_report(vote, key) {
-                Ok(report) => report,
-                Err(err) => {
-                    let reason = err.to_string().replace('\n', " ");
+            validated_votes.push((vote, key));
+        }
+
+        let verification_reports = if validated_votes.len() < GOVERNANCE_VOTE_VERIFY_BATCH_MIN {
+            let mut reports = Vec::with_capacity(validated_votes.len());
+            for (vote, key) in &validated_votes {
+                match self.governance_vote_verifier.verify_with_report(vote, key) {
+                    Ok(report) => reports.push(report),
+                    Err(err) => {
+                        let reason = err.to_string().replace('\n', " ");
+                        self.record_governance_chain_audit_event(
+                            "execute",
+                            proposal_id,
+                            Some(vote.voter_id),
+                            "reject",
+                            format!(
+                                "vote_verifier_reject voter={} verifier={} signature_scheme={} reason={}",
+                                vote.voter_id,
+                                active_verifier_name,
+                                active_verifier_scheme.as_str(),
+                                reason
+                            ),
+                        );
+                        return Err(err);
+                    }
+                }
+            }
+            reports
+        } else {
+            let verify_inputs: Vec<GovernanceVoteVerificationInput<'_>> = validated_votes
+                .iter()
+                .map(|(vote, key)| GovernanceVoteVerificationInput {
+                    vote: *vote,
+                    key: *key,
+                })
+                .collect();
+            match self
+                .governance_vote_verifier
+                .verify_batch_with_report(&verify_inputs)
+            {
+                Ok(reports) => reports,
+                Err(batch_err) => {
+                    // Fallback to per-vote verification to retain deterministic reject diagnostics.
+                    for (vote, key) in &validated_votes {
+                        match self.governance_vote_verifier.verify_with_report(vote, key) {
+                            Ok(_) => {}
+                            Err(err) => {
+                                let reason = err.to_string().replace('\n', " ");
+                                self.record_governance_chain_audit_event(
+                                    "execute",
+                                    proposal_id,
+                                    Some(vote.voter_id),
+                                    "reject",
+                                    format!(
+                                        "vote_verifier_reject voter={} verifier={} signature_scheme={} reason={}",
+                                        vote.voter_id,
+                                        active_verifier_name,
+                                        active_verifier_scheme.as_str(),
+                                        reason
+                                    ),
+                                );
+                                return Err(err);
+                            }
+                        }
+                    }
+                    let reason = batch_err.to_string().replace('\n', " ");
                     self.record_governance_chain_audit_event(
                         "execute",
                         proposal_id,
-                        Some(vote.voter_id),
+                        None,
                         "reject",
                         format!(
-                            "vote_verifier_reject voter={} verifier={} signature_scheme={} reason={}",
-                            vote.voter_id,
+                            "vote_verifier_batch_reject verifier={} signature_scheme={} reason={}",
                             active_verifier_name,
                             active_verifier_scheme.as_str(),
                             reason
                         ),
                     );
-                    return Err(err);
+                    return Err(batch_err);
                 }
-            };
+            }
+        };
+        if verification_reports.len() != validated_votes.len() {
+            return Err(BFTError::Internal(format!(
+                "governance vote verifier report size mismatch: expected={} got={}",
+                validated_votes.len(),
+                verification_reports.len()
+            )));
+        }
+
+        let mut support_weight = 0u64;
+        let mut council_support_bp = 0u16;
+        let mut council_categories = HashSet::new();
+        let mut verification_report: Option<GovernanceVoteVerificationReport> = None;
+        for (idx, (vote, _)) in validated_votes.iter().enumerate() {
             if verification_report.is_none() {
-                verification_report = Some(report);
+                verification_report = Some(verification_reports[idx].clone());
             }
             if vote.support {
                 support_weight = support_weight
