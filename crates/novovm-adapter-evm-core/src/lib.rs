@@ -57,6 +57,8 @@ pub struct EvmRawTxFieldsM0 {
     pub nonce: Option<u64>,
     pub gas_limit: Option<u64>,
     pub gas_price: Option<u64>,
+    pub access_list_address_count: Option<u64>,
+    pub access_list_storage_key_count: Option<u64>,
     pub to: Option<Vec<u8>>,
     pub value: Option<u128>,
     pub data: Option<Vec<u8>>,
@@ -383,6 +385,51 @@ fn rlp_item_as_address(item: &RlpItem<'_>, field: &str) -> anyhow::Result<Option
     Ok(Some(raw.to_vec()))
 }
 
+fn rlp_item_as_list_items<'a>(
+    item: &'a RlpItem<'a>,
+    field: &str,
+) -> anyhow::Result<Vec<RlpItem<'a>>> {
+    match item {
+        RlpItem::List(payload) => parse_rlp_list_payload_items(payload),
+        RlpItem::Bytes(_) => bail!("{} must be list", field),
+    }
+}
+
+fn rlp_access_list_intrinsic_counts(item: &RlpItem<'_>, field: &str) -> anyhow::Result<(u64, u64)> {
+    let entries = rlp_item_as_list_items(item, field)?;
+    let mut address_count = 0u64;
+    let mut storage_key_count = 0u64;
+    for (entry_idx, entry) in entries.iter().enumerate() {
+        let entry_field = format!("{}[{}]", field, entry_idx);
+        let entry_items = rlp_item_as_list_items(entry, &entry_field)?;
+        if entry_items.len() < 2 {
+            bail!("{} must be [address,storageKeys]", entry_field);
+        }
+        let address_field = format!("{}.address", entry_field);
+        let address_raw = rlp_item_as_bytes(&entry_items[0], &address_field)?;
+        if address_raw.len() != 20 {
+            bail!(
+                "{} must be 20 bytes, got {}",
+                address_field,
+                address_raw.len()
+            );
+        }
+        address_count = address_count.saturating_add(1);
+
+        let storage_keys_field = format!("{}.storageKeys", entry_field);
+        let storage_keys = rlp_item_as_list_items(&entry_items[1], &storage_keys_field)?;
+        for (key_idx, storage_key) in storage_keys.iter().enumerate() {
+            let key_field = format!("{}[{}]", storage_keys_field, key_idx);
+            let key_raw = rlp_item_as_bytes(storage_key, &key_field)?;
+            if key_raw.len() != 32 {
+                bail!("{} must be 32 bytes, got {}", key_field, key_raw.len());
+            }
+            storage_key_count = storage_key_count.saturating_add(1);
+        }
+    }
+    Ok((address_count, storage_key_count))
+}
+
 fn tx_fields_from_legacy_list(
     items: &[RlpItem<'_>],
     hint: EvmRawTxRouteHint,
@@ -415,6 +462,8 @@ fn tx_fields_from_legacy_list(
         nonce: Some(nonce),
         gas_limit: Some(gas_limit),
         gas_price: Some(gas_price),
+        access_list_address_count: None,
+        access_list_storage_key_count: None,
         to,
         value: Some(value),
         data: Some(data),
@@ -435,12 +484,16 @@ fn tx_fields_from_type1_list(
     let to = rlp_item_as_address(&items[4], "type1.to")?;
     let value = rlp_item_as_u128(&items[5], "type1.value")?;
     let data = rlp_item_as_bytes(&items[6], "type1.data")?.to_vec();
+    let (access_list_address_count, access_list_storage_key_count) =
+        rlp_access_list_intrinsic_counts(&items[7], "type1.access_list")?;
     Ok(EvmRawTxFieldsM0 {
         hint,
         chain_id: Some(chain_id),
         nonce: Some(nonce),
         gas_limit: Some(gas_limit),
         gas_price: Some(gas_price),
+        access_list_address_count: Some(access_list_address_count),
+        access_list_storage_key_count: Some(access_list_storage_key_count),
         to,
         value: Some(value),
         data: Some(data),
@@ -461,12 +514,16 @@ fn tx_fields_from_type2_list(
     let to = rlp_item_as_address(&items[5], "type2.to")?;
     let value = rlp_item_as_u128(&items[6], "type2.value")?;
     let data = rlp_item_as_bytes(&items[7], "type2.data")?.to_vec();
+    let (access_list_address_count, access_list_storage_key_count) =
+        rlp_access_list_intrinsic_counts(&items[8], "type2.access_list")?;
     Ok(EvmRawTxFieldsM0 {
         hint,
         chain_id: Some(chain_id),
         nonce: Some(nonce),
         gas_limit: Some(gas_limit),
         gas_price: Some(max_fee_per_gas),
+        access_list_address_count: Some(access_list_address_count),
+        access_list_storage_key_count: Some(access_list_storage_key_count),
         to,
         value: Some(value),
         data: Some(data),
@@ -503,6 +560,8 @@ pub fn translate_raw_evm_tx_fields_m0(raw: &[u8]) -> anyhow::Result<EvmRawTxFiel
             nonce: None,
             gas_limit: None,
             gas_price: None,
+            access_list_address_count: None,
+            access_list_storage_key_count: None,
             to: None,
             value: None,
             data: None,
@@ -619,9 +678,60 @@ pub fn active_precompile_set_m0(profile: &EvmChainProfile) -> &'static [&'static
 
 #[must_use]
 pub fn estimate_intrinsic_gas_m0(tx: &TxIR) -> u64 {
+    const TX_BASE_GAS: u64 = 21_000;
+    const TX_CREATE_EXTRA_GAS: u64 = 32_000;
+    const TX_DATA_ZERO_BYTE_GAS: u64 = 4;
+    const TX_DATA_NON_ZERO_BYTE_GAS: u64 = 16;
+    const TX_INITCODE_WORD_GAS: u64 = 2;
+
     let zero_bytes = tx.data.iter().filter(|b| **b == 0).count() as u64;
     let non_zero_bytes = tx.data.len() as u64 - zero_bytes;
-    21_000u64 + zero_bytes.saturating_mul(4) + non_zero_bytes.saturating_mul(16)
+    let mut intrinsic = TX_BASE_GAS
+        .saturating_add(zero_bytes.saturating_mul(TX_DATA_ZERO_BYTE_GAS))
+        .saturating_add(non_zero_bytes.saturating_mul(TX_DATA_NON_ZERO_BYTE_GAS));
+    if matches!(tx.tx_type, TxType::ContractDeploy) {
+        let initcode_words = (tx.data.len() as u64).saturating_add(31) / 32;
+        intrinsic = intrinsic
+            .saturating_add(TX_CREATE_EXTRA_GAS)
+            .saturating_add(initcode_words.saturating_mul(TX_INITCODE_WORD_GAS));
+    }
+    intrinsic
+}
+
+#[must_use]
+pub fn estimate_access_list_intrinsic_extra_gas_m0(
+    access_list_address_count: u64,
+    access_list_storage_key_count: u64,
+) -> u64 {
+    access_list_address_count
+        .saturating_mul(2_400)
+        .saturating_add(access_list_storage_key_count.saturating_mul(1_900))
+}
+
+#[must_use]
+pub fn estimate_intrinsic_gas_with_access_list_m0(
+    tx: &TxIR,
+    access_list_address_count: u64,
+    access_list_storage_key_count: u64,
+) -> u64 {
+    estimate_intrinsic_gas_m0(tx).saturating_add(estimate_access_list_intrinsic_extra_gas_m0(
+        access_list_address_count,
+        access_list_storage_key_count,
+    ))
+}
+
+fn infer_access_list_intrinsic_counts_from_signature_m0(signature: &[u8]) -> Option<(u64, u64)> {
+    let hint = resolve_raw_evm_tx_route_hint_m0(signature).ok()?;
+    if hint.envelope != EvmRawTxEnvelopeType::Type1AccessList
+        && hint.envelope != EvmRawTxEnvelopeType::Type2DynamicFee
+    {
+        return None;
+    }
+    let fields = translate_raw_evm_tx_fields_m0(signature).ok()?;
+    Some((
+        fields.access_list_address_count.unwrap_or(0),
+        fields.access_list_storage_key_count.unwrap_or(0),
+    ))
 }
 
 pub fn validate_tx_semantics_m0(profile: &EvmChainProfile, tx: &TxIR) -> anyhow::Result<()> {
@@ -640,11 +750,19 @@ pub fn validate_tx_semantics_m0(profile: &EvmChainProfile, tx: &TxIR) -> anyhow:
             }
         }
         TxType::ContractDeploy => {
+            const MAX_INITCODE_SIZE_BYTES: usize = 49_152;
             if tx.to.is_some() {
                 bail!("contract deploy tx must not set recipient");
             }
             if tx.data.is_empty() {
                 bail!("contract deploy tx missing init code");
+            }
+            if tx.data.len() > MAX_INITCODE_SIZE_BYTES {
+                bail!(
+                    "contract deploy init code too large: len={} max={}",
+                    tx.data.len(),
+                    MAX_INITCODE_SIZE_BYTES
+                );
             }
         }
         _ => {
@@ -659,7 +777,13 @@ pub fn validate_tx_semantics_m0(profile: &EvmChainProfile, tx: &TxIR) -> anyhow:
         bail!("missing signature");
     }
 
-    let intrinsic = estimate_intrinsic_gas_m0(tx);
+    let (access_list_address_count, access_list_storage_key_count) =
+        infer_access_list_intrinsic_counts_from_signature_m0(&tx.signature).unwrap_or((0, 0));
+    let intrinsic = estimate_intrinsic_gas_with_access_list_m0(
+        tx,
+        access_list_address_count,
+        access_list_storage_key_count,
+    );
     if tx.gas_limit < intrinsic {
         bail!(
             "intrinsic gas too low: gas_limit={} intrinsic={}",
@@ -797,6 +921,15 @@ mod tests {
     }
 
     #[test]
+    fn intrinsic_gas_contract_deploy_includes_create_and_initcode_word_cost() {
+        let mut tx = sample_tx(1);
+        tx.tx_type = TxType::ContractDeploy;
+        tx.to = None;
+        tx.data = vec![0x60, 0x00, 0x60, 0x00];
+        assert_eq!(estimate_intrinsic_gas_m0(&tx), 53_042);
+    }
+
+    #[test]
     fn validate_tx_m0_rejects_low_gas() {
         let profile = resolve_evm_profile(ChainType::EVM, 1).expect("profile");
         let mut tx = sample_tx(1);
@@ -829,8 +962,21 @@ mod tests {
         tx.tx_type = TxType::ContractDeploy;
         tx.to = None;
         tx.data = vec![0x60, 0x00, 0x60, 0x00];
-        tx.gas_limit = 22_000;
+        tx.gas_limit = 53_042;
         validate_tx_semantics_m0(&profile, &tx).expect("valid contract deploy");
+    }
+
+    #[test]
+    fn validate_tx_m0_rejects_contract_deploy_oversized_initcode() {
+        let profile = resolve_evm_profile(ChainType::EVM, 1).expect("profile");
+        let mut tx = sample_tx(1);
+        tx.tx_type = TxType::ContractDeploy;
+        tx.to = None;
+        tx.data = vec![0x60; 49_153];
+        tx.gas_limit = u64::MAX;
+        let err =
+            validate_tx_semantics_m0(&profile, &tx).expect_err("must reject oversized initcode");
+        assert!(err.to_string().contains("init code too large"));
     }
 
     #[test]
@@ -888,6 +1034,8 @@ mod tests {
         assert_eq!(fields.nonce, Some(7));
         assert_eq!(fields.gas_limit, Some(21_000));
         assert_eq!(fields.gas_price, Some(1));
+        assert_eq!(fields.access_list_address_count, None);
+        assert_eq!(fields.access_list_storage_key_count, None);
         assert_eq!(fields.to, Some(to));
         assert_eq!(fields.value, Some(9));
     }
@@ -916,6 +1064,8 @@ mod tests {
         assert_eq!(fields.nonce, Some(8));
         assert_eq!(fields.gas_limit, Some(22_000));
         assert_eq!(fields.gas_price, Some(2));
+        assert_eq!(fields.access_list_address_count, Some(0));
+        assert_eq!(fields.access_list_storage_key_count, Some(0));
         assert_eq!(fields.to, Some(to));
         assert_eq!(fields.value, Some(3));
         assert_eq!(fields.data, Some(vec![0xaa, 0xbb]));
@@ -946,8 +1096,70 @@ mod tests {
         assert_eq!(fields.nonce, Some(9));
         assert_eq!(fields.gas_limit, Some(30_000));
         assert_eq!(fields.gas_price, Some(30));
+        assert_eq!(fields.access_list_address_count, Some(0));
+        assert_eq!(fields.access_list_storage_key_count, Some(0));
         assert_eq!(fields.to, Some(to));
         assert_eq!(fields.value, Some(4));
+    }
+
+    #[test]
+    fn translate_type1_fields_extracts_access_list_intrinsic_counts() {
+        let to = vec![0x55u8; 20];
+        let access_list = enc_list(&[
+            enc_list(&[
+                enc_bytes(&[0x10; 20]),
+                enc_list(&[enc_bytes(&[0x01; 32]), enc_bytes(&[0x02; 32])]),
+            ]),
+            enc_list(&[enc_bytes(&[0x20; 20]), enc_list(&[enc_bytes(&[0x03; 32])])]),
+        ]);
+        let payload = enc_list(&[
+            enc_u64(1),
+            enc_u64(8),
+            enc_u64(2),
+            enc_u64(30_500),
+            enc_bytes(&to),
+            enc_u128(3),
+            enc_bytes(&[0xaa]),
+            access_list,
+            enc_u64(1),
+            enc_u64(1),
+            enc_u64(1),
+        ]);
+        let mut raw = vec![0x01];
+        raw.extend_from_slice(&payload);
+        let fields = translate_raw_evm_tx_fields_m0(&raw).expect("type1 tx decode");
+        assert_eq!(fields.access_list_address_count, Some(2));
+        assert_eq!(fields.access_list_storage_key_count, Some(3));
+    }
+
+    #[test]
+    fn validate_tx_m0_rejects_type1_raw_when_access_list_intrinsic_not_covered() {
+        let profile = resolve_evm_profile(ChainType::EVM, 1).expect("profile");
+        let to = vec![0x77u8; 20];
+        let access_list = enc_list(&[enc_list(&[
+            enc_bytes(&[0x31; 20]),
+            enc_list(&[enc_bytes(&[0x91; 32])]),
+        ])]);
+        let payload = enc_list(&[
+            enc_u64(1),
+            enc_u64(8),
+            enc_u64(2),
+            enc_u64(25_000),
+            enc_bytes(&to),
+            enc_u128(3),
+            enc_bytes(&[0xaa]),
+            access_list,
+            enc_u64(1),
+            enc_u64(1),
+            enc_u64(1),
+        ]);
+        let mut raw = vec![0x01];
+        raw.extend_from_slice(&payload);
+        let tx =
+            translate_raw_evm_tx_to_ir_m0(&raw, vec![0x7fu8; 20], 1).expect("translate tx to ir");
+        let err = validate_tx_semantics_m0(&profile, &tx)
+            .expect_err("must reject low gas after access list intrinsic");
+        assert!(err.to_string().contains("intrinsic gas too low"));
     }
 
     #[test]

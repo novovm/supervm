@@ -2,6 +2,7 @@
 name = "novovm-node"
 version = "0.1.0"
 edition = "2021"
+autobins = false
 
 [dependencies]
 anyhow = "1"

@@ -339,7 +339,7 @@ impl AIDeFiStrategy {
             },
             AgentConfig {
                 model: ModelType::LLaMA3,
-                system_prompt: "你是风险管理专家，专注于避免 MEV 攻击".to_string(),
+                system_prompt: "你是风险管理专家，专注于避免顺序套利抢跑".to_string(),
                 weight: 0.3,
             },
         ];
@@ -533,3 +533,4 @@ pub async fn parallel_inference(
 - **经济激励**：WEB30 代币支付 AI 计费
 
 SuperVM 不仅是高性能区块链，更是**有大脑的智能区块链** 🚀
+

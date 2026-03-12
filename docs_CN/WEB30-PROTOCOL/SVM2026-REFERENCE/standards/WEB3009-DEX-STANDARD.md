@@ -8,7 +8,7 @@
 
 ## 设计理念
 
-WEB3009 是 SuperVM 原生 DEX 协议，利用 MVCC 并行、AI 做市、MEV 保护。
+WEB3009 是 SuperVM 原生 DEX 协议，利用 MVCC 并行、AI 做市、顺序套利保护。
 
 ## 核心创新
 
@@ -16,7 +16,7 @@ WEB3009 是 SuperVM 原生 DEX 协议，利用 MVCC 并行、AI 做市、MEV 保
 |---------|-------------|
 | 串行交易 | ✅ **MVCC 并行 495K TPS** |
 | 固定费率 | ✅ **AI 动态费率** |
-| MEV 攻击严重 | ✅ **隐私订单（环签名）** |
+| 顺序套利抢跑严重 | ✅ **隐私订单（环签名）** |
 | 单链流动性 | ✅ **跨链聚合** |
 
 ---
@@ -46,7 +46,7 @@ pub trait WEB3009DEX {
         min_amount_out: u128,
     ) -> Result<TransactionHash, DEXError>;
     
-    /// 隐私订单（防 MEV）
+    /// 隐私订单（防顺序套利抢跑）
     async fn place_private_order(
         &self,
         order: Order,
@@ -138,3 +138,4 @@ println!("AI 建议: {:?}", strategy);
     - 🔒 隐私订单建议结合 `RingCT` 完成签名与双花检测，再落到同一结算原语。
 
 > 结论：WEB3009 与“原子交易匹配”的关系是“上层撮合/定价 + 下层原子结算”。目前下层原子结算（AtomicCrossChainSwap）已具备，可直接作为 DEX 的跨链结算基石。
+

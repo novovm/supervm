@@ -1,0 +1,21 @@
+# NOVOVM EVM 上游缺失能力对照（Adapters 视角索引）- 2026-03-11
+
+本文件作为“上游缺失能力清单”的适配器域引用入口。
+
+## 用途
+
+1. 作为 EVM 迁移路线纠偏输入，不替代 EVM 主线迁移计划。
+2. 用于核对“全功能镜像终局（M3）”与当前实现之间的缺口。
+3. 辅助排序能力优先级（网络同步、交易池、运维接口、策略数据面等）。
+
+## 主线约束
+
+- 该清单是“对照输入”，不是独立主线任务。
+- EVM 主线以 `docs_CN/Adapters/EVM/NOVOVM-EVM-ADAPTER-MIGRATION-PLAN-2026-03-06.md` 和迁移台账为准。
+
+## 关联文档
+
+- 上游缺失能力清单（原文）：
+  `docs_CN/内部策略目录（仅内部）`
+- EVM 全功能镜像节点规范：
+  `docs_CN/Adapters/EVM/NOVOVM-EVM-FULL-MIRROR-NODE-MODE-SPEC-2026-03-11.md`
