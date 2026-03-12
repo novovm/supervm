@@ -125,7 +125,7 @@
       - set `NOVOVM_UNIFIED_ACCOUNT_PLUGIN_PREFER_SELF_GUARD=true` to prefer plugin self-guard and skip host plugin pre-guard.
       - host then requires plugin capability bit `0x2` (`UA self-guard v1`) via adapter capability check.
       - host now switches plugin call from `novovm_adapter_plugin_apply_v1` to `novovm_adapter_plugin_apply_v2` in this mode and passes UA self-guard flag (`0x1`).
-      - plugin (`crates/novovm-adapter-evm-plugin`) now executes in-plugin UA route guard before apply（in-memory router, owner+evm domain+nonce replay gate）.
+      - plugin (`crates/plugins/evm/plugin`) now executes in-plugin UA route guard before apply（in-memory router, owner+evm domain+nonce replay gate）.
   - env:
     - `NOVOVM_UNIFIED_ACCOUNT_PLUGIN_INGRESS_GUARD` (default `true`)
     - `NOVOVM_UNIFIED_ACCOUNT_PLUGIN_PREFER_SELF_GUARD` (default `false`)
@@ -172,7 +172,7 @@
 
 1. Ingress normalization（扩展）
    - done: `public RPC` + `ffi_v2 local ingress` + `native adapter ingress` + `plugin adapter ingress(host-side)`.
-   - done（hardening）: plugin-side self-guard 已补齐 standalone 持久化/审计闭环（`crates/novovm-adapter-evm-plugin/src/lib.rs`）。
+   - done（hardening）: plugin-side self-guard 已补齐 standalone 持久化/审计闭环（`crates/plugins/evm/plugin/src/lib.rs`）。
    - standalone env（plugin-side）:
      - `NOVOVM_ADAPTER_PLUGIN_UA_STORE_BACKEND=memory|bincode_file|rocksdb`（default: `memory`）
      - `NOVOVM_ADAPTER_PLUGIN_UA_STORE_PATH=<path>`

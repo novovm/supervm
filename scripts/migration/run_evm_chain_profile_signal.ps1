@@ -54,12 +54,12 @@ function Invoke-TestCase {
 $cases = @()
 $cases += Invoke-TestCase -Name "evm_core_profile_family_support" -Args @(
     "test",
-    "--manifest-path", "crates/novovm-adapter-evm-core/Cargo.toml",
+    "--manifest-path", "crates/plugins/evm/core/Cargo.toml",
     "supports_evm_family_includes_polygon_and_avalanche"
 )
 $cases += Invoke-TestCase -Name "evm_core_profile_resolver_m0_family" -Args @(
     "test",
-    "--manifest-path", "crates/novovm-adapter-evm-core/Cargo.toml",
+    "--manifest-path", "crates/plugins/evm/core/Cargo.toml",
     "resolve_profile_supports_m0_evm_family"
 )
 $cases += Invoke-TestCase -Name "native_adapter_profile_family_support" -Args @(

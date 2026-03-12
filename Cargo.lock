@@ -858,7 +858,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "novovm-edge-gateway"
+name = "novovm-evm-gateway"
 version = "0.1.0"
 dependencies = [
  "anyhow",

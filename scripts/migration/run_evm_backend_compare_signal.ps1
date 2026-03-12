@@ -170,7 +170,7 @@ function Resolve-EvmPluginPath {
         @("libnovovm_adapter_evm_plugin.so", "novovm_adapter_evm_plugin.so")
     }
 
-    $pluginCrateDir = Join-Path $RepoRootValue "crates\novovm-adapter-evm-plugin"
+    $pluginCrateDir = Join-Path $RepoRootValue "crates\\plugins\\evm\\plugin"
     $searchDirs = Get-EvmPluginSearchDirs -RepoRootValue $RepoRootValue -PluginCrateDir $pluginCrateDir
 
     foreach ($dir in $searchDirs) {
@@ -193,7 +193,7 @@ function Resolve-EvmPluginPath {
     $buildResult = Invoke-CargoAllowFailure -WorkDir $RepoRootValue -CargoArgs @(
         "build",
         "--manifest-path",
-        "crates/novovm-adapter-evm-plugin/Cargo.toml"
+        "crates/plugins/evm/plugin/Cargo.toml"
     ) -EnvVars @{}
     if ($buildResult.exit_code -ne 0) {
         throw "failed to build evm plugin: $($buildResult.output)"

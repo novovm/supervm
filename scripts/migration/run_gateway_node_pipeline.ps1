@@ -223,7 +223,7 @@ $CargoTargetRoot = if ($env:CARGO_TARGET_DIR) {
 if (-not $SkipBuild) {
     $build = Invoke-ProcessAndCapture `
         -FilePath "cargo" `
-        -Arguments @("build", "-p", "novovm-edge-gateway", "-p", "novovm-node") `
+        -Arguments @("build", "-p", "novovm-evm-gateway", "-p", "novovm-node") `
         -WorkingDirectory $RepoRoot `
         -Environment @{}
     if ($build.exit_code -ne 0) {
@@ -231,7 +231,7 @@ if (-not $SkipBuild) {
     }
 }
 
-$GatewayExe = Resolve-BinaryPath -DefaultTargetRoot $CargoTargetRoot -ExplicitPath $GatewayBinaryPath -BinaryBaseName "novovm-edge-gateway"
+$GatewayExe = Resolve-BinaryPath -DefaultTargetRoot $CargoTargetRoot -ExplicitPath $GatewayBinaryPath -BinaryBaseName "novovm-evm-gateway"
 $NodeExe = Resolve-BinaryPath -DefaultTargetRoot $CargoTargetRoot -ExplicitPath $NodeBinaryPath -BinaryBaseName "novovm-node"
 if (-not (Test-Path $GatewayExe)) {
     throw "gateway binary not found: $GatewayExe"

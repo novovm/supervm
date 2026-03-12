@@ -84,21 +84,21 @@ function Invoke-TestCase {
 $cases = @()
 $cases += Invoke-TestCase -Name "evm_core_translate_fields" -Args @(
     "test",
-    "--manifest-path", "crates/novovm-adapter-evm-core/Cargo.toml",
+    "--manifest-path", "crates/plugins/evm/core/Cargo.toml",
     "translate_"
 )
-$pluginManifest = Join-Path $RepoRoot "crates\novovm-adapter-evm-plugin\Cargo.toml"
+$pluginManifest = Join-Path $RepoRoot "crates\\plugins\\evm\\plugin\Cargo.toml"
 if ($allowPluginSourceTestsResolved -and (Test-Path $pluginManifest)) {
     $cases += Invoke-TestCase -Name "evm_plugin_self_guard_v2" -Args @(
         "test",
-        "--manifest-path", "crates/novovm-adapter-evm-plugin/Cargo.toml",
+        "--manifest-path", "crates/plugins/evm/plugin/Cargo.toml",
         "plugin_apply_v2_self_guard_rejects_replay_nonce"
     )
 } else {
     $skipReason = if (-not $allowPluginSourceTestsResolved) {
         "disabled by AllowPluginSourceTests/NOVOVM_EVM_TX_TYPE_SIGNAL_ALLOW_PLUGIN_SOURCE_TESTS"
     } else {
-        "plugin source manifest missing: crates/novovm-adapter-evm-plugin/Cargo.toml"
+        "plugin source manifest missing: crates/plugins/evm/plugin/Cargo.toml"
     }
     $cases += [pscustomobject][ordered]@{
         name = "evm_plugin_self_guard_v2"

@@ -138,12 +138,12 @@ $TargetRoot = if ($env:CARGO_TARGET_DIR) {
     Join-Path $RepoRoot "target"
 }
 if (-not $SkipBuild) {
-    & cargo build -p novovm-edge-gateway
+    & cargo build -p novovm-evm-gateway
     if ($LASTEXITCODE -ne 0) {
-        throw "build failed: novovm-edge-gateway"
+        throw "build failed: novovm-evm-gateway"
     }
 }
-$GatewayExe = Resolve-BinaryPath -TargetRoot $TargetRoot -BinaryBaseName "novovm-edge-gateway"
+$GatewayExe = Resolve-BinaryPath -TargetRoot $TargetRoot -BinaryBaseName "novovm-evm-gateway"
 if (-not (Test-Path $GatewayExe)) {
     throw "gateway binary not found: $GatewayExe"
 }

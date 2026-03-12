@@ -7,4 +7,4 @@ description = "Shared EVM semantics core for NOVOVM adapters/plugins."
 
 [dependencies]
 anyhow = "1"
-novovm-adapter-api = { path = "../novovm-adapter-api" }
+novovm-adapter-api = { path = "../../../novovm-adapter-api" }

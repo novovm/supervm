@@ -12,7 +12,7 @@ novovm-network = { path = "../novovm-network" }
 novovm-protocol = { path = "../novovm-protocol" }
 novovm-adapter-api = { path = "../novovm-adapter-api" }
 novovm-adapter-novovm = { path = "../novovm-adapter-novovm" }
-novovm-adapter-evm-core = { path = "../novovm-adapter-evm-core" }
+novovm-adapter-evm-core = { path = "../plugins/evm/core" }
 ed25519-dalek = { version = "2", features = ["rand_core"] }
 rand = "0.8"
 sha2 = "0.10"

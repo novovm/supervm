@@ -55,11 +55,11 @@
 
 | WP | 名称 | 状态 | 代码锚点 | 下一步 |
 |---|---|---|---|---|
-| WP-01 | EVM 外部入口归一化与主线消费 | InProgress | `crates/novovm-edge-gateway/src/main.rs` + `crates/novovm-node/src/bin/novovm-node.rs` | 继续补齐 `eth_*` 生产接口与语义一致性。 |
-| WP-02 | 插件执行主路径（apply_v2/self-guard） | InProgress | `crates/novovm-adapter-evm-plugin/src/lib.rs` | 强化执行语义与异常路径，减少分支包装。 |
-| WP-03 | 内存 ingress 队列与策略数据面 | InProgress | `crates/novovm-adapter-evm-plugin/src/lib.rs` | 对齐真实 txpool/广播前策略消费。 |
-| WP-04 | 收益归集/换汇/发放闭环 | InProgress | `crates/novovm-adapter-evm-plugin/src/lib.rs` | 补齐对账字段与宿主接线。 |
-| WP-05 | 原子 intent 门控后广播 | InProgress | `crates/novovm-adapter-evm-plugin/src/lib.rs` | 固化门控条件与失败补偿。 |
+| WP-01 | EVM 外部入口归一化与主线消费 | InProgress | `crates/gateways/evm-gateway/src/main.rs` + `crates/novovm-node/src/bin/novovm-node.rs` | 继续补齐 `eth_*` 生产接口与语义一致性。 |
+| WP-02 | 插件执行主路径（apply_v2/self-guard） | InProgress | `crates/plugins/evm/plugin/src/lib.rs` | 强化执行语义与异常路径，减少分支包装。 |
+| WP-03 | 内存 ingress 队列与策略数据面 | InProgress | `crates/plugins/evm/plugin/src/lib.rs` | 对齐真实 txpool/广播前策略消费。 |
+| WP-04 | 收益归集/换汇/发放闭环 | InProgress | `crates/plugins/evm/plugin/src/lib.rs` | 补齐对账字段与宿主接线。 |
+| WP-05 | 原子 intent 门控后广播 | InProgress | `crates/plugins/evm/plugin/src/lib.rs` | 固化门控条件与失败补偿。 |
 | WP-06 | go-ethereum 能力直迁（网络/同步/txpool） | NotStarted | `D:\WEB3_AI\go-ethereum` 对照实现 | 从 txpool+sync 开始分模块直迁。 |
 
 ## 5. 完成定义（不再工程化）
@@ -82,3 +82,4 @@
 - 进度台账：`NOVOVM-EVM-ADAPTER-MIGRATION-LEDGER-2026-03-06.md`
 - 全功能镜像规范：`NOVOVM-EVM-FULL-MIRROR-NODE-MODE-SPEC-2026-03-11.md`
 - 上游缺失能力对照：`NOVOVM-EVM-UPSTREAM-REQUIRED-CAPABILITY-CHECKLIST-2026-03-11.md`
+- 边界铁律：`NOVOVM-EVM-PLUGIN-BOUNDARY-IRON-LAWS-2026-03-13.md`
