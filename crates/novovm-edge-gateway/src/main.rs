@@ -3,9 +3,9 @@
 use anyhow::{bail, Context, Result};
 use novovm_adapter_api::{
     AccountPolicy, AccountRole, AtomicBroadcastReadyV1, AtomicIntentReceiptV1, AtomicIntentStatus,
-    EvmFeePayoutInstructionV1, EvmFeeSettlementRecordV1, NonceScope, PersonaAddress, PersonaType,
-    ProtocolKind, RouteDecision, RouteRequest, SerializationFormat, TxIR, TxType,
-    UnifiedAccountRouter,
+    EvmFeePayoutInstructionV1, EvmFeeSettlementRecordV1, EvmMempoolIngressFrameV1, NonceScope,
+    PersonaAddress, PersonaType, ProtocolKind, RouteDecision, RouteRequest, SerializationFormat,
+    TxIR, TxType, UnifiedAccountRouter,
 };
 use novovm_adapter_evm_core::{
     estimate_access_list_intrinsic_extra_gas_m0, estimate_intrinsic_gas_m0,
@@ -17,8 +17,8 @@ use novovm_adapter_evm_plugin::{
     drain_executable_ingress_frames_for_host, drain_payout_instructions_for_host,
     drain_pending_ingress_frames_for_host, drain_settlement_records_for_host,
     runtime_tap_ir_batch_v1, snapshot_executable_ingress_frames_for_host,
-    snapshot_pending_sender_buckets_for_host,
-    NOVOVM_ADAPTER_PLUGIN_APPLY_FLAG_ATOMIC_INTENT_GUARD_V1,
+    snapshot_pending_ingress_frames_for_host, snapshot_pending_sender_buckets_for_host,
+    EvmPendingSenderBucketV1, NOVOVM_ADAPTER_PLUGIN_APPLY_FLAG_ATOMIC_INTENT_GUARD_V1,
 };
 use novovm_adapter_novovm::{
     build_privacy_tx_ir_signed_from_raw_v1, PrivacyTxRawEnvelopeV1, PrivacyTxRawSignerV1,
@@ -2295,7 +2295,10 @@ fn run_gateway_method(
         eth_default_gas_price,
     );
     match method {
-        "evm_sendRawTransaction" => {
+        "evm_sendRawTransaction"
+        | "evm_send_raw_transaction"
+        | "evm_publicSendRawTransaction"
+        | "evm_public_send_raw_transaction" => {
             let mut forwarded = params.clone();
             force_evm_send_public_broadcast_detail(&mut forwarded);
             run_gateway_method(
@@ -2309,7 +2312,10 @@ fn run_gateway_method(
                 &forwarded,
             )
         }
-        "evm_sendTransaction" => {
+        "evm_sendTransaction"
+        | "evm_send_transaction"
+        | "evm_publicSendTransaction"
+        | "evm_public_send_transaction" => {
             let mut forwarded = params.clone();
             force_evm_send_public_broadcast_detail(&mut forwarded);
             run_gateway_method(
@@ -2323,7 +2329,7 @@ fn run_gateway_method(
                 &forwarded,
             )
         }
-        "evm_getLogs" => run_gateway_method(
+        "evm_getLogs" | "evm_get_logs" => run_gateway_method(
             router,
             eth_tx_index,
             evm_settlement_index_by_id,
@@ -2333,7 +2339,7 @@ fn run_gateway_method(
             "eth_getLogs",
             params,
         ),
-        "evm_getTransactionReceipt" => run_gateway_method(
+        "evm_getTransactionReceipt" | "evm_get_transaction_receipt" => run_gateway_method(
             router,
             eth_tx_index,
             evm_settlement_index_by_id,
@@ -2343,6 +2349,656 @@ fn run_gateway_method(
             "eth_getTransactionReceipt",
             params,
         ),
+        "evm_subscribe" => run_gateway_method(
+            router,
+            eth_tx_index,
+            evm_settlement_index_by_id,
+            evm_settlement_index_by_tx,
+            evm_pending_payout_by_settlement,
+            ctx,
+            "eth_subscribe",
+            params,
+        ),
+        "evm_unsubscribe" => run_gateway_method(
+            router,
+            eth_tx_index,
+            evm_settlement_index_by_id,
+            evm_settlement_index_by_tx,
+            evm_pending_payout_by_settlement,
+            ctx,
+            "eth_unsubscribe",
+            params,
+        ),
+        "evm_newFilter" | "evm_new_filter" => run_gateway_method(
+            router,
+            eth_tx_index,
+            evm_settlement_index_by_id,
+            evm_settlement_index_by_tx,
+            evm_pending_payout_by_settlement,
+            ctx,
+            "eth_newFilter",
+            params,
+        ),
+        "evm_newBlockFilter" | "evm_new_block_filter" => run_gateway_method(
+            router,
+            eth_tx_index,
+            evm_settlement_index_by_id,
+            evm_settlement_index_by_tx,
+            evm_pending_payout_by_settlement,
+            ctx,
+            "eth_newBlockFilter",
+            params,
+        ),
+        "evm_newPendingTransactionFilter" | "evm_new_pending_transaction_filter" => run_gateway_method(
+            router,
+            eth_tx_index,
+            evm_settlement_index_by_id,
+            evm_settlement_index_by_tx,
+            evm_pending_payout_by_settlement,
+            ctx,
+            "eth_newPendingTransactionFilter",
+            params,
+        ),
+        "evm_getFilterChanges" | "evm_get_filter_changes" => run_gateway_method(
+            router,
+            eth_tx_index,
+            evm_settlement_index_by_id,
+            evm_settlement_index_by_tx,
+            evm_pending_payout_by_settlement,
+            ctx,
+            "eth_getFilterChanges",
+            params,
+        ),
+        "evm_getFilterLogs" | "evm_get_filter_logs" => run_gateway_method(
+            router,
+            eth_tx_index,
+            evm_settlement_index_by_id,
+            evm_settlement_index_by_tx,
+            evm_pending_payout_by_settlement,
+            ctx,
+            "eth_getFilterLogs",
+            params,
+        ),
+        "evm_uninstallFilter" | "evm_uninstall_filter" => run_gateway_method(
+            router,
+            eth_tx_index,
+            evm_settlement_index_by_id,
+            evm_settlement_index_by_tx,
+            evm_pending_payout_by_settlement,
+            ctx,
+            "eth_uninstallFilter",
+            params,
+        ),
+        "evm_chainId" | "evm_chain_id" => run_gateway_method(
+            router,
+            eth_tx_index,
+            evm_settlement_index_by_id,
+            evm_settlement_index_by_tx,
+            evm_pending_payout_by_settlement,
+            ctx,
+            "eth_chainId",
+            params,
+        ),
+        "evm_clientVersion" | "evm_client_version" => run_gateway_method(
+            router,
+            eth_tx_index,
+            evm_settlement_index_by_id,
+            evm_settlement_index_by_tx,
+            evm_pending_payout_by_settlement,
+            ctx,
+            "web3_clientVersion",
+            params,
+        ),
+        "evm_sha3" => run_gateway_method(
+            router,
+            eth_tx_index,
+            evm_settlement_index_by_id,
+            evm_settlement_index_by_tx,
+            evm_pending_payout_by_settlement,
+            ctx,
+            "web3_sha3",
+            params,
+        ),
+        "evm_protocolVersion" | "evm_protocol_version" => run_gateway_method(
+            router,
+            eth_tx_index,
+            evm_settlement_index_by_id,
+            evm_settlement_index_by_tx,
+            evm_pending_payout_by_settlement,
+            ctx,
+            "eth_protocolVersion",
+            params,
+        ),
+        "evm_listening" => run_gateway_method(
+            router,
+            eth_tx_index,
+            evm_settlement_index_by_id,
+            evm_settlement_index_by_tx,
+            evm_pending_payout_by_settlement,
+            ctx,
+            "net_listening",
+            params,
+        ),
+        "evm_peerCount" | "evm_peer_count" => run_gateway_method(
+            router,
+            eth_tx_index,
+            evm_settlement_index_by_id,
+            evm_settlement_index_by_tx,
+            evm_pending_payout_by_settlement,
+            ctx,
+            "net_peerCount",
+            params,
+        ),
+        "evm_accounts" => run_gateway_method(
+            router,
+            eth_tx_index,
+            evm_settlement_index_by_id,
+            evm_settlement_index_by_tx,
+            evm_pending_payout_by_settlement,
+            ctx,
+            "eth_accounts",
+            params,
+        ),
+        "evm_coinbase" => run_gateway_method(
+            router,
+            eth_tx_index,
+            evm_settlement_index_by_id,
+            evm_settlement_index_by_tx,
+            evm_pending_payout_by_settlement,
+            ctx,
+            "eth_coinbase",
+            params,
+        ),
+        "evm_mining" => run_gateway_method(
+            router,
+            eth_tx_index,
+            evm_settlement_index_by_id,
+            evm_settlement_index_by_tx,
+            evm_pending_payout_by_settlement,
+            ctx,
+            "eth_mining",
+            params,
+        ),
+        "evm_hashrate" => run_gateway_method(
+            router,
+            eth_tx_index,
+            evm_settlement_index_by_id,
+            evm_settlement_index_by_tx,
+            evm_pending_payout_by_settlement,
+            ctx,
+            "eth_hashrate",
+            params,
+        ),
+        "evm_netVersion" | "evm_net_version" => run_gateway_method(
+            router,
+            eth_tx_index,
+            evm_settlement_index_by_id,
+            evm_settlement_index_by_tx,
+            evm_pending_payout_by_settlement,
+            ctx,
+            "net_version",
+            params,
+        ),
+        "evm_syncing" => run_gateway_method(
+            router,
+            eth_tx_index,
+            evm_settlement_index_by_id,
+            evm_settlement_index_by_tx,
+            evm_pending_payout_by_settlement,
+            ctx,
+            "eth_syncing",
+            params,
+        ),
+        "evm_blockNumber" | "evm_block_number" => run_gateway_method(
+            router,
+            eth_tx_index,
+            evm_settlement_index_by_id,
+            evm_settlement_index_by_tx,
+            evm_pending_payout_by_settlement,
+            ctx,
+            "eth_blockNumber",
+            params,
+        ),
+        "evm_getBalance" | "evm_get_balance" => run_gateway_method(
+            router,
+            eth_tx_index,
+            evm_settlement_index_by_id,
+            evm_settlement_index_by_tx,
+            evm_pending_payout_by_settlement,
+            ctx,
+            "eth_getBalance",
+            params,
+        ),
+        "evm_getBlockByNumber" | "evm_get_block_by_number" => run_gateway_method(
+            router,
+            eth_tx_index,
+            evm_settlement_index_by_id,
+            evm_settlement_index_by_tx,
+            evm_pending_payout_by_settlement,
+            ctx,
+            "eth_getBlockByNumber",
+            params,
+        ),
+        "evm_getBlockByHash" | "evm_get_block_by_hash" => run_gateway_method(
+            router,
+            eth_tx_index,
+            evm_settlement_index_by_id,
+            evm_settlement_index_by_tx,
+            evm_pending_payout_by_settlement,
+            ctx,
+            "eth_getBlockByHash",
+            params,
+        ),
+        "evm_getBlockReceipts" | "evm_get_block_receipts" => run_gateway_method(
+            router,
+            eth_tx_index,
+            evm_settlement_index_by_id,
+            evm_settlement_index_by_tx,
+            evm_pending_payout_by_settlement,
+            ctx,
+            "eth_getBlockReceipts",
+            params,
+        ),
+        "evm_getTransactionByHash" | "evm_get_transaction_by_hash" => run_gateway_method(
+            router,
+            eth_tx_index,
+            evm_settlement_index_by_id,
+            evm_settlement_index_by_tx,
+            evm_pending_payout_by_settlement,
+            ctx,
+            "eth_getTransactionByHash",
+            params,
+        ),
+        "evm_getTransactionCount" | "evm_get_transaction_count" => run_gateway_method(
+            router,
+            eth_tx_index,
+            evm_settlement_index_by_id,
+            evm_settlement_index_by_tx,
+            evm_pending_payout_by_settlement,
+            ctx,
+            "eth_getTransactionCount",
+            params,
+        ),
+        "evm_gasPrice" | "evm_gas_price" => run_gateway_method(
+            router,
+            eth_tx_index,
+            evm_settlement_index_by_id,
+            evm_settlement_index_by_tx,
+            evm_pending_payout_by_settlement,
+            ctx,
+            "eth_gasPrice",
+            params,
+        ),
+        "evm_call" => run_gateway_method(
+            router,
+            eth_tx_index,
+            evm_settlement_index_by_id,
+            evm_settlement_index_by_tx,
+            evm_pending_payout_by_settlement,
+            ctx,
+            "eth_call",
+            params,
+        ),
+        "evm_estimateGas" | "evm_estimate_gas" => run_gateway_method(
+            router,
+            eth_tx_index,
+            evm_settlement_index_by_id,
+            evm_settlement_index_by_tx,
+            evm_pending_payout_by_settlement,
+            ctx,
+            "eth_estimateGas",
+            params,
+        ),
+        "evm_getCode" | "evm_get_code" => run_gateway_method(
+            router,
+            eth_tx_index,
+            evm_settlement_index_by_id,
+            evm_settlement_index_by_tx,
+            evm_pending_payout_by_settlement,
+            ctx,
+            "eth_getCode",
+            params,
+        ),
+        "evm_getStorageAt" | "evm_get_storage_at" => run_gateway_method(
+            router,
+            eth_tx_index,
+            evm_settlement_index_by_id,
+            evm_settlement_index_by_tx,
+            evm_pending_payout_by_settlement,
+            ctx,
+            "eth_getStorageAt",
+            params,
+        ),
+        "evm_getProof" | "evm_get_proof" => run_gateway_method(
+            router,
+            eth_tx_index,
+            evm_settlement_index_by_id,
+            evm_settlement_index_by_tx,
+            evm_pending_payout_by_settlement,
+            ctx,
+            "eth_getProof",
+            params,
+        ),
+        "evm_maxPriorityFeePerGas" | "evm_max_priority_fee_per_gas" => run_gateway_method(
+            router,
+            eth_tx_index,
+            evm_settlement_index_by_id,
+            evm_settlement_index_by_tx,
+            evm_pending_payout_by_settlement,
+            ctx,
+            "eth_maxPriorityFeePerGas",
+            params,
+        ),
+        "evm_feeHistory" | "evm_fee_history" => run_gateway_method(
+            router,
+            eth_tx_index,
+            evm_settlement_index_by_id,
+            evm_settlement_index_by_tx,
+            evm_pending_payout_by_settlement,
+            ctx,
+            "eth_feeHistory",
+            params,
+        ),
+        "evm_getTransactionByBlockNumberAndIndex"
+        | "evm_get_transaction_by_block_number_and_index" => run_gateway_method(
+            router,
+            eth_tx_index,
+            evm_settlement_index_by_id,
+            evm_settlement_index_by_tx,
+            evm_pending_payout_by_settlement,
+            ctx,
+            "eth_getTransactionByBlockNumberAndIndex",
+            params,
+        ),
+        "evm_getTransactionByBlockHashAndIndex"
+        | "evm_get_transaction_by_block_hash_and_index" => run_gateway_method(
+            router,
+            eth_tx_index,
+            evm_settlement_index_by_id,
+            evm_settlement_index_by_tx,
+            evm_pending_payout_by_settlement,
+            ctx,
+            "eth_getTransactionByBlockHashAndIndex",
+            params,
+        ),
+        "evm_getBlockTransactionCountByNumber"
+        | "evm_get_block_transaction_count_by_number" => run_gateway_method(
+            router,
+            eth_tx_index,
+            evm_settlement_index_by_id,
+            evm_settlement_index_by_tx,
+            evm_pending_payout_by_settlement,
+            ctx,
+            "eth_getBlockTransactionCountByNumber",
+            params,
+        ),
+        "evm_getBlockTransactionCountByHash" | "evm_get_block_transaction_count_by_hash" => {
+            run_gateway_method(
+                router,
+                eth_tx_index,
+                evm_settlement_index_by_id,
+                evm_settlement_index_by_tx,
+                evm_pending_payout_by_settlement,
+                ctx,
+                "eth_getBlockTransactionCountByHash",
+                params,
+            )
+        }
+        "evm_getUncleCountByBlockNumber" | "evm_get_uncle_count_by_block_number" => {
+            run_gateway_method(
+                router,
+                eth_tx_index,
+                evm_settlement_index_by_id,
+                evm_settlement_index_by_tx,
+                evm_pending_payout_by_settlement,
+                ctx,
+                "eth_getUncleCountByBlockNumber",
+                params,
+            )
+        }
+        "evm_getUncleCountByBlockHash" | "evm_get_uncle_count_by_block_hash" => run_gateway_method(
+            router,
+            eth_tx_index,
+            evm_settlement_index_by_id,
+            evm_settlement_index_by_tx,
+            evm_pending_payout_by_settlement,
+            ctx,
+            "eth_getUncleCountByBlockHash",
+            params,
+        ),
+        "evm_getUncleByBlockNumberAndIndex" | "evm_get_uncle_by_block_number_and_index" => {
+            run_gateway_method(
+                router,
+                eth_tx_index,
+                evm_settlement_index_by_id,
+                evm_settlement_index_by_tx,
+                evm_pending_payout_by_settlement,
+                ctx,
+                "eth_getUncleByBlockNumberAndIndex",
+                params,
+            )
+        }
+        "evm_getUncleByBlockHashAndIndex" | "evm_get_uncle_by_block_hash_and_index" => {
+            run_gateway_method(
+                router,
+                eth_tx_index,
+                evm_settlement_index_by_id,
+                evm_settlement_index_by_tx,
+                evm_pending_payout_by_settlement,
+                ctx,
+                "eth_getUncleByBlockHashAndIndex",
+                params,
+            )
+        }
+        "evm_pendingTransactions" | "evm_pending_transactions" => run_gateway_method(
+            router,
+            eth_tx_index,
+            evm_settlement_index_by_id,
+            evm_settlement_index_by_tx,
+            evm_pending_payout_by_settlement,
+            ctx,
+            "eth_pendingTransactions",
+            params,
+        ),
+        "evm_txpoolContent" | "evm_txpool_content" => run_gateway_method(
+            router,
+            eth_tx_index,
+            evm_settlement_index_by_id,
+            evm_settlement_index_by_tx,
+            evm_pending_payout_by_settlement,
+            ctx,
+            "txpool_content",
+            params,
+        ),
+        "evm_txpoolContentFrom" | "evm_txpool_contentFrom" | "evm_txpool_content_from" => run_gateway_method(
+            router,
+            eth_tx_index,
+            evm_settlement_index_by_id,
+            evm_settlement_index_by_tx,
+            evm_pending_payout_by_settlement,
+            ctx,
+            "txpool_contentFrom",
+            params,
+        ),
+        "evm_txpoolInspect" | "evm_txpool_inspect" => run_gateway_method(
+            router,
+            eth_tx_index,
+            evm_settlement_index_by_id,
+            evm_settlement_index_by_tx,
+            evm_pending_payout_by_settlement,
+            ctx,
+            "txpool_inspect",
+            params,
+        ),
+        "evm_txpoolInspectFrom" | "evm_txpool_inspectFrom" | "evm_txpool_inspect_from" => run_gateway_method(
+            router,
+            eth_tx_index,
+            evm_settlement_index_by_id,
+            evm_settlement_index_by_tx,
+            evm_pending_payout_by_settlement,
+            ctx,
+            "txpool_inspectFrom",
+            params,
+        ),
+        "evm_txpoolStatus" | "evm_txpool_status" => run_gateway_method(
+            router,
+            eth_tx_index,
+            evm_settlement_index_by_id,
+            evm_settlement_index_by_tx,
+            evm_pending_payout_by_settlement,
+            ctx,
+            "txpool_status",
+            params,
+        ),
+        "evm_txpoolStatusFrom" | "evm_txpool_statusFrom" | "evm_txpool_status_from" => run_gateway_method(
+            router,
+            eth_tx_index,
+            evm_settlement_index_by_id,
+            evm_settlement_index_by_tx,
+            evm_pending_payout_by_settlement,
+            ctx,
+            "txpool_statusFrom",
+            params,
+        ),
+        "evm_snapshotPendingIngress" | "evm_snapshot_pending_ingress" => {
+            let max_items = param_as_u64(params, "max_items")
+                .or_else(|| param_as_u64(params, "max"))
+                .unwrap_or(512)
+                .clamp(1, 8_192) as usize;
+            let chain_filter = param_as_u64_any_with_tx(params, &["chain_id", "chainId"]);
+            let include_raw =
+                param_as_bool_any_with_tx(params, &["include_raw", "includeRaw"]).unwrap_or(true);
+            let include_parsed =
+                param_as_bool_any_with_tx(params, &["include_parsed", "includeParsed"])
+                    .unwrap_or(true);
+            let mut frames = snapshot_pending_ingress_frames_for_host(max_items);
+            if let Some(chain_id) = chain_filter {
+                frames.retain(|frame| frame.chain_id == chain_id);
+            }
+            let items: Vec<serde_json::Value> = frames
+                .iter()
+                .map(|frame| gateway_evm_ingress_frame_json(frame, include_raw, include_parsed))
+                .collect();
+            Ok((
+                serde_json::json!({
+                    "count": items.len(),
+                    "items": items,
+                }),
+                false,
+            ))
+        }
+        "evm_snapshotExecutableIngress" | "evm_snapshot_executable_ingress" => {
+            let max_items = param_as_u64(params, "max_items")
+                .or_else(|| param_as_u64(params, "max"))
+                .unwrap_or(512)
+                .clamp(1, 8_192) as usize;
+            let chain_filter =
+                param_as_u64_any_with_tx(params, &["chain_id", "chainId"]);
+            let include_raw =
+                param_as_bool_any_with_tx(params, &["include_raw", "includeRaw"]).unwrap_or(true);
+            let include_parsed =
+                param_as_bool_any_with_tx(params, &["include_parsed", "includeParsed"])
+                    .unwrap_or(true);
+            let mut frames = snapshot_executable_ingress_frames_for_host(max_items);
+            if let Some(chain_id) = chain_filter {
+                frames.retain(|frame| frame.chain_id == chain_id);
+            }
+            let items: Vec<serde_json::Value> = frames
+                .iter()
+                .map(|frame| gateway_evm_ingress_frame_json(frame, include_raw, include_parsed))
+                .collect();
+            Ok((
+                serde_json::json!({
+                    "count": items.len(),
+                    "items": items,
+                }),
+                false,
+            ))
+        }
+        "evm_drainExecutableIngress" | "evm_drain_executable_ingress" => {
+            let max_items = param_as_u64(params, "max_items")
+                .or_else(|| param_as_u64(params, "max"))
+                .unwrap_or(512)
+                .clamp(1, 8_192) as usize;
+            let chain_filter =
+                param_as_u64_any_with_tx(params, &["chain_id", "chainId"]);
+            let include_raw =
+                param_as_bool_any_with_tx(params, &["include_raw", "includeRaw"]).unwrap_or(true);
+            let include_parsed =
+                param_as_bool_any_with_tx(params, &["include_parsed", "includeParsed"])
+                    .unwrap_or(true);
+            let mut frames = drain_executable_ingress_frames_for_host(max_items);
+            if let Some(chain_id) = chain_filter {
+                frames.retain(|frame| frame.chain_id == chain_id);
+            }
+            let items: Vec<serde_json::Value> = frames
+                .iter()
+                .map(|frame| gateway_evm_ingress_frame_json(frame, include_raw, include_parsed))
+                .collect();
+            Ok((
+                serde_json::json!({
+                    "count": items.len(),
+                    "items": items,
+                }),
+                false,
+            ))
+        }
+        "evm_drainPendingIngress" | "evm_drain_pending_ingress" => {
+            let max_items = param_as_u64(params, "max_items")
+                .or_else(|| param_as_u64(params, "max"))
+                .unwrap_or(512)
+                .clamp(1, 8_192) as usize;
+            let chain_filter =
+                param_as_u64_any_with_tx(params, &["chain_id", "chainId"]);
+            let include_raw =
+                param_as_bool_any_with_tx(params, &["include_raw", "includeRaw"]).unwrap_or(true);
+            let include_parsed =
+                param_as_bool_any_with_tx(params, &["include_parsed", "includeParsed"])
+                    .unwrap_or(true);
+            let mut frames = drain_pending_ingress_frames_for_host(max_items);
+            if let Some(chain_id) = chain_filter {
+                frames.retain(|frame| frame.chain_id == chain_id);
+            }
+            let items: Vec<serde_json::Value> = frames
+                .iter()
+                .map(|frame| gateway_evm_ingress_frame_json(frame, include_raw, include_parsed))
+                .collect();
+            Ok((
+                serde_json::json!({
+                    "count": items.len(),
+                    "items": items,
+                }),
+                false,
+            ))
+        }
+        "evm_snapshotPendingSenderBuckets" | "evm_snapshot_pending_sender_buckets" => {
+            let max_senders = param_as_u64(params, "max_senders")
+                .or_else(|| param_as_u64(params, "maxSenders"))
+                .unwrap_or(256)
+                .clamp(1, 4_096) as usize;
+            let max_txs_per_sender = param_as_u64(params, "max_txs_per_sender")
+                .or_else(|| param_as_u64(params, "maxTxsPerSender"))
+                .unwrap_or(64)
+                .clamp(1, 1_024) as usize;
+            let chain_filter =
+                param_as_u64_any_with_tx(params, &["chain_id", "chainId"]);
+            let mut buckets =
+                snapshot_pending_sender_buckets_for_host(max_senders, max_txs_per_sender);
+            if let Some(chain_id) = chain_filter {
+                buckets.retain(|bucket| bucket.chain_id == chain_id);
+            }
+            let items: Vec<serde_json::Value> = buckets
+                .iter()
+                .map(gateway_evm_pending_sender_bucket_json)
+                .collect();
+            Ok((
+                serde_json::json!({
+                    "count": items.len(),
+                    "items": items,
+                }),
+                false,
+            ))
+        }
         "eth_chainId" => {
             let chain_id = param_as_u64_any_with_tx(params, &["chain_id", "chainId"])
                 .unwrap_or(ctx.eth_default_chain_id);
@@ -4313,7 +4969,459 @@ fn run_gateway_method(
                 Ok((serde_json::Value::Null, false))
             }
         }
-        "evm_getTxSubmitStatus" => {
+        "evm_getLogsBatch" | "evm_get_logs_batch" => {
+            let queries = extract_gateway_batch_items(params, &["queries", "filters", "items"]);
+            if queries.is_empty() {
+                bail!("queries (or filters/items) is required");
+            }
+            let chain_id = param_as_u64_any_with_tx(params, &["chain_id", "chainId"]);
+            let mut out = Vec::with_capacity(queries.len());
+            for query in queries {
+                let forwarded = if let Some(chain_id) = chain_id {
+                    match query {
+                        serde_json::Value::Object(mut map) => {
+                            if !map.contains_key("chain_id") && !map.contains_key("chainId") {
+                                map.insert("chain_id".to_string(), serde_json::json!(chain_id));
+                            }
+                            serde_json::Value::Object(map)
+                        }
+                        other => serde_json::json!([
+                            {
+                                "chain_id": chain_id
+                            },
+                            other
+                        ]),
+                    }
+                } else {
+                    query
+                };
+                let (item, _) = run_gateway_method(
+                    router,
+                    eth_tx_index,
+                    evm_settlement_index_by_id,
+                    evm_settlement_index_by_tx,
+                    evm_pending_payout_by_settlement,
+                    ctx,
+                    "eth_getLogs",
+                    &forwarded,
+                )?;
+                out.push(item);
+            }
+            Ok((serde_json::Value::Array(out), false))
+        }
+        "evm_getFilterChangesBatch" | "evm_get_filter_changes_batch" => {
+            let filters = extract_gateway_batch_items(
+                params,
+                &["filter_ids", "filterIds", "subscriptions", "ids", "items"],
+            );
+            if filters.is_empty() {
+                bail!("filter_ids (or filterIds/subscriptions/ids/items) is required");
+            }
+            let mut out = Vec::with_capacity(filters.len());
+            for filter in filters {
+                let forwarded = match filter {
+                    serde_json::Value::Object(map) => serde_json::Value::Object(map),
+                    other => serde_json::json!({ "filter_id": other }),
+                };
+                let (item, _) = run_gateway_method(
+                    router,
+                    eth_tx_index,
+                    evm_settlement_index_by_id,
+                    evm_settlement_index_by_tx,
+                    evm_pending_payout_by_settlement,
+                    ctx,
+                    "eth_getFilterChanges",
+                    &forwarded,
+                )?;
+                out.push(item);
+            }
+            Ok((serde_json::Value::Array(out), false))
+        }
+        "evm_getFilterLogsBatch" | "evm_get_filter_logs_batch" => {
+            let filters = extract_gateway_batch_items(
+                params,
+                &["filter_ids", "filterIds", "subscriptions", "ids", "items"],
+            );
+            if filters.is_empty() {
+                bail!("filter_ids (or filterIds/subscriptions/ids/items) is required");
+            }
+            let mut out = Vec::with_capacity(filters.len());
+            for filter in filters {
+                let forwarded = match filter {
+                    serde_json::Value::Object(map) => serde_json::Value::Object(map),
+                    other => serde_json::json!({ "filter_id": other }),
+                };
+                let (item, _) = run_gateway_method(
+                    router,
+                    eth_tx_index,
+                    evm_settlement_index_by_id,
+                    evm_settlement_index_by_tx,
+                    evm_pending_payout_by_settlement,
+                    ctx,
+                    "eth_getFilterLogs",
+                    &forwarded,
+                )?;
+                out.push(item);
+            }
+            Ok((serde_json::Value::Array(out), false))
+        }
+        "evm_publicSendRawTransactionBatch" | "evm_public_send_raw_transaction_batch" => {
+            let items = extract_gateway_batch_items(
+                params,
+                &["raw_txs", "rawTxs", "txs", "transactions", "items"],
+            );
+            if items.is_empty() {
+                bail!("raw_txs (or rawTxs/txs/transactions/items) is required");
+            }
+            let chain_id = param_as_u64_any_with_tx(params, &["chain_id", "chainId"]);
+            let mut accepted = 0usize;
+            let mut rejected = 0usize;
+            let mut results = Vec::with_capacity(items.len());
+            for (idx, item) in items.into_iter().enumerate() {
+                let mut forwarded = match item {
+                    serde_json::Value::Object(map) => serde_json::Value::Object(map),
+                    other => serde_json::json!({ "raw_tx": other }),
+                };
+                if let Some(chain_id) = chain_id {
+                    if let Some(map) = forwarded.as_object_mut() {
+                        if !map.contains_key("chain_id") && !map.contains_key("chainId") {
+                            map.insert("chain_id".to_string(), serde_json::json!(chain_id));
+                        }
+                    }
+                }
+                match run_gateway_method(
+                    router,
+                    eth_tx_index,
+                    evm_settlement_index_by_id,
+                    evm_settlement_index_by_tx,
+                    evm_pending_payout_by_settlement,
+                    ctx,
+                    "evm_publicSendRawTransaction",
+                    &forwarded,
+                ) {
+                    Ok((result, _)) => {
+                        accepted = accepted.saturating_add(1);
+                        results.push(serde_json::json!({
+                            "index": idx,
+                            "ok": true,
+                            "result": result,
+                        }));
+                    }
+                    Err(err) => {
+                        rejected = rejected.saturating_add(1);
+                        let raw_message = err.to_string();
+                        let code =
+                            gateway_error_code_for_method("eth_sendRawTransaction", &raw_message);
+                        let message = gateway_error_message_for_method(
+                            "eth_sendRawTransaction",
+                            code,
+                            &raw_message,
+                        );
+                        let data =
+                            gateway_error_data_for_method("eth_sendRawTransaction", code, &raw_message);
+                        results.push(serde_json::json!({
+                            "index": idx,
+                            "ok": false,
+                            "error_code": code,
+                            "error_message": message,
+                            "error_data": data,
+                        }));
+                    }
+                }
+            }
+            Ok((
+                serde_json::json!({
+                    "total": accepted.saturating_add(rejected),
+                    "accepted": accepted,
+                    "rejected": rejected,
+                    "results": results,
+                }),
+                false,
+            ))
+        }
+        "evm_publicSendTransactionBatch" | "evm_public_send_transaction_batch" => {
+            let items = extract_gateway_batch_items(params, &["txs", "transactions", "items"]);
+            if items.is_empty() {
+                bail!("txs (or transactions/items) is required");
+            }
+            let chain_id = param_as_u64_any_with_tx(params, &["chain_id", "chainId"]);
+            let mut accepted = 0usize;
+            let mut rejected = 0usize;
+            let mut results = Vec::with_capacity(items.len());
+            for (idx, item) in items.into_iter().enumerate() {
+                let mut forwarded = match item {
+                    serde_json::Value::Object(map) => serde_json::Value::Object(map),
+                    other => serde_json::json!({ "tx": other }),
+                };
+                if let Some(chain_id) = chain_id {
+                    if let Some(map) = forwarded.as_object_mut() {
+                        if !map.contains_key("chain_id") && !map.contains_key("chainId") {
+                            map.insert("chain_id".to_string(), serde_json::json!(chain_id));
+                        }
+                    }
+                }
+                match run_gateway_method(
+                    router,
+                    eth_tx_index,
+                    evm_settlement_index_by_id,
+                    evm_settlement_index_by_tx,
+                    evm_pending_payout_by_settlement,
+                    ctx,
+                    "evm_publicSendTransaction",
+                    &forwarded,
+                ) {
+                    Ok((result, _)) => {
+                        accepted = accepted.saturating_add(1);
+                        results.push(serde_json::json!({
+                            "index": idx,
+                            "ok": true,
+                            "result": result,
+                        }));
+                    }
+                    Err(err) => {
+                        rejected = rejected.saturating_add(1);
+                        let raw_message = err.to_string();
+                        let code =
+                            gateway_error_code_for_method("eth_sendTransaction", &raw_message);
+                        let message = gateway_error_message_for_method(
+                            "eth_sendTransaction",
+                            code,
+                            &raw_message,
+                        );
+                        let data =
+                            gateway_error_data_for_method("eth_sendTransaction", code, &raw_message);
+                        results.push(serde_json::json!({
+                            "index": idx,
+                            "ok": false,
+                            "error_code": code,
+                            "error_message": message,
+                            "error_data": data,
+                        }));
+                    }
+                }
+            }
+            Ok((
+                serde_json::json!({
+                    "total": accepted.saturating_add(rejected),
+                    "accepted": accepted,
+                    "rejected": rejected,
+                    "results": results,
+                }),
+                false,
+            ))
+        }
+        "evm_getTxSubmitStatusBatch" | "evm_get_tx_submit_status_batch" => {
+            let tx_hashes = extract_eth_tx_hashes_query_params(params);
+            if tx_hashes.is_empty() {
+                bail!("tx_hashes (or txHashes/hashes/txs) is required");
+            }
+            let chain_id = param_as_u64_any_with_tx(params, &["chain_id", "chainId"]);
+            let mut out = Vec::with_capacity(tx_hashes.len());
+            for tx_hash in tx_hashes {
+                let forwarded = match chain_id {
+                    Some(chain_id) => serde_json::json!({
+                        "tx_hash": tx_hash,
+                        "chain_id": chain_id,
+                    }),
+                    None => serde_json::json!({
+                        "tx_hash": tx_hash,
+                    }),
+                };
+                let (status, _) = run_gateway_method(
+                    router,
+                    eth_tx_index,
+                    evm_settlement_index_by_id,
+                    evm_settlement_index_by_tx,
+                    evm_pending_payout_by_settlement,
+                    ctx,
+                    "evm_getTxSubmitStatus",
+                    &forwarded,
+                )?;
+                out.push(status);
+            }
+            Ok((serde_json::Value::Array(out), false))
+        }
+        "evm_replayPublicBroadcast" | "evm_replay_public_broadcast" => {
+            let tx_hash_raw = extract_eth_tx_hash_query_param(params)
+                .or_else(|| param_as_string(params, "txHash"))
+                .ok_or_else(|| anyhow::anyhow!("tx_hash (or txHash/hash) is required"))?;
+            let tx_hash_bytes = decode_hex_bytes(&tx_hash_raw, "tx_hash")?;
+            let tx_hash = vec_to_32(&tx_hash_bytes, "tx_hash")?;
+            let chain_hint = param_as_u64_any_with_tx(params, &["chain_id", "chainId"]);
+
+            let mut entry = eth_tx_index.get(&tx_hash).cloned();
+            if entry.is_none() {
+                entry = ctx.eth_tx_index_store.load_eth_tx(&tx_hash)?;
+                if let Some(cached) = entry.as_ref() {
+                    eth_tx_index.insert(tx_hash, cached.clone());
+                }
+            }
+            if entry.is_none() {
+                if let Some(tx) = find_gateway_eth_runtime_tx_by_hash(tx_hash, chain_hint) {
+                    entry = Some(gateway_eth_tx_index_entry_from_ir(tx));
+                }
+            }
+            let Some(entry) = entry else {
+                return Ok((serde_json::Value::Null, false));
+            };
+            if chain_hint.is_some_and(|chain_id| entry.chain_id != chain_id) {
+                return Ok((serde_json::Value::Null, false));
+            }
+
+            let tx_ir = gateway_eth_tx_ir_from_index_entry(&entry);
+            let tx_ir_bincode = tx_ir
+                .serialize(SerializationFormat::Bincode)
+                .context("serialize eth tx ir bincode for replay public broadcast failed")?;
+            let broadcast_result = maybe_execute_gateway_eth_public_broadcast(
+                entry.chain_id,
+                &entry.tx_hash,
+                GatewayEthPublicBroadcastPayload {
+                    raw_tx: None,
+                    tx_ir_bincode: Some(tx_ir_bincode.as_slice()),
+                },
+                true,
+            )?;
+            upsert_gateway_eth_broadcast_status(entry.tx_hash, &broadcast_result);
+            let broadcast_json = match broadcast_result {
+                Some((output, attempts, executor)) => serde_json::json!({
+                    "mode": "external",
+                    "attempts": attempts,
+                    "executor": executor,
+                    "executor_output": output,
+                }),
+                None => serde_json::json!({
+                    "mode": "none",
+                }),
+            };
+            Ok((
+                serde_json::json!({
+                    "replayed": true,
+                    "tx_hash": format!("0x{}", to_hex(&entry.tx_hash)),
+                    "chain_id": format!("0x{:x}", entry.chain_id),
+                    "broadcast": broadcast_json,
+                }),
+                false,
+            ))
+        }
+        "evm_replayPublicBroadcastBatch" | "evm_replay_public_broadcast_batch" => {
+            let tx_hashes = extract_eth_tx_hashes_query_params(params);
+            if tx_hashes.is_empty() {
+                bail!("tx_hashes (or txHashes/hashes/txs) is required");
+            }
+            let chain_id = param_as_u64_any_with_tx(params, &["chain_id", "chainId"]);
+            let mut replayed = 0usize;
+            let mut failed = 0usize;
+            let mut results = Vec::with_capacity(tx_hashes.len());
+            for tx_hash in tx_hashes {
+                let forwarded = match chain_id {
+                    Some(chain_id) => serde_json::json!({
+                        "tx_hash": tx_hash,
+                        "chain_id": chain_id,
+                    }),
+                    None => serde_json::json!({
+                        "tx_hash": tx_hash,
+                    }),
+                };
+                match run_gateway_method(
+                    router,
+                    eth_tx_index,
+                    evm_settlement_index_by_id,
+                    evm_settlement_index_by_tx,
+                    evm_pending_payout_by_settlement,
+                    ctx,
+                    "evm_replayPublicBroadcast",
+                    &forwarded,
+                ) {
+                    Ok((item, _)) => {
+                        replayed = replayed.saturating_add(1);
+                        results.push(item);
+                    }
+                    Err(e) => {
+                        failed = failed.saturating_add(1);
+                        results.push(serde_json::json!({
+                            "replayed": false,
+                            "tx_hash": forwarded
+                                .get("tx_hash")
+                                .cloned()
+                                .unwrap_or(serde_json::Value::Null),
+                            "error": e.to_string(),
+                        }));
+                    }
+                }
+            }
+            Ok((
+                serde_json::json!({
+                    "total": replayed.saturating_add(failed),
+                    "replayed": replayed,
+                    "failed": failed,
+                    "results": results,
+                }),
+                false,
+            ))
+        }
+        "evm_getTransactionReceiptBatch" | "evm_get_transaction_receipt_batch" => {
+            let tx_hashes = extract_eth_tx_hashes_query_params(params);
+            if tx_hashes.is_empty() {
+                bail!("tx_hashes (or txHashes/hashes/txs) is required");
+            }
+            let chain_id = param_as_u64_any_with_tx(params, &["chain_id", "chainId"]);
+            let mut out = Vec::with_capacity(tx_hashes.len());
+            for tx_hash in tx_hashes {
+                let forwarded = match chain_id {
+                    Some(chain_id) => serde_json::json!({
+                        "tx_hash": tx_hash,
+                        "chain_id": chain_id,
+                    }),
+                    None => serde_json::json!({
+                        "tx_hash": tx_hash,
+                    }),
+                };
+                let (item, _) = run_gateway_method(
+                    router,
+                    eth_tx_index,
+                    evm_settlement_index_by_id,
+                    evm_settlement_index_by_tx,
+                    evm_pending_payout_by_settlement,
+                    ctx,
+                    "eth_getTransactionReceipt",
+                    &forwarded,
+                )?;
+                out.push(item);
+            }
+            Ok((serde_json::Value::Array(out), false))
+        }
+        "evm_getTransactionByHashBatch" | "evm_get_transaction_by_hash_batch" => {
+            let tx_hashes = extract_eth_tx_hashes_query_params(params);
+            if tx_hashes.is_empty() {
+                bail!("tx_hashes (or txHashes/hashes/txs) is required");
+            }
+            let chain_id = param_as_u64_any_with_tx(params, &["chain_id", "chainId"]);
+            let mut out = Vec::with_capacity(tx_hashes.len());
+            for tx_hash in tx_hashes {
+                let forwarded = match chain_id {
+                    Some(chain_id) => serde_json::json!({
+                        "tx_hash": tx_hash,
+                        "chain_id": chain_id,
+                    }),
+                    None => serde_json::json!({
+                        "tx_hash": tx_hash,
+                    }),
+                };
+                let (item, _) = run_gateway_method(
+                    router,
+                    eth_tx_index,
+                    evm_settlement_index_by_id,
+                    evm_settlement_index_by_tx,
+                    evm_pending_payout_by_settlement,
+                    ctx,
+                    "eth_getTransactionByHash",
+                    &forwarded,
+                )?;
+                out.push(item);
+            }
+            Ok((serde_json::Value::Array(out), false))
+        }
+        "evm_getTxSubmitStatus" | "evm_get_tx_submit_status" => {
             let tx_hash_raw = extract_eth_tx_hash_query_param(params)
                 .or_else(|| param_as_string(params, "txHash"))
                 .ok_or_else(|| anyhow::anyhow!("tx_hash (or txHash/hash) is required"))?;
@@ -4428,7 +5536,7 @@ fn run_gateway_method(
                 false,
             ))
         }
-        "evm_getSettlementById" => {
+        "evm_getSettlementById" | "evm_get_settlement_by_id" => {
             let settlement_id = param_as_string(params, "settlement_id")
                 .or_else(|| param_as_string(params, "settlementId"))
                 .ok_or_else(|| anyhow::anyhow!("settlement_id (or settlementId) is required"))?;
@@ -4449,7 +5557,7 @@ fn run_gateway_method(
                 Ok((serde_json::Value::Null, false))
             }
         }
-        "evm_getSettlementByTxHash" => {
+        "evm_getSettlementByTxHash" | "evm_get_settlement_by_tx_hash" => {
             let chain_id = param_as_u64(params, "chain_id")
                 .or_else(|| param_as_u64(params, "chainId"))
                 .unwrap_or(ctx.eth_default_chain_id);
@@ -4479,7 +5587,7 @@ fn run_gateway_method(
                 Ok((serde_json::Value::Null, false))
             }
         }
-        "evm_replaySettlementPayout" => {
+        "evm_replaySettlementPayout" | "evm_replay_settlement_payout" => {
             let settlement_id = param_as_string(params, "settlement_id")
                 .or_else(|| param_as_string(params, "settlementId"))
                 .ok_or_else(|| anyhow::anyhow!("settlement_id (or settlementId) is required"))?;
@@ -4523,7 +5631,7 @@ fn run_gateway_method(
                 false,
             ))
         }
-        "evm_getAtomicReadyByIntentId" => {
+        "evm_getAtomicReadyByIntentId" | "evm_get_atomic_ready_by_intent_id" => {
             let intent_id = param_as_string(params, "intent_id")
                 .or_else(|| param_as_string(params, "intentId"))
                 .ok_or_else(|| anyhow::anyhow!("intent_id (or intentId) is required"))?;
@@ -4536,7 +5644,7 @@ fn run_gateway_method(
                 Ok((serde_json::Value::Null, false))
             }
         }
-        "evm_replayAtomicReady" => {
+        "evm_replayAtomicReady" | "evm_replay_atomic_ready" => {
             let intent_id = param_as_string(params, "intent_id")
                 .or_else(|| param_as_string(params, "intentId"))
                 .ok_or_else(|| anyhow::anyhow!("intent_id (or intentId) is required"))?;
@@ -4560,7 +5668,7 @@ fn run_gateway_method(
                 false,
             ))
         }
-        "evm_queueAtomicBroadcast" => {
+        "evm_queueAtomicBroadcast" | "evm_queue_atomic_broadcast" => {
             let intent_id = param_as_string(params, "intent_id")
                 .or_else(|| param_as_string(params, "intentId"))
                 .ok_or_else(|| anyhow::anyhow!("intent_id (or intentId) is required"))?;
@@ -4616,7 +5724,7 @@ fn run_gateway_method(
                 }
             }
         }
-        "evm_replayAtomicBroadcastQueue" => {
+        "evm_replayAtomicBroadcastQueue" | "evm_replay_atomic_broadcast_queue" => {
             let intent_id = param_as_string(params, "intent_id")
                 .or_else(|| param_as_string(params, "intentId"))
                 .ok_or_else(|| anyhow::anyhow!("intent_id (or intentId) is required"))?;
@@ -4645,7 +5753,7 @@ fn run_gateway_method(
                 false,
             ))
         }
-        "evm_markAtomicBroadcastFailed" => {
+        "evm_markAtomicBroadcastFailed" | "evm_mark_atomic_broadcast_failed" => {
             let intent_id = param_as_string(params, "intent_id")
                 .or_else(|| param_as_string(params, "intentId"))
                 .ok_or_else(|| anyhow::anyhow!("intent_id (or intentId) is required"))?;
@@ -4678,7 +5786,7 @@ fn run_gateway_method(
                 false,
             ))
         }
-        "evm_markAtomicBroadcasted" => {
+        "evm_markAtomicBroadcasted" | "evm_mark_atomic_broadcasted" => {
             let intent_id = param_as_string(params, "intent_id")
                 .or_else(|| param_as_string(params, "intentId"))
                 .ok_or_else(|| anyhow::anyhow!("intent_id (or intentId) is required"))?;
@@ -4700,7 +5808,7 @@ fn run_gateway_method(
                 false,
             ))
         }
-        "evm_executeAtomicBroadcast" => {
+        "evm_executeAtomicBroadcast" | "evm_execute_atomic_broadcast" => {
             let intent_id = param_as_string(params, "intent_id")
                 .or_else(|| param_as_string(params, "intentId"))
                 .ok_or_else(|| anyhow::anyhow!("intent_id (or intentId) is required"))?;
@@ -4874,7 +5982,7 @@ fn run_gateway_method(
                 }
             }
         }
-        "evm_executePendingAtomicBroadcasts" => {
+        "evm_executePendingAtomicBroadcasts" | "evm_execute_pending_atomic_broadcasts" => {
             let force_native = gateway_atomic_broadcast_force_native(params);
             let use_external_executor = !force_native
                 && gateway_atomic_broadcast_use_external_executor(params);
@@ -5889,7 +6997,7 @@ fn run_gateway_method(
             ))
         }
         _ => bail!(
-            "unknown method: {}; valid: ua_createUca|ua_rotatePrimaryKey|ua_bindPersona|ua_revokePersona|ua_getBindingOwner|ua_setPolicy|eth_chainId|net_version|web3_clientVersion|web3_sha3|eth_protocolVersion|net_listening|net_peerCount|eth_accounts|eth_coinbase|eth_mining|eth_hashrate|eth_maxPriorityFeePerGas|eth_feeHistory|eth_syncing|eth_pendingTransactions|eth_blockNumber|eth_getBalance|eth_getBlockByNumber|eth_getBlockByHash|eth_getTransactionByBlockNumberAndIndex|eth_getTransactionByBlockHashAndIndex|eth_getBlockTransactionCountByNumber|eth_getBlockTransactionCountByHash|eth_getBlockReceipts|eth_getUncleCountByBlockNumber|eth_getUncleCountByBlockHash|eth_getUncleByBlockNumberAndIndex|eth_getUncleByBlockHashAndIndex|eth_getLogs|eth_subscribe|eth_unsubscribe|eth_newFilter|eth_newBlockFilter|eth_newPendingTransactionFilter|eth_getFilterChanges|eth_getFilterLogs|eth_uninstallFilter|txpool_content|txpool_contentFrom|txpool_inspect|txpool_inspectFrom|txpool_status|txpool_statusFrom|eth_gasPrice|eth_call|eth_estimateGas|eth_getCode|eth_getStorageAt|eth_getProof|eth_sendRawTransaction|eth_sendTransaction|eth_getTransactionCount|eth_getTransactionByHash|eth_getTransactionReceipt|evm_sendRawTransaction|evm_sendTransaction|evm_getLogs|evm_getTransactionReceipt|evm_getTxSubmitStatus|evm_getSettlementById|evm_getSettlementByTxHash|evm_replaySettlementPayout|evm_getAtomicReadyByIntentId|evm_replayAtomicReady|evm_queueAtomicBroadcast|evm_replayAtomicBroadcastQueue|evm_markAtomicBroadcastFailed|evm_markAtomicBroadcasted|evm_executeAtomicBroadcast|evm_executePendingAtomicBroadcasts|web30_sendRawTransaction|web30_sendTransaction",
+            "unknown method: {}; valid: ua_createUca|ua_rotatePrimaryKey|ua_bindPersona|ua_revokePersona|ua_getBindingOwner|ua_setPolicy|eth_chainId|net_version|web3_clientVersion|web3_sha3|eth_protocolVersion|net_listening|net_peerCount|eth_accounts|eth_coinbase|eth_mining|eth_hashrate|eth_maxPriorityFeePerGas|eth_feeHistory|eth_syncing|eth_pendingTransactions|eth_blockNumber|eth_getBalance|eth_getBlockByNumber|eth_getBlockByHash|eth_getTransactionByBlockNumberAndIndex|eth_getTransactionByBlockHashAndIndex|eth_getBlockTransactionCountByNumber|eth_getBlockTransactionCountByHash|eth_getBlockReceipts|eth_getUncleCountByBlockNumber|eth_getUncleCountByBlockHash|eth_getUncleByBlockNumberAndIndex|eth_getUncleByBlockHashAndIndex|eth_getLogs|eth_subscribe|eth_unsubscribe|eth_newFilter|eth_newBlockFilter|eth_newPendingTransactionFilter|eth_getFilterChanges|eth_getFilterLogs|eth_uninstallFilter|txpool_content|txpool_contentFrom|txpool_inspect|txpool_inspectFrom|txpool_status|txpool_statusFrom|eth_gasPrice|eth_call|eth_estimateGas|eth_getCode|eth_getStorageAt|eth_getProof|eth_sendRawTransaction|eth_sendTransaction|eth_getTransactionCount|eth_getTransactionByHash|eth_getTransactionReceipt|evm_sendRawTransaction|evm_send_raw_transaction|evm_sendTransaction|evm_send_transaction|evm_publicSendRawTransaction|evm_public_send_raw_transaction|evm_publicSendRawTransactionBatch|evm_public_send_raw_transaction_batch|evm_publicSendTransaction|evm_public_send_transaction|evm_publicSendTransactionBatch|evm_public_send_transaction_batch|evm_getLogs|evm_get_logs|evm_getLogsBatch|evm_get_logs_batch|evm_getTransactionReceipt|evm_get_transaction_receipt|evm_getTransactionReceiptBatch|evm_get_transaction_receipt_batch|evm_getTransactionByHashBatch|evm_get_transaction_by_hash_batch|evm_subscribe|evm_unsubscribe|evm_newFilter|evm_new_filter|evm_newBlockFilter|evm_new_block_filter|evm_newPendingTransactionFilter|evm_new_pending_transaction_filter|evm_getFilterChanges|evm_get_filter_changes|evm_getFilterChangesBatch|evm_get_filter_changes_batch|evm_getFilterLogs|evm_get_filter_logs|evm_getFilterLogsBatch|evm_get_filter_logs_batch|evm_uninstallFilter|evm_uninstall_filter|evm_chainId|evm_chain_id|evm_clientVersion|evm_client_version|evm_sha3|evm_protocolVersion|evm_protocol_version|evm_listening|evm_peerCount|evm_peer_count|evm_accounts|evm_coinbase|evm_mining|evm_hashrate|evm_netVersion|evm_net_version|evm_syncing|evm_blockNumber|evm_block_number|evm_getBalance|evm_get_balance|evm_getBlockByNumber|evm_get_block_by_number|evm_getBlockByHash|evm_get_block_by_hash|evm_getBlockReceipts|evm_get_block_receipts|evm_getTransactionByHash|evm_get_transaction_by_hash|evm_getTransactionCount|evm_get_transaction_count|evm_gasPrice|evm_gas_price|evm_call|evm_estimateGas|evm_estimate_gas|evm_getCode|evm_get_code|evm_getStorageAt|evm_get_storage_at|evm_getProof|evm_get_proof|evm_maxPriorityFeePerGas|evm_max_priority_fee_per_gas|evm_feeHistory|evm_fee_history|evm_getTransactionByBlockNumberAndIndex|evm_get_transaction_by_block_number_and_index|evm_getTransactionByBlockHashAndIndex|evm_get_transaction_by_block_hash_and_index|evm_getBlockTransactionCountByNumber|evm_get_block_transaction_count_by_number|evm_getBlockTransactionCountByHash|evm_get_block_transaction_count_by_hash|evm_getUncleCountByBlockNumber|evm_get_uncle_count_by_block_number|evm_getUncleCountByBlockHash|evm_get_uncle_count_by_block_hash|evm_getUncleByBlockNumberAndIndex|evm_get_uncle_by_block_number_and_index|evm_getUncleByBlockHashAndIndex|evm_get_uncle_by_block_hash_and_index|evm_pendingTransactions|evm_pending_transactions|evm_txpoolContent|evm_txpool_content|evm_txpoolContentFrom|evm_txpool_contentFrom|evm_txpool_content_from|evm_txpoolInspect|evm_txpool_inspect|evm_txpoolInspectFrom|evm_txpool_inspectFrom|evm_txpool_inspect_from|evm_txpoolStatus|evm_txpool_status|evm_txpoolStatusFrom|evm_txpool_statusFrom|evm_txpool_status_from|evm_snapshotPendingIngress|evm_snapshot_pending_ingress|evm_snapshotExecutableIngress|evm_snapshot_executable_ingress|evm_drainExecutableIngress|evm_drain_executable_ingress|evm_drainPendingIngress|evm_drain_pending_ingress|evm_snapshotPendingSenderBuckets|evm_snapshot_pending_sender_buckets|evm_getTxSubmitStatusBatch|evm_get_tx_submit_status_batch|evm_replayPublicBroadcast|evm_replay_public_broadcast|evm_replayPublicBroadcastBatch|evm_replay_public_broadcast_batch|evm_getTxSubmitStatus|evm_get_tx_submit_status|evm_getSettlementById|evm_get_settlement_by_id|evm_getSettlementByTxHash|evm_get_settlement_by_tx_hash|evm_replaySettlementPayout|evm_replay_settlement_payout|evm_getAtomicReadyByIntentId|evm_get_atomic_ready_by_intent_id|evm_replayAtomicReady|evm_replay_atomic_ready|evm_queueAtomicBroadcast|evm_queue_atomic_broadcast|evm_replayAtomicBroadcastQueue|evm_replay_atomic_broadcast_queue|evm_markAtomicBroadcastFailed|evm_mark_atomic_broadcast_failed|evm_markAtomicBroadcasted|evm_mark_atomic_broadcasted|evm_executeAtomicBroadcast|evm_execute_atomic_broadcast|evm_executePendingAtomicBroadcasts|evm_execute_pending_atomic_broadcasts|web30_sendRawTransaction|web30_sendTransaction",
             method
         ),
     }
@@ -5928,6 +7036,45 @@ fn force_evm_send_public_broadcast_detail(params: &mut serde_json::Value) {
             });
         }
     }
+}
+
+fn gateway_evm_ingress_frame_json(
+    frame: &EvmMempoolIngressFrameV1,
+    include_raw: bool,
+    include_parsed: bool,
+) -> serde_json::Value {
+    let mut obj = serde_json::Map::new();
+    obj.insert(
+        "chain_id".to_string(),
+        serde_json::Value::String(format!("0x{:x}", frame.chain_id)),
+    );
+    obj.insert(
+        "tx_hash".to_string(),
+        serde_json::Value::String(format!("0x{}", to_hex(&frame.tx_hash))),
+    );
+    obj.insert(
+        "observed_at_unix_ms".to_string(),
+        serde_json::Value::from(frame.observed_at_unix_ms),
+    );
+    if include_raw {
+        obj.insert(
+            "raw_tx".to_string(),
+            serde_json::Value::String(format!("0x{}", to_hex(&frame.raw_tx))),
+        );
+    }
+    if include_parsed {
+        let parsed = serde_json::to_value(&frame.parsed_tx).unwrap_or(serde_json::Value::Null);
+        obj.insert("parsed_tx".to_string(), parsed);
+    }
+    serde_json::Value::Object(obj)
+}
+
+fn gateway_evm_pending_sender_bucket_json(bucket: &EvmPendingSenderBucketV1) -> serde_json::Value {
+    serde_json::json!({
+        "chain_id": format!("0x{:x}", bucket.chain_id),
+        "sender": format!("0x{}", to_hex(&bucket.sender)),
+        "txs": bucket.txs,
+    })
 }
 
 fn gateway_eth_broadcast_status_store(

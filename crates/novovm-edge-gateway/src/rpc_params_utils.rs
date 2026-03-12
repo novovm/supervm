@@ -672,6 +672,85 @@ pub(super) fn extract_eth_tx_hash_query_param(params: &serde_json::Value) -> Opt
     first_scalar_param_string(params)
 }
 
+pub(super) fn extract_eth_tx_hashes_query_params(params: &serde_json::Value) -> Vec<String> {
+    const CANDIDATE_LIST_KEYS: &[&str] = &["tx_hashes", "txHashes", "hashes", "txs"];
+    if let Some(map) = params_object_with_any_keys(params, CANDIDATE_LIST_KEYS) {
+        for key in CANDIDATE_LIST_KEYS {
+            let Some(raw) = map.get(*key) else {
+                continue;
+            };
+            let Some(arr) = raw.as_array() else {
+                continue;
+            };
+            let out: Vec<String> = arr
+                .iter()
+                .filter_map(value_to_string)
+                .map(|v| v.trim().to_string())
+                .filter(|v| !v.is_empty())
+                .collect();
+            if !out.is_empty() {
+                return out;
+            }
+        }
+    }
+    if let serde_json::Value::Array(items) = params {
+        for item in items {
+            let Some(arr) = item.as_array() else {
+                continue;
+            };
+            let out: Vec<String> = arr
+                .iter()
+                .filter_map(value_to_string)
+                .map(|v| v.trim().to_string())
+                .filter(|v| !v.is_empty())
+                .collect();
+            if !out.is_empty() {
+                return out;
+            }
+        }
+    }
+    extract_eth_tx_hash_query_param(params)
+        .into_iter()
+        .collect()
+}
+
+pub(super) fn extract_gateway_batch_items(
+    params: &serde_json::Value,
+    candidate_list_keys: &[&str],
+) -> Vec<serde_json::Value> {
+    let extract_from_map =
+        |map: &serde_json::Map<String, serde_json::Value>| -> Option<Vec<serde_json::Value>> {
+            for key in candidate_list_keys {
+                let Some(raw) = map.get(*key) else {
+                    continue;
+                };
+                let Some(arr) = raw.as_array() else {
+                    continue;
+                };
+                if !arr.is_empty() {
+                    return Some(arr.clone());
+                }
+            }
+            None
+        };
+
+    match params {
+        serde_json::Value::Object(map) => extract_from_map(map).unwrap_or_default(),
+        serde_json::Value::Array(arr) => {
+            for item in arr {
+                let Some(map) = item.as_object() else {
+                    continue;
+                };
+                if let Some(found) = extract_from_map(map) {
+                    return found;
+                }
+            }
+            arr.clone()
+        }
+        _ => Vec::new(),
+    }
+}
+
 pub(super) fn extract_eth_persona_address_param(params: &serde_json::Value) -> Option<String> {
     const CANDIDATE_KEYS: &[&str] = &["external_address", "from", "address"];
     if let Some(map) = params_object_with_any_keys(params, CANDIDATE_KEYS) {

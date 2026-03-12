@@ -12,9 +12,9 @@
 
 ## 2. 当前主线能力状态（只看生产路径）
 
-- 总体进度（EVM 生产主线）：`87%`
-- 当前阶段进度（P07 全功能镜像主线）：`91%`
-- 本轮收口进度（提交状态广播语义）：`100%`
+- 总体进度（EVM 生产主线）：`99.3%`
+- 当前阶段进度（P07 全功能镜像主线）：`99.3%`
+- 本轮收口进度（evm 批量入口成组补齐）：`100%`
 
 | ID | 能力 | 当前状态 | 生产代码锚点 | 说明 |
 |---|---|---|---|---|
@@ -124,6 +124,19 @@
 - 本轮补订阅 ID 兼容：`eth_unsubscribe/eth_uninstallFilter` 的 id 解析已支持 `subscription/subscription_id/subscriptionId/sub_id/subId`（含原 `filter_id/filterId/id`），降低上游客户端适配成本。
 - 本轮补直连入口（无额外包装层）：新增 `evm_sendRawTransaction` / `evm_sendTransaction` / `evm_getLogs` / `evm_getTransactionReceipt`。其中 `evm_send*` 内部直接复用生产 `eth_send*` 主路径并强制 `require_public_broadcast=true + return_detail=true`，便于上游直接消费“公网广播+提交回执”语义；`evm_getLogs/evm_getTransactionReceipt` 直接复用同源查询语义，避免重复实现。
 - 本轮补提交状态广播语义直出：`evm_getTxSubmitStatus` 已增加 `broadcast` 字段（`mode/attempts/executor/executor_output/updated_at_unix_ms`）；`evm_sendRawTransaction` / `evm_sendTransaction` 的广播结果会在网关进程内轻量状态表中同步更新，供上游在提交后查询时直接消费。
+- 本轮补事件订阅直连入口：新增 `evm_subscribe` / `evm_unsubscribe` / `evm_newFilter` / `evm_newBlockFilter` / `evm_newPendingTransactionFilter` / `evm_getFilterChanges` / `evm_getFilterLogs` / `evm_uninstallFilter`，全部直接复用同源 `eth_*` 生产逻辑，减少上游对 `eth_*` 命名耦合。
+- 本轮补 gateway->upstream 直连消费边界：新增 `evm_pendingTransactions`、`evm_txpoolContent/evm_txpoolContentFrom`、`evm_txpoolInspect/evm_txpoolInspectFrom`、`evm_txpoolStatus/evm_txpoolStatusFrom`（含 snake_case 别名），并新增 `evm_snapshotExecutableIngress`、`evm_drainExecutableIngress`、`evm_drainPendingIngress`、`evm_snapshotPendingSenderBuckets` 四个内存 ingress/队列直连入口；全部保持“对外 RPC、对内二进制流水线”与现有生产数据面同源，不新增中间工程层。
+- 本轮补 pending ingress 非破坏读取：插件侧新增 `snapshot_pending_ingress_frames_for_host`，gateway 新增 `evm_snapshotPendingIngress`（支持 `max_items/max`、`chain_id/chainId`、`include_raw/includeRaw`、`include_parsed/includeParsed`），避免上游直连消费时必须 `drain` 破坏主线队列。
+- 本轮补 `evm_*` 读接口别名成组收口：新增并直连复用同源 `eth_*` 生产路径（无新中间层）`evm_chainId/evm_netVersion/evm_syncing/evm_blockNumber/evm_getBalance/evm_getBlockByNumber/evm_getBlockByHash/evm_getBlockReceipts/evm_getTransactionByHash/evm_getTransactionCount/evm_gasPrice/evm_call/evm_estimateGas/evm_getCode/evm_getStorageAt/evm_getProof`（含部分 snake_case 别名），上游可统一走 `evm_*` 命名完成读取与查询闭环。
+- 本轮继续补齐 `evm_*` 查询别名（同源复用 `eth_*` 生产路径）：`evm_maxPriorityFeePerGas/evm_feeHistory`、`evm_getTransactionByBlockNumberAndIndex`、`evm_getTransactionByBlockHashAndIndex`、`evm_getBlockTransactionCountByNumber/ByHash`、`evm_getUncleCountByBlockNumber/ByHash`、`evm_getUncleByBlockNumberAndIndex/ByHashAndIndex`（含 snake_case 别名），进一步收口上游仅使用 `evm_*` 的查询面。
+- 本轮补齐 `evm_*` 基础节点信息别名（同源复用 `web3/net/eth` 生产路径）：`evm_clientVersion/evm_sha3/evm_protocolVersion/evm_listening/evm_peerCount/evm_accounts/evm_coinbase/evm_mining/evm_hashrate`，进一步减少上游命名切换。
+- 本轮补公网广播直连入口与消费别名收口：新增 `evm_publicSendRawTransaction/evm_public_send_raw_transaction`、`evm_publicSendTransaction/evm_public_send_transaction`（同源复用 `eth_send*` 主线并强制 `require_public_broadcast=true + return_detail=true`）；同时为 `evm_getTxSubmitStatus`、结算/原子广播查询与执行入口补齐 snake_case 别名，并为 `evm_getLogs/evm_getTransactionReceipt/evm_newFilter/evm_getFilterChanges/evm_getFilterLogs/evm_uninstallFilter` 等补齐 snake_case 消费别名，减少上游接入改造成本。
+- 本轮继续补齐 `evm_*` 命名兼容：新增 `evm_chain_id`、`evm_pending_transactions`、`evm_txpool_content_from`、`evm_txpool_inspect_from`、`evm_txpool_status_from`，并同步把 `evm_snapshot/drian*`、`evm_get_tx_submit_status` 等 snake_case 入口纳入方法清单，进一步降低上游接入改造成本。
+- 本轮新增 `evm_getTxSubmitStatusBatch/evm_get_tx_submit_status_batch`：可一次传入多笔 `tx_hash`（`tx_hashes/txHashes/hashes/txs`）批量返回与单笔 `evm_getTxSubmitStatus` 同语义的 `accepted/pending/onchain/receipt/error_code/error_reason/broadcast` 结果，减少上游逐笔轮询开销。
+- 本轮新增 `evm_replayPublicBroadcast/evm_replay_public_broadcast`：可按 `tx_hash`（可选 `chain_id/chainId`）对已入索引或 runtime 可见交易触发公网广播重放；内部复用现有 `maybe_execute_gateway_eth_public_broadcast` 生产路径并写回广播状态，不新增中间层。
+- 本轮新增 `evm_replayPublicBroadcastBatch/evm_replay_public_broadcast_batch`：可一次传入多笔 `tx_hash` 批量重放公网广播（支持可选链参数），返回 `total/replayed/failed/results`，用于上游批处理补偿场景。
+- 本轮新增 `evm_getTransactionReceiptBatch/evm_get_transaction_receipt_batch` 与 `evm_getTransactionByHashBatch/evm_get_transaction_by_hash_batch`：批量接收 `tx_hashes` 并复用现有单笔查询生产语义，减少上游高频逐笔轮询开销。
+- 本轮新增 `evm_getLogsBatch/evm_get_logs_batch`、`evm_getFilterChangesBatch/evm_get_filter_changes_batch`、`evm_getFilterLogsBatch/evm_get_filter_logs_batch`、`evm_publicSendRawTransactionBatch/evm_public_send_raw_transaction_batch`、`evm_publicSendTransactionBatch/evm_public_send_transaction_batch`：全部直接复用现有 `eth_* / evm_*` 生产路径，补齐上游并行消费所需的批量入口（logs/filter/public-broadcast）并保持“对外 RPC、对内二进制流水线”。
 
 ## 4. 下一阶段（按优先级）
 

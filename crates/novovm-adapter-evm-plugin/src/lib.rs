@@ -1287,6 +1287,23 @@ pub fn drain_executable_ingress_frames_for_host(max_items: usize) -> Vec<EvmMemp
     out
 }
 
+pub fn snapshot_pending_ingress_frames_for_host(max_items: usize) -> Vec<EvmMempoolIngressFrameV1> {
+    if max_items == 0 {
+        return Vec::new();
+    }
+    let runtime = resolve_evm_runtime_state();
+    let runtime = match runtime.lock() {
+        Ok(v) => v,
+        Err(_) => return Vec::new(),
+    };
+    runtime
+        .ingress_frames
+        .iter()
+        .take(max_items)
+        .cloned()
+        .collect()
+}
+
 pub fn drain_pending_ingress_frames_for_host(max_items: usize) -> Vec<EvmMempoolIngressFrameV1> {
     let runtime = resolve_evm_runtime_state();
     let mut runtime = match runtime.lock() {

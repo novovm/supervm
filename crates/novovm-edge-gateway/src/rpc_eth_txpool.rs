@@ -84,6 +84,31 @@ pub(super) fn gateway_eth_tx_index_entry_from_ir(tx: TxIR) -> GatewayEthTxIndexE
     }
 }
 
+pub(super) fn gateway_eth_tx_ir_from_index_entry(entry: &GatewayEthTxIndexEntry) -> TxIR {
+    let tx_type = if entry.to.is_none() {
+        TxType::ContractDeploy
+    } else if entry.input.is_empty() {
+        TxType::Transfer
+    } else {
+        TxType::ContractCall
+    };
+    TxIR {
+        hash: entry.tx_hash.to_vec(),
+        from: entry.from.clone(),
+        to: entry.to.clone(),
+        value: entry.value,
+        gas_limit: entry.gas_limit,
+        gas_price: entry.gas_price,
+        nonce: entry.nonce,
+        data: entry.input.clone(),
+        signature: Vec::new(),
+        chain_id: entry.chain_id,
+        tx_type,
+        source_chain: None,
+        target_chain: None,
+    }
+}
+
 pub(super) fn collect_gateway_eth_txpool_runtime_txs(chain_id: u64) -> (Vec<TxIR>, Vec<TxIR>) {
     let max_items = gateway_eth_query_scan_max().max(1);
     let executable = snapshot_executable_ingress_frames_for_host(max_items)
