@@ -176,6 +176,8 @@ static AOEM_INSTALL_PROFILE_CACHE: OnceLock<Mutex<HashMap<PathBuf, Option<Value>
     OnceLock::new();
 static AOEM_MANIFEST_CACHE: OnceLock<Mutex<HashMap<PathBuf, Option<Value>>>> = OnceLock::new();
 
+const MAX_AOEM_OWNED_BUFFER_BYTES: usize = 64 * 1024 * 1024;
+
 impl<'a> Drop for AoemHandle<'a> {
     fn drop(&mut self) {
         if !self.raw.is_null() {
@@ -565,12 +567,27 @@ impl AoemDyn {
     }
 
     fn copy_aoem_owned_bytes(&self, ptr: *mut u8, len: usize, ctx: &str) -> Result<Vec<u8>> {
-        if ptr.is_null() {
-            bail!("{ctx} returned null buffer");
-        }
         let free_fn = self
             .free
             .ok_or_else(|| anyhow!("aoem_free not found in loaded DLL"))?;
+        if ptr.is_null() {
+            if len == 0 {
+                return Ok(Vec::new());
+            }
+            bail!("{ctx} returned null buffer");
+        }
+        if len > MAX_AOEM_OWNED_BUFFER_BYTES {
+            unsafe { free_fn(ptr, len) };
+            bail!(
+                "{ctx} returned oversized AOEM buffer: len={} > max={}",
+                len,
+                MAX_AOEM_OWNED_BUFFER_BYTES
+            );
+        }
+        if len == 0 {
+            unsafe { free_fn(ptr, len) };
+            return Ok(Vec::new());
+        }
         let out = unsafe { std::slice::from_raw_parts(ptr as *const u8, len) }.to_vec();
         unsafe { free_fn(ptr, len) };
         Ok(out)

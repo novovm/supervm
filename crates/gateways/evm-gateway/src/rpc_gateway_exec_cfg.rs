@@ -1,4 +1,545 @@
 use super::*;
+use novovm_network::{
+    get_network_runtime_peer_heads, get_network_runtime_sync_status,
+    plan_network_runtime_sync_pull_window, TcpTransport, Transport, UdpTransport,
+};
+#[cfg(test)]
+use novovm_network::{set_network_runtime_sync_status, NetworkRuntimeSyncStatus};
+use novovm_protocol::{
+    protocol_catalog::distributed_occc::gossip::{
+        GossipMessage as DistributedOcccGossipMessage, MessageType as DistributedOcccMessageType,
+    },
+    GossipMessage as ProtocolGossipMessage, NodeId, ProtocolMessage, ShardId,
+};
+
+#[derive(Clone)]
+enum GatewayEthNativeBroadcaster {
+    Udp { node: NodeId, socket: UdpTransport },
+    Tcp { node: NodeId, socket: TcpTransport },
+}
+
+impl GatewayEthNativeBroadcaster {
+    fn register_peer(&self, node: NodeId, addr: &str) -> Result<(), anyhow::Error> {
+        match self {
+            Self::Udp { socket, .. } => socket
+                .register_peer(node, addr)
+                .map_err(|e| anyhow::anyhow!(e.to_string())),
+            Self::Tcp { socket, .. } => socket
+                .register_peer(node, addr)
+                .map_err(|e| anyhow::anyhow!(e.to_string())),
+        }
+    }
+
+    fn send(&self, peer: NodeId, msg: ProtocolMessage) -> Result<(), anyhow::Error> {
+        match self {
+            Self::Udp { socket, .. } => socket.send(peer, msg),
+            Self::Tcp { socket, .. } => socket.send(peer, msg),
+        }
+        .map_err(|e| anyhow::anyhow!(e.to_string()))
+    }
+
+    fn drain_incoming(&self, max_frames: usize) {
+        let cap = max_frames.max(1);
+        match self {
+            Self::Udp { node, socket } => {
+                for _ in 0..cap {
+                    match socket.try_recv(*node) {
+                        Ok(Some(_)) => {}
+                        Ok(None) | Err(_) => break,
+                    }
+                }
+            }
+            Self::Tcp { node, socket } => {
+                for _ in 0..cap {
+                    match socket.try_recv(*node) {
+                        Ok(Some(_)) => {}
+                        Ok(None) | Err(_) => break,
+                    }
+                }
+            }
+        }
+    }
+}
+
+static GATEWAY_ETH_NATIVE_BROADCASTER_CACHE: OnceLock<
+    Mutex<HashMap<String, GatewayEthNativeBroadcaster>>,
+> = OnceLock::new();
+static GATEWAY_ETH_NATIVE_DISCOVERY_LAST_MS: OnceLock<Mutex<HashMap<String, u128>>> =
+    OnceLock::new();
+static GATEWAY_ETH_NATIVE_RUNTIME_WORKER_STARTED: OnceLock<
+    Mutex<std::collections::HashSet<String>>,
+> = OnceLock::new();
+static GATEWAY_ETH_NATIVE_SYNC_PULL_TRACKER: OnceLock<
+    Mutex<HashMap<String, GatewayEthNativeSyncPullState>>,
+> = OnceLock::new();
+const GATEWAY_ETH_NATIVE_DISCOVERY_INTERVAL_MS: u128 = 3_000;
+const GATEWAY_ETH_NATIVE_RECV_DRAIN_MAX_PER_BROADCAST: usize = 32;
+const GATEWAY_ETH_NATIVE_RUNTIME_WORKER_TICK_MS: u64 = 1_000;
+const GATEWAY_ETH_NATIVE_SYNC_PULL_RESEND_MS: u128 = 3_000;
+const GATEWAY_ETH_NATIVE_SYNC_PULL_PAYLOAD_MAGIC: [u8; 4] = *b"NSP1";
+
+#[derive(Clone)]
+struct GatewayEthNativeSyncPullState {
+    phase: String,
+    from_block: u64,
+    to_block: u64,
+    last_sent_ms: u128,
+    resend_round: u32,
+}
+
+fn gateway_eth_native_broadcaster_cache(
+) -> &'static Mutex<HashMap<String, GatewayEthNativeBroadcaster>> {
+    GATEWAY_ETH_NATIVE_BROADCASTER_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn gateway_eth_native_discovery_last_ms() -> &'static Mutex<HashMap<String, u128>> {
+    GATEWAY_ETH_NATIVE_DISCOVERY_LAST_MS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn gateway_eth_native_runtime_worker_started() -> &'static Mutex<std::collections::HashSet<String>>
+{
+    GATEWAY_ETH_NATIVE_RUNTIME_WORKER_STARTED
+        .get_or_init(|| Mutex::new(std::collections::HashSet::new()))
+}
+
+fn gateway_eth_native_sync_pull_tracker(
+) -> &'static Mutex<HashMap<String, GatewayEthNativeSyncPullState>> {
+    GATEWAY_ETH_NATIVE_SYNC_PULL_TRACKER.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn next_gateway_eth_native_sync_pull_fanout(
+    worker_key: &str,
+    phase: &str,
+    from_block: u64,
+    to_block: u64,
+    now_ms: u128,
+) -> Option<usize> {
+    let Ok(mut guard) = gateway_eth_native_sync_pull_tracker().lock() else {
+        return Some(1);
+    };
+    let (should_send, resend_round) = match guard.get(worker_key) {
+        None => (true, 0u32),
+        Some(last) => {
+            let window_changed =
+                last.phase != phase || last.from_block != from_block || last.to_block != to_block;
+            if window_changed {
+                (true, 0)
+            } else if now_ms.saturating_sub(last.last_sent_ms)
+                >= GATEWAY_ETH_NATIVE_SYNC_PULL_RESEND_MS
+            {
+                (true, last.resend_round.saturating_add(1))
+            } else {
+                (false, last.resend_round)
+            }
+        }
+    };
+    if !should_send {
+        return None;
+    }
+    if guard.len() > 256 {
+        guard.clear();
+    }
+    guard.insert(
+        worker_key.to_string(),
+        GatewayEthNativeSyncPullState {
+            phase: phase.to_string(),
+            from_block,
+            to_block,
+            last_sent_ms: now_ms,
+            resend_round,
+        },
+    );
+    let fanout = if resend_round == 0 {
+        1
+    } else if resend_round == 1 {
+        2
+    } else {
+        usize::MAX
+    };
+    Some(fanout)
+}
+
+fn clear_gateway_eth_native_sync_pull_tracker(worker_key: &str) {
+    if let Ok(mut guard) = gateway_eth_native_sync_pull_tracker().lock() {
+        guard.remove(worker_key);
+    }
+}
+
+fn should_send_gateway_eth_native_discovery(now_ms: u128, last_sent_ms: u128) -> bool {
+    last_sent_ms == 0
+        || now_ms.saturating_sub(last_sent_ms) >= GATEWAY_ETH_NATIVE_DISCOVERY_INTERVAL_MS
+}
+
+fn gateway_eth_native_should_emit_discovery(chain_id: u64) -> bool {
+    match get_network_runtime_sync_status(chain_id) {
+        None => true,
+        Some(status) => {
+            if status.peer_count == 0 {
+                return true;
+            }
+            // During active syncing, keep light discovery when peer set is thin.
+            status.highest_block > status.current_block && status.peer_count <= 1
+        }
+    }
+}
+
+fn merge_gateway_eth_sync_pull_candidates(
+    preferred: Vec<NodeId>,
+    full_ordered: Vec<NodeId>,
+) -> Vec<NodeId> {
+    let mut out = preferred;
+    let mut seen = std::collections::HashSet::<u64>::new();
+    for node in &out {
+        seen.insert(node.0);
+    }
+    for node in full_ordered {
+        if seen.insert(node.0) {
+            out.push(node);
+        }
+    }
+    out
+}
+
+fn select_gateway_eth_sync_pull_peers_from_snapshot(
+    peer_nodes: &[NodeId],
+    runtime_heads: &[(u64, u64)],
+    fanout: usize,
+) -> Vec<NodeId> {
+    if peer_nodes.is_empty() || fanout == 0 {
+        return Vec::new();
+    }
+    let finite_fanout = if fanout == usize::MAX {
+        peer_nodes.len()
+    } else {
+        fanout.min(peer_nodes.len())
+    };
+    if finite_fanout == 0 {
+        return Vec::new();
+    }
+    if runtime_heads.is_empty() {
+        return peer_nodes.iter().take(finite_fanout).copied().collect();
+    }
+    let mut configured = std::collections::HashSet::<u64>::new();
+    for node in peer_nodes {
+        configured.insert(node.0);
+    }
+    let mut ordered = Vec::<NodeId>::new();
+    let mut seen = std::collections::HashSet::<u64>::new();
+    for (peer_id, _head) in runtime_heads {
+        if configured.contains(peer_id) {
+            if seen.insert(*peer_id) {
+                ordered.push(NodeId(*peer_id));
+            }
+        }
+    }
+    for node in peer_nodes {
+        if seen.insert(node.0) {
+            ordered.push(*node);
+        }
+    }
+    ordered.into_iter().take(finite_fanout).collect()
+}
+
+fn select_gateway_eth_native_sync_pull_peers(
+    chain_id: u64,
+    peer_nodes: &[NodeId],
+    fanout: usize,
+) -> Vec<NodeId> {
+    let runtime_heads = get_network_runtime_peer_heads(chain_id);
+    select_gateway_eth_sync_pull_peers_from_snapshot(peer_nodes, &runtime_heads, fanout)
+}
+
+fn send_gateway_eth_native_sync_pull_requests(
+    chain_id: u64,
+    broadcaster: &GatewayEthNativeBroadcaster,
+    local_node: NodeId,
+    peer_nodes: &[NodeId],
+    phase: &str,
+    fanout: usize,
+    payload: &[u8],
+    now: u64,
+) -> usize {
+    if peer_nodes.is_empty() || payload.is_empty() || fanout == 0 {
+        return 0;
+    }
+    let from_u32 = match u32::try_from(local_node.0) {
+        Ok(v) => v,
+        Err(_) => return 0,
+    };
+    let preferred = select_gateway_eth_native_sync_pull_peers(chain_id, peer_nodes, fanout);
+    if preferred.is_empty() {
+        return 0;
+    }
+    let full_ordered = select_gateway_eth_native_sync_pull_peers(chain_id, peer_nodes, usize::MAX);
+    let candidates = merge_gateway_eth_sync_pull_candidates(preferred, full_ordered);
+    let target_success = if fanout == usize::MAX {
+        peer_nodes.len()
+    } else {
+        fanout.min(peer_nodes.len()).max(1)
+    };
+    let mut success_count = 0usize;
+    let msg_type = gateway_eth_native_sync_pull_msg_type(phase);
+    for peer in candidates {
+        if success_count >= target_success {
+            break;
+        }
+        let to_u32 = match u32::try_from(peer.0) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        let sync_pull = ProtocolMessage::DistributedOcccGossip(DistributedOcccGossipMessage {
+            from: from_u32,
+            to: to_u32,
+            msg_type: msg_type.clone(),
+            payload: payload.to_vec(),
+            timestamp: now,
+            seq: now,
+        });
+        if broadcaster.send(peer, sync_pull).is_ok() {
+            success_count = success_count.saturating_add(1);
+        }
+    }
+    success_count
+}
+
+pub(super) fn poll_gateway_eth_public_broadcast_native_runtime(chain_id: u64, max_frames: usize) {
+    ensure_gateway_eth_public_broadcast_native_runtime(chain_id);
+
+    let prefix = format!("{chain_id}:");
+    let broadcasters: Vec<GatewayEthNativeBroadcaster> =
+        if let Ok(guard) = gateway_eth_native_broadcaster_cache().lock() {
+            guard
+                .iter()
+                .filter(|(key, _)| key.starts_with(&prefix))
+                .map(|(_, broadcaster)| broadcaster.clone())
+                .collect()
+        } else {
+            Vec::new()
+        };
+    for broadcaster in broadcasters {
+        broadcaster.drain_incoming(max_frames);
+    }
+}
+
+fn build_gateway_eth_native_broadcaster_key(
+    chain_id: u64,
+    transport: GatewayEthPublicBroadcastNativeTransport,
+    local_node: NodeId,
+    listen_addr: &str,
+) -> String {
+    format!(
+        "{}:{}:{}:{}",
+        chain_id,
+        transport.as_mode(),
+        local_node.0,
+        listen_addr
+    )
+}
+
+fn get_or_create_gateway_eth_native_broadcaster(
+    chain_id: u64,
+    transport: GatewayEthPublicBroadcastNativeTransport,
+    local_node: NodeId,
+    listen_addr: &str,
+) -> Result<(String, GatewayEthNativeBroadcaster)> {
+    let broadcaster_key =
+        build_gateway_eth_native_broadcaster_key(chain_id, transport, local_node, listen_addr);
+
+    if let Ok(guard) = gateway_eth_native_broadcaster_cache().lock() {
+        if let Some(existing) = guard.get(&broadcaster_key) {
+            return Ok((broadcaster_key, existing.clone()));
+        }
+    }
+
+    let created = match transport {
+        GatewayEthPublicBroadcastNativeTransport::Udp => {
+            let socket = UdpTransport::bind_for_chain(local_node, listen_addr, chain_id)
+                .with_context(|| {
+                    format!(
+                        "native runtime failed: chain_id={} reason=udp_bind_failed listen={}",
+                        chain_id, listen_addr
+                    )
+                })?;
+            GatewayEthNativeBroadcaster::Udp {
+                node: local_node,
+                socket,
+            }
+        }
+        GatewayEthPublicBroadcastNativeTransport::Tcp => {
+            let socket = TcpTransport::bind_for_chain(local_node, listen_addr, chain_id)
+                .with_context(|| {
+                    format!(
+                        "native runtime failed: chain_id={} reason=tcp_bind_failed listen={}",
+                        chain_id, listen_addr
+                    )
+                })?;
+            GatewayEthNativeBroadcaster::Tcp {
+                node: local_node,
+                socket,
+            }
+        }
+    };
+
+    if let Ok(mut guard) = gateway_eth_native_broadcaster_cache().lock() {
+        if guard.len() > 64 {
+            guard.clear();
+        }
+        guard.insert(broadcaster_key.clone(), created.clone());
+    }
+
+    Ok((broadcaster_key, created))
+}
+
+fn ensure_gateway_eth_public_broadcast_native_runtime(chain_id: u64) {
+    let peers = gateway_eth_public_broadcast_native_peers(chain_id);
+    if peers.is_empty() {
+        return;
+    }
+
+    let transport = gateway_eth_public_broadcast_native_transport(chain_id);
+    let listen_addr = gateway_eth_public_broadcast_native_listen_addr(chain_id, transport);
+    let local_node = gateway_eth_public_broadcast_native_node_id(chain_id);
+    let Ok((broadcaster_key, broadcaster)) =
+        get_or_create_gateway_eth_native_broadcaster(chain_id, transport, local_node, &listen_addr)
+    else {
+        return;
+    };
+
+    let peer_nodes: Vec<NodeId> = peers.iter().map(|(peer, _)| *peer).collect();
+    for (peer, addr) in peers {
+        let _ = broadcaster.register_peer(peer, &addr);
+    }
+    ensure_gateway_eth_native_runtime_worker(
+        chain_id,
+        &broadcaster_key,
+        broadcaster.clone(),
+        local_node,
+        peer_nodes,
+    );
+    broadcaster.drain_incoming(GATEWAY_ETH_NATIVE_RECV_DRAIN_MAX_PER_BROADCAST);
+}
+
+fn ensure_gateway_eth_native_runtime_worker(
+    chain_id: u64,
+    worker_key: &str,
+    broadcaster: GatewayEthNativeBroadcaster,
+    local_node: NodeId,
+    peer_nodes: Vec<NodeId>,
+) {
+    if peer_nodes.is_empty() {
+        return;
+    }
+    let should_spawn = if let Ok(mut guard) = gateway_eth_native_runtime_worker_started().lock() {
+        guard.insert(worker_key.to_string())
+    } else {
+        false
+    };
+    if !should_spawn {
+        return;
+    }
+    let worker_key_owned = worker_key.to_string();
+    thread::spawn(move || {
+        thread::sleep(Duration::from_millis(
+            GATEWAY_ETH_NATIVE_RUNTIME_WORKER_TICK_MS,
+        ));
+        let mut last_discovery_sent_ms: u128 = 0;
+        loop {
+            let now = now_unix_millis() as u64;
+            let now_ms = now as u128;
+            if gateway_eth_native_should_emit_discovery(chain_id)
+                && should_send_gateway_eth_native_discovery(now_ms, last_discovery_sent_ms)
+            {
+                for peer in &peer_nodes {
+                    let heartbeat = ProtocolMessage::Gossip(ProtocolGossipMessage::Heartbeat {
+                        from: local_node,
+                        shard: ShardId(1),
+                    });
+                    let _ = broadcaster.send(*peer, heartbeat);
+                    let peer_list = ProtocolMessage::Gossip(ProtocolGossipMessage::PeerList {
+                        from: local_node,
+                        peers: peer_nodes.clone(),
+                    });
+                    let _ = broadcaster.send(*peer, peer_list);
+                }
+                last_discovery_sent_ms = now_ms;
+            }
+            if let Some(window) = plan_network_runtime_sync_pull_window(chain_id) {
+                if let Some(fanout) = next_gateway_eth_native_sync_pull_fanout(
+                    &worker_key_owned,
+                    window.phase.as_str(),
+                    window.from_block,
+                    window.to_block,
+                    now_ms,
+                ) {
+                    let payload = encode_gateway_eth_native_sync_pull_payload(
+                        chain_id,
+                        window.phase.as_str(),
+                        window.from_block,
+                        window.to_block,
+                    );
+                    let sent = send_gateway_eth_native_sync_pull_requests(
+                        chain_id,
+                        &broadcaster,
+                        local_node,
+                        &peer_nodes,
+                        window.phase.as_str(),
+                        fanout,
+                        payload.as_slice(),
+                        now,
+                    );
+                    if sent == 0 {
+                        // All selected peers failed in this round, clear tracker to allow
+                        // immediate retry on next tick instead of waiting resend timeout.
+                        clear_gateway_eth_native_sync_pull_tracker(&worker_key_owned);
+                        // Force next tick to emit discovery frame immediately.
+                        last_discovery_sent_ms = 0;
+                    }
+                }
+            } else {
+                clear_gateway_eth_native_sync_pull_tracker(&worker_key_owned);
+            }
+            broadcaster.drain_incoming(GATEWAY_ETH_NATIVE_RECV_DRAIN_MAX_PER_BROADCAST);
+            let elapsed = (now_unix_millis() as u64).saturating_sub(now);
+            let sleep_ms = GATEWAY_ETH_NATIVE_RUNTIME_WORKER_TICK_MS.saturating_sub(elapsed);
+            thread::sleep(Duration::from_millis(sleep_ms.max(10)));
+        }
+    });
+}
+
+fn gateway_eth_native_sync_pull_phase_tag(phase: &str) -> u8 {
+    match phase {
+        "headers" => 1,
+        "bodies" => 2,
+        "state" => 3,
+        "finalize" => 4,
+        "discovery" => 5,
+        _ => 0,
+    }
+}
+
+fn gateway_eth_native_sync_pull_msg_type(phase: &str) -> DistributedOcccMessageType {
+    match phase {
+        // Header phase keeps StateSync channel for compatibility.
+        "headers" => DistributedOcccMessageType::StateSync,
+        // Bodies/state/finalize/discovery go through shard-state channel.
+        _ => DistributedOcccMessageType::ShardState,
+    }
+}
+
+fn encode_gateway_eth_native_sync_pull_payload(
+    chain_id: u64,
+    phase: &str,
+    from_block: u64,
+    to_block: u64,
+) -> Vec<u8> {
+    let mut out = Vec::with_capacity(4 + 1 + 8 + 8 + 8);
+    out.extend_from_slice(&GATEWAY_ETH_NATIVE_SYNC_PULL_PAYLOAD_MAGIC);
+    out.push(gateway_eth_native_sync_pull_phase_tag(phase));
+    out.extend_from_slice(&chain_id.to_le_bytes());
+    out.extend_from_slice(&from_block.to_le_bytes());
+    out.extend_from_slice(&to_block.to_le_bytes());
+    out
+}
 
 pub(super) fn gateway_evm_atomic_broadcast_exec_path(chain_id: u64) -> Option<PathBuf> {
     let chain_key_dec = format!("NOVOVM_GATEWAY_EVM_ATOMIC_BROADCAST_EXEC_CHAIN_{chain_id}");
@@ -113,6 +654,37 @@ pub(super) fn gateway_eth_public_broadcast_required(chain_id: u64) -> bool {
         .unwrap_or(false)
 }
 
+pub(super) fn gateway_eth_public_broadcast_capability_json(chain_id: u64) -> serde_json::Value {
+    let required = gateway_eth_public_broadcast_required(chain_id);
+    let exec_path = gateway_eth_public_broadcast_exec_path(chain_id);
+    let native_peers = gateway_eth_public_broadcast_native_peers(chain_id);
+    let native_peer_count = native_peers.len() as u64;
+    let transport = gateway_eth_public_broadcast_native_transport(chain_id).as_mode();
+    let mode = if exec_path.is_some() {
+        "external_executor"
+    } else if native_peer_count > 0 {
+        "native_transport"
+    } else {
+        "none"
+    };
+    let available = exec_path.is_some() || native_peer_count > 0;
+    let ready = available || !required;
+    serde_json::json!({
+        "chain_id": format!("0x{:x}", chain_id),
+        "required": required,
+        "ready": ready,
+        "available": available,
+        "mode": mode,
+        "executor_configured": exec_path.is_some(),
+        "executor_path": exec_path
+            .as_ref()
+            .map(|p| p.display().to_string())
+            .unwrap_or_default(),
+        "native_transport": transport,
+        "native_peer_count": format!("0x{:x}", native_peer_count),
+    })
+}
+
 fn gateway_eth_public_broadcast_chain_u64_env(chain_id: u64, base_key: &str, default: u64) -> u64 {
     let chain_key_dec = format!("{base_key}_CHAIN_{chain_id}");
     let chain_key_hex = format!("{base_key}_CHAIN_0x{:x}", chain_id);
@@ -120,6 +692,278 @@ fn gateway_eth_public_broadcast_chain_u64_env(chain_id: u64, base_key: &str, def
         .or_else(|| string_env_nonempty(&chain_key_hex))
         .and_then(|raw| raw.trim().parse::<u64>().ok())
         .unwrap_or_else(|| u64_env(base_key, default))
+}
+
+fn gateway_eth_public_broadcast_chain_string_env(chain_id: u64, base_key: &str) -> Option<String> {
+    let chain_key_dec = format!("{base_key}_CHAIN_{chain_id}");
+    let chain_key_hex = format!("{base_key}_CHAIN_0x{:x}", chain_id);
+    string_env_nonempty(&chain_key_dec)
+        .or_else(|| string_env_nonempty(&chain_key_hex))
+        .or_else(|| string_env_nonempty(base_key))
+}
+
+fn parse_u64_with_optional_hex_prefix(raw: &str) -> Option<u64> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    if let Some(hex) = trimmed
+        .strip_prefix("0x")
+        .or_else(|| trimmed.strip_prefix("0X"))
+    {
+        return u64::from_str_radix(hex, 16).ok();
+    }
+    trimmed.parse::<u64>().ok()
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum GatewayEthPublicBroadcastNativeTransport {
+    Udp,
+    Tcp,
+}
+
+impl GatewayEthPublicBroadcastNativeTransport {
+    fn as_mode(self) -> &'static str {
+        match self {
+            Self::Udp => "udp",
+            Self::Tcp => "tcp",
+        }
+    }
+}
+
+fn gateway_eth_public_broadcast_native_transport(
+    chain_id: u64,
+) -> GatewayEthPublicBroadcastNativeTransport {
+    let raw = gateway_eth_public_broadcast_chain_string_env(
+        chain_id,
+        "NOVOVM_GATEWAY_ETH_PUBLIC_BROADCAST_NATIVE_TRANSPORT",
+    )
+    .unwrap_or_else(|| "udp".to_string());
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "tcp" => GatewayEthPublicBroadcastNativeTransport::Tcp,
+        _ => GatewayEthPublicBroadcastNativeTransport::Udp,
+    }
+}
+
+fn gateway_eth_public_broadcast_native_node_id(chain_id: u64) -> NodeId {
+    let raw = gateway_eth_public_broadcast_chain_string_env(
+        chain_id,
+        "NOVOVM_GATEWAY_ETH_PUBLIC_BROADCAST_NATIVE_NODE_ID",
+    );
+    let id = raw
+        .as_deref()
+        .and_then(parse_u64_with_optional_hex_prefix)
+        .unwrap_or(1);
+    NodeId(id)
+}
+
+fn gateway_eth_public_broadcast_native_listen_addr(
+    chain_id: u64,
+    transport: GatewayEthPublicBroadcastNativeTransport,
+) -> String {
+    gateway_eth_public_broadcast_chain_string_env(
+        chain_id,
+        "NOVOVM_GATEWAY_ETH_PUBLIC_BROADCAST_NATIVE_LISTEN",
+    )
+    .unwrap_or_else(|| match transport {
+        GatewayEthPublicBroadcastNativeTransport::Udp => "0.0.0.0:0".to_string(),
+        GatewayEthPublicBroadcastNativeTransport::Tcp => "127.0.0.1:0".to_string(),
+    })
+}
+
+fn gateway_eth_public_broadcast_native_peers(chain_id: u64) -> Vec<(NodeId, String)> {
+    let Some(raw) = gateway_eth_public_broadcast_chain_string_env(
+        chain_id,
+        "NOVOVM_GATEWAY_ETH_PUBLIC_BROADCAST_NATIVE_PEERS",
+    ) else {
+        return Vec::new();
+    };
+    let mut peers = Vec::<(NodeId, String)>::new();
+    for token in raw.split([',', ';', '\n', '\r', '\t', ' ']) {
+        let entry = token.trim();
+        if entry.is_empty() {
+            continue;
+        }
+        let (node_raw, addr_raw) = entry
+            .split_once('@')
+            .or_else(|| entry.split_once('='))
+            .unwrap_or(("", ""));
+        if node_raw.is_empty() || addr_raw.trim().is_empty() {
+            continue;
+        }
+        let Some(node_id) = parse_u64_with_optional_hex_prefix(node_raw) else {
+            continue;
+        };
+        peers.push((NodeId(node_id), addr_raw.trim().to_string()));
+    }
+    peers
+}
+
+fn gateway_eth_public_broadcast_payload_bytes(
+    payload: GatewayEthPublicBroadcastPayload<'_>,
+) -> Option<Vec<u8>> {
+    payload
+        .raw_tx
+        .filter(|bytes| !bytes.is_empty())
+        .map(|bytes| bytes.to_vec())
+        .or_else(|| {
+            payload
+                .tx_ir_bincode
+                .filter(|bytes| !bytes.is_empty())
+                .map(|bytes| bytes.to_vec())
+        })
+}
+
+fn execute_gateway_eth_public_broadcast_native(
+    chain_id: u64,
+    tx_hash: &[u8; 32],
+    payload: GatewayEthPublicBroadcastPayload<'_>,
+) -> Result<Option<(String, u64, String)>> {
+    let peers = gateway_eth_public_broadcast_native_peers(chain_id);
+    if peers.is_empty() {
+        return Ok(None);
+    }
+    let payload_bytes = gateway_eth_public_broadcast_payload_bytes(payload).ok_or_else(|| {
+        anyhow::anyhow!(
+            "public broadcast failed: chain_id={} tx_hash=0x{} reason=native_payload_missing",
+            chain_id,
+            to_hex(tx_hash)
+        )
+    })?;
+    let transport = gateway_eth_public_broadcast_native_transport(chain_id);
+    let listen_addr = gateway_eth_public_broadcast_native_listen_addr(chain_id, transport);
+    let local_node = gateway_eth_public_broadcast_native_node_id(chain_id);
+    let from_u32 = u32::try_from(local_node.0).map_err(|_| {
+        anyhow::anyhow!(
+            "public broadcast failed: chain_id={} tx_hash=0x{} reason=native_node_id_out_of_range node_id={}",
+            chain_id,
+            to_hex(tx_hash),
+            local_node.0
+        )
+    })?;
+    let now = now_unix_millis() as u64;
+    let mut success = 0u64;
+    let mut failed = 0u64;
+    let mut errors = Vec::<String>::new();
+    let peer_nodes: Vec<NodeId> = peers.iter().map(|(peer, _)| *peer).collect();
+
+    let (broadcaster_key, broadcaster) =
+        get_or_create_gateway_eth_native_broadcaster(chain_id, transport, local_node, &listen_addr)
+            .with_context(|| {
+                format!(
+            "public broadcast failed: chain_id={} tx_hash=0x{} reason=native_runtime_init_failed",
+            chain_id,
+            to_hex(tx_hash)
+        )
+            })?;
+    ensure_gateway_eth_native_runtime_worker(
+        chain_id,
+        &broadcaster_key,
+        broadcaster.clone(),
+        local_node,
+        peer_nodes.clone(),
+    );
+
+    for (peer, addr) in peers {
+        let to_u32 = match u32::try_from(peer.0) {
+            Ok(v) => v,
+            Err(_) => {
+                failed = failed.saturating_add(1);
+                errors.push(format!("peer_id_out_of_range({})", peer.0));
+                continue;
+            }
+        };
+        if let Err(e) = broadcaster.register_peer(peer, &addr) {
+            failed = failed.saturating_add(1);
+            errors.push(format!("register_peer({}:{})={}", peer.0, addr, e));
+            continue;
+        }
+        let msg = ProtocolMessage::DistributedOcccGossip(DistributedOcccGossipMessage {
+            from: from_u32,
+            to: to_u32,
+            msg_type: DistributedOcccMessageType::TxProposal,
+            payload: payload_bytes.clone(),
+            timestamp: now,
+            seq: now,
+        });
+        match broadcaster.send(peer, msg) {
+            Ok(_) => success = success.saturating_add(1),
+            Err(e) => {
+                failed = failed.saturating_add(1);
+                errors.push(format!("send({})={}", peer.0, e));
+            }
+        }
+    }
+    broadcaster.drain_incoming(GATEWAY_ETH_NATIVE_RECV_DRAIN_MAX_PER_BROADCAST);
+
+    // Periodic discovery/liveness gossip to keep runtime peer discovery warm.
+    // Keep this after tx proposal dispatch so public broadcast path remains tx-first.
+    let should_emit_discovery = {
+        let now_ms = now_unix_millis();
+        if let Ok(mut guard) = gateway_eth_native_discovery_last_ms().lock() {
+            let last = guard.get(&broadcaster_key).copied().unwrap_or(0);
+            if now_ms.saturating_sub(last) >= GATEWAY_ETH_NATIVE_DISCOVERY_INTERVAL_MS {
+                guard.insert(broadcaster_key.clone(), now_ms);
+                true
+            } else {
+                false
+            }
+        } else {
+            false
+        }
+    };
+    if should_emit_discovery {
+        for peer in &peer_nodes {
+            let heartbeat = ProtocolMessage::Gossip(ProtocolGossipMessage::Heartbeat {
+                from: local_node,
+                shard: ShardId(1),
+            });
+            let _ = broadcaster.send(*peer, heartbeat);
+            let peer_list = ProtocolMessage::Gossip(ProtocolGossipMessage::PeerList {
+                from: local_node,
+                peers: peer_nodes.clone(),
+            });
+            let _ = broadcaster.send(*peer, peer_list);
+        }
+    }
+
+    if success == 0 {
+        bail!(
+            "public broadcast failed: chain_id={} tx_hash=0x{} reason=native_send_failed failed={} details={}",
+            chain_id,
+            to_hex(tx_hash),
+            failed,
+            errors.join(";")
+        );
+    }
+    let mut result = serde_json::json!({
+        "broadcasted": true,
+        "chain_id": format!("0x{:x}", chain_id),
+        "tx_hash": format!("0x{}", to_hex(tx_hash)),
+        "mode": format!("native_{}", transport.as_mode()),
+        "sent": format!("0x{:x}", success),
+        "failed": format!("0x{:x}", failed),
+        "peers": format!("0x{:x}", success.saturating_add(failed)),
+    });
+    if failed > 0 {
+        if let Some(map) = result.as_object_mut() {
+            map.insert(
+                "errors".to_string(),
+                serde_json::Value::Array(
+                    errors
+                        .into_iter()
+                        .take(8)
+                        .map(serde_json::Value::String)
+                        .collect(),
+                ),
+            );
+        }
+    }
+    Ok(Some((
+        result.to_string(),
+        1,
+        format!("native:{}", transport.as_mode()),
+    )))
 }
 
 pub(super) fn gateway_eth_public_broadcast_exec_retry_default(chain_id: u64) -> u64 {
@@ -382,6 +1226,11 @@ pub(super) fn maybe_execute_gateway_eth_public_broadcast(
     required_override: bool,
 ) -> Result<Option<(String, u64, String)>> {
     let Some(exec_path) = gateway_eth_public_broadcast_exec_path(chain_id) else {
+        if let Some(native_result) =
+            execute_gateway_eth_public_broadcast_native(chain_id, tx_hash, payload)?
+        {
+            return Ok(Some(native_result));
+        }
         if required_override || gateway_eth_public_broadcast_required(chain_id) {
             bail!(
                 "public broadcast failed: chain_id={} tx_hash=0x{} reason=executor_not_configured",
@@ -413,6 +1262,159 @@ pub(super) fn maybe_execute_gateway_eth_public_broadcast(
                 e
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn native_sync_pull_tracker_dedups_same_window_before_timeout() {
+        let worker_key = "chain1:udp:node1:0.0.0.0:0:test";
+        clear_gateway_eth_native_sync_pull_tracker(worker_key);
+        let now = 10_000u128;
+        assert_eq!(
+            next_gateway_eth_native_sync_pull_fanout(worker_key, "headers", 101, 200, now),
+            Some(1)
+        );
+        assert_eq!(
+            next_gateway_eth_native_sync_pull_fanout(
+                worker_key,
+                "headers",
+                101,
+                200,
+                now.saturating_add(500)
+            ),
+            None
+        );
+        clear_gateway_eth_native_sync_pull_tracker(worker_key);
+    }
+
+    #[test]
+    fn native_sync_pull_tracker_escalates_fanout_on_timeout_retries() {
+        let worker_key = "chain1:udp:node1:0.0.0.0:0:test2";
+        clear_gateway_eth_native_sync_pull_tracker(worker_key);
+        let now = 20_000u128;
+        assert_eq!(
+            next_gateway_eth_native_sync_pull_fanout(worker_key, "headers", 1, 100, now),
+            Some(1)
+        );
+        let resend_now = now.saturating_add(GATEWAY_ETH_NATIVE_SYNC_PULL_RESEND_MS + 10);
+        assert_eq!(
+            next_gateway_eth_native_sync_pull_fanout(worker_key, "headers", 1, 100, resend_now),
+            Some(2)
+        );
+        let resend_again = resend_now.saturating_add(GATEWAY_ETH_NATIVE_SYNC_PULL_RESEND_MS + 10);
+        assert_eq!(
+            next_gateway_eth_native_sync_pull_fanout(worker_key, "headers", 1, 100, resend_again),
+            Some(usize::MAX)
+        );
+        assert_eq!(
+            next_gateway_eth_native_sync_pull_fanout(
+                worker_key,
+                "headers",
+                101,
+                200,
+                resend_again.saturating_add(100)
+            ),
+            Some(1),
+            "window change should reset to single-peer first shot"
+        );
+        clear_gateway_eth_native_sync_pull_tracker(worker_key);
+    }
+
+    #[test]
+    fn select_sync_pull_peers_prefers_highest_runtime_peer() {
+        let peers = vec![NodeId(10), NodeId(11), NodeId(12)];
+        let runtime_heads = vec![(11u64, 200u64), (12u64, 180u64), (10u64, 150u64)];
+        let selected = select_gateway_eth_sync_pull_peers_from_snapshot(&peers, &runtime_heads, 2);
+        assert_eq!(selected, vec![NodeId(11), NodeId(12)]);
+    }
+
+    #[test]
+    fn select_sync_pull_peers_falls_back_to_configured_order_when_unknown() {
+        let peers = vec![NodeId(10), NodeId(11)];
+        let runtime_heads = vec![(99u64, 300u64)];
+        let selected = select_gateway_eth_sync_pull_peers_from_snapshot(&peers, &runtime_heads, 1);
+        assert_eq!(selected, vec![NodeId(10)]);
+    }
+
+    #[test]
+    fn native_discovery_send_is_rate_limited() {
+        assert!(should_send_gateway_eth_native_discovery(10_000, 0));
+        assert!(!should_send_gateway_eth_native_discovery(10_100, 10_000));
+        assert!(should_send_gateway_eth_native_discovery(
+            10_000 + GATEWAY_ETH_NATIVE_DISCOVERY_INTERVAL_MS + 1,
+            10_000
+        ));
+    }
+
+    #[test]
+    fn merge_sync_pull_candidates_keeps_priority_and_uniqueness() {
+        let preferred = vec![NodeId(11), NodeId(12)];
+        let full = vec![NodeId(11), NodeId(10), NodeId(12), NodeId(13)];
+        let merged = merge_gateway_eth_sync_pull_candidates(preferred, full);
+        assert_eq!(merged, vec![NodeId(11), NodeId(12), NodeId(10), NodeId(13)]);
+    }
+
+    #[test]
+    fn sync_pull_phase_routes_to_expected_message_type() {
+        assert!(matches!(
+            gateway_eth_native_sync_pull_msg_type("headers"),
+            DistributedOcccMessageType::StateSync
+        ));
+        assert!(matches!(
+            gateway_eth_native_sync_pull_msg_type("bodies"),
+            DistributedOcccMessageType::ShardState
+        ));
+        assert!(matches!(
+            gateway_eth_native_sync_pull_msg_type("state"),
+            DistributedOcccMessageType::ShardState
+        ));
+        assert!(matches!(
+            gateway_eth_native_sync_pull_msg_type("finalize"),
+            DistributedOcccMessageType::ShardState
+        ));
+    }
+
+    #[test]
+    fn native_discovery_emission_follows_runtime_sync_state() {
+        let chain_id = 8_001_u64;
+        set_network_runtime_sync_status(
+            chain_id,
+            NetworkRuntimeSyncStatus {
+                peer_count: 0,
+                starting_block: 0,
+                current_block: 10,
+                highest_block: 20,
+            },
+        );
+        assert!(gateway_eth_native_should_emit_discovery(chain_id));
+
+        set_network_runtime_sync_status(
+            chain_id,
+            NetworkRuntimeSyncStatus {
+                peer_count: 2,
+                starting_block: 0,
+                current_block: 20,
+                highest_block: 20,
+            },
+        );
+        assert!(!gateway_eth_native_should_emit_discovery(chain_id));
+
+        set_network_runtime_sync_status(
+            chain_id,
+            NetworkRuntimeSyncStatus {
+                peer_count: 1,
+                starting_block: 0,
+                current_block: 20,
+                highest_block: 40,
+            },
+        );
+        assert!(gateway_eth_native_should_emit_discovery(chain_id));
+
+        assert!(gateway_eth_native_should_emit_discovery(9_999_991_u64));
     }
 }
 

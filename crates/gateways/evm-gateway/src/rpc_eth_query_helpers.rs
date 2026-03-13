@@ -305,6 +305,194 @@ pub(super) fn parse_eth_access_list_intrinsic_counts(
     Ok((address_count, storage_key_count))
 }
 
+pub(super) fn parse_eth_blob_intrinsic_fields(params: &serde_json::Value) -> Result<(u64, u64)> {
+    let max_fee_per_blob_gas =
+        param_as_u64_any_with_tx(params, &["max_fee_per_blob_gas", "maxFeePerBlobGas"])
+            .unwrap_or(0);
+    const BLOB_HASH_KEYS: &[&str] = &[
+        "blobVersionedHashes",
+        "blob_versioned_hashes",
+        "blobHashes",
+        "blob_hashes",
+    ];
+    let blob_hashes_value = params_object_with_any_keys(params, BLOB_HASH_KEYS)
+        .and_then(|map| BLOB_HASH_KEYS.iter().find_map(|key| map.get(*key)))
+        .or_else(|| {
+            param_tx_object(params).and_then(|tx| {
+                tx.as_object()
+                    .and_then(|map| BLOB_HASH_KEYS.iter().find_map(|key| map.get(*key)))
+            })
+        });
+    let Some(blob_hashes_value) = blob_hashes_value else {
+        return Ok((max_fee_per_blob_gas, 0));
+    };
+    let Some(blob_hashes) = blob_hashes_value.as_array() else {
+        bail!("blobVersionedHashes must be string[]");
+    };
+    let mut blob_hash_count = 0u64;
+    for (idx, item) in blob_hashes.iter().enumerate() {
+        let hash_raw = value_to_string(item)
+            .ok_or_else(|| anyhow::anyhow!("blobVersionedHashes[{}] must be hex string", idx))?;
+        let decoded = decode_hex_bytes(&hash_raw, "blobVersionedHashes")?;
+        if decoded.len() != 32 {
+            bail!(
+                "blobVersionedHashes[{}] must be 32 bytes hex, got {}",
+                idx,
+                decoded.len()
+            );
+        }
+        blob_hash_count = blob_hash_count.saturating_add(1);
+    }
+    Ok((max_fee_per_blob_gas, blob_hash_count))
+}
+
+fn gateway_eth_chain_bool_env(chain_id: u64, base_key: &str, default: bool) -> bool {
+    let chain_key_dec = format!("{base_key}_CHAIN_{chain_id}");
+    let chain_key_hex = format!("{base_key}_CHAIN_0x{:x}", chain_id);
+    let chain_key_hex_upper = format!("{base_key}_CHAIN_0x{:X}", chain_id);
+    string_env_nonempty(&chain_key_dec)
+        .or_else(|| string_env_nonempty(&chain_key_hex))
+        .or_else(|| string_env_nonempty(&chain_key_hex_upper))
+        .and_then(|raw| {
+            let normalized = raw.trim().to_ascii_lowercase();
+            match normalized.as_str() {
+                "1" | "true" | "yes" | "on" => Some(true),
+                "0" | "false" | "no" | "off" => Some(false),
+                _ => None,
+            }
+        })
+        .unwrap_or_else(|| bool_env(base_key, default))
+}
+
+pub(super) fn gateway_eth_chain_u64_env(chain_id: u64, base_key: &str, default: u64) -> u64 {
+    let chain_key_dec = format!("{base_key}_CHAIN_{chain_id}");
+    let chain_key_hex = format!("{base_key}_CHAIN_0x{:x}", chain_id);
+    let chain_key_hex_upper = format!("{base_key}_CHAIN_0x{:X}", chain_id);
+    string_env_nonempty(&chain_key_dec)
+        .or_else(|| string_env_nonempty(&chain_key_hex))
+        .or_else(|| string_env_nonempty(&chain_key_hex_upper))
+        .and_then(|raw| parse_u64_decimal_or_hex(raw.trim()))
+        .unwrap_or_else(|| u64_env(base_key, default))
+}
+
+pub(super) fn gateway_eth_type3_write_enabled(chain_id: u64) -> bool {
+    gateway_eth_chain_bool_env(chain_id, "NOVOVM_EVM_ENABLE_TYPE3_WRITE", false)
+}
+
+pub(super) fn gateway_eth_type2_write_enabled(chain_id: u64) -> bool {
+    gateway_eth_chain_bool_env(chain_id, "NOVOVM_EVM_ENABLE_TYPE2_WRITE", true)
+}
+
+pub(super) fn gateway_eth_type1_write_enabled(chain_id: u64) -> bool {
+    gateway_eth_chain_bool_env(chain_id, "NOVOVM_EVM_ENABLE_TYPE1_WRITE", true)
+}
+
+pub(super) fn gateway_eth_london_fork_block(chain_id: u64) -> u64 {
+    gateway_eth_chain_u64_env(chain_id, "NOVOVM_GATEWAY_ETH_FORK_LONDON_BLOCK", 0)
+}
+
+pub(super) fn gateway_eth_cancun_fork_block(chain_id: u64) -> u64 {
+    gateway_eth_chain_u64_env(chain_id, "NOVOVM_GATEWAY_ETH_FORK_CANCUN_BLOCK", 0)
+}
+
+pub(super) fn gateway_eth_london_active(chain_id: u64, block_number: u64) -> bool {
+    block_number >= gateway_eth_london_fork_block(chain_id)
+}
+
+pub(super) fn gateway_eth_cancun_active(chain_id: u64, block_number: u64) -> bool {
+    block_number >= gateway_eth_cancun_fork_block(chain_id)
+}
+
+pub(super) fn validate_gateway_eth_tx_type_fork_activation(
+    chain_id: u64,
+    tx_type: u8,
+    pending_block_number: u64,
+) -> Result<()> {
+    if tx_type >= 2 && !gateway_eth_london_active(chain_id, pending_block_number) {
+        bail!(
+            "london fork not active for chain_id={} pending_block={} required_block={}",
+            chain_id,
+            pending_block_number,
+            gateway_eth_london_fork_block(chain_id)
+        );
+    }
+    if tx_type == 3 && !gateway_eth_cancun_active(chain_id, pending_block_number) {
+        bail!(
+            "cancun fork not active for chain_id={} pending_block={} required_block={}",
+            chain_id,
+            pending_block_number,
+            gateway_eth_cancun_fork_block(chain_id)
+        );
+    }
+    Ok(())
+}
+
+pub(super) fn resolve_gateway_eth_write_tx_type(
+    chain_id: u64,
+    explicit_tx_type: Option<u64>,
+    has_eip1559_fee_fields: bool,
+    has_access_list_intrinsic: bool,
+    max_fee_per_blob_gas: u64,
+    blob_hash_count: u64,
+) -> Result<u8> {
+    let has_blob_fields = max_fee_per_blob_gas > 0 || blob_hash_count > 0;
+    let tx_type_u64 = explicit_tx_type.unwrap_or(if has_blob_fields {
+        3
+    } else if has_eip1559_fee_fields {
+        2
+    } else if has_access_list_intrinsic {
+        1
+    } else {
+        0
+    });
+    if tx_type_u64 > u8::MAX as u64 {
+        bail!("tx_type out of range: {}", tx_type_u64);
+    }
+    let tx_type = tx_type_u64 as u8;
+    if has_access_list_intrinsic && tx_type != 1 && tx_type != 2 && tx_type != 3 {
+        bail!(
+            "accessList requires tx_type 1 (EIP-2930), 2 (EIP-1559), or 3 (blob), got {}",
+            tx_type
+        );
+    }
+    if has_blob_fields && tx_type != 3 {
+        bail!("blob fields require tx_type 3 (EIP-4844), got {}", tx_type);
+    }
+    if has_eip1559_fee_fields && tx_type == 0 {
+        bail!("legacy tx (type 0) cannot include EIP-1559 fee fields");
+    }
+    if has_eip1559_fee_fields && tx_type == 1 {
+        bail!("access-list tx (type 1) cannot include EIP-1559 fee fields");
+    }
+    if tx_type == 1 && !gateway_eth_type1_write_enabled(chain_id) {
+        bail!(
+            "access-list (type 1) write path disabled for chain_id={}",
+            chain_id
+        );
+    }
+    if tx_type == 2 && !gateway_eth_type2_write_enabled(chain_id) {
+        bail!(
+            "dynamic-fee (type 2) write path disabled for chain_id={}",
+            chain_id
+        );
+    }
+    if tx_type == 3 {
+        if !gateway_eth_type3_write_enabled(chain_id) {
+            bail!(
+                "blob (type 3) write path disabled for chain_id={}",
+                chain_id
+            );
+        }
+        if max_fee_per_blob_gas == 0 {
+            bail!("blob tx maxFeePerBlobGas must be non-zero");
+        }
+        if blob_hash_count == 0 {
+            bail!("blob tx requires blobVersionedHashes");
+        }
+    }
+    Ok(tx_type)
+}
+
 pub(super) fn parse_eth_block_number_from_tag(tag: &str, latest: u64) -> Result<Option<u64>> {
     let normalized = tag.trim().trim_matches('"');
     if normalized.is_empty()
@@ -333,47 +521,184 @@ pub(super) fn gateway_eth_block_hash_for_txs(
 ) -> [u8; 32] {
     let mut tx_hashes: Vec<[u8; 32]> = txs.iter().map(|item| item.tx_hash).collect();
     tx_hashes.sort();
-    gateway_eth_pseudo_block_hash(chain_id, block_number, &tx_hashes)
+    gateway_eth_block_hash_from_tx_hashes(chain_id, block_number, &tx_hashes)
 }
 
-pub(super) fn gateway_eth_pseudo_block_hash(
+pub(super) fn gateway_eth_block_hash_from_tx_hashes(
     chain_id: u64,
     block_number: u64,
     tx_hashes: &[[u8; 32]],
 ) -> [u8; 32] {
-    let mut hasher = Sha256::new();
-    hasher.update(b"gateway-evm-pseudo-block-v1");
+    let mut hasher = Keccak256::new();
+    hasher.update(b"gateway-evm-block-hash-v1");
     hasher.update(chain_id.to_le_bytes());
     hasher.update(block_number.to_le_bytes());
     for tx_hash in tx_hashes {
         hasher.update(tx_hash);
     }
-    let digest = hasher.finalize();
+    hasher.finalize().into()
+}
+
+pub(super) fn gateway_eth_block_merkle_root_from_sorted_txs(
+    _domain: &[u8],
+    _chain_id: u64,
+    _block_number: u64,
+    sorted_txs: &[GatewayEthTxIndexEntry],
+) -> [u8; 32] {
+    if sorted_txs.is_empty() {
+        return gateway_eth_empty_trie_root_bytes_for_block_roots();
+    }
+    let kv_pairs = sorted_txs
+        .iter()
+        .enumerate()
+        .map(|(idx, tx)| {
+            (
+                gateway_eth_rlp_encode_u64(idx as u64),
+                gateway_eth_transaction_leaf_payload(tx),
+            )
+        })
+        .collect::<Vec<(Vec<u8>, Vec<u8>)>>();
+    gateway_eth_mpt_root_from_kv_pairs(&kv_pairs)
+}
+
+fn gateway_eth_empty_trie_root_bytes_for_block_roots() -> [u8; 32] {
     let mut out = [0u8; 32];
-    out.copy_from_slice(&digest[..32]);
+    if let Ok(bytes) = decode_hex_bytes(GATEWAY_ETH_EMPTY_TRIE_ROOT, "empty_trie_root") {
+        if bytes.len() == 32 {
+            out.copy_from_slice(&bytes);
+        }
+    }
     out
 }
 
-pub(super) fn gateway_eth_pseudo_block_root_from_sorted_txs(
-    domain: &[u8],
-    chain_id: u64,
-    block_number: u64,
-    sorted_txs: &[GatewayEthTxIndexEntry],
-) -> [u8; 32] {
-    let mut hasher = Sha256::new();
-    hasher.update(domain);
-    hasher.update(chain_id.to_le_bytes());
-    hasher.update(block_number.to_le_bytes());
-    for tx in sorted_txs {
-        hasher.update(tx.tx_hash);
-        hasher.update(tx.tx_type.to_le_bytes());
-        hasher.update(tx.gas_limit.to_le_bytes());
-        hasher.update(tx.gas_price.to_le_bytes());
+fn gateway_eth_rlp_encode_length(prefix_short: u8, prefix_long: u8, len: usize) -> Vec<u8> {
+    if len <= 55 {
+        return vec![prefix_short + len as u8];
     }
-    let digest = hasher.finalize();
-    let mut out = [0u8; 32];
-    out.copy_from_slice(&digest[..32]);
+    let mut len_bytes = Vec::new();
+    let mut v = len;
+    while v > 0 {
+        len_bytes.push((v & 0xff) as u8);
+        v >>= 8;
+    }
+    if len_bytes.is_empty() {
+        len_bytes.push(0);
+    }
+    len_bytes.reverse();
+    let mut out = Vec::with_capacity(1 + len_bytes.len());
+    out.push(prefix_long + len_bytes.len() as u8);
+    out.extend_from_slice(&len_bytes);
     out
+}
+
+fn gateway_eth_rlp_encode_bytes(bytes: &[u8]) -> Vec<u8> {
+    if bytes.is_empty() {
+        return vec![0x80];
+    }
+    if bytes.len() == 1 && bytes[0] < 0x80 {
+        return vec![bytes[0]];
+    }
+    let mut out = gateway_eth_rlp_encode_length(0x80, 0xb7, bytes.len());
+    out.extend_from_slice(bytes);
+    out
+}
+
+fn gateway_eth_rlp_encode_u64(v: u64) -> Vec<u8> {
+    if v == 0 {
+        return gateway_eth_rlp_encode_bytes(&[]);
+    }
+    let bytes = v.to_be_bytes();
+    let first_non_zero = bytes
+        .iter()
+        .position(|b| *b != 0)
+        .unwrap_or(bytes.len() - 1);
+    gateway_eth_rlp_encode_bytes(&bytes[first_non_zero..])
+}
+
+fn gateway_eth_rlp_encode_u128(v: u128) -> Vec<u8> {
+    if v == 0 {
+        return gateway_eth_rlp_encode_bytes(&[]);
+    }
+    let bytes = v.to_be_bytes();
+    let first_non_zero = bytes
+        .iter()
+        .position(|b| *b != 0)
+        .unwrap_or(bytes.len() - 1);
+    gateway_eth_rlp_encode_bytes(&bytes[first_non_zero..])
+}
+
+fn gateway_eth_rlp_encode_list(items: &[Vec<u8>]) -> Vec<u8> {
+    let payload_len = items.iter().map(Vec::len).sum();
+    let mut out = gateway_eth_rlp_encode_length(0xc0, 0xf7, payload_len);
+    for item in items {
+        out.extend_from_slice(item);
+    }
+    out
+}
+
+fn gateway_eth_transaction_leaf_payload(tx: &GatewayEthTxIndexEntry) -> Vec<u8> {
+    let to = tx.to.as_deref().unwrap_or(&[]);
+    gateway_eth_rlp_encode_list(&[
+        gateway_eth_rlp_encode_bytes(&tx.tx_hash),
+        gateway_eth_rlp_encode_u64(tx.tx_type as u64),
+        gateway_eth_rlp_encode_bytes(tx.from.as_slice()),
+        gateway_eth_rlp_encode_bytes(to),
+        gateway_eth_rlp_encode_u128(tx.value),
+        gateway_eth_rlp_encode_u64(tx.gas_limit),
+        gateway_eth_rlp_encode_u64(tx.gas_price),
+        gateway_eth_rlp_encode_bytes(tx.input.as_slice()),
+    ])
+}
+
+fn gateway_eth_receipt_leaf_payload(
+    tx: &GatewayEthTxIndexEntry,
+    cumulative_gas_used: u128,
+    effective_gas_price: u64,
+    contract_address: &[u8],
+    status_flag: u8,
+) -> Vec<u8> {
+    gateway_eth_rlp_encode_list(&[
+        gateway_eth_rlp_encode_u64(status_flag as u64),
+        gateway_eth_rlp_encode_u128(cumulative_gas_used),
+        gateway_eth_rlp_encode_u64(tx.gas_limit),
+        gateway_eth_rlp_encode_u64(effective_gas_price),
+        gateway_eth_rlp_encode_bytes(&tx.tx_hash),
+        gateway_eth_rlp_encode_u64(tx.tx_type as u64),
+        gateway_eth_rlp_encode_bytes(contract_address),
+    ])
+}
+
+pub(super) fn gateway_eth_receipts_root_from_sorted_txs(
+    chain_id: u64,
+    _block_number: u64,
+    sorted_txs: &[GatewayEthTxIndexEntry],
+    is_pending_block: bool,
+) -> [u8; 32] {
+    if sorted_txs.is_empty() {
+        return gateway_eth_empty_trie_root_bytes_for_block_roots();
+    }
+
+    let base_fee_per_gas = gateway_eth_base_fee_per_gas_wei(chain_id);
+    let mut kv_pairs = Vec::<(Vec<u8>, Vec<u8>)>::with_capacity(sorted_txs.len());
+    for (tx_index, tx) in sorted_txs.iter().enumerate() {
+        let cumulative_gas_used = gateway_eth_block_cumulative_gas_used(sorted_txs, tx_index);
+        let effective_gas_price = gateway_eth_effective_gas_price_wei(tx, base_fee_per_gas);
+        let contract_address = if tx.to.is_none() {
+            gateway_eth_derive_contract_address(&tx.from, tx.nonce)
+        } else {
+            Vec::new()
+        };
+        let status_flag: u8 = if is_pending_block { 0 } else { 1 };
+        let payload = gateway_eth_receipt_leaf_payload(
+            tx,
+            cumulative_gas_used,
+            effective_gas_price,
+            contract_address.as_slice(),
+            status_flag,
+        );
+        kv_pairs.push((gateway_eth_rlp_encode_u64(tx_index as u64), payload));
+    }
+    gateway_eth_mpt_root_from_kv_pairs(&kv_pairs)
 }
 
 pub(super) fn gateway_eth_block_by_number_json(
@@ -382,28 +707,25 @@ pub(super) fn gateway_eth_block_by_number_json(
     txs: &[GatewayEthTxIndexEntry],
     full_transactions: bool,
     is_pending_block: bool,
+    state_root_override: Option<[u8; 32]>,
 ) -> serde_json::Value {
     let mut sorted_txs = txs.to_vec();
     sort_gateway_eth_block_txs(&mut sorted_txs);
     let block_hash = gateway_eth_block_hash_for_txs(chain_id, block_number, &sorted_txs);
-    let transactions_root = gateway_eth_pseudo_block_root_from_sorted_txs(
+    let transactions_root = gateway_eth_block_merkle_root_from_sorted_txs(
         b"gateway-evm-transactions-root-v1",
         chain_id,
         block_number,
         &sorted_txs,
     );
-    let receipts_root = gateway_eth_pseudo_block_root_from_sorted_txs(
-        b"gateway-evm-receipts-root-v1",
+    let receipts_root = gateway_eth_receipts_root_from_sorted_txs(
         chain_id,
         block_number,
         &sorted_txs,
+        is_pending_block,
     );
-    let state_root = gateway_eth_pseudo_block_root_from_sorted_txs(
-        b"gateway-evm-state-root-v1",
-        chain_id,
-        block_number,
-        &sorted_txs,
-    );
+    let state_root =
+        state_root_override.unwrap_or_else(|| gateway_eth_state_root_from_entries(&sorted_txs));
     let gas_used = sorted_txs
         .iter()
         .fold(0u128, |acc, tx| acc.saturating_add(tx.gas_limit as u128));
@@ -411,9 +733,9 @@ pub(super) fn gateway_eth_block_by_number_json(
     let parent_hash = if block_number == 0 {
         [0u8; 32]
     } else {
-        gateway_eth_pseudo_block_hash(chain_id, block_number.saturating_sub(1), &[])
+        gateway_eth_block_hash_from_tx_hashes(chain_id, block_number.saturating_sub(1), &[])
     };
-    let base_fee_per_gas = gateway_eth_base_fee_per_gas_wei();
+    let base_fee_per_gas = gateway_eth_base_fee_per_gas_wei(chain_id);
     let txs_json: Vec<serde_json::Value> = if full_transactions {
         sorted_txs
             .iter()
@@ -457,9 +779,14 @@ pub(super) fn gateway_eth_block_by_number_json(
     })
 }
 
-pub(super) fn gateway_eth_base_fee_per_gas_wei() -> u64 {
-    u64_env(
+pub(super) fn gateway_eth_default_gas_price_wei(chain_id: u64) -> u64 {
+    gateway_eth_chain_u64_env(chain_id, "NOVOVM_GATEWAY_ETH_DEFAULT_GAS_PRICE", 1)
+}
+
+pub(super) fn gateway_eth_base_fee_per_gas_wei(chain_id: u64) -> u64 {
+    gateway_eth_chain_u64_env(
+        chain_id,
         "NOVOVM_GATEWAY_ETH_DEFAULT_BASE_FEE_PER_GAS",
-        u64_env("NOVOVM_GATEWAY_ETH_DEFAULT_GAS_PRICE", 1),
+        gateway_eth_default_gas_price_wei(chain_id),
     )
 }

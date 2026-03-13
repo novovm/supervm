@@ -7,6 +7,37 @@ pub(super) fn gateway_eth_tx_ir_with_hash(mut tx: TxIR) -> TxIR {
     tx
 }
 
+fn gateway_eth_tx_hash32(tx: &TxIR) -> Option<[u8; 32]> {
+    if tx.hash.len() != 32 {
+        return None;
+    }
+    let mut out = [0u8; 32];
+    out.copy_from_slice(&tx.hash);
+    Some(out)
+}
+
+fn merge_gateway_eth_pending_ingress_txs(
+    pending_txs: Vec<TxIR>,
+    mut queued_txs: Vec<TxIR>,
+    ingress_txs: Vec<TxIR>,
+) -> (Vec<TxIR>, Vec<TxIR>) {
+    let mut seen_hashes = BTreeSet::<[u8; 32]>::new();
+    for tx in pending_txs.iter().chain(queued_txs.iter()) {
+        if let Some(hash) = gateway_eth_tx_hash32(tx) {
+            seen_hashes.insert(hash);
+        }
+    }
+    for tx in ingress_txs {
+        if let Some(hash) = gateway_eth_tx_hash32(&tx) {
+            if !seen_hashes.insert(hash) {
+                continue;
+            }
+        }
+        queued_txs.push(tx);
+    }
+    (pending_txs, queued_txs)
+}
+
 pub(super) fn gateway_eth_txpool_tx_json_from_ir(tx: &TxIR) -> serde_json::Value {
     let normalized = gateway_eth_tx_ir_with_hash(tx.clone());
     let (max_fee_per_gas, max_priority_fee_per_gas) =
@@ -121,7 +152,12 @@ pub(super) fn collect_gateway_eth_txpool_runtime_txs(chain_id: u64) -> (Vec<TxIR
         .filter(|bucket| bucket.chain_id == chain_id)
         .flat_map(|bucket| bucket.txs.into_iter().map(gateway_eth_tx_ir_with_hash))
         .collect::<Vec<TxIR>>();
-    (executable, queued)
+    let ingress = snapshot_pending_ingress_frames_for_host(max_items)
+        .into_iter()
+        .filter(|frame| frame.chain_id == chain_id)
+        .filter_map(|frame| frame.parsed_tx.map(gateway_eth_tx_ir_with_hash))
+        .collect::<Vec<TxIR>>();
+    merge_gateway_eth_pending_ingress_txs(executable, queued, ingress)
 }
 
 pub(super) fn collect_gateway_eth_pending_hashes_runtime(chain_id: u64) -> BTreeSet<[u8; 32]> {
@@ -473,4 +509,52 @@ pub(super) fn build_gateway_eth_txpool_inspect(
         "pending": pending_json,
         "queued": serde_json::json!({}),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn merge_gateway_eth_pending_ingress_txs_skips_hash_duplicates() {
+        let mut pending = TxIR::transfer(vec![0x11; 20], vec![0x21; 20], 1, 1, 1);
+        pending.compute_hash();
+        let mut queued = TxIR::transfer(vec![0x12; 20], vec![0x22; 20], 1, 2, 2);
+        queued.compute_hash();
+        let mut ingress_dup_pending = TxIR::transfer(vec![0x13; 20], vec![0x23; 20], 1, 1, 1);
+        ingress_dup_pending.hash = pending.hash.clone();
+        let mut ingress_dup_queued = TxIR::transfer(vec![0x14; 20], vec![0x24; 20], 1, 2, 2);
+        ingress_dup_queued.hash = queued.hash.clone();
+
+        let (out_pending, out_queued) = merge_gateway_eth_pending_ingress_txs(
+            vec![pending.clone()],
+            vec![queued.clone()],
+            vec![ingress_dup_pending, ingress_dup_queued],
+        );
+        assert_eq!(out_pending.len(), 1);
+        assert_eq!(out_queued.len(), 1);
+        assert_eq!(out_pending[0].hash, pending.hash);
+        assert_eq!(out_queued[0].hash, queued.hash);
+    }
+
+    #[test]
+    fn merge_gateway_eth_pending_ingress_txs_appends_unique_ingress_to_queue() {
+        let mut pending = TxIR::transfer(vec![0x31; 20], vec![0x41; 20], 1, 3, 3);
+        pending.compute_hash();
+        let mut queued = TxIR::transfer(vec![0x32; 20], vec![0x42; 20], 1, 4, 4);
+        queued.compute_hash();
+        let mut ingress = TxIR::transfer(vec![0x33; 20], vec![0x43; 20], 1, 5, 5);
+        ingress.compute_hash();
+
+        let (out_pending, out_queued) = merge_gateway_eth_pending_ingress_txs(
+            vec![pending.clone()],
+            vec![queued.clone()],
+            vec![ingress.clone()],
+        );
+        assert_eq!(out_pending.len(), 1);
+        assert_eq!(out_queued.len(), 2);
+        assert_eq!(out_pending[0].hash, pending.hash);
+        assert_eq!(out_queued[0].hash, queued.hash);
+        assert_eq!(out_queued[1].hash, ingress.hash);
+    }
 }

@@ -417,6 +417,7 @@ fn main() -> Result<()> {
             }
             let msg = ProtocolMessage::Finality(FinalityMessage::CheckpointPropose {
                 id: CheckpointId(batch_id),
+                from: pnode(leader_id as CNodeId),
                 payload: proposal_payload.clone(),
             });
             let encoded = protocol_encode(&msg).context("encode proposal protocol msg failed")?;

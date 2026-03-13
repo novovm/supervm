@@ -11,6 +11,8 @@ novovm-adapter-evm-core = { path = "../../plugins/evm/core" }
 novovm-adapter-evm-plugin = { path = "../../plugins/evm/plugin" }
 novovm-adapter-novovm = { path = "../../novovm-adapter-novovm" }
 novovm-exec = { path = "../../novovm-exec" }
+novovm-network = { path = "../../novovm-network" }
+novovm-protocol = { path = "../../novovm-protocol" }
 rocksdb = { version = "0.22", default-features = false }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

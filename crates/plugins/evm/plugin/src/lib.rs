@@ -1,3 +1,4 @@
+use bincode::Options as _;
 use novovm_adapter_api::{
     AccountAuditEvent, AccountRole, AtomicBroadcastReadyV1, AtomicCrossChainIntentV1,
     AtomicIntentReceiptV1, AtomicIntentStatus, ChainConfig, ChainType, EvmFeeIncomeRecordV1,
@@ -7,7 +8,8 @@ use novovm_adapter_api::{
     UnifiedAccountRouter,
 };
 use novovm_adapter_evm_core::{
-    active_precompile_set_m0, resolve_evm_profile, validate_tx_semantics_m0,
+    active_precompile_set_m0, resolve_evm_chain_type_from_chain_id, resolve_evm_profile,
+    validate_tx_semantics_m0,
 };
 use novovm_adapter_novovm::create_native_adapter;
 use rocksdb::Options as RocksDbOptions;
@@ -455,13 +457,7 @@ fn resolve_evm_runtime_state() -> &'static Mutex<EvmRuntimeState> {
 }
 
 fn infer_chain_type_from_chain_id(chain_id: u64) -> ChainType {
-    match chain_id {
-        1 => ChainType::EVM,
-        56 => ChainType::BNB,
-        137 => ChainType::Polygon,
-        43114 => ChainType::Avalanche,
-        _ => ChainType::EVM,
-    }
+    resolve_evm_chain_type_from_chain_id(chain_id)
 }
 
 fn ensure_tx_hash(mut tx: TxIR) -> TxIR {
@@ -556,6 +552,39 @@ fn tx_present_in_runtime(runtime: &EvmRuntimeState, chain_id: u64, tx_hash: &[u8
             .ingress_frames
             .iter()
             .any(|frame| frame.chain_id == chain_id && frame.tx_hash.as_slice() == tx_hash)
+}
+
+fn tx_matches_runtime_frame(frame: &EvmMempoolIngressFrameV1, chain_id: u64, tx: &TxIR) -> bool {
+    if frame.chain_id != chain_id {
+        return false;
+    }
+    let Some(parsed) = frame.parsed_tx.as_ref() else {
+        return false;
+    };
+    parsed.hash == tx.hash
+        && parsed.from == tx.from
+        && parsed.to == tx.to
+        && parsed.value == tx.value
+        && parsed.gas_limit == tx.gas_limit
+        && parsed.gas_price == tx.gas_price
+        && parsed.nonce == tx.nonce
+        && parsed.data == tx.data
+        && parsed.signature == tx.signature
+        && parsed.chain_id == tx.chain_id
+        && parsed.tx_type == tx.tx_type
+        && parsed.source_chain == tx.source_chain
+        && parsed.target_chain == tx.target_chain
+}
+
+fn tx_present_exact_in_runtime(runtime: &EvmRuntimeState, chain_id: u64, tx: &TxIR) -> bool {
+    runtime
+        .executable_ingress_frames
+        .iter()
+        .any(|frame| tx_matches_runtime_frame(frame, chain_id, tx))
+        || runtime
+            .ingress_frames
+            .iter()
+            .any(|frame| tx_matches_runtime_frame(frame, chain_id, tx))
 }
 
 fn derive_primary_reject_reason(
@@ -836,6 +865,11 @@ fn push_ingress_frames(chain_id: u64, txs: &[TxIR]) -> EvmIngressPushOutcome {
     for tx in txs {
         let tx = ensure_tx_hash(tx.clone());
         let tx_hash = tx.hash.clone();
+        if tx_present_exact_in_runtime(&runtime, chain_id, &tx) {
+            outcome.summary.accepted = outcome.summary.accepted.saturating_add(1);
+            outcome.accepted_txs.push(tx);
+            continue;
+        }
         let sender_key = sender_key_from_tx(chain_id, &tx);
         if let Some(sender_key) = sender_key.as_ref() {
             if let Some(next_nonce) = sender_next_nonce_hint(&runtime, sender_key) {
@@ -1473,6 +1507,9 @@ unsafe fn write_bincode_blob_to_out(
         return NOVOVM_ADAPTER_PLUGIN_RC_INVALID_ARG;
     }
     *out_len = payload.len();
+    if payload.len() > MAX_PLUGIN_TX_IR_BYTES {
+        return NOVOVM_ADAPTER_PLUGIN_RC_PAYLOAD_TOO_LARGE;
+    }
     if out_ptr.is_null() {
         return if out_cap == 0 {
             NOVOVM_ADAPTER_PLUGIN_RC_OK
@@ -1485,6 +1522,22 @@ unsafe fn write_bincode_blob_to_out(
     }
     std::ptr::copy_nonoverlapping(payload.as_ptr(), out_ptr, payload.len());
     NOVOVM_ADAPTER_PLUGIN_RC_OK
+}
+
+fn serialize_bincode_export_blob<T: Serialize>(value: &T) -> Result<Vec<u8>, i32> {
+    match bincode::DefaultOptions::new()
+        .with_fixint_encoding()
+        .with_limit(MAX_PLUGIN_TX_IR_BYTES as u64)
+        .serialize(value)
+    {
+        Ok(v) => Ok(v),
+        Err(err) => {
+            if matches!(*err, bincode::ErrorKind::SizeLimit) {
+                return Err(NOVOVM_ADAPTER_PLUGIN_RC_PAYLOAD_TOO_LARGE);
+            }
+            Err(NOVOVM_ADAPTER_PLUGIN_RC_APPLY_FAILED)
+        }
+    }
 }
 
 fn default_plugin_store_path(backend: UaPluginStoreBackend) -> PathBuf {
@@ -1949,9 +2002,19 @@ fn decode_plugin_apply_inputs(
     };
 
     let tx_bytes = unsafe { std::slice::from_raw_parts(tx_ir_ptr, tx_ir_len) };
-    let txs: Vec<TxIR> = match bincode::deserialize(tx_bytes) {
+    let txs: Vec<TxIR> = match bincode::DefaultOptions::new()
+        .with_fixint_encoding()
+        .allow_trailing_bytes()
+        .with_limit(MAX_PLUGIN_TX_IR_BYTES as u64)
+        .deserialize(tx_bytes)
+    {
         Ok(v) => v,
-        Err(_) => return Err(NOVOVM_ADAPTER_PLUGIN_RC_DECODE_FAILED),
+        Err(err) => {
+            if matches!(*err, bincode::ErrorKind::SizeLimit) {
+                return Err(NOVOVM_ADAPTER_PLUGIN_RC_PAYLOAD_TOO_LARGE);
+            }
+            return Err(NOVOVM_ADAPTER_PLUGIN_RC_DECODE_FAILED);
+        }
     };
     validate_plugin_tx_batch(&txs)?;
     Ok((chain_type, txs))
@@ -2200,9 +2263,9 @@ pub unsafe extern "C" fn novovm_adapter_plugin_drain_ingress_bincode_v1(
     out_len: *mut usize,
 ) -> i32 {
     let frames = drain_plugin_ingress_frames_for_host(max_items);
-    let payload = match bincode::serialize(&frames) {
+    let payload = match serialize_bincode_export_blob(&frames) {
         Ok(v) => v,
-        Err(_) => return NOVOVM_ADAPTER_PLUGIN_RC_APPLY_FAILED,
+        Err(rc) => return rc,
     };
     write_bincode_blob_to_out(&payload, out_ptr, out_cap, out_len)
 }
@@ -2221,9 +2284,9 @@ pub unsafe extern "C" fn novovm_adapter_plugin_drain_executable_ingress_bincode_
     out_len: *mut usize,
 ) -> i32 {
     let frames = drain_executable_ingress_frames_for_host(max_items);
-    let payload = match bincode::serialize(&frames) {
+    let payload = match serialize_bincode_export_blob(&frames) {
         Ok(v) => v,
-        Err(_) => return NOVOVM_ADAPTER_PLUGIN_RC_APPLY_FAILED,
+        Err(rc) => return rc,
     };
     write_bincode_blob_to_out(&payload, out_ptr, out_cap, out_len)
 }
@@ -2242,9 +2305,9 @@ pub unsafe extern "C" fn novovm_adapter_plugin_drain_pending_ingress_bincode_v1(
     out_len: *mut usize,
 ) -> i32 {
     let frames = drain_pending_ingress_frames_for_host(max_items);
-    let payload = match bincode::serialize(&frames) {
+    let payload = match serialize_bincode_export_blob(&frames) {
         Ok(v) => v,
-        Err(_) => return NOVOVM_ADAPTER_PLUGIN_RC_APPLY_FAILED,
+        Err(rc) => return rc,
     };
     write_bincode_blob_to_out(&payload, out_ptr, out_cap, out_len)
 }
@@ -2264,9 +2327,9 @@ pub unsafe extern "C" fn novovm_adapter_plugin_snapshot_pending_sender_buckets_b
     out_len: *mut usize,
 ) -> i32 {
     let buckets = snapshot_pending_sender_buckets_for_host(max_senders, max_txs_per_sender);
-    let payload = match bincode::serialize(&buckets) {
+    let payload = match serialize_bincode_export_blob(&buckets) {
         Ok(v) => v,
-        Err(_) => return NOVOVM_ADAPTER_PLUGIN_RC_APPLY_FAILED,
+        Err(rc) => return rc,
     };
     write_bincode_blob_to_out(&payload, out_ptr, out_cap, out_len)
 }
@@ -2285,9 +2348,9 @@ pub unsafe extern "C" fn novovm_adapter_plugin_drain_atomic_receipts_bincode_v1(
     out_len: *mut usize,
 ) -> i32 {
     let receipts = drain_atomic_receipts_for_host(max_items);
-    let payload = match bincode::serialize(&receipts) {
+    let payload = match serialize_bincode_export_blob(&receipts) {
         Ok(v) => v,
-        Err(_) => return NOVOVM_ADAPTER_PLUGIN_RC_APPLY_FAILED,
+        Err(rc) => return rc,
     };
     write_bincode_blob_to_out(&payload, out_ptr, out_cap, out_len)
 }
@@ -2306,9 +2369,9 @@ pub unsafe extern "C" fn novovm_adapter_plugin_drain_settlement_records_bincode_
     out_len: *mut usize,
 ) -> i32 {
     let records = drain_settlement_records_for_host(max_items);
-    let payload = match bincode::serialize(&records) {
+    let payload = match serialize_bincode_export_blob(&records) {
         Ok(v) => v,
-        Err(_) => return NOVOVM_ADAPTER_PLUGIN_RC_APPLY_FAILED,
+        Err(rc) => return rc,
     };
     write_bincode_blob_to_out(&payload, out_ptr, out_cap, out_len)
 }
@@ -2327,9 +2390,9 @@ pub unsafe extern "C" fn novovm_adapter_plugin_drain_payout_instructions_bincode
     out_len: *mut usize,
 ) -> i32 {
     let records = drain_payout_instructions_for_host(max_items);
-    let payload = match bincode::serialize(&records) {
+    let payload = match serialize_bincode_export_blob(&records) {
         Ok(v) => v,
-        Err(_) => return NOVOVM_ADAPTER_PLUGIN_RC_APPLY_FAILED,
+        Err(rc) => return rc,
     };
     write_bincode_blob_to_out(&payload, out_ptr, out_cap, out_len)
 }
@@ -2348,9 +2411,9 @@ pub unsafe extern "C" fn novovm_adapter_plugin_drain_atomic_broadcast_ready_binc
     out_len: *mut usize,
 ) -> i32 {
     let items = drain_atomic_broadcast_ready_for_host(max_items);
-    let payload = match bincode::serialize(&items) {
+    let payload = match serialize_bincode_export_blob(&items) {
         Ok(v) => v,
-        Err(_) => return NOVOVM_ADAPTER_PLUGIN_RC_APPLY_FAILED,
+        Err(rc) => return rc,
     };
     write_bincode_blob_to_out(&payload, out_ptr, out_cap, out_len)
 }
@@ -2368,9 +2431,9 @@ pub unsafe extern "C" fn novovm_adapter_plugin_get_settlement_snapshot_bincode_v
     out_len: *mut usize,
 ) -> i32 {
     let snapshot = settlement_snapshot_for_host();
-    let payload = match bincode::serialize(&snapshot) {
+    let payload = match serialize_bincode_export_blob(&snapshot) {
         Ok(v) => v,
-        Err(_) => return NOVOVM_ADAPTER_PLUGIN_RC_APPLY_FAILED,
+        Err(rc) => return rc,
     };
     write_bincode_blob_to_out(&payload, out_ptr, out_cap, out_len)
 }
@@ -2762,6 +2825,34 @@ mod tests {
     }
 
     #[test]
+    fn ingress_txpool_duplicate_tx_is_idempotent_accepted() {
+        let _guard = runtime_queue_test_guard();
+        reset_runtime_queues_for_test();
+
+        let tx = sample_tx(1, 99);
+        let first = runtime_tap_ir_batch_v1(ChainType::EVM, 1, std::slice::from_ref(&tx), 0)
+            .expect("first tap ok");
+        assert_eq!(first.requested, 1);
+        assert_eq!(first.accepted, 1);
+        assert_eq!(first.dropped, 0);
+
+        let second = runtime_tap_ir_batch_v1(ChainType::EVM, 1, std::slice::from_ref(&tx), 0)
+            .expect("second tap ok");
+        assert_eq!(second.requested, 1);
+        assert_eq!(second.accepted, 1);
+        assert_eq!(second.dropped, 0);
+        assert!(second.reject_reasons.is_empty());
+        assert_eq!(second.primary_reject_reason, None);
+
+        let frames = drain_plugin_ingress_frames_for_host(16);
+        let same_hash_count = frames
+            .iter()
+            .filter(|frame| frame.tx_hash == tx.hash)
+            .count();
+        assert_eq!(same_hash_count, 1);
+    }
+
+    #[test]
     fn ingress_txpool_rejects_nonce_gap_beyond_threshold() {
         let _guard = runtime_queue_test_guard();
         reset_runtime_queues_for_test();
@@ -2944,7 +3035,9 @@ mod tests {
         assert_eq!(first.accepted, 1);
         assert_eq!(first.dropped, 0);
 
-        let low_replace = with_gas_price(sample_tx(1, 0), 1);
+        let mut low_replace = sample_tx(1, 0);
+        low_replace.to = Some(encode_address(2001));
+        low_replace = resign_tx(low_replace);
         let second = runtime_tap_ir_batch_v1(ChainType::EVM, 1, &[low_replace], 0).expect("tap ok");
         assert_eq!(second.requested, 1);
         assert_eq!(second.accepted, 0);
@@ -3285,6 +3378,37 @@ mod tests {
                 &mut out as *mut NovovmAdapterPluginApplyResultV1,
             )
         };
+        assert_eq!(rc, NOVOVM_ADAPTER_PLUGIN_RC_PAYLOAD_TOO_LARGE);
+    }
+
+    #[test]
+    fn plugin_apply_v1_rejects_decode_size_limit_payload() {
+        let mut out = NovovmAdapterPluginApplyResultV1::default();
+        let mut payload = Vec::new();
+        // Vec<TxIR> length prefix set to a huge value; decode must hard-fail (never succeed).
+        payload.extend_from_slice(&u64::MAX.to_le_bytes());
+        let rc = unsafe {
+            novovm_adapter_plugin_apply_v1(
+                1,
+                1,
+                payload.as_ptr(),
+                payload.len(),
+                &mut out as *mut NovovmAdapterPluginApplyResultV1,
+            )
+        };
+        assert!(
+            rc == NOVOVM_ADAPTER_PLUGIN_RC_PAYLOAD_TOO_LARGE
+                || rc == NOVOVM_ADAPTER_PLUGIN_RC_DECODE_FAILED
+        );
+    }
+
+    #[test]
+    fn bincode_export_rejects_payload_over_size_limit() {
+        let payload = vec![0u8; MAX_PLUGIN_TX_IR_BYTES + 1];
+        let mut out_len = 0usize;
+        let rc =
+            unsafe { write_bincode_blob_to_out(&payload, std::ptr::null_mut(), 0, &mut out_len) };
+        assert_eq!(out_len, payload.len());
         assert_eq!(rc, NOVOVM_ADAPTER_PLUGIN_RC_PAYLOAD_TOO_LARGE);
     }
 }

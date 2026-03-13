@@ -868,6 +868,8 @@ dependencies = [
  "novovm-adapter-evm-plugin",
  "novovm-adapter-novovm",
  "novovm-exec",
+ "novovm-network",
+ "novovm-protocol",
  "rocksdb",
  "serde",
  "serde_json",

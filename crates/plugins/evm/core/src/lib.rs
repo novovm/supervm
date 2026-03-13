@@ -2,6 +2,8 @@
 
 use anyhow::bail;
 use novovm_adapter_api::{BlockIR, ChainType, TxIR, TxType};
+use std::collections::HashMap;
+use std::sync::OnceLock;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EvmChainProfileKind {
@@ -57,6 +59,9 @@ pub struct EvmRawTxFieldsM0 {
     pub nonce: Option<u64>,
     pub gas_limit: Option<u64>,
     pub gas_price: Option<u64>,
+    pub max_priority_fee_per_gas: Option<u64>,
+    pub max_fee_per_blob_gas: Option<u64>,
+    pub blob_hash_count: Option<u64>,
     pub access_list_address_count: Option<u64>,
     pub access_list_storage_key_count: Option<u64>,
     pub to: Option<Vec<u8>>,
@@ -149,6 +154,95 @@ const AVALANCHE_CCHAIN_MAINNET_PRECOMPILES_M0: &[&str] = &[
     "blake2f",
 ];
 
+static EVM_CHAIN_TYPE_OVERRIDES: OnceLock<HashMap<u64, ChainType>> = OnceLock::new();
+
+fn parse_evm_chain_type_overrides(raw: &str) -> HashMap<u64, ChainType> {
+    let mut out = HashMap::<u64, ChainType>::new();
+    for entry in raw.split([',', ';']) {
+        let trimmed = entry.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let (chain_id_raw, chain_type_raw) = if let Some((left, right)) = trimmed.split_once('=') {
+            (left.trim(), right.trim())
+        } else if let Some((left, right)) = trimmed.split_once(':') {
+            (left.trim(), right.trim())
+        } else {
+            continue;
+        };
+        let Ok(chain_id) = chain_id_raw.parse::<u64>() else {
+            continue;
+        };
+        let Ok(chain_type) = ChainType::parse(chain_type_raw) else {
+            continue;
+        };
+        if supports_evm_family(chain_type) {
+            out.insert(chain_id, chain_type);
+        }
+    }
+    out
+}
+
+fn evm_chain_type_overrides() -> &'static HashMap<u64, ChainType> {
+    EVM_CHAIN_TYPE_OVERRIDES.get_or_init(|| {
+        std::env::var("NOVOVM_EVM_CHAIN_TYPE_OVERRIDES")
+            .ok()
+            .map(|raw| parse_evm_chain_type_overrides(&raw))
+            .unwrap_or_default()
+    })
+}
+
+fn parse_bool_env(raw: &str) -> Option<bool> {
+    let normalized = raw.trim().to_ascii_lowercase();
+    match normalized.as_str() {
+        "1" | "true" | "yes" | "on" => Some(true),
+        "0" | "false" | "no" | "off" => Some(false),
+        _ => None,
+    }
+}
+
+fn evm_bool_env(base_key: &str, default: bool) -> bool {
+    std::env::var(base_key)
+        .ok()
+        .and_then(|raw| parse_bool_env(&raw))
+        .unwrap_or(default)
+}
+
+fn evm_chain_bool_env(chain_id: u64, base_key: &str, default: bool) -> bool {
+    let chain_key_dec = format!("{base_key}_CHAIN_{chain_id}");
+    let chain_key_hex = format!("{base_key}_CHAIN_0x{:x}", chain_id);
+    std::env::var(&chain_key_dec)
+        .ok()
+        .or_else(|| std::env::var(&chain_key_hex).ok())
+        .and_then(|raw| parse_bool_env(&raw))
+        .unwrap_or_else(|| evm_bool_env(base_key, default))
+}
+
+fn evm_type1_write_enabled_for_chain(chain_id: u64) -> bool {
+    evm_chain_bool_env(chain_id, "NOVOVM_EVM_ENABLE_TYPE1_WRITE", true)
+}
+
+fn evm_type2_write_enabled_for_chain(chain_id: u64) -> bool {
+    evm_chain_bool_env(chain_id, "NOVOVM_EVM_ENABLE_TYPE2_WRITE", true)
+}
+
+fn evm_type3_write_enabled_for_chain(chain_id: u64) -> bool {
+    evm_chain_bool_env(chain_id, "NOVOVM_EVM_ENABLE_TYPE3_WRITE", false)
+}
+
+#[must_use]
+pub fn resolve_evm_chain_type_from_chain_id(chain_id: u64) -> ChainType {
+    if let Some(chain_type) = evm_chain_type_overrides().get(&chain_id).copied() {
+        return chain_type;
+    }
+    match chain_id {
+        56 => ChainType::BNB,
+        137 => ChainType::Polygon,
+        43114 => ChainType::Avalanche,
+        _ => ChainType::EVM,
+    }
+}
+
 #[must_use]
 pub fn supports_evm_family(chain_type: ChainType) -> bool {
     matches!(
@@ -226,9 +320,11 @@ pub fn resolve_raw_evm_tx_route_hint_m0(raw: &[u8]) -> anyhow::Result<EvmRawTxRo
             tx_type_number: envelope.tx_type_number(),
             tx_type4: false,
         }),
-        EvmRawTxEnvelopeType::Type3Blob => {
-            bail!("unsupported eth tx type: blob (type 3) write path disabled in M0");
-        }
+        EvmRawTxEnvelopeType::Type3Blob => Ok(EvmRawTxRouteHint {
+            envelope,
+            tx_type_number: envelope.tx_type_number(),
+            tx_type4: false,
+        }),
         EvmRawTxEnvelopeType::Type4SetCode => Ok(EvmRawTxRouteHint {
             envelope,
             tx_type_number: envelope.tx_type_number(),
@@ -462,6 +558,9 @@ fn tx_fields_from_legacy_list(
         nonce: Some(nonce),
         gas_limit: Some(gas_limit),
         gas_price: Some(gas_price),
+        max_priority_fee_per_gas: None,
+        max_fee_per_blob_gas: None,
+        blob_hash_count: None,
         access_list_address_count: None,
         access_list_storage_key_count: None,
         to,
@@ -492,6 +591,9 @@ fn tx_fields_from_type1_list(
         nonce: Some(nonce),
         gas_limit: Some(gas_limit),
         gas_price: Some(gas_price),
+        max_priority_fee_per_gas: None,
+        max_fee_per_blob_gas: None,
+        blob_hash_count: None,
         access_list_address_count: Some(access_list_address_count),
         access_list_storage_key_count: Some(access_list_storage_key_count),
         to,
@@ -509,6 +611,7 @@ fn tx_fields_from_type2_list(
     }
     let chain_id = rlp_item_as_u64(&items[0], "type2.chain_id")?;
     let nonce = rlp_item_as_u64(&items[1], "type2.nonce")?;
+    let max_priority_fee_per_gas = rlp_item_as_u64(&items[2], "type2.max_priority_fee_per_gas")?;
     let max_fee_per_gas = rlp_item_as_u64(&items[3], "type2.max_fee_per_gas")?;
     let gas_limit = rlp_item_as_u64(&items[4], "type2.gas_limit")?;
     let to = rlp_item_as_address(&items[5], "type2.to")?;
@@ -522,6 +625,66 @@ fn tx_fields_from_type2_list(
         nonce: Some(nonce),
         gas_limit: Some(gas_limit),
         gas_price: Some(max_fee_per_gas),
+        max_priority_fee_per_gas: Some(max_priority_fee_per_gas),
+        max_fee_per_blob_gas: None,
+        blob_hash_count: None,
+        access_list_address_count: Some(access_list_address_count),
+        access_list_storage_key_count: Some(access_list_storage_key_count),
+        to,
+        value: Some(value),
+        data: Some(data),
+    })
+}
+
+fn rlp_blob_hash_count(item: &RlpItem<'_>, field: &str) -> anyhow::Result<u64> {
+    let RlpItem::List(payload) = item else {
+        bail!("{field} must be rlp list");
+    };
+    let mut cursor = 0usize;
+    let mut count = 0u64;
+    while cursor < payload.len() {
+        let (entry, consumed) = parse_rlp_item(&payload[cursor..])?;
+        let raw = rlp_item_as_bytes(&entry, field)?;
+        if raw.len() != 32 {
+            bail!("{field} entry must be 32 bytes");
+        }
+        cursor = cursor.saturating_add(consumed);
+        count = count.saturating_add(1);
+    }
+    if cursor != payload.len() {
+        bail!("{field} malformed list payload");
+    }
+    Ok(count)
+}
+
+fn tx_fields_from_type3_list(
+    items: &[RlpItem<'_>],
+    hint: EvmRawTxRouteHint,
+) -> anyhow::Result<EvmRawTxFieldsM0> {
+    if items.len() < 11 {
+        bail!("type3 tx rlp list too short: expected >=11 fields");
+    }
+    let chain_id = rlp_item_as_u64(&items[0], "type3.chain_id")?;
+    let nonce = rlp_item_as_u64(&items[1], "type3.nonce")?;
+    let max_priority_fee_per_gas = rlp_item_as_u64(&items[2], "type3.max_priority_fee_per_gas")?;
+    let max_fee_per_gas = rlp_item_as_u64(&items[3], "type3.max_fee_per_gas")?;
+    let gas_limit = rlp_item_as_u64(&items[4], "type3.gas_limit")?;
+    let to = rlp_item_as_address(&items[5], "type3.to")?;
+    let value = rlp_item_as_u128(&items[6], "type3.value")?;
+    let data = rlp_item_as_bytes(&items[7], "type3.data")?.to_vec();
+    let (access_list_address_count, access_list_storage_key_count) =
+        rlp_access_list_intrinsic_counts(&items[8], "type3.access_list")?;
+    let max_fee_per_blob_gas = rlp_item_as_u64(&items[9], "type3.max_fee_per_blob_gas")?;
+    let blob_hash_count = rlp_blob_hash_count(&items[10], "type3.blob_versioned_hashes")?;
+    Ok(EvmRawTxFieldsM0 {
+        hint,
+        chain_id: Some(chain_id),
+        nonce: Some(nonce),
+        gas_limit: Some(gas_limit),
+        gas_price: Some(max_fee_per_gas),
+        max_priority_fee_per_gas: Some(max_priority_fee_per_gas),
+        max_fee_per_blob_gas: Some(max_fee_per_blob_gas),
+        blob_hash_count: Some(blob_hash_count),
         access_list_address_count: Some(access_list_address_count),
         access_list_storage_key_count: Some(access_list_storage_key_count),
         to,
@@ -532,7 +695,7 @@ fn tx_fields_from_type2_list(
 
 pub fn translate_raw_evm_tx_fields_m0(raw: &[u8]) -> anyhow::Result<EvmRawTxFieldsM0> {
     let hint = resolve_raw_evm_tx_route_hint_m0(raw)?;
-    match hint.envelope {
+    let fields = match hint.envelope {
         EvmRawTxEnvelopeType::Legacy => {
             let items = parse_top_level_rlp_list(raw)?;
             tx_fields_from_legacy_list(&items, hint)
@@ -552,7 +715,11 @@ pub fn translate_raw_evm_tx_fields_m0(raw: &[u8]) -> anyhow::Result<EvmRawTxFiel
             tx_fields_from_type2_list(&items, hint)
         }
         EvmRawTxEnvelopeType::Type3Blob => {
-            bail!("unsupported eth tx type: blob (type 3) write path disabled in M0");
+            if raw.len() < 2 {
+                bail!("type3 tx payload is empty");
+            }
+            let items = parse_top_level_rlp_list(&raw[1..])?;
+            tx_fields_from_type3_list(&items, hint)
         }
         EvmRawTxEnvelopeType::Type4SetCode => Ok(EvmRawTxFieldsM0 {
             hint,
@@ -560,13 +727,45 @@ pub fn translate_raw_evm_tx_fields_m0(raw: &[u8]) -> anyhow::Result<EvmRawTxFiel
             nonce: None,
             gas_limit: None,
             gas_price: None,
+            max_priority_fee_per_gas: None,
+            max_fee_per_blob_gas: None,
+            blob_hash_count: None,
             access_list_address_count: None,
             access_list_storage_key_count: None,
             to: None,
             value: None,
             data: None,
         }),
+    }?;
+    let chain_id = fields.chain_id.unwrap_or_default();
+    match fields.hint.envelope {
+        EvmRawTxEnvelopeType::Type1AccessList => {
+            if !evm_type1_write_enabled_for_chain(chain_id) {
+                bail!(
+                    "unsupported eth tx type: access-list (type 1) write path disabled in M0 for chain_id={}",
+                    chain_id
+                );
+            }
+        }
+        EvmRawTxEnvelopeType::Type2DynamicFee => {
+            if !evm_type2_write_enabled_for_chain(chain_id) {
+                bail!(
+                    "unsupported eth tx type: dynamic-fee (type 2) write path disabled in M0 for chain_id={}",
+                    chain_id
+                );
+            }
+        }
+        EvmRawTxEnvelopeType::Type3Blob => {
+            if !evm_type3_write_enabled_for_chain(chain_id) {
+                bail!(
+                    "unsupported eth tx type: blob (type 3) write path disabled in M0 for chain_id={}",
+                    chain_id
+                );
+            }
+        }
+        _ => {}
     }
+    Ok(fields)
 }
 
 pub fn translate_raw_evm_tx_to_ir_m0(
@@ -720,18 +919,25 @@ pub fn estimate_intrinsic_gas_with_access_list_m0(
     ))
 }
 
-fn infer_access_list_intrinsic_counts_from_signature_m0(signature: &[u8]) -> Option<(u64, u64)> {
-    let hint = resolve_raw_evm_tx_route_hint_m0(signature).ok()?;
-    if hint.envelope != EvmRawTxEnvelopeType::Type1AccessList
-        && hint.envelope != EvmRawTxEnvelopeType::Type2DynamicFee
-    {
-        return None;
-    }
-    let fields = translate_raw_evm_tx_fields_m0(signature).ok()?;
-    Some((
-        fields.access_list_address_count.unwrap_or(0),
-        fields.access_list_storage_key_count.unwrap_or(0),
-    ))
+#[must_use]
+pub fn estimate_blob_intrinsic_extra_gas_m0(blob_hash_count: u64) -> u64 {
+    const BLOB_GAS_PER_BLOB: u64 = 131_072;
+    blob_hash_count.saturating_mul(BLOB_GAS_PER_BLOB)
+}
+
+#[must_use]
+pub fn estimate_intrinsic_gas_with_envelope_extras_m0(
+    tx: &TxIR,
+    access_list_address_count: u64,
+    access_list_storage_key_count: u64,
+    blob_hash_count: u64,
+) -> u64 {
+    estimate_intrinsic_gas_with_access_list_m0(
+        tx,
+        access_list_address_count,
+        access_list_storage_key_count,
+    )
+    .saturating_add(estimate_blob_intrinsic_extra_gas_m0(blob_hash_count))
 }
 
 pub fn validate_tx_semantics_m0(profile: &EvmChainProfile, tx: &TxIR) -> anyhow::Result<()> {
@@ -777,12 +983,76 @@ pub fn validate_tx_semantics_m0(profile: &EvmChainProfile, tx: &TxIR) -> anyhow:
         bail!("missing signature");
     }
 
-    let (access_list_address_count, access_list_storage_key_count) =
-        infer_access_list_intrinsic_counts_from_signature_m0(&tx.signature).unwrap_or((0, 0));
-    let intrinsic = estimate_intrinsic_gas_with_access_list_m0(
+    let parsed_fields = translate_raw_evm_tx_fields_m0(&tx.signature).ok();
+    if let Some(fields) = parsed_fields.as_ref() {
+        if let (Some(max_priority), Some(max_fee)) =
+            (fields.max_priority_fee_per_gas, fields.gas_price)
+        {
+            if max_priority > max_fee {
+                bail!(
+                    "max_priority_fee_per_gas exceeds max_fee_per_gas: priority={} max_fee={}",
+                    max_priority,
+                    max_fee
+                );
+            }
+        }
+        match fields.hint.envelope {
+            EvmRawTxEnvelopeType::Type1AccessList => {
+                if !evm_type1_write_enabled_for_chain(profile.chain_id) {
+                    bail!(
+                        "unsupported eth tx type: access-list (type 1) write path disabled in M0 for chain_id={}",
+                        profile.chain_id
+                    );
+                }
+            }
+            EvmRawTxEnvelopeType::Type2DynamicFee => {
+                if !evm_type2_write_enabled_for_chain(profile.chain_id) {
+                    bail!(
+                        "unsupported eth tx type: dynamic-fee (type 2) write path disabled in M0 for chain_id={}",
+                        profile.chain_id
+                    );
+                }
+            }
+            EvmRawTxEnvelopeType::Type3Blob => {
+                if !evm_type3_write_enabled_for_chain(profile.chain_id) {
+                    bail!(
+                        "unsupported eth tx type: blob (type 3) write path disabled in M0 for chain_id={}",
+                        profile.chain_id
+                    );
+                }
+                if fields.max_fee_per_blob_gas.unwrap_or(0) == 0 {
+                    bail!("blob tx max_fee_per_blob_gas must be non-zero");
+                }
+                if fields.blob_hash_count.unwrap_or(0) == 0 {
+                    bail!("blob tx must include at least one blob_versioned_hash");
+                }
+            }
+            EvmRawTxEnvelopeType::Type4SetCode => {
+                if matches!(profile.tx_type4_policy, TxType4Policy::Reject) {
+                    bail!("unsupported eth tx type: set-code (type 4) rejected by profile");
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let access_list_address_count = parsed_fields
+        .as_ref()
+        .and_then(|fields| fields.access_list_address_count)
+        .unwrap_or(0);
+    let access_list_storage_key_count = parsed_fields
+        .as_ref()
+        .and_then(|fields| fields.access_list_storage_key_count)
+        .unwrap_or(0);
+    let blob_hash_count = parsed_fields
+        .as_ref()
+        .and_then(|fields| fields.blob_hash_count)
+        .unwrap_or(0);
+    let intrinsic = estimate_intrinsic_gas_with_envelope_extras_m0(
         tx,
         access_list_address_count,
         access_list_storage_key_count,
+        blob_hash_count,
     );
     if tx.gas_limit < intrinsic {
         bail!(
@@ -990,6 +1260,21 @@ mod tests {
     }
 
     #[test]
+    fn resolve_chain_type_from_chain_id_uses_builtin_defaults() {
+        assert_eq!(resolve_evm_chain_type_from_chain_id(1), ChainType::EVM);
+        assert_eq!(resolve_evm_chain_type_from_chain_id(56), ChainType::BNB);
+        assert_eq!(
+            resolve_evm_chain_type_from_chain_id(137),
+            ChainType::Polygon
+        );
+        assert_eq!(
+            resolve_evm_chain_type_from_chain_id(43114),
+            ChainType::Avalanche
+        );
+        assert_eq!(resolve_evm_chain_type_from_chain_id(8453), ChainType::EVM);
+    }
+
+    #[test]
     fn classify_raw_tx_envelope_supports_legacy_and_typed() {
         let legacy = classify_raw_evm_tx_envelope(&[0xf8, 0x00]).expect("legacy envelope");
         assert_eq!(legacy, EvmRawTxEnvelopeType::Legacy);
@@ -1000,11 +1285,10 @@ mod tests {
     }
 
     #[test]
-    fn route_hint_m0_rejects_blob_writes() {
-        let err = resolve_raw_evm_tx_route_hint_m0(&[0x03, 0xc0]).expect_err("blob must reject");
-        assert!(err
-            .to_string()
-            .contains("blob (type 3) write path disabled in M0"));
+    fn route_hint_m0_accepts_blob_envelope_type() {
+        let hint = resolve_raw_evm_tx_route_hint_m0(&[0x03, 0xc0]).expect("blob route hint");
+        assert_eq!(hint.tx_type_number, 3);
+        assert!(!hint.tx_type4);
     }
 
     #[test]
@@ -1100,6 +1384,92 @@ mod tests {
         assert_eq!(fields.access_list_storage_key_count, Some(0));
         assert_eq!(fields.to, Some(to));
         assert_eq!(fields.value, Some(4));
+    }
+
+    #[test]
+    fn translate_type3_fields_extracts_blob_fee_and_hash_count() {
+        let to = vec![0x44u8; 20];
+        let payload = enc_list(&[
+            enc_u64(1),
+            enc_u64(9),
+            enc_u64(2),
+            enc_u64(30),
+            enc_u64(30_000),
+            enc_bytes(&to),
+            enc_u128(4),
+            enc_bytes(&[]),
+            enc_list(&[]),
+            enc_u64(7),
+            enc_list(&[enc_bytes(&[0x11; 32]), enc_bytes(&[0x22; 32])]),
+            enc_u64(1),
+            enc_u64(1),
+            enc_u64(1),
+        ]);
+        let items = parse_top_level_rlp_list(&payload).expect("type3 payload");
+        let hint = EvmRawTxRouteHint {
+            envelope: EvmRawTxEnvelopeType::Type3Blob,
+            tx_type_number: 3,
+            tx_type4: false,
+        };
+        let fields = tx_fields_from_type3_list(&items, hint).expect("type3 decode");
+        assert_eq!(fields.chain_id, Some(1));
+        assert_eq!(fields.nonce, Some(9));
+        assert_eq!(fields.gas_limit, Some(30_000));
+        assert_eq!(fields.gas_price, Some(30));
+        assert_eq!(fields.max_fee_per_blob_gas, Some(7));
+        assert_eq!(fields.blob_hash_count, Some(2));
+    }
+
+    #[test]
+    fn translate_type3_fields_respects_chain_scoped_type3_toggle() {
+        let to = vec![0x44u8; 20];
+        let payload = enc_list(&[
+            enc_u64(137),
+            enc_u64(9),
+            enc_u64(2),
+            enc_u64(30),
+            enc_u64(30_000),
+            enc_bytes(&to),
+            enc_u128(4),
+            enc_bytes(&[]),
+            enc_list(&[]),
+            enc_u64(7),
+            enc_list(&[enc_bytes(&[0x11; 32])]),
+            enc_u64(1),
+            enc_u64(1),
+            enc_u64(1),
+        ]);
+        let mut raw = vec![0x03];
+        raw.extend_from_slice(&payload);
+
+        let keys = [
+            "NOVOVM_EVM_ENABLE_TYPE3_WRITE",
+            "NOVOVM_EVM_ENABLE_TYPE3_WRITE_CHAIN_137",
+        ];
+        let captured = keys
+            .iter()
+            .map(|k| (k.to_string(), std::env::var(k).ok()))
+            .collect::<Vec<_>>();
+        std::env::set_var("NOVOVM_EVM_ENABLE_TYPE3_WRITE", "0");
+        std::env::remove_var("NOVOVM_EVM_ENABLE_TYPE3_WRITE_CHAIN_137");
+        let err = translate_raw_evm_tx_fields_m0(&raw).expect_err("type3 should reject by default");
+        assert!(err
+            .to_string()
+            .contains("blob (type 3) write path disabled in M0"));
+
+        std::env::set_var("NOVOVM_EVM_ENABLE_TYPE3_WRITE_CHAIN_137", "1");
+        let fields =
+            translate_raw_evm_tx_fields_m0(&raw).expect("type3 should pass on chain override");
+        assert_eq!(fields.chain_id, Some(137));
+        assert_eq!(fields.hint.tx_type_number, 3);
+
+        for (key, value) in captured {
+            if let Some(value) = value {
+                std::env::set_var(&key, value);
+            } else {
+                std::env::remove_var(&key);
+            }
+        }
     }
 
     #[test]
@@ -1306,5 +1676,13 @@ mod tests {
         let err =
             translate_raw_evm_block_to_ir_m0(&block, 1).expect_err("missing hash should reject");
         assert!(err.to_string().contains("evm block hash is required"));
+    }
+
+    #[test]
+    fn estimate_intrinsic_with_blob_adds_blob_gas() {
+        let tx = sample_tx(1);
+        let plain = estimate_intrinsic_gas_with_access_list_m0(&tx, 0, 0);
+        let with_blob = estimate_intrinsic_gas_with_envelope_extras_m0(&tx, 0, 0, 2);
+        assert_eq!(with_blob, plain.saturating_add(2 * 131_072));
     }
 }

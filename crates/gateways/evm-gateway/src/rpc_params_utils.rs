@@ -305,6 +305,46 @@ pub(super) fn param_as_bool_any_with_tx(params: &serde_json::Value, keys: &[&str
     None
 }
 
+pub(super) fn resolve_chain_id_with_tx_consistency(
+    params: &serde_json::Value,
+    default_chain_id: u64,
+) -> Result<u64> {
+    let mut resolved: Option<u64> = None;
+    let mut seen_sources: Vec<(String, u64)> = Vec::new();
+    let mut register_value = |source: String, value: u64| -> Result<()> {
+        seen_sources.push((source, value));
+        if let Some(existing) = resolved {
+            if existing != value {
+                let details = seen_sources
+                    .iter()
+                    .map(|(k, v)| format!("{k}={v}"))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                bail!("chain_id mismatch across params: {}", details);
+            }
+        } else {
+            resolved = Some(value);
+        }
+        Ok(())
+    };
+
+    for key in ["chain_id", "chainId"] {
+        if let Some(value) = param_as_u64(params, key) {
+            register_value(key.to_string(), value)?;
+        }
+    }
+
+    if let Some(tx) = param_tx_object(params) {
+        for key in ["chain_id", "chainId"] {
+            if let Some(value) = param_as_u64(tx, key) {
+                register_value(format!("tx.{key}"), value)?;
+            }
+        }
+    }
+
+    Ok(resolved.unwrap_or(default_chain_id))
+}
+
 pub(super) fn value_to_bool(v: &serde_json::Value) -> Option<bool> {
     match v {
         serde_json::Value::Bool(b) => Some(*b),
@@ -615,12 +655,15 @@ pub(super) fn compute_gateway_eth_tx_hash(input: &GatewayEthTxHashInput<'_>) -> 
     hasher.update(input.value.to_le_bytes());
     hasher.update(input.gas_limit.to_le_bytes());
     hasher.update(input.gas_price.to_le_bytes());
+    hasher.update(input.max_priority_fee_per_gas.to_le_bytes());
     hasher.update((input.data.len() as u64).to_le_bytes());
     hasher.update(input.data);
     hasher.update((input.signature.len() as u64).to_le_bytes());
     hasher.update(input.signature);
     hasher.update(input.access_list_address_count.to_le_bytes());
     hasher.update(input.access_list_storage_key_count.to_le_bytes());
+    hasher.update(input.max_fee_per_blob_gas.to_le_bytes());
+    hasher.update(input.blob_hash_count.to_le_bytes());
     hasher.update(input.signature_domain.as_bytes());
     hasher.update([if input.wants_cross_chain_atomic { 1 } else { 0 }]);
     hasher.finalize().into()
@@ -1246,20 +1289,51 @@ pub(super) fn resolve_gateway_eth_get_proof_entries(
     ))
 }
 
-pub(super) fn parse_u128_hex_or_dec(raw: &str) -> Option<u128> {
+pub(super) fn parse_storage_key_32(raw: &str) -> Option<[u8; 32]> {
     let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
     if let Some(hex) = trimmed
         .strip_prefix("0x")
         .or_else(|| trimmed.strip_prefix("0X"))
     {
         if hex.is_empty() {
-            Some(0)
-        } else {
-            u128::from_str_radix(hex, 16).ok()
+            return Some([0u8; 32]);
         }
-    } else {
-        trimmed.parse::<u128>().ok()
+        if !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return None;
+        }
+        let normalized = if hex.len() % 2 == 1 {
+            let mut prefixed = String::with_capacity(hex.len() + 1);
+            prefixed.push('0');
+            prefixed.push_str(hex);
+            prefixed
+        } else {
+            hex.to_string()
+        };
+        if normalized.len() > 64 {
+            return None;
+        }
+        let mut decoded = Vec::with_capacity(normalized.len() / 2);
+        let bytes = normalized.as_bytes();
+        let mut idx = 0usize;
+        while idx < bytes.len() {
+            let pair = std::str::from_utf8(&bytes[idx..idx + 2]).ok()?;
+            let v = u8::from_str_radix(pair, 16).ok()?;
+            decoded.push(v);
+            idx += 2;
+        }
+        let mut out = [0u8; 32];
+        let start = 32usize.saturating_sub(decoded.len());
+        out[start..].copy_from_slice(&decoded);
+        return Some(out);
     }
+
+    let decimal = trimmed.parse::<u128>().ok()?;
+    let mut out = [0u8; 32];
+    out[16..].copy_from_slice(&decimal.to_be_bytes());
+    Some(out)
 }
 
 pub(super) fn decode_hex_bytes(raw: &str, field: &str) -> Result<Vec<u8>> {

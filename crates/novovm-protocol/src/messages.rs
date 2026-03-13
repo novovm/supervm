@@ -53,6 +53,7 @@ pub enum TwoPcMessage {
 pub enum FinalityMessage {
     CheckpointPropose {
         id: CheckpointId,
+        from: NodeId,
         payload: Vec<u8>,
     },
     Vote {
@@ -62,6 +63,7 @@ pub enum FinalityMessage {
     },
     Cert {
         id: CheckpointId,
+        from: NodeId,
         sigs: Vec<Vec<u8>>,
     },
 }

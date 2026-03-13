@@ -1,4 +1,10 @@
 use super::*;
+use novovm_network::{set_network_runtime_sync_status, NetworkRuntimeSyncStatus};
+use novovm_protocol::{
+    decode as protocol_decode,
+    protocol_catalog::distributed_occc::gossip::MessageType as DistributedOcccMessageType,
+    ProtocolMessage,
+};
 use std::cell::Cell;
 use web30_core::privacy::generate_ring_keypair;
 
@@ -543,9 +549,9 @@ fn eth_tx_hash_queries_respect_default_chain_scope_unless_overridden() {
     assert!(!changed_runtime_explicit_receipt);
     assert_eq!(runtime_explicit_receipt["pending"].as_bool(), Some(true));
     assert!(runtime_explicit_receipt["status"].is_null());
-    assert!(runtime_explicit_receipt["blockNumber"].is_string());
-    assert!(runtime_explicit_receipt["blockHash"].is_string());
-    assert!(runtime_explicit_receipt["transactionIndex"].is_string());
+    assert!(runtime_explicit_receipt["blockNumber"].is_null());
+    assert!(runtime_explicit_receipt["blockHash"].is_null());
+    assert!(runtime_explicit_receipt["transactionIndex"].is_null());
 
     let _ = fs::remove_dir_all(&spool_dir);
 }
@@ -1105,7 +1111,7 @@ fn eth_query_block_number_balance_and_block_by_number_work() {
         block_latest["gasLimit"].as_str(),
         Some(expected_gas_limit.as_str())
     );
-    let expected_base_fee = format!("0x{:x}", gateway_eth_base_fee_per_gas_wei());
+    let expected_base_fee = format!("0x{:x}", gateway_eth_base_fee_per_gas_wei(1));
     assert_eq!(
         block_latest["baseFeePerGas"].as_str(),
         Some(expected_base_fee.as_str())
@@ -1190,6 +1196,125 @@ fn eth_query_block_number_balance_and_block_by_number_work() {
     assert_eq!(logs_bloom.len(), 514);
     assert!(logs_bloom.starts_with("0x"));
     let _ = fs::remove_dir_all(&spool_dir);
+}
+
+#[test]
+fn eth_block_state_root_matches_get_proof_for_same_block_view() {
+    let backend = GatewayEthTxIndexStoreBackend::Memory;
+    let mut router = UnifiedAccountRouter::new();
+    let mut eth_tx_index = HashMap::new();
+    let mut evm_settlement_index_by_id = HashMap::new();
+    let mut evm_settlement_index_by_tx = HashMap::new();
+    let mut evm_pending_payout_by_settlement = HashMap::new();
+    let mut eth_filters = GatewayEthFilterState::default();
+    let spool_dir = std::env::temp_dir().join(format!(
+        "novovm-gateway-state-root-proof-alignment-{}-{}",
+        std::process::id(),
+        now_unix_millis()
+    ));
+    fs::create_dir_all(&spool_dir).expect("create spool dir");
+    let mut ctx = GatewayMethodContext {
+        eth_tx_index_store: &backend,
+        eth_default_chain_id: 1,
+        spool_dir: &spool_dir,
+        eth_filters: &mut eth_filters,
+    };
+
+    let addr_a = vec![0x11u8; 20];
+    let addr_b = vec![0x22u8; 20];
+
+    eth_tx_index.insert(
+        [0x01u8; 32],
+        GatewayEthTxIndexEntry {
+            tx_hash: [0x01u8; 32],
+            uca_id: "uca-state-root-1".to_string(),
+            chain_id: 1,
+            nonce: 1,
+            tx_type: 0,
+            from: addr_a.clone(),
+            to: Some(addr_b.clone()),
+            value: 3,
+            gas_limit: 21_000,
+            gas_price: 1,
+            input: vec![],
+        },
+    );
+    eth_tx_index.insert(
+        [0x02u8; 32],
+        GatewayEthTxIndexEntry {
+            tx_hash: [0x02u8; 32],
+            uca_id: "uca-state-root-2".to_string(),
+            chain_id: 1,
+            nonce: 2,
+            tx_type: 0,
+            from: addr_b,
+            to: Some(addr_a.clone()),
+            value: 1,
+            gas_limit: 21_000,
+            gas_price: 1,
+            input: vec![],
+        },
+    );
+
+    let (block_obj, changed_block_obj) = run_gateway_method(
+        &mut router,
+        &mut eth_tx_index,
+        &mut evm_settlement_index_by_id,
+        &mut evm_settlement_index_by_tx,
+        &mut evm_pending_payout_by_settlement,
+        &mut ctx,
+        "eth_getBlockByNumber",
+        &serde_json::json!({
+            "chain_id": 1u64,
+            "block": "0x2",
+            "full_transactions": false,
+        }),
+    )
+    .expect("eth_getBlockByNumber should work");
+    assert!(!changed_block_obj);
+
+    let all_entries =
+        collect_gateway_eth_chain_entries(&eth_tx_index, &backend, 1, gateway_eth_query_scan_max())
+            .expect("collect chain entries");
+    let latest =
+        resolve_gateway_eth_latest_block_number(1, &all_entries, &backend).expect("resolve latest");
+    let state_entries = resolve_gateway_eth_get_proof_entries(1, all_entries, "0x2", latest)
+        .expect("resolve proof entries")
+        .expect("block view should exist");
+    let expected_state_root = gateway_eth_state_root_from_entries(&state_entries);
+    let expected_state_root_hex = format!("0x{}", to_hex(&expected_state_root));
+
+    assert_eq!(
+        block_obj["stateRoot"].as_str(),
+        Some(expected_state_root_hex.as_str()),
+        "block stateRoot must align with proof-view state root for same block view"
+    );
+
+    let _ = fs::remove_dir_all(&spool_dir);
+}
+
+#[test]
+fn receipts_root_differs_between_pending_and_confirmed_for_same_txs() {
+    let mut txs = vec![GatewayEthTxIndexEntry {
+        tx_hash: [0x77u8; 32],
+        uca_id: "uca-receipts-root".to_string(),
+        chain_id: 1,
+        nonce: 15,
+        tx_type: 2,
+        from: vec![0x11u8; 20],
+        to: Some(vec![0x22u8; 20]),
+        value: 9,
+        gas_limit: 21_000,
+        gas_price: 7,
+        input: vec![0x60, 0x00],
+    }];
+    sort_gateway_eth_block_txs(&mut txs);
+    let pending_root = gateway_eth_receipts_root_from_sorted_txs(1, 15, &txs, true);
+    let confirmed_root = gateway_eth_receipts_root_from_sorted_txs(1, 15, &txs, false);
+    assert_ne!(
+        pending_root, confirmed_root,
+        "pending/confirmed receiptsRoot should differ when receipt status semantics differ"
+    );
 }
 
 #[test]
@@ -1848,7 +1973,7 @@ fn eth_query_block_by_hash_tx_by_block_index_and_logs_work() {
         fee_history["baseFeePerGas"].as_array().map(|v| v.len()),
         Some(3)
     );
-    let expected_base_fee = format!("0x{:x}", gateway_eth_base_fee_per_gas_wei());
+    let expected_base_fee = format!("0x{:x}", gateway_eth_base_fee_per_gas_wei(1));
     let fee_history_base_fees = fee_history["baseFeePerGas"]
         .as_array()
         .expect("baseFeePerGas should be array");
@@ -2390,11 +2515,9 @@ fn eth_filter_and_txpool_methods_work_with_tx_index_state() {
         runtime_tx_by_hash["hash"].as_str(),
         Some(runtime_hash_hex.as_str())
     );
-    assert_eq!(runtime_tx_by_hash["blockNumber"].as_str(), Some("0x1"));
-    let runtime_tx_index = runtime_tx_by_hash["transactionIndex"]
-        .as_str()
-        .expect("runtime tx index should be string");
-    assert!(runtime_tx_index == "0x0" || runtime_tx_index == "0x1");
+    assert!(runtime_tx_by_hash["blockNumber"].is_null());
+    assert!(runtime_tx_by_hash["blockHash"].is_null());
+    assert!(runtime_tx_by_hash["transactionIndex"].is_null());
     assert_eq!(runtime_tx_by_hash["pending"].as_bool(), Some(true));
 
     let (pending_transactions_runtime, changed_pending_transactions_runtime) = run_gateway_method(
@@ -2704,14 +2827,9 @@ fn eth_filter_and_txpool_methods_work_with_tx_index_state() {
     )
     .expect("eth_getTransactionByBlockNumberAndIndex pending(runtime) should work");
     assert!(!changed_tx_by_pending_number_index);
-    assert_eq!(
-        tx_by_pending_number_index["blockNumber"].as_str(),
-        Some("0x1")
-    );
-    assert_eq!(
-        tx_by_pending_number_index["transactionIndex"].as_str(),
-        Some("0x0")
-    );
+    assert!(tx_by_pending_number_index["blockNumber"].is_null());
+    assert!(tx_by_pending_number_index["blockHash"].is_null());
+    assert!(tx_by_pending_number_index["transactionIndex"].is_null());
     assert_eq!(tx_by_pending_number_index["pending"].as_bool(), Some(true));
 
     let (tx_by_pending_hash_index, changed_tx_by_pending_hash_index) = run_gateway_method(
@@ -2730,14 +2848,9 @@ fn eth_filter_and_txpool_methods_work_with_tx_index_state() {
     )
     .expect("eth_getTransactionByBlockHashAndIndex pending(runtime) should work");
     assert!(!changed_tx_by_pending_hash_index);
-    assert_eq!(
-        tx_by_pending_hash_index["blockNumber"].as_str(),
-        Some("0x1")
-    );
-    assert_eq!(
-        tx_by_pending_hash_index["transactionIndex"].as_str(),
-        Some("0x1")
-    );
+    assert!(tx_by_pending_hash_index["blockNumber"].is_null());
+    assert!(tx_by_pending_hash_index["blockHash"].is_null());
+    assert!(tx_by_pending_hash_index["transactionIndex"].is_null());
     assert_eq!(tx_by_pending_hash_index["pending"].as_bool(), Some(true));
 
     let (pending_count_by_hash_runtime, changed_pending_count_by_hash_runtime) =
@@ -2788,10 +2901,9 @@ fn eth_filter_and_txpool_methods_work_with_tx_index_state() {
         Some(true)
     );
     assert!(pending_receipts_by_number[0]["status"].is_null());
-    assert_eq!(
-        pending_receipts_by_number[0]["blockNumber"].as_str(),
-        Some("0x1")
-    );
+    assert!(pending_receipts_by_number[0]["blockNumber"].is_null());
+    assert!(pending_receipts_by_number[0]["blockHash"].is_null());
+    assert!(pending_receipts_by_number[0]["transactionIndex"].is_null());
     assert_eq!(
         pending_receipts_by_number[0]["cumulativeGasUsed"].as_str(),
         Some("0x5208")
@@ -2877,7 +2989,9 @@ fn eth_filter_and_txpool_methods_work_with_tx_index_state() {
     assert!(!changed_runtime_receipt_by_hash);
     assert_eq!(runtime_receipt_by_hash["pending"].as_bool(), Some(true));
     assert!(runtime_receipt_by_hash["status"].is_null());
-    assert_eq!(runtime_receipt_by_hash["blockNumber"].as_str(), Some("0x1"));
+    assert!(runtime_receipt_by_hash["blockNumber"].is_null());
+    assert!(runtime_receipt_by_hash["blockHash"].is_null());
+    assert!(runtime_receipt_by_hash["transactionIndex"].is_null());
     assert_eq!(
         runtime_receipt_by_hash["transactionHash"].as_str(),
         Some(runtime_hash_hex.as_str())
@@ -2900,12 +3014,10 @@ fn eth_filter_and_txpool_methods_work_with_tx_index_state() {
     )
     .expect("eth_syncing runtime snapshot should work");
     assert!(!changed_runtime_syncing);
-    assert!(runtime_syncing.is_object());
-    assert_eq!(runtime_syncing["currentBlock"].as_str(), Some("0x0"));
-    assert_eq!(runtime_syncing["highestBlock"].as_str(), Some("0x1"));
     assert_eq!(
-        runtime_syncing["highestBlock"].as_str(),
-        pending_block_runtime["number"].as_str()
+        runtime_syncing,
+        serde_json::Value::Bool(false),
+        "eth_syncing should stay false when only pending view exists without runtime gap"
     );
 
     let (runtime_block_number, changed_runtime_block_number) = run_gateway_method(
@@ -3425,10 +3537,9 @@ fn eth_filter_and_txpool_methods_work_with_tx_index_state() {
         Some(true)
     );
     assert!(pending_receipts_after_confirmed[0]["status"].is_null());
-    assert_eq!(
-        pending_receipts_after_confirmed[0]["blockNumber"].as_str(),
-        Some("0x2")
-    );
+    assert!(pending_receipts_after_confirmed[0]["blockNumber"].is_null());
+    assert!(pending_receipts_after_confirmed[0]["blockHash"].is_null());
+    assert!(pending_receipts_after_confirmed[0]["transactionIndex"].is_null());
 
     let (logs_filter_id_raw, changed_new_filter) = run_gateway_method(
         &mut router,
@@ -3875,7 +3986,7 @@ fn eth_gas_price_prefers_runtime_then_recent_chain_then_default() {
 }
 
 #[test]
-fn eth_syncing_json_enforces_pending_boundary_in_object_mode() {
+fn eth_syncing_json_ignores_pending_block_boundary() {
     let syncing_object = gateway_eth_syncing_json(
         GatewayEthSyncStatusV1 {
             peer_count: 3,
@@ -3889,7 +4000,7 @@ fn eth_syncing_json_enforces_pending_boundary_in_object_mode() {
     assert!(syncing_object.is_object());
     assert_eq!(syncing_object["startingBlock"].as_str(), Some("0xc"));
     assert_eq!(syncing_object["currentBlock"].as_str(), Some("0xc"));
-    assert_eq!(syncing_object["highestBlock"].as_str(), Some("0x10"));
+    assert_eq!(syncing_object["highestBlock"].as_str(), Some("0xd"));
 
     let syncing_without_pending = gateway_eth_syncing_json(
         GatewayEthSyncStatusV1 {
@@ -3906,7 +4017,7 @@ fn eth_syncing_json_enforces_pending_boundary_in_object_mode() {
         Some("0xd")
     );
 
-    let syncing_with_pending_boundary = gateway_eth_syncing_json(
+    let not_syncing_with_pending_boundary = gateway_eth_syncing_json(
         GatewayEthSyncStatusV1 {
             peer_count: 1,
             starting_block: 5,
@@ -3916,21 +4027,12 @@ fn eth_syncing_json_enforces_pending_boundary_in_object_mode() {
         },
         Some(8),
     );
-    assert!(syncing_with_pending_boundary.is_object());
     assert_eq!(
-        syncing_with_pending_boundary["startingBlock"].as_str(),
-        Some("0x5")
-    );
-    assert_eq!(
-        syncing_with_pending_boundary["currentBlock"].as_str(),
-        Some("0x7")
-    );
-    assert_eq!(
-        syncing_with_pending_boundary["highestBlock"].as_str(),
-        Some("0x8")
+        not_syncing_with_pending_boundary,
+        serde_json::Value::Bool(false)
     );
 
-    let syncing_with_external_current_and_pending = gateway_eth_syncing_json(
+    let not_syncing_with_stale_pending = gateway_eth_syncing_json(
         GatewayEthSyncStatusV1 {
             peer_count: 2,
             starting_block: 100,
@@ -3940,18 +4042,9 @@ fn eth_syncing_json_enforces_pending_boundary_in_object_mode() {
         },
         Some(151),
     );
-    assert!(syncing_with_external_current_and_pending.is_object());
     assert_eq!(
-        syncing_with_external_current_and_pending["startingBlock"].as_str(),
-        Some("0x64")
-    );
-    assert_eq!(
-        syncing_with_external_current_and_pending["currentBlock"].as_str(),
-        Some("0xc8")
-    );
-    assert_eq!(
-        syncing_with_external_current_and_pending["highestBlock"].as_str(),
-        Some("0xc9")
+        not_syncing_with_stale_pending,
+        serde_json::Value::Bool(false)
     );
 
     let not_syncing = gateway_eth_syncing_json(
@@ -4566,7 +4659,7 @@ fn eth_fee_history_accepts_chain_object_plus_standard_array_params() {
 }
 
 #[test]
-fn eth_syncing_prefers_chain_scoped_snapshot_fields() {
+fn eth_syncing_ignores_chain_scoped_snapshot_fields_without_runtime_sync() {
     let _guard = env_test_guard();
     let backend = GatewayEthTxIndexStoreBackend::Memory;
     let mut router = UnifiedAccountRouter::new();
@@ -4658,9 +4751,7 @@ fn eth_syncing_prefers_chain_scoped_snapshot_fields() {
     )
     .expect("eth_syncing chain 1 should work");
     assert!(!changed_chain_1);
-    assert_eq!(syncing_chain_1["startingBlock"].as_str(), Some("0x1"));
-    assert_eq!(syncing_chain_1["currentBlock"].as_str(), Some("0x10"));
-    assert_eq!(syncing_chain_1["highestBlock"].as_str(), Some("0x20"));
+    assert_eq!(syncing_chain_1, serde_json::Value::Bool(false));
 
     let (syncing_chain_137, changed_chain_137) = run_gateway_method(
         &mut router,
@@ -4674,9 +4765,7 @@ fn eth_syncing_prefers_chain_scoped_snapshot_fields() {
     )
     .expect("eth_syncing chain 137 should work");
     assert!(!changed_chain_137);
-    assert_eq!(syncing_chain_137["startingBlock"].as_str(), Some("0x5"));
-    assert_eq!(syncing_chain_137["currentBlock"].as_str(), Some("0x30"));
-    assert_eq!(syncing_chain_137["highestBlock"].as_str(), Some("0x40"));
+    assert_eq!(syncing_chain_137, serde_json::Value::Bool(false));
 
     restore_env_vars(&saved_sync_env);
     restore_env_vars(&saved_path_env);
@@ -4684,7 +4773,7 @@ fn eth_syncing_prefers_chain_scoped_snapshot_fields() {
 }
 
 #[test]
-fn eth_syncing_chain_scoped_env_overrides_take_precedence() {
+fn eth_syncing_ignores_chain_scoped_env_overrides_without_runtime_sync() {
     let _guard = env_test_guard();
     let backend = GatewayEthTxIndexStoreBackend::Memory;
     let mut router = UnifiedAccountRouter::new();
@@ -4739,8 +4828,7 @@ fn eth_syncing_chain_scoped_env_overrides_take_precedence() {
     )
     .expect("eth_syncing chain 1 from env should work");
     assert!(!changed_chain_1);
-    assert_eq!(syncing_chain_1["currentBlock"].as_str(), Some("0x10"));
-    assert_eq!(syncing_chain_1["highestBlock"].as_str(), Some("0x11"));
+    assert_eq!(syncing_chain_1, serde_json::Value::Bool(false));
 
     let (syncing_chain_137, changed_chain_137) = run_gateway_method(
         &mut router,
@@ -4754,15 +4842,444 @@ fn eth_syncing_chain_scoped_env_overrides_take_precedence() {
     )
     .expect("eth_syncing chain 137 from chain-scoped env should work");
     assert!(!changed_chain_137);
-    assert_eq!(syncing_chain_137["currentBlock"].as_str(), Some("0x30"));
-    assert_eq!(syncing_chain_137["highestBlock"].as_str(), Some("0x31"));
+    assert_eq!(syncing_chain_137, serde_json::Value::Bool(false));
 
     restore_env_vars(&saved_sync_env);
     let _ = fs::remove_dir_all(&spool_dir);
 }
 
 #[test]
-fn eth_syncing_chain_scoped_status_path_overrides_global_status_path() {
+fn eth_syncing_prefers_runtime_sync_status_over_env_and_snapshot() {
+    let _guard = env_test_guard();
+    let backend = GatewayEthTxIndexStoreBackend::Memory;
+    let mut router = UnifiedAccountRouter::new();
+    let mut eth_tx_index = HashMap::new();
+    let mut evm_settlement_index_by_id = HashMap::new();
+    let mut evm_settlement_index_by_tx = HashMap::new();
+    let mut evm_pending_payout_by_settlement = HashMap::new();
+    let spool_dir = std::env::temp_dir().join(format!(
+        "novovm-gateway-eth-syncing-runtime-priority-{}-{}",
+        std::process::id(),
+        now_unix_millis()
+    ));
+    fs::create_dir_all(&spool_dir).expect("create spool dir");
+    let mut eth_filters = GatewayEthFilterState::default();
+    let mut ctx = GatewayMethodContext {
+        eth_tx_index_store: &backend,
+        eth_default_chain_id: 1,
+        spool_dir: &spool_dir,
+        eth_filters: &mut eth_filters,
+    };
+
+    let sync_env_keys = [
+        "NOVOVM_GATEWAY_ETH_SYNC_STATUS_PATH",
+        "NOVOVM_GATEWAY_ETH_SYNC_CURRENT_BLOCK",
+        "NOVOVM_GATEWAY_ETH_SYNC_HIGHEST_BLOCK",
+        "NOVOVM_GATEWAY_ETH_PEER_COUNT",
+    ];
+    let saved_sync_env = capture_env_vars(&sync_env_keys);
+    for key in sync_env_keys {
+        std::env::remove_var(key);
+    }
+    std::env::set_var("NOVOVM_GATEWAY_ETH_SYNC_CURRENT_BLOCK", "0x3");
+    std::env::set_var("NOVOVM_GATEWAY_ETH_SYNC_HIGHEST_BLOCK", "0x4");
+    std::env::set_var("NOVOVM_GATEWAY_ETH_PEER_COUNT", "0x1");
+
+    let chain_id = 9_901_u64;
+    set_network_runtime_sync_status(
+        chain_id,
+        NetworkRuntimeSyncStatus {
+            peer_count: 7,
+            starting_block: 1,
+            current_block: 0x20,
+            highest_block: 0x30,
+        },
+    );
+
+    let (syncing, changed_syncing) = run_gateway_method(
+        &mut router,
+        &mut eth_tx_index,
+        &mut evm_settlement_index_by_id,
+        &mut evm_settlement_index_by_tx,
+        &mut evm_pending_payout_by_settlement,
+        &mut ctx,
+        "eth_syncing",
+        &serde_json::json!({ "chain_id": chain_id }),
+    )
+    .expect("eth_syncing should use runtime status");
+    assert!(!changed_syncing);
+    assert_eq!(syncing["currentBlock"].as_str(), Some("0x20"));
+    assert_eq!(syncing["highestBlock"].as_str(), Some("0x30"));
+
+    let (peer_count, changed_peer_count) = run_gateway_method(
+        &mut router,
+        &mut eth_tx_index,
+        &mut evm_settlement_index_by_id,
+        &mut evm_settlement_index_by_tx,
+        &mut evm_pending_payout_by_settlement,
+        &mut ctx,
+        "net_peerCount",
+        &serde_json::json!({ "chain_id": chain_id }),
+    )
+    .expect("net_peerCount should use runtime status");
+    assert!(!changed_peer_count);
+    assert_eq!(peer_count.as_str(), Some("0x7"));
+
+    restore_env_vars(&saved_sync_env);
+    let _ = fs::remove_dir_all(&spool_dir);
+}
+
+#[test]
+fn eth_syncing_runtime_current_is_monotonic_when_local_index_lags() {
+    let _guard = env_test_guard();
+    let backend = GatewayEthTxIndexStoreBackend::Memory;
+    let mut router = UnifiedAccountRouter::new();
+    let mut eth_tx_index = HashMap::new();
+    let mut evm_settlement_index_by_id = HashMap::new();
+    let mut evm_settlement_index_by_tx = HashMap::new();
+    let mut evm_pending_payout_by_settlement = HashMap::new();
+    let spool_dir = std::env::temp_dir().join(format!(
+        "novovm-gateway-eth-syncing-runtime-monotonic-{}-{}",
+        std::process::id(),
+        now_unix_millis()
+    ));
+    fs::create_dir_all(&spool_dir).expect("create spool dir");
+    let mut eth_filters = GatewayEthFilterState::default();
+    let mut ctx = GatewayMethodContext {
+        eth_tx_index_store: &backend,
+        eth_default_chain_id: 1,
+        spool_dir: &spool_dir,
+        eth_filters: &mut eth_filters,
+    };
+
+    let sync_env_keys = [
+        "NOVOVM_GATEWAY_ETH_SYNC_STATUS_PATH",
+        "NOVOVM_GATEWAY_ETH_SYNC_CURRENT_BLOCK",
+        "NOVOVM_GATEWAY_ETH_SYNC_HIGHEST_BLOCK",
+        "NOVOVM_GATEWAY_ETH_PEER_COUNT",
+    ];
+    let saved_sync_env = capture_env_vars(&sync_env_keys);
+    for key in sync_env_keys {
+        std::env::remove_var(key);
+    }
+
+    let chain_id = 9_902_u64;
+    set_network_runtime_sync_status(
+        chain_id,
+        NetworkRuntimeSyncStatus {
+            peer_count: 5,
+            starting_block: 0x10,
+            current_block: 0x40,
+            highest_block: 0x50,
+        },
+    );
+
+    // Local index intentionally lags runtime current.
+    let lagging_entry = GatewayEthTxIndexEntry {
+        tx_hash: [0x92u8; 32],
+        uca_id: "uca-runtime-monotonic".to_string(),
+        chain_id,
+        nonce: 0x20,
+        tx_type: 0,
+        from: vec![0x11; 20],
+        to: Some(vec![0x22; 20]),
+        value: 1,
+        gas_limit: 21_000,
+        gas_price: 1,
+        input: vec![],
+    };
+    eth_tx_index.insert(lagging_entry.tx_hash, lagging_entry);
+
+    let (syncing, changed_syncing) = run_gateway_method(
+        &mut router,
+        &mut eth_tx_index,
+        &mut evm_settlement_index_by_id,
+        &mut evm_settlement_index_by_tx,
+        &mut evm_pending_payout_by_settlement,
+        &mut ctx,
+        "eth_syncing",
+        &serde_json::json!({ "chain_id": chain_id }),
+    )
+    .expect("eth_syncing should keep runtime monotonic");
+    assert!(!changed_syncing);
+    let starting_block = u64::from_str_radix(
+        syncing["startingBlock"]
+            .as_str()
+            .expect("startingBlock should be string")
+            .trim_start_matches("0x"),
+        16,
+    )
+    .expect("parse startingBlock");
+    let current_block = u64::from_str_radix(
+        syncing["currentBlock"]
+            .as_str()
+            .expect("currentBlock should be string")
+            .trim_start_matches("0x"),
+        16,
+    )
+    .expect("parse currentBlock");
+    let highest_block = u64::from_str_radix(
+        syncing["highestBlock"]
+            .as_str()
+            .expect("highestBlock should be string")
+            .trim_start_matches("0x"),
+        16,
+    )
+    .expect("parse highestBlock");
+    assert!(starting_block <= current_block);
+    assert_eq!(current_block, 0x40);
+    assert_eq!(highest_block, 0x50);
+
+    restore_env_vars(&saved_sync_env);
+    let _ = fs::remove_dir_all(&spool_dir);
+}
+
+#[test]
+fn eth_block_number_prefers_runtime_current_when_index_lags() {
+    let _guard = env_test_guard();
+    let backend = GatewayEthTxIndexStoreBackend::Memory;
+    let mut router = UnifiedAccountRouter::new();
+    let mut eth_tx_index = HashMap::new();
+    let mut evm_settlement_index_by_id = HashMap::new();
+    let mut evm_settlement_index_by_tx = HashMap::new();
+    let mut evm_pending_payout_by_settlement = HashMap::new();
+    let spool_dir = std::env::temp_dir().join(format!(
+        "novovm-gateway-eth-block-number-runtime-priority-{}-{}",
+        std::process::id(),
+        now_unix_millis()
+    ));
+    fs::create_dir_all(&spool_dir).expect("create spool dir");
+    let mut eth_filters = GatewayEthFilterState::default();
+    let mut ctx = GatewayMethodContext {
+        eth_tx_index_store: &backend,
+        eth_default_chain_id: 1,
+        spool_dir: &spool_dir,
+        eth_filters: &mut eth_filters,
+    };
+
+    let sync_env_keys = [
+        "NOVOVM_GATEWAY_ETH_SYNC_STATUS_PATH",
+        "NOVOVM_GATEWAY_ETH_SYNC_CURRENT_BLOCK",
+        "NOVOVM_GATEWAY_ETH_SYNC_HIGHEST_BLOCK",
+        "NOVOVM_GATEWAY_ETH_PEER_COUNT",
+    ];
+    let saved_sync_env = capture_env_vars(&sync_env_keys);
+    for key in sync_env_keys {
+        std::env::remove_var(key);
+    }
+
+    let chain_id = 9_903_u64;
+    set_network_runtime_sync_status(
+        chain_id,
+        NetworkRuntimeSyncStatus {
+            peer_count: 2,
+            starting_block: 0x10,
+            current_block: 0x44,
+            highest_block: 0x55,
+        },
+    );
+
+    // Local index lags behind runtime current.
+    eth_tx_index.insert(
+        [0x93u8; 32],
+        GatewayEthTxIndexEntry {
+            tx_hash: [0x93u8; 32],
+            uca_id: "uca-runtime-block-number-priority".to_string(),
+            chain_id,
+            nonce: 0x20,
+            tx_type: 0,
+            from: vec![0x11; 20],
+            to: Some(vec![0x22; 20]),
+            value: 1,
+            gas_limit: 21_000,
+            gas_price: 1,
+            input: vec![],
+        },
+    );
+
+    let (block_number, changed_block_number) = run_gateway_method(
+        &mut router,
+        &mut eth_tx_index,
+        &mut evm_settlement_index_by_id,
+        &mut evm_settlement_index_by_tx,
+        &mut evm_pending_payout_by_settlement,
+        &mut ctx,
+        "eth_blockNumber",
+        &serde_json::json!({ "chain_id": chain_id }),
+    )
+    .expect("eth_blockNumber should prefer runtime current");
+    assert!(!changed_block_number);
+    assert_eq!(block_number.as_str(), Some("0x44"));
+
+    restore_env_vars(&saved_sync_env);
+    let _ = fs::remove_dir_all(&spool_dir);
+}
+
+#[test]
+fn eth_pending_block_and_receipts_follow_runtime_current_when_index_lags() {
+    let _guard = env_test_guard();
+    let backend = GatewayEthTxIndexStoreBackend::Memory;
+    let mut router = UnifiedAccountRouter::new();
+    let mut eth_tx_index = HashMap::new();
+    let mut evm_settlement_index_by_id = HashMap::new();
+    let mut evm_settlement_index_by_tx = HashMap::new();
+    let mut evm_pending_payout_by_settlement = HashMap::new();
+    let spool_dir = std::env::temp_dir().join(format!(
+        "novovm-gateway-eth-pending-runtime-priority-{}-{}",
+        std::process::id(),
+        now_unix_millis()
+    ));
+    fs::create_dir_all(&spool_dir).expect("create spool dir");
+    let mut eth_filters = GatewayEthFilterState::default();
+    let mut ctx = GatewayMethodContext {
+        eth_tx_index_store: &backend,
+        eth_default_chain_id: 1,
+        spool_dir: &spool_dir,
+        eth_filters: &mut eth_filters,
+    };
+
+    let sync_env_keys = [
+        "NOVOVM_GATEWAY_ETH_SYNC_STATUS_PATH",
+        "NOVOVM_GATEWAY_ETH_SYNC_CURRENT_BLOCK",
+        "NOVOVM_GATEWAY_ETH_SYNC_HIGHEST_BLOCK",
+        "NOVOVM_GATEWAY_ETH_PEER_COUNT",
+    ];
+    let saved_sync_env = capture_env_vars(&sync_env_keys);
+    for key in sync_env_keys {
+        std::env::remove_var(key);
+    }
+
+    let chain_id = 9_904_u64;
+    set_network_runtime_sync_status(
+        chain_id,
+        NetworkRuntimeSyncStatus {
+            peer_count: 3,
+            starting_block: 0x10,
+            current_block: 0x44,
+            highest_block: 0x50,
+        },
+    );
+
+    // Local index lags runtime current.
+    eth_tx_index.insert(
+        [0x94u8; 32],
+        GatewayEthTxIndexEntry {
+            tx_hash: [0x94u8; 32],
+            uca_id: "uca-runtime-pending-priority".to_string(),
+            chain_id,
+            nonce: 0x20,
+            tx_type: 0,
+            from: vec![0x11; 20],
+            to: Some(vec![0x22; 20]),
+            value: 1,
+            gas_limit: 21_000,
+            gas_price: 1,
+            input: vec![],
+        },
+    );
+
+    let mut runtime_tx = TxIR::transfer(vec![0x31; 20], vec![0x42; 20], 3, 7, chain_id);
+    runtime_tx.compute_hash();
+    let tap_summary = runtime_tap_ir_batch_v1(
+        novovm_adapter_api::ChainType::EVM,
+        chain_id,
+        &[runtime_tx],
+        0,
+    )
+    .expect("runtime tap should accept pending tx");
+    assert_eq!(tap_summary.accepted, 1);
+
+    let (block_number, changed_block_number) = run_gateway_method(
+        &mut router,
+        &mut eth_tx_index,
+        &mut evm_settlement_index_by_id,
+        &mut evm_settlement_index_by_tx,
+        &mut evm_pending_payout_by_settlement,
+        &mut ctx,
+        "eth_blockNumber",
+        &serde_json::json!({ "chain_id": chain_id }),
+    )
+    .expect("eth_blockNumber should work");
+    assert!(!changed_block_number);
+    assert_eq!(block_number.as_str(), Some("0x44"));
+
+    let (pending_block, changed_pending_block) = run_gateway_method(
+        &mut router,
+        &mut eth_tx_index,
+        &mut evm_settlement_index_by_id,
+        &mut evm_settlement_index_by_tx,
+        &mut evm_pending_payout_by_settlement,
+        &mut ctx,
+        "eth_getBlockByNumber",
+        &serde_json::json!({
+            "chain_id": chain_id,
+            "block": "pending",
+            "full_transactions": true,
+        }),
+    )
+    .expect("eth_getBlockByNumber pending should work");
+    assert!(!changed_pending_block);
+    assert_eq!(pending_block["number"].as_str(), Some("0x45"));
+    let pending_txs = pending_block["transactions"]
+        .as_array()
+        .expect("pending transactions should be array");
+    assert_eq!(pending_txs.len(), 1);
+    let tx_hash = pending_txs[0]["hash"]
+        .as_str()
+        .expect("pending tx should contain hash")
+        .to_string();
+
+    let (pending_receipts, changed_pending_receipts) = run_gateway_method(
+        &mut router,
+        &mut eth_tx_index,
+        &mut evm_settlement_index_by_id,
+        &mut evm_settlement_index_by_tx,
+        &mut evm_pending_payout_by_settlement,
+        &mut ctx,
+        "eth_getBlockReceipts",
+        &serde_json::json!({
+            "chain_id": chain_id,
+            "block": "pending",
+        }),
+    )
+    .expect("eth_getBlockReceipts pending should work");
+    assert!(!changed_pending_receipts);
+    let receipts = pending_receipts
+        .as_array()
+        .expect("pending receipts should be array");
+    assert_eq!(receipts.len(), 1);
+    assert!(receipts[0]["blockNumber"].is_null());
+    assert!(receipts[0]["blockHash"].is_null());
+    assert!(receipts[0]["transactionIndex"].is_null());
+    assert_eq!(receipts[0]["pending"].as_bool(), Some(true));
+
+    let (pending_receipt, changed_pending_receipt) = run_gateway_method(
+        &mut router,
+        &mut eth_tx_index,
+        &mut evm_settlement_index_by_id,
+        &mut evm_settlement_index_by_tx,
+        &mut evm_pending_payout_by_settlement,
+        &mut ctx,
+        "eth_getTransactionReceipt",
+        &serde_json::json!({
+            "chain_id": chain_id,
+            "tx_hash": tx_hash,
+        }),
+    )
+    .expect("eth_getTransactionReceipt pending should work");
+    assert!(!changed_pending_receipt);
+    assert!(pending_receipt["blockNumber"].is_null());
+    assert!(pending_receipt["blockHash"].is_null());
+    assert!(pending_receipt["transactionIndex"].is_null());
+    assert_eq!(pending_receipt["pending"].as_bool(), Some(true));
+    assert!(pending_receipt["status"].is_null());
+
+    restore_env_vars(&saved_sync_env);
+    let _ = fs::remove_dir_all(&spool_dir);
+}
+
+#[test]
+fn eth_syncing_ignores_chain_scoped_status_path_overrides_without_runtime_sync() {
     let _guard = env_test_guard();
     let backend = GatewayEthTxIndexStoreBackend::Memory;
     let mut router = UnifiedAccountRouter::new();
@@ -4853,11 +5370,9 @@ fn eth_syncing_chain_scoped_status_path_overrides_global_status_path() {
         "eth_syncing",
         &serde_json::json!({ "chain_id": 1u64 }),
     )
-    .expect("eth_syncing chain 1 should use global status path");
+    .expect("eth_syncing chain 1 should work");
     assert!(!changed_chain_1);
-    assert_eq!(syncing_chain_1["startingBlock"].as_str(), Some("0x1"));
-    assert_eq!(syncing_chain_1["currentBlock"].as_str(), Some("0x10"));
-    assert_eq!(syncing_chain_1["highestBlock"].as_str(), Some("0x20"));
+    assert_eq!(syncing_chain_1, serde_json::Value::Bool(false));
 
     let (syncing_chain_137, changed_chain_137) = run_gateway_method(
         &mut router,
@@ -4869,11 +5384,9 @@ fn eth_syncing_chain_scoped_status_path_overrides_global_status_path() {
         "eth_syncing",
         &serde_json::json!({ "chain_id": 137u64 }),
     )
-    .expect("eth_syncing chain 137 should use chain-scoped status path");
+    .expect("eth_syncing chain 137 should work");
     assert!(!changed_chain_137);
-    assert_eq!(syncing_chain_137["startingBlock"].as_str(), Some("0x5"));
-    assert_eq!(syncing_chain_137["currentBlock"].as_str(), Some("0x30"));
-    assert_eq!(syncing_chain_137["highestBlock"].as_str(), Some("0x40"));
+    assert_eq!(syncing_chain_137, serde_json::Value::Bool(false));
 
     restore_env_vars(&saved_sync_env);
     if let Some(value) = prev_status_path {
@@ -4966,7 +5479,7 @@ fn evm_atomic_broadcast_chain_scoped_exec_env_overrides_take_precedence() {
 }
 
 #[test]
-fn eth_syncing_env_values_override_snapshot_values_when_both_present() {
+fn eth_syncing_ignores_env_and_snapshot_overrides_without_runtime_sync() {
     let _guard = env_test_guard();
     let backend = GatewayEthTxIndexStoreBackend::Memory;
     let mut router = UnifiedAccountRouter::new();
@@ -5041,11 +5554,9 @@ fn eth_syncing_env_values_override_snapshot_values_when_both_present() {
         "eth_syncing",
         &serde_json::json!({ "chain_id": 1u64 }),
     )
-    .expect("eth_syncing should prefer env overrides");
+    .expect("eth_syncing should work");
     assert!(!changed_syncing);
-    assert_eq!(syncing["startingBlock"].as_str(), Some("0x5"));
-    assert_eq!(syncing["currentBlock"].as_str(), Some("0x30"));
-    assert_eq!(syncing["highestBlock"].as_str(), Some("0x31"));
+    assert_eq!(syncing, serde_json::Value::Bool(false));
 
     restore_env_vars(&saved_sync_env);
     let _ = fs::remove_dir_all(&spool_dir);
@@ -5737,7 +6248,9 @@ fn eth_runtime_pending_tx_by_hash_uses_store_latest_height_when_memory_window_st
     .expect("eth_getTransactionByHash runtime should work");
     assert!(!changed);
     assert_eq!(tx_by_hash["pending"].as_bool(), Some(true));
-    assert_eq!(tx_by_hash["blockNumber"].as_str(), Some("0x1f5"));
+    assert!(tx_by_hash["blockNumber"].is_null());
+    assert!(tx_by_hash["blockHash"].is_null());
+    assert!(tx_by_hash["transactionIndex"].is_null());
 
     if let Some(value) = prev_scan_max {
         std::env::set_var("NOVOVM_GATEWAY_ETH_QUERY_SCAN_MAX", value);
@@ -6932,6 +7445,19 @@ fn eth_effective_gas_price_type2_respects_base_fee_floor() {
         gas_price: 5,
         input: Vec::new(),
     };
+    let type3_entry = GatewayEthTxIndexEntry {
+        tx_hash: [0x97u8; 32],
+        uca_id: "uca-type3".to_string(),
+        chain_id: 1,
+        nonce: 9,
+        tx_type: 3,
+        from: vec![0x51u8; 20],
+        to: Some(vec![0x52u8; 20]),
+        value: 1,
+        gas_limit: 50_000,
+        gas_price: 5,
+        input: Vec::new(),
+    };
     let legacy_entry = GatewayEthTxIndexEntry {
         tx_hash: [0x98u8; 32],
         uca_id: "uca-legacy".to_string(),
@@ -6946,8 +7472,22 @@ fn eth_effective_gas_price_type2_respects_base_fee_floor() {
         input: Vec::new(),
     };
 
+    let priority = gateway_eth_default_max_priority_fee_per_gas_wei(1);
+    let expected_type2_base9 = 9u64.max(type2_entry.gas_price.min(9u64.saturating_add(priority)));
+    let expected_type2_base3 = 3u64.max(type2_entry.gas_price.min(3u64.saturating_add(priority)));
     assert_eq!(gateway_eth_effective_gas_price_wei(&type2_entry, 9), 9);
-    assert_eq!(gateway_eth_effective_gas_price_wei(&type2_entry, 3), 5);
+    assert_eq!(
+        gateway_eth_effective_gas_price_wei(&type2_entry, 9),
+        expected_type2_base9
+    );
+    assert_eq!(
+        gateway_eth_effective_gas_price_wei(&type2_entry, 3),
+        expected_type2_base3
+    );
+    assert_eq!(
+        gateway_eth_effective_gas_price_wei(&type3_entry, 3),
+        3u64.max(type3_entry.gas_price.min(3u64.saturating_add(priority)))
+    );
     assert_eq!(gateway_eth_effective_gas_price_wei(&legacy_entry, 9), 5);
 }
 
@@ -6981,7 +7521,7 @@ fn eth_transaction_json_type2_fee_fields_are_compatible() {
     };
 
     let expected_priority =
-        gateway_eth_default_max_priority_fee_per_gas_wei().min(type2_entry.gas_price);
+        gateway_eth_default_max_priority_fee_per_gas_wei(1).min(type2_entry.gas_price);
 
     let type2_json = gateway_eth_tx_by_hash_json(&type2_entry);
     assert_eq!(type2_json["gasPrice"].as_str(), Some("0x9"));
@@ -7009,7 +7549,7 @@ fn eth_runtime_pending_tx_json_type2_fee_fields_follow_raw_signature() {
     tx.gas_price = 13;
     tx.signature = vec![0x02, 0xc0];
     tx.compute_hash();
-    let expected_priority = gateway_eth_default_max_priority_fee_per_gas_wei().min(tx.gas_price);
+    let expected_priority = gateway_eth_default_max_priority_fee_per_gas_wei(1).min(tx.gas_price);
 
     let pending_json = gateway_eth_pending_tx_by_hash_json_from_ir(&tx);
     assert_eq!(pending_json["gasPrice"].as_str(), Some("0xd"));
@@ -7067,7 +7607,7 @@ fn eth_get_code_storage_and_call_read_path_use_tx_index_state() {
         uca_id: "uca-deploy".to_string(),
         chain_id: 1,
         nonce: deploy_nonce,
-        tx_type: 2,
+        tx_type: 0,
         from: deployer.clone(),
         to: None,
         value: 0,
@@ -7080,7 +7620,7 @@ fn eth_get_code_storage_and_call_read_path_use_tx_index_state() {
         uca_id: "uca-call".to_string(),
         chain_id: 1,
         nonce: call_nonce,
-        tx_type: 1,
+        tx_type: 0,
         from: caller,
         to: Some(contract.clone()),
         value: 0,
@@ -7164,7 +7704,7 @@ fn eth_get_code_storage_and_call_read_path_use_tx_index_state() {
     assert!(!changed_code_future);
     assert!(code_future.is_null());
 
-    let deploy_code_hash: [u8; 32] = Sha256::digest(&deploy_input).into();
+    let deploy_code_hash: [u8; 32] = Keccak256::digest(&deploy_input).into();
     let (slot0, changed_slot0) = run_gateway_method(
         &mut router,
         &mut eth_tx_index,
@@ -7281,9 +7821,12 @@ fn eth_get_code_storage_and_call_read_path_use_tx_index_state() {
         Some(66),
         "storageHash must be 32-byte hex"
     );
-    assert_eq!(
-        proof["accountProof"].as_array().map(std::vec::Vec::len),
-        Some(0)
+    assert!(
+        proof["accountProof"]
+            .as_array()
+            .map(|items| !items.is_empty())
+            .unwrap_or(false),
+        "accountProof should include merkle siblings for existing account"
     );
     let storage_proof = proof["storageProof"]
         .as_array()
@@ -7305,9 +7848,12 @@ fn eth_get_code_storage_and_call_read_path_use_tx_index_state() {
         storage_proof[1]["value"].as_str(),
         Some(format!("0x{}", to_hex(&call_tx_hash)).as_str())
     );
-    assert_eq!(
-        storage_proof[0]["proof"].as_array().map(std::vec::Vec::len),
-        Some(0)
+    assert!(
+        storage_proof[0]["proof"]
+            .as_array()
+            .map(|items| !items.is_empty())
+            .unwrap_or(false),
+        "storage proof should include merkle siblings for existing slot"
     );
 
     let (proof_no_slots, changed_proof_no_slots) = run_gateway_method(
@@ -7324,7 +7870,7 @@ fn eth_get_code_storage_and_call_read_path_use_tx_index_state() {
     assert!(!changed_proof_no_slots);
     assert_eq!(
         proof_no_slots["storageHash"].as_str(),
-        Some(GATEWAY_ETH_EMPTY_TRIE_ROOT)
+        proof["storageHash"].as_str()
     );
     assert_eq!(
         proof_no_slots["storageProof"]
@@ -7570,6 +8116,76 @@ fn eth_get_code_storage_and_call_read_path_use_tx_index_state() {
         Some("0x0000000000000000000000000000000000000000000000000000000000000000")
     );
 
+    let (eth_call_total_supply, changed_eth_call_total_supply) = run_gateway_method(
+        &mut router,
+        &mut eth_tx_index,
+        &mut evm_settlement_index_by_id,
+        &mut evm_settlement_index_by_tx,
+        &mut evm_pending_payout_by_settlement,
+        &mut ctx,
+        "eth_call",
+        &serde_json::json!([
+            {
+                "to": format!("0x{}", to_hex(&contract)),
+                "data": "0x18160ddd",
+            },
+            "latest"
+        ]),
+    )
+    .expect("eth_call totalSupply should work");
+    assert!(!changed_eth_call_total_supply);
+    assert_eq!(
+        eth_call_total_supply.as_str(),
+        Some("0x000000000000000000000000000000000000000000000000000000000000002a")
+    );
+
+    let (eth_call_decimals, changed_eth_call_decimals) = run_gateway_method(
+        &mut router,
+        &mut eth_tx_index,
+        &mut evm_settlement_index_by_id,
+        &mut evm_settlement_index_by_tx,
+        &mut evm_pending_payout_by_settlement,
+        &mut ctx,
+        "eth_call",
+        &serde_json::json!([
+            {
+                "to": format!("0x{}", to_hex(&contract)),
+                "data": "0x313ce567",
+            },
+            "latest"
+        ]),
+    )
+    .expect("eth_call decimals should work");
+    assert!(!changed_eth_call_decimals);
+    assert_eq!(
+        eth_call_decimals.as_str(),
+        Some("0x0000000000000000000000000000000000000000000000000000000000000012")
+    );
+
+    let allowance_data = format!("0xdd62ed3e{}{}", "00".repeat(32), "00".repeat(32));
+    let (eth_call_allowance, changed_eth_call_allowance) = run_gateway_method(
+        &mut router,
+        &mut eth_tx_index,
+        &mut evm_settlement_index_by_id,
+        &mut evm_settlement_index_by_tx,
+        &mut evm_pending_payout_by_settlement,
+        &mut ctx,
+        "eth_call",
+        &serde_json::json!([
+            {
+                "to": format!("0x{}", to_hex(&contract)),
+                "data": allowance_data,
+            },
+            "latest"
+        ]),
+    )
+    .expect("eth_call allowance should work");
+    assert!(!changed_eth_call_allowance);
+    assert_eq!(
+        eth_call_allowance.as_str(),
+        Some("0x0000000000000000000000000000000000000000000000000000000000000000")
+    );
+
     let (eth_call_code_earliest, changed_eth_call_code_earliest) = run_gateway_method(
         &mut router,
         &mut eth_tx_index,
@@ -7609,6 +8225,131 @@ fn eth_get_code_storage_and_call_read_path_use_tx_index_state() {
     .expect("eth_call future block should work");
     assert!(!changed_eth_call_future);
     assert!(eth_call_future.is_null());
+
+    let _ = fs::remove_dir_all(&spool_dir);
+}
+
+#[test]
+fn evm_verify_proof_matches_eth_get_proof_and_detects_tamper() {
+    let _guard = env_test_guard();
+    let backend = GatewayEthTxIndexStoreBackend::Memory;
+    let mut router = UnifiedAccountRouter::new();
+    let mut eth_tx_index = HashMap::new();
+    let mut evm_settlement_index_by_id = HashMap::new();
+    let mut evm_settlement_index_by_tx = HashMap::new();
+    let mut evm_pending_payout_by_settlement = HashMap::new();
+    let spool_dir = std::env::temp_dir().join(format!(
+        "novovm-gateway-evm-verify-proof-{}-{}",
+        std::process::id(),
+        now_unix_millis()
+    ));
+    fs::create_dir_all(&spool_dir).expect("create spool dir");
+    let mut eth_filters = GatewayEthFilterState::default();
+    let mut ctx = GatewayMethodContext {
+        eth_tx_index_store: &backend,
+        eth_default_chain_id: 1,
+        spool_dir: &spool_dir,
+        eth_filters: &mut eth_filters,
+    };
+
+    let deployer = vec![0xabu8; 20];
+    let deploy_nonce = 1u64;
+    let contract = gateway_eth_derive_contract_address(&deployer, deploy_nonce);
+    let deploy_tx_hash = [0x9au8; 32];
+    eth_tx_index.insert(
+        deploy_tx_hash,
+        GatewayEthTxIndexEntry {
+            tx_hash: deploy_tx_hash,
+            uca_id: "uca-proof-verify".to_string(),
+            chain_id: 1,
+            nonce: deploy_nonce,
+            tx_type: 2,
+            from: deployer,
+            to: None,
+            value: 0,
+            gas_limit: 80_000,
+            gas_price: 1,
+            input: vec![0x60, 0x00, 0x60, 0x00],
+        },
+    );
+
+    let proof_params = serde_json::json!({
+        "chain_id": 1u64,
+        "address": format!("0x{}", to_hex(&contract)),
+        "storage_keys": ["0x0"],
+        "block": "latest",
+    });
+    let (proof, changed_proof) = run_gateway_method(
+        &mut router,
+        &mut eth_tx_index,
+        &mut evm_settlement_index_by_id,
+        &mut evm_settlement_index_by_tx,
+        &mut evm_pending_payout_by_settlement,
+        &mut ctx,
+        "eth_getProof",
+        &proof_params,
+    )
+    .expect("eth_getProof should work");
+    assert!(!changed_proof);
+    assert!(!proof.is_null());
+
+    let verify_params = serde_json::json!({
+        "chain_id": 1u64,
+        "address": format!("0x{}", to_hex(&contract)),
+        "storage_keys": ["0x0"],
+        "block": "latest",
+        "proof": proof,
+    });
+    let (verified, changed_verified) = run_gateway_method(
+        &mut router,
+        &mut eth_tx_index,
+        &mut evm_settlement_index_by_id,
+        &mut evm_settlement_index_by_tx,
+        &mut evm_pending_payout_by_settlement,
+        &mut ctx,
+        "evm_verifyProof",
+        &verify_params,
+    )
+    .expect("evm_verifyProof should accept matching proof");
+    assert!(!changed_verified);
+    assert_eq!(verified["valid"].as_bool(), Some(true));
+    assert_eq!(
+        verified["mismatch_fields"]
+            .as_array()
+            .map(std::vec::Vec::len),
+        Some(0)
+    );
+
+    let mut tampered_proof = verify_params["proof"].clone();
+    if let Some(obj) = tampered_proof.as_object_mut() {
+        obj.insert(
+            "nonce".to_string(),
+            serde_json::Value::String("0x999".to_string()),
+        );
+    }
+    let tampered_params = serde_json::json!({
+        "chain_id": 1u64,
+        "address": format!("0x{}", to_hex(&contract)),
+        "storage_keys": ["0x0"],
+        "block": "latest",
+        "proof": tampered_proof,
+    });
+    let (tampered_result, changed_tampered) = run_gateway_method(
+        &mut router,
+        &mut eth_tx_index,
+        &mut evm_settlement_index_by_id,
+        &mut evm_settlement_index_by_tx,
+        &mut evm_pending_payout_by_settlement,
+        &mut ctx,
+        "evm_verify_proof",
+        &tampered_params,
+    )
+    .expect("evm_verify_proof should detect mismatch");
+    assert!(!changed_tampered);
+    assert_eq!(tampered_result["valid"].as_bool(), Some(false));
+    assert!(tampered_result["mismatch_fields"]
+        .as_array()
+        .is_some_and(|items| items.iter().any(|item| item.as_str() == Some("nonce"))));
 
     let _ = fs::remove_dir_all(&spool_dir);
 }
@@ -7779,6 +8520,522 @@ fn eth_estimate_gas_deploy_includes_access_list_intrinsic_cost() {
         Some(format!("0x{:x}", expected).as_str())
     );
 
+    let _ = fs::remove_dir_all(&spool_dir);
+}
+
+#[test]
+fn eth_estimate_gas_type3_includes_blob_intrinsic_cost_when_enabled() {
+    let _guard = env_test_guard();
+    let captured = capture_env_vars(&["NOVOVM_EVM_ENABLE_TYPE3_WRITE"]);
+    std::env::set_var("NOVOVM_EVM_ENABLE_TYPE3_WRITE", "1");
+
+    let backend = GatewayEthTxIndexStoreBackend::Memory;
+    let mut router = UnifiedAccountRouter::new();
+    let mut eth_tx_index = HashMap::new();
+    let mut evm_settlement_index_by_id = HashMap::new();
+    let mut evm_settlement_index_by_tx = HashMap::new();
+    let mut evm_pending_payout_by_settlement = HashMap::new();
+    let spool_dir = std::env::temp_dir().join(format!(
+        "novovm-gateway-eth-estimate-gas-type3-{}-{}",
+        std::process::id(),
+        now_unix_millis()
+    ));
+    fs::create_dir_all(&spool_dir).expect("create spool dir");
+    let mut eth_filters = GatewayEthFilterState::default();
+    let mut ctx = GatewayMethodContext {
+        eth_tx_index_store: &backend,
+        eth_default_chain_id: 1,
+        spool_dir: &spool_dir,
+        eth_filters: &mut eth_filters,
+    };
+
+    let from = vec![0x41u8; 20];
+    let to = vec![0x42u8; 20];
+    let params = serde_json::json!([{
+        "chain_id": 1u64,
+        "from": format!("0x{}", to_hex(&from)),
+        "to": format!("0x{}", to_hex(&to)),
+        "type": "0x3",
+        "maxFeePerGas": "0x2",
+        "maxPriorityFeePerGas": "0x1",
+        "maxFeePerBlobGas": "0x7",
+        "blobVersionedHashes": [
+            format!("0x{}", "11".repeat(32)),
+            format!("0x{}", "22".repeat(32)),
+        ]
+    }]);
+    let (estimated_raw, changed_estimated) = run_gateway_method(
+        &mut router,
+        &mut eth_tx_index,
+        &mut evm_settlement_index_by_id,
+        &mut evm_settlement_index_by_tx,
+        &mut evm_pending_payout_by_settlement,
+        &mut ctx,
+        "eth_estimateGas",
+        &params,
+    )
+    .expect("eth_estimateGas type3 should include blob intrinsic gas");
+    assert!(!changed_estimated);
+
+    let mut tx_ir = TxIR {
+        hash: Vec::new(),
+        from,
+        to: Some(to),
+        value: 0,
+        gas_limit: u64::MAX,
+        gas_price: 0,
+        nonce: 0,
+        data: Vec::new(),
+        signature: Vec::new(),
+        chain_id: 1,
+        tx_type: TxType::Transfer,
+        source_chain: None,
+        target_chain: None,
+    };
+    tx_ir.compute_hash();
+    let expected = estimate_intrinsic_gas_with_envelope_extras_m0(&tx_ir, 0, 0, 2);
+    assert_eq!(
+        estimated_raw.as_str(),
+        Some(format!("0x{:x}", expected).as_str())
+    );
+
+    restore_env_vars(&captured);
+    let _ = fs::remove_dir_all(&spool_dir);
+}
+
+#[test]
+fn eth_estimate_gas_contract_call_adds_exec_surcharge_and_respects_gas_cap() {
+    let _guard = env_test_guard();
+    let backend = GatewayEthTxIndexStoreBackend::Memory;
+    let mut router = UnifiedAccountRouter::new();
+    let mut eth_tx_index = HashMap::new();
+    let mut evm_settlement_index_by_id = HashMap::new();
+    let mut evm_settlement_index_by_tx = HashMap::new();
+    let mut evm_pending_payout_by_settlement = HashMap::new();
+    let spool_dir = std::env::temp_dir().join(format!(
+        "novovm-gateway-eth-estimate-gas-surcharge-{}-{}",
+        std::process::id(),
+        now_unix_millis()
+    ));
+    fs::create_dir_all(&spool_dir).expect("create spool dir");
+    let mut eth_filters = GatewayEthFilterState::default();
+    let mut ctx = GatewayMethodContext {
+        eth_tx_index_store: &backend,
+        eth_default_chain_id: 1,
+        spool_dir: &spool_dir,
+        eth_filters: &mut eth_filters,
+    };
+
+    let deployer = vec![0x51u8; 20];
+    let caller = vec![0x52u8; 20];
+    let funder = vec![0x53u8; 20];
+    let deploy_nonce = 7u64;
+    let contract = gateway_eth_derive_contract_address(&deployer, deploy_nonce);
+    eth_tx_index.insert(
+        [0x91u8; 32],
+        GatewayEthTxIndexEntry {
+            tx_hash: [0x91u8; 32],
+            uca_id: "uca-estimate-deploy".to_string(),
+            chain_id: 1,
+            nonce: deploy_nonce,
+            tx_type: 0,
+            from: deployer,
+            to: None,
+            value: 0,
+            gas_limit: 80_000,
+            gas_price: 1,
+            input: vec![0x60, 0x00, 0x60, 0x00, 0xf3],
+        },
+    );
+    eth_tx_index.insert(
+        [0x92u8; 32],
+        GatewayEthTxIndexEntry {
+            tx_hash: [0x92u8; 32],
+            uca_id: "uca-estimate-fund".to_string(),
+            chain_id: 1,
+            nonce: deploy_nonce + 1,
+            tx_type: 0,
+            from: funder,
+            to: Some(caller.clone()),
+            value: 1_000_000,
+            gas_limit: 21_000,
+            gas_price: 1,
+            input: Vec::new(),
+        },
+    );
+
+    let call_data = vec![0xaa, 0xbb, 0xcc, 0xdd];
+    let params = serde_json::json!([
+        {
+            "chain_id": 1u64,
+            "from": format!("0x{}", to_hex(&caller)),
+            "to": format!("0x{}", to_hex(&contract)),
+            "data": format!("0x{}", to_hex(&call_data)),
+            "value": "0x1"
+        }
+    ]);
+    let (estimated_raw, changed_estimated) = run_gateway_method(
+        &mut router,
+        &mut eth_tx_index,
+        &mut evm_settlement_index_by_id,
+        &mut evm_settlement_index_by_tx,
+        &mut evm_pending_payout_by_settlement,
+        &mut ctx,
+        "eth_estimateGas",
+        &params,
+    )
+    .expect("eth_estimateGas contract call should work");
+    assert!(!changed_estimated);
+    let mut tx_ir = TxIR {
+        hash: Vec::new(),
+        from: caller.clone(),
+        to: Some(contract.clone()),
+        value: 1,
+        gas_limit: u64::MAX,
+        gas_price: 1,
+        nonce: 0,
+        data: call_data.clone(),
+        signature: Vec::new(),
+        chain_id: 1,
+        tx_type: TxType::ContractCall,
+        source_chain: None,
+        target_chain: None,
+    };
+    tx_ir.compute_hash();
+    let intrinsic = estimate_intrinsic_gas_with_access_list_m0(&tx_ir, 0, 0);
+    let expected = intrinsic.saturating_add(25_000);
+    assert_eq!(
+        estimated_raw.as_str(),
+        Some(format!("0x{:x}", expected).as_str())
+    );
+
+    let too_low_params = serde_json::json!([
+        {
+            "chain_id": 1u64,
+            "from": format!("0x{}", to_hex(&caller)),
+            "to": format!("0x{}", to_hex(&contract)),
+            "data": format!("0x{}", to_hex(&call_data)),
+            "value": "0x1",
+            "gas": format!("0x{:x}", expected.saturating_sub(1)),
+        }
+    ]);
+    let err = run_gateway_method(
+        &mut router,
+        &mut eth_tx_index,
+        &mut evm_settlement_index_by_id,
+        &mut evm_settlement_index_by_tx,
+        &mut evm_pending_payout_by_settlement,
+        &mut ctx,
+        "eth_estimateGas",
+        &too_low_params,
+    )
+    .expect_err("eth_estimateGas should reject gas cap below required");
+    assert!(err.to_string().contains("required gas exceeds allowance"));
+
+    let _ = fs::remove_dir_all(&spool_dir);
+}
+
+#[test]
+fn eth_estimate_gas_rejects_chain_id_mismatch_between_top_level_and_tx() {
+    let backend = GatewayEthTxIndexStoreBackend::Memory;
+    let mut router = UnifiedAccountRouter::new();
+    let mut eth_tx_index = HashMap::new();
+    let mut evm_settlement_index_by_id = HashMap::new();
+    let mut evm_settlement_index_by_tx = HashMap::new();
+    let mut evm_pending_payout_by_settlement = HashMap::new();
+    let mut eth_filters = GatewayEthFilterState::default();
+    let spool_dir = std::env::temp_dir().join(format!(
+        "novovm-gateway-eth-estimate-gas-chain-id-mismatch-{}-{}",
+        std::process::id(),
+        now_unix_millis()
+    ));
+    fs::create_dir_all(&spool_dir).expect("create spool dir");
+    let mut ctx = GatewayMethodContext {
+        eth_tx_index_store: &backend,
+        eth_default_chain_id: 1,
+        spool_dir: &spool_dir,
+        eth_filters: &mut eth_filters,
+    };
+
+    let from = vec![0x35u8; 20];
+    let to = vec![0x36u8; 20];
+    let err = run_gateway_method(
+        &mut router,
+        &mut eth_tx_index,
+        &mut evm_settlement_index_by_id,
+        &mut evm_settlement_index_by_tx,
+        &mut evm_pending_payout_by_settlement,
+        &mut ctx,
+        "eth_estimateGas",
+        &serde_json::json!([{
+            "chain_id": 1u64,
+            "tx": { "chainId": 2u64 },
+            "from": format!("0x{}", to_hex(&from)),
+            "to": format!("0x{}", to_hex(&to)),
+            "value": "0x0",
+            "gas": "0x5208"
+        }]),
+    )
+    .expect_err("eth_estimateGas should reject chain_id mismatch across params");
+    assert!(err.to_string().contains("chain_id mismatch across params"));
+
+    let _ = fs::remove_dir_all(&spool_dir);
+}
+
+#[test]
+fn eth_estimate_gas_rejects_type2_priority_fee_above_max_fee() {
+    let _guard = env_test_guard();
+    let backend = GatewayEthTxIndexStoreBackend::Memory;
+    let mut router = UnifiedAccountRouter::new();
+    let mut eth_tx_index = HashMap::new();
+    let mut evm_settlement_index_by_id = HashMap::new();
+    let mut evm_settlement_index_by_tx = HashMap::new();
+    let mut evm_pending_payout_by_settlement = HashMap::new();
+    let mut eth_filters = GatewayEthFilterState::default();
+    let spool_dir = std::env::temp_dir().join(format!(
+        "novovm-gateway-eth-estimate-gas-type2-priority-{}-{}",
+        std::process::id(),
+        now_unix_millis()
+    ));
+    fs::create_dir_all(&spool_dir).expect("create spool dir");
+    let mut ctx = GatewayMethodContext {
+        eth_tx_index_store: &backend,
+        eth_default_chain_id: 1,
+        spool_dir: &spool_dir,
+        eth_filters: &mut eth_filters,
+    };
+    let from = vec![0x41u8; 20];
+    let to = vec![0x42u8; 20];
+    let params = serde_json::json!([{
+        "chain_id": 1u64,
+        "from": format!("0x{}", to_hex(&from)),
+        "to": format!("0x{}", to_hex(&to)),
+        "value": "0x0",
+        "gas": "0x5208",
+        "maxFeePerGas": "0x1",
+        "maxPriorityFeePerGas": "0x2"
+    }]);
+    let err = run_gateway_method(
+        &mut router,
+        &mut eth_tx_index,
+        &mut evm_settlement_index_by_id,
+        &mut evm_settlement_index_by_tx,
+        &mut evm_pending_payout_by_settlement,
+        &mut ctx,
+        "eth_estimateGas",
+        &params,
+    )
+    .expect_err("eth_estimateGas should reject when maxPriorityFeePerGas > maxFeePerGas");
+    assert!(err
+        .to_string()
+        .contains("maxPriorityFeePerGas exceeds maxFeePerGas"));
+    let _ = fs::remove_dir_all(&spool_dir);
+}
+
+#[test]
+fn eth_estimate_gas_rejects_type2_without_max_fee_per_gas() {
+    let _guard = env_test_guard();
+    let backend = GatewayEthTxIndexStoreBackend::Memory;
+    let mut router = UnifiedAccountRouter::new();
+    let mut eth_tx_index = HashMap::new();
+    let mut evm_settlement_index_by_id = HashMap::new();
+    let mut evm_settlement_index_by_tx = HashMap::new();
+    let mut evm_pending_payout_by_settlement = HashMap::new();
+    let mut eth_filters = GatewayEthFilterState::default();
+    let spool_dir = std::env::temp_dir().join(format!(
+        "novovm-gateway-eth-estimate-gas-type2-missing-maxfee-{}-{}",
+        std::process::id(),
+        now_unix_millis()
+    ));
+    fs::create_dir_all(&spool_dir).expect("create spool dir");
+    let mut ctx = GatewayMethodContext {
+        eth_tx_index_store: &backend,
+        eth_default_chain_id: 1,
+        spool_dir: &spool_dir,
+        eth_filters: &mut eth_filters,
+    };
+    let from = vec![0x45u8; 20];
+    let to = vec![0x46u8; 20];
+    let params = serde_json::json!([{
+        "chain_id": 1u64,
+        "type": "0x2",
+        "from": format!("0x{}", to_hex(&from)),
+        "to": format!("0x{}", to_hex(&to)),
+        "value": "0x0",
+        "gas": "0x5208",
+        "gasPrice": "0x2"
+    }]);
+    let err = run_gateway_method(
+        &mut router,
+        &mut eth_tx_index,
+        &mut evm_settlement_index_by_id,
+        &mut evm_settlement_index_by_tx,
+        &mut evm_pending_payout_by_settlement,
+        &mut ctx,
+        "eth_estimateGas",
+        &params,
+    )
+    .expect_err("eth_estimateGas should reject type2 without maxFeePerGas");
+    assert!(err
+        .to_string()
+        .contains("maxFeePerGas is required for type2/type3 transactions"));
+    let _ = fs::remove_dir_all(&spool_dir);
+}
+
+#[test]
+fn eth_estimate_gas_rejects_legacy_type_with_eip1559_fee_fields() {
+    let _guard = env_test_guard();
+    let backend = GatewayEthTxIndexStoreBackend::Memory;
+    let mut router = UnifiedAccountRouter::new();
+    let mut eth_tx_index = HashMap::new();
+    let mut evm_settlement_index_by_id = HashMap::new();
+    let mut evm_settlement_index_by_tx = HashMap::new();
+    let mut evm_pending_payout_by_settlement = HashMap::new();
+    let mut eth_filters = GatewayEthFilterState::default();
+    let spool_dir = std::env::temp_dir().join(format!(
+        "novovm-gateway-eth-estimate-gas-legacy-with-1559-{}-{}",
+        std::process::id(),
+        now_unix_millis()
+    ));
+    fs::create_dir_all(&spool_dir).expect("create spool dir");
+    let mut ctx = GatewayMethodContext {
+        eth_tx_index_store: &backend,
+        eth_default_chain_id: 1,
+        spool_dir: &spool_dir,
+        eth_filters: &mut eth_filters,
+    };
+    let from = vec![0x43u8; 20];
+    let to = vec![0x44u8; 20];
+    let params = serde_json::json!([{
+        "chain_id": 1u64,
+        "from": format!("0x{}", to_hex(&from)),
+        "to": format!("0x{}", to_hex(&to)),
+        "type": "0x0",
+        "value": "0x0",
+        "gas": "0x5208",
+        "maxFeePerGas": "0x3",
+        "maxPriorityFeePerGas": "0x1"
+    }]);
+    let err = run_gateway_method(
+        &mut router,
+        &mut eth_tx_index,
+        &mut evm_settlement_index_by_id,
+        &mut evm_settlement_index_by_tx,
+        &mut evm_pending_payout_by_settlement,
+        &mut ctx,
+        "eth_estimateGas",
+        &params,
+    )
+    .expect_err("eth_estimateGas should reject legacy type carrying EIP-1559 fee fields");
+    assert!(err
+        .to_string()
+        .contains("legacy tx (type 0) cannot include EIP-1559 fee fields"));
+    let _ = fs::remove_dir_all(&spool_dir);
+}
+
+#[test]
+fn eth_estimate_gas_rejects_type2_max_fee_below_base_fee() {
+    let _guard = env_test_guard();
+    let backend = GatewayEthTxIndexStoreBackend::Memory;
+    let mut router = UnifiedAccountRouter::new();
+    let mut eth_tx_index = HashMap::new();
+    let mut evm_settlement_index_by_id = HashMap::new();
+    let mut evm_settlement_index_by_tx = HashMap::new();
+    let mut evm_pending_payout_by_settlement = HashMap::new();
+    let mut eth_filters = GatewayEthFilterState::default();
+    let spool_dir = std::env::temp_dir().join(format!(
+        "novovm-gateway-eth-estimate-gas-type2-basefee-{}-{}",
+        std::process::id(),
+        now_unix_millis()
+    ));
+    fs::create_dir_all(&spool_dir).expect("create spool dir");
+    let mut ctx = GatewayMethodContext {
+        eth_tx_index_store: &backend,
+        eth_default_chain_id: 1,
+        spool_dir: &spool_dir,
+        eth_filters: &mut eth_filters,
+    };
+    let from = vec![0x51u8; 20];
+    let to = vec![0x52u8; 20];
+    let params = serde_json::json!([{
+        "chain_id": 1u64,
+        "from": format!("0x{}", to_hex(&from)),
+        "to": format!("0x{}", to_hex(&to)),
+        "value": "0x0",
+        "gas": "0x5208",
+        "maxFeePerGas": "0x0",
+        "maxPriorityFeePerGas": "0x0"
+    }]);
+    let err = run_gateway_method(
+        &mut router,
+        &mut eth_tx_index,
+        &mut evm_settlement_index_by_id,
+        &mut evm_settlement_index_by_tx,
+        &mut evm_pending_payout_by_settlement,
+        &mut ctx,
+        "eth_estimateGas",
+        &params,
+    )
+    .expect_err("eth_estimateGas should reject when maxFeePerGas < base fee");
+    assert!(err
+        .to_string()
+        .contains("maxFeePerGas below current base fee"));
+    let _ = fs::remove_dir_all(&spool_dir);
+}
+
+#[test]
+fn eth_estimate_gas_rejects_type2_when_london_not_active() {
+    let _guard = env_test_guard();
+    let captured = capture_env_vars(&[
+        "NOVOVM_GATEWAY_ETH_FORK_LONDON_BLOCK",
+        "NOVOVM_GATEWAY_ETH_FORK_LONDON_BLOCK_CHAIN_1",
+    ]);
+    std::env::remove_var("NOVOVM_GATEWAY_ETH_FORK_LONDON_BLOCK");
+    std::env::set_var("NOVOVM_GATEWAY_ETH_FORK_LONDON_BLOCK_CHAIN_1", "2");
+
+    let backend = GatewayEthTxIndexStoreBackend::Memory;
+    let mut router = UnifiedAccountRouter::new();
+    let mut eth_tx_index = HashMap::new();
+    let mut evm_settlement_index_by_id = HashMap::new();
+    let mut evm_settlement_index_by_tx = HashMap::new();
+    let mut evm_pending_payout_by_settlement = HashMap::new();
+    let mut eth_filters = GatewayEthFilterState::default();
+    let spool_dir = std::env::temp_dir().join(format!(
+        "novovm-gateway-eth-estimate-gas-type2-london-{}-{}",
+        std::process::id(),
+        now_unix_millis()
+    ));
+    fs::create_dir_all(&spool_dir).expect("create spool dir");
+    let mut ctx = GatewayMethodContext {
+        eth_tx_index_store: &backend,
+        eth_default_chain_id: 1,
+        spool_dir: &spool_dir,
+        eth_filters: &mut eth_filters,
+    };
+    let from = vec![0x53u8; 20];
+    let to = vec![0x54u8; 20];
+    let err = run_gateway_method(
+        &mut router,
+        &mut eth_tx_index,
+        &mut evm_settlement_index_by_id,
+        &mut evm_settlement_index_by_tx,
+        &mut evm_pending_payout_by_settlement,
+        &mut ctx,
+        "eth_estimateGas",
+        &serde_json::json!([{
+            "chain_id": 1u64,
+            "from": format!("0x{}", to_hex(&from)),
+            "to": format!("0x{}", to_hex(&to)),
+            "value": "0x1",
+            "gas": "0x5208",
+            "maxFeePerGas": "0x2",
+            "maxPriorityFeePerGas": "0x1"
+        }]),
+    )
+    .expect_err("eth_estimateGas should reject type2 before London activation");
+    assert!(err.to_string().contains("london fork not active"));
+
+    restore_env_vars(&captured);
     let _ = fs::remove_dir_all(&spool_dir);
 }
 
@@ -8208,6 +9465,716 @@ fn eth_send_transaction_infers_type2_from_eip1559_fee_fields() {
 }
 
 #[test]
+fn eth_send_transaction_type2_hash_and_index_use_max_fee_per_gas() {
+    let backend = GatewayEthTxIndexStoreBackend::Memory;
+    let mut router = UnifiedAccountRouter::new();
+    let mut eth_tx_index = HashMap::new();
+    let mut evm_settlement_index_by_id = HashMap::new();
+    let mut evm_settlement_index_by_tx = HashMap::new();
+    let mut evm_pending_payout_by_settlement = HashMap::new();
+    let mut eth_filters = GatewayEthFilterState::default();
+    let chain_id = 770_023u64;
+    let spool_dir = std::env::temp_dir().join(format!(
+        "novovm-gateway-send-tx-eip1559-fee-canonical-{}-{}",
+        std::process::id(),
+        now_unix_millis()
+    ));
+    fs::create_dir_all(&spool_dir).expect("create spool dir");
+    let mut ctx = GatewayMethodContext {
+        eth_tx_index_store: &backend,
+        eth_default_chain_id: chain_id,
+        spool_dir: &spool_dir,
+        eth_filters: &mut eth_filters,
+    };
+
+    let sender = vec![0x75u8; 20];
+    let receiver = vec![0x76u8; 20];
+    let uca_id = "uca:eip1559-fee-canonical".to_string();
+    let now = now_unix_sec();
+    let persona = PersonaAddress {
+        persona_type: PersonaType::Evm,
+        chain_id,
+        external_address: sender.clone(),
+    };
+    router
+        .create_uca(uca_id.clone(), vec![0x33u8; 32], now)
+        .expect("create uca");
+    router
+        .add_binding(&uca_id, AccountRole::Owner, persona, now)
+        .expect("add binding");
+
+    let (tx_hash_json, changed) = run_gateway_method(
+        &mut router,
+        &mut eth_tx_index,
+        &mut evm_settlement_index_by_id,
+        &mut evm_settlement_index_by_tx,
+        &mut evm_pending_payout_by_settlement,
+        &mut ctx,
+        "eth_sendTransaction",
+        &serde_json::json!([{
+            "from": format!("0x{}", to_hex(&sender)),
+            "to": format!("0x{}", to_hex(&receiver)),
+            "nonce": "0x0",
+            "type": "0x2",
+            "value": "0x1",
+            "gas": "0x5208",
+            "gasPrice": "0x2",
+            "maxFeePerGas": "0x9",
+            "maxPriorityFeePerGas": "0x1"
+        }]),
+    )
+    .expect("eth_sendTransaction type2 canonical fee should work");
+    assert!(changed);
+
+    let tx_hash_hex = tx_hash_json
+        .as_str()
+        .expect("eth_sendTransaction result should be tx hash string");
+    let tx_hash_bytes = decode_hex_bytes(tx_hash_hex, "tx_hash").expect("decode tx hash");
+    let tx_hash = vec_to_32(&tx_hash_bytes, "tx_hash").expect("tx hash bytes length");
+    let indexed = eth_tx_index
+        .get(&tx_hash)
+        .expect("new tx should be indexed by hash");
+    assert_eq!(indexed.chain_id, chain_id);
+    assert_eq!(indexed.tx_type, 2);
+    assert_eq!(indexed.gas_price, 9);
+
+    let expected_hash = compute_gateway_eth_tx_hash(&GatewayEthTxHashInput {
+        uca_id: &uca_id,
+        chain_id,
+        nonce: 0,
+        tx_type: 2,
+        tx_type4: false,
+        from: &sender,
+        to: Some(&receiver),
+        value: 1,
+        gas_limit: 21_000,
+        gas_price: 9,
+        max_priority_fee_per_gas: 1,
+        data: &[],
+        signature: &[],
+        access_list_address_count: 0,
+        access_list_storage_key_count: 0,
+        max_fee_per_blob_gas: 0,
+        blob_hash_count: 0,
+        signature_domain: &format!("evm:{chain_id}"),
+        wants_cross_chain_atomic: false,
+    });
+    assert_eq!(tx_hash, expected_hash);
+
+    let _ = fs::remove_dir_all(&spool_dir);
+}
+
+#[test]
+fn eth_send_transaction_rejects_chain_id_mismatch_between_top_level_and_tx() {
+    let backend = GatewayEthTxIndexStoreBackend::Memory;
+    let mut router = UnifiedAccountRouter::new();
+    let mut eth_tx_index = HashMap::new();
+    let mut evm_settlement_index_by_id = HashMap::new();
+    let mut evm_settlement_index_by_tx = HashMap::new();
+    let mut evm_pending_payout_by_settlement = HashMap::new();
+    let mut eth_filters = GatewayEthFilterState::default();
+    let chain_id = 1u64;
+    let spool_dir = std::env::temp_dir().join(format!(
+        "novovm-gateway-send-tx-chain-id-mismatch-{}-{}",
+        std::process::id(),
+        now_unix_millis()
+    ));
+    fs::create_dir_all(&spool_dir).expect("create spool dir");
+    let mut ctx = GatewayMethodContext {
+        eth_tx_index_store: &backend,
+        eth_default_chain_id: chain_id,
+        spool_dir: &spool_dir,
+        eth_filters: &mut eth_filters,
+    };
+
+    let sender = vec![0x73u8; 20];
+    let receiver = vec![0x74u8; 20];
+    let uca_id = "uca:send-tx-chain-id-mismatch".to_string();
+    let now = now_unix_sec();
+    let persona = PersonaAddress {
+        persona_type: PersonaType::Evm,
+        chain_id,
+        external_address: sender.clone(),
+    };
+    router
+        .create_uca(uca_id.clone(), vec![0x33u8; 32], now)
+        .expect("create uca");
+    router
+        .add_binding(&uca_id, AccountRole::Owner, persona, now)
+        .expect("add binding");
+
+    let err = run_gateway_method(
+        &mut router,
+        &mut eth_tx_index,
+        &mut evm_settlement_index_by_id,
+        &mut evm_settlement_index_by_tx,
+        &mut evm_pending_payout_by_settlement,
+        &mut ctx,
+        "eth_sendTransaction",
+        &serde_json::json!([{
+            "chain_id": chain_id,
+            "tx": { "chainId": chain_id + 1 },
+            "from": format!("0x{}", to_hex(&sender)),
+            "to": format!("0x{}", to_hex(&receiver)),
+            "nonce": "0x0",
+            "value": "0x1",
+            "gas": "0x5208",
+            "gasPrice": "0x1"
+        }]),
+    )
+    .expect_err("eth_sendTransaction should reject chain_id mismatch across params");
+    assert!(err.to_string().contains("chain_id mismatch across params"));
+
+    let _ = fs::remove_dir_all(&spool_dir);
+}
+
+#[test]
+fn eth_send_transaction_rejects_type2_max_fee_below_base_fee() {
+    let _guard = env_test_guard();
+    let captured = capture_env_vars(&["NOVOVM_GATEWAY_ETH_DEFAULT_BASE_FEE_PER_GAS"]);
+    std::env::set_var("NOVOVM_GATEWAY_ETH_DEFAULT_BASE_FEE_PER_GAS", "9");
+
+    let backend = GatewayEthTxIndexStoreBackend::Memory;
+    let mut router = UnifiedAccountRouter::new();
+    let mut eth_tx_index = HashMap::new();
+    let mut evm_settlement_index_by_id = HashMap::new();
+    let mut evm_settlement_index_by_tx = HashMap::new();
+    let mut evm_pending_payout_by_settlement = HashMap::new();
+    let mut eth_filters = GatewayEthFilterState::default();
+    let chain_id = 770_015u64;
+    let spool_dir = std::env::temp_dir().join(format!(
+        "novovm-gateway-send-tx-eip1559-base-fee-reject-{}-{}",
+        std::process::id(),
+        now_unix_millis()
+    ));
+    fs::create_dir_all(&spool_dir).expect("create spool dir");
+    let mut ctx = GatewayMethodContext {
+        eth_tx_index_store: &backend,
+        eth_default_chain_id: chain_id,
+        spool_dir: &spool_dir,
+        eth_filters: &mut eth_filters,
+    };
+
+    let sender = vec![0x61u8; 20];
+    let receiver = vec![0x62u8; 20];
+    let uca_id = "uca:eip1559-base-fee-reject".to_string();
+    let now = now_unix_sec();
+    let persona = PersonaAddress {
+        persona_type: PersonaType::Evm,
+        chain_id,
+        external_address: sender.clone(),
+    };
+    router
+        .create_uca(uca_id.clone(), vec![0x33u8; 32], now)
+        .expect("create uca");
+    router
+        .add_binding(&uca_id, AccountRole::Owner, persona, now)
+        .expect("add binding");
+
+    let err = run_gateway_method(
+        &mut router,
+        &mut eth_tx_index,
+        &mut evm_settlement_index_by_id,
+        &mut evm_settlement_index_by_tx,
+        &mut evm_pending_payout_by_settlement,
+        &mut ctx,
+        "eth_sendTransaction",
+        &serde_json::json!([{
+            "from": format!("0x{}", to_hex(&sender)),
+            "to": format!("0x{}", to_hex(&receiver)),
+            "nonce": "0x0",
+            "value": "0x1",
+            "gas": "0x5208",
+            "maxFeePerGas": "0x5",
+            "maxPriorityFeePerGas": "0x2"
+        }]),
+    )
+    .expect_err("eth_sendTransaction should reject when maxFeePerGas < baseFeePerGas");
+    assert!(err
+        .to_string()
+        .contains("maxFeePerGas below current base fee"));
+
+    restore_env_vars(&captured);
+    let _ = fs::remove_dir_all(&spool_dir);
+}
+
+#[test]
+fn eth_send_transaction_rejects_type2_without_max_fee_per_gas() {
+    let backend = GatewayEthTxIndexStoreBackend::Memory;
+    let mut router = UnifiedAccountRouter::new();
+    let mut eth_tx_index = HashMap::new();
+    let mut evm_settlement_index_by_id = HashMap::new();
+    let mut evm_settlement_index_by_tx = HashMap::new();
+    let mut evm_pending_payout_by_settlement = HashMap::new();
+    let mut eth_filters = GatewayEthFilterState::default();
+    let chain_id = 770_019u64;
+    let spool_dir = std::env::temp_dir().join(format!(
+        "novovm-gateway-send-tx-type2-missing-maxfee-{}-{}",
+        std::process::id(),
+        now_unix_millis()
+    ));
+    fs::create_dir_all(&spool_dir).expect("create spool dir");
+    let mut ctx = GatewayMethodContext {
+        eth_tx_index_store: &backend,
+        eth_default_chain_id: chain_id,
+        spool_dir: &spool_dir,
+        eth_filters: &mut eth_filters,
+    };
+
+    let sender = vec![0x63u8; 20];
+    let receiver = vec![0x64u8; 20];
+    let uca_id = "uca:eip1559-missing-max-fee".to_string();
+    let now = now_unix_sec();
+    let persona = PersonaAddress {
+        persona_type: PersonaType::Evm,
+        chain_id,
+        external_address: sender.clone(),
+    };
+    router
+        .create_uca(uca_id.clone(), vec![0x33u8; 32], now)
+        .expect("create uca");
+    router
+        .add_binding(&uca_id, AccountRole::Owner, persona, now)
+        .expect("add binding");
+
+    let err = run_gateway_method(
+        &mut router,
+        &mut eth_tx_index,
+        &mut evm_settlement_index_by_id,
+        &mut evm_settlement_index_by_tx,
+        &mut evm_pending_payout_by_settlement,
+        &mut ctx,
+        "eth_sendTransaction",
+        &serde_json::json!([{
+            "from": format!("0x{}", to_hex(&sender)),
+            "to": format!("0x{}", to_hex(&receiver)),
+            "nonce": "0x0",
+            "type": "0x2",
+            "value": "0x1",
+            "gas": "0x5208",
+            "gasPrice": "0x2"
+        }]),
+    )
+    .expect_err("eth_sendTransaction should reject type2 without maxFeePerGas");
+    assert!(err
+        .to_string()
+        .contains("maxFeePerGas is required for type2/type3 transactions"));
+
+    let _ = fs::remove_dir_all(&spool_dir);
+}
+
+#[test]
+fn eth_send_transaction_rejects_type2_priority_fee_above_max_fee() {
+    let backend = GatewayEthTxIndexStoreBackend::Memory;
+    let mut router = UnifiedAccountRouter::new();
+    let mut eth_tx_index = HashMap::new();
+    let mut evm_settlement_index_by_id = HashMap::new();
+    let mut evm_settlement_index_by_tx = HashMap::new();
+    let mut evm_pending_payout_by_settlement = HashMap::new();
+    let mut eth_filters = GatewayEthFilterState::default();
+    let chain_id = 770_016u64;
+    let spool_dir = std::env::temp_dir().join(format!(
+        "novovm-gateway-send-tx-eip1559-priority-fee-reject-{}-{}",
+        std::process::id(),
+        now_unix_millis()
+    ));
+    fs::create_dir_all(&spool_dir).expect("create spool dir");
+    let mut ctx = GatewayMethodContext {
+        eth_tx_index_store: &backend,
+        eth_default_chain_id: chain_id,
+        spool_dir: &spool_dir,
+        eth_filters: &mut eth_filters,
+    };
+
+    let sender = vec![0x63u8; 20];
+    let receiver = vec![0x64u8; 20];
+    let uca_id = "uca:eip1559-priority-fee-reject".to_string();
+    let now = now_unix_sec();
+    let persona = PersonaAddress {
+        persona_type: PersonaType::Evm,
+        chain_id,
+        external_address: sender.clone(),
+    };
+    router
+        .create_uca(uca_id.clone(), vec![0x33u8; 32], now)
+        .expect("create uca");
+    router
+        .add_binding(&uca_id, AccountRole::Owner, persona, now)
+        .expect("add binding");
+
+    let err = run_gateway_method(
+        &mut router,
+        &mut eth_tx_index,
+        &mut evm_settlement_index_by_id,
+        &mut evm_settlement_index_by_tx,
+        &mut evm_pending_payout_by_settlement,
+        &mut ctx,
+        "eth_sendTransaction",
+        &serde_json::json!([{
+            "from": format!("0x{}", to_hex(&sender)),
+            "to": format!("0x{}", to_hex(&receiver)),
+            "nonce": "0x0",
+            "value": "0x1",
+            "gas": "0x5208",
+            "maxFeePerGas": "0x5",
+            "maxPriorityFeePerGas": "0x6"
+        }]),
+    )
+    .expect_err("eth_sendTransaction should reject when maxPriorityFeePerGas > maxFeePerGas");
+    assert!(err
+        .to_string()
+        .contains("maxPriorityFeePerGas exceeds maxFeePerGas"));
+
+    let _ = fs::remove_dir_all(&spool_dir);
+}
+
+#[test]
+fn eth_send_transaction_rejects_type1_with_eip1559_fee_fields() {
+    let backend = GatewayEthTxIndexStoreBackend::Memory;
+    let mut router = UnifiedAccountRouter::new();
+    let mut eth_tx_index = HashMap::new();
+    let mut evm_settlement_index_by_id = HashMap::new();
+    let mut evm_settlement_index_by_tx = HashMap::new();
+    let mut evm_pending_payout_by_settlement = HashMap::new();
+    let mut eth_filters = GatewayEthFilterState::default();
+    let chain_id = 770_017u64;
+    let spool_dir = std::env::temp_dir().join(format!(
+        "novovm-gateway-send-tx-type1-with-1559-{}-{}",
+        std::process::id(),
+        now_unix_millis()
+    ));
+    fs::create_dir_all(&spool_dir).expect("create spool dir");
+    let mut ctx = GatewayMethodContext {
+        eth_tx_index_store: &backend,
+        eth_default_chain_id: chain_id,
+        spool_dir: &spool_dir,
+        eth_filters: &mut eth_filters,
+    };
+
+    let sender = vec![0x6au8; 20];
+    let receiver = vec![0x6bu8; 20];
+    let access_addr = vec![0x6cu8; 20];
+    let uca_id = "uca:type1-with-1559-reject".to_string();
+    let now = now_unix_sec();
+    let persona = PersonaAddress {
+        persona_type: PersonaType::Evm,
+        chain_id,
+        external_address: sender.clone(),
+    };
+    router
+        .create_uca(uca_id.clone(), vec![0x33u8; 32], now)
+        .expect("create uca");
+    router
+        .add_binding(&uca_id, AccountRole::Owner, persona, now)
+        .expect("add binding");
+
+    let err = run_gateway_method(
+        &mut router,
+        &mut eth_tx_index,
+        &mut evm_settlement_index_by_id,
+        &mut evm_settlement_index_by_tx,
+        &mut evm_pending_payout_by_settlement,
+        &mut ctx,
+        "eth_sendTransaction",
+        &serde_json::json!([{
+            "from": format!("0x{}", to_hex(&sender)),
+            "to": format!("0x{}", to_hex(&receiver)),
+            "nonce": "0x0",
+            "type": "0x1",
+            "value": "0x1",
+            "gas": "0x6000",
+            "accessList": [{
+                "address": format!("0x{}", to_hex(&access_addr)),
+                "storageKeys": []
+            }],
+            "maxFeePerGas": "0x5",
+            "maxPriorityFeePerGas": "0x2"
+        }]),
+    )
+    .expect_err("eth_sendTransaction should reject type1 carrying EIP-1559 fee fields");
+    assert!(err
+        .to_string()
+        .contains("access-list tx (type 1) cannot include EIP-1559 fee fields"));
+
+    let _ = fs::remove_dir_all(&spool_dir);
+}
+
+#[test]
+fn eth_send_transaction_rejects_type2_when_london_not_active() {
+    let _guard = env_test_guard();
+    let captured = capture_env_vars(&[
+        "NOVOVM_GATEWAY_ETH_FORK_LONDON_BLOCK",
+        "NOVOVM_GATEWAY_ETH_FORK_LONDON_BLOCK_CHAIN_770016",
+    ]);
+    std::env::remove_var("NOVOVM_GATEWAY_ETH_FORK_LONDON_BLOCK");
+    std::env::set_var("NOVOVM_GATEWAY_ETH_FORK_LONDON_BLOCK_CHAIN_770016", "2");
+
+    let backend = GatewayEthTxIndexStoreBackend::Memory;
+    let mut router = UnifiedAccountRouter::new();
+    let mut eth_tx_index = HashMap::new();
+    let mut evm_settlement_index_by_id = HashMap::new();
+    let mut evm_settlement_index_by_tx = HashMap::new();
+    let mut evm_pending_payout_by_settlement = HashMap::new();
+    let mut eth_filters = GatewayEthFilterState::default();
+    let chain_id = 770_016u64;
+    let spool_dir = std::env::temp_dir().join(format!(
+        "novovm-gateway-send-tx-type2-london-{}-{}",
+        std::process::id(),
+        now_unix_millis()
+    ));
+    fs::create_dir_all(&spool_dir).expect("create spool dir");
+    let mut ctx = GatewayMethodContext {
+        eth_tx_index_store: &backend,
+        eth_default_chain_id: chain_id,
+        spool_dir: &spool_dir,
+        eth_filters: &mut eth_filters,
+    };
+
+    let sender = vec![0x65u8; 20];
+    let receiver = vec![0x66u8; 20];
+    let uca_id = "uca:eip1559-london-not-active".to_string();
+    let now = now_unix_sec();
+    let persona = PersonaAddress {
+        persona_type: PersonaType::Evm,
+        chain_id,
+        external_address: sender.clone(),
+    };
+    router
+        .create_uca(uca_id.clone(), vec![0x34u8; 32], now)
+        .expect("create uca");
+    router
+        .add_binding(&uca_id, AccountRole::Owner, persona, now)
+        .expect("add binding");
+
+    let err = run_gateway_method(
+        &mut router,
+        &mut eth_tx_index,
+        &mut evm_settlement_index_by_id,
+        &mut evm_settlement_index_by_tx,
+        &mut evm_pending_payout_by_settlement,
+        &mut ctx,
+        "eth_sendTransaction",
+        &serde_json::json!([{
+            "from": format!("0x{}", to_hex(&sender)),
+            "to": format!("0x{}", to_hex(&receiver)),
+            "nonce": "0x0",
+            "value": "0x1",
+            "gas": "0x5208",
+            "maxFeePerGas": "0x5",
+            "maxPriorityFeePerGas": "0x2"
+        }]),
+    )
+    .expect_err("eth_sendTransaction should reject type2 before London activation");
+    assert!(err.to_string().contains("london fork not active"));
+
+    restore_env_vars(&captured);
+    let _ = fs::remove_dir_all(&spool_dir);
+}
+
+#[test]
+fn eth_send_transaction_rejects_type2_when_london_not_active_with_upper_hex_chain_key() {
+    let _guard = env_test_guard();
+    let captured = capture_env_vars(&[
+        "NOVOVM_GATEWAY_ETH_FORK_LONDON_BLOCK",
+        "NOVOVM_GATEWAY_ETH_FORK_LONDON_BLOCK_CHAIN_43114",
+        "NOVOVM_GATEWAY_ETH_FORK_LONDON_BLOCK_CHAIN_0xA86A",
+    ]);
+    std::env::remove_var("NOVOVM_GATEWAY_ETH_FORK_LONDON_BLOCK");
+    std::env::remove_var("NOVOVM_GATEWAY_ETH_FORK_LONDON_BLOCK_CHAIN_43114");
+    std::env::set_var("NOVOVM_GATEWAY_ETH_FORK_LONDON_BLOCK_CHAIN_0xA86A", "2");
+
+    let backend = GatewayEthTxIndexStoreBackend::Memory;
+    let mut router = UnifiedAccountRouter::new();
+    let mut eth_tx_index = HashMap::new();
+    let mut evm_settlement_index_by_id = HashMap::new();
+    let mut evm_settlement_index_by_tx = HashMap::new();
+    let mut evm_pending_payout_by_settlement = HashMap::new();
+    let mut eth_filters = GatewayEthFilterState::default();
+    let chain_id = 43_114u64;
+    let spool_dir = std::env::temp_dir().join(format!(
+        "novovm-gateway-send-tx-type2-london-upper-hex-{}-{}",
+        std::process::id(),
+        now_unix_millis()
+    ));
+    fs::create_dir_all(&spool_dir).expect("create spool dir");
+    let mut ctx = GatewayMethodContext {
+        eth_tx_index_store: &backend,
+        eth_default_chain_id: chain_id,
+        spool_dir: &spool_dir,
+        eth_filters: &mut eth_filters,
+    };
+
+    let sender = vec![0x67u8; 20];
+    let receiver = vec![0x68u8; 20];
+    let uca_id = "uca:eip1559-london-not-active-upper-hex".to_string();
+    let now = now_unix_sec();
+    let persona = PersonaAddress {
+        persona_type: PersonaType::Evm,
+        chain_id,
+        external_address: sender.clone(),
+    };
+    router
+        .create_uca(uca_id.clone(), vec![0x35u8; 32], now)
+        .expect("create uca");
+    router
+        .add_binding(&uca_id, AccountRole::Owner, persona, now)
+        .expect("add binding");
+
+    let err = run_gateway_method(
+        &mut router,
+        &mut eth_tx_index,
+        &mut evm_settlement_index_by_id,
+        &mut evm_settlement_index_by_tx,
+        &mut evm_pending_payout_by_settlement,
+        &mut ctx,
+        "eth_sendTransaction",
+        &serde_json::json!([{
+            "from": format!("0x{}", to_hex(&sender)),
+            "to": format!("0x{}", to_hex(&receiver)),
+            "nonce": "0x0",
+            "value": "0x1",
+            "gas": "0x5208",
+            "maxFeePerGas": "0x5",
+            "maxPriorityFeePerGas": "0x2"
+        }]),
+    )
+    .expect_err("eth_sendTransaction should reject type2 before London activation");
+    assert!(err.to_string().contains("london fork not active"));
+
+    restore_env_vars(&captured);
+    let _ = fs::remove_dir_all(&spool_dir);
+}
+
+#[test]
+fn resolve_gateway_eth_write_tx_type_respects_chain_scoped_type2_toggle() {
+    let _guard = env_test_guard();
+    let captured = capture_env_vars(&[
+        "NOVOVM_EVM_ENABLE_TYPE2_WRITE",
+        "NOVOVM_EVM_ENABLE_TYPE2_WRITE_CHAIN_137",
+    ]);
+    std::env::set_var("NOVOVM_EVM_ENABLE_TYPE2_WRITE", "0");
+    std::env::remove_var("NOVOVM_EVM_ENABLE_TYPE2_WRITE_CHAIN_137");
+
+    let err = resolve_gateway_eth_write_tx_type(137, Some(2), true, false, 0, 0)
+        .expect_err("type2 should be rejected when disabled");
+    assert!(err
+        .to_string()
+        .contains("dynamic-fee (type 2) write path disabled"));
+
+    std::env::set_var("NOVOVM_EVM_ENABLE_TYPE2_WRITE_CHAIN_137", "1");
+    let tx_type = resolve_gateway_eth_write_tx_type(137, Some(2), true, false, 0, 0)
+        .expect("type2 should pass when chain override enabled");
+    assert_eq!(tx_type, 2);
+
+    restore_env_vars(&captured);
+}
+
+#[test]
+fn resolve_gateway_eth_write_tx_type_respects_upper_hex_chain_scoped_type2_toggle() {
+    let _guard = env_test_guard();
+    let captured = capture_env_vars(&[
+        "NOVOVM_EVM_ENABLE_TYPE2_WRITE",
+        "NOVOVM_EVM_ENABLE_TYPE2_WRITE_CHAIN_43114",
+        "NOVOVM_EVM_ENABLE_TYPE2_WRITE_CHAIN_0xA86A",
+    ]);
+    std::env::set_var("NOVOVM_EVM_ENABLE_TYPE2_WRITE", "0");
+    std::env::remove_var("NOVOVM_EVM_ENABLE_TYPE2_WRITE_CHAIN_43114");
+    std::env::set_var("NOVOVM_EVM_ENABLE_TYPE2_WRITE_CHAIN_0xA86A", "1");
+
+    let tx_type = resolve_gateway_eth_write_tx_type(43_114, Some(2), true, false, 0, 0)
+        .expect("type2 should pass when upper-hex chain override enabled");
+    assert_eq!(tx_type, 2);
+
+    restore_env_vars(&captured);
+}
+
+#[test]
+fn resolve_gateway_eth_write_tx_type_respects_chain_scoped_type1_toggle() {
+    let _guard = env_test_guard();
+    let captured = capture_env_vars(&[
+        "NOVOVM_EVM_ENABLE_TYPE1_WRITE",
+        "NOVOVM_EVM_ENABLE_TYPE1_WRITE_CHAIN_56",
+    ]);
+    std::env::set_var("NOVOVM_EVM_ENABLE_TYPE1_WRITE", "0");
+    std::env::remove_var("NOVOVM_EVM_ENABLE_TYPE1_WRITE_CHAIN_56");
+
+    let err = resolve_gateway_eth_write_tx_type(56, Some(1), false, true, 0, 0)
+        .expect_err("type1 should be rejected when disabled");
+    assert!(err
+        .to_string()
+        .contains("access-list (type 1) write path disabled"));
+
+    std::env::set_var("NOVOVM_EVM_ENABLE_TYPE1_WRITE_CHAIN_56", "1");
+    let tx_type = resolve_gateway_eth_write_tx_type(56, Some(1), false, true, 0, 0)
+        .expect("type1 should pass when chain override enabled");
+    assert_eq!(tx_type, 1);
+
+    restore_env_vars(&captured);
+}
+
+#[test]
+fn resolve_gateway_eth_write_tx_type_respects_upper_hex_chain_scoped_type1_toggle() {
+    let _guard = env_test_guard();
+    let captured = capture_env_vars(&[
+        "NOVOVM_EVM_ENABLE_TYPE1_WRITE",
+        "NOVOVM_EVM_ENABLE_TYPE1_WRITE_CHAIN_43114",
+        "NOVOVM_EVM_ENABLE_TYPE1_WRITE_CHAIN_0xA86A",
+    ]);
+    std::env::set_var("NOVOVM_EVM_ENABLE_TYPE1_WRITE", "0");
+    std::env::remove_var("NOVOVM_EVM_ENABLE_TYPE1_WRITE_CHAIN_43114");
+    std::env::set_var("NOVOVM_EVM_ENABLE_TYPE1_WRITE_CHAIN_0xA86A", "1");
+
+    let tx_type = resolve_gateway_eth_write_tx_type(43_114, Some(1), false, true, 0, 0)
+        .expect("type1 should pass when upper-hex chain override enabled");
+    assert_eq!(tx_type, 1);
+
+    restore_env_vars(&captured);
+}
+
+#[test]
+fn resolve_gateway_eth_write_tx_type_respects_chain_scoped_type3_toggle() {
+    let _guard = env_test_guard();
+    let captured = capture_env_vars(&[
+        "NOVOVM_EVM_ENABLE_TYPE3_WRITE",
+        "NOVOVM_EVM_ENABLE_TYPE3_WRITE_CHAIN_137",
+    ]);
+    std::env::set_var("NOVOVM_EVM_ENABLE_TYPE3_WRITE", "0");
+    std::env::remove_var("NOVOVM_EVM_ENABLE_TYPE3_WRITE_CHAIN_137");
+
+    let err = resolve_gateway_eth_write_tx_type(137, Some(3), false, false, 1, 1)
+        .expect_err("type3 should be rejected when disabled");
+    assert!(err
+        .to_string()
+        .contains("blob (type 3) write path disabled"));
+
+    std::env::set_var("NOVOVM_EVM_ENABLE_TYPE3_WRITE_CHAIN_137", "1");
+    let tx_type = resolve_gateway_eth_write_tx_type(137, Some(3), false, false, 1, 1)
+        .expect("type3 should pass when chain override enabled");
+    assert_eq!(tx_type, 3);
+
+    restore_env_vars(&captured);
+}
+
+#[test]
+fn resolve_gateway_eth_write_tx_type_respects_upper_hex_chain_scoped_type3_toggle() {
+    let _guard = env_test_guard();
+    let captured = capture_env_vars(&[
+        "NOVOVM_EVM_ENABLE_TYPE3_WRITE",
+        "NOVOVM_EVM_ENABLE_TYPE3_WRITE_CHAIN_43114",
+        "NOVOVM_EVM_ENABLE_TYPE3_WRITE_CHAIN_0xA86A",
+    ]);
+    std::env::set_var("NOVOVM_EVM_ENABLE_TYPE3_WRITE", "0");
+    std::env::remove_var("NOVOVM_EVM_ENABLE_TYPE3_WRITE_CHAIN_43114");
+    std::env::set_var("NOVOVM_EVM_ENABLE_TYPE3_WRITE_CHAIN_0xA86A", "1");
+
+    let tx_type = resolve_gateway_eth_write_tx_type(43_114, Some(3), false, false, 1, 1)
+        .expect("type3 should pass when upper-hex chain override enabled");
+    assert_eq!(tx_type, 3);
+
+    restore_env_vars(&captured);
+}
+
+#[test]
 fn eth_send_transaction_accepts_camel_case_signature_domain_alias() {
     let backend = GatewayEthTxIndexStoreBackend::Memory;
     let mut router = UnifiedAccountRouter::new();
@@ -8286,10 +10253,13 @@ fn eth_send_transaction_accepts_camel_case_signature_domain_alias() {
         value: 1,
         gas_limit: 21_000,
         gas_price: 2,
+        max_priority_fee_per_gas: 0,
         data: &[],
         signature: &[],
         access_list_address_count: 0,
         access_list_storage_key_count: 0,
+        max_fee_per_blob_gas: 0,
+        blob_hash_count: 0,
         signature_domain: signature_domain.as_str(),
         wants_cross_chain_atomic: false,
     });
@@ -8450,6 +10420,171 @@ fn eth_send_transaction_rejects_low_gas_when_access_list_intrinsic_not_covered()
     .expect_err("eth_sendTransaction should reject low gas for accessList intrinsic");
     assert!(err.to_string().contains("gas too low for intrinsic cost"));
 
+    let _ = fs::remove_dir_all(&spool_dir);
+}
+
+#[test]
+fn eth_send_transaction_type3_accepts_blob_fields_when_enabled() {
+    let _guard = env_test_guard();
+    let captured = capture_env_vars(&["NOVOVM_EVM_ENABLE_TYPE3_WRITE"]);
+    std::env::set_var("NOVOVM_EVM_ENABLE_TYPE3_WRITE", "1");
+
+    let backend = GatewayEthTxIndexStoreBackend::Memory;
+    let mut router = UnifiedAccountRouter::new();
+    let mut eth_tx_index = HashMap::new();
+    let mut evm_settlement_index_by_id = HashMap::new();
+    let mut evm_settlement_index_by_tx = HashMap::new();
+    let mut evm_pending_payout_by_settlement = HashMap::new();
+    let mut eth_filters = GatewayEthFilterState::default();
+    let chain_id = 770_014u64;
+    let spool_dir = std::env::temp_dir().join(format!(
+        "novovm-gateway-send-tx-type3-{}-{}",
+        std::process::id(),
+        now_unix_millis()
+    ));
+    fs::create_dir_all(&spool_dir).expect("create spool dir");
+    let mut ctx = GatewayMethodContext {
+        eth_tx_index_store: &backend,
+        eth_default_chain_id: chain_id,
+        spool_dir: &spool_dir,
+        eth_filters: &mut eth_filters,
+    };
+
+    let sender = vec![0x79u8; 20];
+    let receiver = vec![0x7au8; 20];
+    let uca_id = "uca:type3-send".to_string();
+    let now = now_unix_sec();
+    let persona = PersonaAddress {
+        persona_type: PersonaType::Evm,
+        chain_id,
+        external_address: sender.clone(),
+    };
+    router
+        .create_uca(uca_id.clone(), vec![0x55u8; 32], now)
+        .expect("create uca");
+    router
+        .add_binding(&uca_id, AccountRole::Owner, persona, now)
+        .expect("add binding");
+
+    let (tx_hash_json, changed) = run_gateway_method(
+        &mut router,
+        &mut eth_tx_index,
+        &mut evm_settlement_index_by_id,
+        &mut evm_settlement_index_by_tx,
+        &mut evm_pending_payout_by_settlement,
+        &mut ctx,
+        "eth_sendTransaction",
+        &serde_json::json!([{
+            "from": format!("0x{}", to_hex(&sender)),
+            "to": format!("0x{}", to_hex(&receiver)),
+            "nonce": "0x0",
+            "value": "0x1",
+            "gas": "0x50000",
+            "type": "0x3",
+            "maxFeePerGas": "0x2",
+            "maxPriorityFeePerGas": "0x1",
+            "maxFeePerBlobGas": "0x7",
+            "blobVersionedHashes": [
+                format!("0x{}", "33".repeat(32))
+            ]
+        }]),
+    )
+    .expect("eth_sendTransaction type3 should work when enabled");
+    assert!(changed);
+    let tx_hash_hex = tx_hash_json
+        .as_str()
+        .expect("eth_sendTransaction result should be tx hash string");
+    let tx_hash_bytes = decode_hex_bytes(tx_hash_hex, "tx_hash").expect("decode tx hash");
+    let tx_hash = vec_to_32(&tx_hash_bytes, "tx_hash").expect("tx hash bytes length");
+    let indexed = eth_tx_index
+        .get(&tx_hash)
+        .expect("new tx should be indexed by hash");
+    assert_eq!(indexed.chain_id, chain_id);
+    assert_eq!(indexed.from, sender);
+    assert_eq!(indexed.nonce, 0);
+    assert_eq!(indexed.tx_type, 3);
+
+    restore_env_vars(&captured);
+    let _ = fs::remove_dir_all(&spool_dir);
+}
+
+#[test]
+fn eth_send_transaction_rejects_type3_when_cancun_not_active() {
+    let _guard = env_test_guard();
+    let captured = capture_env_vars(&[
+        "NOVOVM_EVM_ENABLE_TYPE3_WRITE",
+        "NOVOVM_GATEWAY_ETH_FORK_LONDON_BLOCK",
+        "NOVOVM_GATEWAY_ETH_FORK_CANCUN_BLOCK",
+        "NOVOVM_GATEWAY_ETH_FORK_LONDON_BLOCK_CHAIN_770014",
+        "NOVOVM_GATEWAY_ETH_FORK_CANCUN_BLOCK_CHAIN_770014",
+    ]);
+    std::env::set_var("NOVOVM_EVM_ENABLE_TYPE3_WRITE", "1");
+    std::env::remove_var("NOVOVM_GATEWAY_ETH_FORK_LONDON_BLOCK");
+    std::env::remove_var("NOVOVM_GATEWAY_ETH_FORK_CANCUN_BLOCK");
+    std::env::set_var("NOVOVM_GATEWAY_ETH_FORK_LONDON_BLOCK_CHAIN_770014", "0");
+    std::env::set_var("NOVOVM_GATEWAY_ETH_FORK_CANCUN_BLOCK_CHAIN_770014", "2");
+
+    let backend = GatewayEthTxIndexStoreBackend::Memory;
+    let mut router = UnifiedAccountRouter::new();
+    let mut eth_tx_index = HashMap::new();
+    let mut evm_settlement_index_by_id = HashMap::new();
+    let mut evm_settlement_index_by_tx = HashMap::new();
+    let mut evm_pending_payout_by_settlement = HashMap::new();
+    let mut eth_filters = GatewayEthFilterState::default();
+    let chain_id = 770_014u64;
+    let spool_dir = std::env::temp_dir().join(format!(
+        "novovm-gateway-send-tx-type3-cancun-{}-{}",
+        std::process::id(),
+        now_unix_millis()
+    ));
+    fs::create_dir_all(&spool_dir).expect("create spool dir");
+    let mut ctx = GatewayMethodContext {
+        eth_tx_index_store: &backend,
+        eth_default_chain_id: chain_id,
+        spool_dir: &spool_dir,
+        eth_filters: &mut eth_filters,
+    };
+
+    let sender = vec![0x7bu8; 20];
+    let receiver = vec![0x7cu8; 20];
+    let uca_id = "uca:type3-cancun-not-active".to_string();
+    let now = now_unix_sec();
+    let persona = PersonaAddress {
+        persona_type: PersonaType::Evm,
+        chain_id,
+        external_address: sender.clone(),
+    };
+    router
+        .create_uca(uca_id.clone(), vec![0x56u8; 32], now)
+        .expect("create uca");
+    router
+        .add_binding(&uca_id, AccountRole::Owner, persona, now)
+        .expect("add binding");
+
+    let err = run_gateway_method(
+        &mut router,
+        &mut eth_tx_index,
+        &mut evm_settlement_index_by_id,
+        &mut evm_settlement_index_by_tx,
+        &mut evm_pending_payout_by_settlement,
+        &mut ctx,
+        "eth_sendTransaction",
+        &serde_json::json!([{
+            "from": format!("0x{}", to_hex(&sender)),
+            "to": format!("0x{}", to_hex(&receiver)),
+            "nonce": "0x0",
+            "value": "0x1",
+            "gas": "0x50000",
+            "gasPrice": "0x1",
+            "type": "0x3",
+            "maxFeePerBlobGas": "0x7",
+            "blobVersionedHashes": [format!("0x{}", "33".repeat(32))]
+        }]),
+    )
+    .expect_err("eth_sendTransaction should reject type3 before Cancun activation");
+    assert!(err.to_string().contains("cancun fork not active"));
+
+    restore_env_vars(&captured);
     let _ = fs::remove_dir_all(&spool_dir);
 }
 
@@ -8680,6 +10815,657 @@ fn eth_send_raw_transaction_rejects_chain_id_mismatch_for_chain_id_alias() {
     .expect_err("eth_sendRawTransaction should reject chainId alias mismatch");
     assert!(err.to_string().contains("chain_id mismatch"));
 
+    let _ = fs::remove_dir_all(&spool_dir);
+}
+
+#[test]
+fn eth_send_raw_transaction_rejects_explicit_tx_type_mismatch() {
+    let backend = GatewayEthTxIndexStoreBackend::Memory;
+    let mut router = UnifiedAccountRouter::new();
+    let mut eth_tx_index = HashMap::new();
+    let mut evm_settlement_index_by_id = HashMap::new();
+    let mut evm_settlement_index_by_tx = HashMap::new();
+    let mut evm_pending_payout_by_settlement = HashMap::new();
+    let chain_id = 1u64;
+    let spool_dir = std::env::temp_dir().join(format!(
+        "novovm-gateway-eth-send-raw-type-mismatch-{}-{}",
+        std::process::id(),
+        now_unix_millis()
+    ));
+    fs::create_dir_all(&spool_dir).expect("create spool dir");
+    let mut eth_filters = GatewayEthFilterState::default();
+    let mut ctx = GatewayMethodContext {
+        eth_tx_index_store: &backend,
+        eth_default_chain_id: chain_id,
+        spool_dir: &spool_dir,
+        eth_filters: &mut eth_filters,
+    };
+
+    let sender = vec![0x47u8; 20];
+    let receiver = vec![0x48u8; 20];
+    let owner_uca = "uca:raw-type-mismatch-owner".to_string();
+    let now = now_unix_sec();
+    let persona = PersonaAddress {
+        persona_type: PersonaType::Evm,
+        chain_id,
+        external_address: sender.clone(),
+    };
+    router
+        .create_uca(owner_uca.clone(), vec![0x22u8; 32], now)
+        .expect("create owner uca");
+    router
+        .add_binding(&owner_uca, AccountRole::Owner, persona, now)
+        .expect("add binding");
+
+    // legacy tx (inferred tx_type=0), but explicit tx_type=2.
+    let raw_tx = test_rlp_encode_list(&[
+        test_rlp_encode_u64(0),
+        test_rlp_encode_u64(1),
+        test_rlp_encode_u64(21_000),
+        test_rlp_encode_bytes(&receiver),
+        test_rlp_encode_u128(1),
+        test_rlp_encode_bytes(&[]),
+        test_rlp_encode_u64(37),
+        test_rlp_encode_u64(1),
+        test_rlp_encode_u64(1),
+    ]);
+    let raw_tx_hex = format!("0x{}", to_hex(&raw_tx));
+
+    let err = run_gateway_method(
+        &mut router,
+        &mut eth_tx_index,
+        &mut evm_settlement_index_by_id,
+        &mut evm_settlement_index_by_tx,
+        &mut evm_pending_payout_by_settlement,
+        &mut ctx,
+        "eth_sendRawTransaction",
+        &serde_json::json!({
+            "from": format!("0x{}", to_hex(&sender)),
+            "raw_tx": raw_tx_hex,
+            "tx_type": "0x2"
+        }),
+    )
+    .expect_err("eth_sendRawTransaction should reject explicit tx_type mismatch");
+    assert!(err.to_string().contains("tx_type mismatch"));
+
+    let _ = fs::remove_dir_all(&spool_dir);
+}
+
+#[test]
+fn eth_send_raw_transaction_accepts_matching_explicit_tx_type() {
+    let _guard = env_test_guard();
+    let captured = capture_env_vars(&[
+        "NOVOVM_EVM_ENABLE_TYPE2_WRITE",
+        "NOVOVM_GATEWAY_ETH_DEFAULT_BASE_FEE_PER_GAS",
+    ]);
+    std::env::set_var("NOVOVM_EVM_ENABLE_TYPE2_WRITE", "1");
+    std::env::set_var("NOVOVM_GATEWAY_ETH_DEFAULT_BASE_FEE_PER_GAS", "0");
+
+    let backend = GatewayEthTxIndexStoreBackend::Memory;
+    let mut router = UnifiedAccountRouter::new();
+    let mut eth_tx_index = HashMap::new();
+    let mut evm_settlement_index_by_id = HashMap::new();
+    let mut evm_settlement_index_by_tx = HashMap::new();
+    let mut evm_pending_payout_by_settlement = HashMap::new();
+    let chain_id = 1u64;
+    let spool_dir = std::env::temp_dir().join(format!(
+        "novovm-gateway-eth-send-raw-type-match-{}-{}",
+        std::process::id(),
+        now_unix_millis()
+    ));
+    fs::create_dir_all(&spool_dir).expect("create spool dir");
+    let mut eth_filters = GatewayEthFilterState::default();
+    let mut ctx = GatewayMethodContext {
+        eth_tx_index_store: &backend,
+        eth_default_chain_id: chain_id,
+        spool_dir: &spool_dir,
+        eth_filters: &mut eth_filters,
+    };
+
+    let sender = vec![0x49u8; 20];
+    let receiver = vec![0x4au8; 20];
+    let owner_uca = "uca:raw-type-match-owner".to_string();
+    let now = now_unix_sec();
+    let persona = PersonaAddress {
+        persona_type: PersonaType::Evm,
+        chain_id,
+        external_address: sender.clone(),
+    };
+    router
+        .create_uca(owner_uca.clone(), vec![0x22u8; 32], now)
+        .expect("create owner uca");
+    router
+        .add_binding(&owner_uca, AccountRole::Owner, persona, now)
+        .expect("add binding");
+
+    let type2_payload = test_rlp_encode_list(&[
+        test_rlp_encode_u64(chain_id),
+        test_rlp_encode_u64(0),
+        test_rlp_encode_u64(2),
+        test_rlp_encode_u64(100),
+        test_rlp_encode_u64(21_000),
+        test_rlp_encode_bytes(&receiver),
+        test_rlp_encode_u128(1),
+        test_rlp_encode_bytes(&[]),
+        test_rlp_encode_list(&[]),
+    ]);
+    let mut raw_tx = vec![0x02u8];
+    raw_tx.extend_from_slice(&type2_payload);
+    let raw_tx_hex = format!("0x{}", to_hex(&raw_tx));
+
+    let (tx_hash_json, changed) = run_gateway_method(
+        &mut router,
+        &mut eth_tx_index,
+        &mut evm_settlement_index_by_id,
+        &mut evm_settlement_index_by_tx,
+        &mut evm_pending_payout_by_settlement,
+        &mut ctx,
+        "eth_sendRawTransaction",
+        &serde_json::json!({
+            "from": format!("0x{}", to_hex(&sender)),
+            "raw_tx": raw_tx_hex,
+            "type": "0x2"
+        }),
+    )
+    .expect("eth_sendRawTransaction should accept matching explicit tx_type");
+    assert!(changed);
+    let tx_hash_hex = tx_hash_json
+        .as_str()
+        .expect("eth_sendRawTransaction result should be tx hash string");
+    let tx_hash_bytes = decode_hex_bytes(tx_hash_hex, "tx_hash").expect("decode tx hash");
+    let tx_hash = vec_to_32(&tx_hash_bytes, "tx_hash").expect("tx hash bytes length");
+    let indexed = eth_tx_index
+        .get(&tx_hash)
+        .expect("raw tx should be indexed by hash");
+    assert_eq!(indexed.tx_type, 2);
+
+    restore_env_vars(&captured);
+    let _ = fs::remove_dir_all(&spool_dir);
+}
+
+#[test]
+fn eth_send_raw_transaction_rejects_intrinsic_gas_too_low() {
+    let backend = GatewayEthTxIndexStoreBackend::Memory;
+    let mut router = UnifiedAccountRouter::new();
+    let mut eth_tx_index = HashMap::new();
+    let mut evm_settlement_index_by_id = HashMap::new();
+    let mut evm_settlement_index_by_tx = HashMap::new();
+    let mut evm_pending_payout_by_settlement = HashMap::new();
+    let chain_id = 1u64;
+    let spool_dir = std::env::temp_dir().join(format!(
+        "novovm-gateway-eth-send-raw-intrinsic-too-low-{}-{}",
+        std::process::id(),
+        now_unix_millis()
+    ));
+    fs::create_dir_all(&spool_dir).expect("create spool dir");
+    let mut eth_filters = GatewayEthFilterState::default();
+    let mut ctx = GatewayMethodContext {
+        eth_tx_index_store: &backend,
+        eth_default_chain_id: chain_id,
+        spool_dir: &spool_dir,
+        eth_filters: &mut eth_filters,
+    };
+
+    let sender = vec![0x55u8; 20];
+    let receiver = vec![0x56u8; 20];
+    let owner_uca = "uca:raw-intrinsic-owner".to_string();
+    let now = now_unix_sec();
+    let persona = PersonaAddress {
+        persona_type: PersonaType::Evm,
+        chain_id,
+        external_address: sender.clone(),
+    };
+    router
+        .create_uca(owner_uca.clone(), vec![0x22u8; 32], now)
+        .expect("create owner uca");
+    router
+        .add_binding(&owner_uca, AccountRole::Owner, persona, now)
+        .expect("add binding");
+
+    // legacy raw tx with gasLimit below transfer intrinsic 21_000.
+    let raw_tx = test_rlp_encode_list(&[
+        test_rlp_encode_u64(0),
+        test_rlp_encode_u64(1),
+        test_rlp_encode_u64(20_999),
+        test_rlp_encode_bytes(&receiver),
+        test_rlp_encode_u128(1),
+        test_rlp_encode_bytes(&[]),
+        test_rlp_encode_u64(37),
+        test_rlp_encode_u64(1),
+        test_rlp_encode_u64(1),
+    ]);
+    let raw_tx_hex = format!("0x{}", to_hex(&raw_tx));
+
+    let err = run_gateway_method(
+        &mut router,
+        &mut eth_tx_index,
+        &mut evm_settlement_index_by_id,
+        &mut evm_settlement_index_by_tx,
+        &mut evm_pending_payout_by_settlement,
+        &mut ctx,
+        "eth_sendRawTransaction",
+        &serde_json::json!({
+            "from": format!("0x{}", to_hex(&sender)),
+            "raw_tx": raw_tx_hex
+        }),
+    )
+    .expect_err("eth_sendRawTransaction should reject intrinsic gas too low");
+    let text = err.to_string();
+    assert!(text.contains("semantic validation failed"));
+
+    let _ = fs::remove_dir_all(&spool_dir);
+}
+
+#[test]
+fn eth_send_raw_transaction_rejects_type2_max_fee_below_base_fee() {
+    let _guard = env_test_guard();
+    let captured = capture_env_vars(&["NOVOVM_GATEWAY_ETH_DEFAULT_BASE_FEE_PER_GAS"]);
+    std::env::set_var("NOVOVM_GATEWAY_ETH_DEFAULT_BASE_FEE_PER_GAS", "9");
+
+    let backend = GatewayEthTxIndexStoreBackend::Memory;
+    let mut router = UnifiedAccountRouter::new();
+    let mut eth_tx_index = HashMap::new();
+    let mut evm_settlement_index_by_id = HashMap::new();
+    let mut evm_settlement_index_by_tx = HashMap::new();
+    let mut evm_pending_payout_by_settlement = HashMap::new();
+    let chain_id = 1u64;
+    let spool_dir = std::env::temp_dir().join(format!(
+        "novovm-gateway-eth-send-raw-type2-base-fee-reject-{}-{}",
+        std::process::id(),
+        now_unix_millis()
+    ));
+    fs::create_dir_all(&spool_dir).expect("create spool dir");
+    let mut eth_filters = GatewayEthFilterState::default();
+    let mut ctx = GatewayMethodContext {
+        eth_tx_index_store: &backend,
+        eth_default_chain_id: chain_id,
+        spool_dir: &spool_dir,
+        eth_filters: &mut eth_filters,
+    };
+
+    let sender = vec![0x57u8; 20];
+    let receiver = vec![0x58u8; 20];
+    let owner_uca = "uca:raw-type2-base-fee-owner".to_string();
+    let now = now_unix_sec();
+    let persona = PersonaAddress {
+        persona_type: PersonaType::Evm,
+        chain_id,
+        external_address: sender.clone(),
+    };
+    router
+        .create_uca(owner_uca.clone(), vec![0x22u8; 32], now)
+        .expect("create owner uca");
+    router
+        .add_binding(&owner_uca, AccountRole::Owner, persona, now)
+        .expect("add binding");
+
+    let type2_payload = test_rlp_encode_list(&[
+        test_rlp_encode_u64(chain_id),
+        test_rlp_encode_u64(0),      // nonce
+        test_rlp_encode_u64(2),      // maxPriorityFeePerGas
+        test_rlp_encode_u64(5),      // maxFeePerGas (below base fee=9)
+        test_rlp_encode_u64(21_000), // gasLimit
+        test_rlp_encode_bytes(&receiver),
+        test_rlp_encode_u128(1),
+        test_rlp_encode_bytes(&[]),
+        test_rlp_encode_list(&[]), // accessList
+    ]);
+    let mut raw_tx = vec![0x02u8];
+    raw_tx.extend_from_slice(&type2_payload);
+    let raw_tx_hex = format!("0x{}", to_hex(&raw_tx));
+
+    let err = run_gateway_method(
+        &mut router,
+        &mut eth_tx_index,
+        &mut evm_settlement_index_by_id,
+        &mut evm_settlement_index_by_tx,
+        &mut evm_pending_payout_by_settlement,
+        &mut ctx,
+        "eth_sendRawTransaction",
+        &serde_json::json!({
+            "from": format!("0x{}", to_hex(&sender)),
+            "raw_tx": raw_tx_hex
+        }),
+    )
+    .expect_err("eth_sendRawTransaction should reject when maxFeePerGas < baseFeePerGas");
+    assert!(err
+        .to_string()
+        .contains("maxFeePerGas below current base fee"));
+
+    restore_env_vars(&captured);
+    let _ = fs::remove_dir_all(&spool_dir);
+}
+
+#[test]
+fn eth_send_raw_transaction_rejects_type2_priority_fee_above_max_fee() {
+    let backend = GatewayEthTxIndexStoreBackend::Memory;
+    let mut router = UnifiedAccountRouter::new();
+    let mut eth_tx_index = HashMap::new();
+    let mut evm_settlement_index_by_id = HashMap::new();
+    let mut evm_settlement_index_by_tx = HashMap::new();
+    let mut evm_pending_payout_by_settlement = HashMap::new();
+    let chain_id = 1u64;
+    let spool_dir = std::env::temp_dir().join(format!(
+        "novovm-gateway-eth-send-raw-type2-priority-fee-reject-{}-{}",
+        std::process::id(),
+        now_unix_millis()
+    ));
+    fs::create_dir_all(&spool_dir).expect("create spool dir");
+    let mut eth_filters = GatewayEthFilterState::default();
+    let mut ctx = GatewayMethodContext {
+        eth_tx_index_store: &backend,
+        eth_default_chain_id: chain_id,
+        spool_dir: &spool_dir,
+        eth_filters: &mut eth_filters,
+    };
+
+    let sender = vec![0x59u8; 20];
+    let receiver = vec![0x5au8; 20];
+    let owner_uca = "uca:raw-type2-priority-fee-owner".to_string();
+    let now = now_unix_sec();
+    let persona = PersonaAddress {
+        persona_type: PersonaType::Evm,
+        chain_id,
+        external_address: sender.clone(),
+    };
+    router
+        .create_uca(owner_uca.clone(), vec![0x22u8; 32], now)
+        .expect("create owner uca");
+    router
+        .add_binding(&owner_uca, AccountRole::Owner, persona, now)
+        .expect("add binding");
+
+    let type2_payload = test_rlp_encode_list(&[
+        test_rlp_encode_u64(chain_id),
+        test_rlp_encode_u64(0),      // nonce
+        test_rlp_encode_u64(6),      // maxPriorityFeePerGas (above maxFee)
+        test_rlp_encode_u64(5),      // maxFeePerGas
+        test_rlp_encode_u64(21_000), // gasLimit
+        test_rlp_encode_bytes(&receiver),
+        test_rlp_encode_u128(1),
+        test_rlp_encode_bytes(&[]),
+        test_rlp_encode_list(&[]), // accessList
+    ]);
+    let mut raw_tx = vec![0x02u8];
+    raw_tx.extend_from_slice(&type2_payload);
+    let raw_tx_hex = format!("0x{}", to_hex(&raw_tx));
+
+    let err = run_gateway_method(
+        &mut router,
+        &mut eth_tx_index,
+        &mut evm_settlement_index_by_id,
+        &mut evm_settlement_index_by_tx,
+        &mut evm_pending_payout_by_settlement,
+        &mut ctx,
+        "eth_sendRawTransaction",
+        &serde_json::json!({
+            "from": format!("0x{}", to_hex(&sender)),
+            "raw_tx": raw_tx_hex
+        }),
+    )
+    .expect_err("eth_sendRawTransaction should reject when maxPriorityFeePerGas > maxFeePerGas");
+    assert!(err.to_string().contains("semantic validation failed"));
+
+    let _ = fs::remove_dir_all(&spool_dir);
+}
+
+#[test]
+fn eth_send_raw_transaction_rejects_type2_when_write_path_disabled() {
+    let _guard = env_test_guard();
+    let captured = capture_env_vars(&[
+        "NOVOVM_EVM_ENABLE_TYPE2_WRITE",
+        "NOVOVM_EVM_ENABLE_TYPE2_WRITE_CHAIN_1",
+        "NOVOVM_EVM_ENABLE_TYPE2_WRITE_CHAIN_0x1",
+    ]);
+    std::env::set_var("NOVOVM_EVM_ENABLE_TYPE2_WRITE", "0");
+    std::env::remove_var("NOVOVM_EVM_ENABLE_TYPE2_WRITE_CHAIN_1");
+    std::env::remove_var("NOVOVM_EVM_ENABLE_TYPE2_WRITE_CHAIN_0x1");
+
+    let backend = GatewayEthTxIndexStoreBackend::Memory;
+    let mut router = UnifiedAccountRouter::new();
+    let mut eth_tx_index = HashMap::new();
+    let mut evm_settlement_index_by_id = HashMap::new();
+    let mut evm_settlement_index_by_tx = HashMap::new();
+    let mut evm_pending_payout_by_settlement = HashMap::new();
+    let chain_id = 1u64;
+    let spool_dir = std::env::temp_dir().join(format!(
+        "novovm-gateway-eth-send-raw-type2-disabled-{}-{}",
+        std::process::id(),
+        now_unix_millis()
+    ));
+    fs::create_dir_all(&spool_dir).expect("create spool dir");
+    let mut eth_filters = GatewayEthFilterState::default();
+    let mut ctx = GatewayMethodContext {
+        eth_tx_index_store: &backend,
+        eth_default_chain_id: chain_id,
+        spool_dir: &spool_dir,
+        eth_filters: &mut eth_filters,
+    };
+
+    let sender = vec![0x5bu8; 20];
+    let receiver = vec![0x5cu8; 20];
+    let owner_uca = "uca:raw-type2-disabled-owner".to_string();
+    let now = now_unix_sec();
+    let persona = PersonaAddress {
+        persona_type: PersonaType::Evm,
+        chain_id,
+        external_address: sender.clone(),
+    };
+    router
+        .create_uca(owner_uca.clone(), vec![0x22u8; 32], now)
+        .expect("create owner uca");
+    router
+        .add_binding(&owner_uca, AccountRole::Owner, persona, now)
+        .expect("add binding");
+
+    let type2_payload = test_rlp_encode_list(&[
+        test_rlp_encode_u64(chain_id),
+        test_rlp_encode_u64(0),
+        test_rlp_encode_u64(2),
+        test_rlp_encode_u64(5),
+        test_rlp_encode_u64(21_000),
+        test_rlp_encode_bytes(&receiver),
+        test_rlp_encode_u128(1),
+        test_rlp_encode_bytes(&[]),
+        test_rlp_encode_list(&[]),
+    ]);
+    let mut raw_tx = vec![0x02u8];
+    raw_tx.extend_from_slice(&type2_payload);
+    let raw_tx_hex = format!("0x{}", to_hex(&raw_tx));
+
+    let err = run_gateway_method(
+        &mut router,
+        &mut eth_tx_index,
+        &mut evm_settlement_index_by_id,
+        &mut evm_settlement_index_by_tx,
+        &mut evm_pending_payout_by_settlement,
+        &mut ctx,
+        "eth_sendRawTransaction",
+        &serde_json::json!({
+            "from": format!("0x{}", to_hex(&sender)),
+            "raw_tx": raw_tx_hex
+        }),
+    )
+    .expect_err("eth_sendRawTransaction should reject when type2 write path disabled");
+    assert!(err
+        .to_string()
+        .contains("dynamic-fee (type 2) write path disabled"));
+
+    restore_env_vars(&captured);
+    let _ = fs::remove_dir_all(&spool_dir);
+}
+
+#[test]
+fn eth_send_raw_transaction_rejects_type2_when_london_not_active() {
+    let _guard = env_test_guard();
+    let captured = capture_env_vars(&[
+        "NOVOVM_GATEWAY_ETH_FORK_LONDON_BLOCK",
+        "NOVOVM_GATEWAY_ETH_FORK_LONDON_BLOCK_CHAIN_1",
+        "NOVOVM_GATEWAY_ETH_FORK_LONDON_BLOCK_CHAIN_0x1",
+    ]);
+    std::env::remove_var("NOVOVM_GATEWAY_ETH_FORK_LONDON_BLOCK");
+    std::env::set_var("NOVOVM_GATEWAY_ETH_FORK_LONDON_BLOCK_CHAIN_1", "2");
+    std::env::remove_var("NOVOVM_GATEWAY_ETH_FORK_LONDON_BLOCK_CHAIN_0x1");
+
+    let backend = GatewayEthTxIndexStoreBackend::Memory;
+    let mut router = UnifiedAccountRouter::new();
+    let mut eth_tx_index = HashMap::new();
+    let mut evm_settlement_index_by_id = HashMap::new();
+    let mut evm_settlement_index_by_tx = HashMap::new();
+    let mut evm_pending_payout_by_settlement = HashMap::new();
+    let chain_id = 1u64;
+    let spool_dir = std::env::temp_dir().join(format!(
+        "novovm-gateway-eth-send-raw-type2-london-{}-{}",
+        std::process::id(),
+        now_unix_millis()
+    ));
+    fs::create_dir_all(&spool_dir).expect("create spool dir");
+    let mut eth_filters = GatewayEthFilterState::default();
+    let mut ctx = GatewayMethodContext {
+        eth_tx_index_store: &backend,
+        eth_default_chain_id: chain_id,
+        spool_dir: &spool_dir,
+        eth_filters: &mut eth_filters,
+    };
+
+    let sender = vec![0x5du8; 20];
+    let receiver = vec![0x5eu8; 20];
+    let owner_uca = "uca:raw-type2-london-owner".to_string();
+    let now = now_unix_sec();
+    let persona = PersonaAddress {
+        persona_type: PersonaType::Evm,
+        chain_id,
+        external_address: sender.clone(),
+    };
+    router
+        .create_uca(owner_uca.clone(), vec![0x22u8; 32], now)
+        .expect("create owner uca");
+    router
+        .add_binding(&owner_uca, AccountRole::Owner, persona, now)
+        .expect("add binding");
+
+    let type2_payload = test_rlp_encode_list(&[
+        test_rlp_encode_u64(chain_id),
+        test_rlp_encode_u64(0),
+        test_rlp_encode_u64(2),
+        test_rlp_encode_u64(5),
+        test_rlp_encode_u64(21_000),
+        test_rlp_encode_bytes(&receiver),
+        test_rlp_encode_u128(1),
+        test_rlp_encode_bytes(&[]),
+        test_rlp_encode_list(&[]),
+    ]);
+    let mut raw_tx = vec![0x02u8];
+    raw_tx.extend_from_slice(&type2_payload);
+    let raw_tx_hex = format!("0x{}", to_hex(&raw_tx));
+
+    let err = run_gateway_method(
+        &mut router,
+        &mut eth_tx_index,
+        &mut evm_settlement_index_by_id,
+        &mut evm_settlement_index_by_tx,
+        &mut evm_pending_payout_by_settlement,
+        &mut ctx,
+        "eth_sendRawTransaction",
+        &serde_json::json!({
+            "from": format!("0x{}", to_hex(&sender)),
+            "raw_tx": raw_tx_hex
+        }),
+    )
+    .expect_err("eth_sendRawTransaction should reject type2 before London activation");
+    assert!(err.to_string().contains("london fork not active"));
+
+    restore_env_vars(&captured);
+    let _ = fs::remove_dir_all(&spool_dir);
+}
+
+#[test]
+fn eth_send_raw_transaction_rejects_type3_when_cancun_not_active() {
+    let _guard = env_test_guard();
+    let captured = capture_env_vars(&[
+        "NOVOVM_EVM_ENABLE_TYPE3_WRITE",
+        "NOVOVM_GATEWAY_ETH_FORK_LONDON_BLOCK",
+        "NOVOVM_GATEWAY_ETH_FORK_CANCUN_BLOCK",
+        "NOVOVM_GATEWAY_ETH_FORK_LONDON_BLOCK_CHAIN_1",
+        "NOVOVM_GATEWAY_ETH_FORK_CANCUN_BLOCK_CHAIN_1",
+    ]);
+    std::env::set_var("NOVOVM_EVM_ENABLE_TYPE3_WRITE", "1");
+    std::env::remove_var("NOVOVM_GATEWAY_ETH_FORK_LONDON_BLOCK");
+    std::env::remove_var("NOVOVM_GATEWAY_ETH_FORK_CANCUN_BLOCK");
+    std::env::set_var("NOVOVM_GATEWAY_ETH_FORK_LONDON_BLOCK_CHAIN_1", "0");
+    std::env::set_var("NOVOVM_GATEWAY_ETH_FORK_CANCUN_BLOCK_CHAIN_1", "2");
+
+    let backend = GatewayEthTxIndexStoreBackend::Memory;
+    let mut router = UnifiedAccountRouter::new();
+    let mut eth_tx_index = HashMap::new();
+    let mut evm_settlement_index_by_id = HashMap::new();
+    let mut evm_settlement_index_by_tx = HashMap::new();
+    let mut evm_pending_payout_by_settlement = HashMap::new();
+    let chain_id = 1u64;
+    let spool_dir = std::env::temp_dir().join(format!(
+        "novovm-gateway-eth-send-raw-type3-cancun-{}-{}",
+        std::process::id(),
+        now_unix_millis()
+    ));
+    fs::create_dir_all(&spool_dir).expect("create spool dir");
+    let mut eth_filters = GatewayEthFilterState::default();
+    let mut ctx = GatewayMethodContext {
+        eth_tx_index_store: &backend,
+        eth_default_chain_id: chain_id,
+        spool_dir: &spool_dir,
+        eth_filters: &mut eth_filters,
+    };
+
+    let sender = vec![0x5fu8; 20];
+    let receiver = vec![0x60u8; 20];
+    let owner_uca = "uca:raw-type3-cancun-owner".to_string();
+    let now = now_unix_sec();
+    let persona = PersonaAddress {
+        persona_type: PersonaType::Evm,
+        chain_id,
+        external_address: sender.clone(),
+    };
+    router
+        .create_uca(owner_uca.clone(), vec![0x22u8; 32], now)
+        .expect("create owner uca");
+    router
+        .add_binding(&owner_uca, AccountRole::Owner, persona, now)
+        .expect("add binding");
+
+    let type3_payload = test_rlp_encode_list(&[
+        test_rlp_encode_u64(chain_id),
+        test_rlp_encode_u64(0),
+        test_rlp_encode_u64(2),
+        test_rlp_encode_u64(5),
+        test_rlp_encode_u64(0x50_000),
+        test_rlp_encode_bytes(&receiver),
+        test_rlp_encode_u128(1),
+        test_rlp_encode_bytes(&[]),
+        test_rlp_encode_list(&[]),
+        test_rlp_encode_u64(7),
+        test_rlp_encode_list(&[test_rlp_encode_bytes(&[0x33u8; 32])]),
+    ]);
+    let mut raw_tx = vec![0x03u8];
+    raw_tx.extend_from_slice(&type3_payload);
+    let raw_tx_hex = format!("0x{}", to_hex(&raw_tx));
+
+    let err = run_gateway_method(
+        &mut router,
+        &mut eth_tx_index,
+        &mut evm_settlement_index_by_id,
+        &mut evm_settlement_index_by_tx,
+        &mut evm_pending_payout_by_settlement,
+        &mut ctx,
+        "eth_sendRawTransaction",
+        &serde_json::json!({
+            "from": format!("0x{}", to_hex(&sender)),
+            "raw_tx": raw_tx_hex
+        }),
+    )
+    .expect_err("eth_sendRawTransaction should reject type3 before Cancun activation");
+    assert!(err.to_string().contains("cancun fork not active"));
+
+    restore_env_vars(&captured);
     let _ = fs::remove_dir_all(&spool_dir);
 }
 
@@ -9236,6 +12022,17 @@ fn auto_replay_pending_payouts_respects_cap_and_advances_status() {
         evm_payout_pending_warn_threshold: usize::MAX,
         evm_payout_last_autoreplay_at_ms: 0,
         evm_payout_last_warn_at_ms: 0,
+        evm_atomic_broadcast_autoreplay_max: 0,
+        evm_atomic_broadcast_autoreplay_cooldown_ms: 0,
+        evm_atomic_broadcast_pending_warn_threshold: usize::MAX,
+        evm_atomic_broadcast_autoreplay_use_external_executor: false,
+        evm_atomic_broadcast_last_autoreplay_at_ms: 0,
+        evm_atomic_broadcast_last_warn_at_ms: 0,
+        eth_public_broadcast_autoreplay_max: 0,
+        eth_public_broadcast_autoreplay_cooldown_ms: 0,
+        eth_public_broadcast_pending_warn_threshold: usize::MAX,
+        eth_public_broadcast_last_autoreplay_at_ms: 0,
+        eth_public_broadcast_last_warn_at_ms: 0,
         eth_default_chain_id: 1,
         ua_store: GatewayUaStoreBackend::BincodeFile {
             path: spool_dir.join("ua-store.bin"),
@@ -9654,6 +12451,591 @@ fn public_broadcast_executor_output_validation_rejects_mismatch() {
 }
 
 #[test]
+fn maybe_execute_public_broadcast_falls_back_to_native_udp() {
+    let _guard = env_test_guard();
+    let keys = [
+        "NOVOVM_GATEWAY_ETH_PUBLIC_BROADCAST_EXEC",
+        "NOVOVM_GATEWAY_ETH_PUBLIC_BROADCAST_REQUIRED",
+        "NOVOVM_GATEWAY_ETH_PUBLIC_BROADCAST_NATIVE_TRANSPORT",
+        "NOVOVM_GATEWAY_ETH_PUBLIC_BROADCAST_NATIVE_NODE_ID",
+        "NOVOVM_GATEWAY_ETH_PUBLIC_BROADCAST_NATIVE_LISTEN",
+        "NOVOVM_GATEWAY_ETH_PUBLIC_BROADCAST_NATIVE_PEERS",
+    ];
+    let captured = capture_env_vars(&keys);
+    for key in keys {
+        std::env::remove_var(key);
+    }
+    let run = || {
+        let peer_socket = std::net::UdpSocket::bind("127.0.0.1:0").expect("bind udp peer socket");
+        peer_socket
+            .set_read_timeout(Some(std::time::Duration::from_secs(1)))
+            .expect("set udp read timeout");
+        let peer_addr = peer_socket.local_addr().expect("peer socket local addr");
+
+        std::env::set_var(
+            "NOVOVM_GATEWAY_ETH_PUBLIC_BROADCAST_NATIVE_TRANSPORT",
+            "udp",
+        );
+        std::env::set_var("NOVOVM_GATEWAY_ETH_PUBLIC_BROADCAST_NATIVE_NODE_ID", "0x1");
+        std::env::set_var(
+            "NOVOVM_GATEWAY_ETH_PUBLIC_BROADCAST_NATIVE_LISTEN",
+            "127.0.0.1:0",
+        );
+        std::env::set_var(
+            "NOVOVM_GATEWAY_ETH_PUBLIC_BROADCAST_NATIVE_PEERS",
+            format!("2@{}", peer_addr),
+        );
+
+        let chain_id = 1u64;
+        let tx_hash = [0xaau8; 32];
+        let raw_tx = [0x01u8, 0x02, 0x03, 0x04];
+
+        let executed = maybe_execute_gateway_eth_public_broadcast(
+            chain_id,
+            &tx_hash,
+            GatewayEthPublicBroadcastPayload {
+                raw_tx: Some(raw_tx.as_slice()),
+                tx_ir_bincode: None,
+            },
+            true,
+        )
+        .expect("native fallback broadcast should succeed")
+        .expect("native fallback should return output");
+        assert_eq!(executed.1, 1);
+        assert_eq!(executed.2, "native:udp");
+
+        let mut recv_buf = [0u8; 2048];
+        let (n, _) = peer_socket
+            .recv_from(&mut recv_buf)
+            .expect("peer should receive native broadcast packet");
+        let decoded = protocol_decode(&recv_buf[..n]).expect("decode protocol packet");
+        match decoded {
+            ProtocolMessage::DistributedOcccGossip(msg) => {
+                assert_eq!(msg.msg_type, DistributedOcccMessageType::TxProposal);
+                assert_eq!(msg.from, 1);
+                assert_eq!(msg.to, 2);
+                assert_eq!(msg.payload, raw_tx);
+            }
+            other => panic!("unexpected native broadcast message: {other:?}"),
+        }
+    };
+    let run_result = std::panic::catch_unwind(run);
+    restore_env_vars(&captured);
+    if let Err(panic) = run_result {
+        std::panic::resume_unwind(panic);
+    }
+}
+
+#[test]
+fn upsert_gateway_eth_broadcast_status_classifies_native_mode() {
+    let backend = GatewayEthTxIndexStoreBackend::Memory;
+    let tx_hash = [0xabu8; 32];
+    if let Ok(mut map) = gateway_eth_broadcast_status_store().lock() {
+        map.clear();
+    }
+    let result = Some((
+        serde_json::json!({"broadcasted": true}).to_string(),
+        1,
+        "native:udp".to_string(),
+    ));
+    upsert_gateway_eth_broadcast_status(&backend, 1, tx_hash, &result);
+    let status = gateway_eth_broadcast_status_json_by_tx(&backend, &tx_hash);
+    assert_eq!(status["mode"].as_str(), Some("native"));
+    assert_eq!(status["executor"].as_str(), Some("native:udp"));
+}
+
+#[test]
+fn gateway_eth_broadcast_status_json_by_tx_reloads_from_rocksdb() {
+    let rocksdb_path = std::env::temp_dir().join(format!(
+        "novovm-gateway-broadcast-status-{}-{}",
+        std::process::id(),
+        now_unix_millis()
+    ));
+    let backend = GatewayEthTxIndexStoreBackend::RocksDb {
+        path: rocksdb_path.clone(),
+    };
+    let tx_hash = [0xcdu8; 32];
+    if let Ok(mut map) = gateway_eth_broadcast_status_store().lock() {
+        map.clear();
+    }
+
+    let result = Some((
+        serde_json::json!({"broadcasted": true, "mode": "native_udp"}).to_string(),
+        1,
+        "native:udp".to_string(),
+    ));
+    upsert_gateway_eth_broadcast_status(&backend, 1, tx_hash, &result);
+
+    if let Ok(mut map) = gateway_eth_broadcast_status_store().lock() {
+        map.clear();
+    }
+    let status = gateway_eth_broadcast_status_json_by_tx(&backend, &tx_hash);
+    assert_eq!(status["mode"].as_str(), Some("native"));
+    assert_eq!(status["attempts"].as_u64(), Some(1));
+    assert_eq!(status["executor"].as_str(), Some("native:udp"));
+    assert!(status["updated_at_unix_ms"].as_u64().is_some());
+    let _ = fs::remove_dir_all(&rocksdb_path);
+}
+
+#[test]
+fn gateway_eth_submit_status_by_tx_reloads_from_rocksdb() {
+    let _guard = env_test_guard();
+    let rocksdb_path = std::env::temp_dir().join(format!(
+        "novovm-gateway-submit-status-{}-{}",
+        std::process::id(),
+        now_unix_millis()
+    ));
+    let backend = GatewayEthTxIndexStoreBackend::RocksDb {
+        path: rocksdb_path.clone(),
+    };
+    let tx_hash = [0xceu8; 32];
+    if let Ok(mut map) = gateway_eth_submit_status_store().lock() {
+        map.clear();
+    }
+
+    upsert_gateway_eth_submit_status(
+        &backend,
+        tx_hash,
+        GatewayEthSubmitStatus {
+            chain_id: Some(1),
+            accepted: false,
+            pending: false,
+            onchain: false,
+            error_code: Some("PUBLIC_BROADCAST_FAILED".to_string()),
+            error_reason: Some("public broadcast failed".to_string()),
+            updated_at_unix_ms: now_unix_millis(),
+        },
+    );
+
+    if let Ok(mut map) = gateway_eth_submit_status_store().lock() {
+        map.clear();
+    }
+    let status = gateway_eth_submit_status_by_tx(&backend, &tx_hash)
+        .expect("load submit status from rocksdb");
+    assert_eq!(status.chain_id, Some(1));
+    assert!(!status.accepted);
+    assert_eq!(
+        status.error_code.as_deref(),
+        Some("PUBLIC_BROADCAST_FAILED")
+    );
+    let _ = fs::remove_dir_all(&rocksdb_path);
+}
+
+#[test]
+fn evm_get_tx_submit_status_uses_persisted_failure_status_when_tx_missing() {
+    let _guard = env_test_guard();
+    let backend = GatewayEthTxIndexStoreBackend::Memory;
+    let tx_hash = [0xafu8; 32];
+    if let Ok(mut map) = gateway_eth_submit_status_store().lock() {
+        map.clear();
+    }
+    upsert_gateway_eth_submit_status(
+        &backend,
+        tx_hash,
+        GatewayEthSubmitStatus {
+            chain_id: Some(1),
+            accepted: false,
+            pending: false,
+            onchain: false,
+            error_code: Some("PUBLIC_BROADCAST_FAILED".to_string()),
+            error_reason: Some("public broadcast failed".to_string()),
+            updated_at_unix_ms: now_unix_millis(),
+        },
+    );
+
+    let mut router = UnifiedAccountRouter::new();
+    let mut eth_tx_index = HashMap::new();
+    let mut evm_settlement_index_by_id = HashMap::new();
+    let mut evm_settlement_index_by_tx = HashMap::new();
+    let mut evm_pending_payout_by_settlement = HashMap::new();
+    let spool_dir = std::env::temp_dir().join(format!(
+        "novovm-gateway-submit-status-lifecycle-{}-{}",
+        std::process::id(),
+        now_unix_millis()
+    ));
+    fs::create_dir_all(&spool_dir).expect("create spool dir");
+    let mut eth_filters = GatewayEthFilterState::default();
+    let mut ctx = GatewayMethodContext {
+        eth_tx_index_store: &backend,
+        eth_default_chain_id: 1,
+        spool_dir: &spool_dir,
+        eth_filters: &mut eth_filters,
+    };
+    let (status, changed) = run_gateway_method(
+        &mut router,
+        &mut eth_tx_index,
+        &mut evm_settlement_index_by_id,
+        &mut evm_settlement_index_by_tx,
+        &mut evm_pending_payout_by_settlement,
+        &mut ctx,
+        "evm_getTxSubmitStatus",
+        &serde_json::json!({
+            "chain_id": 1,
+            "tx_hash": format!("0x{}", to_hex(&tx_hash)),
+        }),
+    )
+    .expect("evm_getTxSubmitStatus should read persisted submit failure");
+    assert!(!changed);
+    assert_eq!(status["accepted"].as_bool(), Some(false));
+    assert_eq!(status["pending"].as_bool(), Some(false));
+    assert_eq!(status["onchain"].as_bool(), Some(false));
+    assert_eq!(
+        status["error_code"].as_str(),
+        Some("PUBLIC_BROADCAST_FAILED")
+    );
+    assert_eq!(
+        status["error_reason"].as_str(),
+        Some("public broadcast failed")
+    );
+    assert_eq!(status["chain_id"].as_str(), Some("0x1"));
+    let _ = fs::remove_dir_all(&spool_dir);
+    if let Ok(mut map) = gateway_eth_submit_status_store().lock() {
+        map.clear();
+    }
+}
+
+#[test]
+fn infer_gateway_eth_tx_hash_from_write_params_supports_raw_tx() {
+    let _guard = env_test_guard();
+    let sender = vec![0x31u8; 20];
+    let receiver = vec![0x32u8; 20];
+    let raw_tx = test_rlp_encode_list(&[
+        test_rlp_encode_u64(0),
+        test_rlp_encode_u64(1),
+        test_rlp_encode_u64(21_000),
+        test_rlp_encode_bytes(&receiver),
+        test_rlp_encode_u128(1),
+        test_rlp_encode_bytes(&[]),
+        test_rlp_encode_u64(37),
+        test_rlp_encode_u64(1),
+        test_rlp_encode_u64(1),
+    ]);
+    let params = serde_json::json!({
+        "from": format!("0x{}", to_hex(&sender)),
+        "raw_tx": format!("0x{}", to_hex(&raw_tx)),
+    });
+    let inferred =
+        infer_gateway_eth_tx_hash_from_write_params("eth_sendRawTransaction", &params, 1)
+            .expect("infer tx hash from raw params");
+    let fields = translate_raw_evm_tx_fields_m0(&raw_tx).expect("decode raw tx fields");
+    let tx_ir = tx_ir_from_raw_fields_m0(&fields, &raw_tx, sender, 1);
+    let expected = vec_to_32(&tx_ir.hash, "tx_hash").expect("expected tx hash");
+    assert_eq!(inferred, expected);
+}
+
+#[test]
+fn infer_gateway_eth_tx_hash_from_write_params_returns_none_on_chain_id_mismatch() {
+    let _guard = env_test_guard();
+    let sender = vec![0x33u8; 20];
+    let receiver = vec![0x34u8; 20];
+    let raw_tx = test_rlp_encode_list(&[
+        test_rlp_encode_u64(0),
+        test_rlp_encode_u64(1),
+        test_rlp_encode_u64(21_000),
+        test_rlp_encode_bytes(&receiver),
+        test_rlp_encode_u128(1),
+        test_rlp_encode_bytes(&[]),
+        test_rlp_encode_u64(37),
+        test_rlp_encode_u64(1),
+        test_rlp_encode_u64(1),
+    ]);
+    let params = serde_json::json!({
+        "from": format!("0x{}", to_hex(&sender)),
+        "raw_tx": format!("0x{}", to_hex(&raw_tx)),
+        "chain_id": 1u64,
+        "tx": { "chainId": 2u64 }
+    });
+    let inferred =
+        infer_gateway_eth_tx_hash_from_write_params("eth_sendRawTransaction", &params, 1);
+    assert!(inferred.is_none());
+}
+
+#[test]
+fn persist_gateway_eth_submit_failure_status_infers_tx_hash_for_raw_write_error() {
+    let _guard = env_test_guard();
+    let backend = GatewayEthTxIndexStoreBackend::Memory;
+    let sender = vec![0x41u8; 20];
+    let receiver = vec![0x42u8; 20];
+    let raw_tx = test_rlp_encode_list(&[
+        test_rlp_encode_u64(0),
+        test_rlp_encode_u64(1),
+        test_rlp_encode_u64(21_000),
+        test_rlp_encode_bytes(&receiver),
+        test_rlp_encode_u128(1),
+        test_rlp_encode_bytes(&[]),
+        test_rlp_encode_u64(37),
+        test_rlp_encode_u64(1),
+        test_rlp_encode_u64(1),
+    ]);
+    let params = serde_json::json!({
+        "chain_id": 1,
+        "from": format!("0x{}", to_hex(&sender)),
+        "raw_tx": format!("0x{}", to_hex(&raw_tx)),
+    });
+
+    if let Ok(mut map) = gateway_eth_submit_status_store().lock() {
+        map.clear();
+    }
+    persist_gateway_eth_submit_failure_status_from_error(
+        &backend,
+        None,
+        "evm_publicSendRawTransaction",
+        &params,
+        "public broadcast failed without embedded tx_hash",
+        -32040,
+        "public broadcast failed",
+        1,
+    );
+    let tx_hash = infer_gateway_eth_tx_hash_from_write_params("eth_sendRawTransaction", &params, 1)
+        .expect("inferred tx hash");
+    let status =
+        gateway_eth_submit_status_by_tx(&backend, &tx_hash).expect("persisted submit status");
+    assert_eq!(status.chain_id, Some(1));
+    assert!(!status.accepted);
+    assert_eq!(
+        status.error_code.as_deref(),
+        Some("PUBLIC_BROADCAST_FAILED")
+    );
+    assert_eq!(
+        status.error_reason.as_deref(),
+        Some("public broadcast failed")
+    );
+    if let Ok(mut map) = gateway_eth_submit_status_store().lock() {
+        map.clear();
+    }
+}
+
+#[test]
+fn infer_gateway_eth_send_tx_hash_from_params_supports_explicit_uca_and_nonce() {
+    let _guard = env_test_guard();
+    let from = vec![0x51u8; 20];
+    let to = vec![0x52u8; 20];
+    let params = serde_json::json!({
+        "uca_id": "uca-send-hash-1",
+        "chain_id": 1u64,
+        "nonce": 7u64,
+        "from": format!("0x{}", to_hex(&from)),
+        "to": format!("0x{}", to_hex(&to)),
+        "value": "0x1",
+        "gas": "0x5208",
+        "gasPrice": "0x1",
+        "data": "0x",
+        "signature_domain": "evm:1",
+    });
+    let inferred =
+        infer_gateway_eth_send_tx_hash_from_params(None, &params, 1).expect("infer send tx hash");
+    let expected = compute_gateway_eth_tx_hash(&GatewayEthTxHashInput {
+        uca_id: "uca-send-hash-1",
+        chain_id: 1,
+        nonce: 7,
+        tx_type: 0,
+        tx_type4: false,
+        from: &from,
+        to: Some(&to),
+        value: 1,
+        gas_limit: 21_000,
+        gas_price: 1,
+        max_priority_fee_per_gas: 0,
+        data: &[],
+        signature: &[],
+        access_list_address_count: 0,
+        access_list_storage_key_count: 0,
+        max_fee_per_blob_gas: 0,
+        blob_hash_count: 0,
+        signature_domain: "evm:1",
+        wants_cross_chain_atomic: false,
+    });
+    assert_eq!(inferred, expected);
+}
+
+#[test]
+fn infer_gateway_eth_send_tx_hash_from_params_distinguishes_max_priority_fee_per_gas() {
+    let _guard = env_test_guard();
+    let from = vec![0x71u8; 20];
+    let to = vec![0x72u8; 20];
+    let base = serde_json::json!({
+        "uca_id": "uca-send-hash-priority",
+        "chain_id": 1u64,
+        "nonce": 11u64,
+        "from": format!("0x{}", to_hex(&from)),
+        "to": format!("0x{}", to_hex(&to)),
+        "value": "0x1",
+        "gas": "0x5208",
+        "maxFeePerGas": "0x64",
+        "data": "0x",
+        "signature_domain": "evm:1",
+    });
+    let mut low = base.clone();
+    low["maxPriorityFeePerGas"] = serde_json::Value::String("0x1".to_string());
+    let mut high = base;
+    high["maxPriorityFeePerGas"] = serde_json::Value::String("0x2".to_string());
+
+    let low_hash = infer_gateway_eth_send_tx_hash_from_params(None, &low, 1)
+        .expect("infer send tx hash with low priority fee");
+    let high_hash = infer_gateway_eth_send_tx_hash_from_params(None, &high, 1)
+        .expect("infer send tx hash with high priority fee");
+
+    assert_ne!(low_hash, high_hash);
+}
+
+#[test]
+fn infer_gateway_eth_send_tx_hash_from_params_type2_uses_max_fee_for_gas_price() {
+    let _guard = env_test_guard();
+    let from = vec![0x79u8; 20];
+    let to = vec![0x7au8; 20];
+    let params = serde_json::json!({
+        "uca_id": "uca-send-hash-fee-canonical",
+        "chain_id": 1u64,
+        "nonce": 12u64,
+        "from": format!("0x{}", to_hex(&from)),
+        "to": format!("0x{}", to_hex(&to)),
+        "value": "0x1",
+        "gas": "0x5208",
+        "type": "0x2",
+        "gasPrice": "0x1",
+        "maxFeePerGas": "0x64",
+        "maxPriorityFeePerGas": "0x2",
+        "signature_domain": "evm:1",
+    });
+
+    let inferred =
+        infer_gateway_eth_send_tx_hash_from_params(None, &params, 1).expect("infer send tx hash");
+    let expected = compute_gateway_eth_tx_hash(&GatewayEthTxHashInput {
+        uca_id: "uca-send-hash-fee-canonical",
+        chain_id: 1,
+        nonce: 12,
+        tx_type: 2,
+        tx_type4: false,
+        from: &from,
+        to: Some(&to),
+        value: 1,
+        gas_limit: 21_000,
+        gas_price: 100,
+        max_priority_fee_per_gas: 2,
+        data: &[],
+        signature: &[],
+        access_list_address_count: 0,
+        access_list_storage_key_count: 0,
+        max_fee_per_blob_gas: 0,
+        blob_hash_count: 0,
+        signature_domain: "evm:1",
+        wants_cross_chain_atomic: false,
+    });
+    assert_eq!(inferred, expected);
+}
+
+#[test]
+fn infer_gateway_eth_send_tx_hash_from_params_returns_none_when_max_fee_below_base_fee() {
+    let _guard = env_test_guard();
+    let captured = capture_env_vars(&["NOVOVM_GATEWAY_ETH_DEFAULT_BASE_FEE_PER_GAS"]);
+    std::env::set_var("NOVOVM_GATEWAY_ETH_DEFAULT_BASE_FEE_PER_GAS", "128");
+
+    let from = vec![0x7bu8; 20];
+    let to = vec![0x7cu8; 20];
+    let params = serde_json::json!({
+        "uca_id": "uca-send-hash-fee-below-base",
+        "chain_id": 1u64,
+        "nonce": 13u64,
+        "from": format!("0x{}", to_hex(&from)),
+        "to": format!("0x{}", to_hex(&to)),
+        "value": "0x1",
+        "gas": "0x5208",
+        "type": "0x2",
+        "maxFeePerGas": "0x64",
+        "maxPriorityFeePerGas": "0x2",
+        "signature_domain": "evm:1",
+    });
+
+    let inferred = infer_gateway_eth_send_tx_hash_from_params(None, &params, 1);
+    assert!(inferred.is_none());
+
+    restore_env_vars(&captured);
+}
+
+#[test]
+fn infer_gateway_eth_send_tx_hash_from_params_returns_none_on_chain_id_mismatch() {
+    let _guard = env_test_guard();
+    let from = vec![0x73u8; 20];
+    let to = vec![0x74u8; 20];
+    let params = serde_json::json!({
+        "uca_id": "uca-send-hash-mismatch",
+        "chain_id": 1u64,
+        "tx": { "chainId": 2u64 },
+        "nonce": 11u64,
+        "from": format!("0x{}", to_hex(&from)),
+        "to": format!("0x{}", to_hex(&to)),
+        "value": "0x1",
+        "gas": "0x5208",
+        "gasPrice": "0x1",
+    });
+    let inferred = infer_gateway_eth_send_tx_hash_from_params(None, &params, 1);
+    assert!(inferred.is_none());
+}
+
+#[test]
+fn persist_gateway_eth_submit_failure_status_infers_tx_hash_for_send_transaction_error() {
+    let _guard = env_test_guard();
+    let backend = GatewayEthTxIndexStoreBackend::Memory;
+    let mut router = UnifiedAccountRouter::new();
+    router
+        .create_uca("uca-send-hash-2".to_string(), vec![0xa1u8; 32], 1)
+        .expect("create uca");
+    let from = vec![0x61u8; 20];
+    let to = vec![0x62u8; 20];
+    router
+        .add_binding(
+            "uca-send-hash-2",
+            AccountRole::Owner,
+            PersonaAddress {
+                persona_type: PersonaType::Evm,
+                chain_id: 1,
+                external_address: from.clone(),
+            },
+            2,
+        )
+        .expect("bind evm persona");
+    let params = serde_json::json!({
+        "chain_id": 1u64,
+        "nonce": 9u64,
+        "from": format!("0x{}", to_hex(&from)),
+        "to": format!("0x{}", to_hex(&to)),
+        "value": "0x3",
+        "gas": "0x5208",
+        "gasPrice": "0x2",
+    });
+    if let Ok(mut map) = gateway_eth_submit_status_store().lock() {
+        map.clear();
+    }
+    persist_gateway_eth_submit_failure_status_from_error(
+        &backend,
+        Some(&router),
+        "evm_publicSendTransaction",
+        &params,
+        "public broadcast failed without tx hash",
+        -32040,
+        "public broadcast failed",
+        1,
+    );
+    let tx_hash = infer_gateway_eth_send_tx_hash_from_params(Some(&router), &params, 1)
+        .expect("infer send tx hash");
+    let status =
+        gateway_eth_submit_status_by_tx(&backend, &tx_hash).expect("persisted submit status");
+    assert_eq!(status.chain_id, Some(1));
+    assert!(!status.accepted);
+    assert_eq!(
+        status.error_code.as_deref(),
+        Some("PUBLIC_BROADCAST_FAILED")
+    );
+    assert_eq!(
+        status.error_reason.as_deref(),
+        Some("public broadcast failed")
+    );
+    if let Ok(mut map) = gateway_eth_submit_status_store().lock() {
+        map.clear();
+    }
+}
+
+#[test]
 fn atomic_ready_index_entry_prefers_tx_hash_hint() {
     let mut leg_a = TxIR::transfer(vec![0x11; 20], vec![0x22; 20], 1, 10, 1);
     leg_a.compute_hash();
@@ -9789,4 +13171,180 @@ fn load_atomic_broadcast_tx_ir_bincode_uses_cached_payload_after_pending_ready_c
             .expect("payload from cached store");
     assert_eq!(second, expected);
     let _ = fs::remove_dir_all(&spool_dir);
+}
+
+#[test]
+fn gateway_eth_chain_fee_env_overrides_apply_to_helpers() {
+    let _guard = env_test_guard();
+    let keys = [
+        "NOVOVM_GATEWAY_ETH_DEFAULT_GAS_PRICE",
+        "NOVOVM_GATEWAY_ETH_DEFAULT_BASE_FEE_PER_GAS",
+        "NOVOVM_GATEWAY_ETH_DEFAULT_MAX_PRIORITY_FEE_PER_GAS",
+        "NOVOVM_GATEWAY_ETH_DEFAULT_GAS_PRICE_CHAIN_137",
+        "NOVOVM_GATEWAY_ETH_DEFAULT_BASE_FEE_PER_GAS_CHAIN_137",
+        "NOVOVM_GATEWAY_ETH_DEFAULT_MAX_PRIORITY_FEE_PER_GAS_CHAIN_137",
+        "NOVOVM_GATEWAY_ETH_DEFAULT_GAS_PRICE_CHAIN_0x89",
+        "NOVOVM_GATEWAY_ETH_DEFAULT_BASE_FEE_PER_GAS_CHAIN_0x89",
+        "NOVOVM_GATEWAY_ETH_DEFAULT_MAX_PRIORITY_FEE_PER_GAS_CHAIN_0x89",
+    ];
+    let captured = capture_env_vars(&keys);
+    std::env::set_var("NOVOVM_GATEWAY_ETH_DEFAULT_GAS_PRICE", "5");
+    std::env::set_var("NOVOVM_GATEWAY_ETH_DEFAULT_BASE_FEE_PER_GAS", "7");
+    std::env::set_var("NOVOVM_GATEWAY_ETH_DEFAULT_MAX_PRIORITY_FEE_PER_GAS", "11");
+    std::env::set_var("NOVOVM_GATEWAY_ETH_DEFAULT_GAS_PRICE_CHAIN_137", "13");
+    std::env::set_var(
+        "NOVOVM_GATEWAY_ETH_DEFAULT_BASE_FEE_PER_GAS_CHAIN_137",
+        "17",
+    );
+    std::env::set_var(
+        "NOVOVM_GATEWAY_ETH_DEFAULT_MAX_PRIORITY_FEE_PER_GAS_CHAIN_137",
+        "0x1d",
+    );
+
+    assert_eq!(gateway_eth_default_gas_price_wei(1), 5);
+    assert_eq!(gateway_eth_base_fee_per_gas_wei(1), 7);
+    assert_eq!(gateway_eth_default_max_priority_fee_per_gas_wei(1), 11);
+    assert_eq!(gateway_eth_default_gas_price_wei(137), 13);
+    assert_eq!(gateway_eth_base_fee_per_gas_wei(137), 17);
+    assert_eq!(gateway_eth_default_max_priority_fee_per_gas_wei(137), 29);
+
+    restore_env_vars(&captured);
+}
+
+#[test]
+fn gateway_eth_chain_fee_env_upper_hex_overrides_apply_to_helpers() {
+    let _guard = env_test_guard();
+    let keys = [
+        "NOVOVM_GATEWAY_ETH_DEFAULT_GAS_PRICE",
+        "NOVOVM_GATEWAY_ETH_DEFAULT_BASE_FEE_PER_GAS",
+        "NOVOVM_GATEWAY_ETH_DEFAULT_MAX_PRIORITY_FEE_PER_GAS",
+        "NOVOVM_GATEWAY_ETH_DEFAULT_GAS_PRICE_CHAIN_43114",
+        "NOVOVM_GATEWAY_ETH_DEFAULT_BASE_FEE_PER_GAS_CHAIN_43114",
+        "NOVOVM_GATEWAY_ETH_DEFAULT_MAX_PRIORITY_FEE_PER_GAS_CHAIN_43114",
+        "NOVOVM_GATEWAY_ETH_DEFAULT_GAS_PRICE_CHAIN_0xA86A",
+        "NOVOVM_GATEWAY_ETH_DEFAULT_BASE_FEE_PER_GAS_CHAIN_0xA86A",
+        "NOVOVM_GATEWAY_ETH_DEFAULT_MAX_PRIORITY_FEE_PER_GAS_CHAIN_0xA86A",
+    ];
+    let captured = capture_env_vars(&keys);
+    std::env::set_var("NOVOVM_GATEWAY_ETH_DEFAULT_GAS_PRICE", "5");
+    std::env::set_var("NOVOVM_GATEWAY_ETH_DEFAULT_BASE_FEE_PER_GAS", "7");
+    std::env::set_var("NOVOVM_GATEWAY_ETH_DEFAULT_MAX_PRIORITY_FEE_PER_GAS", "11");
+    std::env::remove_var("NOVOVM_GATEWAY_ETH_DEFAULT_GAS_PRICE_CHAIN_43114");
+    std::env::remove_var("NOVOVM_GATEWAY_ETH_DEFAULT_BASE_FEE_PER_GAS_CHAIN_43114");
+    std::env::remove_var("NOVOVM_GATEWAY_ETH_DEFAULT_MAX_PRIORITY_FEE_PER_GAS_CHAIN_43114");
+    std::env::set_var("NOVOVM_GATEWAY_ETH_DEFAULT_GAS_PRICE_CHAIN_0xA86A", "23");
+    std::env::set_var(
+        "NOVOVM_GATEWAY_ETH_DEFAULT_BASE_FEE_PER_GAS_CHAIN_0xA86A",
+        "31",
+    );
+    std::env::set_var(
+        "NOVOVM_GATEWAY_ETH_DEFAULT_MAX_PRIORITY_FEE_PER_GAS_CHAIN_0xA86A",
+        "0x25",
+    );
+
+    assert_eq!(gateway_eth_default_gas_price_wei(1), 5);
+    assert_eq!(gateway_eth_base_fee_per_gas_wei(1), 7);
+    assert_eq!(gateway_eth_default_max_priority_fee_per_gas_wei(1), 11);
+    assert_eq!(gateway_eth_default_gas_price_wei(43_114), 23);
+    assert_eq!(gateway_eth_base_fee_per_gas_wei(43_114), 31);
+    assert_eq!(gateway_eth_default_max_priority_fee_per_gas_wei(43_114), 37);
+
+    restore_env_vars(&captured);
+}
+
+#[test]
+fn eth_fee_endpoints_use_chain_scoped_fee_overrides() {
+    let _guard = env_test_guard();
+    let keys = [
+        "NOVOVM_GATEWAY_ETH_DEFAULT_GAS_PRICE",
+        "NOVOVM_GATEWAY_ETH_DEFAULT_BASE_FEE_PER_GAS",
+        "NOVOVM_GATEWAY_ETH_DEFAULT_MAX_PRIORITY_FEE_PER_GAS",
+        "NOVOVM_GATEWAY_ETH_DEFAULT_BASE_FEE_PER_GAS_CHAIN_137",
+        "NOVOVM_GATEWAY_ETH_DEFAULT_MAX_PRIORITY_FEE_PER_GAS_CHAIN_137",
+    ];
+    let captured = capture_env_vars(&keys);
+    std::env::set_var("NOVOVM_GATEWAY_ETH_DEFAULT_GAS_PRICE", "2");
+    std::env::set_var("NOVOVM_GATEWAY_ETH_DEFAULT_BASE_FEE_PER_GAS", "3");
+    std::env::set_var("NOVOVM_GATEWAY_ETH_DEFAULT_MAX_PRIORITY_FEE_PER_GAS", "4");
+    std::env::set_var(
+        "NOVOVM_GATEWAY_ETH_DEFAULT_BASE_FEE_PER_GAS_CHAIN_137",
+        "21",
+    );
+    std::env::set_var(
+        "NOVOVM_GATEWAY_ETH_DEFAULT_MAX_PRIORITY_FEE_PER_GAS_CHAIN_137",
+        "0x1f",
+    );
+
+    let backend = GatewayEthTxIndexStoreBackend::Memory;
+    let mut router = UnifiedAccountRouter::new();
+    let mut eth_tx_index = HashMap::new();
+    let mut evm_settlement_index_by_id = HashMap::new();
+    let mut evm_settlement_index_by_tx = HashMap::new();
+    let mut evm_pending_payout_by_settlement = HashMap::new();
+    let mut eth_filters = GatewayEthFilterState::default();
+    let spool_dir = std::env::temp_dir().join(format!(
+        "novovm-gateway-chain-fee-overrides-{}-{}",
+        std::process::id(),
+        now_unix_millis()
+    ));
+    fs::create_dir_all(&spool_dir).expect("create spool dir");
+    let mut ctx = GatewayMethodContext {
+        eth_tx_index_store: &backend,
+        eth_default_chain_id: 1,
+        spool_dir: &spool_dir,
+        eth_filters: &mut eth_filters,
+    };
+
+    let (priority_chain_1, changed_priority_chain_1) = run_gateway_method(
+        &mut router,
+        &mut eth_tx_index,
+        &mut evm_settlement_index_by_id,
+        &mut evm_settlement_index_by_tx,
+        &mut evm_pending_payout_by_settlement,
+        &mut ctx,
+        "eth_maxPriorityFeePerGas",
+        &serde_json::json!({"chain_id": 1u64}),
+    )
+    .expect("eth_maxPriorityFeePerGas chain 1");
+    assert!(!changed_priority_chain_1);
+    assert_eq!(priority_chain_1.as_str(), Some("0x4"));
+
+    let (priority_chain_137, changed_priority_chain_137) = run_gateway_method(
+        &mut router,
+        &mut eth_tx_index,
+        &mut evm_settlement_index_by_id,
+        &mut evm_settlement_index_by_tx,
+        &mut evm_pending_payout_by_settlement,
+        &mut ctx,
+        "eth_maxPriorityFeePerGas",
+        &serde_json::json!({"chain_id": 137u64}),
+    )
+    .expect("eth_maxPriorityFeePerGas chain 137");
+    assert!(!changed_priority_chain_137);
+    assert_eq!(priority_chain_137.as_str(), Some("0x1f"));
+
+    let (fee_history_chain_137, changed_fee_history_chain_137) = run_gateway_method(
+        &mut router,
+        &mut eth_tx_index,
+        &mut evm_settlement_index_by_id,
+        &mut evm_settlement_index_by_tx,
+        &mut evm_pending_payout_by_settlement,
+        &mut ctx,
+        "eth_feeHistory",
+        &serde_json::json!({
+            "chain_id": 137u64,
+            "block_count": 1u64,
+            "newest_block": "latest",
+        }),
+    )
+    .expect("eth_feeHistory chain 137");
+    assert!(!changed_fee_history_chain_137);
+    let base_fees = fee_history_chain_137["baseFeePerGas"]
+        .as_array()
+        .expect("baseFeePerGas should be array");
+    assert_eq!(base_fees.len(), 2);
+    assert!(base_fees.iter().all(|v| v.as_str() == Some("0x15")));
+
+    let _ = fs::remove_dir_all(&spool_dir);
+    restore_env_vars(&captured);
 }

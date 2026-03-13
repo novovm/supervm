@@ -422,6 +422,31 @@ pub(super) fn gateway_eth_tx_index_key(tx_hash: &[u8; 32]) -> Vec<u8> {
     out
 }
 
+pub(super) fn gateway_eth_broadcast_status_key(tx_hash: &[u8; 32]) -> Vec<u8> {
+    let mut out =
+        Vec::with_capacity(GATEWAY_ETH_BROADCAST_STATUS_ROCKSDB_KEY_PREFIX.len() + tx_hash.len());
+    out.extend_from_slice(GATEWAY_ETH_BROADCAST_STATUS_ROCKSDB_KEY_PREFIX);
+    out.extend_from_slice(tx_hash);
+    out
+}
+
+pub(super) fn gateway_eth_submit_status_key(tx_hash: &[u8; 32]) -> Vec<u8> {
+    let mut out =
+        Vec::with_capacity(GATEWAY_ETH_SUBMIT_STATUS_ROCKSDB_KEY_PREFIX.len() + tx_hash.len());
+    out.extend_from_slice(GATEWAY_ETH_SUBMIT_STATUS_ROCKSDB_KEY_PREFIX);
+    out.extend_from_slice(tx_hash);
+    out
+}
+
+pub(super) fn gateway_eth_public_broadcast_pending_key(tx_hash: &[u8; 32]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(
+        GATEWAY_ETH_PUBLIC_BROADCAST_PENDING_ROCKSDB_KEY_PREFIX.len() + tx_hash.len(),
+    );
+    out.extend_from_slice(GATEWAY_ETH_PUBLIC_BROADCAST_PENDING_ROCKSDB_KEY_PREFIX);
+    out.extend_from_slice(tx_hash);
+    out
+}
+
 pub(super) fn gateway_eth_tx_block_index_prefix(chain_id: u64, block_number: u64) -> Vec<u8> {
     let mut out =
         Vec::with_capacity(GATEWAY_ETH_TX_BLOCK_INDEX_ROCKSDB_KEY_PREFIX.len() + 8 + 1 + 8 + 1);

@@ -1,4 +1,5 @@
 use super::*;
+use novovm_network::observe_network_runtime_local_head_max;
 
 pub(super) fn gateway_evm_settlement_json(
     entry: &GatewayEvmSettlementIndexEntry,
@@ -55,20 +56,23 @@ pub(super) fn upsert_gateway_eth_tx_index(
             );
         }
     }
+    let _ = observe_network_runtime_local_head_max(record.chain_id, record.nonce);
 }
 
-pub(super) fn gateway_eth_default_max_priority_fee_per_gas_wei() -> u64 {
-    u64_env(
+pub(super) fn gateway_eth_default_max_priority_fee_per_gas_wei(chain_id: u64) -> u64 {
+    gateway_eth_chain_u64_env(
+        chain_id,
         "NOVOVM_GATEWAY_ETH_DEFAULT_MAX_PRIORITY_FEE_PER_GAS",
-        u64_env("NOVOVM_GATEWAY_ETH_DEFAULT_GAS_PRICE", 1),
+        gateway_eth_default_gas_price_wei(chain_id),
     )
 }
 
 pub(super) fn gateway_eth_type2_fee_fields_json(
     max_fee_per_gas: u64,
+    chain_id: u64,
 ) -> (serde_json::Value, serde_json::Value) {
     let max_priority_fee_per_gas =
-        gateway_eth_default_max_priority_fee_per_gas_wei().min(max_fee_per_gas);
+        gateway_eth_default_max_priority_fee_per_gas_wei(chain_id).min(max_fee_per_gas);
     (
         serde_json::Value::String(format!("0x{:x}", max_fee_per_gas)),
         serde_json::Value::String(format!("0x{:x}", max_priority_fee_per_gas)),
@@ -78,8 +82,8 @@ pub(super) fn gateway_eth_type2_fee_fields_json(
 pub(super) fn gateway_eth_tx_fee_fields_json_from_entry(
     entry: &GatewayEthTxIndexEntry,
 ) -> (serde_json::Value, serde_json::Value) {
-    if entry.tx_type == 2 {
-        gateway_eth_type2_fee_fields_json(entry.gas_price)
+    if entry.tx_type == 2 || entry.tx_type == 3 {
+        gateway_eth_type2_fee_fields_json(entry.gas_price, entry.chain_id)
     } else {
         (serde_json::Value::Null, serde_json::Value::Null)
     }
@@ -88,11 +92,14 @@ pub(super) fn gateway_eth_tx_fee_fields_json_from_entry(
 pub(super) fn gateway_eth_tx_fee_fields_json_from_ir(
     tx: &TxIR,
 ) -> (serde_json::Value, serde_json::Value) {
-    let is_type2 = resolve_raw_evm_tx_route_hint_m0(&tx.signature)
-        .map(|hint| hint.envelope == EvmRawTxEnvelopeType::Type2DynamicFee)
+    let is_dynamic_fee = resolve_raw_evm_tx_route_hint_m0(&tx.signature)
+        .map(|hint| {
+            hint.envelope == EvmRawTxEnvelopeType::Type2DynamicFee
+                || hint.envelope == EvmRawTxEnvelopeType::Type3Blob
+        })
         .unwrap_or(false);
-    if is_type2 {
-        gateway_eth_type2_fee_fields_json(tx.gas_price)
+    if is_dynamic_fee {
+        gateway_eth_type2_fee_fields_json(tx.gas_price, tx.chain_id)
     } else {
         (serde_json::Value::Null, serde_json::Value::Null)
     }
@@ -179,18 +186,18 @@ pub(super) fn gateway_eth_tx_with_block_json(
 
 pub(super) fn gateway_eth_tx_pending_with_block_json(
     entry: &GatewayEthTxIndexEntry,
-    block_number: u64,
-    tx_index: usize,
-    block_hash: &[u8; 32],
+    _block_number: u64,
+    _tx_index: usize,
+    _block_hash: &[u8; 32],
 ) -> serde_json::Value {
     let (max_fee_per_gas, max_priority_fee_per_gas) =
         gateway_eth_tx_fee_fields_json_from_entry(entry);
     serde_json::json!({
         "hash": format!("0x{}", to_hex(&entry.tx_hash)),
         "nonce": format!("0x{:x}", entry.nonce),
-        "blockHash": format!("0x{}", to_hex(block_hash)),
-        "blockNumber": format!("0x{:x}", block_number),
-        "transactionIndex": format!("0x{:x}", tx_index),
+        "blockHash": serde_json::Value::Null,
+        "blockNumber": serde_json::Value::Null,
+        "transactionIndex": serde_json::Value::Null,
         "from": format!("0x{}", to_hex(&entry.from)),
         "to": entry.to.as_ref().map(|v| format!("0x{}", to_hex(v))),
         "value": format!("0x{:x}", entry.value),
@@ -256,8 +263,12 @@ pub(super) fn gateway_eth_tx_by_hash_query_json(
 
 pub(super) fn gateway_eth_tx_receipt_json(entry: &GatewayEthTxIndexEntry) -> serde_json::Value {
     let contract_address = gateway_eth_contract_address_hex(entry);
-    let effective_gas_price =
-        gateway_eth_effective_gas_price_wei(entry, gateway_eth_base_fee_per_gas_wei());
+    let effective_gas_price = gateway_eth_effective_gas_price_wei(
+        entry,
+        gateway_eth_base_fee_per_gas_wei(entry.chain_id),
+    );
+    let logs = gateway_eth_receipt_logs_json(entry, None, None, None);
+    let logs_bloom = gateway_eth_receipt_logs_bloom_hex(entry);
     serde_json::json!({
         "transactionHash": format!("0x{}", to_hex(&entry.tx_hash)),
         "transactionIndex": serde_json::Value::Null,
@@ -269,8 +280,8 @@ pub(super) fn gateway_eth_tx_receipt_json(entry: &GatewayEthTxIndexEntry) -> ser
         "gasUsed": format!("0x{:x}", entry.gas_limit),
         "effectiveGasPrice": format!("0x{:x}", effective_gas_price),
         "contractAddress": contract_address,
-        "logs": [],
-        "logsBloom": gateway_eth_empty_logs_bloom_hex(),
+        "logs": logs,
+        "logsBloom": logs_bloom,
         "type": format!("0x{:x}", entry.tx_type),
         "status": serde_json::Value::Null,
         "pending": true,
@@ -282,8 +293,12 @@ pub(super) fn gateway_eth_tx_receipt_confirmed_without_position_json(
     entry: &GatewayEthTxIndexEntry,
 ) -> serde_json::Value {
     let contract_address = gateway_eth_contract_address_hex(entry);
-    let effective_gas_price =
-        gateway_eth_effective_gas_price_wei(entry, gateway_eth_base_fee_per_gas_wei());
+    let effective_gas_price = gateway_eth_effective_gas_price_wei(
+        entry,
+        gateway_eth_base_fee_per_gas_wei(entry.chain_id),
+    );
+    let logs = gateway_eth_receipt_logs_json(entry, Some(entry.nonce), None, None);
+    let logs_bloom = gateway_eth_receipt_logs_bloom_hex(entry);
     serde_json::json!({
         "transactionHash": format!("0x{}", to_hex(&entry.tx_hash)),
         "transactionIndex": serde_json::Value::Null,
@@ -295,8 +310,8 @@ pub(super) fn gateway_eth_tx_receipt_confirmed_without_position_json(
         "gasUsed": format!("0x{:x}", entry.gas_limit),
         "effectiveGasPrice": format!("0x{:x}", effective_gas_price),
         "contractAddress": contract_address,
-        "logs": [],
-        "logsBloom": gateway_eth_empty_logs_bloom_hex(),
+        "logs": logs,
+        "logsBloom": logs_bloom,
         "type": format!("0x{:x}", entry.tx_type),
         "status": "0x1",
         "pending": false,
@@ -312,8 +327,13 @@ pub(super) fn gateway_eth_tx_receipt_with_block_json(
     cumulative_gas_used: u128,
 ) -> serde_json::Value {
     let contract_address = gateway_eth_contract_address_hex(entry);
-    let effective_gas_price =
-        gateway_eth_effective_gas_price_wei(entry, gateway_eth_base_fee_per_gas_wei());
+    let effective_gas_price = gateway_eth_effective_gas_price_wei(
+        entry,
+        gateway_eth_base_fee_per_gas_wei(entry.chain_id),
+    );
+    let logs =
+        gateway_eth_receipt_logs_json(entry, Some(block_number), Some(tx_index), Some(block_hash));
+    let logs_bloom = gateway_eth_receipt_logs_bloom_hex(entry);
     serde_json::json!({
         "transactionHash": format!("0x{}", to_hex(&entry.tx_hash)),
         "transactionIndex": format!("0x{:x}", tx_index),
@@ -325,8 +345,8 @@ pub(super) fn gateway_eth_tx_receipt_with_block_json(
         "gasUsed": format!("0x{:x}", entry.gas_limit),
         "effectiveGasPrice": format!("0x{:x}", effective_gas_price),
         "contractAddress": contract_address,
-        "logs": [],
-        "logsBloom": gateway_eth_empty_logs_bloom_hex(),
+        "logs": logs,
+        "logsBloom": logs_bloom,
         "type": format!("0x{:x}", entry.tx_type),
         "status": "0x1",
         "pending": false,
@@ -336,27 +356,31 @@ pub(super) fn gateway_eth_tx_receipt_with_block_json(
 
 pub(super) fn gateway_eth_tx_receipt_pending_with_block_json(
     entry: &GatewayEthTxIndexEntry,
-    block_number: u64,
-    tx_index: usize,
-    block_hash: &[u8; 32],
+    _block_number: u64,
+    _tx_index: usize,
+    _block_hash: &[u8; 32],
     cumulative_gas_used: u128,
 ) -> serde_json::Value {
     let contract_address = gateway_eth_contract_address_hex(entry);
-    let effective_gas_price =
-        gateway_eth_effective_gas_price_wei(entry, gateway_eth_base_fee_per_gas_wei());
+    let effective_gas_price = gateway_eth_effective_gas_price_wei(
+        entry,
+        gateway_eth_base_fee_per_gas_wei(entry.chain_id),
+    );
+    let logs = gateway_eth_receipt_logs_json(entry, None, None, None);
+    let logs_bloom = gateway_eth_receipt_logs_bloom_hex(entry);
     serde_json::json!({
         "transactionHash": format!("0x{}", to_hex(&entry.tx_hash)),
-        "transactionIndex": format!("0x{:x}", tx_index),
-        "blockHash": format!("0x{}", to_hex(block_hash)),
-        "blockNumber": format!("0x{:x}", block_number),
+        "transactionIndex": serde_json::Value::Null,
+        "blockHash": serde_json::Value::Null,
+        "blockNumber": serde_json::Value::Null,
         "from": format!("0x{}", to_hex(&entry.from)),
         "to": entry.to.as_ref().map(|v| format!("0x{}", to_hex(v))),
         "cumulativeGasUsed": format!("0x{:x}", cumulative_gas_used),
         "gasUsed": format!("0x{:x}", entry.gas_limit),
         "effectiveGasPrice": format!("0x{:x}", effective_gas_price),
         "contractAddress": contract_address,
-        "logs": [],
-        "logsBloom": gateway_eth_empty_logs_bloom_hex(),
+        "logs": logs,
+        "logsBloom": logs_bloom,
         "type": format!("0x{:x}", entry.tx_type),
         "status": serde_json::Value::Null,
         "pending": true,
@@ -408,11 +432,59 @@ pub(super) fn gateway_eth_effective_gas_price_wei(
     entry: &GatewayEthTxIndexEntry,
     base_fee_per_gas: u64,
 ) -> u64 {
-    if entry.tx_type == 2 {
-        entry.gas_price.max(base_fee_per_gas)
+    if entry.tx_type == 2 || entry.tx_type == 3 {
+        // tx.gas_price stores maxFeePerGas for EIP-1559 style txs.
+        let priority_fee_per_gas = gateway_eth_default_max_priority_fee_per_gas_wei(entry.chain_id);
+        let candidate = base_fee_per_gas.saturating_add(priority_fee_per_gas);
+        let capped = entry.gas_price.min(candidate);
+        capped.max(base_fee_per_gas)
     } else {
         entry.gas_price
     }
+}
+
+fn gateway_eth_receipt_log_address(entry: &GatewayEthTxIndexEntry) -> &[u8] {
+    entry.to.as_deref().unwrap_or(entry.from.as_slice())
+}
+
+fn gateway_eth_bloom_insert_data(bloom: &mut [u8; 256], raw: &[u8]) {
+    let hash: [u8; 32] = Keccak256::digest(raw).into();
+    for idx in 0..3 {
+        let bit = (u16::from(hash[idx * 2]) << 8 | u16::from(hash[idx * 2 + 1])) & 2047;
+        let byte_index = 255usize.saturating_sub((bit / 8) as usize);
+        let mask = 1u8 << (bit % 8);
+        bloom[byte_index] |= mask;
+    }
+}
+
+fn gateway_eth_receipt_logs_json(
+    entry: &GatewayEthTxIndexEntry,
+    block_number: Option<u64>,
+    tx_index: Option<usize>,
+    block_hash: Option<&[u8; 32]>,
+) -> Vec<serde_json::Value> {
+    let log_index = tx_index.map(|value| format!("0x{:x}", value));
+    let tx_index_hex = tx_index.map(|value| format!("0x{:x}", value));
+    let block_number_hex = block_number.map(|value| format!("0x{:x}", value));
+    let block_hash_hex = block_hash.map(|value| format!("0x{}", to_hex(value)));
+    vec![serde_json::json!({
+        "removed": false,
+        "logIndex": log_index,
+        "transactionIndex": tx_index_hex,
+        "transactionHash": format!("0x{}", to_hex(&entry.tx_hash)),
+        "blockHash": block_hash_hex,
+        "blockNumber": block_number_hex,
+        "address": format!("0x{}", to_hex(gateway_eth_receipt_log_address(entry))),
+        "data": format!("0x{}", to_hex(&entry.input)),
+        "topics": [format!("0x{}", to_hex(&entry.tx_hash))],
+    })]
+}
+
+fn gateway_eth_receipt_logs_bloom_hex(entry: &GatewayEthTxIndexEntry) -> String {
+    let mut bloom = [0u8; 256];
+    gateway_eth_bloom_insert_data(&mut bloom, gateway_eth_receipt_log_address(entry));
+    gateway_eth_bloom_insert_data(&mut bloom, &entry.tx_hash);
+    format!("0x{}", to_hex(&bloom))
 }
 
 pub(super) fn gateway_eth_tx_receipt_query_json(
