@@ -698,9 +698,7 @@ pub(super) fn gateway_eth_collect_storage_items_for_address(
     let mut slots = BTreeMap::<[u8; 32], [u8; 32]>::new();
     for entry in &sorted {
         let slot_key = gateway_eth_slot_to_be32(entry.nonce as u128);
-        if entry.to.as_ref().is_some_and(|to| to == address) {
-            slots.insert(slot_key, entry.tx_hash);
-        } else if entry.from == address {
+        if entry.to.as_ref().is_some_and(|to| to == address) || entry.from == address {
             slots.insert(slot_key, entry.tx_hash);
         }
     }
@@ -717,10 +715,12 @@ pub(super) fn gateway_eth_collect_storage_items_for_address(
     slots.into_iter().collect()
 }
 
+type GatewayEthStorageProofEntry = ([u8; 32], [u8; 32], Vec<Vec<u8>>);
+
 pub(super) fn gateway_eth_storage_proof_for_slots(
     storage_items: &[([u8; 32], [u8; 32])],
     slots: &[[u8; 32]],
-) -> ([u8; 32], Vec<([u8; 32], [u8; 32], Vec<Vec<u8>>)>) {
+) -> ([u8; 32], Vec<GatewayEthStorageProofEntry>) {
     let kv_pairs = gateway_eth_storage_trie_kv_pairs(storage_items);
     let storage_root = gateway_eth_mpt_root_from_kv_pairs(&kv_pairs);
     let values = storage_items

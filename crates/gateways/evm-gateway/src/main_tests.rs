@@ -2806,8 +2806,7 @@ fn eth_filter_and_txpool_methods_work_with_tx_index_state() {
     );
     assert!(logs_blockhash_conflict.is_err());
     let logs_blockhash_conflict_err = logs_blockhash_conflict
-        .err()
-        .expect("eth_getLogs blockHash+fromBlock must error")
+        .expect_err("eth_getLogs blockHash+fromBlock must error")
         .to_string();
     assert!(logs_blockhash_conflict_err.contains("blockHash is mutually exclusive"));
 
@@ -10589,6 +10588,101 @@ fn eth_send_transaction_rejects_type3_when_cancun_not_active() {
 }
 
 #[test]
+fn gateway_eth_contract_deploy_initcode_size_tracks_amsterdam_fork_activation() {
+    let _guard = env_test_guard();
+    let captured = capture_env_vars(&[
+        "NOVOVM_GATEWAY_ETH_FORK_AMSTERDAM_BLOCK",
+        "NOVOVM_GATEWAY_ETH_FORK_AMSTERDAM_BLOCK_CHAIN_43114",
+        "NOVOVM_GATEWAY_ETH_FORK_AMSTERDAM_BLOCK_CHAIN_0xA86A",
+    ]);
+    std::env::remove_var("NOVOVM_GATEWAY_ETH_FORK_AMSTERDAM_BLOCK");
+    std::env::remove_var("NOVOVM_GATEWAY_ETH_FORK_AMSTERDAM_BLOCK_CHAIN_43114");
+    std::env::set_var("NOVOVM_GATEWAY_ETH_FORK_AMSTERDAM_BLOCK_CHAIN_0xA86A", "2");
+
+    let err = validate_gateway_eth_contract_deploy_initcode_size(43_114, 1, 49_153)
+        .expect_err("pre-amsterdam should reject >49152 initcode");
+    assert!(err.to_string().contains("init code too large"));
+    validate_gateway_eth_contract_deploy_initcode_size(43_114, 2, 49_153)
+        .expect("amsterdam should allow >49152 initcode");
+    let err = validate_gateway_eth_contract_deploy_initcode_size(43_114, 2, 65_537)
+        .expect_err("amsterdam should reject >65536 initcode");
+    assert!(err.to_string().contains("init code too large"));
+
+    restore_env_vars(&captured);
+}
+
+#[test]
+fn eth_send_transaction_rejects_oversized_initcode_before_amsterdam() {
+    let _guard = env_test_guard();
+    let chain_id = 770_019u64;
+    let captured = capture_env_vars(&[
+        "NOVOVM_GATEWAY_ETH_FORK_AMSTERDAM_BLOCK",
+        "NOVOVM_GATEWAY_ETH_FORK_AMSTERDAM_BLOCK_CHAIN_770019",
+    ]);
+    std::env::remove_var("NOVOVM_GATEWAY_ETH_FORK_AMSTERDAM_BLOCK");
+    std::env::set_var("NOVOVM_GATEWAY_ETH_FORK_AMSTERDAM_BLOCK_CHAIN_770019", "2");
+
+    let backend = GatewayEthTxIndexStoreBackend::Memory;
+    let mut router = UnifiedAccountRouter::new();
+    let mut eth_tx_index = HashMap::new();
+    let mut evm_settlement_index_by_id = HashMap::new();
+    let mut evm_settlement_index_by_tx = HashMap::new();
+    let mut evm_pending_payout_by_settlement = HashMap::new();
+    let mut eth_filters = GatewayEthFilterState::default();
+    let spool_dir = std::env::temp_dir().join(format!(
+        "novovm-gateway-send-tx-oversized-initcode-pre-amsterdam-{}-{}",
+        std::process::id(),
+        now_unix_millis()
+    ));
+    fs::create_dir_all(&spool_dir).expect("create spool dir");
+    let mut ctx = GatewayMethodContext {
+        eth_tx_index_store: &backend,
+        eth_default_chain_id: chain_id,
+        spool_dir: &spool_dir,
+        eth_filters: &mut eth_filters,
+    };
+
+    let sender = vec![0x77u8; 20];
+    let uca_id = "uca:oversized-initcode-pre-amsterdam".to_string();
+    let now = now_unix_sec();
+    let persona = PersonaAddress {
+        persona_type: PersonaType::Evm,
+        chain_id,
+        external_address: sender.clone(),
+    };
+    router
+        .create_uca(uca_id.clone(), vec![0x37u8; 32], now)
+        .expect("create uca");
+    router
+        .add_binding(&uca_id, AccountRole::Owner, persona, now)
+        .expect("add binding");
+
+    let oversized_initcode = vec![0x60u8; 49_153];
+    let err = run_gateway_method(
+        &mut router,
+        &mut eth_tx_index,
+        &mut evm_settlement_index_by_id,
+        &mut evm_settlement_index_by_tx,
+        &mut evm_pending_payout_by_settlement,
+        &mut ctx,
+        "eth_sendTransaction",
+        &serde_json::json!([{
+            "from": format!("0x{}", to_hex(&sender)),
+            "nonce": "0x0",
+            "value": "0x0",
+            "gas": "0x989680",
+            "gasPrice": "0x1",
+            "data": format!("0x{}", to_hex(&oversized_initcode))
+        }]),
+    )
+    .expect_err("eth_sendTransaction should reject oversized initcode before amsterdam");
+    assert!(err.to_string().contains("init code too large"));
+
+    restore_env_vars(&captured);
+    let _ = fs::remove_dir_all(&spool_dir);
+}
+
+#[test]
 fn eth_send_raw_transaction_without_uca_id_uses_binding_owner() {
     let backend = GatewayEthTxIndexStoreBackend::Memory;
     let mut router = UnifiedAccountRouter::new();
@@ -12686,6 +12780,149 @@ fn evm_get_tx_submit_status_uses_persisted_failure_status_when_tx_missing() {
     assert_eq!(
         status["error_reason"].as_str(),
         Some("public broadcast failed")
+    );
+    assert_eq!(status["chain_id"].as_str(), Some("0x1"));
+    let _ = fs::remove_dir_all(&spool_dir);
+    if let Ok(mut map) = gateway_eth_submit_status_store().lock() {
+        map.clear();
+    }
+}
+
+#[test]
+fn evm_get_tx_submit_status_uses_persisted_success_status_when_tx_missing() {
+    let _guard = env_test_guard();
+    let backend = GatewayEthTxIndexStoreBackend::Memory;
+    let tx_hash = [0xb0u8; 32];
+    if let Ok(mut map) = gateway_eth_submit_status_store().lock() {
+        map.clear();
+    }
+    upsert_gateway_eth_submit_status(
+        &backend,
+        tx_hash,
+        GatewayEthSubmitStatus {
+            chain_id: Some(1),
+            accepted: true,
+            pending: true,
+            onchain: false,
+            error_code: None,
+            error_reason: None,
+            updated_at_unix_ms: now_unix_millis(),
+        },
+    );
+
+    let mut router = UnifiedAccountRouter::new();
+    let mut eth_tx_index = HashMap::new();
+    let mut evm_settlement_index_by_id = HashMap::new();
+    let mut evm_settlement_index_by_tx = HashMap::new();
+    let mut evm_pending_payout_by_settlement = HashMap::new();
+    let spool_dir = std::env::temp_dir().join(format!(
+        "novovm-gateway-submit-status-lifecycle-success-{}-{}",
+        std::process::id(),
+        now_unix_millis()
+    ));
+    fs::create_dir_all(&spool_dir).expect("create spool dir");
+    let mut eth_filters = GatewayEthFilterState::default();
+    let mut ctx = GatewayMethodContext {
+        eth_tx_index_store: &backend,
+        eth_default_chain_id: 1,
+        spool_dir: &spool_dir,
+        eth_filters: &mut eth_filters,
+    };
+    let (status, changed) = run_gateway_method(
+        &mut router,
+        &mut eth_tx_index,
+        &mut evm_settlement_index_by_id,
+        &mut evm_settlement_index_by_tx,
+        &mut evm_pending_payout_by_settlement,
+        &mut ctx,
+        "evm_getTxSubmitStatus",
+        &serde_json::json!({
+            "chain_id": 1,
+            "tx_hash": format!("0x{}", to_hex(&tx_hash)),
+        }),
+    )
+    .expect("evm_getTxSubmitStatus should read persisted submit success");
+    assert!(!changed);
+    assert_eq!(status["accepted"].as_bool(), Some(true));
+    assert_eq!(status["pending"].as_bool(), Some(true));
+    assert_eq!(status["onchain"].as_bool(), Some(false));
+    assert_eq!(status["stage"].as_str(), Some("pending"));
+    assert_eq!(status["terminal"].as_bool(), Some(false));
+    assert_eq!(status["failed"].as_bool(), Some(false));
+    assert_eq!(status["error_code"], serde_json::Value::Null);
+    assert_eq!(status["error_reason"], serde_json::Value::Null);
+    assert_eq!(status["chain_id"].as_str(), Some("0x1"));
+    let _ = fs::remove_dir_all(&spool_dir);
+    if let Ok(mut map) = gateway_eth_submit_status_store().lock() {
+        map.clear();
+    }
+}
+
+#[test]
+fn evm_get_tx_submit_status_uses_persisted_onchain_failed_status_when_tx_missing() {
+    let _guard = env_test_guard();
+    let backend = GatewayEthTxIndexStoreBackend::Memory;
+    let tx_hash = [0xb1u8; 32];
+    if let Ok(mut map) = gateway_eth_submit_status_store().lock() {
+        map.clear();
+    }
+    upsert_gateway_eth_submit_status(
+        &backend,
+        tx_hash,
+        GatewayEthSubmitStatus {
+            chain_id: Some(1),
+            accepted: true,
+            pending: false,
+            onchain: true,
+            error_code: Some("ONCHAIN_FAILED".to_string()),
+            error_reason: Some("transaction failed onchain".to_string()),
+            updated_at_unix_ms: now_unix_millis(),
+        },
+    );
+
+    let mut router = UnifiedAccountRouter::new();
+    let mut eth_tx_index = HashMap::new();
+    let mut evm_settlement_index_by_id = HashMap::new();
+    let mut evm_settlement_index_by_tx = HashMap::new();
+    let mut evm_pending_payout_by_settlement = HashMap::new();
+    let spool_dir = std::env::temp_dir().join(format!(
+        "novovm-gateway-submit-status-lifecycle-onchain-failed-{}-{}",
+        std::process::id(),
+        now_unix_millis()
+    ));
+    fs::create_dir_all(&spool_dir).expect("create spool dir");
+    let mut eth_filters = GatewayEthFilterState::default();
+    let mut ctx = GatewayMethodContext {
+        eth_tx_index_store: &backend,
+        eth_default_chain_id: 1,
+        spool_dir: &spool_dir,
+        eth_filters: &mut eth_filters,
+    };
+    let (status, changed) = run_gateway_method(
+        &mut router,
+        &mut eth_tx_index,
+        &mut evm_settlement_index_by_id,
+        &mut evm_settlement_index_by_tx,
+        &mut evm_pending_payout_by_settlement,
+        &mut ctx,
+        "evm_getTxSubmitStatus",
+        &serde_json::json!({
+            "chain_id": 1,
+            "tx_hash": format!("0x{}", to_hex(&tx_hash)),
+        }),
+    )
+    .expect("evm_getTxSubmitStatus should read persisted onchain failed status");
+    assert!(!changed);
+    assert_eq!(status["accepted"].as_bool(), Some(true));
+    assert_eq!(status["pending"].as_bool(), Some(false));
+    assert_eq!(status["onchain"].as_bool(), Some(true));
+    assert_eq!(status["stage"].as_str(), Some("onchain_failed"));
+    assert_eq!(status["terminal"].as_bool(), Some(true));
+    assert_eq!(status["failed"].as_bool(), Some(true));
+    assert_eq!(status["error_code"].as_str(), Some("ONCHAIN_FAILED"));
+    assert_eq!(
+        status["error_reason"].as_str(),
+        Some("transaction failed onchain")
     );
     assert_eq!(status["chain_id"].as_str(), Some("0x1"));
     let _ = fs::remove_dir_all(&spool_dir);

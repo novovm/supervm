@@ -395,12 +395,52 @@ pub(super) fn gateway_eth_cancun_fork_block(chain_id: u64) -> u64 {
     gateway_eth_chain_u64_env(chain_id, "NOVOVM_GATEWAY_ETH_FORK_CANCUN_BLOCK", 0)
 }
 
+pub(super) fn gateway_eth_amsterdam_fork_block(chain_id: u64) -> u64 {
+    gateway_eth_chain_u64_env(chain_id, "NOVOVM_GATEWAY_ETH_FORK_AMSTERDAM_BLOCK", 0)
+}
+
 pub(super) fn gateway_eth_london_active(chain_id: u64, block_number: u64) -> bool {
     block_number >= gateway_eth_london_fork_block(chain_id)
 }
 
 pub(super) fn gateway_eth_cancun_active(chain_id: u64, block_number: u64) -> bool {
     block_number >= gateway_eth_cancun_fork_block(chain_id)
+}
+
+pub(super) fn gateway_eth_amsterdam_active(chain_id: u64, block_number: u64) -> bool {
+    block_number >= gateway_eth_amsterdam_fork_block(chain_id)
+}
+
+pub(super) fn gateway_eth_max_initcode_size_bytes(
+    chain_id: u64,
+    pending_block_number: u64,
+) -> usize {
+    // EIP-7954 raises limits at Amsterdam:
+    // pre-Amsterdam: 49_152 (24_576 * 2), Amsterdam+: 65_536 (32_768 * 2).
+    if gateway_eth_amsterdam_active(chain_id, pending_block_number) {
+        65_536
+    } else {
+        49_152
+    }
+}
+
+pub(super) fn validate_gateway_eth_contract_deploy_initcode_size(
+    chain_id: u64,
+    pending_block_number: u64,
+    initcode_len: usize,
+) -> Result<()> {
+    let max_len = gateway_eth_max_initcode_size_bytes(chain_id, pending_block_number);
+    if initcode_len > max_len {
+        bail!(
+            "contract deploy init code too large for chain_id={} pending_block={} len={} max={} (amsterdam_fork_block={})",
+            chain_id,
+            pending_block_number,
+            initcode_len,
+            max_len,
+            gateway_eth_amsterdam_fork_block(chain_id)
+        );
+    }
+    Ok(())
 }
 
 pub(super) fn validate_gateway_eth_tx_type_fork_activation(

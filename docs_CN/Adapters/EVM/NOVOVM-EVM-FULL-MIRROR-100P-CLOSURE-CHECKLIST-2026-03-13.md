@@ -124,7 +124,20 @@
 - P0-A 当前：`100%`
 - P0-B 当前：`100%`
 - P0-A + P0-B 合并进度：`100%`
+- P0-C 当前：`100%`
+- P0-D 当前：`100%`
+- P0-E 当前：`100%`
 - P1 当前：`100%`（链族配置化 + type1/type2/type3 链级写开关 + blob 费用/校验 + gateway 主写路径 blob 语义 + raw/非raw 前置语义校验 + London 口径 effectiveGasPrice 收口 + 链级费率覆盖同源语义 + London/Cancun fork 激活高度语义 + 链级 `0xHEX` 大小写兼容 + raw 主写路径开关/激活边界/显式 tx_type 一致性同源校验 + 写/估算入口 `chain_id` 参数一致性硬校验 + 失败状态哈希推导链参数一致性 + type2/type3 `maxFeePerGas` 显式必填语义 + 动态费哈希/索引单源费用口径 + 失败状态哈希推导费用边界同源）
+- EVM 全镜像收口总进度：`100%`
+
+2026-03-14 本地验收（生产代码）：
+
+- `cargo fmt --manifest-path Cargo.toml --all -- --check` 通过。
+- `cargo clippy --workspace --all-targets -- -D warnings` 通过。
+- `cargo clippy -p novovm-consensus --all-targets -- -D warnings` 通过。
+- `cargo clippy -p novovm-network --all-targets -- -D warnings` 通过。
+- `cargo test -p novovm-evm-gateway -- --nocapture` 通过（`160/160`）。
+- `cargo test -p novovm-adapter-evm-plugin -- --nocapture` 通过（`29/29`）。
 
 ### P0-C：执行语义与回执语义收口
 
@@ -169,6 +182,8 @@
 - 本轮补 `evm_getUpstreamConsumerBundle` 直连消费收口：输出新增 `consumer.public_broadcast/consumer.tx_status/consumer.events(logs/filter_changes/filter_logs)`，并新增 `unresolved.{lifecycle/receipt/broadcast}_tx_hashes`；`ready` 改为严格判定（`tx_status` 三类语义全部可解 + 事件数组可读 + 公网广播就绪），避免“有数据但不可消费”假就绪。
 - 本轮补 txpool 重复提交幂等语义：插件入池主线对“完全相同交易（字段级一致）”改为直接幂等接受，不再误报 `underpriced/nonce too low`；同时保持替换交易语义不变（同 nonce 低费替换仍拒绝，高费替换仍接受）。
 - 本轮补 `tx status` 直连可消费语义：`evm_getTransactionLifecycle` 与 `evm_getUpstreamTxStatusBundle` 均新增 `stage/terminal/failed + receipt_pending/receipt_status + broadcast_mode` 扁平字段（不再要求上游跨 `lifecycle/receipt/broadcast` 二次归并）；`evm_getUpstreamConsumerBundle` 同步增加 `stage_resolved/stage_unresolved` 与 `unresolved.stage_tx_hashes`，`ready_details` 增加 `tx_status_stage_ready`，收口“回执/错误语义可直接消费”边界。
+- 本轮补 `submit-status` 成功路径收口：`eth_sendRawTransaction/eth_sendTransaction` 成功后不再清理 submit-status，而是持久化 `accepted=true,pending=true,onchain=false`；`evm_getTxSubmitStatus/evm_getTransactionLifecycle` 在“无索引但有 submit-status”场景改为按状态推导 `stage/terminal/failed`（`pending/accepted/onchain/failed/rejected`），不再一律返回 `failed`。
+- 本轮补 `submit-status` 的 `onchain_failed` 终态语义：索引命中且回执 `status=0x0` 时会持久化 `error_code=ONCHAIN_FAILED`，并在“无索引但有 submit-status”场景下稳定返回 `stage=onchain_failed, failed=true, terminal=true`，不再退化为 `onchain`。新增回归：`main_tests::evm_get_tx_submit_status_uses_persisted_onchain_failed_status_when_tx_missing`。
 - 本轮补 `pending atomic-broadcast` 自动恢复主线：gateway 启动后会自动回放 pending atomic-broadcast（按 `NOVOVM_GATEWAY_EVM_ATOMIC_BROADCAST_AUTOREPLAY_MAX` 上限），每次请求处理后也会执行同一自动回放；支持冷却/积压阈值/外部执行器开关（`NOVOVM_GATEWAY_EVM_ATOMIC_BROADCAST_AUTOREPLAY_COOLDOWN_MS`、`NOVOVM_GATEWAY_EVM_ATOMIC_BROADCAST_PENDING_WARN_THRESHOLD`、`NOVOVM_GATEWAY_EVM_ATOMIC_BROADCAST_AUTOREPLAY_USE_EXTERNAL_EXECUTOR`），并保持成功清票据、失败保留重放票据的生产语义闭环。
 - 本轮补 `pending atomic-ready` 自动恢复主线：gateway 自动回放 `compensate_pending_v1` 的 atomic-ready 记录（按 atomic-broadcast 自动回放扫描上限），恢复路径为 `pending atomic-ready -> atomic-ready spool + atomic-broadcast queue + pending ticket/payload`，随后由同一自动广播回放链路继续执行；重启后无需手工 `evm_replayAtomicReady` 批量补线。
 - 本轮补 `pending public-broadcast` 自动恢复主线：gateway 已接入“启动即自动回放 + 每次请求后自动回放”生产路径，自动扫描最近链上 tx 索引中 `broadcast_status in {none, missing}` 的交易并重试公网广播；参数为 `NOVOVM_GATEWAY_ETH_PUBLIC_BROADCAST_AUTOREPLAY_MAX`、`NOVOVM_GATEWAY_ETH_PUBLIC_BROADCAST_AUTOREPLAY_COOLDOWN_MS`、`NOVOVM_GATEWAY_ETH_PUBLIC_BROADCAST_PENDING_WARN_THRESHOLD`，复用现有 `maybe_execute_gateway_eth_public_broadcast` 主路径（外部执行器或 native 回退）。
@@ -223,6 +238,7 @@
 - 本轮补 type2/type3 费用必填语义：`eth_sendTransaction` 与 `eth_estimateGas` 在 `tx_type=2/3` 路径下已改为强制要求显式 `maxFeePerGas`（不再隐式回退 `gasPrice`），减少动态费交易参数歧义。新增回归：`main_tests::eth_send_transaction_rejects_type2_without_max_fee_per_gas`、`main_tests::eth_estimate_gas_rejects_type2_without_max_fee_per_gas`。
 - 本轮补动态费单源费用口径：`eth_sendTransaction` 与 `infer_gateway_eth_send_tx_hash_from_params` 在 `tx_type=2/3` 下统一以 `maxFeePerGas` 作为 `gas_price` 参与主写索引与哈希推导，`maxPriorityFeePerGas` 同步走一致默认与校验口径，消除 `gasPrice` 与动态费字段并存时的语义漂移。新增回归：`main_tests::eth_send_transaction_type2_hash_and_index_use_max_fee_per_gas`、`main_tests::infer_gateway_eth_send_tx_hash_from_params_type2_uses_max_fee_for_gas_price`。
 - 本轮补失败状态哈希推导费用边界同源：`infer_gateway_eth_send_tx_hash_from_params` 已补 `maxFeePerGas >= baseFeePerGas` 硬校验，避免在主写路径会拒绝的动态费参数上误生成失败哈希状态；并补齐 type1 上层 `0xHEX` 链级写开关回归。新增回归：`main_tests::infer_gateway_eth_send_tx_hash_from_params_returns_none_when_max_fee_below_base_fee`、`main_tests::resolve_gateway_eth_write_tx_type_respects_upper_hex_chain_scoped_type1_toggle`。
+- 本轮补 Amsterdam/EIP-7954 语义收口：新增链级 fork 高度开关 `NOVOVM_GATEWAY_ETH_FORK_AMSTERDAM_BLOCK(_CHAIN_{id|0xid})`，并将 contract deploy initcode 上限切为同源函数（Amsterdam 前 `49_152`，Amsterdam 后 `65_536`）；`eth_estimateGas`、`eth_sendTransaction`、`eth_sendRawTransaction` 三条写路径已统一接入。`novovm-adapter-evm-core::validate_tx_semantics_m0` 的通用上限同步提升到 `65_536`，避免 Amsterdam 激活链误拒绝。新增回归：`main_tests::gateway_eth_contract_deploy_initcode_size_tracks_amsterdam_fork_activation`、`main_tests::eth_send_transaction_rejects_oversized_initcode_before_amsterdam`。
 
 ## 4. 代码边界铁律（执行版）
 

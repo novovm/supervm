@@ -2764,8 +2764,8 @@ mod tests {
         not_enough.from = from.clone();
         not_enough = resign_tx(not_enough);
 
-        push_ingress_frames(1, &[low.clone()]);
-        push_ingress_frames(1, &[not_enough.clone()]);
+        push_ingress_frames(1, std::slice::from_ref(&low));
+        push_ingress_frames(1, std::slice::from_ref(&not_enough));
         let frames = drain_plugin_ingress_frames_for_host(16);
         let matched: Vec<_> = frames
             .iter()

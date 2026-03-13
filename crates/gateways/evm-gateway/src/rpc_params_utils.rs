@@ -116,10 +116,10 @@ pub(super) fn last_block_tag_like_param_string(params: &serde_json::Value) -> Op
     })
 }
 
-pub(super) fn non_object_param_at<'a>(
-    params: &'a serde_json::Value,
+pub(super) fn non_object_param_at(
+    params: &serde_json::Value,
     index: usize,
-) -> Option<&'a serde_json::Value> {
+) -> Option<&serde_json::Value> {
     params
         .as_array()
         .and_then(|arr| arr.iter().filter(|v| !v.is_object()).nth(index))

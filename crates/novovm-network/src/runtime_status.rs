@@ -355,9 +355,7 @@ fn recompute_runtime_sync_status_from_observed(
     let observed_peer_count = peer_map.map(|m| m.len() as u64).unwrap_or(0);
     let effective_peer_count = observed_peer_count.max(native_peer_count);
 
-    if has_peer_observation_history {
-        status.peer_count = effective_peer_count;
-    } else if effective_peer_count > 0 {
+    if has_peer_observation_history || effective_peer_count > 0 {
         status.peer_count = effective_peer_count;
     }
     status.current_block = local_head.unwrap_or(status.current_block);
@@ -371,7 +369,7 @@ fn recompute_runtime_sync_status_from_observed(
     if status.highest_block > status.current_block {
         let existing_anchor = observed.sync_anchor_by_chain.get(&chain_id).copied();
         let mut start_anchor = existing_anchor
-            .unwrap_or_else(|| {
+            .unwrap_or({
                 if status.starting_block > 0 && status.starting_block <= status.current_block {
                     status.starting_block
                 } else {

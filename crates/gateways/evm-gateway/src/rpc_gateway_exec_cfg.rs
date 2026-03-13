@@ -226,10 +226,8 @@ fn select_gateway_eth_sync_pull_peers_from_snapshot(
     let mut ordered = Vec::<NodeId>::new();
     let mut seen = std::collections::HashSet::<u64>::new();
     for (peer_id, _head) in runtime_heads {
-        if configured.contains(peer_id) {
-            if seen.insert(*peer_id) {
-                ordered.push(NodeId(*peer_id));
-            }
+        if configured.contains(peer_id) && seen.insert(*peer_id) {
+            ordered.push(NodeId(*peer_id));
         }
     }
     for node in peer_nodes {
@@ -249,6 +247,7 @@ fn select_gateway_eth_native_sync_pull_peers(
     select_gateway_eth_sync_pull_peers_from_snapshot(peer_nodes, &runtime_heads, fanout)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn send_gateway_eth_native_sync_pull_requests(
     chain_id: u64,
     broadcaster: &GatewayEthNativeBroadcaster,
@@ -1266,6 +1265,7 @@ pub(super) fn maybe_execute_gateway_eth_public_broadcast(
 }
 
 #[cfg(test)]
+#[allow(clippy::items_after_test_module)]
 mod tests {
     use super::*;
 

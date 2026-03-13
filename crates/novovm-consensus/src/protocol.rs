@@ -1279,10 +1279,7 @@ impl HotStuffProtocol {
         } else {
             let verify_inputs: Vec<GovernanceVoteVerificationInput<'_>> = validated_votes
                 .iter()
-                .map(|(vote, key)| GovernanceVoteVerificationInput {
-                    vote: *vote,
-                    key: *key,
-                })
+                .map(|(vote, key)| GovernanceVoteVerificationInput { vote, key })
                 .collect();
             match self
                 .governance_vote_verifier

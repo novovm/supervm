@@ -941,6 +941,8 @@ pub fn estimate_intrinsic_gas_with_envelope_extras_m0(
 }
 
 pub fn validate_tx_semantics_m0(profile: &EvmChainProfile, tx: &TxIR) -> anyhow::Result<()> {
+    const MAX_INITCODE_SIZE_BYTES_POST_AMSTERDAM: usize = 65_536;
+
     if tx.chain_id != profile.chain_id {
         bail!(
             "chain_id mismatch for profile: tx_chain={} profile_chain={}",
@@ -956,18 +958,17 @@ pub fn validate_tx_semantics_m0(profile: &EvmChainProfile, tx: &TxIR) -> anyhow:
             }
         }
         TxType::ContractDeploy => {
-            const MAX_INITCODE_SIZE_BYTES: usize = 49_152;
             if tx.to.is_some() {
                 bail!("contract deploy tx must not set recipient");
             }
             if tx.data.is_empty() {
                 bail!("contract deploy tx missing init code");
             }
-            if tx.data.len() > MAX_INITCODE_SIZE_BYTES {
+            if tx.data.len() > MAX_INITCODE_SIZE_BYTES_POST_AMSTERDAM {
                 bail!(
                     "contract deploy init code too large: len={} max={}",
                     tx.data.len(),
-                    MAX_INITCODE_SIZE_BYTES
+                    MAX_INITCODE_SIZE_BYTES_POST_AMSTERDAM
                 );
             }
         }
@@ -1242,7 +1243,7 @@ mod tests {
         let mut tx = sample_tx(1);
         tx.tx_type = TxType::ContractDeploy;
         tx.to = None;
-        tx.data = vec![0x60; 49_153];
+        tx.data = vec![0x60; 65_537];
         tx.gas_limit = u64::MAX;
         let err =
             validate_tx_semantics_m0(&profile, &tx).expect_err("must reject oversized initcode");

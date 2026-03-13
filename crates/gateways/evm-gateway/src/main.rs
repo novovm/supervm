@@ -1427,33 +1427,6 @@ impl GatewayEthTxIndexStoreBackend {
         }
     }
 
-    fn delete_eth_submit_status(&self, tx_hash: &[u8; 32]) -> Result<()> {
-        match self {
-            GatewayEthTxIndexStoreBackend::Memory => Ok(()),
-            GatewayEthTxIndexStoreBackend::RocksDb { path } => {
-                let db = open_gateway_eth_tx_index_rocksdb(path)?;
-                let cf = db
-                    .cf_handle(GATEWAY_ETH_TX_INDEX_ROCKSDB_CF_STATE)
-                    .ok_or_else(|| {
-                        anyhow::anyhow!(
-                            "missing eth tx index rocksdb column family '{}' for {}",
-                            GATEWAY_ETH_TX_INDEX_ROCKSDB_CF_STATE,
-                            path.display()
-                        )
-                    })?;
-                let key = gateway_eth_submit_status_key(tx_hash);
-                db.delete_cf(cf, key).with_context(|| {
-                    format!(
-                        "delete eth submit-status from cf '{}' failed: {}",
-                        GATEWAY_ETH_TX_INDEX_ROCKSDB_CF_STATE,
-                        path.display()
-                    )
-                })?;
-                Ok(())
-            }
-        }
-    }
-
     fn load_eth_txs_by_chain(
         &self,
         chain_id: u64,
@@ -5271,6 +5244,13 @@ fn run_gateway_method(
                 envelope_tx_type,
                 pending_block_number,
             )?;
+            if to.is_none() {
+                validate_gateway_eth_contract_deploy_initcode_size(
+                    chain_id,
+                    pending_block_number,
+                    data.len(),
+                )?;
+            }
             let block_tag =
                 parse_eth_tx_count_block_tag(params).unwrap_or_else(|| "latest".to_string());
             let view_entries =
@@ -7634,6 +7614,13 @@ fn run_gateway_method(
                 } else {
                     gateway_eth_tx_receipt_json(&pending_entry)
                 };
+                persist_gateway_eth_submit_success_status(
+                    ctx.eth_tx_index_store,
+                    tx_hash,
+                    pending_entry.chain_id,
+                    true,
+                    false,
+                );
                 return Ok((
                     serde_json::json!({
                         "accepted": true,
@@ -7692,14 +7679,59 @@ fn run_gateway_method(
                             false,
                         ));
                     }
+                    let stage = if status.pending {
+                        "pending"
+                    } else if status.onchain
+                        && status.error_code.as_deref() == Some("ONCHAIN_FAILED")
+                    {
+                        "onchain_failed"
+                    } else if status.onchain {
+                        "onchain"
+                    } else if status.accepted {
+                        "accepted"
+                    } else if status.error_code.is_some() {
+                        "failed"
+                    } else {
+                        "rejected"
+                    };
+                    let terminal = !matches!(stage, "pending" | "accepted");
+                    let failed = matches!(stage, "onchain_failed" | "failed" | "rejected");
+                    let (error_code, error_reason) = if failed {
+                        let fallback_code = if stage == "onchain_failed" {
+                            "ONCHAIN_FAILED"
+                        } else if stage == "failed" {
+                            "SUBMIT_FAILED"
+                        } else {
+                            "SUBMIT_REJECTED"
+                        };
+                        let fallback_reason = if stage == "onchain_failed" {
+                            "transaction failed onchain"
+                        } else if stage == "failed" {
+                            "submit failed"
+                        } else {
+                            "submit rejected"
+                        };
+                        (
+                            status
+                                .error_code
+                                .clone()
+                                .unwrap_or_else(|| fallback_code.to_string()),
+                            status
+                                .error_reason
+                                .clone()
+                                .unwrap_or_else(|| fallback_reason.to_string()),
+                        )
+                    } else {
+                        (String::new(), String::new())
+                    };
                     return Ok((
                         serde_json::json!({
                             "accepted": status.accepted,
                             "pending": status.pending,
                             "onchain": status.onchain,
-                            "stage": "failed",
-                            "terminal": true,
-                            "failed": true,
+                            "stage": stage,
+                            "terminal": terminal,
+                            "failed": failed,
                             "tx_hash": format!("0x{}", to_hex(&tx_hash)),
                             "chain_id": status.chain_id.map(|value| format!("0x{:x}", value)),
                             "receipt_pending": serde_json::Value::Null,
@@ -7707,8 +7739,8 @@ fn run_gateway_method(
                             "broadcast_mode": broadcast.get("mode").cloned().unwrap_or(serde_json::Value::Null),
                             "receipt": serde_json::Value::Null,
                             "broadcast": broadcast,
-                            "error_code": status.error_code.unwrap_or_else(|| "SUBMIT_FAILED".to_string()),
-                            "error_reason": status.error_reason.unwrap_or_else(|| "submit failed".to_string()),
+                            "error_code": if failed { serde_json::Value::String(error_code) } else { serde_json::Value::Null },
+                            "error_reason": if failed { serde_json::Value::String(error_reason) } else { serde_json::Value::Null },
                             "updated_at_unix_ms": status.updated_at_unix_ms,
                         }),
                         false,
@@ -7770,6 +7802,22 @@ fn run_gateway_method(
                 "onchain"
             };
             let failed = stage == "onchain_failed";
+            if pending {
+                persist_gateway_eth_submit_success_status(
+                    ctx.eth_tx_index_store,
+                    tx_hash,
+                    entry.chain_id,
+                    true,
+                    false,
+                );
+            } else {
+                persist_gateway_eth_submit_onchain_status(
+                    ctx.eth_tx_index_store,
+                    tx_hash,
+                    entry.chain_id,
+                    failed,
+                );
+            }
             Ok((
                 serde_json::json!({
                     "accepted": true,
@@ -8504,10 +8552,11 @@ fn run_gateway_method(
                 &chain_entries,
                 ctx.eth_tx_index_store,
             )?;
+            let pending_block_number = latest_block_number.saturating_add(1);
             validate_gateway_eth_tx_type_fork_activation(
                 chain_id,
                 fields.hint.tx_type_number,
-                latest_block_number.saturating_add(1),
+                pending_block_number,
             )?;
 
             let explicit_nonce = param_as_u64_any_with_tx(params, &["nonce"]);
@@ -8578,6 +8627,13 @@ fn run_gateway_method(
                 now,
             })?;
             let tx_ir = tx_ir_from_raw_fields_m0(&fields, &raw_tx, from.clone(), chain_id);
+            if tx_ir.to.is_none() {
+                validate_gateway_eth_contract_deploy_initcode_size(
+                    chain_id,
+                    pending_block_number,
+                    tx_ir.data.len(),
+                )?;
+            }
             let chain_type = resolve_evm_chain_type_from_chain_id(chain_id);
             let profile = resolve_evm_profile(chain_type, chain_id)?;
             validate_tx_semantics_m0(&profile, &tx_ir)
@@ -8648,7 +8704,13 @@ fn run_gateway_method(
             let wire = encode_gateway_ingress_ops_wire_v1_eth(&record)?;
             write_spool_ops_wire_v1(ctx.spool_dir, &wire)?;
             upsert_gateway_eth_tx_index(eth_tx_index, ctx.eth_tx_index_store, &record);
-            clear_gateway_eth_submit_status(ctx.eth_tx_index_store, &record.tx_hash);
+            persist_gateway_eth_submit_success_status(
+                ctx.eth_tx_index_store,
+                record.tx_hash,
+                record.chain_id,
+                true,
+                false,
+            );
             for settlement in &tap_drain.settlement_records {
                 if let Err(e) = upsert_gateway_evm_settlement_index(
                     evm_settlement_index_by_id,
@@ -8845,11 +8907,19 @@ fn run_gateway_method(
                 max_fee_per_blob_gas,
                 blob_hash_count,
             )?;
+            let pending_block_number = latest_block_number.saturating_add(1);
             validate_gateway_eth_tx_type_fork_activation(
                 chain_id,
                 tx_type,
-                latest_block_number.saturating_add(1),
+                pending_block_number,
             )?;
+            if to.is_none() {
+                validate_gateway_eth_contract_deploy_initcode_size(
+                    chain_id,
+                    pending_block_number,
+                    data.len(),
+                )?;
+            }
             let (gas_price, max_priority_fee_per_gas) = if tx_type == 2 || tx_type == 3 {
                 if max_fee_per_gas_param.is_none() {
                     bail!(
@@ -9031,7 +9101,13 @@ fn run_gateway_method(
             let wire = encode_gateway_ingress_ops_wire_v1_eth(&record)?;
             write_spool_ops_wire_v1(ctx.spool_dir, &wire)?;
             upsert_gateway_eth_tx_index(eth_tx_index, ctx.eth_tx_index_store, &record);
-            clear_gateway_eth_submit_status(ctx.eth_tx_index_store, &record.tx_hash);
+            persist_gateway_eth_submit_success_status(
+                ctx.eth_tx_index_store,
+                record.tx_hash,
+                record.chain_id,
+                true,
+                false,
+            );
             for settlement in &tap_drain.settlement_records {
                 if let Err(e) = upsert_gateway_evm_settlement_index(
                     evm_settlement_index_by_id,
@@ -9887,21 +9963,49 @@ fn upsert_gateway_eth_submit_status(
     }
 }
 
-fn clear_gateway_eth_submit_status(
+fn persist_gateway_eth_submit_success_status(
     eth_tx_index_store: &GatewayEthTxIndexStoreBackend,
-    tx_hash: &[u8; 32],
+    tx_hash: [u8; 32],
+    chain_id: u64,
+    pending: bool,
+    onchain: bool,
 ) {
-    if let Ok(mut map) = gateway_eth_submit_status_store().lock() {
-        map.remove(tx_hash);
-    }
-    if let Err(e) = eth_tx_index_store.delete_eth_submit_status(tx_hash) {
-        gateway_warn!(
-            "gateway_warn: delete eth submit-status failed: tx_hash=0x{} backend={} err={}",
-            to_hex(tx_hash),
-            eth_tx_index_store.backend_name(),
-            e
-        );
-    }
+    let status = GatewayEthSubmitStatus {
+        chain_id: Some(chain_id),
+        accepted: true,
+        pending,
+        onchain,
+        error_code: None,
+        error_reason: None,
+        updated_at_unix_ms: now_unix_millis(),
+    };
+    upsert_gateway_eth_submit_status(eth_tx_index_store, tx_hash, status);
+}
+
+fn persist_gateway_eth_submit_onchain_status(
+    eth_tx_index_store: &GatewayEthTxIndexStoreBackend,
+    tx_hash: [u8; 32],
+    chain_id: u64,
+    onchain_failed: bool,
+) {
+    let (error_code, error_reason) = if onchain_failed {
+        (
+            Some("ONCHAIN_FAILED".to_string()),
+            Some("transaction failed onchain".to_string()),
+        )
+    } else {
+        (None, None)
+    };
+    let status = GatewayEthSubmitStatus {
+        chain_id: Some(chain_id),
+        accepted: true,
+        pending: false,
+        onchain: true,
+        error_code,
+        error_reason,
+        updated_at_unix_ms: now_unix_millis(),
+    };
+    upsert_gateway_eth_submit_status(eth_tx_index_store, tx_hash, status);
 }
 
 fn gateway_eth_submit_status_by_tx(
@@ -10228,6 +10332,7 @@ fn is_gateway_eth_write_method(method: &str) -> bool {
         || method == "evm_public_send_transaction"
 }
 
+#[allow(clippy::too_many_arguments)]
 fn persist_gateway_eth_submit_failure_status_from_error(
     eth_tx_index_store: &GatewayEthTxIndexStoreBackend,
     router: Option<&UnifiedAccountRouter>,
