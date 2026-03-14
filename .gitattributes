@@ -1,3 +1,6 @@
 # Keep GitHub language stats focused on runtime code.
 # Migration/ops scripts are infrastructure, not the core product language.
 scripts/**/*.ps1 linguist-detectable=false
+aoem/**/*.dll filter=lfs diff=lfs merge=lfs -text
+aoem/**/*.so filter=lfs diff=lfs merge=lfs -text
+aoem/**/*.dylib filter=lfs diff=lfs merge=lfs -text

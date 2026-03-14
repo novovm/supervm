@@ -30,13 +30,16 @@ docs_CN/INDEX.md
 aoem/data/
 aoem/variants/*/config/aoem-runtime-profile.json
 
-# AOEM bundle: keep a minimal, auditable tracked set only
+# AOEM bundle: track full FFI runtime set (windows + linux + sidecars)
 aoem/**
 !aoem/
 !aoem/INSTALL-INFO.txt
 !aoem/bin/
 aoem/bin/**
 !aoem/bin/aoem_ffi.dll
+!aoem/plugins/
+aoem/plugins/**
+!aoem/plugins/*.dll
 !aoem/include/
 aoem/include/**
 !aoem/include/aoem.h
@@ -46,6 +49,17 @@ aoem/manifest/**
 !aoem/config/
 aoem/config/**
 !aoem/config/aoem-runtime-profile.json
+!aoem/linux/
+aoem/linux/**
+!aoem/linux/bin/
+aoem/linux/bin/**
+!aoem/linux/bin/libaoem_ffi.so
+!aoem/linux/plugins/
+aoem/linux/plugins/**
+!aoem/linux/plugins/*.so
+!aoem/linux/include/
+aoem/linux/include/**
+!aoem/linux/include/aoem.h
 
 # Never track local build side-products under AOEM bundle
 aoem/**/*.pdb
