@@ -3,6 +3,8 @@ param(
     [string]$GatewayBind = "127.0.0.1:9899",
     [string]$UpstreamRpc = "",
     [string]$RawTx = "",
+    [string]$UcaId = "",
+    [string]$FromAddress = "",
     [UInt64]$ChainId = 1,
     [int]$PollMaxAttempts = 45,
     [int]$PollIntervalMs = 3000,
@@ -184,8 +186,12 @@ $summary = [ordered]@{
     gateway_bind = $GatewayBind
     chain_id = $ChainId
     upstream_rpc = $UpstreamRpc
+    uca_id = $UcaId
+    uca_id_effective = $UcaId
+    from_address = $FromAddress
     tx_hash = $null
     send_result = $null
+    send_retry_result = $null
     submit_status = $null
     receipt = $null
     receipt_found = $false
@@ -216,23 +222,107 @@ try {
         jsonrpc = "2.0"
         id = 2
         method = "eth_sendRawTransaction"
-        params = @{
-            chain_id = [UInt64]$ChainId
-            raw_tx = $RawTx
-            require_public_broadcast = $true
-            return_detail = $true
-        }
-    } | ConvertTo-Json -Depth 16 -Compress
+        params = @{}
+    }
+    $sendReq.params["chain_id"] = [UInt64]$ChainId
+    $sendReq.params["raw_tx"] = $RawTx
+    $sendReq.params["require_public_broadcast"] = $true
+    $sendReq.params["return_detail"] = $true
 
-    $sendResp = Invoke-RestMethod -Uri $url -Method Post -ContentType "application/json" -Body $sendReq
-    if ($sendResp.error) {
-        $summary.send_result = $sendResp.error
-        throw ("eth_sendRawTransaction failed: code={0} message={1}" -f $sendResp.error.code, $sendResp.error.message)
+    if ($FromAddress) {
+        if (-not $UcaId) {
+            $UcaId = "uca-mainnet-write-{0:yyyyMMddHHmmssfff}" -f (Get-Date)
+        }
+        $summary.uca_id = $UcaId
+        $summary.uca_id_effective = $UcaId
+
+        $createReq = @{
+            jsonrpc = "2.0"
+            id = 11
+            method = "ua_createUca"
+            params = @{
+                uca_id = $UcaId
+            }
+        } | ConvertTo-Json -Depth 10 -Compress
+        $null = Invoke-RestMethod -Uri $url -Method Post -ContentType "application/json" -Body $createReq
+
+        $bindReq = @{
+            jsonrpc = "2.0"
+            id = 12
+            method = "ua_bindPersona"
+            params = @{
+                uca_id = $UcaId
+                persona_type = "evm"
+                chain_id = [UInt64]$ChainId
+                external_address = $FromAddress
+            }
+        } | ConvertTo-Json -Depth 10 -Compress
+        $null = Invoke-RestMethod -Uri $url -Method Post -ContentType "application/json" -Body $bindReq
+
+        $sendReq.params["uca_id"] = $UcaId
+        $sendReq.params["from"] = $FromAddress
     }
 
-    $txHash = Resolve-TxHashFromResult -Result $sendResp.result -Context "eth_sendRawTransaction"
+    $sendReq = $sendReq | ConvertTo-Json -Depth 16 -Compress
+
+    $sendResp = Invoke-RestMethod -Uri $url -Method Post -ContentType "application/json" -Body $sendReq
+    $summary.send_result = $sendResp
+    $sendError = $null
+    $sendErrorProp = $sendResp.PSObject.Properties["error"]
+    if ($null -ne $sendErrorProp) {
+        $sendError = $sendErrorProp.Value
+    }
+    if ($null -ne $sendError) {
+        $sendErrorCodeProp = $sendError.PSObject.Properties["code"]
+        $sendErrorMessageProp = $sendError.PSObject.Properties["message"]
+        $sendErrorCode = if ($null -ne $sendErrorCodeProp) { [string]$sendErrorCodeProp.Value } else { "" }
+        $sendErrorMessage = if ($null -ne $sendErrorMessageProp -and $null -ne $sendErrorMessageProp.Value) { [string]$sendErrorMessageProp.Value } else { "" }
+        if ($FromAddress -and $sendErrorCode -eq "-32033" -and $sendErrorMessage) {
+            $m = [regex]::Match($sendErrorMessage, "binding_owner=([a-zA-Z0-9_\\-]+)")
+            if ($m.Success) {
+                $bindingOwner = $m.Groups[1].Value
+                if (-not [string]::IsNullOrWhiteSpace($bindingOwner)) {
+                    $summary.uca_id_effective = $bindingOwner
+                    $retryReq = @{
+                        jsonrpc = "2.0"
+                        id = 13
+                        method = "eth_sendRawTransaction"
+                        params = @{
+                            uca_id = $bindingOwner
+                            chain_id = [UInt64]$ChainId
+                            from = $FromAddress
+                            raw_tx = $RawTx
+                            require_public_broadcast = $true
+                            return_detail = $true
+                        }
+                    } | ConvertTo-Json -Depth 16 -Compress
+                    $retryResp = Invoke-RestMethod -Uri $url -Method Post -ContentType "application/json" -Body $retryReq
+                    $summary.send_retry_result = $retryResp
+                    $sendResp = $retryResp
+                    $sendError = $null
+                    $retryErrorProp = $retryResp.PSObject.Properties["error"]
+                    if ($null -ne $retryErrorProp) {
+                        $sendError = $retryErrorProp.Value
+                    }
+                }
+            }
+        }
+    }
+    if ($null -ne $sendError) {
+        $sendErrorCodeProp = $sendError.PSObject.Properties["code"]
+        $sendErrorMessageProp = $sendError.PSObject.Properties["message"]
+        $sendErrorCode = if ($null -ne $sendErrorCodeProp) { [string]$sendErrorCodeProp.Value } else { "" }
+        $sendErrorMessage = if ($null -ne $sendErrorMessageProp -and $null -ne $sendErrorMessageProp.Value) { [string]$sendErrorMessageProp.Value } else { "" }
+        throw ("eth_sendRawTransaction failed: code={0} message={1}" -f $sendErrorCode, $sendErrorMessage)
+    }
+
+    $sendResult = $null
+    $sendResultProp = $sendResp.PSObject.Properties["result"]
+    if ($null -ne $sendResultProp) {
+        $sendResult = $sendResultProp.Value
+    }
+    $txHash = Resolve-TxHashFromResult -Result $sendResult -Context "eth_sendRawTransaction"
     $summary.tx_hash = $txHash
-    $summary.send_result = $sendResp.result
 
     $statusReq = @{
         jsonrpc = "2.0"
@@ -245,8 +335,13 @@ try {
     } | ConvertTo-Json -Depth 16 -Compress
     try {
         $statusResp = Invoke-RestMethod -Uri $url -Method Post -ContentType "application/json" -Body $statusReq
-        if ($statusResp.result) {
-            $summary.submit_status = $statusResp.result
+        $statusResult = $null
+        $statusResultProp = $statusResp.PSObject.Properties["result"]
+        if ($null -ne $statusResultProp) {
+            $statusResult = $statusResultProp.Value
+        }
+        if ($null -ne $statusResult) {
+            $summary.submit_status = $statusResult
         }
     } catch {
         # optional: keep canary flow running even if status endpoint is unavailable
@@ -266,11 +361,25 @@ try {
         $summary.poll_attempts = $i
         $receiptReq = $receiptReqTemplate | ConvertTo-Json -Depth 10 -Compress
         $receiptResp = Invoke-RestMethod -Uri $url -Method Post -ContentType "application/json" -Body $receiptReq
-        if ($receiptResp.error) {
-            throw ("eth_getTransactionReceipt failed: code={0} message={1}" -f $receiptResp.error.code, $receiptResp.error.message)
+        $receiptError = $null
+        $receiptErrorProp = $receiptResp.PSObject.Properties["error"]
+        if ($null -ne $receiptErrorProp) {
+            $receiptError = $receiptErrorProp.Value
         }
-        if ($receiptResp.result) {
-            $summary.receipt = $receiptResp.result
+        if ($null -ne $receiptError) {
+            $receiptErrorCodeProp = $receiptError.PSObject.Properties["code"]
+            $receiptErrorMessageProp = $receiptError.PSObject.Properties["message"]
+            $receiptErrorCode = if ($null -ne $receiptErrorCodeProp) { [string]$receiptErrorCodeProp.Value } else { "" }
+            $receiptErrorMessage = if ($null -ne $receiptErrorMessageProp -and $null -ne $receiptErrorMessageProp.Value) { [string]$receiptErrorMessageProp.Value } else { "" }
+            throw ("eth_getTransactionReceipt failed: code={0} message={1}" -f $receiptErrorCode, $receiptErrorMessage)
+        }
+        $receiptResult = $null
+        $receiptResultProp = $receiptResp.PSObject.Properties["result"]
+        if ($null -ne $receiptResultProp) {
+            $receiptResult = $receiptResultProp.Value
+        }
+        if ($null -ne $receiptResult) {
+            $summary.receipt = $receiptResult
             $summary.receipt_found = $true
             break
         }
@@ -299,4 +408,3 @@ if (-not $summary.receipt_found) {
 }
 
 Write-Host ("mainnet write canary ok: tx_hash={0}" -f $summary.tx_hash)
-

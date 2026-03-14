@@ -13,7 +13,7 @@
 - 适配器/网关兼容层完成度：`92%`
 - 原生 geth 全节点等价度：`63%`
 - 寄宿 superVM 融合度：`86%`
-- Ethereum mainnet live attach 完成度：`95%`
+- Ethereum mainnet live attach 完成度：`97%`
 
 > 说明：现阶段“常用 eth_* 查询与提交路径”基本齐备，但“原生网络/同步/状态证明/完整执行语义”仍未收口到 100%。
 > 补充：当前 `100% 收口` 不等于“真实 mainnet 状态 + 真实 mainnet 广播 + 实网验证”已经完成。
@@ -144,6 +144,8 @@
 - 本轮已完成固定确认块读侧实网对拍：通过公开 mainnet RPC 样本，对 `eth_chainId/eth_blockNumber/eth_getBlockByNumber/eth_getBlockByHash/eth_getBalance/eth_getCode/eth_getTransactionByHash/eth_getTransactionReceipt/eth_feeHistory/eth_getBlockTransactionCountByNumber/eth_getBlockTransactionCountByHash/eth_getTransactionByBlockNumberAndIndex/eth_getTransactionByBlockHashAndIndex/eth_getUncleCountByBlockNumber/eth_getUncleCountByBlockHash/eth_getLogs/eth_call/eth_estimateGas` 做 gateway vs upstream 对拍，读侧语义已打通。
 - 针对公开 upstream 偶发 `no response`，`rpc_eth_upstream.rs` 已补 3 次短重试（100ms backoff）热路径收口，降低瞬时抖动导致的本地回退概率。
 - 本轮新增写侧一键验证脚本：`scripts/migration/run_evm_mainnet_write_canary.ps1`，已固定“真实 raw 广播 + receipt 轮询 + summary 落盘（`artifacts/migration/evm-mainnet-write-canary-summary.json`）”流程，剩余只需注入真实已签名 canary rawTx 直接执行。
+- 本轮新增“链路可达 canary”一键脚本：`scripts/migration/run_evm_mainnet_connectivity_canary.ps1`；实测通过（summary: `artifacts/migration/evm-mainnet-connectivity-canary-summary.json`），已验证 `gateway -> upstream mainnet sendRawTransaction` 到达主网广播边界（上游回包 `Insufficient funds`）。
+- 本轮新增“本机私钥自动签名+写侧 canary”脚本：`scripts/migration/run_evm_mainnet_funded_write_canary.ps1`。该脚本会先拉取主网 `pending nonce + feeData` 生成 type2 签名交易，再调用 `run_evm_mainnet_write_canary.ps1` 执行广播与 receipt 轮询，默认输出 `artifacts/migration/evm-mainnet-funded-write-canary-summary.json`。
 - 但尚未被证明为“真实 mainnet 状态 + 真实 mainnet 广播 + 实网一致性验证”全部完成态。
 
 ## 7. 进度（2026-03-13）
@@ -313,6 +315,20 @@
 - `novovm-adapter-novovm` 验签缓存容器已从 `Mutex<HashSet>` 切到 `DashSet` 并发集合，降低并发验签阶段全局锁竞争；`execute_transaction` 仍按 hash 命中移除缓存，语义不变。
 - `novovm-adapter-evm-plugin` 的 `apply_ir_batch` 已去掉 `Box<dyn ChainAdapter>` 热路径动态分发，改为直接使用 `NovoVmAdapter` 具体实现，减少批内 `verify/execute/state_root` 虚调用开销，协议语义不变。
 - `aoem-bindings` 已补 `aoem_ed25519_verify_v1/aoem_ed25519_verify_batch_v1` 直连入口；`novovm-adapter-novovm` 的单笔/批量验签已优先走 AOEM，新 AOEM FFI 可用时不再停留在纯 CPU 本地 dalek 路径。
+- `novovm-adapter-novovm` 在 AOEM batch 缺失回退场景已从逐笔串行验签升级为分片并发验签，保持同一 `verify_tx_signature_v1` 语义，降低降级路径吞吐损失。
+- `novovm-node` 的 native adapter signal 已增加批量 `verify_block` 快路径（全通过时不再逐笔 `verify_transaction`），并保留“失败时逐笔回退”以确保行为一致。
+- `novovm-node` 的本地 ingress 预检查已增加批量并发签名预校验（`admit_mempool_basic`、`validate_and_summarize_txs`），nonce 顺序检查仍保持原顺序规则。
+- `novovm-node` 的 `run_ffi_v2` 已去重 admitted 批次重复签名计算：在 admission 已验签前提下，`tx_meta` 汇总路径只保留 fee/nonce 规则复核，减少同批重复哈希成本。
+- `novovm-node` 的 `LocalBatch` 已落地批次级 `txs_digest` 预计算；`batch_state_root` 与 `block_hash` 复用该摘要，减少闭环阶段重复逐笔哈希。
+- `run_ffi_v2` 已把“批次切分 + `ExecOpV2` 映射 + mapped_ops 汇总”合并为单次构建路径，减少 admitted 批次重复扫描。
+- `run_ffi_v2` 的 mempool admission 已增加 owned fast-path（`admit_mempool_basic_owned`），解码后交易向量可直接筛选接纳，降低 admission 阶段对象复制开销。
+- `novovm-node` 的 `build_local_batches_from_txs/encode_ops_v2_buffer` 已改为复用单一构建函数（`build_local_batches_and_ops_from_txs`），减少双实现维护与语义漂移风险。
+- `run_ffi_v2` 已改为在 UA/adapter 路径后消费 admitted 向量进入 owned 批次构建（`build_local_batches_and_ops_from_txs_owned`），去掉批次阶段交易复制。
+- `run_ffi_v2 -> batch_a` 已切到 owned 闭环：`run_batch_a_minimal_closure` 按值接收 `Vec<LocalBatch>` 并在 `build_local_block_owned` 直接消费，去掉 block 构建阶段的 batch 向量 clone。
+- `run_batch_a_minimal_closure` 已把 `batch_layout/mapped_ops/expected_txs` 统计改为单次预计算复用，降低闭环重复扫描。
+- `build_local_batches_and_ops_from_txs(_owned)` 的 `txs_digest` 已并入构建主循环，去掉每批次摘要二次扫描。
+- owned 批次构建已改为迭代消费（替代 `split_off` 尾向量搬移），降低批次切分内存搬移成本。
+- `verify_local_tx_signatures_batch` 已改为“线程返回连续 `Vec<bool>` + 主线程切片回填”，替代 `(idx,bool)` 元组聚合，减少并行验签中间分配与索引搬运。
 - `aoem-bindings` 已补 `aoem_secp256k1_verify_v1/aoem_secp256k1_recover_pubkey_v1` 直连入口；`novovm-adapter-evm-core` 已把 raw sender recovery 下沉到核心层，gateway `eth_sendRawTransaction` 现优先使用 AOEM 从 raw 原文恢复 sender，显式 `from` 改为一致性约束或兼容回退。
 - `eth_sendTransaction` 已补 recoverable-signature sender 校验：请求若携带 `signature/raw_signature/signed_tx` 且可被解析为 recoverable raw EVM tx，则 gateway 现按同一 AOEM `secp256k1 recover` 主线恢复 sender 并与显式 `from` 做强一致校验；不可恢复时保持原宿主路径。
 - `eth_sendTransaction` 的同一 recoverable-signature 路径已补字段强一致：若 `signed_tx` 可恢复，则 `nonce/to/value/gas/fee/data/accessList/blob` 等有效字段必须与显式请求体一致；否则直接拒绝或在失败状态哈希推导处返回 `None`。
