@@ -1,40 +1,31 @@
-AOEM beta0.8 installed
-variant=core
-source=<aoem-release-bundle>
-installed_bin=aoem/bin
-installed_header=aoem/include/aoem.h
+AOEM fullmax package installed
+release=AOEM FFI Beta 0.7.3
+source_bundle=AOEM/artifacts/ffi-bundles/fullmax/macos/20260314-221800
+installed_root=aoem/
+
+Installed runtime layout:
+  core dylib: aoem/bin/libaoem_ffi.dylib
+  header: aoem/include/aoem.h
+  plugins: aoem/plugins/*.dylib
+  compatibility variants:
+    - aoem/variants/persist/bin/libaoem_ffi.dylib
+    - aoem/variants/wasm/bin/libaoem_ffi.dylib
+  explicit macOS mirror bundle: aoem/macos/
 
 Host default load path (repository-relative):
-  aoem/bin/aoem_ffi.dll
+  macOS: aoem/bin/libaoem_ffi.dylib
+  Linux: aoem/bin/libaoem_ffi.so
+  Windows: aoem/bin/aoem_ffi.dll
 
-Variant naming note:
-  core, persist, wasm all use the same binary name: aoem_ffi.dll.
-  This is intentional ABI naming. Runtime identity is determined by:
-    1) core dynlib: aoem/bin/aoem_ffi.dll
-    2) sidecar plugins in aoem/plugins
-    3) aoem-manifest.json + capabilities check at startup
+Runtime composition note:
+  novovm host runtime loads the core dylib from aoem/bin/
+  persist/wasm sidecars are resolved from aoem/plugins/
+  aoem-manifest.json tracks only platform core dynlibs
+  aoem/macos/ is a synced release bundle mirror, not the default host load root
 
-Repository tracking policy (minimal set):
-  tracked:
-    - aoem/bin/aoem_ffi.dll (core runtime)
-    - aoem/include/aoem.h
-    - aoem/manifest/aoem-manifest.json
-    - aoem/INSTALL-INFO.txt
-  optional sidecars not tracked in git:
-    - aoem/plugins/aoem_ffi_persist_rocksdb.dll
-    - aoem/plugins/aoem_ffi_runtime_wasm_wasmtime.dll
-    - aoem/plugins/aoem_ffi_zkvm_executor.dll
-    - aoem/plugins/aoem_ffi_crypto_mldsa.dll
-
-Release distribution policy:
-  composed package (core + sidecar plugins) is distributed as GitHub Releases assets.
-  Always verify SHA256SUMS and aoem-manifest.json before install.
+Generated configuration:
+  manifest: aoem/manifest/aoem-manifest.json
+  runtime profile: aoem/config/aoem-runtime-profile.json
 
 Recommended one-time probe:
-  cargo run --release --example ffi_install_probe -- --dll <repo>/aoem/bin/aoem_ffi.dll
-
-Default runtime profile output:
-  aoem/config/aoem-runtime-profile.json
-
-Worldline default mode:
-  single_engine (threads=1, engine_workers=auto)
+  cargo run --quiet -p aoem-bindings --example ffi_install_probe -- --dll <repo>/aoem/bin/libaoem_ffi.dylib
