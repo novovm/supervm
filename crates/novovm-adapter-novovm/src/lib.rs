@@ -1,6 +1,9 @@
 #![forbid(unsafe_code)]
 
 use anyhow::{anyhow, bail, Result};
+use aoem_bindings::{
+    ed25519_verify_batch_v1_auto, ed25519_verify_v1_auto, AoemEd25519VerifyItemRef,
+};
 use dashmap::DashSet;
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use novovm_adapter_api::{
@@ -75,6 +78,114 @@ impl NovoVmAdapter {
             bail!("adapter is not initialized");
         }
         Ok(())
+    }
+
+    fn tx_shape_ok(tx: &TxIR) -> bool {
+        match tx.tx_type {
+            TxType::Transfer | TxType::ContractCall => tx.to.is_some(),
+            TxType::ContractDeploy => tx.to.is_none() && !tx.data.is_empty(),
+            TxType::Privacy => tx.to.is_none() && !tx.data.is_empty(),
+            _ => false,
+        }
+    }
+
+    fn tx_from_matches_pubkey_bytes(tx: &TxIR, pubkey_bytes: &[u8; 32]) -> bool {
+        let expected_from = address_from_pubkey_bytes_v1(pubkey_bytes);
+        if tx.from.len() == 20 {
+            tx.from == expected_from
+        } else if tx.from.len() == 32 {
+            tx.from == *pubkey_bytes
+        } else {
+            false
+        }
+    }
+
+    pub fn verify_transactions_batch(&self, txs: &[TxIR]) -> Result<Vec<bool>> {
+        self.ensure_initialized()?;
+        if txs.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let mut verify_results = vec![false; txs.len()];
+        let mut batch_indices = Vec::new();
+        let mut batch_pubkeys = Vec::new();
+        let mut batch_signatures = Vec::new();
+        let mut batch_messages = Vec::new();
+
+        for (idx, tx) in txs.iter().enumerate() {
+            if tx.chain_id != self.config.chain_id {
+                continue;
+            }
+            if !Self::tx_shape_ok(tx) || tx.hash.is_empty() || tx.signature.is_empty() {
+                continue;
+            }
+            if tx.hash != compute_tx_ir_hash(tx) {
+                continue;
+            }
+
+            match tx.tx_type {
+                TxType::Privacy => {
+                    if Self::decode_privacy_stealth_address(tx).is_err() {
+                        continue;
+                    }
+                    let signature = match Self::decode_privacy_signature(tx) {
+                        Ok(v) => v,
+                        Err(_) => continue,
+                    };
+                    let key_image_key = Self::privacy_key_image_key(&signature.key_image);
+                    if self.kv.contains_key(&key_image_key) {
+                        continue;
+                    }
+                    verify_results[idx] = Self::verify_privacy_tx_signature_v1(tx)?;
+                }
+                _ => {
+                    if tx.signature.len() != 96 {
+                        continue;
+                    }
+                    let mut pubkey_bytes = [0u8; 32];
+                    pubkey_bytes.copy_from_slice(&tx.signature[..32]);
+                    let mut sig_bytes = [0u8; 64];
+                    sig_bytes.copy_from_slice(&tx.signature[32..96]);
+                    batch_indices.push(idx);
+                    batch_pubkeys.push(pubkey_bytes);
+                    batch_signatures.push(sig_bytes);
+                    batch_messages.push(tx_signing_message_v1(tx));
+                }
+            }
+        }
+
+        if !batch_indices.is_empty() {
+            let mut batch_items = Vec::with_capacity(batch_indices.len());
+            for slot in 0..batch_indices.len() {
+                batch_items.push(AoemEd25519VerifyItemRef {
+                    pubkey: &batch_pubkeys[slot],
+                    message: &batch_messages[slot],
+                    signature: &batch_signatures[slot],
+                });
+            }
+
+            if let Some(batch_crypto_results) = ed25519_verify_batch_v1_auto(&batch_items)? {
+                for (slot, verified) in batch_crypto_results.into_iter().enumerate() {
+                    if !verified {
+                        continue;
+                    }
+                    let idx = batch_indices[slot];
+                    verify_results[idx] =
+                        Self::tx_from_matches_pubkey_bytes(&txs[idx], &batch_pubkeys[slot]);
+                }
+            } else {
+                for idx in batch_indices {
+                    verify_results[idx] = verify_tx_signature_v1(&txs[idx])?;
+                }
+            }
+        }
+
+        for (idx, verified) in verify_results.iter().copied().enumerate() {
+            if verified {
+                self.verified_tx_cache.insert(txs[idx].hash.clone());
+            }
+        }
+        Ok(verify_results)
     }
 
     fn default_account() -> AccountState {
@@ -546,6 +657,11 @@ pub fn address_from_pubkey_v1(pubkey: &VerifyingKey) -> Vec<u8> {
     digest[12..32].to_vec()
 }
 
+fn address_from_pubkey_bytes_v1(pubkey_bytes: &[u8; 32]) -> Vec<u8> {
+    let digest: [u8; 32] = Sha256::digest(pubkey_bytes).into();
+    digest[12..32].to_vec()
+}
+
 pub fn address_from_seed_v1(seed: [u8; 32]) -> Vec<u8> {
     let signing_key = SigningKey::from_bytes(&seed);
     address_from_pubkey_v1(&signing_key.verifying_key())
@@ -698,17 +814,23 @@ fn verify_tx_signature_v1(tx: &TxIR) -> Result<bool> {
     let mut sig_bytes = [0u8; 64];
     sig_bytes.copy_from_slice(&tx.signature[32..96]);
 
-    let verifying_key = match VerifyingKey::from_bytes(&pubkey_bytes) {
-        Ok(v) => v,
-        Err(_) => return Ok(false),
-    };
-    let signature = Signature::from_bytes(&sig_bytes);
     let msg = tx_signing_message_v1(tx);
-    if verifying_key.verify(&msg, &signature).is_err() {
+    let signature_ok = if let Some(valid) = ed25519_verify_v1_auto(&pubkey_bytes, &msg, &sig_bytes)?
+    {
+        valid
+    } else {
+        let verifying_key = match VerifyingKey::from_bytes(&pubkey_bytes) {
+            Ok(v) => v,
+            Err(_) => return Ok(false),
+        };
+        let signature = Signature::from_bytes(&sig_bytes);
+        verifying_key.verify(&msg, &signature).is_ok()
+    };
+    if !signature_ok {
         return Ok(false);
     }
 
-    let expected_from = address_from_pubkey_v1(&verifying_key);
+    let expected_from = address_from_pubkey_bytes_v1(&pubkey_bytes);
     let from_matches = if tx.from.len() == 20 {
         tx.from == expected_from
     } else if tx.from.len() == 32 {
@@ -753,13 +875,7 @@ impl ChainAdapter for NovoVmAdapter {
         if tx.chain_id != self.config.chain_id {
             return Ok(false);
         }
-        let tx_shape_ok = match tx.tx_type {
-            TxType::Transfer | TxType::ContractCall => tx.to.is_some(),
-            TxType::ContractDeploy => tx.to.is_none() && !tx.data.is_empty(),
-            TxType::Privacy => tx.to.is_none() && !tx.data.is_empty(),
-            _ => false,
-        };
-        if !tx_shape_ok || tx.hash.is_empty() || tx.signature.is_empty() {
+        if !Self::tx_shape_ok(tx) || tx.hash.is_empty() || tx.signature.is_empty() {
             return Ok(false);
         }
         if tx.hash != compute_tx_ir_hash(tx) {
@@ -840,12 +956,10 @@ impl ChainAdapter for NovoVmAdapter {
         if block.number == 0 && block.transactions.is_empty() {
             return Ok(true);
         }
-        for tx in &block.transactions {
-            if !self.verify_transaction(tx)? {
-                return Ok(false);
-            }
-        }
-        Ok(true)
+        Ok(self
+            .verify_transactions_batch(&block.transactions)?
+            .into_iter()
+            .all(|v| v))
     }
 
     fn apply_block(&mut self, block: &BlockIR, state: &mut StateIR) -> Result<()> {

@@ -5,14 +5,18 @@
 - 目标不是“RPC 兼容层”，而是“可替代原生 geth 的 Rust 全功能镜像节点（寄宿 superVM）”。
 - 完成判定只看生产代码与运行行为，不看 gate/signal/snapshot 脚本产物。
 - 内部固定二进制流水线：`plugin/gateway -> opsw1 -> novovm-node -> AOEM`。
+- `SUPERVM 主网` 与 `EVM 全镜像` 并存：EVM 作为寄宿在 superVM 内的镜像域存在，不替代 superVM 主链。
+- 本清单的 `100%` 只定义 `EVM 功能/语义/内部主线收口`，不定义 `Ethereum mainnet live attach`。
 
 ## 2. 当前基线（2026-03-13）
 
 - 适配器/网关兼容层完成度：`92%`
 - 原生 geth 全节点等价度：`63%`
 - 寄宿 superVM 融合度：`86%`
+- Ethereum mainnet live attach 完成度：`95%`
 
 > 说明：现阶段“常用 eth_* 查询与提交路径”基本齐备，但“原生网络/同步/状态证明/完整执行语义”仍未收口到 100%。
+> 补充：当前 `100% 收口` 不等于“真实 mainnet 状态 + 真实 mainnet 广播 + 实网验证”已经完成。
 
 ## 3. 一次性收口任务包（只做生产代码）
 
@@ -118,6 +122,29 @@
 - 本轮完成真实 MPT 收口：`transactionsRoot/receiptsRoot/stateRoot/storageRoot` 全部改为 hexary Patricia trie 根（key/value 以 RLP 语义写入，key 路径按 nibble 编码），不再使用自定义二叉 Merkle 根。
 - 本轮完成 `eth_getProof` 证明节点语义收口：`accountProof/storageProof` 改为 trie 路径上的 RLP 节点序列（非 sibling 哈希列表），并与 `evm_verifyProof` 主线保持同源。
 - 外部 geth 节点样本批量对拍保留为验收证据项（不再阻塞主线功能 100% 收口）。
+
+### P0-C：Ethereum Mainnet Live Attach（独立于 100% 镜像收口）
+
+1. 接入真实 Ethereum mainnet 状态源，而不是仅使用本地索引/运行时视图。
+2. 接入真实 mainnet 广播出口，而不是仅停留在 public-broadcast 框架或 native transport 骨架。
+3. 完成最小实网一致性验证：`eth_blockNumber/latest block/balance/code/receipt/sendRawTransaction`。
+
+完成定义：
+
+- `eth_chainId = 0x1` 之外，`eth_blockNumber` 会跟随真实主网推进。
+- `eth_getBalance/eth_getCode/eth_getTransactionReceipt` 与外部可信 mainnet RPC 对齐。
+- `eth_sendRawTransaction` 发出的最小 canary 交易可被真实主网接受并可回查 receipt。
+
+当前状态（2026-03-14）：
+
+- 进行中（真实状态源读路径 + 真实上游 raw 广播出口已接入，读侧实网一致性已完成，剩余仅真实签名广播 canary）。
+- 当前仓库已经具备 `chainId=1` 默认口径、RPC 写读主线、public-broadcast 执行器框架与 native transport 骨架。
+- `evm-gateway` 已新增真实上游状态源直连：通过 `NOVOVM_GATEWAY_ETH_UPSTREAM_RPC`（支持 `_CHAIN_{id}` / `_CHAIN_0x{id}`）可让 `eth_blockNumber/eth_syncing/eth_gasPrice/eth_maxPriorityFeePerGas/eth_feeHistory/eth_getBalance/eth_getBlockByNumber/eth_getBlockByHash/eth_getTransactionByBlockNumberAndIndex/eth_getTransactionByBlockHashAndIndex/eth_getBlockTransactionCountByNumber/eth_getBlockTransactionCountByHash/eth_getBlockReceipts/eth_getUncleCountByBlockNumber/eth_getUncleCountByBlockHash/eth_getLogs/eth_call/eth_estimateGas/eth_getCode/eth_getStorageAt/eth_getProof/eth_getTransactionCount/eth_getTransactionByHash/eth_getTransactionReceipt` 优先读取真实 Ethereum 上游 RPC，并在失败或 `null` 时回退本地视图。
+- `eth_sendRawTransaction` 在未配置外部执行器时，已可通过 `NOVOVM_GATEWAY_ETH_PUBLIC_BROADCAST_UPSTREAM_RPC`（未显式配置时回退复用 `NOVOVM_GATEWAY_ETH_UPSTREAM_RPC`）直接调用上游 `eth_sendRawTransaction` 做真实广播，并在失败后再回退 native transport。
+- 本轮已完成固定确认块读侧实网对拍：通过公开 mainnet RPC 样本，对 `eth_chainId/eth_blockNumber/eth_getBlockByNumber/eth_getBlockByHash/eth_getBalance/eth_getCode/eth_getTransactionByHash/eth_getTransactionReceipt/eth_feeHistory/eth_getBlockTransactionCountByNumber/eth_getBlockTransactionCountByHash/eth_getTransactionByBlockNumberAndIndex/eth_getTransactionByBlockHashAndIndex/eth_getUncleCountByBlockNumber/eth_getUncleCountByBlockHash/eth_getLogs/eth_call/eth_estimateGas` 做 gateway vs upstream 对拍，读侧语义已打通。
+- 针对公开 upstream 偶发 `no response`，`rpc_eth_upstream.rs` 已补 3 次短重试（100ms backoff）热路径收口，降低瞬时抖动导致的本地回退概率。
+- 本轮新增写侧一键验证脚本：`scripts/migration/run_evm_mainnet_write_canary.ps1`，已固定“真实 raw 广播 + receipt 轮询 + summary 落盘（`artifacts/migration/evm-mainnet-write-canary-summary.json`）”流程，剩余只需注入真实已签名 canary rawTx 直接执行。
+- 但尚未被证明为“真实 mainnet 状态 + 真实 mainnet 广播 + 实网一致性验证”全部完成态。
 
 ## 7. 进度（2026-03-13）
 
@@ -285,6 +312,11 @@
 - `novovm-adapter-novovm` 已增加“单次验签缓存”：`verify_transaction` 成功后的 tx 在同批 `execute_transaction` 主线上不再重复完整验签，缓存未命中时回退原逻辑，执行语义保持一致。
 - `novovm-adapter-novovm` 验签缓存容器已从 `Mutex<HashSet>` 切到 `DashSet` 并发集合，降低并发验签阶段全局锁竞争；`execute_transaction` 仍按 hash 命中移除缓存，语义不变。
 - `novovm-adapter-evm-plugin` 的 `apply_ir_batch` 已去掉 `Box<dyn ChainAdapter>` 热路径动态分发，改为直接使用 `NovoVmAdapter` 具体实现，减少批内 `verify/execute/state_root` 虚调用开销，协议语义不变。
+- `aoem-bindings` 已补 `aoem_ed25519_verify_v1/aoem_ed25519_verify_batch_v1` 直连入口；`novovm-adapter-novovm` 的单笔/批量验签已优先走 AOEM，新 AOEM FFI 可用时不再停留在纯 CPU 本地 dalek 路径。
+- `aoem-bindings` 已补 `aoem_secp256k1_verify_v1/aoem_secp256k1_recover_pubkey_v1` 直连入口；`novovm-adapter-evm-core` 已把 raw sender recovery 下沉到核心层，gateway `eth_sendRawTransaction` 现优先使用 AOEM 从 raw 原文恢复 sender，显式 `from` 改为一致性约束或兼容回退。
+- `eth_sendTransaction` 已补 recoverable-signature sender 校验：请求若携带 `signature/raw_signature/signed_tx` 且可被解析为 recoverable raw EVM tx，则 gateway 现按同一 AOEM `secp256k1 recover` 主线恢复 sender 并与显式 `from` 做强一致校验；不可恢复时保持原宿主路径。
+- `eth_sendTransaction` 的同一 recoverable-signature 路径已补字段强一致：若 `signed_tx` 可恢复，则 `nonce/to/value/gas/fee/data/accessList/blob` 等有效字段必须与显式请求体一致；否则直接拒绝或在失败状态哈希推导处返回 `None`。
+- `apply_ir_batch` 已收口为“并发语义预校验 + 单批 AOEM ed25519 batch verify + 串行状态提交”；隐私交易与 `from` 匹配边界保持原语义，不改变外部 EVM 行为。
 - `novovm-adapter-novovm` 已增加“状态根懒刷新缓存”：执行/写入路径仅标记 dirty，不再每笔交易全量重算状态根；`state_root()` 查询时再统一刷新缓存，批内吞吐提升且不改对外语义。
 
 完成定义：
@@ -395,7 +427,7 @@
 
 ### 高性能专项进度（2026-03-14）
 
-- HP-01 当前：`100%`（已完成“并发语义预校验 + 单批 hash 预处理复用 + apply/runtime_tap 主线去重复哈希 + verify/execute 去双验签 + apply 主线并发 verify 串行 execute + 错误路径 shutdown 收口”）
+- HP-01 当前：`100%`（已完成“并发语义预校验 + 单批 hash 预处理复用 + apply/runtime_tap 主线去重复哈希 + verify/execute 去双验签 + AOEM ed25519 single/batch verify 热路径直连 + AOEM secp256k1 raw sender recovery / recoverable-signature sender 校验直连 + apply 主线 AOEM batch verify + 串行 execute + 错误路径 shutdown 收口”）
 - HP-02 当前：`100%`（已完成“txpool 热路径独立锁 + chain_id 分片锁 + `chain_id+sender` ingress 分片写入 + 可调分片/公平轮转 + prepared ingress 主入口复用 + runtime 结算/回执按链分片 + host drain 分片轮转聚合 + pending 跨分片全局 sender round-robin 语义收口 + pending sender bucket 按分片定向取数”）
 - HP-03 当前：`100%`（已完成“public-broadcast status + receiptBatch + txByHashBatch + replayPublicBroadcastBatch + lifecycleBatch + logs/filterLogs + filterChangesBatch + upstreamTxStatusBundle/eventBundle/fullBundle/consumerBundle helper 直连去层 + publicSendBatch 递归去层收口 + native sync-pull peer 单次快照选路 + fanout 小快照优先 + 失败回退 + tracker 原地更新 + phase-tag 去字符串化 + phase 自适应重发 + 同步期短 tick + public-broadcast 热路径去 discovery 附带发送 + broadcaster peer 注册缓存去重复注册 + peers 配置按链缓存快照复用 + fanout=1 快路径 + 收包前置窗口规划 + 单次有序 peer 快照发送”）
 - HP-04 当前：`100%`（已完成“network 非阻塞重试 + runtime status 低争用短路 + 观测/更新路径直连 reconcile 去重复锁 + StateSync/ShardState 单次进锁更新 + 收包去双调用 + 无变化快返 + sync-pull 目标表 DashMap 化 + followup 跟踪去双写 + UDP/TCP 回包续拉去 clone + sync-pull 回包流式组装 + stale 到期短路 + stale 清理 retain 原地回收 + peer heads Top-K 选路 + Top-K(k=1) 快路径 + dirty/stale 到期触发重算短路 + UDP/TCP 收包缓冲区复用 + UDP 发送首包注册化 + local-head/native-snapshot 无变化快返 + pull-target 单次读取 + src->peer 单次遍历 + try_recv 懒反查 + 非 sync 报文跳过 header 解码 + 消息来源 id 单次解析复用 + sync ingress 单次解析复用 + sync 回包窗口计划流式发送去中间批量容器 + src_addr/src_ip O(1) 索引化命中 + sync window phase 预取触发 + UDP/TCP 收包短锁（锁外解码/读包）”）

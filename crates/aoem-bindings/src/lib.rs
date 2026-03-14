@@ -2,6 +2,7 @@ use anyhow::{anyhow, bail, Context, Result};
 use libloading::Library;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::ffi::{c_char, c_void, CStr};
 use std::fs;
@@ -68,6 +69,29 @@ pub type AoemRingctProveBatchV1 =
     unsafe extern "C" fn(*const u8, usize, *mut *mut u8, *mut usize) -> i32;
 pub type AoemRingctVerifyBatchV1 =
     unsafe extern "C" fn(*const u8, usize, *mut *mut u8, *mut usize, *mut u32) -> i32;
+pub type AoemEd25519VerifyV1 =
+    unsafe extern "C" fn(*const u8, usize, *const u8, usize, *const u8, usize, *mut u32) -> i32;
+pub type AoemSecp256k1VerifyV1 =
+    unsafe extern "C" fn(*const u8, usize, *const u8, usize, *const u8, usize, *mut u32) -> i32;
+pub type AoemSecp256k1RecoverPubkeyV1 =
+    unsafe extern "C" fn(*const u8, usize, *const u8, usize, *mut *mut u8, *mut usize) -> i32;
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct AoemEd25519VerifyItemV1 {
+    pub pubkey_ptr: *const u8,
+    pub pubkey_len: usize,
+    pub message_ptr: *const u8,
+    pub message_len: usize,
+    pub signature_ptr: *const u8,
+    pub signature_len: usize,
+}
+pub type AoemEd25519VerifyBatchV1 = unsafe extern "C" fn(
+    *const AoemEd25519VerifyItemV1,
+    usize,
+    *mut *mut u8,
+    *mut usize,
+    *mut u32,
+) -> i32;
 #[repr(C)]
 pub struct AoemCreateOptionsV1 {
     pub abi_version: u32,
@@ -129,6 +153,10 @@ pub struct AoemDyn {
     bulletproof_verify_batch_v1: Option<AoemBulletproofVerifyBatchV1>,
     ringct_prove_batch_v1: Option<AoemRingctProveBatchV1>,
     ringct_verify_batch_v1: Option<AoemRingctVerifyBatchV1>,
+    ed25519_verify_v1: Option<AoemEd25519VerifyV1>,
+    ed25519_verify_batch_v1: Option<AoemEd25519VerifyBatchV1>,
+    secp256k1_verify_v1: Option<AoemSecp256k1VerifyV1>,
+    secp256k1_recover_pubkey_v1: Option<AoemSecp256k1RecoverPubkeyV1>,
     create: AoemCreate,
     create_with_options: Option<AoemCreateWithOptions>,
     destroy: AoemDestroy,
@@ -157,6 +185,13 @@ pub struct AoemHostAdaptiveDecision {
     pub reason: &'static str,
 }
 
+#[derive(Clone, Copy)]
+pub struct AoemEd25519VerifyItemRef<'a> {
+    pub pubkey: &'a [u8],
+    pub message: &'a [u8],
+    pub signature: &'a [u8],
+}
+
 struct GlobalLaneScheduler {
     budget: AtomicUsize,
     inflight: AtomicUsize,
@@ -175,6 +210,9 @@ static AOEM_RECOMMEND_CACHE: OnceLock<Mutex<RecommendCache>> = OnceLock::new();
 static AOEM_INSTALL_PROFILE_CACHE: OnceLock<Mutex<HashMap<PathBuf, Option<Value>>>> =
     OnceLock::new();
 static AOEM_MANIFEST_CACHE: OnceLock<Mutex<HashMap<PathBuf, Option<Value>>>> = OnceLock::new();
+thread_local! {
+    static AOEM_HOST_DYNLIB: RefCell<Option<Result<AoemDyn, String>>> = const { RefCell::new(None) };
+}
 
 const MAX_AOEM_OWNED_BUFFER_BYTES: usize = 64 * 1024 * 1024;
 
@@ -262,6 +300,22 @@ impl AoemDyn {
             .get::<AoemRingctVerifyBatchV1>(b"aoem_ringct_verify_batch_v1")
             .ok()
             .map(|f| *f);
+        let ed25519_verify_v1: Option<AoemEd25519VerifyV1> = lib
+            .get::<AoemEd25519VerifyV1>(b"aoem_ed25519_verify_v1")
+            .ok()
+            .map(|f| *f);
+        let ed25519_verify_batch_v1: Option<AoemEd25519VerifyBatchV1> = lib
+            .get::<AoemEd25519VerifyBatchV1>(b"aoem_ed25519_verify_batch_v1")
+            .ok()
+            .map(|f| *f);
+        let secp256k1_verify_v1: Option<AoemSecp256k1VerifyV1> = lib
+            .get::<AoemSecp256k1VerifyV1>(b"aoem_secp256k1_verify_v1")
+            .ok()
+            .map(|f| *f);
+        let secp256k1_recover_pubkey_v1: Option<AoemSecp256k1RecoverPubkeyV1> = lib
+            .get::<AoemSecp256k1RecoverPubkeyV1>(b"aoem_secp256k1_recover_pubkey_v1")
+            .ok()
+            .map(|f| *f);
         let create: AoemCreate = *lib.get::<AoemCreate>(b"aoem_create")?;
         let create_with_options: Option<AoemCreateWithOptions> = lib
             .get::<AoemCreateWithOptions>(b"aoem_create_with_options")
@@ -301,6 +355,10 @@ impl AoemDyn {
             bulletproof_verify_batch_v1,
             ringct_prove_batch_v1,
             ringct_verify_batch_v1,
+            ed25519_verify_v1,
+            ed25519_verify_batch_v1,
+            secp256k1_verify_v1,
+            secp256k1_recover_pubkey_v1,
             create,
             create_with_options,
             destroy,
@@ -536,6 +594,22 @@ impl AoemDyn {
         self.ringct_prove_batch_v1.is_some() && self.ringct_verify_batch_v1.is_some()
     }
 
+    pub fn supports_ed25519_verify_v1(&self) -> bool {
+        self.ed25519_verify_v1.is_some()
+    }
+
+    pub fn supports_ed25519_verify_batch_v1(&self) -> bool {
+        self.ed25519_verify_batch_v1.is_some() && self.free.is_some()
+    }
+
+    pub fn supports_secp256k1_verify_v1(&self) -> bool {
+        self.secp256k1_verify_v1.is_some()
+    }
+
+    pub fn supports_secp256k1_recover_pubkey_v1(&self) -> bool {
+        self.secp256k1_recover_pubkey_v1.is_some() && self.free.is_some()
+    }
+
     pub fn supports_privacy_batch_v1(&self) -> bool {
         self.supports_ring_signature_verify_batch_web30_v1()
             && self.supports_bulletproof_batch_v1()
@@ -765,6 +839,173 @@ impl AoemDyn {
             bail!("aoem_ring_signature_verify_web30_v1 failed: rc={rc}");
         }
         Ok(out_valid != 0)
+    }
+
+    pub fn ed25519_verify_v1(
+        &self,
+        pubkey: &[u8],
+        message: &[u8],
+        signature: &[u8],
+    ) -> Result<bool> {
+        let Some(verify_fn) = self.ed25519_verify_v1 else {
+            bail!("aoem_ed25519_verify_v1 not found in loaded DLL");
+        };
+        if pubkey.is_empty() {
+            bail!("ed25519 pubkey must not be empty");
+        }
+        if signature.is_empty() {
+            bail!("ed25519 signature must not be empty");
+        }
+        let mut out_valid = 0u32;
+        let rc = unsafe {
+            verify_fn(
+                pubkey.as_ptr(),
+                pubkey.len(),
+                message.as_ptr(),
+                message.len(),
+                signature.as_ptr(),
+                signature.len(),
+                &mut out_valid as *mut u32,
+            )
+        };
+        if rc != 0 {
+            bail!("aoem_ed25519_verify_v1 failed: rc={rc}");
+        }
+        Ok(out_valid != 0)
+    }
+
+    pub fn ed25519_verify_batch_v1(
+        &self,
+        items: &[AoemEd25519VerifyItemRef<'_>],
+    ) -> Result<Vec<bool>> {
+        let Some(batch_fn) = self.ed25519_verify_batch_v1 else {
+            bail!("aoem_ed25519_verify_batch_v1 not found in loaded DLL");
+        };
+        if items.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut raw_items = Vec::with_capacity(items.len());
+        for item in items {
+            if item.pubkey.is_empty() {
+                bail!("ed25519 batch pubkey must not be empty");
+            }
+            if item.signature.is_empty() {
+                bail!("ed25519 batch signature must not be empty");
+            }
+            raw_items.push(AoemEd25519VerifyItemV1 {
+                pubkey_ptr: item.pubkey.as_ptr(),
+                pubkey_len: item.pubkey.len(),
+                message_ptr: item.message.as_ptr(),
+                message_len: item.message.len(),
+                signature_ptr: item.signature.as_ptr(),
+                signature_len: item.signature.len(),
+            });
+        }
+        let mut out_results_ptr: *mut u8 = ptr::null_mut();
+        let mut out_results_len = 0usize;
+        let mut out_valid_count = 0u32;
+        let rc = unsafe {
+            batch_fn(
+                raw_items.as_ptr(),
+                raw_items.len(),
+                &mut out_results_ptr as *mut *mut u8,
+                &mut out_results_len as *mut usize,
+                &mut out_valid_count as *mut u32,
+            )
+        };
+        if rc != 0 {
+            bail!("aoem_ed25519_verify_batch_v1 failed: rc={rc}");
+        }
+        let out_results =
+            self.copy_aoem_owned_bytes(out_results_ptr, out_results_len, "ed25519 batch results")?;
+        if out_results.len() != items.len() {
+            bail!(
+                "ed25519 batch results length mismatch: expected {}, got {}",
+                items.len(),
+                out_results.len()
+            );
+        }
+        Ok(out_results.into_iter().map(|v| v != 0).collect())
+    }
+
+    pub fn secp256k1_verify_v1(
+        &self,
+        message32: &[u8],
+        signature65: &[u8],
+        pubkey: &[u8],
+    ) -> Result<bool> {
+        let Some(verify_fn) = self.secp256k1_verify_v1 else {
+            bail!("aoem_secp256k1_verify_v1 not found in loaded DLL");
+        };
+        if message32.len() != 32 {
+            bail!(
+                "secp256k1 message32 must be 32 bytes, got {}",
+                message32.len()
+            );
+        }
+        if signature65.len() != 65 {
+            bail!(
+                "secp256k1 signature65 must be 65 bytes, got {}",
+                signature65.len()
+            );
+        }
+        if pubkey.is_empty() {
+            bail!("secp256k1 pubkey must not be empty");
+        }
+        let mut out_valid = 0u32;
+        let rc = unsafe {
+            verify_fn(
+                message32.as_ptr(),
+                message32.len(),
+                signature65.as_ptr(),
+                signature65.len(),
+                pubkey.as_ptr(),
+                pubkey.len(),
+                &mut out_valid as *mut u32,
+            )
+        };
+        if rc != 0 {
+            bail!("aoem_secp256k1_verify_v1 failed: rc={rc}");
+        }
+        Ok(out_valid != 0)
+    }
+
+    pub fn secp256k1_recover_pubkey_v1(
+        &self,
+        message32: &[u8],
+        signature65: &[u8],
+    ) -> Result<Vec<u8>> {
+        let Some(recover_fn) = self.secp256k1_recover_pubkey_v1 else {
+            bail!("aoem_secp256k1_recover_pubkey_v1 not found in loaded DLL");
+        };
+        if message32.len() != 32 {
+            bail!(
+                "secp256k1 message32 must be 32 bytes, got {}",
+                message32.len()
+            );
+        }
+        if signature65.len() != 65 {
+            bail!(
+                "secp256k1 signature65 must be 65 bytes, got {}",
+                signature65.len()
+            );
+        }
+        let mut out_pubkey_ptr: *mut u8 = ptr::null_mut();
+        let mut out_pubkey_len = 0usize;
+        let rc = unsafe {
+            recover_fn(
+                message32.as_ptr(),
+                message32.len(),
+                signature65.as_ptr(),
+                signature65.len(),
+                &mut out_pubkey_ptr as *mut *mut u8,
+                &mut out_pubkey_len as *mut usize,
+            )
+        };
+        if rc != 0 {
+            bail!("aoem_secp256k1_recover_pubkey_v1 failed: rc={rc}");
+        }
+        self.copy_aoem_owned_bytes(out_pubkey_ptr, out_pubkey_len, "secp256k1 recovered pubkey")
     }
 
     /// Groth16 batch prove entry for host-side high-throughput usage.
@@ -1004,6 +1245,116 @@ pub fn default_manifest_path_for_dll(dll_path: &Path) -> PathBuf {
         return level1.join("manifest").join("aoem-manifest.json");
     }
     parent.join("manifest").join("aoem-manifest.json")
+}
+
+fn default_host_dll_name() -> &'static str {
+    if cfg!(target_os = "windows") {
+        "aoem_ffi.dll"
+    } else if cfg!(target_os = "macos") {
+        "libaoem_ffi.dylib"
+    } else {
+        "libaoem_ffi.so"
+    }
+}
+
+pub fn default_host_dll_path() -> PathBuf {
+    if let Ok(explicit) = std::env::var("NOVOVM_AOEM_DLL").or_else(|_| std::env::var("AOEM_DLL")) {
+        let trimmed = explicit.trim();
+        if !trimmed.is_empty() {
+            return PathBuf::from(trimmed);
+        }
+    }
+
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    for base in [
+        manifest_dir.join("..").join(".."),
+        manifest_dir.join("..").join("..").join(".."),
+    ] {
+        let candidate = base.join("aoem").join("bin").join(default_host_dll_name());
+        if candidate.exists() {
+            return candidate;
+        }
+    }
+    manifest_dir
+        .join("..")
+        .join("..")
+        .join("aoem")
+        .join("bin")
+        .join(default_host_dll_name())
+}
+
+fn with_default_host_dynlib<T>(f: impl FnOnce(&AoemDyn) -> Result<T>) -> Result<Option<T>> {
+    AOEM_HOST_DYNLIB.with(|slot| {
+        let mut slot = slot.borrow_mut();
+        if slot.is_none() {
+            let loaded: std::result::Result<AoemDyn, String> = {
+                let dll_path = default_host_dll_path();
+                unsafe { AoemDyn::load(&dll_path) }
+            }
+            .map_err(|err| err.to_string());
+            *slot = Some(loaded);
+        }
+        match slot.as_ref().expect("aoem host dynlib slot initialized") {
+            Ok(dynlib) => f(dynlib).map(Some),
+            Err(_) => Ok(None),
+        }
+    })
+}
+
+pub fn ed25519_verify_v1_auto(
+    pubkey: &[u8],
+    message: &[u8],
+    signature: &[u8],
+) -> Result<Option<bool>> {
+    with_default_host_dynlib(|dynlib| {
+        if !dynlib.supports_ed25519_verify_v1() {
+            bail!("aoem_ed25519_verify_v1 not supported by loaded DLL");
+        }
+        dynlib.ed25519_verify_v1(pubkey, message, signature)
+    })
+    .or_else(|_| Ok(None))
+}
+
+pub fn ed25519_verify_batch_v1_auto(
+    items: &[AoemEd25519VerifyItemRef<'_>],
+) -> Result<Option<Vec<bool>>> {
+    if items.is_empty() {
+        return Ok(Some(Vec::new()));
+    }
+    with_default_host_dynlib(|dynlib| {
+        if !dynlib.supports_ed25519_verify_batch_v1() {
+            bail!("aoem_ed25519_verify_batch_v1 not supported by loaded DLL");
+        }
+        dynlib.ed25519_verify_batch_v1(items)
+    })
+    .or_else(|_| Ok(None))
+}
+
+pub fn secp256k1_verify_v1_auto(
+    message32: &[u8],
+    signature65: &[u8],
+    pubkey: &[u8],
+) -> Result<Option<bool>> {
+    with_default_host_dynlib(|dynlib| {
+        if !dynlib.supports_secp256k1_verify_v1() {
+            bail!("aoem_secp256k1_verify_v1 not supported by loaded DLL");
+        }
+        dynlib.secp256k1_verify_v1(message32, signature65, pubkey)
+    })
+    .or_else(|_| Ok(None))
+}
+
+pub fn secp256k1_recover_pubkey_v1_auto(
+    message32: &[u8],
+    signature65: &[u8],
+) -> Result<Option<Vec<u8>>> {
+    with_default_host_dynlib(|dynlib| {
+        if !dynlib.supports_secp256k1_recover_pubkey_v1() {
+            bail!("aoem_secp256k1_recover_pubkey_v1 not supported by loaded DLL");
+        }
+        dynlib.secp256k1_recover_pubkey_v1(message32, signature65)
+    })
+    .or_else(|_| Ok(None))
 }
 
 fn infer_variant_from_dll_path(dll_path: &Path) -> &'static str {

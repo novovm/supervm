@@ -1,0 +1,23 @@
+{
+  "name": "supervm",
+  "version": "1.0.0",
+  "description": "External brand: `NOVOVM`   Technical short name: `NVM`   Execution engine: `AOEM Engine` (Powered by AOEM Engine)",
+  "main": "index.js",
+  "directories": {
+    "doc": "docs"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/novovm/supervm.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/novovm/supervm/issues"
+  },
+  "homepage": "https://github.com/novovm/supervm#readme"
+}

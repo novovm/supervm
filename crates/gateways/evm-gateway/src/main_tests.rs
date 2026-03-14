@@ -175,6 +175,13 @@ fn test_rlp_encode_list(items: &[Vec<u8>]) -> Vec<u8> {
     out
 }
 
+fn resolve_test_raw_sender(raw_tx: &[u8], fallback: &[u8]) -> Vec<u8> {
+    recover_raw_evm_tx_sender_m0(raw_tx)
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| fallback.to_vec())
+}
+
 fn decode_single_ops_wire_value(bytes: &[u8]) -> Result<Vec<u8>> {
     const HEADER_LEN: usize = 5 + 2 + 2 + 4;
     if bytes.len() < HEADER_LEN {
@@ -9629,6 +9636,144 @@ fn eth_send_transaction_rejects_chain_id_mismatch_between_top_level_and_tx() {
 }
 
 #[test]
+fn eth_send_transaction_rejects_signature_sender_mismatch_when_recoverable() {
+    let backend = GatewayEthTxIndexStoreBackend::Memory;
+    let mut router = UnifiedAccountRouter::new();
+    let mut eth_tx_index = HashMap::new();
+    let mut evm_settlement_index_by_id = HashMap::new();
+    let mut evm_settlement_index_by_tx = HashMap::new();
+    let mut evm_pending_payout_by_settlement = HashMap::new();
+    let mut eth_filters = GatewayEthFilterState::default();
+    let chain_id = 1u64;
+    let spool_dir = std::env::temp_dir().join(format!(
+        "novovm-gateway-send-tx-signature-sender-mismatch-{}-{}",
+        std::process::id(),
+        now_unix_millis()
+    ));
+    fs::create_dir_all(&spool_dir).expect("create spool dir");
+    let mut ctx = GatewayMethodContext {
+        eth_tx_index_store: &backend,
+        eth_default_chain_id: chain_id,
+        spool_dir: &spool_dir,
+        eth_filters: &mut eth_filters,
+    };
+
+    let receiver = vec![0x7au8; 20];
+    let raw_tx = test_rlp_encode_list(&[
+        test_rlp_encode_u64(0),
+        test_rlp_encode_u64(1),
+        test_rlp_encode_u64(21_000),
+        test_rlp_encode_bytes(&receiver),
+        test_rlp_encode_u128(1),
+        test_rlp_encode_bytes(&[]),
+        test_rlp_encode_u64(37),
+        test_rlp_encode_u64(1),
+        test_rlp_encode_u64(1),
+    ]);
+    let Some(recovered) =
+        recover_raw_evm_tx_sender_m0(&raw_tx).expect("raw sender recovery should not error")
+    else {
+        let _ = fs::remove_dir_all(&spool_dir);
+        return;
+    };
+    let mut explicit_from = vec![0x7bu8; 20];
+    if explicit_from == recovered {
+        explicit_from[0] ^= 0x01;
+    }
+
+    let err = run_gateway_method(
+        &mut router,
+        &mut eth_tx_index,
+        &mut evm_settlement_index_by_id,
+        &mut evm_settlement_index_by_tx,
+        &mut evm_pending_payout_by_settlement,
+        &mut ctx,
+        "eth_sendTransaction",
+        &serde_json::json!([{
+            "uca_id": "uca:signature-mismatch",
+            "from": format!("0x{}", to_hex(&explicit_from)),
+            "to": format!("0x{}", to_hex(&receiver)),
+            "nonce": "0x0",
+            "value": "0x1",
+            "gas": "0x5208",
+            "gasPrice": "0x1",
+            "signature": format!("0x{}", to_hex(&raw_tx))
+        }]),
+    )
+    .expect_err("eth_sendTransaction should reject recoverable signature sender mismatch");
+    assert!(err.to_string().contains("from mismatch: explicit=0x"));
+
+    let _ = fs::remove_dir_all(&spool_dir);
+}
+
+#[test]
+fn eth_send_transaction_rejects_signature_nonce_mismatch_when_recoverable() {
+    let backend = GatewayEthTxIndexStoreBackend::Memory;
+    let mut router = UnifiedAccountRouter::new();
+    let mut eth_tx_index = HashMap::new();
+    let mut evm_settlement_index_by_id = HashMap::new();
+    let mut evm_settlement_index_by_tx = HashMap::new();
+    let mut evm_pending_payout_by_settlement = HashMap::new();
+    let mut eth_filters = GatewayEthFilterState::default();
+    let chain_id = 1u64;
+    let spool_dir = std::env::temp_dir().join(format!(
+        "novovm-gateway-send-tx-signature-nonce-mismatch-{}-{}",
+        std::process::id(),
+        now_unix_millis()
+    ));
+    fs::create_dir_all(&spool_dir).expect("create spool dir");
+    let mut ctx = GatewayMethodContext {
+        eth_tx_index_store: &backend,
+        eth_default_chain_id: chain_id,
+        spool_dir: &spool_dir,
+        eth_filters: &mut eth_filters,
+    };
+
+    let receiver = vec![0x6bu8; 20];
+    let raw_tx = test_rlp_encode_list(&[
+        test_rlp_encode_u64(0),
+        test_rlp_encode_u64(1),
+        test_rlp_encode_u64(21_000),
+        test_rlp_encode_bytes(&receiver),
+        test_rlp_encode_u128(1),
+        test_rlp_encode_bytes(&[]),
+        test_rlp_encode_u64(37),
+        test_rlp_encode_u64(1),
+        test_rlp_encode_u64(1),
+    ]);
+    let Some(recovered) =
+        recover_raw_evm_tx_sender_m0(&raw_tx).expect("raw sender recovery should not error")
+    else {
+        let _ = fs::remove_dir_all(&spool_dir);
+        return;
+    };
+
+    let err = run_gateway_method(
+        &mut router,
+        &mut eth_tx_index,
+        &mut evm_settlement_index_by_id,
+        &mut evm_settlement_index_by_tx,
+        &mut evm_pending_payout_by_settlement,
+        &mut ctx,
+        "eth_sendTransaction",
+        &serde_json::json!([{
+            "uca_id": "uca:signature-nonce-mismatch",
+            "from": format!("0x{}", to_hex(&recovered)),
+            "to": format!("0x{}", to_hex(&receiver)),
+            "nonce": "0x1",
+            "value": "0x1",
+            "gas": "0x5208",
+            "gasPrice": "0x1",
+            "signature": format!("0x{}", to_hex(&raw_tx))
+        }]),
+    )
+    .expect_err("eth_sendTransaction should reject recoverable signature nonce mismatch");
+    assert!(err.to_string().contains("signature nonce mismatch"));
+
+    let _ = fs::remove_dir_all(&spool_dir);
+}
+
+#[test]
 fn eth_send_transaction_rejects_type2_max_fee_below_base_fee() {
     let _guard = env_test_guard();
     let captured = capture_env_vars(&["NOVOVM_GATEWAY_ETH_DEFAULT_BASE_FEE_PER_GAS"]);
@@ -10706,10 +10851,22 @@ fn eth_send_raw_transaction_without_uca_id_uses_binding_owner() {
         eth_filters: &mut eth_filters,
     };
 
-    let sender = vec![0x71u8; 20];
+    let fallback_sender = vec![0x71u8; 20];
     let receiver = vec![0x72u8; 20];
     let uca_id = "uca:raw-auto-owner".to_string();
     let now = now_unix_sec();
+    let raw_tx = test_rlp_encode_list(&[
+        test_rlp_encode_u64(0),
+        test_rlp_encode_u64(1),
+        test_rlp_encode_u64(21_000),
+        test_rlp_encode_bytes(&receiver),
+        test_rlp_encode_u128(1),
+        test_rlp_encode_bytes(&[]),
+        test_rlp_encode_u64(37),
+        test_rlp_encode_u64(1),
+        test_rlp_encode_u64(1),
+    ]);
+    let sender = resolve_test_raw_sender(&raw_tx, &fallback_sender);
     let persona = PersonaAddress {
         persona_type: PersonaType::Evm,
         chain_id,
@@ -10724,17 +10881,6 @@ fn eth_send_raw_transaction_without_uca_id_uses_binding_owner() {
 
     // Minimal legacy raw tx: [nonce, gasPrice, gasLimit, to, value, data, v, r, s]
     // v=37 encodes chain_id=1 (EIP-155), nonce=0.
-    let raw_tx = test_rlp_encode_list(&[
-        test_rlp_encode_u64(0),
-        test_rlp_encode_u64(1),
-        test_rlp_encode_u64(21_000),
-        test_rlp_encode_bytes(&receiver),
-        test_rlp_encode_u128(1),
-        test_rlp_encode_bytes(&[]),
-        test_rlp_encode_u64(37),
-        test_rlp_encode_u64(1),
-        test_rlp_encode_u64(1),
-    ]);
     let raw_tx_hex = format!("0x{}", to_hex(&raw_tx));
 
     let (tx_hash_json, changed) = run_gateway_method(
@@ -10791,22 +10937,10 @@ fn eth_send_raw_transaction_rejects_explicit_uca_id_mismatch_with_binding_owner(
         eth_filters: &mut eth_filters,
     };
 
-    let sender = vec![0x43u8; 20];
+    let fallback_sender = vec![0x43u8; 20];
     let receiver = vec![0x44u8; 20];
     let owner_uca = "uca:raw-owner".to_string();
     let now = now_unix_sec();
-    let persona = PersonaAddress {
-        persona_type: PersonaType::Evm,
-        chain_id,
-        external_address: sender.clone(),
-    };
-    router
-        .create_uca(owner_uca.clone(), vec![0x22u8; 32], now)
-        .expect("create owner uca");
-    router
-        .add_binding(&owner_uca, AccountRole::Owner, persona, now)
-        .expect("add binding");
-
     let raw_tx = test_rlp_encode_list(&[
         test_rlp_encode_u64(0),
         test_rlp_encode_u64(1),
@@ -10818,6 +10952,18 @@ fn eth_send_raw_transaction_rejects_explicit_uca_id_mismatch_with_binding_owner(
         test_rlp_encode_u64(1),
         test_rlp_encode_u64(1),
     ]);
+    let sender = resolve_test_raw_sender(&raw_tx, &fallback_sender);
+    let persona = PersonaAddress {
+        persona_type: PersonaType::Evm,
+        chain_id,
+        external_address: sender.clone(),
+    };
+    router
+        .create_uca(owner_uca.clone(), vec![0x22u8; 32], now)
+        .expect("create owner uca");
+    router
+        .add_binding(&owner_uca, AccountRole::Owner, persona, now)
+        .expect("add binding");
     let raw_tx_hex = format!("0x{}", to_hex(&raw_tx));
 
     let err = run_gateway_method(
@@ -11101,10 +11247,22 @@ fn eth_send_raw_transaction_rejects_intrinsic_gas_too_low() {
         eth_filters: &mut eth_filters,
     };
 
-    let sender = vec![0x55u8; 20];
+    let fallback_sender = vec![0x55u8; 20];
     let receiver = vec![0x56u8; 20];
     let owner_uca = "uca:raw-intrinsic-owner".to_string();
     let now = now_unix_sec();
+    let raw_tx = test_rlp_encode_list(&[
+        test_rlp_encode_u64(0),
+        test_rlp_encode_u64(1),
+        test_rlp_encode_u64(20_999),
+        test_rlp_encode_bytes(&receiver),
+        test_rlp_encode_u128(1),
+        test_rlp_encode_bytes(&[]),
+        test_rlp_encode_u64(37),
+        test_rlp_encode_u64(1),
+        test_rlp_encode_u64(1),
+    ]);
+    let sender = resolve_test_raw_sender(&raw_tx, &fallback_sender);
     let persona = PersonaAddress {
         persona_type: PersonaType::Evm,
         chain_id,
@@ -11118,17 +11276,6 @@ fn eth_send_raw_transaction_rejects_intrinsic_gas_too_low() {
         .expect("add binding");
 
     // legacy raw tx with gasLimit below transfer intrinsic 21_000.
-    let raw_tx = test_rlp_encode_list(&[
-        test_rlp_encode_u64(0),
-        test_rlp_encode_u64(1),
-        test_rlp_encode_u64(20_999),
-        test_rlp_encode_bytes(&receiver),
-        test_rlp_encode_u128(1),
-        test_rlp_encode_bytes(&[]),
-        test_rlp_encode_u64(37),
-        test_rlp_encode_u64(1),
-        test_rlp_encode_u64(1),
-    ]);
     let raw_tx_hex = format!("0x{}", to_hex(&raw_tx));
 
     let err = run_gateway_method(
@@ -12935,7 +13082,7 @@ fn evm_get_tx_submit_status_uses_persisted_onchain_failed_status_when_tx_missing
 #[test]
 fn infer_gateway_eth_tx_hash_from_write_params_supports_raw_tx() {
     let _guard = env_test_guard();
-    let sender = vec![0x31u8; 20];
+    let fallback_sender = vec![0x31u8; 20];
     let receiver = vec![0x32u8; 20];
     let raw_tx = test_rlp_encode_list(&[
         test_rlp_encode_u64(0),
@@ -12948,6 +13095,7 @@ fn infer_gateway_eth_tx_hash_from_write_params_supports_raw_tx() {
         test_rlp_encode_u64(1),
         test_rlp_encode_u64(1),
     ]);
+    let sender = resolve_test_raw_sender(&raw_tx, &fallback_sender);
     let params = serde_json::json!({
         "from": format!("0x{}", to_hex(&sender)),
         "raw_tx": format!("0x{}", to_hex(&raw_tx)),
@@ -12992,7 +13140,7 @@ fn infer_gateway_eth_tx_hash_from_write_params_returns_none_on_chain_id_mismatch
 fn persist_gateway_eth_submit_failure_status_infers_tx_hash_for_raw_write_error() {
     let _guard = env_test_guard();
     let backend = GatewayEthTxIndexStoreBackend::Memory;
-    let sender = vec![0x41u8; 20];
+    let fallback_sender = vec![0x41u8; 20];
     let receiver = vec![0x42u8; 20];
     let raw_tx = test_rlp_encode_list(&[
         test_rlp_encode_u64(0),
@@ -13005,6 +13153,7 @@ fn persist_gateway_eth_submit_failure_status_infers_tx_hash_for_raw_write_error(
         test_rlp_encode_u64(1),
         test_rlp_encode_u64(1),
     ]);
+    let sender = resolve_test_raw_sender(&raw_tx, &fallback_sender);
     let params = serde_json::json!({
         "chain_id": 1,
         "from": format!("0x{}", to_hex(&sender)),
@@ -13084,6 +13233,80 @@ fn infer_gateway_eth_send_tx_hash_from_params_supports_explicit_uca_and_nonce() 
         wants_cross_chain_atomic: false,
     });
     assert_eq!(inferred, expected);
+}
+
+#[test]
+fn infer_gateway_eth_send_tx_hash_from_params_returns_none_on_signature_sender_mismatch() {
+    let _guard = env_test_guard();
+    let receiver = vec![0x61u8; 20];
+    let raw_tx = test_rlp_encode_list(&[
+        test_rlp_encode_u64(0),
+        test_rlp_encode_u64(1),
+        test_rlp_encode_u64(21_000),
+        test_rlp_encode_bytes(&receiver),
+        test_rlp_encode_u128(1),
+        test_rlp_encode_bytes(&[]),
+        test_rlp_encode_u64(37),
+        test_rlp_encode_u64(1),
+        test_rlp_encode_u64(1),
+    ]);
+    let Some(recovered) =
+        recover_raw_evm_tx_sender_m0(&raw_tx).expect("raw sender recovery should not error")
+    else {
+        return;
+    };
+    let mut explicit_from = vec![0x62u8; 20];
+    if explicit_from == recovered {
+        explicit_from[0] ^= 0x01;
+    }
+    let params = serde_json::json!({
+        "uca_id": "uca:signature-mismatch",
+        "from": format!("0x{}", to_hex(&explicit_from)),
+        "to": format!("0x{}", to_hex(&receiver)),
+        "nonce": "0x0",
+        "value": "0x1",
+        "gas": "0x5208",
+        "gasPrice": "0x1",
+        "signature": format!("0x{}", to_hex(&raw_tx)),
+        "signature_domain": "evm:1",
+    });
+    let inferred = infer_gateway_eth_send_tx_hash_from_params(None, &params, 1);
+    assert!(inferred.is_none());
+}
+
+#[test]
+fn infer_gateway_eth_send_tx_hash_from_params_returns_none_on_signature_nonce_mismatch() {
+    let _guard = env_test_guard();
+    let receiver = vec![0x63u8; 20];
+    let raw_tx = test_rlp_encode_list(&[
+        test_rlp_encode_u64(0),
+        test_rlp_encode_u64(1),
+        test_rlp_encode_u64(21_000),
+        test_rlp_encode_bytes(&receiver),
+        test_rlp_encode_u128(1),
+        test_rlp_encode_bytes(&[]),
+        test_rlp_encode_u64(37),
+        test_rlp_encode_u64(1),
+        test_rlp_encode_u64(1),
+    ]);
+    let Some(recovered) =
+        recover_raw_evm_tx_sender_m0(&raw_tx).expect("raw sender recovery should not error")
+    else {
+        return;
+    };
+    let params = serde_json::json!({
+        "uca_id": "uca:signature-nonce-mismatch",
+        "from": format!("0x{}", to_hex(&recovered)),
+        "to": format!("0x{}", to_hex(&receiver)),
+        "nonce": "0x1",
+        "value": "0x1",
+        "gas": "0x5208",
+        "gasPrice": "0x1",
+        "signature": format!("0x{}", to_hex(&raw_tx)),
+        "signature_domain": "evm:1",
+    });
+    let inferred = infer_gateway_eth_send_tx_hash_from_params(None, &params, 1);
+    assert!(inferred.is_none());
 }
 
 #[test]

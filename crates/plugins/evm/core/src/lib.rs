@@ -1,7 +1,9 @@
 #![forbid(unsafe_code)]
 
 use anyhow::bail;
+use aoem_bindings::secp256k1_recover_pubkey_v1_auto;
 use novovm_adapter_api::{BlockIR, ChainType, TxIR, TxType};
+use sha3::{Digest, Keccak256};
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
@@ -479,6 +481,204 @@ fn rlp_item_as_address(item: &RlpItem<'_>, field: &str) -> anyhow::Result<Option
         bail!("{} must be 20 bytes or empty, got {}", field, raw.len());
     }
     Ok(Some(raw.to_vec()))
+}
+
+fn rlp_encode_len(prefix_small: u8, prefix_long: u8, len: usize) -> Vec<u8> {
+    if len < 56 {
+        return vec![prefix_small + len as u8];
+    }
+    let mut len_bytes = Vec::new();
+    let mut n = len;
+    while n > 0 {
+        len_bytes.push((n & 0xff) as u8);
+        n >>= 8;
+    }
+    len_bytes.reverse();
+    let mut out = Vec::with_capacity(1 + len_bytes.len());
+    out.push(prefix_long + len_bytes.len() as u8);
+    out.extend_from_slice(&len_bytes);
+    out
+}
+
+fn rlp_encode_bytes(bytes: &[u8]) -> Vec<u8> {
+    if bytes.len() == 1 && bytes[0] < 0x80 {
+        return vec![bytes[0]];
+    }
+    let mut out = rlp_encode_len(0x80, 0xb7, bytes.len());
+    out.extend_from_slice(bytes);
+    out
+}
+
+fn rlp_encode_u128(v: u128) -> Vec<u8> {
+    if v == 0 {
+        return rlp_encode_bytes(&[]);
+    }
+    let bytes = v.to_be_bytes();
+    let first_non_zero = bytes
+        .iter()
+        .position(|value| *value != 0)
+        .unwrap_or(bytes.len() - 1);
+    rlp_encode_bytes(&bytes[first_non_zero..])
+}
+
+fn rlp_encode_item(item: &RlpItem<'_>) -> Vec<u8> {
+    match item {
+        RlpItem::Bytes(bytes) => rlp_encode_bytes(bytes),
+        RlpItem::List(payload) => {
+            let mut out = rlp_encode_len(0xc0, 0xf7, payload.len());
+            out.extend_from_slice(payload);
+            out
+        }
+    }
+}
+
+fn rlp_encode_list(items: &[Vec<u8>]) -> Vec<u8> {
+    let payload_len: usize = items.iter().map(Vec::len).sum();
+    let mut out = rlp_encode_len(0xc0, 0xf7, payload_len);
+    for item in items {
+        out.extend_from_slice(item);
+    }
+    out
+}
+
+fn pad_signature_word_to_32(raw: &[u8], field: &str) -> anyhow::Result<[u8; 32]> {
+    if raw.len() > 32 {
+        bail!("{field} must be <=32 bytes, got {}", raw.len());
+    }
+    let mut out = [0u8; 32];
+    let start = 32usize.saturating_sub(raw.len());
+    out[start..].copy_from_slice(raw);
+    Ok(out)
+}
+
+fn normalize_legacy_recovery_id(v: u128) -> anyhow::Result<(u8, Option<u128>)> {
+    match v {
+        0 | 1 => Ok((v as u8, None)),
+        27 | 28 => Ok(((v - 27) as u8, None)),
+        35.. => Ok((((v - 35) % 2) as u8, Some((v - 35) / 2))),
+        _ => bail!("legacy.v must be 0/1/27/28 or >=35, got {}", v),
+    }
+}
+
+fn normalize_typed_recovery_id(v: u128, field: &str) -> anyhow::Result<u8> {
+    match v {
+        0 | 1 => Ok(v as u8),
+        27 | 28 => Ok((v - 27) as u8),
+        _ => bail!("{field} must be 0/1/27/28, got {}", v),
+    }
+}
+
+fn build_signature65(r_raw: &[u8], s_raw: &[u8], recovery_id: u8) -> anyhow::Result<[u8; 65]> {
+    if recovery_id > 1 {
+        bail!("recovery_id must be 0 or 1, got {}", recovery_id);
+    }
+    let r = pad_signature_word_to_32(r_raw, "signature.r")?;
+    let s = pad_signature_word_to_32(s_raw, "signature.s")?;
+    let mut out = [0u8; 65];
+    out[..32].copy_from_slice(&r);
+    out[32..64].copy_from_slice(&s);
+    out[64] = recovery_id;
+    Ok(out)
+}
+
+fn evm_address_from_secp256k1_pubkey(pubkey: &[u8]) -> Option<Vec<u8>> {
+    let body = match pubkey {
+        [0x04, tail @ ..] if tail.len() == 64 => tail,
+        tail if tail.len() == 64 => tail,
+        _ => return None,
+    };
+    let digest = Keccak256::digest(body);
+    Some(digest[12..].to_vec())
+}
+
+fn typed_tx_recovery_input(
+    raw: &[u8],
+    tx_type_prefix: u8,
+    unsigned_item_count: usize,
+    v_idx: usize,
+    r_idx: usize,
+    s_idx: usize,
+    field_prefix: &str,
+) -> anyhow::Result<([u8; 32], [u8; 65])> {
+    if raw.len() < 2 {
+        bail!("{field_prefix} raw tx payload is empty");
+    }
+    let items = parse_top_level_rlp_list(&raw[1..])?;
+    if items.len() <= s_idx {
+        bail!(
+            "{field_prefix} tx rlp list too short: expected >={}, got {}",
+            s_idx + 1,
+            items.len()
+        );
+    }
+    let v = rlp_item_as_u128(&items[v_idx], &format!("{field_prefix}.v"))?;
+    let recovery_id = normalize_typed_recovery_id(v, &format!("{field_prefix}.v"))?;
+    let r = rlp_item_as_bytes(&items[r_idx], &format!("{field_prefix}.r"))?;
+    let s = rlp_item_as_bytes(&items[s_idx], &format!("{field_prefix}.s"))?;
+    let signature65 = build_signature65(r, s, recovery_id)?;
+    let unsigned_items = items[..unsigned_item_count]
+        .iter()
+        .map(rlp_encode_item)
+        .collect::<Vec<_>>();
+    let mut sign_payload = vec![tx_type_prefix];
+    sign_payload.extend_from_slice(&rlp_encode_list(&unsigned_items));
+    let digest = Keccak256::digest(&sign_payload);
+    let mut message32 = [0u8; 32];
+    message32.copy_from_slice(&digest);
+    Ok((message32, signature65))
+}
+
+fn build_raw_evm_sender_recovery_input_m0(raw: &[u8]) -> anyhow::Result<([u8; 32], [u8; 65])> {
+    let hint = resolve_raw_evm_tx_route_hint_m0(raw)?;
+    match hint.envelope {
+        EvmRawTxEnvelopeType::Legacy => {
+            let items = parse_top_level_rlp_list(raw)?;
+            if items.len() < 9 {
+                bail!(
+                    "legacy tx rlp list too short for sender recovery: expected >=9, got {}",
+                    items.len()
+                );
+            }
+            let v = rlp_item_as_u128(&items[6], "legacy.v")?;
+            let (recovery_id, eip155_chain_id) = normalize_legacy_recovery_id(v)?;
+            let r = rlp_item_as_bytes(&items[7], "legacy.r")?;
+            let s = rlp_item_as_bytes(&items[8], "legacy.s")?;
+            let signature65 = build_signature65(r, s, recovery_id)?;
+            let mut unsigned_items = items[..6].iter().map(rlp_encode_item).collect::<Vec<_>>();
+            if let Some(chain_id) = eip155_chain_id {
+                unsigned_items.push(rlp_encode_u128(chain_id));
+                unsigned_items.push(rlp_encode_bytes(&[]));
+                unsigned_items.push(rlp_encode_bytes(&[]));
+            }
+            let digest = Keccak256::digest(rlp_encode_list(&unsigned_items));
+            let mut message32 = [0u8; 32];
+            message32.copy_from_slice(&digest);
+            Ok((message32, signature65))
+        }
+        EvmRawTxEnvelopeType::Type1AccessList => {
+            typed_tx_recovery_input(raw, 0x01, 8, 8, 9, 10, "type1")
+        }
+        EvmRawTxEnvelopeType::Type2DynamicFee => {
+            typed_tx_recovery_input(raw, 0x02, 9, 9, 10, 11, "type2")
+        }
+        EvmRawTxEnvelopeType::Type3Blob => {
+            typed_tx_recovery_input(raw, 0x03, 11, 11, 12, 13, "type3")
+        }
+        EvmRawTxEnvelopeType::Type4SetCode => {
+            bail!("type4 sender recovery is not enabled in M0")
+        }
+    }
+}
+
+pub fn recover_raw_evm_tx_sender_m0(raw: &[u8]) -> anyhow::Result<Option<Vec<u8>>> {
+    let (message32, signature65) = match build_raw_evm_sender_recovery_input_m0(raw) {
+        Ok(v) => v,
+        Err(_) => return Ok(None),
+    };
+    let Some(pubkey) = secp256k1_recover_pubkey_v1_auto(&message32, &signature65)? else {
+        return Ok(None);
+    };
+    Ok(evm_address_from_secp256k1_pubkey(&pubkey))
 }
 
 fn rlp_item_as_list_items<'a>(
@@ -1585,6 +1785,25 @@ mod tests {
         assert_eq!(tx.nonce, 8);
         assert_eq!(tx.tx_type, TxType::ContractCall);
         assert_eq!(tx.data, vec![0xaa, 0xbb]);
+    }
+
+    #[test]
+    fn recover_raw_tx_sender_fake_legacy_signature_is_optional_but_well_formed() {
+        let raw = enc_list(&[
+            enc_u64(7),
+            enc_u64(1),
+            enc_u64(21_000),
+            enc_bytes(&[0x11u8; 20]),
+            enc_u128(9),
+            enc_bytes(&[]),
+            enc_u64(37),
+            enc_u64(1),
+            enc_u64(1),
+        ]);
+        let sender = recover_raw_evm_tx_sender_m0(&raw).expect("recovery path should not error");
+        if let Some(sender) = sender {
+            assert_eq!(sender.len(), 20);
+        }
     }
 
     #[test]

@@ -12,5 +12,6 @@ dashmap = "6.1"
 ed25519-dalek = "2"
 serde_json = "1"
 sha2 = "0.10"
+aoem-bindings = { path = "../aoem-bindings" }
 novovm-adapter-api = { path = "../novovm-adapter-api" }
 web30-core = { path = "../../vendor/web30-core" }

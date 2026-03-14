@@ -13,9 +13,10 @@ use novovm_adapter_evm_core::{
     estimate_intrinsic_gas_with_access_list_m0,
 };
 use novovm_adapter_evm_core::{
-    estimate_intrinsic_gas_with_envelope_extras_m0, resolve_evm_chain_type_from_chain_id,
-    resolve_evm_profile, resolve_raw_evm_tx_route_hint_m0, translate_raw_evm_tx_fields_m0,
-    tx_ir_from_raw_fields_m0, validate_tx_semantics_m0, EvmRawTxEnvelopeType,
+    estimate_intrinsic_gas_with_envelope_extras_m0, recover_raw_evm_tx_sender_m0,
+    resolve_evm_chain_type_from_chain_id, resolve_evm_profile, resolve_raw_evm_tx_route_hint_m0,
+    translate_raw_evm_tx_fields_m0, tx_ir_from_raw_fields_m0, validate_tx_semantics_m0,
+    EvmRawTxEnvelopeType, EvmRawTxFieldsM0,
 };
 use novovm_adapter_evm_plugin::{
     drain_atomic_broadcast_ready_for_host, drain_atomic_receipts_for_host,
@@ -60,6 +61,8 @@ mod rpc_params_utils;
 use rpc_params_utils::*;
 mod rpc_eth_query_helpers;
 use rpc_eth_query_helpers::*;
+mod rpc_eth_upstream;
+use rpc_eth_upstream::*;
 mod rpc_error_http;
 use rpc_error_http::*;
 mod rpc_eth_receipts;
@@ -5221,6 +5224,11 @@ fn run_gateway_method(
         "eth_maxPriorityFeePerGas" => {
             let chain_id = param_as_u64_any_with_tx(params, &["chain_id", "chainId"])
                 .unwrap_or(ctx.eth_default_chain_id);
+            if let Some(upstream) =
+                maybe_gateway_eth_upstream_read(chain_id, "eth_maxPriorityFeePerGas", params)?
+            {
+                return Ok((upstream, false));
+            }
             Ok((
                 serde_json::Value::String(format!(
                     "0x{:x}",
@@ -5232,6 +5240,11 @@ fn run_gateway_method(
         "eth_feeHistory" => {
             let chain_id = param_as_u64_any_with_tx(params, &["chain_id", "chainId"])
                 .unwrap_or(ctx.eth_default_chain_id);
+            if let Some(upstream) =
+                maybe_gateway_eth_upstream_read(chain_id, "eth_feeHistory", params)?
+            {
+                return Ok((upstream, false));
+            }
             let base_fee_per_gas_wei = gateway_eth_base_fee_per_gas_wei(chain_id);
             let default_priority_fee_wei =
                 gateway_eth_default_max_priority_fee_per_gas_wei(chain_id);
@@ -5342,6 +5355,11 @@ fn run_gateway_method(
         "eth_syncing" => {
             let chain_id = param_as_u64_any_with_tx(params, &["chain_id", "chainId"])
                 .unwrap_or(ctx.eth_default_chain_id);
+            if let Some(upstream) =
+                maybe_gateway_eth_upstream_read(chain_id, "eth_syncing", params)?
+            {
+                return Ok((upstream, false));
+            }
             let sync_status =
                 resolve_gateway_eth_sync_status(chain_id, eth_tx_index, ctx.eth_tx_index_store)?;
             Ok((gateway_eth_syncing_json(sync_status, None), false))
@@ -5370,6 +5388,11 @@ fn run_gateway_method(
         "eth_blockNumber" => {
             let chain_id = param_as_u64_any_with_tx(params, &["chain_id", "chainId"])
                 .unwrap_or(ctx.eth_default_chain_id);
+            if let Some(upstream) =
+                maybe_gateway_eth_upstream_read(chain_id, "eth_blockNumber", params)?
+            {
+                return Ok((upstream, false));
+            }
             let sync_status =
                 resolve_gateway_eth_sync_status(chain_id, eth_tx_index, ctx.eth_tx_index_store)?;
             Ok((
@@ -5383,6 +5406,11 @@ fn run_gateway_method(
         "eth_getBalance" => {
             let chain_id = param_as_u64_any_with_tx(params, &["chain_id", "chainId"])
                 .unwrap_or(ctx.eth_default_chain_id);
+            if let Some(upstream) =
+                maybe_gateway_eth_upstream_read(chain_id, "eth_getBalance", params)?
+            {
+                return Ok((upstream, false));
+            }
             let address_raw = extract_eth_persona_address_param(params)
                 .ok_or_else(|| anyhow::anyhow!("address (or from/external_address) is required"))?;
             let address = decode_hex_bytes(&address_raw, "address")?;
@@ -5407,6 +5435,11 @@ fn run_gateway_method(
         "eth_getBlockByNumber" => {
             let chain_id = param_as_u64_any_with_tx(params, &["chain_id", "chainId"])
                 .unwrap_or(ctx.eth_default_chain_id);
+            if let Some(upstream) =
+                maybe_gateway_eth_upstream_read(chain_id, "eth_getBlockByNumber", params)?
+            {
+                return Ok((upstream, false));
+            }
             let full_transactions = parse_eth_block_query_full_transactions(params);
             let block_tag = parse_eth_block_query_tag(params).unwrap_or_else(|| "latest".to_string());
             let normalized_tag = block_tag.trim().trim_matches('"');
@@ -5501,6 +5534,11 @@ fn run_gateway_method(
         "eth_getBlockByHash" => {
             let chain_id = param_as_u64_any_with_tx(params, &["chain_id", "chainId"])
                 .unwrap_or(ctx.eth_default_chain_id);
+            if let Some(upstream) =
+                maybe_gateway_eth_upstream_read(chain_id, "eth_getBlockByHash", params)?
+            {
+                return Ok((upstream, false));
+            }
             let full_transactions = parse_eth_block_query_full_transactions(params);
             let block_hash_raw = extract_eth_block_hash_param(params)
                 .ok_or_else(|| anyhow::anyhow!("block_hash (or blockHash/hash) is required"))?;
@@ -5591,6 +5629,13 @@ fn run_gateway_method(
         "eth_getTransactionByBlockNumberAndIndex" => {
             let chain_id = param_as_u64_any_with_tx(params, &["chain_id", "chainId"])
                 .unwrap_or(ctx.eth_default_chain_id);
+            if let Some(upstream) = maybe_gateway_eth_upstream_read(
+                chain_id,
+                "eth_getTransactionByBlockNumberAndIndex",
+                params,
+            )? {
+                return Ok((upstream, false));
+            }
             let tx_index = parse_eth_block_query_tx_index(params).ok_or_else(|| {
                 anyhow::anyhow!("transaction_index (or transactionIndex/index) is required")
             })?;
@@ -5663,6 +5708,13 @@ fn run_gateway_method(
         "eth_getTransactionByBlockHashAndIndex" => {
             let chain_id = param_as_u64_any_with_tx(params, &["chain_id", "chainId"])
                 .unwrap_or(ctx.eth_default_chain_id);
+            if let Some(upstream) = maybe_gateway_eth_upstream_read(
+                chain_id,
+                "eth_getTransactionByBlockHashAndIndex",
+                params,
+            )? {
+                return Ok((upstream, false));
+            }
             let tx_index = parse_eth_block_query_tx_index(params).ok_or_else(|| {
                 anyhow::anyhow!("transaction_index (or transactionIndex/index) is required")
             })?;
@@ -5738,6 +5790,13 @@ fn run_gateway_method(
         "eth_getBlockTransactionCountByNumber" => {
             let chain_id = param_as_u64_any_with_tx(params, &["chain_id", "chainId"])
                 .unwrap_or(ctx.eth_default_chain_id);
+            if let Some(upstream) = maybe_gateway_eth_upstream_read(
+                chain_id,
+                "eth_getBlockTransactionCountByNumber",
+                params,
+            )? {
+                return Ok((upstream, false));
+            }
             let block_tag =
                 parse_eth_block_query_tag(params).unwrap_or_else(|| "latest".to_string());
             let normalized_tag = block_tag.trim().trim_matches('"');
@@ -5790,6 +5849,13 @@ fn run_gateway_method(
         "eth_getBlockTransactionCountByHash" => {
             let chain_id = param_as_u64_any_with_tx(params, &["chain_id", "chainId"])
                 .unwrap_or(ctx.eth_default_chain_id);
+            if let Some(upstream) = maybe_gateway_eth_upstream_read(
+                chain_id,
+                "eth_getBlockTransactionCountByHash",
+                params,
+            )? {
+                return Ok((upstream, false));
+            }
             let block_hash_raw = extract_eth_block_hash_param(params)
                 .ok_or_else(|| anyhow::anyhow!("block_hash (or blockHash/hash) is required"))?;
             let block_hash = parse_hex32_from_string(&block_hash_raw, "block_hash")?;
@@ -5846,6 +5912,11 @@ fn run_gateway_method(
         "eth_getBlockReceipts" => {
             let chain_id = param_as_u64_any_with_tx(params, &["chain_id", "chainId"])
                 .unwrap_or(ctx.eth_default_chain_id);
+            if let Some(upstream) =
+                maybe_gateway_eth_upstream_read(chain_id, "eth_getBlockReceipts", params)?
+            {
+                return Ok((upstream, false));
+            }
             let entries = collect_gateway_eth_chain_entries(
                 eth_tx_index,
                 ctx.eth_tx_index_store,
@@ -6021,6 +6092,13 @@ fn run_gateway_method(
         "eth_getUncleCountByBlockNumber" => {
             let chain_id = param_as_u64_any_with_tx(params, &["chain_id", "chainId"])
                 .unwrap_or(ctx.eth_default_chain_id);
+            if let Some(upstream) = maybe_gateway_eth_upstream_read(
+                chain_id,
+                "eth_getUncleCountByBlockNumber",
+                params,
+            )? {
+                return Ok((upstream, false));
+            }
             let entries = collect_gateway_eth_chain_entries(
                 eth_tx_index,
                 ctx.eth_tx_index_store,
@@ -6065,6 +6143,13 @@ fn run_gateway_method(
         "eth_getUncleCountByBlockHash" => {
             let chain_id = param_as_u64_any_with_tx(params, &["chain_id", "chainId"])
                 .unwrap_or(ctx.eth_default_chain_id);
+            if let Some(upstream) = maybe_gateway_eth_upstream_read(
+                chain_id,
+                "eth_getUncleCountByBlockHash",
+                params,
+            )? {
+                return Ok((upstream, false));
+            }
             let requested_hash = parse_eth_block_hash_from_params(params)?;
             let entries = collect_gateway_eth_chain_entries(
                 eth_tx_index,
@@ -6160,6 +6245,11 @@ fn run_gateway_method(
         "eth_getLogs" => {
             let chain_id = param_as_u64_any_with_tx(params, &["chain_id", "chainId"])
                 .unwrap_or(ctx.eth_default_chain_id);
+            if let Some(upstream) =
+                maybe_gateway_eth_upstream_read(chain_id, "eth_getLogs", params)?
+            {
+                return Ok((upstream, false));
+            }
             let entries = collect_gateway_eth_chain_entries(
                 eth_tx_index,
                 ctx.eth_tx_index_store,
@@ -6453,6 +6543,11 @@ fn run_gateway_method(
         "eth_gasPrice" => {
             let chain_id = param_as_u64_any_with_tx(params, &["chain_id", "chainId"])
                 .unwrap_or(ctx.eth_default_chain_id);
+            if let Some(upstream) =
+                maybe_gateway_eth_upstream_read(chain_id, "eth_gasPrice", params)?
+            {
+                return Ok((upstream, false));
+            }
             let suggested = gateway_eth_suggest_gas_price_wei(
                 chain_id,
                 eth_tx_index,
@@ -6467,6 +6562,11 @@ fn run_gateway_method(
         "eth_call" => {
             let chain_id = param_as_u64_any_with_tx(params, &["chain_id", "chainId"])
                 .unwrap_or(ctx.eth_default_chain_id);
+            if let Some(upstream) =
+                maybe_gateway_eth_upstream_read(chain_id, "eth_call", params)?
+            {
+                return Ok((upstream, false));
+            }
             let from = match extract_eth_persona_address_param(params) {
                 Some(raw_from) => {
                     let from = decode_hex_bytes(&raw_from, "from")?;
@@ -6602,6 +6702,11 @@ fn run_gateway_method(
         "eth_estimateGas" => {
             let chain_id =
                 resolve_chain_id_with_tx_consistency(params, ctx.eth_default_chain_id)?;
+            if let Some(upstream) =
+                maybe_gateway_eth_upstream_read(chain_id, "eth_estimateGas", params)?
+            {
+                return Ok((upstream, false));
+            }
             let eth_default_gas_price = gateway_eth_default_gas_price_wei(chain_id);
             let (access_list_address_count, access_list_storage_key_count) =
                 parse_eth_access_list_intrinsic_counts(params)?;
@@ -6784,6 +6889,11 @@ fn run_gateway_method(
         "eth_getCode" => {
             let chain_id = param_as_u64_any_with_tx(params, &["chain_id", "chainId"])
                 .unwrap_or(ctx.eth_default_chain_id);
+            if let Some(upstream) =
+                maybe_gateway_eth_upstream_read(chain_id, "eth_getCode", params)?
+            {
+                return Ok((upstream, false));
+            }
             let address_raw = extract_eth_persona_address_param(params)
                 .ok_or_else(|| anyhow::anyhow!("address is required for eth_getCode"))?;
             let address = decode_hex_bytes(&address_raw, "address")?;
@@ -6812,6 +6922,11 @@ fn run_gateway_method(
         "eth_getStorageAt" => {
             let chain_id = param_as_u64_any_with_tx(params, &["chain_id", "chainId"])
                 .unwrap_or(ctx.eth_default_chain_id);
+            if let Some(upstream) =
+                maybe_gateway_eth_upstream_read(chain_id, "eth_getStorageAt", params)?
+            {
+                return Ok((upstream, false));
+            }
             let address_raw = extract_eth_persona_address_param(params)
                 .ok_or_else(|| anyhow::anyhow!("address is required for eth_getStorageAt"))?;
             let address = decode_hex_bytes(&address_raw, "address")?;
@@ -6849,6 +6964,11 @@ fn run_gateway_method(
         "eth_getProof" => {
             let chain_id = param_as_u64_any_with_tx(params, &["chain_id", "chainId"])
                 .unwrap_or(ctx.eth_default_chain_id);
+            if let Some(upstream) =
+                maybe_gateway_eth_upstream_read(chain_id, "eth_getProof", params)?
+            {
+                return Ok((upstream, false));
+            }
             let address_raw = extract_eth_persona_address_param(params)
                 .ok_or_else(|| anyhow::anyhow!("address is required for eth_getProof"))?;
             let address = decode_hex_bytes(&address_raw, "address")?;
@@ -7242,6 +7362,11 @@ fn run_gateway_method(
         "eth_getTransactionCount" => {
             let chain_id = param_as_u64_any_with_tx(params, &["chain_id", "chainId"])
                 .unwrap_or(ctx.eth_default_chain_id);
+            if let Some(upstream) =
+                maybe_gateway_eth_upstream_read(chain_id, "eth_getTransactionCount", params)?
+            {
+                return Ok((upstream, false));
+            }
             let address_raw = extract_eth_persona_address_param(params)
                 .ok_or_else(|| anyhow::anyhow!("address (or from/external_address) is required"))?;
             let external_address = decode_hex_bytes(&address_raw, "address")?;
@@ -7332,12 +7457,19 @@ fn run_gateway_method(
             Ok((serde_json::Value::String(format!("0x{:x}", nonce)), false))
         }
         "eth_getTransactionByHash" => {
+            let chain_hint = param_as_u64_any_with_tx(params, &["chain_id", "chainId"])
+                .or(Some(ctx.eth_default_chain_id));
+            if let Some(chain_id) = chain_hint {
+                if let Some(upstream) =
+                    maybe_gateway_eth_upstream_read(chain_id, "eth_getTransactionByHash", params)?
+                {
+                    return Ok((upstream, false));
+                }
+            }
             let tx_hash_raw = extract_eth_tx_hash_query_param(params)
                 .ok_or_else(|| anyhow::anyhow!("tx_hash (or hash) is required"))?;
             let tx_hash_bytes = decode_hex_bytes(&tx_hash_raw, "tx_hash")?;
             let tx_hash = vec_to_32(&tx_hash_bytes, "tx_hash")?;
-            let chain_hint = param_as_u64_any_with_tx(params, &["chain_id", "chainId"])
-                .or(Some(ctx.eth_default_chain_id));
             if let Some(entry) = eth_tx_index.get(&tx_hash) {
                 if chain_hint.is_some_and(|chain_id| entry.chain_id != chain_id) {
                     return Ok((serde_json::Value::Null, false));
@@ -7395,12 +7527,19 @@ fn run_gateway_method(
             }
         }
         "eth_getTransactionReceipt" => {
+            let chain_hint = param_as_u64_any_with_tx(params, &["chain_id", "chainId"])
+                .or(Some(ctx.eth_default_chain_id));
+            if let Some(chain_id) = chain_hint {
+                if let Some(upstream) =
+                    maybe_gateway_eth_upstream_read(chain_id, "eth_getTransactionReceipt", params)?
+                {
+                    return Ok((upstream, false));
+                }
+            }
             let tx_hash_raw = extract_eth_tx_hash_query_param(params)
                 .ok_or_else(|| anyhow::anyhow!("tx_hash (or hash) is required"))?;
             let tx_hash_bytes = decode_hex_bytes(&tx_hash_raw, "tx_hash")?;
             let tx_hash = vec_to_32(&tx_hash_bytes, "tx_hash")?;
-            let chain_hint = param_as_u64_any_with_tx(params, &["chain_id", "chainId"])
-                .or(Some(ctx.eth_default_chain_id));
             if let Some(entry) = eth_tx_index.get(&tx_hash) {
                 if chain_hint.is_some_and(|chain_id| entry.chain_id != chain_id) {
                     return Ok((serde_json::Value::Null, false));
@@ -9456,10 +9595,29 @@ fn run_gateway_method(
                 .or(fields.nonce)
                 .ok_or_else(|| anyhow::anyhow!("nonce is required for eth_sendRawTransaction"))?;
 
-            let from_raw = extract_eth_persona_address_param(params).ok_or_else(|| {
-                anyhow::anyhow!("from (or external_address) is required for eth_sendRawTransaction")
-            })?;
-            let from = decode_hex_bytes(&from_raw, "from")?;
+            let explicit_from = extract_eth_persona_address_param(params)
+                .map(|raw| decode_hex_bytes(&raw, "from"))
+                .transpose()?;
+            let recovered_from = recover_raw_evm_tx_sender_m0(&raw_tx)?;
+            let from = match (explicit_from, recovered_from) {
+                (Some(explicit), Some(recovered)) => {
+                    if explicit != recovered {
+                        bail!(
+                            "from mismatch: explicit=0x{} recovered_from_raw=0x{}",
+                            to_hex(&explicit),
+                            to_hex(&recovered)
+                        );
+                    }
+                    recovered
+                }
+                (Some(explicit), None) => explicit,
+                (None, Some(recovered)) => recovered,
+                (None, None) => {
+                    bail!(
+                        "from (or external_address) is required for eth_sendRawTransaction when raw sender recovery is unavailable"
+                    )
+                }
+            };
             let persona = PersonaAddress {
                 persona_type: PersonaType::Evm,
                 chain_id,
@@ -9676,7 +9834,21 @@ fn run_gateway_method(
             let from_raw = extract_eth_persona_address_param(params).ok_or_else(|| {
                 anyhow::anyhow!("from (or external_address) is required for eth_sendTransaction")
             })?;
-            let from = decode_hex_bytes(&from_raw, "from")?;
+            let explicit_from = decode_hex_bytes(&from_raw, "from")?;
+            let recovered_from = recover_gateway_eth_sender_from_signature_param(params)?;
+            let from = match (explicit_from, recovered_from) {
+                (explicit, Some(recovered)) => {
+                    if explicit != recovered {
+                        bail!(
+                            "from mismatch: explicit=0x{} recovered_from_signature=0x{}",
+                            to_hex(&explicit),
+                            to_hex(&recovered)
+                        );
+                    }
+                    recovered
+                }
+                (explicit, None) => explicit,
+            };
             let persona = PersonaAddress {
                 persona_type: PersonaType::Evm,
                 chain_id,
@@ -9855,20 +10027,7 @@ fn run_gateway_method(
             let session_expires_at =
                 param_as_u64_any_with_tx(params, &["session_expires_at", "sessionExpiresAt"]);
             let now = param_as_u64(params, "now").unwrap_or_else(now_unix_sec);
-
-            let _decision = router.route(RouteRequest {
-                uca_id: uca_id.clone(),
-                persona,
-                role,
-                protocol: ProtocolKind::Eth,
-                signature_domain: signature_domain.clone(),
-                nonce,
-                wants_cross_chain_atomic,
-                tx_type4,
-                session_expires_at,
-                now,
-            })?;
-            let tx_hash = compute_gateway_eth_tx_hash(&GatewayEthTxHashInput {
+            let tx_hash_input = GatewayEthTxHashInput {
                 uca_id: &uca_id,
                 chain_id,
                 nonce,
@@ -9888,7 +10047,28 @@ fn run_gateway_method(
                 blob_hash_count,
                 signature_domain: &signature_domain,
                 wants_cross_chain_atomic,
-            });
+            };
+
+            validate_gateway_eth_send_tx_signature_consistency(
+                params,
+                &tx_hash_input,
+                tx_type,
+                tx_type4,
+            )?;
+
+            let _decision = router.route(RouteRequest {
+                uca_id: uca_id.clone(),
+                persona,
+                role,
+                protocol: ProtocolKind::Eth,
+                signature_domain: signature_domain.clone(),
+                nonce,
+                wants_cross_chain_atomic,
+                tx_type4,
+                session_expires_at,
+                now,
+            })?;
+            let tx_hash = compute_gateway_eth_tx_hash(&tx_hash_input);
             let tx_ir_type = if to.is_none() {
                 TxType::ContractDeploy
             } else if data.is_empty() {
@@ -11025,6 +11205,136 @@ fn infer_gateway_eth_send_tx_uca_id(
     router.resolve_binding_owner(&persona).map(str::to_string)
 }
 
+fn recover_gateway_eth_sender_from_signature_param(
+    params: &serde_json::Value,
+) -> anyhow::Result<Option<Vec<u8>>> {
+    let signature =
+        match param_as_string_any_with_tx(params, &["signature", "raw_signature", "signed_tx"]) {
+            Some(raw_sig) => decode_hex_bytes(&raw_sig, "signature")?,
+            None => return Ok(None),
+        };
+    if signature.is_empty() {
+        return Ok(None);
+    }
+    recover_raw_evm_tx_sender_m0(&signature)
+}
+
+fn recover_gateway_eth_signature_raw_fields(
+    params: &serde_json::Value,
+) -> anyhow::Result<Option<EvmRawTxFieldsM0>> {
+    let signature =
+        match param_as_string_any_with_tx(params, &["signature", "raw_signature", "signed_tx"]) {
+            Some(raw_sig) => decode_hex_bytes(&raw_sig, "signature")?,
+            None => return Ok(None),
+        };
+    if signature.is_empty() {
+        return Ok(None);
+    }
+    let Some(_) = recover_raw_evm_tx_sender_m0(&signature)? else {
+        return Ok(None);
+    };
+    Ok(translate_raw_evm_tx_fields_m0(&signature).ok())
+}
+
+fn validate_gateway_eth_send_tx_signature_consistency(
+    params: &serde_json::Value,
+    effective: &GatewayEthTxHashInput<'_>,
+    tx_type: u8,
+    tx_type4: bool,
+) -> anyhow::Result<()> {
+    let Some(fields) = recover_gateway_eth_signature_raw_fields(params)? else {
+        return Ok(());
+    };
+    if let Some(raw_chain_id) = fields.chain_id {
+        if raw_chain_id != effective.chain_id {
+            bail!(
+                "signature chain_id mismatch: effective={} recovered={}",
+                effective.chain_id,
+                raw_chain_id
+            );
+        }
+    }
+    if fields.hint.tx_type_number != tx_type || fields.hint.tx_type4 != tx_type4 {
+        bail!(
+            "signature tx_type mismatch: effective={} recovered={}",
+            tx_type,
+            fields.hint.tx_type_number
+        );
+    }
+    if fields.nonce.unwrap_or_default() != effective.nonce {
+        bail!(
+            "signature nonce mismatch: effective={} recovered={}",
+            effective.nonce,
+            fields.nonce.unwrap_or_default()
+        );
+    }
+    if fields.gas_limit.unwrap_or_default() != effective.gas_limit {
+        bail!(
+            "signature gas_limit mismatch: effective={} recovered={}",
+            effective.gas_limit,
+            fields.gas_limit.unwrap_or_default()
+        );
+    }
+    if fields.gas_price.unwrap_or_default() != effective.gas_price {
+        bail!(
+            "signature gas_price mismatch: effective={} recovered={}",
+            effective.gas_price,
+            fields.gas_price.unwrap_or_default()
+        );
+    }
+    if fields.max_priority_fee_per_gas.unwrap_or_default() != effective.max_priority_fee_per_gas {
+        bail!(
+            "signature max_priority_fee_per_gas mismatch: effective={} recovered={}",
+            effective.max_priority_fee_per_gas,
+            fields.max_priority_fee_per_gas.unwrap_or_default()
+        );
+    }
+    if fields.access_list_address_count.unwrap_or_default() != effective.access_list_address_count {
+        bail!(
+            "signature access_list_address_count mismatch: effective={} recovered={}",
+            effective.access_list_address_count,
+            fields.access_list_address_count.unwrap_or_default()
+        );
+    }
+    if fields.access_list_storage_key_count.unwrap_or_default()
+        != effective.access_list_storage_key_count
+    {
+        bail!(
+            "signature access_list_storage_key_count mismatch: effective={} recovered={}",
+            effective.access_list_storage_key_count,
+            fields.access_list_storage_key_count.unwrap_or_default()
+        );
+    }
+    if fields.max_fee_per_blob_gas.unwrap_or_default() != effective.max_fee_per_blob_gas {
+        bail!(
+            "signature max_fee_per_blob_gas mismatch: effective={} recovered={}",
+            effective.max_fee_per_blob_gas,
+            fields.max_fee_per_blob_gas.unwrap_or_default()
+        );
+    }
+    if fields.blob_hash_count.unwrap_or_default() != effective.blob_hash_count {
+        bail!(
+            "signature blob_hash_count mismatch: effective={} recovered={}",
+            effective.blob_hash_count,
+            fields.blob_hash_count.unwrap_or_default()
+        );
+    }
+    if fields.value.unwrap_or_default() != effective.value {
+        bail!(
+            "signature value mismatch: effective={} recovered={}",
+            effective.value,
+            fields.value.unwrap_or_default()
+        );
+    }
+    if fields.to.as_deref() != effective.to {
+        bail!("signature to mismatch with effective request fields");
+    }
+    if fields.data.as_deref().unwrap_or_default() != effective.data {
+        bail!("signature data mismatch with effective request fields");
+    }
+    Ok(())
+}
+
 fn infer_gateway_eth_tx_hash_from_write_params(
     method: &str,
     params: &serde_json::Value,
@@ -11057,8 +11367,22 @@ fn infer_gateway_eth_tx_hash_from_write_params(
     let chain_id = explicit_chain_id
         .or(fields.chain_id)
         .unwrap_or(default_chain_id);
-    let from_raw = extract_eth_persona_address_param(params)?;
-    let from = decode_hex_bytes(&from_raw, "from").ok()?;
+    let explicit_from = extract_eth_persona_address_param(params)
+        .map(|raw| decode_hex_bytes(&raw, "from"))
+        .transpose()
+        .ok()?;
+    let recovered_from = recover_raw_evm_tx_sender_m0(&raw_tx).ok().flatten();
+    let from = match (explicit_from, recovered_from) {
+        (Some(explicit), Some(recovered)) => {
+            if explicit != recovered {
+                return None;
+            }
+            recovered
+        }
+        (Some(explicit), None) => explicit,
+        (None, Some(recovered)) => recovered,
+        (None, None) => return None,
+    };
     let tx_ir = tx_ir_from_raw_fields_m0(&fields, &raw_tx, from, chain_id);
     vec_to_32(&tx_ir.hash, "tx_hash").ok()
 }
@@ -11070,7 +11394,19 @@ fn infer_gateway_eth_send_tx_hash_from_params(
 ) -> Option<[u8; 32]> {
     let chain_id = resolve_chain_id_with_tx_consistency(params, default_chain_id).ok()?;
     let from_raw = extract_eth_persona_address_param(params)?;
-    let from = decode_hex_bytes(&from_raw, "from").ok()?;
+    let explicit_from = decode_hex_bytes(&from_raw, "from").ok()?;
+    let recovered_from = recover_gateway_eth_sender_from_signature_param(params)
+        .ok()
+        .flatten();
+    let from = match (explicit_from, recovered_from) {
+        (explicit, Some(recovered)) => {
+            if explicit != recovered {
+                return None;
+            }
+            recovered
+        }
+        (explicit, None) => explicit,
+    };
     let uca_id = infer_gateway_eth_send_tx_uca_id(router, params, chain_id, &from)?;
     let nonce = param_as_u64_any_with_tx(params, &["nonce"])?;
     let to = match param_as_string_any_with_tx(params, &["to"]) {
@@ -11163,7 +11499,7 @@ fn infer_gateway_eth_send_tx_hash_from_params(
         &["wants_cross_chain_atomic", "wantsCrossChainAtomic"],
     )
     .unwrap_or(false);
-    Some(compute_gateway_eth_tx_hash(&GatewayEthTxHashInput {
+    let tx_hash_input = GatewayEthTxHashInput {
         uca_id: &uca_id,
         chain_id,
         nonce,
@@ -11183,7 +11519,10 @@ fn infer_gateway_eth_send_tx_hash_from_params(
         blob_hash_count,
         signature_domain: &signature_domain,
         wants_cross_chain_atomic,
-    }))
+    };
+    validate_gateway_eth_send_tx_signature_consistency(params, &tx_hash_input, tx_type, tx_type4)
+        .ok()?;
+    Some(compute_gateway_eth_tx_hash(&tx_hash_input))
 }
 
 fn gateway_eth_submit_error_code_label(code: i64) -> &'static str {

@@ -2512,20 +2512,15 @@ fn validate_and_verify_txs_for_apply_batch(
         .map(|v| v.get())
         .unwrap_or(1)
         .min(txs.len().max(1));
-    let mut verify_results = vec![false; txs.len()];
     if workers > 1 && txs.len() > 1 {
         let chunk_size = txs.len().div_ceil(workers);
         std::thread::scope(|scope| -> anyhow::Result<()> {
             let mut jobs = Vec::with_capacity(workers);
-            for (chunk, out_chunk) in txs
-                .chunks(chunk_size)
-                .zip(verify_results.chunks_mut(chunk_size))
-            {
+            for chunk in txs.chunks(chunk_size) {
                 let profile = profile.clone();
                 jobs.push(scope.spawn(move || -> anyhow::Result<()> {
-                    for (tx, out) in chunk.iter().zip(out_chunk.iter_mut()) {
+                    for tx in chunk {
                         validate_tx_semantics_m0(&profile, tx)?;
-                        *out = adapter.verify_transaction(tx)?;
                     }
                     Ok(())
                 }));
@@ -2537,13 +2532,12 @@ fn validate_and_verify_txs_for_apply_batch(
             }
             Ok(())
         })?;
-    } else {
-        for (tx, out) in txs.iter().zip(verify_results.iter_mut()) {
-            validate_tx_semantics_m0(profile, tx)?;
-            *out = adapter.verify_transaction(tx)?;
-        }
+        return adapter.verify_transactions_batch(txs);
     }
-    Ok(verify_results)
+    for tx in txs {
+        validate_tx_semantics_m0(profile, tx)?;
+    }
+    adapter.verify_transactions_batch(txs)
 }
 
 #[no_mangle]

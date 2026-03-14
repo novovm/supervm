@@ -1043,6 +1043,24 @@ fn gateway_eth_public_broadcast_chain_string_env(chain_id: u64, base_key: &str) 
         .or_else(|| string_env_nonempty(base_key))
 }
 
+fn gateway_eth_public_broadcast_upstream_rpc_url(chain_id: u64) -> Option<String> {
+    gateway_eth_public_broadcast_chain_string_env(
+        chain_id,
+        "NOVOVM_GATEWAY_ETH_PUBLIC_BROADCAST_UPSTREAM_RPC",
+    )
+    .or_else(|| {
+        gateway_eth_public_broadcast_chain_string_env(chain_id, "NOVOVM_GATEWAY_ETH_UPSTREAM_RPC")
+    })
+}
+
+fn gateway_eth_public_broadcast_upstream_rpc_timeout_ms(chain_id: u64) -> u64 {
+    gateway_eth_public_broadcast_chain_u64_env(
+        chain_id,
+        "NOVOVM_GATEWAY_ETH_PUBLIC_BROADCAST_UPSTREAM_RPC_TIMEOUT_MS",
+        GATEWAY_ETH_PUBLIC_BROADCAST_EXEC_TIMEOUT_MS_DEFAULT,
+    )
+}
+
 fn parse_u64_with_optional_hex_prefix(raw: &str) -> Option<u64> {
     let trimmed = raw.trim();
     if trimmed.is_empty() {
@@ -1558,6 +1576,46 @@ pub(super) fn execute_gateway_eth_public_broadcast_with_retry(
     }
 }
 
+fn execute_gateway_eth_public_broadcast_upstream(
+    chain_id: u64,
+    tx_hash: &[u8; 32],
+    payload: GatewayEthPublicBroadcastPayload<'_>,
+) -> Result<Option<(String, u64, String)>> {
+    let Some(url) = gateway_eth_public_broadcast_upstream_rpc_url(chain_id) else {
+        return Ok(None);
+    };
+    let Some(raw_tx) = payload.raw_tx.filter(|raw| !raw.is_empty()) else {
+        return Ok(None);
+    };
+    let timeout_ms = gateway_eth_public_broadcast_upstream_rpc_timeout_ms(chain_id);
+    let raw_tx_hex = format!("0x{}", to_hex(raw_tx));
+    let result = execute_gateway_eth_upstream_json_rpc(
+        &url,
+        "eth_sendRawTransaction",
+        serde_json::json!([raw_tx_hex]),
+        timeout_ms,
+    )?;
+    let Some(returned_hash) = result.as_str() else {
+        bail!(
+            "upstream eth_sendRawTransaction returned non-string result: {}",
+            result
+        );
+    };
+    let expected_hash = format!("0x{}", to_hex(tx_hash));
+    if !returned_hash.eq_ignore_ascii_case(&expected_hash) {
+        bail!(
+            "upstream eth_sendRawTransaction hash mismatch: expected={} got={}",
+            expected_hash,
+            returned_hash
+        );
+    }
+    Ok(Some((
+        returned_hash.to_string(),
+        1,
+        format!("upstream_rpc:{url}"),
+    )))
+}
+
 pub(super) fn maybe_execute_gateway_eth_public_broadcast(
     chain_id: u64,
     tx_hash: &[u8; 32],
@@ -1565,10 +1623,24 @@ pub(super) fn maybe_execute_gateway_eth_public_broadcast(
     required_override: bool,
 ) -> Result<Option<(String, u64, String)>> {
     let Some(exec_path) = gateway_eth_public_broadcast_exec_path(chain_id) else {
+        let mut upstream_error: Option<anyhow::Error> = None;
+        match execute_gateway_eth_public_broadcast_upstream(chain_id, tx_hash, payload) {
+            Ok(Some(result)) => return Ok(Some(result)),
+            Ok(None) => {}
+            Err(error) => upstream_error = Some(error),
+        }
         if let Some(native_result) =
             execute_gateway_eth_public_broadcast_native(chain_id, tx_hash, payload)?
         {
             return Ok(Some(native_result));
+        }
+        if let Some(error) = upstream_error {
+            bail!(
+                "public broadcast failed: chain_id={} tx_hash=0x{} reason=upstream_rpc err={}",
+                chain_id,
+                to_hex(tx_hash),
+                error
+            );
         }
         if required_override || gateway_eth_public_broadcast_required(chain_id) {
             bail!(
