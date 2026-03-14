@@ -7,7 +7,7 @@
       "name": "core",
       "platform": "windows",
       "dll": "bin/aoem_ffi.dll",
-      "sha256": "397cc22cf59c585b6e07e3445c226d515a1642e61dee873421f075211fe88e8f",
+      "sha256": "b76ef865d05b5d37b1c5aeb83dd84d3ec3a0db01fd2b7d00603b50e6270fbe04",
       "abi_expected": 1,
       "capabilities_required": {
         "execute_ops_v2": true

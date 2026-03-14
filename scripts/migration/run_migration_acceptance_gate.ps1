@@ -511,6 +511,7 @@ if ($IncludeGovernanceRpcGate) {
         -RepoRoot $RepoRoot `
         -OutputDir $governanceRpcOutputDir `
         -Bind $GovernanceRpcBind `
+        -StartupTimeoutSeconds 20 `
         -ExpectedRequests $GovernanceRpcExpectedRequests | Out-Null
 }
 

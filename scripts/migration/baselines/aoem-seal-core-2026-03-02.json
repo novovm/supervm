@@ -1,7 +1,7 @@
 {
-  "generated_at_utc": "2026-03-03T15:30:00Z",
+  "generated_at_utc": "2026-03-15T13:20:00Z",
   "source": {
-    "doc": "D:\\WorksArea\\SUPERVM\\docs_CN\\AOEM-FFI\\AOEM-FFI-BETA08-TPS-SEAL-2026-03-02.md",
+    "doc": "D:\\WEB3_AI\\SUPERVM\\AOEM\\docs-CN\\perf\\AOEM-FFI-BETA09-TPS-SEAL-2026-03-09.md",
     "line_profile": "core_single",
     "line_mapping": {
       "cpu_parity": "cpu_parity_single(P50)",
@@ -12,14 +12,14 @@
     {
       "variant": "core",
       "preset": "cpu_parity",
-      "tps": 5003439.86,
-      "source": "aoem_ffi_beta08_tps_seal_2026_03_02"
+      "tps": 4717521.87,
+      "source": "aoem_ffi_beta09_tps_seal_2026_03_15_local_refresh"
     },
     {
       "variant": "core",
       "preset": "cpu_batch_stress",
-      "tps": 20900563.48,
-      "source": "aoem_ffi_beta08_tps_seal_2026_03_02"
+      "tps": 17323126.55,
+      "source": "aoem_ffi_beta09_tps_seal_2026_03_15_local_refresh"
     }
   ]
 }
