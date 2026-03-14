@@ -177,6 +177,54 @@ $unifiedAccountBlockMergePass = if ($snapshotHasUaBlockMerge) { [bool]$snapshot.
 $unifiedAccountBlockReleasePass = if ($snapshotHasUaBlockRelease) { [bool]$snapshot.key_results.unified_account_block_release_pass } else { $true }
 $unifiedAccountSummaryJson = if ($snapshotHasUaSummaryJson) { [string]$snapshot.evidence.unified_account_summary_json } else { "" }
 
+$acceptanceHasEconomicServiceSurfaceGateEnabled = $null -ne $acceptance -and $acceptance.PSObject.Properties.Match("economic_service_surface_gate_enabled").Count -gt 0
+$acceptanceHasEconomicServiceSurfacePass = $null -ne $acceptance -and $acceptance.PSObject.Properties.Match("economic_service_surface_pass").Count -gt 0
+$acceptanceHasEconomicServiceSurfaceTokenSystemPass = $null -ne $acceptance -and $acceptance.PSObject.Properties.Match("economic_service_surface_token_system_pass").Count -gt 0
+$acceptanceHasEconomicServiceSurfaceAmmPass = $null -ne $acceptance -and $acceptance.PSObject.Properties.Match("economic_service_surface_amm_pass").Count -gt 0
+$acceptanceHasEconomicServiceSurfaceCdpPass = $null -ne $acceptance -and $acceptance.PSObject.Properties.Match("economic_service_surface_cdp_pass").Count -gt 0
+$acceptanceHasEconomicServiceSurfaceBondPass = $null -ne $acceptance -and $acceptance.PSObject.Properties.Match("economic_service_surface_bond_pass").Count -gt 0
+$acceptanceHasEconomicServiceSurfaceNavPass = $null -ne $acceptance -and $acceptance.PSObject.Properties.Match("economic_service_surface_nav_redemption_pass").Count -gt 0
+$acceptanceHasEconomicServiceSurfaceTreasuryPass = $null -ne $acceptance -and $acceptance.PSObject.Properties.Match("economic_service_surface_treasury_pass").Count -gt 0
+$acceptanceHasEconomicServiceSurfaceGovernancePass = $null -ne $acceptance -and $acceptance.PSObject.Properties.Match("economic_service_surface_governance_system_pass").Count -gt 0
+$acceptanceHasEconomicServiceSurfaceDividendPass = $null -ne $acceptance -and $acceptance.PSObject.Properties.Match("economic_service_surface_dividend_pool_pass").Count -gt 0
+$acceptanceHasEconomicServiceSurfaceForeignPass = $null -ne $acceptance -and $acceptance.PSObject.Properties.Match("economic_service_surface_foreign_payment_pass").Count -gt 0
+$acceptanceHasEconomicServiceSurfaceReportJson = $null -ne $acceptance -and $acceptance.PSObject.Properties.Match("economic_service_surface_report_json").Count -gt 0
+
+$economicServiceSurfaceGateEnabled = if ($acceptanceHasEconomicServiceSurfaceGateEnabled) { [bool]$acceptance.economic_service_surface_gate_enabled } else { $false }
+$economicServiceSurfacePass = if ($economicServiceSurfaceGateEnabled -and $acceptanceHasEconomicServiceSurfacePass) { [bool]$acceptance.economic_service_surface_pass } else { $true }
+$economicServiceSurfaceTokenSystemPass = if ($economicServiceSurfaceGateEnabled -and $acceptanceHasEconomicServiceSurfaceTokenSystemPass) { [bool]$acceptance.economic_service_surface_token_system_pass } else { $true }
+$economicServiceSurfaceAmmPass = if ($economicServiceSurfaceGateEnabled -and $acceptanceHasEconomicServiceSurfaceAmmPass) { [bool]$acceptance.economic_service_surface_amm_pass } else { $true }
+$economicServiceSurfaceCdpPass = if ($economicServiceSurfaceGateEnabled -and $acceptanceHasEconomicServiceSurfaceCdpPass) { [bool]$acceptance.economic_service_surface_cdp_pass } else { $true }
+$economicServiceSurfaceBondPass = if ($economicServiceSurfaceGateEnabled -and $acceptanceHasEconomicServiceSurfaceBondPass) { [bool]$acceptance.economic_service_surface_bond_pass } else { $true }
+$economicServiceSurfaceNavPass = if ($economicServiceSurfaceGateEnabled -and $acceptanceHasEconomicServiceSurfaceNavPass) { [bool]$acceptance.economic_service_surface_nav_redemption_pass } else { $true }
+$economicServiceSurfaceTreasuryPass = if ($economicServiceSurfaceGateEnabled -and $acceptanceHasEconomicServiceSurfaceTreasuryPass) { [bool]$acceptance.economic_service_surface_treasury_pass } else { $true }
+$economicServiceSurfaceGovernancePass = if ($economicServiceSurfaceGateEnabled -and $acceptanceHasEconomicServiceSurfaceGovernancePass) { [bool]$acceptance.economic_service_surface_governance_system_pass } else { $true }
+$economicServiceSurfaceDividendPass = if ($economicServiceSurfaceGateEnabled -and $acceptanceHasEconomicServiceSurfaceDividendPass) { [bool]$acceptance.economic_service_surface_dividend_pool_pass } else { $true }
+$economicServiceSurfaceForeignPass = if ($economicServiceSurfaceGateEnabled -and $acceptanceHasEconomicServiceSurfaceForeignPass) { [bool]$acceptance.economic_service_surface_foreign_payment_pass } else { $true }
+$economicServiceSurfaceReportJson = if ($acceptanceHasEconomicServiceSurfaceReportJson) { [string]$acceptance.economic_service_surface_report_json } else { "" }
+$snapshotHasEconomicServiceSurfaceSummaryJson = $null -ne $snapshot.evidence -and $snapshot.evidence.PSObject.Properties.Match("economic_service_surface_summary_json").Count -gt 0
+$economicServiceSurfaceSummaryJson = if ($snapshotHasEconomicServiceSurfaceSummaryJson) { [string]$snapshot.evidence.economic_service_surface_summary_json } else { "" }
+
+$acceptanceHasOpsControlSurfaceGateEnabled = $null -ne $acceptance -and $acceptance.PSObject.Properties.Match("ops_control_surface_gate_enabled").Count -gt 0
+$acceptanceHasOpsControlSurfacePass = $null -ne $acceptance -and $acceptance.PSObject.Properties.Match("ops_control_surface_pass").Count -gt 0
+$acceptanceHasOpsControlSurfaceRateLimitPass = $null -ne $acceptance -and $acceptance.PSObject.Properties.Match("ops_control_surface_rate_limit_pass").Count -gt 0
+$acceptanceHasOpsControlSurfaceCircuitBreakerPass = $null -ne $acceptance -and $acceptance.PSObject.Properties.Match("ops_control_surface_circuit_breaker_pass").Count -gt 0
+$acceptanceHasOpsControlSurfaceQuotaPass = $null -ne $acceptance -and $acceptance.PSObject.Properties.Match("ops_control_surface_quota_pass").Count -gt 0
+$acceptanceHasOpsControlSurfaceAlertFieldPass = $null -ne $acceptance -and $acceptance.PSObject.Properties.Match("ops_control_surface_alert_field_pass").Count -gt 0
+$acceptanceHasOpsControlSurfaceAuditFieldPass = $null -ne $acceptance -and $acceptance.PSObject.Properties.Match("ops_control_surface_audit_field_pass").Count -gt 0
+$acceptanceHasOpsControlSurfaceReportJson = $null -ne $acceptance -and $acceptance.PSObject.Properties.Match("ops_control_surface_report_json").Count -gt 0
+
+$opsControlSurfaceGateEnabled = if ($acceptanceHasOpsControlSurfaceGateEnabled) { [bool]$acceptance.ops_control_surface_gate_enabled } else { $false }
+$opsControlSurfacePass = if ($opsControlSurfaceGateEnabled -and $acceptanceHasOpsControlSurfacePass) { [bool]$acceptance.ops_control_surface_pass } else { $true }
+$opsControlSurfaceRateLimitPass = if ($opsControlSurfaceGateEnabled -and $acceptanceHasOpsControlSurfaceRateLimitPass) { [bool]$acceptance.ops_control_surface_rate_limit_pass } else { $true }
+$opsControlSurfaceCircuitBreakerPass = if ($opsControlSurfaceGateEnabled -and $acceptanceHasOpsControlSurfaceCircuitBreakerPass) { [bool]$acceptance.ops_control_surface_circuit_breaker_pass } else { $true }
+$opsControlSurfaceQuotaPass = if ($opsControlSurfaceGateEnabled -and $acceptanceHasOpsControlSurfaceQuotaPass) { [bool]$acceptance.ops_control_surface_quota_pass } else { $true }
+$opsControlSurfaceAlertFieldPass = if ($opsControlSurfaceGateEnabled -and $acceptanceHasOpsControlSurfaceAlertFieldPass) { [bool]$acceptance.ops_control_surface_alert_field_pass } else { $true }
+$opsControlSurfaceAuditFieldPass = if ($opsControlSurfaceGateEnabled -and $acceptanceHasOpsControlSurfaceAuditFieldPass) { [bool]$acceptance.ops_control_surface_audit_field_pass } else { $true }
+$opsControlSurfaceReportJson = if ($acceptanceHasOpsControlSurfaceReportJson) { [string]$acceptance.ops_control_surface_report_json } else { "" }
+$snapshotHasOpsControlSurfaceSummaryJson = $null -ne $snapshot.evidence -and $snapshot.evidence.PSObject.Properties.Match("ops_control_surface_summary_json").Count -gt 0
+$opsControlSurfaceSummaryJson = if ($snapshotHasOpsControlSurfaceSummaryJson) { [string]$snapshot.evidence.ops_control_surface_summary_json } else { "" }
+
 $rcCandidate = [ordered]@{
     generated_at_utc = [DateTime]::UtcNow.ToString("o")
     rc_ref = $RcRef
@@ -218,6 +266,28 @@ $rcCandidate = [ordered]@{
     foreign_rate_source_pass = [bool]$acceptance.foreign_rate_source_pass
     nav_valuation_source_pass = [bool]$acceptance.nav_valuation_source_pass
     dividend_balance_source_pass = [bool]$acceptance.dividend_balance_source_pass
+    economic_service_surface_gate_enabled = $economicServiceSurfaceGateEnabled
+    economic_service_surface_pass = $economicServiceSurfacePass
+    economic_service_surface_token_system_pass = $economicServiceSurfaceTokenSystemPass
+    economic_service_surface_amm_pass = $economicServiceSurfaceAmmPass
+    economic_service_surface_cdp_pass = $economicServiceSurfaceCdpPass
+    economic_service_surface_bond_pass = $economicServiceSurfaceBondPass
+    economic_service_surface_nav_redemption_pass = $economicServiceSurfaceNavPass
+    economic_service_surface_treasury_pass = $economicServiceSurfaceTreasuryPass
+    economic_service_surface_governance_system_pass = $economicServiceSurfaceGovernancePass
+    economic_service_surface_dividend_pool_pass = $economicServiceSurfaceDividendPass
+    economic_service_surface_foreign_payment_pass = $economicServiceSurfaceForeignPass
+    economic_service_surface_report_json = $economicServiceSurfaceReportJson
+    economic_service_surface_summary_json = $economicServiceSurfaceSummaryJson
+    ops_control_surface_gate_enabled = $opsControlSurfaceGateEnabled
+    ops_control_surface_pass = $opsControlSurfacePass
+    ops_control_surface_rate_limit_pass = $opsControlSurfaceRateLimitPass
+    ops_control_surface_circuit_breaker_pass = $opsControlSurfaceCircuitBreakerPass
+    ops_control_surface_quota_pass = $opsControlSurfaceQuotaPass
+    ops_control_surface_alert_field_pass = $opsControlSurfaceAlertFieldPass
+    ops_control_surface_audit_field_pass = $opsControlSurfaceAuditFieldPass
+    ops_control_surface_report_json = $opsControlSurfaceReportJson
+    ops_control_surface_summary_json = $opsControlSurfaceSummaryJson
     unified_account_gate_enabled = [bool]$acceptance.unified_account_gate_enabled
     unified_account_pass = [bool]$acceptance.unified_account_pass
     unified_account_block_merge_pass = $unifiedAccountBlockMergePass
@@ -296,6 +366,28 @@ $md = @(
     "- foreign_rate_source_pass: $($rcCandidate.foreign_rate_source_pass)"
     "- nav_valuation_source_pass: $($rcCandidate.nav_valuation_source_pass)"
     "- dividend_balance_source_pass: $($rcCandidate.dividend_balance_source_pass)"
+    "- economic_service_surface_gate_enabled: $($rcCandidate.economic_service_surface_gate_enabled)"
+    "- economic_service_surface_pass: $($rcCandidate.economic_service_surface_pass)"
+    "- economic_service_surface_token_system_pass: $($rcCandidate.economic_service_surface_token_system_pass)"
+    "- economic_service_surface_amm_pass: $($rcCandidate.economic_service_surface_amm_pass)"
+    "- economic_service_surface_cdp_pass: $($rcCandidate.economic_service_surface_cdp_pass)"
+    "- economic_service_surface_bond_pass: $($rcCandidate.economic_service_surface_bond_pass)"
+    "- economic_service_surface_nav_redemption_pass: $($rcCandidate.economic_service_surface_nav_redemption_pass)"
+    "- economic_service_surface_treasury_pass: $($rcCandidate.economic_service_surface_treasury_pass)"
+    "- economic_service_surface_governance_system_pass: $($rcCandidate.economic_service_surface_governance_system_pass)"
+    "- economic_service_surface_dividend_pool_pass: $($rcCandidate.economic_service_surface_dividend_pool_pass)"
+    "- economic_service_surface_foreign_payment_pass: $($rcCandidate.economic_service_surface_foreign_payment_pass)"
+    "- economic_service_surface_report_json: $($rcCandidate.economic_service_surface_report_json)"
+    "- economic_service_surface_summary_json: $($rcCandidate.economic_service_surface_summary_json)"
+    "- ops_control_surface_gate_enabled: $($rcCandidate.ops_control_surface_gate_enabled)"
+    "- ops_control_surface_pass: $($rcCandidate.ops_control_surface_pass)"
+    "- ops_control_surface_rate_limit_pass: $($rcCandidate.ops_control_surface_rate_limit_pass)"
+    "- ops_control_surface_circuit_breaker_pass: $($rcCandidate.ops_control_surface_circuit_breaker_pass)"
+    "- ops_control_surface_quota_pass: $($rcCandidate.ops_control_surface_quota_pass)"
+    "- ops_control_surface_alert_field_pass: $($rcCandidate.ops_control_surface_alert_field_pass)"
+    "- ops_control_surface_audit_field_pass: $($rcCandidate.ops_control_surface_audit_field_pass)"
+    "- ops_control_surface_report_json: $($rcCandidate.ops_control_surface_report_json)"
+    "- ops_control_surface_summary_json: $($rcCandidate.ops_control_surface_summary_json)"
     "- unified_account_gate_enabled: $($rcCandidate.unified_account_gate_enabled)"
     "- unified_account_pass: $($rcCandidate.unified_account_pass)"
     "- unified_account_block_merge_pass: $($rcCandidate.unified_account_block_merge_pass)"
@@ -361,6 +453,28 @@ Write-Host "  governance_council_policy_pass: $($rcCandidate.governance_council_
 Write-Host "  governance_access_policy_pass: $($rcCandidate.governance_access_policy_pass)"
 Write-Host "  governance_token_economics_pass: $($rcCandidate.governance_token_economics_pass)"
 Write-Host "  governance_treasury_spend_pass: $($rcCandidate.governance_treasury_spend_pass)"
+Write-Host "  economic_service_surface_gate_enabled: $($rcCandidate.economic_service_surface_gate_enabled)"
+Write-Host "  economic_service_surface_pass: $($rcCandidate.economic_service_surface_pass)"
+Write-Host "  economic_service_surface_token_system_pass: $($rcCandidate.economic_service_surface_token_system_pass)"
+Write-Host "  economic_service_surface_amm_pass: $($rcCandidate.economic_service_surface_amm_pass)"
+Write-Host "  economic_service_surface_cdp_pass: $($rcCandidate.economic_service_surface_cdp_pass)"
+Write-Host "  economic_service_surface_bond_pass: $($rcCandidate.economic_service_surface_bond_pass)"
+Write-Host "  economic_service_surface_nav_redemption_pass: $($rcCandidate.economic_service_surface_nav_redemption_pass)"
+Write-Host "  economic_service_surface_treasury_pass: $($rcCandidate.economic_service_surface_treasury_pass)"
+Write-Host "  economic_service_surface_governance_system_pass: $($rcCandidate.economic_service_surface_governance_system_pass)"
+Write-Host "  economic_service_surface_dividend_pool_pass: $($rcCandidate.economic_service_surface_dividend_pool_pass)"
+Write-Host "  economic_service_surface_foreign_payment_pass: $($rcCandidate.economic_service_surface_foreign_payment_pass)"
+Write-Host "  economic_service_surface_report_json: $($rcCandidate.economic_service_surface_report_json)"
+Write-Host "  economic_service_surface_summary_json: $($rcCandidate.economic_service_surface_summary_json)"
+Write-Host "  ops_control_surface_gate_enabled: $($rcCandidate.ops_control_surface_gate_enabled)"
+Write-Host "  ops_control_surface_pass: $($rcCandidate.ops_control_surface_pass)"
+Write-Host "  ops_control_surface_rate_limit_pass: $($rcCandidate.ops_control_surface_rate_limit_pass)"
+Write-Host "  ops_control_surface_circuit_breaker_pass: $($rcCandidate.ops_control_surface_circuit_breaker_pass)"
+Write-Host "  ops_control_surface_quota_pass: $($rcCandidate.ops_control_surface_quota_pass)"
+Write-Host "  ops_control_surface_alert_field_pass: $($rcCandidate.ops_control_surface_alert_field_pass)"
+Write-Host "  ops_control_surface_audit_field_pass: $($rcCandidate.ops_control_surface_audit_field_pass)"
+Write-Host "  ops_control_surface_report_json: $($rcCandidate.ops_control_surface_report_json)"
+Write-Host "  ops_control_surface_summary_json: $($rcCandidate.ops_control_surface_summary_json)"
 Write-Host "  unified_account_gate_enabled: $($rcCandidate.unified_account_gate_enabled)"
 Write-Host "  unified_account_pass: $($rcCandidate.unified_account_pass)"
 Write-Host "  unified_account_block_merge_pass: $($rcCandidate.unified_account_block_merge_pass)"

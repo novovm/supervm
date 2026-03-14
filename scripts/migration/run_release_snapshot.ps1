@@ -96,6 +96,8 @@ $performanceSummaryJson = [string]$acceptance.performance_report_json
 $functionalSummaryJson = [string]$acceptance.functional_report_json
 $governanceRpcSummaryJson = [string]$acceptance.governance_rpc_report_json
 $governanceRpcMldsaFfiSummaryJson = [string]$acceptance.governance_rpc_mldsa_ffi_report_json
+$economicServiceSurfaceSummaryJson = [string]$acceptance.economic_service_surface_report_json
+$opsControlSurfaceSummaryJson = [string]$acceptance.ops_control_surface_report_json
 $unifiedAccountSummaryJson = [string]$acceptance.unified_account_report_json
 $rpcExposureSummaryJson = [string]$acceptance.rpc_exposure_report_json
 
@@ -105,11 +107,17 @@ if (-not (Test-Path $performanceSummaryJson)) {
 if (-not (Test-Path $functionalSummaryJson)) {
     throw "missing functional summary json: $functionalSummaryJson"
 }
-if (-not (Test-Path $governanceRpcSummaryJson)) {
+if ([bool]$acceptance.governance_rpc_gate_enabled -and -not (Test-Path $governanceRpcSummaryJson)) {
     throw "missing governance rpc summary json: $governanceRpcSummaryJson"
 }
 if ([bool]$acceptance.governance_rpc_mldsa_ffi_gate_enabled -and -not (Test-Path $governanceRpcMldsaFfiSummaryJson)) {
     throw "missing governance rpc mldsa ffi summary json: $governanceRpcMldsaFfiSummaryJson"
+}
+if ([bool]$acceptance.economic_service_surface_gate_enabled -and -not (Test-Path $economicServiceSurfaceSummaryJson)) {
+    throw "missing economic service surface summary json: $economicServiceSurfaceSummaryJson"
+}
+if ([bool]$acceptance.ops_control_surface_gate_enabled -and -not (Test-Path $opsControlSurfaceSummaryJson)) {
+    throw "missing ops control surface summary json: $opsControlSurfaceSummaryJson"
 }
 if ([bool]$acceptance.unified_account_gate_enabled -and -not (Test-Path $unifiedAccountSummaryJson)) {
     throw "missing unified account summary json: $unifiedAccountSummaryJson"
@@ -120,9 +128,23 @@ if ([bool]$acceptance.rpc_exposure_gate_enabled -and -not (Test-Path $rpcExposur
 
 $performance = Get-Content -Path $performanceSummaryJson -Raw | ConvertFrom-Json
 $functional = Get-Content -Path $functionalSummaryJson -Raw | ConvertFrom-Json
-$governanceRpc = Get-Content -Path $governanceRpcSummaryJson -Raw | ConvertFrom-Json
+$governanceRpc = if ([bool]$acceptance.governance_rpc_gate_enabled) {
+    Get-Content -Path $governanceRpcSummaryJson -Raw | ConvertFrom-Json
+} else {
+    $null
+}
 $governanceRpcMldsaFfi = if ([bool]$acceptance.governance_rpc_mldsa_ffi_gate_enabled) {
     Get-Content -Path $governanceRpcMldsaFfiSummaryJson -Raw | ConvertFrom-Json
+} else {
+    $null
+}
+$economicServiceSurface = if ([bool]$acceptance.economic_service_surface_gate_enabled) {
+    Get-Content -Path $economicServiceSurfaceSummaryJson -Raw | ConvertFrom-Json
+} else {
+    $null
+}
+$opsControlSurface = if ([bool]$acceptance.ops_control_surface_gate_enabled) {
+    Get-Content -Path $opsControlSurfaceSummaryJson -Raw | ConvertFrom-Json
 } else {
     $null
 }
@@ -163,6 +185,8 @@ $enabledGates = [ordered]@{
     governance_token_economics = [bool]$acceptance.governance_token_economics_gate_enabled
     governance_treasury_spend = [bool]$acceptance.governance_treasury_spend_gate_enabled
     economic_infra_dedicated = [bool]$acceptance.economic_infra_dedicated_gate_enabled
+    economic_service_surface = [bool]$acceptance.economic_service_surface_gate_enabled
+    ops_control_surface = [bool]$acceptance.ops_control_surface_gate_enabled
     market_engine_treasury_negative = [bool]$acceptance.market_engine_treasury_negative_gate_enabled
     foreign_rate_source = [bool]$acceptance.foreign_rate_source_gate_enabled
     nav_valuation_source = [bool]$acceptance.nav_valuation_source_gate_enabled
@@ -215,6 +239,8 @@ $governancePass = [bool](
 
 $economicPass = [bool](
     ((-not [bool]$acceptance.economic_infra_dedicated_gate_enabled) -or [bool]$acceptance.economic_infra_dedicated_pass) -and
+    ((-not [bool]$acceptance.economic_service_surface_gate_enabled) -or [bool]$acceptance.economic_service_surface_pass) -and
+    ((-not [bool]$acceptance.ops_control_surface_gate_enabled) -or [bool]$acceptance.ops_control_surface_pass) -and
     ((-not [bool]$acceptance.market_engine_treasury_negative_gate_enabled) -or [bool]$acceptance.market_engine_treasury_negative_pass) -and
     ((-not [bool]$acceptance.foreign_rate_source_gate_enabled) -or [bool]$acceptance.foreign_rate_source_pass) -and
     ((-not [bool]$acceptance.nav_valuation_source_gate_enabled) -or [bool]$acceptance.nav_valuation_source_pass) -and
@@ -245,7 +271,7 @@ $keyResults = [ordered]@{
     functional_pass = [bool]$acceptance.functional_pass
     governance_chain_audit_root_parity_pass = [bool]$acceptance.governance_chain_audit_root_parity_pass
     performance_pass = [bool]$acceptance.performance_pass
-    governance_rpc_duplicate_reject = [bool]$governanceRpc.duplicate_reject_ok
+    governance_rpc_duplicate_reject = if ([bool]$acceptance.governance_rpc_gate_enabled -and $governanceRpc) { [bool]$governanceRpc.duplicate_reject_ok } else { $true }
     governance_rpc_audit_persist_pass = [bool]$acceptance.governance_rpc_audit_persist_pass
     governance_rpc_signature_scheme_reject_pass = [bool]$acceptance.governance_rpc_signature_scheme_reject_pass
     governance_rpc_vote_verifier_startup_pass = [bool]$acceptance.governance_rpc_vote_verifier_startup_pass
@@ -285,6 +311,22 @@ $keyResults = [ordered]@{
     governance_treasury_spend_pass = [bool]$acceptance.governance_treasury_spend_pass
     economic_pass = $economicPass
     economic_infra_dedicated_pass = if ([bool]$acceptance.economic_infra_dedicated_gate_enabled) { [bool]$acceptance.economic_infra_dedicated_pass } else { $true }
+    economic_service_surface_pass = if ([bool]$acceptance.economic_service_surface_gate_enabled) { [bool]$acceptance.economic_service_surface_pass } else { $true }
+    economic_service_surface_token_system_pass = if ([bool]$acceptance.economic_service_surface_gate_enabled) { [bool]$acceptance.economic_service_surface_token_system_pass } else { $true }
+    economic_service_surface_amm_pass = if ([bool]$acceptance.economic_service_surface_gate_enabled) { [bool]$acceptance.economic_service_surface_amm_pass } else { $true }
+    economic_service_surface_cdp_pass = if ([bool]$acceptance.economic_service_surface_gate_enabled) { [bool]$acceptance.economic_service_surface_cdp_pass } else { $true }
+    economic_service_surface_bond_pass = if ([bool]$acceptance.economic_service_surface_gate_enabled) { [bool]$acceptance.economic_service_surface_bond_pass } else { $true }
+    economic_service_surface_nav_redemption_pass = if ([bool]$acceptance.economic_service_surface_gate_enabled) { [bool]$acceptance.economic_service_surface_nav_redemption_pass } else { $true }
+    economic_service_surface_treasury_pass = if ([bool]$acceptance.economic_service_surface_gate_enabled) { [bool]$acceptance.economic_service_surface_treasury_pass } else { $true }
+    economic_service_surface_governance_system_pass = if ([bool]$acceptance.economic_service_surface_gate_enabled) { [bool]$acceptance.economic_service_surface_governance_system_pass } else { $true }
+    economic_service_surface_dividend_pool_pass = if ([bool]$acceptance.economic_service_surface_gate_enabled) { [bool]$acceptance.economic_service_surface_dividend_pool_pass } else { $true }
+    economic_service_surface_foreign_payment_pass = if ([bool]$acceptance.economic_service_surface_gate_enabled) { [bool]$acceptance.economic_service_surface_foreign_payment_pass } else { $true }
+    ops_control_surface_pass = if ([bool]$acceptance.ops_control_surface_gate_enabled) { [bool]$acceptance.ops_control_surface_pass } else { $true }
+    ops_control_surface_rate_limit_pass = if ([bool]$acceptance.ops_control_surface_gate_enabled) { [bool]$acceptance.ops_control_surface_rate_limit_pass } else { $true }
+    ops_control_surface_circuit_breaker_pass = if ([bool]$acceptance.ops_control_surface_gate_enabled) { [bool]$acceptance.ops_control_surface_circuit_breaker_pass } else { $true }
+    ops_control_surface_quota_pass = if ([bool]$acceptance.ops_control_surface_gate_enabled) { [bool]$acceptance.ops_control_surface_quota_pass } else { $true }
+    ops_control_surface_alert_field_pass = if ([bool]$acceptance.ops_control_surface_gate_enabled) { [bool]$acceptance.ops_control_surface_alert_field_pass } else { $true }
+    ops_control_surface_audit_field_pass = if ([bool]$acceptance.ops_control_surface_gate_enabled) { [bool]$acceptance.ops_control_surface_audit_field_pass } else { $true }
     market_engine_treasury_negative_pass = if ([bool]$acceptance.market_engine_treasury_negative_gate_enabled) { [bool]$acceptance.market_engine_treasury_negative_pass } else { $true }
     foreign_rate_source_pass = if ([bool]$acceptance.foreign_rate_source_gate_enabled) { [bool]$acceptance.foreign_rate_source_pass } else { $true }
     nav_valuation_source_pass = if ([bool]$acceptance.nav_valuation_source_gate_enabled) { [bool]$acceptance.nav_valuation_source_pass } else { $true }
@@ -320,13 +362,15 @@ $snapshot = [ordered]@{
         acceptance_summary_json = $acceptanceSummaryJson
         functional_summary_json = $functionalSummaryJson
         performance_summary_json = $performanceSummaryJson
-        governance_rpc_summary_json = $governanceRpcSummaryJson
+        governance_rpc_summary_json = if ([bool]$acceptance.governance_rpc_gate_enabled) { $governanceRpcSummaryJson } else { "" }
         governance_rpc_mldsa_ffi_summary_json = if ([bool]$acceptance.governance_rpc_mldsa_ffi_gate_enabled) { $governanceRpcMldsaFfiSummaryJson } else { "" }
         governance_market_policy_summary_json = [string]$acceptance.governance_market_policy_report_json
         governance_council_policy_summary_json = [string]$acceptance.governance_council_policy_report_json
         governance_access_policy_summary_json = [string]$acceptance.governance_access_policy_report_json
         governance_treasury_spend_summary_json = [string]$acceptance.governance_treasury_spend_report_json
         economic_infra_dedicated_summary_json = [string]$acceptance.economic_infra_dedicated_report_json
+        economic_service_surface_summary_json = [string]$acceptance.economic_service_surface_report_json
+        ops_control_surface_summary_json = [string]$acceptance.ops_control_surface_report_json
         market_engine_treasury_negative_summary_json = [string]$acceptance.market_engine_treasury_negative_report_json
         foreign_rate_source_summary_json = [string]$acceptance.foreign_rate_source_report_json
         nav_valuation_source_summary_json = [string]$acceptance.nav_valuation_source_report_json
@@ -364,6 +408,9 @@ $md = @(
     "- adapter_pass: $($snapshot.key_results.adapter_pass)",
     "- dos_pass: $($snapshot.key_results.dos_pass)",
     "- consensus_pass: $($snapshot.key_results.consensus_pass)",
+    "- economic_pass: $($snapshot.key_results.economic_pass)",
+    "- economic_service_surface_pass: $($snapshot.key_results.economic_service_surface_pass)",
+    "- ops_control_surface_pass: $($snapshot.key_results.ops_control_surface_pass)",
     "- governance_chain_audit_root_parity_pass: $($snapshot.key_results.governance_chain_audit_root_parity_pass)",
     "- evm_chain_profile_signal_pass: $($snapshot.key_results.evm_chain_profile_signal_pass)",
     "- evm_tx_type_signal_pass: $($snapshot.key_results.evm_tx_type_signal_pass)",
@@ -384,6 +431,8 @@ $md = @(
     "- governance_access_policy_summary_json: $($snapshot.evidence.governance_access_policy_summary_json)",
     "- governance_treasury_spend_summary_json: $($snapshot.evidence.governance_treasury_spend_summary_json)",
     "- economic_infra_dedicated_summary_json: $($snapshot.evidence.economic_infra_dedicated_summary_json)",
+    "- economic_service_surface_summary_json: $($snapshot.evidence.economic_service_surface_summary_json)",
+    "- ops_control_surface_summary_json: $($snapshot.evidence.ops_control_surface_summary_json)",
     "- market_engine_treasury_negative_summary_json: $($snapshot.evidence.market_engine_treasury_negative_summary_json)",
     "- foreign_rate_source_summary_json: $($snapshot.evidence.foreign_rate_source_summary_json)",
     "- nav_valuation_source_summary_json: $($snapshot.evidence.nav_valuation_source_summary_json)",

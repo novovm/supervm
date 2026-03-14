@@ -54,7 +54,13 @@ if (-not (Test-Path $compareScript)) {
 
 $baselinePath = $BaselineJson
 if (-not $baselinePath) {
-    $baselinePath = Join-Path $RepoRoot "scripts\migration\baselines\aoem-seal-core-2026-03-02.json"
+    $defaultBaseline = Join-Path $RepoRoot "scripts\migration\baselines\aoem-seal-core-2026-03-02.json"
+    $linuxBaseline = Join-Path $RepoRoot "scripts\migration\baselines\aoem-seal-core-linux-2026-03-10.json"
+    if (-not $IsWindows -and (Test-Path $linuxBaseline)) {
+        $baselinePath = $linuxBaseline
+    } else {
+        $baselinePath = $defaultBaseline
+    }
 }
 if (-not (Test-Path $baselinePath)) {
     throw "missing seal baseline json: $baselinePath"

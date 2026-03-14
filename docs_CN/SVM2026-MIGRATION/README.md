@@ -23,6 +23,30 @@
 9. `NOVOVM-RELEASE-RC-RUNBOOK-2026-03-05.md`
    - 发布候选（RC）流程手册，固定 `full_snapshot_v1` 复现口径，并新增治理 RPC 安全发布铁律与 `full_snapshot_v2`（含 RPC 暴露门禁）入口。
 
+## 2026-03-13 收口新增入口
+
+1. `NOVOVM-OPEN-BUSINESS-SURFACE-CLOSURE-CHECKLIST-2026-03-13.md`
+   - 开放业务面收口总清单（按周 gate + 每日证据回填）。
+2. `NOVOVM-ECONOMIC-OPS-RUNBOOK-2026-03-13.md`
+   - 经济开放面值班/回滚/对账/巡检最小运维手册。
+3. `NOVOVM-WEB30-ECONOMIC-CALIBRATION-2026-03-13.md`
+   - WEB30 与经济开放面的统一口径说明。
+4. `NOVOVM-VULNERABILITY-RESPONSE-POLICY-2026-03-13.md`
+   - 漏洞披露窗口、SLA、回滚预案、联系人。
+5. `NOVOVM-THIRD-PARTY-AUDIT-HANDOFF-PACK-2026-03-13.md`
+   - 第三方审计交付包范围与验收口径。
+6. `NOVOVM-THIRD-PARTY-AUDIT-INTAKE-REGISTER-2026-03-13.md`
+   - 第三方审计受理登记、回包导入与关单入口。
+7. `NOVOVM-GA-CLOSURE-REPORT-DRAFT-2026-03-13.md`
+   - GA 收口正式版前的阻断态草案。
+
+## Linux 封盘证据入口（2026-03-10）
+
+1. `../AOEM-FFI/AOEM-FFI-BETA08-TPS-SEAL-Linux-2026-03-10.md`
+   - AOEM FFI Linux 十二线封盘（core/persist/wasm）。
+2. `../CONSENSUS/NOVOVM-CONSENSUS-NETWORK-E2E-TPS-SEAL-Linux-2026-03-10.md`
+   - 共识网络 E2E TPS Linux 封盘（persist + ops_wire_v1 + inmemory）。
+
 ## 建议阅读顺序
 
 1. 审计报告（先确认问题边界）

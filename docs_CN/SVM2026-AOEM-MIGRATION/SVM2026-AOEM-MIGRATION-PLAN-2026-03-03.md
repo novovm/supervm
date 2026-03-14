@@ -35,7 +35,15 @@
 - 验收与封盘：
   - [x] 功能一致性代理脚本（`scripts/migration/run_functional_consistency.ps1`）
   - [x] TPS 口径采集脚本（`scripts/migration/run_performance_compare.ps1`）
-  - [ ] 导入 `SVM2026` baseline 并完成性能回归判定
-  - [ ] 接入 `state_root` 并完成硬一致性校验
-  - [ ] 稳定性与回归测试封盘
+  - [x] 导入 `AOEM seal baseline` 并完成性能回归判定（`2026-03-13 11:55 HDT`，Linux seal baseline，`pass=true`）
+  - [x] 接入 `state_root` 并完成硬一致性校验（`2026-03-13 11:59 HDT`，`epoch_commit/proposal_emit` 双阶段校验 + 负向单测）
+  - [ ] 稳定性与回归测试封盘（`2026-03-13 12:15 HDT` 已新增 `run_stability_window_gate.ps1`、完成 smoke 并启动 `72h` 实窗，待窗口完成后封盘）
+
+### Phase 4 证据路径（2026-03-13）
+
+- `artifacts/migration/week1-2026-03-13/perf-gate-seal-single/performance-gate-summary.json`
+- `cargo test -p novovm-consensus state_root_match_helper`
+- `cargo test -p novovm-consensus test_propose_epoch_with_state_root_override`
+- `scripts/migration/run_stability_window_gate.ps1`
+- `artifacts/migration/week1-2026-03-13/stability-window-smoke/stability-window-summary.json`
 

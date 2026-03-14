@@ -2,6 +2,7 @@
 name = "novovm-prover"
 version = "0.1.0"
 edition = "2021"
+license = "GPL-3.0-or-later"
 authors = ["SuperVM Core Team"]
 description = "NOVOVM prover capability bridge (F-09/F-15 migration scaffold)."
 

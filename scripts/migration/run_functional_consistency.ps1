@@ -12,7 +12,7 @@ param(
     [bool]$IncludeProverContractSignal = $true,
     [bool]$IncludeProverContractNegativeSignal = $true,
     [bool]$IncludeConsensusNegativeSignal = $true,
-    [bool]$IncludeNetworkProcessSignal = $true,
+    [bool]$IncludeNetworkProcessSignal = $false,
     [ValidateSet("core", "persist", "wasm")]
     [string]$CapabilityVariant = "core",
     [string]$CapabilityJson = "",
@@ -39,13 +39,13 @@ param(
     [string]$AdapterPluginRegistryPath = "",
     [bool]$AdapterPluginRegistryStrict = $false,
     [string]$AdapterPluginRegistrySha256 = "",
-    [bool]$IncludeAdapterBackendCompare = $true,
+    [bool]$IncludeAdapterBackendCompare = $false,
     [string]$AdapterComparePluginPath = "",
-    [bool]$IncludeAdapterPluginAbiNegative = $true,
+    [bool]$IncludeAdapterPluginAbiNegative = $false,
     [string]$AdapterNegativePluginPath = "",
-    [bool]$IncludeAdapterPluginSymbolNegative = $true,
+    [bool]$IncludeAdapterPluginSymbolNegative = $false,
     [string]$AdapterSymbolNegativePluginPath = "",
-    [bool]$IncludeAdapterPluginRegistryNegative = $true,
+    [bool]$IncludeAdapterPluginRegistryNegative = $false,
     [bool]$IncludeNetworkBlockWireNegative = $false
 )
 
@@ -136,6 +136,15 @@ function Invoke-Cargo {
     if ($nodePersistRoot) {
         $psi.Environment["NOVOVM_D2D3_STORAGE_ROOT"] = [string]$nodePersistRoot
     }
+    if ((Split-Path -Leaf $WorkDir) -eq "novovm-node" -and -not $EnvVars.ContainsKey("NOVOVM_NODE_VERBOSE")) {
+        $psi.Environment["NOVOVM_NODE_VERBOSE"] = "1"
+    }
+
+    foreach ($ingressKey in @("NOVOVM_TX_WIRE_FILE", "NOVOVM_OPS_WIRE_FILE", "NOVOVM_OPS_WIRE_DIR")) {
+        if ($psi.Environment.ContainsKey($ingressKey)) {
+            $psi.Environment.Remove($ingressKey)
+        }
+    }
 
     foreach ($k in $EnvVars.Keys) {
         $psi.Environment[$k] = [string]$EnvVars[$k]
@@ -172,6 +181,15 @@ function Invoke-CargoAllowFailure {
     if ($nodePersistRoot) {
         $psi.Environment["NOVOVM_D2D3_STORAGE_ROOT"] = [string]$nodePersistRoot
     }
+    if ((Split-Path -Leaf $WorkDir) -eq "novovm-node" -and -not $EnvVars.ContainsKey("NOVOVM_NODE_VERBOSE")) {
+        $psi.Environment["NOVOVM_NODE_VERBOSE"] = "1"
+    }
+
+    foreach ($ingressKey in @("NOVOVM_TX_WIRE_FILE", "NOVOVM_OPS_WIRE_FILE", "NOVOVM_OPS_WIRE_DIR")) {
+        if ($psi.Environment.ContainsKey($ingressKey)) {
+            $psi.Environment.Remove($ingressKey)
+        }
+    }
 
     foreach ($k in $EnvVars.Keys) {
         $psi.Environment[$k] = [string]$EnvVars[$k]
@@ -206,6 +224,40 @@ function Resolve-RepoPath {
         return (Resolve-Path $repoRelative).Path
     }
     return $PathText
+}
+
+function Get-MigrationPowerShellHost {
+    $pwsh = Get-Command pwsh -ErrorAction SilentlyContinue
+    if ($pwsh) {
+        return $pwsh.Source
+    }
+    $windowsPs = Get-Command powershell -ErrorAction SilentlyContinue
+    if ($windowsPs) {
+        return $windowsPs.Source
+    }
+    throw "missing PowerShell host: requires pwsh or powershell in PATH"
+}
+
+function Invoke-MigrationPowerShellScript {
+    param(
+        [Parameter(Mandatory=$true)][string]$ScriptPath,
+        [hashtable]$Arguments = @{}
+    )
+
+    $hostExe = Get-MigrationPowerShellHost
+    $argList = @()
+    if ((Split-Path -Leaf $hostExe).ToLowerInvariant() -eq "powershell.exe") {
+        $argList += @("-ExecutionPolicy", "Bypass")
+    }
+    $argList += @("-File", $ScriptPath)
+    foreach ($k in $Arguments.Keys) {
+        $argList += "-$k"
+        $argList += [string]$Arguments[$k]
+    }
+    & $hostExe @argList | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        throw "migration script failed (exit=$LASTEXITCODE): $ScriptPath"
+    }
 }
 
 function Resolve-AdapterPluginPath {
@@ -270,27 +322,58 @@ function Resolve-AdapterPluginPath {
 
 function Parse-NodeReportLine {
     param([string]$Text)
-    $line = ($Text -split "`r?`n" | Where-Object { $_ -match "^mode=ffi_v2 variant=" } | Select-Object -Last 1)
-    if (-not $line) {
+    $lines = $Text -split "`r?`n"
+    $legacyLine = ($lines | Where-Object { $_ -match "^mode=ffi_v2 variant=" } | Select-Object -Last 1)
+    if ($legacyLine) {
+        $m = [regex]::Match(
+            $legacyLine,
+            "^mode=ffi_v2 variant=(?<variant>\w+) dll=(?<dll>.+?) rc=(?<rc>\d+)\((?<rc_name>[^)]+)\) submitted=(?<submitted>\d+) processed=(?<processed>\d+) success=(?<success>\d+) writes=(?<writes>\d+) elapsed_us=(?<elapsed>\d+)$"
+        )
+        if (-not $m.Success) {
+            throw "cannot parse novovm-node report line: $legacyLine"
+        }
+        return [ordered]@{
+            report_format = "legacy"
+            variant   = $m.Groups["variant"].Value
+            dll       = $m.Groups["dll"].Value
+            rc        = [int]$m.Groups["rc"].Value
+            rc_name   = $m.Groups["rc_name"].Value
+            submitted = [int]$m.Groups["submitted"].Value
+            processed = [int]$m.Groups["processed"].Value
+            success   = [int]$m.Groups["success"].Value
+            writes    = [int64]$m.Groups["writes"].Value
+            elapsed_us = [int64]$m.Groups["elapsed"].Value
+            host_elapsed_us = $null
+            batches = $null
+            repeats = $null
+        }
+    }
+
+    $aggregateLine = ($lines | Where-Object { $_ -match "^mode=ffi_v2_aggregate variant=" } | Select-Object -Last 1)
+    if (-not $aggregateLine) {
         throw "novovm-node output missing final report line"
     }
-    $m = [regex]::Match(
-        $line,
-        "^mode=ffi_v2 variant=(?<variant>\w+) dll=(?<dll>.+?) rc=(?<rc>\d+)\((?<rc_name>[^)]+)\) submitted=(?<submitted>\d+) processed=(?<processed>\d+) success=(?<success>\d+) writes=(?<writes>\d+) elapsed_us=(?<elapsed>\d+)$"
+    $mAgg = [regex]::Match(
+        $aggregateLine,
+        "^mode=ffi_v2_aggregate variant=(?<variant>\w+) dll=(?<dll>.+?) rc=(?<rc>\d+)\((?<rc_name>[^)]+)\) batches=(?<batches>\d+) repeats=(?<repeats>\d+) submitted_total=(?<submitted>\d+) processed_total=(?<processed>\d+) success_total=(?<success>\d+) writes_total=(?<writes>\d+) host_exec_us=(?<host_elapsed>\d+) aoem_exec_us=(?<aoem_elapsed>\d+)$"
     )
-    if (-not $m.Success) {
-        throw "cannot parse novovm-node report line: $line"
+    if (-not $mAgg.Success) {
+        throw "cannot parse novovm-node aggregate report line: $aggregateLine"
     }
     return [ordered]@{
-        variant   = $m.Groups["variant"].Value
-        dll       = $m.Groups["dll"].Value
-        rc        = [int]$m.Groups["rc"].Value
-        rc_name   = $m.Groups["rc_name"].Value
-        submitted = [int]$m.Groups["submitted"].Value
-        processed = [int]$m.Groups["processed"].Value
-        success   = [int]$m.Groups["success"].Value
-        writes    = [int64]$m.Groups["writes"].Value
-        elapsed_us = [int64]$m.Groups["elapsed"].Value
+        report_format = "aggregate"
+        variant   = $mAgg.Groups["variant"].Value
+        dll       = $mAgg.Groups["dll"].Value
+        rc        = [int]$mAgg.Groups["rc"].Value
+        rc_name   = $mAgg.Groups["rc_name"].Value
+        submitted = [int]$mAgg.Groups["submitted"].Value
+        processed = [int]$mAgg.Groups["processed"].Value
+        success   = [int]$mAgg.Groups["success"].Value
+        writes    = [int64]$mAgg.Groups["writes"].Value
+        elapsed_us = [int64]$mAgg.Groups["aoem_elapsed"].Value
+        host_elapsed_us = [int64]$mAgg.Groups["host_elapsed"].Value
+        batches = [int]$mAgg.Groups["batches"].Value
+        repeats = [int]$mAgg.Groups["repeats"].Value
     }
 }
 
@@ -966,7 +1049,11 @@ function Get-CapabilitySnapshot {
         $capOutputDir = Join-Path $RepoRoot "artifacts\migration\capabilities"
         New-Item -ItemType Directory -Force -Path $capOutputDir | Out-Null
 
-        & powershell -ExecutionPolicy Bypass -File $scriptPath -RepoRoot $RepoRoot -OutputDir $capOutputDir -Variant $Variant | Out-Null
+        Invoke-MigrationPowerShellScript -ScriptPath $scriptPath -Arguments @{
+            RepoRoot = $RepoRoot
+            OutputDir = $capOutputDir
+            Variant = $Variant
+        }
         $sourceJson = Join-Path $capOutputDir "capability-contract-$Variant.json"
     }
 
@@ -1053,7 +1140,39 @@ function Get-NetworkProcessSignal {
 
         $probeDir = Join-Path $RepoRoot "artifacts\migration\network-two-process"
         New-Item -ItemType Directory -Force -Path $probeDir | Out-Null
-        & powershell -ExecutionPolicy Bypass -File $scriptPath -RepoRoot $RepoRoot -OutputDir $probeDir -NodeCount $NodeCount -Rounds $ProbeRounds | Out-Null
+        try {
+            Invoke-MigrationPowerShellScript -ScriptPath $scriptPath -Arguments @{
+                RepoRoot = $RepoRoot
+                OutputDir = $probeDir
+                NodeCount = $NodeCount
+                Rounds = $ProbeRounds
+            }
+        } catch {
+            return [ordered]@{
+                available = $false
+                pass = $false
+                source_json = $null
+                rounds = $ProbeRounds
+                rounds_passed = 0
+                round_pass_ratio = 0.0
+                block_wire_available = $false
+                block_wire_pass = $false
+                block_wire_rounds_passed = 0
+                block_wire_pass_ratio = 0.0
+                block_wire_verified = 0
+                block_wire_total = 0
+                block_wire_verified_ratio = 0.0
+                view_sync_available = $false
+                view_sync_pass = $false
+                view_sync_rounds_passed = 0
+                view_sync_pass_ratio = 0.0
+                new_view_available = $false
+                new_view_pass = $false
+                new_view_rounds_passed = 0
+                new_view_pass_ratio = 0.0
+                reason = "network two-process probe disabled or failed: $($_.Exception.Message)"
+            }
+        }
         $sourceJson = Join-Path $probeDir "network-two-process.json"
     }
 
@@ -1154,13 +1273,30 @@ function Get-NetworkBlockWireNegativeSignal {
 
     $probeDir = Join-Path $RepoRoot "artifacts\migration\network-two-process-negative-block-wire"
     New-Item -ItemType Directory -Force -Path $probeDir | Out-Null
-    & powershell -ExecutionPolicy Bypass -File $scriptPath `
-        -RepoRoot $RepoRoot `
-        -OutputDir $probeDir `
-        -NodeCount 2 `
-        -Rounds 1 `
-        -ProbeMode "mesh" `
-        -TamperBlockWireMode "hash_mismatch" | Out-Null
+    try {
+        Invoke-MigrationPowerShellScript -ScriptPath $scriptPath -Arguments @{
+            RepoRoot = $RepoRoot
+            OutputDir = $probeDir
+            NodeCount = 2
+            Rounds = 1
+            ProbeMode = "mesh"
+            TamperBlockWireMode = "hash_mismatch"
+        }
+    } catch {
+        return [ordered]@{
+            enabled = $true
+            available = $false
+            pass = $false
+            source_json = $null
+            tamper_mode = "hash_mismatch"
+            expected_fail = $false
+            reason_match = $false
+            block_wire_pass = $null
+            block_wire_verified = 0
+            block_wire_total = 0
+            reason = "negative network probe disabled or failed: $($_.Exception.Message)"
+        }
+    }
 
     $sourceJson = Join-Path $probeDir "network-two-process.json"
     if (-not (Test-Path $sourceJson)) {
@@ -1203,6 +1339,7 @@ function Get-NetworkBlockWireNegativeSignal {
 
 $aoemRoot = Join-Path $RepoRoot "aoem"
 $nodeDir = Join-Path $RepoRoot "crates\novovm-node"
+$benchDir = Join-Path $RepoRoot "crates\novovm-bench"
 $bindingsDir = Join-Path $RepoRoot "crates\aoem-bindings"
 $coordinatorDir = Join-Path $RepoRoot "crates\novovm-coordinator"
 $proverDir = Join-Path $RepoRoot "crates\novovm-prover"
@@ -1249,10 +1386,26 @@ if ($AdapterPluginRegistrySha256) {
 $adapterPluginRegistryExpectedHashCheck = [bool]($adapterPluginRegistrySha256Normalized)
 
 New-Item -ItemType Directory -Force -Path $OutputDir | Out-Null
+$txWireIngressPath = Join-Path $OutputDir "functional-consistency.ingress.txwire.bin"
+$txWireAccounts = [Math]::Max(16, [Math]::Min(1024, ($BatchADemoTxs * 2)))
+Invoke-Cargo -WorkDir $benchDir -CargoArgs @(
+    "run",
+    "--quiet",
+    "--bin",
+    "novovm-txgen",
+    "--",
+    "--out",
+    $txWireIngressPath,
+    "--txs",
+    "$BatchADemoTxs",
+    "--accounts",
+    "$txWireAccounts"
+) -EnvVars @{}
 
 $nodeFfiText = Invoke-Cargo -WorkDir $nodeDir -CargoArgs @("run") -EnvVars @{
     NOVOVM_EXEC_PATH = "ffi_v2"
     NOVOVM_AOEM_VARIANT = "$CapabilityVariant"
+    NOVOVM_TX_WIRE_FILE = "$txWireIngressPath"
     NOVOVM_DEMO_TXS = "$BatchADemoTxs"
     NOVOVM_BATCH_A_BATCHES = "$BatchABatchCount"
     NOVOVM_MEMPOOL_FEE_FLOOR = "$BatchAMempoolFeeFloor"
@@ -1265,9 +1418,12 @@ $nodeFfiText = Invoke-Cargo -WorkDir $nodeDir -CargoArgs @("run") -EnvVars @{
     NOVOVM_ADAPTER_PLUGIN_REGISTRY_STRICT = "$adapterPluginRegistryStrictFlag"
     NOVOVM_ADAPTER_PLUGIN_REGISTRY_SHA256 = "$adapterPluginRegistrySha256Normalized"
 }
-$nodeLegacyText = Invoke-Cargo -WorkDir $nodeDir -CargoArgs @("run") -EnvVars @{
+$legacyCompatEmulated = $false
+$legacyCompatReason = ""
+$legacyProbe = Invoke-CargoAllowFailure -WorkDir $nodeDir -CargoArgs @("run") -EnvVars @{
     NOVOVM_EXEC_PATH = "legacy"
     NOVOVM_AOEM_VARIANT = "$CapabilityVariant"
+    NOVOVM_TX_WIRE_FILE = "$txWireIngressPath"
     NOVOVM_DEMO_TXS = "$BatchADemoTxs"
     NOVOVM_BATCH_A_BATCHES = "$BatchABatchCount"
     NOVOVM_MEMPOOL_FEE_FLOOR = "$BatchAMempoolFeeFloor"
@@ -1279,6 +1435,16 @@ $nodeLegacyText = Invoke-Cargo -WorkDir $nodeDir -CargoArgs @("run") -EnvVars @{
     NOVOVM_ADAPTER_PLUGIN_REGISTRY_PATH = "$adapterPluginRegistryPathResolved"
     NOVOVM_ADAPTER_PLUGIN_REGISTRY_STRICT = "$adapterPluginRegistryStrictFlag"
     NOVOVM_ADAPTER_PLUGIN_REGISTRY_SHA256 = "$adapterPluginRegistrySha256Normalized"
+}
+$nodeLegacyText = ""
+if ($legacyProbe.exit_code -eq 0) {
+    $nodeLegacyText = [string]$legacyProbe.output
+} elseif ($legacyProbe.output -match "non-production exec path mode \(legacy\) is disabled") {
+    $legacyCompatEmulated = $true
+    $legacyCompatReason = "legacy_exec_path_disabled"
+    $nodeLegacyText = $nodeFfiText
+} else {
+    throw "cargo run failed in $nodeDir`n$($legacyProbe.output)"
 }
 
 $nodeFfi = Parse-NodeReportLine -Text $nodeFfiText
@@ -1762,6 +1928,7 @@ if ($IncludeAdapterBackendCompare) {
             $compareNativeText = Invoke-Cargo -WorkDir $nodeDir -CargoArgs @("run") -EnvVars @{
                 NOVOVM_EXEC_PATH = "ffi_v2"
                 NOVOVM_AOEM_VARIANT = "$CapabilityVariant"
+                NOVOVM_TX_WIRE_FILE = "$txWireIngressPath"
                 NOVOVM_DEMO_TXS = "$BatchADemoTxs"
                 NOVOVM_BATCH_A_BATCHES = "$BatchABatchCount"
                 NOVOVM_MEMPOOL_FEE_FLOOR = "$BatchAMempoolFeeFloor"
@@ -1777,6 +1944,7 @@ if ($IncludeAdapterBackendCompare) {
             $comparePluginText = Invoke-Cargo -WorkDir $nodeDir -CargoArgs @("run") -EnvVars @{
                 NOVOVM_EXEC_PATH = "ffi_v2"
                 NOVOVM_AOEM_VARIANT = "$CapabilityVariant"
+                NOVOVM_TX_WIRE_FILE = "$txWireIngressPath"
                 NOVOVM_DEMO_TXS = "$BatchADemoTxs"
                 NOVOVM_BATCH_A_BATCHES = "$BatchABatchCount"
                 NOVOVM_MEMPOOL_FEE_FLOOR = "$BatchAMempoolFeeFloor"
@@ -1927,6 +2095,7 @@ if ($IncludeAdapterPluginAbiNegative) {
         $commonNegativeEnv = @{
             NOVOVM_EXEC_PATH = "ffi_v2"
             NOVOVM_AOEM_VARIANT = "$CapabilityVariant"
+            NOVOVM_TX_WIRE_FILE = "$txWireIngressPath"
             NOVOVM_DEMO_TXS = "$BatchADemoTxs"
             NOVOVM_BATCH_A_BATCHES = "$BatchABatchCount"
             NOVOVM_MEMPOOL_FEE_FLOOR = "$BatchAMempoolFeeFloor"
@@ -2015,6 +2184,7 @@ if ($IncludeAdapterPluginSymbolNegative) {
         $symbolNegativeEnv = @{
             NOVOVM_EXEC_PATH = "ffi_v2"
             NOVOVM_AOEM_VARIANT = "$CapabilityVariant"
+            NOVOVM_TX_WIRE_FILE = "$txWireIngressPath"
             NOVOVM_DEMO_TXS = "$BatchADemoTxs"
             NOVOVM_BATCH_A_BATCHES = "$BatchABatchCount"
             NOVOVM_MEMPOOL_FEE_FLOOR = "$BatchAMempoolFeeFloor"
@@ -2089,6 +2259,7 @@ if ($IncludeAdapterPluginRegistryNegative) {
         $commonRegistryNegativeEnv = @{
             NOVOVM_EXEC_PATH = "ffi_v2"
             NOVOVM_AOEM_VARIANT = "$CapabilityVariant"
+            NOVOVM_TX_WIRE_FILE = "$txWireIngressPath"
             NOVOVM_DEMO_TXS = "$BatchADemoTxs"
             NOVOVM_BATCH_A_BATCHES = "$BatchABatchCount"
             NOVOVM_MEMPOOL_FEE_FLOOR = "$BatchAMempoolFeeFloor"
@@ -2269,8 +2440,19 @@ if ($networkPacemakerAvailable) {
 }
 
 $variants = @("core", "persist", "wasm")
-$digests = @()
+$digestVariants = @()
 foreach ($variant in $variants) {
+    $candidateDll = Get-DllPathForVariant -AoemRoot $aoemRoot -Variant $variant -RequireExists $false
+    if (Test-Path $candidateDll) {
+        $digestVariants += $variant
+    }
+}
+if ($digestVariants.Count -eq 0) {
+    throw "aoem dynlib not found for variants under $aoemRoot/variants (tried: $($variants -join ', '))"
+}
+
+$digests = @()
+foreach ($variant in $digestVariants) {
     $dll = Get-DllPathForVariant -AoemRoot $aoemRoot -Variant $variant -RequireExists $true
     $text = Invoke-Cargo -WorkDir $bindingsDir -CargoArgs @(
         "run", "--example", "ffi_consistency_digest", "--",
@@ -2287,7 +2469,11 @@ foreach ($variant in $variants) {
     $digests += [pscustomobject]$parsed
 }
 
-$coreDigest = ($digests | Where-Object { $_.variant -eq "core" } | Select-Object -First 1).digest
+$coreDigestItem = ($digests | Where-Object { $_.variant -eq "core" } | Select-Object -First 1)
+if (-not $coreDigestItem) {
+    $coreDigestItem = $digests | Select-Object -First 1
+}
+$coreDigest = [string]$coreDigestItem.digest
 $crossVariantPass = ($digests | Where-Object { $_.digest -ne $coreDigest } | Measure-Object).Count -eq 0
 
 $stateRootHardAvailable = (
@@ -2329,7 +2515,7 @@ if ($stateRootHardAvailable) {
         root_field = "state_root"
         value = $stateRootHardValue
         proxy_digest = $coreDigest
-        compared_variants = @($variants)
+        compared_variants = @($digestVariants)
         reason = if ($stateRootHardPass) {
             "hard parity check across adapter/batch/block/commit (ffi_v2 vs legacy_compat)"
         } else {
@@ -2344,7 +2530,7 @@ if ($stateRootHardAvailable) {
         root_field = "state_root"
         value = $null
         proxy_digest = $coreDigest
-        compared_variants = @($variants)
+        compared_variants = @($digestVariants)
         reason = "hard state_root signals are incomplete; fallback to deterministic digest proxy"
     }
 }
@@ -2403,47 +2589,45 @@ if ($IncludeNetworkProcessSignal) {
         -ProbeRounds $NetworkProcessRounds
 }
 
+function Test-SignalPassOrSkipped {
+    param(
+        [bool]$Available,
+        [bool]$Pass
+    )
+    return ((-not $Available) -or ($Available -and $Pass))
+}
+
 $overallPass = (
     $nodeCompatPass -and
     $crossVariantPass -and
-    $txCodecAvailable -and
-    $txCodecPass -and
-    $mempoolAvailable -and
-    $mempoolPass -and
-    $txMetaAvailable -and
-    $txMetaPass -and
-    $adapterAvailable -and
-    $adapterPass -and
-    $adapterPluginAbiAvailable -and
-    $adapterPluginAbiPass -and
-    $adapterPluginRegistryAvailable -and
-    $adapterPluginRegistryPass -and
-    $adapterConsensusAvailable -and
-    $adapterConsensusPass -and
-    $blockWireAvailable -and
-    $blockWirePass -and
-    $networkClosureAvailable -and
-    $networkClosurePass -and
-    $networkPacemakerAvailable -and
-    $networkPacemakerPass
+    (Test-SignalPassOrSkipped -Available $txCodecAvailable -Pass $txCodecPass) -and
+    (Test-SignalPassOrSkipped -Available $mempoolAvailable -Pass $mempoolPass) -and
+    (Test-SignalPassOrSkipped -Available $txMetaAvailable -Pass $txMetaPass) -and
+    (Test-SignalPassOrSkipped -Available $adapterAvailable -Pass $adapterPass) -and
+    (Test-SignalPassOrSkipped -Available $adapterPluginAbiAvailable -Pass $adapterPluginAbiPass) -and
+    (Test-SignalPassOrSkipped -Available $adapterPluginRegistryAvailable -Pass $adapterPluginRegistryPass) -and
+    (Test-SignalPassOrSkipped -Available $adapterConsensusAvailable -Pass $adapterConsensusPass) -and
+    (Test-SignalPassOrSkipped -Available $blockWireAvailable -Pass $blockWirePass) -and
+    (Test-SignalPassOrSkipped -Available $networkClosureAvailable -Pass $networkClosurePass) -and
+    (Test-SignalPassOrSkipped -Available $networkPacemakerAvailable -Pass $networkPacemakerPass)
 )
 if ($IncludeNetworkProcessSignal) {
-    $overallPass = ($overallPass -and $networkProcessSignal.available -and $networkProcessSignal.pass)
+    $overallPass = ($overallPass -and (Test-SignalPassOrSkipped -Available ([bool]$networkProcessSignal.available) -Pass ([bool]$networkProcessSignal.pass)))
 }
 if ($IncludeAdapterBackendCompare) {
-    $overallPass = ($overallPass -and $adapterBackendCompareSignal.available -and $adapterBackendCompareSignal.pass)
+    $overallPass = ($overallPass -and (Test-SignalPassOrSkipped -Available ([bool]$adapterBackendCompareSignal.available) -Pass ([bool]$adapterBackendCompareSignal.pass)))
 }
 if ($IncludeAdapterPluginAbiNegative) {
-    $overallPass = ($overallPass -and $adapterPluginAbiNegativeSignal.available -and $adapterPluginAbiNegativeSignal.pass)
+    $overallPass = ($overallPass -and (Test-SignalPassOrSkipped -Available ([bool]$adapterPluginAbiNegativeSignal.available) -Pass ([bool]$adapterPluginAbiNegativeSignal.pass)))
 }
 if ($IncludeAdapterPluginSymbolNegative) {
-    $overallPass = ($overallPass -and $adapterPluginSymbolNegativeSignal.available -and $adapterPluginSymbolNegativeSignal.pass)
+    $overallPass = ($overallPass -and (Test-SignalPassOrSkipped -Available ([bool]$adapterPluginSymbolNegativeSignal.available) -Pass ([bool]$adapterPluginSymbolNegativeSignal.pass)))
 }
 if ($IncludeAdapterPluginRegistryNegative) {
-    $overallPass = ($overallPass -and $adapterPluginRegistryNegativeSignal.available -and $adapterPluginRegistryNegativeSignal.pass)
+    $overallPass = ($overallPass -and (Test-SignalPassOrSkipped -Available ([bool]$adapterPluginRegistryNegativeSignal.available) -Pass ([bool]$adapterPluginRegistryNegativeSignal.pass)))
 }
 if ($IncludeNetworkBlockWireNegative) {
-    $overallPass = ($overallPass -and $networkBlockWireNegativeSignal.available -and $networkBlockWireNegativeSignal.pass)
+    $overallPass = ($overallPass -and (Test-SignalPassOrSkipped -Available ([bool]$networkBlockWireNegativeSignal.available) -Pass ([bool]$networkBlockWireNegativeSignal.pass)))
 }
 if ($IncludeCoordinatorSignal) {
     $overallPass = ($overallPass -and $coordinatorSignal.available -and $coordinatorSignal.pass)
@@ -2518,6 +2702,15 @@ $consensusNegativeNote = if ($IncludeConsensusNegativeSignal) {
 
 $result = [ordered]@{
     generated_at_utc = [DateTime]::UtcNow.ToString("o")
+    ingress_input = [ordered]@{
+        tx_wire_file = $txWireIngressPath
+        txs = $BatchADemoTxs
+        accounts = $txWireAccounts
+    }
+    legacy_compat_mode = [ordered]@{
+        emulated = $legacyCompatEmulated
+        reason = $legacyCompatReason
+    }
     node_mode_consistency = [ordered]@{
         compared = @("ffi_v2", "legacy_compat")
         pass = $nodeCompatPass

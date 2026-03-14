@@ -13809,3 +13809,132 @@ fn eth_fee_endpoints_use_chain_scoped_fee_overrides() {
     let _ = fs::remove_dir_all(&spool_dir);
     restore_env_vars(&captured);
 }
+
+fn fuzz_env_u64(name: &str, default: u64) -> u64 {
+    std::env::var(name)
+        .ok()
+        .and_then(|raw| raw.trim().parse::<u64>().ok())
+        .unwrap_or(default)
+}
+
+fn fuzz_env_usize(name: &str, default: usize) -> usize {
+    std::env::var(name)
+        .ok()
+        .and_then(|raw| raw.trim().parse::<usize>().ok())
+        .unwrap_or(default)
+}
+
+fn fuzz_next(state: &mut u64) -> u64 {
+    let mut x = *state;
+    x ^= x >> 12;
+    x ^= x << 25;
+    x ^= x >> 27;
+    *state = x;
+    x.wrapping_mul(0x2545_F491_4F6C_DD1D)
+}
+
+fn fuzz_hex(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for b in bytes {
+        out.push(HEX[(b >> 4) as usize] as char);
+        out.push(HEX[(b & 0x0f) as usize] as char);
+    }
+    out
+}
+
+fn fuzz_mutate_json_bytes(state: &mut u64, base: &[u8]) -> Vec<u8> {
+    let mut out = base.to_vec();
+    match fuzz_next(state) % 4 {
+        0 => {
+            if !out.is_empty() {
+                let idx = (fuzz_next(state) as usize) % out.len();
+                out[idx] ^= (fuzz_next(state) & 0xff) as u8;
+            }
+        }
+        1 => {
+            let flips = ((fuzz_next(state) % 8) + 1) as usize;
+            for _ in 0..flips {
+                if out.is_empty() {
+                    break;
+                }
+                let idx = (fuzz_next(state) as usize) % out.len();
+                out[idx] = (fuzz_next(state) & 0xff) as u8;
+            }
+        }
+        2 => {
+            if !out.is_empty() {
+                let keep = (fuzz_next(state) as usize) % out.len();
+                out.truncate(keep);
+            }
+        }
+        _ => {
+            let append = ((fuzz_next(state) % 16) + 1) as usize;
+            for _ in 0..append {
+                out.push((fuzz_next(state) & 0xff) as u8);
+            }
+        }
+    }
+    out
+}
+
+#[test]
+fn fuzz_min_rpc_params_seeded_corpus_no_panic() {
+    let _guard = env_test_guard();
+    let seed = fuzz_env_u64("NOVOVM_FUZZ_MIN_SEED", 20260313);
+    let iterations = fuzz_env_usize("NOVOVM_FUZZ_MIN_RPC_ITERS", 3000);
+    let mut state = seed.max(1);
+
+    let corpus: Vec<Vec<u8>> = vec![
+        br#"{}"#.to_vec(),
+        br#"[]"#.to_vec(),
+        br#"{"chain_id":"0x1"}"#.to_vec(),
+        br#"[{"tx_hash":"0x1234"},{"block":"latest"},true]"#.to_vec(),
+        br#"{"filter":{"address":"0x1111111111111111111111111111111111111111","topics":["0x2222222222222222222222222222222222222222222222222222222222222222"]}}"#.to_vec(),
+        br#"{"raw_tx":"0xf86c018502540be40082520894aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa88016345785d8a00008026a0b7e8e4a6c7d58a47f6d29b6cb16f1c7f5c8a7f7ec5b9fa7a1d8c19f6d8f2b87a02a6d2f8c8f42d8f6d8909f94b6f6a6a4d9f7f1c7b6a5d4e3f2c1b0a99887766"}"#.to_vec(),
+        br#"{"blockHash":"0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","storageKeys":["0x1","0x2"]}"#.to_vec(),
+    ];
+
+    for _ in 0..iterations {
+        let idx = (fuzz_next(&mut state) as usize) % corpus.len();
+        let mutated = fuzz_mutate_json_bytes(&mut state, &corpus[idx]);
+        let params = match serde_json::from_slice::<serde_json::Value>(&mutated) {
+            Ok(value) => value,
+            Err(_) => {
+                if (fuzz_next(&mut state) & 1) == 0 {
+                    serde_json::json!([String::from_utf8_lossy(&mutated).to_string()])
+                } else {
+                    serde_json::json!({
+                        "raw": format!("0x{}", fuzz_hex(&mutated)),
+                        "chain_id": "0x1"
+                    })
+                }
+            }
+        };
+
+        let latest = ((fuzz_next(&mut state) % 50_000) + 1) as u64;
+        let no_panic = std::panic::catch_unwind(|| {
+            let _ = parse_eth_block_query_tag(&params);
+            let _ = parse_eth_block_query_tx_index(&params);
+            let _ = parse_eth_tx_count_block_tag(&params);
+            let _ = parse_eth_get_proof_storage_keys(&params);
+            let _ = parse_eth_get_proof_block_tag(&params);
+            let _ = parse_eth_logs_query_from_params(&params, latest);
+            let _ = extract_eth_raw_tx_param(&params);
+            let _ = extract_web3_sha3_input_hex(&params);
+            let _ = extract_web30_tx_payload(&params);
+        });
+        assert!(
+            no_panic.is_ok(),
+            "rpc params parser panicked for input={}",
+            params
+        );
+    }
+
+    println!(
+        "fuzz_min_rpc_params: seed={} iterations={} corpus={}",
+        seed,
+        iterations,
+        corpus.len()
+    );
+}

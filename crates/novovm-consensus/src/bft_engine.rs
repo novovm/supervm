@@ -86,6 +86,15 @@ pub struct BFTEngine {
     last_commit_qc_timings: Option<CommitQcTimings>,
 }
 
+fn ensure_state_root_match(stage: &str, expected: Hash, actual: Hash) -> BFTResult<()> {
+    if expected != actual {
+        return Err(BFTError::InvalidProposal(format!(
+            "state_root mismatch at {stage}: expected={expected:?} actual={actual:?}"
+        )));
+    }
+    Ok(())
+}
+
 impl BFTEngine {
     /// 创建新的 BFT 引擎
     pub fn new(
@@ -192,11 +201,21 @@ impl BFTEngine {
 
         // 提交 Epoch
         let committed_epoch = manager.commit_current_epoch()?;
+        ensure_state_root_match(
+            "epoch_commit",
+            state_root,
+            committed_epoch.state_root,
+        )?;
         drop(manager);
 
         // 通过协议提出提案
         let mut protocol = self.protocol.lock().expect("BFTEngine mutex poisoned");
         let proposal = protocol.propose(&committed_epoch)?;
+        ensure_state_root_match(
+            "proposal_emit",
+            state_root,
+            proposal.state_delta_hash,
+        )?;
         Ok(proposal)
     }
 
@@ -905,6 +924,20 @@ mod tests {
             .unwrap();
 
         assert_eq!(proposal.state_delta_hash, override_root);
+    }
+
+    #[test]
+    fn test_state_root_match_helper_accepts_equal() {
+        assert!(ensure_state_root_match("test_stage", [1u8; 32], [1u8; 32]).is_ok());
+    }
+
+    #[test]
+    fn test_state_root_match_helper_rejects_mismatch() {
+        let err = ensure_state_root_match("proposal_emit", [1u8; 32], [2u8; 32])
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("state_root mismatch"));
+        assert!(err.contains("proposal_emit"));
     }
 
     #[test]

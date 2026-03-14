@@ -279,10 +279,13 @@ if (-not [string]::IsNullOrWhiteSpace($env:CARGO_TARGET_DIR)) {
 }
 $nodeExeCandidates = @()
 if (-not [string]::IsNullOrWhiteSpace($cargoTargetDir)) {
+    $nodeExeCandidates += (Join-Path $cargoTargetDir "debug\novovm-node")
     $nodeExeCandidates += (Join-Path $cargoTargetDir "debug\novovm-node.exe")
 }
 $nodeExeCandidates += @(
+    (Join-Path $RepoRoot "target\debug\novovm-node"),
     (Join-Path $RepoRoot "target\debug\novovm-node.exe"),
+    (Join-Path $nodeCrateDir "target\debug\novovm-node"),
     (Join-Path $nodeCrateDir "target\debug\novovm-node.exe")
 )
 $nodeExe = ""

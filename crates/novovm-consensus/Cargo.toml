@@ -2,6 +2,7 @@
 name = "novovm-consensus"
 version = "0.1.0"
 edition = "2021"
+license = "GPL-3.0-or-later"
 authors = ["SuperVM Core Team"]
 description = "NOVOVM consensus migration skeleton from SVM2026"
 
@@ -28,4 +29,3 @@ criterion = "0.5"
 [features]
 default = []
 async-runtime = ["tokio"]
-

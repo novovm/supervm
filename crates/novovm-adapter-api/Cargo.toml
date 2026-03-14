@@ -2,6 +2,7 @@
 name = "novovm-adapter-api"
 version = "0.1.0"
 edition = "2021"
+license = "GPL-3.0-or-later"
 authors = ["SuperVM Core Team"]
 description = "NOVOVM adapter API: IR types + adapter traits (host-facing), no L0 implementation."
 

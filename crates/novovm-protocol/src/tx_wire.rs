@@ -87,6 +87,64 @@ pub fn decode_local_tx_wire_v1(bytes: &[u8]) -> Result<LocalTxWireV1, TxWireErro
 mod tests {
     use super::*;
 
+    fn fuzz_env_u64(name: &str, default: u64) -> u64 {
+        std::env::var(name)
+            .ok()
+            .and_then(|raw| raw.trim().parse::<u64>().ok())
+            .unwrap_or(default)
+    }
+
+    fn fuzz_env_usize(name: &str, default: usize) -> usize {
+        std::env::var(name)
+            .ok()
+            .and_then(|raw| raw.trim().parse::<usize>().ok())
+            .unwrap_or(default)
+    }
+
+    fn fuzz_next(state: &mut u64) -> u64 {
+        let mut x = *state;
+        x ^= x >> 12;
+        x ^= x << 25;
+        x ^= x >> 27;
+        *state = x;
+        x.wrapping_mul(0x2545_F491_4F6C_DD1D)
+    }
+
+    fn mutate_bytes(state: &mut u64, base: &[u8]) -> Vec<u8> {
+        let mut out = base.to_vec();
+        match fuzz_next(state) % 4 {
+            0 => {
+                if !out.is_empty() {
+                    let idx = (fuzz_next(state) as usize) % out.len();
+                    out[idx] ^= (fuzz_next(state) & 0xff) as u8;
+                }
+            }
+            1 => {
+                let flips = ((fuzz_next(state) % 4) + 1) as usize;
+                for _ in 0..flips {
+                    if out.is_empty() {
+                        break;
+                    }
+                    let idx = (fuzz_next(state) as usize) % out.len();
+                    out[idx] = (fuzz_next(state) & 0xff) as u8;
+                }
+            }
+            2 => {
+                if !out.is_empty() {
+                    let keep = (fuzz_next(state) as usize) % out.len();
+                    out.truncate(keep);
+                }
+            }
+            _ => {
+                let append = ((fuzz_next(state) % 8) + 1) as usize;
+                for _ in 0..append {
+                    out.push((fuzz_next(state) & 0xff) as u8);
+                }
+            }
+        }
+        out
+    }
+
     #[test]
     fn tx_wire_roundtrip() {
         let tx = LocalTxWireV1 {
@@ -116,5 +174,55 @@ mod tests {
         wire[0] = b'X';
         let err = decode_local_tx_wire_v1(&wire).unwrap_err().to_string();
         assert!(err.contains("magic mismatch"));
+    }
+
+    #[test]
+    fn fuzz_min_tx_wire_decode_seeded_no_panic() {
+        let seed = fuzz_env_u64("NOVOVM_FUZZ_MIN_SEED", 20260313);
+        let iterations = fuzz_env_usize("NOVOVM_FUZZ_MIN_TX_ITERS", 5000);
+        let mut state = seed.max(1);
+
+        let valid = LocalTxWireV1 {
+            account: 42,
+            key: 7,
+            value: 9001,
+            nonce: 3,
+            fee: 1,
+            signature: [0xabu8; 32],
+        };
+        let valid_wire = encode_local_tx_wire_v1(&valid);
+        let expected_len = 4usize + 1 + (8 * 5) + 32;
+
+        let mut short_wire = valid_wire.clone();
+        short_wire.truncate(expected_len.saturating_sub(3));
+        let mut bad_magic = valid_wire.clone();
+        bad_magic[0] ^= 0xff;
+        let mut bad_version = valid_wire.clone();
+        bad_version[4] = bad_version[4].wrapping_add(1);
+
+        let corpus = vec![
+            valid_wire,
+            short_wire,
+            bad_magic,
+            bad_version,
+            Vec::new(),
+            b"NTX1".to_vec(),
+            vec![0u8; expected_len],
+            vec![0xffu8; expected_len],
+        ];
+
+        for _ in 0..iterations {
+            let idx = (fuzz_next(&mut state) as usize) % corpus.len();
+            let sample = mutate_bytes(&mut state, &corpus[idx]);
+            let _ = decode_local_tx_wire_v1(&sample);
+        }
+
+        println!(
+            "fuzz_min_tx_wire: seed={} iterations={} corpus={} expected_len={}",
+            seed,
+            iterations,
+            corpus.len(),
+            expected_len
+        );
     }
 }

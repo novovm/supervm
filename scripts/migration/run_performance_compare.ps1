@@ -31,6 +31,24 @@ $ErrorActionPreference = "Stop"
 if (-not (Get-Variable -Name IsWindows -ErrorAction SilentlyContinue)) {
     $IsWindows = ($env:OS -eq "Windows_NT")
 }
+if (-not (Get-Variable -Name IsMacOS -ErrorAction SilentlyContinue)) {
+    $IsMacOS = $false
+}
+if (-not (Get-Variable -Name IsLinux -ErrorAction SilentlyContinue)) {
+    $IsLinux = -not $IsWindows -and -not $IsMacOS
+}
+
+function Get-PowerShellHostCommand {
+    if (Get-Command -Name "pwsh" -ErrorAction SilentlyContinue) {
+        return "pwsh"
+    }
+    if (Get-Command -Name "powershell" -ErrorAction SilentlyContinue) {
+        return "powershell"
+    }
+    throw "neither pwsh nor powershell is available in PATH"
+}
+
+$PowerShellHost = Get-PowerShellHostCommand
 
 if (-not $RepoRoot) {
     $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
@@ -274,9 +292,9 @@ function Get-CapabilitySnapshot {
         New-Item -ItemType Directory -Force -Path $capOutputDir | Out-Null
 
         if ($AoemPluginDir) {
-            & powershell -ExecutionPolicy Bypass -File $scriptPath -RepoRoot $RepoRoot -OutputDir $capOutputDir -Variant $Variant -AoemPluginDir $AoemPluginDir | Out-Null
+            & $PowerShellHost -NoProfile -File $scriptPath -RepoRoot $RepoRoot -OutputDir $capOutputDir -Variant $Variant -AoemPluginDir $AoemPluginDir | Out-Null
         } else {
-            & powershell -ExecutionPolicy Bypass -File $scriptPath -RepoRoot $RepoRoot -OutputDir $capOutputDir -Variant $Variant | Out-Null
+            & $PowerShellHost -NoProfile -File $scriptPath -RepoRoot $RepoRoot -OutputDir $capOutputDir -Variant $Variant | Out-Null
         }
         $sourceJson = Join-Path $capOutputDir "capability-contract-$Variant.json"
     }
@@ -353,7 +371,7 @@ function Resolve-BaselineJsonPath {
     $outDir = if ($BaselineOutputDir) { $BaselineOutputDir } else { Join-Path $RepoRoot "artifacts\migration\baseline" }
     New-Item -ItemType Directory -Force -Path $outDir | Out-Null
 
-    & powershell -ExecutionPolicy Bypass -File $scriptPath `
+    & $PowerShellHost -NoProfile -File $scriptPath `
         -RepoRoot $RepoRoot `
         -SvmRoot $SvmRoot `
         -OutputDir $outDir `

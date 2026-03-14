@@ -360,13 +360,20 @@ if (-not [string]::IsNullOrWhiteSpace($env:CARGO_TARGET_DIR)) {
     }
 }
 $nodeExeCandidates = @()
-if (-not [string]::IsNullOrWhiteSpace($cargoTargetDir)) {
-    $nodeExeCandidates += (Join-Path $cargoTargetDir "debug\novovm-node.exe")
+if ($IsWindows) {
+    $nodeBinaryNames = @("novovm-node.exe", "novovm-node")
+} else {
+    $nodeBinaryNames = @("novovm-node", "novovm-node.exe")
 }
-$nodeExeCandidates += @(
-    (Join-Path $RepoRoot "target\debug\novovm-node.exe"),
-    (Join-Path $nodeCrateDir "target\debug\novovm-node.exe")
-)
+if (-not [string]::IsNullOrWhiteSpace($cargoTargetDir)) {
+    foreach ($name in $nodeBinaryNames) {
+        $nodeExeCandidates += (Join-Path $cargoTargetDir "debug\$name")
+    }
+}
+foreach ($name in $nodeBinaryNames) {
+    $nodeExeCandidates += (Join-Path $RepoRoot "target\debug\$name")
+    $nodeExeCandidates += (Join-Path $nodeCrateDir "target\debug\$name")
+}
 $nodeExe = ""
 foreach ($candidate in $nodeExeCandidates) {
     if (Test-Path $candidate) {

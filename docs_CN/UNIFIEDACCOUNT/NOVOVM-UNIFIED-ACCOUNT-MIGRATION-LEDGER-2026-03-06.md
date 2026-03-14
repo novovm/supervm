@@ -19,9 +19,9 @@
 |---|---|---|---|---|---|---|
 | U0 基线审计域 | InProgress | Architecture | 无 | 审计快照 | SUPERVM/SVM2026 差异可评审 | 审计快照已落盘 |
 | U1 账户契约域 | InProgress | Protocol | U0 | Spec v1 | UCA/绑定/策略/唯一性规则冻结 | Spec v1 已创建 |
-| U2 路由策略域 | NotStarted | Runtime | U1 | Router 决策表 | 决策顺序与拒绝语义冻结 | 待输出 |
-| U3 回归验证域（辅助） | NotStarted | QA + Security | U1/U2 | 最小回归用例集 | 可快速复现关键失败，不阻断主线接线 | 待输出 |
-| U4 生态对接域 | NotStarted | Adapter Team | U2/U3 | 兼容声明 | 与 WP-10/WP-11/WP-13 依赖闭环 | 待联动 |
+| U2 路由策略域 | ReadyForMerge | Runtime | U1 | Router 决策表 | 决策顺序与拒绝语义冻结 | `NOVOVM-UNIFIED-ACCOUNT-U2-U3-U4-FROZEN-DELIVERABLES-2026-03-13.md` 已冻结路由决策表 |
+| U3 回归验证域（辅助） | ReadyForMerge | QA + Security | U1/U2 | 最小回归用例集 | 可快速复现关键失败，不阻断主线接线 | `run_unified_account_gate.ps1 + run_fuzz_min_gate.ps1` 固定入口已复跑通过 |
+| U4 生态对接域 | ReadyForMerge | Adapter Team | U2/U3 | 兼容声明 | 与 WP-10/WP-11/WP-13 依赖闭环 | 已输出生态兼容声明并与 EVM/能力台账对齐 |
 
 ---
 
@@ -31,19 +31,19 @@
 
 | ID | Capability | Status | Owner | Blocking Dependency | Deliverable | Done Criteria | Next Production Step | Evidence | Updated |
 |---|---|---|---|---|---|---|---|---|---|
-| UA-A01 | 双标识账户模型（UCA+Persona） | InProgress | Protocol | U0 | Spec 身份章节 | 明确主身份与视图地址关系 | `ua_mapping_signal` | 审计快照 + Spec v1 | 2026-03-06 |
-| UA-A02 | 多链地址绑定索引 | InProgress | Runtime | UA-A01 | 绑定索引设计 | 支持绑定/解绑/反查 | `ua_mapping_signal` | 审计快照 + Spec v1 | 2026-03-06 |
-| UA-A03 | 数字账户号段扩展 | NotStarted | Protocol | UA-A01 | ID Policy 规范 | 号段策略不影响主路径 | `ua_id_policy_signal` | SVM2026 审计 | 2026-03-06 |
-| UA-A04 | KYC 扩展域策略 | NotStarted | Governance | UA-A01 | KYC Policy 说明 | 默认不入共识关键路径 | `ua_kyc_policy_signal` | 审计快照 | 2026-03-06 |
-| UA-A05 | 签名域隔离 | InProgress | Security | UA-A01 | Signature Domain 规范 | 跨域验签必失败 | `ua_signature_domain_signal` | Spec v1 | 2026-03-06 |
-| UA-A06 | Nonce/Replay 策略 | InProgress | Runtime | UA-A01 | Nonce Policy 规范 | Persona 级 nonce + replay 拒绝 | `ua_nonce_replay_signal` | Spec v1 | 2026-03-06 |
-| UA-A07 | 权限与授权模型 | InProgress | Security | UA-A01 | Permission 规范 | Owner/Delegate/SessionKey 权限边界冻结 | `ua_permission_signal` | Spec v1 | 2026-03-06 |
+| UA-A01 | 双标识账户模型（UCA+Persona） | ReadyForMerge | Protocol | U0 | Spec 身份章节 | 明确主身份与视图地址关系 | 保持 UCA 主控语义不变，进入持久化与恢复压测 | `docs_CN/UNIFIEDACCOUNT/NOVOVM-UNIFIED-ACCOUNT-SPEC-v1-2026-03-06.md` + `artifacts/migration/week1-2026-03-13/unified-account-gate-baseline/unified-account-gate-summary.json`（UA-G01~UA-G03） | 2026-03-13 |
+| UA-A02 | 多链地址绑定索引 | ReadyForMerge | Runtime | UA-A01 | 绑定索引设计 | 支持绑定/解绑/反查 | 按现有索引语义补长压与恢复验证，不改接口语义 | `artifacts/migration/week1-2026-03-13/unified-account-gate-baseline/unified-account-gate-summary.json`（UA-G01~UA-G03/UA-G15） | 2026-03-13 |
+| UA-A03 | 数字账户号段扩展 | InProgress | Protocol | UA-A01 | ID Policy 规范 | 号段策略不影响主路径 | 先完成创建入口参数校验与冲突拒绝口径对齐 | `docs_CN/UNIFIEDACCOUNT/NOVOVM-UNIFIED-ACCOUNT-U2-U3-U4-FROZEN-DELIVERABLES-2026-03-13.md`（A03 最小闭环定义） | 2026-03-13 |
+| UA-A04 | KYC 扩展域策略 | InProgress | Governance | UA-A01 | KYC Policy 说明 | 默认不入共识关键路径 | 先以扩展策略字段接线，不进入共识关键路径 | `docs_CN/UNIFIEDACCOUNT/NOVOVM-UNIFIED-ACCOUNT-U2-U3-U4-FROZEN-DELIVERABLES-2026-03-13.md`（A04 最小闭环定义） | 2026-03-13 |
+| UA-A05 | 签名域隔离 | ReadyForMerge | Security | UA-A01 | Signature Domain 规范 | 跨域验签必失败 | 继续保持域隔离拒绝语义固定并做跨版本回归 | `artifacts/migration/week1-2026-03-13/unified-account-gate-baseline/unified-account-gate-summary.json`（UA-G04/UA-G05） | 2026-03-13 |
+| UA-A06 | Nonce/Replay 策略 | ReadyForMerge | Runtime | UA-A01 | Nonce Policy 规范 | Persona 级 nonce + replay 拒绝 | 继续保持 persona 级 nonce，补并发长压 | `artifacts/migration/week1-2026-03-13/unified-account-gate-baseline/unified-account-gate-summary.json`（UA-G06/UA-G07） | 2026-03-13 |
+| UA-A07 | 权限与授权模型 | ReadyForMerge | Security | UA-A01 | Permission 规范 | Owner/Delegate/SessionKey 权限边界冻结 | 按现有角色边界补撤销/恢复组合回归 | `artifacts/migration/week1-2026-03-13/unified-account-gate-baseline/unified-account-gate-summary.json`（UA-G08/UA-G09） | 2026-03-13 |
 | UA-A08 | 原子协调边界 | ReadyForMerge | Protocol | UA-A01 | 边界策略说明 | `eth_*` 不承载跨链原子语义 | `ua_persona_boundary_signal` | `artifacts/migration/release-candidate-novovm-rc-2026-03-07-ua-ga-next-rerun10/snapshot/acceptance-gate-full/unified-account-gate/unified-account-gate-summary.json`（UA-G10/UA-G11 通过） | 2026-03-09 |
-| UA-A09 | Type 4（7702）账户约束 | NotStarted | Protocol + Security | UA-A05/UA-A07 | Type4 Policy 文档 | 明确输入受理、签名校验、拒绝错误码、降级策略、与代理/会话密钥混用限制 | `ua_type4_policy_signal` | EVM 文档联动 | 2026-03-06 |
-| UA-A10 | 存储键空间规范 | NotStarted | Runtime | UA-A01/UA-A02 | Storage Key 规范 | 账户键空间与链状态键空间分离 | `ua_storage_key_signal` | SVM2026 审计 | 2026-03-06 |
-| UA-A11 | 与 EVM WP-10 联动 | InProgress | Architecture | UA-A01~A09 | 依赖闭环记录 | WP 依赖状态一致 | `ua_dependency_signal` | EVM PLAN/LEDGER | 2026-03-06 |
+| UA-A09 | Type 4（7702）账户约束 | InProgress | Protocol + Security | UA-A05/UA-A07 | Type4 Policy 文档 | 明确输入受理、签名校验、拒绝错误码、降级策略、与代理/会话密钥混用限制 | 已冻结三态策略（supported/rejected/degraded），继续推进策略参数外化 | `docs_CN/UNIFIEDACCOUNT/NOVOVM-UNIFIED-ACCOUNT-U2-U3-U4-FROZEN-DELIVERABLES-2026-03-13.md` + `artifacts/migration/week1-2026-03-13/unified-account-gate-baseline/unified-account-gate-summary.json`（UA-G12/13/14） | 2026-03-13 |
+| UA-A10 | 存储键空间规范 | InProgress | Runtime | UA-A01/UA-A02 | Storage Key 规范 | 账户键空间与链状态键空间分离 | 已冻结键空间隔离契约，继续推进专用 CF 与冲突扫描实装 | `docs_CN/UNIFIEDACCOUNT/NOVOVM-UNIFIED-ACCOUNT-SPEC-v1-2026-03-06.md`（9.2） + `docs_CN/UNIFIEDACCOUNT/NOVOVM-UNIFIED-ACCOUNT-U2-U3-U4-FROZEN-DELIVERABLES-2026-03-13.md` | 2026-03-13 |
+| UA-A11 | 与 EVM WP-10 联动 | ReadyForMerge | Architecture | UA-A01~A09 | 依赖闭环记录 | WP 依赖状态一致 | 维持依赖口径同步，后续只做增量回归 | `docs_CN/Adapters/EVM/NOVOVM-EVM-ADAPTER-MIGRATION-LEDGER-2026-03-06.md` + `docs_CN/UNIFIEDACCOUNT/NOVOVM-UNIFIED-ACCOUNT-U2-U3-U4-FROZEN-DELIVERABLES-2026-03-13.md` | 2026-03-13 |
 | UA-A12 | RC 收口 | ReadyForMerge | Release | UA-A01~A11 | RC 候选包 | 门禁通过且兼容声明完成 | `ua_rc_candidate_gate` | `artifacts/migration/rc-ua-selfguard-rocksdb-20260308-000948/rc-candidate.json`（`overall_pass=true`） | 2026-03-09 |
-| UA-A13 | 唯一性与冲突约束 | InProgress | Security + Runtime | UA-A01/UA-A02 | Unique/Conflict 规范 | `1 PersonaAddress -> 1 UCA` 强约束 + 冲突拒绝与事件闭环 | `ua_uniqueness_conflict_signal` | Spec v1 | 2026-03-06 |
+| UA-A13 | 唯一性与冲突约束 | ReadyForMerge | Security + Runtime | UA-A01/UA-A02 | Unique/Conflict 规范 | `1 PersonaAddress -> 1 UCA` 强约束 + 冲突拒绝与事件闭环 | 继续保留冲突阻断与审计事件双约束 | `docs_CN/UNIFIEDACCOUNT/NOVOVM-UNIFIED-ACCOUNT-SPEC-v1-2026-03-06.md` + `artifacts/migration/week1-2026-03-13/unified-account-gate-baseline/unified-account-gate-summary.json`（UA-G15） | 2026-03-13 |
 
 ---
 
@@ -86,6 +86,7 @@
 | 2026-03-09 | `eth_chainId/net_version` 边界兼容补齐（无内部链路改造） | gateway 补齐 EVM 基础网络查询别名，仅在外部边界层处理并直接返回（不进入 `.opsw1`），保持内部 `gateway -> opsw1 -> novovm-node -> AOEM` 二进制主线不变 | `crates/gateways/evm-gateway/src/main.rs` + `scripts/migration/run_gateway_node_smoke.ps1` + `artifacts/migration/unifiedaccount/gateway-node-eth-web30-nonraw-smoke-pipeline-summary.json` | Accepted |
 | 2026-03-09 | `eth_gasPrice/eth_estimateGas` 边界兼容补齐（无内部链路改造） | gateway 补齐 EVM 常用费用查询接口，`eth_gasPrice` 与 `eth_estimateGas` 仅在边界层返回结果，不触发内部 `.opsw1` 写入，继续保持内部二进制流水线高性能路径 | `crates/gateways/evm-gateway/src/main.rs` + `scripts/migration/run_gateway_node_smoke.ps1` + `artifacts/migration/unifiedaccount/gateway-node-eth-web30-nonraw-smoke-pipeline-summary.json` | Accepted |
 | 2026-03-09 | `eth_getCode/eth_getStorageAt` 边界兼容补齐（无内部链路改造） | gateway 补齐 EVM 常用只读查询接口：`eth_getCode` 与 `eth_getStorageAt`，仅用于边界协议兼容，不进入 `.opsw1` 与内部 AOEM 主线，维持 UA/EVM 内部二进制流水线不变 | `crates/gateways/evm-gateway/src/main.rs` + `scripts/migration/run_gateway_node_smoke.ps1` + `artifacts/migration/unifiedaccount/gateway-node-eth-web30-nonraw-smoke-pipeline-summary.json` | Accepted |
+| 2026-03-13 12:28 HDT | U2/U3/U4 交付物冻结 + UA 状态回填 | 输出并冻结 U2 路由决策表、U3 最小回归集、U4 生态兼容声明；将 UA-A01/A02/A05/A06/A07/A11/A13 升级到 `ReadyForMerge`，并将 UA-A03/A04/A09/A10 推进到 `InProgress`（最小闭环已定义） | `docs_CN/UNIFIEDACCOUNT/NOVOVM-UNIFIED-ACCOUNT-U2-U3-U4-FROZEN-DELIVERABLES-2026-03-13.md` + `artifacts/migration/week1-2026-03-13/unified-account-gate-baseline/unified-account-gate-summary.json` + `docs_CN/Adapters/EVM/NOVOVM-EVM-ADAPTER-MIGRATION-LEDGER-2026-03-06.md` | Accepted |
 
 ---
 
