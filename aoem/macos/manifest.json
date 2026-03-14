@@ -1,0 +1,26 @@
+{
+  "stamp": "20260314-221800",
+  "release_version": "AOEM FFI Beta 0.7.3",
+  "platform": "macos",
+  "profile": "fullmax",
+  "bundle_dir": "/Users/aoem-a2/Downloads/dev_project/vsCode/WorksArea/AOEM/artifacts/ffi-bundles/fullmax/macos/20260314-221800",
+  "core_dll": "/Users/aoem-a2/Downloads/dev_project/vsCode/WorksArea/AOEM/artifacts/ffi-bundles/fullmax/macos/20260314-221800/core/bin/libaoem_ffi.dylib",
+  "plugins": [
+    "libaoem_ffi_crypto_hsm.dylib",
+    "libaoem_ffi_crypto_kms.dylib",
+    "libaoem_ffi_crypto_mldsa.dylib",
+    "libaoem_ffi_hsm.dylib",
+    "libaoem_ffi_kms.dylib",
+    "libaoem_ffi_mldsa.dylib",
+    "libaoem_ffi_persist.dylib",
+    "libaoem_ffi_persist_rocksdb.dylib",
+    "libaoem_ffi_runtime_wasm_wasmtime.dylib",
+    "libaoem_ffi_wasm.dylib",
+    "libaoem_ffi_zkvm.dylib",
+    "libaoem_ffi_zkvm_executor.dylib",
+    "libaoem_hsm_plugin.dylib",
+    "libaoem_kms_plugin.dylib"
+  ],
+  "features": "rocksdb-persistence,wasmtime-runtime,privacy-verify,mldsa,zkvm-executor,risc0,sp1,halo2",
+  "notes": "macOS fullmax core + sidecars (persist/wasm/zkvm/mldsa/kms-hsm)"
+}

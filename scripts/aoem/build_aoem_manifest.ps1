@@ -13,12 +13,12 @@ function Get-DynlibNameCandidates {
   return @("aoem_ffi.dll", "libaoem_ffi.so", "libaoem_ffi.dylib")
 }
 
+# Unified runtime manifest tracks only platform core dynlibs.
+# persist/wasm/zkvm/etc are composed at runtime from sidecar plugins.
 function Get-VariantRelBinDir([string]$Name) {
   switch ($Name) {
     'core' { return 'bin' }
-    'persist' { return 'variants/persist/bin' }
-    'wasm' { return 'variants/wasm/bin' }
-    default { throw "unknown variant: $Name" }
+    default { throw "unsupported manifest entry name for unified runtime manifest: $Name" }
   }
 }
 
@@ -70,29 +70,7 @@ function Add-Entry([string]$Name) {
   }
 }
 
-function Add-LinuxCoreEntry {
-  $rel = "linux/bin/libaoem_ffi.so"
-  $abs = Join-Path $aoemRoot $rel
-  if (-not (Test-Path $abs)) {
-    return
-  }
-  $hash = (Get-FileHash -Algorithm SHA256 -Path $abs).Hash.ToLowerInvariant()
-  $script:entries += [pscustomobject]@{
-    name = "core"
-    platform = "linux"
-    dll = $rel
-    sha256 = $hash
-    abi_expected = 1
-    capabilities_required = [pscustomobject]@{
-      execute_ops_v2 = $true
-    }
-  }
-}
-
 Add-Entry -Name 'core'
-Add-Entry -Name 'persist'
-Add-Entry -Name 'wasm'
-Add-LinuxCoreEntry
 
 $outDir = Split-Path -Parent $OutManifest
 New-Item -ItemType Directory -Force -Path $outDir | Out-Null

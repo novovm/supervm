@@ -1,27 +1,37 @@
 {
-    "generated_at_utc":  "2026-03-14T09:06:58.3853722Z",
-    "release_version":  "Beta 0.8",
-    "aoem_root":  "D:\\WEB3_AI\\SUPERVM\\aoem",
-    "entries":  [
-                    {
-                        "name":  "core",
-                        "platform":  "windows",
-                        "dll":  "bin/aoem_ffi.dll",
-                        "sha256":  "b76ef865d05b5d37b1c5aeb83dd84d3ec3a0db01fd2b7d00603b50e6270fbe04",
-                        "abi_expected":  1,
-                        "capabilities_required":  {
-                                                      "execute_ops_v2":  true
-                                                  }
-                    },
-                    {
-                        "name":  "core",
-                        "platform":  "linux",
-                        "dll":  "linux/bin/libaoem_ffi.so",
-                        "sha256":  "f1a0b7e5d5725438bb54a52017f191f651417e97a4676bc688b20c959e673334",
-                        "abi_expected":  1,
-                        "capabilities_required":  {
-                                                      "execute_ops_v2":  true
-                                                  }
-                    }
-                ]
+  "generated_at_utc": "2026-03-14T14:37:48.1591690Z",
+  "release_version": "AOEM FFI Beta 0.7.3",
+  "aoem_root": "/Users/aoem-a2/Downloads/dev_project/vsCode/WorksArea/SUPERVM/aoem",
+  "entries": [
+    {
+      "name": "core",
+      "platform": "windows",
+      "dll": "bin/aoem_ffi.dll",
+      "sha256": "397cc22cf59c585b6e07e3445c226d515a1642e61dee873421f075211fe88e8f",
+      "abi_expected": 1,
+      "capabilities_required": {
+        "execute_ops_v2": true
+      }
+    },
+    {
+      "name": "core",
+      "platform": "linux",
+      "dll": "bin/libaoem_ffi.so",
+      "sha256": "866374b4eea88d356b1c3934fe1122e95a503433cd02353873bf2eac073bbad1",
+      "abi_expected": 1,
+      "capabilities_required": {
+        "execute_ops_v2": true
+      }
+    },
+    {
+      "name": "core",
+      "platform": "macos",
+      "dll": "bin/libaoem_ffi.dylib",
+      "sha256": "296a3169a99ff0559ef3c4bc90b4122ad4f6edab1405bbadb0438d20904d69f1",
+      "abi_expected": 1,
+      "capabilities_required": {
+        "execute_ops_v2": true
+      }
+    }
+  ]
 }

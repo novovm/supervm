@@ -60,6 +60,23 @@ aoem/linux/plugins/**
 !aoem/linux/include/
 aoem/linux/include/**
 !aoem/linux/include/aoem.h
+!aoem/macos/
+aoem/macos/**
+!aoem/macos/manifest.json
+!aoem/macos/include/
+aoem/macos/include/**
+!aoem/macos/include/aoem.h
+!aoem/macos/core/
+aoem/macos/core/**
+!aoem/macos/core/bin/
+aoem/macos/core/bin/**
+!aoem/macos/core/bin/libaoem_ffi.dylib
+!aoem/macos/core/plugins/
+aoem/macos/core/plugins/**
+!aoem/macos/core/plugins/*.dylib
+!aoem/macos/kms-hsm-plugin/
+aoem/macos/kms-hsm-plugin/**
+!aoem/macos/kms-hsm-plugin/*.dylib
 
 # Never track local build side-products under AOEM bundle
 aoem/**/*.pdb
