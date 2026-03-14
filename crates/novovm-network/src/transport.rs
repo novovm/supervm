@@ -1,7 +1,8 @@
 #![forbid(unsafe_code)]
 
 use crate::{
-    get_network_runtime_sync_status, observe_network_runtime_local_head_max,
+    get_network_runtime_peer_heads_top_k, get_network_runtime_sync_status,
+    observe_network_runtime_local_head_max,
     observe_network_runtime_peer_head, observe_network_runtime_peer_head_with_local_head_max,
     plan_network_runtime_sync_pull_window, register_network_runtime_peer,
     unregister_network_runtime_peer, NetworkRuntimeNativeSyncPhaseV1,
@@ -59,6 +60,9 @@ const RUNTIME_SYNC_PULL_PREFETCH_MARGIN_HEADERS: u64 = 8;
 const RUNTIME_SYNC_PULL_PREFETCH_MARGIN_BODIES: u64 = 4;
 const RUNTIME_SYNC_PULL_PREFETCH_MARGIN_STATE: u64 = 2;
 const RUNTIME_SYNC_PULL_PREFETCH_MARGIN_FINALIZE: u64 = 1;
+const DEFAULT_RUNTIME_SYNC_PULL_FOLLOWUP_FANOUT_MAX: usize = 1;
+const HARD_MAX_RUNTIME_SYNC_PULL_FOLLOWUP_FANOUT: usize = 8;
+static RUNTIME_SYNC_PULL_FOLLOWUP_FANOUT_MAX_CACHE: OnceLock<usize> = OnceLock::new();
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct RuntimeSyncPullRequest {
@@ -183,6 +187,41 @@ fn parse_env_u64(name: &str, fallback: u64) -> u64 {
         .ok()
         .and_then(|raw| raw.trim().parse::<u64>().ok())
         .unwrap_or(fallback)
+}
+
+fn runtime_sync_pull_followup_fanout_max() -> usize {
+    *RUNTIME_SYNC_PULL_FOLLOWUP_FANOUT_MAX_CACHE.get_or_init(|| {
+        parse_env_usize(
+            "NOVOVM_NETWORK_SYNC_PULL_FOLLOWUP_FANOUT_MAX",
+            DEFAULT_RUNTIME_SYNC_PULL_FOLLOWUP_FANOUT_MAX,
+        )
+        .clamp(1, HARD_MAX_RUNTIME_SYNC_PULL_FOLLOWUP_FANOUT)
+    })
+}
+
+fn runtime_sync_pull_followup_targets(chain_id: u64, fallback_target: NodeId) -> Vec<NodeId> {
+    let fanout_max = runtime_sync_pull_followup_fanout_max();
+    if fanout_max == 1 {
+        // Fast path: default fanout is 1, keep pulling on current response peer.
+        // Avoid per-message top-k query overhead in the common path.
+        return vec![fallback_target];
+    }
+
+    let mut targets: Vec<NodeId> = get_network_runtime_peer_heads_top_k(chain_id, fanout_max)
+        .into_iter()
+        .map(|(peer_id, _)| NodeId(peer_id))
+        .collect();
+    if targets.is_empty() {
+        targets.push(fallback_target);
+        return targets;
+    }
+    if !targets.contains(&fallback_target) && targets.len() < fanout_max {
+        targets.push(fallback_target);
+    }
+    if targets.len() > fanout_max {
+        targets.truncate(fanout_max);
+    }
+    targets
 }
 
 /// Simple in-memory transport for tests/bench harnesses.
@@ -1019,40 +1058,40 @@ fn maybe_build_runtime_sync_pull_followup_request(
     msg: &ProtocolMessage,
 ) -> Option<(NodeId, ProtocolMessage)> {
     let sync_ctx = runtime_sync_pull_message_context(msg);
-    maybe_build_runtime_sync_pull_followup_request_with_context(
-        chain_id, local_node, msg, &sync_ctx,
-    )
+    maybe_build_runtime_sync_pull_followup_requests_with_context(chain_id, local_node, msg, &sync_ctx)
+        .into_iter()
+        .next()
 }
 
-fn maybe_build_runtime_sync_pull_followup_request_with_context(
+fn maybe_build_runtime_sync_pull_followup_requests_with_context(
     chain_id: u64,
     local_node: NodeId,
     msg: &ProtocolMessage,
     sync_ctx: &RuntimeSyncPullMessageContext,
-) -> Option<(NodeId, ProtocolMessage)> {
+) -> Vec<(NodeId, ProtocolMessage)> {
     let ProtocolMessage::DistributedOcccGossip(gossip_msg) = msg else {
-        return None;
+        return Vec::new();
     };
     if !sync_ctx.is_sync_pull {
-        return None;
+        return Vec::new();
     }
     if gossip_msg.to != local_node.0 as u32 {
-        return None;
+        return Vec::new();
     }
     // Incoming NSP1 is already a pull request, not a downloaded sync result.
     if sync_ctx.request.is_some() {
-        return None;
+        return Vec::new();
     }
     // Only continue pull loop when response payload is a valid sync header.
-    let response_height = sync_ctx.header_height?;
-    let target = NodeId(gossip_msg.from as u64);
-    // Keep consuming current window replies until reaching requested upper bound.
-    if should_wait_runtime_sync_pull_target_window(chain_id, local_node, target, response_height) {
-        return None;
-    }
-    let window = plan_network_runtime_sync_pull_window(chain_id)?;
+    let Some(response_height) = sync_ctx.header_height else {
+        return Vec::new();
+    };
+    let sender_target = NodeId(gossip_msg.from as u64);
+    let Some(window) = plan_network_runtime_sync_pull_window(chain_id) else {
+        return Vec::new();
+    };
     if window.from_block > window.to_block {
-        return None;
+        return Vec::new();
     }
 
     let payload = encode_runtime_sync_pull_request_payload(
@@ -1065,17 +1104,33 @@ fn maybe_build_runtime_sync_pull_followup_request_with_context(
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)
         .unwrap_or(0);
-    let request = ProtocolMessage::DistributedOcccGossip(
-        novovm_protocol::protocol_catalog::distributed_occc::gossip::GossipMessage {
-            from: local_node.0 as u32,
-            to: gossip_msg.from,
-            msg_type: runtime_sync_pull_msg_type_for_phase(window.phase),
-            payload,
-            timestamp: now,
-            seq: now,
-        },
-    );
-    Some((target, request))
+
+    let mut out = Vec::new();
+    for (idx, target) in runtime_sync_pull_followup_targets(chain_id, sender_target)
+        .into_iter()
+        .enumerate()
+    {
+        // Keep consuming current window replies until reaching requested upper bound.
+        if should_wait_runtime_sync_pull_target_window(chain_id, local_node, target, response_height)
+        {
+            continue;
+        }
+        let Ok(to_wire) = u32::try_from(target.0) else {
+            continue;
+        };
+        let request = ProtocolMessage::DistributedOcccGossip(
+            novovm_protocol::protocol_catalog::distributed_occc::gossip::GossipMessage {
+                from: local_node.0 as u32,
+                to: to_wire,
+                msg_type: runtime_sync_pull_msg_type_for_phase(window.phase),
+                payload: payload.clone(),
+                timestamp: now,
+                seq: now.saturating_add(idx as u64),
+            },
+        );
+        out.push((target, request));
+    }
+    out
 }
 
 fn runtime_peer_id_from_protocol_message(msg: &ProtocolMessage) -> Option<u64> {
@@ -1301,18 +1356,32 @@ impl Transport for UdpTransport {
             source_peer_id_hint,
             &sync_ctx,
         );
-        if let Some((to, followup)) = maybe_build_runtime_sync_pull_followup_request_with_context(
+        let fallback_sender = if let ProtocolMessage::DistributedOcccGossip(gossip) = &decoded {
+            Some(NodeId(gossip.from as u64))
+        } else {
+            None
+        };
+        for (to, followup) in maybe_build_runtime_sync_pull_followup_requests_with_context(
             self.chain_id,
             self.node,
             &decoded,
             &sync_ctx,
         ) {
-            if self.send_internal(to, &followup).is_err() {
-                // `send` path already tracks outbound pull targets on success.
-                // When falling back to raw socket send, track once here.
-                maybe_track_runtime_sync_pull_request_outbound(self.chain_id, self.node, &followup);
-                if let Ok(encoded) = protocol_encode(&followup) {
-                    let _ = self.socket.send_to(&encoded, src);
+            if self.send_internal(to, &followup).is_ok() {
+                continue;
+            }
+            if fallback_sender != Some(to) {
+                continue;
+            }
+            if let Ok(encoded) = protocol_encode(&followup) {
+                if self.socket.send_to(&encoded, src).is_ok() {
+                    // `send` path already tracks outbound pull targets on success.
+                    // Fallback path should track only when raw socket send succeeds.
+                    maybe_track_runtime_sync_pull_request_outbound(
+                        self.chain_id,
+                        self.node,
+                        &followup,
+                    );
                 }
             }
         }
@@ -1421,18 +1490,32 @@ impl Transport for TcpTransport {
             source_peer_id_hint,
             &sync_ctx,
         );
-        if let Some((to, followup)) = maybe_build_runtime_sync_pull_followup_request_with_context(
+        let fallback_sender = if let ProtocolMessage::DistributedOcccGossip(gossip) = &decoded {
+            Some(NodeId(gossip.from as u64))
+        } else {
+            None
+        };
+        for (to, followup) in maybe_build_runtime_sync_pull_followup_requests_with_context(
             self.chain_id,
             self.node,
             &decoded,
             &sync_ctx,
         ) {
-            if self.send_internal(to, &followup).is_err() {
-                // `send` path already tracks outbound pull targets on success.
-                // When falling back to raw tcp stream send, track once here.
-                maybe_track_runtime_sync_pull_request_outbound(self.chain_id, self.node, &followup);
-                if let Ok(encoded) = protocol_encode(&followup) {
-                    let _ = write_tcp_frame(&mut stream, &encoded);
+            if self.send_internal(to, &followup).is_ok() {
+                continue;
+            }
+            if fallback_sender != Some(to) {
+                continue;
+            }
+            if let Ok(encoded) = protocol_encode(&followup) {
+                if write_tcp_frame(&mut stream, &encoded).is_ok() {
+                    // `send` path already tracks outbound pull targets on success.
+                    // Fallback path should track only when raw tcp write succeeds.
+                    maybe_track_runtime_sync_pull_request_outbound(
+                        self.chain_id,
+                        self.node,
+                        &followup,
+                    );
                 }
             }
         }

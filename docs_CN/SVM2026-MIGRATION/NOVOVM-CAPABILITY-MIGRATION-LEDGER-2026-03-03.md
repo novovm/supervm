@@ -238,3 +238,23 @@
 - 已完成：`F-14` vm-runtime split 门禁已接入 acceptance，并在自动台账中按 `vm_runtime_split_pass + legacy_vm_runtime_present=False` 固化为 `ReadyForMerge`。
 - 状态：`F-10/F-11/F-12/F-13/F-14 = Done`（2026-03-07 自动回填快照）。
 - 证据样本：`docs_CN/SVM2026-MIGRATION/NOVOVM-CAPABILITY-MIGRATION-LEDGER-AUTO-2026-03-04.md`（`Full Scan Matrix (F-01~F-16)` 与 `Ledger` 段）。
+- 已完成（2026-03-15）：`novovm-node` 的 `run_ffi_v2` 热路径去二次扫描：`mempool admission` 与 `tx_meta` 汇总合并到同一遍（`admit_mempool_basic_owned_with_meta`），避免 admission 后再跑一遍 `summarize`。
+- 已完成（2026-03-15）：`verify_local_tx_signatures_batch` 增加负载感知并发阈值（`MIN_WORKER_CHUNK=64`），小批量走串行、大批量再并行，减少小批交易线程调度开销。
+- 已完成（2026-03-15）：`tx_meta.accounts` 统计去 `HashSet`：在 `admit_mempool_basic_owned_with_meta` 与 `validate_and_summarize_txs_with_mode` 中复用 `next_nonce_by_account.len()` 作为账户数，减少一次哈希集合写入开销。
+- 已完成（2026-03-15）：AOEM 本地套件更新后，`aoem/manifest/aoem-manifest.json` 的 `core/windows` 哈希已与当前 `aoem/bin/aoem_ffi.dll` 对齐（避免 `AOEM DLL hash mismatch` 阻断功能门禁）。
+- 已完成（2026-03-15）：`run_performance_gate_seal_single.ps1` 增加 `$IsWindows` 兼容初始化，修复脚本在严格模式下变量未定义导致的门禁中断。
+- 已完成（2026-03-15）：在 production-only 策略下，旧 `chain_query_rpc/governance_rpc` probe 与当前入口策略冲突，已使用 `full_snapshot_v1` 口径完成 acceptance 主链路复跑并通过（`functional + performance`）。
+- 证据样本：本地 `cargo clippy -p novovm-node -- -D warnings` 与 `cargo test -p novovm-node` 通过（当前包测试集为 `0 tests`，编译/门禁绿）。
+- 已完成（2026-03-15）：`novovm-adapter-novovm` 批验签 fallback 并行路径增加负载阈值（`TX_SIG_VERIFY_PARALLEL_MIN_BATCH=128`、`TX_SIG_VERIFY_PARALLEL_MIN_CHUNK=64`），小批次直接串行，避免线程抖动；大批次并行保持吞吐。
+- 已完成（2026-03-15）：`novovm-adapter-novovm` fallback 并行合并路径改为 chunk 布尔切片回填（去掉 `slot` 元组逐项写回），减少中间分配与合并成本。
+- 证据样本：本地 `cargo clippy -p novovm-adapter-novovm -- -D warnings` 与 `cargo test -p novovm-adapter-novovm` 通过（`6 + 7` 测试全绿）。
+- 已完成（2026-03-15）：`novovm-network` sync-pull followup 目标选路增加默认 fast path：`fanout=1`（默认）时直接沿当前响应对端继续拉取，不再每条消息触发 runtime `top-k` 查询，降低 common path 查询开销。
+- 证据样本：本地 `cargo clippy -p novovm-network -- -D warnings` 与 `cargo test -p novovm-network` 通过（`48` 测试全绿）；`run_migration_acceptance_gate.ps1 -FullSnapshotProfile -AllowedRegressionPct -10` 复跑 `overall_pass=True`。
+- 已完成（2026-03-15）：`novovm-network` `UDP/TCP try_recv` followup fallback 发送路径修正为“仅在 fallback 发送成功时记录 outbound pull target”；去除对非 fallback 目标与发送失败场景的无效 track，避免 runtime sync 目标状态被误推进。
+- 证据样本：本地 `cargo clippy -p novovm-network -- -D warnings` 与 `cargo test -p novovm-network` 通过（`48` 测试全绿）；`run_migration_acceptance_gate.ps1 -FullSnapshotProfile -AllowedRegressionPct -10` 复跑 `overall_pass=True`。
+- 已完成（2026-03-15）：`novovm-node` `verify_local_tx_signatures_batch` 并行路径去中间 `Vec<bool>` 回拷贝：worker 直接写入结果切片，减少每 worker 额外分配与合并 copy。
+- 证据样本：本地 `cargo clippy -p novovm-node -- -D warnings` 与 `cargo test -p novovm-node` 通过；`run_migration_acceptance_gate.ps1 -FullSnapshotProfile -AllowedRegressionPct -10` 复跑 `overall_pass=True`。
+- 已完成（2026-03-15）：`novovm-node` mempool/admission 汇总循环微优化：`admit_mempool_basic_owned_with_meta` 改为 `tx + sig` zip 遍历并对 `next_nonce_by_account` 预分配容量；`validate_and_summarize_txs_with_mode` 拆分 `assume_signatures_valid` 分支并去索引访问，减少热路径分支与额外边界检查。
+- 证据样本：本地 `cargo clippy -p novovm-node -- -D warnings` 通过；`run_migration_acceptance_gate.ps1 -FullSnapshotProfile -AllowedRegressionPct -10` 复跑 `overall_pass=True`（`functional_pass=True`, `performance_pass=True`）。
+- 已完成（2026-03-15）：`novovm-network` sync-pull followup fanout 参数解析缓存化：`NOVOVM_NETWORK_SYNC_PULL_FOLLOWUP_FANOUT_MAX` 改为 `OnceLock` 首次解析后复用，避免热路径重复 env 读取与 parse。
+- 证据样本：本地 `cargo clippy -p novovm-network -- -D warnings` 通过；`run_migration_acceptance_gate.ps1 -FullSnapshotProfile -AllowedRegressionPct -10` 复跑 `overall_pass=True`。

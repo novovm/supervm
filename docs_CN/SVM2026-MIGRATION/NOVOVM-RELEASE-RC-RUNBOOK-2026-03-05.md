@@ -227,3 +227,67 @@ powershell -ExecutionPolicy Bypass -File scripts/migration/run_release_candidate
 
 补充：
 - `run_evm_backend_compare_signal.ps1` 已增加 Windows 短路径状态目录策略（默认 `artifacts/migration/evm/backend-compare-state`），并支持 `NOVOVM_EVM_BACKEND_COMPARE_STATE_ROOT` 覆盖，避免 rocksdb 在深路径下创建 `OPTIONS-*.dbtmp` 失败。
+
+## 16. 本地 AOEM 套件更新后的 acceptance 快速收口（2026-03-15）
+
+- 先决条件：若出现 `AOEM DLL hash mismatch`，先同步 `aoem/manifest/aoem-manifest.json` 与当前 `aoem/bin/aoem_ffi.dll` 哈希。
+- 脚本兼容：`run_performance_gate_seal_single.ps1` 在严格模式下需确保 `$IsWindows` 已初始化。
+- 生产策略说明：在 `production-only` 节点策略下，`run_chain_query_rpc_gate.ps1` 已 decommission，旧 rpc probe 不作为本地快速收口主路径。
+- 推荐本地收口命令：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/migration/run_migration_acceptance_gate.ps1 `
+  -FullSnapshotProfile `
+  -AllowedRegressionPct -10
+```
+
+- 本地结果：`profile_name=full_snapshot_v1`，`overall_pass=true`，产物：
+  - `artifacts/migration/acceptance-gate/acceptance-gate-summary.json`
+
+## 17. 高性能直推最小提交集（2026-03-15）
+
+目标：仅提交本轮“热路径性能收口”代码与对应台账，不混入其他功能线改动。
+
+建议提交文件（最小集）：
+
+- `crates/novovm-adapter-novovm/src/lib.rs`
+  - 批验签 fallback 并行阈值与分块策略（小批串行、大批并行）。
+- `crates/novovm-network/src/transport.rs`
+  - sync-pull followup 默认 fast path；
+  - fallback 发送成功后再 track；
+  - followup fanout env 解析 `OnceLock` 缓存化。
+- `crates/novovm-node/src/main.rs`
+  - `verify_local_tx_signatures_batch` 去中间回拷贝；
+  - admission/meta 汇总循环微优化（zip + 分支拆分 + 预分配）。
+- `docs_CN/SVM2026-MIGRATION/NOVOVM-CAPABILITY-MIGRATION-LEDGER-2026-03-03.md`
+  - 本轮性能改动与证据回填。
+
+对应 diff 规模（参考）：
+
+- `crates/novovm-adapter-novovm/src/lib.rs`: `+48/-2`
+- `crates/novovm-network/src/transport.rs`: `+126/-43`
+- `crates/novovm-node/src/main.rs`: `+389/-114`
+- `docs_CN/SVM2026-MIGRATION/NOVOVM-CAPABILITY-MIGRATION-LEDGER-2026-03-03.md`: `+20/-0`
+
+一键暂存（仅最小集）：
+
+```powershell
+git add `
+  crates/novovm-adapter-novovm/src/lib.rs `
+  crates/novovm-network/src/transport.rs `
+  crates/novovm-node/src/main.rs `
+  docs_CN/SVM2026-MIGRATION/NOVOVM-CAPABILITY-MIGRATION-LEDGER-2026-03-03.md
+```
+
+最小校验（非工程化口径）：
+
+```powershell
+cargo clippy -p novovm-adapter-novovm -p novovm-network -p novovm-node -- -D warnings
+powershell -ExecutionPolicy Bypass -File scripts/migration/run_migration_acceptance_gate.ps1 -FullSnapshotProfile -AllowedRegressionPct -10
+```
+
+提交建议（示例）：
+
+```powershell
+git commit -m "perf(hotpath): tighten adapter/network/node fast paths and keep acceptance green"
+```

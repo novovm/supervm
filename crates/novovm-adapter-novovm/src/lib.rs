@@ -26,6 +26,8 @@ const ADAPTER_UA_INGRESS_GUARD_ENV: &str = "NOVOVM_UNIFIED_ACCOUNT_ADAPTER_INGRE
 const ADAPTER_UA_AUTOPROVISION_ENV: &str = "NOVOVM_UNIFIED_ACCOUNT_ADAPTER_AUTOPROVISION";
 const ADAPTER_UA_SIGNATURE_DOMAIN_ENV: &str = "NOVOVM_UNIFIED_ACCOUNT_ADAPTER_SIGNATURE_DOMAIN";
 const ADAPTER_TX_SIG_DOMAIN: &[u8] = b"novovm_adapter_tx_sig_v1";
+const TX_SIG_VERIFY_PARALLEL_MIN_BATCH: usize = 128;
+const TX_SIG_VERIFY_PARALLEL_MIN_CHUNK: usize = 64;
 
 #[derive(Debug)]
 pub struct NovoVmAdapter {
@@ -174,8 +176,52 @@ impl NovoVmAdapter {
                         Self::tx_from_matches_pubkey_bytes(&txs[idx], &batch_pubkeys[slot]);
                 }
             } else {
-                for idx in batch_indices {
-                    verify_results[idx] = verify_tx_signature_v1(&txs[idx])?;
+                let total = batch_indices.len();
+                let worker_count = std::thread::available_parallelism()
+                    .map(|v| v.get())
+                    .unwrap_or(1)
+                    .min((total / TX_SIG_VERIFY_PARALLEL_MIN_CHUNK).max(1));
+                if total >= TX_SIG_VERIFY_PARALLEL_MIN_BATCH && worker_count > 1 {
+                    let chunk_size = total
+                        .div_ceil(worker_count)
+                        .max(TX_SIG_VERIFY_PARALLEL_MIN_CHUNK);
+                    let batch_indices_ref = &batch_indices;
+                    let txs_ref = txs;
+                    let fallback_results =
+                        std::thread::scope(|scope| -> Result<Vec<bool>> {
+                            let mut jobs = Vec::with_capacity(total.div_ceil(chunk_size));
+                            for start in (0..batch_indices_ref.len()).step_by(chunk_size) {
+                                let end = (start + chunk_size).min(batch_indices_ref.len());
+                                jobs.push(scope.spawn(move || -> Result<(usize, Vec<bool>)> {
+                                    let mut chunk_results = Vec::with_capacity(end - start);
+                                    for idx in &batch_indices_ref[start..end] {
+                                        let verified = verify_tx_signature_v1(&txs_ref[*idx])?;
+                                        chunk_results.push(verified);
+                                    }
+                                    Ok((start, chunk_results))
+                                }));
+                            }
+
+                            let mut merged = vec![false; batch_indices_ref.len()];
+                            for job in jobs {
+                                let (start, chunk_results) = job
+                                    .join()
+                                    .map_err(|_| anyhow!("parallel verify_transaction thread panicked"))??;
+                                let end = start + chunk_results.len();
+                                merged[start..end].copy_from_slice(&chunk_results);
+                            }
+                            Ok(merged)
+                        })?;
+                    for (slot, verified) in fallback_results.into_iter().enumerate() {
+                        if verified {
+                            let idx = batch_indices[slot];
+                            verify_results[idx] = true;
+                        }
+                    }
+                } else {
+                    for idx in batch_indices {
+                        verify_results[idx] = verify_tx_signature_v1(&txs[idx])?;
+                    }
                 }
             }
         }

@@ -5,8 +5,8 @@
 use anyhow::{bail, Context, Result};
 use ed25519_dalek::SigningKey;
 use novovm_adapter_api::{
-    default_chain_id, AccountAuditEvent, AccountPolicy, AccountRole, ChainConfig, ChainType,
-    NonceScope, PersonaAddress, PersonaType, ProtocolKind, RouteDecision, RouteRequest,
+    default_chain_id, AccountAuditEvent, AccountPolicy, AccountRole, BlockIR, ChainConfig,
+    ChainType, NonceScope, PersonaAddress, PersonaType, ProtocolKind, RouteDecision, RouteRequest,
     SerializationFormat, StateIR, TxIR, TxType, UnifiedAccountError, UnifiedAccountRouter,
 };
 use novovm_adapter_evm_core::{
@@ -765,6 +765,7 @@ struct LocalBatch {
     id: u64,
     txs: Vec<LocalTx>,
     mapped_ops: u32,
+    txs_digest: [u8; 32],
 }
 
 #[derive(Debug, Clone)]
@@ -1046,6 +1047,39 @@ fn verify_local_tx_signature(tx: &LocalTx) -> bool {
     tx.signature == compute_local_tx_signature_parts(tx.account, tx.key, tx.value, tx.nonce, tx.fee)
 }
 
+fn verify_local_tx_signatures_batch(txs: &[LocalTx]) -> Vec<bool> {
+    const MIN_WORKER_CHUNK: usize = 64;
+
+    if txs.is_empty() {
+        return Vec::new();
+    }
+    let cpu_parallelism = std::thread::available_parallelism()
+        .map(|v| v.get())
+        .unwrap_or(1);
+    let load_limited_workers = txs.len().div_ceil(MIN_WORKER_CHUNK).max(1);
+    let worker_count = cpu_parallelism.min(load_limited_workers).min(txs.len().max(1));
+    if worker_count <= 1 || txs.len() <= 1 {
+        return txs.iter().map(verify_local_tx_signature).collect();
+    }
+
+    let chunk_size = txs.len().div_ceil(worker_count);
+    let mut results = vec![false; txs.len()];
+    std::thread::scope(|scope| {
+        let mut jobs = Vec::with_capacity(worker_count);
+        for (out_chunk, tx_chunk) in results.chunks_mut(chunk_size).zip(txs.chunks(chunk_size)) {
+            jobs.push(scope.spawn(move || {
+                for (out, tx) in out_chunk.iter_mut().zip(tx_chunk.iter()) {
+                    *out = verify_local_tx_signature(tx);
+                }
+            }));
+        }
+        for job in jobs {
+            job.join().expect("local tx signature worker panicked");
+        }
+    });
+    results
+}
+
 fn to_tx_wire_v1(tx: &LocalTx) -> LocalTxWireV1 {
     LocalTxWireV1 {
         account: tx.account,
@@ -1117,13 +1151,14 @@ fn admit_mempool_basic(
     let mut nonce_ok = true;
     let mut sig_ok = true;
     let mut next_nonce_by_account: HashMap<u64, u64> = HashMap::new();
+    let sig_results = verify_local_tx_signatures_batch(txs);
 
-    for tx in txs {
+    for (idx, tx) in txs.iter().enumerate() {
         if tx.fee < fee_floor {
             rejected = rejected.saturating_add(1);
             continue;
         }
-        if !verify_local_tx_signature(tx) {
+        if !sig_results[idx] {
             sig_ok = false;
             rejected = rejected.saturating_add(1);
             continue;
@@ -1142,10 +1177,11 @@ fn admit_mempool_basic(
         bail!("mempool rejected all transactions");
     }
 
+    let accepted_len = accepted.len();
     Ok((
-        accepted.clone(),
+        accepted,
         MempoolAdmissionSummary {
-            accepted: accepted.len(),
+            accepted: accepted_len,
             rejected,
             fee_floor,
             nonce_ok,
@@ -1154,53 +1190,153 @@ fn admit_mempool_basic(
     ))
 }
 
-fn validate_and_summarize_txs(txs: &[LocalTx]) -> Result<TxMetaSummary> {
+fn admit_mempool_basic_owned(
+    txs: Vec<LocalTx>,
+    fee_floor: u64,
+) -> Result<(Vec<LocalTx>, MempoolAdmissionSummary)> {
+    let (accepted, summary, _) = admit_mempool_basic_owned_with_meta(txs, fee_floor)?;
+    Ok((accepted, summary))
+}
+
+fn admit_mempool_basic_owned_with_meta(
+    txs: Vec<LocalTx>,
+    fee_floor: u64,
+) -> Result<(Vec<LocalTx>, MempoolAdmissionSummary, TxMetaSummary)> {
+    if txs.is_empty() {
+        bail!("mempool admission requires at least one tx");
+    }
+
+    let sig_results = verify_local_tx_signatures_batch(&txs);
+    let mut accepted = Vec::with_capacity(txs.len());
+    let mut rejected = 0usize;
+    let mut nonce_ok = true;
+    let mut sig_ok = true;
+    let mut next_nonce_by_account: HashMap<u64, u64> = HashMap::with_capacity(txs.len());
+    let mut min_fee = u64::MAX;
+    let mut max_fee = 0u64;
+
+    for (tx, sig_valid) in txs.into_iter().zip(sig_results.into_iter()) {
+        if tx.fee < fee_floor {
+            rejected = rejected.saturating_add(1);
+            continue;
+        }
+        if !sig_valid {
+            sig_ok = false;
+            rejected = rejected.saturating_add(1);
+            continue;
+        }
+        let expected_nonce = next_nonce_by_account.entry(tx.account).or_insert(0);
+        if tx.nonce != *expected_nonce {
+            nonce_ok = false;
+            rejected = rejected.saturating_add(1);
+            continue;
+        }
+        *expected_nonce = expected_nonce.saturating_add(1);
+        min_fee = min_fee.min(tx.fee);
+        max_fee = max_fee.max(tx.fee);
+        accepted.push(tx);
+    }
+
+    if accepted.is_empty() {
+        bail!("mempool rejected all transactions");
+    }
+
+    let accepted_len = accepted.len();
+    Ok((
+        accepted,
+        MempoolAdmissionSummary {
+            accepted: accepted_len,
+            rejected,
+            fee_floor,
+            nonce_ok,
+            sig_ok,
+        },
+        TxMetaSummary {
+            accounts: next_nonce_by_account.len(),
+            min_fee,
+            max_fee,
+            nonce_ok: true,
+            sig_ok: true,
+        },
+    ))
+}
+
+fn validate_and_summarize_txs_with_mode(
+    txs: &[LocalTx],
+    assume_signatures_valid: bool,
+) -> Result<TxMetaSummary> {
     if txs.is_empty() {
         bail!("tx set cannot be empty");
     }
 
-    let mut next_nonce_by_account: HashMap<u64, u64> = HashMap::new();
-    let mut accounts: HashSet<u64> = HashSet::new();
+    let mut next_nonce_by_account: HashMap<u64, u64> = HashMap::with_capacity(txs.len());
     let mut min_fee = u64::MAX;
     let mut max_fee = 0u64;
-
-    for tx in txs {
-        if tx.fee == 0 {
-            bail!(
-                "tx fee must be > 0 (account={}, nonce={})",
-                tx.account,
-                tx.nonce
-            );
+    if assume_signatures_valid {
+        for tx in txs {
+            if tx.fee == 0 {
+                bail!(
+                    "tx fee must be > 0 (account={}, nonce={})",
+                    tx.account,
+                    tx.nonce
+                );
+            }
+            let expected_nonce = next_nonce_by_account.entry(tx.account).or_insert(0);
+            if tx.nonce != *expected_nonce {
+                bail!(
+                    "nonce sequence invalid for account {}: expected {}, got {}",
+                    tx.account,
+                    *expected_nonce,
+                    tx.nonce
+                );
+            }
+            *expected_nonce = expected_nonce.saturating_add(1);
+            min_fee = min_fee.min(tx.fee);
+            max_fee = max_fee.max(tx.fee);
         }
-        if !verify_local_tx_signature(tx) {
-            bail!(
-                "tx signature invalid (account={}, nonce={})",
-                tx.account,
-                tx.nonce
-            );
+    } else {
+        let sig_results = verify_local_tx_signatures_batch(txs);
+        for (tx, sig_valid) in txs.iter().zip(sig_results.iter().copied()) {
+            if tx.fee == 0 {
+                bail!(
+                    "tx fee must be > 0 (account={}, nonce={})",
+                    tx.account,
+                    tx.nonce
+                );
+            }
+            if !sig_valid {
+                bail!(
+                    "tx signature invalid (account={}, nonce={})",
+                    tx.account,
+                    tx.nonce
+                );
+            }
+            let expected_nonce = next_nonce_by_account.entry(tx.account).or_insert(0);
+            if tx.nonce != *expected_nonce {
+                bail!(
+                    "nonce sequence invalid for account {}: expected {}, got {}",
+                    tx.account,
+                    *expected_nonce,
+                    tx.nonce
+                );
+            }
+            *expected_nonce = expected_nonce.saturating_add(1);
+            min_fee = min_fee.min(tx.fee);
+            max_fee = max_fee.max(tx.fee);
         }
-        let expected_nonce = next_nonce_by_account.entry(tx.account).or_insert(0);
-        if tx.nonce != *expected_nonce {
-            bail!(
-                "nonce sequence invalid for account {}: expected {}, got {}",
-                tx.account,
-                *expected_nonce,
-                tx.nonce
-            );
-        }
-        *expected_nonce = expected_nonce.saturating_add(1);
-        accounts.insert(tx.account);
-        min_fee = min_fee.min(tx.fee);
-        max_fee = max_fee.max(tx.fee);
     }
 
     Ok(TxMetaSummary {
-        accounts: accounts.len(),
+        accounts: next_nonce_by_account.len(),
         min_fee,
         max_fee,
         nonce_ok: true,
         sig_ok: true,
     })
+}
+
+fn validate_and_summarize_txs(txs: &[LocalTx]) -> Result<TxMetaSummary> {
+    validate_and_summarize_txs_with_mode(txs, false)
 }
 
 fn encode_adapter_address(seed: u64) -> Vec<u8> {
@@ -1747,7 +1883,7 @@ fn run_native_adapter_signal(
     let mut state = StateIR::new();
     let mut verified = true;
     let mut applied = true;
-
+    let mut parsed_txs = Vec::with_capacity(tx_irs.len());
     for ir in tx_irs {
         let raw = ir
             .serialize(SerializationFormat::Bincode)
@@ -1755,16 +1891,49 @@ fn run_native_adapter_signal(
         let parsed = adapter
             .parse_transaction(&raw)
             .context("adapter parse_transaction failed")?;
-        let tx_ok = adapter
-            .verify_transaction(&parsed)
-            .context("adapter verify_transaction failed")?;
-        verified = verified && tx_ok;
-        if tx_ok {
-            if let Err(e) = adapter.execute_transaction(&parsed, &mut state) {
+        parsed_txs.push(parsed);
+    }
+
+    let gas_limit = parsed_txs
+        .iter()
+        .fold(0u64, |acc, tx| acc.saturating_add(tx.gas_limit))
+        .max(21_000);
+    let parsed_block = BlockIR {
+        hash: vec![0u8; 32],
+        parent_hash: vec![0u8; 32],
+        number: 1,
+        timestamp: 0,
+        transactions: parsed_txs,
+        state_root: vec![0u8; 32],
+        transactions_root: vec![0u8; 32],
+        receipts_root: vec![0u8; 32],
+        miner: vec![0u8; 20],
+        difficulty: 0,
+        gas_used: 0,
+        gas_limit,
+    };
+
+    if adapter
+        .verify_block(&parsed_block)
+        .context("adapter verify_block failed")?
+    {
+        for tx in &parsed_block.transactions {
+            if let Err(e) = adapter.execute_transaction(tx, &mut state) {
                 return Err(e).context("adapter execute_transaction failed");
             }
-        } else {
-            applied = false;
+        }
+    } else {
+        verified = false;
+        applied = false;
+        for tx in &parsed_block.transactions {
+            let tx_ok = adapter
+                .verify_transaction(tx)
+                .context("adapter verify_transaction failed")?;
+            if tx_ok {
+                if let Err(e) = adapter.execute_transaction(tx, &mut state) {
+                    return Err(e).context("adapter execute_transaction failed");
+                }
+            }
         }
     }
 
@@ -2241,29 +2410,8 @@ fn build_demo_txs() -> Vec<LocalTx> {
 }
 
 fn build_local_batches_from_txs(txs: &[LocalTx], requested_batches: usize) -> Vec<LocalBatch> {
-    if txs.is_empty() {
-        return Vec::new();
-    }
-
-    let batch_count = requested_batches.max(1).min(txs.len());
-    let base = txs.len() / batch_count;
-    let rem = txs.len() % batch_count;
-    let mut out = Vec::with_capacity(batch_count);
-    let mut cursor = 0usize;
-
-    for i in 0..batch_count {
-        let sz = base + usize::from(i < rem);
-        let end = cursor + sz;
-        let batch_txs = txs[cursor..end].to_vec();
-        out.push(LocalBatch {
-            id: (i + 1) as u64,
-            mapped_ops: batch_txs.len() as u32,
-            txs: batch_txs,
-        });
-        cursor = end;
-    }
-
-    out
+    let (batches, _, _) = build_local_batches_and_ops_from_txs(txs, requested_batches);
+    batches
 }
 
 fn batch_layout_summary(batches: &[LocalBatch]) -> String {
@@ -2278,32 +2426,161 @@ fn batch_layout_summary(batches: &[LocalBatch]) -> String {
 }
 
 fn encode_ops_v2_buffer(txs: &[LocalTx]) -> ExecBatchBuffer {
+    let (_, ops, _) = build_local_batches_and_ops_from_txs(txs, 1);
+    ops
+}
+
+fn build_local_batches_and_ops_from_txs(
+    txs: &[LocalTx],
+    requested_batches: usize,
+) -> (Vec<LocalBatch>, ExecBatchBuffer, usize) {
+    if txs.is_empty() {
+        return (
+            Vec::new(),
+            ExecBatchBuffer {
+                _keys: Vec::new(),
+                _values: Vec::new(),
+                ops: Vec::new(),
+            },
+            0,
+        );
+    }
+
+    let batch_count = requested_batches.max(1).min(txs.len());
+    let base = txs.len() / batch_count;
+    let rem = txs.len() % batch_count;
+
+    let mut out = Vec::with_capacity(batch_count);
     let mut keys = vec![[0u8; 8]; txs.len()];
     let mut values = vec![[0u8; 8]; txs.len()];
     let mut ops = Vec::with_capacity(txs.len());
+    let mut total_mapped_ops = 0usize;
+    let mut cursor = 0usize;
 
-    for (i, tx) in txs.iter().enumerate() {
-        keys[i] = tx.key.to_le_bytes();
-        values[i] = tx.value.to_le_bytes();
-        ops.push(ExecOpV2 {
-            opcode: 2,
-            flags: 0,
-            reserved: 0,
-            key_ptr: keys[i].as_mut_ptr(),
-            key_len: keys[i].len() as u32,
-            value_ptr: values[i].as_mut_ptr(),
-            value_len: values[i].len() as u32,
-            delta: 0,
-            expect_version: u64::MAX,
-            plan_id: (tx.account << 32) | tx.nonce.saturating_add(1),
+    for i in 0..batch_count {
+        let sz = base + usize::from(i < rem);
+        let end = cursor + sz;
+        let mut batch_txs = Vec::with_capacity(sz);
+        let mut digest_hasher = Sha256::new();
+        for idx in cursor..end {
+            let tx = &txs[idx];
+            let tx_hash = hash_local_tx(tx);
+            digest_hasher.update(tx_hash);
+            batch_txs.push(tx.clone());
+            keys[idx] = tx.key.to_le_bytes();
+            values[idx] = tx.value.to_le_bytes();
+            ops.push(ExecOpV2 {
+                opcode: 2,
+                flags: 0,
+                reserved: 0,
+                key_ptr: keys[idx].as_mut_ptr(),
+                key_len: keys[idx].len() as u32,
+                value_ptr: values[idx].as_mut_ptr(),
+                value_len: values[idx].len() as u32,
+                delta: 0,
+                expect_version: u64::MAX,
+                plan_id: (tx.account << 32) | tx.nonce.saturating_add(1),
+            });
+        }
+
+        let txs_digest: [u8; 32] = digest_hasher.finalize().into();
+        total_mapped_ops = total_mapped_ops.saturating_add(batch_txs.len());
+        out.push(LocalBatch {
+            id: (i + 1) as u64,
+            mapped_ops: batch_txs.len() as u32,
+            txs: batch_txs,
+            txs_digest,
+        });
+        cursor = end;
+    }
+
+    (
+        out,
+        ExecBatchBuffer {
+            _keys: keys,
+            _values: values,
+            ops,
+        },
+        total_mapped_ops,
+    )
+}
+
+fn build_local_batches_and_ops_from_txs_owned(
+    txs: Vec<LocalTx>,
+    requested_batches: usize,
+) -> (Vec<LocalBatch>, ExecBatchBuffer, usize) {
+    if txs.is_empty() {
+        return (
+            Vec::new(),
+            ExecBatchBuffer {
+                _keys: Vec::new(),
+                _values: Vec::new(),
+                ops: Vec::new(),
+            },
+            0,
+        );
+    }
+
+    let total_txs = txs.len();
+    let batch_count = requested_batches.max(1).min(total_txs);
+    let base = total_txs / batch_count;
+    let rem = total_txs % batch_count;
+
+    let mut out = Vec::with_capacity(batch_count);
+    let mut keys = vec![[0u8; 8]; total_txs];
+    let mut values = vec![[0u8; 8]; total_txs];
+    let mut ops = Vec::with_capacity(total_txs);
+    let mut total_mapped_ops = 0usize;
+    let mut op_cursor = 0usize;
+    let mut tx_iter = txs.into_iter();
+
+    for i in 0..batch_count {
+        let sz = base + usize::from(i < rem);
+        let mut batch_txs = Vec::with_capacity(sz);
+        let mut digest_hasher = Sha256::new();
+        for _ in 0..sz {
+            let tx = tx_iter
+                .next()
+                .expect("tx iterator should yield enough items for computed batch size");
+            let tx_hash = hash_local_tx(&tx);
+            digest_hasher.update(tx_hash);
+            keys[op_cursor] = tx.key.to_le_bytes();
+            values[op_cursor] = tx.value.to_le_bytes();
+            ops.push(ExecOpV2 {
+                opcode: 2,
+                flags: 0,
+                reserved: 0,
+                key_ptr: keys[op_cursor].as_mut_ptr(),
+                key_len: keys[op_cursor].len() as u32,
+                value_ptr: values[op_cursor].as_mut_ptr(),
+                value_len: values[op_cursor].len() as u32,
+                delta: 0,
+                expect_version: u64::MAX,
+                plan_id: (tx.account << 32) | tx.nonce.saturating_add(1),
+            });
+            op_cursor = op_cursor.saturating_add(1);
+            batch_txs.push(tx);
+        }
+
+        let txs_digest: [u8; 32] = digest_hasher.finalize().into();
+        total_mapped_ops = total_mapped_ops.saturating_add(batch_txs.len());
+        out.push(LocalBatch {
+            id: (i + 1) as u64,
+            mapped_ops: batch_txs.len() as u32,
+            txs: batch_txs,
+            txs_digest,
         });
     }
 
-    ExecBatchBuffer {
-        _keys: keys,
-        _values: values,
-        ops,
-    }
+    (
+        out,
+        ExecBatchBuffer {
+            _keys: keys,
+            _values: values,
+            ops,
+        },
+        total_mapped_ops,
+    )
 }
 
 #[cfg(test)]
@@ -2323,9 +2600,7 @@ fn build_batch_state_root(base: [u8; 32], batch: &LocalBatch) -> [u8; 32] {
     hasher.update(base);
     hasher.update(batch.id.to_le_bytes());
     hasher.update((batch.txs.len() as u64).to_le_bytes());
-    for tx in &batch.txs {
-        hasher.update(hash_local_tx(tx));
-    }
+    hasher.update(batch.txs_digest);
     hasher.finalize().into()
 }
 
@@ -2355,14 +2630,12 @@ fn compute_block_hash(header: &LocalBlockHeader, batches: &[LocalBatch]) -> [u8;
         hasher.update(batch.id.to_le_bytes());
         hasher.update(batch.mapped_ops.to_le_bytes());
         hasher.update((batch.txs.len() as u64).to_le_bytes());
-        for tx in &batch.txs {
-            hasher.update(hash_local_tx(tx));
-        }
+        hasher.update(batch.txs_digest);
     }
     hasher.finalize().into()
 }
 
-fn build_local_block(closure: &BatchAClosureOutput, batches: &[LocalBatch]) -> LocalBlock {
+fn build_local_block_owned(closure: &BatchAClosureOutput, batches: Vec<LocalBatch>) -> LocalBlock {
     let tx_count = batches.iter().map(|b| b.txs.len() as u64).sum();
     let header = LocalBlockHeader {
         height: closure.height,
@@ -2374,7 +2647,6 @@ fn build_local_block(closure: &BatchAClosureOutput, batches: &[LocalBatch]) -> L
         batch_count: batches.len() as u32,
         consensus_binding: closure.consensus_binding,
     };
-    let batches = batches.to_vec();
     let block_hash = compute_block_hash(&header, &batches);
     LocalBlock {
         header,
@@ -2382,6 +2654,10 @@ fn build_local_block(closure: &BatchAClosureOutput, batches: &[LocalBatch]) -> L
         proposal_hash: closure.proposal_hash,
         block_hash,
     }
+}
+
+fn build_local_block(closure: &BatchAClosureOutput, batches: &[LocalBatch]) -> LocalBlock {
+    build_local_block_owned(closure, batches.to_vec())
 }
 
 fn to_block_header_wire_v1(header: &LocalBlockHeader) -> BlockHeaderWireV1 {
@@ -4441,7 +4717,7 @@ fn persist_query_state_for_block(block: &LocalBlock) -> Result<(PathBuf, QuerySt
 }
 
 fn run_batch_a_minimal_closure(
-    batches: &[LocalBatch],
+    batches: Vec<LocalBatch>,
     consensus_binding: ConsensusPluginBindingV1,
     execution_state_root: [u8; 32],
     slash_policy: &SlashPolicy,
@@ -4451,6 +4727,9 @@ fn run_batch_a_minimal_closure(
     if batches.is_empty() {
         bail!("batch_a requires at least one batch");
     }
+    let batch_layout = batch_layout_summary(&batches);
+    let batch_mapped_ops_total = batches.iter().map(|b| b.mapped_ops as u64).sum::<u64>();
+    let expected_txs = batches.iter().map(|b| b.txs.len() as u64).sum::<u64>();
 
     let validator_set = ValidatorSet::new_equal_weight(vec![0]);
     let signing_key = SigningKey::generate(&mut OsRng);
@@ -4477,14 +4756,14 @@ fn run_batch_a_minimal_closure(
     );
 
     engine.start_epoch().context("start epoch failed")?;
-    for batch in batches {
+    for batch in &batches {
         engine
             .add_batch(batch.id, batch.txs.len() as u64)
             .with_context(|| format!("add batch {} failed", batch.id))?;
     }
 
     let mut batch_results = HashMap::new();
-    for batch in batches {
+    for batch in &batches {
         batch_results.insert(
             batch.id,
             build_batch_state_root(execution_state_root, batch),
@@ -4518,8 +4797,8 @@ fn run_batch_a_minimal_closure(
     println!(
         "batch_a_batches: count={} layout={} mapped_ops={}",
         batches.len(),
-        batch_layout_summary(batches),
-        batches.iter().map(|b| b.mapped_ops as u64).sum::<u64>()
+        batch_layout,
+        batch_mapped_ops_total
     );
 
     let closure = BatchAClosureOutput {
@@ -4531,7 +4810,6 @@ fn run_batch_a_minimal_closure(
         proposal_hash,
         consensus_binding,
     };
-    let expected_txs = batches.iter().map(|b| b.txs.len() as u64).sum::<u64>();
     if closure.txs != expected_txs {
         bail!(
             "batch_a tx mismatch: committed={} expected={}",
@@ -4539,7 +4817,7 @@ fn run_batch_a_minimal_closure(
             expected_txs
         );
     }
-    let block = build_local_block(&closure, batches);
+    let block = build_local_block_owned(&closure, batches);
     println!(
         "block_out: height={} epoch={} batches={} txs={} block_hash={} state_root={} governance_chain_audit_root={} proposal_hash={}",
         block.header.height,
@@ -11753,36 +12031,18 @@ fn run_ffi_v2() -> Result<()> {
     );
 
     let fee_floor = u64_env("NOVOVM_MEMPOOL_FEE_FLOOR", 1);
-    let (admitted_txs, mempool) = admit_mempool_basic(&decoded_txs, fee_floor)?;
+    let (admitted_txs, mempool, tx_meta) =
+        admit_mempool_basic_owned_with_meta(decoded_txs, fee_floor)?;
+    let admitted_txs_count = admitted_txs.len();
     println!(
         "mempool_out: policy=basic accepted={} rejected={} fee_floor={} nonce_ok={} sig_ok={}",
         mempool.accepted, mempool.rejected, mempool.fee_floor, mempool.nonce_ok, mempool.sig_ok
     );
 
-    let tx_meta = validate_and_summarize_txs(&admitted_txs)?;
-    let requested_batches = u32_env("NOVOVM_BATCH_A_BATCHES", 1) as usize;
-    let local_batches = build_local_batches_from_txs(&admitted_txs, requested_batches);
-    let total_mapped_ops = local_batches
-        .iter()
-        .map(|b| b.mapped_ops as usize)
-        .sum::<usize>();
-    let batch = encode_ops_v2_buffer(&admitted_txs);
-    if total_mapped_ops != batch.ops.len() {
-        bail!(
-            "batch mapping mismatch: mapped_ops={} encoded_ops={}",
-            total_mapped_ops,
-            batch.ops.len()
-        );
-    }
-    println!(
-        "tx_ingress: codec=novovm_local_tx_v1 accepted={} mapped_ops={}",
-        admitted_txs.len(),
-        batch.ops.len()
-    );
     println!(
         "tx_meta: accounts={} txs={} min_fee={} max_fee={} nonce_ok={} sig_ok={}",
         tx_meta.accounts,
-        admitted_txs.len(),
+        admitted_txs_count,
         tx_meta.min_fee,
         tx_meta.max_fee,
         tx_meta.nonce_ok,
@@ -11897,6 +12157,21 @@ fn run_ffi_v2() -> Result<()> {
         to_hex(&adapter_signal.consensus_adapter_hash),
         adapter_signal.backend
     );
+    let requested_batches = u32_env("NOVOVM_BATCH_A_BATCHES", 1) as usize;
+    let (local_batches, batch, total_mapped_ops) =
+        build_local_batches_and_ops_from_txs_owned(admitted_txs, requested_batches);
+    if total_mapped_ops != batch.ops.len() {
+        bail!(
+            "batch mapping mismatch: mapped_ops={} encoded_ops={}",
+            total_mapped_ops,
+            batch.ops.len()
+        );
+    }
+    println!(
+        "tx_ingress: codec=novovm_local_tx_v1 accepted={} mapped_ops={}",
+        admitted_txs_count,
+        batch.ops.len()
+    );
     println!(
         "batch_ingress: batches={} layout={} mapped_ops={}",
         local_batches.len(),
@@ -11929,7 +12204,7 @@ fn run_ffi_v2() -> Result<()> {
         adapter_hash: adapter_signal.consensus_adapter_hash,
     };
     match run_batch_a_minimal_closure(
-        &local_batches,
+        local_batches,
         consensus_binding,
         adapter_signal.state_root,
         &slash_policy_loaded.policy,
@@ -11951,7 +12226,7 @@ fn run_ffi_v2() -> Result<()> {
     }
 
     let strict_network = bool_env("NOVOVM_NETWORK_STRICT");
-    match run_network_smoke(admitted_txs.len() as u64) {
+    match run_network_smoke(admitted_txs_count as u64) {
         Ok(signal) => {
             println!(
                 "network_out: transport={} from={} to={} sent={} received={} msg_kind={}",
