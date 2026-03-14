@@ -798,6 +798,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "bincode",
+ "dashmap",
  "ed25519-dalek",
  "novovm-adapter-api",
  "serde_json",
@@ -863,6 +864,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "bincode",
+ "dashmap",
  "novovm-adapter-api",
  "novovm-adapter-evm-core",
  "novovm-adapter-evm-plugin",

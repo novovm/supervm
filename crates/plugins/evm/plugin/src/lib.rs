@@ -1,4 +1,5 @@
 use bincode::Options as _;
+use novovm_adapter_api::ChainAdapter;
 use novovm_adapter_api::{
     AccountAuditEvent, AccountRole, AtomicBroadcastReadyV1, AtomicCrossChainIntentV1,
     AtomicIntentReceiptV1, AtomicIntentStatus, ChainConfig, ChainType, EvmFeeIncomeRecordV1,
@@ -11,14 +12,15 @@ use novovm_adapter_evm_core::{
     active_precompile_set_m0, resolve_evm_chain_type_from_chain_id, resolve_evm_profile,
     validate_tx_semantics_m0,
 };
-use novovm_adapter_novovm::create_native_adapter;
+use novovm_adapter_novovm::NovoVmAdapter;
 use rocksdb::Options as RocksDbOptions;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Mutex, OnceLock};
 
 pub const NOVOVM_ADAPTER_PLUGIN_ABI_V1: u32 = 1;
@@ -62,6 +64,10 @@ const DEFAULT_TXPOOL_PRICE_BUMP_PCT: u64 = 10;
 const DEFAULT_TXPOOL_MAX_PENDING_PER_SENDER: usize = 64;
 const DEFAULT_TXPOOL_MAX_NONCE_GAP: u64 = 1024;
 const DEFAULT_TXPOOL_EXECUTABLE_QUEUE_MAX: usize = 4096;
+const DEFAULT_EVM_RUNTIME_SHARD_COUNT: usize = 16;
+const MAX_EVM_RUNTIME_SHARD_COUNT: usize = 128;
+const DEFAULT_EVM_TXPOOL_SHARD_COUNT: usize = 16;
+const MAX_EVM_TXPOOL_SHARD_COUNT: usize = 128;
 
 #[derive(Debug)]
 struct EvmRuntimeConfig {
@@ -153,12 +159,16 @@ struct EvmRuntimeState {
     settlement_seq: u64,
     reserve_total_wei: u128,
     payout_total_units: u128,
-    ingress_frames: VecDeque<EvmMempoolIngressFrameV1>,
-    executable_ingress_frames: VecDeque<EvmMempoolIngressFrameV1>,
     atomic_receipts: VecDeque<AtomicIntentReceiptV1>,
     settlement_records: VecDeque<EvmFeeSettlementRecordV1>,
     payout_instructions: VecDeque<EvmFeePayoutInstructionV1>,
     atomic_broadcast_ready: VecDeque<AtomicBroadcastReadyV1>,
+}
+
+#[derive(Debug, Default)]
+struct EvmTxpoolState {
+    ingress_frames: VecDeque<EvmMempoolIngressFrameV1>,
+    executable_ingress_frames: VecDeque<EvmMempoolIngressFrameV1>,
     pending_by_nonce: HashMap<IngressNonceKey, IngressNonceMeta>,
     pending_by_sender: HashMap<IngressSenderKey, BTreeMap<u64, Vec<u8>>>,
     next_nonce_by_sender: HashMap<IngressSenderKey, u64>,
@@ -260,7 +270,11 @@ struct UaPluginAuditRecordV1 {
 static UA_PLUGIN_RUNTIME: OnceLock<Mutex<UaPluginRuntime>> = OnceLock::new();
 static UA_PLUGIN_STANDALONE_CONFIG: OnceLock<UaPluginStandaloneConfig> = OnceLock::new();
 static EVM_RUNTIME_CONFIG: OnceLock<EvmRuntimeConfig> = OnceLock::new();
-static EVM_RUNTIME_STATE: OnceLock<Mutex<EvmRuntimeState>> = OnceLock::new();
+static EVM_RUNTIME_SHARDS: OnceLock<Vec<Mutex<EvmRuntimeState>>> = OnceLock::new();
+static EVM_RUNTIME_SHARD_CURSOR: AtomicUsize = AtomicUsize::new(0);
+static EVM_RUNTIME_SETTLEMENT_SEQ: AtomicU64 = AtomicU64::new(0);
+static EVM_TXPOOL_SHARDS: OnceLock<Vec<Mutex<EvmTxpoolState>>> = OnceLock::new();
+static EVM_TXPOOL_SHARD_CURSOR: AtomicUsize = AtomicUsize::new(0);
 
 fn normalize_root32(root: &[u8]) -> [u8; 32] {
     if root.len() == 32 {
@@ -427,33 +441,111 @@ fn resolve_evm_runtime_config() -> &'static EvmRuntimeConfig {
     })
 }
 
-fn resolve_evm_runtime_state() -> &'static Mutex<EvmRuntimeState> {
-    EVM_RUNTIME_STATE.get_or_init(|| {
-        let mut state = EvmRuntimeState::default();
-        if let Ok(raw) = std::env::var("NOVOVM_ADAPTER_PLUGIN_EVM_RESERVE_CCY") {
-            let trimmed = raw.trim();
-            if !trimmed.is_empty() {
-                state.settlement_policy.reserve_currency_code = trimmed.to_string();
-            }
+fn default_settlement_policy_from_env() -> EvmFeeSettlementPolicyV1 {
+    let mut policy = EvmFeeSettlementPolicyV1::default();
+    if let Ok(raw) = std::env::var("NOVOVM_ADAPTER_PLUGIN_EVM_RESERVE_CCY") {
+        let trimmed = raw.trim();
+        if !trimmed.is_empty() {
+            policy.reserve_currency_code = trimmed.to_string();
         }
-        if let Ok(raw) = std::env::var("NOVOVM_ADAPTER_PLUGIN_EVM_PAYOUT_TOKEN") {
-            let trimmed = raw.trim();
-            if !trimmed.is_empty() {
-                state.settlement_policy.payout_token_code = trimmed.to_string();
-            }
+    }
+    if let Ok(raw) = std::env::var("NOVOVM_ADAPTER_PLUGIN_EVM_PAYOUT_TOKEN") {
+        let trimmed = raw.trim();
+        if !trimmed.is_empty() {
+            policy.payout_token_code = trimmed.to_string();
         }
-        if let Ok(raw) = std::env::var("NOVOVM_ADAPTER_PLUGIN_EVM_RESERVE_ACCOUNT_HEX") {
-            if let Some(addr) = decode_hex_bytes(&raw) {
-                state.settlement_policy.reserve_account = addr;
-            }
+    }
+    if let Ok(raw) = std::env::var("NOVOVM_ADAPTER_PLUGIN_EVM_RESERVE_ACCOUNT_HEX") {
+        if let Some(addr) = decode_hex_bytes(&raw) {
+            policy.reserve_account = addr;
         }
-        if let Ok(raw) = std::env::var("NOVOVM_ADAPTER_PLUGIN_EVM_PAYOUT_ACCOUNT_HEX") {
-            if let Some(addr) = decode_hex_bytes(&raw) {
-                state.settlement_policy.payout_account = addr;
-            }
+    }
+    if let Ok(raw) = std::env::var("NOVOVM_ADAPTER_PLUGIN_EVM_PAYOUT_ACCOUNT_HEX") {
+        if let Some(addr) = decode_hex_bytes(&raw) {
+            policy.payout_account = addr;
         }
-        Mutex::new(state)
-    })
+    }
+    policy
+}
+
+fn resolve_evm_runtime_shards() -> &'static [Mutex<EvmRuntimeState>] {
+    EVM_RUNTIME_SHARDS
+        .get_or_init(|| {
+            let shard_count = parse_env_usize(
+                "NOVOVM_ADAPTER_PLUGIN_EVM_RUNTIME_SHARDS",
+                DEFAULT_EVM_RUNTIME_SHARD_COUNT,
+            )
+            .clamp(1, MAX_EVM_RUNTIME_SHARD_COUNT);
+            let policy = default_settlement_policy_from_env();
+            (0..shard_count)
+                .map(|_| {
+                    let state = EvmRuntimeState {
+                        settlement_policy: policy.clone(),
+                        ..EvmRuntimeState::default()
+                    };
+                    Mutex::new(state)
+                })
+                .collect()
+        })
+        .as_slice()
+}
+
+fn runtime_shard_start_index(shard_count: usize) -> usize {
+    if shard_count <= 1 {
+        0
+    } else {
+        EVM_RUNTIME_SHARD_CURSOR.fetch_add(1, Ordering::Relaxed) % shard_count
+    }
+}
+
+fn resolve_evm_runtime_state_for_chain(chain_id: u64) -> &'static Mutex<EvmRuntimeState> {
+    let shards = resolve_evm_runtime_shards();
+    &shards[txpool_shard_index(chain_id, shards.len())]
+}
+
+fn resolve_evm_txpool_shards() -> &'static [Mutex<EvmTxpoolState>] {
+    EVM_TXPOOL_SHARDS
+        .get_or_init(|| {
+            let shard_count = parse_env_usize(
+                "NOVOVM_ADAPTER_PLUGIN_EVM_TXPOOL_SHARDS",
+                DEFAULT_EVM_TXPOOL_SHARD_COUNT,
+            )
+            .clamp(1, MAX_EVM_TXPOOL_SHARD_COUNT);
+            (0..shard_count)
+                .map(|_| Mutex::new(EvmTxpoolState::default()))
+                .collect()
+        })
+        .as_slice()
+}
+
+fn txpool_shard_index(chain_id: u64, shard_count: usize) -> usize {
+    let mixed = chain_id ^ (chain_id >> 32);
+    (mixed as usize) % shard_count.max(1)
+}
+
+fn txpool_shard_index_for_sender(chain_id: u64, sender: &[u8], shard_count: usize) -> usize {
+    if sender.is_empty() {
+        return txpool_shard_index(chain_id, shard_count);
+    }
+    let mut mixed = chain_id ^ (chain_id >> 32);
+    for byte in sender {
+        mixed = mixed
+            .wrapping_mul(1099511628211u64)
+            .wrapping_add((*byte as u64).saturating_add(1));
+    }
+    (mixed as usize) % shard_count.max(1)
+}
+
+fn txpool_shard_index_for_tx(chain_id: u64, tx: &TxIR, shard_count: usize) -> usize {
+    txpool_shard_index_for_sender(chain_id, tx.from.as_slice(), shard_count)
+}
+
+fn txpool_shard_start_index(shard_count: usize) -> usize {
+    if shard_count <= 1 {
+        0
+    } else {
+        EVM_TXPOOL_SHARD_CURSOR.fetch_add(1, Ordering::Relaxed) % shard_count
+    }
 }
 
 fn infer_chain_type_from_chain_id(chain_id: u64) -> ChainType {
@@ -465,6 +557,63 @@ fn ensure_tx_hash(mut tx: TxIR) -> TxIR {
         tx.compute_hash();
     }
     tx
+}
+
+fn tx_hash_or_compute(tx: &TxIR) -> Vec<u8> {
+    if tx.hash.is_empty() {
+        let mut cloned = tx.clone();
+        cloned.compute_hash();
+        cloned.hash
+    } else {
+        tx.hash.clone()
+    }
+}
+
+fn parallel_worker_count(item_count: usize) -> usize {
+    std::thread::available_parallelism()
+        .map(|v| v.get())
+        .unwrap_or(1)
+        .min(item_count.max(1))
+}
+
+fn prepare_txs_with_hashes(txs: &[TxIR]) -> Vec<TxIR> {
+    if txs.is_empty() {
+        return Vec::new();
+    }
+    let workers = parallel_worker_count(txs.len());
+    // Avoid thread fan-out for tiny batches; keep hot path deterministic.
+    if workers <= 1 || txs.len() < 32 {
+        return txs.iter().cloned().map(ensure_tx_hash).collect();
+    }
+
+    let chunk_size = txs.len().div_ceil(workers);
+    let mut chunked: Vec<Vec<TxIR>> = Vec::with_capacity(workers);
+    let mut panicked = false;
+    std::thread::scope(|scope| {
+        let mut jobs = Vec::with_capacity(workers);
+        for chunk in txs.chunks(chunk_size) {
+            jobs.push(scope.spawn(move || -> Vec<TxIR> {
+                chunk.iter().cloned().map(ensure_tx_hash).collect()
+            }));
+        }
+        for job in jobs {
+            match job.join() {
+                Ok(v) => chunked.push(v),
+                Err(_) => {
+                    panicked = true;
+                }
+            }
+        }
+    });
+    if panicked {
+        return txs.iter().cloned().map(ensure_tx_hash).collect();
+    }
+
+    let mut out = Vec::with_capacity(txs.len());
+    for chunk in chunked {
+        out.extend(chunk);
+    }
+    out
 }
 
 fn nonce_key_from_tx(chain_id: u64, tx: &TxIR) -> Option<IngressNonceKey> {
@@ -500,7 +649,7 @@ fn sender_key_from_nonce_key(key: &IngressNonceKey) -> IngressSenderKey {
     }
 }
 
-fn remove_nonce_index_for_frame(runtime: &mut EvmRuntimeState, frame: &EvmMempoolIngressFrameV1) {
+fn remove_nonce_index_for_frame(runtime: &mut EvmTxpoolState, frame: &EvmMempoolIngressFrameV1) {
     let Some(key) = nonce_key_from_frame(frame) else {
         return;
     };
@@ -532,7 +681,7 @@ fn remove_nonce_index_for_frame(runtime: &mut EvmRuntimeState, frame: &EvmMempoo
 }
 
 fn remove_ingress_frame_by_hash(
-    runtime: &mut EvmRuntimeState,
+    runtime: &mut EvmTxpoolState,
     chain_id: u64,
     tx_hash: &[u8],
 ) -> Option<EvmMempoolIngressFrameV1> {
@@ -543,7 +692,7 @@ fn remove_ingress_frame_by_hash(
     runtime.ingress_frames.remove(pos)
 }
 
-fn tx_present_in_runtime(runtime: &EvmRuntimeState, chain_id: u64, tx_hash: &[u8]) -> bool {
+fn tx_present_in_runtime(runtime: &EvmTxpoolState, chain_id: u64, tx_hash: &[u8]) -> bool {
     runtime
         .executable_ingress_frames
         .iter()
@@ -576,7 +725,7 @@ fn tx_matches_runtime_frame(frame: &EvmMempoolIngressFrameV1, chain_id: u64, tx:
         && parsed.target_chain == tx.target_chain
 }
 
-fn tx_present_exact_in_runtime(runtime: &EvmRuntimeState, chain_id: u64, tx: &TxIR) -> bool {
+fn tx_present_exact_in_runtime(runtime: &EvmTxpoolState, chain_id: u64, tx: &TxIR) -> bool {
     runtime
         .executable_ingress_frames
         .iter()
@@ -628,15 +777,51 @@ fn derive_reject_reasons(summary: &EvmRuntimeTapSummaryV1) -> Vec<EvmTxpoolRejec
     out
 }
 
-fn drain_pending_frames_round_robin(
-    runtime: &mut EvmRuntimeState,
+fn pop_next_pending_frame_for_sender(
+    runtime: &mut EvmTxpoolState,
+    sender_key: &IngressSenderKey,
+) -> Option<EvmMempoolIngressFrameV1> {
+    let tx_hash = runtime
+        .pending_by_sender
+        .get(sender_key)
+        .and_then(|pending| pending.first_key_value().map(|(_, hash)| hash.clone()))?;
+    if let Some(frame) = remove_ingress_frame_by_hash(runtime, sender_key.chain_id, &tx_hash) {
+        remove_nonce_index_for_frame(runtime, &frame);
+        return Some(frame);
+    }
+    let remove_sender = if let Some(sender_map) = runtime.pending_by_sender.get_mut(sender_key) {
+        if let Some((&nonce, _)) = sender_map.first_key_value() {
+            let _ = sender_map.remove(&nonce);
+        }
+        sender_map.is_empty()
+    } else {
+        false
+    };
+    if remove_sender {
+        let _ = runtime.pending_by_sender.remove(sender_key);
+        let _ = runtime.next_nonce_by_sender.remove(sender_key);
+    }
+    None
+}
+
+fn drain_pending_frames_round_robin_across_shards(
     max_items: usize,
 ) -> Vec<EvmMempoolIngressFrameV1> {
     if max_items == 0 {
         return Vec::new();
     }
-    let mut sender_keys: Vec<IngressSenderKey> =
-        runtime.pending_by_sender.keys().cloned().collect();
+    let shards = resolve_evm_txpool_shards();
+    if shards.is_empty() {
+        return Vec::new();
+    }
+    let mut sender_keys: Vec<IngressSenderKey> = Vec::new();
+    for shard in shards {
+        let runtime = match shard.lock() {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        sender_keys.extend(runtime.pending_by_sender.keys().cloned());
+    }
     if sender_keys.is_empty() {
         return Vec::new();
     }
@@ -644,38 +829,29 @@ fn drain_pending_frames_round_robin(
         std::cmp::Ordering::Equal => left.from.cmp(&right.from),
         ord => ord,
     });
-    let mut out = Vec::with_capacity(max_items.min(runtime.ingress_frames.len()));
+    sender_keys.dedup();
+
+    let mut out: Vec<EvmMempoolIngressFrameV1> = Vec::with_capacity(max_items);
     let mut cursor = 0usize;
     while out.len() < max_items && !sender_keys.is_empty() {
         if cursor >= sender_keys.len() {
             cursor = 0;
         }
         let sender_key = sender_keys[cursor].clone();
-        let tx_hash = runtime
-            .pending_by_sender
-            .get(&sender_key)
-            .and_then(|pending| pending.first_key_value().map(|(_, hash)| hash.clone()));
-        let Some(tx_hash) = tx_hash else {
-            sender_keys.remove(cursor);
-            continue;
-        };
-        if let Some(frame) = remove_ingress_frame_by_hash(runtime, sender_key.chain_id, &tx_hash) {
-            remove_nonce_index_for_frame(runtime, &frame);
-            out.push(frame);
-        } else {
-            let remove_sender =
-                if let Some(sender_map) = runtime.pending_by_sender.get_mut(&sender_key) {
-                    if let Some((&nonce, _)) = sender_map.first_key_value() {
-                        let _ = sender_map.remove(&nonce);
-                    }
-                    sender_map.is_empty()
-                } else {
-                    false
-                };
-            if remove_sender {
-                let _ = runtime.pending_by_sender.remove(&sender_key);
-                let _ = runtime.next_nonce_by_sender.remove(&sender_key);
+        let shard_index = txpool_shard_index_for_sender(
+            sender_key.chain_id,
+            sender_key.from.as_slice(),
+            shards.len(),
+        );
+        let mut runtime = match shards[shard_index].lock() {
+            Ok(v) => v,
+            Err(_) => {
+                sender_keys.remove(cursor);
+                continue;
             }
+        };
+        if let Some(frame) = pop_next_pending_frame_for_sender(&mut runtime, &sender_key) {
+            out.push(frame);
         }
         let has_more = runtime
             .pending_by_sender
@@ -692,7 +868,7 @@ fn drain_pending_frames_round_robin(
 }
 
 fn find_executable_frame_pos_by_sender_nonce(
-    runtime: &EvmRuntimeState,
+    runtime: &EvmTxpoolState,
     chain_id: u64,
     from: &[u8],
     nonce: u64,
@@ -710,7 +886,7 @@ fn find_executable_frame_pos_by_sender_nonce(
 }
 
 fn sender_nonce_gap_exceeded(
-    runtime: &EvmRuntimeState,
+    runtime: &EvmTxpoolState,
     sender_key: &IngressSenderKey,
     nonce: u64,
     max_gap: u64,
@@ -727,12 +903,12 @@ fn sender_nonce_gap_exceeded(
     nonce > min_nonce.saturating_add(max_gap)
 }
 
-fn sender_next_nonce_hint(runtime: &EvmRuntimeState, sender_key: &IngressSenderKey) -> Option<u64> {
+fn sender_next_nonce_hint(runtime: &EvmTxpoolState, sender_key: &IngressSenderKey) -> Option<u64> {
     runtime.next_nonce_by_sender.get(sender_key).copied()
 }
 
 fn resolve_sender_expected_nonce(
-    runtime: &EvmRuntimeState,
+    runtime: &EvmTxpoolState,
     sender_key: &IngressSenderKey,
 ) -> Option<u64> {
     if let Some(next) = sender_next_nonce_hint(runtime, sender_key) {
@@ -745,7 +921,7 @@ fn resolve_sender_expected_nonce(
 }
 
 fn enforce_sender_pending_cap(
-    runtime: &mut EvmRuntimeState,
+    runtime: &mut EvmTxpoolState,
     sender_key: &IngressSenderKey,
     max_pending_per_sender: usize,
 ) {
@@ -798,7 +974,7 @@ fn enforce_sender_pending_cap(
 }
 
 fn promote_sender_executable_frames(
-    runtime: &mut EvmRuntimeState,
+    runtime: &mut EvmTxpoolState,
     config: &EvmRuntimeConfig,
     sender_key: &IngressSenderKey,
 ) {
@@ -844,26 +1020,33 @@ fn promote_sender_executable_frames(
         .insert(sender_key.clone(), expected_nonce);
 }
 
-fn push_ingress_frames(chain_id: u64, txs: &[TxIR]) -> EvmIngressPushOutcome {
-    if txs.is_empty() {
+fn push_ingress_frames_prepared(chain_id: u64, prepared_txs: &[TxIR]) -> EvmIngressPushOutcome {
+    if prepared_txs.is_empty() {
         return EvmIngressPushOutcome::default();
     }
     let mut outcome = EvmIngressPushOutcome {
         summary: EvmRuntimeTapSummaryV1 {
-            requested: txs.len(),
+            requested: prepared_txs.len(),
             ..EvmRuntimeTapSummaryV1::default()
         },
-        accepted_txs: Vec::with_capacity(txs.len()),
+        accepted_txs: Vec::with_capacity(prepared_txs.len()),
     };
     let config = resolve_evm_runtime_config();
-    let runtime = resolve_evm_runtime_state();
-    let mut runtime = match runtime.lock() {
-        Ok(v) => v,
-        Err(_) => return outcome,
-    };
+    let shards = resolve_evm_txpool_shards();
+    let shard_count = shards.len().max(1);
     let observed_at = now_unix_ms();
-    for tx in txs {
-        let tx = ensure_tx_hash(tx.clone());
+    for tx in prepared_txs.iter().cloned() {
+        let shard_index = txpool_shard_index_for_tx(chain_id, &tx, shard_count);
+        let runtime = &shards[shard_index];
+        let mut runtime = match runtime.lock() {
+            Ok(v) => v,
+            Err(_) => {
+                outcome.summary.dropped = outcome.summary.dropped.saturating_add(1);
+                outcome.summary.dropped_over_capacity =
+                    outcome.summary.dropped_over_capacity.saturating_add(1);
+                continue;
+            }
+        };
         let tx_hash = tx.hash.clone();
         if tx_present_exact_in_runtime(&runtime, chain_id, &tx) {
             outcome.summary.accepted = outcome.summary.accepted.saturating_add(1);
@@ -1006,10 +1189,10 @@ fn push_ingress_frames(chain_id: u64, txs: &[TxIR]) -> EvmIngressPushOutcome {
             outcome.summary.dropped_over_capacity =
                 outcome.summary.dropped_over_capacity.saturating_add(1);
         }
-    }
-    while runtime.ingress_frames.len() > config.ingress_queue_max {
-        if let Some(removed) = runtime.ingress_frames.pop_front() {
-            remove_nonce_index_for_frame(&mut runtime, &removed);
+        while runtime.ingress_frames.len() > config.ingress_queue_max {
+            if let Some(removed) = runtime.ingress_frames.pop_front() {
+                remove_nonce_index_for_frame(&mut runtime, &removed);
+            }
         }
     }
     outcome.summary.reject_reasons = derive_reject_reasons(&outcome.summary);
@@ -1020,13 +1203,22 @@ fn push_ingress_frames(chain_id: u64, txs: &[TxIR]) -> EvmIngressPushOutcome {
     outcome
 }
 
+#[cfg(test)]
+fn push_ingress_frames(chain_id: u64, txs: &[TxIR]) -> EvmIngressPushOutcome {
+    let prepared_txs = prepare_txs_with_hashes(txs);
+    push_ingress_frames_prepared(chain_id, &prepared_txs)
+}
+
 fn settle_fee_income_record(
     runtime: &mut EvmRuntimeState,
     convert_num: u128,
     convert_den: u128,
     income: &EvmFeeIncomeRecordV1,
 ) -> EvmFeeSettlementResultV1 {
-    runtime.settlement_seq = runtime.settlement_seq.saturating_add(1);
+    let settlement_seq = EVM_RUNTIME_SETTLEMENT_SEQ
+        .fetch_add(1, Ordering::Relaxed)
+        .saturating_add(1);
+    runtime.settlement_seq = runtime.settlement_seq.max(settlement_seq);
     let reserve_delta = income.fee_amount_wei;
     let payout_delta = reserve_delta
         .saturating_mul(convert_num)
@@ -1036,7 +1228,7 @@ fn settle_fee_income_record(
     EvmFeeSettlementResultV1 {
         reserve_delta,
         payout_delta,
-        settlement_id: format!("evm-settlement-{:020}", runtime.settlement_seq),
+        settlement_id: format!("evm-settlement-{:020}", settlement_seq),
     }
 }
 
@@ -1064,19 +1256,18 @@ fn settle_fee_income_for_batch(chain_id: u64, txs: &[TxIR]) {
         return;
     }
     let config = resolve_evm_runtime_config();
-    let runtime = resolve_evm_runtime_state();
+    let runtime = resolve_evm_runtime_state_for_chain(chain_id);
     let mut runtime = match runtime.lock() {
         Ok(v) => v,
         Err(_) => return,
     };
     for tx in txs {
-        let tx = ensure_tx_hash(tx.clone());
         let fee_amount_wei = (tx.gas_limit as u128).saturating_mul(tx.gas_price as u128);
         let income = EvmFeeIncomeRecordV1 {
             chain_id,
-            tx_hash: tx.hash,
+            tx_hash: tx_hash_or_compute(tx),
             fee_amount_wei,
-            collector_address: tx.from,
+            collector_address: tx.from.clone(),
         };
         let result = settle_fee_income_record(
             &mut runtime,
@@ -1102,9 +1293,9 @@ fn settle_fee_income_for_batch(chain_id: u64, txs: &[TxIR]) {
     }
 }
 
-fn enqueue_atomic_receipt(receipt: AtomicIntentReceiptV1) {
+fn enqueue_atomic_receipt(chain_id: u64, receipt: AtomicIntentReceiptV1) {
     let config = resolve_evm_runtime_config();
-    let runtime = resolve_evm_runtime_state();
+    let runtime = resolve_evm_runtime_state_for_chain(chain_id);
     let mut runtime = match runtime.lock() {
         Ok(v) => v,
         Err(_) => return,
@@ -1115,9 +1306,9 @@ fn enqueue_atomic_receipt(receipt: AtomicIntentReceiptV1) {
     }
 }
 
-fn enqueue_atomic_broadcast_ready(item: AtomicBroadcastReadyV1) {
+fn enqueue_atomic_broadcast_ready(chain_id: u64, item: AtomicBroadcastReadyV1) {
     let config = resolve_evm_runtime_config();
-    let runtime = resolve_evm_runtime_state();
+    let runtime = resolve_evm_runtime_state_for_chain(chain_id);
     let mut runtime = match runtime.lock() {
         Ok(v) => v,
         Err(_) => return,
@@ -1133,8 +1324,8 @@ fn build_atomic_intent_id(chain_id: u64, txs: &[TxIR]) -> String {
     hasher.update(b"evm-plugin-atomic-intent-v1");
     hasher.update(chain_id.to_be_bytes());
     for tx in txs {
-        let tx = ensure_tx_hash(tx.clone());
-        hasher.update(tx.hash);
+        let tx_hash = tx_hash_or_compute(tx);
+        hasher.update(tx_hash);
         hasher.update(tx.nonce.to_be_bytes());
     }
     let digest = hasher.finalize();
@@ -1224,64 +1415,96 @@ fn prepare_atomic_intent_guard(
     let intent_id = intent.intent_id.clone();
     match validate_atomic_intent_local(chain_id, &intent) {
         Ok(()) => {
-            enqueue_atomic_receipt(AtomicIntentReceiptV1 {
-                intent_id: intent_id.clone(),
-                status: AtomicIntentStatus::Accepted,
-                reason: None,
-            });
+            enqueue_atomic_receipt(
+                chain_id,
+                AtomicIntentReceiptV1 {
+                    intent_id: intent_id.clone(),
+                    status: AtomicIntentStatus::Accepted,
+                    reason: None,
+                },
+            );
             Ok(Some(intent))
         }
         Err(err) => {
-            enqueue_atomic_receipt(AtomicIntentReceiptV1 {
-                intent_id: intent_id.clone(),
-                status: AtomicIntentStatus::Rejected,
-                reason: Some(err.to_string()),
-            });
+            enqueue_atomic_receipt(
+                chain_id,
+                AtomicIntentReceiptV1 {
+                    intent_id: intent_id.clone(),
+                    status: AtomicIntentStatus::Rejected,
+                    reason: Some(err.to_string()),
+                },
+            );
             Err(err)
         }
     }
 }
 
-fn mark_atomic_intent_executed(intent: &AtomicCrossChainIntentV1) {
-    enqueue_atomic_receipt(AtomicIntentReceiptV1 {
-        intent_id: intent.intent_id.clone(),
-        status: AtomicIntentStatus::Executed,
-        reason: None,
-    });
-    enqueue_atomic_broadcast_ready(AtomicBroadcastReadyV1 {
-        intent: intent.clone(),
-        ready_at_unix_ms: now_unix_ms(),
-    });
+fn mark_atomic_intent_executed(chain_id: u64, intent: &AtomicCrossChainIntentV1) {
+    enqueue_atomic_receipt(
+        chain_id,
+        AtomicIntentReceiptV1 {
+            intent_id: intent.intent_id.clone(),
+            status: AtomicIntentStatus::Executed,
+            reason: None,
+        },
+    );
+    enqueue_atomic_broadcast_ready(
+        chain_id,
+        AtomicBroadcastReadyV1 {
+            intent: intent.clone(),
+            ready_at_unix_ms: now_unix_ms(),
+        },
+    );
 }
 
-fn mark_atomic_intent_apply_failed(intent_id: &str, error: &str) {
-    enqueue_atomic_receipt(AtomicIntentReceiptV1 {
-        intent_id: intent_id.to_string(),
-        status: AtomicIntentStatus::Rejected,
-        reason: Some(error.to_string()),
-    });
+fn mark_atomic_intent_apply_failed(chain_id: u64, intent_id: &str, error: &str) {
+    enqueue_atomic_receipt(
+        chain_id,
+        AtomicIntentReceiptV1 {
+            intent_id: intent_id.to_string(),
+            status: AtomicIntentStatus::Rejected,
+            reason: Some(error.to_string()),
+        },
+    );
 }
 
 pub fn drain_plugin_ingress_frames_for_host(max_items: usize) -> Vec<EvmMempoolIngressFrameV1> {
-    let runtime = resolve_evm_runtime_state();
-    let mut runtime = match runtime.lock() {
-        Ok(v) => v,
-        Err(_) => return Vec::new(),
-    };
-    let total = runtime
-        .executable_ingress_frames
-        .len()
-        .saturating_add(runtime.ingress_frames.len());
-    let take = max_items.min(total);
-    let mut out = Vec::with_capacity(take);
-    while out.len() < take {
-        if let Some(frame) = runtime.executable_ingress_frames.pop_front() {
-            out.push(frame);
-            continue;
+    if max_items == 0 {
+        return Vec::new();
+    }
+    let shards = resolve_evm_txpool_shards();
+    let shard_count = shards.len();
+    let start = txpool_shard_start_index(shard_count);
+    let mut out = Vec::with_capacity(max_items);
+    for offset in 0..shard_count {
+        if out.len() >= max_items {
+            break;
         }
-        let pending_take = take.saturating_sub(out.len());
-        out.extend(drain_pending_frames_round_robin(&mut runtime, pending_take));
-        break;
+        let shard = &shards[(start + offset) % shard_count];
+        let mut runtime = match shard.lock() {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        let remaining = max_items.saturating_sub(out.len());
+        let total = runtime
+            .executable_ingress_frames
+            .len()
+            .saturating_add(runtime.ingress_frames.len());
+        let take = remaining.min(total);
+        let mut drained = 0usize;
+        while drained < take {
+            if let Some(frame) = runtime.executable_ingress_frames.pop_front() {
+                out.push(frame);
+                drained = drained.saturating_add(1);
+                continue;
+            }
+            break;
+        }
+    }
+    if out.len() < max_items {
+        let pending_take = max_items.saturating_sub(out.len());
+        let pending = drain_pending_frames_round_robin_across_shards(pending_take);
+        out.extend(pending);
     }
     out
 }
@@ -1292,30 +1515,54 @@ pub fn snapshot_executable_ingress_frames_for_host(
     if max_items == 0 {
         return Vec::new();
     }
-    let runtime = resolve_evm_runtime_state();
-    let runtime = match runtime.lock() {
-        Ok(v) => v,
-        Err(_) => return Vec::new(),
-    };
-    runtime
-        .executable_ingress_frames
-        .iter()
-        .take(max_items)
-        .cloned()
-        .collect()
+    let shards = resolve_evm_txpool_shards();
+    let shard_count = shards.len();
+    let start = txpool_shard_start_index(shard_count);
+    let mut out = Vec::with_capacity(max_items);
+    for offset in 0..shard_count {
+        if out.len() >= max_items {
+            break;
+        }
+        let shard = &shards[(start + offset) % shard_count];
+        let runtime = match shard.lock() {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        let remaining = max_items.saturating_sub(out.len());
+        out.extend(
+            runtime
+                .executable_ingress_frames
+                .iter()
+                .take(remaining)
+                .cloned(),
+        );
+    }
+    out
 }
 
 pub fn drain_executable_ingress_frames_for_host(max_items: usize) -> Vec<EvmMempoolIngressFrameV1> {
-    let runtime = resolve_evm_runtime_state();
-    let mut runtime = match runtime.lock() {
-        Ok(v) => v,
-        Err(_) => return Vec::new(),
-    };
-    let take = max_items.min(runtime.executable_ingress_frames.len());
-    let mut out = Vec::with_capacity(take);
-    for _ in 0..take {
-        if let Some(frame) = runtime.executable_ingress_frames.pop_front() {
-            out.push(frame);
+    if max_items == 0 {
+        return Vec::new();
+    }
+    let shards = resolve_evm_txpool_shards();
+    let shard_count = shards.len();
+    let start = txpool_shard_start_index(shard_count);
+    let mut out = Vec::with_capacity(max_items);
+    for offset in 0..shard_count {
+        if out.len() >= max_items {
+            break;
+        }
+        let shard = &shards[(start + offset) % shard_count];
+        let mut runtime = match shard.lock() {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        let remaining = max_items.saturating_sub(out.len());
+        let take = remaining.min(runtime.executable_ingress_frames.len());
+        for _ in 0..take {
+            if let Some(frame) = runtime.executable_ingress_frames.pop_front() {
+                out.push(frame);
+            }
         }
     }
     out
@@ -1325,31 +1572,49 @@ pub fn snapshot_pending_ingress_frames_for_host(max_items: usize) -> Vec<EvmMemp
     if max_items == 0 {
         return Vec::new();
     }
-    let runtime = resolve_evm_runtime_state();
-    let runtime = match runtime.lock() {
-        Ok(v) => v,
-        Err(_) => return Vec::new(),
-    };
-    runtime
-        .ingress_frames
-        .iter()
-        .take(max_items)
-        .cloned()
-        .collect()
+    let shards = resolve_evm_txpool_shards();
+    let shard_count = shards.len();
+    let start = txpool_shard_start_index(shard_count);
+    let mut out = Vec::with_capacity(max_items);
+    for offset in 0..shard_count {
+        if out.len() >= max_items {
+            break;
+        }
+        let shard = &shards[(start + offset) % shard_count];
+        let runtime = match shard.lock() {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        let remaining = max_items.saturating_sub(out.len());
+        out.extend(runtime.ingress_frames.iter().take(remaining).cloned());
+    }
+    out
 }
 
 pub fn drain_pending_ingress_frames_for_host(max_items: usize) -> Vec<EvmMempoolIngressFrameV1> {
-    let runtime = resolve_evm_runtime_state();
-    let mut runtime = match runtime.lock() {
-        Ok(v) => v,
-        Err(_) => return Vec::new(),
-    };
-    let take = max_items.min(runtime.ingress_frames.len());
-    let mut out = Vec::with_capacity(take);
-    for _ in 0..take {
-        if let Some(frame) = runtime.ingress_frames.pop_front() {
-            remove_nonce_index_for_frame(&mut runtime, &frame);
-            out.push(frame);
+    if max_items == 0 {
+        return Vec::new();
+    }
+    let shards = resolve_evm_txpool_shards();
+    let shard_count = shards.len();
+    let start = txpool_shard_start_index(shard_count);
+    let mut out = Vec::with_capacity(max_items);
+    for offset in 0..shard_count {
+        if out.len() >= max_items {
+            break;
+        }
+        let shard = &shards[(start + offset) % shard_count];
+        let mut runtime = match shard.lock() {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        let remaining = max_items.saturating_sub(out.len());
+        let take = remaining.min(runtime.ingress_frames.len());
+        for _ in 0..take {
+            if let Some(frame) = runtime.ingress_frames.pop_front() {
+                remove_nonce_index_for_frame(&mut runtime, &frame);
+                out.push(frame);
+            }
         }
     }
     out
@@ -1362,36 +1627,95 @@ pub fn snapshot_pending_sender_buckets_for_host(
     if max_senders == 0 || max_txs_per_sender == 0 {
         return Vec::new();
     }
-    let runtime = resolve_evm_runtime_state();
-    let runtime = match runtime.lock() {
-        Ok(v) => v,
-        Err(_) => return Vec::new(),
-    };
-    let ingress_tx_by_hash: HashMap<Vec<u8>, TxIR> = runtime
-        .ingress_frames
-        .iter()
-        .filter_map(|frame| {
-            frame
-                .parsed_tx
-                .as_ref()
-                .map(|tx| (frame.tx_hash.clone(), tx.clone()))
-        })
-        .collect();
-    let mut sender_entries: Vec<(&IngressSenderKey, &BTreeMap<u64, Vec<u8>>)> =
-        runtime.pending_by_sender.iter().collect();
-    sender_entries.sort_by(|(left_key, _), (right_key, _)| {
-        match left_key.chain_id.cmp(&right_key.chain_id) {
+    #[derive(Debug)]
+    struct SenderPendingHashes {
+        sender_key: IngressSenderKey,
+        tx_hashes: Vec<Vec<u8>>,
+        shard_index: usize,
+    }
+
+    let shards = resolve_evm_txpool_shards();
+    let shard_count = shards.len();
+    let start = txpool_shard_start_index(shard_count);
+    let mut sender_entries: Vec<SenderPendingHashes> = Vec::new();
+    for offset in 0..shard_count {
+        let shard_index = (start + offset) % shard_count;
+        let shard = &shards[shard_index];
+        let runtime = match shard.lock() {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        sender_entries.extend(runtime.pending_by_sender.iter().map(|(key, map)| {
+            SenderPendingHashes {
+                sender_key: key.clone(),
+                tx_hashes: map.values().take(max_txs_per_sender).cloned().collect(),
+                shard_index,
+            }
+        }));
+    }
+    sender_entries.sort_by(
+        |SenderPendingHashes {
+             sender_key: left_key,
+             ..
+         },
+         SenderPendingHashes {
+             sender_key: right_key,
+             ..
+         }| match left_key.chain_id.cmp(&right_key.chain_id) {
             std::cmp::Ordering::Equal => left_key.from.cmp(&right_key.from),
             ord => ord,
-        }
-    });
+        },
+    );
+    sender_entries.truncate(max_senders);
 
-    let mut out = Vec::with_capacity(max_senders.min(sender_entries.len()));
-    for (sender_key, sender_map) in sender_entries.into_iter().take(max_senders) {
-        let mut txs = Vec::with_capacity(max_txs_per_sender.min(sender_map.len()));
-        for tx_hash in sender_map.values().take(max_txs_per_sender) {
-            if let Some(tx) = ingress_tx_by_hash.get(tx_hash) {
-                txs.push(tx.clone());
+    let mut needed_hashes_by_shard: HashMap<usize, HashSet<Vec<u8>>> = HashMap::new();
+    for entry in &sender_entries {
+        let needed_hashes = needed_hashes_by_shard.entry(entry.shard_index).or_default();
+        for tx_hash in &entry.tx_hashes {
+            needed_hashes.insert(tx_hash.clone());
+        }
+    }
+
+    let mut ingress_tx_by_hash_by_shard: HashMap<usize, HashMap<Vec<u8>, TxIR>> = HashMap::new();
+    for (shard_index, needed_hashes) in needed_hashes_by_shard {
+        if needed_hashes.is_empty() {
+            continue;
+        }
+        let shard = &shards[shard_index];
+        let runtime = match shard.lock() {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        let mut tx_by_hash: HashMap<Vec<u8>, TxIR> = HashMap::with_capacity(needed_hashes.len());
+        for frame in runtime.ingress_frames.iter() {
+            if !needed_hashes.contains(&frame.tx_hash) {
+                continue;
+            }
+            if let Some(tx) = frame.parsed_tx.as_ref() {
+                tx_by_hash
+                    .entry(frame.tx_hash.clone())
+                    .or_insert_with(|| tx.clone());
+            }
+            if tx_by_hash.len() >= needed_hashes.len() {
+                break;
+            }
+        }
+        ingress_tx_by_hash_by_shard.insert(shard_index, tx_by_hash);
+    }
+
+    let mut out = Vec::with_capacity(sender_entries.len());
+    for SenderPendingHashes {
+        sender_key,
+        tx_hashes,
+        shard_index,
+    } in sender_entries
+    {
+        let mut txs = Vec::with_capacity(max_txs_per_sender.min(tx_hashes.len()));
+        if let Some(ingress_tx_by_hash) = ingress_tx_by_hash_by_shard.get(&shard_index) {
+            for tx_hash in tx_hashes.iter().take(max_txs_per_sender) {
+                if let Some(tx) = ingress_tx_by_hash.get(tx_hash) {
+                    txs.push(tx.clone());
+                }
             }
         }
         if txs.is_empty() {
@@ -1407,87 +1731,155 @@ pub fn snapshot_pending_sender_buckets_for_host(
 }
 
 pub fn plugin_settlement_totals_for_host() -> (u128, u128) {
-    let runtime = resolve_evm_runtime_state();
-    let runtime = match runtime.lock() {
-        Ok(v) => v,
-        Err(_) => return (0, 0),
-    };
-    (runtime.reserve_total_wei, runtime.payout_total_units)
+    let shards = resolve_evm_runtime_shards();
+    let mut reserve_total_wei = 0u128;
+    let mut payout_total_units = 0u128;
+    for shard in shards {
+        let runtime = match shard.lock() {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        reserve_total_wei = reserve_total_wei.saturating_add(runtime.reserve_total_wei);
+        payout_total_units = payout_total_units.saturating_add(runtime.payout_total_units);
+    }
+    (reserve_total_wei, payout_total_units)
 }
 
 pub fn settlement_snapshot_for_host() -> EvmFeeSettlementSnapshotV1 {
-    let runtime = resolve_evm_runtime_state();
-    let runtime = match runtime.lock() {
-        Ok(v) => v,
-        Err(_) => return EvmFeeSettlementSnapshotV1::default(),
-    };
+    let shards = resolve_evm_runtime_shards();
+    let mut policy: Option<EvmFeeSettlementPolicyV1> = None;
+    let mut reserve_total_wei = 0u128;
+    let mut payout_total_units = 0u128;
+    for shard in shards {
+        let runtime = match shard.lock() {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        if policy.is_none() {
+            policy = Some(runtime.settlement_policy.clone());
+        }
+        reserve_total_wei = reserve_total_wei.saturating_add(runtime.reserve_total_wei);
+        payout_total_units = payout_total_units.saturating_add(runtime.payout_total_units);
+    }
     EvmFeeSettlementSnapshotV1 {
-        policy: runtime.settlement_policy.clone(),
-        settlement_seq: runtime.settlement_seq,
-        reserve_total_wei: runtime.reserve_total_wei,
-        payout_total_units: runtime.payout_total_units,
+        policy: policy.unwrap_or_default(),
+        settlement_seq: EVM_RUNTIME_SETTLEMENT_SEQ.load(Ordering::Relaxed),
+        reserve_total_wei,
+        payout_total_units,
     }
 }
 
 pub fn drain_atomic_receipts_for_host(max_items: usize) -> Vec<AtomicIntentReceiptV1> {
-    let runtime = resolve_evm_runtime_state();
-    let mut runtime = match runtime.lock() {
-        Ok(v) => v,
-        Err(_) => return Vec::new(),
-    };
-    let take = max_items.min(runtime.atomic_receipts.len());
-    let mut out = Vec::with_capacity(take);
-    for _ in 0..take {
-        if let Some(receipt) = runtime.atomic_receipts.pop_front() {
-            out.push(receipt);
+    if max_items == 0 {
+        return Vec::new();
+    }
+    let shards = resolve_evm_runtime_shards();
+    let shard_count = shards.len();
+    let start = runtime_shard_start_index(shard_count);
+    let mut out = Vec::with_capacity(max_items);
+    for offset in 0..shard_count {
+        if out.len() >= max_items {
+            break;
+        }
+        let shard = &shards[(start + offset) % shard_count];
+        let mut runtime = match shard.lock() {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        let take = max_items
+            .saturating_sub(out.len())
+            .min(runtime.atomic_receipts.len());
+        for _ in 0..take {
+            if let Some(receipt) = runtime.atomic_receipts.pop_front() {
+                out.push(receipt);
+            }
         }
     }
     out
 }
 
 pub fn drain_settlement_records_for_host(max_items: usize) -> Vec<EvmFeeSettlementRecordV1> {
-    let runtime = resolve_evm_runtime_state();
-    let mut runtime = match runtime.lock() {
-        Ok(v) => v,
-        Err(_) => return Vec::new(),
-    };
-    let take = max_items.min(runtime.settlement_records.len());
-    let mut out = Vec::with_capacity(take);
-    for _ in 0..take {
-        if let Some(item) = runtime.settlement_records.pop_front() {
-            out.push(item);
+    if max_items == 0 {
+        return Vec::new();
+    }
+    let shards = resolve_evm_runtime_shards();
+    let shard_count = shards.len();
+    let start = runtime_shard_start_index(shard_count);
+    let mut out = Vec::with_capacity(max_items);
+    for offset in 0..shard_count {
+        if out.len() >= max_items {
+            break;
+        }
+        let shard = &shards[(start + offset) % shard_count];
+        let mut runtime = match shard.lock() {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        let take = max_items
+            .saturating_sub(out.len())
+            .min(runtime.settlement_records.len());
+        for _ in 0..take {
+            if let Some(item) = runtime.settlement_records.pop_front() {
+                out.push(item);
+            }
         }
     }
     out
 }
 
 pub fn drain_payout_instructions_for_host(max_items: usize) -> Vec<EvmFeePayoutInstructionV1> {
-    let runtime = resolve_evm_runtime_state();
-    let mut runtime = match runtime.lock() {
-        Ok(v) => v,
-        Err(_) => return Vec::new(),
-    };
-    let take = max_items.min(runtime.payout_instructions.len());
-    let mut out = Vec::with_capacity(take);
-    for _ in 0..take {
-        if let Some(item) = runtime.payout_instructions.pop_front() {
-            out.push(item);
+    if max_items == 0 {
+        return Vec::new();
+    }
+    let shards = resolve_evm_runtime_shards();
+    let shard_count = shards.len();
+    let start = runtime_shard_start_index(shard_count);
+    let mut out = Vec::with_capacity(max_items);
+    for offset in 0..shard_count {
+        if out.len() >= max_items {
+            break;
+        }
+        let shard = &shards[(start + offset) % shard_count];
+        let mut runtime = match shard.lock() {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        let take = max_items
+            .saturating_sub(out.len())
+            .min(runtime.payout_instructions.len());
+        for _ in 0..take {
+            if let Some(item) = runtime.payout_instructions.pop_front() {
+                out.push(item);
+            }
         }
     }
     out
 }
 
 pub fn drain_atomic_broadcast_ready_for_host(max_items: usize) -> Vec<AtomicBroadcastReadyV1> {
-    let runtime = resolve_evm_runtime_state();
-    let mut runtime = match runtime.lock() {
-        Ok(v) => v,
-        Err(_) => return Vec::new(),
-    };
-    let take = max_items.min(runtime.atomic_broadcast_ready.len());
-    let mut out = Vec::with_capacity(take);
-    for _ in 0..take {
-        if let Some(item) = runtime.atomic_broadcast_ready.pop_front() {
-            out.push(item);
+    if max_items == 0 {
+        return Vec::new();
+    }
+    let shards = resolve_evm_runtime_shards();
+    let shard_count = shards.len();
+    let start = runtime_shard_start_index(shard_count);
+    let mut out = Vec::with_capacity(max_items);
+    for offset in 0..shard_count {
+        if out.len() >= max_items {
+            break;
+        }
+        let shard = &shards[(start + offset) % shard_count];
+        let mut runtime = match shard.lock() {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        let take = max_items
+            .saturating_sub(out.len())
+            .min(runtime.atomic_broadcast_ready.len());
+        for _ in 0..take {
+            if let Some(item) = runtime.atomic_broadcast_ready.pop_front() {
+                out.push(item);
+            }
         }
     }
     out
@@ -2027,22 +2419,26 @@ pub fn runtime_tap_ir_batch_v1(
     flags: u64,
 ) -> Result<EvmRuntimeTapSummaryV1, i32> {
     validate_plugin_tx_batch(txs)?;
+    let prepared_txs = prepare_txs_with_hashes(txs);
     if flags & NOVOVM_ADAPTER_PLUGIN_APPLY_FLAG_UA_SELF_GUARD_V1 != 0
-        && route_txs_via_plugin_ua_self_guard(chain_id, txs).is_err()
+        && route_txs_via_plugin_ua_self_guard(chain_id, &prepared_txs).is_err()
     {
         return Err(NOVOVM_ADAPTER_PLUGIN_RC_UA_SELF_GUARD_FAILED);
     }
-    let ingress = push_ingress_frames(chain_id, txs);
+    let ingress = push_ingress_frames_prepared(chain_id, &prepared_txs);
     let atomic_guard_requested =
         flags & NOVOVM_ADAPTER_PLUGIN_APPLY_FLAG_ATOMIC_INTENT_GUARD_V1 != 0;
     if atomic_guard_requested {
         let intent = prepare_atomic_intent_guard(chain_type, chain_id, &ingress.accepted_txs)
             .map_err(|_| NOVOVM_ADAPTER_PLUGIN_RC_APPLY_FAILED)?;
         if let Some(intent) = intent {
-            enqueue_atomic_broadcast_ready(AtomicBroadcastReadyV1 {
-                intent,
-                ready_at_unix_ms: now_unix_ms(),
-            });
+            enqueue_atomic_broadcast_ready(
+                chain_id,
+                AtomicBroadcastReadyV1 {
+                    intent,
+                    ready_at_unix_ms: now_unix_ms(),
+                },
+            );
         }
     }
     settle_fee_income_for_batch(chain_id, &ingress.accepted_txs);
@@ -2065,35 +2461,89 @@ fn apply_ir_batch(
         custom_config: None,
     };
 
-    let mut adapter = create_native_adapter(config)?;
+    let mut adapter = NovoVmAdapter::new(config);
     adapter.initialize()?;
 
-    let mut state = StateIR::new();
-    let mut verified = true;
-    let mut applied = true;
-    for tx in txs {
-        validate_tx_semantics_m0(&profile, tx)?;
-        let tx_ok = adapter.verify_transaction(tx)?;
-        verified = verified && tx_ok;
-        if tx_ok {
-            adapter.execute_transaction(tx, &mut state)?;
-        } else {
-            applied = false;
+    // Keep state transition deterministic: verify in parallel, execute in order.
+    let apply_result = (|| -> anyhow::Result<NovovmAdapterPluginApplyResultV1> {
+        let verify_results = validate_and_verify_txs_for_apply_batch(&adapter, &profile, txs)?;
+        let mut state = StateIR::new();
+        let mut verified = true;
+        let mut applied = true;
+        for (tx, tx_ok) in txs.iter().zip(verify_results.into_iter()) {
+            verified = verified && tx_ok;
+            if tx_ok {
+                adapter.execute_transaction(tx, &mut state)?;
+            } else {
+                applied = false;
+            }
+        }
+
+        let state_root = adapter.state_root()?;
+        let accounts = state.accounts.len() as u64;
+        Ok(NovovmAdapterPluginApplyResultV1 {
+            verified: u8::from(verified),
+            applied: u8::from(applied),
+            txs: txs.len() as u64,
+            accounts,
+            state_root: normalize_root32(&state_root),
+            error_code: 0,
+        })
+    })();
+
+    let shutdown_result = adapter.shutdown();
+    match (apply_result, shutdown_result) {
+        (Ok(result), Ok(())) => Ok(result),
+        (Ok(_), Err(err)) => Err(err),
+        (Err(err), Ok(())) => Err(err),
+        (Err(err), Err(_)) => Err(err),
+    }
+}
+
+fn validate_and_verify_txs_for_apply_batch(
+    adapter: &NovoVmAdapter,
+    profile: &novovm_adapter_evm_core::EvmChainProfile,
+    txs: &[TxIR],
+) -> anyhow::Result<Vec<bool>> {
+    if txs.is_empty() {
+        return Ok(Vec::new());
+    }
+    let workers = std::thread::available_parallelism()
+        .map(|v| v.get())
+        .unwrap_or(1)
+        .min(txs.len().max(1));
+    let mut verify_results = vec![false; txs.len()];
+    if workers > 1 && txs.len() > 1 {
+        let chunk_size = txs.len().div_ceil(workers);
+        std::thread::scope(|scope| -> anyhow::Result<()> {
+            let mut jobs = Vec::with_capacity(workers);
+            for (chunk, out_chunk) in txs
+                .chunks(chunk_size)
+                .zip(verify_results.chunks_mut(chunk_size))
+            {
+                let profile = profile.clone();
+                jobs.push(scope.spawn(move || -> anyhow::Result<()> {
+                    for (tx, out) in chunk.iter().zip(out_chunk.iter_mut()) {
+                        validate_tx_semantics_m0(&profile, tx)?;
+                        *out = adapter.verify_transaction(tx)?;
+                    }
+                    Ok(())
+                }));
+            }
+            for job in jobs {
+                job.join().map_err(|_| {
+                    anyhow::anyhow!("parallel transaction verification thread panicked")
+                })??;
+            }
+            Ok(())
+        })?;
+    } else {
+        for (tx, out) in txs.iter().zip(verify_results.iter_mut()) {
+            validate_tx_semantics_m0(profile, tx)?;
+            *out = adapter.verify_transaction(tx)?;
         }
     }
-
-    let state_root = adapter.state_root()?;
-    let accounts = state.accounts.len() as u64;
-    adapter.shutdown()?;
-
-    Ok(NovovmAdapterPluginApplyResultV1 {
-        verified: u8::from(verified),
-        applied: u8::from(applied),
-        txs: txs.len() as u64,
-        accounts,
-        state_root: normalize_root32(&state_root),
-        error_code: 0,
-    })
+    Ok(verify_results)
 }
 
 #[no_mangle]
@@ -2130,23 +2580,24 @@ pub unsafe extern "C" fn novovm_adapter_plugin_apply_v1(
         Ok(v) => v,
         Err(rc) => return rc,
     };
+    let prepared_txs = prepare_txs_with_hashes(&txs);
 
-    push_ingress_frames(chain_id, &txs);
-    let atomic_intent = match prepare_atomic_intent_guard(chain_type, chain_id, &txs) {
+    push_ingress_frames_prepared(chain_id, &prepared_txs);
+    let atomic_intent = match prepare_atomic_intent_guard(chain_type, chain_id, &prepared_txs) {
         Ok(v) => v,
         Err(_) => return NOVOVM_ADAPTER_PLUGIN_RC_APPLY_FAILED,
     };
-    let result = match apply_ir_batch(chain_type, chain_id, &txs) {
+    let result = match apply_ir_batch(chain_type, chain_id, &prepared_txs) {
         Ok(v) => {
             if let Some(intent) = atomic_intent.as_ref() {
-                mark_atomic_intent_executed(intent);
+                mark_atomic_intent_executed(chain_id, intent);
             }
-            settle_fee_income_for_batch(chain_id, &txs);
+            settle_fee_income_for_batch(chain_id, &prepared_txs);
             v
         }
         Err(err) => {
             if let Some(intent) = atomic_intent.as_ref() {
-                mark_atomic_intent_apply_failed(&intent.intent_id, &err.to_string());
+                mark_atomic_intent_apply_failed(chain_id, &intent.intent_id, &err.to_string());
             }
             return NOVOVM_ADAPTER_PLUGIN_RC_APPLY_FAILED;
         }
@@ -2180,22 +2631,23 @@ pub unsafe extern "C" fn novovm_adapter_plugin_apply_v2(
         Ok(v) => v,
         Err(rc) => return rc,
     };
+    let prepared_txs = prepare_txs_with_hashes(&txs);
     let flags = if options_ptr.is_null() {
         0
     } else {
         (*options_ptr).flags
     };
     if flags & NOVOVM_ADAPTER_PLUGIN_APPLY_FLAG_UA_SELF_GUARD_V1 != 0
-        && route_txs_via_plugin_ua_self_guard(chain_id, &txs).is_err()
+        && route_txs_via_plugin_ua_self_guard(chain_id, &prepared_txs).is_err()
     {
         return NOVOVM_ADAPTER_PLUGIN_RC_UA_SELF_GUARD_FAILED;
     }
     let atomic_guard_requested =
         flags & NOVOVM_ADAPTER_PLUGIN_APPLY_FLAG_ATOMIC_INTENT_GUARD_V1 != 0;
 
-    push_ingress_frames(chain_id, &txs);
+    push_ingress_frames_prepared(chain_id, &prepared_txs);
     let atomic_intent = if atomic_guard_requested {
-        match prepare_atomic_intent_guard(chain_type, chain_id, &txs) {
+        match prepare_atomic_intent_guard(chain_type, chain_id, &prepared_txs) {
             Ok(v) => v,
             Err(_) => return NOVOVM_ADAPTER_PLUGIN_RC_APPLY_FAILED,
         }
@@ -2203,17 +2655,17 @@ pub unsafe extern "C" fn novovm_adapter_plugin_apply_v2(
         None
     };
 
-    let result = match apply_ir_batch(chain_type, chain_id, &txs) {
+    let result = match apply_ir_batch(chain_type, chain_id, &prepared_txs) {
         Ok(v) => {
             if let Some(intent) = atomic_intent.as_ref() {
-                mark_atomic_intent_executed(intent);
+                mark_atomic_intent_executed(chain_id, intent);
             }
-            settle_fee_income_for_batch(chain_id, &txs);
+            settle_fee_income_for_batch(chain_id, &prepared_txs);
             v
         }
         Err(err) => {
             if let Some(intent) = atomic_intent.as_ref() {
-                mark_atomic_intent_apply_failed(&intent.intent_id, &err.to_string());
+                mark_atomic_intent_apply_failed(chain_id, &intent.intent_id, &err.to_string());
             }
             return NOVOVM_ADAPTER_PLUGIN_RC_APPLY_FAILED;
         }
@@ -2453,19 +2905,29 @@ mod tests {
     }
 
     fn reset_runtime_queues_for_test() {
-        let runtime = resolve_evm_runtime_state();
-        let mut runtime = runtime
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        runtime.ingress_frames.clear();
-        runtime.executable_ingress_frames.clear();
-        runtime.atomic_receipts.clear();
-        runtime.settlement_records.clear();
-        runtime.payout_instructions.clear();
-        runtime.atomic_broadcast_ready.clear();
-        runtime.pending_by_nonce.clear();
-        runtime.pending_by_sender.clear();
-        runtime.next_nonce_by_sender.clear();
+        EVM_RUNTIME_SETTLEMENT_SEQ.store(0, Ordering::Relaxed);
+        for shard in resolve_evm_runtime_shards() {
+            let mut runtime = shard
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            runtime.settlement_seq = 0;
+            runtime.reserve_total_wei = 0;
+            runtime.payout_total_units = 0;
+            runtime.atomic_receipts.clear();
+            runtime.settlement_records.clear();
+            runtime.payout_instructions.clear();
+            runtime.atomic_broadcast_ready.clear();
+        }
+        for shard in resolve_evm_txpool_shards() {
+            let mut txpool = shard
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            txpool.ingress_frames.clear();
+            txpool.executable_ingress_frames.clear();
+            txpool.pending_by_nonce.clear();
+            txpool.pending_by_sender.clear();
+            txpool.next_nonce_by_sender.clear();
+        }
     }
 
     fn encode_address(seed: u64) -> Vec<u8> {

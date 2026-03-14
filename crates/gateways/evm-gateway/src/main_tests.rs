@@ -1319,6 +1319,7 @@ fn receipts_root_differs_between_pending_and_confirmed_for_same_txs() {
 
 #[test]
 fn eth_query_block_by_hash_tx_by_block_index_and_logs_work() {
+    let _guard = env_test_guard();
     let backend = GatewayEthTxIndexStoreBackend::Memory;
     let mut router = UnifiedAccountRouter::new();
     let mut eth_tx_index = HashMap::new();

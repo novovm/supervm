@@ -2,9 +2,9 @@
 
 use crate::{
     get_network_runtime_sync_status, observe_network_runtime_local_head_max,
-    observe_network_runtime_peer_head, plan_network_runtime_sync_pull_window,
-    register_network_runtime_peer, unregister_network_runtime_peer,
-    NetworkRuntimeNativeSyncPhaseV1,
+    observe_network_runtime_peer_head, observe_network_runtime_peer_head_with_local_head_max,
+    plan_network_runtime_sync_pull_window, register_network_runtime_peer,
+    unregister_network_runtime_peer, NetworkRuntimeNativeSyncPhaseV1,
 };
 use dashmap::DashMap;
 use novovm_protocol::{
@@ -17,7 +17,7 @@ use novovm_protocol::{
 };
 use std::collections::VecDeque;
 use std::io::{Read, Write};
-use std::net::{SocketAddr, TcpListener, TcpStream, UdpSocket};
+use std::net::{IpAddr, SocketAddr, TcpListener, TcpStream, UdpSocket};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 use thiserror::Error;
@@ -52,6 +52,13 @@ pub trait Transport: Send + Sync {
 const RUNTIME_SYNC_PULL_REQUEST_MAGIC: [u8; 4] = *b"NSP1";
 const RUNTIME_SYNC_PULL_REQUEST_LEN: usize = 4 + 1 + 8 + 8 + 8;
 const RUNTIME_SYNC_PULL_RESPONSE_BATCH_MAX: u64 = 128;
+const DEFAULT_TCP_CONNECT_RETRY_ATTEMPTS: usize = 2;
+const DEFAULT_TCP_CONNECT_RETRY_BACKOFF_MS: u64 = 0;
+const PEER_IP_HINT_AMBIGUOUS: u64 = u64::MAX;
+const RUNTIME_SYNC_PULL_PREFETCH_MARGIN_HEADERS: u64 = 8;
+const RUNTIME_SYNC_PULL_PREFETCH_MARGIN_BODIES: u64 = 4;
+const RUNTIME_SYNC_PULL_PREFETCH_MARGIN_STATE: u64 = 2;
+const RUNTIME_SYNC_PULL_PREFETCH_MARGIN_FINALIZE: u64 = 1;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct RuntimeSyncPullRequest {
@@ -61,39 +68,121 @@ struct RuntimeSyncPullRequest {
     to_block: u64,
 }
 
-type RuntimeSyncPullTargetMap = std::collections::HashMap<(u64, u64, u64), u64>;
-static RUNTIME_SYNC_PULL_TARGETS: OnceLock<Mutex<RuntimeSyncPullTargetMap>> = OnceLock::new();
-
-fn runtime_sync_pull_target_map() -> &'static Mutex<RuntimeSyncPullTargetMap> {
-    RUNTIME_SYNC_PULL_TARGETS.get_or_init(|| Mutex::new(std::collections::HashMap::new()))
+#[derive(Debug, Clone, Copy, Default)]
+struct RuntimeSyncPullMessageContext {
+    is_sync_pull: bool,
+    request: Option<RuntimeSyncPullRequest>,
+    header_height: Option<u64>,
 }
 
+#[derive(Debug, Clone)]
+struct RuntimeSyncPullResponsePlan {
+    to: NodeId,
+    to_wire: u32,
+    msg_type: DistributedOcccMessageType,
+    response_from: u64,
+    response_to: u64,
+    timestamp: u64,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct RuntimeSyncPullTargetState {
+    to_block: u64,
+    followup_trigger_block: u64,
+}
+
+type RuntimeSyncPullTargetMap = DashMap<(u64, u64, u64), RuntimeSyncPullTargetState>;
+static RUNTIME_SYNC_PULL_TARGETS: OnceLock<RuntimeSyncPullTargetMap> = OnceLock::new();
+
+fn runtime_sync_pull_target_map() -> &'static RuntimeSyncPullTargetMap {
+    RUNTIME_SYNC_PULL_TARGETS.get_or_init(DashMap::new)
+}
+
+#[cfg(test)]
 fn set_runtime_sync_pull_target(
     chain_id: u64,
     local_node: NodeId,
     remote_peer: NodeId,
     to_block: u64,
 ) {
-    if let Ok(mut guard) = runtime_sync_pull_target_map().lock() {
-        guard.insert((chain_id, local_node.0, remote_peer.0), to_block);
-    }
+    set_runtime_sync_pull_target_with_trigger(
+        chain_id,
+        local_node,
+        remote_peer,
+        to_block,
+        to_block,
+    );
 }
 
+fn set_runtime_sync_pull_target_with_trigger(
+    chain_id: u64,
+    local_node: NodeId,
+    remote_peer: NodeId,
+    to_block: u64,
+    followup_trigger_block: u64,
+) {
+    runtime_sync_pull_target_map().insert(
+        (chain_id, local_node.0, remote_peer.0),
+        RuntimeSyncPullTargetState {
+            to_block,
+            followup_trigger_block: followup_trigger_block.min(to_block),
+        },
+    );
+}
+
+#[cfg(test)]
 fn get_runtime_sync_pull_target(
     chain_id: u64,
     local_node: NodeId,
     remote_peer: NodeId,
 ) -> Option<u64> {
     runtime_sync_pull_target_map()
-        .lock()
-        .ok()
-        .and_then(|guard| guard.get(&(chain_id, local_node.0, remote_peer.0)).copied())
+        .get(&(chain_id, local_node.0, remote_peer.0))
+        .map(|target| target.to_block)
 }
 
 fn clear_runtime_sync_pull_target(chain_id: u64, local_node: NodeId, remote_peer: NodeId) {
-    if let Ok(mut guard) = runtime_sync_pull_target_map().lock() {
-        guard.remove(&(chain_id, local_node.0, remote_peer.0));
+    runtime_sync_pull_target_map().remove(&(chain_id, local_node.0, remote_peer.0));
+}
+
+fn should_wait_runtime_sync_pull_target_window(
+    chain_id: u64,
+    local_node: NodeId,
+    remote_peer: NodeId,
+    observed_height: u64,
+) -> bool {
+    let key = (chain_id, local_node.0, remote_peer.0);
+    let target_map = runtime_sync_pull_target_map();
+    if let Some(target) = target_map.get(&key) {
+        let target_to = target.to_block;
+        let trigger = target.followup_trigger_block;
+        drop(target);
+        if observed_height < trigger {
+            return true;
+        }
+        if observed_height >= target_to {
+            target_map.remove(&key);
+            return false;
+        }
+        // Prefetch trigger: near the tail of current window, start requesting
+        // next window to hide pull RTT while preserving deterministic ordering.
+        target_map.remove(&key);
     }
+    false
+}
+
+fn parse_env_usize(name: &str, fallback: usize) -> usize {
+    std::env::var(name)
+        .ok()
+        .and_then(|raw| raw.trim().parse::<usize>().ok())
+        .unwrap_or(fallback)
+}
+
+fn parse_env_u64(name: &str, fallback: u64) -> u64 {
+    std::env::var(name)
+        .ok()
+        .and_then(|raw| raw.trim().parse::<u64>().ok())
+        .unwrap_or(fallback)
 }
 
 /// Simple in-memory transport for tests/bench harnesses.
@@ -150,7 +239,10 @@ pub struct UdpTransport {
     chain_id: u64,
     socket: Arc<UdpSocket>,
     peers: Arc<DashMap<NodeId, SocketAddr>>,
-    max_packet_size: usize,
+    peer_addr_index: Arc<DashMap<SocketAddr, NodeId>>,
+    peer_ip_hint_index: Arc<DashMap<IpAddr, u64>>,
+    runtime_peer_registered: Arc<DashMap<NodeId, ()>>,
+    recv_buf: Arc<Mutex<Vec<u8>>>,
 }
 
 /// TCP transport for multi-process / multi-host cluster probes.
@@ -163,9 +255,14 @@ pub struct TcpTransport {
     chain_id: u64,
     listener: Arc<TcpListener>,
     peers: Arc<DashMap<NodeId, SocketAddr>>,
+    peer_addr_index: Arc<DashMap<SocketAddr, NodeId>>,
+    peer_ip_hint_index: Arc<DashMap<IpAddr, u64>>,
     outbound_streams: Arc<DashMap<NodeId, Arc<Mutex<TcpStream>>>>,
     max_packet_size: usize,
+    recv_frame_buf: Arc<Mutex<Vec<u8>>>,
     connect_timeout_ms: u64,
+    connect_retry_attempts: usize,
+    connect_retry_backoff_ms: u64,
 }
 
 impl TcpTransport {
@@ -212,9 +309,21 @@ impl TcpTransport {
             chain_id,
             listener: Arc::new(listener),
             peers: Arc::new(DashMap::new()),
+            peer_addr_index: Arc::new(DashMap::new()),
+            peer_ip_hint_index: Arc::new(DashMap::new()),
             outbound_streams: Arc::new(DashMap::new()),
             max_packet_size: max_packet_size.max(1024),
+            recv_frame_buf: Arc::new(Mutex::new(vec![0u8; max_packet_size.max(1024)])),
             connect_timeout_ms: 500,
+            connect_retry_attempts: parse_env_usize(
+                "NOVOVM_NETWORK_TCP_CONNECT_RETRY_ATTEMPTS",
+                DEFAULT_TCP_CONNECT_RETRY_ATTEMPTS,
+            )
+            .max(1),
+            connect_retry_backoff_ms: parse_env_u64(
+                "NOVOVM_NETWORK_TCP_CONNECT_RETRY_BACKOFF_MS",
+                DEFAULT_TCP_CONNECT_RETRY_BACKOFF_MS,
+            ),
         })
     }
 
@@ -222,15 +331,24 @@ impl TcpTransport {
         let parsed: SocketAddr = addr
             .parse()
             .map_err(|e: std::net::AddrParseError| NetworkError::AddressParse(e.to_string()))?;
-        self.peers.insert(node, parsed);
+        if let Some(old_addr) = self.peers.insert(node, parsed) {
+            self.peer_addr_index.remove(&old_addr);
+            if old_addr.ip() != parsed.ip() {
+                refresh_peer_ip_hint_for_ip(&self.peers, &self.peer_ip_hint_index, old_addr.ip());
+            }
+        }
+        self.peer_addr_index.insert(parsed, node);
+        refresh_peer_ip_hint_for_ip(&self.peers, &self.peer_ip_hint_index, parsed.ip());
         let _ = register_network_runtime_peer(self.chain_id, node.0);
         Ok(())
     }
 
     pub fn unregister_peer(&self, node: NodeId) -> Result<(), NetworkError> {
-        if self.peers.remove(&node).is_none() {
+        let Some((_, removed_addr)) = self.peers.remove(&node) else {
             return Err(NetworkError::PeerNotFound(node));
-        }
+        };
+        self.peer_addr_index.remove(&removed_addr);
+        refresh_peer_ip_hint_for_ip(&self.peers, &self.peer_ip_hint_index, removed_addr.ip());
         clear_runtime_sync_pull_target(self.chain_id, self.node, node);
         self.outbound_streams.remove(&node);
         let _ = unregister_network_runtime_peer(self.chain_id, node.0);
@@ -245,6 +363,99 @@ impl TcpTransport {
 
     pub fn set_connect_timeout_ms(&mut self, timeout_ms: u64) {
         self.connect_timeout_ms = timeout_ms.max(1);
+    }
+
+    pub fn set_connect_retry_attempts(&mut self, attempts: usize) {
+        self.connect_retry_attempts = attempts.max(1);
+    }
+
+    pub fn set_connect_retry_backoff_ms(&mut self, backoff_ms: u64) {
+        self.connect_retry_backoff_ms = backoff_ms;
+    }
+
+    fn send_internal(&self, to: NodeId, msg: &ProtocolMessage) -> Result<(), NetworkError> {
+        let peer = *self.peers.get(&to).ok_or(NetworkError::PeerNotFound(to))?;
+        let encoded = protocol_encode(msg).map_err(|e| NetworkError::Encode(e.to_string()))?;
+        if let Some(stream_arc) = self
+            .outbound_streams
+            .get(&to)
+            .map(|entry| Arc::clone(entry.value()))
+        {
+            let write_result = {
+                let mut guard = stream_arc
+                    .lock()
+                    .map_err(|_| NetworkError::Io("tcp stream lock poisoned".to_string()))?;
+                write_tcp_frame(&mut guard, &encoded)
+            };
+            match write_result {
+                Ok(()) => {
+                    maybe_update_runtime_sync_local_progress_from_send(
+                        self.chain_id,
+                        self.node,
+                        msg,
+                    );
+                    return Ok(());
+                }
+                Err(e) => {
+                    self.outbound_streams.remove(&to);
+                    if should_mark_peer_disconnected(&e) {
+                        clear_runtime_sync_pull_target(self.chain_id, self.node, to);
+                        let _ = unregister_network_runtime_peer(self.chain_id, to.0);
+                    }
+                }
+            }
+        }
+
+        let mut last_err = None;
+        let mut last_connect_io_error: Option<std::io::Error> = None;
+        let mut stream_opt = None;
+        for attempt_idx in 0..self.connect_retry_attempts {
+            match TcpStream::connect_timeout(&peer, Duration::from_millis(self.connect_timeout_ms))
+            {
+                Ok(s) => {
+                    stream_opt = Some(s);
+                    break;
+                }
+                Err(e) => {
+                    last_err = Some(e.to_string());
+                    last_connect_io_error = Some(e);
+                    let should_backoff = attempt_idx + 1 < self.connect_retry_attempts
+                        && self.connect_retry_backoff_ms > 0;
+                    if should_backoff {
+                        std::thread::sleep(Duration::from_millis(self.connect_retry_backoff_ms));
+                    }
+                }
+            }
+        }
+        if stream_opt.is_none() {
+            if let Some(io_err) = last_connect_io_error.as_ref() {
+                if should_mark_peer_disconnected(io_err) {
+                    clear_runtime_sync_pull_target(self.chain_id, self.node, to);
+                    let _ = unregister_network_runtime_peer(self.chain_id, to.0);
+                }
+            }
+        }
+        let mut stream = stream_opt.ok_or_else(|| {
+            NetworkError::Io(format!(
+                "tcp connect failed after retries: {}",
+                last_err.unwrap_or_else(|| "unknown".to_string())
+            ))
+        })?;
+        stream
+            .set_nodelay(true)
+            .map_err(|e| NetworkError::Io(e.to_string()))?;
+        write_tcp_frame(&mut stream, &encoded).map_err(|e| {
+            if should_mark_peer_disconnected(&e) {
+                clear_runtime_sync_pull_target(self.chain_id, self.node, to);
+                let _ = unregister_network_runtime_peer(self.chain_id, to.0);
+            }
+            NetworkError::Io(e.to_string())
+        })?;
+        self.outbound_streams
+            .insert(to, Arc::new(Mutex::new(stream)));
+        let _ = register_network_runtime_peer(self.chain_id, to.0);
+        maybe_update_runtime_sync_local_progress_from_send(self.chain_id, self.node, msg);
+        Ok(())
     }
 }
 
@@ -291,7 +502,10 @@ impl UdpTransport {
             chain_id,
             socket: Arc::new(socket),
             peers: Arc::new(DashMap::new()),
-            max_packet_size: max_packet_size.max(1024),
+            peer_addr_index: Arc::new(DashMap::new()),
+            peer_ip_hint_index: Arc::new(DashMap::new()),
+            runtime_peer_registered: Arc::new(DashMap::new()),
+            recv_buf: Arc::new(Mutex::new(vec![0u8; max_packet_size.max(1024)])),
         })
     }
 
@@ -299,16 +513,28 @@ impl UdpTransport {
         let parsed: SocketAddr = addr
             .parse()
             .map_err(|e: std::net::AddrParseError| NetworkError::AddressParse(e.to_string()))?;
-        self.peers.insert(node, parsed);
-        let _ = register_network_runtime_peer(self.chain_id, node.0);
+        if let Some(old_addr) = self.peers.insert(node, parsed) {
+            self.peer_addr_index.remove(&old_addr);
+            if old_addr.ip() != parsed.ip() {
+                refresh_peer_ip_hint_for_ip(&self.peers, &self.peer_ip_hint_index, old_addr.ip());
+            }
+        }
+        self.peer_addr_index.insert(parsed, node);
+        refresh_peer_ip_hint_for_ip(&self.peers, &self.peer_ip_hint_index, parsed.ip());
+        if self.runtime_peer_registered.insert(node, ()).is_none() {
+            let _ = register_network_runtime_peer(self.chain_id, node.0);
+        }
         Ok(())
     }
 
     pub fn unregister_peer(&self, node: NodeId) -> Result<(), NetworkError> {
-        if self.peers.remove(&node).is_none() {
+        let Some((_, removed_addr)) = self.peers.remove(&node) else {
             return Err(NetworkError::PeerNotFound(node));
-        }
+        };
+        self.peer_addr_index.remove(&removed_addr);
+        refresh_peer_ip_hint_for_ip(&self.peers, &self.peer_ip_hint_index, removed_addr.ip());
         clear_runtime_sync_pull_target(self.chain_id, self.node, node);
+        self.runtime_peer_registered.remove(&node);
         let _ = unregister_network_runtime_peer(self.chain_id, node.0);
         Ok(())
     }
@@ -318,16 +544,60 @@ impl UdpTransport {
             .local_addr()
             .map_err(|e| NetworkError::Io(e.to_string()))
     }
+
+    fn send_internal(&self, to: NodeId, msg: &ProtocolMessage) -> Result<(), NetworkError> {
+        let peer = *self.peers.get(&to).ok_or(NetworkError::PeerNotFound(to))?;
+        let encoded = protocol_encode(msg).map_err(|e| NetworkError::Encode(e.to_string()))?;
+        let sent = match self.socket.send_to(&encoded, peer) {
+            Ok(sent) => sent,
+            Err(e) => {
+                if should_mark_peer_disconnected(&e) {
+                    clear_runtime_sync_pull_target(self.chain_id, self.node, to);
+                    self.runtime_peer_registered.remove(&to);
+                    let _ = unregister_network_runtime_peer(self.chain_id, to.0);
+                }
+                return Err(NetworkError::Io(e.to_string()));
+            }
+        };
+        if sent != encoded.len() {
+            return Err(NetworkError::Io(format!(
+                "partial udp send: sent={sent} expected={}",
+                encoded.len()
+            )));
+        }
+        if self.runtime_peer_registered.insert(to, ()).is_none() {
+            let _ = register_network_runtime_peer(self.chain_id, to.0);
+        }
+        maybe_update_runtime_sync_local_progress_from_send(self.chain_id, self.node, msg);
+        Ok(())
+    }
 }
 
+#[cfg(test)]
 fn maybe_update_runtime_sync_from_protocol_message(
     chain_id: u64,
     msg: &ProtocolMessage,
+    msg_peer_id: Option<u64>,
     source_peer_id_hint: Option<u64>,
 ) {
-    if let Some(peer_id) = runtime_peer_id_from_protocol_message(msg).or(source_peer_id_hint) {
-        let _ = register_network_runtime_peer(chain_id, peer_id);
-    }
+    let sync_ctx = runtime_sync_pull_message_context(msg);
+    maybe_update_runtime_sync_from_protocol_message_with_context(
+        chain_id,
+        msg,
+        msg_peer_id,
+        source_peer_id_hint,
+        &sync_ctx,
+    );
+}
+
+fn maybe_update_runtime_sync_from_protocol_message_with_context(
+    chain_id: u64,
+    msg: &ProtocolMessage,
+    msg_peer_id: Option<u64>,
+    source_peer_id_hint: Option<u64>,
+    sync_ctx: &RuntimeSyncPullMessageContext,
+) {
+    let fallback_peer_id = msg_peer_id.or(source_peer_id_hint);
 
     match msg {
         ProtocolMessage::Gossip(ProtocolGossipMessage::PeerList { from, peers }) => {
@@ -339,7 +609,9 @@ fn maybe_update_runtime_sync_from_protocol_message(
             }
         }
         ProtocolMessage::Pacemaker(PacemakerMessage::ViewSync { from, height, .. }) => {
-            let _ = observe_network_runtime_peer_head(chain_id, from.0, *height);
+            let _ = observe_network_runtime_peer_head_with_local_head_max(
+                chain_id, from.0, *height, None,
+            );
         }
         ProtocolMessage::Pacemaker(PacemakerMessage::NewView {
             from,
@@ -347,35 +619,46 @@ fn maybe_update_runtime_sync_from_protocol_message(
             high_qc_height,
             ..
         }) => {
-            let _ =
-                observe_network_runtime_peer_head(chain_id, from.0, (*height).max(*high_qc_height));
+            let _ = observe_network_runtime_peer_head_with_local_head_max(
+                chain_id,
+                from.0,
+                (*height).max(*high_qc_height),
+                None,
+            );
         }
         ProtocolMessage::DistributedOcccGossip(gossip_msg) => {
-            if let Ok(header) = decode_block_header_wire_v1(&gossip_msg.payload) {
-                let _ = observe_network_runtime_peer_head(
-                    chain_id,
-                    gossip_msg.from as u64,
-                    header.height,
-                );
-                if matches!(
-                    gossip_msg.msg_type,
-                    DistributedOcccMessageType::StateSync | DistributedOcccMessageType::ShardState
-                ) {
+            if sync_ctx.is_sync_pull {
+                if let Some(height) = sync_ctx.header_height {
                     // Treat downloader state headers as local progress.
                     // This keeps runtime current_block advancing from real ingress
                     // messages instead of waiting for external snapshot injection.
-                    let _ = observe_network_runtime_local_head_max(chain_id, header.height);
+                    let _ = observe_network_runtime_peer_head_with_local_head_max(
+                        chain_id,
+                        gossip_msg.from as u64,
+                        height,
+                        Some(height),
+                    );
+                } else {
+                    let _ = register_network_runtime_peer(chain_id, gossip_msg.from as u64);
                 }
+            } else {
+                let _ = register_network_runtime_peer(chain_id, gossip_msg.from as u64);
             }
         }
         ProtocolMessage::Finality(FinalityMessage::Vote { id, from, .. }) => {
-            let _ = observe_network_runtime_peer_head(chain_id, from.0, id.0);
+            let _ =
+                observe_network_runtime_peer_head_with_local_head_max(chain_id, from.0, id.0, None);
         }
         ProtocolMessage::Finality(FinalityMessage::CheckpointPropose { id, from, .. })
         | ProtocolMessage::Finality(FinalityMessage::Cert { id, from, .. }) => {
-            let _ = observe_network_runtime_peer_head(chain_id, from.0, id.0);
+            let _ =
+                observe_network_runtime_peer_head_with_local_head_max(chain_id, from.0, id.0, None);
         }
-        _ => {}
+        _ => {
+            if let Some(peer_id) = fallback_peer_id {
+                let _ = register_network_runtime_peer(chain_id, peer_id);
+            }
+        }
     }
 }
 
@@ -405,7 +688,9 @@ fn maybe_update_runtime_sync_local_progress_from_send(
         }
         ProtocolMessage::DistributedOcccGossip(gossip_msg) => {
             maybe_track_runtime_sync_pull_request_outbound(chain_id, local_node, msg);
-            if gossip_msg.from == local_node.0 as u32 {
+            if gossip_msg.from == local_node.0 as u32
+                && is_runtime_sync_pull_msg_type(&gossip_msg.msg_type)
+            {
                 if let Ok(header) = decode_block_header_wire_v1(&gossip_msg.payload) {
                     let _ = observe_network_runtime_local_head_max(chain_id, header.height);
                 }
@@ -450,6 +735,28 @@ fn decode_runtime_sync_pull_request(payload: &[u8]) -> Option<RuntimeSyncPullReq
         from_block,
         to_block,
     })
+}
+
+fn runtime_sync_pull_message_context(msg: &ProtocolMessage) -> RuntimeSyncPullMessageContext {
+    let ProtocolMessage::DistributedOcccGossip(gossip_msg) = msg else {
+        return RuntimeSyncPullMessageContext::default();
+    };
+    if !is_runtime_sync_pull_msg_type(&gossip_msg.msg_type) {
+        return RuntimeSyncPullMessageContext::default();
+    }
+    let request = decode_runtime_sync_pull_request(&gossip_msg.payload);
+    let header_height = if request.is_none() {
+        decode_block_header_wire_v1(&gossip_msg.payload)
+            .ok()
+            .map(|header| header.height)
+    } else {
+        None
+    };
+    RuntimeSyncPullMessageContext {
+        is_sync_pull: true,
+        request,
+        header_height,
+    }
 }
 
 fn decode_runtime_sync_phase_byte(raw: u8) -> NetworkRuntimeNativeSyncPhaseV1 {
@@ -518,6 +825,26 @@ fn runtime_sync_pull_response_cap_to(request: &RuntimeSyncPullRequest) -> u64 {
     )
 }
 
+fn runtime_sync_pull_prefetch_margin_by_phase(phase: NetworkRuntimeNativeSyncPhaseV1) -> u64 {
+    match phase {
+        NetworkRuntimeNativeSyncPhaseV1::Headers => RUNTIME_SYNC_PULL_PREFETCH_MARGIN_HEADERS,
+        NetworkRuntimeNativeSyncPhaseV1::Bodies => RUNTIME_SYNC_PULL_PREFETCH_MARGIN_BODIES,
+        NetworkRuntimeNativeSyncPhaseV1::State => RUNTIME_SYNC_PULL_PREFETCH_MARGIN_STATE,
+        NetworkRuntimeNativeSyncPhaseV1::Finalize => RUNTIME_SYNC_PULL_PREFETCH_MARGIN_FINALIZE,
+        NetworkRuntimeNativeSyncPhaseV1::Discovery | NetworkRuntimeNativeSyncPhaseV1::Idle => 0,
+    }
+}
+
+fn runtime_sync_pull_followup_trigger_height(
+    request: &RuntimeSyncPullRequest,
+    capped_target_to: u64,
+) -> u64 {
+    let window_span = capped_target_to.saturating_sub(request.from_block);
+    let phase_margin = runtime_sync_pull_prefetch_margin_by_phase(request.phase);
+    let bounded_margin = phase_margin.min(window_span / 2);
+    capped_target_to.saturating_sub(bounded_margin)
+}
+
 fn maybe_track_runtime_sync_pull_request_outbound(
     chain_id: u64,
     local_node: NodeId,
@@ -539,11 +866,13 @@ fn maybe_track_runtime_sync_pull_request_outbound(
         return;
     }
     let capped_target_to = runtime_sync_pull_response_cap_to(&request);
-    set_runtime_sync_pull_target(
+    let followup_trigger = runtime_sync_pull_followup_trigger_height(&request, capped_target_to);
+    set_runtime_sync_pull_target_with_trigger(
         chain_id,
         local_node,
         NodeId(gossip_msg.to as u64),
         capped_target_to,
+        followup_trigger,
     );
 }
 
@@ -564,109 +893,162 @@ fn encode_runtime_sync_block_header_payload(response_height: u64) -> Vec<u8> {
     encode_block_header_wire_v1(&header)
 }
 
-fn collect_runtime_sync_pull_response_payloads(
+fn compute_runtime_sync_pull_response_range(
     chain_id: u64,
     phase: NetworkRuntimeNativeSyncPhaseV1,
     from_block: u64,
     to_block: u64,
-) -> Vec<Vec<u8>> {
+) -> Option<(u64, u64)> {
     let local_head = get_network_runtime_sync_status(chain_id)
         .map(|s| s.current_block)
         .unwrap_or(0);
     if local_head < from_block {
-        return Vec::new();
+        return None;
     }
     let response_to = local_head.min(to_block);
     let phase_batch = runtime_sync_pull_response_batch_max_by_phase(phase).max(1);
     let capped_to = response_to.min(from_block.saturating_add(phase_batch.saturating_sub(1)));
-    let mut payloads = Vec::new();
-    for height in from_block..=capped_to {
-        payloads.push(encode_runtime_sync_block_header_payload(height));
+    if capped_to < from_block {
+        return None;
     }
-    payloads
+    Some((from_block, capped_to))
 }
 
-fn maybe_build_runtime_sync_pull_responses(
+fn maybe_plan_runtime_sync_pull_responses_with_context(
     chain_id: u64,
     local_node: NodeId,
     msg: &ProtocolMessage,
-) -> Option<(NodeId, Vec<ProtocolMessage>)> {
+    sync_ctx: &RuntimeSyncPullMessageContext,
+) -> Option<RuntimeSyncPullResponsePlan> {
     let ProtocolMessage::DistributedOcccGossip(gossip_msg) = msg else {
         return None;
     };
-    if !is_runtime_sync_pull_msg_type(&gossip_msg.msg_type) {
+    if !sync_ctx.is_sync_pull {
         return None;
     }
     if gossip_msg.to != local_node.0 as u32 {
         return None;
     }
-    let request = decode_runtime_sync_pull_request(&gossip_msg.payload)?;
+    let request = sync_ctx.request?;
     if request.chain_id != chain_id {
         return None;
     }
     // Pull request provides remote desired sync edge; ingest as remote progress hint.
     let _ = observe_network_runtime_peer_head(chain_id, gossip_msg.from as u64, request.to_block);
 
-    let response_payloads = collect_runtime_sync_pull_response_payloads(
+    let (response_from, response_to) = compute_runtime_sync_pull_response_range(
         chain_id,
         request.phase,
         request.from_block,
         request.to_block,
-    );
-    if response_payloads.is_empty() {
-        return None;
+    )?;
+    Some(RuntimeSyncPullResponsePlan {
+        to: NodeId(gossip_msg.from as u64),
+        to_wire: gossip_msg.from,
+        msg_type: runtime_sync_pull_msg_type_for_phase(request.phase),
+        response_from,
+        response_to,
+        timestamp: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0),
+    })
+}
+
+fn emit_runtime_sync_pull_responses(
+    local_node: NodeId,
+    plan: &RuntimeSyncPullResponsePlan,
+    mut send_one: impl FnMut(NodeId, &ProtocolMessage) -> bool,
+    mut send_one_fallback: impl FnMut(&ProtocolMessage),
+) {
+    for (offset, height) in (plan.response_from..=plan.response_to).enumerate() {
+        let response_payload = encode_runtime_sync_block_header_payload(height);
+        let seq = plan.timestamp.saturating_add(offset as u64);
+        let response = ProtocolMessage::DistributedOcccGossip(
+            novovm_protocol::protocol_catalog::distributed_occc::gossip::GossipMessage {
+                from: local_node.0 as u32,
+                to: plan.to_wire,
+                msg_type: plan.msg_type.clone(),
+                payload: response_payload,
+                timestamp: plan.timestamp,
+                seq,
+            },
+        );
+        if !send_one(plan.to, &response) {
+            send_one_fallback(&response);
+        }
     }
-    let response_msg_type = runtime_sync_pull_msg_type_for_phase(request.phase);
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis() as u64)
-        .unwrap_or(0);
-    let mut responses = Vec::with_capacity(response_payloads.len());
-    for (offset, response_payload) in response_payloads.into_iter().enumerate() {
-        let seq = now.saturating_add(offset as u64);
+}
+
+#[cfg(test)]
+#[allow(dead_code)]
+fn maybe_build_runtime_sync_pull_responses(
+    chain_id: u64,
+    local_node: NodeId,
+    msg: &ProtocolMessage,
+) -> Option<(NodeId, Vec<ProtocolMessage>)> {
+    let sync_ctx = runtime_sync_pull_message_context(msg);
+    let plan =
+        maybe_plan_runtime_sync_pull_responses_with_context(chain_id, local_node, msg, &sync_ctx)?;
+    let response_count = plan
+        .response_to
+        .saturating_sub(plan.response_from)
+        .saturating_add(1);
+    let mut responses = Vec::with_capacity(response_count as usize);
+    for (offset, height) in (plan.response_from..=plan.response_to).enumerate() {
+        let response_payload = encode_runtime_sync_block_header_payload(height);
+        let seq = plan.timestamp.saturating_add(offset as u64);
         responses.push(ProtocolMessage::DistributedOcccGossip(
             novovm_protocol::protocol_catalog::distributed_occc::gossip::GossipMessage {
                 from: local_node.0 as u32,
-                to: gossip_msg.from,
-                msg_type: response_msg_type.clone(),
+                to: plan.to_wire,
+                msg_type: plan.msg_type.clone(),
                 payload: response_payload,
-                timestamp: now,
+                timestamp: plan.timestamp,
                 seq,
             },
         ));
     }
-    Some((NodeId(gossip_msg.from as u64), responses))
+    Some((plan.to, responses))
 }
 
+#[cfg(test)]
 fn maybe_build_runtime_sync_pull_followup_request(
     chain_id: u64,
     local_node: NodeId,
     msg: &ProtocolMessage,
 ) -> Option<(NodeId, ProtocolMessage)> {
+    let sync_ctx = runtime_sync_pull_message_context(msg);
+    maybe_build_runtime_sync_pull_followup_request_with_context(
+        chain_id, local_node, msg, &sync_ctx,
+    )
+}
+
+fn maybe_build_runtime_sync_pull_followup_request_with_context(
+    chain_id: u64,
+    local_node: NodeId,
+    msg: &ProtocolMessage,
+    sync_ctx: &RuntimeSyncPullMessageContext,
+) -> Option<(NodeId, ProtocolMessage)> {
     let ProtocolMessage::DistributedOcccGossip(gossip_msg) = msg else {
         return None;
     };
-    if !is_runtime_sync_pull_msg_type(&gossip_msg.msg_type) {
+    if !sync_ctx.is_sync_pull {
         return None;
     }
     if gossip_msg.to != local_node.0 as u32 {
         return None;
     }
     // Incoming NSP1 is already a pull request, not a downloaded sync result.
-    if decode_runtime_sync_pull_request(&gossip_msg.payload).is_some() {
+    if sync_ctx.request.is_some() {
         return None;
     }
     // Only continue pull loop when response payload is a valid sync header.
-    let Ok(header) = decode_block_header_wire_v1(&gossip_msg.payload) else {
-        return None;
-    };
+    let response_height = sync_ctx.header_height?;
     let target = NodeId(gossip_msg.from as u64);
-    if let Some(target_to) = get_runtime_sync_pull_target(chain_id, local_node, target) {
-        // Keep consuming current window replies until reaching requested upper bound.
-        if header.height < target_to {
-            return None;
-        }
-        clear_runtime_sync_pull_target(chain_id, local_node, target);
+    // Keep consuming current window replies until reaching requested upper bound.
+    if should_wait_runtime_sync_pull_target_window(chain_id, local_node, target, response_height) {
+        return None;
     }
     let window = plan_network_runtime_sync_pull_window(chain_id)?;
     if window.from_block > window.to_block {
@@ -711,13 +1093,39 @@ fn runtime_peer_id_from_protocol_message(msg: &ProtocolMessage) -> Option<u64> {
     }
 }
 
+fn refresh_peer_ip_hint_for_ip(
+    peers: &DashMap<NodeId, SocketAddr>,
+    peer_ip_hint_index: &DashMap<IpAddr, u64>,
+    ip: IpAddr,
+) {
+    let mut found: Option<u64> = None;
+    for entry in peers.iter() {
+        if entry.value().ip() != ip {
+            continue;
+        }
+        let peer_id = entry.key().0;
+        if found.is_some() {
+            peer_ip_hint_index.insert(ip, PEER_IP_HINT_AMBIGUOUS);
+            return;
+        }
+        found = Some(peer_id);
+    }
+    if let Some(peer_id) = found {
+        peer_ip_hint_index.insert(ip, peer_id);
+    } else {
+        peer_ip_hint_index.remove(&ip);
+    }
+}
+
 fn maybe_learn_peer_addr(
     peers: &DashMap<NodeId, SocketAddr>,
+    peer_addr_index: &DashMap<SocketAddr, NodeId>,
+    peer_ip_hint_index: &DashMap<IpAddr, u64>,
     local_node: NodeId,
     src: SocketAddr,
-    msg: &ProtocolMessage,
+    msg_peer_id: Option<u64>,
 ) {
-    let Some(peer_id) = runtime_peer_id_from_protocol_message(msg) else {
+    let Some(peer_id) = msg_peer_id else {
         return;
     };
     if peer_id == local_node.0 {
@@ -735,7 +1143,14 @@ fn maybe_learn_peer_addr(
         })
         .unwrap_or(true);
     if should_update {
-        peers.insert(peer_node, src);
+        if let Some(old_addr) = peers.insert(peer_node, src) {
+            peer_addr_index.remove(&old_addr);
+            if old_addr.ip() != src.ip() {
+                refresh_peer_ip_hint_for_ip(peers, peer_ip_hint_index, old_addr.ip());
+            }
+        }
+        peer_addr_index.insert(src, peer_node);
+        refresh_peer_ip_hint_for_ip(peers, peer_ip_hint_index, src.ip());
     }
 }
 
@@ -743,31 +1158,39 @@ fn infer_peer_id_from_src_addr(
     peers: &DashMap<NodeId, SocketAddr>,
     src: SocketAddr,
 ) -> Option<u64> {
-    let exact_match = peers.iter().find_map(|entry| {
-        if *entry.value() == src {
-            Some(entry.key().0)
-        } else {
-            None
-        }
-    });
-    if exact_match.is_some() {
-        return exact_match;
-    }
-
-    // TCP inbound connections often arrive from ephemeral source ports.
-    // If there is exactly one configured peer on the same IP, use it as a
-    // safe hint for runtime sync attribution.
     let mut same_ip_peer: Option<u64> = None;
     for entry in peers.iter() {
-        if entry.value().ip() != src.ip() {
-            continue;
+        let addr = *entry.value();
+        if addr == src {
+            return Some(entry.key().0);
         }
-        if same_ip_peer.is_some() {
-            return None;
+        if addr.ip() == src.ip() {
+            if same_ip_peer.is_some() {
+                return None;
+            }
+            same_ip_peer = Some(entry.key().0);
         }
-        same_ip_peer = Some(entry.key().0);
     }
     same_ip_peer
+}
+
+fn infer_peer_id_from_src_addr_with_index(
+    peers: &DashMap<NodeId, SocketAddr>,
+    peer_addr_index: &DashMap<SocketAddr, NodeId>,
+    peer_ip_hint_index: &DashMap<IpAddr, u64>,
+    src: SocketAddr,
+) -> Option<u64> {
+    if let Some(peer) = peer_addr_index.get(&src) {
+        return Some(peer.value().0);
+    }
+    if let Some(peer_hint) = peer_ip_hint_index.get(&src.ip()) {
+        let peer_id = *peer_hint;
+        if peer_id != PEER_IP_HINT_AMBIGUOUS {
+            return Some(peer_id);
+        }
+        return None;
+    }
+    infer_peer_id_from_src_addr(peers, src)
 }
 
 fn should_mark_peer_disconnected(io_err: &std::io::Error) -> bool {
@@ -787,29 +1210,7 @@ fn should_mark_peer_disconnected(io_err: &std::io::Error) -> bool {
 
 impl Transport for UdpTransport {
     fn send(&self, to: NodeId, msg: ProtocolMessage) -> Result<(), NetworkError> {
-        let peer = self.peers.get(&to).ok_or(NetworkError::PeerNotFound(to))?;
-        let encoded = protocol_encode(&msg).map_err(|e| NetworkError::Encode(e.to_string()))?;
-        let sent = match self.socket.send_to(&encoded, *peer) {
-            Ok(sent) => {
-                let _ = register_network_runtime_peer(self.chain_id, to.0);
-                sent
-            }
-            Err(e) => {
-                if should_mark_peer_disconnected(&e) {
-                    clear_runtime_sync_pull_target(self.chain_id, self.node, to);
-                    let _ = unregister_network_runtime_peer(self.chain_id, to.0);
-                }
-                return Err(NetworkError::Io(e.to_string()));
-            }
-        };
-        if sent != encoded.len() {
-            return Err(NetworkError::Io(format!(
-                "partial udp send: sent={sent} expected={}",
-                encoded.len()
-            )));
-        }
-        maybe_update_runtime_sync_local_progress_from_send(self.chain_id, self.node, &msg);
-        Ok(())
+        self.send_internal(to, &msg)
     }
 
     fn try_recv(&self, me: NodeId) -> Result<Option<ProtocolMessage>, NetworkError> {
@@ -820,49 +1221,21 @@ impl Transport for UdpTransport {
             });
         }
 
-        let mut buf = vec![0u8; self.max_packet_size];
-        match self.socket.recv_from(&mut buf) {
-            Ok((n, src)) => {
-                let decoded =
-                    protocol_decode(&buf[..n]).map_err(|e| NetworkError::Decode(e.to_string()))?;
-                let source_peer_id_hint = infer_peer_id_from_src_addr(&self.peers, src);
-                maybe_learn_peer_addr(&self.peers, self.node, src, &decoded);
-                if let Some((to, responses)) =
-                    maybe_build_runtime_sync_pull_responses(self.chain_id, self.node, &decoded)
-                {
-                    for response in responses {
-                        // Prefer registry route to keep peer activity updates on send path.
-                        if self.send(to, response.clone()).is_err() {
-                            // Fallback to raw src addr for cases where peer registry is stale.
-                            if let Ok(encoded) = protocol_encode(&response) {
-                                let _ = self.socket.send_to(&encoded, src);
-                            }
-                        }
-                    }
-                }
-                maybe_update_runtime_sync_from_protocol_message(
-                    self.chain_id,
-                    &decoded,
-                    source_peer_id_hint,
-                );
-                if let Some((to, followup)) = maybe_build_runtime_sync_pull_followup_request(
-                    self.chain_id,
-                    self.node,
-                    &decoded,
-                ) {
-                    maybe_track_runtime_sync_pull_request_outbound(
-                        self.chain_id,
-                        self.node,
-                        &followup,
-                    );
-                    if self.send(to, followup.clone()).is_err() {
-                        if let Ok(encoded) = protocol_encode(&followup) {
-                            let _ = self.socket.send_to(&encoded, src);
-                        }
-                    }
-                }
-                Ok(Some(decoded))
-            }
+        let mut recv_buf = {
+            let mut shared = self
+                .recv_buf
+                .lock()
+                .map_err(|_| NetworkError::Io("udp recv buffer lock poisoned".to_string()))?;
+            std::mem::take(&mut *shared)
+        };
+        if recv_buf.is_empty() {
+            recv_buf.resize(1024, 0);
+        }
+        let recv_outcome = self.socket.recv_from(recv_buf.as_mut_slice());
+        let decode_outcome = match recv_outcome {
+            Ok((n, src)) => protocol_decode(&recv_buf[..n])
+                .map(|decoded| Some((decoded, src)))
+                .map_err(|e| NetworkError::Decode(e.to_string())),
             Err(e)
                 if e.kind() == std::io::ErrorKind::WouldBlock
                     || e.kind() == std::io::ErrorKind::TimedOut
@@ -871,90 +1244,85 @@ impl Transport for UdpTransport {
                 Ok(None)
             }
             Err(e) => Err(NetworkError::Io(e.to_string())),
+        };
+        let _ = self.recv_buf.lock().map(|mut shared| {
+            *shared = recv_buf;
+        });
+        let (decoded, src) = match decode_outcome {
+            Ok(Some(v)) => v,
+            Ok(None) => return Ok(None),
+            Err(e) => return Err(e),
+        };
+        let msg_peer_id = runtime_peer_id_from_protocol_message(&decoded);
+        let source_peer_id_hint = if msg_peer_id.is_none() {
+            infer_peer_id_from_src_addr_with_index(
+                &self.peers,
+                &self.peer_addr_index,
+                &self.peer_ip_hint_index,
+                src,
+            )
+        } else {
+            None
+        };
+        let sync_ctx = runtime_sync_pull_message_context(&decoded);
+        maybe_learn_peer_addr(
+            &self.peers,
+            &self.peer_addr_index,
+            &self.peer_ip_hint_index,
+            self.node,
+            src,
+            msg_peer_id,
+        );
+        if let Some(plan) = maybe_plan_runtime_sync_pull_responses_with_context(
+            self.chain_id,
+            self.node,
+            &decoded,
+            &sync_ctx,
+        ) {
+            emit_runtime_sync_pull_responses(
+                self.node,
+                &plan,
+                |to, response| {
+                    // Prefer registry route to keep peer activity updates on send path.
+                    self.send_internal(to, response).is_ok()
+                },
+                |response| {
+                    // Fallback to raw src addr for cases where peer registry is stale.
+                    if let Ok(encoded) = protocol_encode(response) {
+                        let _ = self.socket.send_to(&encoded, src);
+                    }
+                },
+            );
         }
+        maybe_update_runtime_sync_from_protocol_message_with_context(
+            self.chain_id,
+            &decoded,
+            msg_peer_id,
+            source_peer_id_hint,
+            &sync_ctx,
+        );
+        if let Some((to, followup)) = maybe_build_runtime_sync_pull_followup_request_with_context(
+            self.chain_id,
+            self.node,
+            &decoded,
+            &sync_ctx,
+        ) {
+            if self.send_internal(to, &followup).is_err() {
+                // `send` path already tracks outbound pull targets on success.
+                // When falling back to raw socket send, track once here.
+                maybe_track_runtime_sync_pull_request_outbound(self.chain_id, self.node, &followup);
+                if let Ok(encoded) = protocol_encode(&followup) {
+                    let _ = self.socket.send_to(&encoded, src);
+                }
+            }
+        }
+        Ok(Some(decoded))
     }
 }
 
 impl Transport for TcpTransport {
     fn send(&self, to: NodeId, msg: ProtocolMessage) -> Result<(), NetworkError> {
-        let peer = self.peers.get(&to).ok_or(NetworkError::PeerNotFound(to))?;
-        let encoded = protocol_encode(&msg).map_err(|e| NetworkError::Encode(e.to_string()))?;
-        if let Some(stream_arc) = self
-            .outbound_streams
-            .get(&to)
-            .map(|entry| Arc::clone(entry.value()))
-        {
-            let write_result = {
-                let mut guard = stream_arc
-                    .lock()
-                    .map_err(|_| NetworkError::Io("tcp stream lock poisoned".to_string()))?;
-                write_tcp_frame(&mut guard, &encoded)
-            };
-            match write_result {
-                Ok(()) => {
-                    maybe_update_runtime_sync_local_progress_from_send(
-                        self.chain_id,
-                        self.node,
-                        &msg,
-                    );
-                    return Ok(());
-                }
-                Err(e) => {
-                    self.outbound_streams.remove(&to);
-                    if should_mark_peer_disconnected(&e) {
-                        clear_runtime_sync_pull_target(self.chain_id, self.node, to);
-                        let _ = unregister_network_runtime_peer(self.chain_id, to.0);
-                    }
-                }
-            }
-        }
-
-        let mut last_err = None;
-        let mut last_connect_io_error: Option<std::io::Error> = None;
-        let mut stream_opt = None;
-        for _ in 0..5 {
-            match TcpStream::connect_timeout(&peer, Duration::from_millis(self.connect_timeout_ms))
-            {
-                Ok(s) => {
-                    stream_opt = Some(s);
-                    break;
-                }
-                Err(e) => {
-                    last_err = Some(e.to_string());
-                    last_connect_io_error = Some(e);
-                    std::thread::sleep(Duration::from_millis(10));
-                }
-            }
-        }
-        if stream_opt.is_none() {
-            if let Some(io_err) = last_connect_io_error.as_ref() {
-                if should_mark_peer_disconnected(io_err) {
-                    clear_runtime_sync_pull_target(self.chain_id, self.node, to);
-                    let _ = unregister_network_runtime_peer(self.chain_id, to.0);
-                }
-            }
-        }
-        let mut stream = stream_opt.ok_or_else(|| {
-            NetworkError::Io(format!(
-                "tcp connect failed after retries: {}",
-                last_err.unwrap_or_else(|| "unknown".to_string())
-            ))
-        })?;
-        stream
-            .set_nodelay(true)
-            .map_err(|e| NetworkError::Io(e.to_string()))?;
-        write_tcp_frame(&mut stream, &encoded).map_err(|e| {
-            if should_mark_peer_disconnected(&e) {
-                clear_runtime_sync_pull_target(self.chain_id, self.node, to);
-                let _ = unregister_network_runtime_peer(self.chain_id, to.0);
-            }
-            NetworkError::Io(e.to_string())
-        })?;
-        self.outbound_streams
-            .insert(to, Arc::new(Mutex::new(stream)));
-        let _ = register_network_runtime_peer(self.chain_id, to.0);
-        maybe_update_runtime_sync_local_progress_from_send(self.chain_id, self.node, &msg);
-        Ok(())
+        self.send_internal(to, &msg)
     }
 
     fn try_recv(&self, me: NodeId) -> Result<Option<ProtocolMessage>, NetworkError> {
@@ -990,33 +1358,79 @@ impl Transport for TcpTransport {
                 self.max_packet_size
             )));
         }
-        let mut payload = vec![0u8; frame_len];
+        let mut recv_frame_buf = {
+            let mut shared = self
+                .recv_frame_buf
+                .lock()
+                .map_err(|_| NetworkError::Io("tcp recv buffer lock poisoned".to_string()))?;
+            std::mem::take(&mut *shared)
+        };
+        if recv_frame_buf.len() < frame_len {
+            recv_frame_buf.resize(frame_len, 0);
+        }
         stream
-            .read_exact(&mut payload)
+            .read_exact(&mut recv_frame_buf[..frame_len])
             .map_err(|e| NetworkError::Io(e.to_string()))?;
-        let decoded = protocol_decode(&payload).map_err(|e| NetworkError::Decode(e.to_string()))?;
-        let source_peer_id_hint = infer_peer_id_from_src_addr(&self.peers, addr);
-        if let Some((to, responses)) =
-            maybe_build_runtime_sync_pull_responses(self.chain_id, self.node, &decoded)
-        {
-            for response in responses {
-                if self.send(to, response.clone()).is_err() {
-                    if let Ok(encoded) = protocol_encode(&response) {
+        let decode_outcome = protocol_decode(&recv_frame_buf[..frame_len])
+            .map_err(|e| NetworkError::Decode(e.to_string()));
+        let _ = self.recv_frame_buf.lock().map(|mut shared| {
+            *shared = recv_frame_buf;
+        });
+        let decoded = decode_outcome?;
+        let msg_peer_id = runtime_peer_id_from_protocol_message(&decoded);
+        let source_peer_id_hint = if msg_peer_id.is_none() {
+            infer_peer_id_from_src_addr_with_index(
+                &self.peers,
+                &self.peer_addr_index,
+                &self.peer_ip_hint_index,
+                addr,
+            )
+        } else {
+            None
+        };
+        let sync_ctx = runtime_sync_pull_message_context(&decoded);
+        maybe_learn_peer_addr(
+            &self.peers,
+            &self.peer_addr_index,
+            &self.peer_ip_hint_index,
+            self.node,
+            addr,
+            msg_peer_id,
+        );
+        if let Some(plan) = maybe_plan_runtime_sync_pull_responses_with_context(
+            self.chain_id,
+            self.node,
+            &decoded,
+            &sync_ctx,
+        ) {
+            emit_runtime_sync_pull_responses(
+                self.node,
+                &plan,
+                |to, response| self.send_internal(to, response).is_ok(),
+                |response| {
+                    if let Ok(encoded) = protocol_encode(response) {
                         let _ = write_tcp_frame(&mut stream, &encoded);
                     }
-                }
-            }
+                },
+            );
         }
-        maybe_update_runtime_sync_from_protocol_message(
+        maybe_update_runtime_sync_from_protocol_message_with_context(
             self.chain_id,
             &decoded,
+            msg_peer_id,
             source_peer_id_hint,
+            &sync_ctx,
         );
-        if let Some((to, followup)) =
-            maybe_build_runtime_sync_pull_followup_request(self.chain_id, self.node, &decoded)
-        {
-            maybe_track_runtime_sync_pull_request_outbound(self.chain_id, self.node, &followup);
-            if self.send(to, followup.clone()).is_err() {
+        if let Some((to, followup)) = maybe_build_runtime_sync_pull_followup_request_with_context(
+            self.chain_id,
+            self.node,
+            &decoded,
+            &sync_ctx,
+        ) {
+            if self.send_internal(to, &followup).is_err() {
+                // `send` path already tracks outbound pull targets on success.
+                // When falling back to raw tcp stream send, track once here.
+                maybe_track_runtime_sync_pull_request_outbound(self.chain_id, self.node, &followup);
                 if let Ok(encoded) = protocol_encode(&followup) {
                     let _ = write_tcp_frame(&mut stream, &encoded);
                 }
@@ -1502,7 +1916,7 @@ mod tests {
             seq: 1,
         });
 
-        maybe_update_runtime_sync_from_protocol_message(chain_id, &shard_state, None);
+        maybe_update_runtime_sync_from_protocol_message(chain_id, &shard_state, None, None);
 
         let status =
             get_network_runtime_sync_status(chain_id).expect("runtime sync status should exist");
@@ -1746,6 +2160,119 @@ mod tests {
         let tracked_to =
             get_runtime_sync_pull_target(chain_id, local, remote).expect("target should exist");
         assert_eq!(tracked_to, 1_031);
+        clear_runtime_sync_pull_target(chain_id, local, remote);
+    }
+
+    #[test]
+    fn runtime_sync_pull_headers_prefetch_can_trigger_followup_before_window_tail() {
+        let chain_id = 9_896_u64;
+        let local = NodeId(972);
+        let remote = NodeId(973);
+        clear_runtime_sync_pull_target(chain_id, local, remote);
+
+        set_network_runtime_sync_status(
+            chain_id,
+            NetworkRuntimeSyncStatus {
+                peer_count: 3,
+                starting_block: 600,
+                current_block: 640,
+                highest_block: 700,
+            },
+        );
+
+        let outbound = ProtocolMessage::DistributedOcccGossip(DistributedGossipMessage {
+            from: local.0 as u32,
+            to: remote.0 as u32,
+            msg_type: DistributedMessageType::StateSync,
+            payload: encode_runtime_sync_pull_request_payload(
+                chain_id,
+                NetworkRuntimeNativeSyncPhaseV1::Headers,
+                641,
+                700,
+            ),
+            timestamp: 0,
+            seq: 1,
+        });
+        maybe_track_runtime_sync_pull_request_outbound(chain_id, local, &outbound);
+        let tracked_to =
+            get_runtime_sync_pull_target(chain_id, local, remote).expect("target should exist");
+        assert_eq!(tracked_to, 700);
+
+        set_network_runtime_sync_status(
+            chain_id,
+            NetworkRuntimeSyncStatus {
+                peer_count: 3,
+                starting_block: 600,
+                current_block: 691,
+                highest_block: 700,
+            },
+        );
+        let before_prefetch = ProtocolMessage::DistributedOcccGossip(DistributedGossipMessage {
+            from: remote.0 as u32,
+            to: local.0 as u32,
+            msg_type: DistributedMessageType::StateSync,
+            payload: encode_block_header_wire_v1(&BlockHeaderWireV1 {
+                height: 691,
+                epoch_id: 1,
+                parent_hash: [0x11u8; 32],
+                state_root: [0x22u8; 32],
+                governance_chain_audit_root: [0x33u8; 32],
+                tx_count: 0,
+                batch_count: 0,
+                consensus_binding: ConsensusPluginBindingV1 {
+                    plugin_class_code: CONSENSUS_PLUGIN_CLASS_CODE,
+                    adapter_hash: [0x44u8; 32],
+                },
+            }),
+            timestamp: 0,
+            seq: 2,
+        });
+        assert!(
+            maybe_build_runtime_sync_pull_followup_request(chain_id, local, &before_prefetch)
+                .is_none(),
+            "should still wait before prefetch trigger height"
+        );
+
+        set_network_runtime_sync_status(
+            chain_id,
+            NetworkRuntimeSyncStatus {
+                peer_count: 3,
+                starting_block: 600,
+                current_block: 692,
+                highest_block: 700,
+            },
+        );
+        let on_prefetch = ProtocolMessage::DistributedOcccGossip(DistributedGossipMessage {
+            from: remote.0 as u32,
+            to: local.0 as u32,
+            msg_type: DistributedMessageType::StateSync,
+            payload: encode_block_header_wire_v1(&BlockHeaderWireV1 {
+                height: 692,
+                epoch_id: 1,
+                parent_hash: [0x11u8; 32],
+                state_root: [0x22u8; 32],
+                governance_chain_audit_root: [0x33u8; 32],
+                tx_count: 0,
+                batch_count: 0,
+                consensus_binding: ConsensusPluginBindingV1 {
+                    plugin_class_code: CONSENSUS_PLUGIN_CLASS_CODE,
+                    adapter_hash: [0x44u8; 32],
+                },
+            }),
+            timestamp: 0,
+            seq: 3,
+        });
+        let (_target, followup) =
+            maybe_build_runtime_sync_pull_followup_request(chain_id, local, &on_prefetch)
+                .expect("prefetch trigger should generate followup");
+        let ProtocolMessage::DistributedOcccGossip(followup_msg) = followup else {
+            panic!("followup should be distributed gossip");
+        };
+        let payload = decode_runtime_sync_pull_request(&followup_msg.payload)
+            .expect("followup payload should be NSP1");
+        assert_eq!(payload.chain_id, chain_id);
+        assert_eq!(payload.from_block, 693);
+        assert!(payload.to_block >= payload.from_block);
         clear_runtime_sync_pull_target(chain_id, local, remote);
     }
 

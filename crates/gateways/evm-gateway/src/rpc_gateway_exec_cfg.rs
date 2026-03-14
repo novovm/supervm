@@ -1,6 +1,7 @@
 use super::*;
+use dashmap::DashMap;
 use novovm_network::{
-    get_network_runtime_peer_heads, get_network_runtime_sync_status,
+    get_network_runtime_peer_heads_top_k, get_network_runtime_sync_status,
     plan_network_runtime_sync_pull_window, TcpTransport, Transport, UdpTransport,
 };
 #[cfg(test)]
@@ -11,22 +12,76 @@ use novovm_protocol::{
     },
     GossipMessage as ProtocolGossipMessage, NodeId, ProtocolMessage, ShardId,
 };
+use std::sync::Arc;
 
 #[derive(Clone)]
 enum GatewayEthNativeBroadcaster {
-    Udp { node: NodeId, socket: UdpTransport },
-    Tcp { node: NodeId, socket: TcpTransport },
+    Udp {
+        node: NodeId,
+        socket: UdpTransport,
+        registered_peers: Arc<Mutex<HashMap<u64, String>>>,
+    },
+    Tcp {
+        node: NodeId,
+        socket: TcpTransport,
+        registered_peers: Arc<Mutex<HashMap<u64, String>>>,
+    },
 }
 
 impl GatewayEthNativeBroadcaster {
+    fn registered_peers(&self) -> &Mutex<HashMap<u64, String>> {
+        match self {
+            Self::Udp {
+                registered_peers, ..
+            }
+            | Self::Tcp {
+                registered_peers, ..
+            } => registered_peers,
+        }
+    }
+
+    fn needs_peer_registration(&self, peers: &[(NodeId, String)]) -> bool {
+        let Ok(guard) = self.registered_peers().lock() else {
+            return true;
+        };
+        for (peer, addr) in peers {
+            if guard.get(&peer.0).is_none_or(|cached| cached != addr) {
+                return true;
+            }
+        }
+        false
+    }
+
     fn register_peer(&self, node: NodeId, addr: &str) -> Result<(), anyhow::Error> {
         match self {
-            Self::Udp { socket, .. } => socket
-                .register_peer(node, addr)
-                .map_err(|e| anyhow::anyhow!(e.to_string())),
-            Self::Tcp { socket, .. } => socket
-                .register_peer(node, addr)
-                .map_err(|e| anyhow::anyhow!(e.to_string())),
+            Self::Udp {
+                socket,
+                registered_peers,
+                ..
+            } => register_gateway_eth_native_peer_cached(
+                registered_peers,
+                node,
+                addr,
+                |peer, addr| {
+                    socket
+                        .register_peer(peer, addr)
+                        .map_err(|e| anyhow::anyhow!(e.to_string()))
+                },
+            ),
+            Self::Tcp {
+                socket,
+                registered_peers,
+                ..
+            } => register_gateway_eth_native_peer_cached(
+                registered_peers,
+                node,
+                addr,
+                |peer, addr| {
+                    socket
+                        .register_peer(peer, addr)
+                        .map_err(|e| anyhow::anyhow!(e.to_string()))
+                },
+            ),
         }
     }
 
@@ -41,7 +96,7 @@ impl GatewayEthNativeBroadcaster {
     fn drain_incoming(&self, max_frames: usize) {
         let cap = max_frames.max(1);
         match self {
-            Self::Udp { node, socket } => {
+            Self::Udp { node, socket, .. } => {
                 for _ in 0..cap {
                     match socket.try_recv(*node) {
                         Ok(Some(_)) => {}
@@ -49,7 +104,7 @@ impl GatewayEthNativeBroadcaster {
                     }
                 }
             }
-            Self::Tcp { node, socket } => {
+            Self::Tcp { node, socket, .. } => {
                 for _ in 0..cap {
                     match socket.try_recv(*node) {
                         Ok(Some(_)) => {}
@@ -61,39 +116,85 @@ impl GatewayEthNativeBroadcaster {
     }
 }
 
+fn register_gateway_eth_native_peer_cached<F>(
+    registered_peers: &Mutex<HashMap<u64, String>>,
+    node: NodeId,
+    addr: &str,
+    register_peer: F,
+) -> Result<(), anyhow::Error>
+where
+    F: FnOnce(NodeId, &str) -> Result<(), anyhow::Error>,
+{
+    if let Ok(guard) = registered_peers.lock() {
+        if guard.get(&node.0).is_some_and(|cached| cached == addr) {
+            return Ok(());
+        }
+    }
+    register_peer(node, addr)?;
+    if let Ok(mut guard) = registered_peers.lock() {
+        guard.insert(node.0, addr.to_string());
+        if guard.len() > 8_192 {
+            guard.clear();
+        }
+    }
+    Ok(())
+}
+
 static GATEWAY_ETH_NATIVE_BROADCASTER_CACHE: OnceLock<
     Mutex<HashMap<String, GatewayEthNativeBroadcaster>>,
 > = OnceLock::new();
-static GATEWAY_ETH_NATIVE_DISCOVERY_LAST_MS: OnceLock<Mutex<HashMap<String, u128>>> =
+static GATEWAY_ETH_NATIVE_PEERS_CACHE: OnceLock<DashMap<u64, GatewayEthNativePeersCache>> =
     OnceLock::new();
 static GATEWAY_ETH_NATIVE_RUNTIME_WORKER_STARTED: OnceLock<
     Mutex<std::collections::HashSet<String>>,
 > = OnceLock::new();
 static GATEWAY_ETH_NATIVE_SYNC_PULL_TRACKER: OnceLock<
-    Mutex<HashMap<String, GatewayEthNativeSyncPullState>>,
+    DashMap<String, GatewayEthNativeSyncPullState>,
 > = OnceLock::new();
 const GATEWAY_ETH_NATIVE_DISCOVERY_INTERVAL_MS: u128 = 3_000;
 const GATEWAY_ETH_NATIVE_RECV_DRAIN_MAX_PER_BROADCAST: usize = 32;
+const GATEWAY_ETH_NATIVE_RECV_DRAIN_MAX_SYNC_TICK: usize = 128;
 const GATEWAY_ETH_NATIVE_RUNTIME_WORKER_TICK_MS: u64 = 1_000;
-const GATEWAY_ETH_NATIVE_SYNC_PULL_RESEND_MS: u128 = 3_000;
+const GATEWAY_ETH_NATIVE_RUNTIME_WORKER_SYNC_TICK_MS: u64 = 250;
+const GATEWAY_ETH_NATIVE_SYNC_PULL_RESEND_HEADERS_MS: u128 = 1_200;
+const GATEWAY_ETH_NATIVE_SYNC_PULL_RESEND_BODIES_MS: u128 = 1_500;
+const GATEWAY_ETH_NATIVE_SYNC_PULL_RESEND_STATE_MS: u128 = 2_000;
+const GATEWAY_ETH_NATIVE_SYNC_PULL_RESEND_FINALIZE_MS: u128 = 2_500;
+const GATEWAY_ETH_NATIVE_SYNC_PULL_RESEND_DEFAULT_MS: u128 = 3_000;
+const GATEWAY_ETH_NATIVE_SYNC_PULL_RESEND_MS_MIN: u64 = 50;
+const GATEWAY_ETH_NATIVE_SYNC_PULL_RESEND_MS_MAX: u64 = 60_000;
 const GATEWAY_ETH_NATIVE_SYNC_PULL_PAYLOAD_MAGIC: [u8; 4] = *b"NSP1";
+const GATEWAY_ETH_NATIVE_SYNC_PULL_FANOUT_CAP_HARD_MAX: u64 = 1_024;
+const GATEWAY_ETH_NATIVE_SYNC_PULL_SEGMENTS_CAP_HARD_MAX: u64 = 1_024;
+const GATEWAY_ETH_NATIVE_SYNC_PULL_SEGMENT_MIN_BLOCKS_DEFAULT: u64 = 1;
+const GATEWAY_ETH_NATIVE_SYNC_PULL_SEGMENT_MIN_BLOCKS_HARD_MAX: u64 = 1_000_000;
 
 #[derive(Clone)]
 struct GatewayEthNativeSyncPullState {
-    phase: String,
+    phase_tag: u8,
     from_block: u64,
     to_block: u64,
     last_sent_ms: u128,
     resend_round: u32,
 }
 
+#[derive(Clone)]
+struct GatewayEthNativePeersCache {
+    raw: String,
+    peers: GatewayEthNativePeers,
+    peer_nodes: GatewayEthNativePeerNodes,
+}
+
+type GatewayEthNativePeers = Arc<Vec<(NodeId, String)>>;
+type GatewayEthNativePeerNodes = Arc<Vec<NodeId>>;
+
 fn gateway_eth_native_broadcaster_cache(
 ) -> &'static Mutex<HashMap<String, GatewayEthNativeBroadcaster>> {
     GATEWAY_ETH_NATIVE_BROADCASTER_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-fn gateway_eth_native_discovery_last_ms() -> &'static Mutex<HashMap<String, u128>> {
-    GATEWAY_ETH_NATIVE_DISCOVERY_LAST_MS.get_or_init(|| Mutex::new(HashMap::new()))
+fn gateway_eth_native_peers_cache() -> &'static DashMap<u64, GatewayEthNativePeersCache> {
+    GATEWAY_ETH_NATIVE_PEERS_CACHE.get_or_init(DashMap::new)
 }
 
 fn gateway_eth_native_runtime_worker_started() -> &'static Mutex<std::collections::HashSet<String>>
@@ -102,53 +203,62 @@ fn gateway_eth_native_runtime_worker_started() -> &'static Mutex<std::collection
         .get_or_init(|| Mutex::new(std::collections::HashSet::new()))
 }
 
-fn gateway_eth_native_sync_pull_tracker(
-) -> &'static Mutex<HashMap<String, GatewayEthNativeSyncPullState>> {
-    GATEWAY_ETH_NATIVE_SYNC_PULL_TRACKER.get_or_init(|| Mutex::new(HashMap::new()))
+fn gateway_eth_native_sync_pull_tracker() -> &'static DashMap<String, GatewayEthNativeSyncPullState>
+{
+    GATEWAY_ETH_NATIVE_SYNC_PULL_TRACKER.get_or_init(DashMap::new)
 }
 
 fn next_gateway_eth_native_sync_pull_fanout(
     worker_key: &str,
-    phase: &str,
+    phase_tag: u8,
     from_block: u64,
     to_block: u64,
     now_ms: u128,
+    resend_interval_ms: u128,
 ) -> Option<usize> {
-    let Ok(mut guard) = gateway_eth_native_sync_pull_tracker().lock() else {
-        return Some(1);
-    };
-    let (should_send, resend_round) = match guard.get(worker_key) {
-        None => (true, 0u32),
-        Some(last) => {
-            let window_changed =
-                last.phase != phase || last.from_block != from_block || last.to_block != to_block;
-            if window_changed {
-                (true, 0)
-            } else if now_ms.saturating_sub(last.last_sent_ms)
-                >= GATEWAY_ETH_NATIVE_SYNC_PULL_RESEND_MS
-            {
-                (true, last.resend_round.saturating_add(1))
-            } else {
-                (false, last.resend_round)
-            }
+    let tracker = gateway_eth_native_sync_pull_tracker();
+    let mut resend_round = 0u32;
+    let should_send = if let Some(last) = tracker.get_mut(worker_key) {
+        let window_changed = last.phase_tag != phase_tag
+            || last.from_block != from_block
+            || last.to_block != to_block;
+        if window_changed {
+            resend_round = 0;
+            true
+        } else if now_ms.saturating_sub(last.last_sent_ms) >= resend_interval_ms {
+            resend_round = last.resend_round.saturating_add(1);
+            true
+        } else {
+            resend_round = last.resend_round;
+            false
         }
+    } else {
+        true
     };
     if !should_send {
         return None;
     }
-    if guard.len() > 256 {
-        guard.clear();
+    if let Some(mut last) = tracker.get_mut(worker_key) {
+        last.phase_tag = phase_tag;
+        last.from_block = from_block;
+        last.to_block = to_block;
+        last.last_sent_ms = now_ms;
+        last.resend_round = resend_round;
+    } else {
+        if tracker.len() > 256 {
+            tracker.clear();
+        }
+        tracker.insert(
+            worker_key.to_string(),
+            GatewayEthNativeSyncPullState {
+                phase_tag,
+                from_block,
+                to_block,
+                last_sent_ms: now_ms,
+                resend_round,
+            },
+        );
     }
-    guard.insert(
-        worker_key.to_string(),
-        GatewayEthNativeSyncPullState {
-            phase: phase.to_string(),
-            from_block,
-            to_block,
-            last_sent_ms: now_ms,
-            resend_round,
-        },
-    );
     let fanout = if resend_round == 0 {
         1
     } else if resend_round == 1 {
@@ -159,10 +269,133 @@ fn next_gateway_eth_native_sync_pull_fanout(
     Some(fanout)
 }
 
-fn clear_gateway_eth_native_sync_pull_tracker(worker_key: &str) {
-    if let Ok(mut guard) = gateway_eth_native_sync_pull_tracker().lock() {
-        guard.remove(worker_key);
+fn gateway_eth_native_sync_pull_resend_ms_by_tag(phase_tag: u8) -> u128 {
+    match phase_tag {
+        1 => GATEWAY_ETH_NATIVE_SYNC_PULL_RESEND_HEADERS_MS,
+        2 => GATEWAY_ETH_NATIVE_SYNC_PULL_RESEND_BODIES_MS,
+        3 => GATEWAY_ETH_NATIVE_SYNC_PULL_RESEND_STATE_MS,
+        4 => GATEWAY_ETH_NATIVE_SYNC_PULL_RESEND_FINALIZE_MS,
+        _ => GATEWAY_ETH_NATIVE_SYNC_PULL_RESEND_DEFAULT_MS,
     }
+}
+
+fn gateway_eth_native_sync_pull_resend_ms(chain_id: u64, phase_tag: u8) -> u128 {
+    let default_ms = gateway_eth_native_sync_pull_resend_ms_by_tag(phase_tag) as u64;
+    let configured_ms = gateway_eth_native_sync_pull_chain_phase_u64_env(
+        chain_id,
+        phase_tag,
+        "NOVOVM_GATEWAY_ETH_NATIVE_SYNC_PULL_RESEND_MS",
+        default_ms,
+    );
+    configured_ms.clamp(
+        GATEWAY_ETH_NATIVE_SYNC_PULL_RESEND_MS_MIN,
+        GATEWAY_ETH_NATIVE_SYNC_PULL_RESEND_MS_MAX,
+    ) as u128
+}
+
+fn gateway_eth_native_sync_pull_phase_env_suffix(phase_tag: u8) -> Option<&'static str> {
+    match phase_tag {
+        1 => Some("HEADERS"),
+        2 => Some("BODIES"),
+        3 => Some("STATE"),
+        4 => Some("FINALIZE"),
+        5 => Some("DISCOVERY"),
+        _ => None,
+    }
+}
+
+fn gateway_eth_native_sync_pull_chain_u64_env_opt(chain_id: u64, base_key: &str) -> Option<u64> {
+    let chain_key_dec = format!("{base_key}_CHAIN_{chain_id}");
+    let chain_key_hex_lower = format!("{base_key}_CHAIN_0x{:x}", chain_id);
+    let chain_key_hex_upper = format!("{base_key}_CHAIN_0x{:X}", chain_id);
+    string_env_nonempty(&chain_key_dec)
+        .or_else(|| string_env_nonempty(&chain_key_hex_lower))
+        .or_else(|| string_env_nonempty(&chain_key_hex_upper))
+        .or_else(|| string_env_nonempty(base_key))
+        .and_then(|raw| raw.trim().parse::<u64>().ok())
+}
+
+fn gateway_eth_native_sync_pull_chain_u64_env(chain_id: u64, base_key: &str, default: u64) -> u64 {
+    gateway_eth_native_sync_pull_chain_u64_env_opt(chain_id, base_key).unwrap_or(default)
+}
+
+fn gateway_eth_native_sync_pull_chain_phase_u64_env(
+    chain_id: u64,
+    phase_tag: u8,
+    base_key: &str,
+    default: u64,
+) -> u64 {
+    if let Some(phase_suffix) = gateway_eth_native_sync_pull_phase_env_suffix(phase_tag) {
+        let phase_key = format!("{base_key}_{phase_suffix}");
+        if let Some(value) = gateway_eth_native_sync_pull_chain_u64_env_opt(chain_id, &phase_key) {
+            return value;
+        }
+    }
+    gateway_eth_native_sync_pull_chain_u64_env(chain_id, base_key, default)
+}
+
+fn gateway_eth_native_sync_pull_fanout_cap(chain_id: u64, phase_tag: u8) -> Option<usize> {
+    let raw = gateway_eth_native_sync_pull_chain_phase_u64_env(
+        chain_id,
+        phase_tag,
+        "NOVOVM_GATEWAY_ETH_NATIVE_SYNC_PULL_FANOUT_MAX",
+        0,
+    );
+    if raw == 0 {
+        None
+    } else {
+        Some(raw.min(GATEWAY_ETH_NATIVE_SYNC_PULL_FANOUT_CAP_HARD_MAX) as usize)
+    }
+}
+
+fn gateway_eth_native_sync_pull_segments_cap(chain_id: u64, phase_tag: u8) -> Option<usize> {
+    let raw = gateway_eth_native_sync_pull_chain_phase_u64_env(
+        chain_id,
+        phase_tag,
+        "NOVOVM_GATEWAY_ETH_NATIVE_SYNC_PULL_SEGMENTS_MAX",
+        0,
+    );
+    if raw == 0 {
+        None
+    } else {
+        Some(raw.min(GATEWAY_ETH_NATIVE_SYNC_PULL_SEGMENTS_CAP_HARD_MAX) as usize)
+    }
+}
+
+fn gateway_eth_native_sync_pull_segment_min_blocks(chain_id: u64, phase_tag: u8) -> u64 {
+    gateway_eth_native_sync_pull_chain_phase_u64_env(
+        chain_id,
+        phase_tag,
+        "NOVOVM_GATEWAY_ETH_NATIVE_SYNC_PULL_SEGMENT_MIN_BLOCKS",
+        GATEWAY_ETH_NATIVE_SYNC_PULL_SEGMENT_MIN_BLOCKS_DEFAULT,
+    )
+    .clamp(1, GATEWAY_ETH_NATIVE_SYNC_PULL_SEGMENT_MIN_BLOCKS_HARD_MAX)
+}
+
+fn resolve_gateway_eth_native_sync_pull_fanout(
+    chain_id: u64,
+    phase_tag: u8,
+    requested_fanout: usize,
+    peer_count: usize,
+) -> usize {
+    if peer_count == 0 {
+        return 0;
+    }
+    let base = if requested_fanout == usize::MAX {
+        peer_count
+    } else {
+        requested_fanout.min(peer_count)
+    };
+    let capped = if let Some(cap) = gateway_eth_native_sync_pull_fanout_cap(chain_id, phase_tag) {
+        base.min(cap)
+    } else {
+        base
+    };
+    capped.max(1)
+}
+
+fn clear_gateway_eth_native_sync_pull_tracker(worker_key: &str) {
+    gateway_eth_native_sync_pull_tracker().remove(worker_key);
 }
 
 fn should_send_gateway_eth_native_discovery(now_ms: u128, last_sent_ms: u128) -> bool {
@@ -183,6 +416,7 @@ fn gateway_eth_native_should_emit_discovery(chain_id: u64) -> bool {
     }
 }
 
+#[cfg(test)]
 fn merge_gateway_eth_sync_pull_candidates(
     preferred: Vec<NodeId>,
     full_ordered: Vec<NodeId>,
@@ -219,13 +453,17 @@ fn select_gateway_eth_sync_pull_peers_from_snapshot(
     if runtime_heads.is_empty() {
         return peer_nodes.iter().take(finite_fanout).copied().collect();
     }
-    let mut configured = std::collections::HashSet::<u64>::new();
+    let mut configured = std::collections::HashSet::<u64>::with_capacity(peer_nodes.len());
     for node in peer_nodes {
         configured.insert(node.0);
     }
     let mut ordered = Vec::<NodeId>::new();
-    let mut seen = std::collections::HashSet::<u64>::new();
+    let mut seen = std::collections::HashSet::<u64>::with_capacity(peer_nodes.len());
+    let configured_len = configured.len();
     for (peer_id, _head) in runtime_heads {
+        if seen.len() >= configured_len {
+            break;
+        }
         if configured.contains(peer_id) && seen.insert(*peer_id) {
             ordered.push(NodeId(*peer_id));
         }
@@ -243,62 +481,134 @@ fn select_gateway_eth_native_sync_pull_peers(
     peer_nodes: &[NodeId],
     fanout: usize,
 ) -> Vec<NodeId> {
-    let runtime_heads = get_network_runtime_peer_heads(chain_id);
+    if peer_nodes.is_empty() || fanout == 0 {
+        return Vec::new();
+    }
+    let head_budget = if fanout == usize::MAX {
+        peer_nodes.len()
+    } else {
+        fanout.min(peer_nodes.len())
+    };
+    let runtime_heads = get_network_runtime_peer_heads_top_k(chain_id, head_budget);
     select_gateway_eth_sync_pull_peers_from_snapshot(peer_nodes, &runtime_heads, fanout)
 }
 
 #[allow(clippy::too_many_arguments)]
 fn send_gateway_eth_native_sync_pull_requests(
-    chain_id: u64,
     broadcaster: &GatewayEthNativeBroadcaster,
     local_node: NodeId,
-    peer_nodes: &[NodeId],
-    phase: &str,
+    ordered_peers: &[NodeId],
+    chain_id: u64,
+    phase_tag: u8,
+    from_block: u64,
+    to_block: u64,
     fanout: usize,
-    payload: &[u8],
     now: u64,
 ) -> usize {
-    if peer_nodes.is_empty() || payload.is_empty() || fanout == 0 {
+    if ordered_peers.is_empty() || fanout == 0 || to_block < from_block {
         return 0;
     }
     let from_u32 = match u32::try_from(local_node.0) {
         Ok(v) => v,
         Err(_) => return 0,
     };
-    let preferred = select_gateway_eth_native_sync_pull_peers(chain_id, peer_nodes, fanout);
-    if preferred.is_empty() {
+    let requested_target_success = if fanout == usize::MAX {
+        ordered_peers.len()
+    } else {
+        fanout.min(ordered_peers.len()).max(1)
+    };
+    let window_span = to_block.saturating_sub(from_block).saturating_add(1) as usize;
+    let mut target_success = requested_target_success.min(window_span.max(1));
+    if let Some(segments_cap) = gateway_eth_native_sync_pull_segments_cap(chain_id, phase_tag) {
+        target_success = target_success.min(segments_cap.max(1));
+    }
+    let min_segment_blocks = gateway_eth_native_sync_pull_segment_min_blocks(chain_id, phase_tag);
+    if min_segment_blocks > 1 {
+        let by_min_blocks = (window_span as u64)
+            .saturating_add(min_segment_blocks.saturating_sub(1))
+            .saturating_div(min_segment_blocks)
+            .max(1) as usize;
+        target_success = target_success.min(by_min_blocks);
+    }
+    target_success = target_success.max(1);
+    let msg_type = gateway_eth_native_sync_pull_msg_type_by_tag(phase_tag);
+    if target_success == 1 {
+        if let Some(peer) = ordered_peers
+            .iter()
+            .copied()
+            .find(|peer| u32::try_from(peer.0).is_ok())
+        {
+            if let Ok(to_u32) = u32::try_from(peer.0) {
+                let payload = encode_gateway_eth_native_sync_pull_payload(
+                    chain_id, phase_tag, from_block, to_block,
+                );
+                let sync_pull =
+                    ProtocolMessage::DistributedOcccGossip(DistributedOcccGossipMessage {
+                        from: from_u32,
+                        to: to_u32,
+                        msg_type,
+                        payload,
+                        timestamp: now,
+                        seq: now,
+                    });
+                return usize::from(broadcaster.send(peer, sync_pull).is_ok());
+            }
+        }
         return 0;
     }
-    let full_ordered = select_gateway_eth_native_sync_pull_peers(chain_id, peer_nodes, usize::MAX);
-    let candidates = merge_gateway_eth_sync_pull_candidates(preferred, full_ordered);
-    let target_success = if fanout == usize::MAX {
-        peer_nodes.len()
-    } else {
-        fanout.min(peer_nodes.len()).max(1)
-    };
+    let ranges = split_gateway_eth_sync_pull_window(from_block, to_block, target_success);
+    if ranges.is_empty() {
+        return 0;
+    }
     let mut success_count = 0usize;
-    let msg_type = gateway_eth_native_sync_pull_msg_type(phase);
-    for peer in candidates {
-        if success_count >= target_success {
+    let mut next_range_idx = 0usize;
+    for peer in ordered_peers.iter().copied() {
+        if next_range_idx >= ranges.len() {
             break;
         }
-        let to_u32 = match u32::try_from(peer.0) {
-            Ok(v) => v,
-            Err(_) => continue,
-        };
-        let sync_pull = ProtocolMessage::DistributedOcccGossip(DistributedOcccGossipMessage {
-            from: from_u32,
-            to: to_u32,
-            msg_type: msg_type.clone(),
-            payload: payload.to_vec(),
-            timestamp: now,
-            seq: now,
-        });
-        if broadcaster.send(peer, sync_pull).is_ok() {
-            success_count = success_count.saturating_add(1);
+        if let Ok(to_u32) = u32::try_from(peer.0) {
+            let (range_from, range_to) = ranges[next_range_idx];
+            let payload = encode_gateway_eth_native_sync_pull_payload(
+                chain_id, phase_tag, range_from, range_to,
+            );
+            let sync_pull = ProtocolMessage::DistributedOcccGossip(DistributedOcccGossipMessage {
+                from: from_u32,
+                to: to_u32,
+                msg_type: msg_type.clone(),
+                payload,
+                timestamp: now,
+                seq: now,
+            });
+            if broadcaster.send(peer, sync_pull).is_ok() {
+                success_count = success_count.saturating_add(1);
+                next_range_idx = next_range_idx.saturating_add(1);
+            }
         }
     }
     success_count
+}
+
+fn split_gateway_eth_sync_pull_window(
+    from_block: u64,
+    to_block: u64,
+    segments: usize,
+) -> Vec<(u64, u64)> {
+    if segments == 0 || to_block < from_block {
+        return Vec::new();
+    }
+    let total_len = to_block.saturating_sub(from_block).saturating_add(1) as usize;
+    let seg_count = segments.min(total_len.max(1));
+    let base_len = total_len / seg_count;
+    let remainder = total_len % seg_count;
+    let mut out = Vec::with_capacity(seg_count);
+    let mut cursor = from_block;
+    for idx in 0..seg_count {
+        let chunk_len = base_len + usize::from(idx < remainder);
+        let end = cursor.saturating_add(chunk_len as u64).saturating_sub(1);
+        out.push((cursor, end));
+        cursor = end.saturating_add(1);
+    }
+    out
 }
 
 pub(super) fn poll_gateway_eth_public_broadcast_native_runtime(chain_id: u64, max_frames: usize) {
@@ -362,6 +672,7 @@ fn get_or_create_gateway_eth_native_broadcaster(
             GatewayEthNativeBroadcaster::Udp {
                 node: local_node,
                 socket,
+                registered_peers: Arc::new(Mutex::new(HashMap::new())),
             }
         }
         GatewayEthPublicBroadcastNativeTransport::Tcp => {
@@ -375,6 +686,7 @@ fn get_or_create_gateway_eth_native_broadcaster(
             GatewayEthNativeBroadcaster::Tcp {
                 node: local_node,
                 socket,
+                registered_peers: Arc::new(Mutex::new(HashMap::new())),
             }
         }
     };
@@ -390,7 +702,10 @@ fn get_or_create_gateway_eth_native_broadcaster(
 }
 
 fn ensure_gateway_eth_public_broadcast_native_runtime(chain_id: u64) {
-    let peers = gateway_eth_public_broadcast_native_peers(chain_id);
+    let Some((peers, peer_nodes)) = gateway_eth_public_broadcast_native_peers_snapshot(chain_id)
+    else {
+        return;
+    };
     if peers.is_empty() {
         return;
     }
@@ -404,9 +719,10 @@ fn ensure_gateway_eth_public_broadcast_native_runtime(chain_id: u64) {
         return;
     };
 
-    let peer_nodes: Vec<NodeId> = peers.iter().map(|(peer, _)| *peer).collect();
-    for (peer, addr) in peers {
-        let _ = broadcaster.register_peer(peer, &addr);
+    if broadcaster.needs_peer_registration(peers.as_ref()) {
+        for (peer, addr) in peers.iter() {
+            let _ = broadcaster.register_peer(*peer, addr.as_str());
+        }
     }
     ensure_gateway_eth_native_runtime_worker(
         chain_id,
@@ -423,7 +739,7 @@ fn ensure_gateway_eth_native_runtime_worker(
     worker_key: &str,
     broadcaster: GatewayEthNativeBroadcaster,
     local_node: NodeId,
-    peer_nodes: Vec<NodeId>,
+    peer_nodes: Arc<Vec<NodeId>>,
 ) {
     if peer_nodes.is_empty() {
         return;
@@ -442,48 +758,68 @@ fn ensure_gateway_eth_native_runtime_worker(
             GATEWAY_ETH_NATIVE_RUNTIME_WORKER_TICK_MS,
         ));
         let mut last_discovery_sent_ms: u128 = 0;
+        let mut recv_drain_max = GATEWAY_ETH_NATIVE_RECV_DRAIN_MAX_PER_BROADCAST;
         loop {
+            // Drain first so sync window planning can use freshest runtime observations.
+            broadcaster.drain_incoming(recv_drain_max);
             let now = now_unix_millis() as u64;
             let now_ms = now as u128;
+            let mut worker_tick_ms = GATEWAY_ETH_NATIVE_RUNTIME_WORKER_TICK_MS;
+            let mut next_recv_drain_max = GATEWAY_ETH_NATIVE_RECV_DRAIN_MAX_PER_BROADCAST;
             if gateway_eth_native_should_emit_discovery(chain_id)
                 && should_send_gateway_eth_native_discovery(now_ms, last_discovery_sent_ms)
             {
-                for peer in &peer_nodes {
-                    let heartbeat = ProtocolMessage::Gossip(ProtocolGossipMessage::Heartbeat {
-                        from: local_node,
-                        shard: ShardId(1),
-                    });
-                    let _ = broadcaster.send(*peer, heartbeat);
-                    let peer_list = ProtocolMessage::Gossip(ProtocolGossipMessage::PeerList {
-                        from: local_node,
-                        peers: peer_nodes.clone(),
-                    });
-                    let _ = broadcaster.send(*peer, peer_list);
+                let heartbeat = ProtocolMessage::Gossip(ProtocolGossipMessage::Heartbeat {
+                    from: local_node,
+                    shard: ShardId(1),
+                });
+                let peer_list = ProtocolMessage::Gossip(ProtocolGossipMessage::PeerList {
+                    from: local_node,
+                    peers: peer_nodes.as_ref().clone(),
+                });
+                for peer in peer_nodes.iter() {
+                    let _ = broadcaster.send(*peer, heartbeat.clone());
+                    let _ = broadcaster.send(*peer, peer_list.clone());
                 }
                 last_discovery_sent_ms = now_ms;
             }
             if let Some(window) = plan_network_runtime_sync_pull_window(chain_id) {
+                worker_tick_ms = GATEWAY_ETH_NATIVE_RUNTIME_WORKER_SYNC_TICK_MS;
+                next_recv_drain_max = GATEWAY_ETH_NATIVE_RECV_DRAIN_MAX_SYNC_TICK;
+                let phase_tag = gateway_eth_native_sync_pull_phase_tag(window.phase.as_str());
+                let resend_interval_ms =
+                    gateway_eth_native_sync_pull_resend_ms(chain_id, phase_tag);
                 if let Some(fanout) = next_gateway_eth_native_sync_pull_fanout(
                     &worker_key_owned,
-                    window.phase.as_str(),
+                    phase_tag,
                     window.from_block,
                     window.to_block,
                     now_ms,
+                    resend_interval_ms,
                 ) {
-                    let payload = encode_gateway_eth_native_sync_pull_payload(
+                    let resolved_fanout = resolve_gateway_eth_native_sync_pull_fanout(
                         chain_id,
-                        window.phase.as_str(),
-                        window.from_block,
-                        window.to_block,
+                        phase_tag,
+                        fanout,
+                        peer_nodes.len(),
+                    );
+                    if resolved_fanout == 0 {
+                        continue;
+                    }
+                    let ordered_peers = select_gateway_eth_native_sync_pull_peers(
+                        chain_id,
+                        peer_nodes.as_ref(),
+                        resolved_fanout,
                     );
                     let sent = send_gateway_eth_native_sync_pull_requests(
-                        chain_id,
                         &broadcaster,
                         local_node,
-                        &peer_nodes,
-                        window.phase.as_str(),
-                        fanout,
-                        payload.as_slice(),
+                        ordered_peers.as_slice(),
+                        chain_id,
+                        phase_tag,
+                        window.from_block,
+                        window.to_block,
+                        resolved_fanout,
                         now,
                     );
                     if sent == 0 {
@@ -497,9 +833,9 @@ fn ensure_gateway_eth_native_runtime_worker(
             } else {
                 clear_gateway_eth_native_sync_pull_tracker(&worker_key_owned);
             }
-            broadcaster.drain_incoming(GATEWAY_ETH_NATIVE_RECV_DRAIN_MAX_PER_BROADCAST);
+            recv_drain_max = next_recv_drain_max;
             let elapsed = (now_unix_millis() as u64).saturating_sub(now);
-            let sleep_ms = GATEWAY_ETH_NATIVE_RUNTIME_WORKER_TICK_MS.saturating_sub(elapsed);
+            let sleep_ms = worker_tick_ms.saturating_sub(elapsed);
             thread::sleep(Duration::from_millis(sleep_ms.max(10)));
         }
     });
@@ -516,24 +852,29 @@ fn gateway_eth_native_sync_pull_phase_tag(phase: &str) -> u8 {
     }
 }
 
+#[cfg(test)]
 fn gateway_eth_native_sync_pull_msg_type(phase: &str) -> DistributedOcccMessageType {
-    match phase {
+    gateway_eth_native_sync_pull_msg_type_by_tag(gateway_eth_native_sync_pull_phase_tag(phase))
+}
+
+fn gateway_eth_native_sync_pull_msg_type_by_tag(phase_tag: u8) -> DistributedOcccMessageType {
+    match phase_tag {
         // Header phase keeps StateSync channel for compatibility.
-        "headers" => DistributedOcccMessageType::StateSync,
-        // Bodies/state/finalize/discovery go through shard-state channel.
+        1 => DistributedOcccMessageType::StateSync,
+        // Bodies/state/finalize/discovery/unknown go through shard-state channel.
         _ => DistributedOcccMessageType::ShardState,
     }
 }
 
 fn encode_gateway_eth_native_sync_pull_payload(
     chain_id: u64,
-    phase: &str,
+    phase_tag: u8,
     from_block: u64,
     to_block: u64,
 ) -> Vec<u8> {
     let mut out = Vec::with_capacity(4 + 1 + 8 + 8 + 8);
     out.extend_from_slice(&GATEWAY_ETH_NATIVE_SYNC_PULL_PAYLOAD_MAGIC);
-    out.push(gateway_eth_native_sync_pull_phase_tag(phase));
+    out.push(phase_tag);
     out.extend_from_slice(&chain_id.to_le_bytes());
     out.extend_from_slice(&from_block.to_le_bytes());
     out.extend_from_slice(&to_block.to_le_bytes());
@@ -656,8 +997,9 @@ pub(super) fn gateway_eth_public_broadcast_required(chain_id: u64) -> bool {
 pub(super) fn gateway_eth_public_broadcast_capability_json(chain_id: u64) -> serde_json::Value {
     let required = gateway_eth_public_broadcast_required(chain_id);
     let exec_path = gateway_eth_public_broadcast_exec_path(chain_id);
-    let native_peers = gateway_eth_public_broadcast_native_peers(chain_id);
-    let native_peer_count = native_peers.len() as u64;
+    let native_peer_count = gateway_eth_public_broadcast_native_peers_snapshot(chain_id)
+        .map(|(peers, _)| peers.len() as u64)
+        .unwrap_or(0);
     let transport = gateway_eth_public_broadcast_native_transport(chain_id).as_mode();
     let mode = if exec_path.is_some() {
         "external_executor"
@@ -770,13 +1112,7 @@ fn gateway_eth_public_broadcast_native_listen_addr(
     })
 }
 
-fn gateway_eth_public_broadcast_native_peers(chain_id: u64) -> Vec<(NodeId, String)> {
-    let Some(raw) = gateway_eth_public_broadcast_chain_string_env(
-        chain_id,
-        "NOVOVM_GATEWAY_ETH_PUBLIC_BROADCAST_NATIVE_PEERS",
-    ) else {
-        return Vec::new();
-    };
+fn parse_gateway_eth_public_broadcast_native_peers(raw: &str) -> Vec<(NodeId, String)> {
     let mut peers = Vec::<(NodeId, String)>::new();
     for token in raw.split([',', ';', '\n', '\r', '\t', ' ']) {
         let entry = token.trim();
@@ -796,6 +1132,35 @@ fn gateway_eth_public_broadcast_native_peers(chain_id: u64) -> Vec<(NodeId, Stri
         peers.push((NodeId(node_id), addr_raw.trim().to_string()));
     }
     peers
+}
+
+fn gateway_eth_public_broadcast_native_peers_snapshot(
+    chain_id: u64,
+) -> Option<(GatewayEthNativePeers, GatewayEthNativePeerNodes)> {
+    let raw = gateway_eth_public_broadcast_chain_string_env(
+        chain_id,
+        "NOVOVM_GATEWAY_ETH_PUBLIC_BROADCAST_NATIVE_PEERS",
+    )?;
+    let cache = gateway_eth_native_peers_cache();
+    if let Some(existing) = cache.get(&chain_id) {
+        if existing.raw == raw {
+            return Some((existing.peers.clone(), existing.peer_nodes.clone()));
+        }
+    }
+
+    let peers_vec = parse_gateway_eth_public_broadcast_native_peers(raw.as_str());
+    let peer_nodes_vec: Vec<NodeId> = peers_vec.iter().map(|(peer, _)| *peer).collect();
+    let peers = Arc::new(peers_vec);
+    let peer_nodes = Arc::new(peer_nodes_vec);
+    cache.insert(
+        chain_id,
+        GatewayEthNativePeersCache {
+            raw,
+            peers: peers.clone(),
+            peer_nodes: peer_nodes.clone(),
+        },
+    );
+    Some((peers, peer_nodes))
 }
 
 fn gateway_eth_public_broadcast_payload_bytes(
@@ -818,7 +1183,10 @@ fn execute_gateway_eth_public_broadcast_native(
     tx_hash: &[u8; 32],
     payload: GatewayEthPublicBroadcastPayload<'_>,
 ) -> Result<Option<(String, u64, String)>> {
-    let peers = gateway_eth_public_broadcast_native_peers(chain_id);
+    let Some((peers, peer_nodes)) = gateway_eth_public_broadcast_native_peers_snapshot(chain_id)
+    else {
+        return Ok(None);
+    };
     if peers.is_empty() {
         return Ok(None);
     }
@@ -844,7 +1212,6 @@ fn execute_gateway_eth_public_broadcast_native(
     let mut success = 0u64;
     let mut failed = 0u64;
     let mut errors = Vec::<String>::new();
-    let peer_nodes: Vec<NodeId> = peers.iter().map(|(peer, _)| *peer).collect();
 
     let (broadcaster_key, broadcaster) =
         get_or_create_gateway_eth_native_broadcaster(chain_id, transport, local_node, &listen_addr)
@@ -863,7 +1230,16 @@ fn execute_gateway_eth_public_broadcast_native(
         peer_nodes.clone(),
     );
 
-    for (peer, addr) in peers {
+    if broadcaster.needs_peer_registration(peers.as_ref()) {
+        for (peer, addr) in peers.iter() {
+            if let Err(e) = broadcaster.register_peer(*peer, addr.as_str()) {
+                failed = failed.saturating_add(1);
+                errors.push(format!("register_peer({}:{})={}", peer.0, addr, e));
+            }
+        }
+    }
+
+    for (peer, _addr) in peers.iter() {
         let to_u32 = match u32::try_from(peer.0) {
             Ok(v) => v,
             Err(_) => {
@@ -872,11 +1248,6 @@ fn execute_gateway_eth_public_broadcast_native(
                 continue;
             }
         };
-        if let Err(e) = broadcaster.register_peer(peer, &addr) {
-            failed = failed.saturating_add(1);
-            errors.push(format!("register_peer({}:{})={}", peer.0, addr, e));
-            continue;
-        }
         let msg = ProtocolMessage::DistributedOcccGossip(DistributedOcccGossipMessage {
             from: from_u32,
             to: to_u32,
@@ -885,7 +1256,7 @@ fn execute_gateway_eth_public_broadcast_native(
             timestamp: now,
             seq: now,
         });
-        match broadcaster.send(peer, msg) {
+        match broadcaster.send(*peer, msg) {
             Ok(_) => success = success.saturating_add(1),
             Err(e) => {
                 failed = failed.saturating_add(1);
@@ -894,37 +1265,6 @@ fn execute_gateway_eth_public_broadcast_native(
         }
     }
     broadcaster.drain_incoming(GATEWAY_ETH_NATIVE_RECV_DRAIN_MAX_PER_BROADCAST);
-
-    // Periodic discovery/liveness gossip to keep runtime peer discovery warm.
-    // Keep this after tx proposal dispatch so public broadcast path remains tx-first.
-    let should_emit_discovery = {
-        let now_ms = now_unix_millis();
-        if let Ok(mut guard) = gateway_eth_native_discovery_last_ms().lock() {
-            let last = guard.get(&broadcaster_key).copied().unwrap_or(0);
-            if now_ms.saturating_sub(last) >= GATEWAY_ETH_NATIVE_DISCOVERY_INTERVAL_MS {
-                guard.insert(broadcaster_key.clone(), now_ms);
-                true
-            } else {
-                false
-            }
-        } else {
-            false
-        }
-    };
-    if should_emit_discovery {
-        for peer in &peer_nodes {
-            let heartbeat = ProtocolMessage::Gossip(ProtocolGossipMessage::Heartbeat {
-                from: local_node,
-                shard: ShardId(1),
-            });
-            let _ = broadcaster.send(*peer, heartbeat);
-            let peer_list = ProtocolMessage::Gossip(ProtocolGossipMessage::PeerList {
-                from: local_node,
-                peers: peer_nodes.clone(),
-            });
-            let _ = broadcaster.send(*peer, peer_list);
-        }
-    }
 
     if success == 0 {
         bail!(
@@ -1274,17 +1614,22 @@ mod tests {
         let worker_key = "chain1:udp:node1:0.0.0.0:0:test";
         clear_gateway_eth_native_sync_pull_tracker(worker_key);
         let now = 10_000u128;
+        let phase_tag = gateway_eth_native_sync_pull_phase_tag("headers");
+        let resend_ms = gateway_eth_native_sync_pull_resend_ms_by_tag(phase_tag);
         assert_eq!(
-            next_gateway_eth_native_sync_pull_fanout(worker_key, "headers", 101, 200, now),
+            next_gateway_eth_native_sync_pull_fanout(
+                worker_key, phase_tag, 101, 200, now, resend_ms
+            ),
             Some(1)
         );
         assert_eq!(
             next_gateway_eth_native_sync_pull_fanout(
                 worker_key,
-                "headers",
+                phase_tag,
                 101,
                 200,
-                now.saturating_add(500)
+                now.saturating_add(500),
+                resend_ms,
             ),
             None
         );
@@ -1296,27 +1641,39 @@ mod tests {
         let worker_key = "chain1:udp:node1:0.0.0.0:0:test2";
         clear_gateway_eth_native_sync_pull_tracker(worker_key);
         let now = 20_000u128;
+        let phase_tag = gateway_eth_native_sync_pull_phase_tag("headers");
+        let resend_ms = gateway_eth_native_sync_pull_resend_ms_by_tag(phase_tag);
         assert_eq!(
-            next_gateway_eth_native_sync_pull_fanout(worker_key, "headers", 1, 100, now),
+            next_gateway_eth_native_sync_pull_fanout(worker_key, phase_tag, 1, 100, now, resend_ms),
             Some(1)
         );
-        let resend_now = now.saturating_add(GATEWAY_ETH_NATIVE_SYNC_PULL_RESEND_MS + 10);
+        let resend_now = now.saturating_add(resend_ms + 10);
         assert_eq!(
-            next_gateway_eth_native_sync_pull_fanout(worker_key, "headers", 1, 100, resend_now),
+            next_gateway_eth_native_sync_pull_fanout(
+                worker_key, phase_tag, 1, 100, resend_now, resend_ms
+            ),
             Some(2)
         );
-        let resend_again = resend_now.saturating_add(GATEWAY_ETH_NATIVE_SYNC_PULL_RESEND_MS + 10);
+        let resend_again = resend_now.saturating_add(resend_ms + 10);
         assert_eq!(
-            next_gateway_eth_native_sync_pull_fanout(worker_key, "headers", 1, 100, resend_again),
+            next_gateway_eth_native_sync_pull_fanout(
+                worker_key,
+                phase_tag,
+                1,
+                100,
+                resend_again,
+                resend_ms
+            ),
             Some(usize::MAX)
         );
         assert_eq!(
             next_gateway_eth_native_sync_pull_fanout(
                 worker_key,
-                "headers",
+                phase_tag,
                 101,
                 200,
-                resend_again.saturating_add(100)
+                resend_again.saturating_add(100),
+                resend_ms,
             ),
             Some(1),
             "window change should reset to single-peer first shot"
@@ -1356,6 +1713,75 @@ mod tests {
         let full = vec![NodeId(11), NodeId(10), NodeId(12), NodeId(13)];
         let merged = merge_gateway_eth_sync_pull_candidates(preferred, full);
         assert_eq!(merged, vec![NodeId(11), NodeId(12), NodeId(10), NodeId(13)]);
+    }
+
+    #[test]
+    fn split_sync_pull_window_creates_contiguous_ranges() {
+        let ranges = split_gateway_eth_sync_pull_window(101, 120, 3);
+        assert_eq!(ranges.len(), 3);
+        assert_eq!(ranges[0].0, 101);
+        assert_eq!(ranges[2].1, 120);
+        for pair in ranges.windows(2) {
+            assert_eq!(pair[0].1.saturating_add(1), pair[1].0);
+        }
+        let total = ranges
+            .iter()
+            .map(|(from, to)| to.saturating_sub(*from).saturating_add(1))
+            .sum::<u64>();
+        assert_eq!(total, 20);
+    }
+
+    #[test]
+    fn split_sync_pull_window_caps_segments_by_window_span() {
+        let ranges = split_gateway_eth_sync_pull_window(1_000, 1_003, 16);
+        assert_eq!(
+            ranges,
+            vec![
+                (1_000, 1_000),
+                (1_001, 1_001),
+                (1_002, 1_002),
+                (1_003, 1_003)
+            ]
+        );
+    }
+
+    #[test]
+    fn resolve_sync_pull_fanout_respects_requested_and_peer_count_without_cap() {
+        let chain_id = 8_101_u64;
+        let phase_tag = gateway_eth_native_sync_pull_phase_tag("headers");
+        let resolved = resolve_gateway_eth_native_sync_pull_fanout(chain_id, phase_tag, 2, 10);
+        assert_eq!(resolved, 2);
+        let resolved_all =
+            resolve_gateway_eth_native_sync_pull_fanout(chain_id, phase_tag, usize::MAX, 3);
+        assert_eq!(resolved_all, 3);
+    }
+
+    #[test]
+    fn sync_pull_phase_env_suffix_is_stable() {
+        assert_eq!(
+            gateway_eth_native_sync_pull_phase_env_suffix(gateway_eth_native_sync_pull_phase_tag(
+                "headers"
+            )),
+            Some("HEADERS")
+        );
+        assert_eq!(
+            gateway_eth_native_sync_pull_phase_env_suffix(gateway_eth_native_sync_pull_phase_tag(
+                "bodies"
+            )),
+            Some("BODIES")
+        );
+        assert_eq!(
+            gateway_eth_native_sync_pull_phase_env_suffix(gateway_eth_native_sync_pull_phase_tag(
+                "state"
+            )),
+            Some("STATE")
+        );
+        assert_eq!(
+            gateway_eth_native_sync_pull_phase_env_suffix(gateway_eth_native_sync_pull_phase_tag(
+                "finalize"
+            )),
+            Some("FINALIZE")
+        );
     }
 
     #[test]

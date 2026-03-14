@@ -51,6 +51,15 @@
 - 原子跨链 intent：本地检查通过后再广播。
 - 结果要求：交易收入可对账，原子流程可控可审计。
 
+## 3.6 高性能流水线改造面（不改协议/共识）
+
+- 插件执行路径：采用“并发预处理 + 串行状态提交”。
+- 插件状态根：采用“脏标记 + 按需刷新缓存”，避免批内每笔全量重算状态根。
+- 插件运行态：按链/发送方分片锁，降低全局锁竞争。
+- gateway 边界：请求处理并发化，保持对外 JSON-RPC 语义不变。
+- network 传输：减少阻塞重试与全局状态锁，保持同步口径同源。
+- AOEM/GPU：仅用于可并行且不影响共识判定的环节（哈希/签名校验/批量过滤）。
+
 ## 4. 当前工作包（生产口径）
 
 | WP | 名称 | 状态 | 代码锚点 | 下一步 |
@@ -61,6 +70,7 @@
 | WP-04 | 收益归集/换汇/发放闭环 | InProgress | `crates/plugins/evm/plugin/src/lib.rs` | 补齐对账字段与宿主接线。 |
 | WP-05 | 原子 intent 门控后广播 | InProgress | `crates/plugins/evm/plugin/src/lib.rs` | 固化门控条件与失败补偿。 |
 | WP-06 | go-ethereum 能力直迁（网络/同步/txpool） | NotStarted | `D:\WEB3_AI\go-ethereum` 对照实现 | 从 txpool+sync 开始分模块直迁。 |
+| WP-07 | 高性能流水线并发改造（专项） | InProgress | `crates/plugins/evm/plugin` + `crates/gateways/evm-gateway` + `crates/novovm-network` | 插件并发预处理与 txpool 分片已落地；gateway 已落地 `public-broadcast status / receiptBatch / txByHashBatch / replayPublicBroadcastBatch / lifecycleBatch / logsBatch / filterLogsBatch / filterChangesBatch / upstreamTxStatusBundle / upstreamEventBundle / upstreamFullBundle / upstreamConsumerBundle / publicSend*Batch` 收口（含 bundle helper 直连去递归分发层），并完成 native sync-pull peer 选路“单次快照发送 + fanout 小快照优先 + 失败回退”、tracker 原地更新、phase 自适应重发、同步期短 tick、public-broadcast 热路径去 discovery 附带发送、按 fanout 同窗分段并发拉取（多窗口并发抓取）以及并发参数可调（`FANOUT_MAX/SEGMENTS_MAX/SEGMENT_MIN_BLOCKS`，支持 phase 后缀 `_HEADERS/_BODIES/_STATE/_FINALIZE`，支持 `_CHAIN_0x{id}` 大小写，并新增 `RESEND_MS` 同源链级+phase 覆盖与 `50..60000ms` 钳制；runtime peer-head 选路预算按本轮 fanout 收口）；network 已落地非阻塞重试 + runtime 观测/更新路径直连 reconcile 去重复锁 + StateSync/ShardState 单次进锁更新 + 收包去双调用 + 无变化快返 + sync-pull 目标表 `DashMap` 化 + followup 出站 track 去双写 + UDP/TCP 回包续拉 `send_internal` 去 clone + sync-pull 回包区间流式组装 + stale 到期短路 + peer heads Top-K 选路 + dirty/stale 到期触发重算短路 + UDP/TCP 收包缓冲区复用 + UDP 发送首包注册化 + local-head/native-snapshot 无变化快返 + pull-target 单次读取 + src->peer 单次遍历 + try_recv 懒反查 + 非 sync 报文跳过 header 解码 + 消息来源 id 单次解析复用 + sync window phase 预取触发 + UDP/TCP 收包短锁（锁外解码/读包）；下一步推进压测边界固化与默认参数定标。 |
 
 ## 5. 完成定义（不再工程化）
 

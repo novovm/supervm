@@ -136,7 +136,7 @@
 - `cargo clippy --workspace --all-targets -- -D warnings` 通过。
 - `cargo clippy -p novovm-consensus --all-targets -- -D warnings` 通过。
 - `cargo clippy -p novovm-network --all-targets -- -D warnings` 通过。
-- `cargo test -p novovm-evm-gateway -- --nocapture` 通过（`160/160`）。
+- `cargo test -p novovm-evm-gateway -- --nocapture` 通过（`163/163`）。
 - `cargo test -p novovm-adapter-evm-plugin -- --nocapture` 通过（`29/29`）。
 
 ### P0-C：执行语义与回执语义收口
@@ -263,3 +263,140 @@
 4. 提交->入池->广播->上链->回执闭环稳定。
 5. FFI/持久化边界通过异常恢复与一致性验证。
 6. 插件保持寄宿 superVM，不破坏内部二进制高性能主线。
+
+## 8. 高性能流水线专项（功能口径外的性能收口）
+
+说明：
+
+- 第 7 节 `100%` 表示“生产功能闭环 100%”。
+- 本节是“在不改变协议/共识/规则前提下”的性能专项改造，不与功能口径混算。
+
+### HP-01：插件执行流水线并发化（不改执行顺序）
+
+1. 交易批处理拆分为“并发预校验 + 串行状态提交”。
+2. 保持账户 nonce、区块执行顺序、回执语义完全不变。
+
+本轮落地：
+
+- 插件已补“单批一次 hash 预处理并复用”热路径：`prepare_txs_with_hashes` 在大批量场景按分片并行预处理，小批量保持串行低开销。
+- `runtime_tap`、`apply_v1`、`apply_v2` 已统一复用同一份预处理批次，避免 ingress/atomic/apply/settlement 对同批交易重复 `ensure_tx_hash`。
+- `atomic intent id` 与结算入口已改为“优先复用现有 hash，缺失时再补算”，保持语义不变的前提下减少重复克隆与重复哈希。
+- `apply_ir_batch` 已把“并发语义校验 + 并发验签”收口为单次并发扫描（分片内先 `validate_tx_semantics_m0` 再 `verify_transaction`），去掉独立语义扫描阶段，减少整批遍历与线程调度开销。
+- `novovm-adapter-novovm` 已增加“单次验签缓存”：`verify_transaction` 成功后的 tx 在同批 `execute_transaction` 主线上不再重复完整验签，缓存未命中时回退原逻辑，执行语义保持一致。
+- `novovm-adapter-novovm` 验签缓存容器已从 `Mutex<HashSet>` 切到 `DashSet` 并发集合，降低并发验签阶段全局锁竞争；`execute_transaction` 仍按 hash 命中移除缓存，语义不变。
+- `novovm-adapter-evm-plugin` 的 `apply_ir_batch` 已去掉 `Box<dyn ChainAdapter>` 热路径动态分发，改为直接使用 `NovoVmAdapter` 具体实现，减少批内 `verify/execute/state_root` 虚调用开销，协议语义不变。
+- `novovm-adapter-novovm` 已增加“状态根懒刷新缓存”：执行/写入路径仅标记 dirty，不再每笔交易全量重算状态根；`state_root()` 查询时再统一刷新缓存，批内吞吐提升且不改对外语义。
+
+完成定义：
+
+- 同一输入批次，状态根与回执结果与改造前一致。
+- CPU 利用率提升，单批处理延迟下降。
+
+### HP-02：插件运行态锁分片
+
+1. 将全局运行态锁按 `chain_id/sender` 分片，降低锁竞争。
+2. 不改变 txpool 语义（替换/nonce-gap/容量约束）。
+
+本轮落地：
+
+- 已将插件 `txpool` 热路径从结算/回执运行态中拆分为独立锁，降低 ingress 与结算路径的锁竞争。
+- 已将 `txpool` 再按 `chain_id` 分片为多锁（`EVM_TXPOOL_SHARDS`），不同链写入路径可并行，不再竞争同一把 txpool 锁。
+- 已补 `txpool` 分片数可配置（`NOVOVM_ADAPTER_PLUGIN_EVM_TXPOOL_SHARDS`）与 host 读口公平轮转（按游标起点遍历分片），减少固定分片热点与读取偏置。
+- ingress 主入口已拆分为 `push_ingress_frames_prepared`，直接消费预处理批次；`runtime_tap/apply_v1/apply_v2` 共享同一预处理结果后再进 txpool，进一步缩短 txpool 锁内重复计算路径。
+- 结算/回执运行态已按链分片（`NOVOVM_ADAPTER_PLUGIN_EVM_RUNTIME_SHARDS`）：`settlement/atomic-receipt/atomic-ready` 写路径改为按 `chain_id` 命中分片锁，去除单全局运行态锁热点。
+- host 侧 `drain_atomic_receipts/drain_settlement_records/drain_payout_instructions/drain_atomic_broadcast_ready` 已改为分片轮转聚合；`settlement totals/snapshot` 改为跨分片汇总，`settlement_seq` 保持全局单调。
+
+完成定义：
+
+- 高并发写入时无全局大锁瓶颈。
+- 行为语义与当前生产一致。
+
+### HP-03：gateway 请求并发化（仅边界层）
+
+1. 保持外部 JSON-RPC 语义不变。
+2. 入口请求改并发 worker 处理，状态缓存改分段并发结构。
+
+本轮落地：
+
+- `evm_getPublicBroadcastStatusBatch` 已改为“批量并发查询 + 顺序聚合返回”路径，新增批量 worker 并发控制（`NOVOVM_GATEWAY_BATCH_WORKERS`，`0=自动`）。
+- `evm_getTransactionReceiptBatch`、`evm_getTransactionByHashBatch` 已改为“批量并发查询 + 顺序聚合返回”路径，保持默认链提示、pending 语义与单笔查询一致。
+- `evm_replayPublicBroadcastBatch` 已改为“批量并发回放 + 顺序聚合返回”路径，保持逐笔错误项与成功项结构不变。
+- `evm_getTransactionLifecycleBatch` 已改为“批量并发查询 + 顺序聚合返回”路径，并与单笔 `evm_getTransactionLifecycle` 统一复用同一生产 helper，避免语义漂移。
+- `evm_getLogsBatch`、`evm_getFilterLogsBatch` 已改为“批量并发查询 + 顺序聚合返回”路径；保留原有日志过滤语义与返回顺序。
+- `evm_getUpstreamTxStatusBundle` 已改为“按 tx 并发收口 lifecycle+receipt+broadcast 一次生成”，减少重复批量扫描与重复解析开销。
+- `evm_getFilterChangesBatch` 已改为直连生产 `filter` 处理 helper，去掉批量递归分发开销。
+- `evm_getUpstreamEventBundle` 的 `logs/filterChanges/filterLogs` 已改为直连生产 helper，减少重复路由分发与参数重解析开销。
+- `evm_publicSendRawTransactionBatch`、`evm_publicSendTransactionBatch` 已去掉批量内递归分发层，直接进入 `eth_send*` 主生产路径（保留 public-broadcast 语义标记）。
+- `evm_getUpstreamTxStatusBundle`、`evm_getUpstreamEventBundle`、`evm_getUpstreamFullBundle` 已完成 helper 直连收口，去掉 bundle 内部递归 `run_gateway_method` 分发层，减少二次参数解析与重复路由开销。
+- `evm_getUpstreamConsumerBundle` 已改为直连 `FullBundle helper`，去掉 consumer->fullBundle 的递归分发层。
+- 批量查询中的持久层命中缓存回写已收口为“线程外顺序回写”，避免并发写入主索引锁竞争。
+- native sync-pull peer 选择已收口为“单次 runtime 头快照 + 单次有序候选发送”，去掉同一轮中的双次 `select` 与 merge 组装，减少重复排序与集合构建开销。
+- `public broadcast` 交易热路径已去掉“每笔交易附带周期性 discovery 发送”逻辑，统一交给后台 native runtime worker 维持 peer 活性，减少每笔交易额外报文与拷贝开销。
+- 对外返回结构与顺序保持兼容，不改已有方法语义。
+
+完成定义：
+
+- 对外接口响应语义不变。
+- 高并发请求下吞吐提升且无状态漂移。
+
+### HP-04：network 拉取与状态计算并发优化
+
+1. 去除热路径阻塞重试/sleep。
+2. runtime status 计算改为分片或低竞争更新。
+
+本轮落地：
+
+- `TcpTransport::send` 已去除固定阻塞 sleep 重试，改为可配置重试策略（`NOVOVM_NETWORK_TCP_CONNECT_RETRY_ATTEMPTS`、`NOVOVM_NETWORK_TCP_CONNECT_RETRY_BACKOFF_MS`），默认低延迟快返。
+- `runtime_status` 在 `set_network_runtime_*` 热更新路径中增加“状态未变化不触发 reconcile”短路，减少高频重复锁竞争与重复重算。
+- `runtime_status` 已把“按 chain_id 再读取 runtime 后 reconcile”的二次锁路径收口为“携带已知 runtime 状态直接 reconcile native 状态”，`set_network_runtime_sync_status / set_network_runtime_peer_count / set_network_runtime_block_progress` 及 peer/local/snapshot 观测路径统一复用，减少热路径重复锁与重复 map 读取。
+- `transport` 的 `StateSync/ShardState` 收包更新已改为“单次进锁同时更新 peer_head + local_head(max)”路径，替换原先两次独立 runtime 更新调用，降低高频收包时锁竞争。
+- `transport` 的收包 runtime 更新已去掉“先 register 再 observe”的双调用模式：`Pacemaker/Finality/可解码 DistributedOccc` 直接单调用 `observe_*`，未知消息才走兜底 `register`，进一步减少每条热消息的重复锁与重复重算。
+- `runtime_status` 的 `register_peer / observe_peer_head` 已增加“无状态变化快返”路径：当 peer/head/local 未变化且无 native hint 清理时直接返回，不再触发整轮 recompute + reconcile，进一步压低高频消息空转成本。
+- `transport` 的 runtime sync pull inflight 目标表已从 `Mutex<HashMap>` 改为 `DashMap`，并把 followup “未到窗口上界则等待、到上界则清理”收口为单 helper，减少高频收包下的全局锁竞争与重复 map 访问。
+- `transport` 的 followup 出站路径已去掉“接收侧预跟踪 + send 成功后再跟踪”双写，改为“send 成功走发送主路径跟踪；仅 fallback 原始 socket/tcp 直发时补一次跟踪”，减少重复解码与重复写目标表。
+- `transport` 的 UDP/TCP 回包/续拉发送路径已改为 `send_internal(&ProtocolMessage)` 直发，收包回路不再为 fallback 保留而 clone 消息对象，减少热路径分配与拷贝。
+- `transport` 的 sync-pull 回包构建已从“先组 `Vec<Vec<u8>>` 中间 payload 再二次组消息”收口为“按区间直接流式组消息”，减少中间容器分配与一次遍历。
+- `runtime_status` 已增加“stale 到期时间短路”机制：未到期链路直接跳过 stale 全量扫描，降低高频读写下 `peer_last_seen/native_snapshot` 的重复遍历成本；语义保持一致（到期后同样清理 stale peer/snapshot）。
+- `runtime_status` 已新增 `peer heads Top-K` 查询路径；gateway sync-pull 选路改为按配置 peer 数量按需取 Top-K，不再默认全量排序全部 runtime peers，降低调度热路径排序开销。
+- `runtime_status` 读路径已改为“dirty/stale 到期才重算”：`get_network_runtime_sync_status/get_network_runtime_peer_heads/get_network_runtime_peer_heads_top_k` 在无脏变化且未到期时直接返回缓存状态，减少高频轮询下重复重算。
+- `transport` 收包热路径已改为缓冲区复用：`UdpTransport::try_recv` 与 `TcpTransport::try_recv` 不再每帧分配新 `Vec`，改为复用内部接收缓冲，降低高频收包分配与拷贝开销。
+- `transport` UDP 发送热路径已去掉“每次发包都执行 runtime peer register”的重复开销，改为“首包注册、断连清理后再注册”，减少高频发送时 runtime 状态锁竞争。
+- `runtime_status` 的 `observe_network_runtime_local_head` / `observe_network_runtime_local_head_max` / `ingest_network_runtime_native_sync_snapshot` 已加入“无变化快返”短路，减少 send/worker tick 高频上报下的重复重算。
+- `gateway` sync-pull 调度已改为“按本轮 fanout 取小规模 Top-K 优先发送 + 配置顺序失败回退”，不再每轮全量 peers 排序/发送扫描。
+- `gateway` native sync worker 已改为“先 drain 收包、再规划并发送下一窗口”顺序，窗口规划直接消费最新 runtime 观测，减少滞后窗口重复拉取。
+- `gateway` sync-pull 发送已改为“单次构建全量有序 peer 快照 + 按 fanout 截断发送”，去掉发送函数内部重复选路与重复去重集合构建。
+- `gateway` sync-pull tracker 已改为“已有窗口状态原地更新”，避免每个 tick 重建 `worker_key` 字符串与整条 state。
+- `transport` 的 pull target 窗口检查已收口为单次读取后判定/清理，减少同键双查开销。
+- `transport` 的 `src -> peer` 推断已改为单次遍历（精确地址优先 + 同 IP 唯一回退），减少收包路径重复遍历。
+- `transport` 的 `try_recv` 已改为“消息自带来源 id 时不做 `src -> peer` 反查”，减少每包 DashMap 扫描。
+- `transport` runtime 状态更新已改为“仅 `StateSync/ShardState` 尝试 header 解码”，去掉其他 `DistributedOccc` 报文的无效解码开销。
+- `gateway` native sync worker 已改为“同步期短 tick（250ms）+ 空闲期常规 tick（1000ms）”，提升窗口推进速度。
+- `gateway` sync-pull 重发窗口已改为 phase 自适应（headers/bodies/state/finalize 分档），减少重发等待空窗。
+- `gateway` sync-pull tracker 状态已改为 `phase_tag(u8)`，去掉热路径 phase 字符串拷贝与比较开销（仅保留协议 tag）。
+- `gateway` native broadcaster 已内置 peer 注册缓存（同 peer 同地址跳过重复 `register_peer`），把每笔广播重复注册收口为首包注册，降低发送热路径锁竞争与系统调用开销。
+- `gateway` native peers 已改为按链缓存快照（raw 配置变更自动刷新），`capability/runtime-worker/public-broadcast` 共享同一份解析结果，去掉每次调用重复 split+parse+peer_nodes 构建。
+- `runtime_status` stale 清理已改为 `retain` 原地回收（去掉 stale id 中间向量），并为 `Top-K(k=1)` 增加 O(n) 快路径，降低 sync-pull 单播阶段排序/分配开销。
+- `transport` 的 `StateSync/ShardState` ingress 已改为“单次解析复用”：同一报文的 request/header 解析结果在 response 构建、runtime 更新、followup 构建三段共用，去掉重复解码与重复分支判断。
+- `transport` 的 sync-pull 回包主路径已改为“窗口计划 + 流式发送”：收包后不再先构建整批 `Vec<ProtocolMessage>`，而是按响应区间逐条构建并发送（保留失败 fallback），减少中间容器分配与二次遍历。
+- `transport` 新增 `src_addr -> peer` 直达索引 + `src_ip` 唯一性索引并接入 UDP/TCP 收包路径，优先 O(1) 地址/同 IP 命中；仅索引未命中时才回退遍历推断，降低高并发收包时的 DashMap 全表扫描成本。
+- `transport` 的 sync-pull followup 已增加 phase 分档预取触发：窗口尾部即可提前发起下一窗请求，减少“窗口完全收满后才发送”带来的 RTT 空档。
+- `transport` 的 UDP/TCP 收包主线已改为短锁路径：共享缓冲只在取/还时加锁，`recv/decode/read` 全部锁外执行，减少高并发收包锁竞争。
+- `gateway` native sync-pull worker 已增加“同窗分段并发拉取”：按 fanout 把 `from/to` 窗口切成连续子区间并并发分发到多 peer，减少同窗重复请求和单窗串行等待。
+- `gateway` native sync-pull worker 已增加链级并发调优参数：`FANOUT_MAX/SEGMENTS_MAX/SEGMENT_MIN_BLOCKS`（支持 `_CHAIN_{id|0xid}`），用于压测场景下控制并发窗口与窗口粒度，默认不改变现有行为。
+- 本轮补 phase 级并发调优键：`FANOUT_MAX/SEGMENTS_MAX/SEGMENT_MIN_BLOCKS` 均支持 `_HEADERS/_BODIES/_STATE/_FINALIZE` 后缀（可叠加 `_CHAIN_{id|0xid}`），并兼容 `_CHAIN_0x{id}` 大小写环境键。
+- 本轮补 sync-pull 重发间隔调优键：`NOVOVM_GATEWAY_ETH_NATIVE_SYNC_PULL_RESEND_MS` 支持链级 + phase 后缀覆盖（同样可叠加 `_CHAIN_{id|0xid}` 与 `_HEADERS/_BODIES/_STATE/_FINALIZE`），并做 `50..60000ms` 硬钳制，便于压测定标。
+- 本轮补 sync-pull 选路热路径降耗：runtime `peer-head Top-K` 查询预算改为“本轮 fanout 预算”，不再按全量 peer 取样。
+- `transport` 发送路径已改为“peer 地址即时拷贝后发送/重试”，避免在 TCP 连接重试/UDP 发送阶段持有 DashMap guard；`gateway` sync-pull 发送增加 `fanout=1` 快路径，减少小 fanout 场景集合开销。
+
+完成定义：
+
+- 同步状态语义不变（`eth_syncing/net_peerCount/blockNumber` 同源）。
+- 拉取链路在抖动网络下恢复更快。
+
+### 高性能专项进度（2026-03-14）
+
+- HP-01 当前：`100%`（已完成“并发语义预校验 + 单批 hash 预处理复用 + apply/runtime_tap 主线去重复哈希 + verify/execute 去双验签 + apply 主线并发 verify 串行 execute + 错误路径 shutdown 收口”）
+- HP-02 当前：`100%`（已完成“txpool 热路径独立锁 + chain_id 分片锁 + `chain_id+sender` ingress 分片写入 + 可调分片/公平轮转 + prepared ingress 主入口复用 + runtime 结算/回执按链分片 + host drain 分片轮转聚合 + pending 跨分片全局 sender round-robin 语义收口 + pending sender bucket 按分片定向取数”）
+- HP-03 当前：`100%`（已完成“public-broadcast status + receiptBatch + txByHashBatch + replayPublicBroadcastBatch + lifecycleBatch + logs/filterLogs + filterChangesBatch + upstreamTxStatusBundle/eventBundle/fullBundle/consumerBundle helper 直连去层 + publicSendBatch 递归去层收口 + native sync-pull peer 单次快照选路 + fanout 小快照优先 + 失败回退 + tracker 原地更新 + phase-tag 去字符串化 + phase 自适应重发 + 同步期短 tick + public-broadcast 热路径去 discovery 附带发送 + broadcaster peer 注册缓存去重复注册 + peers 配置按链缓存快照复用 + fanout=1 快路径 + 收包前置窗口规划 + 单次有序 peer 快照发送”）
+- HP-04 当前：`100%`（已完成“network 非阻塞重试 + runtime status 低争用短路 + 观测/更新路径直连 reconcile 去重复锁 + StateSync/ShardState 单次进锁更新 + 收包去双调用 + 无变化快返 + sync-pull 目标表 DashMap 化 + followup 跟踪去双写 + UDP/TCP 回包续拉去 clone + sync-pull 回包流式组装 + stale 到期短路 + stale 清理 retain 原地回收 + peer heads Top-K 选路 + Top-K(k=1) 快路径 + dirty/stale 到期触发重算短路 + UDP/TCP 收包缓冲区复用 + UDP 发送首包注册化 + local-head/native-snapshot 无变化快返 + pull-target 单次读取 + src->peer 单次遍历 + try_recv 懒反查 + 非 sync 报文跳过 header 解码 + 消息来源 id 单次解析复用 + sync ingress 单次解析复用 + sync 回包窗口计划流式发送去中间批量容器 + src_addr/src_ip O(1) 索引化命中 + sync window phase 预取触发 + UDP/TCP 收包短锁（锁外解码/读包）”）
+- 高性能流水线专项总进度：`100%`

@@ -47,6 +47,8 @@ struct NetworkRuntimeSyncObservedState {
     local_head_by_chain: HashMap<u64, u64>,
     peer_height_by_chain: HashMap<u64, HashMap<u64, u64>>,
     peer_last_seen_millis_by_chain: HashMap<u64, HashMap<u64, u128>>,
+    next_stale_check_at_by_chain: HashMap<u64, u128>,
+    dirty_chains: HashSet<u64>,
     peer_observed_once_by_chain: HashSet<u64>,
     native_peer_count_by_chain: HashMap<u64, u64>,
     native_remote_best_by_chain: HashMap<u64, u64>,
@@ -173,6 +175,74 @@ fn now_unix_millis() -> u128 {
         .as_millis()
 }
 
+fn hint_runtime_stale_check_deadline(
+    observed: &mut NetworkRuntimeSyncObservedState,
+    chain_id: u64,
+    now: u128,
+) {
+    let deadline = now.saturating_add(DEFAULT_RUNTIME_PEER_STALE_TIMEOUT_MILLIS);
+    observed
+        .next_stale_check_at_by_chain
+        .entry(chain_id)
+        .and_modify(|due| *due = (*due).min(deadline))
+        .or_insert(deadline);
+}
+
+fn recompute_runtime_stale_check_deadline(
+    chain_id: u64,
+    observed: &mut NetworkRuntimeSyncObservedState,
+) {
+    let mut next_due: Option<u128> = observed
+        .peer_last_seen_millis_by_chain
+        .get(&chain_id)
+        .and_then(|peer_last_seen| peer_last_seen.values().copied().min())
+        .map(|last_seen| last_seen.saturating_add(DEFAULT_RUNTIME_PEER_STALE_TIMEOUT_MILLIS));
+
+    if let Some(snapshot_updated_at) = observed
+        .native_snapshot_updated_at_by_chain
+        .get(&chain_id)
+        .copied()
+    {
+        let snapshot_due =
+            snapshot_updated_at.saturating_add(DEFAULT_RUNTIME_PEER_STALE_TIMEOUT_MILLIS);
+        next_due = Some(next_due.map_or(snapshot_due, |existing| existing.min(snapshot_due)));
+    }
+
+    if let Some(due) = next_due {
+        observed.next_stale_check_at_by_chain.insert(chain_id, due);
+    } else {
+        observed.next_stale_check_at_by_chain.remove(&chain_id);
+    }
+}
+
+#[inline]
+fn mark_runtime_sync_observed_dirty(observed: &mut NetworkRuntimeSyncObservedState, chain_id: u64) {
+    observed.dirty_chains.insert(chain_id);
+}
+
+fn runtime_sync_recompute_due(
+    chain_id: u64,
+    statuses: &HashMap<u64, NetworkRuntimeSyncStatus>,
+    observed: &NetworkRuntimeSyncObservedState,
+    has_observed: bool,
+) -> bool {
+    if !has_observed {
+        return false;
+    }
+    if !statuses.contains_key(&chain_id) {
+        return true;
+    }
+    if observed.dirty_chains.contains(&chain_id) {
+        return true;
+    }
+    observed
+        .next_stale_check_at_by_chain
+        .get(&chain_id)
+        .copied()
+        .map(|due| now_unix_millis() >= due)
+        .unwrap_or(false)
+}
+
 fn native_sync_phase_from_runtime_status(
     status: &NetworkRuntimeSyncStatus,
 ) -> NetworkRuntimeNativeSyncPhaseV1 {
@@ -245,65 +315,91 @@ pub fn reconcile_network_runtime_native_sync_status(
     chain_id: u64,
 ) -> Option<NetworkRuntimeNativeSyncStatusV1> {
     let runtime = get_network_runtime_sync_status(chain_id)?;
+    reconcile_network_runtime_native_sync_status_for_runtime(chain_id, runtime)
+}
+
+fn reconcile_network_runtime_native_sync_status_for_runtime(
+    chain_id: u64,
+    runtime: NetworkRuntimeSyncStatus,
+) -> Option<NetworkRuntimeNativeSyncStatusV1> {
     let phase = native_sync_phase_from_runtime_status(&runtime);
-    if matches!(phase, NetworkRuntimeNativeSyncPhaseV1::Idle) {
-        return finish_network_runtime_native_sync(
-            chain_id,
-            runtime.peer_count,
-            runtime.current_block,
-        );
-    }
-    let native_current = get_network_runtime_native_sync_status(chain_id);
-    if native_current.is_none() {
-        let _ = begin_network_runtime_native_sync(
-            chain_id,
-            runtime.peer_count,
-            runtime.current_block,
-            runtime.highest_block,
-        );
-    }
-    advance_network_runtime_native_sync(
-        chain_id,
-        phase,
-        runtime.peer_count,
-        runtime.current_block,
-        runtime.highest_block,
-    )
+    let mut native = runtime_native_sync_status_map().lock().ok()?;
+    let previous = native.get(&chain_id).copied();
+    let status = if matches!(phase, NetworkRuntimeNativeSyncPhaseV1::Idle) {
+        NetworkRuntimeNativeSyncStatusV1 {
+            phase: NetworkRuntimeNativeSyncPhaseV1::Idle,
+            peer_count: runtime.peer_count,
+            starting_block: runtime.current_block,
+            current_block: runtime.current_block,
+            highest_block: runtime.current_block,
+            updated_at_unix_millis: now_unix_millis(),
+        }
+        .normalized()
+    } else {
+        let starting_block = previous
+            .map(|s| {
+                if matches!(s.phase, NetworkRuntimeNativeSyncPhaseV1::Idle) {
+                    runtime.current_block
+                } else {
+                    s.starting_block.min(runtime.current_block)
+                }
+            })
+            .unwrap_or(runtime.current_block);
+        NetworkRuntimeNativeSyncStatusV1 {
+            phase,
+            peer_count: runtime.peer_count,
+            starting_block,
+            current_block: runtime.current_block,
+            highest_block: runtime.highest_block.max(runtime.current_block),
+            updated_at_unix_millis: now_unix_millis(),
+        }
+        .normalized()
+    };
+    native.insert(chain_id, status);
+    Some(status)
 }
 
 fn prune_stale_runtime_peers(chain_id: u64, observed: &mut NetworkRuntimeSyncObservedState) {
     let now = now_unix_millis();
-    let stale_peer_ids: Vec<u64> = observed
+    if !observed
         .peer_last_seen_millis_by_chain
+        .contains_key(&chain_id)
+        && !observed
+            .native_snapshot_updated_at_by_chain
+            .contains_key(&chain_id)
+    {
+        observed.next_stale_check_at_by_chain.remove(&chain_id);
+        return;
+    }
+    if let Some(next_due) = observed
+        .next_stale_check_at_by_chain
         .get(&chain_id)
-        .map(|m| {
-            m.iter()
-                .filter_map(|(peer_id, last_seen)| {
-                    if now.saturating_sub(*last_seen) > DEFAULT_RUNTIME_PEER_STALE_TIMEOUT_MILLIS {
-                        Some(*peer_id)
-                    } else {
-                        None
-                    }
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-    if !stale_peer_ids.is_empty() {
-        if let Some(peer_heights) = observed.peer_height_by_chain.get_mut(&chain_id) {
-            for peer_id in &stale_peer_ids {
-                peer_heights.remove(peer_id);
-            }
-            if peer_heights.is_empty() {
-                observed.peer_height_by_chain.remove(&chain_id);
-            }
+        .copied()
+    {
+        if now < next_due {
+            return;
         }
-        if let Some(peer_last_seen) = observed.peer_last_seen_millis_by_chain.get_mut(&chain_id) {
-            for peer_id in &stale_peer_ids {
-                peer_last_seen.remove(peer_id);
+    }
+    if let Some(mut peer_last_seen) = observed.peer_last_seen_millis_by_chain.remove(&chain_id) {
+        let before = peer_last_seen.len();
+        peer_last_seen.retain(|_, last_seen| {
+            now.saturating_sub(*last_seen) <= DEFAULT_RUNTIME_PEER_STALE_TIMEOUT_MILLIS
+        });
+        let peers_changed = peer_last_seen.len() != before;
+        if peer_last_seen.is_empty() {
+            observed.peer_height_by_chain.remove(&chain_id);
+        } else {
+            if peers_changed {
+                if let Some(peer_heights) = observed.peer_height_by_chain.get_mut(&chain_id) {
+                    peer_heights.retain(|peer_id, _| peer_last_seen.contains_key(peer_id));
+                    if peer_heights.is_empty() {
+                        observed.peer_height_by_chain.remove(&chain_id);
+                    }
+                }
             }
-            if peer_last_seen.is_empty() {
-                observed.peer_last_seen_millis_by_chain.remove(&chain_id);
-            }
+            observed
+                .peer_last_seen_millis_by_chain
+                .insert(chain_id, peer_last_seen);
         }
     }
 
@@ -323,6 +419,7 @@ fn prune_stale_runtime_peers(chain_id: u64, observed: &mut NetworkRuntimeSyncObs
                 .remove(&chain_id);
         }
     }
+    recompute_runtime_stale_check_deadline(chain_id, observed);
 }
 
 fn recompute_runtime_sync_status_from_observed(
@@ -390,15 +487,22 @@ fn recompute_runtime_sync_status_from_observed(
     }
     let normalized = status.normalized();
     statuses.insert(chain_id, normalized);
+    observed.dirty_chains.remove(&chain_id);
     normalized
 }
 
 pub fn set_network_runtime_sync_status(chain_id: u64, status: NetworkRuntimeSyncStatus) {
     let normalized = status.normalized();
+    let mut changed = true;
     if let Ok(mut guard) = runtime_sync_status_map().lock() {
-        guard.insert(chain_id, normalized);
+        changed = guard.get(&chain_id).copied() != Some(normalized);
+        if changed {
+            guard.insert(chain_id, normalized);
+        }
     }
-    let _ = reconcile_network_runtime_native_sync_status(chain_id);
+    if changed {
+        let _ = reconcile_network_runtime_native_sync_status_for_runtime(chain_id, normalized);
+    }
 }
 
 pub fn set_network_runtime_native_sync_status(
@@ -412,15 +516,24 @@ pub fn set_network_runtime_native_sync_status(
 }
 
 pub fn set_network_runtime_peer_count(chain_id: u64, peer_count: u64) {
+    let mut normalized: Option<NetworkRuntimeSyncStatus> = None;
+    let mut changed = true;
     if let Ok(mut guard) = runtime_sync_status_map().lock() {
         let mut status = guard
             .get(&chain_id)
             .copied()
             .unwrap_or_else(empty_runtime_sync_status);
         status.peer_count = peer_count;
-        guard.insert(chain_id, status.normalized());
+        let next = status.normalized();
+        changed = guard.get(&chain_id).copied() != Some(next);
+        if changed {
+            guard.insert(chain_id, next);
+            normalized = Some(next);
+        }
     }
-    let _ = reconcile_network_runtime_native_sync_status(chain_id);
+    if let Some(next) = normalized.filter(|_| changed) {
+        let _ = reconcile_network_runtime_native_sync_status_for_runtime(chain_id, next);
+    }
 }
 
 pub fn set_network_runtime_block_progress(
@@ -429,6 +542,8 @@ pub fn set_network_runtime_block_progress(
     current_block: u64,
     highest_block: u64,
 ) {
+    let mut normalized: Option<NetworkRuntimeSyncStatus> = None;
+    let mut changed = true;
     if let Ok(mut guard) = runtime_sync_status_map().lock() {
         let mut status = guard
             .get(&chain_id)
@@ -437,9 +552,16 @@ pub fn set_network_runtime_block_progress(
         status.starting_block = starting_block;
         status.current_block = current_block;
         status.highest_block = highest_block;
-        guard.insert(chain_id, status.normalized());
+        let next = status.normalized();
+        changed = guard.get(&chain_id).copied() != Some(next);
+        if changed {
+            guard.insert(chain_id, next);
+            normalized = Some(next);
+        }
     }
-    let _ = reconcile_network_runtime_native_sync_status(chain_id);
+    if let Some(next) = normalized.filter(|_| changed) {
+        let _ = reconcile_network_runtime_native_sync_status_for_runtime(chain_id, next);
+    }
 }
 
 #[must_use]
@@ -450,24 +572,32 @@ pub fn register_network_runtime_peer(
     let mut statuses = runtime_sync_status_map().lock().ok()?;
     let mut observed = runtime_sync_observed_state_map().lock().ok()?;
     let now = now_unix_millis();
-    observed.native_peer_count_by_chain.remove(&chain_id);
-    observed
-        .peer_height_by_chain
-        .entry(chain_id)
-        .or_default()
-        .entry(peer_id)
-        .or_insert(0);
+    let cleared_native_hint = observed
+        .native_peer_count_by_chain
+        .remove(&chain_id)
+        .is_some();
+    let peers = observed.peer_height_by_chain.entry(chain_id).or_default();
+    let peer_was_present = peers.contains_key(&peer_id);
+    peers.entry(peer_id).or_insert(0);
     observed.peer_observed_once_by_chain.insert(chain_id);
     observed
         .peer_last_seen_millis_by_chain
         .entry(chain_id)
         .or_default()
         .insert(peer_id, now);
+    hint_runtime_stale_check_deadline(&mut observed, chain_id, now);
+    if peer_was_present && !cleared_native_hint {
+        let current = statuses.get(&chain_id).copied();
+        drop(observed);
+        drop(statuses);
+        return current;
+    }
+    mark_runtime_sync_observed_dirty(&mut observed, chain_id);
     let recomputed =
         recompute_runtime_sync_status_from_observed(chain_id, &mut statuses, &mut observed);
     drop(observed);
     drop(statuses);
-    let _ = reconcile_network_runtime_native_sync_status(chain_id);
+    let _ = reconcile_network_runtime_native_sync_status_for_runtime(chain_id, recomputed);
     Some(recomputed)
 }
 
@@ -491,11 +621,13 @@ pub fn unregister_network_runtime_peer(
             observed.peer_last_seen_millis_by_chain.remove(&chain_id);
         }
     }
+    observed.next_stale_check_at_by_chain.remove(&chain_id);
+    mark_runtime_sync_observed_dirty(&mut observed, chain_id);
     let recomputed =
         recompute_runtime_sync_status_from_observed(chain_id, &mut statuses, &mut observed);
     drop(observed);
     drop(statuses);
-    let _ = reconcile_network_runtime_native_sync_status(chain_id);
+    let _ = reconcile_network_runtime_native_sync_status_for_runtime(chain_id, recomputed);
     Some(recomputed)
 }
 
@@ -505,10 +637,28 @@ pub fn observe_network_runtime_peer_head(
     peer_id: u64,
     peer_head: u64,
 ) -> Option<NetworkRuntimeSyncStatus> {
+    observe_network_runtime_peer_head_with_local_head_max(chain_id, peer_id, peer_head, None)
+}
+
+#[must_use]
+pub fn observe_network_runtime_peer_head_with_local_head_max(
+    chain_id: u64,
+    peer_id: u64,
+    peer_head: u64,
+    local_head_max: Option<u64>,
+) -> Option<NetworkRuntimeSyncStatus> {
     let mut statuses = runtime_sync_status_map().lock().ok()?;
     let mut observed = runtime_sync_observed_state_map().lock().ok()?;
     let now = now_unix_millis();
-    observed.native_peer_count_by_chain.remove(&chain_id);
+    let cleared_native_hint = observed
+        .native_peer_count_by_chain
+        .remove(&chain_id)
+        .is_some();
+    let previous_peer_head = observed
+        .peer_height_by_chain
+        .get(&chain_id)
+        .and_then(|m| m.get(&peer_id))
+        .copied();
     observed
         .peer_height_by_chain
         .entry(chain_id)
@@ -520,11 +670,37 @@ pub fn observe_network_runtime_peer_head(
         .entry(chain_id)
         .or_default()
         .insert(peer_id, now);
+    hint_runtime_stale_check_deadline(&mut observed, chain_id, now);
+    let peer_changed = previous_peer_head != Some(peer_head);
+    let mut local_changed = false;
+    if let Some(local_head) = local_head_max {
+        let previous_local = observed.local_head_by_chain.get(&chain_id).copied();
+        let merged = observed
+            .local_head_by_chain
+            .get(&chain_id)
+            .copied()
+            .unwrap_or_else(|| {
+                statuses
+                    .get(&chain_id)
+                    .map(|s| s.current_block)
+                    .unwrap_or_default()
+            })
+            .max(local_head);
+        observed.local_head_by_chain.insert(chain_id, merged);
+        local_changed = previous_local != Some(merged);
+    }
+    if !peer_changed && !local_changed && !cleared_native_hint {
+        let current = statuses.get(&chain_id).copied();
+        drop(observed);
+        drop(statuses);
+        return current;
+    }
+    mark_runtime_sync_observed_dirty(&mut observed, chain_id);
     let recomputed =
         recompute_runtime_sync_status_from_observed(chain_id, &mut statuses, &mut observed);
     drop(observed);
     drop(statuses);
-    let _ = reconcile_network_runtime_native_sync_status(chain_id);
+    let _ = reconcile_network_runtime_native_sync_status_for_runtime(chain_id, recomputed);
     Some(recomputed)
 }
 
@@ -535,12 +711,21 @@ pub fn observe_network_runtime_local_head(
 ) -> Option<NetworkRuntimeSyncStatus> {
     let mut statuses = runtime_sync_status_map().lock().ok()?;
     let mut observed = runtime_sync_observed_state_map().lock().ok()?;
-    observed.local_head_by_chain.insert(chain_id, local_head);
+    let previous_local = observed.local_head_by_chain.insert(chain_id, local_head);
+    if previous_local == Some(local_head)
+        && !runtime_sync_recompute_due(chain_id, &statuses, &observed, true)
+    {
+        let current = statuses.get(&chain_id).copied();
+        drop(observed);
+        drop(statuses);
+        return current;
+    }
+    mark_runtime_sync_observed_dirty(&mut observed, chain_id);
     let recomputed =
         recompute_runtime_sync_status_from_observed(chain_id, &mut statuses, &mut observed);
     drop(observed);
     drop(statuses);
-    let _ = reconcile_network_runtime_native_sync_status(chain_id);
+    let _ = reconcile_network_runtime_native_sync_status_for_runtime(chain_id, recomputed);
     Some(recomputed)
 }
 
@@ -552,25 +737,39 @@ pub fn ingest_network_runtime_native_sync_snapshot(
     let mut statuses = runtime_sync_status_map().lock().ok()?;
     let mut observed = runtime_sync_observed_state_map().lock().ok()?;
     let now = now_unix_millis();
-    observed
+    let next_remote_best = snapshot.highest_head.max(snapshot.local_head);
+    let previous_local = observed
         .local_head_by_chain
         .insert(chain_id, snapshot.local_head);
-    observed
+    let previous_peer_count = observed
         .native_peer_count_by_chain
         .insert(chain_id, snapshot.peer_count);
-    observed
+    let previous_remote_best = observed
         .native_remote_best_by_chain
-        .insert(chain_id, snapshot.highest_head.max(snapshot.local_head));
+        .insert(chain_id, next_remote_best);
+    let observed_once_before = observed.peer_observed_once_by_chain.contains(&chain_id);
     observed
         .native_snapshot_updated_at_by_chain
         .insert(chain_id, now);
+    hint_runtime_stale_check_deadline(&mut observed, chain_id, now);
     observed.peer_observed_once_by_chain.insert(chain_id);
+    let snapshot_changed = previous_local != Some(snapshot.local_head)
+        || previous_peer_count != Some(snapshot.peer_count)
+        || previous_remote_best != Some(next_remote_best)
+        || !observed_once_before;
+    if !snapshot_changed && !runtime_sync_recompute_due(chain_id, &statuses, &observed, true) {
+        let current = statuses.get(&chain_id).copied();
+        drop(observed);
+        drop(statuses);
+        return current;
+    }
+    mark_runtime_sync_observed_dirty(&mut observed, chain_id);
     let recomputed =
         recompute_runtime_sync_status_from_observed(chain_id, &mut statuses, &mut observed);
     drop(observed);
     drop(statuses);
 
-    let _ = reconcile_network_runtime_native_sync_status(chain_id);
+    let _ = reconcile_network_runtime_native_sync_status_for_runtime(chain_id, recomputed);
 
     Some(recomputed)
 }
@@ -582,7 +781,7 @@ pub fn observe_network_runtime_local_head_max(
 ) -> Option<NetworkRuntimeSyncStatus> {
     let mut statuses = runtime_sync_status_map().lock().ok()?;
     let mut observed = runtime_sync_observed_state_map().lock().ok()?;
-    let merged = observed
+    let previous_local = observed
         .local_head_by_chain
         .get(&chain_id)
         .copied()
@@ -591,14 +790,22 @@ pub fn observe_network_runtime_local_head_max(
                 .get(&chain_id)
                 .map(|s| s.current_block)
                 .unwrap_or_default()
-        })
-        .max(local_head);
+        });
+    let merged = previous_local.max(local_head);
     observed.local_head_by_chain.insert(chain_id, merged);
+    if merged == previous_local && !runtime_sync_recompute_due(chain_id, &statuses, &observed, true)
+    {
+        let current = statuses.get(&chain_id).copied();
+        drop(observed);
+        drop(statuses);
+        return current;
+    }
+    mark_runtime_sync_observed_dirty(&mut observed, chain_id);
     let recomputed =
         recompute_runtime_sync_status_from_observed(chain_id, &mut statuses, &mut observed);
     drop(observed);
     drop(statuses);
-    let _ = reconcile_network_runtime_native_sync_status(chain_id);
+    let _ = reconcile_network_runtime_native_sync_status_for_runtime(chain_id, recomputed);
     Some(recomputed)
 }
 
@@ -612,6 +819,9 @@ pub fn get_network_runtime_sync_status(chain_id: u64) -> Option<NetworkRuntimeSy
         return None;
     }
     if !has_observed {
+        return statuses.get(&chain_id).copied();
+    }
+    if !runtime_sync_recompute_due(chain_id, &statuses, &observed, has_observed) {
         return statuses.get(&chain_id).copied();
     }
     Some(recompute_runtime_sync_status_from_observed(
@@ -639,14 +849,110 @@ pub fn get_network_runtime_peer_heads(chain_id: u64) -> Vec<(u64, u64)> {
         Ok(guard) => guard,
         Err(_) => return Vec::new(),
     };
-    let _ = recompute_runtime_sync_status_from_observed(chain_id, &mut statuses, &mut observed);
+    let has_observed_peers = observed
+        .peer_height_by_chain
+        .get(&chain_id)
+        .map(|m| !m.is_empty())
+        .unwrap_or(false);
+    if !has_observed_peers {
+        return Vec::new();
+    }
+    if runtime_sync_recompute_due(chain_id, &statuses, &observed, true) {
+        let _ = recompute_runtime_sync_status_from_observed(chain_id, &mut statuses, &mut observed);
+    }
     let mut out = observed
         .peer_height_by_chain
         .get(&chain_id)
         .map(|m| m.iter().map(|(peer_id, head)| (*peer_id, *head)).collect())
         .unwrap_or_else(Vec::new);
-    out.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    if out.len() > 1 {
+        out.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    }
     out
+}
+
+#[inline]
+fn runtime_peer_head_better(lhs: (u64, u64), rhs: (u64, u64)) -> bool {
+    lhs.1 > rhs.1 || (lhs.1 == rhs.1 && lhs.0 < rhs.0)
+}
+
+#[must_use]
+pub fn get_network_runtime_peer_heads_top_k(chain_id: u64, k: usize) -> Vec<(u64, u64)> {
+    if k == 0 {
+        return Vec::new();
+    }
+    let mut statuses = match runtime_sync_status_map().lock() {
+        Ok(guard) => guard,
+        Err(_) => return Vec::new(),
+    };
+    let mut observed = match runtime_sync_observed_state_map().lock() {
+        Ok(guard) => guard,
+        Err(_) => return Vec::new(),
+    };
+    let has_observed_peers = observed
+        .peer_height_by_chain
+        .get(&chain_id)
+        .map(|m| !m.is_empty())
+        .unwrap_or(false);
+    if !has_observed_peers {
+        return Vec::new();
+    }
+    if runtime_sync_recompute_due(chain_id, &statuses, &observed, true) {
+        let _ = recompute_runtime_sync_status_from_observed(chain_id, &mut statuses, &mut observed);
+    }
+    let Some(peer_map) = observed.peer_height_by_chain.get(&chain_id) else {
+        return Vec::new();
+    };
+    if peer_map.is_empty() {
+        return Vec::new();
+    }
+    if k == 1 {
+        if let Some((peer_id, head)) =
+            peer_map
+                .iter()
+                .max_by(|(peer_id_a, head_a), (peer_id_b, head_b)| {
+                    head_a.cmp(head_b).then_with(|| peer_id_b.cmp(peer_id_a))
+                })
+        {
+            return vec![(*peer_id, *head)];
+        }
+        return Vec::new();
+    }
+    if k >= peer_map.len() {
+        let mut out: Vec<(u64, u64)> = peer_map
+            .iter()
+            .map(|(peer_id, head)| (*peer_id, *head))
+            .collect();
+        if out.len() > 1 {
+            out.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+        }
+        return out;
+    }
+
+    let mut top = Vec::<(u64, u64)>::with_capacity(k);
+    for (peer_id, head) in peer_map {
+        let entry = (*peer_id, *head);
+        if top.len() == k {
+            let worst = *top.last().unwrap_or(&entry);
+            if !runtime_peer_head_better(entry, worst) {
+                continue;
+            }
+        }
+        let insert_at = top
+            .iter()
+            .position(|existing| runtime_peer_head_better(entry, *existing));
+        if top.len() < k {
+            if let Some(idx) = insert_at {
+                top.insert(idx, entry);
+            } else {
+                top.push(entry);
+            }
+        } else if let Some(idx) = insert_at {
+            top.insert(idx, entry);
+            top.truncate(k);
+        }
+    }
+    top
 }
 
 #[must_use]
@@ -743,6 +1049,8 @@ mod tests {
             observed
                 .native_snapshot_updated_at_by_chain
                 .remove(&chain_id);
+            observed.next_stale_check_at_by_chain.remove(&chain_id);
+            observed.dirty_chains.remove(&chain_id);
             observed.sync_anchor_by_chain.remove(&chain_id);
         }
     }
@@ -860,6 +1168,7 @@ mod tests {
                 .entry(chain_id)
                 .or_default()
                 .insert(42, 0);
+            observed.next_stale_check_at_by_chain.insert(chain_id, 0);
         }
 
         observe_network_runtime_local_head(chain_id, 10).expect("trigger recompute");
@@ -883,6 +1192,7 @@ mod tests {
                 .entry(chain_id)
                 .or_default()
                 .insert(7, 0);
+            observed.next_stale_check_at_by_chain.insert(chain_id, 0);
         }
 
         let status = get_network_runtime_sync_status(chain_id).expect("status on read");
@@ -1127,6 +1437,7 @@ mod tests {
             observed
                 .native_snapshot_updated_at_by_chain
                 .insert(chain_id, 0);
+            observed.next_stale_check_at_by_chain.insert(chain_id, 0);
         }
 
         observe_network_runtime_local_head(chain_id, 50).expect("trigger recompute");
@@ -1232,5 +1543,31 @@ mod tests {
         let heads = get_network_runtime_peer_heads(chain_id);
         assert_eq!(heads.first().copied(), Some((102, 144)));
         assert!(heads.iter().any(|(peer, head)| *peer == 101 && *head == 88));
+    }
+
+    #[test]
+    fn runtime_peer_heads_top_k_returns_expected_order() {
+        let chain_id = 2041_u64;
+        clear_runtime_sync_status_for_test(chain_id);
+
+        register_network_runtime_peer(chain_id, 201).expect("register peer 201");
+        register_network_runtime_peer(chain_id, 202).expect("register peer 202");
+        register_network_runtime_peer(chain_id, 203).expect("register peer 203");
+        register_network_runtime_peer(chain_id, 204).expect("register peer 204");
+
+        observe_network_runtime_peer_head(chain_id, 201, 300).expect("observe 201");
+        observe_network_runtime_peer_head(chain_id, 202, 500).expect("observe 202");
+        observe_network_runtime_peer_head(chain_id, 203, 500).expect("observe 203");
+        observe_network_runtime_peer_head(chain_id, 204, 100).expect("observe 204");
+
+        let top_2 = get_network_runtime_peer_heads_top_k(chain_id, 2);
+        assert_eq!(top_2.len(), 2);
+        assert_eq!(top_2[0], (202, 500));
+        assert_eq!(top_2[1], (203, 500));
+
+        let top_all = get_network_runtime_peer_heads_top_k(chain_id, usize::MAX);
+        assert_eq!(top_all.first().copied(), Some((202, 500)));
+        assert_eq!(top_all.get(1).copied(), Some((203, 500)));
+        assert_eq!(top_all.last().copied(), Some((204, 100)));
     }
 }

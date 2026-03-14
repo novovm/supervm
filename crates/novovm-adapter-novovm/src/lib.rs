@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 
-use anyhow::{bail, Result};
+use anyhow::{anyhow, bail, Result};
+use dashmap::DashSet;
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use novovm_adapter_api::{
     AccountRole, AccountState, BlockIR, ChainAdapter, ChainConfig, ChainType, PersonaAddress,
@@ -9,6 +10,7 @@ use novovm_adapter_api::{
 };
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
+use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 use web30_core::privacy::verify_ring_signature;
 use web30_core::types::{
@@ -28,17 +30,33 @@ pub struct NovoVmAdapter {
     initialized: bool,
     state: StateIR,
     kv: HashMap<Vec<u8>, Vec<u8>>,
+    state_root_cache: Mutex<StateRootCache>,
+    verified_tx_cache: DashSet<Vec<u8>>,
     unified_account_router: UnifiedAccountRouter,
+}
+
+#[derive(Debug)]
+struct StateRootCache {
+    root: Vec<u8>,
+    dirty: bool,
 }
 
 impl NovoVmAdapter {
     #[must_use]
     pub fn new(config: ChainConfig) -> Self {
+        let state = StateIR::new();
+        let kv = HashMap::new();
+        let state_root = Self::compute_state_root(&state, &kv);
         Self {
             config,
             initialized: false,
-            state: StateIR::new(),
-            kv: HashMap::new(),
+            state,
+            kv,
+            state_root_cache: Mutex::new(StateRootCache {
+                root: state_root,
+                dirty: false,
+            }),
+            verified_tx_cache: DashSet::new(),
             unified_account_router: UnifiedAccountRouter::new(),
         }
     }
@@ -468,6 +486,14 @@ impl NovoVmAdapter {
 
         hasher.finalize().to_vec()
     }
+
+    fn mark_state_root_dirty_and_snapshot_last(&self) -> Vec<u8> {
+        if let Ok(mut cache) = self.state_root_cache.lock() {
+            cache.dirty = true;
+            return cache.root.clone();
+        }
+        vec![0u8; 32]
+    }
 }
 
 fn tx_type_tag(tx_type: TxType) -> u8 {
@@ -713,6 +739,7 @@ impl ChainAdapter for NovoVmAdapter {
     fn shutdown(&mut self) -> Result<()> {
         self.ensure_initialized()?;
         self.initialized = false;
+        self.verified_tx_cache.clear();
         Ok(())
     }
 
@@ -758,12 +785,18 @@ impl ChainAdapter for NovoVmAdapter {
         if !signature_ok {
             return Ok(false);
         }
+        self.verified_tx_cache.insert(tx.hash.clone());
         Ok(true)
     }
 
     fn execute_transaction(&mut self, tx: &TxIR, state: &mut StateIR) -> Result<()> {
         self.ensure_initialized()?;
-        if !self.verify_transaction(tx)? {
+        let already_verified = if tx.hash.is_empty() {
+            false
+        } else {
+            self.verified_tx_cache.remove(&tx.hash).is_some()
+        };
+        if !already_verified && !self.verify_transaction(tx)? {
             bail!("transaction verification failed");
         }
         self.route_transaction_through_unified_account(tx)?;
@@ -786,9 +819,9 @@ impl ChainAdapter for NovoVmAdapter {
             }
             _ => bail!("unsupported tx_type for native adapter: {:?}", tx.tx_type),
         }
-        let root = Self::compute_state_root(state, &self.kv);
-        state.state_root = root.clone();
-        self.state.state_root = root;
+        let last_root = self.mark_state_root_dirty_and_snapshot_last();
+        state.state_root = last_root.clone();
+        self.state.state_root = last_root;
         Ok(())
     }
 
@@ -834,18 +867,37 @@ impl ChainAdapter for NovoVmAdapter {
     fn write_state(&mut self, key: &[u8], value: Vec<u8>) -> Result<()> {
         self.ensure_initialized()?;
         self.kv.insert(key.to_vec(), value);
+        let _ = self.mark_state_root_dirty_and_snapshot_last();
         Ok(())
     }
 
     fn delete_state(&mut self, key: &[u8]) -> Result<()> {
         self.ensure_initialized()?;
         self.kv.remove(key);
+        let _ = self.mark_state_root_dirty_and_snapshot_last();
         Ok(())
     }
 
     fn state_root(&self) -> Result<Vec<u8>> {
         self.ensure_initialized()?;
-        Ok(Self::compute_state_root(&self.state, &self.kv))
+        {
+            let cache = self
+                .state_root_cache
+                .lock()
+                .map_err(|_| anyhow!("state_root cache mutex poisoned"))?;
+            if !cache.dirty {
+                return Ok(cache.root.clone());
+            }
+        }
+
+        let root = Self::compute_state_root(&self.state, &self.kv);
+        let mut cache = self
+            .state_root_cache
+            .lock()
+            .map_err(|_| anyhow!("state_root cache mutex poisoned"))?;
+        cache.root = root.clone();
+        cache.dirty = false;
+        Ok(root)
     }
 
     fn get_balance(&self, address: &[u8]) -> Result<u128> {

@@ -118,6 +118,7 @@ const GATEWAY_EVM_RUNTIME_DRAIN_MAX: usize = 256;
 const GATEWAY_EVM_ATOMIC_BROADCAST_EXEC_RETRY_DEFAULT: u64 = 1;
 const GATEWAY_EVM_ATOMIC_BROADCAST_EXEC_TIMEOUT_MS_DEFAULT: u64 = 5_000;
 const GATEWAY_EVM_ATOMIC_BROADCAST_EXEC_RETRY_BACKOFF_MS_DEFAULT: u64 = 25;
+const GATEWAY_BATCH_WORKERS_DEFAULT_MAX: usize = 8;
 const GATEWAY_EVM_ATOMIC_BROADCAST_EXEC_BATCH_DEFAULT: u64 = 64;
 const GATEWAY_EVM_ATOMIC_BROADCAST_EXEC_BATCH_HARD_MAX: u64 = 1024;
 const GATEWAY_ETH_PUBLIC_BROADCAST_EXEC_RETRY_DEFAULT: u64 = 1;
@@ -689,6 +690,1607 @@ fn atomic_reject_reasons_csv(receipts: &[AtomicIntentReceiptV1]) -> String {
     } else {
         reasons.join(",")
     }
+}
+
+fn gateway_batch_worker_count(batch_len: usize) -> usize {
+    if batch_len <= 1 {
+        return 1;
+    }
+    let configured = std::env::var("NOVOVM_GATEWAY_BATCH_WORKERS")
+        .ok()
+        .and_then(|raw| raw.trim().parse::<usize>().ok())
+        .unwrap_or(0);
+    let auto = std::thread::available_parallelism()
+        .map(|v| v.get())
+        .unwrap_or(1)
+        .clamp(1, GATEWAY_BATCH_WORKERS_DEFAULT_MAX);
+    let workers = if configured == 0 { auto } else { configured };
+    workers.clamp(1, batch_len)
+}
+
+fn gateway_eth_public_broadcast_status_item_json(
+    eth_tx_index: &HashMap<[u8; 32], GatewayEthTxIndexEntry>,
+    eth_tx_index_store: &GatewayEthTxIndexStoreBackend,
+    tx_hash: [u8; 32],
+    chain_hint: Option<u64>,
+) -> serde_json::Value {
+    let mut chain_id: Option<u64> = None;
+    let mut known = false;
+    if let Some(entry) = eth_tx_index.get(&tx_hash) {
+        chain_id = Some(entry.chain_id);
+        known = true;
+    } else if let Ok(Some(entry)) = eth_tx_index_store.load_eth_tx(&tx_hash) {
+        chain_id = Some(entry.chain_id);
+        known = true;
+    } else if let Some(tx) = find_gateway_eth_runtime_tx_by_hash(tx_hash, chain_hint) {
+        let runtime_entry = gateway_eth_tx_index_entry_from_ir(tx);
+        chain_id = Some(runtime_entry.chain_id);
+        known = true;
+    }
+    if let (Some(actual_chain_id), Some(chain_hint)) = (chain_id, chain_hint) {
+        if actual_chain_id != chain_hint {
+            return serde_json::json!({
+                "known": false,
+                "tx_hash": format!("0x{}", to_hex(&tx_hash)),
+                "chain_id": format!("0x{:x}", actual_chain_id),
+                "has_status": false,
+                "broadcast": serde_json::Value::Null,
+            });
+        }
+    }
+    let broadcast = gateway_eth_broadcast_status_json_by_tx(eth_tx_index_store, &tx_hash);
+    serde_json::json!({
+        "known": known,
+        "tx_hash": format!("0x{}", to_hex(&tx_hash)),
+        "chain_id": chain_id.map(|v| format!("0x{:x}", v)),
+        "has_status": !broadcast.is_null(),
+        "broadcast": broadcast,
+    })
+}
+
+fn gateway_eth_tx_by_hash_item_json(
+    eth_tx_index: &HashMap<[u8; 32], GatewayEthTxIndexEntry>,
+    eth_tx_index_store: &GatewayEthTxIndexStoreBackend,
+    tx_hash: [u8; 32],
+    chain_hint: Option<u64>,
+) -> Result<(serde_json::Value, Option<GatewayEthTxIndexEntry>)> {
+    if let Some(entry) = eth_tx_index.get(&tx_hash) {
+        if chain_hint.is_some_and(|chain_id| entry.chain_id != chain_id) {
+            return Ok((serde_json::Value::Null, None));
+        }
+        return Ok((
+            gateway_eth_tx_by_hash_query_json(entry, eth_tx_index, eth_tx_index_store)?,
+            None,
+        ));
+    }
+    if let Some(entry) = eth_tx_index_store.load_eth_tx(&tx_hash)? {
+        if chain_hint.is_some_and(|chain_id| entry.chain_id != chain_id) {
+            return Ok((serde_json::Value::Null, None));
+        }
+        return Ok((
+            gateway_eth_tx_by_hash_query_json(&entry, eth_tx_index, eth_tx_index_store)?,
+            Some(entry),
+        ));
+    }
+    if let Some(tx) = find_gateway_eth_runtime_tx_by_hash(tx_hash, chain_hint) {
+        let pending_entry = gateway_eth_tx_index_entry_from_ir(tx);
+        let chain_entries = collect_gateway_eth_chain_entries(
+            eth_tx_index,
+            eth_tx_index_store,
+            pending_entry.chain_id,
+            gateway_eth_query_scan_max(),
+        )?;
+        let latest_block_number = resolve_gateway_eth_latest_block_number(
+            pending_entry.chain_id,
+            &chain_entries,
+            eth_tx_index_store,
+        )?;
+        let mut pending_view_index = eth_tx_index.clone();
+        if let Some((pending_block_number, pending_block_hash, pending_entries)) =
+            resolve_gateway_eth_pending_block_for_runtime_view(
+                pending_entry.chain_id,
+                latest_block_number,
+                &mut pending_view_index,
+                eth_tx_index_store,
+            )?
+        {
+            if let Some(tx_index) = pending_entries
+                .iter()
+                .position(|entry| entry.tx_hash == tx_hash)
+            {
+                return Ok((
+                    gateway_eth_tx_pending_with_block_json(
+                        &pending_entries[tx_index],
+                        pending_block_number,
+                        tx_index,
+                        &pending_block_hash,
+                    ),
+                    None,
+                ));
+            }
+        }
+        return Ok((gateway_eth_tx_by_hash_json(&pending_entry), None));
+    }
+    Ok((serde_json::Value::Null, None))
+}
+
+fn gateway_eth_tx_receipt_item_json(
+    eth_tx_index: &HashMap<[u8; 32], GatewayEthTxIndexEntry>,
+    eth_tx_index_store: &GatewayEthTxIndexStoreBackend,
+    tx_hash: [u8; 32],
+    chain_hint: Option<u64>,
+) -> Result<(serde_json::Value, Option<GatewayEthTxIndexEntry>)> {
+    if let Some(entry) = eth_tx_index.get(&tx_hash) {
+        if chain_hint.is_some_and(|chain_id| entry.chain_id != chain_id) {
+            return Ok((serde_json::Value::Null, None));
+        }
+        return Ok((
+            gateway_eth_tx_receipt_query_json(entry, eth_tx_index, eth_tx_index_store)?,
+            None,
+        ));
+    }
+    if let Some(entry) = eth_tx_index_store.load_eth_tx(&tx_hash)? {
+        if chain_hint.is_some_and(|chain_id| entry.chain_id != chain_id) {
+            return Ok((serde_json::Value::Null, None));
+        }
+        return Ok((
+            gateway_eth_tx_receipt_query_json(&entry, eth_tx_index, eth_tx_index_store)?,
+            Some(entry),
+        ));
+    }
+    if let Some(tx) = find_gateway_eth_runtime_tx_by_hash(tx_hash, chain_hint) {
+        let pending_entry = gateway_eth_tx_index_entry_from_ir(tx);
+        let chain_entries = collect_gateway_eth_chain_entries(
+            eth_tx_index,
+            eth_tx_index_store,
+            pending_entry.chain_id,
+            gateway_eth_query_scan_max(),
+        )?;
+        let latest_block_number = resolve_gateway_eth_latest_block_number(
+            pending_entry.chain_id,
+            &chain_entries,
+            eth_tx_index_store,
+        )?;
+        let mut pending_view_index = eth_tx_index.clone();
+        if let Some((pending_block_number, pending_block_hash, pending_entries)) =
+            resolve_gateway_eth_pending_block_for_runtime_view(
+                pending_entry.chain_id,
+                latest_block_number,
+                &mut pending_view_index,
+                eth_tx_index_store,
+            )?
+        {
+            if let Some(receipt) = gateway_eth_tx_receipt_pending_query_json_by_hash(
+                pending_block_number,
+                &pending_block_hash,
+                &pending_entries,
+                &tx_hash,
+            ) {
+                return Ok((receipt, None));
+            }
+        }
+        return Ok((gateway_eth_tx_receipt_json(&pending_entry), None));
+    }
+    Ok((serde_json::Value::Null, None))
+}
+
+fn gateway_eth_replay_public_broadcast_item_json(
+    eth_tx_index: &HashMap<[u8; 32], GatewayEthTxIndexEntry>,
+    eth_tx_index_store: &GatewayEthTxIndexStoreBackend,
+    tx_hash_raw: &str,
+    chain_hint: Option<u64>,
+) -> Result<(serde_json::Value, Option<GatewayEthTxIndexEntry>)> {
+    let tx_hash_bytes = decode_hex_bytes(tx_hash_raw, "tx_hash")?;
+    let tx_hash = vec_to_32(&tx_hash_bytes, "tx_hash")?;
+
+    let mut cache_entry = None;
+    let mut entry = eth_tx_index.get(&tx_hash).cloned();
+    if entry.is_none() {
+        entry = eth_tx_index_store.load_eth_tx(&tx_hash)?;
+        if let Some(cached) = entry.as_ref() {
+            cache_entry = Some(cached.clone());
+        }
+    }
+    if entry.is_none() {
+        if let Some(tx) = find_gateway_eth_runtime_tx_by_hash(tx_hash, chain_hint) {
+            entry = Some(gateway_eth_tx_index_entry_from_ir(tx));
+        }
+    }
+    let Some(entry) = entry else {
+        return Ok((serde_json::Value::Null, cache_entry));
+    };
+    if chain_hint.is_some_and(|chain_id| entry.chain_id != chain_id) {
+        return Ok((serde_json::Value::Null, cache_entry));
+    }
+
+    let tx_ir = gateway_eth_tx_ir_from_index_entry(&entry);
+    let tx_ir_bincode = tx_ir
+        .serialize(SerializationFormat::Bincode)
+        .context("serialize eth tx ir bincode for replay public broadcast failed")?;
+    let broadcast_result = maybe_execute_gateway_eth_public_broadcast(
+        entry.chain_id,
+        &entry.tx_hash,
+        GatewayEthPublicBroadcastPayload {
+            raw_tx: None,
+            tx_ir_bincode: Some(tx_ir_bincode.as_slice()),
+        },
+        true,
+    )?;
+    upsert_gateway_eth_broadcast_status(
+        eth_tx_index_store,
+        entry.chain_id,
+        entry.tx_hash,
+        &broadcast_result,
+    );
+    let broadcast_json = match broadcast_result {
+        Some((output, attempts, executor)) => serde_json::json!({
+            "mode": "external",
+            "attempts": attempts,
+            "executor": executor,
+            "executor_output": output,
+        }),
+        None => serde_json::json!({
+            "mode": "none",
+        }),
+    };
+    Ok((
+        serde_json::json!({
+            "replayed": true,
+            "tx_hash": format!("0x{}", to_hex(&entry.tx_hash)),
+            "chain_id": format!("0x{:x}", entry.chain_id),
+            "broadcast": broadcast_json,
+        }),
+        cache_entry,
+    ))
+}
+
+fn gateway_eth_tx_lifecycle_item_json(
+    eth_tx_index: &HashMap<[u8; 32], GatewayEthTxIndexEntry>,
+    eth_tx_index_store: &GatewayEthTxIndexStoreBackend,
+    tx_hash: [u8; 32],
+    chain_hint: Option<u64>,
+) -> Result<(serde_json::Value, Option<GatewayEthTxIndexEntry>)> {
+    let broadcast = gateway_eth_broadcast_status_json_by_tx(eth_tx_index_store, &tx_hash);
+
+    if let Some(tx) = find_gateway_eth_runtime_tx_by_hash(tx_hash, chain_hint) {
+        let pending_entry = gateway_eth_tx_index_entry_from_ir(tx);
+        let chain_entries = collect_gateway_eth_chain_entries(
+            eth_tx_index,
+            eth_tx_index_store,
+            pending_entry.chain_id,
+            gateway_eth_query_scan_max(),
+        )?;
+        let latest_block_number = resolve_gateway_eth_latest_block_number(
+            pending_entry.chain_id,
+            &chain_entries,
+            eth_tx_index_store,
+        )?;
+        let mut pending_view_index = eth_tx_index.clone();
+        let receipt = if let Some((pending_block_number, pending_block_hash, pending_entries)) =
+            resolve_gateway_eth_pending_block_for_runtime_view(
+                pending_entry.chain_id,
+                latest_block_number,
+                &mut pending_view_index,
+                eth_tx_index_store,
+            )? {
+            gateway_eth_tx_receipt_pending_query_json_by_hash(
+                pending_block_number,
+                &pending_block_hash,
+                &pending_entries,
+                &tx_hash,
+            )
+            .unwrap_or_else(|| gateway_eth_tx_receipt_json(&pending_entry))
+        } else {
+            gateway_eth_tx_receipt_json(&pending_entry)
+        };
+        persist_gateway_eth_submit_success_status(
+            eth_tx_index_store,
+            tx_hash,
+            pending_entry.chain_id,
+            true,
+            false,
+        );
+        return Ok((
+            serde_json::json!({
+                "accepted": true,
+                "pending": true,
+                "onchain": false,
+                "stage": "pending",
+                "terminal": false,
+                "failed": false,
+                "tx_hash": format!("0x{}", to_hex(&tx_hash)),
+                "chain_id": format!("0x{:x}", pending_entry.chain_id),
+                "receipt_pending": receipt.get("pending").cloned().unwrap_or(serde_json::Value::Null),
+                "receipt_status": receipt.get("status").cloned().unwrap_or(serde_json::Value::Null),
+                "broadcast_mode": broadcast.get("mode").cloned().unwrap_or(serde_json::Value::Null),
+                "receipt": receipt,
+                "broadcast": broadcast,
+                "error_code": serde_json::Value::Null,
+                "error_reason": serde_json::Value::Null,
+            }),
+            None,
+        ));
+    }
+
+    let mut cache_entry = None;
+    let mut entry = eth_tx_index.get(&tx_hash).cloned();
+    if entry.is_none() {
+        entry = eth_tx_index_store.load_eth_tx(&tx_hash)?;
+        if let Some(cached) = entry.as_ref() {
+            cache_entry = Some(cached.clone());
+        }
+    }
+    let submit_status = gateway_eth_submit_status_by_tx(eth_tx_index_store, &tx_hash);
+    let Some(entry) = entry else {
+        if let Some(status) = submit_status {
+            if chain_hint
+                .zip(status.chain_id)
+                .is_some_and(|(hint, status_chain)| hint != status_chain)
+            {
+                return Ok((
+                    serde_json::json!({
+                        "accepted": false,
+                        "pending": false,
+                        "onchain": false,
+                        "stage": "rejected",
+                        "terminal": true,
+                        "failed": true,
+                        "tx_hash": format!("0x{}", to_hex(&tx_hash)),
+                        "chain_id": status.chain_id.map(|value| format!("0x{:x}", value)),
+                        "receipt_pending": serde_json::Value::Null,
+                        "receipt_status": serde_json::Value::Null,
+                        "broadcast_mode": broadcast.get("mode").cloned().unwrap_or(serde_json::Value::Null),
+                        "receipt": serde_json::Value::Null,
+                        "broadcast": broadcast,
+                        "error_code": "CHAIN_MISMATCH",
+                        "error_reason": "transaction exists but chain_id mismatch",
+                        "updated_at_unix_ms": status.updated_at_unix_ms,
+                    }),
+                    cache_entry,
+                ));
+            }
+            let stage = if status.pending {
+                "pending"
+            } else if status.onchain && status.error_code.as_deref() == Some("ONCHAIN_FAILED") {
+                "onchain_failed"
+            } else if status.onchain {
+                "onchain"
+            } else if status.accepted {
+                "accepted"
+            } else if status.error_code.is_some() {
+                "failed"
+            } else {
+                "rejected"
+            };
+            let terminal = !matches!(stage, "pending" | "accepted");
+            let failed = matches!(stage, "onchain_failed" | "failed" | "rejected");
+            let (error_code, error_reason) = if failed {
+                let fallback_code = if stage == "onchain_failed" {
+                    "ONCHAIN_FAILED"
+                } else if stage == "failed" {
+                    "SUBMIT_FAILED"
+                } else {
+                    "SUBMIT_REJECTED"
+                };
+                let fallback_reason = if stage == "onchain_failed" {
+                    "transaction failed onchain"
+                } else if stage == "failed" {
+                    "submit failed"
+                } else {
+                    "submit rejected"
+                };
+                (
+                    status
+                        .error_code
+                        .clone()
+                        .unwrap_or_else(|| fallback_code.to_string()),
+                    status
+                        .error_reason
+                        .clone()
+                        .unwrap_or_else(|| fallback_reason.to_string()),
+                )
+            } else {
+                (String::new(), String::new())
+            };
+            return Ok((
+                serde_json::json!({
+                    "accepted": status.accepted,
+                    "pending": status.pending,
+                    "onchain": status.onchain,
+                    "stage": stage,
+                    "terminal": terminal,
+                    "failed": failed,
+                    "tx_hash": format!("0x{}", to_hex(&tx_hash)),
+                    "chain_id": status.chain_id.map(|value| format!("0x{:x}", value)),
+                    "receipt_pending": serde_json::Value::Null,
+                    "receipt_status": serde_json::Value::Null,
+                    "broadcast_mode": broadcast.get("mode").cloned().unwrap_or(serde_json::Value::Null),
+                    "receipt": serde_json::Value::Null,
+                    "broadcast": broadcast,
+                    "error_code": if failed { serde_json::Value::String(error_code) } else { serde_json::Value::Null },
+                    "error_reason": if failed { serde_json::Value::String(error_reason) } else { serde_json::Value::Null },
+                    "updated_at_unix_ms": status.updated_at_unix_ms,
+                }),
+                cache_entry,
+            ));
+        }
+        return Ok((
+            serde_json::json!({
+                "accepted": false,
+                "pending": false,
+                "onchain": false,
+                "stage": "not_found",
+                "terminal": true,
+                "failed": true,
+                "tx_hash": format!("0x{}", to_hex(&tx_hash)),
+                "chain_id": serde_json::Value::Null,
+                "receipt_pending": serde_json::Value::Null,
+                "receipt_status": serde_json::Value::Null,
+                "broadcast_mode": broadcast.get("mode").cloned().unwrap_or(serde_json::Value::Null),
+                "receipt": serde_json::Value::Null,
+                "broadcast": broadcast,
+                "error_code": "TX_NOT_FOUND",
+                "error_reason": "transaction not found",
+            }),
+            cache_entry,
+        ));
+    };
+    if chain_hint.is_some_and(|chain_id| entry.chain_id != chain_id) {
+        return Ok((
+            serde_json::json!({
+                "accepted": false,
+                "pending": false,
+                "onchain": false,
+                "stage": "rejected",
+                "terminal": true,
+                "failed": true,
+                "tx_hash": format!("0x{}", to_hex(&tx_hash)),
+                "chain_id": format!("0x{:x}", entry.chain_id),
+                "receipt_pending": serde_json::Value::Null,
+                "receipt_status": serde_json::Value::Null,
+                "broadcast_mode": broadcast.get("mode").cloned().unwrap_or(serde_json::Value::Null),
+                "receipt": serde_json::Value::Null,
+                "broadcast": broadcast,
+                "error_code": "CHAIN_MISMATCH",
+                "error_reason": "transaction exists but chain_id mismatch",
+            }),
+            cache_entry,
+        ));
+    }
+    let receipt = gateway_eth_tx_receipt_query_json(&entry, eth_tx_index, eth_tx_index_store)?;
+    let pending = receipt
+        .get("pending")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false);
+    let stage = if pending {
+        "pending"
+    } else if receipt.get("status").and_then(serde_json::Value::as_str) == Some("0x0") {
+        "onchain_failed"
+    } else {
+        "onchain"
+    };
+    let failed = stage == "onchain_failed";
+    if pending {
+        persist_gateway_eth_submit_success_status(
+            eth_tx_index_store,
+            tx_hash,
+            entry.chain_id,
+            true,
+            false,
+        );
+    } else {
+        persist_gateway_eth_submit_onchain_status(
+            eth_tx_index_store,
+            tx_hash,
+            entry.chain_id,
+            failed,
+        );
+    }
+    Ok((
+        serde_json::json!({
+            "accepted": true,
+            "pending": pending,
+            "onchain": !pending,
+            "stage": stage,
+            "terminal": !pending,
+            "failed": failed,
+            "tx_hash": format!("0x{}", to_hex(&tx_hash)),
+            "chain_id": format!("0x{:x}", entry.chain_id),
+            "receipt_pending": receipt.get("pending").cloned().unwrap_or(serde_json::Value::Null),
+            "receipt_status": receipt.get("status").cloned().unwrap_or(serde_json::Value::Null),
+            "broadcast_mode": broadcast.get("mode").cloned().unwrap_or(serde_json::Value::Null),
+            "receipt": receipt,
+            "broadcast": broadcast,
+            "error_code": serde_json::Value::Null,
+            "error_reason": serde_json::Value::Null,
+        }),
+        cache_entry,
+    ))
+}
+
+#[derive(Clone, Copy)]
+struct GatewayEthUpstreamTxStatusInclude {
+    lifecycle: bool,
+    receipts: bool,
+    broadcast: bool,
+}
+
+type GatewayEthUpstreamTxStatusChunk =
+    (Vec<(usize, serde_json::Value)>, Vec<GatewayEthTxIndexEntry>);
+
+fn gateway_eth_upstream_tx_status_item_json(
+    eth_tx_index: &HashMap<[u8; 32], GatewayEthTxIndexEntry>,
+    eth_tx_index_store: &GatewayEthTxIndexStoreBackend,
+    chain_id: u64,
+    tx_hash_raw: &str,
+    tx_hash: [u8; 32],
+    include: GatewayEthUpstreamTxStatusInclude,
+) -> Result<(serde_json::Value, Vec<GatewayEthTxIndexEntry>)> {
+    let chain_hint = Some(chain_id);
+    let mut cache_entries = Vec::with_capacity(2);
+    let lifecycle = if include.lifecycle {
+        let (item, cache_entry) = gateway_eth_tx_lifecycle_item_json(
+            eth_tx_index,
+            eth_tx_index_store,
+            tx_hash,
+            chain_hint,
+        )?;
+        if let Some(entry) = cache_entry {
+            cache_entries.push(entry);
+        }
+        item
+    } else {
+        serde_json::Value::Null
+    };
+    let receipt = if include.receipts {
+        let (item, cache_entry) = gateway_eth_tx_receipt_item_json(
+            eth_tx_index,
+            eth_tx_index_store,
+            tx_hash,
+            chain_hint,
+        )?;
+        if let Some(entry) = cache_entry {
+            cache_entries.push(entry);
+        }
+        item
+    } else {
+        serde_json::Value::Null
+    };
+    let broadcast = if include.broadcast {
+        gateway_eth_public_broadcast_status_item_json(
+            eth_tx_index,
+            eth_tx_index_store,
+            tx_hash,
+            chain_hint,
+        )
+    } else {
+        serde_json::Value::Null
+    };
+
+    let accepted = lifecycle
+        .get("accepted")
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
+    let pending = lifecycle
+        .get("pending")
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
+    let onchain = lifecycle
+        .get("onchain")
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
+    let error_code = lifecycle
+        .get("error_code")
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
+    let error_reason = lifecycle
+        .get("error_reason")
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
+    let receipt_pending = receipt
+        .get("pending")
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
+    let receipt_status = receipt
+        .get("status")
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
+    let broadcast_mode = broadcast
+        .get("mode")
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
+    let accepted_bool = accepted.as_bool();
+    let pending_bool = pending.as_bool();
+    let onchain_bool = onchain.as_bool();
+    let error_code_str = error_code.as_str();
+    let stage = if onchain_bool == Some(true) {
+        if receipt_status.as_str() == Some("0x0") {
+            "onchain_failed"
+        } else {
+            "onchain"
+        }
+    } else if pending_bool == Some(true) {
+        "pending"
+    } else if accepted_bool == Some(true) {
+        "accepted"
+    } else if accepted_bool == Some(false) {
+        if error_code_str.is_some() {
+            "failed"
+        } else {
+            "rejected"
+        }
+    } else {
+        "unknown"
+    };
+    let terminal = matches!(stage, "onchain" | "onchain_failed" | "failed" | "rejected");
+    let failed = matches!(stage, "onchain_failed" | "failed" | "rejected");
+    Ok((
+        serde_json::json!({
+            "tx_hash": tx_hash_raw,
+            "chain_id": format!("0x{:x}", chain_id),
+            "accepted": accepted,
+            "pending": pending,
+            "onchain": onchain,
+            "error_code": error_code,
+            "error_reason": error_reason,
+            "stage": stage,
+            "terminal": terminal,
+            "failed": failed,
+            "receipt_pending": receipt_pending,
+            "receipt_status": receipt_status,
+            "broadcast_mode": broadcast_mode,
+            "lifecycle": lifecycle,
+            "receipt": receipt,
+            "broadcast": broadcast,
+        }),
+        cache_entries,
+    ))
+}
+
+fn gateway_eth_logs_item_json(
+    eth_tx_index: &HashMap<[u8; 32], GatewayEthTxIndexEntry>,
+    eth_tx_index_store: &GatewayEthTxIndexStoreBackend,
+    eth_default_chain_id: u64,
+    params: &serde_json::Value,
+) -> Result<serde_json::Value> {
+    let chain_id =
+        param_as_u64_any_with_tx(params, &["chain_id", "chainId"]).unwrap_or(eth_default_chain_id);
+    let entries = collect_gateway_eth_chain_entries(
+        eth_tx_index,
+        eth_tx_index_store,
+        chain_id,
+        gateway_eth_query_scan_max(),
+    )?;
+    let latest = resolve_gateway_eth_latest_block_number(chain_id, &entries, eth_tx_index_store)?;
+    let query = parse_eth_logs_query_from_params(params, latest)?;
+    let logs = collect_gateway_eth_logs_with_query(
+        chain_id,
+        entries,
+        &query,
+        eth_tx_index,
+        eth_tx_index_store,
+    )?;
+    Ok(serde_json::Value::Array(logs))
+}
+
+fn gateway_eth_filter_logs_item_json(
+    eth_tx_index: &HashMap<[u8; 32], GatewayEthTxIndexEntry>,
+    eth_tx_index_store: &GatewayEthTxIndexStoreBackend,
+    filters: &HashMap<u64, GatewayEthFilterKind>,
+    params: &serde_json::Value,
+) -> Result<serde_json::Value> {
+    let filter_id = parse_eth_filter_id(params)
+        .ok_or_else(|| anyhow::anyhow!("filter_id (or id) is required"))?;
+    let Some(filter) = filters.get(&filter_id).cloned() else {
+        bail!("filter not found: 0x{:x}", filter_id);
+    };
+    match filter {
+        GatewayEthFilterKind::Logs(log_filter) => {
+            let entries = collect_gateway_eth_chain_entries(
+                eth_tx_index,
+                eth_tx_index_store,
+                log_filter.chain_id,
+                gateway_eth_query_scan_max(),
+            )?;
+            let logs = collect_gateway_eth_logs_with_query(
+                log_filter.chain_id,
+                entries,
+                &log_filter.query,
+                eth_tx_index,
+                eth_tx_index_store,
+            )?;
+            Ok(serde_json::Value::Array(logs))
+        }
+        GatewayEthFilterKind::Blocks { .. } | GatewayEthFilterKind::PendingTransactions { .. } => {
+            bail!("filter does not support logs: 0x{:x}", filter_id)
+        }
+    }
+}
+
+fn gateway_eth_filter_changes_item_json(
+    eth_tx_index: &mut HashMap<[u8; 32], GatewayEthTxIndexEntry>,
+    eth_tx_index_store: &GatewayEthTxIndexStoreBackend,
+    eth_filters: &mut GatewayEthFilterState,
+    filter_id: u64,
+) -> Result<serde_json::Value> {
+    let Some(mut filter) = eth_filters.filters.get(&filter_id).cloned() else {
+        bail!("filter not found: 0x{:x}", filter_id);
+    };
+    let response = match &mut filter {
+        GatewayEthFilterKind::Logs(log_filter) => {
+            let entries = collect_gateway_eth_chain_entries(
+                eth_tx_index,
+                eth_tx_index_store,
+                log_filter.chain_id,
+                gateway_eth_query_scan_max(),
+            )?;
+            if log_filter.query.block_hash.is_some() {
+                if log_filter.block_hash_drained {
+                    serde_json::Value::Array(Vec::new())
+                } else {
+                    log_filter.block_hash_drained = true;
+                    serde_json::Value::Array(collect_gateway_eth_logs_with_query(
+                        log_filter.chain_id,
+                        entries,
+                        &log_filter.query,
+                        eth_tx_index,
+                        eth_tx_index_store,
+                    )?)
+                }
+            } else {
+                let latest = resolve_gateway_eth_latest_block_number(
+                    log_filter.chain_id,
+                    &entries,
+                    eth_tx_index_store,
+                )?;
+                let has_runtime_pending = log_filter.query.include_pending_block
+                    && resolve_gateway_eth_pending_block_for_runtime_view(
+                        log_filter.chain_id,
+                        latest,
+                        eth_tx_index,
+                        eth_tx_index_store,
+                    )?
+                    .is_some();
+                let max_visible_block = if has_runtime_pending {
+                    latest.saturating_add(1)
+                } else {
+                    latest
+                };
+                let from = log_filter
+                    .query
+                    .from_block
+                    .unwrap_or(0)
+                    .max(log_filter.next_block);
+                let requested_to = log_filter.query.to_block.unwrap_or(max_visible_block);
+                let to = requested_to.min(max_visible_block);
+                if from > to {
+                    serde_json::Value::Array(Vec::new())
+                } else {
+                    let mut delta_query = log_filter.query.clone();
+                    delta_query.from_block = Some(from);
+                    delta_query.to_block = Some(to);
+                    log_filter.next_block = to.saturating_add(1);
+                    serde_json::Value::Array(collect_gateway_eth_logs_with_query(
+                        log_filter.chain_id,
+                        entries,
+                        &delta_query,
+                        eth_tx_index,
+                        eth_tx_index_store,
+                    )?)
+                }
+            }
+        }
+        GatewayEthFilterKind::Blocks {
+            chain_id,
+            last_seen_block,
+        } => {
+            let entries = collect_gateway_eth_chain_entries(
+                eth_tx_index,
+                eth_tx_index_store,
+                *chain_id,
+                gateway_eth_query_scan_max(),
+            )?;
+            let latest =
+                resolve_gateway_eth_latest_block_number(*chain_id, &entries, eth_tx_index_store)?;
+            if latest <= *last_seen_block {
+                serde_json::Value::Array(Vec::new())
+            } else {
+                let mut emitted_blocks = BTreeSet::<u64>::new();
+                let mut out = Vec::new();
+                for (block_number, block_txs) in gateway_eth_group_entries_by_block(entries) {
+                    if block_number <= *last_seen_block {
+                        continue;
+                    }
+                    let block_hash =
+                        gateway_eth_block_hash_for_txs(*chain_id, block_number, &block_txs);
+                    out.push(serde_json::Value::String(format!(
+                        "0x{}",
+                        to_hex(&block_hash)
+                    )));
+                    emitted_blocks.insert(block_number);
+                }
+
+                let mut recover_start = last_seen_block.saturating_add(1);
+                let recover_cap = gateway_eth_query_scan_max() as u64;
+                let span = latest.saturating_sub(recover_start).saturating_add(1);
+                if span > recover_cap {
+                    recover_start = latest.saturating_sub(recover_cap.saturating_sub(1));
+                }
+                for block_number in recover_start..=latest {
+                    if emitted_blocks.contains(&block_number) {
+                        continue;
+                    }
+                    let precise_block_txs = collect_gateway_eth_block_entries_precise(
+                        eth_tx_index,
+                        eth_tx_index_store,
+                        *chain_id,
+                        block_number,
+                        gateway_eth_query_scan_max(),
+                    )?;
+                    if precise_block_txs.is_empty() {
+                        continue;
+                    }
+                    let block_hash =
+                        gateway_eth_block_hash_for_txs(*chain_id, block_number, &precise_block_txs);
+                    out.push(serde_json::Value::String(format!(
+                        "0x{}",
+                        to_hex(&block_hash)
+                    )));
+                }
+
+                *last_seen_block = latest.max(*last_seen_block);
+                serde_json::Value::Array(out)
+            }
+        }
+        GatewayEthFilterKind::PendingTransactions {
+            chain_id,
+            last_seen_hashes,
+        } => {
+            let current_hashes = collect_gateway_eth_pending_hashes_runtime(*chain_id);
+            let hashes = current_hashes
+                .difference(last_seen_hashes)
+                .map(|hash| serde_json::Value::String(format!("0x{}", to_hex(hash))))
+                .collect::<Vec<serde_json::Value>>();
+            *last_seen_hashes = current_hashes;
+            serde_json::Value::Array(hashes)
+        }
+    };
+    eth_filters.filters.insert(filter_id, filter);
+    Ok(response)
+}
+
+fn gateway_eth_pending_transactions_json(chain_id: u64) -> serde_json::Value {
+    let (pending_txs, queued_txs) = collect_gateway_eth_txpool_runtime_txs(chain_id);
+    if pending_txs.is_empty() && queued_txs.is_empty() {
+        return serde_json::Value::Array(Vec::new());
+    }
+    let mut pending = Vec::<serde_json::Value>::with_capacity(pending_txs.len() + queued_txs.len());
+    pending.extend(
+        pending_txs
+            .iter()
+            .map(gateway_eth_pending_tx_by_hash_json_from_ir),
+    );
+    pending.extend(
+        queued_txs
+            .iter()
+            .map(gateway_eth_pending_tx_by_hash_json_from_ir),
+    );
+    serde_json::Value::Array(pending)
+}
+
+fn gateway_eth_txpool_status_json(chain_id: u64) -> serde_json::Value {
+    let (pending_txs, queued_txs) = collect_gateway_eth_txpool_runtime_txs(chain_id);
+    if pending_txs.is_empty() && queued_txs.is_empty() {
+        return serde_json::json!({
+            "pending": "0x0",
+            "queued": "0x0",
+        });
+    }
+    build_gateway_eth_txpool_status_from_ir(&pending_txs, &queued_txs)
+}
+
+fn gateway_eth_upstream_status_arrays_json(
+    eth_tx_index: &mut HashMap<[u8; 32], GatewayEthTxIndexEntry>,
+    eth_tx_index_store: &GatewayEthTxIndexStoreBackend,
+    chain_id: u64,
+    tx_hashes: &[String],
+    include: GatewayEthUpstreamTxStatusInclude,
+) -> Result<(serde_json::Value, serde_json::Value, serde_json::Value)> {
+    if tx_hashes.is_empty() || (!include.lifecycle && !include.receipts && !include.broadcast) {
+        return Ok((
+            serde_json::Value::Array(Vec::new()),
+            serde_json::Value::Array(Vec::new()),
+            serde_json::Value::Array(Vec::new()),
+        ));
+    }
+
+    let mut indexed_hashes: Vec<(usize, String, [u8; 32])> = Vec::with_capacity(tx_hashes.len());
+    for (idx, tx_hash) in tx_hashes.iter().enumerate() {
+        let tx_hash_bytes = decode_hex_bytes(tx_hash, "tx_hash")?;
+        indexed_hashes.push((idx, tx_hash.clone(), vec_to_32(&tx_hash_bytes, "tx_hash")?));
+    }
+    let workers = gateway_batch_worker_count(indexed_hashes.len());
+    let eth_tx_index_snapshot = eth_tx_index.clone();
+    let mut ordered_items: Vec<(usize, serde_json::Value)> =
+        Vec::with_capacity(indexed_hashes.len());
+    let mut cache_entries: Vec<GatewayEthTxIndexEntry> = Vec::new();
+    if workers <= 1 || indexed_hashes.len() <= 1 {
+        for (idx, tx_hash, tx_hash_bytes) in indexed_hashes {
+            let (item, mut local_cache_entries) = gateway_eth_upstream_tx_status_item_json(
+                &eth_tx_index_snapshot,
+                eth_tx_index_store,
+                chain_id,
+                &tx_hash,
+                tx_hash_bytes,
+                include,
+            )?;
+            ordered_items.push((idx, item));
+            cache_entries.append(&mut local_cache_entries);
+        }
+    } else {
+        let chunk_size = indexed_hashes.len().div_ceil(workers).max(1);
+        let mut chunk_results: Vec<GatewayEthUpstreamTxStatusChunk> = Vec::new();
+        std::thread::scope(|scope| -> Result<()> {
+            let mut handles = Vec::new();
+            for chunk in indexed_hashes.chunks(chunk_size) {
+                let chunk_items = chunk.to_vec();
+                let snapshot = &eth_tx_index_snapshot;
+                let store = eth_tx_index_store;
+                handles.push(scope.spawn(move || {
+                    let mut local_items = Vec::with_capacity(chunk_items.len());
+                    let mut local_cache_entries = Vec::new();
+                    for (idx, tx_hash, tx_hash_bytes) in chunk_items {
+                        let (item, mut entry_cache) = gateway_eth_upstream_tx_status_item_json(
+                            snapshot,
+                            store,
+                            chain_id,
+                            &tx_hash,
+                            tx_hash_bytes,
+                            include,
+                        )?;
+                        local_items.push((idx, item));
+                        local_cache_entries.append(&mut entry_cache);
+                    }
+                    Ok::<_, anyhow::Error>((local_items, local_cache_entries))
+                }));
+            }
+            for handle in handles {
+                let local = handle.join().map_err(|_| {
+                    anyhow::anyhow!("gateway upstream snapshot worker thread panicked")
+                })??;
+                chunk_results.push(local);
+            }
+            Ok(())
+        })?;
+        for (mut local_items, mut local_cache_entries) in chunk_results {
+            ordered_items.append(&mut local_items);
+            cache_entries.append(&mut local_cache_entries);
+        }
+    }
+    for entry in cache_entries {
+        eth_tx_index.insert(entry.tx_hash, entry);
+    }
+    ordered_items.sort_by_key(|(idx, _)| *idx);
+
+    let mut lifecycle_items = Vec::new();
+    let mut receipt_items = Vec::new();
+    let mut broadcast_items = Vec::new();
+    for (_, item) in ordered_items {
+        if include.lifecycle {
+            lifecycle_items.push(
+                item.get("lifecycle")
+                    .cloned()
+                    .unwrap_or(serde_json::Value::Null),
+            );
+        }
+        if include.receipts {
+            receipt_items.push(
+                item.get("receipt")
+                    .cloned()
+                    .unwrap_or(serde_json::Value::Null),
+            );
+        }
+        if include.broadcast {
+            broadcast_items.push(
+                item.get("broadcast")
+                    .cloned()
+                    .unwrap_or(serde_json::Value::Null),
+            );
+        }
+    }
+    Ok((
+        serde_json::Value::Array(lifecycle_items),
+        serde_json::Value::Array(receipt_items),
+        serde_json::Value::Array(broadcast_items),
+    ))
+}
+
+fn gateway_evm_upstream_snapshot_json(
+    eth_tx_index: &mut HashMap<[u8; 32], GatewayEthTxIndexEntry>,
+    eth_tx_index_store: &GatewayEthTxIndexStoreBackend,
+    eth_default_chain_id: u64,
+    chain_id: u64,
+    params: &serde_json::Value,
+) -> Result<serde_json::Value> {
+    let tx_hashes = extract_eth_tx_hashes_query_params(params);
+    let include_pending = param_as_bool(params, "include_pending")
+        .or_else(|| param_as_bool(params, "includePending"))
+        .unwrap_or(true);
+    let include_txpool = param_as_bool(params, "include_txpool")
+        .or_else(|| param_as_bool(params, "includeTxpool"))
+        .unwrap_or(true);
+    let include_logs = param_as_bool(params, "include_logs")
+        .or_else(|| param_as_bool(params, "includeLogs"))
+        .unwrap_or(true);
+    let include_lifecycle = param_as_bool(params, "include_lifecycle")
+        .or_else(|| param_as_bool(params, "includeLifecycle"))
+        .unwrap_or(!tx_hashes.is_empty());
+    let include_receipts = param_as_bool(params, "include_receipts")
+        .or_else(|| param_as_bool(params, "includeReceipts"))
+        .unwrap_or(!tx_hashes.is_empty());
+    let include_broadcast = param_as_bool(params, "include_broadcast")
+        .or_else(|| param_as_bool(params, "includeBroadcast"))
+        .unwrap_or(!tx_hashes.is_empty());
+
+    let pending_transactions = if include_pending {
+        gateway_eth_pending_transactions_json(chain_id)
+    } else {
+        serde_json::json!([])
+    };
+    let txpool_status = if include_txpool {
+        gateway_eth_txpool_status_json(chain_id)
+    } else {
+        serde_json::json!({
+            "pending": "0x0",
+            "queued": "0x0",
+        })
+    };
+    let logs = if include_logs {
+        let mut logs_params = params.clone();
+        if logs_params.get("chain_id").is_none() && logs_params.get("chainId").is_none() {
+            if let Some(obj) = logs_params.as_object_mut() {
+                obj.insert("chain_id".to_owned(), serde_json::Value::from(chain_id));
+            }
+        }
+        gateway_eth_logs_item_json(
+            eth_tx_index,
+            eth_tx_index_store,
+            eth_default_chain_id,
+            &logs_params,
+        )?
+    } else {
+        serde_json::json!([])
+    };
+
+    let include_status = GatewayEthUpstreamTxStatusInclude {
+        lifecycle: include_lifecycle,
+        receipts: include_receipts,
+        broadcast: include_broadcast,
+    };
+    let (lifecycle, receipts, broadcast) = gateway_eth_upstream_status_arrays_json(
+        eth_tx_index,
+        eth_tx_index_store,
+        chain_id,
+        &tx_hashes,
+        include_status,
+    )?;
+
+    Ok(serde_json::json!({
+        "chain_id": format!("0x{:x}", chain_id),
+        "tx_hashes": tx_hashes,
+        "pending_transactions": pending_transactions,
+        "txpool_status": txpool_status,
+        "logs": logs,
+        "lifecycle": lifecycle,
+        "receipts": receipts,
+        "broadcast": broadcast,
+    }))
+}
+
+fn gateway_evm_upstream_runtime_bundle_json(
+    eth_tx_index: &mut HashMap<[u8; 32], GatewayEthTxIndexEntry>,
+    eth_tx_index_store: &GatewayEthTxIndexStoreBackend,
+    eth_default_chain_id: u64,
+    chain_id: u64,
+    max_items: u64,
+    include_ingress: bool,
+    params: &serde_json::Value,
+) -> Result<serde_json::Value> {
+    let upstream = gateway_evm_upstream_snapshot_json(
+        eth_tx_index,
+        eth_tx_index_store,
+        eth_default_chain_id,
+        chain_id,
+        params,
+    )?;
+
+    let ingress = if include_ingress {
+        let max_items_usize = max_items.clamp(1, 8_192) as usize;
+        let include_raw = true;
+        let include_parsed = true;
+
+        let mut executable_frames = snapshot_executable_ingress_frames_for_host(max_items_usize);
+        executable_frames.retain(|frame| frame.chain_id == chain_id);
+        let executable_ingress: Vec<serde_json::Value> = executable_frames
+            .iter()
+            .map(|frame| gateway_evm_ingress_frame_json(frame, include_raw, include_parsed))
+            .collect();
+
+        let mut pending_frames = snapshot_pending_ingress_frames_for_host(max_items_usize);
+        pending_frames.retain(|frame| frame.chain_id == chain_id);
+        let pending_ingress: Vec<serde_json::Value> = pending_frames
+            .iter()
+            .map(|frame| gateway_evm_ingress_frame_json(frame, include_raw, include_parsed))
+            .collect();
+
+        let mut sender_buckets = snapshot_pending_sender_buckets_for_host(256, 64);
+        sender_buckets.retain(|bucket| bucket.chain_id == chain_id);
+        let pending_sender_buckets: Vec<serde_json::Value> = sender_buckets
+            .iter()
+            .map(gateway_evm_pending_sender_bucket_json)
+            .collect();
+
+        serde_json::json!({
+            "max_items": max_items,
+            "executable_ingress": executable_ingress,
+            "pending_ingress": pending_ingress,
+            "pending_sender_buckets": pending_sender_buckets,
+        })
+    } else {
+        serde_json::json!({
+            "max_items": max_items,
+            "executable_ingress": [],
+            "pending_ingress": [],
+            "pending_sender_buckets": [],
+        })
+    };
+
+    Ok(serde_json::json!({
+        "chain_id": format!("0x{:x}", chain_id),
+        "upstream": upstream,
+        "ingress": ingress,
+    }))
+}
+
+fn gateway_evm_parse_filter_ids(input: &serde_json::Value) -> Vec<String> {
+    let mut out = Vec::new();
+    let sources = [
+        input.get("filter_ids"),
+        input.get("filterIds"),
+        input.get("filters"),
+        input.get("ids"),
+    ];
+    for source in sources {
+        let Some(source) = source else {
+            continue;
+        };
+        if let Some(value) = source.as_str() {
+            out.push(value.to_owned());
+        }
+        if let Some(values) = source.as_array() {
+            for value in values {
+                if let Some(v) = value.as_str() {
+                    out.push(v.to_owned());
+                }
+            }
+        }
+        if !out.is_empty() {
+            break;
+        }
+    }
+    out
+}
+
+#[derive(Copy, Clone)]
+struct GatewayEvmUpstreamTxStatusBundleOptions {
+    chain_id: u64,
+    max_items: usize,
+    auto_from_pending: bool,
+    include_lifecycle: bool,
+    include_receipts: bool,
+    include_broadcast: bool,
+}
+
+fn gateway_evm_upstream_tx_status_bundle_json(
+    eth_tx_index: &mut HashMap<[u8; 32], GatewayEthTxIndexEntry>,
+    eth_tx_index_store: &GatewayEthTxIndexStoreBackend,
+    options: GatewayEvmUpstreamTxStatusBundleOptions,
+    params: &serde_json::Value,
+) -> Result<serde_json::Value> {
+    let mut tx_hashes = extract_eth_tx_hashes_query_params(params);
+    if tx_hashes.len() > options.max_items {
+        tx_hashes.truncate(options.max_items);
+    }
+    if tx_hashes.is_empty() && options.auto_from_pending {
+        let pending_transactions = gateway_eth_pending_transactions_json(options.chain_id);
+        let mut seen: BTreeSet<String> = BTreeSet::new();
+        if let Some(items) = pending_transactions.as_array() {
+            for item in items {
+                let Some(tx_hash) = item.get("hash").and_then(|v| v.as_str()) else {
+                    continue;
+                };
+                if seen.insert(tx_hash.to_ascii_lowercase()) {
+                    tx_hashes.push(tx_hash.to_owned());
+                    if tx_hashes.len() >= options.max_items {
+                        break;
+                    }
+                }
+            }
+        }
+    }
+    if tx_hashes.is_empty() {
+        bail!("tx_hashes (or txHashes/hashes/txs) is required; or set auto_from_pending=true");
+    }
+
+    let mut indexed_hashes: Vec<(usize, String, [u8; 32])> = Vec::with_capacity(tx_hashes.len());
+    for (idx, tx_hash) in tx_hashes.into_iter().enumerate() {
+        let tx_hash_bytes = decode_hex_bytes(&tx_hash, "tx_hash")?;
+        indexed_hashes.push((idx, tx_hash, vec_to_32(&tx_hash_bytes, "tx_hash")?));
+    }
+    let include_flags = GatewayEthUpstreamTxStatusInclude {
+        lifecycle: options.include_lifecycle,
+        receipts: options.include_receipts,
+        broadcast: options.include_broadcast,
+    };
+    let workers = gateway_batch_worker_count(indexed_hashes.len());
+    let eth_tx_index_snapshot = eth_tx_index.clone();
+    let mut ordered_items: Vec<(usize, serde_json::Value)> =
+        Vec::with_capacity(indexed_hashes.len());
+    let mut cache_entries: Vec<GatewayEthTxIndexEntry> = Vec::new();
+    if workers <= 1 || indexed_hashes.len() <= 1 {
+        for (idx, tx_hash, tx_hash_bytes) in indexed_hashes {
+            let (item, mut local_cache_entries) = gateway_eth_upstream_tx_status_item_json(
+                &eth_tx_index_snapshot,
+                eth_tx_index_store,
+                options.chain_id,
+                &tx_hash,
+                tx_hash_bytes,
+                include_flags,
+            )?;
+            ordered_items.push((idx, item));
+            cache_entries.append(&mut local_cache_entries);
+        }
+    } else {
+        let chunk_size = indexed_hashes.len().div_ceil(workers).max(1);
+        let mut chunk_results: Vec<GatewayEthUpstreamTxStatusChunk> = Vec::new();
+        std::thread::scope(|scope| -> Result<()> {
+            let mut handles = Vec::new();
+            for chunk in indexed_hashes.chunks(chunk_size) {
+                let chunk_items = chunk.to_vec();
+                let snapshot = &eth_tx_index_snapshot;
+                let store = eth_tx_index_store;
+                handles.push(scope.spawn(move || {
+                    let mut local_items = Vec::with_capacity(chunk_items.len());
+                    let mut local_cache_entries = Vec::new();
+                    for (idx, tx_hash, tx_hash_bytes) in chunk_items {
+                        let (item, mut entry_cache) = gateway_eth_upstream_tx_status_item_json(
+                            snapshot,
+                            store,
+                            options.chain_id,
+                            &tx_hash,
+                            tx_hash_bytes,
+                            include_flags,
+                        )?;
+                        local_items.push((idx, item));
+                        local_cache_entries.append(&mut entry_cache);
+                    }
+                    Ok::<_, anyhow::Error>((local_items, local_cache_entries))
+                }));
+            }
+            for handle in handles {
+                let local = handle.join().map_err(|_| {
+                    anyhow::anyhow!("gateway upstream tx-status bundle worker thread panicked")
+                })??;
+                chunk_results.push(local);
+            }
+            Ok(())
+        })?;
+        for (mut local_items, mut local_cache_entries) in chunk_results {
+            ordered_items.append(&mut local_items);
+            cache_entries.append(&mut local_cache_entries);
+        }
+    }
+    for entry in cache_entries {
+        eth_tx_index.insert(entry.tx_hash, entry);
+    }
+    ordered_items.sort_by_key(|(idx, _)| *idx);
+    let items: Vec<serde_json::Value> = ordered_items.into_iter().map(|(_, item)| item).collect();
+
+    Ok(serde_json::json!({
+        "chain_id": format!("0x{:x}", options.chain_id),
+        "count": items.len(),
+        "items": items,
+    }))
+}
+
+#[derive(Copy, Clone)]
+struct GatewayEvmUpstreamEventBundleOptions {
+    chain_id: u64,
+    eth_default_chain_id: u64,
+    include_logs: bool,
+    include_filter_changes: bool,
+    include_filter_logs: bool,
+}
+
+fn gateway_evm_upstream_event_bundle_json(
+    eth_tx_index: &mut HashMap<[u8; 32], GatewayEthTxIndexEntry>,
+    eth_tx_index_store: &GatewayEthTxIndexStoreBackend,
+    eth_filters: &mut GatewayEthFilterState,
+    options: GatewayEvmUpstreamEventBundleOptions,
+    params: &serde_json::Value,
+) -> Result<serde_json::Value> {
+    let mut logs_params = params.clone();
+    if logs_params.get("chain_id").is_none() && logs_params.get("chainId").is_none() {
+        if let Some(obj) = logs_params.as_object_mut() {
+            obj.insert(
+                "chain_id".to_owned(),
+                serde_json::Value::from(options.chain_id),
+            );
+        }
+    }
+
+    let logs = if options.include_logs {
+        gateway_eth_logs_item_json(
+            eth_tx_index,
+            eth_tx_index_store,
+            options.eth_default_chain_id,
+            &logs_params,
+        )?
+    } else {
+        serde_json::json!([])
+    };
+
+    let filter_ids = gateway_evm_parse_filter_ids(params);
+    let mut filter_changes = Vec::new();
+    let mut filter_logs = Vec::new();
+    if !filter_ids.is_empty() {
+        for filter_id in filter_ids {
+            if options.include_filter_changes {
+                let forwarded = serde_json::json!({
+                    "chain_id": options.chain_id,
+                    "filter_id": filter_id,
+                });
+                let parsed_filter_id = parse_eth_filter_id(&forwarded)
+                    .ok_or_else(|| anyhow::anyhow!("filter_id (or id) is required"))?;
+                let changes = gateway_eth_filter_changes_item_json(
+                    eth_tx_index,
+                    eth_tx_index_store,
+                    eth_filters,
+                    parsed_filter_id,
+                )?;
+                filter_changes.push(serde_json::json!({
+                    "filter_id": forwarded["filter_id"],
+                    "changes": changes,
+                }));
+            }
+            if options.include_filter_logs {
+                let forwarded = serde_json::json!({
+                    "chain_id": options.chain_id,
+                    "filter_id": filter_id,
+                });
+                let items = gateway_eth_filter_logs_item_json(
+                    eth_tx_index,
+                    eth_tx_index_store,
+                    &eth_filters.filters,
+                    &forwarded,
+                )?;
+                filter_logs.push(serde_json::json!({
+                    "filter_id": forwarded["filter_id"],
+                    "logs": items,
+                }));
+            }
+        }
+    }
+
+    Ok(serde_json::json!({
+        "chain_id": format!("0x{:x}", options.chain_id),
+        "logs": logs,
+        "filter_changes": filter_changes,
+        "filter_logs": filter_logs,
+    }))
+}
+
+fn gateway_evm_runtime_native_sync_status_json(chain_id: u64) -> serde_json::Value {
+    let Some(status) = get_network_runtime_native_sync_status(chain_id) else {
+        return serde_json::Value::Null;
+    };
+    let active = network_runtime_native_sync_is_active(&status);
+    serde_json::json!({
+        "chain_id": format!("0x{:x}", chain_id),
+        "phase": status.phase.as_str(),
+        "active": active,
+        "peer_count": status.peer_count,
+        "starting_block": status.starting_block,
+        "current_block": status.current_block,
+        "highest_block": status.highest_block,
+        "updated_at_unix_millis": status.updated_at_unix_millis,
+        "peerCount": format!("0x{:x}", status.peer_count),
+        "startingBlock": format!("0x{:x}", status.starting_block),
+        "currentBlock": format!("0x{:x}", status.current_block),
+        "highestBlock": format!("0x{:x}", status.highest_block),
+    })
+}
+
+fn gateway_evm_runtime_sync_pull_window_json(chain_id: u64) -> serde_json::Value {
+    let Some(window) = plan_network_runtime_sync_pull_window(chain_id) else {
+        return serde_json::Value::Null;
+    };
+    serde_json::json!({
+        "chain_id": format!("0x{:x}", window.chain_id),
+        "phase": window.phase.as_str(),
+        "peer_count": window.peer_count,
+        "current_block": window.current_block,
+        "highest_block": window.highest_block,
+        "from_block": window.from_block,
+        "to_block": window.to_block,
+        "peerCount": format!("0x{:x}", window.peer_count),
+        "currentBlock": format!("0x{:x}", window.current_block),
+        "highestBlock": format!("0x{:x}", window.highest_block),
+        "fromBlock": format!("0x{:x}", window.from_block),
+        "toBlock": format!("0x{:x}", window.to_block),
+    })
+}
+
+fn gateway_evm_runtime_status_bundle_json(
+    chain_id: u64,
+    eth_tx_index: &mut HashMap<[u8; 32], GatewayEthTxIndexEntry>,
+    eth_tx_index_store: &GatewayEthTxIndexStoreBackend,
+) -> Result<serde_json::Value> {
+    let sync_status = resolve_gateway_eth_sync_status(chain_id, eth_tx_index, eth_tx_index_store)?;
+    let peer_count = sync_status.peer_count;
+    let block_number = sync_status
+        .current_block
+        .max(sync_status.local_current_block);
+    let syncing = gateway_eth_syncing_json(sync_status, None);
+    Ok(serde_json::json!({
+        "syncing": syncing,
+        "peer_count": format!("0x{:x}", peer_count),
+        "block_number": format!("0x{:x}", block_number),
+        "public_broadcast": gateway_eth_public_broadcast_capability_json(chain_id),
+        "native_sync": gateway_evm_runtime_native_sync_status_json(chain_id),
+        "sync_pull_window": gateway_evm_runtime_sync_pull_window_json(chain_id),
+    }))
+}
+
+#[derive(Copy, Clone)]
+struct GatewayEvmUpstreamFullBundleOptions {
+    chain_id: u64,
+    max_items: u64,
+    include_ingress: bool,
+    include_logs: bool,
+    include_filter_changes: bool,
+    include_filter_logs: bool,
+    include_lifecycle: bool,
+    include_receipts: bool,
+    include_broadcast: bool,
+    auto_from_pending: bool,
+}
+
+fn gateway_evm_upstream_full_bundle_json(
+    eth_tx_index: &mut HashMap<[u8; 32], GatewayEthTxIndexEntry>,
+    eth_tx_index_store: &GatewayEthTxIndexStoreBackend,
+    eth_default_chain_id: u64,
+    eth_filters: &mut GatewayEthFilterState,
+    options: GatewayEvmUpstreamFullBundleOptions,
+    params: &serde_json::Value,
+) -> Result<serde_json::Value> {
+    let runtime_status =
+        gateway_evm_runtime_status_bundle_json(options.chain_id, eth_tx_index, eth_tx_index_store)?;
+
+    let mut bundle_forwarded = params.clone();
+    if let Some(obj) = bundle_forwarded.as_object_mut() {
+        obj.insert(
+            "chain_id".to_owned(),
+            serde_json::Value::from(options.chain_id),
+        );
+        obj.insert(
+            "max_items".to_owned(),
+            serde_json::Value::from(options.max_items),
+        );
+        obj.insert(
+            "include_ingress".to_owned(),
+            serde_json::Value::from(options.include_ingress),
+        );
+        obj.insert(
+            "include_logs".to_owned(),
+            serde_json::Value::from(options.include_logs),
+        );
+        obj.insert(
+            "include_lifecycle".to_owned(),
+            serde_json::Value::from(options.include_lifecycle),
+        );
+        obj.insert(
+            "include_receipts".to_owned(),
+            serde_json::Value::from(options.include_receipts),
+        );
+        obj.insert(
+            "include_broadcast".to_owned(),
+            serde_json::Value::from(options.include_broadcast),
+        );
+    }
+    let runtime_bundle = gateway_evm_upstream_runtime_bundle_json(
+        eth_tx_index,
+        eth_tx_index_store,
+        eth_default_chain_id,
+        options.chain_id,
+        options.max_items,
+        options.include_ingress,
+        &bundle_forwarded,
+    )?;
+
+    let mut tx_status_forwarded = serde_json::json!({
+        "chain_id": options.chain_id,
+        "max_items": options.max_items,
+        "auto_from_pending": options.auto_from_pending,
+        "include_lifecycle": options.include_lifecycle,
+        "include_receipts": options.include_receipts,
+        "include_broadcast": options.include_broadcast,
+    });
+    let tx_hashes = runtime_bundle
+        .get("upstream")
+        .and_then(|v| v.get("tx_hashes"))
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+    if !tx_hashes.is_empty() {
+        if let Some(obj) = tx_status_forwarded.as_object_mut() {
+            obj.insert("tx_hashes".to_owned(), serde_json::Value::Array(tx_hashes));
+        }
+    }
+    let tx_status_bundle = gateway_evm_upstream_tx_status_bundle_json(
+        eth_tx_index,
+        eth_tx_index_store,
+        GatewayEvmUpstreamTxStatusBundleOptions {
+            chain_id: options.chain_id,
+            max_items: options.max_items as usize,
+            auto_from_pending: options.auto_from_pending,
+            include_lifecycle: options.include_lifecycle,
+            include_receipts: options.include_receipts,
+            include_broadcast: options.include_broadcast,
+        },
+        &tx_status_forwarded,
+    )?;
+
+    let event_forwarded = serde_json::json!({
+        "chain_id": options.chain_id,
+        "include_logs": options.include_logs,
+        "include_filter_changes": options.include_filter_changes,
+        "include_filter_logs": options.include_filter_logs,
+        "filter_ids": params.get("filter_ids")
+            .or_else(|| params.get("filterIds"))
+            .or_else(|| params.get("filters"))
+            .or_else(|| params.get("ids"))
+            .cloned()
+            .unwrap_or(serde_json::Value::Array(vec![])),
+    });
+    let event_bundle = gateway_evm_upstream_event_bundle_json(
+        eth_tx_index,
+        eth_tx_index_store,
+        eth_filters,
+        GatewayEvmUpstreamEventBundleOptions {
+            chain_id: options.chain_id,
+            eth_default_chain_id,
+            include_logs: options.include_logs,
+            include_filter_changes: options.include_filter_changes,
+            include_filter_logs: options.include_filter_logs,
+        },
+        &event_forwarded,
+    )?;
+
+    Ok(serde_json::json!({
+        "chain_id": format!("0x{:x}", options.chain_id),
+        "runtime_status": {
+            "syncing": runtime_status["syncing"].clone(),
+            "peer_count": runtime_status["peer_count"].clone(),
+            "block_number": runtime_status["block_number"].clone(),
+            "public_broadcast": runtime_status["public_broadcast"].clone(),
+            "native_sync": runtime_status["native_sync"].clone(),
+            "sync_pull_window": runtime_status["sync_pull_window"].clone(),
+        },
+        "runtime_bundle": runtime_bundle,
+        "tx_status_bundle": tx_status_bundle,
+        "event_bundle": event_bundle,
+    }))
 }
 
 fn enforce_gateway_atomic_gate(
@@ -4750,142 +6352,12 @@ fn run_gateway_method(
         "eth_getFilterChanges" => {
             let filter_id = parse_eth_filter_id(params)
                 .ok_or_else(|| anyhow::anyhow!("filter_id (or id) is required"))?;
-            let Some(mut filter) = ctx.eth_filters.filters.get(&filter_id).cloned() else {
-                bail!("filter not found: 0x{:x}", filter_id);
-            };
-            let response = match &mut filter {
-                GatewayEthFilterKind::Logs(log_filter) => {
-                    let entries = collect_gateway_eth_chain_entries(
-                        eth_tx_index,
-                        ctx.eth_tx_index_store,
-                        log_filter.chain_id,
-                        gateway_eth_query_scan_max(),
-                    )?;
-                    if log_filter.query.block_hash.is_some() {
-                        if log_filter.block_hash_drained {
-                            serde_json::Value::Array(Vec::new())
-                        } else {
-                            log_filter.block_hash_drained = true;
-                            serde_json::Value::Array(collect_gateway_eth_logs_with_query(
-                                log_filter.chain_id,
-                                entries,
-                                &log_filter.query,
-                                eth_tx_index,
-                                ctx.eth_tx_index_store,
-                            )?)
-                        }
-                    } else {
-                        let latest = resolve_gateway_eth_latest_block_number(
-                            log_filter.chain_id,
-                            &entries,
-                            ctx.eth_tx_index_store,
-                        )?;
-                        let has_runtime_pending = log_filter.query.include_pending_block
-                            && resolve_gateway_eth_pending_block_for_runtime_view(
-                                log_filter.chain_id,
-                                latest,
-                                eth_tx_index,
-                                ctx.eth_tx_index_store,
-                            )?
-                            .is_some();
-                        let max_visible_block = if has_runtime_pending {
-                            latest.saturating_add(1)
-                        } else {
-                            latest
-                        };
-                        let from = log_filter.query.from_block.unwrap_or(0).max(log_filter.next_block);
-                        let requested_to = log_filter.query.to_block.unwrap_or(max_visible_block);
-                        let to = requested_to.min(max_visible_block);
-                        if from > to {
-                            serde_json::Value::Array(Vec::new())
-                        } else {
-                            let mut delta_query = log_filter.query.clone();
-                            delta_query.from_block = Some(from);
-                            delta_query.to_block = Some(to);
-                            log_filter.next_block = to.saturating_add(1);
-                            serde_json::Value::Array(collect_gateway_eth_logs_with_query(
-                                log_filter.chain_id,
-                                entries,
-                                &delta_query,
-                                eth_tx_index,
-                                ctx.eth_tx_index_store,
-                            )?)
-                        }
-                    }
-                }
-                GatewayEthFilterKind::Blocks {
-                    chain_id,
-                    last_seen_block,
-                } => {
-                    let entries = collect_gateway_eth_chain_entries(
-                        eth_tx_index,
-                        ctx.eth_tx_index_store,
-                        *chain_id,
-                        gateway_eth_query_scan_max(),
-                    )?;
-                    let latest =
-                        resolve_gateway_eth_latest_block_number(*chain_id, &entries, ctx.eth_tx_index_store)?;
-                    if latest <= *last_seen_block {
-                        serde_json::Value::Array(Vec::new())
-                    } else {
-                        let mut emitted_blocks = BTreeSet::<u64>::new();
-                        let mut out = Vec::new();
-                        for (block_number, block_txs) in gateway_eth_group_entries_by_block(entries) {
-                            if block_number <= *last_seen_block {
-                                continue;
-                            }
-                            let block_hash =
-                                gateway_eth_block_hash_for_txs(*chain_id, block_number, &block_txs);
-                            out.push(serde_json::Value::String(format!("0x{}", to_hex(&block_hash))));
-                            emitted_blocks.insert(block_number);
-                        }
-
-                        let mut recover_start = last_seen_block.saturating_add(1);
-                        let recover_cap = gateway_eth_query_scan_max() as u64;
-                        let span = latest.saturating_sub(recover_start).saturating_add(1);
-                        if span > recover_cap {
-                            recover_start = latest.saturating_sub(recover_cap.saturating_sub(1));
-                        }
-                        for block_number in recover_start..=latest {
-                            if emitted_blocks.contains(&block_number) {
-                                continue;
-                            }
-                            let precise_block_txs = collect_gateway_eth_block_entries_precise(
-                                eth_tx_index,
-                                ctx.eth_tx_index_store,
-                                *chain_id,
-                                block_number,
-                                gateway_eth_query_scan_max(),
-                            )?;
-                            if precise_block_txs.is_empty() {
-                                continue;
-                            }
-                            let block_hash = gateway_eth_block_hash_for_txs(
-                                *chain_id,
-                                block_number,
-                                &precise_block_txs,
-                            );
-                            out.push(serde_json::Value::String(format!("0x{}", to_hex(&block_hash))));
-                        }
-
-                        *last_seen_block = latest.max(*last_seen_block);
-                        serde_json::Value::Array(out)
-                    }
-                }
-                GatewayEthFilterKind::PendingTransactions {
-                    chain_id,
-                    last_seen_hashes,
-                } => {
-                    let current_hashes = collect_gateway_eth_pending_hashes_runtime(*chain_id);
-                    let hashes = current_hashes
-                        .difference(last_seen_hashes)
-                        .map(|hash| serde_json::Value::String(format!("0x{}", to_hex(hash))))
-                        .collect::<Vec<serde_json::Value>>();
-                    *last_seen_hashes = current_hashes;
-                    serde_json::Value::Array(hashes)
-                }
-            };
-            ctx.eth_filters.filters.insert(filter_id, filter);
+            let response = gateway_eth_filter_changes_item_json(
+                eth_tx_index,
+                ctx.eth_tx_index_store,
+                ctx.eth_filters,
+                filter_id,
+            )?;
             Ok((response, false))
         }
         "txpool_content" => {
@@ -5996,8 +7468,8 @@ fn run_gateway_method(
                 bail!("queries (or filters/items) is required");
             }
             let chain_id = param_as_u64_any_with_tx(params, &["chain_id", "chainId"]);
-            let mut out = Vec::with_capacity(queries.len());
-            for query in queries {
+            let mut indexed_queries: Vec<(usize, serde_json::Value)> = Vec::with_capacity(queries.len());
+            for (idx, query) in queries.into_iter().enumerate() {
                 let forwarded = if let Some(chain_id) = chain_id {
                     match query {
                         serde_json::Value::Object(mut map) => {
@@ -6016,18 +7488,61 @@ fn run_gateway_method(
                 } else {
                     query
                 };
-                let (item, _) = run_gateway_method(
-                    router,
-                    eth_tx_index,
-                    evm_settlement_index_by_id,
-                    evm_settlement_index_by_tx,
-                    evm_pending_payout_by_settlement,
-                    ctx,
-                    "eth_getLogs",
-                    &forwarded,
-                )?;
-                out.push(item);
+                indexed_queries.push((idx, forwarded));
             }
+            let workers = gateway_batch_worker_count(indexed_queries.len());
+            let eth_tx_index_snapshot = eth_tx_index.clone();
+            let mut ordered_items: Vec<(usize, serde_json::Value)> =
+                Vec::with_capacity(indexed_queries.len());
+            if workers <= 1 {
+                for (idx, query) in indexed_queries {
+                    let item = gateway_eth_logs_item_json(
+                        &eth_tx_index_snapshot,
+                        ctx.eth_tx_index_store,
+                        ctx.eth_default_chain_id,
+                        &query,
+                    )?;
+                    ordered_items.push((idx, item));
+                }
+            } else {
+                let chunk_size = indexed_queries.len().div_ceil(workers).max(1);
+                let mut chunk_results: Vec<Vec<(usize, serde_json::Value)>> = Vec::new();
+                std::thread::scope(|scope| -> Result<()> {
+                    let mut handles = Vec::new();
+                    for chunk in indexed_queries.chunks(chunk_size) {
+                        let chunk_items = chunk.to_vec();
+                        let snapshot = &eth_tx_index_snapshot;
+                        let store = ctx.eth_tx_index_store;
+                        let default_chain_id = ctx.eth_default_chain_id;
+                        handles.push(scope.spawn(move || {
+                            let mut local = Vec::with_capacity(chunk_items.len());
+                            for (idx, query) in chunk_items {
+                                let item =
+                                    gateway_eth_logs_item_json(snapshot, store, default_chain_id, &query)?;
+                                local.push((idx, item));
+                            }
+                            Ok::<_, anyhow::Error>(local)
+                        }));
+                    }
+                    for handle in handles {
+                        let local = handle
+                            .join()
+                            .map_err(|_| anyhow::anyhow!("gateway logs batch worker thread panicked"))??;
+                        chunk_results.push(local);
+                    }
+                    Ok(())
+                })?;
+                for chunk in chunk_results {
+                    for item in chunk {
+                        ordered_items.push(item);
+                    }
+                }
+            }
+            ordered_items.sort_by_key(|(idx, _)| *idx);
+            let out: Vec<serde_json::Value> = ordered_items
+                .into_iter()
+                .map(|(_, item)| item)
+                .collect();
             Ok((serde_json::Value::Array(out), false))
         }
         "evm_getFilterChangesBatch" | "evm_get_filter_changes_batch" => {
@@ -6044,15 +7559,13 @@ fn run_gateway_method(
                     serde_json::Value::Object(map) => serde_json::Value::Object(map),
                     other => serde_json::json!({ "filter_id": other }),
                 };
-                let (item, _) = run_gateway_method(
-                    router,
+                let filter_id = parse_eth_filter_id(&forwarded)
+                    .ok_or_else(|| anyhow::anyhow!("filter_id (or id) is required"))?;
+                let item = gateway_eth_filter_changes_item_json(
                     eth_tx_index,
-                    evm_settlement_index_by_id,
-                    evm_settlement_index_by_tx,
-                    evm_pending_payout_by_settlement,
-                    ctx,
-                    "eth_getFilterChanges",
-                    &forwarded,
+                    ctx.eth_tx_index_store,
+                    ctx.eth_filters,
+                    filter_id,
                 )?;
                 out.push(item);
             }
@@ -6066,24 +7579,73 @@ fn run_gateway_method(
             if filters.is_empty() {
                 bail!("filter_ids (or filterIds/subscriptions/ids/items) is required");
             }
-            let mut out = Vec::with_capacity(filters.len());
-            for filter in filters {
+            let mut indexed_filters: Vec<(usize, serde_json::Value)> =
+                Vec::with_capacity(filters.len());
+            for (idx, filter) in filters.into_iter().enumerate() {
                 let forwarded = match filter {
                     serde_json::Value::Object(map) => serde_json::Value::Object(map),
                     other => serde_json::json!({ "filter_id": other }),
                 };
-                let (item, _) = run_gateway_method(
-                    router,
-                    eth_tx_index,
-                    evm_settlement_index_by_id,
-                    evm_settlement_index_by_tx,
-                    evm_pending_payout_by_settlement,
-                    ctx,
-                    "eth_getFilterLogs",
-                    &forwarded,
-                )?;
-                out.push(item);
+                indexed_filters.push((idx, forwarded));
             }
+            let workers = gateway_batch_worker_count(indexed_filters.len());
+            let eth_tx_index_snapshot = eth_tx_index.clone();
+            let filters_snapshot = ctx.eth_filters.filters.clone();
+            let mut ordered_items: Vec<(usize, serde_json::Value)> =
+                Vec::with_capacity(indexed_filters.len());
+            if workers <= 1 {
+                for (idx, forwarded) in indexed_filters {
+                    let item = gateway_eth_filter_logs_item_json(
+                        &eth_tx_index_snapshot,
+                        ctx.eth_tx_index_store,
+                        &filters_snapshot,
+                        &forwarded,
+                    )?;
+                    ordered_items.push((idx, item));
+                }
+            } else {
+                let chunk_size = indexed_filters.len().div_ceil(workers).max(1);
+                let mut chunk_results: Vec<Vec<(usize, serde_json::Value)>> = Vec::new();
+                std::thread::scope(|scope| -> Result<()> {
+                    let mut handles = Vec::new();
+                    for chunk in indexed_filters.chunks(chunk_size) {
+                        let chunk_items = chunk.to_vec();
+                        let snapshot = &eth_tx_index_snapshot;
+                        let store = ctx.eth_tx_index_store;
+                        let filters_map = &filters_snapshot;
+                        handles.push(scope.spawn(move || {
+                            let mut local = Vec::with_capacity(chunk_items.len());
+                            for (idx, forwarded) in chunk_items {
+                                let item = gateway_eth_filter_logs_item_json(
+                                    snapshot,
+                                    store,
+                                    filters_map,
+                                    &forwarded,
+                                )?;
+                                local.push((idx, item));
+                            }
+                            Ok::<_, anyhow::Error>(local)
+                        }));
+                    }
+                    for handle in handles {
+                        let local = handle
+                            .join()
+                            .map_err(|_| anyhow::anyhow!("gateway filter-logs batch worker thread panicked"))??;
+                        chunk_results.push(local);
+                    }
+                    Ok(())
+                })?;
+                for chunk in chunk_results {
+                    for item in chunk {
+                        ordered_items.push(item);
+                    }
+                }
+            }
+            ordered_items.sort_by_key(|(idx, _)| *idx);
+            let out: Vec<serde_json::Value> = ordered_items
+                .into_iter()
+                .map(|(_, item)| item)
+                .collect();
             Ok((serde_json::Value::Array(out), false))
         }
         "evm_publicSendRawTransactionBatch" | "evm_public_send_raw_transaction_batch" => {
@@ -6110,6 +7672,7 @@ fn run_gateway_method(
                         }
                     }
                 }
+                force_evm_send_public_broadcast_detail(&mut forwarded);
                 match run_gateway_method(
                     router,
                     eth_tx_index,
@@ -6117,7 +7680,7 @@ fn run_gateway_method(
                     evm_settlement_index_by_tx,
                     evm_pending_payout_by_settlement,
                     ctx,
-                    "evm_publicSendRawTransaction",
+                    "eth_sendRawTransaction",
                     &forwarded,
                 ) {
                     Ok((result, _)) => {
@@ -6191,6 +7754,7 @@ fn run_gateway_method(
                         }
                     }
                 }
+                force_evm_send_public_broadcast_detail(&mut forwarded);
                 match run_gateway_method(
                     router,
                     eth_tx_index,
@@ -6198,7 +7762,7 @@ fn run_gateway_method(
                     evm_settlement_index_by_tx,
                     evm_pending_payout_by_settlement,
                     ctx,
-                    "evm_publicSendTransaction",
+                    "eth_sendTransaction",
                     &forwarded,
                 ) {
                     Ok((result, _)) => {
@@ -6311,29 +7875,59 @@ fn run_gateway_method(
             if tx_hashes.is_empty() {
                 bail!("tx_hashes (or txHashes/hashes/txs) is required");
             }
-            let chain_id = param_as_u64_any_with_tx(params, &["chain_id", "chainId"]);
-            let mut out = Vec::with_capacity(tx_hashes.len());
+            let chain_hint = param_as_u64_any_with_tx(params, &["chain_id", "chainId"])
+                .or(Some(ctx.eth_default_chain_id));
+            let mut decoded_hashes = Vec::with_capacity(tx_hashes.len());
             for tx_hash in tx_hashes {
-                let forwarded = match chain_id {
-                    Some(chain_id) => serde_json::json!({
-                        "tx_hash": tx_hash,
-                        "chain_id": chain_id,
-                    }),
-                    None => serde_json::json!({
-                        "tx_hash": tx_hash,
-                    }),
-                };
-                let (status, _) = run_gateway_method(
-                    router,
-                    eth_tx_index,
-                    evm_settlement_index_by_id,
-                    evm_settlement_index_by_tx,
-                    evm_pending_payout_by_settlement,
-                    ctx,
-                    "evm_getPublicBroadcastStatus",
-                    &forwarded,
-                )?;
-                out.push(status);
+                let tx_hash_bytes = decode_hex_bytes(&tx_hash, "tx_hash")?;
+                decoded_hashes.push(vec_to_32(&tx_hash_bytes, "tx_hash")?);
+            }
+            let workers = gateway_batch_worker_count(decoded_hashes.len());
+            let mut out = Vec::with_capacity(decoded_hashes.len());
+            if workers <= 1 || decoded_hashes.len() <= 1 {
+                for tx_hash in decoded_hashes {
+                    out.push(gateway_eth_public_broadcast_status_item_json(
+                        eth_tx_index,
+                        ctx.eth_tx_index_store,
+                        tx_hash,
+                        chain_hint,
+                    ));
+                }
+            } else {
+                let chunk_size = decoded_hashes.len().div_ceil(workers);
+                let chunks = std::thread::scope(|scope| -> Result<Vec<Vec<serde_json::Value>>> {
+                    let mut jobs = Vec::with_capacity(workers);
+                    for chunk in decoded_hashes.chunks(chunk_size) {
+                        let hashes = chunk.to_vec();
+                        let eth_tx_index = &*eth_tx_index;
+                        let eth_tx_index_store = ctx.eth_tx_index_store;
+                        jobs.push(scope.spawn(move || {
+                            let mut partial = Vec::with_capacity(hashes.len());
+                            for tx_hash in hashes {
+                                partial.push(gateway_eth_public_broadcast_status_item_json(
+                                    eth_tx_index,
+                                    eth_tx_index_store,
+                                    tx_hash,
+                                    chain_hint,
+                                ));
+                            }
+                            partial
+                        }));
+                    }
+                    let mut out = Vec::with_capacity(jobs.len());
+                    for job in jobs {
+                        let partial = job.join().map_err(|_| {
+                            anyhow::anyhow!(
+                                "gateway public-broadcast status batch worker thread panicked"
+                            )
+                        })?;
+                        out.push(partial);
+                    }
+                    Ok(out)
+                })?;
+                for partial in chunks {
+                    out.extend(partial);
+                }
             }
             Ok((serde_json::Value::Array(out), false))
         }
@@ -6348,150 +7942,14 @@ fn run_gateway_method(
         "evm_getUpstreamSnapshot" | "evm_get_upstream_snapshot" => {
             let chain_id = param_as_u64_any_with_tx(params, &["chain_id", "chainId"])
                 .unwrap_or(ctx.eth_default_chain_id);
-            let tx_hashes = extract_eth_tx_hashes_query_params(params);
-            let include_pending = param_as_bool(params, "include_pending")
-                .or_else(|| param_as_bool(params, "includePending"))
-                .unwrap_or(true);
-            let include_txpool = param_as_bool(params, "include_txpool")
-                .or_else(|| param_as_bool(params, "includeTxpool"))
-                .unwrap_or(true);
-            let include_logs = param_as_bool(params, "include_logs")
-                .or_else(|| param_as_bool(params, "includeLogs"))
-                .unwrap_or(true);
-            let include_lifecycle = param_as_bool(params, "include_lifecycle")
-                .or_else(|| param_as_bool(params, "includeLifecycle"))
-                .unwrap_or(!tx_hashes.is_empty());
-            let include_receipts = param_as_bool(params, "include_receipts")
-                .or_else(|| param_as_bool(params, "includeReceipts"))
-                .unwrap_or(!tx_hashes.is_empty());
-            let include_broadcast = param_as_bool(params, "include_broadcast")
-                .or_else(|| param_as_bool(params, "includeBroadcast"))
-                .unwrap_or(!tx_hashes.is_empty());
-
-            let pending_transactions = if include_pending {
-                let forwarded = serde_json::json!({ "chain_id": chain_id });
-                run_gateway_method(
-                    router,
-                    eth_tx_index,
-                    evm_settlement_index_by_id,
-                    evm_settlement_index_by_tx,
-                    evm_pending_payout_by_settlement,
-                    ctx,
-                    "eth_pendingTransactions",
-                    &forwarded,
-                )?
-                .0
-            } else {
-                serde_json::json!([])
-            };
-
-            let txpool_status = if include_txpool {
-                let forwarded = serde_json::json!({ "chain_id": chain_id });
-                run_gateway_method(
-                    router,
-                    eth_tx_index,
-                    evm_settlement_index_by_id,
-                    evm_settlement_index_by_tx,
-                    evm_pending_payout_by_settlement,
-                    ctx,
-                    "txpool_status",
-                    &forwarded,
-                )?
-                .0
-            } else {
-                serde_json::json!({
-                    "pending": "0x0",
-                    "queued": "0x0",
-                })
-            };
-
-            let logs = if include_logs {
-                run_gateway_method(
-                    router,
-                    eth_tx_index,
-                    evm_settlement_index_by_id,
-                    evm_settlement_index_by_tx,
-                    evm_pending_payout_by_settlement,
-                    ctx,
-                    "eth_getLogs",
-                    params,
-                )?
-                .0
-            } else {
-                serde_json::json!([])
-            };
-
-            let lifecycle = if include_lifecycle && !tx_hashes.is_empty() {
-                let forwarded = serde_json::json!({
-                    "chain_id": chain_id,
-                    "tx_hashes": tx_hashes.clone(),
-                });
-                run_gateway_method(
-                    router,
-                    eth_tx_index,
-                    evm_settlement_index_by_id,
-                    evm_settlement_index_by_tx,
-                    evm_pending_payout_by_settlement,
-                    ctx,
-                    "evm_getTransactionLifecycleBatch",
-                    &forwarded,
-                )?
-                .0
-            } else {
-                serde_json::json!([])
-            };
-
-            let receipts = if include_receipts && !tx_hashes.is_empty() {
-                let forwarded = serde_json::json!({
-                    "chain_id": chain_id,
-                    "tx_hashes": tx_hashes.clone(),
-                });
-                run_gateway_method(
-                    router,
-                    eth_tx_index,
-                    evm_settlement_index_by_id,
-                    evm_settlement_index_by_tx,
-                    evm_pending_payout_by_settlement,
-                    ctx,
-                    "evm_getTransactionReceiptBatch",
-                    &forwarded,
-                )?
-                .0
-            } else {
-                serde_json::json!([])
-            };
-
-            let broadcast = if include_broadcast && !tx_hashes.is_empty() {
-                let forwarded = serde_json::json!({
-                    "chain_id": chain_id,
-                    "tx_hashes": tx_hashes.clone(),
-                });
-                run_gateway_method(
-                    router,
-                    eth_tx_index,
-                    evm_settlement_index_by_id,
-                    evm_settlement_index_by_tx,
-                    evm_pending_payout_by_settlement,
-                    ctx,
-                    "evm_getPublicBroadcastStatusBatch",
-                    &forwarded,
-                )?
-                .0
-            } else {
-                serde_json::json!([])
-            };
-
             Ok((
-                serde_json::json!({
-                    "chain_id": format!("0x{:x}", chain_id),
-                    "tx_hashes": tx_hashes,
-                    "pending_transactions": pending_transactions,
-                    "txpool_status": txpool_status,
-                    "logs": logs,
-                    "lifecycle": lifecycle,
-                    "receipts": receipts,
-                    "broadcast": broadcast,
-                }),
+                gateway_evm_upstream_snapshot_json(
+                    eth_tx_index,
+                    ctx.eth_tx_index_store,
+                    ctx.eth_default_chain_id,
+                    chain_id,
+                    params,
+                )?,
                 false,
             ))
         }
@@ -6507,74 +7965,16 @@ fn run_gateway_method(
             let include_ingress = param_as_bool(params, "include_ingress")
                 .or_else(|| param_as_bool(params, "includeIngress"))
                 .unwrap_or(true);
-
-            let (upstream, _) = run_gateway_method(
-                router,
-                eth_tx_index,
-                evm_settlement_index_by_id,
-                evm_settlement_index_by_tx,
-                evm_pending_payout_by_settlement,
-                ctx,
-                "evm_getUpstreamSnapshot",
-                params,
-            )?;
-
-            let ingress = if include_ingress {
-                let forwarded = serde_json::json!({
-                    "chain_id": chain_id,
-                    "max_items": max_items,
-                });
-                let (executable_ingress, _) = run_gateway_method(
-                    router,
-                    eth_tx_index,
-                    evm_settlement_index_by_id,
-                    evm_settlement_index_by_tx,
-                    evm_pending_payout_by_settlement,
-                    ctx,
-                    "evm_snapshotExecutableIngress",
-                    &forwarded,
-                )?;
-                let (pending_ingress, _) = run_gateway_method(
-                    router,
-                    eth_tx_index,
-                    evm_settlement_index_by_id,
-                    evm_settlement_index_by_tx,
-                    evm_pending_payout_by_settlement,
-                    ctx,
-                    "evm_snapshotPendingIngress",
-                    &forwarded,
-                )?;
-                let (pending_sender_buckets, _) = run_gateway_method(
-                    router,
-                    eth_tx_index,
-                    evm_settlement_index_by_id,
-                    evm_settlement_index_by_tx,
-                    evm_pending_payout_by_settlement,
-                    ctx,
-                    "evm_snapshotPendingSenderBuckets",
-                    &forwarded,
-                )?;
-                serde_json::json!({
-                    "max_items": max_items,
-                    "executable_ingress": executable_ingress,
-                    "pending_ingress": pending_ingress,
-                    "pending_sender_buckets": pending_sender_buckets,
-                })
-            } else {
-                serde_json::json!({
-                    "max_items": max_items,
-                    "executable_ingress": [],
-                    "pending_ingress": [],
-                    "pending_sender_buckets": [],
-                })
-            };
-
             Ok((
-                serde_json::json!({
-                    "chain_id": format!("0x{:x}", chain_id),
-                    "upstream": upstream,
-                    "ingress": ingress,
-                }),
+                gateway_evm_upstream_runtime_bundle_json(
+                    eth_tx_index,
+                    ctx.eth_tx_index_store,
+                    ctx.eth_default_chain_id,
+                    chain_id,
+                    max_items,
+                    include_ingress,
+                    params,
+                )?,
                 false,
             ))
         }
@@ -6601,222 +8001,20 @@ fn run_gateway_method(
             let include_broadcast = param_as_bool(params, "include_broadcast")
                 .or_else(|| param_as_bool(params, "includeBroadcast"))
                 .unwrap_or(true);
-
-            let mut tx_hashes = extract_eth_tx_hashes_query_params(params);
-            if tx_hashes.len() > max_items {
-                tx_hashes.truncate(max_items);
-            }
-            if tx_hashes.is_empty() && auto_from_pending {
-                let forwarded = serde_json::json!({
-                    "chain_id": chain_id,
-                });
-                let (pending_transactions, _) = run_gateway_method(
-                    router,
-                    eth_tx_index,
-                    evm_settlement_index_by_id,
-                    evm_settlement_index_by_tx,
-                    evm_pending_payout_by_settlement,
-                    ctx,
-                    "eth_pendingTransactions",
-                    &forwarded,
-                )?;
-                let mut seen: BTreeSet<String> = BTreeSet::new();
-                if let Some(items) = pending_transactions.as_array() {
-                    for item in items {
-                        let Some(tx_hash) = item.get("hash").and_then(|v| v.as_str()) else {
-                            continue;
-                        };
-                        if seen.insert(tx_hash.to_ascii_lowercase()) {
-                            tx_hashes.push(tx_hash.to_owned());
-                            if tx_hashes.len() >= max_items {
-                                break;
-                            }
-                        }
-                    }
-                }
-            }
-            if tx_hashes.is_empty() {
-                bail!(
-                    "tx_hashes (or txHashes/hashes/txs) is required; or set auto_from_pending=true"
-                );
-            }
-
-            let index_by_hash = |value: serde_json::Value| -> HashMap<String, serde_json::Value> {
-                let mut out: HashMap<String, serde_json::Value> = HashMap::new();
-                let Some(items) = value.as_array() else {
-                    return out;
-                };
-                for item in items {
-                    let tx_hash = item
-                        .get("tx_hash")
-                        .or_else(|| item.get("txHash"))
-                        .or_else(|| item.get("hash"))
-                        .and_then(|v| v.as_str());
-                    if let Some(tx_hash) = tx_hash {
-                        out.insert(tx_hash.to_ascii_lowercase(), item.clone());
-                    }
-                }
-                out
-            };
-
-            let lifecycle_by_hash = if include_lifecycle {
-                let forwarded = serde_json::json!({
-                    "chain_id": chain_id,
-                    "tx_hashes": tx_hashes,
-                });
-                let (lifecycle, _) = run_gateway_method(
-                    router,
-                    eth_tx_index,
-                    evm_settlement_index_by_id,
-                    evm_settlement_index_by_tx,
-                    evm_pending_payout_by_settlement,
-                    ctx,
-                    "evm_getTransactionLifecycleBatch",
-                    &forwarded,
-                )?;
-                index_by_hash(lifecycle)
-            } else {
-                HashMap::new()
-            };
-
-            let receipt_by_hash = if include_receipts {
-                let forwarded = serde_json::json!({
-                    "chain_id": chain_id,
-                    "tx_hashes": tx_hashes,
-                });
-                let (receipts, _) = run_gateway_method(
-                    router,
-                    eth_tx_index,
-                    evm_settlement_index_by_id,
-                    evm_settlement_index_by_tx,
-                    evm_pending_payout_by_settlement,
-                    ctx,
-                    "evm_getTransactionReceiptBatch",
-                    &forwarded,
-                )?;
-                index_by_hash(receipts)
-            } else {
-                HashMap::new()
-            };
-
-            let broadcast_by_hash = if include_broadcast {
-                let forwarded = serde_json::json!({
-                    "chain_id": chain_id,
-                    "tx_hashes": tx_hashes,
-                });
-                let (broadcast, _) = run_gateway_method(
-                    router,
-                    eth_tx_index,
-                    evm_settlement_index_by_id,
-                    evm_settlement_index_by_tx,
-                    evm_pending_payout_by_settlement,
-                    ctx,
-                    "evm_getPublicBroadcastStatusBatch",
-                    &forwarded,
-                )?;
-                index_by_hash(broadcast)
-            } else {
-                HashMap::new()
-            };
-
-            let mut items = Vec::with_capacity(tx_hashes.len());
-            for tx_hash in tx_hashes {
-                let tx_hash_key = tx_hash.to_ascii_lowercase();
-                let lifecycle = lifecycle_by_hash
-                    .get(&tx_hash_key)
-                    .cloned()
-                    .unwrap_or(serde_json::Value::Null);
-                let receipt = receipt_by_hash
-                    .get(&tx_hash_key)
-                    .cloned()
-                    .unwrap_or(serde_json::Value::Null);
-                let broadcast = broadcast_by_hash
-                    .get(&tx_hash_key)
-                    .cloned()
-                    .unwrap_or(serde_json::Value::Null);
-                let accepted = lifecycle
-                    .get("accepted")
-                    .cloned()
-                    .unwrap_or(serde_json::Value::Null);
-                let pending = lifecycle
-                    .get("pending")
-                    .cloned()
-                    .unwrap_or(serde_json::Value::Null);
-                let onchain = lifecycle
-                    .get("onchain")
-                    .cloned()
-                    .unwrap_or(serde_json::Value::Null);
-                let error_code = lifecycle
-                    .get("error_code")
-                    .cloned()
-                    .unwrap_or(serde_json::Value::Null);
-                let error_reason = lifecycle
-                    .get("error_reason")
-                    .cloned()
-                    .unwrap_or(serde_json::Value::Null);
-                let receipt_pending = receipt
-                    .get("pending")
-                    .cloned()
-                    .unwrap_or(serde_json::Value::Null);
-                let receipt_status = receipt
-                    .get("status")
-                    .cloned()
-                    .unwrap_or(serde_json::Value::Null);
-                let broadcast_mode = broadcast
-                    .get("mode")
-                    .cloned()
-                    .unwrap_or(serde_json::Value::Null);
-                let accepted_bool = accepted.as_bool();
-                let pending_bool = pending.as_bool();
-                let onchain_bool = onchain.as_bool();
-                let error_code_str = error_code.as_str();
-                let stage = if onchain_bool == Some(true) {
-                    if receipt_status.as_str() == Some("0x0") {
-                        "onchain_failed"
-                    } else {
-                        "onchain"
-                    }
-                } else if pending_bool == Some(true) {
-                    "pending"
-                } else if accepted_bool == Some(true) {
-                    "accepted"
-                } else if accepted_bool == Some(false) {
-                    if error_code_str.is_some() {
-                        "failed"
-                    } else {
-                        "rejected"
-                    }
-                } else {
-                    "unknown"
-                };
-                let terminal = matches!(stage, "onchain" | "onchain_failed" | "failed" | "rejected");
-                let failed = matches!(stage, "onchain_failed" | "failed" | "rejected");
-                items.push(serde_json::json!({
-                    "tx_hash": tx_hash,
-                    "chain_id": format!("0x{:x}", chain_id),
-                    "accepted": accepted,
-                    "pending": pending,
-                    "onchain": onchain,
-                    "error_code": error_code,
-                    "error_reason": error_reason,
-                    "stage": stage,
-                    "terminal": terminal,
-                    "failed": failed,
-                    "receipt_pending": receipt_pending,
-                    "receipt_status": receipt_status,
-                    "broadcast_mode": broadcast_mode,
-                    "lifecycle": lifecycle,
-                    "receipt": receipt,
-                    "broadcast": broadcast,
-                }));
-            }
-
             Ok((
-                serde_json::json!({
-                    "chain_id": format!("0x{:x}", chain_id),
-                    "count": items.len(),
-                    "items": items,
-                }),
+                gateway_evm_upstream_tx_status_bundle_json(
+                    eth_tx_index,
+                    ctx.eth_tx_index_store,
+                    GatewayEvmUpstreamTxStatusBundleOptions {
+                        chain_id,
+                        max_items,
+                        auto_from_pending,
+                        include_lifecycle,
+                        include_receipts,
+                        include_broadcast,
+                    },
+                    params,
+                )?,
                 false,
             ))
         }
@@ -6832,115 +8030,20 @@ fn run_gateway_method(
             let include_filter_logs = param_as_bool(params, "include_filter_logs")
                 .or_else(|| param_as_bool(params, "includeFilterLogs"))
                 .unwrap_or(false);
-            let parse_filter_ids = |input: &serde_json::Value| -> Vec<String> {
-                let mut out = Vec::new();
-                let sources = [
-                    input.get("filter_ids"),
-                    input.get("filterIds"),
-                    input.get("filters"),
-                    input.get("ids"),
-                ];
-                for source in sources {
-                    let Some(source) = source else {
-                        continue;
-                    };
-                    if let Some(value) = source.as_str() {
-                        out.push(value.to_owned());
-                    }
-                    if let Some(values) = source.as_array() {
-                        for value in values {
-                            if let Some(v) = value.as_str() {
-                                out.push(v.to_owned());
-                            }
-                        }
-                    }
-                    if !out.is_empty() {
-                        break;
-                    }
-                }
-                out
-            };
-            let mut logs_params = params.clone();
-            if logs_params.get("chain_id").is_none() && logs_params.get("chainId").is_none() {
-                if let Some(obj) = logs_params.as_object_mut() {
-                    obj.insert(
-                        "chain_id".to_owned(),
-                        serde_json::Value::from(chain_id),
-                    );
-                }
-            }
-
-            let logs = if include_logs {
-                run_gateway_method(
-                    router,
-                    eth_tx_index,
-                    evm_settlement_index_by_id,
-                    evm_settlement_index_by_tx,
-                    evm_pending_payout_by_settlement,
-                    ctx,
-                    "eth_getLogs",
-                    &logs_params,
-                )?
-                .0
-            } else {
-                serde_json::json!([])
-            };
-
-            let filter_ids = parse_filter_ids(params);
-            let mut filter_changes = Vec::new();
-            let mut filter_logs = Vec::new();
-            if !filter_ids.is_empty() {
-                for filter_id in filter_ids {
-                    if include_filter_changes {
-                        let forwarded = serde_json::json!({
-                            "chain_id": chain_id,
-                            "filter_id": filter_id,
-                        });
-                        let (changes, _) = run_gateway_method(
-                            router,
-                            eth_tx_index,
-                            evm_settlement_index_by_id,
-                            evm_settlement_index_by_tx,
-                            evm_pending_payout_by_settlement,
-                            ctx,
-                            "evm_getFilterChanges",
-                            &forwarded,
-                        )?;
-                        filter_changes.push(serde_json::json!({
-                            "filter_id": forwarded["filter_id"],
-                            "changes": changes,
-                        }));
-                    }
-                    if include_filter_logs {
-                        let forwarded = serde_json::json!({
-                            "chain_id": chain_id,
-                            "filter_id": filter_id,
-                        });
-                        let (items, _) = run_gateway_method(
-                            router,
-                            eth_tx_index,
-                            evm_settlement_index_by_id,
-                            evm_settlement_index_by_tx,
-                            evm_pending_payout_by_settlement,
-                            ctx,
-                            "evm_getFilterLogs",
-                            &forwarded,
-                        )?;
-                        filter_logs.push(serde_json::json!({
-                            "filter_id": forwarded["filter_id"],
-                            "logs": items,
-                        }));
-                    }
-                }
-            }
-
             Ok((
-                serde_json::json!({
-                    "chain_id": format!("0x{:x}", chain_id),
-                    "logs": logs,
-                    "filter_changes": filter_changes,
-                    "filter_logs": filter_logs,
-                }),
+                gateway_evm_upstream_event_bundle_json(
+                    eth_tx_index,
+                    ctx.eth_tx_index_store,
+                    ctx.eth_filters,
+                    GatewayEvmUpstreamEventBundleOptions {
+                        chain_id,
+                        eth_default_chain_id: ctx.eth_default_chain_id,
+                        include_logs,
+                        include_filter_changes,
+                        include_filter_logs,
+                    },
+                    params,
+                )?,
                 false,
             ))
         }
@@ -6980,171 +8083,26 @@ fn run_gateway_method(
                 .or_else(|| param_as_bool(params, "fromPending"))
                 .unwrap_or(true);
 
-            let runtime_forwarded = serde_json::json!({
-                "chain_id": chain_id,
-            });
-            let (syncing, _) = run_gateway_method(
-                router,
-                eth_tx_index,
-                evm_settlement_index_by_id,
-                evm_settlement_index_by_tx,
-                evm_pending_payout_by_settlement,
-                ctx,
-                "eth_syncing",
-                &runtime_forwarded,
-            )?;
-            let (peer_count, _) = run_gateway_method(
-                router,
-                eth_tx_index,
-                evm_settlement_index_by_id,
-                evm_settlement_index_by_tx,
-                evm_pending_payout_by_settlement,
-                ctx,
-                "net_peerCount",
-                &runtime_forwarded,
-            )?;
-            let (block_number, _) = run_gateway_method(
-                router,
-                eth_tx_index,
-                evm_settlement_index_by_id,
-                evm_settlement_index_by_tx,
-                evm_pending_payout_by_settlement,
-                ctx,
-                "eth_blockNumber",
-                &runtime_forwarded,
-            )?;
-            let (broadcast_capability, _) = run_gateway_method(
-                router,
-                eth_tx_index,
-                evm_settlement_index_by_id,
-                evm_settlement_index_by_tx,
-                evm_pending_payout_by_settlement,
-                ctx,
-                "evm_getPublicBroadcastCapability",
-                &runtime_forwarded,
-            )?;
-            let (native_sync, _) = run_gateway_method(
-                router,
-                eth_tx_index,
-                evm_settlement_index_by_id,
-                evm_settlement_index_by_tx,
-                evm_pending_payout_by_settlement,
-                ctx,
-                "evm_getRuntimeNativeSyncStatus",
-                &runtime_forwarded,
-            )?;
-            let (sync_pull_window, _) = run_gateway_method(
-                router,
-                eth_tx_index,
-                evm_settlement_index_by_id,
-                evm_settlement_index_by_tx,
-                evm_pending_payout_by_settlement,
-                ctx,
-                "evm_getRuntimeSyncPullWindow",
-                &runtime_forwarded,
-            )?;
-
-            let mut bundle_forwarded = params.clone();
-            if let Some(obj) = bundle_forwarded.as_object_mut() {
-                obj.insert("chain_id".to_owned(), serde_json::Value::from(chain_id));
-                obj.insert("max_items".to_owned(), serde_json::Value::from(max_items));
-                obj.insert(
-                    "include_ingress".to_owned(),
-                    serde_json::Value::from(include_ingress),
-                );
-                obj.insert("include_logs".to_owned(), serde_json::Value::from(include_logs));
-                obj.insert(
-                    "include_lifecycle".to_owned(),
-                    serde_json::Value::from(include_lifecycle),
-                );
-                obj.insert(
-                    "include_receipts".to_owned(),
-                    serde_json::Value::from(include_receipts),
-                );
-                obj.insert(
-                    "include_broadcast".to_owned(),
-                    serde_json::Value::from(include_broadcast),
-                );
-            }
-            let (runtime_bundle, _) = run_gateway_method(
-                router,
-                eth_tx_index,
-                evm_settlement_index_by_id,
-                evm_settlement_index_by_tx,
-                evm_pending_payout_by_settlement,
-                ctx,
-                "evm_getUpstreamRuntimeBundle",
-                &bundle_forwarded,
-            )?;
-
-            let mut tx_status_forwarded = serde_json::json!({
-                "chain_id": chain_id,
-                "max_items": max_items,
-                "auto_from_pending": auto_from_pending,
-                "include_lifecycle": include_lifecycle,
-                "include_receipts": include_receipts,
-                "include_broadcast": include_broadcast,
-            });
-            let tx_hashes = runtime_bundle
-                .get("upstream")
-                .and_then(|v| v.get("tx_hashes"))
-                .and_then(|v| v.as_array())
-                .cloned()
-                .unwrap_or_default();
-            if !tx_hashes.is_empty() {
-                if let Some(obj) = tx_status_forwarded.as_object_mut() {
-                    obj.insert("tx_hashes".to_owned(), serde_json::Value::Array(tx_hashes));
-                }
-            }
-            let (tx_status_bundle, _) = run_gateway_method(
-                router,
-                eth_tx_index,
-                evm_settlement_index_by_id,
-                evm_settlement_index_by_tx,
-                evm_pending_payout_by_settlement,
-                ctx,
-                "evm_getUpstreamTxStatusBundle",
-                &tx_status_forwarded,
-            )?;
-
-            let event_forwarded = serde_json::json!({
-                "chain_id": chain_id,
-                "include_logs": include_logs,
-                "include_filter_changes": include_filter_changes,
-                "include_filter_logs": include_filter_logs,
-                "filter_ids": params.get("filter_ids")
-                    .or_else(|| params.get("filterIds"))
-                    .or_else(|| params.get("filters"))
-                    .or_else(|| params.get("ids"))
-                    .cloned()
-                    .unwrap_or(serde_json::Value::Array(vec![])),
-            });
-            let (event_bundle, _) = run_gateway_method(
-                router,
-                eth_tx_index,
-                evm_settlement_index_by_id,
-                evm_settlement_index_by_tx,
-                evm_pending_payout_by_settlement,
-                ctx,
-                "evm_getUpstreamEventBundle",
-                &event_forwarded,
-            )?;
-
             Ok((
-                serde_json::json!({
-                    "chain_id": format!("0x{:x}", chain_id),
-                    "runtime_status": {
-                        "syncing": syncing,
-                        "peer_count": peer_count,
-                        "block_number": block_number,
-                        "public_broadcast": broadcast_capability,
-                        "native_sync": native_sync,
-                        "sync_pull_window": sync_pull_window,
+                gateway_evm_upstream_full_bundle_json(
+                    eth_tx_index,
+                    ctx.eth_tx_index_store,
+                    ctx.eth_default_chain_id,
+                    ctx.eth_filters,
+                    GatewayEvmUpstreamFullBundleOptions {
+                        chain_id,
+                        max_items,
+                        include_ingress,
+                        include_logs,
+                        include_filter_changes,
+                        include_filter_logs,
+                        include_lifecycle,
+                        include_receipts,
+                        include_broadcast,
+                        auto_from_pending,
                     },
-                    "runtime_bundle": runtime_bundle,
-                    "tx_status_bundle": tx_status_bundle,
-                    "event_bundle": event_bundle,
-                }),
+                    params,
+                )?,
                 false,
             ))
         }
@@ -7175,14 +8133,23 @@ fn run_gateway_method(
                 obj.insert("auto_from_pending".to_owned(), serde_json::Value::from(true));
             }
 
-            let (full_bundle, _) = run_gateway_method(
-                router,
+            let full_bundle = gateway_evm_upstream_full_bundle_json(
                 eth_tx_index,
-                evm_settlement_index_by_id,
-                evm_settlement_index_by_tx,
-                evm_pending_payout_by_settlement,
-                ctx,
-                "evm_getUpstreamFullBundle",
+                ctx.eth_tx_index_store,
+                ctx.eth_default_chain_id,
+                ctx.eth_filters,
+                GatewayEvmUpstreamFullBundleOptions {
+                    chain_id,
+                    max_items,
+                    include_ingress: true,
+                    include_logs: true,
+                    include_filter_changes: true,
+                    include_filter_logs: false,
+                    include_lifecycle: true,
+                    include_receipts: true,
+                    include_broadcast: true,
+                    auto_from_pending: true,
+                },
                 &forwarded,
             )?;
 
@@ -7359,144 +8326,207 @@ fn run_gateway_method(
             if tx_hashes.is_empty() {
                 bail!("tx_hashes (or txHashes/hashes/txs) is required");
             }
-            let chain_id = param_as_u64_any_with_tx(params, &["chain_id", "chainId"]);
-            let mut out = Vec::with_capacity(tx_hashes.len());
-            for tx_hash in tx_hashes {
-                let forwarded = match chain_id {
-                    Some(chain_id) => serde_json::json!({
-                        "tx_hash": tx_hash,
-                        "chain_id": chain_id,
-                    }),
-                    None => serde_json::json!({
-                        "tx_hash": tx_hash,
-                    }),
-                };
-                let (status, _) = run_gateway_method(
-                    router,
-                    eth_tx_index,
-                    evm_settlement_index_by_id,
-                    evm_settlement_index_by_tx,
-                    evm_pending_payout_by_settlement,
-                    ctx,
-                    "evm_getTransactionLifecycle",
-                    &forwarded,
-                )?;
-                out.push(status);
+            let chain_hint = param_as_u64_any_with_tx(params, &["chain_id", "chainId"])
+                .or(Some(ctx.eth_default_chain_id));
+            let mut decoded_hashes = Vec::with_capacity(tx_hashes.len());
+            for (idx, tx_hash) in tx_hashes.into_iter().enumerate() {
+                let tx_hash_bytes = decode_hex_bytes(&tx_hash, &format!("tx_hashes[{idx}]"))?;
+                decoded_hashes.push(vec_to_32(&tx_hash_bytes, &format!("tx_hashes[{idx}]"))?);
             }
+            let indexed_hashes: Vec<(usize, [u8; 32])> =
+                decoded_hashes.into_iter().enumerate().collect();
+            let workers = gateway_batch_worker_count(indexed_hashes.len());
+            let eth_tx_index_snapshot = eth_tx_index.clone();
+            let mut cache_updates: Vec<GatewayEthTxIndexEntry> = Vec::new();
+            let mut ordered_items: Vec<(usize, serde_json::Value)> =
+                Vec::with_capacity(indexed_hashes.len());
+            if workers <= 1 {
+                for (idx, tx_hash) in indexed_hashes {
+                    let (item, cache_entry) = gateway_eth_tx_lifecycle_item_json(
+                        &eth_tx_index_snapshot,
+                        ctx.eth_tx_index_store,
+                        tx_hash,
+                        chain_hint,
+                    )?;
+                    if let Some(entry) = cache_entry {
+                        cache_updates.push(entry);
+                    }
+                    ordered_items.push((idx, item));
+                }
+            } else {
+                let chunk_size = indexed_hashes.len().div_ceil(workers).max(1);
+                let mut chunk_results: Vec<
+                    Vec<(usize, serde_json::Value, Option<GatewayEthTxIndexEntry>)>,
+                > = Vec::new();
+                std::thread::scope(|scope| -> Result<()> {
+                    let mut handles = Vec::new();
+                    for chunk in indexed_hashes.chunks(chunk_size) {
+                        let chunk_items = chunk.to_vec();
+                        let snapshot = &eth_tx_index_snapshot;
+                        let store = ctx.eth_tx_index_store;
+                        handles.push(scope.spawn(move || {
+                            let mut local = Vec::with_capacity(chunk_items.len());
+                            for (idx, tx_hash) in chunk_items {
+                                let (item, cache_entry) = gateway_eth_tx_lifecycle_item_json(
+                                    snapshot, store, tx_hash, chain_hint,
+                                )?;
+                                local.push((idx, item, cache_entry));
+                            }
+                            Ok::<_, anyhow::Error>(local)
+                        }));
+                    }
+                    for handle in handles {
+                        let local = handle
+                            .join()
+                            .map_err(|_| anyhow::anyhow!("gateway tx-lifecycle batch worker thread panicked"))??;
+                        chunk_results.push(local);
+                    }
+                    Ok(())
+                })?;
+                for chunk in chunk_results {
+                    for (idx, item, cache_entry) in chunk {
+                        if let Some(entry) = cache_entry {
+                            cache_updates.push(entry);
+                        }
+                        ordered_items.push((idx, item));
+                    }
+                }
+            }
+            ordered_items.sort_by_key(|(idx, _)| *idx);
+            for entry in cache_updates {
+                eth_tx_index.insert(entry.tx_hash, entry);
+            }
+            let out: Vec<serde_json::Value> =
+                ordered_items.into_iter().map(|(_, item)| item).collect();
             Ok((serde_json::Value::Array(out), false))
         }
         "evm_replayPublicBroadcast" | "evm_replay_public_broadcast" => {
             let tx_hash_raw = extract_eth_tx_hash_query_param(params)
                 .or_else(|| param_as_string(params, "txHash"))
                 .ok_or_else(|| anyhow::anyhow!("tx_hash (or txHash/hash) is required"))?;
-            let tx_hash_bytes = decode_hex_bytes(&tx_hash_raw, "tx_hash")?;
-            let tx_hash = vec_to_32(&tx_hash_bytes, "tx_hash")?;
             let chain_hint = param_as_u64_any_with_tx(params, &["chain_id", "chainId"]);
-
-            let mut entry = eth_tx_index.get(&tx_hash).cloned();
-            if entry.is_none() {
-                entry = ctx.eth_tx_index_store.load_eth_tx(&tx_hash)?;
-                if let Some(cached) = entry.as_ref() {
-                    eth_tx_index.insert(tx_hash, cached.clone());
-                }
-            }
-            if entry.is_none() {
-                if let Some(tx) = find_gateway_eth_runtime_tx_by_hash(tx_hash, chain_hint) {
-                    entry = Some(gateway_eth_tx_index_entry_from_ir(tx));
-                }
-            }
-            let Some(entry) = entry else {
-                return Ok((serde_json::Value::Null, false));
-            };
-            if chain_hint.is_some_and(|chain_id| entry.chain_id != chain_id) {
-                return Ok((serde_json::Value::Null, false));
-            }
-
-            let tx_ir = gateway_eth_tx_ir_from_index_entry(&entry);
-            let tx_ir_bincode = tx_ir
-                .serialize(SerializationFormat::Bincode)
-                .context("serialize eth tx ir bincode for replay public broadcast failed")?;
-            let broadcast_result = maybe_execute_gateway_eth_public_broadcast(
-                entry.chain_id,
-                &entry.tx_hash,
-                GatewayEthPublicBroadcastPayload {
-                    raw_tx: None,
-                    tx_ir_bincode: Some(tx_ir_bincode.as_slice()),
-                },
-                true,
-            )?;
-            upsert_gateway_eth_broadcast_status(
+            let eth_tx_index_snapshot = eth_tx_index.clone();
+            let (item, cache_entry) = gateway_eth_replay_public_broadcast_item_json(
+                &eth_tx_index_snapshot,
                 ctx.eth_tx_index_store,
-                entry.chain_id,
-                entry.tx_hash,
-                &broadcast_result,
-            );
-            let broadcast_json = match broadcast_result {
-                Some((output, attempts, executor)) => serde_json::json!({
-                    "mode": "external",
-                    "attempts": attempts,
-                    "executor": executor,
-                    "executor_output": output,
-                }),
-                None => serde_json::json!({
-                    "mode": "none",
-                }),
-            };
-            Ok((
-                serde_json::json!({
-                    "replayed": true,
-                    "tx_hash": format!("0x{}", to_hex(&entry.tx_hash)),
-                    "chain_id": format!("0x{:x}", entry.chain_id),
-                    "broadcast": broadcast_json,
-                }),
-                false,
-            ))
+                &tx_hash_raw,
+                chain_hint,
+            )?;
+            if let Some(entry) = cache_entry {
+                eth_tx_index.insert(entry.tx_hash, entry);
+            }
+            Ok((item, false))
         }
         "evm_replayPublicBroadcastBatch" | "evm_replay_public_broadcast_batch" => {
             let tx_hashes = extract_eth_tx_hashes_query_params(params);
             if tx_hashes.is_empty() {
                 bail!("tx_hashes (or txHashes/hashes/txs) is required");
             }
-            let chain_id = param_as_u64_any_with_tx(params, &["chain_id", "chainId"]);
-            let mut replayed = 0usize;
-            let mut failed = 0usize;
-            let mut results = Vec::with_capacity(tx_hashes.len());
-            for tx_hash in tx_hashes {
-                let forwarded = match chain_id {
-                    Some(chain_id) => serde_json::json!({
-                        "tx_hash": tx_hash,
-                        "chain_id": chain_id,
-                    }),
-                    None => serde_json::json!({
-                        "tx_hash": tx_hash,
-                    }),
-                };
-                match run_gateway_method(
-                    router,
-                    eth_tx_index,
-                    evm_settlement_index_by_id,
-                    evm_settlement_index_by_tx,
-                    evm_pending_payout_by_settlement,
-                    ctx,
-                    "evm_replayPublicBroadcast",
-                    &forwarded,
-                ) {
-                    Ok((item, _)) => {
-                        replayed = replayed.saturating_add(1);
-                        results.push(item);
-                    }
-                    Err(e) => {
-                        failed = failed.saturating_add(1);
-                        results.push(serde_json::json!({
-                            "replayed": false,
-                            "tx_hash": forwarded
-                                .get("tx_hash")
-                                .cloned()
-                                .unwrap_or(serde_json::Value::Null),
-                            "error": e.to_string(),
-                        }));
+            let chain_hint = param_as_u64_any_with_tx(params, &["chain_id", "chainId"]);
+            let indexed_hashes: Vec<(usize, String)> = tx_hashes.into_iter().enumerate().collect();
+            let workers = gateway_batch_worker_count(indexed_hashes.len());
+            let eth_tx_index_snapshot = eth_tx_index.clone();
+            let mut ordered_items: Vec<(usize, serde_json::Value, bool)> =
+                Vec::with_capacity(indexed_hashes.len());
+            let mut cache_updates: Vec<GatewayEthTxIndexEntry> = Vec::new();
+            if workers <= 1 {
+                for (idx, tx_hash_raw) in indexed_hashes {
+                    match gateway_eth_replay_public_broadcast_item_json(
+                        &eth_tx_index_snapshot,
+                        ctx.eth_tx_index_store,
+                        &tx_hash_raw,
+                        chain_hint,
+                    ) {
+                        Ok((item, cache_entry)) => {
+                            if let Some(entry) = cache_entry {
+                                cache_updates.push(entry);
+                            }
+                            ordered_items.push((idx, item, false));
+                        }
+                        Err(e) => {
+                            ordered_items.push((
+                                idx,
+                                serde_json::json!({
+                                    "replayed": false,
+                                    "tx_hash": tx_hash_raw,
+                                    "error": e.to_string(),
+                                }),
+                                true,
+                            ));
+                        }
                     }
                 }
+            } else {
+                let chunk_size = indexed_hashes.len().div_ceil(workers).max(1);
+                type ReplayBatchItem =
+                    (usize, serde_json::Value, bool, Option<GatewayEthTxIndexEntry>);
+                let mut chunk_results: Vec<Vec<ReplayBatchItem>> = Vec::new();
+                std::thread::scope(|scope| -> Result<()> {
+                    let mut handles = Vec::new();
+                    for chunk in indexed_hashes.chunks(chunk_size) {
+                        let chunk_items = chunk.to_vec();
+                        let snapshot = &eth_tx_index_snapshot;
+                        let store = ctx.eth_tx_index_store;
+                        handles.push(scope.spawn(move || {
+                            let mut local = Vec::with_capacity(chunk_items.len());
+                            for (idx, tx_hash_raw) in chunk_items {
+                                match gateway_eth_replay_public_broadcast_item_json(
+                                    snapshot,
+                                    store,
+                                    &tx_hash_raw,
+                                    chain_hint,
+                                ) {
+                                    Ok((item, cache_entry)) => {
+                                        local.push((idx, item, false, cache_entry));
+                                    }
+                                    Err(e) => {
+                                        local.push((
+                                            idx,
+                                            serde_json::json!({
+                                                "replayed": false,
+                                                "tx_hash": tx_hash_raw,
+                                                "error": e.to_string(),
+                                            }),
+                                            true,
+                                            None,
+                                        ));
+                                    }
+                                }
+                            }
+                            Ok::<_, anyhow::Error>(local)
+                        }));
+                    }
+                    for handle in handles {
+                        let local = handle
+                            .join()
+                            .map_err(|_| anyhow::anyhow!("gateway replay-public-broadcast batch worker thread panicked"))??;
+                        chunk_results.push(local);
+                    }
+                    Ok(())
+                })?;
+                for chunk in chunk_results {
+                    for (idx, item, is_failed, cache_entry) in chunk {
+                        if let Some(entry) = cache_entry {
+                            cache_updates.push(entry);
+                        }
+                        ordered_items.push((idx, item, is_failed));
+                    }
+                }
+            }
+            ordered_items.sort_by_key(|(idx, _, _)| *idx);
+            for entry in cache_updates {
+                eth_tx_index.insert(entry.tx_hash, entry);
+            }
+            let mut replayed = 0usize;
+            let mut failed = 0usize;
+            let mut results = Vec::with_capacity(ordered_items.len());
+            for (_, item, is_failed) in ordered_items {
+                if is_failed {
+                    failed = failed.saturating_add(1);
+                } else {
+                    replayed = replayed.saturating_add(1);
+                }
+                results.push(item);
             }
             Ok((
                 serde_json::json!({
@@ -7513,30 +8543,80 @@ fn run_gateway_method(
             if tx_hashes.is_empty() {
                 bail!("tx_hashes (or txHashes/hashes/txs) is required");
             }
-            let chain_id = param_as_u64_any_with_tx(params, &["chain_id", "chainId"]);
-            let mut out = Vec::with_capacity(tx_hashes.len());
-            for tx_hash in tx_hashes {
-                let forwarded = match chain_id {
-                    Some(chain_id) => serde_json::json!({
-                        "tx_hash": tx_hash,
-                        "chain_id": chain_id,
-                    }),
-                    None => serde_json::json!({
-                        "tx_hash": tx_hash,
-                    }),
-                };
-                let (item, _) = run_gateway_method(
-                    router,
-                    eth_tx_index,
-                    evm_settlement_index_by_id,
-                    evm_settlement_index_by_tx,
-                    evm_pending_payout_by_settlement,
-                    ctx,
-                    "eth_getTransactionReceipt",
-                    &forwarded,
-                )?;
-                out.push(item);
+            let chain_hint = param_as_u64_any_with_tx(params, &["chain_id", "chainId"])
+                .or(Some(ctx.eth_default_chain_id));
+            let mut decoded_hashes = Vec::with_capacity(tx_hashes.len());
+            for (idx, tx_hash) in tx_hashes.into_iter().enumerate() {
+                let tx_hash_bytes = decode_hex_bytes(&tx_hash, &format!("tx_hashes[{idx}]"))?;
+                decoded_hashes.push(vec_to_32(&tx_hash_bytes, &format!("tx_hashes[{idx}]"))?);
             }
+            let indexed_hashes: Vec<(usize, [u8; 32])> =
+                decoded_hashes.into_iter().enumerate().collect();
+            let workers = gateway_batch_worker_count(indexed_hashes.len());
+            let eth_tx_index_snapshot = eth_tx_index.clone();
+            let mut cache_updates: Vec<GatewayEthTxIndexEntry> = Vec::new();
+            let mut ordered_items: Vec<(usize, serde_json::Value)> =
+                Vec::with_capacity(indexed_hashes.len());
+            if workers <= 1 {
+                for (idx, tx_hash) in indexed_hashes {
+                    let (item, cache_entry) = gateway_eth_tx_receipt_item_json(
+                        &eth_tx_index_snapshot,
+                        ctx.eth_tx_index_store,
+                        tx_hash,
+                        chain_hint,
+                    )?;
+                    if let Some(entry) = cache_entry {
+                        cache_updates.push(entry);
+                    }
+                    ordered_items.push((idx, item));
+                }
+            } else {
+                let chunk_size = indexed_hashes.len().div_ceil(workers).max(1);
+                let mut chunk_results: Vec<Vec<(usize, serde_json::Value, Option<GatewayEthTxIndexEntry>)>> =
+                    Vec::new();
+                std::thread::scope(|scope| -> Result<()> {
+                    let mut handles = Vec::new();
+                    for chunk in indexed_hashes.chunks(chunk_size) {
+                        let chunk_items = chunk.to_vec();
+                        let snapshot = &eth_tx_index_snapshot;
+                        let store = ctx.eth_tx_index_store;
+                        handles.push(scope.spawn(move || {
+                            let mut local = Vec::with_capacity(chunk_items.len());
+                            for (idx, tx_hash) in chunk_items {
+                                let (item, cache_entry) =
+                                    gateway_eth_tx_receipt_item_json(
+                                        snapshot, store, tx_hash, chain_hint,
+                                    )?;
+                                local.push((idx, item, cache_entry));
+                            }
+                            Ok::<_, anyhow::Error>(local)
+                        }));
+                    }
+                    for handle in handles {
+                        let local = handle
+                            .join()
+                            .map_err(|_| anyhow::anyhow!("gateway receipt batch worker thread panicked"))??;
+                        chunk_results.push(local);
+                    }
+                    Ok(())
+                })?;
+                for chunk in chunk_results {
+                    for (idx, item, cache_entry) in chunk {
+                        if let Some(entry) = cache_entry {
+                            cache_updates.push(entry);
+                        }
+                        ordered_items.push((idx, item));
+                    }
+                }
+            }
+            ordered_items.sort_by_key(|(idx, _)| *idx);
+            for entry in cache_updates {
+                eth_tx_index.entry(entry.tx_hash).or_insert(entry);
+            }
+            let out: Vec<serde_json::Value> = ordered_items
+                .into_iter()
+                .map(|(_, item)| item)
+                .collect();
             Ok((serde_json::Value::Array(out), false))
         }
         "evm_getTransactionByHashBatch" | "evm_get_transaction_by_hash_batch" => {
@@ -7544,30 +8624,79 @@ fn run_gateway_method(
             if tx_hashes.is_empty() {
                 bail!("tx_hashes (or txHashes/hashes/txs) is required");
             }
-            let chain_id = param_as_u64_any_with_tx(params, &["chain_id", "chainId"]);
-            let mut out = Vec::with_capacity(tx_hashes.len());
-            for tx_hash in tx_hashes {
-                let forwarded = match chain_id {
-                    Some(chain_id) => serde_json::json!({
-                        "tx_hash": tx_hash,
-                        "chain_id": chain_id,
-                    }),
-                    None => serde_json::json!({
-                        "tx_hash": tx_hash,
-                    }),
-                };
-                let (item, _) = run_gateway_method(
-                    router,
-                    eth_tx_index,
-                    evm_settlement_index_by_id,
-                    evm_settlement_index_by_tx,
-                    evm_pending_payout_by_settlement,
-                    ctx,
-                    "eth_getTransactionByHash",
-                    &forwarded,
-                )?;
-                out.push(item);
+            let chain_hint = param_as_u64_any_with_tx(params, &["chain_id", "chainId"])
+                .or(Some(ctx.eth_default_chain_id));
+            let mut decoded_hashes = Vec::with_capacity(tx_hashes.len());
+            for (idx, tx_hash) in tx_hashes.into_iter().enumerate() {
+                let tx_hash_bytes = decode_hex_bytes(&tx_hash, &format!("tx_hashes[{idx}]"))?;
+                decoded_hashes.push(vec_to_32(&tx_hash_bytes, &format!("tx_hashes[{idx}]"))?);
             }
+            let indexed_hashes: Vec<(usize, [u8; 32])> =
+                decoded_hashes.into_iter().enumerate().collect();
+            let workers = gateway_batch_worker_count(indexed_hashes.len());
+            let eth_tx_index_snapshot = eth_tx_index.clone();
+            let mut cache_updates: Vec<GatewayEthTxIndexEntry> = Vec::new();
+            let mut ordered_items: Vec<(usize, serde_json::Value)> =
+                Vec::with_capacity(indexed_hashes.len());
+            if workers <= 1 {
+                for (idx, tx_hash) in indexed_hashes {
+                    let (item, cache_entry) = gateway_eth_tx_by_hash_item_json(
+                        &eth_tx_index_snapshot,
+                        ctx.eth_tx_index_store,
+                        tx_hash,
+                        chain_hint,
+                    )?;
+                    if let Some(entry) = cache_entry {
+                        cache_updates.push(entry);
+                    }
+                    ordered_items.push((idx, item));
+                }
+            } else {
+                let chunk_size = indexed_hashes.len().div_ceil(workers).max(1);
+                let mut chunk_results: Vec<Vec<(usize, serde_json::Value, Option<GatewayEthTxIndexEntry>)>> =
+                    Vec::new();
+                std::thread::scope(|scope| -> Result<()> {
+                    let mut handles = Vec::new();
+                    for chunk in indexed_hashes.chunks(chunk_size) {
+                        let chunk_items = chunk.to_vec();
+                        let snapshot = &eth_tx_index_snapshot;
+                        let store = ctx.eth_tx_index_store;
+                        handles.push(scope.spawn(move || {
+                            let mut local = Vec::with_capacity(chunk_items.len());
+                            for (idx, tx_hash) in chunk_items {
+                                let (item, cache_entry) = gateway_eth_tx_by_hash_item_json(
+                                    snapshot, store, tx_hash, chain_hint,
+                                )?;
+                                local.push((idx, item, cache_entry));
+                            }
+                            Ok::<_, anyhow::Error>(local)
+                        }));
+                    }
+                    for handle in handles {
+                        let local = handle
+                            .join()
+                            .map_err(|_| anyhow::anyhow!("gateway tx-by-hash batch worker thread panicked"))??;
+                        chunk_results.push(local);
+                    }
+                    Ok(())
+                })?;
+                for chunk in chunk_results {
+                    for (idx, item, cache_entry) in chunk {
+                        if let Some(entry) = cache_entry {
+                            cache_updates.push(entry);
+                        }
+                        ordered_items.push((idx, item));
+                    }
+                }
+            }
+            ordered_items.sort_by_key(|(idx, _)| *idx);
+            for entry in cache_updates {
+                eth_tx_index.entry(entry.tx_hash).or_insert(entry);
+            }
+            let out: Vec<serde_json::Value> = ordered_items
+                .into_iter()
+                .map(|(_, item)| item)
+                .collect();
             Ok((serde_json::Value::Array(out), false))
         }
         "evm_getTransactionLifecycle"
@@ -7581,263 +8710,17 @@ fn run_gateway_method(
             let tx_hash = vec_to_32(&tx_hash_bytes, "tx_hash")?;
             let chain_hint = param_as_u64_any_with_tx(params, &["chain_id", "chainId"])
                 .or(Some(ctx.eth_default_chain_id));
-            let broadcast = gateway_eth_broadcast_status_json_by_tx(ctx.eth_tx_index_store, &tx_hash);
-
-            if let Some(tx) = find_gateway_eth_runtime_tx_by_hash(tx_hash, chain_hint) {
-                let pending_entry = gateway_eth_tx_index_entry_from_ir(tx);
-                let chain_entries = collect_gateway_eth_chain_entries(
-                    eth_tx_index,
-                    ctx.eth_tx_index_store,
-                    pending_entry.chain_id,
-                    gateway_eth_query_scan_max(),
-                )?;
-                let latest_block_number = resolve_gateway_eth_latest_block_number(
-                    pending_entry.chain_id,
-                    &chain_entries,
-                    ctx.eth_tx_index_store,
-                )?;
-                let receipt = if let Some((pending_block_number, pending_block_hash, pending_entries)) =
-                    resolve_gateway_eth_pending_block_for_runtime_view(
-                        pending_entry.chain_id,
-                        latest_block_number,
-                        eth_tx_index,
-                        ctx.eth_tx_index_store,
-                    )?
-                {
-                    gateway_eth_tx_receipt_pending_query_json_by_hash(
-                        pending_block_number,
-                        &pending_block_hash,
-                        &pending_entries,
-                        &tx_hash,
-                    )
-                    .unwrap_or_else(|| gateway_eth_tx_receipt_json(&pending_entry))
-                } else {
-                    gateway_eth_tx_receipt_json(&pending_entry)
-                };
-                persist_gateway_eth_submit_success_status(
-                    ctx.eth_tx_index_store,
-                    tx_hash,
-                    pending_entry.chain_id,
-                    true,
-                    false,
-                );
-                return Ok((
-                    serde_json::json!({
-                        "accepted": true,
-                        "pending": true,
-                        "onchain": false,
-                        "stage": "pending",
-                        "terminal": false,
-                        "failed": false,
-                        "tx_hash": format!("0x{}", to_hex(&tx_hash)),
-                        "chain_id": format!("0x{:x}", pending_entry.chain_id),
-                        "receipt_pending": receipt.get("pending").cloned().unwrap_or(serde_json::Value::Null),
-                        "receipt_status": receipt.get("status").cloned().unwrap_or(serde_json::Value::Null),
-                        "broadcast_mode": broadcast.get("mode").cloned().unwrap_or(serde_json::Value::Null),
-                        "receipt": receipt,
-                        "broadcast": broadcast,
-                        "error_code": serde_json::Value::Null,
-                        "error_reason": serde_json::Value::Null,
-                    }),
-                    false,
-                ));
+            let eth_tx_index_snapshot = eth_tx_index.clone();
+            let (item, cache_entry) = gateway_eth_tx_lifecycle_item_json(
+                &eth_tx_index_snapshot,
+                ctx.eth_tx_index_store,
+                tx_hash,
+                chain_hint,
+            )?;
+            if let Some(entry) = cache_entry {
+                eth_tx_index.insert(entry.tx_hash, entry);
             }
-
-            let mut entry = eth_tx_index.get(&tx_hash).cloned();
-            if entry.is_none() {
-                entry = ctx.eth_tx_index_store.load_eth_tx(&tx_hash)?;
-                if let Some(cached) = entry.as_ref() {
-                    eth_tx_index.insert(tx_hash, cached.clone());
-                }
-            }
-            let submit_status = gateway_eth_submit_status_by_tx(ctx.eth_tx_index_store, &tx_hash);
-            let Some(entry) = entry else {
-                if let Some(status) = submit_status {
-                    if chain_hint
-                        .zip(status.chain_id)
-                        .is_some_and(|(hint, status_chain)| hint != status_chain)
-                    {
-                        return Ok((
-                            serde_json::json!({
-                                "accepted": false,
-                                "pending": false,
-                                "onchain": false,
-                                "stage": "rejected",
-                                "terminal": true,
-                                "failed": true,
-                                "tx_hash": format!("0x{}", to_hex(&tx_hash)),
-                                "chain_id": status.chain_id.map(|value| format!("0x{:x}", value)),
-                                "receipt_pending": serde_json::Value::Null,
-                                "receipt_status": serde_json::Value::Null,
-                                "broadcast_mode": broadcast.get("mode").cloned().unwrap_or(serde_json::Value::Null),
-                                "receipt": serde_json::Value::Null,
-                                "broadcast": broadcast,
-                                "error_code": "CHAIN_MISMATCH",
-                                "error_reason": "transaction exists but chain_id mismatch",
-                                "updated_at_unix_ms": status.updated_at_unix_ms,
-                            }),
-                            false,
-                        ));
-                    }
-                    let stage = if status.pending {
-                        "pending"
-                    } else if status.onchain
-                        && status.error_code.as_deref() == Some("ONCHAIN_FAILED")
-                    {
-                        "onchain_failed"
-                    } else if status.onchain {
-                        "onchain"
-                    } else if status.accepted {
-                        "accepted"
-                    } else if status.error_code.is_some() {
-                        "failed"
-                    } else {
-                        "rejected"
-                    };
-                    let terminal = !matches!(stage, "pending" | "accepted");
-                    let failed = matches!(stage, "onchain_failed" | "failed" | "rejected");
-                    let (error_code, error_reason) = if failed {
-                        let fallback_code = if stage == "onchain_failed" {
-                            "ONCHAIN_FAILED"
-                        } else if stage == "failed" {
-                            "SUBMIT_FAILED"
-                        } else {
-                            "SUBMIT_REJECTED"
-                        };
-                        let fallback_reason = if stage == "onchain_failed" {
-                            "transaction failed onchain"
-                        } else if stage == "failed" {
-                            "submit failed"
-                        } else {
-                            "submit rejected"
-                        };
-                        (
-                            status
-                                .error_code
-                                .clone()
-                                .unwrap_or_else(|| fallback_code.to_string()),
-                            status
-                                .error_reason
-                                .clone()
-                                .unwrap_or_else(|| fallback_reason.to_string()),
-                        )
-                    } else {
-                        (String::new(), String::new())
-                    };
-                    return Ok((
-                        serde_json::json!({
-                            "accepted": status.accepted,
-                            "pending": status.pending,
-                            "onchain": status.onchain,
-                            "stage": stage,
-                            "terminal": terminal,
-                            "failed": failed,
-                            "tx_hash": format!("0x{}", to_hex(&tx_hash)),
-                            "chain_id": status.chain_id.map(|value| format!("0x{:x}", value)),
-                            "receipt_pending": serde_json::Value::Null,
-                            "receipt_status": serde_json::Value::Null,
-                            "broadcast_mode": broadcast.get("mode").cloned().unwrap_or(serde_json::Value::Null),
-                            "receipt": serde_json::Value::Null,
-                            "broadcast": broadcast,
-                            "error_code": if failed { serde_json::Value::String(error_code) } else { serde_json::Value::Null },
-                            "error_reason": if failed { serde_json::Value::String(error_reason) } else { serde_json::Value::Null },
-                            "updated_at_unix_ms": status.updated_at_unix_ms,
-                        }),
-                        false,
-                    ));
-                }
-                return Ok((
-                    serde_json::json!({
-                        "accepted": false,
-                        "pending": false,
-                        "onchain": false,
-                        "stage": "not_found",
-                        "terminal": true,
-                        "failed": true,
-                        "tx_hash": format!("0x{}", to_hex(&tx_hash)),
-                        "chain_id": serde_json::Value::Null,
-                        "receipt_pending": serde_json::Value::Null,
-                        "receipt_status": serde_json::Value::Null,
-                        "broadcast_mode": broadcast.get("mode").cloned().unwrap_or(serde_json::Value::Null),
-                        "receipt": serde_json::Value::Null,
-                        "broadcast": broadcast,
-                        "error_code": "TX_NOT_FOUND",
-                        "error_reason": "transaction not found",
-                    }),
-                    false,
-                ));
-            };
-            if chain_hint.is_some_and(|chain_id| entry.chain_id != chain_id) {
-                return Ok((
-                    serde_json::json!({
-                        "accepted": false,
-                        "pending": false,
-                        "onchain": false,
-                        "stage": "rejected",
-                        "terminal": true,
-                        "failed": true,
-                        "tx_hash": format!("0x{}", to_hex(&tx_hash)),
-                        "chain_id": format!("0x{:x}", entry.chain_id),
-                        "receipt_pending": serde_json::Value::Null,
-                        "receipt_status": serde_json::Value::Null,
-                        "broadcast_mode": broadcast.get("mode").cloned().unwrap_or(serde_json::Value::Null),
-                        "receipt": serde_json::Value::Null,
-                        "broadcast": broadcast,
-                        "error_code": "CHAIN_MISMATCH",
-                        "error_reason": "transaction exists but chain_id mismatch",
-                    }),
-                    false,
-                ));
-            }
-            let receipt = gateway_eth_tx_receipt_query_json(&entry, eth_tx_index, ctx.eth_tx_index_store)?;
-            let pending = receipt
-                .get("pending")
-                .and_then(serde_json::Value::as_bool)
-                .unwrap_or(false);
-            let stage = if pending {
-                "pending"
-            } else if receipt.get("status").and_then(serde_json::Value::as_str) == Some("0x0") {
-                "onchain_failed"
-            } else {
-                "onchain"
-            };
-            let failed = stage == "onchain_failed";
-            if pending {
-                persist_gateway_eth_submit_success_status(
-                    ctx.eth_tx_index_store,
-                    tx_hash,
-                    entry.chain_id,
-                    true,
-                    false,
-                );
-            } else {
-                persist_gateway_eth_submit_onchain_status(
-                    ctx.eth_tx_index_store,
-                    tx_hash,
-                    entry.chain_id,
-                    failed,
-                );
-            }
-            Ok((
-                serde_json::json!({
-                    "accepted": true,
-                    "pending": pending,
-                    "onchain": !pending,
-                    "stage": stage,
-                    "terminal": !pending,
-                    "failed": failed,
-                    "tx_hash": format!("0x{}", to_hex(&tx_hash)),
-                    "chain_id": format!("0x{:x}", entry.chain_id),
-                    "receipt_pending": receipt.get("pending").cloned().unwrap_or(serde_json::Value::Null),
-                    "receipt_status": receipt.get("status").cloned().unwrap_or(serde_json::Value::Null),
-                    "broadcast_mode": broadcast.get("mode").cloned().unwrap_or(serde_json::Value::Null),
-                    "receipt": receipt,
-                    "broadcast": broadcast,
-                    "error_code": serde_json::Value::Null,
-                    "error_reason": serde_json::Value::Null,
-                }),
-                false,
-            ))
+            Ok((item, false))
         }
         "evm_getSettlementById" | "evm_get_settlement_by_id" => {
             let settlement_id = param_as_string(params, "settlement_id")
