@@ -40,7 +40,7 @@
 | 完整同步（header/fast/state sync） | 部分正确（仍缺） | 已新增 `header_sync_gate`（headers-first）与 `fast_state_sync_gate`（fast headers + state snapshot verify）并接入 acceptance gate，且均含篡改负向拒绝；`fast/state sync` 的生产多 peer/持久化恢复链路仍缺。 |
 | DoS 防护（tx spam/peer flood/invalid block storm） | 部分正确（仍缺） | 已有 RPC ingress rate-limit（429 / `-32029`）门禁，且新增网络级 `peer-score/ban + invalid-block-storm` 门禁（`network_dos_gate`）；仍缺生产级持久化惩罚、跨节点信誉传播与灰度恢复策略。 |
 | 经济参数（gas pricing/burn/inflation/treasury） | 部分正确（主链路已迁移，生产化策略待补） | `NOVOVM` 已迁入 `mint/burn/gas-service split/treasury spend`，并补齐经济跨模块主链路（预言机价格驱动/CDP 清算/NAV 结算/回购编排）门禁化；剩余缺口主要在长期运维与策略持久化。 |
-| ZK runtime（F-15） | 正确（当前受 AOEM 约束） | 台账明确 `zk_runtime_ready=False`、`zkvm_prove/verify=False`，等待 AOEM 1.0。 |
+| ZK runtime（F-15） | 正确（能力已就绪） | 最新能力快照已回填 `zk_runtime_ready=True`、`zkvm_prove=True`、`zkvm_verify=True`。 |
 
 ## C. 「下一阶段（自然演进）」
 
@@ -197,7 +197,6 @@
   - `novovm-consensus` 已接入 `cooldown_epochs` 自动解禁窗口（`SlashExecution` 含 `jailed_until_epoch/cooldown_epochs`）；
   - `scripts/migration/run_unjail_cooldown_gate.ps1` 已接入 acceptance gate，覆盖“未到期拒绝 + 到期自动解禁”。
 - NOVOVM 未完与阻塞：
-  - `F-15: zkvm_prove=False, zkvm_verify=False`
   - 批次表：`E | RPC/CLI/DevEx | NotStarted`
 - SVM2026 共识现状：
   - `supervm-node` 注释明确为 `Single-validator BFT engine for smoke / wiring demo`

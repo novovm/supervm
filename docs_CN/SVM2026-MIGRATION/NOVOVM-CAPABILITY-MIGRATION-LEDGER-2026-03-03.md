@@ -16,9 +16,9 @@
 | F-06 | 分布式协调 | `supervm-distributed`/`supervm-dist-coordinator` | `novovm-coordinator` | Done | `novovm-coordinator` 2PC 状态机 + `two_pc_smoke` + `coordinator_negative_smoke` 已接入功能门禁；`coordinator_signal` 与 `coordinator_negative_signal` 均通过并纳入 `overall_pass` | 后续进入持久化/超时重试/恢复策略增强 | 2026-03-07 |
 | F-07 | 网络层（核心完成，生产待收口） | `supervm-network` + `l4-network` | `novovm-network` + `novovm-protocol` | Done | `network_output_signal` + `network_closure_signal` + `network_pacemaker_signal` + `network_process_signal` + `network_block_wire` 持续通过，mesh 口径稳定，`view_sync/new_view` 已形成 UDP 进程级闭环门禁；新增 `header_sync_gate`（headers-first 正向闭环 + tamper 负向拒绝）与 `fast_state_sync_gate`（fast headers + state snapshot verify + tamper 负向拒绝）并接入 acceptance gate；新增 `network_dos_gate`（peer-score/ban + invalid-block-storm 拒绝）与 `pacemaker_failover_gate`（leader 超时失效 -> view-change -> 新 leader 出块提交）并接入 acceptance gate | 长压、多 peer 真同步路径、持久化/恢复语义、观测告警与故障注入收口 | 2026-03-07 |
 | F-08 | Chain Adapter 接口 | `supervm-chainlinker-api` | `novovm-adapter-api` + `novovm-adapter-novovm` + `novovm-adapter-sample-plugin` | Done | 默认门禁已覆盖 `adapter_backend_compare_signal` + `adapter_plugin_abi_negative_signal` + `adapter_plugin_symbol_negative_signal` + `adapter_plugin_registry_negative_signal`，并全部通过（compare 与 3 个负向均 `enabled=True, available=True, pass=True`）；新增 `run_adapter_stability_gate.ps1` 并接入 acceptance gate（`runs=3, pass_rate=100%`） | 继续扩展长压窗口（`runs>=10`）并跟踪 compare 耗时抖动阈值 | 2026-03-07 |
-| F-09 | zk 执行与聚合 | `src/l2-executor` | `novovm-prover` | ReadyForMerge | `contract_schema_smoke` + `contract_schema_negative_smoke` 已接入；`prover_contract_signal` 与 `prover_contract_negative_signal`（missing_formal_fields / empty_reason_codes / normalization_stable）均通过 | AOEM 未完成项冻结：等待 AOEM 1.0 发布后再做 runtime 参数调优 | 2026-03-04 |
-| F-15 | AOEM ZK 能力契约 | `optional/zkvm-executor` | `novovm-prover` + `novovm-exec` | ReadyForMerge | `novovm-exec` 已统一正式字段与兼容字段解析，并规范化 fallback reason codes；`zk_contract_schema_ready=True` 持续稳定 | AOEM 未完成项冻结：等待 AOEM 1.0 发布后再切换 runtime-ready（当前 `zk_runtime_ready=False`） | 2026-03-04 |
-| F-16 | AOEM MSM 加速契约 | `aoem-engine` + `aoem-ffi` | `novovm-prover` + `novovm-exec` | ReadyForMerge | MSM 能力字段与快照链路持续稳定（`msm_accel=True`） | AOEM 未完成项冻结：等待 AOEM 1.0 发布后再对齐 `msm_backend` 细粒度枚举 | 2026-03-04 |
+| F-09 | zk 执行与聚合 | `src/l2-executor` | `novovm-prover` | Done | `contract_schema_smoke` + `contract_schema_negative_smoke` 已接入；`prover_contract_signal` 与 `prover_contract_negative_signal`（missing_formal_fields / empty_reason_codes / normalization_stable）持续通过；`zk_runtime_ready=True` | 继续做生产参数定标与长压回归 | 2026-03-15 |
+| F-15 | AOEM ZK 能力契约 | `optional/zkvm-executor` | `novovm-prover` + `novovm-exec` | Done | `novovm-exec` 已统一正式字段与兼容字段解析并规范化 fallback reason codes；能力快照已确认 `zkvm_prove=True`、`zkvm_verify=True`、`zk_formal_fields_present=True` | 继续做 prove/verify 组合压测与回归 | 2026-03-15 |
+| F-16 | AOEM MSM 加速契约 | `aoem-engine` + `aoem-ffi` | `novovm-prover` + `novovm-exec` | Done | MSM 能力字段与快照链路持续稳定（`msm_accel=True`，`msm_backend=auto`） | 继续做 backend 策略与性能定标 | 2026-03-15 |
 
 ## 全量扫描快照（F-01 ~ F-16）
 
@@ -34,14 +34,14 @@
 | F-06 | Done | `coordinator=True, signal_enabled=True, signal_available=True, signal_pass=True, negative_enabled=True, negative_available=True, negative_pass=True` |
 | F-07 | Done | `network=True, closure=True, pacemaker=True, process=True, block_wire=True, view_sync=True, new_view=True, block_wire_negative=False` |
 | F-08 | Done | `adapter=True, abi=True, registry=True, consensus=True, compare=True, matrix=True, non_novovm_sample=True, abi_negative_enabled=True, abi_negative_pass=True, symbol_negative_enabled=True, symbol_negative_pass=True, registry_negative_enabled=True, registry_negative_pass=True` |
-| F-09 | ReadyForMerge | `prover=True, prover_signal=True, prover_negative_enabled=True, prover_negative_available=True, prover_negative_pass=True, schema_ok=True, reason_norm=True, zk_runtime_ready=False` |
+| F-09 | Done | `prover=True, prover_signal=True, prover_negative_enabled=True, prover_negative_available=True, prover_negative_pass=True, schema_ok=True, reason_norm=True, zk_runtime_ready=True` |
 | F-10 | Done | `storage_service=False, chain_query_rpc=True, governance_chain_audit_persist=True, governance_chain_audit_restart=True` |
 | F-11 | Done | `app_domain=False, governance_access_policy=True, governance_council_policy=True, governance_execution=True, governance_negative=True` |
 | F-12 | Done | `app_defi=False, governance_token_economics=True, governance_treasury_spend=True, governance_market_policy=True, market_engine=True, market_treasury=True, market_dividend=True, market_foreign_payment=True` |
 | F-13 | Done | `adapters_multi=False, adapter_non_novovm_sample=True, adapter_stability=True, f08_ready=True` |
 | F-14 | Done | `protocol=True, consensus=True, network=True, adapter=True, legacy_vm_runtime_present=False` |
-| F-15 | ReadyForMerge | `zkvm_prove=False, zkvm_verify=False, schema_ready=True` |
-| F-16 | ReadyForMerge | `msm_accel=True, msm_backend=` |
+| F-15 | Done | `zkvm_prove=True, zkvm_verify=True, zk_formal_fields_present=True, schema_ready=True` |
+| F-16 | Done | `msm_accel=True, msm_backend=auto` |
 
 ## 域级状态快照（D0 ~ D3）
 
@@ -71,7 +71,7 @@
 ## 本轮 Acceptance Gate（2026-03-04）
 
 - 结论：`overall_pass=True`（`functional_pass=True`，`performance_pass=True`，`adapter_stability_pass=True`）
-- 域级结论：`D0~D3 = Done`（MVP 口径）；能力项状态仍按台账保持 `ReadyForMerge` / `InProgress` 细分。
+- 域级结论：`D0~D3 = Done`（MVP 口径）；能力项状态本轮已更新为 `16/16 Done`。
 - 运行配置：`release+seal_single`，`performance_runs=3`，`adapter_stability_runs=3`，`allowed_regression_pct=-5`
 - 性能口径（P50）：
   1. `core/cpu_batch_stress`: baseline `20900563.48` -> current `25317353.02`（`+21.13%`）
@@ -80,7 +80,7 @@
 ## 当前阻塞项
 
 1. AOEM 仓库 `vendor/curve25519-dalek` 缺失，影响 AOEM 侧完整构建核验。
-2. AOEM 运行时 ZK/MSM 正式能力字段尚未发布，相关 runtime-ready 项统一冻结至 AOEM 1.0 发布后再推进。
+2. AOEM 运行时 ZK/MSM 正式能力字段已发布并完成能力快照回填（`zkvm_prove/zkvm_verify/msm_backend` 已可用）；该项阻塞已解除。
 
 ## 增量更新（2026-03-05）
 

@@ -11,7 +11,7 @@
 
 ## 2. 当前基线（启动日快照）
 
-- 主能力矩阵：`F-01~F-16 = 13 Done + 3 ReadyForMerge`（F-09/F-15/F-16）。
+- 主能力矩阵：`F-01~F-16 = 16 Done`。
 - 经济基础设施：`9/9 Done`，但口径为“受限主链路”。
 - 统一账户：`UA-A01~UA-A13 = 2 ReadyForMerge + 7 InProgress + 4 NotStarted`。
 - AOEM 迁移计划仍有 `4` 个未勾选项（Phase 3/4）。

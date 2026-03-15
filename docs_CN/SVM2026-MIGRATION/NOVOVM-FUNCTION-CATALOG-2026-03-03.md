@@ -67,7 +67,7 @@
 | A | 交易入口 -> `ops_v2` -> AOEM 执行 -> 状态提交 -> 批次输出（最小真链） | F-01/F-03/F-04 + F-05 最小接线 | Done（MVP；`tx_codec_signal` / `mempool_admission_signal` / `tx_metadata_signal` / `batch_a_closure` / `block_wire_signal` / `block_output_signal` / `commit_output_signal` 持续通过，`state_root` 硬一致性门禁已开启） |
 | B | 共识与终局（执行-共识解耦） | F-05 | Done（MVP；`novovm-consensus` + `consensus_negative_signal` 持续通过） |
 | C | P2P / gossip / 同步 | F-07 + F-08 | Done（MVP；`novovm-network` + Adapter 双后端闭环稳定，`compare + ABI/符号/注册表` 负向门禁均已默认开启并通过） |
-| D | ZK 证明路径（prover/verifier） | F-15/F-16 | ReadyForMerge（迁移契约与门禁已打通；当前 AOEM runtime `zkvm_prove/zkvm_verify` 仍为 false） |
+| D | ZK 证明路径（prover/verifier） | F-15/F-16 | Done（迁移契约、门禁与 runtime 能力已就绪；`zkvm_prove/zkvm_verify/msm_backend` 已回填） |
 | E | RPC / CLI / DevEx | F-10~F-13（裁剪后） | NotStarted |
 
 ## 4. 不建议做法

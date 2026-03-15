@@ -403,7 +403,14 @@ $f09ReadyForMerge = (
         ($proverContractNegativeAvailable -and $proverContractNegativePass)
     )
 )
-$f09Status = if ($f09ReadyForMerge) { "ReadyForMerge" } elseif ($proverSkeletonReady -or $capContract) { "InProgress" } else { "NotStarted" }
+$f09Done = (
+    $f09ReadyForMerge -and
+    $proverReady -and
+    $zkReady -and
+    $zkProve -and
+    $zkVerify
+)
+$f09Status = if ($f09Done) { "Done" } elseif ($f09ReadyForMerge) { "ReadyForMerge" } elseif ($proverSkeletonReady -or $capContract) { "InProgress" } else { "NotStarted" }
 $f10ReadyForMerge = (
     $chainQueryRpcPass -and
     $governanceRpcChainAuditPersistPass -and
@@ -434,8 +441,24 @@ $f11Status = if ($f11ReadyForMerge) { "Done" } elseif ($appDomainSkeletonReady -
 $f12Status = if ($f12ReadyForMerge) { "Done" } elseif ($appDefiSkeletonReady -or $governanceTokenEconomicsPass -or $governanceMarketPolicyPass) { "InProgress" } else { "NotStarted" }
 $f13Status = if ($f13ReadyForMerge) { "Done" } elseif ($adaptersMultiSkeletonReady -or $adapterNonNovoSampleReady -or $adapterStabilityPass) { "InProgress" } else { "NotStarted" }
 $f14Status = if ($protocolSkeletonReady -and $consensusSkeletonReady -and $networkSkeletonReady -and $adapterSkeletonReady -and (-not $legacyVmRuntimePresent)) { "Done" } elseif ($protocolSkeletonReady -and $consensusSkeletonReady -and $networkSkeletonReady -and $adapterSkeletonReady) { "InProgress" } elseif ($legacyVmRuntimePresent) { "NotStarted" } else { "NotStarted" }
-$f15Status = if ($zkContractSchemaReady -and $proverContractSignalPass -and $functionalPass) { "ReadyForMerge" } elseif ($capContract) { "InProgress" } else { "NotStarted" }
-$f16Status = if ($msmReady -and $functionalPass) { "ReadyForMerge" } elseif ($capContract) { "InProgress" } else { "NotStarted" }
+$f15Done = (
+    $zkContractSchemaReady -and
+    $proverContractSignalPass -and
+    $functionalPass -and
+    $zkProve -and
+    $zkVerify -and
+    $zkFormalFieldsPresent
+)
+$f15ReadyForMerge = ($zkContractSchemaReady -and $proverContractSignalPass -and $functionalPass)
+$f15Status = if ($f15Done) { "Done" } elseif ($f15ReadyForMerge) { "ReadyForMerge" } elseif ($capContract) { "InProgress" } else { "NotStarted" }
+
+$f16Done = (
+    $msmReady -and
+    $functionalPass -and
+    (-not [string]::IsNullOrWhiteSpace($msmBackend))
+)
+$f16ReadyForMerge = ($msmReady -and $functionalPass)
+$f16Status = if ($f16Done) { "Done" } elseif ($f16ReadyForMerge) { "ReadyForMerge" } elseif ($capContract) { "InProgress" } else { "NotStarted" }
 
 $domainD0Done = ((Is-ClosedStatus -Status $f01Status) -and (Is-ClosedStatus -Status $f02Status))
 $domainD1Done = ((Is-ClosedStatus -Status $f01Status) -and (Is-ClosedStatus -Status $f02Status) -and $functionalPass)
