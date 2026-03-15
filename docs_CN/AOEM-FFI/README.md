@@ -1,0 +1,27 @@
+<!--
+Copyright (c) 2026 AOEM SYSTEM TECHNOLOGY
+All rights reserved.
+Author: AOEM SYSTEM TECHNOLOGY
+-->
+
+# AOEM FFI 文档索引（SuperVM）
+
+本目录仅保留 SuperVM 对外发布口径所需的 AOEM FFI 权威文档，避免旧口径混淆。
+
+## 当前权威（优先阅读）
+
+1. `AOEM-INTRODUCTION-V1-2026-03-15.md`
+2. `SUPERVM-ZK-PROOF-INTEGRATION-V1-2026-03-15.md`
+3. `AOEM-FFI-FULLMAX-CAPABILITY-MATRIX-2026-03-12.md`
+4. `AOEM-FFI-HOST-CALL-PARAMS-V1-2026-03-10.md`
+
+## AOEM 上游权威（能力契约源）
+
+- `AOEM/docs/perf/AOEM-FFI-FULLMAX-CAPABILITY-MATRIX-2026-03-12.md`
+- `AOEM/docs/perf/AOEM-FFI-HOST-CALL-PARAMS-V1-2026-03-10.md`
+- `AOEM/docs/perf/AOEM-CRYPTO-GPU-AUDIT-2026-03-11.md`
+
+## 发布口径规则
+
+- 对外评估仅使用“当前权威”中的 4 份文档。
+- 旧口径/过程性封盘文档已移至 `archive/`，不属于当前发布口径。

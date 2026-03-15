@@ -25,6 +25,7 @@
 
 - 上述 `100%` 只代表 `EVM 插件/gateway/语义/生命周期/内部二进制主线` 已收口。
 - 它不代表当前默认部署已经具备“真实 Ethereum mainnet 状态 + 真实 mainnet 广播 + 实网一致性验证”。
+- 原生协议兼容专项进度请单独查看：`docs_CN/Adapters/EVM/NOVOVM-EVM-NATIVE-PROTOCOL-COMPAT-PROGRESS-2026-03-16.md`。
 
 | ID | 能力 | 当前状态 | 生产代码锚点 | 说明 |
 |---|---|---|---|---|
@@ -188,11 +189,11 @@
 - 本轮完成区块根函数语义收口：移除 `pseudo` 命名口径，统一为确定性区块哈希/根函数实现（生产代码路径）。
 - 本轮补 `receipt/error` 直连闭环：新增 `eth submit-status` 持久化（`gateway:eth:submit_status:v1:*`，RocksDB+内存同源），写入口失败（如 txpool reject/public broadcast failed）会按 `tx_hash` 持久化标准错误语义；`evm_getTxSubmitStatus/evm_getTransactionLifecycle` 在“索引未命中”场景下会优先返回该持久化失败状态（含 `error_code/error_reason/updated_at_unix_ms`），并在同一 `tx_hash` 后续提交成功时自动清理旧失败状态，避免历史失败污染当前生命周期查询。
 - 本轮继续收口 `receipt/error` 批量提交边界：`evm_publicSendRawTransactionBatch/evm_publicSendTransactionBatch` 的失败项现在会同步写入 submit-status（与单笔写入口同语义）；同时单笔写入口失败时若错误文本未携带 `tx_hash`，会回退到参数推导（raw 写入走 `raw_tx` 推导，`sendTransaction` 写入走 `uca_id/binding + nonce + tx 字段` 推导）并落持久化状态，保证后续 `evm_getTxSubmitStatus/evm_getTransactionLifecycle` 可直接查询失败归因，不丢批量失败状态。
-- 本轮补 gateway->upstream 直连“单请求聚合面”：新增 `evm_getUpstreamSnapshot/evm_get_upstream_snapshot`，可一次返回同链 `pending_transactions + txpool_status + logs + lifecycle + receipts + broadcast`（按参数可裁剪）；内部全量复用现有生产主路径（`eth_pendingTransactions/txpool_status/eth_getLogs/evm_getTransactionLifecycleBatch/evm_getTransactionReceiptBatch/evm_getPublicBroadcastStatusBatch`），不新增工程化中间层，便于上游直接消费。
-- 本轮继续补 gateway->upstream 直连“运行时聚合面”：新增 `evm_getUpstreamRuntimeBundle/evm_get_upstream_runtime_bundle`，在 `evm_getUpstreamSnapshot` 基础上同请求补齐 `executable_ingress + pending_ingress + pending_sender_buckets`，形成“upstream + ingress”一包返回，内部仍只复用现有生产方法，不引入中间包装层。
-- 本轮补 gateway->upstream 直连“提交状态聚合面”：新增 `evm_getUpstreamTxStatusBundle/evm_get_upstream_tx_status_bundle`，可一次返回 `accepted/pending/onchain/error_code/error_reason + lifecycle + receipt + broadcast`；支持显式 `tx_hashes` 或自动从 `eth_pendingTransactions` 抽取（`auto_from_pending`），用于上游稳定直消费提交后闭环状态。
-- 本轮补 gateway->upstream 直连“事件聚合面”：新增 `evm_getUpstreamEventBundle/evm_get_upstream_event_bundle`，可同请求返回 `eth_getLogs + evm_getFilterChanges(+evm_getFilterLogs)`；支持 `filter_ids/filterIds/filters/ids` 多种输入，减少上游 logs/filter 多次 RPC 拼接开销。
-- 本轮补 gateway->upstream 直连“全量总聚合面”：新增 `evm_getUpstreamFullBundle/evm_get_upstream_full_bundle`，同请求汇总 `runtime_status(syncing/peer_count/block_number) + runtime_bundle + tx_status_bundle + event_bundle`，并复用前述生产接口（不引入中间层）实现“一次调用拿全链路状态”。
+- 本轮补 gateway->upstream 直连“单请求聚合面”：新增 `evm_getRuntimeSnapshot/evm_get_runtime_snapshot`，可一次返回同链 `pending_transactions + txpool_status + logs + lifecycle + receipts + broadcast`（按参数可裁剪）；内部全量复用现有生产主路径（`eth_pendingTransactions/txpool_status/eth_getLogs/evm_getTransactionLifecycleBatch/evm_getTransactionReceiptBatch/evm_getPublicBroadcastStatusBatch`），不新增工程化中间层，便于上游直接消费。
+- 本轮继续补 gateway->upstream 直连“运行时聚合面”：新增 `evm_getRuntimeBundle/evm_get_runtime_bundle`，在 `evm_getRuntimeSnapshot` 基础上同请求补齐 `executable_ingress + pending_ingress + pending_sender_buckets`，形成“upstream + ingress”一包返回，内部仍只复用现有生产方法，不引入中间包装层。
+- 本轮补 gateway->upstream 直连“提交状态聚合面”：新增 `evm_getRuntimeTxStatusBundle/evm_get_runtime_tx_status_bundle`，可一次返回 `accepted/pending/onchain/error_code/error_reason + lifecycle + receipt + broadcast`；支持显式 `tx_hashes` 或自动从 `eth_pendingTransactions` 抽取（`auto_from_pending`），用于上游稳定直消费提交后闭环状态。
+- 本轮补 gateway->upstream 直连“事件聚合面”：新增 `evm_getRuntimeEventBundle/evm_get_runtime_event_bundle`，可同请求返回 `eth_getLogs + evm_getFilterChanges(+evm_getFilterLogs)`；支持 `filter_ids/filterIds/filters/ids` 多种输入，减少上游 logs/filter 多次 RPC 拼接开销。
+- 本轮补 gateway->upstream 直连“全量总聚合面”：新增 `evm_getRuntimeFullBundle/evm_get_runtime_full_bundle`，同请求汇总 `runtime_status(syncing/peer_count/block_number) + runtime_bundle + tx_status_bundle + event_bundle`，并复用前述生产接口（不引入中间层）实现“一次调用拿全链路状态”。
 - 本轮继续去工程化收口 runtime 同步边界：已移除 `evm_ingestRuntimeSyncSnapshot*` 与 `evm_setRuntimeNativeSyncStatus*` 注入式写入口，仅保留 runtime 同步只读接口（`evm_getRuntimeSyncStatus/evm_getRuntimeNativeSyncStatus/evm_getRuntimeSyncPullWindow`）；`eth_syncing/net_peerCount/eth_blockNumber` 仅消费 `novovm-network` 真实运行时观测，不再允许外部 RPC 注入覆盖同步状态。
 - 本轮补 network 运行时同步观测：`novovm-network` 的收包路径已把 `Finality::Vote(checkpoint id)` 纳入同步高度观测（同源写入 runtime `highest_block`），并补回归测试，减少 finality 面进度不计入 `eth_syncing` 的盲区。
 - 本轮修正 runtime native sync 活跃边界：`phase=idle` 且 `highest==current` 时不再因 `peer_count>0` 被判定为“同步中”，修复 `eth_syncing` 在已追平状态下的假阳性。
@@ -205,11 +206,11 @@
 - 本轮补原生网络“实收包”闭环：gateway 在每轮原生广播后会在同一 transport 上小批量 `try_recv` 拉取消息并驱动 runtime 状态更新（peer/sync 观测同源），避免只发不收导致的状态滞后。
 - 本轮补只读路径同步收敛：`resolve_gateway_eth_sync_status` 在读取 `eth_syncing/net_peerCount/eth_blockNumber` 前会先轮询链级 native broadcaster 缓存做小批量收包，让“读多写少”场景也能持续由真实网络消息刷新 runtime 同步状态。
 - 本轮新增公网广播能力直查接口：`evm_getPublicBroadcastCapability/evm_get_public_broadcast_capability`（含 `ready/required/mode/executor_configured/native_peer_count`），可直接判定当前链是否具备“提交后可广播”的生产闭环能力。
-- 本轮把公网广播能力并入总聚合：`evm_getUpstreamFullBundle.runtime_status.public_broadcast` 已输出同源能力快照，补齐 upstream 单请求判断广播门禁的直连消费边界。
-- 本轮补 runtime 同步拉取窗口直连：新增 `evm_getRuntimeSyncPullWindow/evm_get_runtime_sync_pull_window`（返回 `phase + from_block/to_block`），并并入 `evm_getUpstreamFullBundle.runtime_status.sync_pull_window`，上游可单请求消费同步拉取边界，无需脚本层拼装。
+- 本轮把公网广播能力并入总聚合：`evm_getRuntimeFullBundle.runtime_status.public_broadcast` 已输出同源能力快照，补齐 upstream 单请求判断广播门禁的直连消费边界。
+- 本轮补 runtime 同步拉取窗口直连：新增 `evm_getRuntimeSyncPullWindow/evm_get_runtime_sync_pull_window`（返回 `phase + from_block/to_block`），并并入 `evm_getRuntimeFullBundle.runtime_status.sync_pull_window`，上游可单请求消费同步拉取边界，无需脚本层拼装。
 - 本轮补 native runtime 同步拉取发包：gateway 原生 runtime worker 已按 `plan_network_runtime_sync_pull_window` 直接发 `DistributedOcccGossip(StateSync)` 请求帧（payload: `NSP1 + phase + chain_id + from_block + to_block`），完成“runtime 同步窗口 -> 原生网络发包”直连闭环。
 - 本轮补 `novovm-network` 同步拉取收包闭环：收包侧已消费 `StateSync(NSP1)` 拉取请求并自动回包 `block_header_wire_v1`（`StateSync`），同时把请求 `to_block` 写入远端链高提示，形成“请求/回包/runtime 更新”同源生产链路。
-- 本轮补 gateway 直连消费单入口：新增 `evm_getUpstreamConsumerBundle/evm_get_upstream_consumer_bundle`，一次返回 `runtime(syncing/peer/block/broadcast/native_sync) + runtime_bundle + tx_status_bundle + event_bundle`，并附 `ready/ready_details/counts`（`public_broadcast_ready/tx_status_ready/events_ready`）。上游无需多次拼装 logs/receipt-error/public-broadcast 结果，即可直接消费闭环状态。
+- 本轮补 gateway 直连消费单入口：新增 `evm_getRuntimeConsumerBundle/evm_get_runtime_consumer_bundle`，一次返回 `runtime(syncing/peer/block/broadcast/native_sync) + runtime_bundle + tx_status_bundle + event_bundle`，并附 `ready/ready_details/counts`（`public_broadcast_ready/tx_status_ready/events_ready`）。上游无需多次拼装 logs/receipt-error/public-broadcast 结果，即可直接消费闭环状态。
 - 本轮补 `eth_getProof` 生产复验入口：新增 `evm_verifyProof/evm_verify_proof`，同请求参数（`chain_id/address/storage_keys/block`）下可对外部提交的 `proof` 做同源状态视图复验，返回 `valid + mismatch_fields`（含 `address/accountProof/balance/codeHash/nonce/storageHash/storageProof` 维度）用于快速判定 proof 是否被篡改。
 - 本轮把 `evm_verifyProof` 从“JSON 对比校验”收口为“真实 MPT 证明校验”：账户 proof 与 storage proof 均按 trie RLP 节点路径 + 根哈希 + 目标值语义验证，`valid` 结果不再依赖完整对象字符串对齐。
 - 本轮补 `type0/type1/type2` 状态读同源语义：`gateway` 状态视图已去除 `tx_type==2` 硬限制，合约创建识别统一按 `to==null && input!=empty`；合约调用写入投影不再只认 `type1`。`eth_getCode/eth_getStorageAt/eth_getProof/stateRoot` 在 `legacy(type0)` 场景已通过回归锁定。
@@ -232,7 +233,7 @@
 - 本轮补 AOEM FFI owned-buffer 边界：`aoem-bindings` 新增 `MAX_AOEM_OWNED_BUFFER_BYTES=64MiB` 硬上限，`copy_aoem_owned_bytes` 在超限时会先 `aoem_free` 再拒绝，防止异常长度触发超大内存占用；并允许 `ptr=null && len=0` 作为空返回语义，减少空载荷误判。
 - 本轮补 `32-byte slot key` 同源收口：`eth_getStorageAt/eth_getProof` 的 storage key 参数解析、读取和 proof 构造已统一到完整 `[u8;32]` 键空间，网关内部不再先降级为 `u128` 再回查；同时 storage item 内部模型改为 `([u8;32], value)`，proof/value 匹配改为精确键匹配，避免高位 key 截断语义偏差。
 - 本轮补 `eth_call/eth_estimateGas` 生产边界：`eth_call` 增加 `from/to` 长度校验、`value` 余额约束、`to=null` 稳定返回与常见 ERC20 selector（`balanceOf/totalSupply/decimals/allowance`）同源读取；`eth_estimateGas` 改为统一 `estimate_intrinsic_gas_with_access_list_m0`，并补“目标有代码 + calldata 非空”执行附加估算、`gas` 上限拒绝（`required gas exceeds allowance`）和 `value` 余额校验。对应回归 `eth_estimate_gas_contract_call_adds_exec_surcharge_and_respects_gas_cap` 已通过。
-- 本轮补 gateway 直连消费可用性收口：`evm_getUpstreamConsumerBundle` 由“只返回聚合 bundle”升级为“可直接消费输出”，新增 `consumer.public_broadcast/consumer.tx_status/consumer.events` 与 `unresolved` 明细（按 tx_hash 列出 lifecycle/receipt/broadcast 未解项）；并将 `ready` 改为严格语义（必须公网广播就绪 + tx_status 三类已解 + 事件数组可读），消除上游“假就绪”风险。
+- 本轮补 gateway 直连消费可用性收口：`evm_getRuntimeConsumerBundle` 由“只返回聚合 bundle”升级为“可直接消费输出”，新增 `consumer.public_broadcast/consumer.tx_status/consumer.events` 与 `unresolved` 明细（按 tx_hash 列出 lifecycle/receipt/broadcast 未解项）；并将 `ready` 改为严格语义（必须公网广播就绪 + tx_status 三类已解 + 事件数组可读），消除上游“假就绪”风险。
 - 本轮补回执日志语义收口：`eth_getTransactionReceipt` 与 `eth_getBlockReceipts` 已统一输出最小日志项（`address=to|from`、`topic0=tx_hash`、`data=input`），并基于地址+topic 生成真实 2048-bit `logsBloom`；pending/confirmed 路径保持同源字段语义。
 - 本轮修复 `NSP1` 大窗口续拉停滞：`novovm-network` 对窗口 in-flight 目标改为按单次响应上限截断后的 `to_block`（不再盲等原请求 `to_block`），避免“响应批上限 < 请求窗口”时续拉不触发。
 - 本轮补 native 同步拉取失效恢复：gateway 同窗超时重发改为分级扇出（`1 -> 2 -> all peers`），并保持 runtime 链高优先顺序，减少单 peer 故障对下载推进的阻塞。
@@ -244,7 +245,7 @@
 - 本轮补 MPT 主线收口：`transactionsRoot/receiptsRoot` 已从自定义二叉 Merkle 切到 hexary Patricia trie 根（`key=rlp(tx_index)`，`value=tx/receipt payload`），不再使用网关私有树根算法。
 - 本轮补状态证明主线收口：`stateRoot/storageRoot` 与 `eth_getProof(accountProof/storageProof)` 已切到 trie 节点语义（proof 节点为路径 RLP node 序列），替换旧的 sibling-hash 证明结构。
 - 本轮补 txpool 重复交易幂等收口：`novovm-adapter-evm-plugin` 入池主循环已在生产路径实现“完全同交易字段重复提交 -> 幂等 accepted（不重复入池）”；并保持替换语义不变（低费替换仍 `replacement_underpriced`，满足 bump 的替换仍可生效），对应回归 `ingress_txpool_duplicate_tx_is_idempotent_accepted` 已通过。
-- 本轮补 `tx status` 直接消费收口：`evm_getTransactionLifecycle` 与 `evm_getUpstreamTxStatusBundle` 增加扁平语义字段 `stage/terminal/failed + receipt_pending/receipt_status + broadcast_mode`；`evm_getUpstreamConsumerBundle` 同步新增 `stage_resolved/stage_unresolved`、`unresolved.stage_tx_hashes` 与 `ready_details.tx_status_stage_ready`，上游可直接判定提交阶段与失败类型，不再做三路对象二次归并。
+- 本轮补 `tx status` 直接消费收口：`evm_getTransactionLifecycle` 与 `evm_getRuntimeTxStatusBundle` 增加扁平语义字段 `stage/terminal/failed + receipt_pending/receipt_status + broadcast_mode`；`evm_getRuntimeConsumerBundle` 同步新增 `stage_resolved/stage_unresolved`、`unresolved.stage_tx_hashes` 与 `ready_details.tx_status_stage_ready`，上游可直接判定提交阶段与失败类型，不再做三路对象二次归并。
 - 本轮补 `pending atomic-broadcast` 自动恢复收口：gateway 已接入“启动即自动回放 + 每次请求后自动回放”生产路径；自动回放参数固定为 `NOVOVM_GATEWAY_EVM_ATOMIC_BROADCAST_AUTOREPLAY_MAX`、`NOVOVM_GATEWAY_EVM_ATOMIC_BROADCAST_AUTOREPLAY_COOLDOWN_MS`、`NOVOVM_GATEWAY_EVM_ATOMIC_BROADCAST_PENDING_WARN_THRESHOLD`、`NOVOVM_GATEWAY_EVM_ATOMIC_BROADCAST_AUTOREPLAY_USE_EXTERNAL_EXECUTOR`，成功会清理 pending ticket/payload 并置 `broadcasted_v1`，失败保留 pending ticket 并置 `broadcast_failed_v1`。
 - 本轮补 `pending atomic-ready` 自动恢复收口：gateway 已接入 pending atomic-ready 批量恢复（RocksDB 扫描同源前缀），自动把 `compensate_pending_v1` 记录恢复为 `atomic-ready spool + queue + pending ticket/payload`，并由现有 pending atomic-broadcast 自动回放链路继续执行；重启后可自动收敛，不再依赖人工逐条 `evm_replayAtomicReady`。
 - 本轮补 `pending public-broadcast` 自动恢复收口：gateway 已接入公网广播 pending 自动回放（启动与请求后双触发），会从链索引中扫描 `broadcast_status=none|missing` 的交易并自动重试广播；参数固定为 `NOVOVM_GATEWAY_ETH_PUBLIC_BROADCAST_AUTOREPLAY_MAX`、`NOVOVM_GATEWAY_ETH_PUBLIC_BROADCAST_AUTOREPLAY_COOLDOWN_MS`、`NOVOVM_GATEWAY_ETH_PUBLIC_BROADCAST_PENDING_WARN_THRESHOLD`，并保持现有外部执行器/原生回退主路径语义不变。
@@ -366,12 +367,12 @@
   - `evm_replayPublicBroadcastBatch` 已改为“批量并发回放 + 顺序聚合返回”路径；逐笔失败仍按原结构返回 `replayed=false + error`。
   - `evm_getTransactionLifecycleBatch` 已改为“批量并发查询 + 顺序聚合返回”路径；并与单笔 `evm_getTransactionLifecycle` 统一复用同一生产 helper，保证单批语义一致。
   - `evm_getLogsBatch` 与 `evm_getFilterLogsBatch` 已改为“批量并发查询 + 顺序聚合返回”路径，保持过滤语义与输出顺序兼容。
-  - `evm_getUpstreamTxStatusBundle` 已改为“按 tx 并发收口 lifecycle+receipt+broadcast”路径，减少重复批量查询和重复解析开销。
+  - `evm_getRuntimeTxStatusBundle` 已改为“按 tx 并发收口 lifecycle+receipt+broadcast”路径，减少重复批量查询和重复解析开销。
   - `evm_getFilterChangesBatch` 已改为直连生产 `filter` 处理 helper，去掉批量递归分发开销。
-  - `evm_getUpstreamEventBundle` 的 `logs/filterChanges/filterLogs` 已改为直连生产 helper，减少重复路由分发与参数重解析开销。
+  - `evm_getRuntimeEventBundle` 的 `logs/filterChanges/filterLogs` 已改为直连生产 helper，减少重复路由分发与参数重解析开销。
   - `evm_publicSendRawTransactionBatch` 与 `evm_publicSendTransactionBatch` 已去掉批量内递归分发层，直接进入 `eth_send*` 主生产路径（保留 public-broadcast 语义标记）。
-  - `evm_getUpstreamTxStatusBundle`、`evm_getUpstreamEventBundle`、`evm_getUpstreamFullBundle` 已完成 helper 直连收口，去掉 bundle 内部递归 `run_gateway_method` 分发层，减少重复路由与参数重解析开销。
-  - `evm_getUpstreamConsumerBundle` 已改为直连 `FullBundle helper`，去掉 consumer->fullBundle 递归分发层。
+  - `evm_getRuntimeTxStatusBundle`、`evm_getRuntimeEventBundle`、`evm_getRuntimeFullBundle` 已完成 helper 直连收口，去掉 bundle 内部递归 `run_gateway_method` 分发层，减少重复路由与参数重解析开销。
+  - `evm_getRuntimeConsumerBundle` 已改为直连 `FullBundle helper`，去掉 consumer->fullBundle 递归分发层。
   - 批量查询保持单笔语义：默认链提示、pending 交易视图、chain_id 边界过滤均保持兼容。
   - 批量查询的索引缓存回写改为线程外顺序回写，避免并发路径污染主索引写入。
   - native sync-pull 发送选路已改为“单次 runtime peer-head 快照 + 单次有序候选发送”，去掉同一轮内双次 `select` 与 merge 组装，减少重复排序和集合构建开销。
@@ -438,5 +439,6 @@
 ### 专项总进度（2026-03-14）
 
 - 高性能流水线专项总进度：`100%`
+
 
 

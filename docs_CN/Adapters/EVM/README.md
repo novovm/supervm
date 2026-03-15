@@ -14,6 +14,9 @@
 - 全功能镜像节点模式规范  
   `NOVOVM-EVM-FULL-MIRROR-NODE-MODE-SPEC-2026-03-11.md`
 
+- 插件配置/设置/使用手册（并行运维入口）  
+  `NOVOVM-EVM-PLUGIN-CONFIG-SETUP-USAGE-2026-03-16.md`
+
 - 迁移方案（阶段拆解）  
   `NOVOVM-EVM-ADAPTER-MIGRATION-PLAN-2026-03-06.md`
 

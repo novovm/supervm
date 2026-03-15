@@ -1204,6 +1204,17 @@ pub fn default_runtime_profile_path_for_dll(dll_path: &Path) -> PathBuf {
                 return root.join("config").join("aoem-runtime-profile.json");
             }
         }
+        if level1_name == "core" {
+            let platform_root = level1.parent().unwrap_or(level1);
+            let repo_root = platform_root.parent().unwrap_or(platform_root);
+            let common = repo_root.join("config").join("aoem-runtime-profile.json");
+            if common.exists() {
+                return common;
+            }
+            return platform_root
+                .join("config")
+                .join("aoem-runtime-profile.json");
+        }
         return level1.join("config").join("aoem-runtime-profile.json");
     }
     parent.join("aoem-runtime-profile.json")
@@ -1242,6 +1253,15 @@ pub fn default_manifest_path_for_dll(dll_path: &Path) -> PathBuf {
                 return root.join("manifest").join("aoem-manifest.json");
             }
         }
+        if level1_name == "core" {
+            let platform_root = level1.parent().unwrap_or(level1);
+            let repo_root = platform_root.parent().unwrap_or(platform_root);
+            let common = repo_root.join("manifest").join("aoem-manifest.json");
+            if common.exists() {
+                return common;
+            }
+            return platform_root.join("manifest").join("aoem-manifest.json");
+        }
         return level1.join("manifest").join("aoem-manifest.json");
     }
     parent.join("manifest").join("aoem-manifest.json")
@@ -1254,6 +1274,16 @@ fn default_host_dll_name() -> &'static str {
         "libaoem_ffi.dylib"
     } else {
         "libaoem_ffi.so"
+    }
+}
+
+fn current_platform_dir_name() -> &'static str {
+    if cfg!(target_os = "windows") {
+        "windows"
+    } else if cfg!(target_os = "macos") {
+        "macos"
+    } else {
+        "linux"
     }
 }
 
@@ -1270,15 +1300,26 @@ pub fn default_host_dll_path() -> PathBuf {
         manifest_dir.join("..").join(".."),
         manifest_dir.join("..").join("..").join(".."),
     ] {
-        let candidate = base.join("aoem").join("bin").join(default_host_dll_name());
-        if candidate.exists() {
-            return candidate;
+        let aoem_root = base.join("aoem");
+        for candidate in [
+            aoem_root
+                .join(current_platform_dir_name())
+                .join("core")
+                .join("bin")
+                .join(default_host_dll_name()),
+            aoem_root.join("bin").join(default_host_dll_name()),
+        ] {
+            if candidate.exists() {
+                return candidate;
+            }
         }
     }
     manifest_dir
         .join("..")
         .join("..")
         .join("aoem")
+        .join(current_platform_dir_name())
+        .join("core")
         .join("bin")
         .join(default_host_dll_name())
 }

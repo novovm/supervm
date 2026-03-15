@@ -1,6 +1,8 @@
 param(
     [string]$RepoRoot = "",
     [string]$GatewayBind = "127.0.0.1:9899",
+    [ValidateSet("fullnode_only", "upstream_proxy")]
+    [string]$BroadcastMode = "fullnode_only",
     [string]$UpstreamRpc = "",
     [string]$RawTx = "",
     [string]$UcaId = "",
@@ -9,6 +11,8 @@ param(
     [int]$PollMaxAttempts = 45,
     [int]$PollIntervalMs = 3000,
     [UInt64]$UpstreamTimeoutMs = 20000,
+    [switch]$RequireReceiptInFullnode,
+    [switch]$DisableFullnodeAutoBootstrap,
     [string]$SummaryOut = "artifacts/migration/evm-mainnet-write-canary-summary.json",
     [switch]$SkipBuild
 )
@@ -126,11 +130,29 @@ if (-not $UpstreamRpc) {
 if (-not $RawTx) {
     $RawTx = $env:NOVOVM_EVM_MAINNET_CANARY_RAW_TX
 }
-if (-not $UpstreamRpc) {
-    throw "missing UpstreamRpc: pass -UpstreamRpc or set NOVOVM_GATEWAY_ETH_UPSTREAM_RPC"
-}
 if (-not $RawTx) {
     throw "missing RawTx: pass -RawTx or set NOVOVM_EVM_MAINNET_CANARY_RAW_TX"
+}
+if ($BroadcastMode -eq "upstream_proxy" -and -not $UpstreamRpc) {
+    throw "missing UpstreamRpc in upstream_proxy mode: pass -UpstreamRpc or set NOVOVM_GATEWAY_ETH_UPSTREAM_RPC"
+}
+
+function Get-RpcField {
+    param(
+        [AllowNull()]$Obj,
+        [Parameter(Mandatory = $true)][string]$Name
+    )
+    if ($null -eq $Obj) {
+        return $null
+    }
+    $prop = $Obj.PSObject.Properties[$Name]
+    if ($null -eq $prop) {
+        return $null
+    }
+    return $prop.Value
+}
+if (-not $UcaId) {
+    $UcaId = $env:NOVOVM_EVM_MAINNET_CANARY_UCA_ID
 }
 
 $TargetRoot = if ($env:CARGO_TARGET_DIR) {
@@ -159,12 +181,39 @@ if (Test-Path $gwErr) { Remove-Item -Force $gwErr }
 $chainHex = ("0x{0:x}" -f $ChainId)
 $envMap = @{
     "NOVOVM_GATEWAY_BIND" = $GatewayBind
-    "NOVOVM_GATEWAY_ETH_UPSTREAM_RPC" = $UpstreamRpc
-    "NOVOVM_GATEWAY_ETH_PUBLIC_BROADCAST_UPSTREAM_RPC" = $UpstreamRpc
-    "NOVOVM_GATEWAY_ETH_UPSTREAM_RPC_TIMEOUT_MS" = ([string]$UpstreamTimeoutMs)
-    "NOVOVM_GATEWAY_ETH_PUBLIC_BROADCAST_UPSTREAM_RPC_TIMEOUT_MS" = ([string]$UpstreamTimeoutMs)
-    "NOVOVM_GATEWAY_ETH_UPSTREAM_RPC_CHAIN_$ChainId" = $UpstreamRpc
-    "NOVOVM_GATEWAY_ETH_UPSTREAM_RPC_CHAIN_$chainHex" = $UpstreamRpc
+    # Default strict full-node mode: clear upstream/proxy routes.
+    "NOVOVM_GATEWAY_ETH_UPSTREAM_RPC" = ""
+    "NOVOVM_GATEWAY_ETH_PUBLIC_BROADCAST_UPSTREAM_RPC" = ""
+    "NOVOVM_GATEWAY_ETH_UPSTREAM_RPC_TIMEOUT_MS" = ""
+    "NOVOVM_GATEWAY_ETH_PUBLIC_BROADCAST_UPSTREAM_RPC_TIMEOUT_MS" = ""
+    "NOVOVM_GATEWAY_ETH_UPSTREAM_RPC_CHAIN_$ChainId" = ""
+    "NOVOVM_GATEWAY_ETH_UPSTREAM_RPC_CHAIN_$chainHex" = ""
+    "NOVOVM_GATEWAY_ETH_PUBLIC_BROADCAST_UPSTREAM_RPC_CHAIN_$ChainId" = ""
+    "NOVOVM_GATEWAY_ETH_PUBLIC_BROADCAST_UPSTREAM_RPC_CHAIN_$chainHex" = ""
+}
+
+if ($BroadcastMode -eq "upstream_proxy") {
+    $envMap["NOVOVM_GATEWAY_ETH_UPSTREAM_RPC"] = $UpstreamRpc
+    $envMap["NOVOVM_GATEWAY_ETH_PUBLIC_BROADCAST_UPSTREAM_RPC"] = $UpstreamRpc
+    $envMap["NOVOVM_GATEWAY_ETH_UPSTREAM_RPC_TIMEOUT_MS"] = ([string]$UpstreamTimeoutMs)
+    $envMap["NOVOVM_GATEWAY_ETH_PUBLIC_BROADCAST_UPSTREAM_RPC_TIMEOUT_MS"] = ([string]$UpstreamTimeoutMs)
+    $envMap["NOVOVM_GATEWAY_ETH_UPSTREAM_RPC_CHAIN_$ChainId"] = $UpstreamRpc
+    $envMap["NOVOVM_GATEWAY_ETH_UPSTREAM_RPC_CHAIN_$chainHex"] = $UpstreamRpc
+    $envMap["NOVOVM_GATEWAY_ETH_PUBLIC_BROADCAST_UPSTREAM_RPC_CHAIN_$ChainId"] = $UpstreamRpc
+    $envMap["NOVOVM_GATEWAY_ETH_PUBLIC_BROADCAST_UPSTREAM_RPC_CHAIN_$chainHex"] = $UpstreamRpc
+} elseif (-not $DisableFullnodeAutoBootstrap) {
+    if (-not (Test-Path "Env:NOVOVM_GATEWAY_ETH_PUBLIC_BROADCAST_NATIVE_NODE_ID")) {
+        $envMap["NOVOVM_GATEWAY_ETH_PUBLIC_BROADCAST_NATIVE_NODE_ID"] = "1"
+    }
+    if (-not (Test-Path "Env:NOVOVM_GATEWAY_ETH_PUBLIC_BROADCAST_NATIVE_LISTEN")) {
+        $envMap["NOVOVM_GATEWAY_ETH_PUBLIC_BROADCAST_NATIVE_LISTEN"] = "127.0.0.1:39001"
+    }
+    if (-not (Test-Path "Env:NOVOVM_GATEWAY_ETH_PUBLIC_BROADCAST_NATIVE_TRANSPORT")) {
+        $envMap["NOVOVM_GATEWAY_ETH_PUBLIC_BROADCAST_NATIVE_TRANSPORT"] = "udp"
+    }
+    if (-not (Test-Path "Env:NOVOVM_GATEWAY_ETH_PUBLIC_BROADCAST_NATIVE_PEERS")) {
+        $envMap["NOVOVM_GATEWAY_ETH_PUBLIC_BROADCAST_NATIVE_PEERS"] = "2@127.0.0.1:39001"
+    }
 }
 
 $envState = Push-ProcessEnv -Environment $envMap
@@ -181,18 +230,22 @@ try {
 }
 
 $startedAt = [DateTimeOffset]::UtcNow
-$summary = [ordered]@{
+    $summary = [ordered]@{
     started_at_utc = $startedAt.ToString("o")
     gateway_bind = $GatewayBind
+    broadcast_mode = $BroadcastMode
     chain_id = $ChainId
     upstream_rpc = $UpstreamRpc
-    uca_id = $UcaId
-    uca_id_effective = $UcaId
-    from_address = $FromAddress
-    tx_hash = $null
+        tx_hash = $null
+        uca_id = $UcaId
+        from_address = $FromAddress
     send_result = $null
-    send_retry_result = $null
     submit_status = $null
+    runtime_protocol_caps = $null
+    fullnode_native_ready = $null
+    runtime_protocol_caps_after_send = $null
+    fullnode_native_ready_after_send = $null
+    accepted_or_pending = $false
     receipt = $null
     receipt_found = $false
     poll_attempts = 0
@@ -214,28 +267,34 @@ try {
         params = @()
     } | ConvertTo-Json -Depth 6 -Compress
     $chainResp = Invoke-RestMethod -Uri $url -Method Post -ContentType "application/json" -Body $chainReq
-    if (-not $chainResp.result) {
+    $chainResult = Get-RpcField -Obj $chainResp -Name "result"
+    if (-not $chainResult) {
         throw "eth_chainId returned empty result"
     }
 
-    $sendReq = @{
+    $capsReq = @{
         jsonrpc = "2.0"
-        id = 2
-        method = "eth_sendRawTransaction"
-        params = @{}
-    }
-    $sendReq.params["chain_id"] = [UInt64]$ChainId
-    $sendReq.params["raw_tx"] = $RawTx
-    $sendReq.params["require_public_broadcast"] = $true
-    $sendReq.params["return_detail"] = $true
-
-    if ($FromAddress) {
-        if (-not $UcaId) {
-            $UcaId = "uca-mainnet-write-{0:yyyyMMddHHmmssfff}" -f (Get-Date)
+        id = 9
+        method = "evm_getRuntimeProtocolCaps"
+        params = @{
+            chain_id = [UInt64]$ChainId
         }
-        $summary.uca_id = $UcaId
-        $summary.uca_id_effective = $UcaId
+    } | ConvertTo-Json -Depth 10 -Compress
+    $capsResp = Invoke-RestMethod -Uri $url -Method Post -ContentType "application/json" -Body $capsReq
+    $capsErr = Get-RpcField -Obj $capsResp -Name "error"
+    if ($null -eq $capsErr) {
+        $capsResult = Get-RpcField -Obj $capsResp -Name "result"
+        if ($capsResult) {
+            $summary.runtime_protocol_caps = $capsResult
+            $nativeDiscovery = [bool](Get-RpcField -Obj $capsResult -Name "native_peer_discovery")
+            $nativeHandshake = [bool](Get-RpcField -Obj $capsResult -Name "native_eth_handshake")
+            $nativeSync = [bool](Get-RpcField -Obj $capsResult -Name "native_snap_sync_state_machine")
+            $summary.fullnode_native_ready = ($nativeDiscovery -and $nativeHandshake -and $nativeSync)
+        }
+    }
+    # In fullnode_only mode, readiness can be reached after first native send warmup.
 
+    if ($UcaId -and $FromAddress) {
         $createReq = @{
             jsonrpc = "2.0"
             id = 11
@@ -243,8 +302,16 @@ try {
             params = @{
                 uca_id = $UcaId
             }
-        } | ConvertTo-Json -Depth 10 -Compress
-        $null = Invoke-RestMethod -Uri $url -Method Post -ContentType "application/json" -Body $createReq
+        } | ConvertTo-Json -Depth 8 -Compress
+        $createResp = Invoke-RestMethod -Uri $url -Method Post -ContentType "application/json" -Body $createReq
+        $createErr = Get-RpcField -Obj $createResp -Name "error"
+        if ($null -ne $createErr) {
+            $createMsg = [string](Get-RpcField -Obj $createErr -Name "message")
+            if ($createMsg -notmatch "(?i)uca.*exists|already exists") {
+                $createCode = Get-RpcField -Obj $createErr -Name "code"
+                throw ("ua_createUca failed: code={0} message={1}" -f $createCode, $createMsg)
+            }
+        }
 
         $bindReq = @{
             jsonrpc = "2.0"
@@ -257,72 +324,46 @@ try {
                 external_address = $FromAddress
             }
         } | ConvertTo-Json -Depth 10 -Compress
-        $null = Invoke-RestMethod -Uri $url -Method Post -ContentType "application/json" -Body $bindReq
-
-        $sendReq.params["uca_id"] = $UcaId
-        $sendReq.params["from"] = $FromAddress
-    }
-
-    $sendReq = $sendReq | ConvertTo-Json -Depth 16 -Compress
-
-    $sendResp = Invoke-RestMethod -Uri $url -Method Post -ContentType "application/json" -Body $sendReq
-    $summary.send_result = $sendResp
-    $sendError = $null
-    $sendErrorProp = $sendResp.PSObject.Properties["error"]
-    if ($null -ne $sendErrorProp) {
-        $sendError = $sendErrorProp.Value
-    }
-    if ($null -ne $sendError) {
-        $sendErrorCodeProp = $sendError.PSObject.Properties["code"]
-        $sendErrorMessageProp = $sendError.PSObject.Properties["message"]
-        $sendErrorCode = if ($null -ne $sendErrorCodeProp) { [string]$sendErrorCodeProp.Value } else { "" }
-        $sendErrorMessage = if ($null -ne $sendErrorMessageProp -and $null -ne $sendErrorMessageProp.Value) { [string]$sendErrorMessageProp.Value } else { "" }
-        if ($FromAddress -and $sendErrorCode -eq "-32033" -and $sendErrorMessage) {
-            $m = [regex]::Match($sendErrorMessage, "binding_owner=([a-zA-Z0-9_\\-]+)")
-            if ($m.Success) {
-                $bindingOwner = $m.Groups[1].Value
-                if (-not [string]::IsNullOrWhiteSpace($bindingOwner)) {
-                    $summary.uca_id_effective = $bindingOwner
-                    $retryReq = @{
-                        jsonrpc = "2.0"
-                        id = 13
-                        method = "eth_sendRawTransaction"
-                        params = @{
-                            uca_id = $bindingOwner
-                            chain_id = [UInt64]$ChainId
-                            from = $FromAddress
-                            raw_tx = $RawTx
-                            require_public_broadcast = $true
-                            return_detail = $true
-                        }
-                    } | ConvertTo-Json -Depth 16 -Compress
-                    $retryResp = Invoke-RestMethod -Uri $url -Method Post -ContentType "application/json" -Body $retryReq
-                    $summary.send_retry_result = $retryResp
-                    $sendResp = $retryResp
-                    $sendError = $null
-                    $retryErrorProp = $retryResp.PSObject.Properties["error"]
-                    if ($null -ne $retryErrorProp) {
-                        $sendError = $retryErrorProp.Value
-                    }
-                }
+        $bindResp = Invoke-RestMethod -Uri $url -Method Post -ContentType "application/json" -Body $bindReq
+        $bindErr = Get-RpcField -Obj $bindResp -Name "error"
+        if ($null -ne $bindErr) {
+            $bindMsg = [string](Get-RpcField -Obj $bindErr -Name "message")
+            if ($bindMsg -notmatch "already|exists|bound") {
+                $bindCode = Get-RpcField -Obj $bindErr -Name "code"
+                throw ("ua_bindPersona failed: code={0} message={1}" -f $bindCode, $bindMsg)
             }
         }
     }
-    if ($null -ne $sendError) {
-        $sendErrorCodeProp = $sendError.PSObject.Properties["code"]
-        $sendErrorMessageProp = $sendError.PSObject.Properties["message"]
-        $sendErrorCode = if ($null -ne $sendErrorCodeProp) { [string]$sendErrorCodeProp.Value } else { "" }
-        $sendErrorMessage = if ($null -ne $sendErrorMessageProp -and $null -ne $sendErrorMessageProp.Value) { [string]$sendErrorMessageProp.Value } else { "" }
-        throw ("eth_sendRawTransaction failed: code={0} message={1}" -f $sendErrorCode, $sendErrorMessage)
+
+    $sendParams = @{
+        chain_id = [UInt64]$ChainId
+        raw_tx = $RawTx
+        require_public_broadcast = $true
+        return_detail = $true
+    }
+    if ($UcaId) {
+        $sendParams.uca_id = $UcaId
     }
 
-    $sendResult = $null
-    $sendResultProp = $sendResp.PSObject.Properties["result"]
-    if ($null -ne $sendResultProp) {
-        $sendResult = $sendResultProp.Value
+    $sendReq = @{
+        jsonrpc = "2.0"
+        id = 2
+        method = "eth_sendRawTransaction"
+        params = $sendParams
+    } | ConvertTo-Json -Depth 16 -Compress
+
+    $sendResp = Invoke-RestMethod -Uri $url -Method Post -ContentType "application/json" -Body $sendReq
+    $sendErr = Get-RpcField -Obj $sendResp -Name "error"
+    if ($null -ne $sendErr) {
+        $summary.send_result = $sendErr
+        $sendCode = Get-RpcField -Obj $sendErr -Name "code"
+        $sendMsg = Get-RpcField -Obj $sendErr -Name "message"
+        throw ("eth_sendRawTransaction failed: code={0} message={1}" -f $sendCode, $sendMsg)
     }
+    $sendResult = Get-RpcField -Obj $sendResp -Name "result"
     $txHash = Resolve-TxHashFromResult -Result $sendResult -Context "eth_sendRawTransaction"
     $summary.tx_hash = $txHash
+    $summary.send_result = $sendResult
 
     $statusReq = @{
         jsonrpc = "2.0"
@@ -335,16 +376,40 @@ try {
     } | ConvertTo-Json -Depth 16 -Compress
     try {
         $statusResp = Invoke-RestMethod -Uri $url -Method Post -ContentType "application/json" -Body $statusReq
-        $statusResult = $null
-        $statusResultProp = $statusResp.PSObject.Properties["result"]
-        if ($null -ne $statusResultProp) {
-            $statusResult = $statusResultProp.Value
-        }
-        if ($null -ne $statusResult) {
+        $statusResult = Get-RpcField -Obj $statusResp -Name "result"
+        if ($statusResult) {
             $summary.submit_status = $statusResult
+            $accepted = [bool](Get-RpcField -Obj $statusResult -Name "accepted")
+            $pending = [bool](Get-RpcField -Obj $statusResult -Name "pending")
+            if ($accepted -or $pending) {
+                $summary.accepted_or_pending = $true
+            }
         }
     } catch {
         # optional: keep canary flow running even if status endpoint is unavailable
+    }
+
+    if ($BroadcastMode -eq "fullnode_only") {
+        $capsReq2 = @{
+            jsonrpc = "2.0"
+            id = 10
+            method = "evm_getRuntimeProtocolCaps"
+            params = @{
+                chain_id = [UInt64]$ChainId
+            }
+        } | ConvertTo-Json -Depth 10 -Compress
+        $capsResp2 = Invoke-RestMethod -Uri $url -Method Post -ContentType "application/json" -Body $capsReq2
+        $capsErr2 = Get-RpcField -Obj $capsResp2 -Name "error"
+        if ($null -eq $capsErr2) {
+            $capsResult2 = Get-RpcField -Obj $capsResp2 -Name "result"
+            if ($capsResult2) {
+                $summary.runtime_protocol_caps_after_send = $capsResult2
+                $nativeDiscovery2 = [bool](Get-RpcField -Obj $capsResult2 -Name "native_peer_discovery")
+                $nativeHandshake2 = [bool](Get-RpcField -Obj $capsResult2 -Name "native_eth_handshake")
+                $nativeSync2 = [bool](Get-RpcField -Obj $capsResult2 -Name "native_snap_sync_state_machine")
+                $summary.fullnode_native_ready_after_send = ($nativeDiscovery2 -and $nativeHandshake2 -and $nativeSync2)
+            }
+        }
     }
 
     $receiptReqTemplate = @{
@@ -357,37 +422,37 @@ try {
         }
     }
 
-    for ($i = 1; $i -le $PollMaxAttempts; $i++) {
-        $summary.poll_attempts = $i
-        $receiptReq = $receiptReqTemplate | ConvertTo-Json -Depth 10 -Compress
-        $receiptResp = Invoke-RestMethod -Uri $url -Method Post -ContentType "application/json" -Body $receiptReq
-        $receiptError = $null
-        $receiptErrorProp = $receiptResp.PSObject.Properties["error"]
-        if ($null -ne $receiptErrorProp) {
-            $receiptError = $receiptErrorProp.Value
-        }
-        if ($null -ne $receiptError) {
-            $receiptErrorCodeProp = $receiptError.PSObject.Properties["code"]
-            $receiptErrorMessageProp = $receiptError.PSObject.Properties["message"]
-            $receiptErrorCode = if ($null -ne $receiptErrorCodeProp) { [string]$receiptErrorCodeProp.Value } else { "" }
-            $receiptErrorMessage = if ($null -ne $receiptErrorMessageProp -and $null -ne $receiptErrorMessageProp.Value) { [string]$receiptErrorMessageProp.Value } else { "" }
-            throw ("eth_getTransactionReceipt failed: code={0} message={1}" -f $receiptErrorCode, $receiptErrorMessage)
-        }
-        $receiptResult = $null
-        $receiptResultProp = $receiptResp.PSObject.Properties["result"]
-        if ($null -ne $receiptResultProp) {
-            $receiptResult = $receiptResultProp.Value
-        }
-        if ($null -ne $receiptResult) {
-            $summary.receipt = $receiptResult
-            $summary.receipt_found = $true
-            break
-        }
-        Start-Sleep -Milliseconds $PollIntervalMs
+    $requireReceipt = $true
+    if ($BroadcastMode -eq "fullnode_only" -and -not $RequireReceiptInFullnode) {
+        $requireReceipt = $false
     }
 
-    if (-not $summary.receipt_found) {
-        throw "receipt not found within polling window"
+    if ($requireReceipt) {
+        for ($i = 1; $i -le $PollMaxAttempts; $i++) {
+            $summary.poll_attempts = $i
+            $receiptReq = $receiptReqTemplate | ConvertTo-Json -Depth 10 -Compress
+            $receiptResp = Invoke-RestMethod -Uri $url -Method Post -ContentType "application/json" -Body $receiptReq
+            $receiptErr = Get-RpcField -Obj $receiptResp -Name "error"
+            if ($null -ne $receiptErr) {
+                $receiptCode = Get-RpcField -Obj $receiptErr -Name "code"
+                $receiptMsg = Get-RpcField -Obj $receiptErr -Name "message"
+                throw ("eth_getTransactionReceipt failed: code={0} message={1}" -f $receiptCode, $receiptMsg)
+            }
+            $receiptResult = Get-RpcField -Obj $receiptResp -Name "result"
+            if ($receiptResult) {
+                $summary.receipt = $receiptResult
+                $summary.receipt_found = $true
+                break
+            }
+            Start-Sleep -Milliseconds $PollIntervalMs
+        }
+        if (-not $summary.receipt_found) {
+            throw "receipt not found within polling window"
+        }
+    } else {
+        if ($summary.accepted_or_pending -ne $true) {
+            throw "fullnode_only canary failed: tx not observed as accepted/pending"
+        }
     }
 }
 finally {
@@ -403,8 +468,13 @@ finally {
     Write-Host "summary written: $SummaryOut"
 }
 
-if (-not $summary.receipt_found) {
+if ($BroadcastMode -eq "fullnode_only" -and -not $RequireReceiptInFullnode) {
+    if ($summary.accepted_or_pending -ne $true) {
+        throw "mainnet write canary failed (fullnode_only pending criteria); inspect summary: $SummaryOut"
+    }
+} elseif (-not $summary.receipt_found) {
     throw "mainnet write canary failed; inspect summary: $SummaryOut"
 }
 
 Write-Host ("mainnet write canary ok: tx_hash={0}" -f $summary.tx_hash)
+

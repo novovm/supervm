@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use super::*;
 
 const GATEWAY_ETH_UPSTREAM_RPC_TIMEOUT_MS_DEFAULT: u64 = 5_000;
@@ -346,47 +347,8 @@ pub(super) fn maybe_gateway_eth_upstream_read(
     method: &str,
     params: &serde_json::Value,
 ) -> Result<Option<serde_json::Value>> {
-    let Some(url) = gateway_eth_upstream_rpc_url(chain_id) else {
-        return Ok(None);
-    };
-    let Some(upstream_params) = build_gateway_eth_upstream_params(method, params)? else {
-        return Ok(None);
-    };
-    let timeout_ms = gateway_eth_upstream_rpc_timeout_ms(chain_id);
-    let mut last_error: Option<anyhow::Error> = None;
-    for attempt in 0..GATEWAY_ETH_UPSTREAM_RPC_ATTEMPTS {
-        match execute_gateway_eth_upstream_json_rpc(
-            &url,
-            method,
-            upstream_params.clone(),
-            timeout_ms,
-        ) {
-            Ok(result) if result.is_null() => {
-                if attempt + 1 == GATEWAY_ETH_UPSTREAM_RPC_ATTEMPTS {
-                    return Ok(None);
-                }
-            }
-            Ok(result) => return Ok(Some(result)),
-            Err(error) => {
-                last_error = Some(error);
-                if attempt + 1 == GATEWAY_ETH_UPSTREAM_RPC_ATTEMPTS {
-                    break;
-                }
-            }
-        }
-        std::thread::sleep(Duration::from_millis(
-            GATEWAY_ETH_UPSTREAM_RPC_RETRY_BACKOFF_MS,
-        ));
-    }
-    if let Some(error) = last_error {
-        if gateway_warn_enabled() {
-            eprintln!(
-                "gateway_warn: eth upstream read failed method={} chain_id={} url={} error={}",
-                method, chain_id, url, error
-            );
-        }
-        return Ok(None);
-    }
+    let _ = (chain_id, method, params);
+    // Mirror-only policy: upstream proxy fallback is hard-disabled.
     Ok(None)
 }
 

@@ -201,21 +201,13 @@ impl BFTEngine {
 
         // 提交 Epoch
         let committed_epoch = manager.commit_current_epoch()?;
-        ensure_state_root_match(
-            "epoch_commit",
-            state_root,
-            committed_epoch.state_root,
-        )?;
+        ensure_state_root_match("epoch_commit", state_root, committed_epoch.state_root)?;
         drop(manager);
 
         // 通过协议提出提案
         let mut protocol = self.protocol.lock().expect("BFTEngine mutex poisoned");
         let proposal = protocol.propose(&committed_epoch)?;
-        ensure_state_root_match(
-            "proposal_emit",
-            state_root,
-            proposal.state_delta_hash,
-        )?;
+        ensure_state_root_match("proposal_emit", state_root, proposal.state_delta_hash)?;
         Ok(proposal)
     }
 

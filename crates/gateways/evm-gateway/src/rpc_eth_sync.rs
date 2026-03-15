@@ -1,13 +1,9 @@
 use super::*;
 use novovm_network::{
-    get_network_runtime_native_sync_status, get_network_runtime_sync_status,
-    network_runtime_native_sync_is_active, observe_network_runtime_local_head_max,
-    set_network_runtime_sync_status, NetworkRuntimeSyncStatus,
+    get_network_runtime_native_sync_status, network_runtime_native_sync_is_active,
+    observe_network_runtime_local_head_max, set_network_runtime_sync_status,
+    NetworkRuntimeSyncStatus,
 };
-
-fn gateway_eth_runtime_sync_is_authoritative(status: &NetworkRuntimeSyncStatus) -> bool {
-    status.peer_count > 0 || status.highest_block > status.current_block
-}
 
 pub(super) fn resolve_gateway_eth_sync_status(
     chain_id: u64,
@@ -49,48 +45,9 @@ pub(super) fn resolve_gateway_eth_sync_status(
         highest_block = native_sync.highest_block;
     }
 
-    let runtime_sync = if let Some(runtime_before_local) = get_network_runtime_sync_status(chain_id)
-    {
-        let _ = observe_network_runtime_local_head_max(chain_id, local_current_block);
-        if let Some(mut runtime_after_local) = get_network_runtime_sync_status(chain_id) {
-            let lost_current =
-                runtime_after_local.current_block < runtime_before_local.current_block;
-            let lost_highest =
-                runtime_after_local.highest_block < runtime_before_local.highest_block;
-            if lost_current {
-                runtime_after_local.current_block = runtime_before_local.current_block;
-            }
-            if lost_highest {
-                runtime_after_local.highest_block = runtime_before_local.highest_block;
-            }
-            if lost_current || lost_highest {
-                if runtime_after_local.peer_count < runtime_before_local.peer_count {
-                    runtime_after_local.peer_count = runtime_before_local.peer_count;
-                }
-                runtime_after_local.starting_block = runtime_after_local
-                    .starting_block
-                    .min(runtime_before_local.starting_block);
-            }
-            if runtime_after_local.highest_block < runtime_after_local.current_block {
-                runtime_after_local.highest_block = runtime_after_local.current_block;
-            }
-            if runtime_after_local.starting_block > runtime_after_local.current_block {
-                runtime_after_local.starting_block = runtime_after_local.current_block;
-            }
-            Some(runtime_after_local)
-        } else {
-            Some(runtime_before_local)
-        }
-    } else {
-        None
-    };
     if !has_runtime_native_sync {
-        if let Some(runtime) = runtime_sync.filter(gateway_eth_runtime_sync_is_authoritative) {
-            peer_count = runtime.peer_count;
-            starting_block = runtime.starting_block;
-            current_block = runtime.current_block;
-            highest_block = runtime.highest_block;
-        }
+        // Keep local baseline as authoritative source when native sync status is not active.
+        let _ = observe_network_runtime_local_head_max(chain_id, local_current_block);
     }
 
     current_block = current_block.max(local_current_block);

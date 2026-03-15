@@ -1,10 +1,6 @@
 use super::*;
 use novovm_network::{set_network_runtime_sync_status, NetworkRuntimeSyncStatus};
-use novovm_protocol::{
-    decode as protocol_decode,
-    protocol_catalog::distributed_occc::gossip::MessageType as DistributedOcccMessageType,
-    ProtocolMessage,
-};
+use novovm_protocol::{decode as protocol_decode, EvmNativeMessage, NodeId, ProtocolMessage};
 use std::cell::Cell;
 use web30_core::privacy::generate_ring_keypair;
 
@@ -12752,11 +12748,18 @@ fn maybe_execute_public_broadcast_falls_back_to_native_udp() {
             .expect("peer should receive native broadcast packet");
         let decoded = protocol_decode(&recv_buf[..n]).expect("decode protocol packet");
         match decoded {
-            ProtocolMessage::DistributedOcccGossip(msg) => {
-                assert_eq!(msg.msg_type, DistributedOcccMessageType::TxProposal);
-                assert_eq!(msg.from, 1);
-                assert_eq!(msg.to, 2);
-                assert_eq!(msg.payload, raw_tx);
+            ProtocolMessage::EvmNative(EvmNativeMessage::Transactions {
+                from,
+                chain_id,
+                tx_hash: got_hash,
+                tx_count,
+                payload,
+            }) => {
+                assert_eq!(from, NodeId(1));
+                assert_eq!(chain_id, 1);
+                assert_eq!(got_hash, tx_hash);
+                assert_eq!(tx_count, 1);
+                assert_eq!(payload, raw_tx);
             }
             other => panic!("unexpected native broadcast message: {other:?}"),
         }

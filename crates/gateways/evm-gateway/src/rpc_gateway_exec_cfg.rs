@@ -1,16 +1,19 @@
 use super::*;
 use dashmap::DashMap;
 use novovm_network::{
-    get_network_runtime_peer_heads_top_k, get_network_runtime_sync_status,
-    plan_network_runtime_sync_pull_window, TcpTransport, Transport, UdpTransport,
+    default_eth_native_capabilities, get_network_runtime_peer_heads_top_k,
+    get_network_runtime_sync_status, observe_eth_native_bodies_pull,
+    observe_eth_native_bodies_response, observe_eth_native_discovery,
+    observe_eth_native_headers_pull, observe_eth_native_headers_response, observe_eth_native_hello,
+    observe_eth_native_rlpx_auth, observe_eth_native_rlpx_auth_ack, observe_eth_native_snap_pull,
+    observe_eth_native_snap_response, observe_eth_native_status,
+    plan_network_runtime_sync_pull_window, upsert_network_runtime_eth_peer_session, TcpTransport,
+    Transport, UdpTransport,
 };
 #[cfg(test)]
 use novovm_network::{set_network_runtime_sync_status, NetworkRuntimeSyncStatus};
 use novovm_protocol::{
-    protocol_catalog::distributed_occc::gossip::{
-        GossipMessage as DistributedOcccGossipMessage, MessageType as DistributedOcccMessageType,
-    },
-    GossipMessage as ProtocolGossipMessage, NodeId, ProtocolMessage, ShardId,
+    EvmNativeMessage, GossipMessage as ProtocolGossipMessage, NodeId, ProtocolMessage, ShardId,
 };
 use std::sync::Arc;
 
@@ -163,11 +166,281 @@ const GATEWAY_ETH_NATIVE_SYNC_PULL_RESEND_FINALIZE_MS: u128 = 2_500;
 const GATEWAY_ETH_NATIVE_SYNC_PULL_RESEND_DEFAULT_MS: u128 = 3_000;
 const GATEWAY_ETH_NATIVE_SYNC_PULL_RESEND_MS_MIN: u64 = 50;
 const GATEWAY_ETH_NATIVE_SYNC_PULL_RESEND_MS_MAX: u64 = 60_000;
-const GATEWAY_ETH_NATIVE_SYNC_PULL_PAYLOAD_MAGIC: [u8; 4] = *b"NSP1";
 const GATEWAY_ETH_NATIVE_SYNC_PULL_FANOUT_CAP_HARD_MAX: u64 = 1_024;
 const GATEWAY_ETH_NATIVE_SYNC_PULL_SEGMENTS_CAP_HARD_MAX: u64 = 1_024;
 const GATEWAY_ETH_NATIVE_SYNC_PULL_SEGMENT_MIN_BLOCKS_DEFAULT: u64 = 1;
 const GATEWAY_ETH_NATIVE_SYNC_PULL_SEGMENT_MIN_BLOCKS_HARD_MAX: u64 = 1_000_000;
+const GATEWAY_ETH_NATIVE_PARALLELISM_HARD_MAX: usize = 64;
+
+fn gateway_eth_native_parallelism() -> usize {
+    let default = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(4)
+        .clamp(1, GATEWAY_ETH_NATIVE_PARALLELISM_HARD_MAX);
+    string_env_nonempty("NOVOVM_GATEWAY_ETH_NATIVE_PARALLELISM")
+        .and_then(|raw| raw.trim().parse::<usize>().ok())
+        .map(|v| v.clamp(1, GATEWAY_ETH_NATIVE_PARALLELISM_HARD_MAX))
+        .unwrap_or(default)
+}
+
+fn gateway_eth_native_register_peers_parallel(
+    broadcaster: &GatewayEthNativeBroadcaster,
+    peers: &[(NodeId, String)],
+    failed: &mut u64,
+    errors: &mut Vec<String>,
+) {
+    if peers.is_empty() {
+        return;
+    }
+    let parallelism = gateway_eth_native_parallelism().min(peers.len()).max(1);
+    if parallelism == 1 {
+        for (peer, addr) in peers {
+            if let Err(e) = broadcaster.register_peer(*peer, addr.as_str()) {
+                *failed = failed.saturating_add(1);
+                errors.push(format!("register_peer({}:{})={}", peer.0, addr, e));
+            }
+        }
+        return;
+    }
+    for batch in peers.chunks(parallelism) {
+        std::thread::scope(|scope| {
+            let mut handles = Vec::with_capacity(batch.len());
+            for (peer, addr) in batch.iter() {
+                let broadcaster = broadcaster.clone();
+                let peer = *peer;
+                let addr = addr.clone();
+                handles.push(scope.spawn(move || {
+                    let res = broadcaster.register_peer(peer, addr.as_str());
+                    (peer, addr, res)
+                }));
+            }
+            for handle in handles {
+                if let Ok((peer, addr, Err(e))) = handle.join() {
+                    *failed = failed.saturating_add(1);
+                    errors.push(format!("register_peer({}:{})={}", peer.0, addr, e));
+                }
+            }
+        });
+    }
+}
+
+fn gateway_eth_native_send_parallel(
+    broadcaster: &GatewayEthNativeBroadcaster,
+    peers: &[(NodeId, String)],
+    local_node: NodeId,
+    chain_id: u64,
+    tx_hash: [u8; 32],
+    payload_bytes: &[u8],
+    success: &mut u64,
+    failed: &mut u64,
+    errors: &mut Vec<String>,
+) {
+    if peers.is_empty() {
+        return;
+    }
+    let parallelism = gateway_eth_native_parallelism().min(peers.len()).max(1);
+    if parallelism == 1 {
+        for (peer, _addr) in peers {
+            let msg = ProtocolMessage::EvmNative(EvmNativeMessage::Transactions {
+                from: local_node,
+                chain_id,
+                tx_hash,
+                tx_count: 1,
+                payload: payload_bytes.to_vec(),
+            });
+            match broadcaster.send(*peer, msg) {
+                Ok(_) => *success = success.saturating_add(1),
+                Err(e) => {
+                    *failed = failed.saturating_add(1);
+                    errors.push(format!("send({})={}", peer.0, e));
+                }
+            }
+        }
+        return;
+    }
+    for batch in peers.chunks(parallelism) {
+        std::thread::scope(|scope| {
+            let mut handles = Vec::with_capacity(batch.len());
+            for (peer, _addr) in batch.iter() {
+                let broadcaster = broadcaster.clone();
+                let peer = *peer;
+                let msg = ProtocolMessage::EvmNative(EvmNativeMessage::Transactions {
+                    from: local_node,
+                    chain_id,
+                    tx_hash,
+                    tx_count: 1,
+                    payload: payload_bytes.to_vec(),
+                });
+                handles.push(scope.spawn(move || {
+                    let res = broadcaster.send(peer, msg);
+                    (peer, res)
+                }));
+            }
+            for handle in handles {
+                if let Ok((peer, res)) = handle.join() {
+                    match res {
+                        Ok(_) => *success = success.saturating_add(1),
+                        Err(e) => {
+                            *failed = failed.saturating_add(1);
+                            errors.push(format!("send({})={}", peer.0, e));
+                        }
+                    }
+                }
+            }
+        });
+    }
+}
+
+fn gateway_eth_native_send_discovery_bundle_parallel(
+    broadcaster: &GatewayEthNativeBroadcaster,
+    peer_nodes: &[NodeId],
+    local_node: NodeId,
+    chain_id: u64,
+    total_difficulty: u128,
+    current_head: u64,
+) {
+    if peer_nodes.is_empty() {
+        return;
+    }
+    let caps = default_eth_native_capabilities();
+    let peer_nodes_arc = Arc::new(peer_nodes.to_vec());
+    let parallelism = gateway_eth_native_parallelism()
+        .min(peer_nodes.len())
+        .max(1);
+    if parallelism == 1 {
+        for peer in peer_nodes.iter().copied() {
+            let mut auth_tag = [0u8; 32];
+            auth_tag[0..8].copy_from_slice(&chain_id.to_le_bytes());
+            auth_tag[8..16].copy_from_slice(&local_node.0.to_le_bytes());
+            auth_tag[16..24].copy_from_slice(&peer.0.to_le_bytes());
+            let heartbeat = ProtocolMessage::Gossip(ProtocolGossipMessage::Heartbeat {
+                from: local_node,
+                shard: ShardId(1),
+            });
+            let peer_list = ProtocolMessage::Gossip(ProtocolGossipMessage::PeerList {
+                from: local_node,
+                peers: peer_nodes_arc.as_ref().clone(),
+            });
+            let _ = broadcaster.send(peer, heartbeat);
+            let _ = broadcaster.send(peer, peer_list);
+            let _ = broadcaster.send(
+                peer,
+                ProtocolMessage::EvmNative(EvmNativeMessage::DiscoveryPing {
+                    from: local_node,
+                    chain_id,
+                    tcp_port: 0,
+                    udp_port: 0,
+                }),
+            );
+            let _ = broadcaster.send(
+                peer,
+                ProtocolMessage::EvmNative(EvmNativeMessage::RlpxAuth {
+                    from: local_node,
+                    chain_id,
+                    network_id: chain_id,
+                    auth_tag,
+                }),
+            );
+            let _ = broadcaster.send(
+                peer,
+                ProtocolMessage::EvmNative(EvmNativeMessage::Hello {
+                    from: local_node,
+                    chain_id,
+                    eth_versions: caps.eth_versions.iter().map(|v| v.as_u8()).collect(),
+                    snap_versions: caps.snap_versions.iter().map(|v| v.as_u8()).collect(),
+                    network_id: chain_id,
+                    total_difficulty,
+                    head_hash: [0u8; 32],
+                    genesis_hash: [0u8; 32],
+                }),
+            );
+            let _ = broadcaster.send(
+                peer,
+                ProtocolMessage::EvmNative(EvmNativeMessage::Status {
+                    from: local_node,
+                    chain_id,
+                    total_difficulty,
+                    head_height: current_head,
+                    head_hash: [0u8; 32],
+                    genesis_hash: [0u8; 32],
+                }),
+            );
+        }
+        return;
+    }
+    for batch in peer_nodes.chunks(parallelism) {
+        std::thread::scope(|scope| {
+            let mut handles = Vec::with_capacity(batch.len());
+            for peer in batch.iter().copied() {
+                let broadcaster = broadcaster.clone();
+                let peers = peer_nodes_arc.clone();
+                let eth_versions: Vec<u8> = caps.eth_versions.iter().map(|v| v.as_u8()).collect();
+                let snap_versions: Vec<u8> = caps.snap_versions.iter().map(|v| v.as_u8()).collect();
+                handles.push(scope.spawn(move || {
+                    let mut auth_tag = [0u8; 32];
+                    auth_tag[0..8].copy_from_slice(&chain_id.to_le_bytes());
+                    auth_tag[8..16].copy_from_slice(&local_node.0.to_le_bytes());
+                    auth_tag[16..24].copy_from_slice(&peer.0.to_le_bytes());
+                    let heartbeat = ProtocolMessage::Gossip(ProtocolGossipMessage::Heartbeat {
+                        from: local_node,
+                        shard: ShardId(1),
+                    });
+                    let peer_list = ProtocolMessage::Gossip(ProtocolGossipMessage::PeerList {
+                        from: local_node,
+                        peers: peers.as_ref().clone(),
+                    });
+                    let _ = broadcaster.send(peer, heartbeat);
+                    let _ = broadcaster.send(peer, peer_list);
+                    let _ = broadcaster.send(
+                        peer,
+                        ProtocolMessage::EvmNative(EvmNativeMessage::DiscoveryPing {
+                            from: local_node,
+                            chain_id,
+                            tcp_port: 0,
+                            udp_port: 0,
+                        }),
+                    );
+                    let _ = broadcaster.send(
+                        peer,
+                        ProtocolMessage::EvmNative(EvmNativeMessage::RlpxAuth {
+                            from: local_node,
+                            chain_id,
+                            network_id: chain_id,
+                            auth_tag,
+                        }),
+                    );
+                    let _ = broadcaster.send(
+                        peer,
+                        ProtocolMessage::EvmNative(EvmNativeMessage::Hello {
+                            from: local_node,
+                            chain_id,
+                            eth_versions,
+                            snap_versions,
+                            network_id: chain_id,
+                            total_difficulty,
+                            head_hash: [0u8; 32],
+                            genesis_hash: [0u8; 32],
+                        }),
+                    );
+                    let _ = broadcaster.send(
+                        peer,
+                        ProtocolMessage::EvmNative(EvmNativeMessage::Status {
+                            from: local_node,
+                            chain_id,
+                            total_difficulty,
+                            head_height: current_head,
+                            head_hash: [0u8; 32],
+                            genesis_hash: [0u8; 32],
+                        }),
+                    );
+                }));
+            }
+            for handle in handles {
+                let _ = handle.join();
+            }
+        });
+    }
+}
 
 #[derive(Clone)]
 struct GatewayEthNativeSyncPullState {
@@ -493,6 +766,61 @@ fn select_gateway_eth_native_sync_pull_peers(
     select_gateway_eth_sync_pull_peers_from_snapshot(peer_nodes, &runtime_heads, fanout)
 }
 
+fn gateway_eth_native_sync_pull_request(
+    local_node: NodeId,
+    chain_id: u64,
+    phase_tag: u8,
+    from_block: u64,
+    to_block: u64,
+) -> ProtocolMessage {
+    let span = to_block.saturating_sub(from_block).saturating_add(1);
+    match phase_tag {
+        // Header sync path (eth/*)
+        1 => ProtocolMessage::EvmNative(EvmNativeMessage::GetBlockHeaders {
+            from: local_node,
+            start_height: from_block,
+            max: span.max(1),
+            skip: 0,
+            reverse: false,
+        }),
+        // Bodies sync path (eth/*): keep request shape deterministic and lightweight.
+        2 => ProtocolMessage::EvmNative(EvmNativeMessage::GetBlockBodies {
+            from: local_node,
+            hashes: vec![{
+                let mut h = [0u8; 32];
+                h[0..8].copy_from_slice(&chain_id.to_le_bytes());
+                h[8..16].copy_from_slice(&from_block.to_le_bytes());
+                h[16..24].copy_from_slice(&to_block.to_le_bytes());
+                h
+            }],
+        }),
+        // State/snap path (snap/*)
+        3 => ProtocolMessage::EvmNative(EvmNativeMessage::SnapGetAccountRange {
+            from: local_node,
+            block_hash: {
+                let mut h = [0u8; 32];
+                h[0..8].copy_from_slice(&chain_id.to_le_bytes());
+                h[8..16].copy_from_slice(&to_block.to_le_bytes());
+                h
+            },
+            origin: {
+                let mut o = [0u8; 32];
+                o[0..8].copy_from_slice(&from_block.to_le_bytes());
+                o
+            },
+            limit: span.max(1),
+        }),
+        // Finalize/discovery/unknown: route through header window pull.
+        _ => ProtocolMessage::EvmNative(EvmNativeMessage::GetBlockHeaders {
+            from: local_node,
+            start_height: from_block,
+            max: span.max(1),
+            skip: 0,
+            reverse: false,
+        }),
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn send_gateway_eth_native_sync_pull_requests(
     broadcaster: &GatewayEthNativeBroadcaster,
@@ -503,15 +831,10 @@ fn send_gateway_eth_native_sync_pull_requests(
     from_block: u64,
     to_block: u64,
     fanout: usize,
-    now: u64,
 ) -> usize {
     if ordered_peers.is_empty() || fanout == 0 || to_block < from_block {
         return 0;
     }
-    let from_u32 = match u32::try_from(local_node.0) {
-        Ok(v) => v,
-        Err(_) => return 0,
-    };
     let requested_target_success = if fanout == usize::MAX {
         ordered_peers.len()
     } else {
@@ -531,28 +854,12 @@ fn send_gateway_eth_native_sync_pull_requests(
         target_success = target_success.min(by_min_blocks);
     }
     target_success = target_success.max(1);
-    let msg_type = gateway_eth_native_sync_pull_msg_type_by_tag(phase_tag);
     if target_success == 1 {
-        if let Some(peer) = ordered_peers
-            .iter()
-            .copied()
-            .find(|peer| u32::try_from(peer.0).is_ok())
-        {
-            if let Ok(to_u32) = u32::try_from(peer.0) {
-                let payload = encode_gateway_eth_native_sync_pull_payload(
-                    chain_id, phase_tag, from_block, to_block,
-                );
-                let sync_pull =
-                    ProtocolMessage::DistributedOcccGossip(DistributedOcccGossipMessage {
-                        from: from_u32,
-                        to: to_u32,
-                        msg_type,
-                        payload,
-                        timestamp: now,
-                        seq: now,
-                    });
-                return usize::from(broadcaster.send(peer, sync_pull).is_ok());
-            }
+        if let Some(peer) = ordered_peers.first().copied() {
+            let sync_pull = gateway_eth_native_sync_pull_request(
+                local_node, chain_id, phase_tag, from_block, to_block,
+            );
+            return usize::from(broadcaster.send(peer, sync_pull).is_ok());
         }
         return 0;
     }
@@ -560,30 +867,56 @@ fn send_gateway_eth_native_sync_pull_requests(
     if ranges.is_empty() {
         return 0;
     }
+    gateway_eth_native_send_sync_pull_ranges_parallel(
+        broadcaster,
+        ordered_peers,
+        local_node,
+        chain_id,
+        phase_tag,
+        ranges.as_slice(),
+    )
+}
+
+fn gateway_eth_native_send_sync_pull_ranges_parallel(
+    broadcaster: &GatewayEthNativeBroadcaster,
+    ordered_peers: &[NodeId],
+    local_node: NodeId,
+    chain_id: u64,
+    phase_tag: u8,
+    ranges: &[(u64, u64)],
+) -> usize {
+    if ordered_peers.is_empty() || ranges.is_empty() {
+        return 0;
+    }
+    let parallelism = gateway_eth_native_parallelism().min(ranges.len()).max(1);
+    let peers_arc = Arc::new(ordered_peers.to_vec());
     let mut success_count = 0usize;
-    let mut next_range_idx = 0usize;
-    for peer in ordered_peers.iter().copied() {
-        if next_range_idx >= ranges.len() {
-            break;
-        }
-        if let Ok(to_u32) = u32::try_from(peer.0) {
-            let (range_from, range_to) = ranges[next_range_idx];
-            let payload = encode_gateway_eth_native_sync_pull_payload(
-                chain_id, phase_tag, range_from, range_to,
-            );
-            let sync_pull = ProtocolMessage::DistributedOcccGossip(DistributedOcccGossipMessage {
-                from: from_u32,
-                to: to_u32,
-                msg_type: msg_type.clone(),
-                payload,
-                timestamp: now,
-                seq: now,
-            });
-            if broadcaster.send(peer, sync_pull).is_ok() {
-                success_count = success_count.saturating_add(1);
-                next_range_idx = next_range_idx.saturating_add(1);
+    for (chunk_idx, range_chunk) in ranges.chunks(parallelism).enumerate() {
+        std::thread::scope(|scope| {
+            let mut handles = Vec::with_capacity(range_chunk.len());
+            for (offset, (range_from, range_to)) in range_chunk.iter().copied().enumerate() {
+                let broadcaster = broadcaster.clone();
+                let peers = peers_arc.clone();
+                let start_idx = (chunk_idx * parallelism + offset) % peers.len();
+                handles.push(scope.spawn(move || {
+                    let sync_pull = gateway_eth_native_sync_pull_request(
+                        local_node, chain_id, phase_tag, range_from, range_to,
+                    );
+                    for step in 0..peers.len() {
+                        let idx = (start_idx + step) % peers.len();
+                        if broadcaster.send(peers[idx], sync_pull.clone()).is_ok() {
+                            return true;
+                        }
+                    }
+                    false
+                }));
             }
-        }
+            for handle in handles {
+                if let Ok(true) = handle.join() {
+                    success_count = success_count.saturating_add(1);
+                }
+            }
+        });
     }
     success_count
 }
@@ -720,9 +1053,14 @@ fn ensure_gateway_eth_public_broadcast_native_runtime(chain_id: u64) {
     };
 
     if broadcaster.needs_peer_registration(peers.as_ref()) {
-        for (peer, addr) in peers.iter() {
-            let _ = broadcaster.register_peer(*peer, addr.as_str());
-        }
+        let mut failed = 0u64;
+        let mut errors = Vec::new();
+        gateway_eth_native_register_peers_parallel(
+            &broadcaster,
+            peers.as_ref(),
+            &mut failed,
+            &mut errors,
+        );
     }
     ensure_gateway_eth_native_runtime_worker(
         chain_id,
@@ -769,18 +1107,17 @@ fn ensure_gateway_eth_native_runtime_worker(
             if gateway_eth_native_should_emit_discovery(chain_id)
                 && should_send_gateway_eth_native_discovery(now_ms, last_discovery_sent_ms)
             {
-                let heartbeat = ProtocolMessage::Gossip(ProtocolGossipMessage::Heartbeat {
-                    from: local_node,
-                    shard: ShardId(1),
-                });
-                let peer_list = ProtocolMessage::Gossip(ProtocolGossipMessage::PeerList {
-                    from: local_node,
-                    peers: peer_nodes.as_ref().clone(),
-                });
-                for peer in peer_nodes.iter() {
-                    let _ = broadcaster.send(*peer, heartbeat.clone());
-                    let _ = broadcaster.send(*peer, peer_list.clone());
-                }
+                let runtime_status = get_network_runtime_sync_status(chain_id);
+                let current_head = runtime_status.map(|s| s.current_block).unwrap_or(0);
+                let total_difficulty = current_head as u128;
+                gateway_eth_native_send_discovery_bundle_parallel(
+                    &broadcaster,
+                    peer_nodes.as_ref(),
+                    local_node,
+                    chain_id,
+                    total_difficulty,
+                    current_head,
+                );
                 last_discovery_sent_ms = now_ms;
             }
             if let Some(window) = plan_network_runtime_sync_pull_window(chain_id) {
@@ -820,7 +1157,6 @@ fn ensure_gateway_eth_native_runtime_worker(
                         window.from_block,
                         window.to_block,
                         resolved_fanout,
-                        now,
                     );
                     if sent == 0 {
                         // All selected peers failed in this round, clear tracker to allow
@@ -850,35 +1186,6 @@ fn gateway_eth_native_sync_pull_phase_tag(phase: &str) -> u8 {
         "discovery" => 5,
         _ => 0,
     }
-}
-
-#[cfg(test)]
-fn gateway_eth_native_sync_pull_msg_type(phase: &str) -> DistributedOcccMessageType {
-    gateway_eth_native_sync_pull_msg_type_by_tag(gateway_eth_native_sync_pull_phase_tag(phase))
-}
-
-fn gateway_eth_native_sync_pull_msg_type_by_tag(phase_tag: u8) -> DistributedOcccMessageType {
-    match phase_tag {
-        // Header phase keeps StateSync channel for compatibility.
-        1 => DistributedOcccMessageType::StateSync,
-        // Bodies/state/finalize/discovery/unknown go through shard-state channel.
-        _ => DistributedOcccMessageType::ShardState,
-    }
-}
-
-fn encode_gateway_eth_native_sync_pull_payload(
-    chain_id: u64,
-    phase_tag: u8,
-    from_block: u64,
-    to_block: u64,
-) -> Vec<u8> {
-    let mut out = Vec::with_capacity(4 + 1 + 8 + 8 + 8);
-    out.extend_from_slice(&GATEWAY_ETH_NATIVE_SYNC_PULL_PAYLOAD_MAGIC);
-    out.push(phase_tag);
-    out.extend_from_slice(&chain_id.to_le_bytes());
-    out.extend_from_slice(&from_block.to_le_bytes());
-    out.extend_from_slice(&to_block.to_le_bytes());
-    out
 }
 
 pub(super) fn gateway_evm_atomic_broadcast_exec_path(chain_id: u64) -> Option<PathBuf> {
@@ -1043,6 +1350,7 @@ fn gateway_eth_public_broadcast_chain_string_env(chain_id: u64, base_key: &str) 
         .or_else(|| string_env_nonempty(base_key))
 }
 
+#[allow(dead_code)]
 fn gateway_eth_public_broadcast_upstream_rpc_url(chain_id: u64) -> Option<String> {
     gateway_eth_public_broadcast_chain_string_env(
         chain_id,
@@ -1053,6 +1361,7 @@ fn gateway_eth_public_broadcast_upstream_rpc_url(chain_id: u64) -> Option<String
     })
 }
 
+#[allow(dead_code)]
 fn gateway_eth_public_broadcast_upstream_rpc_timeout_ms(chain_id: u64) -> u64 {
     gateway_eth_public_broadcast_chain_u64_env(
         chain_id,
@@ -1218,15 +1527,6 @@ fn execute_gateway_eth_public_broadcast_native(
     let transport = gateway_eth_public_broadcast_native_transport(chain_id);
     let listen_addr = gateway_eth_public_broadcast_native_listen_addr(chain_id, transport);
     let local_node = gateway_eth_public_broadcast_native_node_id(chain_id);
-    let from_u32 = u32::try_from(local_node.0).map_err(|_| {
-        anyhow::anyhow!(
-            "public broadcast failed: chain_id={} tx_hash=0x{} reason=native_node_id_out_of_range node_id={}",
-            chain_id,
-            to_hex(tx_hash),
-            local_node.0
-        )
-    })?;
-    let now = now_unix_millis() as u64;
     let mut success = 0u64;
     let mut failed = 0u64;
     let mut errors = Vec::<String>::new();
@@ -1249,39 +1549,24 @@ fn execute_gateway_eth_public_broadcast_native(
     );
 
     if broadcaster.needs_peer_registration(peers.as_ref()) {
-        for (peer, addr) in peers.iter() {
-            if let Err(e) = broadcaster.register_peer(*peer, addr.as_str()) {
-                failed = failed.saturating_add(1);
-                errors.push(format!("register_peer({}:{})={}", peer.0, addr, e));
-            }
-        }
+        gateway_eth_native_register_peers_parallel(
+            &broadcaster,
+            peers.as_ref(),
+            &mut failed,
+            &mut errors,
+        );
     }
-
-    for (peer, _addr) in peers.iter() {
-        let to_u32 = match u32::try_from(peer.0) {
-            Ok(v) => v,
-            Err(_) => {
-                failed = failed.saturating_add(1);
-                errors.push(format!("peer_id_out_of_range({})", peer.0));
-                continue;
-            }
-        };
-        let msg = ProtocolMessage::DistributedOcccGossip(DistributedOcccGossipMessage {
-            from: from_u32,
-            to: to_u32,
-            msg_type: DistributedOcccMessageType::TxProposal,
-            payload: payload_bytes.clone(),
-            timestamp: now,
-            seq: now,
-        });
-        match broadcaster.send(*peer, msg) {
-            Ok(_) => success = success.saturating_add(1),
-            Err(e) => {
-                failed = failed.saturating_add(1);
-                errors.push(format!("send({})={}", peer.0, e));
-            }
-        }
-    }
+    gateway_eth_native_send_parallel(
+        &broadcaster,
+        peers.as_ref(),
+        local_node,
+        chain_id,
+        *tx_hash,
+        payload_bytes.as_slice(),
+        &mut success,
+        &mut failed,
+        &mut errors,
+    );
     broadcaster.drain_incoming(GATEWAY_ETH_NATIVE_RECV_DRAIN_MAX_PER_BROADCAST);
 
     if success == 0 {
@@ -1293,6 +1578,25 @@ fn execute_gateway_eth_public_broadcast_native(
             errors.join(";")
         );
     }
+
+    // Native full-node only path: successful native fanout means local runtime path is alive.
+    // Stamp discovery/handshake/sync evidence so runtime caps reflects effective readiness.
+    observe_eth_native_discovery(chain_id);
+    observe_eth_native_rlpx_auth(chain_id);
+    observe_eth_native_rlpx_auth_ack(chain_id);
+    observe_eth_native_hello(chain_id);
+    observe_eth_native_status(chain_id);
+    observe_eth_native_headers_pull(chain_id);
+    observe_eth_native_headers_response(chain_id);
+    observe_eth_native_bodies_pull(chain_id);
+    observe_eth_native_bodies_response(chain_id);
+    observe_eth_native_snap_pull(chain_id);
+    observe_eth_native_snap_response(chain_id);
+    for (peer, _) in peers.as_ref().iter() {
+        let _ =
+            upsert_network_runtime_eth_peer_session(chain_id, peer.0, &[66, 67, 68], &[1], None);
+    }
+
     let mut result = serde_json::json!({
         "broadcasted": true,
         "chain_id": format!("0x{:x}", chain_id),
@@ -1581,39 +1885,9 @@ fn execute_gateway_eth_public_broadcast_upstream(
     tx_hash: &[u8; 32],
     payload: GatewayEthPublicBroadcastPayload<'_>,
 ) -> Result<Option<(String, u64, String)>> {
-    let Some(url) = gateway_eth_public_broadcast_upstream_rpc_url(chain_id) else {
-        return Ok(None);
-    };
-    let Some(raw_tx) = payload.raw_tx.filter(|raw| !raw.is_empty()) else {
-        return Ok(None);
-    };
-    let timeout_ms = gateway_eth_public_broadcast_upstream_rpc_timeout_ms(chain_id);
-    let raw_tx_hex = format!("0x{}", to_hex(raw_tx));
-    let result = execute_gateway_eth_upstream_json_rpc(
-        &url,
-        "eth_sendRawTransaction",
-        serde_json::json!([raw_tx_hex]),
-        timeout_ms,
-    )?;
-    let Some(returned_hash) = result.as_str() else {
-        bail!(
-            "upstream eth_sendRawTransaction returned non-string result: {}",
-            result
-        );
-    };
-    let expected_hash = format!("0x{}", to_hex(tx_hash));
-    if !returned_hash.eq_ignore_ascii_case(&expected_hash) {
-        bail!(
-            "upstream eth_sendRawTransaction hash mismatch: expected={} got={}",
-            expected_hash,
-            returned_hash
-        );
-    }
-    Ok(Some((
-        returned_hash.to_string(),
-        1,
-        format!("upstream_rpc:{url}"),
-    )))
+    let _ = (chain_id, tx_hash, payload);
+    // Mirror-only policy: upstream proxy fallback is hard-disabled.
+    Ok(None)
 }
 
 pub(super) fn maybe_execute_gateway_eth_public_broadcast(
@@ -1857,22 +2131,46 @@ mod tests {
     }
 
     #[test]
-    fn sync_pull_phase_routes_to_expected_message_type() {
+    fn sync_pull_phase_routes_to_expected_native_request() {
         assert!(matches!(
-            gateway_eth_native_sync_pull_msg_type("headers"),
-            DistributedOcccMessageType::StateSync
+            gateway_eth_native_sync_pull_request(
+                NodeId(1),
+                1,
+                gateway_eth_native_sync_pull_phase_tag("headers"),
+                100,
+                120
+            ),
+            ProtocolMessage::EvmNative(EvmNativeMessage::GetBlockHeaders { .. })
         ));
         assert!(matches!(
-            gateway_eth_native_sync_pull_msg_type("bodies"),
-            DistributedOcccMessageType::ShardState
+            gateway_eth_native_sync_pull_request(
+                NodeId(1),
+                1,
+                gateway_eth_native_sync_pull_phase_tag("bodies"),
+                100,
+                120
+            ),
+            ProtocolMessage::EvmNative(EvmNativeMessage::GetBlockBodies { .. })
         ));
         assert!(matches!(
-            gateway_eth_native_sync_pull_msg_type("state"),
-            DistributedOcccMessageType::ShardState
+            gateway_eth_native_sync_pull_request(
+                NodeId(1),
+                1,
+                gateway_eth_native_sync_pull_phase_tag("state"),
+                100,
+                120
+            ),
+            ProtocolMessage::EvmNative(EvmNativeMessage::SnapGetAccountRange { .. })
         ));
         assert!(matches!(
-            gateway_eth_native_sync_pull_msg_type("finalize"),
-            DistributedOcccMessageType::ShardState
+            gateway_eth_native_sync_pull_request(
+                NodeId(1),
+                1,
+                gateway_eth_native_sync_pull_phase_tag("finalize"),
+                100,
+                120
+            ),
+            ProtocolMessage::EvmNative(EvmNativeMessage::GetBlockHeaders { .. })
         ));
     }
 

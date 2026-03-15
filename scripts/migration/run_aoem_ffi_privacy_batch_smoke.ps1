@@ -73,7 +73,10 @@ function Resolve-AoemDllPath {
         return (Resolve-Path $fromEnv).Path
     }
     $name = Get-DllName
+    $platform = if ($IsWindows) { "windows" } elseif ($IsMacOS) { "macos" } else { "linux" }
     $candidates = @(
+        (Join-Path $RepoRootValue "aoem\$platform\core\bin\$name"),
+        (Join-Path $RepoRootValue "aoem\$platform\bin\$name"),
         (Join-Path $RepoRootValue "aoem\bin\$name"),
         (Join-Path $RepoRootValue "aoem\plugins\$name"),
         (Join-Path $RepoRootValue "bin\$name")

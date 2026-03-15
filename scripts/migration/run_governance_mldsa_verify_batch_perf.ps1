@@ -1,6 +1,6 @@
 param(
     [string]$RepoRoot = "D:\WEB3_AI\SUPERVM",
-    [string]$DllPath = "D:\WEB3_AI\SUPERVM\aoem\bin\aoem_ffi.dll",
+    [string]$DllPath = "D:\WEB3_AI\SUPERVM\aoem\windows\core\bin\aoem_ffi.dll",
     [int[]]$Counts = @(1000, 10000, 100000),
     [int[]]$ParMinSet = @(1, 64),
     [int]$Repeats = 5,

@@ -94,6 +94,100 @@ pub enum PacemakerMessage {
     },
 }
 
+/// EVM native protocol plane messages (discovery + eth/snap sync skeleton).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum EvmNativeMessage {
+    DiscoveryPing {
+        from: NodeId,
+        chain_id: u64,
+        tcp_port: u16,
+        udp_port: u16,
+    },
+    DiscoveryPong {
+        from: NodeId,
+        chain_id: u64,
+    },
+    DiscoveryFindNode {
+        from: NodeId,
+        target: NodeId,
+    },
+    DiscoveryNeighbors {
+        from: NodeId,
+        peers: Vec<NodeId>,
+    },
+    RlpxAuth {
+        from: NodeId,
+        chain_id: u64,
+        network_id: u64,
+        auth_tag: [u8; 32],
+    },
+    RlpxAuthAck {
+        from: NodeId,
+        chain_id: u64,
+        network_id: u64,
+        ack_tag: [u8; 32],
+    },
+    Hello {
+        from: NodeId,
+        chain_id: u64,
+        eth_versions: Vec<u8>,
+        snap_versions: Vec<u8>,
+        network_id: u64,
+        total_difficulty: u128,
+        head_hash: [u8; 32],
+        genesis_hash: [u8; 32],
+    },
+    Status {
+        from: NodeId,
+        chain_id: u64,
+        total_difficulty: u128,
+        head_height: u64,
+        head_hash: [u8; 32],
+        genesis_hash: [u8; 32],
+    },
+    NewBlockHashes {
+        from: NodeId,
+        blocks: Vec<([u8; 32], u64)>,
+    },
+    Transactions {
+        from: NodeId,
+        chain_id: u64,
+        tx_hash: [u8; 32],
+        tx_count: u64,
+        payload: Vec<u8>,
+    },
+    GetBlockHeaders {
+        from: NodeId,
+        start_height: u64,
+        max: u64,
+        skip: u64,
+        reverse: bool,
+    },
+    BlockHeaders {
+        from: NodeId,
+        heights: Vec<u64>,
+    },
+    GetBlockBodies {
+        from: NodeId,
+        hashes: Vec<[u8; 32]>,
+    },
+    BlockBodies {
+        from: NodeId,
+        body_count: u64,
+    },
+    SnapGetAccountRange {
+        from: NodeId,
+        block_hash: [u8; 32],
+        origin: [u8; 32],
+        limit: u64,
+    },
+    SnapAccountRange {
+        from: NodeId,
+        account_count: u64,
+        proof_node_count: u64,
+    },
+}
+
 /// Unified protocol message.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ProtocolMessage {
@@ -101,6 +195,7 @@ pub enum ProtocolMessage {
     Finality(FinalityMessage),
     Gossip(GossipMessage),
     Pacemaker(PacemakerMessage),
+    EvmNative(EvmNativeMessage),
     /// 分布式 OCCC 兼容 gossip（结构化消息，用于迁移期与回归对齐）。
     DistributedOcccGossip(protocol_catalog::distributed_occc::gossip::GossipMessage),
 }

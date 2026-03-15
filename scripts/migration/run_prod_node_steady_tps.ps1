@@ -24,6 +24,19 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+if (-not (Get-Variable -Name IsWindows -ErrorAction SilentlyContinue)) {
+    $IsWindows = ($env:OS -eq "Windows_NT")
+}
+if (-not (Get-Variable -Name IsMacOS -ErrorAction SilentlyContinue)) {
+    $IsMacOS = $false
+    if ($PSVersionTable.Platform -eq "Unix") {
+        try {
+            $IsMacOS = [System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform([System.Runtime.InteropServices.OSPlatform]::OSX)
+        } catch {
+            $IsMacOS = $false
+        }
+    }
+}
 
 if (-not $RepoRoot) {
     $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
@@ -42,7 +55,10 @@ $OutputDir = [System.IO.Path]::GetFullPath($OutputDir)
 New-Item -ItemType Directory -Force -Path $OutputDir | Out-Null
 
 if (-not $AoemPluginDir) {
-    $AoemPluginDir = Join-Path $RepoRoot "aoem\plugins"
+    $platform = if ($IsWindows) { "windows" } elseif ($IsMacOS) { "macos" } else { "linux" }
+    $candidateNew = Join-Path $RepoRoot "aoem\$platform\core\plugins"
+    $candidateOld = Join-Path $RepoRoot "aoem\plugins"
+    $AoemPluginDir = if (Test-Path $candidateNew) { $candidateNew } else { $candidateOld }
 }
 if (-not (Test-Path $AoemPluginDir)) {
     throw "aoem plugin dir not found: $AoemPluginDir"

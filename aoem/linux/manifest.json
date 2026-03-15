@@ -1,0 +1,26 @@
+{
+  "stamp": "20260315-204130",
+  "release_version": "Beta 0.8",
+  "platform": "linux",
+  "profile": "fullmax",
+  "bundle_dir": "/mnt/d/WEB3_AI/AOEM/artifacts/ffi-bundles/fullmax/linux/20260315-204130",
+  "core_dll": "/mnt/d/WEB3_AI/AOEM/artifacts/ffi-bundles/fullmax/linux/20260315-204130/core/bin/libaoem_ffi.so",
+  "plugins": [
+    "libaoem_ffi_crypto_hsm.so",
+    "libaoem_ffi_crypto_kms.so",
+    "libaoem_ffi_crypto_mldsa.so",
+    "libaoem_ffi_hsm.so",
+    "libaoem_ffi_kms.so",
+    "libaoem_ffi_mldsa.so",
+    "libaoem_ffi_persist.so",
+    "libaoem_ffi_persist_rocksdb.so",
+    "libaoem_ffi_runtime_wasm_wasmtime.so",
+    "libaoem_ffi_wasm.so",
+    "libaoem_ffi_zkvm.so",
+    "libaoem_ffi_zkvm_executor.so",
+    "libaoem_hsm_plugin.so",
+    "libaoem_kms_plugin.so"
+  ],
+  "features": "rocksdb-persistence,wasmtime-runtime,privacy-verify,mldsa,zkvm-executor,risc0,sp1,halo2",
+  "notes": "linux fullmax includes persist/wasm/zkvm/mldsa/kms-hsm sidecars; risc0/sp1 runtime paths are enabled"
+}

@@ -55,17 +55,14 @@ pub struct AoemRuntimeConfig {
 fn find_aoem_root_near(start: &Path) -> Option<PathBuf> {
     for dir in start.ancestors() {
         let candidate = dir.join("aoem");
-        if candidate
-            .join("manifest")
-            .join("aoem-manifest.json")
-            .exists()
-        {
+        if default_manifest_path(&candidate).exists() {
             return Some(candidate);
         }
-        if dynlib_names_by_preference()
-            .iter()
-            .any(|name| candidate.join("bin").join(name).exists())
-        {
+        if dynlib_names_by_preference().iter().any(|name| {
+            platform_roots_in_priority(&candidate).iter().any(|r| {
+                r.join("core").join("bin").join(name).exists() || r.join("bin").join(name).exists()
+            })
+        }) {
             return Some(candidate);
         }
     }
@@ -159,12 +156,12 @@ impl AoemRuntimeConfig {
         let manifest_path = std::env::var("NOVOVM_AOEM_MANIFEST")
             .or_else(|_| std::env::var("AOEM_DLL_MANIFEST"))
             .map(PathBuf::from)
-            .unwrap_or_else(|_| aoem_root.join("manifest").join("aoem-manifest.json"));
+            .unwrap_or_else(|_| default_manifest_path(&aoem_root));
 
         let runtime_profile_path = std::env::var("NOVOVM_AOEM_RUNTIME_PROFILE")
             .or_else(|_| std::env::var("AOEM_RUNTIME_PROFILE"))
             .map(PathBuf::from)
-            .unwrap_or_else(|_| aoem_root.join("config").join("aoem-runtime-profile.json"));
+            .unwrap_or_else(|_| default_runtime_profile_path(&aoem_root));
 
         let ingress_workers = parse_u32_env("NOVOVM_INGRESS_WORKERS")
             .or_else(|| parse_u32_env("AOEM_INGRESS_WORKERS"))
@@ -669,12 +666,48 @@ fn dynlib_names_by_preference() -> &'static [&'static str] {
     }
 }
 
-fn variant_bin_dir(root: &Path, variant: AoemRuntimeVariant) -> PathBuf {
-    match variant {
-        AoemRuntimeVariant::Core => root.join("bin"),
-        AoemRuntimeVariant::Persist => root.join("bin"),
-        AoemRuntimeVariant::Wasm => root.join("bin"),
+fn current_platform_dir_name() -> &'static str {
+    if cfg!(target_os = "windows") {
+        "windows"
+    } else if cfg!(target_os = "macos") {
+        "macos"
+    } else {
+        "linux"
     }
+}
+
+fn platform_roots_in_priority(root: &Path) -> Vec<PathBuf> {
+    vec![root.join(current_platform_dir_name()), root.to_path_buf()]
+}
+
+fn default_manifest_path(root: &Path) -> PathBuf {
+    let candidates = vec![
+        root.join("manifest").join("aoem-manifest.json"),
+        root.join(current_platform_dir_name())
+            .join("manifest")
+            .join("aoem-manifest.json"),
+    ];
+    for p in &candidates {
+        if p.exists() {
+            return p.clone();
+        }
+    }
+    candidates[0].clone()
+}
+
+fn default_runtime_profile_path(root: &Path) -> PathBuf {
+    let candidates = vec![
+        root.join("config").join("aoem-runtime-profile.json"),
+        root.join(current_platform_dir_name())
+            .join("config")
+            .join("aoem-runtime-profile.json"),
+    ];
+    for p in &candidates {
+        if p.exists() {
+            return p.clone();
+        }
+    }
+    candidates[0].clone()
 }
 
 fn split_plugin_dir_list(raw: &str) -> Vec<PathBuf> {
@@ -785,26 +818,41 @@ fn default_plugin_dir(root: &Path, variant: AoemRuntimeVariant) -> Option<PathBu
         return None;
     }
     let variant_name = variant.as_str();
-    let candidates = vec![
-        root.join("plugins").join(variant_name),
-        root.join("plugins"),
-        root.join("bin").join("plugins").join(variant_name),
-        root.join("bin").join("plugins"),
-        root.join("bin"),
-    ];
+    let mut candidates = Vec::new();
+    for platform_root in platform_roots_in_priority(root) {
+        candidates.push(
+            platform_root
+                .join("core")
+                .join("plugins")
+                .join(variant_name),
+        );
+        candidates.push(platform_root.join("core").join("plugins"));
+        candidates.push(platform_root.join("plugins").join(variant_name));
+        candidates.push(platform_root.join("plugins"));
+        candidates.push(platform_root.join("core").join("bin"));
+        candidates.push(platform_root.join("bin"));
+    }
     pick_plugin_dir_from_candidates(variant, &candidates)
 }
 
 fn default_dll_path(root: &Path, _variant: AoemRuntimeVariant) -> PathBuf {
     // Unified AOEM runtime: all variants load core dynlib and compose sidecars.
-    let core_bin = variant_bin_dir(root, AoemRuntimeVariant::Core);
     for name in dynlib_names_by_preference() {
-        let candidate = core_bin.join(name);
-        if candidate.exists() {
-            return candidate;
+        for platform_root in platform_roots_in_priority(root) {
+            for candidate in [
+                platform_root.join("core").join("bin").join(name),
+                platform_root.join("bin").join(name),
+            ] {
+                if candidate.exists() {
+                    return candidate;
+                }
+            }
         }
     }
-    core_bin.join(dynlib_names_by_preference()[0])
+    root.join(current_platform_dir_name())
+        .join("core")
+        .join("bin")
+        .join(dynlib_names_by_preference()[0])
 }
 
 fn capability_bool(root: &serde_json::Value, paths: &[&str]) -> Option<bool> {
@@ -942,9 +990,9 @@ fn _assert_abi_struct_layout(_v: AoemCreateOptionsV1) {}
 #[cfg(test)]
 mod tests {
     use super::{
-        default_dll_path, default_plugin_dir, dynlib_names_by_preference,
-        pick_plugin_dir_from_candidates, plugin_names_for_variant, split_plugin_dir_list,
-        variant_bin_dir, AoemCapabilityContract, AoemRuntimeVariant,
+        current_platform_dir_name, default_dll_path, default_plugin_dir,
+        dynlib_names_by_preference, pick_plugin_dir_from_candidates, plugin_names_for_variant,
+        split_plugin_dir_list, AoemCapabilityContract, AoemRuntimeVariant,
     };
     use serde_json::json;
     use std::fs;
@@ -1075,7 +1123,10 @@ mod tests {
     #[test]
     fn default_dll_path_prefers_host_name_when_present() {
         let root = temp_dir("default-dll-prefer-host");
-        let bin = variant_bin_dir(&root, AoemRuntimeVariant::Core);
+        let bin = root
+            .join(current_platform_dir_name())
+            .join("core")
+            .join("bin");
         fs::create_dir_all(&bin).expect("create bin dir");
 
         let host_name = dynlib_names_by_preference()[0];
@@ -1091,7 +1142,10 @@ mod tests {
     #[test]
     fn default_dll_path_uses_host_default_when_host_binary_missing() {
         let root = temp_dir("default-dll-fallback");
-        let bin = variant_bin_dir(&root, AoemRuntimeVariant::Core);
+        let bin = root
+            .join(current_platform_dir_name())
+            .join("core")
+            .join("bin");
         fs::create_dir_all(&bin).expect("create bin dir");
 
         let dll = bin.join("aoem_ffi.dll");
@@ -1142,10 +1196,15 @@ mod tests {
     fn default_plugin_dir_prefers_variant_subdir() {
         let root = temp_dir("plugin-default-variant-subdir");
         let variant_subdir = root
+            .join(current_platform_dir_name())
+            .join("core")
             .join("plugins")
             .join(AoemRuntimeVariant::Persist.as_str());
         fs::create_dir_all(&variant_subdir).expect("create variant subdir");
-        let fallback_subdir = root.join("plugins");
+        let fallback_subdir = root
+            .join(current_platform_dir_name())
+            .join("core")
+            .join("plugins");
         fs::create_dir_all(&fallback_subdir).expect("create fallback subdir");
         let name = plugin_names_for_variant(AoemRuntimeVariant::Persist)[0];
         fs::write(fallback_subdir.join(name), b"fallback").expect("write fallback plugin");

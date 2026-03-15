@@ -87,7 +87,7 @@ fn main() -> Result<()> {
     let dll_path = parse_path_arg(
         &args,
         "dll",
-        PathBuf::from(r"D:\WEB3_AI\SUPERVM\aoem\bin\aoem_ffi.dll"),
+        PathBuf::from(r"D:\WEB3_AI\SUPERVM\aoem\windows\core\bin\aoem_ffi.dll"),
     )?;
     let out_path = parse_path_arg(
         &args,

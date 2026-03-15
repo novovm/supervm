@@ -121,6 +121,14 @@ Privacy and security are treated as **infrastructure primitives**, not optional 
 - Execution‑proof decoupling with on‑demand / batched / aggregated proofs
 - Security boundaries backed by post‑quantum readiness
 
+## AOEM FFI transparency
+
+For capability evaluation (to avoid “black box” misreads), use:
+
+- `docs_CN/AOEM-FFI/README.md`
+- `docs_CN/AOEM-FFI/AOEM-FFI-CAPABILITY-TRANSPARENCY-MATRIX-2026-03-15.md`
+- `docs_CN/AOEM-FFI/AOEM-FFI-FULLMAX-INTEGRATION-2026-03-12.md`
+
 ## Ecosystem positioning
 
 NOVOVM is a **collaborative infrastructure layer**:

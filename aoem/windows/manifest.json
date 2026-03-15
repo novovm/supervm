@@ -1,0 +1,26 @@
+﻿{
+    "stamp":  "20260315-204130",
+    "release_version":  "Beta 0.8",
+    "platform":  "windows",
+    "profile":  "fullmax",
+    "bundle_dir":  "D:\\WEB3_AI\\AOEM\\artifacts\\ffi-bundles\\fullmax\\windows\\20260315-204130",
+    "core_dll":  "D:\\WEB3_AI\\AOEM\\artifacts\\ffi-bundles\\fullmax\\windows\\20260315-204130\\core\\bin\\aoem_ffi.dll",
+    "plugins":  [
+                    "aoem_ffi_crypto_hsm.dll",
+                    "aoem_ffi_crypto_kms.dll",
+                    "aoem_ffi_crypto_mldsa.dll",
+                    "aoem_ffi_hsm.dll",
+                    "aoem_ffi_kms.dll",
+                    "aoem_ffi_mldsa.dll",
+                    "aoem_ffi_persist.dll",
+                    "aoem_ffi_persist_rocksdb.dll",
+                    "aoem_ffi_runtime_wasm_wasmtime.dll",
+                    "aoem_ffi_wasm.dll",
+                    "aoem_ffi_zkvm.dll",
+                    "aoem_ffi_zkvm_executor.dll",
+                    "aoem_hsm_plugin.dll",
+                    "aoem_kms_plugin.dll"
+                ],
+    "features":  "rocksdb-persistence,wasmtime-runtime,privacy-verify,mldsa,zkvm-executor,risc0,sp1,halo2",
+    "notes":  "windows fullmax compiles risc0/sp1/halo2 feature set; sp1 runtime path depends on upstream backend/platform availability"
+}

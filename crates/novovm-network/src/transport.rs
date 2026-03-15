@@ -1,18 +1,23 @@
 #![forbid(unsafe_code)]
 
 use crate::{
-    get_network_runtime_peer_heads_top_k, get_network_runtime_sync_status,
-    observe_network_runtime_local_head_max,
+    get_network_runtime_sync_status, observe_eth_native_bodies_pull,
+    observe_eth_native_bodies_response, observe_eth_native_discovery,
+    observe_eth_native_headers_pull, observe_eth_native_headers_response, observe_eth_native_hello,
+    observe_eth_native_rlpx_auth, observe_eth_native_rlpx_auth_ack, observe_eth_native_snap_pull,
+    observe_eth_native_snap_response, observe_eth_native_status,
+    observe_network_runtime_eth_peer_head, observe_network_runtime_local_head_max,
     observe_network_runtime_peer_head, observe_network_runtime_peer_head_with_local_head_max,
     plan_network_runtime_sync_pull_window, register_network_runtime_peer,
-    unregister_network_runtime_peer, NetworkRuntimeNativeSyncPhaseV1,
+    unregister_network_runtime_peer, upsert_network_runtime_eth_peer_session,
+    NetworkRuntimeNativeSyncPhaseV1,
 };
 use dashmap::DashMap;
 use novovm_protocol::{
     decode as protocol_decode, decode_block_header_wire_v1, encode as protocol_encode,
     encode_block_header_wire_v1,
     protocol_catalog::distributed_occc::gossip::MessageType as DistributedOcccMessageType,
-    BlockHeaderWireV1, ConsensusPluginBindingV1, FinalityMessage,
+    BlockHeaderWireV1, ConsensusPluginBindingV1, EvmNativeMessage, FinalityMessage,
     GossipMessage as ProtocolGossipMessage, NodeId, PacemakerMessage, ProtocolMessage,
     TwoPcMessage, CONSENSUS_PLUGIN_CLASS_CODE,
 };
@@ -60,9 +65,6 @@ const RUNTIME_SYNC_PULL_PREFETCH_MARGIN_HEADERS: u64 = 8;
 const RUNTIME_SYNC_PULL_PREFETCH_MARGIN_BODIES: u64 = 4;
 const RUNTIME_SYNC_PULL_PREFETCH_MARGIN_STATE: u64 = 2;
 const RUNTIME_SYNC_PULL_PREFETCH_MARGIN_FINALIZE: u64 = 1;
-const DEFAULT_RUNTIME_SYNC_PULL_FOLLOWUP_FANOUT_MAX: usize = 1;
-const HARD_MAX_RUNTIME_SYNC_PULL_FOLLOWUP_FANOUT: usize = 8;
-static RUNTIME_SYNC_PULL_FOLLOWUP_FANOUT_MAX_CACHE: OnceLock<usize> = OnceLock::new();
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct RuntimeSyncPullRequest {
@@ -97,9 +99,33 @@ struct RuntimeSyncPullTargetState {
 
 type RuntimeSyncPullTargetMap = DashMap<(u64, u64, u64), RuntimeSyncPullTargetState>;
 static RUNTIME_SYNC_PULL_TARGETS: OnceLock<RuntimeSyncPullTargetMap> = OnceLock::new();
+static NETWORK_GOSSIP_SYNC_COMPAT_ENABLED: OnceLock<bool> = OnceLock::new();
 
 fn runtime_sync_pull_target_map() -> &'static RuntimeSyncPullTargetMap {
     RUNTIME_SYNC_PULL_TARGETS.get_or_init(DashMap::new)
+}
+
+fn parse_env_bool(name: &str, fallback: bool) -> bool {
+    match std::env::var(name) {
+        Ok(raw) => {
+            let normalized = raw.trim().to_ascii_lowercase();
+            if normalized.is_empty() {
+                fallback
+            } else if matches!(normalized.as_str(), "0" | "false" | "off" | "no") {
+                false
+            } else if matches!(normalized.as_str(), "1" | "true" | "on" | "yes") {
+                true
+            } else {
+                fallback
+            }
+        }
+        Err(_) => fallback,
+    }
+}
+
+fn network_gossip_sync_compat_enabled() -> bool {
+    *NETWORK_GOSSIP_SYNC_COMPAT_ENABLED
+        .get_or_init(|| parse_env_bool("NOVOVM_NETWORK_ENABLE_GOSSIP_SYNC_COMPAT", true))
 }
 
 #[cfg(test)]
@@ -187,41 +213,6 @@ fn parse_env_u64(name: &str, fallback: u64) -> u64 {
         .ok()
         .and_then(|raw| raw.trim().parse::<u64>().ok())
         .unwrap_or(fallback)
-}
-
-fn runtime_sync_pull_followup_fanout_max() -> usize {
-    *RUNTIME_SYNC_PULL_FOLLOWUP_FANOUT_MAX_CACHE.get_or_init(|| {
-        parse_env_usize(
-            "NOVOVM_NETWORK_SYNC_PULL_FOLLOWUP_FANOUT_MAX",
-            DEFAULT_RUNTIME_SYNC_PULL_FOLLOWUP_FANOUT_MAX,
-        )
-        .clamp(1, HARD_MAX_RUNTIME_SYNC_PULL_FOLLOWUP_FANOUT)
-    })
-}
-
-fn runtime_sync_pull_followup_targets(chain_id: u64, fallback_target: NodeId) -> Vec<NodeId> {
-    let fanout_max = runtime_sync_pull_followup_fanout_max();
-    if fanout_max == 1 {
-        // Fast path: default fanout is 1, keep pulling on current response peer.
-        // Avoid per-message top-k query overhead in the common path.
-        return vec![fallback_target];
-    }
-
-    let mut targets: Vec<NodeId> = get_network_runtime_peer_heads_top_k(chain_id, fanout_max)
-        .into_iter()
-        .map(|(peer_id, _)| NodeId(peer_id))
-        .collect();
-    if targets.is_empty() {
-        targets.push(fallback_target);
-        return targets;
-    }
-    if !targets.contains(&fallback_target) && targets.len() < fanout_max {
-        targets.push(fallback_target);
-    }
-    if targets.len() > fanout_max {
-        targets.truncate(fanout_max);
-    }
-    targets
 }
 
 /// Simple in-memory transport for tests/bench harnesses.
@@ -428,6 +419,12 @@ impl TcpTransport {
             };
             match write_result {
                 Ok(()) => {
+                    maybe_track_runtime_sync_pull_request_outbound_send(
+                        self.chain_id,
+                        self.node,
+                        to,
+                        msg,
+                    );
                     maybe_update_runtime_sync_local_progress_from_send(
                         self.chain_id,
                         self.node,
@@ -493,6 +490,7 @@ impl TcpTransport {
         self.outbound_streams
             .insert(to, Arc::new(Mutex::new(stream)));
         let _ = register_network_runtime_peer(self.chain_id, to.0);
+        maybe_track_runtime_sync_pull_request_outbound_send(self.chain_id, self.node, to, msg);
         maybe_update_runtime_sync_local_progress_from_send(self.chain_id, self.node, msg);
         Ok(())
     }
@@ -607,6 +605,7 @@ impl UdpTransport {
         if self.runtime_peer_registered.insert(to, ()).is_none() {
             let _ = register_network_runtime_peer(self.chain_id, to.0);
         }
+        maybe_track_runtime_sync_pull_request_outbound_send(self.chain_id, self.node, to, msg);
         maybe_update_runtime_sync_local_progress_from_send(self.chain_id, self.node, msg);
         Ok(())
     }
@@ -693,6 +692,99 @@ fn maybe_update_runtime_sync_from_protocol_message_with_context(
             let _ =
                 observe_network_runtime_peer_head_with_local_head_max(chain_id, from.0, id.0, None);
         }
+        ProtocolMessage::EvmNative(native_msg) => match native_msg {
+            EvmNativeMessage::DiscoveryPing { from, .. }
+            | EvmNativeMessage::DiscoveryPong { from, .. }
+            | EvmNativeMessage::DiscoveryFindNode { from, .. }
+            | EvmNativeMessage::DiscoveryNeighbors { from, .. } => {
+                let _ = register_network_runtime_peer(chain_id, from.0);
+                observe_eth_native_discovery(chain_id);
+            }
+            EvmNativeMessage::RlpxAuth { from, .. } => {
+                let _ = register_network_runtime_peer(chain_id, from.0);
+                observe_eth_native_rlpx_auth(chain_id);
+            }
+            EvmNativeMessage::RlpxAuthAck { from, .. } => {
+                let _ = register_network_runtime_peer(chain_id, from.0);
+                observe_eth_native_rlpx_auth_ack(chain_id);
+            }
+            EvmNativeMessage::Hello {
+                from,
+                chain_id: hello_chain_id,
+                eth_versions,
+                snap_versions,
+                ..
+            } => {
+                let _ = register_network_runtime_peer(chain_id, from.0);
+                observe_eth_native_hello(chain_id);
+                if *hello_chain_id == chain_id {
+                    let _ = upsert_network_runtime_eth_peer_session(
+                        chain_id,
+                        from.0,
+                        eth_versions,
+                        snap_versions,
+                        None,
+                    );
+                }
+            }
+            EvmNativeMessage::Status {
+                from,
+                chain_id: status_chain_id,
+                head_height,
+                ..
+            } => {
+                let _ = register_network_runtime_peer(chain_id, from.0);
+                observe_eth_native_status(chain_id);
+                if *status_chain_id == chain_id {
+                    observe_network_runtime_eth_peer_head(chain_id, from.0, *head_height);
+                }
+                let _ = observe_network_runtime_peer_head_with_local_head_max(
+                    chain_id,
+                    from.0,
+                    *head_height,
+                    None,
+                );
+            }
+            EvmNativeMessage::NewBlockHashes { from, blocks } => {
+                let _ = register_network_runtime_peer(chain_id, from.0);
+                if let Some((_, height)) = blocks.iter().max_by_key(|(_, h)| *h) {
+                    observe_network_runtime_eth_peer_head(chain_id, from.0, *height);
+                    let _ = observe_network_runtime_peer_head_with_local_head_max(
+                        chain_id, from.0, *height, None,
+                    );
+                }
+            }
+            EvmNativeMessage::BlockHeaders { from, heights } => {
+                let _ = register_network_runtime_peer(chain_id, from.0);
+                observe_eth_native_headers_response(chain_id);
+                if let Some(height) = heights.iter().copied().max() {
+                    observe_network_runtime_eth_peer_head(chain_id, from.0, height);
+                    let _ = observe_network_runtime_peer_head_with_local_head_max(
+                        chain_id,
+                        from.0,
+                        height,
+                        Some(height),
+                    );
+                }
+            }
+            EvmNativeMessage::GetBlockHeaders { from, .. }
+            | EvmNativeMessage::Transactions { from, .. }
+            | EvmNativeMessage::GetBlockBodies { from, .. }
+            | EvmNativeMessage::BlockBodies { from, .. }
+            | EvmNativeMessage::SnapGetAccountRange { from, .. }
+            | EvmNativeMessage::SnapAccountRange { from, .. } => {
+                let _ = register_network_runtime_peer(chain_id, from.0);
+                match native_msg {
+                    EvmNativeMessage::BlockBodies { .. } => {
+                        observe_eth_native_bodies_response(chain_id);
+                    }
+                    EvmNativeMessage::SnapAccountRange { .. } => {
+                        observe_eth_native_snap_response(chain_id);
+                    }
+                    _ => {}
+                }
+            }
+        },
         _ => {
             if let Some(peer_id) = fallback_peer_id {
                 let _ = register_network_runtime_peer(chain_id, peer_id);
@@ -726,7 +818,6 @@ fn maybe_update_runtime_sync_local_progress_from_send(
             }
         }
         ProtocolMessage::DistributedOcccGossip(gossip_msg) => {
-            maybe_track_runtime_sync_pull_request_outbound(chain_id, local_node, msg);
             if gossip_msg.from == local_node.0 as u32
                 && is_runtime_sync_pull_msg_type(&gossip_msg.msg_type)
             {
@@ -746,6 +837,31 @@ fn maybe_update_runtime_sync_local_progress_from_send(
                 let _ = observe_network_runtime_local_head_max(chain_id, id.0);
             }
         }
+        ProtocolMessage::EvmNative(native_msg) => match native_msg {
+            EvmNativeMessage::Status {
+                from, head_height, ..
+            } => {
+                if *from == local_node {
+                    let _ = observe_network_runtime_local_head_max(chain_id, *head_height);
+                }
+            }
+            EvmNativeMessage::BlockHeaders { from, heights } => {
+                if *from == local_node {
+                    if let Some(height) = heights.iter().copied().max() {
+                        let _ = observe_network_runtime_local_head_max(chain_id, height);
+                    }
+                }
+            }
+            EvmNativeMessage::NewBlockHashes { from, blocks } => {
+                if *from == local_node {
+                    if let Some((_, height)) = blocks.iter().max_by_key(|(_, h)| *h) {
+                        let _ = observe_network_runtime_local_head_max(chain_id, *height);
+                    }
+                }
+            }
+            EvmNativeMessage::Transactions { .. } => {}
+            _ => {}
+        },
         _ => {}
     }
 }
@@ -780,6 +896,9 @@ fn runtime_sync_pull_message_context(msg: &ProtocolMessage) -> RuntimeSyncPullMe
     let ProtocolMessage::DistributedOcccGossip(gossip_msg) = msg else {
         return RuntimeSyncPullMessageContext::default();
     };
+    if !network_gossip_sync_compat_enabled() {
+        return RuntimeSyncPullMessageContext::default();
+    }
     if !is_runtime_sync_pull_msg_type(&gossip_msg.msg_type) {
         return RuntimeSyncPullMessageContext::default();
     }
@@ -884,11 +1003,103 @@ fn runtime_sync_pull_followup_trigger_height(
     capped_target_to.saturating_sub(bounded_margin)
 }
 
+fn decode_evm_native_sync_marker_range(marker: &[u8; 32]) -> (u64, u64, u64) {
+    let chain_id = u64::from_le_bytes(marker[0..8].try_into().unwrap_or([0u8; 8]));
+    let from_block = u64::from_le_bytes(marker[8..16].try_into().unwrap_or([0u8; 8]));
+    let to_block = u64::from_le_bytes(marker[16..24].try_into().unwrap_or([0u8; 8]));
+    (chain_id, from_block, to_block)
+}
+
+fn maybe_extract_evm_native_sync_pull_request(
+    chain_id: u64,
+    local_node: NodeId,
+    msg: &ProtocolMessage,
+) -> Option<RuntimeSyncPullRequest> {
+    let ProtocolMessage::EvmNative(native_msg) = msg else {
+        return None;
+    };
+    match native_msg {
+        EvmNativeMessage::GetBlockHeaders {
+            from,
+            start_height,
+            max,
+            skip,
+            reverse,
+        } => {
+            if *from != local_node {
+                return None;
+            }
+            let step = skip.saturating_add(1);
+            let span = max.saturating_sub(1).saturating_mul(step);
+            let to_block = if *reverse {
+                *start_height
+            } else {
+                start_height.saturating_add(span)
+            };
+            Some(RuntimeSyncPullRequest {
+                phase: NetworkRuntimeNativeSyncPhaseV1::Headers,
+                chain_id,
+                from_block: *start_height,
+                to_block: to_block.max(*start_height),
+            })
+        }
+        EvmNativeMessage::GetBlockBodies { from, hashes } => {
+            if *from != local_node {
+                return None;
+            }
+            let marker = hashes.first()?;
+            let (marker_chain_id, from_block, to_block) =
+                decode_evm_native_sync_marker_range(marker);
+            if marker_chain_id != chain_id {
+                return None;
+            }
+            Some(RuntimeSyncPullRequest {
+                phase: NetworkRuntimeNativeSyncPhaseV1::Bodies,
+                chain_id,
+                from_block,
+                to_block: to_block.max(from_block),
+            })
+        }
+        EvmNativeMessage::SnapGetAccountRange {
+            from,
+            block_hash,
+            origin,
+            limit,
+        } => {
+            if *from != local_node {
+                return None;
+            }
+            let marker_chain_id =
+                u64::from_le_bytes(block_hash[0..8].try_into().unwrap_or([0u8; 8]));
+            if marker_chain_id != chain_id {
+                return None;
+            }
+            let from_block = u64::from_le_bytes(origin[0..8].try_into().unwrap_or([0u8; 8]));
+            let to_hint = u64::from_le_bytes(block_hash[8..16].try_into().unwrap_or([0u8; 8]));
+            let to_block = if to_hint >= from_block {
+                to_hint
+            } else {
+                from_block.saturating_add(limit.saturating_sub(1))
+            };
+            Some(RuntimeSyncPullRequest {
+                phase: NetworkRuntimeNativeSyncPhaseV1::State,
+                chain_id,
+                from_block,
+                to_block: to_block.max(from_block),
+            })
+        }
+        _ => None,
+    }
+}
+
 fn maybe_track_runtime_sync_pull_request_outbound(
     chain_id: u64,
     local_node: NodeId,
     msg: &ProtocolMessage,
 ) {
+    if !network_gossip_sync_compat_enabled() {
+        return;
+    }
     let ProtocolMessage::DistributedOcccGossip(gossip_msg) = msg else {
         return;
     };
@@ -913,6 +1124,89 @@ fn maybe_track_runtime_sync_pull_request_outbound(
         capped_target_to,
         followup_trigger,
     );
+}
+
+fn maybe_track_runtime_sync_pull_request_outbound_send(
+    chain_id: u64,
+    local_node: NodeId,
+    remote_peer: NodeId,
+    msg: &ProtocolMessage,
+) {
+    maybe_track_runtime_sync_pull_request_outbound(chain_id, local_node, msg);
+    let Some(request) = maybe_extract_evm_native_sync_pull_request(chain_id, local_node, msg)
+    else {
+        return;
+    };
+    match request.phase {
+        NetworkRuntimeNativeSyncPhaseV1::Headers
+        | NetworkRuntimeNativeSyncPhaseV1::Finalize
+        | NetworkRuntimeNativeSyncPhaseV1::Discovery
+        | NetworkRuntimeNativeSyncPhaseV1::Idle => observe_eth_native_headers_pull(chain_id),
+        NetworkRuntimeNativeSyncPhaseV1::Bodies => observe_eth_native_bodies_pull(chain_id),
+        NetworkRuntimeNativeSyncPhaseV1::State => observe_eth_native_snap_pull(chain_id),
+    }
+    let capped_target_to = runtime_sync_pull_response_cap_to(&request);
+    let followup_trigger = runtime_sync_pull_followup_trigger_height(&request, capped_target_to);
+    set_runtime_sync_pull_target_with_trigger(
+        chain_id,
+        local_node,
+        remote_peer,
+        capped_target_to,
+        followup_trigger,
+    );
+}
+
+fn encode_evm_native_sync_marker(chain_id: u64, from_block: u64, to_block: u64) -> [u8; 32] {
+    let mut marker = [0u8; 32];
+    marker[0..8].copy_from_slice(&chain_id.to_le_bytes());
+    marker[8..16].copy_from_slice(&from_block.to_le_bytes());
+    marker[16..24].copy_from_slice(&to_block.to_le_bytes());
+    marker
+}
+
+fn build_evm_native_sync_pull_request(
+    local_node: NodeId,
+    chain_id: u64,
+    phase: NetworkRuntimeNativeSyncPhaseV1,
+    from_block: u64,
+    to_block: u64,
+) -> ProtocolMessage {
+    let span = to_block.saturating_sub(from_block).saturating_add(1).max(1);
+    match phase {
+        NetworkRuntimeNativeSyncPhaseV1::Bodies => {
+            ProtocolMessage::EvmNative(EvmNativeMessage::GetBlockBodies {
+                from: local_node,
+                hashes: vec![encode_evm_native_sync_marker(
+                    chain_id, from_block, to_block,
+                )],
+            })
+        }
+        NetworkRuntimeNativeSyncPhaseV1::State => {
+            let mut block_hash = [0u8; 32];
+            block_hash[0..8].copy_from_slice(&chain_id.to_le_bytes());
+            block_hash[8..16].copy_from_slice(&to_block.to_le_bytes());
+            let mut origin = [0u8; 32];
+            origin[0..8].copy_from_slice(&from_block.to_le_bytes());
+            ProtocolMessage::EvmNative(EvmNativeMessage::SnapGetAccountRange {
+                from: local_node,
+                block_hash,
+                origin,
+                limit: span,
+            })
+        }
+        NetworkRuntimeNativeSyncPhaseV1::Headers
+        | NetworkRuntimeNativeSyncPhaseV1::Finalize
+        | NetworkRuntimeNativeSyncPhaseV1::Discovery
+        | NetworkRuntimeNativeSyncPhaseV1::Idle => {
+            ProtocolMessage::EvmNative(EvmNativeMessage::GetBlockHeaders {
+                from: local_node,
+                start_height: from_block,
+                max: span,
+                skip: 0,
+                reverse: false,
+            })
+        }
+    }
 }
 
 fn encode_runtime_sync_block_header_payload(response_height: u64) -> Vec<u8> {
@@ -959,6 +1253,9 @@ fn maybe_plan_runtime_sync_pull_responses_with_context(
     msg: &ProtocolMessage,
     sync_ctx: &RuntimeSyncPullMessageContext,
 ) -> Option<RuntimeSyncPullResponsePlan> {
+    if !network_gossip_sync_compat_enabled() {
+        return None;
+    }
     let ProtocolMessage::DistributedOcccGossip(gossip_msg) = msg else {
         return None;
     };
@@ -992,6 +1289,107 @@ fn maybe_plan_runtime_sync_pull_responses_with_context(
             .map(|d| d.as_millis() as u64)
             .unwrap_or(0),
     })
+}
+
+fn maybe_build_evm_native_sync_response(
+    chain_id: u64,
+    local_node: NodeId,
+    msg: &ProtocolMessage,
+) -> Option<(NodeId, ProtocolMessage)> {
+    let ProtocolMessage::EvmNative(native_msg) = msg else {
+        return None;
+    };
+    match native_msg {
+        EvmNativeMessage::RlpxAuth {
+            from,
+            chain_id: auth_chain_id,
+            network_id,
+            auth_tag,
+        } => {
+            if *from == local_node || *auth_chain_id != chain_id {
+                return None;
+            }
+            let mut ack_tag = *auth_tag;
+            ack_tag.reverse();
+            Some((
+                *from,
+                ProtocolMessage::EvmNative(EvmNativeMessage::RlpxAuthAck {
+                    from: local_node,
+                    chain_id,
+                    network_id: *network_id,
+                    ack_tag,
+                }),
+            ))
+        }
+        EvmNativeMessage::GetBlockHeaders {
+            from,
+            start_height,
+            max,
+            skip,
+            reverse,
+        } => {
+            if *from == local_node {
+                return None;
+            }
+            let head = get_network_runtime_sync_status(chain_id)
+                .map(|s| s.current_block.max(s.highest_block))
+                .unwrap_or(0);
+            let max_count = (*max).max(1).min(256) as usize;
+            let step = skip.saturating_add(1);
+            let mut heights = Vec::with_capacity(max_count);
+            let mut cursor = *start_height;
+            for _ in 0..max_count {
+                if *reverse {
+                    heights.push(cursor);
+                    if cursor < step {
+                        break;
+                    }
+                    cursor = cursor.saturating_sub(step);
+                } else {
+                    if head > 0 && cursor > head {
+                        break;
+                    }
+                    heights.push(cursor);
+                    cursor = cursor.saturating_add(step);
+                }
+            }
+            Some((
+                *from,
+                ProtocolMessage::EvmNative(EvmNativeMessage::BlockHeaders {
+                    from: local_node,
+                    heights,
+                }),
+            ))
+        }
+        EvmNativeMessage::GetBlockBodies { from, hashes } => {
+            if *from == local_node {
+                return None;
+            }
+            Some((
+                *from,
+                ProtocolMessage::EvmNative(EvmNativeMessage::BlockBodies {
+                    from: local_node,
+                    body_count: hashes.len() as u64,
+                }),
+            ))
+        }
+        EvmNativeMessage::SnapGetAccountRange { from, limit, .. } => {
+            if *from == local_node {
+                return None;
+            }
+            let account_count = (*limit).min(2048);
+            let proof_node_count = account_count.saturating_div(8).max(1);
+            Some((
+                *from,
+                ProtocolMessage::EvmNative(EvmNativeMessage::SnapAccountRange {
+                    from: local_node,
+                    account_count,
+                    proof_node_count,
+                }),
+            ))
+        }
+        _ => None,
+    }
 }
 
 fn emit_runtime_sync_pull_responses(
@@ -1058,79 +1456,106 @@ fn maybe_build_runtime_sync_pull_followup_request(
     msg: &ProtocolMessage,
 ) -> Option<(NodeId, ProtocolMessage)> {
     let sync_ctx = runtime_sync_pull_message_context(msg);
-    maybe_build_runtime_sync_pull_followup_requests_with_context(chain_id, local_node, msg, &sync_ctx)
-        .into_iter()
-        .next()
+    maybe_build_runtime_sync_pull_followup_request_with_context(
+        chain_id, local_node, msg, &sync_ctx,
+    )
 }
 
-fn maybe_build_runtime_sync_pull_followup_requests_with_context(
+fn maybe_build_runtime_sync_pull_followup_request_with_context(
     chain_id: u64,
     local_node: NodeId,
     msg: &ProtocolMessage,
     sync_ctx: &RuntimeSyncPullMessageContext,
-) -> Vec<(NodeId, ProtocolMessage)> {
-    let ProtocolMessage::DistributedOcccGossip(gossip_msg) = msg else {
-        return Vec::new();
-    };
-    if !sync_ctx.is_sync_pull {
-        return Vec::new();
-    }
-    if gossip_msg.to != local_node.0 as u32 {
-        return Vec::new();
-    }
-    // Incoming NSP1 is already a pull request, not a downloaded sync result.
-    if sync_ctx.request.is_some() {
-        return Vec::new();
-    }
-    // Only continue pull loop when response payload is a valid sync header.
-    let Some(response_height) = sync_ctx.header_height else {
-        return Vec::new();
-    };
-    let sender_target = NodeId(gossip_msg.from as u64);
-    let Some(window) = plan_network_runtime_sync_pull_window(chain_id) else {
-        return Vec::new();
-    };
-    if window.from_block > window.to_block {
-        return Vec::new();
-    }
+) -> Option<(NodeId, ProtocolMessage)> {
+    match msg {
+        ProtocolMessage::DistributedOcccGossip(gossip_msg) => {
+            if !sync_ctx.is_sync_pull {
+                return None;
+            }
+            if gossip_msg.to != local_node.0 as u32 {
+                return None;
+            }
+            // Incoming NSP1 is already a pull request, not a downloaded sync result.
+            if sync_ctx.request.is_some() {
+                return None;
+            }
+            // Only continue pull loop when response payload is a valid sync header.
+            let response_height = sync_ctx.header_height?;
+            let target = NodeId(gossip_msg.from as u64);
+            if should_wait_runtime_sync_pull_target_window(
+                chain_id,
+                local_node,
+                target,
+                response_height,
+            ) {
+                return None;
+            }
+            let window = plan_network_runtime_sync_pull_window(chain_id)?;
+            if window.from_block > window.to_block {
+                return None;
+            }
 
-    let payload = encode_runtime_sync_pull_request_payload(
-        chain_id,
-        window.phase,
-        window.from_block,
-        window.to_block,
-    );
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis() as u64)
-        .unwrap_or(0);
-
-    let mut out = Vec::new();
-    for (idx, target) in runtime_sync_pull_followup_targets(chain_id, sender_target)
-        .into_iter()
-        .enumerate()
-    {
-        // Keep consuming current window replies until reaching requested upper bound.
-        if should_wait_runtime_sync_pull_target_window(chain_id, local_node, target, response_height)
-        {
-            continue;
+            let payload = encode_runtime_sync_pull_request_payload(
+                chain_id,
+                window.phase,
+                window.from_block,
+                window.to_block,
+            );
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis() as u64)
+                .unwrap_or(0);
+            let request = ProtocolMessage::DistributedOcccGossip(
+                novovm_protocol::protocol_catalog::distributed_occc::gossip::GossipMessage {
+                    from: local_node.0 as u32,
+                    to: gossip_msg.from,
+                    msg_type: runtime_sync_pull_msg_type_for_phase(window.phase),
+                    payload,
+                    timestamp: now,
+                    seq: now,
+                },
+            );
+            Some((target, request))
         }
-        let Ok(to_wire) = u32::try_from(target.0) else {
-            continue;
-        };
-        let request = ProtocolMessage::DistributedOcccGossip(
-            novovm_protocol::protocol_catalog::distributed_occc::gossip::GossipMessage {
-                from: local_node.0 as u32,
-                to: to_wire,
-                msg_type: runtime_sync_pull_msg_type_for_phase(window.phase),
-                payload: payload.clone(),
-                timestamp: now,
-                seq: now.saturating_add(idx as u64),
-            },
-        );
-        out.push((target, request));
+        ProtocolMessage::EvmNative(native_msg) => {
+            let (target, observed_height_opt) = match native_msg {
+                EvmNativeMessage::BlockHeaders { from, heights } => {
+                    (*from, heights.iter().copied().max())
+                }
+                EvmNativeMessage::BlockBodies { from, .. } => (*from, None),
+                EvmNativeMessage::SnapAccountRange { from, .. } => (*from, None),
+                _ => return None,
+            };
+            if target == local_node {
+                return None;
+            }
+            let target_state = runtime_sync_pull_target_map()
+                .get(&(chain_id, local_node.0, target.0))
+                .map(|entry| *entry)?;
+            let observed_height = observed_height_opt.unwrap_or(target_state.to_block);
+            if should_wait_runtime_sync_pull_target_window(
+                chain_id,
+                local_node,
+                target,
+                observed_height,
+            ) {
+                return None;
+            }
+            let window = plan_network_runtime_sync_pull_window(chain_id)?;
+            if window.from_block > window.to_block {
+                return None;
+            }
+            let request = build_evm_native_sync_pull_request(
+                local_node,
+                chain_id,
+                window.phase,
+                window.from_block,
+                window.to_block,
+            );
+            Some((target, request))
+        }
+        _ => None,
     }
-    out
 }
 
 fn runtime_peer_id_from_protocol_message(msg: &ProtocolMessage) -> Option<u64> {
@@ -1143,6 +1568,24 @@ fn runtime_peer_id_from_protocol_message(msg: &ProtocolMessage) -> Option<u64> {
         | ProtocolMessage::Finality(FinalityMessage::CheckpointPropose { from, .. })
         | ProtocolMessage::Finality(FinalityMessage::Cert { from, .. }) => Some(from.0),
         ProtocolMessage::TwoPc(TwoPcMessage::Propose { tx }) => Some(tx.from.0),
+        ProtocolMessage::EvmNative(native_msg) => match native_msg {
+            EvmNativeMessage::DiscoveryPing { from, .. }
+            | EvmNativeMessage::DiscoveryPong { from, .. }
+            | EvmNativeMessage::DiscoveryFindNode { from, .. }
+            | EvmNativeMessage::DiscoveryNeighbors { from, .. }
+            | EvmNativeMessage::RlpxAuth { from, .. }
+            | EvmNativeMessage::RlpxAuthAck { from, .. }
+            | EvmNativeMessage::Hello { from, .. }
+            | EvmNativeMessage::Status { from, .. }
+            | EvmNativeMessage::NewBlockHashes { from, .. }
+            | EvmNativeMessage::Transactions { from, .. }
+            | EvmNativeMessage::GetBlockHeaders { from, .. }
+            | EvmNativeMessage::BlockHeaders { from, .. }
+            | EvmNativeMessage::GetBlockBodies { from, .. }
+            | EvmNativeMessage::BlockBodies { from, .. }
+            | EvmNativeMessage::SnapGetAccountRange { from, .. }
+            | EvmNativeMessage::SnapAccountRange { from, .. } => Some(from.0),
+        },
         ProtocolMessage::DistributedOcccGossip(gossip_msg) => Some(gossip_msg.from as u64),
         _ => None,
     }
@@ -1349,6 +1792,15 @@ impl Transport for UdpTransport {
                 },
             );
         }
+        if let Some((to, response)) =
+            maybe_build_evm_native_sync_response(self.chain_id, self.node, &decoded)
+        {
+            if self.send_internal(to, &response).is_err() {
+                if let Ok(encoded) = protocol_encode(&response) {
+                    let _ = self.socket.send_to(&encoded, src);
+                }
+            }
+        }
         maybe_update_runtime_sync_from_protocol_message_with_context(
             self.chain_id,
             &decoded,
@@ -1356,32 +1808,23 @@ impl Transport for UdpTransport {
             source_peer_id_hint,
             &sync_ctx,
         );
-        let fallback_sender = if let ProtocolMessage::DistributedOcccGossip(gossip) = &decoded {
-            Some(NodeId(gossip.from as u64))
-        } else {
-            None
-        };
-        for (to, followup) in maybe_build_runtime_sync_pull_followup_requests_with_context(
+        if let Some((to, followup)) = maybe_build_runtime_sync_pull_followup_request_with_context(
             self.chain_id,
             self.node,
             &decoded,
             &sync_ctx,
         ) {
-            if self.send_internal(to, &followup).is_ok() {
-                continue;
-            }
-            if fallback_sender != Some(to) {
-                continue;
-            }
-            if let Ok(encoded) = protocol_encode(&followup) {
-                if self.socket.send_to(&encoded, src).is_ok() {
-                    // `send` path already tracks outbound pull targets on success.
-                    // Fallback path should track only when raw socket send succeeds.
-                    maybe_track_runtime_sync_pull_request_outbound(
-                        self.chain_id,
-                        self.node,
-                        &followup,
-                    );
+            if self.send_internal(to, &followup).is_err() {
+                // `send` path already tracks outbound pull targets on success.
+                // When falling back to raw socket send, track once here.
+                maybe_track_runtime_sync_pull_request_outbound_send(
+                    self.chain_id,
+                    self.node,
+                    to,
+                    &followup,
+                );
+                if let Ok(encoded) = protocol_encode(&followup) {
+                    let _ = self.socket.send_to(&encoded, src);
                 }
             }
         }
@@ -1483,6 +1926,15 @@ impl Transport for TcpTransport {
                 },
             );
         }
+        if let Some((to, response)) =
+            maybe_build_evm_native_sync_response(self.chain_id, self.node, &decoded)
+        {
+            if self.send_internal(to, &response).is_err() {
+                if let Ok(encoded) = protocol_encode(&response) {
+                    let _ = write_tcp_frame(&mut stream, &encoded);
+                }
+            }
+        }
         maybe_update_runtime_sync_from_protocol_message_with_context(
             self.chain_id,
             &decoded,
@@ -1490,32 +1942,23 @@ impl Transport for TcpTransport {
             source_peer_id_hint,
             &sync_ctx,
         );
-        let fallback_sender = if let ProtocolMessage::DistributedOcccGossip(gossip) = &decoded {
-            Some(NodeId(gossip.from as u64))
-        } else {
-            None
-        };
-        for (to, followup) in maybe_build_runtime_sync_pull_followup_requests_with_context(
+        if let Some((to, followup)) = maybe_build_runtime_sync_pull_followup_request_with_context(
             self.chain_id,
             self.node,
             &decoded,
             &sync_ctx,
         ) {
-            if self.send_internal(to, &followup).is_ok() {
-                continue;
-            }
-            if fallback_sender != Some(to) {
-                continue;
-            }
-            if let Ok(encoded) = protocol_encode(&followup) {
-                if write_tcp_frame(&mut stream, &encoded).is_ok() {
-                    // `send` path already tracks outbound pull targets on success.
-                    // Fallback path should track only when raw tcp write succeeds.
-                    maybe_track_runtime_sync_pull_request_outbound(
-                        self.chain_id,
-                        self.node,
-                        &followup,
-                    );
+            if self.send_internal(to, &followup).is_err() {
+                // `send` path already tracks outbound pull targets on success.
+                // When falling back to raw tcp stream send, track once here.
+                maybe_track_runtime_sync_pull_request_outbound_send(
+                    self.chain_id,
+                    self.node,
+                    to,
+                    &followup,
+                );
+                if let Ok(encoded) = protocol_encode(&followup) {
+                    let _ = write_tcp_frame(&mut stream, &encoded);
                 }
             }
         }

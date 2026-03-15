@@ -31,8 +31,10 @@ use novovm_adapter_novovm::{
 };
 use novovm_exec::{OpsWireOp, OpsWireV1Builder};
 use novovm_network::{
+    current_eth_native_parity_progress_for_chain, default_eth_native_capabilities,
     get_network_runtime_native_sync_status, get_network_runtime_sync_status,
     network_runtime_native_sync_is_active, plan_network_runtime_sync_pull_window,
+    snapshot_network_runtime_eth_peer_sessions,
 };
 use rocksdb::{
     ColumnFamilyDescriptor, Direction, IteratorMode, Options as RocksDbOptions, DB as RocksDb,
@@ -525,6 +527,14 @@ impl GatewayEthFilterState {
 }
 
 fn main() -> Result<()> {
+    if std::env::var_os("NOVOVM_NETWORK_ENABLE_GOSSIP_SYNC_COMPAT").is_none() {
+        std::env::set_var("NOVOVM_NETWORK_ENABLE_GOSSIP_SYNC_COMPAT", "0");
+    }
+    let gateway_mode =
+        std::env::var("NOVOVM_GATEWAY_NODE_MODE").unwrap_or_else(|_| "full".to_string());
+    if !gateway_mode.eq_ignore_ascii_case("full") {
+        bail!("non-full gateway mode is disabled: novovm-evm-gateway runs in full-node-only mode");
+    }
     let mut runtime = GatewayRuntime::from_env()?;
     gateway_summary!(
         "gateway_in: bind={} spool_dir={} max_body={} max_requests={} evm_payout_autoreplay_max={} evm_payout_autoreplay_cooldown_ms={} evm_payout_pending_warn_threshold={} evm_atomic_broadcast_autoreplay_max={} evm_atomic_broadcast_autoreplay_cooldown_ms={} evm_atomic_broadcast_pending_warn_threshold={} evm_atomic_broadcast_autoreplay_use_external_executor={} eth_public_broadcast_autoreplay_max={} eth_public_broadcast_autoreplay_cooldown_ms={} eth_public_broadcast_pending_warn_threshold={} eth_default_chain_id={} ua_store_backend={} ua_store_path={} eth_tx_index_backend={} eth_tx_index_path={} internal_ingress=ops_wire_v1",
@@ -1708,7 +1718,7 @@ fn gateway_eth_upstream_status_arrays_json(
     ))
 }
 
-fn gateway_evm_upstream_snapshot_json(
+fn gateway_evm_runtime_snapshot_json(
     eth_tx_index: &mut HashMap<[u8; 32], GatewayEthTxIndexEntry>,
     eth_tx_index_store: &GatewayEthTxIndexStoreBackend,
     eth_default_chain_id: u64,
@@ -1790,7 +1800,7 @@ fn gateway_evm_upstream_snapshot_json(
     }))
 }
 
-fn gateway_evm_upstream_runtime_bundle_json(
+fn gateway_evm_runtime_bundle_json(
     eth_tx_index: &mut HashMap<[u8; 32], GatewayEthTxIndexEntry>,
     eth_tx_index_store: &GatewayEthTxIndexStoreBackend,
     eth_default_chain_id: u64,
@@ -1799,7 +1809,7 @@ fn gateway_evm_upstream_runtime_bundle_json(
     include_ingress: bool,
     params: &serde_json::Value,
 ) -> Result<serde_json::Value> {
-    let upstream = gateway_evm_upstream_snapshot_json(
+    let upstream = gateway_evm_runtime_snapshot_json(
         eth_tx_index,
         eth_tx_index_store,
         eth_default_chain_id,
@@ -1885,7 +1895,7 @@ fn gateway_evm_parse_filter_ids(input: &serde_json::Value) -> Vec<String> {
 }
 
 #[derive(Copy, Clone)]
-struct GatewayEvmUpstreamTxStatusBundleOptions {
+struct GatewayEvmRuntimeTxStatusBundleOptions {
     chain_id: u64,
     max_items: usize,
     auto_from_pending: bool,
@@ -1894,10 +1904,10 @@ struct GatewayEvmUpstreamTxStatusBundleOptions {
     include_broadcast: bool,
 }
 
-fn gateway_evm_upstream_tx_status_bundle_json(
+fn gateway_evm_runtime_tx_status_bundle_json(
     eth_tx_index: &mut HashMap<[u8; 32], GatewayEthTxIndexEntry>,
     eth_tx_index_store: &GatewayEthTxIndexStoreBackend,
-    options: GatewayEvmUpstreamTxStatusBundleOptions,
+    options: GatewayEvmRuntimeTxStatusBundleOptions,
     params: &serde_json::Value,
 ) -> Result<serde_json::Value> {
     let mut tx_hashes = extract_eth_tx_hashes_query_params(params);
@@ -2007,7 +2017,7 @@ fn gateway_evm_upstream_tx_status_bundle_json(
 }
 
 #[derive(Copy, Clone)]
-struct GatewayEvmUpstreamEventBundleOptions {
+struct GatewayEvmRuntimeEventBundleOptions {
     chain_id: u64,
     eth_default_chain_id: u64,
     include_logs: bool,
@@ -2015,11 +2025,11 @@ struct GatewayEvmUpstreamEventBundleOptions {
     include_filter_logs: bool,
 }
 
-fn gateway_evm_upstream_event_bundle_json(
+fn gateway_evm_runtime_event_bundle_json(
     eth_tx_index: &mut HashMap<[u8; 32], GatewayEthTxIndexEntry>,
     eth_tx_index_store: &GatewayEthTxIndexStoreBackend,
     eth_filters: &mut GatewayEthFilterState,
-    options: GatewayEvmUpstreamEventBundleOptions,
+    options: GatewayEvmRuntimeEventBundleOptions,
     params: &serde_json::Value,
 ) -> Result<serde_json::Value> {
     let mut logs_params = params.clone();
@@ -2156,7 +2166,7 @@ fn gateway_evm_runtime_status_bundle_json(
 }
 
 #[derive(Copy, Clone)]
-struct GatewayEvmUpstreamFullBundleOptions {
+struct GatewayEvmRuntimeFullBundleOptions {
     chain_id: u64,
     max_items: u64,
     include_ingress: bool,
@@ -2169,12 +2179,12 @@ struct GatewayEvmUpstreamFullBundleOptions {
     auto_from_pending: bool,
 }
 
-fn gateway_evm_upstream_full_bundle_json(
+fn gateway_evm_runtime_full_bundle_json(
     eth_tx_index: &mut HashMap<[u8; 32], GatewayEthTxIndexEntry>,
     eth_tx_index_store: &GatewayEthTxIndexStoreBackend,
     eth_default_chain_id: u64,
     eth_filters: &mut GatewayEthFilterState,
-    options: GatewayEvmUpstreamFullBundleOptions,
+    options: GatewayEvmRuntimeFullBundleOptions,
     params: &serde_json::Value,
 ) -> Result<serde_json::Value> {
     let runtime_status =
@@ -2211,7 +2221,7 @@ fn gateway_evm_upstream_full_bundle_json(
             serde_json::Value::from(options.include_broadcast),
         );
     }
-    let runtime_bundle = gateway_evm_upstream_runtime_bundle_json(
+    let runtime_bundle = gateway_evm_runtime_bundle_json(
         eth_tx_index,
         eth_tx_index_store,
         eth_default_chain_id,
@@ -2240,10 +2250,10 @@ fn gateway_evm_upstream_full_bundle_json(
             obj.insert("tx_hashes".to_owned(), serde_json::Value::Array(tx_hashes));
         }
     }
-    let tx_status_bundle = gateway_evm_upstream_tx_status_bundle_json(
+    let tx_status_bundle = gateway_evm_runtime_tx_status_bundle_json(
         eth_tx_index,
         eth_tx_index_store,
-        GatewayEvmUpstreamTxStatusBundleOptions {
+        GatewayEvmRuntimeTxStatusBundleOptions {
             chain_id: options.chain_id,
             max_items: options.max_items as usize,
             auto_from_pending: options.auto_from_pending,
@@ -2266,11 +2276,11 @@ fn gateway_evm_upstream_full_bundle_json(
             .cloned()
             .unwrap_or(serde_json::Value::Array(vec![])),
     });
-    let event_bundle = gateway_evm_upstream_event_bundle_json(
+    let event_bundle = gateway_evm_runtime_event_bundle_json(
         eth_tx_index,
         eth_tx_index_store,
         eth_filters,
-        GatewayEvmUpstreamEventBundleOptions {
+        GatewayEvmRuntimeEventBundleOptions {
             chain_id: options.chain_id,
             eth_default_chain_id,
             include_logs: options.include_logs,
@@ -5179,6 +5189,60 @@ fn run_gateway_method(
                 false,
             ))
         }
+        "evm_getRuntimeProtocolCaps" | "evm_get_runtime_protocol_caps" => {
+            let chain_id = param_as_u64_any_with_tx(params, &["chain_id", "chainId"])
+                .unwrap_or(ctx.eth_default_chain_id);
+            let caps = default_eth_native_capabilities();
+            let parity = current_eth_native_parity_progress_for_chain(chain_id);
+            let peer_sessions = snapshot_network_runtime_eth_peer_sessions(chain_id);
+            Ok((
+                serde_json::json!({
+                    "chain_id": format!("0x{:x}", chain_id),
+                    "profile": parity.profile.as_str(),
+                    "progress_pct": parity.progress_pct(),
+                    "completed_count": parity.completed_count(),
+                    "total_count": parity.total_count(),
+                    "full_node_only": parity.full_node_only,
+                    "upstream_fallback_disabled": parity.upstream_fallback_disabled,
+                    "native_peer_discovery": parity.native_peer_discovery,
+                    "native_eth_handshake": parity.native_eth_handshake,
+                    "native_snap_sync_state_machine": parity.native_snap_sync_state_machine,
+                    "state_proof_semantics_closed": parity.state_proof_semantics_closed,
+                    "rpc_core_semantics_closed": parity.rpc_core_semantics_closed,
+                    "eth_versions_supported": caps
+                        .eth_versions
+                        .iter()
+                        .map(|v| serde_json::Value::String(v.as_str().to_string()))
+                        .collect::<Vec<_>>(),
+                    "snap_versions_supported": caps
+                        .snap_versions
+                        .iter()
+                        .map(|v| serde_json::Value::String(v.as_str().to_string()))
+                        .collect::<Vec<_>>(),
+                    "highest_eth_supported": caps
+                        .highest_eth_version()
+                        .map(|v| v.as_str())
+                        .unwrap_or("none"),
+                    "highest_snap_supported": caps
+                        .highest_snap_version()
+                        .map(|v| v.as_str())
+                        .unwrap_or("none"),
+                    "peer_sessions": peer_sessions
+                        .iter()
+                        .map(|s| {
+                            serde_json::json!({
+                                "peer_id": format!("0x{:x}", s.peer_id),
+                                "last_head_height": s.last_head_height,
+                                "lastHeadHeight": format!("0x{:x}", s.last_head_height),
+                                "negotiated_eth": s.negotiated.eth_version.as_str(),
+                                "negotiated_snap": s.negotiated.snap_version.map(|v| v.as_str()).unwrap_or("none"),
+                            })
+                        })
+                        .collect::<Vec<_>>(),
+                }),
+                false,
+            ))
+        }
         "evm_getRuntimeSyncPullWindow" | "evm_get_runtime_sync_pull_window" => {
             let chain_id = param_as_u64_any_with_tx(params, &["chain_id", "chainId"])
                 .unwrap_or(ctx.eth_default_chain_id);
@@ -5355,11 +5419,6 @@ fn run_gateway_method(
         "eth_syncing" => {
             let chain_id = param_as_u64_any_with_tx(params, &["chain_id", "chainId"])
                 .unwrap_or(ctx.eth_default_chain_id);
-            if let Some(upstream) =
-                maybe_gateway_eth_upstream_read(chain_id, "eth_syncing", params)?
-            {
-                return Ok((upstream, false));
-            }
             let sync_status =
                 resolve_gateway_eth_sync_status(chain_id, eth_tx_index, ctx.eth_tx_index_store)?;
             Ok((gateway_eth_syncing_json(sync_status, None), false))
@@ -5388,11 +5447,6 @@ fn run_gateway_method(
         "eth_blockNumber" => {
             let chain_id = param_as_u64_any_with_tx(params, &["chain_id", "chainId"])
                 .unwrap_or(ctx.eth_default_chain_id);
-            if let Some(upstream) =
-                maybe_gateway_eth_upstream_read(chain_id, "eth_blockNumber", params)?
-            {
-                return Ok((upstream, false));
-            }
             let sync_status =
                 resolve_gateway_eth_sync_status(chain_id, eth_tx_index, ctx.eth_tx_index_store)?;
             Ok((
@@ -8078,11 +8132,11 @@ fn run_gateway_method(
                 .unwrap_or(ctx.eth_default_chain_id);
             Ok((gateway_eth_public_broadcast_capability_json(chain_id), false))
         }
-        "evm_getUpstreamSnapshot" | "evm_get_upstream_snapshot" => {
+        "evm_getRuntimeSnapshot" | "evm_get_runtime_snapshot" => {
             let chain_id = param_as_u64_any_with_tx(params, &["chain_id", "chainId"])
                 .unwrap_or(ctx.eth_default_chain_id);
             Ok((
-                gateway_evm_upstream_snapshot_json(
+                gateway_evm_runtime_snapshot_json(
                     eth_tx_index,
                     ctx.eth_tx_index_store,
                     ctx.eth_default_chain_id,
@@ -8092,7 +8146,7 @@ fn run_gateway_method(
                 false,
             ))
         }
-        "evm_getUpstreamRuntimeBundle" | "evm_get_upstream_runtime_bundle" => {
+        "evm_getRuntimeBundle" | "evm_get_runtime_bundle" => {
             let chain_id = param_as_u64_any_with_tx(params, &["chain_id", "chainId"])
                 .unwrap_or(ctx.eth_default_chain_id);
             let max_items =
@@ -8105,7 +8159,7 @@ fn run_gateway_method(
                 .or_else(|| param_as_bool(params, "includeIngress"))
                 .unwrap_or(true);
             Ok((
-                gateway_evm_upstream_runtime_bundle_json(
+                gateway_evm_runtime_bundle_json(
                     eth_tx_index,
                     ctx.eth_tx_index_store,
                     ctx.eth_default_chain_id,
@@ -8117,7 +8171,7 @@ fn run_gateway_method(
                 false,
             ))
         }
-        "evm_getUpstreamTxStatusBundle" | "evm_get_upstream_tx_status_bundle" => {
+        "evm_getRuntimeTxStatusBundle" | "evm_get_runtime_tx_status_bundle" => {
             let chain_id = param_as_u64_any_with_tx(params, &["chain_id", "chainId"])
                 .unwrap_or(ctx.eth_default_chain_id);
             let max_items =
@@ -8141,10 +8195,10 @@ fn run_gateway_method(
                 .or_else(|| param_as_bool(params, "includeBroadcast"))
                 .unwrap_or(true);
             Ok((
-                gateway_evm_upstream_tx_status_bundle_json(
+                gateway_evm_runtime_tx_status_bundle_json(
                     eth_tx_index,
                     ctx.eth_tx_index_store,
-                    GatewayEvmUpstreamTxStatusBundleOptions {
+                    GatewayEvmRuntimeTxStatusBundleOptions {
                         chain_id,
                         max_items,
                         auto_from_pending,
@@ -8157,7 +8211,7 @@ fn run_gateway_method(
                 false,
             ))
         }
-        "evm_getUpstreamEventBundle" | "evm_get_upstream_event_bundle" => {
+        "evm_getRuntimeEventBundle" | "evm_get_runtime_event_bundle" => {
             let chain_id = param_as_u64_any_with_tx(params, &["chain_id", "chainId"])
                 .unwrap_or(ctx.eth_default_chain_id);
             let include_logs = param_as_bool(params, "include_logs")
@@ -8170,11 +8224,11 @@ fn run_gateway_method(
                 .or_else(|| param_as_bool(params, "includeFilterLogs"))
                 .unwrap_or(false);
             Ok((
-                gateway_evm_upstream_event_bundle_json(
+                gateway_evm_runtime_event_bundle_json(
                     eth_tx_index,
                     ctx.eth_tx_index_store,
                     ctx.eth_filters,
-                    GatewayEvmUpstreamEventBundleOptions {
+                    GatewayEvmRuntimeEventBundleOptions {
                         chain_id,
                         eth_default_chain_id: ctx.eth_default_chain_id,
                         include_logs,
@@ -8186,7 +8240,7 @@ fn run_gateway_method(
                 false,
             ))
         }
-        "evm_getUpstreamFullBundle" | "evm_get_upstream_full_bundle" => {
+        "evm_getRuntimeFullBundle" | "evm_get_runtime_full_bundle" => {
             let chain_id = param_as_u64_any_with_tx(params, &["chain_id", "chainId"])
                 .unwrap_or(ctx.eth_default_chain_id);
             let max_items =
@@ -8223,12 +8277,12 @@ fn run_gateway_method(
                 .unwrap_or(true);
 
             Ok((
-                gateway_evm_upstream_full_bundle_json(
+                gateway_evm_runtime_full_bundle_json(
                     eth_tx_index,
                     ctx.eth_tx_index_store,
                     ctx.eth_default_chain_id,
                     ctx.eth_filters,
-                    GatewayEvmUpstreamFullBundleOptions {
+                    GatewayEvmRuntimeFullBundleOptions {
                         chain_id,
                         max_items,
                         include_ingress,
@@ -8245,7 +8299,7 @@ fn run_gateway_method(
                 false,
             ))
         }
-        "evm_getUpstreamConsumerBundle" | "evm_get_upstream_consumer_bundle" => {
+        "evm_getRuntimeConsumerBundle" | "evm_get_runtime_consumer_bundle" => {
             let chain_id = param_as_u64_any_with_tx(params, &["chain_id", "chainId"])
                 .unwrap_or(ctx.eth_default_chain_id);
             let max_items =
@@ -8272,12 +8326,12 @@ fn run_gateway_method(
                 obj.insert("auto_from_pending".to_owned(), serde_json::Value::from(true));
             }
 
-            let full_bundle = gateway_evm_upstream_full_bundle_json(
+            let full_bundle = gateway_evm_runtime_full_bundle_json(
                 eth_tx_index,
                 ctx.eth_tx_index_store,
                 ctx.eth_default_chain_id,
                 ctx.eth_filters,
-                GatewayEvmUpstreamFullBundleOptions {
+                GatewayEvmRuntimeFullBundleOptions {
                     chain_id,
                     max_items,
                     include_ingress: true,
@@ -10507,7 +10561,7 @@ fn run_gateway_method(
             ))
         }
         _ => bail!(
-            "unknown method: {}; valid: ua_createUca|ua_rotatePrimaryKey|ua_bindPersona|ua_revokePersona|ua_getBindingOwner|ua_setPolicy|eth_chainId|net_version|web3_clientVersion|web3_sha3|eth_protocolVersion|net_listening|net_peerCount|eth_accounts|eth_coinbase|eth_mining|eth_hashrate|eth_maxPriorityFeePerGas|eth_feeHistory|eth_syncing|eth_pendingTransactions|eth_blockNumber|eth_getBalance|eth_getBlockByNumber|eth_getBlockByHash|eth_getTransactionByBlockNumberAndIndex|eth_getTransactionByBlockHashAndIndex|eth_getBlockTransactionCountByNumber|eth_getBlockTransactionCountByHash|eth_getBlockReceipts|eth_getUncleCountByBlockNumber|eth_getUncleCountByBlockHash|eth_getUncleByBlockNumberAndIndex|eth_getUncleByBlockHashAndIndex|eth_getLogs|eth_subscribe|eth_unsubscribe|eth_newFilter|eth_newBlockFilter|eth_newPendingTransactionFilter|eth_getFilterChanges|eth_getFilterLogs|eth_uninstallFilter|txpool_content|txpool_contentFrom|txpool_inspect|txpool_inspectFrom|txpool_status|txpool_statusFrom|eth_gasPrice|eth_call|eth_estimateGas|eth_getCode|eth_getStorageAt|eth_getProof|eth_sendRawTransaction|eth_sendTransaction|eth_getTransactionCount|eth_getTransactionByHash|eth_getTransactionReceipt|evm_sendRawTransaction|evm_send_raw_transaction|evm_sendTransaction|evm_send_transaction|evm_publicSendRawTransaction|evm_public_send_raw_transaction|evm_publicSendRawTransactionBatch|evm_public_send_raw_transaction_batch|evm_publicSendTransaction|evm_public_send_transaction|evm_publicSendTransactionBatch|evm_public_send_transaction_batch|evm_getLogs|evm_get_logs|evm_getLogsBatch|evm_get_logs_batch|evm_getTransactionReceipt|evm_get_transaction_receipt|evm_getTransactionReceiptBatch|evm_get_transaction_receipt_batch|evm_getTransactionByHashBatch|evm_get_transaction_by_hash_batch|evm_subscribe|evm_unsubscribe|evm_newFilter|evm_new_filter|evm_newBlockFilter|evm_new_block_filter|evm_newPendingTransactionFilter|evm_new_pending_transaction_filter|evm_getFilterChanges|evm_get_filter_changes|evm_getFilterChangesBatch|evm_get_filter_changes_batch|evm_getFilterLogs|evm_get_filter_logs|evm_getFilterLogsBatch|evm_get_filter_logs_batch|evm_uninstallFilter|evm_uninstall_filter|evm_chainId|evm_chain_id|evm_clientVersion|evm_client_version|evm_sha3|evm_protocolVersion|evm_protocol_version|evm_listening|evm_peerCount|evm_peer_count|evm_accounts|evm_coinbase|evm_mining|evm_hashrate|evm_netVersion|evm_net_version|evm_syncing|evm_blockNumber|evm_block_number|evm_getBalance|evm_get_balance|evm_getBlockByNumber|evm_get_block_by_number|evm_getBlockByHash|evm_get_block_by_hash|evm_getBlockReceipts|evm_get_block_receipts|evm_getTransactionByHash|evm_get_transaction_by_hash|evm_getTransactionCount|evm_get_transaction_count|evm_gasPrice|evm_gas_price|evm_call|evm_estimateGas|evm_estimate_gas|evm_getCode|evm_get_code|evm_getStorageAt|evm_get_storage_at|evm_getProof|evm_get_proof|evm_verifyProof|evm_verify_proof|evm_maxPriorityFeePerGas|evm_max_priority_fee_per_gas|evm_feeHistory|evm_fee_history|evm_getTransactionByBlockNumberAndIndex|evm_get_transaction_by_block_number_and_index|evm_getTransactionByBlockHashAndIndex|evm_get_transaction_by_block_hash_and_index|evm_getBlockTransactionCountByNumber|evm_get_block_transaction_count_by_number|evm_getBlockTransactionCountByHash|evm_get_block_transaction_count_by_hash|evm_getUncleCountByBlockNumber|evm_get_uncle_count_by_block_number|evm_getUncleCountByBlockHash|evm_get_uncle_count_by_block_hash|evm_getUncleByBlockNumberAndIndex|evm_get_uncle_by_block_number_and_index|evm_getUncleByBlockHashAndIndex|evm_get_uncle_by_block_hash_and_index|evm_pendingTransactions|evm_pending_transactions|evm_txpoolContent|evm_txpool_content|evm_txpoolContentFrom|evm_txpool_contentFrom|evm_txpool_content_from|evm_txpoolInspect|evm_txpool_inspect|evm_txpoolInspectFrom|evm_txpool_inspectFrom|evm_txpool_inspect_from|evm_txpoolStatus|evm_txpool_status|evm_txpoolStatusFrom|evm_txpool_statusFrom|evm_txpool_status_from|evm_snapshotPendingIngress|evm_snapshot_pending_ingress|evm_snapshotExecutableIngress|evm_snapshot_executable_ingress|evm_drainExecutableIngress|evm_drain_executable_ingress|evm_drainPendingIngress|evm_drain_pending_ingress|evm_snapshotPendingSenderBuckets|evm_snapshot_pending_sender_buckets|evm_getPublicBroadcastStatus|evm_get_public_broadcast_status|evm_getBroadcastStatus|evm_get_broadcast_status|evm_getPublicBroadcastStatusBatch|evm_get_public_broadcast_status_batch|evm_getBroadcastStatusBatch|evm_get_broadcast_status_batch|evm_getUpstreamConsumerBundle|evm_get_upstream_consumer_bundle|evm_getTransactionLifecycleBatch|evm_get_transaction_lifecycle_batch|evm_getTxSubmitStatusBatch|evm_get_tx_submit_status_batch|evm_replayPublicBroadcast|evm_replay_public_broadcast|evm_replayPublicBroadcastBatch|evm_replay_public_broadcast_batch|evm_getTransactionLifecycle|evm_get_transaction_lifecycle|evm_getTxSubmitStatus|evm_get_tx_submit_status|evm_getSettlementById|evm_get_settlement_by_id|evm_getSettlementByTxHash|evm_get_settlement_by_tx_hash|evm_replaySettlementPayout|evm_replay_settlement_payout|evm_getAtomicReadyByIntentId|evm_get_atomic_ready_by_intent_id|evm_replayAtomicReady|evm_replay_atomic_ready|evm_queueAtomicBroadcast|evm_queue_atomic_broadcast|evm_replayAtomicBroadcastQueue|evm_replay_atomic_broadcast_queue|evm_markAtomicBroadcastFailed|evm_mark_atomic_broadcast_failed|evm_markAtomicBroadcasted|evm_mark_atomic_broadcasted|evm_executeAtomicBroadcast|evm_execute_atomic_broadcast|evm_executePendingAtomicBroadcasts|evm_execute_pending_atomic_broadcasts|web30_sendRawTransaction|web30_sendTransaction",
+            "unknown method: {}; valid: ua_createUca|ua_rotatePrimaryKey|ua_bindPersona|ua_revokePersona|ua_getBindingOwner|ua_setPolicy|eth_chainId|net_version|web3_clientVersion|web3_sha3|eth_protocolVersion|net_listening|net_peerCount|eth_accounts|eth_coinbase|eth_mining|eth_hashrate|eth_maxPriorityFeePerGas|eth_feeHistory|eth_syncing|eth_pendingTransactions|eth_blockNumber|eth_getBalance|eth_getBlockByNumber|eth_getBlockByHash|eth_getTransactionByBlockNumberAndIndex|eth_getTransactionByBlockHashAndIndex|eth_getBlockTransactionCountByNumber|eth_getBlockTransactionCountByHash|eth_getBlockReceipts|eth_getUncleCountByBlockNumber|eth_getUncleCountByBlockHash|eth_getUncleByBlockNumberAndIndex|eth_getUncleByBlockHashAndIndex|eth_getLogs|eth_subscribe|eth_unsubscribe|eth_newFilter|eth_newBlockFilter|eth_newPendingTransactionFilter|eth_getFilterChanges|eth_getFilterLogs|eth_uninstallFilter|txpool_content|txpool_contentFrom|txpool_inspect|txpool_inspectFrom|txpool_status|txpool_statusFrom|eth_gasPrice|eth_call|eth_estimateGas|eth_getCode|eth_getStorageAt|eth_getProof|eth_sendRawTransaction|eth_sendTransaction|eth_getTransactionCount|eth_getTransactionByHash|eth_getTransactionReceipt|evm_sendRawTransaction|evm_send_raw_transaction|evm_sendTransaction|evm_send_transaction|evm_publicSendRawTransaction|evm_public_send_raw_transaction|evm_publicSendRawTransactionBatch|evm_public_send_raw_transaction_batch|evm_publicSendTransaction|evm_public_send_transaction|evm_publicSendTransactionBatch|evm_public_send_transaction_batch|evm_getLogs|evm_get_logs|evm_getLogsBatch|evm_get_logs_batch|evm_getTransactionReceipt|evm_get_transaction_receipt|evm_getTransactionReceiptBatch|evm_get_transaction_receipt_batch|evm_getTransactionByHashBatch|evm_get_transaction_by_hash_batch|evm_subscribe|evm_unsubscribe|evm_newFilter|evm_new_filter|evm_newBlockFilter|evm_new_block_filter|evm_newPendingTransactionFilter|evm_new_pending_transaction_filter|evm_getFilterChanges|evm_get_filter_changes|evm_getFilterChangesBatch|evm_get_filter_changes_batch|evm_getFilterLogs|evm_get_filter_logs|evm_getFilterLogsBatch|evm_get_filter_logs_batch|evm_uninstallFilter|evm_uninstall_filter|evm_chainId|evm_chain_id|evm_clientVersion|evm_client_version|evm_sha3|evm_protocolVersion|evm_protocol_version|evm_listening|evm_peerCount|evm_peer_count|evm_accounts|evm_coinbase|evm_mining|evm_hashrate|evm_netVersion|evm_net_version|evm_syncing|evm_blockNumber|evm_block_number|evm_getBalance|evm_get_balance|evm_getBlockByNumber|evm_get_block_by_number|evm_getBlockByHash|evm_get_block_by_hash|evm_getBlockReceipts|evm_get_block_receipts|evm_getTransactionByHash|evm_get_transaction_by_hash|evm_getTransactionCount|evm_get_transaction_count|evm_gasPrice|evm_gas_price|evm_call|evm_estimateGas|evm_estimate_gas|evm_getCode|evm_get_code|evm_getStorageAt|evm_get_storage_at|evm_getProof|evm_get_proof|evm_verifyProof|evm_verify_proof|evm_maxPriorityFeePerGas|evm_max_priority_fee_per_gas|evm_feeHistory|evm_fee_history|evm_getTransactionByBlockNumberAndIndex|evm_get_transaction_by_block_number_and_index|evm_getTransactionByBlockHashAndIndex|evm_get_transaction_by_block_hash_and_index|evm_getBlockTransactionCountByNumber|evm_get_block_transaction_count_by_number|evm_getBlockTransactionCountByHash|evm_get_block_transaction_count_by_hash|evm_getUncleCountByBlockNumber|evm_get_uncle_count_by_block_number|evm_getUncleCountByBlockHash|evm_get_uncle_count_by_block_hash|evm_getUncleByBlockNumberAndIndex|evm_get_uncle_by_block_number_and_index|evm_getUncleByBlockHashAndIndex|evm_get_uncle_by_block_hash_and_index|evm_pendingTransactions|evm_pending_transactions|evm_txpoolContent|evm_txpool_content|evm_txpoolContentFrom|evm_txpool_contentFrom|evm_txpool_content_from|evm_txpoolInspect|evm_txpool_inspect|evm_txpoolInspectFrom|evm_txpool_inspectFrom|evm_txpool_inspect_from|evm_txpoolStatus|evm_txpool_status|evm_txpoolStatusFrom|evm_txpool_statusFrom|evm_txpool_status_from|evm_snapshotPendingIngress|evm_snapshot_pending_ingress|evm_snapshotExecutableIngress|evm_snapshot_executable_ingress|evm_drainExecutableIngress|evm_drain_executable_ingress|evm_drainPendingIngress|evm_drain_pending_ingress|evm_snapshotPendingSenderBuckets|evm_snapshot_pending_sender_buckets|evm_getPublicBroadcastStatus|evm_get_public_broadcast_status|evm_getBroadcastStatus|evm_get_broadcast_status|evm_getPublicBroadcastStatusBatch|evm_get_public_broadcast_status_batch|evm_getBroadcastStatusBatch|evm_get_broadcast_status_batch|evm_getRuntimeSnapshot|evm_get_runtime_snapshot|evm_getRuntimeBundle|evm_get_runtime_bundle|evm_getRuntimeTxStatusBundle|evm_get_runtime_tx_status_bundle|evm_getRuntimeEventBundle|evm_get_runtime_event_bundle|evm_getRuntimeFullBundle|evm_get_runtime_full_bundle|evm_getRuntimeConsumerBundle|evm_get_runtime_consumer_bundle|evm_getTransactionLifecycleBatch|evm_get_transaction_lifecycle_batch|evm_getTxSubmitStatusBatch|evm_get_tx_submit_status_batch|evm_replayPublicBroadcast|evm_replay_public_broadcast|evm_replayPublicBroadcastBatch|evm_replay_public_broadcast_batch|evm_getTransactionLifecycle|evm_get_transaction_lifecycle|evm_getTxSubmitStatus|evm_get_tx_submit_status|evm_getSettlementById|evm_get_settlement_by_id|evm_getSettlementByTxHash|evm_get_settlement_by_tx_hash|evm_replaySettlementPayout|evm_replay_settlement_payout|evm_getAtomicReadyByIntentId|evm_get_atomic_ready_by_intent_id|evm_replayAtomicReady|evm_replay_atomic_ready|evm_queueAtomicBroadcast|evm_queue_atomic_broadcast|evm_replayAtomicBroadcastQueue|evm_replay_atomic_broadcast_queue|evm_markAtomicBroadcastFailed|evm_mark_atomic_broadcast_failed|evm_markAtomicBroadcasted|evm_mark_atomic_broadcasted|evm_executeAtomicBroadcast|evm_execute_atomic_broadcast|evm_executePendingAtomicBroadcasts|evm_execute_pending_atomic_broadcasts|web30_sendRawTransaction|web30_sendTransaction",
             method
         ),
     }

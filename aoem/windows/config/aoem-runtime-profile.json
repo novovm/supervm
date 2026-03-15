@@ -1,0 +1,120 @@
+{
+  "abi": 1,
+  "capabilities": {
+    "abi_version": 1,
+    "backend_cpu": true,
+    "backend_gpu_path": true,
+    "bulletproof_batch_verify": true,
+    "bulletproof_verify": true,
+    "bundle_profile": "full",
+    "create_with_options": true,
+    "ed25519_batch_verify": true,
+    "ed25519_verify": true,
+    "execute_ops_v2": true,
+    "fallback_reason": "",
+    "fallback_reason_codes": [],
+    "gpu_adaptive_scope": "ring_batch_online;zk_threshold_env;primitive_threshold_env",
+    "groth16_verify": true,
+    "groth16_verify_full_gpu": true,
+    "groth16_verify_full_gpu_kernel": "groth16_bls12_381_pairing_miller_full_gpu_v1",
+    "groth16_verify_full_gpu_reason_code": "pairing_miller_gpu_bridge_enabled",
+    "hash_blake3_256": true,
+    "hash_keccak256": true,
+    "hash_sha256": true,
+    "hsm_delegate_runtime": false,
+    "hsm_mode_target": "local",
+    "hsm_plugin_probe": false,
+    "hsm_sign": true,
+    "json_input_enabled": false,
+    "json_response_enabled": false,
+    "kms_delegate_runtime": false,
+    "kms_mode_target": "local",
+    "kms_plugin_probe": false,
+    "kms_sign": true,
+    "mldsa_delegate_runtime": false,
+    "mldsa_mode_target": "none",
+    "mldsa_plugin_probe": false,
+    "mldsa_verify": true,
+    "msm_accel": true,
+    "msm_backend": "auto",
+    "persist_backend_target": "rocksdb",
+    "persist_delegate_runtime": false,
+    "persist_plugin_probe": false,
+    "primitive_execute_v1": true,
+    "ring_signature_batch_verify": true,
+    "ring_signature_verify": true,
+    "ringct_batch_verify": true,
+    "ringct_commitment_full_gpu": true,
+    "ringct_commitment_full_gpu_kernel": "ringct_ristretto_commitment_balance_msm_bridge_v1",
+    "ringct_commitment_full_gpu_reason_code": "bridge_kernel_enabled",
+    "ringct_verify": true,
+    "rocksdb_persistence": true,
+    "secp256k1_recover_pubkey": true,
+    "secp256k1_verify": true,
+    "single_exec_enabled": false,
+    "version": "aoem-1.0.0",
+    "wasm_delegate_runtime": false,
+    "wasm_plugin_probe": false,
+    "wasm_runtime_target": "none",
+    "wasmtime_runtime": true,
+    "zk_formal_fields_present": true,
+    "zkvm_delegate_runtime": false,
+    "zkvm_mode_target": "none",
+    "zkvm_plugin_probe": false,
+    "zkvm_prove": true,
+    "zkvm_verify": true
+  },
+  "dll_path": "/Users/aoem-a2/Downloads/dev_project/vsCode/WorksArea/SUPERVM/aoem/bin/libaoem_ffi.dylib",
+  "ffi_symbol_contract": {
+    "bulletproof_batch_v1": true,
+    "execute_ops_v2": true,
+    "execute_ops_wire_v1": true,
+    "groth16_prove_auto_path": true,
+    "groth16_prove_batch_v1": true,
+    "groth16_prove_v1": true,
+    "privacy_batch_v1_all": true,
+    "ring_signature_verify_batch_web30_v1": true,
+    "ring_signature_verify_web30_v1": true,
+    "ringct_batch_v1": true,
+    "zkvm_probe": true
+  },
+  "generated_at_unix": 1773499714,
+  "host": {
+    "budget_threads": 12,
+    "hw_threads": 14
+  },
+  "probe_hint": {
+    "batch": 1024,
+    "key_space": 1000000,
+    "rw": 0.5,
+    "txs": 1000000
+  },
+  "profiles": [
+    {
+      "max_txs": 100000,
+      "name": "small_txs",
+      "threads": 4
+    },
+    {
+      "max_batch": 256,
+      "name": "small_batch",
+      "threads": 6
+    },
+    {
+      "max_key_space": 256,
+      "min_rw": 0.5,
+      "name": "high_contention",
+      "threads": 9
+    },
+    {
+      "name": "throughput_default",
+      "threads": 12
+    }
+  ],
+  "recommended_threads": 12,
+  "schema": "aoem-runtime-profile/v1",
+  "threads": {
+    "default": 12
+  },
+  "version": "aoem-1.0.0"
+}
