@@ -154,7 +154,7 @@
 - P0-A 当前：`100%`
 - P0-B 当前：`100%`
 - P0-A + P0-B 合并进度：`100%`
-- P0-C 当前：`100%`
+- P0-C 当前：`97%`（剩余“有余额账户实单上链并成功回查 receipt”）
 - P0-D 当前：`100%`
 - P0-E 当前：`100%`
 - P1 当前：`100%`（链族配置化 + type1/type2/type3 链级写开关 + blob 费用/校验 + gateway 主写路径 blob 语义 + raw/非raw 前置语义校验 + London 口径 effectiveGasPrice 收口 + 链级费率覆盖同源语义 + London/Cancun fork 激活高度语义 + 链级 `0xHEX` 大小写兼容 + raw 主写路径开关/激活边界/显式 tx_type 一致性同源校验 + 写/估算入口 `chain_id` 参数一致性硬校验 + 失败状态哈希推导链参数一致性 + type2/type3 `maxFeePerGas` 显式必填语义 + 动态费哈希/索引单源费用口径 + 失败状态哈希推导费用边界同源）
