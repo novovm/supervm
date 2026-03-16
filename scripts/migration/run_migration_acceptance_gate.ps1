@@ -49,6 +49,7 @@ param(
     [bool]$IncludeDividendBalanceSourceGate = $false,
     [bool]$IncludeUnifiedAccountGate = $false,
     [bool]$IncludeRpcExposureGate = $false,
+    [bool]$IncludeTestnetBootstrapGate = $false,
     [string]$RpcExposurePublicBind = "127.0.0.1:8899",
     [string]$RpcExposureGovBind = "127.0.0.1:8901",
     [bool]$IncludeUnjailCooldownGate = $true,
@@ -179,6 +180,7 @@ $navValuationSourceGateScript = Join-Path $RepoRoot "scripts\migration\run_nav_v
 $dividendBalanceSourceGateScript = Join-Path $RepoRoot "scripts\migration\run_dividend_balance_source_gate.ps1"
 $unifiedAccountGateScript = Join-Path $RepoRoot "scripts\migration\run_unified_account_gate.ps1"
 $rpcExposureGateScript = Join-Path $RepoRoot "scripts\migration\run_rpc_exposure_gate.ps1"
+$testnetBootstrapGateScript = Join-Path $RepoRoot "scripts\migration\run_testnet_bootstrap_gate.ps1"
 $unjailCooldownGateScript = Join-Path $RepoRoot "scripts\migration\run_unjail_cooldown_gate.ps1"
 $adapterStabilityScript = Join-Path $RepoRoot "scripts\migration\run_adapter_stability_gate.ps1"
 $vmRuntimeSplitScript = Join-Path $RepoRoot "scripts\migration\run_vm_runtime_split_gate.ps1"
@@ -272,6 +274,9 @@ if ($IncludeUnifiedAccountGate) {
 if ($IncludeRpcExposureGate) {
     Require-Path -Path $rpcExposureGateScript -Name "rpc exposure gate script"
 }
+if ($IncludeTestnetBootstrapGate) {
+    Require-Path -Path $testnetBootstrapGateScript -Name "testnet bootstrap gate script"
+}
 if ($IncludeUnjailCooldownGate) {
     Require-Path -Path $unjailCooldownGateScript -Name "unjail cooldown gate script"
 }
@@ -325,6 +330,7 @@ $navValuationSourceOutputDir = Join-Path $OutputDir "nav-valuation-source-gate"
 $dividendBalanceSourceOutputDir = Join-Path $OutputDir "dividend-balance-source-gate"
 $unifiedAccountOutputDir = Join-Path $OutputDir "unified-account-gate"
 $rpcExposureOutputDir = Join-Path $OutputDir "rpc-exposure-gate"
+$testnetBootstrapOutputDir = Join-Path $OutputDir "testnet-bootstrap-gate"
 $unjailCooldownOutputDir = Join-Path $OutputDir "unjail-cooldown-gate"
 $adapterStabilityOutputDir = Join-Path $OutputDir "adapter-stability-gate"
 $vmRuntimeSplitOutputDir = Join-Path $OutputDir "vm-runtime-split-gate"
@@ -421,6 +427,9 @@ if ($IncludeUnifiedAccountGate) {
 }
 if ($IncludeRpcExposureGate) {
     New-Item -ItemType Directory -Force -Path $rpcExposureOutputDir | Out-Null
+}
+if ($IncludeTestnetBootstrapGate) {
+    New-Item -ItemType Directory -Force -Path $testnetBootstrapOutputDir | Out-Null
 }
 if ($IncludeUnjailCooldownGate) {
     New-Item -ItemType Directory -Force -Path $unjailCooldownOutputDir | Out-Null
@@ -729,6 +738,12 @@ if ($IncludeRpcExposureGate) {
         -PublicBind $RpcExposurePublicBind `
         -GovBind $RpcExposureGovBind | Out-Null
 }
+if ($IncludeTestnetBootstrapGate) {
+    Write-Host "acceptance gate: testnet bootstrap gate ..."
+    & $testnetBootstrapGateScript `
+        -RepoRoot $RepoRoot `
+        -OutputDir $testnetBootstrapOutputDir | Out-Null
+}
 
 if ($IncludeUnjailCooldownGate) {
     Write-Host "acceptance gate: unjail cooldown gate ..."
@@ -883,6 +898,9 @@ if ($IncludeUnifiedAccountGate) {
 if ($IncludeRpcExposureGate) {
     $rpcExposureJson = Join-Path $rpcExposureOutputDir "rpc-exposure-gate-summary.json"
 }
+if ($IncludeTestnetBootstrapGate) {
+    $testnetBootstrapJson = Join-Path $testnetBootstrapOutputDir "testnet-bootstrap-gate-summary.json"
+}
 if ($IncludeUnjailCooldownGate) {
     $unjailCooldownJson = Join-Path $unjailCooldownOutputDir "unjail-cooldown-gate-summary.json"
 }
@@ -998,6 +1016,9 @@ if ($IncludeUnifiedAccountGate) {
 }
 if ($IncludeRpcExposureGate) {
     Require-Path -Path $rpcExposureJson -Name "rpc exposure gate summary json"
+}
+if ($IncludeTestnetBootstrapGate) {
+    Require-Path -Path $testnetBootstrapJson -Name "testnet bootstrap gate summary json"
 }
 if ($IncludeUnjailCooldownGate) {
     Require-Path -Path $unjailCooldownJson -Name "unjail cooldown gate summary json"
@@ -1115,6 +1136,9 @@ if ($IncludeUnifiedAccountGate) {
 }
 if ($IncludeRpcExposureGate) {
     $rpcExposure = Get-Content -Path $rpcExposureJson -Raw | ConvertFrom-Json
+}
+if ($IncludeTestnetBootstrapGate) {
+    $testnetBootstrap = Get-Content -Path $testnetBootstrapJson -Raw | ConvertFrom-Json
 }
 if ($IncludeUnjailCooldownGate) {
     $unjailCooldown = Get-Content -Path $unjailCooldownJson -Raw | ConvertFrom-Json
@@ -1494,6 +1518,11 @@ if ($IncludeRpcExposureGate) {
 } else {
     $rpcExposurePass = $true
 }
+if ($IncludeTestnetBootstrapGate) {
+    $testnetBootstrapPass = [bool]$testnetBootstrap.pass
+} else {
+    $testnetBootstrapPass = $true
+}
 if ($IncludeUnjailCooldownGate) {
     $unjailCooldownPass = [bool]$unjailCooldown.pass
 } else {
@@ -1554,7 +1583,7 @@ if ($IncludeEvmBackendCompareGate) {
     $evmBackendCompareAvalanchePass = $true
     $evmBackendComparePass = $true
 }
-$overallPass = ($functionalPass -and $governanceChainAuditRootParityPass -and $performancePass -and $chainQueryRpcPass -and $governanceRpcPass -and $governanceRpcAuditPersistPass -and $governanceRpcSignatureSchemeRejectPass -and $governanceRpcVoteVerifierStartupPass -and $governanceRpcVoteVerifierStagedRejectPass -and $governanceRpcVoteVerifierExecutePass -and $governanceRpcChainAuditExecuteVerifierProofPass -and $governanceRpcChainAuditRootProofPass -and $governanceRpcMldsaFfiPass -and $governanceRpcMldsaFfiStartupPass -and $headerSyncPass -and $fastStateSyncPass -and $networkDosPass -and $pacemakerFailoverPass -and $slashGovernancePass -and $slashPolicyExternalPass -and $governanceHookPass -and $governanceExecutionPass -and $governanceParam2Pass -and $governanceParam3Pass -and $governanceMarketPolicyPass -and $governanceMarketPolicyEnginePass -and $governanceMarketPolicyTreasuryPass -and $governanceMarketPolicyOrchestrationPass -and $governanceMarketPolicyDividendPass -and $governanceMarketPolicyForeignPass -and $governanceCouncilPolicyPass -and $governanceNegativePass -and $governanceAccessPolicyPass -and $governanceTokenEconomicsPass -and $governanceTreasurySpendPass -and $economicInfraDedicatedPass -and $economicInfraDedicatedTokenPass -and $economicInfraDedicatedAmmPass -and $economicInfraDedicatedNavPass -and $economicInfraDedicatedCdpPass -and $economicInfraDedicatedBondPass -and $economicInfraDedicatedTreasuryPass -and $economicInfraDedicatedGovernancePass -and $economicInfraDedicatedDividendPass -and $economicInfraDedicatedForeignPass -and $economicServiceSurfacePass -and $economicServiceSurfaceTokenPass -and $economicServiceSurfaceAmmPass -and $economicServiceSurfaceCdpPass -and $economicServiceSurfaceBondPass -and $economicServiceSurfaceNavPass -and $economicServiceSurfaceTreasuryPass -and $economicServiceSurfaceGovernancePass -and $economicServiceSurfaceDividendPass -and $economicServiceSurfaceForeignPass -and $opsControlSurfacePass -and $opsControlSurfaceRateLimitPass -and $opsControlSurfaceCircuitBreakerPass -and $opsControlSurfaceQuotaPass -and $opsControlSurfaceAlertFieldPass -and $opsControlSurfaceAuditFieldPass -and $marketEngineTreasuryNegativePass -and $foreignRateSourcePass -and $navValuationSourcePass -and $dividendBalanceSourcePass -and $unifiedAccountPass -and $rpcExposurePass -and $unjailCooldownPass -and $adapterStabilityPass -and $vmRuntimeSplitPass -and $evmChainProfileSignalPass -and $evmTxTypeSignalPass -and $overlapRouterSignalPass -and $evmBackendComparePass)
+$overallPass = ($functionalPass -and $governanceChainAuditRootParityPass -and $performancePass -and $chainQueryRpcPass -and $governanceRpcPass -and $governanceRpcAuditPersistPass -and $governanceRpcSignatureSchemeRejectPass -and $governanceRpcVoteVerifierStartupPass -and $governanceRpcVoteVerifierStagedRejectPass -and $governanceRpcVoteVerifierExecutePass -and $governanceRpcChainAuditExecuteVerifierProofPass -and $governanceRpcChainAuditRootProofPass -and $governanceRpcMldsaFfiPass -and $governanceRpcMldsaFfiStartupPass -and $headerSyncPass -and $fastStateSyncPass -and $networkDosPass -and $pacemakerFailoverPass -and $slashGovernancePass -and $slashPolicyExternalPass -and $governanceHookPass -and $governanceExecutionPass -and $governanceParam2Pass -and $governanceParam3Pass -and $governanceMarketPolicyPass -and $governanceMarketPolicyEnginePass -and $governanceMarketPolicyTreasuryPass -and $governanceMarketPolicyOrchestrationPass -and $governanceMarketPolicyDividendPass -and $governanceMarketPolicyForeignPass -and $governanceCouncilPolicyPass -and $governanceNegativePass -and $governanceAccessPolicyPass -and $governanceTokenEconomicsPass -and $governanceTreasurySpendPass -and $economicInfraDedicatedPass -and $economicInfraDedicatedTokenPass -and $economicInfraDedicatedAmmPass -and $economicInfraDedicatedNavPass -and $economicInfraDedicatedCdpPass -and $economicInfraDedicatedBondPass -and $economicInfraDedicatedTreasuryPass -and $economicInfraDedicatedGovernancePass -and $economicInfraDedicatedDividendPass -and $economicInfraDedicatedForeignPass -and $economicServiceSurfacePass -and $economicServiceSurfaceTokenPass -and $economicServiceSurfaceAmmPass -and $economicServiceSurfaceCdpPass -and $economicServiceSurfaceBondPass -and $economicServiceSurfaceNavPass -and $economicServiceSurfaceTreasuryPass -and $economicServiceSurfaceGovernancePass -and $economicServiceSurfaceDividendPass -and $economicServiceSurfaceForeignPass -and $opsControlSurfacePass -and $opsControlSurfaceRateLimitPass -and $opsControlSurfaceCircuitBreakerPass -and $opsControlSurfaceQuotaPass -and $opsControlSurfaceAlertFieldPass -and $opsControlSurfaceAuditFieldPass -and $marketEngineTreasuryNegativePass -and $foreignRateSourcePass -and $navValuationSourcePass -and $dividendBalanceSourcePass -and $unifiedAccountPass -and $rpcExposurePass -and $testnetBootstrapPass -and $unjailCooldownPass -and $adapterStabilityPass -and $vmRuntimeSplitPass -and $evmChainProfileSignalPass -and $evmTxTypeSignalPass -and $overlapRouterSignalPass -and $evmBackendComparePass)
 
 $summary = [ordered]@{
     generated_at_utc = [DateTime]::UtcNow.ToString("o")
@@ -1667,6 +1696,8 @@ $summary = [ordered]@{
     unified_account_pass = $unifiedAccountPass
     rpc_exposure_gate_enabled = $IncludeRpcExposureGate
     rpc_exposure_pass = $rpcExposurePass
+    testnet_bootstrap_gate_enabled = $IncludeTestnetBootstrapGate
+    testnet_bootstrap_pass = $testnetBootstrapPass
     unjail_cooldown_gate_enabled = $IncludeUnjailCooldownGate
     unjail_cooldown_pass = $unjailCooldownPass
     adapter_stability_enabled = $IncludeAdapterStabilityGate
@@ -1718,6 +1749,7 @@ $summary = [ordered]@{
     dividend_balance_source_report_json = if ($IncludeDividendBalanceSourceGate) { $dividendBalanceSourceJson } else { "" }
     unified_account_report_json = if ($IncludeUnifiedAccountGate) { $unifiedAccountJson } else { "" }
     rpc_exposure_report_json = if ($IncludeRpcExposureGate) { $rpcExposureJson } else { "" }
+    testnet_bootstrap_report_json = if ($IncludeTestnetBootstrapGate) { $testnetBootstrapJson } else { "" }
     unjail_cooldown_report_json = if ($IncludeUnjailCooldownGate) { $unjailCooldownJson } else { "" }
     adapter_stability_report_json = if ($IncludeAdapterStabilityGate) { $adapterStabilityJson } else { "" }
     vm_runtime_split_report_json = if ($IncludeVmRuntimeSplitGate) { $vmRuntimeSplitJson } else { "" }
@@ -1868,6 +1900,8 @@ $md = @(
     "- unified_account_pass: $($summary.unified_account_pass)"
     "- rpc_exposure_gate_enabled: $($summary.rpc_exposure_gate_enabled)"
     "- rpc_exposure_pass: $($summary.rpc_exposure_pass)"
+    "- testnet_bootstrap_gate_enabled: $($summary.testnet_bootstrap_gate_enabled)"
+    "- testnet_bootstrap_pass: $($summary.testnet_bootstrap_pass)"
     "- rpc_exposure_public_bind: $($summary.rpc_exposure_public_bind)"
     "- rpc_exposure_gov_bind: $($summary.rpc_exposure_gov_bind)"
     "- unjail_cooldown_gate_enabled: $($summary.unjail_cooldown_gate_enabled)"
@@ -1924,6 +1958,7 @@ $md = @(
     "- dividend_balance_source_report_json: $($summary.dividend_balance_source_report_json)"
     "- unified_account_report_json: $($summary.unified_account_report_json)"
     "- rpc_exposure_report_json: $($summary.rpc_exposure_report_json)"
+    "- testnet_bootstrap_report_json: $($summary.testnet_bootstrap_report_json)"
     "- unjail_cooldown_report_json: $($summary.unjail_cooldown_report_json)"
     "- adapter_stability_report_json: $($summary.adapter_stability_report_json)"
     "- vm_runtime_split_report_json: $($summary.vm_runtime_split_report_json)"
@@ -2028,6 +2063,9 @@ if ($IncludeUnifiedAccountGate) {
 if ($IncludeRpcExposureGate) {
     Write-Host "  rpc_exposure_report: $rpcExposureJson"
 }
+if ($IncludeTestnetBootstrapGate) {
+    Write-Host "  testnet_bootstrap_report: $testnetBootstrapJson"
+}
 if ($IncludeUnjailCooldownGate) {
     Write-Host "  unjail_cooldown_report: $unjailCooldownJson"
 }
@@ -2061,7 +2099,7 @@ if ($IncludeEvmBackendCompareGate) {
 Write-Host "  summary_json: $summaryJson"
 
 if (-not $overallPass) {
-    throw "migration acceptance gate FAILED (functional_pass=$functionalPass, governance_chain_audit_root_parity_pass=$governanceChainAuditRootParityPass, performance_pass=$performancePass, chain_query_rpc_pass=$chainQueryRpcPass, governance_rpc_pass=$governanceRpcPass, governance_rpc_audit_persist_pass=$governanceRpcAuditPersistPass, governance_rpc_signature_scheme_reject_pass=$governanceRpcSignatureSchemeRejectPass, governance_rpc_vote_verifier_startup_pass=$governanceRpcVoteVerifierStartupPass, governance_rpc_vote_verifier_staged_reject_pass=$governanceRpcVoteVerifierStagedRejectPass, governance_rpc_vote_verifier_execute_pass=$governanceRpcVoteVerifierExecutePass, governance_rpc_chain_audit_pass=$governanceRpcChainAuditPass, governance_rpc_chain_audit_persist_pass=$governanceRpcChainAuditPersistPass, governance_rpc_chain_audit_restart_pass=$governanceRpcChainAuditRestartPass, governance_rpc_chain_audit_execute_verifier_pass=$governanceRpcChainAuditExecuteVerifierPass, governance_rpc_chain_audit_persist_execute_verifier_pass=$governanceRpcChainAuditPersistExecuteVerifierPass, governance_rpc_chain_audit_restart_execute_verifier_pass=$governanceRpcChainAuditRestartExecuteVerifierPass, governance_rpc_chain_audit_execute_verifier_proof_pass=$governanceRpcChainAuditExecuteVerifierProofPass, governance_rpc_policy_chain_audit_consistency_pass=$governanceRpcPolicyChainAuditConsistencyPass, governance_rpc_chain_audit_root_pass=$governanceRpcChainAuditRootPass, governance_rpc_chain_audit_persist_root_pass=$governanceRpcChainAuditPersistRootPass, governance_rpc_chain_audit_restart_root_pass=$governanceRpcChainAuditRestartRootPass, governance_rpc_chain_audit_root_proof_pass=$governanceRpcChainAuditRootProofPass, governance_rpc_mldsa_ffi_pass=$governanceRpcMldsaFfiPass, governance_rpc_mldsa_ffi_startup_pass=$governanceRpcMldsaFfiStartupPass, header_sync_pass=$headerSyncPass, fast_state_sync_pass=$fastStateSyncPass, network_dos_pass=$networkDosPass, pacemaker_failover_pass=$pacemakerFailoverPass, slash_governance_pass=$slashGovernancePass, slash_policy_external_pass=$slashPolicyExternalPass, governance_hook_pass=$governanceHookPass, governance_execution_pass=$governanceExecutionPass, governance_param2_pass=$governanceParam2Pass, governance_param3_pass=$governanceParam3Pass, governance_market_policy_pass=$governanceMarketPolicyPass, governance_market_policy_engine_pass=$governanceMarketPolicyEnginePass, governance_market_policy_treasury_pass=$governanceMarketPolicyTreasuryPass, governance_market_policy_orchestration_pass=$governanceMarketPolicyOrchestrationPass, governance_market_policy_dividend_pass=$governanceMarketPolicyDividendPass, governance_market_policy_foreign_payment_pass=$governanceMarketPolicyForeignPass, governance_council_policy_pass=$governanceCouncilPolicyPass, governance_negative_pass=$governanceNegativePass, governance_access_policy_pass=$governanceAccessPolicyPass, governance_token_economics_pass=$governanceTokenEconomicsPass, governance_treasury_spend_pass=$governanceTreasurySpendPass, economic_infra_dedicated_pass=$economicInfraDedicatedPass, economic_infra_dedicated_token_system_pass=$economicInfraDedicatedTokenPass, economic_infra_dedicated_amm_pass=$economicInfraDedicatedAmmPass, economic_infra_dedicated_nav_redemption_pass=$economicInfraDedicatedNavPass, economic_infra_dedicated_cdp_pass=$economicInfraDedicatedCdpPass, economic_infra_dedicated_bond_pass=$economicInfraDedicatedBondPass, economic_infra_dedicated_treasury_pass=$economicInfraDedicatedTreasuryPass, economic_infra_dedicated_governance_system_pass=$economicInfraDedicatedGovernancePass, economic_infra_dedicated_dividend_pool_pass=$economicInfraDedicatedDividendPass, economic_infra_dedicated_foreign_payment_pass=$economicInfraDedicatedForeignPass, economic_service_surface_pass=$economicServiceSurfacePass, economic_service_surface_token_system_pass=$economicServiceSurfaceTokenPass, economic_service_surface_amm_pass=$economicServiceSurfaceAmmPass, economic_service_surface_cdp_pass=$economicServiceSurfaceCdpPass, economic_service_surface_bond_pass=$economicServiceSurfaceBondPass, economic_service_surface_nav_redemption_pass=$economicServiceSurfaceNavPass, economic_service_surface_treasury_pass=$economicServiceSurfaceTreasuryPass, economic_service_surface_governance_system_pass=$economicServiceSurfaceGovernancePass, economic_service_surface_dividend_pool_pass=$economicServiceSurfaceDividendPass, economic_service_surface_foreign_payment_pass=$economicServiceSurfaceForeignPass, ops_control_surface_pass=$opsControlSurfacePass, ops_control_surface_rate_limit_pass=$opsControlSurfaceRateLimitPass, ops_control_surface_circuit_breaker_pass=$opsControlSurfaceCircuitBreakerPass, ops_control_surface_quota_pass=$opsControlSurfaceQuotaPass, ops_control_surface_alert_field_pass=$opsControlSurfaceAlertFieldPass, ops_control_surface_audit_field_pass=$opsControlSurfaceAuditFieldPass, market_engine_treasury_negative_pass=$marketEngineTreasuryNegativePass, foreign_rate_source_pass=$foreignRateSourcePass, nav_valuation_source_pass=$navValuationSourcePass, dividend_balance_source_pass=$dividendBalanceSourcePass, unified_account_pass=$unifiedAccountPass, rpc_exposure_pass=$rpcExposurePass, unjail_cooldown_pass=$unjailCooldownPass, adapter_stability_pass=$adapterStabilityPass, vm_runtime_split_pass=$vmRuntimeSplitPass, evm_chain_profile_signal_pass=$evmChainProfileSignalPass, evm_tx_type_signal_pass=$evmTxTypeSignalPass, overlap_router_signal_pass=$overlapRouterSignalPass, evm_backend_compare_pass=$evmBackendComparePass, evm_backend_compare_evm_pass=$evmBackendCompareEvmPass, evm_backend_compare_polygon_pass=$evmBackendComparePolygonPass, evm_backend_compare_bnb_pass=$evmBackendCompareBnbPass, evm_backend_compare_avalanche_pass=$evmBackendCompareAvalanchePass)"
+    throw "migration acceptance gate FAILED (functional_pass=$functionalPass, governance_chain_audit_root_parity_pass=$governanceChainAuditRootParityPass, performance_pass=$performancePass, chain_query_rpc_pass=$chainQueryRpcPass, governance_rpc_pass=$governanceRpcPass, governance_rpc_audit_persist_pass=$governanceRpcAuditPersistPass, governance_rpc_signature_scheme_reject_pass=$governanceRpcSignatureSchemeRejectPass, governance_rpc_vote_verifier_startup_pass=$governanceRpcVoteVerifierStartupPass, governance_rpc_vote_verifier_staged_reject_pass=$governanceRpcVoteVerifierStagedRejectPass, governance_rpc_vote_verifier_execute_pass=$governanceRpcVoteVerifierExecutePass, governance_rpc_chain_audit_pass=$governanceRpcChainAuditPass, governance_rpc_chain_audit_persist_pass=$governanceRpcChainAuditPersistPass, governance_rpc_chain_audit_restart_pass=$governanceRpcChainAuditRestartPass, governance_rpc_chain_audit_execute_verifier_pass=$governanceRpcChainAuditExecuteVerifierPass, governance_rpc_chain_audit_persist_execute_verifier_pass=$governanceRpcChainAuditPersistExecuteVerifierPass, governance_rpc_chain_audit_restart_execute_verifier_pass=$governanceRpcChainAuditRestartExecuteVerifierPass, governance_rpc_chain_audit_execute_verifier_proof_pass=$governanceRpcChainAuditExecuteVerifierProofPass, governance_rpc_policy_chain_audit_consistency_pass=$governanceRpcPolicyChainAuditConsistencyPass, governance_rpc_chain_audit_root_pass=$governanceRpcChainAuditRootPass, governance_rpc_chain_audit_persist_root_pass=$governanceRpcChainAuditPersistRootPass, governance_rpc_chain_audit_restart_root_pass=$governanceRpcChainAuditRestartRootPass, governance_rpc_chain_audit_root_proof_pass=$governanceRpcChainAuditRootProofPass, governance_rpc_mldsa_ffi_pass=$governanceRpcMldsaFfiPass, governance_rpc_mldsa_ffi_startup_pass=$governanceRpcMldsaFfiStartupPass, header_sync_pass=$headerSyncPass, fast_state_sync_pass=$fastStateSyncPass, network_dos_pass=$networkDosPass, pacemaker_failover_pass=$pacemakerFailoverPass, slash_governance_pass=$slashGovernancePass, slash_policy_external_pass=$slashPolicyExternalPass, governance_hook_pass=$governanceHookPass, governance_execution_pass=$governanceExecutionPass, governance_param2_pass=$governanceParam2Pass, governance_param3_pass=$governanceParam3Pass, governance_market_policy_pass=$governanceMarketPolicyPass, governance_market_policy_engine_pass=$governanceMarketPolicyEnginePass, governance_market_policy_treasury_pass=$governanceMarketPolicyTreasuryPass, governance_market_policy_orchestration_pass=$governanceMarketPolicyOrchestrationPass, governance_market_policy_dividend_pass=$governanceMarketPolicyDividendPass, governance_market_policy_foreign_payment_pass=$governanceMarketPolicyForeignPass, governance_council_policy_pass=$governanceCouncilPolicyPass, governance_negative_pass=$governanceNegativePass, governance_access_policy_pass=$governanceAccessPolicyPass, governance_token_economics_pass=$governanceTokenEconomicsPass, governance_treasury_spend_pass=$governanceTreasurySpendPass, economic_infra_dedicated_pass=$economicInfraDedicatedPass, economic_infra_dedicated_token_system_pass=$economicInfraDedicatedTokenPass, economic_infra_dedicated_amm_pass=$economicInfraDedicatedAmmPass, economic_infra_dedicated_nav_redemption_pass=$economicInfraDedicatedNavPass, economic_infra_dedicated_cdp_pass=$economicInfraDedicatedCdpPass, economic_infra_dedicated_bond_pass=$economicInfraDedicatedBondPass, economic_infra_dedicated_treasury_pass=$economicInfraDedicatedTreasuryPass, economic_infra_dedicated_governance_system_pass=$economicInfraDedicatedGovernancePass, economic_infra_dedicated_dividend_pool_pass=$economicInfraDedicatedDividendPass, economic_infra_dedicated_foreign_payment_pass=$economicInfraDedicatedForeignPass, economic_service_surface_pass=$economicServiceSurfacePass, economic_service_surface_token_system_pass=$economicServiceSurfaceTokenPass, economic_service_surface_amm_pass=$economicServiceSurfaceAmmPass, economic_service_surface_cdp_pass=$economicServiceSurfaceCdpPass, economic_service_surface_bond_pass=$economicServiceSurfaceBondPass, economic_service_surface_nav_redemption_pass=$economicServiceSurfaceNavPass, economic_service_surface_treasury_pass=$economicServiceSurfaceTreasuryPass, economic_service_surface_governance_system_pass=$economicServiceSurfaceGovernancePass, economic_service_surface_dividend_pool_pass=$economicServiceSurfaceDividendPass, economic_service_surface_foreign_payment_pass=$economicServiceSurfaceForeignPass, ops_control_surface_pass=$opsControlSurfacePass, ops_control_surface_rate_limit_pass=$opsControlSurfaceRateLimitPass, ops_control_surface_circuit_breaker_pass=$opsControlSurfaceCircuitBreakerPass, ops_control_surface_quota_pass=$opsControlSurfaceQuotaPass, ops_control_surface_alert_field_pass=$opsControlSurfaceAlertFieldPass, ops_control_surface_audit_field_pass=$opsControlSurfaceAuditFieldPass, market_engine_treasury_negative_pass=$marketEngineTreasuryNegativePass, foreign_rate_source_pass=$foreignRateSourcePass, nav_valuation_source_pass=$navValuationSourcePass, dividend_balance_source_pass=$dividendBalanceSourcePass, unified_account_pass=$unifiedAccountPass, rpc_exposure_pass=$rpcExposurePass, testnet_bootstrap_pass=$testnetBootstrapPass, unjail_cooldown_pass=$unjailCooldownPass, adapter_stability_pass=$adapterStabilityPass, vm_runtime_split_pass=$vmRuntimeSplitPass, evm_chain_profile_signal_pass=$evmChainProfileSignalPass, evm_tx_type_signal_pass=$evmTxTypeSignalPass, overlap_router_signal_pass=$overlapRouterSignalPass, evm_backend_compare_pass=$evmBackendComparePass, evm_backend_compare_evm_pass=$evmBackendCompareEvmPass, evm_backend_compare_polygon_pass=$evmBackendComparePolygonPass, evm_backend_compare_bnb_pass=$evmBackendCompareBnbPass, evm_backend_compare_avalanche_pass=$evmBackendCompareAvalanchePass)"
 }
 
 Write-Host "migration acceptance gate PASS"

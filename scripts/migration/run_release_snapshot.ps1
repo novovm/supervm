@@ -12,6 +12,7 @@ param(
     [ValidateRange(1, 64)]
     [int]$GovernanceRpcMldsaFfiExpectedRequests = 9,
     [switch]$IncludeUnifiedAccountGate,
+    [switch]$IncludeTestnetBootstrapGate,
     [string]$AoemPluginDir = "",
     [bool]$PreferComposedAoemRuntime = $true,
     [switch]$FullSnapshotProfileV2,
@@ -53,6 +54,7 @@ if ($FullSnapshotProfileGA) {
         -GovernanceRpcMldsaFfiBind $GovernanceRpcMldsaFfiBind `
         -GovernanceRpcMldsaFfiExpectedRequests $GovernanceRpcMldsaFfiExpectedRequests `
         -IncludeUnifiedAccountGate:$IncludeUnifiedAccountGate `
+        -IncludeTestnetBootstrapGate:$IncludeTestnetBootstrapGate `
         -FullSnapshotProfileGA | Out-Null
 } elseif ($FullSnapshotProfileV2) {
     & $acceptanceScript `
@@ -68,6 +70,7 @@ if ($FullSnapshotProfileGA) {
         -GovernanceRpcMldsaFfiBind $GovernanceRpcMldsaFfiBind `
         -GovernanceRpcMldsaFfiExpectedRequests $GovernanceRpcMldsaFfiExpectedRequests `
         -IncludeUnifiedAccountGate:$IncludeUnifiedAccountGate `
+        -IncludeTestnetBootstrapGate:$IncludeTestnetBootstrapGate `
         -FullSnapshotProfileV2 | Out-Null
 } else {
     & $acceptanceScript `
@@ -83,6 +86,7 @@ if ($FullSnapshotProfileGA) {
         -GovernanceRpcMldsaFfiBind $GovernanceRpcMldsaFfiBind `
         -GovernanceRpcMldsaFfiExpectedRequests $GovernanceRpcMldsaFfiExpectedRequests `
         -IncludeUnifiedAccountGate:$IncludeUnifiedAccountGate `
+        -IncludeTestnetBootstrapGate:$IncludeTestnetBootstrapGate `
         -FullSnapshotProfile | Out-Null
 }
 
@@ -100,6 +104,7 @@ $economicServiceSurfaceSummaryJson = [string]$acceptance.economic_service_surfac
 $opsControlSurfaceSummaryJson = [string]$acceptance.ops_control_surface_report_json
 $unifiedAccountSummaryJson = [string]$acceptance.unified_account_report_json
 $rpcExposureSummaryJson = [string]$acceptance.rpc_exposure_report_json
+$testnetBootstrapSummaryJson = [string]$acceptance.testnet_bootstrap_report_json
 
 if (-not (Test-Path $performanceSummaryJson)) {
     throw "missing performance summary json: $performanceSummaryJson"
@@ -124,6 +129,9 @@ if ([bool]$acceptance.unified_account_gate_enabled -and -not (Test-Path $unified
 }
 if ([bool]$acceptance.rpc_exposure_gate_enabled -and -not (Test-Path $rpcExposureSummaryJson)) {
     throw "missing rpc exposure summary json: $rpcExposureSummaryJson"
+}
+if ([bool]$acceptance.testnet_bootstrap_gate_enabled -and -not (Test-Path $testnetBootstrapSummaryJson)) {
+    throw "missing testnet bootstrap summary json: $testnetBootstrapSummaryJson"
 }
 
 $performance = Get-Content -Path $performanceSummaryJson -Raw | ConvertFrom-Json
@@ -155,6 +163,11 @@ $unifiedAccount = if ([bool]$acceptance.unified_account_gate_enabled) {
 }
 $rpcExposure = if ([bool]$acceptance.rpc_exposure_gate_enabled) {
     Get-Content -Path $rpcExposureSummaryJson -Raw | ConvertFrom-Json
+} else {
+    $null
+}
+$testnetBootstrap = if ([bool]$acceptance.testnet_bootstrap_gate_enabled) {
+    Get-Content -Path $testnetBootstrapSummaryJson -Raw | ConvertFrom-Json
 } else {
     $null
 }
@@ -194,6 +207,7 @@ $enabledGates = [ordered]@{
     governance_rpc_mldsa_ffi = [bool]$acceptance.governance_rpc_mldsa_ffi_gate_enabled
     unified_account = [bool]$acceptance.unified_account_gate_enabled
     rpc_exposure = [bool]$acceptance.rpc_exposure_gate_enabled
+    testnet_bootstrap = [bool]$acceptance.testnet_bootstrap_gate_enabled
     unjail_cooldown = [bool]$acceptance.unjail_cooldown_gate_enabled
     adapter_stability = [bool]$acceptance.adapter_stability_enabled
     vm_runtime_split = [bool]$acceptance.vm_runtime_split_gate_enabled
@@ -338,6 +352,27 @@ $keyResults = [ordered]@{
     rpc_exposure_pass = if ([bool]$acceptance.rpc_exposure_gate_enabled) { [bool]$acceptance.rpc_exposure_pass } else { $true }
     rpc_exposure_default_safe_pass = if ($rpcExposure) { [bool]$rpcExposure.default_safe_pass } else { $true }
     rpc_exposure_controlled_open_pass = if ($rpcExposure) { [bool]$rpcExposure.controlled_open_pass } else { $true }
+    testnet_bootstrap_pass = if ([bool]$acceptance.testnet_bootstrap_gate_enabled) { [bool]$acceptance.testnet_bootstrap_pass } else { $true }
+    testnet_bootstrap_validators_pass = if (
+        $testnetBootstrap -and
+        $testnetBootstrap.PSObject.Properties.Name -contains "checks" -and
+        $testnetBootstrap.checks.PSObject.Properties.Name -contains "validators_ge_4"
+    ) { [bool]$testnetBootstrap.checks.validators_ge_4 } elseif ([bool]$acceptance.testnet_bootstrap_gate_enabled) { $false } else { $true }
+    testnet_bootstrap_batches_pass = if (
+        $testnetBootstrap -and
+        $testnetBootstrap.PSObject.Properties.Name -contains "checks" -and
+        $testnetBootstrap.checks.PSObject.Properties.Name -contains "batches_gt_0"
+    ) { [bool]$testnetBootstrap.checks.batches_gt_0 } elseif ([bool]$acceptance.testnet_bootstrap_gate_enabled) { $false } else { $true }
+    testnet_bootstrap_tps_pass = if (
+        $testnetBootstrap -and
+        $testnetBootstrap.PSObject.Properties.Name -contains "checks" -and
+        $testnetBootstrap.checks.PSObject.Properties.Name -contains "consensus_network_e2e_tps_p50_gt_0"
+    ) { [bool]$testnetBootstrap.checks.consensus_network_e2e_tps_p50_gt_0 } elseif ([bool]$acceptance.testnet_bootstrap_gate_enabled) { $false } else { $true }
+    testnet_bootstrap_network_messages_pass = if (
+        $testnetBootstrap -and
+        $testnetBootstrap.PSObject.Properties.Name -contains "checks" -and
+        $testnetBootstrap.checks.PSObject.Properties.Name -contains "network_message_count_gt_0"
+    ) { [bool]$testnetBootstrap.checks.network_message_count_gt_0 } elseif ([bool]$acceptance.testnet_bootstrap_gate_enabled) { $false } else { $true }
     evm_chain_profile_signal_pass = if ([bool]$acceptance.evm_chain_profile_signal_gate_enabled) { [bool]$acceptance.evm_chain_profile_signal_pass } else { $true }
     evm_tx_type_signal_pass = if ([bool]$acceptance.evm_tx_type_signal_gate_enabled) { [bool]$acceptance.evm_tx_type_signal_pass } else { $true }
     overlap_router_signal_pass = if ([bool]$acceptance.overlap_router_signal_gate_enabled) { [bool]$acceptance.overlap_router_signal_pass } else { $true }
@@ -377,6 +412,7 @@ $snapshot = [ordered]@{
         dividend_balance_source_summary_json = [string]$acceptance.dividend_balance_source_report_json
         unified_account_summary_json = if ([bool]$acceptance.unified_account_gate_enabled) { $unifiedAccountSummaryJson } else { "" }
         rpc_exposure_summary_json = if ([bool]$acceptance.rpc_exposure_gate_enabled) { $rpcExposureSummaryJson } else { "" }
+        testnet_bootstrap_summary_json = if ([bool]$acceptance.testnet_bootstrap_gate_enabled) { $testnetBootstrapSummaryJson } else { "" }
         evm_chain_profile_signal_summary_json = [string]$acceptance.evm_chain_profile_signal_report_json
         evm_tx_type_signal_summary_json = [string]$acceptance.evm_tx_type_signal_report_json
         overlap_router_signal_summary_json = [string]$acceptance.overlap_router_signal_report_json
@@ -420,6 +456,11 @@ $md = @(
     "- evm_backend_compare_polygon_pass: $($snapshot.key_results.evm_backend_compare_polygon_pass)",
     "- evm_backend_compare_bnb_pass: $($snapshot.key_results.evm_backend_compare_bnb_pass)",
     "- evm_backend_compare_avalanche_pass: $($snapshot.key_results.evm_backend_compare_avalanche_pass)",
+    "- testnet_bootstrap_pass: $($snapshot.key_results.testnet_bootstrap_pass)",
+    "- testnet_bootstrap_validators_pass: $($snapshot.key_results.testnet_bootstrap_validators_pass)",
+    "- testnet_bootstrap_batches_pass: $($snapshot.key_results.testnet_bootstrap_batches_pass)",
+    "- testnet_bootstrap_tps_pass: $($snapshot.key_results.testnet_bootstrap_tps_pass)",
+    "- testnet_bootstrap_network_messages_pass: $($snapshot.key_results.testnet_bootstrap_network_messages_pass)",
     "- tps_p50: $(($snapshot.key_results.tps_p50 | ConvertTo-Json -Compress))",
     "- acceptance_summary_json: $($snapshot.evidence.acceptance_summary_json)",
     "- functional_summary_json: $($snapshot.evidence.functional_summary_json)",
@@ -439,6 +480,7 @@ $md = @(
     "- dividend_balance_source_summary_json: $($snapshot.evidence.dividend_balance_source_summary_json)",
     "- unified_account_summary_json: $($snapshot.evidence.unified_account_summary_json)",
     "- rpc_exposure_summary_json: $($snapshot.evidence.rpc_exposure_summary_json)",
+    "- testnet_bootstrap_summary_json: $($snapshot.evidence.testnet_bootstrap_summary_json)",
     "- evm_chain_profile_signal_summary_json: $($snapshot.evidence.evm_chain_profile_signal_summary_json)",
     "- evm_tx_type_signal_summary_json: $($snapshot.evidence.evm_tx_type_signal_summary_json)",
     "- overlap_router_signal_summary_json: $($snapshot.evidence.overlap_router_signal_summary_json)",
@@ -453,6 +495,7 @@ $md -join "`n" | Set-Content -Path $snapshotMdPath -Encoding UTF8
 Write-Host "release snapshot generated:"
 Write-Host "  overall_pass: $($snapshot.overall_pass)"
 Write-Host "  profile_name: $($snapshot.profile_name)"
+Write-Host "  testnet_bootstrap_pass: $($snapshot.key_results.testnet_bootstrap_pass)"
 Write-Host "  snapshot_json: $snapshotJsonPath"
 Write-Host "  snapshot_md: $snapshotMdPath"
 

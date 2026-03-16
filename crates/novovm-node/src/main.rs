@@ -4260,6 +4260,125 @@ fn is_unified_account_eth_persona_query_method(method: &str) -> bool {
     method == "eth_getTransactionCount"
 }
 
+fn is_evm_control_namespace(method: &str) -> bool {
+    method.starts_with("engine_")
+        || method.starts_with("admin_")
+        || method.starts_with("debug_")
+        || method.starts_with("miner_")
+        || method.starts_with("personal_")
+        || method.starts_with("clique_")
+        || method.starts_with("parity_")
+}
+
+fn novovm_public_rpc_surface_map_json() -> serde_json::Value {
+    serde_json::json!({
+        "host_chain": "supervm_mainnet",
+        "evm_plugin_enabled": true,
+        "mode": "host_chain_plus_plugin",
+        "domains": [
+            {
+                "domain": "novovm_mainnet",
+                "scope": "native",
+                "entry_methods": [
+                    "novovm_getSurfaceMap",
+                    "novovm_getMethodDomain",
+                    "getBlock",
+                    "getTransaction",
+                    "getReceipt",
+                    "getBalance",
+                    "ua_createUca",
+                    "ua_rotatePrimaryKey",
+                    "ua_bindPersona",
+                    "ua_setPolicy",
+                    "web30_sendTransaction",
+                    "web30_sendRawTransaction"
+                ]
+            },
+            {
+                "domain": "evm_plugin",
+                "scope": "compatibility",
+                "entry_methods": [
+                    "eth_chainId",
+                    "net_version",
+                    "web3_clientVersion",
+                    "eth_blockNumber",
+                    "eth_getBlockByNumber",
+                    "eth_getBalance",
+                    "eth_getCode",
+                    "eth_getStorageAt",
+                    "eth_call",
+                    "eth_estimateGas",
+                    "eth_gasPrice",
+                    "eth_maxPriorityFeePerGas",
+                    "eth_feeHistory",
+                    "eth_getTransactionByHash",
+                    "eth_getTransactionReceipt",
+                    "eth_sendRawTransaction",
+                    "eth_sendTransaction"
+                ]
+            }
+        ],
+        "notes": [
+            "supervm mainnet remains the single host chain",
+            "eth_* namespace is compatibility surface provided by evm plugin"
+        ]
+    })
+}
+
+fn novovm_public_rpc_method_domain(method: &str) -> &'static str {
+    if method.starts_with("ua_")
+        || method.starts_with("web30_")
+        || method.starts_with("novovm_")
+        || method.starts_with("governance_")
+        || matches!(
+            method,
+            "getBlock" | "getTransaction" | "getReceipt" | "getBalance"
+        )
+    {
+        "novovm_mainnet"
+    } else if method.starts_with("eth_")
+        || method.starts_with("evm_")
+        || method.starts_with("txpool_")
+        || method.starts_with("net_")
+        || method.starts_with("web3_")
+        || is_evm_control_namespace(method)
+    {
+        "evm_plugin"
+    } else {
+        "unknown"
+    }
+}
+
+fn novovm_public_rpc_method_domain_json(method: &str) -> serde_json::Value {
+    serde_json::json!({
+        "host_chain": "supervm_mainnet",
+        "method": method,
+        "domain": novovm_public_rpc_method_domain(method),
+        "control_namespace_disabled": is_evm_control_namespace(method),
+    })
+}
+
+fn is_eth_plugin_allowed_method(method: &str) -> bool {
+    is_unified_account_eth_route_method(method)
+        || is_unified_account_eth_persona_query_method(method)
+        || matches!(
+            method,
+            "eth_chainId"
+                | "eth_getTransactionByHash"
+                | "eth_getTransactionReceipt"
+                | "eth_blockNumber"
+                | "eth_getBlockByNumber"
+                | "eth_getBalance"
+                | "eth_getCode"
+                | "eth_getStorageAt"
+                | "eth_call"
+                | "eth_estimateGas"
+                | "eth_gasPrice"
+                | "eth_maxPriorityFeePerGas"
+                | "eth_feeHistory"
+        )
+}
+
 fn is_unified_account_web30_route_method(method: &str) -> bool {
     method == "web30_sendTransaction" || method == "web30_sendRawTransaction"
 }
@@ -4313,6 +4432,11 @@ fn public_rpc_error_code_for_method(method: &str, message: &str) -> i64 {
     if method.starts_with("eth_") && message.contains("unsupported eth filter/reorg method in M0")
     {
         return -32036;
+    }
+    if method.starts_with("eth_")
+        && message.contains("eth method not enabled in supervm public rpc plugin scope")
+    {
+        return -32601;
     }
     -32602
 }
@@ -8207,7 +8331,240 @@ fn run_chain_query(
     method: &str,
     params: &serde_json::Value,
 ) -> Result<serde_json::Value> {
+    fn parse_block_selector_from_raw(raw: Option<String>) -> Result<Option<u64>> {
+        let Some(raw) = raw else { return Ok(None) };
+        let trimmed = raw.trim();
+        if trimmed.is_empty()
+            || trimmed.eq_ignore_ascii_case("latest")
+            || trimmed.eq_ignore_ascii_case("pending")
+        {
+            return Ok(None);
+        }
+        if trimmed.eq_ignore_ascii_case("earliest") {
+            return Ok(Some(0));
+        }
+        parse_u64_decimal_or_hex(trimmed)
+            .map(Some)
+            .ok_or_else(|| anyhow::anyhow!("invalid block selector: {}", trimmed))
+    }
+
+    fn parse_block_selector_u64(params: &serde_json::Value, default_latest: u64) -> Result<u64> {
+        fn parse_at_array_index(
+            params: &serde_json::Value,
+            index: usize,
+            default_latest: u64,
+        ) -> Result<u64> {
+            let raw = match params {
+                serde_json::Value::Array(arr) => arr.get(index).and_then(value_to_string),
+                _ => None,
+            };
+            let parsed = parse_block_selector_from_raw(raw)?;
+            Ok(parsed.unwrap_or(default_latest))
+        }
+
+        if let serde_json::Value::Array(_) = params {
+            return parse_at_array_index(params, 0, default_latest);
+        }
+
+        let object_selector = param_as_string(params, "height")
+            .or_else(|| param_as_string(params, "block_number"))
+            .or_else(|| param_as_string(params, "number"))
+            .or_else(|| param_as_string(params, "block"));
+        let parsed = parse_block_selector_from_raw(object_selector)?;
+        Ok(parsed.unwrap_or(default_latest))
+    }
+
+    fn parse_block_selector_at_array_index_u64(
+        params: &serde_json::Value,
+        index: usize,
+        default_latest: u64,
+    ) -> Result<u64> {
+        let object_selector = param_as_string(params, "height")
+            .or_else(|| param_as_string(params, "block_number"))
+            .or_else(|| param_as_string(params, "number"))
+            .or_else(|| param_as_string(params, "block"));
+        if let Some(height) = parse_block_selector_from_raw(object_selector)? {
+            return Ok(height);
+        }
+
+        let raw = match params {
+            serde_json::Value::Array(arr) => arr.get(index).and_then(value_to_string),
+            _ => None,
+        };
+        let parsed = parse_block_selector_from_raw(raw)?;
+        Ok(parsed.unwrap_or(default_latest))
+    }
+
+    fn parse_eth_call_object(params: &serde_json::Value) -> serde_json::Value {
+        match params {
+            serde_json::Value::Array(arr) => arr.first().cloned().unwrap_or(serde_json::Value::Null),
+            serde_json::Value::Object(map) => map
+                .get("call")
+                .or_else(|| map.get("tx"))
+                .or_else(|| map.get("transaction"))
+                .cloned()
+                .unwrap_or_else(|| params.clone()),
+            _ => serde_json::Value::Null,
+        }
+    }
+
+    fn parse_eth_storage_slot(params: &serde_json::Value) -> Result<u64> {
+        let object_slot = param_as_string(params, "position")
+            .or_else(|| param_as_string(params, "slot"))
+            .or_else(|| param_as_string(params, "index"));
+        if let Some(slot) = object_slot {
+            return parse_u64_decimal_or_hex(&slot)
+                .ok_or_else(|| anyhow::anyhow!("invalid storage slot selector: {}", slot));
+        }
+
+        if let serde_json::Value::Array(arr) = params {
+            if let Some(raw) = arr.get(1).and_then(value_to_string) {
+                return parse_u64_decimal_or_hex(&raw)
+                    .ok_or_else(|| anyhow::anyhow!("invalid storage slot selector: {}", raw));
+            }
+        }
+        Ok(0)
+    }
+
+    fn parse_eth_reward_percentile_count(params: &serde_json::Value) -> usize {
+        let candidate = match params {
+            serde_json::Value::Object(map) => map
+                .get("reward_percentiles")
+                .or_else(|| map.get("rewardPercentiles")),
+            serde_json::Value::Array(arr) => arr.get(2),
+            _ => None,
+        };
+        candidate
+            .and_then(|value| value.as_array().map(|items| items.len()))
+            .unwrap_or(0)
+    }
+
+    fn hex_to_data_len(data: &str) -> usize {
+        let trimmed = data.trim();
+        let hex = trimmed
+            .strip_prefix("0x")
+            .or_else(|| trimmed.strip_prefix("0X"))
+            .unwrap_or(trimmed);
+        if hex.is_empty() {
+            0
+        } else {
+            hex.len().saturating_add(1) / 2
+        }
+    }
+
+    fn parse_eth_compat_chain_id(params: &serde_json::Value, default_chain_id: u64) -> Result<u64> {
+        let parse_selector = |raw: Option<String>| -> Result<Option<u64>> {
+            let Some(raw) = raw else { return Ok(None) };
+            let trimmed = raw.trim();
+            if trimmed.is_empty() {
+                return Ok(None);
+            }
+            parse_u64_decimal_or_hex(trimmed)
+                .map(Some)
+                .ok_or_else(|| anyhow::anyhow!("invalid chain id selector: {}", trimmed))
+        };
+
+        let object_chain_id = param_as_string(params, "chain_id")
+            .or_else(|| param_as_string(params, "chainId"))
+            .or_else(|| param_as_string(params, "network_id"))
+            .or_else(|| param_as_string(params, "net_version"));
+        if let Some(chain_id) = parse_selector(object_chain_id)? {
+            return Ok(chain_id);
+        }
+
+        if let serde_json::Value::Array(arr) = params {
+            let array_chain_id = arr.first().and_then(value_to_string);
+            if let Some(chain_id) = parse_selector(array_chain_id)? {
+                return Ok(chain_id);
+            }
+        }
+        Ok(default_chain_id)
+    }
+
+    fn parse_eth_query_account(params: &serde_json::Value) -> Option<String> {
+        param_as_string(params, "account")
+            .or_else(|| param_as_string(params, "address"))
+            .or_else(|| match params {
+                serde_json::Value::Array(arr) => arr.first().and_then(value_to_string),
+                _ => None,
+            })
+    }
+
+    fn parse_eth_compat_chain_id(params: &serde_json::Value, default_chain_id: u64) -> Result<u64> {
+        let parse_chain_id = |raw: Option<String>| -> Result<Option<u64>> {
+            let Some(raw) = raw else { return Ok(None) };
+            let trimmed = raw.trim();
+            if trimmed.is_empty() {
+                return Ok(None);
+            }
+            parse_u64_decimal_or_hex(trimmed)
+                .map(Some)
+                .ok_or_else(|| anyhow::anyhow!("invalid chain id selector: {}", trimmed))
+        };
+
+        let object_chain_id = param_as_string(params, "chain_id")
+            .or_else(|| param_as_string(params, "chainId"))
+            .or_else(|| param_as_string(params, "network_id"))
+            .or_else(|| param_as_string(params, "net_version"));
+        if let Some(chain_id) = parse_chain_id(object_chain_id)? {
+            return Ok(chain_id);
+        }
+
+        if let serde_json::Value::Array(arr) = params {
+            let array_chain_id = arr.first().and_then(value_to_string);
+            if let Some(chain_id) = parse_chain_id(array_chain_id)? {
+                return Ok(chain_id);
+            }
+        }
+        Ok(default_chain_id)
+    }
+
+    let latest_height = db.blocks.last().map(|b| b.height).unwrap_or(0);
+    let default_eth_chain_id =
+        parse_u64_decimal_or_hex(&string_env("NOVOVM_ETH_COMPAT_CHAIN_ID", "1")).unwrap_or(1);
+    let client_version = string_env(
+        "NOVOVM_PUBLIC_CLIENT_VERSION",
+        &format!("novovm-node/{} (supervm-host)", env!("CARGO_PKG_VERSION")),
+    );
+    let compat_gas_price =
+        parse_u64_decimal_or_hex(&string_env("NOVOVM_ETH_COMPAT_GAS_PRICE", "1000000000"))
+            .unwrap_or(1_000_000_000);
+    let compat_priority_fee =
+        parse_u64_decimal_or_hex(&string_env("NOVOVM_ETH_COMPAT_PRIORITY_FEE", "100000000"))
+            .unwrap_or(100_000_000);
     let response = match method {
+        "novovm_getSurfaceMap" | "novovm_get_surface_map" => novovm_public_rpc_surface_map_json(),
+        "novovm_getMethodDomain" | "novovm_get_method_domain" => {
+            let target_method = param_as_string(params, "method")
+                .or_else(|| param_as_string(params, "rpc_method"))
+                .or_else(|| param_as_string(params, "name"))
+                .or_else(|| match params {
+                    serde_json::Value::Array(arr) => arr.first().and_then(value_to_string),
+                    _ => None,
+                })
+                .ok_or_else(|| anyhow::anyhow!("method is required for novovm_getMethodDomain"))?;
+            novovm_public_rpc_method_domain_json(&target_method)
+        }
+        "eth_chainId" => {
+            let chain_id = parse_eth_compat_chain_id(params, default_eth_chain_id)?;
+            serde_json::json!({
+                "method": "eth_chainId",
+                "chain_id": chain_id,
+                "chain_id_hex": format!("0x{:x}", chain_id),
+            })
+        }
+        "net_version" => {
+            let chain_id = parse_eth_compat_chain_id(params, default_eth_chain_id)?;
+            serde_json::json!({
+                "method": "net_version",
+                "chain_id": chain_id,
+                "net_version": chain_id.to_string(),
+            })
+        }
+        "web3_clientVersion" => serde_json::json!({
+            "method": "web3_clientVersion",
+            "client_version": client_version,
+        }),
         "getBlock" => {
             let height = param_as_u64(params, "height");
             let block = match height {
@@ -8251,6 +8608,38 @@ fn run_chain_query(
                 "tx_hash": tx_hash,
                 "found": tx.is_some(),
                 "transaction": tx,
+            })
+        }
+        "eth_blockNumber" => serde_json::json!({
+            "method": "eth_blockNumber",
+            "block_number": format!("0x{:x}", latest_height),
+            "block_number_u64": latest_height,
+        }),
+        "eth_getBlockByNumber" => {
+            let requested_height = parse_block_selector_u64(params, latest_height)?;
+            let full_transactions = match params {
+                serde_json::Value::Object(map) => map
+                    .get("full_transactions")
+                    .or_else(|| map.get("fullTransactions"))
+                    .and_then(value_to_bool)
+                    .unwrap_or(false),
+                serde_json::Value::Array(arr) => {
+                    arr.get(1).and_then(value_to_bool).unwrap_or(false)
+                }
+                _ => false,
+            };
+            let block = db
+                .blocks
+                .iter()
+                .find(|b| b.height == requested_height)
+                .cloned();
+            serde_json::json!({
+                "method": "eth_getBlockByNumber",
+                "requested_height": requested_height,
+                "requested_height_hex": format!("0x{:x}", requested_height),
+                "full_transactions": full_transactions,
+                "found": block.is_some(),
+                "block": block,
             })
         }
         "getReceipt" => {
@@ -8299,8 +8688,144 @@ fn run_chain_query(
                 "balance": balance,
             })
         }
+        "eth_getBalance" => {
+            let account = parse_eth_query_account(params).unwrap_or_default();
+            let trimmed = account.trim();
+            if trimmed.is_empty() {
+                bail!("account/address is required for eth_getBalance");
+            }
+            let queried_height = parse_block_selector_u64(params, latest_height)?;
+            let balance = db.balances.get(trimmed).copied().unwrap_or(0);
+            serde_json::json!({
+                "method": "eth_getBalance",
+                "account": trimmed,
+                "queried_height": queried_height,
+                "queried_height_hex": format!("0x{:x}", queried_height),
+                "found": db.balances.contains_key(trimmed),
+                "balance": balance,
+                "balance_hex": format!("0x{:x}", balance),
+            })
+        }
+        "eth_getCode" => {
+            let account = parse_eth_query_account(params).unwrap_or_default();
+            let trimmed = account.trim();
+            if trimmed.is_empty() {
+                bail!("account/address is required for eth_getCode");
+            }
+            let queried_height = parse_block_selector_u64(params, latest_height)?;
+            serde_json::json!({
+                "method": "eth_getCode",
+                "account": trimmed,
+                "queried_height": queried_height,
+                "queried_height_hex": format!("0x{:x}", queried_height),
+                "found": false,
+                "code": "0x",
+            })
+        }
+        "eth_getStorageAt" => {
+            let account = parse_eth_query_account(params).unwrap_or_default();
+            let trimmed = account.trim();
+            if trimmed.is_empty() {
+                bail!("account/address is required for eth_getStorageAt");
+            }
+            let slot = parse_eth_storage_slot(params)?;
+            let queried_height = parse_block_selector_at_array_index_u64(params, 2, latest_height)?;
+            serde_json::json!({
+                "method": "eth_getStorageAt",
+                "account": trimmed,
+                "slot": slot,
+                "slot_hex": format!("0x{:x}", slot),
+                "queried_height": queried_height,
+                "queried_height_hex": format!("0x{:x}", queried_height),
+                "value": format!("0x{:064x}", 0u64),
+            })
+        }
+        "eth_call" => {
+            let call_obj = parse_eth_call_object(params);
+            let to = param_as_string(&call_obj, "to").unwrap_or_default();
+            let from = param_as_string(&call_obj, "from").unwrap_or_default();
+            let data = param_as_string(&call_obj, "data")
+                .or_else(|| param_as_string(&call_obj, "input"))
+                .unwrap_or_else(|| "0x".to_string());
+            let value = param_as_string(&call_obj, "value").unwrap_or_else(|| "0x0".to_string());
+            let queried_height = parse_block_selector_at_array_index_u64(params, 1, latest_height)?;
+            serde_json::json!({
+                "method": "eth_call",
+                "to": to,
+                "from": from,
+                "data": data,
+                "value": value,
+                "queried_height": queried_height,
+                "queried_height_hex": format!("0x{:x}", queried_height),
+                "result": "0x",
+            })
+        }
+        "eth_estimateGas" => {
+            let call_obj = parse_eth_call_object(params);
+            let data = param_as_string(&call_obj, "data")
+                .or_else(|| param_as_string(&call_obj, "input"))
+                .unwrap_or_else(|| "0x".to_string());
+            let data_len = hex_to_data_len(&data) as u64;
+            let estimated = 21_000u64.saturating_add(data_len.saturating_mul(16));
+            let queried_height = parse_block_selector_at_array_index_u64(params, 1, latest_height)?;
+            serde_json::json!({
+                "method": "eth_estimateGas",
+                "queried_height": queried_height,
+                "queried_height_hex": format!("0x{:x}", queried_height),
+                "estimated_gas": estimated,
+                "estimated_gas_hex": format!("0x{:x}", estimated),
+            })
+        }
+        "eth_gasPrice" => serde_json::json!({
+            "method": "eth_gasPrice",
+            "gas_price": compat_gas_price,
+            "gas_price_hex": format!("0x{:x}", compat_gas_price),
+        }),
+        "eth_maxPriorityFeePerGas" => serde_json::json!({
+            "method": "eth_maxPriorityFeePerGas",
+            "max_priority_fee_per_gas": compat_priority_fee,
+            "max_priority_fee_per_gas_hex": format!("0x{:x}", compat_priority_fee),
+        }),
+        "eth_feeHistory" => {
+            let block_count = match params {
+                serde_json::Value::Object(map) => map
+                    .get("block_count")
+                    .or_else(|| map.get("blockCount"))
+                    .and_then(value_to_u64)
+                    .unwrap_or(1),
+                serde_json::Value::Array(arr) => arr.first().and_then(value_to_u64).unwrap_or(1),
+                _ => 1,
+            }
+            .clamp(1, 128);
+            let newest = parse_block_selector_at_array_index_u64(params, 1, latest_height)?;
+            let reward_percentiles = parse_eth_reward_percentile_count(params);
+            let base_fee_per_gas: Vec<String> = (0..=block_count)
+                .map(|_| format!("0x{:x}", compat_gas_price))
+                .collect();
+            let gas_used_ratio: Vec<f64> = (0..block_count).map(|_| 0.0).collect();
+            let reward = if reward_percentiles > 0 {
+                Some(
+                    (0..block_count)
+                        .map(|_| vec![format!("0x{:x}", compat_priority_fee); reward_percentiles])
+                        .collect::<Vec<Vec<String>>>(),
+                )
+            } else {
+                None
+            };
+            serde_json::json!({
+                "method": "eth_feeHistory",
+                "block_count": block_count,
+                "oldest_block": newest.saturating_sub(block_count.saturating_sub(1)),
+                "oldest_block_hex": format!("0x{:x}", newest.saturating_sub(block_count.saturating_sub(1))),
+                "newest_block": newest,
+                "newest_block_hex": format!("0x{:x}", newest),
+                "baseFeePerGas": base_fee_per_gas,
+                "gasUsedRatio": gas_used_ratio,
+                "reward": reward,
+            })
+        }
         _ => bail!(
-            "unknown method: {}; valid: getBlock|getTransaction|getReceipt|getBalance",
+            "unknown method: {}; valid: novovm_getSurfaceMap|novovm_get_surface_map|novovm_getMethodDomain|novovm_get_method_domain|getBlock|getTransaction|getReceipt|getBalance|eth_chainId|net_version|web3_clientVersion|eth_blockNumber|eth_getBlockByNumber|eth_getBalance|eth_getCode|eth_getStorageAt|eth_call|eth_estimateGas|eth_gasPrice|eth_maxPriorityFeePerGas|eth_feeHistory",
             method
         ),
     };
@@ -8576,12 +9101,13 @@ fn run_unified_account_rpc(
             || is_unified_account_eth_route_method(m)
             || is_unified_account_web30_route_method(m) =>
         {
-            let uca_id = param_as_string(params, "uca_id").ok_or_else(|| {
-                anyhow::anyhow!("uca_id is required for route methods (ua_route/eth/web30)")
-            })?;
+            let explicit_uca_id = param_as_string(params, "uca_id");
             let role = parse_account_role(params)?;
             let is_eth_alias = is_unified_account_eth_route_method(method);
             let is_eth_raw_alias = method == "eth_sendRawTransaction";
+            let default_eth_chain_id =
+                parse_u64_decimal_or_hex(&string_env("NOVOVM_ETH_COMPAT_CHAIN_ID", "1"))
+                    .unwrap_or(1);
             let inferred_eth_tx_type = if is_eth_alias && is_eth_raw_alias {
                 infer_eth_raw_tx_type_hint(params)?
             } else {
@@ -8600,9 +9126,15 @@ fn run_unified_account_rpc(
                     );
                 }
             }
-            let chain_id = explicit_chain_id
-                .or(inferred_chain_id)
-                .ok_or_else(|| anyhow::anyhow!("chain_id is required for route methods"))?;
+            let chain_id = if is_eth_alias {
+                explicit_chain_id
+                    .or(inferred_chain_id)
+                    .unwrap_or(default_eth_chain_id)
+            } else {
+                explicit_chain_id
+                    .or(inferred_chain_id)
+                    .ok_or_else(|| anyhow::anyhow!("chain_id is required for route methods"))?
+            };
             let is_web30_alias = is_unified_account_web30_route_method(method);
             let persona_type = if is_eth_alias {
                 PersonaType::Evm
@@ -8613,12 +9145,23 @@ fn run_unified_account_rpc(
             } else {
                 PersonaType::Other("unknown".to_string())
             };
-            let external_address_raw = param_as_string(params, "external_address")
+            let external_address = if let Some(external_address_raw) = param_as_string(params, "external_address")
                 .or_else(|| param_as_string(params, "from"))
-                .ok_or_else(|| {
-                    anyhow::anyhow!("external_address (or from) is required for route methods")
-                })?;
-            let external_address = decode_hex_bytes(&external_address_raw, "external_address")?;
+            {
+                decode_hex_bytes(&external_address_raw, "external_address")?
+            } else if is_eth_alias && is_eth_raw_alias {
+                inferred_eth_tx_type
+                    .as_ref()
+                    .map(|hint| hint.fields.from.clone())
+                    .filter(|from| !from.is_empty())
+                    .ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "external_address (or from) is required for route methods"
+                        )
+                    })?
+            } else {
+                bail!("external_address (or from) is required for route methods");
+            };
             let protocol = if is_eth_alias {
                 ProtocolKind::Eth
             } else if is_web30_alias {
@@ -8654,9 +9197,42 @@ fn run_unified_account_rpc(
                     );
                 }
             }
-            let nonce = explicit_nonce
-                .or(inferred_nonce)
-                .ok_or_else(|| anyhow::anyhow!("nonce is required for route methods"))?;
+            let persona = PersonaAddress {
+                persona_type: persona_type.clone(),
+                chain_id,
+                external_address: external_address.clone(),
+            };
+            let binding_owner = router.resolve_binding_owner(&persona).map(str::to_string);
+            let uca_id = match (explicit_uca_id, binding_owner) {
+                (Some(explicit), Some(owner_id)) => {
+                    if explicit != owner_id {
+                        bail!(
+                            "uca_id mismatch for address binding: explicit={} binding_owner={}",
+                            explicit,
+                            owner_id
+                        );
+                    }
+                    explicit
+                }
+                (Some(explicit), None) => explicit,
+                (None, Some(owner_id)) if is_eth_alias => owner_id,
+                (None, Some(_)) => {
+                    bail!("uca_id is required for route methods (ua_route/eth/web30)")
+                }
+                (None, None) if is_eth_alias => {
+                    bail!(
+                        "uca_id is required or address binding must exist for route methods"
+                    )
+                }
+                (None, None) => {
+                    bail!("uca_id is required for route methods (ua_route/eth/web30)")
+                }
+            };
+            let nonce = match explicit_nonce.or(inferred_nonce) {
+                Some(nonce) => nonce,
+                None if is_eth_alias => router.next_nonce_for_persona(&uca_id, &persona)?,
+                None => bail!("nonce is required for route methods"),
+            };
             let wants_cross_chain_atomic =
                 param_as_bool(params, "wants_cross_chain_atomic").unwrap_or(false);
             let explicit_tx_type = param_as_u64(params, "tx_type");
@@ -8714,11 +9290,7 @@ fn run_unified_account_rpc(
 
             let request = RouteRequest {
                 uca_id: uca_id.clone(),
-                persona: PersonaAddress {
-                    persona_type: persona_type.clone(),
-                    chain_id,
-                    external_address,
-                },
+                persona,
                 role,
                 protocol,
                 signature_domain: signature_domain.clone(),
@@ -8769,6 +9341,12 @@ fn run_public_rpc(
     }
     if is_eth_filter_or_reorg_method_m0(method) {
         bail!("unsupported eth filter/reorg method in M0: {}", method);
+    }
+    if method.starts_with("eth_") && !is_eth_plugin_allowed_method(method) {
+        bail!(
+            "eth method not enabled in supervm public rpc plugin scope: {}",
+            method
+        );
     }
     let out = run_chain_query(db, method, params)?;
     Ok((out, false))
@@ -9333,7 +9911,7 @@ fn run_chain_query_mode() -> Result<()> {
         .to_string();
     if method.is_empty() {
         bail!(
-            "missing NOVOVM_CHAIN_QUERY_METHOD; valid: getBlock|getTransaction|getReceipt|getBalance"
+            "missing NOVOVM_CHAIN_QUERY_METHOD; valid: novovm_getSurfaceMap|novovm_get_surface_map|novovm_getMethodDomain|novovm_get_method_domain|getBlock|getTransaction|getReceipt|getBalance|eth_chainId|net_version|web3_clientVersion|eth_blockNumber|eth_getBlockByNumber|eth_getBalance|eth_getCode|eth_getStorageAt|eth_call|eth_estimateGas|eth_gasPrice|eth_maxPriorityFeePerGas|eth_feeHistory"
         );
     }
 
@@ -12914,6 +13492,210 @@ mod tests {
                 .expect("getBalance should succeed");
         assert_eq!(balance_resp["found"].as_bool(), Some(true));
         assert_eq!(balance_resp["balance"].as_u64(), Some(20));
+
+        let block_number_resp = run_chain_query(&db, "eth_blockNumber", &serde_json::json!([]))
+            .expect("eth_blockNumber should succeed");
+        assert_eq!(block_number_resp["block_number"].as_str(), Some("0x5"));
+        assert_eq!(block_number_resp["block_number_u64"].as_u64(), Some(5));
+
+        let chain_id_resp = run_chain_query(&db, "eth_chainId", &serde_json::json!({}))
+            .expect("eth_chainId should succeed");
+        assert_eq!(chain_id_resp["chain_id"].as_u64(), Some(1));
+        assert_eq!(chain_id_resp["chain_id_hex"].as_str(), Some("0x1"));
+
+        let net_version_resp =
+            run_chain_query(&db, "net_version", &serde_json::json!({"chain_id": "0x89"}))
+                .expect("net_version should accept chain selector");
+        assert_eq!(net_version_resp["chain_id"].as_u64(), Some(137));
+        assert_eq!(net_version_resp["net_version"].as_str(), Some("137"));
+
+        let client_version_resp =
+            run_chain_query(&db, "web3_clientVersion", &serde_json::json!({}))
+                .expect("web3_clientVersion should succeed");
+        assert!(
+            client_version_resp["client_version"]
+                .as_str()
+                .is_some_and(|value| value.contains("novovm-node/"))
+        );
+
+        let surface_map_resp =
+            run_chain_query(&db, "novovm_getSurfaceMap", &serde_json::json!({}))
+                .expect("novovm_getSurfaceMap should succeed");
+        assert_eq!(
+            surface_map_resp["host_chain"].as_str(),
+            Some("supervm_mainnet")
+        );
+        assert!(surface_map_resp["domains"]
+            .as_array()
+            .is_some_and(|domains| domains
+                .iter()
+                .any(|domain| domain["domain"].as_str() == Some("novovm_mainnet"))));
+        assert!(surface_map_resp["domains"]
+            .as_array()
+            .is_some_and(|domains| domains
+                .iter()
+                .any(|domain| domain["domain"].as_str() == Some("evm_plugin"))));
+
+        let method_domain_eth_resp = run_chain_query(
+            &db,
+            "novovm_getMethodDomain",
+            &serde_json::json!({"method": "eth_getBalance"}),
+        )
+        .expect("novovm_getMethodDomain should return evm_plugin for eth method");
+        assert_eq!(method_domain_eth_resp["domain"].as_str(), Some("evm_plugin"));
+        assert_eq!(
+            method_domain_eth_resp["control_namespace_disabled"].as_bool(),
+            Some(false)
+        );
+
+        let method_domain_mainnet_resp = run_chain_query(
+            &db,
+            "novovm_getMethodDomain",
+            &serde_json::json!(["ua_bindPersona"]),
+        )
+        .expect("novovm_getMethodDomain should return novovm_mainnet for ua_*");
+        assert_eq!(
+            method_domain_mainnet_resp["domain"].as_str(),
+            Some("novovm_mainnet")
+        );
+
+        let method_domain_control_resp = run_chain_query(
+            &db,
+            "novovm_getMethodDomain",
+            &serde_json::json!({"method": "debug_traceCall"}),
+        )
+        .expect("novovm_getMethodDomain should detect control namespace");
+        assert_eq!(
+            method_domain_control_resp["domain"].as_str(),
+            Some("evm_plugin")
+        );
+        assert_eq!(
+            method_domain_control_resp["control_namespace_disabled"].as_bool(),
+            Some(true)
+        );
+
+        let block_by_number_latest = run_chain_query(
+            &db,
+            "eth_getBlockByNumber",
+            &serde_json::json!(["latest", false]),
+        )
+        .expect("eth_getBlockByNumber latest should succeed");
+        assert_eq!(block_by_number_latest["found"].as_bool(), Some(true));
+        assert_eq!(
+            block_by_number_latest["block"]["height"].as_u64(),
+            Some(5)
+        );
+
+        let block_by_number_hex = run_chain_query(
+            &db,
+            "eth_getBlockByNumber",
+            &serde_json::json!(["0x5", true]),
+        )
+        .expect("eth_getBlockByNumber hex should succeed");
+        assert_eq!(block_by_number_hex["found"].as_bool(), Some(true));
+        assert_eq!(
+            block_by_number_hex["requested_height_hex"].as_str(),
+            Some("0x5")
+        );
+
+        let eth_balance_resp = run_chain_query(
+            &db,
+            "eth_getBalance",
+            &serde_json::json!(["1001", "latest"]),
+        )
+        .expect("eth_getBalance should succeed");
+        assert_eq!(eth_balance_resp["found"].as_bool(), Some(true));
+        assert_eq!(eth_balance_resp["balance"].as_u64(), Some(20));
+        assert_eq!(eth_balance_resp["balance_hex"].as_str(), Some("0x14"));
+
+        let eth_code_resp = run_chain_query(
+            &db,
+            "eth_getCode",
+            &serde_json::json!(["1001", "latest"]),
+        )
+        .expect("eth_getCode should succeed");
+        assert_eq!(eth_code_resp["code"].as_str(), Some("0x"));
+
+        let eth_storage_resp = run_chain_query(
+            &db,
+            "eth_getStorageAt",
+            &serde_json::json!(["1001", "0x2", "latest"]),
+        )
+        .expect("eth_getStorageAt should succeed");
+        assert_eq!(eth_storage_resp["slot_hex"].as_str(), Some("0x2"));
+        assert_eq!(eth_storage_resp["value"].as_str().map(|v| v.len()), Some(66));
+
+        let eth_call_resp = run_chain_query(
+            &db,
+            "eth_call",
+            &serde_json::json!([{ "to": "0x1234", "data": "0x010203" }, "latest"]),
+        )
+        .expect("eth_call should succeed");
+        assert_eq!(eth_call_resp["result"].as_str(), Some("0x"));
+
+        let eth_estimate_gas_resp = run_chain_query(
+            &db,
+            "eth_estimateGas",
+            &serde_json::json!([{ "to": "0x1234", "data": "0x010203" }, "latest"]),
+        )
+        .expect("eth_estimateGas should succeed");
+        assert_eq!(
+            eth_estimate_gas_resp["estimated_gas"].as_u64(),
+            Some(21_048)
+        );
+        assert_eq!(
+            eth_estimate_gas_resp["estimated_gas_hex"].as_str(),
+            Some("0x5238")
+        );
+
+        let eth_gas_price_resp = run_chain_query(&db, "eth_gasPrice", &serde_json::json!({}))
+            .expect("eth_gasPrice should succeed");
+        assert_eq!(eth_gas_price_resp["gas_price"].as_u64(), Some(1_000_000_000));
+        assert_eq!(
+            eth_gas_price_resp["gas_price_hex"].as_str(),
+            Some("0x3b9aca00")
+        );
+
+        let eth_priority_fee_resp = run_chain_query(
+            &db,
+            "eth_maxPriorityFeePerGas",
+            &serde_json::json!({}),
+        )
+        .expect("eth_maxPriorityFeePerGas should succeed");
+        assert_eq!(
+            eth_priority_fee_resp["max_priority_fee_per_gas"].as_u64(),
+            Some(100_000_000)
+        );
+        assert_eq!(
+            eth_priority_fee_resp["max_priority_fee_per_gas_hex"].as_str(),
+            Some("0x5f5e100")
+        );
+
+        let eth_fee_history_resp = run_chain_query(
+            &db,
+            "eth_feeHistory",
+            &serde_json::json!([2, "latest", [10, 20]]),
+        )
+        .expect("eth_feeHistory should succeed");
+        assert_eq!(eth_fee_history_resp["block_count"].as_u64(), Some(2));
+        assert_eq!(
+            eth_fee_history_resp["baseFeePerGas"]
+                .as_array()
+                .map(|items| items.len()),
+            Some(3)
+        );
+        assert_eq!(
+            eth_fee_history_resp["gasUsedRatio"]
+                .as_array()
+                .map(|items| items.len()),
+            Some(2)
+        );
+        assert_eq!(
+            eth_fee_history_resp["reward"]
+                .as_array()
+                .map(|items| items.len()),
+            Some(2)
+        );
     }
 
     #[test]
@@ -14623,6 +15405,13 @@ mod tests {
             ),
             -32036
         );
+        assert_eq!(
+            public_rpc_error_code_for_method(
+                "eth_getCode",
+                "eth method not enabled in supervm public rpc plugin scope: eth_getCode"
+            ),
+            -32601
+        );
     }
 
     #[test]
@@ -14639,6 +15428,22 @@ mod tests {
         .expect_err("eth_getLogs must be rejected in M0")
         .to_string();
         assert!(err.contains("unsupported eth filter/reorg method in M0"));
+    }
+
+    #[test]
+    fn unified_account_public_rpc_eth_non_plugin_method_rejected() {
+        let db = QueryStateDb::default();
+        let mut router = UnifiedAccountRouter::new();
+        let err = run_public_rpc(
+            &db,
+            &mut router,
+            None,
+            "eth_getCode",
+            &serde_json::json!({}),
+        )
+        .expect_err("eth_getCode must be rejected in plugin-only scope")
+        .to_string();
+        assert!(err.contains("eth method not enabled in supervm public rpc plugin scope"));
     }
 
     #[test]

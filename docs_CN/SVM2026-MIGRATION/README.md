@@ -2,6 +2,29 @@
 
 本文档集用于替代 `SVM2026/ROADMAP.md` 中旧的混合叙事，面向 `NOVOVM` 生产版落地。
 
+## 命名与边界铁律（防误导）
+
+- `SuperVM 主网`：唯一主链与共识主体，长期口径不变。
+- `EVM`：仅作为 `SuperVM` 的插件增强能力（兼容接口/钱包接入/多链桥接），不是独立主链。
+- `novovm-node`：`SuperVM` 主网节点二进制，不定义为 “EVM 节点客户端”。
+- `novovm-evm-gateway`：EVM 插件网关（兼容入口），不是独立 EVM 链执行客户端。
+- 文档/代码中出现 `eth_*` 仅表示兼容命名空间，不代表系统架构切换为 “EVM 链模式”。
+
+## 边界自检接口（运行态一眼确认）
+
+- `novovm_getSurfaceMap`：返回 `novovm_mainnet` / `evm_plugin` 两个域的总览。
+- `novovm_getMethodDomain`：输入任意方法名，返回该方法归属域（`novovm_mainnet` / `evm_plugin` / `unknown`）。
+
+最小调用示例（JSON-RPC）：
+
+```json
+{"jsonrpc":"2.0","id":1,"method":"novovm_getSurfaceMap","params":{}}
+```
+
+```json
+{"jsonrpc":"2.0","id":2,"method":"novovm_getMethodDomain","params":{"method":"eth_getBalance"}}
+```
+
 ## 文档清单
 
 1. `NOVOVM-SVM2026-AUDIT-2026-03-03.md`
@@ -18,8 +41,10 @@
    - 能力迁移执行台账模板（按能力项推进、验证、回退）。
 7. `NOVOVM-CAPABILITY-MIGRATION-LEDGER-2026-03-03.md`
    - 能力迁移执行台账（实际推进状态）。
-8. `NOVOVM-CAPABILITY-MIGRATION-LEDGER-AUTO-2026-03-03.md`
-   - 自动回填台账快照（由迁移报告脚本生成）。
+8. `NOVOVM-CAPABILITY-MIGRATION-LEDGER-AUTO-2026-03-04.md`
+   - 自动回填台账快照（当前主口径，full-snapshot 产物回填）。
+9. `NOVOVM-CAPABILITY-MIGRATION-LEDGER-AUTO-2026-03-03.md`
+   - 历史自动快照（保留归档，不作为当前进度主口径）。
 9. `NOVOVM-RELEASE-RC-RUNBOOK-2026-03-05.md`
    - 发布候选（RC）流程手册，固定 `full_snapshot_v1` 复现口径，并新增治理 RPC 安全发布铁律与 `full_snapshot_v2`（含 RPC 暴露门禁）入口。
 

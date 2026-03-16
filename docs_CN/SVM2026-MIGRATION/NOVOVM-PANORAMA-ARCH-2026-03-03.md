@@ -66,6 +66,17 @@
 4. 状态根、回执、性能指标口径由 D2 统一定义，D1 负责采集与透传。
 5. ZK 与 MSM 能力均通过 D1 能力契约暴露，D4 不直连 AOEM 私有符号。
 
+## 5.1 主网与 EVM 插件并存边界（运行态）
+
+| 归属域 | 对外方法命名空间 | 运行定位 |
+|---|---|---|
+| `novovm_mainnet` | `novovm_*` / `ua_*` / `web30_*` | SuperVM 主网原生能力面（主链主体） |
+| `evm_plugin` | `eth_*` / `evm_*` / `txpool_*` / `net_*` / `web3_*` | EVM 兼容插件能力面（不是独立主链） |
+
+运行态可用以下接口直接确认边界：
+- `novovm_getSurfaceMap`
+- `novovm_getMethodDomain`
+
 ## 6. 生产版最小可用形态（MVP）
 
 - D0：AOEM core/persist 变体可用，manifest 校验启用。
@@ -76,17 +87,17 @@
 
 达到上述形态后，再进入历史能力逐项迁入阶段。
 
-## 6.1 域级状态（2026-03-04）
+## 6.1 域级状态（2026-03-15）
 
 口径说明：
 - 这里的 `Done` 指 **D0~D3 的 MVP 完成态**（可持续运行 + 门禁通过），不等同于全部能力项的生产封盘 Done。
 
 | Domain | 状态 | 判定依据 |
 |---|---|---|
-| D0 AOEM 底座域 | Done | AOEM core/persist 可用，manifest 校验启用，F-01/F-02 为 ReadyForMerge |
+| D0 AOEM 底座域 | Done | AOEM core/persist 可用，manifest 校验启用，F-01/F-02 已完成（Done） |
 | D1 执行门面域 | Done | `submit_ops` + 统一错误码/指标输出稳定，functional gate 持续通过 |
-| D2 协议核心域 | Done | 交易生命周期/状态根/回执标准化稳定，F-03/F-04 为 ReadyForMerge |
-| D3 共识网络域 | Done | 共识+网络+协调+Adapter 主链路闭环稳定，F-05/F-06/F-07/F-08 为 ReadyForMerge |
+| D2 协议核心域 | Done | 交易生命周期/状态根/回执标准化稳定，F-03/F-04 已完成（Done） |
+| D3 共识网络域 | Done | 共识+网络+协调+Adapter 主链路闭环稳定，F-05/F-06/F-07/F-08 已完成（Done） |
 
 ## 7. ZK+MSM 落位说明
 

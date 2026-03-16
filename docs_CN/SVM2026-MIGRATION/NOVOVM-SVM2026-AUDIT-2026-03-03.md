@@ -7,6 +7,7 @@
 - 为 NOVOVM 新架构文档与迁移计划提供证据基础。
 
 > 说明：本次是“架构与工程审计”，不是密码学/共识算法正确性再验证。
+> 进展注记（2026-03-15）：本文 3.3 记录的是 SVM2026 原始仓热点；其中 `quorum_cert` 批量签名验证 TODO 已在 `SUPERVM/crates/novovm-consensus/src/quorum_cert.rs` 落地为 `ed25519-dalek verify_batch`。
 
 ## 2. 审计输入
 

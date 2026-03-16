@@ -127,6 +127,38 @@ powershell -ExecutionPolicy Bypass -File scripts/migration/run_release_candidate
   - `unified_account_block_release_pass`
   - `unified_account_summary_json`
 
+## 10.1 可选：Testnet Bootstrap（TNET-B）纳入快照/RC
+
+当需要把 `testnet_bootstrap` 门禁结果写入 `release-snapshot/rc-candidate` 时，使用以下参数：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/migration/run_release_candidate.ps1 `
+  -RepoRoot . `
+  -RcRef novovm-rc-2026-03-15-testnet-bootstrap `
+  -IncludeTestnetBootstrapGate
+```
+
+说明：
+- 该模式会把 `testnet_bootstrap_gate_enabled/pass` 写入 `acceptance-gate-summary.json`。
+- `release-snapshot.json` 会额外包含：
+  - `enabled_gates.testnet_bootstrap`
+  - `key_results.testnet_bootstrap_pass`
+  - `key_results.testnet_bootstrap_validators_pass`
+  - `key_results.testnet_bootstrap_batches_pass`
+  - `key_results.testnet_bootstrap_tps_pass`
+  - `key_results.testnet_bootstrap_network_messages_pass`
+  - `evidence.testnet_bootstrap_summary_json`
+- `rc-candidate.json` 会同步包含：
+  - `testnet_bootstrap_gate_enabled`
+  - `testnet_bootstrap_pass`
+  - `testnet_bootstrap_validators_pass`
+  - `testnet_bootstrap_batches_pass`
+  - `testnet_bootstrap_tps_pass`
+  - `testnet_bootstrap_network_messages_pass`
+  - `testnet_bootstrap_report_json`
+  - `testnet_bootstrap_summary_json`
+- 若不启用该参数，`full_snapshot_*` 默认语义保持不变（不强制进入默认发布面）。
+
 ## 11. EVM Overlap Router（A15）信号接线
 
 - `run_migration_acceptance_gate.ps1` 已增加 `overlap_router_signal`（默认开启），并写入：

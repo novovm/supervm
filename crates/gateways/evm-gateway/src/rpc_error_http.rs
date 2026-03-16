@@ -52,6 +52,9 @@ pub(super) fn parse_named_error_csv_tokens(message: &str, name: &str) -> Vec<Str
 
 pub(super) fn gateway_error_code_for_method(method: &str, message: &str) -> i64 {
     let lower = message.to_ascii_lowercase();
+    if lower.contains("standalone evm control namespace disabled on supervm host mode") {
+        return -32601;
+    }
     let is_evm_write_method = method == "eth_sendRawTransaction"
         || method == "eth_sendTransaction"
         || method == "evm_sendRawTransaction"

@@ -8,7 +8,7 @@ description = "NOVOVM consensus migration skeleton from SVM2026"
 
 [dependencies]
 # Cryptography (Ed25519 signatures)
-ed25519-dalek = { version = "2", features = ["rand_core"] }
+ed25519-dalek = { version = "2", features = ["rand_core", "batch"] }
 rand = "0.8"
 sha2 = "0.10"
 

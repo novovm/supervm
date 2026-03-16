@@ -363,6 +363,145 @@ fn eth_chain_id_and_net_version_accept_chain_params() {
 }
 
 #[test]
+fn novovm_surface_map_lists_mainnet_and_evm_plugin_domains() {
+    let backend = GatewayEthTxIndexStoreBackend::Memory;
+    let mut router = UnifiedAccountRouter::new();
+    let mut eth_tx_index = HashMap::new();
+    let mut evm_settlement_index_by_id = HashMap::new();
+    let mut evm_settlement_index_by_tx = HashMap::new();
+    let mut evm_pending_payout_by_settlement = HashMap::new();
+    let spool_dir = std::env::temp_dir().join(format!(
+        "novovm-gateway-surface-map-{}-{}",
+        std::process::id(),
+        now_unix_millis()
+    ));
+    fs::create_dir_all(&spool_dir).expect("create spool dir");
+    let mut eth_filters = GatewayEthFilterState::default();
+    let mut ctx = GatewayMethodContext {
+        eth_tx_index_store: &backend,
+        eth_default_chain_id: 1,
+        spool_dir: &spool_dir,
+        eth_filters: &mut eth_filters,
+    };
+
+    let (surface, changed) = run_gateway_method(
+        &mut router,
+        &mut eth_tx_index,
+        &mut evm_settlement_index_by_id,
+        &mut evm_settlement_index_by_tx,
+        &mut evm_pending_payout_by_settlement,
+        &mut ctx,
+        "novovm_getSurfaceMap",
+        &serde_json::json!({}),
+    )
+    .expect("novovm_getSurfaceMap should succeed");
+    assert!(!changed);
+    assert_eq!(surface["host_chain"].as_str(), Some("supervm_mainnet"));
+    assert_eq!(surface["evm_plugin_enabled"].as_bool(), Some(true));
+    let domains = surface["domains"]
+        .as_array()
+        .expect("domains should be an array");
+    assert!(domains
+        .iter()
+        .any(|item| item["domain"].as_str() == Some("novovm_mainnet")));
+    assert!(domains
+        .iter()
+        .any(|item| item["domain"].as_str() == Some("evm_plugin")));
+
+    let _ = fs::remove_dir_all(&spool_dir);
+}
+
+#[test]
+fn novovm_method_domain_reports_mainnet_vs_evm_plugin() {
+    let backend = GatewayEthTxIndexStoreBackend::Memory;
+    let mut router = UnifiedAccountRouter::new();
+    let mut eth_tx_index = HashMap::new();
+    let mut evm_settlement_index_by_id = HashMap::new();
+    let mut evm_settlement_index_by_tx = HashMap::new();
+    let mut evm_pending_payout_by_settlement = HashMap::new();
+    let spool_dir = std::env::temp_dir().join(format!(
+        "novovm-gateway-method-domain-{}-{}",
+        std::process::id(),
+        now_unix_millis()
+    ));
+    fs::create_dir_all(&spool_dir).expect("create spool dir");
+    let mut eth_filters = GatewayEthFilterState::default();
+    let mut ctx = GatewayMethodContext {
+        eth_tx_index_store: &backend,
+        eth_default_chain_id: 1,
+        spool_dir: &spool_dir,
+        eth_filters: &mut eth_filters,
+    };
+
+    let (eth_method, changed_eth_method) = run_gateway_method(
+        &mut router,
+        &mut eth_tx_index,
+        &mut evm_settlement_index_by_id,
+        &mut evm_settlement_index_by_tx,
+        &mut evm_pending_payout_by_settlement,
+        &mut ctx,
+        "novovm_getMethodDomain",
+        &serde_json::json!({ "method": "eth_getBalance" }),
+    )
+    .expect("eth method domain query should succeed");
+    assert!(!changed_eth_method);
+    assert_eq!(eth_method["host_chain"].as_str(), Some("supervm_mainnet"));
+    assert_eq!(eth_method["domain"].as_str(), Some("evm_plugin"));
+    assert_eq!(
+        eth_method["control_namespace_disabled"].as_bool(),
+        Some(false)
+    );
+
+    let (mainnet_method, changed_mainnet_method) = run_gateway_method(
+        &mut router,
+        &mut eth_tx_index,
+        &mut evm_settlement_index_by_id,
+        &mut evm_settlement_index_by_tx,
+        &mut evm_pending_payout_by_settlement,
+        &mut ctx,
+        "novovm_getMethodDomain",
+        &serde_json::json!(["ua_bindPersona"]),
+    )
+    .expect("mainnet method domain query should succeed");
+    assert!(!changed_mainnet_method);
+    assert_eq!(mainnet_method["domain"].as_str(), Some("novovm_mainnet"));
+
+    let (control_method, changed_control_method) = run_gateway_method(
+        &mut router,
+        &mut eth_tx_index,
+        &mut evm_settlement_index_by_id,
+        &mut evm_settlement_index_by_tx,
+        &mut evm_pending_payout_by_settlement,
+        &mut ctx,
+        "novovm_get_method_domain",
+        &serde_json::json!(["debug_traceCall"]),
+    )
+    .expect("control namespace domain query should succeed");
+    assert!(!changed_control_method);
+    assert_eq!(control_method["domain"].as_str(), Some("evm_plugin"));
+    assert_eq!(
+        control_method["control_namespace_disabled"].as_bool(),
+        Some(true)
+    );
+
+    let (unknown_method, changed_unknown_method) = run_gateway_method(
+        &mut router,
+        &mut eth_tx_index,
+        &mut evm_settlement_index_by_id,
+        &mut evm_settlement_index_by_tx,
+        &mut evm_pending_payout_by_settlement,
+        &mut ctx,
+        "novovm_getMethodDomain",
+        &serde_json::json!({ "method": "totally_unknown_method" }),
+    )
+    .expect("unknown method domain query should succeed");
+    assert!(!changed_unknown_method);
+    assert_eq!(unknown_method["domain"].as_str(), Some("unknown"));
+
+    let _ = fs::remove_dir_all(&spool_dir);
+}
+
+#[test]
 fn eth_tx_hash_queries_respect_default_chain_scope_unless_overridden() {
     let _guard = env_test_guard();
     let backend = GatewayEthTxIndexStoreBackend::Memory;
@@ -12434,6 +12573,13 @@ fn gateway_error_code_maps_txpool_reject_reasons() {
         gateway_error_code_for_method("web30_sendRawTransaction", &unknown),
         -32030
     );
+    assert_eq!(
+        gateway_error_code_for_method(
+            "engine_getPayloadV3",
+            "standalone evm control namespace disabled on supervm host mode: engine_getPayloadV3"
+        ),
+        -32601
+    );
 }
 
 #[test]
@@ -13915,7 +14061,7 @@ fn fuzz_min_rpc_params_seeded_corpus_no_panic() {
             }
         };
 
-        let latest = ((fuzz_next(&mut state) % 50_000) + 1) as u64;
+        let latest = (fuzz_next(&mut state) % 50_000) + 1;
         let no_panic = std::panic::catch_unwind(|| {
             let _ = parse_eth_block_query_tag(&params);
             let _ = parse_eth_block_query_tx_index(&params);

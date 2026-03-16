@@ -135,6 +135,7 @@
 - 已完成：新增 `run_slash_policy_external_gate.ps1` 并接入 `run_migration_acceptance_gate.ps1`（`overall_pass` 新增 `slash_policy_external_pass` 约束），覆盖 policy 外置化正向与 `policy_invalid/policy_parse_failed` 负向门禁。
 - 已完成：`novovm-consensus` 罚没恢复最小闭环：`SlashPolicy.cooldown_epochs` + 自动解禁（`state.height >= jailed_until_epoch`），`SlashExecution` 已输出 `jailed_until_epoch/cooldown_epochs`。
 - 已完成：新增 `run_unjail_cooldown_gate.ps1` 并接入 `run_migration_acceptance_gate.ps1`（`overall_pass` 新增 `unjail_cooldown_pass` 约束），覆盖“未到期拒绝 + 到期自动解禁”门禁。
+- 已完成：新增 `run_testnet_bootstrap_gate.ps1`（本地多节点 testnet bootstrap 闭环），并接入 `run_migration_acceptance_gate.ps1` 可选聚合（`IncludeTestnetBootstrapGate`，`overall_pass` 新增 `testnet_bootstrap_pass` 约束）。
 - 已完成：RPC 查询门禁稳健性修复：`run_chain_query_rpc_gate.ps1` 兼容 PowerShell 无 `ConvertFrom-Json -Depth` 参数；`novovm-node` query-db 读取兼容 UTF-8 BOM，默认 acceptance 全链路恢复稳定。
 - 已完成：自动台账回填脚本 `generate_capability_ledger_auto.ps1`，可基于最新报告生成当日台账快照。
 - 已完成：`F-03/F-04` 最小协议骨架 `crates/novovm-protocol`（`ids/messages/wire/protocol_catalog`）迁移起步，可作为网络与共识共享协议类型入口。

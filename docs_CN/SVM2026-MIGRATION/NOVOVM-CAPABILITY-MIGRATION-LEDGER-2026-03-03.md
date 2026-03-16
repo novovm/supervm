@@ -210,6 +210,8 @@
 - 已完成：新增 `scripts/migration/run_unjail_cooldown_gate.ps1`（正向：jail -> cooldown 到期自动 unjail；负向：未到期拒绝），并接入 `scripts/migration/run_migration_acceptance_gate.ps1`（`overall_pass` 新增 `unjail_cooldown_pass` 约束）。
 - 证据样本：`artifacts/migration/acceptance-gate-unjail-full/unjail-cooldown-gate/unjail-cooldown-gate-summary.json`（`pass=True`）。
 - 证据样本：`artifacts/migration/acceptance-gate-unjail-full/acceptance-gate-summary.json`（`overall_pass=True`，含 `unjail_cooldown_pass=True`）。
+- 已完成：新增 `scripts/migration/run_testnet_bootstrap_gate.ps1`（本地多节点 testnet bootstrap 闭环），并接入 `scripts/migration/run_migration_acceptance_gate.ps1` 可选聚合（`IncludeTestnetBootstrapGate`，`overall_pass` 新增 `testnet_bootstrap_pass` 约束）。
+- 证据样本：`artifacts/migration/testnet-bootstrap-gate-2026-03-15/testnet-bootstrap-gate-summary.json`（`pass=True`）与 `artifacts/migration/acceptance-gate-testnet-bootstrap-quick/acceptance-gate-summary.json`（`overall_pass=True`, `testnet_bootstrap_pass=True`）。
 - 已完成：`view-change`（超时换主）与 `fork-choice`（高度/权重优先）已接入 `novovm-consensus` 与 `consensus_negative_smoke`，功能一致性门禁通过（`artifacts/migration/functional-smoke-consensus-view-fork/functional-consistency.json`，`consensus_negative_signal.view_change=True`，`fork_choice=True`）。
 - 已完成：GA 主线回归快照（2026-03-07，post-fix）全绿：`full_snapshot_ga_v1` 在 `release-snapshot-ga-post-fix-2026-03-07` 下复跑通过，`overall_pass=True`。
 - 证据样本：`artifacts/migration/release-snapshot-ga-post-fix-2026-03-07/release-snapshot.json`（`governance_market_policy_pass=True`，`governance_market_policy_engine_pass=True`，`governance_market_policy_treasury_pass=True`，`governance_market_policy_orchestration_pass=True`，`governance_token_economics_pass=True`，`governance_treasury_spend_pass=True`）。
@@ -258,3 +260,5 @@
 - 证据样本：本地 `cargo clippy -p novovm-node -- -D warnings` 通过；`run_migration_acceptance_gate.ps1 -FullSnapshotProfile -AllowedRegressionPct -10` 复跑 `overall_pass=True`（`functional_pass=True`, `performance_pass=True`）。
 - 已完成（2026-03-15）：`novovm-network` sync-pull followup fanout 参数解析缓存化：`NOVOVM_NETWORK_SYNC_PULL_FOLLOWUP_FANOUT_MAX` 改为 `OnceLock` 首次解析后复用，避免热路径重复 env 读取与 parse。
 - 证据样本：本地 `cargo clippy -p novovm-network -- -D warnings` 通过；`run_migration_acceptance_gate.ps1 -FullSnapshotProfile -AllowedRegressionPct -10` 复跑 `overall_pass=True`。
+- 已完成（2026-03-15）：`aoem-bindings` 已与 AOEM 原生头文件完成 `53/53` 符号对齐加载，补齐 `zkvm_prove_verify_v1`、`mldsa*`、`sha/keccak/blake3`、`groth16_verify*`、`bulletproof_prove/verify_v1`、`ringct_prove/verify_v1`、`kms/hsm_sign_v1`、`execute/execute_batch/execute_primitive_v1` 的动态绑定与可调用封装。
+- 证据样本：本地 `cargo check -p aoem-bindings` 通过（`Finished dev profile`）；头文件符号对比结果 `header=53, loaded=53, missing=0`（对照 `D:\\WEB3_AI\\AOEM\\crates\\ffi\\aoem-ffi\\include\\aoem.h`）。

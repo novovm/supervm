@@ -20,10 +20,10 @@
 | F-07 | 网络层（核心完成，生产待收口） | `supervm-network` + `src/l4-network` | `novovm-network`（已落地骨架 + `UdpTransport`） | 重构 + 收口 | P1 |
 | F-08 | Chain Adapter 接口 | `supervm-chainlinker-api` | `novovm-adapter-api`（契约）+ `novovm-adapter-novovm`（native）+ `novovm-adapter-sample-plugin`（plugin） | 复用后裁剪 | P1 |
 | F-09 | zk 执行与聚合 | `src/l2-executor` | `novovm-prover`（已落地骨架 + contract smoke） | 重构 | P1 |
-| F-10 | Web3 存储服务 | `src/web3-storage` | `novovm-storage-service`（规划） | 重构 | P2 |
-| F-11 | 域名系统 | `src/domain-registry-sdk` | `novovm-app-domain`（规划） | 暂缓到生态层 | P3 |
-| F-12 | DeFi 核心 | `src/defi-core` | `novovm-app-defi`（规划） | 暂缓到生态层 | P3 |
-| F-13 | 多链插件能力 | `plugins/*` | `novovm-adapters/*`（规划） | 暂缓（最后） | P4 |
+| F-10 | Web3 存储服务（按裁剪口径） | `src/web3-storage` | `novovm-node` query/rpc + governance audit persistence（已落地） | 重构（裁剪口径已闭环） | P2 |
+| F-11 | 域名系统（按裁剪口径） | `src/domain-registry-sdk` | `novovm-consensus` governance domain policy（已落地） | 重构（裁剪口径已闭环） | P3 |
+| F-12 | DeFi 核心（按裁剪口径） | `src/defi-core` | `novovm-consensus` token economics + treasury spend + market governance（已落地） | 重构（裁剪口径已闭环） | P3 |
+| F-13 | 多链插件能力（按裁剪口径） | `plugins/*` | `novovm-adapter-api` + `novovm-adapter-novovm` + `novovm-adapter-sample-plugin`（已落地） | 重构（裁剪口径已闭环） | P4 |
 | F-14 | 历史 vm-runtime 杂糅能力 | `src/vm-runtime/*` | 分拆到 D2/D3/D4 | 重构优先，不整体迁 | P1 |
 | F-15 | AOEM ZK 能力契约（prove/verify） | `crates/optional/zkvm-executor` + `aoem-runtime-cli(zkvm-executor feature)` | `novovm-prover`（已落地）+ `novovm-exec` 能力探测面 | 重构为稳定契约 | P0 |
 | F-16 | AOEM MSM 加速能力（BLS12-381） | `aoem-engine` + `aoem-ffi`（`BlsMsmBackend/BlsMsmDecision`） | `novovm-prover`（已落地）+ `novovm-exec` 能力探测面 | 复用并标准化输出 | P0 |
@@ -50,7 +50,7 @@
 
 ## 3.2 共识/网络核验口径（2026-03-03）
 
-- 共识层：按迁移生产口径约 `80%`（核心可运行，仍有批量验证收口项）。
+- 共识层：按迁移生产口径由 `~80%` 收口到 `Done`（`novovm-consensus` 已补齐 QC 批量签名验证，2026-03-15）。
 - 网络层：核心功能已完成并通过主体测试，按生产封盘口径建议 `90~95%`。
 - 证据文档：`SVM2026-LAYER-STATUS-VERIFIED-2026-03-03.md`。
 
@@ -68,7 +68,7 @@
 | B | 共识与终局（执行-共识解耦） | F-05 | Done（MVP；`novovm-consensus` + `consensus_negative_signal` 持续通过） |
 | C | P2P / gossip / 同步 | F-07 + F-08 | Done（MVP；`novovm-network` + Adapter 双后端闭环稳定，`compare + ABI/符号/注册表` 负向门禁均已默认开启并通过） |
 | D | ZK 证明路径（prover/verifier） | F-15/F-16 | Done（迁移契约、门禁与 runtime 能力已就绪；`zkvm_prove/zkvm_verify/msm_backend` 已回填） |
-| E | RPC / CLI / DevEx | F-10~F-13（裁剪后） | NotStarted |
+| E | RPC / CLI / DevEx | F-10~F-13（裁剪后） | Done（按裁剪口径，见能力台账 F-10~F-13） |
 
 ## 4. 不建议做法
 

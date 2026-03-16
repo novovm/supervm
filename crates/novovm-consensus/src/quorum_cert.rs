@@ -4,7 +4,7 @@
 // 使用 Ed25519 签名（Phase 4.1 已完成 batch verify PoC）
 
 use crate::types::{BFTError, BFTResult, Hash, Height, NodeId, ValidatorSet};
-use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
+use ed25519_dalek::{verify_batch, Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -172,8 +172,10 @@ impl QuorumCertificate {
         validator_set: &ValidatorSet,
         public_keys: &HashMap<NodeId, VerifyingKey>,
     ) -> BFTResult<()> {
-        // TODO: 使用 ed25519_dalek::verify_batch() 进行批量验证
-        // 当前实现：逐个验证（Phase 4.2 Week 3 优化）
+        // 先做结构/语义检查，再进入 batch verify。
+        let mut messages: Vec<Vec<u8>> = Vec::with_capacity(self.votes.len());
+        let mut signatures: Vec<Signature> = Vec::with_capacity(self.votes.len());
+        let mut verifying_keys: Vec<VerifyingKey> = Vec::with_capacity(self.votes.len());
 
         for vote in &self.votes {
             // 检查是否是验证者
@@ -196,13 +198,22 @@ impl QuorumCertificate {
                 ));
             }
 
-            // 验证签名
+            // 收集 batch verify 输入
             let public_key = public_keys
                 .get(&vote.voter_id)
                 .ok_or(BFTError::NotValidator(vote.voter_id))?;
+            let signature = Signature::from_slice(&vote.signature).map_err(|e| {
+                BFTError::InvalidSignature(format!("Invalid signature format: {}", e))
+            })?;
 
-            vote.verify(public_key)?;
+            messages.push(Vote::construct_message(&vote.proposal_hash, vote.height));
+            signatures.push(signature);
+            verifying_keys.push(*public_key);
         }
+
+        let message_refs: Vec<&[u8]> = messages.iter().map(Vec::as_slice).collect();
+        verify_batch(&message_refs, &signatures, &verifying_keys)
+            .map_err(|e| BFTError::InvalidSignature(format!("Batch verification failed: {}", e)))?;
 
         Ok(())
     }
@@ -361,5 +372,29 @@ mod tests {
         qc.add_vote(Vote::new(2, [8u8; 32], 33, &signing_keys[2]), 2);
         assert_eq!(qc.total_weight, 7);
         assert!(qc.verify(&validator_set, &public_keys).is_ok()); // quorum=7
+    }
+
+    #[test]
+    fn test_qc_batch_verify_rejects_tampered_signature() {
+        let validator_set = ValidatorSet::new_equal_weight(vec![0, 1, 2, 3]);
+        let signing_keys: Vec<_> = (0..4).map(|_| SigningKey::generate(&mut OsRng)).collect();
+        let public_keys: HashMap<NodeId, VerifyingKey> = signing_keys
+            .iter()
+            .enumerate()
+            .map(|(i, sk)| (i as NodeId, sk.verifying_key()))
+            .collect();
+
+        let mut qc = QuorumCertificate::new([9u8; 32], 44);
+        for (i, signing_key) in signing_keys.iter().enumerate().take(3) {
+            let vote = Vote::new(i as NodeId, [9u8; 32], 44, signing_key);
+            qc.add_vote(vote, 1);
+        }
+        assert_eq!(qc.total_weight, 3);
+
+        // 篡改一个签名字节，确保 batch verify 失败。
+        qc.votes[1].signature[0] ^= 0x01;
+
+        let result = qc.verify(&validator_set, &public_keys);
+        assert!(matches!(result, Err(BFTError::InvalidSignature(_))));
     }
 }

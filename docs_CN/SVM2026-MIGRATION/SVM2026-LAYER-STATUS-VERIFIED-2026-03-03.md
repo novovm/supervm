@@ -6,6 +6,13 @@
 - 网络层（轻量抽象）：`D:\WorksArea\SVM2026\supervm-network`
 - 网络层（L4 主实现）：`D:\WorksArea\SVM2026\src\l4-network`
 
+## 1.1 迁移进展更新（2026-03-15）
+
+- 本文档第 3.1 节“批量签名验证 TODO”在 `NOVOVM` 迁移实现中已收口：
+  - 落地位置：`SUPERVM/crates/novovm-consensus/src/quorum_cert.rs`
+  - 变更：`QC` 签名验证改为 `ed25519-dalek verify_batch`（批量验签路径）
+  - 回归：`cargo test -p novovm-consensus quorum_cert::tests` 全通过
+
 ## 2. 核验方法
 
 1. 代码结构审计（模块/依赖/TODO）。
@@ -61,4 +68,4 @@
 
 1. 在迁移台账中将共识标注为 `~80%`，网络标注为 `核心完成/生产待收口`。
 2. 将 `l4-network` 的 doctest 修复列为网络迁移前置项。
-3. 将 `quorum_cert` 的批量验证补齐列为共识迁移前置项。
+3. `quorum_cert` 批量验证补齐：已完成（2026-03-15，见 1.1）。

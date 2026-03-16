@@ -13,6 +13,7 @@ param(
     [ValidateRange(1, 64)]
     [int]$GovernanceRpcMldsaFfiExpectedRequests = 9,
     [switch]$IncludeUnifiedAccountGate,
+    [switch]$IncludeTestnetBootstrapGate,
     [string]$AoemPluginDir = "",
     [bool]$PreferComposedAoemRuntime = $true,
     [switch]$FullSnapshotProfileV2,
@@ -110,6 +111,7 @@ if ($FullSnapshotProfileGA) {
         -GovernanceRpcMldsaFfiBind $GovernanceRpcMldsaFfiBind `
         -GovernanceRpcMldsaFfiExpectedRequests $GovernanceRpcMldsaFfiExpectedRequests `
         -IncludeUnifiedAccountGate:$IncludeUnifiedAccountGate `
+        -IncludeTestnetBootstrapGate:$IncludeTestnetBootstrapGate `
         -FullSnapshotProfileGA | Out-Null
 } elseif ($FullSnapshotProfileV2) {
     & $snapshotScript `
@@ -125,6 +127,7 @@ if ($FullSnapshotProfileGA) {
         -GovernanceRpcMldsaFfiBind $GovernanceRpcMldsaFfiBind `
         -GovernanceRpcMldsaFfiExpectedRequests $GovernanceRpcMldsaFfiExpectedRequests `
         -IncludeUnifiedAccountGate:$IncludeUnifiedAccountGate `
+        -IncludeTestnetBootstrapGate:$IncludeTestnetBootstrapGate `
         -FullSnapshotProfileV2 | Out-Null
 } else {
     & $snapshotScript `
@@ -139,7 +142,8 @@ if ($FullSnapshotProfileGA) {
         -GovernanceRpcMldsaFfiAoemRoot $GovernanceRpcMldsaFfiAoemRoot `
         -GovernanceRpcMldsaFfiBind $GovernanceRpcMldsaFfiBind `
         -GovernanceRpcMldsaFfiExpectedRequests $GovernanceRpcMldsaFfiExpectedRequests `
-        -IncludeUnifiedAccountGate:$IncludeUnifiedAccountGate | Out-Null
+        -IncludeUnifiedAccountGate:$IncludeUnifiedAccountGate `
+        -IncludeTestnetBootstrapGate:$IncludeTestnetBootstrapGate | Out-Null
 }
 
 $snapshotJson = Join-Path $snapshotOutputDir "release-snapshot.json"
@@ -225,6 +229,31 @@ $opsControlSurfaceReportJson = if ($acceptanceHasOpsControlSurfaceReportJson) { 
 $snapshotHasOpsControlSurfaceSummaryJson = $null -ne $snapshot.evidence -and $snapshot.evidence.PSObject.Properties.Match("ops_control_surface_summary_json").Count -gt 0
 $opsControlSurfaceSummaryJson = if ($snapshotHasOpsControlSurfaceSummaryJson) { [string]$snapshot.evidence.ops_control_surface_summary_json } else { "" }
 
+$acceptanceHasTestnetBootstrapGateEnabled = $null -ne $acceptance -and $acceptance.PSObject.Properties.Match("testnet_bootstrap_gate_enabled").Count -gt 0
+$acceptanceHasTestnetBootstrapPass = $null -ne $acceptance -and $acceptance.PSObject.Properties.Match("testnet_bootstrap_pass").Count -gt 0
+$acceptanceHasTestnetBootstrapReportJson = $null -ne $acceptance -and $acceptance.PSObject.Properties.Match("testnet_bootstrap_report_json").Count -gt 0
+$snapshotHasTestnetBootstrapPass = $null -ne $snapshot.key_results -and $snapshot.key_results.PSObject.Properties.Match("testnet_bootstrap_pass").Count -gt 0
+$snapshotHasTestnetBootstrapValidatorsPass = $null -ne $snapshot.key_results -and $snapshot.key_results.PSObject.Properties.Match("testnet_bootstrap_validators_pass").Count -gt 0
+$snapshotHasTestnetBootstrapBatchesPass = $null -ne $snapshot.key_results -and $snapshot.key_results.PSObject.Properties.Match("testnet_bootstrap_batches_pass").Count -gt 0
+$snapshotHasTestnetBootstrapTpsPass = $null -ne $snapshot.key_results -and $snapshot.key_results.PSObject.Properties.Match("testnet_bootstrap_tps_pass").Count -gt 0
+$snapshotHasTestnetBootstrapNetworkMessagesPass = $null -ne $snapshot.key_results -and $snapshot.key_results.PSObject.Properties.Match("testnet_bootstrap_network_messages_pass").Count -gt 0
+$snapshotHasTestnetBootstrapSummaryJson = $null -ne $snapshot.evidence -and $snapshot.evidence.PSObject.Properties.Match("testnet_bootstrap_summary_json").Count -gt 0
+
+$testnetBootstrapGateEnabled = if ($acceptanceHasTestnetBootstrapGateEnabled) { [bool]$acceptance.testnet_bootstrap_gate_enabled } else { $false }
+$testnetBootstrapPass = if ($snapshotHasTestnetBootstrapPass) {
+    [bool]$snapshot.key_results.testnet_bootstrap_pass
+} elseif ($testnetBootstrapGateEnabled -and $acceptanceHasTestnetBootstrapPass) {
+    [bool]$acceptance.testnet_bootstrap_pass
+} else {
+    $true
+}
+$testnetBootstrapValidatorsPass = if ($snapshotHasTestnetBootstrapValidatorsPass) { [bool]$snapshot.key_results.testnet_bootstrap_validators_pass } elseif ($testnetBootstrapGateEnabled) { $false } else { $true }
+$testnetBootstrapBatchesPass = if ($snapshotHasTestnetBootstrapBatchesPass) { [bool]$snapshot.key_results.testnet_bootstrap_batches_pass } elseif ($testnetBootstrapGateEnabled) { $false } else { $true }
+$testnetBootstrapTpsPass = if ($snapshotHasTestnetBootstrapTpsPass) { [bool]$snapshot.key_results.testnet_bootstrap_tps_pass } elseif ($testnetBootstrapGateEnabled) { $false } else { $true }
+$testnetBootstrapNetworkMessagesPass = if ($snapshotHasTestnetBootstrapNetworkMessagesPass) { [bool]$snapshot.key_results.testnet_bootstrap_network_messages_pass } elseif ($testnetBootstrapGateEnabled) { $false } else { $true }
+$testnetBootstrapReportJson = if ($acceptanceHasTestnetBootstrapReportJson) { [string]$acceptance.testnet_bootstrap_report_json } else { "" }
+$testnetBootstrapSummaryJson = if ($snapshotHasTestnetBootstrapSummaryJson) { [string]$snapshot.evidence.testnet_bootstrap_summary_json } else { "" }
+
 $rcCandidate = [ordered]@{
     generated_at_utc = [DateTime]::UtcNow.ToString("o")
     rc_ref = $RcRef
@@ -293,6 +322,14 @@ $rcCandidate = [ordered]@{
     unified_account_block_merge_pass = $unifiedAccountBlockMergePass
     unified_account_block_release_pass = $unifiedAccountBlockReleasePass
     unified_account_summary_json = $unifiedAccountSummaryJson
+    testnet_bootstrap_gate_enabled = $testnetBootstrapGateEnabled
+    testnet_bootstrap_pass = $testnetBootstrapPass
+    testnet_bootstrap_validators_pass = $testnetBootstrapValidatorsPass
+    testnet_bootstrap_batches_pass = $testnetBootstrapBatchesPass
+    testnet_bootstrap_tps_pass = $testnetBootstrapTpsPass
+    testnet_bootstrap_network_messages_pass = $testnetBootstrapNetworkMessagesPass
+    testnet_bootstrap_report_json = $testnetBootstrapReportJson
+    testnet_bootstrap_summary_json = $testnetBootstrapSummaryJson
     evm_chain_profile_signal_gate_enabled = [bool]$acceptance.evm_chain_profile_signal_gate_enabled
     evm_chain_profile_signal_pass = if ([bool]$acceptance.evm_chain_profile_signal_gate_enabled) { [bool]$acceptance.evm_chain_profile_signal_pass } else { $true }
     evm_chain_profile_signal_report_json = [string]$acceptance.evm_chain_profile_signal_report_json
@@ -393,6 +430,14 @@ $md = @(
     "- unified_account_block_merge_pass: $($rcCandidate.unified_account_block_merge_pass)"
     "- unified_account_block_release_pass: $($rcCandidate.unified_account_block_release_pass)"
     "- unified_account_summary_json: $($rcCandidate.unified_account_summary_json)"
+    "- testnet_bootstrap_gate_enabled: $($rcCandidate.testnet_bootstrap_gate_enabled)"
+    "- testnet_bootstrap_pass: $($rcCandidate.testnet_bootstrap_pass)"
+    "- testnet_bootstrap_validators_pass: $($rcCandidate.testnet_bootstrap_validators_pass)"
+    "- testnet_bootstrap_batches_pass: $($rcCandidate.testnet_bootstrap_batches_pass)"
+    "- testnet_bootstrap_tps_pass: $($rcCandidate.testnet_bootstrap_tps_pass)"
+    "- testnet_bootstrap_network_messages_pass: $($rcCandidate.testnet_bootstrap_network_messages_pass)"
+    "- testnet_bootstrap_report_json: $($rcCandidate.testnet_bootstrap_report_json)"
+    "- testnet_bootstrap_summary_json: $($rcCandidate.testnet_bootstrap_summary_json)"
     "- evm_chain_profile_signal_gate_enabled: $($rcCandidate.evm_chain_profile_signal_gate_enabled)"
     "- evm_chain_profile_signal_pass: $($rcCandidate.evm_chain_profile_signal_pass)"
     "- evm_chain_profile_signal_report_json: $($rcCandidate.evm_chain_profile_signal_report_json)"
@@ -480,6 +525,14 @@ Write-Host "  unified_account_pass: $($rcCandidate.unified_account_pass)"
 Write-Host "  unified_account_block_merge_pass: $($rcCandidate.unified_account_block_merge_pass)"
 Write-Host "  unified_account_block_release_pass: $($rcCandidate.unified_account_block_release_pass)"
 Write-Host "  unified_account_summary_json: $($rcCandidate.unified_account_summary_json)"
+Write-Host "  testnet_bootstrap_gate_enabled: $($rcCandidate.testnet_bootstrap_gate_enabled)"
+Write-Host "  testnet_bootstrap_pass: $($rcCandidate.testnet_bootstrap_pass)"
+Write-Host "  testnet_bootstrap_validators_pass: $($rcCandidate.testnet_bootstrap_validators_pass)"
+Write-Host "  testnet_bootstrap_batches_pass: $($rcCandidate.testnet_bootstrap_batches_pass)"
+Write-Host "  testnet_bootstrap_tps_pass: $($rcCandidate.testnet_bootstrap_tps_pass)"
+Write-Host "  testnet_bootstrap_network_messages_pass: $($rcCandidate.testnet_bootstrap_network_messages_pass)"
+Write-Host "  testnet_bootstrap_report_json: $($rcCandidate.testnet_bootstrap_report_json)"
+Write-Host "  testnet_bootstrap_summary_json: $($rcCandidate.testnet_bootstrap_summary_json)"
 Write-Host "  evm_chain_profile_signal_gate_enabled: $($rcCandidate.evm_chain_profile_signal_gate_enabled)"
 Write-Host "  evm_chain_profile_signal_pass: $($rcCandidate.evm_chain_profile_signal_pass)"
 Write-Host "  evm_chain_profile_signal_report_json: $($rcCandidate.evm_chain_profile_signal_report_json)"

@@ -200,7 +200,7 @@ mod tests {
         let mut bad_version = valid_wire.clone();
         bad_version[4] = bad_version[4].wrapping_add(1);
 
-        let corpus = vec![
+        let corpus = [
             valid_wire,
             short_wire,
             bad_magic,
