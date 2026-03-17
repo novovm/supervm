@@ -145,20 +145,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python - <<'PY'
-import subprocess
-import sys
-import py_compile
-
-files = subprocess.check_output(["git", "ls-files", "*.py"]).decode().splitlines()
-if not files:
-    print("No Python files to check.")
-    sys.exit(0)
-
-for path in files:
-    py_compile.compile(path, doraise=True)
-print(f"Checked {len(files)} Python files.")
-PY
+          mapfile -t files < <(git ls-files '*.py')
+          if [ "${#files[@]}" -eq 0 ]; then
+            echo "No Python files to check."
+            exit 0
+          fi
+          python -m py_compile "${files[@]}"
+          echo "Checked ${#files[@]} Python files."
 
   node:
     name: Node checks
