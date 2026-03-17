@@ -11,6 +11,9 @@ use novovm_adapter_api::{
     PersonaType, ProtocolKind, RouteDecision, RouteRequest, SerializationFormat, StateIR, TxIR,
     TxType, UnifiedAccountError, UnifiedAccountRouter,
 };
+use novovm_adapter_evm_core::{
+    recover_raw_evm_tx_sender_m0, translate_raw_evm_tx_fields_m0, tx_ir_from_raw_fields_m0,
+};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -102,6 +105,17 @@ impl NovoVmAdapter {
         }
     }
 
+    fn supports_evm_raw_signature_path(&self) -> bool {
+        matches!(
+            self.config.chain_type,
+            ChainType::EVM
+                | ChainType::BNB
+                | ChainType::Polygon
+                | ChainType::Avalanche
+                | ChainType::Custom
+        )
+    }
+
     pub fn verify_transactions_batch(&self, txs: &[TxIR]) -> Result<Vec<bool>> {
         self.ensure_initialized()?;
         if txs.is_empty() {
@@ -141,7 +155,13 @@ impl NovoVmAdapter {
                     verify_results[idx] = Self::verify_privacy_tx_signature_v1(tx)?;
                 }
                 _ => {
+                    // For native NOVOVM signatures, keep the fast ed25519 batch path.
+                    // For EVM-family chains, fallback to raw-EVM signature recovery path,
+                    // which mirrors geth's "decode+recover sender" basic validation stage.
                     if tx.signature.len() != 96 {
+                        if self.supports_evm_raw_signature_path() {
+                            verify_results[idx] = verify_evm_raw_tx_signature_v1(tx)?;
+                        }
                         continue;
                     }
                     let mut pubkey_bytes = [0u8; 32];
@@ -886,6 +906,19 @@ fn verify_tx_signature_v1(tx: &TxIR) -> Result<bool> {
     Ok(from_matches)
 }
 
+fn verify_evm_raw_tx_signature_v1(tx: &TxIR) -> Result<bool> {
+    let Some(recovered_from) = recover_raw_evm_tx_sender_m0(&tx.signature)? else {
+        return Ok(false);
+    };
+    let parsed_fields = match translate_raw_evm_tx_fields_m0(&tx.signature) {
+        Ok(v) => v,
+        Err(_) => return Ok(false),
+    };
+    let canonical =
+        tx_ir_from_raw_fields_m0(&parsed_fields, &tx.signature, recovered_from, tx.chain_id);
+    Ok(tx.hash == canonical.hash)
+}
+
 impl ChainAdapter for NovoVmAdapter {
     fn chain_type(&self) -> ChainType {
         self.config.chain_type
@@ -941,7 +974,15 @@ impl ChainAdapter for NovoVmAdapter {
                 }
                 Self::verify_privacy_tx_signature_v1(tx)?
             }
-            _ => verify_tx_signature_v1(tx)?,
+            _ => {
+                if tx.signature.len() == 96 {
+                    verify_tx_signature_v1(tx)?
+                } else if self.supports_evm_raw_signature_path() {
+                    verify_evm_raw_tx_signature_v1(tx)?
+                } else {
+                    false
+                }
+            }
         };
         if !signature_ok {
             return Ok(false);
@@ -1101,6 +1142,9 @@ pub fn create_native_adapter(config: ChainConfig) -> Result<Box<dyn ChainAdapter
 #[cfg(test)]
 mod tests {
     use super::*;
+    use novovm_adapter_evm_core::{
+        recover_raw_evm_tx_sender_m0, translate_raw_evm_tx_fields_m0, tx_ir_from_raw_fields_m0,
+    };
     use web30_core::privacy::generate_ring_keypair;
 
     #[test]
@@ -1161,6 +1205,21 @@ mod tests {
         tx
     }
 
+    fn decode_hex_bytes(hex: &str) -> Vec<u8> {
+        let normalized = hex.trim_start_matches("0x");
+        assert_eq!(normalized.len() % 2, 0, "hex length must be even");
+        let mut out = Vec::with_capacity(normalized.len() / 2);
+        let bytes = normalized.as_bytes();
+        let mut i = 0usize;
+        while i < bytes.len() {
+            let hi = (bytes[i] as char).to_digit(16).expect("hex hi digit");
+            let lo = (bytes[i + 1] as char).to_digit(16).expect("hex lo digit");
+            out.push(((hi << 4) | lo) as u8);
+            i += 2;
+        }
+        out
+    }
+
     #[test]
     fn build_privacy_tx_unsigned_sets_expected_shape() {
         let envelope = PrivacyTxEnvelopeV1 {
@@ -1208,6 +1267,32 @@ mod tests {
         assert!(adapter
             .verify_transaction(&deploy_tx)
             .expect("verify deploy"));
+    }
+
+    #[test]
+    fn verify_transaction_accepts_raw_evm_signature_payload_when_sender_matches() {
+        let mut adapter = NovoVmAdapter::new(ChainConfig {
+            chain_type: ChainType::EVM,
+            chain_id: 1,
+            name: "test".to_string(),
+            enabled: true,
+            custom_config: None,
+        });
+        adapter.initialize().expect("init");
+
+        // Sample EIP-155 legacy signed tx payload (same fixture style as gateway tests).
+        let raw_tx = decode_hex_bytes("0xf86c018502540be40082520894aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa88016345785d8a00008026a0b7e8e4a6c7d58a47f6d29b6cb16f1c7f5c8a7f7ec5b9fa7a1d8c19f6d8f2b87a02a6d2f8c8f42d8f6d8909f94b6f6a6a4d9f7f1c7b6a5d4e3f2c1b0a99887766");
+        let Some(sender) = recover_raw_evm_tx_sender_m0(&raw_tx)
+            .expect("raw sender recovery path should not error")
+        else {
+            return;
+        };
+        let fields = translate_raw_evm_tx_fields_m0(&raw_tx).expect("decode raw tx fields");
+        let tx = tx_ir_from_raw_fields_m0(&fields, &raw_tx, sender, 1);
+        assert!(
+            adapter.verify_transaction(&tx).expect("verify raw tx"),
+            "raw evm signature payload should verify via sender recovery"
+        );
     }
 
     #[test]

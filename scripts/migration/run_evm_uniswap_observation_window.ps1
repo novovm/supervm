@@ -17,6 +17,8 @@ param(
     [UInt64]$PluginMinCandidates = 600,
     [UInt64]$RlpxMaxPeersPerTick = 32,
     [string]$RlpxHelloProfile = "geth",
+    [string]$RlpxProfilePath = "",
+    [switch]$FreshRlpxProfile,
     [switch]$RlpxSingleSession,
     [Nullable[UInt64]]$RlpxCoreTarget = $null,
     [Nullable[UInt64]]$RlpxActiveTarget = $null,
@@ -248,6 +250,47 @@ function Set-ChainScopedEnvValue {
     $Environment[$BaseKey] = $Value
     $Environment[("{0}_CHAIN_{1}" -f $BaseKey, $ChainId)] = $Value
     $Environment[("{0}_CHAIN_{1}" -f $BaseKey, $ChainHex)] = $Value
+}
+
+function Join-BoundedCsv {
+    param(
+        [string[]]$Items,
+        [int]$MaxLength = 28000
+    )
+    $selected = New-Object System.Collections.Generic.List[string]
+    $currentLength = 0
+    $skipped = 0
+    if ($null -eq $Items) {
+        return [ordered]@{
+            csv = ""
+            included = 0
+            skipped = 0
+            length = 0
+        }
+    }
+    foreach ($raw in $Items) {
+        $entry = [string]$raw
+        if ([string]::IsNullOrWhiteSpace($entry)) {
+            continue
+        }
+        $trimmed = $entry.Trim()
+        $delta = $trimmed.Length
+        if ($selected.Count -gt 0) {
+            $delta = $delta + 1 # comma
+        }
+        if (($currentLength + $delta) -gt $MaxLength) {
+            $skipped++
+            continue
+        }
+        $selected.Add($trimmed)
+        $currentLength = $currentLength + $delta
+    }
+    return [ordered]@{
+        csv = ($selected -join ",")
+        included = [int]$selected.Count
+        skipped = [int]$skipped
+        length = [int]$currentLength
+    }
 }
 
 function Invoke-JsonRpc {
@@ -1172,14 +1215,29 @@ if (Test-Path $runTmpDir) {
 New-Item -ItemType Directory -Force -Path $runTmpDir | Out-Null
 $gatewayUaStorePath = Join-Path $runTmpDir "gateway-ua-store.bin"
 $gatewaySpoolDir = Join-Path $runTmpDir "gateway-spool"
-$gatewayRlpxProfilePath = Join-Path $runTmpDir ("gateway-eth-rlpx-peer-profile-chain-{0}.json" -f $ChainId)
 New-Item -ItemType Directory -Force -Path $gatewaySpoolDir | Out-Null
+$gatewayRlpxProfilePath = $null
+if ([string]::IsNullOrWhiteSpace([string]$RlpxProfilePath)) {
+    $gatewayRlpxProfilePath = Resolve-FullPath -Root $RepoRoot -Value ("artifacts/migration/state/gateway-eth-rlpx-peer-profile-chain-{0}.json" -f $ChainId)
+} else {
+    $gatewayRlpxProfilePath = Resolve-FullPath -Root $RepoRoot -Value ([string]$RlpxProfilePath)
+}
+$gatewayRlpxProfileDir = Split-Path -Parent $gatewayRlpxProfilePath
+if (-not [string]::IsNullOrWhiteSpace([string]$gatewayRlpxProfileDir)) {
+    New-Item -ItemType Directory -Force -Path $gatewayRlpxProfileDir | Out-Null
+}
+if ($FreshRlpxProfile.IsPresent -and (Test-Path $gatewayRlpxProfilePath)) {
+    Remove-Item -Force -Path $gatewayRlpxProfilePath
+}
 
 $chainHex = ("0x{0:x}" -f $ChainId)
 $hasFixedPluginEnode = -not [string]::IsNullOrWhiteSpace([string]$FixedPluginEnode)
 $dnsDiscoveryEnabled = [bool]$EnableDnsDiscoverySeed -and ([UInt64]$ChainId -eq [UInt64]1) -and (-not $hasFixedPluginEnode)
 $dnsSeedEnodes = @()
 $dnsSeedError = $null
+$bootnodesIncludedCount = 0
+$bootnodesSkippedForEnvLimit = 0
+$bootnodesEnvValueLength = 0
 if ($dnsDiscoveryEnabled) {
     $dnsResult = Resolve-DnsDiscoveryEnodes -Root $RepoRoot -MaxEnodes $DnsDiscoveryMaxEnodes -DnsRoot $DnsDiscoveryRoot
     if ($null -ne $dnsResult.error) {
@@ -1265,7 +1323,16 @@ if ($mergedBootnodes.Count -gt 0) {
         }
     }
     if ($bootnodeFinal.Count -gt 0) {
-        $envMap["NOVOVM_GATEWAY_ETH_PUBLIC_BROADCAST_BOOTNODES"] = ($bootnodeFinal -join ",")
+        $bootnodeCsv = Join-BoundedCsv -Items $bootnodeFinal -MaxLength 28000
+        $bootnodesIncludedCount = [int]$bootnodeCsv.included
+        $bootnodesSkippedForEnvLimit = [int]$bootnodeCsv.skipped
+        $bootnodesEnvValueLength = [int]$bootnodeCsv.length
+        if ($bootnodeCsv.included -gt 0) {
+            $envMap["NOVOVM_GATEWAY_ETH_PUBLIC_BROADCAST_BOOTNODES"] = [string]$bootnodeCsv.csv
+        }
+        if ($bootnodeCsv.skipped -gt 0) {
+            Write-Warning ("bootnodes env truncated by length cap: included={0} skipped={1} len={2}" -f $bootnodeCsv.included, $bootnodeCsv.skipped, $bootnodeCsv.length)
+        }
     }
 }
 
@@ -1334,12 +1401,17 @@ $summary = [ordered]@{
     dns_discovery_seed_requested = [UInt64]$DnsDiscoveryMaxEnodes
     dns_discovery_seed_count = [UInt64]$dnsSeedEnodes.Count
     dns_discovery_seed_error = $dnsSeedError
+    bootnodes_env_included_count = [UInt64][Math]::Max(0, $bootnodesIncludedCount)
+    bootnodes_env_skipped_for_length = [UInt64][Math]::Max(0, $bootnodesSkippedForEnvLimit)
+    bootnodes_env_value_length = [UInt64][Math]::Max(0, $bootnodesEnvValueLength)
     fixed_plugin_enode = if ($hasFixedPluginEnode) { [string]$FixedPluginEnode } else { $null }
     plugin_mempool_ingest_enabled = [bool]$EnablePluginMempoolIngest
     plugin_mempool_poll_ms = [UInt64]$PluginMempoolPollMs
     plugin_min_candidates = [UInt64][Math]::Max(1, $PluginMinCandidates)
     rlpx_max_peers_per_tick = [UInt64][Math]::Max(1, $RlpxMaxPeersPerTick)
     rlpx_hello_profile = [string]$RlpxHelloProfile
+    rlpx_profile_path = [string]$gatewayRlpxProfilePath
+    rlpx_profile_fresh_start = [bool]$FreshRlpxProfile
     rlpx_single_session = [bool]$RlpxSingleSession
     rlpx_core_target = if ($null -eq $RlpxCoreTarget) { $null } else { [UInt64]$RlpxCoreTarget }
     rlpx_active_target = if ($null -eq $RlpxActiveTarget) { $null } else { [UInt64]$RlpxActiveTarget }

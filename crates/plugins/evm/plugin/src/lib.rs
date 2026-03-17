@@ -2567,6 +2567,17 @@ pub fn runtime_tap_ir_batch_v1(
     Ok(ingress.summary)
 }
 
+pub fn apply_ir_batch_v1(
+    chain_type: ChainType,
+    chain_id: u64,
+    txs: &[TxIR],
+) -> Result<NovovmAdapterPluginApplyResultV1, i32> {
+    validate_plugin_tx_batch(txs)?;
+    let prepared_txs = prepare_txs_with_hashes(txs);
+    apply_ir_batch(chain_type, chain_id, &prepared_txs)
+        .map_err(|_| NOVOVM_ADAPTER_PLUGIN_RC_APPLY_FAILED)
+}
+
 fn apply_ir_batch(
     chain_type: ChainType,
     chain_id: u64,

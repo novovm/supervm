@@ -1,5 +1,10 @@
 # NOVOVM EVM/Adapter 迁移进度台账（SUPERVM）- 生产主线版（2026-03-12）
 
+> ⚠️ 历史归档说明（2026-03-18）
+>  
+> 本文用于迁移过程追溯，包含阶段性“完成度/百分比/当时状态”口径，**不作为当前开源发布判定依据**。  
+> 当前请以 `README.md` 中“当前有效文档”与 `NOVOVM-EVM-FULL-LIFECYCLE-CLOSURE-TARGET-2026-03-17.md` 为准。
+
 ## 1. 执行口径（去工程化）
 
 - 迁移完成度只看生产代码是否接线，不再以 `gate/signal/snapshot/rc` 数量判定。
@@ -25,7 +30,7 @@
 
 - 上述 `100%` 只代表 `EVM 插件/gateway/语义/生命周期/内部二进制主线` 已收口。
 - 它不代表当前默认部署已经具备“真实 Ethereum mainnet 状态 + 真实 mainnet 广播 + 实网一致性验证”。
-- 原生协议兼容专项进度请单独查看：`docs_CN/Adapters/EVM/NOVOVM-EVM-NATIVE-PROTOCOL-COMPAT-PROGRESS-2026-03-16.md`。
+- 原生协议兼容专项进度请单独查看：`docs_CN/Adapters/EVM/archive/NOVOVM-EVM-NATIVE-PROTOCOL-COMPAT-PROGRESS-2026-03-16.md`。
 
 | ID | 能力 | 当前状态 | 生产代码锚点 | 说明 |
 |---|---|---|---|---|

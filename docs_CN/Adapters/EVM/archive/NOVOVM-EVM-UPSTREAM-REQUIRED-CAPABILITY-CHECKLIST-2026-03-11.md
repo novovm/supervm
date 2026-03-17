@@ -1,5 +1,10 @@
 # NOVOVM EVM 上游缺失能力对照（Adapters 视角索引）- 2026-03-11
 
+> ⚠️ 历史归档说明（2026-03-18）
+>  
+> 本文是“上游能力缺口”索引，不是当前发布标准或运维手册。  
+> 当前发布与运行请以 `README.md` 中“当前有效文档”清单为准。
+
 本文件作为“上游缺失能力清单”的适配器域引用入口。
 
 ## 用途
@@ -11,7 +16,7 @@
 ## 主线约束
 
 - 该清单是“对照输入”，不是独立主线任务。
-- EVM 主线以 `docs_CN/Adapters/EVM/NOVOVM-EVM-ADAPTER-MIGRATION-PLAN-2026-03-06.md` 和迁移台账为准。
+- EVM 主线以 `docs_CN/Adapters/EVM/archive/NOVOVM-EVM-ADAPTER-MIGRATION-PLAN-2026-03-06.md` 和迁移台账为准。
 
 ## 关联文档
 

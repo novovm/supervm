@@ -1139,6 +1139,7 @@ dependencies = [
  "dashmap",
  "ed25519-dalek",
  "novovm-adapter-api",
+ "novovm-adapter-evm-core",
  "serde_json",
  "sha2",
  "web30-core",

@@ -3233,6 +3233,11 @@ fn gateway_eth_plugin_rlpx_worker_tier_rank(
         || state.recent_unique_swap_hits_total > 0
         || state.total_swap_hits > 0
         || state.total_unique_swap_hits > 0;
+    let normal_core_ok = is_recent_gossip
+        || has_recent_new_hash_window
+        || is_core_locked
+        || strong_unique_history_recent_ready
+        || elite_unique_history;
     if swap_priority_enabled {
         let swap_core_ok = is_recent_swap
             || strong_swap_history
@@ -3242,16 +3247,10 @@ fn gateway_eth_plugin_rlpx_worker_tier_rank(
                     || is_core_locked
                     || strong_unique_history_recent_ready
                     || elite_unique_history));
-        if has_gossip_history && swap_core_ok {
+        if has_gossip_history && (swap_core_ok || normal_core_ok) {
             return 0; // core
         }
-    } else if has_gossip_history
-        && (is_recent_gossip
-            || has_recent_new_hash_window
-            || is_core_locked
-            || strong_unique_history_recent_ready
-            || elite_unique_history)
-    {
+    } else if has_gossip_history && normal_core_ok {
         return 0; // core
     }
     let is_recent_ready = state.last_success_ms > 0

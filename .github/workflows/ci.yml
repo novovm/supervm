@@ -146,19 +146,19 @@ jobs:
         run: |
           set -euo pipefail
           python - <<'PY'
-            import subprocess
-            import sys
-            import py_compile
+import subprocess
+import sys
+import py_compile
 
-            files = subprocess.check_output(["git", "ls-files", "*.py"]).decode().splitlines()
-            if not files:
-              print("No Python files to check.")
-              sys.exit(0)
+files = subprocess.check_output(["git", "ls-files", "*.py"]).decode().splitlines()
+if not files:
+    print("No Python files to check.")
+    sys.exit(0)
 
-            for path in files:
-              py_compile.compile(path, doraise=True)
-            print(f"Checked {len(files)} Python files.")
-            PY
+for path in files:
+    py_compile.compile(path, doraise=True)
+print(f"Checked {len(files)} Python files.")
+PY
 
   node:
     name: Node checks

@@ -152,7 +152,7 @@ $env:NOVOVM_GATEWAY_ETH_PUBLIC_BROADCAST_NATIVE_PEERS = ""
 ## 6. 启动步骤（Setup）
 
 ```powershell
-cd D:\WEB3_AI\SUPERVM
+cd <repo-root>
 cargo build -p novovm-evm-gateway
 .\target\debug\novovm-evm-gateway.exe
 ```
@@ -160,6 +160,17 @@ cargo build -p novovm-evm-gateway
 ---
 
 ## 7. 使用示例（Usage）
+
+## 7.0 版本兼容检查（先做）
+
+在多机器环境中，若出现“同仓库但方法缺失”，通常是运行的网关二进制版本不一致。先核对：
+
+```powershell
+git rev-parse HEAD
+Get-FileHash .\target\debug\novovm-evm-gateway.exe
+```
+
+若 RPC 返回 `unknown method`，先统一二进制与提交，再执行后续示例。
 
 ## 7.1 查询余额（Query Balance）
 
@@ -233,6 +244,8 @@ cargo build -p novovm-evm-gateway
 ```json
 {"jsonrpc":"2.0","id":6,"method":"evm_getPublicBroadcastPluginPeers","params":{"chain_id":1}}
 ```
+
+若该方法不可用，可先调用 `evm_getPublicBroadcastStatus` 与 `net_peerCount` 做最小诊断，再升级到当前提交的网关二进制。
 
 ## 7.7 geth 公网连接桥接（一步接公网）
 

@@ -19,13 +19,13 @@ use novovm_adapter_evm_core::{
     EvmRawTxEnvelopeType, EvmRawTxFieldsM0,
 };
 use novovm_adapter_evm_plugin::{
-    drain_atomic_broadcast_ready_for_host, drain_atomic_receipts_for_host,
+    apply_ir_batch_v1, drain_atomic_broadcast_ready_for_host, drain_atomic_receipts_for_host,
     drain_executable_ingress_frames_for_host, drain_payout_instructions_for_host,
     drain_pending_ingress_frames_for_host, drain_settlement_records_for_host,
     evict_stale_ingress_frames_for_host, runtime_tap_ir_batch_v1,
     snapshot_executable_ingress_frames_for_host, snapshot_pending_ingress_frames_for_host,
     snapshot_pending_sender_buckets_for_host, EvmPendingSenderBucketV1,
-    NOVOVM_ADAPTER_PLUGIN_APPLY_FLAG_ATOMIC_INTENT_GUARD_V1,
+    NovovmAdapterPluginApplyResultV1, NOVOVM_ADAPTER_PLUGIN_APPLY_FLAG_ATOMIC_INTENT_GUARD_V1,
 };
 use novovm_adapter_novovm::{
     build_privacy_tx_ir_signed_from_raw_v1, PrivacyTxRawEnvelopeV1, PrivacyTxRawSignerV1,
@@ -33,7 +33,8 @@ use novovm_adapter_novovm::{
 use novovm_exec::{OpsWireOp, OpsWireV1Builder};
 use novovm_network::{
     get_network_runtime_native_sync_status, get_network_runtime_sync_status,
-    network_runtime_native_sync_is_active, plan_network_runtime_sync_pull_window,
+    network_runtime_native_sync_is_active, observe_network_runtime_local_head_max,
+    plan_network_runtime_sync_pull_window,
 };
 use rocksdb::{
     ColumnFamilyDescriptor, Direction, IteratorMode, Options as RocksDbOptions, DB as RocksDb,
@@ -2416,6 +2417,42 @@ fn apply_gateway_evm_runtime_tap(
         payout_instructions,
         atomic_ready_items,
     })
+}
+
+fn execute_gateway_evm_executable_ingress_frames(
+    chain_id: u64,
+    frames: &[EvmMempoolIngressFrameV1],
+) -> Result<(Vec<TxIR>, Vec<serde_json::Value>, usize)> {
+    let mut txs = Vec::new();
+    let mut sampled_hashes = Vec::new();
+    let mut dropped_unparsed = 0usize;
+    for frame in frames {
+        let Some(tx) = frame.parsed_tx.clone() else {
+            dropped_unparsed = dropped_unparsed.saturating_add(1);
+            continue;
+        };
+        if tx.chain_id != chain_id {
+            continue;
+        }
+        let hash_bytes = if !frame.tx_hash.is_empty() {
+            frame.tx_hash.as_slice()
+        } else {
+            tx.hash.as_slice()
+        };
+        sampled_hashes.push(serde_json::Value::String(format!(
+            "0x{}",
+            to_hex(hash_bytes)
+        )));
+        txs.push(tx);
+    }
+    if txs.is_empty() {
+        bail!(
+            "no parsed ingress transactions for chain_id={} (dropped_unparsed={})",
+            chain_id,
+            dropped_unparsed
+        );
+    }
+    Ok((txs, sampled_hashes, dropped_unparsed))
 }
 
 impl GatewayUaStoreBackend {
@@ -5131,6 +5168,224 @@ fn run_gateway_method(
                 serde_json::json!({
                     "count": items.len(),
                     "items": items,
+                }),
+                false,
+            ))
+        }
+        "evm_executeExecutableIngressSample" | "evm_execute_executable_ingress_sample" => {
+            let chain_id = param_as_u64_any_with_tx(params, &["chain_id", "chainId"])
+                .unwrap_or(ctx.eth_default_chain_id);
+            let max_items = param_as_u64(params, "max_items")
+                .or_else(|| param_as_u64(params, "max"))
+                .unwrap_or(16)
+                .clamp(1, 2_048) as usize;
+            let use_drain =
+                param_as_bool_any_with_tx(params, &["drain", "use_drain", "useDrain"])
+                    .unwrap_or(true);
+            let fallback_pending = param_as_bool_any_with_tx(
+                params,
+                &["fallback_pending", "fallbackPending", "fallback"],
+            )
+            .unwrap_or(true);
+            let single_tx_fallback = param_as_bool_any_with_tx(
+                params,
+                &["single_tx_fallback", "singleTxFallback", "single_fallback"],
+            )
+            .unwrap_or(true);
+            let mut source = if use_drain {
+                "drain_executable_ingress"
+            } else {
+                "snapshot_executable_ingress"
+            };
+            let mut frames = if use_drain {
+                drain_executable_ingress_frames_for_host(max_items)
+            } else {
+                snapshot_executable_ingress_frames_for_host(max_items)
+            };
+            frames.retain(|frame| frame.chain_id == chain_id);
+            let mut sampled_count = frames.len();
+            let mut used_pending_fallback = false;
+            let (txs, mut sampled_hashes, dropped_unparsed) =
+                match execute_gateway_evm_executable_ingress_frames(chain_id, &frames) {
+                    Ok(result) => result,
+                    Err(exec_err) => {
+                        if !fallback_pending {
+                            return Err(exec_err);
+                        }
+                        let mut pending_frames = if use_drain {
+                            drain_pending_ingress_frames_for_host(max_items)
+                        } else {
+                            snapshot_pending_ingress_frames_for_host(max_items)
+                        };
+                        pending_frames.retain(|frame| frame.chain_id == chain_id);
+                        sampled_count = pending_frames.len();
+                        match execute_gateway_evm_executable_ingress_frames(
+                            chain_id,
+                            &pending_frames,
+                        ) {
+                            Ok(result) => {
+                                used_pending_fallback = true;
+                                source = if use_drain {
+                                    "drain_pending_ingress_fallback"
+                                } else {
+                                    "snapshot_pending_ingress_fallback"
+                                };
+                                result
+                            }
+                            Err(pending_err) => {
+                                return Err(anyhow::anyhow!(
+                                    "executable ingress sample failed ({}) and pending fallback failed ({})",
+                                    exec_err,
+                                    pending_err
+                                ));
+                            }
+                        }
+                    }
+                };
+            let chain_type = evm_chain_type_for_gateway(chain_id);
+            let candidate_txs = txs.len();
+            let mut batch_error_code = None::<i32>;
+            let mut result = match apply_ir_batch_v1(chain_type, chain_id, &txs) {
+                Ok(v) => v,
+                Err(rc) => {
+                    batch_error_code = Some(rc);
+                    NovovmAdapterPluginApplyResultV1 {
+                        verified: 0,
+                        applied: 0,
+                        txs: txs.len() as u64,
+                        accounts: 0,
+                        state_root: [0u8; 32],
+                        error_code: rc,
+                    }
+                }
+            };
+            let mut selection_mode = "batch";
+            let mut single_attempts = 0usize;
+            let mut single_error_codes: Vec<i32> = Vec::new();
+            let mut selected_single_index: Option<usize> = None;
+            if single_tx_fallback
+                && txs.len() > 1
+                && !(result.verified == 1 && result.applied == 1)
+            {
+                for (idx, tx) in txs.iter().enumerate() {
+                    single_attempts = single_attempts.saturating_add(1);
+                    match apply_ir_batch_v1(chain_type, chain_id, std::slice::from_ref(tx)) {
+                        Ok(single_result) => {
+                            if single_result.verified == 1 && single_result.applied == 1 {
+                                result = single_result;
+                                sampled_hashes = vec![sampled_hashes[idx].clone()];
+                                sampled_count = 1;
+                                selection_mode = "single_tx_fallback";
+                                selected_single_index = Some(idx);
+                                break;
+                            }
+                        }
+                        Err(rc) => single_error_codes.push(rc),
+                    }
+                }
+            }
+            let local_exec_head_before = get_network_runtime_sync_status(chain_id)
+                .map(|status| status.current_block)
+                .unwrap_or(0);
+            let mut local_exec_head_after = local_exec_head_before;
+            let mut local_exec_block_hash: Option<String> = None;
+            let mut local_exec_indexed_txs = 0usize;
+            if result.verified == 1 && result.applied == 1 {
+                local_exec_head_after = local_exec_head_before.saturating_add(1);
+                let _ = observe_network_runtime_local_head_max(chain_id, local_exec_head_after);
+                let selected_txs: Vec<TxIR> = if let Some(idx) = selected_single_index {
+                    txs.get(idx).cloned().into_iter().collect()
+                } else {
+                    txs.clone()
+                };
+                let mut sealed_entries = Vec::<GatewayEthTxIndexEntry>::new();
+                for tx in selected_txs {
+                    let normalized = gateway_eth_tx_ir_with_hash(tx);
+                    if normalized.hash.len() != 32 {
+                        continue;
+                    }
+                    let mut tx_hash = [0u8; 32];
+                    tx_hash.copy_from_slice(&normalized.hash);
+                    let tx_type = gateway_eth_tx_type_number_from_ir(normalized.tx_type);
+                    let tx_type4 = resolve_raw_evm_tx_route_hint_m0(&normalized.signature)
+                        .map(|hint| hint.tx_type4)
+                        .unwrap_or(false);
+                    let record = GatewayIngressEthRecordV1 {
+                        version: GATEWAY_INGRESS_RECORD_VERSION,
+                        protocol: GATEWAY_INGRESS_PROTOCOL_ETH,
+                        uca_id: "runtime:execute_ingress".to_string(),
+                        chain_id,
+                        nonce: local_exec_head_after,
+                        tx_type,
+                        tx_type4,
+                        from: normalized.from.clone(),
+                        to: normalized.to.clone(),
+                        value: normalized.value,
+                        gas_limit: normalized.gas_limit,
+                        gas_price: normalized.gas_price,
+                        data: normalized.data.clone(),
+                        signature: normalized.signature.clone(),
+                        tx_hash,
+                        signature_domain: format!("evm:{chain_id}:runtime_execute"),
+                    };
+                    upsert_gateway_eth_tx_index(eth_tx_index, ctx.eth_tx_index_store, &record);
+                    persist_gateway_eth_submit_onchain_status(
+                        ctx.eth_tx_index_store,
+                        tx_hash,
+                        chain_id,
+                        false,
+                    );
+                    sealed_entries.push(GatewayEthTxIndexEntry {
+                        tx_hash,
+                        uca_id: record.uca_id,
+                        chain_id,
+                        nonce: local_exec_head_after,
+                        tx_type: record.tx_type,
+                        from: record.from,
+                        to: record.to,
+                        value: record.value,
+                        gas_limit: record.gas_limit,
+                        gas_price: record.gas_price,
+                        input: record.data,
+                    });
+                }
+                if !sealed_entries.is_empty() {
+                    sort_gateway_eth_block_txs(&mut sealed_entries);
+                    let block_hash =
+                        gateway_eth_block_hash_for_txs(chain_id, local_exec_head_after, &sealed_entries);
+                    local_exec_block_hash = Some(format!("0x{}", to_hex(&block_hash)));
+                    local_exec_indexed_txs = sealed_entries.len();
+                }
+            }
+            Ok((
+                serde_json::json!({
+                    "chain_id": format!("0x{:x}", chain_id),
+                    "source": source,
+                    "sampled_frames": sampled_count,
+                    "fallback_pending_enabled": fallback_pending,
+                    "used_pending_fallback": used_pending_fallback,
+                    "single_tx_fallback_enabled": single_tx_fallback,
+                    "selection_mode": selection_mode,
+                    "candidate_txs": candidate_txs,
+                    "batch_error_code": batch_error_code,
+                    "single_attempts": single_attempts,
+                    "single_error_codes": single_error_codes,
+                    "sampled_tx_hashes": sampled_hashes,
+                    "dropped_unparsed": dropped_unparsed,
+                    "local_exec_head_before": format!("0x{:x}", local_exec_head_before),
+                    "local_exec_head_after": format!("0x{:x}", local_exec_head_after),
+                    "local_exec_sealed": result.verified == 1 && result.applied == 1 && local_exec_head_after > local_exec_head_before,
+                    "local_exec_block_number": format!("0x{:x}", local_exec_head_after),
+                    "local_exec_block_hash": local_exec_block_hash,
+                    "local_exec_indexed_txs": local_exec_indexed_txs,
+                    "apply": {
+                        "verified": result.verified == 1,
+                        "applied": result.applied == 1,
+                        "txs": result.txs,
+                        "accounts": result.accounts,
+                        "state_root": format!("0x{}", to_hex(&result.state_root)),
+                        "error_code": result.error_code,
+                    }
                 }),
                 false,
             ))

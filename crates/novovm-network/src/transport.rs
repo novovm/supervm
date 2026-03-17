@@ -12,9 +12,9 @@ use novovm_protocol::{
     decode as protocol_decode, decode_block_header_wire_v1, encode as protocol_encode,
     encode_block_header_wire_v1,
     protocol_catalog::distributed_occc::gossip::MessageType as DistributedOcccMessageType,
-    BlockHeaderWireV1, ConsensusPluginBindingV1, FinalityMessage,
-    EvmNativeMessage, GossipMessage as ProtocolGossipMessage, NodeId, PacemakerMessage,
-    ProtocolMessage, TwoPcMessage, CONSENSUS_PLUGIN_CLASS_CODE,
+    BlockHeaderWireV1, ConsensusPluginBindingV1, EvmNativeMessage, FinalityMessage,
+    GossipMessage as ProtocolGossipMessage, NodeId, PacemakerMessage, ProtocolMessage,
+    TwoPcMessage, CONSENSUS_PLUGIN_CLASS_CODE,
 };
 use std::collections::VecDeque;
 use std::io::{Read, Write};
