@@ -3,6 +3,7 @@
 // 简化版 HotStuff-2 协议（3-chain rule）
 // Propose → Vote → PreCommit → Commit
 
+use crate::account_index::UnifiedAccountIndex;
 use crate::epoch::Epoch;
 use crate::governance_verifier::{
     Ed25519GovernanceVoteVerifier, GovernanceVoteVerificationInput,
@@ -173,6 +174,8 @@ pub struct HotStuffProtocol {
     governance_market_policy: MarketGovernancePolicy,
     /// 基于 SVM2026 `web30-core` 的 token/economics 运行时。
     token_runtime: Web30TokenRuntime,
+    /// 跨模块统一账户索引服务（当前用于分红账户快照路径）。
+    account_index: UnifiedAccountIndex,
     /// 基于 SVM2026 `web30-core` 的 market engine（AMM/CDP/Bond/NAV）。
     market_engine: Web30MarketEngine,
     /// 治理投票签名校验器（默认 ed25519，可注入其他方案）。
@@ -194,8 +197,10 @@ impl HotStuffProtocol {
         let governance_token_economics_policy = TokenEconomicsPolicy::default();
         let governance_market_policy = MarketGovernancePolicy::default();
         let token_runtime = Web30TokenRuntime::from_policy(&governance_token_economics_policy)?;
+        let mut account_index = UnifiedAccountIndex::new(100);
+        account_index.refresh_from_token_runtime(&token_runtime);
         let mut market_engine = Web30MarketEngine::from_policy(&governance_market_policy)?;
-        market_engine.set_dividend_runtime_balances(token_runtime.dividend_eligible_balances(100));
+        market_engine.set_dividend_account_index_snapshot(account_index.dividend_snapshot());
         Ok(Self {
             validator_set,
             self_id,
@@ -220,6 +225,7 @@ impl HotStuffProtocol {
             governance_token_economics_policy,
             governance_market_policy,
             token_runtime,
+            account_index,
             market_engine,
             governance_vote_verifier: Arc::new(Ed25519GovernanceVoteVerifier),
         })
@@ -823,12 +829,18 @@ impl HotStuffProtocol {
         self.slash_policy.clone()
     }
 
+    fn sync_market_dividend_account_index(&mut self) {
+        self.account_index
+            .refresh_from_token_runtime(&self.token_runtime);
+        self.market_engine
+            .set_dividend_account_index_snapshot(self.account_index.dividend_snapshot());
+    }
+
     /// 更新 token economics policy（运行期可由治理层下发）。
     pub fn set_token_economics_policy(&mut self, policy: TokenEconomicsPolicy) -> BFTResult<()> {
         policy.validate()?;
         self.token_runtime.reconfigure(&policy)?;
-        self.market_engine
-            .set_dividend_runtime_balances(self.token_runtime.dividend_eligible_balances(100));
+        self.sync_market_dividend_account_index();
         self.governance_token_economics_policy = policy;
         Ok(())
     }
@@ -844,8 +856,7 @@ impl HotStuffProtocol {
         policy: MarketGovernancePolicy,
     ) -> BFTResult<()> {
         policy.validate()?;
-        self.market_engine
-            .set_dividend_runtime_balances(self.token_runtime.dividend_eligible_balances(100));
+        self.sync_market_dividend_account_index();
         self.market_engine.reconfigure(&policy)?;
         self.governance_market_policy = policy;
         Ok(())
@@ -889,17 +900,23 @@ impl HotStuffProtocol {
 
     /// mint：amount>0、不超过 locked_supply 剩余额度、且不突破 max_supply。
     pub fn mint_tokens(&mut self, account: NodeId, amount: u64) -> BFTResult<()> {
-        self.token_runtime.mint(account, amount)
+        self.token_runtime.mint(account, amount)?;
+        self.sync_market_dividend_account_index();
+        Ok(())
     }
 
     /// burn：先扣余额，再销毁总量。
     pub fn burn_tokens(&mut self, account: NodeId, amount: u64) -> BFTResult<()> {
-        self.token_runtime.burn(account, amount)
+        self.token_runtime.burn(account, amount)?;
+        self.sync_market_dividend_account_index();
+        Ok(())
     }
 
     /// gas fee 路由：provider / treasury / burn。
     pub fn charge_gas_fee(&mut self, payer: NodeId, amount: u64) -> BFTResult<FeeRoutingOutcome> {
-        self.token_runtime.charge_gas_fee(payer, amount)
+        let outcome = self.token_runtime.charge_gas_fee(payer, amount)?;
+        self.sync_market_dividend_account_index();
+        Ok(outcome)
     }
 
     /// service fee 路由：provider / treasury / burn。
@@ -908,7 +925,9 @@ impl HotStuffProtocol {
         payer: NodeId,
         amount: u64,
     ) -> BFTResult<FeeRoutingOutcome> {
-        self.token_runtime.charge_service_fee(payer, amount)
+        let outcome = self.token_runtime.charge_service_fee(payer, amount)?;
+        self.sync_market_dividend_account_index();
+        Ok(outcome)
     }
 
     /// treasury spend（治理执行面）：从 treasury 主账户转账给目标账户。
@@ -918,7 +937,9 @@ impl HotStuffProtocol {
         amount: u64,
         _reason: &str,
     ) -> BFTResult<()> {
-        self.token_runtime.spend_treasury(to, amount)
+        self.token_runtime.spend_treasury(to, amount)?;
+        self.sync_market_dividend_account_index();
+        Ok(())
     }
 
     pub fn token_balance(&self, account: NodeId) -> u64 {

@@ -2332,6 +2332,126 @@ pub fn secp256k1_recover_pubkey_v1_auto(
     .or_else(|_| Ok(None))
 }
 
+pub fn bulletproof_prove_v1_auto(amount: u128, bits: u32) -> Result<Option<(Vec<u8>, Vec<u8>)>> {
+    with_default_host_dynlib(|dynlib| {
+        if !dynlib.supports_bulletproof_v1() {
+            bail!("aoem_bulletproof_prove_v1 not supported by loaded DLL");
+        }
+        dynlib.bulletproof_prove_v1(amount, bits)
+    })
+    .or_else(|_| Ok(None))
+}
+
+pub fn bulletproof_verify_v1_auto(
+    commitment: &[u8],
+    proof: &[u8],
+    bits: u32,
+) -> Result<Option<bool>> {
+    with_default_host_dynlib(|dynlib| {
+        if !dynlib.supports_bulletproof_v1() {
+            bail!("aoem_bulletproof_verify_v1 not supported by loaded DLL");
+        }
+        dynlib.bulletproof_verify_v1(commitment, proof, bits)
+    })
+    .or_else(|_| Ok(None))
+}
+
+pub fn ringct_prove_v1_auto(
+    message: &[u8],
+    amount: u128,
+    ring_size: u32,
+) -> Result<Option<Vec<u8>>> {
+    with_default_host_dynlib(|dynlib| {
+        if !dynlib.supports_ringct_v1() {
+            bail!("aoem_ringct_prove_v1 not supported by loaded DLL");
+        }
+        dynlib.ringct_prove_v1(message, amount, ring_size)
+    })
+    .or_else(|_| Ok(None))
+}
+
+pub fn ringct_verify_v1_auto(tx_payload: &[u8], tx_encoding: u32) -> Result<Option<bool>> {
+    with_default_host_dynlib(|dynlib| {
+        if !dynlib.supports_ringct_v1() {
+            bail!("aoem_ringct_verify_v1 not supported by loaded DLL");
+        }
+        dynlib.ringct_verify_v1(tx_payload, tx_encoding)
+    })
+    .or_else(|_| Ok(None))
+}
+
+fn encode_single_blob_wire_v1(blob: &[u8], label: &str) -> Result<Vec<u8>> {
+    if blob.is_empty() {
+        bail!("{label} blob must not be empty");
+    }
+    let len_u32 =
+        u32::try_from(blob.len()).map_err(|_| anyhow!("{label} blob too large: {}", blob.len()))?;
+    let mut out = Vec::with_capacity(8usize.saturating_add(blob.len()));
+    out.extend_from_slice(&1u32.to_le_bytes());
+    out.extend_from_slice(&len_u32.to_le_bytes());
+    out.extend_from_slice(blob);
+    Ok(out)
+}
+
+fn decode_single_blob_wire_v1(wire: &[u8], label: &str) -> Result<Vec<u8>> {
+    if wire.len() < 8 {
+        bail!("{label} wire too short");
+    }
+    let count = u32::from_le_bytes([wire[0], wire[1], wire[2], wire[3]]);
+    if count != 1 {
+        bail!("{label} wire expected count=1, got {}", count);
+    }
+    let len = u32::from_le_bytes([wire[4], wire[5], wire[6], wire[7]]) as usize;
+    let end = 8usize.saturating_add(len);
+    if len == 0 {
+        bail!("{label} wire item must not be empty");
+    }
+    if wire.len() != end {
+        bail!(
+            "{label} wire size mismatch: expected {}, got {}",
+            end,
+            wire.len()
+        );
+    }
+    Ok(wire[8..end].to_vec())
+}
+
+pub fn groth16_prove_v1_auto(witness: &[u8]) -> Result<Option<(Vec<u8>, Vec<u8>, Vec<u8>)>> {
+    with_default_host_dynlib(|dynlib| {
+        if !dynlib.supports_groth16_prove_auto_path() {
+            bail!("aoem_groth16_prove_auto path not supported by loaded DLL");
+        }
+        let witness_wire = encode_single_blob_wire_v1(witness, "groth16 witness")?;
+        let (vk, proofs_wire, public_inputs_wire) = dynlib.groth16_prove_batch_v1(&witness_wire)?;
+        let proof = decode_single_blob_wire_v1(&proofs_wire, "groth16 proofs batch")?;
+        let public_inputs =
+            decode_single_blob_wire_v1(&public_inputs_wire, "groth16 public inputs batch")?;
+        Ok((vk, proof, public_inputs))
+    })
+    .or_else(|_| Ok(None))
+}
+
+pub fn groth16_verify_v1_auto(
+    vk: &[u8],
+    proof: &[u8],
+    public_inputs: &[u8],
+) -> Result<Option<bool>> {
+    with_default_host_dynlib(|dynlib| {
+        if dynlib.supports_groth16_verify_v1() {
+            return dynlib.groth16_verify_v1(vk, proof, public_inputs);
+        }
+        if dynlib.supports_groth16_verify_batch_v1() {
+            let proofs_wire = encode_single_blob_wire_v1(proof, "groth16 proof")?;
+            let public_inputs_wire =
+                encode_single_blob_wire_v1(public_inputs, "groth16 public inputs")?;
+            let out = dynlib.groth16_verify_batch_v1(vk, &proofs_wire, &public_inputs_wire)?;
+            return Ok(*out.first().unwrap_or(&false));
+        }
+        bail!("aoem_groth16_verify_v1/verify_batch_v1 not supported by loaded DLL");
+    })
+    .or_else(|_| Ok(None))
+}
+
 fn infer_variant_from_dll_path(dll_path: &Path) -> &'static str {
     let p = normalize_path_for_match(dll_path.to_string_lossy().as_ref());
     if p.contains("/variants/persist/") {

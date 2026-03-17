@@ -11,6 +11,7 @@ param(
     [switch]$FullSnapshotProfile,
     [switch]$FullSnapshotProfileV2,
     [switch]$FullSnapshotProfileGA,
+    [bool]$IncludePerformanceGate = $true,
     [bool]$IncludeChainQueryRpcGate = $true,
     [string]$ChainQueryRpcBind = "127.0.0.1:8899",
     [ValidateRange(1, 32)]
@@ -124,13 +125,13 @@ if ($FullSnapshotProfileGA) {
     $IncludeGovernanceTreasurySpendGate = $false
     $IncludeGovernanceMarketPolicyGate = $false
     $IncludeGovernanceCouncilPolicyGate = $false
-    $IncludeEconomicInfraDedicatedGate = $false
+    $IncludeEconomicInfraDedicatedGate = $true
     $IncludeEconomicServiceSurfaceGate = $true
     $IncludeOpsControlSurfaceGate = $true
-    $IncludeMarketEngineTreasuryNegativeGate = $false
-    $IncludeForeignRateSourceGate = $false
-    $IncludeNavValuationSourceGate = $false
-    $IncludeDividendBalanceSourceGate = $false
+    $IncludeMarketEngineTreasuryNegativeGate = $true
+    $IncludeForeignRateSourceGate = $true
+    $IncludeNavValuationSourceGate = $true
+    $IncludeDividendBalanceSourceGate = $true
     $profileName = "full_snapshot_ga_v1"
 }
 
@@ -189,7 +190,9 @@ $evmTxTypeSignalScript = Join-Path $RepoRoot "scripts\migration\run_evm_tx_type_
 $overlapRouterSignalScript = Join-Path $RepoRoot "scripts\migration\run_overlap_router_signal.ps1"
 $evmBackendCompareGateScript = Join-Path $RepoRoot "scripts\migration\run_evm_backend_compare_signal.ps1"
 Require-Path -Path $functionalScript -Name "functional script"
-Require-Path -Path $performanceGateScript -Name "performance gate script"
+if ($IncludePerformanceGate) {
+    Require-Path -Path $performanceGateScript -Name "performance gate script"
+}
 if ($IncludeChainQueryRpcGate) {
     Require-Path -Path $chainQueryRpcGateScript -Name "chain query rpc gate script"
 }
@@ -468,41 +471,45 @@ Write-Host "acceptance gate: functional consistency ..."
     -OutputDir $functionalOutputDir `
     -CapabilityVariant core | Out-Null
 
-Write-Host "acceptance gate: performance seal gate ..."
-$performanceAttempt = 0
-while ($true) {
-    try {
-        & $performanceGateScript `
-            -RepoRoot $RepoRoot `
-            -OutputDir $performanceOutputDir `
-            -AllowedRegressionPct $AllowedRegressionPct `
-            -Runs $PerformanceRuns | Out-Null
-        break
-    } catch {
-        $canRetry = $false
-        if ($performanceAttempt -lt $PerformanceBorderlineRetries) {
-            $perfSummaryPath = Join-Path $performanceOutputDir "performance-gate-summary.json"
-            if (Test-Path $perfSummaryPath) {
-                try {
-                    $perfSummary = Get-Content -Path $perfSummaryPath -Raw | ConvertFrom-Json
-                    $failedRows = @($perfSummary.compare | Where-Object { -not [bool]$_.pass })
-                    if ($failedRows.Count -gt 0) {
-                        $borderlineThreshold = $AllowedRegressionPct - $PerformanceBorderlineEpsilonPct
-                        $hardFailures = @($failedRows | Where-Object { [double]$_.delta_pct -lt $borderlineThreshold })
-                        $canRetry = ($hardFailures.Count -eq 0)
+if ($IncludePerformanceGate) {
+    Write-Host "acceptance gate: performance seal gate ..."
+    $performanceAttempt = 0
+    while ($true) {
+        try {
+            & $performanceGateScript `
+                -RepoRoot $RepoRoot `
+                -OutputDir $performanceOutputDir `
+                -AllowedRegressionPct $AllowedRegressionPct `
+                -Runs $PerformanceRuns | Out-Null
+            break
+        } catch {
+            $canRetry = $false
+            if ($performanceAttempt -lt $PerformanceBorderlineRetries) {
+                $perfSummaryPath = Join-Path $performanceOutputDir "performance-gate-summary.json"
+                if (Test-Path $perfSummaryPath) {
+                    try {
+                        $perfSummary = Get-Content -Path $perfSummaryPath -Raw | ConvertFrom-Json
+                        $failedRows = @($perfSummary.compare | Where-Object { -not [bool]$_.pass })
+                        if ($failedRows.Count -gt 0) {
+                            $borderlineThreshold = $AllowedRegressionPct - $PerformanceBorderlineEpsilonPct
+                            $hardFailures = @($failedRows | Where-Object { [double]$_.delta_pct -lt $borderlineThreshold })
+                            $canRetry = ($hardFailures.Count -eq 0)
+                        }
+                    } catch {
+                        $canRetry = $false
                     }
-                } catch {
-                    $canRetry = $false
                 }
             }
+            if ($canRetry) {
+                $performanceAttempt++
+                Write-Host "acceptance gate: performance seal gate borderline retry ($performanceAttempt/$PerformanceBorderlineRetries) ..."
+                continue
+            }
+            throw
         }
-        if ($canRetry) {
-            $performanceAttempt++
-            Write-Host "acceptance gate: performance seal gate borderline retry ($performanceAttempt/$PerformanceBorderlineRetries) ..."
-            continue
-        }
-        throw
     }
+} else {
+    Write-Host "acceptance gate: performance seal gate skipped (IncludePerformanceGate=false)"
 }
 
 if ($IncludeChainQueryRpcGate) {
@@ -932,7 +939,9 @@ if ($IncludeEvmBackendCompareGate) {
     }
 }
 Require-Path -Path $functionalJson -Name "functional report json"
-Require-Path -Path $performanceJson -Name "performance gate summary json"
+if ($IncludePerformanceGate) {
+    Require-Path -Path $performanceJson -Name "performance gate summary json"
+}
 if ($IncludeChainQueryRpcGate) {
     Require-Path -Path $chainQueryRpcJson -Name "chain query rpc gate summary json"
 }
@@ -1052,7 +1061,14 @@ if ($IncludeEvmBackendCompareGate) {
 }
 
 $functional = Get-Content -Path $functionalJson -Raw | ConvertFrom-Json
-$performance = Get-Content -Path $performanceJson -Raw | ConvertFrom-Json
+if ($IncludePerformanceGate) {
+    $performance = Get-Content -Path $performanceJson -Raw | ConvertFrom-Json
+} else {
+    $performance = [pscustomobject]@{
+        pass = $true
+        skipped = $true
+    }
+}
 if ($IncludeChainQueryRpcGate) {
     $chainQueryRpc = Get-Content -Path $chainQueryRpcJson -Raw | ConvertFrom-Json
 }
@@ -1593,6 +1609,7 @@ $summary = [ordered]@{
     overall_pass = $overallPass
     functional_pass = $functionalPass
     governance_chain_audit_root_parity_pass = $governanceChainAuditRootParityPass
+    performance_gate_enabled = $IncludePerformanceGate
     performance_pass = $performancePass
     chain_query_rpc_gate_enabled = $IncludeChainQueryRpcGate
     chain_query_rpc_pass = $chainQueryRpcPass
@@ -1720,7 +1737,7 @@ $summary = [ordered]@{
     evm_backend_compare_avalanche_pass = $evmBackendCompareAvalanchePass
     evm_backend_compare_pass = $evmBackendComparePass
     functional_report_json = $functionalJson
-    performance_report_json = $performanceJson
+    performance_report_json = if ($IncludePerformanceGate) { $performanceJson } else { "" }
     chain_query_rpc_report_json = if ($IncludeChainQueryRpcGate) { $chainQueryRpcJson } else { "" }
     governance_rpc_report_json = if ($IncludeGovernanceRpcGate) { $governanceRpcJson } else { "" }
     governance_rpc_mldsa_ffi_report_json = if ($IncludeGovernanceRpcMldsaFfiGate) { $governanceRpcMldsaFfiJson } else { "" }
@@ -1760,7 +1777,7 @@ $summary = [ordered]@{
     evm_backend_compare_polygon_report_json = if ($IncludeEvmBackendCompareGate -and $EvmBackendCompareIncludePolygon) { $evmBackendComparePolygonJson } else { "" }
     evm_backend_compare_bnb_report_json = if ($IncludeEvmBackendCompareGate -and $EvmBackendCompareIncludeBnb) { $evmBackendCompareBnbJson } else { "" }
     evm_backend_compare_avalanche_report_json = if ($IncludeEvmBackendCompareGate -and $EvmBackendCompareIncludeAvalanche) { $evmBackendCompareAvalancheJson } else { "" }
-    performance_runs = $PerformanceRuns
+    performance_runs = if ($IncludePerformanceGate) { $PerformanceRuns } else { 0 }
     chain_query_rpc_expected_requests = if ($IncludeChainQueryRpcGate) { $ChainQueryRpcExpectedRequests } else { 0 }
     chain_query_rpc_bind = if ($IncludeChainQueryRpcGate) { $ChainQueryRpcBind } else { "" }
     governance_rpc_expected_requests = if ($IncludeGovernanceRpcGate) { $GovernanceRpcExpectedRequests } else { 0 }
@@ -1789,6 +1806,7 @@ $md = @(
     "- overall_pass: $($summary.overall_pass)"
     "- functional_pass: $($summary.functional_pass)"
     "- governance_chain_audit_root_parity_pass: $($summary.governance_chain_audit_root_parity_pass)"
+    "- performance_gate_enabled: $($summary.performance_gate_enabled)"
     "- performance_pass: $($summary.performance_pass)"
     "- chain_query_rpc_gate_enabled: $($summary.chain_query_rpc_gate_enabled)"
     "- chain_query_rpc_pass: $($summary.chain_query_rpc_pass)"
@@ -1978,7 +1996,11 @@ Write-Host "  full_snapshot_profile: $([bool]($FullSnapshotProfile -or $FullSnap
 Write-Host "  full_snapshot_profile_v2: $([bool]$FullSnapshotProfileV2)"
 Write-Host "  overall_pass: $overallPass"
 Write-Host "  functional_report: $functionalJson"
-Write-Host "  performance_report: $performanceJson"
+if ($IncludePerformanceGate) {
+    Write-Host "  performance_report: $performanceJson"
+} else {
+    Write-Host "  performance_report: skipped"
+}
 if ($IncludeChainQueryRpcGate) {
     Write-Host "  chain_query_rpc_report: $chainQueryRpcJson"
 }

@@ -69,6 +69,16 @@ $cases = @(
         key = "governance_treasury_spend_flow"
         filter = "test_governance_execute_treasury_spend"
         category = "treasury_path"
+    },
+    [ordered]@{
+        key = "buyback_liquidity_unavailable_rejected"
+        filter = "test_buyback_rejects_when_liquidity_unavailable"
+        category = "treasury_negative"
+    },
+    [ordered]@{
+        key = "buyback_slippage_cap_rejected"
+        filter = "test_buyback_rejects_when_slippage_exceeds_cap"
+        category = "treasury_negative"
     }
 )
 
@@ -93,7 +103,8 @@ foreach ($case in $cases) {
 
 $policyNegativePass = @($results | Where-Object { $_.category -eq "policy_negative" -and $_.pass }).Count -eq 2
 $treasuryPathPass = @($results | Where-Object { $_.category -eq "treasury_path" -and $_.pass }).Count -eq 1
-$allPass = [bool]($policyNegativePass -and $treasuryPathPass)
+$treasuryNegativePass = @($results | Where-Object { $_.category -eq "treasury_negative" -and $_.pass }).Count -eq 2
+$allPass = [bool]($policyNegativePass -and $treasuryPathPass -and $treasuryNegativePass)
 
 $errorReason = ""
 if (-not $allPass) {
@@ -110,6 +121,7 @@ $summary = [ordered]@{
     pass = $allPass
     policy_negative_pass = $policyNegativePass
     treasury_path_pass = $treasuryPathPass
+    treasury_negative_pass = $treasuryNegativePass
     error_reason = $errorReason
     tests = $results
 }
@@ -125,6 +137,7 @@ $md = @(
     "- pass: $($summary.pass)"
     "- policy_negative_pass: $($summary.policy_negative_pass)"
     "- treasury_path_pass: $($summary.treasury_path_pass)"
+    "- treasury_negative_pass: $($summary.treasury_negative_pass)"
     "- error_reason: $($summary.error_reason)"
     "- summary_json: $summaryJson"
     ""
@@ -139,6 +152,7 @@ Write-Host "market engine treasury negative gate summary:"
 Write-Host "  pass: $($summary.pass)"
 Write-Host "  policy_negative_pass: $($summary.policy_negative_pass)"
 Write-Host "  treasury_path_pass: $($summary.treasury_path_pass)"
+Write-Host "  treasury_negative_pass: $($summary.treasury_negative_pass)"
 Write-Host "  summary_json: $summaryJson"
 
 if (-not $allPass) {

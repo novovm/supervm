@@ -58,6 +58,12 @@ pub struct BuybackConfig {
     pub trigger_discount_bp: u16,
     /// 当前观测折价（bps，来自上游策略或风控输入）
     pub observed_market_discount_bp: u16,
+    /// 订单簿可成交深度（稳定资产计价）。
+    pub orderbook_liquidity_stable: u128,
+    /// AMM 可成交深度（稳定资产计价）。
+    pub amm_liquidity_stable: u128,
+    /// 可接受的最大执行滑点（bps）。
+    pub max_execution_slippage_bp: u16,
 }
 
 impl Default for BuybackConfig {
@@ -67,6 +73,9 @@ impl Default for BuybackConfig {
             burn_share_bp: 5000,
             trigger_discount_bp: 500,
             observed_market_discount_bp: 600,
+            orderbook_liquidity_stable: 1_000_000_000_000,
+            amm_liquidity_stable: 1_000_000_000_000,
+            max_execution_slippage_bp: 1_500,
         }
     }
 }
@@ -101,6 +110,7 @@ impl TreasuryImpl {
         cfg.burn_share_bp = Self::normalize_bp(cfg.burn_share_bp);
         cfg.trigger_discount_bp = Self::normalize_bp(cfg.trigger_discount_bp);
         cfg.observed_market_discount_bp = Self::normalize_bp(cfg.observed_market_discount_bp);
+        cfg.max_execution_slippage_bp = Self::normalize_bp(cfg.max_execution_slippage_bp);
         cfg
     }
 
@@ -208,6 +218,16 @@ impl TreasuryImpl {
     /// 更新观测折价（由上游风控/执行层输入）
     pub fn set_observed_market_discount_bp(&mut self, discount_bp: u16) {
         self.buyback_config.observed_market_discount_bp = Self::normalize_bp(discount_bp);
+    }
+
+    /// 更新回购执行流动性模型（AMM + 订单簿）。
+    pub fn set_buyback_execution_liquidity(
+        &mut self,
+        orderbook_liquidity_stable: u128,
+        amm_liquidity_stable: u128,
+    ) {
+        self.buyback_config.orderbook_liquidity_stable = orderbook_liquidity_stable;
+        self.buyback_config.amm_liquidity_stable = amm_liquidity_stable;
     }
 
     /// 记录外汇收入
@@ -357,12 +377,31 @@ impl Treasury for TreasuryImpl {
             .saturating_mul(u128::from(self.buyback_config.min_main_reserve_bp))
             / 10_000;
         let available = main_balance.saturating_sub(min_reserve);
-        let spent = available.min(max_stable_to_spend);
+        let desired_spent = available.min(max_stable_to_spend);
+        let executable_liquidity = self
+            .buyback_config
+            .orderbook_liquidity_stable
+            .saturating_add(self.buyback_config.amm_liquidity_stable);
+        if executable_liquidity == 0 {
+            bail!("buyback liquidity unavailable");
+        }
+        let spent = desired_spent.min(executable_liquidity);
         if spent == 0 {
             return Ok(TreasuryEvent::BuybackAndBurn {
                 spent_stable: 0,
                 burned_token: 0,
             });
+        }
+
+        // 简化成交冲击模型：impact ~= spent / (liquidity + spent)
+        let price_impact_bp =
+            spent.saturating_mul(10_000) / executable_liquidity.saturating_add(spent);
+        if price_impact_bp > u128::from(self.buyback_config.max_execution_slippage_bp) {
+            bail!(
+                "buyback slippage exceeds cap: impact_bp={} cap_bp={}",
+                price_impact_bp,
+                self.buyback_config.max_execution_slippage_bp
+            );
         }
 
         self.balances.insert(
@@ -375,8 +414,10 @@ impl Treasury for TreasuryImpl {
             .or_insert(0);
         *total = total.saturating_add(spent);
 
+        let executable_token =
+            spent.saturating_mul(10_000u128.saturating_sub(price_impact_bp)) / 10_000;
         let burned_token =
-            spent.saturating_mul(u128::from(self.buyback_config.burn_share_bp)) / 10_000;
+            executable_token.saturating_mul(u128::from(self.buyback_config.burn_share_bp)) / 10_000;
         Ok(TreasuryEvent::BuybackAndBurn {
             spent_stable: spent,
             burned_token,
@@ -570,6 +611,7 @@ mod tests {
             burn_share_bp: 5_000,
             trigger_discount_bp: 800,
             observed_market_discount_bp: 700,
+            ..BuybackConfig::default()
         });
 
         let event = treasury
@@ -596,6 +638,7 @@ mod tests {
             burn_share_bp: 6_000,       // burn 60%
             trigger_discount_bp: 500,
             observed_market_discount_bp: 650,
+            ..BuybackConfig::default()
         });
 
         let event = treasury
@@ -613,6 +656,53 @@ mod tests {
             other => panic!("unexpected event: {:?}", other),
         }
         assert_eq!(treasury.balance_of(TreasuryAccountKind::Main), 2_500_000);
+    }
+
+    #[test]
+    fn test_buyback_rejects_when_liquidity_unavailable() {
+        let mut treasury = build_treasury();
+        treasury.set_buyback_execution_liquidity(0, 0);
+        let err = treasury
+            .execute_buyback_and_burn(100_000)
+            .expect_err("no liquidity must fail");
+        assert!(err.to_string().contains("liquidity unavailable"));
+    }
+
+    #[test]
+    fn test_buyback_rejects_when_slippage_exceeds_cap() {
+        let mut treasury = build_treasury();
+        treasury.set_buyback_config(BuybackConfig {
+            max_execution_slippage_bp: 100,
+            ..BuybackConfig::default()
+        });
+        treasury.set_buyback_execution_liquidity(1_000, 1_000);
+        let err = treasury
+            .execute_buyback_and_burn(5_000)
+            .expect_err("slippage cap must reject");
+        assert!(err.to_string().contains("slippage exceeds cap"));
+    }
+
+    #[test]
+    fn test_buyback_partial_fill_by_liquidity() {
+        let mut treasury = build_treasury();
+        treasury.set_buyback_config(BuybackConfig {
+            max_execution_slippage_bp: 10_000,
+            ..BuybackConfig::default()
+        });
+        treasury.set_buyback_execution_liquidity(700, 800); // total 1500
+        let event = treasury
+            .execute_buyback_and_burn(10_000)
+            .expect("partial fill execution");
+        match event {
+            TreasuryEvent::BuybackAndBurn {
+                spent_stable,
+                burned_token,
+            } => {
+                assert_eq!(spent_stable, 1_500);
+                assert!(burned_token <= spent_stable);
+            }
+            other => panic!("unexpected event: {:?}", other),
+        }
     }
 
     #[test]

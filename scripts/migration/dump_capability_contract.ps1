@@ -63,6 +63,34 @@ function Get-DynlibNameCandidates {
     return @("libaoem_ffi.so")
 }
 
+function Resolve-AoemRoot {
+    param([string]$RepoRoot)
+
+    $dynlibCandidates = Get-DynlibNameCandidates
+    $roots = @()
+    if (-not [string]::IsNullOrWhiteSpace($env:NOVOVM_AOEM_ROOT)) {
+        $roots += $env:NOVOVM_AOEM_ROOT
+    }
+    $roots += (Join-Path $RepoRoot "aoem")
+
+    $workspaceParent = Split-Path $RepoRoot -Parent
+    if (-not [string]::IsNullOrWhiteSpace($workspaceParent)) {
+        $roots += (Join-Path $workspaceParent "AOEM")
+        $roots += (Join-Path $workspaceParent "AOEM\artifacts\standalone-run")
+    }
+
+    foreach ($root in $roots) {
+        if (-not $root -or -not (Test-Path $root)) { continue }
+        foreach ($name in $dynlibCandidates) {
+            if (Test-Path (Join-Path $root "bin\$name")) {
+                return (Resolve-Path $root).Path
+            }
+        }
+    }
+
+    return (Join-Path $RepoRoot "aoem")
+}
+
 function Get-AoemVariantBinDir {
     param([string]$AoemRoot, [string]$Variant)
     switch ($Variant) {
@@ -206,7 +234,7 @@ function Resolve-AoemRuntimeForVariant {
 New-Item -ItemType Directory -Force -Path $OutputDir | Out-Null
 
 $execDir = Join-Path $RepoRoot "crates\novovm-exec"
-$aoemRoot = Join-Path $RepoRoot "aoem"
+$aoemRoot = Resolve-AoemRoot -RepoRoot $RepoRoot
 $runtime = Resolve-AoemRuntimeForVariant -AoemRoot $aoemRoot -Variant $Variant -AoemPluginDir $AoemPluginDir -PreferComposed:$PreferComposedAoemRuntime -RequireExists $true
 $aoemDll = [string]$runtime.dll
 $aoemManifest = Join-Path $aoemRoot "manifest\aoem-manifest.json"

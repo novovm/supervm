@@ -86,6 +86,7 @@
 #![allow(missing_docs)]
 #![deny(unsafe_code)]
 
+pub mod account_index;
 pub mod bft_engine;
 pub mod epoch;
 pub mod governance_verifier;

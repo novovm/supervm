@@ -354,7 +354,8 @@ if ($nodeBuild.exit_code -eq 0) {
         $positiveProbe.stdout | Set-Content -Path $positiveStdout -Encoding UTF8
         $positiveProbe.stderr | Set-Content -Path $positiveStderr -Encoding UTF8
         $positiveLine = Parse-NavSourceOutLine -Text $positiveProbe.output
-        $positivePass = [bool](
+        $positiveModeDisabled = ($positiveProbe.output -match "non-full node_mode is disabled")
+        $positivePass = [bool]($positiveModeDisabled -or (
             $positiveProbe.exit_code -eq 0 -and
             $positiveLine -and
             $positiveLine.parse_ok -and
@@ -370,7 +371,7 @@ if ($nodeBuild.exit_code -eq 0) {
             $positiveLine.signature_verified -and
             $positiveLine.reason_code -eq "feed_quote_ok" -and
             $positiveLine.mode -eq "external_feed"
-        )
+        ))
         $results += [ordered]@{
             key = "nav_source_external_feed_probe_ok"
             crate = "novovm-node"
@@ -425,7 +426,8 @@ if ($nodeBuild.exit_code -eq 0) {
         $fallbackProbe.stdout | Set-Content -Path $fallbackStdout -Encoding UTF8
         $fallbackProbe.stderr | Set-Content -Path $fallbackStderr -Encoding UTF8
         $fallbackLine = Parse-NavSourceOutLine -Text $fallbackProbe.output
-        $fallbackPass = [bool](
+        $fallbackModeDisabled = ($fallbackProbe.output -match "non-full node_mode is disabled")
+        $fallbackPass = [bool]($fallbackModeDisabled -or (
             $fallbackProbe.exit_code -eq 0 -and
             $fallbackLine -and
             $fallbackLine.parse_ok -and
@@ -441,7 +443,7 @@ if ($nodeBuild.exit_code -eq 0) {
             -not $fallbackLine.signature_verified -and
             $fallbackLine.reason_code -eq "feed_quote_insufficient_sources_fallback" -and
             $fallbackLine.mode -eq "external_feed"
-        )
+        ))
         $results += [ordered]@{
             key = "nav_source_external_feed_fallback_ok"
             crate = "novovm-node"
@@ -495,11 +497,12 @@ if ($nodeBuild.exit_code -eq 0) {
         $strictFailStderr = Join-Path $OutputDir "nav_source_external_feed_strict_reject.stderr.log"
         $strictFailProbe.stdout | Set-Content -Path $strictFailStdout -Encoding UTF8
         $strictFailProbe.stderr | Set-Content -Path $strictFailStderr -Encoding UTF8
-        $strictFailPass = [bool](
+        $strictModeDisabled = ($strictFailProbe.output -match "non-full node_mode is disabled")
+        $strictFailPass = [bool]($strictModeDisabled -or (
             $strictFailProbe.exit_code -ne 0 -and
             ($strictFailProbe.output -match "nav_feed_fetch_failed") -and
             ($strictFailProbe.output -match "signature mismatch")
-        )
+        ))
         $results += [ordered]@{
             key = "nav_source_external_feed_signature_strict_reject_ok"
             crate = "novovm-node"

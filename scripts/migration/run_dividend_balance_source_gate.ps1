@@ -64,6 +64,11 @@ $cases = @(
         key = "protocol_market_policy_syncs_dividend_balances"
         filter = "test_market_policy_reconfigure_syncs_dividend_runtime_balances"
         category = "protocol_sync"
+    },
+    [ordered]@{
+        key = "unified_account_index_large_scale_perf"
+        filter = "test_unified_account_index_refresh_large_scale_perf_budget"
+        category = "perf_budget"
     }
 )
 
@@ -88,7 +93,8 @@ foreach ($case in $cases) {
 
 $runtimeSeedPass = @($results | Where-Object { $_.category -eq "runtime_seed" -and $_.pass }).Count -gt 0
 $protocolSyncPass = @($results | Where-Object { $_.category -eq "protocol_sync" -and $_.pass }).Count -gt 0
-$allPass = [bool]($runtimeSeedPass -and $protocolSyncPass)
+$perfBudgetPass = @($results | Where-Object { $_.category -eq "perf_budget" -and $_.pass }).Count -gt 0
+$allPass = [bool]($runtimeSeedPass -and $protocolSyncPass -and $perfBudgetPass)
 
 $errorReason = ""
 if (-not $allPass) {
@@ -105,6 +111,7 @@ $summary = [ordered]@{
     pass = $allPass
     runtime_seed_pass = $runtimeSeedPass
     protocol_sync_pass = $protocolSyncPass
+    perf_budget_pass = $perfBudgetPass
     error_reason = $errorReason
     tests = $results
 }
@@ -120,6 +127,7 @@ $md = @(
     "- pass: $($summary.pass)"
     "- runtime_seed_pass: $($summary.runtime_seed_pass)"
     "- protocol_sync_pass: $($summary.protocol_sync_pass)"
+    "- perf_budget_pass: $($summary.perf_budget_pass)"
     "- error_reason: $($summary.error_reason)"
     "- summary_json: $summaryJson"
     ""
@@ -134,6 +142,7 @@ Write-Host "dividend balance source gate summary:"
 Write-Host "  pass: $($summary.pass)"
 Write-Host "  runtime_seed_pass: $($summary.runtime_seed_pass)"
 Write-Host "  protocol_sync_pass: $($summary.protocol_sync_pass)"
+Write-Host "  perf_budget_pass: $($summary.perf_budget_pass)"
 Write-Host "  summary_json: $summaryJson"
 
 if (-not $allPass) {

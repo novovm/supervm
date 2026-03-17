@@ -225,6 +225,7 @@ pub struct Web30MarketEngine {
     treasury_ingress: Web30Address,
     dividend_probe_user: Web30Address,
     foreign_probe_miner: Web30Address,
+    // Snapshot sourced from unified account index service (kept deterministic, sorted).
     dividend_runtime_balances: Vec<(Web30Address, u128)>,
     foreign_rate_quote_spec_applied: bool,
     foreign_rate_fallback_used: bool,
@@ -325,6 +326,13 @@ impl Web30MarketEngine {
                     .trigger_discount_bp
                     .saturating_add(50)
                     .min(10_000),
+                orderbook_liquidity_stable: u128::from(
+                    policy.buyback.max_treasury_budget_per_epoch,
+                )
+                .saturating_mul(4),
+                amm_liquidity_stable: u128::from(policy.buyback.max_treasury_budget_per_epoch)
+                    .saturating_mul(4),
+                max_execution_slippage_bp: 1_500,
             },
             nav_config: NavConfig {
                 min_nav_multiplier_bp: policy.reserve.min_reserve_ratio_bp,
@@ -617,15 +625,23 @@ impl Web30MarketEngine {
         Ok(())
     }
 
-    /// Inject runtime/token-account balances for dividend snapshot path.
+    /// Set unified account-index snapshot for dividend path.
     /// Market engine merges these balances with deterministic probe accounts.
-    pub fn set_dividend_runtime_balances<I>(&mut self, balances: I)
+    pub fn set_dividend_account_index_snapshot<I>(&mut self, balances: I)
     where
         I: IntoIterator<Item = (Web30Address, u128)>,
     {
         self.dividend_runtime_balances = balances.into_iter().collect();
         self.dividend_runtime_balances
             .sort_by(|(left, _), (right, _)| left.as_bytes().cmp(right.as_bytes()));
+    }
+
+    /// Compatibility shim for historical call sites/scripts.
+    pub fn set_dividend_runtime_balances<I>(&mut self, balances: I)
+    where
+        I: IntoIterator<Item = (Web30Address, u128)>,
+    {
+        self.set_dividend_account_index_snapshot(balances);
     }
 
     /// Switch NAV valuation to external-feed mode.

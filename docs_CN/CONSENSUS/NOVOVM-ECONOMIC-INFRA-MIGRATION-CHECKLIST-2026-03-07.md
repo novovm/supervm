@@ -29,9 +29,9 @@
 | NAV 赎回 | 已完整可用 | `market_engine` 接入 `NavRedemptionManager`，NAV 估值源支持 `deterministic/external(feed)` 可切换并具备缺失报价 fallback，输出 nav snapshot/redemption + source 指标；`novovm-node` 已支持 HTTP feed 多源聚合（中位数）+ strict/fallback + 签名校验 | `run_governance_market_policy_gate.ps1` + `run_economic_infra_dedicated_gate.ps1` + `run_market_engine_treasury_negative_gate.ps1` + `run_nav_valuation_source_gate.ps1` | Done（受限主链路） | 已完成多源+签名门禁，后续可扩展权重聚合与链上预言机桥 |
 | CDP | 已完整可用 | `market_engine` 接入 `CdpManager`，具备价格更新/清算编排 | `run_governance_market_policy_gate.ps1` + `run_economic_infra_dedicated_gate.ps1` | Done（受限主链路） | 当前以编排与参数治理为主，业务域接口未独立收口 |
 | 债券系统 | 已完整可用 | `market_engine` 接入 `BondManager` 与治理参数热更新 | `run_governance_market_policy_gate.ps1` + `run_economic_infra_dedicated_gate.ps1` | Done（受限主链路） | 仍未形成独立主链业务入口与全量门禁包 |
-| 国库管理 | 已完整可用 | `TreasurySpend` 已接入治理执行路径；`market_engine` 有 treasury 快照输出；`TreasuryImpl` 已按 policy 执行 reserve/burn/trigger 约束 | `run_governance_treasury_spend_gate.ps1` + `run_governance_market_policy_gate.ps1` + `run_economic_infra_dedicated_gate.ps1` + `run_market_engine_treasury_negative_gate.ps1` | Done（受限主链路） | 回购执行仍为确定性执行语义，尚未接外部 AMM 真实成交 |
+| 国库管理 | 已完整可用 | `TreasurySpend` 已接入治理执行路径；`market_engine` 有 treasury 快照输出；`TreasuryImpl` 已按 policy 执行 reserve/burn/trigger + 流动性/滑点约束成交语义 | `run_governance_treasury_spend_gate.ps1` + `run_governance_market_policy_gate.ps1` + `run_economic_infra_dedicated_gate.ps1` + `run_market_engine_treasury_negative_gate.ps1` | Done（受限主链路） | 已完成内部流动性成交模型；后续可接外部 AMM/订单簿桥 |
 | 治理系统 | 已完整可用 | I-GOV-01~04 主链路已接线（受限执行面） | `governance_*_gate` 系列 + acceptance | Done（受限主链路） | 仍为受限执行面，非完整主网全开放治理面 |
-| 分红池 | 已完整可用 | `market_engine` 已接入 `DividendPoolImpl`（`receive_income/take_daily_snapshot/claim`），并通过 `token_runtime.dividend_eligible_balances` 注入真实运行态账户余额（同时保留 deterministic probe fallback） | `run_governance_market_policy_gate.ps1` + `run_economic_infra_dedicated_gate.ps1`（`dividend_pool_pass=true`） + `run_dividend_balance_source_gate.ps1` | Done（受限主链路） | 已完成运行态余额注入，后续可继续升级到跨模块统一账户索引服务 |
+| 分红池 | 已完整可用 | `market_engine` 已接入 `DividendPoolImpl`（`receive_income/take_daily_snapshot/claim`），并通过 `account_index` 统一账户索引服务同步 `token_runtime.dividend_eligible_balances`（保留 deterministic probe fallback） | `run_governance_market_policy_gate.ps1` + `run_economic_infra_dedicated_gate.ps1`（`dividend_pool_pass=true`） + `run_dividend_balance_source_gate.ps1` | Done（受限主链路） | 主链路与大规模账户快照性能门禁已完成；后续可扩展更高账户规模压测阈值（可选） |
 | 跨链外币支付 | 已完整可用 | `market_engine` 已接入 `ForeignPaymentProcessorImpl`（`process_foreign_payment/miner_swap_to_foreign`）并输出 reserve/token 信号；`novovm-node` 已支持外部 HTTP 汇率源多源聚合（多数聚合）+ strict/fallback + 签名校验，主链路汇率源采用 `ConfigurableExchangeRateProvider` | `run_governance_market_policy_gate.ps1` + `run_economic_infra_dedicated_gate.ps1`（`foreign_payment_pass=true`） + `run_foreign_rate_source_gate.ps1` | Done（受限主链路） | 已完成多源+签名门禁，后续可扩展链上结算桥 |
 
 ## 5. 关键证据
@@ -56,7 +56,10 @@
   - `mint/burn/charge_gas_fee/charge_service_fee/spend_treasury`
 - `crates/novovm-consensus/src/market_engine.rs`
   - `AMMManager/CdpManager/BondManager/NavRedemptionManager` 接线
+  - `set_dividend_account_index_snapshot` 统一账户索引快照接线
   - `run_cross_module_orchestration` 输出 `oracle/cdp/nav + dividend + foreign_payment` 编排信号
+- `crates/novovm-consensus/src/account_index.rs`
+  - `UnifiedAccountIndex` 跨模块统一账户索引服务（分红账户快照）
 - `scripts/migration/run_governance_token_economics_gate.ps1`
 - `scripts/migration/run_governance_treasury_spend_gate.ps1`
 - `scripts/migration/run_governance_market_policy_gate.ps1`
@@ -80,7 +83,7 @@
 - 脚本：`scripts/migration/run_market_engine_treasury_negative_gate.ps1`
 - 产物：`artifacts/migration/market-engine-treasury-negative-gate-2026-03-07/market-engine-treasury-negative-gate-summary.json`
   - 结果：`pass=true`
-  - 负向覆盖：`buyback_zero_budget_reject`、`buyback_not_triggered_below_threshold`、`buyback_reserve_and_burn_share`、`market_engine_reject_zero_buyback_budget`
+  - 负向覆盖：`buyback_zero_budget_reject`、`buyback_not_triggered_below_threshold`、`buyback_reserve_and_burn_share`、`buyback_liquidity_unavailable_rejected`、`buyback_slippage_cap_rejected`、`market_engine_reject_zero_buyback_budget`
 - acceptance 产物：`artifacts/migration/acceptance-market-engine-treasury-negative-smoke-2026-03-07/acceptance-gate-summary.json`
   - 结果：`overall_pass=true`
   - 关键字段：`market_engine_treasury_negative_pass=true`
@@ -105,7 +108,8 @@
 - 脚本：`scripts/migration/run_dividend_balance_source_gate.ps1`
 - 产物：`artifacts/migration/dividend-balance-source-gate-2026-03-07/dividend-balance-source-gate-summary.json`
   - 结果：`pass=true`
-  - 覆盖：`dividend_pool_injected_balances_claim_ok`、`dividend_pool_reentrancy_guard_ok`、`market_engine_runtime_dividend_seed_ok`、`protocol_market_dividend_sync_ok`、`market_engine_regression_ok`
+  - 覆盖：`market_engine_runtime_dividend_seed`、`protocol_market_policy_syncs_dividend_balances`、`unified_account_index_large_scale_perf`
+  - 聚合字段：`runtime_seed_pass=true`、`protocol_sync_pass=true`、`perf_budget_pass=true`
 - acceptance 产物：`artifacts/migration/acceptance-economic-dividend-source-smoke-2026-03-07/acceptance-gate-summary.json`
   - 结果：`overall_pass=true`
   - 关键字段：`dividend_balance_source_pass=true`
@@ -125,12 +129,23 @@
   - 结果：`overall_pass=true`
   - 关键字段：`nav_valuation_source_pass=true`
 
-### 5.2 尚未主链路完成（占位/未接线）
+### 5.1.6 `full_snapshot_ga_v1` 收口快照（2026-03-18）
+
+- 脚本：`scripts/migration/run_migration_acceptance_gate.ps1 -FullSnapshotProfileGA`
+- 产物：`artifacts/migration/acceptance-full-snapshot-ga-v1-2026-03-18-r2/acceptance-gate-summary.json`
+  - 结果：`overall_pass=true`
+  - 关键字段：`economic_infra_dedicated_pass=true`、`market_engine_treasury_negative_pass=true`、`foreign_rate_source_pass=true`、`nav_valuation_source_pass=true`、`dividend_balance_source_pass=true`
+  - 说明：当前本地 AOEM 动态库符号存在兼容差异，收口快照按 `IncludePerformanceGate=false` 执行（`performance_gate_enabled=false`）。
+
+### 5.2 主链路收口状态（2026-03-18 复核）
 
 - `vendor/web30-core/src/privacy.rs`
-  - 存在 TODO（环签名验证）。
+  - 环签名能力已完成 AOEM FFI 主链路接线：`verify_ring_signature_via_aoem` / `generate_ring_signature_via_aoem` / `generate_ring_keypair_via_aoem` 已落地并由 `aoem-ring-ffi` 特性控制。
+  - 失败语义为 fail-closed（DLL/能力缺失时拒绝通过），不再属于“未接线 TODO”。
+  - 本地复核：`cargo test -p web30-core --manifest-path Cargo.toml` 通过（`84 passed`）。
 - `vendor/web30-core/src/dividend_pool.rs`
-  - 已通过上层 `token_runtime` 注入接入运行态余额；后续可升级为跨模块统一账户索引服务（替代注入式快照）。
+  - 上层已由 `token_runtime` 直接注入升级为 `account_index` 跨模块统一账户索引服务（替代注入式快照）。
+  - 大规模账户快照性能门禁已补齐：`test_unified_account_index_refresh_large_scale_perf_budget`（默认 `20_000` 账户、`8_000ms` 预算，可通过环境变量调节）。
 
 ## 6. 与“核心金融基础设施(全部可用)”文档的对比结论
 
@@ -143,6 +158,6 @@
 ## 7. 下一步（直接可执行）
 
 1. （已完成）`ForeignPayment` 与 NAV feed 已从 HTTP 单源扩展为多源聚合 + 签名校验门禁（见 5.1.3 / 5.1.5）。
-2. 将 buyback 从确定性执行语义升级到真实流动性执行（AMM/订单簿），补成交失败/滑点上限负向门禁。
-3. 将分红账户余额注入升级为跨模块统一账户索引服务，并补大规模账户快照性能门禁。
-4. 在 `full_snapshot_ga_v1` 基础上跑一版完整 acceptance 快照，把 `economic_infra_dedicated_*` + `market_engine_treasury_negative_*` + `foreign_rate_source_*` + `nav_valuation_source_*` + `dividend_balance_source_*` 字段纳入发布证据。
+2. （已完成）buyback 已从确定性语义升级到流动性/滑点约束成交模型；后续可接外部 AMM/订单簿桥。
+3. （已完成）在统一账户索引服务基础上补齐大规模账户快照性能门禁。
+4. （已完成）在 `full_snapshot_ga_v1` 基础上跑完整 acceptance 快照，`economic_infra_dedicated_*` + `market_engine_treasury_negative_*` + `foreign_rate_source_*` + `nav_valuation_source_*` + `dividend_balance_source_*` 字段已纳入发布证据（见 5.1.6）。

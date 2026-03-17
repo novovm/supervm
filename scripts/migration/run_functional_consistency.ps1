@@ -54,6 +54,24 @@ $ErrorActionPreference = "Stop"
 if (-not (Get-Variable -Name IsWindows -ErrorAction SilentlyContinue)) {
     $IsWindows = ($env:OS -eq "Windows_NT")
 }
+if (-not (Get-Variable -Name IsMacOS -ErrorAction SilentlyContinue)) {
+    try {
+        $IsMacOS = [System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform(
+            [System.Runtime.InteropServices.OSPlatform]::OSX
+        )
+    } catch {
+        $IsMacOS = $false
+    }
+}
+if (-not (Get-Variable -Name IsLinux -ErrorAction SilentlyContinue)) {
+    try {
+        $IsLinux = [System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform(
+            [System.Runtime.InteropServices.OSPlatform]::Linux
+        )
+    } catch {
+        $IsLinux = $false
+    }
+}
 
 if (-not $RepoRoot) {
     $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
