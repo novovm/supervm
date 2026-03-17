@@ -692,6 +692,18 @@ fn remove_ingress_frame_by_hash(
     runtime.ingress_frames.remove(pos)
 }
 
+fn remove_executable_ingress_frame_by_hash(
+    runtime: &mut EvmTxpoolState,
+    chain_id: u64,
+    tx_hash: &[u8],
+) -> Option<EvmMempoolIngressFrameV1> {
+    let pos = runtime
+        .executable_ingress_frames
+        .iter()
+        .position(|frame| frame.chain_id == chain_id && frame.tx_hash.as_slice() == tx_hash)?;
+    runtime.executable_ingress_frames.remove(pos)
+}
+
 fn tx_present_in_runtime(runtime: &EvmTxpoolState, chain_id: u64, tx_hash: &[u8]) -> bool {
     runtime
         .executable_ingress_frames
@@ -1618,6 +1630,116 @@ pub fn drain_pending_ingress_frames_for_host(max_items: usize) -> Vec<EvmMempool
         }
     }
     out
+}
+
+pub fn evict_ingress_tx_hashes_for_host(chain_id: u64, tx_hashes: &[[u8; 32]]) -> usize {
+    if tx_hashes.is_empty() {
+        return 0;
+    }
+    let wanted = tx_hashes.iter().copied().collect::<HashSet<[u8; 32]>>();
+    if wanted.is_empty() {
+        return 0;
+    }
+    let shards = resolve_evm_txpool_shards();
+    let mut removed = 0usize;
+    for shard in shards {
+        let mut runtime = match shard.lock() {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        loop {
+            let next_hash = runtime.executable_ingress_frames.iter().find_map(|frame| {
+                if frame.chain_id != chain_id || frame.tx_hash.len() != 32 {
+                    return None;
+                }
+                let mut hash = [0u8; 32];
+                hash.copy_from_slice(frame.tx_hash.as_slice());
+                wanted.contains(&hash).then_some(hash)
+            });
+            let Some(tx_hash) = next_hash else {
+                break;
+            };
+            if remove_executable_ingress_frame_by_hash(&mut runtime, chain_id, tx_hash.as_slice())
+                .is_some()
+            {
+                removed = removed.saturating_add(1);
+            } else {
+                break;
+            }
+        }
+
+        loop {
+            let next_hash = runtime.ingress_frames.iter().find_map(|frame| {
+                if frame.chain_id != chain_id || frame.tx_hash.len() != 32 {
+                    return None;
+                }
+                let mut hash = [0u8; 32];
+                hash.copy_from_slice(frame.tx_hash.as_slice());
+                wanted.contains(&hash).then_some(hash)
+            });
+            let Some(tx_hash) = next_hash else {
+                break;
+            };
+            if let Some(frame) = remove_ingress_frame_by_hash(&mut runtime, chain_id, &tx_hash) {
+                remove_nonce_index_for_frame(&mut runtime, &frame);
+                removed = removed.saturating_add(1);
+            } else {
+                break;
+            }
+        }
+    }
+    removed
+}
+
+pub fn evict_stale_ingress_frames_for_host(chain_id: u64, observed_before_unix_ms: u64) -> usize {
+    if observed_before_unix_ms == 0 {
+        return 0;
+    }
+    let shards = resolve_evm_txpool_shards();
+    let mut removed = 0usize;
+    for shard in shards {
+        let mut runtime = match shard.lock() {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        let mut executable_idx = 0usize;
+        while executable_idx < runtime.executable_ingress_frames.len() {
+            let should_remove = runtime
+                .executable_ingress_frames
+                .get(executable_idx)
+                .map(|frame| {
+                    frame.chain_id == chain_id
+                        && frame.observed_at_unix_ms <= observed_before_unix_ms
+                })
+                .unwrap_or(false);
+            if should_remove {
+                let _ = runtime.executable_ingress_frames.remove(executable_idx);
+                removed = removed.saturating_add(1);
+            } else {
+                executable_idx = executable_idx.saturating_add(1);
+            }
+        }
+        let mut pending_idx = 0usize;
+        while pending_idx < runtime.ingress_frames.len() {
+            let should_remove = runtime
+                .ingress_frames
+                .get(pending_idx)
+                .map(|frame| {
+                    frame.chain_id == chain_id
+                        && frame.observed_at_unix_ms <= observed_before_unix_ms
+                })
+                .unwrap_or(false);
+            if should_remove {
+                if let Some(frame) = runtime.ingress_frames.remove(pending_idx) {
+                    remove_nonce_index_for_frame(&mut runtime, &frame);
+                    removed = removed.saturating_add(1);
+                }
+            } else {
+                pending_idx = pending_idx.saturating_add(1);
+            }
+        }
+    }
+    removed
 }
 
 pub fn snapshot_pending_sender_buckets_for_host(
@@ -3135,6 +3257,8 @@ mod tests {
 
     #[test]
     fn plugin_apply_v2_self_guard_rejects_replay_nonce() {
+        let _guard = runtime_queue_test_guard();
+        reset_runtime_queues_for_test();
         let txs = vec![sample_tx(1, 0)];
         let tx_bytes = bincode::serialize(&txs).expect("tx encode");
         let options = NovovmAdapterPluginApplyOptionsV1 {
@@ -3439,6 +3563,56 @@ mod tests {
             .filter_map(|frame| frame.parsed_tx.as_ref().map(|tx| tx.nonce))
             .collect();
         assert_eq!(pending_nonces, vec![2, 3]);
+    }
+
+    #[test]
+    fn evict_ingress_tx_hashes_removes_executable_and_pending_frames() {
+        let _guard = runtime_queue_test_guard();
+        reset_runtime_queues_for_test();
+
+        let sender = address_from_seed_v1(TEST_SIGN_SEED);
+        let mut tx0 = sample_tx(1, 0);
+        tx0.from = sender.clone();
+        let mut tx2 = sample_tx(1, 2);
+        tx2.from = sender.clone();
+        push_ingress_frames(1, &[resign_tx(tx0), resign_tx(tx2)]);
+
+        let executable = snapshot_executable_ingress_frames_for_host(16);
+        let pending = snapshot_pending_ingress_frames_for_host(16);
+        assert_eq!(executable.len(), 1);
+        assert_eq!(pending.len(), 1);
+
+        let mut hashes = Vec::<[u8; 32]>::new();
+        for frame in executable.into_iter().chain(pending) {
+            if frame.tx_hash.len() != 32 {
+                continue;
+            }
+            let mut hash = [0u8; 32];
+            hash.copy_from_slice(frame.tx_hash.as_slice());
+            hashes.push(hash);
+        }
+        let removed = evict_ingress_tx_hashes_for_host(1, hashes.as_slice());
+        assert_eq!(removed, 2);
+        assert!(snapshot_executable_ingress_frames_for_host(16).is_empty());
+        assert!(snapshot_pending_ingress_frames_for_host(16).is_empty());
+    }
+
+    #[test]
+    fn evict_stale_ingress_frames_removes_old_runtime_frames() {
+        let _guard = runtime_queue_test_guard();
+        reset_runtime_queues_for_test();
+
+        let sender = address_from_seed_v1(TEST_SIGN_SEED);
+        let mut tx0 = sample_tx(1, 0);
+        tx0.from = sender.clone();
+        let mut tx2 = sample_tx(1, 2);
+        tx2.from = sender;
+        push_ingress_frames(1, &[resign_tx(tx0), resign_tx(tx2)]);
+
+        let removed = evict_stale_ingress_frames_for_host(1, u64::MAX);
+        assert_eq!(removed, 2);
+        assert!(snapshot_executable_ingress_frames_for_host(16).is_empty());
+        assert!(snapshot_pending_ingress_frames_for_host(16).is_empty());
     }
 
     #[test]

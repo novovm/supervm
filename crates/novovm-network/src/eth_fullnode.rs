@@ -486,7 +486,7 @@ mod tests {
 
     #[test]
     fn parity_progress_for_chain_marks_native_snap_state_machine_ready_after_full_cycle() {
-        let chain_id = 9_916_0316_u64;
+        let chain_id = 99_160_316_u64;
         let peer_id = 88_u64;
         let _ = upsert_network_runtime_eth_peer_session(chain_id, peer_id, &[66, 68], &[1], None)
             .expect("negotiated");
@@ -504,7 +504,7 @@ mod tests {
 
     #[test]
     fn parity_progress_for_chain_marks_native_rlpx_profile_after_handshake_cycle() {
-        let chain_id = 9_916_0317_u64;
+        let chain_id = 99_160_317_u64;
         observe_eth_native_discovery(chain_id);
         observe_eth_native_rlpx_auth(chain_id);
         observe_eth_native_rlpx_auth_ack(chain_id);

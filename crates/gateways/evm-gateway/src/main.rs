@@ -22,9 +22,10 @@ use novovm_adapter_evm_plugin::{
     drain_atomic_broadcast_ready_for_host, drain_atomic_receipts_for_host,
     drain_executable_ingress_frames_for_host, drain_payout_instructions_for_host,
     drain_pending_ingress_frames_for_host, drain_settlement_records_for_host,
-    runtime_tap_ir_batch_v1, snapshot_executable_ingress_frames_for_host,
-    snapshot_pending_ingress_frames_for_host, snapshot_pending_sender_buckets_for_host,
-    EvmPendingSenderBucketV1, NOVOVM_ADAPTER_PLUGIN_APPLY_FLAG_ATOMIC_INTENT_GUARD_V1,
+    evict_stale_ingress_frames_for_host, runtime_tap_ir_batch_v1,
+    snapshot_executable_ingress_frames_for_host, snapshot_pending_ingress_frames_for_host,
+    snapshot_pending_sender_buckets_for_host, EvmPendingSenderBucketV1,
+    NOVOVM_ADAPTER_PLUGIN_APPLY_FLAG_ATOMIC_INTENT_GUARD_V1,
 };
 use novovm_adapter_novovm::{
     build_privacy_tx_ir_signed_from_raw_v1, PrivacyTxRawEnvelopeV1, PrivacyTxRawSignerV1,
@@ -551,6 +552,7 @@ fn main() -> Result<()> {
     auto_replay_pending_payouts(&mut runtime);
     auto_replay_pending_atomic_broadcasts(&mut runtime);
     auto_replay_pending_public_broadcasts(&mut runtime);
+    ensure_gateway_eth_plugin_mempool_ingest_runtime(runtime.eth_default_chain_id);
 
     let server = tiny_http::Server::http(&runtime.bind)
         .map_err(|e| anyhow::anyhow!("start gateway server failed on {}: {}", runtime.bind, e))?;
@@ -5464,7 +5466,12 @@ fn run_gateway_method(
         "eth_pendingTransactions" => {
             let chain_id = param_as_u64_any_with_tx(params, &["chain_id", "chainId"])
                 .unwrap_or(ctx.eth_default_chain_id);
-            let (pending_txs, queued_txs) = collect_gateway_eth_txpool_runtime_txs(chain_id);
+            poll_gateway_eth_public_broadcast_native_runtime(chain_id, 64);
+            let (pending_txs, queued_txs) = collect_gateway_eth_txpool_txs_with_index_fallback(
+                chain_id,
+                eth_tx_index,
+                ctx.eth_tx_index_store,
+            )?;
             if !pending_txs.is_empty() || !queued_txs.is_empty() {
                 let mut pending =
                     Vec::<serde_json::Value>::with_capacity(pending_txs.len() + queued_txs.len());
@@ -6550,7 +6557,12 @@ fn run_gateway_method(
         "txpool_content" => {
             let chain_id = param_as_u64_any_with_tx(params, &["chain_id", "chainId"])
                 .unwrap_or(ctx.eth_default_chain_id);
-            let (pending_txs, queued_txs) = collect_gateway_eth_txpool_runtime_txs(chain_id);
+            poll_gateway_eth_public_broadcast_native_runtime(chain_id, 64);
+            let (pending_txs, queued_txs) = collect_gateway_eth_txpool_txs_with_index_fallback(
+                chain_id,
+                eth_tx_index,
+                ctx.eth_tx_index_store,
+            )?;
             if !pending_txs.is_empty() || !queued_txs.is_empty() {
                 return Ok((build_gateway_eth_txpool_content_from_ir(pending_txs, queued_txs), false));
             }
@@ -6559,13 +6571,18 @@ fn run_gateway_method(
         "txpool_contentFrom" => {
             let chain_id = param_as_u64_any_with_tx(params, &["chain_id", "chainId"])
                 .unwrap_or(ctx.eth_default_chain_id);
+            poll_gateway_eth_public_broadcast_native_runtime(chain_id, 64);
             let address_raw = extract_eth_persona_address_param(params)
                 .ok_or_else(|| anyhow::anyhow!("address (or from/external_address) is required"))?;
             let address = decode_hex_bytes(&address_raw, "address")?;
             if address.len() != 20 {
                 bail!("address must be 20 bytes");
             }
-            let (pending_txs, queued_txs) = collect_gateway_eth_txpool_runtime_txs(chain_id);
+            let (pending_txs, queued_txs) = collect_gateway_eth_txpool_txs_with_index_fallback(
+                chain_id,
+                eth_tx_index,
+                ctx.eth_tx_index_store,
+            )?;
             Ok((
                 build_gateway_eth_txpool_content_from_ir_for_sender(
                     pending_txs,
@@ -6578,7 +6595,12 @@ fn run_gateway_method(
         "txpool_inspect" => {
             let chain_id = param_as_u64_any_with_tx(params, &["chain_id", "chainId"])
                 .unwrap_or(ctx.eth_default_chain_id);
-            let (pending_txs, queued_txs) = collect_gateway_eth_txpool_runtime_txs(chain_id);
+            poll_gateway_eth_public_broadcast_native_runtime(chain_id, 64);
+            let (pending_txs, queued_txs) = collect_gateway_eth_txpool_txs_with_index_fallback(
+                chain_id,
+                eth_tx_index,
+                ctx.eth_tx_index_store,
+            )?;
             if !pending_txs.is_empty() || !queued_txs.is_empty() {
                 return Ok((build_gateway_eth_txpool_inspect_from_ir(pending_txs, queued_txs), false));
             }
@@ -6587,13 +6609,18 @@ fn run_gateway_method(
         "txpool_inspectFrom" => {
             let chain_id = param_as_u64_any_with_tx(params, &["chain_id", "chainId"])
                 .unwrap_or(ctx.eth_default_chain_id);
+            poll_gateway_eth_public_broadcast_native_runtime(chain_id, 64);
             let address_raw = extract_eth_persona_address_param(params)
                 .ok_or_else(|| anyhow::anyhow!("address (or from/external_address) is required"))?;
             let address = decode_hex_bytes(&address_raw, "address")?;
             if address.len() != 20 {
                 bail!("address must be 20 bytes");
             }
-            let (pending_txs, queued_txs) = collect_gateway_eth_txpool_runtime_txs(chain_id);
+            let (pending_txs, queued_txs) = collect_gateway_eth_txpool_txs_with_index_fallback(
+                chain_id,
+                eth_tx_index,
+                ctx.eth_tx_index_store,
+            )?;
             Ok((
                 build_gateway_eth_txpool_inspect_from_ir_for_sender(
                     pending_txs,
@@ -6606,7 +6633,12 @@ fn run_gateway_method(
         "txpool_status" => {
             let chain_id = param_as_u64_any_with_tx(params, &["chain_id", "chainId"])
                 .unwrap_or(ctx.eth_default_chain_id);
-            let (pending_txs, queued_txs) = collect_gateway_eth_txpool_runtime_txs(chain_id);
+            poll_gateway_eth_public_broadcast_native_runtime(chain_id, 64);
+            let (pending_txs, queued_txs) = collect_gateway_eth_txpool_txs_with_index_fallback(
+                chain_id,
+                eth_tx_index,
+                ctx.eth_tx_index_store,
+            )?;
             if !pending_txs.is_empty() || !queued_txs.is_empty() {
                 return Ok((build_gateway_eth_txpool_status_from_ir(&pending_txs, &queued_txs), false));
             }
@@ -6621,13 +6653,18 @@ fn run_gateway_method(
         "txpool_statusFrom" => {
             let chain_id = param_as_u64_any_with_tx(params, &["chain_id", "chainId"])
                 .unwrap_or(ctx.eth_default_chain_id);
+            poll_gateway_eth_public_broadcast_native_runtime(chain_id, 64);
             let address_raw = extract_eth_persona_address_param(params)
                 .ok_or_else(|| anyhow::anyhow!("address (or from/external_address) is required"))?;
             let address = decode_hex_bytes(&address_raw, "address")?;
             if address.len() != 20 {
                 bail!("address must be 20 bytes");
             }
-            let (pending_txs, queued_txs) = collect_gateway_eth_txpool_runtime_txs(chain_id);
+            let (pending_txs, queued_txs) = collect_gateway_eth_txpool_txs_with_index_fallback(
+                chain_id,
+                eth_tx_index,
+                ctx.eth_tx_index_store,
+            )?;
             Ok((
                 build_gateway_eth_txpool_status_from_ir_for_sender(
                     &pending_txs,
@@ -8175,7 +8212,29 @@ fn run_gateway_method(
                 .unwrap_or(ctx.eth_default_chain_id);
             Ok((gateway_eth_public_broadcast_capability_json(chain_id), false))
         }
-        "evm_getUpstreamSnapshot" | "evm_get_upstream_snapshot" => {
+        "evm_getPublicBroadcastPluginPeers"
+        | "evm_get_public_broadcast_plugin_peers"
+        | "evm_getPluginPeers"
+        | "evm_get_plugin_peers" => {
+            let chain_id = param_as_u64_any_with_tx(params, &["chain_id", "chainId"])
+                .unwrap_or(ctx.eth_default_chain_id);
+            Ok((gateway_eth_public_broadcast_plugin_peers_json(chain_id), false))
+        }
+        "evm_reportPublicBroadcastPluginSession"
+        | "evm_report_public_broadcast_plugin_session"
+        | "evm_reportPluginSession"
+        | "evm_report_plugin_session" => {
+            let chain_id = param_as_u64_any_with_tx(params, &["chain_id", "chainId"])
+                .unwrap_or(ctx.eth_default_chain_id);
+            Ok((
+                gateway_eth_public_broadcast_ingest_plugin_session_report(chain_id, params)?,
+                false,
+            ))
+        }
+        "evm_getUpstreamSnapshot"
+        | "evm_get_upstream_snapshot"
+        | "evm_getRuntimeSnapshot"
+        | "evm_get_runtime_snapshot" => {
             let chain_id = param_as_u64_any_with_tx(params, &["chain_id", "chainId"])
                 .unwrap_or(ctx.eth_default_chain_id);
             Ok((

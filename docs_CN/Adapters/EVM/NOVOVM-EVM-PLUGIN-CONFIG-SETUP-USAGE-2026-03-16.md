@@ -34,6 +34,15 @@
 - 通过上游 RPC 获取状态或做广播。
 - 只用于迁移和临时验证，不是最终主线形态。
 
+### 2.4 端口与网络边界（Port & Network Boundary）
+
+- 以太坊（geth）外部 P2P 默认端口是 `30303`（TCP），发现协议默认也使用 `30303`（UDP，可单独改）。
+- SUPERVM 主网采用另一套隐私网络形态，不与以太坊公网 P2P 端口语义混用。
+- 实践上建议把两类端口分层：
+  - SUPERVM 网络端口：例如 `39001`、`39002`（示例）。
+  - EVM 插件/以太坊兼容端口：例如 `30303`、`30304`。
+- 通过路由策略做自适应分类，避免把 `enode://...` 与 `nodeId@host:port` 混在同一语义里。
+
 ---
 
 ## 3. 关键环境变量（Key Environment Variables）
@@ -52,8 +61,18 @@
 | `NOVOVM_GATEWAY_ETH_PUBLIC_BROADCAST_NATIVE_TRANSPORT` | `udp` 或 `tcp` |
 | `NOVOVM_GATEWAY_ETH_PUBLIC_BROADCAST_NATIVE_NODE_ID` | 本机 native 节点 ID（十进制或 `0x`） |
 | `NOVOVM_GATEWAY_ETH_PUBLIC_BROADCAST_NATIVE_LISTEN` | 本机 native 监听地址，例如 `127.0.0.1:39001` |
-| `NOVOVM_GATEWAY_ETH_PUBLIC_BROADCAST_NATIVE_PEERS` | 对端列表，格式：`nodeId@host:port,nodeId@host:port` |
+| `NOVOVM_GATEWAY_ETH_PUBLIC_BROADCAST_NATIVE_PEERS` | 对端列表，支持混合输入：`nodeId@host:port`、`nodeId=host:port`、`enode://...@host:port` |
+| `NOVOVM_GATEWAY_ETH_PUBLIC_BROADCAST_ROUTE_POLICY` | 路由策略：`auto`（默认）/`supvm_only`/`plugin_only` |
+| `NOVOVM_GATEWAY_ETH_PUBLIC_BROADCAST_PLUGIN_PORTS` | 插件协议端口白名单（默认 `30303,30304`），`auto` 模式按端口分类路由 |
+| `NOVOVM_GATEWAY_ETH_PUBLIC_BROADCAST_PLUGIN_SESSION_PROBE_MODE` | 插件会话探测模式：`enode`（默认，仅探测 `enode://`）/`all`/`disabled` |
 | `NOVOVM_NETWORK_ENABLE_GOSSIP_SYNC_COMPAT` | 旧兼容开关；EVM 进程默认注入 `0`（关闭旧 gossip 同步） |
+
+说明（当前实现状态）：
+
+- `auto` 模式会把 `30303/30304`（可配置）以及 `enode://...` 归类为插件路由候选。
+- `nodeId@host:port` 且端口不在插件端口表时，走 SUPERVM 路由。
+- 插件路由会维护会话阶段指标：`disconnected/tcp_connected/auth_sent/ack_seen/ready`，用于区分“仅 TCP 可达”和“有协议回包”。
+- 目前插件路由仍处于接入阶段，能力输出会标记 `plugin_route_pending`，用于避免混淆与误连。
 
 ## 3.3 Upstream（代理）相关
 
@@ -113,7 +132,9 @@ $env:NOVOVM_GATEWAY_ETH_PUBLIC_BROADCAST_EXEC = ""
 $env:NOVOVM_GATEWAY_ETH_PUBLIC_BROADCAST_NATIVE_TRANSPORT = "udp"
 $env:NOVOVM_GATEWAY_ETH_PUBLIC_BROADCAST_NATIVE_NODE_ID = "1"
 $env:NOVOVM_GATEWAY_ETH_PUBLIC_BROADCAST_NATIVE_LISTEN = "127.0.0.1:39001"
-$env:NOVOVM_GATEWAY_ETH_PUBLIC_BROADCAST_NATIVE_PEERS = "2@127.0.0.1:39001"
+$env:NOVOVM_GATEWAY_ETH_PUBLIC_BROADCAST_ROUTE_POLICY = "auto"
+$env:NOVOVM_GATEWAY_ETH_PUBLIC_BROADCAST_PLUGIN_PORTS = "30303,30304"
+$env:NOVOVM_GATEWAY_ETH_PUBLIC_BROADCAST_NATIVE_PEERS = "2@127.0.0.1:39001,enode://<pubkey>@<eth-peer-ip>:30303"
 ```
 
 ## 5.2 Passive（轻量）
@@ -171,6 +192,85 @@ cargo build -p novovm-evm-gateway
 {"jsonrpc":"2.0","id":4,"method":"evm_getTxSubmitStatus","params":{"chain_id":1,"tx_hash":"0x..."}}
 ```
 
+## 7.5 上报插件会话阶段（Plugin Session Report）
+
+可用于“协议封装在 EVM 插件中，网关只消费阶段状态”的场景。
+
+方法别名：
+
+- `evm_reportPublicBroadcastPluginSession`
+- `evm_report_public_broadcast_plugin_session`
+- `evm_reportPluginSession`
+- `evm_report_plugin_session`
+
+请求示例：
+
+```json
+{
+  "jsonrpc":"2.0",
+  "id":5,
+  "method":"evm_reportPublicBroadcastPluginSession",
+  "params":{
+    "chain_id":1,
+    "sessions":[
+      {"endpoint":"enode://<pubkey>@<peer-ip>:30303","stage":"ready","updated_ms":1731686400000},
+      {"endpoint":"enode://<pubkey2>@<peer-ip>:30303","stage":"ack_seen"}
+    ]
+  }
+}
+```
+
+阶段支持：
+
+- `disconnected`
+- `tcp_connected`
+- `auth_sent`
+- `ack_seen`
+- `ready`
+
+## 7.6 查询插件 peer 列表（Plugin Peer List）
+
+```json
+{"jsonrpc":"2.0","id":6,"method":"evm_getPublicBroadcastPluginPeers","params":{"chain_id":1}}
+```
+
+## 7.7 geth 公网连接桥接（一步接公网）
+
+如果插件网络栈由 geth 托管，可直接用脚本把 `admin_peers` 同步到网关阶段缓存：
+
+`scripts/migration/run_evm_geth_plugin_peer_bridge.ps1`
+
+示例：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/migration/run_evm_geth_plugin_peer_bridge.ps1 `
+  -GatewayUrl "http://127.0.0.1:9899" `
+  -GethUrl "http://127.0.0.1:8545" `
+  -ChainId 1
+```
+
+## 7.8 插件 mempool 持续吸入后的自动出池（确认回收 + TTL 淘汰）
+
+为避免 `txpool.pending` 长期单向累积，网关支持在 ingest worker 内自动回收：
+
+- 链上确认回收（按 tx hash 轮询 receipt）
+- 本地 stale TTL 淘汰（按 `observed_at_unix_ms`）
+
+新增环境变量：
+
+- `NOVOVM_GATEWAY_ETH_PLUGIN_MEMPOOL_INGEST_CONFIRM_MAX_CHECK_PER_TICK`
+  默认 `128`，每个 tick 最多检查多少本地 pending 哈希用于 receipt 回收。可设 `0` 关闭。
+- `NOVOVM_GATEWAY_ETH_PLUGIN_MEMPOOL_INGEST_STALE_TTL_MS`
+  默认 `1800000`（30 分钟），超过该年龄的本地 ingress 交易会被淘汰。可设 `0` 关闭。
+
+可在 `evm_getPublicBroadcastStatus` 中观察：
+
+- `native_plugin_mempool_ingest_evicted_total`
+- `native_plugin_mempool_ingest_evicted_confirmed_total`
+- `native_plugin_mempool_ingest_evicted_stale_total`
+- `native_plugin_mempool_ingest_confirm_max_check_per_tick`
+- `native_plugin_mempool_ingest_stale_ttl_ms`
+
 ---
 
 ## 8. 写入 Canary（Full-node Only）
@@ -199,11 +299,56 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/migration/run_evm_ma
 
 ---
 
+## 8.1 2026-03-17 根因闭环与回归基线
+
+同一 peer（`157.90.35.166:30303`）A/B 结论：
+
+- `go-ethereum` 原生：`ready` 后首帧为 `new_pooled_hashes(0x18)`，可持续 `getPooled -> pooledTxs`。
+- `SUPERVM + EVM 插件`：修复后已可复现同一路径（`ready/new_pooled/get_pooled/pooled` 均为正）。
+
+本次根因：
+
+- RLPx 读帧在 `partial read + timeout` 场景下发生“流失步”，导致后续 `header MAC` 失配并掉线。
+
+修复点（代码）：
+
+- `crates/gateways/evm-gateway/src/rpc_gateway_exec_cfg.rs`
+  - `gateway_eth_rlpx_read_exact_with_partial`：已读部分后遇到 timeout-like 错误时继续补读，避免丢字节。
+  - 增强 timeout-like 识别（含 Windows `os error 10060/10035`）。
+  - 新增 `single-session` 模式与 `ready` 后首帧 trace 日志。
+
+建议最小回归命令（固定 peer，单会话，无重连噪声）：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/migration/run_evm_uniswap_observation_window.ps1 `
+  -SkipBuild -EnablePluginMempoolIngest -RlpxSingleSession -SmokeAssert `
+  -FixedPluginEnode "enode://4aeb4ab6c14b23e2c4cfdce879c04b0748a20d8e9b59e25ded2a08143e265c6c25936e74cbc8e641e3312ca288673d91f2f93f8e277de3cfa444ecdaaf982052@157.90.35.166:30303" `
+  -DurationMinutes 12 -IntervalSeconds 5 -WarmupSeconds 6 `
+  -PluginMinCandidates 1 -RlpxMaxPeersPerTick 1 -RlpxHelloProfile geth
+```
+
+`-SmokeAssert` 默认断言：
+
+- `ready >= 1`
+- `new_pooled_hashes >= 1`
+- `pooled_txs >= 1`
+- `first_post_ready_frame_code == 0x18`
+
+---
+
 ## 9. 常见问题（FAQ）
 
 ### Q1: 会不会一启动就和以太坊主网全量同步，占满流量？
 
 不会。是否进入持续同步取决于你是否配置了 native peers 或 upstream。
+
+### Q4: 端口会不会冲突？SUPERVM 主网和以太坊是否会混线？
+
+不会，前提是按策略分层：
+
+- 以太坊公网默认 P2P 是 `30303`（TCP/UDP 发现）。
+- SUPERVM 主网走隐私网络形态，建议使用独立端口段（如 `39xxx`）。
+- 启用 `NOVOVM_GATEWAY_ETH_PUBLIC_BROADCAST_ROUTE_POLICY=auto` + `NOVOVM_GATEWAY_ETH_PUBLIC_BROADCAST_PLUGIN_PORTS`，可把不同端口映射到不同路由策略，降低混线风险。
 
 ### Q2: 会不会像原生 full node 一样持续吃盘？
 

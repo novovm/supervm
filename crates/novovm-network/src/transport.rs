@@ -13,8 +13,8 @@ use novovm_protocol::{
     encode_block_header_wire_v1,
     protocol_catalog::distributed_occc::gossip::MessageType as DistributedOcccMessageType,
     BlockHeaderWireV1, ConsensusPluginBindingV1, FinalityMessage,
-    GossipMessage as ProtocolGossipMessage, NodeId, PacemakerMessage, ProtocolMessage,
-    TwoPcMessage, CONSENSUS_PLUGIN_CLASS_CODE,
+    EvmNativeMessage, GossipMessage as ProtocolGossipMessage, NodeId, PacemakerMessage,
+    ProtocolMessage, TwoPcMessage, CONSENSUS_PLUGIN_CLASS_CODE,
 };
 use std::collections::VecDeque;
 use std::io::{Read, Write};
@@ -994,6 +994,106 @@ fn maybe_plan_runtime_sync_pull_responses_with_context(
     })
 }
 
+fn maybe_build_evm_native_sync_response(
+    chain_id: u64,
+    local_node: NodeId,
+    msg: &ProtocolMessage,
+) -> Option<(NodeId, ProtocolMessage)> {
+    let ProtocolMessage::EvmNative(native_msg) = msg else {
+        return None;
+    };
+    match native_msg {
+        EvmNativeMessage::RlpxAuth {
+            from,
+            chain_id: auth_chain_id,
+            network_id,
+            auth_tag,
+        } => {
+            if *from == local_node || *auth_chain_id != chain_id {
+                return None;
+            }
+            let mut ack_tag = *auth_tag;
+            ack_tag.reverse();
+            Some((
+                *from,
+                ProtocolMessage::EvmNative(EvmNativeMessage::RlpxAuthAck {
+                    from: local_node,
+                    chain_id,
+                    network_id: *network_id,
+                    ack_tag,
+                }),
+            ))
+        }
+        EvmNativeMessage::GetBlockHeaders {
+            from,
+            start_height,
+            max,
+            skip,
+            reverse,
+        } => {
+            if *from == local_node {
+                return None;
+            }
+            let head = get_network_runtime_sync_status(chain_id)
+                .map(|s| s.current_block.max(s.highest_block))
+                .unwrap_or(0);
+            let max_count = (*max).clamp(1, 256) as usize;
+            let step = skip.saturating_add(1);
+            let mut heights = Vec::with_capacity(max_count);
+            let mut cursor = *start_height;
+            for _ in 0..max_count {
+                if *reverse {
+                    heights.push(cursor);
+                    if cursor < step {
+                        break;
+                    }
+                    cursor = cursor.saturating_sub(step);
+                } else {
+                    if head > 0 && cursor > head {
+                        break;
+                    }
+                    heights.push(cursor);
+                    cursor = cursor.saturating_add(step);
+                }
+            }
+            Some((
+                *from,
+                ProtocolMessage::EvmNative(EvmNativeMessage::BlockHeaders {
+                    from: local_node,
+                    heights,
+                }),
+            ))
+        }
+        EvmNativeMessage::GetBlockBodies { from, hashes } => {
+            if *from == local_node {
+                return None;
+            }
+            Some((
+                *from,
+                ProtocolMessage::EvmNative(EvmNativeMessage::BlockBodies {
+                    from: local_node,
+                    body_count: hashes.len() as u64,
+                }),
+            ))
+        }
+        EvmNativeMessage::SnapGetAccountRange { from, limit, .. } => {
+            if *from == local_node {
+                return None;
+            }
+            let account_count = (*limit).min(2048);
+            let proof_node_count = account_count.saturating_div(8).max(1);
+            Some((
+                *from,
+                ProtocolMessage::EvmNative(EvmNativeMessage::SnapAccountRange {
+                    from: local_node,
+                    account_count,
+                    proof_node_count,
+                }),
+            ))
+        }
+        _ => None,
+    }
+}
 fn emit_runtime_sync_pull_responses(
     local_node: NodeId,
     plan: &RuntimeSyncPullResponsePlan,

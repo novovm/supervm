@@ -1120,6 +1120,7 @@ fn evm_replay_settlement_payout_clears_pending_and_updates_status() {
 
 #[test]
 fn eth_query_block_number_balance_and_block_by_number_work() {
+    let chain_id = 770_001_u64;
     let backend = GatewayEthTxIndexStoreBackend::Memory;
     let mut router = UnifiedAccountRouter::new();
     let mut eth_tx_index = HashMap::new();
@@ -1135,7 +1136,7 @@ fn eth_query_block_number_balance_and_block_by_number_work() {
     let mut eth_filters = GatewayEthFilterState::default();
     let mut ctx = GatewayMethodContext {
         eth_tx_index_store: &backend,
-        eth_default_chain_id: 1,
+        eth_default_chain_id: chain_id,
         spool_dir: &spool_dir,
         eth_filters: &mut eth_filters,
     };
@@ -1146,7 +1147,7 @@ fn eth_query_block_number_balance_and_block_by_number_work() {
         GatewayEthTxIndexEntry {
             tx_hash: [0x11u8; 32],
             uca_id: "uca-a".to_string(),
-            chain_id: 1,
+            chain_id,
             nonce: 7,
             tx_type: 0,
             from: addr_a.clone(),
@@ -1162,7 +1163,7 @@ fn eth_query_block_number_balance_and_block_by_number_work() {
         GatewayEthTxIndexEntry {
             tx_hash: [0x22u8; 32],
             uca_id: "uca-b".to_string(),
-            chain_id: 1,
+            chain_id,
             nonce: 8,
             tx_type: 0,
             from: addr_b.clone(),
@@ -1182,7 +1183,7 @@ fn eth_query_block_number_balance_and_block_by_number_work() {
         &mut evm_pending_payout_by_settlement,
         &mut ctx,
         "eth_blockNumber",
-        &serde_json::json!({ "chain_id": 1u64 }),
+        &serde_json::json!({ "chain_id": chain_id }),
     )
     .expect("eth_blockNumber should work");
     assert!(!changed_block_number);
@@ -1197,7 +1198,7 @@ fn eth_query_block_number_balance_and_block_by_number_work() {
         &mut ctx,
         "eth_getBalance",
         &serde_json::json!({
-            "chain_id": 1u64,
+            "chain_id": chain_id,
             "address": format!("0x{}", to_hex(&addr_a)),
         }),
     )
@@ -1214,7 +1215,7 @@ fn eth_query_block_number_balance_and_block_by_number_work() {
         &mut ctx,
         "eth_getBlockByNumber",
         &serde_json::json!({
-            "chain_id": 1u64,
+            "chain_id": chain_id,
             "block_number": "0x8",
             "full_transactions": false,
         }),
@@ -1253,7 +1254,7 @@ fn eth_query_block_number_balance_and_block_by_number_work() {
         block_latest["gasLimit"].as_str(),
         Some(expected_gas_limit.as_str())
     );
-    let expected_base_fee = format!("0x{:x}", gateway_eth_base_fee_per_gas_wei(1));
+    let expected_base_fee = format!("0x{:x}", gateway_eth_base_fee_per_gas_wei(chain_id));
     assert_eq!(
         block_latest["baseFeePerGas"].as_str(),
         Some(expected_base_fee.as_str())
@@ -1307,7 +1308,7 @@ fn eth_query_block_number_balance_and_block_by_number_work() {
         &mut ctx,
         "eth_getBlockTransactionCountByNumber",
         &serde_json::json!({
-            "chain_id": 1u64,
+            "chain_id": chain_id,
             "block": "safe",
         }),
     )
@@ -1324,7 +1325,7 @@ fn eth_query_block_number_balance_and_block_by_number_work() {
         &mut ctx,
         "eth_getBlockTransactionCountByNumber",
         &serde_json::json!({
-            "chain_id": 1u64,
+            "chain_id": chain_id,
             "block": "finalized",
         }),
     )

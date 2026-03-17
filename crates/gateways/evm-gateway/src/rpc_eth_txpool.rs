@@ -160,6 +160,47 @@ pub(super) fn collect_gateway_eth_txpool_runtime_txs(chain_id: u64) -> (Vec<TxIR
     merge_gateway_eth_pending_ingress_txs(executable, queued, ingress)
 }
 
+pub(super) fn collect_gateway_eth_txpool_txs_with_index_fallback(
+    chain_id: u64,
+    eth_tx_index: &mut HashMap<[u8; 32], GatewayEthTxIndexEntry>,
+    eth_tx_index_store: &GatewayEthTxIndexStoreBackend,
+) -> Result<(Vec<TxIR>, Vec<TxIR>)> {
+    let (pending_txs, queued_txs) = collect_gateway_eth_txpool_runtime_txs(chain_id);
+    if !pending_txs.is_empty() || !queued_txs.is_empty() {
+        return Ok((pending_txs, queued_txs));
+    }
+
+    let chain_entries = collect_gateway_eth_chain_entries(
+        eth_tx_index,
+        eth_tx_index_store,
+        chain_id,
+        gateway_eth_query_scan_max(),
+    )?;
+    if chain_entries.is_empty() {
+        return Ok((pending_txs, queued_txs));
+    }
+
+    let mut fallback_pending = Vec::<TxIR>::new();
+    let mut seen = BTreeSet::<[u8; 32]>::new();
+    for entry in chain_entries {
+        let Some(status) = gateway_eth_submit_status_by_tx(eth_tx_index_store, &entry.tx_hash)
+        else {
+            continue;
+        };
+        if !status.pending || !seen.insert(entry.tx_hash) {
+            continue;
+        }
+        fallback_pending.push(gateway_eth_tx_ir_from_index_entry(&entry));
+    }
+    fallback_pending.sort_by(|a, b| {
+        a.from
+            .cmp(&b.from)
+            .then(a.nonce.cmp(&b.nonce))
+            .then(a.hash.cmp(&b.hash))
+    });
+    Ok((fallback_pending, Vec::new()))
+}
+
 pub(super) fn collect_gateway_eth_pending_hashes_runtime(chain_id: u64) -> BTreeSet<[u8; 32]> {
     let (pending_txs, queued_txs) = collect_gateway_eth_txpool_runtime_txs(chain_id);
     pending_txs

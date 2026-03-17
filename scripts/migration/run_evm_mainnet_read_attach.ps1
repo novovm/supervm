@@ -166,7 +166,7 @@ if (-not $UpstreamRpc) {
     $UpstreamRpc = $env:NOVOVM_GATEWAY_ETH_UPSTREAM_RPC
 }
 if (-not $UpstreamRpc) {
-    $UpstreamRpc = "https://ethereum-rpc.publicnode.com"
+    throw "missing UpstreamRpc: pass -UpstreamRpc <http(s)://...> or set NOVOVM_GATEWAY_ETH_UPSTREAM_RPC"
 }
 
 $TargetRoot = if ($env:CARGO_TARGET_DIR) {

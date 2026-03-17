@@ -1,8 +1,8 @@
 use super::*;
 use novovm_network::{
-    get_network_runtime_native_sync_status, network_runtime_native_sync_is_active,
-    observe_network_runtime_local_head_max, set_network_runtime_sync_status,
-    NetworkRuntimeSyncStatus,
+    get_network_runtime_native_sync_status, get_network_runtime_sync_status,
+    network_runtime_native_sync_is_active, observe_network_runtime_local_head_max,
+    set_network_runtime_sync_status, NetworkRuntimeSyncStatus,
 };
 
 pub(super) fn resolve_gateway_eth_sync_status(
@@ -28,18 +28,25 @@ pub(super) fn resolve_gateway_eth_sync_status(
         .min()
         .unwrap_or(local_current_block);
 
-    // Production precedence: local index baseline -> runtime sync status.
+    // Production precedence: runtime observed peers/status -> native active sync state
+    // -> local index baseline.
     let mut peer_count = 0u64;
     let mut starting_block = local_starting_block;
     let mut current_block = local_current_block;
     let mut highest_block = local_current_block;
+    if let Some(runtime_sync) = get_network_runtime_sync_status(chain_id) {
+        peer_count = runtime_sync.peer_count;
+        starting_block = runtime_sync.starting_block;
+        current_block = runtime_sync.current_block;
+        highest_block = runtime_sync.highest_block;
+    }
 
     let runtime_native_sync = get_network_runtime_native_sync_status(chain_id);
     let has_runtime_native_sync = runtime_native_sync
         .as_ref()
         .is_some_and(network_runtime_native_sync_is_active);
     if let Some(native_sync) = runtime_native_sync.filter(network_runtime_native_sync_is_active) {
-        peer_count = native_sync.peer_count;
+        peer_count = peer_count.max(native_sync.peer_count);
         starting_block = native_sync.starting_block;
         current_block = native_sync.current_block;
         highest_block = native_sync.highest_block;
