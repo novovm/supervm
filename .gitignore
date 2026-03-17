@@ -155,3 +155,7 @@ docs_CN/GPT Agent
 #.idea/
 
 tmp_rlpx_probe/
+
+# Local temporary scratch files (never push)
+target-codex/
+tmp_*
