@@ -2,6 +2,7 @@
 
 use anyhow::bail;
 use aoem_bindings::secp256k1_recover_pubkey_v1_auto;
+use k256::ecdsa::{RecoveryId, Signature, VerifyingKey};
 use novovm_adapter_api::{BlockIR, ChainType, TxIR, TxType};
 use sha3::{Digest, Keccak256};
 use std::collections::HashMap;
@@ -675,10 +676,26 @@ pub fn recover_raw_evm_tx_sender_m0(raw: &[u8]) -> anyhow::Result<Option<Vec<u8>
         Ok(v) => v,
         Err(_) => return Ok(None),
     };
-    let Some(pubkey) = secp256k1_recover_pubkey_v1_auto(&message32, &signature65)? else {
+    let pubkey = if let Some(pubkey) = secp256k1_recover_pubkey_v1_auto(&message32, &signature65)?
+    {
+        pubkey
+    } else if let Some(pubkey) = recover_secp256k1_pubkey_fallback_m0(&message32, &signature65) {
+        pubkey
+    } else {
         return Ok(None);
     };
     Ok(evm_address_from_secp256k1_pubkey(&pubkey))
+}
+
+fn recover_secp256k1_pubkey_fallback_m0(
+    message32: &[u8; 32],
+    signature65: &[u8; 65],
+) -> Option<Vec<u8>> {
+    let signature = Signature::from_slice(&signature65[..64]).ok()?;
+    let recovery_id = RecoveryId::from_byte(signature65[64])?;
+    let verifying_key =
+        VerifyingKey::recover_from_prehash(message32, &signature, recovery_id).ok()?;
+    Some(verifying_key.to_encoded_point(false).as_bytes().to_vec())
 }
 
 fn rlp_item_as_list_items<'a>(

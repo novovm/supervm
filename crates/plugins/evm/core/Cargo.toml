@@ -9,5 +9,6 @@ description = "Shared EVM semantics core for NOVOVM adapters/plugins."
 [dependencies]
 anyhow = "1"
 aoem-bindings = { path = "../../../aoem-bindings" }
+k256 = { version = "0.13", features = ["ecdsa"] }
 novovm-adapter-api = { path = "../../../novovm-adapter-api" }
 sha3 = "0.10"
