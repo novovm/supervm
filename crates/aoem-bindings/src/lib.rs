@@ -2416,7 +2416,9 @@ fn decode_single_blob_wire_v1(wire: &[u8], label: &str) -> Result<Vec<u8>> {
     Ok(wire[8..end].to_vec())
 }
 
-pub fn groth16_prove_v1_auto(witness: &[u8]) -> Result<Option<(Vec<u8>, Vec<u8>, Vec<u8>)>> {
+pub type Groth16ProveV1AutoOutput = (Vec<u8>, Vec<u8>, Vec<u8>);
+
+pub fn groth16_prove_v1_auto(witness: &[u8]) -> Result<Option<Groth16ProveV1AutoOutput>> {
     with_default_host_dynlib(|dynlib| {
         if !dynlib.supports_groth16_prove_auto_path() {
             bail!("aoem_groth16_prove_auto path not supported by loaded DLL");

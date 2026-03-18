@@ -1434,6 +1434,15 @@ impl Transport for UdpTransport {
             src,
             msg_peer_id,
         );
+        if let Some((to, response)) =
+            maybe_build_evm_native_sync_response(self.chain_id, self.node, &decoded)
+        {
+            if self.send_internal(to, &response).is_err() {
+                if let Ok(encoded) = protocol_encode(&response) {
+                    let _ = self.socket.send_to(&encoded, src);
+                }
+            }
+        }
         if let Some(plan) = maybe_plan_runtime_sync_pull_responses_with_context(
             self.chain_id,
             self.node,
@@ -1572,6 +1581,15 @@ impl Transport for TcpTransport {
             addr,
             msg_peer_id,
         );
+        if let Some((to, response)) =
+            maybe_build_evm_native_sync_response(self.chain_id, self.node, &decoded)
+        {
+            if self.send_internal(to, &response).is_err() {
+                if let Ok(encoded) = protocol_encode(&response) {
+                    let _ = write_tcp_frame(&mut stream, &encoded);
+                }
+            }
+        }
         if let Some(plan) = maybe_plan_runtime_sync_pull_responses_with_context(
             self.chain_id,
             self.node,
