@@ -208,15 +208,11 @@ enum GatewayEthSwapKind {
 }
 
 fn gateway_eth_plugin_is_uniswap_v2_swap_selector(selector: [u8; 4]) -> bool {
-    GATEWAY_ETH_UNISWAP_V2_SWAP_SELECTORS
-        .iter()
-        .any(|known| *known == selector)
+    GATEWAY_ETH_UNISWAP_V2_SWAP_SELECTORS.contains(&selector)
 }
 
 fn gateway_eth_plugin_is_uniswap_v3_swap_selector(selector: [u8; 4]) -> bool {
-    GATEWAY_ETH_UNISWAP_V3_SWAP_SELECTORS
-        .iter()
-        .any(|known| *known == selector)
+    GATEWAY_ETH_UNISWAP_V3_SWAP_SELECTORS.contains(&selector)
 }
 
 fn gateway_eth_plugin_detect_swap_kind_from_raw_tx(
@@ -235,13 +231,12 @@ fn gateway_eth_plugin_detect_swap_kind_from_raw_tx(
         }
         return None;
     }
-    if to.as_slice() == GATEWAY_ETH_UNISWAP_V3_ROUTER
+    if (to.as_slice() == GATEWAY_ETH_UNISWAP_V3_ROUTER
         || to.as_slice() == GATEWAY_ETH_UNISWAP_V3_ROUTER_02
-        || to.as_slice() == GATEWAY_ETH_UNISWAP_UNIVERSAL_ROUTER
+        || to.as_slice() == GATEWAY_ETH_UNISWAP_UNIVERSAL_ROUTER)
+        && (gateway_eth_plugin_is_uniswap_v3_swap_selector(selector) || !tx.data.is_empty())
     {
-        if gateway_eth_plugin_is_uniswap_v3_swap_selector(selector) || !tx.data.is_empty() {
-            return Some(GatewayEthSwapKind::V3);
-        }
+        return Some(GatewayEthSwapKind::V3);
     }
     None
 }
@@ -3967,7 +3962,8 @@ fn gateway_eth_plugin_rlpx_apply_core_fallback_candidate_budget(
     (core_budget, active_budget, candidate_budget)
 }
 
-fn gateway_eth_plugin_rlpx_should_demote_congested_peer(
+#[derive(Clone, Copy, Debug, Default)]
+struct GatewayEthPluginRlpxCongestedPeerDemotionInput {
     tier_rank: u8,
     disconnect_too_many_count: u64,
     recent_unique_new_hashes: u64,
@@ -3975,17 +3971,25 @@ fn gateway_eth_plugin_rlpx_should_demote_congested_peer(
     recent_duplicate_new_hashes: u64,
     recent_duplicate_pooled_txs: u64,
     last_success_ms: u64,
+}
+
+fn gateway_eth_plugin_rlpx_should_demote_congested_peer(
+    input: GatewayEthPluginRlpxCongestedPeerDemotionInput,
     now_ms: u64,
     stale_window_ms: u64,
     too_many_threshold: u64,
 ) -> bool {
-    if tier_rank > 1 || disconnect_too_many_count < too_many_threshold.max(1) {
+    if input.tier_rank > 1 || input.disconnect_too_many_count < too_many_threshold.max(1) {
         return false;
     }
-    let recent_unique = recent_unique_new_hashes.saturating_add(recent_unique_pooled_txs);
-    let recent_duplicate = recent_duplicate_new_hashes.saturating_add(recent_duplicate_pooled_txs);
-    let stale =
-        last_success_ms == 0 || now_ms.saturating_sub(last_success_ms) > stale_window_ms.max(1);
+    let recent_unique = input
+        .recent_unique_new_hashes
+        .saturating_add(input.recent_unique_pooled_txs);
+    let recent_duplicate = input
+        .recent_duplicate_new_hashes
+        .saturating_add(input.recent_duplicate_pooled_txs);
+    let stale = input.last_success_ms == 0
+        || now_ms.saturating_sub(input.last_success_ms) > stale_window_ms.max(1);
     if !stale {
         return false;
     }
@@ -4004,13 +4008,15 @@ fn gateway_eth_plugin_rlpx_demote_congested_candidates(
     let mut demoted = 0usize;
     for candidate in candidates.iter_mut() {
         if gateway_eth_plugin_rlpx_should_demote_congested_peer(
-            candidate.tier_rank,
-            candidate.disconnect_too_many_count,
-            candidate.recent_unique_new_pooled_hashes_total,
-            candidate.recent_unique_pooled_txs_total,
-            candidate.recent_duplicate_new_pooled_hashes_total,
-            candidate.recent_duplicate_pooled_txs_total,
-            candidate.last_success_ms,
+            GatewayEthPluginRlpxCongestedPeerDemotionInput {
+                tier_rank: candidate.tier_rank,
+                disconnect_too_many_count: candidate.disconnect_too_many_count,
+                recent_unique_new_hashes: candidate.recent_unique_new_pooled_hashes_total,
+                recent_unique_pooled_txs: candidate.recent_unique_pooled_txs_total,
+                recent_duplicate_new_hashes: candidate.recent_duplicate_new_pooled_hashes_total,
+                recent_duplicate_pooled_txs: candidate.recent_duplicate_pooled_txs_total,
+                last_success_ms: candidate.last_success_ms,
+            },
             now_ms,
             stale_window_ms,
             too_many_threshold,
@@ -10926,37 +10932,43 @@ mod tests {
         let too_many_threshold = 8u64;
 
         assert!(gateway_eth_plugin_rlpx_should_demote_congested_peer(
-            0,
-            12,
-            0,
-            0,
-            64,
-            0,
-            now_ms.saturating_sub(stale_window_ms + 1),
+            GatewayEthPluginRlpxCongestedPeerDemotionInput {
+                tier_rank: 0,
+                disconnect_too_many_count: 12,
+                recent_unique_new_hashes: 0,
+                recent_unique_pooled_txs: 0,
+                recent_duplicate_new_hashes: 64,
+                recent_duplicate_pooled_txs: 0,
+                last_success_ms: now_ms.saturating_sub(stale_window_ms + 1),
+            },
             now_ms,
             stale_window_ms,
             too_many_threshold,
         ));
         assert!(!gateway_eth_plugin_rlpx_should_demote_congested_peer(
-            0,
-            12,
-            16,
-            4,
-            8,
-            0,
-            now_ms.saturating_sub(stale_window_ms + 1),
+            GatewayEthPluginRlpxCongestedPeerDemotionInput {
+                tier_rank: 0,
+                disconnect_too_many_count: 12,
+                recent_unique_new_hashes: 16,
+                recent_unique_pooled_txs: 4,
+                recent_duplicate_new_hashes: 8,
+                recent_duplicate_pooled_txs: 0,
+                last_success_ms: now_ms.saturating_sub(stale_window_ms + 1),
+            },
             now_ms,
             stale_window_ms,
             too_many_threshold,
         ));
         assert!(!gateway_eth_plugin_rlpx_should_demote_congested_peer(
-            2,
-            100,
-            0,
-            0,
-            200,
-            100,
-            0,
+            GatewayEthPluginRlpxCongestedPeerDemotionInput {
+                tier_rank: 2,
+                disconnect_too_many_count: 100,
+                recent_unique_new_hashes: 0,
+                recent_unique_pooled_txs: 0,
+                recent_duplicate_new_hashes: 200,
+                recent_duplicate_pooled_txs: 100,
+                last_success_ms: 0,
+            },
             now_ms,
             stale_window_ms,
             too_many_threshold,
