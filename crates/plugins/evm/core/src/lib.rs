@@ -676,8 +676,7 @@ pub fn recover_raw_evm_tx_sender_m0(raw: &[u8]) -> anyhow::Result<Option<Vec<u8>
         Ok(v) => v,
         Err(_) => return Ok(None),
     };
-    let pubkey = if let Some(pubkey) = secp256k1_recover_pubkey_v1_auto(&message32, &signature65)?
-    {
+    let pubkey = if let Some(pubkey) = secp256k1_recover_pubkey_v1_auto(&message32, &signature65)? {
         pubkey
     } else if let Some(pubkey) = recover_secp256k1_pubkey_fallback_m0(&message32, &signature65) {
         pubkey
