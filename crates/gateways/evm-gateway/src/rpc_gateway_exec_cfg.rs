@@ -3242,7 +3242,7 @@ fn gateway_eth_plugin_rlpx_worker_tier_rank(
                     || is_core_locked
                     || strong_unique_history_recent_ready
                     || elite_unique_history));
-        if has_gossip_history && (swap_core_ok || normal_core_ok) {
+        if has_gossip_history && swap_core_ok {
             return 0; // core
         }
     } else if has_gossip_history && normal_core_ok {
