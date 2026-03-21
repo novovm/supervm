@@ -1162,6 +1162,7 @@ dependencies = [
  "novovm-adapter-api",
  "novovm-adapter-evm-core",
  "postcard",
+ "serde",
  "serde_json",
  "sha2",
  "web30-core",
@@ -1175,6 +1176,7 @@ dependencies = [
  "novovm-adapter-api",
  "novovm-adapter-novovm",
  "postcard",
+ "serde",
  "sha2",
 ]
 

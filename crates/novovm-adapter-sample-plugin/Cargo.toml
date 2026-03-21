@@ -12,6 +12,7 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 anyhow = "1"
 postcard = { version = "1", default-features = false, features = ["alloc"] }
+serde = { version = "1", features = ["derive"] }
 sha2 = "0.10"
 novovm-adapter-api = { path = "../novovm-adapter-api" }
 novovm-adapter-novovm = { path = "../novovm-adapter-novovm" }
