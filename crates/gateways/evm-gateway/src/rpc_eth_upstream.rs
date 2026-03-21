@@ -38,6 +38,12 @@ fn gateway_eth_upstream_rpc_timeout_ms(chain_id: u64) -> u64 {
     )
 }
 
+fn gateway_eth_upstream_read_enabled(_chain_id: u64) -> bool {
+    // Sealed mode: disable upstream read path unconditionally.
+    // Keep the function to avoid broad call-site churn.
+    false
+}
+
 fn build_gateway_eth_upstream_params(
     method: &str,
     params: &serde_json::Value,
@@ -347,9 +353,33 @@ pub(super) fn maybe_gateway_eth_upstream_read(
     method: &str,
     params: &serde_json::Value,
 ) -> Result<Option<serde_json::Value>> {
-    let _ = (chain_id, method, params);
-    // Mirror-only policy: upstream proxy fallback is hard-disabled.
-    Ok(None)
+    if !gateway_eth_upstream_read_enabled(chain_id) {
+        return Ok(None);
+    }
+    let Some(rpc_url) = gateway_eth_upstream_rpc_url(chain_id) else {
+        return Ok(None);
+    };
+    let Some(upstream_params) = build_gateway_eth_upstream_params(method, params)? else {
+        return Ok(None);
+    };
+    let timeout_ms = gateway_eth_upstream_rpc_timeout_ms(chain_id);
+    match execute_gateway_eth_upstream_json_rpc(
+        rpc_url.as_str(),
+        method,
+        upstream_params,
+        timeout_ms,
+    ) {
+        Ok(result) => Ok(Some(result)),
+        Err(error) => {
+            if gateway_warn_enabled() {
+                eprintln!(
+                    "gateway_warn: upstream read failed chain_id={} method={} err={}",
+                    chain_id, method, error
+                );
+            }
+            Ok(None)
+        }
+    }
 }
 
 #[cfg(test)]

@@ -5033,18 +5033,21 @@ pub(super) fn gateway_eth_public_broadcast_capability_json(chain_id: u64) -> ser
         )
     };
     let transport = gateway_eth_public_broadcast_native_transport(chain_id).as_mode();
+    let plugin_route_available = plugin_session_stage_stats.ready > 0;
     let mode = if exec_path.is_some() {
         "external_executor"
     } else if supvm_peer_count > 0 && plugin_peer_count > 0 {
-        "adaptive_supvm_active_plugin_pending"
+        "adaptive_supvm_active_plugin"
     } else if supvm_peer_count > 0 {
         "native_transport"
+    } else if plugin_route_available {
+        "plugin_route_active"
     } else if plugin_peer_count > 0 {
         "plugin_route_pending"
     } else {
         "none"
     };
-    let available = exec_path.is_some() || supvm_peer_count > 0;
+    let available = exec_path.is_some() || supvm_peer_count > 0 || plugin_route_available;
     let ready = available || !required;
     let mut plugin_session_stage_counts = serde_json::Map::new();
     for stage in [
@@ -5079,7 +5082,7 @@ pub(super) fn gateway_eth_public_broadcast_capability_json(chain_id: u64) -> ser
         "native_plugin_ports": plugin_ports_json,
         "native_supvm_peer_count": format!("0x{:x}", supvm_peer_count),
         "native_plugin_peer_count": format!("0x{:x}", plugin_peer_count),
-        "native_plugin_route_available": plugin_session_stage_stats.ready > 0,
+        "native_plugin_route_available": plugin_route_available,
         "native_plugin_route_connectivity": plugin_reachable_count > 0,
         "native_plugin_probe_checked_ms": format!("0x{:x}", plugin_probe_checked_ms),
         "native_plugin_reachable_count": format!("0x{:x}", plugin_reachable_count),
@@ -8702,11 +8705,36 @@ fn execute_gateway_eth_public_broadcast_native(
     let Some(snapshot) = gateway_eth_public_broadcast_native_peers_snapshot(chain_id) else {
         return Ok(None);
     };
-    let peers = snapshot.supvm_peers;
-    let peer_nodes = snapshot.supvm_peer_nodes;
+    let mut peers = snapshot.supvm_peers;
+    let mut peer_nodes = snapshot.supvm_peer_nodes;
     let plugin_peers = snapshot.plugin_peers;
     let peer_source = snapshot.peer_source;
     let route_policy = snapshot.route_policy;
+    let plugin_only_route = peers.is_empty() && !plugin_peers.is_empty();
+    if plugin_only_route {
+        let stage_stats = gateway_eth_plugin_session_stage_stats(chain_id, plugin_peers.as_ref());
+        if stage_stats.ready == 0 {
+            bail!(
+                "public broadcast failed: chain_id={} tx_hash=0x{} reason=plugin_route_not_ready plugin_peers={} stage_ready={} stage_ack={} stage_auth={} stage_tcp={} stage_disconnected={}",
+                chain_id,
+                to_hex(tx_hash),
+                plugin_peers.len(),
+                stage_stats.ready,
+                stage_stats.ack_seen,
+                stage_stats.auth_sent,
+                stage_stats.tcp_connected,
+                stage_stats.disconnected,
+            );
+        }
+    }
+    if peers.is_empty() && !plugin_peers.is_empty() {
+        let (bridge_peers, bridge_nodes) =
+            gateway_eth_plugin_runtime_bridge_peers(plugin_peers.as_ref());
+        if !bridge_peers.is_empty() {
+            peers = bridge_peers;
+            peer_nodes = bridge_nodes;
+        }
+    }
     if peers.is_empty() {
         if plugin_peers.is_empty() {
             return Ok(None);
