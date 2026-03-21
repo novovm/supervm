@@ -302,4 +302,3 @@ mod tests {
         assert_eq!(rc, NOVOVM_ADAPTER_PLUGIN_RC_PAYLOAD_TOO_LARGE);
     }
 }
-

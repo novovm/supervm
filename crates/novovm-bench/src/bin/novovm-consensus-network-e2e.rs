@@ -458,14 +458,15 @@ fn main() -> Result<()> {
             else {
                 bail!("follower {i} did not receive proposal message");
             };
-            let decoded: BenchFinalityPayload =
-                crate::bincode_compat::deserialize(&payload).context("deserialize proposal payload failed")?;
+            let decoded: BenchFinalityPayload = crate::bincode_compat::deserialize(&payload)
+                .context("deserialize proposal payload failed")?;
             let BenchFinalityPayload::Proposal(follower_proposal) = decoded else {
                 bail!("follower {i} received non-proposal payload");
             };
             let vote = engines[i].vote_for_proposal(&follower_proposal)?;
-            let payload = crate::bincode_compat::serialize(&BenchFinalityPayload::Vote(vote.clone()))
-                .context("serialize vote payload failed")?;
+            let payload =
+                crate::bincode_compat::serialize(&BenchFinalityPayload::Vote(vote.clone()))
+                    .context("serialize vote payload failed")?;
             let msg = ProtocolMessage::Finality(FinalityMessage::Vote {
                 id: CheckpointId(batch_id),
                 from: pnode(i as CNodeId),
@@ -506,8 +507,8 @@ fn main() -> Result<()> {
                 // stale vote from previous round, drop.
                 continue;
             }
-            let decoded: BenchFinalityPayload =
-                crate::bincode_compat::deserialize(&sig).context("deserialize vote payload failed")?;
+            let decoded: BenchFinalityPayload = crate::bincode_compat::deserialize(&sig)
+                .context("deserialize vote payload failed")?;
             let BenchFinalityPayload::Vote(v) = decoded else {
                 bail!("leader received non-vote payload");
             };
@@ -636,4 +637,3 @@ fn main() -> Result<()> {
 
     Ok(())
 }
-

@@ -13729,7 +13729,8 @@ fn decode_atomic_broadcast_tx_ir_bincode_accepts_single_tx_ir() {
 fn decode_atomic_broadcast_tx_ir_bincode_accepts_singleton_vec_tx_ir() {
     let mut tx = TxIR::transfer(vec![0x83; 20], vec![0x84; 20], 5, 88, 1);
     tx.compute_hash();
-    let payload = crate::bincode_compat::serialize(&vec![tx.clone()]).expect("serialize vec bincode");
+    let payload =
+        crate::bincode_compat::serialize(&vec![tx.clone()]).expect("serialize vec bincode");
     let decoded = decode_gateway_atomic_broadcast_tx_ir_bincode(&payload)
         .expect("decode singleton vec tx_ir");
     assert_eq!(decoded.chain_id, tx.chain_id);
@@ -14088,4 +14089,3 @@ fn fuzz_min_rpc_params_seeded_corpus_no_panic() {
         corpus.len()
     );
 }
-

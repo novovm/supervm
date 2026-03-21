@@ -1086,7 +1086,8 @@ fn push_ingress_frames_prepared(chain_id: u64, prepared_txs: &[TxIR]) -> EvmIngr
                                 config.txpool_price_bump_pct,
                             );
                             if tx.gas_price >= required {
-                                let raw_tx = crate::bincode_compat::serialize(&tx).unwrap_or_default();
+                                let raw_tx =
+                                    crate::bincode_compat::serialize(&tx).unwrap_or_default();
                                 runtime.executable_ingress_frames[pos] = EvmMempoolIngressFrameV1 {
                                     chain_id,
                                     tx_hash: tx.hash.clone(),
@@ -2039,7 +2040,8 @@ unsafe fn write_bincode_blob_to_out(
 }
 
 fn serialize_bincode_export_blob<T: Serialize>(value: &T) -> Result<Vec<u8>, i32> {
-    let payload = bincode_compat::serialize(value).map_err(|_| NOVOVM_ADAPTER_PLUGIN_RC_APPLY_FAILED)?;
+    let payload =
+        bincode_compat::serialize(value).map_err(|_| NOVOVM_ADAPTER_PLUGIN_RC_APPLY_FAILED)?;
     if payload.len() > MAX_PLUGIN_TX_IR_BYTES {
         return Err(NOVOVM_ADAPTER_PLUGIN_RC_PAYLOAD_TOO_LARGE);
     }
@@ -2511,11 +2513,11 @@ fn decode_plugin_apply_inputs(
     if tx_bytes.len() > MAX_PLUGIN_TX_IR_BYTES {
         return Err(NOVOVM_ADAPTER_PLUGIN_RC_PAYLOAD_TOO_LARGE);
     }
-    let txs: Vec<TxIR> = match crate::bincode_compat::deserialize_with_remainder::<Vec<TxIR>>(tx_bytes)
-    {
-        Ok((v, _)) => v,
-        Err(_) => return Err(NOVOVM_ADAPTER_PLUGIN_RC_DECODE_FAILED),
-    };
+    let txs: Vec<TxIR> =
+        match crate::bincode_compat::deserialize_with_remainder::<Vec<TxIR>>(tx_bytes) {
+            Ok((v, _)) => v,
+            Err(_) => return Err(NOVOVM_ADAPTER_PLUGIN_RC_DECODE_FAILED),
+        };
     validate_plugin_tx_batch(&txs)?;
     Ok((chain_type, txs))
 }
@@ -3888,7 +3890,8 @@ mod tests {
         assert_eq!(rc_bucket, NOVOVM_ADAPTER_PLUGIN_RC_OK);
         pending_bucket_buf.truncate(pending_bucket_len);
         let pending_buckets: Vec<EvmPendingSenderBucketV1> =
-            crate::bincode_compat::deserialize(&pending_bucket_buf).expect("decode pending sender buckets");
+            crate::bincode_compat::deserialize(&pending_bucket_buf)
+                .expect("decode pending sender buckets");
         assert!(pending_buckets.is_empty());
 
         let mut receipts_len = 0usize;
@@ -4039,5 +4042,3 @@ mod tests {
         assert_eq!(rc, NOVOVM_ADAPTER_PLUGIN_RC_PAYLOAD_TOO_LARGE);
     }
 }
-
-

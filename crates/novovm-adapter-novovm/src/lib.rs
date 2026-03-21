@@ -1426,4 +1426,3 @@ mod tests {
         assert!(!tx.signature.is_empty());
     }
 }
-

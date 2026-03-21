@@ -9286,7 +9286,8 @@ mod tests {
     fn native_transactions_payload_decode_accepts_bincode_vec_tx_ir() {
         let mut tx = TxIR::transfer(vec![0x11; 20], vec![0x22; 20], 7, 3, 1);
         tx.compute_hash();
-        let payload = crate::bincode_compat::serialize(&vec![tx.clone()]).expect("serialize tx list");
+        let payload =
+            crate::bincode_compat::serialize(&vec![tx.clone()]).expect("serialize tx list");
         let decoded = gateway_eth_native_decode_transactions_payload(1, payload.as_slice())
             .expect("decode bincode tx list");
         assert_eq!(decoded.len(), 1);
@@ -11314,5 +11315,3 @@ pub(super) fn decode_gateway_atomic_broadcast_tx_ir_bincode(payload: &[u8]) -> R
     }
     bail!("decode atomic-broadcast tx_ir_bincode failed");
 }
-
-

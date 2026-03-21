@@ -247,5 +247,3 @@ mod tests {
         validate_executor_request(&req).expect("validate request");
     }
 }
-
-

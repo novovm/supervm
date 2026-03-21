@@ -416,8 +416,8 @@ fn main() -> Result<()> {
                 if id.0 != batch_id {
                     continue;
                 }
-                let decoded: ClusterWirePayload =
-                    crate::bincode_compat::deserialize(&sig).context("decode vote payload failed")?;
+                let decoded: ClusterWirePayload = crate::bincode_compat::deserialize(&sig)
+                    .context("decode vote payload failed")?;
                 let ClusterWirePayload::Vote(vote) = decoded else {
                     continue;
                 };
@@ -469,8 +469,8 @@ fn main() -> Result<()> {
             else {
                 continue;
             };
-            let decoded: ClusterWirePayload =
-                crate::bincode_compat::deserialize(&payload).context("decode proposal payload failed")?;
+            let decoded: ClusterWirePayload = crate::bincode_compat::deserialize(&payload)
+                .context("decode proposal payload failed")?;
             let ClusterWirePayload::Proposal {
                 proposal,
                 leader_state,
@@ -546,4 +546,3 @@ fn main() -> Result<()> {
     println!("{text}");
     Ok(())
 }
-
