@@ -4,7 +4,7 @@ pub(super) fn encode_gateway_ingress_ops_wire_v1_eth(
     record: &GatewayIngressEthRecordV1,
 ) -> Result<Vec<u8>> {
     let value =
-        bincode::serialize(record).context("serialize gateway ingress eth record failed")?;
+        crate::bincode_compat::serialize(record).context("serialize gateway ingress eth record failed")?;
     let key = gateway_ingress_key(record.protocol, &record.tx_hash);
     let plan_id = ((record.chain_id & 0xffff_ffff) << 32) | (record.nonce & 0xffff_ffff);
     encode_gateway_ingress_ops_wire_v1_record(&key, &value, plan_id)
@@ -14,7 +14,7 @@ pub(super) fn encode_gateway_ingress_ops_wire_v1_web30(
     record: &GatewayIngressWeb30RecordV1,
 ) -> Result<Vec<u8>> {
     let value =
-        bincode::serialize(record).context("serialize gateway ingress web30 record failed")?;
+        crate::bincode_compat::serialize(record).context("serialize gateway ingress web30 record failed")?;
     let key = gateway_ingress_key(record.protocol, &record.tx_hash);
     let plan_id = ((record.chain_id & 0xffff_ffff) << 32) | (record.nonce & 0xffff_ffff);
     encode_gateway_ingress_ops_wire_v1_record(&key, &value, plan_id)
@@ -26,7 +26,7 @@ pub(super) fn encode_gateway_ingress_ops_wire_v1_evm_payout(
     let mut builder = OpsWireV1Builder::new();
     for item in instructions {
         let record_value =
-            bincode::serialize(item).context("serialize gateway evm payout instruction failed")?;
+            crate::bincode_compat::serialize(item).context("serialize gateway evm payout instruction failed")?;
         let record_key =
             gateway_evm_payout_projection_key(EVM_PAYOUT_LEDGER_RECORD_KEY_PREFIX, item);
         let reserve_key =
@@ -192,7 +192,7 @@ pub(super) fn encode_gateway_ops_wire_v1_evm_settlement_records(
             gateway_evm_settlement_key(EVM_SETTLEMENT_LEDGER_PAYOUT_DELTA_KEY_PREFIX, item);
         let status_key = gateway_evm_settlement_key(EVM_SETTLEMENT_LEDGER_STATUS_KEY_PREFIX, item);
         let record_value =
-            bincode::serialize(item).context("serialize gateway evm settlement record failed")?;
+            crate::bincode_compat::serialize(item).context("serialize gateway evm settlement record failed")?;
         let reserve_value = item.result.reserve_delta.to_le_bytes().to_vec();
         let payout_value = item.result.payout_delta.to_le_bytes().to_vec();
         let plan_id = gateway_evm_settlement_plan_id(item);
@@ -291,7 +291,7 @@ pub(super) fn encode_gateway_ops_wire_v1_evm_atomic_ready(
     for item in ready_items {
         let key = gateway_evm_atomic_ready_key(item);
         let value =
-            bincode::serialize(item).context("serialize gateway evm atomic-ready record failed")?;
+            crate::bincode_compat::serialize(item).context("serialize gateway evm atomic-ready record failed")?;
         builder.push(OpsWireOp {
             opcode: 2,
             flags: 0,
@@ -344,7 +344,7 @@ pub(super) fn encode_gateway_ops_wire_v1_evm_atomic_broadcast_queue(
     let mut builder = OpsWireV1Builder::new();
     for ticket in tickets {
         let key = gateway_evm_atomic_broadcast_queue_key(ticket);
-        let value = bincode::serialize(ticket)
+        let value = crate::bincode_compat::serialize(ticket)
             .context("serialize gateway evm atomic-broadcast ticket failed")?;
         builder.push(OpsWireOp {
             opcode: 2,
@@ -572,3 +572,4 @@ pub(super) fn settlement_index_entry_from_record(
         status: "settled_v1".to_string(),
     })
 }
+

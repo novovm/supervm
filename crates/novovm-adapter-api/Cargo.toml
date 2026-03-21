@@ -9,10 +9,11 @@ description = "NOVOVM adapter API: IR types + adapter traits (host-facing), no L
 [dependencies]
 anyhow = "1"
 serde = { version = "1", features = ["derive"] }
-bincode = "1.3"
+postcard = { version = "1", default-features = false, features = ["alloc"] }
 sha2 = "0.10"
 serde_json = { version = "1", optional = true }
 
 [features]
 # Keep compatibility with older code that uses `#[cfg(feature = "serde_json")]`.
 serde_json = ["dep:serde_json"]
+

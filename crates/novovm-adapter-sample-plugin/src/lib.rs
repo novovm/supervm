@@ -1,3 +1,5 @@
+mod bincode_compat;
+
 use novovm_adapter_api::{ChainConfig, ChainType, StateIR, TxIR, TxType};
 use novovm_adapter_novovm::create_native_adapter;
 
@@ -73,7 +75,7 @@ fn decode_plugin_apply_inputs(
     };
 
     let tx_bytes = unsafe { std::slice::from_raw_parts(tx_ir_ptr, tx_ir_len) };
-    let txs: Vec<TxIR> = match bincode::deserialize(tx_bytes) {
+    let txs: Vec<TxIR> = match crate::bincode_compat::deserialize(tx_bytes) {
         Ok(v) => v,
         Err(_) => return Err(NOVOVM_ADAPTER_PLUGIN_RC_DECODE_FAILED),
     };
@@ -253,7 +255,7 @@ mod tests {
     #[test]
     fn plugin_apply_v1_rejects_invalid_chain_type() {
         let txs = vec![sample_tx(20260303, 0)];
-        let tx_bytes = bincode::serialize(&txs).expect("tx encode");
+        let tx_bytes = crate::bincode_compat::serialize(&txs).expect("tx encode");
         let mut out = NovovmAdapterPluginApplyResultV1::default();
         let rc = unsafe {
             novovm_adapter_plugin_apply_v1(
@@ -270,7 +272,7 @@ mod tests {
     #[test]
     fn plugin_apply_v1_rejects_empty_batch() {
         let txs: Vec<TxIR> = Vec::new();
-        let tx_bytes = bincode::serialize(&txs).expect("tx encode");
+        let tx_bytes = crate::bincode_compat::serialize(&txs).expect("tx encode");
         let mut out = NovovmAdapterPluginApplyResultV1::default();
         let rc = unsafe {
             novovm_adapter_plugin_apply_v1(
@@ -300,3 +302,4 @@ mod tests {
         assert_eq!(rc, NOVOVM_ADAPTER_PLUGIN_RC_PAYLOAD_TOO_LARGE);
     }
 }
+

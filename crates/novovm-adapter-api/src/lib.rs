@@ -1,5 +1,7 @@
 #![forbid(unsafe_code)]
 
+mod bincode_compat;
+
 pub mod chain_adapter;
 pub mod evm_mirror;
 pub mod ir;

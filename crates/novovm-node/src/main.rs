@@ -3,6 +3,7 @@
 // Author: Xonovo Technology
 
 use anyhow::{bail, Context, Result};
+mod bincode_compat;
 use ed25519_dalek::SigningKey;
 use novovm_adapter_api::{
     default_chain_id, AccountAuditEvent, AccountPolicy, AccountRole, BlockIR, ChainConfig,
@@ -1987,7 +1988,7 @@ fn run_plugin_adapter_signal(
     let chain_code = chain_type_to_plugin_code(chain).ok_or_else(|| {
         anyhow::anyhow!("plugin backend does not support chain={}", chain.as_str())
     })?;
-    let tx_bytes = bincode::serialize(tx_irs).context("serialize tx_irs for plugin failed")?;
+    let tx_bytes = crate::bincode_compat::serialize(tx_irs).context("serialize tx_irs for plugin failed")?;
 
     let lib = unsafe { libloading::Library::new(plugin_path) }
         .with_context(|| format!("load adapter plugin failed: {}", plugin_path.display()))?;
@@ -3674,7 +3675,7 @@ impl UnifiedAccountStoreBackend {
 
                 if let Some(router_bytes) = router_raw {
                     let router: UnifiedAccountRouter =
-                        bincode::deserialize(&router_bytes).with_context(|| {
+                        crate::bincode_compat::deserialize(&router_bytes).with_context(|| {
                             format!(
                                 "decode unified account rocksdb state router failed: {}",
                                 path.display()
@@ -3746,7 +3747,7 @@ impl UnifiedAccountStoreBackend {
                         )
                     },
                 )?;
-                let router_encoded = bincode::serialize(&snapshot.router).with_context(|| {
+                let router_encoded = crate::bincode_compat::serialize(&snapshot.router).with_context(|| {
                     format!(
                         "serialize unified account rocksdb state router failed: {}",
                         path.display()
@@ -3847,7 +3848,7 @@ fn decode_unified_account_snapshot(raw: &[u8], path: &Path) -> Result<UnifiedAcc
     if raw.is_empty() {
         return Ok(empty_unified_account_snapshot());
     }
-    if let Ok(envelope) = bincode::deserialize::<UnifiedAccountStoreEnvelopeV1>(raw) {
+    if let Ok(envelope) = crate::bincode_compat::deserialize::<UnifiedAccountStoreEnvelopeV1>(raw) {
         if envelope.version != UNIFIED_ACCOUNT_STORE_ENVELOPE_VERSION {
             bail!(
                 "unsupported unified account db version {} at {}",
@@ -3861,7 +3862,7 @@ fn decode_unified_account_snapshot(raw: &[u8], path: &Path) -> Result<UnifiedAcc
         });
     }
     // Backward compatibility: old format stored UnifiedAccountRouter directly.
-    let legacy_router: UnifiedAccountRouter = bincode::deserialize(raw)
+    let legacy_router: UnifiedAccountRouter = crate::bincode_compat::deserialize(raw)
         .with_context(|| format!("parse unified account db failed: {}", path.display()))?;
     Ok(UnifiedAccountStoreSnapshot {
         flushed_event_count: legacy_router.events().len() as u64,
@@ -3881,7 +3882,7 @@ fn encode_unified_account_snapshot(snapshot: &UnifiedAccountStoreSnapshot) -> Re
         router: &snapshot.router,
         flushed_event_count: snapshot.flushed_event_count,
     };
-    bincode::serialize(&envelope).context("serialize unified account router failed")
+    crate::bincode_compat::serialize(&envelope).context("serialize unified account router failed")
 }
 
 fn unified_account_audit_log_path(query_db_path: &Path) -> PathBuf {
@@ -14187,7 +14188,7 @@ mod tests {
             .create_uca("uca-roundtrip", vec![7u8; 32], 1)
             .expect("create uca for roundtrip");
         let expected_events = router.events().len();
-        let legacy_raw = bincode::serialize(&router).expect("serialize legacy router");
+        let legacy_raw = crate::bincode_compat::serialize(&router).expect("serialize legacy router");
         let snapshot = UnifiedAccountStoreSnapshot {
             router,
             flushed_event_count: 1,
@@ -14299,7 +14300,7 @@ mod tests {
             .expect("create uca for namespace-only rocksdb decode");
         let expected_events = router.events().len();
         let router_encoded =
-            bincode::serialize(&router).expect("serialize router for namespace-only write");
+            crate::bincode_compat::serialize(&router).expect("serialize router for namespace-only write");
         let db =
             open_unified_account_rocksdb(&path).expect("open rocksdb store for namespace write");
         db.put(UNIFIED_ACCOUNT_STORE_ROCKSDB_KEY_STATE_ROUTER, router_encoded)
@@ -15784,3 +15785,5 @@ mod tests {
         assert_eq!(decoded_signature, signature.as_slice());
     }
 }
+
+

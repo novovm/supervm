@@ -11,7 +11,8 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 anyhow = "1"
-bincode = "1.3"
+postcard = { version = "1", default-features = false, features = ["alloc"] }
 sha2 = "0.10"
 novovm-adapter-api = { path = "../novovm-adapter-api" }
 novovm-adapter-novovm = { path = "../novovm-adapter-novovm" }
+

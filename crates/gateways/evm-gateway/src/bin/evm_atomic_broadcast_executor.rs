@@ -1,5 +1,8 @@
 #![forbid(unsafe_code)]
 
+#[path = "../bincode_compat.rs"]
+mod bincode_compat;
+
 use anyhow::{bail, Context, Result};
 use novovm_adapter_api::TxIR;
 use serde_json::Value;
@@ -117,10 +120,10 @@ fn validate_executor_request(req: &AtomicBroadcastExecRequest) -> Result<()> {
 }
 
 fn decode_tx_ir_bincode(payload: &[u8]) -> Result<TxIR> {
-    if let Ok(tx) = bincode::deserialize::<TxIR>(payload) {
+    if let Ok(tx) = crate::bincode_compat::deserialize::<TxIR>(payload) {
         return Ok(tx);
     }
-    if let Ok(mut txs) = bincode::deserialize::<Vec<TxIR>>(payload) {
+    if let Ok(mut txs) = crate::bincode_compat::deserialize::<Vec<TxIR>>(payload) {
         if txs.len() == 1 {
             return Ok(txs.remove(0));
         }
@@ -244,3 +247,5 @@ mod tests {
         validate_executor_request(&req).expect("validate request");
     }
 }
+
+

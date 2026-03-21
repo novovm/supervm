@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 
 use anyhow::{bail, Context, Result};
+mod bincode_compat;
 use novovm_adapter_api::{
     AccountPolicy, AccountRole, AtomicBroadcastReadyV1, AtomicIntentReceiptV1, AtomicIntentStatus,
     EvmFeePayoutInstructionV1, EvmFeeSettlementRecordV1, EvmMempoolIngressFrameV1, NonceScope,
@@ -2481,7 +2482,7 @@ impl GatewayUaStoreBackend {
                 if raw.is_empty() {
                     return Ok(UnifiedAccountRouter::new());
                 }
-                if let Ok(envelope) = bincode::deserialize::<GatewayUaStoreEnvelopeV1>(&raw) {
+                if let Ok(envelope) = crate::bincode_compat::deserialize::<GatewayUaStoreEnvelopeV1>(&raw) {
                     if envelope.version != GATEWAY_UA_STORE_ENVELOPE_VERSION {
                         bail!(
                             "unsupported gateway ua store version {} at {}",
@@ -2492,7 +2493,7 @@ impl GatewayUaStoreBackend {
                     return Ok(envelope.router);
                 }
                 let router: UnifiedAccountRouter =
-                    bincode::deserialize(&raw).with_context(|| {
+                    crate::bincode_compat::deserialize(&raw).with_context(|| {
                         format!("decode legacy gateway ua store failed: {}", path.display())
                     })?;
                 Ok(router)
@@ -2533,7 +2534,7 @@ impl GatewayUaStoreBackend {
                 if raw.is_empty() {
                     return Ok(UnifiedAccountRouter::new());
                 }
-                if let Ok(envelope) = bincode::deserialize::<GatewayUaStoreEnvelopeV1>(&raw) {
+                if let Ok(envelope) = crate::bincode_compat::deserialize::<GatewayUaStoreEnvelopeV1>(&raw) {
                     if envelope.version != GATEWAY_UA_STORE_ENVELOPE_VERSION {
                         bail!(
                             "unsupported gateway ua store version {} at {}",
@@ -2544,7 +2545,7 @@ impl GatewayUaStoreBackend {
                     return Ok(envelope.router);
                 }
                 let router: UnifiedAccountRouter =
-                    bincode::deserialize(&raw).with_context(|| {
+                    crate::bincode_compat::deserialize(&raw).with_context(|| {
                         format!(
                             "decode legacy gateway ua rocksdb state failed: {}",
                             path.display()
@@ -2566,7 +2567,7 @@ impl GatewayUaStoreBackend {
             router,
         };
         let encoded =
-            bincode::serialize(&envelope).context("serialize gateway ua store envelope failed")?;
+            crate::bincode_compat::serialize(&envelope).context("serialize gateway ua store envelope failed")?;
         match self {
             GatewayUaStoreBackend::BincodeFile { path } => {
                 ensure_parent_dir(path, "gateway ua store")?;
@@ -2643,7 +2644,7 @@ impl GatewayEthTxIndexStoreBackend {
                 if raw.is_empty() {
                     return Ok(None);
                 }
-                if let Ok(record) = bincode::deserialize::<GatewayEthTxIndexRecordV1>(&raw) {
+                if let Ok(record) = crate::bincode_compat::deserialize::<GatewayEthTxIndexRecordV1>(&raw) {
                     if record.version != GATEWAY_ETH_TX_INDEX_RECORD_VERSION {
                         bail!(
                             "unsupported eth tx index record version {} at {}",
@@ -2653,7 +2654,7 @@ impl GatewayEthTxIndexStoreBackend {
                     }
                     return Ok(Some(record.entry));
                 }
-                let legacy_entry: GatewayEthTxIndexEntry = bincode::deserialize(&raw)
+                let legacy_entry: GatewayEthTxIndexEntry = crate::bincode_compat::deserialize(&raw)
                     .with_context(|| {
                         format!(
                             "decode legacy eth tx index record failed: {}",
@@ -2680,7 +2681,7 @@ impl GatewayEthTxIndexStoreBackend {
                         )
                     })?;
                 let key = gateway_eth_tx_index_key(&entry.tx_hash);
-                let value = bincode::serialize(&GatewayEthTxIndexRecordV1 {
+                let value = crate::bincode_compat::serialize(&GatewayEthTxIndexRecordV1 {
                     version: GATEWAY_ETH_TX_INDEX_RECORD_VERSION,
                     entry: entry.clone(),
                 })
@@ -2735,14 +2736,14 @@ impl GatewayEthTxIndexStoreBackend {
                         continue;
                     };
                     let tx_entry = if let Ok(record) =
-                        bincode::deserialize::<GatewayEthTxIndexRecordV1>(&tx_raw)
+                        crate::bincode_compat::deserialize::<GatewayEthTxIndexRecordV1>(&tx_raw)
                     {
                         if record.version != GATEWAY_ETH_TX_INDEX_RECORD_VERSION {
                             continue;
                         }
                         record.entry
                     } else if let Ok(legacy) =
-                        bincode::deserialize::<GatewayEthTxIndexEntry>(&tx_raw)
+                        crate::bincode_compat::deserialize::<GatewayEthTxIndexEntry>(&tx_raw)
                     {
                         legacy
                     } else {
@@ -2804,7 +2805,7 @@ impl GatewayEthTxIndexStoreBackend {
                 if raw.is_empty() {
                     return Ok(None);
                 }
-                if let Ok(record) = bincode::deserialize::<GatewayEthBroadcastStatusRecordV1>(&raw)
+                if let Ok(record) = crate::bincode_compat::deserialize::<GatewayEthBroadcastStatusRecordV1>(&raw)
                 {
                     if record.version != GATEWAY_ETH_BROADCAST_STATUS_RECORD_VERSION {
                         bail!(
@@ -2815,7 +2816,7 @@ impl GatewayEthTxIndexStoreBackend {
                     }
                     return Ok(Some(record.status));
                 }
-                let legacy_status: GatewayEthBroadcastStatus = bincode::deserialize(&raw)
+                let legacy_status: GatewayEthBroadcastStatus = crate::bincode_compat::deserialize(&raw)
                     .with_context(|| {
                         format!(
                             "decode legacy eth broadcast-status record failed: {}",
@@ -2846,7 +2847,7 @@ impl GatewayEthTxIndexStoreBackend {
                         )
                     })?;
                 let key = gateway_eth_broadcast_status_key(tx_hash);
-                let value = bincode::serialize(&GatewayEthBroadcastStatusRecordV1 {
+                let value = crate::bincode_compat::serialize(&GatewayEthBroadcastStatusRecordV1 {
                     version: GATEWAY_ETH_BROADCAST_STATUS_RECORD_VERSION,
                     status: status.clone(),
                 })
@@ -2881,7 +2882,7 @@ impl GatewayEthTxIndexStoreBackend {
                         )
                     })?;
                 let key = gateway_eth_public_broadcast_pending_key(&ticket.tx_hash);
-                let value = bincode::serialize(&GatewayEthPublicBroadcastPendingRecordV1 {
+                let value = crate::bincode_compat::serialize(&GatewayEthPublicBroadcastPendingRecordV1 {
                     version: GATEWAY_ETH_PUBLIC_BROADCAST_PENDING_RECORD_VERSION,
                     ticket: ticket.clone(),
                 })
@@ -2962,14 +2963,14 @@ impl GatewayEthTxIndexStoreBackend {
                         continue;
                     }
                     let ticket = if let Ok(record) =
-                        bincode::deserialize::<GatewayEthPublicBroadcastPendingRecordV1>(&raw)
+                        crate::bincode_compat::deserialize::<GatewayEthPublicBroadcastPendingRecordV1>(&raw)
                     {
                         if record.version != GATEWAY_ETH_PUBLIC_BROADCAST_PENDING_RECORD_VERSION {
                             continue;
                         }
                         record.ticket
                     } else if let Ok(legacy) =
-                        bincode::deserialize::<GatewayEthPublicBroadcastPendingTicketV1>(&raw)
+                        crate::bincode_compat::deserialize::<GatewayEthPublicBroadcastPendingTicketV1>(&raw)
                     {
                         legacy
                     } else {
@@ -3013,7 +3014,7 @@ impl GatewayEthTxIndexStoreBackend {
                 if raw.is_empty() {
                     return Ok(None);
                 }
-                if let Ok(record) = bincode::deserialize::<GatewayEthSubmitStatusRecordV1>(&raw) {
+                if let Ok(record) = crate::bincode_compat::deserialize::<GatewayEthSubmitStatusRecordV1>(&raw) {
                     if record.version != GATEWAY_ETH_SUBMIT_STATUS_RECORD_VERSION {
                         bail!(
                             "unsupported eth submit-status record version {} at {}",
@@ -3023,7 +3024,7 @@ impl GatewayEthTxIndexStoreBackend {
                     }
                     return Ok(Some(record.status));
                 }
-                let legacy_status: GatewayEthSubmitStatus = bincode::deserialize(&raw)
+                let legacy_status: GatewayEthSubmitStatus = crate::bincode_compat::deserialize(&raw)
                     .with_context(|| {
                         format!(
                             "decode legacy eth submit-status record failed: {}",
@@ -3054,7 +3055,7 @@ impl GatewayEthTxIndexStoreBackend {
                         )
                     })?;
                 let key = gateway_eth_submit_status_key(tx_hash);
-                let value = bincode::serialize(&GatewayEthSubmitStatusRecordV1 {
+                let value = crate::bincode_compat::serialize(&GatewayEthSubmitStatusRecordV1 {
                     version: GATEWAY_ETH_SUBMIT_STATUS_RECORD_VERSION,
                     status: status.clone(),
                 })
@@ -3144,14 +3145,14 @@ impl GatewayEthTxIndexStoreBackend {
                         continue;
                     }
                     let entry = if let Ok(record) =
-                        bincode::deserialize::<GatewayEthTxIndexRecordV1>(&tx_raw)
+                        crate::bincode_compat::deserialize::<GatewayEthTxIndexRecordV1>(&tx_raw)
                     {
                         if record.version != GATEWAY_ETH_TX_INDEX_RECORD_VERSION {
                             continue;
                         }
                         record.entry
                     } else if let Ok(legacy) =
-                        bincode::deserialize::<GatewayEthTxIndexEntry>(&tx_raw)
+                        crate::bincode_compat::deserialize::<GatewayEthTxIndexEntry>(&tx_raw)
                     {
                         legacy
                     } else {
@@ -3286,14 +3287,14 @@ impl GatewayEthTxIndexStoreBackend {
                         continue;
                     }
                     let entry = if let Ok(record) =
-                        bincode::deserialize::<GatewayEthTxIndexRecordV1>(&tx_raw)
+                        crate::bincode_compat::deserialize::<GatewayEthTxIndexRecordV1>(&tx_raw)
                     {
                         if record.version != GATEWAY_ETH_TX_INDEX_RECORD_VERSION {
                             continue;
                         }
                         record.entry
                     } else if let Ok(legacy) =
-                        bincode::deserialize::<GatewayEthTxIndexEntry>(&tx_raw)
+                        crate::bincode_compat::deserialize::<GatewayEthTxIndexEntry>(&tx_raw)
                     {
                         legacy
                     } else {
@@ -3382,7 +3383,7 @@ impl GatewayEthTxIndexStoreBackend {
                 if raw.is_empty() {
                     return Ok(None);
                 }
-                if let Ok(record) = bincode::deserialize::<GatewayEvmSettlementIndexRecordV1>(&raw)
+                if let Ok(record) = crate::bincode_compat::deserialize::<GatewayEvmSettlementIndexRecordV1>(&raw)
                 {
                     if record.version != GATEWAY_EVM_SETTLEMENT_INDEX_RECORD_VERSION {
                         bail!(
@@ -3393,7 +3394,7 @@ impl GatewayEthTxIndexStoreBackend {
                     }
                     return Ok(Some(record.entry));
                 }
-                let legacy_entry: GatewayEvmSettlementIndexEntry = bincode::deserialize(&raw)
+                let legacy_entry: GatewayEvmSettlementIndexEntry = crate::bincode_compat::deserialize(&raw)
                     .with_context(|| {
                         format!(
                             "decode legacy evm settlement index record by id failed: {}",
@@ -3438,7 +3439,7 @@ impl GatewayEthTxIndexStoreBackend {
                     return Ok(None);
                 }
                 let settlement_id = if let Ok(ref_record) =
-                    bincode::deserialize::<GatewayEvmSettlementTxRefRecordV1>(&raw)
+                    crate::bincode_compat::deserialize::<GatewayEvmSettlementTxRefRecordV1>(&raw)
                 {
                     if ref_record.version != GATEWAY_EVM_SETTLEMENT_INDEX_RECORD_VERSION {
                         bail!(
@@ -3476,7 +3477,7 @@ impl GatewayEthTxIndexStoreBackend {
                         )
                     })?;
                 let key_by_id = gateway_evm_settlement_index_key_by_id(&entry.settlement_id);
-                let value_by_id = bincode::serialize(&GatewayEvmSettlementIndexRecordV1 {
+                let value_by_id = crate::bincode_compat::serialize(&GatewayEvmSettlementIndexRecordV1 {
                     version: GATEWAY_EVM_SETTLEMENT_INDEX_RECORD_VERSION,
                     entry: entry.clone(),
                 })
@@ -3491,7 +3492,7 @@ impl GatewayEthTxIndexStoreBackend {
 
                 let key_by_tx =
                     gateway_evm_settlement_index_key_by_tx(entry.chain_id, &entry.income_tx_hash);
-                let value_by_tx = bincode::serialize(&GatewayEvmSettlementTxRefRecordV1 {
+                let value_by_tx = crate::bincode_compat::serialize(&GatewayEvmSettlementTxRefRecordV1 {
                     version: GATEWAY_EVM_SETTLEMENT_INDEX_RECORD_VERSION,
                     settlement_id: entry.settlement_id.clone(),
                 })
@@ -3539,7 +3540,7 @@ impl GatewayEthTxIndexStoreBackend {
                 if raw.is_empty() {
                     return Ok(None);
                 }
-                if let Ok(record) = bincode::deserialize::<GatewayEvmPayoutPendingRecordV1>(&raw) {
+                if let Ok(record) = crate::bincode_compat::deserialize::<GatewayEvmPayoutPendingRecordV1>(&raw) {
                     if record.version != GATEWAY_EVM_PAYOUT_PENDING_RECORD_VERSION {
                         bail!(
                             "unsupported evm pending payout record version {} at {}",
@@ -3549,7 +3550,7 @@ impl GatewayEthTxIndexStoreBackend {
                     }
                     return Ok(Some(record.instruction));
                 }
-                let legacy_instruction: EvmFeePayoutInstructionV1 = bincode::deserialize(&raw)
+                let legacy_instruction: EvmFeePayoutInstructionV1 = crate::bincode_compat::deserialize(&raw)
                     .with_context(|| {
                         format!(
                             "decode legacy evm pending payout record failed: {}",
@@ -3579,7 +3580,7 @@ impl GatewayEthTxIndexStoreBackend {
                         )
                     })?;
                 let key = gateway_evm_payout_pending_key(&instruction.settlement_id);
-                let value = bincode::serialize(&GatewayEvmPayoutPendingRecordV1 {
+                let value = crate::bincode_compat::serialize(&GatewayEvmPayoutPendingRecordV1 {
                     version: GATEWAY_EVM_PAYOUT_PENDING_RECORD_VERSION,
                     instruction: instruction.clone(),
                 })
@@ -3660,14 +3661,14 @@ impl GatewayEthTxIndexStoreBackend {
                         continue;
                     }
                     let instruction = if let Ok(record) =
-                        bincode::deserialize::<GatewayEvmPayoutPendingRecordV1>(&raw)
+                        crate::bincode_compat::deserialize::<GatewayEvmPayoutPendingRecordV1>(&raw)
                     {
                         if record.version != GATEWAY_EVM_PAYOUT_PENDING_RECORD_VERSION {
                             continue;
                         }
                         record.instruction
                     } else if let Ok(legacy) =
-                        bincode::deserialize::<EvmFeePayoutInstructionV1>(&raw)
+                        crate::bincode_compat::deserialize::<EvmFeePayoutInstructionV1>(&raw)
                     {
                         legacy
                     } else {
@@ -3714,7 +3715,7 @@ impl GatewayEthTxIndexStoreBackend {
                 if raw.is_empty() {
                     return Ok(None);
                 }
-                if let Ok(record) = bincode::deserialize::<GatewayEvmAtomicReadyIndexRecordV1>(&raw)
+                if let Ok(record) = crate::bincode_compat::deserialize::<GatewayEvmAtomicReadyIndexRecordV1>(&raw)
                 {
                     if record.version != GATEWAY_EVM_ATOMIC_READY_INDEX_RECORD_VERSION {
                         bail!(
@@ -3725,7 +3726,7 @@ impl GatewayEthTxIndexStoreBackend {
                     }
                     return Ok(Some(record.entry));
                 }
-                let legacy_entry: GatewayEvmAtomicReadyIndexEntry = bincode::deserialize(&raw)
+                let legacy_entry: GatewayEvmAtomicReadyIndexEntry = crate::bincode_compat::deserialize(&raw)
                     .with_context(|| {
                         format!(
                             "decode legacy evm atomic-ready index by intent failed: {}",
@@ -3752,7 +3753,7 @@ impl GatewayEthTxIndexStoreBackend {
                         )
                     })?;
                 let key = gateway_evm_atomic_ready_index_key_by_intent(&entry.intent_id);
-                let value = bincode::serialize(&GatewayEvmAtomicReadyIndexRecordV1 {
+                let value = crate::bincode_compat::serialize(&GatewayEvmAtomicReadyIndexRecordV1 {
                     version: GATEWAY_EVM_ATOMIC_READY_INDEX_RECORD_VERSION,
                     entry: entry.clone(),
                 })
@@ -3798,7 +3799,7 @@ impl GatewayEthTxIndexStoreBackend {
                     return Ok(None);
                 }
                 if let Ok(record) =
-                    bincode::deserialize::<GatewayEvmAtomicReadyPendingRecordV1>(&raw)
+                    crate::bincode_compat::deserialize::<GatewayEvmAtomicReadyPendingRecordV1>(&raw)
                 {
                     if record.version != GATEWAY_EVM_ATOMIC_READY_PENDING_RECORD_VERSION {
                         bail!(
@@ -3810,7 +3811,7 @@ impl GatewayEthTxIndexStoreBackend {
                     return Ok(Some(record.ready_item));
                 }
                 let legacy_item: AtomicBroadcastReadyV1 =
-                    bincode::deserialize(&raw).with_context(|| {
+                    crate::bincode_compat::deserialize(&raw).with_context(|| {
                         format!(
                             "decode legacy evm pending atomic-ready record failed: {}",
                             path.display()
@@ -3855,14 +3856,14 @@ impl GatewayEthTxIndexStoreBackend {
                         continue;
                     }
                     let item = if let Ok(record) =
-                        bincode::deserialize::<GatewayEvmAtomicReadyPendingRecordV1>(&raw)
+                        crate::bincode_compat::deserialize::<GatewayEvmAtomicReadyPendingRecordV1>(&raw)
                     {
                         if record.version != GATEWAY_EVM_ATOMIC_READY_PENDING_RECORD_VERSION {
                             continue;
                         }
                         record.ready_item
                     } else if let Ok(legacy_item) =
-                        bincode::deserialize::<AtomicBroadcastReadyV1>(&raw)
+                        crate::bincode_compat::deserialize::<AtomicBroadcastReadyV1>(&raw)
                     {
                         legacy_item
                     } else {
@@ -3893,7 +3894,7 @@ impl GatewayEthTxIndexStoreBackend {
                         )
                     })?;
                 let key = gateway_evm_atomic_ready_pending_key(&item.intent.intent_id);
-                let value = bincode::serialize(&GatewayEvmAtomicReadyPendingRecordV1 {
+                let value = crate::bincode_compat::serialize(&GatewayEvmAtomicReadyPendingRecordV1 {
                     version: GATEWAY_EVM_ATOMIC_READY_PENDING_RECORD_VERSION,
                     ready_item: item.clone(),
                 })
@@ -3969,7 +3970,7 @@ impl GatewayEthTxIndexStoreBackend {
                     return Ok(None);
                 }
                 if let Ok(record) =
-                    bincode::deserialize::<GatewayEvmAtomicBroadcastPendingRecordV1>(&raw)
+                    crate::bincode_compat::deserialize::<GatewayEvmAtomicBroadcastPendingRecordV1>(&raw)
                 {
                     if record.version != GATEWAY_EVM_ATOMIC_BROADCAST_PENDING_RECORD_VERSION {
                         bail!(
@@ -3980,7 +3981,7 @@ impl GatewayEthTxIndexStoreBackend {
                     }
                     return Ok(Some(record.ticket));
                 }
-                let legacy_ticket: GatewayEvmAtomicBroadcastTicketV1 = bincode::deserialize(&raw)
+                let legacy_ticket: GatewayEvmAtomicBroadcastTicketV1 = crate::bincode_compat::deserialize(&raw)
                     .with_context(|| {
                     format!(
                         "decode legacy evm pending atomic-broadcast ticket failed: {}",
@@ -4010,7 +4011,7 @@ impl GatewayEthTxIndexStoreBackend {
                         )
                     })?;
                 let key = gateway_evm_atomic_broadcast_pending_key(&ticket.intent_id);
-                let value = bincode::serialize(&GatewayEvmAtomicBroadcastPendingRecordV1 {
+                let value = crate::bincode_compat::serialize(&GatewayEvmAtomicBroadcastPendingRecordV1 {
                     version: GATEWAY_EVM_ATOMIC_BROADCAST_PENDING_RECORD_VERSION,
                     ticket: ticket.clone(),
                 })
@@ -4172,14 +4173,14 @@ impl GatewayEthTxIndexStoreBackend {
                         continue;
                     }
                     let ticket = if let Ok(record) =
-                        bincode::deserialize::<GatewayEvmAtomicBroadcastPendingRecordV1>(&raw)
+                        crate::bincode_compat::deserialize::<GatewayEvmAtomicBroadcastPendingRecordV1>(&raw)
                     {
                         if record.version != GATEWAY_EVM_ATOMIC_BROADCAST_PENDING_RECORD_VERSION {
                             continue;
                         }
                         record.ticket
                     } else if let Ok(legacy) =
-                        bincode::deserialize::<GatewayEvmAtomicBroadcastTicketV1>(&raw)
+                        crate::bincode_compat::deserialize::<GatewayEvmAtomicBroadcastTicketV1>(&raw)
                     {
                         legacy
                     } else {
@@ -13338,3 +13339,5 @@ fn write_spool_ops_wire_v1(spool_dir: &Path, bytes: &[u8]) -> Result<PathBuf> {
 
 #[cfg(test)]
 mod main_tests;
+
+

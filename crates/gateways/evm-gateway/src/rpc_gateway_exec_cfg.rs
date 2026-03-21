@@ -158,13 +158,13 @@ fn gateway_eth_native_decode_transactions_payload(
     if payload.is_empty() {
         return Err("transactions payload is empty".to_string());
     }
-    if let Ok(txs) = bincode::deserialize::<Vec<TxIR>>(payload) {
+    if let Ok(txs) = crate::bincode_compat::deserialize::<Vec<TxIR>>(payload) {
         if txs.is_empty() {
             return Err("transactions payload decoded as empty tx list".to_string());
         }
         return Ok(txs);
     }
-    if let Ok(tx) = bincode::deserialize::<TxIR>(payload) {
+    if let Ok(tx) = crate::bincode_compat::deserialize::<TxIR>(payload) {
         return Ok(vec![tx]);
     }
     if let Ok(raw_txs) = gateway_eth_native_extract_raw_txs_from_transactions_rlp(payload) {
@@ -9286,7 +9286,7 @@ mod tests {
     fn native_transactions_payload_decode_accepts_bincode_vec_tx_ir() {
         let mut tx = TxIR::transfer(vec![0x11; 20], vec![0x22; 20], 7, 3, 1);
         tx.compute_hash();
-        let payload = bincode::serialize(&vec![tx.clone()]).expect("serialize tx list");
+        let payload = crate::bincode_compat::serialize(&vec![tx.clone()]).expect("serialize tx list");
         let decoded = gateway_eth_native_decode_transactions_payload(1, payload.as_slice())
             .expect("decode bincode tx list");
         assert_eq!(decoded.len(), 1);
@@ -11300,10 +11300,10 @@ pub(super) fn decode_gateway_atomic_broadcast_tx_ir_bincode(payload: &[u8]) -> R
     if payload.is_empty() {
         bail!("atomic-broadcast tx_ir_bincode is empty");
     }
-    if let Ok(tx) = bincode::deserialize::<TxIR>(payload) {
+    if let Ok(tx) = crate::bincode_compat::deserialize::<TxIR>(payload) {
         return Ok(tx);
     }
-    if let Ok(mut txs) = bincode::deserialize::<Vec<TxIR>>(payload) {
+    if let Ok(mut txs) = crate::bincode_compat::deserialize::<Vec<TxIR>>(payload) {
         if txs.len() == 1 {
             return Ok(txs.remove(0));
         }
@@ -11314,3 +11314,5 @@ pub(super) fn decode_gateway_atomic_broadcast_tx_ir_bincode(payload: &[u8]) -> R
     }
     bail!("decode atomic-broadcast tx_ir_bincode failed");
 }
+
+

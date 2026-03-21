@@ -790,7 +790,7 @@ fn web30_send_transaction_privacy_spools_signed_tx_ir_when_aoem_available() {
     let wire = fs::read(&spool_file).expect("read spool ops-wire");
     let value = decode_single_ops_wire_value(&wire).expect("decode ops-wire value");
     let record: GatewayIngressWeb30RecordV1 =
-        bincode::deserialize(&value).expect("decode web30 ingress record");
+        crate::bincode_compat::deserialize(&value).expect("decode web30 ingress record");
     let tx = TxIR::deserialize(&record.payload, SerializationFormat::Bincode)
         .expect("decode signed privacy tx ir");
     assert_eq!(tx.tx_type, TxType::Privacy);
@@ -11998,7 +11998,7 @@ fn evm_queue_and_mark_atomic_broadcast_updates_status() {
     let wire = fs::read(&spool_file).expect("read broadcast queue spool");
     let value = decode_single_ops_wire_value(&wire).expect("decode queue ops wire value");
     let ticket: GatewayEvmAtomicBroadcastTicketV1 =
-        bincode::deserialize(&value).expect("decode atomic-broadcast ticket");
+        crate::bincode_compat::deserialize(&value).expect("decode atomic-broadcast ticket");
     assert_eq!(ticket.intent_id, intent_id);
     assert_eq!(ticket.chain_id, 1);
     assert_eq!(ticket.tx_hash, tx_hash);
@@ -12165,7 +12165,7 @@ fn evm_mark_failed_and_replay_atomic_broadcast_queue_updates_status() {
     let wire = fs::read(&spool_file).expect("read replay broadcast queue spool");
     let value = decode_single_ops_wire_value(&wire).expect("decode replay queue ops wire value");
     let ticket: GatewayEvmAtomicBroadcastTicketV1 =
-        bincode::deserialize(&value).expect("decode replay atomic-broadcast ticket");
+        crate::bincode_compat::deserialize(&value).expect("decode replay atomic-broadcast ticket");
     assert_eq!(ticket.intent_id, intent_id);
     assert_eq!(ticket.chain_id, 1);
     assert_eq!(ticket.tx_hash, tx_hash);
@@ -12270,7 +12270,7 @@ fn evm_execute_atomic_broadcast_native_forced_succeeds() {
     let wire = fs::read(&spool_file).expect("read native execute spool");
     let value = decode_single_ops_wire_value(&wire).expect("decode native execute ops-wire");
     let record: GatewayIngressEthRecordV1 =
-        bincode::deserialize(&value).expect("decode ingress record");
+        crate::bincode_compat::deserialize(&value).expect("decode ingress record");
     assert_eq!(record.tx_hash, tx_hash);
     assert!(eth_tx_index.contains_key(&tx_hash));
     assert!(!evm_settlement_index_by_id.is_empty());
@@ -13729,7 +13729,7 @@ fn decode_atomic_broadcast_tx_ir_bincode_accepts_single_tx_ir() {
 fn decode_atomic_broadcast_tx_ir_bincode_accepts_singleton_vec_tx_ir() {
     let mut tx = TxIR::transfer(vec![0x83; 20], vec![0x84; 20], 5, 88, 1);
     tx.compute_hash();
-    let payload = bincode::serialize(&vec![tx.clone()]).expect("serialize vec bincode");
+    let payload = crate::bincode_compat::serialize(&vec![tx.clone()]).expect("serialize vec bincode");
     let decoded = decode_gateway_atomic_broadcast_tx_ir_bincode(&payload)
         .expect("decode singleton vec tx_ir");
     assert_eq!(decoded.chain_id, tx.chain_id);
@@ -14088,3 +14088,4 @@ fn fuzz_min_rpc_params_seeded_corpus_no_panic() {
         corpus.len()
     );
 }
+

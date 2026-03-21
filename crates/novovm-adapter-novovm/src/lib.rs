@@ -1,5 +1,7 @@
 #![forbid(unsafe_code)]
 
+mod bincode_compat;
+
 use anyhow::{anyhow, bail, Result};
 use aoem_bindings::{
     ed25519_verify_batch_v1_auto, ed25519_verify_v1_auto, AoemEd25519VerifyItemRef,
@@ -438,7 +440,7 @@ impl NovoVmAdapter {
     }
 
     fn decode_privacy_stealth_address(tx: &TxIR) -> Result<Web30StealthAddress> {
-        bincode::deserialize(&tx.data)
+        crate::bincode_compat::deserialize(&tx.data)
             .map_err(|e| anyhow::anyhow!("privacy tx stealth address decode failed: {e}"))
     }
 
@@ -744,7 +746,7 @@ pub fn signature_payload_with_seed_v1(tx: &TxIR, seed: [u8; 32]) -> Vec<u8> {
 }
 
 pub fn privacy_stealth_payload_v1(stealth_address: &Web30StealthAddress) -> Result<Vec<u8>> {
-    bincode::serialize(stealth_address)
+    crate::bincode_compat::serialize(stealth_address)
         .map_err(|e| anyhow::anyhow!("encode privacy stealth address failed: {e}"))
 }
 
@@ -1244,7 +1246,7 @@ mod tests {
         assert_eq!(tx.gas_price, 3);
         assert!(!tx.hash.is_empty());
         let decoded: Web30StealthAddress =
-            bincode::deserialize(&tx.data).expect("decode stealth payload");
+            crate::bincode_compat::deserialize(&tx.data).expect("decode stealth payload");
         assert_eq!(decoded.view_key, envelope.stealth_address.view_key);
         assert_eq!(decoded.spend_key, envelope.stealth_address.spend_key);
     }
@@ -1424,3 +1426,4 @@ mod tests {
         assert!(!tx.signature.is_empty());
     }
 }
+

@@ -5,6 +5,9 @@
 #![forbid(unsafe_code)]
 #![allow(clippy::needless_range_loop, clippy::vec_init_then_push)]
 
+#[path = "../bincode_compat.rs"]
+mod bincode_compat;
+
 use anyhow::{bail, Context, Result};
 use ed25519_dalek::{SigningKey, VerifyingKey};
 use novovm_consensus::{BFTConfig, BFTEngine, BFTProposal, NodeId as CNodeId, ValidatorSet, Vote};
@@ -409,7 +412,7 @@ fn main() -> Result<()> {
 
         let stage_start = Instant::now();
         let proposal_payload =
-            bincode::serialize(&BenchFinalityPayload::Proposal(proposal.clone()))
+            crate::bincode_compat::serialize(&BenchFinalityPayload::Proposal(proposal.clone()))
                 .context("serialize proposal payload failed")?;
         for i in 0..validators {
             if i == leader_idx {
@@ -456,12 +459,12 @@ fn main() -> Result<()> {
                 bail!("follower {i} did not receive proposal message");
             };
             let decoded: BenchFinalityPayload =
-                bincode::deserialize(&payload).context("deserialize proposal payload failed")?;
+                crate::bincode_compat::deserialize(&payload).context("deserialize proposal payload failed")?;
             let BenchFinalityPayload::Proposal(follower_proposal) = decoded else {
                 bail!("follower {i} received non-proposal payload");
             };
             let vote = engines[i].vote_for_proposal(&follower_proposal)?;
-            let payload = bincode::serialize(&BenchFinalityPayload::Vote(vote.clone()))
+            let payload = crate::bincode_compat::serialize(&BenchFinalityPayload::Vote(vote.clone()))
                 .context("serialize vote payload failed")?;
             let msg = ProtocolMessage::Finality(FinalityMessage::Vote {
                 id: CheckpointId(batch_id),
@@ -504,7 +507,7 @@ fn main() -> Result<()> {
                 continue;
             }
             let decoded: BenchFinalityPayload =
-                bincode::deserialize(&sig).context("deserialize vote payload failed")?;
+                crate::bincode_compat::deserialize(&sig).context("deserialize vote payload failed")?;
             let BenchFinalityPayload::Vote(v) = decoded else {
                 bail!("leader received non-vote payload");
             };
@@ -633,3 +636,4 @@ fn main() -> Result<()> {
 
     Ok(())
 }
+

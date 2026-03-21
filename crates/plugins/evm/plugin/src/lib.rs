@@ -1,4 +1,4 @@
-use bincode::Options as _;
+mod bincode_compat;
 use novovm_adapter_api::ChainAdapter;
 use novovm_adapter_api::{
     AccountAuditEvent, AccountRole, AtomicBroadcastReadyV1, AtomicCrossChainIntentV1,
@@ -1086,7 +1086,7 @@ fn push_ingress_frames_prepared(chain_id: u64, prepared_txs: &[TxIR]) -> EvmIngr
                                 config.txpool_price_bump_pct,
                             );
                             if tx.gas_price >= required {
-                                let raw_tx = bincode::serialize(&tx).unwrap_or_default();
+                                let raw_tx = crate::bincode_compat::serialize(&tx).unwrap_or_default();
                                 runtime.executable_ingress_frames[pos] = EvmMempoolIngressFrameV1 {
                                     chain_id,
                                     tx_hash: tx.hash.clone(),
@@ -1172,7 +1172,7 @@ fn push_ingress_frames_prepared(chain_id: u64, prepared_txs: &[TxIR]) -> EvmIngr
                 .or_default()
                 .insert(tx.nonce, tx.hash.clone());
         }
-        let raw_tx = bincode::serialize(&tx).unwrap_or_default();
+        let raw_tx = crate::bincode_compat::serialize(&tx).unwrap_or_default();
         let frame = EvmMempoolIngressFrameV1 {
             chain_id,
             tx_hash: tx.hash.clone(),
@@ -2039,19 +2039,11 @@ unsafe fn write_bincode_blob_to_out(
 }
 
 fn serialize_bincode_export_blob<T: Serialize>(value: &T) -> Result<Vec<u8>, i32> {
-    match bincode::DefaultOptions::new()
-        .with_fixint_encoding()
-        .with_limit(MAX_PLUGIN_TX_IR_BYTES as u64)
-        .serialize(value)
-    {
-        Ok(v) => Ok(v),
-        Err(err) => {
-            if matches!(*err, bincode::ErrorKind::SizeLimit) {
-                return Err(NOVOVM_ADAPTER_PLUGIN_RC_PAYLOAD_TOO_LARGE);
-            }
-            Err(NOVOVM_ADAPTER_PLUGIN_RC_APPLY_FAILED)
-        }
+    let payload = bincode_compat::serialize(value).map_err(|_| NOVOVM_ADAPTER_PLUGIN_RC_APPLY_FAILED)?;
+    if payload.len() > MAX_PLUGIN_TX_IR_BYTES {
+        return Err(NOVOVM_ADAPTER_PLUGIN_RC_PAYLOAD_TOO_LARGE);
     }
+    Ok(payload)
 }
 
 fn default_plugin_store_path(backend: UaPluginStoreBackend) -> PathBuf {
@@ -2135,7 +2127,7 @@ fn open_rocksdb(path: &Path) -> anyhow::Result<rocksdb::DB> {
 }
 
 fn decode_store_envelope(raw: &[u8]) -> anyhow::Result<UaPluginStoreEnvelopeV1> {
-    if let Ok(envelope) = bincode::deserialize::<UaPluginStoreEnvelopeV1>(raw) {
+    if let Ok(envelope) = crate::bincode_compat::deserialize::<UaPluginStoreEnvelopeV1>(raw) {
         if envelope.version == UA_PLUGIN_STORE_VERSION_V1 {
             return Ok(envelope);
         }
@@ -2146,7 +2138,7 @@ fn decode_store_envelope(raw: &[u8]) -> anyhow::Result<UaPluginStoreEnvelopeV1> 
     }
 
     // Backward compatibility: older payload persisted router directly.
-    let router: UnifiedAccountRouter = bincode::deserialize(raw).map_err(|e| {
+    let router: UnifiedAccountRouter = crate::bincode_compat::deserialize(raw).map_err(|e| {
         anyhow::anyhow!("decode ua plugin store envelope failed (router fallback): {e}")
     })?;
     Ok(UaPluginStoreEnvelopeV1 {
@@ -2208,7 +2200,7 @@ fn save_runtime_to_bincode_file(path: &Path, runtime: &UaPluginRuntime) -> anyho
         router: &runtime.router,
         audit_seq: runtime.audit_seq,
     };
-    let payload = bincode::serialize(&envelope)
+    let payload = crate::bincode_compat::serialize(&envelope)
         .map_err(|e| anyhow::anyhow!("encode ua plugin store payload failed: {e}"))?;
     fs::write(path, payload).map_err(|e| {
         anyhow::anyhow!(
@@ -2226,7 +2218,7 @@ fn save_runtime_to_rocksdb(path: &Path, runtime: &UaPluginRuntime) -> anyhow::Re
         router: &runtime.router,
         audit_seq: runtime.audit_seq,
     };
-    let payload = bincode::serialize(&envelope)
+    let payload = crate::bincode_compat::serialize(&envelope)
         .map_err(|e| anyhow::anyhow!("encode ua plugin store payload failed: {e}"))?;
     db.put(UA_PLUGIN_STORE_KEY_V1, payload)
         .map_err(|e| anyhow::anyhow!("rocksdb write ua plugin store failed: {}", e))
@@ -2516,19 +2508,13 @@ fn decode_plugin_apply_inputs(
     };
 
     let tx_bytes = unsafe { std::slice::from_raw_parts(tx_ir_ptr, tx_ir_len) };
-    let txs: Vec<TxIR> = match bincode::DefaultOptions::new()
-        .with_fixint_encoding()
-        .allow_trailing_bytes()
-        .with_limit(MAX_PLUGIN_TX_IR_BYTES as u64)
-        .deserialize(tx_bytes)
+    if tx_bytes.len() > MAX_PLUGIN_TX_IR_BYTES {
+        return Err(NOVOVM_ADAPTER_PLUGIN_RC_PAYLOAD_TOO_LARGE);
+    }
+    let txs: Vec<TxIR> = match crate::bincode_compat::deserialize_with_remainder::<Vec<TxIR>>(tx_bytes)
     {
-        Ok(v) => v,
-        Err(err) => {
-            if matches!(*err, bincode::ErrorKind::SizeLimit) {
-                return Err(NOVOVM_ADAPTER_PLUGIN_RC_PAYLOAD_TOO_LARGE);
-            }
-            return Err(NOVOVM_ADAPTER_PLUGIN_RC_DECODE_FAILED);
-        }
+        Ok((v, _)) => v,
+        Err(_) => return Err(NOVOVM_ADAPTER_PLUGIN_RC_DECODE_FAILED),
     };
     validate_plugin_tx_batch(&txs)?;
     Ok((chain_type, txs))
@@ -3183,7 +3169,7 @@ mod tests {
     #[test]
     fn plugin_apply_v1_rejects_invalid_chain_type() {
         let txs = vec![sample_tx(1, 0)];
-        let tx_bytes = bincode::serialize(&txs).expect("tx encode");
+        let tx_bytes = crate::bincode_compat::serialize(&txs).expect("tx encode");
         let mut out = NovovmAdapterPluginApplyResultV1::default();
         let rc = unsafe {
             novovm_adapter_plugin_apply_v1(
@@ -3216,7 +3202,7 @@ mod tests {
     #[test]
     fn plugin_apply_v1_rejects_empty_batch() {
         let txs: Vec<TxIR> = Vec::new();
-        let tx_bytes = bincode::serialize(&txs).expect("tx encode");
+        let tx_bytes = crate::bincode_compat::serialize(&txs).expect("tx encode");
         let mut out = NovovmAdapterPluginApplyResultV1::default();
         let rc = unsafe {
             novovm_adapter_plugin_apply_v1(
@@ -3234,7 +3220,7 @@ mod tests {
     fn plugin_apply_v1_rejects_unsupported_tx_type() {
         let mut tx = sample_tx(1, 0);
         tx.tx_type = TxType::Privacy;
-        let tx_bytes = bincode::serialize(&vec![tx]).expect("tx encode");
+        let tx_bytes = crate::bincode_compat::serialize(&vec![tx]).expect("tx encode");
         let mut out = NovovmAdapterPluginApplyResultV1::default();
         let rc = unsafe {
             novovm_adapter_plugin_apply_v1(
@@ -3252,7 +3238,7 @@ mod tests {
     fn plugin_apply_v1_maps_engine_failure_to_apply_failed() {
         let mut tx = sample_tx(1, 0);
         tx.gas_limit = 20_999;
-        let tx_bytes = bincode::serialize(&vec![tx]).expect("tx encode");
+        let tx_bytes = crate::bincode_compat::serialize(&vec![tx]).expect("tx encode");
         let mut out = NovovmAdapterPluginApplyResultV1::default();
         let rc = unsafe {
             novovm_adapter_plugin_apply_v1(
@@ -3271,7 +3257,7 @@ mod tests {
         let _guard = runtime_queue_test_guard();
         reset_runtime_queues_for_test();
         let txs = vec![sample_tx(1, 0)];
-        let tx_bytes = bincode::serialize(&txs).expect("tx encode");
+        let tx_bytes = crate::bincode_compat::serialize(&txs).expect("tx encode");
         let options = NovovmAdapterPluginApplyOptionsV1 {
             flags: NOVOVM_ADAPTER_PLUGIN_APPLY_FLAG_UA_SELF_GUARD_V1,
         };
@@ -3308,7 +3294,7 @@ mod tests {
         reset_runtime_queues_for_test();
         let (reserve_before, payout_before) = plugin_settlement_totals_for_host();
         let txs = vec![sample_tx(1, 0), sample_contract_call_tx(1, 1)];
-        let tx_bytes = bincode::serialize(&txs).expect("tx encode");
+        let tx_bytes = crate::bincode_compat::serialize(&txs).expect("tx encode");
         let mut out = NovovmAdapterPluginApplyResultV1::default();
         let rc = unsafe {
             novovm_adapter_plugin_apply_v1(
@@ -3707,7 +3693,7 @@ mod tests {
         invalid_tx.source_chain = Some(2);
         invalid_tx.target_chain = Some(137);
         let invalid_tx = resign_tx(invalid_tx);
-        let invalid_bytes = bincode::serialize(&vec![invalid_tx]).expect("tx encode");
+        let invalid_bytes = crate::bincode_compat::serialize(&vec![invalid_tx]).expect("tx encode");
         let rc_invalid = unsafe {
             novovm_adapter_plugin_apply_v2(
                 1,
@@ -3724,7 +3710,7 @@ mod tests {
         valid_tx.source_chain = Some(1);
         valid_tx.target_chain = Some(137);
         let valid_tx = resign_tx(valid_tx);
-        let valid_bytes = bincode::serialize(&vec![valid_tx]).expect("tx encode");
+        let valid_bytes = crate::bincode_compat::serialize(&vec![valid_tx]).expect("tx encode");
         let rc_valid = unsafe {
             novovm_adapter_plugin_apply_v2(
                 1,
@@ -3759,7 +3745,7 @@ mod tests {
         tx.source_chain = Some(1);
         tx.target_chain = Some(137);
         let tx = resign_tx(tx);
-        let tx_bytes = bincode::serialize(&vec![tx]).expect("tx encode");
+        let tx_bytes = crate::bincode_compat::serialize(&vec![tx]).expect("tx encode");
         let rc = unsafe {
             novovm_adapter_plugin_runtime_tap_v1(
                 1,
@@ -3820,7 +3806,7 @@ mod tests {
         assert_eq!(rc, NOVOVM_ADAPTER_PLUGIN_RC_OK);
         out.truncate(out_len);
         let snapshot: EvmFeeSettlementSnapshotV1 =
-            bincode::deserialize(&out).expect("decode settlement snapshot");
+            crate::bincode_compat::deserialize(&out).expect("decode settlement snapshot");
         assert!(!snapshot.policy.reserve_currency_code.is_empty());
         assert!(!snapshot.policy.payout_token_code.is_empty());
     }
@@ -3850,7 +3836,7 @@ mod tests {
         assert_eq!(rc_ingress, NOVOVM_ADAPTER_PLUGIN_RC_OK);
         ingress_buf.truncate(ingress_len);
         let ingress: Vec<EvmMempoolIngressFrameV1> =
-            bincode::deserialize(&ingress_buf).expect("decode ingress");
+            crate::bincode_compat::deserialize(&ingress_buf).expect("decode ingress");
         assert!(ingress.is_empty());
 
         let mut pending_len = 0usize;
@@ -3875,7 +3861,7 @@ mod tests {
         assert_eq!(rc_pending, NOVOVM_ADAPTER_PLUGIN_RC_OK);
         pending_buf.truncate(pending_len);
         let pending: Vec<EvmMempoolIngressFrameV1> =
-            bincode::deserialize(&pending_buf).expect("decode pending ingress");
+            crate::bincode_compat::deserialize(&pending_buf).expect("decode pending ingress");
         assert!(pending.is_empty());
 
         let mut pending_bucket_len = 0usize;
@@ -3902,7 +3888,7 @@ mod tests {
         assert_eq!(rc_bucket, NOVOVM_ADAPTER_PLUGIN_RC_OK);
         pending_bucket_buf.truncate(pending_bucket_len);
         let pending_buckets: Vec<EvmPendingSenderBucketV1> =
-            bincode::deserialize(&pending_bucket_buf).expect("decode pending sender buckets");
+            crate::bincode_compat::deserialize(&pending_bucket_buf).expect("decode pending sender buckets");
         assert!(pending_buckets.is_empty());
 
         let mut receipts_len = 0usize;
@@ -3927,7 +3913,7 @@ mod tests {
         assert_eq!(rc_receipts, NOVOVM_ADAPTER_PLUGIN_RC_OK);
         receipts_buf.truncate(receipts_len);
         let receipts: Vec<AtomicIntentReceiptV1> =
-            bincode::deserialize(&receipts_buf).expect("decode receipts");
+            crate::bincode_compat::deserialize(&receipts_buf).expect("decode receipts");
         assert!(receipts.is_empty());
 
         let mut settlement_len = 0usize;
@@ -3952,7 +3938,7 @@ mod tests {
         assert_eq!(rc_settlement, NOVOVM_ADAPTER_PLUGIN_RC_OK);
         settlement_buf.truncate(settlement_len);
         let settlement: Vec<EvmFeeSettlementRecordV1> =
-            bincode::deserialize(&settlement_buf).expect("decode settlement records");
+            crate::bincode_compat::deserialize(&settlement_buf).expect("decode settlement records");
         assert!(settlement.is_empty());
 
         let mut payout_len = 0usize;
@@ -3977,7 +3963,7 @@ mod tests {
         assert_eq!(rc_payout, NOVOVM_ADAPTER_PLUGIN_RC_OK);
         payout_buf.truncate(payout_len);
         let payouts: Vec<EvmFeePayoutInstructionV1> =
-            bincode::deserialize(&payout_buf).expect("decode payout instructions");
+            crate::bincode_compat::deserialize(&payout_buf).expect("decode payout instructions");
         assert!(payouts.is_empty());
 
         let mut ready_len = 0usize;
@@ -4002,7 +3988,7 @@ mod tests {
         assert_eq!(rc_ready, NOVOVM_ADAPTER_PLUGIN_RC_OK);
         ready_buf.truncate(ready_len);
         let ready: Vec<AtomicBroadcastReadyV1> =
-            bincode::deserialize(&ready_buf).expect("decode atomic ready records");
+            crate::bincode_compat::deserialize(&ready_buf).expect("decode atomic ready records");
         assert!(ready.is_empty());
     }
 
@@ -4053,3 +4039,5 @@ mod tests {
         assert_eq!(rc, NOVOVM_ADAPTER_PLUGIN_RC_PAYLOAD_TOO_LARGE);
     }
 }
+
+

@@ -193,7 +193,7 @@ impl BlockIR {
                 #[cfg(not(feature = "serde_json"))]
                 bail!("JSON serialization requires 'serde_json' feature")
             }
-            SerializationFormat::Bincode => Ok(bincode::serialize(self)?),
+            SerializationFormat::Bincode => Ok(crate::bincode_compat::serialize(self)?),
         }
     }
 
@@ -207,7 +207,7 @@ impl BlockIR {
                 #[cfg(not(feature = "serde_json"))]
                 bail!("JSON deserialization requires 'serde_json' feature")
             }
-            SerializationFormat::Bincode => Ok(bincode::deserialize(data)?),
+            SerializationFormat::Bincode => Ok(crate::bincode_compat::deserialize(data)?),
         }
     }
 }
@@ -229,7 +229,7 @@ impl TxIR {
                 #[cfg(not(feature = "serde_json"))]
                 bail!("JSON serialization requires 'serde_json' feature")
             }
-            SerializationFormat::Bincode => Ok(bincode::serialize(self)?),
+            SerializationFormat::Bincode => Ok(crate::bincode_compat::serialize(self)?),
         }
     }
 
@@ -243,7 +243,7 @@ impl TxIR {
                 #[cfg(not(feature = "serde_json"))]
                 bail!("JSON deserialization requires 'serde_json' feature")
             }
-            SerializationFormat::Bincode => Ok(bincode::deserialize(data)?),
+            SerializationFormat::Bincode => Ok(crate::bincode_compat::deserialize(data)?),
         }
     }
 }
@@ -259,7 +259,7 @@ impl StateIR {
                 #[cfg(not(feature = "serde_json"))]
                 bail!("JSON serialization requires 'serde_json' feature")
             }
-            SerializationFormat::Bincode => Ok(bincode::serialize(self)?),
+            SerializationFormat::Bincode => Ok(crate::bincode_compat::serialize(self)?),
         }
     }
 
@@ -273,7 +273,8 @@ impl StateIR {
                 #[cfg(not(feature = "serde_json"))]
                 bail!("JSON deserialization requires 'serde_json' feature")
             }
-            SerializationFormat::Bincode => Ok(bincode::deserialize(data)?),
+            SerializationFormat::Bincode => Ok(crate::bincode_compat::deserialize(data)?),
         }
     }
 }
+

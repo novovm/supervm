@@ -13,12 +13,12 @@ pub enum WireError {
 
 /// Encode a protocol message for transport.
 pub fn encode(msg: &ProtocolMessage) -> Result<Vec<u8>, WireError> {
-    bincode::serialize(msg).map_err(|e| WireError::Encode(e.to_string()))
+    crate::bincode_compat::serialize(msg).map_err(|e| WireError::Encode(e.to_string()))
 }
 
 /// Decode a protocol message from transport bytes.
 pub fn decode(bytes: &[u8]) -> Result<ProtocolMessage, WireError> {
-    bincode::deserialize(bytes).map_err(|e| WireError::Decode(e.to_string()))
+    crate::bincode_compat::deserialize(bytes).map_err(|e| WireError::Decode(e.to_string()))
 }
 
 #[cfg(test)]
@@ -52,3 +52,4 @@ mod tests {
         }
     }
 }
+

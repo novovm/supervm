@@ -1,5 +1,7 @@
 #![forbid(unsafe_code)]
 
+mod bincode_compat;
+
 pub mod block_binding;
 pub mod block_wire;
 pub mod ids;

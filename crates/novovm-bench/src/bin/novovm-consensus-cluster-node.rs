@@ -5,6 +5,9 @@
 #![forbid(unsafe_code)]
 #![allow(clippy::large_enum_variant)]
 
+#[path = "../bincode_compat.rs"]
+mod bincode_compat;
+
 use anyhow::{bail, Context, Result};
 use ed25519_dalek::{SigningKey, VerifyingKey};
 use novovm_consensus::{
@@ -379,7 +382,7 @@ fn main() -> Result<()> {
             batch_results.insert(batch_id, [0u8; 32]);
             let proposal = engine.propose_epoch_with_state_root(&batch_results, [0u8; 32])?;
             let leader_state = engine.protocol_state_snapshot();
-            let payload = bincode::serialize(&ClusterWirePayload::Proposal {
+            let payload = crate::bincode_compat::serialize(&ClusterWirePayload::Proposal {
                 proposal: proposal.clone(),
                 leader_state,
             })?;
@@ -414,7 +417,7 @@ fn main() -> Result<()> {
                     continue;
                 }
                 let decoded: ClusterWirePayload =
-                    bincode::deserialize(&sig).context("decode vote payload failed")?;
+                    crate::bincode_compat::deserialize(&sig).context("decode vote payload failed")?;
                 let ClusterWirePayload::Vote(vote) = decoded else {
                     continue;
                 };
@@ -467,7 +470,7 @@ fn main() -> Result<()> {
                 continue;
             };
             let decoded: ClusterWirePayload =
-                bincode::deserialize(&payload).context("decode proposal payload failed")?;
+                crate::bincode_compat::deserialize(&payload).context("decode proposal payload failed")?;
             let ClusterWirePayload::Proposal {
                 proposal,
                 leader_state,
@@ -477,7 +480,7 @@ fn main() -> Result<()> {
             };
             engine.sync_protocol_state(leader_state);
             let vote = engine.vote_for_proposal(&proposal)?;
-            let sig = bincode::serialize(&ClusterWirePayload::Vote(vote.clone()))
+            let sig = crate::bincode_compat::serialize(&ClusterWirePayload::Vote(vote.clone()))
                 .context("encode follower vote payload failed")?;
             let msg = ProtocolMessage::Finality(FinalityMessage::Vote {
                 id,
@@ -543,3 +546,4 @@ fn main() -> Result<()> {
     println!("{text}");
     Ok(())
 }
+
