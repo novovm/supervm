@@ -1,12 +1,13 @@
 #![forbid(unsafe_code)]
 
 use anyhow::{bail, Context, Result};
+use ed25519_dalek::{Signature as Ed25519Signature, Verifier, VerifyingKey};
 mod bincode_compat;
 use novovm_adapter_api::{
     AccountPolicy, AccountRole, AtomicBroadcastReadyV1, AtomicIntentReceiptV1, AtomicIntentStatus,
     EvmFeePayoutInstructionV1, EvmFeeSettlementRecordV1, EvmMempoolIngressFrameV1, NonceScope,
     PersonaAddress, PersonaType, ProtocolKind, RouteDecision, RouteRequest, SerializationFormat,
-    TxIR, TxType, UnifiedAccountRouter,
+    TxIR, TxType, Type4PolicyMode, KycPolicyMode, UnifiedAccountRouter,
 };
 #[cfg(test)]
 use novovm_adapter_evm_core::{
@@ -93,6 +94,7 @@ const GATEWAY_ETH_BROADCAST_STATUS_RECORD_VERSION: u32 = 1;
 const GATEWAY_ETH_SUBMIT_STATUS_RECORD_VERSION: u32 = 1;
 const GATEWAY_ETH_TX_INDEX_BACKEND_MEMORY: &str = "memory";
 const GATEWAY_ETH_TX_INDEX_BACKEND_ROCKSDB: &str = "rocksdb";
+const GATEWAY_ALLOW_NON_PROD_BACKEND_ENV: &str = "NOVOVM_ALLOW_NON_PROD_GATEWAY_BACKEND";
 const GATEWAY_ETH_TX_INDEX_ROCKSDB_CF_STATE: &str = "eth_tx_index_state_v1";
 const GATEWAY_ETH_TX_INDEX_ROCKSDB_KEY_PREFIX: &[u8] = b"gateway:eth:tx:index:v1:";
 const GATEWAY_ETH_BROADCAST_STATUS_ROCKSDB_KEY_PREFIX: &[u8] = b"gateway:eth:broadcast_status:v1:";
@@ -221,6 +223,10 @@ struct GatewayIngressEthRecordV1 {
     signature: Vec<u8>,
     tx_hash: [u8; 32],
     signature_domain: String,
+    #[serde(default)]
+    overlay_node_id: String,
+    #[serde(default)]
+    overlay_session_id: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -236,6 +242,10 @@ struct GatewayIngressWeb30RecordV1 {
     signature_domain: String,
     wants_cross_chain_atomic: bool,
     tx_hash: [u8; 32],
+    #[serde(default)]
+    overlay_node_id: String,
+    #[serde(default)]
+    overlay_session_id: String,
 }
 
 struct GatewayWeb30TxHashInput<'a> {
@@ -424,6 +434,8 @@ struct GatewayMethodContext<'a> {
     eth_tx_index_store: &'a GatewayEthTxIndexStoreBackend,
     eth_default_chain_id: u64,
     spool_dir: &'a Path,
+    overlay_node_id: String,
+    overlay_session_id: String,
     eth_filters: &'a mut GatewayEthFilterState,
 }
 
@@ -527,8 +539,943 @@ impl GatewayEthFilterState {
     }
 }
 
+#[derive(Debug, Clone)]
+struct GatewayEmbeddedReconcileConfig {
+    sender_address: String,
+    rpc_endpoint: String,
+    interval_seconds: u64,
+    restart_delay_seconds: u64,
+    replay_max_per_payout: u64,
+    replay_cooldown_sec: u64,
+    dispatch_index_file: PathBuf,
+    submitted_index_file: PathBuf,
+    address_map_file: PathBuf,
+    output_dir: PathBuf,
+    reconcile_index_file: PathBuf,
+    state_file: PathBuf,
+    cursor_file: PathBuf,
+    confirm_method: String,
+    submit_method: String,
+    wei_per_reward_unit: u64,
+    gas_limit: u64,
+    max_fee_per_gas_wei: u64,
+    max_priority_fee_per_gas_wei: u64,
+    rpc_timeout_sec: u64,
+    full_replay_first_cycle: bool,
+}
+
+#[derive(Debug, Clone)]
+struct GatewayEmbeddedReconcileCycleResult {
+    processed_submitted_records: u64,
+    payout_state_size: usize,
+    confirmed_count: u64,
+    replayed_count: u64,
+    pending_count: u64,
+    error_count: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(default)]
+struct GatewayReconcileDispatchInstruction {
+    payout_id: String,
+    node_id: String,
+    payout_account: String,
+    reward_units: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(default)]
+struct GatewayReconcileDispatchRecordLine {
+    voucher_id: String,
+    payout_instructions: Vec<GatewayReconcileDispatchInstruction>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(default)]
+struct GatewayReconcileSubmittedItem {
+    payout_id: String,
+    voucher_id: String,
+    node_id: String,
+    payout_account: String,
+    reward_units: u64,
+    status: String,
+    tx_hash_hex: String,
+    submitted_at_unix_ms: u64,
+    error: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(default)]
+struct GatewayReconcileSubmittedRecordLine {
+    dispatch_created_at_unix_ms: u64,
+    payout_submissions: Vec<GatewayReconcileSubmittedItem>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+struct GatewayReconcilePayoutStateEntry {
+    version: u32,
+    payout_id: String,
+    voucher_id: String,
+    node_id: String,
+    payout_account: String,
+    reward_units: u64,
+    status: String,
+    tx_hash_hex: Option<String>,
+    confirm_block_number_hex: Option<String>,
+    submit_count: u64,
+    replay_count: u64,
+    last_submit_at_unix_ms: u64,
+    last_confirm_at_unix_ms: u64,
+    last_error: Option<String>,
+}
+
+impl Default for GatewayReconcilePayoutStateEntry {
+    fn default() -> Self {
+        Self {
+            version: 1,
+            payout_id: String::new(),
+            voucher_id: String::new(),
+            node_id: String::new(),
+            payout_account: String::new(),
+            reward_units: 0,
+            status: "new_v1".to_string(),
+            tx_hash_hex: None,
+            confirm_block_number_hex: None,
+            submit_count: 0,
+            replay_count: 0,
+            last_submit_at_unix_ms: 0,
+            last_confirm_at_unix_ms: 0,
+            last_error: None,
+        }
+    }
+}
+
+impl GatewayReconcilePayoutStateEntry {
+    fn new(
+        payout_id: &str,
+        voucher_id: &str,
+        node_id: &str,
+        payout_account: &str,
+        reward_units: u64,
+    ) -> Self {
+        Self {
+            payout_id: payout_id.to_string(),
+            voucher_id: voucher_id.to_string(),
+            node_id: node_id.to_string(),
+            payout_account: payout_account.to_string(),
+            reward_units,
+            ..Default::default()
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+struct GatewayReconcileStateRoot {
+    version: u32,
+    updated_at_unix_ms: u64,
+    payouts: BTreeMap<String, GatewayReconcilePayoutStateEntry>,
+}
+
+impl Default for GatewayReconcileStateRoot {
+    fn default() -> Self {
+        Self {
+            version: 1,
+            updated_at_unix_ms: 0,
+            payouts: BTreeMap::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct GatewayReconcileChangedAction {
+    payout_id: String,
+    action: String,
+    tx_hash_hex: String,
+    status: String,
+}
+
+fn load_gateway_embedded_reconcile_config() -> Result<Option<GatewayEmbeddedReconcileConfig>> {
+    fn env_present(name: &str) -> bool {
+        std::env::var(name)
+            .map(|v| !v.trim().is_empty())
+            .unwrap_or(false)
+    }
+    fn string_env_prefer(primary: &str, fallback: &str, default: &str) -> String {
+        if env_present(primary) {
+            string_env(primary, default)
+        } else if env_present(fallback) {
+            string_env(fallback, default)
+        } else {
+            default.to_string()
+        }
+    }
+    fn u64_env_prefer(primary: &str, fallback: &str, default: u64) -> u64 {
+        if env_present(primary) {
+            u64_env(primary, default)
+        } else if env_present(fallback) {
+            u64_env(fallback, default)
+        } else {
+            default
+        }
+    }
+    fn bool_env_prefer(primary: &str, fallback: &str, default: bool) -> bool {
+        if env_present(primary) {
+            bool_env(primary, default)
+        } else if env_present(fallback) {
+            bool_env(fallback, default)
+        } else {
+            default
+        }
+    }
+
+    let enabled = bool_env_prefer(
+        "NOVOVM_GATEWAY_EMBED_RECONCILE_DAEMON",
+        "NOVOVM_RECONCILE_ENABLED",
+        false,
+    );
+    if !enabled {
+        return Ok(None);
+    }
+    let sender_address = string_env_prefer(
+        "NOVOVM_GATEWAY_RECONCILE_SENDER_ADDRESS",
+        "NOVOVM_RECONCILE_SENDER_ADDRESS",
+        "",
+    );
+    if sender_address.trim().is_empty() {
+        bail!("reconcile sender address is required when embedded reconcile daemon is enabled");
+    }
+    let rpc_endpoint = string_env_prefer(
+        "NOVOVM_GATEWAY_RECONCILE_RPC_ENDPOINT",
+        "NOVOVM_RECONCILE_RPC_ENDPOINT",
+        "http://127.0.0.1:9899",
+    );
+    let interval_seconds = u64_env_prefer(
+        "NOVOVM_GATEWAY_RECONCILE_INTERVAL_SECONDS",
+        "NOVOVM_RECONCILE_INTERVAL_SECONDS",
+        15,
+    );
+    let restart_delay_seconds = u64_env_prefer(
+        "NOVOVM_GATEWAY_RECONCILE_RESTART_DELAY_SECONDS",
+        "NOVOVM_RECONCILE_RESTART_DELAY_SECONDS",
+        3,
+    );
+    let replay_max_per_payout = u64_env_prefer(
+        "NOVOVM_GATEWAY_RECONCILE_REPLAY_MAX_PER_PAYOUT",
+        "NOVOVM_RECONCILE_REPLAY_MAX_PER_PAYOUT",
+        3,
+    );
+    let replay_cooldown_sec = u64_env_prefer(
+        "NOVOVM_GATEWAY_RECONCILE_REPLAY_COOLDOWN_SEC",
+        "NOVOVM_RECONCILE_REPLAY_COOLDOWN_SEC",
+        30,
+    );
+    let dispatch_index_file = PathBuf::from(string_env_prefer(
+        "NOVOVM_GATEWAY_RECONCILE_DISPATCH_INDEX_FILE",
+        "NOVOVM_RECONCILE_DISPATCH_INDEX_FILE",
+        "artifacts/l1/l1l4-payout-dispatch.jsonl",
+    ));
+    let submitted_index_file = PathBuf::from(string_env_prefer(
+        "NOVOVM_GATEWAY_RECONCILE_SUBMITTED_INDEX_FILE",
+        "NOVOVM_RECONCILE_SUBMITTED_INDEX_FILE",
+        "artifacts/l1/l1l4-payout-submitted.jsonl",
+    ));
+    let address_map_file = PathBuf::from(string_env_prefer(
+        "NOVOVM_GATEWAY_RECONCILE_ADDRESS_MAP_FILE",
+        "NOVOVM_RECONCILE_ADDRESS_MAP_FILE",
+        "artifacts/l1/payout-address-map.json",
+    ));
+    let output_dir = PathBuf::from(string_env_prefer(
+        "NOVOVM_GATEWAY_RECONCILE_OUTPUT_DIR",
+        "NOVOVM_RECONCILE_OUTPUT_DIR",
+        "artifacts/l1/payout-reconcile",
+    ));
+    let reconcile_index_file = PathBuf::from(string_env_prefer(
+        "NOVOVM_GATEWAY_RECONCILE_INDEX_FILE",
+        "NOVOVM_RECONCILE_INDEX_FILE",
+        "artifacts/l1/l1l4-payout-reconcile.jsonl",
+    ));
+    let state_file = PathBuf::from(string_env_prefer(
+        "NOVOVM_GATEWAY_RECONCILE_STATE_FILE",
+        "NOVOVM_RECONCILE_STATE_FILE",
+        "artifacts/l1/l1l4-payout-state.json",
+    ));
+    let cursor_file = PathBuf::from(string_env_prefer(
+        "NOVOVM_GATEWAY_RECONCILE_CURSOR_FILE",
+        "NOVOVM_RECONCILE_CURSOR_FILE",
+        "artifacts/l1/l1l4-payout-reconcile.cursor",
+    ));
+    let confirm_method = string_env_prefer(
+        "NOVOVM_GATEWAY_RECONCILE_CONFIRM_METHOD",
+        "NOVOVM_RECONCILE_CONFIRM_METHOD",
+        "eth_getTransactionReceipt",
+    );
+    let submit_method = string_env_prefer(
+        "NOVOVM_GATEWAY_RECONCILE_SUBMIT_METHOD",
+        "NOVOVM_RECONCILE_SUBMIT_METHOD",
+        "eth_sendTransaction",
+    );
+    let wei_per_reward_unit = u64_env_prefer(
+        "NOVOVM_GATEWAY_RECONCILE_WEI_PER_REWARD_UNIT",
+        "NOVOVM_RECONCILE_WEI_PER_REWARD_UNIT",
+        1,
+    );
+    let gas_limit = u64_env_prefer(
+        "NOVOVM_GATEWAY_RECONCILE_GAS_LIMIT",
+        "NOVOVM_RECONCILE_GAS_LIMIT",
+        21_000,
+    );
+    let max_fee_per_gas_wei = u64_env_prefer(
+        "NOVOVM_GATEWAY_RECONCILE_MAX_FEE_PER_GAS_WEI",
+        "NOVOVM_RECONCILE_MAX_FEE_PER_GAS_WEI",
+        0,
+    );
+    let max_priority_fee_per_gas_wei = u64_env_prefer(
+        "NOVOVM_GATEWAY_RECONCILE_MAX_PRIORITY_FEE_PER_GAS_WEI",
+        "NOVOVM_RECONCILE_MAX_PRIORITY_FEE_PER_GAS_WEI",
+        0,
+    );
+    let rpc_timeout_sec = u64_env_prefer(
+        "NOVOVM_GATEWAY_RECONCILE_RPC_TIMEOUT_SEC",
+        "NOVOVM_RECONCILE_RPC_TIMEOUT_SEC",
+        15,
+    );
+    let full_replay_first_cycle = bool_env_prefer(
+        "NOVOVM_GATEWAY_RECONCILE_FULL_REPLAY_FIRST_CYCLE",
+        "NOVOVM_RECONCILE_FULL_REPLAY_FIRST_CYCLE",
+        false,
+    );
+    Ok(Some(GatewayEmbeddedReconcileConfig {
+        sender_address,
+        rpc_endpoint,
+        interval_seconds,
+        restart_delay_seconds,
+        replay_max_per_payout,
+        replay_cooldown_sec,
+        dispatch_index_file,
+        submitted_index_file,
+        address_map_file,
+        output_dir,
+        reconcile_index_file,
+        state_file,
+        cursor_file,
+        confirm_method,
+        submit_method,
+        wei_per_reward_unit,
+        gas_limit,
+        max_fee_per_gas_wei,
+        max_priority_fee_per_gas_wei,
+        rpc_timeout_sec,
+        full_replay_first_cycle,
+    }))
+}
+
+fn gateway_reconcile_normalize_evm_address(address: &str) -> Option<String> {
+    let trimmed = address.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let no_prefix = trimmed
+        .strip_prefix("0x")
+        .or_else(|| trimmed.strip_prefix("0X"))
+        .unwrap_or(trimmed);
+    if no_prefix.len() != 40 || !no_prefix.chars().all(|c| c.is_ascii_hexdigit()) {
+        return None;
+    }
+    Some(format!("0x{}", no_prefix.to_ascii_lowercase()))
+}
+
+fn gateway_reconcile_normalize_tx_hash(tx_hash_hex: &str) -> Option<String> {
+    let trimmed = tx_hash_hex.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let no_prefix = trimmed
+        .strip_prefix("0x")
+        .or_else(|| trimmed.strip_prefix("0X"))
+        .unwrap_or(trimmed);
+    if no_prefix.len() != 64 || !no_prefix.chars().all(|c| c.is_ascii_hexdigit()) {
+        return None;
+    }
+    Some(format!("0x{}", no_prefix.to_ascii_lowercase()))
+}
+
+fn gateway_reconcile_hex_qty_u64(value: u64) -> String {
+    format!("0x{value:x}")
+}
+
+fn gateway_reconcile_hex_qty_u128(value: u128) -> String {
+    format!("0x{value:x}")
+}
+
+fn gateway_reconcile_read_cursor(path: &Path, full_replay: bool) -> Result<u64> {
+    if full_replay || !path.exists() {
+        return Ok(0);
+    }
+    let raw = fs::read_to_string(path)
+        .with_context(|| format!("read reconcile cursor failed: {}", path.display()))?;
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Ok(0);
+    }
+    let value = trimmed.parse::<u64>().with_context(|| {
+        format!(
+            "invalid reconcile cursor value at {}: {}",
+            path.display(),
+            trimmed
+        )
+    })?;
+    Ok(value)
+}
+
+fn gateway_reconcile_load_address_map(path: &Path) -> Result<HashMap<String, String>> {
+    if !path.exists() {
+        return Ok(HashMap::new());
+    }
+    let raw = fs::read_to_string(path)
+        .with_context(|| format!("read reconcile address map failed: {}", path.display()))?;
+    if raw.trim().is_empty() {
+        return Ok(HashMap::new());
+    }
+    let json: serde_json::Value = serde_json::from_str(&raw)
+        .with_context(|| format!("parse reconcile address map failed: {}", path.display()))?;
+    let mut table = HashMap::new();
+    if let Some(obj) = json.as_object() {
+        for (k, v) in obj {
+            if let Some(s) = v.as_str() {
+                table.insert(k.clone(), s.to_string());
+            }
+        }
+    }
+    Ok(table)
+}
+
+fn gateway_reconcile_resolve_payout_address(
+    node_id: &str,
+    payout_account: &str,
+    address_map: &HashMap<String, String>,
+) -> Option<String> {
+    gateway_reconcile_normalize_evm_address(payout_account)
+        .or_else(|| {
+            address_map
+                .get(payout_account)
+                .and_then(|v| gateway_reconcile_normalize_evm_address(v))
+        })
+        .or_else(|| {
+            address_map
+                .get(node_id)
+                .and_then(|v| gateway_reconcile_normalize_evm_address(v))
+        })
+}
+
+fn gateway_reconcile_rpc_call(
+    cfg: &GatewayEmbeddedReconcileConfig,
+    method: &str,
+    params: serde_json::Value,
+) -> Result<serde_json::Value> {
+    let timeout = Duration::from_secs(cfg.rpc_timeout_sec.max(1));
+    let payload = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 1u64,
+        "method": method,
+        "params": params,
+    });
+    let response = ureq::post(&cfg.rpc_endpoint)
+        .timeout_connect(timeout)
+        .timeout_read(timeout)
+        .send_json(payload)
+        .with_context(|| {
+            format!(
+                "reconcile rpc call failed: endpoint={} method={}",
+                cfg.rpc_endpoint, method
+            )
+        })?;
+    let value: serde_json::Value = response.into_json().with_context(|| {
+        format!(
+            "reconcile rpc decode failed: endpoint={} method={}",
+            cfg.rpc_endpoint, method
+        )
+    })?;
+    if let Some(err) = value.get("error") {
+        bail!(
+            "reconcile rpc returned error: endpoint={} method={} error={}",
+            cfg.rpc_endpoint,
+            method,
+            err
+        );
+    }
+    Ok(value
+        .get("result")
+        .cloned()
+        .unwrap_or(serde_json::Value::Null))
+}
+
+fn run_gateway_embedded_reconcile_cycle(
+    cfg: &GatewayEmbeddedReconcileConfig,
+    full_replay: bool,
+) -> Result<GatewayEmbeddedReconcileCycleResult> {
+    if !cfg.dispatch_index_file.exists() {
+        bail!(
+            "reconcile dispatch index file not found: {}",
+            cfg.dispatch_index_file.display()
+        );
+    }
+    if !cfg.submitted_index_file.exists() {
+        bail!(
+            "reconcile submitted index file not found: {}",
+            cfg.submitted_index_file.display()
+        );
+    }
+
+    let sender = gateway_reconcile_normalize_evm_address(&cfg.sender_address).ok_or_else(|| {
+        anyhow::anyhow!("invalid reconcile sender address: {}", cfg.sender_address)
+    })?;
+    let cursor_dispatch_at = gateway_reconcile_read_cursor(&cfg.cursor_file, full_replay)?;
+    let address_map = gateway_reconcile_load_address_map(&cfg.address_map_file)?;
+
+    let dispatch_raw = fs::read_to_string(&cfg.dispatch_index_file).with_context(|| {
+        format!(
+            "read reconcile dispatch index failed: {}",
+            cfg.dispatch_index_file.display()
+        )
+    })?;
+    let mut dispatch_map = HashMap::<String, GatewayReconcileDispatchInstruction>::new();
+    for (idx, line) in dispatch_raw.lines().enumerate() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        let row: GatewayReconcileDispatchRecordLine =
+            serde_json::from_str(line).with_context(|| {
+                format!(
+                    "parse reconcile dispatch index line failed: path={} line={}",
+                    cfg.dispatch_index_file.display(),
+                    idx + 1
+                )
+            })?;
+        let voucher_id = row.voucher_id;
+        for mut item in row.payout_instructions {
+            if item.payout_id.trim().is_empty() {
+                continue;
+            }
+            if item.node_id.trim().is_empty() {
+                item.node_id = String::new();
+            }
+            if item.payout_account.trim().is_empty() {
+                item.payout_account = String::new();
+            }
+            let key = item.payout_id.clone();
+            if !voucher_id.trim().is_empty() && item.node_id.is_empty() {
+                item.node_id = voucher_id.clone();
+            }
+            dispatch_map.insert(key, item);
+        }
+    }
+
+    let mut state = if cfg.state_file.exists() {
+        let raw = fs::read_to_string(&cfg.state_file).with_context(|| {
+            format!(
+                "read reconcile state file failed: {}",
+                cfg.state_file.display()
+            )
+        })?;
+        if raw.trim().is_empty() {
+            GatewayReconcileStateRoot::default()
+        } else {
+            serde_json::from_str::<GatewayReconcileStateRoot>(&raw).with_context(|| {
+                format!(
+                    "parse reconcile state file failed: {}",
+                    cfg.state_file.display()
+                )
+            })?
+        }
+    } else {
+        GatewayReconcileStateRoot::default()
+    };
+
+    let submitted_raw = fs::read_to_string(&cfg.submitted_index_file).with_context(|| {
+        format!(
+            "read reconcile submitted index failed: {}",
+            cfg.submitted_index_file.display()
+        )
+    })?;
+    let mut submit_rows = Vec::<GatewayReconcileSubmittedItem>::new();
+    let mut processed_submitted_records = 0u64;
+    let mut last_dispatch_at = cursor_dispatch_at;
+    for (idx, line) in submitted_raw.lines().enumerate() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        let row: GatewayReconcileSubmittedRecordLine =
+            serde_json::from_str(line).with_context(|| {
+                format!(
+                    "parse reconcile submitted index line failed: path={} line={}",
+                    cfg.submitted_index_file.display(),
+                    idx + 1
+                )
+            })?;
+        if !full_replay && row.dispatch_created_at_unix_ms <= cursor_dispatch_at {
+            continue;
+        }
+        processed_submitted_records = processed_submitted_records.saturating_add(1);
+        if row.dispatch_created_at_unix_ms > last_dispatch_at {
+            last_dispatch_at = row.dispatch_created_at_unix_ms;
+        }
+        submit_rows.extend(row.payout_submissions.into_iter());
+    }
+
+    for row in submit_rows {
+        let payout_id = row.payout_id.trim().to_string();
+        if payout_id.is_empty() {
+            continue;
+        }
+        let mut voucher_id = row.voucher_id.trim().to_string();
+        let mut node_id = row.node_id.trim().to_string();
+        let mut payout_account = row.payout_account.trim().to_string();
+        let mut reward_units = row.reward_units;
+        if let Some(dispatch) = dispatch_map.get(&payout_id) {
+            if voucher_id.is_empty() {
+                voucher_id = dispatch.payout_id.clone();
+            }
+            if node_id.is_empty() {
+                node_id = dispatch.node_id.clone();
+            }
+            if payout_account.is_empty() {
+                payout_account = dispatch.payout_account.clone();
+            }
+            if reward_units == 0 {
+                reward_units = dispatch.reward_units;
+            }
+        }
+        let entry = state
+            .payouts
+            .entry(payout_id.clone())
+            .or_insert_with(|| {
+                GatewayReconcilePayoutStateEntry::new(
+                    &payout_id,
+                    &voucher_id,
+                    &node_id,
+                    &payout_account,
+                    reward_units,
+                )
+            });
+        if !voucher_id.is_empty() {
+            entry.voucher_id = voucher_id;
+        }
+        if !node_id.is_empty() {
+            entry.node_id = node_id;
+        }
+        if !payout_account.is_empty() {
+            entry.payout_account = payout_account;
+        }
+        if reward_units > 0 {
+            entry.reward_units = reward_units;
+        }
+        if !row.status.trim().is_empty() {
+            entry.status = row.status.trim().to_string();
+        }
+        entry.tx_hash_hex = gateway_reconcile_normalize_tx_hash(&row.tx_hash_hex);
+        if row.submitted_at_unix_ms > 0 {
+            entry.last_submit_at_unix_ms = row.submitted_at_unix_ms;
+        }
+        entry.last_error = if row.error.trim().is_empty() {
+            None
+        } else {
+            Some(row.error)
+        };
+        if entry.status == "submitted_v1" {
+            entry.submit_count = entry.submit_count.saturating_add(1);
+        }
+    }
+
+    let now_ms = now_unix_millis() as u64;
+    let cooldown_ms = cfg.replay_cooldown_sec.saturating_mul(1000);
+    let mut confirmed_count = 0u64;
+    let mut replayed_count = 0u64;
+    let mut pending_count = 0u64;
+    let mut error_count = 0u64;
+    let mut changed = Vec::<GatewayReconcileChangedAction>::new();
+
+    let payout_ids: Vec<String> = state.payouts.keys().cloned().collect();
+    for payout_id in payout_ids {
+        let Some(entry) = state.payouts.get_mut(&payout_id) else {
+            continue;
+        };
+        if entry.status == "confirmed_v1" {
+            continue;
+        }
+        let normalized_tx_hash = entry
+            .tx_hash_hex
+            .as_deref()
+            .and_then(gateway_reconcile_normalize_tx_hash);
+        let mut confirmed = false;
+        if let Some(tx_hash) = normalized_tx_hash.as_ref() {
+            match gateway_reconcile_rpc_call(
+                cfg,
+                &cfg.confirm_method,
+                serde_json::json!([tx_hash]),
+            ) {
+                Ok(result) => {
+                    if !result.is_null() {
+                        let block_number = result
+                            .get("blockNumber")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or_default()
+                            .to_string();
+                        let transaction_hash = result
+                            .get("transactionHash")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or(tx_hash)
+                            .to_string();
+                        entry.status = "confirmed_v1".to_string();
+                        entry.confirm_block_number_hex = if block_number.is_empty() {
+                            None
+                        } else {
+                            Some(block_number)
+                        };
+                        entry.last_confirm_at_unix_ms = now_ms;
+                        entry.tx_hash_hex = Some(transaction_hash.clone());
+                        entry.last_error = None;
+                        confirmed = true;
+                        confirmed_count = confirmed_count.saturating_add(1);
+                        changed.push(GatewayReconcileChangedAction {
+                            payout_id: payout_id.clone(),
+                            action: "confirm".to_string(),
+                            tx_hash_hex: transaction_hash,
+                            status: entry.status.clone(),
+                        });
+                    }
+                }
+                Err(e) => {
+                    entry.last_error = Some(e.to_string());
+                    error_count = error_count.saturating_add(1);
+                }
+            }
+        }
+        if confirmed {
+            continue;
+        }
+
+        let due = cooldown_ms == 0
+            || entry.last_submit_at_unix_ms == 0
+            || now_ms.saturating_sub(entry.last_submit_at_unix_ms) >= cooldown_ms;
+        let can_replay = entry.replay_count < cfg.replay_max_per_payout && due;
+        if !can_replay {
+            pending_count = pending_count.saturating_add(1);
+            continue;
+        }
+
+        let Some(to_address) = gateway_reconcile_resolve_payout_address(
+            &entry.node_id,
+            &entry.payout_account,
+            &address_map,
+        ) else {
+            entry.status = "replay_error_v1".to_string();
+            entry.last_error = Some("target address unresolved in replay".to_string());
+            error_count = error_count.saturating_add(1);
+            continue;
+        };
+
+        let wei_amount = (entry.reward_units as u128).saturating_mul(cfg.wei_per_reward_unit as u128);
+        let mut tx = serde_json::Map::new();
+        tx.insert("from".to_string(), serde_json::Value::String(sender.clone()));
+        tx.insert("to".to_string(), serde_json::Value::String(to_address));
+        tx.insert(
+            "value".to_string(),
+            serde_json::Value::String(gateway_reconcile_hex_qty_u128(wei_amount)),
+        );
+        if cfg.gas_limit > 0 {
+            tx.insert(
+                "gas".to_string(),
+                serde_json::Value::String(gateway_reconcile_hex_qty_u64(cfg.gas_limit)),
+            );
+        }
+        if cfg.max_fee_per_gas_wei > 0 {
+            tx.insert(
+                "maxFeePerGas".to_string(),
+                serde_json::Value::String(gateway_reconcile_hex_qty_u64(cfg.max_fee_per_gas_wei)),
+            );
+        }
+        if cfg.max_priority_fee_per_gas_wei > 0 {
+            tx.insert(
+                "maxPriorityFeePerGas".to_string(),
+                serde_json::Value::String(gateway_reconcile_hex_qty_u64(
+                    cfg.max_priority_fee_per_gas_wei,
+                )),
+            );
+        }
+
+        match gateway_reconcile_rpc_call(
+            cfg,
+            &cfg.submit_method,
+            serde_json::json!([serde_json::Value::Object(tx)]),
+        ) {
+            Ok(result) => {
+                let tx_hash = result.as_str().unwrap_or_default().to_string();
+                if let Some(norm_hash) = gateway_reconcile_normalize_tx_hash(&tx_hash) {
+                    entry.tx_hash_hex = Some(norm_hash.clone());
+                    entry.status = "submitted_v1".to_string();
+                    entry.last_submit_at_unix_ms = now_ms;
+                    entry.submit_count = entry.submit_count.saturating_add(1);
+                    entry.replay_count = entry.replay_count.saturating_add(1);
+                    entry.last_error = None;
+                    replayed_count = replayed_count.saturating_add(1);
+                    changed.push(GatewayReconcileChangedAction {
+                        payout_id: payout_id.clone(),
+                        action: "replay_submit".to_string(),
+                        tx_hash_hex: norm_hash,
+                        status: entry.status.clone(),
+                    });
+                } else {
+                    entry.status = "replay_error_v1".to_string();
+                    entry.replay_count = entry.replay_count.saturating_add(1);
+                    entry.last_error = Some("empty replay rpc result".to_string());
+                    error_count = error_count.saturating_add(1);
+                }
+            }
+            Err(e) => {
+                entry.status = "replay_error_v1".to_string();
+                entry.replay_count = entry.replay_count.saturating_add(1);
+                entry.last_error = Some(e.to_string());
+                error_count = error_count.saturating_add(1);
+            }
+        }
+    }
+
+    state.updated_at_unix_ms = now_ms;
+    if let Some(parent) = cfg.state_file.parent() {
+        if !parent.as_os_str().is_empty() {
+            fs::create_dir_all(parent).with_context(|| {
+                format!(
+                    "create reconcile state parent dir failed: {}",
+                    parent.display()
+                )
+            })?;
+        }
+    }
+    let state_bytes = serde_json::to_vec_pretty(&state)
+        .with_context(|| "encode reconcile state json failed".to_string())?;
+    fs::write(&cfg.state_file, state_bytes).with_context(|| {
+        format!(
+            "write reconcile state file failed: {}",
+            cfg.state_file.display()
+        )
+    })?;
+
+    fs::create_dir_all(&cfg.output_dir).with_context(|| {
+        format!(
+            "create reconcile output dir failed: {}",
+            cfg.output_dir.display()
+        )
+    })?;
+    if let Some(parent) = cfg.reconcile_index_file.parent() {
+        if !parent.as_os_str().is_empty() {
+            fs::create_dir_all(parent).with_context(|| {
+                format!(
+                    "create reconcile index parent dir failed: {}",
+                    parent.display()
+                )
+            })?;
+        }
+    }
+    if let Some(parent) = cfg.cursor_file.parent() {
+        if !parent.as_os_str().is_empty() {
+            fs::create_dir_all(parent).with_context(|| {
+                format!(
+                    "create reconcile cursor parent dir failed: {}",
+                    parent.display()
+                )
+            })?;
+        }
+    }
+
+    let reconcile = serde_json::json!({
+        "version": 1u32,
+        "created_at_unix_ms": now_ms,
+        "rpc_endpoint": cfg.rpc_endpoint,
+        "confirm_method": cfg.confirm_method,
+        "submit_method": cfg.submit_method,
+        "processed_submitted_records": processed_submitted_records,
+        "payout_state_size": state.payouts.len() as u64,
+        "confirmed_count": confirmed_count,
+        "replayed_count": replayed_count,
+        "pending_count": pending_count,
+        "error_count": error_count,
+        "changed": changed,
+    });
+
+    let snapshot_name = format!("reconcile-{now_ms}.json");
+    let snapshot_path = cfg.output_dir.join(snapshot_name);
+    let snapshot_bytes = serde_json::to_vec_pretty(&reconcile)
+        .with_context(|| "encode reconcile snapshot failed".to_string())?;
+    fs::write(&snapshot_path, snapshot_bytes).with_context(|| {
+        format!(
+            "write reconcile snapshot failed: {}",
+            snapshot_path.display()
+        )
+    })?;
+
+    let mut line_bytes = serde_json::to_vec(&reconcile)
+        .with_context(|| "encode reconcile index line failed".to_string())?;
+    line_bytes.push(b'\n');
+    let mut index_writer = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&cfg.reconcile_index_file)
+        .with_context(|| {
+            format!(
+                "open reconcile index file failed: {}",
+                cfg.reconcile_index_file.display()
+            )
+        })?;
+    index_writer
+        .write_all(&line_bytes)
+        .with_context(|| {
+            format!(
+                "append reconcile index failed: {}",
+                cfg.reconcile_index_file.display()
+            )
+        })?;
+
+    fs::write(&cfg.cursor_file, last_dispatch_at.to_string()).with_context(|| {
+        format!(
+            "write reconcile cursor failed: {}",
+            cfg.cursor_file.display()
+        )
+    })?;
+
+    Ok(GatewayEmbeddedReconcileCycleResult {
+        processed_submitted_records,
+        payout_state_size: state.payouts.len(),
+        confirmed_count,
+        replayed_count,
+        pending_count,
+        error_count,
+    })
+}
+
 fn main() -> Result<()> {
     let mut runtime = GatewayRuntime::from_env()?;
+    let reconcile_cfg = load_gateway_embedded_reconcile_config()?;
+    if let Some(cfg) = reconcile_cfg.as_ref() {
+        gateway_summary!(
+            "gateway_reconcile_in: enabled=true sender={} rpc_endpoint={} interval_seconds={} replay_max_per_payout={} replay_cooldown_sec={} dispatch_index={} submitted_index={} state_file={} reconcile_index={} cursor_file={} output_dir={} full_replay_first_cycle={}",
+            cfg.sender_address,
+            cfg.rpc_endpoint,
+            cfg.interval_seconds,
+            cfg.replay_max_per_payout,
+            cfg.replay_cooldown_sec,
+            cfg.dispatch_index_file.display(),
+            cfg.submitted_index_file.display(),
+            cfg.state_file.display(),
+            cfg.reconcile_index_file.display(),
+            cfg.cursor_file.display(),
+            cfg.output_dir.display(),
+            cfg.full_replay_first_cycle
+        );
+    }
+    let mut reconcile_next_run_at_unix_ms = 0u128;
+    let mut reconcile_first_cycle = true;
     gateway_summary!(
         "gateway_in: bind={} spool_dir={} max_body={} max_requests={} evm_payout_autoreplay_max={} evm_payout_autoreplay_cooldown_ms={} evm_payout_pending_warn_threshold={} evm_atomic_broadcast_autoreplay_max={} evm_atomic_broadcast_autoreplay_cooldown_ms={} evm_atomic_broadcast_pending_warn_threshold={} evm_atomic_broadcast_autoreplay_use_external_executor={} eth_public_broadcast_autoreplay_max={} eth_public_broadcast_autoreplay_cooldown_ms={} eth_public_broadcast_pending_warn_threshold={} eth_default_chain_id={} ua_store_backend={} ua_store_path={} eth_tx_index_backend={} eth_tx_index_path={} internal_ingress=ops_wire_v1",
         runtime.bind,
@@ -556,23 +1503,68 @@ fn main() -> Result<()> {
     auto_replay_pending_public_broadcasts(&mut runtime);
     ensure_gateway_eth_plugin_mempool_ingest_runtime(runtime.eth_default_chain_id);
 
-    let server = tiny_http::Server::http(&runtime.bind)
-        .map_err(|e| anyhow::anyhow!("start gateway server failed on {}: {}", runtime.bind, e))?;
-    let mut processed = 0u32;
-    for request in server.incoming_requests() {
-        handle_gateway_request(&mut runtime, request)?;
-        processed = processed.saturating_add(1);
-        if runtime.max_requests > 0 && processed >= runtime.max_requests {
-            break;
+    let run_result = (|| -> Result<()> {
+        let server = tiny_http::Server::http(&runtime.bind)
+            .map_err(|e| anyhow::anyhow!("start gateway server failed on {}: {}", runtime.bind, e))?;
+        let mut processed = 0u32;
+        loop {
+            if let Some(cfg) = reconcile_cfg.as_ref() {
+                let now_ms = now_unix_millis();
+                if now_ms >= reconcile_next_run_at_unix_ms {
+                    let full_replay_this_cycle =
+                        reconcile_first_cycle && cfg.full_replay_first_cycle;
+                    reconcile_first_cycle = false;
+                    match run_gateway_embedded_reconcile_cycle(cfg, full_replay_this_cycle) {
+                        Ok(cycle) => {
+                            gateway_summary!(
+                                "gateway_reconcile_cycle_out: processed_submitted={} state_size={} confirmed={} replayed={} pending={} errors={}",
+                                cycle.processed_submitted_records,
+                                cycle.payout_state_size,
+                                cycle.confirmed_count,
+                                cycle.replayed_count,
+                                cycle.pending_count,
+                                cycle.error_count
+                            );
+                            let interval_ms = (cfg.interval_seconds.max(1) as u128)
+                                .saturating_mul(1000);
+                            reconcile_next_run_at_unix_ms = now_ms.saturating_add(interval_ms);
+                        }
+                        Err(e) => {
+                            gateway_warn!(
+                                "gateway_warn: embedded reconcile cycle failed: {}",
+                                e
+                            );
+                            let retry_ms = (cfg.restart_delay_seconds.max(1) as u128)
+                                .saturating_mul(1000);
+                            reconcile_next_run_at_unix_ms = now_ms.saturating_add(retry_ms);
+                        }
+                    }
+                }
+            }
+
+            match server.recv_timeout(Duration::from_millis(250)) {
+                Ok(Some(request)) => {
+                    handle_gateway_request(&mut runtime, request)?;
+                    processed = processed.saturating_add(1);
+                    if runtime.max_requests > 0 && processed >= runtime.max_requests {
+                        break;
+                    }
+                }
+                Ok(None) => {}
+                Err(e) => {
+                    bail!("gateway receive request failed: {}", e);
+                }
+            }
         }
-    }
-    gateway_summary!(
-        "gateway_out: bind={} processed={} max_requests={}",
-        runtime.bind,
-        processed,
-        runtime.max_requests
-    );
-    Ok(())
+        gateway_summary!(
+            "gateway_out: bind={} processed={} max_requests={}",
+            runtime.bind,
+            processed,
+            runtime.max_requests
+        );
+        Ok(())
+    })();
+    run_result
 }
 
 impl GatewayRuntime {
@@ -620,6 +1612,9 @@ impl GatewayRuntime {
         let ua_store = resolve_gateway_ua_store_backend()?;
         let eth_tx_index_store = resolve_gateway_eth_tx_index_store_backend()?;
         let router = ua_store.load_router()?;
+        ua_store
+            .save_router(&router)
+            .context("bootstrap gateway unified-account store writable check failed")?;
         let mut evm_pending_payout_by_settlement = HashMap::new();
         if evm_payout_pending_hydrate_max > 0 {
             match eth_tx_index_store
@@ -2520,16 +3515,6 @@ impl GatewayUaStoreBackend {
                             path.display()
                         )
                     })?;
-                if raw.is_none() {
-                    raw = db
-                        .get(GATEWAY_UA_STORE_ROCKSDB_KEY_ROUTER)
-                        .with_context(|| {
-                            format!(
-                                "read gateway ua legacy router key from default cf failed: {}",
-                                path.display()
-                            )
-                        })?;
-                }
                 let Some(raw) = raw else {
                     return Ok(UnifiedAccountRouter::new());
                 };
@@ -4239,8 +5224,17 @@ fn resolve_gateway_ua_store_backend() -> Result<GatewayUaStoreBackend> {
         }
     };
     match backend.as_str() {
-        "bincode_file" | "file" | "bincode" => Ok(GatewayUaStoreBackend::BincodeFile { path }),
         "rocksdb" => Ok(GatewayUaStoreBackend::RocksDb { path }),
+        "bincode_file" | "file" | "bincode" => {
+            if bool_env("NOVOVM_ALLOW_NON_PROD_UA_BACKEND", false) {
+                Ok(GatewayUaStoreBackend::BincodeFile { path })
+            } else {
+                bail!(
+                    "NOVOVM_GATEWAY_UA_STORE_BACKEND={} is non-production; use rocksdb or set NOVOVM_ALLOW_NON_PROD_UA_BACKEND=1 for explicit override",
+                    backend
+                )
+            }
+        }
         _ => bail!(
             "invalid NOVOVM_GATEWAY_UA_STORE_BACKEND={}; valid: rocksdb|bincode_file|file|bincode",
             backend
@@ -4251,12 +5245,21 @@ fn resolve_gateway_ua_store_backend() -> Result<GatewayUaStoreBackend> {
 fn resolve_gateway_eth_tx_index_store_backend() -> Result<GatewayEthTxIndexStoreBackend> {
     let backend = string_env(
         "NOVOVM_GATEWAY_ETH_TX_INDEX_BACKEND",
-        GATEWAY_ETH_TX_INDEX_BACKEND_MEMORY,
+        GATEWAY_ETH_TX_INDEX_BACKEND_ROCKSDB,
     )
     .trim()
     .to_ascii_lowercase();
     match backend.as_str() {
-        "memory" => Ok(GatewayEthTxIndexStoreBackend::Memory),
+        "memory" => {
+            if bool_env(GATEWAY_ALLOW_NON_PROD_BACKEND_ENV, false) {
+                Ok(GatewayEthTxIndexStoreBackend::Memory)
+            } else {
+                bail!(
+                    "NOVOVM_GATEWAY_ETH_TX_INDEX_BACKEND=memory is non-production; use rocksdb or set {}=1 for explicit override",
+                    GATEWAY_ALLOW_NON_PROD_BACKEND_ENV
+                )
+            }
+        }
         "rocksdb" => {
             let path = if let Some(custom) = string_env_nonempty("NOVOVM_GATEWAY_ETH_TX_INDEX_PATH")
             {
@@ -4365,11 +5368,15 @@ fn handle_gateway_request(
         .get("params")
         .cloned()
         .unwrap_or_else(|| serde_json::json!({}));
+    let overlay_node_id = resolve_gateway_overlay_node_id(&params);
+    let overlay_session_id = resolve_gateway_overlay_session_id(&params, &overlay_node_id);
 
     let mut ctx = GatewayMethodContext {
         eth_tx_index_store: &runtime.eth_tx_index_store,
         eth_default_chain_id: runtime.eth_default_chain_id,
         spool_dir: &runtime.spool_dir,
+        overlay_node_id,
+        overlay_session_id,
         eth_filters: &mut runtime.eth_filters,
     };
     match run_gateway_method(
@@ -4420,6 +5427,62 @@ fn handle_gateway_request(
     auto_replay_pending_atomic_broadcasts(runtime);
     auto_replay_pending_public_broadcasts(runtime);
     Ok(())
+}
+
+fn sanitize_gateway_overlay_id(raw: &str, fallback: &str) -> String {
+    let mut normalized = String::new();
+    for ch in raw.trim().chars() {
+        if ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-' | ':' | '.') {
+            normalized.push(ch);
+            if normalized.len() >= 96 {
+                break;
+            }
+        }
+    }
+    if normalized.is_empty() {
+        fallback.to_string()
+    } else {
+        normalized
+    }
+}
+
+fn resolve_gateway_overlay_node_id(params: &serde_json::Value) -> String {
+    let raw = param_as_string_any_with_tx(
+        params,
+        &[
+            "overlay_node_id",
+            "overlayNodeId",
+            "node_id",
+            "nodeId",
+        ],
+    )
+    .or_else(|| string_env_nonempty("NOVOVM_OVERLAY_NODE_ID"))
+    .or_else(|| string_env_nonempty("NOVOVM_NODE_ID"))
+    .or_else(|| string_env_nonempty("HOSTNAME"))
+    .or_else(|| string_env_nonempty("COMPUTERNAME"))
+    .unwrap_or_else(|| "overlay-local".to_string());
+    sanitize_gateway_overlay_id(&raw, "overlay-local")
+}
+
+fn resolve_gateway_overlay_session_id(params: &serde_json::Value, node_id: &str) -> String {
+    let fallback = format!(
+        "{}-{:x}-{:x}",
+        node_id,
+        now_unix_millis(),
+        SPOOL_SEQ.fetch_add(1, Ordering::Relaxed)
+    );
+    let raw = param_as_string_any_with_tx(
+        params,
+        &[
+            "overlay_session_id",
+            "overlaySessionId",
+            "session_id",
+            "sessionId",
+        ],
+    )
+    .or_else(|| string_env_nonempty("NOVOVM_OVERLAY_SESSION_ID"))
+    .unwrap_or(fallback.clone());
+    sanitize_gateway_overlay_id(&raw, &fallback)
 }
 
 fn resolve_gateway_eth_pending_block_for_runtime_view(
@@ -5352,6 +6415,8 @@ fn run_gateway_method(
                         signature: normalized.signature.clone(),
                         tx_hash,
                         signature_domain: format!("evm:{chain_id}:runtime_execute"),
+                        overlay_node_id: ctx.overlay_node_id.clone(),
+                        overlay_session_id: ctx.overlay_session_id.clone(),
                     };
                     upsert_gateway_eth_tx_index(eth_tx_index, ctx.eth_tx_index_store, &record);
                     persist_gateway_eth_submit_onchain_status(
@@ -7662,8 +8727,9 @@ fn run_gateway_method(
             ))
         }
         "ua_createUca" => {
-            let uca_id = param_as_string(params, "uca_id")
+            let uca_id_raw = param_as_string(params, "uca_id")
                 .ok_or_else(|| anyhow::anyhow!("uca_id is required for ua_createUca"))?;
+            let uca_id = validate_uca_id_policy(&uca_id_raw)?;
             let now = param_as_u64(params, "now").unwrap_or_else(now_unix_sec);
             let primary_key_ref = parse_primary_key_ref(params, &uca_id)?;
             router.create_uca(uca_id.clone(), primary_key_ref, now)?;
@@ -9918,12 +10984,45 @@ fn run_gateway_method(
             };
             let allow_type4_with_delegate_or_session =
                 param_as_bool(params, "allow_type4_with_delegate_or_session").unwrap_or(false);
+            let type4_policy_mode = if let Some(raw) = param_as_string(params, "type4_policy_mode")
+            {
+                match raw.trim().to_ascii_lowercase().as_str() {
+                    "supported" => Type4PolicyMode::Supported,
+                    "rejected" => Type4PolicyMode::Rejected,
+                    "degraded" => Type4PolicyMode::Degraded,
+                    other => bail!(
+                        "invalid type4_policy_mode: {}; valid: supported|rejected|degraded",
+                        other
+                    ),
+                }
+            } else if allow_type4_with_delegate_or_session {
+                Type4PolicyMode::Supported
+            } else {
+                Type4PolicyMode::Rejected
+            };
+            let kyc_policy_mode = if let Some(raw) = param_as_string(params, "kyc_policy_mode") {
+                match raw.trim().to_ascii_lowercase().as_str() {
+                    "disabled" => KycPolicyMode::Disabled,
+                    "informational" => KycPolicyMode::Informational,
+                    "required_non_owner" | "required-non-owner" | "requiredfornonowner" => {
+                        KycPolicyMode::RequiredForNonOwner
+                    }
+                    other => bail!(
+                        "invalid kyc_policy_mode: {}; valid: disabled|informational|required_non_owner",
+                        other
+                    ),
+                }
+            } else {
+                KycPolicyMode::Disabled
+            };
             router.update_policy(
                 &uca_id,
                 role,
                 AccountPolicy {
                     nonce_scope,
+                    type4_policy_mode,
                     allow_type4_with_delegate_or_session,
+                    kyc_policy_mode,
                 },
                 now,
             )?;
@@ -9936,6 +11035,16 @@ fn run_gateway_method(
                         NonceScope::Persona => "persona",
                         NonceScope::Chain => "chain",
                         NonceScope::Global => "global",
+                    },
+                    "type4_policy_mode": match type4_policy_mode {
+                        Type4PolicyMode::Supported => "supported",
+                        Type4PolicyMode::Rejected => "rejected",
+                        Type4PolicyMode::Degraded => "degraded",
+                    },
+                    "kyc_policy_mode": match kyc_policy_mode {
+                        KycPolicyMode::Disabled => "disabled",
+                        KycPolicyMode::Informational => "informational",
+                        KycPolicyMode::RequiredForNonOwner => "required_non_owner",
                     },
                     "allow_type4_with_delegate_or_session": allow_type4_with_delegate_or_session,
                 }),
@@ -10087,6 +11196,8 @@ fn run_gateway_method(
             let wants_cross_chain_atomic =
                 param_as_bool_any_with_tx(params, &["wants_cross_chain_atomic", "wantsCrossChainAtomic"])
                     .unwrap_or(false);
+            let kyc =
+                resolve_gateway_kyc_verified(params, &uca_id, chain_id, &from, role, nonce, true)?;
             let session_expires_at =
                 param_as_u64_any_with_tx(params, &["session_expires_at", "sessionExpiresAt"]);
             let now = param_as_u64(params, "now").unwrap_or_else(now_unix_sec);
@@ -10098,6 +11209,8 @@ fn run_gateway_method(
                 protocol: ProtocolKind::Eth,
                 signature_domain: signature_domain.clone(),
                 nonce,
+                kyc_attestation_provided: kyc.provided,
+                kyc_verified: kyc.verified,
                 wants_cross_chain_atomic,
                 tx_type4: fields.hint.tx_type4,
                 session_expires_at,
@@ -10148,6 +11261,8 @@ fn run_gateway_method(
                 signature: raw_tx,
                 tx_hash,
                 signature_domain: signature_domain.clone(),
+                overlay_node_id: ctx.overlay_node_id.clone(),
+                overlay_session_id: ctx.overlay_session_id.clone(),
             };
             let tx_ir_bincode = if gateway_eth_public_broadcast_exec_path(chain_id).is_some() {
                 Some(
@@ -10258,6 +11373,8 @@ fn run_gateway_method(
                     "pending": true,
                     "onchain": false,
                     "broadcast": broadcast_json,
+                    "overlay_node_id": record.overlay_node_id,
+                    "overlay_session_id": record.overlay_session_id,
                 }),
                 true,
             ))
@@ -10460,6 +11577,8 @@ fn run_gateway_method(
             let wants_cross_chain_atomic =
                 param_as_bool_any_with_tx(params, &["wants_cross_chain_atomic", "wantsCrossChainAtomic"])
                     .unwrap_or(false);
+            let kyc =
+                resolve_gateway_kyc_verified(params, &uca_id, chain_id, &from, role, nonce, true)?;
             let session_expires_at =
                 param_as_u64_any_with_tx(params, &["session_expires_at", "sessionExpiresAt"]);
             let now = param_as_u64(params, "now").unwrap_or_else(now_unix_sec);
@@ -10499,6 +11618,8 @@ fn run_gateway_method(
                 protocol: ProtocolKind::Eth,
                 signature_domain: signature_domain.clone(),
                 nonce,
+                kyc_attestation_provided: kyc.provided,
+                kyc_verified: kyc.verified,
                 wants_cross_chain_atomic,
                 tx_type4,
                 session_expires_at,
@@ -10562,6 +11683,8 @@ fn run_gateway_method(
                 signature,
                 tx_hash,
                 signature_domain: signature_domain.clone(),
+                overlay_node_id: ctx.overlay_node_id.clone(),
+                overlay_session_id: ctx.overlay_session_id.clone(),
             };
             let tx_ir_bincode = if gateway_eth_public_broadcast_exec_path(chain_id).is_some() {
                 Some(
@@ -10677,6 +11800,8 @@ fn run_gateway_method(
                     "pending": true,
                     "onchain": false,
                     "broadcast": broadcast_json,
+                    "overlay_node_id": record.overlay_node_id,
+                    "overlay_session_id": record.overlay_session_id,
                 }),
                 true,
             ))
@@ -10702,6 +11827,8 @@ fn run_gateway_method(
                 .unwrap_or_else(|| "web30:mainnet".to_string());
             let wants_cross_chain_atomic =
                 param_as_bool(params, "wants_cross_chain_atomic").unwrap_or(false);
+            let kyc =
+                resolve_gateway_kyc_verified(params, &uca_id, chain_id, &from, role, nonce, false)?;
             let session_expires_at = param_as_u64(params, "session_expires_at");
             let now = param_as_u64(params, "now").unwrap_or_else(now_unix_sec);
 
@@ -10716,6 +11843,8 @@ fn run_gateway_method(
                 protocol: ProtocolKind::Web30,
                 signature_domain: signature_domain.clone(),
                 nonce,
+                kyc_attestation_provided: kyc.provided,
+                kyc_verified: kyc.verified,
                 wants_cross_chain_atomic,
                 tx_type4: false,
                 session_expires_at,
@@ -10743,6 +11872,8 @@ fn run_gateway_method(
                 signature_domain: signature_domain.clone(),
                 wants_cross_chain_atomic,
                 tx_hash,
+                overlay_node_id: ctx.overlay_node_id.clone(),
+                overlay_session_id: ctx.overlay_session_id.clone(),
             };
             let wire = encode_gateway_ingress_ops_wire_v1_web30(&record)?;
             let spool_file = write_spool_ops_wire_v1(ctx.spool_dir, &wire)?;
@@ -10761,6 +11892,8 @@ fn run_gateway_method(
                     "tx_hash": format!("0x{}", to_hex(&record.tx_hash)),
                     "spool_file": spool_file.display().to_string(),
                     "ingress_codec": "ops_wire_v1",
+                    "overlay_node_id": record.overlay_node_id,
+                    "overlay_session_id": record.overlay_session_id,
                 }),
                 true,
             ))
@@ -10782,6 +11915,8 @@ fn run_gateway_method(
                 .unwrap_or_else(|| "web30:mainnet".to_string());
             let wants_cross_chain_atomic =
                 param_as_bool(params, "wants_cross_chain_atomic").unwrap_or(false);
+            let kyc =
+                resolve_gateway_kyc_verified(params, &uca_id, chain_id, &from, role, nonce, false)?;
             let session_expires_at = param_as_u64(params, "session_expires_at");
             let now = param_as_u64(params, "now").unwrap_or_else(now_unix_sec);
 
@@ -10796,6 +11931,8 @@ fn run_gateway_method(
                 protocol: ProtocolKind::Web30,
                 signature_domain: signature_domain.clone(),
                 nonce,
+                kyc_attestation_provided: kyc.provided,
+                kyc_verified: kyc.verified,
                 wants_cross_chain_atomic,
                 tx_type4: false,
                 session_expires_at,
@@ -10875,6 +12012,8 @@ fn run_gateway_method(
                 signature_domain: signature_domain.clone(),
                 wants_cross_chain_atomic,
                 tx_hash,
+                overlay_node_id: ctx.overlay_node_id.clone(),
+                overlay_session_id: ctx.overlay_session_id.clone(),
             };
             let wire = encode_gateway_ingress_ops_wire_v1_web30(&record)?;
             let spool_file = write_spool_ops_wire_v1(ctx.spool_dir, &wire)?;
@@ -10938,6 +12077,8 @@ fn run_gateway_method(
                     "ingress_codec": "ops_wire_v1",
                     "payload_kind": payload_kind,
                     "tx_ir_type": tx_ir_type,
+                    "overlay_node_id": record.overlay_node_id,
+                    "overlay_session_id": record.overlay_session_id,
                 }),
                 true,
             ))
@@ -11608,6 +12749,211 @@ fn is_gateway_eth_send_tx_write_method(method: &str) -> bool {
         || method == "evm_send_transaction"
         || method == "evm_publicSendTransaction"
         || method == "evm_public_send_transaction"
+}
+
+fn gateway_param_as_bool_any(params: &serde_json::Value, keys: &[&str]) -> Option<bool> {
+    for key in keys {
+        if let Some(value) = param_as_bool(params, key) {
+            return Some(value);
+        }
+    }
+    None
+}
+
+fn gateway_param_as_string_any(params: &serde_json::Value, keys: &[&str]) -> Option<String> {
+    for key in keys {
+        if let Some(value) = param_as_string(params, key) {
+            return Some(value);
+        }
+    }
+    None
+}
+
+fn gateway_ua_route_role_label(role: AccountRole) -> &'static str {
+    match role {
+        AccountRole::Owner => "owner",
+        AccountRole::Delegate => "delegate",
+        AccountRole::SessionKey => "session_key",
+    }
+}
+
+fn gateway_ua_kyc_attestation_message(
+    uca_id: &str,
+    chain_id: u64,
+    external_address: &[u8],
+    role: AccountRole,
+    nonce: u64,
+) -> String {
+    format!(
+        "novovm.ua.kyc.v1|uca_id={}|chain_id={}|address=0x{}|role={}|nonce={}",
+        uca_id,
+        chain_id,
+        to_hex(external_address),
+        gateway_ua_route_role_label(role),
+        nonce
+    )
+}
+
+#[derive(Debug, Clone, Copy)]
+struct GatewayKycVerificationOutcome {
+    provided: bool,
+    verified: bool,
+}
+
+fn parse_gateway_ua_kyc_attestor_allowlist() -> Vec<[u8; 32]> {
+    let Some(raw) = string_env_nonempty("NOVOVM_UA_KYC_ATTESTOR_PUBKEYS") else {
+        return Vec::new();
+    };
+    raw.split(',')
+        .filter_map(|token| {
+            let trimmed = token.trim();
+            if trimmed.is_empty() {
+                return None;
+            }
+            let decoded = decode_hex_bytes(trimmed, "NOVOVM_UA_KYC_ATTESTOR_PUBKEYS").ok()?;
+            if decoded.len() != 32 {
+                return None;
+            }
+            let mut out = [0u8; 32];
+            out.copy_from_slice(&decoded);
+            Some(out)
+        })
+        .collect()
+}
+
+fn resolve_gateway_kyc_verified(
+    params: &serde_json::Value,
+    uca_id: &str,
+    chain_id: u64,
+    external_address: &[u8],
+    role: AccountRole,
+    nonce: u64,
+    include_tx_object: bool,
+) -> Result<GatewayKycVerificationOutcome> {
+    let explicit_bypass = if include_tx_object {
+        param_as_bool_any_with_tx(params, &["kyc_verified", "kycVerified"])
+    } else {
+        gateway_param_as_bool_any(params, &["kyc_verified", "kycVerified"])
+    };
+    let attestor_pubkey_hex = if include_tx_object {
+        param_as_string_any_with_tx(
+            params,
+            &[
+                "kyc_attestor_pubkey",
+                "kycAttestorPubkey",
+                "kyc_proof_pubkey",
+                "kycProofPubkey",
+            ],
+        )
+    } else {
+        gateway_param_as_string_any(
+            params,
+            &[
+                "kyc_attestor_pubkey",
+                "kycAttestorPubkey",
+                "kyc_proof_pubkey",
+                "kycProofPubkey",
+            ],
+        )
+    };
+    let attestation_sig_hex = if include_tx_object {
+        param_as_string_any_with_tx(
+            params,
+            &[
+                "kyc_attestation_sig",
+                "kycAttestationSig",
+                "kyc_proof_sig",
+                "kycProofSig",
+            ],
+        )
+    } else {
+        gateway_param_as_string_any(
+            params,
+            &[
+                "kyc_attestation_sig",
+                "kycAttestationSig",
+                "kyc_proof_sig",
+                "kycProofSig",
+            ],
+        )
+    };
+    if attestor_pubkey_hex.is_none() && attestation_sig_hex.is_none() {
+        if explicit_bypass.unwrap_or(false) {
+            bail!(
+                "kyc_verified boolean bypass is disabled; provide kyc_attestor_pubkey and kyc_attestation_sig"
+            );
+        }
+        return Ok(GatewayKycVerificationOutcome {
+            provided: false,
+            verified: false,
+        });
+    }
+    let Some(attestor_pubkey_hex) = attestor_pubkey_hex else {
+        return Ok(GatewayKycVerificationOutcome {
+            provided: true,
+            verified: false,
+        });
+    };
+    let Some(attestation_sig_hex) = attestation_sig_hex else {
+        return Ok(GatewayKycVerificationOutcome {
+            provided: true,
+            verified: false,
+        });
+    };
+    let Ok(attestor_pubkey) = decode_hex_bytes(&attestor_pubkey_hex, "kyc_attestor_pubkey") else {
+        return Ok(GatewayKycVerificationOutcome {
+            provided: true,
+            verified: false,
+        });
+    };
+    if attestor_pubkey.len() != 32 {
+        return Ok(GatewayKycVerificationOutcome {
+            provided: true,
+            verified: false,
+        });
+    }
+    let Ok(attestation_sig) = decode_hex_bytes(&attestation_sig_hex, "kyc_attestation_sig") else {
+        return Ok(GatewayKycVerificationOutcome {
+            provided: true,
+            verified: false,
+        });
+    };
+    if attestation_sig.len() != 64 {
+        return Ok(GatewayKycVerificationOutcome {
+            provided: true,
+            verified: false,
+        });
+    }
+    let mut attestor_pubkey_arr = [0u8; 32];
+    attestor_pubkey_arr.copy_from_slice(&attestor_pubkey);
+    let allowlist = parse_gateway_ua_kyc_attestor_allowlist();
+    if !allowlist.is_empty() && !allowlist.iter().any(|allowed| allowed == &attestor_pubkey_arr) {
+        return Ok(GatewayKycVerificationOutcome {
+            provided: true,
+            verified: false,
+        });
+    }
+    let Ok(verifying_key) = VerifyingKey::from_bytes(&attestor_pubkey_arr) else {
+        return Ok(GatewayKycVerificationOutcome {
+            provided: true,
+            verified: false,
+        });
+    };
+    let Ok(signature) = Ed25519Signature::from_slice(&attestation_sig) else {
+        return Ok(GatewayKycVerificationOutcome {
+            provided: true,
+            verified: false,
+        });
+    };
+    let message =
+        gateway_ua_kyc_attestation_message(uca_id, chain_id, external_address, role, nonce);
+    let verified = verifying_key
+        .verify(message.as_bytes(), &signature)
+        .is_ok();
+    Ok(GatewayKycVerificationOutcome {
+        provided: true,
+        verified,
+    })
 }
 
 fn infer_gateway_eth_send_tx_uca_id(
@@ -12487,6 +13833,8 @@ fn execute_gateway_atomic_broadcast_ticket_native(
         signature: tx_ir.signature.clone(),
         tx_hash,
         signature_domain: "evm:atomic_broadcast".to_string(),
+        overlay_node_id: ctx.overlay_node_id.clone(),
+        overlay_session_id: ctx.overlay_session_id.clone(),
     };
     let wire = encode_gateway_ingress_ops_wire_v1_eth(&record)?;
     let spool_file = write_spool_ops_wire_v1(ctx.spool_dir, &wire)?;
@@ -12868,6 +14216,8 @@ fn auto_replay_pending_atomic_broadcasts(runtime: &mut GatewayRuntime) {
                 eth_tx_index_store: &runtime.eth_tx_index_store,
                 eth_default_chain_id: runtime.eth_default_chain_id,
                 spool_dir: runtime.spool_dir.as_path(),
+                overlay_node_id: "reconcile:auto".to_string(),
+                overlay_session_id: format!("reconcile-{}", now_unix_millis()),
                 eth_filters: &mut dummy_filters,
             };
             execute_gateway_atomic_broadcast_ticket_native(

@@ -17,6 +17,6 @@ pub use evm_mirror::{
 pub use ir::{AccountState, BlockIR, SerializationFormat, StateIR, TxIR, TxType};
 pub use unified_account::{
     AccountAction, AccountAuditEvent, AccountPolicy, AccountRole, BindingState, NonceScope,
-    PersonaAddress, PersonaType, ProtocolKind, RouteDecision, RouteRequest, UcaStatus,
-    UnifiedAccountError, UnifiedAccountRouter,
+    KycPolicyMode, PersonaAddress, PersonaType, ProtocolKind, RouteDecision, RouteRequest,
+    Type4PolicyMode, UcaStatus, UnifiedAccountError, UnifiedAccountRouter,
 };

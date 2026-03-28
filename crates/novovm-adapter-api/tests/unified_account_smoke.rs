@@ -1,7 +1,7 @@
 use anyhow::Result;
 use novovm_adapter_api::{
     AccountAction, AccountAuditEvent, AccountPolicy, AccountRole, NonceScope, PersonaAddress,
-    PersonaType, ProtocolKind, RouteDecision, RouteRequest, UnifiedAccountError,
+    PersonaType, ProtocolKind, RouteDecision, RouteRequest, Type4PolicyMode, KycPolicyMode, UnifiedAccountError,
     UnifiedAccountRouter,
 };
 
@@ -76,6 +76,8 @@ fn route_checks_domain_and_nonce_scope_persona() -> Result<()> {
         protocol: ProtocolKind::Eth,
         signature_domain: "evm:1".to_string(),
         nonce: 0,
+        kyc_attestation_provided: false,
+        kyc_verified: false,
         wants_cross_chain_atomic: false,
         tx_type4: false,
         session_expires_at: None,
@@ -91,6 +93,8 @@ fn route_checks_domain_and_nonce_scope_persona() -> Result<()> {
             protocol: ProtocolKind::Eth,
             signature_domain: "evm:1".to_string(),
             nonce: 0,
+            kyc_attestation_provided: false,
+            kyc_verified: false,
             wants_cross_chain_atomic: false,
             tx_type4: false,
             session_expires_at: None,
@@ -113,6 +117,8 @@ fn route_checks_domain_and_nonce_scope_persona() -> Result<()> {
             protocol: ProtocolKind::Eth,
             signature_domain: "web30:mainnet".to_string(),
             nonce: 1,
+            kyc_attestation_provided: false,
+            kyc_verified: false,
             wants_cross_chain_atomic: false,
             tx_type4: false,
             session_expires_at: None,
@@ -140,7 +146,9 @@ fn permission_boundary_and_type4_policy_are_enforced() -> Result<()> {
             AccountRole::Delegate,
             AccountPolicy {
                 nonce_scope: NonceScope::Global,
+                type4_policy_mode: Type4PolicyMode::Rejected,
                 allow_type4_with_delegate_or_session: false,
+                kyc_policy_mode: KycPolicyMode::Disabled,
             },
             3,
         )
@@ -161,6 +169,8 @@ fn permission_boundary_and_type4_policy_are_enforced() -> Result<()> {
             protocol: ProtocolKind::Eth,
             signature_domain: "evm:1".to_string(),
             nonce: 0,
+            kyc_attestation_provided: false,
+            kyc_verified: false,
             wants_cross_chain_atomic: true,
             tx_type4: false,
             session_expires_at: None,
@@ -180,6 +190,8 @@ fn permission_boundary_and_type4_policy_are_enforced() -> Result<()> {
             protocol: ProtocolKind::Eth,
             signature_domain: "evm:1".to_string(),
             nonce: 0,
+            kyc_attestation_provided: false,
+            kyc_verified: false,
             wants_cross_chain_atomic: false,
             tx_type4: true,
             session_expires_at: None,
@@ -211,6 +223,8 @@ fn next_nonce_for_persona_tracks_route_progress() -> Result<()> {
         protocol: ProtocolKind::Eth,
         signature_domain: "evm:1".to_string(),
         nonce: 0,
+        kyc_attestation_provided: false,
+        kyc_verified: false,
         wants_cross_chain_atomic: false,
         tx_type4: false,
         session_expires_at: None,

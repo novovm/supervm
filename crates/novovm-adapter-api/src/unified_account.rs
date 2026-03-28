@@ -43,6 +43,32 @@ pub enum AccountAction {
     RotateKey,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Type4PolicyMode {
+    Supported,
+    Rejected,
+    Degraded,
+}
+
+impl Default for Type4PolicyMode {
+    fn default() -> Self {
+        Self::Rejected
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum KycPolicyMode {
+    Disabled,
+    Informational,
+    RequiredForNonOwner,
+}
+
+impl Default for KycPolicyMode {
+    fn default() -> Self {
+        Self::Disabled
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum PersonaType {
     Web30,
@@ -96,14 +122,21 @@ pub struct PersonaBinding {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AccountPolicy {
     pub nonce_scope: NonceScope,
+    #[serde(default)]
+    pub type4_policy_mode: Type4PolicyMode,
+    #[serde(default)]
     pub allow_type4_with_delegate_or_session: bool,
+    #[serde(default)]
+    pub kyc_policy_mode: KycPolicyMode,
 }
 
 impl Default for AccountPolicy {
     fn default() -> Self {
         Self {
             nonce_scope: NonceScope::Persona,
+            type4_policy_mode: Type4PolicyMode::Rejected,
             allow_type4_with_delegate_or_session: false,
+            kyc_policy_mode: KycPolicyMode::Disabled,
         }
     }
 }
@@ -123,6 +156,10 @@ pub struct RouteRequest {
     pub protocol: ProtocolKind,
     pub signature_domain: String,
     pub nonce: u64,
+    #[serde(default)]
+    pub kyc_attestation_provided: bool,
+    #[serde(default)]
+    pub kyc_verified: bool,
     pub wants_cross_chain_atomic: bool,
     pub tx_type4: bool,
     pub session_expires_at: Option<u64>,
@@ -192,6 +229,24 @@ pub enum AccountAuditEvent {
         role: AccountRole,
         at: u64,
     },
+    Type4PolicyDegraded {
+        uca_id: String,
+        role: AccountRole,
+        at: u64,
+    },
+    KycAttestationObserved {
+        uca_id: String,
+        role: AccountRole,
+        provided: bool,
+        verified: bool,
+        at: u64,
+    },
+    KycPolicyRejected {
+        uca_id: String,
+        role: AccountRole,
+        provided: bool,
+        at: u64,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -229,6 +284,8 @@ pub enum UnifiedAccountError {
     },
     PersonaBoundaryViolation,
     Type4PolicyViolation,
+    Type4RoleMixViolation,
+    KycPolicyViolation,
     SessionKeyExpired {
         expires_at: u64,
         now: u64,
@@ -271,9 +328,17 @@ impl fmt::Display for UnifiedAccountError {
             UnifiedAccountError::Type4PolicyViolation => {
                 write!(
                     f,
-                    "type4 transaction cannot be used with delegate/session role by policy"
+                    "ERR_UNSUPPORTED_TX_TYPE_4: type4 transaction cannot be used by current policy"
                 )
             }
+            UnifiedAccountError::Type4RoleMixViolation => write!(
+                f,
+                "ERR_TYPE4_ROLE_MIX_FORBIDDEN: type4 transaction cannot be used with delegate/session role by policy"
+            ),
+            UnifiedAccountError::KycPolicyViolation => write!(
+                f,
+                "ERR_KYC_POLICY_FORBIDDEN_NON_OWNER: non-owner route blocked by kyc policy"
+            ),
             UnifiedAccountError::SessionKeyExpired { expires_at, now } => {
                 write!(f, "session key expired at {expires_at}, now {now}")
             }
@@ -557,16 +622,57 @@ impl UnifiedAccountRouter {
             .policy
             .clone();
 
-        if request.tx_type4
-            && request.role != AccountRole::Owner
-            && !policy.allow_type4_with_delegate_or_session
+        if request.kyc_attestation_provided
+            || matches!(policy.kyc_policy_mode, KycPolicyMode::Informational)
         {
-            self.events.push(AccountAuditEvent::Type4PolicyRejected {
+            self.events.push(AccountAuditEvent::KycAttestationObserved {
                 uca_id: request.uca_id.clone(),
                 role: request.role,
+                provided: request.kyc_attestation_provided,
+                verified: request.kyc_verified,
                 at: request.now,
             });
-            return Err(UnifiedAccountError::Type4PolicyViolation);
+        }
+
+        if request.tx_type4 {
+            match policy.type4_policy_mode {
+                Type4PolicyMode::Rejected => {
+                    self.events.push(AccountAuditEvent::Type4PolicyRejected {
+                        uca_id: request.uca_id.clone(),
+                        role: request.role,
+                        at: request.now,
+                    });
+                    return Err(UnifiedAccountError::Type4PolicyViolation);
+                }
+                Type4PolicyMode::Degraded => {
+                    self.events.push(AccountAuditEvent::Type4PolicyDegraded {
+                        uca_id: request.uca_id.clone(),
+                        role: request.role,
+                        at: request.now,
+                    });
+                }
+                Type4PolicyMode::Supported => {}
+            }
+            if request.role != AccountRole::Owner && !policy.allow_type4_with_delegate_or_session {
+                self.events.push(AccountAuditEvent::Type4PolicyRejected {
+                    uca_id: request.uca_id.clone(),
+                    role: request.role,
+                    at: request.now,
+                });
+                return Err(UnifiedAccountError::Type4RoleMixViolation);
+            }
+        }
+        if request.role != AccountRole::Owner
+            && matches!(policy.kyc_policy_mode, KycPolicyMode::RequiredForNonOwner)
+            && !request.kyc_verified
+        {
+            self.events.push(AccountAuditEvent::KycPolicyRejected {
+                uca_id: request.uca_id.clone(),
+                role: request.role,
+                provided: request.kyc_attestation_provided,
+                at: request.now,
+            });
+            return Err(UnifiedAccountError::KycPolicyViolation);
         }
 
         if request.protocol == ProtocolKind::Eth && request.wants_cross_chain_atomic {

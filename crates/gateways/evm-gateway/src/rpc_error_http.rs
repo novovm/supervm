@@ -77,6 +77,14 @@ pub(super) fn gateway_error_code_for_method(method: &str, message: &str) -> i64 
     if is_evm_write_method && lower.contains("plugin_atomic_gate_not_ready") {
         return -32039;
     }
+    if is_evm_write_method
+        && (lower.contains("kyc_verified")
+            || lower.contains("kyc_attestor_pubkey")
+            || lower.contains("kyc_attestation_sig")
+            || lower.contains("kyc attestation signature"))
+    {
+        return -32033;
+    }
     if is_evm_write_method && lower.contains("gateway evm txpool rejected tx") {
         if let Some(reason) = parse_named_error_csv_tokens(message, "reasons")
             .first()

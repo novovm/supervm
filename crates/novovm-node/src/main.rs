@@ -4,11 +4,12 @@
 
 use anyhow::{bail, Context, Result};
 mod bincode_compat;
-use ed25519_dalek::SigningKey;
+use ed25519_dalek::{Signature as Ed25519Signature, SigningKey, Verifier, VerifyingKey};
 use novovm_adapter_api::{
     default_chain_id, AccountAuditEvent, AccountPolicy, AccountRole, BlockIR, ChainConfig,
     ChainType, NonceScope, PersonaAddress, PersonaType, ProtocolKind, RouteDecision, RouteRequest,
-    SerializationFormat, StateIR, TxIR, TxType, UnifiedAccountError, UnifiedAccountRouter,
+    SerializationFormat, StateIR, TxIR, TxType, Type4PolicyMode, KycPolicyMode, UnifiedAccountError,
+    UnifiedAccountRouter,
 };
 use novovm_adapter_evm_core::{
     translate_raw_evm_tx_fields_m0, tx_ir_from_raw_fields_m0, EvmRawTxFieldsM0,
@@ -3577,8 +3578,17 @@ fn resolve_unified_account_store(query_db_path: &Path) -> Result<UnifiedAccountS
     let backend = unified_account_store_backend_kind();
     let path = unified_account_store_path_for_backend(query_db_path, &backend);
     match backend.as_str() {
-        "bincode_file" | "file" | "bincode" => Ok(UnifiedAccountStoreBackend::BincodeFile { path }),
         "rocksdb" => Ok(UnifiedAccountStoreBackend::RocksDb { path }),
+        "bincode_file" | "file" | "bincode" => {
+            if bool_env("NOVOVM_ALLOW_NON_PROD_UA_BACKEND", false) {
+                Ok(UnifiedAccountStoreBackend::BincodeFile { path })
+            } else {
+                bail!(
+                    "NOVOVM_UNIFIED_ACCOUNT_STORE_BACKEND={} is non-production; use rocksdb or set NOVOVM_ALLOW_NON_PROD_UA_BACKEND=1 for explicit override",
+                    backend
+                )
+            }
+        }
         _ => bail!(
             "invalid NOVOVM_UNIFIED_ACCOUNT_STORE_BACKEND={}; valid: rocksdb|bincode_file|file|bincode",
             backend
@@ -3652,27 +3662,6 @@ impl UnifiedAccountStoreBackend {
                         )
                     })?;
 
-                // Backward compatibility: load v2 namespace keys from default CF if dedicated
-                // CF storage is not present yet.
-                if router_raw.is_none() && cursor_raw.is_none() {
-                    router_raw = db
-                        .get(UNIFIED_ACCOUNT_STORE_ROCKSDB_KEY_STATE_ROUTER)
-                        .with_context(|| {
-                            format!(
-                                "read unified account rocksdb state key from default cf failed: {}",
-                                path.display()
-                            )
-                        })?;
-                    cursor_raw = db
-                        .get(UNIFIED_ACCOUNT_STORE_ROCKSDB_KEY_AUDIT_CURSOR)
-                        .with_context(|| {
-                            format!(
-                                "read unified account rocksdb audit cursor key from default cf failed: {}",
-                                path.display()
-                            )
-                        })?;
-                }
-
                 if let Some(router_bytes) = router_raw {
                     let router: UnifiedAccountRouter =
                         crate::bincode_compat::deserialize(&router_bytes).with_context(|| {
@@ -3701,18 +3690,7 @@ impl UnifiedAccountStoreBackend {
                         path.display()
                     );
                 }
-                let raw = db
-                    .get(UNIFIED_ACCOUNT_STORE_ROCKSDB_KEY_SNAPSHOT)
-                    .with_context(|| {
-                        format!(
-                            "read unified account rocksdb legacy snapshot key failed: {}",
-                            path.display()
-                        )
-                    })?;
-                match raw {
-                    Some(bytes) => decode_unified_account_snapshot(&bytes, path),
-                    None => Ok(empty_unified_account_snapshot()),
-                }
+                Ok(empty_unified_account_snapshot())
             }
         }
     }
@@ -3753,7 +3731,6 @@ impl UnifiedAccountStoreBackend {
                         path.display()
                     )
                 })?;
-                let legacy_encoded = encode_unified_account_snapshot(snapshot)?;
                 let mut batch = RocksDbWriteBatch::default();
                 batch.put_cf(
                     state_cf,
@@ -3765,17 +3742,6 @@ impl UnifiedAccountStoreBackend {
                     UNIFIED_ACCOUNT_STORE_ROCKSDB_KEY_AUDIT_CURSOR,
                     snapshot.flushed_event_count.to_be_bytes(),
                 );
-                // Keep default-CF namespace keys for backward compatibility with pre-CF readers.
-                batch.put(
-                    UNIFIED_ACCOUNT_STORE_ROCKSDB_KEY_STATE_ROUTER,
-                    router_encoded.as_slice(),
-                );
-                batch.put(
-                    UNIFIED_ACCOUNT_STORE_ROCKSDB_KEY_AUDIT_CURSOR,
-                    snapshot.flushed_event_count.to_be_bytes(),
-                );
-                // Keep legacy snapshot key for rollback compatibility.
-                batch.put(UNIFIED_ACCOUNT_STORE_ROCKSDB_KEY_SNAPSHOT, legacy_encoded);
                 db.write(batch).with_context(|| {
                     format!(
                         "write unified account rocksdb namespace batch failed: {}",
@@ -3956,6 +3922,14 @@ fn resolve_unified_account_audit_sink(
     query_db_path: &Path,
 ) -> Result<UnifiedAccountAuditSinkBackend> {
     let backend = unified_account_audit_backend_kind();
+    if backend != UNIFIED_ACCOUNT_AUDIT_BACKEND_ROCKSDB
+        && !bool_env("NOVOVM_ALLOW_NON_PROD_UA_BACKEND", false)
+    {
+        bail!(
+            "NOVOVM_UNIFIED_ACCOUNT_AUDIT_BACKEND={} is non-production; use rocksdb or set NOVOVM_ALLOW_NON_PROD_UA_BACKEND=1 for explicit override",
+            backend
+        );
+    }
     resolve_unified_account_audit_sink_with_backend(query_db_path, &backend)
 }
 
@@ -4004,14 +3978,24 @@ fn unified_account_audit_record_to_json(
     seq: u64,
     record: &UnifiedAccountAuditSinkRecord,
 ) -> Result<serde_json::Value> {
+    let router_events_json = record
+        .router_events
+        .iter()
+        .map(account_audit_event_to_json)
+        .collect::<Result<Vec<_>>>()?;
     let mut value = serde_json::to_value(record)
         .context("serialize unified account audit record to json failed")?;
     if let serde_json::Value::Object(map) = &mut value {
         map.insert("seq".to_string(), serde_json::json!(seq));
+        map.insert(
+            "router_events".to_string(),
+            serde_json::Value::Array(router_events_json),
+        );
         return Ok(value);
     }
     Ok(serde_json::json!({
         "seq": seq,
+        "router_events": router_events_json,
         "record": value,
     }))
 }
@@ -4154,10 +4138,15 @@ struct UnifiedAccountAuditQueryFilter {
     method: Option<String>,
     source: Option<String>,
     success: Option<bool>,
+    uca_id: Option<String>,
+    event_kind: Option<String>,
+    role: Option<AccountRole>,
+    kyc_provided: Option<bool>,
+    kyc_verified: Option<bool>,
 }
 
 impl UnifiedAccountAuditQueryFilter {
-    fn from_rpc_params(params: &serde_json::Value) -> Self {
+    fn from_rpc_params(params: &serde_json::Value) -> Result<Self> {
         let method = param_as_string(params, "filter_method")
             .map(|v| v.trim().to_string())
             .filter(|v| !v.is_empty());
@@ -4165,11 +4154,40 @@ impl UnifiedAccountAuditQueryFilter {
             .map(|v| v.trim().to_string())
             .filter(|v| !v.is_empty());
         let success = param_as_bool(params, "filter_success");
-        Self {
+        let uca_id = param_as_string(params, "filter_uca_id")
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty());
+        let event_kind = param_as_string(params, "filter_event")
+            .or_else(|| param_as_string(params, "filter_event_kind"))
+            .map(|v| normalize_audit_filter_token(v.trim()))
+            .filter(|v| !v.is_empty());
+        let role = match param_as_string(params, "filter_role")
+            .map(|v| v.trim().to_ascii_lowercase())
+            .filter(|v| !v.is_empty())
+        {
+            Some(raw) => Some(match raw.as_str() {
+                "owner" => AccountRole::Owner,
+                "delegate" => AccountRole::Delegate,
+                "session" | "sessionkey" | "session_key" => AccountRole::SessionKey,
+                _ => bail!(
+                    "invalid filter_role: {}; valid: owner|delegate|session_key",
+                    raw
+                ),
+            }),
+            None => None,
+        };
+        let kyc_provided = param_as_bool(params, "filter_kyc_provided");
+        let kyc_verified = param_as_bool(params, "filter_kyc_verified");
+        Ok(Self {
             method,
             source,
             success,
-        }
+            uca_id,
+            event_kind,
+            role,
+            kyc_provided,
+            kyc_verified,
+        })
     }
 
     fn matches(&self, record: &UnifiedAccountAuditSinkRecord) -> bool {
@@ -4188,15 +4206,214 @@ impl UnifiedAccountAuditQueryFilter {
                 return false;
             }
         }
+        if self.requires_event_match()
+            && !record
+                .router_events
+                .iter()
+                .any(|event| self.matches_event(event))
+        {
+            return false;
+        }
+        true
+    }
+
+    fn requires_event_match(&self) -> bool {
+        self.uca_id.is_some()
+            || self.event_kind.is_some()
+            || self.role.is_some()
+            || self.kyc_provided.is_some()
+            || self.kyc_verified.is_some()
+    }
+
+    fn matches_router_event(&self, event: &AccountAuditEvent) -> bool {
+        self.matches_event(event)
+    }
+
+    fn matches_event(&self, event: &AccountAuditEvent) -> bool {
+        if let Some(uca_id) = &self.uca_id {
+            if !account_audit_event_matches_uca_id(event, uca_id) {
+                return false;
+            }
+        }
+        if let Some(kind) = &self.event_kind {
+            if normalize_audit_filter_token(account_audit_event_kind(event)) != *kind {
+                return false;
+            }
+        }
+        if let Some(role) = self.role {
+            if account_audit_event_role(event) != Some(role) {
+                return false;
+            }
+        }
+        if let Some(provided) = self.kyc_provided {
+            if account_audit_event_kyc_provided(event) != Some(provided) {
+                return false;
+            }
+        }
+        if let Some(verified) = self.kyc_verified {
+            if account_audit_event_kyc_verified(event) != Some(verified) {
+                return false;
+            }
+        }
         true
     }
 
     fn to_json(&self) -> serde_json::Value {
+        let role = self.role.map(|role| match role {
+            AccountRole::Owner => "owner",
+            AccountRole::Delegate => "delegate",
+            AccountRole::SessionKey => "session_key",
+        });
         serde_json::json!({
             "method": self.method,
             "source": self.source,
             "success": self.success,
+            "uca_id": self.uca_id,
+            "event_kind": self.event_kind,
+            "role": role,
+            "kyc_provided": self.kyc_provided,
+            "kyc_verified": self.kyc_verified,
         })
+    }
+}
+
+fn normalize_audit_filter_token(raw: &str) -> String {
+    raw.chars()
+        .filter(|ch| ch.is_ascii_alphanumeric())
+        .map(|ch| ch.to_ascii_lowercase())
+        .collect()
+}
+
+fn account_audit_event_kind(event: &AccountAuditEvent) -> &'static str {
+    match event {
+        AccountAuditEvent::UcaCreated { .. } => "uca_created",
+        AccountAuditEvent::BindingAdded { .. } => "binding_added",
+        AccountAuditEvent::BindingConflictRejected { .. } => "binding_conflict_rejected",
+        AccountAuditEvent::BindingRevoked { .. } => "binding_revoked",
+        AccountAuditEvent::NonceReplayRejected { .. } => "nonce_replay_rejected",
+        AccountAuditEvent::DomainMismatchRejected { .. } => "domain_mismatch_rejected",
+        AccountAuditEvent::PermissionDenied { .. } => "permission_denied",
+        AccountAuditEvent::KeyRotated { .. } => "key_rotated",
+        AccountAuditEvent::SessionKeyExpired { .. } => "session_key_expired",
+        AccountAuditEvent::Type4PolicyRejected { .. } => "type4_policy_rejected",
+        AccountAuditEvent::Type4PolicyDegraded { .. } => "type4_policy_degraded",
+        AccountAuditEvent::KycAttestationObserved { .. } => "kyc_attestation_observed",
+        AccountAuditEvent::KycPolicyRejected { .. } => "kyc_policy_rejected",
+    }
+}
+
+fn account_audit_event_code(event: &AccountAuditEvent) -> &'static str {
+    match event {
+        AccountAuditEvent::UcaCreated { .. } => "UA_AUDIT_UCA_CREATED",
+        AccountAuditEvent::BindingAdded { .. } => "UA_AUDIT_BINDING_ADDED",
+        AccountAuditEvent::BindingConflictRejected { .. } => "UA_AUDIT_BINDING_CONFLICT_REJECTED",
+        AccountAuditEvent::BindingRevoked { .. } => "UA_AUDIT_BINDING_REVOKED",
+        AccountAuditEvent::NonceReplayRejected { .. } => "UA_AUDIT_NONCE_REPLAY_REJECTED",
+        AccountAuditEvent::DomainMismatchRejected { .. } => "UA_AUDIT_DOMAIN_MISMATCH_REJECTED",
+        AccountAuditEvent::PermissionDenied { .. } => "UA_AUDIT_PERMISSION_DENIED",
+        AccountAuditEvent::KeyRotated { .. } => "UA_AUDIT_KEY_ROTATED",
+        AccountAuditEvent::SessionKeyExpired { .. } => "UA_AUDIT_SESSION_KEY_EXPIRED",
+        AccountAuditEvent::Type4PolicyRejected { .. } => "UA_AUDIT_TYPE4_POLICY_REJECTED",
+        AccountAuditEvent::Type4PolicyDegraded { .. } => "UA_AUDIT_TYPE4_POLICY_DEGRADED",
+        AccountAuditEvent::KycAttestationObserved { .. } => "UA_AUDIT_KYC_ATTESTATION_OBSERVED",
+        AccountAuditEvent::KycPolicyRejected { .. } => "UA_AUDIT_KYC_POLICY_REJECTED",
+    }
+}
+
+fn account_audit_event_to_json(event: &AccountAuditEvent) -> Result<serde_json::Value> {
+    let mut value = serde_json::to_value(event)
+        .context("serialize unified account audit event to json failed")?;
+    if let serde_json::Value::Object(map) = &mut value {
+        map.insert(
+            "event_kind".to_string(),
+            serde_json::json!(account_audit_event_kind(event)),
+        );
+        map.insert(
+            "event_code".to_string(),
+            serde_json::json!(account_audit_event_code(event)),
+        );
+        return Ok(value);
+    }
+    Ok(serde_json::json!({
+        "event_kind": account_audit_event_kind(event),
+        "event_code": account_audit_event_code(event),
+        "event": value,
+    }))
+}
+
+fn account_audit_event_matches_uca_id(event: &AccountAuditEvent, uca_id: &str) -> bool {
+    match event {
+        AccountAuditEvent::UcaCreated { uca_id: event_uca_id, .. } => {
+            event_uca_id.eq_ignore_ascii_case(uca_id)
+        }
+        AccountAuditEvent::BindingAdded { uca_id: event_uca_id, .. } => {
+            event_uca_id.eq_ignore_ascii_case(uca_id)
+        }
+        AccountAuditEvent::BindingConflictRejected {
+            request_uca_id,
+            existing_uca_id,
+            ..
+        } => {
+            request_uca_id.eq_ignore_ascii_case(uca_id)
+                || existing_uca_id.eq_ignore_ascii_case(uca_id)
+        }
+        AccountAuditEvent::BindingRevoked { uca_id: event_uca_id, .. } => {
+            event_uca_id.eq_ignore_ascii_case(uca_id)
+        }
+        AccountAuditEvent::NonceReplayRejected { uca_id: event_uca_id, .. } => {
+            event_uca_id.eq_ignore_ascii_case(uca_id)
+        }
+        AccountAuditEvent::DomainMismatchRejected { uca_id: event_uca_id, .. } => {
+            event_uca_id.eq_ignore_ascii_case(uca_id)
+        }
+        AccountAuditEvent::PermissionDenied { uca_id: event_uca_id, .. } => {
+            event_uca_id.eq_ignore_ascii_case(uca_id)
+        }
+        AccountAuditEvent::KeyRotated { uca_id: event_uca_id, .. } => {
+            event_uca_id.eq_ignore_ascii_case(uca_id)
+        }
+        AccountAuditEvent::SessionKeyExpired { uca_id: event_uca_id, .. } => {
+            event_uca_id.eq_ignore_ascii_case(uca_id)
+        }
+        AccountAuditEvent::Type4PolicyRejected { uca_id: event_uca_id, .. } => {
+            event_uca_id.eq_ignore_ascii_case(uca_id)
+        }
+        AccountAuditEvent::Type4PolicyDegraded { uca_id: event_uca_id, .. } => {
+            event_uca_id.eq_ignore_ascii_case(uca_id)
+        }
+        AccountAuditEvent::KycAttestationObserved { uca_id: event_uca_id, .. } => {
+            event_uca_id.eq_ignore_ascii_case(uca_id)
+        }
+        AccountAuditEvent::KycPolicyRejected { uca_id: event_uca_id, .. } => {
+            event_uca_id.eq_ignore_ascii_case(uca_id)
+        }
+    }
+}
+
+fn account_audit_event_role(event: &AccountAuditEvent) -> Option<AccountRole> {
+    match event {
+        AccountAuditEvent::PermissionDenied { role, .. }
+        | AccountAuditEvent::Type4PolicyRejected { role, .. }
+        | AccountAuditEvent::Type4PolicyDegraded { role, .. }
+        | AccountAuditEvent::KycAttestationObserved { role, .. }
+        | AccountAuditEvent::KycPolicyRejected { role, .. } => Some(*role),
+        _ => None,
+    }
+}
+
+fn account_audit_event_kyc_provided(event: &AccountAuditEvent) -> Option<bool> {
+    match event {
+        AccountAuditEvent::KycAttestationObserved { provided, .. }
+        | AccountAuditEvent::KycPolicyRejected { provided, .. } => Some(*provided),
+        _ => None,
+    }
+}
+
+fn account_audit_event_kyc_verified(event: &AccountAuditEvent) -> Option<bool> {
+    match event {
+        AccountAuditEvent::KycAttestationObserved { verified, .. } => Some(*verified),
+        AccountAuditEvent::KycPolicyRejected { .. } => Some(false),
+        _ => None,
     }
 }
 
@@ -4205,7 +4422,7 @@ fn load_unified_account_audit_records_for_rpc(
     since_seq: u64,
     limit: usize,
     filter: &UnifiedAccountAuditQueryFilter,
-) -> Result<(u64, Vec<serde_json::Value>)> {
+) -> Result<(u64, Vec<serde_json::Value>, u64, bool)> {
     let records = load_unified_account_audit_records_all(sink)?;
     let head_seq = records.last().map(|(seq, _)| *seq).unwrap_or(0);
     let mut filtered = Vec::new();
@@ -4216,13 +4433,15 @@ fn load_unified_account_audit_records_for_rpc(
         if !filter.matches(&record) {
             continue;
         }
-        filtered.push(unified_account_audit_record_to_json(seq, &record)?);
+        filtered.push((seq, unified_account_audit_record_to_json(seq, &record)?));
     }
-    if filtered.len() > limit {
-        let start = filtered.len().saturating_sub(limit);
-        filtered = filtered[start..].to_vec();
+    let has_more = filtered.len() > limit;
+    if has_more {
+        filtered.truncate(limit);
     }
-    Ok((head_seq, filtered))
+    let next_since_seq = filtered.last().map(|(seq, _)| *seq).unwrap_or(since_seq);
+    let events = filtered.into_iter().map(|(_, event)| event).collect();
+    Ok((head_seq, events, next_since_seq, has_more))
 }
 
 fn migrate_unified_account_audit_records(
@@ -4420,13 +4639,21 @@ fn public_rpc_error_code_for_method(method: &str, message: &str) -> i64 {
         if message.contains("chain_id mismatch")
             || message.contains("nonce mismatch")
             || message.contains("tx_type mismatch")
+            || message.contains("kyc_verified")
+            || message.contains("kyc_attestor_pubkey")
+            || message.contains("kyc_attestation_sig")
+            || message.contains("kyc attestation signature")
         {
             return -32033;
         }
         if message.contains("intrinsic gas too low") {
             return -32034;
         }
-        if message.contains("type4 transaction cannot be used") {
+        if message.contains("type4 transaction cannot be used")
+            || message.contains("ERR_UNSUPPORTED_TX_TYPE_4")
+            || message.contains("ERR_TYPE4_ROLE_MIX_FORBIDDEN")
+            || message.contains("ERR_KYC_POLICY_FORBIDDEN_NON_OWNER")
+        {
             return -32035;
         }
     }
@@ -4626,6 +4853,8 @@ fn route_local_txs_through_unified_account(
             protocol: ProtocolKind::Eth,
             signature_domain: signature_domain.to_string(),
             nonce: tx.nonce,
+            kyc_attestation_provided: false,
+            kyc_verified: false,
             wants_cross_chain_atomic: false,
             tx_type4: false,
             session_expires_at: None,
@@ -5304,9 +5533,27 @@ fn infer_eth_raw_tx_type_hint(params: &serde_json::Value) -> Result<Option<EthRa
     Ok(Some(EthRawTxTypeHint { raw_tx, fields }))
 }
 
+fn param_as_string_any(params: &serde_json::Value, keys: &[&str]) -> Option<String> {
+    for key in keys {
+        if let Some(value) = param_as_string(params, key) {
+            return Some(value);
+        }
+    }
+    None
+}
+
 fn param_as_u64_any(params: &serde_json::Value, keys: &[&str]) -> Option<u64> {
     for key in keys {
         if let Some(value) = param_as_u64(params, key) {
+            return Some(value);
+        }
+    }
+    None
+}
+
+fn param_as_bool_any(params: &serde_json::Value, keys: &[&str]) -> Option<bool> {
+    for key in keys {
+        if let Some(value) = param_as_bool(params, key) {
             return Some(value);
         }
     }
@@ -5320,6 +5567,163 @@ fn param_as_u128_any(params: &serde_json::Value, keys: &[&str]) -> Option<u128> 
         }
     }
     None
+}
+
+fn ua_route_role_label(role: AccountRole) -> &'static str {
+    match role {
+        AccountRole::Owner => "owner",
+        AccountRole::Delegate => "delegate",
+        AccountRole::SessionKey => "session_key",
+    }
+}
+
+fn ua_kyc_attestation_message(
+    uca_id: &str,
+    chain_id: u64,
+    external_address: &[u8],
+    role: AccountRole,
+    nonce: u64,
+) -> String {
+    format!(
+        "novovm.ua.kyc.v1|uca_id={}|chain_id={}|address=0x{}|role={}|nonce={}",
+        uca_id,
+        chain_id,
+        to_hex(external_address),
+        ua_route_role_label(role),
+        nonce
+    )
+}
+
+fn parse_ua_kyc_attestor_allowlist() -> Vec<[u8; 32]> {
+    let Some(raw) = string_env_nonempty("NOVOVM_UA_KYC_ATTESTOR_PUBKEYS") else {
+        return Vec::new();
+    };
+    raw.split(',')
+        .filter_map(|token| {
+            let trimmed = token.trim();
+            if trimmed.is_empty() {
+                return None;
+            }
+            let decoded = decode_hex_bytes(trimmed, "NOVOVM_UA_KYC_ATTESTOR_PUBKEYS").ok()?;
+            if decoded.len() != 32 {
+                return None;
+            }
+            let mut out = [0u8; 32];
+            out.copy_from_slice(&decoded);
+            Some(out)
+        })
+        .collect()
+}
+
+#[derive(Debug, Clone, Copy)]
+struct NodeKycVerificationOutcome {
+    provided: bool,
+    verified: bool,
+}
+
+fn resolve_node_kyc_verification(
+    params: &serde_json::Value,
+    uca_id: &str,
+    chain_id: u64,
+    external_address: &[u8],
+    role: AccountRole,
+    nonce: u64,
+) -> Result<NodeKycVerificationOutcome> {
+    let explicit_bypass = param_as_bool_any(params, &["kyc_verified", "kycVerified"]).unwrap_or(false);
+    let attestor_pubkey_hex = param_as_string_any(
+        params,
+        &[
+            "kyc_attestor_pubkey",
+            "kycAttestorPubkey",
+            "kyc_proof_pubkey",
+            "kycProofPubkey",
+        ],
+    );
+    let attestation_sig_hex = param_as_string_any(
+        params,
+        &[
+            "kyc_attestation_sig",
+            "kycAttestationSig",
+            "kyc_proof_sig",
+            "kycProofSig",
+        ],
+    );
+    if attestor_pubkey_hex.is_none() && attestation_sig_hex.is_none() {
+        if explicit_bypass {
+            bail!(
+                "kyc_verified boolean bypass is disabled; provide kyc_attestor_pubkey and kyc_attestation_sig"
+            );
+        }
+        return Ok(NodeKycVerificationOutcome {
+            provided: false,
+            verified: false,
+        });
+    }
+    let Some(attestor_pubkey_hex) = attestor_pubkey_hex else {
+        return Ok(NodeKycVerificationOutcome {
+            provided: true,
+            verified: false,
+        });
+    };
+    let Some(attestation_sig_hex) = attestation_sig_hex else {
+        return Ok(NodeKycVerificationOutcome {
+            provided: true,
+            verified: false,
+        });
+    };
+    let Ok(attestor_pubkey) = decode_hex_bytes(&attestor_pubkey_hex, "kyc_attestor_pubkey") else {
+        return Ok(NodeKycVerificationOutcome {
+            provided: true,
+            verified: false,
+        });
+    };
+    if attestor_pubkey.len() != 32 {
+        return Ok(NodeKycVerificationOutcome {
+            provided: true,
+            verified: false,
+        });
+    }
+    let Ok(attestation_sig) = decode_hex_bytes(&attestation_sig_hex, "kyc_attestation_sig") else {
+        return Ok(NodeKycVerificationOutcome {
+            provided: true,
+            verified: false,
+        });
+    };
+    if attestation_sig.len() != 64 {
+        return Ok(NodeKycVerificationOutcome {
+            provided: true,
+            verified: false,
+        });
+    }
+    let mut attestor_pubkey_arr = [0u8; 32];
+    attestor_pubkey_arr.copy_from_slice(&attestor_pubkey);
+    let allowlist = parse_ua_kyc_attestor_allowlist();
+    if !allowlist.is_empty() && !allowlist.iter().any(|allowed| allowed == &attestor_pubkey_arr) {
+        return Ok(NodeKycVerificationOutcome {
+            provided: true,
+            verified: false,
+        });
+    }
+    let Ok(verifying_key) = VerifyingKey::from_bytes(&attestor_pubkey_arr) else {
+        return Ok(NodeKycVerificationOutcome {
+            provided: true,
+            verified: false,
+        });
+    };
+    let Ok(signature) = Ed25519Signature::from_slice(&attestation_sig) else {
+        return Ok(NodeKycVerificationOutcome {
+            provided: true,
+            verified: false,
+        });
+    };
+    let message = ua_kyc_attestation_message(uca_id, chain_id, external_address, role, nonce);
+    let verified = verifying_key
+        .verify(message.as_bytes(), &signature)
+        .is_ok();
+    Ok(NodeKycVerificationOutcome {
+        provided: true,
+        verified,
+    })
 }
 
 fn parse_eth_send_transaction_ir(
@@ -5444,6 +5848,30 @@ fn parse_primary_key_ref(params: &serde_json::Value, uca_id: &str) -> Result<Vec
     hasher.update(b"uca-primary-key-ref-v1");
     hasher.update(uca_id.as_bytes());
     Ok(hasher.finalize().to_vec())
+}
+
+fn validate_uca_id_policy(uca_id_raw: &str) -> Result<String> {
+    let uca_id = uca_id_raw.trim();
+    if uca_id.is_empty() {
+        bail!("uca_id must not be empty");
+    }
+    if uca_id.len() > 128 {
+        bail!("uca_id too long: {} (max 128)", uca_id.len());
+    }
+    if uca_id.chars().all(|ch| ch.is_ascii_digit()) {
+        let numeric = uca_id
+            .parse::<u64>()
+            .map_err(|_| anyhow::anyhow!("uca_id numeric segment parse failed: {}", uca_id))?;
+        const UCA_BUSINESS_SEGMENT_START: u64 = 1_000_000;
+        if numeric < UCA_BUSINESS_SEGMENT_START {
+            bail!(
+                "uca_id in reserved numeric segment: {} (business segment starts at {})",
+                numeric,
+                UCA_BUSINESS_SEGMENT_START
+            );
+        }
+    }
+    Ok(uca_id.to_string())
 }
 
 fn parse_governance_signature_scheme(
@@ -8841,8 +9269,9 @@ fn run_unified_account_rpc(
 ) -> Result<(serde_json::Value, bool)> {
     match method {
         "ua_createUca" => {
-            let uca_id = param_as_string(params, "uca_id")
+            let uca_id_raw = param_as_string(params, "uca_id")
                 .ok_or_else(|| anyhow::anyhow!("uca_id is required for ua_createUca"))?;
+            let uca_id = validate_uca_id_policy(&uca_id_raw)?;
             let now = param_as_u64(params, "now").unwrap_or_else(now_unix_sec);
             let primary_key_ref = parse_primary_key_ref(params, &uca_id)?;
             router.create_uca(uca_id.clone(), primary_key_ref, now)?;
@@ -8892,10 +9321,43 @@ fn run_unified_account_rpc(
             };
             let allow_type4_with_delegate_or_session =
                 param_as_bool(params, "allow_type4_with_delegate_or_session").unwrap_or(false);
+            let type4_policy_mode = if let Some(raw) = param_as_string(params, "type4_policy_mode")
+            {
+                match raw.trim().to_ascii_lowercase().as_str() {
+                    "supported" => Type4PolicyMode::Supported,
+                    "rejected" => Type4PolicyMode::Rejected,
+                    "degraded" => Type4PolicyMode::Degraded,
+                    other => bail!(
+                        "invalid type4_policy_mode: {}; valid: supported|rejected|degraded",
+                        other
+                    ),
+                }
+            } else if allow_type4_with_delegate_or_session {
+                Type4PolicyMode::Supported
+            } else {
+                Type4PolicyMode::Rejected
+            };
+            let kyc_policy_mode = if let Some(raw) = param_as_string(params, "kyc_policy_mode") {
+                match raw.trim().to_ascii_lowercase().as_str() {
+                    "disabled" => KycPolicyMode::Disabled,
+                    "informational" => KycPolicyMode::Informational,
+                    "required_non_owner" | "required-non-owner" | "requiredfornonowner" => {
+                        KycPolicyMode::RequiredForNonOwner
+                    }
+                    other => bail!(
+                        "invalid kyc_policy_mode: {}; valid: disabled|informational|required_non_owner",
+                        other
+                    ),
+                }
+            } else {
+                KycPolicyMode::Disabled
+            };
             let now = param_as_u64(params, "now").unwrap_or_else(now_unix_sec);
             let policy = AccountPolicy {
                 nonce_scope,
+                type4_policy_mode,
                 allow_type4_with_delegate_or_session,
+                kyc_policy_mode,
             };
             router.update_policy(&uca_id, role, policy, now)?;
             Ok((
@@ -8907,6 +9369,16 @@ fn run_unified_account_rpc(
                         NonceScope::Persona => "persona",
                         NonceScope::Chain => "chain",
                         NonceScope::Global => "global",
+                    },
+                    "type4_policy_mode": match type4_policy_mode {
+                        Type4PolicyMode::Supported => "supported",
+                        Type4PolicyMode::Rejected => "rejected",
+                        Type4PolicyMode::Degraded => "degraded",
+                    },
+                    "kyc_policy_mode": match kyc_policy_mode {
+                        KycPolicyMode::Disabled => "disabled",
+                        KycPolicyMode::Informational => "informational",
+                        KycPolicyMode::RequiredForNonOwner => "required_non_owner",
                     },
                     "allow_type4_with_delegate_or_session": allow_type4_with_delegate_or_session,
                 }),
@@ -9000,6 +9472,7 @@ fn run_unified_account_rpc(
                 })
                 .to_ascii_lowercase();
             let limit = param_as_u64(params, "limit").unwrap_or(50).clamp(1, 500) as usize;
+            let filter = UnifiedAccountAuditQueryFilter::from_rpc_params(params)?;
             if source == "router" {
                 let clear = param_as_bool(params, "clear").unwrap_or(false);
                 let mut events: Vec<_> = if clear {
@@ -9007,17 +9480,25 @@ fn run_unified_account_rpc(
                 } else {
                     router.events().to_vec()
                 };
+                if filter.requires_event_match() {
+                    events.retain(|event| filter.matches_router_event(event));
+                }
                 if events.len() > limit {
                     let start = events.len().saturating_sub(limit);
                     events = events[start..].to_vec();
                 }
+                let events_json = events
+                    .iter()
+                    .map(account_audit_event_to_json)
+                    .collect::<Result<Vec<_>>>()?;
                 return Ok((
                     serde_json::json!({
                         "method": method,
                         "source": "router",
-                        "count": events.len(),
+                        "count": events_json.len(),
                         "clear": clear,
-                        "events": events,
+                        "filter": filter.to_json(),
+                        "events": events_json,
                     }),
                     clear,
                 ));
@@ -9027,8 +9508,7 @@ fn run_unified_account_rpc(
                     anyhow::anyhow!("audit sink is not available for ua_getAuditEvents")
                 })?;
                 let since_seq = param_as_u64(params, "since_seq").unwrap_or(0);
-                let filter = UnifiedAccountAuditQueryFilter::from_rpc_params(params);
-                let (head_seq, events) =
+                let (head_seq, events, next_since_seq, has_more) =
                     load_unified_account_audit_records_for_rpc(sink, since_seq, limit, &filter)?;
                 return Ok((
                     serde_json::json!({
@@ -9039,6 +9519,9 @@ fn run_unified_account_rpc(
                         "since_seq": since_seq,
                         "filter": filter.to_json(),
                         "head_seq": head_seq,
+                        "next_since_seq": next_since_seq,
+                        "has_more": has_more,
+                        "cursor": next_since_seq,
                         "count": events.len(),
                         "events": events,
                     }),
@@ -9258,6 +9741,14 @@ fn run_unified_account_rpc(
                     .as_ref()
                     .map(|hint| hint.fields.hint.tx_type4)
                     .unwrap_or(false);
+            let kyc = resolve_node_kyc_verification(
+                params,
+                &uca_id,
+                chain_id,
+                &external_address,
+                role,
+                nonce,
+            )?;
             let inferred_eth_tx_ir = if is_eth_alias {
                 if is_eth_raw_alias {
                     inferred_eth_tx_type.as_ref().map(|hint| {
@@ -9296,6 +9787,8 @@ fn run_unified_account_rpc(
                 protocol,
                 signature_domain: signature_domain.clone(),
                 nonce,
+                kyc_attestation_provided: kyc.provided,
+                kyc_verified: kyc.verified,
                 wants_cross_chain_atomic,
                 tx_type4,
                 session_expires_at,
@@ -9316,6 +9809,8 @@ fn run_unified_account_rpc(
                     "gas_limit": gas_limit,
                     "tx_type": tx_type,
                     "tx_type4": tx_type4,
+                    "kyc_attestation_provided": kyc.provided,
+                    "kyc_verified": kyc.verified,
                     "tx_ir_type": inferred_eth_tx_ir_type,
                     "tx_ir_data_len": inferred_eth_tx_ir_data_len,
                     "session_expires_at": session_expires_at,

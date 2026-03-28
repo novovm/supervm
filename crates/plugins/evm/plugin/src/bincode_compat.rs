@@ -1,12 +1,10 @@
 use serde::{de::DeserializeOwned, Serialize};
 
-#[allow(dead_code)]
 #[inline]
 pub fn serialize<T: Serialize>(value: &T) -> Result<Vec<u8>, postcard::Error> {
     postcard::to_allocvec(value)
 }
 
-#[allow(dead_code)]
 #[inline]
 pub fn deserialize<T>(bytes: &[u8]) -> Result<T, postcard::Error>
 where
@@ -15,7 +13,6 @@ where
     postcard::from_bytes(bytes)
 }
 
-#[allow(dead_code)]
 #[inline]
 pub fn deserialize_with_remainder<T>(bytes: &[u8]) -> Result<(T, usize), postcard::Error>
 where

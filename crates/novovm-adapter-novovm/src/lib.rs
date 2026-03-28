@@ -403,6 +403,8 @@ impl NovoVmAdapter {
                 protocol: ProtocolKind::Eth,
                 signature_domain: self.unified_account_signature_domain(tx.chain_id),
                 nonce: tx.nonce,
+                kyc_attestation_provided: false,
+                kyc_verified: false,
                 wants_cross_chain_atomic: matches!(
                     tx.tx_type,
                     TxType::CrossChainTransfer | TxType::CrossChainCall

@@ -10,6 +10,7 @@ aes = "0.8"
 postcard = { version = "1", default-features = false, features = ["alloc"] }
 ctr = "0.9"
 dashmap = "6.1"
+ed25519-dalek = { version = "2", features = ["rand_core"] }
 hmac = "0.12"
 k256 = { version = "0.13", features = ["ecdsa", "ecdh", "arithmetic"] }
 novovm-adapter-api = { path = "../../novovm-adapter-api" }

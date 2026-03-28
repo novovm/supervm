@@ -1,7 +1,16 @@
 #![forbid(unsafe_code)]
 
-#[path = "../bincode_compat.rs"]
-mod bincode_compat;
+mod bincode_compat {
+    use serde::de::DeserializeOwned;
+
+    #[inline]
+    pub fn deserialize<T>(bytes: &[u8]) -> Result<T, postcard::Error>
+    where
+        T: DeserializeOwned,
+    {
+        postcard::from_bytes(bytes)
+    }
+}
 
 use anyhow::{bail, Context, Result};
 use novovm_adapter_api::TxIR;

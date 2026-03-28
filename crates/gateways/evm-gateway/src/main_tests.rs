@@ -272,6 +272,8 @@ fn eth_chain_id_and_net_version_accept_chain_params() {
         eth_tx_index_store: &backend,
         eth_default_chain_id: 1,
         spool_dir: &spool_dir,
+        overlay_node_id: "test-overlay".to_string(),
+        overlay_session_id: "test-session".to_string(),
         eth_filters: &mut eth_filters,
     };
 
@@ -381,6 +383,8 @@ fn novovm_surface_map_lists_mainnet_and_evm_plugin_domains() {
         eth_tx_index_store: &backend,
         eth_default_chain_id: 1,
         spool_dir: &spool_dir,
+        overlay_node_id: "test-overlay".to_string(),
+        overlay_session_id: "test-session".to_string(),
         eth_filters: &mut eth_filters,
     };
 
@@ -430,6 +434,8 @@ fn novovm_method_domain_reports_mainnet_vs_evm_plugin() {
         eth_tx_index_store: &backend,
         eth_default_chain_id: 1,
         spool_dir: &spool_dir,
+        overlay_node_id: "test-overlay".to_string(),
+        overlay_session_id: "test-session".to_string(),
         eth_filters: &mut eth_filters,
     };
 
@@ -521,6 +527,8 @@ fn eth_tx_hash_queries_respect_default_chain_scope_unless_overridden() {
         eth_tx_index_store: &backend,
         eth_default_chain_id: 1,
         spool_dir: &spool_dir,
+        overlay_node_id: "test-overlay".to_string(),
+        overlay_session_id: "test-session".to_string(),
         eth_filters: &mut eth_filters,
     };
 
@@ -763,6 +771,8 @@ fn web30_send_transaction_privacy_spools_signed_tx_ir_when_aoem_available() {
         eth_tx_index_store: &GatewayEthTxIndexStoreBackend::Memory,
         eth_default_chain_id: 1,
         spool_dir: &spool_dir,
+        overlay_node_id: "test-overlay".to_string(),
+        overlay_session_id: "test-session".to_string(),
         eth_filters: &mut eth_filters,
     };
     let (response, changed) = run_gateway_method(
@@ -980,6 +990,8 @@ fn evm_settlement_query_methods_hit_in_memory_index() {
         eth_tx_index_store: &backend,
         eth_default_chain_id: 1,
         spool_dir: &spool_dir,
+        overlay_node_id: "test-overlay".to_string(),
+        overlay_session_id: "test-session".to_string(),
         eth_filters: &mut eth_filters,
     };
 
@@ -1089,6 +1101,8 @@ fn evm_replay_settlement_payout_clears_pending_and_updates_status() {
         eth_tx_index_store: &backend,
         eth_default_chain_id: 1,
         spool_dir: &spool_dir,
+        overlay_node_id: "test-overlay".to_string(),
+        overlay_session_id: "test-session".to_string(),
         eth_filters: &mut eth_filters,
     };
     let (replayed, changed) = run_gateway_method(
@@ -1138,6 +1152,8 @@ fn eth_query_block_number_balance_and_block_by_number_work() {
         eth_tx_index_store: &backend,
         eth_default_chain_id: chain_id,
         spool_dir: &spool_dir,
+        overlay_node_id: "test-overlay".to_string(),
+        overlay_session_id: "test-session".to_string(),
         eth_filters: &mut eth_filters,
     };
     let addr_a = vec![0xaau8; 20];
@@ -1360,6 +1376,8 @@ fn eth_block_state_root_matches_get_proof_for_same_block_view() {
         eth_tx_index_store: &backend,
         eth_default_chain_id: 1,
         spool_dir: &spool_dir,
+        overlay_node_id: "test-overlay".to_string(),
+        overlay_session_id: "test-session".to_string(),
         eth_filters: &mut eth_filters,
     };
 
@@ -1480,6 +1498,8 @@ fn eth_query_block_by_hash_tx_by_block_index_and_logs_work() {
         eth_tx_index_store: &backend,
         eth_default_chain_id: 1,
         spool_dir: &spool_dir,
+        overlay_node_id: "test-overlay".to_string(),
+        overlay_session_id: "test-session".to_string(),
         eth_filters: &mut eth_filters,
     };
     let addr_a = vec![0xa1u8; 20];
@@ -2294,6 +2314,8 @@ fn eth_filter_and_txpool_methods_work_with_tx_index_state() {
         eth_tx_index_store: &backend,
         eth_default_chain_id: 1,
         spool_dir: &spool_dir,
+        overlay_node_id: "test-overlay".to_string(),
+        overlay_session_id: "test-session".to_string(),
         eth_filters: &mut eth_filters,
     };
     let addr_a = vec![0xaau8; 20];
@@ -3907,6 +3929,8 @@ fn eth_block_filter_changes_recovers_new_blocks_from_store_when_memory_window_st
         eth_tx_index_store: &backend,
         eth_default_chain_id: chain_id,
         spool_dir: &spool_dir,
+        overlay_node_id: "test-overlay".to_string(),
+        overlay_session_id: "test-session".to_string(),
         eth_filters: &mut eth_filters,
     };
 
@@ -4033,6 +4057,8 @@ fn eth_gas_price_prefers_runtime_then_recent_chain_then_default() {
         eth_tx_index_store: &backend,
         eth_default_chain_id: 1,
         spool_dir: &spool_dir,
+        overlay_node_id: "test-overlay".to_string(),
+        overlay_session_id: "test-session".to_string(),
         eth_filters: &mut eth_filters,
     };
 
@@ -4306,6 +4332,8 @@ fn receipt_and_block_receipts_accept_object_then_scalar_array_params() {
         eth_tx_index_store: &backend,
         eth_default_chain_id: 1,
         spool_dir: &spool_dir,
+        overlay_node_id: "test-overlay".to_string(),
+        overlay_session_id: "test-session".to_string(),
         eth_filters: &mut eth_filters,
     };
 
@@ -4524,6 +4552,8 @@ fn eth_subscribe_logs_accepts_nested_filter_mixed_array_params() {
         eth_tx_index_store: &backend,
         eth_default_chain_id: 1,
         spool_dir: &spool_dir,
+        overlay_node_id: "test-overlay".to_string(),
+        overlay_session_id: "test-session".to_string(),
         eth_filters: &mut eth_filters,
     };
 
@@ -4603,6 +4633,8 @@ fn eth_subscribe_logs_accepts_object_kind_with_nested_filter() {
         eth_tx_index_store: &backend,
         eth_default_chain_id: 1,
         spool_dir: &spool_dir,
+        overlay_node_id: "test-overlay".to_string(),
+        overlay_session_id: "test-session".to_string(),
         eth_filters: &mut eth_filters,
     };
 
@@ -4683,6 +4715,8 @@ fn eth_call_accepts_chain_object_plus_call_object_plus_tag_array() {
         eth_tx_index_store: &backend,
         eth_default_chain_id: 1,
         spool_dir: &spool_dir,
+        overlay_node_id: "test-overlay".to_string(),
+        overlay_session_id: "test-session".to_string(),
         eth_filters: &mut eth_filters,
     };
 
@@ -4765,6 +4799,8 @@ fn eth_fee_history_accepts_chain_object_plus_standard_array_params() {
         eth_tx_index_store: &backend,
         eth_default_chain_id: chain_id,
         spool_dir: &spool_dir,
+        overlay_node_id: "test-overlay".to_string(),
+        overlay_session_id: "test-session".to_string(),
         eth_filters: &mut eth_filters,
     };
 
@@ -4821,6 +4857,8 @@ fn eth_syncing_ignores_chain_scoped_snapshot_fields_without_runtime_sync() {
         eth_tx_index_store: &backend,
         eth_default_chain_id: 1,
         spool_dir: &spool_dir,
+        overlay_node_id: "test-overlay".to_string(),
+        overlay_session_id: "test-session".to_string(),
         eth_filters: &mut eth_filters,
     };
     let sync_env_keys = [
@@ -4935,6 +4973,8 @@ fn eth_syncing_ignores_chain_scoped_env_overrides_without_runtime_sync() {
         eth_tx_index_store: &backend,
         eth_default_chain_id: 1,
         spool_dir: &spool_dir,
+        overlay_node_id: "test-overlay".to_string(),
+        overlay_session_id: "test-session".to_string(),
         eth_filters: &mut eth_filters,
     };
 
@@ -5011,6 +5051,8 @@ fn eth_syncing_prefers_runtime_sync_status_over_env_and_snapshot() {
         eth_tx_index_store: &backend,
         eth_default_chain_id: 1,
         spool_dir: &spool_dir,
+        overlay_node_id: "test-overlay".to_string(),
+        overlay_session_id: "test-session".to_string(),
         eth_filters: &mut eth_filters,
     };
 
@@ -5092,6 +5134,8 @@ fn eth_syncing_runtime_current_is_monotonic_when_local_index_lags() {
         eth_tx_index_store: &backend,
         eth_default_chain_id: 1,
         spool_dir: &spool_dir,
+        overlay_node_id: "test-overlay".to_string(),
+        overlay_session_id: "test-session".to_string(),
         eth_filters: &mut eth_filters,
     };
 
@@ -5197,6 +5241,8 @@ fn eth_block_number_prefers_runtime_current_when_index_lags() {
         eth_tx_index_store: &backend,
         eth_default_chain_id: 1,
         spool_dir: &spool_dir,
+        overlay_node_id: "test-overlay".to_string(),
+        overlay_session_id: "test-session".to_string(),
         eth_filters: &mut eth_filters,
     };
 
@@ -5278,6 +5324,8 @@ fn eth_pending_block_and_receipts_follow_runtime_current_when_index_lags() {
         eth_tx_index_store: &backend,
         eth_default_chain_id: 1,
         spool_dir: &spool_dir,
+        overlay_node_id: "test-overlay".to_string(),
+        overlay_session_id: "test-session".to_string(),
         eth_filters: &mut eth_filters,
     };
 
@@ -5441,6 +5489,8 @@ fn eth_syncing_ignores_chain_scoped_status_path_overrides_without_runtime_sync()
         eth_tx_index_store: &backend,
         eth_default_chain_id: 1,
         spool_dir: &spool_dir,
+        overlay_node_id: "test-overlay".to_string(),
+        overlay_session_id: "test-session".to_string(),
         eth_filters: &mut eth_filters,
     };
     let sync_env_keys = [
@@ -5641,6 +5691,8 @@ fn eth_syncing_ignores_env_and_snapshot_overrides_without_runtime_sync() {
         eth_tx_index_store: &backend,
         eth_default_chain_id: 1,
         spool_dir: &spool_dir,
+        overlay_node_id: "test-overlay".to_string(),
+        overlay_session_id: "test-session".to_string(),
         eth_filters: &mut eth_filters,
     };
 
@@ -5996,6 +6048,8 @@ fn eth_block_number_uses_store_latest_block_when_scan_window_small() {
         eth_tx_index_store: &backend,
         eth_default_chain_id: chain_id,
         spool_dir: &spool_dir,
+        overlay_node_id: "test-overlay".to_string(),
+        overlay_session_id: "test-session".to_string(),
         eth_filters: &mut eth_filters,
     };
 
@@ -6080,6 +6134,8 @@ fn eth_syncing_uses_store_latest_block_when_scan_window_small() {
         eth_tx_index_store: &backend,
         eth_default_chain_id: chain_id,
         spool_dir: &spool_dir,
+        overlay_node_id: "test-overlay".to_string(),
+        overlay_session_id: "test-session".to_string(),
         eth_filters: &mut eth_filters,
     };
 
@@ -6173,6 +6229,8 @@ fn eth_pending_block_queries_return_null_without_runtime_pending_txs() {
         eth_tx_index_store: &backend,
         eth_default_chain_id: chain_id,
         spool_dir: &spool_dir,
+        overlay_node_id: "test-overlay".to_string(),
+        overlay_session_id: "test-session".to_string(),
         eth_filters: &mut eth_filters,
     };
 
@@ -6326,6 +6384,8 @@ fn eth_runtime_pending_tx_by_hash_uses_store_latest_height_when_memory_window_st
         eth_tx_index_store: &backend,
         eth_default_chain_id: chain_id,
         spool_dir: &spool_dir,
+        overlay_node_id: "test-overlay".to_string(),
+        overlay_session_id: "test-session".to_string(),
         eth_filters: &mut eth_filters,
     };
 
@@ -6431,6 +6491,8 @@ fn eth_get_block_receipts_recovers_confirmed_block_from_store_when_scan_window_t
         eth_tx_index_store: &backend,
         eth_default_chain_id: chain_id,
         spool_dir: &spool_dir,
+        overlay_node_id: "test-overlay".to_string(),
+        overlay_session_id: "test-session".to_string(),
         eth_filters: &mut eth_filters,
     };
 
@@ -6548,6 +6610,8 @@ fn eth_fee_history_recovers_block_usage_from_store_when_scan_window_truncated() 
         eth_tx_index_store: &backend,
         eth_default_chain_id: chain_id,
         spool_dir: &spool_dir,
+        overlay_node_id: "test-overlay".to_string(),
+        overlay_session_id: "test-session".to_string(),
         eth_filters: &mut eth_filters,
     };
 
@@ -6650,6 +6714,8 @@ fn eth_block_number_queries_recover_from_store_when_scan_window_truncated() {
         eth_tx_index_store: &backend,
         eth_default_chain_id: chain_id,
         spool_dir: &spool_dir,
+        overlay_node_id: "test-overlay".to_string(),
+        overlay_session_id: "test-session".to_string(),
         eth_filters: &mut eth_filters,
     };
 
@@ -6827,6 +6893,8 @@ fn eth_block_hash_queries_recover_from_store_when_scan_window_truncated() {
         eth_tx_index_store: &backend,
         eth_default_chain_id: chain_id,
         spool_dir: &spool_dir,
+        overlay_node_id: "test-overlay".to_string(),
+        overlay_session_id: "test-session".to_string(),
         eth_filters: &mut eth_filters,
     };
 
@@ -7027,6 +7095,8 @@ fn eth_logs_by_hash_queries_recover_from_store_when_scan_window_truncated() {
         eth_tx_index_store: &backend,
         eth_default_chain_id: chain_id,
         spool_dir: &spool_dir,
+        overlay_node_id: "test-overlay".to_string(),
+        overlay_session_id: "test-session".to_string(),
         eth_filters: &mut eth_filters,
     };
 
@@ -7226,6 +7296,8 @@ fn eth_logs_by_block_range_queries_recover_from_store_when_scan_window_truncated
         eth_tx_index_store: &backend,
         eth_default_chain_id: chain_id,
         spool_dir: &spool_dir,
+        overlay_node_id: "test-overlay".to_string(),
+        overlay_session_id: "test-session".to_string(),
         eth_filters: &mut eth_filters,
     };
 
@@ -7466,6 +7538,8 @@ fn eth_logs_filter_latest_pending_without_runtime_pending_keeps_next_confirmed_b
         eth_tx_index_store: &backend,
         eth_default_chain_id: chain_id,
         spool_dir: &spool_dir,
+        overlay_node_id: "test-overlay".to_string(),
+        overlay_session_id: "test-session".to_string(),
         eth_filters: &mut eth_filters,
     };
 
@@ -7731,6 +7805,8 @@ fn eth_get_code_storage_and_call_read_path_use_tx_index_state() {
         eth_tx_index_store: &backend,
         eth_default_chain_id: 1,
         spool_dir: &spool_dir,
+        overlay_node_id: "test-overlay".to_string(),
+        overlay_session_id: "test-session".to_string(),
         eth_filters: &mut eth_filters,
     };
 
@@ -8392,6 +8468,8 @@ fn evm_verify_proof_matches_eth_get_proof_and_detects_tamper() {
         eth_tx_index_store: &backend,
         eth_default_chain_id: 1,
         spool_dir: &spool_dir,
+        overlay_node_id: "test-overlay".to_string(),
+        overlay_session_id: "test-session".to_string(),
         eth_filters: &mut eth_filters,
     };
 
@@ -8517,6 +8595,8 @@ fn eth_state_read_returns_null_when_historical_block_outside_scan_window() {
         eth_tx_index_store: &backend,
         eth_default_chain_id: 1,
         spool_dir: &spool_dir,
+        overlay_node_id: "test-overlay".to_string(),
+        overlay_session_id: "test-session".to_string(),
         eth_filters: &mut eth_filters,
     };
 
@@ -8606,6 +8686,8 @@ fn eth_estimate_gas_deploy_includes_access_list_intrinsic_cost() {
         eth_tx_index_store: &backend,
         eth_default_chain_id: 1,
         spool_dir: &spool_dir,
+        overlay_node_id: "test-overlay".to_string(),
+        overlay_session_id: "test-session".to_string(),
         eth_filters: &mut eth_filters,
     };
 
@@ -8689,6 +8771,8 @@ fn eth_estimate_gas_type3_includes_blob_intrinsic_cost_when_enabled() {
         eth_tx_index_store: &backend,
         eth_default_chain_id: 1,
         spool_dir: &spool_dir,
+        overlay_node_id: "test-overlay".to_string(),
+        overlay_session_id: "test-session".to_string(),
         eth_filters: &mut eth_filters,
     };
 
@@ -8766,6 +8850,8 @@ fn eth_estimate_gas_contract_call_adds_exec_surcharge_and_respects_gas_cap() {
         eth_tx_index_store: &backend,
         eth_default_chain_id: 1,
         spool_dir: &spool_dir,
+        overlay_node_id: "test-overlay".to_string(),
+        overlay_session_id: "test-session".to_string(),
         eth_filters: &mut eth_filters,
     };
 
@@ -8897,6 +8983,8 @@ fn eth_estimate_gas_rejects_chain_id_mismatch_between_top_level_and_tx() {
         eth_tx_index_store: &backend,
         eth_default_chain_id: 1,
         spool_dir: &spool_dir,
+        overlay_node_id: "test-overlay".to_string(),
+        overlay_session_id: "test-session".to_string(),
         eth_filters: &mut eth_filters,
     };
 
@@ -8945,6 +9033,8 @@ fn eth_estimate_gas_rejects_type2_priority_fee_above_max_fee() {
         eth_tx_index_store: &backend,
         eth_default_chain_id: 1,
         spool_dir: &spool_dir,
+        overlay_node_id: "test-overlay".to_string(),
+        overlay_session_id: "test-session".to_string(),
         eth_filters: &mut eth_filters,
     };
     let from = vec![0x41u8; 20];
@@ -8995,6 +9085,8 @@ fn eth_estimate_gas_rejects_type2_without_max_fee_per_gas() {
         eth_tx_index_store: &backend,
         eth_default_chain_id: 1,
         spool_dir: &spool_dir,
+        overlay_node_id: "test-overlay".to_string(),
+        overlay_session_id: "test-session".to_string(),
         eth_filters: &mut eth_filters,
     };
     let from = vec![0x45u8; 20];
@@ -9045,6 +9137,8 @@ fn eth_estimate_gas_rejects_legacy_type_with_eip1559_fee_fields() {
         eth_tx_index_store: &backend,
         eth_default_chain_id: 1,
         spool_dir: &spool_dir,
+        overlay_node_id: "test-overlay".to_string(),
+        overlay_session_id: "test-session".to_string(),
         eth_filters: &mut eth_filters,
     };
     let from = vec![0x43u8; 20];
@@ -9096,6 +9190,8 @@ fn eth_estimate_gas_rejects_type2_max_fee_below_base_fee() {
         eth_tx_index_store: &backend,
         eth_default_chain_id: 1,
         spool_dir: &spool_dir,
+        overlay_node_id: "test-overlay".to_string(),
+        overlay_session_id: "test-session".to_string(),
         eth_filters: &mut eth_filters,
     };
     let from = vec![0x51u8; 20];
@@ -9153,6 +9249,8 @@ fn eth_estimate_gas_rejects_type2_when_london_not_active() {
         eth_tx_index_store: &backend,
         eth_default_chain_id: 1,
         spool_dir: &spool_dir,
+        overlay_node_id: "test-overlay".to_string(),
+        overlay_session_id: "test-session".to_string(),
         eth_filters: &mut eth_filters,
     };
     let from = vec![0x53u8; 20];
@@ -9202,6 +9300,8 @@ fn eth_get_transaction_count_supports_latest_and_pending_without_forced_binding(
         eth_tx_index_store: &backend,
         eth_default_chain_id: 1,
         spool_dir: &spool_dir,
+        overlay_node_id: "test-overlay".to_string(),
+        overlay_session_id: "test-session".to_string(),
         eth_filters: &mut eth_filters,
     };
 
@@ -9268,6 +9368,8 @@ fn eth_get_transaction_count_supports_latest_and_pending_without_forced_binding(
             protocol: ProtocolKind::Eth,
             signature_domain: "evm:1".to_string(),
             nonce: 0,
+            kyc_attestation_provided: false,
+            kyc_verified: false,
             wants_cross_chain_atomic: false,
             tx_type4: false,
             session_expires_at: None,
@@ -9447,6 +9549,8 @@ fn eth_send_transaction_without_nonce_uses_pending_view_nonce() {
         eth_tx_index_store: &backend,
         eth_default_chain_id: chain_id,
         spool_dir: &spool_dir,
+        overlay_node_id: "test-overlay".to_string(),
+        overlay_session_id: "test-session".to_string(),
         eth_filters: &mut eth_filters,
     };
 
@@ -9474,6 +9578,8 @@ fn eth_send_transaction_without_nonce_uses_pending_view_nonce() {
                 protocol: ProtocolKind::Eth,
                 signature_domain: format!("evm:{chain_id}"),
                 nonce,
+                kyc_attestation_provided: false,
+                kyc_verified: false,
                 wants_cross_chain_atomic: false,
                 tx_type4: false,
                 session_expires_at: None,
@@ -9551,6 +9657,8 @@ fn eth_send_transaction_infers_type2_from_eip1559_fee_fields() {
         eth_tx_index_store: &backend,
         eth_default_chain_id: chain_id,
         spool_dir: &spool_dir,
+        overlay_node_id: "test-overlay".to_string(),
+        overlay_session_id: "test-session".to_string(),
         eth_filters: &mut eth_filters,
     };
 
@@ -9627,6 +9735,8 @@ fn eth_send_transaction_type2_hash_and_index_use_max_fee_per_gas() {
         eth_tx_index_store: &backend,
         eth_default_chain_id: chain_id,
         spool_dir: &spool_dir,
+        overlay_node_id: "test-overlay".to_string(),
+        overlay_session_id: "test-session".to_string(),
         eth_filters: &mut eth_filters,
     };
 
@@ -9727,6 +9837,8 @@ fn eth_send_transaction_rejects_chain_id_mismatch_between_top_level_and_tx() {
         eth_tx_index_store: &backend,
         eth_default_chain_id: chain_id,
         spool_dir: &spool_dir,
+        overlay_node_id: "test-overlay".to_string(),
+        overlay_session_id: "test-session".to_string(),
         eth_filters: &mut eth_filters,
     };
 
@@ -9791,6 +9903,8 @@ fn eth_send_transaction_rejects_signature_sender_mismatch_when_recoverable() {
         eth_tx_index_store: &backend,
         eth_default_chain_id: chain_id,
         spool_dir: &spool_dir,
+        overlay_node_id: "test-overlay".to_string(),
+        overlay_session_id: "test-session".to_string(),
         eth_filters: &mut eth_filters,
     };
 
@@ -9862,6 +9976,8 @@ fn eth_send_transaction_rejects_signature_nonce_mismatch_when_recoverable() {
         eth_tx_index_store: &backend,
         eth_default_chain_id: chain_id,
         spool_dir: &spool_dir,
+        overlay_node_id: "test-overlay".to_string(),
+        overlay_session_id: "test-session".to_string(),
         eth_filters: &mut eth_filters,
     };
 
@@ -9933,6 +10049,8 @@ fn eth_send_transaction_rejects_type2_max_fee_below_base_fee() {
         eth_tx_index_store: &backend,
         eth_default_chain_id: chain_id,
         spool_dir: &spool_dir,
+        overlay_node_id: "test-overlay".to_string(),
+        overlay_session_id: "test-session".to_string(),
         eth_filters: &mut eth_filters,
     };
 
@@ -9999,6 +10117,8 @@ fn eth_send_transaction_rejects_type2_without_max_fee_per_gas() {
         eth_tx_index_store: &backend,
         eth_default_chain_id: chain_id,
         spool_dir: &spool_dir,
+        overlay_node_id: "test-overlay".to_string(),
+        overlay_session_id: "test-session".to_string(),
         eth_filters: &mut eth_filters,
     };
 
@@ -10064,6 +10184,8 @@ fn eth_send_transaction_rejects_type2_priority_fee_above_max_fee() {
         eth_tx_index_store: &backend,
         eth_default_chain_id: chain_id,
         spool_dir: &spool_dir,
+        overlay_node_id: "test-overlay".to_string(),
+        overlay_session_id: "test-session".to_string(),
         eth_filters: &mut eth_filters,
     };
 
@@ -10129,6 +10251,8 @@ fn eth_send_transaction_rejects_type1_with_eip1559_fee_fields() {
         eth_tx_index_store: &backend,
         eth_default_chain_id: chain_id,
         spool_dir: &spool_dir,
+        overlay_node_id: "test-overlay".to_string(),
+        overlay_session_id: "test-session".to_string(),
         eth_filters: &mut eth_filters,
     };
 
@@ -10208,6 +10332,8 @@ fn eth_send_transaction_rejects_type2_when_london_not_active() {
         eth_tx_index_store: &backend,
         eth_default_chain_id: chain_id,
         spool_dir: &spool_dir,
+        overlay_node_id: "test-overlay".to_string(),
+        overlay_session_id: "test-session".to_string(),
         eth_filters: &mut eth_filters,
     };
 
@@ -10282,6 +10408,8 @@ fn eth_send_transaction_rejects_type2_when_london_not_active_with_upper_hex_chai
         eth_tx_index_store: &backend,
         eth_default_chain_id: chain_id,
         spool_dir: &spool_dir,
+        overlay_node_id: "test-overlay".to_string(),
+        overlay_session_id: "test-session".to_string(),
         eth_filters: &mut eth_filters,
     };
 
@@ -10475,6 +10603,8 @@ fn eth_send_transaction_accepts_camel_case_signature_domain_alias() {
         eth_tx_index_store: &backend,
         eth_default_chain_id: chain_id,
         spool_dir: &spool_dir,
+        overlay_node_id: "test-overlay".to_string(),
+        overlay_session_id: "test-session".to_string(),
         eth_filters: &mut eth_filters,
     };
 
@@ -10575,6 +10705,8 @@ fn eth_send_transaction_infers_type1_from_access_list() {
         eth_tx_index_store: &backend,
         eth_default_chain_id: chain_id,
         spool_dir: &spool_dir,
+        overlay_node_id: "test-overlay".to_string(),
+        overlay_session_id: "test-session".to_string(),
         eth_filters: &mut eth_filters,
     };
 
@@ -10656,6 +10788,8 @@ fn eth_send_transaction_rejects_low_gas_when_access_list_intrinsic_not_covered()
         eth_tx_index_store: &backend,
         eth_default_chain_id: chain_id,
         spool_dir: &spool_dir,
+        overlay_node_id: "test-overlay".to_string(),
+        overlay_session_id: "test-session".to_string(),
         eth_filters: &mut eth_filters,
     };
 
@@ -10728,6 +10862,8 @@ fn eth_send_transaction_type3_accepts_blob_fields_when_enabled() {
         eth_tx_index_store: &backend,
         eth_default_chain_id: chain_id,
         spool_dir: &spool_dir,
+        overlay_node_id: "test-overlay".to_string(),
+        overlay_session_id: "test-session".to_string(),
         eth_filters: &mut eth_filters,
     };
 
@@ -10823,6 +10959,8 @@ fn eth_send_transaction_rejects_type3_when_cancun_not_active() {
         eth_tx_index_store: &backend,
         eth_default_chain_id: chain_id,
         spool_dir: &spool_dir,
+        overlay_node_id: "test-overlay".to_string(),
+        overlay_session_id: "test-session".to_string(),
         eth_filters: &mut eth_filters,
     };
 
@@ -10921,6 +11059,8 @@ fn eth_send_transaction_rejects_oversized_initcode_before_amsterdam() {
         eth_tx_index_store: &backend,
         eth_default_chain_id: chain_id,
         spool_dir: &spool_dir,
+        overlay_node_id: "test-overlay".to_string(),
+        overlay_session_id: "test-session".to_string(),
         eth_filters: &mut eth_filters,
     };
 
@@ -10984,6 +11124,8 @@ fn eth_send_raw_transaction_without_uca_id_uses_binding_owner() {
         eth_tx_index_store: &backend,
         eth_default_chain_id: chain_id,
         spool_dir: &spool_dir,
+        overlay_node_id: "test-overlay".to_string(),
+        overlay_session_id: "test-session".to_string(),
         eth_filters: &mut eth_filters,
     };
 
@@ -11070,6 +11212,8 @@ fn eth_send_raw_transaction_rejects_explicit_uca_id_mismatch_with_binding_owner(
         eth_tx_index_store: &backend,
         eth_default_chain_id: chain_id,
         spool_dir: &spool_dir,
+        overlay_node_id: "test-overlay".to_string(),
+        overlay_session_id: "test-session".to_string(),
         eth_filters: &mut eth_filters,
     };
 
@@ -11142,6 +11286,8 @@ fn eth_send_raw_transaction_rejects_chain_id_mismatch_for_chain_id_alias() {
         eth_tx_index_store: &backend,
         eth_default_chain_id: chain_id,
         spool_dir: &spool_dir,
+        overlay_node_id: "test-overlay".to_string(),
+        overlay_session_id: "test-session".to_string(),
         eth_filters: &mut eth_filters,
     };
 
@@ -11215,6 +11361,8 @@ fn eth_send_raw_transaction_rejects_explicit_tx_type_mismatch() {
         eth_tx_index_store: &backend,
         eth_default_chain_id: chain_id,
         spool_dir: &spool_dir,
+        overlay_node_id: "test-overlay".to_string(),
+        overlay_session_id: "test-session".to_string(),
         eth_filters: &mut eth_filters,
     };
 
@@ -11296,6 +11444,8 @@ fn eth_send_raw_transaction_accepts_matching_explicit_tx_type() {
         eth_tx_index_store: &backend,
         eth_default_chain_id: chain_id,
         spool_dir: &spool_dir,
+        overlay_node_id: "test-overlay".to_string(),
+        overlay_session_id: "test-session".to_string(),
         eth_filters: &mut eth_filters,
     };
 
@@ -11380,6 +11530,8 @@ fn eth_send_raw_transaction_rejects_intrinsic_gas_too_low() {
         eth_tx_index_store: &backend,
         eth_default_chain_id: chain_id,
         spool_dir: &spool_dir,
+        overlay_node_id: "test-overlay".to_string(),
+        overlay_session_id: "test-session".to_string(),
         eth_filters: &mut eth_filters,
     };
 
@@ -11458,6 +11610,8 @@ fn eth_send_raw_transaction_rejects_type2_max_fee_below_base_fee() {
         eth_tx_index_store: &backend,
         eth_default_chain_id: chain_id,
         spool_dir: &spool_dir,
+        overlay_node_id: "test-overlay".to_string(),
+        overlay_session_id: "test-session".to_string(),
         eth_filters: &mut eth_filters,
     };
 
@@ -11534,6 +11688,8 @@ fn eth_send_raw_transaction_rejects_type2_priority_fee_above_max_fee() {
         eth_tx_index_store: &backend,
         eth_default_chain_id: chain_id,
         spool_dir: &spool_dir,
+        overlay_node_id: "test-overlay".to_string(),
+        overlay_session_id: "test-session".to_string(),
         eth_filters: &mut eth_filters,
     };
 
@@ -11617,6 +11773,8 @@ fn eth_send_raw_transaction_rejects_type2_when_write_path_disabled() {
         eth_tx_index_store: &backend,
         eth_default_chain_id: chain_id,
         spool_dir: &spool_dir,
+        overlay_node_id: "test-overlay".to_string(),
+        overlay_session_id: "test-session".to_string(),
         eth_filters: &mut eth_filters,
     };
 
@@ -11703,6 +11861,8 @@ fn eth_send_raw_transaction_rejects_type2_when_london_not_active() {
         eth_tx_index_store: &backend,
         eth_default_chain_id: chain_id,
         spool_dir: &spool_dir,
+        overlay_node_id: "test-overlay".to_string(),
+        overlay_session_id: "test-session".to_string(),
         eth_filters: &mut eth_filters,
     };
 
@@ -11791,6 +11951,8 @@ fn eth_send_raw_transaction_rejects_type3_when_cancun_not_active() {
         eth_tx_index_store: &backend,
         eth_default_chain_id: chain_id,
         spool_dir: &spool_dir,
+        overlay_node_id: "test-overlay".to_string(),
+        overlay_session_id: "test-session".to_string(),
         eth_filters: &mut eth_filters,
     };
 
@@ -11891,6 +12053,8 @@ fn evm_replay_atomic_ready_clears_pending_and_updates_status() {
         eth_tx_index_store: &backend,
         eth_default_chain_id: 1,
         spool_dir: &spool_dir,
+        overlay_node_id: "test-overlay".to_string(),
+        overlay_session_id: "test-session".to_string(),
         eth_filters: &mut eth_filters,
     };
     let (replayed, changed) = run_gateway_method(
@@ -11972,6 +12136,8 @@ fn evm_queue_and_mark_atomic_broadcast_updates_status() {
         eth_tx_index_store: &backend,
         eth_default_chain_id: 1,
         spool_dir: &spool_dir,
+        overlay_node_id: "test-overlay".to_string(),
+        overlay_session_id: "test-session".to_string(),
         eth_filters: &mut eth_filters,
     };
     let (queued, changed) = run_gateway_method(
@@ -12099,6 +12265,8 @@ fn evm_mark_failed_and_replay_atomic_broadcast_queue_updates_status() {
         eth_tx_index_store: &backend,
         eth_default_chain_id: 1,
         spool_dir: &spool_dir,
+        overlay_node_id: "test-overlay".to_string(),
+        overlay_session_id: "test-session".to_string(),
         eth_filters: &mut eth_filters,
     };
 
@@ -12242,6 +12410,8 @@ fn evm_execute_atomic_broadcast_native_forced_succeeds() {
         eth_tx_index_store: &backend,
         eth_default_chain_id: 1,
         spool_dir: &spool_dir,
+        overlay_node_id: "test-overlay".to_string(),
+        overlay_session_id: "test-session".to_string(),
         eth_filters: &mut eth_filters,
     };
     let (executed, changed) = run_gateway_method(
@@ -12346,6 +12516,8 @@ fn evm_execute_pending_atomic_broadcasts_native_forced_succeeds() {
         eth_tx_index_store: &backend,
         eth_default_chain_id: 1,
         spool_dir: &spool_dir,
+        overlay_node_id: "test-overlay".to_string(),
+        overlay_session_id: "test-session".to_string(),
         eth_filters: &mut eth_filters,
     };
     let (result, changed) = run_gateway_method(
@@ -13051,6 +13223,8 @@ fn evm_get_tx_submit_status_uses_persisted_failure_status_when_tx_missing() {
         eth_tx_index_store: &backend,
         eth_default_chain_id: 1,
         spool_dir: &spool_dir,
+        overlay_node_id: "test-overlay".to_string(),
+        overlay_session_id: "test-session".to_string(),
         eth_filters: &mut eth_filters,
     };
     let (status, changed) = run_gateway_method(
@@ -13124,6 +13298,8 @@ fn evm_get_tx_submit_status_uses_persisted_success_status_when_tx_missing() {
         eth_tx_index_store: &backend,
         eth_default_chain_id: 1,
         spool_dir: &spool_dir,
+        overlay_node_id: "test-overlay".to_string(),
+        overlay_session_id: "test-session".to_string(),
         eth_filters: &mut eth_filters,
     };
     let (status, changed) = run_gateway_method(
@@ -13194,6 +13370,8 @@ fn evm_get_tx_submit_status_uses_persisted_onchain_failed_status_when_tx_missing
         eth_tx_index_store: &backend,
         eth_default_chain_id: 1,
         spool_dir: &spool_dir,
+        overlay_node_id: "test-overlay".to_string(),
+        overlay_session_id: "test-session".to_string(),
         eth_filters: &mut eth_filters,
     };
     let (status, changed) = run_gateway_method(
@@ -13904,6 +14082,8 @@ fn eth_fee_endpoints_use_chain_scoped_fee_overrides() {
         eth_tx_index_store: &backend,
         eth_default_chain_id: 1,
         spool_dir: &spool_dir,
+        overlay_node_id: "test-overlay".to_string(),
+        overlay_session_id: "test-session".to_string(),
         eth_filters: &mut eth_filters,
     };
 

@@ -1229,6 +1229,7 @@ dependencies = [
  "anyhow",
  "ctr",
  "dashmap",
+ "ed25519-dalek",
  "hmac",
  "k256",
  "novovm-adapter-api",

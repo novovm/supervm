@@ -51,6 +51,7 @@ const UA_PLUGIN_STORE_KEY_V1: &[u8] = b"ua_plugin:store:router:v1";
 const UA_PLUGIN_AUDIT_HEAD_KEY_V1: &[u8] = b"ua_plugin:audit:head:v1";
 const UA_PLUGIN_AUDIT_SEQ_KEY_PREFIX_V1: &str = "ua_plugin:audit:seq:v1:";
 const UA_PLUGIN_ARTIFACTS_SUBDIR: &str = "artifacts/migration/unifiedaccount";
+const UA_PLUGIN_ALLOW_NON_PROD_BACKEND_ENV: &str = "NOVOVM_ALLOW_NON_PROD_PLUGIN_BACKEND";
 const MAX_PLUGIN_TX_IR_BYTES: usize = 16 * 1024 * 1024;
 const MAX_PLUGIN_TX_COUNT: usize = 100_000;
 const DEFAULT_INGRESS_QUEUE_MAX: usize = 4096;
@@ -2066,21 +2067,76 @@ fn default_plugin_audit_path(backend: UaPluginAuditBackend) -> PathBuf {
     }
 }
 
+fn ua_plugin_allow_non_prod_backend() -> bool {
+    std::env::var(UA_PLUGIN_ALLOW_NON_PROD_BACKEND_ENV)
+        .ok()
+        .map(|raw| raw.trim().to_ascii_lowercase())
+        .map(|raw| matches!(raw.as_str(), "1" | "true" | "yes" | "on"))
+        .unwrap_or(false)
+}
+
 fn parse_store_backend(raw: &str) -> UaPluginStoreBackend {
-    match raw.trim().to_ascii_lowercase().as_str() {
-        "memory" | "" => UaPluginStoreBackend::Memory,
-        "bincode_file" | "bincode" | "file" => UaPluginStoreBackend::BincodeFile,
-        "rocksdb" => UaPluginStoreBackend::Rocksdb,
-        _ => UaPluginStoreBackend::Memory,
+    let allow_non_prod = ua_plugin_allow_non_prod_backend();
+    let normalized = raw.trim().to_ascii_lowercase();
+    match normalized.as_str() {
+        "" | "rocksdb" => UaPluginStoreBackend::Rocksdb,
+        "memory" => {
+            if allow_non_prod {
+                UaPluginStoreBackend::Memory
+            } else {
+                panic!(
+                    "NOVOVM_ADAPTER_PLUGIN_UA_STORE_BACKEND=memory is non-production; set {}=1 for explicit override",
+                    UA_PLUGIN_ALLOW_NON_PROD_BACKEND_ENV
+                )
+            }
+        }
+        "bincode_file" | "bincode" | "file" => {
+            if allow_non_prod {
+                UaPluginStoreBackend::BincodeFile
+            } else {
+                panic!(
+                    "NOVOVM_ADAPTER_PLUGIN_UA_STORE_BACKEND={} is non-production; set {}=1 for explicit override",
+                    normalized,
+                    UA_PLUGIN_ALLOW_NON_PROD_BACKEND_ENV
+                )
+            }
+        }
+        _ => panic!(
+            "invalid NOVOVM_ADAPTER_PLUGIN_UA_STORE_BACKEND={}; valid: rocksdb|memory|bincode_file|bincode|file",
+            normalized
+        ),
     }
 }
 
 fn parse_audit_backend(raw: &str) -> UaPluginAuditBackend {
-    match raw.trim().to_ascii_lowercase().as_str() {
-        "none" | "" => UaPluginAuditBackend::None,
-        "jsonl" => UaPluginAuditBackend::Jsonl,
-        "rocksdb" => UaPluginAuditBackend::Rocksdb,
-        _ => UaPluginAuditBackend::None,
+    let allow_non_prod = ua_plugin_allow_non_prod_backend();
+    let normalized = raw.trim().to_ascii_lowercase();
+    match normalized.as_str() {
+        "" | "rocksdb" => UaPluginAuditBackend::Rocksdb,
+        "none" => {
+            if allow_non_prod {
+                UaPluginAuditBackend::None
+            } else {
+                panic!(
+                    "NOVOVM_ADAPTER_PLUGIN_UA_AUDIT_BACKEND=none is non-production; set {}=1 for explicit override",
+                    UA_PLUGIN_ALLOW_NON_PROD_BACKEND_ENV
+                )
+            }
+        }
+        "jsonl" => {
+            if allow_non_prod {
+                UaPluginAuditBackend::Jsonl
+            } else {
+                panic!(
+                    "NOVOVM_ADAPTER_PLUGIN_UA_AUDIT_BACKEND=jsonl is non-production; set {}=1 for explicit override",
+                    UA_PLUGIN_ALLOW_NON_PROD_BACKEND_ENV
+                )
+            }
+        }
+        _ => panic!(
+            "invalid NOVOVM_ADAPTER_PLUGIN_UA_AUDIT_BACKEND={}; valid: rocksdb|none|jsonl",
+            normalized
+        ),
     }
 }
 
@@ -2088,7 +2144,7 @@ fn resolve_ua_plugin_standalone_config() -> &'static UaPluginStandaloneConfig {
     UA_PLUGIN_STANDALONE_CONFIG.get_or_init(|| {
         let store_backend = parse_store_backend(
             &std::env::var("NOVOVM_ADAPTER_PLUGIN_UA_STORE_BACKEND")
-                .unwrap_or_else(|_| "memory".to_string()),
+                .unwrap_or_else(|_| "rocksdb".to_string()),
         );
         let store_path = std::env::var("NOVOVM_ADAPTER_PLUGIN_UA_STORE_PATH")
             .ok()
@@ -2099,7 +2155,7 @@ fn resolve_ua_plugin_standalone_config() -> &'static UaPluginStandaloneConfig {
 
         let audit_backend = parse_audit_backend(
             &std::env::var("NOVOVM_ADAPTER_PLUGIN_UA_AUDIT_BACKEND")
-                .unwrap_or_else(|_| "none".to_string()),
+                .unwrap_or_else(|_| "rocksdb".to_string()),
         );
         let audit_path = std::env::var("NOVOVM_ADAPTER_PLUGIN_UA_AUDIT_PATH")
             .ok()
@@ -2430,6 +2486,8 @@ fn route_txs_via_plugin_ua_self_guard(chain_id: u64, txs: &[TxIR]) -> anyhow::Re
             protocol: ProtocolKind::Eth,
             signature_domain: format!("evm:{}", chain_id),
             nonce: tx.nonce,
+            kyc_attestation_provided: false,
+            kyc_verified: false,
             wants_cross_chain_atomic: false,
             tx_type4: false,
             session_expires_at: None,

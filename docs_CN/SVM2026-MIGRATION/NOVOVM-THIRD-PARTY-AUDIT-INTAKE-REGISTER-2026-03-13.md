@@ -18,7 +18,7 @@
 - 包路径：
   - `artifacts/migration/week1-2026-03-13/third-party-audit-handoff-pack-2026-03-13-1342.tar.gz`
 - SHA256：
-  - `634d01b3678387b96f8cb22dec75fe1ef4fba6db855962fc848a2f2cc949bdc2`
+- `f4493626df0dffac943d898ed79bac9af144fca1f17c163fba207565ae945ceb`
 - SHA256 文件：
   - `artifacts/migration/week1-2026-03-13/third-party-audit-handoff-pack-2026-03-13-1342.tar.gz.sha256.txt`
 - Manifest：
