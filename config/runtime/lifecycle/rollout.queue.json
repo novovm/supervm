@@ -1,0 +1,49 @@
+{
+  "max_concurrent_plans": 2,
+  "poll_seconds": 2,
+  "dispatch_pause_seconds": 1,
+  "plans": [
+    {
+      "name": "cn-main-rollout",
+      "enabled": true,
+      "region": "CN",
+      "region_window": "01:00-04:00 UTC",
+      "action": "upgrade",
+      "plan_file": "config/runtime/lifecycle/rollout.plan.json",
+      "target_version": "v2026.04.04",
+      "controller_id": "ops-main",
+      "operation_id": "cn-rollout-2026-04-04-a",
+      "audit_file": "artifacts/runtime/rollout/cn-audit.jsonl",
+      "upgrade_health_seconds": 12,
+      "default_max_failures": 0,
+      "pause_seconds_between_nodes": 3,
+      "auto_rollback_on_failure": true,
+      "continue_on_failure": false,
+      "ignore_upgrade_window": false,
+      "default_transport": "local",
+      "ssh_binary": "ssh",
+      "remote_timeout_seconds": 30
+    },
+    {
+      "name": "eu-main-rollout-example",
+      "enabled": false,
+      "region": "EU",
+      "region_window": "05:00-08:00 UTC",
+      "action": "upgrade",
+      "plan_file": "config/runtime/lifecycle/rollout.plan.json",
+      "target_version": "v2026.04.04",
+      "controller_id": "ops-main",
+      "operation_id": "eu-rollout-2026-04-04-a",
+      "audit_file": "artifacts/runtime/rollout/eu-audit.jsonl",
+      "upgrade_health_seconds": 12,
+      "default_max_failures": 1,
+      "pause_seconds_between_nodes": 3,
+      "auto_rollback_on_failure": true,
+      "continue_on_failure": true,
+      "ignore_upgrade_window": false,
+      "default_transport": "ssh",
+      "ssh_binary": "ssh",
+      "remote_timeout_seconds": 30
+    }
+  ]
+}

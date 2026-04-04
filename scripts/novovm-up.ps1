@@ -43,6 +43,8 @@ param(
     [int]$IdleExitSeconds = 0,
     [ValidateRange(0, 4294967295)]
     [uint32]$GatewayMaxRequests = 0,
+    [string]$GatewayBinaryPath = "",
+    [string]$NodeBinaryPath = "",
     [switch]$Force
 )
 
@@ -128,7 +130,9 @@ function Invoke-PipelineOnce {
         [int]$SupervisorPollMsValue,
         [int]$NodeWatchBatchMaxFilesValue,
         [int]$IdleExitSecondsValue,
-        [uint32]$GatewayMaxRequestsValue
+        [uint32]$GatewayMaxRequestsValue,
+        [string]$GatewayBinaryPathValue,
+        [string]$NodeBinaryPathValue
     )
     $invokeArgs = @{}
     if ($NoGatewayMode) {
@@ -159,6 +163,12 @@ function Invoke-PipelineOnce {
     $invokeArgs["NodeWatchBatchMaxFiles"] = $NodeWatchBatchMaxFilesValue
     $invokeArgs["IdleExitSeconds"] = $IdleExitSecondsValue
     $invokeArgs["GatewayMaxRequests"] = $GatewayMaxRequestsValue
+    if (-not [string]::IsNullOrWhiteSpace($GatewayBinaryPathValue)) {
+        $invokeArgs["GatewayBinaryPath"] = $GatewayBinaryPathValue
+    }
+    if (-not [string]::IsNullOrWhiteSpace($NodeBinaryPathValue)) {
+        $invokeArgs["NodeBinaryPath"] = $NodeBinaryPathValue
+    }
     & $PipelineScriptPath @invokeArgs
 }
 
@@ -271,7 +281,7 @@ Write-Host ("novovm_up_profile: profile={0} role={1} no_gateway={2} daemon={3} u
 Write-Host ("novovm_up_reconcile_embedded: enabled={0} sender={1} endpoint={2} interval_sec={3} replay_max={4} replay_cooldown_sec={5}" -f [bool]$effectiveEnableReconcileDaemon, $ReconcileSenderAddress, $ReconcileRpcEndpoint, $ReconcileIntervalSeconds, $ReconcileReplayMaxPerPayout, $ReconcileReplayCooldownSec)
 
 if (-not $Daemon) {
-    Invoke-PipelineOnce -PipelineScriptPath $pipelineScript -NoGatewayMode:$effectiveNoGateway -SkipBuildMode:$effectiveSkipBuild -UseNodeWatchModeFlag:$effectiveUseNodeWatchMode -LeanIoFlag:$effectiveLeanIo -EnableReconcileDaemonFlag:$effectiveEnableReconcileDaemon -ReconcileSenderAddressValue $ReconcileSenderAddress -ReconcileRpcEndpointValue $ReconcileRpcEndpoint -ReconcileIntervalSecondsValue $ReconcileIntervalSeconds -ReconcileRestartDelaySecondsValue $ReconcileRestartDelaySeconds -ReconcileReplayMaxPerPayoutValue $ReconcileReplayMaxPerPayout -ReconcileReplayCooldownSecValue $ReconcileReplayCooldownSec -BindValue $GatewayBind -SpoolDirValue $SpoolDir -PollMsValue $PollMs -SupervisorPollMsValue $SupervisorPollMs -NodeWatchBatchMaxFilesValue $NodeWatchBatchMaxFiles -IdleExitSecondsValue $IdleExitSeconds -GatewayMaxRequestsValue $GatewayMaxRequests
+    Invoke-PipelineOnce -PipelineScriptPath $pipelineScript -NoGatewayMode:$effectiveNoGateway -SkipBuildMode:$effectiveSkipBuild -UseNodeWatchModeFlag:$effectiveUseNodeWatchMode -LeanIoFlag:$effectiveLeanIo -EnableReconcileDaemonFlag:$effectiveEnableReconcileDaemon -ReconcileSenderAddressValue $ReconcileSenderAddress -ReconcileRpcEndpointValue $ReconcileRpcEndpoint -ReconcileIntervalSecondsValue $ReconcileIntervalSeconds -ReconcileRestartDelaySecondsValue $ReconcileRestartDelaySeconds -ReconcileReplayMaxPerPayoutValue $ReconcileReplayMaxPerPayout -ReconcileReplayCooldownSecValue $ReconcileReplayCooldownSec -BindValue $GatewayBind -SpoolDirValue $SpoolDir -PollMsValue $PollMs -SupervisorPollMsValue $SupervisorPollMs -NodeWatchBatchMaxFilesValue $NodeWatchBatchMaxFiles -IdleExitSecondsValue $IdleExitSeconds -GatewayMaxRequestsValue $GatewayMaxRequests -GatewayBinaryPathValue $GatewayBinaryPath -NodeBinaryPathValue $NodeBinaryPath
     exit 0
 }
 
@@ -280,7 +290,7 @@ while ($true) {
     Write-Host ("novovm_up_daemon_cycle_in: profile={0} role={1} no_gateway={2} skip_build={3} use_node_watch_mode={4} lean_io={5} restart_count={6}" -f $Profile, $RoleProfile, [bool]$effectiveNoGateway, [bool]$effectiveSkipBuild, [bool]$effectiveUseNodeWatchMode, [bool]$effectiveLeanIo, $restartCount)
     $ok = $true
     try {
-        Invoke-PipelineOnce -PipelineScriptPath $pipelineScript -NoGatewayMode:$effectiveNoGateway -SkipBuildMode:$effectiveSkipBuild -UseNodeWatchModeFlag:$effectiveUseNodeWatchMode -LeanIoFlag:$effectiveLeanIo -EnableReconcileDaemonFlag:$effectiveEnableReconcileDaemon -ReconcileSenderAddressValue $ReconcileSenderAddress -ReconcileRpcEndpointValue $ReconcileRpcEndpoint -ReconcileIntervalSecondsValue $ReconcileIntervalSeconds -ReconcileRestartDelaySecondsValue $ReconcileRestartDelaySeconds -ReconcileReplayMaxPerPayoutValue $ReconcileReplayMaxPerPayout -ReconcileReplayCooldownSecValue $ReconcileReplayCooldownSec -BindValue $GatewayBind -SpoolDirValue $SpoolDir -PollMsValue $PollMs -SupervisorPollMsValue $SupervisorPollMs -NodeWatchBatchMaxFilesValue $NodeWatchBatchMaxFiles -IdleExitSecondsValue $IdleExitSeconds -GatewayMaxRequestsValue $GatewayMaxRequests
+        Invoke-PipelineOnce -PipelineScriptPath $pipelineScript -NoGatewayMode:$effectiveNoGateway -SkipBuildMode:$effectiveSkipBuild -UseNodeWatchModeFlag:$effectiveUseNodeWatchMode -LeanIoFlag:$effectiveLeanIo -EnableReconcileDaemonFlag:$effectiveEnableReconcileDaemon -ReconcileSenderAddressValue $ReconcileSenderAddress -ReconcileRpcEndpointValue $ReconcileRpcEndpoint -ReconcileIntervalSecondsValue $ReconcileIntervalSeconds -ReconcileRestartDelaySecondsValue $ReconcileRestartDelaySeconds -ReconcileReplayMaxPerPayoutValue $ReconcileReplayMaxPerPayout -ReconcileReplayCooldownSecValue $ReconcileReplayCooldownSec -BindValue $GatewayBind -SpoolDirValue $SpoolDir -PollMsValue $PollMs -SupervisorPollMsValue $SupervisorPollMs -NodeWatchBatchMaxFilesValue $NodeWatchBatchMaxFiles -IdleExitSecondsValue $IdleExitSeconds -GatewayMaxRequestsValue $GatewayMaxRequests -GatewayBinaryPathValue $GatewayBinaryPath -NodeBinaryPathValue $NodeBinaryPath
     } catch {
         $ok = $false
         Write-Host ("novovm_up_daemon_cycle_err: {0}" -f $_.Exception.Message)

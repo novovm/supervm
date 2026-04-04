@@ -1,0 +1,71 @@
+{
+  "controllers": {
+    "allowed_ids": [
+      "local-controller",
+      "ops-main"
+    ]
+  },
+  "group_order": [
+    "canary",
+    "stable"
+  ],
+  "groups": [
+    {
+      "name": "canary",
+      "max_failures": 0
+    },
+    {
+      "name": "stable",
+      "max_failures": 1
+    }
+  ],
+  "nodes": [
+    {
+      "name": "node-canary-1",
+      "repo_root": "D:/WEB3_AI/SUPERVM",
+      "transport": "local",
+      "enabled": true,
+      "node_group": "canary",
+      "upgrade_window": "02:00-04:00 UTC"
+    },
+    {
+      "name": "node-stable-1",
+      "repo_root": "D:/WEB3_AI/SUPERVM",
+      "transport": "local",
+      "enabled": true,
+      "node_group": "stable",
+      "upgrade_window": "04:00-08:00 UTC"
+    },
+    {
+      "name": "node-ssh-example",
+      "repo_root": "/opt/supervm",
+      "remote_repo_root": "/opt/supervm",
+      "transport": "ssh",
+      "remote_host": "10.0.0.11",
+      "remote_user": "novovm",
+      "remote_port": 22,
+      "remote_shell": "pwsh",
+      "ssh_identity_file": "C:/Users/ops/.ssh/id_ed25519",
+      "ssh_known_hosts_file": "C:/Users/ops/.ssh/known_hosts",
+      "ssh_strict_host_key": "accept-new",
+      "enabled": false,
+      "node_group": "canary",
+      "upgrade_window": "02:00-04:00 UTC"
+    },
+    {
+      "name": "node-winrm-example",
+      "repo_root": "D:/WEB3_AI/SUPERVM",
+      "remote_repo_root": "D:/WEB3_AI/SUPERVM",
+      "transport": "winrm",
+      "remote_host": "10.0.0.21",
+      "winrm_use_ssl": false,
+      "winrm_port": 5985,
+      "winrm_auth": "Negotiate",
+      "winrm_cred_user_env": "NOVOVM_WINRM_USER",
+      "winrm_cred_pass_env": "NOVOVM_WINRM_PASS",
+      "enabled": false,
+      "node_group": "stable",
+      "upgrade_window": "04:00-08:00 UTC"
+    }
+  ]
+}

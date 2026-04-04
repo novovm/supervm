@@ -265,7 +265,8 @@ fn list_ops_wire_files_for_watch(dir: &Path, max_files: usize) -> Result<Vec<Pat
 }
 
 fn move_file_to_dir(src: &Path, dir: &Path) -> Result<PathBuf> {
-    fs::create_dir_all(dir).with_context(|| format!("create directory failed: {}", dir.display()))?;
+    fs::create_dir_all(dir)
+        .with_context(|| format!("create directory failed: {}", dir.display()))?;
     let base_name = src
         .file_name()
         .map(|v| v.to_string_lossy().to_string())
@@ -345,8 +346,9 @@ fn finalize_success_file(path: &Path, done_dir: Option<&Path>) -> Result<()> {
     if let Some(dir) = done_dir {
         move_file_to_dir(path, dir)?;
     } else {
-        fs::remove_file(path)
-            .with_context(|| format!("remove processed ops wire file failed: {}", path.display()))?;
+        fs::remove_file(path).with_context(|| {
+            format!("remove processed ops wire file failed: {}", path.display())
+        })?;
     }
     Ok(())
 }
@@ -539,20 +541,18 @@ fn main() -> Result<()> {
         bail!("NOVOVM_TX_REPEAT_COUNT must be 1 when NOVOVM_OPS_WIRE_DIR is used");
     }
     let watch_mode = bool_env("NOVOVM_OPS_WIRE_WATCH");
-    let l1l4_anchor_file_path =
-        string_env_nonempty("NOVOVM_L1L4_ANCHOR_PATH").map(PathBuf::from);
+    let l1l4_anchor_file_path = string_env_nonempty("NOVOVM_L1L4_ANCHOR_PATH").map(PathBuf::from);
     let l1l4_anchor_ledger_enabled = bool_env("NOVOVM_L1L4_ANCHOR_LEDGER_ENABLED");
-    let l1l4_anchor_ledger_key_prefix =
-        string_env_nonempty("NOVOVM_L1L4_ANCHOR_LEDGER_KEY_PREFIX")
-            .unwrap_or_else(|| "ledger:l1:l1l4_anchor:v1:".to_string())
-            .into_bytes();
+    let l1l4_anchor_ledger_key_prefix = string_env_nonempty("NOVOVM_L1L4_ANCHOR_LEDGER_KEY_PREFIX")
+        .unwrap_or_else(|| "ledger:l1:l1l4_anchor:v1:".to_string())
+        .into_bytes();
     let l1l4_anchor_any_sink = l1l4_anchor_file_path.is_some() || l1l4_anchor_ledger_enabled;
     let node_id = string_env_nonempty("NOVOVM_NODE_ID")
         .or_else(|| string_env_nonempty("HOSTNAME"))
         .or_else(|| string_env_nonempty("COMPUTERNAME"))
         .unwrap_or_else(|| "local".to_string());
-    let overlay_node_id = string_env_nonempty("NOVOVM_OVERLAY_NODE_ID")
-        .unwrap_or_else(|| node_id.clone());
+    let overlay_node_id =
+        string_env_nonempty("NOVOVM_OVERLAY_NODE_ID").unwrap_or_else(|| node_id.clone());
     let overlay_session_id = string_env_nonempty("NOVOVM_OVERLAY_SESSION_ID")
         .unwrap_or_else(|| format!("sess-{}-{}", now_unix_ms(), std::process::id()));
     let mut anchor_seq: u64 = 0;
@@ -696,8 +696,10 @@ fn main() -> Result<()> {
                     append_l1l4_anchor_record(anchor_path, &anchor_record)?;
                 }
                 if l1l4_anchor_ledger_enabled {
-                    let wire =
-                        encode_l1l4_anchor_ledger_wire(&anchor_record, &l1l4_anchor_ledger_key_prefix)?;
+                    let wire = encode_l1l4_anchor_ledger_wire(
+                        &anchor_record,
+                        &l1l4_anchor_ledger_key_prefix,
+                    )?;
                     let report = session.submit_ops_wire_report(&wire);
                     if !report.ok {
                         let err = report
@@ -791,7 +793,8 @@ fn main() -> Result<()> {
             append_l1l4_anchor_record(anchor_path, &anchor_record)?;
         }
         if l1l4_anchor_ledger_enabled {
-            let wire = encode_l1l4_anchor_ledger_wire(&anchor_record, &l1l4_anchor_ledger_key_prefix)?;
+            let wire =
+                encode_l1l4_anchor_ledger_wire(&anchor_record, &l1l4_anchor_ledger_key_prefix)?;
             let report = session.submit_ops_wire_report(&wire);
             if !report.ok {
                 let err = report

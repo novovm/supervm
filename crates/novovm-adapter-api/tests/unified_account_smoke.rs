@@ -1,8 +1,8 @@
 use anyhow::Result;
 use novovm_adapter_api::{
-    AccountAction, AccountAuditEvent, AccountPolicy, AccountRole, NonceScope, PersonaAddress,
-    PersonaType, ProtocolKind, RouteDecision, RouteRequest, Type4PolicyMode, KycPolicyMode, UnifiedAccountError,
-    UnifiedAccountRouter,
+    AccountAction, AccountAuditEvent, AccountPolicy, AccountRole, KycPolicyMode, NonceScope,
+    PersonaAddress, PersonaType, ProtocolKind, RouteDecision, RouteRequest, Type4PolicyMode,
+    UnifiedAccountError, UnifiedAccountRouter,
 };
 
 fn evm_persona(chain_id: u64, seed: u8) -> PersonaAddress {

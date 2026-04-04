@@ -5,9 +5,9 @@ use ed25519_dalek::{Signature as Ed25519Signature, Verifier, VerifyingKey};
 mod bincode_compat;
 use novovm_adapter_api::{
     AccountPolicy, AccountRole, AtomicBroadcastReadyV1, AtomicIntentReceiptV1, AtomicIntentStatus,
-    EvmFeePayoutInstructionV1, EvmFeeSettlementRecordV1, EvmMempoolIngressFrameV1, NonceScope,
-    PersonaAddress, PersonaType, ProtocolKind, RouteDecision, RouteRequest, SerializationFormat,
-    TxIR, TxType, Type4PolicyMode, KycPolicyMode, UnifiedAccountRouter,
+    EvmFeePayoutInstructionV1, EvmFeeSettlementRecordV1, EvmMempoolIngressFrameV1, KycPolicyMode,
+    NonceScope, PersonaAddress, PersonaType, ProtocolKind, RouteDecision, RouteRequest,
+    SerializationFormat, TxIR, TxType, Type4PolicyMode, UnifiedAccountRouter,
 };
 #[cfg(test)]
 use novovm_adapter_evm_core::{
@@ -982,8 +982,7 @@ fn gateway_reconcile_rpc_call(
         "params": params,
     });
     let response = ureq::post(&cfg.rpc_endpoint)
-        .timeout_connect(timeout)
-        .timeout_read(timeout)
+        .timeout(timeout)
         .send_json(payload)
         .with_context(|| {
             format!(
@@ -1147,18 +1146,15 @@ fn run_gateway_embedded_reconcile_cycle(
                 reward_units = dispatch.reward_units;
             }
         }
-        let entry = state
-            .payouts
-            .entry(payout_id.clone())
-            .or_insert_with(|| {
-                GatewayReconcilePayoutStateEntry::new(
-                    &payout_id,
-                    &voucher_id,
-                    &node_id,
-                    &payout_account,
-                    reward_units,
-                )
-            });
+        let entry = state.payouts.entry(payout_id.clone()).or_insert_with(|| {
+            GatewayReconcilePayoutStateEntry::new(
+                &payout_id,
+                &voucher_id,
+                &node_id,
+                &payout_account,
+                reward_units,
+            )
+        });
         if !voucher_id.is_empty() {
             entry.voucher_id = voucher_id;
         }
@@ -1210,11 +1206,8 @@ fn run_gateway_embedded_reconcile_cycle(
             .and_then(gateway_reconcile_normalize_tx_hash);
         let mut confirmed = false;
         if let Some(tx_hash) = normalized_tx_hash.as_ref() {
-            match gateway_reconcile_rpc_call(
-                cfg,
-                &cfg.confirm_method,
-                serde_json::json!([tx_hash]),
-            ) {
+            match gateway_reconcile_rpc_call(cfg, &cfg.confirm_method, serde_json::json!([tx_hash]))
+            {
                 Ok(result) => {
                     if !result.is_null() {
                         let block_number = result
@@ -1276,9 +1269,13 @@ fn run_gateway_embedded_reconcile_cycle(
             continue;
         };
 
-        let wei_amount = (entry.reward_units as u128).saturating_mul(cfg.wei_per_reward_unit as u128);
+        let wei_amount =
+            (entry.reward_units as u128).saturating_mul(cfg.wei_per_reward_unit as u128);
         let mut tx = serde_json::Map::new();
-        tx.insert("from".to_string(), serde_json::Value::String(sender.clone()));
+        tx.insert(
+            "from".to_string(),
+            serde_json::Value::String(sender.clone()),
+        );
         tx.insert("to".to_string(), serde_json::Value::String(to_address));
         tx.insert(
             "value".to_string(),
@@ -1428,14 +1425,12 @@ fn run_gateway_embedded_reconcile_cycle(
                 cfg.reconcile_index_file.display()
             )
         })?;
-    index_writer
-        .write_all(&line_bytes)
-        .with_context(|| {
-            format!(
-                "append reconcile index failed: {}",
-                cfg.reconcile_index_file.display()
-            )
-        })?;
+    index_writer.write_all(&line_bytes).with_context(|| {
+        format!(
+            "append reconcile index failed: {}",
+            cfg.reconcile_index_file.display()
+        )
+    })?;
 
     fs::write(&cfg.cursor_file, last_dispatch_at.to_string()).with_context(|| {
         format!(
@@ -1504,8 +1499,9 @@ fn main() -> Result<()> {
     ensure_gateway_eth_plugin_mempool_ingest_runtime(runtime.eth_default_chain_id);
 
     let run_result = (|| -> Result<()> {
-        let server = tiny_http::Server::http(&runtime.bind)
-            .map_err(|e| anyhow::anyhow!("start gateway server failed on {}: {}", runtime.bind, e))?;
+        let server = tiny_http::Server::http(&runtime.bind).map_err(|e| {
+            anyhow::anyhow!("start gateway server failed on {}: {}", runtime.bind, e)
+        })?;
         let mut processed = 0u32;
         loop {
             if let Some(cfg) = reconcile_cfg.as_ref() {
@@ -1525,17 +1521,14 @@ fn main() -> Result<()> {
                                 cycle.pending_count,
                                 cycle.error_count
                             );
-                            let interval_ms = (cfg.interval_seconds.max(1) as u128)
-                                .saturating_mul(1000);
+                            let interval_ms =
+                                (cfg.interval_seconds.max(1) as u128).saturating_mul(1000);
                             reconcile_next_run_at_unix_ms = now_ms.saturating_add(interval_ms);
                         }
                         Err(e) => {
-                            gateway_warn!(
-                                "gateway_warn: embedded reconcile cycle failed: {}",
-                                e
-                            );
-                            let retry_ms = (cfg.restart_delay_seconds.max(1) as u128)
-                                .saturating_mul(1000);
+                            gateway_warn!("gateway_warn: embedded reconcile cycle failed: {}", e);
+                            let retry_ms =
+                                (cfg.restart_delay_seconds.max(1) as u128).saturating_mul(1000);
                             reconcile_next_run_at_unix_ms = now_ms.saturating_add(retry_ms);
                         }
                     }
@@ -5449,12 +5442,7 @@ fn sanitize_gateway_overlay_id(raw: &str, fallback: &str) -> String {
 fn resolve_gateway_overlay_node_id(params: &serde_json::Value) -> String {
     let raw = param_as_string_any_with_tx(
         params,
-        &[
-            "overlay_node_id",
-            "overlayNodeId",
-            "node_id",
-            "nodeId",
-        ],
+        &["overlay_node_id", "overlayNodeId", "node_id", "nodeId"],
     )
     .or_else(|| string_env_nonempty("NOVOVM_OVERLAY_NODE_ID"))
     .or_else(|| string_env_nonempty("NOVOVM_NODE_ID"))
@@ -12927,7 +12915,11 @@ fn resolve_gateway_kyc_verified(
     let mut attestor_pubkey_arr = [0u8; 32];
     attestor_pubkey_arr.copy_from_slice(&attestor_pubkey);
     let allowlist = parse_gateway_ua_kyc_attestor_allowlist();
-    if !allowlist.is_empty() && !allowlist.iter().any(|allowed| allowed == &attestor_pubkey_arr) {
+    if !allowlist.is_empty()
+        && !allowlist
+            .iter()
+            .any(|allowed| allowed == &attestor_pubkey_arr)
+    {
         return Ok(GatewayKycVerificationOutcome {
             provided: true,
             verified: false,
@@ -12947,9 +12939,7 @@ fn resolve_gateway_kyc_verified(
     };
     let message =
         gateway_ua_kyc_attestation_message(uca_id, chain_id, external_address, role, nonce);
-    let verified = verifying_key
-        .verify(message.as_bytes(), &signature)
-        .is_ok();
+    let verified = verifying_key.verify(message.as_bytes(), &signature).is_ok();
     Ok(GatewayKycVerificationOutcome {
         provided: true,
         verified,

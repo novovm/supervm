@@ -1,4 +1,4 @@
-# NOVOVM 主线现状-目标-差距清单（打勾版，更新于 2026-03-24）
+# NOVOVM 主线现状-目标-差距清单（打勾版，更新于 2026-04-04）
 
 ## 1. 范围说明
 
@@ -13,7 +13,7 @@
 4. [x] `novovm-node` 常驻消费模式已具备（watch + daemon + lean I/O）。  
 5. [x] 四层角色化运行已具备（`-RoleProfile full|l1|l2|l3`，同一程序不同角色）。  
 6. [x] 四层最小闭环已具备：L4/L3/L2 真实消费计量写入 L1 锚点文件。  
-7. [ ] 公网常驻节点生命周期产品化仍未完成（热更新、平滑升级、运行时治理收口）。  
+7. [x] 公网常驻节点生命周期产品化最小版本已完成（版本注册、常驻启动、升级、回滚编排）。  
 8. [x] L1/L2/L3 多机部署参数模板已完成（角色矩阵脚本+文档）。  
 9. [x] 覆盖层寻址（NodeID/SessionID）最小可用版本已完成（gateway 入站记录 + node 锚点双侧落标识，底层仍兼容 IP 传输）。  
 10. [x] 周期化收益结算最小版本已完成（按锚点汇总生成 voucher 凭据）。
@@ -27,6 +27,11 @@
 18. [x] 回补状态机 gateway 二进制生命周期内嵌最小版本已完成（由 `novovm-evm-gateway` 进程内拉起并守护）。
 19. [x] 回补状态机“纯二进制逻辑化”已完成（移除对 `powershell` 回补脚本执行器的主路径依赖）。
 20. [x] 回补配置口径统一已完成（支持 `NOVOVM_RECONCILE_*`，兼容 `NOVOVM_GATEWAY_RECONCILE_*`）。
+21. [x] 节点生命周期治理增强最小版本已完成（runtime template 收口 + node group 升级保护）。
+22. [x] 外层自动灰度编排控制器最小版本已完成（按组推进 + 失败阈值 + 可选自动回滚）。
+23. [x] 灰度编排跨主机执行适配已完成（local/ssh/winrm 统一计划驱动）。
+24. [x] 灰度编排执行认证与审计追踪最小版本已完成（controller 准入 + SSH/WinRM 凭据托管 + jsonl 审计）。
+25. [x] 灰度集中调度控制面最小版本已完成（多计划队列 + 并发限流 + 跨区域窗口编排）。
 
 ## 3. 已完成项（主线）
 
@@ -47,12 +52,18 @@
 15. 回补 daemon 脚本与手册：`scripts/novovm-l1l4-reconcile-daemon.ps1`、`docs_CN/NOVOVM-L1L4-RECONCILE-DAEMON-RUNBOOK-2026-03-23.md`。  
 16. 主入口一体化回补参数：`scripts/novovm-up.ps1`、`scripts/migration/run_gateway_node_pipeline.ps1`。  
 17. gateway 二进制生命周期内嵌回补：`crates/gateways/evm-gateway/src/main.rs`（`NOVOVM_GATEWAY_EMBED_RECONCILE_DAEMON`）。  
+18. 公网节点生命周期编排脚本与手册：`scripts/novovm-node-lifecycle.ps1`、`docs_CN/NOVOVM-NODE-LIFECYCLE-UPGRADE-ROLLBACK-RUNBOOK-2026-04-03.md`。  
+19. 生命周期治理增强（runtime/set-policy/upgrade group guard）：`scripts/novovm-node-lifecycle.ps1`。  
+20. 外层灰度编排控制器与手册：`scripts/novovm-node-rollout.ps1`、`docs_CN/NOVOVM-NODE-GRAY-ROLLOUT-CONTROLLER-RUNBOOK-2026-04-03.md`。  
+21. 跨主机执行适配（SSH/WinRM）：`scripts/novovm-node-rollout.ps1`、`config/runtime/lifecycle/rollout.plan.json`。  
+22. 执行认证与审计追踪：`scripts/novovm-node-rollout.ps1`、`config/runtime/lifecycle/rollout.plan.json`。  
+23. 灰度集中调度控制面：`scripts/novovm-node-rollout-control.ps1`、`config/runtime/lifecycle/rollout.queue.json`、`docs_CN/NOVOVM-NODE-ROLLOUT-CONTROL-PLANE-RUNBOOK-2026-04-04.md`。  
 
 ## 4. 未完成项（差距）
 
-## Gap-A：节点服务体系仍是“可运行”，还不是“完整运维产品”
-现状：已有 daemon/watch 机制，但缺统一热更新与升级编排。  
-目标：形成稳定的公网节点生命周期管理（启动、平滑重启、升级、回滚）。
+## Gap-A：节点服务体系已具备“升级/回滚+治理增强+灰度编排最小闭环”，仍待进一步强化
+现状：已具备 release 注册、版本切换、守护进程启动、升级失败自动回滚、runtime 模板收口、分组升级保护、外层灰度编排、跨主机统一调度、执行认证与审计追踪、集中调度控制面。  
+目标：后续增强控制面策略编排（优先级抢占、区域容量配额、自动重试退避）。
 
 ## Gap-B：四层闭环已跑通“计量/锚点/周期凭据/自动发放/到账执行/外部确认/真实广播/强一致回补/主入口一体化/gateway 生命周期内嵌/纯 Rust 回补”
 现状：主路径已由 gateway 内嵌 Rust 循环执行回补，不再依赖外部 powershell 守护脚本。  
@@ -64,5 +75,5 @@
 
 ## 5. 下一步执行顺序（功能优先）
 
-1. P1：公网常驻节点生命周期产品化（升级与回滚编排）。  
-2. P1：覆盖层寻址增强版（在 NodeID/SessionID 基础上继续强化路由与抗分析）。  
+1. P1：覆盖层寻址增强版（在 NodeID/SessionID 基础上继续强化路由与抗分析）。  
+2. P1：节点生命周期治理增强（灰度分组、策略模板化、热切换参数收口）。  

@@ -1,0 +1,21 @@
+{
+  "profile": "prod",
+  "role_profile": "l3",
+  "no_gateway": false,
+  "use_node_watch_mode": true,
+  "lean_io": true,
+  "enable_reconcile_daemon": true,
+  "reconcile_sender_address": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "reconcile_rpc_endpoint": "http://127.0.0.1:9899",
+  "reconcile_interval_seconds": 15,
+  "reconcile_restart_delay_seconds": 3,
+  "reconcile_replay_max_per_payout": 3,
+  "reconcile_replay_cooldown_sec": 30,
+  "gateway_bind": "0.0.0.0:9899",
+  "spool_dir": "artifacts/ingress/spool",
+  "poll_ms": 200,
+  "supervisor_poll_ms": 1000,
+  "node_watch_batch_max_files": 1024,
+  "idle_exit_seconds": 0,
+  "gateway_max_requests": 0
+}

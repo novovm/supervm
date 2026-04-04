@@ -95,3 +95,9 @@ powershell -ExecutionPolicy Bypass -File .\scripts\novovm-up.ps1 -Profile prod -
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\novovm-up.ps1 -Profile prod -RoleProfile l3 -Daemon -ReconcileSenderAddress 0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa -ReconcileRpcEndpoint http://127.0.0.1:9899
 ```
+
+## 9. 公网节点生命周期编排（升级/回滚）
+
+已提供统一生命周期脚本：`scripts/novovm-node-lifecycle.ps1`。  
+支持动作：`register|start|stop|status|upgrade|rollback`。  
+详细命令见：`docs_CN/NOVOVM-NODE-LIFECYCLE-UPGRADE-ROLLBACK-RUNBOOK-2026-04-03.md`。
