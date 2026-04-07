@@ -227,6 +227,30 @@ struct GatewayIngressEthRecordV1 {
     overlay_node_id: String,
     #[serde(default)]
     overlay_session_id: String,
+    #[serde(default)]
+    overlay_route_id: String,
+    #[serde(default)]
+    overlay_route_epoch: u64,
+    #[serde(default)]
+    overlay_route_mask_bits: u8,
+    #[serde(default)]
+    overlay_route_strategy: String,
+    #[serde(default)]
+    overlay_route_hop_count: u8,
+    #[serde(default)]
+    overlay_route_mode: String,
+    #[serde(default)]
+    overlay_route_region: String,
+    #[serde(default)]
+    overlay_route_relay_bucket: u16,
+    #[serde(default)]
+    overlay_route_relay_set_size: u8,
+    #[serde(default)]
+    overlay_route_relay_round: u64,
+    #[serde(default)]
+    overlay_route_relay_index: u8,
+    #[serde(default)]
+    overlay_route_relay_id: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -246,6 +270,30 @@ struct GatewayIngressWeb30RecordV1 {
     overlay_node_id: String,
     #[serde(default)]
     overlay_session_id: String,
+    #[serde(default)]
+    overlay_route_id: String,
+    #[serde(default)]
+    overlay_route_epoch: u64,
+    #[serde(default)]
+    overlay_route_mask_bits: u8,
+    #[serde(default)]
+    overlay_route_strategy: String,
+    #[serde(default)]
+    overlay_route_hop_count: u8,
+    #[serde(default)]
+    overlay_route_mode: String,
+    #[serde(default)]
+    overlay_route_region: String,
+    #[serde(default)]
+    overlay_route_relay_bucket: u16,
+    #[serde(default)]
+    overlay_route_relay_set_size: u8,
+    #[serde(default)]
+    overlay_route_relay_round: u64,
+    #[serde(default)]
+    overlay_route_relay_index: u8,
+    #[serde(default)]
+    overlay_route_relay_id: String,
 }
 
 struct GatewayWeb30TxHashInput<'a> {
@@ -436,6 +484,18 @@ struct GatewayMethodContext<'a> {
     spool_dir: &'a Path,
     overlay_node_id: String,
     overlay_session_id: String,
+    overlay_route_id: String,
+    overlay_route_epoch: u64,
+    overlay_route_mask_bits: u8,
+    overlay_route_mode: String,
+    overlay_route_region: String,
+    overlay_route_relay_bucket: u16,
+    overlay_route_relay_set_size: u8,
+    overlay_route_relay_round: u64,
+    overlay_route_relay_index: u8,
+    overlay_route_relay_id: String,
+    overlay_route_strategy: String,
+    overlay_route_hop_count: u8,
     eth_filters: &'a mut GatewayEthFilterState,
 }
 
@@ -3499,7 +3559,7 @@ impl GatewayUaStoreBackend {
                                 path.display()
                             )
                         })?;
-                let mut raw = db
+                let raw = db
                     .get_cf(state_cf, GATEWAY_UA_STORE_ROCKSDB_KEY_ROUTER)
                     .with_context(|| {
                         format!(
@@ -5363,6 +5423,52 @@ fn handle_gateway_request(
         .unwrap_or_else(|| serde_json::json!({}));
     let overlay_node_id = resolve_gateway_overlay_node_id(&params);
     let overlay_session_id = resolve_gateway_overlay_session_id(&params, &overlay_node_id);
+    let overlay_route_epoch_seconds = resolve_gateway_overlay_route_epoch_seconds(&params);
+    let overlay_route_mask_bits = resolve_gateway_overlay_route_mask_bits(&params);
+    let overlay_route_now_sec = now_unix_sec();
+    let overlay_route_epoch =
+        overlay_route_now_sec.saturating_div(overlay_route_epoch_seconds.max(1));
+    let overlay_route_strategy = resolve_gateway_overlay_route_strategy(&params);
+    let overlay_route_hop_slot_seconds = resolve_gateway_overlay_route_hop_slot_seconds(&params);
+    let overlay_route_hop_slot = if overlay_route_strategy == "multi_hop" {
+        overlay_route_now_sec.saturating_div(overlay_route_hop_slot_seconds.max(1))
+    } else {
+        0
+    };
+    let overlay_route_hop_count =
+        resolve_gateway_overlay_route_hop_count(&params, &overlay_route_strategy);
+    let overlay_route_mode = resolve_gateway_overlay_route_mode(&params).unwrap_or_else(|| {
+        gateway_overlay_route_mode_from_strategy(&overlay_route_strategy).to_string()
+    });
+    let overlay_route_region = resolve_gateway_overlay_route_region(&params);
+    let overlay_route_relay_buckets =
+        resolve_gateway_overlay_route_relay_buckets(&params, &overlay_route_mode);
+    let overlay_route_id = resolve_gateway_overlay_route_id(
+        &params,
+        &overlay_node_id,
+        &overlay_session_id,
+        overlay_route_epoch,
+        overlay_route_hop_slot,
+        overlay_route_mask_bits,
+    );
+    let overlay_route_relay_bucket = resolve_gateway_overlay_route_relay_bucket(
+        &overlay_route_id,
+        &overlay_route_region,
+        overlay_route_relay_buckets,
+    );
+    let overlay_route_relay_set_size =
+        resolve_gateway_overlay_route_relay_set_size(&params, &overlay_route_mode);
+    let overlay_route_relay_rotate_seconds =
+        resolve_gateway_overlay_route_relay_rotate_seconds(&params, &overlay_route_mode);
+    let (overlay_route_relay_round, overlay_route_relay_index, overlay_route_relay_id) =
+        resolve_gateway_overlay_route_relay_selection(
+            &overlay_route_id,
+            &overlay_route_region,
+            overlay_route_relay_bucket,
+            overlay_route_relay_set_size,
+            overlay_route_relay_rotate_seconds,
+            overlay_route_now_sec,
+        );
 
     let mut ctx = GatewayMethodContext {
         eth_tx_index_store: &runtime.eth_tx_index_store,
@@ -5370,6 +5476,18 @@ fn handle_gateway_request(
         spool_dir: &runtime.spool_dir,
         overlay_node_id,
         overlay_session_id,
+        overlay_route_id,
+        overlay_route_epoch,
+        overlay_route_mask_bits,
+        overlay_route_mode,
+        overlay_route_region,
+        overlay_route_relay_bucket,
+        overlay_route_relay_set_size,
+        overlay_route_relay_round,
+        overlay_route_relay_index,
+        overlay_route_relay_id,
+        overlay_route_strategy,
+        overlay_route_hop_count,
         eth_filters: &mut runtime.eth_filters,
     };
     match run_gateway_method(
@@ -5439,6 +5557,128 @@ fn sanitize_gateway_overlay_id(raw: &str, fallback: &str) -> String {
     }
 }
 
+fn gateway_overlay_route_mode_from_strategy(strategy: &str) -> &'static str {
+    if strategy == "multi_hop" {
+        "secure"
+    } else {
+        "fast"
+    }
+}
+
+fn resolve_gateway_overlay_route_region(params: &serde_json::Value) -> String {
+    let raw = param_as_string_any_with_tx(
+        params,
+        &[
+            "overlay_route_region",
+            "overlayRouteRegion",
+            "route_region",
+            "routeRegion",
+        ],
+    )
+    .or_else(|| string_env_nonempty("NOVOVM_OVERLAY_ROUTE_REGION"))
+    .unwrap_or_else(|| "global".to_string());
+    sanitize_gateway_overlay_id(&raw, "global")
+}
+
+fn resolve_gateway_overlay_route_relay_buckets(params: &serde_json::Value, mode: &str) -> u16 {
+    let default_buckets = if mode == "secure" { 8 } else { 1 };
+    let raw = param_as_u64_any_with_tx(
+        params,
+        &[
+            "overlay_route_relay_buckets",
+            "overlayRouteRelayBuckets",
+            "route_relay_buckets",
+            "routeRelayBuckets",
+        ],
+    )
+    .or_else(|| {
+        string_env_nonempty("NOVOVM_OVERLAY_ROUTE_RELAY_BUCKETS")
+            .and_then(|v| v.parse::<u64>().ok())
+    })
+    .unwrap_or(default_buckets);
+    raw.clamp(1, 1024) as u16
+}
+
+fn resolve_gateway_overlay_route_relay_bucket(
+    route_id: &str,
+    region: &str,
+    relay_buckets: u16,
+) -> u16 {
+    if relay_buckets <= 1 {
+        return 0;
+    }
+    let material = format!("{route_id}|{region}");
+    let digest = Sha256::digest(material.as_bytes());
+    let bucket_seed = u64::from_be_bytes([
+        digest[0], digest[1], digest[2], digest[3], digest[4], digest[5], digest[6], digest[7],
+    ]);
+    (bucket_seed % relay_buckets as u64) as u16
+}
+
+fn resolve_gateway_overlay_route_relay_set_size(params: &serde_json::Value, mode: &str) -> u8 {
+    let default_set_size = if mode == "secure" { 3 } else { 1 };
+    let raw = param_as_u64_any_with_tx(
+        params,
+        &[
+            "overlay_route_relay_set_size",
+            "overlayRouteRelaySetSize",
+            "route_relay_set_size",
+            "routeRelaySetSize",
+        ],
+    )
+    .or_else(|| {
+        string_env_nonempty("NOVOVM_OVERLAY_ROUTE_RELAY_SET_SIZE")
+            .and_then(|v| v.parse::<u64>().ok())
+    })
+    .unwrap_or(default_set_size);
+    raw.clamp(1, 64) as u8
+}
+
+fn resolve_gateway_overlay_route_relay_rotate_seconds(
+    params: &serde_json::Value,
+    mode: &str,
+) -> u64 {
+    let default_rotate_seconds = if mode == "secure" { 60 } else { 300 };
+    let raw = param_as_u64_any_with_tx(
+        params,
+        &[
+            "overlay_route_relay_rotate_seconds",
+            "overlayRouteRelayRotateSeconds",
+            "route_relay_rotate_seconds",
+            "routeRelayRotateSeconds",
+        ],
+    )
+    .or_else(|| {
+        string_env_nonempty("NOVOVM_OVERLAY_ROUTE_RELAY_ROTATE_SECONDS")
+            .and_then(|v| v.parse::<u64>().ok())
+    })
+    .unwrap_or(default_rotate_seconds);
+    raw.clamp(1, 86_400)
+}
+
+fn resolve_gateway_overlay_route_relay_selection(
+    route_id: &str,
+    region: &str,
+    relay_bucket: u16,
+    relay_set_size: u8,
+    relay_rotate_seconds: u64,
+    now_unix_sec_value: u64,
+) -> (u64, u8, String) {
+    let relay_round = now_unix_sec_value.saturating_div(relay_rotate_seconds.max(1));
+    let relay_index = if relay_set_size <= 1 {
+        0u8
+    } else {
+        let material = format!("{route_id}|{region}|{relay_bucket}|{relay_round}");
+        let digest = Sha256::digest(material.as_bytes());
+        let pick_seed = u64::from_be_bytes([
+            digest[0], digest[1], digest[2], digest[3], digest[4], digest[5], digest[6], digest[7],
+        ]);
+        (pick_seed % relay_set_size as u64) as u8
+    };
+    let relay_id = format!("rly:{}:{}:{}", region, relay_bucket, relay_index);
+    (relay_round, relay_index, relay_id)
+}
+
 fn resolve_gateway_overlay_node_id(params: &serde_json::Value) -> String {
     let raw = param_as_string_any_with_tx(
         params,
@@ -5471,6 +5711,250 @@ fn resolve_gateway_overlay_session_id(params: &serde_json::Value, node_id: &str)
     .or_else(|| string_env_nonempty("NOVOVM_OVERLAY_SESSION_ID"))
     .unwrap_or(fallback.clone());
     sanitize_gateway_overlay_id(&raw, &fallback)
+}
+
+fn resolve_gateway_overlay_route_epoch_seconds(params: &serde_json::Value) -> u64 {
+    let raw = param_as_u64_any_with_tx(
+        params,
+        &[
+            "overlay_route_epoch_seconds",
+            "overlayRouteEpochSeconds",
+            "route_epoch_seconds",
+            "routeEpochSeconds",
+        ],
+    )
+    .or_else(|| {
+        string_env_nonempty("NOVOVM_OVERLAY_ROUTE_EPOCH_SECONDS")
+            .and_then(|v| v.parse::<u64>().ok())
+    })
+    .unwrap_or(300);
+    raw.clamp(1, 86_400)
+}
+
+fn resolve_gateway_overlay_route_mask_bits(params: &serde_json::Value) -> u8 {
+    let raw = param_as_u64_any_with_tx(
+        params,
+        &[
+            "overlay_route_mask_bits",
+            "overlayRouteMaskBits",
+            "route_mask_bits",
+            "routeMaskBits",
+        ],
+    )
+    .or_else(|| {
+        string_env_nonempty("NOVOVM_OVERLAY_ROUTE_MASK_BITS").and_then(|v| v.parse::<u64>().ok())
+    })
+    .unwrap_or(40);
+    raw.clamp(0, 64) as u8
+}
+
+fn resolve_gateway_overlay_route_hop_slot_seconds(params: &serde_json::Value) -> u64 {
+    let default_slot_seconds = match resolve_gateway_overlay_route_mode(params).as_deref() {
+        Some("fast") => 300,
+        _ => 30,
+    };
+    let raw = param_as_u64_any_with_tx(
+        params,
+        &[
+            "overlay_route_hop_slot_seconds",
+            "overlayRouteHopSlotSeconds",
+            "route_hop_slot_seconds",
+            "routeHopSlotSeconds",
+        ],
+    )
+    .or_else(|| {
+        string_env_nonempty("NOVOVM_OVERLAY_ROUTE_HOP_SLOT_SECONDS")
+            .and_then(|v| v.parse::<u64>().ok())
+    })
+    .unwrap_or(default_slot_seconds);
+    raw.clamp(1, 86_400)
+}
+
+fn resolve_gateway_overlay_route_mode(params: &serde_json::Value) -> Option<String> {
+    let raw = param_as_string_any_with_tx(
+        params,
+        &[
+            "overlay_route_mode",
+            "overlayRouteMode",
+            "route_mode",
+            "routeMode",
+        ],
+    )
+    .or_else(|| string_env_nonempty("NOVOVM_OVERLAY_ROUTE_MODE"))?;
+    let mode = raw.trim().to_ascii_lowercase();
+    if mode == "secure" || mode == "fast" {
+        Some(mode)
+    } else {
+        None
+    }
+}
+
+fn resolve_gateway_overlay_route_strategy(params: &serde_json::Value) -> String {
+    if let Some(mode) = resolve_gateway_overlay_route_mode(params) {
+        if mode == "secure" {
+            return "multi_hop".to_string();
+        }
+        if mode == "fast" {
+            return "direct".to_string();
+        }
+    }
+    let enforce_multi_hop = resolve_gateway_overlay_route_enforce_multi_hop(params);
+    if enforce_multi_hop {
+        return "multi_hop".to_string();
+    }
+    let raw = param_as_string_any_with_tx(
+        params,
+        &[
+            "overlay_route_strategy",
+            "overlayRouteStrategy",
+            "route_strategy",
+            "routeStrategy",
+        ],
+    )
+    .or_else(|| string_env_nonempty("NOVOVM_OVERLAY_ROUTE_STRATEGY"))
+    .unwrap_or_else(|| "direct".to_string());
+    let strategy = raw.trim().to_ascii_lowercase();
+    if strategy == "multi_hop" {
+        "multi_hop".to_string()
+    } else {
+        "direct".to_string()
+    }
+}
+
+fn resolve_gateway_overlay_route_enforce_multi_hop(params: &serde_json::Value) -> bool {
+    if let Some(v) = param_as_bool_any_with_tx(
+        params,
+        &[
+            "overlay_route_enforce_multi_hop",
+            "overlayRouteEnforceMultiHop",
+            "route_enforce_multi_hop",
+            "routeEnforceMultiHop",
+        ],
+    ) {
+        return v;
+    }
+    let raw = param_as_string_any_with_tx(
+        params,
+        &[
+            "overlay_route_enforce_multi_hop",
+            "overlayRouteEnforceMultiHop",
+            "route_enforce_multi_hop",
+            "routeEnforceMultiHop",
+        ],
+    )
+    .or_else(|| string_env_nonempty("NOVOVM_OVERLAY_ROUTE_ENFORCE_MULTI_HOP"))
+    .unwrap_or_else(|| "0".to_string());
+    let v = raw.trim();
+    v == "1"
+        || v.eq_ignore_ascii_case("true")
+        || v.eq_ignore_ascii_case("on")
+        || v.eq_ignore_ascii_case("yes")
+}
+
+fn resolve_gateway_overlay_route_min_hops(params: &serde_json::Value) -> u8 {
+    let default_min_hops = match resolve_gateway_overlay_route_mode(params).as_deref() {
+        Some("fast") => 1,
+        _ => 2,
+    };
+    let raw = param_as_u64_any_with_tx(
+        params,
+        &[
+            "overlay_route_min_hops",
+            "overlayRouteMinHops",
+            "route_min_hops",
+            "routeMinHops",
+        ],
+    )
+    .or_else(|| {
+        string_env_nonempty("NOVOVM_OVERLAY_ROUTE_MIN_HOPS").and_then(|v| v.parse::<u64>().ok())
+    })
+    .unwrap_or(default_min_hops);
+    raw.clamp(1, 16) as u8
+}
+
+fn resolve_gateway_overlay_route_hop_count(params: &serde_json::Value, strategy: &str) -> u8 {
+    let default_hops = if strategy == "multi_hop" { 3 } else { 1 };
+    let raw = param_as_u64_any_with_tx(
+        params,
+        &[
+            "overlay_route_hop_count",
+            "overlayRouteHopCount",
+            "route_hop_count",
+            "routeHopCount",
+        ],
+    )
+    .or_else(|| {
+        string_env_nonempty("NOVOVM_OVERLAY_ROUTE_HOP_COUNT").and_then(|v| v.parse::<u64>().ok())
+    })
+    .unwrap_or(default_hops);
+    let min_hops = resolve_gateway_overlay_route_min_hops(params);
+    let hops = raw.clamp(1, 16) as u8;
+    if strategy == "multi_hop" {
+        hops.max(min_hops)
+    } else {
+        1
+    }
+}
+
+fn build_gateway_overlay_route_id(
+    seed: &str,
+    node_id: &str,
+    session_id: &str,
+    route_epoch: u64,
+    route_hop_slot: u64,
+    mask_bits: u8,
+) -> String {
+    let material = format!("{seed}|{node_id}|{session_id}|{route_epoch}|{route_hop_slot}");
+    let digest = Sha256::digest(material.as_bytes());
+    let mut value_bytes = [0u8; 8];
+    value_bytes.copy_from_slice(&digest[..8]);
+    let mut value = u64::from_be_bytes(value_bytes);
+    let keep = mask_bits.min(64);
+    if keep == 0 {
+        value = 0;
+    } else if keep < 64 {
+        value &= u64::MAX << (64 - keep);
+    }
+    format!("ovr{:016x}", value)
+}
+
+fn resolve_gateway_overlay_route_id(
+    params: &serde_json::Value,
+    node_id: &str,
+    session_id: &str,
+    route_epoch: u64,
+    route_hop_slot: u64,
+    mask_bits: u8,
+) -> String {
+    let fallback = format!("ovr{:x}", route_epoch);
+    let route_raw = param_as_string_any_with_tx(
+        params,
+        &["overlay_route_id", "overlayRouteId", "route_id", "routeId"],
+    )
+    .or_else(|| string_env_nonempty("NOVOVM_OVERLAY_ROUTE_ID"));
+    if let Some(raw) = route_raw {
+        return sanitize_gateway_overlay_id(&raw, &fallback);
+    }
+    let seed = param_as_string_any_with_tx(
+        params,
+        &[
+            "overlay_route_seed",
+            "overlayRouteSeed",
+            "route_seed",
+            "routeSeed",
+        ],
+    )
+    .or_else(|| string_env_nonempty("NOVOVM_OVERLAY_ROUTE_SEED"))
+    .unwrap_or_else(|| node_id.to_string());
+    let route_id = build_gateway_overlay_route_id(
+        &seed,
+        node_id,
+        session_id,
+        route_epoch,
+        route_hop_slot,
+        mask_bits,
+    );
+    sanitize_gateway_overlay_id(&route_id, &fallback)
 }
 
 fn resolve_gateway_eth_pending_block_for_runtime_view(
@@ -6405,6 +6889,18 @@ fn run_gateway_method(
                         signature_domain: format!("evm:{chain_id}:runtime_execute"),
                         overlay_node_id: ctx.overlay_node_id.clone(),
                         overlay_session_id: ctx.overlay_session_id.clone(),
+                        overlay_route_id: ctx.overlay_route_id.clone(),
+                        overlay_route_epoch: ctx.overlay_route_epoch,
+                        overlay_route_mask_bits: ctx.overlay_route_mask_bits,
+                        overlay_route_mode: ctx.overlay_route_mode.clone(),
+                        overlay_route_region: ctx.overlay_route_region.clone(),
+                        overlay_route_relay_bucket: ctx.overlay_route_relay_bucket,
+                        overlay_route_relay_set_size: ctx.overlay_route_relay_set_size,
+                        overlay_route_relay_round: ctx.overlay_route_relay_round,
+                        overlay_route_relay_index: ctx.overlay_route_relay_index,
+                        overlay_route_relay_id: ctx.overlay_route_relay_id.clone(),
+                        overlay_route_strategy: ctx.overlay_route_strategy.clone(),
+                        overlay_route_hop_count: ctx.overlay_route_hop_count,
                     };
                     upsert_gateway_eth_tx_index(eth_tx_index, ctx.eth_tx_index_store, &record);
                     persist_gateway_eth_submit_onchain_status(
@@ -11251,6 +11747,18 @@ fn run_gateway_method(
                 signature_domain: signature_domain.clone(),
                 overlay_node_id: ctx.overlay_node_id.clone(),
                 overlay_session_id: ctx.overlay_session_id.clone(),
+                overlay_route_id: ctx.overlay_route_id.clone(),
+                overlay_route_epoch: ctx.overlay_route_epoch,
+                overlay_route_mask_bits: ctx.overlay_route_mask_bits,
+                overlay_route_mode: ctx.overlay_route_mode.clone(),
+                overlay_route_region: ctx.overlay_route_region.clone(),
+                overlay_route_relay_bucket: ctx.overlay_route_relay_bucket,
+                overlay_route_relay_set_size: ctx.overlay_route_relay_set_size,
+                overlay_route_relay_round: ctx.overlay_route_relay_round,
+                overlay_route_relay_index: ctx.overlay_route_relay_index,
+                overlay_route_relay_id: ctx.overlay_route_relay_id.clone(),
+                overlay_route_strategy: ctx.overlay_route_strategy.clone(),
+                overlay_route_hop_count: ctx.overlay_route_hop_count,
             };
             let tx_ir_bincode = if gateway_eth_public_broadcast_exec_path(chain_id).is_some() {
                 Some(
@@ -11363,6 +11871,18 @@ fn run_gateway_method(
                     "broadcast": broadcast_json,
                     "overlay_node_id": record.overlay_node_id,
                     "overlay_session_id": record.overlay_session_id,
+                    "overlay_route_id": record.overlay_route_id,
+                    "overlay_route_epoch": record.overlay_route_epoch,
+                    "overlay_route_mask_bits": record.overlay_route_mask_bits,
+                    "overlay_route_mode": record.overlay_route_mode,
+                    "overlay_route_region": record.overlay_route_region,
+                    "overlay_route_relay_bucket": record.overlay_route_relay_bucket,
+                    "overlay_route_relay_set_size": record.overlay_route_relay_set_size,
+                    "overlay_route_relay_round": record.overlay_route_relay_round,
+                    "overlay_route_relay_index": record.overlay_route_relay_index,
+                    "overlay_route_relay_id": record.overlay_route_relay_id,
+                    "overlay_route_strategy": record.overlay_route_strategy,
+                    "overlay_route_hop_count": record.overlay_route_hop_count,
                 }),
                 true,
             ))
@@ -11673,6 +12193,18 @@ fn run_gateway_method(
                 signature_domain: signature_domain.clone(),
                 overlay_node_id: ctx.overlay_node_id.clone(),
                 overlay_session_id: ctx.overlay_session_id.clone(),
+                overlay_route_id: ctx.overlay_route_id.clone(),
+                overlay_route_epoch: ctx.overlay_route_epoch,
+                overlay_route_mask_bits: ctx.overlay_route_mask_bits,
+                overlay_route_mode: ctx.overlay_route_mode.clone(),
+                overlay_route_region: ctx.overlay_route_region.clone(),
+                overlay_route_relay_bucket: ctx.overlay_route_relay_bucket,
+                overlay_route_relay_set_size: ctx.overlay_route_relay_set_size,
+                overlay_route_relay_round: ctx.overlay_route_relay_round,
+                overlay_route_relay_index: ctx.overlay_route_relay_index,
+                overlay_route_relay_id: ctx.overlay_route_relay_id.clone(),
+                overlay_route_strategy: ctx.overlay_route_strategy.clone(),
+                overlay_route_hop_count: ctx.overlay_route_hop_count,
             };
             let tx_ir_bincode = if gateway_eth_public_broadcast_exec_path(chain_id).is_some() {
                 Some(
@@ -11790,6 +12322,18 @@ fn run_gateway_method(
                     "broadcast": broadcast_json,
                     "overlay_node_id": record.overlay_node_id,
                     "overlay_session_id": record.overlay_session_id,
+                    "overlay_route_id": record.overlay_route_id,
+                    "overlay_route_epoch": record.overlay_route_epoch,
+                    "overlay_route_mask_bits": record.overlay_route_mask_bits,
+                    "overlay_route_mode": record.overlay_route_mode,
+                    "overlay_route_region": record.overlay_route_region,
+                    "overlay_route_relay_bucket": record.overlay_route_relay_bucket,
+                    "overlay_route_relay_set_size": record.overlay_route_relay_set_size,
+                    "overlay_route_relay_round": record.overlay_route_relay_round,
+                    "overlay_route_relay_index": record.overlay_route_relay_index,
+                    "overlay_route_relay_id": record.overlay_route_relay_id,
+                    "overlay_route_strategy": record.overlay_route_strategy,
+                    "overlay_route_hop_count": record.overlay_route_hop_count,
                 }),
                 true,
             ))
@@ -11862,6 +12406,18 @@ fn run_gateway_method(
                 tx_hash,
                 overlay_node_id: ctx.overlay_node_id.clone(),
                 overlay_session_id: ctx.overlay_session_id.clone(),
+                overlay_route_id: ctx.overlay_route_id.clone(),
+                overlay_route_epoch: ctx.overlay_route_epoch,
+                overlay_route_mask_bits: ctx.overlay_route_mask_bits,
+                overlay_route_mode: ctx.overlay_route_mode.clone(),
+                overlay_route_region: ctx.overlay_route_region.clone(),
+                overlay_route_relay_bucket: ctx.overlay_route_relay_bucket,
+                overlay_route_relay_set_size: ctx.overlay_route_relay_set_size,
+                overlay_route_relay_round: ctx.overlay_route_relay_round,
+                overlay_route_relay_index: ctx.overlay_route_relay_index,
+                overlay_route_relay_id: ctx.overlay_route_relay_id.clone(),
+                overlay_route_strategy: ctx.overlay_route_strategy.clone(),
+                overlay_route_hop_count: ctx.overlay_route_hop_count,
             };
             let wire = encode_gateway_ingress_ops_wire_v1_web30(&record)?;
             let spool_file = write_spool_ops_wire_v1(ctx.spool_dir, &wire)?;
@@ -11882,6 +12438,18 @@ fn run_gateway_method(
                     "ingress_codec": "ops_wire_v1",
                     "overlay_node_id": record.overlay_node_id,
                     "overlay_session_id": record.overlay_session_id,
+                    "overlay_route_id": record.overlay_route_id,
+                    "overlay_route_epoch": record.overlay_route_epoch,
+                    "overlay_route_mask_bits": record.overlay_route_mask_bits,
+                    "overlay_route_mode": record.overlay_route_mode,
+                    "overlay_route_region": record.overlay_route_region,
+                    "overlay_route_relay_bucket": record.overlay_route_relay_bucket,
+                    "overlay_route_relay_set_size": record.overlay_route_relay_set_size,
+                    "overlay_route_relay_round": record.overlay_route_relay_round,
+                    "overlay_route_relay_index": record.overlay_route_relay_index,
+                    "overlay_route_relay_id": record.overlay_route_relay_id,
+                    "overlay_route_strategy": record.overlay_route_strategy,
+                    "overlay_route_hop_count": record.overlay_route_hop_count,
                 }),
                 true,
             ))
@@ -12002,6 +12570,18 @@ fn run_gateway_method(
                 tx_hash,
                 overlay_node_id: ctx.overlay_node_id.clone(),
                 overlay_session_id: ctx.overlay_session_id.clone(),
+                overlay_route_id: ctx.overlay_route_id.clone(),
+                overlay_route_epoch: ctx.overlay_route_epoch,
+                overlay_route_mask_bits: ctx.overlay_route_mask_bits,
+                overlay_route_mode: ctx.overlay_route_mode.clone(),
+                overlay_route_region: ctx.overlay_route_region.clone(),
+                overlay_route_relay_bucket: ctx.overlay_route_relay_bucket,
+                overlay_route_relay_set_size: ctx.overlay_route_relay_set_size,
+                overlay_route_relay_round: ctx.overlay_route_relay_round,
+                overlay_route_relay_index: ctx.overlay_route_relay_index,
+                overlay_route_relay_id: ctx.overlay_route_relay_id.clone(),
+                overlay_route_strategy: ctx.overlay_route_strategy.clone(),
+                overlay_route_hop_count: ctx.overlay_route_hop_count,
             };
             let wire = encode_gateway_ingress_ops_wire_v1_web30(&record)?;
             let spool_file = write_spool_ops_wire_v1(ctx.spool_dir, &wire)?;
@@ -12067,6 +12647,18 @@ fn run_gateway_method(
                     "tx_ir_type": tx_ir_type,
                     "overlay_node_id": record.overlay_node_id,
                     "overlay_session_id": record.overlay_session_id,
+                    "overlay_route_id": record.overlay_route_id,
+                    "overlay_route_epoch": record.overlay_route_epoch,
+                    "overlay_route_mask_bits": record.overlay_route_mask_bits,
+                    "overlay_route_mode": record.overlay_route_mode,
+                    "overlay_route_region": record.overlay_route_region,
+                    "overlay_route_relay_bucket": record.overlay_route_relay_bucket,
+                    "overlay_route_relay_set_size": record.overlay_route_relay_set_size,
+                    "overlay_route_relay_round": record.overlay_route_relay_round,
+                    "overlay_route_relay_index": record.overlay_route_relay_index,
+                    "overlay_route_relay_id": record.overlay_route_relay_id,
+                    "overlay_route_strategy": record.overlay_route_strategy,
+                    "overlay_route_hop_count": record.overlay_route_hop_count,
                 }),
                 true,
             ))
@@ -12530,6 +13122,83 @@ fn gateway_evm_ingress_frame_json(
     include_raw: bool,
     include_parsed: bool,
 ) -> serde_json::Value {
+    let overlay_route_mode = if frame.overlay_route_mode.is_empty() {
+        gateway_overlay_route_mode_from_strategy(&frame.overlay_route_strategy).to_string()
+    } else {
+        frame.overlay_route_mode.clone()
+    };
+    let overlay_route_region = if frame.overlay_route_region.is_empty() {
+        "global".to_string()
+    } else {
+        frame.overlay_route_region.clone()
+    };
+    let overlay_route_relay_bucket = frame.overlay_route_relay_bucket;
+    let overlay_route_relay_candidates =
+        string_env_nonempty("NOVOVM_OVERLAY_ROUTE_RELAY_CANDIDATES")
+            .map(|raw| {
+                raw.split([',', ';'])
+                    .map(str::trim)
+                    .filter(|v| !v.is_empty())
+                    .map(|v| v.to_string())
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+    let overlay_route_relay_set_size_base = if frame.overlay_route_relay_set_size == 0 {
+        if overlay_route_mode == "secure" {
+            3
+        } else {
+            1
+        }
+    } else {
+        frame.overlay_route_relay_set_size
+    };
+    let overlay_route_relay_set_size = if overlay_route_relay_candidates.is_empty() {
+        overlay_route_relay_set_size_base.max(1)
+    } else {
+        overlay_route_relay_set_size_base
+            .max(1)
+            .min(overlay_route_relay_candidates.len().min(u8::MAX as usize) as u8)
+    };
+    let overlay_route_relay_round = if frame.overlay_route_relay_round == 0 {
+        let default_rotate_seconds = if overlay_route_mode == "secure" {
+            60
+        } else {
+            300
+        };
+        let rotate_seconds = string_env_nonempty("NOVOVM_OVERLAY_ROUTE_RELAY_ROTATE_SECONDS")
+            .and_then(|v| v.parse::<u64>().ok())
+            .unwrap_or(default_rotate_seconds)
+            .clamp(1, 86_400);
+        now_unix_sec().saturating_div(rotate_seconds.max(1))
+    } else {
+        frame.overlay_route_relay_round
+    };
+    let overlay_route_relay_index = if frame.overlay_route_relay_set_size == 0 {
+        let (_, idx, _) = resolve_gateway_overlay_route_relay_selection(
+            &frame.overlay_route_id,
+            &overlay_route_region,
+            overlay_route_relay_bucket,
+            overlay_route_relay_set_size,
+            1,
+            overlay_route_relay_round,
+        );
+        idx
+    } else {
+        frame.overlay_route_relay_index
+    };
+    let overlay_route_relay_id = if frame.overlay_route_relay_id.is_empty() {
+        overlay_route_relay_candidates
+            .get(overlay_route_relay_index as usize)
+            .cloned()
+            .unwrap_or_else(|| {
+                format!(
+                    "rly:{}:{}:{}",
+                    overlay_route_region, overlay_route_relay_bucket, overlay_route_relay_index
+                )
+            })
+    } else {
+        frame.overlay_route_relay_id.clone()
+    };
     let mut obj = serde_json::Map::new();
     obj.insert(
         "chain_id".to_string(),
@@ -12542,6 +13211,54 @@ fn gateway_evm_ingress_frame_json(
     obj.insert(
         "observed_at_unix_ms".to_string(),
         serde_json::Value::from(frame.observed_at_unix_ms),
+    );
+    obj.insert(
+        "overlay_route_id".to_string(),
+        serde_json::Value::String(frame.overlay_route_id.clone()),
+    );
+    obj.insert(
+        "overlay_route_epoch".to_string(),
+        serde_json::Value::from(frame.overlay_route_epoch),
+    );
+    obj.insert(
+        "overlay_route_mask_bits".to_string(),
+        serde_json::Value::from(frame.overlay_route_mask_bits),
+    );
+    obj.insert(
+        "overlay_route_mode".to_string(),
+        serde_json::Value::String(overlay_route_mode),
+    );
+    obj.insert(
+        "overlay_route_region".to_string(),
+        serde_json::Value::String(overlay_route_region),
+    );
+    obj.insert(
+        "overlay_route_relay_bucket".to_string(),
+        serde_json::Value::from(overlay_route_relay_bucket),
+    );
+    obj.insert(
+        "overlay_route_relay_set_size".to_string(),
+        serde_json::Value::from(overlay_route_relay_set_size),
+    );
+    obj.insert(
+        "overlay_route_relay_round".to_string(),
+        serde_json::Value::from(overlay_route_relay_round),
+    );
+    obj.insert(
+        "overlay_route_relay_index".to_string(),
+        serde_json::Value::from(overlay_route_relay_index),
+    );
+    obj.insert(
+        "overlay_route_relay_id".to_string(),
+        serde_json::Value::String(overlay_route_relay_id),
+    );
+    obj.insert(
+        "overlay_route_strategy".to_string(),
+        serde_json::Value::String(frame.overlay_route_strategy.clone()),
+    );
+    obj.insert(
+        "overlay_route_hop_count".to_string(),
+        serde_json::Value::from(frame.overlay_route_hop_count),
     );
     if include_raw {
         obj.insert(
@@ -13825,6 +14542,18 @@ fn execute_gateway_atomic_broadcast_ticket_native(
         signature_domain: "evm:atomic_broadcast".to_string(),
         overlay_node_id: ctx.overlay_node_id.clone(),
         overlay_session_id: ctx.overlay_session_id.clone(),
+        overlay_route_id: ctx.overlay_route_id.clone(),
+        overlay_route_epoch: ctx.overlay_route_epoch,
+        overlay_route_mask_bits: ctx.overlay_route_mask_bits,
+        overlay_route_mode: ctx.overlay_route_mode.clone(),
+        overlay_route_region: ctx.overlay_route_region.clone(),
+        overlay_route_relay_bucket: ctx.overlay_route_relay_bucket,
+        overlay_route_relay_set_size: ctx.overlay_route_relay_set_size,
+        overlay_route_relay_round: ctx.overlay_route_relay_round,
+        overlay_route_relay_index: ctx.overlay_route_relay_index,
+        overlay_route_relay_id: ctx.overlay_route_relay_id.clone(),
+        overlay_route_strategy: ctx.overlay_route_strategy.clone(),
+        overlay_route_hop_count: ctx.overlay_route_hop_count,
     };
     let wire = encode_gateway_ingress_ops_wire_v1_eth(&record)?;
     let spool_file = write_spool_ops_wire_v1(ctx.spool_dir, &wire)?;
@@ -14208,6 +14937,18 @@ fn auto_replay_pending_atomic_broadcasts(runtime: &mut GatewayRuntime) {
                 spool_dir: runtime.spool_dir.as_path(),
                 overlay_node_id: "reconcile:auto".to_string(),
                 overlay_session_id: format!("reconcile-{}", now_unix_millis()),
+                overlay_route_id: "reconcile:auto".to_string(),
+                overlay_route_epoch: 0,
+                overlay_route_mask_bits: 40,
+                overlay_route_mode: "fast".to_string(),
+                overlay_route_region: "global".to_string(),
+                overlay_route_relay_bucket: 0,
+                overlay_route_relay_set_size: 1,
+                overlay_route_relay_round: 0,
+                overlay_route_relay_index: 0,
+                overlay_route_relay_id: "rly:global:0:0".to_string(),
+                overlay_route_strategy: "direct".to_string(),
+                overlay_route_hop_count: 1,
                 eth_filters: &mut dummy_filters,
             };
             execute_gateway_atomic_broadcast_ticket_native(

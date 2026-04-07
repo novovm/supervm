@@ -1,0 +1,55 @@
+{
+  "version": 1,
+  "updated_at": "2026-04-05T00:00:00Z",
+  "relays": [
+    {
+      "id": "rly-cn-gz-01",
+      "region": "CN",
+      "roles": ["l2", "l3", "full"],
+      "health": 0.98,
+      "enabled": true
+    },
+    {
+      "id": "rly-cn-sh-01",
+      "region": "CN",
+      "roles": ["l1", "full"],
+      "health": 0.95,
+      "enabled": true
+    },
+    {
+      "id": "rly-cn-bj-01",
+      "region": "CN",
+      "roles": ["l1", "l2", "l3", "full"],
+      "health": 0.92,
+      "enabled": true
+    },
+    {
+      "id": "rly-eu-de-01",
+      "region": "EU",
+      "roles": ["l2", "l3", "full"],
+      "health": 0.93,
+      "enabled": true
+    },
+    {
+      "id": "rly-eu-fr-01",
+      "region": "EU",
+      "roles": ["l1", "l3", "full"],
+      "health": 0.9,
+      "enabled": true
+    },
+    {
+      "id": "rly-us-va-01",
+      "region": "US",
+      "roles": ["l1", "l2", "full"],
+      "health": 0.91,
+      "enabled": true
+    },
+    {
+      "id": "rly-global-01",
+      "region": "global",
+      "roles": ["default"],
+      "health": 0.88,
+      "enabled": true
+    }
+  ]
+}

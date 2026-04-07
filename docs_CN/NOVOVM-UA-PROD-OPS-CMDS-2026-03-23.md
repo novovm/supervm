@@ -6,9 +6,9 @@
 
 1. `UA store 一键备份/恢复`
 2. `统一入口常驻守护`
-3. `单入口收口（全部走 novovm-up）`
+3. `主线入口收口（统一到 novovmctl）`
 
-主入口：`scripts/novovm-up.ps1`
+主线入口：`novovmctl`（UA store 历史操作仍保留遗留兼容壳）
 
 ## 2. UA store 一键备份/恢复
 
@@ -20,9 +20,7 @@
 
 ### 2.1 备份
 
-```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\novovm-up.ps1 -UaStoreAction backup
-```
+该操作仍属 UA store 历史兼容动作，仓库内不再保留 `novovm-up.ps1` 的可执行示例命令。
 
 产物目录：
 
@@ -30,15 +28,11 @@ powershell -ExecutionPolicy Bypass -File .\scripts\novovm-up.ps1 -UaStoreAction 
 
 ### 2.2 恢复（默认恢复最新快照）
 
-```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\novovm-up.ps1 -UaStoreAction restore
-```
+该操作仍属 UA store 历史兼容动作，仓库内不再保留 `novovm-up.ps1` 的可执行示例命令。
 
 恢复指定快照：
 
-```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\novovm-up.ps1 -UaStoreAction restore -UaSnapshot 20260323-021500
-```
+同上，指定快照恢复仍归入遗留兼容流程，不纳入主线命令面。
 
 说明：
 
@@ -47,9 +41,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\novovm-up.ps1 -UaStoreAction 
 
 ### 2.3 迁移（rocksdb 路径迁移）
 
-```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\novovm-up.ps1 -UaStoreAction migrate -GatewayStoreFrom "E:\old\gateway-ua.rocksdb" -PluginStoreFrom "E:\old\plugin-ua.rocksdb" -PluginAuditFrom "E:\old\plugin-ua-audit.rocksdb"
-```
+该操作仍属 UA store 历史兼容动作，仓库内不再保留 `novovm-up.ps1` 的可执行示例命令。
 
 说明：
 
@@ -61,7 +53,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\novovm-up.ps1 -UaStoreAction 
 生产守护运行：
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\novovm-up.ps1 -Profile prod -Daemon
+novovmctl daemon --profile prod
 ```
 
 说明：`prod + daemon` 默认启用 `UseNodeWatchMode + LeanIo`，由 `novovm-node` 常驻消费 `opsw1`，并跳过 done/failed 归档路径以减少磁盘 I/O。
@@ -71,48 +63,46 @@ powershell -ExecutionPolicy Bypass -File .\scripts\novovm-up.ps1 -Profile prod -
 仅连接外部 gateway：
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\novovm-up.ps1 -Profile prod -Daemon -NoGateway
+novovmctl daemon --profile prod -NoGateway
 ```
 
 可配置重启间隔与最大重启次数：
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\novovm-up.ps1 -Profile prod -Daemon -RestartDelaySeconds 5 -MaxRestarts 20
+novovmctl daemon --profile prod -RestartDelaySeconds 5 -MaxRestarts 20
 ```
 
 可直通生产性能参数（不引入观测链路）：
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\novovm-up.ps1 -Profile prod -Daemon -PollMs 100 -SupervisorPollMs 1000 -NodeWatchBatchMaxFiles 2048 -GatewayBind 0.0.0.0:9899 -SpoolDir artifacts/ingress/spool -GatewayMaxRequests 0
+novovmctl daemon --profile prod -PollMs 100 -SupervisorPollMs 1000 -NodeWatchBatchMaxFiles 2048 -GatewayBind 0.0.0.0:9899 -SpoolDir artifacts/ingress/spool -GatewayMaxRequests 0
 ```
 
 如需显式打开低 I/O（非 daemon 也可）：
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\novovm-up.ps1 -Profile prod -UseNodeWatchMode -LeanIo -NoGateway
+novovmctl daemon --profile prod --use-node-watch-mode --lean-io --no-gateway
 ```
 
 如需在非 daemon 下显式启用常驻消费模式：
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\novovm-up.ps1 -Profile prod -UseNodeWatchMode -NoGateway
+novovmctl daemon --profile prod --use-node-watch-mode --no-gateway
 ```
 
 如需强制每次启动前先构建（默认生产模式为跳过构建以减少开销）：
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\novovm-up.ps1 -Profile prod -Daemon -BuildBeforeRun
+novovmctl daemon --profile prod -BuildBeforeRun
 ```
 
-兼容入口（内部转发到 `novovm-up.ps1`）：
+遗留兼容壳（内部转发到 `novovmctl daemon`）：
 
-```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\novovm-prod-daemon.ps1 -Profile prod
-```
+仓库内不再保留 `novovm-prod-daemon.ps1` 的可执行示例命令。
 
-`novovm-prod-daemon.ps1` 已支持透传 `PollMs/NodeWatchBatchMaxFiles/GatewayBind/SpoolDir/GatewayMaxRequests/LeanIo` 等性能参数。
+`novovm-prod-daemon.ps1` 仅作为遗留兼容壳保留，主线生产入口已统一为 `novovmctl daemon`。
 
 ## 4. 口径
 
-1. 这是生产主线运维命令，不引入额外模拟/观测路径。
+1. 主线生产运维入口已统一为 `novovmctl`；本文件中的 `.ps1` 仅在遗留兼容壳/阶段外场景保留。
 2. 不新增测试框架依赖，不改业务执行语义。

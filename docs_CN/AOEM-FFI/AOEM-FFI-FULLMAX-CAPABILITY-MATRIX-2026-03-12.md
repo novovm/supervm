@@ -6,7 +6,7 @@ Author: AOEM SYSTEM TECHNOLOGY
 
 # AOEM FFI Fullmax 能力矩阵（2026-03-12）
 
-> 发布口径说明：本文件是 `docs/perf/AOEM-FFI-FULLMAX-CAPABILITY-MATRIX-2026-03-12.md` 的中文权威版本，内容逐项对齐。
+> 发布口径说明：本文件是 `docs/AOEM-FFI/AOEM-FFI-FULLMAX-CAPABILITY-MATRIX-2026-03-12.md` 的中文权威版本，内容逐项对齐。
 
 ## 产物快照
 
@@ -26,6 +26,9 @@ Author: AOEM SYSTEM TECHNOLOGY
   - `rocksdb-persistence,wasmtime-runtime,privacy-verify,mldsa,zkvm-executor,risc0,sp1,halo2`
 - macOS fullmax 特性：
   - `rocksdb-persistence,wasmtime-runtime,privacy-verify,mldsa,zkvm-executor,risc0,sp1,halo2`
+- 主线边界说明（NOVOVM）：
+  - 本矩阵仅覆盖 AOEM FFI 执行能力。
+  - 覆盖层路由治理（`overlay_route_mode/region/relay_*`）归属 NOVOVM 宿主层，不在 AOEM 能力矩阵范围内。
 
 ## FFI 能力矩阵
 
@@ -119,4 +122,3 @@ Author: AOEM SYSTEM TECHNOLOGY
 - Linux 上 `librocksdb-sys` 在部分构建路径可能出现 `libclang` 线程加载抖动。
 - 当前 fullmax 产物已包含 persist sidecar；如本机构建遇到抖动，建议单独命令先构建 persist，再回填到 bundle。
 - `scripts/export_aoem_beta08_bundle.ps1` 为历史兼容脚本，当前标准打包口径是 fullmax core+sidecar。
-

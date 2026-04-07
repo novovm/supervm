@@ -11,8 +11,8 @@
 5. 执行认证与控制器准入（controller allowlist）
 6. 统一审计追踪（jsonl 审计日志）
 
-统一脚本：`scripts/novovm-node-rollout.ps1`。  
-底层执行器：`scripts/novovm-node-lifecycle.ps1`。
+主线入口：`novovmctl rollout`。  
+底层执行器：`novovmctl lifecycle`。
 
 ## 2. 计划文件
 
@@ -42,24 +42,24 @@
 ## 3. 批量下发分组策略
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\novovm-node-rollout.ps1 `
-  -Action set-policy `
-  -PlanFile .\config\runtime\lifecycle\rollout.plan.json `
-  -ControllerId local-controller `
+novovmctl rollout `
+  --action set-policy `
+  --plan-file .\config\runtime\lifecycle\rollout.plan.json `
+  --controller-id local-controller `
   -AuditFile .\artifacts\runtime\rollout\audit.jsonl
 ```
 
 ## 4. 执行灰度升级
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\novovm-node-rollout.ps1 `
-  -Action upgrade `
-  -PlanFile .\config\runtime\lifecycle\rollout.plan.json `
-  -TargetVersion v2026.04.04 `
-  -ControllerId local-controller `
+novovmctl rollout `
+  --action upgrade `
+  --plan-file .\config\runtime\lifecycle\rollout.plan.json `
+  --target-version v2026.04.04 `
+  --controller-id local-controller `
   -AuditFile .\artifacts\runtime\rollout\audit.jsonl `
-  -UpgradeHealthSeconds 12 `
-  -AutoRollbackOnFailure
+  --upgrade-health-seconds 12 `
+  --auto-rollback-on-failure
 ```
 
 行为：
@@ -67,17 +67,17 @@ powershell -ExecutionPolicy Bypass -File .\scripts\novovm-node-rollout.ps1 `
 1. 按 `group_order` 顺序推进（默认 canary -> stable）。
 2. 每个节点调用 lifecycle 的 `upgrade`，并带 `RequireNodeGroup` 防误升。
 3. 分组内错误数超过阈值即中断后续组。
-4. 开启 `-AutoRollbackOnFailure` 时，失败节点立刻执行 lifecycle `rollback`。
-5. `upgrade_window` 默认强制门控（不在窗口会阻断升级）；需要绕过时显式加 `-IgnoreUpgradeWindow`。
+4. 开启 `--auto-rollback-on-failure` 时，失败节点立刻执行 lifecycle `rollback`。
+5. `upgrade_window` 默认强制门控（不在窗口会阻断升级）；需要绕过时显式加 `--ignore-upgrade-window`。
 6. 每个节点动作都会写入审计文件，便于复盘与责任追踪。
 
 跨主机升级（SSH + WinRM 混合）：
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\novovm-node-rollout.ps1 `
-  -Action upgrade `
-  -PlanFile .\config\runtime\lifecycle\rollout.plan.json `
-  -TargetVersion v2026.04.04 `
+novovmctl rollout `
+  --action upgrade `
+  --plan-file .\config\runtime\lifecycle\rollout.plan.json `
+  --target-version v2026.04.04 `
   -DefaultTransport local `
   -SshBinary ssh `
   -SshIdentityFile C:\Users\ops\.ssh\id_ed25519 `
@@ -86,35 +86,35 @@ powershell -ExecutionPolicy Bypass -File .\scripts\novovm-node-rollout.ps1 `
   -WinRmCredentialUserEnv NOVOVM_WINRM_USER `
   -WinRmCredentialPasswordEnv NOVOVM_WINRM_PASS `
   -RemoteTimeoutSeconds 30 `
-  -ControllerId ops-main `
-  -OperationId rollout-2026-04-03-a `
+  --controller-id ops-main `
+  --operation-id rollout-2026-04-03-a `
   -AuditFile .\artifacts\runtime\rollout\audit.jsonl `
-  -AutoRollbackOnFailure
+  --auto-rollback-on-failure
 ```
 
 ## 5. 查看全组状态
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\novovm-node-rollout.ps1 `
-  -Action status `
-  -PlanFile .\config\runtime\lifecycle\rollout.plan.json
+novovmctl rollout `
+  --action status `
+  --plan-file .\config\runtime\lifecycle\rollout.plan.json
 ```
 
 ## 6. 全组回滚
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\novovm-node-rollout.ps1 `
-  -Action rollback `
-  -PlanFile .\config\runtime\lifecycle\rollout.plan.json
+novovmctl rollout `
+  --action rollback `
+  --plan-file .\config\runtime\lifecycle\rollout.plan.json
 ```
 
 指定回滚版本：
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\novovm-node-rollout.ps1 `
-  -Action rollback `
-  -PlanFile .\config\runtime\lifecycle\rollout.plan.json `
-  -RollbackVersion v2026.04.03
+novovmctl rollout `
+  --action rollback `
+  --plan-file .\config\runtime\lifecycle\rollout.plan.json `
+  --rollback-version v2026.04.03
 ```
 
 ## 7. 生产建议
@@ -132,5 +132,5 @@ powershell -ExecutionPolicy Bypass -File .\scripts\novovm-node-rollout.ps1 `
 单计划或小规模执行继续用本脚本。  
 多计划并发、跨区域窗口编排请使用：
 
-1. `scripts/novovm-node-rollout-control.ps1`
+1. `novovmctl rollout-control`
 2. `docs_CN/NOVOVM-NODE-ROLLOUT-CONTROL-PLANE-RUNBOOK-2026-04-04.md`

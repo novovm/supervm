@@ -18,6 +18,8 @@ powershell -ExecutionPolicy Bypass -File .\scripts\novovm-generate-role-matrix.p
 4. `run-full.ps1`
 5. `README.txt`
 
+生成脚本默认产出 `novovmctl daemon` 命令模板。
+
 ## 3. 推荐机器角色
 
 1. L1：最终性锚点与治理参数节点（不拉 gateway）。
@@ -30,21 +32,21 @@ powershell -ExecutionPolicy Bypass -File .\scripts\novovm-generate-role-matrix.p
 
 ```powershell
 $env:NOVOVM_NODE_ID="novovm-l1-01"
-powershell -ExecutionPolicy Bypass -File .\scripts\novovm-up.ps1 -Profile prod -RoleProfile l1 -Daemon -SpoolDir artifacts/ingress/spool -PollMs 100 -SupervisorPollMs 1000 -NodeWatchBatchMaxFiles 2048
+novovmctl daemon --profile prod --role-profile l1 --spool-dir artifacts/ingress/spool --poll-ms 100 --supervisor-poll-ms 1000 --node-watch-batch-max-files 2048
 ```
 
 ### L2 主机
 
 ```powershell
 $env:NOVOVM_NODE_ID="novovm-l2-01"
-powershell -ExecutionPolicy Bypass -File .\scripts\novovm-up.ps1 -Profile prod -RoleProfile l2 -Daemon -SpoolDir artifacts/ingress/spool -PollMs 100 -SupervisorPollMs 1000 -NodeWatchBatchMaxFiles 2048
+novovmctl daemon --profile prod --role-profile l2 --spool-dir artifacts/ingress/spool --poll-ms 100 --supervisor-poll-ms 1000 --node-watch-batch-max-files 2048
 ```
 
 ### L3 主机
 
 ```powershell
 $env:NOVOVM_NODE_ID="novovm-l3-01"
-powershell -ExecutionPolicy Bypass -File .\scripts\novovm-up.ps1 -Profile prod -RoleProfile l3 -Daemon -GatewayBind 0.0.0.0:9899 -SpoolDir artifacts/ingress/spool -PollMs 100 -SupervisorPollMs 1000 -NodeWatchBatchMaxFiles 2048
+novovmctl daemon --profile prod --role-profile l3 --gateway-bind 0.0.0.0:9899 --spool-dir artifacts/ingress/spool --poll-ms 100 --supervisor-poll-ms 1000 --node-watch-batch-max-files 2048
 ```
 
 ## 5. L1 锚点写入口径（生产）
@@ -60,3 +62,37 @@ powershell -ExecutionPolicy Bypass -File .\scripts\novovm-up.ps1 -Profile prod -
 1. 锚点继续写本地文件（运维可审计）。
 2. 同一锚点同时写入统一账本键空间（执行主线内闭环）。
 
+## 6. 覆盖层路由参数矩阵（生产口径）
+
+`-Profile prod` 默认启用 `NOVOVM_OVERLAY_ROUTE_MODE=secure`，并收口为：
+
+1. `NOVOVM_OVERLAY_ROUTE_REGION=global`
+2. `NOVOVM_OVERLAY_ROUTE_RELAY_BUCKETS=8`
+3. `NOVOVM_OVERLAY_ROUTE_RELAY_SET_SIZE=3`
+4. `NOVOVM_OVERLAY_ROUTE_RELAY_ROTATE_SECONDS=60`
+5. `NOVOVM_OVERLAY_ROUTE_STRATEGY=multi_hop`
+6. `NOVOVM_OVERLAY_ROUTE_ENFORCE_MULTI_HOP=1`
+7. `NOVOVM_OVERLAY_ROUTE_HOP_COUNT>=3`
+8. `NOVOVM_OVERLAY_ROUTE_MIN_HOPS>=2`
+9. `NOVOVM_OVERLAY_ROUTE_HOP_SLOT_SECONDS=30`
+
+显式切换快速模式（仅在你确认场景需要时）：
+
+1. `NOVOVM_OVERLAY_ROUTE_MODE=fast`
+2. `NOVOVM_OVERLAY_ROUTE_RELAY_BUCKETS=1`
+3. `NOVOVM_OVERLAY_ROUTE_RELAY_SET_SIZE=1`
+4. `NOVOVM_OVERLAY_ROUTE_RELAY_ROTATE_SECONDS=300`
+5. `NOVOVM_OVERLAY_ROUTE_STRATEGY=direct`
+6. `NOVOVM_OVERLAY_ROUTE_HOP_COUNT=1`
+7. `NOVOVM_OVERLAY_ROUTE_MIN_HOPS=1`
+8. `NOVOVM_OVERLAY_ROUTE_HOP_SLOT_SECONDS=300`
+
+当前主线落标字段（node/gateway/plugin 同口径）：
+
+1. `overlay_route_mode`
+2. `overlay_route_region`
+3. `overlay_route_relay_bucket`
+4. `overlay_route_relay_set_size`
+5. `overlay_route_relay_round`
+6. `overlay_route_relay_index`
+7. `overlay_route_relay_id`

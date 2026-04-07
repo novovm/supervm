@@ -27,6 +27,9 @@ Author: AOEM SYSTEM TECHNOLOGY
   - `rocksdb-persistence,wasmtime-runtime,privacy-verify,mldsa,zkvm-executor,risc0,sp1,halo2`
 - macOS fullmax features:
   - `rocksdb-persistence,wasmtime-runtime,privacy-verify,mldsa,zkvm-executor,risc0,sp1,halo2`
+- Boundary note (NOVOVM mainline):
+  - This matrix covers AOEM FFI execution capabilities only.
+  - Overlay routing controls (`overlay_route_mode/region/relay_*`) are governed in NOVOVM host layer, outside AOEM capability matrix scope.
 
 ## FFI Capability Matrix
 
@@ -120,4 +123,3 @@ Key runtime parameters (verify/prove paths):
 - On Linux, `librocksdb-sys` may occasionally show `libclang` thread-loading jitter on specific build paths.
 - Current fullmax bundles include persist sidecar. If local build jitters, build persist first and then backfill it into the bundle.
 - `scripts/export_aoem_beta08_bundle.ps1` is legacy compatibility tooling. Current release-standard packaging is fullmax core + sidecars.
-

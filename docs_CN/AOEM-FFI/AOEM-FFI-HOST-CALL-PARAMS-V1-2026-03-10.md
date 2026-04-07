@@ -6,7 +6,7 @@ Author: AOEM SYSTEM TECHNOLOGY
 
 # AOEM FFI 宿主调用参数总表 v1（2026-03-10）
 
-> 发布口径说明：本文件与 `docs/perf/AOEM-FFI-HOST-CALL-PARAMS-V1-2026-03-10.md` 保持逐项同步。  
+> 发布口径说明：本文件与 `docs/AOEM-FFI/AOEM-FFI-HOST-CALL-PARAMS-V1-2026-03-10.md` 保持逐项同步。  
 > 头文件权威：`crates/ffi/aoem-ffi/include/aoem.h`
 
 ## 1. 推荐调用顺序（宿主主线）
@@ -294,7 +294,12 @@ release 静默契约：
 
 ## 9. 相关文档
 
-- `docs-CN/perf/AOEM-FFI-FULLMAX-CAPABILITY-MATRIX-2026-03-12.md`
-- `docs/AOEM/OPTIONAL-COMPONENTS-MATRIX-V1-2026-03-09.md`
-- `docs/AOEM/OUT-OF-TREE-ADAPTER-INTEGRATION-GUIDE-V1-2026-03-09.md`
+- `docs_CN/AOEM-FFI/AOEM-FFI-FULLMAX-CAPABILITY-MATRIX-2026-03-12.md`
+- `docs/AOEM-FFI/AOEM-FFI-HOST-CALL-PARAMS-V1-2026-03-10.md`
+- `docs/AOEM-FFI/AOEM-FFI-FULLMAX-CAPABILITY-MATRIX-2026-03-12.md`
 
+## 10. NOVOVM 宿主层边界（2026-04-05）
+
+1. AOEM 宿主调用契约不包含覆盖层路由落标字段。
+2. 覆盖层治理与落标（`overlay_route_mode/region/relay_bucket/relay_set_size/relay_round/relay_index/relay_id`）由 NOVOVM node/gateway/plugin 宿主链路生成。
+3. AOEM 保持执行内核与传输中立，不把覆盖层策略分支下沉进 AOEM ABI。

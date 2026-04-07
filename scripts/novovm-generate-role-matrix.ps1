@@ -54,7 +54,7 @@ function Build-RoleScript {
     $nodeIdEscaped = $NodeId.Replace("'", "''")
     @"
 `$env:NOVOVM_NODE_ID = '$nodeIdEscaped'
-powershell -ExecutionPolicy Bypass -File .\scripts\novovm-up.ps1 -Profile prod -RoleProfile $RoleProfile -Daemon -SpoolDir $SpoolDir -PollMs $PollMs -SupervisorPollMs $SupervisorPollMs -NodeWatchBatchMaxFiles $NodeWatchBatchMaxFiles $ExtraArgs
+novovmctl daemon --profile prod --role-profile $RoleProfile --spool-dir $SpoolDir --poll-ms $PollMs --supervisor-poll-ms $SupervisorPollMs --node-watch-batch-max-files $NodeWatchBatchMaxFiles $ExtraArgs
 "@
 }
 
@@ -64,8 +64,8 @@ New-Item -ItemType Directory -Force -Path $outDirFull | Out-Null
 
 $l1Script = Build-RoleScript -NodeId $L1NodeId -RoleProfile "l1" -ExtraArgs ""
 $l2Script = Build-RoleScript -NodeId $L2NodeId -RoleProfile "l2" -ExtraArgs ""
-$l3Script = Build-RoleScript -NodeId $L3NodeId -RoleProfile "l3" -ExtraArgs ("-GatewayBind " + $L3GatewayBind)
-$fullScript = Build-RoleScript -NodeId "novovm-full-01" -RoleProfile "full" -ExtraArgs ("-GatewayBind " + $L3GatewayBind)
+$l3Script = Build-RoleScript -NodeId $L3NodeId -RoleProfile "l3" -ExtraArgs ("--gateway-bind " + $L3GatewayBind)
+$fullScript = Build-RoleScript -NodeId "novovm-full-01" -RoleProfile "full" -ExtraArgs ("--gateway-bind " + $L3GatewayBind)
 
 Write-TextFile -PathValue (Join-Path $outDirFull "run-l1.ps1") -Content $l1Script
 Write-TextFile -PathValue (Join-Path $outDirFull "run-l2.ps1") -Content $l2Script
@@ -85,7 +85,7 @@ usage:
 4) or use run-full.ps1 for single-host full mode
 
 notes:
-- all scripts use production profile and daemon mode
+- all scripts use novovmctl daemon as the mainline entry
 - node ids are prefilled and can be edited
 - spool, polling and watch batch parameters are fixed in generated scripts
 "@

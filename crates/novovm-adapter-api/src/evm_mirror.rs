@@ -47,6 +47,30 @@ pub struct EvmMempoolIngressFrameV1 {
     pub raw_tx: Vec<u8>,
     pub parsed_tx: Option<TxIR>,
     pub observed_at_unix_ms: u64,
+    #[serde(default)]
+    pub overlay_route_id: String,
+    #[serde(default)]
+    pub overlay_route_epoch: u64,
+    #[serde(default)]
+    pub overlay_route_mask_bits: u8,
+    #[serde(default)]
+    pub overlay_route_mode: String,
+    #[serde(default)]
+    pub overlay_route_region: String,
+    #[serde(default)]
+    pub overlay_route_relay_bucket: u16,
+    #[serde(default)]
+    pub overlay_route_relay_set_size: u8,
+    #[serde(default)]
+    pub overlay_route_relay_round: u64,
+    #[serde(default)]
+    pub overlay_route_relay_index: u8,
+    #[serde(default)]
+    pub overlay_route_relay_id: String,
+    #[serde(default)]
+    pub overlay_route_strategy: String,
+    #[serde(default)]
+    pub overlay_route_hop_count: u8,
 }
 
 /// Cross-chain atomic intent submitted from the plugin side.

@@ -3,14 +3,14 @@
 ## 1. 目标
 
 把“四层网络”落到一个统一入口里运行，不拆成四个不同软件。  
-统一命令：`scripts/novovm-up.ps1`。
+主线命令：`novovmctl daemon`（前台单进程可用 `novovmctl up`）。
 
 ## 2. 角色参数
 
 入口新增参数：
 
 ```powershell
--RoleProfile full|l1|l2|l3
+--role-profile full|l1|l2|l3
 ```
 
 说明：
@@ -27,25 +27,25 @@
 ### 3.1 全栈（单机闭环）
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\novovm-up.ps1 -Profile prod -RoleProfile full -Daemon
+novovmctl daemon --profile prod --role-profile full
 ```
 
 ### 3.2 L1 节点（不拉 gateway）
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\novovm-up.ps1 -Profile prod -RoleProfile l1 -Daemon
+novovmctl daemon --profile prod --role-profile l1
 ```
 
 ### 3.3 L2 节点（不拉 gateway）
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\novovm-up.ps1 -Profile prod -RoleProfile l2 -Daemon
+novovmctl daemon --profile prod --role-profile l2
 ```
 
 ### 3.4 L3 接入节点（拉 gateway）
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\novovm-up.ps1 -Profile prod -RoleProfile l3 -Daemon -GatewayBind 0.0.0.0:9899
+novovmctl daemon --profile prod --role-profile l3 --gateway-bind 0.0.0.0:9899
 ```
 
 ## 4. 自动注入的角色环境变量
@@ -94,7 +94,7 @@ novovm_up_profile: profile=... role=... no_gateway=... daemon=... use_node_watch
 ## 7. 多机部署矩阵
 
 多机（L1/L2/L3 分机）命令模板见：`docs_CN/NOVOVM-L1-L3-MULTI-NODE-PROD-MATRIX-2026-03-23.md`。  
-可用生成脚本：`scripts/novovm-generate-role-matrix.ps1`。
+可用生成脚本：`scripts/novovm-generate-role-matrix.ps1`（输出默认 `novovmctl daemon` 命令模板）。
 
 ## 8. 收益结算周期
 
@@ -131,13 +131,15 @@ novovm_up_profile: profile=... role=... no_gateway=... daemon=... use_node_watch
 回补 daemon 常驻命令见：`docs_CN/NOVOVM-L1L4-RECONCILE-DAEMON-RUNBOOK-2026-03-23.md`。  
 可用脚本：`scripts/novovm-l1l4-reconcile-daemon.ps1`。
 
-## 15. 统一入口内联回补 daemon（gateway 内嵌生命周期）
+## 15. 阶段外：统一入口内联回补 daemon（遗留兼容壳）
 
-现在可在统一入口直接开启回补 daemon（由 gateway 进程内 supervisor 管理）：
+本节尚未纳入 `novovmctl` 主线入口面；以下命令仍为遗留兼容壳口径：
 
-```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\novovm-up.ps1 -Profile prod -RoleProfile l3 -Daemon -ReconcileSenderAddress 0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa -ReconcileRpcEndpoint http://127.0.0.1:9899
-```
+仓库内不再保留 `novovm-up.ps1` 的可执行示例命令。
+
+主线入口仍为 `novovmctl daemon --profile prod --role-profile l3`。
+
+如确需阶段外回补一体化口径，需在遗留兼容环境中单独确认，不纳入主线命令面。
 
 常用参数：
 
@@ -151,4 +153,12 @@ powershell -ExecutionPolicy Bypass -File .\scripts\novovm-up.ps1 -Profile prod -
 2. 统一入口不再启动独立回补 sidecar 进程。  
 3. 回补状态机主路径已改为 gateway 内嵌 Rust 循环，不依赖 powershell 执行器。  
 4. 回补环境变量支持统一前缀 `NOVOVM_RECONCILE_*`（并兼容旧前缀）。  
-5. 覆盖层最小寻址标识支持 `NOVOVM_OVERLAY_NODE_ID` 与 `NOVOVM_OVERLAY_SESSION_ID`。  
+5. 覆盖层寻址增强支持 `NOVOVM_OVERLAY_NODE_ID`、`NOVOVM_OVERLAY_SESSION_ID`、`NOVOVM_OVERLAY_ROUTE_ID`、`NOVOVM_OVERLAY_ROUTE_SEED`、`NOVOVM_OVERLAY_ROUTE_EPOCH_SECONDS`、`NOVOVM_OVERLAY_ROUTE_MASK_BITS`（默认按 epoch 轮换 route_id）。  
+6. 覆盖层路由模式开关支持 `NOVOVM_OVERLAY_ROUTE_MODE=secure|fast`（统一入口可用 `-OverlayRouteMode secure|fast`）。  
+7. `secure` 模式默认：`multi_hop`、`hop_count>=3`、`min_hops>=2`、`hop_slot_seconds=30`。  
+8. `fast` 模式默认：`direct`、`hop_count=1`、`min_hops=1`、`hop_slot_seconds=300`。  
+9. 仍支持细粒度参数 `NOVOVM_OVERLAY_ROUTE_STRATEGY`、`NOVOVM_OVERLAY_ROUTE_HOP_COUNT`、`NOVOVM_OVERLAY_ROUTE_ENFORCE_MULTI_HOP`、`NOVOVM_OVERLAY_ROUTE_MIN_HOPS`、`NOVOVM_OVERLAY_ROUTE_HOP_SLOT_SECONDS`（模式优先于策略默认值）。  
+10. 新增分流参数：`NOVOVM_OVERLAY_ROUTE_REGION`（默认 `global`）、`NOVOVM_OVERLAY_ROUTE_RELAY_BUCKETS`（`secure` 默认 `8`，`fast` 默认 `1`）、`NOVOVM_OVERLAY_ROUTE_RELAY_SET_SIZE`（`secure` 默认 `3`，`fast` 默认 `1`）、`NOVOVM_OVERLAY_ROUTE_RELAY_ROTATE_SECONDS`（`secure` 默认 `60`，`fast` 默认 `300`）。  
+11. gateway 侧 `eth_sendRawTransaction/eth_sendTransaction/web30_sendRawTransaction/web30_sendTransaction` 返回体已同口径输出 `overlay_route_id/overlay_route_epoch/overlay_route_mask_bits/overlay_route_mode/overlay_route_region/overlay_route_relay_bucket/overlay_route_relay_set_size/overlay_route_relay_round/overlay_route_relay_index/overlay_route_relay_id/overlay_route_strategy/overlay_route_hop_count`。  
+12. gateway 侧 `evm_snapshotPendingIngress/evm_snapshotExecutableIngress/evm_drainPendingIngress/evm_drainExecutableIngress` 结果已同口径输出 `overlay_route_id/overlay_route_epoch/overlay_route_mask_bits/overlay_route_mode/overlay_route_region/overlay_route_relay_bucket/overlay_route_relay_set_size/overlay_route_relay_round/overlay_route_relay_index/overlay_route_relay_id/overlay_route_strategy/overlay_route_hop_count`，且字段来自 ingress frame 原生记录。  
+13. plugin 侧 UA 审计记录（`ua-plugin-self-guard-audit.jsonl` / RocksDB）已同口径输出 `overlay_route_id/overlay_route_epoch/overlay_route_mask_bits/overlay_route_mode/overlay_route_region/overlay_route_relay_bucket/overlay_route_relay_set_size/overlay_route_relay_round/overlay_route_relay_index/overlay_route_relay_id/overlay_route_strategy/overlay_route_hop_count`。  

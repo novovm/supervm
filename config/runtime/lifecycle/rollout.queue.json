@@ -2,12 +2,685 @@
   "max_concurrent_plans": 2,
   "poll_seconds": 2,
   "dispatch_pause_seconds": 1,
+  "enable_priority_preemption": true,
+  "preempt_requeue_seconds": 3,
+  "controller_governance": {
+    "primary_id": "ops-main",
+    "standby_ids": [
+      "ops-standby-1"
+    ],
+    "allow_standby_takeover": true,
+    "lease_file": "artifacts/runtime/rollout/controller-lease.json",
+    "lease_ttl_seconds": 30,
+    "lease_heartbeat_seconds": 5,
+    "dedupe_file": "artifacts/runtime/rollout/dedupe-execution.json",
+    "dedupe_ttl_seconds": 86400
+  },
+  "risk_policy": {
+    "active_profile": "production",
+    "hot_reload": {
+      "enabled": true,
+      "check_seconds": 2
+    },
+    "decision_dashboard_export": {
+      "enabled": true,
+      "check_seconds": 30,
+      "mode": "both",
+      "tail": 2000,
+      "audit_file": "artifacts/runtime/rollout/control-plane-audit.jsonl",
+      "output_file": "artifacts/runtime/rollout/control-plane-decision-dashboard.jsonl",
+      "script_file": "scripts/novovm-rollout-decision-dashboard-export.ps1"
+    },
+    "decision_dashboard_consumer": {
+      "enabled": true,
+      "check_seconds": 30,
+      "mode": "all",
+      "tail": 2000,
+      "input_file": "artifacts/runtime/rollout/control-plane-decision-dashboard.jsonl",
+      "output_file": "artifacts/runtime/rollout/control-plane-decision-dashboard-state.json",
+      "alerts_file": "artifacts/runtime/rollout/control-plane-decision-dashboard-alerts.jsonl",
+      "script_file": "scripts/novovm-rollout-decision-dashboard-consumer.ps1"
+    },
+    "policy_profiles": {
+      "production": {
+        "blocked_levels": [
+          "red"
+        ],
+        "winner_guard_blocked_levels": [
+          "red"
+        ],
+        "failover_risk_link_blocked_levels": [
+          "red"
+        ],
+        "failover_converge": {
+          "enabled": true,
+          "max_concurrent_plans": 1,
+          "min_dispatch_pause_seconds": 30,
+          "block_on_snapshot_red": true,
+          "block_on_replay_red": true
+        }
+      },
+      "release_guard": {
+        "blocked_levels": [
+          "orange",
+          "red"
+        ],
+        "winner_guard_blocked_levels": [
+          "yellow",
+          "orange",
+          "red"
+        ],
+        "failover_risk_link_blocked_levels": [
+          "orange",
+          "red"
+        ],
+        "failover_converge": {
+          "enabled": true,
+          "max_concurrent_plans": 1,
+          "min_dispatch_pause_seconds": 45,
+          "block_on_snapshot_red": true,
+          "block_on_replay_red": true
+        },
+        "action_matrix": [
+          {
+            "source": "*",
+            "level": "yellow",
+            "cap_concurrent": 1,
+            "pause_seconds": 4,
+            "block_dispatch": false
+          },
+          {
+            "source": "*",
+            "level": "orange",
+            "cap_concurrent": 1,
+            "pause_seconds": 8,
+            "block_dispatch": true
+          },
+          {
+            "source": "*",
+            "level": "red",
+            "cap_concurrent": 1,
+            "pause_seconds": 10,
+            "block_dispatch": true
+          }
+        ]
+      }
+    },
+    "blocked_levels": [
+      "red"
+    ],
+    "winner_guard_blocked_levels": [
+      "red"
+    ],
+    "failover_risk_link_blocked_levels": [
+      "red"
+    ],
+    "site_region_map": {
+      "CN-SH-1": "CN",
+      "EU-FRA-1": "EU"
+    },
+    "region_action_matrix_overrides": {
+      "CN": [
+        {
+          "source": "cycle",
+          "level": "yellow",
+          "cap_concurrent": 1,
+          "pause_seconds": 4,
+          "block_dispatch": false
+        }
+      ]
+    },
+    "site_action_matrix_overrides": {
+      "CN-SH-1": [
+        {
+          "source": "cycle",
+          "level": "red",
+          "cap_concurrent": 1,
+          "pause_seconds": 8,
+          "block_dispatch": true
+        }
+      ]
+    },
+    "region_winner_guard_blocked_levels": {
+      "CN": [
+        "orange",
+        "red"
+      ]
+    },
+    "site_winner_guard_blocked_levels": {
+      "CN-SH-1": [
+        "yellow",
+        "orange",
+        "red"
+      ]
+    },
+    "region_failover_risk_link_blocked_levels": {
+      "CN": [
+        "red"
+      ]
+    },
+    "site_failover_risk_link_blocked_levels": {
+      "CN-SH-1": [
+        "orange",
+        "red"
+      ]
+    },
+    "action_matrix": [
+      {
+        "source": "*",
+        "level": "yellow",
+        "cap_concurrent": 1,
+        "pause_seconds": 3,
+        "block_dispatch": false
+      },
+      {
+        "source": "*",
+        "level": "orange",
+        "cap_concurrent": 1,
+        "pause_seconds": 6,
+        "block_dispatch": false
+      },
+      {
+        "source": "startup",
+        "level": "red",
+        "min_site_priority": 150,
+        "cap_concurrent": 1,
+        "pause_seconds": 4,
+        "block_dispatch": false
+      },
+      {
+        "source": "cycle",
+        "level": "red",
+        "min_site_priority": 120,
+        "cap_concurrent": 1,
+        "pause_seconds": 6,
+        "block_dispatch": true
+      }
+    ],
+    "alert_channel_targets": {
+      "l1-pager": "oncall:l1:finality",
+      "l2-oncall": "oncall:l2:execution",
+      "l3-oncall": "oncall:l3:edge",
+      "ops-oncall": "oncall:ops:default",
+      "l1-observe": "observe:l1:finality",
+      "l2-observe": "observe:l2:execution",
+      "l3-observe": "observe:l3:edge",
+      "ops-observe": "observe:ops:default"
+    },
+    "alert_target_delivery_types": {
+      "oncall:l1:finality": "webhook",
+      "oncall:l2:execution": "webhook",
+      "oncall:l3:edge": "webhook",
+      "oncall:ops:default": "webhook",
+      "observe:l1:finality": "im",
+      "observe:l2:execution": "im",
+      "observe:l3:edge": "im",
+      "observe:ops:default": "im"
+    },
+    "delivery_webhook_endpoints": {
+      "oncall:l1:finality": "https://ops.example.com/novovm/l1/pager",
+      "oncall:l2:execution": "https://ops.example.com/novovm/l2/oncall",
+      "oncall:l3:edge": "https://ops.example.com/novovm/l3/oncall",
+      "oncall:ops:default": "https://ops.example.com/novovm/ops/oncall"
+    },
+    "delivery_im_endpoints": {
+      "observe:l1:finality": "https://im.example.com/bot/l1-observe",
+      "observe:l2:execution": "https://im.example.com/bot/l2-observe",
+      "observe:l3:edge": "https://im.example.com/bot/l3-observe",
+      "observe:ops:default": "https://im.example.com/bot/ops-observe"
+    },
+    "delivery_email_targets": {
+      "oncall:ops:default": "ops-alert@example.com"
+    },
+    "delivery_email": {
+      "smtp_server": "smtp.example.com",
+      "smtp_port": 587,
+      "from": "novovm-alert@example.com",
+      "use_ssl": true,
+      "smtp_user": "novovm-alert@example.com",
+      "smtp_password_env": "NOVOVM_SMTP_PASSWORD"
+    },
+    "policy_cli": {
+      "binary_file": "target/release/novovm-rollout-policy.exe"
+    },
+    "decision_delivery": {
+    },
+    "decision_route": {
+    },
+    "profile_select": {
+    },
+    "risk_action_eval": {
+    },
+    "risk_action_matrix_build": {
+    },
+    "failover_policy_matrix_build": {
+    },
+    "risk_matrix_select": {
+    },
+    "risk_blocked_select": {
+    },
+    "risk_blocked_map_build": {
+    },
+    "risk_level_set": {
+    }
+  },
+  "site_consensus": {
+    "enabled": false,
+    "site_id": "CN-SH-1",
+    "required_sites": 2,
+    "vote_ttl_seconds": 120,
+    "retry_seconds": 3,
+    "state_file": "artifacts/runtime/rollout/site-consensus-state.json",
+    "accountability": {
+      "enabled": false,
+      "state_file": "artifacts/runtime/rollout/site-consensus-accountability.json",
+      "max_penalty_points": 200,
+      "recovery_per_win": 1,
+      "reputation": {
+        "enabled": false,
+        "aging_interval_seconds": 3600,
+        "recover_points_per_interval": 1,
+        "recover_idle_seconds": 1800
+      },
+      "risk": {
+        "enabled": false,
+        "state_file": "artifacts/runtime/rollout/site-consensus-risk.json",
+        "ema_alpha": 0.2,
+        "winner_guard": {
+          "enabled": false,
+          "fallback_allow_when_all_blocked": true
+        },
+        "auto_throttle": {
+          "enabled": false,
+          "yellow_max_concurrent_plans": 1,
+          "yellow_dispatch_pause_seconds": 3,
+          "orange_max_concurrent_plans": 1,
+          "orange_dispatch_pause_seconds": 6,
+          "red_block": true
+        }
+      },
+      "matrix": [
+        {
+          "name": "conflict-loser-demote",
+          "event": "consensus_conflict_loser",
+          "role": "loser",
+          "site": "*",
+          "penalty_points": 5
+        },
+        {
+          "name": "committed-other-self-demote",
+          "event": "consensus_committed_other",
+          "role": "self",
+          "site": "*",
+          "penalty_points": 3
+        },
+        {
+          "name": "winner-recover",
+          "event": "consensus_winner",
+          "role": "winner",
+          "site": "*",
+          "penalty_points": -1
+        }
+      ]
+    },
+    "site_priorities": {
+      "global_default": 80,
+      "region_overrides": {
+        "CN": 120,
+        "EU": 90
+      },
+      "site_overrides": {
+        "CN-SH-1": 200,
+        "EU-FRA-1": 100
+      }
+    }
+  },
+  "state_recovery": {
+    "enabled": true,
+    "snapshot_file": "artifacts/runtime/rollout/control-plane-state-snapshot.json",
+    "snapshot_replica_files": [
+      "artifacts/runtime/rollout-dr/control-plane-state-snapshot.json"
+    ],
+    "replay_file": "artifacts/runtime/rollout/control-plane-replay.jsonl",
+    "replay_replica_files": [
+      "artifacts/runtime/rollout-dr/control-plane-replay.jsonl"
+    ],
+    "replay_max_entries": 5000,
+    "enable_replica_validation": true,
+    "replica_validation_interval_seconds": 15,
+    "replica_allowed_lag_entries": 2,
+    "enable_replica_auto_failover": true,
+    "replica_health_file": "artifacts/runtime/rollout/control-plane-replica-health.json",
+    "replica_failover_cooldown_seconds": 30,
+    "failover_converge": {
+      "enabled": true,
+      "max_concurrent_plans": 1,
+      "min_dispatch_pause_seconds": 30,
+      "block_on_snapshot_red": true,
+      "block_on_replay_red": true,
+      "region_overrides": {
+        "CN": {
+          "enabled": true,
+          "max_concurrent_plans": 1,
+          "min_dispatch_pause_seconds": 35,
+          "block_on_snapshot_red": true,
+          "block_on_replay_red": true
+        }
+      },
+      "site_overrides": {
+        "CN-SH-1": {
+          "enabled": true,
+          "max_concurrent_plans": 1,
+          "min_dispatch_pause_seconds": 40,
+          "block_on_snapshot_red": true,
+          "block_on_replay_red": true
+        }
+      }
+    },
+    "failover_policy": {
+      "enabled": true,
+      "default_allow": false,
+      "slo_link": {
+        "enabled": true,
+        "min_effective_score": 65,
+        "block_on_violation": true,
+        "region_overrides": {
+          "CN": {
+            "enabled": true,
+            "min_effective_score": 70,
+            "block_on_violation": true
+          }
+        },
+        "site_overrides": {
+          "CN-SH-1": {
+            "enabled": true,
+            "min_effective_score": 75,
+            "block_on_violation": true
+          }
+        }
+      },
+      "drill_link": {
+        "enabled": true,
+        "min_pass_rate": 0.6,
+        "min_average_score": 70,
+        "require_last_pass": false,
+        "region_overrides": {
+          "CN": {
+            "enabled": true,
+            "min_pass_rate": 0.7,
+            "min_average_score": 75,
+            "require_last_pass": true
+          }
+        },
+        "site_overrides": {
+          "CN-SH-1": {
+            "enabled": true,
+            "min_pass_rate": 0.8,
+            "min_average_score": 80,
+            "require_last_pass": true
+          }
+        }
+      },
+      "risk_link": {
+        "enabled": false,
+        "region_overrides": {
+          "CN": {
+            "enabled": true
+          }
+        },
+        "site_overrides": {
+          "CN-SH-1": {
+            "enabled": true
+          }
+        }
+      },
+      "region_matrix_overrides": {
+        "CN": [
+          {
+            "name": "cn-cycle-red-allow",
+            "source": "cycle",
+            "grades": [
+              "red"
+            ],
+            "min_site_priority": 120,
+            "allow_auto_failover": true,
+            "cooldown_seconds": 35
+          }
+        ]
+      },
+      "site_matrix_overrides": {
+        "CN-SH-1": [
+          {
+            "name": "cn-sh-startup-red-block",
+            "source": "startup",
+            "grades": [
+              "red"
+            ],
+            "allow_auto_failover": false
+          }
+        ]
+      },
+      "matrix": [
+        {
+          "name": "startup-red-primary",
+          "source": "startup",
+          "grades": [
+            "red"
+          ],
+          "min_site_priority": 150,
+          "allow_auto_failover": true,
+          "cooldown_seconds": 20
+        },
+        {
+          "name": "cycle-red-primary",
+          "source": "cycle",
+          "grades": [
+            "red"
+          ],
+          "min_site_priority": 150,
+          "allow_auto_failover": true,
+          "cooldown_seconds": 30
+        },
+        {
+          "name": "fallback-block",
+          "source": "*",
+          "grades": [
+            "*"
+          ],
+          "allow_auto_failover": false
+        }
+      ]
+    },
+    "replica_failover_on_startup": true,
+    "enable_replica_switchback": true,
+    "replica_switchback_stable_cycles": 3,
+    "replica_drill": {
+      "enabled": false,
+      "drill_id": "drill-2026-04-template",
+      "score": {
+        "enabled": true,
+        "file": "artifacts/runtime/rollout/control-plane-replica-drill-score.json",
+        "window_samples": 20,
+        "pass_score": 70
+      }
+    },
+    "slo": {
+      "enabled": true,
+      "file": "artifacts/runtime/rollout/control-plane-replica-slo.json",
+      "window_samples": 60,
+      "min_green_rate": 0.95,
+      "max_red_in_window": 0,
+      "block_on_violation": true,
+      "adaptive": {
+        "enabled": true,
+        "file": "artifacts/runtime/rollout/control-plane-replica-adaptive.json",
+        "step": 2,
+        "good_score": 95,
+        "bad_score": 70,
+        "max_shift": 20
+      },
+      "circuit_breaker": {
+        "enabled": true,
+        "yellow_max_concurrent_plans": 1,
+        "yellow_dispatch_pause_seconds": 3,
+        "red_block": true,
+        "matrix": [
+          {
+            "name": "green",
+            "min_score": 95,
+            "max_score": 101,
+            "max_concurrent_plans": 2,
+            "dispatch_pause_seconds": 1,
+            "block_dispatch": false
+          },
+          {
+            "name": "yellow",
+            "min_score": 80,
+            "max_score": 95,
+            "max_concurrent_plans": 1,
+            "dispatch_pause_seconds": 3,
+            "block_dispatch": false
+          },
+          {
+            "name": "orange",
+            "min_score": 60,
+            "max_score": 80,
+            "max_concurrent_plans": 1,
+            "dispatch_pause_seconds": 6,
+            "block_dispatch": false
+          },
+          {
+            "name": "red",
+            "min_score": 0,
+            "max_score": 60,
+            "max_concurrent_plans": 1,
+            "dispatch_pause_seconds": 8,
+            "block_dispatch": true
+          }
+        ]
+      }
+    },
+    "resume_from_snapshot": true,
+    "replay_conflicts_on_start": true
+  },
+  "region_capacities": {
+    "CN": 1,
+    "EU": 1,
+    "DEFAULT": 1
+  },
+  "adaptive_policy": {
+    "enabled": true,
+    "state_file": "artifacts/runtime/rollout/adaptive-policy-state.json",
+    "alpha": 0.2,
+    "high_failure_rate": 0.35,
+    "low_failure_rate": 0.1,
+    "max_cap_boost": 1
+  },
   "plans": [
     {
       "name": "cn-main-rollout",
       "enabled": true,
       "region": "CN",
+      "overlay_route_mode": "secure",
+      "overlay_route_runtime_file": "config/runtime/lifecycle/overlay.route.runtime.json",
+      "overlay_route_runtime_profile": "prod-cn",
+      "overlay_route_relay_directory_file": "config/runtime/lifecycle/overlay.relay.directory.json",
+      "overlay_route_relay_health_min": 0.7,
+      "overlay_route_relay_penalty_state_file": "artifacts/runtime/lifecycle/overlay.relay.penalty.state.json",
+      "overlay_route_relay_penalty_delta": {
+        "rly-cn-bj-01": 0.2
+      },
+      "overlay_route_relay_penalty_recover_per_run": 0.05,
+      "overlay_route_auto_penalty_enabled": true,
+      "overlay_route_auto_penalty_step": 0.2,
+      "overlay_route_relay_health_refresh_enabled": true,
+      "overlay_route_relay_health_refresh_mode": "auto",
+      "overlay_route_relay_health_refresh_timeout_ms": 800,
+      "overlay_route_relay_health_refresh_alpha": 0.2,
+      "overlay_route_relay_health_refresh_cooldown_seconds": 30,
+      "overlay_route_relay_discovery_enabled": true,
+      "overlay_route_relay_discovery_file": "config/runtime/lifecycle/overlay.relay.discovery.json",
+      "overlay_route_relay_discovery_cooldown_seconds": 120,
+      "overlay_route_relay_discovery_default_health": 0.85,
+      "overlay_route_relay_discovery_default_enabled": true,
+      "overlay_route_relay_discovery_http_urls": "http://127.0.0.1:8899/overlay-relays",
+      "overlay_route_relay_discovery_source_weights": {
+        "seed-cn": 1.0,
+        "127.0.0.1": 0.8
+      },
+      "overlay_route_relay_discovery_http_timeout_ms": 1500,
+      "overlay_route_relay_discovery_source_reputation_file": "artifacts/runtime/lifecycle/overlay.relay.discovery.source-reputation.json",
+      "overlay_route_relay_discovery_source_decay": 0.05,
+      "overlay_route_relay_discovery_source_penalty_on_fail": 0.2,
+      "overlay_route_relay_discovery_source_recover_on_success": 0.03,
+      "overlay_route_relay_discovery_source_blacklist_threshold": 0.15,
+      "overlay_route_relay_discovery_source_denylist": "",
+      "overlay_route_relay_discovery_http_urls_file": "config/runtime/lifecycle/overlay.relay.discovery.seeds.json",
+      "overlay_route_relay_discovery_seed_region": "CN",
+      "overlay_route_relay_discovery_seed_mode": "secure",
+      "overlay_route_relay_discovery_seed_profile": "prod-cn",
+      "overlay_route_relay_discovery_seed_failover_state_file": "artifacts/runtime/lifecycle/overlay.relay.discovery.seed-failover.state.json",
+      "overlay_route_relay_discovery_seed_priority": {
+        "seed.cn.novovm.example": 200,
+        "seed.secure.novovm.example": 180,
+        "__default__": 100
+      },
+      "overlay_route_relay_discovery_seed_success_rate_threshold": 0.5,
+      "overlay_route_relay_discovery_seed_cooldown_seconds": 120,
+      "overlay_route_relay_discovery_seed_max_consecutive_failures": 3,
+      "overlay_route_relay_discovery_region_priority": {
+        "CN": 220,
+        "EU": 160,
+        "US": 140,
+        "__default__": 100
+      },
+      "overlay_route_relay_discovery_region_failover_threshold": 0.46,
+      "overlay_route_relay_discovery_region_cooldown_seconds": 240,
+      "overlay_route_relay_discovery_relay_score_smoothing_alpha": 0.2,
+      "overlay_route_relay_discovery_region_priority": {
+        "CN": 220,
+        "EU": 180,
+        "__default__": 100
+      },
+      "overlay_route_relay_discovery_region_failover_threshold": 0.5,
+      "overlay_route_relay_discovery_region_cooldown_seconds": 120,
+      "overlay_route_relay_candidates": [
+        "rly-cn-prod-a",
+        "rly-cn-prod-b",
+        "rly-cn-prod-c"
+      ],
+      "overlay_route_relay_candidates_by_region": {
+        "CN": [
+          "rly-cn-gz-01",
+          "rly-cn-sh-01",
+          "rly-cn-bj-01"
+        ],
+        "default": [
+          "rly-global-01"
+        ]
+      },
+      "overlay_route_relay_candidates_by_role": {
+        "l1": [
+          "rly-cn-l1-01"
+        ],
+        "l2": [
+          "rly-cn-l2-01",
+          "rly-cn-l2-02"
+        ],
+        "l3": [
+          "rly-cn-l3-01",
+          "rly-cn-l3-02"
+        ],
+        "full": [
+          "rly-cn-full-01"
+        ],
+        "default": [
+          "rly-cn-default-01"
+        ]
+      },
       "region_window": "01:00-04:00 UTC",
+      "priority": 200,
+      "preemptible": false,
       "action": "upgrade",
       "plan_file": "config/runtime/lifecycle/rollout.plan.json",
       "target_version": "v2026.04.04",
@@ -20,6 +693,9 @@
       "auto_rollback_on_failure": true,
       "continue_on_failure": false,
       "ignore_upgrade_window": false,
+      "retry_max_attempts": 2,
+      "retry_backoff_seconds": 5,
+      "retry_backoff_factor": 2,
       "default_transport": "local",
       "ssh_binary": "ssh",
       "remote_timeout_seconds": 30
@@ -28,7 +704,86 @@
       "name": "eu-main-rollout-example",
       "enabled": false,
       "region": "EU",
+      "overlay_route_mode": "secure",
+      "overlay_route_runtime_file": "config/runtime/lifecycle/overlay.route.runtime.json",
+      "overlay_route_runtime_profile": "prod-eu",
+      "overlay_route_relay_directory_file": "config/runtime/lifecycle/overlay.relay.directory.json",
+      "overlay_route_relay_health_min": 0.5,
+      "overlay_route_relay_penalty_state_file": "artifacts/runtime/lifecycle/overlay.relay.penalty.state.json",
+      "overlay_route_relay_penalty_recover_per_run": 0.08,
+      "overlay_route_auto_penalty_enabled": false,
+      "overlay_route_auto_penalty_step": 0.2,
+      "overlay_route_relay_health_refresh_enabled": false,
+      "overlay_route_relay_health_refresh_mode": "auto",
+      "overlay_route_relay_health_refresh_timeout_ms": 800,
+      "overlay_route_relay_health_refresh_alpha": 0.2,
+      "overlay_route_relay_health_refresh_cooldown_seconds": 30,
+      "overlay_route_relay_discovery_enabled": false,
+      "overlay_route_relay_discovery_file": "config/runtime/lifecycle/overlay.relay.discovery.json",
+      "overlay_route_relay_discovery_cooldown_seconds": 120,
+      "overlay_route_relay_discovery_default_health": 0.85,
+      "overlay_route_relay_discovery_default_enabled": true,
+      "overlay_route_relay_discovery_http_urls": "",
+      "overlay_route_relay_discovery_source_weights": {},
+      "overlay_route_relay_discovery_http_timeout_ms": 1500,
+      "overlay_route_relay_discovery_source_reputation_file": "artifacts/runtime/lifecycle/overlay.relay.discovery.source-reputation.json",
+      "overlay_route_relay_discovery_source_decay": 0.05,
+      "overlay_route_relay_discovery_source_penalty_on_fail": 0.2,
+      "overlay_route_relay_discovery_source_recover_on_success": 0.03,
+      "overlay_route_relay_discovery_source_blacklist_threshold": 0.15,
+      "overlay_route_relay_discovery_source_denylist": "",
+      "overlay_route_relay_discovery_http_urls_file": "config/runtime/lifecycle/overlay.relay.discovery.seeds.json",
+      "overlay_route_relay_discovery_seed_region": "EU",
+      "overlay_route_relay_discovery_seed_mode": "secure",
+      "overlay_route_relay_discovery_seed_profile": "prod-eu",
+      "overlay_route_relay_discovery_seed_failover_state_file": "artifacts/runtime/lifecycle/overlay.relay.discovery.seed-failover.state.json",
+      "overlay_route_relay_discovery_seed_priority": {
+        "seed.eu.novovm.example": 200,
+        "seed.fast.novovm.example": 180,
+        "__default__": 100
+      },
+      "overlay_route_relay_discovery_seed_success_rate_threshold": 0.5,
+      "overlay_route_relay_discovery_seed_cooldown_seconds": 120,
+      "overlay_route_relay_discovery_seed_max_consecutive_failures": 3,
+      "overlay_route_relay_discovery_region_priority": {
+        "EU": 220,
+        "US": 160,
+        "CN": 150,
+        "__default__": 100
+      },
+      "overlay_route_relay_discovery_region_failover_threshold": 0.52,
+      "overlay_route_relay_discovery_region_cooldown_seconds": 120,
+      "overlay_route_relay_discovery_relay_score_smoothing_alpha": 0.3,
+      "overlay_route_relay_discovery_region_priority": {
+        "EU": 220,
+        "US": 180,
+        "__default__": 100
+      },
+      "overlay_route_relay_discovery_region_failover_threshold": 0.5,
+      "overlay_route_relay_discovery_region_cooldown_seconds": 120,
+      "overlay_route_relay_candidates": [
+        "rly-eu-dev-a"
+      ],
+      "overlay_route_relay_candidates_by_region": {
+        "EU": [
+          "rly-eu-de-01",
+          "rly-eu-fr-01"
+        ],
+        "default": [
+          "rly-eu-default-01"
+        ]
+      },
+      "overlay_route_relay_candidates_by_role": {
+        "l3": [
+          "rly-eu-l3-01"
+        ],
+        "default": [
+          "rly-eu-default-01"
+        ]
+      },
       "region_window": "05:00-08:00 UTC",
+      "priority": 100,
+      "preemptible": true,
       "action": "upgrade",
       "plan_file": "config/runtime/lifecycle/rollout.plan.json",
       "target_version": "v2026.04.04",
@@ -41,6 +796,9 @@
       "auto_rollback_on_failure": true,
       "continue_on_failure": true,
       "ignore_upgrade_window": false,
+      "retry_max_attempts": 3,
+      "retry_backoff_seconds": 6,
+      "retry_backoff_factor": 2,
       "default_transport": "ssh",
       "ssh_binary": "ssh",
       "remote_timeout_seconds": 30

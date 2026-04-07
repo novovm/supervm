@@ -34,6 +34,12 @@
 1. 在 IP 传输之上增加 NodeID/SessionID 覆盖层。  
 2. 逐步减少固定地址暴露，支持多跳路由策略。  
 3. 完成抗分析增强基线（不是“不可追踪”承诺）。  
+4. 主线已补充 route 轮换标识：`overlay_route_id/overlay_route_epoch/overlay_route_mask_bits`（node 锚点 + gateway 入站返回同口径落地）。
+5. 主线已补充多跳策略参数：`overlay_route_strategy/overlay_route_hop_count`（当前为可治理参数化，不改动底层 IP 兼容传输）。
+6. 主线已补充多跳强约束参数：`overlay_route_enforce_multi_hop/overlay_route_min_hops`（prod 入口默认强制 multi_hop 并抬高最小跳数）。
+7. 主线已补充多跳细粒度轮换参数：`overlay_route_hop_slot_seconds`（在 epoch 内继续按 hop slot 轮换 route_id，降低路径可关联性）。
+8. 主线已补充区域与中继桶分流参数：`overlay_route_region/overlay_route_relay_bucket`（node 锚点 + gateway 返回 + plugin 审计同口径）。
+9. 主线已补充中继候选集轮换参数：`overlay_route_relay_set_size/overlay_route_relay_round/overlay_route_relay_index/overlay_route_relay_id`（锚点 + gateway 返回/快照 + plugin 审计同口径）。
 
 完成标志：在不破坏兼容性的前提下显著提升寻址弹性与隐私强度。
 

@@ -12,6 +12,8 @@ members = [
     "crates/novovm-exec",
     "crates/novovm-network",
     "crates/novovm-node",
+    "crates/novovm-rollout-policy",
+    "crates/novovmctl",
     "crates/novovm-protocol",
     "crates/novovm-prover",
     "vendor/web30-core",

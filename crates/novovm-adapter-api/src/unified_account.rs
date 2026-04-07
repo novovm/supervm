@@ -43,30 +43,20 @@ pub enum AccountAction {
     RotateKey,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum Type4PolicyMode {
     Supported,
+    #[default]
     Rejected,
     Degraded,
 }
 
-impl Default for Type4PolicyMode {
-    fn default() -> Self {
-        Self::Rejected
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum KycPolicyMode {
+    #[default]
     Disabled,
     Informational,
     RequiredForNonOwner,
-}
-
-impl Default for KycPolicyMode {
-    fn default() -> Self {
-        Self::Disabled
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]

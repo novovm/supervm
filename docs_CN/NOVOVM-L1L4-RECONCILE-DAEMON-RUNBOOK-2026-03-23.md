@@ -33,6 +33,8 @@ powershell -ExecutionPolicy Bypass -File .\scripts\novovm-l1l4-reconcile-daemon.
 
 如需让回补 daemon 与主链路同生命周期运行，可直接使用：
 
-```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\novovm-up.ps1 -Profile prod -RoleProfile l3 -Daemon -ReconcileSenderAddress 0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa -ReconcileRpcEndpoint http://127.0.0.1:9899
-```
+仓库内不再保留 `novovm-up.ps1` 的可执行示例命令。
+
+主线入口只保留 `novovmctl daemon --profile prod --role-profile l3`。
+
+原 `novovm-up.ps1 -Daemon -Reconcile*` 口径已降级为遗留兼容壳，不再属于主线 runbook 命令面。

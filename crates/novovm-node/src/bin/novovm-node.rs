@@ -11,7 +11,10 @@ use novovm_node::tx_ingress::{
     load_ops_wire_v1_from_tx_wire_file, load_ops_wire_v1_payload_file,
     LOCAL_TX_WIRE_CODEC_WRITE_U64LE_V1,
 };
+use sha2::{Digest, Sha256};
+use std::collections::hash_map::DefaultHasher;
 use std::fs::{self, OpenOptions};
+use std::hash::{Hash, Hasher};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -56,11 +59,53 @@ fn string_env_nonempty(name: &str) -> Option<String> {
     })
 }
 
+fn u64_env_clamped(name: &str, default: u64, min: u64, max: u64) -> u64 {
+    std::env::var(name)
+        .ok()
+        .and_then(|raw| raw.trim().parse::<u64>().ok())
+        .map(|v| v.clamp(min, max))
+        .unwrap_or(default.clamp(min, max))
+}
+
+fn u8_env_clamped(name: &str, default: u8, min: u8, max: u8) -> u8 {
+    std::env::var(name)
+        .ok()
+        .and_then(|raw| raw.trim().parse::<u8>().ok())
+        .map(|v| v.clamp(min, max))
+        .unwrap_or(default.clamp(min, max))
+}
+
 fn now_unix_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|v| v.as_millis() as u64)
         .unwrap_or(0)
+}
+
+fn build_overlay_route_id(
+    route_seed: &str,
+    overlay_node_id: &str,
+    overlay_session_id: &str,
+    route_epoch: u64,
+    route_hop_slot: u64,
+    route_mask_bits: u8,
+) -> String {
+    let mut hasher = DefaultHasher::new();
+    route_seed.hash(&mut hasher);
+    overlay_node_id.hash(&mut hasher);
+    overlay_session_id.hash(&mut hasher);
+    route_epoch.hash(&mut hasher);
+    route_hop_slot.hash(&mut hasher);
+    let value = hasher.finish();
+    let keep_bits = route_mask_bits.min(64);
+    let masked = if keep_bits == 0 {
+        0
+    } else if keep_bits >= 64 {
+        value
+    } else {
+        value & (u64::MAX << (64 - keep_bits))
+    };
+    format!("ovr{:016x}", masked)
 }
 
 fn json_escape_minimal(raw: &str) -> String {
@@ -91,10 +136,38 @@ struct L1L4AnchorRecord {
     json_bytes: Vec<u8>,
 }
 
+fn parse_overlay_route_relay_candidates(raw: &str) -> Vec<String> {
+    raw.split([',', ';'])
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .map(|v| v.to_string())
+        .collect()
+}
+
+fn overlay_route_relay_candidates_from_env() -> Vec<String> {
+    string_env_nonempty("NOVOVM_OVERLAY_ROUTE_RELAY_CANDIDATES")
+        .map(|raw| parse_overlay_route_relay_candidates(&raw))
+        .unwrap_or_default()
+}
+
+#[allow(clippy::too_many_arguments)]
 fn build_l1l4_anchor_record(
     node_id: &str,
     overlay_node_id: &str,
     overlay_session_id: &str,
+    overlay_route_seed: &str,
+    overlay_route_id_override: Option<&str>,
+    overlay_route_epoch_seconds: u64,
+    overlay_route_hop_slot_seconds: u64,
+    overlay_route_mask_bits: u8,
+    overlay_route_mode: &str,
+    overlay_route_region: &str,
+    overlay_route_relay_buckets: u16,
+    overlay_route_relay_set_size: u8,
+    overlay_route_relay_candidates: &[String],
+    overlay_route_relay_rotate_seconds: u64,
+    overlay_route_strategy: &str,
+    overlay_route_hop_count: u8,
     seq: u64,
     l4_ingress_ops: u64,
     l3_routed_batches: u64,
@@ -102,17 +175,96 @@ fn build_l1l4_anchor_record(
     l2_exec_failed_files: u64,
 ) -> L1L4AnchorRecord {
     let ts_unix_ms = now_unix_ms();
+    let ts_unix_sec = ts_unix_ms / 1000;
+    let route_epoch_window = overlay_route_epoch_seconds.max(1);
+    let overlay_route_epoch = ts_unix_sec / route_epoch_window;
+    let route_hop_slot_window = overlay_route_hop_slot_seconds.max(1);
+    let overlay_route_hop_slot = if overlay_route_strategy == "multi_hop" {
+        ts_unix_sec / route_hop_slot_window
+    } else {
+        0
+    };
+    let overlay_route_id = overlay_route_id_override
+        .filter(|v| !v.trim().is_empty())
+        .map(|v| v.trim().to_string())
+        .unwrap_or_else(|| {
+            build_overlay_route_id(
+                overlay_route_seed,
+                overlay_node_id,
+                overlay_session_id,
+                overlay_route_epoch,
+                overlay_route_hop_slot,
+                overlay_route_mask_bits,
+            )
+        });
+    let overlay_route_relay_bucket = if overlay_route_relay_buckets <= 1 {
+        0u16
+    } else {
+        let material = format!("{overlay_route_id}|{overlay_route_region}");
+        let digest = Sha256::digest(material.as_bytes());
+        let bucket_seed = u64::from_be_bytes([
+            digest[0], digest[1], digest[2], digest[3], digest[4], digest[5], digest[6], digest[7],
+        ]);
+        (bucket_seed % overlay_route_relay_buckets as u64) as u16
+    };
+    let relay_candidate_cap = overlay_route_relay_candidates.len().min(u8::MAX as usize) as u8;
+    let overlay_route_relay_set_size_effective = if relay_candidate_cap == 0 {
+        overlay_route_relay_set_size.max(1)
+    } else {
+        overlay_route_relay_set_size.max(1).min(relay_candidate_cap)
+    };
+    let overlay_route_relay_round =
+        ts_unix_sec.saturating_div(overlay_route_relay_rotate_seconds.max(1));
+    let overlay_route_relay_index = if overlay_route_relay_set_size_effective <= 1 {
+        0u8
+    } else {
+        let material = format!(
+            "{overlay_route_id}|{overlay_route_region}|{overlay_route_relay_bucket}|{overlay_route_relay_round}"
+        );
+        let digest = Sha256::digest(material.as_bytes());
+        let pick_seed = u64::from_be_bytes([
+            digest[0], digest[1], digest[2], digest[3], digest[4], digest[5], digest[6], digest[7],
+        ]);
+        (pick_seed % overlay_route_relay_set_size_effective as u64) as u8
+    };
+    let overlay_route_relay_id = overlay_route_relay_candidates
+        .get(overlay_route_relay_index as usize)
+        .cloned()
+        .unwrap_or_else(|| {
+            format!(
+                "rly:{}:{}:{}",
+                overlay_route_region, overlay_route_relay_bucket, overlay_route_relay_index
+            )
+        });
     let anchor_id = build_l1_anchor_id(seq, ts_unix_ms, l2_exec_ok_ops, l2_exec_failed_files);
     let node_id_escaped = json_escape_minimal(node_id);
     let overlay_node_id_escaped = json_escape_minimal(overlay_node_id);
     let overlay_session_id_escaped = json_escape_minimal(overlay_session_id);
+    let overlay_route_id_escaped = json_escape_minimal(&overlay_route_id);
+    let overlay_route_mode_escaped = json_escape_minimal(overlay_route_mode);
+    let overlay_route_region_escaped = json_escape_minimal(overlay_route_region);
+    let overlay_route_relay_id_escaped = json_escape_minimal(&overlay_route_relay_id);
+    let overlay_route_strategy_escaped = json_escape_minimal(overlay_route_strategy);
     let json = format!(
-        "{{\"version\":1,\"anchor_id\":\"{}\",\"seq\":{},\"node_id\":\"{}\",\"overlay_node_id\":\"{}\",\"overlay_session_id\":\"{}\",\"ts_unix_ms\":{},\"l4_ingress_ops\":{},\"l3_routed_batches\":{},\"l2_exec_ok_ops\":{},\"l2_exec_failed_files\":{}}}\n",
+        "{{\"version\":1,\"anchor_id\":\"{}\",\"seq\":{},\"node_id\":\"{}\",\"overlay_node_id\":\"{}\",\"overlay_session_id\":\"{}\",\"overlay_route_id\":\"{}\",\"overlay_route_epoch\":{},\"overlay_route_hop_slot\":{},\"overlay_route_mask_bits\":{},\"overlay_route_mode\":\"{}\",\"overlay_route_region\":\"{}\",\"overlay_route_relay_bucket\":{},\"overlay_route_relay_set_size\":{},\"overlay_route_relay_round\":{},\"overlay_route_relay_index\":{},\"overlay_route_relay_id\":\"{}\",\"overlay_route_strategy\":\"{}\",\"overlay_route_hop_count\":{},\"ts_unix_ms\":{},\"l4_ingress_ops\":{},\"l3_routed_batches\":{},\"l2_exec_ok_ops\":{},\"l2_exec_failed_files\":{}}}\n",
         anchor_id,
         seq,
         node_id_escaped,
         overlay_node_id_escaped,
         overlay_session_id_escaped,
+        overlay_route_id_escaped,
+        overlay_route_epoch,
+        overlay_route_hop_slot,
+        overlay_route_mask_bits,
+        overlay_route_mode_escaped,
+        overlay_route_region_escaped,
+        overlay_route_relay_bucket,
+        overlay_route_relay_set_size_effective,
+        overlay_route_relay_round,
+        overlay_route_relay_index,
+        overlay_route_relay_id_escaped,
+        overlay_route_strategy_escaped,
+        overlay_route_hop_count,
         ts_unix_ms,
         l4_ingress_ops,
         l3_routed_batches,
@@ -555,6 +707,110 @@ fn main() -> Result<()> {
         string_env_nonempty("NOVOVM_OVERLAY_NODE_ID").unwrap_or_else(|| node_id.clone());
     let overlay_session_id = string_env_nonempty("NOVOVM_OVERLAY_SESSION_ID")
         .unwrap_or_else(|| format!("sess-{}-{}", now_unix_ms(), std::process::id()));
+    let overlay_route_seed =
+        string_env_nonempty("NOVOVM_OVERLAY_ROUTE_SEED").unwrap_or_else(|| overlay_node_id.clone());
+    let overlay_route_id_override = string_env_nonempty("NOVOVM_OVERLAY_ROUTE_ID");
+    let overlay_route_epoch_seconds =
+        u64_env_clamped("NOVOVM_OVERLAY_ROUTE_EPOCH_SECONDS", 300, 1, 86_400);
+    let overlay_route_mode = string_env_nonempty("NOVOVM_OVERLAY_ROUTE_MODE")
+        .map(|v| v.to_ascii_lowercase())
+        .filter(|v| v == "secure" || v == "fast")
+        .unwrap_or_default();
+    let overlay_route_hop_slot_default = if overlay_route_mode == "fast" {
+        300
+    } else {
+        30
+    };
+    let overlay_route_hop_slot_seconds = u64_env_clamped(
+        "NOVOVM_OVERLAY_ROUTE_HOP_SLOT_SECONDS",
+        overlay_route_hop_slot_default,
+        1,
+        86_400,
+    );
+    let overlay_route_mask_bits = u8_env_clamped("NOVOVM_OVERLAY_ROUTE_MASK_BITS", 40, 0, 64);
+    let overlay_route_enforce_multi_hop = if overlay_route_mode == "secure" {
+        true
+    } else if overlay_route_mode == "fast" {
+        false
+    } else {
+        bool_env("NOVOVM_OVERLAY_ROUTE_ENFORCE_MULTI_HOP")
+    };
+    let overlay_route_min_hops_default = if overlay_route_mode == "fast" { 1 } else { 2 };
+    let overlay_route_min_hops = u8_env_clamped(
+        "NOVOVM_OVERLAY_ROUTE_MIN_HOPS",
+        overlay_route_min_hops_default,
+        1,
+        16,
+    );
+    let mut overlay_route_strategy = string_env_nonempty("NOVOVM_OVERLAY_ROUTE_STRATEGY")
+        .map(|v| v.to_ascii_lowercase())
+        .filter(|v| v == "direct" || v == "multi_hop")
+        .unwrap_or_else(|| "direct".to_string());
+    if overlay_route_mode == "secure" {
+        overlay_route_strategy = "multi_hop".to_string();
+    } else if overlay_route_mode == "fast" {
+        overlay_route_strategy = "direct".to_string();
+    }
+    if overlay_route_enforce_multi_hop {
+        overlay_route_strategy = "multi_hop".to_string();
+    }
+    let overlay_route_hop_count = {
+        let default_hops = if overlay_route_strategy == "multi_hop" {
+            3
+        } else {
+            1
+        };
+        let parsed = u8_env_clamped("NOVOVM_OVERLAY_ROUTE_HOP_COUNT", default_hops, 1, 16);
+        if overlay_route_strategy == "direct" {
+            1
+        } else {
+            parsed.max(overlay_route_min_hops)
+        }
+    };
+    let overlay_route_mode_effective =
+        if overlay_route_mode == "secure" || overlay_route_mode == "fast" {
+            overlay_route_mode.clone()
+        } else if overlay_route_strategy == "multi_hop" {
+            "secure".to_string()
+        } else {
+            "fast".to_string()
+        };
+    let overlay_route_region =
+        string_env_nonempty("NOVOVM_OVERLAY_ROUTE_REGION").unwrap_or_else(|| "global".to_string());
+    let overlay_route_relay_buckets_default = if overlay_route_mode_effective == "secure" {
+        8
+    } else {
+        1
+    };
+    let overlay_route_relay_buckets = u64_env_clamped(
+        "NOVOVM_OVERLAY_ROUTE_RELAY_BUCKETS",
+        overlay_route_relay_buckets_default,
+        1,
+        1024,
+    ) as u16;
+    let overlay_route_relay_set_size_default = if overlay_route_mode_effective == "secure" {
+        3
+    } else {
+        1
+    };
+    let overlay_route_relay_set_size = u64_env_clamped(
+        "NOVOVM_OVERLAY_ROUTE_RELAY_SET_SIZE",
+        overlay_route_relay_set_size_default,
+        1,
+        64,
+    ) as u8;
+    let overlay_route_relay_rotate_seconds_default = if overlay_route_mode_effective == "secure" {
+        60
+    } else {
+        300
+    };
+    let overlay_route_relay_rotate_seconds = u64_env_clamped(
+        "NOVOVM_OVERLAY_ROUTE_RELAY_ROTATE_SECONDS",
+        overlay_route_relay_rotate_seconds_default,
+        1,
+        86_400,
+    );
+    let overlay_route_relay_candidates = overlay_route_relay_candidates_from_env();
     let mut anchor_seq: u64 = 0;
     if watch_mode {
         if !use_wire_v1 {
@@ -686,6 +942,19 @@ fn main() -> Result<()> {
                     &node_id,
                     &overlay_node_id,
                     &overlay_session_id,
+                    &overlay_route_seed,
+                    overlay_route_id_override.as_deref(),
+                    overlay_route_epoch_seconds,
+                    overlay_route_hop_slot_seconds,
+                    overlay_route_mask_bits,
+                    &overlay_route_mode_effective,
+                    &overlay_route_region,
+                    overlay_route_relay_buckets,
+                    overlay_route_relay_set_size,
+                    &overlay_route_relay_candidates,
+                    overlay_route_relay_rotate_seconds,
+                    &overlay_route_strategy,
+                    overlay_route_hop_count,
                     anchor_seq,
                     cycle_ingress_ops,
                     cycle_seen_files,
@@ -783,6 +1052,19 @@ fn main() -> Result<()> {
             &node_id,
             &overlay_node_id,
             &overlay_session_id,
+            &overlay_route_seed,
+            overlay_route_id_override.as_deref(),
+            overlay_route_epoch_seconds,
+            overlay_route_hop_slot_seconds,
+            overlay_route_mask_bits,
+            &overlay_route_mode_effective,
+            &overlay_route_region,
+            overlay_route_relay_buckets,
+            overlay_route_relay_set_size,
+            &overlay_route_relay_candidates,
+            overlay_route_relay_rotate_seconds,
+            &overlay_route_strategy,
+            overlay_route_hop_count,
             anchor_seq,
             submitted_total,
             prepared_batches.len() as u64,

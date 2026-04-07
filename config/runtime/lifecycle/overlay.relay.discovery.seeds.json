@@ -1,0 +1,35 @@
+{
+  "default": [
+    "https://seed.global.novovm.example/overlay-relays"
+  ],
+  "regions": {
+    "CN": [
+      "https://seed.cn.novovm.example/overlay-relays"
+    ],
+    "EU": [
+      "https://seed.eu.novovm.example/overlay-relays"
+    ],
+    "US": [
+      "https://seed.us.novovm.example/overlay-relays"
+    ]
+  },
+  "modes": {
+    "secure": [
+      "https://seed.secure.novovm.example/overlay-relays"
+    ],
+    "fast": [
+      "https://seed.fast.novovm.example/overlay-relays"
+    ]
+  },
+  "profiles": {
+    "prod": [
+      "https://seed.prod.novovm.example/overlay-relays"
+    ],
+    "prod_privacy": [
+      "https://seed.privacy.novovm.example/overlay-relays"
+    ],
+    "dev": [
+      "https://seed.dev.novovm.example/overlay-relays"
+    ]
+  }
+}

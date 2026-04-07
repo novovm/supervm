@@ -245,3 +245,8 @@ On failure, read `aoem_last_error(handle)` immediately.
 - `docs_CN/AOEM-FFI/AOEM-FFI-HOST-CALL-PARAMS-V1-2026-03-10.md`
 - `docs_CN/AOEM-FFI/AOEM-FFI-FULLMAX-CAPABILITY-MATRIX-2026-03-12.md`
 
+## 10. NOVOVM host-layer boundary (2026-04-05)
+
+1. AOEM host-call contract does not include overlay route fields.
+2. Overlay governance and labeling (`overlay_route_mode/region/relay_bucket/relay_set_size/relay_round/relay_index/relay_id`) are produced by NOVOVM node/gateway/plugin host path.
+3. AOEM should remain execution-focused and transport-neutral; do not move overlay policy branching into AOEM ABI.

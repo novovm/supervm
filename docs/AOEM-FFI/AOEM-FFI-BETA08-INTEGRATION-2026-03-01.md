@@ -150,7 +150,7 @@ Changes:
 - NOVOVM host binding (clean path):
   - `AoemDyn::capabilities()`
   - `AoemDyn::create_handle()`
-  - `AoemHandle::execute_ops_v2()` (canonical perf path, typed binary ABI)
+- `AoemHandle::execute_ops_v2()` (canonical perf path, typed binary ABI)
 - Added perf example:
   - `crates/aoem-bindings/examples/ffi_perf_smoke.rs`
   - `crates/aoem-bindings/examples/ffi_perf_worldline.rs`
@@ -158,7 +158,14 @@ Changes:
   - `AoemDyn::load()` now rejects DLLs when `aoem_abi_version != 1`
   - `AoemDyn::load()` now rejects DLLs when `capabilities.execute_ops_v2 != true`
   - `AoemDyn::load()` now verifies DLL hash against manifest (`aoem/manifest/aoem-manifest.json`) when present
-  - set `AOEM_DLL_MANIFEST_REQUIRED=1` to force manifest presence; set `AOEM_DLL_MANIFEST=<path>` to override path
+- set `AOEM_DLL_MANIFEST_REQUIRED=1` to force manifest presence; set `AOEM_DLL_MANIFEST=<path>` to override path
+
+## NOVOVM mainline boundary alignment (2026-04-05)
+
+1. AOEM FFI is the execution/kernel boundary only.  
+2. Overlay routing governance (`secure|fast`, multi-hop, relay bucket/set/rotation) belongs to node/gateway/plugin host path, not AOEM ABI fields.  
+3. Mainline production entry is now `novovmctl` (`novovmctl up` for foreground, `novovmctl daemon` for supervised production) with production default `NOVOVM_OVERLAY_ROUTE_MODE=secure`; AOEM stays transport-agnostic.  
+4. Binary ingress/response is still the production baseline; JSON path remains compatibility/debug only.  
 
 ## Perf smoke (method only)
 
@@ -272,4 +279,3 @@ These APIs are kept for compatibility and diagnostics, not as the default perf r
 Current guidance:
 - default throughput worldline uses FFI V2 typed ops.
 - old envelope benchmark parameters are removed from `ffi_perf_worldline`.
-
