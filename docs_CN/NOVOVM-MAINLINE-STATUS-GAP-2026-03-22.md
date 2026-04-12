@@ -5,6 +5,13 @@
 本文只描述仓库主线的功能落地状态，不讨论营销叙事。  
 口径以“真实生产链路可运行”为准，不以模拟环境和表演型测试作为完成标准。
 
+### 单一系统口径（强制）
+
+1. `SuperVM` 是单一系统，四层网络（L4/L3/L2/L1）是唯一网络主干，不允许并行第二套网络语义。  
+2. 本文只记录交付状态，不定义网络架构语义；网络语义唯一来源固定为 `docs_CN/NOVOVM-NETWORK/NOVOVM-NETWORK-RFC-0-MAINLINE-DECISION-2026-04-08.md`。  
+3. 本文中出现的“中继 / 多跳 / 覆盖层”均视为 L3 增量能力，不是独立模块系统。  
+4. 运维壳（`novovmctl`/兼容壳）仅消费四层网络状态，不得引入第二套策略判断。  
+
 ## 2. 主线完成度总览
 
 ### 严格收口口径（2026-04-07）
@@ -600,5 +607,6 @@
 Final closure summary:
 - Phase 1 unified Rust policy core: closed
 - Phase 2 mainline Rust shell migration: closed
+- NOVOVM network baseline v3 (`A + B + C.2 + D.3`): closed (single source: `docs_CN/NOVOVM-NETWORK/NOVOVM-NETWORK-RFC-0-MAINLINE-DECISION-2026-04-08.md`)
 - Formal final summary document:
   - `docs_CN/NOVOVM-RUST-MIGRATION-FINAL-CLOSURE-2026-04-07.md`

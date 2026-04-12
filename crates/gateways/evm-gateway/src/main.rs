@@ -14603,10 +14603,47 @@ fn execute_gateway_atomic_broadcast_ticket(
     timeout_ms: u64,
     tx_ir_bincode: Option<&[u8]>,
 ) -> Result<String> {
+    fn validate_gateway_atomic_broadcast_exec_path(exec_path: &Path) -> Result<PathBuf> {
+        const ALLOWED_BASENAMES: [&str; 2] =
+            ["evm_atomic_broadcast_executor", "evm_atomic_broadcast_executor.exe"];
+        let canonical = exec_path.canonicalize().with_context(|| {
+            format!(
+                "canonicalize evm atomic-broadcast executor path failed: {}",
+                exec_path.display()
+            )
+        })?;
+        let metadata = canonical.metadata().with_context(|| {
+            format!(
+                "read evm atomic-broadcast executor metadata failed: {}",
+                canonical.display()
+            )
+        })?;
+        if !metadata.is_file() {
+            bail!(
+                "evm atomic-broadcast executor path is not a file: {}",
+                canonical.display()
+            );
+        }
+        let Some(file_name) = canonical.file_name().and_then(|v| v.to_str()) else {
+            bail!(
+                "evm atomic-broadcast executor path has invalid basename: {}",
+                canonical.display()
+            );
+        };
+        if !ALLOWED_BASENAMES.contains(&file_name) {
+            bail!(
+                "evm atomic-broadcast executor basename is not allowlisted: {}",
+                canonical.display()
+            );
+        }
+        Ok(canonical)
+    }
+
+    let exec_path = validate_gateway_atomic_broadcast_exec_path(exec_path)?;
     let req = build_gateway_atomic_broadcast_executor_request(ticket, tx_ir_bincode);
     let req_body = serde_json::to_vec(&req)
         .context("serialize evm atomic-broadcast executor request failed")?;
-    let mut child = Command::new(exec_path)
+    let mut child = Command::new(&exec_path)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

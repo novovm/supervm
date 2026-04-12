@@ -20,7 +20,7 @@ sha2 = "0.10"
 libloading = "0.8"
 postcard = { version = "1", default-features = false, features = ["alloc"] }
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+serde_json = { version = "1", features = ["preserve_order"] }
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 tiny_http = "0.12"
 rocksdb = { version = "0.22", default-features = false }
@@ -33,3 +33,11 @@ aoem-bindings = { path = "../aoem-bindings" }
 [[bin]]
 name = "novovm-node"
 path = "src/bin/novovm-node.rs"
+
+[[bin]]
+name = "supervm-mainline-gate"
+path = "src/bin/supervm-mainline-gate.rs"
+
+[[bin]]
+name = "supervm-mainline-preflight"
+path = "src/bin/supervm-mainline-preflight.rs"

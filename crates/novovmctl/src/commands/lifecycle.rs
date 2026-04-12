@@ -11,7 +11,7 @@ use std::fs::{self, OpenOptions};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 const DEFAULT_RELEASE_ROOT: &str = "artifacts/runtime/releases";
 const DEFAULT_RUNTIME_STATE_FILE: &str = "artifacts/runtime/lifecycle/state.json";
@@ -965,6 +965,38 @@ fn spawn_effective_node(
     runtime_pid_path: &Path,
     managed_ingress: &ManagedIngressManifest,
 ) -> Result<u32, CtlError> {
+    const MANUAL_ROUTE_ENV_LOCK_KEYS: [&str; 30] = [
+        "NOVOVM_L3_POLICY_MODE",
+        "NOVOVM_L3_PROFILE_STICKY_MARGIN",
+        "NOVOVM_L3_PROFILE_RUNTIME_FEEDBACK_SCALE",
+        "NOVOVM_L3_PROFILE_CANDIDATE_LIMIT",
+        "NOVOVM_L3_PROFILE_MODE_POLICY",
+        "NOVOVM_L3_PROFILE_MODE_POLICY_GOVERNANCE",
+        "NOVOVM_L3_PROFILE_MODE_MIN",
+        "NOVOVM_L3_PROFILE_MODE_MAX",
+        "NOVOVM_L3_PROFILE_FAMILY",
+        "NOVOVM_L3_PROFILE_FAMILY_GOVERNANCE",
+        "NOVOVM_L3_PROFILE_FAMILY_MIN",
+        "NOVOVM_L3_PROFILE_FAMILY_MAX",
+        "NOVOVM_L3_POLICY_PROFILE_VERSION",
+        "NOVOVM_L3_POLICY_PROFILE_VERSION_GOVERNANCE",
+        "NOVOVM_L3_POLICY_PROFILE_DEFAULT",
+        "NOVOVM_OVERLAY_ROUTE_MODE",
+        "NOVOVM_OVERLAY_ROUTE_REGION",
+        "NOVOVM_OVERLAY_ROUTE_STRATEGY",
+        "NOVOVM_OVERLAY_ROUTE_ENFORCE_MULTI_HOP",
+        "NOVOVM_OVERLAY_ROUTE_HOP_COUNT",
+        "NOVOVM_OVERLAY_ROUTE_MIN_HOPS",
+        "NOVOVM_OVERLAY_ROUTE_HOP_SLOT_SECONDS",
+        "NOVOVM_OVERLAY_ROUTE_RELAY_BUCKETS",
+        "NOVOVM_OVERLAY_ROUTE_RELAY_SET_SIZE",
+        "NOVOVM_OVERLAY_ROUTE_RELAY_ROTATE_SECONDS",
+        "NOVOVM_OVERLAY_ROUTE_RELAY_CANDIDATES",
+        "NOVOVM_OVERLAY_ROUTE_FORCE_STRATEGY",
+        "NOVOVM_OVERLAY_ROUTE_FORCE_RELAY_ID",
+        "NOVOVM_OVERLAY_ROUTE_FORCE_HOP_COUNT",
+        "NOVOVM_OVERLAY_ROUTE_ID",
+    ];
     if let Some(parent) = runtime_pid_path.parent() {
         if !parent.as_os_str().is_empty() {
             fs::create_dir_all(parent).map_err(|e| {
@@ -976,8 +1008,24 @@ fn spawn_effective_node(
         }
     }
     let mut command = Command::new(&effective.node_bin);
+    let sched_token = format!(
+        "novovmctl-lifecycle-{}-{}",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or(0)
+    );
     command.arg("--profile").arg(&effective.profile);
     command.arg("--role-profile").arg(&effective.role_profile);
+    for key in MANUAL_ROUTE_ENV_LOCK_KEYS {
+        command.env_remove(key);
+    }
+    command.env("NOVOVM_SCHED_SOURCE", "novovmctl");
+    command.env("NOVOVM_SCHED_TOKEN", &sched_token);
+    command.env("NOVOVM_SCHED_REQUIRED", "1");
+    command.env("NOVOVM_SINGLE_SOURCE_STRICT", "1");
+    command.env("NOVOVM_SUPERVM_MANUAL_ROUTE_ENV_LOCK", "1");
     if let Some(v) = effective.overlay_route_runtime_file.as_deref() {
         command.arg("--overlay-route-runtime-file").arg(v);
     }

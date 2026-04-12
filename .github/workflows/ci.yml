@@ -83,15 +83,20 @@ jobs:
       - name: Clippy
         run: cargo clippy --manifest-path "${{ needs.detect.outputs.rust_manifest }}" --all-targets -- -D warnings
 
-      - name: Tests
-        run: cargo test --manifest-path "${{ needs.detect.outputs.rust_manifest }}" --all
-
-      - name: State Root Regression Gates
+      - name: SuperVM Mainline Gate Runner (canonical)
         shell: bash
         run: |
           set -euo pipefail
-          cargo test --manifest-path "${{ needs.detect.outputs.rust_manifest }}" -p novovm-consensus state_root_match_helper
-          cargo test --manifest-path "${{ needs.detect.outputs.rust_manifest }}" -p novovm-consensus test_propose_epoch_with_state_root_override
+          cargo run -p novovm-node --bin supervm-mainline-gate
+
+      - name: Upload mainline status artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: supervm-mainline-status
+          path: |
+            artifacts/mainline-status.json
+            artifacts/mainline-delivery-contract.json
+          if-no-files-found: error
 
   rust_security:
     name: Rust security checks

@@ -20,7 +20,7 @@ use std::collections::VecDeque;
 use std::io::{Read, Write};
 use std::net::{IpAddr, SocketAddr, TcpListener, TcpStream, UdpSocket};
 use std::sync::{Arc, Mutex, OnceLock};
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -63,6 +63,156 @@ const RUNTIME_SYNC_PULL_PREFETCH_MARGIN_FINALIZE: u64 = 1;
 const DEFAULT_RUNTIME_SYNC_PULL_FOLLOWUP_FANOUT_MAX: usize = 1;
 const HARD_MAX_RUNTIME_SYNC_PULL_FOLLOWUP_FANOUT: usize = 8;
 static RUNTIME_SYNC_PULL_FOLLOWUP_FANOUT_MAX_CACHE: OnceLock<usize> = OnceLock::new();
+static LOCAL_OBSERVED_PEERS: OnceLock<DashMap<String, LocalObservedPeer>> = OnceLock::new();
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LocalObservedPeer {
+    pub node_id: String,
+    pub addr_hint: String,
+    pub last_seen_unix_ms: u64,
+}
+
+pub fn snapshot_local_observed_peers() -> Vec<LocalObservedPeer> {
+    let mut peers: Vec<_> = local_observed_peers_registry()
+        .iter()
+        .map(|entry| entry.value().clone())
+        .collect();
+    peers.sort_by(|left, right| {
+        left.node_id
+            .cmp(&right.node_id)
+            .then_with(|| left.addr_hint.cmp(&right.addr_hint))
+    });
+    peers
+}
+
+fn local_observed_peers_registry() -> &'static DashMap<String, LocalObservedPeer> {
+    LOCAL_OBSERVED_PEERS.get_or_init(DashMap::new)
+}
+
+#[cfg(test)]
+fn clear_local_observed_peers_registry() {
+    local_observed_peers_registry().clear();
+}
+
+fn now_unix_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+// Source-rank guardrail for routing seeding:
+// LocalObserved > OperatorForced.
+// Only exact peer_addr_index hits may enter this registry.
+fn observe_local_observed_peer(peer: &NodeId, addr: SocketAddr) {
+    local_observed_peers_registry().insert(
+        peer.0.to_string(),
+        LocalObservedPeer {
+            node_id: peer.0.to_string(),
+            addr_hint: addr.to_string(),
+            last_seen_unix_ms: now_unix_ms(),
+        },
+    );
+}
+
+fn observe_local_observed_peer_from_exact_addr_index(
+    peer_addr_index: &DashMap<SocketAddr, NodeId>,
+    addr: SocketAddr,
+) {
+    if let Some(peer) = peer_addr_index.get(&addr) {
+        observe_local_observed_peer(peer.value(), addr);
+    }
+}
+
+fn observe_local_observed_peer_from_confirmed_sender(
+    peers: &DashMap<NodeId, SocketAddr>,
+    msg_peer_id: Option<u64>,
+    addr: SocketAddr,
+) -> bool {
+    let Some(msg_peer_id) = msg_peer_id else {
+        return false;
+    };
+    let peer = NodeId(msg_peer_id);
+    let Some(registered_addr) = peers.get(&peer) else {
+        return false;
+    };
+    if *registered_addr.value() != addr {
+        return false;
+    }
+    observe_local_observed_peer(&peer, addr);
+    true
+}
+
+fn observe_local_observed_peer_from_transport_evidence(
+    peers: &DashMap<NodeId, SocketAddr>,
+    peer_addr_index: &DashMap<SocketAddr, NodeId>,
+    msg_peer_id: Option<u64>,
+    addr: SocketAddr,
+) {
+    if observe_local_observed_peer_from_confirmed_sender(peers, msg_peer_id, addr) {
+        return;
+    }
+    observe_local_observed_peer_from_exact_addr_index(peer_addr_index, addr);
+}
+
+#[cfg(test)]
+mod local_observed_tests {
+    use super::*;
+    use std::net::{Ipv4Addr, SocketAddrV4};
+
+    #[test]
+    fn exact_addr_index_observation_enters_snapshot() {
+        clear_local_observed_peers_registry();
+        let peer_addr_index = DashMap::new();
+        let addr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 30303));
+        peer_addr_index.insert(addr, NodeId(7));
+
+        observe_local_observed_peer_from_exact_addr_index(&peer_addr_index, addr);
+
+        let snapshot = snapshot_local_observed_peers();
+        assert_eq!(snapshot.len(), 1);
+        assert_eq!(snapshot[0].node_id, "7");
+        assert_eq!(snapshot[0].addr_hint, "127.0.0.1:30303");
+        clear_local_observed_peers_registry();
+    }
+
+    #[test]
+    fn confirmed_sender_with_exact_registered_addr_enters_snapshot() {
+        clear_local_observed_peers_registry();
+        let peers = DashMap::new();
+        let addr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 40404));
+        peers.insert(NodeId(9), addr);
+
+        assert!(observe_local_observed_peer_from_confirmed_sender(
+            &peers,
+            Some(9),
+            addr
+        ));
+
+        let snapshot = snapshot_local_observed_peers();
+        assert_eq!(snapshot.len(), 1);
+        assert_eq!(snapshot[0].node_id, "9");
+        assert_eq!(snapshot[0].addr_hint, "127.0.0.1:40404");
+        clear_local_observed_peers_registry();
+    }
+
+    #[test]
+    fn confirmed_sender_rejects_non_exact_registered_addr() {
+        clear_local_observed_peers_registry();
+        let peers = DashMap::new();
+        let registered = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 50505));
+        let src = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 50506));
+        peers.insert(NodeId(11), registered);
+
+        assert!(!observe_local_observed_peer_from_confirmed_sender(
+            &peers,
+            Some(11),
+            src
+        ));
+        assert!(snapshot_local_observed_peers().is_empty());
+        clear_local_observed_peers_registry();
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct RuntimeSyncPullRequest {
@@ -1426,6 +1576,12 @@ impl Transport for UdpTransport {
             None
         };
         let sync_ctx = runtime_sync_pull_message_context(&decoded);
+        observe_local_observed_peer_from_transport_evidence(
+            &self.peers,
+            &self.peer_addr_index,
+            msg_peer_id,
+            src,
+        );
         maybe_learn_peer_addr(
             &self.peers,
             &self.peer_addr_index,
@@ -1573,6 +1729,12 @@ impl Transport for TcpTransport {
             None
         };
         let sync_ctx = runtime_sync_pull_message_context(&decoded);
+        observe_local_observed_peer_from_transport_evidence(
+            &self.peers,
+            &self.peer_addr_index,
+            msg_peer_id,
+            addr,
+        );
         maybe_learn_peer_addr(
             &self.peers,
             &self.peer_addr_index,
