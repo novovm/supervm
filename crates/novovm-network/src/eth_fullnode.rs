@@ -1932,8 +1932,10 @@ fn eth_peer_effective_stage_v1(state: &EthPeerSessionState, now: u64) -> EthPeer
 fn eth_peer_window_stats_from_rounds_v1(
     rounds: &std::collections::VecDeque<EthPeerRoundOutcomeV1>,
 ) -> EthPeerRecentWindowStatsV1 {
-    let mut stats = EthPeerRecentWindowStatsV1::default();
-    stats.window_rounds = rounds.len() as u64;
+    let mut stats = EthPeerRecentWindowStatsV1 {
+        window_rounds: rounds.len() as u64,
+        ..EthPeerRecentWindowStatsV1::default()
+    };
     for round in rounds {
         if round.selected_bootstrap || round.selected_sync {
             stats.selected_rounds = stats.selected_rounds.saturating_add(1);
@@ -3697,63 +3699,78 @@ pub fn observe_network_runtime_eth_peer_body_success_v1(
     entry.last_state_change_unix_ms = now;
 }
 
+pub struct EthPeerSelectionRoundObservationV1<'a> {
+    pub peers: &'a [NodeId],
+    pub selected_bootstrap_peers: &'a [NodeId],
+    pub selected_sync_peers: &'a [NodeId],
+    pub header_success_peers: &'a [u64],
+    pub body_success_peers: &'a [u64],
+    pub connect_failure_peers: &'a [u64],
+    pub handshake_failure_peers: &'a [u64],
+    pub decode_failure_peers: &'a [u64],
+    pub timeout_failure_peers: &'a [u64],
+    pub validation_reject_peers: &'a [u64],
+    pub disconnect_peers: &'a [u64],
+    pub capacity_reject_peers: &'a [u64],
+}
+
 pub fn observe_network_runtime_eth_peer_selection_round_v1(
     chain_id: u64,
-    peers: &[NodeId],
-    selected_bootstrap_peers: &[NodeId],
-    selected_sync_peers: &[NodeId],
-    header_success_peers: &[u64],
-    body_success_peers: &[u64],
-    connect_failure_peers: &[u64],
-    handshake_failure_peers: &[u64],
-    decode_failure_peers: &[u64],
-    timeout_failure_peers: &[u64],
-    validation_reject_peers: &[u64],
-    disconnect_peers: &[u64],
-    capacity_reject_peers: &[u64],
+    observation: EthPeerSelectionRoundObservationV1<'_>,
 ) {
     let now = eth_peer_now_unix_ms_v1();
-    let selected_bootstrap = selected_bootstrap_peers
+    let selected_bootstrap = observation
+        .selected_bootstrap_peers
         .iter()
         .map(|peer| peer.0)
         .collect::<std::collections::BTreeSet<_>>();
-    let selected_sync = selected_sync_peers
+    let selected_sync = observation
+        .selected_sync_peers
         .iter()
         .map(|peer| peer.0)
         .collect::<std::collections::BTreeSet<_>>();
-    let header_success = header_success_peers
+    let header_success = observation
+        .header_success_peers
         .iter()
         .copied()
         .collect::<std::collections::BTreeSet<_>>();
-    let body_success = body_success_peers
+    let body_success = observation
+        .body_success_peers
         .iter()
         .copied()
         .collect::<std::collections::BTreeSet<_>>();
-    let connect_failure = connect_failure_peers
+    let connect_failure = observation
+        .connect_failure_peers
         .iter()
         .copied()
         .collect::<std::collections::BTreeSet<_>>();
-    let handshake_failure = handshake_failure_peers
+    let handshake_failure = observation
+        .handshake_failure_peers
         .iter()
         .copied()
         .collect::<std::collections::BTreeSet<_>>();
-    let decode_failure = decode_failure_peers
+    let decode_failure = observation
+        .decode_failure_peers
         .iter()
         .copied()
         .collect::<std::collections::BTreeSet<_>>();
-    let timeout_failure = timeout_failure_peers
+    let timeout_failure = observation
+        .timeout_failure_peers
         .iter()
         .copied()
         .collect::<std::collections::BTreeSet<_>>();
-    let validation_reject = validation_reject_peers
+    let validation_reject = observation
+        .validation_reject_peers
         .iter()
         .copied()
         .collect::<std::collections::BTreeSet<_>>();
-    let disconnect = disconnect_peers
+    let disconnect = observation
+        .disconnect_peers
         .iter()
         .copied()
         .collect::<std::collections::BTreeSet<_>>();
-    let capacity_reject = capacity_reject_peers
+    let capacity_reject = observation
+        .capacity_reject_peers
         .iter()
         .copied()
         .collect::<std::collections::BTreeSet<_>>();
@@ -3762,7 +3779,7 @@ pub fn observe_network_runtime_eth_peer_selection_round_v1(
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     let chain = guard.entry(chain_id).or_default();
-    for peer in peers {
+    for peer in observation.peers {
         let entry = chain
             .entry(peer.0)
             .or_insert_with(|| eth_peer_session_state_default_v1(now));
@@ -4495,7 +4512,7 @@ mod tests {
 
     #[test]
     fn sync_selection_prefers_stable_body_contributor_over_flaky_higher_head_peer() {
-        let chain_id = 99_160_318_1_u64;
+        let chain_id = 991_603_181_u64;
         let stable_peer = NodeId(411);
         let flaky_peer = NodeId(412);
         let _ = upsert_network_runtime_eth_peer_session(
@@ -4569,7 +4586,7 @@ mod tests {
 
     #[test]
     fn sync_selection_prefers_long_term_trusted_peer_over_ephemeral_higher_head_peer() {
-        let chain_id = 99_160_318_2_u64;
+        let chain_id = 991_603_182_u64;
         let trusted_peer = NodeId(421);
         let ephemeral_peer = NodeId(422);
         let now = eth_peer_now_unix_ms_v1();

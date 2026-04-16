@@ -73,6 +73,14 @@ struct StateRootCache {
     dirty: bool,
 }
 
+#[derive(Clone, Copy)]
+struct ExecutionReconstructionContextV1<'a> {
+    status_ok: bool,
+    final_state_root: [u8; 32],
+    tx_index: u32,
+    raw_execution_logs: &'a [AoemEventLogV1],
+}
+
 impl NovoVmAdapter {
     #[must_use]
     pub fn new(config: ChainConfig) -> Self {
@@ -751,11 +759,9 @@ impl NovoVmAdapter {
         tx: &TxIR,
         state: &StateIR,
         artifact: Option<&AoemTxExecutionArtifactV1>,
-        status_ok: bool,
-        final_state_root: [u8; 32],
-        tx_index: u32,
-        raw_execution_logs: &[AoemEventLogV1],
+        context: ExecutionReconstructionContextV1<'_>,
     ) -> AoemExecutionReconstructionInputV1 {
+        let status_ok = context.status_ok;
         let tx_hash = Self::tx_hash_or_compute(tx);
         let contract_address_from_artifact =
             artifact.and_then(|item| item.contract_address.clone());
@@ -793,7 +799,7 @@ impl NovoVmAdapter {
         let raw_event_logs = artifact
             .map(|item| item.event_logs.clone())
             .filter(|logs| !logs.is_empty())
-            .unwrap_or_else(|| raw_execution_logs.to_vec());
+            .unwrap_or_else(|| context.raw_execution_logs.to_vec());
         let raw_log_bloom = artifact.map(|item| item.log_bloom.clone());
         let failed_class = if status_ok {
             None
@@ -849,7 +855,7 @@ impl NovoVmAdapter {
             .unwrap_or(false)
         {
             AoemFieldSourceV1::AoemRaw
-        } else if !raw_execution_logs.is_empty() {
+        } else if !context.raw_execution_logs.is_empty() {
             AoemFieldSourceV1::HostState
         } else {
             AoemFieldSourceV1::Missing
@@ -875,7 +881,7 @@ impl NovoVmAdapter {
             .or_else(|| Some(tx.from.clone()));
 
         AoemExecutionReconstructionInputV1 {
-            tx_index,
+            tx_index: context.tx_index,
             tx_hash,
             tx_type: Self::canonical_tx_type(tx.tx_type),
             from: tx.from.clone(),
@@ -889,7 +895,7 @@ impl NovoVmAdapter {
                 .or(Some(tx.gas_price)),
             receipt_type: artifact.and_then(|item| item.receipt_type),
             status_ok,
-            state_root: final_state_root,
+            state_root: context.final_state_root,
             contract_address,
             call_data: tx.data.clone(),
             init_code: if tx.tx_type == TxType::ContractDeploy {
@@ -1475,15 +1481,14 @@ impl NovoVmAdapter {
         };
 
         let raw_execution_logs = std::mem::take(&mut self.execution_current_logs);
-        let reconstruction_input = self.build_execution_reconstruction_input(
-            tx,
-            state,
-            artifact,
+        let reconstruction_context = ExecutionReconstructionContextV1 {
             status_ok,
             final_state_root,
-            self.execution_current_tx_index,
-            raw_execution_logs.as_slice(),
-        );
+            tx_index: self.execution_current_tx_index,
+            raw_execution_logs: raw_execution_logs.as_slice(),
+        };
+        let reconstruction_input =
+            self.build_execution_reconstruction_input(tx, state, artifact, reconstruction_context);
         let reconstruction_rules =
             self.execution_reconstruction_rules(self.runtime_log_rebuild_enabled());
         let resolved_artifact = match reconstruct_tx_execution_artifact_v1(

@@ -8,13 +8,10 @@ fn parse_repo_root() -> PathBuf {
     let mut args = std::env::args().skip(1);
     let mut repo_root = PathBuf::from(".");
     while let Some(arg) = args.next() {
-        match arg.as_str() {
-            "--repo-root" => {
-                if let Some(v) = args.next() {
-                    repo_root = PathBuf::from(v);
-                }
+        if arg.as_str() == "--repo-root" {
+            if let Some(v) = args.next() {
+                repo_root = PathBuf::from(v);
             }
-            _ => {}
         }
     }
     repo_root

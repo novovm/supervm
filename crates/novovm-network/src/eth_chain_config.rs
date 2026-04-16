@@ -96,7 +96,7 @@ pub fn resolve_eth_chain_config_v1(chain_id: u64) -> EthChainConfigV1 {
     let genesis_hash = std::env::var("NOVOVM_NETWORK_ETH_GENESIS_HASH_HEX")
         .ok()
         .and_then(|raw| eth_chain_config_parse_fixed_hex_v1::<32>(raw.as_str()))
-        .unwrap_or_else(|| match chain_id {
+        .unwrap_or(match chain_id {
             1 => ETH_MAINNET_GENESIS_HASH_V1,
             _ => [0u8; 32],
         });
@@ -265,7 +265,6 @@ fn eth_chain_config_fork_progression_v1(config: &EthChainConfigV1) -> Vec<(u64, 
     out
 }
 
-#[must_use]
 pub fn validate_eth_fork_id_against_chain_config_v1(
     config: &EthChainConfigV1,
     local_head_block: u64,
@@ -302,8 +301,8 @@ pub fn validate_eth_fork_id_against_chain_config_v1(
                 return Ok(());
             }
         }
-        for superset_idx in (idx + 1)..sums.len() {
-            if sums[superset_idx] == remote_fork_id.hash {
+        for checksum in sums.iter().skip(idx + 1) {
+            if *checksum == remote_fork_id.hash {
                 return Ok(());
             }
         }
@@ -312,7 +311,6 @@ pub fn validate_eth_fork_id_against_chain_config_v1(
     Ok(())
 }
 
-#[must_use]
 pub fn validate_eth_chain_config_peer_status_v1(
     config: &EthChainConfigV1,
     local_head_block: u64,

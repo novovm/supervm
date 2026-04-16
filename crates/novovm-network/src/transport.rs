@@ -64,11 +64,12 @@ use crate::{
     write_eth_fullnode_native_worker_runtime_snapshot_default_path_v1,
     EthChainConfigPeerValidationReasonV1, EthFullnodeBudgetHooksV1,
     EthFullnodeNativePeerFailureSnapshotV1, EthFullnodeNativeWorkerRuntimeSnapshotV1,
-    EthPeerLifecycleSummaryV1, EthPeerSelectionQualitySummaryV1, EthPeerSelectionScoreV1,
-    EthRlpxBlockBodiesResponseV1, EthRlpxBlockHeadersResponseV1, EthRlpxFrameSessionV1,
-    EthRlpxStatusV1, NetworkRuntimeNativePendingTxPropagationStopReasonV1,
-    NetworkRuntimeNativeSyncPhaseV1, ETH_FULLNODE_NATIVE_WORKER_RUNTIME_SCHEMA_V1,
-    ETH_RLPX_BASE_PROTOCOL_OFFSET, ETH_RLPX_ETH_BLOCK_BODIES_MSG, ETH_RLPX_ETH_BLOCK_HEADERS_MSG,
+    EthPeerLifecycleSummaryV1, EthPeerSelectionQualitySummaryV1,
+    EthPeerSelectionRoundObservationV1, EthPeerSelectionScoreV1, EthRlpxBlockBodiesResponseV1,
+    EthRlpxBlockHeadersResponseV1, EthRlpxFrameSessionV1, EthRlpxStatusV1,
+    NetworkRuntimeNativePendingTxPropagationStopReasonV1, NetworkRuntimeNativeSyncPhaseV1,
+    ETH_FULLNODE_NATIVE_WORKER_RUNTIME_SCHEMA_V1, ETH_RLPX_BASE_PROTOCOL_OFFSET,
+    ETH_RLPX_ETH_BLOCK_BODIES_MSG, ETH_RLPX_ETH_BLOCK_HEADERS_MSG,
     ETH_RLPX_ETH_GET_BLOCK_BODIES_MSG, ETH_RLPX_ETH_GET_BLOCK_HEADERS_MSG, ETH_RLPX_ETH_STATUS_MSG,
     ETH_RLPX_ETH_TRANSACTIONS_MSG, ETH_RLPX_P2P_DISCONNECT_MSG, ETH_RLPX_P2P_HELLO_MSG,
     ETH_RLPX_P2P_PING_MSG, ETH_RLPX_P2P_PONG_MSG,
@@ -509,18 +510,20 @@ impl EthFullnodeNativePeerWorkerV1 {
             .collect::<Vec<_>>();
         observe_network_runtime_eth_peer_selection_round_v1(
             plan.chain_id,
-            &plan.candidate_peers,
-            &plan.bootstrap_peers,
-            &plan.sync_peers,
-            &report.header_updated_peer_ids,
-            &report.body_updated_peer_ids,
-            &connect_failure_peers,
-            &handshake_failure_peers,
-            &decode_failure_peers,
-            &timeout_failure_peers,
-            &validation_reject_peers,
-            &disconnect_peers,
-            &capacity_reject_peers,
+            EthPeerSelectionRoundObservationV1 {
+                peers: &plan.candidate_peers,
+                selected_bootstrap_peers: &plan.bootstrap_peers,
+                selected_sync_peers: &plan.sync_peers,
+                header_success_peers: &report.header_updated_peer_ids,
+                body_success_peers: &report.body_updated_peer_ids,
+                connect_failure_peers: &connect_failure_peers,
+                handshake_failure_peers: &handshake_failure_peers,
+                decode_failure_peers: &decode_failure_peers,
+                timeout_failure_peers: &timeout_failure_peers,
+                validation_reject_peers: &validation_reject_peers,
+                disconnect_peers: &disconnect_peers,
+                capacity_reject_peers: &capacity_reject_peers,
+            },
         );
         let runtime_snapshot = build_eth_fullnode_native_worker_runtime_snapshot_v1(&plan, &report);
         set_eth_fullnode_native_worker_runtime_snapshot_v1(plan.chain_id, runtime_snapshot.clone());
@@ -1005,9 +1008,8 @@ fn connect_eth_fullnode_native_rlpx_peer_v1(
     let timeout = Duration::from_secs(5);
     observe_network_runtime_eth_peer_connecting_v1(chain_id, peer.0);
     let mut stream = connect_eth_fullnode_native_rlpx_addr_v1(endpoint.addr_hint.as_str(), timeout)
-        .map_err(|err| {
-            observe_eth_fullnode_connect_error_v1(chain_id, peer.0, &err);
-            err
+        .inspect_err(|err| {
+            observe_eth_fullnode_connect_error_v1(chain_id, peer.0, err);
         })?;
     observe_network_runtime_eth_peer_connected_v1(chain_id, peer.0);
     stream.set_read_timeout(Some(timeout)).map_err(|e| {
@@ -3372,7 +3374,7 @@ fn maybe_build_evm_native_sync_response(
             }
             let headers = get_network_runtime_native_header_snapshot_v1(chain_id)
                 .into_iter()
-                .filter(|snapshot| heights.iter().any(|height| *height == snapshot.number))
+                .filter(|snapshot| heights.contains(&snapshot.number))
                 .map(|snapshot| evm_native_block_header_wire_from_runtime_snapshot(&snapshot))
                 .collect();
             Some((
@@ -3397,7 +3399,7 @@ fn maybe_build_evm_native_sync_response(
             }
             let bodies = get_network_runtime_native_body_snapshot_v1(chain_id)
                 .into_iter()
-                .filter(|snapshot| hashes.iter().any(|hash| *hash == snapshot.block_hash))
+                .filter(|snapshot| hashes.contains(&snapshot.block_hash))
                 .map(|snapshot| evm_native_block_body_wire_from_runtime_snapshot(&snapshot))
                 .collect();
             Some((

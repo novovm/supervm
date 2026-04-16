@@ -1375,17 +1375,14 @@ pub struct EthRlpxHandshakeResponderOutcomeV1 {
     pub remote_static_pub: [u8; ETH_RLPX_PUB_LEN],
 }
 
-fn eth_rlpx_decode_auth_req_v4_v1(
-    plain: &[u8],
-) -> Result<
-    (
-        [u8; ETH_RLPX_SIG_LEN],
-        [u8; ETH_RLPX_PUB_LEN],
-        [u8; 32],
-        u64,
-    ),
-    String,
-> {
+type EthRlpxDecodedAuthReqV4V1 = (
+    [u8; ETH_RLPX_SIG_LEN],
+    [u8; ETH_RLPX_PUB_LEN],
+    [u8; 32],
+    u64,
+);
+
+fn eth_rlpx_decode_auth_req_v4_v1(plain: &[u8]) -> Result<EthRlpxDecodedAuthReqV4V1, String> {
     let (root, _) = eth_rlpx_parse_item_v1(plain)?;
     let EthRlpxRlpItemV1::List(payload) = root else {
         return Err("rlpx_auth_req_not_list".to_string());

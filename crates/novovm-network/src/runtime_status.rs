@@ -47,14 +47,26 @@ static NETWORK_RUNTIME_NATIVE_HEAD_SNAPSHOTS: OnceLock<
 static NETWORK_RUNTIME_NATIVE_CANONICAL_CHAINS: OnceLock<
     Mutex<HashMap<u64, NetworkRuntimeNativeCanonicalChainStateInternalV1>>,
 > = OnceLock::new();
+type NetworkRuntimeNativePendingTxStateByHashV1 =
+    HashMap<[u8; 32], NetworkRuntimeNativePendingTxStateV1>;
+type NetworkRuntimeNativePendingTxPayloadByHashV1 = HashMap<[u8; 32], Vec<u8>>;
+type NetworkRuntimeNativePendingTxTombstoneByHashV1 =
+    HashMap<[u8; 32], NetworkRuntimeNativePendingTxTombstoneV1>;
+type NetworkRuntimeNativePendingTxStateByChainV1 =
+    HashMap<u64, NetworkRuntimeNativePendingTxStateByHashV1>;
+type NetworkRuntimeNativePendingTxPayloadByChainV1 =
+    HashMap<u64, NetworkRuntimeNativePendingTxPayloadByHashV1>;
+type NetworkRuntimeNativePendingTxTombstoneByChainV1 =
+    HashMap<u64, NetworkRuntimeNativePendingTxTombstoneByHashV1>;
+
 static NETWORK_RUNTIME_NATIVE_PENDING_TXS: OnceLock<
-    Mutex<HashMap<u64, HashMap<[u8; 32], NetworkRuntimeNativePendingTxStateV1>>>,
+    Mutex<NetworkRuntimeNativePendingTxStateByChainV1>,
 > = OnceLock::new();
 static NETWORK_RUNTIME_NATIVE_PENDING_TX_PAYLOADS: OnceLock<
-    Mutex<HashMap<u64, HashMap<[u8; 32], Vec<u8>>>>,
+    Mutex<NetworkRuntimeNativePendingTxPayloadByChainV1>,
 > = OnceLock::new();
 static NETWORK_RUNTIME_NATIVE_PENDING_TX_TOMBSTONES: OnceLock<
-    Mutex<HashMap<u64, HashMap<[u8; 32], NetworkRuntimeNativePendingTxTombstoneV1>>>,
+    Mutex<NetworkRuntimeNativePendingTxTombstoneByChainV1>,
 > = OnceLock::new();
 static NETWORK_RUNTIME_NATIVE_PENDING_TX_BROADCAST_RUNTIME: OnceLock<
     Mutex<HashMap<u64, NetworkRuntimeNativePendingTxBroadcastRuntimeSummaryV1>>,
@@ -97,18 +109,17 @@ fn runtime_native_canonical_chain_map(
     NETWORK_RUNTIME_NATIVE_CANONICAL_CHAINS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-fn runtime_native_pending_tx_map(
-) -> &'static Mutex<HashMap<u64, HashMap<[u8; 32], NetworkRuntimeNativePendingTxStateV1>>> {
+fn runtime_native_pending_tx_map() -> &'static Mutex<NetworkRuntimeNativePendingTxStateByChainV1> {
     NETWORK_RUNTIME_NATIVE_PENDING_TXS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
 fn runtime_native_pending_tx_payload_map(
-) -> &'static Mutex<HashMap<u64, HashMap<[u8; 32], Vec<u8>>>> {
+) -> &'static Mutex<NetworkRuntimeNativePendingTxPayloadByChainV1> {
     NETWORK_RUNTIME_NATIVE_PENDING_TX_PAYLOADS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
 fn runtime_native_pending_tx_tombstone_map(
-) -> &'static Mutex<HashMap<u64, HashMap<[u8; 32], NetworkRuntimeNativePendingTxTombstoneV1>>> {
+) -> &'static Mutex<NetworkRuntimeNativePendingTxTombstoneByChainV1> {
     NETWORK_RUNTIME_NATIVE_PENDING_TX_TOMBSTONES.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
@@ -2799,17 +2810,24 @@ pub fn observe_network_runtime_native_execution_budget_throttle_v1(
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NetworkRuntimeNativeExecutionBudgetTargetObservationV1 {
+    pub hard_budget_per_tick: u64,
+    pub hard_time_slice_ms: u64,
+    pub target_budget_per_tick: u64,
+    pub target_time_slice_ms: u64,
+    pub effective_budget_per_tick: u64,
+    pub effective_time_slice_ms: u64,
+    pub reason: Option<String>,
+}
+
 pub fn observe_network_runtime_native_execution_budget_target_v1(
     chain_id: u64,
-    hard_budget_per_tick: u64,
-    hard_time_slice_ms: u64,
-    target_budget_per_tick: u64,
-    target_time_slice_ms: u64,
-    effective_budget_per_tick: u64,
-    effective_time_slice_ms: u64,
-    reason: Option<&str>,
+    observation: &NetworkRuntimeNativeExecutionBudgetTargetObservationV1,
 ) {
     let now = now_unix_millis();
+    let hard_budget_per_tick = observation.hard_budget_per_tick.max(1);
+    let hard_time_slice_ms = observation.hard_time_slice_ms.max(1);
     if let Ok(mut guard) = runtime_native_execution_budget_runtime_map().lock() {
         let summary = guard.entry(chain_id).or_insert_with(|| {
             NetworkRuntimeNativeExecutionBudgetRuntimeSummaryV1 {
@@ -2818,26 +2836,33 @@ pub fn observe_network_runtime_native_execution_budget_target_v1(
             }
         });
         summary.chain_id = chain_id;
-        summary.hard_budget_per_tick = Some(hard_budget_per_tick.max(1));
-        summary.hard_time_slice_ms = Some(hard_time_slice_ms.max(1));
+        summary.hard_budget_per_tick = Some(hard_budget_per_tick);
+        summary.hard_time_slice_ms = Some(hard_time_slice_ms);
         summary.target_budget_per_tick = Some(
-            target_budget_per_tick
+            observation
+                .target_budget_per_tick
                 .max(1)
-                .min(hard_budget_per_tick.max(1)),
+                .min(hard_budget_per_tick),
         );
-        summary.target_time_slice_ms =
-            Some(target_time_slice_ms.max(1).min(hard_time_slice_ms.max(1)));
-        summary.effective_budget_per_tick = Some(
-            effective_budget_per_tick
+        summary.target_time_slice_ms = Some(
+            observation
+                .target_time_slice_ms
                 .max(1)
-                .min(hard_budget_per_tick.max(1)),
+                .min(hard_time_slice_ms),
+        );
+        summary.effective_budget_per_tick = Some(
+            observation
+                .effective_budget_per_tick
+                .max(1)
+                .min(hard_budget_per_tick),
         );
         summary.effective_time_slice_ms = Some(
-            effective_time_slice_ms
+            observation
+                .effective_time_slice_ms
                 .max(1)
-                .min(hard_time_slice_ms.max(1)),
+                .min(hard_time_slice_ms),
         );
-        summary.last_execution_target_reason = reason.map(|value| value.to_string());
+        summary.last_execution_target_reason = observation.reason.clone();
         summary.last_updated_unix_ms = Some(now);
     }
 }
@@ -5268,13 +5293,15 @@ mod tests {
 
         observe_network_runtime_native_execution_budget_target_v1(
             chain_id,
-            64,
-            10,
-            48,
-            8,
-            40,
-            7,
-            Some("sync_pressure_high+recent_execution_throttle"),
+            &NetworkRuntimeNativeExecutionBudgetTargetObservationV1 {
+                hard_budget_per_tick: 64,
+                hard_time_slice_ms: 10,
+                target_budget_per_tick: 48,
+                target_time_slice_ms: 8,
+                effective_budget_per_tick: 40,
+                effective_time_slice_ms: 7,
+                reason: Some("sync_pressure_high+recent_execution_throttle".to_string()),
+            },
         );
         observe_network_runtime_native_execution_budget_throttle_v1(
             chain_id,

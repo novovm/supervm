@@ -1133,7 +1133,7 @@ fn tx_broadcast_failure_peer_selection_correlation_json(
                 "sessionReady": session.map(|item| item.session_ready).unwrap_or(false),
                 "lifecycleStage": session.map(|item| item.lifecycle_stage.as_str()),
                 "consecutiveFailures": session.map(|item| item.consecutive_failures).unwrap_or(0),
-                "lastFailureReason": session.and_then(|item| item.last_failure_reason_name.as_ref().map(String::as_str)),
+                "lastFailureReason": session.and_then(|item| item.last_failure_reason_name.as_deref()),
             }
         }));
     }
@@ -3208,7 +3208,7 @@ mod tests {
         hasher.finalize().to_vec()
     }
 
-    fn build_signed_tx_for_e2e_v1(
+    struct SignedTxE2EInputV1 {
         chain_id: u64,
         tx_type: TxType,
         seed: [u8; 32],
@@ -3218,25 +3218,27 @@ mod tests {
         gas_limit: u64,
         gas_price: u64,
         value: u128,
-    ) -> TxIR {
-        let from = address_from_seed_v1(seed);
+    }
+
+    fn build_signed_tx_for_e2e_v1(input: SignedTxE2EInputV1) -> TxIR {
+        let from = address_from_seed_v1(input.seed);
         let mut tx = TxIR {
             hash: Vec::new(),
             from,
-            to,
-            value,
-            gas_limit,
-            gas_price,
-            nonce,
-            data,
+            to: input.to,
+            value: input.value,
+            gas_limit: input.gas_limit,
+            gas_price: input.gas_price,
+            nonce: input.nonce,
+            data: input.data,
             signature: Vec::new(),
-            chain_id,
-            tx_type,
+            chain_id: input.chain_id,
+            tx_type: input.tx_type,
             source_chain: None,
             target_chain: None,
         };
         tx.hash = compute_test_tx_hash_v1(&tx);
-        tx.signature = signature_payload_with_seed_v1(&tx, seed);
+        tx.signature = signature_payload_with_seed_v1(&tx, input.seed);
         tx
     }
 
@@ -3300,39 +3302,39 @@ mod tests {
         let mut runtime_state = StateIR::new();
         let state_version = 0x2a_u64;
 
-        let deploy_tx = build_signed_tx_for_e2e_v1(
+        let deploy_tx = build_signed_tx_for_e2e_v1(SignedTxE2EInputV1 {
             chain_id,
-            TxType::ContractDeploy,
-            [0x11; 32],
-            0,
-            None,
-            vec![0x60, 0x00, 0x60, 0x01],
-            150_000,
-            11,
-            0,
-        );
-        let revert_call_tx = build_signed_tx_for_e2e_v1(
+            tx_type: TxType::ContractDeploy,
+            seed: [0x11; 32],
+            nonce: 0,
+            to: None,
+            data: vec![0x60, 0x00, 0x60, 0x01],
+            gas_limit: 150_000,
+            gas_price: 11,
+            value: 0,
+        });
+        let revert_call_tx = build_signed_tx_for_e2e_v1(SignedTxE2EInputV1 {
             chain_id,
-            TxType::ContractCall,
-            [0x22; 32],
-            0,
-            Some(vec![0xb2; 20]),
-            vec![0xaa, 0xbb, 0xcc],
-            120_000,
-            13,
-            0,
-        );
-        let invalid_call_tx = build_signed_tx_for_e2e_v1(
+            tx_type: TxType::ContractCall,
+            seed: [0x22; 32],
+            nonce: 0,
+            to: Some(vec![0xb2; 20]),
+            data: vec![0xaa, 0xbb, 0xcc],
+            gas_limit: 120_000,
+            gas_price: 13,
+            value: 0,
+        });
+        let invalid_call_tx = build_signed_tx_for_e2e_v1(SignedTxE2EInputV1 {
             chain_id,
-            TxType::ContractCall,
-            [0x33; 32],
-            0,
-            Some(vec![0xc3; 20]),
-            vec![0xdd, 0xee],
-            120_000,
-            17,
-            0,
-        );
+            tx_type: TxType::ContractCall,
+            seed: [0x33; 32],
+            nonce: 0,
+            to: Some(vec![0xc3; 20]),
+            data: vec![0xdd, 0xee],
+            gas_limit: 120_000,
+            gas_price: 17,
+            value: 0,
+        });
 
         let deploy_artifact = novovm_exec::AoemTxExecutionArtifactV1 {
             tx_index: 0,
@@ -3428,8 +3430,8 @@ mod tests {
             }),
         };
 
-        let txs = vec![deploy_tx, revert_call_tx, invalid_call_tx];
-        let artifacts = vec![deploy_artifact, revert_artifact, invalid_artifact];
+        let txs = [deploy_tx, revert_call_tx, invalid_call_tx];
+        let artifacts = [deploy_artifact, revert_artifact, invalid_artifact];
         let mut receipts = Vec::with_capacity(txs.len());
         for (tx, artifact) in txs.iter().zip(artifacts.iter()) {
             let resolved = adapter
@@ -3513,17 +3515,17 @@ mod tests {
         adapter.initialize().expect("initialize adapter");
         let mut runtime_state = StateIR::new();
 
-        let tx = build_signed_tx_for_e2e_v1(
+        let tx = build_signed_tx_for_e2e_v1(SignedTxE2EInputV1 {
             chain_id,
-            case.tx_type,
-            case.seed,
-            case.nonce,
-            case.to,
-            case.data,
-            case.gas_limit,
-            case.gas_price,
-            case.value,
-        );
+            tx_type: case.tx_type,
+            seed: case.seed,
+            nonce: case.nonce,
+            to: case.to,
+            data: case.data,
+            gas_limit: case.gas_limit,
+            gas_price: case.gas_price,
+            value: case.value,
+        });
         let artifact = novovm_exec::AoemTxExecutionArtifactV1 {
             tx_index: 0,
             tx_hash: tx.hash.clone(),
@@ -4194,7 +4196,7 @@ mod tests {
         if payload.is_empty() {
             return Ok(Vec::new());
         }
-        if payload.len() % 2 != 0 {
+        if !payload.len().is_multiple_of(2) {
             bail!("hex payload must have even length, got {}", payload.len());
         }
         let mut out = Vec::with_capacity(payload.len() / 2);
@@ -6787,10 +6789,7 @@ mod tests {
             pending_by_hash["pendingTx"]["lastPropagationPeerId"].as_str(),
             Some("0xb")
         );
-        assert_eq!(
-            pending_by_hash["pendingTx"]["lastPropagationFailureClass"].is_null(),
-            true
-        );
+        assert!(pending_by_hash["pendingTx"]["lastPropagationFailureClass"].is_null());
         assert_eq!(
             pending_by_hash["pendingTx"]["propagationDisposition"].as_str(),
             Some("propagated")
@@ -6805,14 +6804,8 @@ mod tests {
             pending_by_hash["failureClassificationContract"].as_str(),
             Some(ETH_PENDING_TX_PROPAGATION_CLASSIFICATION_CONTRACT_V1)
         );
-        assert_eq!(
-            pending_by_hash["pendingTx"]["propagationStopReason"].is_null(),
-            true
-        );
-        assert_eq!(
-            pending_by_hash["pendingTx"]["propagationRecoverability"].is_null(),
-            true
-        );
+        assert!(pending_by_hash["pendingTx"]["propagationStopReason"].is_null());
+        assert!(pending_by_hash["pendingTx"]["propagationRecoverability"].is_null());
         assert_eq!(
             pending_by_hash["pendingTx"]["failureClassificationContract"].as_str(),
             Some(ETH_PENDING_TX_PROPAGATION_CLASSIFICATION_CONTRACT_V1)

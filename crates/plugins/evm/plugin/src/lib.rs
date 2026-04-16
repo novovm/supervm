@@ -1974,11 +1974,11 @@ fn materialize_batch_execution_artifacts(
     };
 
     if batch.tx_artifacts.len() < txs.len() {
-        for idx in batch.tx_artifacts.len()..txs.len() {
+        for (idx, tx) in txs.iter().enumerate().skip(batch.tx_artifacts.len()) {
             batch
                 .tx_artifacts
                 .push(default_tx_execution_artifact_for_receipt(
-                    &txs[idx],
+                    tx,
                     idx,
                     verify_results.get(idx).copied().unwrap_or(false),
                     state_root,
@@ -2062,7 +2062,7 @@ fn build_execution_receipts_from_apply_batch(
             chain_id,
             tx_hash: tx_hash_or_compute(tx),
             tx_index: idx as u32,
-            tx_type: tx.tx_type.clone(),
+            tx_type: tx.tx_type,
             receipt_type: aoem_artifact.and_then(|artifact| artifact.receipt_type),
             status_ok,
             gas_used,

@@ -26,13 +26,14 @@ use novovm_network::{
     snapshot_network_runtime_native_pending_tx_summary_v1, AvailabilityController,
     AvailabilityDecision, AvailabilityMode, CapabilityReadiness, CapabilityRouteHint,
     FileQueueStore, GossipMessage, InMemoryQueueStore, L3RegionalRoutingTable, L4LocalRoutingTable,
-    L4PeerRef, MessageType, NetworkRuntimeNativeSyncPhaseV1, QueueStore, QueuedRequest,
-    Reachability, RelayCapacityClass, RelayClient, RelayHealth, RelayMembership, RelayRef,
-    RelayServer, ReplayResult, RouteSelector, RoutingSource, SelectedPath, L3_BASELINE_FINGERPRINT,
-    L3_BASELINE_LOCK_VERSION, L3_BASELINE_PHASE, L3_POLICY_BASELINE_VERSION,
-    L3_READONLY_EXPORT_BASELINE_VERSION, L3_REGRESSION_LOCKSET, L3_RELAY_RUNTIME_FEEDBACK_SCALE,
-    L3_RELAY_SCORE_SCALE, L3_RELAY_SELECTED_STICKY_MARGIN, L3_RELAY_SOURCE_BONUS_CONFIGURED,
-    L3_RELAY_SOURCE_BONUS_POOL, L3_RELAY_SOURCE_BONUS_SNAPSHOT,
+    L4PeerRef, MessageType, NetworkRuntimeNativeExecutionBudgetTargetObservationV1,
+    NetworkRuntimeNativeSyncPhaseV1, QueueStore, QueuedRequest, Reachability, RelayCapacityClass,
+    RelayClient, RelayHealth, RelayMembership, RelayRef, RelayServer, ReplayResult, RouteSelector,
+    RoutingSource, SelectedPath, L3_BASELINE_FINGERPRINT, L3_BASELINE_LOCK_VERSION,
+    L3_BASELINE_PHASE, L3_POLICY_BASELINE_VERSION, L3_READONLY_EXPORT_BASELINE_VERSION,
+    L3_REGRESSION_LOCKSET, L3_RELAY_RUNTIME_FEEDBACK_SCALE, L3_RELAY_SCORE_SCALE,
+    L3_RELAY_SELECTED_STICKY_MARGIN, L3_RELAY_SOURCE_BONUS_CONFIGURED, L3_RELAY_SOURCE_BONUS_POOL,
+    L3_RELAY_SOURCE_BONUS_SNAPSHOT,
 };
 use novovm_node::mainline_canonical::{
     append_mainline_canonical_batch, derive_mainline_eth_fullnode_chain_view_v1,
@@ -2017,6 +2018,10 @@ fn parse_l3_profile_mode_bound_with_family(
     (effective, source, requested)
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "L3 env/governance/family resolution intentionally receives raw knobs in one place."
+)]
 fn l3_profile_family_resolution_from_raw(
     family_raw: Option<&str>,
     governance_raw: Option<&str>,
@@ -2077,11 +2082,6 @@ fn l3_profile_family_resolution_from_raw(
             <= l3_profile_family_rank(family_max_raw_effective)
         {
             (family_min_raw_effective, family_max_raw_effective, false)
-        } else if matches!(
-            family_governance_effective,
-            L3ProfileFamilyGovernance::Locked
-        ) {
-            (family_max_raw_effective, family_min_raw_effective, true)
         } else {
             (family_max_raw_effective, family_min_raw_effective, true)
         };
@@ -2385,7 +2385,7 @@ fn l3_routing_policy_profile_from_env(
     )
 }
 
-fn explicit_requested<'a>(requested: &'a str, source: L3PolicySelectionSource) -> Option<&'a str> {
+fn explicit_requested(requested: &str, source: L3PolicySelectionSource) -> Option<&str> {
     if matches!(source, L3PolicySelectionSource::EnvExplicit) {
         Some(requested)
     } else {
@@ -2393,6 +2393,10 @@ fn explicit_requested<'a>(requested: &'a str, source: L3PolicySelectionSource) -
     }
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Single policy entrypoint keeps mode/family knobs and capability hints aligned."
+)]
 fn apply_l3_profile_mode_policy_from_raw_with_family(
     base_max_candidates: usize,
     profile: L3RoutingPolicyProfile,
@@ -2590,6 +2594,10 @@ fn apply_l3_profile_mode_policy_from_raw_with_family(
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Test helper mirrors production policy entrypoint for table-driven coverage."
+)]
 fn apply_l3_profile_mode_policy_from_raw(
     base_max_candidates: usize,
     profile: L3RoutingPolicyProfile,
@@ -2669,6 +2677,10 @@ fn apply_l3_profile_mode_policy_from_env(
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Test helper mirrors family-resolution raw input surface."
+)]
 fn l3_profile_family_resolution_from_raw_inputs(
     family_raw: Option<&str>,
     family_governance_raw: Option<&str>,
@@ -2692,6 +2704,10 @@ fn l3_profile_family_resolution_from_raw_inputs(
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Test helper intentionally fans in raw knobs to exercise policy matrix."
+)]
 fn l3_profile_mode_policy_with_family_from_raw_inputs(
     base_max_candidates: usize,
     mode_raw: Option<&str>,
@@ -2793,6 +2809,10 @@ fn l3_routing_policy_profile_and_resolution_from_raw_inputs(
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Test helper mirrors production mode-policy adapter path."
+)]
 fn l3_profile_mode_policy_from_raw_inputs(
     base_max_candidates: usize,
     mode_raw: Option<&str>,
@@ -3285,6 +3305,10 @@ struct L4ReadonlyExport {
     freshness_window_ms: u64,
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Readonly export builder intentionally materializes full routing/selection context."
+)]
 fn build_l3_readonly_export(
     l3_table: &L3RegionalRoutingTable,
     selected_relay_id: Option<&str>,
@@ -3542,6 +3566,10 @@ fn apply_relay_score_feedback(
     }
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Route-aware submit path carries metadata plus callback hooks in one surface."
+)]
 fn submit_ops_wire_report_with_route_and_log_with_fallback(
     overlay_route_strategy: &str,
     overlay_route_selected_relay_id: Option<&str>,
@@ -3689,6 +3717,10 @@ fn submit_ops_wire_report_with_route_and_log_with_fallback(
     }
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Wrapper forwards full route metadata to fallback-aware submission path."
+)]
 fn submit_ops_wire_report_with_route_and_log(
     overlay_route_strategy: &str,
     overlay_route_selected_relay_id: Option<&str>,
@@ -3697,7 +3729,7 @@ fn submit_ops_wire_report_with_route_and_log(
     payload: &[u8],
     fallback_mode: RelayFailFallbackMode,
     verbose: bool,
-    mut emit_log: impl FnMut(String),
+    emit_log: impl FnMut(String),
     mut on_relay_outcome: impl FnMut(&str, bool),
     submit: impl FnMut(&[u8]) -> AoemSubmitReport,
 ) -> AoemSubmitReport {
@@ -3709,12 +3741,16 @@ fn submit_ops_wire_report_with_route_and_log(
         payload,
         fallback_mode,
         verbose,
-        |line| emit_log(line),
+        emit_log,
         |relay_id, ok| on_relay_outcome(relay_id, ok),
         submit,
     )
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Public route submit wrapper keeps call sites explicit and avoids hidden globals."
+)]
 fn submit_ops_wire_report_with_route(
     overlay_route_strategy: &str,
     overlay_route_selected_relay_id: Option<&str>,
@@ -7015,7 +7051,7 @@ mod relay_path_tests {
                         addr: format!("10.60.0.{}:9001", i + 10),
                         capacity_class,
                         health,
-                        score: 200 - i as i32,
+                        score: 200 - i,
                         source: RoutingSource::PeerHinted,
                     }
                 })
@@ -7102,7 +7138,7 @@ mod relay_path_tests {
                     } else {
                         RelayHealth::Healthy
                     },
-                    score: 300 - i as i32,
+                    score: 300 - i,
                     source: RoutingSource::PeerHinted,
                 })
                 .collect()
@@ -7145,7 +7181,7 @@ mod relay_path_tests {
             let _ = super::ingest_runtime_relay_membership(wave_a);
             let _ = super::refresh_l3_discovery_membership(&table, "ap-east", false);
 
-            let wave_b_take = if mode % 2 == 0 { 6 } else { 5 };
+            let wave_b_take = if mode.is_multiple_of(2) { 6 } else { 5 };
             let wave_b = super::relay_membership_entries_from_relays(
                 relays.iter().skip(8).take(wave_b_take).cloned().collect(),
                 now.saturating_sub(120),
@@ -7323,7 +7359,7 @@ mod relay_path_tests {
             let _ = super::ingest_runtime_relay_membership(second_wave);
             let _ = super::refresh_l3_discovery_membership(&table, "ap-east", false);
 
-            let local_relays = if mode % 2 == 0 {
+            let local_relays = if mode.is_multiple_of(2) {
                 vec![
                     RelayRef {
                         node_id: "relay-local-ap-v2-c".to_string(),
@@ -19336,7 +19372,7 @@ mod relay_path_tests {
                 .filter(|t| t.contains("={}"))
                 .map(|t| {
                     t.trim_start_matches('"')
-                        .trim_end_matches(|c| c == '"' || c == ',')
+                        .trim_end_matches(['"', ','])
                         .to_string()
                 })
                 .collect()
@@ -19431,7 +19467,7 @@ mod relay_path_tests {
     fn l2_l1_cross_path_gate_allowed_token_set_is_locked_v1() {
         fn normalize_token(t: &str) -> String {
             t.trim_start_matches('"')
-                .trim_end_matches(|c| c == '"' || c == ',')
+                .trim_end_matches(['"', ','])
                 .to_string()
         }
 
@@ -19863,7 +19899,7 @@ mod relay_path_tests {
             let literal = line
                 .trim_start()
                 .trim_start_matches('"')
-                .trim_end_matches(|c| c == '"' || c == ',');
+                .trim_end_matches(['"', ',']);
             assert!(
                 !literal.contains("  "),
                 "cross_path_gate template literal must not contain double spaces"
@@ -21133,7 +21169,7 @@ fn filter_l3_discovery_membership_fresh(
 }
 
 fn parse_discovery_path_list(raw: &str) -> Vec<String> {
-    raw.split(|c| c == ';' || c == ',' || c == '\n' || c == '\r')
+    raw.split([';', ',', '\n', '\r'])
         .map(str::trim)
         .filter(|v| !v.is_empty())
         .map(str::to_string)
@@ -21815,6 +21851,10 @@ fn refresh_l3_discovery_membership(
     applied
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Runtime route snapshot must receive full selection/profile context to stay deterministic."
+)]
 fn l3_runtime_route_snapshot(
     l3_table: &L3RegionalRoutingTable,
     region: &str,
@@ -22437,13 +22477,14 @@ fn resolve_l2_l1_export_version_mode_from_env() -> L2L1ExportVersionGovernanceVi
 fn l2_l1_export_dual_version_hard_gate() {
     debug_assert_eq!(L2_L1_EXPORT_CURRENT_VERSION, 2);
     debug_assert_eq!(L2_L1_EXPORT_COMPAT_VERSION, 1);
-    debug_assert!(L2_L1_EXPORT_COMPAT_VERSION <= L2_L1_EXPORT_CURRENT_VERSION);
     debug_assert_eq!(L2_L1_EXPORT_COMPAT_LOCKSET, L2_L1_EXPORT_REGRESSION_LOCKSET);
     debug_assert_eq!(
         L2_L1_EXPORT_COMPAT_FINGERPRINT,
         "l2-l1-export-compat:v1:legacy-anchor-fieldset"
     );
 }
+
+const _: () = assert!(L2_L1_EXPORT_COMPAT_VERSION <= L2_L1_EXPORT_CURRENT_VERSION);
 
 fn l2_l1_closure_seal_hash(runtime: &L2L1RuntimeView, tripwire: &L2L1TripwireView) -> u64 {
     let mut hasher = DefaultHasher::new();
@@ -22903,6 +22944,10 @@ fn resolve_l2_l1_tripwire_strict_governance_from_env() -> L2L1TripwireStrictGove
     l2_l1_tripwire_strict_governance_from_raw_input(requested.as_deref())
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Snapshot constructor keeps counter ordering explicit for lock-contract safety."
+)]
 fn build_l2_state_snapshot(
     queue_total: u64,
     replay_applied_total: u64,
@@ -22928,6 +22973,10 @@ fn build_l2_state_snapshot(
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Readonly-export test helper mirrors explicit counter fields for contract checks."
+)]
 fn build_l2_l1_readonly_export(
     queue_total: u64,
     replay_applied_total: u64,
@@ -23558,7 +23607,7 @@ fn build_l1l4_anchor_record(
         l2_l1_governance_lock_hash: l2_l1_governance_hash,
         l2_l1_cross_path_lock_version: L2_L1_CROSS_PATH_LOCK_VERSION,
         l2_l1_cross_path_fingerprint: L2_L1_CROSS_PATH_FINGERPRINT,
-        l2_l1_cross_path_seal_hash: l2_l1_cross_path_seal_hash,
+        l2_l1_cross_path_seal_hash,
         l2_l1_cross_path_state_seal_hash,
         l2_l1_cross_path_replay_seal_hash,
         l2_l1_cross_path_watch_seal_hash,
@@ -23571,7 +23620,7 @@ fn build_l1l4_anchor_record(
         l2_l1_baseline_seal_hash: l2_l1_baseline_seal,
         l2_l1_closure_seal_version: L2_L1_CLOSURE_SEAL_VERSION,
         l2_l1_closure_seal_fingerprint: L2_L1_CLOSURE_SEAL_FINGERPRINT,
-        l2_l1_closure_seal_hash: l2_l1_closure_seal_hash,
+        l2_l1_closure_seal_hash,
         l2_state_export_version: l2_l1_versions.state_export_version,
         l2_state_export_fingerprint: l2_l1_versions.state_export_fingerprint,
         l2_queue_total: l2_l1_export.state.queue_total,
@@ -26352,13 +26401,15 @@ fn main() -> Result<()> {
                 last_execution_target_reason = target_reason.clone();
                 observe_network_runtime_native_execution_budget_target_v1(
                     chain_id,
-                    host_exec_budget_per_tick,
-                    host_exec_time_slice_ms,
-                    host_exec_target_per_tick,
-                    host_exec_target_time_slice_ms,
-                    effective_tick_budget,
-                    effective_tick_time_slice_ms,
-                    target_reason.as_deref(),
+                    &NetworkRuntimeNativeExecutionBudgetTargetObservationV1 {
+                        hard_budget_per_tick: host_exec_budget_per_tick,
+                        hard_time_slice_ms: host_exec_time_slice_ms,
+                        target_budget_per_tick: host_exec_target_per_tick,
+                        target_time_slice_ms: host_exec_target_time_slice_ms,
+                        effective_budget_per_tick: effective_tick_budget,
+                        effective_time_slice_ms: effective_tick_time_slice_ms,
+                        reason: target_reason.clone(),
+                    },
                 );
                 let budget_hits_before = execution_budget_hit_count;
                 let time_slice_before = execution_time_slice_exceeded_count;
@@ -26503,13 +26554,15 @@ fn main() -> Result<()> {
             last_execution_target_reason = target_reason.clone();
             observe_network_runtime_native_execution_budget_target_v1(
                 chain_id,
-                host_exec_budget_per_tick,
-                host_exec_time_slice_ms,
-                host_exec_target_per_tick,
-                host_exec_target_time_slice_ms,
-                effective_tick_budget,
-                effective_tick_time_slice_ms,
-                target_reason.as_deref(),
+                &NetworkRuntimeNativeExecutionBudgetTargetObservationV1 {
+                    hard_budget_per_tick: host_exec_budget_per_tick,
+                    hard_time_slice_ms: host_exec_time_slice_ms,
+                    target_budget_per_tick: host_exec_target_per_tick,
+                    target_time_slice_ms: host_exec_target_time_slice_ms,
+                    effective_budget_per_tick: effective_tick_budget,
+                    effective_time_slice_ms: effective_tick_time_slice_ms,
+                    reason: target_reason.clone(),
+                },
             );
             let budget_hits_before = execution_budget_hit_count;
             let time_slice_before = execution_time_slice_exceeded_count;
@@ -26905,10 +26958,7 @@ mod relay_path_tests_l2_l1_cross_path_lock_contract {
 
     #[test]
     fn l2_l1_cross_path_lock_contract_vector_is_pinned_v1() {
-        assert!(
-            L2_L1_CROSS_PATH_LOCK_VERSION > 0,
-            "lock version must stay positive"
-        );
+        const _: () = assert!(L2_L1_CROSS_PATH_LOCK_VERSION > 0);
         assert!(
             !L2_L1_CROSS_PATH_REGRESSION_LOCKSET.trim().is_empty(),
             "regression lockset must stay non-empty"
