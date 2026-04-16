@@ -1,0 +1,46 @@
+{
+  "schema": "supervm-e2e-geth-parity-sample/v1",
+  "name": "ethapi-blockreceipts-legacy-contract-call-tx",
+  "chain_id": 1,
+  "store_format": "geth-export-receipts/v1",
+  "store_path": "${NOVOVM_GETH_REPO_ROOT}/internal/ethapi/testdata/eth_getBlockReceipts-block-with-legacy-contract-call-tx.json",
+  "expected": {
+    "block": {
+      "number": "0x3",
+      "tx_count": 1,
+      "tx_types": [
+        "0x0"
+      ],
+      "tx_statuses": [
+        "0x1"
+      ],
+      "tx_contract_addresses": [
+        null
+      ]
+    },
+    "receipts": [
+      {
+        "tx_index": 0,
+        "status": "0x1",
+        "tx_type": "0x0",
+        "gas_used": "0x5e28",
+        "cumulative_gas_used": "0x5e28",
+        "contract_address": null,
+        "revert_data": null,
+        "log_count": 1
+      }
+    ],
+    "logs_canonical": {
+      "count": 1,
+      "first_removed": false,
+      "first_address": "0x0000000000000000000000000000000000031ec7"
+    },
+    "logs_noncanonical": {
+      "count": 1,
+      "first_removed": true,
+      "first_address": "0x0000000000000000000000000000000000031ec7",
+      "first_log_ownership": "non_canonical"
+    },
+    "typed_failures": []
+  }
+}

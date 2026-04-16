@@ -18,4 +18,5 @@ aoem-bindings = { path = "../aoem-bindings" }
 novovm-adapter-api = { path = "../novovm-adapter-api" }
 web30-core = { path = "../../vendor/web30-core" }
 novovm-adapter-evm-core = { path = "../plugins/evm/core" }
+novovm-exec = { path = "../novovm-exec" }
 

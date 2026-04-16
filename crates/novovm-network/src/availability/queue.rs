@@ -68,8 +68,12 @@ impl FileQueueStore {
 impl QueueStore for FileQueueStore {
     fn enqueue(&mut self, req: QueuedRequest) -> Result<(), String> {
         let path = self.file_path_for_request_id(&req.request_id);
-        let body = serde_json::to_vec(&req)
-            .map_err(|e| format!("queue json encode failed: request_id={} ({e})", req.request_id))?;
+        let body = serde_json::to_vec(&req).map_err(|e| {
+            format!(
+                "queue json encode failed: request_id={} ({e})",
+                req.request_id
+            )
+        })?;
         fs::write(&path, body)
             .map_err(|e| format!("queue write failed: {} ({e})", path.display()))?;
         Ok(())
@@ -92,7 +96,11 @@ impl QueueStore for FileQueueStore {
 
         files
             .into_iter()
-            .filter_map(|path| fs::read(&path).ok().and_then(|bytes| serde_json::from_slice(&bytes).ok()))
+            .filter_map(|path| {
+                fs::read(&path)
+                    .ok()
+                    .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+            })
             .collect()
     }
 
@@ -150,15 +158,15 @@ mod tests {
             created_unix_ms: 1_000,
             payload: vec![7, 8, 9],
         };
-        store.enqueue(req.clone()).expect("file enqueue should succeed");
+        store
+            .enqueue(req.clone())
+            .expect("file enqueue should succeed");
 
         let pending = store.list_pending();
         assert_eq!(pending.len(), 1);
         assert_eq!(pending[0], req);
 
-        store
-            .remove("req:1")
-            .expect("file remove should succeed");
+        store.remove("req:1").expect("file remove should succeed");
         assert!(store.list_pending().is_empty());
         let _ = fs::remove_dir_all(&queue_dir);
     }

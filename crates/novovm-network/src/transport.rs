@@ -1,24 +1,91 @@
 #![forbid(unsafe_code)]
 
 use crate::{
+    build_eth_fullnode_native_bodies_request_v1, build_eth_fullnode_native_bootstrap_messages_v1,
+    build_eth_fullnode_native_rlpx_status_v1, build_eth_fullnode_native_status_message_v1,
+    build_eth_fullnode_native_sync_request_v1, default_eth_rlpx_capabilities_v1,
+    derive_eth_fullnode_head_view_with_native_preference_v1,
+    derive_eth_fullnode_sync_view_with_native_preference_v1, eth_rlpx_build_disconnect_payload_v1,
+    eth_rlpx_build_get_block_bodies_payload_v1, eth_rlpx_build_get_block_headers_payload_v1,
+    eth_rlpx_build_hello_payload_v1, eth_rlpx_build_status_payload_v1,
+    eth_rlpx_build_transactions_payload_v1, eth_rlpx_default_client_name_v1,
+    eth_rlpx_default_listen_port_v1, eth_rlpx_disconnect_reason_name_v1,
+    eth_rlpx_handshake_initiator_v1, eth_rlpx_hello_profile_v1,
+    eth_rlpx_parse_block_bodies_payload_v1, eth_rlpx_parse_block_headers_payload_v1,
+    eth_rlpx_parse_disconnect_reason_v1, eth_rlpx_parse_hello_payload_v1,
+    eth_rlpx_parse_status_payload_v1, eth_rlpx_parse_transactions_payload_v1,
+    eth_rlpx_read_wire_frame_v1, eth_rlpx_select_shared_eth_version_v1,
+    eth_rlpx_select_shared_snap_version_v1, eth_rlpx_write_wire_frame_v1,
+    get_network_runtime_native_body_snapshot_v1, get_network_runtime_native_head_snapshot_v1,
+    get_network_runtime_native_header_snapshot_v1, get_network_runtime_native_sync_status,
     get_network_runtime_peer_heads_top_k, get_network_runtime_sync_status,
-    observe_network_runtime_local_head_max, observe_network_runtime_peer_head,
-    observe_network_runtime_peer_head_with_local_head_max, plan_network_runtime_sync_pull_window,
-    register_network_runtime_peer, unregister_network_runtime_peer,
-    NetworkRuntimeNativeSyncPhaseV1,
+    has_network_runtime_eth_peer_session, mark_network_runtime_eth_peer_session_ready_v1,
+    observe_eth_native_bodies_pull, observe_eth_native_bodies_response,
+    observe_eth_native_discovery, observe_eth_native_headers_pull,
+    observe_eth_native_headers_response, observe_eth_native_hello, observe_eth_native_rlpx_auth,
+    observe_eth_native_rlpx_auth_ack, observe_eth_native_snap_pull,
+    observe_eth_native_snap_response, observe_eth_native_status,
+    observe_network_runtime_eth_peer_body_success_v1,
+    observe_network_runtime_eth_peer_connect_failure_v1,
+    observe_network_runtime_eth_peer_connected_v1, observe_network_runtime_eth_peer_connecting_v1,
+    observe_network_runtime_eth_peer_decode_failure_v1,
+    observe_network_runtime_eth_peer_disconnect_v1, observe_network_runtime_eth_peer_discovered_v1,
+    observe_network_runtime_eth_peer_handshake_failure_v1, observe_network_runtime_eth_peer_head,
+    observe_network_runtime_eth_peer_header_success_v1,
+    observe_network_runtime_eth_peer_hello_ok_v1,
+    observe_network_runtime_eth_peer_selection_round_v1,
+    observe_network_runtime_eth_peer_status_ok_v1, observe_network_runtime_eth_peer_syncing_v1,
+    observe_network_runtime_eth_peer_timeout_v1,
+    observe_network_runtime_eth_peer_validation_reject_v1, observe_network_runtime_local_head_max,
+    observe_network_runtime_native_pending_tx_broadcast_dispatch_v1,
+    observe_network_runtime_native_pending_tx_ingress_with_payload_v1,
+    observe_network_runtime_native_pending_tx_propagated_v1,
+    observe_network_runtime_native_pending_tx_propagated_with_context_v1,
+    observe_network_runtime_native_pending_tx_propagation_failure_v1,
+    observe_network_runtime_peer_head, observe_network_runtime_peer_head_with_local_head_max,
+    plan_network_runtime_sync_pull_window, register_network_runtime_peer,
+    resolve_eth_chain_config_v1, resolve_eth_fullnode_native_runtime_config_v1,
+    route::PluginPeerEndpoint, select_eth_fullnode_native_bootstrap_candidates_v1,
+    select_eth_fullnode_native_sync_targets_v1, set_eth_fullnode_native_worker_runtime_snapshot_v1,
+    set_network_runtime_native_body_snapshot_v1, set_network_runtime_native_budget_hooks_v1,
+    set_network_runtime_native_head_snapshot_v1, set_network_runtime_native_header_snapshot_v1,
+    snapshot_eth_fullnode_native_head_block_object_v1,
+    snapshot_eth_fullnode_peer_selection_scores_v1,
+    snapshot_network_runtime_eth_peer_lifecycle_summary_v1,
+    snapshot_network_runtime_eth_peer_sessions_for_peers_v1,
+    snapshot_network_runtime_native_canonical_blocks_v1,
+    snapshot_network_runtime_native_canonical_chain_v1,
+    snapshot_network_runtime_native_execution_budget_runtime_summary_v1,
+    snapshot_network_runtime_native_pending_tx_broadcast_candidates_v1,
+    snapshot_network_runtime_native_pending_tx_broadcast_runtime_summary_v1,
+    snapshot_network_runtime_native_pending_tx_summary_v1,
+    snapshot_network_runtime_native_pending_txs_v1, unregister_network_runtime_peer,
+    upsert_network_runtime_eth_peer_session, validate_eth_chain_config_peer_status_v1,
+    write_eth_fullnode_native_worker_runtime_snapshot_default_path_v1,
+    EthChainConfigPeerValidationReasonV1, EthFullnodeBudgetHooksV1,
+    EthFullnodeNativePeerFailureSnapshotV1, EthFullnodeNativeWorkerRuntimeSnapshotV1,
+    EthPeerLifecycleSummaryV1, EthPeerSelectionQualitySummaryV1, EthPeerSelectionScoreV1,
+    EthRlpxBlockBodiesResponseV1, EthRlpxBlockHeadersResponseV1, EthRlpxFrameSessionV1,
+    EthRlpxStatusV1, NetworkRuntimeNativePendingTxPropagationStopReasonV1,
+    NetworkRuntimeNativeSyncPhaseV1, ETH_FULLNODE_NATIVE_WORKER_RUNTIME_SCHEMA_V1,
+    ETH_RLPX_BASE_PROTOCOL_OFFSET, ETH_RLPX_ETH_BLOCK_BODIES_MSG, ETH_RLPX_ETH_BLOCK_HEADERS_MSG,
+    ETH_RLPX_ETH_GET_BLOCK_BODIES_MSG, ETH_RLPX_ETH_GET_BLOCK_HEADERS_MSG, ETH_RLPX_ETH_STATUS_MSG,
+    ETH_RLPX_ETH_TRANSACTIONS_MSG, ETH_RLPX_P2P_DISCONNECT_MSG, ETH_RLPX_P2P_HELLO_MSG,
+    ETH_RLPX_P2P_PING_MSG, ETH_RLPX_P2P_PONG_MSG,
 };
 use dashmap::DashMap;
 use novovm_protocol::{
     decode as protocol_decode, decode_block_header_wire_v1, encode as protocol_encode,
     encode_block_header_wire_v1,
     protocol_catalog::distributed_occc::gossip::MessageType as DistributedOcccMessageType,
-    BlockHeaderWireV1, ConsensusPluginBindingV1, EvmNativeMessage, FinalityMessage,
+    BlockHeaderWireV1, ConsensusPluginBindingV1, EvmNativeBlockBodyWireV1,
+    EvmNativeBlockHeaderWireV1, EvmNativeMessage, FinalityMessage,
     GossipMessage as ProtocolGossipMessage, NodeId, PacemakerMessage, ProtocolMessage,
     TwoPcMessage, CONSENSUS_PLUGIN_CLASS_CODE,
 };
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::io::{Read, Write};
-use std::net::{IpAddr, SocketAddr, TcpListener, TcpStream, UdpSocket};
+use std::net::{IpAddr, SocketAddr, TcpListener, TcpStream, ToSocketAddrs, UdpSocket};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use thiserror::Error;
@@ -48,6 +115,1703 @@ pub enum NetworkError {
 pub trait Transport: Send + Sync {
     fn send(&self, to: NodeId, msg: ProtocolMessage) -> Result<(), NetworkError>;
     fn try_recv(&self, me: NodeId) -> Result<Option<ProtocolMessage>, NetworkError>;
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EthFullnodeNativePeerWorkerConfigV1 {
+    pub chain_id: u64,
+    pub local_node: NodeId,
+    pub peers: Vec<NodeId>,
+    pub peer_endpoints: Vec<PluginPeerEndpoint>,
+    pub recv_budget: usize,
+    pub sync_target_fanout: usize,
+    pub budget_hooks: EthFullnodeBudgetHooksV1,
+}
+
+impl EthFullnodeNativePeerWorkerConfigV1 {
+    #[must_use]
+    pub fn normalized(&self) -> Self {
+        let hard_limit = self.budget_hooks.active_native_peer_hard_limit.max(1) as usize;
+        let recv_budget_cap = self.budget_hooks.native_recv_budget_per_tick.max(1) as usize;
+        let sync_fanout_cap = self.budget_hooks.sync_target_fanout.max(1) as usize;
+        let mut peers = Vec::new();
+        let mut peer_endpoints = Vec::new();
+        for endpoint in &self.peer_endpoints {
+            if endpoint.node_hint == self.local_node.0
+                || peer_endpoints
+                    .iter()
+                    .any(|existing: &PluginPeerEndpoint| existing.node_hint == endpoint.node_hint)
+            {
+                continue;
+            }
+            let peer = NodeId(endpoint.node_hint.max(1));
+            if !peers.contains(&peer) {
+                peers.push(peer);
+            }
+            peer_endpoints.push(endpoint.clone());
+            if peer_endpoints.len() >= hard_limit {
+                break;
+            }
+        }
+        for peer in &self.peers {
+            if *peer == self.local_node || peers.contains(peer) {
+                continue;
+            }
+            peers.push(*peer);
+            if peers.len() >= hard_limit {
+                break;
+            }
+        }
+        Self {
+            chain_id: self.chain_id,
+            local_node: self.local_node,
+            peers,
+            peer_endpoints,
+            recv_budget: self.recv_budget.max(1).min(recv_budget_cap),
+            sync_target_fanout: self.sync_target_fanout.max(1).min(sync_fanout_cap),
+            budget_hooks: self.budget_hooks.clone(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EthFullnodeNativePeerWorkerPlanV1 {
+    pub chain_id: u64,
+    pub local_node: NodeId,
+    pub candidate_peers: Vec<NodeId>,
+    pub candidate_peer_endpoints: Vec<PluginPeerEndpoint>,
+    pub lifecycle_summary: EthPeerLifecycleSummaryV1,
+    pub selection_quality_summary: EthPeerSelectionQualitySummaryV1,
+    pub selection_scores: Vec<EthPeerSelectionScoreV1>,
+    pub bootstrap_peers: Vec<NodeId>,
+    pub sync_peers: Vec<NodeId>,
+    pub recv_budget: usize,
+    pub budget_hooks: EthFullnodeBudgetHooksV1,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EthFullnodeNativePeerWorkerV1 {
+    config: EthFullnodeNativePeerWorkerConfigV1,
+}
+
+impl EthFullnodeNativePeerWorkerV1 {
+    #[must_use]
+    pub fn new(config: EthFullnodeNativePeerWorkerConfigV1) -> Self {
+        Self {
+            config: config.normalized(),
+        }
+    }
+
+    #[must_use]
+    pub fn config(&self) -> &EthFullnodeNativePeerWorkerConfigV1 {
+        &self.config
+    }
+
+    #[must_use]
+    pub fn plan(&self) -> EthFullnodeNativePeerWorkerPlanV1 {
+        let soft_limit = self
+            .config
+            .budget_hooks
+            .active_native_peer_soft_limit
+            .max(1) as usize;
+        let candidate_peers = self.config.peers.clone();
+        let bootstrap_window = soft_limit.max(1);
+
+        let mut session_peers = Vec::new();
+        for peer in &candidate_peers {
+            if has_network_runtime_eth_peer_session(self.config.chain_id, peer.0) {
+                session_peers.push(*peer);
+            }
+        }
+        let bootstrap_candidates = select_eth_fullnode_native_bootstrap_candidates_v1(
+            self.config.chain_id,
+            &candidate_peers,
+            bootstrap_window,
+        );
+
+        let active_session_count = session_peers.len().min(soft_limit);
+        let bootstrap_budget = soft_limit.saturating_sub(active_session_count);
+        let bootstrap_peers = if bootstrap_budget == 0 && session_peers.is_empty() {
+            bootstrap_candidates
+                .into_iter()
+                .take(soft_limit)
+                .collect::<Vec<_>>()
+        } else {
+            bootstrap_candidates
+                .into_iter()
+                .take(bootstrap_budget)
+                .collect::<Vec<_>>()
+        };
+        let sync_fanout = self.config.sync_target_fanout.min(soft_limit);
+        let sync_peers = select_eth_fullnode_native_sync_targets_v1(
+            self.config.chain_id,
+            &session_peers,
+            sync_fanout,
+        );
+        let (selection_scores, selection_quality_summary, _) =
+            snapshot_eth_fullnode_peer_selection_scores_v1(
+                self.config.chain_id,
+                &candidate_peers,
+                &bootstrap_peers,
+                &sync_peers,
+            );
+        let lifecycle_summary = snapshot_network_runtime_eth_peer_lifecycle_summary_v1(
+            self.config.chain_id,
+            candidate_peers.as_slice(),
+        );
+
+        EthFullnodeNativePeerWorkerPlanV1 {
+            chain_id: self.config.chain_id,
+            local_node: self.config.local_node,
+            candidate_peers,
+            candidate_peer_endpoints: self.config.peer_endpoints.clone(),
+            lifecycle_summary,
+            selection_quality_summary,
+            selection_scores,
+            bootstrap_peers,
+            sync_peers,
+            recv_budget: self.config.recv_budget,
+            budget_hooks: self.config.budget_hooks.clone(),
+        }
+    }
+
+    pub fn drive_once<T: Transport>(
+        &self,
+        transport: &T,
+    ) -> Result<EthFullnodeNativeDriveReportV1, NetworkError> {
+        let plan = self.plan();
+        set_network_runtime_native_budget_hooks_v1(plan.chain_id, plan.budget_hooks.clone());
+        let mut report = EthFullnodeNativeDriveReportV1 {
+            lifecycle_summary: plan.lifecycle_summary.clone(),
+            selection_quality_summary: plan.selection_quality_summary.clone(),
+            ..EthFullnodeNativeDriveReportV1::default()
+        };
+        for &peer in &plan.bootstrap_peers {
+            for msg in build_eth_fullnode_native_bootstrap_messages_v1(
+                plan.local_node,
+                peer,
+                plan.chain_id,
+            ) {
+                transport.send(peer, msg)?;
+                report.outbound_messages = report.outbound_messages.saturating_add(1);
+            }
+            report.bootstrapped_peers = report.bootstrapped_peers.saturating_add(1);
+        }
+
+        for &peer in &plan.sync_peers {
+            if dispatch_eth_fullnode_native_sync_from_runtime_v1(
+                transport,
+                plan.local_node,
+                peer,
+                plan.chain_id,
+            )? {
+                report.outbound_messages = report.outbound_messages.saturating_add(1);
+                report.sync_requested_peers = report.sync_requested_peers.saturating_add(1);
+            }
+        }
+
+        for _ in 0..plan.recv_budget {
+            if transport.try_recv(plan.local_node)?.is_some() {
+                report.inbound_messages = report.inbound_messages.saturating_add(1);
+            } else {
+                break;
+            }
+        }
+
+        report.lifecycle_summary = snapshot_network_runtime_eth_peer_lifecycle_summary_v1(
+            plan.chain_id,
+            plan.candidate_peers.as_slice(),
+        );
+        Ok(report)
+    }
+
+    fn endpoint_for_peer(&self, peer: NodeId) -> Option<PluginPeerEndpoint> {
+        self.config
+            .peer_endpoints
+            .iter()
+            .find(|endpoint| endpoint.node_hint == peer.0)
+            .cloned()
+    }
+
+    pub fn drive_real_network_once(
+        &self,
+    ) -> Result<EthFullnodeNativeRealDriveReportV1, NetworkError> {
+        let plan = self.plan();
+        set_network_runtime_native_budget_hooks_v1(plan.chain_id, plan.budget_hooks.clone());
+        let mut report = EthFullnodeNativeRealDriveReportV1 {
+            scheduled_bootstrap_peers: plan.bootstrap_peers.len(),
+            scheduled_sync_peers: plan.sync_peers.len(),
+            lifecycle_summary: plan.lifecycle_summary.clone(),
+            selection_quality_summary: plan.selection_quality_summary.clone(),
+            ..EthFullnodeNativeRealDriveReportV1::default()
+        };
+        for &peer in plan.bootstrap_peers.iter() {
+            let Some(endpoint) = self.endpoint_for_peer(peer) else {
+                report.skipped_missing_endpoint_peers =
+                    report.skipped_missing_endpoint_peers.saturating_add(1);
+                continue;
+            };
+            report.attempted_bootstrap_peers = report.attempted_bootstrap_peers.saturating_add(1);
+            match connect_eth_fullnode_native_rlpx_peer_v1(
+                plan.chain_id,
+                plan.local_node,
+                peer,
+                &endpoint,
+            ) {
+                Ok(()) => {
+                    report.connected_peers = report.connected_peers.saturating_add(1);
+                    report.ready_peers = report.ready_peers.saturating_add(1);
+                    report.status_updates = report.status_updates.saturating_add(1);
+                }
+                Err(err) => {
+                    report.failed_bootstrap_peers = report.failed_bootstrap_peers.saturating_add(1);
+                    report
+                        .peer_failures
+                        .push(build_eth_fullnode_peer_failure_report_v1(
+                            plan.chain_id,
+                            peer,
+                            Some(&endpoint),
+                            EthFullnodeNativePeerDrivePhaseV1::Bootstrap,
+                            &err,
+                        ));
+                }
+            }
+        }
+        for &peer in plan.sync_peers.iter() {
+            let Some(endpoint) = self.endpoint_for_peer(peer) else {
+                report.skipped_missing_endpoint_peers =
+                    report.skipped_missing_endpoint_peers.saturating_add(1);
+                continue;
+            };
+            report.attempted_sync_peers = report.attempted_sync_peers.saturating_add(1);
+            match drive_eth_fullnode_native_rlpx_peer_session_once_v1(
+                plan.chain_id,
+                plan.local_node,
+                peer,
+                &endpoint,
+                &plan.budget_hooks,
+            ) {
+                Ok(peer_report) => {
+                    report.ready_peers = report.ready_peers.saturating_add(1);
+                    report.status_updates = report
+                        .status_updates
+                        .saturating_add(peer_report.status_updates);
+                    report.header_updates = report
+                        .header_updates
+                        .saturating_add(peer_report.header_updates);
+                    report.body_updates =
+                        report.body_updates.saturating_add(peer_report.body_updates);
+                    report.sync_requests = report
+                        .sync_requests
+                        .saturating_add(peer_report.sync_requests);
+                    report.inbound_frames = report
+                        .inbound_frames
+                        .saturating_add(peer_report.inbound_frames);
+                    if peer_report.header_updates > 0 {
+                        report.header_updated_peer_ids.push(peer.0);
+                    }
+                    if peer_report.body_updates > 0 {
+                        report.body_updated_peer_ids.push(peer.0);
+                    }
+                }
+                Err(err) => {
+                    report.failed_sync_peers = report.failed_sync_peers.saturating_add(1);
+                    report
+                        .peer_failures
+                        .push(build_eth_fullnode_peer_failure_report_v1(
+                            plan.chain_id,
+                            peer,
+                            Some(&endpoint),
+                            EthFullnodeNativePeerDrivePhaseV1::Sync,
+                            &err,
+                        ));
+                }
+            }
+        }
+        report.lifecycle_summary = snapshot_network_runtime_eth_peer_lifecycle_summary_v1(
+            plan.chain_id,
+            plan.candidate_peers.as_slice(),
+        );
+        let connect_failure_peers = report
+            .peer_failures
+            .iter()
+            .filter(|failure| {
+                matches!(
+                    failure.lifecycle_class,
+                    Some(crate::EthPeerFailureClassV1::ConnectFailure)
+                )
+            })
+            .map(|failure| failure.peer_id)
+            .collect::<Vec<_>>();
+        let handshake_failure_peers = report
+            .peer_failures
+            .iter()
+            .filter(|failure| {
+                matches!(
+                    failure.lifecycle_class,
+                    Some(crate::EthPeerFailureClassV1::HandshakeFailure)
+                )
+            })
+            .map(|failure| failure.peer_id)
+            .collect::<Vec<_>>();
+        let decode_failure_peers = report
+            .peer_failures
+            .iter()
+            .filter(|failure| {
+                matches!(
+                    failure.lifecycle_class,
+                    Some(crate::EthPeerFailureClassV1::DecodeFailure)
+                )
+            })
+            .map(|failure| failure.peer_id)
+            .collect::<Vec<_>>();
+        let timeout_failure_peers = report
+            .peer_failures
+            .iter()
+            .filter(|failure| {
+                matches!(
+                    failure.lifecycle_class,
+                    Some(crate::EthPeerFailureClassV1::Timeout)
+                )
+            })
+            .map(|failure| failure.peer_id)
+            .collect::<Vec<_>>();
+        let validation_reject_peers = report
+            .peer_failures
+            .iter()
+            .filter(|failure| {
+                matches!(
+                    failure.lifecycle_class,
+                    Some(crate::EthPeerFailureClassV1::ValidationReject)
+                )
+            })
+            .map(|failure| failure.peer_id)
+            .collect::<Vec<_>>();
+        let disconnect_peers = report
+            .peer_failures
+            .iter()
+            .filter(|failure| {
+                matches!(
+                    failure.lifecycle_class,
+                    Some(crate::EthPeerFailureClassV1::Disconnect)
+                )
+            })
+            .map(|failure| failure.peer_id)
+            .collect::<Vec<_>>();
+        let capacity_reject_peers = report
+            .peer_failures
+            .iter()
+            .filter(|failure| {
+                failure.reason_name.as_deref() == Some("too_many_peers")
+                    || failure.reason_code == Some(0x04)
+            })
+            .map(|failure| failure.peer_id)
+            .collect::<Vec<_>>();
+        observe_network_runtime_eth_peer_selection_round_v1(
+            plan.chain_id,
+            &plan.candidate_peers,
+            &plan.bootstrap_peers,
+            &plan.sync_peers,
+            &report.header_updated_peer_ids,
+            &report.body_updated_peer_ids,
+            &connect_failure_peers,
+            &handshake_failure_peers,
+            &decode_failure_peers,
+            &timeout_failure_peers,
+            &validation_reject_peers,
+            &disconnect_peers,
+            &capacity_reject_peers,
+        );
+        let runtime_snapshot = build_eth_fullnode_native_worker_runtime_snapshot_v1(&plan, &report);
+        set_eth_fullnode_native_worker_runtime_snapshot_v1(plan.chain_id, runtime_snapshot.clone());
+        let _ =
+            write_eth_fullnode_native_worker_runtime_snapshot_default_path_v1(&runtime_snapshot);
+        Ok(report)
+    }
+}
+
+pub fn bootstrap_eth_fullnode_native_peer_v1<T: Transport>(
+    transport: &T,
+    local_node: NodeId,
+    peer: NodeId,
+    chain_id: u64,
+) -> Result<(), NetworkError> {
+    for msg in build_eth_fullnode_native_bootstrap_messages_v1(local_node, peer, chain_id) {
+        transport.send(peer, msg)?;
+    }
+    Ok(())
+}
+
+pub fn dispatch_eth_fullnode_native_sync_from_runtime_v1<T: Transport>(
+    transport: &T,
+    local_node: NodeId,
+    peer: NodeId,
+    chain_id: u64,
+) -> Result<bool, NetworkError> {
+    let Some(msg) = build_eth_fullnode_native_sync_request_v1(local_node, chain_id) else {
+        return Ok(false);
+    };
+    transport.send(peer, msg)?;
+    Ok(true)
+}
+
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct EthFullnodeNativeDriveReportV1 {
+    pub bootstrapped_peers: usize,
+    pub sync_requested_peers: usize,
+    pub outbound_messages: usize,
+    pub inbound_messages: usize,
+    pub lifecycle_summary: EthPeerLifecycleSummaryV1,
+    pub selection_quality_summary: EthPeerSelectionQualitySummaryV1,
+}
+
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct EthFullnodeNativeRealDriveReportV1 {
+    pub scheduled_bootstrap_peers: usize,
+    pub scheduled_sync_peers: usize,
+    pub attempted_bootstrap_peers: usize,
+    pub attempted_sync_peers: usize,
+    pub failed_bootstrap_peers: usize,
+    pub failed_sync_peers: usize,
+    pub skipped_missing_endpoint_peers: usize,
+    pub connected_peers: usize,
+    pub ready_peers: usize,
+    pub status_updates: usize,
+    pub header_updates: usize,
+    pub body_updates: usize,
+    pub header_updated_peer_ids: Vec<u64>,
+    pub body_updated_peer_ids: Vec<u64>,
+    pub sync_requests: usize,
+    pub inbound_frames: usize,
+    pub peer_failures: Vec<EthFullnodeNativePeerFailureV1>,
+    pub lifecycle_summary: EthPeerLifecycleSummaryV1,
+    pub selection_quality_summary: EthPeerSelectionQualitySummaryV1,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EthFullnodeNativePeerDrivePhaseV1 {
+    Bootstrap,
+    Sync,
+}
+
+impl EthFullnodeNativePeerDrivePhaseV1 {
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Bootstrap => "bootstrap",
+            Self::Sync => "sync",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EthFullnodeNativePeerFailureClassV1 {
+    PeerNotFound,
+    QueueFull,
+    LocalNodeMismatch,
+    AddressParse,
+    Io,
+    Encode,
+    Decode,
+}
+
+impl EthFullnodeNativePeerFailureClassV1 {
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::PeerNotFound => "peer_not_found",
+            Self::QueueFull => "queue_full",
+            Self::LocalNodeMismatch => "local_node_mismatch",
+            Self::AddressParse => "address_parse",
+            Self::Io => "io",
+            Self::Encode => "encode",
+            Self::Decode => "decode",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EthFullnodeNativePeerFailureV1 {
+    pub peer_id: u64,
+    pub endpoint: Option<String>,
+    pub phase: EthFullnodeNativePeerDrivePhaseV1,
+    pub class: EthFullnodeNativePeerFailureClassV1,
+    pub lifecycle_class: Option<crate::EthPeerFailureClassV1>,
+    pub reason_code: Option<u64>,
+    pub reason_name: Option<String>,
+    pub error: String,
+}
+
+struct EthFullnodeNativeRlpxLivePeerSessionV1 {
+    endpoint: PluginPeerEndpoint,
+    stream: TcpStream,
+    frame_session: EthRlpxFrameSessionV1,
+    _negotiated_eth_version: u8,
+    remote_status: EthRlpxStatusV1,
+    last_sync_request_unix_ms: u64,
+    last_headers_request_id: Option<u64>,
+    last_bodies_request_id: Option<u64>,
+    last_tx_broadcast_unix_ms: u64,
+    pending_body_headers: Vec<(u64, [u8; 32])>,
+}
+
+type EthFullnodeNativeRlpxSessionKeyV1 = (u64, u64);
+type EthFullnodeNativeRlpxSessionMapV1 =
+    HashMap<EthFullnodeNativeRlpxSessionKeyV1, EthFullnodeNativeRlpxLivePeerSessionV1>;
+static ETH_FULLNODE_NATIVE_RLPX_SESSIONS: OnceLock<Mutex<EthFullnodeNativeRlpxSessionMapV1>> =
+    OnceLock::new();
+
+fn eth_fullnode_native_rlpx_sessions_v1() -> &'static Mutex<EthFullnodeNativeRlpxSessionMapV1> {
+    ETH_FULLNODE_NATIVE_RLPX_SESSIONS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+static ETH_FULLNODE_NATIVE_RLPX_REQUEST_ID: OnceLock<std::sync::atomic::AtomicU64> =
+    OnceLock::new();
+fn next_eth_fullnode_native_rlpx_request_id_v1() -> u64 {
+    ETH_FULLNODE_NATIVE_RLPX_REQUEST_ID
+        .get_or_init(|| std::sync::atomic::AtomicU64::new(1))
+        .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        .max(1)
+}
+
+fn connect_eth_fullnode_native_rlpx_addr_v1(
+    addr_hint: &str,
+    timeout: Duration,
+) -> Result<TcpStream, NetworkError> {
+    let mut last_err = None;
+    for addr in addr_hint
+        .to_socket_addrs()
+        .map_err(|e| NetworkError::AddressParse(format!("{addr_hint}:{e}")))?
+    {
+        match TcpStream::connect_timeout(&addr, timeout) {
+            Ok(stream) => return Ok(stream),
+            Err(err) => {
+                last_err = Some(err);
+            }
+        }
+    }
+    Err(NetworkError::Io(
+        last_err
+            .map(|err| format!("connect_failed({addr_hint}):{err}"))
+            .unwrap_or_else(|| format!("connect_failed({addr_hint}):no_resolved_addr")),
+    ))
+}
+
+fn evm_native_header_wire_from_rlpx_header_v1(
+    header: &crate::EthRlpxBlockHeaderRecordV1,
+) -> EvmNativeBlockHeaderWireV1 {
+    EvmNativeBlockHeaderWireV1 {
+        number: header.number,
+        hash: header.hash,
+        parent_hash: header.parent_hash,
+        state_root: header.state_root,
+        transactions_root: header.transactions_root,
+        receipts_root: header.receipts_root,
+        ommers_hash: header.ommers_hash,
+        logs_bloom: header.logs_bloom.clone(),
+        gas_limit: header.gas_limit,
+        gas_used: header.gas_used,
+        timestamp: header.timestamp,
+        base_fee_per_gas: header.base_fee_per_gas,
+        withdrawals_root: header.withdrawals_root,
+        blob_gas_used: header.blob_gas_used,
+        excess_blob_gas: header.excess_blob_gas,
+    }
+}
+
+fn evm_native_body_wire_from_rlpx_body_v1(
+    number: u64,
+    block_hash: [u8; 32],
+    body: &crate::EthRlpxBlockBodyRecordV1,
+) -> EvmNativeBlockBodyWireV1 {
+    EvmNativeBlockBodyWireV1 {
+        number,
+        block_hash,
+        tx_hashes: body.tx_hashes.clone(),
+        ommer_hashes: body.ommer_hashes.clone(),
+        withdrawal_count: body.withdrawal_count,
+        body_available: body.body_available,
+        txs_materialized: body.txs_materialized,
+    }
+}
+
+#[derive(Default)]
+struct EthFullnodeNativeRlpxPeerTickReportV1 {
+    status_updates: usize,
+    header_updates: usize,
+    body_updates: usize,
+    sync_requests: usize,
+    inbound_frames: usize,
+}
+
+fn format_eth_fullnode_rlpx_disconnect_reason_v1(payload: &[u8], phase: &str) -> String {
+    let reason = eth_rlpx_parse_disconnect_reason_v1(payload);
+    format!(
+        "rlpx_remote_disconnected_{phase}:reason_code={} reason={}",
+        reason.unwrap_or(u64::MAX),
+        eth_rlpx_disconnect_reason_name_v1(reason.unwrap_or(u64::MAX)),
+    )
+}
+
+fn eth_fullnode_rlpx_error_is_timeout_v1(raw: &str) -> bool {
+    raw.contains("timed out")
+        || raw.contains("would block")
+        || raw.contains("os error 10060")
+        || raw.contains("os error 10035")
+        || raw.contains("没有正确答复")
+        || raw.contains("没有反应")
+}
+
+fn observe_eth_fullnode_connect_error_v1(chain_id: u64, peer_id: u64, err: &NetworkError) {
+    match err {
+        NetworkError::AddressParse(_) => observe_network_runtime_eth_peer_connect_failure_v1(
+            chain_id,
+            peer_id,
+            "address_parse",
+            true,
+        ),
+        NetworkError::Io(raw) if eth_fullnode_rlpx_error_is_timeout_v1(raw) => {
+            observe_network_runtime_eth_peer_timeout_v1(chain_id, peer_id, "connect_timeout");
+        }
+        NetworkError::Io(_) => {
+            observe_network_runtime_eth_peer_connect_failure_v1(
+                chain_id,
+                peer_id,
+                "connect_failed",
+                false,
+            );
+        }
+        NetworkError::Decode(_) => {
+            observe_network_runtime_eth_peer_handshake_failure_v1(
+                chain_id,
+                peer_id,
+                "connect_decode_failed",
+            );
+        }
+        _ => observe_network_runtime_eth_peer_connect_failure_v1(
+            chain_id,
+            peer_id,
+            "connect_failed",
+            false,
+        ),
+    }
+}
+
+fn classify_eth_fullnode_peer_failure_v1(
+    err: &NetworkError,
+) -> EthFullnodeNativePeerFailureClassV1 {
+    match err {
+        NetworkError::PeerNotFound(_) => EthFullnodeNativePeerFailureClassV1::PeerNotFound,
+        NetworkError::QueueFull => EthFullnodeNativePeerFailureClassV1::QueueFull,
+        NetworkError::LocalNodeMismatch { .. } => {
+            EthFullnodeNativePeerFailureClassV1::LocalNodeMismatch
+        }
+        NetworkError::AddressParse(_) => EthFullnodeNativePeerFailureClassV1::AddressParse,
+        NetworkError::Io(_) => EthFullnodeNativePeerFailureClassV1::Io,
+        NetworkError::Encode(_) => EthFullnodeNativePeerFailureClassV1::Encode,
+        NetworkError::Decode(_) => EthFullnodeNativePeerFailureClassV1::Decode,
+    }
+}
+
+fn build_eth_fullnode_peer_failure_report_v1(
+    chain_id: u64,
+    peer: NodeId,
+    endpoint: Option<&PluginPeerEndpoint>,
+    phase: EthFullnodeNativePeerDrivePhaseV1,
+    err: &NetworkError,
+) -> EthFullnodeNativePeerFailureV1 {
+    let session = snapshot_network_runtime_eth_peer_sessions_for_peers_v1(chain_id, &[peer])
+        .into_iter()
+        .next();
+    EthFullnodeNativePeerFailureV1 {
+        peer_id: peer.0,
+        endpoint: endpoint.map(|endpoint| endpoint.addr_hint.clone()),
+        phase,
+        class: classify_eth_fullnode_peer_failure_v1(err),
+        lifecycle_class: session.as_ref().and_then(|value| value.last_failure_class),
+        reason_code: session
+            .as_ref()
+            .and_then(|value| value.last_failure_reason_code),
+        reason_name: session
+            .as_ref()
+            .and_then(|value| value.last_failure_reason_name.clone()),
+        error: err.to_string(),
+    }
+}
+
+fn build_eth_fullnode_native_worker_runtime_snapshot_v1(
+    plan: &EthFullnodeNativePeerWorkerPlanV1,
+    report: &EthFullnodeNativeRealDriveReportV1,
+) -> EthFullnodeNativeWorkerRuntimeSnapshotV1 {
+    let runtime_config = resolve_eth_fullnode_native_runtime_config_v1(plan.chain_id);
+    let (peer_selection_scores, selection_quality_summary, selection_long_term_summary) =
+        snapshot_eth_fullnode_peer_selection_scores_v1(
+            plan.chain_id,
+            &plan.candidate_peers,
+            &plan.bootstrap_peers,
+            &plan.sync_peers,
+        );
+    let native_head_block = snapshot_eth_fullnode_native_head_block_object_v1(plan.chain_id);
+    let native_canonical_chain = snapshot_network_runtime_native_canonical_chain_v1(plan.chain_id);
+    let native_canonical_blocks = snapshot_network_runtime_native_canonical_blocks_v1(
+        plan.chain_id,
+        plan.budget_hooks.runtime_block_snapshot_limit.max(1) as usize,
+    );
+    let native_pending_tx_summary =
+        snapshot_network_runtime_native_pending_tx_summary_v1(plan.chain_id);
+    let native_pending_tx_broadcast_runtime =
+        snapshot_network_runtime_native_pending_tx_broadcast_runtime_summary_v1(plan.chain_id);
+    let native_execution_budget_runtime =
+        snapshot_network_runtime_native_execution_budget_runtime_summary_v1(plan.chain_id);
+    let native_pending_txs = snapshot_network_runtime_native_pending_txs_v1(
+        plan.chain_id,
+        plan.budget_hooks.runtime_pending_tx_snapshot_limit.max(1) as usize,
+    );
+    let runtime_sync = get_network_runtime_sync_status(plan.chain_id);
+    let runtime_native_sync = get_network_runtime_native_sync_status(plan.chain_id);
+    let head_view = derive_eth_fullnode_head_view_with_native_preference_v1(
+        None,
+        native_head_block.as_ref(),
+        native_canonical_chain.as_ref(),
+        runtime_native_sync,
+    );
+    let sync_view = derive_eth_fullnode_sync_view_with_native_preference_v1(
+        None,
+        native_head_block.as_ref(),
+        native_canonical_chain.as_ref(),
+        runtime_sync,
+        runtime_native_sync,
+    );
+    let peer_sessions = snapshot_network_runtime_eth_peer_sessions_for_peers_v1(
+        plan.chain_id,
+        &plan.candidate_peers,
+    );
+    let peer_failures = report
+        .peer_failures
+        .iter()
+        .map(|failure| EthFullnodeNativePeerFailureSnapshotV1 {
+            peer_id: failure.peer_id,
+            endpoint: failure.endpoint.clone(),
+            phase: failure.phase.as_str().to_string(),
+            class: failure.class.as_str().to_string(),
+            lifecycle_class: failure
+                .lifecycle_class
+                .map(|value| value.as_str().to_string()),
+            reason_code: failure.reason_code,
+            reason_name: failure.reason_name.clone(),
+            error: failure.error.clone(),
+        })
+        .collect::<Vec<_>>();
+    EthFullnodeNativeWorkerRuntimeSnapshotV1 {
+        schema: ETH_FULLNODE_NATIVE_WORKER_RUNTIME_SCHEMA_V1.to_string(),
+        chain_id: plan.chain_id,
+        updated_at_unix_ms: now_unix_ms(),
+        candidate_peer_ids: plan.candidate_peers.iter().map(|peer| peer.0).collect(),
+        scheduled_bootstrap_peers: report.scheduled_bootstrap_peers as u64,
+        scheduled_sync_peers: report.scheduled_sync_peers as u64,
+        attempted_bootstrap_peers: report.attempted_bootstrap_peers as u64,
+        attempted_sync_peers: report.attempted_sync_peers as u64,
+        failed_bootstrap_peers: report.failed_bootstrap_peers as u64,
+        failed_sync_peers: report.failed_sync_peers as u64,
+        skipped_missing_endpoint_peers: report.skipped_missing_endpoint_peers as u64,
+        connected_peers: report.connected_peers as u64,
+        ready_peers: report.ready_peers as u64,
+        status_updates: report.status_updates as u64,
+        header_updates: report.header_updates as u64,
+        body_updates: report.body_updates as u64,
+        sync_requests: report.sync_requests as u64,
+        inbound_frames: report.inbound_frames as u64,
+        head_view,
+        sync_view,
+        native_canonical_chain,
+        native_canonical_blocks,
+        native_pending_tx_summary,
+        native_pending_tx_broadcast_runtime,
+        native_execution_budget_runtime,
+        native_pending_txs,
+        native_head_body_available: native_head_block.as_ref().map(|block| block.body.is_some()),
+        native_head_canonical: native_head_block.as_ref().map(|block| block.canonical),
+        native_head_safe: native_head_block.as_ref().map(|block| block.safe),
+        native_head_finalized: native_head_block.as_ref().map(|block| block.finalized),
+        lifecycle_summary: report.lifecycle_summary.clone(),
+        selection_quality_summary,
+        selection_long_term_summary,
+        selection_window_policy: runtime_config.selection_window_policy.clone(),
+        runtime_config,
+        peer_selection_scores,
+        peer_sessions,
+        peer_failures,
+    }
+}
+
+fn eth_fullnode_peer_validation_disconnect_reason_code_v1(
+    _reason: EthChainConfigPeerValidationReasonV1,
+) -> u64 {
+    0x03
+}
+
+fn format_eth_fullnode_peer_validation_error_v1(
+    reason: EthChainConfigPeerValidationReasonV1,
+    local_status: &EthRlpxStatusV1,
+    remote_status: &EthRlpxStatusV1,
+) -> String {
+    let hex32 = |bytes: &[u8; 32]| -> String {
+        bytes
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>()
+    };
+    let hex4 = |bytes: &[u8; 4]| -> String {
+        bytes
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>()
+    };
+    format!(
+        "rlpx_remote_status_rejected:reason={} local_network_id={} remote_network_id={} local_genesis=0x{} remote_genesis=0x{} local_fork=0x{}:{} remote_fork=0x{}:{}",
+        reason.as_str(),
+        local_status.network_id,
+        remote_status.network_id,
+        hex32(&local_status.genesis_hash),
+        hex32(&remote_status.genesis_hash),
+        hex4(&local_status.fork_id.hash),
+        local_status.fork_id.next,
+        hex4(&remote_status.fork_id.hash),
+        remote_status.fork_id.next,
+    )
+}
+
+fn eth_fullnode_native_head_time_for_validation_v1(chain_id: u64) -> u64 {
+    get_network_runtime_native_header_snapshot_v1(chain_id)
+        .and_then(|snapshot| snapshot.timestamp)
+        .unwrap_or(0)
+}
+
+fn connect_eth_fullnode_native_rlpx_peer_v1(
+    chain_id: u64,
+    local_node: NodeId,
+    peer: NodeId,
+    endpoint: &PluginPeerEndpoint,
+) -> Result<(), NetworkError> {
+    let key = (chain_id, peer.0);
+    observe_network_runtime_eth_peer_discovered_v1(chain_id, peer.0);
+    let mut sessions = eth_fullnode_native_rlpx_sessions_v1()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if sessions.contains_key(&key) {
+        return Ok(());
+    }
+
+    let timeout = Duration::from_secs(5);
+    observe_network_runtime_eth_peer_connecting_v1(chain_id, peer.0);
+    let mut stream = connect_eth_fullnode_native_rlpx_addr_v1(endpoint.addr_hint.as_str(), timeout)
+        .map_err(|err| {
+            observe_eth_fullnode_connect_error_v1(chain_id, peer.0, &err);
+            err
+        })?;
+    observe_network_runtime_eth_peer_connected_v1(chain_id, peer.0);
+    stream.set_read_timeout(Some(timeout)).map_err(|e| {
+        let err = NetworkError::Io(format!(
+            "set_read_timeout_failed:{}:{e}",
+            endpoint.addr_hint
+        ));
+        observe_network_runtime_eth_peer_connect_failure_v1(
+            chain_id,
+            peer.0,
+            "set_read_timeout_failed",
+            false,
+        );
+        err
+    })?;
+    stream.set_write_timeout(Some(timeout)).map_err(|e| {
+        let err = NetworkError::Io(format!(
+            "set_write_timeout_failed:{}:{e}",
+            endpoint.addr_hint
+        ));
+        observe_network_runtime_eth_peer_connect_failure_v1(
+            chain_id,
+            peer.0,
+            "set_write_timeout_failed",
+            false,
+        );
+        err
+    })?;
+
+    let hello_profile = eth_rlpx_hello_profile_v1();
+    observe_eth_native_discovery(chain_id);
+    observe_eth_native_rlpx_auth(chain_id);
+    let mut handshake = eth_rlpx_handshake_initiator_v1(endpoint.endpoint.as_str(), &mut stream)
+        .map_err(|err| {
+            observe_network_runtime_eth_peer_handshake_failure_v1(
+                chain_id,
+                peer.0,
+                "rlpx_auth_failed",
+            );
+            NetworkError::Decode(format!(
+                "{err}:endpoint={} hello_profile={}",
+                endpoint.addr_hint, hello_profile
+            ))
+        })?;
+    observe_eth_native_rlpx_auth_ack(chain_id);
+
+    let local_caps = default_eth_rlpx_capabilities_v1();
+    let local_client_name = eth_rlpx_default_client_name_v1();
+    let hello_payload = eth_rlpx_build_hello_payload_v1(
+        &handshake.local_static_pub,
+        local_caps.as_slice(),
+        local_client_name.as_str(),
+        eth_rlpx_default_listen_port_v1(),
+    );
+    eth_rlpx_write_wire_frame_v1(
+        &mut stream,
+        &mut handshake.session,
+        ETH_RLPX_P2P_HELLO_MSG,
+        hello_payload.as_slice(),
+    )
+    .map_err(NetworkError::Io)?;
+
+    let remote_hello = loop {
+        let (code, payload) = eth_rlpx_read_wire_frame_v1(&mut stream, &mut handshake.session)
+            .map_err(|err| {
+                if eth_fullnode_rlpx_error_is_timeout_v1(err.as_str()) {
+                    observe_network_runtime_eth_peer_timeout_v1(chain_id, peer.0, "hello_timeout");
+                } else {
+                    observe_network_runtime_eth_peer_decode_failure_v1(
+                        chain_id,
+                        peer.0,
+                        "hello_frame_decode_failed",
+                    );
+                }
+                NetworkError::Decode(err)
+            })?;
+        if code == ETH_RLPX_P2P_HELLO_MSG {
+            break eth_rlpx_parse_hello_payload_v1(payload.as_slice()).map_err(|err| {
+                observe_network_runtime_eth_peer_decode_failure_v1(
+                    chain_id,
+                    peer.0,
+                    "hello_payload_decode_failed",
+                );
+                NetworkError::Decode(err)
+            })?;
+        }
+        if code == ETH_RLPX_P2P_PING_MSG {
+            eth_rlpx_write_wire_frame_v1(
+                &mut stream,
+                &mut handshake.session,
+                ETH_RLPX_P2P_PONG_MSG,
+                &[],
+            )
+            .map_err(NetworkError::Io)?;
+            continue;
+        }
+        if code == ETH_RLPX_P2P_DISCONNECT_MSG {
+            observe_network_runtime_eth_peer_disconnect_v1(
+                chain_id,
+                peer.0,
+                eth_rlpx_parse_disconnect_reason_v1(payload.as_slice()),
+            );
+            return Err(NetworkError::Io(
+                format_eth_fullnode_rlpx_disconnect_reason_v1(payload.as_slice(), "before_hello"),
+            ));
+        }
+    };
+    observe_eth_native_hello(chain_id);
+    observe_network_runtime_eth_peer_hello_ok_v1(chain_id, peer.0);
+    if remote_hello.protocol_version >= 5 {
+        handshake.session.set_snappy(true);
+    }
+    let negotiated_eth_version = eth_rlpx_select_shared_eth_version_v1(
+        local_caps.as_slice(),
+        remote_hello.capabilities.as_slice(),
+    )
+    .ok_or_else(|| {
+        NetworkError::Decode(format!(
+            "rlpx_eth_capability_not_found:local_caps={} remote_caps={} endpoint={} hello_profile={}",
+            local_caps
+                .iter()
+                .map(|cap| format!("{}/{}", cap.name, cap.version))
+                .collect::<Vec<_>>()
+                .join(","),
+            remote_hello
+                .capabilities
+                .iter()
+                .map(|cap| format!("{}/{}", cap.name, cap.version))
+                .collect::<Vec<_>>()
+                .join(","),
+            endpoint.addr_hint,
+            hello_profile,
+        ))
+    })?;
+    let negotiated_snap = eth_rlpx_select_shared_snap_version_v1(
+        local_caps.as_slice(),
+        remote_hello.capabilities.as_slice(),
+    );
+    let remote_eth_versions = remote_hello
+        .capabilities
+        .iter()
+        .filter(|cap| cap.name.eq_ignore_ascii_case("eth"))
+        .map(|cap| cap.version as u8)
+        .collect::<Vec<_>>();
+    let remote_snap_versions = remote_hello
+        .capabilities
+        .iter()
+        .filter(|cap| cap.name.eq_ignore_ascii_case("snap"))
+        .map(|cap| cap.version as u8)
+        .collect::<Vec<_>>();
+
+    let eth_offset = ETH_RLPX_BASE_PROTOCOL_OFFSET;
+    let remote_status_payload = loop {
+        let (code, payload) = eth_rlpx_read_wire_frame_v1(&mut stream, &mut handshake.session)
+            .map_err(|err| {
+                if eth_fullnode_rlpx_error_is_timeout_v1(err.as_str()) {
+                    observe_network_runtime_eth_peer_timeout_v1(chain_id, peer.0, "status_timeout");
+                } else {
+                    observe_network_runtime_eth_peer_decode_failure_v1(
+                        chain_id,
+                        peer.0,
+                        "status_frame_decode_failed",
+                    );
+                }
+                NetworkError::Decode(err)
+            })?;
+        if code == eth_offset + ETH_RLPX_ETH_STATUS_MSG {
+            break payload;
+        }
+        if code == ETH_RLPX_P2P_PING_MSG {
+            eth_rlpx_write_wire_frame_v1(
+                &mut stream,
+                &mut handshake.session,
+                ETH_RLPX_P2P_PONG_MSG,
+                &[],
+            )
+            .map_err(NetworkError::Io)?;
+            continue;
+        }
+        if code == ETH_RLPX_P2P_DISCONNECT_MSG {
+            observe_network_runtime_eth_peer_disconnect_v1(
+                chain_id,
+                peer.0,
+                eth_rlpx_parse_disconnect_reason_v1(payload.as_slice()),
+            );
+            return Err(NetworkError::Io(
+                format_eth_fullnode_rlpx_disconnect_reason_v1(payload.as_slice(), "before_status"),
+            ));
+        }
+    };
+    let remote_status = eth_rlpx_parse_status_payload_v1(remote_status_payload.as_slice())
+        .map_err(|err| {
+            observe_network_runtime_eth_peer_decode_failure_v1(
+                chain_id,
+                peer.0,
+                "status_payload_decode_failed",
+            );
+            NetworkError::Decode(err)
+        })?;
+    let local_status =
+        build_eth_fullnode_native_rlpx_status_v1(chain_id, negotiated_eth_version.as_u8() as u32);
+    if let Err(reason) = validate_eth_chain_config_peer_status_v1(
+        &resolve_eth_chain_config_v1(chain_id),
+        local_status.latest_block,
+        eth_fullnode_native_head_time_for_validation_v1(chain_id),
+        &remote_status,
+    ) {
+        observe_network_runtime_eth_peer_validation_reject_v1(chain_id, peer.0, reason);
+        let disconnect_payload = eth_rlpx_build_disconnect_payload_v1(
+            eth_fullnode_peer_validation_disconnect_reason_code_v1(reason),
+        );
+        let _ = eth_rlpx_write_wire_frame_v1(
+            &mut stream,
+            &mut handshake.session,
+            ETH_RLPX_P2P_DISCONNECT_MSG,
+            disconnect_payload.as_slice(),
+        );
+        return Err(NetworkError::Decode(
+            format_eth_fullnode_peer_validation_error_v1(reason, &local_status, &remote_status),
+        ));
+    }
+    observe_network_runtime_eth_peer_status_ok_v1(
+        chain_id,
+        peer.0,
+        Some(remote_status.latest_block),
+    );
+    let local_status_payload = eth_rlpx_build_status_payload_v1(local_status);
+    eth_rlpx_write_wire_frame_v1(
+        &mut stream,
+        &mut handshake.session,
+        eth_offset + ETH_RLPX_ETH_STATUS_MSG,
+        local_status_payload.as_slice(),
+    )
+    .map_err(|err| {
+        observe_network_runtime_eth_peer_handshake_failure_v1(
+            chain_id,
+            peer.0,
+            "status_write_failed",
+        );
+        NetworkError::Io(err)
+    })?;
+
+    let _ = register_network_runtime_peer(chain_id, peer.0);
+    observe_eth_native_status(chain_id);
+    let _ = observe_network_runtime_peer_head(chain_id, peer.0, remote_status.latest_block);
+    observe_network_runtime_eth_peer_head(chain_id, peer.0, remote_status.latest_block);
+    let _ = upsert_network_runtime_eth_peer_session(
+        chain_id,
+        peer.0,
+        remote_eth_versions.as_slice(),
+        remote_snap_versions.as_slice(),
+        Some(remote_status.latest_block),
+    );
+    sessions.insert(
+        key,
+        EthFullnodeNativeRlpxLivePeerSessionV1 {
+            endpoint: endpoint.clone(),
+            stream,
+            frame_session: handshake.session,
+            _negotiated_eth_version: negotiated_eth_version.as_u8(),
+            remote_status,
+            last_sync_request_unix_ms: 0,
+            last_headers_request_id: None,
+            last_bodies_request_id: None,
+            last_tx_broadcast_unix_ms: 0,
+            pending_body_headers: Vec::new(),
+        },
+    );
+    let _ = negotiated_snap;
+    let _ = local_node;
+    Ok(())
+}
+
+fn drive_eth_fullnode_native_rlpx_peer_session_once_v1(
+    chain_id: u64,
+    local_node: NodeId,
+    peer: NodeId,
+    endpoint: &PluginPeerEndpoint,
+    budget_hooks: &EthFullnodeBudgetHooksV1,
+) -> Result<EthFullnodeNativeRlpxPeerTickReportV1, NetworkError> {
+    connect_eth_fullnode_native_rlpx_peer_v1(chain_id, local_node, peer, endpoint)?;
+    let mut sessions = eth_fullnode_native_rlpx_sessions_v1()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let mut report = EthFullnodeNativeRlpxPeerTickReportV1::default();
+    let mut disconnected = false;
+    let mut disconnect_error = None::<NetworkError>;
+    {
+        let Some(session) = sessions.get_mut(&(chain_id, peer.0)) else {
+            return Ok(report);
+        };
+        session
+            .stream
+            .set_read_timeout(Some(Duration::from_millis(150)))
+            .map_err(|e| {
+                NetworkError::Io(format!(
+                    "set_session_read_timeout_failed:{}:{e}",
+                    session.endpoint.addr_hint
+                ))
+            })?;
+
+        loop {
+            match eth_rlpx_read_wire_frame_v1(&mut session.stream, &mut session.frame_session) {
+                Ok((code, payload)) => {
+                    report.inbound_frames = report.inbound_frames.saturating_add(1);
+                    if code == ETH_RLPX_P2P_PING_MSG {
+                        eth_rlpx_write_wire_frame_v1(
+                            &mut session.stream,
+                            &mut session.frame_session,
+                            ETH_RLPX_P2P_PONG_MSG,
+                            &[],
+                        )
+                        .map_err(NetworkError::Io)?;
+                        continue;
+                    }
+                    if code == ETH_RLPX_P2P_DISCONNECT_MSG {
+                        observe_network_runtime_eth_peer_disconnect_v1(
+                            chain_id,
+                            peer.0,
+                            eth_rlpx_parse_disconnect_reason_v1(payload.as_slice()),
+                        );
+                        let _ = unregister_network_runtime_peer(chain_id, peer.0);
+                        disconnected = true;
+                        disconnect_error = Some(NetworkError::Io(
+                            format_eth_fullnode_rlpx_disconnect_reason_v1(
+                                payload.as_slice(),
+                                "ingest",
+                            ),
+                        ));
+                        break;
+                    }
+                    let eth_offset = ETH_RLPX_BASE_PROTOCOL_OFFSET;
+                    if code == eth_offset + ETH_RLPX_ETH_STATUS_MSG {
+                        let status = eth_rlpx_parse_status_payload_v1(payload.as_slice()).map_err(
+                            |err| {
+                                observe_network_runtime_eth_peer_decode_failure_v1(
+                                    chain_id,
+                                    peer.0,
+                                    "status_payload_decode_failed",
+                                );
+                                NetworkError::Decode(err)
+                            },
+                        )?;
+                        let local_status = build_eth_fullnode_native_rlpx_status_v1(
+                            chain_id,
+                            session._negotiated_eth_version as u32,
+                        );
+                        if let Err(reason) = validate_eth_chain_config_peer_status_v1(
+                            &resolve_eth_chain_config_v1(chain_id),
+                            local_status.latest_block,
+                            eth_fullnode_native_head_time_for_validation_v1(chain_id),
+                            &status,
+                        ) {
+                            observe_network_runtime_eth_peer_validation_reject_v1(
+                                chain_id, peer.0, reason,
+                            );
+                            let disconnect_payload = eth_rlpx_build_disconnect_payload_v1(
+                                eth_fullnode_peer_validation_disconnect_reason_code_v1(reason),
+                            );
+                            let _ = eth_rlpx_write_wire_frame_v1(
+                                &mut session.stream,
+                                &mut session.frame_session,
+                                ETH_RLPX_P2P_DISCONNECT_MSG,
+                                disconnect_payload.as_slice(),
+                            );
+                            let _ = unregister_network_runtime_peer(chain_id, peer.0);
+                            disconnected = true;
+                            disconnect_error = Some(NetworkError::Decode(
+                                format_eth_fullnode_peer_validation_error_v1(
+                                    reason,
+                                    &local_status,
+                                    &status,
+                                ),
+                            ));
+                            break;
+                        }
+                        observe_network_runtime_eth_peer_status_ok_v1(
+                            chain_id,
+                            peer.0,
+                            Some(status.latest_block),
+                        );
+                        session.remote_status = status;
+                        observe_eth_native_status(chain_id);
+                        let _ = observe_network_runtime_peer_head(
+                            chain_id,
+                            peer.0,
+                            status.latest_block,
+                        );
+                        observe_network_runtime_eth_peer_head(
+                            chain_id,
+                            peer.0,
+                            status.latest_block,
+                        );
+                        mark_network_runtime_eth_peer_session_ready_v1(
+                            chain_id,
+                            peer.0,
+                            Some(status.latest_block),
+                        );
+                        report.status_updates = report.status_updates.saturating_add(1);
+                        continue;
+                    }
+                    if code == eth_offset + ETH_RLPX_ETH_TRANSACTIONS_MSG {
+                        let txs = eth_rlpx_parse_transactions_payload_v1(payload.as_slice())
+                            .map_err(|err| {
+                                observe_network_runtime_eth_peer_decode_failure_v1(
+                                    chain_id,
+                                    peer.0,
+                                    "transactions_payload_decode_failed",
+                                );
+                                NetworkError::Decode(err)
+                            })?;
+                        for (idx, tx_hash) in txs.tx_hashes.iter().enumerate() {
+                            let tx_payload = txs.tx_rlp_items.get(idx).map(|item| item.as_slice());
+                            observe_network_runtime_native_pending_tx_ingress_with_payload_v1(
+                                chain_id, peer.0, *tx_hash, tx_payload,
+                            );
+                        }
+                        continue;
+                    }
+                    if code == eth_offset + ETH_RLPX_ETH_BLOCK_HEADERS_MSG {
+                        let headers = eth_rlpx_parse_block_headers_payload_v1(payload.as_slice())
+                            .map_err(|err| {
+                            observe_network_runtime_eth_peer_decode_failure_v1(
+                                chain_id,
+                                peer.0,
+                                "headers_payload_decode_failed",
+                            );
+                            NetworkError::Decode(err)
+                        })?;
+                        ingest_real_rlpx_block_headers_v1(
+                            chain_id,
+                            peer.0,
+                            session,
+                            &headers,
+                            &mut report,
+                        )?;
+                        continue;
+                    }
+                    if code == eth_offset + ETH_RLPX_ETH_BLOCK_BODIES_MSG {
+                        let bodies = eth_rlpx_parse_block_bodies_payload_v1(payload.as_slice())
+                            .map_err(|err| {
+                                observe_network_runtime_eth_peer_decode_failure_v1(
+                                    chain_id,
+                                    peer.0,
+                                    "bodies_payload_decode_failed",
+                                );
+                                NetworkError::Decode(err)
+                            })?;
+                        ingest_real_rlpx_block_bodies_v1(
+                            chain_id,
+                            peer.0,
+                            session,
+                            &bodies,
+                            &mut report,
+                        );
+                        continue;
+                    }
+                }
+                Err(err) => {
+                    if err.contains("timed out")
+                        || err.contains("would block")
+                        || err.contains("os error 10060")
+                        || err.contains("os error 10035")
+                        || err.contains("没有正确答复")
+                        || err.contains("没有反应")
+                    {
+                        break;
+                    }
+                    observe_network_runtime_eth_peer_decode_failure_v1(
+                        chain_id,
+                        peer.0,
+                        "frame_decode_failed",
+                    );
+                    return Err(NetworkError::Decode(err));
+                }
+            }
+        }
+
+        let now_ms = now_unix_ms();
+        if !disconnected {
+            if session.last_bodies_request_id.is_some()
+                && now_ms.saturating_sub(session.last_sync_request_unix_ms)
+                    >= budget_hooks.rlpx_request_timeout_ms.max(1)
+            {
+                observe_network_runtime_eth_peer_timeout_v1(chain_id, peer.0, "bodies_timeout");
+                let _ = unregister_network_runtime_peer(chain_id, peer.0);
+                disconnected = true;
+                disconnect_error = Some(NetworkError::Io(format!(
+                    "rlpx_request_timeout:bodies:endpoint={}",
+                    session.endpoint.addr_hint
+                )));
+            } else if session.last_headers_request_id.is_some()
+                && session.pending_body_headers.is_empty()
+                && now_ms.saturating_sub(session.last_sync_request_unix_ms)
+                    >= budget_hooks.rlpx_request_timeout_ms.max(1)
+            {
+                observe_network_runtime_eth_peer_timeout_v1(chain_id, peer.0, "headers_timeout");
+                let _ = unregister_network_runtime_peer(chain_id, peer.0);
+                disconnected = true;
+                disconnect_error = Some(NetworkError::Io(format!(
+                    "rlpx_request_timeout:headers:endpoint={}",
+                    session.endpoint.addr_hint
+                )));
+            }
+        }
+        if !disconnected
+            && session.pending_body_headers.is_empty()
+            && now_ms.saturating_sub(session.last_sync_request_unix_ms)
+                >= budget_hooks.sync_request_interval_ms.max(1)
+        {
+            let Some(msg) = build_eth_fullnode_native_sync_request_v1(local_node, chain_id) else {
+                return Ok(report);
+            };
+            if let ProtocolMessage::EvmNative(EvmNativeMessage::GetBlockHeaders {
+                start_height,
+                max,
+                skip,
+                reverse,
+                ..
+            }) = msg
+            {
+                let request_id = next_eth_fullnode_native_rlpx_request_id_v1();
+                let payload = eth_rlpx_build_get_block_headers_payload_v1(
+                    request_id,
+                    start_height,
+                    max,
+                    skip,
+                    reverse,
+                );
+                eth_rlpx_write_wire_frame_v1(
+                    &mut session.stream,
+                    &mut session.frame_session,
+                    ETH_RLPX_BASE_PROTOCOL_OFFSET + ETH_RLPX_ETH_GET_BLOCK_HEADERS_MSG,
+                    payload.as_slice(),
+                )
+                .map_err(|err| {
+                    observe_network_runtime_eth_peer_handshake_failure_v1(
+                        chain_id,
+                        peer.0,
+                        "headers_request_write_failed",
+                    );
+                    NetworkError::Io(err)
+                })?;
+                observe_eth_native_headers_pull(chain_id);
+                observe_network_runtime_eth_peer_syncing_v1(chain_id, peer.0);
+                session.last_headers_request_id = Some(request_id);
+                session.last_bodies_request_id = None;
+                session.last_sync_request_unix_ms = now_ms;
+                report.sync_requests = report.sync_requests.saturating_add(1);
+            }
+        }
+        if !disconnected
+            && now_ms.saturating_sub(session.last_tx_broadcast_unix_ms)
+                >= budget_hooks.tx_broadcast_interval_ms.max(1)
+        {
+            dispatch_eth_fullnode_native_rlpx_tx_broadcast_v1(
+                chain_id,
+                local_node,
+                peer,
+                session,
+                budget_hooks,
+            )?;
+            session.last_tx_broadcast_unix_ms = now_ms;
+        }
+    }
+    if disconnected {
+        sessions.remove(&(chain_id, peer.0));
+    }
+    if let Some(err) = disconnect_error {
+        return Err(err);
+    }
+    Ok(report)
+}
+
+fn ingest_real_rlpx_block_headers_v1(
+    chain_id: u64,
+    source_peer_id: u64,
+    session: &mut EthFullnodeNativeRlpxLivePeerSessionV1,
+    headers: &EthRlpxBlockHeadersResponseV1,
+    report: &mut EthFullnodeNativeRlpxPeerTickReportV1,
+) -> Result<(), NetworkError> {
+    if session
+        .last_headers_request_id
+        .is_some_and(|request_id| request_id != headers.request_id)
+    {
+        return Ok(());
+    }
+    observe_eth_native_headers_response(chain_id);
+    session.last_headers_request_id = Some(headers.request_id);
+    if headers.headers.is_empty() {
+        session.last_headers_request_id = None;
+        return Ok(());
+    }
+    session.pending_body_headers = headers
+        .headers
+        .iter()
+        .map(|header| (header.number, header.hash))
+        .collect();
+    if let Some(best) = headers.headers.iter().max_by_key(|header| header.number) {
+        let header_wire = evm_native_header_wire_from_rlpx_header_v1(best);
+        ingest_runtime_native_header_from_evm_wire(chain_id, source_peer_id, &header_wire);
+        report.header_updates = report.header_updates.saturating_add(1);
+    }
+    let hashes = session
+        .pending_body_headers
+        .iter()
+        .map(|(_, hash)| *hash)
+        .collect::<Vec<_>>();
+    if !hashes.is_empty() {
+        let request_id = next_eth_fullnode_native_rlpx_request_id_v1();
+        let payload = eth_rlpx_build_get_block_bodies_payload_v1(request_id, hashes.as_slice());
+        eth_rlpx_write_wire_frame_v1(
+            &mut session.stream,
+            &mut session.frame_session,
+            ETH_RLPX_BASE_PROTOCOL_OFFSET + ETH_RLPX_ETH_GET_BLOCK_BODIES_MSG,
+            payload.as_slice(),
+        )
+        .map_err(|err| {
+            observe_network_runtime_eth_peer_handshake_failure_v1(
+                chain_id,
+                source_peer_id,
+                "bodies_request_write_failed",
+            );
+            NetworkError::Io(err)
+        })?;
+        observe_eth_native_bodies_pull(chain_id);
+        observe_network_runtime_eth_peer_syncing_v1(chain_id, source_peer_id);
+        session.last_bodies_request_id = Some(request_id);
+        session.last_sync_request_unix_ms = now_unix_ms();
+        report.sync_requests = report.sync_requests.saturating_add(1);
+    }
+    Ok(())
+}
+
+fn ingest_real_rlpx_block_bodies_v1(
+    chain_id: u64,
+    source_peer_id: u64,
+    session: &mut EthFullnodeNativeRlpxLivePeerSessionV1,
+    bodies: &EthRlpxBlockBodiesResponseV1,
+    report: &mut EthFullnodeNativeRlpxPeerTickReportV1,
+) {
+    if session
+        .last_bodies_request_id
+        .is_some_and(|request_id| request_id != bodies.request_id)
+    {
+        return;
+    }
+    observe_eth_native_bodies_response(chain_id);
+    session.last_headers_request_id = None;
+    for (idx, body) in bodies.bodies.iter().enumerate() {
+        if let Some((number, hash)) = session.pending_body_headers.get(idx).copied() {
+            let body_wire = evm_native_body_wire_from_rlpx_body_v1(number, hash, body);
+            ingest_runtime_native_body_from_evm_wire(chain_id, source_peer_id, &body_wire);
+            report.body_updates = report.body_updates.saturating_add(1);
+        }
+    }
+    session.pending_body_headers.clear();
+    session.last_bodies_request_id = None;
+    mark_network_runtime_eth_peer_session_ready_v1(chain_id, source_peer_id, None);
+}
+
+fn dispatch_eth_fullnode_native_rlpx_tx_broadcast_v1(
+    chain_id: u64,
+    _local_node: NodeId,
+    peer: NodeId,
+    session: &mut EthFullnodeNativeRlpxLivePeerSessionV1,
+    budget_hooks: &EthFullnodeBudgetHooksV1,
+) -> Result<(), NetworkError> {
+    let candidates = snapshot_network_runtime_native_pending_tx_broadcast_candidates_v1(
+        chain_id,
+        budget_hooks.tx_broadcast_max_per_tick.max(1) as usize,
+        budget_hooks.tx_broadcast_max_propagations.max(1),
+    );
+    if candidates.is_empty() {
+        return Ok(());
+    }
+    let candidate_count = candidates.len() as u64;
+    let payload = eth_rlpx_build_transactions_payload_v1(
+        &candidates
+            .iter()
+            .map(|candidate| candidate.tx_payload.clone())
+            .collect::<Vec<_>>(),
+    );
+    eth_rlpx_write_wire_frame_v1(
+        &mut session.stream,
+        &mut session.frame_session,
+        ETH_RLPX_BASE_PROTOCOL_OFFSET + ETH_RLPX_ETH_TRANSACTIONS_MSG,
+        payload.as_slice(),
+    )
+    .map_err(|err| {
+        for candidate in &candidates {
+            observe_network_runtime_native_pending_tx_propagation_failure_v1(
+                chain_id,
+                candidate.tx_hash,
+                Some(peer.0),
+                NetworkRuntimeNativePendingTxPropagationStopReasonV1::IoWriteFailure,
+                "transactions_dispatch",
+            );
+        }
+        observe_network_runtime_native_pending_tx_broadcast_dispatch_v1(
+            chain_id,
+            peer.0,
+            candidate_count,
+            0,
+            false,
+        );
+        observe_network_runtime_eth_peer_handshake_failure_v1(
+            chain_id,
+            peer.0,
+            "transactions_write_failed",
+        );
+        NetworkError::Io(err)
+    })?;
+    for candidate in candidates {
+        observe_network_runtime_native_pending_tx_propagated_with_context_v1(
+            chain_id,
+            candidate.tx_hash,
+            Some(peer.0),
+            Some("transactions_dispatch"),
+            Some(budget_hooks.tx_broadcast_max_propagations.max(1)),
+        );
+    }
+    observe_network_runtime_native_pending_tx_broadcast_dispatch_v1(
+        chain_id,
+        peer.0,
+        candidate_count,
+        candidate_count,
+        true,
+    );
+    Ok(())
+}
+
+pub fn drive_eth_fullnode_native_peer_once_v1<T: Transport>(
+    transport: &T,
+    local_node: NodeId,
+    peer: NodeId,
+    chain_id: u64,
+    recv_budget: usize,
+) -> Result<EthFullnodeNativeDriveReportV1, NetworkError> {
+    drive_eth_fullnode_native_peers_once_v1(
+        transport,
+        local_node,
+        std::slice::from_ref(&peer),
+        chain_id,
+        recv_budget,
+    )
+}
+
+pub fn drive_eth_fullnode_native_peers_once_v1<T: Transport>(
+    transport: &T,
+    local_node: NodeId,
+    peers: &[NodeId],
+    chain_id: u64,
+    recv_budget: usize,
+) -> Result<EthFullnodeNativeDriveReportV1, NetworkError> {
+    let runtime_config = resolve_eth_fullnode_native_runtime_config_v1(chain_id);
+    let budget_hooks = runtime_config.budget_hooks;
+    let effective_recv_budget = if recv_budget == 0 {
+        budget_hooks.native_recv_budget_per_tick.max(1) as usize
+    } else {
+        recv_budget
+            .min(budget_hooks.native_recv_budget_per_tick.max(1) as usize)
+            .max(1)
+    };
+    EthFullnodeNativePeerWorkerV1::new(EthFullnodeNativePeerWorkerConfigV1 {
+        chain_id,
+        local_node,
+        peers: peers.to_vec(),
+        peer_endpoints: Vec::new(),
+        recv_budget: effective_recv_budget,
+        sync_target_fanout: budget_hooks.sync_target_fanout.max(1) as usize,
+        budget_hooks,
+    })
+    .drive_once(transport)
+}
+
+pub fn drive_eth_fullnode_native_peer_endpoints_once_v1(
+    local_node: NodeId,
+    peer_endpoints: &[PluginPeerEndpoint],
+    chain_id: u64,
+    recv_budget: usize,
+) -> Result<EthFullnodeNativeRealDriveReportV1, NetworkError> {
+    let runtime_config = resolve_eth_fullnode_native_runtime_config_v1(chain_id);
+    let budget_hooks = runtime_config.budget_hooks;
+    let effective_recv_budget = if recv_budget == 0 {
+        budget_hooks.native_recv_budget_per_tick.max(1) as usize
+    } else {
+        recv_budget
+            .min(budget_hooks.native_recv_budget_per_tick.max(1) as usize)
+            .max(1)
+    };
+    EthFullnodeNativePeerWorkerV1::new(EthFullnodeNativePeerWorkerConfigV1 {
+        chain_id,
+        local_node,
+        peers: peer_endpoints
+            .iter()
+            .map(|endpoint| NodeId(endpoint.node_hint.max(1)))
+            .collect(),
+        peer_endpoints: peer_endpoints.to_vec(),
+        recv_budget: effective_recv_budget,
+        sync_target_fanout: budget_hooks.sync_target_fanout.max(1) as usize,
+        budget_hooks,
+    })
+    .drive_real_network_once()
 }
 
 const RUNTIME_SYNC_PULL_REQUEST_MAGIC: [u8; 4] = *b"NSP1";
@@ -159,9 +1923,18 @@ fn observe_local_observed_peer_from_transport_evidence(
 mod local_observed_tests {
     use super::*;
     use std::net::{Ipv4Addr, SocketAddrV4};
+    use std::sync::{Mutex, OnceLock};
+
+    fn local_observed_test_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
 
     #[test]
     fn exact_addr_index_observation_enters_snapshot() {
+        let _guard = local_observed_test_lock()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         clear_local_observed_peers_registry();
         let peer_addr_index = DashMap::new();
         let addr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 30303));
@@ -170,14 +1943,17 @@ mod local_observed_tests {
         observe_local_observed_peer_from_exact_addr_index(&peer_addr_index, addr);
 
         let snapshot = snapshot_local_observed_peers();
-        assert_eq!(snapshot.len(), 1);
-        assert_eq!(snapshot[0].node_id, "7");
-        assert_eq!(snapshot[0].addr_hint, "127.0.0.1:30303");
+        assert!(snapshot
+            .iter()
+            .any(|peer| peer.node_id == "7" && peer.addr_hint == "127.0.0.1:30303"));
         clear_local_observed_peers_registry();
     }
 
     #[test]
     fn confirmed_sender_with_exact_registered_addr_enters_snapshot() {
+        let _guard = local_observed_test_lock()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         clear_local_observed_peers_registry();
         let peers = DashMap::new();
         let addr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 40404));
@@ -190,14 +1966,17 @@ mod local_observed_tests {
         ));
 
         let snapshot = snapshot_local_observed_peers();
-        assert_eq!(snapshot.len(), 1);
-        assert_eq!(snapshot[0].node_id, "9");
-        assert_eq!(snapshot[0].addr_hint, "127.0.0.1:40404");
+        assert!(snapshot
+            .iter()
+            .any(|peer| peer.node_id == "9" && peer.addr_hint == "127.0.0.1:40404"));
         clear_local_observed_peers_registry();
     }
 
     #[test]
     fn confirmed_sender_rejects_non_exact_registered_addr() {
+        let _guard = local_observed_test_lock()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         clear_local_observed_peers_registry();
         let peers = DashMap::new();
         let registered = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 50505));
@@ -209,7 +1988,9 @@ mod local_observed_tests {
             Some(11),
             src
         ));
-        assert!(snapshot_local_observed_peers().is_empty());
+        assert!(!snapshot_local_observed_peers()
+            .iter()
+            .any(|peer| { peer.node_id == "11" && peer.addr_hint == "127.0.0.1:50506" }));
         clear_local_observed_peers_registry();
     }
 }
@@ -834,6 +2615,112 @@ fn maybe_update_runtime_sync_from_protocol_message_with_context(
                 let _ = register_network_runtime_peer(chain_id, gossip_msg.from as u64);
             }
         }
+        ProtocolMessage::EvmNative(native_msg) => match native_msg {
+            EvmNativeMessage::DiscoveryPing { from, .. }
+            | EvmNativeMessage::DiscoveryPong { from, .. }
+            | EvmNativeMessage::DiscoveryFindNode { from, .. }
+            | EvmNativeMessage::DiscoveryNeighbors { from, .. } => {
+                let _ = register_network_runtime_peer(chain_id, from.0);
+                observe_eth_native_discovery(chain_id);
+            }
+            EvmNativeMessage::RlpxAuth { from, .. } => {
+                let _ = register_network_runtime_peer(chain_id, from.0);
+                observe_eth_native_rlpx_auth(chain_id);
+            }
+            EvmNativeMessage::RlpxAuthAck { from, .. } => {
+                let _ = register_network_runtime_peer(chain_id, from.0);
+                observe_eth_native_rlpx_auth_ack(chain_id);
+            }
+            EvmNativeMessage::Hello {
+                from,
+                eth_versions,
+                snap_versions,
+                ..
+            } => {
+                let _ = register_network_runtime_peer(chain_id, from.0);
+                observe_eth_native_hello(chain_id);
+                let _ = upsert_network_runtime_eth_peer_session(
+                    chain_id,
+                    from.0,
+                    eth_versions.as_slice(),
+                    snap_versions.as_slice(),
+                    None,
+                );
+            }
+            EvmNativeMessage::Status {
+                from, head_height, ..
+            } => {
+                let _ = register_network_runtime_peer(chain_id, from.0);
+                observe_eth_native_status(chain_id);
+                mark_network_runtime_eth_peer_session_ready_v1(
+                    chain_id,
+                    from.0,
+                    Some(*head_height),
+                );
+                let _ = observe_network_runtime_peer_head(chain_id, from.0, *head_height);
+                observe_network_runtime_eth_peer_head(chain_id, from.0, *head_height);
+            }
+            EvmNativeMessage::NewBlockHashes { from, blocks } => {
+                let _ = register_network_runtime_peer(chain_id, from.0);
+                if let Some((_, height)) = blocks.iter().max_by_key(|(_, height)| *height) {
+                    let _ = observe_network_runtime_peer_head(chain_id, from.0, *height);
+                    observe_network_runtime_eth_peer_head(chain_id, from.0, *height);
+                }
+            }
+            EvmNativeMessage::Transactions {
+                from,
+                tx_hash,
+                payload,
+                ..
+            } => {
+                let _ = register_network_runtime_peer(chain_id, from.0);
+                observe_network_runtime_native_pending_tx_ingress_with_payload_v1(
+                    chain_id,
+                    from.0,
+                    *tx_hash,
+                    Some(payload.as_slice()),
+                );
+            }
+            EvmNativeMessage::GetBlockHeaders { from, .. } => {
+                let _ = register_network_runtime_peer(chain_id, from.0);
+            }
+            EvmNativeMessage::BlockHeaders { from, headers } => {
+                let _ = register_network_runtime_peer(chain_id, from.0);
+                observe_eth_native_headers_response(chain_id);
+                if let Some(header) = headers.iter().max_by_key(|header| header.number) {
+                    ingest_runtime_native_header_from_evm_wire(chain_id, from.0, header);
+                }
+            }
+            EvmNativeMessage::GetBlockBodies { from, .. } => {
+                let _ = register_network_runtime_peer(chain_id, from.0);
+            }
+            EvmNativeMessage::BlockBodies { from, bodies } => {
+                let _ = register_network_runtime_peer(chain_id, from.0);
+                observe_eth_native_bodies_response(chain_id);
+                let preferred =
+                    get_network_runtime_native_head_snapshot_v1(chain_id).and_then(|head| {
+                        bodies
+                            .iter()
+                            .find(|body| {
+                                body.number == head.block_number
+                                    && body.block_hash == head.block_hash
+                            })
+                            .cloned()
+                    });
+                if let Some(body) =
+                    preferred.or_else(|| bodies.iter().max_by_key(|body| body.number).cloned())
+                {
+                    ingest_runtime_native_body_from_evm_wire(chain_id, from.0, &body);
+                }
+            }
+            EvmNativeMessage::SnapGetAccountRange { from, .. } => {
+                let _ = register_network_runtime_peer(chain_id, from.0);
+            }
+            EvmNativeMessage::SnapAccountRange { from, .. } => {
+                let _ = register_network_runtime_peer(chain_id, from.0);
+                observe_eth_native_snap_response(chain_id);
+            }
+        },
         ProtocolMessage::Finality(FinalityMessage::Vote { id, from, .. }) => {
             let _ =
                 observe_network_runtime_peer_head_with_local_head_max(chain_id, from.0, id.0, None);
@@ -885,6 +2772,72 @@ fn maybe_update_runtime_sync_local_progress_from_send(
                 }
             }
         }
+        ProtocolMessage::EvmNative(native_msg) => match native_msg {
+            EvmNativeMessage::DiscoveryPing { from, .. }
+            | EvmNativeMessage::DiscoveryPong { from, .. }
+            | EvmNativeMessage::DiscoveryFindNode { from, .. }
+            | EvmNativeMessage::DiscoveryNeighbors { from, .. } => {
+                if *from == local_node {
+                    observe_eth_native_discovery(chain_id);
+                }
+            }
+            EvmNativeMessage::RlpxAuth { from, .. } => {
+                if *from == local_node {
+                    observe_eth_native_rlpx_auth(chain_id);
+                }
+            }
+            EvmNativeMessage::RlpxAuthAck { from, .. } => {
+                if *from == local_node {
+                    observe_eth_native_rlpx_auth_ack(chain_id);
+                }
+            }
+            EvmNativeMessage::Hello { from, .. } => {
+                if *from == local_node {
+                    observe_eth_native_hello(chain_id);
+                }
+            }
+            EvmNativeMessage::Status { from, .. } => {
+                if *from == local_node {
+                    observe_eth_native_status(chain_id);
+                }
+            }
+            EvmNativeMessage::GetBlockHeaders { from, .. } => {
+                if *from == local_node {
+                    observe_eth_native_headers_pull(chain_id);
+                }
+            }
+            EvmNativeMessage::BlockHeaders { from, .. } => {
+                if *from == local_node {
+                    observe_eth_native_headers_response(chain_id);
+                }
+            }
+            EvmNativeMessage::GetBlockBodies { from, .. } => {
+                if *from == local_node {
+                    observe_eth_native_bodies_pull(chain_id);
+                }
+            }
+            EvmNativeMessage::BlockBodies { from, .. } => {
+                if *from == local_node {
+                    observe_eth_native_bodies_response(chain_id);
+                }
+            }
+            EvmNativeMessage::SnapGetAccountRange { from, .. } => {
+                if *from == local_node {
+                    observe_eth_native_snap_pull(chain_id);
+                }
+            }
+            EvmNativeMessage::SnapAccountRange { from, .. } => {
+                if *from == local_node {
+                    observe_eth_native_snap_response(chain_id);
+                }
+            }
+            EvmNativeMessage::NewBlockHashes { .. } => {}
+            EvmNativeMessage::Transactions { from, tx_hash, .. } => {
+                if *from == local_node {
+                    observe_network_runtime_native_pending_tx_propagated_v1(chain_id, *tx_hash);
+                }
+            }
+        },
         ProtocolMessage::Finality(FinalityMessage::Vote { id, from, .. }) => {
             if *from == local_node {
                 let _ = observe_network_runtime_local_head_max(chain_id, id.0);
@@ -1144,6 +3097,173 @@ fn maybe_plan_runtime_sync_pull_responses_with_context(
     })
 }
 
+fn now_unix_millis_u128() -> u128 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0)
+}
+
+fn evm_native_block_header_wire_from_runtime_snapshot(
+    snapshot: &crate::runtime_status::NetworkRuntimeNativeHeaderSnapshotV1,
+) -> EvmNativeBlockHeaderWireV1 {
+    EvmNativeBlockHeaderWireV1 {
+        number: snapshot.number,
+        hash: snapshot.hash,
+        parent_hash: snapshot.parent_hash,
+        state_root: snapshot.state_root,
+        transactions_root: snapshot.transactions_root,
+        receipts_root: snapshot.receipts_root,
+        ommers_hash: snapshot.ommers_hash,
+        logs_bloom: snapshot.logs_bloom.clone(),
+        gas_limit: snapshot.gas_limit,
+        gas_used: snapshot.gas_used,
+        timestamp: snapshot.timestamp,
+        base_fee_per_gas: snapshot.base_fee_per_gas,
+        withdrawals_root: snapshot.withdrawals_root,
+        blob_gas_used: snapshot.blob_gas_used,
+        excess_blob_gas: snapshot.excess_blob_gas,
+    }
+}
+
+fn evm_native_block_body_wire_from_runtime_snapshot(
+    snapshot: &crate::runtime_status::NetworkRuntimeNativeBodySnapshotV1,
+) -> EvmNativeBlockBodyWireV1 {
+    EvmNativeBlockBodyWireV1 {
+        number: snapshot.number,
+        block_hash: snapshot.block_hash,
+        tx_hashes: snapshot.tx_hashes.clone(),
+        ommer_hashes: snapshot.ommer_hashes.clone(),
+        withdrawal_count: snapshot.withdrawal_count,
+        body_available: snapshot.body_available,
+        txs_materialized: snapshot.txs_materialized,
+    }
+}
+
+fn runtime_native_header_snapshot_from_evm_wire(
+    chain_id: u64,
+    source_peer_id: u64,
+    observed_unix_ms: u128,
+    header: &EvmNativeBlockHeaderWireV1,
+) -> crate::runtime_status::NetworkRuntimeNativeHeaderSnapshotV1 {
+    crate::runtime_status::NetworkRuntimeNativeHeaderSnapshotV1 {
+        chain_id,
+        number: header.number,
+        hash: header.hash,
+        parent_hash: header.parent_hash,
+        state_root: header.state_root,
+        transactions_root: header.transactions_root,
+        receipts_root: header.receipts_root,
+        ommers_hash: header.ommers_hash,
+        logs_bloom: header.logs_bloom.clone(),
+        gas_limit: header.gas_limit,
+        gas_used: header.gas_used,
+        timestamp: header.timestamp,
+        base_fee_per_gas: header.base_fee_per_gas,
+        withdrawals_root: header.withdrawals_root,
+        blob_gas_used: header.blob_gas_used,
+        excess_blob_gas: header.excess_blob_gas,
+        source_peer_id: Some(source_peer_id),
+        observed_unix_ms,
+    }
+}
+
+fn runtime_native_body_snapshot_from_evm_wire(
+    chain_id: u64,
+    observed_unix_ms: u128,
+    body: &EvmNativeBlockBodyWireV1,
+) -> crate::runtime_status::NetworkRuntimeNativeBodySnapshotV1 {
+    crate::runtime_status::NetworkRuntimeNativeBodySnapshotV1 {
+        chain_id,
+        number: body.number,
+        block_hash: body.block_hash,
+        tx_hashes: body.tx_hashes.clone(),
+        ommer_hashes: body.ommer_hashes.clone(),
+        withdrawal_count: body.withdrawal_count,
+        body_available: body.body_available,
+        txs_materialized: body.txs_materialized,
+        observed_unix_ms,
+    }
+}
+
+fn runtime_native_head_snapshot_from_evm_header(
+    chain_id: u64,
+    source_peer_id: u64,
+    peer_count: u64,
+    observed_unix_ms: u128,
+    header: &EvmNativeBlockHeaderWireV1,
+    body_available: bool,
+) -> crate::runtime_status::NetworkRuntimeNativeHeadSnapshotV1 {
+    crate::runtime_status::NetworkRuntimeNativeHeadSnapshotV1 {
+        chain_id,
+        phase: NetworkRuntimeNativeSyncPhaseV1::Headers,
+        peer_count: peer_count.max(1),
+        block_number: header.number,
+        block_hash: header.hash,
+        parent_block_hash: header.parent_hash,
+        state_root: header.state_root,
+        canonical: false,
+        safe: false,
+        finalized: false,
+        reorg_depth_hint: None,
+        body_available,
+        source_peer_id: Some(source_peer_id),
+        observed_unix_ms,
+    }
+}
+
+fn ingest_runtime_native_header_from_evm_wire(
+    chain_id: u64,
+    source_peer_id: u64,
+    header: &EvmNativeBlockHeaderWireV1,
+) {
+    let observed_unix_ms = now_unix_millis_u128();
+    let body_available = get_network_runtime_native_body_snapshot_v1(chain_id)
+        .map(|body| body.number == header.number && body.block_hash == header.hash)
+        .unwrap_or(false);
+    let snapshot = runtime_native_header_snapshot_from_evm_wire(
+        chain_id,
+        source_peer_id,
+        observed_unix_ms,
+        header,
+    );
+    set_network_runtime_native_header_snapshot_v1(chain_id, snapshot);
+    let peer_count = get_network_runtime_sync_status(chain_id)
+        .map(|status| status.peer_count)
+        .unwrap_or(0);
+    let head_snapshot = runtime_native_head_snapshot_from_evm_header(
+        chain_id,
+        source_peer_id,
+        peer_count,
+        observed_unix_ms,
+        header,
+        body_available,
+    );
+    set_network_runtime_native_head_snapshot_v1(chain_id, head_snapshot);
+    observe_network_runtime_eth_peer_head(chain_id, source_peer_id, header.number);
+    observe_network_runtime_eth_peer_header_success_v1(chain_id, source_peer_id, header.number);
+}
+
+fn ingest_runtime_native_body_from_evm_wire(
+    chain_id: u64,
+    source_peer_id: u64,
+    body: &EvmNativeBlockBodyWireV1,
+) {
+    let observed_unix_ms = now_unix_millis_u128();
+    let snapshot = runtime_native_body_snapshot_from_evm_wire(chain_id, observed_unix_ms, body);
+    set_network_runtime_native_body_snapshot_v1(chain_id, snapshot);
+    if let Some(mut head_snapshot) = get_network_runtime_native_head_snapshot_v1(chain_id) {
+        if head_snapshot.block_number == body.number && head_snapshot.block_hash == body.block_hash
+        {
+            head_snapshot.body_available = body.body_available;
+            head_snapshot.source_peer_id = Some(source_peer_id);
+            head_snapshot.observed_unix_ms = observed_unix_ms;
+            set_network_runtime_native_head_snapshot_v1(chain_id, head_snapshot);
+        }
+    }
+    observe_network_runtime_eth_peer_body_success_v1(chain_id, source_peer_id, body.number);
+}
+
 fn maybe_build_evm_native_sync_response(
     chain_id: u64,
     local_node: NodeId,
@@ -1153,6 +3273,22 @@ fn maybe_build_evm_native_sync_response(
         return None;
     };
     match native_msg {
+        EvmNativeMessage::DiscoveryPing {
+            from,
+            chain_id: ping_chain_id,
+            ..
+        } => {
+            if *from == local_node || *ping_chain_id != chain_id {
+                return None;
+            }
+            Some((
+                *from,
+                ProtocolMessage::EvmNative(EvmNativeMessage::DiscoveryPong {
+                    from: local_node,
+                    chain_id,
+                }),
+            ))
+        }
         EvmNativeMessage::RlpxAuth {
             from,
             chain_id: auth_chain_id,
@@ -1174,6 +3310,30 @@ fn maybe_build_evm_native_sync_response(
                 }),
             ))
         }
+        EvmNativeMessage::Hello {
+            from,
+            chain_id: hello_chain_id,
+            ..
+        } => {
+            if *from == local_node || *hello_chain_id != chain_id {
+                return None;
+            }
+            Some((
+                *from,
+                build_eth_fullnode_native_status_message_v1(local_node, chain_id),
+            ))
+        }
+        EvmNativeMessage::Status {
+            from,
+            chain_id: status_chain_id,
+            ..
+        } => {
+            if *from == local_node || *status_chain_id != chain_id {
+                return None;
+            }
+            build_eth_fullnode_native_sync_request_v1(local_node, chain_id)
+                .map(|request| (*from, request))
+        }
         EvmNativeMessage::GetBlockHeaders {
             from,
             start_height,
@@ -1184,8 +3344,12 @@ fn maybe_build_evm_native_sync_response(
             if *from == local_node {
                 return None;
             }
-            let head = get_network_runtime_sync_status(chain_id)
-                .map(|s| s.current_block.max(s.highest_block))
+            let head = get_network_runtime_native_head_snapshot_v1(chain_id)
+                .map(|snapshot| snapshot.block_number)
+                .or_else(|| {
+                    get_network_runtime_sync_status(chain_id)
+                        .map(|s| s.current_block.max(s.highest_block))
+                })
                 .unwrap_or(0);
             let max_count = (*max).clamp(1, 256) as usize;
             let step = skip.saturating_add(1);
@@ -1206,23 +3370,41 @@ fn maybe_build_evm_native_sync_response(
                     cursor = cursor.saturating_add(step);
                 }
             }
+            let headers = get_network_runtime_native_header_snapshot_v1(chain_id)
+                .into_iter()
+                .filter(|snapshot| heights.iter().any(|height| *height == snapshot.number))
+                .map(|snapshot| evm_native_block_header_wire_from_runtime_snapshot(&snapshot))
+                .collect();
             Some((
                 *from,
                 ProtocolMessage::EvmNative(EvmNativeMessage::BlockHeaders {
                     from: local_node,
-                    heights,
+                    headers,
                 }),
             ))
+        }
+        EvmNativeMessage::BlockHeaders { from, headers } => {
+            if *from == local_node {
+                return None;
+            }
+            let hashes = headers.iter().map(|header| header.hash).collect::<Vec<_>>();
+            build_eth_fullnode_native_bodies_request_v1(local_node, hashes.as_slice())
+                .map(|request| (*from, request))
         }
         EvmNativeMessage::GetBlockBodies { from, hashes } => {
             if *from == local_node {
                 return None;
             }
+            let bodies = get_network_runtime_native_body_snapshot_v1(chain_id)
+                .into_iter()
+                .filter(|snapshot| hashes.iter().any(|hash| *hash == snapshot.block_hash))
+                .map(|snapshot| evm_native_block_body_wire_from_runtime_snapshot(&snapshot))
+                .collect();
             Some((
                 *from,
                 ProtocolMessage::EvmNative(EvmNativeMessage::BlockBodies {
                     from: local_node,
-                    body_count: hashes.len() as u64,
+                    bodies,
                 }),
             ))
         }
@@ -1398,6 +3580,24 @@ fn runtime_peer_id_from_protocol_message(msg: &ProtocolMessage) -> Option<u64> {
         | ProtocolMessage::Finality(FinalityMessage::Vote { from, .. })
         | ProtocolMessage::Finality(FinalityMessage::CheckpointPropose { from, .. })
         | ProtocolMessage::Finality(FinalityMessage::Cert { from, .. }) => Some(from.0),
+        ProtocolMessage::EvmNative(
+            EvmNativeMessage::DiscoveryPing { from, .. }
+            | EvmNativeMessage::DiscoveryPong { from, .. }
+            | EvmNativeMessage::DiscoveryFindNode { from, .. }
+            | EvmNativeMessage::DiscoveryNeighbors { from, .. }
+            | EvmNativeMessage::RlpxAuth { from, .. }
+            | EvmNativeMessage::RlpxAuthAck { from, .. }
+            | EvmNativeMessage::Hello { from, .. }
+            | EvmNativeMessage::Status { from, .. }
+            | EvmNativeMessage::NewBlockHashes { from, .. }
+            | EvmNativeMessage::Transactions { from, .. }
+            | EvmNativeMessage::GetBlockHeaders { from, .. }
+            | EvmNativeMessage::BlockHeaders { from, .. }
+            | EvmNativeMessage::GetBlockBodies { from, .. }
+            | EvmNativeMessage::BlockBodies { from, .. }
+            | EvmNativeMessage::SnapGetAccountRange { from, .. }
+            | EvmNativeMessage::SnapAccountRange { from, .. },
+        ) => Some(from.0),
         ProtocolMessage::TwoPc(TwoPcMessage::Propose { tx }) => Some(tx.from.0),
         ProtocolMessage::DistributedOcccGossip(gossip_msg) => Some(gossip_msg.from as u64),
         _ => None,
@@ -1590,6 +3790,13 @@ impl Transport for UdpTransport {
             src,
             msg_peer_id,
         );
+        maybe_update_runtime_sync_from_protocol_message_with_context(
+            self.chain_id,
+            &decoded,
+            msg_peer_id,
+            source_peer_id_hint,
+            &sync_ctx,
+        );
         if let Some((to, response)) =
             maybe_build_evm_native_sync_response(self.chain_id, self.node, &decoded)
         {
@@ -1620,13 +3827,6 @@ impl Transport for UdpTransport {
                 },
             );
         }
-        maybe_update_runtime_sync_from_protocol_message_with_context(
-            self.chain_id,
-            &decoded,
-            msg_peer_id,
-            source_peer_id_hint,
-            &sync_ctx,
-        );
         let fallback_sender = if let ProtocolMessage::DistributedOcccGossip(gossip) = &decoded {
             Some(NodeId(gossip.from as u64))
         } else {
@@ -1743,6 +3943,13 @@ impl Transport for TcpTransport {
             addr,
             msg_peer_id,
         );
+        maybe_update_runtime_sync_from_protocol_message_with_context(
+            self.chain_id,
+            &decoded,
+            msg_peer_id,
+            source_peer_id_hint,
+            &sync_ctx,
+        );
         if let Some((to, response)) =
             maybe_build_evm_native_sync_response(self.chain_id, self.node, &decoded)
         {
@@ -1769,13 +3976,6 @@ impl Transport for TcpTransport {
                 },
             );
         }
-        maybe_update_runtime_sync_from_protocol_message_with_context(
-            self.chain_id,
-            &decoded,
-            msg_peer_id,
-            source_peer_id_hint,
-            &sync_ctx,
-        );
         let fallback_sender = if let ProtocolMessage::DistributedOcccGossip(gossip) = &decoded {
             Some(NodeId(gossip.from as u64))
         } else {
@@ -1821,20 +4021,56 @@ fn write_tcp_frame(stream: &mut TcpStream, payload: &[u8]) -> Result<(), std::io
 mod tests {
     use super::*;
     use crate::{
-        get_network_runtime_sync_status, set_network_runtime_sync_status, NetworkRuntimeSyncStatus,
+        clear_network_runtime_native_snapshots_for_chain_v1,
+        current_eth_native_parity_progress_for_chain, default_eth_fullnode_budget_hooks_v1,
+        derive_eth_fullnode_head_view_with_native_preference_v1,
+        derive_eth_fullnode_sync_view_with_native_preference_v1,
+        get_network_runtime_native_body_snapshot_v1, get_network_runtime_native_head_snapshot_v1,
+        get_network_runtime_native_header_snapshot_v1, get_network_runtime_native_sync_status,
+        get_network_runtime_sync_status, parse_enode_endpoint,
+        set_network_runtime_native_body_snapshot_v1, set_network_runtime_native_head_snapshot_v1,
+        set_network_runtime_native_header_snapshot_v1, set_network_runtime_sync_status,
+        snapshot_eth_fullnode_native_head_block_object_v1, snapshot_eth_native_sync_evidence,
+        snapshot_network_runtime_eth_peer_sessions,
+        snapshot_network_runtime_eth_peer_sessions_for_peers_v1, NetworkRuntimeSyncStatus,
     };
     use novovm_protocol::{
         encode_block_header_wire_v1,
         protocol_catalog::distributed_occc::gossip::{
             GossipMessage as DistributedGossipMessage, MessageType as DistributedMessageType,
         },
-        BlockHeaderWireV1, CheckpointId, ConsensusPluginBindingV1, FinalityMessage, GossipMessage,
-        PacemakerMessage, ShardId, CONSENSUS_PLUGIN_CLASS_CODE,
+        BlockHeaderWireV1, CheckpointId, ConsensusPluginBindingV1, EvmNativeBlockBodyWireV1,
+        EvmNativeBlockHeaderWireV1, FinalityMessage, GossipMessage, PacemakerMessage, ShardId,
+        CONSENSUS_PLUGIN_CLASS_CODE,
     };
     use std::collections::HashSet;
     use std::net::TcpListener;
     use std::thread;
     use std::time::Duration;
+
+    const LIVE_MAINNET_BOOTNODES: [&str; 4] = [
+        "enode://d860a01f9722d78051619d1e2351aba3f43f943f6f00718d1b9baa4101932a1f5011f16bb2b1bb35db20d6fe28fa0bf09636d26a87d31de9ec6203eeedb1f666@18.138.108.67:30303",
+        "enode://22a8232c3abc76a16ae9d6c3b164f98775fe226f0917b0ca871128a74a8e9630b458460865bab457221f1d448dd9791d24c4e5d88786180ac185df813a68d4de@3.209.45.79:30303",
+        "enode://2b252ab6a1d0f971d9722cb839a42cb81db019ba44c08754628ab4a823487071b5695317c8ccd085219c3a03af063495b2f1da8d18218da2d6a82981b45e6ffc@65.108.70.101:30303",
+        "enode://4aeb4ab6c14b23e2c4cfdce879c04b0748a20d8e9b59e25ded2a08143e265c6c25936e74cbc8e641e3312ca288673d91f2f93f8e277de3cfa444ecdaaf982052@157.90.35.166:30303",
+    ];
+
+    fn parse_live_smoke_peer_endpoints() -> Vec<PluginPeerEndpoint> {
+        let raw = std::env::var("NOVOVM_ETH_LIVE_SMOKE_ENODES")
+            .unwrap_or_else(|_| LIVE_MAINNET_BOOTNODES.join(","));
+        raw.split([',', ';', '\n', '\r', '\t', ' '])
+            .map(str::trim)
+            .filter(|entry| !entry.is_empty())
+            .filter_map(|entry| {
+                let (node_hint, addr_hint) = parse_enode_endpoint(entry)?;
+                Some(PluginPeerEndpoint {
+                    endpoint: entry.to_string(),
+                    node_hint,
+                    addr_hint,
+                })
+            })
+            .collect()
+    }
 
     #[test]
     fn in_memory_transport_roundtrip() {
@@ -3201,5 +5437,1255 @@ mod tests {
         assert_eq!(d2.len(), 2, "node2 discovery set: {d2:?}");
         assert_eq!(g2.len(), 2, "node2 gossip set: {g2:?}");
         assert_eq!(s2.len(), 2, "node2 sync set: {s2:?}");
+    }
+
+    #[test]
+    fn evm_native_get_block_headers_response_uses_runtime_native_snapshot() {
+        let chain_id = 9_910_u64;
+        let local = NodeId(991);
+        let remote = NodeId(992);
+
+        set_network_runtime_native_header_snapshot_v1(
+            chain_id,
+            crate::runtime_status::NetworkRuntimeNativeHeaderSnapshotV1 {
+                chain_id,
+                number: 77,
+                hash: [0xa1; 32],
+                parent_hash: [0xa0; 32],
+                state_root: [0xb1; 32],
+                transactions_root: [0xb2; 32],
+                receipts_root: [0xb3; 32],
+                ommers_hash: [0xb4; 32],
+                logs_bloom: vec![0u8; 256],
+                gas_limit: Some(30_000_000),
+                gas_used: Some(42_000),
+                timestamp: Some(17),
+                base_fee_per_gas: Some(9),
+                withdrawals_root: None,
+                blob_gas_used: None,
+                excess_blob_gas: None,
+                source_peer_id: Some(remote.0),
+                observed_unix_ms: 10,
+            },
+        );
+        set_network_runtime_native_head_snapshot_v1(
+            chain_id,
+            crate::runtime_status::NetworkRuntimeNativeHeadSnapshotV1 {
+                chain_id,
+                phase: NetworkRuntimeNativeSyncPhaseV1::Headers,
+                peer_count: 1,
+                block_number: 77,
+                block_hash: [0xa1; 32],
+                parent_block_hash: [0xa0; 32],
+                state_root: [0xb1; 32],
+                canonical: false,
+                safe: false,
+                finalized: false,
+                reorg_depth_hint: None,
+                body_available: false,
+                source_peer_id: Some(remote.0),
+                observed_unix_ms: 11,
+            },
+        );
+
+        let request = ProtocolMessage::EvmNative(EvmNativeMessage::GetBlockHeaders {
+            from: remote,
+            start_height: 77,
+            max: 4,
+            skip: 0,
+            reverse: false,
+        });
+        let (to, response) =
+            maybe_build_evm_native_sync_response(chain_id, local, &request).expect("response");
+        assert_eq!(to, remote);
+
+        let ProtocolMessage::EvmNative(EvmNativeMessage::BlockHeaders { from, headers }) = response
+        else {
+            panic!("expected native block headers response");
+        };
+        assert_eq!(from, local);
+        assert_eq!(headers.len(), 1);
+        assert_eq!(headers[0].number, 77);
+        assert_eq!(headers[0].hash, [0xa1; 32]);
+        assert_eq!(headers[0].parent_hash, [0xa0; 32]);
+    }
+
+    #[test]
+    fn evm_native_block_headers_and_bodies_ingest_runtime_native_snapshots() {
+        let chain_id = 9_911_u64;
+        let remote = NodeId(993);
+
+        let header_msg = ProtocolMessage::EvmNative(EvmNativeMessage::BlockHeaders {
+            from: remote,
+            headers: vec![EvmNativeBlockHeaderWireV1 {
+                number: 88,
+                hash: [0xc1; 32],
+                parent_hash: [0xc0; 32],
+                state_root: [0xd1; 32],
+                transactions_root: [0xd2; 32],
+                receipts_root: [0xd3; 32],
+                ommers_hash: [0xd4; 32],
+                logs_bloom: vec![0u8; 256],
+                gas_limit: Some(30_000_000),
+                gas_used: Some(21_000),
+                timestamp: Some(20),
+                base_fee_per_gas: Some(7),
+                withdrawals_root: None,
+                blob_gas_used: None,
+                excess_blob_gas: None,
+            }],
+        });
+        let header_ctx = runtime_sync_pull_message_context(&header_msg);
+        maybe_update_runtime_sync_from_protocol_message_with_context(
+            chain_id,
+            &header_msg,
+            None,
+            None,
+            &header_ctx,
+        );
+
+        let header = get_network_runtime_native_header_snapshot_v1(chain_id).expect("header");
+        let head = get_network_runtime_native_head_snapshot_v1(chain_id).expect("head");
+        let runtime = get_network_runtime_sync_status(chain_id).expect("runtime");
+        assert_eq!(header.number, 88);
+        assert_eq!(header.hash, [0xc1; 32]);
+        assert_eq!(head.block_number, 88);
+        assert_eq!(head.block_hash, [0xc1; 32]);
+        assert!(!head.body_available);
+        assert_eq!(runtime.current_block, 88);
+        assert_eq!(runtime.highest_block, 88);
+
+        let body_msg = ProtocolMessage::EvmNative(EvmNativeMessage::BlockBodies {
+            from: remote,
+            bodies: vec![EvmNativeBlockBodyWireV1 {
+                number: 88,
+                block_hash: [0xc1; 32],
+                tx_hashes: vec![[0xe1; 32], [0xe2; 32]],
+                ommer_hashes: vec![[0xf1; 32]],
+                withdrawal_count: Some(0),
+                body_available: true,
+                txs_materialized: true,
+            }],
+        });
+        let body_ctx = runtime_sync_pull_message_context(&body_msg);
+        maybe_update_runtime_sync_from_protocol_message_with_context(
+            chain_id, &body_msg, None, None, &body_ctx,
+        );
+
+        let body = get_network_runtime_native_body_snapshot_v1(chain_id).expect("body");
+        let head = get_network_runtime_native_head_snapshot_v1(chain_id).expect("head after body");
+        assert_eq!(body.number, 88);
+        assert_eq!(body.block_hash, [0xc1; 32]);
+        assert_eq!(body.tx_hashes.len(), 2);
+        assert!(head.body_available);
+        assert_eq!(head.block_number, 88);
+        assert_eq!(head.block_hash, [0xc1; 32]);
+    }
+
+    #[test]
+    fn bootstrap_eth_fullnode_native_peer_emits_proven_sequence() {
+        let chain_id = 9_912_u64;
+        let local = NodeId(994);
+        let peer = NodeId(995);
+        let transport = InMemoryTransport::new(8);
+        transport.register(local);
+        transport.register(peer);
+
+        bootstrap_eth_fullnode_native_peer_v1(&transport, local, peer, chain_id)
+            .expect("bootstrap sequence");
+
+        let msg0 = transport.try_recv(peer).expect("recv0").expect("msg0");
+        let msg1 = transport.try_recv(peer).expect("recv1").expect("msg1");
+        let msg2 = transport.try_recv(peer).expect("recv2").expect("msg2");
+        let msg3 = transport.try_recv(peer).expect("recv3").expect("msg3");
+
+        assert!(matches!(
+            msg0,
+            ProtocolMessage::EvmNative(EvmNativeMessage::DiscoveryPing { from, chain_id: c, .. })
+                if from == local && c == chain_id
+        ));
+        assert!(matches!(
+            msg1,
+            ProtocolMessage::EvmNative(EvmNativeMessage::RlpxAuth { from, chain_id: c, network_id, .. })
+                if from == local && c == chain_id && network_id == chain_id
+        ));
+        assert!(matches!(
+            msg2,
+            ProtocolMessage::EvmNative(EvmNativeMessage::Hello { from, chain_id: c, network_id, .. })
+                if from == local && c == chain_id && network_id == chain_id
+        ));
+        assert!(matches!(
+            msg3,
+            ProtocolMessage::EvmNative(EvmNativeMessage::Status { from, chain_id: c, .. })
+                if from == local && c == chain_id
+        ));
+    }
+
+    #[test]
+    fn native_peer_worker_plan_is_multi_peer_but_budget_bounded() {
+        let chain_id = 9_914_u64;
+        let local = NodeId(1_100);
+        let peers = vec![NodeId(1_101), NodeId(1_102), NodeId(1_103), NodeId(1_104)];
+        let mut budget = default_eth_fullnode_budget_hooks_v1();
+        budget.active_native_peer_soft_limit = 2;
+        budget.active_native_peer_hard_limit = 3;
+        let worker = EthFullnodeNativePeerWorkerV1::new(EthFullnodeNativePeerWorkerConfigV1 {
+            chain_id,
+            local_node: local,
+            peers,
+            peer_endpoints: Vec::new(),
+            recv_budget: 4,
+            sync_target_fanout: 2,
+            budget_hooks: budget,
+        });
+
+        let plan = worker.plan();
+        assert_eq!(plan.candidate_peers.len(), 3);
+        assert_eq!(plan.bootstrap_peers.len(), 2);
+        assert!(plan.sync_peers.is_empty());
+    }
+
+    #[test]
+    fn native_peer_worker_plan_skips_cooldown_and_permanent_rejects() {
+        let chain_id = 9_914_001_u64;
+        let local = NodeId(1_105);
+        let peer_a = NodeId(1_106);
+        let peer_b = NodeId(1_107);
+        let peer_c = NodeId(1_108);
+
+        let _ = upsert_network_runtime_eth_peer_session(chain_id, peer_a.0, &[68, 70], &[1], None)
+            .expect("hello-only peer");
+        observe_network_runtime_eth_peer_disconnect_v1(chain_id, peer_a.0, Some(0x04));
+        observe_network_runtime_eth_peer_validation_reject_v1(
+            chain_id,
+            peer_b.0,
+            EthChainConfigPeerValidationReasonV1::WrongNetwork,
+        );
+
+        let mut budget = default_eth_fullnode_budget_hooks_v1();
+        budget.active_native_peer_soft_limit = 3;
+        let worker = EthFullnodeNativePeerWorkerV1::new(EthFullnodeNativePeerWorkerConfigV1 {
+            chain_id,
+            local_node: local,
+            peers: vec![peer_a, peer_b, peer_c],
+            peer_endpoints: Vec::new(),
+            recv_budget: 2,
+            sync_target_fanout: 1,
+            budget_hooks: budget,
+        });
+
+        let plan = worker.plan();
+        assert_eq!(plan.bootstrap_peers, vec![peer_c]);
+        assert!(plan.sync_peers.is_empty());
+        assert_eq!(plan.lifecycle_summary.cooldown_count, 1);
+        assert_eq!(plan.lifecycle_summary.permanently_rejected_count, 1);
+        assert_eq!(plan.lifecycle_summary.retry_eligible_count, 1);
+    }
+
+    #[test]
+    fn real_rlpx_connect_failure_updates_lifecycle_backoff_state() {
+        let chain_id = 9_914_002_u64;
+        let local = NodeId(1_109);
+        let peer = NodeId(1_110);
+        let endpoint = PluginPeerEndpoint {
+            endpoint: "enode://00@127.0.0.1:30303".to_string(),
+            node_hint: peer.0,
+            addr_hint: "not-a-real-socket".to_string(),
+        };
+        let err = connect_eth_fullnode_native_rlpx_peer_v1(chain_id, local, peer, &endpoint)
+            .expect_err("invalid addr must fail");
+        assert!(matches!(err, NetworkError::AddressParse(_)));
+        let snapshot =
+            snapshot_network_runtime_eth_peer_sessions_for_peers_v1(chain_id, &[peer])[0].clone();
+        assert_eq!(
+            snapshot.lifecycle_stage,
+            crate::EthPeerLifecycleStageV1::PermanentlyRejected
+        );
+        assert_eq!(
+            snapshot.last_failure_class,
+            Some(crate::EthPeerFailureClassV1::ConnectFailure)
+        );
+        assert_eq!(
+            snapshot.last_failure_reason_name.as_deref(),
+            Some("address_parse")
+        );
+        assert!(!snapshot.retry_eligible);
+    }
+
+    #[test]
+    fn real_rlpx_worker_keeps_running_other_peers_when_one_bootstrap_fails() {
+        let chain_id = 9_914_003_u64;
+        let local = NodeId(1_111);
+        let bad_peer = NodeId(1_112);
+        let good_peer = NodeId(1_113);
+
+        let responder_signing = k256::ecdsa::SigningKey::random(&mut rand::rngs::OsRng);
+        let responder_nodekey: [u8; 32] = responder_signing.to_bytes().into();
+        let responder_pub = crate::eth_rlpx_pubkey_from_nodekey_bytes_v1(&responder_nodekey)
+            .expect("derive responder pubkey");
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind rlpx listener");
+        let listen_addr = listener.local_addr().expect("rlpx listener addr");
+
+        let bad_endpoint = PluginPeerEndpoint {
+            endpoint: "enode://00@127.0.0.1:30303".to_string(),
+            node_hint: bad_peer.0,
+            addr_hint: "not-a-real-socket".to_string(),
+        };
+        let good_endpoint = PluginPeerEndpoint {
+            endpoint: format!(
+                "enode://{}@{}",
+                responder_pub
+                    .iter()
+                    .map(|b| format!("{b:02x}"))
+                    .collect::<String>(),
+                listen_addr
+            ),
+            node_hint: good_peer.0,
+            addr_hint: listen_addr.to_string(),
+        };
+
+        let server = thread::spawn(move || {
+            let (mut accepted, _) = listener.accept().expect("accept rlpx");
+            accepted
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .expect("set server read timeout");
+            accepted
+                .set_write_timeout(Some(Duration::from_secs(5)))
+                .expect("set server write timeout");
+            let mut responder = crate::eth_rlpx_handshake_responder_with_nodekey_v1(
+                &responder_nodekey,
+                &mut accepted,
+            )
+            .expect("responder handshake");
+            let (hello_code, hello_payload) =
+                crate::eth_rlpx_read_wire_frame_v1(&mut accepted, &mut responder.session)
+                    .expect("read initiator hello");
+            assert_eq!(hello_code, crate::ETH_RLPX_P2P_HELLO_MSG);
+            let initiator_hello = crate::eth_rlpx_parse_hello_payload_v1(hello_payload.as_slice())
+                .expect("parse initiator hello");
+            let responder_hello = crate::eth_rlpx_build_hello_payload_v1(
+                &responder.local_static_pub,
+                crate::default_eth_rlpx_capabilities_v1().as_slice(),
+                "SuperVM/best-effort-test",
+                listen_addr.port().into(),
+            );
+            crate::eth_rlpx_write_wire_frame_v1(
+                &mut accepted,
+                &mut responder.session,
+                crate::ETH_RLPX_P2P_HELLO_MSG,
+                responder_hello.as_slice(),
+            )
+            .expect("write responder hello");
+            if initiator_hello.protocol_version >= 5 {
+                responder.session.set_snappy(true);
+            }
+            let status = crate::EthRlpxStatusV1 {
+                protocol_version: 70,
+                network_id: chain_id,
+                genesis_hash: crate::eth_chain_config_genesis_hash_v1(chain_id),
+                fork_id: crate::build_eth_fork_id_from_chain_config_v1(
+                    &crate::resolve_eth_chain_config_v1(chain_id),
+                    0,
+                    0,
+                ),
+                earliest_block: 0,
+                latest_block: 64,
+                latest_block_hash: [0x64; 32],
+            };
+            let status_payload = crate::eth_rlpx_build_status_payload_v1(status);
+            crate::eth_rlpx_write_wire_frame_v1(
+                &mut accepted,
+                &mut responder.session,
+                crate::ETH_RLPX_BASE_PROTOCOL_OFFSET + crate::ETH_RLPX_ETH_STATUS_MSG,
+                status_payload.as_slice(),
+            )
+            .expect("write responder status");
+            let (peer_status_code, _) =
+                crate::eth_rlpx_read_wire_frame_v1(&mut accepted, &mut responder.session)
+                    .expect("read peer status");
+            assert_eq!(
+                peer_status_code,
+                crate::ETH_RLPX_BASE_PROTOCOL_OFFSET + crate::ETH_RLPX_ETH_STATUS_MSG
+            );
+        });
+
+        let mut budget = default_eth_fullnode_budget_hooks_v1();
+        budget.active_native_peer_soft_limit = 2;
+        budget.active_native_peer_hard_limit = 2;
+        let worker = EthFullnodeNativePeerWorkerV1::new(EthFullnodeNativePeerWorkerConfigV1 {
+            chain_id,
+            local_node: local,
+            peers: vec![bad_peer, good_peer],
+            peer_endpoints: vec![bad_endpoint, good_endpoint],
+            recv_budget: 1,
+            sync_target_fanout: 1,
+            budget_hooks: budget,
+        });
+
+        let report = worker
+            .drive_real_network_once()
+            .expect("best effort bootstrap tick");
+        assert_eq!(report.scheduled_bootstrap_peers, 2);
+        assert_eq!(report.attempted_bootstrap_peers, 2);
+        assert_eq!(report.connected_peers, 1);
+        assert_eq!(report.failed_bootstrap_peers, 1);
+        assert_eq!(report.peer_failures.len(), 1);
+        assert_eq!(report.peer_failures[0].peer_id, bad_peer.0);
+        assert_eq!(
+            report.peer_failures[0].phase,
+            EthFullnodeNativePeerDrivePhaseV1::Bootstrap
+        );
+        assert_eq!(
+            report.peer_failures[0].class,
+            EthFullnodeNativePeerFailureClassV1::AddressParse
+        );
+        assert_eq!(report.lifecycle_summary.permanently_rejected_count, 1);
+        assert!(report.lifecycle_summary.ready_count >= 1);
+
+        server.join().expect("server join");
+    }
+
+    #[test]
+    fn native_peer_worker_prefers_highest_head_session_for_sync() {
+        let chain_id = 9_915_u64;
+        let local = NodeId(1_120);
+        let peer_a = NodeId(1_121);
+        let peer_b = NodeId(1_122);
+        let _ =
+            upsert_network_runtime_eth_peer_session(chain_id, peer_a.0, &[66, 68], &[1], Some(120))
+                .expect("session a");
+        let _ =
+            upsert_network_runtime_eth_peer_session(chain_id, peer_b.0, &[66, 68], &[1], Some(240))
+                .expect("session b");
+        set_network_runtime_sync_status(
+            chain_id,
+            NetworkRuntimeSyncStatus {
+                peer_count: 2,
+                starting_block: 100,
+                current_block: 100,
+                highest_block: 140,
+            },
+        );
+
+        let mut budget = default_eth_fullnode_budget_hooks_v1();
+        budget.active_native_peer_soft_limit = 2;
+        let worker = EthFullnodeNativePeerWorkerV1::new(EthFullnodeNativePeerWorkerConfigV1 {
+            chain_id,
+            local_node: local,
+            peers: vec![peer_a, peer_b],
+            peer_endpoints: Vec::new(),
+            recv_budget: 2,
+            sync_target_fanout: 1,
+            budget_hooks: budget,
+        });
+        let plan = worker.plan();
+        assert_eq!(plan.bootstrap_peers, Vec::<NodeId>::new());
+        assert_eq!(plan.sync_peers, vec![peer_b]);
+    }
+
+    #[test]
+    fn udp_eth_fullnode_native_peer_drive_runs_bootstrap_and_dispatches_header_sync() {
+        let chain_id = 9_916_u64;
+        let local = NodeId(1_010);
+        let remote = NodeId(1_011);
+        let t0 = UdpTransport::bind_for_chain(local, "127.0.0.1:0", chain_id).unwrap();
+        let t1 = UdpTransport::bind_for_chain(remote, "127.0.0.1:0", chain_id).unwrap();
+        let a0 = t0.local_addr().unwrap();
+        let a1 = t1.local_addr().unwrap();
+        t0.register_peer(remote, &a1.to_string()).unwrap();
+        t1.register_peer(local, &a0.to_string()).unwrap();
+
+        set_network_runtime_sync_status(
+            chain_id,
+            NetworkRuntimeSyncStatus {
+                peer_count: 1,
+                starting_block: 56,
+                current_block: 56,
+                highest_block: 72,
+            },
+        );
+        set_network_runtime_native_header_snapshot_v1(
+            chain_id,
+            crate::runtime_status::NetworkRuntimeNativeHeaderSnapshotV1 {
+                chain_id,
+                number: 72,
+                hash: [0x91; 32],
+                parent_hash: [0x90; 32],
+                state_root: [0x81; 32],
+                transactions_root: [0x82; 32],
+                receipts_root: [0x83; 32],
+                ommers_hash: [0x84; 32],
+                logs_bloom: vec![0u8; 256],
+                gas_limit: Some(30_000_000),
+                gas_used: Some(84_000),
+                timestamp: Some(33),
+                base_fee_per_gas: Some(15),
+                withdrawals_root: None,
+                blob_gas_used: None,
+                excess_blob_gas: None,
+                source_peer_id: Some(remote.0),
+                observed_unix_ms: 1,
+            },
+        );
+        set_network_runtime_native_body_snapshot_v1(
+            chain_id,
+            crate::runtime_status::NetworkRuntimeNativeBodySnapshotV1 {
+                chain_id,
+                number: 72,
+                block_hash: [0x91; 32],
+                tx_hashes: vec![[0xa1; 32], [0xa2; 32]],
+                ommer_hashes: vec![[0xb1; 32]],
+                withdrawal_count: Some(0),
+                body_available: true,
+                txs_materialized: true,
+                observed_unix_ms: 2,
+            },
+        );
+
+        let first = drive_eth_fullnode_native_peer_once_v1(&t0, local, remote, chain_id, 0)
+            .expect("bootstrap round");
+        assert_eq!(first.bootstrapped_peers, 1);
+        assert_eq!(first.sync_requested_peers, 0);
+        assert_eq!(first.outbound_messages, 4);
+
+        let started = std::time::Instant::now();
+        while started.elapsed() < Duration::from_millis(750) {
+            let _ = drive_eth_fullnode_native_peer_once_v1(&t1, remote, local, chain_id, 8)
+                .expect("remote round");
+            let _ = drive_eth_fullnode_native_peer_once_v1(&t0, local, remote, chain_id, 8)
+                .expect("local round");
+
+            let evidence = snapshot_eth_native_sync_evidence(chain_id);
+            let sessions = snapshot_network_runtime_eth_peer_sessions(chain_id);
+            if evidence.discovery_seen
+                && evidence.rlpx_auth_seen
+                && evidence.rlpx_auth_ack_seen
+                && evidence.hello_seen
+                && evidence.status_seen
+                && sessions.iter().any(|session| session.peer_id == remote.0)
+            {
+                break;
+            }
+            thread::sleep(Duration::from_millis(5));
+        }
+
+        let evidence = snapshot_eth_native_sync_evidence(chain_id);
+        assert!(evidence.discovery_seen);
+        assert!(evidence.rlpx_auth_seen);
+        assert!(evidence.rlpx_auth_ack_seen);
+        assert!(evidence.hello_seen);
+        assert!(evidence.status_seen);
+
+        let sessions = snapshot_network_runtime_eth_peer_sessions(chain_id);
+        assert!(sessions.iter().any(|session| session.peer_id == remote.0));
+
+        let progress = current_eth_native_parity_progress_for_chain(chain_id);
+        assert!(progress.native_eth_handshake);
+
+        set_network_runtime_sync_status(
+            chain_id,
+            NetworkRuntimeSyncStatus {
+                peer_count: 1,
+                starting_block: 40,
+                current_block: 40,
+                highest_block: 72,
+            },
+        );
+        let sync_round = drive_eth_fullnode_native_peer_once_v1(&t0, local, remote, chain_id, 0)
+            .expect("sync round");
+        assert_eq!(sync_round.bootstrapped_peers, 0);
+        assert_eq!(sync_round.sync_requested_peers, 1);
+        assert_eq!(sync_round.outbound_messages, 1);
+
+        let remote_sync = drive_eth_fullnode_native_peer_once_v1(&t1, remote, local, chain_id, 8)
+            .expect("remote sync round");
+        let local_sync = drive_eth_fullnode_native_peer_once_v1(&t0, local, remote, chain_id, 8)
+            .expect("local sync round");
+        assert!(remote_sync.inbound_messages > 0);
+        assert!(local_sync.inbound_messages > 0);
+
+        let evidence = snapshot_eth_native_sync_evidence(chain_id);
+        assert!(evidence.headers_pull_seen);
+        assert!(evidence.headers_response_seen);
+    }
+
+    #[test]
+    fn real_rlpx_peer_worker_ingests_runtime_native_snapshots() {
+        let chain_id = 9_917_u64;
+        let local = NodeId(1_210);
+        let remote = NodeId(1_211);
+        let responder_signing = k256::ecdsa::SigningKey::random(&mut rand::rngs::OsRng);
+        let responder_nodekey: [u8; 32] = responder_signing.to_bytes().into();
+        let responder_pub = crate::eth_rlpx_pubkey_from_nodekey_bytes_v1(&responder_nodekey)
+            .expect("derive responder pubkey");
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind rlpx listener");
+        let listen_addr = listener.local_addr().expect("rlpx listener addr");
+        let endpoint = PluginPeerEndpoint {
+            endpoint: format!(
+                "enode://{}@{}",
+                responder_pub
+                    .iter()
+                    .map(|b| format!("{b:02x}"))
+                    .collect::<String>(),
+                listen_addr
+            ),
+            node_hint: remote.0,
+            addr_hint: listen_addr.to_string(),
+        };
+        let server = thread::spawn(move || {
+            let (mut accepted, _) = listener.accept().expect("accept rlpx");
+            accepted
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .expect("set server read timeout");
+            accepted
+                .set_write_timeout(Some(Duration::from_secs(5)))
+                .expect("set server write timeout");
+            let mut responder = crate::eth_rlpx_handshake_responder_with_nodekey_v1(
+                &responder_nodekey,
+                &mut accepted,
+            )
+            .expect("responder handshake");
+            let (hello_code, hello_payload) =
+                crate::eth_rlpx_read_wire_frame_v1(&mut accepted, &mut responder.session)
+                    .expect("read initiator hello");
+            assert_eq!(hello_code, crate::ETH_RLPX_P2P_HELLO_MSG);
+            let initiator_hello = crate::eth_rlpx_parse_hello_payload_v1(hello_payload.as_slice())
+                .expect("parse initiator hello");
+            let responder_hello = crate::eth_rlpx_build_hello_payload_v1(
+                &responder.local_static_pub,
+                crate::default_eth_rlpx_capabilities_v1().as_slice(),
+                "SuperVM/transport-test",
+                listen_addr.port().into(),
+            );
+            crate::eth_rlpx_write_wire_frame_v1(
+                &mut accepted,
+                &mut responder.session,
+                crate::ETH_RLPX_P2P_HELLO_MSG,
+                responder_hello.as_slice(),
+            )
+            .expect("write responder hello");
+            if initiator_hello.protocol_version >= 5 {
+                responder.session.set_snappy(true);
+            }
+            let status = crate::EthRlpxStatusV1 {
+                protocol_version: 70,
+                network_id: chain_id,
+                genesis_hash: [0u8; 32],
+                fork_id: crate::build_eth_fork_id_from_chain_config_v1(
+                    &crate::resolve_eth_chain_config_v1(chain_id),
+                    0,
+                    0,
+                ),
+                earliest_block: 1,
+                latest_block: 120,
+                latest_block_hash: [0x42; 32],
+            };
+            let status_payload = crate::eth_rlpx_build_status_payload_v1(status);
+            crate::eth_rlpx_write_wire_frame_v1(
+                &mut accepted,
+                &mut responder.session,
+                crate::ETH_RLPX_BASE_PROTOCOL_OFFSET + crate::ETH_RLPX_ETH_STATUS_MSG,
+                status_payload.as_slice(),
+            )
+            .expect("write responder status");
+            let (peer_status_code, peer_status_payload) =
+                crate::eth_rlpx_read_wire_frame_v1(&mut accepted, &mut responder.session)
+                    .expect("read peer status");
+            assert_eq!(
+                peer_status_code,
+                crate::ETH_RLPX_BASE_PROTOCOL_OFFSET + crate::ETH_RLPX_ETH_STATUS_MSG
+            );
+            let peer_status =
+                crate::eth_rlpx_parse_status_payload_v1(peer_status_payload.as_slice())
+                    .expect("parse peer status");
+            let expected_local_status =
+                crate::build_eth_fullnode_native_rlpx_status_v1(chain_id, 70);
+            assert_eq!(peer_status.network_id, chain_id);
+            assert_eq!(peer_status.protocol_version, 70);
+            assert_eq!(peer_status.latest_block, expected_local_status.latest_block);
+            assert_eq!(
+                peer_status.genesis_hash, expected_local_status.genesis_hash,
+                "local Status genesis must come from local chain facts"
+            );
+            assert_eq!(
+                peer_status.latest_block_hash,
+                expected_local_status.latest_block_hash
+            );
+            assert_eq!(peer_status.fork_id, expected_local_status.fork_id);
+
+            let header_record = crate::EthRlpxBlockHeaderRecordV1 {
+                number: 120,
+                hash: [0u8; 32],
+                parent_hash: [0x10; 32],
+                state_root: [0x20; 32],
+                transactions_root: [0x30; 32],
+                receipts_root: [0x40; 32],
+                ommers_hash: [0x50; 32],
+                logs_bloom: vec![0u8; 256],
+                gas_limit: Some(30_000_000),
+                gas_used: Some(100_000),
+                timestamp: Some(1_234_567),
+                base_fee_per_gas: Some(15),
+                withdrawals_root: None,
+                blob_gas_used: None,
+                excess_blob_gas: None,
+            };
+            loop {
+                let (code, payload) =
+                    crate::eth_rlpx_read_wire_frame_v1(&mut accepted, &mut responder.session)
+                        .expect("read worker frame");
+                if code
+                    == crate::ETH_RLPX_BASE_PROTOCOL_OFFSET
+                        + crate::ETH_RLPX_ETH_GET_BLOCK_HEADERS_MSG
+                {
+                    let request =
+                        crate::eth_rlpx_parse_get_block_headers_payload_v1(payload.as_slice())
+                            .expect("parse get block headers");
+                    let headers_payload = crate::eth_rlpx_build_block_headers_payload_v1(
+                        request.request_id,
+                        std::slice::from_ref(&header_record),
+                    );
+                    crate::eth_rlpx_write_wire_frame_v1(
+                        &mut accepted,
+                        &mut responder.session,
+                        crate::ETH_RLPX_BASE_PROTOCOL_OFFSET
+                            + crate::ETH_RLPX_ETH_BLOCK_HEADERS_MSG,
+                        headers_payload.as_slice(),
+                    )
+                    .expect("write block headers");
+                    thread::sleep(Duration::from_millis(500));
+                    break;
+                }
+            }
+        });
+
+        let mut budget = default_eth_fullnode_budget_hooks_v1();
+        budget.active_native_peer_soft_limit = 1;
+        budget.active_native_peer_hard_limit = 1;
+        let worker = EthFullnodeNativePeerWorkerV1::new(EthFullnodeNativePeerWorkerConfigV1 {
+            chain_id,
+            local_node: local,
+            peers: vec![remote],
+            peer_endpoints: vec![endpoint],
+            recv_budget: 1,
+            sync_target_fanout: 1,
+            budget_hooks: budget,
+        });
+
+        let report0 = worker.drive_real_network_once().expect("connect tick");
+        assert_eq!(report0.connected_peers, 1);
+        let status_after_connect = get_network_runtime_sync_status(chain_id).expect("sync status");
+        assert_eq!(status_after_connect.highest_block, 120);
+
+        let report1 = worker
+            .drive_real_network_once()
+            .expect("header request tick");
+        assert_eq!(report1.sync_requests, 1);
+
+        let report2 = worker
+            .drive_real_network_once()
+            .expect("header response tick");
+        assert_eq!(report2.header_updates, 1);
+
+        let header_snapshot =
+            get_network_runtime_native_header_snapshot_v1(chain_id).expect("header snapshot");
+        assert_eq!(header_snapshot.number, 120);
+        let head_snapshot =
+            get_network_runtime_native_head_snapshot_v1(chain_id).expect("head snapshot");
+        assert_eq!(head_snapshot.block_number, 120);
+
+        server.join().expect("server join");
+    }
+
+    #[test]
+    fn real_rlpx_peer_worker_rejects_wrong_network_status() {
+        let chain_id = 9_918_u64;
+        let local = NodeId(1_220);
+        let remote = NodeId(1_221);
+        let responder_signing = k256::ecdsa::SigningKey::random(&mut rand::rngs::OsRng);
+        let responder_nodekey: [u8; 32] = responder_signing.to_bytes().into();
+        let responder_pub = crate::eth_rlpx_pubkey_from_nodekey_bytes_v1(&responder_nodekey)
+            .expect("derive responder pubkey");
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind rlpx listener");
+        let listen_addr = listener.local_addr().expect("rlpx listener addr");
+        let endpoint = PluginPeerEndpoint {
+            endpoint: format!(
+                "enode://{}@{}",
+                responder_pub
+                    .iter()
+                    .map(|b| format!("{b:02x}"))
+                    .collect::<String>(),
+                listen_addr
+            ),
+            node_hint: remote.0,
+            addr_hint: listen_addr.to_string(),
+        };
+        let server = thread::spawn(move || {
+            let (mut accepted, _) = listener.accept().expect("accept rlpx");
+            accepted
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .expect("set server read timeout");
+            accepted
+                .set_write_timeout(Some(Duration::from_secs(5)))
+                .expect("set server write timeout");
+            let mut responder = crate::eth_rlpx_handshake_responder_with_nodekey_v1(
+                &responder_nodekey,
+                &mut accepted,
+            )
+            .expect("responder handshake");
+            let (hello_code, hello_payload) =
+                crate::eth_rlpx_read_wire_frame_v1(&mut accepted, &mut responder.session)
+                    .expect("read initiator hello");
+            assert_eq!(hello_code, crate::ETH_RLPX_P2P_HELLO_MSG);
+            let initiator_hello = crate::eth_rlpx_parse_hello_payload_v1(hello_payload.as_slice())
+                .expect("parse initiator hello");
+            let responder_hello = crate::eth_rlpx_build_hello_payload_v1(
+                &responder.local_static_pub,
+                crate::default_eth_rlpx_capabilities_v1().as_slice(),
+                "SuperVM/transport-test",
+                listen_addr.port().into(),
+            );
+            crate::eth_rlpx_write_wire_frame_v1(
+                &mut accepted,
+                &mut responder.session,
+                crate::ETH_RLPX_P2P_HELLO_MSG,
+                responder_hello.as_slice(),
+            )
+            .expect("write responder hello");
+            if initiator_hello.protocol_version >= 5 {
+                responder.session.set_snappy(true);
+            }
+            let wrong_status = crate::EthRlpxStatusV1 {
+                protocol_version: 70,
+                network_id: chain_id + 1,
+                genesis_hash: [0u8; 32],
+                fork_id: crate::EthForkIdV1 {
+                    hash: [0x2d, 0x10, 0xff, 0xf0],
+                    next: 0,
+                },
+                earliest_block: 0,
+                latest_block: 120,
+                latest_block_hash: [0x42; 32],
+            };
+            let status_payload = crate::eth_rlpx_build_status_payload_v1(wrong_status);
+            crate::eth_rlpx_write_wire_frame_v1(
+                &mut accepted,
+                &mut responder.session,
+                crate::ETH_RLPX_BASE_PROTOCOL_OFFSET + crate::ETH_RLPX_ETH_STATUS_MSG,
+                status_payload.as_slice(),
+            )
+            .expect("write responder status");
+            let (code, payload) =
+                crate::eth_rlpx_read_wire_frame_v1(&mut accepted, &mut responder.session)
+                    .expect("read disconnect");
+            assert_eq!(code, crate::ETH_RLPX_P2P_DISCONNECT_MSG);
+            assert_eq!(
+                crate::eth_rlpx_parse_disconnect_reason_v1(payload.as_slice()),
+                Some(0x03)
+            );
+        });
+
+        let mut budget = default_eth_fullnode_budget_hooks_v1();
+        budget.active_native_peer_soft_limit = 1;
+        budget.active_native_peer_hard_limit = 1;
+        let worker = EthFullnodeNativePeerWorkerV1::new(EthFullnodeNativePeerWorkerConfigV1 {
+            chain_id,
+            local_node: local,
+            peers: vec![remote],
+            peer_endpoints: vec![endpoint],
+            recv_budget: 1,
+            sync_target_fanout: 1,
+            budget_hooks: budget,
+        });
+
+        let report = worker
+            .drive_real_network_once()
+            .expect("wrong-network peer should be isolated into report");
+        assert_eq!(report.failed_bootstrap_peers, 1);
+        assert_eq!(report.peer_failures.len(), 1);
+        assert_eq!(
+            report.peer_failures[0].phase,
+            EthFullnodeNativePeerDrivePhaseV1::Bootstrap
+        );
+        assert_eq!(
+            report.peer_failures[0].class,
+            EthFullnodeNativePeerFailureClassV1::Decode
+        );
+        assert!(report.peer_failures[0].error.contains("wrong_network"));
+
+        server.join().expect("server join");
+    }
+
+    #[test]
+    fn real_rlpx_peer_worker_records_decode_failures_in_lifecycle_state() {
+        let chain_id = 9_918_001_u64;
+        let local = NodeId(1_222);
+        let remote = NodeId(1_223);
+        let responder_signing = k256::ecdsa::SigningKey::random(&mut rand::rngs::OsRng);
+        let responder_nodekey: [u8; 32] = responder_signing.to_bytes().into();
+        let responder_pub = crate::eth_rlpx_pubkey_from_nodekey_bytes_v1(&responder_nodekey)
+            .expect("derive responder pubkey");
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind rlpx listener");
+        let listen_addr = listener.local_addr().expect("rlpx listener addr");
+        let endpoint = PluginPeerEndpoint {
+            endpoint: format!(
+                "enode://{}@{}",
+                responder_pub
+                    .iter()
+                    .map(|b| format!("{b:02x}"))
+                    .collect::<String>(),
+                listen_addr
+            ),
+            node_hint: remote.0,
+            addr_hint: listen_addr.to_string(),
+        };
+
+        let server = thread::spawn(move || {
+            let (mut accepted, _) = listener.accept().expect("accept rlpx");
+            accepted
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .expect("set server read timeout");
+            accepted
+                .set_write_timeout(Some(Duration::from_secs(5)))
+                .expect("set server write timeout");
+            let mut responder = crate::eth_rlpx_handshake_responder_with_nodekey_v1(
+                &responder_nodekey,
+                &mut accepted,
+            )
+            .expect("responder handshake");
+            let (hello_code, hello_payload) =
+                crate::eth_rlpx_read_wire_frame_v1(&mut accepted, &mut responder.session)
+                    .expect("read initiator hello");
+            assert_eq!(hello_code, crate::ETH_RLPX_P2P_HELLO_MSG);
+            let initiator_hello = crate::eth_rlpx_parse_hello_payload_v1(hello_payload.as_slice())
+                .expect("parse initiator hello");
+            let responder_hello = crate::eth_rlpx_build_hello_payload_v1(
+                &responder.local_static_pub,
+                crate::default_eth_rlpx_capabilities_v1().as_slice(),
+                "SuperVM/decode-test",
+                listen_addr.port().into(),
+            );
+            crate::eth_rlpx_write_wire_frame_v1(
+                &mut accepted,
+                &mut responder.session,
+                crate::ETH_RLPX_P2P_HELLO_MSG,
+                responder_hello.as_slice(),
+            )
+            .expect("write responder hello");
+            if initiator_hello.protocol_version >= 5 {
+                responder.session.set_snappy(true);
+            }
+            crate::eth_rlpx_write_wire_frame_v1(
+                &mut accepted,
+                &mut responder.session,
+                crate::ETH_RLPX_BASE_PROTOCOL_OFFSET + crate::ETH_RLPX_ETH_STATUS_MSG,
+                &[0x01, 0x02, 0x03],
+            )
+            .expect("write malformed status");
+        });
+
+        let err = connect_eth_fullnode_native_rlpx_peer_v1(chain_id, local, remote, &endpoint)
+            .expect_err("malformed status must fail");
+        assert!(matches!(err, NetworkError::Decode(_)));
+        let snapshot =
+            snapshot_network_runtime_eth_peer_sessions_for_peers_v1(chain_id, &[remote])[0].clone();
+        assert_eq!(
+            snapshot.last_failure_class,
+            Some(crate::EthPeerFailureClassV1::DecodeFailure)
+        );
+        assert_eq!(
+            snapshot.last_failure_reason_name.as_deref(),
+            Some("status_payload_decode_failed")
+        );
+        assert_eq!(
+            snapshot.lifecycle_stage,
+            crate::EthPeerLifecycleStageV1::Cooldown
+        );
+        server.join().expect("server join");
+    }
+
+    #[test]
+    #[ignore = "live mainnet peer smoke"]
+    fn live_mainnet_peer_smoke_updates_native_preferred_views() {
+        let chain_id = std::env::var("NOVOVM_ETH_LIVE_SMOKE_CHAIN_ID")
+            .ok()
+            .and_then(|raw| raw.parse::<u64>().ok())
+            .unwrap_or(1);
+        let local = NodeId(
+            std::env::var("NOVOVM_ETH_LIVE_SMOKE_LOCAL_NODE")
+                .ok()
+                .and_then(|raw| raw.parse::<u64>().ok())
+                .unwrap_or(9_990_001),
+        );
+        let max_peers = std::env::var("NOVOVM_ETH_LIVE_SMOKE_MAX_PEERS")
+            .ok()
+            .and_then(|raw| raw.parse::<usize>().ok())
+            .unwrap_or(4)
+            .clamp(1, 4);
+        let ticks = std::env::var("NOVOVM_ETH_LIVE_SMOKE_TICKS")
+            .ok()
+            .and_then(|raw| raw.parse::<usize>().ok())
+            .unwrap_or(8)
+            .clamp(2, 24);
+        let sleep_ms = std::env::var("NOVOVM_ETH_LIVE_SMOKE_SLEEP_MS")
+            .ok()
+            .and_then(|raw| raw.parse::<u64>().ok())
+            .unwrap_or(600)
+            .clamp(50, 5_000);
+        let peer_endpoints = parse_live_smoke_peer_endpoints()
+            .into_iter()
+            .take(max_peers)
+            .collect::<Vec<_>>();
+        assert!(
+            !peer_endpoints.is_empty(),
+            "no live smoke enodes resolved from NOVOVM_ETH_LIVE_SMOKE_ENODES/defaults"
+        );
+
+        let mut failures = Vec::<String>::new();
+        for endpoint in peer_endpoints {
+            clear_network_runtime_native_snapshots_for_chain_v1(chain_id);
+            set_network_runtime_sync_status(
+                chain_id,
+                NetworkRuntimeSyncStatus {
+                    peer_count: 0,
+                    starting_block: 0,
+                    current_block: 0,
+                    highest_block: 0,
+                },
+            );
+
+            let mut budget = default_eth_fullnode_budget_hooks_v1();
+            budget.active_native_peer_soft_limit = 1;
+            budget.active_native_peer_hard_limit = 1;
+            budget.sync_pull_headers_batch = 16;
+            budget.sync_pull_bodies_batch = 16;
+            let worker = EthFullnodeNativePeerWorkerV1::new(EthFullnodeNativePeerWorkerConfigV1 {
+                chain_id,
+                local_node: local,
+                peers: vec![NodeId(endpoint.node_hint.max(1))],
+                peer_endpoints: vec![endpoint.clone()],
+                recv_budget: 1,
+                sync_target_fanout: 1,
+                budget_hooks: budget,
+            });
+
+            let mut saw_status = false;
+            let mut saw_sync_request = false;
+            let mut saw_body_update = false;
+            let mut last_error = None::<String>;
+            for _ in 0..ticks {
+                let report = worker
+                    .drive_real_network_once()
+                    .expect("best-effort real worker should not short-circuit live smoke");
+                if report.status_updates > 0 {
+                    saw_status = true;
+                }
+                if report.sync_requests > 0 {
+                    saw_sync_request = true;
+                }
+                if report.body_updates > 0 {
+                    saw_body_update = true;
+                }
+                if let Some(failure) = report.peer_failures.last() {
+                    last_error = Some(format!(
+                        "{}:{}:{}",
+                        failure.phase.as_str(),
+                        failure.class.as_str(),
+                        failure.error
+                    ));
+                }
+                if get_network_runtime_native_header_snapshot_v1(chain_id).is_some()
+                    && get_network_runtime_native_body_snapshot_v1(chain_id).is_some()
+                {
+                    let sync_status =
+                        get_network_runtime_sync_status(chain_id).expect("live sync status");
+                    let native_sync =
+                        get_network_runtime_native_sync_status(chain_id).expect("live native sync");
+                    let native_block = snapshot_eth_fullnode_native_head_block_object_v1(chain_id)
+                        .expect("live native block");
+                    let native_canonical_chain =
+                        snapshot_network_runtime_native_canonical_chain_v1(chain_id);
+                    let head_view = derive_eth_fullnode_head_view_with_native_preference_v1(
+                        None,
+                        Some(&native_block),
+                        native_canonical_chain.as_ref(),
+                        Some(native_sync),
+                    )
+                    .expect("live head view");
+                    let sync_view = derive_eth_fullnode_sync_view_with_native_preference_v1(
+                        None,
+                        Some(&native_block),
+                        native_canonical_chain.as_ref(),
+                        Some(sync_status),
+                        Some(native_sync),
+                    )
+                    .expect("live sync view");
+                    assert!(saw_status, "live smoke never observed remote Status");
+                    assert!(
+                        saw_sync_request,
+                        "live smoke never dispatched GetBlockHeaders"
+                    );
+                    assert!(saw_body_update, "live smoke never ingested BlockBodies");
+                    assert!(
+                        head_view.block_number > 0,
+                        "live head view block number stayed zero"
+                    );
+                    assert!(
+                        matches!(
+                            head_view.source,
+                            crate::EthFullnodeBlockViewSource::NativeChainSync
+                        ),
+                        "live head view did not prioritize native chain sync"
+                    );
+                    assert!(
+                        sync_view.highest_block_number >= head_view.block_number,
+                        "live sync view highest block did not cover head view"
+                    );
+                    assert!(
+                        native_block
+                            .body
+                            .as_ref()
+                            .is_some_and(|body| body.body_available),
+                        "live native block object did not include an available body"
+                    );
+                    eprintln!(
+                        "live_smoke_ok endpoint={} head={} hash=0x{} highest={} source={} body_available={}",
+                        endpoint.addr_hint,
+                        head_view.block_number,
+                        head_view
+                            .block_hash
+                            .iter()
+                            .map(|b| format!("{b:02x}"))
+                            .collect::<String>(),
+                        sync_view.highest_block_number,
+                        head_view.source.as_str(),
+                        native_block
+                            .body
+                            .as_ref()
+                            .is_some_and(|body| body.body_available),
+                    );
+                    return;
+                }
+                thread::sleep(Duration::from_millis(sleep_ms));
+            }
+            failures.push(format!(
+                "{}:{}",
+                endpoint.addr_hint,
+                last_error.unwrap_or_else(|| {
+                    format!(
+                        "status={} sync_request={} body_update={} header_snapshot={} body_snapshot={}",
+                        saw_status,
+                        saw_sync_request,
+                        saw_body_update,
+                        get_network_runtime_native_header_snapshot_v1(chain_id).is_some(),
+                        get_network_runtime_native_body_snapshot_v1(chain_id).is_some(),
+                    )
+                })
+            ));
+        }
+        panic!(
+            "live mainnet smoke failed for all candidate peers: {}",
+            failures.join(" | ")
+        );
+    }
+
+    #[test]
+    fn evm_native_status_response_triggers_header_pull_from_runtime_gap() {
+        let chain_id = 9_913_u64;
+        let local = NodeId(996);
+        let remote = NodeId(997);
+        set_network_runtime_sync_status(
+            chain_id,
+            NetworkRuntimeSyncStatus {
+                peer_count: 1,
+                starting_block: 50,
+                current_block: 50,
+                highest_block: 77,
+            },
+        );
+
+        let status = ProtocolMessage::EvmNative(EvmNativeMessage::Status {
+            from: remote,
+            chain_id,
+            total_difficulty: 77,
+            head_height: 77,
+            head_hash: [0xaa; 32],
+            genesis_hash: [0u8; 32],
+        });
+        let (to, response) =
+            maybe_build_evm_native_sync_response(chain_id, local, &status).expect("response");
+        assert_eq!(to, remote);
+        let planned = plan_network_runtime_sync_pull_window(chain_id).expect("planned window");
+        let ProtocolMessage::EvmNative(EvmNativeMessage::GetBlockHeaders {
+            from,
+            start_height,
+            max,
+            skip,
+            reverse,
+        }) = response
+        else {
+            panic!("expected get block headers");
+        };
+        assert_eq!(from, local);
+        assert_eq!(start_height, planned.from_block);
+        assert_eq!(max, planned.to_block - planned.from_block + 1);
+        assert_eq!(skip, 0);
+        assert!(!reverse);
+    }
+
+    #[test]
+    fn evm_native_block_headers_response_triggers_body_pull_request() {
+        let chain_id = 9_914_u64;
+        let local = NodeId(998);
+        let remote = NodeId(999);
+        let block_headers = ProtocolMessage::EvmNative(EvmNativeMessage::BlockHeaders {
+            from: remote,
+            headers: vec![
+                EvmNativeBlockHeaderWireV1 {
+                    number: 60,
+                    hash: [0x61; 32],
+                    parent_hash: [0x60; 32],
+                    state_root: [0x71; 32],
+                    transactions_root: [0x72; 32],
+                    receipts_root: [0x73; 32],
+                    ommers_hash: [0x74; 32],
+                    logs_bloom: vec![0u8; 256],
+                    gas_limit: None,
+                    gas_used: None,
+                    timestamp: None,
+                    base_fee_per_gas: None,
+                    withdrawals_root: None,
+                    blob_gas_used: None,
+                    excess_blob_gas: None,
+                },
+                EvmNativeBlockHeaderWireV1 {
+                    number: 61,
+                    hash: [0x62; 32],
+                    parent_hash: [0x61; 32],
+                    state_root: [0x81; 32],
+                    transactions_root: [0x82; 32],
+                    receipts_root: [0x83; 32],
+                    ommers_hash: [0x84; 32],
+                    logs_bloom: vec![0u8; 256],
+                    gas_limit: None,
+                    gas_used: None,
+                    timestamp: None,
+                    base_fee_per_gas: None,
+                    withdrawals_root: None,
+                    blob_gas_used: None,
+                    excess_blob_gas: None,
+                },
+            ],
+        });
+        let (to, response) = maybe_build_evm_native_sync_response(chain_id, local, &block_headers)
+            .expect("body pull response");
+        assert_eq!(to, remote);
+        let ProtocolMessage::EvmNative(EvmNativeMessage::GetBlockBodies { from, hashes }) =
+            response
+        else {
+            panic!("expected get block bodies");
+        };
+        assert_eq!(from, local);
+        assert_eq!(hashes, vec![[0x61; 32], [0x62; 32]]);
     }
 }

@@ -1,0 +1,49 @@
+{
+  "schema": "supervm-e2e-geth-parity-sample/v1",
+  "name": "geth-reorg-dual-tx",
+  "scenario": "adapter_e2e_geth_reorg_dual_tx_v1",
+  "chain_id": 1,
+  "expected": {
+    "block": {
+      "number": "0x7",
+      "tx_count": 2,
+      "tx_types": ["0x2", "0x2"],
+      "tx_statuses": ["0x1", "0x1"],
+      "tx_contract_addresses": ["0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1", null]
+    },
+    "receipts": [
+      {
+        "tx_index": 0,
+        "status": "0x1",
+        "tx_type": "0x2",
+        "gas_used": "0xcf08",
+        "cumulative_gas_used": "0xcf08",
+        "contract_address": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+        "revert_data": null,
+        "log_count": 1
+      },
+      {
+        "tx_index": 1,
+        "status": "0x1",
+        "tx_type": "0x2",
+        "gas_used": "0xa410",
+        "cumulative_gas_used": "0x17318",
+        "contract_address": null,
+        "revert_data": null,
+        "log_count": 2
+      }
+    ],
+    "logs_canonical": {
+      "count": 3,
+      "first_removed": false,
+      "first_address": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
+    },
+    "logs_noncanonical": {
+      "count": 3,
+      "first_removed": true,
+      "first_log_ownership": "non_canonical",
+      "first_address": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
+    },
+    "typed_failures": []
+  }
+}

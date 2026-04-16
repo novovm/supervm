@@ -25,14 +25,17 @@ mod tests {
     use super::*;
     use crate::routing::{
         L4PeerRef, NodeRef, NodeTier, Reachability, RelayCapacityClass, RelayHealth, RelayRef,
-        SelectedPath, RoutingSource,
+        RoutingSource, SelectedPath,
     };
 
     #[test]
     fn maps_readonly_queue_to_queue_only() {
         let c = AvailabilityController::new();
         let decision = c.decide(&SelectedPath::ReadOnlyQueue);
-        assert_eq!(decision.mode, crate::availability::AvailabilityMode::QueueOnly);
+        assert_eq!(
+            decision.mode,
+            crate::availability::AvailabilityMode::QueueOnly
+        );
     }
 
     #[test]
@@ -42,11 +45,13 @@ mod tests {
         let direct = SelectedPath::DirectL4(
             L4PeerRef::new("peer-1".to_string()).with_reachability(Reachability::Reachable),
         );
-        assert_eq!(c.decide(&direct).mode, crate::availability::AvailabilityMode::Normal);
+        assert_eq!(
+            c.decide(&direct).mode,
+            crate::availability::AvailabilityMode::Normal
+        );
 
         let l4_relay = SelectedPath::L4Relay(
-            L4PeerRef::new("peer-2".to_string())
-                .with_reachability(Reachability::RelayOnly),
+            L4PeerRef::new("peer-2".to_string()).with_reachability(Reachability::RelayOnly),
         );
         assert_eq!(
             c.decide(&l4_relay).mode,

@@ -39,4 +39,3 @@ impl AvailabilityAuditLog {
         self.events.len()
     }
 }
-

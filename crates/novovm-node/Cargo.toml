@@ -14,6 +14,7 @@ novovm-protocol = { path = "../novovm-protocol" }
 novovm-adapter-api = { path = "../novovm-adapter-api" }
 novovm-adapter-novovm = { path = "../novovm-adapter-novovm" }
 novovm-adapter-evm-core = { path = "../plugins/evm/core" }
+novovm-adapter-evm-plugin = { path = "../plugins/evm/plugin" }
 ed25519-dalek = { version = "2", features = ["rand_core"] }
 rand = "0.8"
 sha2 = "0.10"
@@ -41,3 +42,23 @@ path = "src/bin/supervm-mainline-gate.rs"
 [[bin]]
 name = "supervm-mainline-preflight"
 path = "src/bin/supervm-mainline-preflight.rs"
+
+[[bin]]
+name = "supervm-mainline-query"
+path = "src/bin/supervm-mainline-query.rs"
+
+[[bin]]
+name = "supervm-mainline-geth-sample-sync"
+path = "src/bin/supervm-mainline-geth-sample-sync.rs"
+
+[[bin]]
+name = "supervm-mainline-soak"
+path = "src/bin/supervm-mainline-soak.rs"
+
+[[bin]]
+name = "supervm-mainline-nightly-gate"
+path = "src/bin/supervm-mainline-nightly-gate.rs"
+
+[[bin]]
+name = "supervm-mainline-duty-report"
+path = "src/bin/supervm-mainline-duty-report.rs"

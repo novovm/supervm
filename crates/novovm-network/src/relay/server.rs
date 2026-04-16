@@ -54,7 +54,9 @@ impl RelayServer {
                     response,
                 }
             }
-            RelayFrame::Result { .. } => unreachable!("RelayServer::forward_with only accepts Forward frame"),
+            RelayFrame::Result { .. } => {
+                unreachable!("RelayServer::forward_with only accepts Forward frame")
+            }
         }
     }
 }

@@ -96,6 +96,36 @@ pub enum PacemakerMessage {
 
 /// EVM native protocol plane messages (discovery + eth/snap sync skeleton).
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EvmNativeBlockHeaderWireV1 {
+    pub number: u64,
+    pub hash: [u8; 32],
+    pub parent_hash: [u8; 32],
+    pub state_root: [u8; 32],
+    pub transactions_root: [u8; 32],
+    pub receipts_root: [u8; 32],
+    pub ommers_hash: [u8; 32],
+    pub logs_bloom: Vec<u8>,
+    pub gas_limit: Option<u64>,
+    pub gas_used: Option<u64>,
+    pub timestamp: Option<u64>,
+    pub base_fee_per_gas: Option<u128>,
+    pub withdrawals_root: Option<[u8; 32]>,
+    pub blob_gas_used: Option<u64>,
+    pub excess_blob_gas: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EvmNativeBlockBodyWireV1 {
+    pub number: u64,
+    pub block_hash: [u8; 32],
+    pub tx_hashes: Vec<[u8; 32]>,
+    pub ommer_hashes: Vec<[u8; 32]>,
+    pub withdrawal_count: Option<usize>,
+    pub body_available: bool,
+    pub txs_materialized: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum EvmNativeMessage {
     DiscoveryPing {
         from: NodeId,
@@ -165,7 +195,7 @@ pub enum EvmNativeMessage {
     },
     BlockHeaders {
         from: NodeId,
-        heights: Vec<u64>,
+        headers: Vec<EvmNativeBlockHeaderWireV1>,
     },
     GetBlockBodies {
         from: NodeId,
@@ -173,7 +203,7 @@ pub enum EvmNativeMessage {
     },
     BlockBodies {
         from: NodeId,
-        body_count: u64,
+        bodies: Vec<EvmNativeBlockBodyWireV1>,
     },
     SnapGetAccountRange {
         from: NodeId,

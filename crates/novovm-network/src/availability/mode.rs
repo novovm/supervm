@@ -4,4 +4,3 @@ pub enum AvailabilityMode {
     ReadOnly,
     QueueOnly,
 }
-

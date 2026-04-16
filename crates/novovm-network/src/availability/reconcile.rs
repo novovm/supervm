@@ -120,12 +120,14 @@ mod tests {
         let report = build_reconcile_report(&store, &["req-applied".to_string()]);
 
         assert_eq!(report.entries.len(), 2);
-        assert!(report.entries.iter().any(|e| {
-            e.request_id == "req-pending" && e.status == ReconcileStatus::Pending
-        }));
-        assert!(report.entries.iter().any(|e| {
-            e.request_id == "req-applied" && e.status == ReconcileStatus::Applied
-        }));
+        assert!(report
+            .entries
+            .iter()
+            .any(|e| { e.request_id == "req-pending" && e.status == ReconcileStatus::Pending }));
+        assert!(report
+            .entries
+            .iter()
+            .any(|e| { e.request_id == "req-applied" && e.status == ReconcileStatus::Applied }));
 
         let stats = report.stats();
         assert_eq!(stats.pending, 1);
@@ -138,12 +140,7 @@ mod tests {
     #[test]
     fn reconcile_report_includes_replay_retry_and_rejected_stats() {
         let store = InMemoryQueueStore::new();
-        let report = build_reconcile_report_with_replay(
-            &store,
-            &["req-applied".to_string()],
-            2,
-            1,
-        );
+        let report = build_reconcile_report_with_replay(&store, &["req-applied".to_string()], 2, 1);
 
         let stats = report.stats();
         assert_eq!(stats.pending, 0);

@@ -367,5 +367,4 @@ mod tests {
         assert_eq!(drained[0].relay_id, "relay-runtime");
         assert_eq!(runtime_relay_membership_pending(), 0);
     }
-
 }

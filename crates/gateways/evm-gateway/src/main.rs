@@ -14604,8 +14604,10 @@ fn execute_gateway_atomic_broadcast_ticket(
     tx_ir_bincode: Option<&[u8]>,
 ) -> Result<String> {
     fn validate_gateway_atomic_broadcast_exec_path(exec_path: &Path) -> Result<PathBuf> {
-        const ALLOWED_BASENAMES: [&str; 2] =
-            ["evm_atomic_broadcast_executor", "evm_atomic_broadcast_executor.exe"];
+        const ALLOWED_BASENAMES: [&str; 2] = [
+            "evm_atomic_broadcast_executor",
+            "evm_atomic_broadcast_executor.exe",
+        ];
         let canonical = exec_path.canonicalize().with_context(|| {
             format!(
                 "canonicalize evm atomic-broadcast executor path failed: {}",

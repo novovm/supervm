@@ -32,7 +32,9 @@ pub struct ReplayRunReport {
 impl ReplayRunReport {
     pub fn stats(&self) -> ReplayStats {
         ReplayStats {
-            applied: self.applied_total.saturating_add(self.duplicate_ignored_total),
+            applied: self
+                .applied_total
+                .saturating_add(self.duplicate_ignored_total),
             retry_later: self.retry_later_total,
             permanently_rejected: self.permanently_rejected_total,
         }

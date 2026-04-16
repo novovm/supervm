@@ -147,3 +147,45 @@ NOVOVM complements heterogeneous systems rather than competing for their state:
 ## One‑sentence summary
 
 NOVOVM is not about building a faster blockchain—it is about building sustainable, verifiable infrastructure for Web3.
+
+## Mainline nightly soak gate
+
+EVM host maintenance mode includes a dedicated nightly soak gate (separate from the main CI gate):
+
+- Workflow: `.github/workflows/mainline-nightly-soak.yml`
+- Runner target: `self-hosted`
+- Default soak profiles: `6h,24h`
+- Gate binary: `cargo run -p novovm-node --bin supervm-mainline-nightly-gate`
+
+Key artifacts:
+
+- `artifacts/mainline/mainline-nightly-soak-gate-report.json`
+- `artifacts/mainline/mainline-soak-6h.json`
+- `artifacts/mainline/mainline-soak-24h.json`
+- `artifacts/mainline/mainline-duty-report-nightly.md` (generated in nightly workflow)
+
+Operations SOP (CN):
+
+- `docs_CN/NOVOVM-NETWORK/NOVOVM-EVM-NIGHTLY-SOAK-SOP-2026-04-17.md`
+
+Manual local run:
+
+```powershell
+cargo run -p novovm-node --bin supervm-mainline-nightly-gate
+```
+
+Duty report generator (from nightly artifacts):
+
+```powershell
+cargo run -p novovm-node --bin supervm-mainline-duty-report
+```
+
+Optional overrides:
+
+- `NOVOVM_MAINLINE_NIGHTLY_RUN_MAINLINE_GATE=true|false`
+- `NOVOVM_MAINLINE_NIGHTLY_SOAK_PROFILES=6h,24h`
+- `NOVOVM_MAINLINE_NIGHTLY_SOAK_CHAIN_ID=<chain_id>`
+- `NOVOVM_MAINLINE_NIGHTLY_SOAK_6H_DURATION_SECONDS=<seconds>`
+- `NOVOVM_MAINLINE_NIGHTLY_SOAK_24H_DURATION_SECONDS=<seconds>`
+- `NOVOVM_MAINLINE_NIGHTLY_SOAK_6H_INTERVAL_SECONDS=<seconds>`
+- `NOVOVM_MAINLINE_NIGHTLY_SOAK_24H_INTERVAL_SECONDS=<seconds>`

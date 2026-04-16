@@ -13,6 +13,14 @@ use novovm_adapter_evm_core::{
     validate_tx_semantics_m0,
 };
 use novovm_adapter_novovm::NovoVmAdapter;
+use novovm_exec::{
+    project_tx_execution_artifacts_v1, AoemBatchExecutionArtifactsV1, AoemEventLogV1,
+    AoemExecFacade, AoemExecOutput, AoemProjectedTxExecutionV1, AoemRuntimeConfig,
+    AoemTxExecutionArtifactV1, ExecOpV2, AOEM_LOG_BLOOM_BYTES_V1,
+};
+pub use novovm_exec::{
+    SupervmEvmExecutionLogV1, SupervmEvmExecutionReceiptV1, SupervmEvmStateMirrorUpdateV1,
+};
 use rocksdb::Options as RocksDbOptions;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -23,12 +31,18 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Mutex, OnceLock};
 
+#[cfg(test)]
+use novovm_exec::AoemTxExecutionAnchorV1;
+
 pub const NOVOVM_ADAPTER_PLUGIN_ABI_V1: u32 = 1;
 pub const NOVOVM_ADAPTER_PLUGIN_CAP_APPLY_IR_V1: u64 = 0x1;
 pub const NOVOVM_ADAPTER_PLUGIN_CAP_UA_SELF_GUARD_V1: u64 = 0x2;
 pub const NOVOVM_ADAPTER_PLUGIN_CAP_EVM_RUNTIME_V1: u64 = 0x4;
 pub const NOVOVM_ADAPTER_PLUGIN_APPLY_FLAG_UA_SELF_GUARD_V1: u64 = 0x1;
 pub const NOVOVM_ADAPTER_PLUGIN_APPLY_FLAG_ATOMIC_INTENT_GUARD_V1: u64 = 0x2;
+pub const NOVOVM_ADAPTER_PLUGIN_APPLY_FLAG_MAINLINE_INGRESS_BYPASS_V1: u64 = 0x4;
+pub const NOVOVM_ADAPTER_PLUGIN_APPLY_FLAG_MAINLINE_RECEIPT_EXPORT_V1: u64 = 0x8;
+pub const NOVOVM_ADAPTER_PLUGIN_APPLY_FLAG_MAINLINE_RECEIPT_INGEST_V1: u64 = 0x10;
 // Stable FFI return codes (external contract):
 //  0=ok, -1=invalid_arg, -2=unsupported_chain, -3=decode_failed,
 // -4=empty_batch, -5=unsupported_tx_type, -6=apply_failed,
@@ -59,6 +73,8 @@ const DEFAULT_ATOMIC_RECEIPT_QUEUE_MAX: usize = 2048;
 const DEFAULT_SETTLEMENT_RECORD_QUEUE_MAX: usize = 4096;
 const DEFAULT_PAYOUT_INSTRUCTION_QUEUE_MAX: usize = 4096;
 const DEFAULT_ATOMIC_BROADCAST_QUEUE_MAX: usize = 2048;
+const DEFAULT_EXECUTION_RECEIPT_QUEUE_MAX: usize = 4096;
+const DEFAULT_STATE_MIRROR_UPDATE_QUEUE_MAX: usize = 2048;
 const DEFAULT_SETTLEMENT_CONVERT_NUM: u128 = 1;
 const DEFAULT_SETTLEMENT_CONVERT_DEN: u128 = 1;
 const DEFAULT_TXPOOL_PRICE_BUMP_PCT: u64 = 10;
@@ -77,6 +93,8 @@ struct EvmRuntimeConfig {
     settlement_record_queue_max: usize,
     payout_instruction_queue_max: usize,
     atomic_broadcast_queue_max: usize,
+    execution_receipt_queue_max: usize,
+    state_mirror_update_queue_max: usize,
     convert_num: u128,
     convert_den: u128,
     txpool_price_bump_pct: u64,
@@ -164,6 +182,8 @@ struct EvmRuntimeState {
     settlement_records: VecDeque<EvmFeeSettlementRecordV1>,
     payout_instructions: VecDeque<EvmFeePayoutInstructionV1>,
     atomic_broadcast_ready: VecDeque<AtomicBroadcastReadyV1>,
+    execution_receipts: VecDeque<SupervmEvmExecutionReceiptV1>,
+    state_mirror_updates: VecDeque<SupervmEvmStateMirrorUpdateV1>,
 }
 
 #[derive(Debug, Default)]
@@ -176,7 +196,7 @@ struct EvmTxpoolState {
 }
 
 #[repr(C)]
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
 pub struct NovovmAdapterPluginApplyResultV1 {
     pub verified: u8,
     pub applied: u8,
@@ -187,9 +207,39 @@ pub struct NovovmAdapterPluginApplyResultV1 {
 }
 
 #[repr(C)]
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
 pub struct NovovmAdapterPluginApplyOptionsV1 {
     pub flags: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SupervmEvmNativeSubmitReportV1 {
+    pub chain_type: ChainType,
+    pub chain_id: u64,
+    pub tx_count: u64,
+    pub tap_summary: EvmRuntimeTapSummaryV1,
+    pub apply_result: NovovmAdapterPluginApplyResultV1,
+    pub exported_receipt_count: u64,
+    pub mirrored_receipt_count: u64,
+    pub state_version: u64,
+    pub ingress_bypassed: bool,
+    pub atomic_guard_enabled: bool,
+}
+
+#[derive(Debug)]
+struct ApplyBatchArtifacts {
+    result: NovovmAdapterPluginApplyResultV1,
+    execution_receipts: Vec<SupervmEvmExecutionReceiptV1>,
+    state_mirror_update: Option<SupervmEvmStateMirrorUpdateV1>,
+    state_version: u64,
+}
+
+#[derive(Debug)]
+struct AoemMainlineOpsBatch {
+    _keys: Vec<[u8; 32]>,
+    _values: Vec<[u8; 32]>,
+    ops: Vec<ExecOpV2>,
+    projected_txs: Vec<AoemProjectedTxExecutionV1>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -286,6 +336,7 @@ static EVM_RUNTIME_CONFIG: OnceLock<EvmRuntimeConfig> = OnceLock::new();
 static EVM_RUNTIME_SHARDS: OnceLock<Vec<Mutex<EvmRuntimeState>>> = OnceLock::new();
 static EVM_RUNTIME_SHARD_CURSOR: AtomicUsize = AtomicUsize::new(0);
 static EVM_RUNTIME_SETTLEMENT_SEQ: AtomicU64 = AtomicU64::new(0);
+static EVM_EXECUTION_STATE_VERSION: AtomicU64 = AtomicU64::new(0);
 static EVM_TXPOOL_SHARDS: OnceLock<Vec<Mutex<EvmTxpoolState>>> = OnceLock::new();
 static EVM_TXPOOL_SHARD_CURSOR: AtomicUsize = AtomicUsize::new(0);
 
@@ -312,6 +363,23 @@ fn now_unix_ms() -> u64 {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_else(|_| std::time::Duration::from_secs(0))
         .as_millis() as u64
+}
+
+fn next_execution_state_version() -> u64 {
+    let now = now_unix_ms().max(1);
+    let mut current = EVM_EXECUTION_STATE_VERSION.load(Ordering::Relaxed);
+    loop {
+        let next = now.max(current.saturating_add(1));
+        match EVM_EXECUTION_STATE_VERSION.compare_exchange(
+            current,
+            next,
+            Ordering::SeqCst,
+            Ordering::Relaxed,
+        ) {
+            Ok(_) => return next,
+            Err(actual) => current = actual,
+        }
+    }
 }
 
 fn to_lower_hex(bytes: &[u8]) -> String {
@@ -652,6 +720,16 @@ fn resolve_evm_runtime_config() -> &'static EvmRuntimeConfig {
             DEFAULT_ATOMIC_BROADCAST_QUEUE_MAX,
         )
         .max(1);
+        let execution_receipt_queue_max = parse_env_usize(
+            "NOVOVM_ADAPTER_PLUGIN_EVM_EXECUTION_RECEIPT_QUEUE_MAX",
+            DEFAULT_EXECUTION_RECEIPT_QUEUE_MAX,
+        )
+        .max(1);
+        let state_mirror_update_queue_max = parse_env_usize(
+            "NOVOVM_ADAPTER_PLUGIN_EVM_STATE_MIRROR_UPDATE_QUEUE_MAX",
+            DEFAULT_STATE_MIRROR_UPDATE_QUEUE_MAX,
+        )
+        .max(1);
         let convert_num = parse_env_u128(
             "NOVOVM_ADAPTER_PLUGIN_EVM_FEE_CONVERT_NUM",
             DEFAULT_SETTLEMENT_CONVERT_NUM,
@@ -685,6 +763,8 @@ fn resolve_evm_runtime_config() -> &'static EvmRuntimeConfig {
             settlement_record_queue_max,
             payout_instruction_queue_max,
             atomic_broadcast_queue_max,
+            execution_receipt_queue_max,
+            state_mirror_update_queue_max,
             convert_num,
             convert_den,
             txpool_price_bump_pct,
@@ -821,6 +901,189 @@ fn tx_hash_or_compute(tx: &TxIR) -> Vec<u8> {
     } else {
         tx.hash.clone()
     }
+}
+
+fn tx_hash32_or_compute(tx: &TxIR) -> [u8; 32] {
+    normalize_root32(tx_hash_or_compute(tx).as_slice())
+}
+
+fn derive_contract_address_for_receipt(from: &[u8], nonce: u64) -> Vec<u8> {
+    let mut hasher = Sha256::new();
+    hasher.update(b"novovm_contract_address_v1");
+    hasher.update(from);
+    hasher.update(nonce.to_le_bytes());
+    let digest: [u8; 32] = hasher.finalize().into();
+    digest[12..32].to_vec()
+}
+
+fn aoem_mainline_enabled() -> bool {
+    parse_env_bool("NOVOVM_ADAPTER_PLUGIN_AOEM_ENABLED", true)
+}
+
+fn aoem_mainline_required() -> bool {
+    parse_env_bool("NOVOVM_ADAPTER_PLUGIN_AOEM_REQUIRED", false)
+}
+
+fn tx_type_code(tx_type: &TxType) -> u8 {
+    match tx_type {
+        TxType::Transfer => 1,
+        TxType::ContractCall => 2,
+        TxType::ContractDeploy => 3,
+        TxType::Privacy => 4,
+        TxType::CrossShard => 5,
+        TxType::CrossChainTransfer => 6,
+        TxType::CrossChainCall => 7,
+    }
+}
+
+fn build_aoem_mainline_value_digest(chain_type: ChainType, chain_id: u64, tx: &TxIR) -> [u8; 32] {
+    let mut hasher = Sha256::new();
+    hasher.update(b"supervm-evm-aoem-mainline-op-v1");
+    hasher.update(chain_type.as_str().as_bytes());
+    hasher.update(chain_id.to_le_bytes());
+    hasher.update(tx.from.as_slice());
+    hasher.update(tx.to.as_deref().unwrap_or(&[]));
+    hasher.update(tx.value.to_le_bytes());
+    hasher.update(tx.gas_limit.to_le_bytes());
+    hasher.update(tx.gas_price.to_le_bytes());
+    hasher.update(tx.nonce.to_le_bytes());
+    hasher.update([tx_type_code(&tx.tx_type)]);
+    hasher.update(tx.data.as_slice());
+    if let Some(source_chain) = tx.source_chain {
+        hasher.update(source_chain.to_le_bytes());
+    }
+    if let Some(target_chain) = tx.target_chain {
+        hasher.update(target_chain.to_le_bytes());
+    }
+    hasher.finalize().into()
+}
+
+fn build_aoem_plan_id(tx: &TxIR, tx_index: usize) -> u64 {
+    let mut hasher = Sha256::new();
+    hasher.update(b"supervm-evm-aoem-plan-id-v1");
+    hasher.update(tx_hash32_or_compute(tx));
+    hasher.update((tx_index as u64).to_le_bytes());
+    let digest: [u8; 32] = hasher.finalize().into();
+    let mut out = [0u8; 8];
+    out.copy_from_slice(&digest[..8]);
+    u64::from_le_bytes(out)
+}
+
+fn build_aoem_mainline_ops_batch(
+    chain_type: ChainType,
+    chain_id: u64,
+    txs: &[TxIR],
+    verify_results: &[bool],
+) -> AoemMainlineOpsBatch {
+    let op_count = verify_results.iter().filter(|ok| **ok).count();
+    let mut keys = vec![[0u8; 32]; op_count];
+    let mut values = vec![[0u8; 32]; op_count];
+    let mut ops = Vec::with_capacity(op_count);
+    let mut projected_txs = Vec::with_capacity(op_count);
+    let mut op_index = 0usize;
+    for (tx_index, (tx, tx_ok)) in txs.iter().zip(verify_results.iter().copied()).enumerate() {
+        if !tx_ok {
+            continue;
+        }
+        keys[op_index] = tx_hash32_or_compute(tx);
+        values[op_index] = build_aoem_mainline_value_digest(chain_type, chain_id, tx);
+        ops.push(ExecOpV2 {
+            opcode: 2,
+            flags: 0,
+            reserved: 0,
+            key_ptr: keys[op_index].as_ptr(),
+            key_len: keys[op_index].len() as u32,
+            value_ptr: values[op_index].as_ptr(),
+            value_len: values[op_index].len() as u32,
+            delta: 0,
+            expect_version: u64::MAX,
+            plan_id: build_aoem_plan_id(tx, tx_index),
+        });
+        projected_txs.push(AoemProjectedTxExecutionV1 {
+            tx_index: tx_index as u32,
+            op_index: Some(op_index as u32),
+            tx_hash: tx_hash_or_compute(tx),
+            gas_limit: tx.gas_limit,
+            contract_address: if tx.tx_type == TxType::ContractDeploy {
+                Some(derive_contract_address_for_receipt(&tx.from, tx.nonce))
+            } else {
+                None
+            },
+            log_emitter: tx.to.clone().or_else(|| Some(tx.from.clone())),
+            event_logs: Vec::new(),
+            receipt_type: None,
+            effective_gas_price: Some(tx.gas_price),
+            runtime_code: None,
+            runtime_code_hash: None,
+            revert_data: None,
+        });
+        op_index = op_index.saturating_add(1);
+    }
+    AoemMainlineOpsBatch {
+        _keys: keys,
+        _values: values,
+        ops,
+        projected_txs,
+    }
+}
+
+fn aoem_batch_state_root(
+    chain_type: ChainType,
+    chain_id: u64,
+    adapter_state_root: [u8; 32],
+    txs: &[TxIR],
+    output: &AoemExecOutput,
+) -> [u8; 32] {
+    let mut hasher = Sha256::new();
+    hasher.update(b"supervm-evm-mainline-state-root-v1");
+    hasher.update(chain_type.as_str().as_bytes());
+    hasher.update(chain_id.to_le_bytes());
+    hasher.update(adapter_state_root);
+    hasher.update(output.result.processed.to_le_bytes());
+    hasher.update(output.result.success.to_le_bytes());
+    hasher.update(output.result.failed_index.to_le_bytes());
+    hasher.update(output.result.total_writes.to_le_bytes());
+    hasher.update(output.metrics.elapsed_us.to_le_bytes());
+    hasher.update(output.metrics.return_code.to_le_bytes());
+    for tx in txs {
+        hasher.update(tx_hash32_or_compute(tx));
+    }
+    hasher.finalize().into()
+}
+
+fn try_execute_mainline_batch_via_aoem(
+    chain_type: ChainType,
+    chain_id: u64,
+    txs: &[TxIR],
+    verify_results: &[bool],
+    adapter_state_root: [u8; 32],
+    _state_version: u64,
+) -> anyhow::Result<Option<AoemBatchExecutionArtifactsV1>> {
+    if !aoem_mainline_enabled() {
+        return Ok(None);
+    }
+    let ops_batch = build_aoem_mainline_ops_batch(chain_type, chain_id, txs, verify_results);
+    if ops_batch.ops.is_empty() {
+        return Ok(None);
+    }
+    let runtime = AoemRuntimeConfig::from_env()?;
+    if !runtime.dll_path.exists() {
+        return Ok(None);
+    }
+    let facade = AoemExecFacade::open_with_runtime(&runtime)?;
+    let capability_contract = facade.capability_contract()?;
+    if !capability_contract.execute_ops_v2 {
+        return Ok(None);
+    }
+    let session = facade.create_session()?;
+    let output = session.submit_ops(ops_batch.ops.as_slice())?;
+    let state_root = aoem_batch_state_root(chain_type, chain_id, adapter_state_root, txs, &output);
+    Ok(Some(project_tx_execution_artifacts_v1(
+        txs.len(),
+        ops_batch.projected_txs.as_slice(),
+        state_root,
+        &output,
+    )))
 }
 
 fn parallel_worker_count(item_count: usize) -> usize {
@@ -1610,6 +1873,309 @@ fn enqueue_atomic_broadcast_ready(chain_id: u64, item: AtomicBroadcastReadyV1) {
     }
 }
 
+fn enqueue_execution_receipts(chain_id: u64, receipts: &[SupervmEvmExecutionReceiptV1]) {
+    if receipts.is_empty() {
+        return;
+    }
+    let config = resolve_evm_runtime_config();
+    let runtime = resolve_evm_runtime_state_for_chain(chain_id);
+    let mut runtime = match runtime.lock() {
+        Ok(v) => v,
+        Err(_) => return,
+    };
+    for receipt in receipts {
+        runtime.execution_receipts.push_back(receipt.clone());
+    }
+    while runtime.execution_receipts.len() > config.execution_receipt_queue_max {
+        let _ = runtime.execution_receipts.pop_front();
+    }
+}
+
+fn enqueue_state_mirror_update(chain_id: u64, update: SupervmEvmStateMirrorUpdateV1) {
+    let config = resolve_evm_runtime_config();
+    let runtime = resolve_evm_runtime_state_for_chain(chain_id);
+    let mut runtime = match runtime.lock() {
+        Ok(v) => v,
+        Err(_) => return,
+    };
+    runtime.state_mirror_updates.push_back(update);
+    while runtime.state_mirror_updates.len() > config.state_mirror_update_queue_max {
+        let _ = runtime.state_mirror_updates.pop_front();
+    }
+}
+
+fn build_supervm_logs_from_aoem_event_logs(
+    tx_index: usize,
+    state_version: u64,
+    logs: &[AoemEventLogV1],
+) -> Vec<SupervmEvmExecutionLogV1> {
+    logs.iter()
+        .enumerate()
+        .map(|(position, log)| SupervmEvmExecutionLogV1 {
+            emitter: log.emitter.clone(),
+            topics: log.topics.clone(),
+            data: log.data.clone(),
+            tx_index: tx_index as u32,
+            log_index: log.log_index.max(position as u32),
+            state_version,
+        })
+        .collect()
+}
+
+fn default_tx_execution_artifact_for_receipt(
+    tx: &TxIR,
+    tx_index: usize,
+    verified: bool,
+    state_root: [u8; 32],
+) -> AoemTxExecutionArtifactV1 {
+    let status_ok = verified;
+    AoemTxExecutionArtifactV1 {
+        tx_index: tx_index as u32,
+        tx_hash: tx_hash_or_compute(tx),
+        status_ok,
+        gas_used: if status_ok { tx.gas_limit } else { 0 },
+        cumulative_gas_used: 0,
+        state_root,
+        contract_address: if status_ok && tx.tx_type == TxType::ContractDeploy {
+            Some(derive_contract_address_for_receipt(&tx.from, tx.nonce))
+        } else {
+            None
+        },
+        receipt_type: None,
+        effective_gas_price: Some(tx.gas_price),
+        runtime_code: None,
+        runtime_code_hash: None,
+        event_logs: Vec::new(),
+        log_bloom: vec![0u8; AOEM_LOG_BLOOM_BYTES_V1],
+        revert_data: None,
+        anchor: None,
+    }
+}
+
+fn materialize_batch_execution_artifacts(
+    txs: &[TxIR],
+    verify_results: &[bool],
+    state_root: [u8; 32],
+    resolved_artifacts: Vec<Option<AoemTxExecutionArtifactV1>>,
+    aoem_artifacts: Option<AoemBatchExecutionArtifactsV1>,
+) -> Option<AoemBatchExecutionArtifactsV1> {
+    let has_resolved = resolved_artifacts.iter().any(|artifact| artifact.is_some());
+    let mut batch = match aoem_artifacts {
+        Some(batch) => batch,
+        None if has_resolved => AoemBatchExecutionArtifactsV1 {
+            state_root,
+            processed_ops: 0,
+            success_ops: 0,
+            failed_index: None,
+            total_writes: 0,
+            tx_artifacts: Vec::with_capacity(txs.len()),
+        },
+        None => return None,
+    };
+
+    if batch.tx_artifacts.len() < txs.len() {
+        for idx in batch.tx_artifacts.len()..txs.len() {
+            batch
+                .tx_artifacts
+                .push(default_tx_execution_artifact_for_receipt(
+                    &txs[idx],
+                    idx,
+                    verify_results.get(idx).copied().unwrap_or(false),
+                    state_root,
+                ));
+        }
+    }
+
+    for (idx, tx) in txs.iter().enumerate() {
+        let replacement = resolved_artifacts
+            .get(idx)
+            .and_then(|artifact| artifact.clone())
+            .unwrap_or_else(|| {
+                batch.tx_artifacts.get(idx).cloned().unwrap_or_else(|| {
+                    default_tx_execution_artifact_for_receipt(
+                        tx,
+                        idx,
+                        verify_results.get(idx).copied().unwrap_or(false),
+                        state_root,
+                    )
+                })
+            });
+        if idx < batch.tx_artifacts.len() {
+            batch.tx_artifacts[idx] = replacement;
+        } else {
+            batch.tx_artifacts.push(replacement);
+        }
+    }
+
+    let mut cumulative_gas_used = 0u64;
+    let mut first_failure = None;
+    let mut success_ops = 0u32;
+    for (idx, artifact) in batch.tx_artifacts.iter_mut().enumerate() {
+        cumulative_gas_used = cumulative_gas_used.saturating_add(artifact.gas_used);
+        artifact.cumulative_gas_used = cumulative_gas_used;
+        artifact.state_root = state_root;
+        let verified = verify_results.get(idx).copied().unwrap_or(false);
+        if verified && artifact.status_ok {
+            success_ops = success_ops.saturating_add(1);
+        } else if verified && first_failure.is_none() {
+            first_failure = Some(artifact.tx_index);
+        }
+    }
+    batch.state_root = state_root;
+    batch.processed_ops = verify_results.iter().filter(|ok| **ok).count() as u32;
+    batch.success_ops = success_ops;
+    batch.failed_index = first_failure;
+    Some(batch)
+}
+
+fn build_execution_receipts_from_apply_batch(
+    chain_type: ChainType,
+    chain_id: u64,
+    txs: &[TxIR],
+    verify_results: &[bool],
+    result: &NovovmAdapterPluginApplyResultV1,
+    state_version: u64,
+    aoem_artifacts: Option<&AoemBatchExecutionArtifactsV1>,
+) -> Vec<SupervmEvmExecutionReceiptV1> {
+    let mut out: Vec<SupervmEvmExecutionReceiptV1> = Vec::with_capacity(txs.len());
+    let final_state_root = aoem_artifacts
+        .map(|artifacts| artifacts.state_root)
+        .unwrap_or(result.state_root);
+    for (idx, tx) in txs.iter().enumerate() {
+        let aoem_artifact = aoem_artifacts.and_then(|artifacts| artifacts.tx_artifacts.get(idx));
+        let status_ok = aoem_artifact
+            .map(|artifact| artifact.status_ok)
+            .unwrap_or_else(|| verify_results.get(idx).copied().unwrap_or(false));
+        let gas_used = aoem_artifact
+            .map(|artifact| artifact.gas_used)
+            .unwrap_or_else(|| if status_ok { tx.gas_limit } else { 0 });
+        let cumulative_gas_used = aoem_artifact
+            .map(|artifact| artifact.cumulative_gas_used)
+            .unwrap_or_else(|| {
+                out.last()
+                    .map(|receipt| receipt.cumulative_gas_used)
+                    .unwrap_or(0)
+                    .saturating_add(gas_used)
+            });
+        out.push(SupervmEvmExecutionReceiptV1 {
+            chain_type,
+            chain_id,
+            tx_hash: tx_hash_or_compute(tx),
+            tx_index: idx as u32,
+            tx_type: tx.tx_type.clone(),
+            receipt_type: aoem_artifact.and_then(|artifact| artifact.receipt_type),
+            status_ok,
+            gas_used,
+            cumulative_gas_used,
+            effective_gas_price: aoem_artifact
+                .and_then(|artifact| artifact.effective_gas_price)
+                .or(Some(tx.gas_price)),
+            log_bloom: aoem_artifact
+                .map(|artifact| artifact.log_bloom.clone())
+                .unwrap_or_else(|| vec![0u8; AOEM_LOG_BLOOM_BYTES_V1]),
+            revert_data: aoem_artifact.and_then(|artifact| artifact.revert_data.clone()),
+            state_root: aoem_artifact
+                .map(|artifact| artifact.state_root)
+                .unwrap_or(final_state_root),
+            state_version,
+            contract_address: aoem_artifact
+                .and_then(|artifact| artifact.contract_address.clone())
+                .or_else(|| {
+                    if status_ok && tx.tx_type == TxType::ContractDeploy {
+                        Some(derive_contract_address_for_receipt(&tx.from, tx.nonce))
+                    } else {
+                        None
+                    }
+                }),
+            logs: aoem_artifact
+                .map(|artifact| {
+                    build_supervm_logs_from_aoem_event_logs(
+                        idx,
+                        state_version,
+                        artifact.event_logs.as_slice(),
+                    )
+                })
+                .unwrap_or_default(),
+        });
+    }
+    out
+}
+
+pub fn ingest_execution_receipts_for_host(
+    chain_id: u64,
+    state_version: u64,
+    receipts: &[SupervmEvmExecutionReceiptV1],
+) -> anyhow::Result<SupervmEvmStateMirrorUpdateV1> {
+    let update = preview_execution_receipts_ingest_for_host(chain_id, state_version, receipts)?;
+    enqueue_state_mirror_update(chain_id, update.clone());
+    Ok(update)
+}
+
+fn preview_execution_receipts_ingest_for_host(
+    chain_id: u64,
+    state_version: u64,
+    receipts: &[SupervmEvmExecutionReceiptV1],
+) -> anyhow::Result<SupervmEvmStateMirrorUpdateV1> {
+    if receipts.is_empty() {
+        anyhow::bail!("execution receipts must not be empty");
+    }
+    for receipt in receipts {
+        if receipt.chain_id != chain_id {
+            anyhow::bail!(
+                "execution receipt chain mismatch: expected={} actual={}",
+                chain_id,
+                receipt.chain_id
+            );
+        }
+    }
+    let resolved_state_version = state_version.max(1);
+    let accepted_receipt_count = receipts.iter().filter(|receipt| receipt.status_ok).count() as u64;
+    let update = SupervmEvmStateMirrorUpdateV1 {
+        chain_type: receipts[0].chain_type,
+        chain_id,
+        state_version: resolved_state_version,
+        state_root: receipts
+            .last()
+            .map(|receipt| receipt.state_root)
+            .unwrap_or([0u8; 32]),
+        receipt_count: receipts.len() as u64,
+        accepted_receipt_count,
+        tx_hashes: receipts
+            .iter()
+            .map(|receipt| receipt.tx_hash.clone())
+            .collect::<Vec<_>>(),
+        imported_at_unix_ms: now_unix_ms(),
+    };
+    Ok(update)
+}
+
+pub fn ingest_execution_receipts_bincode_for_host(
+    chain_id: u64,
+    state_version: u64,
+    payload: &[u8],
+) -> anyhow::Result<SupervmEvmStateMirrorUpdateV1> {
+    if payload.is_empty() {
+        anyhow::bail!("execution receipt payload must not be empty");
+    }
+    let receipts: Vec<SupervmEvmExecutionReceiptV1> =
+        crate::bincode_compat::deserialize(payload)
+            .map_err(|e| anyhow::anyhow!("decode execution receipt payload failed: {e}"))?;
+    ingest_execution_receipts_for_host(chain_id, state_version, receipts.as_slice())
+}
+
+#[cfg(test)]
+fn remove_path_if_present(path: &Path) {
+    if path.as_os_str().is_empty() || !path.exists() {
+        return;
+    }
+    let result = if path.is_dir() {
+        fs::remove_dir_all(path)
+    } else {
+        fs::remove_file(path)
+    };
+    let _ = result;
+}
+
 fn build_atomic_intent_id(chain_id: u64, txs: &[TxIR]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(b"evm-plugin-atomic-intent-v1");
@@ -1757,6 +2323,64 @@ fn mark_atomic_intent_apply_failed(chain_id: u64, intent_id: &str, error: &str) 
             reason: Some(error.to_string()),
         },
     );
+}
+
+pub fn drain_execution_receipts_for_host(max_items: usize) -> Vec<SupervmEvmExecutionReceiptV1> {
+    if max_items == 0 {
+        return Vec::new();
+    }
+    let shards = resolve_evm_runtime_shards();
+    let shard_count = shards.len();
+    let start = runtime_shard_start_index(shard_count);
+    let mut out = Vec::with_capacity(max_items);
+    for offset in 0..shard_count {
+        if out.len() >= max_items {
+            break;
+        }
+        let shard = &shards[(start + offset) % shard_count];
+        let mut runtime = match shard.lock() {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        let take = max_items
+            .saturating_sub(out.len())
+            .min(runtime.execution_receipts.len());
+        for _ in 0..take {
+            if let Some(item) = runtime.execution_receipts.pop_front() {
+                out.push(item);
+            }
+        }
+    }
+    out
+}
+
+pub fn drain_state_mirror_updates_for_host(max_items: usize) -> Vec<SupervmEvmStateMirrorUpdateV1> {
+    if max_items == 0 {
+        return Vec::new();
+    }
+    let shards = resolve_evm_runtime_shards();
+    let shard_count = shards.len();
+    let start = runtime_shard_start_index(shard_count);
+    let mut out = Vec::with_capacity(max_items);
+    for offset in 0..shard_count {
+        if out.len() >= max_items {
+            break;
+        }
+        let shard = &shards[(start + offset) % shard_count];
+        let mut runtime = match shard.lock() {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        let take = max_items
+            .saturating_sub(out.len())
+            .min(runtime.state_mirror_updates.len());
+        for _ in 0..take {
+            if let Some(item) = runtime.state_mirror_updates.pop_front() {
+                out.push(item);
+            }
+        }
+    }
+    out
 }
 
 pub fn drain_plugin_ingress_frames_for_host(max_items: usize) -> Vec<EvmMempoolIngressFrameV1> {
@@ -2919,6 +3543,15 @@ fn apply_ir_batch(
     chain_id: u64,
     txs: &[TxIR],
 ) -> anyhow::Result<NovovmAdapterPluginApplyResultV1> {
+    Ok(apply_ir_batch_with_artifacts(chain_type, chain_id, txs, 0)?.result)
+}
+
+fn apply_ir_batch_with_artifacts(
+    chain_type: ChainType,
+    chain_id: u64,
+    txs: &[TxIR],
+    flags: u64,
+) -> anyhow::Result<ApplyBatchArtifacts> {
     let profile = resolve_evm_profile(chain_type, chain_id)?;
     let _active_precompiles = active_precompile_set_m0(&profile);
 
@@ -2934,39 +3567,157 @@ fn apply_ir_batch(
     adapter.initialize()?;
 
     // Keep state transition deterministic: verify in parallel, execute in order.
-    let apply_result = (|| -> anyhow::Result<NovovmAdapterPluginApplyResultV1> {
+    let apply_result = (|| -> anyhow::Result<(
+        NovovmAdapterPluginApplyResultV1,
+        Vec<bool>,
+        Option<AoemBatchExecutionArtifactsV1>,
+        u64,
+    )> {
         let verify_results = validate_and_verify_txs_for_apply_batch(&adapter, &profile, txs)?;
         let mut state = StateIR::new();
         let mut verified = true;
         let mut applied = true;
-        for (tx, tx_ok) in txs.iter().zip(verify_results.into_iter()) {
-            verified = verified && tx_ok;
-            if tx_ok {
-                adapter.execute_transaction(tx, &mut state)?;
-            } else {
-                applied = false;
+        let pre_state_root = normalize_root32(&adapter.state_root()?);
+        let state_version = next_execution_state_version();
+        let mut aoem_artifacts = match try_execute_mainline_batch_via_aoem(
+            chain_type,
+            chain_id,
+            txs,
+            verify_results.as_slice(),
+            pre_state_root,
+            state_version,
+        ) {
+            Ok(v) => v,
+            Err(err) => {
+                if aoem_mainline_required() {
+                    return Err(err.context("aoem mainline batch execution failed"));
+                }
+                None
             }
+        };
+        let mut resolved_artifacts = vec![None; txs.len()];
+        for (idx, (tx, tx_ok)) in txs.iter().zip(verify_results.iter().copied()).enumerate() {
+            verified = verified && tx_ok;
+            if !tx_ok {
+                applied = false;
+                continue;
+            }
+            let artifact = aoem_artifacts
+                .as_ref()
+                .and_then(|artifacts| artifacts.tx_artifacts.get(idx));
+            let resolved_artifact = adapter.execute_transaction_with_artifact(tx, &mut state, artifact)?;
+            applied = applied && resolved_artifact.status_ok;
+            resolved_artifacts[idx] = Some(resolved_artifact);
         }
-
-        let state_root = adapter.state_root()?;
+        let final_state_root = normalize_root32(&adapter.state_root()?);
+        aoem_artifacts = materialize_batch_execution_artifacts(
+            txs,
+            verify_results.as_slice(),
+            final_state_root,
+            resolved_artifacts,
+            aoem_artifacts,
+        );
         let accounts = state.accounts.len() as u64;
-        Ok(NovovmAdapterPluginApplyResultV1 {
-            verified: u8::from(verified),
-            applied: u8::from(applied),
-            txs: txs.len() as u64,
-            accounts,
-            state_root: normalize_root32(&state_root),
-            error_code: 0,
-        })
+        Ok((
+            NovovmAdapterPluginApplyResultV1 {
+                verified: u8::from(verified),
+                applied: u8::from(applied),
+                txs: txs.len() as u64,
+                accounts,
+                state_root: final_state_root,
+                error_code: 0,
+            },
+            verify_results,
+            aoem_artifacts,
+            state_version,
+        ))
     })();
 
     let shutdown_result = adapter.shutdown();
     match (apply_result, shutdown_result) {
-        (Ok(result), Ok(())) => Ok(result),
+        (Ok((result, verify_results, aoem_artifacts, state_version)), Ok(())) => {
+            let execution_receipts = build_execution_receipts_from_apply_batch(
+                chain_type,
+                chain_id,
+                txs,
+                verify_results.as_slice(),
+                &result,
+                state_version,
+                aoem_artifacts.as_ref(),
+            );
+            if flags & NOVOVM_ADAPTER_PLUGIN_APPLY_FLAG_MAINLINE_RECEIPT_EXPORT_V1 != 0 {
+                enqueue_execution_receipts(chain_id, execution_receipts.as_slice());
+            }
+            let state_mirror_update =
+                if flags & NOVOVM_ADAPTER_PLUGIN_APPLY_FLAG_MAINLINE_RECEIPT_INGEST_V1 != 0 {
+                    Some(ingest_execution_receipts_for_host(
+                        chain_id,
+                        state_version,
+                        execution_receipts.as_slice(),
+                    )?)
+                } else {
+                    None
+                };
+            Ok(ApplyBatchArtifacts {
+                result,
+                execution_receipts,
+                state_mirror_update,
+                state_version,
+            })
+        }
         (Ok(_), Err(err)) => Err(err),
         (Err(err), Ok(())) => Err(err),
         (Err(err), Err(_)) => Err(err),
     }
+}
+
+pub fn submit_internal_batch_to_mainline_v1(
+    chain_type: ChainType,
+    chain_id: u64,
+    txs: &[TxIR],
+    atomic_guard_enabled: bool,
+) -> anyhow::Result<SupervmEvmNativeSubmitReportV1> {
+    validate_plugin_tx_batch(txs)
+        .map_err(|rc| anyhow::anyhow!("validate plugin tx batch failed: rc={rc}"))?;
+    let prepared_txs = prepare_txs_with_hashes(txs);
+    let mut flags = NOVOVM_ADAPTER_PLUGIN_APPLY_FLAG_MAINLINE_INGRESS_BYPASS_V1
+        | NOVOVM_ADAPTER_PLUGIN_APPLY_FLAG_MAINLINE_RECEIPT_EXPORT_V1
+        | NOVOVM_ADAPTER_PLUGIN_APPLY_FLAG_MAINLINE_RECEIPT_INGEST_V1;
+    if atomic_guard_enabled {
+        flags |= NOVOVM_ADAPTER_PLUGIN_APPLY_FLAG_ATOMIC_INTENT_GUARD_V1;
+    }
+    let tap_summary = runtime_tap_ir_batch_v1(chain_type, chain_id, &prepared_txs, flags)
+        .map_err(|rc| anyhow::anyhow!("runtime tap failed: rc={rc}"))?;
+    if tap_summary.accepted < prepared_txs.len() {
+        let reason = tap_summary
+            .primary_reject_reason
+            .map(|value| value.as_str())
+            .unwrap_or("rejected");
+        anyhow::bail!(
+            "mainline batch tap rejected txs: requested={} accepted={} dropped={} reason={}",
+            tap_summary.requested,
+            tap_summary.accepted,
+            tap_summary.dropped,
+            reason
+        );
+    }
+    let artifacts = apply_ir_batch_with_artifacts(chain_type, chain_id, &prepared_txs, flags)?;
+    Ok(SupervmEvmNativeSubmitReportV1 {
+        chain_type,
+        chain_id,
+        tx_count: prepared_txs.len() as u64,
+        tap_summary,
+        apply_result: artifacts.result,
+        exported_receipt_count: artifacts.execution_receipts.len() as u64,
+        mirrored_receipt_count: artifacts
+            .state_mirror_update
+            .as_ref()
+            .map(|update| update.receipt_count)
+            .unwrap_or(0),
+        state_version: artifacts.state_version,
+        ingress_bypassed: true,
+        atomic_guard_enabled,
+    })
 }
 
 fn validate_and_verify_txs_for_apply_batch(
@@ -3108,7 +3859,9 @@ pub unsafe extern "C" fn novovm_adapter_plugin_apply_v2(
     let atomic_guard_requested =
         flags & NOVOVM_ADAPTER_PLUGIN_APPLY_FLAG_ATOMIC_INTENT_GUARD_V1 != 0;
 
-    push_ingress_frames_prepared(chain_id, &prepared_txs);
+    if flags & NOVOVM_ADAPTER_PLUGIN_APPLY_FLAG_MAINLINE_INGRESS_BYPASS_V1 == 0 {
+        push_ingress_frames_prepared(chain_id, &prepared_txs);
+    }
     let atomic_intent = if atomic_guard_requested {
         match prepare_atomic_intent_guard(chain_type, chain_id, &prepared_txs) {
             Ok(v) => v,
@@ -3118,13 +3871,13 @@ pub unsafe extern "C" fn novovm_adapter_plugin_apply_v2(
         None
     };
 
-    let result = match apply_ir_batch(chain_type, chain_id, &prepared_txs) {
+    let result = match apply_ir_batch_with_artifacts(chain_type, chain_id, &prepared_txs, flags) {
         Ok(v) => {
             if let Some(intent) = atomic_intent.as_ref() {
                 mark_atomic_intent_executed(chain_id, intent);
             }
             settle_fee_income_for_batch(chain_id, &prepared_txs);
-            v
+            v.result
         }
         Err(err) => {
             if let Some(intent) = atomic_intent.as_ref() {
@@ -3353,6 +4106,141 @@ pub unsafe extern "C" fn novovm_adapter_plugin_get_settlement_snapshot_bincode_v
     write_bincode_blob_to_out(&payload, out_ptr, out_cap, out_len)
 }
 
+#[no_mangle]
+/// Drain execution receipts and return bincode bytes through caller-provided buffer.
+///
+/// # Safety
+/// - `out_len` must be a valid writable pointer.
+/// - `out_ptr` may be null only when `out_cap == 0` (size-probe mode).
+/// - When non-null, `out_ptr` must be writable for `out_cap` bytes.
+pub unsafe extern "C" fn novovm_adapter_plugin_drain_execution_receipts_bincode_v1(
+    max_items: usize,
+    out_ptr: *mut u8,
+    out_cap: usize,
+    out_len: *mut usize,
+) -> i32 {
+    let items = drain_execution_receipts_for_host(max_items);
+    let payload = match serialize_bincode_export_blob(&items) {
+        Ok(v) => v,
+        Err(rc) => return rc,
+    };
+    write_bincode_blob_to_out(&payload, out_ptr, out_cap, out_len)
+}
+
+#[no_mangle]
+/// Drain state mirror updates and return bincode bytes through caller-provided buffer.
+///
+/// # Safety
+/// - `out_len` must be a valid writable pointer.
+/// - `out_ptr` may be null only when `out_cap == 0` (size-probe mode).
+/// - When non-null, `out_ptr` must be writable for `out_cap` bytes.
+pub unsafe extern "C" fn novovm_adapter_plugin_drain_state_mirror_updates_bincode_v1(
+    max_items: usize,
+    out_ptr: *mut u8,
+    out_cap: usize,
+    out_len: *mut usize,
+) -> i32 {
+    let items = drain_state_mirror_updates_for_host(max_items);
+    let payload = match serialize_bincode_export_blob(&items) {
+        Ok(v) => v,
+        Err(rc) => return rc,
+    };
+    write_bincode_blob_to_out(&payload, out_ptr, out_cap, out_len)
+}
+
+#[no_mangle]
+/// Ingest serialized execution receipts and emit a state mirror update report.
+///
+/// # Safety
+/// - `payload_ptr` must be valid for reads of `payload_len` bytes.
+/// - `out_len` must be a valid writable pointer.
+/// - `out_ptr` may be null only when `out_cap == 0` (size-probe mode).
+/// - When non-null, `out_ptr` must be writable for `out_cap` bytes.
+pub unsafe extern "C" fn novovm_adapter_plugin_ingest_execution_receipts_bincode_v1(
+    chain_id: u64,
+    state_version: u64,
+    payload_ptr: *const u8,
+    payload_len: usize,
+    out_ptr: *mut u8,
+    out_cap: usize,
+    out_len: *mut usize,
+) -> i32 {
+    if payload_ptr.is_null() || payload_len == 0 {
+        return NOVOVM_ADAPTER_PLUGIN_RC_INVALID_ARG;
+    }
+    if payload_len > MAX_PLUGIN_TX_IR_BYTES || payload_len > isize::MAX as usize {
+        return NOVOVM_ADAPTER_PLUGIN_RC_PAYLOAD_TOO_LARGE;
+    }
+    let payload = std::slice::from_raw_parts(payload_ptr, payload_len);
+    let receipts: Vec<SupervmEvmExecutionReceiptV1> =
+        match crate::bincode_compat::deserialize(payload) {
+            Ok(v) => v,
+            Err(_) => return NOVOVM_ADAPTER_PLUGIN_RC_APPLY_FAILED,
+        };
+    let update = match preview_execution_receipts_ingest_for_host(
+        chain_id,
+        state_version,
+        receipts.as_slice(),
+    ) {
+        Ok(v) => v,
+        Err(_) => return NOVOVM_ADAPTER_PLUGIN_RC_APPLY_FAILED,
+    };
+    let encoded = match serialize_bincode_export_blob(&update) {
+        Ok(v) => v,
+        Err(rc) => return rc,
+    };
+    let rc = write_bincode_blob_to_out(&encoded, out_ptr, out_cap, out_len);
+    if rc != NOVOVM_ADAPTER_PLUGIN_RC_OK {
+        return rc;
+    }
+    if out_ptr.is_null() {
+        return NOVOVM_ADAPTER_PLUGIN_RC_OK;
+    }
+    match ingest_execution_receipts_for_host(chain_id, state_version, receipts.as_slice()) {
+        Ok(_) => NOVOVM_ADAPTER_PLUGIN_RC_OK,
+        Err(_) => NOVOVM_ADAPTER_PLUGIN_RC_APPLY_FAILED,
+    }
+}
+
+#[no_mangle]
+/// Submit an internal mainline batch through the same-process execution bridge.
+///
+/// # Safety
+/// - `tx_ir_ptr` must be valid for reads of `tx_ir_len` bytes for the duration of this call.
+/// - `out_len` must be a valid writable pointer.
+/// - `out_ptr` may be null only when `out_cap == 0` (size-probe mode).
+/// - When non-null, `out_ptr` must be writable for `out_cap` bytes.
+pub unsafe extern "C" fn novovm_adapter_plugin_submit_internal_batch_bincode_v1(
+    chain_type_code: u32,
+    chain_id: u64,
+    tx_ir_ptr: *const u8,
+    tx_ir_len: usize,
+    atomic_guard_enabled: u8,
+    out_ptr: *mut u8,
+    out_cap: usize,
+    out_len: *mut usize,
+) -> i32 {
+    let (chain_type, txs) = match decode_plugin_apply_inputs(chain_type_code, tx_ir_ptr, tx_ir_len)
+    {
+        Ok(v) => v,
+        Err(rc) => return rc,
+    };
+    let report = match submit_internal_batch_to_mainline_v1(
+        chain_type,
+        chain_id,
+        &txs,
+        atomic_guard_enabled != 0,
+    ) {
+        Ok(v) => v,
+        Err(_) => return NOVOVM_ADAPTER_PLUGIN_RC_APPLY_FAILED,
+    };
+    let payload = match serialize_bincode_export_blob(&report) {
+        Ok(v) => v,
+        Err(rc) => return rc,
+    };
+    write_bincode_blob_to_out(&payload, out_ptr, out_cap, out_len)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3369,6 +4257,7 @@ mod tests {
 
     fn reset_runtime_queues_for_test() {
         EVM_RUNTIME_SETTLEMENT_SEQ.store(0, Ordering::Relaxed);
+        EVM_EXECUTION_STATE_VERSION.store(0, Ordering::Relaxed);
         for shard in resolve_evm_runtime_shards() {
             let mut runtime = shard
                 .lock()
@@ -3380,6 +4269,8 @@ mod tests {
             runtime.settlement_records.clear();
             runtime.payout_instructions.clear();
             runtime.atomic_broadcast_ready.clear();
+            runtime.execution_receipts.clear();
+            runtime.state_mirror_updates.clear();
         }
         for shard in resolve_evm_txpool_shards() {
             let mut txpool = shard
@@ -3391,6 +4282,15 @@ mod tests {
             txpool.pending_by_sender.clear();
             txpool.next_nonce_by_sender.clear();
         }
+        if let Some(runtime) = UA_PLUGIN_RUNTIME.get() {
+            let mut runtime = runtime
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            *runtime = UaPluginRuntime::default();
+        }
+        let config = resolve_ua_plugin_standalone_config();
+        remove_path_if_present(&config.store_path);
+        remove_path_if_present(&config.audit_path);
     }
 
     fn encode_address(seed: u64) -> Vec<u8> {
@@ -4164,6 +5064,7 @@ mod tests {
     #[test]
     fn plugin_bincode_drain_exports_return_empty_for_zero_max_items() {
         let _guard = runtime_queue_test_guard();
+        reset_runtime_queues_for_test();
         let mut ingress_len = 0usize;
         let rc_ingress_probe = unsafe {
             novovm_adapter_plugin_drain_ingress_bincode_v1(
@@ -4341,6 +5242,276 @@ mod tests {
         let ready: Vec<AtomicBroadcastReadyV1> =
             crate::bincode_compat::deserialize(&ready_buf).expect("decode atomic ready records");
         assert!(ready.is_empty());
+
+        let mut exec_receipts_len = 0usize;
+        let rc_exec_receipts_probe = unsafe {
+            novovm_adapter_plugin_drain_execution_receipts_bincode_v1(
+                0,
+                std::ptr::null_mut(),
+                0,
+                &mut exec_receipts_len as *mut usize,
+            )
+        };
+        assert_eq!(rc_exec_receipts_probe, NOVOVM_ADAPTER_PLUGIN_RC_OK);
+        let mut exec_receipts_buf = vec![0u8; exec_receipts_len];
+        let rc_exec_receipts = unsafe {
+            novovm_adapter_plugin_drain_execution_receipts_bincode_v1(
+                0,
+                exec_receipts_buf.as_mut_ptr(),
+                exec_receipts_buf.len(),
+                &mut exec_receipts_len as *mut usize,
+            )
+        };
+        assert_eq!(rc_exec_receipts, NOVOVM_ADAPTER_PLUGIN_RC_OK);
+        exec_receipts_buf.truncate(exec_receipts_len);
+        let execution_receipts: Vec<SupervmEvmExecutionReceiptV1> =
+            crate::bincode_compat::deserialize(&exec_receipts_buf)
+                .expect("decode execution receipts");
+        assert!(execution_receipts.is_empty());
+
+        let mut mirror_len = 0usize;
+        let rc_mirror_probe = unsafe {
+            novovm_adapter_plugin_drain_state_mirror_updates_bincode_v1(
+                0,
+                std::ptr::null_mut(),
+                0,
+                &mut mirror_len as *mut usize,
+            )
+        };
+        assert_eq!(rc_mirror_probe, NOVOVM_ADAPTER_PLUGIN_RC_OK);
+        let mut mirror_buf = vec![0u8; mirror_len];
+        let rc_mirror = unsafe {
+            novovm_adapter_plugin_drain_state_mirror_updates_bincode_v1(
+                0,
+                mirror_buf.as_mut_ptr(),
+                mirror_buf.len(),
+                &mut mirror_len as *mut usize,
+            )
+        };
+        assert_eq!(rc_mirror, NOVOVM_ADAPTER_PLUGIN_RC_OK);
+        mirror_buf.truncate(mirror_len);
+        let mirror_updates: Vec<SupervmEvmStateMirrorUpdateV1> =
+            crate::bincode_compat::deserialize(&mirror_buf).expect("decode mirror updates");
+        assert!(mirror_updates.is_empty());
+    }
+
+    #[test]
+    fn plugin_apply_v2_can_export_and_ingest_execution_receipts() {
+        let _guard = runtime_queue_test_guard();
+        reset_runtime_queues_for_test();
+        let txs = vec![
+            sample_contract_call_tx(1, 0),
+            sample_contract_deploy_tx(1, 1),
+        ];
+        let tx_bytes = crate::bincode_compat::serialize(&txs).expect("tx encode");
+        let options = NovovmAdapterPluginApplyOptionsV1 {
+            flags: NOVOVM_ADAPTER_PLUGIN_APPLY_FLAG_MAINLINE_RECEIPT_EXPORT_V1
+                | NOVOVM_ADAPTER_PLUGIN_APPLY_FLAG_MAINLINE_RECEIPT_INGEST_V1,
+        };
+        let mut out = NovovmAdapterPluginApplyResultV1::default();
+        let rc = unsafe {
+            novovm_adapter_plugin_apply_v2(
+                1,
+                1,
+                tx_bytes.as_ptr(),
+                tx_bytes.len(),
+                &options as *const NovovmAdapterPluginApplyOptionsV1,
+                &mut out as *mut NovovmAdapterPluginApplyResultV1,
+            )
+        };
+        assert_eq!(rc, NOVOVM_ADAPTER_PLUGIN_RC_OK);
+        let receipts = drain_execution_receipts_for_host(16);
+        assert_eq!(receipts.len(), 2);
+        assert!(receipts.iter().all(|receipt| receipt.chain_id == 1));
+        assert!(receipts.iter().all(|receipt| receipt.state_version > 0));
+        assert!(receipts[1].contract_address.is_some());
+        let mirror_updates = drain_state_mirror_updates_for_host(16);
+        assert_eq!(mirror_updates.len(), 1);
+        assert_eq!(mirror_updates[0].receipt_count, 2);
+        assert_eq!(mirror_updates[0].accepted_receipt_count, 2);
+    }
+
+    #[test]
+    fn execution_receipt_builder_prefers_aoem_contract() {
+        let txs = vec![
+            sample_contract_call_tx(1, 0),
+            sample_contract_deploy_tx(1, 1),
+        ];
+        let verify_results = vec![true, true];
+        let result = NovovmAdapterPluginApplyResultV1 {
+            verified: 1,
+            applied: 1,
+            txs: 2,
+            accounts: 2,
+            state_root: [0x11; 32],
+            error_code: 0,
+        };
+        let aoem_artifacts = AoemBatchExecutionArtifactsV1 {
+            state_root: [0x33; 32],
+            processed_ops: 2,
+            success_ops: 1,
+            failed_index: Some(1),
+            total_writes: 4,
+            tx_artifacts: vec![
+                novovm_exec::AoemTxExecutionArtifactV1 {
+                    tx_index: 0,
+                    tx_hash: tx_hash_or_compute(&txs[0]),
+                    status_ok: true,
+                    gas_used: 21_000,
+                    cumulative_gas_used: 21_000,
+                    state_root: [0x33; 32],
+                    contract_address: None,
+                    receipt_type: Some(2),
+                    effective_gas_price: Some(7),
+                    runtime_code: None,
+                    runtime_code_hash: None,
+                    event_logs: vec![novovm_exec::AoemEventLogV1 {
+                        emitter: txs[0].to.clone().expect("call target"),
+                        topics: vec![[0xabu8; 32]],
+                        data: vec![0x01, 0x02],
+                        log_index: 0,
+                    }],
+                    log_bloom: vec![0x55; AOEM_LOG_BLOOM_BYTES_V1],
+                    revert_data: None,
+                    anchor: Some(AoemTxExecutionAnchorV1 {
+                        op_index: Some(0),
+                        processed_ops: 2,
+                        success_ops: 1,
+                        failed_index: Some(1),
+                        total_writes: 4,
+                        elapsed_us: 9,
+                        return_code: 0,
+                        return_code_name: "ok".to_string(),
+                    }),
+                },
+                novovm_exec::AoemTxExecutionArtifactV1 {
+                    tx_index: 1,
+                    tx_hash: tx_hash_or_compute(&txs[1]),
+                    status_ok: false,
+                    gas_used: 0,
+                    cumulative_gas_used: 21_000,
+                    state_root: [0x33; 32],
+                    contract_address: None,
+                    receipt_type: Some(3),
+                    effective_gas_price: Some(9),
+                    runtime_code: None,
+                    runtime_code_hash: None,
+                    event_logs: Vec::new(),
+                    log_bloom: vec![0u8; AOEM_LOG_BLOOM_BYTES_V1],
+                    revert_data: Some(vec![0xde, 0xad]),
+                    anchor: Some(AoemTxExecutionAnchorV1 {
+                        op_index: Some(1),
+                        processed_ops: 2,
+                        success_ops: 1,
+                        failed_index: Some(1),
+                        total_writes: 4,
+                        elapsed_us: 9,
+                        return_code: 0,
+                        return_code_name: "ok".to_string(),
+                    }),
+                },
+            ],
+        };
+        let receipts = build_execution_receipts_from_apply_batch(
+            ChainType::EVM,
+            1,
+            txs.as_slice(),
+            verify_results.as_slice(),
+            &result,
+            9,
+            Some(&aoem_artifacts),
+        );
+        assert_eq!(receipts.len(), 2);
+        assert_eq!(receipts[0].state_root, [0x33; 32]);
+        assert_eq!(receipts[0].logs.len(), 1);
+        assert_eq!(receipts[0].logs[0].topics, vec![[0xabu8; 32]]);
+        assert_eq!(receipts[0].receipt_type, Some(2));
+        assert_eq!(receipts[0].effective_gas_price, Some(7));
+        assert_eq!(receipts[0].log_bloom, vec![0x55; AOEM_LOG_BLOOM_BYTES_V1]);
+        assert!(receipts[0].status_ok);
+        assert!(!receipts[1].status_ok);
+        assert_eq!(receipts[1].receipt_type, Some(3));
+        assert_eq!(receipts[1].revert_data, Some(vec![0xde, 0xad]));
+        assert!(receipts[1].contract_address.is_none());
+    }
+
+    #[test]
+    fn plugin_receipt_ingest_bincode_returns_state_mirror_update() {
+        let _guard = runtime_queue_test_guard();
+        reset_runtime_queues_for_test();
+        let receipt = SupervmEvmExecutionReceiptV1 {
+            chain_type: ChainType::EVM,
+            chain_id: 1,
+            tx_hash: vec![0x11; 32],
+            tx_index: 0,
+            tx_type: TxType::Transfer,
+            receipt_type: Some(0),
+            status_ok: true,
+            gas_used: 21_000,
+            cumulative_gas_used: 21_000,
+            effective_gas_price: Some(1),
+            log_bloom: vec![0u8; AOEM_LOG_BLOOM_BYTES_V1],
+            revert_data: None,
+            state_root: [0x22; 32],
+            state_version: 77,
+            contract_address: None,
+            logs: Vec::new(),
+        };
+        let payload = crate::bincode_compat::serialize(&vec![receipt]).expect("receipt encode");
+        let mut out_len = 0usize;
+        let rc_probe = unsafe {
+            novovm_adapter_plugin_ingest_execution_receipts_bincode_v1(
+                1,
+                77,
+                payload.as_ptr(),
+                payload.len(),
+                std::ptr::null_mut(),
+                0,
+                &mut out_len as *mut usize,
+            )
+        };
+        assert_eq!(rc_probe, NOVOVM_ADAPTER_PLUGIN_RC_OK);
+        let mut out = vec![0u8; out_len];
+        let rc = unsafe {
+            novovm_adapter_plugin_ingest_execution_receipts_bincode_v1(
+                1,
+                77,
+                payload.as_ptr(),
+                payload.len(),
+                out.as_mut_ptr(),
+                out.len(),
+                &mut out_len as *mut usize,
+            )
+        };
+        assert_eq!(rc, NOVOVM_ADAPTER_PLUGIN_RC_OK);
+        out.truncate(out_len);
+        let update: SupervmEvmStateMirrorUpdateV1 =
+            crate::bincode_compat::deserialize(&out).expect("decode mirror update");
+        assert_eq!(update.chain_id, 1);
+        assert_eq!(update.receipt_count, 1);
+        assert_eq!(update.state_version, 77);
+        let drained = drain_state_mirror_updates_for_host(16);
+        assert_eq!(drained.len(), 1);
+        assert_eq!(drained[0].state_root, [0x22; 32]);
+    }
+
+    #[test]
+    fn submit_internal_batch_to_mainline_avoids_duplicate_ingress() {
+        let _guard = runtime_queue_test_guard();
+        reset_runtime_queues_for_test();
+        let txs = vec![sample_tx(1, 0), sample_tx(1, 1)];
+        let report = submit_internal_batch_to_mainline_v1(ChainType::EVM, 1, &txs, false)
+            .expect("submit ok");
+        assert_eq!(report.tx_count, 2);
+        assert_eq!(report.exported_receipt_count, 2);
+        assert_eq!(report.mirrored_receipt_count, 2);
+        assert!(report.ingress_bypassed);
+        let ingress = drain_plugin_ingress_frames_for_host(16);
+        assert_eq!(ingress.len(), 2);
+        let receipts = drain_execution_receipts_for_host(16);
+        assert_eq!(receipts.len(), 2);
+        let mirror_updates = drain_state_mirror_updates_for_host(16);
+        assert_eq!(mirror_updates.len(), 1);
     }
 
     #[test]

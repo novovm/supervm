@@ -25,8 +25,17 @@ use novovm_consensus::{
     NetworkDosPolicy, NodeId as ConsensusNodeId, ReserveGovernanceParams, SlashMode, SlashPolicy,
     TokenEconomicsPolicy, ValidatorSet, Web30MarketEngineSnapshot,
 };
-use novovm_exec::{AoemExecFacade, AoemRuntimeConfig, AoemRuntimeVariant, ExecOpV2};
-use novovm_network::{InMemoryTransport, Transport, UdpTransport};
+use novovm_exec::{
+    AoemExecFacade, AoemRuntimeConfig, AoemRuntimeVariant, ExecOpV2,
+    SupervmEvmExecutionLogV1, SupervmEvmExecutionReceiptV1, SupervmEvmStateMirrorUpdateV1,
+};
+use novovm_network::{
+    eth_rlpx_transaction_hash_v1,
+    InMemoryTransport, Transport, UdpTransport,
+};
+use novovm_node::tx_ingress::{
+    decode_eth_send_raw_hex_payload_v1, run_eth_send_raw_transaction_from_params_v1,
+};
 use novovm_protocol::{
     decode_block_header_wire_v1, decode_local_tx_wire_v1 as decode_tx_wire_v1,
     encode_block_header_wire_v1, encode_local_tx_wire_v1 as encode_tx_wire_v1,
@@ -42,7 +51,7 @@ use novovm_protocol::{
 };
 use rand::rngs::OsRng;
 use rocksdb::{Options as RocksDbOptions, WriteBatch as RocksDbWriteBatch, DB as RocksDb};
-use serde::{Deserialize, Serialize};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
 use std::fs::{self, OpenOptions};
@@ -507,15 +516,23 @@ struct MempoolAdmissionSummary {
     sig_ok: bool,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Default)]
+struct CanonicalBatchArtifactsV1 {
+    execution_receipts: Vec<SupervmEvmExecutionReceiptV1>,
+    state_mirror_updates: Vec<SupervmEvmStateMirrorUpdateV1>,
+}
+
+#[derive(Debug, Clone)]
 struct AdapterSignalSummary {
     backend: &'static str,
     chain: &'static str,
+    chain_id: u64,
     txs: usize,
     verified: bool,
     applied: bool,
     accounts: usize,
     state_root: [u8; 32],
+    canonical_artifacts: Option<CanonicalBatchArtifactsV1>,
     plugin_abi_enabled: bool,
     plugin_abi_version: u32,
     plugin_abi_expected: u32,
@@ -627,13 +644,6 @@ struct PluginApplyOptionsV1 {
 
 type PluginVersionFn = unsafe extern "C" fn() -> u32;
 type PluginCapabilitiesFn = unsafe extern "C" fn() -> u64;
-type PluginApplyFn = unsafe extern "C" fn(
-    chain_type_code: u32,
-    chain_id: u64,
-    tx_ir_ptr: *const u8,
-    tx_ir_len: usize,
-    out_result: *mut PluginApplyResultV1,
-) -> i32;
 type PluginApplyV2Fn = unsafe extern "C" fn(
     chain_type_code: u32,
     chain_id: u64,
@@ -642,11 +652,20 @@ type PluginApplyV2Fn = unsafe extern "C" fn(
     options_ptr: *const PluginApplyOptionsV1,
     out_result: *mut PluginApplyResultV1,
 ) -> i32;
+type PluginDrainBincodeFn = unsafe extern "C" fn(
+    max_items: usize,
+    out_ptr: *mut u8,
+    out_cap: usize,
+    out_len: *mut usize,
+) -> i32;
 
 const ADAPTER_PLUGIN_EXPECTED_ABI_DEFAULT: u32 = 1;
 const ADAPTER_PLUGIN_CAP_APPLY_IR_V1: u64 = 0x1;
 const ADAPTER_PLUGIN_CAP_UA_SELF_GUARD_V1: u64 = 0x2;
 const ADAPTER_PLUGIN_APPLY_FLAG_UA_SELF_GUARD_V1: u64 = 0x1;
+const ADAPTER_PLUGIN_APPLY_FLAG_MAINLINE_INGRESS_BYPASS_V1: u64 = 0x4;
+const ADAPTER_PLUGIN_APPLY_FLAG_MAINLINE_RECEIPT_EXPORT_V1: u64 = 0x8;
+const ADAPTER_PLUGIN_APPLY_FLAG_MAINLINE_RECEIPT_INGEST_V1: u64 = 0x10;
 const ADAPTER_PLUGIN_REQUIRED_CAPS_DEFAULT: u64 = ADAPTER_PLUGIN_CAP_APPLY_IR_V1;
 const ADAPTER_PLUGIN_REGISTRY_PATH_DEFAULT: &str =
     "..\\..\\config\\novovm-adapter-plugin-registry.json";
@@ -818,6 +837,19 @@ struct QueryTxRecord {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+struct QueryExecutionLogRecord {
+    tx_hash: String,
+    block_height: u64,
+    block_hash: String,
+    emitter: String,
+    topics: Vec<String>,
+    data: String,
+    tx_index: u32,
+    log_index: u32,
+    state_version: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct QueryReceiptRecord {
     tx_hash: String,
     block_height: u64,
@@ -825,6 +857,42 @@ struct QueryReceiptRecord {
     success: bool,
     gas_used: u64,
     state_root: String,
+    #[serde(default)]
+    chain_type: String,
+    #[serde(default)]
+    chain_id: u64,
+    #[serde(default)]
+    tx_type: String,
+    #[serde(default)]
+    receipt_type: Option<u8>,
+    #[serde(default)]
+    cumulative_gas_used: u64,
+    #[serde(default)]
+    effective_gas_price: Option<u64>,
+    #[serde(default)]
+    log_bloom: String,
+    #[serde(default)]
+    revert_data: Option<String>,
+    #[serde(default)]
+    state_version: u64,
+    #[serde(default)]
+    contract_address: Option<String>,
+    #[serde(default)]
+    logs: Vec<QueryExecutionLogRecord>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct QueryStateMirrorRecord {
+    block_height: u64,
+    block_hash: String,
+    chain_type: String,
+    chain_id: u64,
+    state_version: u64,
+    state_root: String,
+    receipt_count: u64,
+    accepted_receipt_count: u64,
+    tx_hashes: Vec<String>,
+    imported_at_unix_ms: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -833,6 +901,10 @@ struct QueryStateDb {
     txs: HashMap<String, QueryTxRecord>,
     receipts: HashMap<String, QueryReceiptRecord>,
     balances: HashMap<String, u64>,
+    #[serde(default)]
+    logs: Vec<QueryExecutionLogRecord>,
+    #[serde(default)]
+    state_mirror_updates: Vec<QueryStateMirrorRecord>,
 }
 
 #[derive(Debug, Clone)]
@@ -1865,6 +1937,69 @@ fn normalize_root32(root: &[u8]) -> [u8; 32] {
     hasher.finalize().into()
 }
 
+fn tx_type_name(tx_type: TxType) -> &'static str {
+    match tx_type {
+        TxType::Transfer => "transfer",
+        TxType::ContractCall => "contract_call",
+        TxType::ContractDeploy => "contract_deploy",
+        TxType::Privacy => "privacy",
+        TxType::CrossShard => "cross_shard",
+        TxType::CrossChainTransfer => "cross_chain_transfer",
+        TxType::CrossChainCall => "cross_chain_call",
+    }
+}
+
+fn canonical_tx_hash_hex_from_local_tx(tx: &LocalTx, chain_id: u64) -> String {
+    let tx_ir = to_adapter_tx_ir(tx, chain_id);
+    to_hex(&tx_ir.hash)
+}
+
+unsafe fn drain_plugin_bincode_items_v1<T>(
+    lib: &libloading::Library,
+    symbol: &[u8],
+    max_items: usize,
+) -> Result<Vec<T>>
+where
+    T: DeserializeOwned,
+{
+    let drain_fn: libloading::Symbol<PluginDrainBincodeFn> = lib
+        .get(symbol)
+        .with_context(|| format!("resolve {} failed", String::from_utf8_lossy(symbol)))?;
+    let mut out_len = 0usize;
+    let probe_rc = drain_fn(max_items, std::ptr::null_mut(), 0, &mut out_len as *mut usize);
+    if probe_rc != 0 {
+        bail!(
+            "plugin bincode export probe failed: symbol={} rc={}",
+            String::from_utf8_lossy(symbol),
+            probe_rc
+        );
+    }
+    if out_len == 0 {
+        return Ok(Vec::new());
+    }
+    let mut payload = vec![0u8; out_len];
+    let rc = drain_fn(
+        max_items,
+        payload.as_mut_ptr(),
+        payload.len(),
+        &mut out_len as *mut usize,
+    );
+    if rc != 0 {
+        bail!(
+            "plugin bincode export failed: symbol={} rc={}",
+            String::from_utf8_lossy(symbol),
+            rc
+        );
+    }
+    payload.truncate(out_len);
+    crate::bincode_compat::deserialize(payload.as_slice()).with_context(|| {
+        format!(
+            "decode plugin bincode export failed: symbol={}",
+            String::from_utf8_lossy(symbol)
+        )
+    })
+}
+
 fn run_native_adapter_signal(
     chain: ChainType,
     chain_id: u64,
@@ -1949,11 +2084,13 @@ fn run_native_adapter_signal(
     Ok(AdapterSignalSummary {
         backend: "native",
         chain: chain.as_str(),
+        chain_id,
         txs: tx_irs.len(),
         verified,
         applied,
         accounts: state.accounts.len(),
         state_root,
+        canonical_artifacts: None,
         plugin_abi_enabled: false,
         plugin_abi_version: 0,
         plugin_abi_expected: expected_abi,
@@ -2001,9 +2138,9 @@ fn run_plugin_adapter_signal(
         let caps_fn: libloading::Symbol<PluginCapabilitiesFn> = lib
             .get(b"novovm_adapter_plugin_capabilities\0")
             .context("resolve novovm_adapter_plugin_capabilities failed")?;
-        let apply_fn: libloading::Symbol<PluginApplyFn> = lib
-            .get(b"novovm_adapter_plugin_apply_v1\0")
-            .context("resolve novovm_adapter_plugin_apply_v1 failed")?;
+        let apply_v2_fn: libloading::Symbol<PluginApplyV2Fn> = lib
+            .get(b"novovm_adapter_plugin_apply_v2\0")
+            .context("resolve novovm_adapter_plugin_apply_v2 failed")?;
 
         let abi_version = version_fn();
         if abi_version != expected_abi {
@@ -2022,37 +2159,50 @@ fn run_plugin_adapter_signal(
             );
         }
 
+        let _: Vec<SupervmEvmExecutionReceiptV1> = drain_plugin_bincode_items_v1(
+            &lib,
+            b"novovm_adapter_plugin_drain_execution_receipts_bincode_v1\0",
+            usize::MAX,
+        )?;
+        let _: Vec<SupervmEvmStateMirrorUpdateV1> = drain_plugin_bincode_items_v1(
+            &lib,
+            b"novovm_adapter_plugin_drain_state_mirror_updates_bincode_v1\0",
+            usize::MAX,
+        )?;
+
+        let mut flags = ADAPTER_PLUGIN_APPLY_FLAG_MAINLINE_RECEIPT_EXPORT_V1
+            | ADAPTER_PLUGIN_APPLY_FLAG_MAINLINE_RECEIPT_INGEST_V1
+            | ADAPTER_PLUGIN_APPLY_FLAG_MAINLINE_INGRESS_BYPASS_V1;
+        if prefer_plugin_self_guard {
+            flags |= ADAPTER_PLUGIN_APPLY_FLAG_UA_SELF_GUARD_V1;
+        }
+        let options = PluginApplyOptionsV1 { flags };
         let mut out = PluginApplyResultV1::default();
-        let rc = if prefer_plugin_self_guard {
-            let apply_v2_fn: libloading::Symbol<PluginApplyV2Fn> = lib
-                .get(b"novovm_adapter_plugin_apply_v2\0")
-                .context("resolve novovm_adapter_plugin_apply_v2 failed in self-guard mode")?;
-            let options = PluginApplyOptionsV1 {
-                flags: ADAPTER_PLUGIN_APPLY_FLAG_UA_SELF_GUARD_V1,
-            };
-            apply_v2_fn(
-                chain_code,
-                chain_id,
-                tx_bytes.as_ptr(),
-                tx_bytes.len(),
-                &options as *const PluginApplyOptionsV1,
-                &mut out as *mut PluginApplyResultV1,
-            )
-        } else {
-            apply_fn(
-                chain_code,
-                chain_id,
-                tx_bytes.as_ptr(),
-                tx_bytes.len(),
-                &mut out as *mut PluginApplyResultV1,
-            )
-        };
+        let rc = apply_v2_fn(
+            chain_code,
+            chain_id,
+            tx_bytes.as_ptr(),
+            tx_bytes.len(),
+            &options as *const PluginApplyOptionsV1,
+            &mut out as *mut PluginApplyResultV1,
+        );
         if rc != 0 {
             bail!("adapter plugin apply failed: rc={}", rc);
         }
         if out.error_code != 0 {
             bail!("adapter plugin returned error_code={}", out.error_code);
         }
+        let execution_receipts: Vec<SupervmEvmExecutionReceiptV1> = drain_plugin_bincode_items_v1(
+            &lib,
+            b"novovm_adapter_plugin_drain_execution_receipts_bincode_v1\0",
+            (out.txs as usize).max(1),
+        )?;
+        let state_mirror_updates: Vec<SupervmEvmStateMirrorUpdateV1> =
+            drain_plugin_bincode_items_v1(
+                &lib,
+                b"novovm_adapter_plugin_drain_state_mirror_updates_bincode_v1\0",
+                (out.txs as usize).max(1),
+            )?;
         let consensus_adapter_hash = compute_consensus_adapter_hash(
             "plugin",
             chain,
@@ -2064,11 +2214,16 @@ fn run_plugin_adapter_signal(
         Ok(AdapterSignalSummary {
             backend: "plugin",
             chain: chain.as_str(),
+            chain_id,
             txs: out.txs as usize,
             verified: out.verified != 0,
             applied: out.applied != 0,
             accounts: out.accounts as usize,
             state_root: out.state_root,
+            canonical_artifacts: Some(CanonicalBatchArtifactsV1 {
+                execution_receipts,
+                state_mirror_updates,
+            }),
             plugin_abi_enabled: true,
             plugin_abi_version: abi_version,
             plugin_abi_expected: expected_abi,
@@ -5009,7 +5164,7 @@ fn save_governance_chain_audit_store(
     Ok(())
 }
 
-fn apply_block_to_query_db(db: &mut QueryStateDb, block: &LocalBlock) {
+fn append_block_to_query_db(db: &mut QueryStateDb, block: &LocalBlock) -> (String, String) {
     let block_hash = to_hex(&block.block_hash);
     let state_root = to_hex(&block.header.state_root);
     let governance_chain_audit_root = to_hex(&block.header.governance_chain_audit_root);
@@ -5025,6 +5180,147 @@ fn apply_block_to_query_db(db: &mut QueryStateDb, block: &LocalBlock) {
         block_hash: block_hash.clone(),
     };
     db.blocks.push(block_record);
+    (block_hash, state_root)
+}
+
+fn query_log_record_from_execution_log(
+    block: &LocalBlock,
+    block_hash: &str,
+    tx_hash: &str,
+    log: &SupervmEvmExecutionLogV1,
+) -> QueryExecutionLogRecord {
+    QueryExecutionLogRecord {
+        tx_hash: tx_hash.to_string(),
+        block_height: block.header.height,
+        block_hash: block_hash.to_string(),
+        emitter: to_hex(&log.emitter),
+        topics: log.topics.iter().map(|topic| to_hex(topic)).collect(),
+        data: to_hex(&log.data),
+        tx_index: log.tx_index,
+        log_index: log.log_index,
+        state_version: log.state_version,
+    }
+}
+
+fn query_receipt_record_from_execution_receipt(
+    block: &LocalBlock,
+    block_hash: &str,
+    receipt: &SupervmEvmExecutionReceiptV1,
+) -> QueryReceiptRecord {
+    let tx_hash = to_hex(&receipt.tx_hash);
+    let logs = receipt
+        .logs
+        .iter()
+        .map(|log| query_log_record_from_execution_log(block, block_hash, tx_hash.as_str(), log))
+        .collect();
+    QueryReceiptRecord {
+        tx_hash,
+        block_height: block.header.height,
+        block_hash: block_hash.to_string(),
+        success: receipt.status_ok,
+        gas_used: receipt.gas_used,
+        state_root: to_hex(&receipt.state_root),
+        chain_type: receipt.chain_type.as_str().to_string(),
+        chain_id: receipt.chain_id,
+        tx_type: tx_type_name(receipt.tx_type).to_string(),
+        receipt_type: receipt.receipt_type,
+        cumulative_gas_used: receipt.cumulative_gas_used,
+        effective_gas_price: receipt.effective_gas_price,
+        log_bloom: to_hex(&receipt.log_bloom),
+        revert_data: receipt.revert_data.as_ref().map(|data| to_hex(data)),
+        state_version: receipt.state_version,
+        contract_address: receipt
+            .contract_address
+            .as_ref()
+            .map(|address| to_hex(address)),
+        logs,
+    }
+}
+
+fn query_state_mirror_record_from_update(
+    block: &LocalBlock,
+    block_hash: &str,
+    update: &SupervmEvmStateMirrorUpdateV1,
+) -> QueryStateMirrorRecord {
+    QueryStateMirrorRecord {
+        block_height: block.header.height,
+        block_hash: block_hash.to_string(),
+        chain_type: update.chain_type.as_str().to_string(),
+        chain_id: update.chain_id,
+        state_version: update.state_version,
+        state_root: to_hex(&update.state_root),
+        receipt_count: update.receipt_count,
+        accepted_receipt_count: update.accepted_receipt_count,
+        tx_hashes: update.tx_hashes.iter().map(|tx_hash| to_hex(tx_hash)).collect(),
+        imported_at_unix_ms: update.imported_at_unix_ms,
+    }
+}
+
+fn ingest_canonical_batch_artifacts_v1(
+    db: &mut QueryStateDb,
+    block: &LocalBlock,
+    chain_id: u64,
+    artifacts: &CanonicalBatchArtifactsV1,
+) {
+    let block_hash = to_hex(&block.block_hash);
+    let receipt_hashes: HashSet<String> = artifacts
+        .execution_receipts
+        .iter()
+        .map(|receipt| to_hex(&receipt.tx_hash))
+        .collect();
+    if !receipt_hashes.is_empty() {
+        db.logs
+            .retain(|record| !receipt_hashes.contains(record.tx_hash.as_str()));
+    }
+
+    let flattened_txs: Vec<&LocalTx> = block
+        .batches
+        .iter()
+        .flat_map(|batch| batch.txs.iter())
+        .collect();
+    let receipt_by_index: HashMap<u32, &SupervmEvmExecutionReceiptV1> = artifacts
+        .execution_receipts
+        .iter()
+        .map(|receipt| (receipt.tx_index, receipt))
+        .collect();
+
+    for (idx, tx) in flattened_txs.iter().enumerate() {
+        let receipt = receipt_by_index.get(&(idx as u32)).copied();
+        let tx_hash = receipt
+            .map(|item| to_hex(&item.tx_hash))
+            .unwrap_or_else(|| canonical_tx_hash_hex_from_local_tx(tx, chain_id));
+        db.balances.insert(tx.account.to_string(), tx.value);
+        db.txs.insert(
+            tx_hash.clone(),
+            QueryTxRecord {
+                tx_hash,
+                block_height: block.header.height,
+                block_hash: block_hash.clone(),
+                account: tx.account,
+                key: tx.key,
+                value: tx.value,
+                nonce: tx.nonce,
+                fee: tx.fee,
+                success: receipt.map(|item| item.status_ok).unwrap_or(true),
+            },
+        );
+    }
+
+    for receipt in &artifacts.execution_receipts {
+        let query_receipt = query_receipt_record_from_execution_receipt(block, &block_hash, receipt);
+        db.logs.extend(query_receipt.logs.clone());
+        db.receipts
+            .insert(query_receipt.tx_hash.clone(), query_receipt);
+    }
+
+    for update in &artifacts.state_mirror_updates {
+        db.state_mirror_updates
+            .push(query_state_mirror_record_from_update(block, &block_hash, update));
+    }
+}
+
+fn apply_block_to_query_db_legacy(db: &mut QueryStateDb, block: &LocalBlock) {
+    let (block_hash, state_root) = append_block_to_query_db(db, block);
 
     for batch in &block.batches {
         for tx in &batch.txs {
@@ -5056,16 +5352,53 @@ fn apply_block_to_query_db(db: &mut QueryStateDb, block: &LocalBlock) {
                     success: true,
                     gas_used: tx.fee,
                     state_root: state_root.clone(),
+                    chain_type: String::new(),
+                    chain_id: 0,
+                    tx_type: String::new(),
+                    receipt_type: None,
+                    cumulative_gas_used: 0,
+                    effective_gas_price: None,
+                    log_bloom: String::new(),
+                    revert_data: None,
+                    state_version: 0,
+                    contract_address: None,
+                    logs: Vec::new(),
                 },
             );
         }
     }
 }
 
-fn persist_query_state_for_block(block: &LocalBlock) -> Result<(PathBuf, QueryStateDb)> {
+fn apply_block_to_query_db_v1(
+    db: &mut QueryStateDb,
+    block: &LocalBlock,
+    chain_id: u64,
+    canonical_artifacts: Option<&CanonicalBatchArtifactsV1>,
+) {
+    if let Some(artifacts) = canonical_artifacts {
+        let has_canonical = !artifacts.execution_receipts.is_empty()
+            || !artifacts.state_mirror_updates.is_empty();
+        if has_canonical {
+            let _ = append_block_to_query_db(db, block);
+            ingest_canonical_batch_artifacts_v1(db, block, chain_id, artifacts);
+            return;
+        }
+    }
+    apply_block_to_query_db_legacy(db, block);
+}
+
+fn apply_block_to_query_db(db: &mut QueryStateDb, block: &LocalBlock) {
+    apply_block_to_query_db_v1(db, block, 1, None);
+}
+
+fn persist_query_state_for_block(
+    block: &LocalBlock,
+    chain_id: u64,
+    canonical_artifacts: Option<&CanonicalBatchArtifactsV1>,
+) -> Result<(PathBuf, QueryStateDb)> {
     let path = chain_query_db_path();
     let mut db = load_query_state_db(&path)?;
-    apply_block_to_query_db(&mut db, block);
+    apply_block_to_query_db_v1(&mut db, block, chain_id, canonical_artifacts);
     save_query_state_db(&path, &db)?;
     Ok((path, db))
 }
@@ -5194,6 +5527,8 @@ fn run_batch_a_minimal_closure(
 fn commit_block_in_memory(
     block: LocalBlock,
     expected_binding: ConsensusPluginBindingV1,
+    chain_id: u64,
+    canonical_artifacts: Option<&CanonicalBatchArtifactsV1>,
 ) -> Result<()> {
     let wire = encode_block_header_wire_v1(&to_block_header_wire_v1(&block.header));
     let decoded_header = decode_block_header_wire_v1(&wire)
@@ -5217,7 +5552,8 @@ fn commit_block_in_memory(
     let total_blocks = store.total_blocks();
     drop(store);
 
-    let (query_db_path, query_db) = persist_query_state_for_block(&latest)?;
+    let (query_db_path, query_db) =
+        persist_query_state_for_block(&latest, chain_id, canonical_artifacts)?;
     println!(
         "commit_out: store=in_memory committed=true height={} total_blocks={} block_hash={} state_root={} governance_chain_audit_root={}",
         latest.header.height,
@@ -5232,11 +5568,13 @@ fn commit_block_in_memory(
         to_hex(&latest.header.consensus_binding.adapter_hash)
     );
     println!(
-        "query_state_out: db={} blocks={} txs={} receipts={} balances={}",
+        "query_state_out: db={} blocks={} txs={} receipts={} logs={} state_mirror_updates={} balances={}",
         query_db_path.display(),
         query_db.blocks.len(),
         query_db.txs.len(),
         query_db.receipts.len(),
+        query_db.logs.len(),
+        query_db.state_mirror_updates.len(),
         query_db.balances.len()
     );
     Ok(())
@@ -5528,7 +5866,7 @@ fn infer_eth_raw_tx_type_hint(params: &serde_json::Value) -> Result<Option<EthRa
     let Some(raw_tx_hex) = extract_eth_raw_tx_param(params) else {
         return Ok(None);
     };
-    let raw_tx = decode_hex_bytes(&raw_tx_hex, "raw_tx")?;
+    let raw_tx = decode_eth_send_raw_hex_payload_v1(&raw_tx_hex, "raw_tx")?;
     let fields = translate_raw_evm_tx_fields_m0(&raw_tx)?;
     Ok(Some(EthRawTxTypeHint { raw_tx, fields }))
 }
@@ -9795,6 +10133,27 @@ fn run_unified_account_rpc(
                 now,
             };
             let decision = router.route(request)?;
+            let mut local_pending_tx_hash_hex: Option<String> = None;
+            let mut local_pending_tx_ingress = false;
+            if is_eth_alias && is_eth_raw_alias {
+                if let Some(hint) = inferred_eth_tx_type.as_ref() {
+                    let raw_tx_hex = format!("0x{}", to_hex(hint.raw_tx.as_slice()));
+                    let ingress = run_eth_send_raw_transaction_from_params_v1(
+                        &serde_json::json!({
+                            "raw_tx": raw_tx_hex,
+                            "chain_id": chain_id,
+                        }),
+                    )?;
+                    local_pending_tx_hash_hex = ingress
+                        .get("pending_tx_hash")
+                        .and_then(|value| value.as_str())
+                        .map(str::to_string);
+                    local_pending_tx_ingress = ingress
+                        .get("pending_tx_local_ingress")
+                        .and_then(|value| value.as_bool())
+                        .unwrap_or(false);
+                }
+            }
             Ok((
                 serde_json::json!({
                     "method": method,
@@ -9814,6 +10173,8 @@ fn run_unified_account_rpc(
                     "tx_ir_type": inferred_eth_tx_ir_type,
                     "tx_ir_data_len": inferred_eth_tx_ir_data_len,
                     "session_expires_at": session_expires_at,
+                    "pending_tx_local_ingress": local_pending_tx_ingress,
+                    "pending_tx_hash": local_pending_tx_hash_hex,
                 }),
                 true,
             ))
@@ -13193,14 +13554,28 @@ fn run_ffi_v2() -> Result<()> {
     let adapter_signal =
         run_adapter_bridge_signal_with_options(&admitted_txs, ua_exec_guard_enabled)?;
     println!(
-        "adapter_out: backend={} chain={} txs={} verified={} applied={} accounts={} state_root={}",
+        "adapter_out: backend={} chain={} chain_id={} txs={} verified={} applied={} accounts={} state_root={}",
         adapter_signal.backend,
         adapter_signal.chain,
+        adapter_signal.chain_id,
         adapter_signal.txs,
         adapter_signal.verified,
         adapter_signal.applied,
         adapter_signal.accounts,
         to_hex(&adapter_signal.state_root)
+    );
+    println!(
+        "adapter_canonical_out: receipts={} state_mirror_updates={}",
+        adapter_signal
+            .canonical_artifacts
+            .as_ref()
+            .map(|items| items.execution_receipts.len())
+            .unwrap_or(0),
+        adapter_signal
+            .canonical_artifacts
+            .as_ref()
+            .map(|items| items.state_mirror_updates.len())
+            .unwrap_or(0)
     );
     println!(
         "adapter_plugin_abi: enabled={} version={} expected={} caps=0x{:x} required=0x{:x} compatible={}",
@@ -13284,7 +13659,12 @@ fn run_ffi_v2() -> Result<()> {
         &slash_policy_loaded.policy,
     ) {
         Ok(block) => {
-            if let Err(e) = commit_block_in_memory(block, consensus_binding) {
+            if let Err(e) = commit_block_in_memory(
+                block,
+                consensus_binding,
+                adapter_signal.chain_id,
+                adapter_signal.canonical_artifacts.as_ref(),
+            ) {
                 if strict_batch_a {
                     return Err(e).context("batch_a commit failed with strict mode");
                 }
@@ -13914,6 +14294,79 @@ mod tests {
         assert_eq!(db.receipts.len(), 2);
         assert_eq!(db.balances.get("1000"), Some(&10));
         assert_eq!(db.balances.get("1001"), Some(&20));
+    }
+
+    #[test]
+    fn canonical_artifact_ingest_uses_adapter_hash_and_persists_logs_and_state_mirror() {
+        let chain_id = 1;
+        let txs = vec![test_tx(1000, 1, 10, 0, 2)];
+        let closure = BatchAClosureOutput {
+            epoch_id: 3,
+            height: 5,
+            txs: 1,
+            state_root: [4u8; 32],
+            governance_chain_audit_root: [7u8; 32],
+            proposal_hash: [5u8; 32],
+            consensus_binding: ConsensusPluginBindingV1 {
+                plugin_class_code: PLUGIN_CLASS_CONSENSUS,
+                adapter_hash: [9u8; 32],
+            },
+        };
+        let batches = build_local_batches_from_txs(&txs, 1);
+        let block = build_local_block(&closure, &batches);
+        let tx_ir = to_adapter_tx_ir(&txs[0], chain_id);
+        let canonical_hash = to_hex(&tx_ir.hash);
+        let legacy_hash = to_hex(&local_tx_hash(&txs[0]));
+        let artifacts = CanonicalBatchArtifactsV1 {
+            execution_receipts: vec![SupervmEvmExecutionReceiptV1 {
+                chain_type: ChainType::EVM,
+                chain_id,
+                tx_hash: tx_ir.hash.clone(),
+                tx_index: 0,
+                tx_type: TxType::Transfer,
+                receipt_type: Some(2),
+                status_ok: true,
+                gas_used: 21_000,
+                cumulative_gas_used: 21_000,
+                effective_gas_price: Some(2),
+                log_bloom: vec![0x11; 256],
+                revert_data: None,
+                state_root: [4u8; 32],
+                state_version: 9,
+                contract_address: None,
+                logs: vec![SupervmEvmExecutionLogV1 {
+                    emitter: vec![0xaa; 20],
+                    topics: vec![[0xbb; 32]],
+                    data: vec![0xcc; 4],
+                    tx_index: 0,
+                    log_index: 0,
+                    state_version: 9,
+                }],
+            }],
+            state_mirror_updates: vec![SupervmEvmStateMirrorUpdateV1 {
+                chain_type: ChainType::EVM,
+                chain_id,
+                state_version: 9,
+                state_root: [4u8; 32],
+                receipt_count: 1,
+                accepted_receipt_count: 1,
+                tx_hashes: vec![tx_ir.hash.clone()],
+                imported_at_unix_ms: 1234,
+            }],
+        };
+
+        let mut db = QueryStateDb::default();
+        apply_block_to_query_db_v1(&mut db, &block, chain_id, Some(&artifacts));
+
+        assert_ne!(canonical_hash, legacy_hash);
+        assert!(db.txs.contains_key(&canonical_hash));
+        assert!(db.receipts.contains_key(&canonical_hash));
+        assert!(!db.receipts.contains_key(&legacy_hash));
+        assert_eq!(db.logs.len(), 1);
+        assert_eq!(db.state_mirror_updates.len(), 1);
+        assert_eq!(db.receipts[&canonical_hash].logs.len(), 1);
+        assert_eq!(db.receipts[&canonical_hash].chain_type, "evm");
+        assert_eq!(db.state_mirror_updates[0].tx_hashes, vec![canonical_hash]);
     }
 
     #[test]
@@ -15845,6 +16298,63 @@ mod tests {
         assert_eq!(resp["tx_type"].as_u64(), Some(2));
         assert_eq!(resp["tx_ir_type"].as_str(), Some("contract_call"));
         assert_eq!(resp["tx_ir_data_len"].as_u64(), Some(1));
+    }
+
+    #[test]
+    fn unified_account_public_rpc_eth_send_raw_routes_into_local_pending_ingress() {
+        let db = QueryStateDb::default();
+        let mut router = UnifiedAccountRouter::new();
+        let evm_addr = ua_hex(0x6E, 20);
+        ua_create(&db, &mut router, "uca-a", 10);
+        ua_bind(&db, &mut router, "uca-a", "owner", "evm", 1, &evm_addr, 11);
+
+        let raw_tx_hex =
+            "0x02e20180021e827530946e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e0480c0010101";
+        let raw_tx_bytes = decode_hex_bytes(raw_tx_hex, "raw_tx").expect("raw tx bytes");
+        let expected_hash = eth_rlpx_transaction_hash_v1(raw_tx_bytes.as_slice());
+        let expected_hash_hex = format!("0x{}", to_hex(&expected_hash));
+
+        let (resp, changed) = run_public_rpc(
+            &db,
+            &mut router,
+            None,
+            "eth_sendRawTransaction",
+            &serde_json::json!({
+                "uca_id": "uca-a",
+                "role": "owner",
+                "chain_id": 1,
+                "from": evm_addr,
+                "raw_tx": raw_tx_hex,
+                "now": 12,
+            }),
+        )
+        .expect("raw tx should route");
+        assert!(changed);
+        assert_eq!(resp["accepted"].as_bool(), Some(true));
+        assert_eq!(resp["pending_tx_local_ingress"].as_bool(), Some(true));
+        assert_eq!(resp["pending_tx_hash"].as_str(), Some(expected_hash_hex.as_str()));
+
+        let pending = novovm_network::get_network_runtime_native_pending_tx_v1(1, expected_hash)
+            .expect("pending tx should be tracked");
+        assert_eq!(
+            pending.origin,
+            novovm_network::NetworkRuntimeNativePendingTxOriginV1::Local
+        );
+        assert_eq!(
+            pending.lifecycle_stage,
+            novovm_network::NetworkRuntimeNativePendingTxLifecycleStageV1::Pending
+        );
+        assert!(pending.ingress_count >= 1);
+
+        let candidates =
+            novovm_network::snapshot_network_runtime_native_pending_tx_broadcast_candidates_v1(
+                1, 64, 3,
+            );
+        assert!(candidates.iter().any(|item| {
+            item.tx_hash == expected_hash
+                && item.tx_payload_len > 0
+                && !item.tx_payload.is_empty()
+        }));
     }
 
     #[test]

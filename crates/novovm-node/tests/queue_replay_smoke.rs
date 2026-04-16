@@ -178,4 +178,3 @@ fn queue_replay_smoke() {
 
     let _ = fs::remove_dir_all(&root);
 }
-

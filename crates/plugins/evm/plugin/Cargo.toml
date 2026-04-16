@@ -8,6 +8,7 @@ description = "EVM-focused dynamic adapter plugin for NOVOVM (C ABI)."
 
 [lib]
 crate-type = ["cdylib", "rlib"]
+doctest = false
 
 [dependencies]
 anyhow = "1"
@@ -19,4 +20,5 @@ sha2 = "0.10"
 novovm-adapter-api = { path = "../../../novovm-adapter-api" }
 novovm-adapter-evm-core = { path = "../core" }
 novovm-adapter-novovm = { path = "../../../novovm-adapter-novovm" }
+novovm-exec = { path = "../../../novovm-exec" }
 

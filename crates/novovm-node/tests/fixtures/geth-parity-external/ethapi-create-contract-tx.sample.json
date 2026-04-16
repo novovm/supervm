@@ -1,0 +1,41 @@
+{
+  "schema": "supervm-e2e-geth-parity-sample/v1",
+  "name": "ethapi-create-contract-tx",
+  "chain_id": 1,
+  "store_format": "geth-export-receipt/v1",
+  "store_path": "${NOVOVM_GETH_REPO_ROOT}/internal/ethapi/testdata/eth_getTransactionReceipt-create-contract-tx.json",
+  "expected": {
+    "block": {
+      "number": "0x2",
+      "tx_count": 1,
+      "tx_types": [
+        "0x0"
+      ],
+      "tx_statuses": [
+        "0x1"
+      ],
+      "tx_contract_addresses": [
+        "0xae9bea628c4ce503dcfd7e305cab4e29e7476592"
+      ]
+    },
+    "receipts": [
+      {
+        "tx_index": 0,
+        "status": "0x1",
+        "tx_type": "0x0",
+        "gas_used": "0xcf50",
+        "cumulative_gas_used": "0xcf50",
+        "contract_address": "0xae9bea628c4ce503dcfd7e305cab4e29e7476592",
+        "revert_data": null,
+        "log_count": 0
+      }
+    ],
+    "logs_canonical": {
+      "count": 0
+    },
+    "logs_noncanonical": {
+      "count": 0
+    },
+    "typed_failures": []
+  }
+}

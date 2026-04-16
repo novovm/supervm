@@ -21,11 +21,7 @@ pub struct CapabilityReport {
 }
 
 impl CapabilityReport {
-    pub fn new(
-        backend: CapabilityBackend,
-        enabled: bool,
-        reason: impl Into<String>,
-    ) -> Self {
+    pub fn new(backend: CapabilityBackend, enabled: bool, reason: impl Into<String>) -> Self {
         Self {
             backend,
             enabled,
@@ -120,9 +116,7 @@ pub struct CapabilityPolicyEvaluation {
     pub availability_adopted: bool,
 }
 
-pub fn assess_read_only_impact(
-    report: &CapabilityReport,
-) -> CapabilityReadOnlyImpact {
+pub fn assess_read_only_impact(report: &CapabilityReport) -> CapabilityReadOnlyImpact {
     match (report.backend, report.enabled) {
         (CapabilityBackend::Native, true) => CapabilityReadOnlyImpact {
             readiness: CapabilityReadiness::Ready,
@@ -193,12 +187,9 @@ pub fn evaluate_advisory_first(
     };
 
     let availability_adopted = match advisory.availability_hint {
-        CapabilityAvailabilityHint::NormalPreferred => {
-            selected_availability_mode == "normal"
-        }
+        CapabilityAvailabilityHint::NormalPreferred => selected_availability_mode == "normal",
         CapabilityAvailabilityHint::QueueOnlyTolerant => {
-            selected_availability_mode == "normal"
-                || selected_availability_mode == "queue_only"
+            selected_availability_mode == "normal" || selected_availability_mode == "queue_only"
         }
         CapabilityAvailabilityHint::QueueOnlyPreferred => {
             selected_availability_mode == "queue_only"
@@ -226,11 +217,9 @@ pub fn detect_capabilities() -> CapabilityReport {
     };
 
     match backend {
-        CapabilityBackend::Native => CapabilityReport::new(
-            CapabilityBackend::Native,
-            true,
-            "baseline_v0_native_stack",
-        ),
+        CapabilityBackend::Native => {
+            CapabilityReport::new(CapabilityBackend::Native, true, "baseline_v0_native_stack")
+        }
         CapabilityBackend::Libp2pStub => {
             let enabled = bool_env("NOVOVM_LIBP2P_STUB_ENABLED");
             if enabled {
@@ -265,10 +254,9 @@ fn bool_env(name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        assess_read_only_impact, capability_state_token, derive_advisory,
-        detect_capabilities, evaluate_advisory_first,
-        CapabilityAvailabilityHint, CapabilityBackend, CapabilityReadiness,
-        CapabilityReport, CapabilityRouteHint,
+        assess_read_only_impact, capability_state_token, derive_advisory, detect_capabilities,
+        evaluate_advisory_first, CapabilityAvailabilityHint, CapabilityBackend,
+        CapabilityReadiness, CapabilityReport, CapabilityRouteHint,
     };
     use std::sync::{Mutex, OnceLock};
 
@@ -348,8 +336,7 @@ mod tests {
 
     #[test]
     fn read_only_impact_stub_enabled_is_limited() {
-        let report =
-            CapabilityReport::new(CapabilityBackend::Libp2pStub, true, "test");
+        let report = CapabilityReport::new(CapabilityBackend::Libp2pStub, true, "test");
         let impact = assess_read_only_impact(&report);
         assert_eq!(impact.readiness, CapabilityReadiness::Limited);
         assert_eq!(impact.summary, "libp2p_stub_enabled_read_only");
@@ -357,8 +344,7 @@ mod tests {
 
     #[test]
     fn read_only_impact_stub_disabled_is_disabled() {
-        let report =
-            CapabilityReport::new(CapabilityBackend::Libp2pStub, false, "test");
+        let report = CapabilityReport::new(CapabilityBackend::Libp2pStub, false, "test");
         let impact = assess_read_only_impact(&report);
         assert_eq!(impact.readiness, CapabilityReadiness::Disabled);
         assert_eq!(impact.summary, "libp2p_stub_disabled");
@@ -378,8 +364,7 @@ mod tests {
 
     #[test]
     fn advisory_stub_enabled_prefers_l3_relay() {
-        let report =
-            CapabilityReport::new(CapabilityBackend::Libp2pStub, true, "test");
+        let report = CapabilityReport::new(CapabilityBackend::Libp2pStub, true, "test");
         let advisory = derive_advisory(&report);
         assert_eq!(advisory.route_hint, CapabilityRouteHint::PreferL3Relay);
         assert_eq!(
@@ -391,8 +376,7 @@ mod tests {
 
     #[test]
     fn advisory_stub_disabled_prefers_queue_only() {
-        let report =
-            CapabilityReport::new(CapabilityBackend::Libp2pStub, false, "test");
+        let report = CapabilityReport::new(CapabilityBackend::Libp2pStub, false, "test");
         let advisory = derive_advisory(&report);
         assert_eq!(advisory.route_hint, CapabilityRouteHint::DegradedOnly);
         assert_eq!(
@@ -414,8 +398,7 @@ mod tests {
 
     #[test]
     fn state_token_stub_disabled() {
-        let report =
-            CapabilityReport::new(CapabilityBackend::Libp2pStub, false, "t");
+        let report = CapabilityReport::new(CapabilityBackend::Libp2pStub, false, "t");
         let token = capability_state_token(&report);
         assert_eq!(
             token,

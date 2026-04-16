@@ -1,0 +1,121 @@
+name: Mainline Nightly Soak
+
+on:
+  schedule:
+    - cron: "15 16 * * *"
+  workflow_dispatch:
+    inputs:
+      run_mainline_gate:
+        description: "Run supervm-mainline-gate before nightly soak"
+        required: false
+        default: "false"
+      profiles:
+        description: "Comma-separated soak profiles (e.g. 6h,24h)"
+        required: false
+        default: "6h,24h"
+      chain_id:
+        description: "Override chain_id (optional; auto-detect from runtime snapshot if empty)"
+        required: false
+        default: ""
+      soak_6h_duration_seconds:
+        description: "Override 6h profile duration seconds (optional)"
+        required: false
+        default: ""
+      soak_24h_duration_seconds:
+        description: "Override 24h profile duration seconds (optional)"
+        required: false
+        default: ""
+      soak_6h_interval_seconds:
+        description: "Override 6h profile sampling interval seconds (optional)"
+        required: false
+        default: ""
+      soak_24h_interval_seconds:
+        description: "Override 24h profile sampling interval seconds (optional)"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nightly-mainline-soak
+  cancel-in-progress: false
+
+jobs:
+  nightly_soak:
+    name: Nightly 6h/24h soak gate
+    runs-on: self-hosted
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run nightly soak gate
+        shell: pwsh
+        run: |
+          $runMainlineGate = "${{ github.event.inputs.run_mainline_gate }}"
+          if ([string]::IsNullOrWhiteSpace($runMainlineGate)) { $runMainlineGate = "false" }
+          $profiles = "${{ github.event.inputs.profiles }}"
+          if ([string]::IsNullOrWhiteSpace($profiles)) { $profiles = "6h,24h" }
+
+          $env:NOVOVM_MAINLINE_NIGHTLY_RUN_MAINLINE_GATE = $runMainlineGate
+          $env:NOVOVM_MAINLINE_NIGHTLY_SOAK_PROFILES = $profiles
+
+          $chainId = "${{ github.event.inputs.chain_id }}"
+          if (-not [string]::IsNullOrWhiteSpace($chainId)) {
+            $env:NOVOVM_MAINLINE_NIGHTLY_SOAK_CHAIN_ID = $chainId
+          }
+
+          $duration6h = "${{ github.event.inputs.soak_6h_duration_seconds }}"
+          if (-not [string]::IsNullOrWhiteSpace($duration6h)) {
+            $env:NOVOVM_MAINLINE_NIGHTLY_SOAK_6H_DURATION_SECONDS = $duration6h
+          }
+          $duration24h = "${{ github.event.inputs.soak_24h_duration_seconds }}"
+          if (-not [string]::IsNullOrWhiteSpace($duration24h)) {
+            $env:NOVOVM_MAINLINE_NIGHTLY_SOAK_24H_DURATION_SECONDS = $duration24h
+          }
+
+          $interval6h = "${{ github.event.inputs.soak_6h_interval_seconds }}"
+          if (-not [string]::IsNullOrWhiteSpace($interval6h)) {
+            $env:NOVOVM_MAINLINE_NIGHTLY_SOAK_6H_INTERVAL_SECONDS = $interval6h
+          }
+          $interval24h = "${{ github.event.inputs.soak_24h_interval_seconds }}"
+          if (-not [string]::IsNullOrWhiteSpace($interval24h)) {
+            $env:NOVOVM_MAINLINE_NIGHTLY_SOAK_24H_INTERVAL_SECONDS = $interval24h
+          }
+
+          cargo run -p novovm-node --bin supervm-mainline-nightly-gate
+
+      - name: Generate duty report from nightly artifacts
+        shell: pwsh
+        run: |
+          $env:NOVOVM_MAINLINE_DUTY_OWNER = "${{ github.actor }}"
+          $env:NOVOVM_MAINLINE_DUTY_WORKFLOW_RUN_URL = "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          $env:NOVOVM_MAINLINE_DUTY_REPORT_PATH = "artifacts/mainline/mainline-duty-report-nightly.md"
+          cargo run -p novovm-node --bin supervm-mainline-duty-report
+
+      - name: Publish duty report to job summary
+        if: always()
+        shell: pwsh
+        run: |
+          $path = "artifacts/mainline/mainline-duty-report-nightly.md"
+          if (Test-Path $path) {
+            Get-Content $path | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+          }
+
+      - name: Upload nightly soak artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: supervm-mainline-nightly-soak-artifacts
+          path: |
+            artifacts/mainline/mainline-nightly-soak-gate-report.json
+            artifacts/mainline/mainline-soak-6h.json
+            artifacts/mainline/mainline-soak-24h.json
+            artifacts/mainline/mainline-duty-report-nightly.md
+          if-no-files-found: warn

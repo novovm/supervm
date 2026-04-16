@@ -5,41 +5,447 @@
 #![forbid(unsafe_code)]
 
 use anyhow::{bail, Context, Result};
+use novovm_adapter_api::{ChainType, TxIR};
+use novovm_adapter_evm_plugin::{
+    drain_execution_receipts_for_host, drain_state_mirror_updates_for_host,
+    submit_internal_batch_to_mainline_v1,
+};
 use novovm_exec::{AoemRuntimeConfig, AoemSubmitReport, OpsWireOp, OpsWireV1Builder};
 use novovm_network::transport::snapshot_local_observed_peers;
 use novovm_network::{
-    drain_runtime_relay_membership,
-    decode_relay_membership_message,
-    ingest_runtime_relay_membership,
-    assess_read_only_impact, capability_state_token, derive_advisory,
-    detect_capabilities, evaluate_advisory_first,
-    AvailabilityController, AvailabilityDecision, AvailabilityMode,
-    CapabilityReadiness, CapabilityRouteHint,
-    L3RegionalRoutingTable, FileQueueStore, InMemoryQueueStore, L4LocalRoutingTable, L4PeerRef,
-    L3_BASELINE_FINGERPRINT, L3_BASELINE_LOCK_VERSION, L3_BASELINE_PHASE,
-    L3_POLICY_BASELINE_VERSION, L3_READONLY_EXPORT_BASELINE_VERSION, L3_REGRESSION_LOCKSET,
-    L3_RELAY_SCORE_SCALE, L3_RELAY_SELECTED_STICKY_MARGIN,
-    L3_RELAY_RUNTIME_FEEDBACK_SCALE,
-    L3_RELAY_SOURCE_BONUS_CONFIGURED, L3_RELAY_SOURCE_BONUS_POOL,
-    L3_RELAY_SOURCE_BONUS_SNAPSHOT, relay_convergence_policy_view,
-    QueuedRequest, QueueStore, Reachability, RelayCapacityClass, RelayHealth, RelayMembership,
-    RelayRef, GossipMessage, MessageType,
-    RouteSelector, RoutingSource, SelectedPath, build_reconcile_report_with_replay,
-    run_replay_with, RelayClient, RelayServer, ReplayResult,
+    assess_read_only_impact, build_reconcile_report_with_replay, capability_state_token,
+    decode_relay_membership_message, derive_advisory, detect_capabilities,
+    drain_runtime_relay_membership, evaluate_advisory_first,
+    get_network_runtime_native_sync_status, ingest_runtime_relay_membership,
+    is_eth_fullnode_runtime_query_method,
+    observe_network_runtime_native_execution_budget_target_v1,
+    observe_network_runtime_native_execution_budget_throttle_v1,
+    observe_network_runtime_native_pending_tx_local_ingress_with_payload_v1,
+    relay_convergence_policy_view, resolve_eth_fullnode_budget_hooks_v1,
+    resolve_eth_fullnode_canonical_query_method, run_replay_with,
+    snapshot_network_runtime_native_pending_tx_summary_v1, AvailabilityController,
+    AvailabilityDecision, AvailabilityMode, CapabilityReadiness, CapabilityRouteHint,
+    FileQueueStore, GossipMessage, InMemoryQueueStore, L3RegionalRoutingTable, L4LocalRoutingTable,
+    L4PeerRef, MessageType, NetworkRuntimeNativeSyncPhaseV1, QueueStore, QueuedRequest,
+    Reachability, RelayCapacityClass, RelayClient, RelayHealth, RelayMembership, RelayRef,
+    RelayServer, ReplayResult, RouteSelector, RoutingSource, SelectedPath, L3_BASELINE_FINGERPRINT,
+    L3_BASELINE_LOCK_VERSION, L3_BASELINE_PHASE, L3_POLICY_BASELINE_VERSION,
+    L3_READONLY_EXPORT_BASELINE_VERSION, L3_REGRESSION_LOCKSET, L3_RELAY_RUNTIME_FEEDBACK_SCALE,
+    L3_RELAY_SCORE_SCALE, L3_RELAY_SELECTED_STICKY_MARGIN, L3_RELAY_SOURCE_BONUS_CONFIGURED,
+    L3_RELAY_SOURCE_BONUS_POOL, L3_RELAY_SOURCE_BONUS_SNAPSHOT,
+};
+use novovm_node::mainline_canonical::{
+    append_mainline_canonical_batch, derive_mainline_eth_fullnode_chain_view_v1,
+    MainlineCanonicalBatchRecordV1,
+};
+use novovm_node::mainline_query::{
+    default_mainline_query_store_path, default_mainline_runtime_snapshot_path,
+    mainline_query_method_from_env, mainline_query_params_from_env, run_mainline_query_from_path,
 };
 use novovm_node::tx_ingress::{
-    available_ingress_codecs, load_exec_batch_from_wire_file, load_ops_wire_v1_file,
+    available_ingress_codecs, decode_eth_send_raw_hex_payload_v1,
+    ingest_local_eth_raw_tx_payload_v1, load_exec_batch_from_wire_file, load_ops_wire_v1_file,
     load_ops_wire_v1_from_tx_wire_file, load_ops_wire_v1_payload_file,
-    LOCAL_TX_WIRE_CODEC_WRITE_U64LE_V1,
+    load_tx_records_from_wire_file, run_eth_send_raw_transaction_from_params_v1,
+    tx_ingress_records_to_adapter_tx_irs, TxIngressRecord, LOCAL_TX_WIRE_CODEC_WRITE_U64LE_V1,
 };
+use novovm_protocol::{encode_local_tx_wire_v1 as encode_tx_wire_v1, LocalTxWireV1};
 use sha2::{Digest, Sha256};
-use std::collections::{hash_map::DefaultHasher, HashMap, HashSet};
+use std::collections::{hash_map::DefaultHasher, HashMap, HashSet, VecDeque};
 use std::fs::{self, OpenOptions};
 use std::hash::{Hash, Hasher};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+fn to_hex_prefixed(bytes: &[u8]) -> String {
+    let mut out = String::with_capacity(bytes.len() * 2 + 2);
+    out.push_str("0x");
+    for byte in bytes {
+        out.push_str(&format!("{byte:02x}"));
+    }
+    out
+}
+
+fn decode_hex_payload_v1(raw: &str, field: &str) -> Result<Vec<u8>> {
+    decode_eth_send_raw_hex_payload_v1(raw, field)
+}
+
+fn load_eth_send_raw_tx_payloads_from_file_v1(path: &Path) -> Result<Vec<Vec<u8>>> {
+    let bytes = fs::read(path).with_context(|| {
+        format!(
+            "read NOVOVM_ETH_SEND_RAW_TX_FILE failed: {}",
+            path.display()
+        )
+    })?;
+    if bytes.is_empty() {
+        bail!("NOVOVM_ETH_SEND_RAW_TX_FILE is empty: {}", path.display());
+    }
+    if let Ok(text) = std::str::from_utf8(&bytes) {
+        let mut payloads = Vec::new();
+        for (line_idx, line) in text.lines().enumerate() {
+            let trimmed = line.trim();
+            if trimmed.is_empty() || trimmed.starts_with('#') {
+                continue;
+            }
+            let field = format!(
+                "NOVOVM_ETH_SEND_RAW_TX_FILE:{}:{}",
+                path.display(),
+                line_idx + 1
+            );
+            payloads.push(decode_hex_payload_v1(trimmed, &field)?);
+        }
+        if !payloads.is_empty() {
+            return Ok(payloads);
+        }
+    }
+    Ok(vec![bytes])
+}
+
+fn load_eth_send_raw_tx_payloads_from_env_v1() -> Result<Vec<Vec<u8>>> {
+    let inline_raw = string_env_nonempty("NOVOVM_ETH_SEND_RAW_TX");
+    let file_raw = string_env_nonempty("NOVOVM_ETH_SEND_RAW_TX_FILE");
+    if inline_raw.is_some() && file_raw.is_some() {
+        bail!("set only one of NOVOVM_ETH_SEND_RAW_TX or NOVOVM_ETH_SEND_RAW_TX_FILE");
+    }
+    if let Some(raw) = inline_raw {
+        return Ok(vec![decode_hex_payload_v1(&raw, "NOVOVM_ETH_SEND_RAW_TX")?]);
+    }
+    if let Some(path_raw) = file_raw {
+        let path = PathBuf::from(path_raw);
+        return load_eth_send_raw_tx_payloads_from_file_v1(&path);
+    }
+    Ok(Vec::new())
+}
+
+fn observe_eth_send_raw_tx_local_ingress_v1(chain_id: u64, payload: &[u8]) -> Result<[u8; 32]> {
+    ingest_local_eth_raw_tx_payload_v1(chain_id, payload)
+}
+
+fn resolve_eth_send_raw_chain_id_v1(mainline_evm_chain_id: Option<u64>) -> u64 {
+    mainline_evm_chain_id.unwrap_or(1)
+}
+
+fn ingest_eth_send_raw_tx_env_v1(chain_id: u64, verbose: bool) -> Result<Vec<[u8; 32]>> {
+    let payloads = load_eth_send_raw_tx_payloads_from_env_v1()?;
+    let mut hashes = Vec::with_capacity(payloads.len());
+    for payload in payloads {
+        let tx_hash = observe_eth_send_raw_tx_local_ingress_v1(chain_id, payload.as_slice())?;
+        if verbose {
+            println!(
+                "eth_send_raw_tx_ingress: chain_id={} tx_hash={} payload_len={}",
+                chain_id,
+                to_hex_prefixed(&tx_hash),
+                payload.len()
+            );
+        }
+        hashes.push(tx_hash);
+    }
+    Ok(hashes)
+}
+
+fn tx_ir_hash_32_v1(tx_ir: &TxIR) -> Option<[u8; 32]> {
+    if tx_ir.hash.len() != 32 {
+        return None;
+    }
+    let mut out = [0u8; 32];
+    out.copy_from_slice(tx_ir.hash.as_slice());
+    Some(out)
+}
+
+fn observe_local_tx_records_pending_ingress_v1(
+    chain_id: u64,
+    tx_records: &[TxIngressRecord],
+    tx_irs: &[TxIR],
+) {
+    for (record, tx_ir) in tx_records.iter().zip(tx_irs.iter()) {
+        let Some(tx_hash) = tx_ir_hash_32_v1(tx_ir) else {
+            continue;
+        };
+        let payload = encode_tx_wire_v1(&LocalTxWireV1 {
+            account: record.account,
+            key: record.key,
+            value: record.value,
+            nonce: record.nonce,
+            fee: record.fee,
+            signature: record.signature,
+        });
+        observe_network_runtime_native_pending_tx_local_ingress_with_payload_v1(
+            chain_id,
+            tx_hash,
+            Some(payload.as_slice()),
+        );
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct MainlineHostExecAdaptiveInputsV1 {
+    hard_budget_per_tick: u64,
+    hard_time_slice_ms: u64,
+    target_budget_per_tick: u64,
+    target_time_slice_ms: u64,
+    pending_backlog: u64,
+    broadcast_dispatch_total: u64,
+    broadcast_dispatch_failed_total: u64,
+    sync_peer_count: u64,
+    sync_gap: u64,
+    sync_phase: Option<NetworkRuntimeNativeSyncPhaseV1>,
+    consecutive_throttle_ticks: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct MainlineHostExecAdaptiveTargetsV1 {
+    effective_budget_per_tick: u64,
+    effective_time_slice_ms: u64,
+    reason: Option<String>,
+}
+
+fn derive_mainline_host_exec_targets_v1(
+    inputs: MainlineHostExecAdaptiveInputsV1,
+) -> MainlineHostExecAdaptiveTargetsV1 {
+    let hard_budget = inputs.hard_budget_per_tick.max(1);
+    let hard_time_slice_ms = inputs.hard_time_slice_ms.max(1);
+    let base_budget = inputs.target_budget_per_tick.max(1).min(hard_budget);
+    let base_time_slice_ms = inputs.target_time_slice_ms.max(1).min(hard_time_slice_ms);
+    let mut effective_budget = base_budget;
+    let mut effective_time_slice_ms = base_time_slice_ms;
+    let mut reasons = Vec::<&'static str>::new();
+
+    if inputs.pending_backlog >= base_budget.saturating_mul(4) {
+        effective_budget = effective_budget
+            .saturating_add((effective_budget / 2).max(1))
+            .min(hard_budget);
+        effective_time_slice_ms = effective_time_slice_ms
+            .saturating_add((effective_time_slice_ms / 3).max(1))
+            .min(hard_time_slice_ms);
+        reasons.push("pending_backlog_high");
+    }
+
+    if inputs.broadcast_dispatch_total >= 16
+        && inputs.broadcast_dispatch_failed_total.saturating_mul(2)
+            >= inputs.broadcast_dispatch_total
+    {
+        effective_budget = effective_budget
+            .saturating_sub((effective_budget / 4).max(1))
+            .max(1);
+        effective_time_slice_ms = effective_time_slice_ms
+            .saturating_sub((effective_time_slice_ms / 4).max(1))
+            .max(1);
+        reasons.push("broadcast_pressure_high");
+    }
+
+    let sync_pressure = matches!(
+        inputs.sync_phase,
+        Some(
+            NetworkRuntimeNativeSyncPhaseV1::Headers
+                | NetworkRuntimeNativeSyncPhaseV1::Bodies
+                | NetworkRuntimeNativeSyncPhaseV1::State
+                | NetworkRuntimeNativeSyncPhaseV1::Finalize
+        )
+    ) || inputs.sync_gap >= 32;
+    if inputs.sync_peer_count > 0 && sync_pressure {
+        effective_budget = effective_budget
+            .saturating_sub((effective_budget / 3).max(1))
+            .max(1);
+        effective_time_slice_ms = effective_time_slice_ms
+            .saturating_sub((effective_time_slice_ms / 3).max(1))
+            .max(1);
+        reasons.push("sync_pressure_high");
+    }
+
+    if inputs.consecutive_throttle_ticks >= 2 {
+        effective_budget = effective_budget
+            .saturating_sub((effective_budget / 5).max(1))
+            .max(1);
+        effective_time_slice_ms = effective_time_slice_ms
+            .saturating_sub((effective_time_slice_ms / 5).max(1))
+            .max(1);
+        reasons.push("recent_execution_throttle");
+    }
+
+    if inputs.pending_backlog == 0 && reasons.is_empty() {
+        effective_budget = effective_budget
+            .saturating_sub((effective_budget / 2).max(1))
+            .max(1);
+        effective_time_slice_ms = effective_time_slice_ms
+            .saturating_sub((effective_time_slice_ms / 2).max(1))
+            .max(1);
+        reasons.push("idle_target_downscale");
+    }
+
+    MainlineHostExecAdaptiveTargetsV1 {
+        effective_budget_per_tick: effective_budget.max(1).min(hard_budget),
+        effective_time_slice_ms: effective_time_slice_ms.max(1).min(hard_time_slice_ms),
+        reason: if reasons.is_empty() {
+            None
+        } else {
+            Some(reasons.join("+"))
+        },
+    }
+}
+
+#[cfg(test)]
+mod eth_send_raw_tx_ingress_tests {
+    use super::*;
+
+    #[test]
+    fn decode_hex_payload_v1_accepts_prefixed_payload() {
+        let payload = decode_hex_payload_v1("0x0102a0", "raw_tx").expect("decode should succeed");
+        assert_eq!(payload, vec![0x01, 0x02, 0xa0]);
+    }
+
+    #[test]
+    fn observe_eth_send_raw_tx_local_ingress_v1_tracks_pending_and_candidate() {
+        let chain_id = 98_877_661;
+        let raw_tx_hex =
+            "0x02e20180021e827530946e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e0480c0010101";
+        let payload = decode_hex_payload_v1(raw_tx_hex, "raw_tx").expect("decode raw tx");
+        let expected_hash = novovm_network::eth_rlpx_transaction_hash_v1(payload.as_slice());
+
+        let observed_hash = observe_eth_send_raw_tx_local_ingress_v1(chain_id, payload.as_slice())
+            .expect("observe local raw tx ingress");
+        assert_eq!(observed_hash, expected_hash);
+
+        let pending =
+            novovm_network::get_network_runtime_native_pending_tx_v1(chain_id, expected_hash)
+                .expect("pending tx should exist");
+        assert_eq!(
+            pending.origin,
+            novovm_network::NetworkRuntimeNativePendingTxOriginV1::Local
+        );
+        assert_eq!(
+            pending.lifecycle_stage,
+            novovm_network::NetworkRuntimeNativePendingTxLifecycleStageV1::Pending
+        );
+
+        let candidates =
+            novovm_network::snapshot_network_runtime_native_pending_tx_broadcast_candidates_v1(
+                chain_id, 64, 3,
+            );
+        assert!(candidates.iter().any(|item| {
+            item.tx_hash == expected_hash && item.tx_payload_len > 0 && !item.tx_payload.is_empty()
+        }));
+    }
+
+    #[test]
+    fn run_eth_send_raw_transaction_from_params_v1_returns_hash_and_tracks_pending() {
+        let chain_id = 98_877_662;
+        let raw_tx_hex =
+            "0x02e20180021e827530946f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f0480c0010101";
+        let payload = decode_hex_payload_v1(raw_tx_hex, "raw_tx").expect("decode raw tx");
+        let expected_hash_hex = to_hex_prefixed(&novovm_network::eth_rlpx_transaction_hash_v1(
+            payload.as_slice(),
+        ));
+
+        let out = run_eth_send_raw_transaction_from_params_v1(&serde_json::json!({
+            "raw_tx": raw_tx_hex,
+            "chain_id": chain_id,
+        }))
+        .expect("eth_sendRawTransaction params route should succeed");
+        assert_eq!(out["accepted"].as_bool(), Some(true));
+        assert_eq!(out["pending_tx_local_ingress"].as_bool(), Some(true));
+        assert_eq!(
+            out["pending_tx_hash"].as_str(),
+            Some(expected_hash_hex.as_str())
+        );
+    }
+}
+
+#[cfg(test)]
+mod execution_budget_target_tests {
+    use super::*;
+
+    fn base_inputs() -> MainlineHostExecAdaptiveInputsV1 {
+        MainlineHostExecAdaptiveInputsV1 {
+            hard_budget_per_tick: 64,
+            hard_time_slice_ms: 10,
+            target_budget_per_tick: 32,
+            target_time_slice_ms: 8,
+            pending_backlog: 0,
+            broadcast_dispatch_total: 0,
+            broadcast_dispatch_failed_total: 0,
+            sync_peer_count: 0,
+            sync_gap: 0,
+            sync_phase: Some(NetworkRuntimeNativeSyncPhaseV1::Idle),
+            consecutive_throttle_ticks: 0,
+        }
+    }
+
+    #[test]
+    fn adaptive_targets_respect_hard_caps_v1() {
+        let mut inputs = base_inputs();
+        inputs.pending_backlog = 10_000;
+        inputs.broadcast_dispatch_total = 128;
+        inputs.broadcast_dispatch_failed_total = 128;
+        inputs.sync_peer_count = 8;
+        inputs.sync_gap = 10_000;
+        inputs.sync_phase = Some(NetworkRuntimeNativeSyncPhaseV1::Bodies);
+        inputs.consecutive_throttle_ticks = 99;
+
+        let out = derive_mainline_host_exec_targets_v1(inputs);
+        assert!(out.effective_budget_per_tick >= 1);
+        assert!(out.effective_time_slice_ms >= 1);
+        assert!(out.effective_budget_per_tick <= inputs.hard_budget_per_tick);
+        assert!(out.effective_time_slice_ms <= inputs.hard_time_slice_ms);
+    }
+
+    #[test]
+    fn adaptive_targets_idle_is_stable_across_long_window_v1() {
+        let inputs = base_inputs();
+        let first = derive_mainline_host_exec_targets_v1(inputs);
+        for _ in 0..256 {
+            let next = derive_mainline_host_exec_targets_v1(inputs);
+            assert_eq!(next, first);
+        }
+        assert_eq!(first.reason.as_deref(), Some("idle_target_downscale"));
+    }
+
+    #[test]
+    fn adaptive_targets_constant_pressure_does_not_oscillate_v1() {
+        let mut inputs = base_inputs();
+        inputs.pending_backlog = 500;
+        inputs.sync_peer_count = 4;
+        inputs.sync_gap = 128;
+        inputs.sync_phase = Some(NetworkRuntimeNativeSyncPhaseV1::Headers);
+        inputs.consecutive_throttle_ticks = 3;
+
+        let first = derive_mainline_host_exec_targets_v1(inputs);
+        for _ in 0..256 {
+            let next = derive_mainline_host_exec_targets_v1(inputs);
+            assert_eq!(next, first);
+        }
+        assert!(first
+            .reason
+            .as_deref()
+            .unwrap_or_default()
+            .contains("pending_backlog_high"));
+        assert!(first
+            .reason
+            .as_deref()
+            .unwrap_or_default()
+            .contains("sync_pressure_high"));
+        assert!(first
+            .reason
+            .as_deref()
+            .unwrap_or_default()
+            .contains("recent_execution_throttle"));
+    }
+
+    #[test]
+    fn adaptive_targets_backlog_prefers_scale_up_within_caps_v1() {
+        let mut inputs = base_inputs();
+        inputs.pending_backlog = 512;
+        let out = derive_mainline_host_exec_targets_v1(inputs);
+        assert!(out.effective_budget_per_tick >= inputs.target_budget_per_tick);
+        assert!(out.effective_time_slice_ms >= inputs.target_time_slice_ms);
+        assert!(out
+            .reason
+            .as_deref()
+            .unwrap_or_default()
+            .contains("pending_backlog_high"));
+    }
+}
 
 const LOCAL_OBSERVED_FRESHNESS_MS: u64 = 60_000;
 const L3_POLICY_PROFILE_EXPORT_VERSION: u32 = 1;
@@ -81,8 +487,7 @@ const L2_L1_EXPORT_COMPAT_LOCKSET: &str = "queue_replay_smoke+relay_path_tests";
 const L2_L1_EXPORT_COMPAT_FINGERPRINT: &str = "l2-l1-export-compat:v1:legacy-anchor-fieldset";
 const L2_L1_EXPORT_VERSION_SWITCH_SEMANTICS: &str =
     "env_explicit(current|compat) or default_current";
-const L2_L1_TRIPWIRE_STRICT_SWITCH_SEMANTICS: &str =
-    "env_explicit(true|false) or default_true";
+const L2_L1_TRIPWIRE_STRICT_SWITCH_SEMANTICS: &str = "env_explicit(true|false) or default_true";
 const L2_L1_EXPORT_FIELDSET_VERSION: u32 = 1;
 const L2_L1_EXPORT_FIELDSET_FINGERPRINT: &str =
     "l2-l1-fieldset:v1:l2_l1_export_*+l2_state_export_*+l2_*";
@@ -167,8 +572,7 @@ const L2_L1_CONTRACT_BREAKING_GUARD_VERSION: u32 = 1;
 const L2_L1_CONTRACT_BREAKING_GUARD_FINGERPRINT: &str =
     "l2-l1-contract-breaking-guard:v1:contract+fieldset+path-lock";
 const L2_L1_CLOSURE_SEAL_VERSION: u32 = 1;
-const L2_L1_CLOSURE_SEAL_FINGERPRINT: &str =
-    "l2-l1-closure-seal:v1:runtime+tripwire+state";
+const L2_L1_CLOSURE_SEAL_FINGERPRINT: &str = "l2-l1-closure-seal:v1:runtime+tripwire+state";
 const L2_L1_GOVERNANCE_LOCK_VERSION: u32 = 1;
 const L2_L1_GOVERNANCE_LOCK_FINGERPRINT: &str =
     "l2-l1-governance-lock:v1:l3-profile-governance+tripwire-strict-governance+l2-export-mode";
@@ -177,8 +581,7 @@ const L2_L1_PATH_REGRESSION_LOCKSET: &str = "queue_replay_smoke+relay_path_tests
 const L2_L1_PATH_FINGERPRINT: &str = "l2-l1-path-lock:v1:state+watch+batch";
 const L2_L1_CROSS_PATH_LOCK_VERSION: u32 = 1;
 const L2_L1_CROSS_PATH_REGRESSION_LOCKSET: &str = "queue_replay_smoke+relay_path_tests";
-const L2_L1_CROSS_PATH_FINGERPRINT: &str =
-    "l2-l1-cross-path-lock:v1:tripwire+contract+governance";
+const L2_L1_CROSS_PATH_FINGERPRINT: &str = "l2-l1-cross-path-lock:v1:tripwire+contract+governance";
 const L2_L1_BASELINE_SEAL_VERSION: u32 = 1;
 const L2_L1_BASELINE_SEAL_FINGERPRINT: &str =
     "l2-l1-baseline-seal:v1:export-mode+governance+cross-path";
@@ -274,6 +677,24 @@ fn string_env_nonempty(name: &str) -> Option<String> {
     })
 }
 
+fn mainline_evm_host_enabled() -> bool {
+    bool_env("NOVOVM_MAINLINE_EVM_HOST_ENABLED")
+}
+
+fn mainline_evm_atomic_guard_enabled() -> bool {
+    bool_env("NOVOVM_MAINLINE_EVM_ATOMIC_GUARD_ENABLED")
+}
+
+fn mainline_evm_chain_id() -> Result<u64> {
+    u64_env_allow_zero("NOVOVM_MAINLINE_EVM_CHAIN_ID", 1)
+}
+
+fn mainline_evm_canonical_store_path() -> PathBuf {
+    string_env_nonempty("NOVOVM_MAINLINE_EVM_CANONICAL_STORE_PATH")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("artifacts/mainline/evm-canonical-artifacts.json"))
+}
+
 const MANUAL_ROUTE_ENV_LOCK_KEYS: [&str; 30] = [
     "NOVOVM_L3_POLICY_MODE",
     "NOVOVM_L3_PROFILE_STICKY_MARGIN",
@@ -352,7 +773,9 @@ fn scheduler_hard_lock_matrix_contract_is_frozen() {
 #[cfg(test)]
 #[test]
 fn mainline_status_freshness_gate_contract_is_frozen() {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("..");
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("..");
     let script_path = root
         .join("scripts")
         .join("_compat")
@@ -383,8 +806,8 @@ fn mainline_status_freshness_gate_contract_is_frozen() {
         "mainline preflight failure contract code changed unexpectedly"
     );
 
-    let preflight_bin = std::fs::read_to_string(&preflight_bin_path)
-        .expect("read supervm-mainline-preflight.rs");
+    let preflight_bin =
+        std::fs::read_to_string(&preflight_bin_path).expect("read supervm-mainline-preflight.rs");
     assert!(
         preflight_bin.contains("../mainline_preflight.rs"),
         "preflight bin must import shared mainline_preflight module"
@@ -638,8 +1061,8 @@ fn resolve_overlay_route(selected_path: &SelectedPath) -> OverlayRouteDecision {
 }
 
 fn operator_forced_availability_mode() -> Option<AvailabilityMode> {
-    let mode = string_env_nonempty("NOVOVM_AVAILABILITY_FORCE_MODE")
-        .map(|v| v.to_ascii_lowercase())?;
+    let mode =
+        string_env_nonempty("NOVOVM_AVAILABILITY_FORCE_MODE").map(|v| v.to_ascii_lowercase())?;
     match mode.as_str() {
         "normal" => Some(AvailabilityMode::Normal),
         "read_only" => Some(AvailabilityMode::ReadOnly),
@@ -657,9 +1080,7 @@ fn resolve_availability_decision(
         return match mode {
             AvailabilityMode::Normal => AvailabilityDecision::normal("operator_forced_mode"),
             AvailabilityMode::ReadOnly => AvailabilityDecision::read_only("operator_forced_mode"),
-            AvailabilityMode::QueueOnly => {
-                AvailabilityDecision::queue_only("operator_forced_mode")
-            }
+            AvailabilityMode::QueueOnly => AvailabilityDecision::queue_only("operator_forced_mode"),
         };
     }
 
@@ -1100,8 +1521,7 @@ impl L3CandidateSourceGovernance {
     fn allows_snapshot(self) -> bool {
         matches!(
             self,
-            L3CandidateSourceGovernance::Baseline
-                | L3CandidateSourceGovernance::PoolSnapshot
+            L3CandidateSourceGovernance::Baseline | L3CandidateSourceGovernance::PoolSnapshot
         )
     }
 
@@ -1112,8 +1532,7 @@ impl L3CandidateSourceGovernance {
     fn allows_discovery(self) -> bool {
         matches!(
             self,
-            L3CandidateSourceGovernance::Baseline
-                | L3CandidateSourceGovernance::PoolSnapshot
+            L3CandidateSourceGovernance::Baseline | L3CandidateSourceGovernance::PoolSnapshot
         )
     }
 }
@@ -1551,10 +1970,7 @@ fn parse_l3_profile_mode_bound(
     }
 }
 
-fn default_l3_profile_mode_bound_for_family(
-    family: L3ProfileFamily,
-    is_min: bool,
-) -> L3PolicyMode {
+fn default_l3_profile_mode_bound_for_family(family: L3ProfileFamily, is_min: bool) -> L3PolicyMode {
     match (family, is_min) {
         (L3ProfileFamily::Production, true) => L3PolicyMode::Baseline,
         (L3ProfileFamily::Production, false) => L3PolicyMode::FastFailover,
@@ -1647,7 +2063,9 @@ fn l3_profile_family_resolution_from_raw(
     let family_target = match (capability_readiness, capability_route_hint) {
         (CapabilityReadiness::Disabled, _) => L3ProfileFamily::Conservative,
         (_, CapabilityRouteHint::DegradedOnly) => L3ProfileFamily::Conservative,
-        (CapabilityReadiness::Ready, CapabilityRouteHint::PreferL3Relay) => L3ProfileFamily::Aggressive,
+        (CapabilityReadiness::Ready, CapabilityRouteHint::PreferL3Relay) => {
+            L3ProfileFamily::Aggressive
+        }
         _ => L3ProfileFamily::Production,
     };
     let (family_min_raw_effective, family_min_source, family_min_requested) =
@@ -1659,7 +2077,10 @@ fn l3_profile_family_resolution_from_raw(
             <= l3_profile_family_rank(family_max_raw_effective)
         {
             (family_min_raw_effective, family_max_raw_effective, false)
-        } else if matches!(family_governance_effective, L3ProfileFamilyGovernance::Locked) {
+        } else if matches!(
+            family_governance_effective,
+            L3ProfileFamilyGovernance::Locked
+        ) {
             (family_max_raw_effective, family_min_raw_effective, true)
         } else {
             (family_max_raw_effective, family_min_raw_effective, true)
@@ -1667,7 +2088,10 @@ fn l3_profile_family_resolution_from_raw(
     let (family_adapted, family_adaptation_applied, family_adaptation_reason) =
         if matches!(family_source, L3ProfileFamilySource::EnvExplicit) {
             (family_effective, false, "family_env_explicit_pinned")
-        } else if matches!(family_governance_effective, L3ProfileFamilyGovernance::Locked) {
+        } else if matches!(
+            family_governance_effective,
+            L3ProfileFamilyGovernance::Locked
+        ) {
             (family_effective, false, "family_governance_locked")
         } else if family_effective == family_target {
             (family_effective, false, "family_policy_no_change")
@@ -1685,13 +2109,17 @@ fn l3_profile_family_resolution_from_raw(
                     "family_env_explicit_pinned"
                 },
             )
-        } else if l3_profile_family_rank(family_adapted) < l3_profile_family_rank(family_min_effective) {
+        } else if l3_profile_family_rank(family_adapted)
+            < l3_profile_family_rank(family_min_effective)
+        {
             (
                 family_min_effective,
                 true,
                 "family_guardrail_clamped_to_min",
             )
-        } else if l3_profile_family_rank(family_adapted) > l3_profile_family_rank(family_max_effective) {
+        } else if l3_profile_family_rank(family_adapted)
+            > l3_profile_family_rank(family_max_effective)
+        {
             (
                 family_max_effective,
                 true,
@@ -1798,8 +2226,7 @@ fn l3_profile_family_resolution_from_env(
     let min_raw = string_env_nonempty("NOVOVM_L3_PROFILE_FAMILY_MIN");
     let max_raw = string_env_nonempty("NOVOVM_L3_PROFILE_FAMILY_MAX");
     let version_raw = string_env_nonempty("NOVOVM_L3_POLICY_PROFILE_VERSION");
-    let version_governance_raw =
-        string_env_nonempty("NOVOVM_L3_POLICY_PROFILE_VERSION_GOVERNANCE");
+    let version_governance_raw = string_env_nonempty("NOVOVM_L3_POLICY_PROFILE_VERSION_GOVERNANCE");
     l3_profile_family_resolution_from_raw(
         family_raw.as_deref(),
         governance_raw.as_deref(),
@@ -1903,17 +2330,14 @@ fn resolve_l3_routing_policy_profile(
     };
     let (sticky_margin, sticky_margin_source, sticky_margin_requested) =
         parse_l3_tuned_i64(mode, sticky_margin_raw, sticky_default, 1, 1_000_000);
-    let (
-        runtime_feedback_scale,
-        runtime_feedback_scale_source,
-        runtime_feedback_scale_requested,
-    ) = parse_l3_tuned_i64(
-        mode,
-        runtime_feedback_scale_raw,
-        runtime_feedback_default,
-        1,
-        1_000_000,
-    );
+    let (runtime_feedback_scale, runtime_feedback_scale_source, runtime_feedback_scale_requested) =
+        parse_l3_tuned_i64(
+            mode,
+            runtime_feedback_scale_raw,
+            runtime_feedback_default,
+            1,
+            1_000_000,
+        );
     let (candidate_limit, candidate_limit_source, candidate_limit_requested) =
         parse_l3_tuned_usize(mode, candidate_limit_raw, candidate_limit_default, 1, 16);
     let profile = L3RoutingPolicyProfile {
@@ -2014,7 +2438,8 @@ fn apply_l3_profile_mode_policy_from_raw_with_family(
             false,
         );
     let (mode_min_effective, mode_max_effective, range_swapped) =
-        if l3_policy_mode_rank(mode_min_raw_effective) <= l3_policy_mode_rank(mode_max_raw_effective)
+        if l3_policy_mode_rank(mode_min_raw_effective)
+            <= l3_policy_mode_rank(mode_max_raw_effective)
         {
             (mode_min_raw_effective, mode_max_raw_effective, false)
         } else {
@@ -2049,7 +2474,9 @@ fn apply_l3_profile_mode_policy_from_raw_with_family(
 
     let mut target_mode = match policy {
         L3ProfileModePolicy::Locked => profile.mode,
-        L3ProfileModePolicy::AdvisoryRoute => policy_target_mode_by_route_hint(capability_route_hint),
+        L3ProfileModePolicy::AdvisoryRoute => {
+            policy_target_mode_by_route_hint(capability_route_hint)
+        }
         L3ProfileModePolicy::AdvisoryReadiness => {
             policy_target_mode_by_readiness(capability_readiness)
         }
@@ -2473,7 +2900,11 @@ fn l3_relay_candidate_chain_with_profile(
 
     fn trim_nonempty(v: &str) -> Option<&str> {
         let t = v.trim();
-        if t.is_empty() { None } else { Some(t) }
+        if t.is_empty() {
+            None
+        } else {
+            Some(t)
+        }
     }
 
     fn health_rank_for_sort(health: RelayHealth) -> u8 {
@@ -2487,7 +2918,9 @@ fn l3_relay_candidate_chain_with_profile(
     fn is_discovery_source(source: RoutingSource) -> bool {
         matches!(
             source,
-            RoutingSource::PeerHinted | RoutingSource::RegionalAnnounced | RoutingSource::LocalObserved
+            RoutingSource::PeerHinted
+                | RoutingSource::RegionalAnnounced
+                | RoutingSource::LocalObserved
         )
     }
 
@@ -2542,8 +2975,7 @@ fn l3_relay_candidate_chain_with_profile(
                 .map(|v| health_rank_for_sort(v.health))
                 .unwrap_or(3);
             let score = view.map(|v| v.score).unwrap_or(-100);
-            let runtime_feedback =
-                l3_table.relay_runtime_feedback_score(relay_id, now_unix_ms);
+            let runtime_feedback = l3_table.relay_runtime_feedback_score(relay_id, now_unix_ms);
             let composite = (score as i64) * L3_RELAY_SCORE_SCALE
                 + flags.source_bonus(profile)
                 + runtime_feedback * profile.runtime_feedback_scale;
@@ -2571,16 +3003,17 @@ fn l3_relay_candidate_chain_with_profile(
         .position(|candidate| !candidate.forced)
         .unwrap_or(available_ranked.len());
     if non_forced_start < available_ranked.len() {
-        if let Some(selected_idx) = available_ranked
-            .iter()
-            .enumerate()
-            .find_map(|(idx, candidate)| {
-                if idx >= non_forced_start && candidate.selected {
-                    Some(idx)
-                } else {
-                    None
-                }
-            })
+        if let Some(selected_idx) =
+            available_ranked
+                .iter()
+                .enumerate()
+                .find_map(|(idx, candidate)| {
+                    if idx >= non_forced_start && candidate.selected {
+                        Some(idx)
+                    } else {
+                        None
+                    }
+                })
         {
             let top = &available_ranked[non_forced_start];
             let selected = &available_ranked[selected_idx];
@@ -2900,7 +3333,9 @@ fn build_l3_readonly_export(
             .policy_profile_version_source
             .as_str()
             .to_string(),
-        policy_profile_version_requested: family_resolution.policy_profile_version_requested.clone(),
+        policy_profile_version_requested: family_resolution
+            .policy_profile_version_requested
+            .clone(),
         policy_profile_family_effective: family_resolution.family_effective.as_str().to_string(),
         policy_profile_family_source: family_resolution.family_source.as_str().to_string(),
         policy_profile_family_requested: family_resolution.family_requested.clone(),
@@ -2924,19 +3359,13 @@ fn build_l3_readonly_export(
             .family_min_effective
             .as_str()
             .to_string(),
-        policy_profile_family_min_source: family_resolution
-            .family_min_source
-            .as_str()
-            .to_string(),
+        policy_profile_family_min_source: family_resolution.family_min_source.as_str().to_string(),
         policy_profile_family_min_requested: family_resolution.family_min_requested.clone(),
         policy_profile_family_max_effective: family_resolution
             .family_max_effective
             .as_str()
             .to_string(),
-        policy_profile_family_max_source: family_resolution
-            .family_max_source
-            .as_str()
-            .to_string(),
+        policy_profile_family_max_source: family_resolution.family_max_source.as_str().to_string(),
         policy_profile_family_max_requested: family_resolution.family_max_requested.clone(),
         policy_profile_family_guardrail_applied: family_resolution.family_guardrail_applied,
         policy_profile_family_guardrail_reason: family_resolution
@@ -2952,10 +3381,16 @@ fn build_l3_readonly_export(
         profile_mode_policy_effective: profile_mode_policy.effective.as_str().to_string(),
         profile_mode_policy_requested: profile_mode_policy.requested.clone(),
         profile_mode_policy_source: profile_mode_policy.source.as_str().to_string(),
-        profile_mode_bound_min_effective: profile_mode_policy.mode_min_effective.as_str().to_string(),
+        profile_mode_bound_min_effective: profile_mode_policy
+            .mode_min_effective
+            .as_str()
+            .to_string(),
         profile_mode_bound_min_requested: profile_mode_policy.mode_min_requested.clone(),
         profile_mode_bound_min_source: profile_mode_policy.mode_min_source.as_str().to_string(),
-        profile_mode_bound_max_effective: profile_mode_policy.mode_max_effective.as_str().to_string(),
+        profile_mode_bound_max_effective: profile_mode_policy
+            .mode_max_effective
+            .as_str()
+            .to_string(),
         profile_mode_bound_max_requested: profile_mode_policy.mode_max_requested.clone(),
         profile_mode_bound_max_source: profile_mode_policy.mode_max_source.as_str().to_string(),
         profile_mode_guardrail_applied: profile_mode_policy.guardrail_applied,
@@ -2985,16 +3420,13 @@ fn build_l3_readonly_export(
         candidate_count,
         candidate_primary,
         selected_index,
-        runtime_top_relay_id: runtime_top
-            .map(|v| v.relay_id.clone())
-            .unwrap_or_default(),
+        runtime_top_relay_id: runtime_top.map(|v| v.relay_id.clone()).unwrap_or_default(),
         runtime_top_score: runtime_top.map(|v| v.runtime_score).unwrap_or(0),
         runtime_feedback_count: readonly.runtime_feedback.len() as u64,
         discovery_readonly_export_version: L3_DISCOVERY_READONLY_EXPORT_VERSION,
         discovery_freshness_fingerprint: L3_DISCOVERY_FRESHNESS_FINGERPRINT.to_string(),
         discovery_membership_max_age_ms: L3_DISCOVERY_MAX_AGE_MS_RUNTIME.load(Ordering::SeqCst),
-        discovery_membership_loaded_total: L3_DISCOVERY_LOADED_TOTAL_RUNTIME
-            .load(Ordering::SeqCst),
+        discovery_membership_loaded_total: L3_DISCOVERY_LOADED_TOTAL_RUNTIME.load(Ordering::SeqCst),
         discovery_membership_accepted_total: L3_DISCOVERY_ACCEPTED_TOTAL_RUNTIME
             .load(Ordering::SeqCst),
         discovery_membership_stale_dropped_total: L3_DISCOVERY_STALE_DROPPED_TOTAL_RUNTIME
@@ -3006,7 +3438,8 @@ fn build_l3_readonly_export(
         discovery_source_breakdown_export_version: L3_DISCOVERY_SOURCE_BREAKDOWN_EXPORT_VERSION,
         discovery_source_breakdown_fingerprint: L3_DISCOVERY_SOURCE_BREAKDOWN_FINGERPRINT
             .to_string(),
-        discovery_membership_priority_export_version: L3_DISCOVERY_MEMBERSHIP_PRIORITY_EXPORT_VERSION,
+        discovery_membership_priority_export_version:
+            L3_DISCOVERY_MEMBERSHIP_PRIORITY_EXPORT_VERSION,
         discovery_membership_priority_fingerprint: L3_DISCOVERY_MEMBERSHIP_PRIORITY_FINGERPRINT
             .to_string(),
         discovery_membership_priority_ordering: L3_DISCOVERY_MEMBERSHIP_PRIORITY_ORDERING
@@ -3164,14 +3597,11 @@ fn submit_ops_wire_report_with_route_and_log_with_fallback(
         } else {
             format!("{request_id}:relay_once:{idx}")
         };
-        let relayed = relay_client.forward_with(
-            attempt_request_id,
-            payload.to_vec(),
-            |_target, wire| {
+        let relayed =
+            relay_client.forward_with(attempt_request_id, payload.to_vec(), |_target, wire| {
                 let report = submit(wire);
                 (report.ok, report)
-            },
-        );
+            });
         let relay_report = relayed.response;
         let relay_ok = relay_report.ok;
         let relay_id = relay_client.relay_id().to_string();
@@ -3227,7 +3657,11 @@ fn submit_ops_wire_report_with_route_and_log_with_fallback(
                 emit_log(availability_relay_path_log_line(
                     &last_relay_id,
                     false,
-                    if relay_attempt_order.len() > 1 { "relay_once" } else { "off" },
+                    if relay_attempt_order.len() > 1 {
+                        "relay_once"
+                    } else {
+                        "off"
+                    },
                     false,
                 ));
                 emit_log(availability_l3_route_log_line(
@@ -3238,7 +3672,11 @@ fn submit_ops_wire_report_with_route_and_log_with_fallback(
                     } else {
                         "relay_primary_failed"
                     },
-                    if relay_attempt_order.len() > 1 { "relay_once" } else { "off" },
+                    if relay_attempt_order.len() > 1 {
+                        "relay_once"
+                    } else {
+                        "off"
+                    },
                     false,
                 ));
             }
@@ -3305,82 +3743,54 @@ fn submit_ops_wire_report_with_route(
 #[cfg(test)]
 mod relay_path_tests {
     use super::{
-        apply_relay_score_feedback, availability_relay_path_log_line,
-        build_l1l4_anchor_record, build_l2_state_snapshot,
-        build_l3_readonly_export, l3_relay_candidate_chain,
-        l3_relay_candidate_chain_with_profile, l3_route_selection_view,
-        default_governance_for_mode,
-        filter_l3_discovery_membership_fresh,
-        parse_l3_discovery_membership_gossip_json,
-        parse_l3_source_governance,
-        l3_profile_family_resolution_from_raw_inputs,
-        l3_profile_mode_policy_from_raw_inputs,
-        l3_profile_mode_policy_with_family_from_raw_inputs,
-        l3_routing_policy_profile_and_resolution_from_raw_inputs,
-        l3_routing_policy_resolution_from_raw_inputs,
-        l2_l1_export_version_mode_from_raw_input,
+        apply_relay_score_feedback, availability_relay_path_log_line, build_l1l4_anchor_record,
+        build_l2_l1_contract_summary_view, build_l2_l1_runtime_view, build_l2_l1_tripwire_view,
+        build_l2_state_snapshot, build_l3_readonly_export, default_governance_for_mode,
+        enforce_l2_l1_runtime_consistency_with_flag, filter_l3_discovery_membership_fresh,
+        l2_l1_cross_path_consistency_hard_gate, l2_l1_export_baseline_view, l2_l1_export_hard_gate,
+        l2_l1_export_version_mode_from_raw_input, l2_l1_export_version_view,
+        l2_l1_governance_lock_hash, l2_l1_path_consistency_hard_gate,
+        l2_l1_runtime_consistency_tripwire, l2_l1_runtime_fieldset_hard_gate,
         l2_l1_tripwire_strict_governance_from_raw_input,
-        l2_l1_runtime_consistency_tripwire,
-        l2_l1_path_consistency_hard_gate,
-        l2_l1_cross_path_consistency_hard_gate,
-        enforce_l2_l1_runtime_consistency_with_flag,
-        build_l2_l1_runtime_view,
-        build_l2_l1_contract_summary_view,
-        build_l2_l1_tripwire_view,
-        l2_l1_runtime_fieldset_hard_gate,
-        l2_l1_export_baseline_view,
-        l2_l1_export_hard_gate,
-        l2_l1_export_version_view,
-        l2_l1_governance_lock_hash,
-        resolve_relay_fallback_mode,
-        submit_ops_wire_report_with_route_and_log_with_fallback,
-        AoemSubmitReport, L1L4AnchorRecord, L2L1ExportVersionMode, L2RuntimeCounters, L2StateSnapshot,
-        L2L1TripwireView,
-        L3RoutingPolicyProfile, L3PolicyMode, L3PolicySelectionSource, L3CandidateSourceGovernance,
-        L2_L1_EXPORT_BASELINE_PHASE, L2_L1_EXPORT_BASELINE_VERSION, L2_L1_EXPORT_FIELDSET,
-        L2_L1_EXPORT_FIELDSET_FINGERPRINT, L2_L1_EXPORT_FIELDSET_VERSION,
-        L2_L1_CONTRACT_FIELDSET, L2_L1_CONTRACT_FINGERPRINT, L2_L1_CONTRACT_VERSION,
-        L2_L1_CONTRACT_COMPAT_VERSION, L2_L1_CONTRACT_BREAKING_GUARD_FINGERPRINT,
-        L2_L1_CONTRACT_BREAKING_GUARD_VERSION,
-        L2_L1_BASELINE_SEAL_FINGERPRINT, L2_L1_BASELINE_SEAL_VERSION,
-        L2_L1_CLOSURE_SEAL_FINGERPRINT, L2_L1_CLOSURE_SEAL_VERSION,
-        L2_L1_EXPORT_COMPAT_FINGERPRINT, L2_L1_EXPORT_COMPAT_LOCKSET,
-        L2_L1_EXPORT_COMPAT_VERSION, L2_L1_EXPORT_CURRENT_VERSION,
-        L2_L1_EXPORT_VERSION_SWITCH_SEMANTICS,
-        L2_L1_TRIPWIRE_STRICT_SWITCH_SEMANTICS,
+        l3_profile_family_resolution_from_raw_inputs, l3_profile_mode_policy_from_raw_inputs,
+        l3_profile_mode_policy_with_family_from_raw_inputs, l3_relay_candidate_chain,
+        l3_relay_candidate_chain_with_profile, l3_route_selection_view,
+        l3_routing_policy_profile_and_resolution_from_raw_inputs,
+        l3_routing_policy_resolution_from_raw_inputs, parse_l3_discovery_membership_gossip_json,
+        parse_l3_source_governance, resolve_relay_fallback_mode,
+        submit_ops_wire_report_with_route_and_log_with_fallback, AoemSubmitReport,
+        L1L4AnchorRecord, L2L1ExportVersionMode, L2L1TripwireView, L2RuntimeCounters,
+        L2StateSnapshot, L3CandidateSourceGovernance, L3PolicyMode, L3PolicySelectionSource,
+        L3RoutingPolicyProfile, RelayFailFallbackMode, L2_L1_BASELINE_SEAL_FINGERPRINT,
+        L2_L1_BASELINE_SEAL_VERSION, L2_L1_CLOSURE_SEAL_FINGERPRINT, L2_L1_CLOSURE_SEAL_VERSION,
+        L2_L1_CONTRACT_BREAKING_GUARD_FINGERPRINT, L2_L1_CONTRACT_BREAKING_GUARD_VERSION,
+        L2_L1_CONTRACT_COMPAT_VERSION, L2_L1_CONTRACT_FIELDSET, L2_L1_CONTRACT_FINGERPRINT,
+        L2_L1_CONTRACT_VERSION, L2_L1_CROSS_PATH_FINGERPRINT, L2_L1_CROSS_PATH_LOCK_VERSION,
+        L2_L1_CROSS_PATH_REGRESSION_LOCKSET, L2_L1_EXPORT_BASELINE_PHASE,
+        L2_L1_EXPORT_BASELINE_VERSION, L2_L1_EXPORT_COMPAT_FINGERPRINT,
+        L2_L1_EXPORT_COMPAT_LOCKSET, L2_L1_EXPORT_COMPAT_VERSION, L2_L1_EXPORT_CURRENT_VERSION,
+        L2_L1_EXPORT_FIELDSET, L2_L1_EXPORT_FIELDSET_FINGERPRINT, L2_L1_EXPORT_FIELDSET_VERSION,
         L2_L1_EXPORT_FINGERPRINT, L2_L1_EXPORT_LOCK_VERSION, L2_L1_EXPORT_REGRESSION_LOCKSET,
-        L2_L1_PATH_FINGERPRINT, L2_L1_PATH_LOCK_VERSION, L2_L1_PATH_REGRESSION_LOCKSET,
-        L2_L1_RUNTIME_FIELDSET, L2_L1_RUNTIME_FIELDSET_FINGERPRINT,
-        L2_L1_RUNTIME_FIELDSET_VERSION,
-        L2_L1_STATE_ANCHOR_MIRROR_FIELDSET, L2_L1_STATE_ANCHOR_MIRROR_FIELDSET_FINGERPRINT,
-        L2_L1_STATE_ANCHOR_MIRROR_FIELDSET_VERSION,
+        L2_L1_EXPORT_VERSION_SWITCH_SEMANTICS, L2_L1_GOVERNANCE_LOCK_FINGERPRINT,
+        L2_L1_GOVERNANCE_LOCK_VERSION, L2_L1_PATH_FINGERPRINT, L2_L1_PATH_LOCK_VERSION,
+        L2_L1_PATH_REGRESSION_LOCKSET, L2_L1_RUNTIME_FIELDSET, L2_L1_RUNTIME_FIELDSET_FINGERPRINT,
+        L2_L1_RUNTIME_FIELDSET_VERSION, L2_L1_STATE_ANCHOR_MIRROR_FIELDSET,
+        L2_L1_STATE_ANCHOR_MIRROR_FIELDSET_FINGERPRINT, L2_L1_STATE_ANCHOR_MIRROR_FIELDSET_VERSION,
         L2_L1_STATE_LOG_FIELDSET, L2_L1_STATE_LOG_FIELDSET_FINGERPRINT,
-        L2_L1_STATE_LOG_FIELDSET_VERSION,
-        L2_L1_GOVERNANCE_LOCK_FINGERPRINT, L2_L1_GOVERNANCE_LOCK_VERSION,
-        L2_L1_CROSS_PATH_FINGERPRINT, L2_L1_CROSS_PATH_LOCK_VERSION, L2_L1_CROSS_PATH_REGRESSION_LOCKSET,
-        L2_STATE_EXPORT_FINGERPRINT, L2_STATE_EXPORT_VERSION,
-        L3_BASELINE_FINGERPRINT, L3_BASELINE_LOCK_VERSION, L3_BASELINE_PHASE,
-        L3_POLICY_BASELINE_VERSION, L3_READONLY_EXPORT_BASELINE_VERSION, L3_REGRESSION_LOCKSET,
-        RelayFailFallbackMode,
-        L3_RELAY_RUNTIME_FEEDBACK_SCALE, L3_RELAY_SELECTED_STICKY_MARGIN,
-        L3_DISCOVERY_MEMBERSHIP_MAX_AGE_SECONDS_DEFAULT,
-        L3_DISCOVERY_MEMBERSHIP_MAX_AGE_SECONDS_MIN,
-        L3_DISCOVERY_MEMBERSHIP_MAX_AGE_SECONDS_MAX,
-        L3_DISCOVERY_SOURCE_GOVERNANCE_EXPORT_VERSION,
-        L3_DISCOVERY_SOURCE_GOVERNANCE_LOCK_VERSION,
-        L3_DISCOVERY_SOURCE_GOVERNANCE_FINGERPRINT,
-        L3_DISCOVERY_SOURCE_BREAKDOWN_EXPORT_VERSION,
-        L3_DISCOVERY_SOURCE_BREAKDOWN_FINGERPRINT,
-        L3_DISCOVERY_MAX_AGE_MS_RUNTIME,
-        L3_DISCOVERY_LOADED_TOTAL_RUNTIME,
-        L3_DISCOVERY_ACCEPTED_TOTAL_RUNTIME,
-        L3_DISCOVERY_STALE_DROPPED_TOTAL_RUNTIME,
-        L3_DISCOVERY_LOADED_PATH_TOTAL_RUNTIME,
-        L3_DISCOVERY_LOADED_JSON_TOTAL_RUNTIME,
-        L3_DISCOVERY_LOADED_GOSSIP_PATH_TOTAL_RUNTIME,
+        L2_L1_STATE_LOG_FIELDSET_VERSION, L2_L1_TRIPWIRE_STRICT_SWITCH_SEMANTICS,
+        L2_STATE_EXPORT_FINGERPRINT, L2_STATE_EXPORT_VERSION, L3_BASELINE_FINGERPRINT,
+        L3_BASELINE_LOCK_VERSION, L3_BASELINE_PHASE, L3_DISCOVERY_ACCEPTED_TOTAL_RUNTIME,
         L3_DISCOVERY_LOADED_GOSSIP_JSON_TOTAL_RUNTIME,
-        L3_DISCOVERY_LOADED_RUNTIME_STREAM_TOTAL_RUNTIME,
-        L3_DISCOVERY_LOADED_LOCAL_OBSERVED_TOTAL_RUNTIME,
+        L3_DISCOVERY_LOADED_GOSSIP_PATH_TOTAL_RUNTIME, L3_DISCOVERY_LOADED_JSON_TOTAL_RUNTIME,
+        L3_DISCOVERY_LOADED_LOCAL_OBSERVED_TOTAL_RUNTIME, L3_DISCOVERY_LOADED_PATH_TOTAL_RUNTIME,
+        L3_DISCOVERY_LOADED_RUNTIME_STREAM_TOTAL_RUNTIME, L3_DISCOVERY_LOADED_TOTAL_RUNTIME,
+        L3_DISCOVERY_MAX_AGE_MS_RUNTIME, L3_DISCOVERY_MEMBERSHIP_MAX_AGE_SECONDS_DEFAULT,
+        L3_DISCOVERY_MEMBERSHIP_MAX_AGE_SECONDS_MAX, L3_DISCOVERY_MEMBERSHIP_MAX_AGE_SECONDS_MIN,
+        L3_DISCOVERY_SOURCE_BREAKDOWN_EXPORT_VERSION, L3_DISCOVERY_SOURCE_BREAKDOWN_FINGERPRINT,
+        L3_DISCOVERY_SOURCE_GOVERNANCE_EXPORT_VERSION, L3_DISCOVERY_SOURCE_GOVERNANCE_FINGERPRINT,
+        L3_DISCOVERY_SOURCE_GOVERNANCE_LOCK_VERSION, L3_DISCOVERY_STALE_DROPPED_TOTAL_RUNTIME,
+        L3_POLICY_BASELINE_VERSION, L3_READONLY_EXPORT_BASELINE_VERSION, L3_REGRESSION_LOCKSET,
+        L3_RELAY_RUNTIME_FEEDBACK_SCALE, L3_RELAY_SELECTED_STICKY_MARGIN,
     };
     use novovm_network::{
         CapabilityReadiness, CapabilityRouteHint, GossipMessage, L3RegionalRoutingTable,
@@ -3662,14 +4072,7 @@ mod relay_path_tests {
             source: RoutingSource::RegionalAnnounced,
         });
 
-        let chain = l3_relay_candidate_chain(
-            &l3,
-            Some("relay-selected"),
-            None,
-            &[],
-            2,
-            1_000_000,
-        );
+        let chain = l3_relay_candidate_chain(&l3, Some("relay-selected"), None, &[], 2, 1_000_000);
         assert_eq!(chain, vec!["relay-selected", "relay-best"]);
     }
 
@@ -3695,14 +4098,7 @@ mod relay_path_tests {
             source: RoutingSource::RegionalAnnounced,
         });
 
-        let chain = l3_relay_candidate_chain(
-            &l3,
-            Some("relay-selected"),
-            None,
-            &[],
-            2,
-            1_000_000,
-        );
+        let chain = l3_relay_candidate_chain(&l3, Some("relay-selected"), None, &[], 2, 1_000_000);
         assert_eq!(chain, vec!["relay-best", "relay-selected"]);
     }
 
@@ -3774,14 +4170,7 @@ mod relay_path_tests {
             });
         }
 
-        let chain = l3_relay_candidate_chain(
-            &l3,
-            None,
-            None,
-            &[],
-            3,
-            1_000_000,
-        );
+        let chain = l3_relay_candidate_chain(&l3, None, None, &[], 3, 1_000_000);
         assert_eq!(
             chain,
             vec![
@@ -4397,8 +4786,8 @@ mod relay_path_tests {
         assert_eq!(published, 1);
 
         let raw = std::fs::read_to_string(&tmp).expect("read published gossip");
-        let decoded = parse_l3_discovery_membership_gossip_json(&raw)
-            .expect("decode published gossip");
+        let decoded =
+            parse_l3_discovery_membership_gossip_json(&raw).expect("decode published gossip");
         let inserted = super::ingest_runtime_relay_membership(decoded);
         assert_eq!(inserted, 1);
 
@@ -4453,8 +4842,8 @@ mod relay_path_tests {
         assert_eq!(published, 1);
 
         let raw = std::fs::read_to_string(&tmp).expect("read published gossip");
-        let decoded = parse_l3_discovery_membership_gossip_json(&raw)
-            .expect("decode published gossip");
+        let decoded =
+            parse_l3_discovery_membership_gossip_json(&raw).expect("decode published gossip");
         let inserted = super::ingest_runtime_relay_membership(decoded);
         assert_eq!(inserted, 1);
 
@@ -4509,8 +4898,8 @@ mod relay_path_tests {
         assert_eq!(published, 1);
 
         let raw = std::fs::read_to_string(&tmp).expect("read published gossip");
-        let decoded = parse_l3_discovery_membership_gossip_json(&raw)
-            .expect("decode published gossip");
+        let decoded =
+            parse_l3_discovery_membership_gossip_json(&raw).expect("decode published gossip");
         let inserted = super::ingest_runtime_relay_membership(decoded);
         assert_eq!(inserted, 1);
 
@@ -4561,11 +4950,13 @@ mod relay_path_tests {
             }],
             now.saturating_sub(1000),
         );
-        let published = super::publish_runtime_membership_gossip_to_path(&tmp_healthy, &healthy_entries)
-            .expect("publish healthy runtime membership gossip");
+        let published =
+            super::publish_runtime_membership_gossip_to_path(&tmp_healthy, &healthy_entries)
+                .expect("publish healthy runtime membership gossip");
         assert_eq!(published, 1);
         let raw = std::fs::read_to_string(&tmp_healthy).expect("read healthy gossip");
-        let decoded = parse_l3_discovery_membership_gossip_json(&raw).expect("decode healthy gossip");
+        let decoded =
+            parse_l3_discovery_membership_gossip_json(&raw).expect("decode healthy gossip");
         assert_eq!(super::ingest_runtime_relay_membership(decoded), 1);
 
         let _ = super::refresh_l3_discovery_membership(&table, "ap-east", false);
@@ -4584,7 +4975,9 @@ mod relay_path_tests {
                 candidate_limit: 3,
             },
         );
-        assert!(healthy_chain.iter().any(|id| id == "relay-cross-newer-unavailable"));
+        assert!(healthy_chain
+            .iter()
+            .any(|id| id == "relay-cross-newer-unavailable"));
 
         let tmp_unavailable = std::env::temp_dir().join(format!(
             "novovm-l3-cross-newer-unavail-unavailable-{}.json",
@@ -4609,7 +5002,8 @@ mod relay_path_tests {
         .expect("publish unavailable runtime membership gossip");
         assert_eq!(published, 1);
         let raw = std::fs::read_to_string(&tmp_unavailable).expect("read unavailable gossip");
-        let decoded = parse_l3_discovery_membership_gossip_json(&raw).expect("decode unavailable gossip");
+        let decoded =
+            parse_l3_discovery_membership_gossip_json(&raw).expect("decode unavailable gossip");
         assert_eq!(super::ingest_runtime_relay_membership(decoded), 1);
 
         let _ = super::refresh_l3_discovery_membership(&table, "ap-east", false);
@@ -4672,7 +5066,8 @@ mod relay_path_tests {
             .expect("publish cross route-affect gossip");
         assert_eq!(published, 1);
         let raw = std::fs::read_to_string(&tmp).expect("read route-affect gossip");
-        let decoded = parse_l3_discovery_membership_gossip_json(&raw).expect("decode route-affect gossip");
+        let decoded =
+            parse_l3_discovery_membership_gossip_json(&raw).expect("decode route-affect gossip");
         assert_eq!(super::ingest_runtime_relay_membership(decoded), 1);
         let _ = super::refresh_l3_discovery_membership(&table, "ap-east", false);
 
@@ -4713,10 +5108,8 @@ mod relay_path_tests {
         let table = L3RegionalRoutingTable::new("ap-east");
         let now = super::now_unix_ms();
 
-        let tmp_fresh = std::env::temp_dir().join(format!(
-            "novovm-l3-cross-stale-fresh-{}.json",
-            now
-        ));
+        let tmp_fresh =
+            std::env::temp_dir().join(format!("novovm-l3-cross-stale-fresh-{}.json", now));
         let fresh_entries = super::relay_membership_entries_from_relays(
             vec![RelayRef {
                 node_id: "relay-cross-stale-prune".to_string(),
@@ -4729,11 +5122,13 @@ mod relay_path_tests {
             }],
             now,
         );
-        let published = super::publish_runtime_membership_gossip_to_path(&tmp_fresh, &fresh_entries)
-            .expect("publish fresh stale-prune gossip");
+        let published =
+            super::publish_runtime_membership_gossip_to_path(&tmp_fresh, &fresh_entries)
+                .expect("publish fresh stale-prune gossip");
         assert_eq!(published, 1);
         let raw = std::fs::read_to_string(&tmp_fresh).expect("read fresh stale-prune gossip");
-        let decoded = parse_l3_discovery_membership_gossip_json(&raw).expect("decode fresh stale-prune gossip");
+        let decoded = parse_l3_discovery_membership_gossip_json(&raw)
+            .expect("decode fresh stale-prune gossip");
         assert_eq!(super::ingest_runtime_relay_membership(decoded), 1);
         let _ = super::refresh_l3_discovery_membership(&table, "ap-east", false);
         let chain_after_fresh = l3_relay_candidate_chain_with_profile(
@@ -4756,8 +5151,8 @@ mod relay_path_tests {
             .any(|id| id == "relay-cross-stale-prune"));
 
         let _ = super::drain_runtime_relay_membership();
-        let stale_seen =
-            now.saturating_sub((super::L3_DISCOVERY_MEMBERSHIP_MAX_AGE_SECONDS_DEFAULT + 10) * 1000);
+        let stale_seen = now
+            .saturating_sub((super::L3_DISCOVERY_MEMBERSHIP_MAX_AGE_SECONDS_DEFAULT + 10) * 1000);
         let tmp_stale = std::env::temp_dir().join(format!(
             "novovm-l3-cross-stale-stale-{}.json",
             super::now_unix_ms()
@@ -4774,11 +5169,13 @@ mod relay_path_tests {
             }],
             stale_seen,
         );
-        let published = super::publish_runtime_membership_gossip_to_path(&tmp_stale, &stale_entries)
-            .expect("publish stale stale-prune gossip");
+        let published =
+            super::publish_runtime_membership_gossip_to_path(&tmp_stale, &stale_entries)
+                .expect("publish stale stale-prune gossip");
         assert_eq!(published, 1);
         let raw = std::fs::read_to_string(&tmp_stale).expect("read stale stale-prune gossip");
-        let decoded = parse_l3_discovery_membership_gossip_json(&raw).expect("decode stale stale-prune gossip");
+        let decoded = parse_l3_discovery_membership_gossip_json(&raw)
+            .expect("decode stale stale-prune gossip");
         assert_eq!(super::ingest_runtime_relay_membership(decoded), 1);
         let _ = super::refresh_l3_discovery_membership(&table, "ap-east", false);
 
@@ -4826,18 +5223,15 @@ mod relay_path_tests {
             let tmp = std::env::temp_dir().join(format!(
                 "novovm-l3-cross-order-{}-{}.json",
                 super::now_unix_ms(),
-                relays
-                    .first()
-                    .map(|r| r.node_id.as_str())
-                    .unwrap_or("none")
+                relays.first().map(|r| r.node_id.as_str()).unwrap_or("none")
             ));
             let entries = super::relay_membership_entries_from_relays(relays, now);
             let published = super::publish_runtime_membership_gossip_to_path(&tmp, &entries)
                 .expect("publish runtime membership gossip");
             assert_eq!(published, 2);
             let raw = std::fs::read_to_string(&tmp).expect("read published gossip");
-            let decoded = parse_l3_discovery_membership_gossip_json(&raw)
-                .expect("decode published gossip");
+            let decoded =
+                parse_l3_discovery_membership_gossip_json(&raw).expect("decode published gossip");
             let inserted = super::ingest_runtime_relay_membership(decoded);
             assert_eq!(inserted, 2);
             let _ = super::refresh_l3_discovery_membership(&table, "ap-east", false);
@@ -4877,9 +5271,12 @@ mod relay_path_tests {
                 selected_index,
             );
             let tripwire = build_l2_l1_tripwire_view(&runtime, true);
-            let state_path_seal =
-                l2_l1_path_consistency_hard_gate("state", &runtime, &tripwire);
-            (selection, state_path_seal.closure_seal_hash, state_path_seal.seal_hash)
+            let state_path_seal = l2_l1_path_consistency_hard_gate("state", &runtime, &tripwire);
+            (
+                selection,
+                state_path_seal.closure_seal_hash,
+                state_path_seal.seal_hash,
+            )
         };
 
         let view_ab = build_view(vec![
@@ -4925,9 +5322,9 @@ mod relay_path_tests {
         ]);
 
         assert_eq!(view_ab, view_ba);
-        assert_eq!(view_ab.0.0, 3);
-        assert_eq!(view_ab.0.1, "relay-alpha-cross-m17".to_string());
-        assert_eq!(view_ab.0.2, 1);
+        assert_eq!(view_ab.0 .0, 3);
+        assert_eq!(view_ab.0 .1, "relay-alpha-cross-m17".to_string());
+        assert_eq!(view_ab.0 .2, 1);
         let _ = super::drain_runtime_relay_membership();
     }
 
@@ -4966,8 +5363,8 @@ mod relay_path_tests {
             .expect("publish runtime membership gossip");
         assert_eq!(published, 1);
         let raw = std::fs::read_to_string(&tmp).expect("read published gossip");
-        let decoded = parse_l3_discovery_membership_gossip_json(&raw)
-            .expect("decode published gossip");
+        let decoded =
+            parse_l3_discovery_membership_gossip_json(&raw).expect("decode published gossip");
         let inserted = super::ingest_runtime_relay_membership(decoded);
         assert_eq!(inserted, 1);
         let _ = super::refresh_l3_discovery_membership(&table, "ap-east", false);
@@ -5675,29 +6072,30 @@ mod relay_path_tests {
             source: RoutingSource::OperatorForced,
         });
 
-        let inserted = super::ingest_runtime_relay_membership(super::relay_membership_entries_from_relays(
-            vec![
-                RelayRef {
-                    node_id: "relay-runtime-zeta-m17".to_string(),
-                    region: "ap-east".to_string(),
-                    addr: "10.0.2.22:9001".to_string(),
-                    capacity_class: RelayCapacityClass::Large,
-                    health: RelayHealth::Healthy,
-                    score: 20,
-                    source: RoutingSource::PeerHinted,
-                },
-                RelayRef {
-                    node_id: "relay-runtime-eta-m17".to_string(),
-                    region: "ap-east".to_string(),
-                    addr: "10.0.2.23:9001".to_string(),
-                    capacity_class: RelayCapacityClass::Large,
-                    health: RelayHealth::Healthy,
-                    score: 19,
-                    source: RoutingSource::PeerHinted,
-                },
-            ],
-            now,
-        ));
+        let inserted =
+            super::ingest_runtime_relay_membership(super::relay_membership_entries_from_relays(
+                vec![
+                    RelayRef {
+                        node_id: "relay-runtime-zeta-m17".to_string(),
+                        region: "ap-east".to_string(),
+                        addr: "10.0.2.22:9001".to_string(),
+                        capacity_class: RelayCapacityClass::Large,
+                        health: RelayHealth::Healthy,
+                        score: 20,
+                        source: RoutingSource::PeerHinted,
+                    },
+                    RelayRef {
+                        node_id: "relay-runtime-eta-m17".to_string(),
+                        region: "ap-east".to_string(),
+                        addr: "10.0.2.23:9001".to_string(),
+                        capacity_class: RelayCapacityClass::Large,
+                        health: RelayHealth::Healthy,
+                        score: 19,
+                        source: RoutingSource::PeerHinted,
+                    },
+                ],
+                now,
+            ));
         assert_eq!(inserted, 2);
         let _ = super::refresh_l3_discovery_membership(&table, "ap-east", false);
         let chain = l3_relay_candidate_chain_with_profile(
@@ -5737,18 +6135,19 @@ mod relay_path_tests {
             score: 4,
             source: RoutingSource::RegionalAnnounced,
         });
-        let inserted = super::ingest_runtime_relay_membership(super::relay_membership_entries_from_relays(
-            vec![RelayRef {
-                node_id: "relay-runtime-ephemeral-m17".to_string(),
-                region: "ap-east".to_string(),
-                addr: "10.0.2.31:9001".to_string(),
-                capacity_class: RelayCapacityClass::Large,
-                health: RelayHealth::Healthy,
-                score: 11,
-                source: RoutingSource::PeerHinted,
-            }],
-            now,
-        ));
+        let inserted =
+            super::ingest_runtime_relay_membership(super::relay_membership_entries_from_relays(
+                vec![RelayRef {
+                    node_id: "relay-runtime-ephemeral-m17".to_string(),
+                    region: "ap-east".to_string(),
+                    addr: "10.0.2.31:9001".to_string(),
+                    capacity_class: RelayCapacityClass::Large,
+                    health: RelayHealth::Healthy,
+                    score: 11,
+                    source: RoutingSource::PeerHinted,
+                }],
+                now,
+            ));
         assert_eq!(inserted, 1);
         let _ = super::refresh_l3_discovery_membership(&table, "ap-east", false);
         table.prune_discovered_relays_except(&std::collections::HashSet::new());
@@ -5805,11 +6204,9 @@ mod relay_path_tests {
         assert_eq!(inserted_fresh, 1);
         let imported_fresh = super::refresh_l3_discovery_membership(&table, "ap-east", false);
         assert_eq!(imported_fresh, 1);
-        assert!(
-            table
-                .relay_score_view("relay-runtime-ephemeral-m15")
-                .is_some()
-        );
+        assert!(table
+            .relay_score_view("relay-runtime-ephemeral-m15")
+            .is_some());
 
         let max_age_ms = super::l3_discovery_membership_max_age_ms();
         let stale_seen = super::now_unix_ms().saturating_sub(max_age_ms.saturating_add(1));
@@ -5829,11 +6226,9 @@ mod relay_path_tests {
         assert_eq!(inserted_stale, 1);
         let imported_stale = super::refresh_l3_discovery_membership(&table, "ap-east", false);
         assert_eq!(imported_stale, 0);
-        assert!(
-            table
-                .relay_score_view("relay-runtime-ephemeral-m15")
-                .is_none()
-        );
+        assert!(table
+            .relay_score_view("relay-runtime-ephemeral-m15")
+            .is_none());
 
         for path in ["batch", "replay", "watch"] {
             let chain = l3_relay_candidate_chain_with_profile(
@@ -6029,7 +6424,10 @@ mod relay_path_tests {
                 source: RoutingSource::LocalObserved,
             }];
             if membership_first {
-                assert_eq!(super::ingest_runtime_relay_membership(membership_entries), 1);
+                assert_eq!(
+                    super::ingest_runtime_relay_membership(membership_entries),
+                    1
+                );
                 assert_eq!(
                     super::ingest_runtime_membership_from_local_observed_relays(local_relays, now),
                     1
@@ -6039,7 +6437,10 @@ mod relay_path_tests {
                     super::ingest_runtime_membership_from_local_observed_relays(local_relays, now),
                     1
                 );
-                assert_eq!(super::ingest_runtime_relay_membership(membership_entries), 1);
+                assert_eq!(
+                    super::ingest_runtime_relay_membership(membership_entries),
+                    1
+                );
             }
             let _ = super::refresh_l3_discovery_membership(&table, "ap-east", false);
             v2_snapshot(&table, "ap-east", now, Some("relay-membership-v2-a"), None)
@@ -6196,9 +6597,9 @@ mod relay_path_tests {
                 relays.reverse();
             }
             assert_eq!(
-                super::ingest_runtime_relay_membership(super::relay_membership_entries_from_relays(
-                    relays, now
-                )),
+                super::ingest_runtime_relay_membership(
+                    super::relay_membership_entries_from_relays(relays, now)
+                ),
                 2
             );
             let _ = super::refresh_l3_discovery_membership(&table, "ap-east", false);
@@ -6253,9 +6654,9 @@ mod relay_path_tests {
                 relays.reverse();
             }
             assert_eq!(
-                super::ingest_runtime_relay_membership(super::relay_membership_entries_from_relays(
-                    relays, now
-                )),
+                super::ingest_runtime_relay_membership(
+                    super::relay_membership_entries_from_relays(relays, now)
+                ),
                 2
             );
             let _ = super::refresh_l3_discovery_membership(&table, "ap-east", false);
@@ -6293,9 +6694,9 @@ mod relay_path_tests {
                 relays.reverse();
             }
             assert_eq!(
-                super::ingest_runtime_relay_membership(super::relay_membership_entries_from_relays(
-                    relays, now
-                )),
+                super::ingest_runtime_relay_membership(
+                    super::relay_membership_entries_from_relays(relays, now)
+                ),
                 2
             );
             let _ = super::refresh_l3_discovery_membership(&table, "ap-east", false);
@@ -6378,8 +6779,7 @@ mod relay_path_tests {
             };
             assert!(super::ingest_runtime_relay_membership(second_round) >= 1);
             let _ = super::refresh_l3_discovery_membership(&table, "ap-east", false);
-            let snapshot =
-                v2_snapshot(&table, "ap-east", now, Some("relay-survivor-v2-b4"), None);
+            let snapshot = v2_snapshot(&table, "ap-east", now, Some("relay-survivor-v2-b4"), None);
             assert!(!snapshot
                 .candidate_set
                 .iter()
@@ -6431,18 +6831,16 @@ mod relay_path_tests {
                 );
                 let _ = super::refresh_l3_discovery_membership(&table, "ap-east", false);
                 assert_eq!(
-                    super::ingest_runtime_relay_membership(super::relay_membership_entries_from_relays(
-                        vec![relay_a, relay_b],
-                        now,
-                    )),
+                    super::ingest_runtime_relay_membership(
+                        super::relay_membership_entries_from_relays(vec![relay_a, relay_b], now,)
+                    ),
                     2
                 );
             } else {
                 assert_eq!(
-                    super::ingest_runtime_relay_membership(super::relay_membership_entries_from_relays(
-                        vec![relay_a, relay_b],
-                        now,
-                    )),
+                    super::ingest_runtime_relay_membership(
+                        super::relay_membership_entries_from_relays(vec![relay_a, relay_b], now,)
+                    ),
                     2
                 );
             }
@@ -6550,28 +6948,39 @@ mod relay_path_tests {
             };
             if stale_first {
                 assert_eq!(
-                    super::ingest_runtime_relay_membership(super::relay_membership_entries_from_relays(
-                        vec![relay.clone()],
-                        stale_seen,
-                    )),
+                    super::ingest_runtime_relay_membership(
+                        super::relay_membership_entries_from_relays(
+                            vec![relay.clone()],
+                            stale_seen,
+                        )
+                    ),
                     1
                 );
                 let _ = super::refresh_l3_discovery_membership(&table, "ap-east", false);
             }
             assert_eq!(
-                super::ingest_runtime_relay_membership(super::relay_membership_entries_from_relays(
-                    vec![relay],
-                    now,
-                )),
+                super::ingest_runtime_relay_membership(
+                    super::relay_membership_entries_from_relays(vec![relay], now,)
+                ),
                 1
             );
             let _ = super::refresh_l3_discovery_membership(&table, "ap-east", false);
-            v2_snapshot(&table, "ap-east", now, Some("relay-stale-recover-v2-c"), None)
+            v2_snapshot(
+                &table,
+                "ap-east",
+                now,
+                Some("relay-stale-recover-v2-c"),
+                None,
+            )
         };
         let c4_left = run_stale_then_fresh(true);
         let _ = super::drain_runtime_relay_membership();
         let c4_right = run_stale_then_fresh(false);
-        v2_report_and_assert("C4.stale_then_fresh_recovery_converges", &c4_left, &c4_right);
+        v2_report_and_assert(
+            "C4.stale_then_fresh_recovery_converges",
+            &c4_left,
+            &c4_right,
+        );
         let _ = super::drain_runtime_relay_membership();
     }
 
@@ -6982,10 +7391,8 @@ mod relay_path_tests {
             let _ = super::ingest_runtime_relay_membership(final_sync);
             let _ = super::refresh_l3_discovery_membership(&table, "ap-east", false);
 
-            let mut keep_ids: std::collections::HashSet<String> = regional_relays()
-                .into_iter()
-                .map(|r| r.node_id)
-                .collect();
+            let mut keep_ids: std::collections::HashSet<String> =
+                regional_relays().into_iter().map(|r| r.node_id).collect();
             keep_ids.extend([
                 "relay-local-ap-v2-c".to_string(),
                 "relay-local-eu-v2-c".to_string(),
@@ -7132,11 +7539,11 @@ mod relay_path_tests {
                 source: RoutingSource::RegionalAnnounced,
             });
 
-            let _ = super::ingest_runtime_relay_membership(super::relay_membership_entries_from_relays(
-                base_relays(),
-                now,
-            ));
-            let _ = super::ingest_runtime_membership_from_local_observed_relays(local_observed(), now);
+            let _ = super::ingest_runtime_relay_membership(
+                super::relay_membership_entries_from_relays(base_relays(), now),
+            );
+            let _ =
+                super::ingest_runtime_membership_from_local_observed_relays(local_observed(), now);
             let _ = super::refresh_l3_discovery_membership(&table, "ap-east", false);
             let keep_ids = expected_keep_set();
             table.prune_discovered_relays_except(&keep_ids);
@@ -7226,8 +7633,10 @@ mod relay_path_tests {
                 let _ = super::ingest_runtime_relay_membership(
                     super::relay_membership_entries_from_relays(base_relays(), ts),
                 );
-                let _ =
-                    super::ingest_runtime_membership_from_local_observed_relays(local_observed(), ts);
+                let _ = super::ingest_runtime_membership_from_local_observed_relays(
+                    local_observed(),
+                    ts,
+                );
                 let _ = super::refresh_l3_discovery_membership(&table, "ap-east", false);
                 let keep_ids = expected_keep_set();
                 table.prune_discovered_relays_except(&keep_ids);
@@ -7395,11 +7804,11 @@ mod relay_path_tests {
                 score: 90,
                 source: RoutingSource::RegionalAnnounced,
             });
-            let _ = super::ingest_runtime_relay_membership(super::relay_membership_entries_from_relays(
-                base_relays(),
-                now,
-            ));
-            let _ = super::ingest_runtime_membership_from_local_observed_relays(local_observed(), now);
+            let _ = super::ingest_runtime_relay_membership(
+                super::relay_membership_entries_from_relays(base_relays(), now),
+            );
+            let _ =
+                super::ingest_runtime_membership_from_local_observed_relays(local_observed(), now);
             let _ = super::refresh_l3_discovery_membership(&table, "ap-east", false);
             table.prune_discovered_relays_except(&expected_keep_set());
             let snapshot = v2_snapshot(
@@ -7498,8 +7907,10 @@ mod relay_path_tests {
                 let _ = super::ingest_runtime_relay_membership(
                     super::relay_membership_entries_from_relays(base_relays(), ts),
                 );
-                let _ =
-                    super::ingest_runtime_membership_from_local_observed_relays(local_observed(), ts);
+                let _ = super::ingest_runtime_membership_from_local_observed_relays(
+                    local_observed(),
+                    ts,
+                );
                 let _ = super::refresh_l3_discovery_membership(&table, "ap-east", false);
                 table.prune_discovered_relays_except(&expected_keep_set());
 
@@ -7548,10 +7959,26 @@ mod relay_path_tests {
         let (mode1, r1, s1) = run_disturbed(1);
         let (mode2, r2, s2) = run_disturbed(2);
         let (mode3, r3, s3) = run_disturbed(3);
-        v2_report_and_assert("V2.Stage3B.recovery_budget.mode0_vs_reference", &mode0, &reference);
-        v2_report_and_assert("V2.Stage3B.recovery_budget.mode1_vs_reference", &mode1, &reference);
-        v2_report_and_assert("V2.Stage3B.recovery_budget.mode2_vs_reference", &mode2, &reference);
-        v2_report_and_assert("V2.Stage3B.recovery_budget.mode3_vs_reference", &mode3, &reference);
+        v2_report_and_assert(
+            "V2.Stage3B.recovery_budget.mode0_vs_reference",
+            &mode0,
+            &reference,
+        );
+        v2_report_and_assert(
+            "V2.Stage3B.recovery_budget.mode1_vs_reference",
+            &mode1,
+            &reference,
+        );
+        v2_report_and_assert(
+            "V2.Stage3B.recovery_budget.mode2_vs_reference",
+            &mode2,
+            &reference,
+        );
+        v2_report_and_assert(
+            "V2.Stage3B.recovery_budget.mode3_vs_reference",
+            &mode3,
+            &reference,
+        );
         println!("Stage3B.ConvergenceBudget mode0={r0}/{s0} mode1={r1}/{s1} mode2={r2}/{s2} mode3={r3}/{s3}");
     }
 
@@ -7596,9 +8023,9 @@ mod relay_path_tests {
                 relays.reverse();
             }
             assert_eq!(
-                super::ingest_runtime_relay_membership(super::relay_membership_entries_from_relays(
-                    relays, now
-                )),
+                super::ingest_runtime_relay_membership(
+                    super::relay_membership_entries_from_relays(relays, now)
+                ),
                 2
             );
             let _ = super::refresh_l3_discovery_membership(&table, "ap-east", false);
@@ -7663,10 +8090,9 @@ mod relay_path_tests {
                 );
             } else {
                 assert_eq!(
-                    super::ingest_runtime_relay_membership(super::relay_membership_entries_from_relays(
-                        vec![ap, eu],
-                        now,
-                    )),
+                    super::ingest_runtime_relay_membership(
+                        super::relay_membership_entries_from_relays(vec![ap, eu], now,)
+                    ),
                     2
                 );
             }
@@ -7685,63 +8111,62 @@ mod relay_path_tests {
         v2_report_and_assert("D2.cross_region_delay_converges", &d2_left, &d2_right);
 
         let _ = super::drain_runtime_relay_membership();
-        let run_multi_region_local_vs_membership =
-            |local_first: bool| -> V2AdjudicationSnapshot {
-                let table = L3RegionalRoutingTable::new("ap-east");
-                table.upsert_l3_relay(RelayRef {
-                    node_id: "relay-forced-v2-d3".to_string(),
+        let run_multi_region_local_vs_membership = |local_first: bool| -> V2AdjudicationSnapshot {
+            let table = L3RegionalRoutingTable::new("ap-east");
+            table.upsert_l3_relay(RelayRef {
+                node_id: "relay-forced-v2-d3".to_string(),
+                region: "ap-east".to_string(),
+                addr: "10.52.0.1:9001".to_string(),
+                capacity_class: RelayCapacityClass::Medium,
+                health: RelayHealth::Healthy,
+                score: 0,
+                source: RoutingSource::OperatorForced,
+            });
+            let local = vec![RelayRef {
+                node_id: "relay-local-us-east-v2-d3".to_string(),
+                region: "us-east".to_string(),
+                addr: "10.52.0.2:9001".to_string(),
+                capacity_class: RelayCapacityClass::Large,
+                health: RelayHealth::Healthy,
+                score: 25,
+                source: RoutingSource::LocalObserved,
+            }];
+            let membership = super::relay_membership_entries_from_relays(
+                vec![RelayRef {
+                    node_id: "relay-membership-ap-east-v2-d3".to_string(),
                     region: "ap-east".to_string(),
-                    addr: "10.52.0.1:9001".to_string(),
-                    capacity_class: RelayCapacityClass::Medium,
-                    health: RelayHealth::Healthy,
-                    score: 0,
-                    source: RoutingSource::OperatorForced,
-                });
-                let local = vec![RelayRef {
-                    node_id: "relay-local-us-east-v2-d3".to_string(),
-                    region: "us-east".to_string(),
-                    addr: "10.52.0.2:9001".to_string(),
+                    addr: "10.52.0.3:9001".to_string(),
                     capacity_class: RelayCapacityClass::Large,
                     health: RelayHealth::Healthy,
-                    score: 25,
-                    source: RoutingSource::LocalObserved,
-                }];
-                let membership = super::relay_membership_entries_from_relays(
-                    vec![RelayRef {
-                        node_id: "relay-membership-ap-east-v2-d3".to_string(),
-                        region: "ap-east".to_string(),
-                        addr: "10.52.0.3:9001".to_string(),
-                        capacity_class: RelayCapacityClass::Large,
-                        health: RelayHealth::Healthy,
-                        score: 8,
-                        source: RoutingSource::PeerHinted,
-                    }],
-                    now,
+                    score: 8,
+                    source: RoutingSource::PeerHinted,
+                }],
+                now,
+            );
+            if local_first {
+                assert_eq!(
+                    super::ingest_runtime_membership_from_local_observed_relays(local, now),
+                    1
                 );
-                if local_first {
-                    assert_eq!(
-                        super::ingest_runtime_membership_from_local_observed_relays(local, now),
-                        1
-                    );
-                    assert_eq!(super::ingest_runtime_relay_membership(membership), 1);
-                } else {
-                    assert_eq!(super::ingest_runtime_relay_membership(membership), 1);
-                    assert_eq!(
-                        super::ingest_runtime_membership_from_local_observed_relays(local, now),
-                        1
-                    );
-                }
-                let _ = super::refresh_l3_discovery_membership(&table, "ap-east", false);
-                let snapshot = v2_snapshot(
-                    &table,
-                    "ap-east",
-                    now,
-                    Some("relay-forced-v2-d3"),
-                    Some("relay-forced-v2-d3"),
+                assert_eq!(super::ingest_runtime_relay_membership(membership), 1);
+            } else {
+                assert_eq!(super::ingest_runtime_relay_membership(membership), 1);
+                assert_eq!(
+                    super::ingest_runtime_membership_from_local_observed_relays(local, now),
+                    1
                 );
-                assert_eq!(snapshot.primary, "relay-forced-v2-d3");
-                snapshot
-            };
+            }
+            let _ = super::refresh_l3_discovery_membership(&table, "ap-east", false);
+            let snapshot = v2_snapshot(
+                &table,
+                "ap-east",
+                now,
+                Some("relay-forced-v2-d3"),
+                Some("relay-forced-v2-d3"),
+            );
+            assert_eq!(snapshot.primary, "relay-forced-v2-d3");
+            snapshot
+        };
         let d3_left = run_multi_region_local_vs_membership(true);
         let _ = super::drain_runtime_relay_membership();
         let d3_right = run_multi_region_local_vs_membership(false);
@@ -7762,34 +8187,9 @@ mod relay_path_tests {
                 source: RoutingSource::OperatorForced,
             });
             assert_eq!(
-                super::ingest_runtime_relay_membership(super::relay_membership_entries_from_relays(
-                    vec![RelayRef {
-                        node_id: "relay-eu-west-v2-d".to_string(),
-                        region: "eu-west".to_string(),
-                        addr: "10.50.0.3:9001".to_string(),
-                        capacity_class: RelayCapacityClass::Large,
-                        health: RelayHealth::Healthy,
-                        score: 20,
-                        source: RoutingSource::PeerHinted,
-                    }],
-                    now,
-                )),
-                1
-            );
-            let _ = super::refresh_l3_discovery_membership(&table, "ap-east", false);
-            assert_eq!(
-                super::ingest_runtime_relay_membership(super::relay_membership_entries_from_relays(
-                    vec![
-                        RelayRef {
-                            node_id: "relay-ap-east-v2-d".to_string(),
-                            region: "ap-east".to_string(),
-                            addr: "10.50.0.2:9001".to_string(),
-                            capacity_class: RelayCapacityClass::Large,
-                            health: RelayHealth::Healthy,
-                            score: 10,
-                            source: RoutingSource::PeerHinted,
-                        },
-                        RelayRef {
+                super::ingest_runtime_relay_membership(
+                    super::relay_membership_entries_from_relays(
+                        vec![RelayRef {
                             node_id: "relay-eu-west-v2-d".to_string(),
                             region: "eu-west".to_string(),
                             addr: "10.50.0.3:9001".to_string(),
@@ -7797,10 +8197,39 @@ mod relay_path_tests {
                             health: RelayHealth::Healthy,
                             score: 20,
                             source: RoutingSource::PeerHinted,
-                        },
-                    ],
-                    now,
-                )),
+                        }],
+                        now,
+                    )
+                ),
+                1
+            );
+            let _ = super::refresh_l3_discovery_membership(&table, "ap-east", false);
+            assert_eq!(
+                super::ingest_runtime_relay_membership(
+                    super::relay_membership_entries_from_relays(
+                        vec![
+                            RelayRef {
+                                node_id: "relay-ap-east-v2-d".to_string(),
+                                region: "ap-east".to_string(),
+                                addr: "10.50.0.2:9001".to_string(),
+                                capacity_class: RelayCapacityClass::Large,
+                                health: RelayHealth::Healthy,
+                                score: 10,
+                                source: RoutingSource::PeerHinted,
+                            },
+                            RelayRef {
+                                node_id: "relay-eu-west-v2-d".to_string(),
+                                region: "eu-west".to_string(),
+                                addr: "10.50.0.3:9001".to_string(),
+                                capacity_class: RelayCapacityClass::Large,
+                                health: RelayHealth::Healthy,
+                                score: 20,
+                                source: RoutingSource::PeerHinted,
+                            },
+                        ],
+                        now,
+                    )
+                ),
                 2
             );
             let _ = super::refresh_l3_discovery_membership(&table, "ap-east", false);
@@ -7879,7 +8308,10 @@ mod relay_path_tests {
             score: 99,
             source: RoutingSource::PeerHinted,
         });
-        assert!(!applied, "discovery must not override operator-forced relay");
+        assert!(
+            !applied,
+            "discovery must not override operator-forced relay"
+        );
 
         l3.upsert_l3_relay_discovered(RelayRef {
             node_id: "relay-discovery-only".into(),
@@ -7975,8 +8407,8 @@ mod relay_path_tests {
         assert_eq!(single_decoded, members);
 
         let vec_raw = serde_json::to_string(&vec![message]).expect("encode vec gossip message");
-        let vec_decoded =
-            parse_l3_discovery_membership_gossip_json(&vec_raw).expect("decode vec gossip membership");
+        let vec_decoded = parse_l3_discovery_membership_gossip_json(&vec_raw)
+            .expect("decode vec gossip membership");
         assert_eq!(vec_decoded, members);
     }
 
@@ -8044,7 +8476,10 @@ mod relay_path_tests {
         assert_eq!(export.baseline_lock_version, 1);
         assert_eq!(export.policy_baseline_version, 1);
         assert_eq!(export.readonly_export_baseline_version, 1);
-        assert_eq!(export.regression_lockset, "relay_path_tests+queue_replay_smoke");
+        assert_eq!(
+            export.regression_lockset,
+            "relay_path_tests+queue_replay_smoke"
+        );
         assert_eq!(
             export.baseline_fingerprint,
             "l3-baseline:f0-f5:v1:forced>health>composite(score*scale+source_bonus)>relay_id"
@@ -8071,7 +8506,10 @@ mod relay_path_tests {
             "family_production_defaults_locked_open_range"
         );
         assert_eq!(export.policy_profile_family_governance_effective, "locked");
-        assert_eq!(export.policy_profile_family_governance_source, "default_locked");
+        assert_eq!(
+            export.policy_profile_family_governance_source,
+            "default_locked"
+        );
         assert_eq!(export.policy_profile_family_governance_requested, "");
         assert!(!export.policy_profile_family_adaptation_applied);
         assert_eq!(
@@ -8079,10 +8517,16 @@ mod relay_path_tests {
             "family_governance_locked"
         );
         assert_eq!(export.policy_profile_family_min_effective, "conservative");
-        assert_eq!(export.policy_profile_family_min_source, "default_open_range");
+        assert_eq!(
+            export.policy_profile_family_min_source,
+            "default_open_range"
+        );
         assert_eq!(export.policy_profile_family_min_requested, "");
         assert_eq!(export.policy_profile_family_max_effective, "aggressive");
-        assert_eq!(export.policy_profile_family_max_source, "default_open_range");
+        assert_eq!(
+            export.policy_profile_family_max_source,
+            "default_open_range"
+        );
         assert_eq!(export.policy_profile_family_max_requested, "");
         assert!(!export.policy_profile_family_guardrail_applied);
         assert_eq!(
@@ -8141,9 +8585,15 @@ mod relay_path_tests {
         assert_eq!(export.profile_mode_bound_max_requested, "");
         assert_eq!(export.profile_mode_bound_max_source, "default_open_range");
         assert!(!export.profile_mode_guardrail_applied);
-        assert_eq!(export.profile_mode_guardrail_reason, "guardrail_not_applied");
+        assert_eq!(
+            export.profile_mode_guardrail_reason,
+            "guardrail_not_applied"
+        );
         assert!(!export.profile_mode_adaptation_applied);
-        assert_eq!(export.profile_mode_adaptation_reason, "policy_no_mode_change");
+        assert_eq!(
+            export.profile_mode_adaptation_reason,
+            "policy_no_mode_change"
+        );
         assert_eq!(
             export.policy_profile_tuning_semantics,
             "baseline_locked_no_tuning_override"
@@ -8155,7 +8605,10 @@ mod relay_path_tests {
             export.relay_fallback_switch_semantics,
             "single_relay_no_direct_fallback"
         );
-        assert_eq!(export.effective_sticky_margin, L3_RELAY_SELECTED_STICKY_MARGIN);
+        assert_eq!(
+            export.effective_sticky_margin,
+            L3_RELAY_SELECTED_STICKY_MARGIN
+        );
         assert_eq!(export.sticky_margin_requested, "");
         assert_eq!(export.sticky_margin_source, "baseline_locked");
         assert_eq!(
@@ -8239,7 +8692,10 @@ mod relay_path_tests {
             L2_L1_EXPORT_REGRESSION_LOCKSET
         );
         assert_eq!(export.baseline.fingerprint, L2_L1_EXPORT_FINGERPRINT);
-        assert_eq!(export.baseline.state_export_version, L2_STATE_EXPORT_VERSION);
+        assert_eq!(
+            export.baseline.state_export_version,
+            L2_STATE_EXPORT_VERSION
+        );
         assert_eq!(
             export.baseline.state_export_fingerprint,
             L2_STATE_EXPORT_FINGERPRINT
@@ -8283,7 +8739,10 @@ mod relay_path_tests {
         assert_eq!(version_view.phase, L2_L1_EXPORT_BASELINE_PHASE);
         assert_eq!(version_view.baseline_version, L2_L1_EXPORT_BASELINE_VERSION);
         assert_eq!(version_view.lock_version, L2_L1_EXPORT_LOCK_VERSION);
-        assert_eq!(version_view.regression_lockset, L2_L1_EXPORT_REGRESSION_LOCKSET);
+        assert_eq!(
+            version_view.regression_lockset,
+            L2_L1_EXPORT_REGRESSION_LOCKSET
+        );
         assert_eq!(version_view.fingerprint, L2_L1_EXPORT_FINGERPRINT);
         assert_eq!(version_view.fieldset_version, L2_L1_EXPORT_FIELDSET_VERSION);
         assert_eq!(
@@ -8344,10 +8803,7 @@ mod relay_path_tests {
             assert_eq!(view.regression_lockset, L2_L1_EXPORT_REGRESSION_LOCKSET);
             assert_eq!(view.fingerprint, L2_L1_EXPORT_FINGERPRINT);
             assert_eq!(view.fieldset_version, L2_L1_EXPORT_FIELDSET_VERSION);
-            assert_eq!(
-                view.fieldset_fingerprint,
-                L2_L1_EXPORT_FIELDSET_FINGERPRINT
-            );
+            assert_eq!(view.fieldset_fingerprint, L2_L1_EXPORT_FIELDSET_FINGERPRINT);
             assert_eq!(view.state_export_version, L2_STATE_EXPORT_VERSION);
             assert_eq!(view.state_export_fingerprint, L2_STATE_EXPORT_FINGERPRINT);
         }
@@ -8374,7 +8830,10 @@ mod relay_path_tests {
             runtime_view.versions.baseline_version,
             L2_L1_EXPORT_BASELINE_VERSION
         );
-        assert_eq!(runtime_view.versions.lock_version, L2_L1_EXPORT_LOCK_VERSION);
+        assert_eq!(
+            runtime_view.versions.lock_version,
+            L2_L1_EXPORT_LOCK_VERSION
+        );
         assert_eq!(
             runtime_view.versions.regression_lockset,
             L2_L1_EXPORT_REGRESSION_LOCKSET
@@ -8508,17 +8967,29 @@ mod relay_path_tests {
             assert!(tripwire.issue.is_empty());
 
             assert_eq!(view.versions.phase, L2_L1_EXPORT_BASELINE_PHASE);
-            assert_eq!(view.versions.baseline_version, L2_L1_EXPORT_BASELINE_VERSION);
+            assert_eq!(
+                view.versions.baseline_version,
+                L2_L1_EXPORT_BASELINE_VERSION
+            );
             assert_eq!(view.versions.lock_version, L2_L1_EXPORT_LOCK_VERSION);
-            assert_eq!(view.versions.regression_lockset, L2_L1_EXPORT_REGRESSION_LOCKSET);
+            assert_eq!(
+                view.versions.regression_lockset,
+                L2_L1_EXPORT_REGRESSION_LOCKSET
+            );
             assert_eq!(view.versions.fingerprint, L2_L1_EXPORT_FINGERPRINT);
-            assert_eq!(view.versions.fieldset_version, L2_L1_EXPORT_FIELDSET_VERSION);
+            assert_eq!(
+                view.versions.fieldset_version,
+                L2_L1_EXPORT_FIELDSET_VERSION
+            );
             assert_eq!(
                 view.versions.fieldset_fingerprint,
                 L2_L1_EXPORT_FIELDSET_FINGERPRINT
             );
             assert_eq!(view.versions.state_export_version, L2_STATE_EXPORT_VERSION);
-            assert_eq!(view.versions.state_export_fingerprint, L2_STATE_EXPORT_FINGERPRINT);
+            assert_eq!(
+                view.versions.state_export_fingerprint,
+                L2_STATE_EXPORT_FINGERPRINT
+            );
             assert!(enforce_l2_l1_runtime_consistency_with_flag(&view, true).is_ok());
         }
     }
@@ -8733,13 +9204,19 @@ mod relay_path_tests {
             Some(1)
         );
         assert_eq!(json["l4_readonly_local_observed_unknown"].as_u64(), Some(1));
-        assert_eq!(json["l4_readonly_operator_forced_unknown"].as_u64(), Some(0));
+        assert_eq!(
+            json["l4_readonly_operator_forced_unknown"].as_u64(),
+            Some(0)
+        );
         assert_eq!(
             json["l4_readonly_direct_candidate_chain"].as_str(),
             Some("relay-a")
         );
         assert_eq!(json["l4_readonly_direct_candidate_count"].as_u64(), Some(1));
-        assert_eq!(json["l4_readonly_freshness_window_ms"].as_u64(), Some(60_000));
+        assert_eq!(
+            json["l4_readonly_freshness_window_ms"].as_u64(),
+            Some(60_000)
+        );
         assert_eq!(json["l3_discovery_export_version"].as_u64(), Some(1));
         assert_eq!(
             json["l3_discovery_fingerprint"].as_str(),
@@ -8783,8 +9260,14 @@ mod relay_path_tests {
         );
         assert_eq!(json["l3_discovery_loaded_path_total"].as_u64(), Some(1));
         assert_eq!(json["l3_discovery_loaded_json_total"].as_u64(), Some(1));
-        assert_eq!(json["l3_discovery_loaded_gossip_path_total"].as_u64(), Some(0));
-        assert_eq!(json["l3_discovery_loaded_gossip_json_total"].as_u64(), Some(0));
+        assert_eq!(
+            json["l3_discovery_loaded_gossip_path_total"].as_u64(),
+            Some(0)
+        );
+        assert_eq!(
+            json["l3_discovery_loaded_gossip_json_total"].as_u64(),
+            Some(0)
+        );
         assert_eq!(
             json["l3_discovery_loaded_runtime_stream_total"].as_u64(),
             Some(0)
@@ -8794,7 +9277,10 @@ mod relay_path_tests {
             Some(1)
         );
         assert_eq!(json["l2_l1_tripwire_strict"].as_bool(), Some(true));
-        assert_eq!(json["l2_l1_tripwire_strict_source"].as_str(), Some("default_true"));
+        assert_eq!(
+            json["l2_l1_tripwire_strict_source"].as_str(),
+            Some("default_true")
+        );
         assert_eq!(json["l2_l1_tripwire_strict_requested"].as_str(), Some("-"));
         assert_eq!(
             json["l2_l1_tripwire_strict_switch_semantics"].as_str(),
@@ -8823,7 +9309,9 @@ mod relay_path_tests {
             Some(L2_L1_CONTRACT_BREAKING_GUARD_FINGERPRINT)
         );
         assert!(
-            json["l2_l1_contract_breaking_guard_hash"].as_u64().is_some(),
+            json["l2_l1_contract_breaking_guard_hash"]
+                .as_u64()
+                .is_some(),
             "contract breaking guard hash should be present"
         );
         assert_eq!(
@@ -8879,10 +9367,22 @@ mod relay_path_tests {
         let cross_path_seal = json["l2_l1_cross_path_seal_hash"]
             .as_u64()
             .expect("cross path seal hash must exist");
-        assert_eq!(json["l2_l1_cross_path_state_seal_hash"].as_u64(), Some(1001));
-        assert_eq!(json["l2_l1_cross_path_replay_seal_hash"].as_u64(), Some(1002));
-        assert_eq!(json["l2_l1_cross_path_watch_seal_hash"].as_u64(), Some(1003));
-        assert_eq!(json["l2_l1_cross_path_batch_seal_hash"].as_u64(), Some(1004));
+        assert_eq!(
+            json["l2_l1_cross_path_state_seal_hash"].as_u64(),
+            Some(1001)
+        );
+        assert_eq!(
+            json["l2_l1_cross_path_replay_seal_hash"].as_u64(),
+            Some(1002)
+        );
+        assert_eq!(
+            json["l2_l1_cross_path_watch_seal_hash"].as_u64(),
+            Some(1003)
+        );
+        assert_eq!(
+            json["l2_l1_cross_path_batch_seal_hash"].as_u64(),
+            Some(1004)
+        );
         assert_ne!(
             json["l2_l1_cross_path_state_seal_hash"].as_u64(),
             Some(cross_path_seal),
@@ -8906,7 +9406,10 @@ mod relay_path_tests {
             "l2_l1_cross_path_watch_seal_hash",
             "l2_l1_cross_path_batch_seal_hash",
         ] {
-            assert!(json.get(key).is_some(), "missing cross path anchor field: {key}");
+            assert!(
+                json.get(key).is_some(),
+                "missing cross path anchor field: {key}"
+            );
         }
     }
 
@@ -8963,7 +9466,10 @@ mod relay_path_tests {
             json["l3_readonly_export_baseline_version"].as_u64(),
             Some(L3_READONLY_EXPORT_BASELINE_VERSION as u64)
         );
-        assert_eq!(json["l3_regression_lockset"].as_str(), Some(L3_REGRESSION_LOCKSET));
+        assert_eq!(
+            json["l3_regression_lockset"].as_str(),
+            Some(L3_REGRESSION_LOCKSET)
+        );
         assert_eq!(
             json["l3_baseline_fingerprint"].as_str(),
             Some(L3_BASELINE_FINGERPRINT)
@@ -9020,7 +9526,10 @@ mod relay_path_tests {
             L2_L1_EXPORT_FIELDSET_FINGERPRINT
         );
         assert_eq!(baseline.state_export_version, L2_STATE_EXPORT_VERSION);
-        assert_eq!(baseline.state_export_fingerprint, L2_STATE_EXPORT_FINGERPRINT);
+        assert_eq!(
+            baseline.state_export_fingerprint,
+            L2_STATE_EXPORT_FINGERPRINT
+        );
         assert_eq!(L2_L1_EXPORT_FIELDSET.len(), 18);
     }
 
@@ -9075,7 +9584,10 @@ mod relay_path_tests {
             "l2-l1-governance-lock:v1:l3-profile-governance+tripwire-strict-governance+l2-export-mode"
         );
         assert_eq!(L2_L1_CROSS_PATH_LOCK_VERSION, 1);
-        assert_eq!(L2_L1_CROSS_PATH_REGRESSION_LOCKSET, L2_L1_EXPORT_REGRESSION_LOCKSET);
+        assert_eq!(
+            L2_L1_CROSS_PATH_REGRESSION_LOCKSET,
+            L2_L1_EXPORT_REGRESSION_LOCKSET
+        );
         assert_eq!(
             L2_L1_CROSS_PATH_FINGERPRINT,
             "l2-l1-cross-path-lock:v1:tripwire+contract+governance"
@@ -9098,8 +9610,14 @@ mod relay_path_tests {
         );
         assert_eq!(L2_L1_STATE_LOG_FIELDSET, L2_L1_STATE_ANCHOR_MIRROR_FIELDSET);
         assert_eq!(L2_L1_PATH_LOCK_VERSION, 1);
-        assert_eq!(L2_L1_PATH_REGRESSION_LOCKSET, L2_L1_EXPORT_REGRESSION_LOCKSET);
-        assert_eq!(L2_L1_PATH_FINGERPRINT, "l2-l1-path-lock:v1:state+watch+batch");
+        assert_eq!(
+            L2_L1_PATH_REGRESSION_LOCKSET,
+            L2_L1_EXPORT_REGRESSION_LOCKSET
+        );
+        assert_eq!(
+            L2_L1_PATH_FINGERPRINT,
+            "l2-l1-path-lock:v1:state+watch+batch"
+        );
         assert_eq!(L2_L1_EXPORT_CURRENT_VERSION, 2);
         assert_eq!(L2_L1_EXPORT_COMPAT_VERSION, 1);
         assert_eq!(L2_L1_EXPORT_COMPAT_LOCKSET, L2_L1_EXPORT_REGRESSION_LOCKSET);
@@ -9161,7 +9679,10 @@ mod relay_path_tests {
         assert!(view.effective_strict);
         assert_eq!(view.source, "default_true");
         assert_eq!(view.requested_mode, "-");
-        assert_eq!(view.switch_semantics, L2_L1_TRIPWIRE_STRICT_SWITCH_SEMANTICS);
+        assert_eq!(
+            view.switch_semantics,
+            L2_L1_TRIPWIRE_STRICT_SWITCH_SEMANTICS
+        );
     }
 
     #[test]
@@ -9170,7 +9691,10 @@ mod relay_path_tests {
         assert!(view.effective_strict);
         assert_eq!(view.source, "env_invalid_fallback");
         assert_eq!(view.requested_mode, "oops");
-        assert_eq!(view.switch_semantics, L2_L1_TRIPWIRE_STRICT_SWITCH_SEMANTICS);
+        assert_eq!(
+            view.switch_semantics,
+            L2_L1_TRIPWIRE_STRICT_SWITCH_SEMANTICS
+        );
     }
 
     #[test]
@@ -9179,7 +9703,10 @@ mod relay_path_tests {
         assert!(!view.effective_strict);
         assert_eq!(view.source, "env_explicit");
         assert_eq!(view.requested_mode, "FaLsE");
-        assert_eq!(view.switch_semantics, L2_L1_TRIPWIRE_STRICT_SWITCH_SEMANTICS);
+        assert_eq!(
+            view.switch_semantics,
+            L2_L1_TRIPWIRE_STRICT_SWITCH_SEMANTICS
+        );
     }
 
     #[test]
@@ -9188,7 +9715,10 @@ mod relay_path_tests {
         assert!(view.effective_strict);
         assert_eq!(view.source, "env_invalid_fallback");
         assert_eq!(view.requested_mode, "oops");
-        assert_eq!(view.switch_semantics, L2_L1_TRIPWIRE_STRICT_SWITCH_SEMANTICS);
+        assert_eq!(
+            view.switch_semantics,
+            L2_L1_TRIPWIRE_STRICT_SWITCH_SEMANTICS
+        );
     }
 
     #[test]
@@ -9197,7 +9727,10 @@ mod relay_path_tests {
         assert!(!view.effective_strict);
         assert_eq!(view.source, "env_explicit");
         assert_eq!(view.requested_mode, "false");
-        assert_eq!(view.switch_semantics, L2_L1_TRIPWIRE_STRICT_SWITCH_SEMANTICS);
+        assert_eq!(
+            view.switch_semantics,
+            L2_L1_TRIPWIRE_STRICT_SWITCH_SEMANTICS
+        );
     }
 
     #[test]
@@ -9980,7 +10513,8 @@ mod relay_path_tests {
             build_l2_l1_contract_summary_view(&runtime, &tripwire_watch, governance_hash);
         let mut batch_summary =
             build_l2_l1_contract_summary_view(&runtime, &tripwire_batch, governance_hash);
-        batch_summary.export_current_version = batch_summary.export_current_version.saturating_add(1);
+        batch_summary.export_current_version =
+            batch_summary.export_current_version.saturating_add(1);
 
         let panicked = std::panic::catch_unwind(|| {
             let _ = l2_l1_cross_path_consistency_hard_gate(
@@ -10039,7 +10573,8 @@ mod relay_path_tests {
             build_l2_l1_contract_summary_view(&runtime, &tripwire_watch, governance_hash);
         let batch_summary =
             build_l2_l1_contract_summary_view(&runtime, &tripwire_batch, governance_hash);
-        state_summary.export_current_version = state_summary.export_current_version.saturating_add(1);
+        state_summary.export_current_version =
+            state_summary.export_current_version.saturating_add(1);
 
         let panicked = std::panic::catch_unwind(|| {
             let _ = l2_l1_cross_path_consistency_hard_gate(
@@ -10098,7 +10633,8 @@ mod relay_path_tests {
             build_l2_l1_contract_summary_view(&runtime, &tripwire_watch, governance_hash);
         let batch_summary =
             build_l2_l1_contract_summary_view(&runtime, &tripwire_batch, governance_hash);
-        watch_summary.export_current_version = watch_summary.export_current_version.saturating_add(1);
+        watch_summary.export_current_version =
+            watch_summary.export_current_version.saturating_add(1);
 
         let panicked = std::panic::catch_unwind(|| {
             let _ = l2_l1_cross_path_consistency_hard_gate(
@@ -10453,8 +10989,7 @@ mod relay_path_tests {
             build_l2_l1_contract_summary_view(&runtime, &tripwire_watch, governance_hash);
         let batch_summary =
             build_l2_l1_contract_summary_view(&runtime, &tripwire_batch, governance_hash);
-        watch_summary.baseline_seal_version =
-            watch_summary.baseline_seal_version.saturating_add(1);
+        watch_summary.baseline_seal_version = watch_summary.baseline_seal_version.saturating_add(1);
 
         let panicked = std::panic::catch_unwind(|| {
             let _ = l2_l1_cross_path_consistency_hard_gate(
@@ -11224,8 +11759,9 @@ mod relay_path_tests {
             build_l2_l1_contract_summary_view(&runtime, &tripwire_watch, governance_hash);
         let batch_summary =
             build_l2_l1_contract_summary_view(&runtime, &tripwire_batch, governance_hash);
-        state_summary.contract_breaking_guard_version =
-            state_summary.contract_breaking_guard_version.saturating_add(1);
+        state_summary.contract_breaking_guard_version = state_summary
+            .contract_breaking_guard_version
+            .saturating_add(1);
 
         let panicked = std::panic::catch_unwind(|| {
             let _ = l2_l1_cross_path_consistency_hard_gate(
@@ -12054,8 +12590,9 @@ mod relay_path_tests {
             build_l2_l1_contract_summary_view(&runtime, &tripwire_watch, governance_hash);
         let batch_summary =
             build_l2_l1_contract_summary_view(&runtime, &tripwire_batch, governance_hash);
-        watch_summary.contract_breaking_guard_version =
-            watch_summary.contract_breaking_guard_version.saturating_add(1);
+        watch_summary.contract_breaking_guard_version = watch_summary
+            .contract_breaking_guard_version
+            .saturating_add(1);
 
         let panicked = std::panic::catch_unwind(|| {
             let _ = l2_l1_cross_path_consistency_hard_gate(
@@ -12354,8 +12891,9 @@ mod relay_path_tests {
             build_l2_l1_contract_summary_view(&runtime, &tripwire_watch, governance_hash);
         let mut batch_summary =
             build_l2_l1_contract_summary_view(&runtime, &tripwire_batch, governance_hash);
-        batch_summary.contract_breaking_guard_version =
-            batch_summary.contract_breaking_guard_version.saturating_add(1);
+        batch_summary.contract_breaking_guard_version = batch_summary
+            .contract_breaking_guard_version
+            .saturating_add(1);
 
         let panicked = std::panic::catch_unwind(|| {
             let _ = l2_l1_cross_path_consistency_hard_gate(
@@ -12592,8 +13130,7 @@ mod relay_path_tests {
             build_l2_l1_contract_summary_view(&runtime, &tripwire_watch, governance_hash);
         let mut batch_summary =
             build_l2_l1_contract_summary_view(&runtime, &tripwire_batch, governance_hash);
-        batch_summary.baseline_seal_version =
-            batch_summary.baseline_seal_version.saturating_add(1);
+        batch_summary.baseline_seal_version = batch_summary.baseline_seal_version.saturating_add(1);
 
         let panicked = std::panic::catch_unwind(|| {
             let _ = l2_l1_cross_path_consistency_hard_gate(
@@ -13126,7 +13663,8 @@ mod relay_path_tests {
             build_l2_l1_contract_summary_view(&runtime, &tripwire_watch, governance_hash);
         let batch_summary =
             build_l2_l1_contract_summary_view(&runtime, &tripwire_batch, governance_hash);
-        state_summary.cross_path_lock_version = state_summary.cross_path_lock_version.saturating_add(1);
+        state_summary.cross_path_lock_version =
+            state_summary.cross_path_lock_version.saturating_add(1);
 
         let panicked = std::panic::catch_unwind(|| {
             let _ = l2_l1_cross_path_consistency_hard_gate(
@@ -15156,8 +15694,9 @@ mod relay_path_tests {
             build_l2_l1_contract_summary_view(&runtime, &tripwire_watch, governance_hash);
         let batch_summary =
             build_l2_l1_contract_summary_view(&runtime, &tripwire_batch, governance_hash);
-        watch_summary.contract_breaking_guard_version =
-            watch_summary.contract_breaking_guard_version.saturating_add(1);
+        watch_summary.contract_breaking_guard_version = watch_summary
+            .contract_breaking_guard_version
+            .saturating_add(1);
 
         let panicked = std::panic::catch_unwind(|| {
             let _ = l2_l1_cross_path_consistency_hard_gate(
@@ -15276,7 +15815,8 @@ mod relay_path_tests {
             build_l2_l1_contract_summary_view(&runtime, &tripwire_watch, governance_hash);
         let batch_summary =
             build_l2_l1_contract_summary_view(&runtime, &tripwire_batch, governance_hash);
-        watch_summary.export_current_version = watch_summary.export_current_version.saturating_add(1);
+        watch_summary.export_current_version =
+            watch_summary.export_current_version.saturating_add(1);
 
         let panicked = std::panic::catch_unwind(|| {
             let _ = l2_l1_cross_path_consistency_hard_gate(
@@ -15882,10 +16422,7 @@ mod relay_path_tests {
         })
         .is_err();
 
-        assert!(
-            panicked,
-            "cross-path lock must reject tripwire issue drift"
-        );
+        assert!(panicked, "cross-path lock must reject tripwire issue drift");
     }
 
     #[test]
@@ -16009,18 +16546,9 @@ mod relay_path_tests {
     #[test]
     fn l2_l1_export_mapping_is_consistent_across_batch_replay_watch_snapshots() {
         let cases = [
-            (
-                "batch",
-                build_l2_state_snapshot(3, 1, 0, 0, 2, 1, 1, 0, 0),
-            ),
-            (
-                "replay",
-                build_l2_state_snapshot(8, 5, 2, 1, 3, 5, 2, 1, 0),
-            ),
-            (
-                "watch",
-                build_l2_state_snapshot(11, 7, 1, 0, 4, 7, 1, 0, 1),
-            ),
+            ("batch", build_l2_state_snapshot(3, 1, 0, 0, 2, 1, 1, 0, 0)),
+            ("replay", build_l2_state_snapshot(8, 5, 2, 1, 3, 5, 2, 1, 0)),
+            ("watch", build_l2_state_snapshot(11, 7, 1, 0, 4, 7, 1, 0, 1)),
         ];
 
         assert_eq!(L2_L1_STATE_ANCHOR_MIRROR_FIELDSET.len(), 38);
@@ -16104,7 +16632,9 @@ mod relay_path_tests {
                 Some(L2_L1_CONTRACT_BREAKING_GUARD_FINGERPRINT)
             );
             assert!(
-                json["l2_l1_contract_breaking_guard_hash"].as_u64().is_some(),
+                json["l2_l1_contract_breaking_guard_hash"]
+                    .as_u64()
+                    .is_some(),
                 "contract breaking guard hash should be present for {label}"
             );
             assert_eq!(
@@ -16123,7 +16653,10 @@ mod relay_path_tests {
                 json["l2_l1_export_compat_fingerprint"].as_str(),
                 Some(L2_L1_EXPORT_COMPAT_FINGERPRINT)
             );
-            assert_eq!(json["l2_l1_export_mode_effective"].as_str(), Some("current"));
+            assert_eq!(
+                json["l2_l1_export_mode_effective"].as_str(),
+                Some("current")
+            );
             assert_eq!(
                 json["l2_l1_export_mode_source"].as_str(),
                 Some("default_current")
@@ -16261,13 +16794,19 @@ mod relay_path_tests {
             let runtime_view = build_l2_l1_runtime_view(counters);
             let tripwire = build_l2_l1_tripwire_view(&runtime_view, true);
             l2_l1_runtime_fieldset_hard_gate(&tripwire);
-            assert!(tripwire.strict, "tripwire strict should be true for {label}");
+            assert!(
+                tripwire.strict,
+                "tripwire strict should be true for {label}"
+            );
             assert!(
                 tripwire.consistent,
                 "tripwire should be consistent for {label}: issue={}",
                 tripwire.issue
             );
-            assert!(tripwire.issue.is_empty(), "tripwire issue should be empty for {label}");
+            assert!(
+                tripwire.issue.is_empty(),
+                "tripwire issue should be empty for {label}"
+            );
             enforce_l2_l1_runtime_consistency_with_flag(&runtime_view, true)
                 .expect("strict runtime consistency should pass");
 
@@ -16360,7 +16899,9 @@ mod relay_path_tests {
                 Some(L2_L1_CONTRACT_BREAKING_GUARD_FINGERPRINT)
             );
             assert!(
-                json["l2_l1_contract_breaking_guard_hash"].as_u64().is_some(),
+                json["l2_l1_contract_breaking_guard_hash"]
+                    .as_u64()
+                    .is_some(),
                 "contract breaking guard hash should be present for {label}"
             );
             assert_eq!(
@@ -16379,7 +16920,10 @@ mod relay_path_tests {
                 json["l2_l1_export_compat_fingerprint"].as_str(),
                 Some(L2_L1_EXPORT_COMPAT_FINGERPRINT)
             );
-            assert_eq!(json["l2_l1_export_mode_effective"].as_str(), Some("current"));
+            assert_eq!(
+                json["l2_l1_export_mode_effective"].as_str(),
+                Some("current")
+            );
             assert_eq!(
                 json["l2_l1_export_mode_source"].as_str(),
                 Some("default_current")
@@ -16582,7 +17126,10 @@ mod relay_path_tests {
             "l2-l1-cross-path-lock:v1:tripwire+contract+governance"
         );
 
-        let source = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bin/novovm-node.rs"));
+        let source = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/bin/novovm-node.rs"
+        ));
         let mut state_only = std::collections::BTreeSet::new();
         let mut watch_only = std::collections::BTreeSet::new();
         let mut batch_only = std::collections::BTreeSet::new();
@@ -16635,13 +17182,16 @@ mod relay_path_tests {
             let line = source
                 .lines()
                 .find(|l| {
-                    l.contains(marker)
-                        && l.contains("strict={}")
-                        && l.contains("consistent={}")
+                    l.contains(marker) && l.contains("strict={}") && l.contains("consistent={}")
                 })
                 .expect("tripwire template line must exist");
-            let start = line.find('"').expect("template line must contain opening quote") + 1;
-            let end = line.rfind('"').expect("template line must contain closing quote");
+            let start = line
+                .find('"')
+                .expect("template line must contain opening quote")
+                + 1;
+            let end = line
+                .rfind('"')
+                .expect("template line must contain closing quote");
             &line[start..end]
         }
 
@@ -16653,7 +17203,10 @@ mod relay_path_tests {
                 .collect()
         }
 
-        let source = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bin/novovm-node.rs"));
+        let source = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/bin/novovm-node.rs"
+        ));
         let state_tpl = extract_template(source, "\"availability_l2_l1_tripwire: ");
         let watch_tpl = extract_template(source, "\"availability_l2_l1_tripwire_watch: ");
         let batch_tpl = extract_template(source, "\"availability_l2_l1_tripwire_batch: ");
@@ -16677,7 +17230,10 @@ mod relay_path_tests {
             "cross_path_watch_seal_hash",
             "cross_path_batch_seal_hash",
         ] {
-            assert!(state_keys.contains(key), "tripwire template missing key: {key}");
+            assert!(
+                state_keys.contains(key),
+                "tripwire template missing key: {key}"
+            );
         }
     }
 
@@ -16687,13 +17243,16 @@ mod relay_path_tests {
             let line = source
                 .lines()
                 .find(|l| {
-                    l.contains(marker)
-                        && l.contains("strict={}")
-                        && l.contains("consistent={}")
+                    l.contains(marker) && l.contains("strict={}") && l.contains("consistent={}")
                 })
                 .expect("tripwire template line must exist");
-            let start = line.find('"').expect("template line must contain opening quote") + 1;
-            let end = line.rfind('"').expect("template line must contain closing quote");
+            let start = line
+                .find('"')
+                .expect("template line must contain opening quote")
+                + 1;
+            let end = line
+                .rfind('"')
+                .expect("template line must contain closing quote");
             &line[start..end]
         }
 
@@ -16705,7 +17264,10 @@ mod relay_path_tests {
                 .collect()
         }
 
-        let source = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bin/novovm-node.rs"));
+        let source = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/bin/novovm-node.rs"
+        ));
         let state_tpl = extract_template(source, "\"availability_l2_l1_tripwire: ");
         let watch_tpl = extract_template(source, "\"availability_l2_l1_tripwire_watch: ");
         let batch_tpl = extract_template(source, "\"availability_l2_l1_tripwire_batch: ");
@@ -16731,7 +17293,10 @@ mod relay_path_tests {
 
     #[test]
     fn l2_l1_cross_path_summary_template_contains_seal_and_closure_keys_v1() {
-        let source = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bin/novovm-node.rs"));
+        let source = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/bin/novovm-node.rs"
+        ));
         let summary_templates: Vec<&str> = source
             .lines()
             .filter(|l| {
@@ -16776,7 +17341,10 @@ mod relay_path_tests {
                 .collect()
         }
 
-        let source = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bin/novovm-node.rs"));
+        let source = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/bin/novovm-node.rs"
+        ));
         let summary_templates: Vec<&str> = source
             .lines()
             .filter(|l| {
@@ -16809,7 +17377,10 @@ mod relay_path_tests {
 
     #[test]
     fn availability_state_cross_path_seal_slots_are_exported_in_template_v1() {
-        let source = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bin/novovm-node.rs"));
+        let source = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/bin/novovm-node.rs"
+        ));
         let line = source
             .lines()
             .find(|l| {
@@ -16840,7 +17411,10 @@ mod relay_path_tests {
                 .unwrap_or_else(|| panic!("availability_state template missing key token: {key}"))
         }
 
-        let source = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bin/novovm-node.rs"));
+        let source = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/bin/novovm-node.rs"
+        ));
         let line = source
             .lines()
             .find(|l| {
@@ -16871,7 +17445,10 @@ mod relay_path_tests {
                 .unwrap_or_else(|| panic!("template missing key token: {key}"))
         }
 
-        let source = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bin/novovm-node.rs"));
+        let source = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/bin/novovm-node.rs"
+        ));
 
         let state_line = source
             .lines()
@@ -16957,7 +17534,10 @@ mod relay_path_tests {
             );
         }
 
-        let source = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bin/novovm-node.rs"));
+        let source = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/bin/novovm-node.rs"
+        ));
 
         let state_line = source
             .lines()
@@ -17038,21 +17618,45 @@ mod relay_path_tests {
                 .unwrap_or_else(|| panic!("template missing key token: {key}"))
         }
 
-        fn assert_group_order(tokens: &[&str], baseline_prefix: &str, closure_prefix: &str, label: &str) {
-            let b_ver = index_of(tokens, &format!("{baseline_prefix}baseline_seal_version={{}}"));
-            let b_fpr = index_of(tokens, &format!("{baseline_prefix}baseline_seal_fingerprint={{}}"));
+        fn assert_group_order(
+            tokens: &[&str],
+            baseline_prefix: &str,
+            closure_prefix: &str,
+            label: &str,
+        ) {
+            let b_ver = index_of(
+                tokens,
+                &format!("{baseline_prefix}baseline_seal_version={{}}"),
+            );
+            let b_fpr = index_of(
+                tokens,
+                &format!("{baseline_prefix}baseline_seal_fingerprint={{}}"),
+            );
             let b_hash = index_of(tokens, &format!("{baseline_prefix}baseline_seal_hash={{}}"));
-            let c_ver = index_of(tokens, &format!("{closure_prefix}closure_seal_version={{}}"));
-            let c_fpr = index_of(tokens, &format!("{closure_prefix}closure_seal_fingerprint={{}}"));
+            let c_ver = index_of(
+                tokens,
+                &format!("{closure_prefix}closure_seal_version={{}}"),
+            );
+            let c_fpr = index_of(
+                tokens,
+                &format!("{closure_prefix}closure_seal_fingerprint={{}}"),
+            );
             let c_hash = index_of(tokens, &format!("{closure_prefix}closure_seal_hash={{}}"));
 
             assert!(
-                b_ver < b_fpr && b_fpr < b_hash && b_hash < c_ver && c_ver < c_fpr && c_fpr < c_hash,
+                b_ver < b_fpr
+                    && b_fpr < b_hash
+                    && b_hash < c_ver
+                    && c_ver < c_fpr
+                    && c_fpr < c_hash,
                 "{label} seal family group order drift detected"
             );
         }
 
-        let source = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bin/novovm-node.rs"));
+        let source = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/bin/novovm-node.rs"
+        ));
 
         let state_line = source
             .lines()
@@ -17085,12 +17689,20 @@ mod relay_path_tests {
 
         assert_group_order(&state_tokens, "l2_l1_", "l2_l1_", "availability_state");
         assert_group_order(&tripwire_tokens, "", "", "availability_l2_l1_tripwire");
-        assert_group_order(&summary_tokens, "", "", "availability_l2_l1_cross_path_summary");
+        assert_group_order(
+            &summary_tokens,
+            "",
+            "",
+            "availability_l2_l1_cross_path_summary",
+        );
     }
 
     #[test]
     fn l2_l1_cross_path_summary_scope_remains_aggregate_only_v1() {
-        let source = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bin/novovm-node.rs"));
+        let source = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/bin/novovm-node.rs"
+        ));
         let summary_templates: Vec<&str> = source
             .lines()
             .filter(|l| {
@@ -17133,13 +17745,15 @@ mod relay_path_tests {
             line.split_whitespace()
                 .filter_map(|t| {
                     let tok = t.trim_end_matches(',').trim_end_matches('"');
-                    tok.split_once("={}")
-                        .map(|(k, _)| k.to_string())
+                    tok.split_once("={}").map(|(k, _)| k.to_string())
                 })
                 .collect()
         }
 
-        let source = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bin/novovm-node.rs"));
+        let source = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/bin/novovm-node.rs"
+        ));
         let summary_templates: Vec<&str> = source
             .lines()
             .filter(|l| {
@@ -17194,7 +17808,10 @@ mod relay_path_tests {
             tokens.iter().any(|t| t.starts_with(key))
         }
 
-        let source = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bin/novovm-node.rs"));
+        let source = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/bin/novovm-node.rs"
+        ));
 
         let state_line = source
             .lines()
@@ -17300,7 +17917,10 @@ mod relay_path_tests {
             tokens.iter().any(|t| t.starts_with(key))
         }
 
-        let source = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bin/novovm-node.rs"));
+        let source = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/bin/novovm-node.rs"
+        ));
 
         let state_line = source
             .lines()
@@ -17360,13 +17980,15 @@ mod relay_path_tests {
             line.split_whitespace()
                 .filter_map(|t| {
                     let tok = t.trim_end_matches(',').trim_end_matches('"');
-                    tok.split_once("={}")
-                        .map(|(k, _)| k.to_string())
+                    tok.split_once("={}").map(|(k, _)| k.to_string())
                 })
                 .collect()
         }
 
-        let source = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bin/novovm-node.rs"));
+        let source = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/bin/novovm-node.rs"
+        ));
         let summary_templates: Vec<&str> = source
             .lines()
             .filter(|l| {
@@ -17405,7 +18027,10 @@ mod relay_path_tests {
                 .unwrap_or_else(|| panic!("template missing key token: {key}"))
         }
 
-        let source = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bin/novovm-node.rs"));
+        let source = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/bin/novovm-node.rs"
+        ));
 
         let state_line = source
             .lines()
@@ -17483,7 +18108,10 @@ mod relay_path_tests {
             );
         }
 
-        let source = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bin/novovm-node.rs"));
+        let source = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/bin/novovm-node.rs"
+        ));
         let state_line = source
             .lines()
             .find(|l| {
@@ -17529,10 +18157,15 @@ mod relay_path_tests {
             tokens
                 .iter()
                 .position(|t| t.starts_with(key))
-                .unwrap_or_else(|| panic!("availability_l2_l1_tripwire template missing key token: {key}"))
+                .unwrap_or_else(|| {
+                    panic!("availability_l2_l1_tripwire template missing key token: {key}")
+                })
         }
 
-        let source = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bin/novovm-node.rs"));
+        let source = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/bin/novovm-node.rs"
+        ));
         let tripwire_line = source
             .lines()
             .find(|l| {
@@ -17569,7 +18202,10 @@ mod relay_path_tests {
             tokens.iter().filter(|t| t.starts_with(key)).count()
         }
 
-        let source = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bin/novovm-node.rs"));
+        let source = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/bin/novovm-node.rs"
+        ));
         let state_line = source
             .lines()
             .find(|l| {
@@ -17645,7 +18281,10 @@ mod relay_path_tests {
             tokens.iter().any(|t| t.starts_with(key))
         }
 
-        let source = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bin/novovm-node.rs"));
+        let source = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/bin/novovm-node.rs"
+        ));
         let state_line = source
             .lines()
             .find(|l| {
@@ -17694,7 +18333,10 @@ mod relay_path_tests {
             tokens.iter().any(|t| t.starts_with(key))
         }
 
-        let source = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bin/novovm-node.rs"));
+        let source = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/bin/novovm-node.rs"
+        ));
         let summary_line = source
             .lines()
             .find(|l| {
@@ -17740,7 +18382,10 @@ mod relay_path_tests {
                 .unwrap_or_else(|| panic!("cross_path_summary template missing key token: {key}"))
         }
 
-        let source = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bin/novovm-node.rs"));
+        let source = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/bin/novovm-node.rs"
+        ));
         let summary_line = source
             .lines()
             .find(|l| {
@@ -17780,7 +18425,10 @@ mod relay_path_tests {
                 .unwrap_or_else(|| panic!("cross_path_summary template missing key token: {key}"))
         }
 
-        let source = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bin/novovm-node.rs"));
+        let source = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/bin/novovm-node.rs"
+        ));
         let summary_line = source
             .lines()
             .find(|l| {
@@ -17835,7 +18483,10 @@ mod relay_path_tests {
             );
         }
 
-        let source = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bin/novovm-node.rs"));
+        let source = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/bin/novovm-node.rs"
+        ));
         let summary_line = source
             .lines()
             .find(|l| {
@@ -17888,7 +18539,10 @@ mod relay_path_tests {
             tokens.iter().filter(|t| t.starts_with(key)).count()
         }
 
-        let source = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bin/novovm-node.rs"));
+        let source = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/bin/novovm-node.rs"
+        ));
         let summary_templates: Vec<&str> = source
             .lines()
             .filter(|l| {
@@ -17941,7 +18595,10 @@ mod relay_path_tests {
 
     #[test]
     fn l2_l1_cross_path_summary_token_shape_is_locked_v1() {
-        let source = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bin/novovm-node.rs"));
+        let source = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/bin/novovm-node.rs"
+        ));
         let summary_templates: Vec<&str> = source
             .lines()
             .filter(|l| {
@@ -18019,7 +18676,10 @@ mod relay_path_tests {
 
     #[test]
     fn l2_l1_cross_path_summary_does_not_leak_gate_alias_keys_v1() {
-        let source = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bin/novovm-node.rs"));
+        let source = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/bin/novovm-node.rs"
+        ));
         let summary_templates: Vec<&str> = source
             .lines()
             .filter(|l| {
@@ -18076,7 +18736,10 @@ mod relay_path_tests {
                 .unwrap_or_else(|| panic!("cross_path_gate template missing key token: {key}"))
         }
 
-        let source = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bin/novovm-node.rs"));
+        let source = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/bin/novovm-node.rs"
+        ));
         let gate_lines: Vec<&str> = source
             .lines()
             .filter(|l| {
@@ -18135,7 +18798,10 @@ mod relay_path_tests {
 
     #[test]
     fn l2_l1_cross_path_gate_templates_are_scoped_and_complete_v1() {
-        let source = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bin/novovm-node.rs"));
+        let source = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/bin/novovm-node.rs"
+        ));
         let gate_lines: Vec<&str> = source
             .lines()
             .filter(|l| {
@@ -18204,7 +18870,10 @@ mod relay_path_tests {
                 .collect()
         }
 
-        let source = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bin/novovm-node.rs"));
+        let source = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/bin/novovm-node.rs"
+        ));
         let gate_lines: Vec<&str> = source
             .lines()
             .filter(|l| {
@@ -18267,7 +18936,10 @@ mod relay_path_tests {
 
     #[test]
     fn l2_l1_cross_path_gate_does_not_leak_summary_aggregate_keys_v1() {
-        let source = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bin/novovm-node.rs"));
+        let source = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/bin/novovm-node.rs"
+        ));
         let gate_lines: Vec<&str> = source
             .lines()
             .filter(|l| {
@@ -18317,7 +18989,10 @@ mod relay_path_tests {
                 .replace("scope=state+replay+batch", "scope=state+replay+<path>")
         }
 
-        let source = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bin/novovm-node.rs"));
+        let source = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/bin/novovm-node.rs"
+        ));
         let gate_lines: Vec<&str> = source
             .lines()
             .filter(|l| {
@@ -18356,10 +19031,15 @@ mod relay_path_tests {
         fn token_value<'a>(line: &'a str, prefix: &str) -> &'a str {
             line.split_whitespace()
                 .find_map(|t| t.strip_prefix(prefix))
-                .unwrap_or_else(|| panic!("cross_path_gate template missing token prefix: {prefix}"))
+                .unwrap_or_else(|| {
+                    panic!("cross_path_gate template missing token prefix: {prefix}")
+                })
         }
 
-        let source = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bin/novovm-node.rs"));
+        let source = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/bin/novovm-node.rs"
+        ));
         let gate_lines: Vec<&str> = source
             .lines()
             .filter(|l| {
@@ -18382,14 +19062,19 @@ mod relay_path_tests {
             .map(|l| token_value(l, "path=").to_string())
             .collect();
         let expected: std::collections::BTreeSet<String> =
-            ["watch".to_string(), "batch".to_string()].into_iter().collect();
+            ["watch".to_string(), "batch".to_string()]
+                .into_iter()
+                .collect();
 
         assert_eq!(paths, expected, "cross_path_gate path set drift detected");
     }
 
     #[test]
     fn l2_l1_cross_path_gate_token_shape_is_locked_v1() {
-        let source = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bin/novovm-node.rs"));
+        let source = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/bin/novovm-node.rs"
+        ));
         let gate_lines: Vec<&str> = source
             .lines()
             .filter(|l| {
@@ -18462,7 +19147,9 @@ mod relay_path_tests {
                 "cross_path_gate fingerprint token drift detected for path={path}"
             );
             assert!(
-                tokens[6].trim_start_matches('"').starts_with("seal_hash={}"),
+                tokens[6]
+                    .trim_start_matches('"')
+                    .starts_with("seal_hash={}"),
                 "cross_path_gate seal_hash token drift detected for path={path}"
             );
 
@@ -18479,10 +19166,15 @@ mod relay_path_tests {
         fn token_value<'a>(line: &'a str, prefix: &str) -> &'a str {
             line.split_whitespace()
                 .find_map(|t| t.strip_prefix(prefix))
-                .unwrap_or_else(|| panic!("cross_path_gate template missing token prefix: {prefix}"))
+                .unwrap_or_else(|| {
+                    panic!("cross_path_gate template missing token prefix: {prefix}")
+                })
         }
 
-        let source = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bin/novovm-node.rs"));
+        let source = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/bin/novovm-node.rs"
+        ));
         let gate_lines: Vec<&str> = source
             .lines()
             .filter(|l| {
@@ -18527,13 +19219,17 @@ mod relay_path_tests {
     #[test]
     fn l2_l1_cross_path_gate_global_key_multiplicity_is_locked_v1() {
         fn count_token(lines: &[&str], needle: &str) -> usize {
-            lines.iter()
+            lines
+                .iter()
                 .flat_map(|l| l.split_whitespace())
                 .filter(|t| t.starts_with(needle))
                 .count()
         }
 
-        let source = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bin/novovm-node.rs"));
+        let source = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/bin/novovm-node.rs"
+        ));
         let gate_lines: Vec<&str> = source
             .lines()
             .filter(|l| {
@@ -18583,10 +19279,15 @@ mod relay_path_tests {
         fn token_value<'a>(line: &'a str, prefix: &str) -> &'a str {
             line.split_whitespace()
                 .find_map(|t| t.strip_prefix(prefix))
-                .unwrap_or_else(|| panic!("cross_path_gate template missing token prefix: {prefix}"))
+                .unwrap_or_else(|| {
+                    panic!("cross_path_gate template missing token prefix: {prefix}")
+                })
         }
 
-        let source = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bin/novovm-node.rs"));
+        let source = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/bin/novovm-node.rs"
+        ));
         let gate_lines: Vec<&str> = source
             .lines()
             .filter(|l| {
@@ -18641,7 +19342,10 @@ mod relay_path_tests {
                 .collect()
         }
 
-        let source = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bin/novovm-node.rs"));
+        let source = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/bin/novovm-node.rs"
+        ));
         let gate_lines: Vec<&str> = source
             .lines()
             .filter(|l| {
@@ -18689,7 +19393,10 @@ mod relay_path_tests {
 
     #[test]
     fn l2_l1_cross_path_gate_template_tail_punctuation_is_locked_v1() {
-        let source = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bin/novovm-node.rs"));
+        let source = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/bin/novovm-node.rs"
+        ));
         let gate_lines: Vec<&str> = source
             .lines()
             .filter(|l| {
@@ -18728,7 +19435,10 @@ mod relay_path_tests {
                 .to_string()
         }
 
-        let source = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bin/novovm-node.rs"));
+        let source = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/bin/novovm-node.rs"
+        ));
         let gate_lines: Vec<&str> = source
             .lines()
             .filter(|l| {
@@ -18781,10 +19491,15 @@ mod relay_path_tests {
         fn token_value<'a>(line: &'a str, prefix: &str) -> &'a str {
             line.split_whitespace()
                 .find_map(|t| t.strip_prefix(prefix))
-                .unwrap_or_else(|| panic!("cross_path_gate template missing token prefix: {prefix}"))
+                .unwrap_or_else(|| {
+                    panic!("cross_path_gate template missing token prefix: {prefix}")
+                })
         }
 
-        let source = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bin/novovm-node.rs"));
+        let source = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/bin/novovm-node.rs"
+        ));
         let gate_lines: Vec<&str> = source
             .lines()
             .filter(|l| {
@@ -18826,7 +19541,10 @@ mod relay_path_tests {
 
     #[test]
     fn l2_l1_cross_path_gate_literal_count_is_locked_v1() {
-        let source = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bin/novovm-node.rs"));
+        let source = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/bin/novovm-node.rs"
+        ));
         let gate_lines: Vec<&str> = source
             .lines()
             .filter(|l| {
@@ -18848,7 +19566,10 @@ mod relay_path_tests {
 
     #[test]
     fn l2_l1_cross_path_gate_template_order_watch_then_batch_is_locked_v1() {
-        let source = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bin/novovm-node.rs"));
+        let source = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/bin/novovm-node.rs"
+        ));
         let indexed: Vec<(usize, &str)> = source
             .lines()
             .enumerate()
@@ -18885,7 +19606,10 @@ mod relay_path_tests {
 
     #[test]
     fn l2_l1_cross_path_gate_comma_placement_is_locked_v1() {
-        let source = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bin/novovm-node.rs"));
+        let source = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/bin/novovm-node.rs"
+        ));
         let gate_lines: Vec<&str> = source
             .lines()
             .filter(|l| {
@@ -18928,7 +19652,10 @@ mod relay_path_tests {
 
     #[test]
     fn l2_l1_cross_path_gate_quote_placement_is_locked_v1() {
-        let source = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bin/novovm-node.rs"));
+        let source = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/bin/novovm-node.rs"
+        ));
         let gate_lines: Vec<&str> = source
             .lines()
             .filter(|l| {
@@ -18969,7 +19696,10 @@ mod relay_path_tests {
             line.split_whitespace().collect::<Vec<_>>().join(" ")
         }
 
-        let source = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bin/novovm-node.rs"));
+        let source = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/bin/novovm-node.rs"
+        ));
         let gate_lines: Vec<&str> = source
             .lines()
             .filter(|l| {
@@ -19031,7 +19761,10 @@ mod relay_path_tests {
 
     #[test]
     fn l2_l1_cross_path_gate_lock_tuple_substring_is_contiguous_and_unique_v1() {
-        let source = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bin/novovm-node.rs"));
+        let source = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/bin/novovm-node.rs"
+        ));
         let gate_lines: Vec<&str> = source
             .lines()
             .filter(|l| {
@@ -19065,7 +19798,10 @@ mod relay_path_tests {
 
     #[test]
     fn l2_l1_cross_path_gate_template_block_adjacency_is_locked_v1() {
-        let source = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bin/novovm-node.rs"));
+        let source = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/bin/novovm-node.rs"
+        ));
         let indexed: Vec<(usize, &str)> = source
             .lines()
             .enumerate()
@@ -19102,7 +19838,10 @@ mod relay_path_tests {
 
     #[test]
     fn l2_l1_cross_path_gate_whitespace_separators_are_locked_v1() {
-        let source = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bin/novovm-node.rs"));
+        let source = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/bin/novovm-node.rs"
+        ));
         let gate_lines: Vec<&str> = source
             .lines()
             .filter(|l| {
@@ -19138,7 +19877,10 @@ mod relay_path_tests {
 
     #[test]
     fn l2_l1_cross_path_gate_path_scope_non_cross_contamination_is_locked_v1() {
-        let source = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bin/novovm-node.rs"));
+        let source = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/bin/novovm-node.rs"
+        ));
         let gate_lines: Vec<&str> = source
             .lines()
             .filter(|l| {
@@ -19189,7 +19931,10 @@ mod relay_path_tests {
             line.split_whitespace().collect::<Vec<_>>().join(" ")
         }
 
-        let source = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bin/novovm-node.rs"));
+        let source = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/bin/novovm-node.rs"
+        ));
         let gate_lines: Vec<&str> = source
             .lines()
             .filter(|l| {
@@ -19218,7 +19963,10 @@ mod relay_path_tests {
 
     #[test]
     fn l2_l1_cross_path_gate_prefix_token_uniqueness_is_locked_v1() {
-        let source = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bin/novovm-node.rs"));
+        let source = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/bin/novovm-node.rs"
+        ));
         let gate_lines: Vec<&str> = source
             .lines()
             .filter(|l| {
@@ -19256,7 +20004,10 @@ mod relay_path_tests {
 
     #[test]
     fn l2_l1_cross_path_gate_placeholder_arity_is_locked_v1() {
-        let source = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bin/novovm-node.rs"));
+        let source = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/bin/novovm-node.rs"
+        ));
         let gate_lines: Vec<&str> = source
             .lines()
             .filter(|l| {
@@ -19285,7 +20036,10 @@ mod relay_path_tests {
 
     #[test]
     fn l2_l1_cross_path_core_slots_are_present_in_state_and_anchor_v1() {
-        let source = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bin/novovm-node.rs"));
+        let source = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/bin/novovm-node.rs"
+        ));
         let state_line = source
             .lines()
             .find(|l| {
@@ -19336,7 +20090,10 @@ mod relay_path_tests {
 
     #[test]
     fn l2_l1_export_governance_tuple_is_aligned_across_state_tripwire_anchor_v1() {
-        let source = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bin/novovm-node.rs"));
+        let source = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/bin/novovm-node.rs"
+        ));
 
         let state_line = source
             .lines()
@@ -19431,7 +20188,10 @@ mod relay_path_tests {
 
     #[test]
     fn l2_l1_export_lockset_slots_are_aligned_across_runtime_state_anchor_v1() {
-        let source = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bin/novovm-node.rs"));
+        let source = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/bin/novovm-node.rs"
+        ));
         let state_line = source
             .lines()
             .find(|l| {
@@ -19520,7 +20280,10 @@ mod relay_path_tests {
                 .unwrap_or_else(|| panic!("availability_state template missing key token: {key}"))
         }
 
-        let source = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bin/novovm-node.rs"));
+        let source = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/bin/novovm-node.rs"
+        ));
         let line = source
             .lines()
             .find(|l| {
@@ -19614,7 +20377,10 @@ mod relay_path_tests {
             Some("9"),
         );
         assert_eq!(profile.sticky_margin, L3_RELAY_SELECTED_STICKY_MARGIN);
-        assert_eq!(profile.runtime_feedback_scale, L3_RELAY_RUNTIME_FEEDBACK_SCALE);
+        assert_eq!(
+            profile.runtime_feedback_scale,
+            L3_RELAY_RUNTIME_FEEDBACK_SCALE
+        );
         assert_eq!(profile.candidate_limit, 3);
         assert_eq!(
             resolution.sticky_margin_source,
@@ -19670,7 +20436,10 @@ mod relay_path_tests {
             Some("-1"),
             Some("invalid"),
         );
-        assert_eq!(profile.sticky_margin, (L3_RELAY_SELECTED_STICKY_MARGIN / 2).max(1));
+        assert_eq!(
+            profile.sticky_margin,
+            (L3_RELAY_SELECTED_STICKY_MARGIN / 2).max(1)
+        );
         assert_eq!(
             profile.runtime_feedback_scale,
             L3_RELAY_RUNTIME_FEEDBACK_SCALE.saturating_mul(2)
@@ -19729,7 +20498,10 @@ mod relay_path_tests {
         );
         assert_eq!(profile.mode, super::L3PolicyMode::FastFailover);
         assert_eq!(resolution.mode_effective, super::L3PolicyMode::FastFailover);
-        assert_eq!(resolution.mode_source, super::L3PolicySelectionSource::PolicyAdaptive);
+        assert_eq!(
+            resolution.mode_source,
+            super::L3PolicySelectionSource::PolicyAdaptive
+        );
         assert_eq!(policy.effective.as_str(), "advisory_route");
         assert!(policy.adaptation_applied);
         assert_eq!(policy.adaptation_reason, "policy_advisory_route");
@@ -19752,7 +20524,10 @@ mod relay_path_tests {
         );
         assert_eq!(profile.mode, super::L3PolicyMode::Stable);
         assert_eq!(resolution.mode_effective, super::L3PolicyMode::Stable);
-        assert_eq!(resolution.mode_source, super::L3PolicySelectionSource::EnvExplicit);
+        assert_eq!(
+            resolution.mode_source,
+            super::L3PolicySelectionSource::EnvExplicit
+        );
         assert_eq!(policy.effective.as_str(), "hybrid");
         assert!(!policy.adaptation_applied);
         assert_eq!(policy.adaptation_reason, "mode_env_explicit_pinned");
@@ -19775,7 +20550,10 @@ mod relay_path_tests {
         );
         assert_eq!(profile.mode, super::L3PolicyMode::Stable);
         assert_eq!(resolution.mode_effective, super::L3PolicyMode::Stable);
-        assert_eq!(resolution.mode_source, super::L3PolicySelectionSource::PolicyAdaptive);
+        assert_eq!(
+            resolution.mode_source,
+            super::L3PolicySelectionSource::PolicyAdaptive
+        );
         assert!(policy.guardrail_applied);
         assert_eq!(policy.guardrail_reason, "guardrail_clamped_to_max");
         assert_eq!(policy.mode_max_effective, super::L3PolicyMode::Stable);
@@ -19807,26 +20585,27 @@ mod relay_path_tests {
 
     #[test]
     fn l3_profile_mode_policy_family_conservative_defaults_apply() {
-        let (profile, resolution, policy, family) = l3_profile_mode_policy_with_family_from_raw_inputs(
-            3,
-            None,
-            None,
-            None,
-            None,
-            None,
-            Some("conservative"),
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            CapabilityReadiness::Limited,
-            CapabilityRouteHint::PreferL3Relay,
-        );
+        let (profile, resolution, policy, family) =
+            l3_profile_mode_policy_with_family_from_raw_inputs(
+                3,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some("conservative"),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                CapabilityReadiness::Limited,
+                CapabilityRouteHint::PreferL3Relay,
+            );
         assert_eq!(family.family_effective.as_str(), "conservative");
         assert_eq!(family.family_source.as_str(), "env_explicit");
         assert_eq!(policy.source.as_str(), "default_by_family");
@@ -19841,87 +20620,96 @@ mod relay_path_tests {
 
     #[test]
     fn l3_profile_mode_policy_family_invalid_falls_back_to_production_defaults() {
-        let (_profile, _resolution, policy, family) = l3_profile_mode_policy_with_family_from_raw_inputs(
-            3,
-            None,
-            None,
-            None,
-            None,
-            None,
-            Some("bad-family"),
-            None,
-            None,
-            None,
-            Some("bad-version"),
-            None,
-            None,
-            None,
-            None,
-            None,
-            CapabilityReadiness::Ready,
-            CapabilityRouteHint::Standard,
-        );
+        let (_profile, _resolution, policy, family) =
+            l3_profile_mode_policy_with_family_from_raw_inputs(
+                3,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some("bad-family"),
+                None,
+                None,
+                None,
+                Some("bad-version"),
+                None,
+                None,
+                None,
+                None,
+                None,
+                CapabilityReadiness::Ready,
+                CapabilityRouteHint::Standard,
+            );
         assert_eq!(family.family_effective.as_str(), "production");
         assert_eq!(family.family_source.as_str(), "env_invalid_fallback");
         assert_eq!(family.policy_profile_version_effective, 1);
-        assert_eq!(family.policy_profile_version_source.as_str(), "env_invalid_fallback");
+        assert_eq!(
+            family.policy_profile_version_source.as_str(),
+            "env_invalid_fallback"
+        );
         assert_eq!(policy.effective.as_str(), "locked");
         assert_eq!(policy.source.as_str(), "default_locked");
     }
 
     #[test]
     fn l3_profile_mode_policy_env_explicit_mode_pin_survives_family_defaults() {
-        let (profile, resolution, policy, family) = l3_profile_mode_policy_with_family_from_raw_inputs(
-            3,
-            Some("stable"),
-            None,
-            None,
-            None,
-            None,
-            Some("aggressive"),
-            None,
-            None,
-            None,
-            Some("2"),
-            None,
-            None,
-            None,
-            None,
-            None,
-            CapabilityReadiness::Limited,
-            CapabilityRouteHint::PreferL3Relay,
-        );
+        let (profile, resolution, policy, family) =
+            l3_profile_mode_policy_with_family_from_raw_inputs(
+                3,
+                Some("stable"),
+                None,
+                None,
+                None,
+                None,
+                Some("aggressive"),
+                None,
+                None,
+                None,
+                Some("2"),
+                None,
+                None,
+                None,
+                None,
+                None,
+                CapabilityReadiness::Limited,
+                CapabilityRouteHint::PreferL3Relay,
+            );
         assert_eq!(family.family_effective.as_str(), "aggressive");
         assert_eq!(family.policy_profile_version_effective, 2);
         assert_eq!(profile.mode, super::L3PolicyMode::Stable);
         assert_eq!(resolution.mode_effective, super::L3PolicyMode::Stable);
-        assert_eq!(resolution.mode_source, super::L3PolicySelectionSource::EnvExplicit);
+        assert_eq!(
+            resolution.mode_source,
+            super::L3PolicySelectionSource::EnvExplicit
+        );
         assert!(!policy.adaptation_applied);
         assert_eq!(policy.adaptation_reason, "mode_env_explicit_pinned");
     }
 
     #[test]
     fn l3_profile_mode_policy_governance_locked_forces_locked_policy_default() {
-        let (profile, resolution, policy, family) = l3_profile_mode_policy_with_family_from_raw_inputs(
-            3,
-            None,
-            None,
-            None,
-            None,
-            None,
-            Some("conservative"),
-            None,
-            None,
-            None,
-            None,
-            None,
-            Some("locked"),
-            None,
-            None,
-            None,
-            CapabilityReadiness::Ready,
-            CapabilityRouteHint::PreferL3Relay,
-        );
+        let (profile, resolution, policy, family) =
+            l3_profile_mode_policy_with_family_from_raw_inputs(
+                3,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some("conservative"),
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some("locked"),
+                None,
+                None,
+                None,
+                CapabilityReadiness::Ready,
+                CapabilityRouteHint::PreferL3Relay,
+            );
         assert_eq!(family.family_effective.as_str(), "conservative");
         assert_eq!(policy.effective.as_str(), "locked");
         assert_eq!(policy.source.as_str(), "governance_locked");
@@ -19931,26 +20719,27 @@ mod relay_path_tests {
 
     #[test]
     fn l3_profile_mode_policy_governance_invalid_falls_back_to_family_adaptive() {
-        let (_profile, _resolution, policy, family) = l3_profile_mode_policy_with_family_from_raw_inputs(
-            3,
-            None,
-            None,
-            None,
-            None,
-            None,
-            Some("aggressive"),
-            None,
-            None,
-            None,
-            None,
-            None,
-            Some("bad-governance"),
-            None,
-            None,
-            None,
-            CapabilityReadiness::Ready,
-            CapabilityRouteHint::PreferL3Relay,
-        );
+        let (_profile, _resolution, policy, family) =
+            l3_profile_mode_policy_with_family_from_raw_inputs(
+                3,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some("aggressive"),
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some("bad-governance"),
+                None,
+                None,
+                None,
+                CapabilityReadiness::Ready,
+                CapabilityRouteHint::PreferL3Relay,
+            );
         assert_eq!(family.family_effective.as_str(), "aggressive");
         assert_eq!(policy.effective.as_str(), "advisory_route");
         assert_eq!(policy.source.as_str(), "default_by_family");
@@ -19968,10 +20757,16 @@ mod relay_path_tests {
             CapabilityReadiness::Ready,
             CapabilityRouteHint::PreferL3Relay,
         );
-        assert_eq!(family.family_governance_effective.as_str(), "capability_adaptive");
+        assert_eq!(
+            family.family_governance_effective.as_str(),
+            "capability_adaptive"
+        );
         assert_eq!(family.family_effective.as_str(), "aggressive");
         assert!(family.family_adaptation_applied);
-        assert_eq!(family.family_adaptation_reason, "family_capability_adaptive");
+        assert_eq!(
+            family.family_adaptation_reason,
+            "family_capability_adaptive"
+        );
     }
 
     #[test]
@@ -19986,10 +20781,16 @@ mod relay_path_tests {
             CapabilityReadiness::Ready,
             CapabilityRouteHint::PreferL3Relay,
         );
-        assert_eq!(family.family_governance_effective.as_str(), "capability_adaptive");
+        assert_eq!(
+            family.family_governance_effective.as_str(),
+            "capability_adaptive"
+        );
         assert_eq!(family.family_effective.as_str(), "conservative");
         assert!(!family.family_adaptation_applied);
-        assert_eq!(family.family_adaptation_reason, "family_env_explicit_pinned");
+        assert_eq!(
+            family.family_adaptation_reason,
+            "family_env_explicit_pinned"
+        );
     }
 
     #[test]
@@ -20007,7 +20808,10 @@ mod relay_path_tests {
         assert_eq!(family.family_effective.as_str(), "production");
         assert!(family.family_adaptation_applied);
         assert!(family.family_guardrail_applied);
-        assert_eq!(family.family_guardrail_reason, "family_guardrail_clamped_to_max");
+        assert_eq!(
+            family.family_guardrail_reason,
+            "family_guardrail_clamped_to_max"
+        );
     }
 
     #[test]
@@ -20025,7 +20829,10 @@ mod relay_path_tests {
         assert_eq!(family.family_effective.as_str(), "conservative");
         assert!(family.family_adaptation_applied);
         assert!(!family.family_guardrail_applied);
-        assert_eq!(family.family_guardrail_reason, "family_guardrail_range_swapped");
+        assert_eq!(
+            family.family_guardrail_reason,
+            "family_guardrail_range_swapped"
+        );
     }
 
     #[test]
@@ -20042,7 +20849,10 @@ mod relay_path_tests {
         );
         assert_eq!(family.family_effective.as_str(), "aggressive");
         assert_eq!(family.policy_profile_version_effective, 2);
-        assert_eq!(family.policy_profile_version_source.as_str(), "default_by_family");
+        assert_eq!(
+            family.policy_profile_version_source.as_str(),
+            "default_by_family"
+        );
         assert_eq!(
             family.policy_profile_version_governance_effective,
             super::L3ProfileVersionGovernance::FamilyAdaptive
@@ -20072,7 +20882,10 @@ mod relay_path_tests {
         );
         assert_eq!(family.family_effective.as_str(), "aggressive");
         assert_eq!(family.policy_profile_version_effective, 7);
-        assert_eq!(family.policy_profile_version_source.as_str(), "env_explicit");
+        assert_eq!(
+            family.policy_profile_version_source.as_str(),
+            "env_explicit"
+        );
         assert_eq!(family.policy_profile_version_requested, "7");
     }
 
@@ -20090,7 +20903,10 @@ mod relay_path_tests {
         );
         assert_eq!(family.family_effective.as_str(), "aggressive");
         assert_eq!(family.policy_profile_version_effective, 1);
-        assert_eq!(family.policy_profile_version_source.as_str(), "default_current");
+        assert_eq!(
+            family.policy_profile_version_source.as_str(),
+            "default_current"
+        );
         assert_eq!(
             family.policy_profile_version_governance_effective,
             super::L3ProfileVersionGovernance::Locked
@@ -20104,8 +20920,7 @@ mod relay_path_tests {
 
     #[test]
     fn relay_fallback_resolution_defaults_from_profile_mode() {
-        let resolution_fast =
-            resolve_relay_fallback_mode(super::L3PolicyMode::FastFailover, None);
+        let resolution_fast = resolve_relay_fallback_mode(super::L3PolicyMode::FastFailover, None);
         assert_eq!(resolution_fast.mode, RelayFailFallbackMode::DirectOnce);
         assert_eq!(resolution_fast.source.as_str(), "default_by_profile");
         assert_eq!(
@@ -20120,10 +20935,8 @@ mod relay_path_tests {
 
     #[test]
     fn relay_fallback_resolution_env_explicit_overrides_profile_default() {
-        let resolution = resolve_relay_fallback_mode(
-            super::L3PolicyMode::Baseline,
-            Some("direct_once"),
-        );
+        let resolution =
+            resolve_relay_fallback_mode(super::L3PolicyMode::Baseline, Some("direct_once"));
         assert_eq!(resolution.mode, RelayFailFallbackMode::DirectOnce);
         assert_eq!(resolution.source.as_str(), "env_explicit");
         assert_eq!(resolution.requested, "direct_once");
@@ -20382,8 +21195,7 @@ fn load_l3_discovery_membership_relays(
                 .and_then(|raw| parse_l3_discovery_membership_json(&raw))
             {
                 Ok(mut entries) => {
-                    loaded_path_total =
-                        loaded_path_total.saturating_add(entries.len() as u64);
+                    loaded_path_total = loaded_path_total.saturating_add(entries.len() as u64);
                     membership_entries.extend(
                         entries
                             .drain(..)
@@ -20534,8 +21346,7 @@ fn load_l3_discovery_membership_relays(
     L3_DISCOVERY_STALE_DROPPED_TOTAL_RUNTIME.store(stale_dropped as u64, Ordering::SeqCst);
     L3_DISCOVERY_LOADED_PATH_TOTAL_RUNTIME.store(loaded_path_total, Ordering::SeqCst);
     L3_DISCOVERY_LOADED_JSON_TOTAL_RUNTIME.store(loaded_json_total, Ordering::SeqCst);
-    L3_DISCOVERY_LOADED_GOSSIP_PATH_TOTAL_RUNTIME
-        .store(loaded_gossip_path_total, Ordering::SeqCst);
+    L3_DISCOVERY_LOADED_GOSSIP_PATH_TOTAL_RUNTIME.store(loaded_gossip_path_total, Ordering::SeqCst);
     L3_DISCOVERY_LOADED_GOSSIP_JSON_TOTAL_RUNTIME.store(loaded_gossip_json_total, Ordering::SeqCst);
     L3_DISCOVERY_LOADED_RUNTIME_STREAM_TOTAL_RUNTIME
         .store(loaded_runtime_stream_total, Ordering::SeqCst);
@@ -20668,7 +21479,8 @@ fn runtime_membership_gossip_publish_state(
     STATE.get_or_init(|| std::sync::Mutex::new(HashMap::new()))
 }
 
-fn local_observed_membership_state() -> &'static std::sync::Mutex<HashMap<String, HashSet<String>>> {
+fn local_observed_membership_state() -> &'static std::sync::Mutex<HashMap<String, HashSet<String>>>
+{
     static STATE: std::sync::OnceLock<std::sync::Mutex<HashMap<String, HashSet<String>>>> =
         std::sync::OnceLock::new();
     STATE.get_or_init(|| std::sync::Mutex::new(HashMap::new()))
@@ -20764,8 +21576,12 @@ fn publish_runtime_membership_gossip_to_path(
     }
     let raw = serde_json::to_vec(&envelope)
         .with_context(|| "encode relay membership gossip envelope failed".to_string())?;
-    fs::write(output_path, raw)
-        .with_context(|| format!("write relay membership gossip path failed: {}", output_path.display()))?;
+    fs::write(output_path, raw).with_context(|| {
+        format!(
+            "write relay membership gossip path failed: {}",
+            output_path.display()
+        )
+    })?;
     if min_publish_interval_ms > 0 {
         if let Ok(mut cache) = runtime_membership_gossip_publish_state().lock() {
             cache.insert(publish_key, (payload_hash, now));
@@ -20851,9 +21667,7 @@ fn should_replace_discovery_merge(existing: &RelayRef, incoming: &RelayRef) -> b
 fn should_admit_discovery_candidate(relay: &RelayRef, target_region: &str) -> bool {
     let is_dynamic_source = matches!(
         relay.source,
-        RoutingSource::LocalObserved
-            | RoutingSource::PeerHinted
-            | RoutingSource::RegionalAnnounced
+        RoutingSource::LocalObserved | RoutingSource::PeerHinted | RoutingSource::RegionalAnnounced
     );
     if !is_dynamic_source {
         return true;
@@ -20878,14 +21692,15 @@ fn refresh_l3_discovery_membership(
     L3_DISCOVERY_LOADED_LOCAL_OBSERVED_TOTAL_RUNTIME
         .store(local_observed.len() as u64, Ordering::SeqCst);
     let now = now_unix_ms();
-    let mut local_membership_entries = relay_membership_entries_from_relays(local_observed.clone(), now);
+    let mut local_membership_entries =
+        relay_membership_entries_from_relays(local_observed.clone(), now);
     let local_observed_tombstones =
         build_local_observed_unavailable_tombstones(region, &local_observed, now);
     let local_observed_tombstoned = local_observed_tombstones.len();
     local_membership_entries.extend(local_observed_tombstones);
-    let injected_local_observed =
-        ingest_runtime_relay_membership(local_membership_entries.clone());
-    let published_local_observed = publish_runtime_membership_gossip(&local_membership_entries, verbose);
+    let injected_local_observed = ingest_runtime_relay_membership(local_membership_entries.clone());
+    let published_local_observed =
+        publish_runtime_membership_gossip(&local_membership_entries, verbose);
     let (relays, discovery_stats) = load_l3_discovery_membership_relays(region, verbose);
     if relays.is_empty() {
         let pruned = if discovery_stats.loaded_total > 0
@@ -21305,7 +22120,10 @@ fn l2_l1_export_version_view(export: &L2L1ReadonlyExport) -> L2L1ExportVersionVi
         export.baseline.fieldset_fingerprint,
         L2_L1_EXPORT_FIELDSET_FINGERPRINT
     );
-    debug_assert_eq!(export.baseline.state_export_version, L2_STATE_EXPORT_VERSION);
+    debug_assert_eq!(
+        export.baseline.state_export_version,
+        L2_STATE_EXPORT_VERSION
+    );
     debug_assert_eq!(
         export.baseline.state_export_fingerprint,
         L2_STATE_EXPORT_FINGERPRINT
@@ -21374,7 +22192,10 @@ fn l2_l1_runtime_consistency_tripwire(view: &L2L1RuntimeView) {
         view.export.baseline.baseline_version,
         view.versions.baseline_version
     );
-    debug_assert_eq!(view.export.baseline.lock_version, view.versions.lock_version);
+    debug_assert_eq!(
+        view.export.baseline.lock_version,
+        view.versions.lock_version
+    );
     debug_assert_eq!(
         view.export.baseline.regression_lockset,
         view.versions.regression_lockset
@@ -21639,13 +22460,37 @@ fn l2_l1_closure_seal_hash(runtime: &L2L1RuntimeView, tripwire: &L2L1TripwireVie
     runtime.versions.state_export_fingerprint.hash(&mut hasher);
     runtime.export.state.queue_total.hash(&mut hasher);
     runtime.export.state.replay_applied_total.hash(&mut hasher);
-    runtime.export.state.replay_retry_later_total.hash(&mut hasher);
+    runtime
+        .export
+        .state
+        .replay_retry_later_total
+        .hash(&mut hasher);
     runtime.export.state.replay_rejected_total.hash(&mut hasher);
-    runtime.export.state.reconcile_pending_total.hash(&mut hasher);
-    runtime.export.state.reconcile_applied_total.hash(&mut hasher);
-    runtime.export.state.reconcile_retry_later_total.hash(&mut hasher);
-    runtime.export.state.reconcile_rejected_total.hash(&mut hasher);
-    runtime.export.state.reconcile_unknown_total.hash(&mut hasher);
+    runtime
+        .export
+        .state
+        .reconcile_pending_total
+        .hash(&mut hasher);
+    runtime
+        .export
+        .state
+        .reconcile_applied_total
+        .hash(&mut hasher);
+    runtime
+        .export
+        .state
+        .reconcile_retry_later_total
+        .hash(&mut hasher);
+    runtime
+        .export
+        .state
+        .reconcile_rejected_total
+        .hash(&mut hasher);
+    runtime
+        .export
+        .state
+        .reconcile_unknown_total
+        .hash(&mut hasher);
     runtime.route_selection.is_some().hash(&mut hasher);
     if let Some(route_selection) = runtime.route_selection {
         route_selection.candidate_count.hash(&mut hasher);
@@ -21665,8 +22510,14 @@ fn l2_l1_path_consistency_hard_gate(
 ) -> L2L1PathSealView {
     l2_l1_contract_hard_gate();
     debug_assert_eq!(L2_L1_PATH_LOCK_VERSION, 1);
-    debug_assert_eq!(L2_L1_PATH_REGRESSION_LOCKSET, L2_L1_EXPORT_REGRESSION_LOCKSET);
-    debug_assert_eq!(L2_L1_PATH_FINGERPRINT, "l2-l1-path-lock:v1:state+watch+batch");
+    debug_assert_eq!(
+        L2_L1_PATH_REGRESSION_LOCKSET,
+        L2_L1_EXPORT_REGRESSION_LOCKSET
+    );
+    debug_assert_eq!(
+        L2_L1_PATH_FINGERPRINT,
+        "l2-l1-path-lock:v1:state+watch+batch"
+    );
     assert!(matches!(path, "state" | "watch" | "batch"));
     let closure = l2_l1_closure_seal_hash(runtime, tripwire);
     let mut hasher = DefaultHasher::new();
@@ -21711,8 +22562,14 @@ fn l2_l1_cross_path_consistency_hard_gate(
     assert_eq!(state_tripwire.issue, watch_tripwire.issue);
     assert_eq!(watch_tripwire.issue, batch_tripwire.issue);
 
-    assert_eq!(state_summary.contract_version, watch_summary.contract_version);
-    assert_eq!(watch_summary.contract_version, batch_summary.contract_version);
+    assert_eq!(
+        state_summary.contract_version,
+        watch_summary.contract_version
+    );
+    assert_eq!(
+        watch_summary.contract_version,
+        batch_summary.contract_version
+    );
     assert_eq!(
         state_summary.contract_fingerprint,
         watch_summary.contract_fingerprint
@@ -21982,10 +22839,7 @@ fn l2_l1_state_anchor_mirror_fieldset_hard_gate() {
         L2_L1_STATE_ANCHOR_MIRROR_FIELDSET_FINGERPRINT,
         "l2-l1-state-anchor-mirror:v6:runtime-fieldset+tripwire-governance+closure-seal+governance-lock+cross-path-seal+baseline-seal"
     );
-    debug_assert_eq!(
-        L2_L1_STATE_ANCHOR_MIRROR_FIELDSET,
-        L2_L1_RUNTIME_FIELDSET
-    );
+    debug_assert_eq!(L2_L1_STATE_ANCHOR_MIRROR_FIELDSET, L2_L1_RUNTIME_FIELDSET);
 }
 
 fn l2_l1_state_log_fieldset_hard_gate() {
@@ -21997,13 +22851,13 @@ fn l2_l1_state_log_fieldset_hard_gate() {
     debug_assert_eq!(L2_L1_STATE_LOG_FIELDSET, L2_L1_STATE_ANCHOR_MIRROR_FIELDSET);
 }
 
-fn enforce_l2_l1_runtime_consistency_with_flag(
-    view: &L2L1RuntimeView,
-    strict: bool,
-) -> Result<()> {
+fn enforce_l2_l1_runtime_consistency_with_flag(view: &L2L1RuntimeView, strict: bool) -> Result<()> {
     let tripwire = build_l2_l1_tripwire_view(view, strict);
     if tripwire.strict && !tripwire.consistent {
-        bail!("l2/l1 runtime consistency tripwire violated: {}", tripwire.issue);
+        bail!(
+            "l2/l1 runtime consistency tripwire violated: {}",
+            tripwire.issue
+        );
     }
     Ok(())
 }
@@ -22421,11 +23275,12 @@ fn build_l1l4_anchor_record(
     let route_epoch_window = overlay_route_epoch_seconds.max(1);
     let overlay_route_epoch = ts_unix_sec / route_epoch_window;
     let route_hop_slot_window = overlay_route_hop_slot_seconds.max(1);
-    let overlay_route_hop_slot = if overlay_route_uses_multi_hop(overlay_route_strategy, overlay_route_hop_count) {
-        ts_unix_sec / route_hop_slot_window
-    } else {
-        0
-    };
+    let overlay_route_hop_slot =
+        if overlay_route_uses_multi_hop(overlay_route_strategy, overlay_route_hop_count) {
+            ts_unix_sec / route_hop_slot_window
+        } else {
+            0
+        };
     let overlay_route_id = overlay_route_id_override
         .filter(|v| !v.trim().is_empty())
         .map(|v| v.trim().to_string())
@@ -22536,10 +23391,8 @@ fn build_l1l4_anchor_record(
         l2_l1_governance_hash,
         l2_l1_closure_seal_hash,
     );
-    let l2_l1_baseline_seal = l2_l1_baseline_seal_hash(
-        l2_l1_governance_hash,
-        l2_l1_cross_path_seal_hash,
-    );
+    let l2_l1_baseline_seal =
+        l2_l1_baseline_seal_hash(l2_l1_governance_hash, l2_l1_cross_path_seal_hash);
     let json = serde_json::to_vec(&L1L4AnchorRecordJson {
         version: 1,
         anchor_id: &anchor_id,
@@ -22977,10 +23830,78 @@ struct PreparedBatch {
     tx_count: usize,
     batch: EitherBatch,
     source_detail: String,
+    tx_records: Option<Vec<TxIngressRecord>>,
 }
 
 fn main() -> Result<()> {
     let verbose = bool_env("NOVOVM_NODE_VERBOSE");
+    if let Some(method) = mainline_query_method_from_env() {
+        let params = mainline_query_params_from_env()
+            .context("parse NOVOVM_MAINLINE_QUERY_PARAMS failed")?;
+        if method.eq_ignore_ascii_case("eth_sendrawtransaction") {
+            let out = run_eth_send_raw_transaction_from_params_v1(&params)?;
+            if verbose {
+                println!(
+                    "eth_send_raw_tx_query_out: chain_id={} tx_hash={}",
+                    out.get("chain_id")
+                        .and_then(|value| value.as_u64())
+                        .unwrap_or(0),
+                    out.get("pending_tx_hash")
+                        .and_then(|value| value.as_str())
+                        .unwrap_or("-")
+                );
+            }
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&out)
+                    .context("encode eth_sendRawTransaction output failed")?
+            );
+            return Ok(());
+        }
+        let runtime_method = is_eth_fullnode_runtime_query_method(&method);
+        let canonical_method = if runtime_method {
+            None
+        } else {
+            Some(
+                resolve_eth_fullnode_canonical_query_method(&method).ok_or_else(|| {
+                    anyhow::anyhow!("unsupported eth_fullnode/mainline query method: {method}")
+                })?,
+            )
+        };
+        let store_path = string_env_nonempty("NOVOVM_MAINLINE_QUERY_STORE_PATH")
+            .map(PathBuf::from)
+            .unwrap_or_else(default_mainline_query_store_path);
+        let runtime_snapshot_path = default_mainline_runtime_snapshot_path();
+        let out = run_mainline_query_from_path(&store_path, &method, &params)?;
+        println!(
+            "eth_fullnode_query_out: path={} method={} found={} count={} source={}",
+            if runtime_method {
+                runtime_snapshot_path.display().to_string()
+            } else {
+                store_path.display().to_string()
+            },
+            canonical_method
+                .map(|value| value.as_str())
+                .unwrap_or(method.as_str()),
+            out.get("found")
+                .and_then(|value| value.as_bool())
+                .unwrap_or(false),
+            out.get("count")
+                .and_then(|value| value.as_u64())
+                .unwrap_or(0),
+            if runtime_method {
+                "runtime_snapshot"
+            } else {
+                "canonical_store"
+            },
+        );
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&out)
+                .context("encode eth_fullnode query output failed")?
+        );
+        return Ok(());
+    }
     let node_mode = std::env::var("NOVOVM_NODE_MODE").unwrap_or_else(|_| "full".to_string());
     if !node_mode.eq_ignore_ascii_case("full") {
         bail!("non-full node_mode is disabled: novovm-node keeps only production path");
@@ -23075,6 +23996,7 @@ fn main() -> Result<()> {
                 tx_count: payload.op_count,
                 batch: EitherBatch::Wire(payload.bytes),
                 source_detail: path.display().to_string(),
+                tx_records: None,
             });
             "ops_wire_v1".to_string()
         } else if let Some(dir) = ops_wire_dir.as_ref() {
@@ -23088,11 +24010,13 @@ fn main() -> Result<()> {
                     tx_count: payload.op_count,
                     batch: EitherBatch::Wire(payload.bytes),
                     source_detail: path.display().to_string(),
+                    tx_records: None,
                 });
             }
             "ops_wire_dir".to_string()
         } else {
             let path = tx_wire_path.as_ref().expect("tx wire path must exist");
+            let tx_records = load_tx_records_from_wire_file(path)?;
             let codec = selected_codec
                 .clone()
                 .unwrap_or_else(|| LOCAL_TX_WIRE_CODEC_WRITE_U64LE_V1.to_string());
@@ -23110,6 +24034,7 @@ fn main() -> Result<()> {
                 tx_count: payload.op_count,
                 batch: EitherBatch::Wire(payload.bytes),
                 source_detail: path.display().to_string(),
+                tx_records: Some(tx_records),
             });
             "tx_wire".to_string()
         };
@@ -23137,6 +24062,7 @@ fn main() -> Result<()> {
             bail!("NOVOVM_D1_CODEC requires ops_wire_v1 ingress; current selected mode=ops_v2");
         }
         let ingress_path = tx_wire_path.as_ref().expect("tx wire path must exist");
+        let tx_records = load_tx_records_from_wire_file(ingress_path)?;
         let payload = load_exec_batch_from_wire_file(ingress_path, |_, rec| {
             (rec.account << 32) | rec.nonce.saturating_add(1)
         })?;
@@ -23144,6 +24070,7 @@ fn main() -> Result<()> {
             tx_count: payload.len(),
             batch: EitherBatch::Ops(payload.ops),
             source_detail: ingress_path.display().to_string(),
+            tx_records: Some(tx_records),
         });
         let path_mode = if ingress_mode == D1IngressMode::Auto && !supports_wire_v1 {
             "ops_v2_fallback".to_string()
@@ -23180,6 +24107,30 @@ fn main() -> Result<()> {
         bail!("NOVOVM_TX_REPEAT_COUNT must be 1 when NOVOVM_OPS_WIRE_DIR is used");
     }
     let watch_mode = bool_env("NOVOVM_OPS_WIRE_WATCH");
+    let mainline_evm_host = mainline_evm_host_enabled();
+    let mainline_evm_chain_id = if mainline_evm_host {
+        Some(mainline_evm_chain_id()?)
+    } else {
+        None
+    };
+    let mainline_evm_atomic_guard = mainline_evm_atomic_guard_enabled();
+    let canonical_store_path = if mainline_evm_host {
+        Some(mainline_evm_canonical_store_path())
+    } else {
+        None
+    };
+    if mainline_evm_host {
+        if watch_mode {
+            bail!("NOVOVM_MAINLINE_EVM_HOST_ENABLED does not support NOVOVM_OPS_WIRE_WATCH");
+        }
+        if tx_wire_path.is_none() || ops_wire_path.is_some() || ops_wire_dir.is_some() {
+            bail!(
+                "NOVOVM_MAINLINE_EVM_HOST_ENABLED requires NOVOVM_TX_WIRE_FILE and forbids NOVOVM_OPS_WIRE_FILE/NOVOVM_OPS_WIRE_DIR"
+            );
+        }
+    }
+    let eth_send_raw_chain_id = resolve_eth_send_raw_chain_id_v1(mainline_evm_chain_id);
+    let _local_eth_send_raw_hashes = ingest_eth_send_raw_tx_env_v1(eth_send_raw_chain_id, verbose)?;
     let l1l4_anchor_file_path = string_env_nonempty("NOVOVM_L1L4_ANCHOR_PATH").map(PathBuf::from);
     let l1l4_anchor_ledger_enabled = bool_env("NOVOVM_L1L4_ANCHOR_LEDGER_ENABLED");
     let l1l4_anchor_ledger_key_prefix = string_env_nonempty("NOVOVM_L1L4_ANCHOR_LEDGER_KEY_PREFIX")
@@ -23266,11 +24217,12 @@ fn main() -> Result<()> {
         1,
         64,
     ) as u8;
-    let overlay_route_relay_rotate_seconds_default = if overlay_route_mode_legacy_effective == "secure" {
-        60
-    } else {
-        300
-    };
+    let overlay_route_relay_rotate_seconds_default =
+        if overlay_route_mode_legacy_effective == "secure" {
+            60
+        } else {
+            300
+        };
     let overlay_route_relay_rotate_seconds = u64_env_clamped(
         "NOVOVM_OVERLAY_ROUTE_RELAY_ROTATE_SECONDS",
         overlay_route_relay_rotate_seconds_default,
@@ -23292,8 +24244,11 @@ fn main() -> Result<()> {
     let selected_path = route_selector.select_best_path();
     let overlay_route_decision = resolve_overlay_route(&selected_path);
     let availability_controller = AvailabilityController::new();
-    let availability_decision =
-        resolve_availability_decision(&availability_controller, &selected_path, &overlay_route_decision);
+    let availability_decision = resolve_availability_decision(
+        &availability_controller,
+        &selected_path,
+        &overlay_route_decision,
+    );
     let overlay_route_decision_source = overlay_route_decision.source;
     let overlay_route_availability_mode = availability_decision.mode;
     let overlay_route_mode_effective = overlay_route_mode_for_decision(&overlay_route_decision);
@@ -23308,16 +24263,14 @@ fn main() -> Result<()> {
         l3_policy_resolution,
         l3_profile_mode_policy_resolution,
         l3_profile_family_resolution,
-    ) =
-        apply_l3_profile_mode_policy_from_env(
-            l3_relay_max_candidates,
-            l3_policy_profile_raw,
-            l3_policy_resolution_raw,
-            capability_impact.readiness,
-            capability_advisory.route_hint,
-        );
-    let l3_relay_fallback_resolution =
-        resolve_relay_fallback_from_env(l3_policy_profile.mode);
+    ) = apply_l3_profile_mode_policy_from_env(
+        l3_relay_max_candidates,
+        l3_policy_profile_raw,
+        l3_policy_resolution_raw,
+        capability_impact.readiness,
+        capability_advisory.route_hint,
+    );
+    let l3_relay_fallback_resolution = resolve_relay_fallback_from_env(l3_policy_profile.mode);
     let l3_relay_fallback_mode = l3_relay_fallback_resolution.mode;
     let l3_relay_fail_cooldown_ms = l3_relay_fail_cooldown_ms_from_env();
     let capability_policy_eval = evaluate_advisory_first(
@@ -23343,7 +24296,8 @@ fn main() -> Result<()> {
     );
 
     if overlay_route_availability_mode == AvailabilityMode::Normal && replay_on_start {
-        let _ = refresh_l3_discovery_membership(&l3_regional_routing, &overlay_route_region, verbose);
+        let _ =
+            refresh_l3_discovery_membership(&l3_regional_routing, &overlay_route_region, verbose);
         let replay_report = run_replay_with(availability_queue.as_mut(), |req| {
             let (relay_candidates, selected_runtime) = l3_runtime_route_snapshot(
                 &l3_regional_routing,
@@ -23916,15 +24870,13 @@ fn main() -> Result<()> {
         );
         let single_source_strict = bool_env("NOVOVM_SINGLE_SOURCE_STRICT");
         let sched_required = bool_env("NOVOVM_SCHED_REQUIRED") || single_source_strict;
-        let sched_source = string_env_nonempty("NOVOVM_SCHED_SOURCE").unwrap_or_else(|| "-".to_string());
+        let sched_source =
+            string_env_nonempty("NOVOVM_SCHED_SOURCE").unwrap_or_else(|| "-".to_string());
         let sched_token_present = string_env_nonempty("NOVOVM_SCHED_TOKEN").is_some();
         let sched_context_ok = scheduler_context_ok(&sched_source, sched_token_present);
         println!(
             "supervm_scheduler_gate: required={} source={} token_present={} context_ok={}",
-            sched_required,
-            sched_source,
-            sched_token_present,
-            sched_context_ok
+            sched_required, sched_source, sched_token_present, sched_context_ok
         );
         if sched_required && !sched_context_ok {
             bail!(
@@ -23948,11 +24900,13 @@ fn main() -> Result<()> {
                 manual_route_env_hits.join(",")
             );
         }
-        let single_source_consistent = l3_readonly_export.baseline_lock_version == L3_BASELINE_LOCK_VERSION
+        let single_source_consistent = l3_readonly_export.baseline_lock_version
+            == L3_BASELINE_LOCK_VERSION
             && l4_readonly_export.baseline_lock_version == L4_READONLY_BASELINE_LOCK_VERSION
             && l2_l1_runtime_for_state.versions.baseline_version
                 == l2_l1_contract_summary.export_baseline_version
-            && l2_l1_runtime_for_state.versions.lock_version == l2_l1_contract_summary.export_lock_version
+            && l2_l1_runtime_for_state.versions.lock_version
+                == l2_l1_contract_summary.export_lock_version
             && l2_l1_runtime_for_state.versions.fieldset_version
                 == l2_l1_contract_summary.fieldset_version
             && l2_l1_runtime_for_state.versions.state_export_version
@@ -24026,166 +24980,168 @@ fn main() -> Result<()> {
         let mut delivery_fieldset_version = "-".to_string();
 
         match std::fs::read_to_string(mainline_status_path) {
-            Ok(raw) => match serde_json::from_str::<serde_json::Value>(&raw) {
-                Ok(json) => {
-                    schema = json
-                        .get("schema")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("-")
-                        .to_string();
-                    generated_utc = json
-                        .get("generated_utc")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("-")
-                        .to_string();
-                    check_network = json
-                        .pointer("/gate/check_novovm_network")
-                        .and_then(|v| v.as_bool())
-                        .unwrap_or(false);
-                    check_node = json
-                        .pointer("/gate/check_novovm_node")
-                        .and_then(|v| v.as_bool())
-                        .unwrap_or(false);
-                    test_relay = json
-                        .pointer("/gate/test_relay_path_tests")
-                        .and_then(|v| v.as_bool())
-                        .unwrap_or(false);
-                    test_queue = json
-                        .pointer("/gate/test_queue_replay_smoke")
-                        .and_then(|v| v.as_bool())
-                        .unwrap_or(false);
-                    test_cross_node_runtime_membership = json
-                        .pointer("/gate/test_cross_node_runtime_membership_closed_loop")
-                        .and_then(|v| v.as_bool())
-                        .unwrap_or(false);
-                    test_cross_node_runtime_membership_cross_region = json
+            Ok(raw) => {
+                match serde_json::from_str::<serde_json::Value>(&raw) {
+                    Ok(json) => {
+                        schema = json
+                            .get("schema")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("-")
+                            .to_string();
+                        generated_utc = json
+                            .get("generated_utc")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("-")
+                            .to_string();
+                        check_network = json
+                            .pointer("/gate/check_novovm_network")
+                            .and_then(|v| v.as_bool())
+                            .unwrap_or(false);
+                        check_node = json
+                            .pointer("/gate/check_novovm_node")
+                            .and_then(|v| v.as_bool())
+                            .unwrap_or(false);
+                        test_relay = json
+                            .pointer("/gate/test_relay_path_tests")
+                            .and_then(|v| v.as_bool())
+                            .unwrap_or(false);
+                        test_queue = json
+                            .pointer("/gate/test_queue_replay_smoke")
+                            .and_then(|v| v.as_bool())
+                            .unwrap_or(false);
+                        test_cross_node_runtime_membership = json
+                            .pointer("/gate/test_cross_node_runtime_membership_closed_loop")
+                            .and_then(|v| v.as_bool())
+                            .unwrap_or(false);
+                        test_cross_node_runtime_membership_cross_region = json
                         .pointer("/gate/test_cross_node_runtime_membership_cross_region_is_not_admitted")
                         .and_then(|v| v.as_bool())
                         .unwrap_or(false);
-                    test_cross_node_runtime_membership_newer_unavailable_dominates_older_healthy = json
+                        test_cross_node_runtime_membership_newer_unavailable_dominates_older_healthy = json
                         .pointer("/gate/test_cross_node_runtime_membership_newer_unavailable_dominates_older_healthy")
                         .and_then(|v| v.as_bool())
                         .unwrap_or(false);
-                    test_cross_node_runtime_membership_can_affect_route_selection = json
+                        test_cross_node_runtime_membership_can_affect_route_selection = json
                         .pointer("/gate/test_cross_node_runtime_membership_can_affect_l3_route_selection_across_batch_replay_watch")
                         .and_then(|v| v.as_bool())
                         .unwrap_or(false);
-                    test_cross_node_stale_runtime_membership_prune = json
+                        test_cross_node_stale_runtime_membership_prune = json
                         .pointer("/gate/test_cross_node_stale_runtime_membership_prunes_discovered_relay_after_refresh")
                         .and_then(|v| v.as_bool())
                         .unwrap_or(false);
-                    test_discovery_membership_freshness = json
+                        test_discovery_membership_freshness = json
                         .pointer("/gate/test_discovery_membership_freshness_contract_default_is_frozen")
                         .and_then(|v| v.as_bool())
                         .unwrap_or(false);
-                    test_discovery_membership_gossip = json
+                        test_discovery_membership_gossip = json
                         .pointer(
                             "/gate/test_discovery_membership_gossip_json_supports_single_and_vec_message",
                         )
                         .and_then(|v| v.as_bool())
                         .unwrap_or(false);
-                    test_discovery_governance_contract = json
-                        .pointer("/gate/test_discovery_source_governance_contract_is_frozen")
-                        .and_then(|v| v.as_bool())
-                        .unwrap_or(false);
-                    test_discovery_breakdown_contract = json
-                        .pointer("/gate/test_discovery_source_breakdown_contract_is_frozen")
-                        .and_then(|v| v.as_bool())
-                        .unwrap_or(false);
-                    test_discovery_membership_priority_contract = json
-                        .pointer("/gate/test_discovery_membership_priority_contract_is_frozen")
-                        .and_then(|v| v.as_bool())
-                        .unwrap_or(false);
-                    test_runtime_membership_route_selection = json
+                        test_discovery_governance_contract = json
+                            .pointer("/gate/test_discovery_source_governance_contract_is_frozen")
+                            .and_then(|v| v.as_bool())
+                            .unwrap_or(false);
+                        test_discovery_breakdown_contract = json
+                            .pointer("/gate/test_discovery_source_breakdown_contract_is_frozen")
+                            .and_then(|v| v.as_bool())
+                            .unwrap_or(false);
+                        test_discovery_membership_priority_contract = json
+                            .pointer("/gate/test_discovery_membership_priority_contract_is_frozen")
+                            .and_then(|v| v.as_bool())
+                            .unwrap_or(false);
+                        test_runtime_membership_route_selection = json
                         .pointer(
                             "/gate/test_runtime_membership_can_affect_l3_route_selection_across_batch_replay_watch",
                         )
                         .and_then(|v| v.as_bool())
                         .unwrap_or(false);
-                    test_operator_forced_route_selection = json
+                        test_operator_forced_route_selection = json
                         .pointer(
                             "/gate/test_operator_forced_still_dominates_route_selection_across_batch_replay_watch",
                         )
                         .and_then(|v| v.as_bool())
                         .unwrap_or(false);
-                    test_pruned_dynamic_route_selection = json
+                        test_pruned_dynamic_route_selection = json
                         .pointer(
                             "/gate/test_pruned_dynamic_relays_no_longer_affect_selection_across_batch_replay_watch",
                         )
                         .and_then(|v| v.as_bool())
                         .unwrap_or(false);
-                    test_concurrent_runtime_membership_stability = json
+                        test_concurrent_runtime_membership_stability = json
                         .pointer(
                             "/gate/test_concurrent_runtime_membership_order_keeps_selection_view_stable",
                         )
                         .and_then(|v| v.as_bool())
                         .unwrap_or(false);
-                    test_stale_runtime_membership_prune = json
+                        test_stale_runtime_membership_prune = json
                         .pointer("/gate/test_stale_runtime_membership_prunes_discovered_relay_after_refresh")
                         .and_then(|v| v.as_bool())
                         .unwrap_or(false);
-                    test_cross_node_gossip_membership_order_stability = json
+                        test_cross_node_gossip_membership_order_stability = json
                         .pointer("/gate/test_cross_node_gossip_membership_order_keeps_selection_view_stable")
                         .and_then(|v| v.as_bool())
                         .unwrap_or(false);
-                    test_cross_node_gossip_membership_operator_forced = json
+                        test_cross_node_gossip_membership_operator_forced = json
                         .pointer("/gate/test_cross_node_gossip_membership_respects_operator_forced_selection")
                         .and_then(|v| v.as_bool())
                         .unwrap_or(false);
-                    test_runtime_membership_unavailable_prune = json
+                        test_runtime_membership_unavailable_prune = json
                         .pointer("/gate/test_runtime_membership_unavailable_update_prunes_existing_discovered_relay")
                         .and_then(|v| v.as_bool())
                         .unwrap_or(false);
-                    test_v2_stage2a_large_scale_distributed_adjudication_consistency = json
+                        test_v2_stage2a_large_scale_distributed_adjudication_consistency = json
                         .pointer("/gate/test_v2_stage2a_large_scale_distributed_adjudication_consistency")
                         .and_then(|v| v.as_bool())
                         .unwrap_or(false);
-                    test_v2_stage2b_weak_network_robustness_consistency = json
-                        .pointer("/gate/test_v2_stage2b_weak_network_robustness_consistency")
-                        .and_then(|v| v.as_bool())
-                        .unwrap_or(false);
-                    test_v2_stage2c_multi_region_real_route_consistency = json
-                        .pointer("/gate/test_v2_stage2c_multi_region_real_route_consistency")
-                        .and_then(|v| v.as_bool())
-                        .unwrap_or(false);
-                    test_v2_stage3a_convergence_recovery_consistency = json
-                        .pointer("/gate/test_v2_stage3a_convergence_recovery_consistency")
-                        .and_then(|v| v.as_bool())
-                        .unwrap_or(false);
-                    test_v2_stage3b_convergence_time_recovery_budget_consistency = json
+                        test_v2_stage2b_weak_network_robustness_consistency = json
+                            .pointer("/gate/test_v2_stage2b_weak_network_robustness_consistency")
+                            .and_then(|v| v.as_bool())
+                            .unwrap_or(false);
+                        test_v2_stage2c_multi_region_real_route_consistency = json
+                            .pointer("/gate/test_v2_stage2c_multi_region_real_route_consistency")
+                            .and_then(|v| v.as_bool())
+                            .unwrap_or(false);
+                        test_v2_stage3a_convergence_recovery_consistency = json
+                            .pointer("/gate/test_v2_stage3a_convergence_recovery_consistency")
+                            .and_then(|v| v.as_bool())
+                            .unwrap_or(false);
+                        test_v2_stage3b_convergence_time_recovery_budget_consistency = json
                         .pointer("/gate/test_v2_stage3b_convergence_time_recovery_budget_consistency")
                         .and_then(|v| v.as_bool())
                         .unwrap_or(false);
-                    test_v2_matrix_a_order_perturbation_consistency = json
-                        .pointer("/gate/test_v2_matrix_a_order_perturbation_consistency")
-                        .and_then(|v| v.as_bool())
-                        .unwrap_or(false);
-                    test_v2_matrix_b_multi_source_conflict_consistency = json
-                        .pointer("/gate/test_v2_matrix_b_multi_source_conflict_consistency")
-                        .and_then(|v| v.as_bool())
-                        .unwrap_or(false);
-                    test_v2_matrix_c_weak_network_disturbance_consistency = json
-                        .pointer("/gate/test_v2_matrix_c_weak_network_disturbance_consistency")
-                        .and_then(|v| v.as_bool())
-                        .unwrap_or(false);
-                    test_v2_matrix_d_multi_region_view_consistency = json
-                        .pointer("/gate/test_v2_matrix_d_multi_region_view_consistency")
-                        .and_then(|v| v.as_bool())
-                        .unwrap_or(false);
-                    lockset_gate = json
-                        .pointer("/lockset/gate")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("-")
-                        .to_string();
-                    overall = json
-                        .pointer("/layers/overall")
-                        .and_then(|v| v.as_i64())
-                        .unwrap_or(-1);
+                        test_v2_matrix_a_order_perturbation_consistency = json
+                            .pointer("/gate/test_v2_matrix_a_order_perturbation_consistency")
+                            .and_then(|v| v.as_bool())
+                            .unwrap_or(false);
+                        test_v2_matrix_b_multi_source_conflict_consistency = json
+                            .pointer("/gate/test_v2_matrix_b_multi_source_conflict_consistency")
+                            .and_then(|v| v.as_bool())
+                            .unwrap_or(false);
+                        test_v2_matrix_c_weak_network_disturbance_consistency = json
+                            .pointer("/gate/test_v2_matrix_c_weak_network_disturbance_consistency")
+                            .and_then(|v| v.as_bool())
+                            .unwrap_or(false);
+                        test_v2_matrix_d_multi_region_view_consistency = json
+                            .pointer("/gate/test_v2_matrix_d_multi_region_view_consistency")
+                            .and_then(|v| v.as_bool())
+                            .unwrap_or(false);
+                        lockset_gate = json
+                            .pointer("/lockset/gate")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("-")
+                            .to_string();
+                        overall = json
+                            .pointer("/layers/overall")
+                            .and_then(|v| v.as_i64())
+                            .unwrap_or(-1);
+                    }
+                    Err(_) => {
+                        source = "invalid_json";
+                    }
                 }
-                Err(_) => {
-                    source = "invalid_json";
-                }
-            },
+            }
             Err(_) => {
                 source = "missing";
             }
@@ -24238,15 +25194,15 @@ fn main() -> Result<()> {
         let gate_passed = check_network
             && check_node
             && test_relay
-                && test_queue
-                && test_cross_node_runtime_membership
-                && test_cross_node_runtime_membership_cross_region
-                && test_cross_node_runtime_membership_newer_unavailable_dominates_older_healthy
-                && test_cross_node_runtime_membership_can_affect_route_selection
-                && test_cross_node_stale_runtime_membership_prune
-                && test_discovery_membership_freshness
-                && test_discovery_membership_gossip
-                && test_discovery_governance_contract
+            && test_queue
+            && test_cross_node_runtime_membership
+            && test_cross_node_runtime_membership_cross_region
+            && test_cross_node_runtime_membership_newer_unavailable_dominates_older_healthy
+            && test_cross_node_runtime_membership_can_affect_route_selection
+            && test_cross_node_stale_runtime_membership_prune
+            && test_discovery_membership_freshness
+            && test_discovery_membership_gossip
+            && test_discovery_governance_contract
             && test_discovery_breakdown_contract
             && test_discovery_membership_priority_contract
             && test_runtime_membership_route_selection
@@ -24284,7 +25240,8 @@ fn main() -> Result<()> {
             diag_codes.push("gate.test_queue_replay_smoke.false".to_string());
         }
         if !test_cross_node_runtime_membership {
-            diag_codes.push("gate.test_cross_node_runtime_membership_closed_loop.false".to_string());
+            diag_codes
+                .push("gate.test_cross_node_runtime_membership_closed_loop.false".to_string());
         }
         if !test_cross_node_runtime_membership_cross_region {
             diag_codes.push(
@@ -24323,13 +25280,17 @@ fn main() -> Result<()> {
             );
         }
         if !test_discovery_governance_contract {
-            diag_codes.push("gate.test_discovery_source_governance_contract_is_frozen.false".to_string());
+            diag_codes
+                .push("gate.test_discovery_source_governance_contract_is_frozen.false".to_string());
         }
         if !test_discovery_breakdown_contract {
-            diag_codes.push("gate.test_discovery_source_breakdown_contract_is_frozen.false".to_string());
+            diag_codes
+                .push("gate.test_discovery_source_breakdown_contract_is_frozen.false".to_string());
         }
         if !test_discovery_membership_priority_contract {
-            diag_codes.push("gate.test_discovery_membership_priority_contract_is_frozen.false".to_string());
+            diag_codes.push(
+                "gate.test_discovery_membership_priority_contract_is_frozen.false".to_string(),
+            );
         }
         if !test_runtime_membership_route_selection {
             diag_codes.push(
@@ -24386,19 +25347,16 @@ fn main() -> Result<()> {
             );
         }
         if !test_v2_stage2b_weak_network_robustness_consistency {
-            diag_codes.push(
-                "gate.test_v2_stage2b_weak_network_robustness_consistency.false".to_string(),
-            );
+            diag_codes
+                .push("gate.test_v2_stage2b_weak_network_robustness_consistency.false".to_string());
         }
         if !test_v2_stage2c_multi_region_real_route_consistency {
-            diag_codes.push(
-                "gate.test_v2_stage2c_multi_region_real_route_consistency.false".to_string(),
-            );
+            diag_codes
+                .push("gate.test_v2_stage2c_multi_region_real_route_consistency.false".to_string());
         }
         if !test_v2_stage3a_convergence_recovery_consistency {
-            diag_codes.push(
-                "gate.test_v2_stage3a_convergence_recovery_consistency.false".to_string(),
-            );
+            diag_codes
+                .push("gate.test_v2_stage3a_convergence_recovery_consistency.false".to_string());
         }
         if !test_v2_stage3b_convergence_time_recovery_budget_consistency {
             diag_codes.push(
@@ -24407,10 +25365,12 @@ fn main() -> Result<()> {
             );
         }
         if !test_v2_matrix_a_order_perturbation_consistency {
-            diag_codes.push("gate.test_v2_matrix_a_order_perturbation_consistency.false".to_string());
+            diag_codes
+                .push("gate.test_v2_matrix_a_order_perturbation_consistency.false".to_string());
         }
         if !test_v2_matrix_b_multi_source_conflict_consistency {
-            diag_codes.push("gate.test_v2_matrix_b_multi_source_conflict_consistency.false".to_string());
+            diag_codes
+                .push("gate.test_v2_matrix_b_multi_source_conflict_consistency.false".to_string());
         }
         if !test_v2_matrix_c_weak_network_disturbance_consistency {
             diag_codes.push(
@@ -24418,7 +25378,8 @@ fn main() -> Result<()> {
             );
         }
         if !test_v2_matrix_d_multi_region_view_consistency {
-            diag_codes.push("gate.test_v2_matrix_d_multi_region_view_consistency.false".to_string());
+            diag_codes
+                .push("gate.test_v2_matrix_d_multi_region_view_consistency.false".to_string());
         }
         if !gate_lockset_ok {
             diag_codes.push("gate.lockset_mismatch".to_string());
@@ -24710,11 +25671,10 @@ fn main() -> Result<()> {
                 );
                 let l2_l1_tripwire_strict_governance =
                     resolve_l2_l1_tripwire_strict_governance_from_env();
-                let l2_l1_tripwire_view =
-                    build_l2_l1_tripwire_view(
-                        &l2_l1_runtime_for_watch,
-                        l2_l1_tripwire_strict_governance.effective_strict,
-                    );
+                let l2_l1_tripwire_view = build_l2_l1_tripwire_view(
+                    &l2_l1_runtime_for_watch,
+                    l2_l1_tripwire_strict_governance.effective_strict,
+                );
                 l2_l1_runtime_fieldset_hard_gate(&l2_l1_tripwire_view);
                 l2_l1_runtime_consistency_tripwire(&l2_l1_runtime_for_watch);
                 enforce_l2_l1_runtime_consistency_with_flag(
@@ -25022,6 +25982,268 @@ fn main() -> Result<()> {
     let mut success_total: u64 = 0;
     let mut writes_total: u64 = 0;
     let mut aoem_exec_us_total: u64 = 0;
+    let mut canonical_receipt_total: u64 = 0;
+    let mut canonical_state_mirror_total: u64 = 0;
+    let mut canonical_batch_total: u64 = 0;
+    let mut execution_budget_hit_count: u64 = 0;
+    let mut execution_deferred_count: u64 = 0;
+    let mut execution_time_slice_exceeded_count: u64 = 0;
+    let mut last_execution_throttle_reason: Option<String> = None;
+    let mut execution_target_scale_up_count: u64 = 0;
+    let mut execution_target_scale_down_count: u64 = 0;
+    let mut last_execution_target_reason: Option<String> = None;
+    let mut consecutive_execution_throttle_ticks: u64 = 0;
+
+    #[derive(Debug)]
+    struct HostExecDeferredBatchV1 {
+        source_detail: String,
+        tx_irs: Vec<TxIR>,
+    }
+
+    let mut host_exec_deferred_batches = VecDeque::<HostExecDeferredBatchV1>::new();
+    let (
+        host_exec_budget_per_tick,
+        host_exec_time_slice_ms,
+        host_exec_target_per_tick,
+        host_exec_target_time_slice_ms,
+    ) = if mainline_evm_host {
+        let chain_id = mainline_evm_chain_id.expect("host mode chain id must be initialized");
+        let budget_hooks = resolve_eth_fullnode_budget_hooks_v1(chain_id);
+        (
+            budget_hooks.host_exec_budget_per_tick.max(1),
+            budget_hooks.host_exec_time_slice_ms.max(1),
+            budget_hooks
+                .host_exec_target_per_tick
+                .max(1)
+                .min(budget_hooks.host_exec_budget_per_tick.max(1)),
+            budget_hooks
+                .host_exec_target_time_slice_ms
+                .max(1)
+                .min(budget_hooks.host_exec_time_slice_ms.max(1)),
+        )
+    } else {
+        (u64::MAX, u64::MAX, u64::MAX, u64::MAX)
+    };
+
+    let run_mainline_host_exec_tick_v1 = |chain_id: u64,
+                                          mut work_queue: VecDeque<HostExecDeferredBatchV1>,
+                                          tick_budget: u64,
+                                          tick_time_slice_ms: u64,
+                                          submitted_total_ref: &mut u64,
+                                          processed_total_ref: &mut u64,
+                                          success_total_ref: &mut u64,
+                                          writes_total_ref: &mut u64,
+                                          canonical_receipt_total_ref: &mut u64,
+                                          canonical_state_mirror_total_ref: &mut u64,
+                                          canonical_batch_total_ref: &mut u64,
+                                          execution_budget_hit_count_ref: &mut u64,
+                                          execution_deferred_count_ref: &mut u64,
+                                          execution_time_slice_exceeded_count_ref: &mut u64,
+                                          last_execution_throttle_reason_ref: &mut Option<
+        String,
+    >|
+     -> Result<VecDeque<HostExecDeferredBatchV1>> {
+        let tick_budget = tick_budget.max(1);
+        let tick_time_slice = Duration::from_millis(tick_time_slice_ms.max(1));
+        let tick_start = Instant::now();
+        let mut tick_processed: u64 = 0;
+
+        while let Some(mut work) = work_queue.pop_front() {
+            if tick_processed >= tick_budget {
+                work_queue.push_front(work);
+                let deferred_now = work_queue
+                    .iter()
+                    .map(|item| item.tx_irs.len() as u64)
+                    .sum::<u64>();
+                *execution_budget_hit_count_ref = execution_budget_hit_count_ref.saturating_add(1);
+                *execution_deferred_count_ref =
+                    execution_deferred_count_ref.saturating_add(deferred_now);
+                *last_execution_throttle_reason_ref =
+                    Some("host_exec_budget_per_tick_exhausted".to_string());
+                observe_network_runtime_native_execution_budget_throttle_v1(
+                    chain_id,
+                    "host_exec_budget_per_tick_exhausted",
+                    deferred_now,
+                    true,
+                    false,
+                );
+                return Ok(work_queue);
+            }
+            if tick_start.elapsed() >= tick_time_slice {
+                work_queue.push_front(work);
+                let deferred_now = work_queue
+                    .iter()
+                    .map(|item| item.tx_irs.len() as u64)
+                    .sum::<u64>();
+                *execution_budget_hit_count_ref = execution_budget_hit_count_ref.saturating_add(1);
+                *execution_deferred_count_ref =
+                    execution_deferred_count_ref.saturating_add(deferred_now);
+                *execution_time_slice_exceeded_count_ref =
+                    execution_time_slice_exceeded_count_ref.saturating_add(1);
+                *last_execution_throttle_reason_ref =
+                    Some("host_exec_time_slice_exceeded".to_string());
+                observe_network_runtime_native_execution_budget_throttle_v1(
+                    chain_id,
+                    "host_exec_time_slice_exceeded",
+                    deferred_now,
+                    true,
+                    true,
+                );
+                return Ok(work_queue);
+            }
+
+            let remaining_budget = tick_budget.saturating_sub(tick_processed);
+            if remaining_budget == 0 {
+                work_queue.push_front(work);
+                let deferred_now = work_queue
+                    .iter()
+                    .map(|item| item.tx_irs.len() as u64)
+                    .sum::<u64>();
+                *execution_budget_hit_count_ref = execution_budget_hit_count_ref.saturating_add(1);
+                *execution_deferred_count_ref =
+                    execution_deferred_count_ref.saturating_add(deferred_now);
+                *last_execution_throttle_reason_ref =
+                    Some("host_exec_budget_per_tick_exhausted".to_string());
+                observe_network_runtime_native_execution_budget_throttle_v1(
+                    chain_id,
+                    "host_exec_budget_per_tick_exhausted",
+                    deferred_now,
+                    true,
+                    false,
+                );
+                return Ok(work_queue);
+            }
+
+            if (work.tx_irs.len() as u64) > remaining_budget {
+                let remainder = work.tx_irs.split_off(remaining_budget as usize);
+                work_queue.push_front(HostExecDeferredBatchV1 {
+                    source_detail: work.source_detail.clone(),
+                    tx_irs: remainder,
+                });
+            }
+
+            if work.tx_irs.is_empty() {
+                continue;
+            }
+
+            let _ = drain_execution_receipts_for_host(usize::MAX);
+            let _ = drain_state_mirror_updates_for_host(usize::MAX);
+            let report = submit_internal_batch_to_mainline_v1(
+                ChainType::EVM,
+                chain_id,
+                &work.tx_irs,
+                mainline_evm_atomic_guard,
+            )
+            .with_context(|| {
+                format!(
+                    "mainline evm host submit failed: source={} tx_count={}",
+                    work.source_detail,
+                    work.tx_irs.len()
+                )
+            })?;
+            let receipts = drain_execution_receipts_for_host(
+                (report.exported_receipt_count as usize).saturating_add(1),
+            );
+            let state_mirror_updates = drain_state_mirror_updates_for_host(
+                (report.mirrored_receipt_count as usize).saturating_add(1),
+            );
+            *canonical_batch_total_ref = canonical_batch_total_ref.saturating_add(1);
+            *canonical_receipt_total_ref =
+                canonical_receipt_total_ref.saturating_add(receipts.len() as u64);
+            *canonical_state_mirror_total_ref =
+                canonical_state_mirror_total_ref.saturating_add(state_mirror_updates.len() as u64);
+            *submitted_total_ref = submitted_total_ref.saturating_add(report.tx_count);
+            *processed_total_ref = processed_total_ref.saturating_add(report.apply_result.txs);
+            *success_total_ref = success_total_ref
+                .saturating_add(receipts.iter().filter(|receipt| receipt.status_ok).count() as u64);
+            *writes_total_ref = writes_total_ref.saturating_add(
+                state_mirror_updates
+                    .iter()
+                    .map(|update| update.accepted_receipt_count)
+                    .sum::<u64>(),
+            );
+            tick_processed = tick_processed.saturating_add(work.tx_irs.len() as u64);
+
+            let store_path = canonical_store_path
+                .as_ref()
+                .expect("host mode canonical store path must be initialized");
+            let store = append_mainline_canonical_batch(
+                store_path,
+                "evm",
+                chain_id,
+                MainlineCanonicalBatchRecordV1 {
+                    seq: *canonical_batch_total_ref,
+                    source_detail: work.source_detail,
+                    tx_count: work.tx_irs.len(),
+                    tap_requested: report.tap_summary.requested as u64,
+                    tap_accepted: report.tap_summary.accepted,
+                    tap_dropped: report.tap_summary.dropped,
+                    apply_verified: report.apply_result.verified != 0,
+                    apply_applied: report.apply_result.applied != 0,
+                    apply_state_root: report.apply_result.state_root,
+                    exported_receipt_count: receipts.len(),
+                    mirrored_receipt_count: state_mirror_updates.len(),
+                    state_version: report.state_version,
+                    ingress_bypassed: report.ingress_bypassed,
+                    atomic_guard_enabled: report.atomic_guard_enabled,
+                    receipts,
+                    state_mirror_updates,
+                },
+            )?;
+            if verbose {
+                let chain_view = derive_mainline_eth_fullnode_chain_view_v1(&store);
+                println!(
+                    "mainline_canonical_out: store={} chain_id={} batch_seq={} total_batches={} receipts_total={} state_mirror_updates_total={} block_view_source={} current_block_number={} highest_block_number={} current_block_hash={}",
+                    store_path.display(),
+                    chain_id,
+                    *canonical_batch_total_ref,
+                    store.batches.len(),
+                    *canonical_receipt_total_ref,
+                    *canonical_state_mirror_total_ref,
+                    chain_view
+                        .as_ref()
+                        .map(|view| view.source.as_str())
+                        .unwrap_or("-"),
+                    chain_view
+                        .as_ref()
+                        .map(|view| view.current_block_number.to_string())
+                        .unwrap_or_else(|| "-".to_string()),
+                    chain_view
+                        .as_ref()
+                        .map(|view| view.highest_block_number.to_string())
+                        .unwrap_or_else(|| "-".to_string()),
+                    chain_view
+                        .as_ref()
+                        .map(|view| to_hex_prefixed(&view.current_block_hash))
+                        .unwrap_or_else(|| "-".to_string())
+                );
+            }
+
+            if tick_start.elapsed() >= tick_time_slice && !work_queue.is_empty() {
+                let deferred_now = work_queue
+                    .iter()
+                    .map(|item| item.tx_irs.len() as u64)
+                    .sum::<u64>();
+                *execution_budget_hit_count_ref = execution_budget_hit_count_ref.saturating_add(1);
+                *execution_deferred_count_ref =
+                    execution_deferred_count_ref.saturating_add(deferred_now);
+                *execution_time_slice_exceeded_count_ref =
+                    execution_time_slice_exceeded_count_ref.saturating_add(1);
+                *last_execution_throttle_reason_ref =
+                    Some("host_exec_time_slice_exceeded".to_string());
+                observe_network_runtime_native_execution_budget_throttle_v1(
+                    chain_id,
+                    "host_exec_time_slice_exceeded",
+                    deferred_now,
+                    true,
+                    true,
+                );
+                return Ok(work_queue);
+            }
+        }
+
+        Ok(work_queue)
+    };
 
     if overlay_route_availability_mode == AvailabilityMode::ReadOnly {
         bail!(
@@ -25062,10 +26284,116 @@ fn main() -> Result<()> {
                 continue;
             }
 
+            if mainline_evm_host {
+                let chain_id =
+                    mainline_evm_chain_id.expect("host mode chain id must be initialized");
+                let tx_records = prepared.tx_records.as_ref().ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "NOVOVM_MAINLINE_EVM_HOST_ENABLED requires tx ingress records: source={}",
+                        prepared.source_detail
+                    )
+                })?;
+                let tx_irs = tx_ingress_records_to_adapter_tx_irs(tx_records, chain_id);
+                observe_local_tx_records_pending_ingress_v1(chain_id, tx_records, &tx_irs);
+                let mut work_queue = std::mem::take(&mut host_exec_deferred_batches);
+                work_queue.push_back(HostExecDeferredBatchV1 {
+                    source_detail: format!(
+                        "{}#batch={}/{}#run={}/{}",
+                        prepared.source_detail,
+                        batch_idx + 1,
+                        prepared_batches.len(),
+                        idx + 1,
+                        repeat_count
+                    ),
+                    tx_irs,
+                });
+                let deferred_tx_total = work_queue
+                    .iter()
+                    .map(|item| item.tx_irs.len() as u64)
+                    .sum::<u64>();
+                let pending_summary =
+                    snapshot_network_runtime_native_pending_tx_summary_v1(chain_id);
+                let sync_status = get_network_runtime_native_sync_status(chain_id);
+                let adaptive_targets =
+                    derive_mainline_host_exec_targets_v1(MainlineHostExecAdaptiveInputsV1 {
+                        hard_budget_per_tick: host_exec_budget_per_tick,
+                        hard_time_slice_ms: host_exec_time_slice_ms,
+                        target_budget_per_tick: host_exec_target_per_tick,
+                        target_time_slice_ms: host_exec_target_time_slice_ms,
+                        pending_backlog: deferred_tx_total
+                            .saturating_add(pending_summary.pending_count as u64)
+                            .saturating_add(pending_summary.reorged_back_to_pending_count as u64),
+                        broadcast_dispatch_total: pending_summary.broadcast_dispatch_total,
+                        broadcast_dispatch_failed_total: pending_summary
+                            .broadcast_dispatch_failed_total,
+                        sync_peer_count: sync_status
+                            .map(|value| value.peer_count)
+                            .unwrap_or_default(),
+                        sync_gap: sync_status
+                            .map(|value| value.highest_block.saturating_sub(value.current_block))
+                            .unwrap_or_default(),
+                        sync_phase: sync_status.map(|value| value.phase),
+                        consecutive_throttle_ticks: consecutive_execution_throttle_ticks,
+                    });
+                let effective_tick_budget = adaptive_targets.effective_budget_per_tick;
+                let effective_tick_time_slice_ms = adaptive_targets.effective_time_slice_ms;
+                let target_reason = adaptive_targets.reason;
+                if effective_tick_budget > host_exec_target_per_tick
+                    || effective_tick_time_slice_ms > host_exec_target_time_slice_ms
+                {
+                    execution_target_scale_up_count =
+                        execution_target_scale_up_count.saturating_add(1);
+                } else if effective_tick_budget < host_exec_target_per_tick
+                    || effective_tick_time_slice_ms < host_exec_target_time_slice_ms
+                {
+                    execution_target_scale_down_count =
+                        execution_target_scale_down_count.saturating_add(1);
+                }
+                last_execution_target_reason = target_reason.clone();
+                observe_network_runtime_native_execution_budget_target_v1(
+                    chain_id,
+                    host_exec_budget_per_tick,
+                    host_exec_time_slice_ms,
+                    host_exec_target_per_tick,
+                    host_exec_target_time_slice_ms,
+                    effective_tick_budget,
+                    effective_tick_time_slice_ms,
+                    target_reason.as_deref(),
+                );
+                let budget_hits_before = execution_budget_hit_count;
+                let time_slice_before = execution_time_slice_exceeded_count;
+                host_exec_deferred_batches = run_mainline_host_exec_tick_v1(
+                    chain_id,
+                    work_queue,
+                    effective_tick_budget,
+                    effective_tick_time_slice_ms,
+                    &mut submitted_total,
+                    &mut processed_total,
+                    &mut success_total,
+                    &mut writes_total,
+                    &mut canonical_receipt_total,
+                    &mut canonical_state_mirror_total,
+                    &mut canonical_batch_total,
+                    &mut execution_budget_hit_count,
+                    &mut execution_deferred_count,
+                    &mut execution_time_slice_exceeded_count,
+                    &mut last_execution_throttle_reason,
+                )?;
+                if execution_budget_hit_count > budget_hits_before
+                    || execution_time_slice_exceeded_count > time_slice_before
+                {
+                    consecutive_execution_throttle_ticks =
+                        consecutive_execution_throttle_ticks.saturating_add(1);
+                } else {
+                    consecutive_execution_throttle_ticks = 0;
+                }
+                continue;
+            }
+
             let report = match &prepared.batch {
                 EitherBatch::Ops(ops) => session.submit_ops_report(ops),
                 EitherBatch::Wire(wire) => {
-                let (relay_candidates, selected_runtime) = l3_runtime_route_snapshot(
+                    let (relay_candidates, selected_runtime) = l3_runtime_route_snapshot(
                         &l3_regional_routing,
                         &overlay_route_region,
                         overlay_route_selected_relay_id.as_deref(),
@@ -25128,6 +26456,90 @@ fn main() -> Result<()> {
             aoem_exec_us_total = aoem_exec_us_total.saturating_add(out.metrics.elapsed_us);
         }
     }
+    if mainline_evm_host && !host_exec_deferred_batches.is_empty() {
+        let chain_id = mainline_evm_chain_id.expect("host mode chain id must be initialized");
+        while !host_exec_deferred_batches.is_empty() {
+            let work_queue = std::mem::take(&mut host_exec_deferred_batches);
+            let deferred_tx_total = work_queue
+                .iter()
+                .map(|item| item.tx_irs.len() as u64)
+                .sum::<u64>();
+            let pending_summary = snapshot_network_runtime_native_pending_tx_summary_v1(chain_id);
+            let sync_status = get_network_runtime_native_sync_status(chain_id);
+            let adaptive_targets =
+                derive_mainline_host_exec_targets_v1(MainlineHostExecAdaptiveInputsV1 {
+                    hard_budget_per_tick: host_exec_budget_per_tick,
+                    hard_time_slice_ms: host_exec_time_slice_ms,
+                    target_budget_per_tick: host_exec_target_per_tick,
+                    target_time_slice_ms: host_exec_target_time_slice_ms,
+                    pending_backlog: deferred_tx_total
+                        .saturating_add(pending_summary.pending_count as u64)
+                        .saturating_add(pending_summary.reorged_back_to_pending_count as u64),
+                    broadcast_dispatch_total: pending_summary.broadcast_dispatch_total,
+                    broadcast_dispatch_failed_total: pending_summary
+                        .broadcast_dispatch_failed_total,
+                    sync_peer_count: sync_status
+                        .map(|value| value.peer_count)
+                        .unwrap_or_default(),
+                    sync_gap: sync_status
+                        .map(|value| value.highest_block.saturating_sub(value.current_block))
+                        .unwrap_or_default(),
+                    sync_phase: sync_status.map(|value| value.phase),
+                    consecutive_throttle_ticks: consecutive_execution_throttle_ticks,
+                });
+            let effective_tick_budget = adaptive_targets.effective_budget_per_tick;
+            let effective_tick_time_slice_ms = adaptive_targets.effective_time_slice_ms;
+            let target_reason = adaptive_targets.reason;
+            if effective_tick_budget > host_exec_target_per_tick
+                || effective_tick_time_slice_ms > host_exec_target_time_slice_ms
+            {
+                execution_target_scale_up_count = execution_target_scale_up_count.saturating_add(1);
+            } else if effective_tick_budget < host_exec_target_per_tick
+                || effective_tick_time_slice_ms < host_exec_target_time_slice_ms
+            {
+                execution_target_scale_down_count =
+                    execution_target_scale_down_count.saturating_add(1);
+            }
+            last_execution_target_reason = target_reason.clone();
+            observe_network_runtime_native_execution_budget_target_v1(
+                chain_id,
+                host_exec_budget_per_tick,
+                host_exec_time_slice_ms,
+                host_exec_target_per_tick,
+                host_exec_target_time_slice_ms,
+                effective_tick_budget,
+                effective_tick_time_slice_ms,
+                target_reason.as_deref(),
+            );
+            let budget_hits_before = execution_budget_hit_count;
+            let time_slice_before = execution_time_slice_exceeded_count;
+            host_exec_deferred_batches = run_mainline_host_exec_tick_v1(
+                chain_id,
+                work_queue,
+                effective_tick_budget,
+                effective_tick_time_slice_ms,
+                &mut submitted_total,
+                &mut processed_total,
+                &mut success_total,
+                &mut writes_total,
+                &mut canonical_receipt_total,
+                &mut canonical_state_mirror_total,
+                &mut canonical_batch_total,
+                &mut execution_budget_hit_count,
+                &mut execution_deferred_count,
+                &mut execution_time_slice_exceeded_count,
+                &mut last_execution_throttle_reason,
+            )?;
+            if execution_budget_hit_count > budget_hits_before
+                || execution_time_slice_exceeded_count > time_slice_before
+            {
+                consecutive_execution_throttle_ticks =
+                    consecutive_execution_throttle_ticks.saturating_add(1);
+            } else {
+                consecutive_execution_throttle_ticks = 0;
+            }
+        }
+    }
     if l1l4_anchor_any_sink {
         anchor_seq = anchor_seq.saturating_add(1);
         let mut l2_l1_runtime_for_batch = build_l2_l1_runtime_view(l2_runtime);
@@ -25138,11 +26550,10 @@ fn main() -> Result<()> {
             l3_readonly_export.selected_index,
         );
         let l2_l1_tripwire_strict_governance = resolve_l2_l1_tripwire_strict_governance_from_env();
-        let l2_l1_tripwire_view =
-            build_l2_l1_tripwire_view(
-                &l2_l1_runtime_for_batch,
-                l2_l1_tripwire_strict_governance.effective_strict,
-            );
+        let l2_l1_tripwire_view = build_l2_l1_tripwire_view(
+            &l2_l1_runtime_for_batch,
+            l2_l1_tripwire_strict_governance.effective_strict,
+        );
         l2_l1_runtime_fieldset_hard_gate(&l2_l1_tripwire_view);
         l2_l1_runtime_consistency_tripwire(&l2_l1_runtime_for_batch);
         enforce_l2_l1_runtime_consistency_with_flag(
@@ -25427,21 +26838,56 @@ fn main() -> Result<()> {
             l2_l1_state_contract_summary_for_cross.closure_seal_hash
         );
         let host_exec_us = exec_loop_sw.elapsed().as_micros() as u64;
-        println!(
-            "mode=ffi_v2_aggregate variant={} dll={} rc=0(ok) batches={} repeats={} submitted_total={} processed_total={} success_total={} writes_total={} queued_total={} availability_mode={} host_exec_us={} aoem_exec_us={}",
-            runtime.variant.as_str(),
-            runtime.dll_path.display(),
-            prepared_batches.len(),
-            repeat_count,
-            submitted_total,
-            processed_total,
-            success_total,
-            writes_total,
-            l2_runtime.queue_total,
-            overlay_availability_mode_label(overlay_route_availability_mode),
-            host_exec_us,
-            aoem_exec_us_total
-        );
+        if mainline_evm_host {
+            let store_path = canonical_store_path
+                .as_ref()
+                .expect("host mode canonical store path must be initialized");
+            println!(
+                "mode=mainline_evm_host variant={} dll={} rc=0(ok) batches={} repeats={} submitted_total={} processed_total={} success_total={} writes_total={} canonical_receipts_total={} canonical_state_mirror_total={} canonical_batches_total={} queued_total={} availability_mode={} canonical_store={} host_exec_us={} host_exec_budget_per_tick={} host_exec_time_slice_ms={} host_exec_target_per_tick={} host_exec_target_time_slice_ms={} execution_budget_hit_count={} execution_deferred_count={} execution_time_slice_exceeded_count={} execution_target_scale_up_count={} execution_target_scale_down_count={} last_execution_throttle_reason={} last_execution_target_reason={}",
+                runtime.variant.as_str(),
+                runtime.dll_path.display(),
+                prepared_batches.len(),
+                repeat_count,
+                submitted_total,
+                processed_total,
+                success_total,
+                writes_total,
+                canonical_receipt_total,
+                canonical_state_mirror_total,
+                canonical_batch_total,
+                l2_runtime.queue_total,
+                overlay_availability_mode_label(overlay_route_availability_mode),
+                store_path.display(),
+                host_exec_us,
+                host_exec_budget_per_tick,
+                host_exec_time_slice_ms,
+                host_exec_target_per_tick,
+                host_exec_target_time_slice_ms,
+                execution_budget_hit_count,
+                execution_deferred_count,
+                execution_time_slice_exceeded_count,
+                execution_target_scale_up_count,
+                execution_target_scale_down_count,
+                last_execution_throttle_reason.as_deref().unwrap_or("-"),
+                last_execution_target_reason.as_deref().unwrap_or("-"),
+            );
+        } else {
+            println!(
+                "mode=ffi_v2_aggregate variant={} dll={} rc=0(ok) batches={} repeats={} submitted_total={} processed_total={} success_total={} writes_total={} queued_total={} availability_mode={} host_exec_us={} aoem_exec_us={}",
+                runtime.variant.as_str(),
+                runtime.dll_path.display(),
+                prepared_batches.len(),
+                repeat_count,
+                submitted_total,
+                processed_total,
+                success_total,
+                writes_total,
+                l2_runtime.queue_total,
+                overlay_availability_mode_label(overlay_route_availability_mode),
+                host_exec_us,
+                aoem_exec_us_total
+            );
+        }
     }
     drop(session);
     std::mem::forget(facade);

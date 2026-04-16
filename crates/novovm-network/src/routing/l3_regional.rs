@@ -2,8 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::RwLock;
 
 use super::types::{
-    unix_ms_now, NodeId, NodeRef, RegionId, RelayHealth, RelayRef, RelayScoreView,
-    RoutingSource,
+    unix_ms_now, NodeId, NodeRef, RegionId, RelayHealth, RelayRef, RelayScoreView, RoutingSource,
 };
 
 pub const L3_RELAY_SCORE_SCALE: i64 = 10;
@@ -174,17 +173,17 @@ impl L3RegionalRoutingTable {
         true
     }
 
-    pub fn prune_discovered_relays_except(
-        &self,
-        keep_relay_ids: &HashSet<String>,
-    ) -> usize {
+    pub fn prune_discovered_relays_except(&self, keep_relay_ids: &HashSet<String>) -> usize {
         let mut relays = self.l3_relays.write().unwrap();
         let before = relays.len();
         relays.retain(|relay_id, relay| {
             if keep_relay_ids.contains(relay_id) {
                 return true;
             }
-            !matches!(relay.source, RoutingSource::PeerHinted | RoutingSource::LocalObserved)
+            !matches!(
+                relay.source,
+                RoutingSource::PeerHinted | RoutingSource::LocalObserved
+            )
         });
         let removed = before.saturating_sub(relays.len());
         drop(relays);
@@ -231,11 +230,7 @@ impl L3RegionalRoutingTable {
         relays
     }
 
-    pub fn relay_pool(
-        &self,
-        now_unix_ms: u64,
-        max_candidates: usize,
-    ) -> Vec<RelayRef> {
+    pub fn relay_pool(&self, now_unix_ms: u64, max_candidates: usize) -> Vec<RelayRef> {
         let cooldowns = self.relay_cooldown_until_unix_ms.read().unwrap();
         let mut relays: Vec<_> = self
             .l3_relays
@@ -315,11 +310,7 @@ impl L3RegionalRoutingTable {
             })
     }
 
-    pub fn relay_runtime_feedback_score(
-        &self,
-        relay_id: &str,
-        now_unix_ms: u64,
-    ) -> i64 {
+    pub fn relay_runtime_feedback_score(&self, relay_id: &str, now_unix_ms: u64) -> i64 {
         let in_cooldown = self
             .relay_cooldown_until_unix_ms
             .read()
@@ -434,12 +425,7 @@ impl L3RegionalRoutingTable {
         }
     }
 
-    pub fn mark_relay_failure(
-        &self,
-        relay_id: &str,
-        now_unix_ms: u64,
-        cooldown_ms: u64,
-    ) -> bool {
+    pub fn mark_relay_failure(&self, relay_id: &str, now_unix_ms: u64, cooldown_ms: u64) -> bool {
         let mut relays = self.l3_relays.write().unwrap();
         if let Some(relay) = relays.get_mut(relay_id) {
             relay.score = relay.score.saturating_sub(1);
@@ -464,7 +450,13 @@ impl L3RegionalRoutingTable {
     }
 
     pub fn any_upstream(&self) -> Option<NodeRef> {
-        let mut upstreams: Vec<_> = self.l2_upstreams.read().unwrap().values().cloned().collect();
+        let mut upstreams: Vec<_> = self
+            .l2_upstreams
+            .read()
+            .unwrap()
+            .values()
+            .cloned()
+            .collect();
         upstreams.sort_by(|left, right| {
             left.node_id
                 .cmp(&right.node_id)
@@ -477,9 +469,21 @@ impl L3RegionalRoutingTable {
         L3RegionalRoutingSnapshot {
             region_id: self.region_id.clone(),
             version: *self.version.read().unwrap(),
-            l2_upstreams: self.l2_upstreams.read().unwrap().values().cloned().collect(),
+            l2_upstreams: self
+                .l2_upstreams
+                .read()
+                .unwrap()
+                .values()
+                .cloned()
+                .collect(),
             l3_relays: self.l3_relays.read().unwrap().values().cloned().collect(),
-            l4_neighbors: self.l4_neighbors.read().unwrap().values().cloned().collect(),
+            l4_neighbors: self
+                .l4_neighbors
+                .read()
+                .unwrap()
+                .values()
+                .cloned()
+                .collect(),
             nat_assist_nodes: self
                 .nat_assist_nodes
                 .read()
@@ -514,10 +518,8 @@ fn relay_runtime_feedback_score_inner(
     if let Some(feedback) = feedback {
         score += i64::from(feedback.recent_successes) * L3_RELAY_RUNTIME_SUCCESS_WEIGHT;
         score -= i64::from(feedback.recent_failures) * L3_RELAY_RUNTIME_FAILURE_WEIGHT;
-        score +=
-            i64::from(feedback.consecutive_successes) * L3_RELAY_RUNTIME_STREAK_SUCCESS_WEIGHT;
-        score -=
-            i64::from(feedback.consecutive_failures) * L3_RELAY_RUNTIME_STREAK_FAILURE_WEIGHT;
+        score += i64::from(feedback.consecutive_successes) * L3_RELAY_RUNTIME_STREAK_SUCCESS_WEIGHT;
+        score -= i64::from(feedback.consecutive_failures) * L3_RELAY_RUNTIME_STREAK_FAILURE_WEIGHT;
 
         if feedback.last_event_unix_ms > 0 && now_unix_ms > feedback.last_event_unix_ms {
             let age_ms = now_unix_ms - feedback.last_event_unix_ms;
@@ -538,9 +540,7 @@ fn relay_runtime_feedback_score_inner(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::routing::types::{
-        NodeTier, RelayCapacityClass, RelayHealth, RoutingSource,
-    };
+    use crate::routing::types::{NodeTier, RelayCapacityClass, RelayHealth, RoutingSource};
 
     #[test]
     fn healthy_relays_prefers_healthy_before_degraded() {
@@ -725,7 +725,9 @@ mod tests {
         });
         assert!(!applied);
 
-        let keep = table.relay_score_view("relay-forced").expect("relay exists");
+        let keep = table
+            .relay_score_view("relay-forced")
+            .expect("relay exists");
         assert_eq!(keep.score, 42);
         assert_eq!(keep.health, RelayHealth::Healthy);
     }

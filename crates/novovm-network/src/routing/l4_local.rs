@@ -142,7 +142,12 @@ impl L4LocalRoutingTable {
             .read()
             .unwrap()
             .values()
-            .filter(|p| matches!(p.reachability, Reachability::Reachable | Reachability::LanOnly))
+            .filter(|p| {
+                matches!(
+                    p.reachability,
+                    Reachability::Reachable | Reachability::LanOnly
+                )
+            })
             .cloned()
             .collect();
 
@@ -164,7 +169,12 @@ impl L4LocalRoutingTable {
             .read()
             .unwrap()
             .values()
-            .filter(|p| matches!(p.reachability, Reachability::Reachable | Reachability::RelayOnly))
+            .filter(|p| {
+                matches!(
+                    p.reachability,
+                    Reachability::Reachable | Reachability::RelayOnly
+                )
+            })
             .filter(|p| {
                 matches!(
                     p.role,

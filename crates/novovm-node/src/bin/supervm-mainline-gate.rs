@@ -26,7 +26,8 @@ struct MainlineGate {
     test_cross_node_runtime_membership_closed_loop: bool,
     test_cross_node_runtime_membership_cross_region_is_not_admitted: bool,
     test_cross_node_runtime_membership_newer_unavailable_dominates_older_healthy: bool,
-    test_cross_node_runtime_membership_can_affect_l3_route_selection_across_batch_replay_watch: bool,
+    test_cross_node_runtime_membership_can_affect_l3_route_selection_across_batch_replay_watch:
+        bool,
     test_cross_node_stale_runtime_membership_prunes_discovered_relay_after_refresh: bool,
     test_runtime_membership_can_affect_l3_route_selection_across_batch_replay_watch: bool,
     test_operator_forced_still_dominates_route_selection_across_batch_replay_watch: bool,
@@ -163,10 +164,18 @@ fn main() -> Result<()> {
         test_queue_replay_smoke: false,
     };
 
-    run_step("check novovm-network", "cargo", &["check", "-p", "novovm-network"])?;
+    run_step(
+        "check novovm-network",
+        "cargo",
+        &["check", "-p", "novovm-network"],
+    )?;
     gate.check_novovm_network = true;
 
-    run_step("check novovm-node", "cargo", &["check", "-p", "novovm-node"])?;
+    run_step(
+        "check novovm-node",
+        "cargo",
+        &["check", "-p", "novovm-node"],
+    )?;
     gate.check_novovm_node = true;
 
     run_step(
@@ -659,6 +668,17 @@ fn main() -> Result<()> {
         ],
     )?;
     gate.test_queue_replay_smoke = true;
+
+    run_step(
+        "test eth_end_to_end_geth_sample_batch_parity_report_from_files_v1",
+        "cargo",
+        &[
+            "test",
+            "-p",
+            "novovm-node",
+            "mainline_query::tests::eth_end_to_end_geth_sample_batch_parity_report_from_files_v1",
+        ],
+    )?;
 
     let status = MainlineStatus {
         schema: "supervm-mainline-status/v2",

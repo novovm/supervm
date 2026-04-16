@@ -52,7 +52,11 @@ pub struct PreflightOutcome {
 }
 
 fn contract_bail<T>(code: &str, detail: impl AsRef<str>) -> Result<T> {
-    bail!("mainline gate contract failed [{}]: {}", code, detail.as_ref());
+    bail!(
+        "mainline gate contract failed [{}]: {}",
+        code,
+        detail.as_ref()
+    );
 }
 
 fn read_json(path: &Path, missing_code: &str, empty_code: &str, parse_code: &str) -> Result<Value> {
@@ -103,7 +107,9 @@ fn require_non_empty_string<'a>(
 
 pub fn run_preflight(repo_root: &Path) -> Result<PreflightOutcome> {
     let status_path = repo_root.join("artifacts").join("mainline-status.json");
-    let delivery_path = repo_root.join("artifacts").join("mainline-delivery-contract.json");
+    let delivery_path = repo_root
+        .join("artifacts")
+        .join("mainline-delivery-contract.json");
 
     let status = read_json(
         &status_path,
@@ -221,7 +227,10 @@ pub fn run_preflight(repo_root: &Path) -> Result<PreflightOutcome> {
         .unwrap_or_default()
         .to_string();
     if gate_lockset.trim().is_empty() {
-        return contract_bail("gate.lockset_missing", "mainline gate payload missing lockset.gate");
+        return contract_bail(
+            "gate.lockset_missing",
+            "mainline gate payload missing lockset.gate",
+        );
     }
 
     let lockset_tokens: Vec<&str> = gate_lockset.split('+').collect();
@@ -354,8 +363,12 @@ pub fn run_preflight(repo_root: &Path) -> Result<PreflightOutcome> {
         .insert("preflight".to_string(), preflight_block);
     let encoded = serde_json::to_string_pretty(&status_for_write)
         .context("encode status with preflight block")?;
-    std::fs::write(&status_path, format!("{encoded}\n"))
-        .with_context(|| format!("rewrite status with preflight block: {}", status_path.display()))?;
+    std::fs::write(&status_path, format!("{encoded}\n")).with_context(|| {
+        format!(
+            "rewrite status with preflight block: {}",
+            status_path.display()
+        )
+    })?;
 
     Ok(PreflightOutcome {
         status_path,
