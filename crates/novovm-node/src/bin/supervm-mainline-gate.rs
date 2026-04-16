@@ -98,7 +98,7 @@ fn run_step(name: &str, program: &str, args: &[&str]) -> Result<()> {
     let mut cmd = Command::new(program);
     cmd.args(args);
     if program.eq_ignore_ascii_case("cargo") {
-        cmd.env("CARGO_TARGET_DIR", "D:\\cargo-target-supervm-gate");
+        cmd.env("CARGO_TARGET_DIR", resolve_gate_target_dir_v1());
     }
     let status = cmd
         .status()
@@ -112,6 +112,23 @@ fn run_step(name: &str, program: &str, args: &[&str]) -> Result<()> {
     }
 
     Ok(())
+}
+
+fn resolve_gate_target_dir_v1() -> String {
+    if let Ok(raw) = std::env::var("CARGO_TARGET_DIR") {
+        let trimmed = raw.trim();
+        // On non-Windows runners, a Windows-style value like `D:\...`
+        // propagates `:` into LD_LIBRARY_PATH join and breaks cargo.
+        let linux_safe = cfg!(windows) || !trimmed.contains(':');
+        if !trimmed.is_empty() && linux_safe {
+            return trimmed.to_string();
+        }
+    }
+    if cfg!(windows) {
+        "D:\\cargo-target-supervm-gate".to_string()
+    } else {
+        "target/cargo-target-supervm-gate".to_string()
+    }
 }
 
 fn main() -> Result<()> {

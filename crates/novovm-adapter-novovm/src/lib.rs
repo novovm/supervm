@@ -20,11 +20,11 @@ use novovm_adapter_evm_core::{
 };
 use novovm_exec::{
     aoem_failure_recoverability_from_class_v1, classify_failure_from_anchor_v1,
-    reconstruct_tx_execution_artifact_v1, AoemCanonicalTxTypeV1, AoemEventLogV1,
-    AoemExecutionReconstructionInputV1, AoemExecutionReconstructionSourcesV1,
+    is_eip7610_rejected_account_v1, reconstruct_tx_execution_artifact_v1, AoemCanonicalTxTypeV1,
+    AoemEventLogV1, AoemExecutionReconstructionInputV1, AoemExecutionReconstructionSourcesV1,
     AoemFailureClassSourceV1, AoemFailureClassV1, AoemFailureRecoverabilityV1, AoemFieldSourceV1,
     AoemReceiptDerivationRulesV1, AoemTxExecutionArtifactV1,
-    AOEM_FAILURE_CLASSIFICATION_CONTRACT_V1,
+    AOEM_FAILURE_CLASSIFICATION_CONTRACT_V1, EIP7610_REJECTION_CONTRACT_V1,
 };
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
@@ -347,6 +347,26 @@ impl NovoVmAdapter {
 
     fn tx_execution_status_ok(artifact: Option<&AoemTxExecutionArtifactV1>) -> bool {
         artifact.map(|item| item.status_ok).unwrap_or(true)
+    }
+
+    fn deploy_rejected_by_eip7610_v1(
+        tx: &TxIR,
+        artifact: Option<&AoemTxExecutionArtifactV1>,
+    ) -> bool {
+        if tx.tx_type != TxType::ContractDeploy {
+            return false;
+        }
+        let contract_address = artifact
+            .and_then(|item| item.contract_address.clone())
+            .unwrap_or_else(|| Self::derive_contract_address(&tx.from, tx.nonce));
+        is_eip7610_rejected_account_v1(tx.chain_id, &contract_address)
+    }
+
+    fn effective_tx_execution_status_ok(
+        tx: &TxIR,
+        artifact: Option<&AoemTxExecutionArtifactV1>,
+    ) -> bool {
+        Self::tx_execution_status_ok(artifact) && !Self::deploy_rejected_by_eip7610_v1(tx, artifact)
     }
 
     fn tx_intrinsic_gas_v1(tx: &TxIR) -> u64 {
@@ -1223,7 +1243,9 @@ impl NovoVmAdapter {
         let contract_address = artifact
             .and_then(|item| item.contract_address.clone())
             .unwrap_or_else(|| Self::derive_contract_address(&tx.from, tx.nonce));
-        if Self::tx_execution_status_ok(artifact) {
+        let eip7610_rejected = is_eip7610_rejected_account_v1(tx.chain_id, &contract_address);
+        let status_ok = Self::tx_execution_status_ok(artifact) && !eip7610_rejected;
+        if status_ok {
             let mut contract_account = state
                 .get_account(&contract_address)
                 .cloned()
@@ -1277,8 +1299,28 @@ impl NovoVmAdapter {
                 b"deploy:last_failed_contract_address".to_vec(),
                 contract_address.clone(),
             );
-            let (failure_class, failure_class_source, failure_recoverability) =
-                Self::classify_failed_tx_v1(tx, artifact);
+            if eip7610_rejected {
+                state.set_storage(
+                    tx.from.clone(),
+                    b"deploy:last_reject_reason".to_vec(),
+                    b"eip7610_rejected_account".to_vec(),
+                );
+                state.set_storage(
+                    tx.from.clone(),
+                    b"deploy:last_reject_contract".to_vec(),
+                    EIP7610_REJECTION_CONTRACT_V1.as_bytes().to_vec(),
+                );
+            }
+            let (failure_class, failure_class_source, failure_recoverability) = if eip7610_rejected
+            {
+                (
+                    AoemFailureClassV1::Invalid.as_str(),
+                    AoemFailureClassSourceV1::HeuristicDefault.as_str(),
+                    aoem_failure_recoverability_from_class_v1(AoemFailureClassV1::Invalid).as_str(),
+                )
+            } else {
+                Self::classify_failed_tx_v1(tx, artifact)
+            };
             state.set_storage(
                 tx.from.clone(),
                 b"aoem:last_contract_deploy_failure".to_vec(),
@@ -1443,7 +1485,7 @@ impl NovoVmAdapter {
             self.reset_execution_receipt_context();
             return Err(err);
         }
-        let status_ok = Self::tx_execution_status_ok(artifact);
+        let status_ok = Self::effective_tx_execution_status_ok(tx, artifact);
         match tx.tx_type {
             TxType::Transfer => {
                 Self::apply_transfer(tx, state, &mut self.kv, artifact)?;
@@ -2119,6 +2161,13 @@ mod tests {
         }
     }
 
+    fn sample_eip7610_rejected_mainnet_address_v1() -> Vec<u8> {
+        vec![
+            0x02, 0x82, 0x0e, 0x4b, 0xee, 0x48, 0x8c, 0x40, 0xf7, 0x45, 0x5f, 0xdc, 0xa5, 0x31,
+            0x25, 0x56, 0x51, 0x48, 0x70, 0x8f,
+        ]
+    }
+
     fn runtime_code_emit_single_log(topic0: [u8; 32], data_word: [u8; 32]) -> Vec<u8> {
         let mut code = Vec::new();
         code.push(0x7f);
@@ -2788,6 +2837,87 @@ mod tests {
         assert_eq!(
             runtime_state.get_storage(&tx.from, b"aoem:last_failure_classification_contract"),
             Some(&AOEM_FAILURE_CLASSIFICATION_CONTRACT_V1.as_bytes().to_vec())
+        );
+    }
+
+    #[test]
+    fn execute_transaction_with_successful_deploy_artifact_rejects_eip7610_account_mainnet() {
+        let mut adapter = NovoVmAdapter::new(ChainConfig {
+            chain_type: ChainType::EVM,
+            chain_id: 1,
+            name: "test".to_string(),
+            enabled: true,
+            custom_config: None,
+        });
+        adapter.initialize().expect("init");
+
+        let tx = sample_tx(TxType::ContractDeploy);
+        assert!(adapter.verify_transaction(&tx).expect("verify deploy"));
+        let mut runtime_state = StateIR::new();
+        let rejected_contract = sample_eip7610_rejected_mainnet_address_v1();
+        let artifact = sample_aoem_artifact(&tx, true, [0x77; 32], Some(rejected_contract.clone()));
+
+        let resolved = adapter
+            .execute_transaction_with_artifact(&tx, &mut runtime_state, Some(&artifact))
+            .expect("execute deploy with eip7610-rejected address");
+
+        assert!(!resolved.status_ok);
+        assert_eq!(resolved.contract_address, None);
+        assert_eq!(
+            runtime_state
+                .get_account(&rejected_contract)
+                .map(|it| it.code_hash.clone()),
+            None
+        );
+        assert_eq!(
+            runtime_state.get_storage(&tx.from, b"aoem:last_failure_class"),
+            Some(&b"invalid".to_vec())
+        );
+        assert_eq!(
+            runtime_state.get_storage(&tx.from, b"aoem:last_failure_recoverability"),
+            Some(&b"non_recoverable".to_vec())
+        );
+        assert_eq!(
+            runtime_state.get_storage(&tx.from, b"deploy:last_reject_reason"),
+            Some(&b"eip7610_rejected_account".to_vec())
+        );
+        assert_eq!(
+            runtime_state.get_storage(&tx.from, b"deploy:last_reject_contract"),
+            Some(&EIP7610_REJECTION_CONTRACT_V1.as_bytes().to_vec())
+        );
+    }
+
+    #[test]
+    fn execute_transaction_with_successful_deploy_artifact_allows_eip7610_listed_address_on_non_mainnet(
+    ) {
+        let mut adapter = NovoVmAdapter::new(ChainConfig {
+            chain_type: ChainType::EVM,
+            chain_id: 11155111,
+            name: "test".to_string(),
+            enabled: true,
+            custom_config: None,
+        });
+        adapter.initialize().expect("init");
+
+        let mut tx = sample_tx(TxType::ContractDeploy);
+        tx.chain_id = 11155111;
+        tx = resign_tx(tx);
+        assert!(adapter.verify_transaction(&tx).expect("verify deploy"));
+
+        let mut runtime_state = StateIR::new();
+        let listed_on_mainnet = sample_eip7610_rejected_mainnet_address_v1();
+        let artifact = sample_aoem_artifact(&tx, true, [0x78; 32], Some(listed_on_mainnet.clone()));
+        let resolved = adapter
+            .execute_transaction_with_artifact(&tx, &mut runtime_state, Some(&artifact))
+            .expect("execute deploy on non-mainnet");
+
+        assert!(resolved.status_ok);
+        assert_eq!(resolved.contract_address, Some(listed_on_mainnet.clone()));
+        assert_eq!(
+            runtime_state
+                .get_account(&listed_on_mainnet)
+                .and_then(|it| it.code_hash.clone()),
+            Some(vec![0x77; 32])
         );
     }
 

@@ -58,6 +58,7 @@ jobs:
       - name: Run nightly soak gate
         shell: pwsh
         run: |
+          Remove-Item Env:CARGO_TARGET_DIR -ErrorAction SilentlyContinue
           $runMainlineGate = "${{ github.event.inputs.run_mainline_gate }}"
           if ([string]::IsNullOrWhiteSpace($runMainlineGate)) { $runMainlineGate = "false" }
           $profiles = "${{ github.event.inputs.profiles }}"

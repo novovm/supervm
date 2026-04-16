@@ -87,6 +87,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          unset CARGO_TARGET_DIR || true
           cargo run -p novovm-node --bin supervm-mainline-gate
 
       - name: Upload mainline status artifact
