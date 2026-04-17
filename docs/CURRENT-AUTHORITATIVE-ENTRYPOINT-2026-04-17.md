@@ -19,7 +19,9 @@ This file defines the current authoritative scope and separates it from archival
    - `docs/NOVOVM-NETWORK/NOVOVM-TREASURY-POLICY-P2C-CONSTRAINED-STRATEGY-SEAL-2026-04-18.md`
    - `docs/NOVOVM-NETWORK/NOVOVM-TREASURY-POLICY-P2C-SEAL-2026-04-18.md` (FINAL)
    - `docs/NOVOVM-NETWORK/NOVOVM-OBSERVABILITY-P2D-SEAL-2026-04-18.md` (FINAL)
-3. Mainline status and delivery contract artifacts
+3. P3 feature gate decision policy (decision only, not enabled)
+   - `docs/NOVOVM-NETWORK/NOVOVM-P3-FEATURE-GATE-DECISION-THRESHOLDS-2026-04-18.md` (AUTHORITATIVE)
+4. Mainline status and delivery contract artifacts
    - `artifacts/mainline-status.json`
    - `artifacts/mainline-delivery-contract.json`
    - `artifacts/mainline/mainline-nightly-soak-gate-report.json`
@@ -47,7 +49,7 @@ When documentation conflicts occur, resolve in this order:
 
 - If you add a new runtime or gate entry, update this file in the same change.
 - Historical files must not claim current status without explicit date and scope.
-- If the project moves to `P2-B1/P2-B2/P2-C/P2-D`, publish a phase seal with completed/not-completed boundaries before updating this entry point.
+- If the project moves to `P2-B1/P2-B2/P2-C/P2-D/P3`, publish a phase seal with completed/not-completed boundaries before updating this entry point.
 
 ## Term freeze (avoid role inversion)
 

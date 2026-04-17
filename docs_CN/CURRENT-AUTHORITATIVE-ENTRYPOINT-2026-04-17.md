@@ -22,7 +22,9 @@
    - `docs_CN/NOVOVM-NETWORK/NOVOVM-TREASURY-POLICY-P2C-CONSTRAINED-STRATEGY-SEAL-2026-04-18.md`
    - `docs_CN/NOVOVM-NETWORK/NOVOVM-TREASURY-POLICY-P2C-SEAL-2026-04-18.md`（FINAL）
    - `docs_CN/NOVOVM-NETWORK/NOVOVM-OBSERVABILITY-P2D-SEAL-2026-04-18.md`（FINAL）
-3. 主线状态与交付契约产物
+3. P3 功能开关决策规范（仅决策，不启用）
+   - `docs_CN/NOVOVM-NETWORK/NOVOVM-P3-FEATURE-GATE-DECISION-THRESHOLDS-2026-04-18.md`（AUTHORITATIVE）
+4. 主线状态与交付契约产物
    - `artifacts/mainline-status.json`
    - `artifacts/mainline-delivery-contract.json`
    - `artifacts/mainline/mainline-nightly-soak-gate-report.json`
@@ -53,7 +55,7 @@
 
 - 新增运维入口或守门入口时，必须同步更新本文件。
 - 历史文档不得再写“当前已完成/当前主线”而不加日期和范围说明。
-- 若后续进入 `P2-B1/P2-B2/P2-C/P2-D`，需先在对应封盘文档中明确“已完成/未完成边界”，再更新本文件入口。
+- 若后续进入 `P2-B1/P2-B2/P2-C/P2-D/P3`，需先在对应封盘文档中明确“已完成/未完成边界”，再更新本文件入口。
 
 ## 术语冻结（防止角色写反）
 
