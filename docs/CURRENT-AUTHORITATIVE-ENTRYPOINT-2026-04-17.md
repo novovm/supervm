@@ -21,7 +21,12 @@ This file defines the current authoritative scope and separates it from archival
    - `docs/NOVOVM-NETWORK/NOVOVM-OBSERVABILITY-P2D-SEAL-2026-04-18.md` (FINAL)
 3. P3 feature gate decision policy (decision only, not enabled)
    - `docs/NOVOVM-NETWORK/NOVOVM-P3-FEATURE-GATE-DECISION-THRESHOLDS-2026-04-18.md` (AUTHORITATIVE)
-4. Mainline status and delivery contract artifacts
+   - `docs/NOVOVM-NETWORK/NOVOVM-P3-GATE-DRYRUN-RESULT-2026-04-18.md` (RECORDED RESULT)
+   - `docs/NOVOVM-NETWORK/NOVOVM-P3A-GATE-WEEKLY-RUN-WINDOW-TEMPLATE-2026-04-18.md` (OPERATIONAL TEMPLATE)
+4. P2-D run-phase reporting template and exporter
+   - `docs/NOVOVM-NETWORK/NOVOVM-CLEARING-METRICS-RUN-PHASE-TEMPLATE-2026-04-18.md`
+   - `scripts/novovm-p2d-daily-report.ps1`
+5. Mainline status and delivery contract artifacts
    - `artifacts/mainline-status.json`
    - `artifacts/mainline-delivery-contract.json`
    - `artifacts/mainline/mainline-nightly-soak-gate-report.json`

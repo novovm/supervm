@@ -63,7 +63,7 @@ impl Web30TokenRuntime {
         let unlock_controller = system_address(SYS_ADDR_UNLOCK_CTRL);
         let token = MainnetTokenImpl::new(MainnetTokenConfig {
             name: "NOVOVM".to_string(),
-            symbol: "NVM".to_string(),
+            symbol: "NOV".to_string(),
             decimals: 9,
             max_supply: policy.max_supply as u128,
             initial_allocations: vec![],

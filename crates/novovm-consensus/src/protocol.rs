@@ -212,7 +212,7 @@ impl HotStuffProtocol {
             slash_policy: SlashPolicy::default(),
             slash_counters: HashMap::new(),
             governance_staged_ops: Vec::new(),
-            governance_execution_enabled: false,
+            governance_execution_enabled: true,
             governance_access_policy,
             governance_council_policy,
             governance_proposals: HashMap::new(),
@@ -2052,6 +2052,7 @@ mod tests {
         let validator_set = ValidatorSet::new_equal_weight(vec![0, 1, 2]);
         let (signing_keys, public_keys) = generate_keys(3);
         let mut protocol = HotStuffProtocol::new(validator_set, 0).unwrap();
+        protocol.set_governance_execution_enabled(false);
         let proposal = protocol
             .submit_governance_proposal(
                 0,

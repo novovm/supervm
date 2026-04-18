@@ -35,6 +35,11 @@ use novovm_network::{
 };
 use novovm_node::tx_ingress::{
     decode_eth_send_raw_hex_payload_v1, run_eth_send_raw_transaction_from_params_v1,
+    get_nov_native_execution_receipt_by_hash_v1,
+    get_nov_native_treasury_clearing_summary_v1, get_nov_native_treasury_settlement_summary_v1,
+    has_nov_native_call_shape_v1,
+    nov_native_module_info_v1, run_nov_native_call_from_params_v1,
+    run_nov_send_raw_transaction_from_params_v1, run_nov_send_transaction_from_params_v1,
 };
 use novovm_protocol::{
     decode_block_header_wire_v1, decode_local_tx_wire_v1 as decode_tx_wire_v1,
@@ -4657,6 +4662,23 @@ fn novovm_public_rpc_surface_map_json() -> serde_json::Value {
                 "entry_methods": [
                     "novovm_getSurfaceMap",
                     "novovm_getMethodDomain",
+                    "nov_getBlock",
+                    "nov_getTransaction",
+                    "nov_getReceipt",
+                    "nov_getTransactionReceipt",
+                    "nov_getBalance",
+                    "nov_getAssetBalance",
+                    "nov_getState",
+                    "nov_getModuleInfo",
+                    "nov_getTreasurySettlementSummary",
+                    "nov_getTreasurySettlementJournal",
+                    "nov_getTreasurySettlementPolicy",
+                    "nov_call",
+                    "nov_estimate",
+                    "nov_estimateGas",
+                    "nov_execute",
+                    "nov_sendTransaction",
+                    "nov_sendRawTransaction",
                     "getBlock",
                     "getTransaction",
                     "getReceipt",
@@ -4703,6 +4725,7 @@ fn novovm_public_rpc_surface_map_json() -> serde_json::Value {
 fn novovm_public_rpc_method_domain(method: &str) -> &'static str {
     if method.starts_with("ua_")
         || method.starts_with("web30_")
+        || method.starts_with("nov_")
         || method.starts_with("novovm_")
         || method.starts_with("governance_")
         || matches!(
@@ -4758,6 +4781,10 @@ fn is_unified_account_web30_route_method(method: &str) -> bool {
     method == "web30_sendTransaction" || method == "web30_sendRawTransaction"
 }
 
+fn is_unified_account_nov_route_method(method: &str) -> bool {
+    method == "nov_sendTransaction" || method == "nov_sendRawTransaction" || method == "nov_execute"
+}
+
 fn is_eth_filter_or_reorg_method_m0(method: &str) -> bool {
     matches!(
         method,
@@ -4778,6 +4805,7 @@ fn is_unified_account_method(method: &str) -> bool {
         || is_unified_account_eth_route_method(method)
         || is_unified_account_eth_persona_query_method(method)
         || is_unified_account_web30_route_method(method)
+        || is_unified_account_nov_route_method(method)
 }
 
 fn public_rpc_error_code_for_method(method: &str, message: &str) -> i64 {
@@ -9332,30 +9360,30 @@ fn run_chain_query(
             "method": "web3_clientVersion",
             "client_version": client_version,
         }),
-        "getBlock" => {
+        "getBlock" | "nov_getBlock" => {
             let height = param_as_u64(params, "height");
             let block = match height {
                 Some(h) => db.blocks.iter().find(|b| b.height == h).cloned(),
                 None => db.blocks.last().cloned(),
             };
             serde_json::json!({
-                "method": "getBlock",
+                "method": method,
                 "requested_height": height,
                 "found": block.is_some(),
                 "block": block,
             })
         }
-        "getTransaction" => {
+        "getTransaction" | "nov_getTransaction" => {
             let tx_hash = param_as_string(params, "tx_hash")
                 .or_else(|| param_as_string(params, "hash"))
                 .unwrap_or_default()
                 .to_ascii_lowercase();
             if tx_hash.is_empty() {
-                bail!("tx_hash is required for getTransaction");
+                bail!("tx_hash is required for {}", method);
             }
             let tx = db.txs.get(&tx_hash).cloned();
             serde_json::json!({
-                "method": "getTransaction",
+                "method": method,
                 "tx_hash": tx_hash,
                 "found": tx.is_some(),
                 "transaction": tx,
@@ -9409,17 +9437,35 @@ fn run_chain_query(
                 "block": block,
             })
         }
-        "getReceipt" => {
+        "getReceipt" | "nov_getReceipt" | "nov_getTransactionReceipt" => {
             let tx_hash = param_as_string(params, "tx_hash")
                 .or_else(|| param_as_string(params, "hash"))
                 .unwrap_or_default()
                 .to_ascii_lowercase();
             if tx_hash.is_empty() {
-                bail!("tx_hash is required for getReceipt");
+                bail!("tx_hash is required for {}", method);
             }
-            let receipt = db.receipts.get(&tx_hash).cloned();
+            let receipt = if let Some(query_receipt) = db.receipts.get(&tx_hash).cloned() {
+                Some(
+                    serde_json::to_value(query_receipt)
+                        .context("serialize query receipt for nov/getReceipt failed")?,
+                )
+            } else {
+                get_nov_native_execution_receipt_by_hash_v1(tx_hash.as_str())?
+                    .map(|native_receipt| {
+                        let mut value = serde_json::to_value(native_receipt)
+                            .context("serialize native nov receipt failed")?;
+                        if let serde_json::Value::Object(map) = &mut value {
+                            if let Ok(summary) = get_nov_native_treasury_settlement_summary_v1() {
+                                map.insert("treasury_settlement".to_string(), summary);
+                            }
+                        }
+                        Ok(value)
+                    })
+                    .transpose()?
+            };
             serde_json::json!({
-                "method": "getReceipt",
+                "method": method,
                 "tx_hash": tx_hash,
                 "found": receipt.is_some(),
                 "receipt": receipt,
@@ -9441,18 +9487,152 @@ fn run_chain_query(
                 "receipt": receipt,
             })
         }
-        "getBalance" => {
+        "getBalance" | "nov_getBalance" => {
             let account = param_as_string(params, "account").unwrap_or_default();
             let trimmed = account.trim();
             if trimmed.is_empty() {
-                bail!("account is required for getBalance");
+                bail!("account is required for {}", method);
             }
             let balance = db.balances.get(trimmed).copied().unwrap_or(0);
             serde_json::json!({
-                "method": "getBalance",
+                "method": method,
                 "account": trimmed,
                 "found": db.balances.contains_key(trimmed),
                 "balance": balance,
+            })
+        }
+        "nov_getAssetBalance" => {
+            let account = param_as_string(params, "account").unwrap_or_default();
+            let trimmed = account.trim();
+            if trimmed.is_empty() {
+                bail!("account is required for nov_getAssetBalance");
+            }
+            let asset = param_as_string(params, "asset")
+                .or_else(|| param_as_string(params, "asset_id"))
+                .unwrap_or_else(|| "NOV".to_string())
+                .to_ascii_uppercase();
+            let raw_balance = db.balances.get(trimmed).copied().unwrap_or(0);
+            let balance = if asset == "NOV" { raw_balance } else { 0 };
+            serde_json::json!({
+                "method": "nov_getAssetBalance",
+                "account": trimmed,
+                "asset": asset,
+                "found": db.balances.contains_key(trimmed),
+                "balance": balance,
+            })
+        }
+        "nov_getModuleInfo" => {
+            let module = param_as_string(params, "module")
+                .or_else(|| param_as_string(params, "name"))
+                .unwrap_or_else(|| "treasury".to_string())
+                .to_ascii_lowercase();
+            let module_info = nov_native_module_info_v1(module.as_str());
+            let found = module_info.is_some();
+            serde_json::json!({
+                "method": "nov_getModuleInfo",
+                "module": module,
+                "found": found,
+                "module_info": module_info.unwrap_or(serde_json::Value::Null),
+            })
+        }
+        "nov_getTreasurySettlementSummary" => {
+            let summary = get_nov_native_treasury_settlement_summary_v1().ok();
+            serde_json::json!({
+                "method": "nov_getTreasurySettlementSummary",
+                "found": summary.is_some(),
+                "summary": summary.unwrap_or(serde_json::Value::Null),
+            })
+        }
+        "nov_getTreasuryClearingSummary" => {
+            let summary = get_nov_native_treasury_clearing_summary_v1().ok();
+            serde_json::json!({
+                "method": "nov_getTreasuryClearingSummary",
+                "found": summary.is_some(),
+                "summary": summary.unwrap_or(serde_json::Value::Null),
+            })
+        }
+        "nov_getExecutionTrace" => {
+            let tx_hash = param_as_string(params, "tx_hash")
+                .or_else(|| param_as_string(params, "hash"))
+                .unwrap_or_default();
+            let method = if tx_hash.trim().is_empty() {
+                "get_last_execution_trace"
+            } else {
+                "get_execution_trace_by_tx"
+            };
+            let args = if tx_hash.trim().is_empty() {
+                serde_json::json!({})
+            } else {
+                serde_json::json!({ "tx_hash": tx_hash })
+            };
+            let out = run_nov_native_call_from_params_v1(&serde_json::json!({
+                "target": {"kind": "native_module", "id": "treasury"},
+                "method": method,
+                "args": args,
+            }))?;
+            serde_json::json!({
+                "method": "nov_getExecutionTrace",
+                "found": out["found"].as_bool().unwrap_or(false),
+                "trace": out["result"].clone(),
+            })
+        }
+        "nov_getTreasuryClearingMetricsSummary" => {
+            let out = run_nov_native_call_from_params_v1(&serde_json::json!({
+                "target": {"kind": "native_module", "id": "treasury"},
+                "method": "get_clearing_metrics_summary",
+                "args": {},
+            }))?;
+            serde_json::json!({
+                "method": "nov_getTreasuryClearingMetricsSummary",
+                "found": out["found"].as_bool().unwrap_or(false),
+                "summary": out["result"].clone(),
+            })
+        }
+        "nov_getTreasuryPolicyMetricsSummary" => {
+            let out = run_nov_native_call_from_params_v1(&serde_json::json!({
+                "target": {"kind": "native_module", "id": "treasury"},
+                "method": "get_policy_metrics_summary",
+                "args": {},
+            }))?;
+            serde_json::json!({
+                "method": "nov_getTreasuryPolicyMetricsSummary",
+                "found": out["found"].as_bool().unwrap_or(false),
+                "summary": out["result"].clone(),
+            })
+        }
+        "nov_getTreasurySettlementPolicy" => {
+            let out = run_nov_native_call_from_params_v1(&serde_json::json!({
+                "target": {"kind": "native_module", "id": "treasury"},
+                "method": "get_settlement_policy",
+                "args": {},
+            }))?;
+            serde_json::json!({
+                "method": "nov_getTreasurySettlementPolicy",
+                "found": out["found"].as_bool().unwrap_or(false),
+                "policy": out["result"].clone(),
+            })
+        }
+        "nov_getTreasurySettlementJournal" => {
+            let requested_limit = param_as_u64(params, "limit").unwrap_or(50);
+            let out = run_nov_native_call_from_params_v1(&serde_json::json!({
+                "target": {"kind": "native_module", "id": "treasury"},
+                "method": "get_settlement_journal",
+                "args": {
+                    "limit": requested_limit,
+                },
+            }))?;
+            serde_json::json!({
+                "method": "nov_getTreasurySettlementJournal",
+                "found": out["found"].as_bool().unwrap_or(false),
+                "journal": out["result"].clone(),
+            })
+        }
+        "nov_getState" => {
+            let state = db.state_mirror_updates.last().cloned();
+            serde_json::json!({
+                "method": "nov_getState",
+                "found": state.is_some(),
+                "state": state,
             })
         }
         "eth_getBalance" => {
@@ -9517,7 +9697,7 @@ fn run_chain_query(
             let value = param_as_string(&call_obj, "value").unwrap_or_else(|| "0x0".to_string());
             let queried_height = parse_block_selector_at_array_index_u64(params, 1, latest_height)?;
             serde_json::json!({
-                "method": "eth_call",
+                "method": method,
                 "to": to,
                 "from": from,
                 "data": data,
@@ -9527,7 +9707,33 @@ fn run_chain_query(
                 "result": "0x",
             })
         }
-        "eth_estimateGas" => {
+        "nov_call" => {
+            if has_nov_native_call_shape_v1(params) {
+                run_nov_native_call_from_params_v1(params)?
+            } else {
+                let call_obj = parse_eth_call_object(params);
+                let to = param_as_string(&call_obj, "to").unwrap_or_default();
+                let from = param_as_string(&call_obj, "from").unwrap_or_default();
+                let data = param_as_string(&call_obj, "data")
+                    .or_else(|| param_as_string(&call_obj, "input"))
+                    .unwrap_or_else(|| "0x".to_string());
+                let value =
+                    param_as_string(&call_obj, "value").unwrap_or_else(|| "0x0".to_string());
+                let queried_height =
+                    parse_block_selector_at_array_index_u64(params, 1, latest_height)?;
+                serde_json::json!({
+                    "method": method,
+                    "to": to,
+                    "from": from,
+                    "data": data,
+                    "value": value,
+                    "queried_height": queried_height,
+                    "queried_height_hex": format!("0x{:x}", queried_height),
+                    "result": "0x",
+                })
+            }
+        }
+        "eth_estimateGas" | "nov_estimateGas" | "nov_estimate" => {
             let call_obj = parse_eth_call_object(params);
             let data = param_as_string(&call_obj, "data")
                 .or_else(|| param_as_string(&call_obj, "input"))
@@ -9536,7 +9742,7 @@ fn run_chain_query(
             let estimated = 21_000u64.saturating_add(data_len.saturating_mul(16));
             let queried_height = parse_block_selector_at_array_index_u64(params, 1, latest_height)?;
             serde_json::json!({
-                "method": "eth_estimateGas",
+                "method": method,
                 "queried_height": queried_height,
                 "queried_height_hex": format!("0x{:x}", queried_height),
                 "estimated_gas": estimated,
@@ -9592,7 +9798,7 @@ fn run_chain_query(
             })
         }
         _ => bail!(
-            "unknown method: {}; valid: novovm_getSurfaceMap|novovm_get_surface_map|novovm_getMethodDomain|novovm_get_method_domain|getBlock|getTransaction|getReceipt|getBalance|eth_chainId|net_version|web3_clientVersion|eth_blockNumber|eth_getBlockByNumber|eth_getBalance|eth_getCode|eth_getStorageAt|eth_call|eth_estimateGas|eth_gasPrice|eth_maxPriorityFeePerGas|eth_feeHistory",
+            "unknown method: {}; valid: novovm_getSurfaceMap|novovm_get_surface_map|novovm_getMethodDomain|novovm_get_method_domain|nov_getBlock|nov_getTransaction|nov_getReceipt|nov_getTransactionReceipt|nov_getBalance|nov_getAssetBalance|nov_getState|nov_getModuleInfo|nov_getTreasurySettlementSummary|nov_getTreasurySettlementJournal|nov_getTreasurySettlementPolicy|nov_call|nov_estimate|nov_estimateGas|getBlock|getTransaction|getReceipt|getBalance|eth_chainId|net_version|web3_clientVersion|eth_blockNumber|eth_getBlockByNumber|eth_getBalance|eth_getCode|eth_getStorageAt|eth_call|eth_estimateGas|eth_gasPrice|eth_maxPriorityFeePerGas|eth_feeHistory",
             method
         ),
     };
@@ -9921,15 +10127,22 @@ fn run_unified_account_rpc(
         }
         m if m == "ua_route"
             || is_unified_account_eth_route_method(m)
-            || is_unified_account_web30_route_method(m) =>
+            || is_unified_account_web30_route_method(m)
+            || is_unified_account_nov_route_method(m) =>
         {
             let explicit_uca_id = param_as_string(params, "uca_id");
             let role = parse_account_role(params)?;
             let is_eth_alias = is_unified_account_eth_route_method(method);
             let is_eth_raw_alias = method == "eth_sendRawTransaction";
+            let is_nov_alias = is_unified_account_nov_route_method(method);
+            let is_nov_raw_alias = method == "nov_sendRawTransaction";
+            let is_nov_execute_alias = method == "nov_execute";
             let default_eth_chain_id =
                 parse_u64_decimal_or_hex(&string_env("NOVOVM_ETH_COMPAT_CHAIN_ID", "1"))
                     .unwrap_or(1);
+            let default_nov_chain_id =
+                parse_u64_decimal_or_hex(&string_env("NOVOVM_NOV_CHAIN_ID", "1"))
+                    .unwrap_or(default_chain_id);
             let inferred_eth_tx_type = if is_eth_alias && is_eth_raw_alias {
                 infer_eth_raw_tx_type_hint(params)?
             } else {
@@ -9952,6 +10165,8 @@ fn run_unified_account_rpc(
                 explicit_chain_id
                     .or(inferred_chain_id)
                     .unwrap_or(default_eth_chain_id)
+            } else if is_nov_alias {
+                explicit_chain_id.or(inferred_chain_id).unwrap_or(default_nov_chain_id)
             } else {
                 explicit_chain_id
                     .or(inferred_chain_id)
@@ -9960,7 +10175,7 @@ fn run_unified_account_rpc(
             let is_web30_alias = is_unified_account_web30_route_method(method);
             let persona_type = if is_eth_alias {
                 PersonaType::Evm
-            } else if is_web30_alias {
+            } else if is_web30_alias || is_nov_alias {
                 PersonaType::Web30
             } else if param_as_string(params, "persona_type").is_some() {
                 parse_persona_type(params, "persona_type")?
@@ -9986,7 +10201,7 @@ fn run_unified_account_rpc(
             };
             let protocol = if is_eth_alias {
                 ProtocolKind::Eth
-            } else if is_web30_alias {
+            } else if is_web30_alias || is_nov_alias {
                 ProtocolKind::Web30
             } else {
                 match param_as_string(params, "protocol")
@@ -10052,7 +10267,9 @@ fn run_unified_account_rpc(
             };
             let nonce = match explicit_nonce.or(inferred_nonce) {
                 Some(nonce) => nonce,
-                None if is_eth_alias => router.next_nonce_for_persona(&uca_id, &persona)?,
+                None if is_eth_alias || is_nov_alias => {
+                    router.next_nonce_for_persona(&uca_id, &persona)?
+                }
                 None => bail!("nonce is required for route methods"),
             };
             let wants_cross_chain_atomic =
@@ -10135,6 +10352,7 @@ fn run_unified_account_rpc(
             let decision = router.route(request)?;
             let mut local_pending_tx_hash_hex: Option<String> = None;
             let mut local_pending_tx_ingress = false;
+            let mut nov_execution_request: Option<serde_json::Value> = None;
             if is_eth_alias && is_eth_raw_alias {
                 if let Some(hint) = inferred_eth_tx_type.as_ref() {
                     let raw_tx_hex = format!("0x{}", to_hex(hint.raw_tx.as_slice()));
@@ -10153,6 +10371,23 @@ fn run_unified_account_rpc(
                         .and_then(|value| value.as_bool())
                         .unwrap_or(false);
                 }
+            } else if is_nov_alias {
+                let ingress = if is_nov_raw_alias {
+                    run_nov_send_raw_transaction_from_params_v1(params)?
+                } else if is_nov_execute_alias {
+                    novovm_node::tx_ingress::run_nov_execute_from_params_v1(params)?
+                } else {
+                    run_nov_send_transaction_from_params_v1(params)?
+                };
+                local_pending_tx_hash_hex = ingress
+                    .get("pending_tx_hash")
+                    .and_then(|value| value.as_str())
+                    .map(str::to_string);
+                local_pending_tx_ingress = ingress
+                    .get("pending_tx_local_ingress")
+                    .and_then(|value| value.as_bool())
+                    .unwrap_or(false);
+                nov_execution_request = ingress.get("execution_request").cloned();
             }
             Ok((
                 serde_json::json!({
@@ -10175,12 +10410,13 @@ fn run_unified_account_rpc(
                     "session_expires_at": session_expires_at,
                     "pending_tx_local_ingress": local_pending_tx_ingress,
                     "pending_tx_hash": local_pending_tx_hash_hex,
+                    "nov_execution_request": nov_execution_request,
                 }),
                 true,
             ))
         }
         _ => bail!(
-            "unknown unified account method: {}; valid: ua_createUca|ua_rotatePrimaryKey|ua_setPolicy|ua_bindPersona|ua_revokePersona|ua_getBindingOwner|ua_getAuditEvents|ua_route|eth_sendRawTransaction|eth_sendTransaction|eth_getTransactionCount|web30_sendTransaction|web30_sendRawTransaction",
+            "unknown unified account method: {}; valid: ua_createUca|ua_rotatePrimaryKey|ua_setPolicy|ua_bindPersona|ua_revokePersona|ua_getBindingOwner|ua_getAuditEvents|ua_route|eth_sendRawTransaction|eth_sendTransaction|eth_getTransactionCount|web30_sendTransaction|web30_sendRawTransaction|nov_sendTransaction|nov_sendRawTransaction|nov_execute",
             method
         ),
     }
@@ -14435,6 +14671,13 @@ mod tests {
         )
         .expect("eth_getTransactionReceipt should succeed");
         assert_eq!(receipt_resp_eth["found"].as_bool(), Some(true));
+        let receipt_resp_nov = run_chain_query(
+            &db,
+            "nov_getTransactionReceipt",
+            &serde_json::json!({"tx_hash": receipt_hash}),
+        )
+        .expect("nov_getTransactionReceipt should succeed");
+        assert_eq!(receipt_resp_nov["found"].as_bool(), Some(true));
 
         let balance_resp =
             run_chain_query(&db, "getBalance", &serde_json::json!({"account": "1001"}))
@@ -14508,6 +14751,17 @@ mod tests {
             Some("novovm_mainnet")
         );
 
+        let method_domain_nov_resp = run_chain_query(
+            &db,
+            "novovm_getMethodDomain",
+            &serde_json::json!({"method": "nov_sendRawTransaction"}),
+        )
+        .expect("novovm_getMethodDomain should return novovm_mainnet for nov_*");
+        assert_eq!(
+            method_domain_nov_resp["domain"].as_str(),
+            Some("novovm_mainnet")
+        );
+
         let method_domain_control_resp = run_chain_query(
             &db,
             "novovm_getMethodDomain",
@@ -14557,6 +14811,73 @@ mod tests {
         assert_eq!(eth_balance_resp["balance"].as_u64(), Some(20));
         assert_eq!(eth_balance_resp["balance_hex"].as_str(), Some("0x14"));
 
+        let nov_balance_resp = run_chain_query(
+            &db,
+            "nov_getBalance",
+            &serde_json::json!({"account": "1001"}),
+        )
+        .expect("nov_getBalance should succeed");
+        assert_eq!(nov_balance_resp["found"].as_bool(), Some(true));
+        assert_eq!(nov_balance_resp["balance"].as_u64(), Some(20));
+
+        let nov_asset_balance_resp = run_chain_query(
+            &db,
+            "nov_getAssetBalance",
+            &serde_json::json!({"account": "1001", "asset": "NOV"}),
+        )
+        .expect("nov_getAssetBalance should succeed");
+        assert_eq!(nov_asset_balance_resp["found"].as_bool(), Some(true));
+        assert_eq!(nov_asset_balance_resp["asset"].as_str(), Some("NOV"));
+        assert_eq!(nov_asset_balance_resp["balance"].as_u64(), Some(20));
+
+        let nov_module_info_resp = run_chain_query(
+            &db,
+            "nov_getModuleInfo",
+            &serde_json::json!({"module": "treasury"}),
+        )
+        .expect("nov_getModuleInfo should succeed");
+        assert_eq!(nov_module_info_resp["found"].as_bool(), Some(true));
+        assert_eq!(
+            nov_module_info_resp["module_info"]["entry_kind"].as_str(),
+            Some("native_module")
+        );
+
+        let nov_treasury_summary_resp = run_chain_query(
+            &db,
+            "nov_getTreasurySettlementSummary",
+            &serde_json::json!({}),
+        )
+        .expect("nov_getTreasurySettlementSummary should succeed");
+        assert_eq!(
+            nov_treasury_summary_resp["method"].as_str(),
+            Some("nov_getTreasurySettlementSummary")
+        );
+        assert!(nov_treasury_summary_resp["summary"].is_object());
+
+        let nov_treasury_policy_resp = run_chain_query(
+            &db,
+            "nov_getTreasurySettlementPolicy",
+            &serde_json::json!({}),
+        )
+        .expect("nov_getTreasurySettlementPolicy should succeed");
+        assert_eq!(
+            nov_treasury_policy_resp["method"].as_str(),
+            Some("nov_getTreasurySettlementPolicy")
+        );
+        assert!(nov_treasury_policy_resp["policy"].is_object());
+
+        let nov_treasury_journal_resp = run_chain_query(
+            &db,
+            "nov_getTreasurySettlementJournal",
+            &serde_json::json!({"limit": 5}),
+        )
+        .expect("nov_getTreasurySettlementJournal should succeed");
+        assert_eq!(
+            nov_treasury_journal_resp["method"].as_str(),
+            Some("nov_getTreasurySettlementJournal")
+        );
+        assert!(nov_treasury_journal_resp["journal"].is_object());
+
         let eth_code_resp = run_chain_query(
             &db,
             "eth_getCode",
@@ -14582,6 +14903,19 @@ mod tests {
         .expect("eth_call should succeed");
         assert_eq!(eth_call_resp["result"].as_str(), Some("0x"));
 
+        let nov_call_resp = run_chain_query(
+            &db,
+            "nov_call",
+            &serde_json::json!([{ "to": "0x1234", "data": "0x010203" }, "latest"]),
+        )
+        .expect("nov_call should succeed");
+        assert_eq!(nov_call_resp["result"].as_str(), Some("0x"));
+
+        let nov_state_resp = run_chain_query(&db, "nov_getState", &serde_json::json!({}))
+            .expect("nov_getState should succeed");
+        assert_eq!(nov_state_resp["method"].as_str(), Some("nov_getState"));
+        assert!(nov_state_resp.get("found").is_some());
+
         let eth_estimate_gas_resp = run_chain_query(
             &db,
             "eth_estimateGas",
@@ -14596,6 +14930,25 @@ mod tests {
             eth_estimate_gas_resp["estimated_gas_hex"].as_str(),
             Some("0x5238")
         );
+
+        let nov_estimate_gas_resp = run_chain_query(
+            &db,
+            "nov_estimateGas",
+            &serde_json::json!([{ "to": "0x1234", "data": "0x010203" }, "latest"]),
+        )
+        .expect("nov_estimateGas should succeed");
+        assert_eq!(
+            nov_estimate_gas_resp["estimated_gas"].as_u64(),
+            Some(21_048)
+        );
+
+        let nov_estimate_resp = run_chain_query(
+            &db,
+            "nov_estimate",
+            &serde_json::json!([{ "to": "0x1234", "data": "0x010203" }, "latest"]),
+        )
+        .expect("nov_estimate should succeed");
+        assert_eq!(nov_estimate_resp["estimated_gas"].as_u64(), Some(21_048));
 
         let eth_gas_price_resp = run_chain_query(&db, "eth_gasPrice", &serde_json::json!({}))
             .expect("eth_gasPrice should succeed");
@@ -15077,6 +15430,62 @@ mod tests {
             }),
         )
         .expect("web30_sendRawTransaction should route via unified account");
+        assert!(route_changed);
+        assert_eq!(route_resp["accepted"].as_bool(), Some(true));
+        assert_eq!(route_resp["decision"]["kind"].as_str(), Some("fast_path"));
+    }
+
+    #[test]
+    fn unified_account_public_rpc_nov_send_raw_transaction_alias_routes() {
+        let db = QueryStateDb::default();
+        let mut router = UnifiedAccountRouter::new();
+        let addr_hex = format!("0x{}", "61".repeat(20));
+
+        run_public_rpc(
+            &db,
+            &mut router,
+            None,
+            "ua_createUca",
+            &serde_json::json!({
+                "uca_id": "uca-nov-alias",
+                "primary_key_ref": format!("0x{}", "71".repeat(32)),
+                "now": 10,
+            }),
+        )
+        .expect("ua_createUca should succeed");
+
+        run_public_rpc(
+            &db,
+            &mut router,
+            None,
+            "ua_bindPersona",
+            &serde_json::json!({
+                "uca_id": "uca-nov-alias",
+                "role": "owner",
+                "persona_type": "web30",
+                "chain_id": 20260417,
+                "external_address": addr_hex,
+                "now": 11,
+            }),
+        )
+        .expect("ua_bindPersona should succeed");
+
+        let (route_resp, route_changed) = run_public_rpc(
+            &db,
+            &mut router,
+            None,
+            "nov_sendRawTransaction",
+            &serde_json::json!({
+                "uca_id": "uca-nov-alias",
+                "role": "owner",
+                "chain_id": 20260417,
+                "from": format!("0x{}", "61".repeat(20)),
+                "nonce": 0,
+                "tx_type4": false,
+                "now": 12,
+            }),
+        )
+        .expect("nov_sendRawTransaction should route via unified account");
         assert!(route_changed);
         assert_eq!(route_resp["accepted"].as_bool(), Some(true));
         assert_eq!(route_resp["decision"]["kind"].as_str(), Some("fast_path"));

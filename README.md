@@ -150,7 +150,7 @@ NOVOVM is not about building a faster blockchain—it is about building sustaina
 
 ## Mainline nightly soak gate
 
-EVM host maintenance mode includes a dedicated nightly soak gate (separate from the main CI gate):
+EVM plugin maintenance mode (running on NOVOVM host) includes a dedicated nightly soak gate (separate from the main CI gate):
 
 - Workflow: `.github/workflows/mainline-nightly-soak.yml`
 - Runner target: `self-hosted`
@@ -167,6 +167,7 @@ Key artifacts:
 Operations SOP (CN):
 
 - `docs_CN/NOVOVM-NETWORK/NOVOVM-EVM-NIGHTLY-SOAK-SOP-2026-04-17.md`
+- `docs_CN/CURRENT-AUTHORITATIVE-ENTRYPOINT-2026-04-17.md`
 
 Manual local run:
 

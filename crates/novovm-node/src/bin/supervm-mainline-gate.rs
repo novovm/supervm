@@ -121,7 +121,10 @@ fn resolve_gate_target_dir_v1() -> String {
         // propagates `:` into LD_LIBRARY_PATH join and breaks cargo.
         let linux_safe = cfg!(windows) || !trimmed.contains(':');
         if !trimmed.is_empty() && linux_safe {
-            return trimmed.to_string();
+            // Child cargo invocations must use an isolated target dir; otherwise
+            // on Windows the running gate binary can be locked while cargo tries
+            // to rebuild/remove it during subsequent test steps.
+            return format!("{trimmed}-gate");
         }
     }
     if cfg!(windows) {

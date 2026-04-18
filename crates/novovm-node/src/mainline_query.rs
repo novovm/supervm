@@ -24,6 +24,11 @@ use crate::mainline_canonical::{
     derive_mainline_eth_fullnode_block_contexts_v1, derive_mainline_eth_fullnode_chain_view_v1,
     load_mainline_canonical_store, MainlineCanonicalStoreV1,
 };
+use crate::tx_ingress::{
+    get_nov_native_treasury_clearing_summary_with_store_path_v1,
+    get_nov_native_treasury_settlement_summary_with_store_path_v1,
+    nov_native_execution_store_path_v1, run_nov_native_call_from_params_with_store_path_v1,
+};
 
 const ETH_NATIVE_RUNTIME_QUERY_SCHEMA_VERSION_V1: u64 = 1;
 const ETH_EXEC_FAILURE_CLASSIFICATION_CONTRACT_V1: &str =
@@ -117,6 +122,169 @@ fn canonical_store_path_from_env() -> PathBuf {
         .filter(|raw| !raw.is_empty())
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("artifacts/mainline/evm-canonical-artifacts.json"))
+}
+
+fn string_env_nonempty_v1(name: &str) -> Option<String> {
+    std::env::var(name).ok().and_then(|raw| {
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        }
+    })
+}
+
+fn native_execution_store_path_from_params_or_env_v1(params: &Value) -> PathBuf {
+    let from_params = match params {
+        Value::Object(map) => map
+            .get("native_execution_store_path")
+            .and_then(|value| value.as_str()),
+        Value::Array(items) => items
+            .first()
+            .and_then(|value| value.get("native_execution_store_path"))
+            .and_then(|value| value.as_str()),
+        _ => None,
+    }
+    .map(|raw| raw.trim().to_string())
+    .filter(|raw| !raw.is_empty())
+    .map(PathBuf::from);
+    from_params
+        .or_else(|| {
+            string_env_nonempty_v1("NOVOVM_MAINLINE_NATIVE_EXECUTION_STORE_PATH").map(PathBuf::from)
+        })
+        .unwrap_or_else(nov_native_execution_store_path_v1)
+}
+
+pub fn is_mainline_native_execution_query_method(method: &str) -> bool {
+    matches!(
+        method,
+        "nov_getTreasurySettlementSummary"
+            | "nov_getTreasuryClearingSummary"
+            | "nov_getExecutionTrace"
+            | "nov_getTreasuryClearingMetricsSummary"
+            | "nov_getTreasuryPolicyMetricsSummary"
+            | "nov_getTreasurySettlementPolicy"
+            | "nov_getTreasurySettlementJournal"
+    )
+}
+
+fn run_mainline_native_execution_query(method: &str, params: &Value) -> Result<Value> {
+    let store_path = native_execution_store_path_from_params_or_env_v1(params);
+    match method {
+        "nov_getTreasurySettlementSummary" => {
+            let summary =
+                get_nov_native_treasury_settlement_summary_with_store_path_v1(store_path.as_path())
+                    .ok();
+            Ok(json!({
+                "method": "nov_getTreasurySettlementSummary",
+                "found": summary.is_some(),
+                "summary": summary.unwrap_or(Value::Null),
+            }))
+        }
+        "nov_getTreasuryClearingSummary" => {
+            let summary =
+                get_nov_native_treasury_clearing_summary_with_store_path_v1(store_path.as_path())
+                    .ok();
+            Ok(json!({
+                "method": "nov_getTreasuryClearingSummary",
+                "found": summary.is_some(),
+                "summary": summary.unwrap_or(Value::Null),
+            }))
+        }
+        "nov_getExecutionTrace" => {
+            let tx_hash = param_as_string(params, "tx_hash")
+                .or_else(|| param_as_string(params, "hash"))
+                .unwrap_or_default();
+            let module_method = if tx_hash.trim().is_empty() {
+                "get_last_execution_trace"
+            } else {
+                "get_execution_trace_by_tx"
+            };
+            let args = if tx_hash.trim().is_empty() {
+                json!({})
+            } else {
+                json!({ "tx_hash": tx_hash })
+            };
+            let out = run_nov_native_call_from_params_with_store_path_v1(
+                &json!({
+                    "target": {"kind": "native_module", "id": "treasury"},
+                    "method": module_method,
+                    "args": args,
+                }),
+                Some(store_path.as_path()),
+            )?;
+            Ok(json!({
+                "method": "nov_getExecutionTrace",
+                "found": out.get("found").and_then(Value::as_bool).unwrap_or(false),
+                "trace": out.get("result").cloned().unwrap_or(Value::Null),
+            }))
+        }
+        "nov_getTreasuryClearingMetricsSummary" => {
+            let out = run_nov_native_call_from_params_with_store_path_v1(
+                &json!({
+                    "target": {"kind": "native_module", "id": "treasury"},
+                    "method": "get_clearing_metrics_summary",
+                    "args": {},
+                }),
+                Some(store_path.as_path()),
+            )?;
+            Ok(json!({
+                "method": "nov_getTreasuryClearingMetricsSummary",
+                "found": out.get("found").and_then(Value::as_bool).unwrap_or(false),
+                "summary": out.get("result").cloned().unwrap_or(Value::Null),
+            }))
+        }
+        "nov_getTreasuryPolicyMetricsSummary" => {
+            let out = run_nov_native_call_from_params_with_store_path_v1(
+                &json!({
+                    "target": {"kind": "native_module", "id": "treasury"},
+                    "method": "get_policy_metrics_summary",
+                    "args": {},
+                }),
+                Some(store_path.as_path()),
+            )?;
+            Ok(json!({
+                "method": "nov_getTreasuryPolicyMetricsSummary",
+                "found": out.get("found").and_then(Value::as_bool).unwrap_or(false),
+                "summary": out.get("result").cloned().unwrap_or(Value::Null),
+            }))
+        }
+        "nov_getTreasurySettlementPolicy" => {
+            let out = run_nov_native_call_from_params_with_store_path_v1(
+                &json!({
+                    "target": {"kind": "native_module", "id": "treasury"},
+                    "method": "get_settlement_policy",
+                    "args": {},
+                }),
+                Some(store_path.as_path()),
+            )?;
+            Ok(json!({
+                "method": "nov_getTreasurySettlementPolicy",
+                "found": out.get("found").and_then(Value::as_bool).unwrap_or(false),
+                "policy": out.get("result").cloned().unwrap_or(Value::Null),
+            }))
+        }
+        "nov_getTreasurySettlementJournal" => {
+            let requested_limit = param_as_u64(params, "limit", 0).unwrap_or(50);
+            let out = run_nov_native_call_from_params_with_store_path_v1(
+                &json!({
+                    "target": {"kind": "native_module", "id": "treasury"},
+                    "method": "get_settlement_journal",
+                    "args": {
+                        "limit": requested_limit,
+                    },
+                }),
+                Some(store_path.as_path()),
+            )?;
+            Ok(json!({
+                "method": "nov_getTreasurySettlementJournal",
+                "found": out.get("found").and_then(Value::as_bool).unwrap_or(false),
+                "journal": out.get("result").cloned().unwrap_or(Value::Null),
+            }))
+        }
+        _ => bail!("unsupported mainline native execution query method: {method}"),
+    }
 }
 
 fn runtime_snapshot_chain_id_from_env() -> u64 {
@@ -2716,6 +2884,9 @@ pub fn run_mainline_query_from_path(path: &Path, method: &str, params: &Value) -
     if is_mainline_runtime_query_method(method) {
         return run_mainline_runtime_query(method, params);
     }
+    if is_mainline_native_execution_query_method(method) {
+        return run_mainline_native_execution_query(method, params);
+    }
     let store = load_mainline_canonical_store(path)?;
     run_mainline_query(&store, method, params)
 }
@@ -2723,6 +2894,9 @@ pub fn run_mainline_query_from_path(path: &Path, method: &str, params: &Value) -
 pub fn run_mainline_query_from_env(method: &str, params: &Value) -> Result<Value> {
     if is_mainline_runtime_query_method(method) {
         return run_mainline_runtime_query(method, params);
+    }
+    if is_mainline_native_execution_query_method(method) {
+        return run_mainline_native_execution_query(method, params);
     }
     let path = canonical_store_path_from_env();
     run_mainline_query_from_path(&path, method, params)
@@ -2735,6 +2909,9 @@ pub fn run_mainline_query(
 ) -> Result<Value> {
     if is_mainline_runtime_query_method(method) {
         return run_mainline_runtime_query(method, params);
+    }
+    if is_mainline_native_execution_query_method(method) {
+        return run_mainline_native_execution_query(method, params);
     }
     let block_contexts = derive_mainline_eth_fullnode_block_contexts_v1(store);
     let chain_view = derive_mainline_eth_fullnode_chain_view_v1(store);
@@ -7600,5 +7777,58 @@ mod tests {
             runtime_root_cause_bundle_v1(Some(&snapshot));
         assert_eq!(root_cause, Some("execution_budget_issue"));
         assert_eq!(root_signals["executionBudgetIssue"].as_bool(), Some(true));
+    }
+
+    #[test]
+    fn recognizes_mainline_native_execution_query_methods() {
+        for method in [
+            "nov_getTreasurySettlementSummary",
+            "nov_getTreasuryClearingSummary",
+            "nov_getExecutionTrace",
+            "nov_getTreasuryClearingMetricsSummary",
+            "nov_getTreasuryPolicyMetricsSummary",
+            "nov_getTreasurySettlementPolicy",
+            "nov_getTreasurySettlementJournal",
+        ] {
+            assert!(
+                is_mainline_native_execution_query_method(method),
+                "method should be recognized: {method}"
+            );
+        }
+    }
+
+    #[test]
+    fn native_execution_queries_do_not_require_canonical_store_path() {
+        let bogus_canonical_store =
+            std::path::Path::new("this-canonical-store-does-not-exist.json");
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system time should be after unix epoch")
+            .as_nanos();
+        let native_store =
+            std::env::temp_dir().join(format!("novovm-mainline-native-store-{unique}.json"));
+        let native_store_path = native_store.to_string_lossy().to_string();
+
+        for (method, extra) in [
+            ("nov_getTreasurySettlementSummary", json!({})),
+            ("nov_getTreasuryClearingSummary", json!({})),
+            ("nov_getExecutionTrace", json!({})),
+            ("nov_getTreasuryClearingMetricsSummary", json!({})),
+            ("nov_getTreasuryPolicyMetricsSummary", json!({})),
+            ("nov_getTreasurySettlementPolicy", json!({})),
+            ("nov_getTreasurySettlementJournal", json!({"limit": 5})),
+        ] {
+            let mut params = extra;
+            if let Value::Object(map) = &mut params {
+                map.insert(
+                    "native_execution_store_path".to_string(),
+                    Value::String(native_store_path.clone()),
+                );
+            }
+            let out = run_mainline_query_from_path(bogus_canonical_store, method, &params)
+                .expect("native execution query should succeed without canonical store");
+            assert_eq!(out.get("method").and_then(Value::as_str), Some(method));
+            assert!(out.get("found").is_some(), "found should exist: {method}");
+        }
     }
 }

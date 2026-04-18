@@ -62,3 +62,7 @@ path = "src/bin/supervm-mainline-nightly-gate.rs"
 [[bin]]
 name = "supervm-mainline-duty-report"
 path = "src/bin/supervm-mainline-duty-report.rs"
+
+[[bin]]
+name = "supervm-mainline-p2d-sample-inject"
+path = "src/bin/supervm-mainline-p2d-sample-inject.rs"

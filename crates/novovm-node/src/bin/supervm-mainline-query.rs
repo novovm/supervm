@@ -3,9 +3,10 @@
 use anyhow::{bail, Context, Result};
 use novovm_node::mainline_query::{
     default_mainline_query_store_path, default_mainline_runtime_snapshot_path,
-    is_mainline_runtime_query_method, mainline_query_method_from_env,
-    mainline_query_params_from_env, run_mainline_query_from_path,
+    is_mainline_native_execution_query_method, is_mainline_runtime_query_method,
+    mainline_query_method_from_env, mainline_query_params_from_env, run_mainline_query_from_path,
 };
+use novovm_node::tx_ingress::nov_native_execution_store_path_v1;
 use std::path::PathBuf;
 
 fn string_env_nonempty(name: &str) -> Option<String> {
@@ -28,7 +29,8 @@ fn main() -> Result<()> {
         .map(PathBuf::from)
         .unwrap_or_else(default_mainline_query_store_path);
     let runtime_method = is_mainline_runtime_query_method(&method);
-    if !runtime_method && !store_path.exists() {
+    let native_execution_method = is_mainline_native_execution_query_method(&method);
+    if !runtime_method && !native_execution_method && !store_path.exists() {
         bail!(
             "mainline canonical store does not exist: {}",
             store_path.display()
@@ -37,11 +39,17 @@ fn main() -> Result<()> {
     let out = run_mainline_query_from_path(&store_path, &method, &params)?;
     let query_path = if runtime_method {
         default_mainline_runtime_snapshot_path()
+    } else if native_execution_method {
+        string_env_nonempty("NOVOVM_MAINLINE_NATIVE_EXECUTION_STORE_PATH")
+            .map(PathBuf::from)
+            .unwrap_or_else(nov_native_execution_store_path_v1)
     } else {
         store_path.clone()
     };
     let query_source = if runtime_method {
         "runtime_snapshot"
+    } else if native_execution_method {
+        "native_execution_store"
     } else {
         "canonical_store"
     };

@@ -1,5 +1,12 @@
 # AOEM（Abstract Orchestrated Execution Model）
 
+> 状态说明（2026-04-17）：
+> 本文是 AOEM 技术说明文档，不是 NOVOVM/SUPERVM 当前生产运维入口。
+> 当前生产入口与主线守门文档请先看：
+> - `README.md`
+> - `docs_CN/CURRENT-AUTHORITATIVE-ENTRYPOINT-2026-04-17.md`
+> - `docs_CN/NOVOVM-NETWORK/NOVOVM-EVM-NIGHTLY-SOAK-SOP-2026-04-17.md`
+
 **第一个不依赖执行顺序定义正确性、具有量子计算同构性的代数化通用并行执行引擎**
 
 _把并发从调度问题变成语义原语 · 具有量子计算同构性 · 让未来硬件（GPU/量子/ZKVM）参与可信执行_

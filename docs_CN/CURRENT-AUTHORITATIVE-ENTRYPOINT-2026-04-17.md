@@ -24,11 +24,16 @@
    - `docs_CN/NOVOVM-NETWORK/NOVOVM-OBSERVABILITY-P2D-SEAL-2026-04-18.md`（FINAL）
 3. P3 功能开关决策规范（仅决策，不启用）
    - `docs_CN/NOVOVM-NETWORK/NOVOVM-P3-FEATURE-GATE-DECISION-THRESHOLDS-2026-04-18.md`（AUTHORITATIVE）
-4. 主线状态与交付契约产物
+   - `docs_CN/NOVOVM-NETWORK/NOVOVM-P3-GATE-DRYRUN-RESULT-2026-04-18.md`（RECORDED RESULT）
+   - `docs_CN/NOVOVM-NETWORK/NOVOVM-P3A-GATE-WEEKLY-RUN-WINDOW-TEMPLATE-2026-04-18.md`（OPERATIONAL TEMPLATE）
+4. P2-D 运行阶段报告模板与导出脚本
+   - `docs_CN/NOVOVM-NETWORK/NOVOVM-CLEARING-METRICS-RUN-PHASE-TEMPLATE-2026-04-18.md`
+   - `scripts/novovm-p2d-daily-report.ps1`
+5. 主线状态与交付契约产物
    - `artifacts/mainline-status.json`
    - `artifacts/mainline-delivery-contract.json`
    - `artifacts/mainline/mainline-nightly-soak-gate-report.json`
-4. EVM 对拍门禁与样本入口
+6. EVM 对拍门禁与样本入口
    - `crates/novovm-node/tests/fixtures/geth-parity/README.md`
    - `crates/novovm-node/tests/fixtures/geth-parity-external/README.md`
 

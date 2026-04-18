@@ -2,7 +2,7 @@
 
 ## 1. 目标与范围
 
-本 SOP 仅用于 EVM 宿主维护态：
+本 SOP 仅用于 EVM 插件维护态（运行于 NOVOVM 宿主）：
 
 - 守长稳，不做新功能开发
 - 固定入口：`supervm-mainline-nightly-gate`
