@@ -20,14 +20,19 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use crate::governance_surface::{
+    is_mainline_governance_query_method, run_mainline_governance_query,
+};
 use crate::mainline_canonical::{
     derive_mainline_eth_fullnode_block_contexts_v1, derive_mainline_eth_fullnode_chain_view_v1,
     load_mainline_canonical_store, MainlineCanonicalStoreV1,
 };
 use crate::tx_ingress::{
+    get_nov_native_account_asset_balance_with_store_path_v1,
     get_nov_native_treasury_clearing_summary_with_store_path_v1,
     get_nov_native_treasury_settlement_summary_with_store_path_v1,
-    nov_native_execution_store_path_v1, run_nov_native_call_from_params_with_store_path_v1,
+    load_nov_native_execution_store_v1, nov_native_execution_store_path_v1,
+    run_nov_execute_from_params_v1, run_nov_native_call_from_params_with_store_path_v1,
 };
 
 const ETH_NATIVE_RUNTIME_QUERY_SCHEMA_VERSION_V1: u64 = 1;
@@ -87,6 +92,23 @@ fn value_as_u64(value: &Value) -> Option<u64> {
     }
 }
 
+fn value_as_u128(value: &Value) -> Option<u128> {
+    match value {
+        Value::Number(number) => number.as_u64().map(u128::from),
+        Value::String(raw) => {
+            let trimmed = raw.trim();
+            let normalized = trimmed
+                .strip_prefix("0x")
+                .or_else(|| trimmed.strip_prefix("0X"))
+                .unwrap_or(trimmed);
+            u128::from_str_radix(normalized, 16)
+                .ok()
+                .or_else(|| trimmed.parse::<u128>().ok())
+        }
+        _ => None,
+    }
+}
+
 fn value_as_string(value: &Value) -> Option<String> {
     match value {
         Value::String(raw) => {
@@ -113,6 +135,24 @@ fn param_as_string(params: &Value, key: &str) -> Option<String> {
         }
         _ => None,
     }
+}
+
+fn param_as_string_any(params: &Value, keys: &[&str]) -> Option<String> {
+    keys.iter().find_map(|key| param_as_string(params, key))
+}
+
+fn param_as_u128(params: &Value, key: &str, index: usize) -> Option<u128> {
+    match params {
+        Value::Object(map) => map.get(key).and_then(value_as_u128),
+        Value::Array(items) => items.get(index).and_then(value_as_u128),
+        _ => None,
+    }
+}
+
+fn param_as_u128_any(params: &Value, keys: &[&str]) -> Option<u128> {
+    keys.iter()
+        .enumerate()
+        .find_map(|(index, key)| param_as_u128(params, key, index))
 }
 
 fn canonical_store_path_from_env() -> PathBuf {
@@ -156,22 +196,206 @@ fn native_execution_store_path_from_params_or_env_v1(params: &Value) -> PathBuf 
         .unwrap_or_else(nov_native_execution_store_path_v1)
 }
 
+fn augment_nov_user_execution_result_v1(
+    method: &str,
+    module: &str,
+    module_method: &str,
+    mut out: Value,
+) -> Value {
+    if let Some(map) = out.as_object_mut() {
+        map.insert("method".to_string(), Value::String(method.to_string()));
+        map.insert("module".to_string(), Value::String(module.to_string()));
+        map.insert(
+            "module_method".to_string(),
+            Value::String(module_method.to_string()),
+        );
+    }
+    out
+}
+
+fn run_mainline_native_user_execute_v1(
+    method: &str,
+    module: &str,
+    module_method: &str,
+    args: Value,
+    params: &Value,
+    default_pay_asset: &str,
+    default_max_pay_amount: u128,
+) -> Result<Value> {
+    let store_path = native_execution_store_path_from_params_or_env_v1(params);
+    let caller = param_as_string_any(params, &["caller", "from"])
+        .ok_or_else(|| anyhow::anyhow!("from/caller is required for {method}"))?;
+    let pay_asset = param_as_string_any(params, &["pay_asset", "fee_pay_asset"])
+        .unwrap_or_else(|| default_pay_asset.to_string());
+    let max_pay_amount = param_as_u128_any(params, &["max_pay_amount", "fee_max_pay_amount"])
+        .unwrap_or(default_max_pay_amount.max(1));
+    let slippage_bps = param_as_u64(params, "slippage_bps", 0)
+        .or_else(|| param_as_u64(params, "fee_slippage_bps", 0))
+        .unwrap_or(100);
+
+    let mut execute_params = serde_json::Map::new();
+    execute_params.insert("from".to_string(), Value::String(caller));
+    execute_params.insert(
+        "target".to_string(),
+        json!({"kind": "native_module", "id": module}),
+    );
+    execute_params.insert(
+        "method".to_string(),
+        Value::String(module_method.to_string()),
+    );
+    execute_params.insert("args".to_string(), args);
+    execute_params.insert(
+        "chain_id".to_string(),
+        json!(param_as_u64(params, "chain_id", 0).unwrap_or(1)),
+    );
+    execute_params.insert(
+        "nonce".to_string(),
+        json!(param_as_u64(params, "nonce", 0).unwrap_or(0)),
+    );
+    execute_params.insert("pay_asset".to_string(), Value::String(pay_asset));
+    execute_params.insert("max_pay_amount".to_string(), json!(max_pay_amount));
+    execute_params.insert("slippage_bps".to_string(), json!(slippage_bps));
+    if let Some(gas_like_limit) = param_as_u64(params, "gas_like_limit", 0)
+        .or_else(|| param_as_u64(params, "gas_limit", 0))
+        .or_else(|| param_as_u64(params, "gas", 0))
+    {
+        execute_params.insert("gas_like_limit".to_string(), json!(gas_like_limit));
+    }
+    execute_params.insert(
+        "native_execution_store_path".to_string(),
+        Value::String(store_path.display().to_string()),
+    );
+
+    let out = run_nov_execute_from_params_v1(&Value::Object(execute_params))?;
+    Ok(augment_nov_user_execution_result_v1(
+        method,
+        module,
+        module_method,
+        out,
+    ))
+}
+
 pub fn is_mainline_native_execution_query_method(method: &str) -> bool {
     matches!(
         method,
-        "nov_getTreasurySettlementSummary"
+        "nov_getAssetBalance"
+            | "nov_getTreasurySettlementSummary"
             | "nov_getTreasuryClearingSummary"
             | "nov_getExecutionTrace"
             | "nov_getTreasuryClearingMetricsSummary"
             | "nov_getTreasuryPolicyMetricsSummary"
             | "nov_getTreasurySettlementPolicy"
             | "nov_getTreasurySettlementJournal"
+            | "nov_swap"
+            | "nov_redeem"
+            | "nov_openVault"
+    )
+}
+
+fn run_mainline_nov_swap_v1(params: &Value) -> Result<Value> {
+    let asset_in = param_as_string_any(params, &["asset_in"])
+        .ok_or_else(|| anyhow::anyhow!("asset_in is required for nov_swap"))?;
+    let asset_out = param_as_string_any(params, &["asset_out"])
+        .ok_or_else(|| anyhow::anyhow!("asset_out is required for nov_swap"))?;
+    let amount_in = param_as_u128_any(params, &["amount_in"])
+        .ok_or_else(|| anyhow::anyhow!("amount_in is required for nov_swap"))?;
+    let min_amount_out = param_as_u128_any(params, &["min_amount_out"]).unwrap_or(0);
+    let requested_slippage_bps = param_as_u64(params, "slippage_bps", 0).unwrap_or(100);
+    run_mainline_native_user_execute_v1(
+        "nov_swap",
+        "amm",
+        "swap_exact_in",
+        json!({
+            "asset_in": asset_in,
+            "asset_out": asset_out,
+            "amount_in": amount_in,
+            "min_amount_out": min_amount_out,
+            "slippage_bps": requested_slippage_bps,
+        }),
+        params,
+        asset_in.as_str(),
+        amount_in,
+    )
+}
+
+fn run_mainline_nov_redeem_v1(params: &Value) -> Result<Value> {
+    let asset_out = param_as_string_any(params, &["asset_out", "asset"])
+        .ok_or_else(|| anyhow::anyhow!("asset_out/asset is required for nov_redeem"))?;
+    let nov_amount = param_as_u128_any(params, &["nov_amount", "amount"])
+        .ok_or_else(|| anyhow::anyhow!("nov_amount/amount is required for nov_redeem"))?;
+    let min_asset_out = param_as_u128_any(params, &["min_asset_out"]).unwrap_or(0);
+    run_mainline_native_user_execute_v1(
+        "nov_redeem",
+        "treasury",
+        "redeem",
+        json!({
+            "asset_out": asset_out,
+            "nov_amount": nov_amount,
+            "min_asset_out": min_asset_out,
+        }),
+        params,
+        "NOV",
+        nov_amount,
+    )
+}
+
+fn run_mainline_nov_open_vault_v1(params: &Value) -> Result<Value> {
+    let collateral_asset = param_as_string_any(params, &["collateral_asset"])
+        .ok_or_else(|| anyhow::anyhow!("collateral_asset is required for nov_openVault"))?;
+    let collateral_amount = param_as_u128_any(params, &["collateral_amount"])
+        .ok_or_else(|| anyhow::anyhow!("collateral_amount is required for nov_openVault"))?;
+    let debt_asset =
+        param_as_string_any(params, &["debt_asset"]).unwrap_or_else(|| "NUSD".to_string());
+    let mint_amount = param_as_u128_any(params, &["mint_amount"]).unwrap_or(0);
+    run_mainline_native_user_execute_v1(
+        "nov_openVault",
+        "credit_engine",
+        "open_vault",
+        json!({
+            "collateral_asset": collateral_asset,
+            "collateral_amount": collateral_amount,
+            "debt_asset": debt_asset,
+            "mint_amount": mint_amount,
+        }),
+        params,
+        collateral_asset.as_str(),
+        collateral_amount,
     )
 }
 
 fn run_mainline_native_execution_query(method: &str, params: &Value) -> Result<Value> {
     let store_path = native_execution_store_path_from_params_or_env_v1(params);
     match method {
+        "nov_getAssetBalance" => {
+            let account = param_as_string_any(params, &["account"])
+                .ok_or_else(|| anyhow::anyhow!("account is required for nov_getAssetBalance"))?;
+            let asset = param_as_string_any(params, &["asset", "asset_id"])
+                .unwrap_or_else(|| "NOV".to_string())
+                .to_ascii_uppercase();
+            let native_balance = get_nov_native_account_asset_balance_with_store_path_v1(
+                store_path.as_path(),
+                account.as_str(),
+                asset.as_str(),
+            )
+            .unwrap_or(0);
+            let found = load_nov_native_execution_store_v1(store_path.as_path())
+                .ok()
+                .and_then(|store| {
+                    store
+                        .module_state
+                        .account_asset_balances
+                        .get(account.as_str())
+                        .map(|assets| assets.contains_key(asset.as_str()))
+                })
+                .unwrap_or(native_balance > 0);
+            Ok(json!({
+                "method": "nov_getAssetBalance",
+                "account": account,
+                "asset": asset,
+                "found": found,
+                "balance": native_balance,
+            }))
+        }
         "nov_getTreasurySettlementSummary" => {
             let summary =
                 get_nov_native_treasury_settlement_summary_with_store_path_v1(store_path.as_path())
@@ -283,6 +507,9 @@ fn run_mainline_native_execution_query(method: &str, params: &Value) -> Result<V
                 "journal": out.get("result").cloned().unwrap_or(Value::Null),
             }))
         }
+        "nov_swap" => run_mainline_nov_swap_v1(params),
+        "nov_redeem" => run_mainline_nov_redeem_v1(params),
+        "nov_openVault" => run_mainline_nov_open_vault_v1(params),
         _ => bail!("unsupported mainline native execution query method: {method}"),
     }
 }
@@ -2887,6 +3114,9 @@ pub fn run_mainline_query_from_path(path: &Path, method: &str, params: &Value) -
     if is_mainline_native_execution_query_method(method) {
         return run_mainline_native_execution_query(method, params);
     }
+    if is_mainline_governance_query_method(method) {
+        return run_mainline_governance_query(method, params);
+    }
     let store = load_mainline_canonical_store(path)?;
     run_mainline_query(&store, method, params)
 }
@@ -2897,6 +3127,9 @@ pub fn run_mainline_query_from_env(method: &str, params: &Value) -> Result<Value
     }
     if is_mainline_native_execution_query_method(method) {
         return run_mainline_native_execution_query(method, params);
+    }
+    if is_mainline_governance_query_method(method) {
+        return run_mainline_governance_query(method, params);
     }
     let path = canonical_store_path_from_env();
     run_mainline_query_from_path(&path, method, params)
@@ -2912,6 +3145,9 @@ pub fn run_mainline_query(
     }
     if is_mainline_native_execution_query_method(method) {
         return run_mainline_native_execution_query(method, params);
+    }
+    if is_mainline_governance_query_method(method) {
+        return run_mainline_governance_query(method, params);
     }
     let block_contexts = derive_mainline_eth_fullnode_block_contexts_v1(store);
     let chain_view = derive_mainline_eth_fullnode_chain_view_v1(store);
@@ -3124,12 +3360,20 @@ pub fn default_mainline_query_store_path() -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::governance_surface::is_mainline_governance_query_method;
+    use crate::governance_verifier_ext::governance_vote_message_bytes_v1;
     use crate::mainline_canonical::MainlineCanonicalBatchRecordV1;
+    use crate::tx_ingress::{
+        get_nov_native_account_asset_balance_with_store_path_v1,
+        save_nov_native_execution_store_v1, NovNativeExecutionStoreV1,
+    };
     use anyhow::Context;
+    use aoem_bindings::{default_host_dll_path, mldsa_keygen_v1_auto, mldsa_sign_v1_auto};
     use novovm_adapter_api::{ChainAdapter, ChainConfig, ChainType, StateIR, TxIR, TxType};
     use novovm_adapter_novovm::{
         address_from_seed_v1, signature_payload_with_seed_v1, NovoVmAdapter,
     };
+    use novovm_consensus::GovernanceVote;
     use novovm_network::{
         clear_eth_fullnode_native_worker_runtime_snapshot_for_chain_v1,
         set_eth_fullnode_native_worker_runtime_snapshot_v1, set_network_runtime_sync_status,
@@ -3140,6 +3384,43 @@ mod tests {
     use serde::Deserialize;
     use sha2::{Digest, Sha256};
     use std::{fs, path::PathBuf};
+
+    fn unique_native_execution_store_path(label: &str) -> PathBuf {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system time should be after unix epoch")
+            .as_nanos();
+        std::env::temp_dir().join(format!("novovm-mainline-{label}-{nonce}.json"))
+    }
+
+    fn unique_governance_store_path(label: &str) -> PathBuf {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system time should be after unix epoch")
+            .as_nanos();
+        std::env::temp_dir().join(format!("novovm-governance-{label}-{nonce}.json"))
+    }
+
+    fn decode_hex_test_v1(raw: &str) -> Vec<u8> {
+        let normalized = raw
+            .trim()
+            .strip_prefix("0x")
+            .or_else(|| raw.trim().strip_prefix("0X"))
+            .unwrap_or(raw.trim());
+        assert_eq!(normalized.len() % 2, 0, "hex must be even length");
+        normalized
+            .as_bytes()
+            .chunks_exact(2)
+            .map(|pair| {
+                let hex = std::str::from_utf8(pair).expect("hex utf8");
+                u8::from_str_radix(hex, 16).expect("hex byte")
+            })
+            .collect()
+    }
+
+    fn encode_hex_test_v1(bytes: &[u8]) -> String {
+        bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+    }
 
     fn sample_store() -> MainlineCanonicalStoreV1 {
         MainlineCanonicalStoreV1 {
@@ -7782,6 +8063,7 @@ mod tests {
     #[test]
     fn recognizes_mainline_native_execution_query_methods() {
         for method in [
+            "nov_getAssetBalance",
             "nov_getTreasurySettlementSummary",
             "nov_getTreasuryClearingSummary",
             "nov_getExecutionTrace",
@@ -7789,9 +8071,32 @@ mod tests {
             "nov_getTreasuryPolicyMetricsSummary",
             "nov_getTreasurySettlementPolicy",
             "nov_getTreasurySettlementJournal",
+            "nov_swap",
+            "nov_redeem",
+            "nov_openVault",
         ] {
             assert!(
                 is_mainline_native_execution_query_method(method),
+                "method should be recognized: {method}"
+            );
+        }
+    }
+
+    #[test]
+    fn recognizes_mainline_governance_query_methods() {
+        for method in [
+            "governance_getPolicy",
+            "governance_getProposal",
+            "governance_listProposals",
+            "governance_listAuditEvents",
+            "governance_listChainAuditEvents",
+            "governance_submitProposal",
+            "governance_sign",
+            "governance_vote",
+            "governance_execute",
+        ] {
+            assert!(
+                is_mainline_governance_query_method(method),
                 "method should be recognized: {method}"
             );
         }
@@ -7810,6 +8115,10 @@ mod tests {
         let native_store_path = native_store.to_string_lossy().to_string();
 
         for (method, extra) in [
+            (
+                "nov_getAssetBalance",
+                json!({"account": format!("0x{}", "44".repeat(20)), "asset": "NOV"}),
+            ),
             ("nov_getTreasurySettlementSummary", json!({})),
             ("nov_getTreasuryClearingSummary", json!({})),
             ("nov_getExecutionTrace", json!({})),
@@ -7830,5 +8139,805 @@ mod tests {
             assert_eq!(out.get("method").and_then(Value::as_str), Some(method));
             assert!(out.get("found").is_some(), "found should exist: {method}");
         }
+    }
+
+    #[test]
+    fn governance_queries_do_not_require_canonical_store_path() {
+        let bogus_canonical_store =
+            std::path::Path::new("this-canonical-store-does-not-exist.json");
+        let governance_store = unique_governance_store_path("query-only");
+        let governance_store_path = governance_store.to_string_lossy().to_string();
+
+        for (method, extra) in [
+            ("governance_getPolicy", json!({})),
+            ("governance_listProposals", json!({})),
+            ("governance_listAuditEvents", json!({ "limit": 5 })),
+            ("governance_listChainAuditEvents", json!({ "limit": 5 })),
+        ] {
+            let mut params = extra;
+            if let Value::Object(map) = &mut params {
+                map.insert(
+                    "governance_store_path".to_string(),
+                    Value::String(governance_store_path.clone()),
+                );
+            }
+            let out = run_mainline_query_from_path(bogus_canonical_store, method, &params)
+                .expect("governance query should succeed without canonical store");
+            assert_eq!(out.get("method").and_then(Value::as_str), Some(method));
+        }
+
+        let _ = fs::remove_file(governance_store);
+    }
+
+    #[test]
+    fn mainline_query_governance_submit_vote_execute_flow_through_real_entry() {
+        let bogus_canonical_store =
+            std::path::Path::new("this-canonical-store-does-not-exist.json");
+        let governance_store = unique_governance_store_path("submit-vote-execute");
+
+        let policy_before = run_mainline_query_from_path(
+            bogus_canonical_store,
+            "governance_getPolicy",
+            &json!({
+                "governance_store_path": governance_store.display().to_string(),
+            }),
+        )
+        .expect("governance_getPolicy should succeed");
+        assert_eq!(policy_before["mempool_fee_floor"].as_u64(), Some(1));
+
+        let submit_out = run_mainline_query_from_path(
+            bogus_canonical_store,
+            "governance_submitProposal",
+            &json!({
+                "governance_store_path": governance_store.display().to_string(),
+                "proposer": 0u64,
+                "proposer_approvals": [0u64],
+                "op": "update_mempool_fee_floor",
+                "fee_floor": 9u64,
+            }),
+        )
+        .expect("submit should succeed");
+        assert_eq!(submit_out["submitted"].as_bool(), Some(true));
+        let proposal_id = submit_out["proposal"]["proposal_id"]
+            .as_u64()
+            .expect("proposal id should exist");
+
+        let proposal_out = run_mainline_query_from_path(
+            bogus_canonical_store,
+            "governance_getProposal",
+            &json!({
+                "governance_store_path": governance_store.display().to_string(),
+                "proposal_id": proposal_id,
+            }),
+        )
+        .expect("getProposal should succeed");
+        assert_eq!(proposal_out["found"].as_bool(), Some(true));
+        assert_eq!(
+            proposal_out["proposal"]["op"].as_str(),
+            Some("update_mempool_fee_floor")
+        );
+
+        let sign_out = run_mainline_query_from_path(
+            bogus_canonical_store,
+            "governance_sign",
+            &json!({
+                "governance_store_path": governance_store.display().to_string(),
+                "proposal_id": proposal_id,
+                "signer_id": 0u64,
+                "support": true,
+            }),
+        )
+        .expect("governance_sign should succeed");
+        assert_eq!(sign_out["method"].as_str(), Some("governance_sign"));
+        assert_eq!(sign_out["signer_id"].as_u64(), Some(0));
+        assert_eq!(sign_out["signature_scheme"].as_str(), Some("ed25519"));
+        assert!(sign_out["signature"].as_str().is_some());
+
+        let store_after_sign: Value = serde_json::from_str(
+            &fs::read_to_string(governance_store.as_path()).expect("governance store should exist"),
+        )
+        .expect("governance store json should parse");
+        assert_eq!(
+            store_after_sign["signed_votes"]
+                .as_object()
+                .map(|map| map.len()),
+            Some(1)
+        );
+        assert_eq!(
+            store_after_sign["signed_vote_meta"]
+                .as_object()
+                .map(|map| map.len()),
+            Some(1)
+        );
+
+        let vote0 = run_mainline_query_from_path(
+            bogus_canonical_store,
+            "governance_vote",
+            &json!({
+                "governance_store_path": governance_store.display().to_string(),
+                "proposal_id": proposal_id,
+                "voter_id": 0u64,
+                "support": true,
+            }),
+        )
+        .expect("first vote should succeed");
+        assert_eq!(vote0["votes_collected"].as_u64(), Some(1));
+
+        let store_after_vote0: Value = serde_json::from_str(
+            &fs::read_to_string(governance_store.as_path()).expect("governance store should exist"),
+        )
+        .expect("governance store json should parse");
+        assert_eq!(
+            store_after_vote0["signed_votes"]
+                .as_object()
+                .map(|map| map.len()),
+            Some(0)
+        );
+        assert_eq!(
+            store_after_vote0["signed_vote_meta"]
+                .as_object()
+                .map(|map| map.len()),
+            Some(0)
+        );
+
+        let vote1 = run_mainline_query_from_path(
+            bogus_canonical_store,
+            "governance_vote",
+            &json!({
+                "governance_store_path": governance_store.display().to_string(),
+                "proposal_id": proposal_id,
+                "voter_id": 1u64,
+                "support": true,
+            }),
+        )
+        .expect("second vote should succeed");
+        assert_eq!(vote1["votes_collected"].as_u64(), Some(2));
+
+        let execute_out = run_mainline_query_from_path(
+            bogus_canonical_store,
+            "governance_execute",
+            &json!({
+                "governance_store_path": governance_store.display().to_string(),
+                "proposal_id": proposal_id,
+                "executor": 0u64,
+                "executor_approvals": [0u64],
+            }),
+        )
+        .expect("execute should succeed");
+        assert_eq!(execute_out["executed"].as_bool(), Some(true));
+        assert_eq!(execute_out["mempool_fee_floor"].as_u64(), Some(9));
+
+        let policy_after = run_mainline_query_from_path(
+            bogus_canonical_store,
+            "governance_getPolicy",
+            &json!({
+                "governance_store_path": governance_store.display().to_string(),
+            }),
+        )
+        .expect("governance_getPolicy after execute should succeed");
+        assert_eq!(policy_after["mempool_fee_floor"].as_u64(), Some(9));
+
+        let proposals_after = run_mainline_query_from_path(
+            bogus_canonical_store,
+            "governance_listProposals",
+            &json!({
+                "governance_store_path": governance_store.display().to_string(),
+            }),
+        )
+        .expect("listProposals should succeed");
+        assert_eq!(proposals_after["count"].as_u64(), Some(0));
+
+        let chain_events = run_mainline_query_from_path(
+            bogus_canonical_store,
+            "governance_listChainAuditEvents",
+            &json!({
+                "governance_store_path": governance_store.display().to_string(),
+                "proposal_id": proposal_id,
+            }),
+        )
+        .expect("listChainAuditEvents should succeed");
+        assert!(chain_events["count"].as_u64().unwrap_or(0) >= 2);
+
+        let audit_events = run_mainline_query_from_path(
+            bogus_canonical_store,
+            "governance_listAuditEvents",
+            &json!({
+                "governance_store_path": governance_store.display().to_string(),
+                "proposal_id": proposal_id,
+            }),
+        )
+        .expect("listAuditEvents should succeed");
+        assert!(audit_events["count"].as_u64().unwrap_or(0) >= 3);
+
+        let _ = fs::remove_file(governance_store);
+    }
+
+    #[test]
+    fn mainline_query_governance_mldsa87_external_vote_executes_through_real_entry() {
+        let aoem_dll = default_host_dll_path();
+        assert!(
+            aoem_dll.exists(),
+            "AOEM DLL should exist for mldsa test at {}",
+            aoem_dll.display()
+        );
+
+        let (pubkey0, secret0) = mldsa_keygen_v1_auto(87)
+            .expect("mldsa keygen voter0 should run")
+            .expect("mldsa keygen voter0 should be available");
+        let (pubkey1, secret1) = mldsa_keygen_v1_auto(87)
+            .expect("mldsa keygen voter1 should run")
+            .expect("mldsa keygen voter1 should be available");
+        let mldsa_pubkeys = format!(
+            "0:{},1:{}",
+            encode_hex_test_v1(pubkey0.as_slice()),
+            encode_hex_test_v1(pubkey1.as_slice())
+        );
+        let with_mldsa = |extra: Value| {
+            let mut map = match extra {
+                Value::Object(map) => map,
+                other => panic!("expected object params, got {other:?}"),
+            };
+            map.insert(
+                "governance_vote_verifier".to_string(),
+                Value::String("mldsa87".to_string()),
+            );
+            map.insert(
+                "governance_mldsa_mode".to_string(),
+                Value::String("aoem_ffi".to_string()),
+            );
+            map.insert(
+                "governance_mldsa87_pubkeys".to_string(),
+                Value::String(mldsa_pubkeys.clone()),
+            );
+            map.insert(
+                "governance_aoem_dll".to_string(),
+                Value::String(aoem_dll.display().to_string()),
+            );
+            Value::Object(map)
+        };
+
+        let bogus_canonical_store =
+            std::path::Path::new("this-canonical-store-does-not-exist.json");
+        let governance_store = unique_governance_store_path("mldsa87-external-vote");
+
+        let submit_out = run_mainline_query_from_path(
+            bogus_canonical_store,
+            "governance_submitProposal",
+            &with_mldsa(json!({
+                "governance_store_path": governance_store.display().to_string(),
+                "proposer": 0u64,
+                "proposer_approvals": [0u64],
+                "op": "update_mempool_fee_floor",
+                "fee_floor": 11u64,
+            })),
+        )
+        .expect("submit should succeed for mldsa flow");
+        let proposal_id = submit_out["proposal"]["proposal_id"]
+            .as_u64()
+            .expect("proposal id should exist");
+        let proposal_height = submit_out["proposal"]["created_height"]
+            .as_u64()
+            .expect("proposal height should exist");
+        let proposal_digest_vec = decode_hex_test_v1(
+            submit_out["proposal"]["proposal_digest"]
+                .as_str()
+                .expect("proposal digest should exist"),
+        );
+        let proposal_digest: [u8; 32] = proposal_digest_vec
+            .as_slice()
+            .try_into()
+            .expect("proposal digest should be 32 bytes");
+
+        let vote0_template = GovernanceVote {
+            proposal_id,
+            proposal_height,
+            proposal_digest,
+            voter_id: 0,
+            support: true,
+            signature: Vec::new(),
+        };
+        let vote0_signature = mldsa_sign_v1_auto(
+            87,
+            secret0.as_slice(),
+            governance_vote_message_bytes_v1(&vote0_template).as_slice(),
+        )
+        .expect("mldsa sign voter0 should run")
+        .expect("mldsa sign voter0 should be available");
+        let vote0_out = run_mainline_query_from_path(
+            bogus_canonical_store,
+            "governance_vote",
+            &with_mldsa(json!({
+                "governance_store_path": governance_store.display().to_string(),
+                "proposal_id": proposal_id,
+                "voter_id": 0u64,
+                "support": true,
+                "signature_algo": "mldsa87",
+                "signature": encode_hex_test_v1(vote0_signature.as_slice()),
+                "mldsa_pubkey": encode_hex_test_v1(pubkey0.as_slice()),
+            })),
+        )
+        .expect("first mldsa vote should succeed");
+        assert_eq!(vote0_out["signature_scheme"].as_str(), Some("mldsa87"));
+        assert_eq!(vote0_out["votes_collected"].as_u64(), Some(1));
+
+        let vote1_template = GovernanceVote {
+            proposal_id,
+            proposal_height,
+            proposal_digest,
+            voter_id: 1,
+            support: true,
+            signature: Vec::new(),
+        };
+        let vote1_signature = mldsa_sign_v1_auto(
+            87,
+            secret1.as_slice(),
+            governance_vote_message_bytes_v1(&vote1_template).as_slice(),
+        )
+        .expect("mldsa sign voter1 should run")
+        .expect("mldsa sign voter1 should be available");
+        let vote1_out = run_mainline_query_from_path(
+            bogus_canonical_store,
+            "governance_vote",
+            &with_mldsa(json!({
+                "governance_store_path": governance_store.display().to_string(),
+                "proposal_id": proposal_id,
+                "voter_id": 1u64,
+                "support": true,
+                "signature_scheme": "mldsa87",
+                "signature": encode_hex_test_v1(vote1_signature.as_slice()),
+                "pubkey": encode_hex_test_v1(pubkey1.as_slice()),
+            })),
+        )
+        .expect("second mldsa vote should succeed");
+        assert_eq!(vote1_out["signature_scheme"].as_str(), Some("mldsa87"));
+        assert_eq!(vote1_out["votes_collected"].as_u64(), Some(2));
+
+        let execute_out = run_mainline_query_from_path(
+            bogus_canonical_store,
+            "governance_execute",
+            &with_mldsa(json!({
+                "governance_store_path": governance_store.display().to_string(),
+                "proposal_id": proposal_id,
+                "executor": 0u64,
+                "executor_approvals": [0u64],
+            })),
+        )
+        .expect("mldsa execute should succeed");
+        assert_eq!(execute_out["executed"].as_bool(), Some(true));
+        assert_eq!(execute_out["mempool_fee_floor"].as_u64(), Some(11));
+        assert_eq!(
+            execute_out["vote_verifier"]["signature_scheme"].as_str(),
+            Some("mldsa87")
+        );
+
+        let audit_events = run_mainline_query_from_path(
+            bogus_canonical_store,
+            "governance_listAuditEvents",
+            &with_mldsa(json!({
+                "governance_store_path": governance_store.display().to_string(),
+                "proposal_id": proposal_id,
+            })),
+        )
+        .expect("listAuditEvents should succeed");
+        assert!(
+            audit_events["events"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .any(|event| event["detail"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .contains("signature_scheme=mldsa87")),
+            "audit events should record mldsa87 signature scheme"
+        );
+
+        let _ = fs::remove_file(governance_store);
+    }
+
+    #[test]
+    fn mainline_query_governance_mldsa87_invalid_signature_rejected_on_execute() {
+        let aoem_dll = default_host_dll_path();
+        assert!(
+            aoem_dll.exists(),
+            "AOEM DLL should exist for mldsa test at {}",
+            aoem_dll.display()
+        );
+
+        let (pubkey0, secret0) = mldsa_keygen_v1_auto(87)
+            .expect("mldsa keygen voter0 should run")
+            .expect("mldsa keygen voter0 should be available");
+        let (pubkey1, secret1) = mldsa_keygen_v1_auto(87)
+            .expect("mldsa keygen voter1 should run")
+            .expect("mldsa keygen voter1 should be available");
+        let mldsa_pubkeys = format!(
+            "0:{},1:{}",
+            encode_hex_test_v1(pubkey0.as_slice()),
+            encode_hex_test_v1(pubkey1.as_slice())
+        );
+        let with_mldsa = |extra: Value| {
+            let mut map = match extra {
+                Value::Object(map) => map,
+                other => panic!("expected object params, got {other:?}"),
+            };
+            map.insert(
+                "governance_vote_verifier".to_string(),
+                Value::String("mldsa87".to_string()),
+            );
+            map.insert(
+                "governance_mldsa_mode".to_string(),
+                Value::String("aoem_ffi".to_string()),
+            );
+            map.insert(
+                "governance_mldsa87_pubkeys".to_string(),
+                Value::String(mldsa_pubkeys.clone()),
+            );
+            map.insert(
+                "governance_aoem_dll".to_string(),
+                Value::String(aoem_dll.display().to_string()),
+            );
+            Value::Object(map)
+        };
+
+        let bogus_canonical_store =
+            std::path::Path::new("this-canonical-store-does-not-exist.json");
+        let governance_store = unique_governance_store_path("mldsa87-invalid-vote");
+
+        let submit_out = run_mainline_query_from_path(
+            bogus_canonical_store,
+            "governance_submitProposal",
+            &with_mldsa(json!({
+                "governance_store_path": governance_store.display().to_string(),
+                "proposer": 0u64,
+                "proposer_approvals": [0u64],
+                "op": "update_mempool_fee_floor",
+                "fee_floor": 13u64,
+            })),
+        )
+        .expect("submit should succeed for invalid mldsa flow");
+        let proposal_id = submit_out["proposal"]["proposal_id"]
+            .as_u64()
+            .expect("proposal id should exist");
+        let proposal_height = submit_out["proposal"]["created_height"]
+            .as_u64()
+            .expect("proposal height should exist");
+        let proposal_digest_vec = decode_hex_test_v1(
+            submit_out["proposal"]["proposal_digest"]
+                .as_str()
+                .expect("proposal digest should exist"),
+        );
+        let proposal_digest: [u8; 32] = proposal_digest_vec
+            .as_slice()
+            .try_into()
+            .expect("proposal digest should be 32 bytes");
+
+        let vote0_template = GovernanceVote {
+            proposal_id,
+            proposal_height,
+            proposal_digest,
+            voter_id: 0,
+            support: true,
+            signature: Vec::new(),
+        };
+        let vote0_signature = mldsa_sign_v1_auto(
+            87,
+            secret0.as_slice(),
+            governance_vote_message_bytes_v1(&vote0_template).as_slice(),
+        )
+        .expect("mldsa sign voter0 should run")
+        .expect("mldsa sign voter0 should be available");
+        run_mainline_query_from_path(
+            bogus_canonical_store,
+            "governance_vote",
+            &with_mldsa(json!({
+                "governance_store_path": governance_store.display().to_string(),
+                "proposal_id": proposal_id,
+                "voter_id": 0u64,
+                "support": true,
+                "signature_scheme": "mldsa87",
+                "signature": encode_hex_test_v1(vote0_signature.as_slice()),
+                "mldsa_pubkey": encode_hex_test_v1(pubkey0.as_slice()),
+            })),
+        )
+        .expect("valid first mldsa vote should succeed");
+
+        let vote1_template = GovernanceVote {
+            proposal_id,
+            proposal_height,
+            proposal_digest,
+            voter_id: 1,
+            support: true,
+            signature: Vec::new(),
+        };
+        let mut vote1_signature = mldsa_sign_v1_auto(
+            87,
+            secret1.as_slice(),
+            governance_vote_message_bytes_v1(&vote1_template).as_slice(),
+        )
+        .expect("mldsa sign voter1 should run")
+        .expect("mldsa sign voter1 should be available");
+        vote1_signature[0] ^= 0x01;
+        run_mainline_query_from_path(
+            bogus_canonical_store,
+            "governance_vote",
+            &with_mldsa(json!({
+                "governance_store_path": governance_store.display().to_string(),
+                "proposal_id": proposal_id,
+                "voter_id": 1u64,
+                "support": true,
+                "signature_scheme": "mldsa87",
+                "signature": encode_hex_test_v1(vote1_signature.as_slice()),
+                "mldsa_pubkey": encode_hex_test_v1(pubkey1.as_slice()),
+            })),
+        )
+        .expect("invalid second mldsa vote should still be accepted into pending set");
+
+        let err = run_mainline_query_from_path(
+            bogus_canonical_store,
+            "governance_execute",
+            &with_mldsa(json!({
+                "governance_store_path": governance_store.display().to_string(),
+                "proposal_id": proposal_id,
+                "executor": 0u64,
+                "executor_approvals": [0u64],
+            })),
+        )
+        .expect_err("execute should reject invalid mldsa vote");
+        let err_text = err.to_string().to_ascii_lowercase();
+        assert!(
+            err_text.contains("invalid") || err_text.contains("mldsa"),
+            "unexpected execute rejection: {err_text}"
+        );
+
+        let _ = fs::remove_file(governance_store);
+    }
+
+    #[test]
+    fn mainline_query_nov_swap_executes_via_real_product_entry() {
+        let bogus_canonical_store =
+            std::path::Path::new("this-canonical-store-does-not-exist.json");
+        let native_store = unique_native_execution_store_path("native-swap");
+        let caller = format!("0x{}", "61".repeat(20));
+
+        let mut pre = NovNativeExecutionStoreV1::default();
+        pre.module_state.account_asset_balances.insert(
+            caller.clone(),
+            std::collections::BTreeMap::from([("USDT".to_string(), 1_000u128)]),
+        );
+        pre.module_state.clearing_static_amm_pools.insert(
+            "mainline_usdt_nov_pool".to_string(),
+            crate::clearing_types::NovStaticAmmPoolStateV1 {
+                pool_id: "mainline_usdt_nov_pool".to_string(),
+                asset_x: "USDT".to_string(),
+                asset_y: "NOV".to_string(),
+                reserve_x: 1_000_000,
+                reserve_y: 2_000_000,
+                swap_fee_ppm: 3_000,
+                enabled: true,
+            },
+        );
+        save_nov_native_execution_store_v1(native_store.as_path(), &pre)
+            .expect("seed native execution store");
+
+        let out = run_mainline_query_from_path(
+            bogus_canonical_store,
+            "nov_swap",
+            &json!({
+                "from": caller,
+                "asset_in": "USDT",
+                "asset_out": "NOV",
+                "amount_in": 100u64,
+                "min_amount_out": 1u64,
+                "slippage_bps": 25u64,
+                "max_pay_amount": 500u64,
+                "native_execution_store_path": native_store.display().to_string(),
+            }),
+        )
+        .expect("nov_swap should succeed through mainline query");
+        assert_eq!(out["method"].as_str(), Some("nov_swap"));
+        assert_eq!(out["module"].as_str(), Some("amm"));
+        assert_eq!(out["module_method"].as_str(), Some("swap_exact_in"));
+        assert_eq!(out["accepted"].as_bool(), Some(true));
+        assert_eq!(out["native_receipt"]["status"].as_bool(), Some(true));
+
+        let pending_tx_hash = out["pending_tx_hash"]
+            .as_str()
+            .expect("pending tx hash should exist");
+        let trace = run_mainline_query_from_path(
+            bogus_canonical_store,
+            "nov_getExecutionTrace",
+            &json!({
+                "tx_hash": pending_tx_hash,
+                "native_execution_store_path": native_store.display().to_string(),
+            }),
+        )
+        .expect("nov_getExecutionTrace should succeed");
+        assert_eq!(trace["found"].as_bool(), Some(true));
+        assert_eq!(trace["trace"]["final_status"].as_str(), Some("success"));
+
+        let usdt_after = get_nov_native_account_asset_balance_with_store_path_v1(
+            native_store.as_path(),
+            caller.as_str(),
+            "USDT",
+        )
+        .expect("USDT balance should load");
+        let nov_after = get_nov_native_account_asset_balance_with_store_path_v1(
+            native_store.as_path(),
+            caller.as_str(),
+            "NOV",
+        )
+        .expect("NOV balance should load");
+        assert_eq!(usdt_after, 900);
+        assert!(nov_after > 0);
+
+        let _ = fs::remove_file(native_store);
+    }
+
+    #[test]
+    fn mainline_query_redeem_open_vault_and_asset_balance_flow_through_real_entry() {
+        let bogus_canonical_store =
+            std::path::Path::new("this-canonical-store-does-not-exist.json");
+        let native_store = unique_native_execution_store_path("native-user-flow");
+        let caller = format!("0x{}", "62".repeat(20));
+
+        let mut pre = NovNativeExecutionStoreV1::default();
+        pre.module_state
+            .treasury_reserves
+            .insert("NOV".to_string(), 500);
+        pre.module_state.treasury_reserve_bucket_nov = 500;
+        pre.module_state.treasury_settled_nov_total = 500;
+        pre.module_state.account_asset_balances.insert(
+            caller.clone(),
+            std::collections::BTreeMap::from([("ETH".to_string(), 500u128)]),
+        );
+        save_nov_native_execution_store_v1(native_store.as_path(), &pre)
+            .expect("seed native execution store");
+
+        let balance_before = run_mainline_query_from_path(
+            bogus_canonical_store,
+            "nov_getAssetBalance",
+            &json!({
+                "account": caller,
+                "asset": "ETH",
+                "native_execution_store_path": native_store.display().to_string(),
+            }),
+        )
+        .expect("nov_getAssetBalance should succeed");
+        assert_eq!(balance_before["found"].as_bool(), Some(true));
+        assert_eq!(balance_before["balance"].as_u64(), Some(500));
+
+        let redeem_out = run_mainline_query_from_path(
+            bogus_canonical_store,
+            "nov_redeem",
+            &json!({
+                "from": caller,
+                "asset_out": "NOV",
+                "nov_amount": 50u64,
+                "max_pay_amount": 500u64,
+                "native_execution_store_path": native_store.display().to_string(),
+            }),
+        )
+        .expect("nov_redeem should succeed through mainline query");
+        assert_eq!(redeem_out["method"].as_str(), Some("nov_redeem"));
+        assert_eq!(redeem_out["module"].as_str(), Some("treasury"));
+        assert_eq!(redeem_out["native_receipt"]["status"].as_bool(), Some(true));
+
+        let journal = run_mainline_query_from_path(
+            bogus_canonical_store,
+            "nov_getTreasurySettlementJournal",
+            &json!({
+                "limit": 2,
+                "native_execution_store_path": native_store.display().to_string(),
+            }),
+        )
+        .expect("nov_getTreasurySettlementJournal should succeed");
+        assert!(journal["journal"]["entries"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .any(|entry| entry["kind"].as_str() == Some("reserve_redeem")));
+
+        let vault_out = run_mainline_query_from_path(
+            bogus_canonical_store,
+            "nov_openVault",
+            &json!({
+                "from": caller,
+                "collateral_asset": "ETH",
+                "collateral_amount": 300u64,
+                "debt_asset": "NUSD",
+                "mint_amount": 100u64,
+                "max_pay_amount": 500u64,
+                "native_execution_store_path": native_store.display().to_string(),
+            }),
+        )
+        .expect("nov_openVault should succeed through mainline query");
+        assert_eq!(vault_out["method"].as_str(), Some("nov_openVault"));
+        assert_eq!(vault_out["module"].as_str(), Some("credit_engine"));
+        assert_eq!(vault_out["native_receipt"]["status"].as_bool(), Some(true));
+
+        let eth_after = run_mainline_query_from_path(
+            bogus_canonical_store,
+            "nov_getAssetBalance",
+            &json!({
+                "account": caller,
+                "asset": "ETH",
+                "native_execution_store_path": native_store.display().to_string(),
+            }),
+        )
+        .expect("nov_getAssetBalance ETH should succeed");
+        assert_eq!(eth_after["balance"].as_u64(), Some(200));
+
+        let nusd_after = run_mainline_query_from_path(
+            bogus_canonical_store,
+            "nov_getAssetBalance",
+            &json!({
+                "account": caller,
+                "asset": "NUSD",
+                "native_execution_store_path": native_store.display().to_string(),
+            }),
+        )
+        .expect("nov_getAssetBalance NUSD should succeed");
+        assert_eq!(nusd_after["found"].as_bool(), Some(true));
+        assert_eq!(nusd_after["balance"].as_u64(), Some(100));
+
+        let _ = fs::remove_file(native_store);
+    }
+
+    #[test]
+    fn mainline_query_nov_swap_reports_risk_rejection_on_real_product_entry() {
+        let bogus_canonical_store =
+            std::path::Path::new("this-canonical-store-does-not-exist.json");
+        let native_store = unique_native_execution_store_path("native-risk-blocked");
+        let caller = format!("0x{}", "63".repeat(20));
+
+        let mut pre = NovNativeExecutionStoreV1::default();
+        pre.module_state.account_asset_balances.insert(
+            caller.clone(),
+            std::collections::BTreeMap::from([("USDT".to_string(), 1_000u128)]),
+        );
+        pre.module_state.clearing_enabled = true;
+        pre.module_state.clearing_require_healthy_risk_buffer = false;
+        pre.module_state.clearing_constrained_strategy = "blocked".to_string();
+        pre.module_state.treasury_min_reserve_bucket_nov = 100;
+        pre.module_state.treasury_reserve_bucket_nov = 0;
+        pre.module_state.treasury_min_risk_buffer_nov = 1;
+        pre.module_state.treasury_risk_buffer_nov = 10;
+        pre.module_state.clearing_static_amm_pools.insert(
+            "mainline_blocked_pool".to_string(),
+            crate::clearing_types::NovStaticAmmPoolStateV1 {
+                pool_id: "mainline_blocked_pool".to_string(),
+                asset_x: "USDT".to_string(),
+                asset_y: "NOV".to_string(),
+                reserve_x: 1_000_000,
+                reserve_y: 1_000_000,
+                swap_fee_ppm: 3_000,
+                enabled: true,
+            },
+        );
+        save_nov_native_execution_store_v1(native_store.as_path(), &pre)
+            .expect("seed blocked native execution store");
+
+        let out = run_mainline_query_from_path(
+            bogus_canonical_store,
+            "nov_swap",
+            &json!({
+                "from": caller,
+                "asset_in": "USDT",
+                "asset_out": "NOV",
+                "amount_in": 100u64,
+                "min_amount_out": 1u64,
+                "slippage_bps": 25u64,
+                "max_pay_amount": 500u64,
+                "native_execution_store_path": native_store.display().to_string(),
+            }),
+        )
+        .expect("nov_swap should return blocked receipt");
+        assert_eq!(out["accepted"].as_bool(), Some(true));
+        assert_eq!(out["native_receipt"]["status"].as_bool(), Some(false));
+        assert!(out["native_receipt"]["failure_reason"]
+            .as_str()
+            .unwrap_or_default()
+            .starts_with("fee.clearing.constrained_blocked"));
+
+        let _ = fs::remove_file(native_store);
     }
 }

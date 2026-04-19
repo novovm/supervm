@@ -30,6 +30,8 @@
 > `docs_CN/NOVOVM-NETWORK/NOVOVM-P3A-GATE-WEEKLY-RUN-WINDOW-TEMPLATE-2026-04-18.md`
 > P2-D 运行阶段报告模板见：
 > `docs_CN/NOVOVM-NETWORK/NOVOVM-CLEARING-METRICS-RUN-PHASE-TEMPLATE-2026-04-18.md`
+> Full 模式最小启动模板见：
+> `docs_CN/NOVOVM-NETWORK/NOVOVM-FULL-MODE-MINIMAL-BOOTSTRAP-TEMPLATE-2026-04-18.md`
 
 - .github/copilot-instructions.md: Copilot指令
 - tools/python-tools/add-python-to-path.bat: Python PATH 临时配置（批处理）

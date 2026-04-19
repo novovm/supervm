@@ -7,6 +7,7 @@ autobins = false
 
 [dependencies]
 anyhow = "1"
+aoem-bindings = { path = "../aoem-bindings" }
 novovm-exec = { path = "../novovm-exec" }
 novovm-consensus = { path = "../novovm-consensus" }
 novovm-network = { path = "../novovm-network" }
@@ -27,9 +28,6 @@ tiny_http = "0.12"
 rocksdb = { version = "0.22", default-features = false }
 ureq = "2"
 lettre = "0.11"
-
-[dev-dependencies]
-aoem-bindings = { path = "../aoem-bindings" }
 
 [[bin]]
 name = "novovm-node"

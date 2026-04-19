@@ -35,20 +35,25 @@ use novovm_network::{
     L3_RELAY_SELECTED_STICKY_MARGIN, L3_RELAY_SOURCE_BONUS_CONFIGURED, L3_RELAY_SOURCE_BONUS_POOL,
     L3_RELAY_SOURCE_BONUS_SNAPSHOT,
 };
+use novovm_node::governance_surface::{
+    default_mainline_governance_store_path, is_mainline_governance_query_method,
+};
 use novovm_node::mainline_canonical::{
     append_mainline_canonical_batch, derive_mainline_eth_fullnode_chain_view_v1,
     MainlineCanonicalBatchRecordV1,
 };
 use novovm_node::mainline_query::{
     default_mainline_query_store_path, default_mainline_runtime_snapshot_path,
-    mainline_query_method_from_env, mainline_query_params_from_env, run_mainline_query_from_path,
+    is_mainline_native_execution_query_method, mainline_query_method_from_env,
+    mainline_query_params_from_env, run_mainline_query_from_path,
 };
 use novovm_node::tx_ingress::{
     available_ingress_codecs, decode_eth_send_raw_hex_payload_v1,
     ingest_local_eth_raw_tx_payload_v1, load_exec_batch_from_wire_file, load_ops_wire_v1_file,
     load_ops_wire_v1_from_tx_wire_file, load_ops_wire_v1_payload_file,
-    load_tx_records_from_wire_file, run_eth_send_raw_transaction_from_params_v1,
-    tx_ingress_records_to_adapter_tx_irs, TxIngressRecord, LOCAL_TX_WIRE_CODEC_WRITE_U64LE_V1,
+    load_tx_records_from_wire_file, nov_native_execution_store_path_v1,
+    run_eth_send_raw_transaction_from_params_v1, tx_ingress_records_to_adapter_tx_irs,
+    TxIngressRecord, LOCAL_TX_WIRE_CODEC_WRITE_U64LE_V1,
 };
 use novovm_protocol::{encode_local_tx_wire_v1 as encode_tx_wire_v1, LocalTxWireV1};
 use sha2::{Digest, Sha256};
@@ -23908,7 +23913,9 @@ fn main() -> Result<()> {
             return Ok(());
         }
         let runtime_method = is_eth_fullnode_runtime_query_method(&method);
-        let canonical_method = if runtime_method {
+        let native_execution_method = is_mainline_native_execution_query_method(&method);
+        let governance_method = is_mainline_governance_query_method(&method);
+        let canonical_method = if runtime_method || native_execution_method || governance_method {
             None
         } else {
             Some(
@@ -23926,6 +23933,18 @@ fn main() -> Result<()> {
             "eth_fullnode_query_out: path={} method={} found={} count={} source={}",
             if runtime_method {
                 runtime_snapshot_path.display().to_string()
+            } else if native_execution_method {
+                string_env_nonempty("NOVOVM_MAINLINE_NATIVE_EXECUTION_STORE_PATH")
+                    .map(PathBuf::from)
+                    .unwrap_or_else(nov_native_execution_store_path_v1)
+                    .display()
+                    .to_string()
+            } else if governance_method {
+                string_env_nonempty("NOVOVM_MAINLINE_GOVERNANCE_STORE_PATH")
+                    .map(PathBuf::from)
+                    .unwrap_or_else(default_mainline_governance_store_path)
+                    .display()
+                    .to_string()
             } else {
                 store_path.display().to_string()
             },
@@ -23940,6 +23959,10 @@ fn main() -> Result<()> {
                 .unwrap_or(0),
             if runtime_method {
                 "runtime_snapshot"
+            } else if native_execution_method {
+                "native_execution_store"
+            } else if governance_method {
+                "governance_surface_store"
             } else {
                 "canonical_store"
             },

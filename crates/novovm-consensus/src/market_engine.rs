@@ -205,6 +205,59 @@ pub struct Web30MarketEngineSnapshot {
     pub foreign_swap_out_total: u64,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Web30MarketDividendBalanceSnapshot {
+    pub address_hex: String,
+    pub balance: u128,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Web30MarketEngineStateSnapshot {
+    pub snapshot: Web30MarketEngineSnapshot,
+    pub dividend_runtime_balances: Vec<Web30MarketDividendBalanceSnapshot>,
+    pub nav_valuation_external_mode: bool,
+    pub nav_valuation_source_name: String,
+    pub nav_valuation_external_price_bp: Option<u32>,
+    pub foreign_rate_quote_spec_applied: bool,
+    pub foreign_rate_fallback_used: bool,
+    pub orchestration_day: u64,
+}
+
+fn address_to_hex(address: &Web30Address) -> String {
+    let mut out = String::with_capacity(address.as_bytes().len() * 2);
+    for byte in address.as_bytes() {
+        out.push_str(&format!("{byte:02x}"));
+    }
+    out
+}
+
+fn address_from_hex(raw: &str) -> BFTResult<Web30Address> {
+    let normalized = raw
+        .trim()
+        .strip_prefix("0x")
+        .or_else(|| raw.trim().strip_prefix("0X"))
+        .unwrap_or(raw.trim());
+    if normalized.len() != 64 {
+        return Err(BFTError::Internal(format!(
+            "market engine address hex must be 64 chars, got {}",
+            normalized.len()
+        )));
+    }
+    let mut bytes = [0u8; 32];
+    for (idx, pair) in normalized.as_bytes().chunks_exact(2).enumerate() {
+        let hex = std::str::from_utf8(pair).map_err(|_| {
+            BFTError::Internal("market engine address hex contains invalid utf8".to_string())
+        })?;
+        bytes[idx] = u8::from_str_radix(hex, 16).map_err(|_| {
+            BFTError::Internal(format!(
+                "market engine address hex contains invalid byte {}",
+                hex
+            ))
+        })?;
+    }
+    Ok(Web30Address::from_bytes(bytes))
+}
+
 pub struct Web30MarketEngine {
     #[allow(dead_code)]
     amm: AMMManager,
@@ -943,6 +996,77 @@ impl Web30MarketEngine {
 
     pub fn snapshot(&self) -> Web30MarketEngineSnapshot {
         self.snapshot.clone()
+    }
+
+    pub fn state_snapshot(&self) -> Web30MarketEngineStateSnapshot {
+        let mut dividend_runtime_balances: Vec<_> = self
+            .dividend_runtime_balances
+            .iter()
+            .map(|(address, balance)| Web30MarketDividendBalanceSnapshot {
+                address_hex: address_to_hex(address),
+                balance: *balance,
+            })
+            .collect();
+        dividend_runtime_balances.sort_by(|left, right| left.address_hex.cmp(&right.address_hex));
+        Web30MarketEngineStateSnapshot {
+            snapshot: self.snapshot.clone(),
+            dividend_runtime_balances,
+            nav_valuation_external_mode: self.nav_valuation_source.mode
+                == NavValuationMode::ExternalFeed,
+            nav_valuation_source_name: self.nav_valuation_source.source_name.clone(),
+            nav_valuation_external_price_bp: self.nav_valuation_source.external_price_bp,
+            foreign_rate_quote_spec_applied: self.foreign_rate_quote_spec_applied,
+            foreign_rate_fallback_used: self.foreign_rate_fallback_used,
+            orchestration_day: self.orchestration_day,
+        }
+    }
+
+    pub fn restore_from_state_snapshot(
+        policy: &MarketGovernancePolicy,
+        state: &Web30MarketEngineStateSnapshot,
+    ) -> BFTResult<Self> {
+        let mut runtime = Self::from_policy(policy)?;
+        let dividend_runtime_balances: Vec<(Web30Address, u128)> = state
+            .dividend_runtime_balances
+            .iter()
+            .map(|entry| Ok((address_from_hex(&entry.address_hex)?, entry.balance)))
+            .collect::<BFTResult<Vec<_>>>()?;
+        runtime.set_dividend_account_index_snapshot(dividend_runtime_balances);
+        runtime.treasury = Self::build_treasury(
+            policy,
+            runtime.treasury_controller,
+            Some((
+                u128::from(state.snapshot.treasury_main_balance),
+                u128::from(state.snapshot.treasury_ecosystem_balance),
+                u128::from(state.snapshot.treasury_risk_reserve_balance),
+            )),
+        );
+        for (ticker, amount) in [
+            ("USDT", state.snapshot.reserve_foreign_usdt_balance),
+            ("BTC", state.snapshot.foreign_reserve_btc),
+            ("ETH", state.snapshot.foreign_reserve_eth),
+        ] {
+            if amount > 0 {
+                runtime
+                    .treasury
+                    .collect_foreign_currency(ticker.to_string(), u128::from(amount))
+                    .map_err(|e| from_web30_error("market engine restore foreign reserve", e))?;
+            }
+        }
+        if state.nav_valuation_external_mode {
+            runtime.set_nav_valuation_source_external(&state.nav_valuation_source_name)?;
+            if let Some(price_bp) = state.nav_valuation_external_price_bp {
+                runtime.set_nav_external_price_bp(price_bp)?;
+            }
+        }
+        if !state.snapshot.foreign_rate_source.trim().is_empty() {
+            runtime.set_foreign_rate_source_name(&state.snapshot.foreign_rate_source)?;
+        }
+        runtime.foreign_rate_quote_spec_applied = state.foreign_rate_quote_spec_applied;
+        runtime.foreign_rate_fallback_used = state.foreign_rate_fallback_used;
+        runtime.orchestration_day = state.orchestration_day;
+        runtime.snapshot = state.snapshot.clone();
+        Ok(runtime)
     }
 }
 

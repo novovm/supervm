@@ -1,5 +1,20 @@
 # NOVOVM 共识可发布规则深度审计与使用规则说明（2026-03-05）
 
+## 0.1 文档状态说明（后续口径）
+
+- 本文档主体结论记录的是 `2026-03-05` 审计时点的“可发布基线”，重点是 `MVP+` 与“受限主链路”边界。
+- 若读取经济模块的当前有效口径，不应只看本文；还应同时参考：
+  - `docs_CN/CONSENSUS/NOVOVM-ECONOMIC-INFRA-MIGRATION-CHECKLIST-2026-03-07.md`
+  - `docs_CN/SVM2026-MIGRATION/NOVOVM-OPEN-BUSINESS-SURFACE-CLOSURE-CHECKLIST-2026-03-13.md`
+  - `docs_CN/SVM2026-MIGRATION/NOVOVM-WEB30-ECONOMIC-CALIBRATION-2026-03-13.md`
+  - `docs_CN/NOVOVM-NETWORK/NOVOVM-NATIVE-ECONOMIC-USER-SURFACE-SEAL-2026-04-18.md`
+- 统一理解：
+  - 本文中的“当前可发布口径 = MVP+”应理解为 `2026-03-05` 快照，不是唯一最新状态。
+  - 经济模块已在后续文档中从“受限主链路”推进到“开放业务面已收口”。
+  - 经济模块又在 `2026-04-18` 进一步推进到“真实 `novovm-node` 用户入口已接通并通过真实产物级门禁”。
+  - 本文中治理相关的 `受限范围 / 受限执行面` 仍主要描述治理开放边界，本轮不因经济用户入口接通而自动失效。
+  - 这不等于 `WEB30` 标准族已全量迁移完成。
+
 ## 0. 审计目标与结论速览
 
 本审计回答 3 个问题：
@@ -21,10 +36,10 @@
 - `继承可发布但尚未完全迁移到 NOVOVM 主链路`：
   - 完整经济域跨模块执行联动（预言机/清算引擎/NAV 实时结算与回购执行策略）已接入 `market_engine` 主链路，并由 `governance_market_orchestration_out` 门禁化。
   - 抗量子签名（ML-DSA）与链上治理权限模型。
-- `治理入口当前状态`：
+- `治理入口在本审计快照中的状态`：
   - 已具备受限治理执行面：`UpdateSlashPolicy`、`UpdateMempoolFeeFloor`、`UpdateNetworkDosPolicy`、`UpdateTokenEconomicsPolicy`、`UpdateMarketGovernancePolicy`、`TreasurySpend`、`UpdateGovernanceAccessPolicy`、`UpdateGovernanceCouncilPolicy` 可经签名投票 + quorum 生效。
 - `发布边界`：
-  - 当前可发布口径是“`MVP+（共识+交易+读查询+经济治理跨模块主链路）`”，不是“完整主网经济治理版”。
+  - 本审计快照中的可发布口径是“`MVP+（共识+交易+读查询+经济治理跨模块主链路）`”，不是“完整主网经济治理版”。
 - `发布策略（当前执行）`：
   - RC 仅内部里程碑，不对外发布；对外仅 GA。
   - GA 前置条件：最小经济治理门禁（`governance_token_economics`、`governance_treasury_spend`）纳入 acceptance 全量通过。
@@ -211,7 +226,7 @@
 | I-TOKEN-05 | Service fee 路由（provider/treasury/burn） | `mainnet_token_impl.rs` (`on_service_fee_paid`) | 已迁入主链路（门禁通过） |
 | I-TOKEN-06 | 国库治理支出（`TreasurySpend`）与超额拒绝 | `mainnet_token.rs::transfer` + `protocol.rs::spend_treasury_tokens` | 已迁入受限治理主链路（门禁通过） |
 
-补充：NOVOVM 当前已完成 `I-TOKEN` 最小可发布闭环，并已迁入经济治理参数族（AMM/CDP/Bond/Reserve/NAV/Buyback）热更新入口；跨模块执行联动（清算/预言机/NAV 实时结算 + 回购编排 + dividend/foreign payment 信号）已在 `market_engine` 主链路接线并门禁化。当前仍保留部分底层实现占位，口径为“受限主链路完成”。
+补充：按本文档对应的审计时点，NOVOVM 已完成 `I-TOKEN` 最小可发布闭环，并已迁入经济治理参数族（AMM/CDP/Bond/Reserve/NAV/Buyback）热更新入口；跨模块执行联动（清算/预言机/NAV 实时结算 + 回购编排 + dividend/foreign payment 信号）已在 `market_engine` 主链路接线并门禁化。若按 `2026-03-13` 之后的统一口径读取，则经济模块已进一步完成“开放业务面”收口；若按 `2026-04-18` 之后的统一口径读取，则原生经济用户入口已接入真实 `novovm-node` 产物并通过真实产物级门禁。本文中“受限主链路完成”的描述应视为历史基线。
 
 ## 3.2 治理与投票规则（I-GOV）
 

@@ -25,6 +25,7 @@ This file defines the current authoritative scope and separates it from archival
    - `docs/NOVOVM-NETWORK/NOVOVM-P3A-GATE-WEEKLY-RUN-WINDOW-TEMPLATE-2026-04-18.md` (OPERATIONAL TEMPLATE)
 4. P2-D run-phase reporting template and exporter
    - `docs/NOVOVM-NETWORK/NOVOVM-CLEARING-METRICS-RUN-PHASE-TEMPLATE-2026-04-18.md`
+   - `docs/NOVOVM-NETWORK/NOVOVM-FULL-MODE-MINIMAL-BOOTSTRAP-TEMPLATE-2026-04-18.md`
    - `scripts/novovm-p2d-daily-report.ps1`
 5. Mainline status and delivery contract artifacts
    - `artifacts/mainline-status.json`

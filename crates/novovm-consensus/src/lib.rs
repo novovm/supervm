@@ -103,9 +103,13 @@ pub use governance_verifier::{
     GovernanceVoteVerificationReport, GovernanceVoteVerifier, GovernanceVoteVerifierScheme,
     GOVERNANCE_VOTE_VERIFY_BATCH_MIN,
 };
-pub use market_engine::{Web30MarketEngine, Web30MarketEngineSnapshot};
-pub use protocol::{HotStuffProtocol, Phase, ProtocolState};
+pub use market_engine::{
+    Web30MarketDividendBalanceSnapshot, Web30MarketEngine, Web30MarketEngineSnapshot,
+    Web30MarketEngineStateSnapshot,
+};
+pub use protocol::{GovernanceEngineSnapshot, HotStuffProtocol, Phase, ProtocolState};
 pub use quorum_cert::{QuorumCertificate, Vote};
+pub use token_runtime::{Web30TokenRuntimeSnapshot, Web30TrackedBalanceSnapshot};
 pub use types::{
     AmmGovernanceParams, BFTError, BFTProposal, BFTResult, BondGovernanceParams,
     BuybackGovernanceParams, CdpGovernanceParams, FeeRoutingOutcome, FeeSplit,

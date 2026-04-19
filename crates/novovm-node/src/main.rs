@@ -35,10 +35,12 @@ use novovm_network::{
 };
 use novovm_node::tx_ingress::{
     decode_eth_send_raw_hex_payload_v1, run_eth_send_raw_transaction_from_params_v1,
+    get_nov_native_account_asset_balance_v1,
     get_nov_native_execution_receipt_by_hash_v1,
     get_nov_native_treasury_clearing_summary_v1, get_nov_native_treasury_settlement_summary_v1,
     has_nov_native_call_shape_v1,
     nov_native_module_info_v1, run_nov_native_call_from_params_v1,
+    run_nov_execute_from_params_v1,
     run_nov_send_raw_transaction_from_params_v1, run_nov_send_transaction_from_params_v1,
 };
 use novovm_protocol::{
@@ -4671,8 +4673,15 @@ fn novovm_public_rpc_surface_map_json() -> serde_json::Value {
                     "nov_getState",
                     "nov_getModuleInfo",
                     "nov_getTreasurySettlementSummary",
+                    "nov_getTreasuryClearingSummary",
                     "nov_getTreasurySettlementJournal",
                     "nov_getTreasurySettlementPolicy",
+                    "nov_getExecutionTrace",
+                    "nov_getTreasuryClearingMetricsSummary",
+                    "nov_getTreasuryPolicyMetricsSummary",
+                    "nov_swap",
+                    "nov_redeem",
+                    "nov_openVault",
                     "nov_call",
                     "nov_estimate",
                     "nov_estimateGas",
@@ -5933,6 +5942,171 @@ fn param_as_u128_any(params: &serde_json::Value, keys: &[&str]) -> Option<u128> 
         }
     }
     None
+}
+
+fn augment_nov_user_execution_result_v1(
+    method: &str,
+    module: &str,
+    module_method: &str,
+    mut out: serde_json::Value,
+) -> serde_json::Value {
+    if let Some(map) = out.as_object_mut() {
+        map.insert(
+            "method".to_string(),
+            serde_json::Value::String(method.to_string()),
+        );
+        map.insert(
+            "module".to_string(),
+            serde_json::Value::String(module.to_string()),
+        );
+        map.insert(
+            "module_method".to_string(),
+            serde_json::Value::String(module_method.to_string()),
+        );
+    }
+    out
+}
+
+fn run_nov_user_execute_rpc_v1(
+    method: &str,
+    module: &str,
+    module_method: &str,
+    args: serde_json::Value,
+    params: &serde_json::Value,
+    default_pay_asset: &str,
+    default_max_pay_amount: u128,
+) -> Result<serde_json::Value> {
+    let caller = param_as_string_any(params, &["caller", "from"])
+        .ok_or_else(|| anyhow::anyhow!("from/caller is required for {}", method))?;
+    let pay_asset = param_as_string_any(params, &["pay_asset", "fee_pay_asset"])
+        .unwrap_or_else(|| default_pay_asset.to_string());
+    let max_pay_amount =
+        param_as_u128_any(params, &["max_pay_amount", "fee_max_pay_amount"])
+            .unwrap_or(default_max_pay_amount.max(1));
+    let slippage_bps = param_as_u64_any(params, &["slippage_bps", "fee_slippage_bps"])
+        .unwrap_or(100);
+
+    let mut execute_params = serde_json::Map::new();
+    execute_params.insert("from".to_string(), serde_json::Value::String(caller));
+    execute_params.insert(
+        "target".to_string(),
+        serde_json::json!({"kind": "native_module", "id": module}),
+    );
+    execute_params.insert(
+        "method".to_string(),
+        serde_json::Value::String(module_method.to_string()),
+    );
+    execute_params.insert("args".to_string(), args);
+    execute_params.insert(
+        "chain_id".to_string(),
+        serde_json::json!(param_as_u64(params, "chain_id").unwrap_or(1)),
+    );
+    execute_params.insert(
+        "nonce".to_string(),
+        serde_json::json!(param_as_u64(params, "nonce").unwrap_or(0)),
+    );
+    execute_params.insert(
+        "pay_asset".to_string(),
+        serde_json::Value::String(pay_asset),
+    );
+    execute_params.insert("max_pay_amount".to_string(), serde_json::json!(max_pay_amount));
+    execute_params.insert("slippage_bps".to_string(), serde_json::json!(slippage_bps));
+
+    if let Some(gas_like_limit) = param_as_u64_any(params, &["gas_like_limit", "gas_limit", "gas"])
+    {
+        execute_params.insert("gas_like_limit".to_string(), serde_json::json!(gas_like_limit));
+    }
+    if let Some(path) = param_as_string(params, "native_execution_store_path") {
+        execute_params.insert(
+            "native_execution_store_path".to_string(),
+            serde_json::Value::String(path),
+        );
+    }
+
+    let out = run_nov_execute_from_params_v1(&serde_json::Value::Object(execute_params))?;
+    Ok(augment_nov_user_execution_result_v1(
+        method,
+        module,
+        module_method,
+        out,
+    ))
+}
+
+fn run_nov_swap_rpc_v1(params: &serde_json::Value) -> Result<serde_json::Value> {
+    let asset_in = param_as_string_any(params, &["asset_in"])
+        .ok_or_else(|| anyhow::anyhow!("asset_in is required for nov_swap"))?;
+    let asset_out = param_as_string_any(params, &["asset_out"])
+        .ok_or_else(|| anyhow::anyhow!("asset_out is required for nov_swap"))?;
+    let amount_in = param_as_u128_any(params, &["amount_in"])
+        .ok_or_else(|| anyhow::anyhow!("amount_in is required for nov_swap"))?;
+    let min_amount_out = param_as_u128_any(params, &["min_amount_out"]).unwrap_or(0);
+    let requested_slippage_bps = param_as_u64_any(params, &["slippage_bps"]).unwrap_or(100);
+    run_nov_user_execute_rpc_v1(
+        "nov_swap",
+        "amm",
+        "swap_exact_in",
+        serde_json::json!({
+            "asset_in": asset_in,
+            "asset_out": asset_out,
+            "amount_in": amount_in,
+            "min_amount_out": min_amount_out,
+            "slippage_bps": requested_slippage_bps,
+        }),
+        params,
+        param_as_string_any(params, &["pay_asset", "fee_pay_asset"])
+            .unwrap_or_else(|| asset_in.clone())
+            .as_str(),
+        amount_in,
+    )
+}
+
+fn run_nov_redeem_rpc_v1(params: &serde_json::Value) -> Result<serde_json::Value> {
+    let asset_out = param_as_string_any(params, &["asset_out", "asset"])
+        .ok_or_else(|| anyhow::anyhow!("asset_out/asset is required for nov_redeem"))?;
+    let nov_amount = param_as_u128_any(params, &["nov_amount", "amount"])
+        .ok_or_else(|| anyhow::anyhow!("nov_amount/amount is required for nov_redeem"))?;
+    let min_asset_out = param_as_u128_any(params, &["min_asset_out"]).unwrap_or(0);
+    run_nov_user_execute_rpc_v1(
+        "nov_redeem",
+        "treasury",
+        "redeem",
+        serde_json::json!({
+            "asset_out": asset_out,
+            "nov_amount": nov_amount,
+            "min_asset_out": min_asset_out,
+        }),
+        params,
+        param_as_string_any(params, &["pay_asset", "fee_pay_asset"])
+            .unwrap_or_else(|| "NOV".to_string())
+            .as_str(),
+        nov_amount,
+    )
+}
+
+fn run_nov_open_vault_rpc_v1(params: &serde_json::Value) -> Result<serde_json::Value> {
+    let collateral_asset = param_as_string_any(params, &["collateral_asset"])
+        .ok_or_else(|| anyhow::anyhow!("collateral_asset is required for nov_openVault"))?;
+    let collateral_amount = param_as_u128_any(params, &["collateral_amount"])
+        .ok_or_else(|| anyhow::anyhow!("collateral_amount is required for nov_openVault"))?;
+    let debt_asset =
+        param_as_string_any(params, &["debt_asset"]).unwrap_or_else(|| "NUSD".to_string());
+    let mint_amount = param_as_u128_any(params, &["mint_amount"]).unwrap_or(0);
+    run_nov_user_execute_rpc_v1(
+        "nov_openVault",
+        "credit_engine",
+        "open_vault",
+        serde_json::json!({
+            "collateral_asset": collateral_asset,
+            "collateral_amount": collateral_amount,
+            "debt_asset": debt_asset,
+            "mint_amount": mint_amount,
+        }),
+        params,
+        param_as_string_any(params, &["pay_asset", "fee_pay_asset"])
+            .unwrap_or_else(|| collateral_asset.clone())
+            .as_str(),
+        collateral_amount,
+    )
 }
 
 fn ua_route_role_label(role: AccountRole) -> &'static str {
@@ -9512,12 +9686,18 @@ fn run_chain_query(
                 .unwrap_or_else(|| "NOV".to_string())
                 .to_ascii_uppercase();
             let raw_balance = db.balances.get(trimmed).copied().unwrap_or(0);
-            let balance = if asset == "NOV" { raw_balance } else { 0 };
+            let native_balance =
+                get_nov_native_account_asset_balance_v1(trimmed, asset.as_str()).unwrap_or(0);
+            let balance = if asset == "NOV" {
+                u128::from(raw_balance).max(native_balance)
+            } else {
+                native_balance
+            };
             serde_json::json!({
                 "method": "nov_getAssetBalance",
                 "account": trimmed,
                 "asset": asset,
-                "found": db.balances.contains_key(trimmed),
+                "found": db.balances.contains_key(trimmed) || native_balance > 0,
                 "balance": balance,
             })
         }
@@ -9627,6 +9807,9 @@ fn run_chain_query(
                 "journal": out["result"].clone(),
             })
         }
+        "nov_swap" => run_nov_swap_rpc_v1(params)?,
+        "nov_redeem" => run_nov_redeem_rpc_v1(params)?,
+        "nov_openVault" => run_nov_open_vault_rpc_v1(params)?,
         "nov_getState" => {
             let state = db.state_mirror_updates.last().cloned();
             serde_json::json!({
@@ -9798,7 +9981,7 @@ fn run_chain_query(
             })
         }
         _ => bail!(
-            "unknown method: {}; valid: novovm_getSurfaceMap|novovm_get_surface_map|novovm_getMethodDomain|novovm_get_method_domain|nov_getBlock|nov_getTransaction|nov_getReceipt|nov_getTransactionReceipt|nov_getBalance|nov_getAssetBalance|nov_getState|nov_getModuleInfo|nov_getTreasurySettlementSummary|nov_getTreasurySettlementJournal|nov_getTreasurySettlementPolicy|nov_call|nov_estimate|nov_estimateGas|getBlock|getTransaction|getReceipt|getBalance|eth_chainId|net_version|web3_clientVersion|eth_blockNumber|eth_getBlockByNumber|eth_getBalance|eth_getCode|eth_getStorageAt|eth_call|eth_estimateGas|eth_gasPrice|eth_maxPriorityFeePerGas|eth_feeHistory",
+            "unknown method: {}; valid: novovm_getSurfaceMap|novovm_get_surface_map|novovm_getMethodDomain|novovm_get_method_domain|nov_getBlock|nov_getTransaction|nov_getReceipt|nov_getTransactionReceipt|nov_getBalance|nov_getAssetBalance|nov_getState|nov_getModuleInfo|nov_getTreasurySettlementSummary|nov_getTreasuryClearingSummary|nov_getTreasurySettlementJournal|nov_getTreasurySettlementPolicy|nov_getExecutionTrace|nov_getTreasuryClearingMetricsSummary|nov_getTreasuryPolicyMetricsSummary|nov_swap|nov_redeem|nov_openVault|nov_call|nov_estimate|nov_estimateGas|getBlock|getTransaction|getReceipt|getBalance|eth_chainId|net_version|web3_clientVersion|eth_blockNumber|eth_getBlockByNumber|eth_getBalance|eth_getCode|eth_getStorageAt|eth_call|eth_estimateGas|eth_gasPrice|eth_maxPriorityFeePerGas|eth_feeHistory",
             method
         ),
     };
@@ -11004,7 +11187,7 @@ fn run_chain_query_mode() -> Result<()> {
         .to_string();
     if method.is_empty() {
         bail!(
-            "missing NOVOVM_CHAIN_QUERY_METHOD; valid: novovm_getSurfaceMap|novovm_get_surface_map|novovm_getMethodDomain|novovm_get_method_domain|getBlock|getTransaction|getReceipt|getBalance|eth_chainId|net_version|web3_clientVersion|eth_blockNumber|eth_getBlockByNumber|eth_getBalance|eth_getCode|eth_getStorageAt|eth_call|eth_estimateGas|eth_gasPrice|eth_maxPriorityFeePerGas|eth_feeHistory"
+            "missing NOVOVM_CHAIN_QUERY_METHOD; valid: novovm_getSurfaceMap|novovm_get_surface_map|novovm_getMethodDomain|novovm_get_method_domain|getBlock|getTransaction|getReceipt|getBalance|nov_getBlock|nov_getTransaction|nov_getReceipt|nov_getTransactionReceipt|nov_getBalance|nov_getAssetBalance|nov_getState|nov_getModuleInfo|nov_getTreasurySettlementSummary|nov_getTreasuryClearingSummary|nov_getTreasurySettlementJournal|nov_getTreasurySettlementPolicy|nov_getExecutionTrace|nov_getTreasuryClearingMetricsSummary|nov_getTreasuryPolicyMetricsSummary|nov_swap|nov_redeem|nov_openVault|nov_call|nov_estimate|nov_estimateGas|eth_chainId|net_version|web3_clientVersion|eth_blockNumber|eth_getBlockByNumber|eth_getBalance|eth_getCode|eth_getStorageAt|eth_call|eth_estimateGas|eth_gasPrice|eth_maxPriorityFeePerGas|eth_feeHistory"
         );
     }
 
@@ -14724,6 +14907,15 @@ mod tests {
                 .any(|domain| domain["domain"].as_str() == Some("novovm_mainnet"))));
         assert!(surface_map_resp["domains"]
             .as_array()
+            .and_then(|domains| domains
+                .iter()
+                .find(|domain| domain["domain"].as_str() == Some("novovm_mainnet")))
+            .and_then(|domain| domain["entry_methods"].as_array())
+            .is_some_and(|methods| methods
+                .iter()
+                .any(|method| method.as_str() == Some("nov_swap"))));
+        assert!(surface_map_resp["domains"]
+            .as_array()
             .is_some_and(|domains| domains
                 .iter()
                 .any(|domain| domain["domain"].as_str() == Some("evm_plugin"))));
@@ -14998,6 +15190,136 @@ mod tests {
                 .map(|items| items.len()),
             Some(2)
         );
+    }
+
+    #[test]
+    fn chain_query_nov_swap_executes_via_native_module_path() {
+        let db = QueryStateDb::default();
+        let mut path = std::env::temp_dir();
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock should be >= epoch")
+            .as_nanos();
+        path.push(format!("novovm-native-swap-{}.json", nonce));
+
+        let caller = format!("0x{}", "61".repeat(20));
+        let mut pre = novovm_node::tx_ingress::NovNativeExecutionStoreV1::default();
+        pre.module_state.account_asset_balances.insert(
+            caller.clone(),
+            std::collections::BTreeMap::from([("USDT".to_string(), 1_000u128)]),
+        );
+        pre.module_state.clearing_static_amm_pools.insert(
+            "rpc_usdt_nov_pool".to_string(),
+            novovm_node::clearing_types::NovStaticAmmPoolStateV1 {
+                pool_id: "rpc_usdt_nov_pool".to_string(),
+                asset_x: "USDT".to_string(),
+                asset_y: "NOV".to_string(),
+                reserve_x: 1_000_000,
+                reserve_y: 2_000_000,
+                swap_fee_ppm: 3_000,
+                enabled: true,
+            },
+        );
+        novovm_node::tx_ingress::save_nov_native_execution_store_v1(path.as_path(), &pre)
+            .expect("seed native execution store");
+
+        let out = run_chain_query(
+            &db,
+            "nov_swap",
+            &serde_json::json!({
+                "from": caller,
+                "asset_in": "USDT",
+                "asset_out": "NOV",
+                "amount_in": 100u64,
+                "min_amount_out": 1u64,
+                "slippage_bps": 25u64,
+                "max_pay_amount": 500u64,
+                "native_execution_store_path": path.display().to_string(),
+            }),
+        )
+        .expect("nov_swap should succeed");
+        assert_eq!(out["method"].as_str(), Some("nov_swap"));
+        assert_eq!(out["module"].as_str(), Some("amm"));
+        assert_eq!(out["module_method"].as_str(), Some("swap_exact_in"));
+        assert_eq!(out["accepted"].as_bool(), Some(true));
+        assert_eq!(out["native_receipt"]["status"].as_bool(), Some(true));
+        assert_eq!(
+            out["native_receipt"]["method"].as_str(),
+            Some("swap_exact_in")
+        );
+
+        let _ = fs::remove_file(&path);
+    }
+
+    #[test]
+    fn public_rpc_nov_redeem_and_open_vault_execute_without_unified_account_alias() {
+        let db = QueryStateDb::default();
+        let mut router = UnifiedAccountRouter::new();
+        let mut path = std::env::temp_dir();
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock should be >= epoch")
+            .as_nanos();
+        path.push(format!("novovm-native-user-rpc-{}.json", nonce));
+
+        let caller = format!("0x{}", "62".repeat(20));
+        let mut pre = novovm_node::tx_ingress::NovNativeExecutionStoreV1::default();
+        pre.module_state
+            .treasury_reserves
+            .insert("NOV".to_string(), 500);
+        pre.module_state.treasury_reserve_bucket_nov = 500;
+        pre.module_state.treasury_settled_nov_total = 500;
+        pre.module_state.account_asset_balances.insert(
+            caller.clone(),
+            std::collections::BTreeMap::from([("ETH".to_string(), 500u128)]),
+        );
+        novovm_node::tx_ingress::save_nov_native_execution_store_v1(path.as_path(), &pre)
+            .expect("seed native execution store");
+
+        let (redeem_resp, redeem_changed) = run_public_rpc(
+            &db,
+            &mut router,
+            None,
+            "nov_redeem",
+            &serde_json::json!({
+                "from": caller,
+                "asset_out": "NOV",
+                "nov_amount": 50u64,
+                "max_pay_amount": 500u64,
+                "native_execution_store_path": path.display().to_string(),
+            }),
+        )
+        .expect("nov_redeem should succeed");
+        assert!(!redeem_changed);
+        assert_eq!(redeem_resp["method"].as_str(), Some("nov_redeem"));
+        assert_eq!(redeem_resp["native_receipt"]["status"].as_bool(), Some(true));
+        assert_eq!(redeem_resp["native_receipt"]["method"].as_str(), Some("redeem"));
+
+        let (vault_resp, vault_changed) = run_public_rpc(
+            &db,
+            &mut router,
+            None,
+            "nov_openVault",
+            &serde_json::json!({
+                "from": caller,
+                "collateral_asset": "ETH",
+                "collateral_amount": 300u64,
+                "debt_asset": "NUSD",
+                "mint_amount": 100u64,
+                "max_pay_amount": 500u64,
+                "native_execution_store_path": path.display().to_string(),
+            }),
+        )
+        .expect("nov_openVault should succeed");
+        assert!(!vault_changed);
+        assert_eq!(vault_resp["method"].as_str(), Some("nov_openVault"));
+        assert_eq!(vault_resp["native_receipt"]["status"].as_bool(), Some(true));
+        assert_eq!(
+            vault_resp["native_receipt"]["method"].as_str(),
+            Some("open_vault")
+        );
+
+        let _ = fs::remove_file(&path);
     }
 
     #[test]

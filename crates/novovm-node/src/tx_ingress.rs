@@ -99,6 +99,7 @@ const NOV_CLEARING_CONSTRAINED_DAILY_USAGE_BPS_DEFAULT_V1: u32 = 8_000;
 const NOV_CLEARING_CONSTRAINED_STRATEGY_DAILY_VOLUME_ONLY_V1: &str = "daily_volume_only";
 const NOV_CLEARING_CONSTRAINED_STRATEGY_TREASURY_DIRECT_ONLY_V1: &str = "treasury_direct_only";
 const NOV_CLEARING_CONSTRAINED_STRATEGY_BLOCKED_V1: &str = "blocked";
+const NOV_CREDIT_ENGINE_MIN_COLLATERAL_RATIO_BPS_V1: u32 = 15_000;
 const NOV_MILLIS_PER_DAY_V1: u128 = 86_400_000;
 
 #[derive(Debug, Clone, Copy)]
@@ -394,9 +395,23 @@ pub struct NovTreasurySettlementJournalEntryV1 {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct NovCreditVaultStateV1 {
+    pub vault_id: u64,
+    pub owner: String,
+    pub collateral_asset: String,
+    pub collateral_amount: u128,
+    pub debt_asset: String,
+    pub debt_amount: u128,
+    pub min_collateral_ratio_bps: u32,
+    pub opened_at_unix_ms: u128,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct NovNativeExecutionModuleStateV1 {
     #[serde(default)]
     pub treasury_reserves: BTreeMap<String, u128>,
+    #[serde(default)]
+    pub account_asset_balances: BTreeMap<String, BTreeMap<String, u128>>,
     #[serde(default)]
     pub governance_proposals: BTreeMap<u64, serde_json::Value>,
     #[serde(default)]
@@ -497,12 +512,17 @@ pub struct NovNativeExecutionModuleStateV1 {
     pub execution_traces_by_tx: BTreeMap<String, NovExecutionTraceV1>,
     #[serde(default)]
     pub execution_trace_order: Vec<String>,
+    #[serde(default)]
+    pub credit_vaults: BTreeMap<u64, NovCreditVaultStateV1>,
+    #[serde(default)]
+    pub next_credit_vault_id: u64,
 }
 
 impl Default for NovNativeExecutionModuleStateV1 {
     fn default() -> Self {
         Self {
             treasury_reserves: BTreeMap::new(),
+            account_asset_balances: BTreeMap::new(),
             governance_proposals: BTreeMap::new(),
             next_governance_proposal_id: 0,
             treasury_settled_nov_total: 0,
@@ -556,6 +576,8 @@ impl Default for NovNativeExecutionModuleStateV1 {
             last_execution_trace: None,
             execution_traces_by_tx: BTreeMap::new(),
             execution_trace_order: Vec::new(),
+            credit_vaults: BTreeMap::new(),
+            next_credit_vault_id: 0,
         }
     }
 }
@@ -961,6 +983,85 @@ fn normalize_asset_symbol_v1(raw: &str) -> String {
     }
 }
 
+fn normalize_account_ref_v1(raw: &str) -> Option<String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    if let Some(token) = normalize_hex_token_v1(trimmed) {
+        return Some(format!("0x{}", token));
+    }
+    Some(trimmed.to_ascii_lowercase())
+}
+
+fn caller_account_ref_v1(request: &NovExecutionRequestV1) -> String {
+    to_hex_prefixed_v1(request.caller.as_slice()).to_ascii_lowercase()
+}
+
+fn native_account_asset_balance_v1(
+    store: &NovNativeExecutionStoreV1,
+    account: &str,
+    asset: &str,
+) -> u128 {
+    let account_key = match normalize_account_ref_v1(account) {
+        Some(value) => value,
+        None => return 0,
+    };
+    let asset_key = normalize_asset_symbol_v1(asset);
+    store
+        .module_state
+        .account_asset_balances
+        .get(account_key.as_str())
+        .and_then(|assets| assets.get(asset_key.as_str()).copied())
+        .unwrap_or(0)
+}
+
+fn credit_native_account_asset_balance_v1(
+    store: &mut NovNativeExecutionStoreV1,
+    account: &str,
+    asset: &str,
+    amount: u128,
+) -> u128 {
+    let account_key = normalize_account_ref_v1(account).unwrap_or_else(|| account.to_string());
+    let asset_key = normalize_asset_symbol_v1(asset);
+    let balances = store
+        .module_state
+        .account_asset_balances
+        .entry(account_key)
+        .or_default();
+    let entry = balances.entry(asset_key).or_insert(0);
+    *entry = entry.saturating_add(amount);
+    *entry
+}
+
+fn debit_native_account_asset_balance_v1(
+    store: &mut NovNativeExecutionStoreV1,
+    account: &str,
+    asset: &str,
+    amount: u128,
+) -> Result<u128> {
+    let account_key = normalize_account_ref_v1(account)
+        .ok_or_else(|| anyhow::anyhow!("invalid account reference"))?;
+    let asset_key = normalize_asset_symbol_v1(asset);
+    let balances = store
+        .module_state
+        .account_asset_balances
+        .entry(account_key.clone())
+        .or_default();
+    let entry = balances.entry(asset_key.clone()).or_insert(0);
+    if *entry < amount {
+        bail!(
+            "insufficient user balance: account={} asset={} requested={} available={}",
+            account_key,
+            asset_key,
+            amount,
+            *entry
+        );
+    }
+    *entry = entry.saturating_sub(amount);
+    Ok(*entry)
+}
+
 fn normalize_policy_source_v1(raw: &str) -> String {
     let normalized = raw.trim().to_ascii_lowercase();
     if normalized.is_empty() || normalized == "default" {
@@ -1039,6 +1140,7 @@ const NOV_NATIVE_MODULE_REGISTRY_V1: [(&str, &[&str]); 6] = [
         "treasury",
         &[
             "deposit_reserve",
+            "redeem",
             "redeem_reserve",
             "get_reserve_balance",
             "get_reserve_snapshot",
@@ -1058,8 +1160,8 @@ const NOV_NATIVE_MODULE_REGISTRY_V1: [(&str, &[&str]); 6] = [
             "get_fee_oracle_rates",
         ],
     ),
-    ("credit_engine", &[]),
-    ("amm", &[]),
+    ("credit_engine", &["open_vault"]),
+    ("amm", &["swap_exact_in"]),
     (
         "governance",
         &[
@@ -2558,6 +2660,18 @@ fn clearing_fail_v1<T>(
     bail!(reason);
 }
 
+fn record_user_flow_failure_reason_v1(
+    store: &mut NovNativeExecutionStoreV1,
+    pay_asset: &str,
+    code: NovClearingFailureCodeV1,
+    detail: impl Into<String>,
+    now_ms: u128,
+) -> String {
+    let reason = clearing_failure_to_reason_v1(code, pay_asset, detail.into());
+    record_clearing_failure_v1(store, pay_asset, code, reason.as_str(), now_ms);
+    reason
+}
+
 struct NovClearingFailureJournalContextV1<'a> {
     tx_hash: &'a str,
     settlement_policy: &'a NovTreasurySettlementPolicyV1,
@@ -3251,6 +3365,821 @@ fn build_failed_native_receipt_v1(
     }
 }
 
+fn build_success_native_receipt_v1(
+    request: &NovExecutionRequestV1,
+    settled_fee: &NovSettledFeeV1,
+    module: &str,
+    method: &str,
+    logs: Vec<NovNativeExecutionLogV1>,
+) -> NovNativeExecutionReceiptV1 {
+    NovNativeExecutionReceiptV1 {
+        tx_hash: to_hex(&request.tx_hash),
+        status: true,
+        target: execution_target_label_v1(&request.target),
+        module: module.to_string(),
+        method: method.to_string(),
+        settled_fee_nov: settled_fee.nov_amount,
+        paid_asset: settled_fee.source_asset.clone(),
+        paid_amount: settled_fee.source_amount,
+        logs,
+        failure_reason: None,
+        fee_contract: settled_fee.fee_contract.clone(),
+        fee_route: settled_fee.route.clone(),
+        fee_quote_id: settled_fee.quote_id.clone(),
+        fee_quote_contract: settled_fee.quote_contract.clone(),
+        fee_clearing_contract: settled_fee.clearing_contract.clone(),
+        fee_price_source: settled_fee.price_source.clone(),
+        fee_quote_required_pay_amount: settled_fee.required_source_amount,
+        fee_quote_expires_at_unix_ms: settled_fee.quote_expires_at_unix_ms,
+        fee_clearing_route_ref: settled_fee.clearing_route_ref.clone(),
+        fee_clearing_source: settled_fee.clearing_source.clone(),
+        fee_clearing_rate_ppm: settled_fee.clearing_rate_ppm,
+        route_meta: route_meta_from_settled_fee_v1(settled_fee),
+        policy_meta: policy_meta_from_settled_fee_v1(settled_fee),
+    }
+}
+
+fn constrained_daily_nov_cap_v1(policy: &NovTreasurySettlementPolicyV1) -> u128 {
+    if policy.clearing_daily_nov_hard_limit == 0 {
+        0
+    } else {
+        policy
+            .clearing_daily_nov_hard_limit
+            .saturating_mul(u128::from(policy.clearing_constrained_daily_usage_bps))
+            .saturating_div(u128::from(NOV_TREASURY_SHARE_BPS_DENOMINATOR_V1))
+            .max(1)
+    }
+}
+
+fn enforce_user_market_risk_gate_v1(
+    store: &mut NovNativeExecutionStoreV1,
+    pay_asset: &str,
+    projected_nov_usage: u128,
+    requested_slippage_bps: u32,
+    requires_amm_route: bool,
+    now_ms: u128,
+) -> Result<()> {
+    refresh_clearing_daily_window_v1(store, now_ms);
+    let policy = resolve_treasury_settlement_policy_v1(store);
+    if !policy.clearing_enabled {
+        bail!(
+            "{}",
+            record_user_flow_failure_reason_v1(
+                store,
+                pay_asset,
+                NovClearingFailureCodeV1::ClearingDisabled,
+                "user execution path is disabled by clearing policy",
+                now_ms,
+            )
+        );
+    }
+    if policy.clearing_daily_nov_hard_limit > 0 {
+        let projected_daily_nov = store
+            .module_state
+            .clearing_daily_nov_used
+            .saturating_add(projected_nov_usage);
+        if projected_daily_nov > policy.clearing_daily_nov_hard_limit {
+            bail!(
+                "{}",
+                record_user_flow_failure_reason_v1(
+                    store,
+                    pay_asset,
+                    NovClearingFailureCodeV1::DailyVolumeExceeded,
+                    format!(
+                        "projected_daily_nov={} hard_limit={} day={}",
+                        projected_daily_nov,
+                        policy.clearing_daily_nov_hard_limit,
+                        store.module_state.clearing_daily_window_day
+                    ),
+                    now_ms,
+                )
+            );
+        }
+    }
+    if policy.clearing_require_healthy_risk_buffer
+        && store.module_state.treasury_risk_buffer_nov < policy.min_risk_buffer_nov
+    {
+        bail!(
+            "{}",
+            record_user_flow_failure_reason_v1(
+                store,
+                pay_asset,
+                NovClearingFailureCodeV1::RiskBufferBelowMin,
+                format!(
+                    "risk_buffer_nov={} min_required={}",
+                    store.module_state.treasury_risk_buffer_nov, policy.min_risk_buffer_nov
+                ),
+                now_ms,
+            )
+        );
+    }
+    let threshold_state = clearing_policy_gate_snapshot_v1(store, &policy)
+        .get("threshold_state")
+        .and_then(|value| value.as_str())
+        .unwrap_or("healthy")
+        .to_string();
+    if threshold_state == "constrained" {
+        match policy.clearing_constrained_strategy.as_str() {
+            NOV_CLEARING_CONSTRAINED_STRATEGY_BLOCKED_V1 => bail!(
+                "{}",
+                record_user_flow_failure_reason_v1(
+                    store,
+                    pay_asset,
+                    NovClearingFailureCodeV1::ConstrainedBlocked,
+                    "threshold_state=constrained strategy=blocked",
+                    now_ms,
+                )
+            ),
+            NOV_CLEARING_CONSTRAINED_STRATEGY_DAILY_VOLUME_ONLY_V1 => {
+                if requested_slippage_bps > policy.clearing_constrained_max_slippage_bps {
+                    bail!(
+                        "{}",
+                        record_user_flow_failure_reason_v1(
+                            store,
+                            pay_asset,
+                            NovClearingFailureCodeV1::SlippageExceeded,
+                            format!(
+                                "threshold_state=constrained strategy=daily_volume_only requested_slippage_bps={} constrained_max_slippage_bps={}",
+                                requested_slippage_bps,
+                                policy.clearing_constrained_max_slippage_bps
+                            ),
+                            now_ms,
+                        )
+                    );
+                }
+                let constrained_cap = constrained_daily_nov_cap_v1(&policy);
+                if constrained_cap > 0 {
+                    let projected_daily_nov = store
+                        .module_state
+                        .clearing_daily_nov_used
+                        .saturating_add(projected_nov_usage);
+                    if projected_daily_nov > constrained_cap {
+                        bail!(
+                            "{}",
+                            record_user_flow_failure_reason_v1(
+                                store,
+                                pay_asset,
+                                NovClearingFailureCodeV1::ConstrainedDailyVolumeExceeded,
+                                format!(
+                                    "threshold_state=constrained strategy=daily_volume_only projected_daily_nov={} constrained_daily_nov_cap={} daily_hard_limit={} constrained_daily_usage_bps={}",
+                                    projected_daily_nov,
+                                    constrained_cap,
+                                    policy.clearing_daily_nov_hard_limit,
+                                    policy.clearing_constrained_daily_usage_bps
+                                ),
+                                now_ms,
+                            )
+                        );
+                    }
+                }
+            }
+            NOV_CLEARING_CONSTRAINED_STRATEGY_TREASURY_DIRECT_ONLY_V1 if requires_amm_route => {
+                bail!(
+                    "{}",
+                    record_user_flow_failure_reason_v1(
+                        store,
+                        pay_asset,
+                        NovClearingFailureCodeV1::ConstrainedRouteRestricted,
+                        "threshold_state=constrained strategy=treasury_direct_only",
+                        now_ms,
+                    )
+                );
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+fn amm_output_for_exact_input_v1(
+    reserve_in: u128,
+    reserve_out: u128,
+    amount_in: u128,
+    fee_ppm: u32,
+) -> Option<u128> {
+    if reserve_in == 0 || reserve_out == 0 || amount_in == 0 {
+        return None;
+    }
+    let fee_den = 1_000_000u128;
+    let amount_in_after_fee =
+        amount_in.saturating_mul(fee_den.saturating_sub(u128::from(fee_ppm))) / fee_den;
+    if amount_in_after_fee == 0 {
+        return None;
+    }
+    let numerator = amount_in_after_fee.saturating_mul(reserve_out);
+    let denominator = reserve_in.saturating_add(amount_in_after_fee);
+    if denominator == 0 {
+        return None;
+    }
+    Some(numerator / denominator)
+}
+
+fn dispatch_treasury_redeem_v1(
+    request: &NovExecutionRequestV1,
+    settled_fee: &NovSettledFeeV1,
+    store: &mut NovNativeExecutionStoreV1,
+    args_json: &serde_json::Value,
+    method_label: &str,
+) -> NovNativeExecutionReceiptV1 {
+    let policy = resolve_treasury_settlement_policy_v1(store);
+    let policy_contract_id = treasury_policy_contract_id_v1(&policy);
+    let policy_threshold_state = clearing_policy_gate_snapshot_v1(store, &policy)
+        .get("threshold_state")
+        .and_then(|value| value.as_str())
+        .unwrap_or("healthy")
+        .to_string();
+    let policy_source = normalize_policy_source_v1(policy.policy_source.as_str());
+    if policy.redeem_paused {
+        increment_settlement_failure_v1(store, "redeem_paused");
+        return build_failed_native_receipt_v1(
+            request,
+            settled_fee,
+            "treasury".to_string(),
+            method_label.to_string(),
+            fee_settlement_reason_v1("redeem_paused", "treasury redeem path is paused"),
+        );
+    }
+    let asset = args_json
+        .get("asset")
+        .or_else(|| args_json.get("asset_out"))
+        .and_then(|value| value.as_str())
+        .map(normalize_asset_symbol_v1)
+        .unwrap_or_else(|| "NOV".to_string());
+    let amount = args_json
+        .get("amount")
+        .or_else(|| args_json.get("nov_amount"))
+        .and_then(parse_u128_from_json_value_v1)
+        .unwrap_or(0);
+    if amount == 0 {
+        increment_settlement_failure_v1(store, "invalid_redeem_amount");
+        return build_failed_native_receipt_v1(
+            request,
+            settled_fee,
+            "treasury".to_string(),
+            method_label.to_string(),
+            fee_settlement_reason_v1("invalid_redeem_amount", "amount must be > 0"),
+        );
+    }
+
+    if asset == "NOV" {
+        let available = store.module_state.treasury_reserve_bucket_nov;
+        if available < amount {
+            increment_settlement_failure_v1(store, "insufficient_reserve");
+            return build_failed_native_receipt_v1(
+                request,
+                settled_fee,
+                "treasury".to_string(),
+                method_label.to_string(),
+                fee_settlement_reason_v1(
+                    "insufficient_reserve",
+                    format!(
+                        "asset=NOV requested={} available_reserve_bucket={}",
+                        amount, available
+                    )
+                    .as_str(),
+                ),
+            );
+        }
+        let reserve_bucket_after = available.saturating_sub(amount);
+        if reserve_bucket_after < policy.min_reserve_bucket_nov {
+            increment_settlement_failure_v1(store, "reserve_bucket_below_min");
+            return build_failed_native_receipt_v1(
+                request,
+                settled_fee,
+                "treasury".to_string(),
+                method_label.to_string(),
+                fee_settlement_reason_v1(
+                    "reserve_bucket_below_min",
+                    format!(
+                        "requested={} reserve_bucket_after={} min_reserve_bucket_nov={}",
+                        amount, reserve_bucket_after, policy.min_reserve_bucket_nov
+                    )
+                    .as_str(),
+                ),
+            );
+        }
+        let available_total = store
+            .module_state
+            .treasury_reserves
+            .get("NOV")
+            .copied()
+            .unwrap_or(0);
+        if available_total < amount {
+            increment_settlement_failure_v1(store, "insufficient_total_reserve");
+            return build_failed_native_receipt_v1(
+                request,
+                settled_fee,
+                "treasury".to_string(),
+                method_label.to_string(),
+                fee_settlement_reason_v1(
+                    "insufficient_total_reserve",
+                    format!(
+                        "asset=NOV requested={} available_total={}",
+                        amount, available_total
+                    )
+                    .as_str(),
+                ),
+            );
+        }
+        let total_reserve_after = {
+            let nov_entry = store
+                .module_state
+                .treasury_reserves
+                .entry("NOV".to_string())
+                .or_insert(0);
+            *nov_entry = nov_entry.saturating_sub(amount);
+            *nov_entry
+        };
+        store.module_state.treasury_reserve_bucket_nov = store
+            .module_state
+            .treasury_reserve_bucket_nov
+            .saturating_sub(amount);
+        let reserve_bucket_after = store.module_state.treasury_reserve_bucket_nov;
+        store.module_state.treasury_redeemed_nov_total = store
+            .module_state
+            .treasury_redeemed_nov_total
+            .saturating_add(amount);
+        let redeemed_nov = store
+            .module_state
+            .treasury_redeemed_by_asset
+            .entry("NOV".to_string())
+            .or_insert(0);
+        *redeemed_nov = redeemed_nov.saturating_add(amount);
+        append_treasury_settlement_journal_v1(
+            store,
+            NovTreasurySettlementJournalEntryV1 {
+                seq: 0,
+                unix_ms: now_unix_millis_v1(),
+                kind: "reserve_redeem".to_string(),
+                tx_hash: to_hex(&request.tx_hash),
+                source_asset: "NOV".to_string(),
+                source_amount: amount,
+                settled_nov: amount,
+                reserve_bucket_delta_nov: -saturating_u128_to_i128_v1(amount),
+                fee_bucket_delta_nov: 0,
+                risk_buffer_delta_nov: 0,
+                route_ref: "treasury.reserve_redeem".to_string(),
+                clearing_source: "treasury".to_string(),
+                clearing_rate_ppm: 0,
+                policy_version: policy.policy_version,
+                policy_source: policy_source.clone(),
+                policy_contract_id: policy_contract_id.clone(),
+                policy_threshold_state: policy_threshold_state.clone(),
+                policy_constrained_strategy: policy.clearing_constrained_strategy.clone(),
+                policy_event_state: "redeemed".to_string(),
+                status: "applied".to_string(),
+                reason: None,
+            },
+        );
+        let caller = caller_account_ref_v1(request);
+        let caller_balance_after =
+            credit_native_account_asset_balance_v1(store, caller.as_str(), "NOV", amount);
+        let log = NovNativeExecutionLogV1 {
+            module: "treasury".to_string(),
+            method: method_label.to_string(),
+            event: "treasury.reserve_redeemed".to_string(),
+            data: serde_json::json!({
+                "asset": "NOV",
+                "amount": amount,
+                "caller": caller,
+                "caller_balance_after": caller_balance_after,
+                "reserve_bucket_after": reserve_bucket_after,
+                "total_reserve_after": total_reserve_after,
+                "risk_buffer_nov": store.module_state.treasury_risk_buffer_nov,
+                "risk_buffer_min_nov": policy.min_risk_buffer_nov,
+            }),
+        };
+        return build_success_native_receipt_v1(
+            request,
+            settled_fee,
+            "treasury",
+            method_label,
+            vec![log],
+        );
+    }
+
+    let available = store
+        .module_state
+        .treasury_reserves
+        .get(asset.as_str())
+        .copied()
+        .unwrap_or(0);
+    if available < amount {
+        increment_settlement_failure_v1(store, "insufficient_reserve");
+        return build_failed_native_receipt_v1(
+            request,
+            settled_fee,
+            "treasury".to_string(),
+            method_label.to_string(),
+            fee_settlement_reason_v1(
+                "insufficient_reserve",
+                format!(
+                    "asset={} requested={} available={}",
+                    asset, amount, available
+                )
+                .as_str(),
+            ),
+        );
+    }
+    let reserve_after = {
+        let entry = store
+            .module_state
+            .treasury_reserves
+            .entry(asset.clone())
+            .or_insert(0);
+        *entry = entry.saturating_sub(amount);
+        *entry
+    };
+    let redeemed_entry = store
+        .module_state
+        .treasury_redeemed_by_asset
+        .entry(asset.clone())
+        .or_insert(0);
+    *redeemed_entry = redeemed_entry.saturating_add(amount);
+    append_treasury_settlement_journal_v1(
+        store,
+        NovTreasurySettlementJournalEntryV1 {
+            seq: 0,
+            unix_ms: now_unix_millis_v1(),
+            kind: "reserve_redeem".to_string(),
+            tx_hash: to_hex(&request.tx_hash),
+            source_asset: asset.clone(),
+            source_amount: amount,
+            settled_nov: 0,
+            reserve_bucket_delta_nov: 0,
+            fee_bucket_delta_nov: 0,
+            risk_buffer_delta_nov: 0,
+            route_ref: "treasury.reserve_redeem".to_string(),
+            clearing_source: "treasury".to_string(),
+            clearing_rate_ppm: 0,
+            policy_version: policy.policy_version,
+            policy_source: policy_source.clone(),
+            policy_contract_id: policy_contract_id.clone(),
+            policy_threshold_state: policy_threshold_state.clone(),
+            policy_constrained_strategy: policy.clearing_constrained_strategy.clone(),
+            policy_event_state: "redeemed".to_string(),
+            status: "applied".to_string(),
+            reason: None,
+        },
+    );
+    let caller = caller_account_ref_v1(request);
+    let caller_balance_after =
+        credit_native_account_asset_balance_v1(store, caller.as_str(), asset.as_str(), amount);
+    let log = NovNativeExecutionLogV1 {
+        module: "treasury".to_string(),
+        method: method_label.to_string(),
+        event: "treasury.reserve_redeemed".to_string(),
+        data: serde_json::json!({
+            "asset": asset,
+            "amount": amount,
+            "caller": caller,
+            "caller_balance_after": caller_balance_after,
+            "reserve_after": reserve_after,
+        }),
+    };
+    build_success_native_receipt_v1(request, settled_fee, "treasury", method_label, vec![log])
+}
+
+fn dispatch_amm_swap_exact_in_v1(
+    request: &NovExecutionRequestV1,
+    settled_fee: &NovSettledFeeV1,
+    store: &mut NovNativeExecutionStoreV1,
+    args_json: &serde_json::Value,
+) -> NovNativeExecutionReceiptV1 {
+    let asset_in = args_json
+        .get("asset_in")
+        .and_then(|value| value.as_str())
+        .map(normalize_asset_symbol_v1)
+        .unwrap_or_default();
+    let asset_out = args_json
+        .get("asset_out")
+        .and_then(|value| value.as_str())
+        .map(normalize_asset_symbol_v1)
+        .unwrap_or_default();
+    let amount_in = args_json
+        .get("amount_in")
+        .and_then(parse_u128_from_json_value_v1)
+        .unwrap_or(0);
+    let min_amount_out = args_json
+        .get("min_amount_out")
+        .and_then(parse_u128_from_json_value_v1)
+        .unwrap_or(0);
+    let requested_slippage_bps = args_json
+        .get("slippage_bps")
+        .and_then(parse_u128_from_json_value_v1)
+        .map(|value| value as u32)
+        .unwrap_or(100);
+    if asset_in.is_empty() || asset_out.is_empty() || asset_in == asset_out || amount_in == 0 {
+        return build_failed_native_receipt_v1(
+            request,
+            settled_fee,
+            "amm".to_string(),
+            "swap_exact_in".to_string(),
+            "amm.invalid_args: asset_in/asset_out/amount_in are required".to_string(),
+        );
+    }
+
+    let best_pool = store
+        .module_state
+        .clearing_static_amm_pools
+        .values()
+        .filter(|pool| pool.enabled)
+        .filter_map(|pool| {
+            let pool_x = normalize_asset_symbol_v1(pool.asset_x.as_str());
+            let pool_y = normalize_asset_symbol_v1(pool.asset_y.as_str());
+            if pool_x == asset_in && pool_y == asset_out {
+                let amount_out = amm_output_for_exact_input_v1(
+                    pool.reserve_x,
+                    pool.reserve_y,
+                    amount_in,
+                    pool.swap_fee_ppm,
+                )?;
+                Some((pool.pool_id.clone(), amount_out, pool.reserve_y, false))
+            } else if pool_y == asset_in && pool_x == asset_out {
+                let amount_out = amm_output_for_exact_input_v1(
+                    pool.reserve_y,
+                    pool.reserve_x,
+                    amount_in,
+                    pool.swap_fee_ppm,
+                )?;
+                Some((pool.pool_id.clone(), amount_out, pool.reserve_x, true))
+            } else {
+                None
+            }
+        })
+        .max_by_key(|(pool_id, amount_out, reserve_out, reversed)| {
+            (*amount_out, *reserve_out, !*reversed, pool_id.clone())
+        });
+    let (selected_pool_id, amount_out, reserve_out_before, reversed) = match best_pool {
+        Some(value) => value,
+        None => {
+            return build_failed_native_receipt_v1(
+                request,
+                settled_fee,
+                "amm".to_string(),
+                "swap_exact_in".to_string(),
+                "amm.route_unavailable: no enabled single-hop pool for pair".to_string(),
+            )
+        }
+    };
+    if amount_out == 0 {
+        return build_failed_native_receipt_v1(
+            request,
+            settled_fee,
+            "amm".to_string(),
+            "swap_exact_in".to_string(),
+            "amm.route_unavailable: quoted output is zero".to_string(),
+        );
+    }
+    if amount_out < min_amount_out {
+        return build_failed_native_receipt_v1(
+            request,
+            settled_fee,
+            "amm".to_string(),
+            "swap_exact_in".to_string(),
+            format!(
+                "amm.slippage_exceeded: amount_out={} min_amount_out={}",
+                amount_out, min_amount_out
+            ),
+        );
+    }
+    let nov_leg_amount = if asset_out == "NOV" {
+        amount_out
+    } else if asset_in == "NOV" {
+        amount_in
+    } else {
+        return build_failed_native_receipt_v1(
+            request,
+            settled_fee,
+            "amm".to_string(),
+            "swap_exact_in".to_string(),
+            "amm.route_unavailable: minimal path currently supports NOV pairs only".to_string(),
+        );
+    };
+    if let Err(err) = enforce_user_market_risk_gate_v1(
+        store,
+        asset_in.as_str(),
+        nov_leg_amount,
+        requested_slippage_bps,
+        true,
+        now_unix_millis_v1(),
+    ) {
+        return build_failed_native_receipt_v1(
+            request,
+            settled_fee,
+            "amm".to_string(),
+            "swap_exact_in".to_string(),
+            err.to_string(),
+        );
+    }
+    let caller = caller_account_ref_v1(request);
+    let caller_asset_in_before =
+        native_account_asset_balance_v1(store, caller.as_str(), asset_in.as_str());
+    if let Err(err) =
+        debit_native_account_asset_balance_v1(store, caller.as_str(), asset_in.as_str(), amount_in)
+    {
+        return build_failed_native_receipt_v1(
+            request,
+            settled_fee,
+            "amm".to_string(),
+            "swap_exact_in".to_string(),
+            format!("amm.insufficient_user_balance: {err}"),
+        );
+    }
+    let caller_asset_out_after = credit_native_account_asset_balance_v1(
+        store,
+        caller.as_str(),
+        asset_out.as_str(),
+        amount_out,
+    );
+    if let Some(pool) = store
+        .module_state
+        .clearing_static_amm_pools
+        .get_mut(selected_pool_id.as_str())
+    {
+        if reversed {
+            pool.reserve_y = pool.reserve_y.saturating_add(amount_in);
+            pool.reserve_x = pool.reserve_x.saturating_sub(amount_out);
+        } else {
+            pool.reserve_x = pool.reserve_x.saturating_add(amount_in);
+            pool.reserve_y = pool.reserve_y.saturating_sub(amount_out);
+        }
+    }
+    store.module_state.clearing_daily_nov_used = store
+        .module_state
+        .clearing_daily_nov_used
+        .saturating_add(nov_leg_amount);
+    let pool = store
+        .module_state
+        .clearing_static_amm_pools
+        .get(selected_pool_id.as_str())
+        .cloned();
+    let log = NovNativeExecutionLogV1 {
+        module: "amm".to_string(),
+        method: "swap_exact_in".to_string(),
+        event: "amm.swap_exact_in.applied".to_string(),
+        data: serde_json::json!({
+            "caller": caller,
+            "pool_id": selected_pool_id,
+            "asset_in": asset_in,
+            "asset_out": asset_out,
+            "amount_in": amount_in,
+            "amount_out": amount_out,
+            "min_amount_out": min_amount_out,
+            "requested_slippage_bps": requested_slippage_bps,
+            "nov_leg_amount": nov_leg_amount,
+            "caller_asset_in_before": caller_asset_in_before,
+            "caller_asset_in_after": native_account_asset_balance_v1(store, caller.as_str(), asset_in.as_str()),
+            "caller_asset_out_after": caller_asset_out_after,
+            "pool_reserve_out_before": reserve_out_before,
+            "pool_reserve_x_after": pool.as_ref().map(|value| value.reserve_x).unwrap_or(0),
+            "pool_reserve_y_after": pool.as_ref().map(|value| value.reserve_y).unwrap_or(0),
+            "swap_fee_ppm": pool.as_ref().map(|value| value.swap_fee_ppm).unwrap_or(0),
+        }),
+    };
+    build_success_native_receipt_v1(request, settled_fee, "amm", "swap_exact_in", vec![log])
+}
+
+fn dispatch_credit_engine_open_vault_v1(
+    request: &NovExecutionRequestV1,
+    settled_fee: &NovSettledFeeV1,
+    store: &mut NovNativeExecutionStoreV1,
+    args_json: &serde_json::Value,
+) -> NovNativeExecutionReceiptV1 {
+    let collateral_asset = args_json
+        .get("collateral_asset")
+        .and_then(|value| value.as_str())
+        .map(normalize_asset_symbol_v1)
+        .unwrap_or_default();
+    let collateral_amount = args_json
+        .get("collateral_amount")
+        .and_then(parse_u128_from_json_value_v1)
+        .unwrap_or(0);
+    let debt_asset = args_json
+        .get("debt_asset")
+        .and_then(|value| value.as_str())
+        .map(normalize_asset_symbol_v1)
+        .unwrap_or_else(|| "NUSD".to_string());
+    let mint_amount = args_json
+        .get("mint_amount")
+        .and_then(parse_u128_from_json_value_v1)
+        .unwrap_or(0);
+    if collateral_asset.is_empty() || collateral_amount == 0 {
+        return build_failed_native_receipt_v1(
+            request,
+            settled_fee,
+            "credit_engine".to_string(),
+            "open_vault".to_string(),
+            "credit_engine.invalid_args: collateral_asset/collateral_amount are required"
+                .to_string(),
+        );
+    }
+    if mint_amount > 0 {
+        let required_collateral = mint_amount
+            .saturating_mul(u128::from(NOV_CREDIT_ENGINE_MIN_COLLATERAL_RATIO_BPS_V1))
+            .saturating_add(9_999)
+            / 10_000;
+        if collateral_amount < required_collateral {
+            return build_failed_native_receipt_v1(
+                request,
+                settled_fee,
+                "credit_engine".to_string(),
+                "open_vault".to_string(),
+                format!(
+                    "credit_engine.collateral_ratio_below_min: collateral_amount={} mint_amount={} min_ratio_bps={}",
+                    collateral_amount,
+                    mint_amount,
+                    NOV_CREDIT_ENGINE_MIN_COLLATERAL_RATIO_BPS_V1
+                ),
+            );
+        }
+        if let Err(err) = enforce_user_market_risk_gate_v1(
+            store,
+            debt_asset.as_str(),
+            mint_amount,
+            0,
+            false,
+            now_unix_millis_v1(),
+        ) {
+            return build_failed_native_receipt_v1(
+                request,
+                settled_fee,
+                "credit_engine".to_string(),
+                "open_vault".to_string(),
+                err.to_string(),
+            );
+        }
+    }
+    let caller = caller_account_ref_v1(request);
+    if let Err(err) = debit_native_account_asset_balance_v1(
+        store,
+        caller.as_str(),
+        collateral_asset.as_str(),
+        collateral_amount,
+    ) {
+        return build_failed_native_receipt_v1(
+            request,
+            settled_fee,
+            "credit_engine".to_string(),
+            "open_vault".to_string(),
+            format!("credit_engine.insufficient_user_balance: {err}"),
+        );
+    }
+    let vault_id = store.module_state.next_credit_vault_id.saturating_add(1);
+    store.module_state.next_credit_vault_id = vault_id;
+    let vault = NovCreditVaultStateV1 {
+        vault_id,
+        owner: caller.clone(),
+        collateral_asset: collateral_asset.clone(),
+        collateral_amount,
+        debt_asset: debt_asset.clone(),
+        debt_amount: mint_amount,
+        min_collateral_ratio_bps: NOV_CREDIT_ENGINE_MIN_COLLATERAL_RATIO_BPS_V1,
+        opened_at_unix_ms: now_unix_millis_v1(),
+    };
+    store
+        .module_state
+        .credit_vaults
+        .insert(vault_id, vault.clone());
+    let caller_debt_balance_after = if mint_amount > 0 {
+        store.module_state.clearing_daily_nov_used = store
+            .module_state
+            .clearing_daily_nov_used
+            .saturating_add(mint_amount);
+        credit_native_account_asset_balance_v1(
+            store,
+            caller.as_str(),
+            debt_asset.as_str(),
+            mint_amount,
+        )
+    } else {
+        native_account_asset_balance_v1(store, caller.as_str(), debt_asset.as_str())
+    };
+    let log = NovNativeExecutionLogV1 {
+        module: "credit_engine".to_string(),
+        method: "open_vault".to_string(),
+        event: "credit_engine.vault_opened".to_string(),
+        data: serde_json::json!({
+            "caller": caller,
+            "vault_id": vault_id,
+            "collateral_asset": collateral_asset,
+            "collateral_amount": collateral_amount,
+            "debt_asset": debt_asset,
+            "mint_amount": mint_amount,
+            "min_collateral_ratio_bps": NOV_CREDIT_ENGINE_MIN_COLLATERAL_RATIO_BPS_V1,
+            "caller_collateral_after": native_account_asset_balance_v1(store, vault.owner.as_str(), vault.collateral_asset.as_str()),
+            "caller_debt_asset_after": caller_debt_balance_after,
+        }),
+    };
+    build_success_native_receipt_v1(
+        request,
+        settled_fee,
+        "credit_engine",
+        "open_vault",
+        vec![log],
+    )
+}
+
 fn dispatch_native_module_execute_v1(
     request: &NovExecutionRequestV1,
     settled_fee: &NovSettledFeeV1,
@@ -3311,320 +4240,25 @@ fn dispatch_native_module_execute_v1(
                     "fee_route": settled_fee.route,
                 }),
             };
-            NovNativeExecutionReceiptV1 {
-                tx_hash: to_hex(&request.tx_hash),
-                status: true,
-                target: execution_target_label_v1(&request.target),
-                module: "treasury".to_string(),
-                method: "deposit_reserve".to_string(),
-                settled_fee_nov: settled_fee.nov_amount,
-                paid_asset: settled_fee.source_asset.clone(),
-                paid_amount: settled_fee.source_amount,
-                logs: vec![log],
-                failure_reason: None,
-                fee_contract: settled_fee.fee_contract.clone(),
-                fee_route: settled_fee.route.clone(),
-                fee_quote_id: settled_fee.quote_id.clone(),
-                fee_quote_contract: settled_fee.quote_contract.clone(),
-                fee_clearing_contract: settled_fee.clearing_contract.clone(),
-                fee_price_source: settled_fee.price_source.clone(),
-                fee_quote_required_pay_amount: settled_fee.required_source_amount,
-                fee_quote_expires_at_unix_ms: settled_fee.quote_expires_at_unix_ms,
-                fee_clearing_route_ref: settled_fee.clearing_route_ref.clone(),
-                fee_clearing_source: settled_fee.clearing_source.clone(),
-                fee_clearing_rate_ppm: settled_fee.clearing_rate_ppm,
-                route_meta: route_meta_from_settled_fee_v1(settled_fee),
-                policy_meta: policy_meta_from_settled_fee_v1(settled_fee),
-            }
+            build_success_native_receipt_v1(
+                request,
+                settled_fee,
+                "treasury",
+                "deposit_reserve",
+                vec![log],
+            )
+        }
+        ("treasury", "redeem") => {
+            dispatch_treasury_redeem_v1(request, settled_fee, store, &args_json, "redeem")
         }
         ("treasury", "redeem_reserve") => {
-            let policy = resolve_treasury_settlement_policy_v1(store);
-            let policy_contract_id = treasury_policy_contract_id_v1(&policy);
-            let policy_threshold_state = clearing_policy_gate_snapshot_v1(store, &policy)
-                .get("threshold_state")
-                .and_then(|value| value.as_str())
-                .unwrap_or("healthy")
-                .to_string();
-            let policy_source = normalize_policy_source_v1(policy.policy_source.as_str());
-            if policy.redeem_paused {
-                increment_settlement_failure_v1(store, "redeem_paused");
-                return build_failed_native_receipt_v1(
-                    request,
-                    settled_fee,
-                    "treasury".to_string(),
-                    "redeem_reserve".to_string(),
-                    fee_settlement_reason_v1("redeem_paused", "treasury redeem path is paused"),
-                );
-            }
-            let asset = args_json
-                .get("asset")
-                .and_then(|value| value.as_str())
-                .map(normalize_asset_symbol_v1)
-                .unwrap_or_else(|| "NOV".to_string());
-            let amount = args_json
-                .get("amount")
-                .and_then(parse_u128_from_json_value_v1)
-                .unwrap_or(0);
-            if amount == 0 {
-                increment_settlement_failure_v1(store, "invalid_redeem_amount");
-                return build_failed_native_receipt_v1(
-                    request,
-                    settled_fee,
-                    "treasury".to_string(),
-                    "redeem_reserve".to_string(),
-                    fee_settlement_reason_v1("invalid_redeem_amount", "amount must be > 0"),
-                );
-            }
-
-            if asset == "NOV" {
-                let available = store.module_state.treasury_reserve_bucket_nov;
-                if available < amount {
-                    increment_settlement_failure_v1(store, "insufficient_reserve");
-                    return build_failed_native_receipt_v1(
-                        request,
-                        settled_fee,
-                        "treasury".to_string(),
-                        "redeem_reserve".to_string(),
-                        fee_settlement_reason_v1(
-                            "insufficient_reserve",
-                            format!(
-                                "asset=NOV requested={} available_reserve_bucket={}",
-                                amount, available
-                            )
-                            .as_str(),
-                        ),
-                    );
-                }
-                let reserve_bucket_after = available.saturating_sub(amount);
-                if reserve_bucket_after < policy.min_reserve_bucket_nov {
-                    increment_settlement_failure_v1(store, "reserve_bucket_below_min");
-                    return build_failed_native_receipt_v1(
-                        request,
-                        settled_fee,
-                        "treasury".to_string(),
-                        "redeem_reserve".to_string(),
-                        fee_settlement_reason_v1(
-                            "reserve_bucket_below_min",
-                            format!(
-                                "requested={} reserve_bucket_after={} min_reserve_bucket_nov={}",
-                                amount, reserve_bucket_after, policy.min_reserve_bucket_nov
-                            )
-                            .as_str(),
-                        ),
-                    );
-                }
-                let available_total = store
-                    .module_state
-                    .treasury_reserves
-                    .get("NOV")
-                    .copied()
-                    .unwrap_or(0);
-                if available_total < amount {
-                    increment_settlement_failure_v1(store, "insufficient_total_reserve");
-                    return build_failed_native_receipt_v1(
-                        request,
-                        settled_fee,
-                        "treasury".to_string(),
-                        "redeem_reserve".to_string(),
-                        fee_settlement_reason_v1(
-                            "insufficient_total_reserve",
-                            format!(
-                                "asset=NOV requested={} available_total={}",
-                                amount, available_total
-                            )
-                            .as_str(),
-                        ),
-                    );
-                }
-                let total_reserve_after = {
-                    let nov_entry = store
-                        .module_state
-                        .treasury_reserves
-                        .entry("NOV".to_string())
-                        .or_insert(0);
-                    *nov_entry = nov_entry.saturating_sub(amount);
-                    *nov_entry
-                };
-                store.module_state.treasury_reserve_bucket_nov = store
-                    .module_state
-                    .treasury_reserve_bucket_nov
-                    .saturating_sub(amount);
-                let reserve_bucket_after = store.module_state.treasury_reserve_bucket_nov;
-                store.module_state.treasury_redeemed_nov_total = store
-                    .module_state
-                    .treasury_redeemed_nov_total
-                    .saturating_add(amount);
-                let redeemed_nov = store
-                    .module_state
-                    .treasury_redeemed_by_asset
-                    .entry("NOV".to_string())
-                    .or_insert(0);
-                *redeemed_nov = redeemed_nov.saturating_add(amount);
-                append_treasury_settlement_journal_v1(
-                    store,
-                    NovTreasurySettlementJournalEntryV1 {
-                        seq: 0,
-                        unix_ms: now_unix_millis_v1(),
-                        kind: "reserve_redeem".to_string(),
-                        tx_hash: to_hex(&request.tx_hash),
-                        source_asset: "NOV".to_string(),
-                        source_amount: amount,
-                        settled_nov: amount,
-                        reserve_bucket_delta_nov: -saturating_u128_to_i128_v1(amount),
-                        fee_bucket_delta_nov: 0,
-                        risk_buffer_delta_nov: 0,
-                        route_ref: "treasury.reserve_redeem".to_string(),
-                        clearing_source: "treasury".to_string(),
-                        clearing_rate_ppm: 0,
-                        policy_version: policy.policy_version,
-                        policy_source: policy_source.clone(),
-                        policy_contract_id: policy_contract_id.clone(),
-                        policy_threshold_state: policy_threshold_state.clone(),
-                        policy_constrained_strategy: policy.clearing_constrained_strategy.clone(),
-                        policy_event_state: "redeemed".to_string(),
-                        status: "applied".to_string(),
-                        reason: None,
-                    },
-                );
-                let log = NovNativeExecutionLogV1 {
-                    module: "treasury".to_string(),
-                    method: "redeem_reserve".to_string(),
-                    event: "treasury.reserve_redeemed".to_string(),
-                    data: serde_json::json!({
-                        "asset": "NOV",
-                        "amount": amount,
-                        "reserve_bucket_after": reserve_bucket_after,
-                        "total_reserve_after": total_reserve_after,
-                        "risk_buffer_nov": store.module_state.treasury_risk_buffer_nov,
-                        "risk_buffer_min_nov": policy.min_risk_buffer_nov,
-                    }),
-                };
-                NovNativeExecutionReceiptV1 {
-                    tx_hash: to_hex(&request.tx_hash),
-                    status: true,
-                    target: execution_target_label_v1(&request.target),
-                    module: "treasury".to_string(),
-                    method: "redeem_reserve".to_string(),
-                    settled_fee_nov: settled_fee.nov_amount,
-                    paid_asset: settled_fee.source_asset.clone(),
-                    paid_amount: settled_fee.source_amount,
-                    logs: vec![log],
-                    failure_reason: None,
-                    fee_contract: settled_fee.fee_contract.clone(),
-                    fee_route: settled_fee.route.clone(),
-                    fee_quote_id: settled_fee.quote_id.clone(),
-                    fee_quote_contract: settled_fee.quote_contract.clone(),
-                    fee_clearing_contract: settled_fee.clearing_contract.clone(),
-                    fee_price_source: settled_fee.price_source.clone(),
-                    fee_quote_required_pay_amount: settled_fee.required_source_amount,
-                    fee_quote_expires_at_unix_ms: settled_fee.quote_expires_at_unix_ms,
-                    fee_clearing_route_ref: settled_fee.clearing_route_ref.clone(),
-                    fee_clearing_source: settled_fee.clearing_source.clone(),
-                    fee_clearing_rate_ppm: settled_fee.clearing_rate_ppm,
-                    route_meta: route_meta_from_settled_fee_v1(settled_fee),
-                    policy_meta: policy_meta_from_settled_fee_v1(settled_fee),
-                }
-            } else {
-                let available = store
-                    .module_state
-                    .treasury_reserves
-                    .get(asset.as_str())
-                    .copied()
-                    .unwrap_or(0);
-                if available < amount {
-                    increment_settlement_failure_v1(store, "insufficient_reserve");
-                    return build_failed_native_receipt_v1(
-                        request,
-                        settled_fee,
-                        "treasury".to_string(),
-                        "redeem_reserve".to_string(),
-                        fee_settlement_reason_v1(
-                            "insufficient_reserve",
-                            format!(
-                                "asset={} requested={} available={}",
-                                asset, amount, available
-                            )
-                            .as_str(),
-                        ),
-                    );
-                }
-                let reserve_after = {
-                    let entry = store
-                        .module_state
-                        .treasury_reserves
-                        .entry(asset.clone())
-                        .or_insert(0);
-                    *entry = entry.saturating_sub(amount);
-                    *entry
-                };
-                let redeemed_entry = store
-                    .module_state
-                    .treasury_redeemed_by_asset
-                    .entry(asset.clone())
-                    .or_insert(0);
-                *redeemed_entry = redeemed_entry.saturating_add(amount);
-                append_treasury_settlement_journal_v1(
-                    store,
-                    NovTreasurySettlementJournalEntryV1 {
-                        seq: 0,
-                        unix_ms: now_unix_millis_v1(),
-                        kind: "reserve_redeem".to_string(),
-                        tx_hash: to_hex(&request.tx_hash),
-                        source_asset: asset.clone(),
-                        source_amount: amount,
-                        settled_nov: 0,
-                        reserve_bucket_delta_nov: 0,
-                        fee_bucket_delta_nov: 0,
-                        risk_buffer_delta_nov: 0,
-                        route_ref: "treasury.reserve_redeem".to_string(),
-                        clearing_source: "treasury".to_string(),
-                        clearing_rate_ppm: 0,
-                        policy_version: policy.policy_version,
-                        policy_source: policy_source.clone(),
-                        policy_contract_id: policy_contract_id.clone(),
-                        policy_threshold_state: policy_threshold_state.clone(),
-                        policy_constrained_strategy: policy.clearing_constrained_strategy.clone(),
-                        policy_event_state: "redeemed".to_string(),
-                        status: "applied".to_string(),
-                        reason: None,
-                    },
-                );
-                let log = NovNativeExecutionLogV1 {
-                    module: "treasury".to_string(),
-                    method: "redeem_reserve".to_string(),
-                    event: "treasury.reserve_redeemed".to_string(),
-                    data: serde_json::json!({
-                        "asset": asset,
-                        "amount": amount,
-                        "reserve_after": reserve_after,
-                    }),
-                };
-                NovNativeExecutionReceiptV1 {
-                    tx_hash: to_hex(&request.tx_hash),
-                    status: true,
-                    target: execution_target_label_v1(&request.target),
-                    module: "treasury".to_string(),
-                    method: "redeem_reserve".to_string(),
-                    settled_fee_nov: settled_fee.nov_amount,
-                    paid_asset: settled_fee.source_asset.clone(),
-                    paid_amount: settled_fee.source_amount,
-                    logs: vec![log],
-                    failure_reason: None,
-                    fee_contract: settled_fee.fee_contract.clone(),
-                    fee_route: settled_fee.route.clone(),
-                    fee_quote_id: settled_fee.quote_id.clone(),
-                    fee_quote_contract: settled_fee.quote_contract.clone(),
-                    fee_clearing_contract: settled_fee.clearing_contract.clone(),
-                    fee_price_source: settled_fee.price_source.clone(),
-                    fee_quote_required_pay_amount: settled_fee.required_source_amount,
-                    fee_quote_expires_at_unix_ms: settled_fee.quote_expires_at_unix_ms,
-                    fee_clearing_route_ref: settled_fee.clearing_route_ref.clone(),
-                    fee_clearing_source: settled_fee.clearing_source.clone(),
-                    fee_clearing_rate_ppm: settled_fee.clearing_rate_ppm,
-                    route_meta: route_meta_from_settled_fee_v1(settled_fee),
-                    policy_meta: policy_meta_from_settled_fee_v1(settled_fee),
-                }
-            }
+            dispatch_treasury_redeem_v1(request, settled_fee, store, &args_json, "redeem_reserve")
+        }
+        ("amm", "swap_exact_in") => {
+            dispatch_amm_swap_exact_in_v1(request, settled_fee, store, &args_json)
+        }
+        ("credit_engine", "open_vault") => {
+            dispatch_credit_engine_open_vault_v1(request, settled_fee, store, &args_json)
         }
         ("governance", "submit_proposal") => {
             let proposal_payload = args_json.clone();
@@ -3945,6 +4579,20 @@ pub fn get_nov_native_execution_receipt_by_hash_v1(
 ) -> Result<Option<NovNativeExecutionReceiptV1>> {
     let path = nov_native_execution_store_path_v1();
     get_nov_native_execution_receipt_by_hash_with_store_path_v1(path.as_path(), tx_hash)
+}
+
+pub fn get_nov_native_account_asset_balance_with_store_path_v1(
+    path: &Path,
+    account: &str,
+    asset: &str,
+) -> Result<u128> {
+    let store = load_nov_native_execution_store_v1(path)?;
+    Ok(native_account_asset_balance_v1(&store, account, asset))
+}
+
+pub fn get_nov_native_account_asset_balance_v1(account: &str, asset: &str) -> Result<u128> {
+    let path = nov_native_execution_store_path_v1();
+    get_nov_native_account_asset_balance_with_store_path_v1(path.as_path(), account, asset)
 }
 
 pub fn get_nov_native_treasury_settlement_summary_with_store_path_v1(
@@ -7838,6 +8486,293 @@ mod tests {
                     .unwrap_or_default()
                     >= 1
             );
+        });
+    }
+
+    #[test]
+    fn treasury_redeem_alias_credits_user_balance_and_journal() {
+        with_test_native_execution_store_path_v1(|path| {
+            let mut pre = NovNativeExecutionStoreV1::default();
+            pre.module_state
+                .treasury_reserves
+                .insert("NOV".to_string(), 250);
+            pre.module_state.treasury_reserve_bucket_nov = 200;
+            pre.module_state.treasury_fee_bucket_nov = 30;
+            pre.module_state.treasury_risk_buffer_nov = 20;
+            pre.module_state.treasury_settled_nov_total = 250;
+            pre.module_state.treasury_settlements = 1;
+            save_nov_native_execution_store_v1(path.as_path(), &pre).expect("seed reserve state");
+
+            let request = NovExecutionRequestV1 {
+                tx_hash: [0xa1; 32],
+                chain_id: 8021,
+                caller: vec![0x41; 20],
+                target: NovExecutionRequestTargetV1::NativeModule("treasury".to_string()),
+                method: "redeem".to_string(),
+                args: serde_json::to_vec(&serde_json::json!({
+                    "asset_out": "NOV",
+                    "nov_amount": 50u64
+                }))
+                .expect("encode args"),
+                fee_pay_asset: "NOV".to_string(),
+                fee_max_pay_amount: 500,
+                fee_slippage_bps: 0,
+                gas_like_limit: Some(80_000),
+                nonce: 41,
+            };
+            let receipt = dispatch_and_persist_nov_execution_request_with_store_path_v1(
+                path.as_path(),
+                &request,
+            )
+            .expect("dispatch should return successful redeem receipt");
+            assert!(receipt.status);
+            assert_eq!(receipt.module, "treasury");
+            assert_eq!(receipt.method, "redeem");
+
+            let caller = to_hex_prefixed_v1(request.caller.as_slice());
+            let balance = get_nov_native_account_asset_balance_with_store_path_v1(
+                path.as_path(),
+                caller.as_str(),
+                "NOV",
+            )
+            .expect("native account balance should load");
+            assert_eq!(balance, 50);
+
+            let journal = run_nov_native_call_from_params_with_store_path_v1(
+                &serde_json::json!({
+                    "target": {"kind": "native_module", "id": "treasury"},
+                    "method": "get_settlement_journal",
+                    "args": {"limit": 1}
+                }),
+                Some(path.as_path()),
+            )
+            .expect("get_settlement_journal should succeed");
+            assert_eq!(
+                journal["result"]["entries"][0]["kind"].as_str(),
+                Some("reserve_redeem")
+            );
+            assert_eq!(
+                journal["result"]["entries"][0]["status"].as_str(),
+                Some("applied")
+            );
+        });
+    }
+
+    #[test]
+    fn amm_swap_exact_in_updates_balances_and_trace() {
+        with_test_native_execution_store_path_v1(|path| {
+            let caller = format!("0x{}", "51".repeat(20));
+            let mut pre = NovNativeExecutionStoreV1::default();
+            credit_native_account_asset_balance_v1(&mut pre, caller.as_str(), "USDT", 1_000);
+            pre.module_state.clearing_static_amm_pools.insert(
+                "usdt_nov_user_pool".to_string(),
+                NovStaticAmmPoolStateV1 {
+                    pool_id: "usdt_nov_user_pool".to_string(),
+                    asset_x: "USDT".to_string(),
+                    asset_y: "NOV".to_string(),
+                    reserve_x: 1_000_000,
+                    reserve_y: 2_000_000,
+                    swap_fee_ppm: 3_000,
+                    enabled: true,
+                },
+            );
+            save_nov_native_execution_store_v1(path.as_path(), &pre).expect("seed amm state");
+
+            let request = NovExecutionRequestV1 {
+                tx_hash: [0xa2; 32],
+                chain_id: 8022,
+                caller: vec![0x51; 20],
+                target: NovExecutionRequestTargetV1::NativeModule("amm".to_string()),
+                method: "swap_exact_in".to_string(),
+                args: serde_json::to_vec(&serde_json::json!({
+                    "asset_in": "USDT",
+                    "asset_out": "NOV",
+                    "amount_in": 100u64,
+                    "min_amount_out": 1u64,
+                    "slippage_bps": 25u64
+                }))
+                .expect("encode args"),
+                fee_pay_asset: "NOV".to_string(),
+                fee_max_pay_amount: 500,
+                fee_slippage_bps: 0,
+                gas_like_limit: Some(90_000),
+                nonce: 42,
+            };
+            let receipt = dispatch_and_persist_nov_execution_request_with_store_path_v1(
+                path.as_path(),
+                &request,
+            )
+            .expect("dispatch should succeed");
+            assert!(
+                receipt.status,
+                "failure_reason={:?}",
+                receipt.failure_reason
+            );
+            assert_eq!(receipt.module, "amm");
+            assert_eq!(receipt.method, "swap_exact_in");
+
+            let usdt_after = get_nov_native_account_asset_balance_with_store_path_v1(
+                path.as_path(),
+                caller.as_str(),
+                "USDT",
+            )
+            .expect("load USDT balance");
+            let nov_after = get_nov_native_account_asset_balance_with_store_path_v1(
+                path.as_path(),
+                caller.as_str(),
+                "NOV",
+            )
+            .expect("load NOV balance");
+            assert_eq!(usdt_after, 900);
+            assert!(nov_after > 0);
+
+            let trace = run_nov_native_call_from_params_with_store_path_v1(
+                &serde_json::json!({
+                    "target": {"kind": "native_module", "id": "treasury"},
+                    "method": "get_execution_trace_by_tx",
+                    "args": {"tx_hash": receipt.tx_hash}
+                }),
+                Some(path.as_path()),
+            )
+            .expect("trace lookup should succeed");
+            assert_eq!(trace["found"].as_bool(), Some(true));
+            assert_eq!(trace["result"]["final_status"].as_str(), Some("success"));
+        });
+    }
+
+    #[test]
+    fn amm_swap_exact_in_rejects_when_constrained_strategy_blocks_user_path() {
+        with_test_native_execution_store_path_v1(|path| {
+            let caller = format!("0x{}", "52".repeat(20));
+            let mut pre = NovNativeExecutionStoreV1::default();
+            credit_native_account_asset_balance_v1(&mut pre, caller.as_str(), "USDT", 1_000);
+            pre.module_state.clearing_enabled = true;
+            pre.module_state.clearing_require_healthy_risk_buffer = false;
+            pre.module_state.clearing_constrained_strategy = "blocked".to_string();
+            pre.module_state.treasury_min_reserve_bucket_nov = 100;
+            pre.module_state.treasury_reserve_bucket_nov = 0;
+            pre.module_state.treasury_min_risk_buffer_nov = 1;
+            pre.module_state.treasury_risk_buffer_nov = 10;
+            pre.module_state.clearing_static_amm_pools.insert(
+                "usdt_nov_blocked_pool".to_string(),
+                NovStaticAmmPoolStateV1 {
+                    pool_id: "usdt_nov_blocked_pool".to_string(),
+                    asset_x: "USDT".to_string(),
+                    asset_y: "NOV".to_string(),
+                    reserve_x: 1_000_000,
+                    reserve_y: 1_000_000,
+                    swap_fee_ppm: 3_000,
+                    enabled: true,
+                },
+            );
+            save_nov_native_execution_store_v1(path.as_path(), &pre).expect("seed blocked state");
+
+            let request = NovExecutionRequestV1 {
+                tx_hash: [0xa3; 32],
+                chain_id: 8023,
+                caller: vec![0x52; 20],
+                target: NovExecutionRequestTargetV1::NativeModule("amm".to_string()),
+                method: "swap_exact_in".to_string(),
+                args: serde_json::to_vec(&serde_json::json!({
+                    "asset_in": "USDT",
+                    "asset_out": "NOV",
+                    "amount_in": 100u64,
+                    "min_amount_out": 1u64,
+                    "slippage_bps": 25u64
+                }))
+                .expect("encode args"),
+                fee_pay_asset: "NOV".to_string(),
+                fee_max_pay_amount: 500,
+                fee_slippage_bps: 0,
+                gas_like_limit: Some(90_000),
+                nonce: 43,
+            };
+            let receipt = dispatch_and_persist_nov_execution_request_with_store_path_v1(
+                path.as_path(),
+                &request,
+            )
+            .expect("dispatch should return blocked receipt");
+            assert!(!receipt.status);
+            assert_eq!(receipt.module, "amm");
+            assert_eq!(receipt.method, "swap_exact_in");
+            assert!(receipt
+                .failure_reason
+                .clone()
+                .unwrap_or_default()
+                .starts_with("fee.clearing.constrained_blocked"));
+        });
+    }
+
+    #[test]
+    fn credit_engine_open_vault_persists_vault_and_mints_debt_asset() {
+        with_test_native_execution_store_path_v1(|path| {
+            let caller = format!("0x{}", "53".repeat(20));
+            let mut pre = NovNativeExecutionStoreV1::default();
+            credit_native_account_asset_balance_v1(&mut pre, caller.as_str(), "ETH", 500);
+            save_nov_native_execution_store_v1(path.as_path(), &pre)
+                .expect("seed vault collateral state");
+
+            let request = NovExecutionRequestV1 {
+                tx_hash: [0xa4; 32],
+                chain_id: 8024,
+                caller: vec![0x53; 20],
+                target: NovExecutionRequestTargetV1::NativeModule("credit_engine".to_string()),
+                method: "open_vault".to_string(),
+                args: serde_json::to_vec(&serde_json::json!({
+                    "collateral_asset": "ETH",
+                    "collateral_amount": 300u64,
+                    "debt_asset": "NUSD",
+                    "mint_amount": 100u64
+                }))
+                .expect("encode args"),
+                fee_pay_asset: "NOV".to_string(),
+                fee_max_pay_amount: 500,
+                fee_slippage_bps: 0,
+                gas_like_limit: Some(90_000),
+                nonce: 44,
+            };
+            let receipt = dispatch_and_persist_nov_execution_request_with_store_path_v1(
+                path.as_path(),
+                &request,
+            )
+            .expect("dispatch should succeed");
+            assert!(
+                receipt.status,
+                "failure_reason={:?}",
+                receipt.failure_reason
+            );
+            assert_eq!(receipt.module, "credit_engine");
+            assert_eq!(receipt.method, "open_vault");
+
+            let store = load_nov_native_execution_store_v1(path.as_path())
+                .expect("reload native execution store");
+            assert_eq!(store.module_state.credit_vaults.len(), 1);
+            let vault = store
+                .module_state
+                .credit_vaults
+                .values()
+                .next()
+                .expect("vault should exist");
+            assert_eq!(vault.owner, caller);
+            assert_eq!(vault.collateral_asset, "ETH");
+            assert_eq!(vault.collateral_amount, 300);
+            assert_eq!(vault.debt_asset, "NUSD");
+            assert_eq!(vault.debt_amount, 100);
+
+            let eth_after = get_nov_native_account_asset_balance_with_store_path_v1(
+                path.as_path(),
+                caller.as_str(),
+                "ETH",
+            )
+            .expect("load ETH balance");
+            let nusd_after = get_nov_native_account_asset_balance_with_store_path_v1(
+                path.as_path(),
+                caller.as_str(),
+                "NUSD",
+            )
+            .expect("load NUSD balance");
+            assert_eq!(eth_after, 200);
+            assert_eq!(nusd_after, 100);
         });
     }
 

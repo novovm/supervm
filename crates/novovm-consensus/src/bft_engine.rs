@@ -7,7 +7,7 @@ use crate::governance_verifier::{
     build_governance_vote_verifier, GovernanceVoteVerifier, GovernanceVoteVerifierScheme,
 };
 use crate::market_engine::Web30MarketEngineSnapshot;
-use crate::protocol::{HotStuffProtocol, Phase, ProtocolState};
+use crate::protocol::{GovernanceEngineSnapshot, HotStuffProtocol, Phase, ProtocolState};
 use crate::quorum_cert::{QuorumCertificate, Vote};
 use crate::types::{
     BFTError, BFTProposal, BFTResult, FeeRoutingOutcome, GovernanceAccessPolicy,
@@ -581,6 +581,16 @@ impl BFTEngine {
     /// Compatibility shim: kept for existing gate/scripts and will be removed after profile update.
     pub fn governance_market_runtime_snapshot(&self) -> Web30MarketEngineSnapshot {
         self.governance_market_engine_snapshot()
+    }
+
+    pub fn governance_snapshot(&self) -> GovernanceEngineSnapshot {
+        let protocol = self.protocol.lock().expect("BFTEngine mutex poisoned");
+        protocol.governance_snapshot()
+    }
+
+    pub fn restore_governance_snapshot(&self, snapshot: GovernanceEngineSnapshot) -> BFTResult<()> {
+        let mut protocol = self.protocol.lock().expect("BFTEngine mutex poisoned");
+        protocol.restore_governance_snapshot(snapshot)
     }
 
     /// 更新 token economics policy（运行期可由治理层下发）。

@@ -10,9 +10,11 @@ use crate::governance_verifier::{
     GovernanceVoteVerificationReport, GovernanceVoteVerifier, GovernanceVoteVerifierScheme,
     GOVERNANCE_VOTE_VERIFY_BATCH_MIN,
 };
-use crate::market_engine::{Web30MarketEngine, Web30MarketEngineSnapshot};
+use crate::market_engine::{
+    Web30MarketEngine, Web30MarketEngineSnapshot, Web30MarketEngineStateSnapshot,
+};
 use crate::quorum_cert::{QuorumCertificate, Vote};
-use crate::token_runtime::Web30TokenRuntime;
+use crate::token_runtime::{Web30TokenRuntime, Web30TokenRuntimeSnapshot};
 use crate::types::{
     BFTError, BFTProposal, BFTResult, FeeRoutingOutcome, GovernanceAccessPolicy,
     GovernanceChainAuditEvent, GovernanceCouncilPolicy, GovernanceOp, GovernanceProposal,
@@ -105,6 +107,24 @@ impl ProtocolState {
         self.active_proposal = None;
         self.votes.clear();
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GovernanceEngineSnapshot {
+    pub protocol_state: ProtocolState,
+    pub slash_policy: SlashPolicy,
+    pub governance_execution_enabled: bool,
+    pub governance_access_policy: GovernanceAccessPolicy,
+    pub governance_council_policy: GovernanceCouncilPolicy,
+    pub governance_proposals: Vec<GovernanceProposal>,
+    pub next_governance_proposal_id: u64,
+    pub governance_chain_audit_events: Vec<GovernanceChainAuditEvent>,
+    pub governance_mempool_fee_floor: u64,
+    pub governance_network_dos_policy: NetworkDosPolicy,
+    pub governance_token_economics_policy: TokenEconomicsPolicy,
+    pub governance_market_policy: MarketGovernancePolicy,
+    pub token_runtime_snapshot: Web30TokenRuntimeSnapshot,
+    pub market_engine_state_snapshot: Web30MarketEngineStateSnapshot,
 }
 
 /// HotStuff-2 协议实现
@@ -896,6 +916,86 @@ impl HotStuffProtocol {
     /// Compatibility shim: kept for existing gate/scripts and will be removed after profile update.
     pub fn governance_market_runtime_snapshot(&self) -> Web30MarketEngineSnapshot {
         self.governance_market_engine_snapshot()
+    }
+
+    pub fn governance_snapshot(&self) -> GovernanceEngineSnapshot {
+        let mut governance_proposals: Vec<_> =
+            self.governance_proposals.values().cloned().collect();
+        governance_proposals.sort_by_key(|proposal| proposal.proposal_id);
+        GovernanceEngineSnapshot {
+            protocol_state: self.state.clone(),
+            slash_policy: self.slash_policy.clone(),
+            governance_execution_enabled: self.governance_execution_enabled,
+            governance_access_policy: self.governance_access_policy.clone(),
+            governance_council_policy: self.governance_council_policy.clone(),
+            governance_proposals,
+            next_governance_proposal_id: self.next_governance_proposal_id,
+            governance_chain_audit_events: self.governance_chain_audit_events.clone(),
+            governance_mempool_fee_floor: self.governance_mempool_fee_floor,
+            governance_network_dos_policy: self.governance_network_dos_policy.clone(),
+            governance_token_economics_policy: self.governance_token_economics_policy.clone(),
+            governance_market_policy: self.governance_market_policy.clone(),
+            token_runtime_snapshot: self.token_runtime.snapshot(),
+            market_engine_state_snapshot: self.market_engine.state_snapshot(),
+        }
+    }
+
+    pub fn restore_governance_snapshot(
+        &mut self,
+        snapshot: GovernanceEngineSnapshot,
+    ) -> BFTResult<()> {
+        snapshot.slash_policy.validate()?;
+        snapshot.governance_access_policy.validate()?;
+        snapshot.governance_council_policy.validate()?;
+        snapshot.governance_network_dos_policy.validate()?;
+        snapshot.governance_token_economics_policy.validate()?;
+        snapshot.governance_market_policy.validate()?;
+
+        self.state = snapshot.protocol_state;
+        self.observed_votes.clear();
+        self.slash_policy = snapshot.slash_policy;
+        self.governance_execution_enabled = snapshot.governance_execution_enabled;
+        self.governance_access_policy = snapshot.governance_access_policy;
+        self.governance_council_policy = snapshot.governance_council_policy;
+        self.governance_proposals = snapshot
+            .governance_proposals
+            .into_iter()
+            .map(|proposal| (proposal.proposal_id, proposal))
+            .collect();
+        self.next_governance_proposal_id = snapshot.next_governance_proposal_id.max(
+            self.governance_proposals
+                .keys()
+                .copied()
+                .max()
+                .unwrap_or(0)
+                .saturating_add(1),
+        );
+        self.governance_chain_audit_events = snapshot.governance_chain_audit_events;
+        self.next_governance_chain_audit_seq = self
+            .governance_chain_audit_events
+            .last()
+            .map(|event| event.seq)
+            .unwrap_or(0);
+        self.governance_chain_audit_root =
+            Self::compute_governance_chain_audit_root(&self.governance_chain_audit_events);
+        self.governance_mempool_fee_floor = snapshot.governance_mempool_fee_floor.max(1);
+        self.governance_network_dos_policy = snapshot.governance_network_dos_policy;
+        self.governance_token_economics_policy = snapshot.governance_token_economics_policy.clone();
+        self.governance_market_policy = snapshot.governance_market_policy.clone();
+        self.token_runtime = Web30TokenRuntime::restore_from_snapshot(
+            &snapshot.governance_token_economics_policy,
+            &snapshot.token_runtime_snapshot,
+        )?;
+        self.account_index = UnifiedAccountIndex::new(100);
+        self.account_index
+            .refresh_from_token_runtime(&self.token_runtime);
+        self.market_engine = Web30MarketEngine::restore_from_state_snapshot(
+            &snapshot.governance_market_policy,
+            &snapshot.market_engine_state_snapshot,
+        )?;
+        self.market_engine
+            .set_dividend_account_index_snapshot(self.account_index.dividend_snapshot());
+        Ok(())
     }
 
     /// mint：amount>0、不超过 locked_supply 剩余额度、且不突破 max_supply。
