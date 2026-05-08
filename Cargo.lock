@@ -1529,6 +1529,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "novovm-governance-observability"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "novovm-network"
 version = "0.1.0"
 dependencies = [
@@ -1556,6 +1566,7 @@ dependencies = [
  "aoem-bindings",
  "chrono",
  "ed25519-dalek",
+ "k256",
  "lettre",
  "libloading",
  "novovm-adapter-api",
@@ -1564,6 +1575,7 @@ dependencies = [
  "novovm-adapter-novovm",
  "novovm-consensus",
  "novovm-exec",
+ "novovm-governance-observability",
  "novovm-network",
  "novovm-protocol",
  "postcard",
@@ -1613,6 +1625,7 @@ name = "novovmctl"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "novovm-governance-observability",
  "serde",
  "serde_json",
  "thiserror 1.0.69",

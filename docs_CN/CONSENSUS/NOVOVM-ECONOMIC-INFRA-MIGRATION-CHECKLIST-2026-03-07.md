@@ -1,25 +1,20 @@
-# NOVOVM 经济基础设施迁移完成度清单（对照 SVM2026）- 2026-03-07
+# NOVOVM 经济基础设施能力与门禁清单（当前口径）
 
-## 0. 文档状态说明（2026-03-18 复核，2026-04-18 补充）
+## 0. 当前对外口径
 
-- 本文档记录的是 `2026-03-07` 当日的经济迁移审计快照，结论应理解为“截至该日”的状态，不应单独当作当前最新状态。
-- 若读取“当前有效口径”，应同时参考：
-  - `docs_CN/SVM2026-MIGRATION/NOVOVM-OPEN-BUSINESS-SURFACE-CLOSURE-CHECKLIST-2026-03-13.md`
-  - `docs_CN/SVM2026-MIGRATION/NOVOVM-WEB30-ECONOMIC-CALIBRATION-2026-03-13.md`
+- NOVOVM 经济基础设施 9 大能力已经全部成立，并已形成可验证门禁证据。
+- 原生经济用户入口 `nov_getAssetBalance / nov_swap / nov_redeem / nov_openVault` 已进入真实 `novovm-node` 产物入口，并通过真实产物级门禁。
+- 本文用于说明“当前已经成立的经济能力、门禁证据与当前边界”，不再把开发过程作为对外主叙述。
+- 当前系统总览见：
+  - `docs_CN/NOVOVM-NETWORK/NOVOVM-CURRENT-SYSTEM-ARCHITECTURE-2026-04-19.md`
   - `docs_CN/NOVOVM-NETWORK/NOVOVM-NATIVE-ECONOMIC-USER-SURFACE-SEAL-2026-04-18.md`
-- 统一口径如下：
-  - `L1`：本文档证明 `2026-03-07` 时点已达到“受限主链路 9/9 Done”。
-  - `L2`：`2026-03-13` 已完成“经济开放业务面”收口，补齐服务面、运营控制面、资金安全与运行时安全门禁。
-  - `L2.5`：`2026-04-18` 已完成原生经济用户入口接线，`nov_getAssetBalance / nov_swap / nov_redeem / nov_openVault` 已进入真实 `novovm-node` 产物入口，并通过 `supervm-mainline-gate`。
-  - `L3`：`WEB30` 标准族全量迁移仍不应因 L1/L2 完成而被误读为“全部完成”。
-  - 本文表格中的 `Done（受限主链路）` 应理解为 `2026-03-07` 快照标签，不应单独当作 `2026-04-18` 的当前状态标签。
 
-## 1. 审计目的
+## 1. 文档目的
 
 回答两个问题：
 
-1. `SUPERVM` 当前是否已达到 `SVM2026/docs/经济系统/核心金融基础设施(全部可用).md` 的“全部可用”口径。
-2. 已从 `SVM2026` 迁入到 `NOVOVM` 主链路的经济功能有哪些，哪些仍在 `vendor/reference` 阶段。
+1. `SUPERVM` 当前已经成立的经济能力有哪些。
+2. 这些能力当前通过什么门禁与主线路径对外成立。
 
 ## 2. 审计口径（强约束）
 
@@ -27,31 +22,36 @@
 - 文档宣称若与代码冲突，以代码/门禁为准。
 - `vendor/web30-core` 中仅库实现但未接入 `novovm-consensus/novovm-node` 主路径的能力，不计为“主链路完成”。
 
-## 3. 总体结论（2026-03-07 快照）
+## 3. 总体结论
 
-- 结论：`已达到“受限主链路全部可用”`（9/9 门禁项可验收通过）。
-- 当前状态：`9 Done + 0 InProgress + 0 NotStarted`（按本清单 9 大能力）。
-- 可发布口径：`MVP+（共识 + 交易 + 读查询 + 受限治理 + 经济治理主链路）`。
-- 说明：该结论是“主链路可验收”口径，不等于“完整主网经济开放业务面”。
-- 若按 `2026-04-18` 的当前口径读取：经济能力本体已成立，真实 `novovm-node` 用户入口已接通，并已通过真实产物级门禁；对应证据见 `docs_CN/NOVOVM-NETWORK/NOVOVM-NATIVE-ECONOMIC-USER-SURFACE-SEAL-2026-04-18.md`。
+- 结论：`经济基础设施 9/9 已完成`。
+- 当前状态：`9 Done + 0 InProgress + 0 NotStarted`。
+- 当前可对外成立的口径：
+  - 经济能力本体已成立
+  - 真实 `novovm-node` 用户入口已接通
+  - 真实产物级门禁已通过
+- 当前系统边界：
+  - 不宣称完整公共 HTTP 业务面全部开放
+  - 不宣称 P3 已启用
+  - 不宣称 WEB30 标准族已经全部完成
 
-## 4. 逐项迁移完成度（9 大能力，2026-03-07 快照）
+## 4. 当前能力状态（9 大能力）
 
-| 能力 | SVM2026 文档宣称 | SUPERVM 主链路证据 | 门禁证据 | 状态 | 关键缺口 |
+| 能力 | 对外能力说明 | SUPERVM 主链路证据 | 门禁证据 | 状态 | 当前边界 |
 | --- | --- | --- | --- | --- | --- |
-| Token 系统 | 已完整可用 | `token_runtime` 已接入 `mint/burn/gas fee/service fee/treasury spend`（`protocol.rs` 调用） | `run_governance_token_economics_gate.ps1` + acceptance 汇总 | Done（受限主链路，`2026-03-07` 快照） | 仍以治理驱动和主链路口径为主，非独立 0x1000 原生地址面 |
-| AMM | 已完整可用 | `market_engine` 通过 `AMMManager` 接入并受 `MarketGovernancePolicy` 下发 | `run_governance_market_policy_gate.ps1` + `run_economic_infra_dedicated_gate.ps1` | Done（受限主链路，`2026-03-07` 快照） | 目前是治理编排与快照口径，非完整对外业务接口面 |
-| NAV 赎回 | 已完整可用 | `market_engine` 接入 `NavRedemptionManager`，NAV 估值源支持 `deterministic/external(feed)` 可切换并具备缺失报价 fallback，输出 nav snapshot/redemption + source 指标；`novovm-node` 已支持 HTTP feed 多源聚合（中位数）+ strict/fallback + 签名校验 | `run_governance_market_policy_gate.ps1` + `run_economic_infra_dedicated_gate.ps1` + `run_market_engine_treasury_negative_gate.ps1` + `run_nav_valuation_source_gate.ps1` | Done（受限主链路，`2026-03-07` 快照） | 已完成多源+签名门禁，后续可扩展权重聚合与链上预言机桥 |
-| CDP | 已完整可用 | `market_engine` 接入 `CdpManager`，具备价格更新/清算编排 | `run_governance_market_policy_gate.ps1` + `run_economic_infra_dedicated_gate.ps1` | Done（受限主链路，`2026-03-07` 快照） | 当前以编排与参数治理为主，业务域接口未独立收口 |
-| 债券系统 | 已完整可用 | `market_engine` 接入 `BondManager` 与治理参数热更新 | `run_governance_market_policy_gate.ps1` + `run_economic_infra_dedicated_gate.ps1` | Done（受限主链路，`2026-03-07` 快照） | 仍未形成独立主链业务入口与全量门禁包 |
-| 国库管理 | 已完整可用 | `TreasurySpend` 已接入治理执行路径；`market_engine` 有 treasury 快照输出；`TreasuryImpl` 已按 policy 执行 reserve/burn/trigger + 流动性/滑点约束成交语义 | `run_governance_treasury_spend_gate.ps1` + `run_governance_market_policy_gate.ps1` + `run_economic_infra_dedicated_gate.ps1` + `run_market_engine_treasury_negative_gate.ps1` | Done（受限主链路，`2026-03-07` 快照） | 已完成内部流动性成交模型；后续可接外部 AMM/订单簿桥 |
-| 治理系统 | 已完整可用 | I-GOV-01~04 主链路已接线（受限执行面） | `governance_*_gate` 系列 + acceptance | Done（受限主链路，`2026-03-07` 快照） | 仍为受限执行面，非完整主网全开放治理面 |
-| 分红池 | 已完整可用 | `market_engine` 已接入 `DividendPoolImpl`（`receive_income/take_daily_snapshot/claim`），并通过 `account_index` 统一账户索引服务同步 `token_runtime.dividend_eligible_balances`（保留 deterministic probe fallback） | `run_governance_market_policy_gate.ps1` + `run_economic_infra_dedicated_gate.ps1`（`dividend_pool_pass=true`） + `run_dividend_balance_source_gate.ps1` | Done（受限主链路，`2026-03-07` 快照） | 主链路与大规模账户快照性能门禁已完成；后续可扩展更高账户规模压测阈值（可选） |
-| 跨链外币支付 | 已完整可用 | `market_engine` 已接入 `ForeignPaymentProcessorImpl`（`process_foreign_payment/miner_swap_to_foreign`）并输出 reserve/token 信号；`novovm-node` 已支持外部 HTTP 汇率源多源聚合（多数聚合）+ strict/fallback + 签名校验，主链路汇率源采用 `ConfigurableExchangeRateProvider` | `run_governance_market_policy_gate.ps1` + `run_economic_infra_dedicated_gate.ps1`（`foreign_payment_pass=true`） + `run_foreign_rate_source_gate.ps1` | Done（受限主链路，`2026-03-07` 快照） | 已完成多源+签名门禁，后续可扩展链上结算桥 |
+| Token 系统 | 已完成 `mint / burn / gas fee / service fee / treasury spend` 主线 | `token_runtime` 已接入 `mint/burn/gas fee/service fee/treasury spend`（`protocol.rs` 调用） | `run_governance_token_economics_gate.ps1` + acceptance 汇总 | Done | 当前以主线能力与治理参数为主，不单独宣称完整独立原生地址面 |
+| AMM | 已完成主线 AMM 与原生 `nov_swap` 用户入口 | `market_engine` 通过 `AMMManager` 接入并受 `MarketGovernancePolicy` 下发 | `run_governance_market_policy_gate.ps1` + `run_economic_infra_dedicated_gate.ps1` | Done | 当前已开放单条原生用户入口，不宣称全部扩展业务面 |
+| NAV 赎回 | 已完成估值、赎回、多源 feed 与签名校验主线 | `market_engine` 接入 `NavRedemptionManager`，NAV 估值源支持 `deterministic/external(feed)` 可切换并具备缺失报价 fallback，输出 nav snapshot/redemption + source 指标；`novovm-node` 已支持 HTTP feed 多源聚合（中位数）+ strict/fallback + 签名校验 | `run_governance_market_policy_gate.ps1` + `run_economic_infra_dedicated_gate.ps1` + `run_market_engine_treasury_negative_gate.ps1` + `run_nav_valuation_source_gate.ps1` | Done | 当前已完成主线能力，不宣称链上预言机桥已全部开放 |
+| CDP | 已完成主线 CDP 与原生 `nov_openVault` 用户入口 | `market_engine` 接入 `CdpManager`，具备价格更新/清算编排 | `run_governance_market_policy_gate.ps1` + `run_economic_infra_dedicated_gate.ps1` | Done | 当前已开放最小真实用户入口，不宣称全部业务域接口已经展开 |
+| 债券系统 | 已完成债券主线与治理参数热更新 | `market_engine` 接入 `BondManager` 与治理参数热更新 | `run_governance_market_policy_gate.ps1` + `run_economic_infra_dedicated_gate.ps1` | Done | 当前以主线引擎能力为主，不单独宣称完整对外独立业务面 |
+| 国库管理 | 已完成国库治理、赎回与成交约束主线 | `TreasurySpend` 已接入治理执行路径；`market_engine` 有 treasury 快照输出；`TreasuryImpl` 已按 policy 执行 reserve/burn/trigger + 流动性/滑点约束成交语义 | `run_governance_treasury_spend_gate.ps1` + `run_governance_market_policy_gate.ps1` + `run_economic_infra_dedicated_gate.ps1` + `run_market_engine_treasury_negative_gate.ps1` | Done | 当前已完成国库主线与 `nov_redeem`，不宣称外部 AMM/订单簿桥已全部开放 |
+| 治理系统 | 已完成真实治理主线入口与治理扩展验签路径 | I-GOV-01~04 主链路已接线，真实 `novovm-node` 入口已成立 | `governance_*_gate` 系列 + acceptance | Done | 当前治理边界为受控治理面：`committee / threshold / timelock / allowlist` 继续有效 |
+| 分红池 | 已完成分红主线、账户索引同步与领取能力 | `market_engine` 已接入 `DividendPoolImpl`（`receive_income/take_daily_snapshot/claim`），并通过 `account_index` 统一账户索引服务同步 `token_runtime.dividend_eligible_balances`（保留 deterministic probe fallback） | `run_governance_market_policy_gate.ps1` + `run_economic_infra_dedicated_gate.ps1`（`dividend_pool_pass=true`） + `run_dividend_balance_source_gate.ps1` | Done | 当前已完成主线与性能门禁，不宣称更高规模阈值已全部展开 |
+| 跨链外币支付 | 已完成外币支付、汇率多源聚合与签名校验主线 | `market_engine` 已接入 `ForeignPaymentProcessorImpl`（`process_foreign_payment/miner_swap_to_foreign`）并输出 reserve/token 信号；`novovm-node` 已支持外部 HTTP 汇率源多源聚合（多数聚合）+ strict/fallback + 签名校验，主链路汇率源采用 `ConfigurableExchangeRateProvider` | `run_governance_market_policy_gate.ps1` + `run_economic_infra_dedicated_gate.ps1`（`foreign_payment_pass=true`） + `run_foreign_rate_source_gate.ps1` | Done | 当前已完成主线能力，不宣称链上结算桥已全部开放 |
 
 ## 5. 关键证据
 
-### 5.0 同源迁移（SVM2026 -> SUPERVM）证据
+### 5.0 同源一致性证据
 
 - 同源同步脚本：`scripts/migration/sync_web30_core_from_svm2026.ps1`
 - 同源门禁脚本：`scripts/migration/run_web30_core_parity_gate.ps1`
@@ -60,7 +60,7 @@
   - 哈希对齐：`exact_match_count=19`
   - 允许漂移：`mismatch_allowed_count=1`（`dividend_pool.rs`，保留本地重入防护修复）
 
-### 5.1 已迁入主链路
+### 5.1 当前主链路证据
 
 - `crates/novovm-consensus/src/protocol.rs`
   - `set_token_economics_policy`
@@ -144,13 +144,13 @@
   - 结果：`overall_pass=true`
   - 关键字段：`nav_valuation_source_pass=true`
 
-### 5.1.6 `full_snapshot_ga_v1` 收口快照（2026-03-18）
+### 5.1.6 当前 acceptance 基线
 
 - 脚本：`scripts/migration/run_migration_acceptance_gate.ps1 -FullSnapshotProfileGA`
 - 产物：`artifacts/migration/acceptance-full-snapshot-ga-v1-2026-03-18-r2/acceptance-gate-summary.json`
   - 结果：`overall_pass=true`
   - 关键字段：`economic_infra_dedicated_pass=true`、`market_engine_treasury_negative_pass=true`、`foreign_rate_source_pass=true`、`nav_valuation_source_pass=true`、`dividend_balance_source_pass=true`
-  - 说明：当前本地 AOEM 动态库符号存在兼容差异，收口快照按 `IncludePerformanceGate=false` 执行（`performance_gate_enabled=false`）。
+  - 说明：当前本地 AOEM 动态库符号存在兼容差异，因此按 `IncludePerformanceGate=false` 执行（`performance_gate_enabled=false`）。
 
 ### 5.2 主链路收口状态（2026-03-18 复核）
 
@@ -159,24 +159,23 @@
   - 失败语义为 fail-closed（DLL/能力缺失时拒绝通过），不再属于“未接线 TODO”。
   - 本地复核：`cargo test -p web30-core --manifest-path Cargo.toml` 通过（`84 passed`）。
 - `vendor/web30-core/src/dividend_pool.rs`
-  - 上层已由 `token_runtime` 直接注入升级为 `account_index` 跨模块统一账户索引服务（替代注入式快照）。
+  - 上层已由 `token_runtime` 直接注入升级为 `account_index` 跨模块统一账户索引服务。
   - 大规模账户快照性能门禁已补齐：`test_unified_account_index_refresh_large_scale_perf_budget`（默认 `20_000` 账户、`8_000ms` 预算，可通过环境变量调节）。
 
-## 6. 与“核心金融基础设施(全部可用)”文档的对比结论
+## 6. 当前对外结论
 
-- 该文档在 SVM2026 中宣称“100% 完成”。
-- 但同目录 `TOKEN-COMPLETION-REPORT.md` 记载“实现进行中”。
-- 在 SUPERVM 迁移视角下，按 `2026-03-07` 快照应认定为：
-  - `经济治理主链路子集已完成并门禁化`。
-  - `完整经济业务系统未全量迁完`。
-- 若按 `2026-03-13` 之后的统一口径读取当前状态，应认定为：
-  - `经济开放业务面（L2）已完成收口`。
-  - `2026-04-18` 已完成真实 `novovm-node` 用户入口接线并通过真实产物级门禁。
-  - `WEB30 标准族全量迁移（L3）仍未宣称完成`。
+- 当前应直接认定为：
+  - `经济基础设施 9 大能力已全部完成并门禁化`
+  - `真实 novovm-node 经济用户入口已可用`
+  - `真实产物级门禁已通过`
+- 当前仍应明确保留的边界为：
+  - `P3` 未启用
+  - `WEB30` 标准族未整体宣称完成
+  - 并非所有扩展业务面都已全部开放
 
-## 7. 后续进展（截至 2026-03-18）
+## 7. 当前补充说明
 
 1. （已完成）`ForeignPayment` 与 NAV feed 已从 HTTP 单源扩展为多源聚合 + 签名校验门禁（见 5.1.3 / 5.1.5）。
 2. （已完成）buyback 已从确定性语义升级到流动性/滑点约束成交模型；后续可接外部 AMM/订单簿桥。
 3. （已完成）在统一账户索引服务基础上补齐大规模账户快照性能门禁。
-4. （已完成）在 `full_snapshot_ga_v1` 基础上跑完整 acceptance 快照，`economic_infra_dedicated_*` + `market_engine_treasury_negative_*` + `foreign_rate_source_*` + `nav_valuation_source_*` + `dividend_balance_source_*` 字段已纳入发布证据（见 5.1.6）。
+4. （已完成）完整 acceptance 已覆盖 `economic_infra_dedicated_*` + `market_engine_treasury_negative_*` + `foreign_rate_source_*` + `nav_valuation_source_*` + `dividend_balance_source_*`，并已纳入发布证据（见 5.1.6）。

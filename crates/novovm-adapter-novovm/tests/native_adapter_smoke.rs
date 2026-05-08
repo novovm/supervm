@@ -19,6 +19,9 @@ fn sample_transfer(chain_id: u64, nonce: u64, value: u128) -> TxIR {
     let mut tx = TxIR {
         hash: Vec::new(),
         from: address_from_seed_v1(TEST_SIGN_SEED),
+        account_id: None,
+        fee_owner_account_id: None,
+        nonce_owner_account_id: None,
         to: Some(encode_address(2000)),
         value,
         gas_limit: 21_000,
@@ -28,6 +31,7 @@ fn sample_transfer(chain_id: u64, nonce: u64, value: u128) -> TxIR {
         signature: Vec::new(),
         chain_id,
         tx_type: TxType::Transfer,
+        execution_policy: Default::default(),
         source_chain: None,
         target_chain: None,
     };

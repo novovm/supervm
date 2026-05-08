@@ -34,6 +34,9 @@ use crate::tx_ingress::{
     load_nov_native_execution_store_v1, nov_native_execution_store_path_v1,
     run_nov_execute_from_params_v1, run_nov_native_call_from_params_with_store_path_v1,
 };
+use crate::unified_account_surface::{
+    is_mainline_unified_account_query_method, run_mainline_unified_account_query,
+};
 
 const ETH_NATIVE_RUNTIME_QUERY_SCHEMA_VERSION_V1: u64 = 1;
 const ETH_EXEC_FAILURE_CLASSIFICATION_CONTRACT_V1: &str =
@@ -202,6 +205,10 @@ fn augment_nov_user_execution_result_v1(
     module_method: &str,
     mut out: Value,
 ) -> Value {
+    let receipt_subject = out
+        .get("native_receipt")
+        .cloned()
+        .and_then(|value| value.as_object().cloned());
     if let Some(map) = out.as_object_mut() {
         map.insert("method".to_string(), Value::String(method.to_string()));
         map.insert("module".to_string(), Value::String(module.to_string()));
@@ -209,6 +216,21 @@ fn augment_nov_user_execution_result_v1(
             "module_method".to_string(),
             Value::String(module_method.to_string()),
         );
+        if let Some(receipt) = receipt_subject {
+            for key in [
+                "account_id",
+                "fee_owner_account_id",
+                "nonce_owner_account_id",
+                "key_algo",
+                "execution_policy",
+                "policy_enforced",
+                "policy_rejection_reason",
+            ] {
+                if let Some(value) = receipt.get(key) {
+                    map.insert(key.to_string(), value.clone());
+                }
+            }
+        }
     }
     out
 }
@@ -225,6 +247,13 @@ fn run_mainline_native_user_execute_v1(
     let store_path = native_execution_store_path_from_params_or_env_v1(params);
     let caller = param_as_string_any(params, &["caller", "from"])
         .ok_or_else(|| anyhow::anyhow!("from/caller is required for {method}"))?;
+    let account_id = param_as_string_any(params, &["account_id", "uca_id"]);
+    let fee_owner_account_id = param_as_string_any(params, &["fee_owner_account_id"]);
+    let nonce_owner_account_id = param_as_string_any(params, &["nonce_owner_account_id"]);
+    let execution_policy = param_as_string_any(params, &["execution_policy"]);
+    let privacy_mode = param_as_string_any(params, &["privacy_mode"]);
+    let unified_account_store_path =
+        param_as_string_any(params, &["unified_account_store_path", "ua_store_path"]);
     let pay_asset = param_as_string_any(params, &["pay_asset", "fee_pay_asset"])
         .unwrap_or_else(|| default_pay_asset.to_string());
     let max_pay_amount = param_as_u128_any(params, &["max_pay_amount", "fee_max_pay_amount"])
@@ -235,6 +264,30 @@ fn run_mainline_native_user_execute_v1(
 
     let mut execute_params = serde_json::Map::new();
     execute_params.insert("from".to_string(), Value::String(caller));
+    if let Some(account_id) = account_id {
+        execute_params.insert("account_id".to_string(), Value::String(account_id));
+    }
+    if let Some(fee_owner_account_id) = fee_owner_account_id {
+        execute_params.insert(
+            "fee_owner_account_id".to_string(),
+            Value::String(fee_owner_account_id),
+        );
+    }
+    if let Some(nonce_owner_account_id) = nonce_owner_account_id {
+        execute_params.insert(
+            "nonce_owner_account_id".to_string(),
+            Value::String(nonce_owner_account_id),
+        );
+    }
+    if let Some(execution_policy) = execution_policy {
+        execute_params.insert(
+            "execution_policy".to_string(),
+            Value::String(execution_policy),
+        );
+    }
+    if let Some(privacy_mode) = privacy_mode {
+        execute_params.insert("privacy_mode".to_string(), Value::String(privacy_mode));
+    }
     execute_params.insert(
         "target".to_string(),
         json!({"kind": "native_module", "id": module}),
@@ -265,6 +318,12 @@ fn run_mainline_native_user_execute_v1(
         "native_execution_store_path".to_string(),
         Value::String(store_path.display().to_string()),
     );
+    if let Some(unified_account_store_path) = unified_account_store_path {
+        execute_params.insert(
+            "unified_account_store_path".to_string(),
+            Value::String(unified_account_store_path),
+        );
+    }
 
     let out = run_nov_execute_from_params_v1(&Value::Object(execute_params))?;
     Ok(augment_nov_user_execution_result_v1(
@@ -3114,6 +3173,9 @@ pub fn run_mainline_query_from_path(path: &Path, method: &str, params: &Value) -
     if is_mainline_native_execution_query_method(method) {
         return run_mainline_native_execution_query(method, params);
     }
+    if is_mainline_unified_account_query_method(method) {
+        return run_mainline_unified_account_query(path, method, params);
+    }
     if is_mainline_governance_query_method(method) {
         return run_mainline_governance_query(method, params);
     }
@@ -3127,6 +3189,13 @@ pub fn run_mainline_query_from_env(method: &str, params: &Value) -> Result<Value
     }
     if is_mainline_native_execution_query_method(method) {
         return run_mainline_native_execution_query(method, params);
+    }
+    if is_mainline_unified_account_query_method(method) {
+        return run_mainline_unified_account_query(
+            &canonical_store_path_from_env(),
+            method,
+            params,
+        );
     }
     if is_mainline_governance_query_method(method) {
         return run_mainline_governance_query(method, params);
@@ -3145,6 +3214,13 @@ pub fn run_mainline_query(
     }
     if is_mainline_native_execution_query_method(method) {
         return run_mainline_native_execution_query(method, params);
+    }
+    if is_mainline_unified_account_query_method(method) {
+        return run_mainline_unified_account_query(
+            &canonical_store_path_from_env(),
+            method,
+            params,
+        );
     }
     if is_mainline_governance_query_method(method) {
         return run_mainline_governance_query(method, params);
@@ -3367,9 +3443,14 @@ mod tests {
         get_nov_native_account_asset_balance_with_store_path_v1,
         save_nov_native_execution_store_v1, NovNativeExecutionStoreV1,
     };
+    use crate::unified_account_surface::{
+        is_mainline_unified_account_query_method, seed_unified_account_key_algo_for_tests_v1,
+    };
     use anyhow::Context;
     use aoem_bindings::{default_host_dll_path, mldsa_keygen_v1_auto, mldsa_sign_v1_auto};
-    use novovm_adapter_api::{ChainAdapter, ChainConfig, ChainType, StateIR, TxIR, TxType};
+    use novovm_adapter_api::{
+        ChainAdapter, ChainConfig, ChainType, StateIR, TxIR, TxType, UcaKeyAlgo,
+    };
     use novovm_adapter_novovm::{
         address_from_seed_v1, signature_payload_with_seed_v1, NovoVmAdapter,
     };
@@ -3382,6 +3463,7 @@ mod tests {
         NetworkRuntimeNativeSyncStatusV1, NetworkRuntimeSyncStatus,
     };
     use serde::Deserialize;
+    use serde_json::{json, Value};
     use sha2::{Digest, Sha256};
     use std::{fs, path::PathBuf};
 
@@ -3399,6 +3481,92 @@ mod tests {
             .expect("system time should be after unix epoch")
             .as_nanos();
         std::env::temp_dir().join(format!("novovm-governance-{label}-{nonce}.json"))
+    }
+
+    fn unique_unified_account_paths(label: &str) -> (PathBuf, PathBuf, PathBuf) {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system time should be after unix epoch")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("novovm-mainline-ua-{label}-{nonce}"));
+        let store = root.join("ua-store.rocksdb");
+        let audit = root.join("ua-audit.rocksdb");
+        (root, store, audit)
+    }
+
+    fn create_cut_c_account_v1(
+        ua_store: &std::path::Path,
+        account_id: &str,
+        now: u64,
+        key_algo: UcaKeyAlgo,
+    ) {
+        seed_unified_account_key_algo_for_tests_v1(ua_store, account_id, key_algo, now)
+            .expect("seed unified account key algo should succeed");
+    }
+
+    fn seed_cut_c_native_swap_store_v1(native_store: &std::path::Path, account_id: &str) {
+        let mut pre = NovNativeExecutionStoreV1::default();
+        pre.module_state.account_asset_balances.insert(
+            account_id.to_string(),
+            std::collections::BTreeMap::from([("USDT".to_string(), 1_000u128)]),
+        );
+        pre.module_state.clearing_static_amm_pools.insert(
+            "cut_c_mainline_usdt_nov_pool".to_string(),
+            crate::clearing_types::NovStaticAmmPoolStateV1 {
+                pool_id: "cut_c_mainline_usdt_nov_pool".to_string(),
+                asset_x: "USDT".to_string(),
+                asset_y: "NOV".to_string(),
+                reserve_x: 1_000_000,
+                reserve_y: 2_000_000,
+                swap_fee_ppm: 3_000,
+                enabled: true,
+            },
+        );
+        save_nov_native_execution_store_v1(native_store, &pre)
+            .expect("seed native execution store");
+    }
+
+    fn run_cut_c_swap_v1(
+        query_store: &std::path::Path,
+        native_store: &std::path::Path,
+        ua_store: &std::path::Path,
+        account_id: &str,
+        execution_policy: &str,
+        privacy_mode: Option<&str>,
+    ) -> Value {
+        let caller = format!("0x{}", "6a".repeat(20));
+        let mut params = serde_json::Map::new();
+        params.insert(
+            "account_id".to_string(),
+            Value::String(account_id.to_string()),
+        );
+        params.insert("from".to_string(), Value::String(caller));
+        params.insert("asset_in".to_string(), Value::String("USDT".to_string()));
+        params.insert("asset_out".to_string(), Value::String("NOV".to_string()));
+        params.insert("amount_in".to_string(), Value::from(100u64));
+        params.insert("min_amount_out".to_string(), Value::from(1u64));
+        params.insert("slippage_bps".to_string(), Value::from(25u64));
+        params.insert("max_pay_amount".to_string(), Value::from(500u64));
+        params.insert(
+            "native_execution_store_path".to_string(),
+            Value::String(native_store.display().to_string()),
+        );
+        params.insert(
+            "unified_account_store_path".to_string(),
+            Value::String(ua_store.display().to_string()),
+        );
+        params.insert(
+            "execution_policy".to_string(),
+            Value::String(execution_policy.to_string()),
+        );
+        if let Some(privacy_mode) = privacy_mode {
+            params.insert(
+                "privacy_mode".to_string(),
+                Value::String(privacy_mode.to_string()),
+            );
+        }
+        run_mainline_query_from_path(query_store, "nov_swap", &Value::Object(params))
+            .expect("nov_swap should return a product-facing result")
     }
 
     fn decode_hex_test_v1(raw: &str) -> Vec<u8> {
@@ -3683,6 +3851,9 @@ mod tests {
         let mut tx = TxIR {
             hash: Vec::new(),
             from,
+            account_id: None,
+            fee_owner_account_id: None,
+            nonce_owner_account_id: None,
             to: input.to,
             value: input.value,
             gas_limit: input.gas_limit,
@@ -3692,6 +3863,7 @@ mod tests {
             signature: Vec::new(),
             chain_id: input.chain_id,
             tx_type: input.tx_type,
+            execution_policy: Default::default(),
             source_chain: None,
             target_chain: None,
         };
@@ -8103,6 +8275,35 @@ mod tests {
     }
 
     #[test]
+    fn recognizes_mainline_unified_account_query_methods() {
+        for method in [
+            "ua_createUca",
+            "ua_rotatePrimaryKey",
+            "ua_setPolicy",
+            "ua_bindPersona",
+            "ua_revokePersona",
+            "ua_getBindingOwner",
+            "ua_getAuditEvents",
+            "ua_getAccount",
+            "ua_getPolicy",
+            "ua_listBindings",
+            "ua_getNextNonce",
+            "ua_route",
+            "ua_registerMappedLock",
+            "ua_getMappedAsset",
+            "ua_burnMappedAsset",
+            "ua_releaseMappedLock",
+            "account_balance",
+            "account_assets",
+        ] {
+            assert!(
+                is_mainline_unified_account_query_method(method),
+                "method should be recognized: {method}"
+            );
+        }
+    }
+
+    #[test]
     fn native_execution_queries_do_not_require_canonical_store_path() {
         let bogus_canonical_store =
             std::path::Path::new("this-canonical-store-does-not-exist.json");
@@ -8770,6 +8971,422 @@ mod tests {
         assert!(nov_after > 0);
 
         let _ = fs::remove_file(native_store);
+    }
+
+    #[test]
+    fn mainline_query_nov_swap_normalizes_subject_to_explicit_account_id() {
+        let bogus_canonical_store =
+            std::path::Path::new("this-canonical-store-does-not-exist.json");
+        let native_store = unique_native_execution_store_path("native-swap-account-subject");
+        let caller = format!("0x{}", "64".repeat(20));
+        let account_id = "acct-mainline-subject";
+
+        let mut pre = NovNativeExecutionStoreV1::default();
+        pre.module_state.account_asset_balances.insert(
+            account_id.to_string(),
+            std::collections::BTreeMap::from([("USDT".to_string(), 1_000u128)]),
+        );
+        pre.module_state.clearing_static_amm_pools.insert(
+            "mainline_subject_pool".to_string(),
+            crate::clearing_types::NovStaticAmmPoolStateV1 {
+                pool_id: "mainline_subject_pool".to_string(),
+                asset_x: "USDT".to_string(),
+                asset_y: "NOV".to_string(),
+                reserve_x: 1_000_000,
+                reserve_y: 2_000_000,
+                swap_fee_ppm: 3_000,
+                enabled: true,
+            },
+        );
+        save_nov_native_execution_store_v1(native_store.as_path(), &pre)
+            .expect("seed native execution store");
+
+        let out = run_mainline_query_from_path(
+            bogus_canonical_store,
+            "nov_swap",
+            &json!({
+                "account_id": account_id,
+                "from": caller,
+                "asset_in": "USDT",
+                "asset_out": "NOV",
+                "amount_in": 100u64,
+                "min_amount_out": 1u64,
+                "slippage_bps": 25u64,
+                "max_pay_amount": 500u64,
+                "native_execution_store_path": native_store.display().to_string(),
+            }),
+        )
+        .expect("nov_swap should normalize subject through mainline query");
+        assert_eq!(out["accepted"].as_bool(), Some(true));
+        assert_eq!(out["account_id"].as_str(), Some(account_id));
+        assert_eq!(out["fee_owner_account_id"].as_str(), Some(account_id));
+        assert_eq!(out["nonce_owner_account_id"].as_str(), Some(account_id));
+        assert_eq!(
+            out["native_receipt"]["account_id"].as_str(),
+            Some(account_id)
+        );
+        assert_eq!(
+            out["native_receipt"]["fee_owner_account_id"].as_str(),
+            Some(account_id)
+        );
+        assert_eq!(
+            out["native_receipt"]["nonce_owner_account_id"].as_str(),
+            Some(account_id)
+        );
+
+        let pending_tx_hash = out["pending_tx_hash"]
+            .as_str()
+            .expect("pending tx hash should exist");
+        let trace = run_mainline_query_from_path(
+            bogus_canonical_store,
+            "nov_getExecutionTrace",
+            &json!({
+                "tx_hash": pending_tx_hash,
+                "native_execution_store_path": native_store.display().to_string(),
+            }),
+        )
+        .expect("nov_getExecutionTrace should succeed");
+        assert_eq!(trace["trace"]["account_id"].as_str(), Some(account_id));
+        assert_eq!(
+            trace["trace"]["fee_owner_account_id"].as_str(),
+            Some(account_id)
+        );
+        assert_eq!(
+            trace["trace"]["nonce_owner_account_id"].as_str(),
+            Some(account_id)
+        );
+
+        let journal = run_mainline_query_from_path(
+            bogus_canonical_store,
+            "nov_getTreasurySettlementJournal",
+            &json!({
+                "limit": 5,
+                "native_execution_store_path": native_store.display().to_string(),
+            }),
+        )
+        .expect("nov_getTreasurySettlementJournal should succeed");
+        assert!(journal["journal"]["entries"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .any(|entry| {
+                entry["account_id"].as_str() == Some(account_id)
+                    && entry["fee_owner_account_id"].as_str() == Some(account_id)
+                    && entry["nonce_owner_account_id"].as_str() == Some(account_id)
+            }));
+
+        let usdt_after = get_nov_native_account_asset_balance_with_store_path_v1(
+            native_store.as_path(),
+            account_id,
+            "USDT",
+        )
+        .expect("USDT balance should load");
+        let nov_after = get_nov_native_account_asset_balance_with_store_path_v1(
+            native_store.as_path(),
+            account_id,
+            "NOV",
+        )
+        .expect("NOV balance should load");
+        let caller_usdt_after = get_nov_native_account_asset_balance_with_store_path_v1(
+            native_store.as_path(),
+            caller.as_str(),
+            "USDT",
+        )
+        .expect("caller USDT balance should load");
+        assert_eq!(usdt_after, 900);
+        assert!(nov_after > 0);
+        assert_eq!(caller_usdt_after, 0);
+
+        let _ = fs::remove_file(native_store);
+    }
+
+    #[test]
+    fn mainline_query_cut_c_standard_ed25519_allows_execution() {
+        let bogus_canonical_store =
+            std::path::Path::new("this-canonical-store-does-not-exist.json");
+        let native_store = unique_native_execution_store_path("cut-c-standard-ed25519");
+        let (ua_root, ua_store, _ua_audit) = unique_unified_account_paths("cut-c-standard-ed25519");
+        let account_id = "acct-cut-c-standard-ed25519";
+
+        create_cut_c_account_v1(ua_store.as_path(), account_id, 31, UcaKeyAlgo::Ed25519);
+        seed_cut_c_native_swap_store_v1(native_store.as_path(), account_id);
+
+        let out = run_cut_c_swap_v1(
+            bogus_canonical_store,
+            native_store.as_path(),
+            ua_store.as_path(),
+            account_id,
+            "standard",
+            None,
+        );
+        assert_eq!(out["accepted"].as_bool(), Some(true));
+        assert_eq!(out["account_id"].as_str(), Some(account_id));
+        assert_eq!(out["key_algo"].as_str(), Some("ed25519"));
+        assert_eq!(out["execution_policy"].as_str(), Some("standard"));
+        assert_eq!(out["policy_enforced"].as_bool(), Some(true));
+        assert_eq!(out["policy_rejection_reason"], Value::Null);
+        assert_eq!(out["native_receipt"]["status"].as_bool(), Some(true));
+        assert_eq!(out["native_receipt"]["key_algo"].as_str(), Some("ed25519"));
+        assert_eq!(
+            out["native_receipt"]["execution_policy"].as_str(),
+            Some("standard")
+        );
+
+        let pending_tx_hash = out["pending_tx_hash"]
+            .as_str()
+            .expect("pending tx hash should exist");
+        let trace = run_mainline_query_from_path(
+            bogus_canonical_store,
+            "nov_getExecutionTrace",
+            &json!({
+                "tx_hash": pending_tx_hash,
+                "native_execution_store_path": native_store.display().to_string(),
+            }),
+        )
+        .expect("nov_getExecutionTrace should succeed");
+        assert_eq!(trace["trace"]["account_id"].as_str(), Some(account_id));
+        assert_eq!(trace["trace"]["key_algo"].as_str(), Some("ed25519"));
+        assert_eq!(
+            trace["trace"]["execution_policy"].as_str(),
+            Some("standard")
+        );
+        assert_eq!(trace["trace"]["policy_enforced"].as_bool(), Some(true));
+
+        let _ = fs::remove_file(native_store);
+        let _ = fs::remove_dir_all(ua_root);
+    }
+
+    #[test]
+    fn mainline_query_cut_c_pq_required_mldsa87_allows_execution() {
+        let bogus_canonical_store =
+            std::path::Path::new("this-canonical-store-does-not-exist.json");
+        let native_store = unique_native_execution_store_path("cut-c-pq-mldsa87");
+        let (ua_root, ua_store, _ua_audit) = unique_unified_account_paths("cut-c-pq-mldsa87");
+        let account_id = "acct-cut-c-pq-mldsa87";
+
+        create_cut_c_account_v1(ua_store.as_path(), account_id, 32, UcaKeyAlgo::Mldsa87);
+        seed_cut_c_native_swap_store_v1(native_store.as_path(), account_id);
+
+        let out = run_cut_c_swap_v1(
+            bogus_canonical_store,
+            native_store.as_path(),
+            ua_store.as_path(),
+            account_id,
+            "pq_required",
+            None,
+        );
+        assert_eq!(out["accepted"].as_bool(), Some(true));
+        assert_eq!(out["account_id"].as_str(), Some(account_id));
+        assert_eq!(out["key_algo"].as_str(), Some("mldsa87"));
+        assert_eq!(out["execution_policy"].as_str(), Some("pq_required"));
+        assert_eq!(out["policy_enforced"].as_bool(), Some(true));
+        assert_eq!(out["policy_rejection_reason"], Value::Null);
+        assert_eq!(out["native_receipt"]["status"].as_bool(), Some(true));
+        assert_eq!(out["native_receipt"]["key_algo"].as_str(), Some("mldsa87"));
+
+        let pending_tx_hash = out["pending_tx_hash"]
+            .as_str()
+            .expect("pending tx hash should exist");
+        let trace = run_mainline_query_from_path(
+            bogus_canonical_store,
+            "nov_getExecutionTrace",
+            &json!({
+                "tx_hash": pending_tx_hash,
+                "native_execution_store_path": native_store.display().to_string(),
+            }),
+        )
+        .expect("nov_getExecutionTrace should succeed");
+        assert_eq!(trace["trace"]["key_algo"].as_str(), Some("mldsa87"));
+        assert_eq!(
+            trace["trace"]["execution_policy"].as_str(),
+            Some("pq_required")
+        );
+        assert_eq!(trace["trace"]["policy_enforced"].as_bool(), Some(true));
+
+        let _ = fs::remove_file(native_store);
+        let _ = fs::remove_dir_all(ua_root);
+    }
+
+    #[test]
+    fn mainline_query_cut_c_pq_required_non_pq_key_rejected() {
+        let bogus_canonical_store =
+            std::path::Path::new("this-canonical-store-does-not-exist.json");
+        let native_store = unique_native_execution_store_path("cut-c-pq-reject");
+        let (ua_root, ua_store, _ua_audit) = unique_unified_account_paths("cut-c-pq-reject");
+        let account_id = "acct-cut-c-pq-reject";
+
+        create_cut_c_account_v1(ua_store.as_path(), account_id, 33, UcaKeyAlgo::Secp256k1);
+        seed_cut_c_native_swap_store_v1(native_store.as_path(), account_id);
+
+        let out = run_cut_c_swap_v1(
+            bogus_canonical_store,
+            native_store.as_path(),
+            ua_store.as_path(),
+            account_id,
+            "pq_required",
+            None,
+        );
+        assert_eq!(out["accepted"].as_bool(), Some(true));
+        assert_eq!(out["account_id"].as_str(), Some(account_id));
+        assert_eq!(out["key_algo"].as_str(), Some("secp256k1"));
+        assert_eq!(out["execution_policy"].as_str(), Some("pq_required"));
+        assert_eq!(out["policy_enforced"].as_bool(), Some(false));
+        assert_eq!(
+            out["policy_rejection_reason"].as_str(),
+            Some("ERR_PQ_REQUIRED_BUT_KEY_NOT_PQ")
+        );
+        assert_eq!(out["native_receipt"]["status"].as_bool(), Some(false));
+        assert_eq!(
+            out["native_receipt"]["policy_rejection_reason"].as_str(),
+            Some("ERR_PQ_REQUIRED_BUT_KEY_NOT_PQ")
+        );
+
+        let pending_tx_hash = out["pending_tx_hash"]
+            .as_str()
+            .expect("pending tx hash should exist");
+        let trace = run_mainline_query_from_path(
+            bogus_canonical_store,
+            "nov_getExecutionTrace",
+            &json!({
+                "tx_hash": pending_tx_hash,
+                "native_execution_store_path": native_store.display().to_string(),
+            }),
+        )
+        .expect("nov_getExecutionTrace should succeed");
+        assert_eq!(trace["trace"]["account_id"].as_str(), Some(account_id));
+        assert_eq!(trace["trace"]["key_algo"].as_str(), Some("secp256k1"));
+        assert_eq!(trace["trace"]["policy_enforced"].as_bool(), Some(false));
+        assert_eq!(
+            trace["trace"]["policy_rejection_reason"].as_str(),
+            Some("ERR_PQ_REQUIRED_BUT_KEY_NOT_PQ")
+        );
+
+        let usdt_after = get_nov_native_account_asset_balance_with_store_path_v1(
+            native_store.as_path(),
+            account_id,
+            "USDT",
+        )
+        .expect("USDT balance should load");
+        assert_eq!(usdt_after, 1_000);
+
+        let _ = fs::remove_file(native_store);
+        let _ = fs::remove_dir_all(ua_root);
+    }
+
+    #[test]
+    fn mainline_query_cut_c_privacy_required_with_confidential_path_succeeds() {
+        let bogus_canonical_store =
+            std::path::Path::new("this-canonical-store-does-not-exist.json");
+        let native_store = unique_native_execution_store_path("cut-c-privacy-success");
+        let (ua_root, ua_store, _ua_audit) = unique_unified_account_paths("cut-c-privacy-success");
+        let account_id = "acct-cut-c-privacy-success";
+
+        create_cut_c_account_v1(ua_store.as_path(), account_id, 34, UcaKeyAlgo::Mldsa87);
+        seed_cut_c_native_swap_store_v1(native_store.as_path(), account_id);
+
+        let out = run_cut_c_swap_v1(
+            bogus_canonical_store,
+            native_store.as_path(),
+            ua_store.as_path(),
+            account_id,
+            "privacy_required",
+            Some("confidential"),
+        );
+        assert_eq!(out["accepted"].as_bool(), Some(true));
+        assert_eq!(out["account_id"].as_str(), Some(account_id));
+        assert_eq!(out["key_algo"].as_str(), Some("mldsa87"));
+        assert_eq!(out["execution_policy"].as_str(), Some("privacy_required"));
+        assert_eq!(out["policy_enforced"].as_bool(), Some(true));
+        assert_eq!(out["policy_rejection_reason"], Value::Null);
+        assert_eq!(out["native_receipt"]["status"].as_bool(), Some(true));
+
+        let pending_tx_hash = out["pending_tx_hash"]
+            .as_str()
+            .expect("pending tx hash should exist");
+        let trace = run_mainline_query_from_path(
+            bogus_canonical_store,
+            "nov_getExecutionTrace",
+            &json!({
+                "tx_hash": pending_tx_hash,
+                "native_execution_store_path": native_store.display().to_string(),
+            }),
+        )
+        .expect("nov_getExecutionTrace should succeed");
+        assert_eq!(trace["trace"]["key_algo"].as_str(), Some("mldsa87"));
+        assert_eq!(
+            trace["trace"]["execution_policy"].as_str(),
+            Some("privacy_required")
+        );
+        assert_eq!(trace["trace"]["policy_enforced"].as_bool(), Some(true));
+
+        let _ = fs::remove_file(native_store);
+        let _ = fs::remove_dir_all(ua_root);
+    }
+
+    #[test]
+    fn mainline_query_cut_c_privacy_required_without_privacy_path_rejected() {
+        let bogus_canonical_store =
+            std::path::Path::new("this-canonical-store-does-not-exist.json");
+        let native_store = unique_native_execution_store_path("cut-c-privacy-reject");
+        let (ua_root, ua_store, _ua_audit) = unique_unified_account_paths("cut-c-privacy-reject");
+        let account_id = "acct-cut-c-privacy-reject";
+
+        create_cut_c_account_v1(ua_store.as_path(), account_id, 35, UcaKeyAlgo::Mldsa87);
+        seed_cut_c_native_swap_store_v1(native_store.as_path(), account_id);
+
+        let out = run_cut_c_swap_v1(
+            bogus_canonical_store,
+            native_store.as_path(),
+            ua_store.as_path(),
+            account_id,
+            "privacy_required",
+            None,
+        );
+        assert_eq!(out["accepted"].as_bool(), Some(true));
+        assert_eq!(out["account_id"].as_str(), Some(account_id));
+        assert_eq!(out["key_algo"].as_str(), Some("mldsa87"));
+        assert_eq!(out["execution_policy"].as_str(), Some("privacy_required"));
+        assert_eq!(out["policy_enforced"].as_bool(), Some(false));
+        assert_eq!(
+            out["policy_rejection_reason"].as_str(),
+            Some("ERR_PRIVACY_REQUIRED_BUT_PATH_NOT_AVAILABLE")
+        );
+        assert_eq!(out["native_receipt"]["status"].as_bool(), Some(false));
+        assert_eq!(
+            out["native_receipt"]["policy_rejection_reason"].as_str(),
+            Some("ERR_PRIVACY_REQUIRED_BUT_PATH_NOT_AVAILABLE")
+        );
+
+        let pending_tx_hash = out["pending_tx_hash"]
+            .as_str()
+            .expect("pending tx hash should exist");
+        let trace = run_mainline_query_from_path(
+            bogus_canonical_store,
+            "nov_getExecutionTrace",
+            &json!({
+                "tx_hash": pending_tx_hash,
+                "native_execution_store_path": native_store.display().to_string(),
+            }),
+        )
+        .expect("nov_getExecutionTrace should succeed");
+        assert_eq!(trace["trace"]["account_id"].as_str(), Some(account_id));
+        assert_eq!(trace["trace"]["key_algo"].as_str(), Some("mldsa87"));
+        assert_eq!(trace["trace"]["policy_enforced"].as_bool(), Some(false));
+        assert_eq!(
+            trace["trace"]["policy_rejection_reason"].as_str(),
+            Some("ERR_PRIVACY_REQUIRED_BUT_PATH_NOT_AVAILABLE")
+        );
+
+        let usdt_after = get_nov_native_account_asset_balance_with_store_path_v1(
+            native_store.as_path(),
+            account_id,
+            "USDT",
+        )
+        .expect("USDT balance should load");
+        assert_eq!(usdt_after, 1_000);
+
+        let _ = fs::remove_file(native_store);
+        let _ = fs::remove_dir_all(ua_root);
     }
 
     #[test]

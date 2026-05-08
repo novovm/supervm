@@ -92,9 +92,54 @@ pub struct PersonaAddress {
 pub struct UcaAccount {
     pub uca_id: String,
     pub primary_key_ref: Vec<u8>,
+    #[serde(default)]
+    pub primary_key_binding: Option<UcaPrimaryKeyBinding>,
     pub status: UcaStatus,
     pub created_at: u64,
     pub updated_at: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum UcaKeyAlgo {
+    Secp256k1,
+    Ed25519,
+    Mldsa87,
+}
+
+impl UcaKeyAlgo {
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Secp256k1 => "secp256k1",
+            Self::Ed25519 => "ed25519",
+            Self::Mldsa87 => "mldsa87",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum UcaKeyProofType {
+    SignatureV1,
+}
+
+impl UcaKeyProofType {
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::SignatureV1 => "signature_v1",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UcaPrimaryKeyBinding {
+    pub key_algo: UcaKeyAlgo,
+    pub public_key: Vec<u8>,
+    pub proof_type: UcaKeyProofType,
+    pub proof_payload: Vec<u8>,
+    pub verified_at: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -166,6 +211,8 @@ pub enum RouteDecision {
 pub enum AccountAuditEvent {
     UcaCreated {
         uca_id: String,
+        #[serde(default)]
+        key_algo: Option<UcaKeyAlgo>,
         at: u64,
     },
     BindingAdded {
@@ -206,6 +253,8 @@ pub enum AccountAuditEvent {
     },
     KeyRotated {
         uca_id: String,
+        #[serde(default)]
+        key_algo: Option<UcaKeyAlgo>,
         at: u64,
     },
     SessionKeyExpired {
@@ -404,6 +453,16 @@ impl UnifiedAccountRouter {
         primary_key_ref: Vec<u8>,
         now: u64,
     ) -> Result<(), UnifiedAccountError> {
+        self.create_uca_with_primary_key_binding(uca_id, primary_key_ref, None, now)
+    }
+
+    pub fn create_uca_with_primary_key_binding(
+        &mut self,
+        uca_id: impl Into<String>,
+        primary_key_ref: Vec<u8>,
+        primary_key_binding: Option<UcaPrimaryKeyBinding>,
+        now: u64,
+    ) -> Result<(), UnifiedAccountError> {
         let uca_id = uca_id.into();
         if self.ucas.contains_key(&uca_id) {
             return Err(UnifiedAccountError::UcaAlreadyExists { uca_id });
@@ -412,6 +471,7 @@ impl UnifiedAccountRouter {
         let account = UcaAccount {
             uca_id: uca_id.clone(),
             primary_key_ref,
+            primary_key_binding: primary_key_binding.clone(),
             status: UcaStatus::Active,
             created_at: now,
             updated_at: now,
@@ -424,8 +484,11 @@ impl UnifiedAccountRouter {
                 bindings: HashMap::new(),
             },
         );
-        self.events
-            .push(AccountAuditEvent::UcaCreated { uca_id, at: now });
+        self.events.push(AccountAuditEvent::UcaCreated {
+            uca_id,
+            key_algo: primary_key_binding.map(|binding| binding.key_algo),
+            at: now,
+        });
         Ok(())
     }
 
@@ -687,6 +750,17 @@ impl UnifiedAccountRouter {
         next_primary_key_ref: Vec<u8>,
         now: u64,
     ) -> Result<(), UnifiedAccountError> {
+        self.rotate_primary_key_with_binding(uca_id, role, next_primary_key_ref, None, now)
+    }
+
+    pub fn rotate_primary_key_with_binding(
+        &mut self,
+        uca_id: &str,
+        role: AccountRole,
+        next_primary_key_ref: Vec<u8>,
+        next_primary_key_binding: Option<UcaPrimaryKeyBinding>,
+        now: u64,
+    ) -> Result<(), UnifiedAccountError> {
         self.ensure_permission(uca_id, role, AccountAction::RotateKey, now)?;
         self.ensure_uca_active(uca_id)?;
         let record = self
@@ -696,9 +770,11 @@ impl UnifiedAccountRouter {
                 uca_id: uca_id.to_string(),
             })?;
         record.account.primary_key_ref = next_primary_key_ref;
+        record.account.primary_key_binding = next_primary_key_binding.clone();
         record.account.updated_at = now;
         self.events.push(AccountAuditEvent::KeyRotated {
             uca_id: uca_id.to_string(),
+            key_algo: next_primary_key_binding.map(|binding| binding.key_algo),
             at: now,
         });
         Ok(())
@@ -707,6 +783,34 @@ impl UnifiedAccountRouter {
     pub fn resolve_binding_owner(&self, persona: &PersonaAddress) -> Option<&str> {
         let key = PersonaKey::from(persona);
         self.binding_owner.get(&key).map(String::as_str)
+    }
+
+    pub fn get_account(&self, uca_id: &str) -> Result<UcaAccount, UnifiedAccountError> {
+        self.ucas
+            .get(uca_id)
+            .map(|record| record.account.clone())
+            .ok_or_else(|| UnifiedAccountError::UcaNotFound {
+                uca_id: uca_id.to_string(),
+            })
+    }
+
+    pub fn get_policy(&self, uca_id: &str) -> Result<AccountPolicy, UnifiedAccountError> {
+        self.ucas
+            .get(uca_id)
+            .map(|record| record.policy.clone())
+            .ok_or_else(|| UnifiedAccountError::UcaNotFound {
+                uca_id: uca_id.to_string(),
+            })
+    }
+
+    pub fn list_bindings(&self, uca_id: &str) -> Result<Vec<PersonaBinding>, UnifiedAccountError> {
+        let record = self
+            .ucas
+            .get(uca_id)
+            .ok_or_else(|| UnifiedAccountError::UcaNotFound {
+                uca_id: uca_id.to_string(),
+            })?;
+        Ok(record.bindings.values().cloned().collect())
     }
 
     pub fn next_nonce_for_persona(

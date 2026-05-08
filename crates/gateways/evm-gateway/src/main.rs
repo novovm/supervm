@@ -7,7 +7,7 @@ use novovm_adapter_api::{
     AccountPolicy, AccountRole, AtomicBroadcastReadyV1, AtomicIntentReceiptV1, AtomicIntentStatus,
     EvmFeePayoutInstructionV1, EvmFeeSettlementRecordV1, EvmMempoolIngressFrameV1, KycPolicyMode,
     NonceScope, PersonaAddress, PersonaType, ProtocolKind, RouteDecision, RouteRequest,
-    SerializationFormat, TxIR, TxType, Type4PolicyMode, UnifiedAccountRouter,
+    SerializationFormat, TxExecutionPolicyV1, TxIR, TxType, Type4PolicyMode, UnifiedAccountRouter,
 };
 #[cfg(test)]
 use novovm_adapter_evm_core::{
@@ -210,6 +210,14 @@ struct GatewayIngressEthRecordV1 {
     version: u16,
     protocol: u8,
     uca_id: String,
+    #[serde(default)]
+    account_id: String,
+    #[serde(default)]
+    fee_owner_account_id: String,
+    #[serde(default)]
+    nonce_owner_account_id: String,
+    #[serde(default)]
+    execution_policy: String,
     chain_id: u64,
     nonce: u64,
     tx_type: u8,
@@ -258,6 +266,14 @@ struct GatewayIngressWeb30RecordV1 {
     version: u16,
     protocol: u8,
     uca_id: String,
+    #[serde(default)]
+    account_id: String,
+    #[serde(default)]
+    fee_owner_account_id: String,
+    #[serde(default)]
+    nonce_owner_account_id: String,
+    #[serde(default)]
+    execution_policy: String,
     chain_id: u64,
     nonce: u64,
     from: Vec<u8>,
@@ -354,6 +370,86 @@ struct GatewayEthTxIndexEntry {
     gas_limit: u64,
     gas_price: u64,
     input: Vec<u8>,
+}
+
+fn gateway_subject_or_default_v1(value: Option<&str>, default: &str) -> String {
+    match value {
+        Some(candidate) if !candidate.trim().is_empty() => candidate.to_string(),
+        _ => default.to_string(),
+    }
+}
+
+fn gateway_explicit_account_id_param(params: &serde_json::Value) -> Option<String> {
+    param_as_string(params, "account_id").or_else(|| param_as_string(params, "uca_id"))
+}
+
+fn gateway_resolve_account_subject_v1(
+    router: &UnifiedAccountRouter,
+    params: &serde_json::Value,
+    persona: &PersonaAddress,
+    unbound_error: &str,
+) -> anyhow::Result<String> {
+    let explicit_account_id = gateway_explicit_account_id_param(params);
+    let binding_owner = router.resolve_binding_owner(persona).map(str::to_string);
+    match (explicit_account_id, binding_owner) {
+        (Some(explicit), Some(owner)) => {
+            if explicit != owner {
+                bail!(
+                    "uca_id mismatch for address binding: explicit={} binding_owner={}",
+                    explicit,
+                    owner
+                );
+            }
+            Ok(explicit)
+        }
+        (Some(explicit), None) => Ok(explicit),
+        (None, Some(owner)) => Ok(owner),
+        (None, None) => bail!("{}", unbound_error),
+    }
+}
+
+fn gateway_resolve_subject_owner_account_ids_v1(
+    params: &serde_json::Value,
+    account_id: &str,
+) -> (String, String) {
+    let fee_owner_account_id = gateway_subject_or_default_v1(
+        param_as_string_any_with_tx(params, &["fee_owner_account_id", "feeOwnerAccountId"])
+            .as_deref(),
+        account_id,
+    );
+    let nonce_owner_account_id = gateway_subject_or_default_v1(
+        param_as_string_any_with_tx(params, &["nonce_owner_account_id", "nonceOwnerAccountId"])
+            .as_deref(),
+        account_id,
+    );
+    (fee_owner_account_id, nonce_owner_account_id)
+}
+
+fn gateway_parse_execution_policy_v1(params: &serde_json::Value) -> TxExecutionPolicyV1 {
+    match param_as_string_any_with_tx(params, &["execution_policy", "executionPolicy"])
+        .unwrap_or_else(|| "standard".to_string())
+        .trim()
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "pqrequired" | "pq_required" | "pq-required" => TxExecutionPolicyV1::PqRequired,
+        "privacyrequired" | "privacy_required" | "privacy-required" => {
+            TxExecutionPolicyV1::PrivacyRequired
+        }
+        _ => TxExecutionPolicyV1::Standard,
+    }
+}
+
+fn gateway_eth_index_entry_matches_subject_v1(
+    entry: &GatewayEthTxIndexEntry,
+    account_id: Option<&str>,
+    address: &[u8],
+) -> bool {
+    if let Some(account_id) = account_id.filter(|value| !value.is_empty()) {
+        entry.uca_id == account_id || (entry.uca_id.is_empty() && entry.from.as_slice() == address)
+    } else {
+        entry.from.as_slice() == address
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -6873,7 +6969,29 @@ fn run_gateway_method(
                     let record = GatewayIngressEthRecordV1 {
                         version: GATEWAY_INGRESS_RECORD_VERSION,
                         protocol: GATEWAY_INGRESS_PROTOCOL_ETH,
-                        uca_id: "runtime:execute_ingress".to_string(),
+                        uca_id: gateway_subject_or_default_v1(
+                            normalized.account_id.as_deref(),
+                            "runtime:execute_ingress",
+                        ),
+                        account_id: gateway_subject_or_default_v1(
+                            normalized.account_id.as_deref(),
+                            "runtime:execute_ingress",
+                        ),
+                        fee_owner_account_id: gateway_subject_or_default_v1(
+                            normalized.fee_owner_account_id.as_deref(),
+                            &gateway_subject_or_default_v1(
+                                normalized.account_id.as_deref(),
+                                "runtime:execute_ingress",
+                            ),
+                        ),
+                        nonce_owner_account_id: gateway_subject_or_default_v1(
+                            normalized.nonce_owner_account_id.as_deref(),
+                            &gateway_subject_or_default_v1(
+                                normalized.account_id.as_deref(),
+                                "runtime:execute_ingress",
+                            ),
+                        ),
+                        execution_policy: normalized.execution_policy.as_str().to_string(),
                         chain_id,
                         nonce: local_exec_head_after,
                         tx_type,
@@ -8748,6 +8866,9 @@ fn run_gateway_method(
             let tx_ir = TxIR {
                 hash: Vec::new(),
                 from: from.clone(),
+                account_id: None,
+                fee_owner_account_id: None,
+                nonce_owner_account_id: None,
                 to: to.clone(),
                 value,
                 gas_limit: u64::MAX,
@@ -8757,6 +8878,7 @@ fn run_gateway_method(
                 signature: Vec::new(),
                 chain_id,
                 tx_type,
+                execution_policy: TxExecutionPolicyV1::Standard,
                 source_chain: None,
                 target_chain: None,
             };
@@ -9339,10 +9461,10 @@ fn run_gateway_method(
                 chain_id,
                 external_address: external_address.clone(),
             };
-            let explicit_uca_id = param_as_string(params, "uca_id");
+            let explicit_account_id = gateway_explicit_account_id_param(params);
             let binding_owner = router.resolve_binding_owner(&persona).map(str::to_string);
             if let (Some(explicit), Some(owner_id)) =
-                (explicit_uca_id.as_ref(), binding_owner.as_ref())
+                (explicit_account_id.as_ref(), binding_owner.as_ref())
             {
                 if explicit != owner_id {
                     bail!(
@@ -9353,6 +9475,7 @@ fn run_gateway_method(
                 }
             }
 
+            let effective_account_id = explicit_account_id.clone().or(binding_owner.clone());
             let entries = collect_gateway_eth_chain_entries(
                 eth_tx_index,
                 ctx.eth_tx_index_store,
@@ -9366,7 +9489,13 @@ fn run_gateway_method(
             )?;
             let latest_nonce = entries
                 .iter()
-                .filter(|entry| entry.from == external_address)
+                .filter(|entry| {
+                    gateway_eth_index_entry_matches_subject_v1(
+                        entry,
+                        effective_account_id.as_deref(),
+                        &external_address,
+                    )
+                })
                 .map(|entry| entry.nonce.saturating_add(1))
                 .max()
                 .unwrap_or(0);
@@ -9374,15 +9503,17 @@ fn run_gateway_method(
                 parse_eth_tx_count_block_tag(params).unwrap_or_else(|| "latest".to_string());
             let normalized_tag = block_tag.trim().trim_matches('"');
             let nonce = if normalized_tag.eq_ignore_ascii_case("pending") {
-                let pending_nonce_from_router = explicit_uca_id
+                let pending_nonce_from_router = effective_account_id
                     .clone()
-                    .or(binding_owner)
                     .and_then(|uca_id| router.next_nonce_for_persona(&uca_id, &persona).ok());
                 let pending_nonce = pending_nonce_from_router
                     .map(|nonce| nonce.max(latest_nonce))
                     .unwrap_or(latest_nonce);
-                let pending_nonce_from_runtime =
-                    gateway_eth_pending_nonce_from_runtime(chain_id, &external_address);
+                let pending_nonce_from_runtime = gateway_eth_pending_nonce_from_runtime(
+                    chain_id,
+                    effective_account_id.as_deref(),
+                    &external_address,
+                );
                 pending_nonce_from_runtime
                     .map(|nonce| nonce.max(pending_nonce))
                     .unwrap_or(pending_nonce)
@@ -9411,7 +9542,13 @@ fn run_gateway_method(
                 }
                 entries
                     .iter()
-                    .filter(|entry| entry.from == external_address && entry.nonce <= block_number)
+                    .filter(|entry| {
+                        gateway_eth_index_entry_matches_subject_v1(
+                            entry,
+                            effective_account_id.as_deref(),
+                            &external_address,
+                        ) && entry.nonce <= block_number
+                    })
                     .map(|entry| entry.nonce.saturating_add(1))
                     .max()
                     .unwrap_or(0)
@@ -11536,7 +11673,6 @@ fn run_gateway_method(
             ))
         }
         "eth_sendRawTransaction" => {
-            let explicit_uca_id = param_as_string(params, "uca_id");
             let role = parse_account_role(params)?;
             let raw_tx_hex = extract_eth_raw_tx_param(params)
                 .ok_or_else(|| anyhow::anyhow!("raw_tx is required for eth_sendRawTransaction"))?;
@@ -11652,26 +11788,15 @@ fn run_gateway_method(
                 chain_id,
                 external_address: from.clone(),
             };
-            let binding_owner = router.resolve_binding_owner(&persona).map(str::to_string);
-            let uca_id = match (explicit_uca_id, binding_owner) {
-                (Some(explicit), Some(owner)) => {
-                    if explicit != owner {
-                        bail!(
-                            "uca_id mismatch for address binding: explicit={} binding_owner={}",
-                            explicit,
-                            owner
-                        );
-                    }
-                    explicit
-                }
-                (Some(explicit), None) => explicit,
-                (None, Some(owner)) => owner,
-                (None, None) => {
-                    bail!(
-                        "uca_id is required for eth_sendRawTransaction when from is not bound"
-                    )
-                }
-            };
+            let account_id = gateway_resolve_account_subject_v1(
+                router,
+                params,
+                &persona,
+                "uca_id is required for eth_sendRawTransaction when from is not bound",
+            )?;
+            let (fee_owner_account_id, nonce_owner_account_id) =
+                gateway_resolve_subject_owner_account_ids_v1(params, &account_id);
+            let execution_policy = gateway_parse_execution_policy_v1(params);
             let signature_domain = param_as_string(params, "signature_domain")
                 .or_else(|| {
                     param_as_string_any_with_tx(params, &["signature_domain", "signatureDomain"])
@@ -11680,14 +11805,21 @@ fn run_gateway_method(
             let wants_cross_chain_atomic =
                 param_as_bool_any_with_tx(params, &["wants_cross_chain_atomic", "wantsCrossChainAtomic"])
                     .unwrap_or(false);
-            let kyc =
-                resolve_gateway_kyc_verified(params, &uca_id, chain_id, &from, role, nonce, true)?;
+            let kyc = resolve_gateway_kyc_verified(
+                params,
+                &account_id,
+                chain_id,
+                &from,
+                role,
+                nonce,
+                true,
+            )?;
             let session_expires_at =
                 param_as_u64_any_with_tx(params, &["session_expires_at", "sessionExpiresAt"]);
             let now = param_as_u64(params, "now").unwrap_or_else(now_unix_sec);
 
             let _decision = router.route(RouteRequest {
-                uca_id: uca_id.clone(),
+                uca_id: account_id.clone(),
                 persona,
                 role,
                 protocol: ProtocolKind::Eth,
@@ -11700,7 +11832,11 @@ fn run_gateway_method(
                 session_expires_at,
                 now,
             })?;
-            let tx_ir = tx_ir_from_raw_fields_m0(&fields, &raw_tx, from.clone(), chain_id);
+            let mut tx_ir = tx_ir_from_raw_fields_m0(&fields, &raw_tx, from.clone(), chain_id);
+            tx_ir.account_id = Some(account_id.clone());
+            tx_ir.fee_owner_account_id = Some(fee_owner_account_id.clone());
+            tx_ir.nonce_owner_account_id = Some(nonce_owner_account_id.clone());
+            tx_ir.execution_policy = execution_policy;
             if tx_ir.to.is_none() {
                 validate_gateway_eth_contract_deploy_initcode_size(
                     chain_id,
@@ -11731,7 +11867,11 @@ fn run_gateway_method(
             let record = GatewayIngressEthRecordV1 {
                 version: GATEWAY_INGRESS_RECORD_VERSION,
                 protocol: GATEWAY_INGRESS_PROTOCOL_ETH,
-                uca_id: uca_id.clone(),
+                uca_id: account_id.clone(),
+                account_id: account_id.clone(),
+                fee_owner_account_id: fee_owner_account_id.clone(),
+                nonce_owner_account_id: nonce_owner_account_id.clone(),
+                execution_policy: execution_policy.as_str().to_string(),
                 chain_id,
                 nonce,
                 tx_type,
@@ -11790,7 +11930,7 @@ fn run_gateway_method(
                 &broadcast_result,
             );
             let wire = encode_gateway_ingress_ops_wire_v1_eth(&record)?;
-            write_spool_ops_wire_v1(ctx.spool_dir, &wire)?;
+            let spool_file = write_spool_ops_wire_v1(ctx.spool_dir, &wire)?;
             upsert_gateway_eth_tx_index(eth_tx_index, ctx.eth_tx_index_store, &record);
             persist_gateway_eth_submit_success_status(
                 ctx.eth_tx_index_store,
@@ -11865,10 +12005,16 @@ fn run_gateway_method(
                 serde_json::json!({
                     "accepted": true,
                     "tx_hash": format!("0x{}", to_hex(&tx_hash)),
+                    "uca_id": record.uca_id,
+                    "account_id": record.account_id,
+                    "fee_owner_account_id": record.fee_owner_account_id,
+                    "nonce_owner_account_id": record.nonce_owner_account_id,
+                    "execution_policy": record.execution_policy,
                     "chain_id": format!("0x{:x}", chain_id),
                     "pending": true,
                     "onchain": false,
                     "broadcast": broadcast_json,
+                    "spool_file": spool_file.display().to_string(),
                     "overlay_node_id": record.overlay_node_id,
                     "overlay_session_id": record.overlay_session_id,
                     "overlay_route_id": record.overlay_route_id,
@@ -11888,7 +12034,6 @@ fn run_gateway_method(
             ))
         }
         "eth_sendTransaction" => {
-            let explicit_uca_id = param_as_string(params, "uca_id");
             let role = parse_account_role(params)?;
             let chain_id =
                 resolve_chain_id_with_tx_consistency(params, ctx.eth_default_chain_id)?;
@@ -11915,24 +12060,15 @@ fn run_gateway_method(
                 chain_id,
                 external_address: from.clone(),
             };
-            let binding_owner = router.resolve_binding_owner(&persona).map(str::to_string);
-            let uca_id = match (explicit_uca_id, binding_owner) {
-                (Some(explicit), Some(owner)) => {
-                    if explicit != owner {
-                        bail!(
-                            "uca_id mismatch for address binding: explicit={} binding_owner={}",
-                            explicit,
-                            owner
-                        );
-                    }
-                    explicit
-                }
-                (Some(explicit), None) => explicit,
-                (None, Some(owner)) => owner,
-                (None, None) => {
-                    bail!("uca_id is required for eth_sendTransaction when from is not bound")
-                }
-            };
+            let account_id = gateway_resolve_account_subject_v1(
+                router,
+                params,
+                &persona,
+                "uca_id is required for eth_sendTransaction when from is not bound",
+            )?;
+            let (fee_owner_account_id, nonce_owner_account_id) =
+                gateway_resolve_subject_owner_account_ids_v1(params, &account_id);
+            let execution_policy = gateway_parse_execution_policy_v1(params);
             let chain_entries = collect_gateway_eth_chain_entries(
                 eth_tx_index,
                 ctx.eth_tx_index_store,
@@ -11949,16 +12085,26 @@ fn run_gateway_method(
             } else {
                 let latest_nonce = chain_entries
                     .iter()
-                    .filter(|entry| entry.from == from)
+                    .filter(|entry| {
+                        gateway_eth_index_entry_matches_subject_v1(
+                            entry,
+                            Some(account_id.as_str()),
+                            &from,
+                        )
+                    })
                     .map(|entry| entry.nonce.saturating_add(1))
                     .max()
                     .unwrap_or(0);
-                let pending_nonce_from_router = router.next_nonce_for_persona(&uca_id, &persona).ok();
+                let pending_nonce_from_router =
+                    router.next_nonce_for_persona(&account_id, &persona).ok();
                 let pending_nonce = pending_nonce_from_router
                     .map(|value| value.max(latest_nonce))
                     .unwrap_or(latest_nonce);
-                let pending_nonce_from_runtime =
-                    gateway_eth_pending_nonce_from_runtime(chain_id, &from);
+                let pending_nonce_from_runtime = gateway_eth_pending_nonce_from_runtime(
+                    chain_id,
+                    Some(account_id.as_str()),
+                    &from,
+                );
                 pending_nonce_from_runtime
                     .map(|value| value.max(pending_nonce))
                     .unwrap_or(pending_nonce)
@@ -12085,13 +12231,20 @@ fn run_gateway_method(
             let wants_cross_chain_atomic =
                 param_as_bool_any_with_tx(params, &["wants_cross_chain_atomic", "wantsCrossChainAtomic"])
                     .unwrap_or(false);
-            let kyc =
-                resolve_gateway_kyc_verified(params, &uca_id, chain_id, &from, role, nonce, true)?;
+            let kyc = resolve_gateway_kyc_verified(
+                params,
+                &account_id,
+                chain_id,
+                &from,
+                role,
+                nonce,
+                true,
+            )?;
             let session_expires_at =
                 param_as_u64_any_with_tx(params, &["session_expires_at", "sessionExpiresAt"]);
             let now = param_as_u64(params, "now").unwrap_or_else(now_unix_sec);
             let tx_hash_input = GatewayEthTxHashInput {
-                uca_id: &uca_id,
+                uca_id: &account_id,
                 chain_id,
                 nonce,
                 tx_type,
@@ -12120,7 +12273,7 @@ fn run_gateway_method(
             )?;
 
             let _decision = router.route(RouteRequest {
-                uca_id: uca_id.clone(),
+                uca_id: account_id.clone(),
                 persona,
                 role,
                 protocol: ProtocolKind::Eth,
@@ -12144,6 +12297,9 @@ fn run_gateway_method(
             let tx_ir = TxIR {
                 hash: tx_hash.to_vec(),
                 from: from.clone(),
+                account_id: Some(account_id.clone()),
+                fee_owner_account_id: Some(fee_owner_account_id.clone()),
+                nonce_owner_account_id: Some(nonce_owner_account_id.clone()),
                 to: to.clone(),
                 value,
                 gas_limit,
@@ -12153,6 +12309,7 @@ fn run_gateway_method(
                 signature: signature.clone(),
                 chain_id,
                 tx_type: tx_ir_type,
+                execution_policy,
                 source_chain: None,
                 target_chain: None,
             };
@@ -12177,7 +12334,11 @@ fn run_gateway_method(
             let record = GatewayIngressEthRecordV1 {
                 version: GATEWAY_INGRESS_RECORD_VERSION,
                 protocol: GATEWAY_INGRESS_PROTOCOL_ETH,
-                uca_id: uca_id.clone(),
+                uca_id: account_id.clone(),
+                account_id: account_id.clone(),
+                fee_owner_account_id: fee_owner_account_id.clone(),
+                nonce_owner_account_id: nonce_owner_account_id.clone(),
+                execution_policy: execution_policy.as_str().to_string(),
                 chain_id,
                 nonce,
                 tx_type,
@@ -12241,7 +12402,7 @@ fn run_gateway_method(
                 &broadcast_result,
             );
             let wire = encode_gateway_ingress_ops_wire_v1_eth(&record)?;
-            write_spool_ops_wire_v1(ctx.spool_dir, &wire)?;
+            let spool_file = write_spool_ops_wire_v1(ctx.spool_dir, &wire)?;
             upsert_gateway_eth_tx_index(eth_tx_index, ctx.eth_tx_index_store, &record);
             persist_gateway_eth_submit_success_status(
                 ctx.eth_tx_index_store,
@@ -12316,10 +12477,16 @@ fn run_gateway_method(
                 serde_json::json!({
                     "accepted": true,
                     "tx_hash": format!("0x{}", to_hex(&record.tx_hash)),
+                    "uca_id": record.uca_id,
+                    "account_id": record.account_id,
+                    "fee_owner_account_id": record.fee_owner_account_id,
+                    "nonce_owner_account_id": record.nonce_owner_account_id,
+                    "execution_policy": record.execution_policy,
                     "chain_id": format!("0x{:x}", chain_id),
                     "pending": true,
                     "onchain": false,
                     "broadcast": broadcast_json,
+                    "spool_file": spool_file.display().to_string(),
                     "overlay_node_id": record.overlay_node_id,
                     "overlay_session_id": record.overlay_session_id,
                     "overlay_route_id": record.overlay_route_id,
@@ -12339,8 +12506,6 @@ fn run_gateway_method(
             ))
         }
         "web30_sendRawTransaction" => {
-            let uca_id = param_as_string(params, "uca_id")
-                .ok_or_else(|| anyhow::anyhow!("uca_id is required for web30_sendRawTransaction"))?;
             let role = parse_account_role(params)?;
             let chain_id = param_as_u64(params, "chain_id")
                 .ok_or_else(|| anyhow::anyhow!("chain_id is required for web30_sendRawTransaction"))?;
@@ -12352,6 +12517,20 @@ fn run_gateway_method(
                 )
             })?;
             let from = decode_hex_bytes(&from_raw, "external_address")?;
+            let persona = PersonaAddress {
+                persona_type: PersonaType::Web30,
+                chain_id,
+                external_address: from.clone(),
+            };
+            let account_id = gateway_resolve_account_subject_v1(
+                router,
+                params,
+                &persona,
+                "uca_id is required for web30_sendRawTransaction",
+            )?;
+            let (fee_owner_account_id, nonce_owner_account_id) =
+                gateway_resolve_subject_owner_account_ids_v1(params, &account_id);
+            let execution_policy = gateway_parse_execution_policy_v1(params);
             let raw_payload = extract_web30_raw_payload_param(params).ok_or_else(|| {
                 anyhow::anyhow!("raw_tx/raw_transaction/raw/payload_hex is required for web30_sendRawTransaction")
             })?;
@@ -12359,18 +12538,21 @@ fn run_gateway_method(
                 .unwrap_or_else(|| "web30:mainnet".to_string());
             let wants_cross_chain_atomic =
                 param_as_bool(params, "wants_cross_chain_atomic").unwrap_or(false);
-            let kyc =
-                resolve_gateway_kyc_verified(params, &uca_id, chain_id, &from, role, nonce, false)?;
+            let kyc = resolve_gateway_kyc_verified(
+                params,
+                &account_id,
+                chain_id,
+                &from,
+                role,
+                nonce,
+                false,
+            )?;
             let session_expires_at = param_as_u64(params, "session_expires_at");
             let now = param_as_u64(params, "now").unwrap_or_else(now_unix_sec);
 
             let decision = router.route(RouteRequest {
-                uca_id: uca_id.clone(),
-                persona: PersonaAddress {
-                    persona_type: PersonaType::Web30,
-                    chain_id,
-                    external_address: from.clone(),
-                },
+                uca_id: account_id.clone(),
+                persona,
                 role,
                 protocol: ProtocolKind::Web30,
                 signature_domain: signature_domain.clone(),
@@ -12383,7 +12565,7 @@ fn run_gateway_method(
                 now,
             })?;
             let tx_hash = compute_gateway_web30_tx_hash(&GatewayWeb30TxHashInput {
-                uca_id: &uca_id,
+                uca_id: &account_id,
                 chain_id,
                 nonce,
                 from: &from,
@@ -12395,7 +12577,11 @@ fn run_gateway_method(
             let record = GatewayIngressWeb30RecordV1 {
                 version: GATEWAY_INGRESS_RECORD_VERSION,
                 protocol: GATEWAY_INGRESS_PROTOCOL_WEB30,
-                uca_id: uca_id.clone(),
+                uca_id: account_id.clone(),
+                account_id: account_id.clone(),
+                fee_owner_account_id: fee_owner_account_id.clone(),
+                nonce_owner_account_id: nonce_owner_account_id.clone(),
+                execution_policy: execution_policy.as_str().to_string(),
                 chain_id,
                 nonce,
                 from,
@@ -12426,7 +12612,11 @@ fn run_gateway_method(
                 serde_json::json!({
                     "method": method,
                     "accepted": true,
-                    "uca_id": uca_id,
+                    "uca_id": record.uca_id,
+                    "account_id": record.account_id,
+                    "fee_owner_account_id": record.fee_owner_account_id,
+                    "nonce_owner_account_id": record.nonce_owner_account_id,
+                    "execution_policy": record.execution_policy,
                     "decision": match decision {
                         RouteDecision::FastPath => serde_json::json!({"kind": "fast_path"}),
                         RouteDecision::Adapter { chain_id } => serde_json::json!({"kind": "adapter", "chain_id": chain_id}),
@@ -12455,8 +12645,6 @@ fn run_gateway_method(
             ))
         }
         "web30_sendTransaction" => {
-            let uca_id = param_as_string(params, "uca_id")
-                .ok_or_else(|| anyhow::anyhow!("uca_id is required for web30_sendTransaction"))?;
             let role = parse_account_role(params)?;
             let chain_id = param_as_u64(params, "chain_id")
                 .ok_or_else(|| anyhow::anyhow!("chain_id is required for web30_sendTransaction"))?;
@@ -12466,23 +12654,40 @@ fn run_gateway_method(
                 anyhow::anyhow!("external_address (or from/address) is required for web30_sendTransaction")
             })?;
             let from = decode_hex_bytes(&from_raw, "external_address")?;
+            let persona = PersonaAddress {
+                persona_type: PersonaType::Web30,
+                chain_id,
+                external_address: from.clone(),
+            };
+            let account_id = gateway_resolve_account_subject_v1(
+                router,
+                params,
+                &persona,
+                "uca_id is required for web30_sendTransaction",
+            )?;
+            let (fee_owner_account_id, nonce_owner_account_id) =
+                gateway_resolve_subject_owner_account_ids_v1(params, &account_id);
+            let execution_policy = gateway_parse_execution_policy_v1(params);
             let privacy_plan = parse_gateway_web30_privacy_plan(params)?;
             let signature_domain = param_as_string(params, "signature_domain")
                 .unwrap_or_else(|| "web30:mainnet".to_string());
             let wants_cross_chain_atomic =
                 param_as_bool(params, "wants_cross_chain_atomic").unwrap_or(false);
-            let kyc =
-                resolve_gateway_kyc_verified(params, &uca_id, chain_id, &from, role, nonce, false)?;
+            let kyc = resolve_gateway_kyc_verified(
+                params,
+                &account_id,
+                chain_id,
+                &from,
+                role,
+                nonce,
+                false,
+            )?;
             let session_expires_at = param_as_u64(params, "session_expires_at");
             let now = param_as_u64(params, "now").unwrap_or_else(now_unix_sec);
 
             let decision = router.route(RouteRequest {
-                uca_id: uca_id.clone(),
-                persona: PersonaAddress {
-                    persona_type: PersonaType::Web30,
-                    chain_id,
-                    external_address: from.clone(),
-                },
+                uca_id: account_id.clone(),
+                persona,
                 role,
                 protocol: ProtocolKind::Web30,
                 signature_domain: signature_domain.clone(),
@@ -12513,7 +12718,7 @@ fn run_gateway_method(
                 {
                     bail!("privacy.ring_members must include from/external_address");
                 }
-                let tx_ir = build_privacy_tx_ir_signed_from_raw_v1(
+                let mut tx_ir = build_privacy_tx_ir_signed_from_raw_v1(
                     &PrivacyTxRawEnvelopeV1 {
                         from: from.clone(),
                         stealth_view_key: plan.stealth_view_key,
@@ -12530,6 +12735,10 @@ fn run_gateway_method(
                         private_key: plan.private_key,
                     },
                 )?;
+                tx_ir.account_id = Some(account_id.clone());
+                tx_ir.fee_owner_account_id = Some(fee_owner_account_id.clone());
+                tx_ir.nonce_owner_account_id = Some(nonce_owner_account_id.clone());
+                tx_ir.execution_policy = execution_policy;
                 tap_drain =
                     apply_gateway_evm_runtime_tap(&tx_ir, wants_cross_chain_atomic)?;
                 let payload = tx_ir
@@ -12545,7 +12754,7 @@ fn run_gateway_method(
             } else {
                 let payload = extract_web30_tx_payload(params)?;
                 let tx_hash = compute_gateway_web30_tx_hash(&GatewayWeb30TxHashInput {
-                    uca_id: &uca_id,
+                    uca_id: &account_id,
                     chain_id,
                     nonce,
                     from: &from,
@@ -12559,7 +12768,11 @@ fn run_gateway_method(
             let record = GatewayIngressWeb30RecordV1 {
                 version: GATEWAY_INGRESS_RECORD_VERSION,
                 protocol: GATEWAY_INGRESS_PROTOCOL_WEB30,
-                uca_id: uca_id.clone(),
+                uca_id: account_id.clone(),
+                account_id: account_id.clone(),
+                fee_owner_account_id: fee_owner_account_id.clone(),
+                nonce_owner_account_id: nonce_owner_account_id.clone(),
+                execution_policy: execution_policy.as_str().to_string(),
                 chain_id,
                 nonce,
                 from,
@@ -12633,7 +12846,11 @@ fn run_gateway_method(
                 serde_json::json!({
                     "method": method,
                     "accepted": true,
-                    "uca_id": uca_id,
+                    "uca_id": record.uca_id,
+                    "account_id": record.account_id,
+                    "fee_owner_account_id": record.fee_owner_account_id,
+                    "nonce_owner_account_id": record.nonce_owner_account_id,
+                    "execution_policy": record.execution_policy,
                     "decision": match decision {
                         RouteDecision::FastPath => serde_json::json!({"kind": "fast_path"}),
                         RouteDecision::Adapter { chain_id } => serde_json::json!({"kind": "adapter", "chain_id": chain_id}),
@@ -13669,7 +13886,7 @@ fn infer_gateway_eth_send_tx_uca_id(
     chain_id: u64,
     from: &[u8],
 ) -> Option<String> {
-    let explicit_uca_id = param_as_string(params, "uca_id");
+    let explicit_uca_id = gateway_explicit_account_id_param(params);
     if let Some(explicit) = explicit_uca_id {
         if let Some(router) = router {
             let persona = PersonaAddress {
@@ -14523,10 +14740,22 @@ fn execute_gateway_atomic_broadcast_ticket_native(
     }
 
     let tap_drain = apply_gateway_evm_runtime_tap(&tx_ir, false)?;
+    let account_id = gateway_subject_or_default_v1(
+        tx_ir.account_id.as_deref(),
+        &format!("atomic:{}", ticket.intent_id),
+    );
+    let fee_owner_account_id =
+        gateway_subject_or_default_v1(tx_ir.fee_owner_account_id.as_deref(), &account_id);
+    let nonce_owner_account_id =
+        gateway_subject_or_default_v1(tx_ir.nonce_owner_account_id.as_deref(), &account_id);
     let record = GatewayIngressEthRecordV1 {
         version: GATEWAY_INGRESS_RECORD_VERSION,
         protocol: GATEWAY_INGRESS_PROTOCOL_ETH,
-        uca_id: format!("atomic:{}", ticket.intent_id),
+        uca_id: account_id.clone(),
+        account_id,
+        fee_owner_account_id,
+        nonce_owner_account_id,
+        execution_policy: tx_ir.execution_policy.as_str().to_string(),
         chain_id: tx_ir.chain_id,
         nonce: tx_ir.nonce,
         tx_type: 0,

@@ -54,6 +54,25 @@ pub enum NovVerificationModeV1 {
     MandatoryZk,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, Default)]
+pub enum NovExecutionPolicyV1 {
+    #[default]
+    Standard,
+    PqRequired,
+    PrivacyRequired,
+}
+
+impl NovExecutionPolicyV1 {
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Standard => "standard",
+            Self::PqRequired => "pq_required",
+            Self::PrivacyRequired => "privacy_required",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum NovGovernanceProposalTypeV1 {
     Parameter,
@@ -74,10 +93,18 @@ pub struct NovTransferTxV1 {
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct NovExecuteTxV1 {
     pub caller: Vec<u8>,
+    #[serde(default)]
+    pub account_id: Option<String>,
+    #[serde(default)]
+    pub fee_owner_account_id: Option<String>,
+    #[serde(default)]
+    pub nonce_owner_account_id: Option<String>,
     pub target: NovExecutionTargetV1,
     pub method: String,
     pub args: Vec<u8>,
     pub execution_mode: NovExecutionModeV1,
+    #[serde(default)]
+    pub execution_policy: NovExecutionPolicyV1,
     pub privacy_mode: NovPrivacyModeV1,
     pub verification_mode: NovVerificationModeV1,
     pub fee_policy: NovFeePolicyV1,
@@ -389,10 +416,14 @@ mod tests {
             chain_id: 777,
             kind: NovTxKindV1::Execute(NovExecuteTxV1 {
                 caller: vec![0x33; 20],
+                account_id: Some("acct-roundtrip".to_string()),
+                fee_owner_account_id: Some("acct-fee".to_string()),
+                nonce_owner_account_id: Some("acct-nonce".to_string()),
                 target: NovExecutionTargetV1::NativeModule("treasury".to_string()),
                 method: "deposit_reserve".to_string(),
                 args: vec![1, 2, 3],
                 execution_mode: NovExecutionModeV1::Batch,
+                execution_policy: NovExecutionPolicyV1::PqRequired,
                 privacy_mode: NovPrivacyModeV1::Confidential,
                 verification_mode: NovVerificationModeV1::MandatoryZk,
                 fee_policy: NovFeePolicyV1 {

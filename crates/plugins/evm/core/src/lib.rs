@@ -1024,6 +1024,9 @@ pub fn tx_ir_from_raw_fields_m0(
     let mut tx = TxIR {
         hash: Vec::new(),
         from,
+        account_id: None,
+        fee_owner_account_id: None,
+        nonce_owner_account_id: None,
         to,
         value: fields.value.unwrap_or(0),
         gas_limit,
@@ -1033,6 +1036,7 @@ pub fn tx_ir_from_raw_fields_m0(
         signature: raw.to_vec(),
         chain_id,
         tx_type,
+        execution_policy: Default::default(),
         source_chain: None,
         target_chain: None,
     };
@@ -1365,6 +1369,9 @@ mod tests {
         TxIR {
             hash: Vec::new(),
             from: vec![1u8; 20],
+            account_id: None,
+            fee_owner_account_id: None,
+            nonce_owner_account_id: None,
             to: Some(vec![2u8; 20]),
             value: 1,
             gas_limit: 21_000,
@@ -1374,6 +1381,7 @@ mod tests {
             signature: vec![9u8; 32],
             chain_id,
             tx_type: TxType::Transfer,
+            execution_policy: Default::default(),
             source_chain: None,
             target_chain: None,
         }

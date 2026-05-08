@@ -1430,6 +1430,9 @@ fn to_adapter_tx_ir(tx: &LocalTx, chain_id: u64) -> TxIR {
     let mut ir = TxIR {
         hash: Vec::new(),
         from: encode_adapter_address(tx.account),
+        account_id: None,
+        fee_owner_account_id: None,
+        nonce_owner_account_id: None,
         to: Some(encode_adapter_address(tx.key)),
         value: tx.value as u128,
         gas_limit: 21_000,
@@ -1439,6 +1442,7 @@ fn to_adapter_tx_ir(tx: &LocalTx, chain_id: u64) -> TxIR {
         signature: tx.signature.to_vec(),
         chain_id,
         tx_type: TxType::Transfer,
+        execution_policy: Default::default(),
         source_chain: None,
         target_chain: None,
     };
@@ -6322,6 +6326,9 @@ fn parse_eth_send_transaction_ir(
     let mut tx = TxIR {
         hash: Vec::new(),
         from,
+        account_id: None,
+        fee_owner_account_id: None,
+        nonce_owner_account_id: None,
         to,
         value,
         gas_limit,
@@ -6331,6 +6338,7 @@ fn parse_eth_send_transaction_ir(
         signature: Vec::new(),
         chain_id,
         tx_type,
+        execution_policy: Default::default(),
         source_chain: None,
         target_chain: None,
     };

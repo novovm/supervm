@@ -41,6 +41,8 @@ const ADAPTER_UA_INGRESS_GUARD_ENV: &str = "NOVOVM_UNIFIED_ACCOUNT_ADAPTER_INGRE
 const ADAPTER_UA_AUTOPROVISION_ENV: &str = "NOVOVM_UNIFIED_ACCOUNT_ADAPTER_AUTOPROVISION";
 const ADAPTER_UA_SIGNATURE_DOMAIN_ENV: &str = "NOVOVM_UNIFIED_ACCOUNT_ADAPTER_SIGNATURE_DOMAIN";
 const ADAPTER_TX_SIG_DOMAIN: &[u8] = b"novovm_adapter_tx_sig_v1";
+const ADAPTER_UA_SUBJECT_ACCOUNT_KEY_PREFIX: &[u8] = b"ua:subject:v1:";
+const ADAPTER_UA_SUBJECT_NONCE_KEY_PREFIX: &[u8] = b"ua:nonce:v1:";
 const TX_SIG_VERIFY_PARALLEL_MIN_BATCH: usize = 128;
 const TX_SIG_VERIFY_PARALLEL_MIN_CHUNK: usize = 64;
 const AOEM_TX_ARTIFACT_KEY_PREFIX_V1: &[u8] = b"aoem:tx_artifact:v1:";
@@ -79,6 +81,13 @@ struct ExecutionReconstructionContextV1<'a> {
     final_state_root: [u8; 32],
     tx_index: u32,
     raw_execution_logs: &'a [AoemEventLogV1],
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct AdapterExecutionSubjectV1 {
+    account_id: String,
+    fee_owner_account_id: String,
+    nonce_owner_account_id: String,
 }
 
 impl NovoVmAdapter {
@@ -300,11 +309,93 @@ impl NovoVmAdapter {
         }
     }
 
-    fn append_nonce_key(address: &[u8], nonce: u64) -> Vec<u8> {
-        let mut key = Vec::with_capacity(address.len() + 8);
-        key.extend_from_slice(address);
+    fn normalize_account_hint_v1(raw: &str) -> Option<String> {
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        }
+    }
+
+    fn append_subject_nonce_key(account_id: &str, nonce: u64) -> Vec<u8> {
+        let mut key =
+            Vec::with_capacity(ADAPTER_UA_SUBJECT_NONCE_KEY_PREFIX.len() + account_id.len() + 8);
+        key.extend_from_slice(ADAPTER_UA_SUBJECT_NONCE_KEY_PREFIX);
+        key.extend_from_slice(account_id.as_bytes());
         key.extend_from_slice(&nonce.to_le_bytes());
         key
+    }
+
+    fn subject_state_key(account_id: &str) -> Vec<u8> {
+        let mut key =
+            Vec::with_capacity(ADAPTER_UA_SUBJECT_ACCOUNT_KEY_PREFIX.len() + account_id.len());
+        key.extend_from_slice(ADAPTER_UA_SUBJECT_ACCOUNT_KEY_PREFIX);
+        key.extend_from_slice(account_id.as_bytes());
+        key
+    }
+
+    fn fallback_adapter_account_id(from: &[u8]) -> String {
+        format!("{ADAPTER_UCA_ID_PREFIX}{}", Self::to_hex(from))
+    }
+
+    fn subject_account_id_from_address_v1(&self, address: &[u8]) -> String {
+        let persona = PersonaAddress {
+            persona_type: PersonaType::Evm,
+            chain_id: self.config.chain_id,
+            external_address: address.to_vec(),
+        };
+        self.unified_account_router
+            .resolve_binding_owner(&persona)
+            .map(str::to_owned)
+            .unwrap_or_else(|| Self::fallback_adapter_account_id(address))
+    }
+
+    fn subject_from_tx_v1(tx: &TxIR) -> AdapterExecutionSubjectV1 {
+        let account_id = tx
+            .account_id
+            .as_deref()
+            .and_then(Self::normalize_account_hint_v1)
+            .unwrap_or_else(|| Self::fallback_adapter_account_id(&tx.from));
+        let fee_owner_account_id = tx
+            .fee_owner_account_id
+            .as_deref()
+            .and_then(Self::normalize_account_hint_v1)
+            .unwrap_or_else(|| account_id.clone());
+        let nonce_owner_account_id = tx
+            .nonce_owner_account_id
+            .as_deref()
+            .and_then(Self::normalize_account_hint_v1)
+            .unwrap_or_else(|| account_id.clone());
+        AdapterExecutionSubjectV1 {
+            account_id,
+            fee_owner_account_id,
+            nonce_owner_account_id,
+        }
+    }
+
+    fn bump_subject_nonce_owner_v1(
+        tx: &TxIR,
+        state: &mut StateIR,
+        kv: &mut HashMap<Vec<u8>, Vec<u8>>,
+    ) {
+        let subject = Self::subject_from_tx_v1(tx);
+        let nonce_owner_key = Self::subject_state_key(subject.nonce_owner_account_id.as_str());
+        let mut nonce_owner_account = state
+            .get_account(&nonce_owner_key)
+            .cloned()
+            .unwrap_or_else(Self::default_account);
+        nonce_owner_account.nonce = nonce_owner_account.nonce.max(tx.nonce.saturating_add(1));
+        state.set_account(nonce_owner_key.clone(), nonce_owner_account);
+        state.set_storage(
+            nonce_owner_key,
+            tx.nonce.to_le_bytes().to_vec(),
+            Self::tx_hash_or_compute(tx),
+        );
+        kv.insert(
+            Self::append_subject_nonce_key(subject.nonce_owner_account_id.as_str(), tx.nonce),
+            Self::tx_hash_or_compute(tx),
+        );
     }
 
     fn derive_contract_address(from: &[u8], nonce: u64) -> Vec<u8> {
@@ -965,10 +1056,6 @@ impl NovoVmAdapter {
             .unwrap_or_else(|| format!("evm:{chain_id}"))
     }
 
-    fn adapter_uca_id(&self, from: &[u8]) -> String {
-        format!("{ADAPTER_UCA_ID_PREFIX}{}", Self::to_hex(from))
-    }
-
     fn adapter_persona(&self, tx: &TxIR) -> PersonaAddress {
         PersonaAddress {
             persona_type: PersonaType::Evm,
@@ -992,31 +1079,35 @@ impl NovoVmAdapter {
         self.execution_current_logs.clear();
     }
 
-    fn route_transaction_through_unified_account(&mut self, tx: &TxIR) -> Result<()> {
+    fn route_transaction_through_unified_account(
+        &mut self,
+        tx: &TxIR,
+    ) -> Result<AdapterExecutionSubjectV1> {
+        let subject = Self::subject_from_tx_v1(tx);
         if !self.unified_account_guard_enabled() {
-            return Ok(());
+            return Ok(subject);
         }
 
         let now = Self::now_unix_sec();
-        let uca_id = self.adapter_uca_id(&tx.from);
         let persona = self.adapter_persona(tx);
 
         if self.unified_account_autoprovision_enabled() {
-            match self
-                .unified_account_router
-                .create_uca(uca_id.clone(), tx.from.clone(), now)
-            {
+            match self.unified_account_router.create_uca(
+                subject.account_id.clone(),
+                tx.from.clone(),
+                now,
+            ) {
                 Ok(()) | Err(UnifiedAccountError::UcaAlreadyExists { .. }) => {}
                 Err(err) => {
                     bail!(
                         "unified account adapter ingress create failed (uca_id={}): {}",
-                        uca_id,
+                        subject.account_id,
                         err
                     );
                 }
             }
             match self.unified_account_router.add_binding(
-                &uca_id,
+                &subject.account_id,
                 AccountRole::Owner,
                 persona.clone(),
                 now,
@@ -1025,7 +1116,7 @@ impl NovoVmAdapter {
                 Err(err) => {
                     bail!(
                         "unified account adapter ingress bind failed (uca_id={}, chain_id={}): {}",
-                        uca_id,
+                        subject.account_id,
                         persona.chain_id,
                         err
                     );
@@ -1036,7 +1127,7 @@ impl NovoVmAdapter {
         let route = self
             .unified_account_router
             .route(RouteRequest {
-                uca_id: uca_id.clone(),
+                uca_id: subject.account_id.clone(),
                 persona: persona.clone(),
                 role: AccountRole::Owner,
                 protocol: ProtocolKind::Eth,
@@ -1055,7 +1146,7 @@ impl NovoVmAdapter {
             .map_err(|err| {
                 anyhow::anyhow!(
                     "unified account adapter ingress route rejected (uca_id={}, chain_id={}, nonce={}): {}",
-                    uca_id,
+                    subject.account_id,
                     tx.chain_id,
                     tx.nonce,
                     err
@@ -1072,7 +1163,7 @@ impl NovoVmAdapter {
             }
         }
 
-        Ok(())
+        Ok(subject)
     }
 
     fn decode_privacy_signature(tx: &TxIR) -> Result<Web30RingSignature> {
@@ -1121,13 +1212,7 @@ impl NovoVmAdapter {
             .to
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("transfer tx missing target address"))?;
-
-        let mut from_account = state
-            .get_account(&tx.from)
-            .cloned()
-            .unwrap_or_else(Self::default_account);
-        from_account.nonce = from_account.nonce.max(tx.nonce.saturating_add(1));
-        state.set_account(tx.from.clone(), from_account);
+        Self::bump_subject_nonce_owner_v1(tx, state, kv);
 
         if Self::tx_execution_status_ok(artifact) {
             let mut to_account = state
@@ -1153,12 +1238,6 @@ impl NovoVmAdapter {
                 failure_recoverability,
             );
         }
-
-        let slot = tx.nonce.to_le_bytes().to_vec();
-        state.set_storage(tx.from.clone(), slot, Self::tx_hash_or_compute(tx));
-
-        let state_key = Self::append_nonce_key(&tx.from, tx.nonce);
-        kv.insert(state_key, Self::tx_hash_or_compute(tx));
         if let Some(artifact) = artifact {
             Self::record_execution_artifact(tx, state, kv, artifact)?;
         }
@@ -1176,12 +1255,7 @@ impl NovoVmAdapter {
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("contract call tx missing target address"))?;
 
-        let mut from_account = state
-            .get_account(&tx.from)
-            .cloned()
-            .unwrap_or_else(Self::default_account);
-        from_account.nonce = from_account.nonce.max(tx.nonce.saturating_add(1));
-        state.set_account(tx.from.clone(), from_account);
+        Self::bump_subject_nonce_owner_v1(tx, state, kv);
 
         if Self::tx_execution_status_ok(artifact) {
             let mut to_account = state
@@ -1210,10 +1284,6 @@ impl NovoVmAdapter {
                 failure_recoverability,
             );
         }
-        kv.insert(
-            Self::append_nonce_key(&tx.from, tx.nonce),
-            Self::tx_hash_or_compute(tx),
-        );
         if let Some(artifact) = artifact {
             Self::record_execution_artifact(tx, state, kv, artifact)?;
         }
@@ -1233,12 +1303,7 @@ impl NovoVmAdapter {
             bail!("contract deploy tx missing init code");
         }
 
-        let mut from_account = state
-            .get_account(&tx.from)
-            .cloned()
-            .unwrap_or_else(Self::default_account);
-        from_account.nonce = from_account.nonce.max(tx.nonce.saturating_add(1));
-        state.set_account(tx.from.clone(), from_account);
+        Self::bump_subject_nonce_owner_v1(tx, state, kv);
 
         let contract_address = artifact
             .and_then(|item| item.contract_address.clone())
@@ -1289,10 +1354,6 @@ impl NovoVmAdapter {
                     runtime_code.clone(),
                 );
             }
-            kv.insert(
-                Self::append_nonce_key(&tx.from, tx.nonce),
-                contract_address.clone(),
-            );
         } else {
             state.set_storage(
                 tx.from.clone(),
@@ -1334,10 +1395,6 @@ impl NovoVmAdapter {
                 failure_class_source,
                 failure_recoverability,
             );
-            kv.insert(
-                Self::append_nonce_key(&tx.from, tx.nonce),
-                contract_address.clone(),
-            );
         }
         if let Some(artifact) = artifact {
             Self::record_execution_artifact(tx, state, kv, artifact)?;
@@ -1366,8 +1423,8 @@ impl NovoVmAdapter {
             bail!("privacy tx insufficient balance");
         }
         from_account.balance -= tx.value;
-        from_account.nonce = from_account.nonce.max(tx.nonce.saturating_add(1));
         state.set_account(tx.from.clone(), from_account);
+        Self::bump_subject_nonce_owner_v1(tx, state, kv);
 
         let recipient = stealth_address.spend_key.to_vec();
         let mut to_account = state
@@ -1387,16 +1444,9 @@ impl NovoVmAdapter {
             b"privacy:key_image".to_vec(),
             ring_signature.key_image.to_vec(),
         );
-        state.set_storage(
-            tx.from.clone(),
-            tx.nonce.to_le_bytes().to_vec(),
-            tx.hash.clone(),
-        );
-
         if record_key_image {
             kv.insert(key_image_key, tx.hash.clone());
         }
-        kv.insert(Self::append_nonce_key(&tx.from, tx.nonce), tx.hash.clone());
         Ok(())
     }
 
@@ -1713,6 +1763,9 @@ pub fn build_privacy_tx_ir_unsigned_v1(envelope: &PrivacyTxEnvelopeV1) -> Result
     let mut tx = TxIR {
         hash: Vec::new(),
         from: envelope.from.clone(),
+        account_id: None,
+        fee_owner_account_id: None,
+        nonce_owner_account_id: None,
         to: None,
         value: envelope.value,
         gas_limit: envelope.gas_limit,
@@ -1722,6 +1775,7 @@ pub fn build_privacy_tx_ir_unsigned_v1(envelope: &PrivacyTxEnvelopeV1) -> Result
         signature: Vec::new(),
         chain_id: envelope.chain_id,
         tx_type: TxType::Privacy,
+        execution_policy: Default::default(),
         source_chain: None,
         target_chain: None,
     };
@@ -1991,7 +2045,12 @@ impl ChainAdapter for NovoVmAdapter {
 
     fn get_nonce(&self, address: &[u8]) -> Result<u64> {
         self.ensure_initialized()?;
-        Ok(self.state.get_account(address).map_or(0, |acc| acc.nonce))
+        let account_id = self.subject_account_id_from_address_v1(address);
+        let subject_key = Self::subject_state_key(&account_id);
+        Ok(self.state.get_account(&subject_key).map_or_else(
+            || self.state.get_account(address).map_or(0, |acc| acc.nonce),
+            |acc| acc.nonce,
+        ))
     }
 }
 
@@ -2052,6 +2111,9 @@ mod tests {
         let mut tx = TxIR {
             hash: Vec::new(),
             from,
+            account_id: None,
+            fee_owner_account_id: None,
+            nonce_owner_account_id: None,
             to: Some(vec![3u8; 20]),
             value: 1,
             gas_limit: 21_000,
@@ -2061,6 +2123,7 @@ mod tests {
             signature: Vec::new(),
             chain_id: 1,
             tx_type,
+            execution_policy: Default::default(),
             source_chain: None,
             target_chain: None,
         };
@@ -2760,7 +2823,9 @@ mod tests {
         );
         assert_eq!(
             runtime_state
-                .get_account(&tx.from)
+                .get_account(&NovoVmAdapter::subject_state_key(
+                    NovoVmAdapter::fallback_adapter_account_id(&tx.from).as_str(),
+                ))
                 .map(|acc| acc.nonce)
                 .unwrap_or(0),
             1
@@ -3804,5 +3869,89 @@ mod tests {
         } else {
             std::env::remove_var(type3_env_key);
         }
+    }
+
+    #[test]
+    fn adapter_subject_normalization_prefers_explicit_account_id_v1() -> Result<()> {
+        let mut adapter = NovoVmAdapter::new(ChainConfig {
+            chain_type: ChainType::NovoVM,
+            chain_id: 1,
+            name: "test".to_string(),
+            enabled: true,
+            custom_config: None,
+        });
+        adapter.initialize()?;
+
+        let mut tx = sample_tx(TxType::Transfer);
+        tx.account_id = Some("uca:phase2:explicit".to_string());
+        tx.fee_owner_account_id = Some("uca:phase2:fee".to_string());
+        tx.nonce_owner_account_id = Some("uca:phase2:explicit".to_string());
+        tx = resign_tx(tx);
+
+        let mut runtime_state = StateIR::new();
+        adapter.execute_transaction(&tx, &mut runtime_state)?;
+
+        let persona = adapter.adapter_persona(&tx);
+        assert_eq!(
+            adapter
+                .unified_account_router()
+                .resolve_binding_owner(&persona),
+            Some("uca:phase2:explicit")
+        );
+        assert!(adapter
+            .unified_account_router()
+            .get_account("uca:phase2:explicit")
+            .is_ok());
+
+        let legacy_fallback = NovoVmAdapter::fallback_adapter_account_id(&tx.from);
+        assert!(
+            adapter
+                .unified_account_router()
+                .get_account(&legacy_fallback)
+                .is_err(),
+            "legacy fallback subject should not be materialized when explicit account_id is supplied"
+        );
+
+        let nonce_owner_key = NovoVmAdapter::subject_state_key("uca:phase2:explicit");
+        assert_eq!(
+            adapter
+                .state
+                .get_account(&nonce_owner_key)
+                .map(|acc| acc.nonce),
+            Some(1),
+            "subject nonce owner must advance under explicit account ownership"
+        );
+        assert_eq!(
+            adapter
+                .state
+                .get_account(&tx.from)
+                .map(|acc| acc.nonce)
+                .unwrap_or(0),
+            0,
+            "legacy address account must not keep nonce ownership after subject normalization"
+        );
+        assert_eq!(
+            adapter.get_nonce(&tx.from)?,
+            1,
+            "adapter nonce query should resolve through the bound account subject"
+        );
+
+        let mut legacy_nonce_key = tx.from.clone();
+        legacy_nonce_key.extend_from_slice(&tx.nonce.to_le_bytes());
+        assert!(
+            !adapter.kv.contains_key(&legacy_nonce_key),
+            "legacy address nonce key must not be written once subject nonce ownership is enabled"
+        );
+        assert!(
+            adapter
+                .kv
+                .contains_key(&NovoVmAdapter::append_subject_nonce_key(
+                    "uca:phase2:explicit",
+                    0
+                )),
+            "subject nonce key must be written for the canonical nonce owner"
+        );
+
+        Ok(())
     }
 }

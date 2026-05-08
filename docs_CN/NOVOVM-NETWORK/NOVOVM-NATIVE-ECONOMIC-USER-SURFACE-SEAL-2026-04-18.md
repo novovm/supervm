@@ -136,20 +136,15 @@ Scope: `novovm-node` 真实产物入口上的原生经济用户面（`nov_getAss
 
 `所有经济扩展面全部开放`
 
-## 与历史文档的关系
+## 当前读取顺序
 
-本文件不改写以下历史快照的原始结论，只补充一个后续里程碑事实：
+对外读取当前经济能力时，建议按以下顺序理解：
 
-- `docs_CN/CONSENSUS/NOVOVM-CONSENSUS-PUBLISHABLE-AUDIT-AND-RULES-2026-03-05.md`
-- `docs_CN/CONSENSUS/NOVOVM-ECONOMIC-INFRA-MIGRATION-CHECKLIST-2026-03-07.md`
-- `docs_CN/SVM2026-MIGRATION/NOVOVM-OPEN-BUSINESS-SURFACE-CLOSURE-CHECKLIST-2026-03-13.md`
+- 系统总览：`docs_CN/NOVOVM-NETWORK/NOVOVM-CURRENT-SYSTEM-ARCHITECTURE-2026-04-19.md`
+- 当前经济用户入口：本文
+- 可观测层与 P3 决策：`docs_CN/NOVOVM-NETWORK/NOVOVM-OBSERVABILITY-P2D-SEAL-2026-04-18.md` 与 `docs_CN/NOVOVM-NETWORK/NOVOVM-P3-FEATURE-GATE-DECISION-THRESHOLDS-2026-04-18.md`
 
-统一读取方式应为：
-
-- `2026-03-05`：可发布基线 / 受限主链路快照
-- `2026-03-07`：经济基础设施迁移完成度快照
-- `2026-03-13`：开放业务面收口
-- `2026-04-18`：真实 `novovm-node` 用户入口接通并通过真实产物级门禁
+这意味着当前对外口径直接读取“已完成的真实入口、当前边界和当前决策状态”，不需要先阅读开发过程文档。
 
 ## 建议对外口径
 

@@ -1,105 +1,157 @@
-# Docs Index
+# NOVOVM Public Docs Index
 
-> 状态说明（2026-04-17）：
-> 本文件为历史自动扫描索引（2026-02-07 生成），不能作为当前生产口径入口。
-> 当前权威入口请先看：
-> `docs_CN/CURRENT-AUTHORITATIVE-ENTRYPOINT-2026-04-17.md`
-> 当前系统完整架构总览见：
-> `docs_CN/NOVOVM-NETWORK/NOVOVM-CURRENT-SYSTEM-ARCHITECTURE-2026-04-19.md`
-> 货币与支付口径决议见：
-> `docs_CN/NOVOVM-NETWORK/NOVOVM-MONETARY-ARCHITECTURE-M0-M1-M2-AND-MULTI-ASSET-PAYMENT-2026-04-17.md`
-> 原生交易与执行接口冻结稿见：
-> `docs_CN/NOVOVM-NETWORK/NOVOVM-NATIVE-TX-AND-EXECUTION-INTERFACE-DESIGN-2026-04-17.md`
-> P1 封盘与当前已实现边界见：
-> `docs_CN/NOVOVM-NETWORK/NOVOVM-NATIVE-PAYMENT-AND-TREASURY-P1-SEAL-2026-04-17.md`
-> P2-A 双轨制度冻结稿见：
-> `docs_CN/NOVOVM-NETWORK/NOVOVM-DUAL-TRACK-SETTLEMENT-AND-MARKET-SYSTEM-P2A-2026-04-17.md`
-> P2-A 清算路由封盘见：
-> `docs_CN/NOVOVM-NETWORK/NOVOVM-CLEARING-ROUTER-P2A-SEAL-2026-04-17.md`
-> P2-C Stage2 Treasury policy 封盘见：
-> `docs_CN/NOVOVM-NETWORK/NOVOVM-TREASURY-POLICY-P2C-STAGE2-SEAL-2026-04-18.md`
-> P2-C constrained strategy 封盘见：
-> `docs_CN/NOVOVM-NETWORK/NOVOVM-TREASURY-POLICY-P2C-CONSTRAINED-STRATEGY-SEAL-2026-04-18.md`
-> P2-C 正式封盘见：
-> `docs_CN/NOVOVM-NETWORK/NOVOVM-TREASURY-POLICY-P2C-SEAL-2026-04-18.md`
-> P2-D 可观测层封盘见：
-> `docs_CN/NOVOVM-NETWORK/NOVOVM-OBSERVABILITY-P2D-SEAL-2026-04-18.md`
-> 治理用户入口封盘见：
-> `docs_CN/NOVOVM-NETWORK/NOVOVM-GOVERNANCE-USER-SURFACE-SEAL-2026-04-18.md`
-> 治理 MLDSA87 external vote 封盘见：
-> `docs_CN/NOVOVM-NETWORK/NOVOVM-GOVERNANCE-MLDSA87-EXTERNAL-VOTE-SEAL-2026-04-18.md`
-> P3 开关决策规范见（Decision Only / Not Enabled）：
-> `docs_CN/NOVOVM-NETWORK/NOVOVM-P3-FEATURE-GATE-DECISION-THRESHOLDS-2026-04-18.md`
-> P3 门槛 dry-run 结果记录见（可判定，不启用）：
-> `docs_CN/NOVOVM-NETWORK/NOVOVM-P3-GATE-DRYRUN-RESULT-2026-04-18.md`
-> P3-A 7 天运行窗口判定模板见：
-> `docs_CN/NOVOVM-NETWORK/NOVOVM-P3A-GATE-WEEKLY-RUN-WINDOW-TEMPLATE-2026-04-18.md`
-> P2-D 运行阶段报告模板见：
-> `docs_CN/NOVOVM-NETWORK/NOVOVM-CLEARING-METRICS-RUN-PHASE-TEMPLATE-2026-04-18.md`
-> Full 模式最小启动模板见：
-> `docs_CN/NOVOVM-NETWORK/NOVOVM-FULL-MODE-MINIMAL-BOOTSTRAP-TEMPLATE-2026-04-18.md`
+本页是 `docs_CN/` 的当前公开资料导航页，只展示当前有效的产品能力、接口、运行与决策文档。
 
-## 目录结构
+当前统一账户/资产线的冻结结论是：
 
-SUPERVM/                                                       # 仓库根目录 (2026-01-27 04:15/2026-02-07 05:13)
-├── .github/                                                   # GitHub配置 (2026-02-07 04:35/2026-02-07 06:34)
-│   ├── workflows/                                             # CI工作流 (2026-02-07 04:35/2026-02-07 04:36)
-│   │   └── ci.yml                                             # 配置 (2026-02-07 04:36/2026-02-07 04:53)
-│   └── copilot-instructions.md                                # Copilot指令 (2026-02-07 06:34/2026-02-07 07:02)
-├── docs/                                                      # 文档目录 (2026-02-06 05:49/2026-02-07 07:05)
-│   ├── temp/                                                  # 临时文档 (2026-02-06 06:07/2026-02-06 06:07)
-│   │   └── AOEM-PROPRIETARY-LICENSING-ANALYSIS-2026-02-06.md  # 专有许可证分析 (2026-02-06 06:07/2026-02-06 06:08)
-│   └── INDEX-DESCRIPTIONS.md                                  # 索引 (2026-02-07 07:05/2026-02-07 07:08)
-├── scripts/                                                   # 脚本目录 (2026-02-06 06:50/2026-02-07 03:55)
-├── specs/                                                     # 规格文档 (2026-02-06 06:43/2026-02-06 06:43)
-├── tools/                                                     # 工具目录 (2026-02-06 14:36/2026-02-07 03:54)
-│   ├── python-tools/                                          # 目录 (2026-02-07 03:54/2026-02-07 03:55)
-│   │   ├── add-python-to-path.bat                             # Python PATH 临时配置（批处理） (2026-02-06 07:03/2026-02-06 07:03)
-│   │   ├── add-python-to-path.ps1                             # Python PATH 临时配置（PowerShell） (2026-02-06 07:02/2026-02-06 07:02)
-│   │   ├── setup-path-permanent.bat                           # Python PATH 永久配置（批处理） (2026-02-06 07:01/2026-02-06 07:01)
-│   │   └── setup-path-permanent.ps1                           # Python PATH 永久配置（PowerShell） (2026-02-06 07:01/2026-02-06 07:01)
-│   └── work-logger/                                           # 工作日志系统 (2026-02-06 14:36/2026-02-06 22:22)
-│       ├── bin/                                               # 命令脚本 (2026-02-06 14:36/2026-02-06 18:17)
-│       │   ├── changelog.py                                   # 日志变更记录脚本 (2026-02-06 06:50/2026-02-06 18:35)
-│       │   ├── query.ps1                                      # 日志查询命令 (2026-02-06 15:05/2026-02-06 15:48)
-│       │   ├── start-silent.ps1                               # 日志后台启动 (2026-02-06 14:23/2026-02-06 15:02)
-│       │   ├── start.ps1                                      # 日志启动 (2026-02-06 14:06/2026-02-06 15:02)
-│       │   ├── status.ps1                                     # 日志状态查看 (2026-02-06 14:11/2026-02-06 15:02)
-│       │   └── stop.ps1                                       # 日志停止 (2026-02-06 14:11/2026-02-06 15:02)
-│       ├── lib/                                               # 核心模块 (2026-02-06 14:36/2026-02-07 05:16)
-│       │   ├── analyzer.py                                    # 日志变更分析 (2026-02-06 14:04/2026-02-06 14:12)
-│       │   ├── db_writer.py                                   # 日志数据库写入 (2026-02-06 15:03/2026-02-06 17:45)
-│       │   ├── index_generator.py                             # 日志索引生成 (2026-02-06 19:46/2026-02-07 07:05)
-│       │   ├── install.py                                     # 日志安装脚本 (2026-02-06 14:04/2026-02-06 18:35)
-│       │   ├── note_generator.py                              # 日志笔记生成 (2026-02-06 14:04/2026-02-06 14:16)
-│       │   ├── query.py                                       # 日志查询模块 (2026-02-06 15:04/2026-02-06 17:45)
-│       │   ├── session_manager.py                             # 日志会话管理 (2026-02-06 14:04/2026-02-06 15:02)
-│       │   └── watcher.py                                     # 日志监听器 (2026-02-06 14:04/2026-02-07 06:13)
-│       ├── mylog/                                             # 变更日志数据库 (2026-02-06 06:15/2026-02-06 07:00)
-│       │   ├── changelog.db                                   # 变更记录 (2026-02-06 07:00/2026-02-06 07:00)
-│       │   ├── DEPLOYMENT-CHECKLIST.md                        # 清单 (2026-02-06 06:52/2026-02-06 18:35)
-│       │   ├── examples.py                                    # 脚本 (2026-02-06 06:51/2026-02-06 18:35)
-│       │   ├── INDEX.md                                       # 索引 (2026-02-06 06:53/2026-02-06 18:35)
-│       │   ├── init-changelog.ps1                             # 变更记录 (2026-02-06 06:55/2026-02-06 06:56)
-│       │   ├── init-changelog.py                              # 变更记录 (2026-02-06 06:49/2026-02-06 06:49)
-│       │   ├── QUICK-REFERENCE.md                             # 参考 (2026-02-06 06:52/2026-02-06 18:35)
-│       │   ├── quickstart.bat                                 # 脚本 (2026-02-06 06:51/2026-02-06 17:42)
-│       │   ├── quickstart.ps1                                 # 脚本 (2026-02-06 06:51/2026-02-06 17:42)
-│       │   ├── README.md                                      # 项目入口 (2026-02-06 06:50/2026-02-06 18:35)
-│       │   ├── schema.sql                                     # 结构 (2026-02-06 06:49/2026-02-06 15:48)
-│       │   ├── SETUP-COMPLETE.md                              # 安装完成 (2026-02-06 06:51/2026-02-06 18:35)
-│       │   └── SUPERVM-CHANGELOG.md                           # 变更记录 (2026-02-06 06:16/2026-02-06 17:42)
-│       ├── output/                                            # 日志输出 (2026-02-06 14:36/2026-02-06 14:37)
-│       │   ├── PYTHON-EDITION-SETUP-COMPLETE.md               # Python版安装完成 (2026-02-06 14:06/2026-02-06 18:35)
-│       │   ├── README.md                                      # 项目入口 (2026-02-06 13:53/2026-02-06 17:42)
-│       │   ├── WORK-NOTE-示例.md                                # 工作笔记 (2026-02-06 14:17/2026-02-06 18:35)
-│       │   └── 完整实现文档.md                                      # 文档 (2026-02-06 14:31/2026-02-06 18:35)
-│       ├── .gitignore                                         # 文件 (2026-02-06 14:39/2026-02-06 15:02)
-│       ├── DATABASE-SCHEMA.md                                 # 数据库结构说明 (2026-02-06 15:02/2026-02-06 17:42)
-│       ├── index-descriptions.json                            # 索引 (2026-02-06 22:22/2026-02-07 07:02)
-│       ├── MIGRATION-COMPLETE.md                              # 迁移完成报告 (2026-02-06 15:13/2026-02-06 17:42)
-│       ├── QUICK-REFERENCE.md                                 # 快速参考卡 (2026-02-06 15:14/2026-02-06 17:42)
-│       └── README.md                                          # 工作日志说明 (2026-02-06 14:04/2026-02-06 21:22)
-├── .gitignore                                                 # 文件 (2026-02-06 04:56/2026-02-07 06:13)
-├── LICENSE                                                    # 授权文件 (2026-02-06 04:56/2026-02-06 05:13)
-└── README.md                                                  # 项目入口 (2026-02-06 04:56/2026-02-07 06:31)
+`统一账户主线已完成主体层、资产视图层、密钥能力层与执行策略层的最小生产闭环；Cut B / AccountMode 默认 No-Go；Phase 4 保持触发式治理。这条线已进入可长期运行的稳定基线。`
+
+## 先读这里
+
+1. 当前权威入口
+   - `docs_CN/CURRENT-AUTHORITATIVE-ENTRYPOINT-2026-04-17.md`
+2. 当前系统完整架构图
+   - `docs_CN/NOVOVM-NETWORK/NOVOVM-CURRENT-SYSTEM-ARCHITECTURE-2026-04-19.md`
+3. 统一账户主体协议
+   - `docs_CN/NOVOVM-NETWORK/NOVOVM-ACCOUNT-PROTOCOL-v1-2026-04-20.md`
+4. 统一账户能力分层规范
+   - `docs_CN/NOVOVM-NETWORK/NOVOVM-ACCOUNT-PROTOCOL-KEYALGO-ACCOUNTMODE-EXECUTIONPOLICY-LAYERING-2026-04-20.md`
+5. 统一账户 Cut A / KeyAlgo 封盘
+   - `docs_CN/NOVOVM-NETWORK/NOVOVM-ACCOUNT-PROTOCOL-CUTA-KEYALGO-SEAL-2026-04-20.md`
+6. 统一账户 Cut A / KeyAlgo 门禁
+   - `docs_CN/NOVOVM-NETWORK/NOVOVM-ACCOUNT-PROTOCOL-CUTA-KEYALGO-IMPLEMENTATION-CHECKLIST-2026-04-20.md`
+7. 统一账户 Cut C / ExecutionPolicy 封盘
+   - `docs_CN/NOVOVM-NETWORK/NOVOVM-ACCOUNT-PROTOCOL-CUTC-EXECUTIONPOLICY-SEAL-2026-04-20.md`
+8. 统一账户 Cut C / ExecutionPolicy 门禁
+   - `docs_CN/NOVOVM-NETWORK/NOVOVM-ACCOUNT-PROTOCOL-CUTC-EXECUTIONPOLICY-IMPLEMENTATION-CHECKLIST-2026-04-20.md`
+9. 统一账户 Cut B / AccountMode 触发条件清单
+   - `docs_CN/NOVOVM-NETWORK/NOVOVM-ACCOUNT-PROTOCOL-CUTB-TRIGGER-CHECKLIST-2026-04-20.md`
+10. 统一账户演进路线
+   - `docs_CN/NOVOVM-NETWORK/NOVOVM-ACCOUNT-PROTOCOL-v1-MIN-TO-v1-EVOLUTION-ROADMAP-2026-04-20.md`
+11. 统一账户 Phase 2 门禁
+   - `docs_CN/NOVOVM-NETWORK/NOVOVM-ACCOUNT-PROTOCOL-PHASE2-IMPLEMENTATION-CHECKLIST-2026-04-20.md`
+12. 统一账户 Phase 3 / Cut 1 封盘
+   - `docs_CN/NOVOVM-NETWORK/NOVOVM-ACCOUNT-PROTOCOL-PHASE3-CUT1-SEAL-2026-04-20.md`
+13. 统一账户 Phase 3 / Cut 2 封盘
+   - `docs_CN/NOVOVM-NETWORK/NOVOVM-ACCOUNT-PROTOCOL-PHASE3-CUT2-SEAL-2026-04-20.md`
+14. 统一账户 Phase 3 门禁
+   - `docs_CN/NOVOVM-NETWORK/NOVOVM-ACCOUNT-PROTOCOL-PHASE3-IMPLEMENTATION-CHECKLIST-2026-04-20.md`
+15. 统一账户 Phase 4 触发条件清单
+   - `docs_CN/NOVOVM-NETWORK/NOVOVM-ACCOUNT-PROTOCOL-PHASE4-TRIGGER-CHECKLIST-2026-04-20.md`
+16. 统一账户 Phase 4 约束设计稿
+   - `docs_CN/NOVOVM-NETWORK/NOVOVM-ACCOUNT-PROTOCOL-PHASE4-MAPPED-ASSET-CONSTRAINT-DRAFT-2026-04-20.md`
+17. 统一账户 Phase 4 失败模式清单
+   - `docs_CN/NOVOVM-NETWORK/NOVOVM-ACCOUNT-PROTOCOL-PHASE4-FAILURE-MODES-2026-04-20.md`
+18. 仓库主入口
+   - `README.md`
+
+## 系统与产品总览
+
+- 当前系统完整架构
+  - `docs_CN/NOVOVM-NETWORK/NOVOVM-CURRENT-SYSTEM-ARCHITECTURE-2026-04-19.md`
+- 统一账户主体协议（v1-min）
+  - `docs_CN/NOVOVM-NETWORK/NOVOVM-ACCOUNT-PROTOCOL-v1-2026-04-20.md`
+- 统一账户能力分层规范
+  - `docs_CN/NOVOVM-NETWORK/NOVOVM-ACCOUNT-PROTOCOL-KEYALGO-ACCOUNTMODE-EXECUTIONPOLICY-LAYERING-2026-04-20.md`
+- 统一账户 Cut A / KeyAlgo 封盘
+  - `docs_CN/NOVOVM-NETWORK/NOVOVM-ACCOUNT-PROTOCOL-CUTA-KEYALGO-SEAL-2026-04-20.md`
+- 统一账户 Cut A / KeyAlgo 实施清单
+  - `docs_CN/NOVOVM-NETWORK/NOVOVM-ACCOUNT-PROTOCOL-CUTA-KEYALGO-IMPLEMENTATION-CHECKLIST-2026-04-20.md`
+- 统一账户 Cut C / ExecutionPolicy 封盘
+  - `docs_CN/NOVOVM-NETWORK/NOVOVM-ACCOUNT-PROTOCOL-CUTC-EXECUTIONPOLICY-SEAL-2026-04-20.md`
+- 统一账户 Cut C / ExecutionPolicy 实施清单
+  - `docs_CN/NOVOVM-NETWORK/NOVOVM-ACCOUNT-PROTOCOL-CUTC-EXECUTIONPOLICY-IMPLEMENTATION-CHECKLIST-2026-04-20.md`
+- 统一账户 Cut B / AccountMode 触发条件清单
+  - `docs_CN/NOVOVM-NETWORK/NOVOVM-ACCOUNT-PROTOCOL-CUTB-TRIGGER-CHECKLIST-2026-04-20.md`
+- 统一账户演进路线（冻结版）
+  - `docs_CN/NOVOVM-NETWORK/NOVOVM-ACCOUNT-PROTOCOL-v1-MIN-TO-v1-EVOLUTION-ROADMAP-2026-04-20.md`
+- 统一账户 Phase 2 实施清单
+  - `docs_CN/NOVOVM-NETWORK/NOVOVM-ACCOUNT-PROTOCOL-PHASE2-IMPLEMENTATION-CHECKLIST-2026-04-20.md`
+- 统一账户 Phase 3 / Cut 1 封盘
+  - `docs_CN/NOVOVM-NETWORK/NOVOVM-ACCOUNT-PROTOCOL-PHASE3-CUT1-SEAL-2026-04-20.md`
+- 统一账户 Phase 3 / Cut 2 封盘
+  - `docs_CN/NOVOVM-NETWORK/NOVOVM-ACCOUNT-PROTOCOL-PHASE3-CUT2-SEAL-2026-04-20.md`
+- 统一账户 Phase 3 实施清单
+  - `docs_CN/NOVOVM-NETWORK/NOVOVM-ACCOUNT-PROTOCOL-PHASE3-IMPLEMENTATION-CHECKLIST-2026-04-20.md`
+- 统一账户 Phase 4 触发条件清单
+  - `docs_CN/NOVOVM-NETWORK/NOVOVM-ACCOUNT-PROTOCOL-PHASE4-TRIGGER-CHECKLIST-2026-04-20.md`
+- 统一账户 Phase 4 映射资产约束设计稿
+  - `docs_CN/NOVOVM-NETWORK/NOVOVM-ACCOUNT-PROTOCOL-PHASE4-MAPPED-ASSET-CONSTRAINT-DRAFT-2026-04-20.md`
+- 统一账户 Phase 4 失败模式清单
+  - `docs_CN/NOVOVM-NETWORK/NOVOVM-ACCOUNT-PROTOCOL-PHASE4-FAILURE-MODES-2026-04-20.md`
+- 货币与支付架构
+  - `docs_CN/NOVOVM-NETWORK/NOVOVM-MONETARY-ARCHITECTURE-M0-M1-M2-AND-MULTI-ASSET-PAYMENT-2026-04-17.md`
+- 原生交易与执行接口
+  - `docs_CN/NOVOVM-NETWORK/NOVOVM-NATIVE-TX-AND-EXECUTION-INTERFACE-DESIGN-2026-04-17.md`
+- Core / Plugin 外部分层
+  - `docs_CN/NOVOVM-NETWORK/NOVOVM-CORE-PLUGIN-EXTERNAL-LAYER-MAP-2026-04-17.md`
+
+## 当前已完成能力
+
+- 原生支付与国库
+  - `docs_CN/NOVOVM-NETWORK/NOVOVM-NATIVE-PAYMENT-AND-TREASURY-P1-SEAL-2026-04-17.md`
+- 清算路由
+  - `docs_CN/NOVOVM-NETWORK/NOVOVM-CLEARING-ROUTER-P2A-SEAL-2026-04-17.md`
+- Treasury Policy
+  - `docs_CN/NOVOVM-NETWORK/NOVOVM-TREASURY-POLICY-P2C-STAGE2-SEAL-2026-04-18.md`
+  - `docs_CN/NOVOVM-NETWORK/NOVOVM-TREASURY-POLICY-P2C-CONSTRAINED-STRATEGY-SEAL-2026-04-18.md`
+  - `docs_CN/NOVOVM-NETWORK/NOVOVM-TREASURY-POLICY-P2C-SEAL-2026-04-18.md`
+- 可观测层
+  - `docs_CN/NOVOVM-NETWORK/NOVOVM-OBSERVABILITY-P2D-SEAL-2026-04-18.md`
+- 原生经济用户入口
+  - `docs_CN/NOVOVM-NETWORK/NOVOVM-NATIVE-ECONOMIC-USER-SURFACE-SEAL-2026-04-18.md`
+- 治理用户入口
+  - `docs_CN/NOVOVM-NETWORK/NOVOVM-GOVERNANCE-USER-SURFACE-SEAL-2026-04-18.md`
+- 治理 MLDSA87 external vote
+  - `docs_CN/NOVOVM-NETWORK/NOVOVM-GOVERNANCE-MLDSA87-EXTERNAL-VOTE-SEAL-2026-04-18.md`
+- 统一账户主体协议（v1-min）
+  - `docs_CN/NOVOVM-NETWORK/NOVOVM-ACCOUNT-PROTOCOL-v1-2026-04-20.md`
+- 统一账户能力分层规范
+  - `docs_CN/NOVOVM-NETWORK/NOVOVM-ACCOUNT-PROTOCOL-KEYALGO-ACCOUNTMODE-EXECUTIONPOLICY-LAYERING-2026-04-20.md`
+- 统一账户 Cut A / KeyAlgo 封盘
+  - `docs_CN/NOVOVM-NETWORK/NOVOVM-ACCOUNT-PROTOCOL-CUTA-KEYALGO-SEAL-2026-04-20.md`
+- 统一账户 Cut A / KeyAlgo 实施清单
+  - `docs_CN/NOVOVM-NETWORK/NOVOVM-ACCOUNT-PROTOCOL-CUTA-KEYALGO-IMPLEMENTATION-CHECKLIST-2026-04-20.md`
+- 统一账户 Cut C / ExecutionPolicy 封盘
+  - `docs_CN/NOVOVM-NETWORK/NOVOVM-ACCOUNT-PROTOCOL-CUTC-EXECUTIONPOLICY-SEAL-2026-04-20.md`
+- 统一账户 Cut C / ExecutionPolicy 实施清单
+  - `docs_CN/NOVOVM-NETWORK/NOVOVM-ACCOUNT-PROTOCOL-CUTC-EXECUTIONPOLICY-IMPLEMENTATION-CHECKLIST-2026-04-20.md`
+- 统一账户 Cut B / AccountMode 触发条件清单
+  - `docs_CN/NOVOVM-NETWORK/NOVOVM-ACCOUNT-PROTOCOL-CUTB-TRIGGER-CHECKLIST-2026-04-20.md`
+- 统一账户演进路线（冻结版）
+  - `docs_CN/NOVOVM-NETWORK/NOVOVM-ACCOUNT-PROTOCOL-v1-MIN-TO-v1-EVOLUTION-ROADMAP-2026-04-20.md`
+- 统一账户 Phase 2 实施清单
+  - `docs_CN/NOVOVM-NETWORK/NOVOVM-ACCOUNT-PROTOCOL-PHASE2-IMPLEMENTATION-CHECKLIST-2026-04-20.md`
+- 统一账户 Phase 3 / Cut 1 封盘
+  - `docs_CN/NOVOVM-NETWORK/NOVOVM-ACCOUNT-PROTOCOL-PHASE3-CUT1-SEAL-2026-04-20.md`
+- 统一账户 Phase 3 / Cut 2 封盘
+  - `docs_CN/NOVOVM-NETWORK/NOVOVM-ACCOUNT-PROTOCOL-PHASE3-CUT2-SEAL-2026-04-20.md`
+- 统一账户 Phase 3 实施清单
+  - `docs_CN/NOVOVM-NETWORK/NOVOVM-ACCOUNT-PROTOCOL-PHASE3-IMPLEMENTATION-CHECKLIST-2026-04-20.md`
+- 统一账户 Phase 4 触发条件清单
+  - `docs_CN/NOVOVM-NETWORK/NOVOVM-ACCOUNT-PROTOCOL-PHASE4-TRIGGER-CHECKLIST-2026-04-20.md`
+- 统一账户 Phase 4 映射资产约束设计稿
+  - `docs_CN/NOVOVM-NETWORK/NOVOVM-ACCOUNT-PROTOCOL-PHASE4-MAPPED-ASSET-CONSTRAINT-DRAFT-2026-04-20.md`
+- 统一账户 Phase 4 失败模式清单
+  - `docs_CN/NOVOVM-NETWORK/NOVOVM-ACCOUNT-PROTOCOL-PHASE4-FAILURE-MODES-2026-04-20.md`
+
+## 运行与决策
+
+- EVM nightly soak SOP
+  - `docs_CN/NOVOVM-NETWORK/NOVOVM-EVM-NIGHTLY-SOAK-SOP-2026-04-17.md`
+- P2-D 日报模板
+  - `docs_CN/NOVOVM-NETWORK/NOVOVM-CLEARING-METRICS-RUN-PHASE-TEMPLATE-2026-04-18.md`
+- Full 模式最小启动模板
+  - `docs_CN/NOVOVM-NETWORK/NOVOVM-FULL-MODE-MINIMAL-BOOTSTRAP-TEMPLATE-2026-04-18.md`
+- P3 决策门槛
+  - `docs_CN/NOVOVM-NETWORK/NOVOVM-P3-FEATURE-GATE-DECISION-THRESHOLDS-2026-04-18.md`
+- P3 dry-run 记录
+  - `docs_CN/NOVOVM-NETWORK/NOVOVM-P3-GATE-DRYRUN-RESULT-2026-04-18.md`
+- P3A 周运行窗口模板
+  - `docs_CN/NOVOVM-NETWORK/NOVOVM-P3A-GATE-WEEKLY-RUN-WINDOW-TEMPLATE-2026-04-18.md`
+
+## 公开资料面原则
+
+- 只有本页与 `CURRENT-AUTHORITATIVE-ENTRYPOINT` 列出的文档属于当前公开资料面。
+- 仓库中未从这两个入口显式列出的文件，不作为当前对外产品介绍、功能说明或发布口径。
+- 迁移清单、历史审计、过程台账等工程参考文件不在当前公开导航中展示。

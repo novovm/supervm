@@ -2,9 +2,9 @@
 
 ## 目的
 
-本文件用于明确“当前有效口径”和“历史归档口径”，避免把历史迁移文档、实验文档、旧设计文档误当成现行生产标准。
+本文件定义 NOVOVM 当前公开资料面的权威入口，只展示当前有效的产品能力、接口、运行与决策文档。
 
-## 现行权威入口（按优先级）
+## 当前公开资料面（按优先级）
 
 1. 仓库根 README（产品定位与主线入口）
    - `README.md`
@@ -12,6 +12,23 @@
    - `.github/workflows/ci.yml`
    - `.github/workflows/mainline-nightly-soak.yml`
    - `docs_CN/NOVOVM-NETWORK/NOVOVM-CURRENT-SYSTEM-ARCHITECTURE-2026-04-19.md`（CURRENT OVERVIEW）
+   - `docs_CN/NOVOVM-NETWORK/NOVOVM-ACCOUNT-PROTOCOL-v1-2026-04-20.md`（AUTHORITATIVE, v1-min）
+   - `docs_CN/NOVOVM-NETWORK/NOVOVM-ACCOUNT-PROTOCOL-KEYALGO-ACCOUNTMODE-EXECUTIONPOLICY-LAYERING-2026-04-20.md`（ACCOUNT CAPABILITY LAYERING RULE）
+   - `docs_CN/NOVOVM-NETWORK/NOVOVM-ACCOUNT-PROTOCOL-CUTA-KEYALGO-SEAL-2026-04-20.md`（CUT A / KEYALGO SEAL）
+   - `docs_CN/NOVOVM-NETWORK/NOVOVM-ACCOUNT-PROTOCOL-CUTA-KEYALGO-IMPLEMENTATION-CHECKLIST-2026-04-20.md`（CUT A / KEYALGO GATE）
+   - `docs_CN/NOVOVM-NETWORK/NOVOVM-ACCOUNT-PROTOCOL-CUTC-EXECUTIONPOLICY-SEAL-2026-04-20.md`（CUT C / EXECUTIONPOLICY SEAL）
+   - `docs_CN/NOVOVM-NETWORK/NOVOVM-ACCOUNT-PROTOCOL-CUTC-EXECUTIONPOLICY-IMPLEMENTATION-CHECKLIST-2026-04-20.md`（CUT C / EXECUTIONPOLICY GATE）
+   - `docs_CN/NOVOVM-NETWORK/NOVOVM-ACCOUNT-PROTOCOL-CUTB-TRIGGER-CHECKLIST-2026-04-20.md`（CUT B / ACCOUNTMODE TRIGGER CHECKLIST）
+   - `docs_CN/NOVOVM-NETWORK/NOVOVM-ACCOUNT-PROTOCOL-v1-MIN-TO-v1-EVOLUTION-ROADMAP-2026-04-20.md`（AUTHORITATIVE ROADMAP）
+   - `docs_CN/NOVOVM-NETWORK/NOVOVM-ACCOUNT-PROTOCOL-PHASE2-IMPLEMENTATION-CHECKLIST-2026-04-20.md`（PHASE 2 GATE）
+   - `docs_CN/NOVOVM-NETWORK/NOVOVM-ACCOUNT-PROTOCOL-PHASE3-CUT1-SEAL-2026-04-20.md`（PHASE 3 / CUT 1 SEAL）
+   - `docs_CN/NOVOVM-NETWORK/NOVOVM-ACCOUNT-PROTOCOL-PHASE3-CUT2-SEAL-2026-04-20.md`（PHASE 3 / CUT 2 SEAL）
+   - `docs_CN/NOVOVM-NETWORK/NOVOVM-ACCOUNT-PROTOCOL-PHASE3-IMPLEMENTATION-CHECKLIST-2026-04-20.md`（PHASE 3 GATE）
+   - `docs_CN/NOVOVM-NETWORK/NOVOVM-ACCOUNT-PROTOCOL-PHASE4-TRIGGER-CHECKLIST-2026-04-20.md`（PHASE 4 TRIGGER CHECKLIST）
+   - `docs_CN/NOVOVM-NETWORK/NOVOVM-ACCOUNT-PROTOCOL-PHASE4-MAPPED-ASSET-CONSTRAINT-DRAFT-2026-04-20.md`（PHASE 4 CONSTRAINT DRAFT）
+   - `docs_CN/NOVOVM-NETWORK/NOVOVM-ACCOUNT-PROTOCOL-PHASE4-FAILURE-MODES-2026-04-20.md`（PHASE 4 FAILURE MODES）
+   - `docs_CN/NOVOVM-NETWORK/NOVOVM-ACCOUNT-PROTOCOL-PHASE4-MVP-SLICE-TEMPLATE-2026-04-21.md`（PHASE 4 触发后 MVP 切片模板）
+   - `docs_CN/NOVOVM-NETWORK/NOVOVM-ACCOUNT-PROTOCOL-STRUCTURAL-CHANGE-PR-GATE-2026-04-21.md`（统一账户结构变更治理守门）
    - `docs_CN/NOVOVM-NETWORK/NOVOVM-EVM-NIGHTLY-SOAK-SOP-2026-04-17.md`
    - `docs_CN/NOVOVM-NETWORK/NOVOVM-CORE-PLUGIN-EXTERNAL-LAYER-MAP-2026-04-17.md`
    - `docs_CN/NOVOVM-NETWORK/NOVOVM-MONETARY-ARCHITECTURE-M0-M1-M2-AND-MULTI-ASSET-PAYMENT-2026-04-17.md`
@@ -42,15 +59,22 @@
    - `crates/novovm-node/tests/fixtures/geth-parity/README.md`
    - `crates/novovm-node/tests/fixtures/geth-parity-external/README.md`
 
-## 历史/归档文档（默认不作为现行规范）
+## 当前统一账户总口径
 
-以下目录默认视为历史上下文或专项归档，除非文档内明确声明“Current/Active”：
+当前统一账户/资产线应按以下冻结结论读取：
 
-- `docs_CN/Old Design/`
-- `docs_CN/MEV/`
-- `docs_CN/SVM2026-MIGRATION/`
-- `docs_CN/AOEM-FFI/archive/`
-- `artifacts/audit/` 下带日期的阶段性审计清单
+`统一账户主线已完成主体层、资产视图层、密钥能力层与执行策略层的最小生产闭环；AccountMode / Cut B 保持为非核心可选标签层，默认 No-Go；Phase 4 继续保持触发式治理，当前 No-Go。`
+
+当前对外不应再把这条线描述成“等待账户架构定型”或“还在做结构性推进”。
+
+当前正确口径是：
+
+`这条线已进入可长期运行的稳定基线，不需要再做默认结构性推进。`
+
+## 公开面原则
+
+- 只有本文件列出的文档属于当前公开资料面。
+- 未在本文件显式列出的仓库文档，不作为当前对外产品介绍、功能说明或发布口径。
 
 ## 冲突处理规则
 
@@ -59,13 +83,17 @@
 1. 代码与可执行 gate（CI/mainline/nightly）结果
 2. `artifacts/mainline-status.json` 与 `artifacts/mainline-delivery-contract.json`
 3. 本文件列出的“现行权威入口”
-4. 其他文档（视为说明性材料）
+4. 其他文档（仅作工程参考，不作为对外主口径）
 
 ## 维护要求
 
-- 新增运维入口或守门入口时，必须同步更新本文件。
-- 历史文档不得再写“当前已完成/当前主线”而不加日期和范围说明。
-- 若后续进入 `P2-B1/P2-B2/P2-C/P2-D/P3`，需先在对应封盘文档中明确“已完成/未完成边界”，再更新本文件入口。
+- 新增对外入口、接口说明、运维入口或守门入口时，必须同步更新本文件。
+- 当前公开资料面应优先描述已成立能力、当前边界和当前读取顺序，不应把开发过程写成对外主叙述。
+- 后续新增正式能力封盘或决策文档时，应先更新对应 seal，再更新本文件入口。
+- 统一账户对外口径应优先读取当前 `Account Protocol v1-min`，不应从 legacy / 迁移过程文档反推当前产品状态。
+- 统一账户对外口径应明确其为稳定基线，不应再默认叙述为“待继续做结构层设计”。
+- 任何统一账户结构性改动 PR 必须满足 `docs_CN/NOVOVM-NETWORK/NOVOVM-ACCOUNT-PROTOCOL-STRUCTURAL-CHANGE-PR-GATE-2026-04-21.md`；缺少 trigger 载荷默认结论为 `Reject (No-Go)`。
+- 任何修改 Trigger Checklist / MVP Slice Template / PR Gate 本身的 PR，必须附 governance proposal + vote + execute 证据；否则默认 `Reject (No-Go)`。
 
 ## 术语冻结（防止角色写反）
 

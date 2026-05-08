@@ -9217,6 +9217,9 @@ fn eth_estimate_gas_deploy_includes_access_list_intrinsic_cost() {
     let mut tx_ir = TxIR {
         hash: Vec::new(),
         from,
+        account_id: None,
+        fee_owner_account_id: None,
+        nonce_owner_account_id: None,
         to: None,
         value: 0,
         gas_limit: u64::MAX,
@@ -9226,6 +9229,7 @@ fn eth_estimate_gas_deploy_includes_access_list_intrinsic_cost() {
         signature: Vec::new(),
         chain_id: 1,
         tx_type: TxType::ContractDeploy,
+        execution_policy: Default::default(),
         source_chain: None,
         target_chain: None,
     };
@@ -9311,6 +9315,9 @@ fn eth_estimate_gas_type3_includes_blob_intrinsic_cost_when_enabled() {
     let mut tx_ir = TxIR {
         hash: Vec::new(),
         from,
+        account_id: None,
+        fee_owner_account_id: None,
+        nonce_owner_account_id: None,
         to: Some(to),
         value: 0,
         gas_limit: u64::MAX,
@@ -9320,6 +9327,7 @@ fn eth_estimate_gas_type3_includes_blob_intrinsic_cost_when_enabled() {
         signature: Vec::new(),
         chain_id: 1,
         tx_type: TxType::Transfer,
+        execution_policy: Default::default(),
         source_chain: None,
         target_chain: None,
     };
@@ -9434,6 +9442,9 @@ fn eth_estimate_gas_contract_call_adds_exec_surcharge_and_respects_gas_cap() {
     let mut tx_ir = TxIR {
         hash: Vec::new(),
         from: caller.clone(),
+        account_id: None,
+        fee_owner_account_id: None,
+        nonce_owner_account_id: None,
         to: Some(contract.clone()),
         value: 1,
         gas_limit: u64::MAX,
@@ -9443,6 +9454,7 @@ fn eth_estimate_gas_contract_call_adds_exec_surcharge_and_respects_gas_cap() {
         signature: Vec::new(),
         chain_id: 1,
         tx_type: TxType::ContractCall,
+        execution_policy: Default::default(),
         source_chain: None,
         target_chain: None,
     };
@@ -10216,7 +10228,7 @@ fn eth_send_transaction_without_nonce_uses_pending_view_nonce() {
         },
     );
 
-    let (tx_hash_json, changed) = run_gateway_method(
+    let (detail_json, changed) = run_gateway_method(
         &mut router,
         &mut eth_tx_index,
         &mut evm_settlement_index_by_id,
@@ -10224,28 +10236,53 @@ fn eth_send_transaction_without_nonce_uses_pending_view_nonce() {
         &mut evm_pending_payout_by_settlement,
         &mut ctx,
         "eth_sendTransaction",
-        &serde_json::json!([{
+        &serde_json::json!({
+            "account_id": uca_id.clone(),
             "from": format!("0x{}", to_hex(&sender)),
             "to": format!("0x{}", to_hex(&receiver)),
             "value": "0x1",
             "gas": "0x5208",
-            "gasPrice": "0x1"
-        }]),
+            "gasPrice": "0x1",
+            "return_detail": true
+        }),
     )
     .expect("eth_sendTransaction without nonce should work");
     assert!(changed);
-    let tx_hash_hex = tx_hash_json
+    assert_eq!(detail_json["account_id"].as_str(), Some(uca_id.as_str()));
+    assert_eq!(
+        detail_json["fee_owner_account_id"].as_str(),
+        Some(uca_id.as_str())
+    );
+    assert_eq!(
+        detail_json["nonce_owner_account_id"].as_str(),
+        Some(uca_id.as_str())
+    );
+    let tx_hash_hex = detail_json["tx_hash"]
         .as_str()
-        .expect("eth_sendTransaction result should be tx hash string");
+        .expect("eth_sendTransaction detail should include tx hash string");
     let tx_hash_bytes = decode_hex_bytes(tx_hash_hex, "tx_hash").expect("decode tx hash");
     let tx_hash = vec_to_32(&tx_hash_bytes, "tx_hash").expect("tx hash bytes length");
     let indexed = eth_tx_index
         .get(&tx_hash)
         .expect("new tx should be indexed by hash");
+    let spool_file = PathBuf::from(
+        detail_json["spool_file"]
+            .as_str()
+            .expect("detail should include spool_file"),
+    );
+    let wire = fs::read(&spool_file).expect("read gateway eth spool");
+    let value = decode_single_ops_wire_value(&wire).expect("decode gateway eth ops wire");
+    let record: GatewayIngressEthRecordV1 =
+        crate::bincode_compat::deserialize(&value).expect("decode eth ingress record");
+    assert_eq!(record.account_id, uca_id);
+    assert_eq!(record.fee_owner_account_id, uca_id);
+    assert_eq!(record.nonce_owner_account_id, uca_id);
     assert_eq!(indexed.chain_id, chain_id);
+    assert_eq!(indexed.uca_id, uca_id);
     assert_eq!(indexed.from, sender);
     assert_eq!(indexed.nonce, 5);
 
+    let _ = fs::remove_file(&spool_file);
     let _ = fs::remove_dir_all(&spool_dir);
 }
 
@@ -11989,7 +12026,7 @@ fn eth_send_raw_transaction_without_uca_id_uses_binding_owner() {
     // v=37 encodes chain_id=1 (EIP-155), nonce=0.
     let raw_tx_hex = format!("0x{}", to_hex(&raw_tx));
 
-    let (tx_hash_json, changed) = run_gateway_method(
+    let (detail_json, changed) = run_gateway_method(
         &mut router,
         &mut eth_tx_index,
         &mut evm_settlement_index_by_id,
@@ -11999,24 +12036,151 @@ fn eth_send_raw_transaction_without_uca_id_uses_binding_owner() {
         "eth_sendRawTransaction",
         &serde_json::json!({
             "from": format!("0x{}", to_hex(&sender)),
-            "raw_tx": raw_tx_hex
+            "raw_tx": raw_tx_hex,
+            "return_detail": true
         }),
     )
     .expect("eth_sendRawTransaction without uca_id should work when from is bound");
     assert!(changed);
-    let tx_hash_hex = tx_hash_json
+    assert_eq!(detail_json["account_id"].as_str(), Some(uca_id.as_str()));
+    assert_eq!(
+        detail_json["fee_owner_account_id"].as_str(),
+        Some(uca_id.as_str())
+    );
+    assert_eq!(
+        detail_json["nonce_owner_account_id"].as_str(),
+        Some(uca_id.as_str())
+    );
+    let tx_hash_hex = detail_json["tx_hash"]
         .as_str()
-        .expect("eth_sendRawTransaction result should be tx hash string");
+        .expect("eth_sendRawTransaction detail should include tx hash string");
     let tx_hash_bytes = decode_hex_bytes(tx_hash_hex, "tx_hash").expect("decode tx hash");
     let tx_hash = vec_to_32(&tx_hash_bytes, "tx_hash").expect("tx hash bytes length");
     let indexed = eth_tx_index
         .get(&tx_hash)
         .expect("raw tx should be indexed by hash");
+    let spool_file = PathBuf::from(
+        detail_json["spool_file"]
+            .as_str()
+            .expect("detail should include spool_file"),
+    );
+    let wire = fs::read(&spool_file).expect("read gateway raw spool");
+    let value = decode_single_ops_wire_value(&wire).expect("decode gateway raw ops wire");
+    let record: GatewayIngressEthRecordV1 =
+        crate::bincode_compat::deserialize(&value).expect("decode eth raw ingress record");
+    assert_eq!(record.account_id, uca_id);
+    assert_eq!(record.fee_owner_account_id, uca_id);
+    assert_eq!(record.nonce_owner_account_id, uca_id);
     assert_eq!(indexed.uca_id, uca_id);
     assert_eq!(indexed.chain_id, chain_id);
     assert_eq!(indexed.from, sender);
     assert_eq!(indexed.nonce, 0);
 
+    let _ = fs::remove_file(&spool_file);
+    let _ = fs::remove_dir_all(&spool_dir);
+}
+
+#[test]
+fn eth_send_raw_transaction_passes_execution_policy_into_ingress_record() {
+    let backend = GatewayEthTxIndexStoreBackend::Memory;
+    let mut router = UnifiedAccountRouter::new();
+    let mut eth_tx_index = HashMap::new();
+    let mut evm_settlement_index_by_id = HashMap::new();
+    let mut evm_settlement_index_by_tx = HashMap::new();
+    let mut evm_pending_payout_by_settlement = HashMap::new();
+    let chain_id = 1u64;
+    let spool_dir = std::env::temp_dir().join(format!(
+        "novovm-gateway-eth-send-raw-policy-{}-{}",
+        std::process::id(),
+        now_unix_millis()
+    ));
+    fs::create_dir_all(&spool_dir).expect("create spool dir");
+    let mut eth_filters = GatewayEthFilterState::default();
+    let mut ctx = GatewayMethodContext {
+        eth_tx_index_store: &backend,
+        eth_default_chain_id: chain_id,
+        spool_dir: &spool_dir,
+        overlay_node_id: "test-overlay".to_string(),
+        overlay_session_id: "test-session".to_string(),
+        overlay_route_id: "route:test".to_string(),
+        overlay_route_epoch: 0,
+        overlay_route_mask_bits: 40,
+        overlay_route_mode: "fast".to_string(),
+        overlay_route_region: "global".to_string(),
+        overlay_route_relay_bucket: 0,
+        overlay_route_relay_set_size: 1,
+        overlay_route_relay_round: 0,
+        overlay_route_relay_index: 0,
+        overlay_route_relay_id: "rly:global:0:0".to_string(),
+        overlay_route_strategy: "direct".to_string(),
+        overlay_route_hop_count: 1,
+        eth_filters: &mut eth_filters,
+    };
+
+    let fallback_sender = vec![0x81u8; 20];
+    let receiver = vec![0x82u8; 20];
+    let uca_id = "uca:raw-policy-pass-through".to_string();
+    let now = now_unix_sec();
+    let raw_tx = test_rlp_encode_list(&[
+        test_rlp_encode_u64(0),
+        test_rlp_encode_u64(1),
+        test_rlp_encode_u64(21_000),
+        test_rlp_encode_bytes(&receiver),
+        test_rlp_encode_u128(1),
+        test_rlp_encode_bytes(&[]),
+        test_rlp_encode_u64(37),
+        test_rlp_encode_u64(1),
+        test_rlp_encode_u64(1),
+    ]);
+    let sender = resolve_test_raw_sender(&raw_tx, &fallback_sender);
+    let persona = PersonaAddress {
+        persona_type: PersonaType::Evm,
+        chain_id,
+        external_address: sender.clone(),
+    };
+    router
+        .create_uca(uca_id.clone(), vec![0x21u8; 32], now)
+        .expect("create uca");
+    router
+        .add_binding(&uca_id, AccountRole::Owner, persona, now)
+        .expect("add binding");
+
+    let raw_tx_hex = format!("0x{}", to_hex(&raw_tx));
+    let (detail_json, changed) = run_gateway_method(
+        &mut router,
+        &mut eth_tx_index,
+        &mut evm_settlement_index_by_id,
+        &mut evm_settlement_index_by_tx,
+        &mut evm_pending_payout_by_settlement,
+        &mut ctx,
+        "eth_sendRawTransaction",
+        &serde_json::json!({
+            "from": format!("0x{}", to_hex(&sender)),
+            "raw_tx": raw_tx_hex,
+            "execution_policy": "pq_required",
+            "return_detail": true
+        }),
+    )
+    .expect("eth_sendRawTransaction should pass through execution policy");
+    assert!(changed);
+    assert_eq!(
+        detail_json["execution_policy"].as_str(),
+        Some("pq_required")
+    );
+
+    let spool_file = PathBuf::from(
+        detail_json["spool_file"]
+            .as_str()
+            .expect("detail should include spool_file"),
+    );
+    let wire = fs::read(&spool_file).expect("read gateway raw spool");
+    let value = decode_single_ops_wire_value(&wire).expect("decode gateway raw ops wire");
+    let record: GatewayIngressEthRecordV1 =
+        crate::bincode_compat::deserialize(&value).expect("decode eth raw ingress record");
+    assert_eq!(record.account_id, uca_id);
+    assert_eq!(record.execution_policy, "pq_required");
+
+    let _ = fs::remove_file(&spool_file);
     let _ = fs::remove_dir_all(&spool_dir);
 }
 

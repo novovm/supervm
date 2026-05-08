@@ -7,12 +7,14 @@ use crate::clearing_types::{
 };
 use crate::liquidity_sources::{StaticAmmPoolLiquidityV1, TreasuryDirectLiquidityV1};
 use crate::treasury_settlement::settle_clearing_result_into_treasury_v1;
+use crate::unified_account_surface::get_unified_account_key_algo_with_store_path_v1;
 use anyhow::{bail, Context, Result};
-use novovm_adapter_api::{TxIR, TxType};
+use novovm_adapter_api::{TxExecutionPolicyV1, TxIR, TxType, UcaKeyAlgo};
 use novovm_exec::{
     EncodedOpsWire, ExecOpV2, OpsWireOp, OpsWireV1Builder, RawIngressCodecRegistry,
     AOEM_OPS_WIRE_V1_MAGIC, AOEM_OPS_WIRE_V1_VERSION,
 };
+use novovm_governance_observability::{append_governance_event_auto, GovernanceEvent};
 use novovm_network::{
     eth_rlpx_transaction_hash_v1, eth_rlpx_validate_transaction_envelope_payload_v1,
     observe_network_runtime_native_pending_tx_local_ingress_with_payload_v1,
@@ -21,8 +23,8 @@ use novovm_network::{
 use novovm_protocol::{
     decode_local_tx_wire_v1 as decode_tx_wire_v1, decode_nov_native_tx_wire_v1,
     encode_nov_native_tx_wire_v1, LocalTxWireV1, NovExecuteTxV1, NovExecutionModeV1,
-    NovExecutionTargetV1, NovFeePolicyV1, NovGovernanceTxV1, NovNativeTxWireV1, NovPrivacyModeV1,
-    NovTxKindV1, NovVerificationModeV1,
+    NovExecutionPolicyV1, NovExecutionTargetV1, NovFeePolicyV1, NovGovernanceTxV1,
+    NovNativeTxWireV1, NovPrivacyModeV1, NovTxKindV1, NovVerificationModeV1,
 };
 use std::collections::BTreeMap;
 use std::fs;
@@ -58,6 +60,9 @@ pub const NOV_NATIVE_TREASURY_MIN_FEE_BUCKET_NOV_ENV: &str =
 pub const NOV_NATIVE_TREASURY_MIN_RISK_BUFFER_NOV_ENV: &str =
     "NOVOVM_NATIVE_TREASURY_MIN_RISK_BUFFER_NOV";
 pub const NOV_NATIVE_CLEARING_ENABLED_ENV: &str = "NOVOVM_NATIVE_CLEARING_ENABLED";
+const ERR_PQ_REQUIRED_BUT_KEY_NOT_PQ: &str = "ERR_PQ_REQUIRED_BUT_KEY_NOT_PQ";
+const ERR_PRIVACY_REQUIRED_BUT_PATH_NOT_AVAILABLE: &str =
+    "ERR_PRIVACY_REQUIRED_BUT_PATH_NOT_AVAILABLE";
 pub const NOV_NATIVE_CLEARING_DAILY_NOV_HARD_LIMIT_ENV: &str =
     "NOVOVM_NATIVE_CLEARING_DAILY_NOV_HARD_LIMIT";
 pub const NOV_NATIVE_CLEARING_REQUIRE_HEALTHY_RISK_BUFFER_ENV: &str =
@@ -132,6 +137,27 @@ pub struct NovExecutionRequestV1 {
     pub fee_slippage_bps: u32,
     pub gas_like_limit: Option<u64>,
     pub nonce: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct NovRequestedExecutionBehaviorV1 {
+    execution_policy: NovExecutionPolicyV1,
+    privacy_mode: NovPrivacyModeV1,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct NovExecutionSubjectMetaV1 {
+    pub account_id: String,
+    pub fee_owner_account_id: String,
+    pub nonce_owner_account_id: String,
+    #[serde(default)]
+    pub key_algo: String,
+    #[serde(default)]
+    pub execution_policy: String,
+    #[serde(default)]
+    pub policy_enforced: bool,
+    #[serde(default)]
+    pub policy_rejection_reason: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -209,6 +235,20 @@ pub struct NovNativeExecutionReceiptV1 {
     pub target: String,
     pub module: String,
     pub method: String,
+    #[serde(default)]
+    pub account_id: String,
+    #[serde(default)]
+    pub fee_owner_account_id: String,
+    #[serde(default)]
+    pub nonce_owner_account_id: String,
+    #[serde(default)]
+    pub key_algo: String,
+    #[serde(default)]
+    pub execution_policy: String,
+    #[serde(default)]
+    pub policy_enforced: bool,
+    #[serde(default)]
+    pub policy_rejection_reason: Option<String>,
     pub settled_fee_nov: u128,
     pub paid_asset: String,
     pub paid_amount: u128,
@@ -320,6 +360,20 @@ pub struct NovTraceSettlementPhaseV1 {
 pub struct NovExecutionTraceV1 {
     pub trace_id: String,
     pub tx_id: String,
+    #[serde(default)]
+    pub account_id: String,
+    #[serde(default)]
+    pub fee_owner_account_id: String,
+    #[serde(default)]
+    pub nonce_owner_account_id: String,
+    #[serde(default)]
+    pub key_algo: String,
+    #[serde(default)]
+    pub execution_policy: String,
+    #[serde(default)]
+    pub policy_enforced: bool,
+    #[serde(default)]
+    pub policy_rejection_reason: Option<String>,
     pub pay_asset: String,
     pub max_pay_amount: u128,
     pub nov_needed: u128,
@@ -366,6 +420,20 @@ pub struct NovTreasurySettlementJournalEntryV1 {
     pub unix_ms: u128,
     pub kind: String,
     pub tx_hash: String,
+    #[serde(default)]
+    pub account_id: String,
+    #[serde(default)]
+    pub fee_owner_account_id: String,
+    #[serde(default)]
+    pub nonce_owner_account_id: String,
+    #[serde(default)]
+    pub key_algo: String,
+    #[serde(default)]
+    pub execution_policy: String,
+    #[serde(default)]
+    pub policy_enforced: bool,
+    #[serde(default)]
+    pub policy_rejection_reason: Option<String>,
     pub source_asset: String,
     pub source_amount: u128,
     pub settled_nov: u128,
@@ -649,6 +717,9 @@ pub fn tx_ingress_record_to_adapter_tx_ir(record: &TxIngressRecord, chain_id: u6
     let mut ir = TxIR {
         hash: Vec::new(),
         from: encode_adapter_address(record.account),
+        account_id: None,
+        fee_owner_account_id: None,
+        nonce_owner_account_id: None,
         to: Some(encode_adapter_address(record.key)),
         value: record.value as u128,
         gas_limit: 21_000,
@@ -658,6 +729,7 @@ pub fn tx_ingress_record_to_adapter_tx_ir(record: &TxIngressRecord, chain_id: u6
         signature: record.signature.to_vec(),
         chain_id,
         tx_type: TxType::Transfer,
+        execution_policy: TxExecutionPolicyV1::Standard,
         source_chain: None,
         target_chain: None,
     };
@@ -862,6 +934,9 @@ pub fn nov_native_tx_to_adapter_tx_ir_v1(tx: &NovNativeTxWireV1) -> Result<TxIR>
         NovTxKindV1::Transfer(transfer) => TxIR {
             hash: Vec::new(),
             from: transfer.from.clone(),
+            account_id: None,
+            fee_owner_account_id: None,
+            nonce_owner_account_id: None,
             to: Some(transfer.to.clone()),
             value: transfer.amount,
             gas_limit: 21_000,
@@ -871,6 +946,7 @@ pub fn nov_native_tx_to_adapter_tx_ir_v1(tx: &NovNativeTxWireV1) -> Result<TxIR>
             signature: tx.signature.to_vec(),
             chain_id: tx.chain_id,
             tx_type: TxType::Transfer,
+            execution_policy: TxExecutionPolicyV1::Standard,
             source_chain: None,
             target_chain: None,
         },
@@ -879,6 +955,9 @@ pub fn nov_native_tx_to_adapter_tx_ir_v1(tx: &NovNativeTxWireV1) -> Result<TxIR>
             TxIR {
                 hash: Vec::new(),
                 from: execute.caller.clone(),
+                account_id: execute.account_id.clone(),
+                fee_owner_account_id: execute.fee_owner_account_id.clone(),
+                nonce_owner_account_id: execute.nonce_owner_account_id.clone(),
                 to: Some(target_addr),
                 value: 0,
                 gas_limit: execute.gas_like_limit.unwrap_or(300_000),
@@ -888,6 +967,7 @@ pub fn nov_native_tx_to_adapter_tx_ir_v1(tx: &NovNativeTxWireV1) -> Result<TxIR>
                 signature: tx.signature.to_vec(),
                 chain_id: tx.chain_id,
                 tx_type: TxType::ContractCall,
+                execution_policy: tx_execution_policy_from_nov_v1(execute.execution_policy),
                 source_chain: None,
                 target_chain: None,
             }
@@ -895,6 +975,9 @@ pub fn nov_native_tx_to_adapter_tx_ir_v1(tx: &NovNativeTxWireV1) -> Result<TxIR>
         NovTxKindV1::Governance(governance) => TxIR {
             hash: Vec::new(),
             from: governance.proposer.clone(),
+            account_id: None,
+            fee_owner_account_id: None,
+            nonce_owner_account_id: None,
             to: None,
             value: 0,
             gas_limit: 80_000,
@@ -904,6 +987,7 @@ pub fn nov_native_tx_to_adapter_tx_ir_v1(tx: &NovNativeTxWireV1) -> Result<TxIR>
             signature: tx.signature.to_vec(),
             chain_id: tx.chain_id,
             tx_type: TxType::Privacy,
+            execution_policy: TxExecutionPolicyV1::Standard,
             source_chain: None,
             target_chain: None,
         },
@@ -994,8 +1078,87 @@ fn normalize_account_ref_v1(raw: &str) -> Option<String> {
     Some(trimmed.to_ascii_lowercase())
 }
 
+fn normalize_subject_account_ref_v1(raw: &str) -> Result<String> {
+    normalize_account_ref_v1(raw).ok_or_else(|| anyhow::anyhow!("invalid account reference"))
+}
+
 fn caller_account_ref_v1(request: &NovExecutionRequestV1) -> String {
     to_hex_prefixed_v1(request.caller.as_slice()).to_ascii_lowercase()
+}
+
+fn fallback_execution_subject_meta_v1(
+    request: &NovExecutionRequestV1,
+) -> NovExecutionSubjectMetaV1 {
+    let account_id = caller_account_ref_v1(request);
+    NovExecutionSubjectMetaV1 {
+        account_id: account_id.clone(),
+        fee_owner_account_id: account_id.clone(),
+        nonce_owner_account_id: account_id,
+        key_algo: String::new(),
+        execution_policy: NovExecutionPolicyV1::Standard.as_str().to_string(),
+        policy_enforced: false,
+        policy_rejection_reason: None,
+    }
+}
+
+fn subject_meta_from_execute_tx_v1(execute: &NovExecuteTxV1) -> NovExecutionSubjectMetaV1 {
+    let caller_fallback =
+        normalize_account_ref_v1(to_hex_prefixed_v1(execute.caller.as_slice()).as_str())
+            .unwrap_or_else(|| to_hex_prefixed_v1(execute.caller.as_slice()).to_ascii_lowercase());
+    let account_id = execute
+        .account_id
+        .as_deref()
+        .and_then(normalize_account_ref_v1)
+        .unwrap_or_else(|| caller_fallback.clone());
+    let fee_owner_account_id = execute
+        .fee_owner_account_id
+        .as_deref()
+        .and_then(normalize_account_ref_v1)
+        .unwrap_or_else(|| account_id.clone());
+    let nonce_owner_account_id = execute
+        .nonce_owner_account_id
+        .as_deref()
+        .and_then(normalize_account_ref_v1)
+        .unwrap_or_else(|| account_id.clone());
+    NovExecutionSubjectMetaV1 {
+        account_id,
+        fee_owner_account_id,
+        nonce_owner_account_id,
+        key_algo: String::new(),
+        execution_policy: execute.execution_policy.as_str().to_string(),
+        policy_enforced: false,
+        policy_rejection_reason: None,
+    }
+}
+
+fn subject_meta_with_execution_policy_v1(
+    mut subject_meta: NovExecutionSubjectMetaV1,
+    key_algo: Option<UcaKeyAlgo>,
+    execution_policy: NovExecutionPolicyV1,
+    policy_enforced: bool,
+    policy_rejection_reason: Option<String>,
+) -> NovExecutionSubjectMetaV1 {
+    subject_meta.key_algo = key_algo
+        .map(|value| value.as_str().to_string())
+        .unwrap_or_default();
+    subject_meta.execution_policy = execution_policy.as_str().to_string();
+    subject_meta.policy_enforced = policy_enforced;
+    subject_meta.policy_rejection_reason = policy_rejection_reason;
+    subject_meta
+}
+
+fn apply_subject_meta_to_receipt_v1(
+    mut receipt: NovNativeExecutionReceiptV1,
+    subject_meta: &NovExecutionSubjectMetaV1,
+) -> NovNativeExecutionReceiptV1 {
+    receipt.account_id = subject_meta.account_id.clone();
+    receipt.fee_owner_account_id = subject_meta.fee_owner_account_id.clone();
+    receipt.nonce_owner_account_id = subject_meta.nonce_owner_account_id.clone();
+    receipt.key_algo = subject_meta.key_algo.clone();
+    receipt.execution_policy = subject_meta.execution_policy.clone();
+    receipt.policy_enforced = subject_meta.policy_enforced;
+    receipt.policy_rejection_reason = subject_meta.policy_rejection_reason.clone();
+    receipt
 }
 
 fn native_account_asset_balance_v1(
@@ -1401,6 +1564,7 @@ fn build_execution_trace_v1(
     request: &NovExecutionRequestV1,
     settled_fee: &NovSettledFeeV1,
     receipt: &NovNativeExecutionReceiptV1,
+    subject_meta: &NovExecutionSubjectMetaV1,
     store: &NovNativeExecutionStoreV1,
     now_ms: u128,
 ) -> NovExecutionTraceV1 {
@@ -1545,6 +1709,13 @@ fn build_execution_trace_v1(
     NovExecutionTraceV1 {
         trace_id: format!("{}:{now_ms}", receipt.tx_hash),
         tx_id: receipt.tx_hash.clone(),
+        account_id: subject_meta.account_id.clone(),
+        fee_owner_account_id: subject_meta.fee_owner_account_id.clone(),
+        nonce_owner_account_id: subject_meta.nonce_owner_account_id.clone(),
+        key_algo: subject_meta.key_algo.clone(),
+        execution_policy: subject_meta.execution_policy.clone(),
+        policy_enforced: subject_meta.policy_enforced,
+        policy_rejection_reason: subject_meta.policy_rejection_reason.clone(),
         pay_asset: normalize_asset_symbol_v1(request.fee_pay_asset.as_str()),
         max_pay_amount: request.fee_max_pay_amount,
         nov_needed: settled_fee.nov_amount,
@@ -2674,6 +2845,7 @@ fn record_user_flow_failure_reason_v1(
 
 struct NovClearingFailureJournalContextV1<'a> {
     tx_hash: &'a str,
+    subject_meta: &'a NovExecutionSubjectMetaV1,
     settlement_policy: &'a NovTreasurySettlementPolicyV1,
     settlement_policy_contract_id: &'a str,
     settlement_threshold_state: &'a str,
@@ -2704,6 +2876,13 @@ fn clearing_fail_with_settlement_journal_v1<T>(
             unix_ms: now_ms,
             kind: "fee_settlement".to_string(),
             tx_hash: context.tx_hash.to_string(),
+            account_id: context.subject_meta.account_id.clone(),
+            fee_owner_account_id: context.subject_meta.fee_owner_account_id.clone(),
+            nonce_owner_account_id: context.subject_meta.nonce_owner_account_id.clone(),
+            key_algo: context.subject_meta.key_algo.clone(),
+            execution_policy: context.subject_meta.execution_policy.clone(),
+            policy_enforced: context.subject_meta.policy_enforced,
+            policy_rejection_reason: context.subject_meta.policy_rejection_reason.clone(),
             source_asset: quote.pay_asset.clone(),
             source_amount: quote.quoted_pay_amount,
             settled_nov: 0,
@@ -2733,6 +2912,7 @@ fn settle_fee_quote_into_treasury_v1(
     store: &mut NovNativeExecutionStoreV1,
     quote: &NovFeeQuoteV1,
     tx_hash: &str,
+    subject_meta: &NovExecutionSubjectMetaV1,
     now_ms: u128,
 ) -> Result<NovSettledFeeV1> {
     refresh_clearing_daily_window_v1(store, now_ms);
@@ -2748,6 +2928,7 @@ fn settle_fee_quote_into_treasury_v1(
         normalize_policy_source_v1(settlement_policy.policy_source.as_str());
     let clearing_failure_context = NovClearingFailureJournalContextV1 {
         tx_hash,
+        subject_meta,
         settlement_policy: &settlement_policy,
         settlement_policy_contract_id: settlement_policy_contract_id.as_str(),
         settlement_threshold_state: settlement_threshold_state.as_str(),
@@ -3202,6 +3383,13 @@ fn settle_fee_quote_into_treasury_v1(
             unix_ms: now_ms,
             kind: "fee_settlement".to_string(),
             tx_hash: tx_hash.to_string(),
+            account_id: subject_meta.account_id.clone(),
+            fee_owner_account_id: subject_meta.fee_owner_account_id.clone(),
+            nonce_owner_account_id: subject_meta.nonce_owner_account_id.clone(),
+            key_algo: subject_meta.key_algo.clone(),
+            execution_policy: subject_meta.execution_policy.clone(),
+            policy_enforced: subject_meta.policy_enforced,
+            policy_rejection_reason: subject_meta.policy_rejection_reason.clone(),
             source_asset: quote.pay_asset.clone(),
             source_amount,
             settled_nov: quote.nov_amount,
@@ -3258,12 +3446,13 @@ fn settle_fee_quote_into_treasury_v1(
 
 fn settle_fee_policy_from_execution_request_v1(
     request: &NovExecutionRequestV1,
+    subject_meta: &NovExecutionSubjectMetaV1,
     store: &mut NovNativeExecutionStoreV1,
     now_ms: u128,
 ) -> Result<NovSettledFeeV1> {
     let quote = quote_fee_policy_from_execution_request_v1(request, store, now_ms)?;
     let tx_hash = to_hex(&request.tx_hash);
-    settle_fee_quote_into_treasury_v1(store, &quote, tx_hash.as_str(), now_ms)
+    settle_fee_quote_into_treasury_v1(store, &quote, tx_hash.as_str(), subject_meta, now_ms)
 }
 
 fn unresolved_settled_fee_v1(request: &NovExecutionRequestV1) -> NovSettledFeeV1 {
@@ -3334,6 +3523,7 @@ fn policy_meta_from_settled_fee_v1(
 fn build_failed_native_receipt_v1(
     request: &NovExecutionRequestV1,
     settled_fee: &NovSettledFeeV1,
+    subject_meta: &NovExecutionSubjectMetaV1,
     module: String,
     method: String,
     reason: String,
@@ -3344,6 +3534,13 @@ fn build_failed_native_receipt_v1(
         target: execution_target_label_v1(&request.target),
         module,
         method,
+        account_id: subject_meta.account_id.clone(),
+        fee_owner_account_id: subject_meta.fee_owner_account_id.clone(),
+        nonce_owner_account_id: subject_meta.nonce_owner_account_id.clone(),
+        key_algo: subject_meta.key_algo.clone(),
+        execution_policy: subject_meta.execution_policy.clone(),
+        policy_enforced: subject_meta.policy_enforced,
+        policy_rejection_reason: subject_meta.policy_rejection_reason.clone(),
         settled_fee_nov: settled_fee.nov_amount,
         paid_asset: settled_fee.source_asset.clone(),
         paid_amount: settled_fee.source_amount,
@@ -3368,6 +3565,7 @@ fn build_failed_native_receipt_v1(
 fn build_success_native_receipt_v1(
     request: &NovExecutionRequestV1,
     settled_fee: &NovSettledFeeV1,
+    subject_meta: &NovExecutionSubjectMetaV1,
     module: &str,
     method: &str,
     logs: Vec<NovNativeExecutionLogV1>,
@@ -3378,6 +3576,13 @@ fn build_success_native_receipt_v1(
         target: execution_target_label_v1(&request.target),
         module: module.to_string(),
         method: method.to_string(),
+        account_id: subject_meta.account_id.clone(),
+        fee_owner_account_id: subject_meta.fee_owner_account_id.clone(),
+        nonce_owner_account_id: subject_meta.nonce_owner_account_id.clone(),
+        key_algo: subject_meta.key_algo.clone(),
+        execution_policy: subject_meta.execution_policy.clone(),
+        policy_enforced: subject_meta.policy_enforced,
+        policy_rejection_reason: subject_meta.policy_rejection_reason.clone(),
         settled_fee_nov: settled_fee.nov_amount,
         paid_asset: settled_fee.source_asset.clone(),
         paid_amount: settled_fee.source_amount,
@@ -3577,6 +3782,7 @@ fn amm_output_for_exact_input_v1(
 fn dispatch_treasury_redeem_v1(
     request: &NovExecutionRequestV1,
     settled_fee: &NovSettledFeeV1,
+    subject_meta: &NovExecutionSubjectMetaV1,
     store: &mut NovNativeExecutionStoreV1,
     args_json: &serde_json::Value,
     method_label: &str,
@@ -3594,6 +3800,7 @@ fn dispatch_treasury_redeem_v1(
         return build_failed_native_receipt_v1(
             request,
             settled_fee,
+            subject_meta,
             "treasury".to_string(),
             method_label.to_string(),
             fee_settlement_reason_v1("redeem_paused", "treasury redeem path is paused"),
@@ -3615,6 +3822,7 @@ fn dispatch_treasury_redeem_v1(
         return build_failed_native_receipt_v1(
             request,
             settled_fee,
+            subject_meta,
             "treasury".to_string(),
             method_label.to_string(),
             fee_settlement_reason_v1("invalid_redeem_amount", "amount must be > 0"),
@@ -3628,6 +3836,7 @@ fn dispatch_treasury_redeem_v1(
             return build_failed_native_receipt_v1(
                 request,
                 settled_fee,
+                subject_meta,
                 "treasury".to_string(),
                 method_label.to_string(),
                 fee_settlement_reason_v1(
@@ -3646,6 +3855,7 @@ fn dispatch_treasury_redeem_v1(
             return build_failed_native_receipt_v1(
                 request,
                 settled_fee,
+                subject_meta,
                 "treasury".to_string(),
                 method_label.to_string(),
                 fee_settlement_reason_v1(
@@ -3669,6 +3879,7 @@ fn dispatch_treasury_redeem_v1(
             return build_failed_native_receipt_v1(
                 request,
                 settled_fee,
+                subject_meta,
                 "treasury".to_string(),
                 method_label.to_string(),
                 fee_settlement_reason_v1(
@@ -3712,6 +3923,13 @@ fn dispatch_treasury_redeem_v1(
                 unix_ms: now_unix_millis_v1(),
                 kind: "reserve_redeem".to_string(),
                 tx_hash: to_hex(&request.tx_hash),
+                account_id: subject_meta.account_id.clone(),
+                fee_owner_account_id: subject_meta.fee_owner_account_id.clone(),
+                nonce_owner_account_id: subject_meta.nonce_owner_account_id.clone(),
+                key_algo: subject_meta.key_algo.clone(),
+                execution_policy: subject_meta.execution_policy.clone(),
+                policy_enforced: subject_meta.policy_enforced,
+                policy_rejection_reason: subject_meta.policy_rejection_reason.clone(),
                 source_asset: "NOV".to_string(),
                 source_amount: amount,
                 settled_nov: amount,
@@ -3731,9 +3949,9 @@ fn dispatch_treasury_redeem_v1(
                 reason: None,
             },
         );
-        let caller = caller_account_ref_v1(request);
+        let caller = subject_meta.account_id.as_str();
         let caller_balance_after =
-            credit_native_account_asset_balance_v1(store, caller.as_str(), "NOV", amount);
+            credit_native_account_asset_balance_v1(store, caller, "NOV", amount);
         let log = NovNativeExecutionLogV1 {
             module: "treasury".to_string(),
             method: method_label.to_string(),
@@ -3741,7 +3959,7 @@ fn dispatch_treasury_redeem_v1(
             data: serde_json::json!({
                 "asset": "NOV",
                 "amount": amount,
-                "caller": caller,
+                "account_id": caller,
                 "caller_balance_after": caller_balance_after,
                 "reserve_bucket_after": reserve_bucket_after,
                 "total_reserve_after": total_reserve_after,
@@ -3752,6 +3970,7 @@ fn dispatch_treasury_redeem_v1(
         return build_success_native_receipt_v1(
             request,
             settled_fee,
+            subject_meta,
             "treasury",
             method_label,
             vec![log],
@@ -3769,6 +3988,7 @@ fn dispatch_treasury_redeem_v1(
         return build_failed_native_receipt_v1(
             request,
             settled_fee,
+            subject_meta,
             "treasury".to_string(),
             method_label.to_string(),
             fee_settlement_reason_v1(
@@ -3803,6 +4023,13 @@ fn dispatch_treasury_redeem_v1(
             unix_ms: now_unix_millis_v1(),
             kind: "reserve_redeem".to_string(),
             tx_hash: to_hex(&request.tx_hash),
+            account_id: subject_meta.account_id.clone(),
+            fee_owner_account_id: subject_meta.fee_owner_account_id.clone(),
+            nonce_owner_account_id: subject_meta.nonce_owner_account_id.clone(),
+            key_algo: subject_meta.key_algo.clone(),
+            execution_policy: subject_meta.execution_policy.clone(),
+            policy_enforced: subject_meta.policy_enforced,
+            policy_rejection_reason: subject_meta.policy_rejection_reason.clone(),
             source_asset: asset.clone(),
             source_amount: amount,
             settled_nov: 0,
@@ -3822,9 +4049,9 @@ fn dispatch_treasury_redeem_v1(
             reason: None,
         },
     );
-    let caller = caller_account_ref_v1(request);
+    let caller = subject_meta.account_id.as_str();
     let caller_balance_after =
-        credit_native_account_asset_balance_v1(store, caller.as_str(), asset.as_str(), amount);
+        credit_native_account_asset_balance_v1(store, caller, asset.as_str(), amount);
     let log = NovNativeExecutionLogV1 {
         module: "treasury".to_string(),
         method: method_label.to_string(),
@@ -3832,17 +4059,25 @@ fn dispatch_treasury_redeem_v1(
         data: serde_json::json!({
             "asset": asset,
             "amount": amount,
-            "caller": caller,
+            "account_id": caller,
             "caller_balance_after": caller_balance_after,
             "reserve_after": reserve_after,
         }),
     };
-    build_success_native_receipt_v1(request, settled_fee, "treasury", method_label, vec![log])
+    build_success_native_receipt_v1(
+        request,
+        settled_fee,
+        subject_meta,
+        "treasury",
+        method_label,
+        vec![log],
+    )
 }
 
 fn dispatch_amm_swap_exact_in_v1(
     request: &NovExecutionRequestV1,
     settled_fee: &NovSettledFeeV1,
+    subject_meta: &NovExecutionSubjectMetaV1,
     store: &mut NovNativeExecutionStoreV1,
     args_json: &serde_json::Value,
 ) -> NovNativeExecutionReceiptV1 {
@@ -3873,6 +4108,7 @@ fn dispatch_amm_swap_exact_in_v1(
         return build_failed_native_receipt_v1(
             request,
             settled_fee,
+            subject_meta,
             "amm".to_string(),
             "swap_exact_in".to_string(),
             "amm.invalid_args: asset_in/asset_out/amount_in are required".to_string(),
@@ -3916,6 +4152,7 @@ fn dispatch_amm_swap_exact_in_v1(
             return build_failed_native_receipt_v1(
                 request,
                 settled_fee,
+                subject_meta,
                 "amm".to_string(),
                 "swap_exact_in".to_string(),
                 "amm.route_unavailable: no enabled single-hop pool for pair".to_string(),
@@ -3926,6 +4163,7 @@ fn dispatch_amm_swap_exact_in_v1(
         return build_failed_native_receipt_v1(
             request,
             settled_fee,
+            subject_meta,
             "amm".to_string(),
             "swap_exact_in".to_string(),
             "amm.route_unavailable: quoted output is zero".to_string(),
@@ -3935,6 +4173,7 @@ fn dispatch_amm_swap_exact_in_v1(
         return build_failed_native_receipt_v1(
             request,
             settled_fee,
+            subject_meta,
             "amm".to_string(),
             "swap_exact_in".to_string(),
             format!(
@@ -3951,6 +4190,7 @@ fn dispatch_amm_swap_exact_in_v1(
         return build_failed_native_receipt_v1(
             request,
             settled_fee,
+            subject_meta,
             "amm".to_string(),
             "swap_exact_in".to_string(),
             "amm.route_unavailable: minimal path currently supports NOV pairs only".to_string(),
@@ -3967,31 +4207,28 @@ fn dispatch_amm_swap_exact_in_v1(
         return build_failed_native_receipt_v1(
             request,
             settled_fee,
+            subject_meta,
             "amm".to_string(),
             "swap_exact_in".to_string(),
             err.to_string(),
         );
     }
-    let caller = caller_account_ref_v1(request);
-    let caller_asset_in_before =
-        native_account_asset_balance_v1(store, caller.as_str(), asset_in.as_str());
+    let caller = subject_meta.account_id.as_str();
+    let caller_asset_in_before = native_account_asset_balance_v1(store, caller, asset_in.as_str());
     if let Err(err) =
-        debit_native_account_asset_balance_v1(store, caller.as_str(), asset_in.as_str(), amount_in)
+        debit_native_account_asset_balance_v1(store, caller, asset_in.as_str(), amount_in)
     {
         return build_failed_native_receipt_v1(
             request,
             settled_fee,
+            subject_meta,
             "amm".to_string(),
             "swap_exact_in".to_string(),
             format!("amm.insufficient_user_balance: {err}"),
         );
     }
-    let caller_asset_out_after = credit_native_account_asset_balance_v1(
-        store,
-        caller.as_str(),
-        asset_out.as_str(),
-        amount_out,
-    );
+    let caller_asset_out_after =
+        credit_native_account_asset_balance_v1(store, caller, asset_out.as_str(), amount_out);
     if let Some(pool) = store
         .module_state
         .clearing_static_amm_pools
@@ -4019,7 +4256,7 @@ fn dispatch_amm_swap_exact_in_v1(
         method: "swap_exact_in".to_string(),
         event: "amm.swap_exact_in.applied".to_string(),
         data: serde_json::json!({
-            "caller": caller,
+            "account_id": caller,
             "pool_id": selected_pool_id,
             "asset_in": asset_in,
             "asset_out": asset_out,
@@ -4029,7 +4266,7 @@ fn dispatch_amm_swap_exact_in_v1(
             "requested_slippage_bps": requested_slippage_bps,
             "nov_leg_amount": nov_leg_amount,
             "caller_asset_in_before": caller_asset_in_before,
-            "caller_asset_in_after": native_account_asset_balance_v1(store, caller.as_str(), asset_in.as_str()),
+            "caller_asset_in_after": native_account_asset_balance_v1(store, caller, asset_in.as_str()),
             "caller_asset_out_after": caller_asset_out_after,
             "pool_reserve_out_before": reserve_out_before,
             "pool_reserve_x_after": pool.as_ref().map(|value| value.reserve_x).unwrap_or(0),
@@ -4037,12 +4274,20 @@ fn dispatch_amm_swap_exact_in_v1(
             "swap_fee_ppm": pool.as_ref().map(|value| value.swap_fee_ppm).unwrap_or(0),
         }),
     };
-    build_success_native_receipt_v1(request, settled_fee, "amm", "swap_exact_in", vec![log])
+    build_success_native_receipt_v1(
+        request,
+        settled_fee,
+        subject_meta,
+        "amm",
+        "swap_exact_in",
+        vec![log],
+    )
 }
 
 fn dispatch_credit_engine_open_vault_v1(
     request: &NovExecutionRequestV1,
     settled_fee: &NovSettledFeeV1,
+    subject_meta: &NovExecutionSubjectMetaV1,
     store: &mut NovNativeExecutionStoreV1,
     args_json: &serde_json::Value,
 ) -> NovNativeExecutionReceiptV1 {
@@ -4068,6 +4313,7 @@ fn dispatch_credit_engine_open_vault_v1(
         return build_failed_native_receipt_v1(
             request,
             settled_fee,
+            subject_meta,
             "credit_engine".to_string(),
             "open_vault".to_string(),
             "credit_engine.invalid_args: collateral_asset/collateral_amount are required"
@@ -4083,6 +4329,7 @@ fn dispatch_credit_engine_open_vault_v1(
             return build_failed_native_receipt_v1(
                 request,
                 settled_fee,
+                subject_meta,
                 "credit_engine".to_string(),
                 "open_vault".to_string(),
                 format!(
@@ -4104,22 +4351,24 @@ fn dispatch_credit_engine_open_vault_v1(
             return build_failed_native_receipt_v1(
                 request,
                 settled_fee,
+                subject_meta,
                 "credit_engine".to_string(),
                 "open_vault".to_string(),
                 err.to_string(),
             );
         }
     }
-    let caller = caller_account_ref_v1(request);
+    let caller = subject_meta.account_id.as_str();
     if let Err(err) = debit_native_account_asset_balance_v1(
         store,
-        caller.as_str(),
+        caller,
         collateral_asset.as_str(),
         collateral_amount,
     ) {
         return build_failed_native_receipt_v1(
             request,
             settled_fee,
+            subject_meta,
             "credit_engine".to_string(),
             "open_vault".to_string(),
             format!("credit_engine.insufficient_user_balance: {err}"),
@@ -4129,7 +4378,7 @@ fn dispatch_credit_engine_open_vault_v1(
     store.module_state.next_credit_vault_id = vault_id;
     let vault = NovCreditVaultStateV1 {
         vault_id,
-        owner: caller.clone(),
+        owner: caller.to_string(),
         collateral_asset: collateral_asset.clone(),
         collateral_amount,
         debt_asset: debt_asset.clone(),
@@ -4146,21 +4395,16 @@ fn dispatch_credit_engine_open_vault_v1(
             .module_state
             .clearing_daily_nov_used
             .saturating_add(mint_amount);
-        credit_native_account_asset_balance_v1(
-            store,
-            caller.as_str(),
-            debt_asset.as_str(),
-            mint_amount,
-        )
+        credit_native_account_asset_balance_v1(store, caller, debt_asset.as_str(), mint_amount)
     } else {
-        native_account_asset_balance_v1(store, caller.as_str(), debt_asset.as_str())
+        native_account_asset_balance_v1(store, caller, debt_asset.as_str())
     };
     let log = NovNativeExecutionLogV1 {
         module: "credit_engine".to_string(),
         method: "open_vault".to_string(),
         event: "credit_engine.vault_opened".to_string(),
         data: serde_json::json!({
-            "caller": caller,
+            "account_id": caller,
             "vault_id": vault_id,
             "collateral_asset": collateral_asset,
             "collateral_amount": collateral_amount,
@@ -4174,6 +4418,7 @@ fn dispatch_credit_engine_open_vault_v1(
     build_success_native_receipt_v1(
         request,
         settled_fee,
+        subject_meta,
         "credit_engine",
         "open_vault",
         vec![log],
@@ -4183,6 +4428,7 @@ fn dispatch_credit_engine_open_vault_v1(
 fn dispatch_native_module_execute_v1(
     request: &NovExecutionRequestV1,
     settled_fee: &NovSettledFeeV1,
+    subject_meta: &NovExecutionSubjectMetaV1,
     store: &mut NovNativeExecutionStoreV1,
 ) -> NovNativeExecutionReceiptV1 {
     let (module_name, method_name) = match &request.target {
@@ -4193,6 +4439,7 @@ fn dispatch_native_module_execute_v1(
             return build_failed_native_receipt_v1(
                 request,
                 settled_fee,
+                subject_meta,
                 "unsupported".to_string(),
                 request.method.clone(),
                 "target is not a native module".to_string(),
@@ -4204,6 +4451,7 @@ fn dispatch_native_module_execute_v1(
         return build_failed_native_receipt_v1(
             request,
             settled_fee,
+            subject_meta,
             module_name,
             method_name,
             "unknown native module".to_string(),
@@ -4243,23 +4491,38 @@ fn dispatch_native_module_execute_v1(
             build_success_native_receipt_v1(
                 request,
                 settled_fee,
+                subject_meta,
                 "treasury",
                 "deposit_reserve",
                 vec![log],
             )
         }
-        ("treasury", "redeem") => {
-            dispatch_treasury_redeem_v1(request, settled_fee, store, &args_json, "redeem")
-        }
-        ("treasury", "redeem_reserve") => {
-            dispatch_treasury_redeem_v1(request, settled_fee, store, &args_json, "redeem_reserve")
-        }
+        ("treasury", "redeem") => dispatch_treasury_redeem_v1(
+            request,
+            settled_fee,
+            subject_meta,
+            store,
+            &args_json,
+            "redeem",
+        ),
+        ("treasury", "redeem_reserve") => dispatch_treasury_redeem_v1(
+            request,
+            settled_fee,
+            subject_meta,
+            store,
+            &args_json,
+            "redeem_reserve",
+        ),
         ("amm", "swap_exact_in") => {
-            dispatch_amm_swap_exact_in_v1(request, settled_fee, store, &args_json)
+            dispatch_amm_swap_exact_in_v1(request, settled_fee, subject_meta, store, &args_json)
         }
-        ("credit_engine", "open_vault") => {
-            dispatch_credit_engine_open_vault_v1(request, settled_fee, store, &args_json)
-        }
+        ("credit_engine", "open_vault") => dispatch_credit_engine_open_vault_v1(
+            request,
+            settled_fee,
+            subject_meta,
+            store,
+            &args_json,
+        ),
         ("governance", "submit_proposal") => {
             let proposal_payload = args_json.clone();
             let proposal_id = store
@@ -4280,37 +4543,48 @@ fn dispatch_native_module_execute_v1(
                     "payload": proposal_payload,
                 }),
             };
-            NovNativeExecutionReceiptV1 {
-                tx_hash: to_hex(&request.tx_hash),
-                status: true,
-                target: execution_target_label_v1(&request.target),
-                module: "governance".to_string(),
-                method: "submit_proposal".to_string(),
-                settled_fee_nov: settled_fee.nov_amount,
-                paid_asset: settled_fee.source_asset.clone(),
-                paid_amount: settled_fee.source_amount,
-                logs: vec![log],
-                failure_reason: None,
-                fee_contract: settled_fee.fee_contract.clone(),
-                fee_route: settled_fee.route.clone(),
-                fee_quote_id: settled_fee.quote_id.clone(),
-                fee_quote_contract: settled_fee.quote_contract.clone(),
-                fee_clearing_contract: settled_fee.clearing_contract.clone(),
-                fee_price_source: settled_fee.price_source.clone(),
-                fee_quote_required_pay_amount: settled_fee.required_source_amount,
-                fee_quote_expires_at_unix_ms: settled_fee.quote_expires_at_unix_ms,
-                fee_clearing_route_ref: settled_fee.clearing_route_ref.clone(),
-                fee_clearing_source: settled_fee.clearing_source.clone(),
-                fee_clearing_rate_ppm: settled_fee.clearing_rate_ppm,
-                route_meta: route_meta_from_settled_fee_v1(settled_fee),
-                policy_meta: policy_meta_from_settled_fee_v1(settled_fee),
-            }
+            apply_subject_meta_to_receipt_v1(
+                NovNativeExecutionReceiptV1 {
+                    tx_hash: to_hex(&request.tx_hash),
+                    status: true,
+                    target: execution_target_label_v1(&request.target),
+                    module: "governance".to_string(),
+                    method: "submit_proposal".to_string(),
+                    settled_fee_nov: settled_fee.nov_amount,
+                    paid_asset: settled_fee.source_asset.clone(),
+                    paid_amount: settled_fee.source_amount,
+                    logs: vec![log],
+                    failure_reason: None,
+                    fee_contract: settled_fee.fee_contract.clone(),
+                    fee_route: settled_fee.route.clone(),
+                    fee_quote_id: settled_fee.quote_id.clone(),
+                    fee_quote_contract: settled_fee.quote_contract.clone(),
+                    fee_clearing_contract: settled_fee.clearing_contract.clone(),
+                    fee_price_source: settled_fee.price_source.clone(),
+                    fee_quote_required_pay_amount: settled_fee.required_source_amount,
+                    fee_quote_expires_at_unix_ms: settled_fee.quote_expires_at_unix_ms,
+                    fee_clearing_route_ref: settled_fee.clearing_route_ref.clone(),
+                    fee_clearing_source: settled_fee.clearing_source.clone(),
+                    fee_clearing_rate_ppm: settled_fee.clearing_rate_ppm,
+                    route_meta: route_meta_from_settled_fee_v1(settled_fee),
+                    policy_meta: policy_meta_from_settled_fee_v1(settled_fee),
+                    account_id: String::new(),
+                    fee_owner_account_id: String::new(),
+                    nonce_owner_account_id: String::new(),
+                    key_algo: String::new(),
+                    execution_policy: String::new(),
+                    policy_enforced: false,
+                    policy_rejection_reason: None,
+                },
+                subject_meta,
+            )
         }
         ("governance", "apply_treasury_policy") => {
             if let Err(err) = governance_execute_authorized_v1(request, &args_json) {
                 return build_failed_native_receipt_v1(
                     request,
                     settled_fee,
+                    subject_meta,
                     "governance".to_string(),
                     "apply_treasury_policy".to_string(),
                     format!("governance.policy.authority_denied: {err}"),
@@ -4346,6 +4620,7 @@ fn dispatch_native_module_execute_v1(
                 return build_failed_native_receipt_v1(
                     request,
                     settled_fee,
+                    subject_meta,
                     "governance".to_string(),
                     "apply_treasury_policy".to_string(),
                     format!(
@@ -4406,6 +4681,7 @@ fn dispatch_native_module_execute_v1(
                         return build_failed_native_receipt_v1(
                             request,
                             settled_fee,
+                            subject_meta,
                             "governance".to_string(),
                             "apply_treasury_policy".to_string(),
                             format!("governance.policy.invalid_constrained_strategy: {}", raw),
@@ -4427,6 +4703,7 @@ fn dispatch_native_module_execute_v1(
                 return build_failed_native_receipt_v1(
                     request,
                     settled_fee,
+                    subject_meta,
                     "governance".to_string(),
                     "apply_treasury_policy".to_string(),
                     format!(
@@ -4477,35 +4754,46 @@ fn dispatch_native_module_execute_v1(
                     "clearing_constrained_strategy": clearing_constrained_strategy,
                 }),
             };
-            NovNativeExecutionReceiptV1 {
-                tx_hash: to_hex(&request.tx_hash),
-                status: true,
-                target: execution_target_label_v1(&request.target),
-                module: "governance".to_string(),
-                method: "apply_treasury_policy".to_string(),
-                settled_fee_nov: settled_fee.nov_amount,
-                paid_asset: settled_fee.source_asset.clone(),
-                paid_amount: settled_fee.source_amount,
-                logs: vec![log],
-                failure_reason: None,
-                fee_contract: settled_fee.fee_contract.clone(),
-                fee_route: settled_fee.route.clone(),
-                fee_quote_id: settled_fee.quote_id.clone(),
-                fee_quote_contract: settled_fee.quote_contract.clone(),
-                fee_clearing_contract: settled_fee.clearing_contract.clone(),
-                fee_price_source: settled_fee.price_source.clone(),
-                fee_quote_required_pay_amount: settled_fee.required_source_amount,
-                fee_quote_expires_at_unix_ms: settled_fee.quote_expires_at_unix_ms,
-                fee_clearing_route_ref: settled_fee.clearing_route_ref.clone(),
-                fee_clearing_source: settled_fee.clearing_source.clone(),
-                fee_clearing_rate_ppm: settled_fee.clearing_rate_ppm,
-                route_meta: route_meta_from_settled_fee_v1(settled_fee),
-                policy_meta: policy_meta_from_settled_fee_v1(settled_fee),
-            }
+            apply_subject_meta_to_receipt_v1(
+                NovNativeExecutionReceiptV1 {
+                    tx_hash: to_hex(&request.tx_hash),
+                    status: true,
+                    target: execution_target_label_v1(&request.target),
+                    module: "governance".to_string(),
+                    method: "apply_treasury_policy".to_string(),
+                    settled_fee_nov: settled_fee.nov_amount,
+                    paid_asset: settled_fee.source_asset.clone(),
+                    paid_amount: settled_fee.source_amount,
+                    logs: vec![log],
+                    failure_reason: None,
+                    fee_contract: settled_fee.fee_contract.clone(),
+                    fee_route: settled_fee.route.clone(),
+                    fee_quote_id: settled_fee.quote_id.clone(),
+                    fee_quote_contract: settled_fee.quote_contract.clone(),
+                    fee_clearing_contract: settled_fee.clearing_contract.clone(),
+                    fee_price_source: settled_fee.price_source.clone(),
+                    fee_quote_required_pay_amount: settled_fee.required_source_amount,
+                    fee_quote_expires_at_unix_ms: settled_fee.quote_expires_at_unix_ms,
+                    fee_clearing_route_ref: settled_fee.clearing_route_ref.clone(),
+                    fee_clearing_source: settled_fee.clearing_source.clone(),
+                    fee_clearing_rate_ppm: settled_fee.clearing_rate_ppm,
+                    route_meta: route_meta_from_settled_fee_v1(settled_fee),
+                    policy_meta: policy_meta_from_settled_fee_v1(settled_fee),
+                    account_id: String::new(),
+                    fee_owner_account_id: String::new(),
+                    nonce_owner_account_id: String::new(),
+                    key_algo: String::new(),
+                    execution_policy: String::new(),
+                    policy_enforced: false,
+                    policy_rejection_reason: None,
+                },
+                subject_meta,
+            )
         }
         _ => build_failed_native_receipt_v1(
             request,
             settled_fee,
+            subject_meta,
             module_name,
             method_name,
             "unsupported native module method".to_string(),
@@ -4517,17 +4805,81 @@ pub fn dispatch_and_persist_nov_execution_request_v1(
     request: &NovExecutionRequestV1,
 ) -> Result<NovNativeExecutionReceiptV1> {
     let path = nov_native_execution_store_path_v1();
-    dispatch_and_persist_nov_execution_request_with_store_path_v1(path.as_path(), request)
+    dispatch_and_persist_nov_execution_request_with_subjects_and_store_path_v1(
+        path.as_path(),
+        request,
+        None,
+        None,
+        None,
+    )
 }
 
 pub fn dispatch_and_persist_nov_execution_request_with_store_path_v1(
     path: &Path,
     request: &NovExecutionRequestV1,
 ) -> Result<NovNativeExecutionReceiptV1> {
+    dispatch_and_persist_nov_execution_request_with_subjects_and_store_path_v1(
+        path, request, None, None, None,
+    )
+}
+
+fn dispatch_and_persist_nov_execution_request_with_subjects_and_store_path_v1(
+    path: &Path,
+    request: &NovExecutionRequestV1,
+    subject_meta: Option<&NovExecutionSubjectMetaV1>,
+    requested_behavior: Option<&NovRequestedExecutionBehaviorV1>,
+    unified_account_store_path: Option<&Path>,
+) -> Result<NovNativeExecutionReceiptV1> {
     let mut store = load_nov_native_execution_store_v1(path)?;
     let now_ms = now_unix_millis_v1();
-    let settled_fee = match settle_fee_policy_from_execution_request_v1(request, &mut store, now_ms)
-    {
+    let effective_subject_meta = subject_meta
+        .cloned()
+        .unwrap_or_else(|| fallback_execution_subject_meta_v1(request));
+    let effective_subject_meta = match enforce_requested_execution_behavior_v1(
+        &effective_subject_meta,
+        requested_behavior,
+        unified_account_store_path,
+    ) {
+        Ok(meta) => meta,
+        Err(rejection) => {
+            let rejected_subject_meta = subject_meta_with_execution_policy_v1(
+                effective_subject_meta.clone(),
+                rejection.key_algo,
+                rejection.execution_policy,
+                false,
+                Some(rejection.reason.to_string()),
+            );
+            let unresolved_fee = unresolved_settled_fee_v1(request);
+            let failed = build_failed_native_receipt_v1(
+                request,
+                &unresolved_fee,
+                &rejected_subject_meta,
+                "execution_policy".to_string(),
+                "enforce".to_string(),
+                rejection.reason.to_string(),
+            );
+            store
+                .receipts
+                .insert(failed.tx_hash.clone(), failed.clone());
+            let trace = build_execution_trace_v1(
+                request,
+                &unresolved_fee,
+                &failed,
+                &rejected_subject_meta,
+                &store,
+                now_ms,
+            );
+            persist_execution_trace_v1(&mut store, trace);
+            save_nov_native_execution_store_v1(path, &store)?;
+            return Ok(failed);
+        }
+    };
+    let settled_fee = match settle_fee_policy_from_execution_request_v1(
+        request,
+        &effective_subject_meta,
+        &mut store,
+        now_ms,
+    ) {
         Ok(value) => value,
         Err(err) => {
             let reason = format!("{err}");
@@ -4540,6 +4892,7 @@ pub fn dispatch_and_persist_nov_execution_request_with_store_path_v1(
             let failed = build_failed_native_receipt_v1(
                 request,
                 &unresolved_fee,
+                &effective_subject_meta,
                 "fee".to_string(),
                 fee_method.to_string(),
                 reason,
@@ -4547,18 +4900,37 @@ pub fn dispatch_and_persist_nov_execution_request_with_store_path_v1(
             store
                 .receipts
                 .insert(failed.tx_hash.clone(), failed.clone());
-            let trace = build_execution_trace_v1(request, &unresolved_fee, &failed, &store, now_ms);
+            let trace = build_execution_trace_v1(
+                request,
+                &unresolved_fee,
+                &failed,
+                &effective_subject_meta,
+                &store,
+                now_ms,
+            );
             persist_execution_trace_v1(&mut store, trace);
             store.last_updated_unix_ms = now_ms;
             save_nov_native_execution_store_v1(path, &store)?;
             return Ok(failed);
         }
     };
-    let receipt = dispatch_native_module_execute_v1(request, &settled_fee, &mut store);
+    let receipt = dispatch_native_module_execute_v1(
+        request,
+        &settled_fee,
+        &effective_subject_meta,
+        &mut store,
+    );
     store
         .receipts
         .insert(receipt.tx_hash.clone(), receipt.clone());
-    let trace = build_execution_trace_v1(request, &settled_fee, &receipt, &store, now_ms);
+    let trace = build_execution_trace_v1(
+        request,
+        &settled_fee,
+        &receipt,
+        &effective_subject_meta,
+        &store,
+        now_ms,
+    );
     persist_execution_trace_v1(&mut store, trace);
     store.last_updated_unix_ms = now_ms;
     save_nov_native_execution_store_v1(path, &store)?;
@@ -4679,6 +5051,191 @@ fn resolve_native_execution_store_path_from_params_v1(
                 Some(PathBuf::from(trimmed))
             }
         })
+}
+
+fn resolve_unified_account_store_path_from_params_v1(
+    params: &serde_json::Value,
+    native_execution_store_path: &Path,
+) -> Option<PathBuf> {
+    params
+        .get("unified_account_store_path")
+        .or_else(|| params.get("ua_store_path"))
+        .and_then(|value| value.as_str())
+        .and_then(|raw| {
+            let trimmed = raw.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(PathBuf::from(trimmed))
+            }
+        })
+        .or_else(|| match std::env::var("NOVOVM_UNIFIED_ACCOUNT_DB") {
+            Ok(raw) => {
+                let trimmed = raw.trim();
+                if trimmed.is_empty() {
+                    None
+                } else {
+                    Some(PathBuf::from(trimmed))
+                }
+            }
+            Err(_) => None,
+        })
+        .or_else(|| {
+            native_execution_store_path
+                .parent()
+                .map(|parent| parent.join("novovm-unified-account-router.rocksdb"))
+        })
+}
+
+fn requested_execution_behavior_v1(
+    execution_policy: NovExecutionPolicyV1,
+    privacy_mode: NovPrivacyModeV1,
+) -> NovRequestedExecutionBehaviorV1 {
+    NovRequestedExecutionBehaviorV1 {
+        execution_policy,
+        privacy_mode,
+    }
+}
+
+fn default_execution_behavior_v1() -> NovRequestedExecutionBehaviorV1 {
+    requested_execution_behavior_v1(NovExecutionPolicyV1::Standard, NovPrivacyModeV1::Public)
+}
+
+fn is_qualified_runtime_policy_demand_v1(subject_meta: &NovExecutionSubjectMetaV1) -> bool {
+    let account_id = subject_meta.account_id.trim();
+    let fee_owner = subject_meta.fee_owner_account_id.trim();
+    let nonce_owner = subject_meta.nonce_owner_account_id.trim();
+    !account_id.is_empty() && !fee_owner.is_empty() && !nonce_owner.is_empty()
+}
+
+fn emit_runtime_policy_observability_event_v1(
+    subject_meta: &NovExecutionSubjectMetaV1,
+    policy: NovExecutionPolicyV1,
+    accepted: bool,
+    reason: Option<&str>,
+) {
+    if matches!(policy, NovExecutionPolicyV1::Standard) {
+        return;
+    }
+    let qualified_demand = is_qualified_runtime_policy_demand_v1(subject_meta);
+    let policy_label = policy.as_str().to_string();
+    let reason_owned = reason.map(|value| value.to_string());
+    let _ = append_governance_event_auto(
+        "tx_ingress",
+        GovernanceEvent::RuntimePolicyEvaluated {
+            policy: policy_label.clone(),
+            required: true,
+            accepted,
+            reason: reason_owned.clone(),
+            qualified_demand: Some(qualified_demand),
+            account_id: Some(subject_meta.account_id.clone()),
+            demand_source: Some("nov_execute".to_string()),
+        },
+    );
+    if !accepted {
+        let _ = append_governance_event_auto(
+            "tx_ingress",
+            GovernanceEvent::RuntimeConstraintHit {
+                policy: policy_label,
+                reason: reason_owned.unwrap_or_else(|| "policy_rejected".to_string()),
+                qualified_demand: Some(qualified_demand),
+                account_id: Some(subject_meta.account_id.clone()),
+            },
+        );
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+struct NovExecutionPolicyRejectionV1 {
+    key_algo: Option<UcaKeyAlgo>,
+    execution_policy: NovExecutionPolicyV1,
+    reason: &'static str,
+}
+
+fn enforce_requested_execution_behavior_v1(
+    subject_meta: &NovExecutionSubjectMetaV1,
+    requested_behavior: Option<&NovRequestedExecutionBehaviorV1>,
+    unified_account_store_path: Option<&Path>,
+) -> std::result::Result<NovExecutionSubjectMetaV1, NovExecutionPolicyRejectionV1> {
+    let requested = requested_behavior
+        .copied()
+        .unwrap_or_else(default_execution_behavior_v1);
+    let resolved_key_algo = unified_account_store_path.and_then(|path| {
+        get_unified_account_key_algo_with_store_path_v1(path, subject_meta.account_id.as_str())
+            .ok()
+            .flatten()
+    });
+    let with_success = || {
+        subject_meta_with_execution_policy_v1(
+            subject_meta.clone(),
+            resolved_key_algo,
+            requested.execution_policy,
+            true,
+            None,
+        )
+    };
+
+    match requested.execution_policy {
+        NovExecutionPolicyV1::Standard => Ok(with_success()),
+        NovExecutionPolicyV1::PqRequired => {
+            if resolved_key_algo == Some(UcaKeyAlgo::Mldsa87) {
+                emit_runtime_policy_observability_event_v1(
+                    subject_meta,
+                    requested.execution_policy,
+                    true,
+                    None,
+                );
+                Ok(with_success())
+            } else {
+                emit_runtime_policy_observability_event_v1(
+                    subject_meta,
+                    requested.execution_policy,
+                    false,
+                    Some(ERR_PQ_REQUIRED_BUT_KEY_NOT_PQ),
+                );
+                Err(NovExecutionPolicyRejectionV1 {
+                    key_algo: resolved_key_algo,
+                    execution_policy: requested.execution_policy,
+                    reason: ERR_PQ_REQUIRED_BUT_KEY_NOT_PQ,
+                })
+            }
+        }
+        NovExecutionPolicyV1::PrivacyRequired => {
+            if resolved_key_algo != Some(UcaKeyAlgo::Mldsa87) {
+                emit_runtime_policy_observability_event_v1(
+                    subject_meta,
+                    requested.execution_policy,
+                    false,
+                    Some(ERR_PQ_REQUIRED_BUT_KEY_NOT_PQ),
+                );
+                Err(NovExecutionPolicyRejectionV1 {
+                    key_algo: resolved_key_algo,
+                    execution_policy: requested.execution_policy,
+                    reason: ERR_PQ_REQUIRED_BUT_KEY_NOT_PQ,
+                })
+            } else if matches!(requested.privacy_mode, NovPrivacyModeV1::Public) {
+                emit_runtime_policy_observability_event_v1(
+                    subject_meta,
+                    requested.execution_policy,
+                    false,
+                    Some(ERR_PRIVACY_REQUIRED_BUT_PATH_NOT_AVAILABLE),
+                );
+                Err(NovExecutionPolicyRejectionV1 {
+                    key_algo: resolved_key_algo,
+                    execution_policy: requested.execution_policy,
+                    reason: ERR_PRIVACY_REQUIRED_BUT_PATH_NOT_AVAILABLE,
+                })
+            } else {
+                emit_runtime_policy_observability_event_v1(
+                    subject_meta,
+                    requested.execution_policy,
+                    true,
+                    None,
+                );
+                Ok(with_success())
+            }
+        }
+    }
 }
 
 pub fn has_nov_native_call_shape_v1(params: &serde_json::Value) -> bool {
@@ -5362,13 +5919,58 @@ pub fn run_nov_send_raw_transaction_from_params_v1(
         .ok_or_else(|| anyhow::anyhow!("raw_tx is required for nov_sendRawTransaction"))?;
     let payload = decode_eth_send_raw_hex_payload_v1(raw_tx, "raw_tx")?;
     let (native_tx, ir, tx_hash) = ingest_local_nov_raw_tx_payload_v1(params, payload.as_slice())?;
+    let requested_execution_policy_override = parse_nov_execution_policy_v1(
+        params
+            .get("execution_policy")
+            .and_then(|value| value.as_str()),
+    );
+    let requested_privacy_mode_override =
+        parse_nov_privacy_mode_v1(params.get("privacy_mode").and_then(|value| value.as_str()));
+    let execution_subject = match &native_tx.kind {
+        NovTxKindV1::Execute(execute) => Some(subject_meta_from_execute_tx_v1(execute)),
+        _ => None,
+    };
+    let requested_execution_behavior = match &native_tx.kind {
+        NovTxKindV1::Execute(execute) => Some(requested_execution_behavior_v1(
+            if params.get("execution_policy").is_some() {
+                requested_execution_policy_override
+            } else {
+                execute.execution_policy
+            },
+            if params.get("privacy_mode").is_some() {
+                requested_privacy_mode_override
+            } else {
+                execute.privacy_mode
+            },
+        )),
+        _ => None,
+    };
     let execution_request = nov_native_tx_to_execution_request_v1(&native_tx)?;
     let store_path_override = resolve_native_execution_store_path_from_params_v1(params);
+    let effective_native_store_path = store_path_override
+        .clone()
+        .unwrap_or_else(nov_native_execution_store_path_v1);
+    let unified_account_store_path = resolve_unified_account_store_path_from_params_v1(
+        params,
+        effective_native_store_path.as_path(),
+    );
     let execution_receipt = if let Some(request) = execution_request.as_ref() {
         Some(if let Some(path) = store_path_override.as_deref() {
-            dispatch_and_persist_nov_execution_request_with_store_path_v1(path, request)?
+            dispatch_and_persist_nov_execution_request_with_subjects_and_store_path_v1(
+                path,
+                request,
+                execution_subject.as_ref(),
+                requested_execution_behavior.as_ref(),
+                unified_account_store_path.as_deref(),
+            )?
         } else {
-            dispatch_and_persist_nov_execution_request_v1(request)?
+            dispatch_and_persist_nov_execution_request_with_subjects_and_store_path_v1(
+                effective_native_store_path.as_path(),
+                request,
+                execution_subject.as_ref(),
+                requested_execution_behavior.as_ref(),
+                unified_account_store_path.as_deref(),
+            )?
         })
     } else {
         None
@@ -5386,6 +5988,7 @@ pub fn run_nov_send_raw_transaction_from_params_v1(
         },
         "tx_ir_type": format!("{:?}", ir.tx_type),
         "execution_request": execution_request,
+        "execution_subject": execution_subject,
         "native_receipt": execution_receipt,
     }))
 }
@@ -5444,11 +6047,29 @@ fn parse_nov_mode_v1(raw: Option<&str>) -> NovExecutionModeV1 {
     }
 }
 
+fn parse_nov_execution_policy_v1(raw: Option<&str>) -> NovExecutionPolicyV1 {
+    match raw.unwrap_or("standard").to_ascii_lowercase().as_str() {
+        "pqrequired" | "pq_required" | "pq-required" => NovExecutionPolicyV1::PqRequired,
+        "privacyrequired" | "privacy_required" | "privacy-required" => {
+            NovExecutionPolicyV1::PrivacyRequired
+        }
+        _ => NovExecutionPolicyV1::Standard,
+    }
+}
+
 fn parse_nov_privacy_mode_v1(raw: Option<&str>) -> NovPrivacyModeV1 {
     match raw.unwrap_or("public").to_ascii_lowercase().as_str() {
         "private" => NovPrivacyModeV1::Private,
         "confidential" => NovPrivacyModeV1::Confidential,
         _ => NovPrivacyModeV1::Public,
+    }
+}
+
+fn tx_execution_policy_from_nov_v1(policy: NovExecutionPolicyV1) -> TxExecutionPolicyV1 {
+    match policy {
+        NovExecutionPolicyV1::Standard => TxExecutionPolicyV1::Standard,
+        NovExecutionPolicyV1::PqRequired => TxExecutionPolicyV1::PqRequired,
+        NovExecutionPolicyV1::PrivacyRequired => TxExecutionPolicyV1::PrivacyRequired,
     }
 }
 
@@ -5502,6 +6123,26 @@ pub fn run_nov_execute_from_params_v1(params: &serde_json::Value) -> Result<serd
         .or_else(|| params.get("from").and_then(|value| value.as_str()))
         .ok_or_else(|| anyhow::anyhow!("caller/from is required for nov_execute"))?;
     let caller = decode_eth_send_raw_hex_payload_v1(caller_raw, "caller")?;
+    let caller_account_id = normalize_subject_account_ref_v1(caller_raw)?;
+    let account_id = params
+        .get("account_id")
+        .or_else(|| params.get("uca_id"))
+        .and_then(|value| value.as_str())
+        .map(normalize_subject_account_ref_v1)
+        .transpose()?
+        .unwrap_or_else(|| caller_account_id.clone());
+    let fee_owner_account_id = params
+        .get("fee_owner_account_id")
+        .and_then(|value| value.as_str())
+        .map(normalize_subject_account_ref_v1)
+        .transpose()?
+        .unwrap_or_else(|| account_id.clone());
+    let nonce_owner_account_id = params
+        .get("nonce_owner_account_id")
+        .and_then(|value| value.as_str())
+        .map(normalize_subject_account_ref_v1)
+        .transpose()?
+        .unwrap_or_else(|| account_id.clone());
 
     let method = params
         .get("method_name")
@@ -5529,6 +6170,11 @@ pub fn run_nov_execute_from_params_v1(params: &serde_json::Value) -> Result<serd
     let execution_mode = parse_nov_mode_v1(
         params
             .get("execution_mode")
+            .and_then(|value| value.as_str()),
+    );
+    let execution_policy = parse_nov_execution_policy_v1(
+        params
+            .get("execution_policy")
             .and_then(|value| value.as_str()),
     );
     let privacy_mode =
@@ -5564,10 +6210,14 @@ pub fn run_nov_execute_from_params_v1(params: &serde_json::Value) -> Result<serd
         chain_id,
         kind: NovTxKindV1::Execute(NovExecuteTxV1 {
             caller,
+            account_id: Some(account_id.clone()),
+            fee_owner_account_id: Some(fee_owner_account_id.clone()),
+            nonce_owner_account_id: Some(nonce_owner_account_id.clone()),
             target,
             method,
             args,
             execution_mode,
+            execution_policy,
             privacy_mode,
             verification_mode,
             fee_policy,
@@ -5582,6 +6232,9 @@ pub fn run_nov_execute_from_params_v1(params: &serde_json::Value) -> Result<serd
         "raw_tx": to_hex_prefixed_v1(raw.as_slice()),
         "chain_id": chain_id,
         "caller": caller_raw,
+        "account_id": account_id,
+        "fee_owner_account_id": fee_owner_account_id,
+        "nonce_owner_account_id": nonce_owner_account_id,
     });
     if let Some(path) = params
         .get("native_execution_store_path")
@@ -5590,6 +6243,18 @@ pub fn run_nov_execute_from_params_v1(params: &serde_json::Value) -> Result<serd
         if let Some(obj) = merged.as_object_mut() {
             obj.insert(
                 "native_execution_store_path".to_string(),
+                serde_json::Value::String(path.to_string()),
+            );
+        }
+    }
+    if let Some(path) = params
+        .get("unified_account_store_path")
+        .or_else(|| params.get("ua_store_path"))
+        .and_then(|value| value.as_str())
+    {
+        if let Some(obj) = merged.as_object_mut() {
+            obj.insert(
+                "unified_account_store_path".to_string(),
                 serde_json::Value::String(path.to_string()),
             );
         }
@@ -5963,6 +6628,9 @@ mod tests {
                 chain_id: 77,
                 kind: NovTxKindV1::Execute(novovm_protocol::NovExecuteTxV1 {
                     caller: vec![0x11; 20],
+                    account_id: Some("acct-pending".to_string()),
+                    fee_owner_account_id: Some("acct-fee".to_string()),
+                    nonce_owner_account_id: Some("acct-nonce".to_string()),
                     target: novovm_protocol::NovExecutionTargetV1::NativeModule(
                         "treasury".to_string(),
                     ),
@@ -5973,6 +6641,7 @@ mod tests {
                     }))
                     .expect("encode args"),
                     execution_mode: NovExecutionModeV1::Standard,
+                    execution_policy: NovExecutionPolicyV1::Standard,
                     privacy_mode: NovPrivacyModeV1::Public,
                     verification_mode: NovVerificationModeV1::Standard,
                     fee_policy: NovFeePolicyV1 {
@@ -5994,6 +6663,14 @@ mod tests {
             assert_eq!(out["accepted"].as_bool(), Some(true));
             assert_eq!(out["nov_tx_kind"].as_str(), Some("execute"));
             assert_eq!(out["chain_id"].as_u64(), Some(77));
+            assert_eq!(
+                out["execution_subject"]["account_id"].as_str(),
+                Some("acct-pending")
+            );
+            assert_eq!(
+                out["native_receipt"]["account_id"].as_str(),
+                Some("acct-pending")
+            );
             assert!(out["pending_tx_hash"]
                 .as_str()
                 .unwrap_or_default()
@@ -8314,8 +8991,18 @@ mod tests {
             quote_contract: NOV_EXECUTION_FEE_QUOTE_CONTRACT_V1.to_string(),
             price_source: "test".to_string(),
         };
-        let err = settle_fee_quote_into_treasury_v1(&mut store, &quote, "deadbeef", 200)
-            .expect_err("expired quote should fail");
+        let subject_meta = NovExecutionSubjectMetaV1 {
+            account_id: "acct-expired".to_string(),
+            fee_owner_account_id: "acct-expired".to_string(),
+            nonce_owner_account_id: "acct-expired".to_string(),
+            key_algo: String::new(),
+            execution_policy: NovExecutionPolicyV1::Standard.as_str().to_string(),
+            policy_enforced: false,
+            policy_rejection_reason: None,
+        };
+        let err =
+            settle_fee_quote_into_treasury_v1(&mut store, &quote, "deadbeef", &subject_meta, 200)
+                .expect_err("expired quote should fail");
         let reason = format!("{err}");
         assert!(reason.starts_with("fee.clearing.quote_expired"));
         assert_eq!(

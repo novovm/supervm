@@ -13,10 +13,12 @@ novovm-consensus = { path = "../novovm-consensus" }
 novovm-network = { path = "../novovm-network" }
 novovm-protocol = { path = "../novovm-protocol" }
 novovm-adapter-api = { path = "../novovm-adapter-api" }
+novovm-governance-observability = { path = "../novovm-governance-observability" }
 novovm-adapter-novovm = { path = "../novovm-adapter-novovm" }
 novovm-adapter-evm-core = { path = "../plugins/evm/core" }
 novovm-adapter-evm-plugin = { path = "../plugins/evm/plugin" }
 ed25519-dalek = { version = "2", features = ["rand_core"] }
+k256 = { version = "0.13", features = ["ecdsa"] }
 rand = "0.8"
 sha2 = "0.10"
 libloading = "0.8"

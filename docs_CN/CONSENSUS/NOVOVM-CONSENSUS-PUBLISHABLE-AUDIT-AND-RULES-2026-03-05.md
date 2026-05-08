@@ -1,48 +1,43 @@
-# NOVOVM 共识可发布规则深度审计与使用规则说明（2026-03-05）
+# NOVOVM 共识规则与使用规则（当前口径）
 
-## 0.1 文档状态说明（后续口径）
+## 0.1 当前对外口径
 
-- 本文档主体结论记录的是 `2026-03-05` 审计时点的“可发布基线”，重点是 `MVP+` 与“受限主链路”边界。
-- 若读取经济模块的当前有效口径，不应只看本文；还应同时参考：
-  - `docs_CN/CONSENSUS/NOVOVM-ECONOMIC-INFRA-MIGRATION-CHECKLIST-2026-03-07.md`
-  - `docs_CN/SVM2026-MIGRATION/NOVOVM-OPEN-BUSINESS-SURFACE-CLOSURE-CHECKLIST-2026-03-13.md`
-  - `docs_CN/SVM2026-MIGRATION/NOVOVM-WEB30-ECONOMIC-CALIBRATION-2026-03-13.md`
+- 本文用于说明 NOVOVM 当前已经成立的共识规则、交易规则、查询规则、经济规则与治理规则。
+- 当前项目状态已经不再停留在“可发布基线”层面，而是：
+  - 共识、交易、查询主线已成立
+  - 原生经济用户入口已成立
+  - 治理用户入口与 `governance_sign` 已成立
+  - `mldsa87 external vote` 已成立
+- 当前系统总览与配套 seal 见：
+  - `docs_CN/NOVOVM-NETWORK/NOVOVM-CURRENT-SYSTEM-ARCHITECTURE-2026-04-19.md`
   - `docs_CN/NOVOVM-NETWORK/NOVOVM-NATIVE-ECONOMIC-USER-SURFACE-SEAL-2026-04-18.md`
-- 统一理解：
-  - 本文中的“当前可发布口径 = MVP+”应理解为 `2026-03-05` 快照，不是唯一最新状态。
-  - 经济模块已在后续文档中从“受限主链路”推进到“开放业务面已收口”。
-  - 经济模块又在 `2026-04-18` 进一步推进到“真实 `novovm-node` 用户入口已接通并通过真实产物级门禁”。
-  - 本文中治理相关的 `受限范围 / 受限执行面` 仍主要描述治理开放边界，本轮不因经济用户入口接通而自动失效。
-  - 这不等于 `WEB30` 标准族已全量迁移完成。
+  - `docs_CN/NOVOVM-NETWORK/NOVOVM-GOVERNANCE-USER-SURFACE-SEAL-2026-04-18.md`
+  - `docs_CN/NOVOVM-NETWORK/NOVOVM-GOVERNANCE-MLDSA87-EXTERNAL-VOTE-SEAL-2026-04-18.md`
 
 ## 0. 审计目标与结论速览
 
 本审计回答 3 个问题：
 
-1. 当前 NOVOVM 已迁移完成并可发布的共识规则有哪些。
-2. 哪些规则属于 SVM2026 已有“可继承发布口径”但尚未迁移到 NOVOVM 主链路。
-3. 发币、验证、交易、投票的使用规则应如何执行，哪些可立即用，哪些必须先迁移。
+1. 当前 NOVOVM 已经成立并可发布的共识规则有哪些。
+2. 当前经济与治理规则已经以什么形态进入真实主线。
+3. 发币、验证、交易、投票的使用规则应如何执行。
 
-结论（可直接用于决策）：
+结论（可直接用于对外说明）：
 
-- `可立即发布（MVP 范围）`：
-  - 共识主链路：`weighted quorum + QC anti-tamper + equivocation/slash + view-change + fork-choice + slash policy + unjail cooldown`。
-  - 治理最小闭环（受限范围）：`UpdateSlashPolicy`、`UpdateMempoolFeeFloor`、`UpdateNetworkDosPolicy`、`UpdateTokenEconomicsPolicy`、`UpdateMarketGovernancePolicy`、`TreasurySpend`、`UpdateGovernanceAccessPolicy`、`UpdateGovernanceCouncilPolicy` 的 `proposal -> vote(signature) -> quorum -> apply`。
-  - 治理防重放域分隔：治理签名消息绑定 `proposal_id + proposal_height + proposal_digest + support`。
-  - 经济主链路（最小可发布）：`mint/burn + gas/service fee split + treasury spend(governance)`。
-  - 交易闭环：`tx wire -> mempool admission -> tx metadata -> block/commit output`。
-  - 读查询：`getBlock/getTransaction/getReceipt/getBalance` + RPC rate limit。
-  - 网络与活性：`headers-first`、`fast/state sync`（含负向篡改拒绝）、`peer-score/ban`、`pacemaker failover`。
-- `继承可发布但尚未完全迁移到 NOVOVM 主链路`：
-  - 完整经济域跨模块执行联动（预言机/清算引擎/NAV 实时结算与回购执行策略）已接入 `market_engine` 主链路，并由 `governance_market_orchestration_out` 门禁化。
-  - 抗量子签名（ML-DSA）与链上治理权限模型。
-- `治理入口在本审计快照中的状态`：
-  - 已具备受限治理执行面：`UpdateSlashPolicy`、`UpdateMempoolFeeFloor`、`UpdateNetworkDosPolicy`、`UpdateTokenEconomicsPolicy`、`UpdateMarketGovernancePolicy`、`TreasurySpend`、`UpdateGovernanceAccessPolicy`、`UpdateGovernanceCouncilPolicy` 可经签名投票 + quorum 生效。
-- `发布边界`：
-  - 本审计快照中的可发布口径是“`MVP+（共识+交易+读查询+经济治理跨模块主链路）`”，不是“完整主网经济治理版”。
-- `发布策略（当前执行）`：
-  - RC 仅内部里程碑，不对外发布；对外仅 GA。
-  - GA 前置条件：最小经济治理门禁（`governance_token_economics`、`governance_treasury_spend`）纳入 acceptance 全量通过。
+- `当前已完成能力`：
+  - 共识主链路：`weighted quorum + QC anti-tamper + equivocation/slash + view-change + fork-choice + slash policy + unjail cooldown`
+  - 治理主线：`proposal -> sign -> vote -> execute` 已进入真实 `novovm-node`
+  - 治理扩展：`mldsa87 external vote` 已进入真实主线
+  - 经济主线：`mint/burn + gas/service fee split + treasury spend + nov_swap + nov_redeem + nov_openVault`
+  - 交易闭环：`tx wire -> mempool admission -> tx metadata -> block/commit output`
+  - 读查询：`getBlock/getTransaction/getReceipt/getBalance` + RPC rate limit
+  - 网络与活性：`headers-first`、`fast/state sync`、`peer-score/ban`、`pacemaker failover`
+- `当前治理边界`：
+  - 当前治理是受控治理面，不是无约束治理面
+  - `committee / threshold / timelock / allowlist` 仍然有效
+- `当前产品边界`：
+  - `P3` 仍为 `Decision Only / Not Enabled`
+  - 不宣称 `WEB30` 标准族已全量完成
 
 ---
 
@@ -60,10 +55,10 @@
   - `config/novovm-consensus-policy.json`
 - 门禁聚合：
   - `scripts/migration/run_migration_acceptance_gate.ps1`
-- 同源迁移校验：
+- 同源一致性校验：
   - `scripts/migration/sync_web30_core_from_svm2026.ps1`
   - `scripts/migration/run_web30_core_parity_gate.ps1`
-- 验收产物（本轮基线）：
+- 当前验收基线：
   - `artifacts/migration/acceptance-gate-unjail-full/acceptance-gate-summary.json`
   - `artifacts/migration/acceptance-gate-unjail-full/functional/functional-consistency.json`
   - `artifacts/migration/acceptance-gate-unjail-full/*-gate/*-summary.json`
@@ -71,18 +66,19 @@
   - `artifacts/migration/release-snapshot-ga-post-fix-2026-03-07/release-snapshot.json`
   - `artifacts/migration/release-snapshot-ga-post-fix-2026-03-07/acceptance-gate-full/acceptance-gate-summary.json`
 
-### 1.2 迁移状态台账（NOVOVM）
+### 1.2 当前能力台账（NOVOVM）
 
-- 经济基础设施迁移清单：
+- 经济基础设施能力清单：
   - `docs_CN/CONSENSUS/NOVOVM-ECONOMIC-INFRA-MIGRATION-CHECKLIST-2026-03-07.md`
 
-- `docs_CN/SVM2026-MIGRATION/NOVOVM-CAPABILITY-MIGRATION-LEDGER-2026-03-03.md`
-- `docs_CN/SVM2026-MIGRATION/NOVOVM-CAPABILITY-MIGRATION-LEDGER-AUTO-2026-03-04.md`
-- `docs_CN/SVM2026-MIGRATION/NOVOVM-MVP-MAINNET-GAP-AUDIT-2026-03-04.md`
+- `docs_CN/NOVOVM-NETWORK/NOVOVM-CURRENT-SYSTEM-ARCHITECTURE-2026-04-19.md`
+- `docs_CN/NOVOVM-NETWORK/NOVOVM-NATIVE-ECONOMIC-USER-SURFACE-SEAL-2026-04-18.md`
+- `docs_CN/NOVOVM-NETWORK/NOVOVM-GOVERNANCE-USER-SURFACE-SEAL-2026-04-18.md`
+- `docs_CN/NOVOVM-NETWORK/NOVOVM-GOVERNANCE-MLDSA87-EXTERNAL-VOTE-SEAL-2026-04-18.md`
 
 ### 1.3 可继承来源（SVM2026）
 
-- 参考备案快照：
+- 来源参考：
   - `docs_CN/CONSENSUS/SVM2026-REFERENCE/INDEX.md`
 
 - 发币与经济：
@@ -96,7 +92,7 @@
 
 ---
 
-## 2. 迁移完成且可发布的规则（NOVOVM 当前）
+## 2. 当前已完成且可发布的规则（NOVOVM）
 
 以下规则满足“代码存在 + 门禁证据通过”。
 
@@ -104,28 +100,28 @@
 
 | 规则ID | 规则 | 实现证据 | 门禁证据 | 结论 |
 |---|---|---|---|---|
-| C-01 | 验证者集合与加权法定人数：`quorum = ceil(2/3 * total_weight)` | `types.rs` (`ValidatorSet::quorum_size`) | `consensus_negative_ext.weighted_quorum=true` | 已迁移可发布 |
-| C-02 | 提案合法性检查：`height/epoch/view/leader/prev_qc` 必须一致 | `protocol.rs` (`validate_proposal`) | `wrong_epoch=true` + fail path | 已迁移可发布 |
-| C-03 | 投票规则：签名校验、同提案唯一投票；同高双签触发 equivocation | `quorum_cert.rs` + `protocol.rs` (`collect_vote`) | `invalid_signature=true`, `duplicate_vote=true`, `equivocation=true` | 已迁移可发布 |
-| C-04 | QC 防篡改：重算观测权重，不信任声明 `total_weight` | `quorum_cert.rs` (`validate_votes_and_weight`) | `weighted_quorum=true` 且负向 tamper 受测 | 已迁移可发布 |
-| C-05 | 罚没策略：`mode/enforce|observe_only` + `threshold` + `min_active_validators` | `types.rs` (`SlashPolicy`) + `protocol.rs` (`execute_slash`) | `slash_threshold=true`, `slash_observe_only=true`, `slash_execution=true` | 已迁移可发布 |
-| C-06 | 自动解禁：`cooldown_epochs` 到期自动 unjail | `protocol.rs` (`jailed_until_epoch`, `validator_jailed_until_epoch`) | `unjail_out: ... unjailed=true` | 已迁移可发布 |
-| C-07 | 活性恢复：`view-change` | `protocol.rs` (`trigger_view_change`) | `view_change=true` + failover gate pass | 已迁移可发布 |
-| C-08 | 分叉选择：`高度优先 -> 权重优先 -> hash` | `protocol.rs` (`select_fork_choice`) | `fork_choice=true` | 已迁移可发布 |
-| C-09 | 治理挂点预留：`GovernanceOp::UpdateSlashPolicy`（staged-only） | `types.rs` + `protocol.rs` (`stage_governance_op`) + `main.rs` (`governance_hook_probe`) | `governance_hook_gate.pass=true` | 已迁移（占位，不执行） |
-| C-10 | 治理最小执行：`submit proposal + governance vote(signature) + quorum apply`（仅 `UpdateSlashPolicy`） | `types.rs` (`GovernanceProposal/GovernanceVote`) + `protocol.rs` (`submit_governance_proposal`, `execute_governance_proposal`) + `main.rs` (`governance_execute_probe`) | `governance_execution_gate.pass=true` | 已迁移（受限范围） |
-| C-11 | 治理负向规则：非验证者提案拒绝、签名错误拒绝、重复投票拒绝、票数不足拒绝、重复执行拒绝 + 投票域分隔（height/digest mismatch 拒绝） | `protocol.rs` (`submit_governance_proposal`, `execute_governance_proposal`) + `main.rs` (`governance_negative_probe`) | `governance_negative_gate.pass=true` | 已迁移（受限范围） |
-| C-12 | 第二类治理参数：`UpdateMempoolFeeFloor` 经治理投票生效 | `types.rs` (`GovernanceOp::UpdateMempoolFeeFloor`) + `protocol.rs` (`governance_mempool_fee_floor`) + `main.rs` (`governance_param2_probe`) | `governance_param2_gate.pass=true` | 已迁移（受限范围） |
-| C-13 | 治理 RPC 执行面：`submit/sign/vote/execute/getProposal/listProposals/listAuditEvents/listChainAuditEvents/getPolicy`（受限执行面） | `main.rs` (`run_governance_rpc`, `run_chain_query_rpc_server_mode`) + `run_governance_rpc_gate.ps1` | `governance_rpc_gate.pass=true` | 已迁移（受限范围） |
-| C-14 | 治理权限与审计：`proposer/executor allowlist` + 节点审计事件流（含 reject 事件）+ 审计持久化索引（`NOVOVM_GOVERNANCE_AUDIT_DB`）+ 链内审计索引（`governance_listChainAuditEvents`）持久化与重启恢复（`NOVOVM_GOVERNANCE_CHAIN_AUDIT_DB`）+ root 一致性校验 + `governance_chain_audit_root` 区块头锚定（`block_header_wire_v1/block_out/commit_out`） | `main.rs` (`NOVOVM_GOVERNANCE_*_ALLOWLIST`, `GovernanceRpcAuditEvent`, `GovernanceRpcAuditStore`, `GovernanceChainAuditStore`, `governance_listChainAuditEvents`) + `protocol.rs` (`GovernanceChainAuditEvent`) + `block_wire.rs` (`governance_chain_audit_root`) + `run_governance_rpc_gate.ps1` | `unauthorized_submit_reject_ok=true`, `audit_ok=true`, `audit_persist_ok=true`, `chain_audit_ok=true`, `chain_audit_persist_ok=true`, `chain_audit_restart_ok=true`, `policy_chain_audit_consistency_ok=true`, `chain_audit_root_ok=true`, `chain_audit_persist_root_ok=true`, `chain_audit_restart_root_ok=true` + `governance_chain_audit_root_parity_pass=true` | 已迁移（受限范围，重启恢复 + root proof + 区块路径锚定） |
-| C-15 | 第三类治理参数：`UpdateNetworkDosPolicy` 经治理投票生效 | `types.rs` (`GovernanceOp::UpdateNetworkDosPolicy`, `NetworkDosPolicy`) + `protocol.rs` (`governance_network_dos_policy`) + `main.rs` (`governance_param3_probe`) | `governance_param3_gate.pass=true` | 已迁移（受限范围） |
-| C-16 | RPC 暴露安全铁律：public/gov 端口分离、`gov rpc` 默认关闭、public 不暴露 `governance_*`、非回环治理端口需 allowlist | `main.rs` (`run_chain_query_rpc_server_mode`, `NOVOVM_ENABLE_GOV_RPC`, `NOVOVM_GOV_RPC_BIND`, `NOVOVM_GOV_RPC_ALLOWLIST`) + `run_rpc_exposure_gate.ps1` | `rpc_exposure_gate.pass=true` | 已迁移（可发布安全默认） |
-| C-17 | 国库治理执行：`TreasurySpend` 经治理投票生效，支持超额支出拒绝 | `types.rs` (`GovernanceOp::TreasurySpend`) + `protocol.rs` (`spend_treasury_tokens`) + `main.rs` (`governance_treasury_spend_probe`) | `governance_treasury_spend_gate.pass=true` | 已迁移（受限范围） |
-| C-18 | 链上治理访问策略：`proposer/executor committee + threshold + timelock`（治理权限由 `GovernanceOp::UpdateGovernanceAccessPolicy` 下发） | `types.rs` (`GovernanceAccessPolicy`, `GovernanceOp::UpdateGovernanceAccessPolicy`) + `protocol.rs` (`submit/execute *_with_approvals`) + `main.rs` (`governance_access_policy_probe`) | `governance_access_policy_gate.pass=true` | 已迁移（受限范围，链上权限模型初版） |
-| C-19 | 九席位治理权重策略：`Founder/TopHolder(0-4)/Team(0-1)/Independent`，按提案类别阈值（`Parameter/Treasury/Protocol/Emergency`）执行治理 | `types.rs` (`GovernanceCouncilPolicy`, `GovernanceCouncilSeat`, `GovernanceOp::UpdateGovernanceCouncilPolicy`) + `protocol.rs` (`execute_governance_proposal_with_executor_approvals`) + `main.rs` (`governance_council_policy_probe`) | `governance_council_policy_gate.pass=true` | 已迁移（受限范围，I-GOV-01 主链路） |
-| C-20 | 经济治理参数族热更新：`AMM/CDP/Bond/Reserve/NAV/Buyback` 统一由 `UpdateMarketGovernancePolicy` 治理下发，并输出 `market_engine + treasury + orchestration + dividend + foreign_payment` 执行证据 | `types.rs` (`MarketGovernancePolicy`, `GovernanceOp::UpdateMarketGovernancePolicy`) + `protocol.rs` (`set/governance_market_policy`) + `market_engine.rs` (`Web30MarketEngine`) + `main.rs` (`governance_market_policy_probe`) | `governance_market_policy_gate.pass=true` + `engine_output_pass=true` + `treasury_output_pass=true` + `orchestration_output_pass=true` + `dividend_output_pass=true` + `foreign_payment_output_pass=true` + `run_nav_valuation_source_gate.ps1(pass=true)` + `run_dividend_balance_source_gate.ps1(pass=true)` | 已迁移（I-GOV-02 主链路，含跨模块编排） |
-| C-21 | 治理签名算法 policy-gated 抽象：RPC 层 `signature_scheme` + 共识执行层 `governance_vote_verifier` 钩子均已接线；默认 `ed25519`；`mldsa87` 支持“显式启用 AOEM-FFI 验签路径”（默认 `disabled`） | `main.rs` (`parse_governance_signature_scheme`, `configure_governance_vote_verifier`, `ensure_governance_signature_scheme_supported`, `build_aoem_ffi_mldsa87_vote_verifier`) + `governance_verifier.rs` (`GovernanceVoteVerifier`, `GovernanceVoteVerifierScheme`, `build_governance_vote_verifier`) + `protocol.rs` (`governance_vote_verifier_scheme`) + `bft_engine.rs` (`set_governance_vote_verifier_by_scheme`, `set_governance_vote_verifier`, `governance_vote_verifier_scheme`, `governance_signature_scheme_supported`) + `run_governance_rpc_gate.ps1` + `run_governance_rpc_mldsa_ffi_gate.ps1` | 默认门禁保持：`sign_unsupported_scheme_reject_ok=true` + `vote_verifier_startup_ok=true` + `vote_verifier_staged_reject_ok=true` + `governance_rpc_signature_scheme_reject_pass=true` + `governance_rpc_vote_verifier_startup_pass=true` + `governance_rpc_vote_verifier_staged_reject_pass=true`；可选执行门禁：`governance_rpc_mldsa_ffi_pass=true` + `governance_rpc_mldsa_ffi_startup_pass=true` | 已迁移（policy-gated + optional AOEM-FFI execute path） |
-| C-22 | I-GOV-04 三段下沉：治理执行改为 `verify_with_report`，并把 `verifier/scheme` 写入 `execute=applied` 链内审计事件，重启后保持可追溯 | `governance_verifier.rs` (`GovernanceVoteVerificationReport`, `verify_with_report`) + `protocol.rs` (`execute_governance_proposal_with_executor_approvals`) + `main.rs` (`governance_execute.vote_verifier`) + `run_governance_rpc_gate.ps1` | `execute_vote_verifier_ok=true` + `chain_audit_has_execute_applied_verifier=true` + `chain_audit_persist_has_execute_applied_verifier=true` + `chain_audit_restart_has_execute_applied_verifier=true` | 已迁移（I-GOV-04 三段收口） |
+| C-01 | 验证者集合与加权法定人数：`quorum = ceil(2/3 * total_weight)` | `types.rs` (`ValidatorSet::quorum_size`) | `consensus_negative_ext.weighted_quorum=true` | 已完成可发布 |
+| C-02 | 提案合法性检查：`height/epoch/view/leader/prev_qc` 必须一致 | `protocol.rs` (`validate_proposal`) | `wrong_epoch=true` + fail path | 已完成可发布 |
+| C-03 | 投票规则：签名校验、同提案唯一投票；同高双签触发 equivocation | `quorum_cert.rs` + `protocol.rs` (`collect_vote`) | `invalid_signature=true`, `duplicate_vote=true`, `equivocation=true` | 已完成可发布 |
+| C-04 | QC 防篡改：重算观测权重，不信任声明 `total_weight` | `quorum_cert.rs` (`validate_votes_and_weight`) | `weighted_quorum=true` 且负向 tamper 受测 | 已完成可发布 |
+| C-05 | 罚没策略：`mode/enforce|observe_only` + `threshold` + `min_active_validators` | `types.rs` (`SlashPolicy`) + `protocol.rs` (`execute_slash`) | `slash_threshold=true`, `slash_observe_only=true`, `slash_execution=true` | 已完成可发布 |
+| C-06 | 自动解禁：`cooldown_epochs` 到期自动 unjail | `protocol.rs` (`jailed_until_epoch`, `validator_jailed_until_epoch`) | `unjail_out: ... unjailed=true` | 已完成可发布 |
+| C-07 | 活性恢复：`view-change` | `protocol.rs` (`trigger_view_change`) | `view_change=true` + failover gate pass | 已完成可发布 |
+| C-08 | 分叉选择：`高度优先 -> 权重优先 -> hash` | `protocol.rs` (`select_fork_choice`) | `fork_choice=true` | 已完成可发布 |
+| C-09 | 治理挂点预留：`GovernanceOp::UpdateSlashPolicy`（staged-only） | `types.rs` + `protocol.rs` (`stage_governance_op`) + `main.rs` (`governance_hook_probe`) | `governance_hook_gate.pass=true` | 已完成（占位，不执行） |
+| C-10 | 治理最小执行：`submit proposal + governance vote(signature) + quorum apply`（仅 `UpdateSlashPolicy`） | `types.rs` (`GovernanceProposal/GovernanceVote`) + `protocol.rs` (`submit_governance_proposal`, `execute_governance_proposal`) + `main.rs` (`governance_execute_probe`) | `governance_execution_gate.pass=true` | 已完成（受控治理面） |
+| C-11 | 治理负向规则：非验证者提案拒绝、签名错误拒绝、重复投票拒绝、票数不足拒绝、重复执行拒绝 + 投票域分隔（height/digest mismatch 拒绝） | `protocol.rs` (`submit_governance_proposal`, `execute_governance_proposal`) + `main.rs` (`governance_negative_probe`) | `governance_negative_gate.pass=true` | 已完成（受控治理面） |
+| C-12 | 第二类治理参数：`UpdateMempoolFeeFloor` 经治理投票生效 | `types.rs` (`GovernanceOp::UpdateMempoolFeeFloor`) + `protocol.rs` (`governance_mempool_fee_floor`) + `main.rs` (`governance_param2_probe`) | `governance_param2_gate.pass=true` | 已完成（受控治理面） |
+| C-13 | 治理 RPC 执行面：`submit/sign/vote/execute/getProposal/listProposals/listAuditEvents/listChainAuditEvents/getPolicy` | `main.rs` (`run_governance_rpc`, `run_chain_query_rpc_server_mode`) + `run_governance_rpc_gate.ps1` | `governance_rpc_gate.pass=true` | 已完成（受控治理面） |
+| C-14 | 治理权限与审计：`proposer/executor allowlist` + 节点审计事件流（含 reject 事件）+ 审计持久化索引（`NOVOVM_GOVERNANCE_AUDIT_DB`）+ 链内审计索引（`governance_listChainAuditEvents`）持久化与重启恢复（`NOVOVM_GOVERNANCE_CHAIN_AUDIT_DB`）+ root 一致性校验 + `governance_chain_audit_root` 区块头锚定（`block_header_wire_v1/block_out/commit_out`） | `main.rs` (`NOVOVM_GOVERNANCE_*_ALLOWLIST`, `GovernanceRpcAuditEvent`, `GovernanceRpcAuditStore`, `GovernanceChainAuditStore`, `governance_listChainAuditEvents`) + `protocol.rs` (`GovernanceChainAuditEvent`) + `block_wire.rs` (`governance_chain_audit_root`) + `run_governance_rpc_gate.ps1` | `unauthorized_submit_reject_ok=true`, `audit_ok=true`, `audit_persist_ok=true`, `chain_audit_ok=true`, `chain_audit_persist_ok=true`, `chain_audit_restart_ok=true`, `policy_chain_audit_consistency_ok=true`, `chain_audit_root_ok=true`, `chain_audit_persist_root_ok=true`, `chain_audit_restart_root_ok=true` + `governance_chain_audit_root_parity_pass=true` | 已完成（受控治理面，重启恢复 + root proof + 区块路径锚定） |
+| C-15 | 第三类治理参数：`UpdateNetworkDosPolicy` 经治理投票生效 | `types.rs` (`GovernanceOp::UpdateNetworkDosPolicy`, `NetworkDosPolicy`) + `protocol.rs` (`governance_network_dos_policy`) + `main.rs` (`governance_param3_probe`) | `governance_param3_gate.pass=true` | 已完成（受控治理面） |
+| C-16 | RPC 暴露安全铁律：public/gov 端口分离、`gov rpc` 默认关闭、public 不暴露 `governance_*`、非回环治理端口需 allowlist | `main.rs` (`run_chain_query_rpc_server_mode`, `NOVOVM_ENABLE_GOV_RPC`, `NOVOVM_GOV_RPC_BIND`, `NOVOVM_GOV_RPC_ALLOWLIST`) + `run_rpc_exposure_gate.ps1` | `rpc_exposure_gate.pass=true` | 已完成（可发布安全默认） |
+| C-17 | 国库治理执行：`TreasurySpend` 经治理投票生效，支持超额支出拒绝 | `types.rs` (`GovernanceOp::TreasurySpend`) + `protocol.rs` (`spend_treasury_tokens`) + `main.rs` (`governance_treasury_spend_probe`) | `governance_treasury_spend_gate.pass=true` | 已完成（受控治理面） |
+| C-18 | 链上治理访问策略：`proposer/executor committee + threshold + timelock`（治理权限由 `GovernanceOp::UpdateGovernanceAccessPolicy` 下发） | `types.rs` (`GovernanceAccessPolicy`, `GovernanceOp::UpdateGovernanceAccessPolicy`) + `protocol.rs` (`submit/execute *_with_approvals`) + `main.rs` (`governance_access_policy_probe`) | `governance_access_policy_gate.pass=true` | 已完成（受控治理面，链上权限模型） |
+| C-19 | 九席位治理权重策略：`Founder/TopHolder(0-4)/Team(0-1)/Independent`，按提案类别阈值（`Parameter/Treasury/Protocol/Emergency`）执行治理 | `types.rs` (`GovernanceCouncilPolicy`, `GovernanceCouncilSeat`, `GovernanceOp::UpdateGovernanceCouncilPolicy`) + `protocol.rs` (`execute_governance_proposal_with_executor_approvals`) + `main.rs` (`governance_council_policy_probe`) | `governance_council_policy_gate.pass=true` | 已完成（I-GOV-01 主链路） |
+| C-20 | 经济治理参数族热更新：`AMM/CDP/Bond/Reserve/NAV/Buyback` 统一由 `UpdateMarketGovernancePolicy` 治理下发，并输出 `market_engine + treasury + orchestration + dividend + foreign_payment` 执行证据 | `types.rs` (`MarketGovernancePolicy`, `GovernanceOp::UpdateMarketGovernancePolicy`) + `protocol.rs` (`set/governance_market_policy`) + `market_engine.rs` (`Web30MarketEngine`) + `main.rs` (`governance_market_policy_probe`) | `governance_market_policy_gate.pass=true` + `engine_output_pass=true` + `treasury_output_pass=true` + `orchestration_output_pass=true` + `dividend_output_pass=true` + `foreign_payment_output_pass=true` + `run_nav_valuation_source_gate.ps1(pass=true)` + `run_dividend_balance_source_gate.ps1(pass=true)` | 已完成（I-GOV-02 主链路，含跨模块编排） |
+| C-21 | 治理签名算法 policy-gated 抽象：RPC 层 `signature_scheme` + 共识执行层 `governance_vote_verifier` 钩子均已接线；默认 `ed25519`；`mldsa87` 支持显式启用 AOEM-FFI 验签路径 | `main.rs` (`parse_governance_signature_scheme`, `configure_governance_vote_verifier`, `ensure_governance_signature_scheme_supported`, `build_aoem_ffi_mldsa87_vote_verifier`) + `governance_verifier.rs` (`GovernanceVoteVerifier`, `GovernanceVoteVerifierScheme`, `build_governance_vote_verifier`) + `protocol.rs` (`governance_vote_verifier_scheme`) + `bft_engine.rs` (`set_governance_vote_verifier_by_scheme`, `set_governance_vote_verifier`, `governance_vote_verifier_scheme`, `governance_signature_scheme_supported`) + `run_governance_rpc_gate.ps1` + `run_governance_rpc_mldsa_ffi_gate.ps1` | 默认门禁保持：`sign_unsupported_scheme_reject_ok=true` + `vote_verifier_startup_ok=true` + `vote_verifier_staged_reject_ok=true` + `governance_rpc_signature_scheme_reject_pass=true` + `governance_rpc_vote_verifier_startup_pass=true` + `governance_rpc_vote_verifier_staged_reject_pass=true`；可选执行门禁：`governance_rpc_mldsa_ffi_pass=true` + `governance_rpc_mldsa_ffi_startup_pass=true` | 已完成（policy-gated + optional AOEM-FFI execute path） |
+| C-22 | I-GOV-04 三段下沉：治理执行改为 `verify_with_report`，并把 `verifier/scheme` 写入 `execute=applied` 链内审计事件，重启后保持可追溯 | `governance_verifier.rs` (`GovernanceVoteVerificationReport`, `verify_with_report`) + `protocol.rs` (`execute_governance_proposal_with_executor_approvals`) + `main.rs` (`governance_execute.vote_verifier`) + `run_governance_rpc_gate.ps1` | `execute_vote_verifier_ok=true` + `chain_audit_has_execute_applied_verifier=true` + `chain_audit_persist_has_execute_applied_verifier=true` + `chain_audit_restart_has_execute_applied_verifier=true` | 已完成（I-GOV-04 三段收口） |
 
 ### C 系列关键观察
 
@@ -143,9 +139,9 @@
 - 治理参数扩展 gate：`run_governance_market_policy_gate.ps1`，验证 `UpdateMarketGovernancePolicy`（AMM/CDP/Bond/Reserve/NAV/Buyback）的提案/投票/生效闭环。
 - 经济跨模块编排证据：`governance_market_orchestration_out`（oracle price update -> CDP liquidation -> NAV redemption settle -> treasury route）已纳入 `run_governance_market_policy_gate.ps1` 的 `orchestration_output_pass`。
 - 经济子域接线证据：`governance_market_dividend_out` 与 `governance_market_foreign_out` 已纳入 `run_governance_market_policy_gate.ps1`，对应 `dividend_output_pass=true`、`foreign_payment_output_pass=true`。
-- WEB30 同源迁移证据：`run_web30_core_parity_gate.ps1` 已验证 `SVM2026 contracts/web30/core/src` 与 `SUPERVM vendor/web30-core/src` 哈希一致（`19` 个完全一致，`1` 个允许漂移：`dividend_pool.rs` 安全修复）。
-- 2026-03-07 回归快照证据：`full_snapshot_ga_v1` post-fix 全绿，`governance_market_policy_pass + engine/treasury/orchestration + token_economics + treasury_spend` 全部为 `true`（`artifacts/migration/release-snapshot-ga-post-fix-2026-03-07/release-snapshot.json`）。
-- 2026-03-07 多源签名回归快照证据：`full_snapshot_ga_v1`（`artifacts/migration/release-snapshot-ga-multisig-2026-03-07/release-snapshot.json`）`overall_pass=true`，并新增发布聚合字段：`governance_market_policy_dividend_pass=true`、`governance_market_policy_foreign_payment_pass=true`、`economic_pass=true`。
+- WEB30 同源一致性证据：`run_web30_core_parity_gate.ps1` 已验证 `SVM2026 contracts/web30/core/src` 与 `SUPERVM vendor/web30-core/src` 哈希一致（`19` 个完全一致，`1` 个允许漂移：`dividend_pool.rs` 安全修复）。
+- 2026-03-07 回归验证证据：`full_snapshot_ga_v1` post-fix 全绿，`governance_market_policy_pass + engine/treasury/orchestration + token_economics + treasury_spend` 全部为 `true`（`artifacts/migration/release-snapshot-ga-post-fix-2026-03-07/release-snapshot.json`）。
+- 2026-03-07 多源签名验证证据：`full_snapshot_ga_v1`（`artifacts/migration/release-snapshot-ga-multisig-2026-03-07/release-snapshot.json`）`overall_pass=true`，并新增发布聚合字段：`governance_market_policy_dividend_pass=true`、`governance_market_policy_foreign_payment_pass=true`、`economic_pass=true`。
 - 2026-03-07 多源签名 RC 证据：`artifacts/migration/release-candidate-novovm-rc-2026-03-07-ga-multisig/rc-candidate.json`，`status=ReadyForMerge/SnapshotGreen`，`snapshot_profile=full_snapshot_ga_v1`，`snapshot_overall_pass=true`，`commit_hash=b72fdd987cf1c61163830bda4d46e4dd34020ecf`。
 - 发布脚本聚合字段已扩展：`run_release_snapshot.ps1` / `run_release_candidate.ps1` 已写入 `economic_infra_dedicated_pass`、`market_engine_treasury_negative_pass`、`foreign_rate_source_pass`、`nav_valuation_source_pass`、`dividend_balance_source_pass`，用于 GA 证据面统一追踪。
 - 2026-03-07 抖动修复口径：`market_engine` 将 dividend probe 调整为按 `day` 轮转地址环，修复同日重复 `reconfigure` 的 claim 冲突，保持严格门禁 `dividend_claims_executed > 0` 不降级。
@@ -187,10 +183,10 @@
 
 | 规则ID | 规则 | 实现证据 | 门禁证据 | 结论 |
 |---|---|---|---|---|
-| T-01 | 交易编解码闭环：`novovm_local_tx_wire_v1` | `main.rs` (`roundtrip_local_tx_codec_v1`) | `tx_codec_signal.pass=true` | 已迁移可发布 |
-| T-02 | mempool 准入：`fee_floor` + 签名正确 + nonce 连续 | `main.rs` (`admit_mempool_basic`) | `mempool_admission_signal.pass=true` | 已迁移可发布 |
-| T-03 | 交易元数据强校验：`fee>0`、签名、nonce 序列 | `main.rs` (`validate_and_summarize_txs`) | `tx_metadata_signal.pass=true` | 已迁移可发布 |
-| T-04 | 执行到共识闭环观测：`block_output/commit_output` | `main.rs`（Batch A 闭环） | `block_output_signal.pass=true`, `commit_output_signal.pass=true` | 已迁移可发布（MVP） |
+| T-01 | 交易编解码闭环：`novovm_local_tx_wire_v1` | `main.rs` (`roundtrip_local_tx_codec_v1`) | `tx_codec_signal.pass=true` | 已完成可发布 |
+| T-02 | mempool 准入：`fee_floor` + 签名正确 + nonce 连续 | `main.rs` (`admit_mempool_basic`) | `mempool_admission_signal.pass=true` | 已完成可发布 |
+| T-03 | 交易元数据强校验：`fee>0`、签名、nonce 序列 | `main.rs` (`validate_and_summarize_txs`) | `tx_metadata_signal.pass=true` | 已完成可发布 |
+| T-04 | 执行到共识闭环观测：`block_output/commit_output` | `main.rs`（Batch A 闭环） | `block_output_signal.pass=true`, `commit_output_signal.pass=true` | 已完成可发布（MVP） |
 
 ### T 系列关键观察
 
@@ -201,39 +197,39 @@
 
 | 规则ID | 规则 | 实现证据 | 门禁证据 | 结论 |
 |---|---|---|---|---|
-| Q-01 | 读查询方法：`getBlock/getTransaction/getReceipt/getBalance` | `main.rs` (`run_chain_query`) | `chain-query-rpc-gate.pass=true` | 已迁移可发布 |
-| Q-02 | 未知方法拒绝：返回 `-32602` | `main.rs` default branch | gate 请求 `getUnknown` 命中 | 已迁移可发布 |
-| Q-03 | RPC 限流：429 + `-32029` | `main.rs` (`is_rate_limited`) | `rate_limit_signal.pass=true` | 已迁移可发布 |
-| N-01 | headers-first 同步 + 篡改父哈希拒绝 | `NOVOVM_NODE_MODE=header_sync_probe` | `header_sync_pass=true` + negative pass | 已迁移可发布 |
-| N-02 | fast/state sync + snapshot 篡改拒绝 | `NOVOVM_NODE_MODE=fast_state_sync_probe` | `fast_state_sync_pass=true` + negative pass | 已迁移可发布 |
-| N-03 | DoS 防护：peer-score/ban + invalid storm reject | `NOVOVM_NODE_MODE=network_dos_probe` | `network_dos_pass=true` | 已迁移可发布 |
-| N-04 | 网络级 pacemaker failover | `NOVOVM_NODE_MODE=pacemaker_failover_probe` | `pacemaker_failover_pass=true` | 已迁移可发布 |
+| Q-01 | 读查询方法：`getBlock/getTransaction/getReceipt/getBalance` | `main.rs` (`run_chain_query`) | `chain-query-rpc-gate.pass=true` | 已完成可发布 |
+| Q-02 | 未知方法拒绝：返回 `-32602` | `main.rs` default branch | gate 请求 `getUnknown` 命中 | 已完成可发布 |
+| Q-03 | RPC 限流：429 + `-32029` | `main.rs` (`is_rate_limited`) | `rate_limit_signal.pass=true` | 已完成可发布 |
+| N-01 | headers-first 同步 + 篡改父哈希拒绝 | `NOVOVM_NODE_MODE=header_sync_probe` | `header_sync_pass=true` + negative pass | 已完成可发布 |
+| N-02 | fast/state sync + snapshot 篡改拒绝 | `NOVOVM_NODE_MODE=fast_state_sync_probe` | `fast_state_sync_pass=true` + negative pass | 已完成可发布 |
+| N-03 | DoS 防护：peer-score/ban + invalid storm reject | `NOVOVM_NODE_MODE=network_dos_probe` | `network_dos_pass=true` | 已完成可发布 |
+| N-04 | 网络级 pacemaker failover | `NOVOVM_NODE_MODE=pacemaker_failover_probe` | `pacemaker_failover_pass=true` | 已完成可发布 |
 
 ---
 
-## 3. 继承规则迁移状态（SVM2026 来源）
+## 3. 当前能力状态（SVM2026 来源对照）
 
-本节区分“已进入 NOVOVM 主链路”的继承规则与“仍待迁移”的继承规则。
+本节用于说明来源与当前对应关系，不再作为开发过程台账阅读。
 
 ## 3.1 发币/经济规则（I-TOKEN）
 
 | 规则ID | 规则 | 来源 | 当前 NOVOVM 状态 |
 |---|---|---|---|
-| I-TOKEN-01 | Token trait 定义 mint/burn/fee-routing 标准接口 | `contracts/web30/core/src/mainnet_token.rs` | 已迁入主链路（`Web30TokenRuntime` 复用） |
-| I-TOKEN-02 | mint 约束：`amount>0`、不超过 `locked_supply`、不突破 `max_supply` | `mainnet_token_impl.rs` (`mint`) | 已迁入主链路（门禁通过） |
-| I-TOKEN-03 | burn 约束：先扣余额再销毁总量 | `mainnet_token_impl.rs` (`burn`) | 已迁入主链路（门禁通过） |
-| I-TOKEN-04 | Gas 费路由（示例 20/30/50）与国库入账 | `mainnet_token_impl.rs` (`on_gas_fee_paid`) | 已迁入主链路（门禁通过） |
-| I-TOKEN-05 | Service fee 路由（provider/treasury/burn） | `mainnet_token_impl.rs` (`on_service_fee_paid`) | 已迁入主链路（门禁通过） |
-| I-TOKEN-06 | 国库治理支出（`TreasurySpend`）与超额拒绝 | `mainnet_token.rs::transfer` + `protocol.rs::spend_treasury_tokens` | 已迁入受限治理主链路（门禁通过） |
+| I-TOKEN-01 | Token trait 定义 mint/burn/fee-routing 标准接口 | `contracts/web30/core/src/mainnet_token.rs` | 已进入当前主链路（`Web30TokenRuntime` 复用） |
+| I-TOKEN-02 | mint 约束：`amount>0`、不超过 `locked_supply`、不突破 `max_supply` | `mainnet_token_impl.rs` (`mint`) | 已进入当前主链路（门禁通过） |
+| I-TOKEN-03 | burn 约束：先扣余额再销毁总量 | `mainnet_token_impl.rs` (`burn`) | 已进入当前主链路（门禁通过） |
+| I-TOKEN-04 | Gas 费路由（示例 20/30/50）与国库入账 | `mainnet_token_impl.rs` (`on_gas_fee_paid`) | 已进入当前主链路（门禁通过） |
+| I-TOKEN-05 | Service fee 路由（provider/treasury/burn） | `mainnet_token_impl.rs` (`on_service_fee_paid`) | 已进入当前主链路（门禁通过） |
+| I-TOKEN-06 | 国库治理支出（`TreasurySpend`）与超额拒绝 | `mainnet_token.rs::transfer` + `protocol.rs::spend_treasury_tokens` | 已进入当前治理主链路（门禁通过） |
 
-补充：按本文档对应的审计时点，NOVOVM 已完成 `I-TOKEN` 最小可发布闭环，并已迁入经济治理参数族（AMM/CDP/Bond/Reserve/NAV/Buyback）热更新入口；跨模块执行联动（清算/预言机/NAV 实时结算 + 回购编排 + dividend/foreign payment 信号）已在 `market_engine` 主链路接线并门禁化。若按 `2026-03-13` 之后的统一口径读取，则经济模块已进一步完成“开放业务面”收口；若按 `2026-04-18` 之后的统一口径读取，则原生经济用户入口已接入真实 `novovm-node` 产物并通过真实产物级门禁。本文中“受限主链路完成”的描述应视为历史基线。
+补充：NOVOVM 已完成 `I-TOKEN` 当前产品闭环，并已形成经济治理参数族（AMM/CDP/Bond/Reserve/NAV/Buyback）热更新入口；跨模块执行联动（清算/预言机/NAV 实时结算 + 回购编排 + dividend/foreign payment 信号）已在 `market_engine` 主链路接线并门禁化。原生经济用户入口已接入真实 `novovm-node` 产物并通过真实产物级门禁。
 
 ## 3.2 治理与投票规则（I-GOV）
 
 | 规则ID | 规则 | 来源 | 当前 NOVOVM 状态 |
 |---|---|---|---|
-| I-GOV-01 | 九席位加权治理模型与提案阈值 | `contracts/web30/core/src/governance.rs` | 已迁入受限主链路：`UpdateGovernanceCouncilPolicy` + 九席位固定结构 + 分类阈值（Parameter/Treasury/Protocol/Emergency） |
-| I-GOV-02 | 参数治理热更新（AMM/CDP/Bond/Gov） | `src/vm-runtime/src/governance.rs` | 已迁入受限主链路：`UpdateMarketGovernancePolicy` 覆盖 `AMM/CDP/Bond/Reserve/NAV/Buyback` 参数治理；`Slash/Mempool/NetworkDos/TokenEconomics/Treasury/AccessPolicy/CouncilPolicy` 亦已可治理 |
+| I-GOV-01 | 九席位加权治理模型与提案阈值 | `contracts/web30/core/src/governance.rs` | 已进入当前治理主链路：`UpdateGovernanceCouncilPolicy` + 九席位固定结构 + 分类阈值（Parameter/Treasury/Protocol/Emergency） |
+| I-GOV-02 | 参数治理热更新（AMM/CDP/Bond/Gov） | `src/vm-runtime/src/governance.rs` | 已进入当前治理主链路：`UpdateMarketGovernancePolicy` 覆盖 `AMM/CDP/Bond/Reserve/NAV/Buyback` 参数治理；`Slash/Mempool/NetworkDos/TokenEconomics/Treasury/AccessPolicy/CouncilPolicy` 亦已可治理 |
 | I-GOV-03 | RPC 治理接口：submit/vote/sign/list | `supervm-node-core/src/rpc/governance_api.rs` | NOVOVM 已接入受限最小面（`submit/sign/vote/execute/get/list/getPolicy/listAuditEvents`），并补齐链上权限模型初版（committee/threshold/timelock）；进程级 allowlist 仍可作为运维防线 |
 | I-GOV-04 | 投票/签名消息校验与抗量子签名验证（ML-DSA） | 同上 | NOVOVM policy-gated + optional execute：默认仅 `ed25519`；`mldsa87` 在 `NOVOVM_GOVERNANCE_MLDSA_MODE=disabled` 下拒绝并审计；显式启用 `NOVOVM_GOVERNANCE_MLDSA_MODE=aoem_ffi` 后，执行层可走 AOEM-FFI 验签（要求 `NOVOVM_GOVERNANCE_MLDSA87_PUBKEYS` 绑定 voter 公钥）；对应门禁：`run_governance_rpc_mldsa_ffi_gate.ps1` |
 
@@ -377,9 +373,11 @@
 
 ---
 
-## 6. 审计快照（本轮）
+## 6. 当前验证基线
 
-- 验收快照（主线）：`artifacts/migration/acceptance-gate-unjail-full/acceptance-gate-summary.json`
+当前对外只保留以下验证结论：
+
+- 主线 acceptance 已通过：
   - `overall_pass=true`
   - `functional_pass=true`
   - `performance_pass=true`
@@ -388,284 +386,25 @@
   - `fast_state_sync_pass=true`
   - `network_dos_pass=true`
   - `pacemaker_failover_pass=true`
-  - `slash_governance_pass=true`
-  - `slash_policy_external_pass=true`
-  - `unjail_cooldown_pass=true`
-  - `adapter_stability_pass=true`
-- 增量快照（治理挂点）：`artifacts/migration/acceptance-gate-governance-smoke/acceptance-gate-summary.json`
-  - `overall_pass=true`
-  - `governance_hook_pass=true`
-- 增量快照（治理执行最小闭环）：`artifacts/migration/acceptance-gate-governance-exec-smoke/acceptance-gate-summary.json`
-  - `overall_pass=true`
-  - `governance_hook_pass=true`
-  - `governance_execution_pass=true`
-- 增量快照（治理顺序推进闭环：2->1）：`artifacts/migration/acceptance-gate-governance-param2-smoke/acceptance-gate-summary.json`
-  - `overall_pass=true`
-  - `governance_hook_pass=true`
-  - `governance_execution_pass=true`
-  - `governance_param2_pass=true`
-  - `governance_negative_pass=true`
-- 增量快照（第三类治理参数 gate）：`artifacts/migration/governance-param3-gate-smoke/governance-param3-gate-summary.json`
-  - `pass=true`
-  - `parse_pass=true`
-  - `input_pass=true`
-  - `output_pass=true`
-- 增量快照（九席位治理阈值 gate）：`artifacts/migration/governance-council-policy-gate-local/governance-council-policy-gate-summary.json`
-  - `pass=true`
-  - `parse_pass=true`
-  - `input_pass=true`
-  - `output_pass=true`
-- 增量快照（经济治理参数族 gate）：`artifacts/migration/governance-market-policy-gate-local/governance-market-policy-gate-summary.json`
-  - `pass=true`
-  - `parse_pass=true`
-  - `input_pass=true`
-  - `output_pass=true`
-- 增量快照（经济治理参数族 gate，engine/treasury 硬门禁）：`artifacts/migration/acceptance-gate-market-engine-smoke/acceptance-gate-summary.json`
-  - `overall_pass=true`
-  - `governance_market_policy_pass=true`
-  - `governance_market_policy_engine_pass=true`
-  - `governance_market_policy_treasury_pass=true`
-- 全量快照（GA + 九席位治理）：`artifacts/migration/release-snapshot-ga-council-local/release-snapshot.json`
-  - `overall_pass=true`
-  - `profile_name=full_snapshot_ga_v1`
-  - `enabled_gates.governance_council_policy=true`
-  - `key_results.governance_council_policy_pass=true`
-- RC 产物（GA + 九席位治理）：`artifacts/migration/release-candidate-novovm-rc-2026-03-06-ga-council-local/rc-candidate.json`
-  - `status=ReadyForMerge/SnapshotGreen`
+- 治理主线验证已通过：
+  - `governance_rpc_pass=true`
+  - `governance_access_policy_pass=true`
   - `governance_council_policy_pass=true`
-- 全量快照（GA + market policy）：`artifacts/migration/release-snapshot-ga-market-local/release-snapshot.json`
-  - `overall_pass=true`
-  - `profile_name=full_snapshot_ga_v1`
-  - `enabled_gates.governance_market_policy=true`
-  - `key_results.governance_market_policy_pass=true`
-- RC 产物（GA + market policy）：`artifacts/migration/release-candidate-novovm-rc-2026-03-06-ga-market-local/rc-candidate.json`
-  - `status=ReadyForMerge/SnapshotGreen`
+  - `governance_token_economics_pass=true`
+  - `governance_treasury_spend_pass=true`
   - `governance_market_policy_pass=true`
-- 增量快照（治理 RPC 最小面接线）：`artifacts/migration/acceptance-gate-governance-rpc-smoke-v2/acceptance-gate-summary.json`
-  - `overall_pass=true`
-  - `governance_rpc_pass=true`
-  - `governance-rpc-gate` 中 `sign1_ok=true`, `unauthorized_submit_reject_ok=true`, `audit_ok=true`
-  - `governance_hook_pass=true`
-  - `governance_execution_pass=true`
-  - `governance_param2_pass=true`
-  - `governance_param3_pass=true`
-  - `governance_negative_pass=true`
-- 增量快照（治理审计持久化索引）：`artifacts/migration/governance-rpc-gate-audit-persist-smoke/governance-rpc-gate-summary.json`
-  - `pass=true`
-  - `audit_ok=true`
-  - `audit_persist_ok=true`
-  - `audit_persist_count=10`
-- 增量快照（治理审计持久化接入 acceptance）：`artifacts/migration/acceptance-gate-governance-audit-persist-smoke/acceptance-gate-summary.json`
-  - `overall_pass=true`
-  - `governance_rpc_pass=true`
-  - `governance_rpc_audit_persist_pass=true`
-- 增量快照（治理签名算法 staged 门禁）：`artifacts/migration/governance-rpc-gate-signature-scheme-smoke/governance-rpc-gate-summary.json`
-  - `pass=true`
-  - `sign_unsupported_scheme_reject_ok=true`
-  - `audit_has_sign_reject_unsupported_scheme=true`
-- 增量快照（治理签名算法 staged 接入 acceptance）：`artifacts/migration/acceptance-gate-governance-signature-scheme-smoke/acceptance-gate-summary.json`
-  - `overall_pass=true`
-  - `governance_rpc_pass=true`
-  - `governance_rpc_signature_scheme_reject_pass=true`
-- 全量发布快照（full gates）：`artifacts/migration/release-snapshot-2026-03-05/release-snapshot.json`
-  - `overall_pass=true`
-  - `profile_name=full_snapshot_v1`
-  - `enabled_gates.*=true`
-  - `rpc_pass/governance_pass/sync_pass/adapter_pass/dos_pass/consensus_pass=true`
-- 全量发布快照 relfix（param3 + adapter stability 回归）：`artifacts/migration/release-snapshot-param3-smoke-relfix/release-snapshot.json`
-  - `overall_pass=true`
-  - `profile_name=full_snapshot_v1`
-  - `governance_pass=true`
-  - `consensus_pass=true`
-  - `governance_param3_pass=true`（见 `acceptance-gate-summary.json`）
-  - `adapter_stability_pass=true`（见 `acceptance-gate-summary.json`）
-- 门禁稳定性根因与修复（固定记录）：
-  - 根因：relative `OutputDir` + child process `cwd` 变化导致 whitelist negative path drift
-  - 修复：在 `scripts/migration/run_functional_consistency.ps1` 与 `scripts/migration/run_adapter_stability_gate.ps1` 中将 `OutputDir` 归一化为绝对路径
-- 门禁稳定性修复（2026-03-06）：
-  - 根因：`adapter_plugin_registry_negative.hash_mismatch` 负例偶发进程异常退出（`reason_match` 丢失）导致单轮误红
-  - 修复：`scripts/migration/run_adapter_stability_gate.ps1` 对该已知抖动形态增加定向单次重试（仅命中该特征才重试，不掩盖其他失败）
-- relfix 证据路径：
-  - `artifacts/migration/adapter-stability-relfix-smoke/adapter-stability-summary.json`
-  - `artifacts/migration/release-snapshot-param3-smoke-relfix/release-snapshot.json`
-  - `artifacts/migration/release-snapshot-param3-smoke-relfix/acceptance-gate-full/acceptance-gate-summary.json`
-- GA 全量快照（含 token economics + treasury spend）：
-  - `artifacts/migration/release-snapshot-ga-smoke-treasury/release-snapshot.json`
-  - `profile_name=full_snapshot_ga_v1`
-  - `overall_pass=true`
-  - `governance_access_policy_pass=true`
-  - `governance_token_economics_pass=true`
-  - `governance_treasury_spend_pass=true`
-- GA 全量快照（正式产物，含 market_engine/treasury 硬门禁）：
-  - `artifacts/migration/release-snapshot-ga-2026-03-06-051653/release-snapshot.json`
-  - `profile_name=full_snapshot_ga_v1`
-  - `overall_pass=true`
-  - `key_results.governance_market_policy_engine_pass=true`
-  - `key_results.governance_market_policy_treasury_pass=true`
-- RC 全量快照（含 governance access policy + token economics + treasury spend）：
-  - `artifacts/migration/release-candidate-novovm-rc-2026-03-06-ga-v1-retryfix/rc-candidate.json`
-  - `status=ReadyForMerge/SnapshotGreen`
-  - `governance_access_policy_pass=true`
-  - `governance_token_economics_pass=true`
-  - `governance_treasury_spend_pass=true`
-- RC 全量快照（正式 `rc_ref`）：
-  - `artifacts/migration/release-candidate-novovm-rc-2026-03-06-ga-v1/rc-candidate.json`
-  - `status=ReadyForMerge/SnapshotGreen`
-  - `commit_hash=823a5880e104c96d03e2ab4a8473c9f620ae6413`
-  - `governance_market_policy_engine_pass=true`
-  - `governance_market_policy_treasury_pass=true`
-- GA 全量快照（orchfix 复核）：
-  - `artifacts/migration/release-candidate-novovm-rc-2026-03-06-ga-orchfix/snapshot/release-snapshot.json`
-  - `profile_name=full_snapshot_ga_v1`
-  - `overall_pass=true`
-  - `key_results.governance_market_policy_orchestration_pass=true`
-- RC 全量快照（orchfix 复核）：
-  - `artifacts/migration/release-candidate-novovm-rc-2026-03-06-ga-orchfix/rc-candidate.json`
-  - `status=ReadyForMerge/SnapshotGreen`
-  - `commit_hash=bac3763192258d5fcb89fc129e2b675d56dbb317`
-  - `governance_market_policy_orchestration_pass=true`
-- GA 全量快照（multisig 复核）：
-  - `artifacts/migration/release-snapshot-ga-multisig-2026-03-07/release-snapshot.json`
-  - `profile_name=full_snapshot_ga_v1`
-  - `overall_pass=true`
-  - `key_results.governance_market_policy_dividend_pass=true`
-  - `key_results.governance_market_policy_foreign_payment_pass=true`
-  - `key_results.economic_pass=true`
-  - `key_results.economic_infra_dedicated_pass=true`
-  - `key_results.market_engine_treasury_negative_pass=true`
-  - `key_results.foreign_rate_source_pass=true`
-  - `key_results.nav_valuation_source_pass=true`
-  - `key_results.dividend_balance_source_pass=true`
-- RC 全量快照（multisig 正式产物）：
-  - `artifacts/migration/release-candidate-novovm-rc-2026-03-07-ga-multisig/rc-candidate.json`
-  - `status=ReadyForMerge/SnapshotGreen`
-  - `snapshot_profile=full_snapshot_ga_v1`
-  - `snapshot_overall_pass=true`
-  - `commit_hash=b72fdd987cf1c61163830bda4d46e4dd34020ecf`
-- 全量发布快照（治理审计持久化接线回归）：
-  - `artifacts/migration/release-snapshot-audit-persist-smoke/release-snapshot.json`
-  - `profile_name=full_snapshot_v1`
-  - `overall_pass=true`
-  - `key_results.governance_rpc_audit_persist_pass=true`
-- RC 快照（治理审计持久化接线回归）：
-  - `artifacts/migration/release-candidate-novovm-rc-2026-03-06-governance-audit-persist-smoke/rc-candidate.json`
-  - `status=ReadyForMerge/SnapshotGreen`
-  - `governance_rpc_audit_persist_pass=true`
-- 全量发布快照（治理签名算法 staged 回归）：
-  - `artifacts/migration/release-snapshot-signature-scheme-smoke/release-snapshot.json`
-  - `profile_name=full_snapshot_v1`
-  - `overall_pass=true`
-  - `key_results.governance_rpc_signature_scheme_reject_pass=true`
-- RC 快照（治理签名算法 staged 回归）：
-  - `artifacts/migration/release-candidate-novovm-rc-2026-03-06-signature-scheme-smoke/rc-candidate.json`
-  - `status=ReadyForMerge/SnapshotGreen`
-  - `governance_rpc_signature_scheme_reject_pass=true`
-- 增量快照（治理链内审计索引 v0）：
-  - `artifacts/migration/governance-rpc-gate-chain-audit-smoke/governance-rpc-gate-summary.json`
-  - `pass=true`
-  - `chain_audit_ok=true`
-- 全量发布快照（治理链内审计索引 v0 回归）：
-  - `artifacts/migration/release-snapshot-chain-audit-smoke/release-snapshot.json`
-  - `profile_name=full_snapshot_v1`
-  - `overall_pass=true`
-  - `key_results.governance_rpc_chain_audit_pass=true`
-- RC 快照（治理链内审计索引 v0 回归）：
-  - `artifacts/migration/release-candidate-novovm-rc-2026-03-06-chain-audit-smoke/rc-candidate.json`
-  - `status=ReadyForMerge/SnapshotGreen`
-  - `governance_rpc_chain_audit_pass=true`
-- 增量快照（治理链内审计索引持久化 + 重启恢复）：
-  - `artifacts/migration/governance-rpc-gate-chain-audit-persist-smoke/governance-rpc-gate-summary.json`
-  - `pass=true`
-  - `chain_audit_ok=true`
-  - `chain_audit_persist_ok=true`
-  - `chain_audit_restart_ok=true`
-- 全量发布快照（治理链内审计索引持久化 + 重启恢复）：
-  - `artifacts/migration/release-snapshot-chain-audit-persist-smoke/release-snapshot.json`
-  - `profile_name=full_snapshot_v1`
-  - `overall_pass=true`
-  - `key_results.governance_rpc_chain_audit_persist_pass=true`
-  - `key_results.governance_rpc_chain_audit_restart_pass=true`
-- RC 快照（治理链内审计索引持久化 + 重启恢复）：
-  - `artifacts/migration/release-candidate-novovm-rc-2026-03-06-chain-audit-persist-smoke/rc-candidate.json`
-  - `status=ReadyForMerge/SnapshotGreen`
-  - `governance_rpc_chain_audit_persist_pass=true`
-  - `governance_rpc_chain_audit_restart_pass=true`
-- 增量快照（治理链内审计 root proof）：
-  - `artifacts/migration/governance-rpc-gate-chain-audit-root-smoke/governance-rpc-gate-summary.json`
-  - `pass=true`
-  - `policy_chain_audit_consistency_ok=true`
-  - `chain_audit_root_ok=true`
-  - `chain_audit_persist_root_ok=true`
-  - `chain_audit_restart_root_ok=true`
-- 全量发布快照（治理链内审计 root proof 回归）：
-  - `artifacts/migration/release-snapshot-chain-audit-root-smoke/release-snapshot.json`
-  - `profile_name=full_snapshot_v1`
-  - `overall_pass=true`
-  - `key_results.governance_rpc_chain_audit_root_proof_pass=true`
-- RC 快照（治理链内审计 root proof 回归）：
-  - `artifacts/migration/release-candidate-novovm-rc-2026-03-06-chain-audit-root-smoke/rc-candidate.json`
-  - `status=ReadyForMerge/SnapshotGreen`
-  - `governance_rpc_chain_audit_root_proof_pass=true`
-- 全量发布快照（治理链审计 root 区块路径锚定回归）：
-  - `artifacts/migration/release-snapshot-governance-chain-audit-root-smoke/release-snapshot.json`
-  - `profile_name=full_snapshot_v1`
-  - `overall_pass=true`
-  - `key_results.governance_chain_audit_root_parity_pass=true`
-- RC 快照（治理链审计 root 区块路径锚定回归）：
-  - `artifacts/migration/release-candidate-novovm-rc-2026-03-06-governance-chain-audit-root-anchor-smoke/rc-candidate.json`
-  - `status=ReadyForMerge/SnapshotGreen`
-  - `governance_chain_audit_root_parity_pass=true`
-- 全量发布快照（I-GOV-04 可选 execute 聚合回归）：
-  - `artifacts/migration/release-snapshot-mldsa-optional-smoke/release-snapshot.json`
-  - `profile_name=full_snapshot_v1`
-  - `overall_pass=true`
-  - `enabled_gates.governance_rpc_mldsa_ffi=true`
-  - `key_results.governance_rpc_mldsa_ffi_pass=true`
-  - `key_results.governance_rpc_mldsa_ffi_startup_pass=true`
-- RC 快照（I-GOV-04 可选 execute 聚合回归）：
-  - `artifacts/migration/release-candidate-novovm-rc-2026-03-06-mldsa-optional-smoke/rc-candidate.json`
-  - `status=ReadyForMerge/SnapshotGreen`
-  - `governance_rpc_mldsa_ffi_gate_enabled=true`
+- 经济主线验证已通过：
+  - `economic_infra_dedicated_pass=true`
+  - `market_engine_treasury_negative_pass=true`
+  - `foreign_rate_source_pass=true`
+  - `nav_valuation_source_pass=true`
+  - `dividend_balance_source_pass=true`
+- 治理扩展验证已通过：
   - `governance_rpc_mldsa_ffi_pass=true`
   - `governance_rpc_mldsa_ffi_startup_pass=true`
+- 真实产物级门禁已通过：
+  - `cargo run -p novovm-node --bin supervm-mainline-gate`
+  - `L1=100% L2=100% L3=100% L4=100% Overall=100%`
 
-该快照对应结论：当前 NOVOVM “共识+交易+读查询+网络活性防护+经济治理跨模块主链路（token economics + treasury spend + market orchestration）”处于可发布状态；后续缺口集中在链上治理长期运维与生产参数治理策略。
-
-- 2026-03-08 全量 acceptance 回填（`full_snapshot_v2`）：
-  - `artifacts/migration/acceptance-gate-full-v2-2026-03-08/acceptance-gate-summary.json`
-  - `overall_pass=true`
-  - `governance_param3_pass=true`
-  - `rpc_exposure_pass=true`
-  - `adapter_stability_pass=true`
-  - `vm_runtime_split_pass=true`
-  - `performance_gate.pass=true`（见 `artifacts/migration/acceptance-gate-full-v2-2026-03-08/performance-gate/performance-gate-summary.json`）
-- 2026-03-08 AOEM core+sidecar 基线回填（含 Network+Consensus matrix）：
-  - `artifacts/migration/aoem-tps-core-sidecar-2026-03-08-baseline/aoem-core-sidecar-tps-summary.json`
-  - `docs_CN/AOEM-FFI/AOEM-FFI-CORE-SIDECAR-TPS-SEAL-2026-03-08.md`
-  - `docs_CN/AOEM-FFI/AOEM-FFI-CORE-SIDECAR-TPS-RAW-2026-03-08.csv`
-  - `cpu_batch_stress_single`（ops/s）：
-    - `core p50/p90/p99 = 22739572.77 / 24221285.67 / 24221285.67`
-    - `persist p50/p90/p99 = 22212152.71 / 22244070.84 / 22244070.84`
-    - `wasm p50/p90/p99 = 22307735.21 / 22580958.38 / 22580958.38`
-  - `network_two_process recv_tps`（E2E, pair_matrix）：
-    - `core p50/p90/p99 = 37.41 / 37.45 / 37.45`
-    - `persist p50/p90/p99 = 37.45 / 37.50 / 37.50`
-    - `wasm p50/p90/p99 = 37.45 / 37.50 / 37.50`
-
-## D1 Ingress Freeze Rules (2026-03-08)
-
-- 目标：固定 D1 为统一封送层，禁止宿主入口为单业务再次分叉。
-- 规则：
-  - D1 只做 ingress 标准化，输出统一 `ops_wire_v1`；不做执行语义、排序、聚合、冲突判断。
-  - 新业务优先直接产出 `ops_wire_v1`。
-  - 无法直接产出时，只允许新增 codec；禁止修改 `novovm-node` 主入口执行流程。
-  - `ops_v2` 仅作为 ABI 兼容回退路径（`ops_v2_fallback/ops_v2_forced`），不是新业务主路径。
-- 生产入口契约（强制机读）：
-  - `d1_ingress_contract: mode=<...> source=<...> codec=<...> aoem_ingress_path=<...>`
-  - 该行由 `novovm-node` 输出，`run_prod_node_e2e_tps.ps1` 与 `run_prod_node_steady_tps.ps1` 必须解析并入报告。
-- 报告字段冻结：
-  - `d1_ingress_mode`
-  - `d1_input_source`
-  - `d1_codec`
-  - `aoem_ingress_path`
+这些结果已经足以支撑本文的当前对外结论，不再把逐次快照、RC 过程和工程回填记录作为公开主叙述。
 

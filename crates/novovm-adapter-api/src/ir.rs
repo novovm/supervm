@@ -6,11 +6,37 @@ use serde::{Deserialize, Serialize};
 #[cfg(feature = "serde_json")]
 use serde_json;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum TxExecutionPolicyV1 {
+    #[default]
+    Standard,
+    PqRequired,
+    PrivacyRequired,
+}
+
+impl TxExecutionPolicyV1 {
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Standard => "standard",
+            Self::PqRequired => "pq_required",
+            Self::PrivacyRequired => "privacy_required",
+        }
+    }
+}
+
 /// Transaction IR.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TxIR {
     pub hash: Vec<u8>,
     pub from: Vec<u8>,
+    #[serde(default)]
+    pub account_id: Option<String>,
+    #[serde(default)]
+    pub fee_owner_account_id: Option<String>,
+    #[serde(default)]
+    pub nonce_owner_account_id: Option<String>,
     pub to: Option<Vec<u8>>,
     pub value: u128,
     pub gas_limit: u64,
@@ -20,6 +46,8 @@ pub struct TxIR {
     pub signature: Vec<u8>,
     pub chain_id: u64,
     pub tx_type: TxType,
+    #[serde(default)]
+    pub execution_policy: TxExecutionPolicyV1,
 
     // Phase 5.3 (optional cross-chain hints)
     pub source_chain: Option<u64>,
@@ -109,6 +137,9 @@ impl TxIR {
         Self {
             hash: vec![],
             from,
+            account_id: None,
+            fee_owner_account_id: None,
+            nonce_owner_account_id: None,
             to: Some(to),
             value,
             gas_limit: 21_000,
@@ -118,6 +149,7 @@ impl TxIR {
             signature: vec![],
             chain_id,
             tx_type: TxType::Transfer,
+            execution_policy: TxExecutionPolicyV1::Standard,
             source_chain: None,
             target_chain: None,
         }
@@ -148,6 +180,9 @@ impl TxIR {
         Self {
             hash: vec![],
             from,
+            account_id: None,
+            fee_owner_account_id: None,
+            nonce_owner_account_id: None,
             to: Some(to),
             value,
             gas_limit: 100_000,
@@ -157,6 +192,7 @@ impl TxIR {
             signature: vec![],
             chain_id: source_chain,
             tx_type: TxType::CrossChainTransfer,
+            execution_policy: TxExecutionPolicyV1::Standard,
             source_chain: Some(source_chain),
             target_chain: Some(target_chain),
         }

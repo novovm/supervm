@@ -4303,6 +4303,9 @@ mod tests {
         let mut tx = TxIR {
             hash: Vec::new(),
             from: address_from_seed_v1(TEST_SIGN_SEED),
+            account_id: None,
+            fee_owner_account_id: None,
+            nonce_owner_account_id: None,
             to: Some(encode_address(2000)),
             value: 5,
             gas_limit: 21_000,
@@ -4312,6 +4315,7 @@ mod tests {
             signature: Vec::new(),
             chain_id,
             tx_type: TxType::Transfer,
+            execution_policy: Default::default(),
             source_chain: None,
             target_chain: None,
         };

@@ -2,13 +2,31 @@
 
 ## Purpose
 
-This file defines the current authoritative scope and separates it from archival and migration-era documents, so historical files are not treated as current production policy.
+This file defines the current public documentation surface for NOVOVM and lists only the documents that describe current product capabilities, interfaces, runtime operations, and decision policy.
 
-## Current authoritative entry points (priority order)
+## Current public documentation surface (priority order)
 
 1. Repository root README (product positioning and mainline entry)
    - `README.md`
 2. NOV native monetary and execution baseline
+   - `docs_CN/NOVOVM-NETWORK/NOVOVM-CURRENT-SYSTEM-ARCHITECTURE-2026-04-19.md` (CURRENT OVERVIEW)
+   - `docs/NOVOVM-NETWORK/NOVOVM-ACCOUNT-PROTOCOL-v1-2026-04-20.md` (AUTHORITATIVE, v1-min)
+   - `docs/NOVOVM-NETWORK/NOVOVM-ACCOUNT-PROTOCOL-KEYALGO-ACCOUNTMODE-EXECUTIONPOLICY-LAYERING-2026-04-20.md` (ACCOUNT CAPABILITY LAYERING RULE)
+   - `docs/NOVOVM-NETWORK/NOVOVM-ACCOUNT-PROTOCOL-CUTA-KEYALGO-SEAL-2026-04-20.md` (CUT A / KEYALGO SEAL)
+   - `docs/NOVOVM-NETWORK/NOVOVM-ACCOUNT-PROTOCOL-CUTA-KEYALGO-IMPLEMENTATION-CHECKLIST-2026-04-20.md` (CUT A / KEYALGO GATE)
+   - `docs/NOVOVM-NETWORK/NOVOVM-ACCOUNT-PROTOCOL-CUTC-EXECUTIONPOLICY-SEAL-2026-04-20.md` (CUT C / EXECUTIONPOLICY SEAL)
+   - `docs/NOVOVM-NETWORK/NOVOVM-ACCOUNT-PROTOCOL-CUTC-EXECUTIONPOLICY-IMPLEMENTATION-CHECKLIST-2026-04-20.md` (CUT C / EXECUTIONPOLICY GATE)
+   - `docs/NOVOVM-NETWORK/NOVOVM-ACCOUNT-PROTOCOL-CUTB-TRIGGER-CHECKLIST-2026-04-20.md` (CUT B / ACCOUNTMODE TRIGGER CHECKLIST)
+   - `docs/NOVOVM-NETWORK/NOVOVM-ACCOUNT-PROTOCOL-v1-MIN-TO-v1-EVOLUTION-ROADMAP-2026-04-20.md` (AUTHORITATIVE ROADMAP)
+   - `docs/NOVOVM-NETWORK/NOVOVM-ACCOUNT-PROTOCOL-PHASE2-IMPLEMENTATION-CHECKLIST-2026-04-20.md` (PHASE 2 GATE)
+   - `docs/NOVOVM-NETWORK/NOVOVM-ACCOUNT-PROTOCOL-PHASE3-CUT1-SEAL-2026-04-20.md` (PHASE 3 / CUT 1 SEAL)
+   - `docs/NOVOVM-NETWORK/NOVOVM-ACCOUNT-PROTOCOL-PHASE3-CUT2-SEAL-2026-04-20.md` (PHASE 3 / CUT 2 SEAL)
+   - `docs/NOVOVM-NETWORK/NOVOVM-ACCOUNT-PROTOCOL-PHASE3-IMPLEMENTATION-CHECKLIST-2026-04-20.md` (PHASE 3 GATE)
+   - `docs/NOVOVM-NETWORK/NOVOVM-ACCOUNT-PROTOCOL-PHASE4-TRIGGER-CHECKLIST-2026-04-20.md` (PHASE 4 TRIGGER CHECKLIST)
+   - `docs/NOVOVM-NETWORK/NOVOVM-ACCOUNT-PROTOCOL-PHASE4-MAPPED-ASSET-CONSTRAINT-DRAFT-2026-04-20.md` (PHASE 4 CONSTRAINT DRAFT)
+   - `docs/NOVOVM-NETWORK/NOVOVM-ACCOUNT-PROTOCOL-PHASE4-FAILURE-MODES-2026-04-20.md` (PHASE 4 FAILURE MODES)
+   - `docs/NOVOVM-NETWORK/NOVOVM-ACCOUNT-PROTOCOL-PHASE4-MVP-SLICE-TEMPLATE-2026-04-21.md` (PHASE 4 TRIGGERED MVP SLICE TEMPLATE)
+   - `docs/NOVOVM-NETWORK/NOVOVM-ACCOUNT-PROTOCOL-STRUCTURAL-CHANGE-PR-GATE-2026-04-21.md` (UNIFIED-ACCOUNT STRUCTURAL CHANGE GOVERNANCE GATE)
    - `docs/NOVOVM-NETWORK/NOVOVM-CORE-PLUGIN-EXTERNAL-LAYER-MAP-2026-04-17.md`
    - `docs/NOVOVM-NETWORK/NOVOVM-MONETARY-ARCHITECTURE-M0-M1-M2-AND-MULTI-ASSET-PAYMENT-2026-04-17.md`
    - `docs/NOVOVM-NETWORK/NOVOVM-NATIVE-TX-AND-EXECUTION-INTERFACE-DESIGN-2026-04-17.md`
@@ -19,6 +37,9 @@ This file defines the current authoritative scope and separates it from archival
    - `docs/NOVOVM-NETWORK/NOVOVM-TREASURY-POLICY-P2C-CONSTRAINED-STRATEGY-SEAL-2026-04-18.md`
    - `docs/NOVOVM-NETWORK/NOVOVM-TREASURY-POLICY-P2C-SEAL-2026-04-18.md` (FINAL)
    - `docs/NOVOVM-NETWORK/NOVOVM-OBSERVABILITY-P2D-SEAL-2026-04-18.md` (FINAL)
+   - `docs_CN/NOVOVM-NETWORK/NOVOVM-NATIVE-ECONOMIC-USER-SURFACE-SEAL-2026-04-18.md` (FINAL)
+   - `docs_CN/NOVOVM-NETWORK/NOVOVM-GOVERNANCE-USER-SURFACE-SEAL-2026-04-18.md` (FINAL)
+   - `docs_CN/NOVOVM-NETWORK/NOVOVM-GOVERNANCE-MLDSA87-EXTERNAL-VOTE-SEAL-2026-04-18.md` (FINAL)
 3. P3 feature gate decision policy (decision only, not enabled)
    - `docs/NOVOVM-NETWORK/NOVOVM-P3-FEATURE-GATE-DECISION-THRESHOLDS-2026-04-18.md` (AUTHORITATIVE)
    - `docs/NOVOVM-NETWORK/NOVOVM-P3-GATE-DRYRUN-RESULT-2026-04-18.md` (RECORDED RESULT)
@@ -32,15 +53,22 @@ This file defines the current authoritative scope and separates it from archival
    - `artifacts/mainline-delivery-contract.json`
    - `artifacts/mainline/mainline-nightly-soak-gate-report.json`
 
-## Historical/archival documents (not current by default)
+## Current unified-account wording
 
-The following directories are historical context unless a file explicitly marks itself as current/active:
+The unified account / asset line should currently be read with the following frozen conclusion:
 
-- `docs_CN/Old Design/`
-- `docs_CN/MEV/`
-- `docs_CN/SVM2026-MIGRATION/`
-- `docs_CN/AOEM-FFI/archive/`
-- date-stamped phase audit files under `artifacts/audit/`
+`The unified-account mainline has completed the minimal production closure of the subject layer, asset-view layer, key-capability layer, and execution-policy layer; AccountMode / Cut B remains a non-core optional label layer with default No-Go; Phase 4 remains trigger-governed and is currently No-Go.`
+
+External wording should no longer frame this line as "waiting for the account architecture to settle" or as "still under structural advancement."
+
+The correct current wording is:
+
+`This line has entered a stable baseline for long-term operation and does not require further structural push by default.`
+
+## Public-surface rule
+
+- Only the documents listed in this file are part of the current public documentation surface.
+- Repository files not explicitly listed here are engineering reference material, not primary external product documentation.
 
 ## Conflict resolution rules
 
@@ -49,13 +77,17 @@ When documentation conflicts occur, resolve in this order:
 1. Code and executable gate results (CI/mainline/nightly)
 2. `artifacts/mainline-status.json` and `artifacts/mainline-delivery-contract.json`
 3. The entry points listed in this file
-4. Other documents (informational only)
+4. Other documents (engineering reference only, not primary external product material)
 
 ## Maintenance requirements
 
-- If you add a new runtime or gate entry, update this file in the same change.
-- Historical files must not claim current status without explicit date and scope.
-- If the project moves to `P2-B1/P2-B2/P2-C/P2-D/P3`, publish a phase seal with completed/not-completed boundaries before updating this entry point.
+- If you add a new public interface, runtime entry, or gate entry, update this file in the same change.
+- Current public documents should describe established capabilities, current boundaries, and current reading order rather than development history.
+- If the project adds a new sealed capability or decision policy, publish that seal first and then update this entry point.
+- Unified account should be read from the current `Account Protocol v1-min` document rather than inferred from legacy or migration material.
+- Unified-account wording should explicitly treat the current line as a stable baseline rather than as a still-open structural design track.
+- Any unified-account structural-change PR must satisfy `docs/NOVOVM-NETWORK/NOVOVM-ACCOUNT-PROTOCOL-STRUCTURAL-CHANGE-PR-GATE-2026-04-21.md`; missing trigger payload defaults to `Reject (No-Go)`.
+- Any PR that modifies Trigger Checklist / MVP Slice Template / PR Gate itself must include governance proposal + vote + execute evidence; otherwise default `Reject (No-Go)`.
 
 ## Term freeze (avoid role inversion)
 

@@ -14,6 +14,137 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  governance_pr_gate_observability:
+    name: Governance PR Gate observability
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Emit PR gate observability event
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/governance
+          python - <<'PY'
+          import json
+          import os
+          import re
+          import time
+          from pathlib import Path
+
+          event_path = os.environ.get("GITHUB_EVENT_PATH", "")
+          with open(event_path, "r", encoding="utf-8") as handle:
+              payload = json.load(handle)
+
+          pr = payload.get("pull_request") or {}
+          body = pr.get("body") or ""
+          pr_id = str(pr.get("number", "unknown"))
+
+          def checked(label: str) -> bool:
+              pattern = r"-\s*\[(x|X)\]\s*" + re.escape(label)
+              return re.search(pattern, body) is not None
+
+          def inline_field(prefix_pattern: str) -> str:
+              for line in body.splitlines():
+                  stripped = line.strip()
+                  if re.match(prefix_pattern, stripped, flags=re.IGNORECASE):
+                      if ":" not in stripped:
+                          return ""
+                      value = stripped.split(":", 1)[1].strip()
+                      return value
+              return ""
+
+          structural_change = checked(
+              "This PR includes unified-account structural change. Trigger payload below is complete."
+          )
+
+          cutb_ref = checked(
+              "`docs/NOVOVM-NETWORK/NOVOVM-ACCOUNT-PROTOCOL-CUTB-TRIGGER-CHECKLIST-2026-04-20.md`"
+          ) or checked(
+              "`docs_CN/NOVOVM-NETWORK/NOVOVM-ACCOUNT-PROTOCOL-CUTB-TRIGGER-CHECKLIST-2026-04-20.md`"
+          )
+          phase4_ref = checked(
+              "`docs/NOVOVM-NETWORK/NOVOVM-ACCOUNT-PROTOCOL-PHASE4-TRIGGER-CHECKLIST-2026-04-20.md`"
+          ) or checked(
+              "`docs_CN/NOVOVM-NETWORK/NOVOVM-ACCOUNT-PROTOCOL-PHASE4-TRIGGER-CHECKLIST-2026-04-20.md`"
+          )
+          trigger_refs = cutb_ref or phase4_ref
+          trigger_items = bool(inline_field(r"^2\.\s*Trigger item ID\(s\):"))
+          evidence_links = bool(inline_field(r"^3\.\s*Evidence link\(s\)"))
+          rollback_boundary = bool(
+              inline_field(r"^4\.\s*Minimal irreversible slice and rollback boundary:")
+          )
+          decision_requested = checked("`Go`") or checked("`No-Go`")
+
+          has_trigger = (
+              structural_change
+              and trigger_refs
+              and trigger_items
+              and evidence_links
+              and rollback_boundary
+              and decision_requested
+          )
+          trigger_valid = has_trigger if structural_change else None
+
+          trigger_type = None
+          if phase4_ref:
+              trigger_type = "Phase4"
+          elif cutb_ref:
+              trigger_type = "CutB"
+
+          governance_control_change = checked(
+              "This PR modifies governance control documents and includes full governance proof chain."
+          )
+          governance_proposal = bool(inline_field(r"^1\.\s*Governance proposal reference:"))
+          governance_vote = bool(inline_field(r"^2\.\s*Governance vote evidence:"))
+          governance_execute = bool(
+              inline_field(r"^3\.\s*Governance execute/activation evidence:")
+          )
+          has_governance_proof = (
+              governance_proposal and governance_vote and governance_execute
+          )
+
+          accepted = True
+          reason = None
+          if structural_change and not has_trigger:
+              accepted = False
+              reason = "missing_trigger_payload"
+          elif governance_control_change and not has_governance_proof:
+              accepted = False
+              reason = "missing_governance_proof_chain"
+
+          record = {
+              "at_unix_ms": int(time.time() * 1000),
+              "source": "github_ci_pr_gate",
+              "event": "pr_gate_evaluated",
+              "pr_id": pr_id,
+              "has_trigger": has_trigger,
+              "trigger_valid": trigger_valid,
+              "accepted": accepted,
+              "reason": reason,
+              "trigger_type": trigger_type,
+              "governance_control_change": governance_control_change,
+              "has_governance_proof": (
+                  has_governance_proof if governance_control_change else True
+              ),
+          }
+
+          output_path = Path("artifacts/governance") / f"governance-events-pr-gate-{pr_id}.jsonl"
+          with output_path.open("a", encoding="utf-8") as handle:
+              handle.write(json.dumps(record, ensure_ascii=False))
+              handle.write("\n")
+          print(f"emitted governance event: {output_path}")
+          PY
+
+      - name: Upload governance observability artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: governance-pr-gate-events
+          path: artifacts/governance/governance-events-pr-gate-*.jsonl
+          if-no-files-found: error
+
   detect:
     name: Detect project types
     runs-on: ubuntu-latest

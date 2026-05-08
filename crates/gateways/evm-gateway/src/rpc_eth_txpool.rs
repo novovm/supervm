@@ -100,9 +100,14 @@ pub(super) fn gateway_eth_tx_index_entry_from_ir(tx: TxIR) -> GatewayEthTxIndexE
     if normalized.hash.len() == 32 {
         tx_hash.copy_from_slice(&normalized.hash);
     }
+    let uca_id = normalized
+        .account_id
+        .clone()
+        .or_else(|| normalized.nonce_owner_account_id.clone())
+        .unwrap_or_default();
     GatewayEthTxIndexEntry {
         tx_hash,
-        uca_id: String::new(),
+        uca_id,
         chain_id: normalized.chain_id,
         nonce: normalized.nonce,
         tx_type: gateway_eth_tx_type_number_from_ir(normalized.tx_type),
@@ -123,9 +128,17 @@ pub(super) fn gateway_eth_tx_ir_from_index_entry(entry: &GatewayEthTxIndexEntry)
     } else {
         TxType::ContractCall
     };
+    let account_id = if entry.uca_id.is_empty() {
+        None
+    } else {
+        Some(entry.uca_id.clone())
+    };
     TxIR {
         hash: entry.tx_hash.to_vec(),
         from: entry.from.clone(),
+        account_id: account_id.clone(),
+        fee_owner_account_id: account_id.clone(),
+        nonce_owner_account_id: account_id,
         to: entry.to.clone(),
         value: entry.value,
         gas_limit: entry.gas_limit,
@@ -135,6 +148,7 @@ pub(super) fn gateway_eth_tx_ir_from_index_entry(entry: &GatewayEthTxIndexEntry)
         signature: Vec::new(),
         chain_id: entry.chain_id,
         tx_type,
+        execution_policy: TxExecutionPolicyV1::Standard,
         source_chain: None,
         target_chain: None,
     }
@@ -249,12 +263,27 @@ pub(super) fn find_gateway_eth_runtime_tx_by_hash(
     None
 }
 
-pub(super) fn gateway_eth_pending_nonce_from_runtime(chain_id: u64, address: &[u8]) -> Option<u64> {
+pub(super) fn gateway_eth_pending_nonce_from_runtime(
+    chain_id: u64,
+    account_id: Option<&str>,
+    address: &[u8],
+) -> Option<u64> {
     let (pending_txs, queued_txs) = collect_gateway_eth_txpool_runtime_txs(chain_id);
     pending_txs
         .into_iter()
         .chain(queued_txs)
-        .filter(|tx| tx.from.as_slice() == address)
+        .filter(|tx| {
+            if let Some(account_id) = account_id.filter(|value| !value.is_empty()) {
+                tx.nonce_owner_account_id.as_deref() == Some(account_id)
+                    || (tx.nonce_owner_account_id.is_none()
+                        && tx.account_id.as_deref() == Some(account_id))
+                    || (tx.nonce_owner_account_id.is_none()
+                        && tx.account_id.is_none()
+                        && tx.from.as_slice() == address)
+            } else {
+                tx.from.as_slice() == address
+            }
+        })
         .map(|tx| tx.nonce.saturating_add(1))
         .max()
 }

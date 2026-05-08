@@ -185,8 +185,7 @@ foreach ($case in $cases) {
         "test",
         $case.test_name,
         "--",
-        "--nocapture",
-        "--exact"
+        "--nocapture"
     ) -TimeoutSeconds $TimeoutSecondsPerCase
 
     $run.stdout | Set-Content -Path $stdoutPath -Encoding UTF8
@@ -209,7 +208,7 @@ foreach ($case in $cases) {
         error_reason = $errorReason
         expected_output = $case.expected_output
         test_name = $case.test_name
-        test_command = "cargo test $($case.test_name) -- --nocapture --exact"
+        test_command = "cargo test $($case.test_name) -- --nocapture"
         exit_code = [int]$run.exit_code
         timed_out = [bool]$run.timed_out
         started_at_utc = $run.started_at_utc

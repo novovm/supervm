@@ -10,6 +10,7 @@ members = [
     "crates/novovm-consensus",
     "crates/novovm-coordinator",
     "crates/novovm-exec",
+    "crates/novovm-governance-observability",
     "crates/novovm-network",
     "crates/novovm-node",
     "crates/novovm-rollout-policy",

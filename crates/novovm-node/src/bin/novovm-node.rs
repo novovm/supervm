@@ -55,6 +55,9 @@ use novovm_node::tx_ingress::{
     run_eth_send_raw_transaction_from_params_v1, tx_ingress_records_to_adapter_tx_irs,
     TxIngressRecord, LOCAL_TX_WIRE_CODEC_WRITE_U64LE_V1,
 };
+use novovm_node::unified_account_surface::{
+    default_mainline_unified_account_store_path, is_mainline_unified_account_query_method,
+};
 use novovm_protocol::{encode_local_tx_wire_v1 as encode_tx_wire_v1, LocalTxWireV1};
 use sha2::{Digest, Sha256};
 use std::collections::{hash_map::DefaultHasher, HashMap, HashSet, VecDeque};
@@ -23914,8 +23917,13 @@ fn main() -> Result<()> {
         }
         let runtime_method = is_eth_fullnode_runtime_query_method(&method);
         let native_execution_method = is_mainline_native_execution_query_method(&method);
+        let unified_account_method = is_mainline_unified_account_query_method(&method);
         let governance_method = is_mainline_governance_query_method(&method);
-        let canonical_method = if runtime_method || native_execution_method || governance_method {
+        let canonical_method = if runtime_method
+            || native_execution_method
+            || unified_account_method
+            || governance_method
+        {
             None
         } else {
             Some(
@@ -23937,6 +23945,10 @@ fn main() -> Result<()> {
                 string_env_nonempty("NOVOVM_MAINLINE_NATIVE_EXECUTION_STORE_PATH")
                     .map(PathBuf::from)
                     .unwrap_or_else(nov_native_execution_store_path_v1)
+                    .display()
+                    .to_string()
+            } else if unified_account_method {
+                default_mainline_unified_account_store_path(&store_path)
                     .display()
                     .to_string()
             } else if governance_method {
@@ -23961,6 +23973,8 @@ fn main() -> Result<()> {
                 "runtime_snapshot"
             } else if native_execution_method {
                 "native_execution_store"
+            } else if unified_account_method {
+                "unified_account_store"
             } else if governance_method {
                 "governance_surface_store"
             } else {

@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
 
+mod bincode_compat;
 mod clearing_router;
 mod clearing_types;
 pub mod governance_surface;
@@ -11,3 +12,4 @@ pub mod mainline_query;
 pub mod mainline_soak;
 mod treasury_settlement;
 pub mod tx_ingress;
+pub mod unified_account_surface;

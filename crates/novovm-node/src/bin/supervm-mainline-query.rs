@@ -10,6 +10,9 @@ use novovm_node::mainline_query::{
     mainline_query_method_from_env, mainline_query_params_from_env, run_mainline_query_from_path,
 };
 use novovm_node::tx_ingress::nov_native_execution_store_path_v1;
+use novovm_node::unified_account_surface::{
+    default_mainline_unified_account_store_path, is_mainline_unified_account_query_method,
+};
 use std::path::PathBuf;
 
 fn string_env_nonempty(name: &str) -> Option<String> {
@@ -33,8 +36,14 @@ fn main() -> Result<()> {
         .unwrap_or_else(default_mainline_query_store_path);
     let runtime_method = is_mainline_runtime_query_method(&method);
     let native_execution_method = is_mainline_native_execution_query_method(&method);
+    let unified_account_method = is_mainline_unified_account_query_method(&method);
     let governance_method = is_mainline_governance_query_method(&method);
-    if !runtime_method && !native_execution_method && !governance_method && !store_path.exists() {
+    if !runtime_method
+        && !native_execution_method
+        && !unified_account_method
+        && !governance_method
+        && !store_path.exists()
+    {
         bail!(
             "mainline canonical store does not exist: {}",
             store_path.display()
@@ -47,6 +56,8 @@ fn main() -> Result<()> {
         string_env_nonempty("NOVOVM_MAINLINE_NATIVE_EXECUTION_STORE_PATH")
             .map(PathBuf::from)
             .unwrap_or_else(nov_native_execution_store_path_v1)
+    } else if unified_account_method {
+        default_mainline_unified_account_store_path(&store_path)
     } else if governance_method {
         string_env_nonempty("NOVOVM_MAINLINE_GOVERNANCE_STORE_PATH")
             .map(PathBuf::from)
@@ -58,6 +69,8 @@ fn main() -> Result<()> {
         "runtime_snapshot"
     } else if native_execution_method {
         "native_execution_store"
+    } else if unified_account_method {
+        "unified_account_store"
     } else if governance_method {
         "governance_surface_store"
     } else {

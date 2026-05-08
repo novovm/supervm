@@ -21,6 +21,7 @@ fn run() -> Result<(), CtlError> {
     let cli = Cli::parse();
     match cli.command {
         TopCommand::Up(args) => commands::up::run(args),
+        TopCommand::GovernanceStats(args) => commands::governance_stats::run(args),
         TopCommand::RolloutControl(args) => commands::rollout_control::run(args),
         TopCommand::Rollout(args) => commands::rollout::run(args),
         TopCommand::Lifecycle(args) => commands::lifecycle::run(args),
