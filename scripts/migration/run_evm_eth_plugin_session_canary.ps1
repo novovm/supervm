@@ -129,6 +129,8 @@ if (-not (Test-Path $gatewayExe)) {
 $logDir = Resolve-FullPath -Root $RepoRoot -Value "artifacts/migration/logs"
 New-Item -ItemType Directory -Force -Path $logDir | Out-Null
 $runTag = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+$stateRoot = Resolve-FullPath -Root $RepoRoot -Value ("artifacts/gateway/canary/eth-plugin-session-{0}" -f $runTag)
+New-Item -ItemType Directory -Force -Path $stateRoot | Out-Null
 $gwOut = Join-Path $logDir "evm-eth-plugin-session-canary-gateway.stdout.log"
 $gwErr = Join-Path $logDir "evm-eth-plugin-session-canary-gateway.stderr.log"
 if (Test-Path $gwOut) {
@@ -150,6 +152,9 @@ if (Test-Path $gwErr) {
 
 $envMap = @{
     "NOVOVM_GATEWAY_BIND" = $GatewayBind
+    "NOVOVM_GATEWAY_UA_STORE_PATH" = (Join-Path $stateRoot "unified-account-router.rocksdb")
+    "NOVOVM_GATEWAY_ETH_TX_INDEX_PATH" = (Join-Path $stateRoot "eth-tx-index.rocksdb")
+    "NOVOVM_GATEWAY_SPOOL_DIR" = (Join-Path $stateRoot "spool")
     "NOVOVM_GATEWAY_ETH_PUBLIC_BROADCAST_ROUTE_POLICY" = "plugin_only"
     "NOVOVM_GATEWAY_ETH_PUBLIC_BROADCAST_PLUGIN_PORTS" = $PluginPorts
     "NOVOVM_GATEWAY_ETH_PUBLIC_BROADCAST_PLUGIN_PROBE_TIMEOUT_MS" = ([string]$ProbeTimeoutMs)
@@ -168,6 +173,7 @@ $summary = [ordered]@{
     started_at_utc = [DateTimeOffset]::UtcNow.ToString("o")
     gateway_bind = $GatewayBind
     chain_id = $ChainId
+    isolated_state_root = $stateRoot
     plugin_ports = $PluginPorts
     native_peers = $NativePeers
     probe_timeout_ms = $ProbeTimeoutMs

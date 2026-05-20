@@ -13864,6 +13864,185 @@ fn evm_execute_pending_atomic_broadcasts_native_forced_succeeds() {
 }
 
 #[test]
+fn ua_router_envelope_roundtrip_and_unsupported_version_are_diagnostic() {
+    let _guard = env_test_guard();
+    let router = UnifiedAccountRouter::new();
+    let encoded = encode_gateway_ua_store_state(&router).expect("encode ua state envelope");
+    assert!(encoded.starts_with(GATEWAY_UA_STORE_ENVELOPE_MAGIC));
+
+    let decoded = decode_gateway_ua_store_state(
+        encoded.as_slice(),
+        Path::new("ua-test.rocksdb"),
+        GATEWAY_UA_STORE_BACKEND_ROCKSDB,
+        false,
+    )
+    .expect("decode ua state envelope");
+    assert!(!decoded.rewrite_envelope);
+
+    let mut unsupported = encoded;
+    unsupported[8..12].copy_from_slice(&999u32.to_le_bytes());
+    let err = decode_gateway_ua_store_state(
+        unsupported.as_slice(),
+        Path::new("ua-test.rocksdb"),
+        GATEWAY_UA_STORE_BACKEND_ROCKSDB,
+        false,
+    )
+    .expect_err("unsupported schema should fail");
+    let msg = format!("{err:#}");
+    assert!(msg.contains("unified_account_router_state_decode_failed"));
+    assert!(msg.contains("classification=unsupported_version"));
+    assert!(msg.contains("safe_action="));
+}
+
+#[test]
+fn ua_router_legacy_state_requires_explicit_migration() {
+    let _guard = env_test_guard();
+    #[derive(Serialize)]
+    struct LegacyEnvelopeRef<'a> {
+        version: u32,
+        router: &'a UnifiedAccountRouter,
+    }
+    let router = UnifiedAccountRouter::new();
+    let legacy = crate::bincode_compat::serialize(&LegacyEnvelopeRef {
+        version: GATEWAY_UA_STORE_LEGACY_ENVELOPE_VERSION,
+        router: &router,
+    })
+    .expect("serialize legacy ua envelope");
+
+    let err = decode_gateway_ua_store_state(
+        legacy.as_slice(),
+        Path::new("legacy-ua.rocksdb"),
+        GATEWAY_UA_STORE_BACKEND_ROCKSDB,
+        false,
+    )
+    .expect_err("legacy state must require explicit migration");
+    let msg = format!("{err:#}");
+    assert!(msg.contains("classification=schema_mismatch"));
+    assert!(msg.contains(GATEWAY_UA_STORE_MIGRATE_LEGACY_ENV));
+
+    let migrated = decode_gateway_ua_store_state(
+        legacy.as_slice(),
+        Path::new("legacy-ua.rocksdb"),
+        GATEWAY_UA_STORE_BACKEND_ROCKSDB,
+        true,
+    )
+    .expect("explicit legacy migration should decode");
+    assert!(migrated.rewrite_envelope);
+}
+
+#[test]
+fn ua_router_explicit_migration_rewrites_legacy_file_state() {
+    let _guard = env_test_guard();
+    #[derive(Serialize)]
+    struct LegacyEnvelopeRef<'a> {
+        version: u32,
+        router: &'a UnifiedAccountRouter,
+    }
+    let keys = [
+        GATEWAY_UA_STORE_MIGRATE_LEGACY_ENV,
+        GATEWAY_UA_STORE_RESET_ENV,
+    ];
+    let captured = capture_env_vars(&keys);
+    let root = std::env::temp_dir().join(format!(
+        "novovm-gateway-ua-migrate-{}-{}",
+        std::process::id(),
+        now_unix_millis()
+    ));
+    let state_path = root.join("unified-account-router.bin");
+    fs::create_dir_all(&root).expect("create migration test root");
+    let router = UnifiedAccountRouter::new();
+    let legacy = crate::bincode_compat::serialize(&LegacyEnvelopeRef {
+        version: GATEWAY_UA_STORE_LEGACY_ENVELOPE_VERSION,
+        router: &router,
+    })
+    .expect("serialize legacy ua envelope");
+    fs::write(&state_path, legacy).expect("write legacy state");
+    std::env::set_var(GATEWAY_UA_STORE_MIGRATE_LEGACY_ENV, "1");
+
+    let backend = GatewayUaStoreBackend::BincodeFile {
+        path: state_path.clone(),
+    };
+    let _router = backend
+        .load_router()
+        .expect("explicit migration should load router");
+    let rewritten = fs::read(&state_path).expect("read rewritten ua state");
+    assert!(rewritten.starts_with(GATEWAY_UA_STORE_ENVELOPE_MAGIC));
+
+    restore_env_vars(&captured);
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn ua_router_rocksdb_stale_state_reports_classified_error() {
+    let _guard = env_test_guard();
+    let path = std::env::temp_dir().join(format!(
+        "novovm-gateway-ua-stale-{}-{}",
+        std::process::id(),
+        now_unix_millis()
+    ));
+    let backend = GatewayUaStoreBackend::RocksDb { path: path.clone() };
+    {
+        let db = open_gateway_ua_rocksdb(path.as_path()).expect("open ua rocksdb");
+        let cf = db
+            .cf_handle(GATEWAY_UA_STORE_ROCKSDB_CF_STATE)
+            .expect("ua state cf");
+        db.put_cf(cf, GATEWAY_UA_STORE_ROCKSDB_KEY_ROUTER, b"stale-bincode")
+            .expect("write stale ua bytes");
+    }
+
+    let err = backend
+        .load_router()
+        .expect_err("stale ua state should fail clearly");
+    let msg = format!("{err:#}");
+    assert!(msg.contains("unified_account_router_state_decode_failed"));
+    assert!(msg.contains("classification=stale_state"));
+    assert!(msg.contains("decode_attempts="));
+    assert!(msg.contains("safe_action="));
+    let _ = fs::remove_dir_all(&path);
+}
+
+#[test]
+fn ua_router_explicit_reset_quarantines_existing_state() {
+    let _guard = env_test_guard();
+    let keys = [
+        GATEWAY_UA_STORE_RESET_ENV,
+        GATEWAY_UA_STORE_QUARANTINE_DIR_ENV,
+        GATEWAY_UA_STORE_MIGRATE_LEGACY_ENV,
+    ];
+    let captured = capture_env_vars(&keys);
+    let root = std::env::temp_dir().join(format!(
+        "novovm-gateway-ua-reset-{}-{}",
+        std::process::id(),
+        now_unix_millis()
+    ));
+    let state_path = root.join("unified-account-router.bin");
+    let quarantine = root.join("quarantine");
+    fs::create_dir_all(&root).expect("create reset test root");
+    fs::write(&state_path, b"old-state").expect("write old state");
+    std::env::set_var(GATEWAY_UA_STORE_RESET_ENV, "1");
+    std::env::set_var(
+        GATEWAY_UA_STORE_QUARANTINE_DIR_ENV,
+        quarantine.display().to_string(),
+    );
+    let backend = GatewayUaStoreBackend::BincodeFile {
+        path: state_path.clone(),
+    };
+
+    let _router = backend
+        .load_router()
+        .expect("explicit reset should load empty router");
+    assert!(!state_path.exists());
+    let quarantined = fs::read_dir(&quarantine)
+        .expect("read quarantine dir")
+        .filter_map(|entry| entry.ok())
+        .collect::<Vec<_>>();
+    assert_eq!(quarantined.len(), 1);
+
+    restore_env_vars(&captured);
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
 fn auto_replay_pending_payouts_respects_cap_and_advances_status() {
     let spool_dir = std::env::temp_dir().join(format!(
         "novovm-gateway-auto-replay-{}-{}",

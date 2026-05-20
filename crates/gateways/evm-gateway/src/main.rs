@@ -78,7 +78,14 @@ use rpc_gateway_ops::*;
 mod rpc_gateway_exec_cfg;
 use rpc_gateway_exec_cfg::*;
 
-const GATEWAY_UA_STORE_ENVELOPE_VERSION: u32 = 1;
+const GATEWAY_UA_STORE_LEGACY_ENVELOPE_VERSION: u32 = 1;
+const GATEWAY_UA_STORE_ENVELOPE_MAGIC: &[u8; 8] = b"NVUAENV1";
+const GATEWAY_UA_STORE_SCHEMA_VERSION: u32 = 1;
+const GATEWAY_UA_STORE_CODEC_BINCODE: u8 = 1;
+const GATEWAY_UA_STORE_ENVELOPE_HEADER_LEN: usize = 8 + 4 + 1 + 3 + 8 + 32;
+const GATEWAY_UA_STORE_MIGRATE_LEGACY_ENV: &str = "NOVOVM_GATEWAY_UA_STORE_MIGRATE_LEGACY";
+const GATEWAY_UA_STORE_RESET_ENV: &str = "NOVOVM_GATEWAY_UA_STORE_RESET";
+const GATEWAY_UA_STORE_QUARANTINE_DIR_ENV: &str = "NOVOVM_GATEWAY_UA_STORE_QUARANTINE_DIR";
 const GATEWAY_UA_STORE_BACKEND_FILE: &str = "bincode_file";
 const GATEWAY_UA_STORE_BACKEND_ROCKSDB: &str = "rocksdb";
 const GATEWAY_UA_STORE_ROCKSDB_CF_STATE: &str = "ua_gateway_state_v1";
@@ -191,6 +198,38 @@ macro_rules! gateway_summary {
 struct GatewayUaStoreEnvelopeV1 {
     version: u32,
     router: UnifiedAccountRouter,
+}
+
+#[derive(Debug)]
+struct GatewayUaStoreLoadOutcome {
+    router: UnifiedAccountRouter,
+    rewrite_envelope: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum GatewayUaStateClassification {
+    SchemaMismatch,
+    StaleState,
+    CorruptState,
+    UnsupportedVersion,
+}
+
+impl GatewayUaStateClassification {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::SchemaMismatch => "schema_mismatch",
+            Self::StaleState => "stale_state",
+            Self::CorruptState => "corrupt_state",
+            Self::UnsupportedVersion => "unsupported_version",
+        }
+    }
+}
+
+#[derive(Debug)]
+struct GatewayUaStateDecodeFailure {
+    classification: GatewayUaStateClassification,
+    decode_attempts: Vec<&'static str>,
+    detail: String,
 }
 
 #[derive(Debug, Clone)]
@@ -3616,6 +3655,11 @@ impl GatewayUaStoreBackend {
     }
 
     fn load_router(&self) -> Result<UnifiedAccountRouter> {
+        if gateway_ua_store_reset_requested() {
+            self.quarantine_existing_state()?;
+            return Ok(UnifiedAccountRouter::new());
+        }
+        let migrate_legacy = gateway_ua_store_migrate_legacy_requested();
         match self {
             GatewayUaStoreBackend::BincodeFile { path } => {
                 if !path.exists() {
@@ -3626,86 +3670,52 @@ impl GatewayUaStoreBackend {
                 if raw.is_empty() {
                     return Ok(UnifiedAccountRouter::new());
                 }
-                if let Ok(envelope) =
-                    crate::bincode_compat::deserialize::<GatewayUaStoreEnvelopeV1>(&raw)
-                {
-                    if envelope.version != GATEWAY_UA_STORE_ENVELOPE_VERSION {
-                        bail!(
-                            "unsupported gateway ua store version {} at {}",
-                            envelope.version,
-                            path.display()
-                        );
-                    }
-                    return Ok(envelope.router);
+                let outcome =
+                    decode_gateway_ua_store_state(&raw, path, self.backend_name(), migrate_legacy)?;
+                if outcome.rewrite_envelope {
+                    self.save_router(&outcome.router)?;
                 }
-                let router: UnifiedAccountRouter = crate::bincode_compat::deserialize(&raw)
-                    .with_context(|| {
-                        format!("decode legacy gateway ua store failed: {}", path.display())
-                    })?;
-                Ok(router)
+                Ok(outcome.router)
             }
             GatewayUaStoreBackend::RocksDb { path } => {
-                let db = open_gateway_ua_rocksdb(path)?;
-                let state_cf =
-                    db.cf_handle(GATEWAY_UA_STORE_ROCKSDB_CF_STATE)
-                        .ok_or_else(|| {
-                            anyhow::anyhow!(
-                                "missing gateway ua rocksdb column family '{}' for {}",
+                let raw = {
+                    let db = open_gateway_ua_rocksdb(path)?;
+                    let state_cf =
+                        db.cf_handle(GATEWAY_UA_STORE_ROCKSDB_CF_STATE)
+                            .ok_or_else(|| {
+                                anyhow::anyhow!(
+                                    "missing gateway ua rocksdb column family '{}' for {}",
+                                    GATEWAY_UA_STORE_ROCKSDB_CF_STATE,
+                                    path.display()
+                                )
+                            })?;
+                    db.get_cf(state_cf, GATEWAY_UA_STORE_ROCKSDB_KEY_ROUTER)
+                        .with_context(|| {
+                            format!(
+                                "read gateway ua router key from cf '{}' failed: {}",
                                 GATEWAY_UA_STORE_ROCKSDB_CF_STATE,
                                 path.display()
                             )
-                        })?;
-                let raw = db
-                    .get_cf(state_cf, GATEWAY_UA_STORE_ROCKSDB_KEY_ROUTER)
-                    .with_context(|| {
-                        format!(
-                            "read gateway ua router key from cf '{}' failed: {}",
-                            GATEWAY_UA_STORE_ROCKSDB_CF_STATE,
-                            path.display()
-                        )
-                    })?;
+                        })?
+                };
                 let Some(raw) = raw else {
                     return Ok(UnifiedAccountRouter::new());
                 };
                 if raw.is_empty() {
                     return Ok(UnifiedAccountRouter::new());
                 }
-                if let Ok(envelope) =
-                    crate::bincode_compat::deserialize::<GatewayUaStoreEnvelopeV1>(&raw)
-                {
-                    if envelope.version != GATEWAY_UA_STORE_ENVELOPE_VERSION {
-                        bail!(
-                            "unsupported gateway ua store version {} at {}",
-                            envelope.version,
-                            path.display()
-                        );
-                    }
-                    return Ok(envelope.router);
+                let outcome =
+                    decode_gateway_ua_store_state(&raw, path, self.backend_name(), migrate_legacy)?;
+                if outcome.rewrite_envelope {
+                    self.save_router(&outcome.router)?;
                 }
-                let router: UnifiedAccountRouter = crate::bincode_compat::deserialize(&raw)
-                    .with_context(|| {
-                        format!(
-                            "decode legacy gateway ua rocksdb state failed: {}",
-                            path.display()
-                        )
-                    })?;
-                Ok(router)
+                Ok(outcome.router)
             }
         }
     }
 
     fn save_router(&self, router: &UnifiedAccountRouter) -> Result<()> {
-        #[derive(Serialize)]
-        struct GatewayUaStoreEnvelopeRef<'a> {
-            version: u32,
-            router: &'a UnifiedAccountRouter,
-        }
-        let envelope = GatewayUaStoreEnvelopeRef {
-            version: GATEWAY_UA_STORE_ENVELOPE_VERSION,
-            router,
-        };
-        let encoded = crate::bincode_compat::serialize(&envelope)
-            .context("serialize gateway ua store envelope failed")?;
+        let encoded = encode_gateway_ua_store_state(router)?;
         match self {
             GatewayUaStoreBackend::BincodeFile { path } => {
                 ensure_parent_dir(path, "gateway ua store")?;
@@ -3737,6 +3747,281 @@ impl GatewayUaStoreBackend {
             }
         }
     }
+
+    fn quarantine_existing_state(&self) -> Result<Option<PathBuf>> {
+        let path = self.path();
+        if !path.exists() {
+            return Ok(None);
+        }
+        let quarantine_dir = gateway_ua_store_quarantine_dir(path);
+        ensure_dir(quarantine_dir.as_path(), "gateway ua quarantine dir")?;
+        let file_name = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("unified-account-router");
+        let target = quarantine_dir.join(format!(
+            "{}.{}.{}.quarantine",
+            file_name,
+            now_unix_millis(),
+            std::process::id()
+        ));
+        fs::rename(path, target.as_path()).with_context(|| {
+            format!(
+                "explicit gateway ua store reset failed: move {} to {}",
+                path.display(),
+                target.display()
+            )
+        })?;
+        gateway_warn!(
+            "unified_account_router_state_reset: path={} quarantined_to={} backend={}",
+            path.display(),
+            target.display(),
+            self.backend_name()
+        );
+        Ok(Some(target))
+    }
+}
+
+fn gateway_ua_store_migrate_legacy_requested() -> bool {
+    bool_env(GATEWAY_UA_STORE_MIGRATE_LEGACY_ENV, false)
+}
+
+fn gateway_ua_store_reset_requested() -> bool {
+    bool_env(GATEWAY_UA_STORE_RESET_ENV, false)
+}
+
+fn gateway_ua_store_quarantine_dir(path: &Path) -> PathBuf {
+    if let Some(custom) = string_env_nonempty(GATEWAY_UA_STORE_QUARANTINE_DIR_ENV) {
+        return PathBuf::from(custom);
+    }
+    path.parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join("quarantine")
+}
+
+fn encode_gateway_ua_store_state(router: &UnifiedAccountRouter) -> Result<Vec<u8>> {
+    let payload = crate::bincode_compat::serialize(router)
+        .context("serialize gateway ua router payload failed")?;
+    let payload_len = u64::try_from(payload.len()).context("gateway ua payload too large")?;
+    let checksum = gateway_ua_store_checksum(payload.as_slice());
+    let mut out = Vec::with_capacity(GATEWAY_UA_STORE_ENVELOPE_HEADER_LEN + payload.len());
+    out.extend_from_slice(GATEWAY_UA_STORE_ENVELOPE_MAGIC);
+    out.extend_from_slice(&GATEWAY_UA_STORE_SCHEMA_VERSION.to_le_bytes());
+    out.push(GATEWAY_UA_STORE_CODEC_BINCODE);
+    out.extend_from_slice(&[0u8; 3]);
+    out.extend_from_slice(&payload_len.to_le_bytes());
+    out.extend_from_slice(&checksum);
+    out.extend_from_slice(payload.as_slice());
+    Ok(out)
+}
+
+fn decode_gateway_ua_store_state(
+    raw: &[u8],
+    path: &Path,
+    backend: &str,
+    migrate_legacy: bool,
+) -> Result<GatewayUaStoreLoadOutcome> {
+    match decode_gateway_ua_store_envelope(raw) {
+        Ok(router) => {
+            return Ok(GatewayUaStoreLoadOutcome {
+                router,
+                rewrite_envelope: false,
+            })
+        }
+        Err(envelope_failure) if migrate_legacy => match decode_gateway_ua_store_legacy(raw) {
+            Ok(router) => {
+                gateway_warn!(
+                        "unified_account_router_state_migrated: path={} backend={} from=legacy to=envelope schema_version={}",
+                        path.display(),
+                        backend,
+                        GATEWAY_UA_STORE_SCHEMA_VERSION
+                    );
+                return Ok(GatewayUaStoreLoadOutcome {
+                    router,
+                    rewrite_envelope: true,
+                });
+            }
+            Err(legacy_failure) => {
+                let failure = merge_gateway_ua_decode_failures(envelope_failure, legacy_failure);
+                return Err(format_gateway_ua_state_decode_error(
+                    path, backend, &failure, true,
+                ));
+            }
+        },
+        Err(envelope_failure) => {
+            let failure = match decode_gateway_ua_store_legacy(raw) {
+                Ok(_) => GatewayUaStateDecodeFailure {
+                    classification: GatewayUaStateClassification::SchemaMismatch,
+                    decode_attempts: vec!["envelope_v1", "legacy_envelope_v1", "legacy_router"],
+                    detail: format!(
+                        "legacy state detected; set {}=1 for explicit migration",
+                        GATEWAY_UA_STORE_MIGRATE_LEGACY_ENV
+                    ),
+                },
+                Err(legacy_failure) => {
+                    merge_gateway_ua_decode_failures(envelope_failure, legacy_failure)
+                }
+            };
+            Err(format_gateway_ua_state_decode_error(
+                path, backend, &failure, false,
+            ))
+        }
+    }
+}
+
+fn decode_gateway_ua_store_envelope(
+    raw: &[u8],
+) -> std::result::Result<UnifiedAccountRouter, GatewayUaStateDecodeFailure> {
+    if raw.len() < GATEWAY_UA_STORE_ENVELOPE_MAGIC.len()
+        || &raw[..GATEWAY_UA_STORE_ENVELOPE_MAGIC.len()] != GATEWAY_UA_STORE_ENVELOPE_MAGIC
+    {
+        return Err(GatewayUaStateDecodeFailure {
+            classification: GatewayUaStateClassification::SchemaMismatch,
+            decode_attempts: vec!["envelope_v1"],
+            detail: "missing gateway ua envelope magic".to_string(),
+        });
+    }
+    if raw.len() < GATEWAY_UA_STORE_ENVELOPE_HEADER_LEN {
+        return Err(GatewayUaStateDecodeFailure {
+            classification: GatewayUaStateClassification::CorruptState,
+            decode_attempts: vec!["envelope_v1"],
+            detail: format!(
+                "envelope header too short: len={} min={}",
+                raw.len(),
+                GATEWAY_UA_STORE_ENVELOPE_HEADER_LEN
+            ),
+        });
+    }
+    let version = u32::from_le_bytes(raw[8..12].try_into().unwrap_or([0u8; 4]));
+    if version != GATEWAY_UA_STORE_SCHEMA_VERSION {
+        return Err(GatewayUaStateDecodeFailure {
+            classification: GatewayUaStateClassification::UnsupportedVersion,
+            decode_attempts: vec!["envelope_v1"],
+            detail: format!(
+                "unsupported schema_version={} expected={}",
+                version, GATEWAY_UA_STORE_SCHEMA_VERSION
+            ),
+        });
+    }
+    let codec = raw[12];
+    if codec != GATEWAY_UA_STORE_CODEC_BINCODE {
+        return Err(GatewayUaStateDecodeFailure {
+            classification: GatewayUaStateClassification::UnsupportedVersion,
+            decode_attempts: vec!["envelope_v1"],
+            detail: format!(
+                "unsupported codec={} expected={}",
+                codec, GATEWAY_UA_STORE_CODEC_BINCODE
+            ),
+        });
+    }
+    let payload_len = u64::from_le_bytes(raw[16..24].try_into().unwrap_or([0u8; 8])) as usize;
+    let payload = &raw[GATEWAY_UA_STORE_ENVELOPE_HEADER_LEN..];
+    if payload_len != payload.len() {
+        return Err(GatewayUaStateDecodeFailure {
+            classification: GatewayUaStateClassification::CorruptState,
+            decode_attempts: vec!["envelope_v1"],
+            detail: format!(
+                "payload_len mismatch: declared={} actual={}",
+                payload_len,
+                payload.len()
+            ),
+        });
+    }
+    let expected_checksum = &raw[24..56];
+    let actual_checksum = gateway_ua_store_checksum(payload);
+    if expected_checksum != actual_checksum.as_slice() {
+        return Err(GatewayUaStateDecodeFailure {
+            classification: GatewayUaStateClassification::CorruptState,
+            decode_attempts: vec!["envelope_v1"],
+            detail: "payload checksum mismatch".to_string(),
+        });
+    }
+    crate::bincode_compat::deserialize::<UnifiedAccountRouter>(payload).map_err(|err| {
+        GatewayUaStateDecodeFailure {
+            classification: GatewayUaStateClassification::CorruptState,
+            decode_attempts: vec!["envelope_v1"],
+            detail: format!("payload decode failed: {err}"),
+        }
+    })
+}
+
+fn decode_gateway_ua_store_legacy(
+    raw: &[u8],
+) -> std::result::Result<UnifiedAccountRouter, GatewayUaStateDecodeFailure> {
+    let mut details = Vec::new();
+    match crate::bincode_compat::deserialize::<GatewayUaStoreEnvelopeV1>(raw) {
+        Ok(envelope) => {
+            if envelope.version == GATEWAY_UA_STORE_LEGACY_ENVELOPE_VERSION {
+                return Ok(envelope.router);
+            }
+            return Err(GatewayUaStateDecodeFailure {
+                classification: GatewayUaStateClassification::UnsupportedVersion,
+                decode_attempts: vec!["legacy_envelope_v1"],
+                detail: format!("unsupported legacy envelope version={}", envelope.version),
+            });
+        }
+        Err(err) => details.push(format!("legacy_envelope_v1={err}")),
+    }
+    match crate::bincode_compat::deserialize::<UnifiedAccountRouter>(raw) {
+        Ok(router) => Ok(router),
+        Err(err) => {
+            details.push(format!("legacy_router={err}"));
+            Err(GatewayUaStateDecodeFailure {
+                classification: GatewayUaStateClassification::StaleState,
+                decode_attempts: vec!["legacy_envelope_v1", "legacy_router"],
+                detail: details.join("; "),
+            })
+        }
+    }
+}
+
+fn merge_gateway_ua_decode_failures(
+    envelope_failure: GatewayUaStateDecodeFailure,
+    legacy_failure: GatewayUaStateDecodeFailure,
+) -> GatewayUaStateDecodeFailure {
+    if envelope_failure.classification != GatewayUaStateClassification::SchemaMismatch {
+        envelope_failure
+    } else {
+        legacy_failure
+    }
+}
+
+fn format_gateway_ua_state_decode_error(
+    path: &Path,
+    backend: &str,
+    failure: &GatewayUaStateDecodeFailure,
+    migrate_legacy: bool,
+) -> anyhow::Error {
+    let safe_action = if migrate_legacy {
+        format!(
+            "inspect state bytes, restore a compatible backup, or set {}=1 to quarantine and reset explicitly",
+            GATEWAY_UA_STORE_RESET_ENV
+        )
+    } else {
+        format!(
+            "use an isolated state path, run with {}=1 for known legacy migration, or set {}=1 to quarantine and reset explicitly",
+            GATEWAY_UA_STORE_MIGRATE_LEGACY_ENV,
+            GATEWAY_UA_STORE_RESET_ENV
+        )
+    };
+    anyhow::anyhow!(
+        "unified_account_router_state_decode_failed: path={} backend={} classification={} decode_attempts={} safe_action=\"{}\" detail=\"{}\"",
+        path.display(),
+        backend,
+        failure.classification.as_str(),
+        failure.decode_attempts.join(","),
+        safe_action,
+        failure.detail.replace('"', "'")
+    )
+}
+
+fn gateway_ua_store_checksum(payload: &[u8]) -> [u8; 32] {
+    let mut hasher = Sha256::new();
+    hasher.update(GATEWAY_UA_STORE_ENVELOPE_MAGIC);
+    hasher.update(GATEWAY_UA_STORE_SCHEMA_VERSION.to_le_bytes());
+    hasher.update([GATEWAY_UA_STORE_CODEC_BINCODE]);
+    hasher.update(payload);
+    hasher.finalize().into()
 }
 
 impl GatewayEthTxIndexStoreBackend {
