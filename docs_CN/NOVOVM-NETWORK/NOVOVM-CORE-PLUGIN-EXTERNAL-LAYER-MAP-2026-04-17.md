@@ -4,10 +4,12 @@
 
 统一团队口径，避免把“当前最成熟的 EVM 能力线”误解为“EVM 是系统宿主”。
 
+Boundary: SUPERVM = repository/path/internal historical code name only; external naming = NOVOVM; EVM = plugin capability, not host identity.
+
 ## 2. 三层结构（冻结口径）
 
 ```text
-NOVOVM / SUPERVM (Host)
+NOVOVM（Host；SUPERVM 仅可作为仓库/路径/内部历史代号出现）
 ├─ Core Host Layer（核心层）
 │  ├─ AOEM 执行内核
 │  ├─ 调度与运行时（scheduler/runtime/gate）
@@ -27,7 +29,7 @@ NOVOVM / SUPERVM (Host)
 
 ## 3. 角色定义
 
-- Host（宿主）只属于 `NOVOVM/SUPERVM`。
+- Host（宿主）只属于 `NOVOVM`；`SUPERVM` 不是对外产品名，仅作为仓库/路径/内部历史代号保留。
 - `EVM` 是 Plugin（被承载能力），不是 Host。
 - “EVM 主线完成”表示插件能力成熟，不表示系统本体等于 EVM。
 
@@ -47,4 +49,3 @@ NOVOVM / SUPERVM (Host)
 
 - EVM 线：维护态（样本喂养、nightly 守门、预算稳态）
 - 主资源：回归 NOVOVM 核心层与下一插件能力建设
-

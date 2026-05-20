@@ -7,7 +7,7 @@ Unify team language and prevent the most mature EVM capability line from being m
 ## 2. Three-layer structure (frozen wording)
 
 ```text
-NOVOVM / SUPERVM (Host)
+NOVOVM (Host; SUPERVM may remain only as repo/path/internal historical code name)
 |- Core Host Layer
 |  |- AOEM execution engine
 |  |- Scheduler/runtime/gate
@@ -27,7 +27,7 @@ NOVOVM / SUPERVM (Host)
 
 ## 3. Role definition
 
-- Host belongs only to `NOVOVM/SUPERVM`.
+- Host belongs only to `NOVOVM`; `SUPERVM` is not an external product name in this wording and may appear only as repo/path/internal historical code name.
 - `EVM` is a plugin capability, not the host.
 - "EVM mainline completed" means plugin maturity, not that the system identity equals EVM.
 

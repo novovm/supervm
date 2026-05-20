@@ -1,5 +1,11 @@
 # WEB30 Protocol Migration Index (2026-03-05)
 
+> Historical migration note.
+>
+> `SUPERVM` appears in this document as the repository/path migration target for
+> archived source material. It is not the current external product name. Current
+> external naming remains NOVOVM.
+
 ## 1. 目标
 
 本索引用于把 `SVM2026` 的 WEB30 协议族群文档快速切回主线，并明确：

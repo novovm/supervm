@@ -1,7 +1,7 @@
 # AOEM（Abstract Orchestrated Execution Model）
 
 > 状态说明（2026-04-17）：
-> 本文是 AOEM 技术说明文档，不是 NOVOVM/SUPERVM 当前生产运维入口。
+> 本文是 AOEM 技术说明文档，不是 NOVOVM 当前生产运维入口；SUPERVM 仅作为当前仓库/路径/内部历史代号保留。
 > 当前生产入口与主线守门文档请先看：
 > - `README.md`
 > - `docs_CN/CURRENT-AUTHORITATIVE-ENTRYPOINT-2026-04-17.md`
