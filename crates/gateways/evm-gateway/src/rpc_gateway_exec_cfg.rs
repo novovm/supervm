@@ -1171,6 +1171,10 @@ enum GatewayEthPluginSessionStage {
     TcpConnected,
     AuthSent,
     AckSeen,
+    HelloSent,
+    HelloSeen,
+    StatusSeen,
+    StatusSent,
     Ready,
 }
 
@@ -1181,6 +1185,10 @@ impl GatewayEthPluginSessionStage {
             Self::TcpConnected => "tcp_connected",
             Self::AuthSent => "auth_sent",
             Self::AckSeen => "ack_seen",
+            Self::HelloSent => "hello_sent",
+            Self::HelloSeen => "hello_seen",
+            Self::StatusSeen => "status_seen",
+            Self::StatusSent => "status_sent",
             Self::Ready => "ready",
         }
     }
@@ -1191,7 +1199,11 @@ impl GatewayEthPluginSessionStage {
             Self::TcpConnected => 1,
             Self::AuthSent => 2,
             Self::AckSeen => 3,
-            Self::Ready => 4,
+            Self::HelloSent => 4,
+            Self::HelloSeen => 5,
+            Self::StatusSeen => 6,
+            Self::StatusSent => 7,
+            Self::Ready => 8,
         }
     }
 }
@@ -1209,6 +1221,10 @@ fn parse_gateway_eth_plugin_session_stage(raw: &str) -> Option<GatewayEthPluginS
         "tcp_connected" | "tcp" | "connected" => Some(GatewayEthPluginSessionStage::TcpConnected),
         "auth_sent" | "auth" => Some(GatewayEthPluginSessionStage::AuthSent),
         "ack_seen" | "ack" | "auth_ack" => Some(GatewayEthPluginSessionStage::AckSeen),
+        "hello_sent" => Some(GatewayEthPluginSessionStage::HelloSent),
+        "hello_seen" | "hello" => Some(GatewayEthPluginSessionStage::HelloSeen),
+        "status_seen" | "eth_status_seen" => Some(GatewayEthPluginSessionStage::StatusSeen),
+        "status_sent" | "eth_status_sent" => Some(GatewayEthPluginSessionStage::StatusSent),
         "ready" | "ok" => Some(GatewayEthPluginSessionStage::Ready),
         _ => None,
     }
@@ -1221,8 +1237,10 @@ fn observe_gateway_eth_plugin_session_stage(chain_id: u64, stage: GatewayEthPlug
     if stage.rank() >= GatewayEthPluginSessionStage::AckSeen.rank() {
         observe_eth_native_rlpx_auth_ack(chain_id);
     }
-    if stage.rank() >= GatewayEthPluginSessionStage::Ready.rank() {
+    if stage.rank() >= GatewayEthPluginSessionStage::HelloSeen.rank() {
         observe_eth_native_hello(chain_id);
+    }
+    if stage.rank() >= GatewayEthPluginSessionStage::StatusSeen.rank() {
         observe_eth_native_status(chain_id);
     }
 }
@@ -1232,8 +1250,10 @@ struct GatewayEthPluginSessionState {
     chain_id: u64,
     endpoint: String,
     stage: GatewayEthPluginSessionStage,
+    best_stage: GatewayEthPluginSessionStage,
     updated_ms: u64,
     last_error: Option<String>,
+    selected_eth_capability: Option<u64>,
 }
 
 #[derive(Default, Clone)]
@@ -1242,6 +1262,10 @@ struct GatewayEthPluginSessionStageStats {
     tcp_connected: u64,
     auth_sent: u64,
     ack_seen: u64,
+    hello_sent: u64,
+    hello_seen: u64,
+    status_seen: u64,
+    status_sent: u64,
     ready: u64,
 }
 
@@ -1254,6 +1278,10 @@ fn gateway_eth_plugin_session_stage_count(
         GatewayEthPluginSessionStage::TcpConnected => stats.tcp_connected,
         GatewayEthPluginSessionStage::AuthSent => stats.auth_sent,
         GatewayEthPluginSessionStage::AckSeen => stats.ack_seen,
+        GatewayEthPluginSessionStage::HelloSent => stats.hello_sent,
+        GatewayEthPluginSessionStage::HelloSeen => stats.hello_seen,
+        GatewayEthPluginSessionStage::StatusSeen => stats.status_seen,
+        GatewayEthPluginSessionStage::StatusSent => stats.status_sent,
         GatewayEthPluginSessionStage::Ready => stats.ready,
     }
 }
@@ -4675,6 +4703,10 @@ pub(super) fn gateway_eth_public_broadcast_capability_json(chain_id: u64) -> ser
         GatewayEthPluginSessionStage::TcpConnected,
         GatewayEthPluginSessionStage::AuthSent,
         GatewayEthPluginSessionStage::AckSeen,
+        GatewayEthPluginSessionStage::HelloSent,
+        GatewayEthPluginSessionStage::HelloSeen,
+        GatewayEthPluginSessionStage::StatusSeen,
+        GatewayEthPluginSessionStage::StatusSent,
         GatewayEthPluginSessionStage::Ready,
     ] {
         plugin_session_stage_counts.insert(
@@ -5322,14 +5354,28 @@ fn set_gateway_eth_plugin_session_stage(
     updated_ms: u64,
     last_error: Option<String>,
 ) {
-    gateway_eth_plugin_session_cache().insert(
+    let cache = gateway_eth_plugin_session_cache();
+    let (best_stage, selected_eth_capability) = cache
+        .get(build_gateway_eth_plugin_session_key(chain_id, endpoint).as_str())
+        .map(|existing| {
+            let best_stage = if existing.best_stage.rank() >= stage.rank() {
+                existing.best_stage
+            } else {
+                stage
+            };
+            (best_stage, existing.selected_eth_capability)
+        })
+        .unwrap_or((stage, None));
+    cache.insert(
         build_gateway_eth_plugin_session_key(chain_id, endpoint),
         GatewayEthPluginSessionState {
             chain_id,
             endpoint: endpoint.to_string(),
             stage,
+            best_stage,
             updated_ms,
             last_error,
+            selected_eth_capability,
         },
     );
 }
@@ -5346,6 +5392,9 @@ fn bump_gateway_eth_plugin_session_stage(
         if existing.stage.rank() < target_stage.rank() {
             existing.stage = target_stage;
         }
+        if existing.best_stage.rank() < target_stage.rank() {
+            existing.best_stage = target_stage;
+        }
         existing.updated_ms = updated_ms;
         existing.last_error = None;
         return;
@@ -5356,8 +5405,37 @@ fn bump_gateway_eth_plugin_session_stage(
             chain_id,
             endpoint: endpoint.to_string(),
             stage: target_stage,
+            best_stage: target_stage,
             updated_ms,
             last_error: None,
+            selected_eth_capability: None,
+        },
+    );
+}
+
+fn set_gateway_eth_plugin_session_selected_eth_capability(
+    chain_id: u64,
+    endpoint: &str,
+    eth_version: u64,
+    updated_ms: u64,
+) {
+    let key = build_gateway_eth_plugin_session_key(chain_id, endpoint);
+    let cache = gateway_eth_plugin_session_cache();
+    if let Some(mut existing) = cache.get_mut(key.as_str()) {
+        existing.selected_eth_capability = Some(eth_version);
+        existing.updated_ms = updated_ms;
+        return;
+    }
+    cache.insert(
+        key,
+        GatewayEthPluginSessionState {
+            chain_id,
+            endpoint: endpoint.to_string(),
+            stage: GatewayEthPluginSessionStage::AckSeen,
+            best_stage: GatewayEthPluginSessionStage::AckSeen,
+            updated_ms,
+            last_error: None,
+            selected_eth_capability: Some(eth_version),
         },
     );
 }
@@ -5397,6 +5475,10 @@ fn gateway_eth_plugin_session_stage_stats(
             GatewayEthPluginSessionStage::TcpConnected => stats.tcp_connected += 1,
             GatewayEthPluginSessionStage::AuthSent => stats.auth_sent += 1,
             GatewayEthPluginSessionStage::AckSeen => stats.ack_seen += 1,
+            GatewayEthPluginSessionStage::HelloSent => stats.hello_sent += 1,
+            GatewayEthPluginSessionStage::HelloSeen => stats.hello_seen += 1,
+            GatewayEthPluginSessionStage::StatusSeen => stats.status_seen += 1,
+            GatewayEthPluginSessionStage::StatusSent => stats.status_sent += 1,
             GatewayEthPluginSessionStage::Ready => stats.ready += 1,
         }
     }
@@ -5464,6 +5546,10 @@ fn gateway_eth_plugin_session_stage_stats_from_cache(
             GatewayEthPluginSessionStage::TcpConnected => stats.tcp_connected += 1,
             GatewayEthPluginSessionStage::AuthSent => stats.auth_sent += 1,
             GatewayEthPluginSessionStage::AckSeen => stats.ack_seen += 1,
+            GatewayEthPluginSessionStage::HelloSent => stats.hello_sent += 1,
+            GatewayEthPluginSessionStage::HelloSeen => stats.hello_seen += 1,
+            GatewayEthPluginSessionStage::StatusSeen => stats.status_seen += 1,
+            GatewayEthPluginSessionStage::StatusSent => stats.status_sent += 1,
             GatewayEthPluginSessionStage::Ready => stats.ready += 1,
         }
     }
@@ -5516,11 +5602,23 @@ pub(super) fn gateway_eth_public_broadcast_plugin_peers_json(chain_id: u64) -> s
                     ),
                 ),
                 (
+                    "best_stage".to_string(),
+                    serde_json::Value::String(
+                        GatewayEthPluginSessionStage::Disconnected
+                            .as_str()
+                            .to_string(),
+                    ),
+                ),
+                (
                     "updated_ms".to_string(),
                     serde_json::Value::String("0x0".to_string()),
                 ),
                 (
                     "last_error".to_string(),
+                    serde_json::Value::String(String::new()),
+                ),
+                (
+                    "selected_eth_capability".to_string(),
                     serde_json::Value::String(String::new()),
                 ),
             ]),
@@ -5556,11 +5654,23 @@ pub(super) fn gateway_eth_public_broadcast_plugin_peers_json(chain_id: u64) -> s
                     ),
                 ),
                 (
+                    "best_stage".to_string(),
+                    serde_json::Value::String(
+                        GatewayEthPluginSessionStage::Disconnected
+                            .as_str()
+                            .to_string(),
+                    ),
+                ),
+                (
                     "updated_ms".to_string(),
                     serde_json::Value::String("0x0".to_string()),
                 ),
                 (
                     "last_error".to_string(),
+                    serde_json::Value::String(String::new()),
+                ),
+                (
+                    "selected_eth_capability".to_string(),
                     serde_json::Value::String(String::new()),
                 ),
             ])
@@ -5570,12 +5680,25 @@ pub(super) fn gateway_eth_public_broadcast_plugin_peers_json(chain_id: u64) -> s
             serde_json::Value::String(stage.as_str().to_string()),
         );
         row.insert(
+            "best_stage".to_string(),
+            serde_json::Value::String(state.best_stage.as_str().to_string()),
+        );
+        row.insert(
             "updated_ms".to_string(),
             serde_json::Value::String(format!("0x{:x}", state.updated_ms)),
         );
         row.insert(
             "last_error".to_string(),
             serde_json::Value::String(last_error.unwrap_or_default()),
+        );
+        row.insert(
+            "selected_eth_capability".to_string(),
+            serde_json::Value::String(
+                state
+                    .selected_eth_capability
+                    .map(|version| format!("eth/{version}"))
+                    .unwrap_or_default(),
+            ),
         );
     }
 
@@ -7387,6 +7510,13 @@ fn gateway_eth_plugin_peer_session_rlpx_ingest(
         );
     }
 
+    bump_gateway_eth_plugin_session_stage(
+        chain_id,
+        endpoint,
+        GatewayEthPluginSessionStage::AuthSent,
+        checked_ms,
+    );
+    observe_gateway_eth_plugin_session_stage(chain_id, GatewayEthPluginSessionStage::AuthSent);
     let mut handshake =
         gateway_eth_plugin_peer_session_rlpx_handshake_initiator(endpoint, &mut stream)?;
     observe_eth_native_rlpx_auth(chain_id);
@@ -7423,6 +7553,13 @@ fn gateway_eth_plugin_peer_session_rlpx_ingest(
         hello_payload.as_slice(),
         Some(endpoint),
     )?;
+    bump_gateway_eth_plugin_session_stage(
+        chain_id,
+        endpoint,
+        GatewayEthPluginSessionStage::HelloSent,
+        now_unix_millis() as u64,
+    );
+    observe_gateway_eth_plugin_session_stage(chain_id, GatewayEthPluginSessionStage::HelloSent);
     if gateway_warn_enabled() {
         eprintln!(
             "gateway_warn: rlpx stage hello_sent endpoint={} hello_profile={} p2p_version={} name={} caps={} caps_geth_canonical={} listen_port={} id_len={} geth_ref_p2p_version=5 geth_ref_caps_order=name+version_asc",
@@ -7529,6 +7666,19 @@ fn gateway_eth_plugin_peer_session_rlpx_ingest(
         }
         return Err("rlpx_eth_capability_not_found".to_string());
     };
+    bump_gateway_eth_plugin_session_stage(
+        chain_id,
+        endpoint,
+        GatewayEthPluginSessionStage::HelloSeen,
+        now_unix_millis() as u64,
+    );
+    observe_gateway_eth_plugin_session_stage(chain_id, GatewayEthPluginSessionStage::HelloSeen);
+    set_gateway_eth_plugin_session_selected_eth_capability(
+        chain_id,
+        endpoint,
+        eth_version,
+        now_unix_millis() as u64,
+    );
     if gateway_warn_enabled() {
         eprintln!(
             "gateway_warn: rlpx stage hello_received endpoint={} remote_proto={} remote_name={} remote_caps={} remote_caps_geth_canonical={} remote_listen_port={} remote_id_len={}",
@@ -7616,6 +7766,13 @@ fn gateway_eth_plugin_peer_session_rlpx_ingest(
     }?;
     let status_chain_id =
         gateway_eth_rlpx_parse_eth_status_chain_id(remote_status.as_slice()).unwrap_or(chain_id);
+    bump_gateway_eth_plugin_session_stage(
+        chain_id,
+        endpoint,
+        GatewayEthPluginSessionStage::StatusSeen,
+        now_unix_millis() as u64,
+    );
+    observe_gateway_eth_plugin_session_stage(chain_id, GatewayEthPluginSessionStage::StatusSeen);
     if gateway_warn_enabled() {
         eprintln!(
             "gateway_warn: rlpx stage status_received endpoint={} remote_chain_id={} negotiated_eth={}",
@@ -7629,6 +7786,13 @@ fn gateway_eth_plugin_peer_session_rlpx_ingest(
         remote_status.as_slice(),
         Some(endpoint),
     )?;
+    bump_gateway_eth_plugin_session_stage(
+        chain_id,
+        endpoint,
+        GatewayEthPluginSessionStage::StatusSent,
+        now_unix_millis() as u64,
+    );
+    observe_gateway_eth_plugin_session_stage(chain_id, GatewayEthPluginSessionStage::StatusSent);
     if gateway_warn_enabled() {
         eprintln!(
             "gateway_warn: rlpx stage status_sent endpoint={} local_chain_id={}",
@@ -9605,6 +9769,19 @@ mod tests {
             now_unix_millis() as u64,
             None,
         );
+        set_gateway_eth_plugin_session_selected_eth_capability(
+            chain_id,
+            endpoint,
+            GATEWAY_ETH_PLUGIN_RLPX_ETH_PROTO_69,
+            now_unix_millis() as u64,
+        );
+        set_gateway_eth_plugin_session_stage(
+            chain_id,
+            endpoint,
+            GatewayEthPluginSessionStage::Disconnected,
+            now_unix_millis() as u64,
+            Some("session_closed_after_ready".to_string()),
+        );
         let worker_key = build_gateway_eth_plugin_rlpx_worker_key(chain_id, endpoint);
         update_gateway_eth_plugin_rlpx_worker_state(worker_key.as_str(), |state| {
             state.learning_score = 0x345;
@@ -9638,6 +9815,9 @@ mod tests {
             .find(|item| item["endpoint"].as_str() == Some(endpoint))
             .expect("target endpoint row should exist");
 
+        assert_eq!(row["stage"].as_str(), Some("disconnected"));
+        assert_eq!(row["best_stage"].as_str(), Some("ready"));
+        assert_eq!(row["selected_eth_capability"].as_str(), Some("eth/69"));
         assert_eq!(row["tier"].as_str(), Some("core"));
         assert_eq!(row["ready_count"].as_str(), Some("0x12"));
         assert_eq!(row["new_pooled_count"].as_str(), Some("0x0"));

@@ -185,6 +185,11 @@ def main() -> int:
     parser.add_argument("--timeout-sec", type=float, default=8.0)
     parser.add_argument("--verify-tls", action="store_true")
     parser.add_argument("--json", action="store_true")
+    parser.add_argument(
+        "--include-enr",
+        action="store_true",
+        help="include raw ENR records alongside decoded enode endpoints in JSON output",
+    )
     args = parser.parse_args()
 
     enrs = _collect_enrs(
@@ -195,6 +200,7 @@ def main() -> int:
         verify_tls=args.verify_tls,
     )
     out: List[str] = []
+    records: List[Dict[str, str]] = []
     seen = set()
     for enr in enrs:
         enode = _decode_enr_to_enode(enr)
@@ -205,9 +211,13 @@ def main() -> int:
             continue
         seen.add(key)
         out.append(enode)
+        records.append({"enr": enr, "enode": enode})
 
     if args.json:
-        print(json.dumps({"count": len(out), "enodes": out}, ensure_ascii=False))
+        payload = {"count": len(out), "enodes": out}
+        if args.include_enr:
+            payload["records"] = records
+        print(json.dumps(payload, ensure_ascii=False))
     else:
         for item in out:
             print(item)
