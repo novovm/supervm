@@ -1,6 +1,9 @@
 #![forbid(unsafe_code)]
 
-use crate::eth_fullnode::{default_eth_native_capabilities, EthWireVersion, SnapWireVersion};
+use crate::eth_fullnode::{
+    default_eth_native_capabilities, eth_wire_version_supported_by_native_v1, EthWireVersion,
+    SnapWireVersion,
+};
 use aes::cipher::{BlockEncrypt, KeyInit};
 use aes::{Aes128, Aes256};
 use ctr::cipher::{KeyIvInit, StreamCipher};
@@ -43,6 +46,8 @@ pub const ETH_RLPX_ETH_GET_BLOCK_HEADERS_MSG: u64 = 0x03;
 pub const ETH_RLPX_ETH_BLOCK_HEADERS_MSG: u64 = 0x04;
 pub const ETH_RLPX_ETH_GET_BLOCK_BODIES_MSG: u64 = 0x05;
 pub const ETH_RLPX_ETH_BLOCK_BODIES_MSG: u64 = 0x06;
+pub const ETH_RLPX_ETH_GET_BLOCK_ACCESS_LISTS_MSG: u64 = 0x12;
+pub const ETH_RLPX_ETH_BLOCK_ACCESS_LISTS_MSG: u64 = 0x13;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EthRlpxCapabilityV1 {
@@ -538,6 +543,7 @@ pub fn eth_rlpx_capabilities_for_hello_profile_v1(profile: &str) -> Vec<EthRlpxC
         .eth_versions
         .iter()
         .copied()
+        .filter(|version| eth_wire_version_supported_by_native_v1(*version))
         .filter(|version| {
             if profile.eq_ignore_ascii_case("geth") {
                 version.as_u8() >= 68
@@ -607,6 +613,17 @@ pub fn eth_rlpx_default_listen_port_v1() -> u64 {
     }
     let profile = eth_rlpx_hello_profile_v1();
     eth_rlpx_default_listen_port_for_profile_v1(profile.as_str())
+}
+
+#[must_use]
+pub fn eth_rlpx_is_unsupported_eth71_bal_message_v1(code: u64) -> bool {
+    if code < ETH_RLPX_BASE_PROTOCOL_OFFSET {
+        return false;
+    }
+    matches!(
+        code - ETH_RLPX_BASE_PROTOCOL_OFFSET,
+        ETH_RLPX_ETH_GET_BLOCK_ACCESS_LISTS_MSG | ETH_RLPX_ETH_BLOCK_ACCESS_LISTS_MSG
+    )
 }
 
 pub fn eth_rlpx_select_shared_eth_version_v1(
@@ -1903,6 +1920,14 @@ mod tests {
         assert!(caps
             .iter()
             .any(|cap| cap.name == "eth" && cap.version == 69));
+        assert!(caps.iter().all(|cap| {
+            cap.name != "eth"
+                || cap.version
+                    <= crate::eth_fullnode::ETH_NATIVE_MAX_SUPPORTED_ETH_PROTOCOL_VERSION as u64
+        }));
+        assert!(!caps
+            .iter()
+            .any(|cap| cap.name == "eth" && cap.version == 71));
         assert!(caps
             .iter()
             .any(|cap| cap.name == "snap" && cap.version == 1));
@@ -1914,6 +1939,9 @@ mod tests {
         assert!(caps
             .iter()
             .all(|cap| { cap.name != "eth" || (68..=70).contains(&(cap.version as u8)) }));
+        assert!(!caps
+            .iter()
+            .any(|cap| cap.name == "eth" && cap.version == 71));
         assert!(caps
             .iter()
             .any(|cap| cap.name == "eth" && cap.version == 69));
@@ -1922,6 +1950,22 @@ mod tests {
             "Geth/v1.14.12-stable/linux-amd64/go1.22.5"
         );
         assert_eq!(eth_rlpx_default_listen_port_for_profile_v1("geth"), 30303);
+    }
+
+    #[test]
+    fn eth71_bal_message_codes_are_classified_as_unsupported_safe() {
+        assert!(eth_rlpx_is_unsupported_eth71_bal_message_v1(
+            ETH_RLPX_BASE_PROTOCOL_OFFSET + ETH_RLPX_ETH_GET_BLOCK_ACCESS_LISTS_MSG
+        ));
+        assert!(eth_rlpx_is_unsupported_eth71_bal_message_v1(
+            ETH_RLPX_BASE_PROTOCOL_OFFSET + ETH_RLPX_ETH_BLOCK_ACCESS_LISTS_MSG
+        ));
+        assert!(!eth_rlpx_is_unsupported_eth71_bal_message_v1(
+            ETH_RLPX_BASE_PROTOCOL_OFFSET + ETH_RLPX_ETH_STATUS_MSG
+        ));
+        assert!(!eth_rlpx_is_unsupported_eth71_bal_message_v1(
+            ETH_RLPX_P2P_PING_MSG
+        ));
     }
 
     #[test]

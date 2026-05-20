@@ -11,19 +11,19 @@ use crate::{
     eth_rlpx_build_transactions_payload_v1, eth_rlpx_default_client_name_v1,
     eth_rlpx_default_listen_port_v1, eth_rlpx_disconnect_reason_name_v1,
     eth_rlpx_handshake_initiator_v1, eth_rlpx_hello_profile_v1,
-    eth_rlpx_parse_block_bodies_payload_v1, eth_rlpx_parse_block_headers_payload_v1,
-    eth_rlpx_parse_disconnect_reason_v1, eth_rlpx_parse_hello_payload_v1,
-    eth_rlpx_parse_status_payload_v1, eth_rlpx_parse_transactions_payload_v1,
-    eth_rlpx_read_wire_frame_v1, eth_rlpx_select_shared_eth_version_v1,
-    eth_rlpx_select_shared_snap_version_v1, eth_rlpx_write_wire_frame_v1,
-    get_network_runtime_native_body_snapshot_v1, get_network_runtime_native_head_snapshot_v1,
-    get_network_runtime_native_header_snapshot_v1, get_network_runtime_native_sync_status,
-    get_network_runtime_peer_heads_top_k, get_network_runtime_sync_status,
-    has_network_runtime_eth_peer_session, mark_network_runtime_eth_peer_session_ready_v1,
-    observe_eth_native_bodies_pull, observe_eth_native_bodies_response,
-    observe_eth_native_discovery, observe_eth_native_headers_pull,
-    observe_eth_native_headers_response, observe_eth_native_hello, observe_eth_native_rlpx_auth,
-    observe_eth_native_rlpx_auth_ack, observe_eth_native_snap_pull,
+    eth_rlpx_is_unsupported_eth71_bal_message_v1, eth_rlpx_parse_block_bodies_payload_v1,
+    eth_rlpx_parse_block_headers_payload_v1, eth_rlpx_parse_disconnect_reason_v1,
+    eth_rlpx_parse_hello_payload_v1, eth_rlpx_parse_status_payload_v1,
+    eth_rlpx_parse_transactions_payload_v1, eth_rlpx_read_wire_frame_v1,
+    eth_rlpx_select_shared_eth_version_v1, eth_rlpx_select_shared_snap_version_v1,
+    eth_rlpx_write_wire_frame_v1, get_network_runtime_native_body_snapshot_v1,
+    get_network_runtime_native_head_snapshot_v1, get_network_runtime_native_header_snapshot_v1,
+    get_network_runtime_native_sync_status, get_network_runtime_peer_heads_top_k,
+    get_network_runtime_sync_status, has_network_runtime_eth_peer_session,
+    mark_network_runtime_eth_peer_session_ready_v1, observe_eth_native_bodies_pull,
+    observe_eth_native_bodies_response, observe_eth_native_discovery,
+    observe_eth_native_headers_pull, observe_eth_native_headers_response, observe_eth_native_hello,
+    observe_eth_native_rlpx_auth, observe_eth_native_rlpx_auth_ack, observe_eth_native_snap_pull,
     observe_eth_native_snap_response, observe_eth_native_status,
     observe_network_runtime_eth_peer_body_success_v1,
     observe_network_runtime_eth_peer_connect_failure_v1,
@@ -1464,6 +1464,18 @@ fn drive_eth_fullnode_native_rlpx_peer_session_once_v1(
                             session,
                             &bodies,
                             &mut report,
+                        );
+                        continue;
+                    }
+                    if eth_rlpx_is_unsupported_eth71_bal_message_v1(code) {
+                        eprintln!(
+                            "network_warn: rlpx stage unsupported_eth71_bal_message chain_id={} peer={} endpoint={} code=0x{:x} negotiated_eth={} payload_len={}",
+                            chain_id,
+                            peer.0,
+                            session.endpoint.addr_hint,
+                            code,
+                            session._negotiated_eth_version,
+                            payload.len(),
                         );
                         continue;
                     }

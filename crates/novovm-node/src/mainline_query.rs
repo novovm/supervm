@@ -1232,8 +1232,16 @@ fn block_context_to_eth_json(
         "cumulativeGasUsed": format!("0x{:x}", cumulative_gas_used),
         "chainId": format!("0x{:x}", block_context.chain_id),
     });
+    if let Some(bal_hash) = block_context_bal_hash_hex_v1(block_context) {
+        out["balHash"] = Value::String(bal_hash);
+    }
     apply_native_block_lifecycle_metadata_v1(&mut out, native_lifecycle, "blockOwnership");
     out
+}
+
+fn block_context_bal_hash_hex_v1(_block_context: &EthFullnodeBlockContextV1) -> Option<String> {
+    // Do not synthesize balHash until real eth/71 BAL metadata is available.
+    None
 }
 
 fn block_context_matches_filter(
@@ -6098,6 +6106,10 @@ mod tests {
         assert_eq!(
             block_out["block"]["logsBloom"].as_str(),
             Some(expected_logs_bloom.as_str())
+        );
+        assert!(
+            block_out["block"].get("balHash").is_none(),
+            "balHash must not be synthesized before BAL metadata exists"
         );
         assert_eq!(
             block_out["block"]["transactions"].as_array().map(Vec::len),

@@ -794,7 +794,7 @@ pub(super) fn gateway_eth_block_by_number_json(
             .map(|tx| serde_json::Value::String(format!("0x{}", to_hex(&tx.tx_hash))))
             .collect()
     };
-    serde_json::json!({
+    let mut block = serde_json::json!({
         "number": format!("0x{:x}", block_number),
         "hash": format!("0x{}", to_hex(&block_hash)),
         "parentHash": format!("0x{}", to_hex(&parent_hash)),
@@ -816,11 +816,20 @@ pub(super) fn gateway_eth_block_by_number_json(
         "uncles": [],
         "baseFeePerGas": format!("0x{:x}", base_fee_per_gas),
         "chainId": format!("0x{:x}", chain_id),
-    })
+    });
+    if let Some(bal_hash) = gateway_eth_block_access_list_hash_hex(chain_id, block_number) {
+        block["balHash"] = serde_json::Value::String(bal_hash);
+    }
+    block
 }
 
 pub(super) fn gateway_eth_default_gas_price_wei(chain_id: u64) -> u64 {
     gateway_eth_chain_u64_env(chain_id, "NOVOVM_GATEWAY_ETH_DEFAULT_GAS_PRICE", 1)
+}
+
+fn gateway_eth_block_access_list_hash_hex(_chain_id: u64, _block_number: u64) -> Option<String> {
+    // Do not synthesize balHash until real eth/71 BAL metadata is available.
+    None
 }
 
 pub(super) fn gateway_eth_base_fee_per_gas_wei(chain_id: u64) -> u64 {

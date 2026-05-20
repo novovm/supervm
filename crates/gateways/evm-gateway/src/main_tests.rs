@@ -1690,6 +1690,10 @@ fn eth_query_block_by_hash_tx_by_block_index_and_logs_work() {
     assert_eq!(txs_full.len(), 2);
     assert_eq!(txs_full[0]["transactionIndex"].as_str(), Some("0x0"));
     assert_eq!(txs_full[1]["transactionIndex"].as_str(), Some("0x1"));
+    assert!(
+        block_by_hash.get("balHash").is_none(),
+        "balHash must not be synthesized before BAL metadata exists"
+    );
 
     let (tx_by_block_index, changed_tx_idx) = run_gateway_method(
         &mut router,
@@ -2272,6 +2276,39 @@ fn eth_query_block_by_hash_tx_by_block_index_and_logs_work() {
         Some(2)
     );
     assert_eq!(fee_history["reward"].as_array().map(|v| v.len()), Some(2));
+
+    let (base_fee, changed_base_fee) = run_gateway_method(
+        &mut router,
+        &mut eth_tx_index,
+        &mut evm_settlement_index_by_id,
+        &mut evm_settlement_index_by_tx,
+        &mut evm_pending_payout_by_settlement,
+        &mut ctx,
+        "eth_baseFee",
+        &serde_json::json!([]),
+    )
+    .expect("eth_baseFee should work");
+    assert!(!changed_base_fee);
+    assert_eq!(
+        base_fee.as_str(),
+        fee_history_base_fees
+            .last()
+            .and_then(|value| value.as_str())
+    );
+    let base_fee_params_err = run_gateway_method(
+        &mut router,
+        &mut eth_tx_index,
+        &mut evm_settlement_index_by_id,
+        &mut evm_settlement_index_by_tx,
+        &mut evm_pending_payout_by_settlement,
+        &mut ctx,
+        "eth_baseFee",
+        &serde_json::json!(["latest"]),
+    )
+    .expect_err("eth_baseFee should reject params");
+    assert!(base_fee_params_err
+        .to_string()
+        .contains("eth_baseFee does not accept parameters"));
 
     let (logs_all, changed_logs_all) = run_gateway_method(
         &mut router,
@@ -4981,6 +5018,106 @@ fn parse_eth_block_query_tag_prefers_first_block_scalar_over_index_scalar() {
         Some("pending")
     );
     assert_eq!(parse_eth_block_query_tx_index(&params), Some(0));
+}
+
+#[test]
+fn eth_base_fee_matches_fee_history_next_base_fee_and_rejects_params() {
+    let _guard = env_test_guard();
+    let backend = GatewayEthTxIndexStoreBackend::Memory;
+    let mut router = UnifiedAccountRouter::new();
+    let mut eth_tx_index = HashMap::new();
+    let mut evm_settlement_index_by_id = HashMap::new();
+    let mut evm_settlement_index_by_tx = HashMap::new();
+    let mut evm_pending_payout_by_settlement = HashMap::new();
+    let chain_id = 1u64;
+    let spool_dir = std::env::temp_dir().join(format!(
+        "novovm-gateway-eth-base-fee-{}-{}",
+        std::process::id(),
+        now_unix_millis()
+    ));
+    fs::create_dir_all(&spool_dir).expect("create spool dir");
+    let mut eth_filters = GatewayEthFilterState::default();
+    let mut ctx = GatewayMethodContext {
+        eth_tx_index_store: &backend,
+        eth_default_chain_id: chain_id,
+        spool_dir: &spool_dir,
+        overlay_node_id: "test-overlay".to_string(),
+        overlay_session_id: "test-session".to_string(),
+        overlay_route_id: "route:test".to_string(),
+        overlay_route_epoch: 0,
+        overlay_route_mask_bits: 40,
+        overlay_route_mode: "fast".to_string(),
+        overlay_route_region: "global".to_string(),
+        overlay_route_relay_bucket: 0,
+        overlay_route_relay_set_size: 1,
+        overlay_route_relay_round: 0,
+        overlay_route_relay_index: 0,
+        overlay_route_relay_id: "rly:global:0:0".to_string(),
+        overlay_route_strategy: "direct".to_string(),
+        overlay_route_hop_count: 1,
+        eth_filters: &mut eth_filters,
+    };
+
+    let (fee_history, changed_fee_history) = run_gateway_method(
+        &mut router,
+        &mut eth_tx_index,
+        &mut evm_settlement_index_by_id,
+        &mut evm_settlement_index_by_tx,
+        &mut evm_pending_payout_by_settlement,
+        &mut ctx,
+        "eth_feeHistory",
+        &serde_json::json!([1, "latest", []]),
+    )
+    .expect("eth_feeHistory baseline should work");
+    assert!(!changed_fee_history);
+    let expected_next_base_fee = fee_history["baseFeePerGas"]
+        .as_array()
+        .and_then(|items| items.last())
+        .and_then(|value| value.as_str())
+        .expect("feeHistory should include next base fee");
+
+    let (base_fee, changed_base_fee) = run_gateway_method(
+        &mut router,
+        &mut eth_tx_index,
+        &mut evm_settlement_index_by_id,
+        &mut evm_settlement_index_by_tx,
+        &mut evm_pending_payout_by_settlement,
+        &mut ctx,
+        "eth_baseFee",
+        &serde_json::Value::Null,
+    )
+    .expect("eth_baseFee without params should work");
+    assert!(!changed_base_fee);
+    let base_fee_hex = base_fee.as_str().expect("eth_baseFee should be a string");
+    assert_eq!(base_fee_hex, expected_next_base_fee);
+    assert!(base_fee_hex.starts_with("0x"));
+    assert!(base_fee_hex.len() >= 3);
+    assert!(
+        base_fee_hex.len() == 3 || !base_fee_hex[2..].starts_with('0'),
+        "JSON-RPC quantity must not have leading zeroes"
+    );
+    assert!(base_fee_hex[2..].chars().all(|ch| ch.is_ascii_hexdigit()));
+
+    let base_fee_params_err = run_gateway_method(
+        &mut router,
+        &mut eth_tx_index,
+        &mut evm_settlement_index_by_id,
+        &mut evm_settlement_index_by_tx,
+        &mut evm_pending_payout_by_settlement,
+        &mut ctx,
+        "eth_baseFee",
+        &serde_json::json!(["latest"]),
+    )
+    .expect_err("eth_baseFee should reject params");
+    assert!(base_fee_params_err
+        .to_string()
+        .contains("eth_baseFee does not accept parameters"));
+    assert_eq!(
+        gateway_error_code_for_method("eth_baseFee", &base_fee_params_err.to_string()),
+        -32602
+    );
+
+    let _ = fs::remove_dir_all(&spool_dir);
 }
 
 #[test]

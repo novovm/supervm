@@ -39,6 +39,8 @@ pub enum EthWireVersion {
     V70,
 }
 
+pub const ETH_NATIVE_MAX_SUPPORTED_ETH_PROTOCOL_VERSION: u8 = 70;
+
 impl EthWireVersion {
     #[must_use]
     pub fn as_u8(self) -> u8 {
@@ -73,6 +75,11 @@ impl EthWireVersion {
             _ => None,
         }
     }
+}
+
+#[must_use]
+pub fn eth_wire_version_supported_by_native_v1(version: EthWireVersion) -> bool {
+    version.as_u8() <= ETH_NATIVE_MAX_SUPPORTED_ETH_PROTOCOL_VERSION
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -1056,7 +1063,10 @@ pub fn default_eth_native_capabilities() -> EthNativeCapabilities {
             EthWireVersion::V68,
             EthWireVersion::V67,
             EthWireVersion::V66,
-        ],
+        ]
+        .into_iter()
+        .filter(|version| eth_wire_version_supported_by_native_v1(*version))
+        .collect(),
         snap_versions: vec![SnapWireVersion::V1],
         tx_broadcast_enabled: true,
         block_propagation_enabled: true,
