@@ -131,11 +131,9 @@ This does not mean the NOVOVM EVM plugin lacks RLPx Hello/Status implementation,
 
 The result should be tracked as a public RLPx probing / peer-selection / network-egress / bootnode-vs-session-peer diagnostic item, not as a regression in `eth_baseFee`, `balHash`, BAL unsupported-safe handling, or the EVM plugin route.
 
-Uniswap-named scripts are MEV / txpool diagnostic tooling present in the repository.
+External observation-window scripts are not part of SUPERVM / NOVOVM EVM plugin acceptance criteria.
 
-They are not part of SUPERVM / NOVOVM EVM plugin acceptance criteria.
-
-No claim is made for that observation window, and the previous invocation is not retained as a SUPERVM / NOVOVM EVM acceptance result.
+No claim is made for those observation windows, and previous invocations are not retained as SUPERVM / NOVOVM EVM acceptance results.
 
 ## Not Claimed
 
@@ -143,7 +141,7 @@ No claim is made for that observation window, and the previous invocation is not
 - Real `balHash` metadata source.
 - Public RLPx session readiness.
 - Old UnifiedAccountRouter RocksDB state migration.
-- MEV / Uniswap observation result.
+- External observation-window result.
 - New EVM plugin architecture.
 
 ## Next Independent Tasks
@@ -152,7 +150,7 @@ These are explicitly not part of this merge candidate:
 
 - RLPx public canary layered diagnosis.
 - UnifiedAccountRouter RocksDB migration / isolation hardening.
-- Any MEV / Uniswap observation work.
+- External observation-window follow-up work.
 
 ## Diff Audit
 
@@ -181,7 +179,7 @@ These are explicitly not part of this merge candidate:
 - No `evm_baseFee` / `evm_base_fee` alias exists under `crates`.
 - No full `eth/71` / BAL implementation is claimed.
 - No UA RocksDB migration code is included.
-- No Uniswap / MEV observation is treated as SUPERVM / NOVOVM EVM acceptance.
+- No external observation-window result is treated as SUPERVM / NOVOVM EVM acceptance.
 
 ## Merge Note
 
@@ -203,7 +201,7 @@ Not claimed:
 - Real `balHash` metadata source.
 - Public RLPx session readiness.
 - Old UnifiedAccountRouter RocksDB state migration.
-- MEV / Uniswap observation result.
+- External observation-window result.
 - New EVM plugin architecture.
 
 `crates/novovm-node/src/main.rs` is intentionally left unchanged because it is not the authoritative `novovm-node` binary entrypoint in the current Cargo layout.
