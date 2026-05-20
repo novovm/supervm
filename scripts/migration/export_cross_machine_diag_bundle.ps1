@@ -2,11 +2,8 @@ param(
     [string]$RepoRoot = "",
     [string]$GatewayUrl = "http://127.0.0.1:9899",
     [UInt64]$ChainId = 1,
-    [UInt64]$ObservationMinutes = 1,
-    [UInt64]$WatchSeconds = 45,
     [string]$StartupCommand = "",
     [string]$NetworkNote = "",
-    [switch]$SkipObservation,
     [string]$OutputRoot = "artifacts/migration/cross-machine-diag"
 )
 
@@ -57,14 +54,6 @@ function Write-Section {
 
 $RepoRoot = Resolve-RootPath -Root $RepoRoot
 Set-Location $RepoRoot
-
-$psExe = if (Get-Command pwsh -ErrorAction SilentlyContinue) {
-    "pwsh"
-} elseif (Get-Command powershell -ErrorAction SilentlyContinue) {
-    "powershell"
-} else {
-    throw "pwsh/powershell not found"
-}
 
 $stamp = Get-Date -Format "yyyyMMdd-HHmmss"
 $outputRootAbs = Resolve-FullPath -Root $RepoRoot -Value $OutputRoot
@@ -144,53 +133,6 @@ foreach ($call in $rpcCalls) {
 }
 $rpcRecords | ConvertTo-Json -Depth 64 | Set-Content -Encoding UTF8 -Path (Join-Path $bundleDir "rpc-snapshot.json")
 
-$obsStdout = Join-Path $bundleDir "observation.stdout.log"
-$obsStderr = Join-Path $bundleDir "observation.stderr.log"
-$watchStdout = Join-Path $bundleDir "watch.stdout.log"
-$watchStderr = Join-Path $bundleDir "watch.stderr.log"
-$obsSummary = Join-Path $bundleDir "evm-uniswap-observation-window-summary.json"
-
-if (-not $SkipObservation) {
-    $obsScript = Join-Path $RepoRoot "scripts/migration/run_evm_uniswap_observation_window.ps1"
-    if (Test-Path $obsScript) {
-        $obsArgs = @(
-            "-ExecutionPolicy", "Bypass",
-            "-File", $obsScript,
-            "-SkipBuild",
-            "-AttachExistingGateway",
-            "-ChainId", ([string][UInt64]$ChainId),
-            "-DurationMinutes", ([string][UInt64]$ObservationMinutes),
-            "-IntervalSeconds", "5",
-            "-WarmupSeconds", "6",
-            "-SummaryOut", $obsSummary
-        )
-        $obsProc = Start-Process -FilePath $psExe -ArgumentList $obsArgs -WorkingDirectory $RepoRoot -RedirectStandardOutput $obsStdout -RedirectStandardError $obsStderr -PassThru
-        Wait-Process -Id $obsProc.Id
-    }
-
-    $watchScript = Join-Path $RepoRoot "scripts/migration/watch_evm_uniswap_window.ps1"
-    if (Test-Path $watchScript) {
-        $watchArgs = @(
-            "-ExecutionPolicy", "Bypass",
-            "-File", $watchScript,
-            "-GatewayUrl", $GatewayUrl,
-            "-ChainId", ([string][UInt64]$ChainId),
-            "-IntervalMs", "1000",
-            "-SampleMax", "5"
-        )
-        $watchProc = Start-Process -FilePath $psExe -ArgumentList $watchArgs -WorkingDirectory $RepoRoot -RedirectStandardOutput $watchStdout -RedirectStandardError $watchStderr -PassThru
-        Start-Sleep -Seconds ([int][Math]::Max(10, [int]$WatchSeconds))
-        if (-not $watchProc.HasExited) {
-            Stop-Process -Id $watchProc.Id -Force
-        }
-    }
-}
-
-$summaryRoot = Join-Path $RepoRoot "artifacts/migration/evm-uniswap-observation-window-summary.json"
-if ((-not (Test-Path $obsSummary)) -and (Test-Path $summaryRoot)) {
-    Copy-Item -Path $summaryRoot -Destination $obsSummary -Force
-}
-
 $gatewayLogCandidates = @(
     (Join-Path $RepoRoot "artifacts/migration/gateway.stdout.log"),
     (Join-Path $RepoRoot "artifacts/migration/gateway.stderr.log"),
@@ -201,20 +143,6 @@ foreach ($log in $gatewayLogCandidates) {
     if (Test-Path $log) {
         Copy-Item -Path $log -Destination (Join-Path $bundleDir ([System.IO.Path]::GetFileName($log))) -Force
     }
-}
-
-$keyLines = New-Object System.Collections.ArrayList
-if (Test-Path $obsStdout) {
-    $lines = Get-Content -Path $obsStdout
-    foreach ($line in $lines) {
-        if ($line -match "pending=(?<pending>\d+)" -or $line -match "uniV2=(?<v2>\d+)" -or $line -match "uniV3=(?<v3>\d+)") {
-            [void]$keyLines.Add($line)
-        }
-    }
-}
-if ($keyLines.Count -gt 0) {
-    $firstSignals = @($keyLines | Select-Object -First 5)
-    Set-Content -Path (Join-Path $bundleDir "key-signal-lines.txt") -Value $firstSignals
 }
 
 if (-not [string]::IsNullOrWhiteSpace($NetworkNote)) {

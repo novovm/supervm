@@ -239,8 +239,7 @@ function Get-AreaWatchPaths {
         "block_building" {
             return @(
                 "crates/novovm-adapter-novovm/src/lib.rs",
-                "scripts/migration/tmp_run_step2_execproof.ps1",
-                "scripts/migration/run_evm_full_lifecycle_autopilot.ps1"
+                "scripts/migration/tmp_run_step2_execproof.ps1"
             )
         }
         "state_storage" {
@@ -268,12 +267,12 @@ function Get-AreaChecks {
         }
         "eth_subprotocol" {
             return @(
-                "powershell -ExecutionPolicy Bypass -File scripts/migration/run_evm_uniswap_observation_window.ps1 -SkipBuild -EnablePluginMempoolIngest -DurationMinutes 2 -IntervalSeconds 5 -WarmupSeconds 6"
+                "powershell -ExecutionPolicy Bypass -File scripts/migration/run_evm_eth_plugin_session_canary.ps1 -SkipBuild -DurationSeconds 60"
             )
         }
         "txpool_semantics" {
             return @(
-                "powershell -ExecutionPolicy Bypass -File scripts/migration/run_evm_uniswap_observation_window.ps1 -SkipBuild -EnablePluginMempoolIngest -DurationMinutes 2 -IntervalSeconds 5 -WarmupSeconds 6"
+                "powershell -ExecutionPolicy Bypass -File scripts/migration/run_evm_eth_plugin_session_canary.ps1 -SkipBuild -DurationSeconds 60"
             )
         }
         "eth_runtime_sync" {
@@ -283,12 +282,12 @@ function Get-AreaChecks {
         }
         "rpc_api_surface" {
             return @(
-                "powershell -ExecutionPolicy Bypass -File scripts/migration/run_evm_full_lifecycle_autopilot.ps1 -SkipBuild -AutopilotDurationMinutes 1 -ExecproofDurationMinutes 1"
+                "powershell -ExecutionPolicy Bypass -File scripts/migration/tmp_run_step2_execproof.ps1 -SkipBuild -DurationMinutes 1"
             )
         }
         "block_building" {
             return @(
-                "powershell -ExecutionPolicy Bypass -File scripts/migration/run_evm_full_lifecycle_autopilot.ps1 -SkipBuild -AutopilotDurationMinutes 1 -ExecproofDurationMinutes 1"
+                "powershell -ExecutionPolicy Bypass -File scripts/migration/tmp_run_step2_execproof.ps1 -SkipBuild -DurationMinutes 1"
             )
         }
         "state_storage" {

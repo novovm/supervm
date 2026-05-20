@@ -201,46 +201,6 @@ fn gateway_eth_native_decode_single_raw_tx(
     ))
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum GatewayEthSwapKind {
-    V2,
-    V3,
-}
-
-fn gateway_eth_plugin_is_uniswap_v2_swap_selector(selector: [u8; 4]) -> bool {
-    GATEWAY_ETH_UNISWAP_V2_SWAP_SELECTORS.contains(&selector)
-}
-
-fn gateway_eth_plugin_is_uniswap_v3_swap_selector(selector: [u8; 4]) -> bool {
-    GATEWAY_ETH_UNISWAP_V3_SWAP_SELECTORS.contains(&selector)
-}
-
-fn gateway_eth_plugin_detect_swap_kind_from_raw_tx(
-    announced_chain_id: u64,
-    raw_tx: &[u8],
-) -> Option<GatewayEthSwapKind> {
-    let tx = gateway_eth_native_decode_single_raw_tx(announced_chain_id, raw_tx).ok()?;
-    let to = tx.to.as_ref()?;
-    if to.len() != 20 || tx.data.len() < 4 {
-        return None;
-    }
-    let selector = [tx.data[0], tx.data[1], tx.data[2], tx.data[3]];
-    if to.as_slice() == GATEWAY_ETH_UNISWAP_V2_ROUTER {
-        if gateway_eth_plugin_is_uniswap_v2_swap_selector(selector) || !tx.data.is_empty() {
-            return Some(GatewayEthSwapKind::V2);
-        }
-        return None;
-    }
-    if (to.as_slice() == GATEWAY_ETH_UNISWAP_V3_ROUTER
-        || to.as_slice() == GATEWAY_ETH_UNISWAP_V3_ROUTER_02
-        || to.as_slice() == GATEWAY_ETH_UNISWAP_UNIVERSAL_ROUTER)
-        && (gateway_eth_plugin_is_uniswap_v3_swap_selector(selector) || !tx.data.is_empty())
-    {
-        return Some(GatewayEthSwapKind::V3);
-    }
-    None
-}
-
 fn gateway_eth_native_extract_raw_txs_from_transactions_rlp(
     payload: &[u8],
 ) -> Result<Vec<Vec<u8>>, String> {
@@ -586,9 +546,6 @@ const GATEWAY_ETH_PLUGIN_RLPX_ACTIVE_RECENT_READY_WINDOW_MS_DEFAULT: u64 = 5 * 6
 const GATEWAY_ETH_PLUGIN_RLPX_CORE_LOCK_MS_DEFAULT: u64 = 10 * 60 * 1_000;
 const GATEWAY_ETH_PLUGIN_RLPX_RECENT_NEW_POOLED_HASH_WINDOW_MS_DEFAULT: u64 = 10 * 60 * 1_000;
 const GATEWAY_ETH_PLUGIN_RLPX_RECENT_NEW_POOLED_HASH_MIN_DEFAULT: u64 = 64;
-const GATEWAY_ETH_PLUGIN_RLPX_SWAP_PRIORITY_LATENCY_TARGET_MS_DEFAULT: u64 = 1_000;
-const GATEWAY_ETH_PLUGIN_RLPX_SWAP_PRIORITY_LATENCY_TARGET_MS_MIN: u64 = 50;
-const GATEWAY_ETH_PLUGIN_RLPX_SWAP_PRIORITY_LATENCY_TARGET_MS_MAX: u64 = 30_000;
 const GATEWAY_ETH_PLUGIN_RLPX_PRIORITY_BUDGET_DEFAULT: usize = 0;
 const GATEWAY_ETH_PLUGIN_RLPX_PRIORITY_BUDGET_HARD_MAX: usize = 64;
 const GATEWAY_ETH_PLUGIN_RLPX_PRIORITY_AUTO_POOL_SIZE_DEFAULT: usize = 0;
@@ -620,43 +577,6 @@ const GATEWAY_ETH_PLUGIN_MEMPOOL_INGEST_POLL_MS_MIN: u64 = 200;
 const GATEWAY_ETH_PLUGIN_MEMPOOL_INGEST_POLL_MS_MAX: u64 = 60_000;
 const GATEWAY_ETH_PLUGIN_MEMPOOL_INGEST_STALE_TTL_MS_DEFAULT: u64 = 30 * 60 * 1_000;
 const GATEWAY_ETH_PLUGIN_MEMPOOL_INGEST_STALE_TTL_MS_MAX: u64 = 24 * 60 * 60 * 1_000;
-const GATEWAY_ETH_UNISWAP_V2_ROUTER: [u8; 20] = [
-    0x7a, 0x25, 0x0d, 0x56, 0x30, 0xb4, 0xcf, 0x53, 0x97, 0x39, 0xdf, 0x2c, 0x5d, 0xac, 0xb4, 0xc6,
-    0x59, 0xf2, 0x48, 0x8d,
-];
-const GATEWAY_ETH_UNISWAP_V3_ROUTER: [u8; 20] = [
-    0xe5, 0x92, 0x42, 0x7a, 0x0a, 0xec, 0xe9, 0x2d, 0xe3, 0xed, 0xee, 0x1f, 0x18, 0xe0, 0x15, 0x7c,
-    0x05, 0x86, 0x15, 0x64,
-];
-const GATEWAY_ETH_UNISWAP_V3_ROUTER_02: [u8; 20] = [
-    0x68, 0xb3, 0x46, 0x58, 0x33, 0xfb, 0x72, 0xa7, 0x0e, 0xcd, 0xf4, 0x85, 0xe0, 0xe4, 0xc7, 0xbd,
-    0x86, 0x65, 0xfc, 0x45,
-];
-const GATEWAY_ETH_UNISWAP_UNIVERSAL_ROUTER: [u8; 20] = [
-    0xef, 0x1c, 0x6e, 0x67, 0x70, 0x3c, 0x7b, 0xd7, 0x10, 0x7e, 0xed, 0x83, 0x03, 0xfb, 0xe6, 0xec,
-    0x25, 0x54, 0xbf, 0x6b,
-];
-const GATEWAY_ETH_UNISWAP_V2_SWAP_SELECTORS: [[u8; 4]; 9] = [
-    [0x38, 0xed, 0x17, 0x39], // swapExactTokensForTokens
-    [0x88, 0x03, 0xdb, 0xee], // swapTokensForExactTokens
-    [0x7f, 0xf3, 0x6a, 0xb5], // swapExactETHForTokens
-    [0x4a, 0x25, 0xd9, 0x4a], // swapTokensForExactETH
-    [0x18, 0xcb, 0xaf, 0xe5], // swapExactTokensForETH
-    [0xfb, 0x3b, 0xdb, 0x41], // swapETHForExactTokens
-    [0x5c, 0x11, 0xd7, 0x95], // supporting fee on transfer variant
-    [0x79, 0x1a, 0xc9, 0x47], // supporting fee on transfer variant
-    [0xb6, 0xf9, 0xde, 0x95], // supporting fee on transfer variant
-];
-const GATEWAY_ETH_UNISWAP_V3_SWAP_SELECTORS: [[u8; 4]; 7] = [
-    [0x41, 0x4b, 0xf3, 0x89], // exactInputSingle
-    [0xc0, 0x4b, 0x8d, 0x59], // exactInput
-    [0xdb, 0x3e, 0x21, 0x98], // exactOutputSingle
-    [0xf2, 0x8c, 0x04, 0x98], // exactOutput
-    [0x35, 0x93, 0x56, 0x4c], // universal router execute
-    [0x24, 0x85, 0x6b, 0xc3], // universal router execute(bytes,bytes[])
-    [0xac, 0x96, 0x50, 0xd8], // multicall
-];
-
 #[derive(Clone, Default)]
 struct GatewayEthPluginMempoolState {
     running: bool,
@@ -706,26 +626,16 @@ struct GatewayEthPluginRlpxWorkerState {
     total_txs_msgs: u64,
     first_seen_hash_count: u64,
     first_seen_tx_count: u64,
-    total_swap_hits: u64,
-    total_swap_v2_hits: u64,
-    total_swap_v3_hits: u64,
-    total_unique_swap_hits: u64,
     last_new_pooled_ms: u64,
-    last_swap_ms: u64,
     recent_new_pooled_hashes_total: u64,
     recent_new_pooled_hashes_window_start_ms: u64,
     recent_unique_new_pooled_hashes_total: u64,
     recent_unique_pooled_txs_total: u64,
     recent_duplicate_new_pooled_hashes_total: u64,
     recent_duplicate_pooled_txs_total: u64,
-    recent_swap_hits_total: u64,
-    recent_unique_swap_hits_total: u64,
-    recent_swap_window_start_ms: u64,
     recent_dedup_window_start_ms: u64,
     total_first_gossip_latency_ms: u64,
     first_gossip_latency_samples: u64,
-    total_first_swap_latency_ms: u64,
-    first_swap_latency_samples: u64,
     last_first_post_ready_code: u64,
     learning_score: u64,
     last_sample_score: u64,
@@ -767,12 +677,7 @@ struct GatewayEthPluginRlpxSessionMetrics {
     pooled_txs_imported: u64,
     first_seen_hashes: u64,
     first_seen_txs: u64,
-    swap_hits: u64,
-    swap_v2_hits: u64,
-    swap_v3_hits: u64,
-    unique_swap_hits: u64,
     first_gossip_latency_ms: u64,
-    first_swap_latency_ms: u64,
     txs_msgs: u64,
 }
 
@@ -802,26 +707,16 @@ struct GatewayEthPluginRlpxWorkerStatePersisted {
     total_txs_msgs: u64,
     first_seen_hash_count: u64,
     first_seen_tx_count: u64,
-    total_swap_hits: u64,
-    total_swap_v2_hits: u64,
-    total_swap_v3_hits: u64,
-    total_unique_swap_hits: u64,
     last_new_pooled_ms: u64,
-    last_swap_ms: u64,
     recent_new_pooled_hashes_total: u64,
     recent_new_pooled_hashes_window_start_ms: u64,
     recent_unique_new_pooled_hashes_total: u64,
     recent_unique_pooled_txs_total: u64,
     recent_duplicate_new_pooled_hashes_total: u64,
     recent_duplicate_pooled_txs_total: u64,
-    recent_swap_hits_total: u64,
-    recent_unique_swap_hits_total: u64,
-    recent_swap_window_start_ms: u64,
     recent_dedup_window_start_ms: u64,
     total_first_gossip_latency_ms: u64,
     first_gossip_latency_samples: u64,
-    total_first_swap_latency_ms: u64,
-    first_swap_latency_samples: u64,
     last_first_post_ready_code: u64,
     learning_score: u64,
     last_sample_score: u64,
@@ -853,12 +748,7 @@ impl GatewayEthPluginRlpxWorkerStatePersisted {
             total_txs_msgs: state.total_txs_msgs,
             first_seen_hash_count: state.first_seen_hash_count,
             first_seen_tx_count: state.first_seen_tx_count,
-            total_swap_hits: state.total_swap_hits,
-            total_swap_v2_hits: state.total_swap_v2_hits,
-            total_swap_v3_hits: state.total_swap_v3_hits,
-            total_unique_swap_hits: state.total_unique_swap_hits,
             last_new_pooled_ms: state.last_new_pooled_ms,
-            last_swap_ms: state.last_swap_ms,
             recent_new_pooled_hashes_total: state.recent_new_pooled_hashes_total,
             recent_new_pooled_hashes_window_start_ms: state
                 .recent_new_pooled_hashes_window_start_ms,
@@ -867,14 +757,9 @@ impl GatewayEthPluginRlpxWorkerStatePersisted {
             recent_duplicate_new_pooled_hashes_total: state
                 .recent_duplicate_new_pooled_hashes_total,
             recent_duplicate_pooled_txs_total: state.recent_duplicate_pooled_txs_total,
-            recent_swap_hits_total: state.recent_swap_hits_total,
-            recent_unique_swap_hits_total: state.recent_unique_swap_hits_total,
-            recent_swap_window_start_ms: state.recent_swap_window_start_ms,
             recent_dedup_window_start_ms: state.recent_dedup_window_start_ms,
             total_first_gossip_latency_ms: state.total_first_gossip_latency_ms,
             first_gossip_latency_samples: state.first_gossip_latency_samples,
-            total_first_swap_latency_ms: state.total_first_swap_latency_ms,
-            first_swap_latency_samples: state.first_swap_latency_samples,
             last_first_post_ready_code: state.last_first_post_ready_code,
             learning_score: state.learning_score,
             last_sample_score: state.last_sample_score,
@@ -912,26 +797,16 @@ impl GatewayEthPluginRlpxWorkerStatePersisted {
             total_txs_msgs: self.total_txs_msgs,
             first_seen_hash_count: self.first_seen_hash_count,
             first_seen_tx_count: self.first_seen_tx_count,
-            total_swap_hits: self.total_swap_hits,
-            total_swap_v2_hits: self.total_swap_v2_hits,
-            total_swap_v3_hits: self.total_swap_v3_hits,
-            total_unique_swap_hits: self.total_unique_swap_hits,
             last_new_pooled_ms: self.last_new_pooled_ms,
-            last_swap_ms: self.last_swap_ms,
             recent_new_pooled_hashes_total: self.recent_new_pooled_hashes_total,
             recent_new_pooled_hashes_window_start_ms: self.recent_new_pooled_hashes_window_start_ms,
             recent_unique_new_pooled_hashes_total: self.recent_unique_new_pooled_hashes_total,
             recent_unique_pooled_txs_total: self.recent_unique_pooled_txs_total,
             recent_duplicate_new_pooled_hashes_total: self.recent_duplicate_new_pooled_hashes_total,
             recent_duplicate_pooled_txs_total: self.recent_duplicate_pooled_txs_total,
-            recent_swap_hits_total: self.recent_swap_hits_total,
-            recent_unique_swap_hits_total: self.recent_unique_swap_hits_total,
-            recent_swap_window_start_ms: self.recent_swap_window_start_ms,
             recent_dedup_window_start_ms: self.recent_dedup_window_start_ms,
             total_first_gossip_latency_ms: self.total_first_gossip_latency_ms,
             first_gossip_latency_samples: self.first_gossip_latency_samples,
-            total_first_swap_latency_ms: self.total_first_swap_latency_ms,
-            first_swap_latency_samples: self.first_swap_latency_samples,
             last_first_post_ready_code: self.last_first_post_ready_code,
             learning_score: self.learning_score,
             last_sample_score: self.last_sample_score,
@@ -2461,34 +2336,6 @@ fn gateway_eth_plugin_mempool_ingest_rlpx_recent_new_hash_min(chain_id: u64) -> 
     .clamp(1, 1_000_000)
 }
 
-fn gateway_eth_plugin_mempool_ingest_rlpx_swap_priority_enabled(chain_id: u64) -> bool {
-    gateway_eth_public_broadcast_chain_string_env(
-        chain_id,
-        "NOVOVM_GATEWAY_ETH_PLUGIN_MEMPOOL_INGEST_RLPX_SWAP_PRIORITY_ENABLE",
-    )
-    .and_then(|raw| {
-        let normalized = raw.trim().to_ascii_lowercase();
-        match normalized.as_str() {
-            "1" | "true" | "on" | "yes" | "swap" | "swap_only" => Some(true),
-            "0" | "false" | "off" | "no" | "disable" | "disabled" => Some(false),
-            _ => None,
-        }
-    })
-    .unwrap_or(false)
-}
-
-fn gateway_eth_plugin_mempool_ingest_rlpx_swap_priority_latency_target_ms(chain_id: u64) -> u64 {
-    gateway_eth_public_broadcast_chain_u64_env(
-        chain_id,
-        "NOVOVM_GATEWAY_ETH_PLUGIN_MEMPOOL_INGEST_RLPX_SWAP_PRIORITY_LATENCY_TARGET_MS",
-        GATEWAY_ETH_PLUGIN_RLPX_SWAP_PRIORITY_LATENCY_TARGET_MS_DEFAULT,
-    )
-    .clamp(
-        GATEWAY_ETH_PLUGIN_RLPX_SWAP_PRIORITY_LATENCY_TARGET_MS_MIN,
-        GATEWAY_ETH_PLUGIN_RLPX_SWAP_PRIORITY_LATENCY_TARGET_MS_MAX,
-    )
-}
-
 fn gateway_eth_plugin_mempool_ingest_rlpx_priority_budget(
     chain_id: u64,
     max_peers: usize,
@@ -2710,10 +2557,6 @@ fn gateway_eth_plugin_rlpx_learning_sample_score(
         .saturating_add(metrics.pooled_msgs.saturating_mul(24))
         .saturating_add(metrics.pooled_txs_received.saturating_mul(6))
         .saturating_add(metrics.pooled_txs_imported.saturating_mul(10))
-        .saturating_add(metrics.swap_hits.saturating_mul(20))
-        .saturating_add(metrics.unique_swap_hits.saturating_mul(36))
-        .saturating_add(metrics.swap_v2_hits.saturating_mul(12))
-        .saturating_add(metrics.swap_v3_hits.saturating_mul(16))
         .saturating_add(metrics.txs_msgs.saturating_mul(16))
         .min(1_000_000u64)
 }
@@ -2764,27 +2607,11 @@ fn gateway_eth_plugin_rlpx_update_learning_state(
     state.first_seen_tx_count = state
         .first_seen_tx_count
         .saturating_add(metrics.first_seen_txs);
-    state.total_swap_hits = state.total_swap_hits.saturating_add(metrics.swap_hits);
-    state.total_swap_v2_hits = state
-        .total_swap_v2_hits
-        .saturating_add(metrics.swap_v2_hits);
-    state.total_swap_v3_hits = state
-        .total_swap_v3_hits
-        .saturating_add(metrics.swap_v3_hits);
-    state.total_unique_swap_hits = state
-        .total_unique_swap_hits
-        .saturating_add(metrics.unique_swap_hits);
     if metrics.first_gossip_latency_ms > 0 {
         state.total_first_gossip_latency_ms = state
             .total_first_gossip_latency_ms
             .saturating_add(metrics.first_gossip_latency_ms);
         state.first_gossip_latency_samples = state.first_gossip_latency_samples.saturating_add(1);
-    }
-    if metrics.first_swap_latency_ms > 0 {
-        state.total_first_swap_latency_ms = state
-            .total_first_swap_latency_ms
-            .saturating_add(metrics.first_swap_latency_ms);
-        state.first_swap_latency_samples = state.first_swap_latency_samples.saturating_add(1);
     }
     if let Some(code) = metrics.first_post_ready_code {
         state.last_first_post_ready_code = code;
@@ -2959,31 +2786,6 @@ fn gateway_eth_plugin_rlpx_update_recent_dedup_window(
         .saturating_add(delta_duplicate_txs);
 }
 
-fn gateway_eth_plugin_rlpx_update_recent_swap_window(
-    chain_id: u64,
-    state: &mut GatewayEthPluginRlpxWorkerState,
-    now_ms: u64,
-    delta_swap_hits: u64,
-    delta_unique_swap_hits: u64,
-) {
-    if delta_swap_hits == 0 && delta_unique_swap_hits == 0 {
-        return;
-    }
-    let window_ms = gateway_eth_plugin_mempool_ingest_rlpx_recent_new_hash_window_ms(chain_id);
-    if state.recent_swap_window_start_ms == 0
-        || now_ms.saturating_sub(state.recent_swap_window_start_ms) > window_ms
-    {
-        state.recent_swap_window_start_ms = now_ms;
-        state.recent_swap_hits_total = delta_swap_hits;
-        state.recent_unique_swap_hits_total = delta_unique_swap_hits;
-        return;
-    }
-    state.recent_swap_hits_total = state.recent_swap_hits_total.saturating_add(delta_swap_hits);
-    state.recent_unique_swap_hits_total = state
-        .recent_unique_swap_hits_total
-        .saturating_add(delta_unique_swap_hits);
-}
-
 fn gateway_eth_plugin_rlpx_apply_live_metrics_delta(
     chain_id: u64,
     worker_key: &str,
@@ -3024,18 +2826,9 @@ fn gateway_eth_plugin_rlpx_apply_live_metrics_delta(
     let delta_first_seen_txs = metrics
         .first_seen_txs
         .saturating_sub(applied.first_seen_txs);
-    let delta_swap_hits = metrics.swap_hits.saturating_sub(applied.swap_hits);
-    let delta_swap_v2_hits = metrics.swap_v2_hits.saturating_sub(applied.swap_v2_hits);
-    let delta_swap_v3_hits = metrics.swap_v3_hits.saturating_sub(applied.swap_v3_hits);
-    let delta_unique_swap_hits = metrics
-        .unique_swap_hits
-        .saturating_sub(applied.unique_swap_hits);
     let delta_first_gossip_latency_ms = metrics
         .first_gossip_latency_ms
         .saturating_sub(applied.first_gossip_latency_ms);
-    let delta_first_swap_latency_ms = metrics
-        .first_swap_latency_ms
-        .saturating_sub(applied.first_swap_latency_ms);
     let delta_txs_msgs = metrics.txs_msgs.saturating_sub(applied.txs_msgs);
     let has_delta = delta_new_pooled_msgs > 0
         || delta_new_pooled_hashes > 0
@@ -3049,12 +2842,7 @@ fn gateway_eth_plugin_rlpx_apply_live_metrics_delta(
         || delta_pooled_txs_imported > 0
         || delta_first_seen_hashes > 0
         || delta_first_seen_txs > 0
-        || delta_swap_hits > 0
-        || delta_swap_v2_hits > 0
-        || delta_swap_v3_hits > 0
-        || delta_unique_swap_hits > 0
         || delta_first_gossip_latency_ms > 0
-        || delta_first_swap_latency_ms > 0
         || delta_txs_msgs > 0
         || metrics.first_post_ready_code.is_some();
     if !has_delta {
@@ -3096,18 +2884,9 @@ fn gateway_eth_plugin_rlpx_apply_live_metrics_delta(
         state.first_seen_tx_count = state
             .first_seen_tx_count
             .saturating_add(delta_first_seen_txs);
-        state.total_swap_hits = state.total_swap_hits.saturating_add(delta_swap_hits);
-        state.total_swap_v2_hits = state.total_swap_v2_hits.saturating_add(delta_swap_v2_hits);
-        state.total_swap_v3_hits = state.total_swap_v3_hits.saturating_add(delta_swap_v3_hits);
-        state.total_unique_swap_hits = state
-            .total_unique_swap_hits
-            .saturating_add(delta_unique_swap_hits);
         state.total_txs_msgs = state.total_txs_msgs.saturating_add(delta_txs_msgs);
         if delta_new_pooled_hashes > 0 || delta_pooled_txs_received > 0 || delta_txs_msgs > 0 {
             state.last_new_pooled_ms = now_ms;
-        }
-        if delta_swap_hits > 0 {
-            state.last_swap_ms = now_ms;
         }
         gateway_eth_plugin_rlpx_update_recent_new_hash_window(
             chain_id,
@@ -3124,25 +2903,12 @@ fn gateway_eth_plugin_rlpx_apply_live_metrics_delta(
             delta_duplicate_new_pooled_hashes,
             delta_duplicate_pooled_txs,
         );
-        gateway_eth_plugin_rlpx_update_recent_swap_window(
-            chain_id,
-            state,
-            now_ms,
-            delta_swap_hits,
-            delta_unique_swap_hits,
-        );
         if delta_first_gossip_latency_ms > 0 {
             state.total_first_gossip_latency_ms = state
                 .total_first_gossip_latency_ms
                 .saturating_add(delta_first_gossip_latency_ms);
             state.first_gossip_latency_samples =
                 state.first_gossip_latency_samples.saturating_add(1);
-        }
-        if delta_first_swap_latency_ms > 0 {
-            state.total_first_swap_latency_ms = state
-                .total_first_swap_latency_ms
-                .saturating_add(delta_first_swap_latency_ms);
-            state.first_swap_latency_samples = state.first_swap_latency_samples.saturating_add(1);
         }
         if let Some(code) = metrics.first_post_ready_code {
             state.last_first_post_ready_code = code;
@@ -3160,12 +2926,7 @@ fn gateway_eth_plugin_rlpx_apply_live_metrics_delta(
     applied.pooled_txs_imported = metrics.pooled_txs_imported;
     applied.first_seen_hashes = metrics.first_seen_hashes;
     applied.first_seen_txs = metrics.first_seen_txs;
-    applied.swap_hits = metrics.swap_hits;
-    applied.swap_v2_hits = metrics.swap_v2_hits;
-    applied.swap_v3_hits = metrics.swap_v3_hits;
-    applied.unique_swap_hits = metrics.unique_swap_hits;
     applied.first_gossip_latency_ms = metrics.first_gossip_latency_ms;
-    applied.first_swap_latency_ms = metrics.first_swap_latency_ms;
     applied.txs_msgs = metrics.txs_msgs;
     if metrics.first_post_ready_code.is_some() {
         applied.first_post_ready_code = metrics.first_post_ready_code;
@@ -3189,8 +2950,6 @@ fn gateway_eth_plugin_rlpx_worker_tier_rank(
     let active_recent_window_ms =
         gateway_eth_plugin_mempool_ingest_rlpx_active_recent_ready_window_ms(chain_id);
     let recent_hash_min = gateway_eth_plugin_mempool_ingest_rlpx_recent_new_hash_min(chain_id);
-    let swap_priority_enabled =
-        gateway_eth_plugin_mempool_ingest_rlpx_swap_priority_enabled(chain_id);
     let has_recent_new_hash_window = state.recent_new_pooled_hashes_window_start_ms > 0
         && now_ms.saturating_sub(state.recent_new_pooled_hashes_window_start_ms)
             <= gateway_eth_plugin_mempool_ingest_rlpx_recent_new_hash_window_ms(chain_id)
@@ -3222,33 +2981,12 @@ fn gateway_eth_plugin_rlpx_worker_tier_rank(
         && core_lock_ms > 0
         && state.last_success_ms > 0
         && now_ms.saturating_sub(state.last_success_ms) <= core_lock_ms;
-    let is_recent_swap = state.last_swap_ms > 0
-        && now_ms.saturating_sub(state.last_swap_ms) <= core_recent_window_ms.saturating_mul(2);
-    let strong_swap_history = state.total_swap_hits >= recent_hash_min.saturating_div(2).max(1)
-        || state.total_unique_swap_hits >= recent_hash_min.saturating_div(4).max(1);
-    let has_swap_history = state.last_swap_ms > 0
-        || state.recent_swap_hits_total > 0
-        || state.recent_unique_swap_hits_total > 0
-        || state.total_swap_hits > 0
-        || state.total_unique_swap_hits > 0;
     let normal_core_ok = is_recent_gossip
         || has_recent_new_hash_window
         || is_core_locked
         || strong_unique_history_recent_ready
         || elite_unique_history;
-    if swap_priority_enabled {
-        let swap_core_ok = is_recent_swap
-            || strong_swap_history
-            || (has_swap_history
-                && (is_recent_gossip
-                    || has_recent_new_hash_window
-                    || is_core_locked
-                    || strong_unique_history_recent_ready
-                    || elite_unique_history));
-        if has_gossip_history && swap_core_ok {
-            return 0; // core
-        }
-    } else if has_gossip_history && normal_core_ok {
+    if has_gossip_history && normal_core_ok {
         return 0; // core
     }
     let is_recent_ready = state.last_success_ms > 0
@@ -3388,7 +3126,7 @@ fn gateway_eth_plugin_rlpx_avg_latency_ms(total_ms: u64, samples: u64) -> u64 {
 }
 
 fn gateway_eth_plugin_rlpx_worker_priority_signal(
-    chain_id: u64,
+    _chain_id: u64,
     state: &GatewayEthPluginRlpxWorkerState,
 ) -> u64 {
     let recent_unique = state
@@ -3451,63 +3189,11 @@ fn gateway_eth_plugin_rlpx_worker_priority_signal(
     if state.disconnect_too_many_count >= 96 {
         signal = signal.saturating_sub(500_000);
     }
-    if gateway_eth_plugin_mempool_ingest_rlpx_swap_priority_enabled(chain_id) {
-        let latency_target_ms =
-            gateway_eth_plugin_mempool_ingest_rlpx_swap_priority_latency_target_ms(chain_id);
-        let has_recent_swap =
-            state.recent_swap_hits_total > 0 || state.recent_unique_swap_hits_total > 0;
-        let has_any_swap =
-            has_recent_swap || state.total_swap_hits > 0 || state.total_unique_swap_hits > 0;
-        signal = signal
-            .saturating_add(state.recent_swap_hits_total.saturating_mul(8_192))
-            .saturating_add(state.recent_unique_swap_hits_total.saturating_mul(16_384))
-            .saturating_add(state.total_swap_hits.saturating_mul(96))
-            .saturating_add(state.total_unique_swap_hits.saturating_mul(256))
-            .saturating_add(state.total_swap_v2_hits.saturating_mul(32))
-            .saturating_add(state.total_swap_v3_hits.saturating_mul(48));
-        if !has_recent_swap {
-            signal = signal.saturating_sub(200_000);
-            if state.sessions_with_gossip > 0 {
-                signal = signal.saturating_sub(120_000);
-            }
-        }
-        if !has_any_swap {
-            signal = signal.saturating_sub(350_000);
-        }
-        let avg_first_swap_ms = gateway_eth_plugin_rlpx_avg_latency_ms(
-            state.total_first_swap_latency_ms,
-            state.first_swap_latency_samples,
-        );
-        if avg_first_swap_ms > 0 {
-            if avg_first_swap_ms <= latency_target_ms.saturating_div(2).max(1) {
-                signal = signal.saturating_add(600_000);
-            } else if avg_first_swap_ms <= latency_target_ms {
-                signal = signal.saturating_add(350_000);
-            } else if avg_first_swap_ms <= latency_target_ms.saturating_mul(2) {
-                signal = signal.saturating_add(120_000);
-            } else {
-                signal = signal.saturating_sub(100_000);
-            }
-        }
-        let avg_first_gossip_ms = gateway_eth_plugin_rlpx_avg_latency_ms(
-            state.total_first_gossip_latency_ms,
-            state.first_gossip_latency_samples,
-        );
-        if avg_first_gossip_ms > 0 {
-            if avg_first_gossip_ms <= latency_target_ms.saturating_div(2).max(1) {
-                signal = signal.saturating_add(250_000);
-            } else if avg_first_gossip_ms <= latency_target_ms {
-                signal = signal.saturating_add(150_000);
-            } else if avg_first_gossip_ms > latency_target_ms.saturating_mul(2) {
-                signal = signal.saturating_sub(50_000);
-            }
-        }
-    }
     signal
 }
 
 fn gateway_eth_plugin_rlpx_worker_score(
-    chain_id: u64,
+    _chain_id: u64,
     state: &GatewayEthPluginRlpxWorkerState,
 ) -> i64 {
     let mut score = 0i64;
@@ -3599,67 +3285,6 @@ fn gateway_eth_plugin_rlpx_worker_score(
     }
     if recent_unique == 0 && state.disconnect_too_many_count >= 8 {
         score -= 20;
-    }
-    if gateway_eth_plugin_mempool_ingest_rlpx_swap_priority_enabled(chain_id) {
-        let has_recent_swap =
-            state.recent_swap_hits_total > 0 || state.recent_unique_swap_hits_total > 0;
-        let has_any_swap =
-            has_recent_swap || state.total_swap_hits > 0 || state.total_unique_swap_hits > 0;
-        score += if state.recent_swap_hits_total >= 16 {
-            220
-        } else if state.recent_swap_hits_total >= 8 {
-            150
-        } else if state.recent_swap_hits_total > 0 {
-            90
-        } else {
-            -180
-        };
-        if state.recent_unique_swap_hits_total >= 8 {
-            score += 160;
-        } else if state.recent_unique_swap_hits_total > 0 {
-            score += 90;
-        }
-        if state.total_swap_hits >= 64 {
-            score += 90;
-        } else if state.total_swap_hits >= 16 {
-            score += 50;
-        } else if state.total_swap_hits > 0 {
-            score += 20;
-        }
-        if state.total_unique_swap_hits > 0 {
-            score += 40;
-        }
-        if !has_any_swap {
-            score -= 220;
-        } else if !has_recent_swap && state.sessions_with_gossip > 0 {
-            score -= 80;
-        }
-        let latency_target_ms =
-            gateway_eth_plugin_mempool_ingest_rlpx_swap_priority_latency_target_ms(chain_id);
-        let avg_first_swap_ms = gateway_eth_plugin_rlpx_avg_latency_ms(
-            state.total_first_swap_latency_ms,
-            state.first_swap_latency_samples,
-        );
-        if avg_first_swap_ms > 0 {
-            if avg_first_swap_ms <= latency_target_ms {
-                score += 120;
-            } else if avg_first_swap_ms <= latency_target_ms.saturating_mul(2) {
-                score += 40;
-            } else {
-                score -= 60;
-            }
-        }
-        let avg_first_gossip_ms = gateway_eth_plugin_rlpx_avg_latency_ms(
-            state.total_first_gossip_latency_ms,
-            state.first_gossip_latency_samples,
-        );
-        if avg_first_gossip_ms > 0 {
-            if avg_first_gossip_ms <= latency_target_ms {
-                score += 40;
-            } else if avg_first_gossip_ms > latency_target_ms.saturating_mul(2) {
-                score -= 20;
-            }
-        }
     }
     score
 }
@@ -4420,7 +4045,7 @@ fn run_gateway_eth_plugin_mempool_ingest_rlpx_tick(
                 let state =
                     snapshot_gateway_eth_plugin_rlpx_worker_state(candidate.worker_key.as_str());
                 format!(
-                    "{}:{:?}:prio={} tier={} score={} psig={} learn={} ready={} gossip={} newHashes={}(u={},du={}) pooled={}/{}/(u={},du={}) swap={}(v2={},v3={},u={}) lat(gossip/swap)={}/{} disc={} tooMany={} succBps={} discBps={}",
+                    "{}:{:?}:prio={} tier={} score={} psig={} learn={} ready={} gossip={} newHashes={}(u={},du={}) pooled={}/{}/(u={},du={}) lat(gossip)={} disc={} tooMany={} succBps={} discBps={}",
                     candidate.peer.addr_hint,
                     candidate.sort_key,
                     candidate.is_priority,
@@ -4437,17 +4062,9 @@ fn run_gateway_eth_plugin_mempool_ingest_rlpx_tick(
                     state.total_pooled_txs_received,
                     state.total_unique_pooled_txs,
                     state.total_duplicate_pooled_txs,
-                    state.total_swap_hits,
-                    state.total_swap_v2_hits,
-                    state.total_swap_v3_hits,
-                    state.total_unique_swap_hits,
                     gateway_eth_plugin_rlpx_avg_latency_ms(
                         state.total_first_gossip_latency_ms,
                         state.first_gossip_latency_samples
-                    ),
-                    gateway_eth_plugin_rlpx_avg_latency_ms(
-                        state.total_first_swap_latency_ms,
-                        state.first_swap_latency_samples
                     ),
                     state.disconnect_count,
                     state.disconnect_too_many_count,
@@ -6062,57 +5679,12 @@ pub(super) fn gateway_eth_public_broadcast_plugin_peers_json(chain_id: u64) -> s
             serde_json::Value::String(format!("0x{:x}", worker_state.first_seen_tx_count)),
         );
         row.insert(
-            "total_swap_hits".to_string(),
-            serde_json::Value::String(format!("0x{:x}", worker_state.total_swap_hits)),
-        );
-        row.insert(
-            "total_swap_v2_hits".to_string(),
-            serde_json::Value::String(format!("0x{:x}", worker_state.total_swap_v2_hits)),
-        );
-        row.insert(
-            "total_swap_v3_hits".to_string(),
-            serde_json::Value::String(format!("0x{:x}", worker_state.total_swap_v3_hits)),
-        );
-        row.insert(
-            "total_unique_swap_hits".to_string(),
-            serde_json::Value::String(format!("0x{:x}", worker_state.total_unique_swap_hits)),
-        );
-        row.insert(
-            "last_swap_ms".to_string(),
-            serde_json::Value::String(format!("0x{:x}", worker_state.last_swap_ms)),
-        );
-        row.insert(
-            "recent_swap_hits_total".to_string(),
-            serde_json::Value::String(format!("0x{:x}", worker_state.recent_swap_hits_total)),
-        );
-        row.insert(
-            "recent_unique_swap_hits_total".to_string(),
-            serde_json::Value::String(format!(
-                "0x{:x}",
-                worker_state.recent_unique_swap_hits_total
-            )),
-        );
-        row.insert(
-            "recent_swap_window_start_ms".to_string(),
-            serde_json::Value::String(format!("0x{:x}", worker_state.recent_swap_window_start_ms)),
-        );
-        row.insert(
             "avg_first_gossip_latency_ms".to_string(),
             serde_json::Value::String(format!(
                 "0x{:x}",
                 gateway_eth_plugin_rlpx_avg_latency_ms(
                     worker_state.total_first_gossip_latency_ms,
                     worker_state.first_gossip_latency_samples
-                )
-            )),
-        );
-        row.insert(
-            "avg_first_swap_latency_ms".to_string(),
-            serde_json::Value::String(format!(
-                "0x{:x}",
-                gateway_eth_plugin_rlpx_avg_latency_ms(
-                    worker_state.total_first_swap_latency_ms,
-                    worker_state.first_swap_latency_samples
                 )
             )),
         );
@@ -8229,10 +7801,6 @@ fn gateway_eth_plugin_peer_session_rlpx_ingest(
                                     if raw_tx.is_empty() {
                                         continue;
                                     }
-                                    let swap_kind = gateway_eth_plugin_detect_swap_kind_from_raw_tx(
-                                        status_chain_id,
-                                        raw_tx.as_slice(),
-                                    );
                                     let tx_hash = gateway_eth_rlpx_keccak256(&[raw_tx.as_slice()]);
                                     let is_unique = gateway_eth_plugin_rlpx_mark_seen_tx(
                                         chain_id, tx_hash, now_ms,
@@ -8245,27 +7813,6 @@ fn gateway_eth_plugin_peer_session_rlpx_ingest(
                                     } else {
                                         metrics.duplicate_pooled_txs =
                                             metrics.duplicate_pooled_txs.saturating_add(1);
-                                    }
-                                    if let Some(kind) = swap_kind {
-                                        metrics.swap_hits = metrics.swap_hits.saturating_add(1);
-                                        if is_unique {
-                                            metrics.unique_swap_hits =
-                                                metrics.unique_swap_hits.saturating_add(1);
-                                        }
-                                        match kind {
-                                            GatewayEthSwapKind::V2 => {
-                                                metrics.swap_v2_hits =
-                                                    metrics.swap_v2_hits.saturating_add(1);
-                                            }
-                                            GatewayEthSwapKind::V3 => {
-                                                metrics.swap_v3_hits =
-                                                    metrics.swap_v3_hits.saturating_add(1);
-                                            }
-                                        }
-                                        if metrics.first_swap_latency_ms == 0 {
-                                            metrics.first_swap_latency_ms =
-                                                ready_started.elapsed().as_millis() as u64;
-                                        }
                                     }
                                 }
                                 let imported = gateway_eth_rlpx_ingest_raw_txs(
@@ -9391,17 +8938,6 @@ mod tests {
         assert_eq!(decoded.len(), 1);
         assert_eq!(decoded[0].chain_id, 1);
         assert_eq!(decoded[0].from.len(), 20);
-    }
-
-    #[test]
-    fn swap_classifier_detects_uniswap_v2_router_swap_raw_tx() {
-        let raw_tx = decode_hex_bytes(
-            "0xf9014c800183043897947a250d5630b4cf539739df2c5dacb4c659f2488d8742aaf334a66c00b8e47ff36ab50000000000000000000000000000000000000000000000004d0a1d49072055290000000000000000000000000000000000000000000000000000000000000080000000000000000000000000002f8c92e0101c16f9de9d812a299e219c2ca87b0000000000000000000000000000000000000000000000000000000060a00b4a0000000000000000000000000000000000000000000000000000000000000002000000000000000000000000c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2000000000000000000000000a2b4c0af19cc16a6cfacce81f192b024d625817d25a08f4c79f832fd3b9121c7666978c16a9f817934b0555596ba1b0503cea9da6962a02fde1f8f58003c965c59cbc0d1f277fb866c1b279f93cb20ae80204efce80df5",
-            "raw_tx",
-        )
-        .expect("decode raw tx");
-        let kind = gateway_eth_plugin_detect_swap_kind_from_raw_tx(1, raw_tx.as_slice());
-        assert_eq!(kind, Some(GatewayEthSwapKind::V2));
     }
 
     fn compact_hex(raw: &str) -> String {
@@ -10571,12 +10107,7 @@ mod tests {
             pooled_txs_imported: 10,
             first_seen_hashes: 40,
             first_seen_txs: 7,
-            swap_hits: 0,
-            swap_v2_hits: 0,
-            swap_v3_hits: 0,
-            unique_swap_hits: 0,
             first_gossip_latency_ms: 0,
-            first_swap_latency_ms: 0,
             txs_msgs: 1,
         };
         let sample1 = gateway_eth_plugin_rlpx_learning_sample_score(&metrics1);
@@ -10714,86 +10245,6 @@ mod tests {
         let healthy_score = gateway_eth_plugin_rlpx_worker_score(chain_id, &healthy);
         let congested_score = gateway_eth_plugin_rlpx_worker_score(chain_id, &congested);
         assert!(healthy_score > congested_score);
-    }
-
-    #[test]
-    fn rlpx_swap_priority_mode_prefers_swap_rich_low_latency_peer() {
-        let chain_id = 9_901_111_u64;
-        let enable_key = format!(
-            "NOVOVM_GATEWAY_ETH_PLUGIN_MEMPOOL_INGEST_RLPX_SWAP_PRIORITY_ENABLE_CHAIN_{}",
-            chain_id
-        );
-        let latency_key = format!(
-            "NOVOVM_GATEWAY_ETH_PLUGIN_MEMPOOL_INGEST_RLPX_SWAP_PRIORITY_LATENCY_TARGET_MS_CHAIN_{}",
-            chain_id
-        );
-        std::env::set_var(enable_key.as_str(), "1");
-        std::env::set_var(latency_key.as_str(), "800");
-        let base = GatewayEthPluginRlpxWorkerState {
-            learning_score: 8_000,
-            sessions_with_gossip: 3,
-            recent_unique_new_pooled_hashes_total: 64,
-            recent_unique_pooled_txs_total: 16,
-            ..Default::default()
-        };
-        let mut swap_rich = base.clone();
-        swap_rich.recent_swap_hits_total = 48;
-        swap_rich.recent_unique_swap_hits_total = 32;
-        swap_rich.total_swap_hits = 320;
-        swap_rich.total_unique_swap_hits = 220;
-        swap_rich.total_swap_v2_hits = 120;
-        swap_rich.total_swap_v3_hits = 200;
-        swap_rich.total_first_gossip_latency_ms = 250;
-        swap_rich.first_gossip_latency_samples = 1;
-        swap_rich.total_first_swap_latency_ms = 300;
-        swap_rich.first_swap_latency_samples = 1;
-
-        let base_signal = gateway_eth_plugin_rlpx_worker_priority_signal(chain_id, &base);
-        let swap_signal = gateway_eth_plugin_rlpx_worker_priority_signal(chain_id, &swap_rich);
-        assert!(swap_signal > base_signal);
-
-        let base_score = gateway_eth_plugin_rlpx_worker_score(chain_id, &base);
-        let swap_score = gateway_eth_plugin_rlpx_worker_score(chain_id, &swap_rich);
-        assert!(swap_score > base_score);
-
-        std::env::remove_var(enable_key.as_str());
-        std::env::remove_var(latency_key.as_str());
-    }
-
-    #[test]
-    fn rlpx_swap_priority_mode_requires_swap_signal_for_core_tier() {
-        let chain_id = 9_901_112_u64;
-        let enable_key = format!(
-            "NOVOVM_GATEWAY_ETH_PLUGIN_MEMPOOL_INGEST_RLPX_SWAP_PRIORITY_ENABLE_CHAIN_{}",
-            chain_id
-        );
-        std::env::set_var(enable_key.as_str(), "1");
-        let now = now_unix_millis() as u64;
-        let mut no_swap = GatewayEthPluginRlpxWorkerState {
-            sessions_with_gossip: 2,
-            sessions_completed: 2,
-            last_success_ms: now,
-            last_new_pooled_ms: now,
-            recent_new_pooled_hashes_total: 128,
-            recent_unique_new_pooled_hashes_total: 96,
-            total_new_pooled_hashes: 512,
-            total_unique_new_pooled_hashes: 384,
-            ..Default::default()
-        };
-        assert_eq!(
-            gateway_eth_plugin_rlpx_worker_tier_rank(chain_id, &no_swap, now),
-            1
-        );
-        no_swap.recent_swap_hits_total = 2;
-        no_swap.recent_unique_swap_hits_total = 1;
-        no_swap.total_swap_hits = 2;
-        no_swap.total_unique_swap_hits = 1;
-        no_swap.last_swap_ms = now;
-        assert_eq!(
-            gateway_eth_plugin_rlpx_worker_tier_rank(chain_id, &no_swap, now),
-            0
-        );
-        std::env::remove_var(enable_key.as_str());
     }
 
     #[test]
