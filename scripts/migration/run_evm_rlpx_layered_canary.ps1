@@ -4,7 +4,11 @@ param(
     [UInt64]$ChainId = 1,
     [string]$LocalGethEnode = "",
     [UInt64]$DiscoveryMaxPeers = 8,
+    [UInt64]$DiscoveryMaxVisit = 1000,
     [UInt64]$SessionMaxPeers = 4,
+    [UInt64]$PublicSessionMaxAttempts = 16,
+    [UInt64]$PublicMaxRounds = 4,
+    [string]$PublicPluginPorts = "30303,30304",
     [UInt64]$ProbeTimeoutMs = 8000,
     [UInt64]$ProbeCacheTtlMs = 16000,
     [UInt64]$ReadWindowMs = 4000,
@@ -131,6 +135,14 @@ function Get-StringField {
     return ""
 }
 
+function Convert-ReportText {
+    param([string]$Text)
+    if ($null -eq $Text) {
+        return ""
+    }
+    return ([string]$Text).Replace([string][char]96, "'") -replace "[^\x09\x0a\x0d\x20-\x7e]", "?"
+}
+
 function Get-DisconnectReasonCode {
     param([string]$Text)
     if (-not $Text) {
@@ -153,6 +165,187 @@ function Get-NodeIdFromEnode {
         return $match.Groups[1].Value
     }
     return ""
+}
+
+function Get-EnodeParts {
+    param([string]$Endpoint)
+    if (-not $Endpoint) {
+        return $null
+    }
+    $match = [regex]::Match($Endpoint, "^enode://([^@]+)@(\[[^\]]+\]|[^:/?#]+):(\d+)(.*)$")
+    if (-not $match.Success) {
+        return $null
+    }
+    return [pscustomobject]@{
+        node_id = $match.Groups[1].Value
+        host = $match.Groups[2].Value
+        port = [int]$match.Groups[3].Value
+        suffix = $match.Groups[4].Value
+    }
+}
+
+function Test-PublicEndpointHost {
+    param([string]$EndpointHost)
+    if (-not $EndpointHost) {
+        return $false
+    }
+    $rawHost = $EndpointHost.Trim()
+    if ($rawHost.StartsWith("[") -and $rawHost.EndsWith("]")) {
+        $rawHost = $rawHost.Substring(1, $rawHost.Length - 2)
+    }
+    $addr = [System.Net.IPAddress]::None
+    if (-not [System.Net.IPAddress]::TryParse($rawHost, [ref]$addr)) {
+        return $true
+    }
+    if ([System.Net.IPAddress]::IsLoopback($addr)) {
+        return $false
+    }
+    if ($addr.Equals([System.Net.IPAddress]::Any) -or $addr.Equals([System.Net.IPAddress]::IPv6Any)) {
+        return $false
+    }
+    if ($addr.AddressFamily -eq [System.Net.Sockets.AddressFamily]::InterNetwork) {
+        $bytes = $addr.GetAddressBytes()
+        if ($bytes[0] -eq 10 -or $bytes[0] -eq 127 -or $bytes[0] -eq 0) {
+            return $false
+        }
+        if ($bytes[0] -eq 172 -and $bytes[1] -ge 16 -and $bytes[1] -le 31) {
+            return $false
+        }
+        if ($bytes[0] -eq 192 -and $bytes[1] -eq 168) {
+            return $false
+        }
+        if ($bytes[0] -eq 169 -and $bytes[1] -eq 254) {
+            return $false
+        }
+        if ($bytes[0] -eq 100 -and $bytes[1] -ge 64 -and $bytes[1] -le 127) {
+            return $false
+        }
+        return $true
+    }
+    if ($addr.IsIPv6LinkLocal -or $addr.IsIPv6SiteLocal) {
+        return $false
+    }
+    $ipv6 = $addr.GetAddressBytes()
+    if (($ipv6[0] -band 0xfe) -eq 0xfc) {
+        return $false
+    }
+    return $true
+}
+
+function Convert-EnodePort {
+    param(
+        [string]$Endpoint,
+        [int]$Port
+    )
+    $parts = Get-EnodeParts -Endpoint $Endpoint
+    if ($null -eq $parts) {
+        return ""
+    }
+    return ("enode://{0}@{1}:{2}{3}" -f $parts.node_id, $parts.host, $Port, $parts.suffix)
+}
+
+function Get-PublicPluginPortList {
+    param([string]$Ports)
+    $values = New-Object System.Collections.Generic.List[int]
+    foreach ($part in @($Ports -split ",")) {
+        $trimmed = $part.Trim()
+        if (-not $trimmed) {
+            continue
+        }
+        $port = 0
+        if ([int]::TryParse($trimmed, [ref]$port) -and $port -gt 0 -and $port -le 65535 -and -not $values.Contains($port)) {
+            $values.Add($port)
+        }
+    }
+    if ($values.Count -eq 0) {
+        $values.Add(30303)
+        $values.Add(30304)
+    }
+    return $values.ToArray()
+}
+
+function New-PublicSessionCandidateSelection {
+    param(
+        $Records,
+        [UInt64]$MaxAttempts,
+        [string]$Ports
+    )
+    $recordsArray = @()
+    if ($null -ne $Records) {
+        $recordsArray = @($Records)
+    }
+    $portList = @(Get-PublicPluginPortList -Ports $Ports)
+    $dedup = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
+    $primary = New-Object System.Collections.Generic.List[object]
+    $alternate = New-Object System.Collections.Generic.List[object]
+    $filtered = [UInt64]0
+
+    foreach ($record in $recordsArray) {
+        $endpoint = Get-StringField -Obj $record -Name "endpoint"
+        $remoteEnr = Get-StringField -Obj $record -Name "remote_enr"
+        $remoteNodeId = Get-StringField -Obj $record -Name "remote_node_id"
+        if (-not $remoteNodeId) {
+            $remoteNodeId = Get-NodeIdFromEnode -Endpoint $endpoint
+        }
+        $parts = Get-EnodeParts -Endpoint $endpoint
+        if ($null -eq $parts -or -not (Test-PublicEndpointHost -EndpointHost $parts.host)) {
+            $filtered = [UInt64]($filtered + 1)
+            continue
+        }
+
+        if ($dedup.Add($endpoint)) {
+            $primary.Add([pscustomobject]@{
+                endpoint = $endpoint
+                remote_node_id = $remoteNodeId
+                remote_enr = $remoteEnr
+                source_endpoint = $endpoint
+                port = $parts.port
+            })
+        }
+        foreach ($port in $portList) {
+            if ($port -eq $parts.port) {
+                continue
+            }
+            $variant = Convert-EnodePort -Endpoint $endpoint -Port $port
+            if ($variant -and $dedup.Add($variant)) {
+                $alternate.Add([pscustomobject]@{
+                    endpoint = $variant
+                    remote_node_id = $remoteNodeId
+                    remote_enr = $remoteEnr
+                    source_endpoint = $endpoint
+                    port = $port
+                })
+            }
+        }
+    }
+
+    $combined = @($primary.ToArray()) + @($alternate.ToArray())
+    $limit = [int][Math]::Max(1, [Math]::Min([UInt64]$combined.Count, [UInt64]$MaxAttempts))
+    return [pscustomobject][ordered]@{
+        candidate_peer_count = [UInt64]$recordsArray.Count
+        candidate_after_filter_count = [UInt64]$combined.Count
+        filtered_candidate_count = $filtered
+        selected_attempt_count = [UInt64]$limit
+        candidates = @($combined | Select-Object -First $limit)
+    }
+}
+
+function Test-ReasonIsTooManyPeers {
+    param([string]$Reason)
+    if (-not $Reason) {
+        return $false
+    }
+    $normalized = $Reason.ToLowerInvariant()
+    return ($normalized.Contains("too_many_peers") -or $normalized.Contains("reason_code=4") -or $normalized.Contains("reason=4") -or $normalized.Contains("reason=0x4") -or $normalized.Contains("reason_code=0x4"))
+}
+
+function Test-ReasonIsTcpTimeout {
+    param([string]$Reason)
+    if (-not $Reason) {
+        return $false
+    }
+    $normalized = $Reason.ToLowerInvariant()
+    return ($normalized.Contains("timed out") -or $normalized.Contains("timeout") -or $normalized.Contains("10060"))
 }
 
 function Push-ProcessEnv {
@@ -199,6 +392,7 @@ function Convert-PluginPeerItemsToMetrics {
         tcp_connect_attempt_count = [UInt64]$CandidateCount
         tcp_connect_success_count = [UInt64]0
         tcp_connect_fail_count = [UInt64]0
+        tcp_connect_timeout_count = [UInt64]0
         rlpx_auth_sent_count = [UInt64]0
         rlpx_auth_ack_seen_count = [UInt64]0
         rlpx_auth_timeout_count = [UInt64]0
@@ -209,6 +403,8 @@ function Convert-PluginPeerItemsToMetrics {
         status_seen_count = [UInt64]0
         ready_count = [UInt64]0
         disconnected_count = [UInt64]0
+        disconnect_reason_too_many_peers_count = [UInt64]0
+        peer_cooldown_count = [UInt64]0
         selected_eth_capability = ""
         disconnect_reason_code = ""
         traces = @()
@@ -226,7 +422,11 @@ function Convert-PluginPeerItemsToMetrics {
         $rank = Get-StageRank -Stage $bestStage
         $lastError = Get-StringField -Obj $item -Name "last_error"
         $inferredRank = $rank
-        if ($inferredRank -lt (Get-StageRank -Stage "auth_sent") -and $lastError -match "rlpx_|auth|handshake|ack") {
+        if ($lastError -match "before_eth_status|eth_status_timeout|eth_capability_not_found") {
+            $inferredRank = [Math]::Max($inferredRank, (Get-StageRank -Stage "hello_seen"))
+        } elseif ($lastError -match "before_hello|remote_hello_timeout") {
+            $inferredRank = [Math]::Max($inferredRank, (Get-StageRank -Stage "hello_sent"))
+        } elseif ($inferredRank -lt (Get-StageRank -Stage "auth_sent") -and $lastError -match "rlpx_|auth|handshake|ack") {
             $inferredRank = Get-StageRank -Stage "auth_sent"
         }
         $cap = Get-StringField -Obj $item -Name "selected_eth_capability"
@@ -239,6 +439,9 @@ function Convert-PluginPeerItemsToMetrics {
             $metrics.tcp_connect_success_count = [UInt64]($metrics.tcp_connect_success_count + 1)
         } elseif ($dialAttempts -gt 0 -or $lastError -match "connect|timed|refused|unreachable|unreachable") {
             $metrics.tcp_connect_fail_count = [UInt64]($metrics.tcp_connect_fail_count + 1)
+            if (Test-ReasonIsTcpTimeout -Reason $lastError) {
+                $metrics.tcp_connect_timeout_count = [UInt64]($metrics.tcp_connect_timeout_count + 1)
+            }
         }
         if ($inferredRank -ge (Get-StageRank -Stage "auth_sent")) {
             $metrics.rlpx_auth_sent_count = [UInt64]($metrics.rlpx_auth_sent_count + 1)
@@ -279,6 +482,9 @@ function Convert-PluginPeerItemsToMetrics {
         if (-not $metrics.disconnect_reason_code -and $reasonCode) {
             $metrics.disconnect_reason_code = $reasonCode
         }
+        if (Test-ReasonIsTooManyPeers -Reason $lastError) {
+            $metrics.disconnect_reason_too_many_peers_count = [UInt64]($metrics.disconnect_reason_too_many_peers_count + 1)
+        }
 
         $remoteId = Get-NodeIdFromEnode -Endpoint $endpoint
         if (-not $remoteId) {
@@ -295,6 +501,74 @@ function Convert-PluginPeerItemsToMetrics {
         }
     }
     return $metrics
+}
+
+function New-RlpxMetricAccumulator {
+    return [ordered]@{
+        candidate_peer_count = [UInt64]0
+        candidate_after_filter_count = [UInt64]0
+        selected_attempt_count = [UInt64]0
+        public_session_round_count = [UInt64]0
+        tcp_connect_attempt_count = [UInt64]0
+        tcp_connect_success_count = [UInt64]0
+        tcp_connect_fail_count = [UInt64]0
+        tcp_connect_timeout_count = [UInt64]0
+        rlpx_auth_sent_count = [UInt64]0
+        rlpx_auth_ack_seen_count = [UInt64]0
+        rlpx_auth_timeout_count = [UInt64]0
+        rlpx_disconnect_before_ack_count = [UInt64]0
+        hello_sent_count = [UInt64]0
+        hello_seen_count = [UInt64]0
+        status_sent_count = [UInt64]0
+        status_seen_count = [UInt64]0
+        ready_count = [UInt64]0
+        disconnected_count = [UInt64]0
+        disconnect_reason_too_many_peers_count = [UInt64]0
+        peer_cooldown_count = [UInt64]0
+        selected_eth_capability = ""
+        disconnect_reason_code = ""
+        traces = @()
+    }
+}
+
+function Add-RlpxMetrics {
+    param(
+        [System.Collections.IDictionary]$Accumulator,
+        $Metrics
+    )
+    if ($null -eq $Metrics) {
+        return
+    }
+    foreach ($key in @(
+        "tcp_connect_attempt_count",
+        "tcp_connect_success_count",
+        "tcp_connect_fail_count",
+        "tcp_connect_timeout_count",
+        "rlpx_auth_sent_count",
+        "rlpx_auth_ack_seen_count",
+        "rlpx_auth_timeout_count",
+        "rlpx_disconnect_before_ack_count",
+        "hello_sent_count",
+        "hello_seen_count",
+        "status_sent_count",
+        "status_seen_count",
+        "ready_count",
+        "disconnected_count",
+        "disconnect_reason_too_many_peers_count"
+    )) {
+        if ($Metrics.Contains($key)) {
+            $Accumulator[$key] = [UInt64]($Accumulator[$key] + [UInt64]$Metrics[$key])
+        }
+    }
+    if (-not $Accumulator.selected_eth_capability -and $Metrics.selected_eth_capability) {
+        $Accumulator.selected_eth_capability = $Metrics.selected_eth_capability
+    }
+    if (-not $Accumulator.disconnect_reason_code -and $Metrics.disconnect_reason_code) {
+        $Accumulator.disconnect_reason_code = $Metrics.disconnect_reason_code
+    }
+    foreach ($trace in @($Metrics.traces)) {
+        $Accumulator.traces += $trace
+    }
 }
 
 function Invoke-GatewaySessionLayer {
@@ -344,6 +618,7 @@ function Invoke-GatewaySessionLayer {
         "NOVOVM_GATEWAY_ETH_PUBLIC_BROADCAST_ENABLE_BUILTIN_BOOTNODES" = "0"
         "NOVOVM_GATEWAY_ETH_PUBLIC_BROADCAST_PLUGIN_MIN_CANDIDATES" = "0"
         "NOVOVM_GATEWAY_ETH_PUBLIC_BROADCAST_NATIVE_PEERS" = ($peers -join ",")
+        "NOVOVM_GATEWAY_ETH_PUBLIC_BROADCAST_PLUGIN_PORTS" = $PublicPluginPorts
         "NOVOVM_GATEWAY_ETH_PUBLIC_BROADCAST_PLUGIN_PROBE_TIMEOUT_MS" = ([string]$ProbeTimeoutMs)
         "NOVOVM_GATEWAY_ETH_PUBLIC_BROADCAST_PLUGIN_PROBE_CACHE_TTL_MS" = ([string]$ProbeCacheTtlMs)
         "NOVOVM_GATEWAY_ETH_PUBLIC_BROADCAST_PLUGIN_SESSION_PROBE_MODE" = "disabled"
@@ -426,6 +701,133 @@ function Invoke-GatewaySessionLayer {
     return [pscustomobject]$layer
 }
 
+function Invoke-PublicReadinessClosure {
+    param(
+        $Records,
+        [string]$RepoRootValue,
+        [string]$GatewayExe,
+        [string]$Bind,
+        [UInt64]$LayerChainId,
+        [string]$LogDir,
+        [string]$StateRoot
+    )
+    $selection = New-PublicSessionCandidateSelection -Records $Records -MaxAttempts $PublicSessionMaxAttempts -Ports $PublicPluginPorts
+    $metrics = New-RlpxMetricAccumulator
+    $metrics.candidate_peer_count = $selection.candidate_peer_count
+    $metrics.candidate_after_filter_count = $selection.candidate_after_filter_count
+    $metrics.selected_attempt_count = $selection.selected_attempt_count
+
+    $layer = [ordered]@{
+        name = "public discovered-peer session"
+        status = "skipped"
+        reason = ""
+        peers = @($selection.candidates | ForEach-Object { [string]$_.endpoint })
+        selection = $selection
+        metrics = $metrics
+        rounds = @()
+        capability = $null
+        plugin_peers = $null
+        gateway_stdout = ""
+        gateway_stderr = ""
+        readiness_claimed = $false
+    }
+    if (@($selection.candidates).Count -eq 0) {
+        $layer.reason = "no usable public session candidates after endpoint filtering"
+        return [pscustomobject]$layer
+    }
+
+    $candidateQueue = @($selection.candidates)
+    $attempted = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
+    $cooldown = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
+    $cooldownNodes = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
+    $timeoutPenalty = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
+    $roundLimit = [int][Math]::Max(1, $PublicMaxRounds)
+
+    for ($round = 1; $round -le $roundLimit; $round++) {
+        $batch = New-Object System.Collections.Generic.List[string]
+        $batchNodeIds = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
+        foreach ($candidate in $candidateQueue) {
+            $endpoint = [string]$candidate.endpoint
+            if (-not $endpoint -or $attempted.Contains($endpoint) -or $cooldown.Contains($endpoint) -or $timeoutPenalty.Contains($endpoint)) {
+                continue
+            }
+            $nodeId = [string]$candidate.remote_node_id
+            if ($nodeId -and $cooldownNodes.Contains($nodeId)) {
+                continue
+            }
+            if ($nodeId -and $batchNodeIds.Contains($nodeId)) {
+                continue
+            }
+            $batch.Add($endpoint)
+            [void]$attempted.Add($endpoint)
+            if ($nodeId) {
+                [void]$batchNodeIds.Add($nodeId)
+            }
+            if ($batch.Count -ge [int][Math]::Max(1, $SessionMaxPeers)) {
+                break
+            }
+        }
+        if ($batch.Count -eq 0) {
+            break
+        }
+
+        $metrics.public_session_round_count = [UInt64]($metrics.public_session_round_count + 1)
+        $roundLayer = Invoke-GatewaySessionLayer `
+            -LayerName ("public discovered-peer session round {0}" -f $round) `
+            -Peers @($batch.ToArray()) `
+            -RepoRootValue $RepoRootValue `
+            -GatewayExe $GatewayExe `
+            -Bind $Bind `
+            -LayerChainId $LayerChainId `
+            -LogDir $LogDir `
+            -StateRoot $StateRoot
+        $layer.rounds += $roundLayer
+        $layer.gateway_stdout = $roundLayer.gateway_stdout
+        $layer.gateway_stderr = $roundLayer.gateway_stderr
+        if ($null -ne $roundLayer.capability) {
+            $layer.capability = $roundLayer.capability
+        }
+        if ($null -ne $roundLayer.plugin_peers) {
+            $layer.plugin_peers = $roundLayer.plugin_peers
+        }
+        if ($null -ne $roundLayer.metrics) {
+            Add-RlpxMetrics -Accumulator $metrics -Metrics $roundLayer.metrics
+            foreach ($trace in @($roundLayer.metrics.traces)) {
+                $endpoint = [string]$trace.endpoint
+                $reason = [string]$trace.reason
+                if ($endpoint -and (Test-ReasonIsTooManyPeers -Reason $reason)) {
+                    [void]$cooldown.Add($endpoint)
+                    $nodeId = [string]$trace.remote_node_id
+                    if ($nodeId) {
+                        [void]$cooldownNodes.Add($nodeId)
+                    }
+                } elseif ($endpoint -and (Test-ReasonIsTcpTimeout -Reason $reason)) {
+                    [void]$timeoutPenalty.Add($endpoint)
+                }
+            }
+            if ($metrics.ready_count -gt 0) {
+                break
+            }
+        }
+    }
+
+    $metrics.peer_cooldown_count = [UInt64][Math]::Max($cooldown.Count, $cooldownNodes.Count)
+    $metrics.tcp_connect_timeout_count = [UInt64]([Math]::Max([UInt64]$metrics.tcp_connect_timeout_count, [UInt64]$timeoutPenalty.Count))
+    $layer.metrics = $metrics
+    $layer.readiness_claimed = ($metrics.ready_count -gt 0 -and $metrics.rlpx_auth_ack_seen_count -gt 0 -and $metrics.hello_seen_count -gt 0 -and $metrics.status_seen_count -gt 0 -and ($metrics.selected_eth_capability -eq "69" -or $metrics.selected_eth_capability -eq "70" -or $metrics.selected_eth_capability -eq "eth/69" -or $metrics.selected_eth_capability -eq "eth/70"))
+    if ($metrics.ready_count -gt 0) {
+        $layer.status = "completed"
+        $layer.reason = "public discovered-peer session reached ready"
+    } elseif ($metrics.public_session_round_count -gt 0) {
+        $layer.status = "completed"
+        $layer.reason = ("public discovered-peer session did not reach ready after {0} round(s)" -f $metrics.public_session_round_count)
+    } else {
+        $layer.status = "skipped"
+        $layer.reason = "no public session batch remained after cooldown or endpoint penalty filtering"
+    }
+    return [pscustomobject]$layer
+}
+
 function Convert-LayerToMarkdown {
     param($Layer)
     $lines = New-Object System.Collections.Generic.List[string]
@@ -433,22 +835,33 @@ function Convert-LayerToMarkdown {
     $lines.Add("")
     $lines.Add(('- status: `{0}`' -f $Layer.status))
     if ($Layer.reason) {
-        $safeReason = ([string]$Layer.reason).Replace([string][char]96, "'")
+        $safeReason = Convert-ReportText -Text ([string]$Layer.reason)
         $lines.Add(('- reason: `{0}`' -f $safeReason))
     }
     if ($null -ne $Layer.metrics) {
         $m = $Layer.metrics
-        $lines.Add(('- tcp: attempts=`{0}`, success=`{1}`, fail=`{2}`' -f $m.tcp_connect_attempt_count, $m.tcp_connect_success_count, $m.tcp_connect_fail_count))
+        if ($m.Contains("candidate_peer_count")) {
+            $lines.Add(('- candidates: discovered=`{0}`, after_filter=`{1}`, selected_attempts=`{2}`, rounds=`{3}`' -f $m.candidate_peer_count, $m.candidate_after_filter_count, $m.selected_attempt_count, $m.public_session_round_count))
+        }
+        $tcpTimeout = $(if ($m.Contains("tcp_connect_timeout_count")) { $m.tcp_connect_timeout_count } else { [UInt64]0 })
+        $lines.Add(('- tcp: attempts=`{0}`, success=`{1}`, fail=`{2}`, timeout=`{3}`' -f $m.tcp_connect_attempt_count, $m.tcp_connect_success_count, $m.tcp_connect_fail_count, $tcpTimeout))
         $lines.Add(('- auth: sent=`{0}`, ack_seen=`{1}`, timeout=`{2}`, disconnect_before_ack=`{3}`' -f $m.rlpx_auth_sent_count, $m.rlpx_auth_ack_seen_count, $m.rlpx_auth_timeout_count, $m.rlpx_disconnect_before_ack_count))
         $lines.Add(('- p2p/eth: hello_sent=`{0}`, hello_seen=`{1}`, status_sent=`{2}`, status_seen=`{3}`, ready=`{4}`' -f $m.hello_sent_count, $m.hello_seen_count, $m.status_sent_count, $m.status_seen_count, $m.ready_count))
         $lines.Add(('- selected_eth_capability: `{0}`' -f ($(if ($m.selected_eth_capability) { $m.selected_eth_capability } else { "none" }))))
+        if ($m.Contains("disconnect_reason_too_many_peers_count")) {
+            $lines.Add(('- disconnect_reason_too_many_peers_count: `{0}`' -f $m.disconnect_reason_too_many_peers_count))
+        }
+        if ($m.Contains("peer_cooldown_count")) {
+            $lines.Add(('- peer_cooldown_count: `{0}`' -f $m.peer_cooldown_count))
+        }
         if ($m.disconnect_reason_code) {
             $lines.Add(('- disconnect_reason_code: `{0}`' -f $m.disconnect_reason_code))
         }
         $lines.Add("")
         $lines.Add("Compact traces:")
         foreach ($trace in @($m.traces)) {
-            $lines.Add(('- peer=`{0}` endpoint=`{1}` stage=`{2}` best=`{3}` reason=`{4}` cap=`{5}`' -f $trace.remote_node_id, $trace.remote_endpoint, $trace.stage, $trace.best_stage, $trace.reason, $trace.selected_eth_capability))
+            $traceReason = Convert-ReportText -Text ([string]$trace.reason)
+            $lines.Add(('- peer=`{0}` endpoint=`{1}` stage=`{2}` best=`{3}` reason=`{4}` cap=`{5}`' -f $trace.remote_node_id, $trace.remote_endpoint, $trace.stage, $trace.best_stage, $traceReason, $trace.selected_eth_capability))
         }
     }
     $lines.Add("")
@@ -519,7 +932,7 @@ try {
         note = "DNS ENR discovery is exercised here; UDP discv4 ping/pong is not performed by this diagnostic and is not treated as session acceptance."
     }
     try {
-        $resolverOutput = & python $resolver --json --include-enr --max-enodes ([int]$DiscoveryMaxPeers) 2>&1
+        $resolverOutput = & python $resolver --json --include-enr --max-enodes ([int]$DiscoveryMaxPeers) --max-visit ([int]$DiscoveryMaxVisit) 2>&1
         if ($LASTEXITCODE -ne 0) {
             throw (($resolverOutput | Out-String).Trim())
         }
@@ -542,23 +955,20 @@ try {
                 }
             }
         }
-        $candidateCount = [Math]::Min([int]$SessionMaxPeers, $records.Count)
         $discovery.status = "completed"
         $discovery.discovery_ping_sent_count = [UInt64]0
         $discovery.discovery_pong_seen_count = [UInt64]0
         $discovery.dns_discovery_query_sent_count = [UInt64]1
         $discovery.dns_discovery_enode_seen_count = [UInt64]$records.Count
         $discovery.discovered_peer_count = [UInt64]$records.Count
-        $discovery.candidate_session_peer_count = [UInt64]$candidateCount
-        $discovery.records = @($records | Select-Object -First $candidateCount)
+        $discovery.candidate_session_peer_count = [UInt64]$records.Count
+        $discovery.records = @($records)
     } catch {
         $discovery.reason = $_.Exception.Message
     }
 
-    $publicPeers = @($discovery.records | ForEach-Object { [string]$_.endpoint } | Where-Object { $_ } | Select-Object -First ([int]$SessionMaxPeers))
-    $publicLayer = Invoke-GatewaySessionLayer `
-        -LayerName "public discovered-peer session" `
-        -Peers $publicPeers `
+    $publicLayer = Invoke-PublicReadinessClosure `
+        -Records $discovery.records `
         -RepoRootValue $RepoRoot `
         -GatewayExe $gatewayExe `
         -Bind $GatewayBind `
@@ -572,11 +982,19 @@ try {
         chain_id = $ChainId
         gateway_bind = $GatewayBind
         state_root = $stateRoot
+        canary = [ordered]@{
+            discovery_max_peers = $DiscoveryMaxPeers
+            discovery_max_visit = $DiscoveryMaxVisit
+            session_max_peers = $SessionMaxPeers
+            public_session_max_attempts = $PublicSessionMaxAttempts
+            public_max_rounds = $PublicMaxRounds
+            public_plugin_ports = $PublicPluginPorts
+        }
         local_geth_session = $localLayer
         public_discovery_only = $discovery
         public_discovered_peer_session = $publicLayer
         boundary = [ordered]@{
-            patch_type = "diagnosis_only"
+            patch_type = "public_rlpx_readiness_closure"
             external_brand = "NOVOVM"
             does_not_change_protocol_semantics = $true
             does_not_redefine_plugin_architecture = $true
@@ -592,14 +1010,26 @@ try {
     )
 
     $md = New-Object System.Collections.Generic.List[string]
-    $md.Add("# RLPx Session Canary After a484a8506")
+    $md.Add("# Public RLPx Readiness Closure After a484a8506")
     $md.Add("")
-    $md.Add("Status: diagnosis-only canary report.")
+    $md.Add("Status: public RLPx readiness closure canary report.")
     $md.Add("")
     $md.Add("Scope:")
-    $md.Add("- This report investigates where one public RLPx probing path stops when auth is sent but no ack is observed.")
+    $md.Add("- This report attempts to close public discovered-peer RLPx readiness by improving peer candidate diversity, endpoint filtering, cooldown, and failure-stage accounting.")
     $md.Add("- It does not change geth-facing RPC compatibility, BAL guard behavior, or NOVOVM plugin architecture.")
+    $md.Add("- Bootnode and DNS discovery targets are discovery inputs only; readiness is assessed only against discovered session peers.")
     $md.Add(('- The gateway uses isolated state paths under `{0}` and does not reuse `artifacts/gateway/unified-account-router.rocksdb`.' -f $stateRoot))
+    $md.Add("")
+    $md.Add("Prior Evidence:")
+    $md.Add("- Local controlled geth evidence from the previous follow-up showed TCP, RLPx auth ack, Hello, Status, negotiated eth/69, and ready_count=1.")
+    $md.Add("- Earlier public short-window samples stopped below auth ack and observed too_many_peers / TCP timeout outcomes.")
+    $md.Add("")
+    $md.Add("Public Peer Selection Changes:")
+    $md.Add("- DNS ENR discovery can collect a larger candidate pool before session attempts.")
+    $md.Add("- Public session candidates are filtered for usable public endpoints.")
+    $md.Add("- Session attempts are spread across candidates and rounds instead of treating the first discovered peer as the whole public result.")
+    $md.Add("- Peers returning too_many_peers are cooled down for later rounds; TCP timeout endpoints are penalized.")
+    $md.Add("- Candidate port diversity is controlled by PublicPluginPorts.")
     $md.Add("")
     $md.Add("Layered Results:")
     $md.Add("")
@@ -610,7 +1040,7 @@ try {
     $md.Add("")
     $md.Add(('- status: `{0}`' -f $discovery.status))
     if ($discovery.reason) {
-        $safeDiscoveryReason = ([string]$discovery.reason).Replace([string][char]96, "'")
+        $safeDiscoveryReason = Convert-ReportText -Text ([string]$discovery.reason)
         $md.Add(('- reason: `{0}`' -f $safeDiscoveryReason))
     }
     $md.Add(('- discovery_ping_sent_count: `{0}`' -f $discovery.discovery_ping_sent_count))
@@ -621,14 +1051,14 @@ try {
     $md.Add(('- candidate_session_peer_count: `{0}`' -f $discovery.candidate_session_peer_count))
     $md.Add(('- note: `{0}`' -f $discovery.note))
     $md.Add("")
-    foreach ($record in @($discovery.records)) {
+    foreach ($record in @($discovery.records | Select-Object -First ([int]$DiscoveryMaxPeers))) {
         $md.Add(('- remote_node_id=`{0}` endpoint=`{1}` remote_enr=`{2}`' -f $record.remote_node_id, $record.endpoint, $record.remote_enr))
     }
     $md.Add("")
     foreach ($line in (Convert-LayerToMarkdown -Layer $publicLayer)) {
         $md.Add($line)
     }
-    $md.Add("Current Diagnosis:")
+    $md.Add("Public Session Result:")
     if ($localLayer.status -eq "skipped") {
         $md.Add("- Local controlled geth session was not exercised because no local enode was supplied.")
     }
@@ -637,7 +1067,9 @@ try {
     }
     if ($null -ne $publicLayer.metrics) {
         $pm = $publicLayer.metrics
-        if ($pm.rlpx_auth_sent_count -gt 0 -and $pm.rlpx_auth_ack_seen_count -eq 0) {
+        if ($publicLayer.readiness_claimed) {
+            $md.Add("- Public discovered-peer session readiness was observed in this run.")
+        } elseif ($pm.rlpx_auth_sent_count -gt 0 -and $pm.rlpx_auth_ack_seen_count -eq 0) {
             $md.Add("- Public discovered-peer session stopped below auth ack in this run.")
         } elseif ($pm.tcp_connect_success_count -eq 0 -and $pm.tcp_connect_fail_count -gt 0) {
             $md.Add("- Public discovered-peer session stopped at TCP connectivity in this run.")
@@ -650,17 +1082,42 @@ try {
         }
     }
     $md.Add("")
+    $md.Add("Readiness Claim:")
+    if ($publicLayer.readiness_claimed) {
+        $md.Add("- public RLPx readiness: CLAIMED for this canary run.")
+        $md.Add("- The run observed TCP success, auth ack, Hello, Status, selected eth/69 or eth/70, and ready_count >= 1.")
+    } else {
+        $md.Add("- public RLPx readiness: NOT CLAIMED.")
+        $md.Add("- A readiness claim requires TCP success, auth ack, Hello, Status, selected eth/69 or eth/70, and ready_count >= 1 in the public discovered-peer session.")
+    }
+    $md.Add("")
     $md.Add("Interpretation:")
-    $md.Add("- If the local controlled peer passes but the public session stops before ack, the likely area is public peer selection, endpoint reachability, network egress, or remote policy.")
+    $md.Add("- Prior local controlled geth evidence passed through TCP, auth ack, Hello, Status, eth/69, and ready.")
+    $md.Add("- If the public session reaches auth ack or Hello but not Status, the likely area is public peer selection, remote peer policy, endpoint quality, or Status exchange compatibility with sampled public peers.")
+    $md.Add("- If a future public run stops before ack, the likely area remains public peer selection, endpoint reachability, network egress, or remote policy.")
     $md.Add("- If both local and public sessions stop before ack, the next independent patch should inspect RLPx auth/session details.")
     $md.Add("- A run that does not observe ack also does not proceed far enough to observe Hello, Status, or eth capability negotiation in that run.")
     $md.Add("- This does not mean the NOVOVM EVM plugin lacks Hello/Status handling.")
     $md.Add("")
     $md.Add("Not Claimed:")
-    $md.Add("- no protocol fix")
+    $md.Add("- no full geth full node parity")
+    $md.Add("- no protocol semantic rewrite")
     $md.Add("- no full eth/71 or BAL implementation")
+    $md.Add("- no real balHash metadata source")
     $md.Add("- no old UnifiedAccountRouter state migration")
+    $md.Add("- no strategy-specific acceptance result")
     $md.Add("- no new NOVOVM plugin architecture")
+    $md.Add("")
+    $md.Add("Diff Audit:")
+    $md.Add('- Script scope: `scripts/migration/run_evm_rlpx_layered_canary.ps1` extends public candidate selection, retry diversity, cooldown accounting, and readiness reporting.')
+    $md.Add('- Report scope: `artifacts/migration/public-rlpx-readiness-closure-after-a484a8506.md` records this public closure run.')
+    $md.Add("- No active protocol semantic files are modified by this canary task.")
+    $md.Add("- No eth_baseFee, balHash, eth/71 guard, BAL fallback, UA RocksDB, or plugin architecture behavior is changed.")
+    $md.Add("")
+    $md.Add("Merge Note:")
+    $md.Add("- This is a public RLPx readiness closure canary improvement and evidence patch.")
+    $md.Add("- The observed public run reached auth ack and Hello on sampled peers but did not observe Status or ready.")
+    $md.Add("- Public RLPx readiness remains not claimed until a public discovered-peer session observes Status and ready_count >= 1.")
     $md.Add("")
     while ($md.Count -gt 0 -and $md[$md.Count - 1] -eq "") {
         $md.RemoveAt($md.Count - 1)

@@ -1,0 +1,150 @@
+# Public RLPx Readiness Closure After a484a8506
+
+Status: public RLPx readiness closure canary report.
+
+Scope:
+- This report attempts to close public discovered-peer RLPx readiness by improving peer candidate diversity, endpoint filtering, cooldown, and failure-stage accounting.
+- It does not change geth-facing RPC compatibility, BAL guard behavior, or NOVOVM plugin architecture.
+- Bootnode and DNS discovery targets are discovery inputs only; readiness is assessed only against discovered session peers.
+- The gateway uses isolated state paths under `D:\WEB3_AI\SUPERVM\artifacts\migration\state\rlpx-layered-canary-1779349139193` and does not reuse `artifacts/gateway/unified-account-router.rocksdb`.
+
+Prior Evidence:
+- Local controlled geth evidence from the previous follow-up showed TCP, RLPx auth ack, Hello, Status, negotiated eth/69, and ready_count=1.
+- Earlier public short-window samples stopped below auth ack and observed too_many_peers / TCP timeout outcomes.
+
+Public Peer Selection Changes:
+- DNS ENR discovery can collect a larger candidate pool before session attempts.
+- Public session candidates are filtered for usable public endpoints.
+- Session attempts are spread across candidates and rounds instead of treating the first discovered peer as the whole public result.
+- Peers returning too_many_peers are cooled down for later rounds; TCP timeout endpoints are penalized.
+- Candidate port diversity is controlled by PublicPluginPorts.
+
+Layered Results:
+
+### local controlled geth peer
+
+- status: `skipped`
+- reason: `LocalGethEnode was not supplied; this diagnostic does not spawn a geth peer`
+
+### public discovery-only
+
+- status: `completed`
+- discovery_ping_sent_count: `0`
+- discovery_pong_seen_count: `0`
+- dns_discovery_query_sent_count: `1`
+- dns_discovery_enode_seen_count: `24`
+- discovered_peer_count: `24`
+- candidate_session_peer_count: `24`
+- note: `DNS ENR discovery is exercised here; UDP discv4 ping/pong is not performed by this diagnostic and is not treated as session acceptance.`
+
+- remote_node_id=`6be8358ecdbfa099838a0da7ba3687a7e3d07ca30a3c190e9e6ab0580cb9da533c46ca823c8597420ba8334d6dcce24f265b36b589679714520ebd104194b3ad` endpoint=`enode://6be8358ecdbfa099838a0da7ba3687a7e3d07ca30a3c190e9e6ab0580cb9da533c46ca823c8597420ba8334d6dcce24f265b36b589679714520ebd104194b3ad@64.34.94.23:30303` remote_enr=`enr:-KO4QA_bMSt78e8KPHhXt8hmC6tOmoLjqnGewDyLnYPnaMiFRaUvkoeV_myTbpwPM1qRUTa2JqSq4HxjwLTi7dyfMqWGAZtFAabZg2V0aMfGhAfJRi6AgmlkgnY0gmlwhEAiXheJc2VjcDI1NmsxoQNr6DWOzb-gmYOKDae6Noen49B8owo8GQ6earBYDLnaU4RzbmFwwIN0Y3CCdl-DdWRwgnZf`
+- remote_node_id=`d14dcd91c765fc7953532dd3cec8c42ccb2978f583f96a9f5b79bbf7a3a10f3e30592c1839bf37bb5e03e02f3bf8770c37d46f01e351b9f7d2adaba2e0f2c760` endpoint=`enode://d14dcd91c765fc7953532dd3cec8c42ccb2978f583f96a9f5b79bbf7a3a10f3e30592c1839bf37bb5e03e02f3bf8770c37d46f01e351b9f7d2adaba2e0f2c760@3.1.24.239:30303` remote_enr=`enr:-KO4QD21Kg_Hx-2wgiNJxq3m3VbEcBk5LBRLAWxjSYpLUe0nUQGIl12f4fTJ1dbCILONSVY0dG_bHLdv1WB-gVOww5KGAZtECreDg2V0aMfGhAfJRi6AgmlkgnY0gmlwhAMBGO-Jc2VjcDI1NmsxoQLRTc2Rx2X8eVNTLdPOyMQsyyl49YP5ap9bebv3o6EPPoRzbmFwwIN0Y3CCdl-DdWRwgnZf`
+- remote_node_id=`149531c6eaacd99c8c898ec427cbc67a976dad05df2d548f266d2a4a989843cd9e9cc25c5f998aaf3dafa668760e1832ae32ceeeadd13bdaf8504d93924848d9` endpoint=`enode://149531c6eaacd99c8c898ec427cbc67a976dad05df2d548f266d2a4a989843cd9e9cc25c5f998aaf3dafa668760e1832ae32ceeeadd13bdaf8504d93924848d9@15.204.109.157:30303` remote_enr=`enr:-Ku4QNaMCsNUXqYt0hzqIna5gJ3eztV17-w7QQlcLE9gLFlzfoAf3xjuAuABLBk3Q7arSxf-YiE7mZve8Kjg-vluIq2GAZi-ds9Gg2V0aMfGhAfJRi6AgmlkgnY0gmlwhA_MbZ2Jc2VjcDI1NmsxoQMUlTHG6qzZnIyJjsQny8Z6l22tBd8tVI8mbSpKmJhDzYRzbmFwwIN0Y3CCdl-DdWRwgrmxhHVkcDaCdl8`
+- remote_node_id=`7d1e976f507518cd895e5721f4c58a5b8ee446eb04aab7b386ce5c84cc7116d10b32c1e749d84834ffd17bd5f9928ecbe56b1dd206172d24e8ba479ba1590cd6` endpoint=`enode://7d1e976f507518cd895e5721f4c58a5b8ee446eb04aab7b386ce5c84cc7116d10b32c1e749d84834ffd17bd5f9928ecbe56b1dd206172d24e8ba479ba1590cd6@13.222.122.244:30303` remote_enr=`enr:-KO4QIAqcCOaId9UQ3iMW0UD0jKw_nmPxBjCgrsb_jXn-1xmZo3T8qHvFj5mzlsHBT_uWlQuBPm1r-ac3nnmLGNskBuGAZv_S-Jhg2V0aMfGhAfJRi6AgmlkgnY0gmlwhA3eevSJc2VjcDI1NmsxoQJ9HpdvUHUYzYleVyH0xYpbjuRG6wSqt7OGzlyEzHEW0YRzbmFwwIN0Y3CCdl-DdWRwgnZf`
+- remote_node_id=`b7148466c8558f57da7a16259edcaece6832400c0baaba01b4e20e60c426922791899525f217a6ffb301d1c2b2a2695963b78c5e765f85e84084ee8d2f86db7c` endpoint=`enode://b7148466c8558f57da7a16259edcaece6832400c0baaba01b4e20e60c426922791899525f217a6ffb301d1c2b2a2695963b78c5e765f85e84084ee8d2f86db7c@95.216.12.50:30303` remote_enr=`enr:-Je4QH5fmSfiVUBl9mf3oEoHzQpgRxDp1V2KxPVtZOUj8eiHebJGSxGUFi7foWOluW3UqHWZm49bKtVZ84B-1-hl4o1cg2V0aMfGhAfJRi6AgmlkgnY0gmlwhF_YDDKJc2VjcDI1NmsxoQK3FIRmyFWPV9p6FiWe3K7OaDJADAuqugG04g5gxCaSJ4N0Y3CCdl-DdWRwgnZf`
+- remote_node_id=`f68ec57cfca4d606d7f03794897d7d38baf9775953bf7e4f2648d648c3c006b9f1470297cc4c3d9bcba804650a349ae743c83c45928e6a3ea50456bc46f55e52` endpoint=`enode://f68ec57cfca4d606d7f03794897d7d38baf9775953bf7e4f2648d648c3c006b9f1470297cc4c3d9bcba804650a349ae743c83c45928e6a3ea50456bc46f55e52@91.156.63.40:30303` remote_enr=`enr:-KO4QAHmA3udRaVDE2WRMkw5JC74FgI-5iSfprX6oWixTfWOJ3LWKOqUdcwpXh1i_tGMHOTzxpTRJerShTwn6-smVy2GAZxsiK3Pg2V0aMfGhAfJRi6AgmlkgnY0gmlwhFucPyiJc2VjcDI1NmsxoQL2jsV8_KTWBtfwN5SJfX04uvl3WVO_fk8mSNZIw8AGuYRzbmFwwIN0Y3CCdl-DdWRwgnZf`
+- remote_node_id=`eeed69e1665475cf0793d7af596ff3f0a23847a64af921850c3aea274e6c0962c53e7d90bd7c01ce4447bc6a54b0f41b5d8894149478d083b076b108fef119f5` endpoint=`enode://eeed69e1665475cf0793d7af596ff3f0a23847a64af921850c3aea274e6c0962c53e7d90bd7c01ce4447bc6a54b0f41b5d8894149478d083b076b108fef119f5@76.224.20.214:30403` remote_enr=`enr:-KO4QLzUAsWXHgRU37e9UZjstwibO39sNHotO9jlqV2R3Te4aWmlzuMEQ2PywrLR31aAjv3WHjdGuGFykCpUowu-LYuGAZMPnKH8g2V0aMfGhAfJRi6AgmlkgnY0gmlwhEzgFNaJc2VjcDI1NmsxoQPu7WnhZlR1zweT169Zb_PwojhHpkr5IYUMOuonTmwJYoRzbmFwwIN0Y3CCdsODdWRwgnbD`
+- remote_node_id=`3af4e30bc41d555942f6816fd752b29e6d245f739de4d7df3c25e0787b110c33fadefe0bc785cc144cb414ec09968a6eed334b9f1dbe43d0d3cce9fdad3a74cc` endpoint=`enode://3af4e30bc41d555942f6816fd752b29e6d245f739de4d7df3c25e0787b110c33fadefe0bc785cc144cb414ec09968a6eed334b9f1dbe43d0d3cce9fdad3a74cc@54.179.0.167:30303` remote_enr=`enr:-KO4QFedeHe7NwUuGFR2-4gNJpAi-tTlQgAC2OftvUiaqpyIPdScuFpJUFLjSh4Ben-q5Fol1Fyex__R7wUDshOrTQuGAZfo_3PRg2V0aMfGhAfJRi6AgmlkgnY0gmlwhDazAKeJc2VjcDI1NmsxoQI69OMLxB1VWUL2gW_XUrKebSRfc53k1988JeB4exEMM4RzbmFwwIN0Y3CCdl-DdWRwgnZf`
+- remote_node_id=`6e0e8af3a28cb6457a62525ae180171a6b8f8331b66f375d790bca30b5410bedaf290dd7338877dbf64deeb64eb3241e9a0d5700f9845bae5c56280033665228` endpoint=`enode://6e0e8af3a28cb6457a62525ae180171a6b8f8331b66f375d790bca30b5410bedaf290dd7338877dbf64deeb64eb3241e9a0d5700f9845bae5c56280033665228@31.165.109.85:30403` remote_enr=`enr:-KO4QEO5bS5pyJUALPRjJR36w29MrtfYijRnkXwsGBzex8NnPjkHjHwBU_nPmeJg--V9lJgVtqwOwApfNX4lqlEoxt6GAZOB2bX5g2V0aMfGhAfJRi6AgmlkgnY0gmlwhB-lbVWJc2VjcDI1NmsxoQJuDorzooy2RXpiUlrhgBcaa4-DMbZvN115C8owtUEL7YRzbmFwwIN0Y3CCdsODdWRwgnbD`
+- remote_node_id=`6d18b21beafae8194a579cd989cb22fff1f44b0341708b44de7f00223155c716c96ccc9aab41e1aa98ed9ee49f06c8282b9dca209bb159809b664130f4d404d9` endpoint=`enode://6d18b21beafae8194a579cd989cb22fff1f44b0341708b44de7f00223155c716c96ccc9aab41e1aa98ed9ee49f06c8282b9dca209bb159809b664130f4d404d9@174.164.215.35:30303` remote_enr=`enr:-KO4QKW6_OQ_tl8Hsrg_15P4G3w1ZaPdA8TU-WgkYv1vVNpREOenzEwue8TYwTXD9iwPFWWtfro7U8qnGpEcLXj-78WGAYMzwCpBg2V0aMfGhAfJRi6AgmlkgnY0gmlwhK6k1yOJc2VjcDI1NmsxoQNtGLIb6vroGUpXnNmJyyL_8fRLA0Fwi0TefwAiMVXHFoRzbmFwwIN0Y3CCdl-DdWRwgnZf`
+- remote_node_id=`51466611c28bf1d132ce8e79a374f09c16f79ae68a8b4e71090a30f91f9470678ff377112cf338d7bea1aeae5e9410900cc6c941cdf113c056d184934a4ed7f9` endpoint=`enode://51466611c28bf1d132ce8e79a374f09c16f79ae68a8b4e71090a30f91f9470678ff377112cf338d7bea1aeae5e9410900cc6c941cdf113c056d184934a4ed7f9@94.72.165.162:30304` remote_enr=`enr:-KO4QNsGGRPzxeP97pU_Dz4Yxu4CUW0JzS3_3eFt5ArrY_qnWnH0igMJ_R521d4JrFziUIrCW80aI_HB7pmXbg_d0_aGAZx5_iTSg2V0aMfGhAfJRi6AgmlkgnY0gmlwhF5IpaKJc2VjcDI1NmsxoQNRRmYRwovx0TLOjnmjdPCcFvea5oqLTnEJCjD5H5RwZ4RzbmFwwIN0Y3CCdmCDdWRwgnZg`
+- remote_node_id=`055b40fee0d962fafade7a76dcf39e398b14c1dad01775c601f5e8ec51c5ea95f43e0ddd5ad3d215f8b1daed47df0cb0ba4e340f70e611a432c59aa08133ec1e` endpoint=`enode://055b40fee0d962fafade7a76dcf39e398b14c1dad01775c601f5e8ec51c5ea95f43e0ddd5ad3d215f8b1daed47df0cb0ba4e340f70e611a432c59aa08133ec1e@3.84.39.146:30303` remote_enr=`enr:-KO4QHx9xK16dCILp6-Zyn5OsRVaZe7-MTN5_GtYg38yZO9yWFBo7GECPLHfgl3QRnXIuxnrI_w5to8t4F-a4WOcd0aGAZ038NCZg2V0aMfGhAfJRi6AgmlkgnY0gmlwhANUJ5KJc2VjcDI1NmsxoQIFW0D-4Nli-vreenbc8545ixTB2tAXdcYB9ejsUcXqlYRzbmFwwIN0Y3CCdl-DdWRwgnZf`
+- remote_node_id=`e1036c6a8b6e68567648c0a6e308d5a7bc2ee3ef31afbf4837c62a3d891b9741d06d52b7519f0f963c4754afee3138006e4b4f606c38c2153fadbdc83458b3f6` endpoint=`enode://e1036c6a8b6e68567648c0a6e308d5a7bc2ee3ef31afbf4837c62a3d891b9741d06d52b7519f0f963c4754afee3138006e4b4f606c38c2153fadbdc83458b3f6@85.208.113.168:30303` remote_enr=`enr:-KO4QJ51nh8MgEpCi_bziawdu9bWBKvCtAfQuEM1rYUh9yT-KpAi4nVaJdeW2jsfuTBkdXnlEoWTTjcn6xmcLPUNL_CGAZxw1joxg2V0aMfGhAfJRi6AgmlkgnY0gmlwhFXQcaiJc2VjcDI1NmsxoQLhA2xqi25oVnZIwKbjCNWnvC7j7zGvv0g3xio9iRuXQYRzbmFwwIN0Y3CCdl-DdWRwgnZf`
+- remote_node_id=`23aaafcb90b53e71516b7515f7b2e8b4039c2e6030d02a7afb4b42ffd2a8449bdc2a2e81d547db0aed9be25daff96741a91ba336c959afc0dc4ec97dd8065c22` endpoint=`enode://23aaafcb90b53e71516b7515f7b2e8b4039c2e6030d02a7afb4b42ffd2a8449bdc2a2e81d547db0aed9be25daff96741a91ba336c959afc0dc4ec97dd8065c22@24.220.158.11:30303` remote_enr=`enr:-KO4QF4nfukJKPaYJ4ddKhxNgYbprfkv0C4qfMbh52SrMsjlMskmkVeIEMwiHybcpCHiisGa7nHpBum6o2m0zWcmU1GGAZxstQAMg2V0aMfGhAfJRi6AgmlkgnY0gmlwhBjcnguJc2VjcDI1NmsxoQIjqq_LkLU-cVFrdRX3sui0A5wuYDDQKnr7S0L_0qhEm4RzbmFwwIN0Y3CCdl-DdWRwgnZf`
+- remote_node_id=`3df8d5fabf8e8b668767c386dd2fc7a499bd5bf64f11515e0a5e6a8c46a650ff1fa4d8e046deb7e6ecf457d7c2bdf3760940c36395c08dc6b6f2ca31b4acdc98` endpoint=`enode://3df8d5fabf8e8b668767c386dd2fc7a499bd5bf64f11515e0a5e6a8c46a650ff1fa4d8e046deb7e6ecf457d7c2bdf3760940c36395c08dc6b6f2ca31b4acdc98@13.214.207.69:30303` remote_enr=`enr:-KO4QEYQBCLLrUZJ6dgWSvL9X-xc9AUFR20fzWe9vCvqfB52PU7E8mdITBmjMLtULbWc4JY-hp4zjZ5r-3omrSM4ggeGAZtHC6dUg2V0aMfGhAfJRi6AgmlkgnY0gmlwhA3Wz0WJc2VjcDI1NmsxoQI9-NX6v46LZodnw4bdL8ekmb1b9k8RUV4KXmqMRqZQ_4RzbmFwwIN0Y3CCdl-DdWRwgnZf`
+- remote_node_id=`6bc3c1701c03f5b014664ffff4b3dc7bf99bc672abd036191fcf3efbbb19b677ee1c9c87bb23b6ffd7f5f8d85e4edf8be2a49aa39df686e31b76376344899636` endpoint=`enode://6bc3c1701c03f5b014664ffff4b3dc7bf99bc672abd036191fcf3efbbb19b677ee1c9c87bb23b6ffd7f5f8d85e4edf8be2a49aa39df686e31b76376344899636@91.134.85.202:22454` remote_enr=`enr:-KO4QMT7E6-r2lYPudJpgT2h9yIo2CNvoEYcE80Bai4NKz_TSIXenh4OHfzPv38LRv9kVzAgmAGWvsz0o7JGMsfkxMaGAZY_yYORg2V0aMfGhAfJRi6AgmlkgnY0gmlwhFuGVcqJc2VjcDI1NmsxoQJrw8FwHAP1sBRmT__0s9x7-ZvGcqvQNhkfzz77uxm2d4RzbmFwwIN0Y3CCV7aDdWRwgle2`
+- remote_node_id=`a8bbbbe05172fde84e42cc1b0213a37519232a940002b54c5188da6aeaf9c1e8d092f6d5621d8470f08090ecf11cb894ce0b492125c53f15c68800187e6bcca9` endpoint=`enode://a8bbbbe05172fde84e42cc1b0213a37519232a940002b54c5188da6aeaf9c1e8d092f6d5621d8470f08090ecf11cb894ce0b492125c53f15c68800187e6bcca9@188.95.248.61:30303` remote_enr=`enr:-J24QFw9S7VWbdapZIsf-Q42BdSEpfdoOor0bLzs042t3b-fS-wBG1jqrF0MlwDcMZbhpf1ForV-oguwfoNbjfvo3mlFg2V0aMfGhAfJRi6AgmlkgnY0gmlwhLxf-D2Jc2VjcDI1NmsxoQOou7vgUXL96E5CzBsCE6N1GSMqlAACtUxRiNpq6vnB6IRzbmFwwIN0Y3CCdl-DdWRwgnZf`
+- remote_node_id=`7f3d4c53d259cb8ae40b59b8fca282f71e0a5f515a6eb9a9884f88ecfe3f24171e25a0d3e88d6e03fd5dd1bd78abea8b8d6b2c292a5de6c9d4687c6dcfc93a74` endpoint=`enode://7f3d4c53d259cb8ae40b59b8fca282f71e0a5f515a6eb9a9884f88ecfe3f24171e25a0d3e88d6e03fd5dd1bd78abea8b8d6b2c292a5de6c9d4687c6dcfc93a74@193.222.57.13:30303` remote_enr=`enr:-KO4QK96SHKvmd_xEe_HmC8EZra2zqyKXH6MWX2asO4rOr-Ce6pwTFTa0xwYz3LFPzIgw-0qqVc6GVxW1gT3akGrECuGAY40C2aKg2V0aMfGhAfJRi6AgmlkgnY0gmlwhMHeOQ2Jc2VjcDI1NmsxoQJ_PUxT0lnLiuQLWbj8ooL3HgpfUVpuuamIT4js_j8kF4RzbmFwwIN0Y3CCdl-DdWRwgnZf`
+- remote_node_id=`79fb056767a32fff97ec2c2942dbb1ce36b62935626128c11ae32c181bb49ba7ffcb926af36108a88fd4f3be78b868f303cf1fd6f5afb1aa841fde46e2ee6393` endpoint=`enode://79fb056767a32fff97ec2c2942dbb1ce36b62935626128c11ae32c181bb49ba7ffcb926af36108a88fd4f3be78b868f303cf1fd6f5afb1aa841fde46e2ee6393@34.56.143.237:30303` remote_enr=`enr:-KO4QJ2Z84wPiBty6ZC8qAI2z2rrHyHGc7sygAb0Nvhpn_2jTyZHJ7DFkSzZTa_jL9vTu9tYBd-PZGLbPRZyIsPxGs2GAZiGOy44g2V0aMfGhAfJRi6AgmlkgnY0gmlwhCI4j-2Jc2VjcDI1NmsxoQN5-wVnZ6Mv_5fsLClC27HONrYpNWJhKMEa4ywYG7Sbp4RzbmFwwIN0Y3CCdl-DdWRwgnZf`
+- remote_node_id=`0697d8743dd15932501023bceac17464e9a50d12142456f84c320dde8a71192430588d41bcebd3657b179e2104bfaac80c69e7bbfd345337f821ab4748190bb7` endpoint=`enode://0697d8743dd15932501023bceac17464e9a50d12142456f84c320dde8a71192430588d41bcebd3657b179e2104bfaac80c69e7bbfd345337f821ab4748190bb7@5.9.105.106:30303` remote_enr=`enr:-KO4QF4ij4vPu9GjYblFRF0Kbk0792BRnRTzEL5FCIEbE_6ueYMvGyxJnrw3A5H7Eidhmei4BH1MsMWRq_-GHIeqJ7aGAZxxLbO4g2V0aMfGhAfJRi6AgmlkgnY0gmlwhAUJaWqJc2VjcDI1NmsxoQMGl9h0PdFZMlAQI7zqwXRk6aUNEhQkVvhMMg3einEZJIRzbmFwwIN0Y3CCdl-DdWRwgnZf`
+- remote_node_id=`037b1102a270ddc5deab555308659d727718e1bc4e56de13f037f00e0dd396653f9c7a3e2169c41cf8046c08c5067205ddca5c50c2020ec8ae0144c331325fd6` endpoint=`enode://037b1102a270ddc5deab555308659d727718e1bc4e56de13f037f00e0dd396653f9c7a3e2169c41cf8046c08c5067205ddca5c50c2020ec8ae0144c331325fd6@104.205.150.91:30303` remote_enr=`enr:-KO4QMu8NSShnzJDpz2GP7owfkLpNrIP4VlGJBgf8WXAcdUSd5Ve94ecyIFl4RCdUN4-Ep4cDRxA51sinOQR7E1YslKGAZmgM-P5g2V0aMfGhAfJRi6AgmlkgnY0gmlwhGjNlluJc2VjcDI1NmsxoQIDexEConDdxd6rVVMIZZ1ydxjhvE5W3hPwN_AODdOWZYRzbmFwwIN0Y3CCdl-DdWRwgnZf`
+- remote_node_id=`df56fdefe31dc7ec7a5f361d2f76773c28ca1e8cb1b2774d0986392f3b5975aaed2922f01bf84f689f4af7fc02d1df3023ff20fbd0a7305c545e0a67ca47cf3f` endpoint=`enode://df56fdefe31dc7ec7a5f361d2f76773c28ca1e8cb1b2774d0986392f3b5975aaed2922f01bf84f689f4af7fc02d1df3023ff20fbd0a7305c545e0a67ca47cf3f@148.113.193.205:30303` remote_enr=`enr:-Ka4QNEh16wcZ64ld7AEeolQPTP9ptYqHoKdgbZo2DwFeTg5Q8AE9teO8FMIQ3TEWBGwsHXoVPdOEkN95faYWzrxwbiGAZIiQXOag2V0aMrJhCDDJ_yD5aUQgmlkgnY0gmlwhJRxwc2Jc2VjcDI1NmsxoQPfVv3v4x3H7HpfNh0vdnc8KMoejLGyd00JhjkvO1l1qoRzbmFwwIN0Y3CCdl-DdWRwgnZf`
+- remote_node_id=`5b85914ae2b29d72b58309dd6eb2d40e0aae13987cc85a6fba4f3586a92c67af719ed97471b0f7d20b26d5e350df7b8d4292629b53da29f5b4b7d8cfa10363a2` endpoint=`enode://5b85914ae2b29d72b58309dd6eb2d40e0aae13987cc85a6fba4f3586a92c67af719ed97471b0f7d20b26d5e350df7b8d4292629b53da29f5b4b7d8cfa10363a2@85.208.113.19:30303` remote_enr=`enr:-KO4QJs5QEa3wj2JmMGsqpAoJ20DAnwBE3XntQ4WEWYozI1iLMpGccWIVrt7xGnZvZXBLW3ZdyWk2jguLGHPKs1ZmwqGAZxw1joxg2V0aMfGhAfJRi6AgmlkgnY0gmlwhFXQcROJc2VjcDI1NmsxoQJbhZFK4rKdcrWDCd1ustQOCq4TmHzIWm-6TzWGqSxnr4RzbmFwwIN0Y3CCdl-DdWRwgnZf`
+- remote_node_id=`147b208c204f43897aadb900bf4e31e9a6ff58426852a1a6b074f30a770c72a1a538b801f8c47af4f5d980e3f9339d7dff168608728b9e5037dcf58e349930c9` endpoint=`enode://147b208c204f43897aadb900bf4e31e9a6ff58426852a1a6b074f30a770c72a1a538b801f8c47af4f5d980e3f9339d7dff168608728b9e5037dcf58e349930c9@157.90.32.103:30303` remote_enr=`enr:-KO4QO9Z0VdyKq3HJp0tY81ecCzEPQOPcvuOeVAgEyDKgrlXX-S1w7U2ZLTebxVvOFhslFxHLC7Ve8YTIgv6JXiNeqiGAZxxKKkbg2V0aMfGhAfJRi6AgmlkgnY0gmlwhJ1aIGeJc2VjcDI1NmsxoQMUeyCMIE9DiXqtuQC_TjHppv9YQmhSoaawdPMKdwxyoYRzbmFwwIN0Y3CCdl-DdWRwgnZf`
+
+### public discovered-peer session
+
+- status: `completed`
+- reason: `public discovered-peer session did not reach ready after 4 round(s)`
+- candidates: discovered=`24`, after_filter=`51`, selected_attempts=`16`, rounds=`4`
+- tcp: attempts=`35`, success=`16`, fail=`19`, timeout=`20`
+- auth: sent=`16`, ack_seen=`16`, timeout=`0`, disconnect_before_ack=`0`
+- p2p/eth: hello_sent=`16`, hello_seen=`1`, status_sent=`0`, status_seen=`0`, ready=`0`
+- selected_eth_capability: `none`
+- disconnect_reason_too_many_peers_count: `15`
+- peer_cooldown_count: `15`
+- disconnect_reason_code: `4`
+
+Compact traces:
+- peer=`149531c6eaacd99c8c898ec427cbc67a976dad05df2d548f266d2a4a989843cd9e9cc25c5f998aaf3dafa668760e1832ae32ceeeadd13bdaf8504d93924848d9` endpoint=`15.204.109.157:30303` stage=`disconnected` best=`disconnected` reason=`rlpx_remote_disconnected_before_hello:reason_code=4 reason=too_many_peers` cap=`none`
+- peer=`149531c6eaacd99c8c898ec427cbc67a976dad05df2d548f266d2a4a989843cd9e9cc25c5f998aaf3dafa668760e1832ae32ceeeadd13bdaf8504d93924848d9` endpoint=`15.204.109.157:30304` stage=`disconnected` best=`disconnected` reason=`connect_failed(15.204.109.157:30304):connection timed out` cap=`none`
+- peer=`6be8358ecdbfa099838a0da7ba3687a7e3d07ca30a3c190e9e6ab0580cb9da533c46ca823c8597420ba8334d6dcce24f265b36b589679714520ebd104194b3ad` endpoint=`64.34.94.23:30303` stage=`disconnected` best=`disconnected` reason=`rlpx_remote_disconnected_before_hello:reason_code=4 reason=too_many_peers` cap=`none`
+- peer=`6be8358ecdbfa099838a0da7ba3687a7e3d07ca30a3c190e9e6ab0580cb9da533c46ca823c8597420ba8334d6dcce24f265b36b589679714520ebd104194b3ad` endpoint=`64.34.94.23:30304` stage=`disconnected` best=`disconnected` reason=`connect_failed(64.34.94.23:30304):connection timed out` cap=`none`
+- peer=`7d1e976f507518cd895e5721f4c58a5b8ee446eb04aab7b386ce5c84cc7116d10b32c1e749d84834ffd17bd5f9928ecbe56b1dd206172d24e8ba479ba1590cd6` endpoint=`13.222.122.244:30303` stage=`disconnected` best=`disconnected` reason=`rlpx_remote_disconnected_before_hello:reason_code=4 reason=too_many_peers` cap=`none`
+- peer=`7d1e976f507518cd895e5721f4c58a5b8ee446eb04aab7b386ce5c84cc7116d10b32c1e749d84834ffd17bd5f9928ecbe56b1dd206172d24e8ba479ba1590cd6` endpoint=`13.222.122.244:30304` stage=`disconnected` best=`disconnected` reason=`connect_failed(13.222.122.244:30304):connection timed out` cap=`none`
+- peer=`d14dcd91c765fc7953532dd3cec8c42ccb2978f583f96a9f5b79bbf7a3a10f3e30592c1839bf37bb5e03e02f3bf8770c37d46f01e351b9f7d2adaba2e0f2c760` endpoint=`3.1.24.239:30303` stage=`disconnected` best=`disconnected` reason=`rlpx_remote_disconnected_before_hello:reason_code=4 reason=too_many_peers` cap=`none`
+- peer=`d14dcd91c765fc7953532dd3cec8c42ccb2978f583f96a9f5b79bbf7a3a10f3e30592c1839bf37bb5e03e02f3bf8770c37d46f01e351b9f7d2adaba2e0f2c760` endpoint=`3.1.24.239:30304` stage=`disconnected` best=`disconnected` reason=`connect_failed(3.1.24.239:30304):connection timed out` cap=`none`
+- peer=`3af4e30bc41d555942f6816fd752b29e6d245f739de4d7df3c25e0787b110c33fadefe0bc785cc144cb414ec09968a6eed334b9f1dbe43d0d3cce9fdad3a74cc` endpoint=`54.179.0.167:30303` stage=`disconnected` best=`disconnected` reason=`rlpx_remote_disconnected_before_hello:reason_code=4 reason=too_many_peers` cap=`none`
+- peer=`3af4e30bc41d555942f6816fd752b29e6d245f739de4d7df3c25e0787b110c33fadefe0bc785cc144cb414ec09968a6eed334b9f1dbe43d0d3cce9fdad3a74cc` endpoint=`54.179.0.167:30304` stage=`disconnected` best=`disconnected` reason=`connect_failed(54.179.0.167:30304):connection timed out` cap=`none`
+- peer=`b7148466c8558f57da7a16259edcaece6832400c0baaba01b4e20e60c426922791899525f217a6ffb301d1c2b2a2695963b78c5e765f85e84084ee8d2f86db7c` endpoint=`95.216.12.50:30303` stage=`disconnected` best=`disconnected` reason=`rlpx_remote_disconnected_before_eth_status:reason_code=4 reason=too_many_peers` cap=`none`
+- peer=`b7148466c8558f57da7a16259edcaece6832400c0baaba01b4e20e60c426922791899525f217a6ffb301d1c2b2a2695963b78c5e765f85e84084ee8d2f86db7c` endpoint=`95.216.12.50:30304` stage=`disconnected` best=`disconnected` reason=`connect_failed(95.216.12.50:30304):connection timed out` cap=`none`
+- peer=`eeed69e1665475cf0793d7af596ff3f0a23847a64af921850c3aea274e6c0962c53e7d90bd7c01ce4447bc6a54b0f41b5d8894149478d083b076b108fef119f5` endpoint=`76.224.20.214:30303` stage=`disconnected` best=`disconnected` reason=`connect_failed(76.224.20.214:30303):connection timed out` cap=`none`
+- peer=`eeed69e1665475cf0793d7af596ff3f0a23847a64af921850c3aea274e6c0962c53e7d90bd7c01ce4447bc6a54b0f41b5d8894149478d083b076b108fef119f5` endpoint=`76.224.20.214:30304` stage=`disconnected` best=`disconnected` reason=`connect_failed(76.224.20.214:30304):connection timed out` cap=`none`
+- peer=`eeed69e1665475cf0793d7af596ff3f0a23847a64af921850c3aea274e6c0962c53e7d90bd7c01ce4447bc6a54b0f41b5d8894149478d083b076b108fef119f5` endpoint=`76.224.20.214:30403` stage=`disconnected` best=`disconnected` reason=`rlpx_remote_disconnected_before_hello:reason_code=4 reason=too_many_peers` cap=`none`
+- peer=`f68ec57cfca4d606d7f03794897d7d38baf9775953bf7e4f2648d648c3c006b9f1470297cc4c3d9bcba804650a349ae743c83c45928e6a3ea50456bc46f55e52` endpoint=`91.156.63.40:30303` stage=`disconnected` best=`disconnected` reason=`rlpx_remote_disconnected_before_hello:reason_code=4 reason=too_many_peers` cap=`none`
+- peer=`f68ec57cfca4d606d7f03794897d7d38baf9775953bf7e4f2648d648c3c006b9f1470297cc4c3d9bcba804650a349ae743c83c45928e6a3ea50456bc46f55e52` endpoint=`91.156.63.40:30304` stage=`disconnected` best=`disconnected` reason=`connect_failed(91.156.63.40:30304):connection timed out` cap=`none`
+- peer=`055b40fee0d962fafade7a76dcf39e398b14c1dad01775c601f5e8ec51c5ea95f43e0ddd5ad3d215f8b1daed47df0cb0ba4e340f70e611a432c59aa08133ec1e` endpoint=`3.84.39.146:30303` stage=`disconnected` best=`disconnected` reason=`rlpx_remote_disconnected_before_hello:reason_code=4 reason=too_many_peers` cap=`none`
+- peer=`055b40fee0d962fafade7a76dcf39e398b14c1dad01775c601f5e8ec51c5ea95f43e0ddd5ad3d215f8b1daed47df0cb0ba4e340f70e611a432c59aa08133ec1e` endpoint=`3.84.39.146:30304` stage=`disconnected` best=`disconnected` reason=`connect_failed(3.84.39.146:30304):connection timed out` cap=`none`
+- peer=`51466611c28bf1d132ce8e79a374f09c16f79ae68a8b4e71090a30f91f9470678ff377112cf338d7bea1aeae5e9410900cc6c941cdf113c056d184934a4ed7f9` endpoint=`94.72.165.162:30303` stage=`disconnected` best=`disconnected` reason=`connect_failed(94.72.165.162:30303):connection timed out` cap=`none`
+- peer=`51466611c28bf1d132ce8e79a374f09c16f79ae68a8b4e71090a30f91f9470678ff377112cf338d7bea1aeae5e9410900cc6c941cdf113c056d184934a4ed7f9` endpoint=`94.72.165.162:30304` stage=`disconnected` best=`disconnected` reason=`rlpx_remote_hello_timeout` cap=`none`
+- peer=`6d18b21beafae8194a579cd989cb22fff1f44b0341708b44de7f00223155c716c96ccc9aab41e1aa98ed9ee49f06c8282b9dca209bb159809b664130f4d404d9` endpoint=`174.164.215.35:30303` stage=`disconnected` best=`disconnected` reason=`rlpx_remote_disconnected_before_hello:reason_code=4 reason=too_many_peers` cap=`none`
+- peer=`6d18b21beafae8194a579cd989cb22fff1f44b0341708b44de7f00223155c716c96ccc9aab41e1aa98ed9ee49f06c8282b9dca209bb159809b664130f4d404d9` endpoint=`174.164.215.35:30304` stage=`disconnected` best=`disconnected` reason=`connect_failed(174.164.215.35:30304):connection timed out` cap=`none`
+- peer=`6e0e8af3a28cb6457a62525ae180171a6b8f8331b66f375d790bca30b5410bedaf290dd7338877dbf64deeb64eb3241e9a0d5700f9845bae5c56280033665228` endpoint=`31.165.109.85:30303` stage=`disconnected` best=`disconnected` reason=`connect_failed(31.165.109.85:30303):connection timed out` cap=`none`
+- peer=`6e0e8af3a28cb6457a62525ae180171a6b8f8331b66f375d790bca30b5410bedaf290dd7338877dbf64deeb64eb3241e9a0d5700f9845bae5c56280033665228` endpoint=`31.165.109.85:30304` stage=`disconnected` best=`disconnected` reason=`connect_failed(31.165.109.85:30304):connection timed out` cap=`none`
+- peer=`6e0e8af3a28cb6457a62525ae180171a6b8f8331b66f375d790bca30b5410bedaf290dd7338877dbf64deeb64eb3241e9a0d5700f9845bae5c56280033665228` endpoint=`31.165.109.85:30403` stage=`disconnected` best=`disconnected` reason=`rlpx_remote_disconnected_before_hello:reason_code=4 reason=too_many_peers` cap=`none`
+- peer=`23aaafcb90b53e71516b7515f7b2e8b4039c2e6030d02a7afb4b42ffd2a8449bdc2a2e81d547db0aed9be25daff96741a91ba336c959afc0dc4ec97dd8065c22` endpoint=`24.220.158.11:30303` stage=`disconnected` best=`disconnected` reason=`rlpx_remote_disconnected_before_hello:reason_code=4 reason=too_many_peers` cap=`none`
+- peer=`23aaafcb90b53e71516b7515f7b2e8b4039c2e6030d02a7afb4b42ffd2a8449bdc2a2e81d547db0aed9be25daff96741a91ba336c959afc0dc4ec97dd8065c22` endpoint=`24.220.158.11:30304` stage=`disconnected` best=`disconnected` reason=`connect_failed(24.220.158.11:30304):connection timed out` cap=`none`
+- peer=`3df8d5fabf8e8b668767c386dd2fc7a499bd5bf64f11515e0a5e6a8c46a650ff1fa4d8e046deb7e6ecf457d7c2bdf3760940c36395c08dc6b6f2ca31b4acdc98` endpoint=`13.214.207.69:30303` stage=`disconnected` best=`disconnected` reason=`rlpx_remote_disconnected_before_hello:reason_code=4 reason=too_many_peers` cap=`none`
+- peer=`3df8d5fabf8e8b668767c386dd2fc7a499bd5bf64f11515e0a5e6a8c46a650ff1fa4d8e046deb7e6ecf457d7c2bdf3760940c36395c08dc6b6f2ca31b4acdc98` endpoint=`13.214.207.69:30304` stage=`disconnected` best=`disconnected` reason=`connect_failed(13.214.207.69:30304):connection timed out` cap=`none`
+- peer=`6bc3c1701c03f5b014664ffff4b3dc7bf99bc672abd036191fcf3efbbb19b677ee1c9c87bb23b6ffd7f5f8d85e4edf8be2a49aa39df686e31b76376344899636` endpoint=`91.134.85.202:22454` stage=`disconnected` best=`disconnected` reason=`rlpx_remote_disconnected_before_hello:reason_code=4 reason=too_many_peers` cap=`none`
+- peer=`6bc3c1701c03f5b014664ffff4b3dc7bf99bc672abd036191fcf3efbbb19b677ee1c9c87bb23b6ffd7f5f8d85e4edf8be2a49aa39df686e31b76376344899636` endpoint=`91.134.85.202:30303` stage=`disconnected` best=`disconnected` reason=`connect_failed(91.134.85.202:30303):connection timed out` cap=`none`
+- peer=`6bc3c1701c03f5b014664ffff4b3dc7bf99bc672abd036191fcf3efbbb19b677ee1c9c87bb23b6ffd7f5f8d85e4edf8be2a49aa39df686e31b76376344899636` endpoint=`91.134.85.202:30304` stage=`disconnected` best=`disconnected` reason=`connect_failed(91.134.85.202:30304):connection timed out` cap=`none`
+- peer=`e1036c6a8b6e68567648c0a6e308d5a7bc2ee3ef31afbf4837c62a3d891b9741d06d52b7519f0f963c4754afee3138006e4b4f606c38c2153fadbdc83458b3f6` endpoint=`85.208.113.168:30303` stage=`disconnected` best=`disconnected` reason=`rlpx_remote_disconnected_before_hello:reason_code=4 reason=too_many_peers` cap=`none`
+- peer=`e1036c6a8b6e68567648c0a6e308d5a7bc2ee3ef31afbf4837c62a3d891b9741d06d52b7519f0f963c4754afee3138006e4b4f606c38c2153fadbdc83458b3f6` endpoint=`85.208.113.168:30304` stage=`disconnected` best=`disconnected` reason=`connect_failed(85.208.113.168:30304):connection timed out` cap=`none`
+
+Public Session Result:
+- Local controlled geth session was not exercised because no local enode was supplied.
+- Public DNS ENR discovery produced candidate session peers; bootnode/DNS discovery is not treated as eth session readiness.
+- Public discovered-peer session reached Hello but did not observe Status in this run.
+
+Readiness Claim:
+- public RLPx readiness: NOT CLAIMED.
+- A readiness claim requires TCP success, auth ack, Hello, Status, selected eth/69 or eth/70, and ready_count >= 1 in the public discovered-peer session.
+
+Interpretation:
+- Prior local controlled geth evidence passed through TCP, auth ack, Hello, Status, eth/69, and ready.
+- If the public session reaches auth ack or Hello but not Status, the likely area is public peer selection, remote peer policy, endpoint quality, or Status exchange compatibility with sampled public peers.
+- If a future public run stops before ack, the likely area remains public peer selection, endpoint reachability, network egress, or remote policy.
+- If both local and public sessions stop before ack, the next independent patch should inspect RLPx auth/session details.
+- A run that does not observe ack also does not proceed far enough to observe Hello, Status, or eth capability negotiation in that run.
+- This does not mean the NOVOVM EVM plugin lacks Hello/Status handling.
+
+Not Claimed:
+- no full geth full node parity
+- no protocol semantic rewrite
+- no full eth/71 or BAL implementation
+- no real balHash metadata source
+- no old UnifiedAccountRouter state migration
+- no strategy-specific acceptance result
+- no new NOVOVM plugin architecture
+
+Diff Audit:
+- Script scope: `scripts/migration/run_evm_rlpx_layered_canary.ps1` extends public candidate selection, retry diversity, cooldown accounting, and readiness reporting.
+- Report scope: `artifacts/migration/public-rlpx-readiness-closure-after-a484a8506.md` records this public closure run.
+- No active protocol semantic files are modified by this canary task.
+- No eth_baseFee, balHash, eth/71 guard, BAL fallback, UA RocksDB, or plugin architecture behavior is changed.
+
+Merge Note:
+- This is a public RLPx readiness closure canary improvement and evidence patch.
+- The observed public run reached auth ack and Hello on sampled peers but did not observe Status or ready.
+- Public RLPx readiness remains not claimed until a public discovered-peer session observes Status and ready_count >= 1.
