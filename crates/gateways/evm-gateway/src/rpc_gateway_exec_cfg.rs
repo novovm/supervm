@@ -1254,6 +1254,22 @@ struct GatewayEthPluginSessionState {
     updated_ms: u64,
     last_error: Option<String>,
     selected_eth_capability: Option<u64>,
+    diagnostics: GatewayEthPluginSessionDiagnostics,
+}
+
+#[derive(Clone, Default)]
+struct GatewayEthPluginSessionDiagnostics {
+    remote_client_id: Option<String>,
+    remote_p2p_version: Option<u64>,
+    remote_capabilities: Option<String>,
+    remote_eth_capabilities: Option<String>,
+    remote_snap_capabilities: Option<String>,
+    hello_seen_elapsed_ms: Option<u64>,
+    status_seen_elapsed_ms: Option<u64>,
+    disconnect_phase: Option<String>,
+    disconnect_reason_code: Option<u64>,
+    disconnect_reason_name: Option<String>,
+    disconnect_elapsed_ms: Option<u64>,
 }
 
 #[derive(Default, Clone)]
@@ -5355,7 +5371,7 @@ fn set_gateway_eth_plugin_session_stage(
     last_error: Option<String>,
 ) {
     let cache = gateway_eth_plugin_session_cache();
-    let (best_stage, selected_eth_capability) = cache
+    let (best_stage, selected_eth_capability, diagnostics) = cache
         .get(build_gateway_eth_plugin_session_key(chain_id, endpoint).as_str())
         .map(|existing| {
             let best_stage = if existing.best_stage.rank() >= stage.rank() {
@@ -5363,9 +5379,13 @@ fn set_gateway_eth_plugin_session_stage(
             } else {
                 stage
             };
-            (best_stage, existing.selected_eth_capability)
+            (
+                best_stage,
+                existing.selected_eth_capability,
+                existing.diagnostics.clone(),
+            )
         })
-        .unwrap_or((stage, None));
+        .unwrap_or((stage, None, GatewayEthPluginSessionDiagnostics::default()));
     cache.insert(
         build_gateway_eth_plugin_session_key(chain_id, endpoint),
         GatewayEthPluginSessionState {
@@ -5376,6 +5396,7 @@ fn set_gateway_eth_plugin_session_stage(
             updated_ms,
             last_error,
             selected_eth_capability,
+            diagnostics,
         },
     );
 }
@@ -5409,6 +5430,7 @@ fn bump_gateway_eth_plugin_session_stage(
             updated_ms,
             last_error: None,
             selected_eth_capability: None,
+            diagnostics: GatewayEthPluginSessionDiagnostics::default(),
         },
     );
 }
@@ -5436,6 +5458,132 @@ fn set_gateway_eth_plugin_session_selected_eth_capability(
             updated_ms,
             last_error: None,
             selected_eth_capability: Some(eth_version),
+            diagnostics: GatewayEthPluginSessionDiagnostics::default(),
+        },
+    );
+}
+
+fn gateway_eth_rlpx_capability_summary(caps: &[GatewayEthRlpxCapability]) -> String {
+    caps.iter()
+        .map(|cap| format!("{}/{}", cap.name, cap.version))
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+fn gateway_eth_rlpx_capability_versions(caps: &[GatewayEthRlpxCapability], name: &str) -> String {
+    caps.iter()
+        .filter(|cap| cap.name == name)
+        .map(|cap| cap.version.to_string())
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+fn set_gateway_eth_plugin_session_remote_hello(
+    chain_id: u64,
+    endpoint: &str,
+    remote_hello: &GatewayEthRlpxHello,
+    selected_eth_capability: Option<u64>,
+    hello_seen_elapsed_ms: u64,
+    updated_ms: u64,
+) {
+    let key = build_gateway_eth_plugin_session_key(chain_id, endpoint);
+    let cache = gateway_eth_plugin_session_cache();
+    let mut diagnostics = cache
+        .get(key.as_str())
+        .map(|existing| existing.diagnostics.clone())
+        .unwrap_or_default();
+    diagnostics.remote_client_id = Some(remote_hello.client_name.clone());
+    diagnostics.remote_p2p_version = Some(remote_hello.protocol_version);
+    diagnostics.remote_capabilities = Some(gateway_eth_rlpx_capability_summary(
+        remote_hello.capabilities.as_slice(),
+    ));
+    diagnostics.remote_eth_capabilities = Some(gateway_eth_rlpx_capability_versions(
+        remote_hello.capabilities.as_slice(),
+        "eth",
+    ));
+    diagnostics.remote_snap_capabilities = Some(gateway_eth_rlpx_capability_versions(
+        remote_hello.capabilities.as_slice(),
+        "snap",
+    ));
+    diagnostics.hello_seen_elapsed_ms = Some(hello_seen_elapsed_ms);
+    diagnostics.disconnect_phase = None;
+    diagnostics.disconnect_reason_code = None;
+    diagnostics.disconnect_reason_name = None;
+    diagnostics.disconnect_elapsed_ms = None;
+    if let Some(mut existing) = cache.get_mut(key.as_str()) {
+        existing.diagnostics = diagnostics;
+        if let Some(eth_version) = selected_eth_capability {
+            existing.selected_eth_capability = Some(eth_version);
+        }
+        existing.updated_ms = updated_ms;
+        return;
+    }
+    cache.insert(
+        key,
+        GatewayEthPluginSessionState {
+            chain_id,
+            endpoint: endpoint.to_string(),
+            stage: GatewayEthPluginSessionStage::HelloSeen,
+            best_stage: GatewayEthPluginSessionStage::HelloSeen,
+            updated_ms,
+            last_error: None,
+            selected_eth_capability,
+            diagnostics,
+        },
+    );
+}
+
+fn set_gateway_eth_plugin_session_status_elapsed(
+    chain_id: u64,
+    endpoint: &str,
+    status_seen_elapsed_ms: u64,
+    updated_ms: u64,
+) {
+    let key = build_gateway_eth_plugin_session_key(chain_id, endpoint);
+    let cache = gateway_eth_plugin_session_cache();
+    if let Some(mut existing) = cache.get_mut(key.as_str()) {
+        existing.diagnostics.status_seen_elapsed_ms = Some(status_seen_elapsed_ms);
+        existing.updated_ms = updated_ms;
+    }
+}
+
+fn set_gateway_eth_plugin_session_disconnect_diagnostics(
+    chain_id: u64,
+    endpoint: &str,
+    phase: &str,
+    reason_code: Option<u64>,
+    reason_name: &str,
+    disconnect_elapsed_ms: u64,
+    updated_ms: u64,
+) {
+    let key = build_gateway_eth_plugin_session_key(chain_id, endpoint);
+    let cache = gateway_eth_plugin_session_cache();
+    if let Some(mut existing) = cache.get_mut(key.as_str()) {
+        existing.diagnostics.disconnect_phase = Some(phase.to_string());
+        existing.diagnostics.disconnect_reason_code = reason_code;
+        existing.diagnostics.disconnect_reason_name = Some(reason_name.to_string());
+        existing.diagnostics.disconnect_elapsed_ms = Some(disconnect_elapsed_ms);
+        existing.updated_ms = updated_ms;
+        return;
+    }
+    let diagnostics = GatewayEthPluginSessionDiagnostics {
+        disconnect_phase: Some(phase.to_string()),
+        disconnect_reason_code: reason_code,
+        disconnect_reason_name: Some(reason_name.to_string()),
+        disconnect_elapsed_ms: Some(disconnect_elapsed_ms),
+        ..GatewayEthPluginSessionDiagnostics::default()
+    };
+    cache.insert(
+        key,
+        GatewayEthPluginSessionState {
+            chain_id,
+            endpoint: endpoint.to_string(),
+            stage: GatewayEthPluginSessionStage::Disconnected,
+            best_stage: GatewayEthPluginSessionStage::Disconnected,
+            updated_ms,
+            last_error: None,
+            selected_eth_capability: None,
+            diagnostics,
         },
     );
 }
@@ -5697,6 +5845,116 @@ pub(super) fn gateway_eth_public_broadcast_plugin_peers_json(chain_id: u64) -> s
                 state
                     .selected_eth_capability
                     .map(|version| format!("eth/{version}"))
+                    .unwrap_or_default(),
+            ),
+        );
+        row.insert(
+            "remote_client_id".to_string(),
+            serde_json::Value::String(
+                state
+                    .diagnostics
+                    .remote_client_id
+                    .clone()
+                    .unwrap_or_default(),
+            ),
+        );
+        row.insert(
+            "remote_p2p_version".to_string(),
+            serde_json::Value::String(
+                state
+                    .diagnostics
+                    .remote_p2p_version
+                    .map(|version| format!("0x{version:x}"))
+                    .unwrap_or_default(),
+            ),
+        );
+        row.insert(
+            "remote_capabilities".to_string(),
+            serde_json::Value::String(
+                state
+                    .diagnostics
+                    .remote_capabilities
+                    .clone()
+                    .unwrap_or_default(),
+            ),
+        );
+        row.insert(
+            "remote_eth_capabilities".to_string(),
+            serde_json::Value::String(
+                state
+                    .diagnostics
+                    .remote_eth_capabilities
+                    .clone()
+                    .unwrap_or_default(),
+            ),
+        );
+        row.insert(
+            "remote_snap_capabilities".to_string(),
+            serde_json::Value::String(
+                state
+                    .diagnostics
+                    .remote_snap_capabilities
+                    .clone()
+                    .unwrap_or_default(),
+            ),
+        );
+        row.insert(
+            "hello_seen_elapsed_ms".to_string(),
+            serde_json::Value::String(
+                state
+                    .diagnostics
+                    .hello_seen_elapsed_ms
+                    .map(|value| format!("0x{value:x}"))
+                    .unwrap_or_default(),
+            ),
+        );
+        row.insert(
+            "status_seen_elapsed_ms".to_string(),
+            serde_json::Value::String(
+                state
+                    .diagnostics
+                    .status_seen_elapsed_ms
+                    .map(|value| format!("0x{value:x}"))
+                    .unwrap_or_default(),
+            ),
+        );
+        row.insert(
+            "disconnect_phase".to_string(),
+            serde_json::Value::String(
+                state
+                    .diagnostics
+                    .disconnect_phase
+                    .clone()
+                    .unwrap_or_default(),
+            ),
+        );
+        row.insert(
+            "disconnect_reason_code".to_string(),
+            serde_json::Value::String(
+                state
+                    .diagnostics
+                    .disconnect_reason_code
+                    .map(|value| format!("0x{value:x}"))
+                    .unwrap_or_default(),
+            ),
+        );
+        row.insert(
+            "disconnect_reason_name".to_string(),
+            serde_json::Value::String(
+                state
+                    .diagnostics
+                    .disconnect_reason_name
+                    .clone()
+                    .unwrap_or_default(),
+            ),
+        );
+        row.insert(
+            "disconnect_elapsed_ms".to_string(),
+            serde_json::Value::String(
+                state
+                    .diagnostics
+                    .disconnect_elapsed_ms
+                    .map(|value| format!("0x{value:x}"))
                     .unwrap_or_default(),
             ),
         );
@@ -7528,6 +7786,7 @@ fn gateway_eth_plugin_peer_session_rlpx_ingest(
         checked_ms,
     );
     observe_gateway_eth_plugin_session_stage(chain_id, GatewayEthPluginSessionStage::AckSeen);
+    let auth_ack_seen_at = Instant::now();
     if gateway_warn_enabled() {
         eprintln!(
             "gateway_warn: rlpx stage ack_received endpoint={}",
@@ -7582,6 +7841,15 @@ fn gateway_eth_plugin_peer_session_rlpx_ingest(
     let hello_deadline = Instant::now() + timeout;
     let remote_hello = loop {
         if Instant::now() >= hello_deadline {
+            set_gateway_eth_plugin_session_disconnect_diagnostics(
+                chain_id,
+                endpoint,
+                "before_hello",
+                None,
+                "hello_timeout",
+                auth_ack_seen_at.elapsed().as_millis() as u64,
+                now_unix_millis() as u64,
+            );
             break Err("rlpx_remote_hello_timeout".to_string());
         }
         match gateway_eth_rlpx_read_wire_frame(&mut stream, &mut handshake.session) {
@@ -7611,6 +7879,15 @@ fn gateway_eth_plugin_peer_session_rlpx_ingest(
                             gateway_eth_rlpx_hex_preview(payload.as_slice(), 24),
                         );
                     }
+                    set_gateway_eth_plugin_session_disconnect_diagnostics(
+                        chain_id,
+                        endpoint,
+                        "before_hello",
+                        reason,
+                        gateway_eth_rlpx_disconnect_reason_name(reason.unwrap_or(u64::MAX)),
+                        auth_ack_seen_at.elapsed().as_millis() as u64,
+                        now_unix_millis() as u64,
+                    );
                     break Err(format!(
                         "rlpx_remote_disconnected_before_hello:reason_code={} reason={}",
                         reason.unwrap_or(u64::MAX),
@@ -7637,11 +7914,29 @@ fn gateway_eth_plugin_peer_session_rlpx_ingest(
                         endpoint, err
                     );
                 }
+                set_gateway_eth_plugin_session_disconnect_diagnostics(
+                    chain_id,
+                    endpoint,
+                    "before_hello",
+                    None,
+                    "read_failed",
+                    auth_ack_seen_at.elapsed().as_millis() as u64,
+                    now_unix_millis() as u64,
+                );
                 break Err(err);
             }
         }
     }?;
 
+    let hello_seen_elapsed_ms = auth_ack_seen_at.elapsed().as_millis() as u64;
+    set_gateway_eth_plugin_session_remote_hello(
+        chain_id,
+        endpoint,
+        &remote_hello,
+        None,
+        hello_seen_elapsed_ms,
+        now_unix_millis() as u64,
+    );
     let Some(eth_version) = gateway_eth_rlpx_select_shared_eth_version(
         local_hello.capabilities.as_slice(),
         remote_hello.capabilities.as_slice(),
@@ -7679,6 +7974,14 @@ fn gateway_eth_plugin_peer_session_rlpx_ingest(
         eth_version,
         now_unix_millis() as u64,
     );
+    set_gateway_eth_plugin_session_remote_hello(
+        chain_id,
+        endpoint,
+        &remote_hello,
+        Some(eth_version),
+        hello_seen_elapsed_ms,
+        now_unix_millis() as u64,
+    );
     if gateway_warn_enabled() {
         eprintln!(
             "gateway_warn: rlpx stage hello_received endpoint={} remote_proto={} remote_name={} remote_caps={} remote_caps_geth_canonical={} remote_listen_port={} remote_id_len={}",
@@ -7705,6 +8008,15 @@ fn gateway_eth_plugin_peer_session_rlpx_ingest(
     let status_deadline = Instant::now() + timeout;
     let remote_status = loop {
         if Instant::now() >= status_deadline {
+            set_gateway_eth_plugin_session_disconnect_diagnostics(
+                chain_id,
+                endpoint,
+                "before_eth_status",
+                None,
+                "status_timeout",
+                auth_ack_seen_at.elapsed().as_millis() as u64,
+                now_unix_millis() as u64,
+            );
             break Err("rlpx_eth_status_timeout".to_string());
         }
         match gateway_eth_rlpx_read_wire_frame(&mut stream, &mut handshake.session) {
@@ -7734,6 +8046,15 @@ fn gateway_eth_plugin_peer_session_rlpx_ingest(
                             gateway_eth_rlpx_hex_preview(payload.as_slice(), 24),
                         );
                     }
+                    set_gateway_eth_plugin_session_disconnect_diagnostics(
+                        chain_id,
+                        endpoint,
+                        "before_eth_status",
+                        reason,
+                        gateway_eth_rlpx_disconnect_reason_name(reason.unwrap_or(u64::MAX)),
+                        auth_ack_seen_at.elapsed().as_millis() as u64,
+                        now_unix_millis() as u64,
+                    );
                     break Err(format!(
                         "rlpx_remote_disconnected_before_eth_status:reason_code={} reason={}",
                         reason.unwrap_or(u64::MAX),
@@ -7760,6 +8081,15 @@ fn gateway_eth_plugin_peer_session_rlpx_ingest(
                         endpoint, err
                     );
                 }
+                set_gateway_eth_plugin_session_disconnect_diagnostics(
+                    chain_id,
+                    endpoint,
+                    "before_eth_status",
+                    None,
+                    "read_failed",
+                    auth_ack_seen_at.elapsed().as_millis() as u64,
+                    now_unix_millis() as u64,
+                );
                 break Err(err);
             }
         }
@@ -7770,6 +8100,12 @@ fn gateway_eth_plugin_peer_session_rlpx_ingest(
         chain_id,
         endpoint,
         GatewayEthPluginSessionStage::StatusSeen,
+        now_unix_millis() as u64,
+    );
+    set_gateway_eth_plugin_session_status_elapsed(
+        chain_id,
+        endpoint,
+        auth_ack_seen_at.elapsed().as_millis() as u64,
         now_unix_millis() as u64,
     );
     observe_gateway_eth_plugin_session_stage(chain_id, GatewayEthPluginSessionStage::StatusSeen);
@@ -9782,6 +10118,43 @@ mod tests {
             now_unix_millis() as u64,
             Some("session_closed_after_ready".to_string()),
         );
+        let remote_hello = GatewayEthRlpxHello {
+            protocol_version: 5,
+            client_name: "Geth/v1.16.0-stable/linux-amd64/go1.24".to_string(),
+            capabilities: vec![
+                GatewayEthRlpxCapability {
+                    name: "eth".to_string(),
+                    version: GATEWAY_ETH_PLUGIN_RLPX_ETH_PROTO_69,
+                },
+                GatewayEthRlpxCapability {
+                    name: "eth".to_string(),
+                    version: GATEWAY_ETH_PLUGIN_RLPX_ETH_PROTO_68,
+                },
+                GatewayEthRlpxCapability {
+                    name: "snap".to_string(),
+                    version: 1,
+                },
+            ],
+            listen_port: 30303,
+            id_len: 64,
+        };
+        set_gateway_eth_plugin_session_remote_hello(
+            chain_id,
+            endpoint,
+            &remote_hello,
+            Some(GATEWAY_ETH_PLUGIN_RLPX_ETH_PROTO_69),
+            0x12,
+            now_unix_millis() as u64,
+        );
+        set_gateway_eth_plugin_session_disconnect_diagnostics(
+            chain_id,
+            endpoint,
+            "before_eth_status",
+            Some(4),
+            "too_many_peers",
+            0x34,
+            now_unix_millis() as u64,
+        );
         let worker_key = build_gateway_eth_plugin_rlpx_worker_key(chain_id, endpoint);
         update_gateway_eth_plugin_rlpx_worker_state(worker_key.as_str(), |state| {
             state.learning_score = 0x345;
@@ -9818,6 +10191,21 @@ mod tests {
         assert_eq!(row["stage"].as_str(), Some("disconnected"));
         assert_eq!(row["best_stage"].as_str(), Some("ready"));
         assert_eq!(row["selected_eth_capability"].as_str(), Some("eth/69"));
+        assert_eq!(
+            row["remote_client_id"].as_str(),
+            Some("Geth/v1.16.0-stable/linux-amd64/go1.24")
+        );
+        assert_eq!(row["remote_p2p_version"].as_str(), Some("0x5"));
+        assert_eq!(row["remote_eth_capabilities"].as_str(), Some("69,68"));
+        assert_eq!(row["remote_snap_capabilities"].as_str(), Some("1"));
+        assert_eq!(row["hello_seen_elapsed_ms"].as_str(), Some("0x12"));
+        assert_eq!(row["disconnect_phase"].as_str(), Some("before_eth_status"));
+        assert_eq!(row["disconnect_reason_code"].as_str(), Some("0x4"));
+        assert_eq!(
+            row["disconnect_reason_name"].as_str(),
+            Some("too_many_peers")
+        );
+        assert_eq!(row["disconnect_elapsed_ms"].as_str(), Some("0x34"));
         assert_eq!(row["tier"].as_str(), Some("core"));
         assert_eq!(row["ready_count"].as_str(), Some("0x12"));
         assert_eq!(row["new_pooled_count"].as_str(), Some("0x0"));
