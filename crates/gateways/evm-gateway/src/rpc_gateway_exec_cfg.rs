@@ -8018,6 +8018,15 @@ fn gateway_eth_plugin_peer_session_rlpx_ingest(
                     .join(","),
             );
         }
+        set_gateway_eth_plugin_session_disconnect_diagnostics(
+            chain_id,
+            endpoint,
+            "capability_mismatch",
+            None,
+            "eth_capability_not_found",
+            auth_ack_seen_at.elapsed().as_millis() as u64,
+            now_unix_millis() as u64,
+        );
         return Err("rlpx_eth_capability_not_found".to_string());
     };
     bump_gateway_eth_plugin_session_stage(
@@ -8139,7 +8148,7 @@ fn gateway_eth_plugin_peer_session_rlpx_ingest(
                     let reason = gateway_eth_rlpx_parse_disconnect_reason(payload.as_slice());
                     if gateway_warn_enabled() {
                         eprintln!(
-                            "gateway_warn: rlpx stage disconnect_received endpoint={} phase=before_eth_status reason_code={} reason={} payload=0x{}",
+                            "gateway_warn: rlpx stage disconnect_received endpoint={} phase=after_status_sent_before_status_seen reason_code={} reason={} payload=0x{}",
                             endpoint,
                             reason.unwrap_or(u64::MAX),
                             gateway_eth_rlpx_disconnect_reason_name(
@@ -8158,7 +8167,7 @@ fn gateway_eth_plugin_peer_session_rlpx_ingest(
                         now_unix_millis() as u64,
                     );
                     break Err(format!(
-                        "rlpx_remote_disconnected_before_eth_status:reason_code={} reason={}",
+                        "rlpx_remote_disconnected_after_status_sent_before_status_seen:reason_code={} reason={}",
                         reason.unwrap_or(u64::MAX),
                         gateway_eth_rlpx_disconnect_reason_name(reason.unwrap_or(u64::MAX)),
                     ));

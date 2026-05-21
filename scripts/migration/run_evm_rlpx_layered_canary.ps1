@@ -364,6 +364,146 @@ function Test-ReasonIsTcpTimeout {
     return ($normalized.Contains("timed out") -or $normalized.Contains("timeout") -or $normalized.Contains("10060"))
 }
 
+function Test-EthCapsContainVersion {
+    param(
+        [string]$Caps,
+        [string[]]$Versions
+    )
+    if (-not $Caps) {
+        return $false
+    }
+    $parts = @($Caps -split "," | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+    foreach ($version in $Versions) {
+        if ($parts -contains $version -or $parts -contains ("eth/{0}" -f $version)) {
+            return $true
+        }
+    }
+    return $false
+}
+
+function Test-SelectedEthVersion {
+    param(
+        [string]$Selected,
+        [string[]]$Versions
+    )
+    if (-not $Selected) {
+        return $false
+    }
+    $normalized = $Selected.Trim().ToLowerInvariant()
+    foreach ($version in $Versions) {
+        if ($normalized -eq $version -or $normalized -eq ("eth/{0}" -f $version)) {
+            return $true
+        }
+    }
+    return $false
+}
+
+function Get-RlpxFailureClass {
+    param($Trace)
+    if ($null -eq $Trace) {
+        return "unknown"
+    }
+    $reason = [string]$Trace.reason
+    $phase = [string]$Trace.disconnect_phase
+    $selected = [string]$Trace.selected_eth_capability
+    $remoteEthCaps = [string]$Trace.remote_eth_capabilities
+    $localStatus = [string]$Trace.local_status_summary
+    $remoteStatus = [string]$Trace.remote_status_summary
+    $bestStage = [string]$Trace.best_stage
+
+    if ($bestStage -eq "ready") {
+        return "ready"
+    }
+    if ($remoteStatus) {
+        return "status_seen_not_ready"
+    }
+    if ($reason -match "remote_status_decode_failed" -or $phase -eq "remote_status_decode_failed") {
+        return "status_payload_mismatch"
+    }
+    if (Test-SelectedEthVersion -Selected $selected -Versions @("68")) {
+        if ($localStatus) {
+            return "eth68_only_after_local_status_before_remote_status"
+        }
+        return "eth68_only_peer"
+    }
+    if ($reason -match "eth_capability_not_found|no_shared_eth_capability" -or $phase -eq "capability_mismatch") {
+        return "capability_mismatch"
+    }
+    if (Test-ReasonIsTooManyPeers -Reason $reason) {
+        if ($phase -eq "after_status_sent_before_status_seen" -or $localStatus) {
+            return "too_many_peers_after_local_status_before_remote_status"
+        }
+        if ($phase -eq "before_eth_status" -or $remoteEthCaps) {
+            return "too_many_peers_after_hello_before_local_status"
+        }
+        return "too_many_peers_before_hello"
+    }
+    if ($phase -eq "after_status_sent_before_status_seen" -or $localStatus) {
+        return "disconnect_after_local_status_before_remote_status"
+    }
+    if ($phase -eq "before_eth_status" -or ($remoteEthCaps -and -not $localStatus)) {
+        return "disconnect_after_hello_before_local_status"
+    }
+    if ($phase -eq "before_hello" -or $reason -match "before_hello|remote_hello_timeout") {
+        return "disconnect_before_hello"
+    }
+    if ($reason -match "ack|auth" -and -not $remoteEthCaps) {
+        return "below_auth_ack"
+    }
+    if (Test-ReasonIsTcpTimeout -Reason $reason) {
+        return "endpoint_timeout"
+    }
+    if ($reason -match "connect_failed|connection refused|unreachable") {
+        return "tcp_connect_failed"
+    }
+    return "unknown"
+}
+
+function Update-RlpxFailureClassification {
+    param([System.Collections.IDictionary]$Metrics)
+    if ($null -eq $Metrics -or -not $Metrics.Contains("traces")) {
+        return
+    }
+    foreach ($key in @(
+        "disconnect_after_hello_before_local_status_count",
+        "disconnect_after_local_status_before_remote_status_count",
+        "capability_mismatch_count",
+        "eth68_only_peer_count",
+        "eth69_70_peer_count",
+        "status_payload_mismatch_count",
+        "endpoint_timeout_count"
+    )) {
+        $Metrics[$key] = [UInt64]0
+    }
+
+    foreach ($trace in @($Metrics.traces)) {
+        $class = Get-RlpxFailureClass -Trace $trace
+        $trace.failure_class = $class
+        if ($class -match "after_hello_before_local_status") {
+            $Metrics.disconnect_after_hello_before_local_status_count = [UInt64]($Metrics.disconnect_after_hello_before_local_status_count + 1)
+        }
+        if ($class -match "after_local_status_before_remote_status") {
+            $Metrics.disconnect_after_local_status_before_remote_status_count = [UInt64]($Metrics.disconnect_after_local_status_before_remote_status_count + 1)
+        }
+        if ($class -eq "capability_mismatch") {
+            $Metrics.capability_mismatch_count = [UInt64]($Metrics.capability_mismatch_count + 1)
+        }
+        if ($class -match "eth68_only") {
+            $Metrics.eth68_only_peer_count = [UInt64]($Metrics.eth68_only_peer_count + 1)
+        }
+        if ((Test-SelectedEthVersion -Selected ([string]$trace.selected_eth_capability) -Versions @("69", "70")) -or
+            (Test-EthCapsContainVersion -Caps ([string]$trace.remote_eth_capabilities) -Versions @("69", "70"))) {
+            $Metrics.eth69_70_peer_count = [UInt64]($Metrics.eth69_70_peer_count + 1)
+        }
+        if ($class -eq "status_payload_mismatch") {
+            $Metrics.status_payload_mismatch_count = [UInt64]($Metrics.status_payload_mismatch_count + 1)
+        }
+        if ($class -eq "endpoint_timeout") {
+            $Metrics.endpoint_timeout_count = [UInt64]($Metrics.endpoint_timeout_count + 1)
+        }
+    }
+}
+
 function Get-CapabilityVersionsFromSummary {
     param(
         [string]$Caps,
@@ -498,6 +638,7 @@ function Merge-GatewayRlpxLogDiagnostics {
     $Metrics.hello_seen_count = [UInt64][Math]::Max([UInt64]$Metrics.hello_seen_count, $helloSeen)
     $Metrics.status_sent_count = [UInt64][Math]::Max([UInt64]$Metrics.status_sent_count, $statusSent)
     $Metrics.status_seen_count = [UInt64][Math]::Max([UInt64]$Metrics.status_seen_count, $statusSeen)
+    Update-RlpxFailureClassification -Metrics $Metrics
 }
 
 function Push-ProcessEnv {
@@ -558,6 +699,13 @@ function Convert-PluginPeerItemsToMetrics {
         disconnect_before_hello_count = [UInt64]0
         disconnect_before_status_count = [UInt64]0
         disconnect_after_status_sent_count = [UInt64]0
+        disconnect_after_hello_before_local_status_count = [UInt64]0
+        disconnect_after_local_status_before_remote_status_count = [UInt64]0
+        capability_mismatch_count = [UInt64]0
+        eth68_only_peer_count = [UInt64]0
+        eth69_70_peer_count = [UInt64]0
+        status_payload_mismatch_count = [UInt64]0
+        endpoint_timeout_count = [UInt64]0
         disconnect_reason_too_many_peers_count = [UInt64]0
         peer_cooldown_count = [UInt64]0
         selected_eth_capability = ""
@@ -637,7 +785,7 @@ function Convert-PluginPeerItemsToMetrics {
         if ($disconnectPhase -eq "before_hello" -or $lastError -match "before_hello|remote_hello_timeout") {
             $metrics.disconnect_before_hello_count = [UInt64]($metrics.disconnect_before_hello_count + 1)
         }
-        if ($disconnectPhase -eq "before_eth_status" -or $lastError -match "before_eth_status|eth_status_timeout|eth_capability_not_found") {
+        if ($disconnectPhase -eq "before_eth_status" -or (($disconnectPhase -ne "after_status_sent_before_status_seen") -and $lastError -match "before_eth_status|eth_status_timeout|eth_capability_not_found")) {
             $metrics.disconnect_before_status_count = [UInt64]($metrics.disconnect_before_status_count + 1)
         }
         if ($disconnectPhase -eq "after_status_sent_before_status_seen") {
@@ -683,11 +831,13 @@ function Convert-PluginPeerItemsToMetrics {
             status_seen_elapsed_ms = $statusSeenElapsedMs
             local_status_summary = $localStatusSummary
             remote_status_summary = $remoteStatusSummary
+            failure_class = "unknown"
             disconnect_phase = $disconnectPhase
             disconnect_reason_name = $disconnectReasonName
             disconnect_elapsed_ms = $disconnectElapsedMs
         }
     }
+    Update-RlpxFailureClassification -Metrics $metrics
     return $metrics
 }
 
@@ -714,6 +864,13 @@ function New-RlpxMetricAccumulator {
         disconnect_before_hello_count = [UInt64]0
         disconnect_before_status_count = [UInt64]0
         disconnect_after_status_sent_count = [UInt64]0
+        disconnect_after_hello_before_local_status_count = [UInt64]0
+        disconnect_after_local_status_before_remote_status_count = [UInt64]0
+        capability_mismatch_count = [UInt64]0
+        eth68_only_peer_count = [UInt64]0
+        eth69_70_peer_count = [UInt64]0
+        status_payload_mismatch_count = [UInt64]0
+        endpoint_timeout_count = [UInt64]0
         disconnect_reason_too_many_peers_count = [UInt64]0
         peer_cooldown_count = [UInt64]0
         selected_eth_capability = ""
@@ -748,6 +905,13 @@ function Add-RlpxMetrics {
         "disconnect_before_hello_count",
         "disconnect_before_status_count",
         "disconnect_after_status_sent_count",
+        "disconnect_after_hello_before_local_status_count",
+        "disconnect_after_local_status_before_remote_status_count",
+        "capability_mismatch_count",
+        "eth68_only_peer_count",
+        "eth69_70_peer_count",
+        "status_payload_mismatch_count",
+        "endpoint_timeout_count",
         "disconnect_reason_too_many_peers_count"
     )) {
         if ($Metrics.Contains($key)) {
@@ -1001,6 +1165,13 @@ function Invoke-PublicReadinessClosure {
                 } elseif ($endpoint -and (Test-ReasonIsTcpTimeout -Reason $reason)) {
                     [void]$timeoutPenalty.Add($endpoint)
                 }
+                if ($endpoint -and (Test-SelectedEthVersion -Selected ([string]$trace.selected_eth_capability) -Versions @("68"))) {
+                    [void]$cooldown.Add($endpoint)
+                    $nodeId = [string]$trace.remote_node_id
+                    if ($nodeId) {
+                        [void]$cooldownNodes.Add($nodeId)
+                    }
+                }
             }
             if ($metrics.ready_count -gt 0) {
                 break
@@ -1057,6 +1228,27 @@ function Convert-LayerToMarkdown {
         if ($m.Contains("disconnect_after_status_sent_count")) {
             $lines.Add(('- disconnect_after_status_sent_count: `{0}`' -f $m.disconnect_after_status_sent_count))
         }
+        if ($m.Contains("disconnect_after_hello_before_local_status_count")) {
+            $lines.Add(('- disconnect_after_hello_before_local_status_count: `{0}`' -f $m.disconnect_after_hello_before_local_status_count))
+        }
+        if ($m.Contains("disconnect_after_local_status_before_remote_status_count")) {
+            $lines.Add(('- disconnect_after_local_status_before_remote_status_count: `{0}`' -f $m.disconnect_after_local_status_before_remote_status_count))
+        }
+        if ($m.Contains("capability_mismatch_count")) {
+            $lines.Add(('- capability_mismatch_count: `{0}`' -f $m.capability_mismatch_count))
+        }
+        if ($m.Contains("eth68_only_peer_count")) {
+            $lines.Add(('- eth68_only_peer_count: `{0}`' -f $m.eth68_only_peer_count))
+        }
+        if ($m.Contains("eth69_70_peer_count")) {
+            $lines.Add(('- eth69_70_peer_count: `{0}`' -f $m.eth69_70_peer_count))
+        }
+        if ($m.Contains("status_payload_mismatch_count")) {
+            $lines.Add(('- status_payload_mismatch_count: `{0}`' -f $m.status_payload_mismatch_count))
+        }
+        if ($m.Contains("endpoint_timeout_count")) {
+            $lines.Add(('- endpoint_timeout_count: `{0}`' -f $m.endpoint_timeout_count))
+        }
         if ($m.Contains("peer_cooldown_count")) {
             $lines.Add(('- peer_cooldown_count: `{0}`' -f $m.peer_cooldown_count))
         }
@@ -1070,7 +1262,8 @@ function Convert-LayerToMarkdown {
             $traceClient = Convert-ReportText -Text ([string]$trace.remote_client_id)
             $localStatus = Convert-ReportText -Text ([string]$trace.local_status_summary)
             $remoteStatus = Convert-ReportText -Text ([string]$trace.remote_status_summary)
-            $lines.Add(('- peer=`{0}` endpoint=`{1}` stage=`{2}` best=`{3}` phase=`{4}` reason=`{5}` cap=`{6}` client=`{7}` eth_caps=`{8}` snap_caps=`{9}` hello_ms=`{10}` status_sent_ms=`{11}` status_seen_ms=`{12}` disconnect_ms=`{13}` local_status=`{14}` remote_status=`{15}`' -f $trace.remote_node_id, $trace.remote_endpoint, $trace.stage, $trace.best_stage, $trace.disconnect_phase, $traceReason, $trace.selected_eth_capability, $traceClient, $trace.remote_eth_capabilities, $trace.remote_snap_capabilities, $trace.hello_seen_elapsed_ms, $trace.status_sent_elapsed_ms, $trace.status_seen_elapsed_ms, $trace.disconnect_elapsed_ms, $localStatus, $remoteStatus))
+            $failureClass = Convert-ReportText -Text ([string]$trace.failure_class)
+            $lines.Add(('- peer=`{0}` endpoint=`{1}` stage=`{2}` best=`{3}` class=`{4}` phase=`{5}` reason=`{6}` cap=`{7}` client=`{8}` eth_caps=`{9}` snap_caps=`{10}` hello_ms=`{11}` status_sent_ms=`{12}` status_seen_ms=`{13}` disconnect_ms=`{14}` local_status=`{15}` remote_status=`{16}`' -f $trace.remote_node_id, $trace.remote_endpoint, $trace.stage, $trace.best_stage, $failureClass, $trace.disconnect_phase, $traceReason, $trace.selected_eth_capability, $traceClient, $trace.remote_eth_capabilities, $trace.remote_snap_capabilities, $trace.hello_seen_elapsed_ms, $trace.status_sent_elapsed_ms, $trace.status_seen_elapsed_ms, $trace.disconnect_elapsed_ms, $localStatus, $remoteStatus))
         }
     }
     $lines.Add("")
@@ -1221,10 +1414,10 @@ try {
     $md = New-Object System.Collections.Generic.List[string]
     $md.Add(("# {0}" -f $ReportTitle))
     $md.Add("")
-    $md.Add("Status: public RLPx readiness/status-gap canary report.")
+    $md.Add("Status: public RLPx readiness/status failure classification report.")
     $md.Add("")
     $md.Add("Scope:")
-    $md.Add("- This report records public discovered-peer RLPx readiness progress and the current failure stage by using peer candidate diversity, endpoint filtering, cooldown, and failure-stage accounting.")
+    $md.Add("- This report records public discovered-peer RLPx readiness progress and the current failure class by using peer candidate diversity, endpoint filtering, cooldown, and failure-stage accounting.")
     $md.Add("- It does not change geth-facing RPC compatibility, BAL guard behavior, or NOVOVM plugin architecture.")
     $md.Add("- Bootnode and DNS discovery targets are discovery inputs only; readiness is assessed only against discovered session peers.")
     $md.Add(('- Gateway executable: `{0}`.' -f $gatewayExe))
@@ -1239,6 +1432,7 @@ try {
     $md.Add("- Public session candidates are filtered for usable public endpoints.")
     $md.Add("- Session attempts are spread across candidates and rounds instead of treating the first discovered peer as the whole public result.")
     $md.Add("- Peers returning too_many_peers are cooled down for later rounds; TCP timeout endpoints are penalized.")
+    $md.Add("- eth/68-only Hello samples are classified separately and cooled down so eth/69 or eth/70 peers remain the readiness target.")
     $md.Add("- Candidate port diversity is controlled by PublicPluginPorts.")
     $md.Add("")
     $md.Add("Layered Results:")
@@ -1298,11 +1492,21 @@ try {
         $md.Add(('- disconnect_before_hello_count: `{0}`' -f $pm.disconnect_before_hello_count))
         $md.Add(('- disconnect_before_status_count: `{0}`' -f $pm.disconnect_before_status_count))
         $md.Add(('- disconnect_after_status_sent_count: `{0}`' -f $pm.disconnect_after_status_sent_count))
+        $md.Add(('- disconnect_after_hello_before_local_status_count: `{0}`' -f $pm.disconnect_after_hello_before_local_status_count))
+        $md.Add(('- disconnect_after_local_status_before_remote_status_count: `{0}`' -f $pm.disconnect_after_local_status_before_remote_status_count))
+        $md.Add(('- capability_mismatch_count: `{0}`' -f $pm.capability_mismatch_count))
+        $md.Add(('- eth68_only_peer_count: `{0}`' -f $pm.eth68_only_peer_count))
+        $md.Add(('- eth69_70_peer_count: `{0}`' -f $pm.eth69_70_peer_count))
+        $md.Add(('- status_payload_mismatch_count: `{0}`' -f $pm.status_payload_mismatch_count))
+        $md.Add(('- endpoint_timeout_count: `{0}`' -f $pm.endpoint_timeout_count))
         $md.Add(('- hello_seen_count: `{0}`' -f $pm.hello_seen_count))
         $md.Add(('- status_sent_count: `{0}`' -f $pm.status_sent_count))
         $md.Add(('- status_seen_count: `{0}`' -f $pm.status_seen_count))
         if ($pm.hello_seen_count -gt 0 -and $pm.status_seen_count -eq 0) {
             $md.Add("- The sampled public run observed at least one remote Hello but did not observe remote Status.")
+        }
+        if ($pm.eth68_only_peer_count -gt 0 -and $pm.eth69_70_peer_count -eq 0) {
+            $md.Add("- Observed Hello samples were eth/68-only and are separated from the eth/69 or eth/70 readiness target.")
         }
         $md.Add("- Per-peer compact traces include remote client, eth/snap capability hints, disconnect phase, and elapsed timing when the gateway observed them.")
         $md.Add("")
@@ -1340,13 +1544,13 @@ try {
     }
     $md.Add("Diff Audit:")
     $md.Add('- Rust scope: `crates/gateways/evm-gateway/src/rpc_gateway_exec_cfg.rs` sends local Status immediately after Hello/shared eth capability and exposes peer diagnostics for remote Hello, Status, capability hints, disconnect phase, and elapsed timing.')
-    $md.Add('- Script scope: `scripts/migration/run_evm_rlpx_layered_canary.ps1` merges gateway JSON and stderr diagnostics and reports the public Status readiness gap.')
-    $md.Add(('- Report scope: `{0}` records this public status-gap / readiness canary run.' -f $reportScope))
+    $md.Add('- Script scope: `scripts/migration/run_evm_rlpx_layered_canary.ps1` merges gateway JSON and stderr diagnostics and reports public Status exchange failure classes.')
+    $md.Add(('- Report scope: `{0}` records this public Status failure classification canary run.' -f $reportScope))
     $md.Add("- RLPx Status timing is changed only to send local Status immediately after Hello/shared eth capability, matching geth-style concurrent Status exchange.")
     $md.Add("- No eth_baseFee, balHash, eth/71 guard, BAL fallback, UA RocksDB, or plugin architecture behavior is changed.")
     $md.Add("")
     $md.Add("Merge Note:")
-    $md.Add("- This is a public RLPx Status readiness gap diagnosis and evidence patch.")
+    $md.Add("- This is a public RLPx Status exchange failure classification and evidence patch.")
     $md.Add("- The observed public run reached auth ack and Hello on sampled peers but did not observe Status or ready.")
     $md.Add("- Public RLPx readiness remains not claimed until a public discovered-peer session observes Status and ready_count >= 1.")
     $md.Add("")
