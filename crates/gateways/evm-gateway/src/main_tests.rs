@@ -178,6 +178,96 @@ fn resolve_test_raw_sender(raw_tx: &[u8], fallback: &[u8]) -> Vec<u8> {
         .unwrap_or_else(|| fallback.to_vec())
 }
 
+fn run_send_raw_type2_one_byte_call_for_test(
+    chain_id: u64,
+    gas_limit: u64,
+    owner_suffix: &str,
+) -> Result<(serde_json::Value, bool)> {
+    let backend = GatewayEthTxIndexStoreBackend::Memory;
+    let mut router = UnifiedAccountRouter::new();
+    let mut eth_tx_index = HashMap::new();
+    let mut evm_settlement_index_by_id = HashMap::new();
+    let mut evm_settlement_index_by_tx = HashMap::new();
+    let mut evm_pending_payout_by_settlement = HashMap::new();
+    let spool_dir = std::env::temp_dir().join(format!(
+        "novovm-gateway-eth-send-raw-type2-calldata-floor-{}-{}-{}",
+        chain_id,
+        std::process::id(),
+        now_unix_millis()
+    ));
+    fs::create_dir_all(&spool_dir).expect("create spool dir");
+    let mut eth_filters = GatewayEthFilterState::default();
+    let mut ctx = GatewayMethodContext {
+        eth_tx_index_store: &backend,
+        eth_default_chain_id: chain_id,
+        spool_dir: &spool_dir,
+        overlay_node_id: "test-overlay".to_string(),
+        overlay_session_id: "test-session".to_string(),
+        overlay_route_id: "route:test".to_string(),
+        overlay_route_epoch: 0,
+        overlay_route_mask_bits: 40,
+        overlay_route_mode: "fast".to_string(),
+        overlay_route_region: "global".to_string(),
+        overlay_route_relay_bucket: 0,
+        overlay_route_relay_set_size: 1,
+        overlay_route_relay_round: 0,
+        overlay_route_relay_index: 0,
+        overlay_route_relay_id: "rly:global:0:0".to_string(),
+        overlay_route_strategy: "direct".to_string(),
+        overlay_route_hop_count: 1,
+        eth_filters: &mut eth_filters,
+    };
+
+    let fallback_sender = vec![0x62u8; 20];
+    let receiver = vec![0x63u8; 20];
+    let type2_payload = test_rlp_encode_list(&[
+        test_rlp_encode_u64(chain_id),
+        test_rlp_encode_u64(0),
+        test_rlp_encode_u64(2),
+        test_rlp_encode_u64(100),
+        test_rlp_encode_u64(gas_limit),
+        test_rlp_encode_bytes(&receiver),
+        test_rlp_encode_u128(1),
+        test_rlp_encode_bytes(&[0xaa]),
+        test_rlp_encode_list(&[]),
+    ]);
+    let mut raw_tx = vec![0x02u8];
+    raw_tx.extend_from_slice(&type2_payload);
+    let sender = resolve_test_raw_sender(&raw_tx, &fallback_sender);
+    let owner_uca = format!("uca:raw-prague-floor-{chain_id}-{owner_suffix}");
+    let now = now_unix_sec();
+    let persona = PersonaAddress {
+        persona_type: PersonaType::Evm,
+        chain_id,
+        external_address: sender.clone(),
+    };
+    router
+        .create_uca(owner_uca.clone(), vec![0x22u8; 32], now)
+        .expect("create owner uca");
+    router
+        .add_binding(&owner_uca, AccountRole::Owner, persona, now)
+        .expect("add binding");
+    let raw_tx_hex = format!("0x{}", to_hex(&raw_tx));
+
+    let result = run_gateway_method(
+        &mut router,
+        &mut eth_tx_index,
+        &mut evm_settlement_index_by_id,
+        &mut evm_settlement_index_by_tx,
+        &mut evm_pending_payout_by_settlement,
+        &mut ctx,
+        "eth_sendRawTransaction",
+        &serde_json::json!({
+            "from": format!("0x{}", to_hex(&sender)),
+            "raw_tx": raw_tx_hex,
+            "type": "0x2"
+        }),
+    );
+
+    let _ = fs::remove_dir_all(&spool_dir);
+    result
+}
+
 fn decode_single_ops_wire_value(bytes: &[u8]) -> Result<Vec<u8>> {
     const HEADER_LEN: usize = 5 + 2 + 2 + 4;
     if bytes.len() < HEADER_LEN {
@@ -9382,6 +9472,149 @@ fn eth_estimate_gas_deploy_includes_access_list_intrinsic_cost() {
 }
 
 #[test]
+fn eth_estimate_gas_chain_scoped_amsterdam_access_list_intrinsic_gas() {
+    let _guard = env_test_guard();
+    const DISABLED_CHAIN_ID: u64 = 770_201;
+    const ENABLED_CHAIN_ID: u64 = 770_202;
+    let captured = capture_env_vars(&[
+        "NOVOVM_EVM_ENABLE_AMSTERDAM_GAS_RULES",
+        "NOVOVM_EVM_ENABLE_AMSTERDAM_GAS_RULES_CHAIN_770201",
+        "NOVOVM_EVM_ENABLE_AMSTERDAM_GAS_RULES_CHAIN_770202",
+    ]);
+    std::env::set_var("NOVOVM_EVM_ENABLE_AMSTERDAM_GAS_RULES", "0");
+    std::env::set_var("NOVOVM_EVM_ENABLE_AMSTERDAM_GAS_RULES_CHAIN_770201", "0");
+    std::env::set_var("NOVOVM_EVM_ENABLE_AMSTERDAM_GAS_RULES_CHAIN_770202", "1");
+
+    let backend = GatewayEthTxIndexStoreBackend::Memory;
+    let mut router = UnifiedAccountRouter::new();
+    let mut eth_tx_index = HashMap::new();
+    let mut evm_settlement_index_by_id = HashMap::new();
+    let mut evm_settlement_index_by_tx = HashMap::new();
+    let mut evm_pending_payout_by_settlement = HashMap::new();
+    let spool_dir = std::env::temp_dir().join(format!(
+        "novovm-gateway-eth-estimate-gas-amsterdam-chain-scope-{}-{}",
+        std::process::id(),
+        now_unix_millis()
+    ));
+    fs::create_dir_all(&spool_dir).expect("create spool dir");
+    let mut eth_filters = GatewayEthFilterState::default();
+    let mut ctx = GatewayMethodContext {
+        eth_tx_index_store: &backend,
+        eth_default_chain_id: DISABLED_CHAIN_ID,
+        spool_dir: &spool_dir,
+        overlay_node_id: "test-overlay".to_string(),
+        overlay_session_id: "test-session".to_string(),
+        overlay_route_id: "route:test".to_string(),
+        overlay_route_epoch: 0,
+        overlay_route_mask_bits: 40,
+        overlay_route_mode: "fast".to_string(),
+        overlay_route_region: "global".to_string(),
+        overlay_route_relay_bucket: 0,
+        overlay_route_relay_set_size: 1,
+        overlay_route_relay_round: 0,
+        overlay_route_relay_index: 0,
+        overlay_route_relay_id: "rly:global:0:0".to_string(),
+        overlay_route_strategy: "direct".to_string(),
+        overlay_route_hop_count: 1,
+        eth_filters: &mut eth_filters,
+    };
+
+    let deploy_data = vec![0x60, 0x00, 0x60, 0x00];
+    let from = vec![0x31u8; 20];
+    let access_addr = vec![0x32u8; 20];
+    let estimate_for_chain =
+        |chain_id: u64,
+         router: &mut UnifiedAccountRouter,
+         eth_tx_index: &mut HashMap<[u8; 32], GatewayEthTxIndexEntry>,
+         evm_settlement_index_by_id: &mut HashMap<String, GatewayEvmSettlementIndexEntry>,
+         evm_settlement_index_by_tx: &mut HashMap<GatewaySettlementTxKey, String>,
+         evm_pending_payout_by_settlement: &mut HashMap<String, EvmFeePayoutInstructionV1>,
+         ctx: &mut GatewayMethodContext<'_>| {
+            run_gateway_method(
+                router,
+                eth_tx_index,
+                evm_settlement_index_by_id,
+                evm_settlement_index_by_tx,
+                evm_pending_payout_by_settlement,
+                ctx,
+                "eth_estimateGas",
+                &serde_json::json!([
+                    {
+                        "chain_id": chain_id,
+                        "from": format!("0x{}", to_hex(&from)),
+                        "data": format!("0x{}", to_hex(&deploy_data)),
+                        "accessList": [
+                            {
+                                "address": format!("0x{}", to_hex(&access_addr)),
+                                "storageKeys": [
+                                    format!("0x{}", "01".repeat(32)),
+                                    format!("0x{}", "02".repeat(32)),
+                                ]
+                            }
+                        ]
+                    }
+                ]),
+            )
+            .expect("eth_estimateGas should apply chain-scoped Amsterdam gas rules")
+            .0
+        };
+
+    let disabled_estimate = estimate_for_chain(
+        DISABLED_CHAIN_ID,
+        &mut router,
+        &mut eth_tx_index,
+        &mut evm_settlement_index_by_id,
+        &mut evm_settlement_index_by_tx,
+        &mut evm_pending_payout_by_settlement,
+        &mut ctx,
+    );
+    let enabled_estimate = estimate_for_chain(
+        ENABLED_CHAIN_ID,
+        &mut router,
+        &mut eth_tx_index,
+        &mut evm_settlement_index_by_id,
+        &mut evm_settlement_index_by_tx,
+        &mut evm_pending_payout_by_settlement,
+        &mut ctx,
+    );
+
+    let mut tx_ir = TxIR {
+        hash: Vec::new(),
+        from,
+        account_id: None,
+        fee_owner_account_id: None,
+        nonce_owner_account_id: None,
+        to: None,
+        value: 0,
+        gas_limit: u64::MAX,
+        gas_price: 0,
+        nonce: 0,
+        data: deploy_data,
+        signature: Vec::new(),
+        chain_id: DISABLED_CHAIN_ID,
+        tx_type: TxType::ContractDeploy,
+        execution_policy: Default::default(),
+        source_chain: None,
+        target_chain: None,
+    };
+    tx_ir.compute_hash();
+    let pre_amsterdam = estimate_intrinsic_gas_m0(&tx_ir)
+        .saturating_add(estimate_access_list_intrinsic_extra_gas_m0(1, 2));
+    let amsterdam_extra = (20 * 4 * 16) + (2 * 32 * 4 * 16);
+    assert_eq!(
+        disabled_estimate.as_str(),
+        Some(format!("0x{:x}", pre_amsterdam).as_str())
+    );
+    assert_eq!(
+        enabled_estimate.as_str(),
+        Some(format!("0x{:x}", pre_amsterdam + amsterdam_extra).as_str())
+    );
+
+    restore_env_vars(&captured);
+    let _ = fs::remove_dir_all(&spool_dir);
+}
+
+#[test]
 fn eth_estimate_gas_type3_includes_blob_intrinsic_cost_when_enabled() {
     let _guard = env_test_guard();
     let captured = capture_env_vars(&["NOVOVM_EVM_ENABLE_TYPE3_WRITE"]);
@@ -12769,10 +13002,62 @@ fn eth_send_raw_transaction_rejects_intrinsic_gas_too_low() {
         }),
     )
     .expect_err("eth_sendRawTransaction should reject intrinsic gas too low");
-    let text = err.to_string();
+    let text = err
+        .chain()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join("\n");
     assert!(text.contains("semantic validation failed"));
 
     let _ = fs::remove_dir_all(&spool_dir);
+}
+
+#[test]
+fn eth_send_raw_transaction_chain_scoped_prague_calldata_floor_gas() {
+    let _guard = env_test_guard();
+    const CHAIN_ID: u64 = 770_212;
+    let captured = capture_env_vars(&[
+        "NOVOVM_EVM_ENABLE_TYPE2_WRITE",
+        "NOVOVM_GATEWAY_ETH_DEFAULT_BASE_FEE_PER_GAS",
+        "NOVOVM_EVM_ENABLE_AMSTERDAM_GAS_RULES",
+        "NOVOVM_EVM_ENABLE_PRAGUE_FLOOR_GAS",
+        "NOVOVM_EVM_ENABLE_PRAGUE_FLOOR_GAS_CHAIN_770212",
+    ]);
+    std::env::set_var("NOVOVM_EVM_ENABLE_TYPE2_WRITE", "1");
+    std::env::set_var("NOVOVM_GATEWAY_ETH_DEFAULT_BASE_FEE_PER_GAS", "0");
+    std::env::set_var("NOVOVM_EVM_ENABLE_AMSTERDAM_GAS_RULES", "0");
+    std::env::set_var("NOVOVM_EVM_ENABLE_PRAGUE_FLOOR_GAS", "0");
+    std::env::set_var("NOVOVM_EVM_ENABLE_PRAGUE_FLOOR_GAS_CHAIN_770212", "0");
+
+    // One non-zero calldata byte has intrinsic gas 21_016 but pre-Amsterdam
+    // calldata floor gas 21_040. The chain-specific toggle should decide
+    // whether the gateway raw tx path accepts or rejects the same tx.
+    let intrinsic_gas = 21_016;
+    let prague_floor_gas = 21_040;
+    assert!(intrinsic_gas < prague_floor_gas);
+    let (accepted, changed) =
+        run_send_raw_type2_one_byte_call_for_test(CHAIN_ID, intrinsic_gas, "disabled")
+            .expect("Prague-disabled chain should not enforce calldata floor gas");
+    assert!(changed);
+    assert!(
+        accepted.as_str().is_some(),
+        "accepted raw tx should return a tx hash"
+    );
+
+    std::env::set_var("NOVOVM_EVM_ENABLE_PRAGUE_FLOOR_GAS_CHAIN_770212", "1");
+    let err = run_send_raw_type2_one_byte_call_for_test(CHAIN_ID, intrinsic_gas, "enabled")
+        .expect_err("Prague-enabled chain should enforce calldata floor gas");
+    let text = err
+        .chain()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        text.contains("semantic validation failed"),
+        "unexpected error: {text}"
+    );
+
+    restore_env_vars(&captured);
 }
 
 #[test]

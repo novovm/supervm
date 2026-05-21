@@ -14,7 +14,7 @@ use novovm_adapter_api::{
     TxType, UnifiedAccountError, UnifiedAccountRouter,
 };
 use novovm_adapter_evm_core::{
-    estimate_intrinsic_gas_with_envelope_extras_m0, recover_raw_evm_tx_sender_m0,
+    estimate_intrinsic_gas_with_envelope_extras_for_chain_m0, recover_raw_evm_tx_sender_m0,
     resolve_evm_profile, translate_raw_evm_tx_fields_m0, tx_ir_from_raw_fields_m0,
     validate_tx_semantics_m0,
 };
@@ -482,7 +482,8 @@ impl NovoVmAdapter {
         let access_list_address_count = fields.access_list_address_count.unwrap_or(0);
         let access_list_storage_key_count = fields.access_list_storage_key_count.unwrap_or(0);
         let blob_hash_count = fields.blob_hash_count.unwrap_or(0);
-        estimate_intrinsic_gas_with_envelope_extras_m0(
+        estimate_intrinsic_gas_with_envelope_extras_for_chain_m0(
+            tx.chain_id,
             tx,
             access_list_address_count,
             access_list_storage_key_count,

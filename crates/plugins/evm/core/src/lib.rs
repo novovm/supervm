@@ -233,6 +233,18 @@ fn evm_type3_write_enabled_for_chain(chain_id: u64) -> bool {
     evm_chain_bool_env(chain_id, "NOVOVM_EVM_ENABLE_TYPE3_WRITE", false)
 }
 
+fn evm_amsterdam_gas_rules_enabled_for_chain(chain_id: u64) -> bool {
+    evm_chain_bool_env(chain_id, "NOVOVM_EVM_ENABLE_AMSTERDAM_GAS_RULES", false)
+}
+
+fn evm_prague_floor_gas_enabled_for_chain(chain_id: u64) -> bool {
+    evm_chain_bool_env(
+        chain_id,
+        "NOVOVM_EVM_ENABLE_PRAGUE_FLOOR_GAS",
+        evm_amsterdam_gas_rules_enabled_for_chain(chain_id),
+    )
+}
+
 #[must_use]
 pub fn resolve_evm_chain_type_from_chain_id(chain_id: u64) -> ChainType {
     if let Some(chain_type) = evm_chain_type_overrides().get(&chain_id).copied() {
@@ -1128,6 +1140,27 @@ pub fn estimate_access_list_intrinsic_extra_gas_m0(
 }
 
 #[must_use]
+pub fn estimate_amsterdam_access_list_intrinsic_extra_gas_m0(
+    access_list_address_count: u64,
+    access_list_storage_key_count: u64,
+) -> u64 {
+    const ADDRESS_BYTES: u64 = 20;
+    const STORAGE_KEY_BYTES: u64 = 32;
+    const TX_TOKEN_PER_NON_ZERO_BYTE: u64 = 4;
+    const TX_COST_FLOOR_PER_TOKEN_7976: u64 = 16;
+
+    let address_cost = ADDRESS_BYTES
+        .saturating_mul(TX_TOKEN_PER_NON_ZERO_BYTE)
+        .saturating_mul(TX_COST_FLOOR_PER_TOKEN_7976);
+    let storage_key_cost = STORAGE_KEY_BYTES
+        .saturating_mul(TX_TOKEN_PER_NON_ZERO_BYTE)
+        .saturating_mul(TX_COST_FLOOR_PER_TOKEN_7976);
+    access_list_address_count
+        .saturating_mul(address_cost)
+        .saturating_add(access_list_storage_key_count.saturating_mul(storage_key_cost))
+}
+
+#[must_use]
 pub fn estimate_intrinsic_gas_with_access_list_m0(
     tx: &TxIR,
     access_list_address_count: u64,
@@ -1137,6 +1170,28 @@ pub fn estimate_intrinsic_gas_with_access_list_m0(
         access_list_address_count,
         access_list_storage_key_count,
     ))
+}
+
+#[must_use]
+pub fn estimate_intrinsic_gas_with_access_list_rules_m0(
+    tx: &TxIR,
+    access_list_address_count: u64,
+    access_list_storage_key_count: u64,
+    amsterdam_rules: bool,
+) -> u64 {
+    let base = estimate_intrinsic_gas_with_access_list_m0(
+        tx,
+        access_list_address_count,
+        access_list_storage_key_count,
+    );
+    if amsterdam_rules {
+        base.saturating_add(estimate_amsterdam_access_list_intrinsic_extra_gas_m0(
+            access_list_address_count,
+            access_list_storage_key_count,
+        ))
+    } else {
+        base
+    }
 }
 
 #[must_use]
@@ -1158,6 +1213,78 @@ pub fn estimate_intrinsic_gas_with_envelope_extras_m0(
         access_list_storage_key_count,
     )
     .saturating_add(estimate_blob_intrinsic_extra_gas_m0(blob_hash_count))
+}
+
+#[must_use]
+pub fn estimate_intrinsic_gas_with_envelope_extras_for_chain_m0(
+    chain_id: u64,
+    tx: &TxIR,
+    access_list_address_count: u64,
+    access_list_storage_key_count: u64,
+    blob_hash_count: u64,
+) -> u64 {
+    estimate_intrinsic_gas_with_access_list_rules_m0(
+        tx,
+        access_list_address_count,
+        access_list_storage_key_count,
+        evm_amsterdam_gas_rules_enabled_for_chain(chain_id),
+    )
+    .saturating_add(estimate_blob_intrinsic_extra_gas_m0(blob_hash_count))
+}
+
+#[must_use]
+pub fn estimate_calldata_floor_gas_m0(
+    tx: &TxIR,
+    access_list_address_count: u64,
+    access_list_storage_key_count: u64,
+    amsterdam_rules: bool,
+) -> u64 {
+    const TX_BASE_GAS: u64 = 21_000;
+    const TX_TOKEN_PER_NON_ZERO_BYTE: u64 = 4;
+    const TX_COST_FLOOR_PER_TOKEN: u64 = 10;
+    const TX_COST_FLOOR_PER_TOKEN_7976: u64 = 16;
+    const ADDRESS_BYTES: u64 = 20;
+    const STORAGE_KEY_BYTES: u64 = 32;
+
+    let tokens = if amsterdam_rules {
+        let data_tokens = (tx.data.len() as u64).saturating_mul(TX_TOKEN_PER_NON_ZERO_BYTE);
+        let address_tokens = access_list_address_count
+            .saturating_mul(ADDRESS_BYTES)
+            .saturating_mul(TX_TOKEN_PER_NON_ZERO_BYTE);
+        let storage_key_tokens = access_list_storage_key_count
+            .saturating_mul(STORAGE_KEY_BYTES)
+            .saturating_mul(TX_TOKEN_PER_NON_ZERO_BYTE);
+        data_tokens
+            .saturating_add(address_tokens)
+            .saturating_add(storage_key_tokens)
+    } else {
+        let zero_bytes = tx.data.iter().filter(|b| **b == 0).count() as u64;
+        let non_zero_bytes = tx.data.len() as u64 - zero_bytes;
+        non_zero_bytes
+            .saturating_mul(TX_TOKEN_PER_NON_ZERO_BYTE)
+            .saturating_add(zero_bytes)
+    };
+    let token_cost = if amsterdam_rules {
+        TX_COST_FLOOR_PER_TOKEN_7976
+    } else {
+        TX_COST_FLOOR_PER_TOKEN
+    };
+    TX_BASE_GAS.saturating_add(tokens.saturating_mul(token_cost))
+}
+
+#[must_use]
+pub fn estimate_calldata_floor_gas_for_chain_m0(
+    chain_id: u64,
+    tx: &TxIR,
+    access_list_address_count: u64,
+    access_list_storage_key_count: u64,
+) -> u64 {
+    estimate_calldata_floor_gas_m0(
+        tx,
+        access_list_address_count,
+        access_list_storage_key_count,
+        evm_amsterdam_gas_rules_enabled_for_chain(chain_id),
+    )
 }
 
 pub fn validate_tx_semantics_m0(profile: &EvmChainProfile, tx: &TxIR) -> anyhow::Result<()> {
@@ -1269,7 +1396,8 @@ pub fn validate_tx_semantics_m0(profile: &EvmChainProfile, tx: &TxIR) -> anyhow:
         .as_ref()
         .and_then(|fields| fields.blob_hash_count)
         .unwrap_or(0);
-    let intrinsic = estimate_intrinsic_gas_with_envelope_extras_m0(
+    let intrinsic = estimate_intrinsic_gas_with_envelope_extras_for_chain_m0(
+        profile.chain_id,
         tx,
         access_list_address_count,
         access_list_storage_key_count,
@@ -1281,6 +1409,21 @@ pub fn validate_tx_semantics_m0(profile: &EvmChainProfile, tx: &TxIR) -> anyhow:
             tx.gas_limit,
             intrinsic
         );
+    }
+    if evm_prague_floor_gas_enabled_for_chain(profile.chain_id) {
+        let floor_gas = estimate_calldata_floor_gas_for_chain_m0(
+            profile.chain_id,
+            tx,
+            access_list_address_count,
+            access_list_storage_key_count,
+        );
+        if tx.gas_limit < floor_gas {
+            bail!(
+                "calldata floor gas too low: gas_limit={} floor_gas={}",
+                tx.gas_limit,
+                floor_gas
+            );
+        }
     }
 
     Ok(())
@@ -1755,6 +1898,67 @@ mod tests {
         let err = validate_tx_semantics_m0(&profile, &tx)
             .expect_err("must reject low gas after access list intrinsic");
         assert!(err.to_string().contains("intrinsic gas too low"));
+    }
+
+    #[test]
+    fn amsterdam_access_list_intrinsic_adds_eip7981_data_cost() {
+        let tx = sample_tx(1);
+        let pre_amsterdam = estimate_intrinsic_gas_with_access_list_rules_m0(&tx, 2, 3, false);
+        let amsterdam = estimate_intrinsic_gas_with_access_list_rules_m0(&tx, 2, 3, true);
+        let expected_extra = 2 * 20 * 4 * 16 + 3 * 32 * 4 * 16;
+        assert_eq!(amsterdam, pre_amsterdam + expected_extra);
+    }
+
+    #[test]
+    fn amsterdam_floor_gas_charges_calldata_and_access_list_tokens() {
+        let mut tx = sample_tx(1);
+        tx.data = vec![0x00, 0x11, 0x22];
+        let pre_amsterdam = estimate_calldata_floor_gas_m0(&tx, 1, 1, false);
+        let amsterdam = estimate_calldata_floor_gas_m0(&tx, 1, 1, true);
+        assert_eq!(pre_amsterdam, 21_000 + (1 + 2 * 4) * 10);
+        assert_eq!(amsterdam, 21_000 + ((3 + 20 + 32) * 4) * 16);
+        assert!(amsterdam > pre_amsterdam);
+    }
+
+    #[test]
+    fn validate_tx_m0_rejects_amsterdam_access_list_intrinsic_when_enabled() {
+        let key = "NOVOVM_EVM_ENABLE_AMSTERDAM_GAS_RULES_CHAIN_1";
+        let captured = std::env::var(key).ok();
+        std::env::set_var(key, "1");
+
+        let profile = resolve_evm_profile(ChainType::EVM, 1).expect("profile");
+        let to = vec![0x77u8; 20];
+        let access_list = enc_list(&[enc_list(&[
+            enc_bytes(&[0x31; 20]),
+            enc_list(&[enc_bytes(&[0x91; 32])]),
+        ])]);
+        let pre_amsterdam_intrinsic = 21_000 + 16 + 2_400 + 1_900;
+        let payload = enc_list(&[
+            enc_u64(1),
+            enc_u64(8),
+            enc_u64(2),
+            enc_u64(pre_amsterdam_intrinsic),
+            enc_bytes(&to),
+            enc_u128(3),
+            enc_bytes(&[0xaa]),
+            access_list,
+            enc_u64(1),
+            enc_u64(1),
+            enc_u64(1),
+        ]);
+        let mut raw = vec![0x01];
+        raw.extend_from_slice(&payload);
+        let tx =
+            translate_raw_evm_tx_to_ir_m0(&raw, vec![0x7fu8; 20], 1).expect("translate tx to ir");
+        let err = validate_tx_semantics_m0(&profile, &tx)
+            .expect_err("Amsterdam access list data cost must be enforced");
+        assert!(err.to_string().contains("intrinsic gas too low"));
+
+        if let Some(value) = captured {
+            std::env::set_var(key, value);
+        } else {
+            std::env::remove_var(key);
+        }
     }
 
     #[test]

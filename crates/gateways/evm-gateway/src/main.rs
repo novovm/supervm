@@ -12,10 +12,10 @@ use novovm_adapter_api::{
 #[cfg(test)]
 use novovm_adapter_evm_core::{
     estimate_access_list_intrinsic_extra_gas_m0, estimate_intrinsic_gas_m0,
-    estimate_intrinsic_gas_with_access_list_m0,
+    estimate_intrinsic_gas_with_access_list_m0, estimate_intrinsic_gas_with_envelope_extras_m0,
 };
 use novovm_adapter_evm_core::{
-    estimate_intrinsic_gas_with_envelope_extras_m0, recover_raw_evm_tx_sender_m0,
+    estimate_intrinsic_gas_with_envelope_extras_for_chain_m0, recover_raw_evm_tx_sender_m0,
     resolve_evm_chain_type_from_chain_id, resolve_evm_profile, resolve_raw_evm_tx_route_hint_m0,
     translate_raw_evm_tx_fields_m0, tx_ir_from_raw_fields_m0, validate_tx_semantics_m0,
     EvmRawTxEnvelopeType, EvmRawTxFieldsM0,
@@ -9197,7 +9197,8 @@ fn run_gateway_method(
                 source_chain: None,
                 target_chain: None,
             };
-            let intrinsic = estimate_intrinsic_gas_with_envelope_extras_m0(
+            let intrinsic = estimate_intrinsic_gas_with_envelope_extras_for_chain_m0(
+                chain_id,
                 &tx_ir,
                 access_list_address_count,
                 access_list_storage_key_count,
@@ -12628,7 +12629,8 @@ fn run_gateway_method(
                 source_chain: None,
                 target_chain: None,
             };
-            let required_intrinsic = estimate_intrinsic_gas_with_envelope_extras_m0(
+            let required_intrinsic = estimate_intrinsic_gas_with_envelope_extras_for_chain_m0(
+                chain_id,
                 &tx_ir,
                 access_list_address_count,
                 access_list_storage_key_count,
