@@ -3,6 +3,7 @@ param(
     [string]$GatewayBind = "127.0.0.1:9899",
     [UInt64]$ChainId = 1,
     [string]$LocalGethEnode = "",
+    [string]$RemoteControlledGethEnode = "",
     [UInt64]$DiscoveryMaxPeers = 8,
     [UInt64]$DiscoveryMaxVisit = 1000,
     [UInt64]$SessionMaxPeers = 4,
@@ -1317,6 +1318,41 @@ try {
             -StateRoot $stateRoot
     }
 
+    $remoteControlledLayer = if ([string]::IsNullOrWhiteSpace($RemoteControlledGethEnode)) {
+        [pscustomobject][ordered]@{
+            name = "remote controlled geth peer"
+            status = "skipped"
+            reason = "RemoteControlledGethEnode was not supplied; this diagnostic does not exercise a controlled geth peer over a public network path"
+            peers = @()
+            metrics = $null
+            capability = $null
+            plugin_peers = $null
+            gateway_stdout = ""
+            gateway_stderr = ""
+            readiness_claimed = $false
+        }
+    } else {
+        Invoke-GatewaySessionLayer `
+            -LayerName "remote controlled geth peer" `
+            -Peers @($RemoteControlledGethEnode) `
+            -RepoRootValue $RepoRoot `
+            -GatewayExe $gatewayExe `
+            -Bind $GatewayBind `
+            -LayerChainId $ChainId `
+            -LogDir $logDir `
+            -StateRoot $stateRoot
+    }
+    if ($null -ne $remoteControlledLayer.metrics) {
+        $rm = $remoteControlledLayer.metrics
+        $remoteControlledLayer | Add-Member -NotePropertyName readiness_claimed -NotePropertyValue (
+            $rm.ready_count -gt 0 -and
+            $rm.rlpx_auth_ack_seen_count -gt 0 -and
+            $rm.hello_seen_count -gt 0 -and
+            $rm.status_seen_count -gt 0 -and
+            (Test-SelectedEthVersion -Selected ([string]$rm.selected_eth_capability) -Versions @("69", "70"))
+        ) -Force
+    }
+
     $resolver = Join-Path $RepoRoot "scripts\migration\resolve_eth_dns_enodes.py"
     $discovery = [ordered]@{
         name = "public discovery-only"
@@ -1390,8 +1426,10 @@ try {
             public_session_max_attempts = $PublicSessionMaxAttempts
             public_max_rounds = $PublicMaxRounds
             public_plugin_ports = $PublicPluginPorts
+            remote_controlled_geth_enode_supplied = (-not [string]::IsNullOrWhiteSpace($RemoteControlledGethEnode))
         }
         local_geth_session = $localLayer
+        remote_controlled_geth_session = $remoteControlledLayer
         public_discovery_only = $discovery
         public_discovered_peer_session = $publicLayer
         boundary = [ordered]@{
@@ -1426,6 +1464,7 @@ try {
     $md.Add("Prior Evidence:")
     $md.Add("- Local controlled geth evidence from the previous follow-up showed TCP, RLPx auth ack, Hello, Status, negotiated eth/69, and ready_count=1.")
     $md.Add("- Earlier public short-window samples stopped below auth ack and observed too_many_peers / TCP timeout outcomes.")
+    $md.Add("- RemoteControlledGethEnode is a controlled public-network comparison point; it is reported separately from random public discovered-peer readiness.")
     $md.Add("")
     $md.Add("Public Peer Selection Changes:")
     $md.Add("- DNS ENR discovery can collect a larger candidate pool before session attempts.")
@@ -1438,6 +1477,9 @@ try {
     $md.Add("Layered Results:")
     $md.Add("")
     foreach ($line in (Convert-LayerToMarkdown -Layer $localLayer)) {
+        $md.Add($line)
+    }
+    foreach ($line in (Convert-LayerToMarkdown -Layer $remoteControlledLayer)) {
         $md.Add($line)
     }
     $md.Add("### public discovery-only")
@@ -1465,6 +1507,13 @@ try {
     $md.Add("Public Session Result:")
     if ($localLayer.status -eq "skipped") {
         $md.Add("- Local controlled geth session was not exercised because no local enode was supplied.")
+    }
+    if ($remoteControlledLayer.status -eq "skipped") {
+        $md.Add("- Remote controlled geth session was not exercised because no remote controlled enode was supplied.")
+    } elseif ($remoteControlledLayer.readiness_claimed) {
+        $md.Add("- Remote controlled geth session readiness was observed in this run.")
+    } elseif ($null -ne $remoteControlledLayer.metrics) {
+        $md.Add("- Remote controlled geth session did not reach the readiness standard in this run.")
     }
     if ($discovery.status -eq "completed" -and $discovery.candidate_session_peer_count -gt 0) {
         $md.Add("- Public DNS ENR discovery produced candidate session peers; bootnode/DNS discovery is not treated as eth session readiness.")
@@ -1522,6 +1571,7 @@ try {
     $md.Add("")
     $md.Add("Interpretation:")
     $md.Add("- Prior local controlled geth evidence passed through TCP, auth ack, Hello, Status, eth/69, and ready.")
+    $md.Add("- A remote controlled geth pass would demonstrate that the gateway RLPx path can traverse a public network path to a known geth peer; random public discovered-peer readiness remains a separate claim.")
     $md.Add("- If the public session reaches auth ack or Hello but not Status, the likely area is public peer selection, remote peer policy, endpoint quality, or Status exchange compatibility with sampled public peers.")
     $md.Add("- If a future public run stops before ack, the likely area remains public peer selection, endpoint reachability, network egress, or remote policy.")
     $md.Add("- If both local and public sessions stop before ack, the next independent patch should inspect RLPx auth/session details.")
@@ -1533,6 +1583,7 @@ try {
     $md.Add("- no EVM execution semantic rewrite")
     $md.Add("- no full eth/71 or BAL implementation")
     $md.Add("- no real balHash metadata source")
+    $md.Add("- no public random-peer readiness unless separately observed")
     $md.Add("- no old UnifiedAccountRouter state migration")
     $md.Add("- no strategy-specific acceptance result")
     $md.Add("- no new NOVOVM plugin architecture")
@@ -1543,14 +1594,14 @@ try {
         $reportScope = $reportScope -replace ('^' + [regex]::Escape($repoRootForReport) + '[\\/]*'), ''
     }
     $md.Add("Diff Audit:")
-    $md.Add('- Rust scope: `crates/gateways/evm-gateway/src/rpc_gateway_exec_cfg.rs` sends local Status immediately after Hello/shared eth capability and exposes peer diagnostics for remote Hello, Status, capability hints, disconnect phase, and elapsed timing.')
-    $md.Add('- Script scope: `scripts/migration/run_evm_rlpx_layered_canary.ps1` merges gateway JSON and stderr diagnostics and reports public Status exchange failure classes.')
+    $md.Add('- Rust scope: no new Rust changes are required for this follow-up; the report reuses the gateway RLPx Status diagnostics added by the prior Status exchange diagnostics patches.')
+    $md.Add('- Script scope: `scripts/migration/run_evm_rlpx_layered_canary.ps1` adds a RemoteControlledGethEnode comparison layer and reports public Status exchange failure classes.')
     $md.Add(('- Report scope: `{0}` records this public Status failure classification canary run.' -f $reportScope))
-    $md.Add("- RLPx Status timing is changed only to send local Status immediately after Hello/shared eth capability, matching geth-style concurrent Status exchange.")
+    $md.Add("- RLPx Status timing is not changed by this follow-up.")
     $md.Add("- No eth_baseFee, balHash, eth/71 guard, BAL fallback, UA RocksDB, or plugin architecture behavior is changed.")
     $md.Add("")
     $md.Add("Merge Note:")
-    $md.Add("- This is a public RLPx Status exchange failure classification and evidence patch.")
+    $md.Add("- This is a public RLPx Status exchange failure classification and remote controlled geth evidence patch.")
     $md.Add("- The observed public run reached auth ack and Hello on sampled peers but did not observe Status or ready.")
     $md.Add("- Public RLPx readiness remains not claimed until a public discovered-peer session observes Status and ready_count >= 1.")
     $md.Add("")
