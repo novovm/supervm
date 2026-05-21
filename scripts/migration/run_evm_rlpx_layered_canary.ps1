@@ -104,11 +104,26 @@ function Get-StageRank {
         "ack_seen" { return 3 }
         "hello_sent" { return 4 }
         "hello_seen" { return 5 }
-        "status_seen" { return 6 }
-        "status_sent" { return 7 }
+        "status_sent" { return 6 }
+        "status_seen" { return 7 }
         "ready" { return 8 }
         default { return 0 }
     }
+}
+
+function Resolve-GatewayExecutablePath {
+    param([string]$Root)
+    $targetRoot = ""
+    if (-not [string]::IsNullOrWhiteSpace($env:CARGO_TARGET_DIR)) {
+        $targetRoot = Resolve-FullPath -Root $Root -Value $env:CARGO_TARGET_DIR
+    } else {
+        $targetRoot = Join-Path $Root "target"
+    }
+    $gatewayExe = Join-Path $targetRoot "debug\novovm-evm-gateway.exe"
+    if (-not (Test-Path $gatewayExe)) {
+        throw ("gateway binary not found: {0} (CARGO_TARGET_DIR={1})" -f $gatewayExe, $env:CARGO_TARGET_DIR)
+    }
+    return $gatewayExe
 }
 
 function Get-StageFromItem {
@@ -386,6 +401,10 @@ function Read-GatewayRlpxLogDiagnostics {
             $map[$endpoint].remote_capabilities = $caps
             $map[$endpoint].remote_eth_capabilities = Get-CapabilityVersionsFromSummary -Caps $caps -Name "eth"
             $map[$endpoint].remote_snap_capabilities = Get-CapabilityVersionsFromSummary -Caps $caps -Name "snap"
+            $selected = [regex]::Match($line, "selected_eth=(\d+)")
+            if ($selected.Success) {
+                $map[$endpoint].selected_eth_capability = ("eth/{0}" -f $selected.Groups[1].Value)
+            }
             continue
         }
         $disconnect = [regex]::Match($line, "disconnect_received endpoint=(\S+) phase=(\S+) reason_code=(\d+) reason=(\S+)")
@@ -399,7 +418,16 @@ function Read-GatewayRlpxLogDiagnostics {
             $map[$endpoint].disconnect_reason_name = $disconnect.Groups[4].Value
             continue
         }
-        $status = [regex]::Match($line, "status_received endpoint=(\S+) remote_chain_id=(\d+) negotiated_eth=(\d+)")
+        $statusSent = [regex]::Match($line, "status_sent endpoint=(\S+) local_chain_id=(\d+) local_status=(\S+)")
+        if ($statusSent.Success) {
+            $endpoint = $statusSent.Groups[1].Value
+            if (-not $map.ContainsKey($endpoint)) {
+                $map[$endpoint] = [ordered]@{}
+            }
+            $map[$endpoint].local_status_summary = $statusSent.Groups[3].Value
+            continue
+        }
+        $status = [regex]::Match($line, "status_received endpoint=(\S+) remote_chain_id=(\d+) negotiated_eth=(\d+) remote_status=(\S+)")
         if ($status.Success) {
             $endpoint = $status.Groups[1].Value
             if (-not $map.ContainsKey($endpoint)) {
@@ -407,6 +435,7 @@ function Read-GatewayRlpxLogDiagnostics {
             }
             $map[$endpoint].remote_chain_id = $status.Groups[2].Value
             $map[$endpoint].selected_eth_capability = ("eth/{0}" -f $status.Groups[3].Value)
+            $map[$endpoint].remote_status_summary = $status.Groups[4].Value
         }
     }
     return $map
@@ -426,14 +455,17 @@ function Merge-GatewayRlpxLogDiagnostics {
     }
     $beforeHello = [UInt64]0
     $beforeStatus = [UInt64]0
+    $afterStatusSent = [UInt64]0
     $helloSeen = [UInt64]0
+    $statusSent = [UInt64]0
+    $statusSeen = [UInt64]0
     foreach ($trace in @($Metrics.traces)) {
         $endpoint = [string]$trace.endpoint
         if (-not $endpoint -or -not $diag.ContainsKey($endpoint)) {
             continue
         }
         $entry = $diag[$endpoint]
-        foreach ($name in @("remote_client_id", "remote_eth_capabilities", "remote_snap_capabilities", "remote_capabilities", "disconnect_phase", "disconnect_reason_name")) {
+        foreach ($name in @("remote_client_id", "remote_eth_capabilities", "remote_snap_capabilities", "remote_capabilities", "disconnect_phase", "disconnect_reason_name", "local_status_summary", "remote_status_summary")) {
             if ($entry.Contains($name) -and -not $trace.$name) {
                 $trace.$name = [string]$entry[$name]
             }
@@ -446,15 +478,26 @@ function Merge-GatewayRlpxLogDiagnostics {
         if ($trace.remote_client_id -or $trace.remote_eth_capabilities) {
             $helloSeen = [UInt64]($helloSeen + 1)
         }
+        if ($trace.local_status_summary) {
+            $statusSent = [UInt64]($statusSent + 1)
+        }
+        if ($trace.remote_status_summary) {
+            $statusSeen = [UInt64]($statusSeen + 1)
+        }
         if ($trace.disconnect_phase -eq "before_hello") {
             $beforeHello = [UInt64]($beforeHello + 1)
         } elseif ($trace.disconnect_phase -eq "before_eth_status") {
             $beforeStatus = [UInt64]($beforeStatus + 1)
+        } elseif ($trace.disconnect_phase -eq "after_status_sent_before_status_seen") {
+            $afterStatusSent = [UInt64]($afterStatusSent + 1)
         }
     }
     $Metrics.disconnect_before_hello_count = [UInt64][Math]::Max([UInt64]$Metrics.disconnect_before_hello_count, $beforeHello)
     $Metrics.disconnect_before_status_count = [UInt64][Math]::Max([UInt64]$Metrics.disconnect_before_status_count, $beforeStatus)
+    $Metrics.disconnect_after_status_sent_count = [UInt64][Math]::Max([UInt64]$Metrics.disconnect_after_status_sent_count, $afterStatusSent)
     $Metrics.hello_seen_count = [UInt64][Math]::Max([UInt64]$Metrics.hello_seen_count, $helloSeen)
+    $Metrics.status_sent_count = [UInt64][Math]::Max([UInt64]$Metrics.status_sent_count, $statusSent)
+    $Metrics.status_seen_count = [UInt64][Math]::Max([UInt64]$Metrics.status_seen_count, $statusSeen)
 }
 
 function Push-ProcessEnv {
@@ -514,6 +557,7 @@ function Convert-PluginPeerItemsToMetrics {
         disconnected_count = [UInt64]0
         disconnect_before_hello_count = [UInt64]0
         disconnect_before_status_count = [UInt64]0
+        disconnect_after_status_sent_count = [UInt64]0
         disconnect_reason_too_many_peers_count = [UInt64]0
         peer_cooldown_count = [UInt64]0
         selected_eth_capability = ""
@@ -550,6 +594,9 @@ function Convert-PluginPeerItemsToMetrics {
         $remoteCaps = Get-StringField -Obj $item -Name "remote_capabilities"
         $helloSeenElapsedMs = Get-StringField -Obj $item -Name "hello_seen_elapsed_ms"
         $statusSeenElapsedMs = Get-StringField -Obj $item -Name "status_seen_elapsed_ms"
+        $statusSentElapsedMs = Get-StringField -Obj $item -Name "status_sent_elapsed_ms"
+        $localStatusSummary = Get-StringField -Obj $item -Name "local_status_summary"
+        $remoteStatusSummary = Get-StringField -Obj $item -Name "remote_status_summary"
         $disconnectPhase = Get-StringField -Obj $item -Name "disconnect_phase"
         $disconnectReasonName = Get-StringField -Obj $item -Name "disconnect_reason_name"
         $disconnectElapsedMs = Get-StringField -Obj $item -Name "disconnect_elapsed_ms"
@@ -593,6 +640,9 @@ function Convert-PluginPeerItemsToMetrics {
         if ($disconnectPhase -eq "before_eth_status" -or $lastError -match "before_eth_status|eth_status_timeout|eth_capability_not_found") {
             $metrics.disconnect_before_status_count = [UInt64]($metrics.disconnect_before_status_count + 1)
         }
+        if ($disconnectPhase -eq "after_status_sent_before_status_seen") {
+            $metrics.disconnect_after_status_sent_count = [UInt64]($metrics.disconnect_after_status_sent_count + 1)
+        }
         if ($inferredRank -ge (Get-StageRank -Stage "auth_sent") -and $inferredRank -lt (Get-StageRank -Stage "ack_seen")) {
             if ($stage -eq "disconnected" -or $lastError) {
                 $metrics.rlpx_disconnect_before_ack_count = [UInt64]($metrics.rlpx_disconnect_before_ack_count + 1)
@@ -629,7 +679,10 @@ function Convert-PluginPeerItemsToMetrics {
             remote_snap_capabilities = $remoteSnapCaps
             remote_capabilities = $remoteCaps
             hello_seen_elapsed_ms = $helloSeenElapsedMs
+            status_sent_elapsed_ms = $statusSentElapsedMs
             status_seen_elapsed_ms = $statusSeenElapsedMs
+            local_status_summary = $localStatusSummary
+            remote_status_summary = $remoteStatusSummary
             disconnect_phase = $disconnectPhase
             disconnect_reason_name = $disconnectReasonName
             disconnect_elapsed_ms = $disconnectElapsedMs
@@ -660,6 +713,7 @@ function New-RlpxMetricAccumulator {
         disconnected_count = [UInt64]0
         disconnect_before_hello_count = [UInt64]0
         disconnect_before_status_count = [UInt64]0
+        disconnect_after_status_sent_count = [UInt64]0
         disconnect_reason_too_many_peers_count = [UInt64]0
         peer_cooldown_count = [UInt64]0
         selected_eth_capability = ""
@@ -693,6 +747,7 @@ function Add-RlpxMetrics {
         "disconnected_count",
         "disconnect_before_hello_count",
         "disconnect_before_status_count",
+        "disconnect_after_status_sent_count",
         "disconnect_reason_too_many_peers_count"
     )) {
         if ($Metrics.Contains($key)) {
@@ -999,6 +1054,9 @@ function Convert-LayerToMarkdown {
         if ($m.Contains("disconnect_before_status_count")) {
             $lines.Add(('- disconnect_before_status_count: `{0}`' -f $m.disconnect_before_status_count))
         }
+        if ($m.Contains("disconnect_after_status_sent_count")) {
+            $lines.Add(('- disconnect_after_status_sent_count: `{0}`' -f $m.disconnect_after_status_sent_count))
+        }
         if ($m.Contains("peer_cooldown_count")) {
             $lines.Add(('- peer_cooldown_count: `{0}`' -f $m.peer_cooldown_count))
         }
@@ -1010,7 +1068,9 @@ function Convert-LayerToMarkdown {
         foreach ($trace in @($m.traces)) {
             $traceReason = Convert-ReportText -Text ([string]$trace.reason)
             $traceClient = Convert-ReportText -Text ([string]$trace.remote_client_id)
-            $lines.Add(('- peer=`{0}` endpoint=`{1}` stage=`{2}` best=`{3}` phase=`{4}` reason=`{5}` cap=`{6}` client=`{7}` eth_caps=`{8}` snap_caps=`{9}` hello_ms=`{10}` status_ms=`{11}` disconnect_ms=`{12}`' -f $trace.remote_node_id, $trace.remote_endpoint, $trace.stage, $trace.best_stage, $trace.disconnect_phase, $traceReason, $trace.selected_eth_capability, $traceClient, $trace.remote_eth_capabilities, $trace.remote_snap_capabilities, $trace.hello_seen_elapsed_ms, $trace.status_seen_elapsed_ms, $trace.disconnect_elapsed_ms))
+            $localStatus = Convert-ReportText -Text ([string]$trace.local_status_summary)
+            $remoteStatus = Convert-ReportText -Text ([string]$trace.remote_status_summary)
+            $lines.Add(('- peer=`{0}` endpoint=`{1}` stage=`{2}` best=`{3}` phase=`{4}` reason=`{5}` cap=`{6}` client=`{7}` eth_caps=`{8}` snap_caps=`{9}` hello_ms=`{10}` status_sent_ms=`{11}` status_seen_ms=`{12}` disconnect_ms=`{13}` local_status=`{14}` remote_status=`{15}`' -f $trace.remote_node_id, $trace.remote_endpoint, $trace.stage, $trace.best_stage, $trace.disconnect_phase, $traceReason, $trace.selected_eth_capability, $traceClient, $trace.remote_eth_capabilities, $trace.remote_snap_capabilities, $trace.hello_seen_elapsed_ms, $trace.status_sent_elapsed_ms, $trace.status_seen_elapsed_ms, $trace.disconnect_elapsed_ms, $localStatus, $remoteStatus))
         }
     }
     $lines.Add("")
@@ -1032,10 +1092,8 @@ try {
         }
     }
 
-    $gatewayExe = Join-Path $RepoRoot "target\debug\novovm-evm-gateway.exe"
-    if (-not (Test-Path $gatewayExe)) {
-        throw "gateway binary not found: $gatewayExe"
-    }
+    $gatewayExe = Resolve-GatewayExecutablePath -Root $RepoRoot
+    Write-Host "gateway executable: $gatewayExe"
 
     $logDir = Resolve-FullPath -Root $RepoRoot -Value "artifacts/migration/logs"
     $stateRoot = Resolve-FullPath -Root $RepoRoot -Value ("artifacts/migration/state/rlpx-layered-canary-{0}" -f ([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()))
@@ -1130,6 +1188,7 @@ try {
         repo_root = $RepoRoot
         chain_id = $ChainId
         gateway_bind = $GatewayBind
+        gateway_executable = $gatewayExe
         state_root = $stateRoot
         canary = [ordered]@{
             discovery_max_peers = $DiscoveryMaxPeers
@@ -1145,7 +1204,8 @@ try {
         boundary = [ordered]@{
             patch_type = "public_rlpx_readiness_closure"
             external_brand = "NOVOVM"
-            does_not_change_protocol_semantics = $true
+            rlpx_status_timing_changed = $true
+            does_not_change_evm_execution_semantics = $true
             does_not_redefine_plugin_architecture = $true
         }
         completed_at_utc = [DateTimeOffset]::UtcNow.ToString("o")
@@ -1167,6 +1227,7 @@ try {
     $md.Add("- This report records public discovered-peer RLPx readiness progress and the current failure stage by using peer candidate diversity, endpoint filtering, cooldown, and failure-stage accounting.")
     $md.Add("- It does not change geth-facing RPC compatibility, BAL guard behavior, or NOVOVM plugin architecture.")
     $md.Add("- Bootnode and DNS discovery targets are discovery inputs only; readiness is assessed only against discovered session peers.")
+    $md.Add(('- Gateway executable: `{0}`.' -f $gatewayExe))
     $md.Add(('- The gateway uses isolated state paths under `{0}` and does not reuse `artifacts/gateway/unified-account-router.rocksdb`.' -f $stateRoot))
     $md.Add("")
     $md.Add("Prior Evidence:")
@@ -1236,7 +1297,9 @@ try {
         $md.Add("Status Gap Diagnostics:")
         $md.Add(('- disconnect_before_hello_count: `{0}`' -f $pm.disconnect_before_hello_count))
         $md.Add(('- disconnect_before_status_count: `{0}`' -f $pm.disconnect_before_status_count))
+        $md.Add(('- disconnect_after_status_sent_count: `{0}`' -f $pm.disconnect_after_status_sent_count))
         $md.Add(('- hello_seen_count: `{0}`' -f $pm.hello_seen_count))
+        $md.Add(('- status_sent_count: `{0}`' -f $pm.status_sent_count))
         $md.Add(('- status_seen_count: `{0}`' -f $pm.status_seen_count))
         if ($pm.hello_seen_count -gt 0 -and $pm.status_seen_count -eq 0) {
             $md.Add("- The sampled public run observed at least one remote Hello but did not observe remote Status.")
@@ -1263,7 +1326,7 @@ try {
     $md.Add("")
     $md.Add("Not Claimed:")
     $md.Add("- no full geth full node parity")
-    $md.Add("- no protocol semantic rewrite")
+    $md.Add("- no EVM execution semantic rewrite")
     $md.Add("- no full eth/71 or BAL implementation")
     $md.Add("- no real balHash metadata source")
     $md.Add("- no old UnifiedAccountRouter state migration")
@@ -1276,10 +1339,10 @@ try {
         $reportScope = $reportScope -replace ('^' + [regex]::Escape($repoRootForReport) + '[\\/]*'), ''
     }
     $md.Add("Diff Audit:")
-    $md.Add('- Rust scope: `crates/gateways/evm-gateway/src/rpc_gateway_exec_cfg.rs` exposes canary-only peer diagnostics for remote Hello, capability hints, disconnect phase, and elapsed timing.')
+    $md.Add('- Rust scope: `crates/gateways/evm-gateway/src/rpc_gateway_exec_cfg.rs` sends local Status immediately after Hello/shared eth capability and exposes peer diagnostics for remote Hello, Status, capability hints, disconnect phase, and elapsed timing.')
     $md.Add('- Script scope: `scripts/migration/run_evm_rlpx_layered_canary.ps1` merges gateway JSON and stderr diagnostics and reports the public Status readiness gap.')
     $md.Add(('- Report scope: `{0}` records this public status-gap / readiness canary run.' -f $reportScope))
-    $md.Add("- No RLPx handshake semantics are changed by this canary task.")
+    $md.Add("- RLPx Status timing is changed only to send local Status immediately after Hello/shared eth capability, matching geth-style concurrent Status exchange.")
     $md.Add("- No eth_baseFee, balHash, eth/71 guard, BAL fallback, UA RocksDB, or plugin architecture behavior is changed.")
     $md.Add("")
     $md.Add("Merge Note:")
