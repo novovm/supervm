@@ -1,10 +1,10 @@
 ﻿{
-    "stamp":  "20260315-204130",
-    "release_version":  "Beta 0.8",
+    "stamp":  "20260523-181655",
+    "release_version":  "SUPERVM v1.2 FULLMAX",
     "platform":  "windows",
     "profile":  "fullmax",
-    "bundle_dir":  "D:\\WEB3_AI\\AOEM\\artifacts\\ffi-bundles\\fullmax\\windows\\20260315-204130",
-    "core_dll":  "D:\\WEB3_AI\\AOEM\\artifacts\\ffi-bundles\\fullmax\\windows\\20260315-204130\\core\\bin\\aoem_ffi.dll",
+    "bundle_dir":  "D:\\WorksArea\\AOEM\\artifacts\\ffi-bundles\\fullmax\\windows\\20260523-181655",
+    "core_dll":  "D:\\WorksArea\\AOEM\\artifacts\\ffi-bundles\\fullmax\\windows\\20260523-181655\\core\\bin\\aoem_ffi.dll",
     "plugins":  [
                     "aoem_ffi_crypto_hsm.dll",
                     "aoem_ffi_crypto_kms.dll",

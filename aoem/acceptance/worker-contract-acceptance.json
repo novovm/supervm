@@ -1,0 +1,45 @@
+{
+  "acceptance_version": "supervm-aoem-fullmax-host-2026-05-23",
+  "artifact_under_test": "aoem/",
+  "entry": "aoem_execute_ops_wire_v1",
+  "worker": "aoem_proof_worker",
+  "batch_count": 4,
+  "jobs": 10000,
+  "required_profiles": [
+    "merkle_membership_v1",
+    "zk_merkle_membership_v1"
+  ],
+  "platform_status": {
+    "windows-x86_64": "included",
+    "linux-x86_64": "included",
+    "macos-universal": "pending_rebuild_not_bundled"
+  },
+  "required_checks": [
+    "windows_fullmax_artifact_present",
+    "windows_embedded_host_smoke_pass",
+    "public_merkle_worker_jobs_pass_when_worker_adapter_is_run",
+    "private_zk_merkle_worker_jobs_pass_when_worker_adapter_is_run",
+    "mixed_profile_rejected_or_split_by_profile",
+    "malformed_jobs_rejected_without_proof_written",
+    "external_verifier_accepts_valid_proofs",
+    "tamper_rejected",
+    "resident_asset_lifecycle_pass",
+    "linux_fullmax_artifact_present",
+    "linux_worker_adapter_present",
+    "macos_artifact_not_bundled_until_fresh_rebuild"
+  ],
+  "expected_summaries": {
+    "embedded_host_smoke": "SUPERVM_AOEM_PROOF_ENGINE_HOST_SMOKE|profile=fixed_profile_v1|proof=ok|verify=ok|state_read=ok|metadata=ok|failures=0",
+    "public_merkle_worker": "AOEM_PROOF_WORKER_SUMMARY|profile=merkle_membership_v1|jobs=10000|batch_count=4|resident_asset=ok|proof=ok|verify=ok|external_verify=ok|malformed=ok|failures=0",
+    "private_zk_merkle_worker": "AOEM_PROOF_WORKER_SUMMARY|profile=zk_merkle_membership_v1|jobs=10000|batch_count=4|resident_asset=ok|privacy=ok|proof=ok|verify=ok|external_verify=ok|malformed=ok|failures=0",
+    "asset_lifecycle": "AOEM_PROOF_WORKER_ASSET_LIFECYCLE|setup=ok|list=ok|select=ok|proof_with_asset=ok|verify=ok|external_verify=ok|release=ok|proof_after_release=rejected|malformed=ok|failures=0"
+  },
+  "non_claims": {
+    "performance_ready_claim": false,
+    "generic_arbitrary_circuit": false,
+    "graph_os_path": false,
+    "dedicated_lr_path": false,
+    "linux_runtime_included": true,
+    "macos_runtime_included": false
+  }
+}

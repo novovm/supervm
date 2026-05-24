@@ -1,0 +1,85 @@
+{
+  "schema_version": "1.0.0-candidate",
+  "entry": "aoem_execute_ops_wire_v1",
+  "workload": "compute.zk.resident_proof_v1",
+  "state_output": "aoem_state_read_v1",
+  "proof_contract": "aoem_resident_proof_contract_v1_le_hex",
+  "profiles": [
+    {
+      "profile_id": "merkle_membership_v1",
+      "status": "included",
+      "type": "public_inclusion_proof",
+      "summary": "Public Merkle inclusion proof. The verifier recomputes the root from public leaf_hash, sibling_path, and leaf_index.",
+      "public_input": {
+        "merkle_root": "hex32",
+        "leaf_hash": "hex32",
+        "leaf_index": "u64",
+        "tree_depth": "u32 <= 32"
+      },
+      "witness": {
+        "sibling_path": "hex32[tree_depth]"
+      },
+      "public_outputs": [
+        "root",
+        "leaf_hash",
+        "leaf_index",
+        "tree_depth",
+        "path_digest",
+        "computed_root"
+      ],
+      "external_verifier_compatible": true,
+      "zero_knowledge_privacy": false,
+      "relationship_to_zk_profile": "retained public fast path; not replaced by zk_merkle_membership_v1"
+    },
+    {
+      "profile_id": "zk_merkle_membership_v1",
+      "status": "included",
+      "type": "private_membership_proof",
+      "summary": "Private Merkle membership proof. Public verifier checks root, commitment, nullifier, and proof binding without seeing the private leaf, path, or index.",
+      "public_input": {
+        "merkle_root": "hex32",
+        "leaf_commitment": "hex32",
+        "nullifier": "hex32",
+        "tree_depth": "u32 <= 32",
+        "hash_profile": "zk_merkle_style_v1"
+      },
+      "private_witness": {
+        "leaf": "hex",
+        "leaf_secret": "hex",
+        "leaf_index": "u64",
+        "sibling_path": "hex32[tree_depth]"
+      },
+      "public_outputs": [
+        "merkle_root",
+        "leaf_commitment",
+        "nullifier",
+        "tree_depth",
+        "hash_profile",
+        "profile_id",
+        "witness_commitment",
+        "private_witness_hidden"
+      ],
+      "forbidden_public_outputs": [
+        "leaf",
+        "sibling_path",
+        "leaf_index",
+        "raw_private_witness"
+      ],
+      "external_verifier_compatible": true,
+      "zero_knowledge_privacy": true,
+      "hides_leaf": true,
+      "hides_sibling_path": true,
+      "hides_leaf_index": true,
+      "does_not_replace": "merkle_membership_v1"
+    }
+  ],
+  "non_claims": {
+    "generic_arbitrary_circuit": false,
+    "performance_ready_claim": false,
+    "graph_os_path": false,
+    "dedicated_lr_path": false,
+    "new_public_ffi_abi": false,
+    "runtime_canon_changed": false,
+    "new_compute_op": false
+  }
+}

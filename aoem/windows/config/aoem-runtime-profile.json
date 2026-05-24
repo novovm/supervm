@@ -64,7 +64,7 @@
     "zkvm_prove": true,
     "zkvm_verify": true
   },
-  "dll_path": "/Users/aoem-a2/Downloads/dev_project/vsCode/WorksArea/SUPERVM/aoem/bin/libaoem_ffi.dylib",
+  "dll_path": "D:\\WorksArea\\SUPERVM\\aoem\\windows\\core\\bin\\aoem_ffi.dll",
   "ffi_symbol_contract": {
     "bulletproof_batch_v1": true,
     "execute_ops_v2": true,

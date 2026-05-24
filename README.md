@@ -126,8 +126,18 @@ Privacy and security are treated as **infrastructure primitives**, not optional 
 For capability evaluation (to avoid “black box” misreads), use:
 
 - `docs_CN/AOEM-FFI/README.md`
-- `docs_CN/AOEM-FFI/AOEM-FFI-CAPABILITY-TRANSPARENCY-MATRIX-2026-03-15.md`
-- `docs_CN/AOEM-FFI/AOEM-FFI-FULLMAX-INTEGRATION-2026-03-12.md`
+- `docs_CN/AOEM-FFI/SUPERVM-AOEM-CAPABILITY-AUDIT-V1-2026-05-23.md`
+- `docs_CN/AOEM-FFI/SUPERVM-AOEM-PROOF-ENGINE-HOST-INTEGRATION-V1-2026-05-23.md`
+
+Current AOEM integration is a single-layer FULLMAX host package, not a Proof-only bundle and not a standalone AOEM platform service. The Proof Engine path is one capability inside that package:
+
+```text
+SUPERVM host -> aoem_execute_ops_wire_v1 -> compute.zk.resident_proof_v1 -> aoem_state_read_v1
+```
+
+The same AOEM package also carries the FULLMAX capability surface used by SUPERVM, including primitive operators, GPU-adaptive paths, RocksDB persistence sidecar, WASM/Wasmtime sidecar, zkVM executor sidecar, ML-DSA, KMS/HSM, RingCT, Bulletproof, Groth16, classic hashes, and classic signature verification. See the capability audit before making product or security claims.
+
+Current runtime baseline: `AOEM FULLMAX Runtime Baseline 2026-05-23`. Windows and Linux have been refreshed from newly generated AOEM `SUPERVM v1.2 FULLMAX` bundles and are the included/verified runtimes. macOS runtime artifacts are currently not bundled; old macOS platform binaries were removed to avoid stale FULLMAX claims. See the AOEM capability audit for the exact status.
 
 ## Ecosystem positioning
 

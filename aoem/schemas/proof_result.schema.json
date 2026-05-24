@@ -1,0 +1,82 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aoem.dev/schemas/compute-native/proof-v1.0/proof_result.schema.json",
+  "title": "AOEM Compute Native Proof v1.0 Worker Result",
+  "description": "One JSONL result emitted by aoem_proof_worker.",
+  "type": "object",
+  "oneOf": [
+    { "$ref": "#/$defs/successResult" },
+    { "$ref": "#/$defs/errorResult" }
+  ],
+  "$defs": {
+    "hex": {
+      "type": "string",
+      "pattern": "^(?:[0-9a-fA-F]{2})*$"
+    },
+    "requestId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9._:-]+$"
+    },
+    "profileId": {
+      "type": "string",
+      "enum": [
+        "fixed_profile_v1",
+        "merkle_membership_v1",
+        "zk_merkle_membership_v1"
+      ]
+    },
+    "successResult": {
+      "type": "object",
+      "required": [
+        "request_id",
+        "status",
+        "profile_id",
+        "proof",
+        "verify_status",
+        "public_outputs",
+        "metadata"
+      ],
+      "properties": {
+        "request_id": { "$ref": "#/$defs/requestId" },
+        "status": { "const": "ok" },
+        "profile_id": { "$ref": "#/$defs/profileId" },
+        "proof": { "$ref": "#/$defs/hex" },
+        "verify_status": { "const": "ok" },
+        "public_outputs": {
+          "type": "string",
+          "description": "AOEM state JSON encoded as a JSON string by the current worker."
+        },
+        "metadata": {
+          "type": "string",
+          "description": "AOEM metadata JSON encoded as a JSON string by the current worker."
+        }
+      },
+      "additionalProperties": false
+    },
+    "errorResult": {
+      "type": "object",
+      "required": ["request_id", "status", "error", "proof_written"],
+      "properties": {
+        "request_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "status": { "const": "error" },
+        "error": {
+          "type": "string",
+          "enum": [
+            "malformed_payload",
+            "wire_execution_failed",
+            "proof_verification_failed",
+            "state_key_overflow"
+          ]
+        },
+        "proof_written": { "const": false }
+      },
+      "additionalProperties": false
+    }
+  }
+}

@@ -1,37 +1,160 @@
 {
-    "generated_at_utc":  "2026-03-15T15:00:51.1922730Z",
-    "release_version":  "Beta 0.8",
-    "aoem_root":  "D:\\WEB3_AI\\SUPERVM\\aoem",
-    "entries":  [
-                    {
-                        "name":  "core",
-                        "platform":  "windows",
-                        "dll":  "windows/core/bin/aoem_ffi.dll",
-                        "sha256":  "0d810fb9002f1901fde736f21ec97d9fccaed42ce2b0d23c50890dd20e2e5281",
-                        "abi_expected":  1,
-                        "capabilities_required":  {
-                                                      "execute_ops_v2":  true
-                                                  }
-                    },
-                    {
-                        "name":  "core",
-                        "platform":  "linux",
-                        "dll":  "linux/core/bin/libaoem_ffi.so",
-                        "sha256":  "8efe5a290d12c0455427a3df3c602ada01c43a98e0b426e636a9f5d33f93c3c9",
-                        "abi_expected":  1,
-                        "capabilities_required":  {
-                                                      "execute_ops_v2":  true
-                                                  }
-                    },
-                    {
-                        "name":  "core",
-                        "platform":  "macos",
-                        "dll":  "macos/core/bin/libaoem_ffi.dylib",
-                        "sha256":  "296a3169a99ff0559ef3c4bc90b4122ad4f6edab1405bbadb0438d20904d69f1",
-                        "abi_expected":  1,
-                        "capabilities_required":  {
-                                                      "execute_ops_v2":  true
-                                                  }
-                    }
-                ]
+  "package": "aoem-fullmax-supervm-host",
+  "layout": "single_layer_fullmax_package",
+  "runtime_baseline": {
+    "id": "AOEM FULLMAX Runtime Baseline 2026-05-23",
+    "stage": "windows_linux_fullmax_trusted_release",
+    "windows_included_and_verified": true,
+    "linux_included_and_verified": true,
+    "macos_pending_not_bundled": true,
+    "document": "RUNTIME-BASELINE.md"
+  },
+  "entry": "aoem_execute_ops_wire_v1",
+  "output": "aoem_state_read_v1",
+  "runtime_canon_changed": false,
+  "public_ffi_abi_changed": false,
+  "source_artifacts": {
+    "windows_fullmax_bundle": "D:\\WorksArea\\AOEM\\artifacts\\ffi-bundles\\fullmax\\windows\\20260523-181655",
+    "linux_fullmax_bundle": "D:\\WorksArea\\AOEM\\artifacts\\ffi-bundles\\fullmax\\linux\\20260524-103416",
+    "proof_engine_host_integration": "D:\\WorksArea\\AOEM\\dist\\aoem-compute-native-proof-v1.1-host-integration",
+    "linux_fullmax_build_log": "D:\\WorksArea\\AOEM\\tmp\\linux_fullmax_20260524-103416.log",
+    "linux_fullmax_status": "included",
+    "macos_fullmax_status": "pending_rebuild_not_bundled"
+  },
+  "entries": [
+    {
+      "name": "core",
+      "platform": "linux-x86_64",
+      "dll": "linux/core/bin/libaoem_ffi.so",
+      "sha256": "d72ea8704b13681b91f23ac6714411046b5965ee5aeda5b6a249bcb0574a05ba",
+      "abi_expected": 1,
+      "capabilities_required": {
+        "execute_ops_v2": true
+      }
+    },
+    {
+      "name": "core",
+      "platform": "windows-x86_64",
+      "dll": "windows/core/bin/aoem_ffi.dll",
+      "sha256": "0879941e58f6879ecfcd7f1c49105fe6ba45ddad588550922307b808adf0a49d",
+      "abi_expected": 1,
+      "capabilities_required": {
+        "execute_ops_v2": true
+      }
+    }
+  ],
+  "platforms": {
+    "windows-x86_64": {
+      "status": "included",
+      "source_bundle": "D:\\WorksArea\\AOEM\\artifacts\\ffi-bundles\\fullmax\\windows\\20260523-181655"
+    },
+    "linux-x86_64": {
+      "status": "included",
+      "source_bundle": "D:\\WorksArea\\AOEM\\artifacts\\ffi-bundles\\fullmax\\linux\\20260524-103416",
+      "build_log": "D:\\WorksArea\\AOEM\\tmp\\linux_fullmax_20260524-103416.log"
+    },
+    "macos-universal": {
+      "status": "pending_rebuild_not_bundled"
+    }
+  },
+  "fullmax_sidecars": {
+    "windows-x86_64": {
+      "core_plugins": [
+        "aoem_ffi_crypto_hsm.dll",
+        "aoem_ffi_crypto_kms.dll",
+        "aoem_ffi_crypto_mldsa.dll",
+        "aoem_ffi_hsm.dll",
+        "aoem_ffi_kms.dll",
+        "aoem_ffi_mldsa.dll",
+        "aoem_ffi_persist.dll",
+        "aoem_ffi_persist_rocksdb.dll",
+        "aoem_ffi_runtime_wasm_wasmtime.dll",
+        "aoem_ffi_wasm.dll",
+        "aoem_ffi_zkvm.dll",
+        "aoem_ffi_zkvm_executor.dll",
+        "aoem_hsm_plugin.dll",
+        "aoem_kms_plugin.dll"
+      ],
+      "kms_hsm_plugin": [
+        "aoem_ffi_crypto_hsm.dll",
+        "aoem_ffi_crypto_kms.dll",
+        "aoem_ffi_hsm.dll",
+        "aoem_ffi_kms.dll",
+        "aoem_hsm_plugin.dll",
+        "aoem_kms_plugin.dll"
+      ]
+    },
+    "linux-x86_64": {
+      "core_plugins": [
+        "libaoem_ffi_crypto_hsm.so",
+        "libaoem_ffi_crypto_kms.so",
+        "libaoem_ffi_crypto_mldsa.so",
+        "libaoem_ffi_hsm.so",
+        "libaoem_ffi_kms.so",
+        "libaoem_ffi_mldsa.so",
+        "libaoem_ffi_persist.so",
+        "libaoem_ffi_persist_rocksdb.so",
+        "libaoem_ffi_runtime_wasm_wasmtime.so",
+        "libaoem_ffi_wasm.so",
+        "libaoem_ffi_zkvm.so",
+        "libaoem_ffi_zkvm_executor.so",
+        "libaoem_hsm_plugin.so",
+        "libaoem_kms_plugin.so"
+      ],
+      "kms_hsm_plugin": [
+        "libaoem_ffi_crypto_hsm.so",
+        "libaoem_ffi_crypto_kms.so",
+        "libaoem_ffi_hsm.so",
+        "libaoem_ffi_kms.so",
+        "libaoem_hsm_plugin.so",
+        "libaoem_kms_plugin.so"
+      ]
+    }
+  },
+  "compute_native_proof_engine": {
+    "workload": "compute.zk.resident_proof_v1",
+    "resident_asset_lifecycle_workload": "compute.zk.resident_asset_lifecycle_v1",
+    "profiles": [
+      "merkle_membership_v1",
+      "zk_merkle_membership_v1"
+    ],
+    "host_integration": "host-integration/",
+    "worker_adapter": "worker-adapter/",
+    "worker_binaries": {
+      "windows-x86_64": {
+        "path": "bin/windows-x86_64/aoem-proof-worker.exe",
+        "sha256": "bafe3a68ecc8189dae1ab4e6405ad56de285007f99f4e5fbeb6ed5aa94101479"
+      },
+      "linux-x86_64": {
+        "path": "bin/linux-x86_64/aoem-proof-worker",
+        "sha256": "3ed735496daa803dad5ad4c909432116d80edfa9ae981177fef7e69119ca69dc"
+      }
+    }
+  },
+  "fullmax_capability_domains": [
+    "rocksdb_persistence_sidecar",
+    "wasm_wasmtime_runtime_sidecar",
+    "zkvm_executor_sidecar",
+    "native_circuit_halo2_path",
+    "mldsa_sidecar",
+    "kms_hsm_sidecar",
+    "classic_hashes",
+    "classic_signature_verify",
+    "ring_signature",
+    "groth16",
+    "bulletproof",
+    "ringct",
+    "gpu_generic_primitives",
+    "compute_tensor",
+    "tensor_graph_runtime_internals",
+    "compute_primitive_u32",
+    "compute_zk_resident_proof"
+  ],
+  "claims": {
+    "generic_arbitrary_circuit": false,
+    "performance_ready": false,
+    "graph_os_path": false,
+    "dedicated_lr_path": false,
+    "standalone_platform_service": false
+  }
 }

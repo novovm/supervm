@@ -1,0 +1,14 @@
+{
+  "license_version": 1,
+  "customer": "Example Customer",
+  "product": "Example Host Product",
+  "tier": "enterprise-placeholder",
+  "features": [
+    "compute.zk.resident_asset_lifecycle_v1",
+    "compute.zk.resident_proof_v1",
+    "profile.merkle_membership_v1",
+    "profile.zk_merkle_membership_v1"
+  ],
+  "enforced": false,
+  "note": "Placeholder only. AOEM default community/dev flows do not require this file unless enterprise entitlement enforcement is enabled."
+}

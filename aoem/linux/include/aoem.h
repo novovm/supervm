@@ -22,6 +22,13 @@
 extern "C" {
 #endif
 
+// AOEM FFI surface tiers:
+// - Production ABI: stable host-facing process, execution, state, hash, signature,
+//   and privacy-native execution entrypoints.
+// - Feature ABI: optional advanced capabilities guarded by Cargo features or plugin probes.
+// - Internal/experimental ABI: diagnostics, probes, and compatibility shims. These may remain
+//   exported for binary compatibility, but they are not default product commitments.
+
 typedef struct aoem_create_options_v1 {
   uint32_t abi_version;   // must be 1
   uint32_t struct_size;   // sizeof(aoem_create_options_v1)
@@ -58,11 +65,14 @@ typedef struct aoem_primitive_result_v1 {
   uint64_t output_hash;
 } aoem_primitive_result_v1;
 
+// Production ABI: process and bundle identity.
 AOEM_API uint32_t aoem_abi_version(void);
 AOEM_API const char* aoem_version_string(void);
 // Process-level one-time warmup entry.
 // Call once at process startup to pre-resolve capabilities and optional sidecar plugins.
 AOEM_API int32_t aoem_global_init(void);
+// Production ABI: capability introspection. Capability booleans report compiled/probed
+// availability; they do not mean every exported symbol is part of the default Production ABI.
 AOEM_API const char* aoem_capabilities_json(void);
 // Persist delegation (runtime plugin model):
 // - If AOEM_PERSISTENCE_PATH is set and non-empty, core AOEM FFI will
@@ -91,9 +101,9 @@ AOEM_API const char* aoem_capabilities_json(void);
 //   AOEM_FFI_MLDSA_PLUGIN=<absolute or relative plugin path>
 //   AOEM_FFI_MLDSA_PLUGIN_DIR=<directory containing plugin binary>
 // - If plugin load/probe fails, aoem_mldsa_* returns capability-not-built semantics.
-// zkVM optional capability probe.
+// Feature ABI: zkVM optional capability probe.
 AOEM_API uint32_t aoem_zkvm_supported(void);
-// Generic zkVM prove+verify entry.
+// Feature ABI: generic zkVM prove+verify entry.
 // backend values:
 //   0 = auto
 //   1 = trace
@@ -124,7 +134,7 @@ AOEM_API int32_t aoem_zkvm_prove_verify_v1(
   size_t witness_len,
   uint32_t* out_verified
 );
-// Minimal host-side zkVM prove+verify roundtrip probe (Trace/Fibonacci).
+// Internal/diagnostic ABI: minimal host-side zkVM prove+verify roundtrip probe (Trace/Fibonacci).
 // return code:
 //  1 = prove+verify succeeded
 //  0 = verify returned false
@@ -136,7 +146,7 @@ AOEM_API int32_t aoem_zkvm_trace_fib_prove_verify(
   uint64_t witness_a,
   uint64_t witness_b
 );
-// ML-DSA optional capability.
+// Feature ABI: ML-DSA optional capability.
 // level values: 44 (ML-DSA-44), 65 (ML-DSA-65), 87 (ML-DSA-87).
 // legacy aliases 2/3/5 are also accepted by the Rust implementation.
 AOEM_API uint32_t aoem_mldsa_supported(void);
@@ -220,7 +230,7 @@ AOEM_API int32_t aoem_mldsa_verify_batch_v1(
   size_t* out_results_len,
   uint32_t* out_valid_count
 );
-// Classic crypto/hash ABI (host-oriented, binary-safe).
+// Production ABI: classic crypto/hash ABI (host-oriented, binary-safe).
 // Hash outputs are fixed 32 bytes.
 // return code:
 //  0 = call succeeded
@@ -240,7 +250,7 @@ AOEM_API int32_t aoem_blake3_256_v1(
   size_t data_len,
   uint8_t* out_hash32
 );
-// Ed25519 verify.
+// Production ABI: Ed25519 verify.
 // return code:
 //  0 = call succeeded (out_valid is 0/1)
 // -2 = invalid argument
@@ -262,7 +272,7 @@ typedef struct aoem_ed25519_verify_item_v1 {
   const uint8_t* signature_ptr;
   size_t signature_len;
 } aoem_ed25519_verify_item_v1;
-// Batch Ed25519 verify.
+// Production ABI: batch Ed25519 verify.
 // - out_results is a byte array with length=item_count; each byte is 0/1.
 // - output memory is allocated by AOEM and must be released with aoem_free.
 // return code:
@@ -276,7 +286,7 @@ AOEM_API int32_t aoem_ed25519_verify_batch_v1(
   size_t* out_results_len,
   uint32_t* out_valid_count
 );
-// secp256k1 verify/recover.
+// Production ABI: secp256k1 verify/recover.
 // Signature format: 65 bytes [r(32)||s(32)||v(1)], where v in {0,1,27,28}.
 // message32 is 32 bytes.
 // return code:
@@ -302,7 +312,7 @@ AOEM_API int32_t aoem_secp256k1_recover_pubkey_v1(
   uint8_t** out_pubkey_ptr,
   size_t* out_pubkey_len
 );
-// Ring-signature verification (Web30-compatible payload).
+// Feature ABI: ring-signature verification (Web30-compatible payload).
 // signature_json payload schema:
 // {
 //   "ring_members": [[u8;32], ...],
@@ -316,7 +326,7 @@ AOEM_API int32_t aoem_secp256k1_recover_pubkey_v1(
 // -2 = invalid argument
 // -4 = decode/verify error
 AOEM_API uint32_t aoem_ring_signature_supported(void);
-// Ring-signature keygen.
+// Feature ABI: ring-signature keygen.
 // output memory is allocated by AOEM and must be released with aoem_free.
 // return code:
 //  0 = call succeeded
@@ -329,7 +339,7 @@ AOEM_API int32_t aoem_ring_signature_keygen_v1(
   uint8_t** out_secret_key_ptr,
   size_t* out_secret_key_len
 );
-// Ring-signature sign (Web30-compatible output payload).
+// Feature ABI: ring-signature sign (Web30-compatible output payload).
 // ring_json accepts:
 //  1) [[u8;32], ...]
 //  2) {"ring_members":[[u8;32], ...]}
@@ -364,7 +374,7 @@ AOEM_API int32_t aoem_ring_signature_verify_web30_v1(
   uint64_t amount_hi,
   uint32_t* out_valid
 );
-// Ring-signature batch verify (Web30-compatible payload).
+// Feature ABI: ring-signature batch verify (Web30-compatible payload).
 // batch_json schema:
 // [
 //   {
@@ -390,7 +400,7 @@ AOEM_API int32_t aoem_ring_signature_verify_batch_web30_v1(
   size_t* out_results_len,
   uint32_t* out_valid_count
 );
-// Groth16 fixed-circuit prove (FFI baseline contract).
+// Feature ABI: Groth16 fixed-circuit prove.
 // Witness wire (little-endian, 24 bytes):
 //   [a:u64][b:u64][c:u64], with constraint a*b == c
 // Outputs:
@@ -412,7 +422,7 @@ AOEM_API int32_t aoem_groth16_prove_v1(
   uint8_t** out_public_inputs_ptr,
   size_t* out_public_inputs_len
 );
-// Groth16 batch prove (FFI high-throughput contract).
+// Feature ABI: Groth16 batch prove.
 // Input:
 // - witnesses wire: [count:u32_le][len:u32_le][bytes...][len:u32_le][bytes...]...
 // - each witness item bytes: same as aoem_groth16_prove_v1 witness wire (24 bytes [a][b][c]).
@@ -435,7 +445,7 @@ AOEM_API int32_t aoem_groth16_prove_batch_v1(
   uint8_t** out_public_inputs_wire_ptr,
   size_t* out_public_inputs_wire_len
 );
-// Groth16 single-proof verify (verify-only FFI).
+// Feature ABI: Groth16 single-proof verify.
 // Input contracts:
 // - vk_ptr/vk_len: PreparedVerifyingKey<Bls12_381> bytes (arkworks uncompressed unchecked wire).
 // - proof_ptr/proof_len: Proof<Bls12_381> bytes (arkworks uncompressed unchecked wire).
@@ -455,7 +465,7 @@ AOEM_API int32_t aoem_groth16_verify_v1(
   size_t public_inputs_len,
   uint32_t* out_valid
 );
-// Groth16 batch verify (verify-only FFI, binary wire).
+// Feature ABI: Groth16 batch verify.
 // Shared verifying key:
 // - vk_ptr/vk_len: PreparedVerifyingKey<Bls12_381> bytes (arkworks uncompressed unchecked wire)
 // Batch wire for proofs/public-inputs (both are required, same count):
@@ -481,7 +491,7 @@ AOEM_API int32_t aoem_groth16_verify_batch_v1(
   size_t* out_results_len,
   uint32_t* out_valid_count
 );
-// Bulletproof range prove (FFI baseline contract).
+// Feature ABI: Bulletproof range prove.
 // Input:
 // - amount_lo/amount_hi: amount (u128 little-endian split; amount_hi must be 0 in v1)
 // - bits: range bits (0 -> default 64)
@@ -502,7 +512,7 @@ AOEM_API int32_t aoem_bulletproof_prove_v1(
   uint8_t** out_proof_ptr,
   size_t* out_proof_len
 );
-// Bulletproof range proof verify (verify-only FFI).
+// Feature ABI: Bulletproof range proof verify.
 // Input contracts:
 // - commitment_ptr/commitment_len: 32-byte commitment
 // - proof_ptr/proof_len: Bulletproof bytes
@@ -520,7 +530,7 @@ AOEM_API int32_t aoem_bulletproof_verify_v1(
   uint32_t bits,
   uint32_t* out_valid
 );
-// Bulletproof batch prove.
+// Feature ABI: Bulletproof batch prove.
 // Input: JSON array
 // [
 //   { "amount_lo": u64, "amount_hi": u64, "bits": u32 },
@@ -537,7 +547,7 @@ AOEM_API int32_t aoem_bulletproof_prove_batch_v1(
   uint8_t** out_batch_json_ptr,
   size_t* out_batch_json_len
 );
-// Bulletproof batch verify.
+// Feature ABI: Bulletproof batch verify.
 // Input: same JSON array produced by aoem_bulletproof_prove_batch_v1.
 // Output:
 // - out_results: byte bitmap (1=valid, 0=invalid)
@@ -549,7 +559,7 @@ AOEM_API int32_t aoem_bulletproof_verify_batch_v1(
   size_t* out_results_len,
   uint32_t* out_valid_count
 );
-// RingCT transaction prove/generate (FFI baseline contract).
+// Feature ABI: RingCT transaction prove/generate.
 // Input:
 // - message_ptr/message_len: transaction message (bound to ring signature)
 // - amount_lo/amount_hi: amount (u128 little-endian split; amount_hi must be 0 in v1)
@@ -570,7 +580,7 @@ AOEM_API int32_t aoem_ringct_prove_v1(
   uint8_t** out_tx_payload_json_ptr,
   size_t* out_tx_payload_json_len
 );
-// RingCT batch prove/generate.
+// Feature ABI: RingCT batch prove/generate.
 // Input: JSON array
 // [
 //   { "message": [u8,...], "amount_lo": u64, "amount_hi": u64, "ring_size": u32 },
@@ -583,31 +593,42 @@ AOEM_API int32_t aoem_ringct_prove_batch_v1(
   uint8_t** out_batch_json_ptr,
   size_t* out_batch_json_len
 );
-// RingCT transaction verify (verify-only FFI).
-// tx_encoding values:
-//   1 = JSON payload (serde schema of PrivacyTransaction)
-// return code:
-//  0 = call succeeded (out_valid is 0/1)
-// -2 = invalid argument/unsupported encoding
-// -4 = decode/verify error
-// -5 = capability not built (privacy-verify feature disabled)
-AOEM_API int32_t aoem_ringct_verify_v1(
-  const uint8_t* tx_payload_ptr,
-  size_t tx_payload_len,
-  uint32_t tx_encoding,
-  uint32_t* out_valid
-);
-// RingCT batch verify.
-// Input: JSON array of PrivacyTransaction payloads.
-// Output:
-// - out_results: byte bitmap (1=valid, 0=invalid)
-// - out_valid_count: count(valid)
-AOEM_API int32_t aoem_ringct_verify_batch_v1(
-  const uint8_t* batch_json_ptr,
-  size_t batch_json_len,
-  uint8_t** out_results_ptr,
-  size_t* out_results_len,
-  uint32_t* out_valid_count
+// Production privacy ABI when built with privacy-verify: unified privacy-native execution.
+// Request JSON v1:
+// {
+//   "version": 1,
+//   "kind": "RingCt",
+//   "backend": "Cpu" | "FullGpu" | "Auto",
+//   "transactions": [
+//     { "encoding": "hex" | "json", "data": "..." }
+//   ]
+// }
+// For encoding="hex", data is hex-encoded JSON bytes of a PrivacyTransaction.
+// For encoding="json", data can be either a JSON object or a JSON string.
+// Response JSON v1:
+// {
+//   "version": 1,
+//   "accepted": bool,
+//   "status": "Accepted" | "Rejected" | "Failed",
+//   "error_code": null | "UnsupportedKind" | "AdmissionRejected" |
+//                 "BackendUnavailable" | "ExecutionRejected" |
+//                 "StateMaterializationFailed",
+//   "error_reason": null | string,
+//   "backend_used": "Cpu" | "FullGpu" | "Auto",
+//   "gpu_path_hit": bool,
+//   "cpu_core_triggered_any": bool,
+//   "cpu_slow_path_triggered_any": bool,
+//   "state_materialized": bool,
+//   "tx_results": [
+//     { "accepted": bool, "error_code": null | string, "error_reason": null | string }
+//   ]
+// }
+// output memory is allocated by AOEM and must be released with aoem_free.
+AOEM_API int32_t aoem_privacy_execute_v1(
+  const uint8_t* request_ptr,
+  size_t request_len,
+  uint8_t** out_response_ptr,
+  size_t* out_response_len
 );
 // KMS/HSM sign baseline ABI (host integration hook).
 // Mode selection:
@@ -644,15 +665,19 @@ AOEM_API int32_t aoem_hsm_sign_v1(
   uint8_t** out_signature_ptr,
   size_t* out_signature_len
 );
+// Internal/compatibility ABI: scheduler heuristic helper, not a primary host contract.
 AOEM_API uint32_t aoem_recommend_parallelism(
   uint64_t txs,
   uint32_t batch,
   uint64_t key_space,
   double rw
 );
+// Production ABI: creates and destroys AOEM execution contexts.
 AOEM_API void* aoem_create(void);
 AOEM_API void* aoem_create_with_options(const aoem_create_options_v1* opts);
 AOEM_API void aoem_destroy(void* handle);
+// Internal/compatibility ABI: disabled by default in production profile; prefer
+// aoem_execute_batch or aoem_execute_ops_*.
 AOEM_API int32_t aoem_execute(
   void* handle,
   const uint8_t* input_ptr,
@@ -660,6 +685,7 @@ AOEM_API int32_t aoem_execute(
   uint8_t** output_ptr,
   size_t* output_len
 );
+// Production ABI: primary batch execution entrypoint.
 // Output format:
 // - default: AOER binary envelope (high-performance path)
 // - compatibility: JSON only when AOEM_FFI_RESPONSE_JSON=1
@@ -675,13 +701,17 @@ AOEM_API int32_t aoem_execute_batch(
   uint8_t** output_ptr,
   size_t* output_len
 );
+// Expert ABI: trusted-host typed operation execution.
+// This is the highest-throughput struct-array fast path for in-process/C/C++/Rust
+// integrations and performance baselines. Prefer aoem_execute_ops_wire_v1 as the
+// default product ABI for cross-language, replayable, black-box host ingestion.
 AOEM_API int32_t aoem_execute_ops_v2(
   void* handle,
   const aoem_op_v2* ops_ptr,
   uint32_t op_count,
   aoem_exec_v2_result* out_result
 );
-// Generic ops-wire ingestion (production-friendly).
+// Production ABI: default generic ops-wire ingestion.
 // Wire format (little-endian):
 // - magic: "AOV2\0" (5 bytes)
 // - version: u16 (currently 1)
@@ -694,13 +724,36 @@ AOEM_API int32_t aoem_execute_ops_v2(
 //   key_bytes[key_len], value_bytes[value_len]
 // This API is domain-agnostic: caller can encode any business workload
 // into AOEM primitive ops without per-app host-side ExecOp struct plumbing.
+// Product positioning: this is the default public execution ABI. aoem_execute_ops_v2
+// remains available as an expert fast path for trusted hosts and apples-to-apples
+// performance comparison.
 AOEM_API int32_t aoem_execute_ops_wire_v1(
   void* handle,
   const uint8_t* input_ptr,
   size_t input_len,
   aoem_exec_v2_result* out_result
 );
-// Generic primitive execution (domain-agnostic; for AI/crypto/etc workloads).
+// Production ABI: JSON state materialization/read/snapshot surface.
+// Request and response payloads are UTF-8 JSON envelopes allocated/freed with aoem_free.
+AOEM_API int32_t aoem_state_write_v1(
+  const uint8_t* request_ptr,
+  size_t request_len,
+  uint8_t** out_ptr,
+  size_t* out_len
+);
+AOEM_API int32_t aoem_state_read_v1(
+  const uint8_t* request_ptr,
+  size_t request_len,
+  uint8_t** out_ptr,
+  size_t* out_len
+);
+AOEM_API int32_t aoem_state_snapshot_v1(
+  const uint8_t* request_ptr,
+  size_t request_len,
+  uint8_t** out_ptr,
+  size_t* out_len
+);
+// Feature ABI: generic primitive execution (domain-agnostic; for AI/crypto/etc workloads).
 // primitive_kind values:
 //   0=sort, 1=scan, 2=scatter, 3=fft, 4=merkle, 5=ntt, 6=gemm
 // backend_request values:

@@ -223,6 +223,7 @@ pub type AoemExecuteOpsV2 =
     unsafe extern "C" fn(*mut c_void, *const AoemOpV2, u32, *mut AoemExecV2Result) -> i32;
 pub type AoemExecuteOpsWireV1 =
     unsafe extern "C" fn(*mut c_void, *const u8, usize, *mut AoemExecV2Result) -> i32;
+pub type AoemStateReadV1 = unsafe extern "C" fn(*const u8, usize, *mut *mut u8, *mut usize) -> i32;
 pub type AoemLastError = unsafe extern "C" fn(*mut c_void) -> *const c_char;
 
 pub struct AoemDyn {
@@ -281,6 +282,7 @@ pub struct AoemDyn {
     free: Option<AoemFree>,
     execute_ops_v2: Option<AoemExecuteOpsV2>,
     execute_ops_wire_v1: Option<AoemExecuteOpsWireV1>,
+    state_read_v1: Option<AoemStateReadV1>,
     last_error: AoemLastError,
 }
 
@@ -548,6 +550,10 @@ impl AoemDyn {
             .get::<AoemExecuteOpsWireV1>(b"aoem_execute_ops_wire_v1")
             .ok()
             .map(|f| *f);
+        let state_read_v1: Option<AoemStateReadV1> = lib
+            .get::<AoemStateReadV1>(b"aoem_state_read_v1")
+            .ok()
+            .map(|f| *f);
         let last_error: AoemLastError = *lib.get::<AoemLastError>(b"aoem_last_error")?;
 
         let dynlib = Self {
@@ -606,6 +612,7 @@ impl AoemDyn {
             free,
             execute_ops_v2,
             execute_ops_wire_v1,
+            state_read_v1,
             last_error,
         };
 
@@ -790,6 +797,48 @@ impl AoemDyn {
 
     pub fn supports_execute_ops_wire_v1(&self) -> bool {
         self.execute_ops_wire_v1.is_some()
+    }
+
+    pub fn supports_state_read_v1(&self) -> bool {
+        self.state_read_v1.is_some() && self.free.is_some()
+    }
+
+    pub fn supports_proof_engine_v1(&self) -> bool {
+        self.supports_execute_ops_wire_v1() && self.supports_state_read_v1()
+    }
+
+    pub fn state_read_v1(&self, request: &[u8]) -> Result<Vec<u8>> {
+        let Some(state_read_v1) = self.state_read_v1 else {
+            bail!("aoem_state_read_v1 not found in loaded DLL");
+        };
+        if request.is_empty() {
+            bail!("aoem_state_read_v1 request must not be empty");
+        }
+        let mut output_ptr: *mut u8 = ptr::null_mut();
+        let mut output_len = 0usize;
+        let rc = unsafe {
+            state_read_v1(
+                request.as_ptr(),
+                request.len(),
+                &mut output_ptr as *mut *mut u8,
+                &mut output_len as *mut usize,
+            )
+        };
+        if rc != 0 {
+            bail!("aoem_state_read_v1 failed: rc={rc}");
+        }
+        self.copy_aoem_owned_bytes(output_ptr, output_len, "aoem_state_read_v1 output")
+    }
+
+    pub fn state_read_json_v1(&self, key: &str) -> Result<Value> {
+        if key.is_empty() {
+            bail!("aoem_state_read_v1 key must not be empty");
+        }
+        let request = serde_json::json!({ "key": key }).to_string();
+        let response = self.state_read_v1(request.as_bytes())?;
+        let text =
+            String::from_utf8(response).context("aoem_state_read_v1 returned non-utf8 json")?;
+        serde_json::from_str(&text).with_context(|| format!("invalid state_read_v1 json: {text}"))
     }
 
     /// True when AOEM FFI exports both zkVM probe symbols.

@@ -1,31 +1,56 @@
-AOEM fullmax package installed
-release=AOEM FFI Beta 0.7.3
-source_bundle=AOEM/artifacts/ffi-bundles/fullmax/macos/20260314-221800
-installed_root=aoem/
+AOEM runtime in SUPERVM is packaged as a single-layer FULLMAX host bundle.
 
-Installed runtime layout:
-  core dylib: aoem/bin/libaoem_ffi.dylib
-  header: aoem/include/aoem.h
-  plugins: aoem/plugins/*.dylib
-  compatibility variants:
-    - aoem/variants/persist/bin/libaoem_ffi.dylib
-    - aoem/variants/wasm/bin/libaoem_ffi.dylib
-  explicit macOS mirror bundle: aoem/macos/
+Runtime baseline:
+  AOEM FULLMAX Runtime Baseline 2026-05-23
+  Windows included and verified.
+  Linux included and verified.
+  macOS pending, not bundled, not advertised as available.
 
-Host default load path (repository-relative):
-  macOS: aoem/bin/libaoem_ffi.dylib
-  Linux: aoem/bin/libaoem_ffi.so
-  Windows: aoem/bin/aoem_ffi.dll
+Primary host model:
+  SUPERVM loads aoem/windows/core/bin/aoem_ffi.dll and calls
+  aoem_execute_ops_wire_v1 / typed AOEM FFI symbols directly.
 
-Runtime composition note:
-  novovm host runtime loads the core dylib from aoem/bin/
-  persist/wasm sidecars are resolved from aoem/plugins/
-  aoem-manifest.json tracks only platform core dynlibs
-  aoem/macos/ is a synced release bundle mirror, not the default host load root
+Current core upgrade:
+  Windows is installed from a freshly generated AOEM FULLMAX bundle:
+    D:\WorksArea\AOEM\artifacts\ffi-bundles\fullmax\windows\20260523-181655
 
-Generated configuration:
-  manifest: aoem/manifest/aoem-manifest.json
-  runtime profile: aoem/config/aoem-runtime-profile.json
+  Linux is installed from a freshly generated AOEM FULLMAX bundle:
+    D:\WorksArea\AOEM\artifacts\ffi-bundles\fullmax\linux\20260524-103416
 
-Recommended one-time probe:
-  cargo run --quiet -p aoem-bindings --example ffi_install_probe -- --dll <repo>/aoem/bin/libaoem_ffi.dylib
+  Linux RISC0 recursion artifact was verified before the FULLMAX build:
+    C:\Users\leadb\Downloads\ffc503386276f809137161f18d2f3ddcba3bb4b2d8b5d893b2c5d94b35afaf47.zip
+    sha256=ffc503386276f809137161f18d2f3ddcba3bb4b2d8b5d893b2c5d94b35afaf47
+
+  macOS is pending rebuild and is not bundled in this SUPERVM package.
+
+Clean package rule:
+  Old macOS dynamic libraries and sidecars were removed from aoem/ so users do
+  not mistake stale platform artifacts for current AOEM v1.2 FULLMAX output.
+  Linux was reintroduced only after a fresh platform FULLMAX artifact was built,
+  copied, checksummed and host-verified.
+
+FULLMAX continuity:
+  RocksDB persistence, WASM/Wasmtime, zkVM executor, ML-DSA, KMS/HSM and related
+  sidecar/plugin binaries are bundled for the included Windows and Linux
+  platforms under aoem/<platform>/core/plugins and
+  aoem/<platform>/kms-hsm-plugin. These are part of the same AOEM package, not a
+  second package layer.
+
+Proof host integration:
+  Embedded host examples, schemas, acceptance contracts and optional JSONL
+  worker adapter are materialized directly under aoem/host-integration,
+  aoem/schemas, aoem/acceptance, aoem/worker-adapter and aoem/bin.
+
+Boundary:
+  No public FFI ABI change, no Runtime Canon change, no Graph OS path, no
+  dedicated LR path, and no generic arbitrary-circuit or performance-ready claim.
+
+Source artifacts:
+  Windows FULLMAX bundle:
+    D:\WorksArea\AOEM\artifacts\ffi-bundles\fullmax\windows\20260523-181655
+  Linux FULLMAX bundle:
+    D:\WorksArea\AOEM\artifacts\ffi-bundles\fullmax\linux\20260524-103416
+  Proof Engine host integration examples/schemas:
+    D:\WorksArea\AOEM\dist\aoem-compute-native-proof-v1.1-host-integration
+  macOS FULLMAX:
+    pending rebuild; not bundled in this SUPERVM package.

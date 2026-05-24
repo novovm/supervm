@@ -1,0 +1,139 @@
+{
+  "name": "aoem-fullmax-supervm-host",
+  "version": "1.2.0-supervm-fullmax-host",
+  "package_stage": "windows-linux-fullmax-host-package",
+  "layout": "single_layer_fullmax_package",
+  "runtime_baseline": {
+    "id": "AOEM FULLMAX Runtime Baseline 2026-05-23",
+    "stage": "windows_linux_fullmax_trusted_release",
+    "windows_included_and_verified": true,
+    "linux_included_and_verified": true,
+    "macos_pending_not_bundled": true,
+    "document": "RUNTIME-BASELINE.md"
+  },
+  "product_identity": {
+    "engine": "AOEM FULLMAX Compute Native Engine",
+    "positioning": "embeddable execution/proof/crypto engine for SUPERVM host systems",
+    "primary_integration_model": "embedded_host_process",
+    "secondary_integration_model": "optional_worker_adapter",
+    "not_a_standalone_platform_service": true
+  },
+  "entry": "aoem_execute_ops_wire_v1",
+  "output": "aoem_state_read_v1",
+  "core_runtime": {
+    "windows_library": "windows/core/bin/aoem_ffi.dll",
+    "linux_library": "linux/core/bin/libaoem_ffi.so",
+    "header_windows": "windows/include/aoem.h",
+    "header_linux": "linux/include/aoem.h"
+  },
+  "proof_engine": {
+    "workload": "compute.zk.resident_proof_v1",
+    "resident_asset_lifecycle_workload": "compute.zk.resident_asset_lifecycle_v1",
+    "proof_contract": "aoem_resident_proof_contract_v1_le_hex",
+    "profiles": [
+      {
+        "profile_id": "merkle_membership_v1",
+        "type": "public_inclusion_proof",
+        "zero_knowledge_privacy": false,
+        "status": "included"
+      },
+      {
+        "profile_id": "zk_merkle_membership_v1",
+        "type": "private_membership_proof",
+        "hides_leaf": true,
+        "hides_sibling_path": true,
+        "hides_leaf_index": true,
+        "status": "included"
+      }
+    ],
+    "host_integration": {
+      "single_proof": "host-integration/embedded_proof_host.c",
+      "batch_proof": "host-integration/embedded_batch_proof_host.c",
+      "resident_asset_lifecycle": "host-integration/embedded_asset_lifecycle_host.c",
+      "hosted_smoke": "examples/hosted_resident_proof_smoke.c",
+      "hosted_service": "examples/hosted_resident_proof_service.c",
+      "hosted_verifier": "examples/hosted_resident_proof_verify.c"
+    },
+    "worker_adapter": {
+      "source": "worker-adapter/aoem_proof_worker.c",
+      "windows_binary": "bin/windows-x86_64/aoem-proof-worker.exe",
+      "linux_binary": "bin/linux-x86_64/aoem-proof-worker",
+      "examples": {
+        "public_merkle_jobs": "worker-adapter/examples/jobs.merkle.jsonl",
+        "private_zk_merkle_jobs": "worker-adapter/examples/jobs.zk_merkle.jsonl",
+        "mixed_profile_jobs": "worker-adapter/examples/jobs.mixed.jsonl"
+      }
+    },
+    "schemas": {
+      "job": "schemas/proof_job.schema.json",
+      "result": "schemas/proof_result.schema.json",
+      "profiles": "schemas/proof_profiles.json"
+    }
+  },
+  "fullmax_capability_domains": [
+    "abi_lifecycle",
+    "capability_discovery",
+    "typed_execution_v2",
+    "wire_execution_v1",
+    "state_read_write_snapshot",
+    "tensor_compute",
+    "tensor_graph_runtime_internals",
+    "primitive_u32_graph",
+    "gpu_generic_primitives",
+    "zk_msm",
+    "resident_pipeline_digest",
+    "resident_proof",
+    "resident_asset_lifecycle",
+    "classic_hashes",
+    "classic_signature_verify",
+    "ring_signature",
+    "groth16",
+    "bulletproof",
+    "ringct",
+    "rocksdb_persistence_sidecar",
+    "wasm_wasmtime_runtime_sidecar",
+    "zkvm_executor_sidecar",
+    "native_circuit_halo2_path",
+    "mldsa_sidecar",
+    "kms_hsm_sidecar"
+  ],
+  "sidecar_layout": {
+    "windows_core_plugins": "windows/core/plugins/",
+    "windows_kms_hsm_plugins": "windows/kms-hsm-plugin/",
+    "linux_core_plugins": "linux/core/plugins/",
+    "linux_kms_hsm_plugins": "linux/kms-hsm-plugin/"
+  },
+  "platforms": {
+    "windows-x86_64": {
+      "status": "included",
+      "library": "windows/core/bin/aoem_ffi.dll",
+      "library_sha256": "0879941e58f6879ecfcd7f1c49105fe6ba45ddad588550922307b808adf0a49d",
+      "fullmax_sidecars": "included",
+      "source_bundle": "D:\\WorksArea\\AOEM\\artifacts\\ffi-bundles\\fullmax\\windows\\20260523-181655"
+    },
+    "linux-x86_64": {
+      "status": "included",
+      "library": "linux/core/bin/libaoem_ffi.so",
+      "library_sha256": "d72ea8704b13681b91f23ac6714411046b5965ee5aeda5b6a249bcb0574a05ba",
+      "fullmax_sidecars": "included",
+      "source_bundle": "D:\\WorksArea\\AOEM\\artifacts\\ffi-bundles\\fullmax\\linux\\20260524-103416",
+      "risc0_recursion_artifact": {
+        "source": "C:\\Users\\leadb\\Downloads\\ffc503386276f809137161f18d2f3ddcba3bb4b2d8b5d893b2c5d94b35afaf47.zip",
+        "sha256": "ffc503386276f809137161f18d2f3ddcba3bb4b2d8b5d893b2c5d94b35afaf47",
+        "status": "verified"
+      }
+    },
+    "macos-universal": {
+      "status": "pending_rebuild_not_bundled"
+    }
+  },
+  "claims": {
+    "generic_arbitrary_circuit": false,
+    "performance_ready": false,
+    "graph_os_path": false,
+    "dedicated_lr_path": false,
+    "public_ffi_abi_changed": false,
+    "runtime_canon_changed": false,
+    "standalone_platform_service": false
+  }
+}

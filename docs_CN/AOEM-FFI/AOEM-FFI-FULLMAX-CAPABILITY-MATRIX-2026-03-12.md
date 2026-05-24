@@ -7,6 +7,17 @@ Author: AOEM SYSTEM TECHNOLOGY
 # AOEM FFI Fullmax 能力矩阵（2026-03-12）
 
 > 发布口径说明：本文件是 `docs/AOEM-FFI/AOEM-FFI-FULLMAX-CAPABILITY-MATRIX-2026-03-12.md` 的中文权威版本，内容逐项对齐。
+>
+> SUPERVM 当前打包状态请优先看
+> `docs_CN/AOEM-FFI/SUPERVM-AOEM-CAPABILITY-AUDIT-V1-2026-05-23.md`。
+> 本文件保留 FULLMAX 能力矩阵口径；当前 SUPERVM 包内已有新构建的
+> Windows/Linux FULLMAX 动态库和 sidecar。macOS 旧二进制已清除，等待
+> fresh FULLMAX rebuild 后重新 materialize。
+
+> 当前 SUPERVM materialized runtime：
+> - Windows: `D:\WorksArea\AOEM\artifacts\ffi-bundles\fullmax\windows\20260523-181655`
+> - Linux: `D:\WorksArea\AOEM\artifacts\ffi-bundles\fullmax\linux\20260524-103416`
+> - macOS: pending rebuild, not bundled
 
 ## 产物快照
 

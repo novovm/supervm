@@ -1,0 +1,151 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aoem.dev/schemas/compute-native/proof-v1.0/proof_job.schema.json",
+  "title": "AOEM Compute Native Proof v1.0 Worker Job",
+  "description": "One JSONL request consumed by aoem_proof_worker.",
+  "type": "object",
+  "oneOf": [
+    { "$ref": "#/$defs/fixedProfileJob" },
+    { "$ref": "#/$defs/merkleMembershipJob" },
+    { "$ref": "#/$defs/zkMerkleMembershipJob" }
+  ],
+  "$defs": {
+    "hex": {
+      "type": "string",
+      "pattern": "^(?:[0-9a-fA-F]{2})*$"
+    },
+    "hex32": {
+      "type": "string",
+      "pattern": "^[0-9a-fA-F]{64}$"
+    },
+    "requestId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9._:-]+$"
+    },
+    "residentAssetId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^(default|0[xX][0-9a-fA-F]+|[1-9][0-9]*)$"
+    },
+    "treeDepth": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 32
+    },
+    "leafIndex": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "fixedProfileJob": {
+      "type": "object",
+      "required": [
+        "request_id",
+        "resident_asset_id",
+        "profile_id",
+        "public_input",
+        "witness"
+      ],
+      "properties": {
+        "request_id": { "$ref": "#/$defs/requestId" },
+        "resident_asset_id": { "$ref": "#/$defs/residentAssetId" },
+        "profile_id": { "const": "fixed_profile_v1" },
+        "public_input": { "$ref": "#/$defs/hex" },
+        "witness": { "$ref": "#/$defs/hex" }
+      },
+      "additionalProperties": false
+    },
+    "merkleMembershipJob": {
+      "type": "object",
+      "required": [
+        "request_id",
+        "resident_asset_id",
+        "profile_id",
+        "public_input",
+        "witness"
+      ],
+      "properties": {
+        "request_id": { "$ref": "#/$defs/requestId" },
+        "resident_asset_id": { "$ref": "#/$defs/residentAssetId" },
+        "profile_id": { "const": "merkle_membership_v1" },
+        "public_input": {
+          "type": "object",
+          "required": ["merkle_root", "leaf_hash", "leaf_index", "tree_depth"],
+          "properties": {
+            "merkle_root": { "$ref": "#/$defs/hex32" },
+            "leaf_hash": { "$ref": "#/$defs/hex32" },
+            "leaf_index": { "$ref": "#/$defs/leafIndex" },
+            "tree_depth": { "$ref": "#/$defs/treeDepth" }
+          },
+          "additionalProperties": false
+        },
+        "witness": {
+          "type": "object",
+          "required": ["sibling_path"],
+          "properties": {
+            "sibling_path": {
+              "type": "array",
+              "minItems": 0,
+              "maxItems": 32,
+              "items": { "$ref": "#/$defs/hex32" }
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "zkMerkleMembershipJob": {
+      "type": "object",
+      "required": [
+        "request_id",
+        "resident_asset_id",
+        "profile_id",
+        "public_input",
+        "witness"
+      ],
+      "properties": {
+        "request_id": { "$ref": "#/$defs/requestId" },
+        "resident_asset_id": { "$ref": "#/$defs/residentAssetId" },
+        "profile_id": { "const": "zk_merkle_membership_v1" },
+        "public_input": {
+          "type": "object",
+          "required": [
+            "merkle_root",
+            "leaf_commitment",
+            "nullifier",
+            "tree_depth",
+            "hash_profile"
+          ],
+          "properties": {
+            "merkle_root": { "$ref": "#/$defs/hex32" },
+            "leaf_commitment": { "$ref": "#/$defs/hex32" },
+            "nullifier": { "$ref": "#/$defs/hex32" },
+            "tree_depth": { "$ref": "#/$defs/treeDepth" },
+            "hash_profile": { "const": "zk_merkle_style_v1" }
+          },
+          "additionalProperties": false
+        },
+        "witness": {
+          "type": "object",
+          "required": ["leaf", "leaf_secret", "leaf_index", "sibling_path"],
+          "properties": {
+            "leaf": { "$ref": "#/$defs/hex" },
+            "leaf_secret": { "$ref": "#/$defs/hex" },
+            "leaf_index": { "$ref": "#/$defs/leafIndex" },
+            "sibling_path": {
+              "type": "array",
+              "minItems": 0,
+              "maxItems": 32,
+              "items": { "$ref": "#/$defs/hex32" }
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}
