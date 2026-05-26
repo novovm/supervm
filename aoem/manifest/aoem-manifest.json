@@ -131,6 +131,19 @@
       }
     }
   },
+  "confidential_transfer": {
+    "profile_id": "confidential_transfer_v1",
+    "semantic_layer": "sdk_host_profile",
+    "underlying_capability": "ringct",
+    "generation_symbol": "aoem_ringct_prove_v1",
+    "validation_symbol": "aoem_privacy_execute_v1",
+    "host_integration": "host-integration/embedded_confidential_transfer_host.c",
+    "hosted_smoke": "examples/hosted_confidential_transfer_smoke.c",
+    "documentation": "docs/confidential-transfer-v1.md",
+    "runtime_canon_changed": false,
+    "public_ffi_abi_changed": false,
+    "proof_worker_default_changed": false
+  },
   "fullmax_capability_domains": [
     "rocksdb_persistence_sidecar",
     "wasm_wasmtime_runtime_sidecar",

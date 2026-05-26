@@ -98,6 +98,30 @@ ML-DSA sidecar
 KMS / HSM sidecar
 ```
 
+## Confidential Transfer Host Profile
+
+This package includes `confidential_transfer_v1` as a SUPERVM host-facing
+profile over existing AOEM RingCT:
+
+```text
+host -> aoem_ringct_prove_v1 -> aoem_privacy_execute_v1
+```
+
+Host references:
+
+```text
+host-integration/embedded_confidential_transfer_host.c
+examples/hosted_confidential_transfer_smoke.c
+docs/confidential-transfer-v1.md
+```
+
+This is an SDK/host semantic wrapper for RingCT confidential transfers. It does
+not add a public FFI ABI, does not change Runtime Canon, does not change the
+proof worker default task, and does not add a new ZK circuit.
+
+The confidential-transfer host example defaults to a fast wiring probe. Pass
+`--run-prove` to execute the full RingCT generation/verification path.
+
 ## Proof Engine Capability
 
 ```text

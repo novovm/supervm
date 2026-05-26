@@ -147,7 +147,7 @@ SUPERVM host process
 | Ring signature | included | `aoem_ring_signature_*`, batch verify | 隐私签名能力；按具体路径审计，不泛化 |
 | Groth16 | included | `aoem_groth16_*` | prove/verify/batch verify symbols present；具体生产语义按 profile/host path 审计 |
 | Bulletproof | included | `aoem_bulletproof_*` | range proof 相关 symbols present |
-| RingCT | included | `aoem_ringct_*` | 隐私交易证明相关 symbols present |
+| RingCT | included | `aoem_ringct_*`, `aoem_privacy_execute_v1` | 隐私交易能力已包含；`confidential_transfer_v1` 是基于现有 RingCT 的宿主产品语义包装 |
 | RocksDB persistence | bundled sidecar | `aoem_ffi_persist`, `aoem_ffi_persist_rocksdb` | FULLMAX persistence plugin 随 Windows/Linux 包存在；运行启用按宿主配置/探测 |
 | WASM / Wasmtime runtime | bundled sidecar | `aoem_ffi_wasm`, `aoem_ffi_runtime_wasm_wasmtime` | FULLMAX WASM plugin 随 Windows/Linux 包存在；不改变主 ABI |
 | zkVM executor | bundled sidecar | `aoem_ffi_zkvm`, `aoem_ffi_zkvm_executor` | Trace/RISC0/SP1/Halo2 相关路径按后端可用性审计 |

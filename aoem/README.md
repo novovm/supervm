@@ -99,6 +99,31 @@ ML-DSA sidecar
 KMS / HSM sidecar
 ```
 
+## Confidential Transfer Capability
+
+`confidential_transfer_v1` is the SUPERVM host-facing product profile for the
+existing AOEM RingCT capability. It is not a new proof system and it does not
+change the public FFI ABI.
+
+```text
+SUPERVM host
+  -> aoem_ringct_prove_v1
+  -> aoem_privacy_execute_v1
+  -> RingCT transaction payload / verification status
+```
+
+Host references:
+
+```text
+host-integration/embedded_confidential_transfer_host.c
+examples/hosted_confidential_transfer_smoke.c
+docs/confidential-transfer-v1.md
+```
+
+This profile is separate from the Proof Engine worker profiles. RingCT remains
+the FULLMAX confidential-transfer path; `compute.zk.resident_proof_v1` remains
+the proof engine path for membership/state proof profiles.
+
 ## Proof Engine Capability
 
 The current Windows and Linux FULLMAX core dynamic libraries include the AOEM

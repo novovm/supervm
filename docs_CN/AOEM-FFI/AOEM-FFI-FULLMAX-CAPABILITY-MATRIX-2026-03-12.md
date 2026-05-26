@@ -59,7 +59,7 @@ Author: AOEM SYSTEM TECHNOLOGY
 | 环签名（Ring Signature） | `aoem_ring_signature_keygen/sign/verify` + `aoem_ring_signature_verify_batch_web30_v1` | ready | ready | ready | 隐私签名能力（成员匿名证明），提供 Web30 兼容载荷与批验入口。 |
 | Groth16（Groth16） | `aoem_groth16_prove_v1/verify_v1/verify_batch_v1` | ready | ready | ready | zk-SNARK（Groth16）证明/验真与批验能力，支持 GPU 路由优化策略。 |
 | Bulletproof（Bulletproof） | `aoem_bulletproof_prove_v1/verify_v1` + `aoem_bulletproof_prove_batch_v1/verify_batch_v1` | ready | ready | ready | 范围证明（Range Proof）能力，提供单条与批量 prove/verify。 |
-| RingCT（RingCT） | `aoem_ringct_prove_v1/verify_v1` + `aoem_ringct_prove_batch_v1/verify_batch_v1` | ready | ready | ready | 隐私交易证明能力（金额隐藏 + 一致性验证），提供单条与批量路径。 |
+| RingCT（RingCT） | `aoem_ringct_prove_v1/verify_v1` + `aoem_ringct_prove_batch_v1/verify_batch_v1` + `confidential_transfer_v1` host profile | ready | ready | ready | 隐私交易证明能力（金额隐藏 + 一致性验证），提供单条与批量路径；`confidential_transfer_v1` 是宿主产品语义包装，不新增 ABI。 |
 
 ## 可选组件插件热插拔级别（Optional Plugin Hot-Plug Level）
 
@@ -118,6 +118,10 @@ Author: AOEM SYSTEM TECHNOLOGY
 - dedicated 并行参数：
   - `AOEM_RINGCT_COMMITMENT_DEDICATED_PAR_MIN_BUCKETS`
   - `AOEM_RINGCT_COMMITMENT_DEDICATED_PAR_THREADS`
+- SUPERVM 宿主产品语义：
+  - `confidential_transfer_v1`
+  - 使用现有 `aoem_ringct_prove_v1` 与 `aoem_privacy_execute_v1`
+  - 不新增 public FFI ABI，不改 Runtime Canon，不改变 Proof Worker 默认任务
 
 ### Transformer 子图（FFI）
 
