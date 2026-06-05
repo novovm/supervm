@@ -108,7 +108,7 @@ try {
     Assert-Contains -Path $report -Needle "crates/gateways/evm-gateway" -Label "active external Ethereum edge path"
     Assert-Contains -Path $report -Needle 'The phrase "live gateway RPC path" means the active external Ethereum RPC edge, not the NOVOVM host entrypoint and not a new EVM plugin architecture.' -Label "live gateway phrase boundary"
     Assert-Contains -Path $report -Needle "One public probing run did not observe an RLPx auth ack" -Label "public canary narrow interpretation"
-    Assert-Contains -Path $report -Needle 'not as a regression in `eth_baseFee`, `balHash`, BAL unsupported-safe handling, or the EVM plugin route' -Label "runtime note attribution boundary"
+    Assert-Contains -Path $report -Needle 'not as a regression in `eth_baseFee`, `blockAccessListHash`, BAL unsupported-safe handling, or the EVM plugin route' -Label "runtime note attribution boundary"
     Assert-Contains -Path $report -Needle "External observation-window result" -Label "external observation not-claimed boundary"
     Assert-DoesNotMatch -Path $report -Pattern "M[E]V|U[n]iswap|u[n]iswap" -Label "forbidden observation wording"
     Assert-Contains -Path $report -Needle "Old UnifiedAccountRouter RocksDB state migration" -Label "RocksDB migration not-claimed boundary"

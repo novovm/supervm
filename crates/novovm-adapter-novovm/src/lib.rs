@@ -26,6 +26,7 @@ use novovm_exec::{
     AoemReceiptDerivationRulesV1, AoemTxExecutionArtifactV1,
     AOEM_FAILURE_CLASSIFICATION_CONTRACT_V1, EIP7610_REJECTION_CONTRACT_V1,
 };
+use novovm_protocol::{EvmBlockAccessListV1, EvmConstructionBlockAccessListV1};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -81,6 +82,18 @@ struct ExecutionReconstructionContextV1<'a> {
     final_state_root: [u8; 32],
     tx_index: u32,
     raw_execution_logs: &'a [AoemEventLogV1],
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NovoVmObservedBlockAccessListV1 {
+    pub block_access_list: Option<EvmBlockAccessListV1>,
+    pub block_access_list_complete: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NovoVmTxExecutionOutcomeV1 {
+    pub artifact: AoemTxExecutionArtifactV1,
+    pub observed_block_access_list: NovoVmObservedBlockAccessListV1,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -850,6 +863,103 @@ impl NovoVmAdapter {
             })
     }
 
+    fn to_evm_address20_v1(address: &[u8]) -> Option<[u8; 20]> {
+        if address.len() != 20 {
+            return None;
+        }
+        let mut out = [0u8; 20];
+        out.copy_from_slice(address);
+        Some(out)
+    }
+
+    fn u128_to_be32_v1(value: u128) -> [u8; 32] {
+        let mut out = [0u8; 32];
+        out[16..32].copy_from_slice(&value.to_be_bytes());
+        out
+    }
+
+    fn block_access_index_from_tx_index_v1(tx_index: u32) -> u32 {
+        tx_index.saturating_add(1)
+    }
+
+    fn build_observed_block_access_list_for_tx_v1(
+        tx: &TxIR,
+        state: &StateIR,
+        resolved_artifact: &AoemTxExecutionArtifactV1,
+        tx_index: u32,
+    ) -> NovoVmObservedBlockAccessListV1 {
+        let mut out = EvmConstructionBlockAccessListV1::new();
+        let block_access_index = Self::block_access_index_from_tx_index_v1(tx_index);
+
+        if let Some(from) = Self::to_evm_address20_v1(&tx.from) {
+            out.account_read(from);
+            out.nonce_change(block_access_index, from, tx.nonce.saturating_add(1));
+        }
+
+        match tx.tx_type {
+            TxType::Transfer | TxType::ContractCall => {
+                if let Some(to_bytes) = tx.to.as_deref() {
+                    if let Some(to) = Self::to_evm_address20_v1(to_bytes) {
+                        out.account_read(to);
+                        if resolved_artifact.status_ok && tx.value > 0 {
+                            if let Some(post_balance) =
+                                state.get_account(to_bytes).map(|account| account.balance)
+                            {
+                                out.balance_change(
+                                    block_access_index,
+                                    to,
+                                    Self::u128_to_be32_v1(post_balance),
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+            TxType::ContractDeploy => {
+                if let Some(contract_bytes) = resolved_artifact.contract_address.as_deref() {
+                    if let Some(contract) = Self::to_evm_address20_v1(contract_bytes) {
+                        out.account_read(contract);
+                        if resolved_artifact.status_ok {
+                            if tx.value > 0 {
+                                if let Some(post_balance) = state
+                                    .get_account(contract_bytes)
+                                    .map(|account| account.balance)
+                                {
+                                    out.balance_change(
+                                        block_access_index,
+                                        contract,
+                                        Self::u128_to_be32_v1(post_balance),
+                                    );
+                                }
+                            }
+                            if let Some(runtime_code) =
+                                resolved_artifact.runtime_code.clone().or_else(|| {
+                                    Self::read_runtime_code_for_address(state, contract_bytes)
+                                })
+                            {
+                                out.code_change(block_access_index, contract, runtime_code);
+                            }
+                        }
+                    }
+                }
+            }
+            TxType::Privacy
+            | TxType::CrossShard
+            | TxType::CrossChainTransfer
+            | TxType::CrossChainCall => {}
+        }
+
+        NovoVmObservedBlockAccessListV1 {
+            block_access_list: if out.is_empty() {
+                None
+            } else {
+                Some(out.to_access_list())
+            },
+            // Adapter path currently captures only a safe EVM-addressable subset.
+            block_access_list_complete: false,
+        }
+    }
+
     fn execution_reconstruction_rules(
         &self,
         rebuild_logs_from_runtime_code_when_missing: bool,
@@ -1508,12 +1618,12 @@ impl NovoVmAdapter {
         vec![0u8; 32]
     }
 
-    pub fn execute_transaction_with_artifact(
+    pub fn execute_transaction_with_observed_metadata_v1(
         &mut self,
         tx: &TxIR,
         state: &mut StateIR,
         artifact: Option<&AoemTxExecutionArtifactV1>,
-    ) -> Result<AoemTxExecutionArtifactV1> {
+    ) -> Result<NovoVmTxExecutionOutcomeV1> {
         self.ensure_initialized()?;
         self.begin_execution_receipt_context(tx);
         let already_verified = if tx.hash.is_empty() {
@@ -1612,8 +1722,28 @@ impl NovoVmAdapter {
 
         Self::record_execution_artifact(tx, state, &mut self.kv, &resolved_artifact)?;
         Self::record_execution_artifact(tx, &mut self.state, &mut self.kv, &resolved_artifact)?;
+        let observed_block_access_list = Self::build_observed_block_access_list_for_tx_v1(
+            tx,
+            state,
+            &resolved_artifact,
+            self.execution_current_tx_index,
+        );
         self.reset_execution_receipt_context();
-        Ok(resolved_artifact)
+        Ok(NovoVmTxExecutionOutcomeV1 {
+            artifact: resolved_artifact,
+            observed_block_access_list,
+        })
+    }
+
+    pub fn execute_transaction_with_artifact(
+        &mut self,
+        tx: &TxIR,
+        state: &mut StateIR,
+        artifact: Option<&AoemTxExecutionArtifactV1>,
+    ) -> Result<AoemTxExecutionArtifactV1> {
+        Ok(self
+            .execute_transaction_with_observed_metadata_v1(tx, state, artifact)?
+            .artifact)
     }
 }
 
@@ -2774,6 +2904,50 @@ mod tests {
             runtime_state.get_storage(&tx.from, b"aoem:last_log_bloom"),
             Some(&vec![0x55; 256])
         );
+    }
+
+    #[test]
+    fn execute_transaction_with_observed_metadata_emits_incomplete_evm_bal_subset() {
+        let mut adapter = NovoVmAdapter::new(ChainConfig {
+            chain_type: ChainType::EVM,
+            chain_id: 1,
+            name: "test".to_string(),
+            enabled: true,
+            custom_config: None,
+        });
+        adapter.initialize().expect("init");
+
+        let tx = sample_tx(TxType::Transfer);
+        let mut runtime_state = StateIR::new();
+        let outcome = adapter
+            .execute_transaction_with_observed_metadata_v1(&tx, &mut runtime_state, None)
+            .expect("execute with observed metadata");
+
+        assert!(outcome.artifact.status_ok);
+        assert!(
+            !outcome
+                .observed_block_access_list
+                .block_access_list_complete
+        );
+        let block_access_list = outcome
+            .observed_block_access_list
+            .block_access_list
+            .expect("observed block access list");
+        assert_eq!(block_access_list.0.len(), 2);
+        let sender_entry = block_access_list
+            .0
+            .iter()
+            .find(|entry| entry.address.as_slice() == tx.from.as_slice())
+            .expect("sender entry");
+        assert_eq!(sender_entry.nonce_changes.len(), 1);
+        assert_eq!(sender_entry.nonce_changes[0].post_nonce, 1);
+        let recipient = tx.to.clone().expect("recipient");
+        let recipient_entry = block_access_list
+            .0
+            .iter()
+            .find(|entry| entry.address.as_slice() == recipient.as_slice())
+            .expect("recipient entry");
+        assert_eq!(recipient_entry.balance_changes.len(), 1);
     }
 
     #[test]

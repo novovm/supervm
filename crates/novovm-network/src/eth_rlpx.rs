@@ -98,6 +98,7 @@ pub struct EthRlpxBlockHeaderRecordV1 {
     pub withdrawals_root: Option<[u8; 32]>,
     pub blob_gas_used: Option<u64>,
     pub excess_blob_gas: Option<u64>,
+    pub block_access_list_hash: Option<[u8; 32]>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -134,6 +135,24 @@ pub struct EthRlpxBlockBodiesResponseV1 {
 pub struct EthRlpxGetBlockBodiesRequestV1 {
     pub request_id: u64,
     pub hashes: Vec<[u8; 32]>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EthRlpxGetBlockAccessListsRequestV1 {
+    pub request_id: u64,
+    pub hashes: Vec<[u8; 32]>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EthRlpxBlockAccessListRecordV1 {
+    pub raw_rlp: Option<Vec<u8>>,
+    pub account_count: Option<usize>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EthRlpxBlockAccessListsResponseV1 {
+    pub request_id: u64,
+    pub lists: Vec<EthRlpxBlockAccessListRecordV1>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -900,6 +919,20 @@ pub fn eth_rlpx_build_get_block_bodies_payload_v1(request_id: u64, hashes: &[[u8
     ])
 }
 
+pub fn eth_rlpx_build_get_block_access_lists_payload_v1(
+    request_id: u64,
+    hashes: &[[u8; 32]],
+) -> Vec<u8> {
+    let hash_items = hashes
+        .iter()
+        .map(|hash| eth_rlpx_encode_bytes_v1(hash))
+        .collect::<Vec<_>>();
+    eth_rlpx_encode_list_v1(&[
+        eth_rlpx_encode_u64_v1(request_id),
+        eth_rlpx_encode_list_v1(&hash_items),
+    ])
+}
+
 pub fn eth_rlpx_build_transactions_payload_v1(tx_rlp_items: &[Vec<u8>]) -> Vec<u8> {
     eth_rlpx_encode_list_v1(tx_rlp_items)
 }
@@ -976,6 +1009,44 @@ pub fn eth_rlpx_parse_get_block_bodies_payload_v1(
         hashes.push(hash);
     }
     Ok(EthRlpxGetBlockBodiesRequestV1 {
+        request_id: eth_rlpx_decode_u64_bytes_v1(request_id_bytes)?,
+        hashes,
+    })
+}
+
+pub fn eth_rlpx_parse_get_block_access_lists_payload_v1(
+    payload: &[u8],
+) -> Result<EthRlpxGetBlockAccessListsRequestV1, String> {
+    let (root, consumed) = eth_rlpx_parse_item_v1(payload)?;
+    if consumed != payload.len() {
+        return Err("rlpx_get_block_access_lists_trailing".to_string());
+    }
+    let EthRlpxRlpItemV1::List(root_payload) = root else {
+        return Err("rlpx_get_block_access_lists_not_list".to_string());
+    };
+    let fields = eth_rlpx_parse_list_items_v1(root_payload)?;
+    if fields.len() < 2 {
+        return Err("rlpx_get_block_access_lists_fields_short".to_string());
+    }
+    let EthRlpxRlpItemV1::Bytes(request_id_bytes) = fields[0] else {
+        return Err("rlpx_get_block_access_lists_request_id_not_bytes".to_string());
+    };
+    let EthRlpxRlpItemV1::List(hashes_payload) = fields[1] else {
+        return Err("rlpx_get_block_access_lists_hashes_not_list".to_string());
+    };
+    let mut hashes = Vec::new();
+    for item in eth_rlpx_parse_list_items_v1(hashes_payload)? {
+        let EthRlpxRlpItemV1::Bytes(hash_bytes) = item else {
+            return Err("rlpx_get_block_access_lists_hash_not_bytes".to_string());
+        };
+        if hash_bytes.len() != 32 {
+            return Err("rlpx_get_block_access_lists_hash_len_invalid".to_string());
+        }
+        let mut hash = [0u8; 32];
+        hash.copy_from_slice(hash_bytes);
+        hashes.push(hash);
+    }
+    Ok(EthRlpxGetBlockAccessListsRequestV1 {
         request_id: eth_rlpx_decode_u64_bytes_v1(request_id_bytes)?,
         hashes,
     })
@@ -1098,6 +1169,23 @@ pub fn eth_rlpx_build_block_bodies_payload_v1(
     ])
 }
 
+pub fn eth_rlpx_build_block_access_lists_payload_v1(
+    request_id: u64,
+    raw_lists: &[Option<Vec<u8>>],
+) -> Vec<u8> {
+    let list_items = raw_lists
+        .iter()
+        .map(|raw_list| match raw_list {
+            Some(raw_list) => raw_list.clone(),
+            None => eth_rlpx_encode_bytes_v1(&[]),
+        })
+        .collect::<Vec<_>>();
+    eth_rlpx_encode_list_v1(&[
+        eth_rlpx_encode_u64_v1(request_id),
+        eth_rlpx_encode_list_v1(&list_items),
+    ])
+}
+
 pub fn eth_rlpx_parse_block_headers_payload_v1(
     payload: &[u8],
 ) -> Result<EthRlpxBlockHeadersResponseV1, String> {
@@ -1203,6 +1291,7 @@ pub fn eth_rlpx_parse_block_headers_payload_v1(
             withdrawals_root,
             blob_gas_used,
             excess_blob_gas,
+            block_access_list_hash: None,
         });
     }
     Ok(EthRlpxBlockHeadersResponseV1 {
@@ -1276,6 +1365,58 @@ pub fn eth_rlpx_parse_block_bodies_payload_v1(
     Ok(EthRlpxBlockBodiesResponseV1 {
         request_id: eth_rlpx_decode_u64_bytes_v1(request_id_bytes)?,
         bodies,
+    })
+}
+
+pub fn eth_rlpx_parse_block_access_lists_payload_v1(
+    payload: &[u8],
+) -> Result<EthRlpxBlockAccessListsResponseV1, String> {
+    let (root, consumed) = eth_rlpx_parse_item_v1(payload)?;
+    if consumed != payload.len() {
+        return Err("rlpx_block_access_lists_trailing".to_string());
+    }
+    let EthRlpxRlpItemV1::List(root_payload) = root else {
+        return Err("rlpx_block_access_lists_not_list".to_string());
+    };
+    let fields = eth_rlpx_parse_list_items_v1(root_payload)?;
+    if fields.len() < 2 {
+        return Err("rlpx_block_access_lists_fields_short".to_string());
+    }
+    let EthRlpxRlpItemV1::Bytes(request_id_bytes) = fields[0] else {
+        return Err("rlpx_block_access_lists_request_id_not_bytes".to_string());
+    };
+    let EthRlpxRlpItemV1::List(lists_payload) = fields[1] else {
+        return Err("rlpx_block_access_lists_list_not_list".to_string());
+    };
+    let raw_lists = eth_rlpx_split_list_raw_items_v1(lists_payload)?;
+    let mut lists = Vec::with_capacity(raw_lists.len());
+    for raw_list in raw_lists {
+        let (item, consumed) = eth_rlpx_parse_item_v1(raw_list)?;
+        if consumed != raw_list.len() {
+            return Err("rlpx_block_access_list_item_trailing".to_string());
+        }
+        match item {
+            EthRlpxRlpItemV1::Bytes(bytes) => {
+                if !bytes.is_empty() {
+                    return Err("rlpx_block_access_list_item_not_list_or_empty_string".to_string());
+                }
+                lists.push(EthRlpxBlockAccessListRecordV1 {
+                    raw_rlp: None,
+                    account_count: None,
+                });
+            }
+            EthRlpxRlpItemV1::List(accounts_payload) => {
+                let account_count = eth_rlpx_split_list_raw_items_v1(accounts_payload)?.len();
+                lists.push(EthRlpxBlockAccessListRecordV1 {
+                    raw_rlp: Some(raw_list.to_vec()),
+                    account_count: Some(account_count),
+                });
+            }
+        }
+    }
+    Ok(EthRlpxBlockAccessListsResponseV1 {
+        request_id: eth_rlpx_decode_u64_bytes_v1(request_id_bytes)?,
+        lists,
     })
 }
 
@@ -2119,6 +2260,14 @@ mod tests {
         assert_eq!(parsed_bodies.request_id, 9);
         assert_eq!(parsed_bodies.hashes, hashes);
 
+        let get_access_lists =
+            eth_rlpx_build_get_block_access_lists_payload_v1(10, hashes.as_slice());
+        let parsed_access_lists =
+            eth_rlpx_parse_get_block_access_lists_payload_v1(get_access_lists.as_slice())
+                .expect("parse get access lists");
+        assert_eq!(parsed_access_lists.request_id, 10);
+        assert_eq!(parsed_access_lists.hashes, hashes);
+
         let header_record = EthRlpxBlockHeaderRecordV1 {
             number: 128,
             hash: [0x00; 32],
@@ -2135,6 +2284,7 @@ mod tests {
             withdrawals_root: None,
             blob_gas_used: None,
             excess_blob_gas: None,
+            block_access_list_hash: None,
         };
         let headers_payload =
             eth_rlpx_build_block_headers_payload_v1(7, std::slice::from_ref(&header_record));
@@ -2160,6 +2310,28 @@ mod tests {
         assert_eq!(parsed_bodies_response.request_id, 11);
         assert_eq!(parsed_bodies_response.bodies.len(), 1);
         assert!(parsed_bodies_response.bodies[0].body_available);
+
+        let access_lists_payload = eth_rlpx_build_block_access_lists_payload_v1(
+            12,
+            &[None, Some(vec![0xc0]), Some(vec![0xc1, 0xc0])],
+        );
+        let parsed_access_lists_response =
+            eth_rlpx_parse_block_access_lists_payload_v1(access_lists_payload.as_slice())
+                .expect("parse access lists response");
+        assert_eq!(parsed_access_lists_response.request_id, 12);
+        assert_eq!(parsed_access_lists_response.lists.len(), 3);
+        assert!(parsed_access_lists_response.lists[0].raw_rlp.is_none());
+        assert_eq!(parsed_access_lists_response.lists[0].account_count, None);
+        assert_eq!(
+            parsed_access_lists_response.lists[1].raw_rlp.as_deref(),
+            Some([0xc0].as_slice())
+        );
+        assert_eq!(parsed_access_lists_response.lists[1].account_count, Some(0));
+        assert_eq!(
+            parsed_access_lists_response.lists[2].raw_rlp.as_deref(),
+            Some([0xc1, 0xc0].as_slice())
+        );
+        assert_eq!(parsed_access_lists_response.lists[2].account_count, Some(1));
 
         let tx_items = vec![vec![0xc0], vec![0xc1, 0x01]];
         let tx_payload = eth_rlpx_build_transactions_payload_v1(tx_items.as_slice());

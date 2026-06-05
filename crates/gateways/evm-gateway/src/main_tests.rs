@@ -1,6 +1,15 @@
 use super::*;
 use novovm_network::{set_network_runtime_sync_status, NetworkRuntimeSyncStatus};
-use novovm_protocol::{decode as protocol_decode, EvmNativeMessage, NodeId, ProtocolMessage};
+use novovm_node::mainline_canonical::{
+    derive_mainline_eth_block_contexts_v1, save_mainline_canonical_store,
+    MainlineCanonicalBatchRecordV1, MainlineCanonicalStoreV1,
+};
+use novovm_protocol::{
+    decode as protocol_decode, EvmBlockAccessAccountV1, EvmBlockAccessBalanceChangeV1,
+    EvmBlockAccessCodeChangeV1, EvmBlockAccessListV1, EvmBlockAccessNonceChangeV1,
+    EvmBlockAccessSlotChangesV1, EvmBlockAccessStorageWriteV1, EvmNativeMessage, NodeId,
+    ProtocolMessage,
+};
 use std::cell::Cell;
 use web30_core::privacy::generate_ring_keypair;
 
@@ -55,6 +64,32 @@ fn env_test_guard() -> EnvTestGuard {
         reset_runtime_host_state_for_test();
     }
     EnvTestGuard { _guard: guard }
+}
+
+fn sample_gateway_block_access_list_v1() -> EvmBlockAccessListV1 {
+    EvmBlockAccessListV1(vec![EvmBlockAccessAccountV1 {
+        address: [0x11; 20],
+        storage_changes: vec![EvmBlockAccessSlotChangesV1 {
+            slot: [0x22; 32],
+            slot_changes: vec![EvmBlockAccessStorageWriteV1 {
+                block_access_index: 1,
+                post_value: [0x33; 32],
+            }],
+        }],
+        storage_reads: vec![[0x44; 32]],
+        balance_changes: vec![EvmBlockAccessBalanceChangeV1 {
+            block_access_index: 2,
+            post_balance: [0x55; 32],
+        }],
+        nonce_changes: vec![EvmBlockAccessNonceChangeV1 {
+            block_access_index: 3,
+            post_nonce: 7,
+        }],
+        code_changes: vec![EvmBlockAccessCodeChangeV1 {
+            block_access_index: 4,
+            new_code: vec![0xde, 0xad, 0xbe, 0xef],
+        }],
+    }])
 }
 
 fn reset_runtime_host_state_for_test() {
@@ -525,6 +560,15 @@ fn novovm_surface_map_lists_mainnet_and_evm_plugin_domains() {
     assert!(domains
         .iter()
         .any(|item| item["domain"].as_str() == Some("evm_plugin")));
+    assert!(domains.iter().any(|item| {
+        item["domain"].as_str() == Some("evm_plugin")
+            && item["scope"].as_str() == Some("internal_diagnostics")
+            && item["entry_methods"].as_array().is_some_and(|methods| {
+                methods.iter().any(|method| {
+                    method.as_str() == Some("supervm_getEthCanonicalBlockAccessListByHash")
+                })
+            })
+    }));
 
     let _ = fs::remove_dir_all(&spool_dir);
 }
@@ -616,6 +660,24 @@ fn novovm_method_domain_reports_mainnet_vs_evm_plugin() {
         Some(true)
     );
 
+    let (internal_method, changed_internal_method) = run_gateway_method(
+        &mut router,
+        &mut eth_tx_index,
+        &mut evm_settlement_index_by_id,
+        &mut evm_settlement_index_by_tx,
+        &mut evm_pending_payout_by_settlement,
+        &mut ctx,
+        "novovm_getMethodDomain",
+        &serde_json::json!({ "method": "supervm_getEthCanonicalBlockAccessListByHash" }),
+    )
+    .expect("internal evm diagnostic method domain query should succeed");
+    assert!(!changed_internal_method);
+    assert_eq!(internal_method["domain"].as_str(), Some("evm_plugin"));
+    assert_eq!(
+        internal_method["control_namespace_disabled"].as_bool(),
+        Some(false)
+    );
+
     let (unknown_method, changed_unknown_method) = run_gateway_method(
         &mut router,
         &mut eth_tx_index,
@@ -631,6 +693,144 @@ fn novovm_method_domain_reports_mainnet_vs_evm_plugin() {
     assert_eq!(unknown_method["domain"].as_str(), Some("unknown"));
 
     let _ = fs::remove_dir_all(&spool_dir);
+}
+
+#[test]
+fn supervm_get_eth_canonical_block_access_list_by_hash_reads_mainline_store() {
+    let _guard = env_test_guard();
+    let captured = capture_env_vars(&[
+        "NOVOVM_MAINLINE_QUERY_STORE_PATH",
+        "NOVOVM_MAINLINE_EVM_CANONICAL_STORE_PATH",
+    ]);
+    let temp_root = std::env::temp_dir().join(format!(
+        "novovm-gateway-supervm-bal-{}-{}",
+        std::process::id(),
+        now_unix_millis()
+    ));
+    let store_path = temp_root.join("canonical.json");
+    fs::create_dir_all(&temp_root).expect("create temp root");
+
+    let block_access_list = sample_gateway_block_access_list_v1();
+    let store = MainlineCanonicalStoreV1 {
+        schema: "supervm-mainline-canonical/v1".to_string(),
+        generated_unix_ms: 1,
+        chain_type: "evm".to_string(),
+        chain_id: 1,
+        batches: vec![MainlineCanonicalBatchRecordV1 {
+            seq: 1,
+            source_detail: "gateway-test".to_string(),
+            tx_count: 1,
+            tap_requested: 1,
+            tap_accepted: 1,
+            tap_dropped: 0,
+            apply_verified: true,
+            apply_applied: true,
+            apply_state_root: [0x77; 32],
+            block_access_list: Some(block_access_list),
+            block_access_list_complete: false,
+            block_access_list_hash: Some([0xac; 32]),
+            exported_receipt_count: 0,
+            mirrored_receipt_count: 0,
+            state_version: 1,
+            ingress_bypassed: true,
+            atomic_guard_enabled: false,
+            receipts: Vec::new(),
+            state_mirror_updates: Vec::new(),
+        }],
+    };
+    save_mainline_canonical_store(&store_path, &store).expect("save canonical store");
+    let block_hash = derive_mainline_eth_block_contexts_v1(&store)
+        .first()
+        .expect("block context")
+        .block_hash;
+    let expected_block_hash = format!("0x{}", to_hex(&block_hash));
+    let expected_bal_hash = format!("0x{}", "ac".repeat(32));
+    let expected_post_value = format!("0x{}", "33".repeat(32));
+    std::env::set_var(
+        "NOVOVM_MAINLINE_QUERY_STORE_PATH",
+        store_path.display().to_string(),
+    );
+    std::env::remove_var("NOVOVM_MAINLINE_EVM_CANONICAL_STORE_PATH");
+
+    let backend = GatewayEthTxIndexStoreBackend::Memory;
+    let mut router = UnifiedAccountRouter::new();
+    let mut eth_tx_index = HashMap::new();
+    let mut evm_settlement_index_by_id = HashMap::new();
+    let mut evm_settlement_index_by_tx = HashMap::new();
+    let mut evm_pending_payout_by_settlement = HashMap::new();
+    let spool_dir = temp_root.join("spool");
+    fs::create_dir_all(&spool_dir).expect("create spool dir");
+    let mut eth_filters = GatewayEthFilterState::default();
+    let mut ctx = GatewayMethodContext {
+        eth_tx_index_store: &backend,
+        eth_default_chain_id: 1,
+        spool_dir: &spool_dir,
+        overlay_node_id: "test-overlay".to_string(),
+        overlay_session_id: "test-session".to_string(),
+        overlay_route_id: "route:test".to_string(),
+        overlay_route_epoch: 0,
+        overlay_route_mask_bits: 40,
+        overlay_route_mode: "fast".to_string(),
+        overlay_route_region: "global".to_string(),
+        overlay_route_relay_bucket: 0,
+        overlay_route_relay_set_size: 1,
+        overlay_route_relay_round: 0,
+        overlay_route_relay_index: 0,
+        overlay_route_relay_id: "rly:global:0:0".to_string(),
+        overlay_route_strategy: "direct".to_string(),
+        overlay_route_hop_count: 1,
+        eth_filters: &mut eth_filters,
+    };
+
+    let (out, changed) = run_gateway_method(
+        &mut router,
+        &mut eth_tx_index,
+        &mut evm_settlement_index_by_id,
+        &mut evm_settlement_index_by_tx,
+        &mut evm_pending_payout_by_settlement,
+        &mut ctx,
+        "supervm_getEthCanonicalBlockAccessListByHash",
+        &serde_json::json!({
+            "blockHash": expected_block_hash,
+        }),
+    )
+    .expect("internal canonical block access list query should succeed");
+    assert!(!changed);
+    assert_eq!(out["found"].as_bool(), Some(true));
+    assert_eq!(out["payloadPresent"].as_bool(), Some(true));
+    assert_eq!(
+        out["blockAccessListContext"]["blockHash"].as_str(),
+        Some(expected_block_hash.as_str())
+    );
+    assert_eq!(
+        out["blockAccessListContext"]["blockAccessListHash"].as_str(),
+        Some(expected_bal_hash.as_str())
+    );
+    assert_eq!(
+        out["blockAccessListContext"]["accountCount"].as_u64(),
+        Some(1)
+    );
+    assert_eq!(out["blockAccessListContext"]["itemCount"].as_u64(), Some(3));
+    assert_eq!(
+        out["blockAccessListContext"]["storageChangeCount"].as_u64(),
+        Some(1)
+    );
+    assert_eq!(
+        out["blockAccessListContext"]["storageReadCount"].as_u64(),
+        Some(1)
+    );
+    assert_eq!(
+        out["result"]["blockAccessList"][0]["address"].as_str(),
+        Some("0x1111111111111111111111111111111111111111")
+    );
+    assert_eq!(
+        out["result"]["blockAccessList"][0]["storageChanges"][0]["slotChanges"][0]["postValue"]
+            .as_str(),
+        Some(expected_post_value.as_str())
+    );
+
+    restore_env_vars(&captured);
+    let _ = fs::remove_dir_all(&temp_root);
 }
 
 #[test]
@@ -1781,8 +1981,8 @@ fn eth_query_block_by_hash_tx_by_block_index_and_logs_work() {
     assert_eq!(txs_full[0]["transactionIndex"].as_str(), Some("0x0"));
     assert_eq!(txs_full[1]["transactionIndex"].as_str(), Some("0x1"));
     assert!(
-        block_by_hash.get("balHash").is_none(),
-        "balHash must not be synthesized before BAL metadata exists"
+        block_by_hash.get("blockAccessListHash").is_none(),
+        "blockAccessListHash must not be synthesized before BAL metadata exists"
     );
 
     let (tx_by_block_index, changed_tx_idx) = run_gateway_method(
@@ -5207,6 +5407,154 @@ fn eth_base_fee_matches_fee_history_next_base_fee_and_rejects_params() {
         -32602
     );
 
+    let _ = fs::remove_dir_all(&spool_dir);
+}
+
+#[test]
+fn eth_capabilities_reports_head_and_history_windows() {
+    let _guard = env_test_guard();
+    let captured = capture_env_vars(&["NOVOVM_GATEWAY_ETH_QUERY_SCAN_MAX"]);
+    std::env::set_var("NOVOVM_GATEWAY_ETH_QUERY_SCAN_MAX", "1");
+
+    let backend = GatewayEthTxIndexStoreBackend::Memory;
+    let mut router = UnifiedAccountRouter::new();
+    let mut eth_tx_index = HashMap::new();
+    let mut evm_settlement_index_by_id = HashMap::new();
+    let mut evm_settlement_index_by_tx = HashMap::new();
+    let mut evm_pending_payout_by_settlement = HashMap::new();
+    let chain_id = 1u64;
+    let spool_dir = std::env::temp_dir().join(format!(
+        "novovm-gateway-eth-capabilities-{}-{}",
+        std::process::id(),
+        now_unix_millis()
+    ));
+    fs::create_dir_all(&spool_dir).expect("create spool dir");
+    let mut eth_filters = GatewayEthFilterState::default();
+    let mut ctx = GatewayMethodContext {
+        eth_tx_index_store: &backend,
+        eth_default_chain_id: chain_id,
+        spool_dir: &spool_dir,
+        overlay_node_id: "test-overlay".to_string(),
+        overlay_session_id: "test-session".to_string(),
+        overlay_route_id: "route:test".to_string(),
+        overlay_route_epoch: 0,
+        overlay_route_mask_bits: 40,
+        overlay_route_mode: "fast".to_string(),
+        overlay_route_region: "global".to_string(),
+        overlay_route_relay_bucket: 0,
+        overlay_route_relay_set_size: 1,
+        overlay_route_relay_round: 0,
+        overlay_route_relay_index: 0,
+        overlay_route_relay_id: "rly:global:0:0".to_string(),
+        overlay_route_strategy: "direct".to_string(),
+        overlay_route_hop_count: 1,
+        eth_filters: &mut eth_filters,
+    };
+    eth_tx_index.insert(
+        [0x04u8; 32],
+        GatewayEthTxIndexEntry {
+            tx_hash: [0x04u8; 32],
+            uca_id: "uca-capabilities-4".to_string(),
+            chain_id,
+            nonce: 4,
+            tx_type: 0,
+            from: vec![0x11u8; 20],
+            to: Some(vec![0x22u8; 20]),
+            value: 7,
+            gas_limit: 21_000,
+            gas_price: 1,
+            input: Vec::new(),
+        },
+    );
+    eth_tx_index.insert(
+        [0x05u8; 32],
+        GatewayEthTxIndexEntry {
+            tx_hash: [0x05u8; 32],
+            uca_id: "uca-capabilities-5".to_string(),
+            chain_id,
+            nonce: 5,
+            tx_type: 0,
+            from: vec![0x33u8; 20],
+            to: Some(vec![0x44u8; 20]),
+            value: 9,
+            gas_limit: 21_000,
+            gas_price: 2,
+            input: Vec::new(),
+        },
+    );
+
+    let (capabilities, changed) = run_gateway_method(
+        &mut router,
+        &mut eth_tx_index,
+        &mut evm_settlement_index_by_id,
+        &mut evm_settlement_index_by_tx,
+        &mut evm_pending_payout_by_settlement,
+        &mut ctx,
+        "eth_capabilities",
+        &serde_json::Value::Null,
+    )
+    .expect("eth_capabilities should work");
+    assert!(!changed);
+
+    let expected_head_hash =
+        gateway_eth_block_hash_for_txs(chain_id, 5, &[eth_tx_index[&[0x05u8; 32]].clone()]);
+    assert_eq!(capabilities["head"]["number"].as_str(), Some("0x5"));
+    assert_eq!(
+        capabilities["head"]["hash"].as_str(),
+        Some(format!("0x{}", to_hex(&expected_head_hash)).as_str())
+    );
+
+    for key in ["state", "tx", "logs", "receipts", "blocks", "stateproofs"] {
+        assert_eq!(
+            capabilities[key]["disabled"].as_bool(),
+            Some(false),
+            "{key} must be marked enabled"
+        );
+    }
+
+    assert_eq!(capabilities["tx"]["oldestBlock"].as_str(), Some("0x4"));
+    assert!(capabilities["tx"].get("deleteStrategy").is_none());
+
+    for key in ["state", "logs", "stateproofs"] {
+        assert_eq!(capabilities[key]["oldestBlock"].as_str(), Some("0x5"));
+        assert_eq!(
+            capabilities[key]["deleteStrategy"]["type"].as_str(),
+            Some("window")
+        );
+        assert_eq!(
+            capabilities[key]["deleteStrategy"]["retentionBlocks"].as_str(),
+            Some("0x1")
+        );
+    }
+
+    assert_eq!(
+        capabilities["receipts"]["oldestBlock"].as_str(),
+        Some("0x0")
+    );
+    assert_eq!(capabilities["blocks"]["oldestBlock"].as_str(), Some("0x0"));
+    assert!(capabilities["receipts"].get("deleteStrategy").is_none());
+    assert!(capabilities["blocks"].get("deleteStrategy").is_none());
+
+    let params_err = run_gateway_method(
+        &mut router,
+        &mut eth_tx_index,
+        &mut evm_settlement_index_by_id,
+        &mut evm_settlement_index_by_tx,
+        &mut evm_pending_payout_by_settlement,
+        &mut ctx,
+        "eth_capabilities",
+        &serde_json::json!(["latest"]),
+    )
+    .expect_err("eth_capabilities should reject params");
+    assert!(params_err
+        .to_string()
+        .contains("eth_capabilities does not accept parameters"));
+    assert_eq!(
+        gateway_error_code_for_method("eth_capabilities", &params_err.to_string()),
+        -32602
+    );
+
+    restore_env_vars(&captured);
     let _ = fs::remove_dir_all(&spool_dir);
 }
 

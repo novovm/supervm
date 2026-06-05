@@ -15,6 +15,7 @@ use novovm_network::{
     snapshot_eth_fullnode_native_worker_runtime_snapshot_v1, EthFullnodeBlockContextV1,
     EthFullnodeHeadViewV1,
 };
+use novovm_protocol::evm_block_access_list_item_count_v1;
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -24,8 +25,9 @@ use crate::governance_surface::{
     is_mainline_governance_query_method, run_mainline_governance_query,
 };
 use crate::mainline_canonical::{
+    derive_mainline_eth_block_access_list_by_hash_v1,
     derive_mainline_eth_fullnode_block_contexts_v1, derive_mainline_eth_fullnode_chain_view_v1,
-    load_mainline_canonical_store, MainlineCanonicalStoreV1,
+    load_mainline_canonical_store, MainlineCanonicalStoreV1, MainlineEthBlockAccessListContextV1,
 };
 use crate::tx_ingress::{
     get_nov_native_account_asset_balance_with_store_path_v1,
@@ -1232,16 +1234,136 @@ fn block_context_to_eth_json(
         "cumulativeGasUsed": format!("0x{:x}", cumulative_gas_used),
         "chainId": format!("0x{:x}", block_context.chain_id),
     });
-    if let Some(bal_hash) = block_context_bal_hash_hex_v1(block_context) {
-        out["balHash"] = Value::String(bal_hash);
+    if let Some(access_list_hash) = block_context_block_access_list_hash_hex_v1(block_context) {
+        out["blockAccessListHash"] = Value::String(access_list_hash);
     }
     apply_native_block_lifecycle_metadata_v1(&mut out, native_lifecycle, "blockOwnership");
     out
 }
 
-fn block_context_bal_hash_hex_v1(_block_context: &EthFullnodeBlockContextV1) -> Option<String> {
-    // Do not synthesize balHash until real eth/71 BAL metadata is available.
-    None
+fn block_context_block_access_list_hash_hex_v1(
+    block_context: &EthFullnodeBlockContextV1,
+) -> Option<String> {
+    block_context
+        .block_access_list_hash
+        .map(|hash| to_hex_prefixed(&hash))
+}
+
+fn block_access_list_to_hex_json_v1(
+    block_access_list: &novovm_protocol::EvmBlockAccessListV1,
+) -> Value {
+    Value::Array(
+        block_access_list
+            .0
+            .iter()
+            .map(|account| {
+                json!({
+                    "address": to_hex_prefixed(&account.address),
+                    "storageChanges": account.storage_changes.iter().map(|slot| {
+                        json!({
+                            "slot": to_hex_prefixed(&slot.slot),
+                            "slotChanges": slot.slot_changes.iter().map(|change| {
+                                json!({
+                                    "blockAccessIndex": format!("0x{:x}", change.block_access_index),
+                                    "postValue": to_hex_prefixed(&change.post_value),
+                                })
+                            }).collect::<Vec<_>>(),
+                        })
+                    }).collect::<Vec<_>>(),
+                    "storageReads": account
+                        .storage_reads
+                        .iter()
+                        .map(|slot| to_hex_prefixed(slot))
+                        .collect::<Vec<_>>(),
+                    "balanceChanges": account.balance_changes.iter().map(|change| {
+                        json!({
+                            "blockAccessIndex": format!("0x{:x}", change.block_access_index),
+                            "postBalance": to_hex_prefixed(&change.post_balance),
+                        })
+                    }).collect::<Vec<_>>(),
+                    "nonceChanges": account.nonce_changes.iter().map(|change| {
+                        json!({
+                            "blockAccessIndex": format!("0x{:x}", change.block_access_index),
+                            "postNonce": format!("0x{:x}", change.post_nonce),
+                        })
+                    }).collect::<Vec<_>>(),
+                    "codeChanges": account.code_changes.iter().map(|change| {
+                        json!({
+                            "blockAccessIndex": format!("0x{:x}", change.block_access_index),
+                            "newCode": to_hex_prefixed(change.new_code.as_slice()),
+                        })
+                    }).collect::<Vec<_>>(),
+                })
+            })
+            .collect(),
+    )
+}
+
+fn block_access_list_context_to_json_v1(
+    block_access_list_context: &MainlineEthBlockAccessListContextV1,
+) -> Value {
+    let payload_present = block_access_list_context.block_access_list.is_some();
+    let (
+        account_count,
+        item_count,
+        storage_change_count,
+        storage_read_count,
+        balance_change_count,
+        nonce_change_count,
+        code_change_count,
+    ) = block_access_list_context
+        .block_access_list
+        .as_ref()
+        .map(|list| {
+            (
+                list.0.len() as u64,
+                evm_block_access_list_item_count_v1(list),
+                list.0
+                    .iter()
+                    .map(|account| account.storage_changes.len() as u64)
+                    .sum(),
+                list.0
+                    .iter()
+                    .map(|account| account.storage_reads.len() as u64)
+                    .sum(),
+                list.0
+                    .iter()
+                    .map(|account| account.balance_changes.len() as u64)
+                    .sum(),
+                list.0
+                    .iter()
+                    .map(|account| account.nonce_changes.len() as u64)
+                    .sum(),
+                list.0
+                    .iter()
+                    .map(|account| account.code_changes.len() as u64)
+                    .sum(),
+            )
+        })
+        .unwrap_or((0, 0, 0, 0, 0, 0, 0));
+    json!({
+        "chainId": format!("0x{:x}", block_access_list_context.chain_id),
+        "blockNumber": format!("0x{:x}", block_access_list_context.block_number),
+        "canonicalBatchSeq": format!("0x{:x}", block_access_list_context.canonical_batch_seq),
+        "blockHash": to_hex_prefixed(&block_access_list_context.block_hash),
+        "blockAccessListHash": block_access_list_context
+            .block_access_list_hash
+            .map(|hash| to_hex_prefixed(&hash)),
+        "blockAccessListComplete": block_access_list_context.block_access_list_complete,
+        "payloadPresent": payload_present,
+        "accountCount": account_count,
+        "itemCount": item_count,
+        "storageChangeCount": storage_change_count,
+        "storageReadCount": storage_read_count,
+        "balanceChangeCount": balance_change_count,
+        "nonceChangeCount": nonce_change_count,
+        "codeChangeCount": code_change_count,
+        "blockAccessList": block_access_list_context
+            .block_access_list
+            .as_ref()
+            .map(block_access_list_to_hex_json_v1)
+            .unwrap_or(Value::Null),
+    })
 }
 
 fn block_context_matches_filter(
@@ -3238,6 +3360,82 @@ pub fn run_mainline_query(
     let head_view = chain_view.as_ref().map(derive_eth_fullnode_head_view_v1);
     let (runtime_snapshot, runtime_snapshot_source) =
         load_mainline_runtime_snapshot_v1(store.chain_id)?;
+    match method {
+        "supervm_getEthCanonicalBlockAccessListByNumber" => {
+            let latest_block_number = chain_view
+                .as_ref()
+                .map(|view| view.current_block_number)
+                .unwrap_or(0);
+            let selector = param_as_block_selector(params, "blockNumber", 0)
+                .or_else(|| param_as_block_selector(params, "block_number", 0))
+                .or_else(|| param_as_block_selector(params, "number", 0))
+                .unwrap_or_else(|| "latest".to_string());
+            let requested_block_number =
+                resolve_block_number_selector(Some(selector.clone()), latest_block_number)
+                    .ok_or_else(|| {
+                        anyhow::anyhow!(
+                    "invalid block selector for supervm_getEthCanonicalBlockAccessListByNumber"
+                )
+                    })?;
+            let selected = block_contexts
+                .iter()
+                .find(|block_context| block_context.block_number == requested_block_number)
+                .and_then(|block_context| {
+                    derive_mainline_eth_block_access_list_by_hash_v1(
+                        store,
+                        block_context.block_hash,
+                    )
+                });
+            let result = selected
+                .as_ref()
+                .map(block_access_list_context_to_json_v1)
+                .unwrap_or(Value::Null);
+            return Ok(json!({
+                "method": method,
+                "chainId": format!("0x{:x}", store.chain_id),
+                "selector": selector,
+                "found": selected.is_some(),
+                "payloadPresent": selected
+                    .as_ref()
+                    .is_some_and(|context| context.block_access_list.is_some()),
+                "result": result.clone(),
+                "blockAccessListContext": result,
+                "head": head_view.as_ref().map(head_view_to_eth_json),
+            }));
+        }
+        "supervm_getEthCanonicalBlockAccessListByHash" => {
+            let block_hash = param_as_string_any(params, &["blockHash", "block_hash", "hash"])
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "blockHash is required for supervm_getEthCanonicalBlockAccessListByHash"
+                    )
+                })?;
+            let block_hash_bytes = parse_hex_h256(&block_hash).ok_or_else(|| {
+                anyhow::anyhow!(
+                    "invalid blockHash for supervm_getEthCanonicalBlockAccessListByHash"
+                )
+            })?;
+            let selected =
+                derive_mainline_eth_block_access_list_by_hash_v1(store, block_hash_bytes);
+            let result = selected
+                .as_ref()
+                .map(block_access_list_context_to_json_v1)
+                .unwrap_or(Value::Null);
+            return Ok(json!({
+                "method": method,
+                "chainId": format!("0x{:x}", store.chain_id),
+                "blockHash": block_hash,
+                "found": selected.is_some(),
+                "payloadPresent": selected
+                    .as_ref()
+                    .is_some_and(|context| context.block_access_list.is_some()),
+                "result": result.clone(),
+                "blockAccessListContext": result,
+                "head": head_view.as_ref().map(head_view_to_eth_json),
+            }));
+        }
+        _ => {}
+    }
     match resolve_eth_fullnode_canonical_query_method(method) {
         Some(novovm_network::EthFullnodeCanonicalQueryMethod::BlockNumber) => Ok(json!({
             "method": "eth_blockNumber",
@@ -3614,6 +3812,9 @@ mod tests {
                 apply_verified: true,
                 apply_applied: true,
                 apply_state_root: [0x11; 32],
+                block_access_list: None,
+                block_access_list_complete: false,
+                block_access_list_hash: None,
                 exported_receipt_count: 1,
                 mirrored_receipt_count: 1,
                 state_version: 9,
@@ -3649,6 +3850,32 @@ mod tests {
         }
     }
 
+    fn sample_query_block_access_list_v1() -> novovm_protocol::EvmBlockAccessListV1 {
+        novovm_protocol::EvmBlockAccessListV1(vec![novovm_protocol::EvmBlockAccessAccountV1 {
+            address: [0x91; 20],
+            storage_changes: vec![novovm_protocol::EvmBlockAccessSlotChangesV1 {
+                slot: [0xa2; 32],
+                slot_changes: vec![novovm_protocol::EvmBlockAccessStorageWriteV1 {
+                    block_access_index: 1,
+                    post_value: [0xb3; 32],
+                }],
+            }],
+            storage_reads: vec![[0xc4; 32]],
+            balance_changes: vec![novovm_protocol::EvmBlockAccessBalanceChangeV1 {
+                block_access_index: 1,
+                post_balance: [0xd5; 32],
+            }],
+            nonce_changes: vec![novovm_protocol::EvmBlockAccessNonceChangeV1 {
+                block_access_index: 1,
+                post_nonce: 2,
+            }],
+            code_changes: vec![novovm_protocol::EvmBlockAccessCodeChangeV1 {
+                block_access_index: 1,
+                new_code: vec![0x60, 0x01],
+            }],
+        }])
+    }
+
     fn rewrite_store_chain_id_v1(store: &mut MainlineCanonicalStoreV1, chain_id: u64) {
         store.chain_id = chain_id;
         for batch in &mut store.batches {
@@ -3680,6 +3907,9 @@ mod tests {
                 apply_verified: true,
                 apply_applied: true,
                 apply_state_root: [0x21; 32],
+                block_access_list: None,
+                block_access_list_complete: false,
+                block_access_list_hash: None,
                 exported_receipt_count: 2,
                 mirrored_receipt_count: 2,
                 state_version: 10,
@@ -3758,6 +3988,9 @@ mod tests {
                 apply_verified: true,
                 apply_applied: true,
                 apply_state_root: [0x71; 32],
+                block_access_list: None,
+                block_access_list_complete: false,
+                block_access_list_hash: None,
                 exported_receipt_count: 2,
                 mirrored_receipt_count: 2,
                 state_version: 12,
@@ -4102,6 +4335,9 @@ mod tests {
                 apply_verified: true,
                 apply_applied: true,
                 apply_state_root: final_state_root,
+                block_access_list: None,
+                block_access_list_complete: false,
+                block_access_list_hash: None,
                 exported_receipt_count: receipts.len(),
                 mirrored_receipt_count: receipts.len(),
                 state_version,
@@ -4216,6 +4452,9 @@ mod tests {
                 apply_verified: true,
                 apply_applied: true,
                 apply_state_root: receipt.state_root,
+                block_access_list: None,
+                block_access_list_complete: false,
+                block_access_list_hash: None,
                 exported_receipt_count: 1,
                 mirrored_receipt_count: 1,
                 state_version,
@@ -5107,6 +5346,9 @@ mod tests {
                 apply_verified: true,
                 apply_applied: true,
                 apply_state_root,
+                block_access_list: None,
+                block_access_list_complete: false,
+                block_access_list_hash: None,
                 exported_receipt_count: out_receipts.len(),
                 mirrored_receipt_count: out_receipts.len(),
                 state_version: 1,
@@ -6108,8 +6350,8 @@ mod tests {
             Some(expected_logs_bloom.as_str())
         );
         assert!(
-            block_out["block"].get("balHash").is_none(),
-            "balHash must not be synthesized before BAL metadata exists"
+            block_out["block"].get("blockAccessListHash").is_none(),
+            "blockAccessListHash must not be synthesized before BAL metadata exists"
         );
         assert_eq!(
             block_out["block"]["transactions"].as_array().map(Vec::len),
@@ -6265,6 +6507,165 @@ mod tests {
         assert_eq!(logs_canonical["logs"][0]["removed"].as_bool(), Some(false));
 
         clear_eth_fullnode_native_worker_runtime_snapshot_for_chain_v1(chain_id);
+    }
+
+    #[test]
+    fn block_context_to_eth_json_emits_block_access_list_hash_when_present() {
+        let block_context = novovm_network::EthFullnodeBlockContextV1 {
+            source: novovm_network::EthFullnodeBlockViewSource::CanonicalHostBatch,
+            chain_id: 1,
+            block_number: 0x12,
+            canonical_batch_seq: Some(0x12),
+            block_hash: [0x11; 32],
+            parent_block_hash: [0x10; 32],
+            state_root: [0x22; 32],
+            block_access_list_hash: Some([0xee; 32]),
+            state_version: 7,
+            tx_count: 0,
+        };
+        let out = block_context_to_eth_json(
+            &block_context,
+            &[],
+            false,
+            &NativeBlockLifecycleResolutionV1::untracked(),
+        );
+        let expected = format!("0x{}", "ee".repeat(32));
+        assert_eq!(out["blockAccessListHash"].as_str(), Some(expected.as_str()));
+    }
+
+    #[test]
+    fn eth_get_block_by_number_emits_persisted_block_access_list_hash() {
+        let mut store = sample_store();
+        store.batches[0].block_access_list_hash = Some([0xedu8; 32]);
+
+        let out = run_mainline_query(&store, "eth_getBlockByNumber", &json!(["latest", false]))
+            .expect("block by number");
+
+        let expected = format!("0x{}", "ed".repeat(32));
+        assert_eq!(
+            out["block"]["blockAccessListHash"].as_str(),
+            Some(expected.as_str())
+        );
+    }
+
+    #[test]
+    fn supervm_get_eth_canonical_block_access_list_by_hash_returns_payload() {
+        let mut store = sample_store();
+        store.batches[0].block_access_list = Some(sample_query_block_access_list_v1());
+        store.batches[0].block_access_list_complete = false;
+        store.batches[0].block_access_list_hash = Some([0xacu8; 32]);
+        let block_context = derive_mainline_eth_fullnode_block_contexts_v1(&store)
+            .into_iter()
+            .next()
+            .expect("block context");
+
+        let out = run_mainline_query(
+            &store,
+            "supervm_getEthCanonicalBlockAccessListByHash",
+            &json!({ "blockHash": to_hex_prefixed(&block_context.block_hash) }),
+        )
+        .expect("canonical block access list by hash");
+
+        assert_eq!(out["found"].as_bool(), Some(true));
+        assert_eq!(out["payloadPresent"].as_bool(), Some(true));
+        assert_eq!(
+            out["blockAccessListContext"]["blockHash"].as_str(),
+            Some(to_hex_prefixed(&block_context.block_hash).as_str())
+        );
+        assert_eq!(
+            out["blockAccessListContext"]["blockAccessListHash"].as_str(),
+            Some(format!("0x{}", "ac".repeat(32)).as_str())
+        );
+        assert_eq!(
+            out["blockAccessListContext"]["blockAccessListComplete"].as_bool(),
+            Some(false)
+        );
+        assert_eq!(
+            out["blockAccessListContext"]["accountCount"].as_u64(),
+            Some(1)
+        );
+        assert_eq!(out["blockAccessListContext"]["itemCount"].as_u64(), Some(3));
+        assert_eq!(
+            out["blockAccessListContext"]["storageChangeCount"].as_u64(),
+            Some(1)
+        );
+        assert_eq!(
+            out["blockAccessListContext"]["storageReadCount"].as_u64(),
+            Some(1)
+        );
+        assert_eq!(
+            out["blockAccessListContext"]["balanceChangeCount"].as_u64(),
+            Some(1)
+        );
+        assert_eq!(
+            out["blockAccessListContext"]["nonceChangeCount"].as_u64(),
+            Some(1)
+        );
+        assert_eq!(
+            out["blockAccessListContext"]["codeChangeCount"].as_u64(),
+            Some(1)
+        );
+        assert_eq!(
+            out["blockAccessListContext"]["blockAccessList"][0]["address"].as_str(),
+            Some(format!("0x{}", "91".repeat(20)).as_str())
+        );
+        assert_eq!(
+            out["blockAccessListContext"]["blockAccessList"][0]["storageChanges"][0]["slot"]
+                .as_str(),
+            Some(format!("0x{}", "a2".repeat(32)).as_str())
+        );
+        assert_eq!(
+            out["blockAccessListContext"]["blockAccessList"][0]["storageReads"][0].as_str(),
+            Some(format!("0x{}", "c4".repeat(32)).as_str())
+        );
+        assert_eq!(
+            out["blockAccessListContext"]["blockAccessList"][0]["balanceChanges"][0]["postBalance"]
+                .as_str(),
+            Some(format!("0x{}", "d5".repeat(32)).as_str())
+        );
+        assert_eq!(
+            out["blockAccessListContext"]["blockAccessList"][0]["nonceChanges"][0]["postNonce"]
+                .as_str(),
+            Some("0x2")
+        );
+        assert_eq!(
+            out["blockAccessListContext"]["blockAccessList"][0]["codeChanges"][0]["newCode"]
+                .as_str(),
+            Some("0x6001")
+        );
+    }
+
+    #[test]
+    fn supervm_get_eth_canonical_block_access_list_by_number_reports_missing_payload() {
+        let store = sample_store();
+
+        let out = run_mainline_query(
+            &store,
+            "supervm_getEthCanonicalBlockAccessListByNumber",
+            &json!({ "blockNumber": "latest" }),
+        )
+        .expect("canonical block access list by number");
+
+        assert_eq!(out["found"].as_bool(), Some(true));
+        assert_eq!(out["payloadPresent"].as_bool(), Some(false));
+        assert_eq!(
+            out["blockAccessListContext"]["blockNumber"].as_str(),
+            Some("0x5")
+        );
+        assert_eq!(
+            out["blockAccessListContext"]["payloadPresent"].as_bool(),
+            Some(false)
+        );
+        assert!(out["blockAccessListContext"]["blockAccessList"].is_null());
+        assert_eq!(
+            out["blockAccessListContext"]["accountCount"].as_u64(),
+            Some(0)
+        );
+        assert_eq!(out["blockAccessListContext"]["itemCount"].as_u64(), Some(0));
+        assert_eq!(
+            out["blockAccessListContext"]["storageChangeCount"].as_u64(),
+            Some(0)
+        );
     }
 
     #[test]
@@ -8055,6 +8456,7 @@ mod tests {
             block_hash: [0xaa; 32],
             parent_block_hash: [0xab; 32],
             state_root: [0xbb; 32],
+            block_access_list_hash: None,
             state_version: 1,
             tx_count: 0,
         };
@@ -8095,6 +8497,7 @@ mod tests {
             block_hash: [0xba; 32],
             parent_block_hash: [0xbb; 32],
             state_root: [0xbc; 32],
+            block_access_list_hash: None,
             state_version: 1,
             tx_count: 0,
         };
@@ -8139,6 +8542,7 @@ mod tests {
             block_hash: [0xca; 32],
             parent_block_hash: [0xcb; 32],
             state_root: [0xcc; 32],
+            block_access_list_hash: None,
             state_version: 1,
             tx_count: 0,
         };
@@ -8174,6 +8578,7 @@ mod tests {
             block_hash: [0xda; 32],
             parent_block_hash: [0xdb; 32],
             state_root: [0xdc; 32],
+            block_access_list_hash: None,
             state_version: 1,
             tx_count: 0,
         };

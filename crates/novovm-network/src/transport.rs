@@ -11,8 +11,9 @@ use crate::{
     eth_rlpx_build_transactions_payload_v1, eth_rlpx_default_client_name_v1,
     eth_rlpx_default_listen_port_v1, eth_rlpx_disconnect_reason_name_v1,
     eth_rlpx_handshake_initiator_v1, eth_rlpx_hello_profile_v1,
-    eth_rlpx_is_unsupported_eth71_bal_message_v1, eth_rlpx_parse_block_bodies_payload_v1,
-    eth_rlpx_parse_block_headers_payload_v1, eth_rlpx_parse_disconnect_reason_v1,
+    eth_rlpx_is_unsupported_eth71_bal_message_v1, eth_rlpx_parse_block_access_lists_payload_v1,
+    eth_rlpx_parse_block_bodies_payload_v1, eth_rlpx_parse_block_headers_payload_v1,
+    eth_rlpx_parse_disconnect_reason_v1, eth_rlpx_parse_get_block_access_lists_payload_v1,
     eth_rlpx_parse_hello_payload_v1, eth_rlpx_parse_status_payload_v1,
     eth_rlpx_parse_transactions_payload_v1, eth_rlpx_read_wire_frame_v1,
     eth_rlpx_select_shared_eth_version_v1, eth_rlpx_select_shared_snap_version_v1,
@@ -69,7 +70,8 @@ use crate::{
     EthRlpxBlockHeadersResponseV1, EthRlpxFrameSessionV1, EthRlpxStatusV1,
     NetworkRuntimeNativePendingTxPropagationStopReasonV1, NetworkRuntimeNativeSyncPhaseV1,
     ETH_FULLNODE_NATIVE_WORKER_RUNTIME_SCHEMA_V1, ETH_RLPX_BASE_PROTOCOL_OFFSET,
-    ETH_RLPX_ETH_BLOCK_BODIES_MSG, ETH_RLPX_ETH_BLOCK_HEADERS_MSG,
+    ETH_RLPX_ETH_BLOCK_ACCESS_LISTS_MSG, ETH_RLPX_ETH_BLOCK_BODIES_MSG,
+    ETH_RLPX_ETH_BLOCK_HEADERS_MSG, ETH_RLPX_ETH_GET_BLOCK_ACCESS_LISTS_MSG,
     ETH_RLPX_ETH_GET_BLOCK_BODIES_MSG, ETH_RLPX_ETH_GET_BLOCK_HEADERS_MSG, ETH_RLPX_ETH_STATUS_MSG,
     ETH_RLPX_ETH_TRANSACTIONS_MSG, ETH_RLPX_P2P_DISCONNECT_MSG, ETH_RLPX_P2P_HELLO_MSG,
     ETH_RLPX_P2P_PING_MSG, ETH_RLPX_P2P_PONG_MSG,
@@ -719,6 +721,7 @@ fn evm_native_header_wire_from_rlpx_header_v1(
         withdrawals_root: header.withdrawals_root,
         blob_gas_used: header.blob_gas_used,
         excess_blob_gas: header.excess_blob_gas,
+        block_access_list_hash: header.block_access_list_hash,
     }
 }
 
@@ -1468,14 +1471,48 @@ fn drive_eth_fullnode_native_rlpx_peer_session_once_v1(
                         continue;
                     }
                     if eth_rlpx_is_unsupported_eth71_bal_message_v1(code) {
+                        let bal_diag = if code
+                            == eth_offset + ETH_RLPX_ETH_GET_BLOCK_ACCESS_LISTS_MSG
+                        {
+                            match eth_rlpx_parse_get_block_access_lists_payload_v1(
+                                payload.as_slice(),
+                            ) {
+                                Ok(request) => format!(
+                                    " request_id={} hashes={}",
+                                    request.request_id,
+                                    request.hashes.len()
+                                ),
+                                Err(err) => format!(" decode_err={err}"),
+                            }
+                        } else if code == eth_offset + ETH_RLPX_ETH_BLOCK_ACCESS_LISTS_MSG {
+                            match eth_rlpx_parse_block_access_lists_payload_v1(payload.as_slice()) {
+                                Ok(response) => {
+                                    let missing = response
+                                        .lists
+                                        .iter()
+                                        .filter(|item| item.raw_rlp.is_none())
+                                        .count();
+                                    format!(
+                                        " request_id={} lists={} missing={}",
+                                        response.request_id,
+                                        response.lists.len(),
+                                        missing
+                                    )
+                                }
+                                Err(err) => format!(" decode_err={err}"),
+                            }
+                        } else {
+                            String::new()
+                        };
                         eprintln!(
-                            "network_warn: rlpx stage unsupported_eth71_bal_message chain_id={} peer={} endpoint={} code=0x{:x} negotiated_eth={} payload_len={}",
+                            "network_warn: rlpx stage unsupported_eth71_bal_message chain_id={} peer={} endpoint={} code=0x{:x} negotiated_eth={} payload_len={}{}",
                             chain_id,
                             peer.0,
                             session.endpoint.addr_hint,
                             code,
                             session._negotiated_eth_version,
                             payload.len(),
+                            bal_diag,
                         );
                         continue;
                     }
@@ -3137,6 +3174,7 @@ fn evm_native_block_header_wire_from_runtime_snapshot(
         withdrawals_root: snapshot.withdrawals_root,
         blob_gas_used: snapshot.blob_gas_used,
         excess_blob_gas: snapshot.excess_blob_gas,
+        block_access_list_hash: snapshot.block_access_list_hash,
     }
 }
 
@@ -3177,6 +3215,7 @@ fn runtime_native_header_snapshot_from_evm_wire(
         withdrawals_root: header.withdrawals_root,
         blob_gas_used: header.blob_gas_used,
         excess_blob_gas: header.excess_blob_gas,
+        block_access_list_hash: header.block_access_list_hash,
         source_peer_id: Some(source_peer_id),
         observed_unix_ms,
     }
@@ -5478,6 +5517,7 @@ mod tests {
                 withdrawals_root: None,
                 blob_gas_used: None,
                 excess_blob_gas: None,
+                block_access_list_hash: None,
                 source_peer_id: Some(remote.0),
                 observed_unix_ms: 10,
             },
@@ -5547,6 +5587,7 @@ mod tests {
                 withdrawals_root: None,
                 blob_gas_used: None,
                 excess_blob_gas: None,
+                block_access_list_hash: None,
             }],
         });
         let header_ctx = runtime_sync_pull_message_context(&header_msg);
@@ -5937,6 +5978,7 @@ mod tests {
                 withdrawals_root: None,
                 blob_gas_used: None,
                 excess_blob_gas: None,
+                block_access_list_hash: None,
                 source_peer_id: Some(remote.0),
                 observed_unix_ms: 1,
             },
@@ -6143,6 +6185,7 @@ mod tests {
                 withdrawals_root: None,
                 blob_gas_used: None,
                 excess_blob_gas: None,
+                block_access_list_hash: None,
             };
             loop {
                 let (code, payload) =
@@ -6671,6 +6714,7 @@ mod tests {
                     withdrawals_root: None,
                     blob_gas_used: None,
                     excess_blob_gas: None,
+                    block_access_list_hash: None,
                 },
                 EvmNativeBlockHeaderWireV1 {
                     number: 61,
@@ -6688,6 +6732,7 @@ mod tests {
                     withdrawals_root: None,
                     blob_gas_used: None,
                     excess_blob_gas: None,
+                    block_access_list_hash: None,
                 },
             ],
         });

@@ -1,4 +1,5 @@
 pub mod daemon;
+pub mod evm_block_access_list;
 pub mod governance_stats;
 pub mod lifecycle;
 pub mod rollout;
@@ -8,6 +9,7 @@ pub mod up;
 use clap::{Parser, Subcommand};
 
 pub use daemon::DaemonArgs;
+pub use evm_block_access_list::EvmBlockAccessListArgs;
 pub use governance_stats::GovernanceStatsArgs;
 pub use lifecycle::LifecycleArgs;
 pub use rollout::RolloutArgs;
@@ -25,6 +27,7 @@ pub struct Cli {
 #[derive(Debug, Subcommand)]
 pub enum TopCommand {
     Up(UpArgs),
+    EvmBlockAccessList(EvmBlockAccessListArgs),
     GovernanceStats(GovernanceStatsArgs),
     RolloutControl(RolloutControlArgs),
     Rollout(RolloutArgs),

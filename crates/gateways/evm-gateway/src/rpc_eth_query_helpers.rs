@@ -817,8 +817,8 @@ pub(super) fn gateway_eth_block_by_number_json(
         "baseFeePerGas": format!("0x{:x}", base_fee_per_gas),
         "chainId": format!("0x{:x}", chain_id),
     });
-    if let Some(bal_hash) = gateway_eth_block_access_list_hash_hex(chain_id, block_number) {
-        block["balHash"] = serde_json::Value::String(bal_hash);
+    if let Some(access_list_hash) = gateway_eth_block_access_list_hash_hex(chain_id, block_number) {
+        block["blockAccessListHash"] = serde_json::Value::String(access_list_hash);
     }
     block
 }
@@ -828,7 +828,7 @@ pub(super) fn gateway_eth_default_gas_price_wei(chain_id: u64) -> u64 {
 }
 
 fn gateway_eth_block_access_list_hash_hex(_chain_id: u64, _block_number: u64) -> Option<String> {
-    // Do not synthesize balHash until real eth/71 BAL metadata is available.
+    // Do not synthesize blockAccessListHash until real eth/71 BAL metadata is available.
     None
 }
 

@@ -52,7 +52,9 @@ pub(super) fn parse_named_error_csv_tokens(message: &str, name: &str) -> Vec<Str
 
 pub(super) fn gateway_error_code_for_method(method: &str, message: &str) -> i64 {
     let lower = message.to_ascii_lowercase();
-    if method == "eth_baseFee" && lower.contains("does not accept parameters") {
+    if (method == "eth_baseFee" || method == "eth_capabilities")
+        && lower.contains("does not accept parameters")
+    {
         return -32602;
     }
     if lower.contains("standalone evm control namespace disabled on supervm host mode") {

@@ -1406,6 +1406,7 @@ dependencies = [
  "novovm-adapter-evm-core",
  "novovm-adapter-novovm",
  "novovm-exec",
+ "novovm-protocol",
  "postcard",
  "rocksdb",
  "serde",
@@ -1424,6 +1425,7 @@ dependencies = [
  "novovm-adapter-api",
  "novovm-adapter-evm-core",
  "novovm-exec",
+ "novovm-protocol",
  "postcard",
  "serde",
  "serde_json",
@@ -1501,6 +1503,7 @@ dependencies = [
  "novovm-adapter-novovm",
  "novovm-exec",
  "novovm-network",
+ "novovm-node",
  "novovm-protocol",
  "postcard",
  "rand 0.8.5",
@@ -1522,6 +1525,7 @@ dependencies = [
  "anyhow",
  "aoem-bindings",
  "novovm-adapter-api",
+ "novovm-protocol",
  "serde",
  "serde_json",
  "sha2",
@@ -1594,6 +1598,7 @@ version = "0.1.0"
 dependencies = [
  "postcard",
  "serde",
+ "sha3",
  "thiserror 1.0.69",
 ]
 
@@ -1626,6 +1631,7 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "novovm-governance-observability",
+ "novovm-node",
  "serde",
  "serde_json",
  "thiserror 1.0.69",

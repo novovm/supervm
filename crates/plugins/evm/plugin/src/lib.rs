@@ -14,13 +14,16 @@ use novovm_adapter_evm_core::{
 };
 use novovm_adapter_novovm::NovoVmAdapter;
 use novovm_exec::{
-    project_tx_execution_artifacts_v1, AoemBatchExecutionArtifactsV1, AoemEventLogV1,
-    AoemExecFacade, AoemExecOutput, AoemProjectedTxExecutionV1, AoemRuntimeConfig,
-    AoemTxExecutionArtifactV1, ExecOpV2, AOEM_LOG_BLOOM_BYTES_V1,
+    project_tx_execution_artifacts_v1, resolve_aoem_block_access_list_hash_v1,
+    AoemBatchExecutionArtifactsV1, AoemEventLogV1, AoemExecFacade, AoemExecOutput,
+    AoemProjectedTxExecutionV1, AoemRuntimeConfig, AoemTxExecutionArtifactV1, ExecOpV2,
+    AOEM_LOG_BLOOM_BYTES_V1,
 };
 pub use novovm_exec::{
-    SupervmEvmExecutionLogV1, SupervmEvmExecutionReceiptV1, SupervmEvmStateMirrorUpdateV1,
+    SupervmEvmBlockMetadataV1, SupervmEvmExecutionLogV1, SupervmEvmExecutionReceiptV1,
+    SupervmEvmStateMirrorUpdateV1,
 };
+use novovm_protocol::merge_evm_block_access_lists_v1;
 use rocksdb::Options as RocksDbOptions;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -184,6 +187,7 @@ struct EvmRuntimeState {
     atomic_broadcast_ready: VecDeque<AtomicBroadcastReadyV1>,
     execution_receipts: VecDeque<SupervmEvmExecutionReceiptV1>,
     state_mirror_updates: VecDeque<SupervmEvmStateMirrorUpdateV1>,
+    block_metadata_updates: VecDeque<SupervmEvmBlockMetadataV1>,
 }
 
 #[derive(Debug, Default)]
@@ -1904,6 +1908,46 @@ fn enqueue_state_mirror_update(chain_id: u64, update: SupervmEvmStateMirrorUpdat
     }
 }
 
+fn enqueue_block_metadata_update(chain_id: u64, metadata: SupervmEvmBlockMetadataV1) {
+    let config = resolve_evm_runtime_config();
+    let runtime = resolve_evm_runtime_state_for_chain(chain_id);
+    let mut runtime = match runtime.lock() {
+        Ok(v) => v,
+        Err(_) => return,
+    };
+    runtime.block_metadata_updates.push_back(metadata);
+    while runtime.block_metadata_updates.len() > config.state_mirror_update_queue_max {
+        let _ = runtime.block_metadata_updates.pop_front();
+    }
+}
+
+fn build_block_metadata_from_apply_batch(
+    chain_type: ChainType,
+    chain_id: u64,
+    state_version: u64,
+    receipts: &[SupervmEvmExecutionReceiptV1],
+    result: &NovovmAdapterPluginApplyResultV1,
+    aoem_artifacts: Option<&AoemBatchExecutionArtifactsV1>,
+) -> SupervmEvmBlockMetadataV1 {
+    SupervmEvmBlockMetadataV1 {
+        chain_type,
+        chain_id,
+        state_version,
+        state_root: aoem_artifacts
+            .map(|artifacts| artifacts.state_root)
+            .unwrap_or(result.state_root),
+        receipt_count: receipts.len() as u64,
+        accepted_receipt_count: receipts.iter().filter(|receipt| receipt.status_ok).count() as u64,
+        block_access_list: aoem_artifacts.and_then(|artifacts| artifacts.block_access_list.clone()),
+        block_access_list_complete: aoem_artifacts
+            .map(|artifacts| artifacts.block_access_list_complete)
+            .unwrap_or(false),
+        // Trusted local source only: derive from raw BAL only when AOEM or another execution path emits it.
+        block_access_list_hash: aoem_artifacts.and_then(resolve_aoem_block_access_list_hash_v1),
+        imported_at_unix_ms: now_unix_ms(),
+    }
+}
+
 fn build_supervm_logs_from_aoem_event_logs(
     tx_index: usize,
     state_version: u64,
@@ -1968,6 +2012,9 @@ fn materialize_batch_execution_artifacts(
             success_ops: 0,
             failed_index: None,
             total_writes: 0,
+            block_access_list: None,
+            block_access_list_complete: false,
+            block_access_list_hash: None,
             tx_artifacts: Vec::with_capacity(txs.len()),
         },
         None => return None,
@@ -2376,6 +2423,35 @@ pub fn drain_state_mirror_updates_for_host(max_items: usize) -> Vec<SupervmEvmSt
             .min(runtime.state_mirror_updates.len());
         for _ in 0..take {
             if let Some(item) = runtime.state_mirror_updates.pop_front() {
+                out.push(item);
+            }
+        }
+    }
+    out
+}
+
+pub fn drain_block_metadata_for_host(max_items: usize) -> Vec<SupervmEvmBlockMetadataV1> {
+    if max_items == 0 {
+        return Vec::new();
+    }
+    let shards = resolve_evm_runtime_shards();
+    let shard_count = shards.len();
+    let start = runtime_shard_start_index(shard_count);
+    let mut out = Vec::with_capacity(max_items);
+    for offset in 0..shard_count {
+        if out.len() >= max_items {
+            break;
+        }
+        let shard = &shards[(start + offset) % shard_count];
+        let mut runtime = match shard.lock() {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        let take = max_items
+            .saturating_sub(out.len())
+            .min(runtime.block_metadata_updates.len());
+        for _ in 0..take {
+            if let Some(item) = runtime.block_metadata_updates.pop_front() {
                 out.push(item);
             }
         }
@@ -3579,6 +3655,9 @@ fn apply_ir_batch_with_artifacts(
         let mut applied = true;
         let pre_state_root = normalize_root32(&adapter.state_root()?);
         let state_version = next_execution_state_version();
+        let mut observed_block_access_list = None;
+        let mut observed_block_access_list_any = false;
+        let mut observed_block_access_list_complete = true;
         let mut aoem_artifacts = match try_execute_mainline_batch_via_aoem(
             chain_type,
             chain_id,
@@ -3605,9 +3684,19 @@ fn apply_ir_batch_with_artifacts(
             let artifact = aoem_artifacts
                 .as_ref()
                 .and_then(|artifacts| artifacts.tx_artifacts.get(idx));
-            let resolved_artifact = adapter.execute_transaction_with_artifact(tx, &mut state, artifact)?;
-            applied = applied && resolved_artifact.status_ok;
-            resolved_artifacts[idx] = Some(resolved_artifact);
+            let outcome =
+                adapter.execute_transaction_with_observed_metadata_v1(tx, &mut state, artifact)?;
+            applied = applied && outcome.artifact.status_ok;
+            if outcome.observed_block_access_list.block_access_list.is_some() {
+                observed_block_access_list_any = true;
+                observed_block_access_list_complete = observed_block_access_list_complete
+                    && outcome.observed_block_access_list.block_access_list_complete;
+            }
+            observed_block_access_list = merge_evm_block_access_lists_v1(
+                observed_block_access_list,
+                outcome.observed_block_access_list.block_access_list,
+            );
+            resolved_artifacts[idx] = Some(outcome.artifact);
         }
         let final_state_root = normalize_root32(&adapter.state_root()?);
         aoem_artifacts = materialize_batch_execution_artifacts(
@@ -3617,6 +3706,12 @@ fn apply_ir_batch_with_artifacts(
             resolved_artifacts,
             aoem_artifacts,
         );
+        if let Some(batch) = aoem_artifacts.as_mut() {
+            if batch.block_access_list.is_none() && observed_block_access_list_any {
+                batch.block_access_list = observed_block_access_list;
+                batch.block_access_list_complete = observed_block_access_list_complete;
+            }
+        }
         let accounts = state.accounts.len() as u64;
         Ok((
             NovovmAdapterPluginApplyResultV1 {
@@ -3645,8 +3740,17 @@ fn apply_ir_batch_with_artifacts(
                 state_version,
                 aoem_artifacts.as_ref(),
             );
+            let block_metadata = build_block_metadata_from_apply_batch(
+                chain_type,
+                chain_id,
+                state_version,
+                execution_receipts.as_slice(),
+                &result,
+                aoem_artifacts.as_ref(),
+            );
             if flags & NOVOVM_ADAPTER_PLUGIN_APPLY_FLAG_MAINLINE_RECEIPT_EXPORT_V1 != 0 {
                 enqueue_execution_receipts(chain_id, execution_receipts.as_slice());
+                enqueue_block_metadata_update(chain_id, block_metadata.clone());
             }
             let state_mirror_update =
                 if flags & NOVOVM_ADAPTER_PLUGIN_APPLY_FLAG_MAINLINE_RECEIPT_INGEST_V1 != 0 {
@@ -4149,6 +4253,27 @@ pub unsafe extern "C" fn novovm_adapter_plugin_drain_state_mirror_updates_bincod
 }
 
 #[no_mangle]
+/// Drain block metadata updates and return bincode bytes through caller-provided buffer.
+///
+/// # Safety
+/// - `out_len` must be a valid writable pointer.
+/// - `out_ptr` may be null only when `out_cap == 0` (size-probe mode).
+/// - When non-null, `out_ptr` must be writable for `out_cap` bytes.
+pub unsafe extern "C" fn novovm_adapter_plugin_drain_block_metadata_bincode_v1(
+    max_items: usize,
+    out_ptr: *mut u8,
+    out_cap: usize,
+    out_len: *mut usize,
+) -> i32 {
+    let items = drain_block_metadata_for_host(max_items);
+    let payload = match serialize_bincode_export_blob(&items) {
+        Ok(v) => v,
+        Err(rc) => return rc,
+    };
+    write_bincode_blob_to_out(&payload, out_ptr, out_cap, out_len)
+}
+
+#[no_mangle]
 /// Ingest serialized execution receipts and emit a state mirror update report.
 ///
 /// # Safety
@@ -4271,6 +4396,7 @@ mod tests {
             runtime.atomic_broadcast_ready.clear();
             runtime.execution_receipts.clear();
             runtime.state_mirror_updates.clear();
+            runtime.block_metadata_updates.clear();
         }
         for shard in resolve_evm_txpool_shards() {
             let mut txpool = shard
@@ -5297,6 +5423,31 @@ mod tests {
         let mirror_updates: Vec<SupervmEvmStateMirrorUpdateV1> =
             crate::bincode_compat::deserialize(&mirror_buf).expect("decode mirror updates");
         assert!(mirror_updates.is_empty());
+
+        let mut metadata_len = 0usize;
+        let rc_metadata_probe = unsafe {
+            novovm_adapter_plugin_drain_block_metadata_bincode_v1(
+                0,
+                std::ptr::null_mut(),
+                0,
+                &mut metadata_len as *mut usize,
+            )
+        };
+        assert_eq!(rc_metadata_probe, NOVOVM_ADAPTER_PLUGIN_RC_OK);
+        let mut metadata_buf = vec![0u8; metadata_len];
+        let rc_metadata = unsafe {
+            novovm_adapter_plugin_drain_block_metadata_bincode_v1(
+                0,
+                metadata_buf.as_mut_ptr(),
+                metadata_buf.len(),
+                &mut metadata_len as *mut usize,
+            )
+        };
+        assert_eq!(rc_metadata, NOVOVM_ADAPTER_PLUGIN_RC_OK);
+        metadata_buf.truncate(metadata_len);
+        let block_metadata: Vec<SupervmEvmBlockMetadataV1> =
+            crate::bincode_compat::deserialize(&metadata_buf).expect("decode block metadata");
+        assert!(block_metadata.is_empty());
     }
 
     #[test]
@@ -5333,6 +5484,136 @@ mod tests {
         assert_eq!(mirror_updates.len(), 1);
         assert_eq!(mirror_updates[0].receipt_count, 2);
         assert_eq!(mirror_updates[0].accepted_receipt_count, 2);
+        let block_metadata = drain_block_metadata_for_host(4);
+        assert_eq!(block_metadata.len(), 1);
+        assert_eq!(block_metadata[0].chain_id, 1);
+        assert!(block_metadata[0].state_version > 0);
+        assert_eq!(block_metadata[0].receipt_count, 2);
+        assert_eq!(block_metadata[0].accepted_receipt_count, 2);
+        assert_eq!(block_metadata[0].block_access_list_hash, None);
+    }
+
+    #[test]
+    fn block_metadata_builder_prefers_aoem_bal_hash_when_present() {
+        let txs = vec![
+            sample_contract_call_tx(1, 0),
+            sample_contract_deploy_tx(1, 1),
+        ];
+        let verify_results = vec![true, true];
+        let result = NovovmAdapterPluginApplyResultV1 {
+            verified: 1,
+            applied: 1,
+            txs: 2,
+            accounts: 2,
+            state_root: [0x11; 32],
+            error_code: 0,
+        };
+        let aoem_artifacts = AoemBatchExecutionArtifactsV1 {
+            state_root: [0x33; 32],
+            processed_ops: 2,
+            success_ops: 2,
+            failed_index: None,
+            total_writes: 4,
+            block_access_list: None,
+            block_access_list_complete: false,
+            block_access_list_hash: Some([0xf1; 32]),
+            tx_artifacts: vec![
+                default_tx_execution_artifact_for_receipt(
+                    &txs[0],
+                    0,
+                    verify_results[0],
+                    [0x33; 32],
+                ),
+                default_tx_execution_artifact_for_receipt(
+                    &txs[1],
+                    1,
+                    verify_results[1],
+                    [0x33; 32],
+                ),
+            ],
+        };
+        let receipts = build_execution_receipts_from_apply_batch(
+            ChainType::EVM,
+            1,
+            &txs,
+            verify_results.as_slice(),
+            &result,
+            9,
+            Some(&aoem_artifacts),
+        );
+        let metadata = build_block_metadata_from_apply_batch(
+            ChainType::EVM,
+            1,
+            9,
+            receipts.as_slice(),
+            &result,
+            Some(&aoem_artifacts),
+        );
+        assert_eq!(metadata.state_root, [0x33; 32]);
+        assert_eq!(metadata.block_access_list_hash, Some([0xf1; 32]));
+        assert_eq!(metadata.receipt_count, 2);
+    }
+
+    #[test]
+    fn block_metadata_builder_keeps_hash_absent_for_incomplete_raw_bal() {
+        let txs = vec![sample_contract_call_tx(1, 0)];
+        let verify_results = vec![true];
+        let result = NovovmAdapterPluginApplyResultV1 {
+            verified: 1,
+            applied: 1,
+            txs: 1,
+            accounts: 1,
+            state_root: [0x11; 32],
+            error_code: 0,
+        };
+        let aoem_artifacts = AoemBatchExecutionArtifactsV1 {
+            state_root: [0x33; 32],
+            processed_ops: 1,
+            success_ops: 1,
+            failed_index: None,
+            total_writes: 1,
+            block_access_list: Some(novovm_protocol::EvmBlockAccessListV1(vec![
+                novovm_protocol::EvmBlockAccessAccountV1 {
+                    address: [0x11; 20],
+                    storage_changes: Vec::new(),
+                    storage_reads: Vec::new(),
+                    balance_changes: vec![novovm_protocol::EvmBlockAccessBalanceChangeV1 {
+                        block_access_index: 1,
+                        post_balance: [0x44; 32],
+                    }],
+                    nonce_changes: Vec::new(),
+                    code_changes: Vec::new(),
+                },
+            ])),
+            block_access_list_complete: false,
+            block_access_list_hash: None,
+            tx_artifacts: vec![default_tx_execution_artifact_for_receipt(
+                &txs[0],
+                0,
+                verify_results[0],
+                [0x33; 32],
+            )],
+        };
+        let receipts = build_execution_receipts_from_apply_batch(
+            ChainType::EVM,
+            1,
+            &txs,
+            verify_results.as_slice(),
+            &result,
+            9,
+            Some(&aoem_artifacts),
+        );
+        let metadata = build_block_metadata_from_apply_batch(
+            ChainType::EVM,
+            1,
+            9,
+            receipts.as_slice(),
+            &result,
+            Some(&aoem_artifacts),
+        );
+        assert!(metadata.block_access_list.is_some());
+        assert!(!metadata.block_access_list_complete);
+        assert_eq!(metadata.block_access_list_hash, None);
     }
 
     #[test]
@@ -5356,6 +5637,9 @@ mod tests {
             success_ops: 1,
             failed_index: Some(1),
             total_writes: 4,
+            block_access_list: None,
+            block_access_list_complete: false,
+            block_access_list_hash: Some([0xf1; 32]),
             tx_artifacts: vec![
                 novovm_exec::AoemTxExecutionArtifactV1 {
                     tx_index: 0,

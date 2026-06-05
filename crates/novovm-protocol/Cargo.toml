@@ -10,4 +10,5 @@ description = "NOVOVM protocol types (wire messages, ids, encoding)."
 serde = { version = "1", features = ["derive"] }
 postcard = { version = "1", default-features = false, features = ["alloc"] }
 thiserror = "1"
+sha3 = "0.10"
 

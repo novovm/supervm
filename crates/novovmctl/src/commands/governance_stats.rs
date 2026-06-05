@@ -488,7 +488,10 @@ fn print_text_summary(
     );
     println!(
         "  privacy_rejected_rate={} (threshold={} required_requests={} min_required={})",
-        format_args!("{:.2}%", assessment.phase4_decision.privacy_rejected_rate * 100.0),
+        format_args!(
+            "{:.2}%",
+            assessment.phase4_decision.privacy_rejected_rate * 100.0
+        ),
         format_args!(
             "{:.2}%",
             assessment.phase4_decision.privacy_rejected_rate_threshold * 100.0
@@ -517,7 +520,10 @@ fn print_text_summary(
     println!(
         "  shadow_closed_loop_rate={} (rate={} threshold={})",
         assessment.phase4_decision.criteria_shadow_closed_loop_rate,
-        format_args!("{:.2}%", assessment.phase4_decision.shadow_closed_loop_rate * 100.0),
+        format_args!(
+            "{:.2}%",
+            assessment.phase4_decision.shadow_closed_loop_rate * 100.0
+        ),
         format_args!(
             "{:.2}%",
             assessment.phase4_decision.shadow_closed_loop_rate_threshold * 100.0

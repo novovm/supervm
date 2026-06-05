@@ -27,7 +27,8 @@ use novovm_consensus::{
 };
 use novovm_exec::{
     AoemExecFacade, AoemRuntimeConfig, AoemRuntimeVariant, ExecOpV2,
-    SupervmEvmExecutionLogV1, SupervmEvmExecutionReceiptV1, SupervmEvmStateMirrorUpdateV1,
+    SupervmEvmBlockMetadataV1, SupervmEvmExecutionLogV1, SupervmEvmExecutionReceiptV1,
+    SupervmEvmStateMirrorUpdateV1,
 };
 use novovm_network::{
     eth_rlpx_transaction_hash_v1,
@@ -527,6 +528,7 @@ struct MempoolAdmissionSummary {
 struct CanonicalBatchArtifactsV1 {
     execution_receipts: Vec<SupervmEvmExecutionReceiptV1>,
     state_mirror_updates: Vec<SupervmEvmStateMirrorUpdateV1>,
+    block_metadata: Option<SupervmEvmBlockMetadataV1>,
 }
 
 #[derive(Debug, Clone)]
@@ -2180,6 +2182,11 @@ fn run_plugin_adapter_signal(
             b"novovm_adapter_plugin_drain_state_mirror_updates_bincode_v1\0",
             usize::MAX,
         )?;
+        let _: Vec<SupervmEvmBlockMetadataV1> = drain_plugin_bincode_items_v1(
+            &lib,
+            b"novovm_adapter_plugin_drain_block_metadata_bincode_v1\0",
+            usize::MAX,
+        )?;
 
         let mut flags = ADAPTER_PLUGIN_APPLY_FLAG_MAINLINE_RECEIPT_EXPORT_V1
             | ADAPTER_PLUGIN_APPLY_FLAG_MAINLINE_RECEIPT_INGEST_V1
@@ -2214,6 +2221,11 @@ fn run_plugin_adapter_signal(
                 b"novovm_adapter_plugin_drain_state_mirror_updates_bincode_v1\0",
                 (out.txs as usize).max(1),
             )?;
+        let block_metadata_updates: Vec<SupervmEvmBlockMetadataV1> = drain_plugin_bincode_items_v1(
+            &lib,
+            b"novovm_adapter_plugin_drain_block_metadata_bincode_v1\0",
+            1,
+        )?;
         let consensus_adapter_hash = compute_consensus_adapter_hash(
             "plugin",
             chain,
@@ -2234,6 +2246,7 @@ fn run_plugin_adapter_signal(
             canonical_artifacts: Some(CanonicalBatchArtifactsV1 {
                 execution_receipts,
                 state_mirror_updates,
+                block_metadata: block_metadata_updates.into_iter().last(),
             }),
             plugin_abi_enabled: true,
             plugin_abi_version: abi_version,
@@ -14780,6 +14793,18 @@ mod tests {
                 tx_hashes: vec![tx_ir.hash.clone()],
                 imported_at_unix_ms: 1234,
             }],
+            block_metadata: Some(SupervmEvmBlockMetadataV1 {
+                chain_type: ChainType::EVM,
+                chain_id,
+                state_version: 9,
+                state_root: [4u8; 32],
+                receipt_count: 1,
+                accepted_receipt_count: 1,
+                block_access_list: None,
+                block_access_list_complete: false,
+                block_access_list_hash: Some([0xee; 32]),
+                imported_at_unix_ms: 1234,
+            }),
         };
 
         let mut db = QueryStateDb::default();

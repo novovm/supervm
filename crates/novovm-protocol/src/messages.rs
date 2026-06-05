@@ -112,6 +112,7 @@ pub struct EvmNativeBlockHeaderWireV1 {
     pub withdrawals_root: Option<[u8; 32]>,
     pub blob_gas_used: Option<u64>,
     pub excess_blob_gas: Option<u64>,
+    pub block_access_list_hash: Option<[u8; 32]>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -4,6 +4,7 @@ mod bincode_compat;
 
 pub mod block_binding;
 pub mod block_wire;
+pub mod evm_block_access_list;
 pub mod ids;
 pub mod messages;
 pub mod protocol_catalog;
@@ -12,6 +13,7 @@ pub mod wire;
 
 pub use block_binding::*;
 pub use block_wire::*;
+pub use evm_block_access_list::*;
 pub use ids::*;
 pub use messages::*;
 pub use tx_wire::*;

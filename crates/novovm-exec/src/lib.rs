@@ -1,6 +1,7 @@
 use anyhow::{bail, Result};
 use aoem_bindings::{AoemCreateOptionsV1, AoemDyn, AoemExecV2Result, AoemHandle, AoemOpV2};
 use novovm_adapter_api::{ChainType, TxType};
+use novovm_protocol::{evm_block_access_list_hash_v1, EvmBlockAccessListV1};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as Sha2Digest, Sha256};
 use sha3::Keccak256;
@@ -655,6 +656,22 @@ pub struct SupervmEvmStateMirrorUpdateV1 {
     pub imported_at_unix_ms: u64,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SupervmEvmBlockMetadataV1 {
+    pub chain_type: ChainType,
+    pub chain_id: u64,
+    pub state_version: u64,
+    pub state_root: [u8; 32],
+    pub receipt_count: u64,
+    pub accepted_receipt_count: u64,
+    #[serde(default)]
+    pub block_access_list: Option<EvmBlockAccessListV1>,
+    #[serde(default)]
+    pub block_access_list_complete: bool,
+    pub block_access_list_hash: Option<[u8; 32]>,
+    pub imported_at_unix_ms: u64,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AoemExecutionAnchorLogDataV1 {
     pub tx_hash: Vec<u8>,
@@ -744,7 +761,27 @@ pub struct AoemBatchExecutionArtifactsV1 {
     pub success_ops: u32,
     pub failed_index: Option<u32>,
     pub total_writes: u64,
+    #[serde(default)]
+    pub block_access_list: Option<EvmBlockAccessListV1>,
+    #[serde(default)]
+    pub block_access_list_complete: bool,
+    #[serde(default)]
+    pub block_access_list_hash: Option<[u8; 32]>,
     pub tx_artifacts: Vec<AoemTxExecutionArtifactV1>,
+}
+
+pub fn resolve_aoem_block_access_list_hash_v1(
+    artifacts: &AoemBatchExecutionArtifactsV1,
+) -> Option<[u8; 32]> {
+    artifacts.block_access_list_hash.or_else(|| {
+        if !artifacts.block_access_list_complete {
+            return None;
+        }
+        artifacts
+            .block_access_list
+            .as_ref()
+            .and_then(|list| evm_block_access_list_hash_v1(list).ok())
+    })
 }
 
 pub fn aoem_op_succeeded_v1(output: &AoemExecOutput, op_index: u32) -> bool {
@@ -1341,6 +1378,9 @@ pub fn project_tx_execution_artifacts_v1(
         success_ops: output.metrics.success_ops,
         failed_index: output.metrics.failed_index,
         total_writes: output.metrics.total_writes,
+        block_access_list: None,
+        block_access_list_complete: false,
+        block_access_list_hash: None,
         tx_artifacts,
     }
 }
@@ -2062,14 +2102,15 @@ mod tests {
         failure_class_from_anchor_return_code_name_v1, failure_class_from_anchor_return_code_v1,
         is_eip7610_rejected_account_v1, pick_plugin_dir_from_candidates, plugin_names_for_variant,
         project_tx_execution_artifacts_v1, reconstruct_tx_execution_artifact_v1,
-        split_plugin_dir_list, AoemBatchExecutionArtifactsV1, AoemCanonicalTxTypeV1,
-        AoemCapabilityContract, AoemExecMetrics, AoemExecOutput,
-        AoemExecutionReconstructionInputV1, AoemExecutionReconstructionSourcesV1,
-        AoemFailureClassSourceV1, AoemFailureClassV1, AoemFailureRecoverabilityV1,
-        AoemProjectedTxExecutionV1, AoemReceiptDerivationRulesV1, AoemRuntimeVariant,
-        AoemTxExecutionAnchorV1, AOEM_LOG_BLOOM_BYTES_V1,
+        resolve_aoem_block_access_list_hash_v1, split_plugin_dir_list,
+        AoemBatchExecutionArtifactsV1, AoemCanonicalTxTypeV1, AoemCapabilityContract,
+        AoemExecMetrics, AoemExecOutput, AoemExecutionReconstructionInputV1,
+        AoemExecutionReconstructionSourcesV1, AoemFailureClassSourceV1, AoemFailureClassV1,
+        AoemFailureRecoverabilityV1, AoemProjectedTxExecutionV1, AoemReceiptDerivationRulesV1,
+        AoemRuntimeVariant, AoemTxExecutionAnchorV1, AOEM_LOG_BLOOM_BYTES_V1,
     };
     use aoem_bindings::AoemExecV2Result;
+    use novovm_protocol::{evm_block_access_list_hash_v1, EvmBlockAccessListV1};
     use serde_json::json;
     use sha3::{Digest, Keccak256};
     use std::fs;
@@ -2344,6 +2385,8 @@ mod tests {
             project_tx_execution_artifacts_v1(3, projected.as_slice(), [0x44; 32], &output);
         assert_eq!(artifacts.tx_artifacts.len(), 3);
         assert_eq!(artifacts.state_root, [0x44; 32]);
+        assert_eq!(artifacts.block_access_list, None);
+        assert_eq!(artifacts.block_access_list_hash, None);
         assert!(artifacts.tx_artifacts[0].status_ok);
         assert_eq!(artifacts.tx_artifacts[0].gas_used, 21_000);
         assert_eq!(artifacts.tx_artifacts[0].cumulative_gas_used, 21_000);
@@ -2459,6 +2502,44 @@ mod tests {
         assert_eq!(artifact.event_logs[0].data, data_word.to_vec());
         assert!(artifact.log_bloom.iter().any(|byte| *byte != 0));
         assert_eq!(artifact.runtime_code_hash, Some(runtime_code_hash));
+    }
+
+    #[test]
+    fn resolve_aoem_block_access_list_hash_derives_from_raw_bal_when_needed() {
+        let block_access_list =
+            EvmBlockAccessListV1(vec![novovm_protocol::EvmBlockAccessAccountV1 {
+                address: [0x11; 20],
+                storage_changes: vec![novovm_protocol::EvmBlockAccessSlotChangesV1 {
+                    slot: [0x22; 32],
+                    slot_changes: vec![novovm_protocol::EvmBlockAccessStorageWriteV1 {
+                        block_access_index: 1,
+                        post_value: [0x33; 32],
+                    }],
+                }],
+                storage_reads: Vec::new(),
+                balance_changes: Vec::new(),
+                nonce_changes: Vec::new(),
+                code_changes: vec![novovm_protocol::EvmBlockAccessCodeChangeV1 {
+                    block_access_index: 0,
+                    new_code: vec![0xde, 0xad, 0xbe, 0xef],
+                }],
+            }]);
+        let expected_hash = evm_block_access_list_hash_v1(&block_access_list).expect("hash");
+        let artifacts = AoemBatchExecutionArtifactsV1 {
+            state_root: [0x44; 32],
+            processed_ops: 1,
+            success_ops: 1,
+            failed_index: None,
+            total_writes: 2,
+            block_access_list: Some(block_access_list),
+            block_access_list_complete: true,
+            block_access_list_hash: None,
+            tx_artifacts: Vec::new(),
+        };
+        assert_eq!(
+            resolve_aoem_block_access_list_hash_v1(&artifacts),
+            Some(expected_hash)
+        );
     }
 
     #[test]

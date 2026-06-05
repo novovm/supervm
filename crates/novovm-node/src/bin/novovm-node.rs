@@ -7,8 +7,8 @@
 use anyhow::{bail, Context, Result};
 use novovm_adapter_api::{ChainType, TxIR};
 use novovm_adapter_evm_plugin::{
-    drain_execution_receipts_for_host, drain_state_mirror_updates_for_host,
-    submit_internal_batch_to_mainline_v1,
+    drain_block_metadata_for_host, drain_execution_receipts_for_host,
+    drain_state_mirror_updates_for_host, submit_internal_batch_to_mainline_v1,
 };
 use novovm_exec::{AoemRuntimeConfig, AoemSubmitReport, OpsWireOp, OpsWireV1Builder};
 use novovm_network::transport::snapshot_local_observed_peers;
@@ -26212,6 +26212,7 @@ fn main() -> Result<()> {
                 continue;
             }
 
+            let _ = drain_block_metadata_for_host(usize::MAX);
             let _ = drain_execution_receipts_for_host(usize::MAX);
             let _ = drain_state_mirror_updates_for_host(usize::MAX);
             let report = submit_internal_batch_to_mainline_v1(
@@ -26233,6 +26234,7 @@ fn main() -> Result<()> {
             let state_mirror_updates = drain_state_mirror_updates_for_host(
                 (report.mirrored_receipt_count as usize).saturating_add(1),
             );
+            let block_metadata = drain_block_metadata_for_host(1).into_iter().last();
             *canonical_batch_total_ref = canonical_batch_total_ref.saturating_add(1);
             *canonical_receipt_total_ref =
                 canonical_receipt_total_ref.saturating_add(receipts.len() as u64);
@@ -26267,6 +26269,16 @@ fn main() -> Result<()> {
                     apply_verified: report.apply_result.verified != 0,
                     apply_applied: report.apply_result.applied != 0,
                     apply_state_root: report.apply_result.state_root,
+                    block_access_list: block_metadata
+                        .as_ref()
+                        .and_then(|metadata| metadata.block_access_list.clone()),
+                    block_access_list_complete: block_metadata
+                        .as_ref()
+                        .map(|metadata| metadata.block_access_list_complete)
+                        .unwrap_or(false),
+                    block_access_list_hash: block_metadata
+                        .as_ref()
+                        .and_then(|metadata| metadata.block_access_list_hash),
                     exported_receipt_count: receipts.len(),
                     mirrored_receipt_count: state_mirror_updates.len(),
                     state_version: report.state_version,

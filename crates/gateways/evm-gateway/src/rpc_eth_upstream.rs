@@ -49,9 +49,11 @@ fn build_gateway_eth_upstream_params(
     params: &serde_json::Value,
 ) -> Result<Option<serde_json::Value>> {
     let params = match method {
-        "eth_blockNumber" | "eth_gasPrice" | "eth_maxPriorityFeePerGas" | "eth_syncing" => {
-            serde_json::Value::Array(Vec::new())
-        }
+        "eth_blockNumber"
+        | "eth_gasPrice"
+        | "eth_maxPriorityFeePerGas"
+        | "eth_syncing"
+        | "eth_capabilities" => serde_json::Value::Array(Vec::new()),
         "eth_getBalance" | "eth_getTransactionCount" | "eth_getCode" => {
             let address_raw = extract_eth_persona_address_param(params)
                 .ok_or_else(|| anyhow::anyhow!("address (or from/external_address) is required"))?;

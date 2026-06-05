@@ -16,6 +16,7 @@ serde_json = "1"
 sha2 = "0.10"
 aoem-bindings = { path = "../aoem-bindings" }
 novovm-adapter-api = { path = "../novovm-adapter-api" }
+novovm-protocol = { path = "../novovm-protocol" }
 web30-core = { path = "../../vendor/web30-core" }
 novovm-adapter-evm-core = { path = "../plugins/evm/core" }
 novovm-exec = { path = "../novovm-exec" }

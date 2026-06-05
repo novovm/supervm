@@ -68,6 +68,116 @@ pub(super) fn resolve_gateway_eth_latest_block_number(
     Ok(latest_from_entries.max(latest_from_store))
 }
 
+pub(super) fn resolve_gateway_eth_oldest_block_number(
+    chain_id: u64,
+    eth_tx_index: &HashMap<[u8; 32], GatewayEthTxIndexEntry>,
+    eth_tx_index_store: &GatewayEthTxIndexStoreBackend,
+) -> Result<Option<u64>> {
+    let oldest_from_entries = eth_tx_index
+        .values()
+        .filter(|entry| entry.chain_id == chain_id)
+        .map(|entry| entry.nonce)
+        .min();
+    let oldest_from_store = eth_tx_index_store.load_eth_oldest_block_number(chain_id)?;
+    Ok(match (oldest_from_entries, oldest_from_store) {
+        (Some(left), Some(right)) => Some(left.min(right)),
+        (Some(left), None) => Some(left),
+        (None, Some(right)) => Some(right),
+        (None, None) => None,
+    })
+}
+
+fn gateway_eth_capability_resource_json(
+    oldest_block: u64,
+    retention_blocks: Option<u64>,
+) -> serde_json::Value {
+    let mut resource = serde_json::Map::new();
+    resource.insert("disabled".to_string(), serde_json::Value::Bool(false));
+    resource.insert(
+        "oldestBlock".to_string(),
+        serde_json::Value::String(format!("0x{:x}", oldest_block)),
+    );
+    if let Some(retention_blocks) = retention_blocks {
+        resource.insert(
+            "deleteStrategy".to_string(),
+            serde_json::json!({
+                "type": "window",
+                "retentionBlocks": format!("0x{:x}", retention_blocks),
+            }),
+        );
+    }
+    serde_json::Value::Object(resource)
+}
+
+pub(super) fn gateway_eth_capabilities_json(
+    chain_id: u64,
+    eth_tx_index: &HashMap<[u8; 32], GatewayEthTxIndexEntry>,
+    eth_tx_index_store: &GatewayEthTxIndexStoreBackend,
+) -> Result<serde_json::Value> {
+    let recent_entries = collect_gateway_eth_chain_entries(
+        eth_tx_index,
+        eth_tx_index_store,
+        chain_id,
+        gateway_eth_query_scan_max(),
+    )?;
+    let latest_block =
+        resolve_gateway_eth_latest_block_number(chain_id, &recent_entries, eth_tx_index_store)?;
+    let head_block_txs = collect_gateway_eth_block_entries_precise(
+        eth_tx_index,
+        eth_tx_index_store,
+        chain_id,
+        latest_block,
+        gateway_eth_query_scan_max(),
+    )?;
+    let head_hash = gateway_eth_block_hash_for_txs(chain_id, latest_block, &head_block_txs);
+    let oldest_indexed_block =
+        resolve_gateway_eth_oldest_block_number(chain_id, eth_tx_index, eth_tx_index_store)?
+            .unwrap_or(0);
+    let recent_oldest_block = recent_entries
+        .iter()
+        .map(|entry| entry.nonce)
+        .min()
+        .unwrap_or(0);
+    let recent_history_floor = if !recent_entries.is_empty()
+        && recent_entries.len() >= gateway_eth_query_scan_max()
+        && recent_oldest_block > 0
+    {
+        recent_oldest_block
+    } else {
+        0
+    };
+    let recent_retention_blocks = if recent_history_floor > 0 {
+        Some(
+            latest_block
+                .saturating_sub(recent_history_floor)
+                .saturating_add(1),
+        )
+    } else {
+        None
+    };
+    Ok(serde_json::json!({
+        "head": {
+            "number": format!("0x{:x}", latest_block),
+            "hash": format!("0x{}", to_hex(&head_hash)),
+        },
+        "state": gateway_eth_capability_resource_json(
+            recent_history_floor,
+            recent_retention_blocks,
+        ),
+        "tx": gateway_eth_capability_resource_json(oldest_indexed_block, None),
+        "logs": gateway_eth_capability_resource_json(
+            recent_history_floor,
+            recent_retention_blocks,
+        ),
+        "receipts": gateway_eth_capability_resource_json(0, None),
+        "blocks": gateway_eth_capability_resource_json(0, None),
+        "stateproofs": gateway_eth_capability_resource_json(
+            recent_history_floor,
+            recent_retention_blocks,
+        ),
+    }))
+}
+
 pub(super) fn collect_gateway_eth_block_entries_precise(
     eth_tx_index: &HashMap<[u8; 32], GatewayEthTxIndexEntry>,
     eth_tx_index_store: &GatewayEthTxIndexStoreBackend,
