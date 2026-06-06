@@ -214,6 +214,49 @@ cargo test -p novovm-evm-gateway json_rpc_indexed_block_tx_receipt_uncle_surface
 
 这证明 gateway 层常用 indexed block/tx/receipt 查询面有独立回归门禁；uncle 当前按 minimal mirror mode 返回空/0，不能解释成完整以太坊 uncle 数据支持。
 
+### 8. Gateway JSON-RPC pending/runtime smoke
+
+命令：
+
+```powershell
+cargo test -p novovm-evm-gateway json_rpc_pending_runtime_surface_smoke_v1 -- --nocapture
+```
+
+结果：
+
+- pass
+- 覆盖 runtime pending txpool snapshot
+- 覆盖 `eth_pendingTransactions`
+- 覆盖 pending `eth_getBlockByNumber`
+- 覆盖 pending `eth_getBlockByHash`
+- 覆盖 pending `eth_getTransactionByHash`
+- 覆盖 pending `eth_getBlockReceipts`
+- 覆盖 pending `eth_getTransactionReceipt`
+- 覆盖 pending logs/filter changes
+- 覆盖 confirmed index 优先于 runtime pending snapshot
+
+这证明 gateway 层 pending/runtime 读面有独立回归门禁；它证明的是 Novo runtime pending view 的产品行为，不等同于完整 geth txpool replacement/eviction 策略。
+
+### 9. Gateway JSON-RPC store recovery smoke
+
+命令：
+
+```powershell
+cargo test -p novovm-evm-gateway json_rpc_store_recovery_surface_smoke_v1 -- --nocapture
+```
+
+结果：
+
+- pass
+- 覆盖 block filter changes 从 store 恢复
+- 覆盖 tx/receipt confirmed position 从 store block index 恢复
+- 覆盖 `eth_getBlockReceipts` 从 store 恢复
+- 覆盖 `eth_feeHistory` 从 store block usage 恢复
+- 覆盖 block number/hash 查询从 store 恢复
+- 覆盖 logs/filter logs 从 store block/hash index 恢复
+
+这证明 gateway 层在内存 scan window 被截断时，仍能从持久化索引恢复常用 JSON-RPC 读取面；这不是完整以太坊历史归档节点声明。
+
 ## Readiness 矩阵
 
 | 能力域 | 当前状态 | 证据 | 产品口径 |
@@ -229,7 +272,7 @@ cargo test -p novovm-evm-gateway json_rpc_indexed_block_tx_receipt_uncle_surface
 | eth/71 BAL 相关 wire 能力 | Partial | BAL payload/canonical/scanner pass；eth/71 BAL wire encode/decode/frame + safe negotiation gate pass；未证明完整 eth/71 peer sync | 可声明 eth/71 BAL wire smoke；不能声明完整 eth/71 等价 |
 | Ethereum fork rules / gas accounting / precompiles | Partial | execution-spec/fork-rule smoke matrix pass；未跑 Ethereum execution-spec 全量 fixture | 可声明样本级 fork-rule gate；不能声明 EVM 语义全等价 |
 | raw Ethereum transaction ingestion/execution | Partial | signed legacy/type1/type2/type3 transfer + typed call/deploy smoke pass；raw nonce gap reject pass；typed gas/revert artifact gate pass；BAL strict scan pass | 可声明 raw transfer/call/deploy smoke 可执行且关键失败路径有 gate；不能声明 raw tx 全等价 |
-| JSON-RPC full-node surface | Partial | mainline query receipt/log 样本 pass；gateway block/tx/filter/call/estimateGas smoke pass；indexed block/tx/receipt/uncle smoke pass；未覆盖 tracing/debug/admin 和全 geth RPC 行为 | 可声明 gateway JSON-RPC 产品面样本可用；不能声明 geth RPC 等价 |
+| JSON-RPC full-node surface | Partial | mainline query receipt/log 样本 pass；gateway block/tx/filter/call/estimateGas smoke pass；indexed block/tx/receipt/uncle smoke pass；pending/runtime smoke pass；store recovery smoke pass；未覆盖 tracing/debug/admin 和全 geth RPC 行为 | 可声明 gateway JSON-RPC 产品面样本可用；不能声明 geth RPC 等价 |
 | devp2p/RLPx peer sync / block import | Partial | 有 gateway/network 代码和 canary，但未作为本矩阵通过项 | 不能声明以太坊全节点 |
 
 ## 当前产品判定
@@ -248,8 +291,8 @@ cargo test -p novovm-evm-gateway json_rpc_indexed_block_tx_receipt_uncle_surface
 
 ## 下一步门禁顺序
 
-1. 如继续扩展 JSON-RPC parity，可补 pending/runtime 与 store recovery 的产品 gate；tracing/debug/admin 仍不作为 Novo EVM 插件主线优先项。
-2. 如需要继续强化 raw tx 产品面，再补 txpool replacement、account balance/fee debit、access-list/storage warmup 的分层 gate。
+1. 继续强化 raw tx 产品面，补 txpool replacement、account balance/fee debit、access-list/storage warmup 的分层 gate。
+2. 如继续扩展 JSON-RPC parity，可补更多 batch/mixed-param edge case；tracing/debug/admin 仍不作为 Novo EVM 插件主线优先项。
 3. 如需要提高 fork-rule 置信度，再接入 Ethereum execution-spec 官方 fixture 子集，但仍作为插件门禁，不改变 SUPERVM 主产品边界。
 4. 如需要提高 eth/71 置信度，再做真实 peer sync/capability negotiation 集成门禁，但仍不把 SUPERVM 产品口径改成 geth 全节点。
 
@@ -335,4 +378,16 @@ Gateway JSON-RPC indexed block/tx/receipt smoke：
 
 ```powershell
 cargo test -p novovm-evm-gateway json_rpc_indexed_block_tx_receipt_uncle_surface_smoke_v1 -- --nocapture
+```
+
+Gateway JSON-RPC pending/runtime smoke：
+
+```powershell
+cargo test -p novovm-evm-gateway json_rpc_pending_runtime_surface_smoke_v1 -- --nocapture
+```
+
+Gateway JSON-RPC store recovery smoke：
+
+```powershell
+cargo test -p novovm-evm-gateway json_rpc_store_recovery_surface_smoke_v1 -- --nocapture
 ```

@@ -2747,6 +2747,13 @@ fn json_rpc_indexed_block_tx_receipt_uncle_surface_smoke_v1() {
 }
 
 #[test]
+fn json_rpc_pending_runtime_surface_smoke_v1() {
+    eth_filter_and_txpool_methods_work_with_tx_index_state();
+    eth_pending_block_and_receipts_follow_runtime_current_when_index_lags();
+    eth_runtime_pending_tx_by_hash_uses_store_latest_height_when_memory_window_stale();
+}
+
+#[test]
 fn eth_filter_and_txpool_methods_work_with_tx_index_state() {
     let _guard = env_test_guard();
     let backend = GatewayEthTxIndexStoreBackend::Memory;
@@ -8459,6 +8466,18 @@ fn eth_logs_by_block_range_queries_recover_from_store_when_scan_window_truncated
 
     let _ = fs::remove_dir_all(&spool_dir);
     let _ = fs::remove_dir_all(&rocksdb_path);
+}
+
+#[test]
+fn json_rpc_store_recovery_surface_smoke_v1() {
+    eth_block_filter_changes_recovers_new_blocks_from_store_when_memory_window_stale();
+    eth_tx_and_receipt_query_recover_confirmed_position_from_store_block_index();
+    eth_get_block_receipts_recovers_confirmed_block_from_store_when_scan_window_truncated();
+    eth_fee_history_recovers_block_usage_from_store_when_scan_window_truncated();
+    eth_block_number_queries_recover_from_store_when_scan_window_truncated();
+    eth_block_hash_queries_recover_from_store_when_scan_window_truncated();
+    eth_logs_by_hash_queries_recover_from_store_when_scan_window_truncated();
+    eth_logs_by_block_range_queries_recover_from_store_when_scan_window_truncated();
 }
 
 #[test]
