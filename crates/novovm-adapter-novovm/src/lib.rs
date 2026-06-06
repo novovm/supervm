@@ -3464,6 +3464,254 @@ mod tests {
     }
 
     #[test]
+    fn evm_execution_spec_account_balance_value_fee_invariants_v1() {
+        let mut call_adapter = NovoVmAdapter::new(ChainConfig {
+            chain_type: ChainType::EVM,
+            chain_id: 1,
+            name: "account-balance-call".to_string(),
+            enabled: true,
+            custom_config: None,
+        });
+        call_adapter.initialize().expect("init call adapter");
+
+        let mut call_tx = sample_tx(TxType::ContractCall);
+        call_tx.value = 13;
+        call_tx.gas_limit = 120_000;
+        call_tx.gas_price = 4;
+        call_tx = resign_tx(call_tx);
+        let call_target = call_tx.to.clone().expect("call target");
+        let mut call_state = StateIR::new();
+        let initial_call_sender_balance = 1_000_000u128;
+        let initial_call_target_balance = 7u128;
+        fund_sender_for_test(&mut call_state, &call_tx, initial_call_sender_balance);
+        call_state.set_account(
+            call_target.clone(),
+            AccountState {
+                balance: initial_call_target_balance,
+                nonce: 0,
+                code_hash: None,
+                storage_root: vec![0u8; 32],
+            },
+        );
+        let mut call_artifact = sample_aoem_artifact(&call_tx, true, [0x71; 32], None);
+        call_artifact.gas_used = 26_000;
+        call_artifact.cumulative_gas_used = 26_000;
+        call_artifact.effective_gas_price = Some(call_tx.gas_price);
+        let expected_call_fee =
+            NovoVmAdapter::execution_fee_wei_v1(&call_tx, Some(&call_artifact), true);
+        let expected_call_sender_balance =
+            initial_call_sender_balance - call_tx.value - expected_call_fee;
+        let expected_call_target_balance = initial_call_target_balance + call_tx.value;
+
+        let call_outcome = call_adapter
+            .execute_transaction_with_observed_metadata_v1(
+                &call_tx,
+                &mut call_state,
+                Some(&call_artifact),
+            )
+            .expect("execute successful call with value");
+
+        assert!(call_outcome.artifact.status_ok);
+        assert_eq!(
+            call_state.get_account(&call_tx.from).map(|acc| acc.balance),
+            Some(expected_call_sender_balance)
+        );
+        assert_eq!(
+            call_state.get_account(&call_target).map(|acc| acc.balance),
+            Some(expected_call_target_balance)
+        );
+        let call_bal = call_outcome
+            .observed_block_access_list
+            .block_access_list
+            .expect("successful call observed BAL");
+        let call_sender_entry = call_bal
+            .0
+            .iter()
+            .find(|entry| entry.address.as_slice() == call_tx.from.as_slice())
+            .expect("successful call sender BAL entry");
+        assert_eq!(
+            call_sender_entry.balance_changes[0].post_balance,
+            NovoVmAdapter::u128_to_be32_v1(expected_call_sender_balance)
+        );
+        let call_target_entry = call_bal
+            .0
+            .iter()
+            .find(|entry| entry.address.as_slice() == call_target.as_slice())
+            .expect("successful call target BAL entry");
+        assert_eq!(
+            call_target_entry.balance_changes[0].post_balance,
+            NovoVmAdapter::u128_to_be32_v1(expected_call_target_balance)
+        );
+
+        let mut deploy_adapter = NovoVmAdapter::new(ChainConfig {
+            chain_type: ChainType::EVM,
+            chain_id: 1,
+            name: "account-balance-create".to_string(),
+            enabled: true,
+            custom_config: None,
+        });
+        deploy_adapter.initialize().expect("init deploy adapter");
+
+        let mut deploy_tx = sample_tx(TxType::ContractDeploy);
+        deploy_tx.value = 19;
+        deploy_tx.gas_limit = 120_000;
+        deploy_tx.gas_price = 5;
+        deploy_tx = resign_tx(deploy_tx);
+        let deploy_contract = vec![0x72u8; 20];
+        let mut deploy_state = StateIR::new();
+        let initial_deploy_sender_balance = 1_000_000u128;
+        fund_sender_for_test(&mut deploy_state, &deploy_tx, initial_deploy_sender_balance);
+        let mut deploy_artifact =
+            sample_aoem_artifact(&deploy_tx, true, [0x72; 32], Some(deploy_contract.clone()));
+        deploy_artifact.gas_used = 41_000;
+        deploy_artifact.cumulative_gas_used = 41_000;
+        deploy_artifact.effective_gas_price = Some(deploy_tx.gas_price);
+        deploy_artifact.runtime_code = Some(vec![0x60, 0x00, 0x60, 0x01]);
+        deploy_artifact.runtime_code_hash = Some(vec![0x77; 32]);
+        let expected_deploy_fee =
+            NovoVmAdapter::execution_fee_wei_v1(&deploy_tx, Some(&deploy_artifact), true);
+        let expected_deploy_sender_balance =
+            initial_deploy_sender_balance - deploy_tx.value - expected_deploy_fee;
+
+        let deploy_outcome = deploy_adapter
+            .execute_transaction_with_observed_metadata_v1(
+                &deploy_tx,
+                &mut deploy_state,
+                Some(&deploy_artifact),
+            )
+            .expect("execute successful create with value");
+
+        assert!(deploy_outcome.artifact.status_ok);
+        assert_eq!(
+            deploy_state
+                .get_account(&deploy_tx.from)
+                .map(|acc| acc.balance),
+            Some(expected_deploy_sender_balance)
+        );
+        let deployed_account = deploy_state
+            .get_account(&deploy_contract)
+            .expect("deployed contract account");
+        assert_eq!(deployed_account.balance, deploy_tx.value);
+        assert_eq!(deployed_account.code_hash, Some(vec![0x77; 32]));
+        let deploy_bal = deploy_outcome
+            .observed_block_access_list
+            .block_access_list
+            .expect("successful create observed BAL");
+        let deploy_sender_entry = deploy_bal
+            .0
+            .iter()
+            .find(|entry| entry.address.as_slice() == deploy_tx.from.as_slice())
+            .expect("successful create sender BAL entry");
+        assert_eq!(
+            deploy_sender_entry.balance_changes[0].post_balance,
+            NovoVmAdapter::u128_to_be32_v1(expected_deploy_sender_balance)
+        );
+        let deploy_contract_entry = deploy_bal
+            .0
+            .iter()
+            .find(|entry| entry.address.as_slice() == deploy_contract.as_slice())
+            .expect("successful create contract BAL entry");
+        assert_eq!(
+            deploy_contract_entry.balance_changes[0].post_balance,
+            NovoVmAdapter::u128_to_be32_v1(deploy_tx.value)
+        );
+        assert_eq!(deploy_contract_entry.code_changes.len(), 1);
+
+        let mut failed_deploy_adapter = NovoVmAdapter::new(ChainConfig {
+            chain_type: ChainType::EVM,
+            chain_id: 1,
+            name: "account-balance-failed-create".to_string(),
+            enabled: true,
+            custom_config: None,
+        });
+        failed_deploy_adapter
+            .initialize()
+            .expect("init failed deploy adapter");
+
+        let mut failed_deploy_tx = sample_tx(TxType::ContractDeploy);
+        failed_deploy_tx.value = 23;
+        failed_deploy_tx.gas_limit = 120_000;
+        failed_deploy_tx.gas_price = 6;
+        failed_deploy_tx = resign_tx(failed_deploy_tx);
+        let failed_contract = vec![0x73u8; 20];
+        let mut failed_deploy_state = StateIR::new();
+        let initial_failed_deploy_sender_balance = 1_000_000u128;
+        fund_sender_for_test(
+            &mut failed_deploy_state,
+            &failed_deploy_tx,
+            initial_failed_deploy_sender_balance,
+        );
+        let mut failed_deploy_artifact = sample_aoem_artifact(
+            &failed_deploy_tx,
+            false,
+            [0x73; 32],
+            Some(failed_contract.clone()),
+        );
+        failed_deploy_artifact.revert_data = None;
+        failed_deploy_artifact.gas_used = 39_000;
+        failed_deploy_artifact.cumulative_gas_used = 39_000;
+        failed_deploy_artifact.effective_gas_price = Some(failed_deploy_tx.gas_price);
+        if let Some(anchor) = failed_deploy_artifact.anchor.as_mut() {
+            anchor.return_code = 13;
+            anchor.return_code_name = "out_of_gas".to_string();
+        }
+        let expected_failed_deploy_fee = NovoVmAdapter::execution_fee_wei_v1(
+            &failed_deploy_tx,
+            Some(&failed_deploy_artifact),
+            false,
+        );
+        let expected_failed_deploy_sender_balance =
+            initial_failed_deploy_sender_balance - expected_failed_deploy_fee;
+
+        let failed_deploy_outcome = failed_deploy_adapter
+            .execute_transaction_with_observed_metadata_v1(
+                &failed_deploy_tx,
+                &mut failed_deploy_state,
+                Some(&failed_deploy_artifact),
+            )
+            .expect("execute failed create with value");
+
+        assert!(!failed_deploy_outcome.artifact.status_ok);
+        assert_eq!(
+            failed_deploy_state
+                .get_account(&failed_deploy_tx.from)
+                .map(|acc| acc.balance),
+            Some(expected_failed_deploy_sender_balance)
+        );
+        assert!(
+            failed_deploy_state.get_account(&failed_contract).is_none(),
+            "failed CREATE must not transfer value into a contract account"
+        );
+        assert_eq!(
+            failed_deploy_state.get_storage(
+                &failed_deploy_tx.from,
+                b"deploy:last_failed_contract_address"
+            ),
+            Some(&failed_contract)
+        );
+        let failed_deploy_bal = failed_deploy_outcome
+            .observed_block_access_list
+            .block_access_list
+            .expect("failed create observed BAL");
+        let failed_deploy_sender_entry = failed_deploy_bal
+            .0
+            .iter()
+            .find(|entry| entry.address.as_slice() == failed_deploy_tx.from.as_slice())
+            .expect("failed create sender BAL entry");
+        assert_eq!(
+            failed_deploy_sender_entry.balance_changes[0].post_balance,
+            NovoVmAdapter::u128_to_be32_v1(expected_failed_deploy_sender_balance)
+        );
+        assert!(
+            failed_deploy_bal
+                .0
+                .iter()
+                .all(|entry| entry.address.as_slice() != failed_contract.as_slice()),
+            "failed CREATE must not emit a contract BAL account entry"
+        );
+    }
+
+    #[test]
     fn execute_tracked_sender_rejects_insufficient_value_fee_v1() {
         let mut adapter = NovoVmAdapter::new(ChainConfig {
             chain_type: ChainType::EVM,
@@ -3597,6 +3845,7 @@ mod tests {
         execute_transfer_debits_tracked_sender_value_and_fee_v1();
         execute_failed_call_debits_fee_without_value_transfer_v1();
         execute_success_call_debits_refunded_sstore_gas_used_v1();
+        evm_execution_spec_account_balance_value_fee_invariants_v1();
         execute_tracked_sender_rejects_insufficient_value_fee_v1();
         tx_intrinsic_gas_includes_type1_access_list_extras_v1();
         execute_raw_type1_access_list_emits_declared_storage_reads_v1();
@@ -4178,6 +4427,7 @@ mod tests {
     #[test]
     fn evm_equivalence_baseline_matrix_receipt_revert_gas_v1() {
         evm_execution_spec_create_call_failure_state_invariants_v1();
+        evm_execution_spec_account_balance_value_fee_invariants_v1();
 
         let type3_env_key = "NOVOVM_EVM_ENABLE_TYPE3_WRITE_CHAIN_1";
         let type3_env_captured = std::env::var(type3_env_key).ok();
