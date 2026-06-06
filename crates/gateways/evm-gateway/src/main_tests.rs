@@ -9480,6 +9480,343 @@ fn eth_get_code_storage_and_call_read_path_use_tx_index_state() {
 }
 
 #[test]
+fn json_rpc_parity_surface_smoke_block_tx_filter_call_estimate_v1() {
+    let _guard = env_test_guard();
+    let backend = GatewayEthTxIndexStoreBackend::Memory;
+    let mut router = UnifiedAccountRouter::new();
+    let mut eth_tx_index = HashMap::new();
+    let mut evm_settlement_index_by_id = HashMap::new();
+    let mut evm_settlement_index_by_tx = HashMap::new();
+    let mut evm_pending_payout_by_settlement = HashMap::new();
+    let spool_dir = std::env::temp_dir().join(format!(
+        "novovm-gateway-json-rpc-parity-smoke-{}-{}",
+        std::process::id(),
+        now_unix_millis()
+    ));
+    fs::create_dir_all(&spool_dir).expect("create spool dir");
+    let mut eth_filters = GatewayEthFilterState::default();
+    let mut ctx = GatewayMethodContext {
+        eth_tx_index_store: &backend,
+        eth_default_chain_id: 1,
+        spool_dir: &spool_dir,
+        overlay_node_id: "test-overlay".to_string(),
+        overlay_session_id: "test-session".to_string(),
+        overlay_route_id: "route:test".to_string(),
+        overlay_route_epoch: 0,
+        overlay_route_mask_bits: 40,
+        overlay_route_mode: "fast".to_string(),
+        overlay_route_region: "global".to_string(),
+        overlay_route_relay_bucket: 0,
+        overlay_route_relay_set_size: 1,
+        overlay_route_relay_round: 0,
+        overlay_route_relay_index: 0,
+        overlay_route_relay_id: "rly:global:0:0".to_string(),
+        overlay_route_strategy: "direct".to_string(),
+        overlay_route_hop_count: 1,
+        eth_filters: &mut eth_filters,
+    };
+
+    let deployer = vec![0x11u8; 20];
+    let caller = vec![0x22u8; 20];
+    let funder = vec![0x44u8; 20];
+    let deploy_nonce = 4u64;
+    let call_nonce = 5u64;
+    let fund_nonce = 6u64;
+    let deploy_input = vec![0x60, 0x00, 0x60, 0x00, 0xf3];
+    let contract = gateway_eth_derive_contract_address(&deployer, deploy_nonce);
+    let deploy_tx_hash = [0xd1u8; 32];
+    let call_tx_hash = [0xc1u8; 32];
+    let fund_tx_hash = [0xb1u8; 32];
+
+    eth_tx_index.insert(
+        deploy_tx_hash,
+        GatewayEthTxIndexEntry {
+            tx_hash: deploy_tx_hash,
+            uca_id: "uca-json-rpc-deploy".to_string(),
+            chain_id: 1,
+            nonce: deploy_nonce,
+            tx_type: 0,
+            from: deployer,
+            to: None,
+            value: 0,
+            gas_limit: 80_000,
+            gas_price: 1,
+            input: deploy_input,
+        },
+    );
+    eth_tx_index.insert(
+        call_tx_hash,
+        GatewayEthTxIndexEntry {
+            tx_hash: call_tx_hash,
+            uca_id: "uca-json-rpc-call".to_string(),
+            chain_id: 1,
+            nonce: call_nonce,
+            tx_type: 0,
+            from: caller.clone(),
+            to: Some(contract.clone()),
+            value: 0,
+            gas_limit: 52_000,
+            gas_price: 1,
+            input: vec![0xaa, 0xbb],
+        },
+    );
+    eth_tx_index.insert(
+        fund_tx_hash,
+        GatewayEthTxIndexEntry {
+            tx_hash: fund_tx_hash,
+            uca_id: "uca-json-rpc-fund".to_string(),
+            chain_id: 1,
+            nonce: fund_nonce,
+            tx_type: 0,
+            from: funder,
+            to: Some(caller.clone()),
+            value: 1_000_000,
+            gas_limit: 21_000,
+            gas_price: 1,
+            input: Vec::new(),
+        },
+    );
+
+    let (block_number, changed_block_number) = run_gateway_method(
+        &mut router,
+        &mut eth_tx_index,
+        &mut evm_settlement_index_by_id,
+        &mut evm_settlement_index_by_tx,
+        &mut evm_pending_payout_by_settlement,
+        &mut ctx,
+        "eth_blockNumber",
+        &serde_json::json!({ "chain_id": 1u64 }),
+    )
+    .expect("eth_blockNumber should work");
+    assert!(!changed_block_number);
+    assert_eq!(block_number.as_str(), Some("0x6"));
+
+    let (call_block, changed_call_block) = run_gateway_method(
+        &mut router,
+        &mut eth_tx_index,
+        &mut evm_settlement_index_by_id,
+        &mut evm_settlement_index_by_tx,
+        &mut evm_pending_payout_by_settlement,
+        &mut ctx,
+        "eth_getBlockByNumber",
+        &serde_json::json!(["0x5", true]),
+    )
+    .expect("eth_getBlockByNumber should return full transactions");
+    assert!(!changed_call_block);
+    assert_eq!(call_block["number"].as_str(), Some("0x5"));
+    let call_block_txs = call_block["transactions"]
+        .as_array()
+        .expect("call block transactions should be array");
+    assert_eq!(call_block_txs.len(), 1);
+    assert_eq!(
+        call_block_txs[0]["hash"].as_str(),
+        Some(format!("0x{}", to_hex(&call_tx_hash)).as_str())
+    );
+    assert_eq!(call_block_txs[0]["pending"].as_bool(), Some(false));
+
+    let call_block_hash = call_block["hash"]
+        .as_str()
+        .expect("call block hash should be string")
+        .to_string();
+    let (call_block_by_hash, changed_call_block_by_hash) = run_gateway_method(
+        &mut router,
+        &mut eth_tx_index,
+        &mut evm_settlement_index_by_id,
+        &mut evm_settlement_index_by_tx,
+        &mut evm_pending_payout_by_settlement,
+        &mut ctx,
+        "eth_getBlockByHash",
+        &serde_json::json!({
+            "chain_id": 1u64,
+            "block_hash": call_block_hash,
+            "full_transactions": true,
+        }),
+    )
+    .expect("eth_getBlockByHash should return full transactions");
+    assert!(!changed_call_block_by_hash);
+    assert_eq!(call_block_by_hash["number"].as_str(), Some("0x5"));
+    assert_eq!(
+        call_block_by_hash["transactions"][0]["hash"].as_str(),
+        Some(format!("0x{}", to_hex(&call_tx_hash)).as_str())
+    );
+
+    let (tx_by_hash, changed_tx_by_hash) = run_gateway_method(
+        &mut router,
+        &mut eth_tx_index,
+        &mut evm_settlement_index_by_id,
+        &mut evm_settlement_index_by_tx,
+        &mut evm_pending_payout_by_settlement,
+        &mut ctx,
+        "eth_getTransactionByHash",
+        &serde_json::json!({
+            "chain_id": 1u64,
+            "tx_hash": format!("0x{}", to_hex(&call_tx_hash)),
+        }),
+    )
+    .expect("eth_getTransactionByHash should work");
+    assert!(!changed_tx_by_hash);
+    assert_eq!(tx_by_hash["blockNumber"].as_str(), Some("0x5"));
+    assert_eq!(
+        tx_by_hash["to"].as_str(),
+        Some(format!("0x{}", to_hex(&contract)).as_str())
+    );
+
+    let (logs_filter_id_raw, changed_new_filter) = run_gateway_method(
+        &mut router,
+        &mut eth_tx_index,
+        &mut evm_settlement_index_by_id,
+        &mut evm_settlement_index_by_tx,
+        &mut evm_pending_payout_by_settlement,
+        &mut ctx,
+        "eth_newFilter",
+        &serde_json::json!([{
+            "chain_id": 1u64,
+            "address": format!("0x{}", to_hex(&contract)),
+            "fromBlock": "earliest",
+            "toBlock": "latest",
+        }]),
+    )
+    .expect("eth_newFilter should work");
+    assert!(!changed_new_filter);
+    let logs_filter_id = logs_filter_id_raw
+        .as_str()
+        .expect("filter id should be string")
+        .to_string();
+
+    let (filter_logs_raw, changed_filter_logs) = run_gateway_method(
+        &mut router,
+        &mut eth_tx_index,
+        &mut evm_settlement_index_by_id,
+        &mut evm_settlement_index_by_tx,
+        &mut evm_pending_payout_by_settlement,
+        &mut ctx,
+        "eth_getFilterLogs",
+        &serde_json::json!([logs_filter_id.clone()]),
+    )
+    .expect("eth_getFilterLogs should work");
+    assert!(!changed_filter_logs);
+    let filter_logs = filter_logs_raw
+        .as_array()
+        .expect("filter logs should be array");
+    assert_eq!(filter_logs.len(), 1);
+    assert_eq!(
+        filter_logs[0]["transactionHash"].as_str(),
+        Some(format!("0x{}", to_hex(&call_tx_hash)).as_str())
+    );
+
+    let (filter_changes_first_raw, changed_filter_changes_first) = run_gateway_method(
+        &mut router,
+        &mut eth_tx_index,
+        &mut evm_settlement_index_by_id,
+        &mut evm_settlement_index_by_tx,
+        &mut evm_pending_payout_by_settlement,
+        &mut ctx,
+        "eth_getFilterChanges",
+        &serde_json::json!([logs_filter_id.clone()]),
+    )
+    .expect("eth_getFilterChanges first poll should work");
+    assert!(!changed_filter_changes_first);
+    let filter_changes_first = filter_changes_first_raw
+        .as_array()
+        .expect("filter changes should be array");
+    assert_eq!(filter_changes_first.len(), 1);
+
+    let (filter_changes_second_raw, changed_filter_changes_second) = run_gateway_method(
+        &mut router,
+        &mut eth_tx_index,
+        &mut evm_settlement_index_by_id,
+        &mut evm_settlement_index_by_tx,
+        &mut evm_pending_payout_by_settlement,
+        &mut ctx,
+        "eth_getFilterChanges",
+        &serde_json::json!([logs_filter_id]),
+    )
+    .expect("eth_getFilterChanges second poll should be empty");
+    assert!(!changed_filter_changes_second);
+    assert_eq!(
+        filter_changes_second_raw.as_array().map(std::vec::Vec::len),
+        Some(0)
+    );
+
+    let mut balance_of_caller_data = vec![0x70, 0xa0, 0x82, 0x31];
+    balance_of_caller_data.extend_from_slice(&[0u8; 12]);
+    balance_of_caller_data.extend_from_slice(&caller);
+    let (eth_call_balance, changed_eth_call_balance) = run_gateway_method(
+        &mut router,
+        &mut eth_tx_index,
+        &mut evm_settlement_index_by_id,
+        &mut evm_settlement_index_by_tx,
+        &mut evm_pending_payout_by_settlement,
+        &mut ctx,
+        "eth_call",
+        &serde_json::json!([
+            {
+                "to": format!("0x{}", to_hex(&contract)),
+                "data": format!("0x{}", to_hex(&balance_of_caller_data)),
+            },
+            "latest"
+        ]),
+    )
+    .expect("eth_call balanceOf should work");
+    assert!(!changed_eth_call_balance);
+    assert_eq!(
+        eth_call_balance.as_str(),
+        Some("0x00000000000000000000000000000000000000000000000000000000000f4240")
+    );
+
+    let estimate_call_data = vec![0xaa, 0xbb, 0xcc, 0xdd];
+    let estimate_params = serde_json::json!([
+        {
+            "chain_id": 1u64,
+            "from": format!("0x{}", to_hex(&caller)),
+            "to": format!("0x{}", to_hex(&contract)),
+            "data": format!("0x{}", to_hex(&estimate_call_data)),
+            "value": "0x1"
+        }
+    ]);
+    let (estimated_raw, changed_estimated) = run_gateway_method(
+        &mut router,
+        &mut eth_tx_index,
+        &mut evm_settlement_index_by_id,
+        &mut evm_settlement_index_by_tx,
+        &mut evm_pending_payout_by_settlement,
+        &mut ctx,
+        "eth_estimateGas",
+        &estimate_params,
+    )
+    .expect("eth_estimateGas contract call should work");
+    assert!(!changed_estimated);
+    let mut tx_ir = TxIR {
+        hash: Vec::new(),
+        from: caller,
+        account_id: None,
+        fee_owner_account_id: None,
+        nonce_owner_account_id: None,
+        to: Some(contract),
+        value: 1,
+        gas_limit: u64::MAX,
+        gas_price: 1,
+        nonce: 0,
+        data: estimate_call_data,
+        signature: Vec::new(),
+        chain_id: 1,
+        tx_type: TxType::ContractCall,
+        execution_policy: Default::default(),
+        source_chain: None,
+        target_chain: None,
+    };
+    tx_ir.compute_hash();
+    let expected_estimate =
+        estimate_intrinsic_gas_with_access_list_m0(&tx_ir, 0, 0).saturating_add(25_000);
+    assert_eq!(
+        estimated_raw.as_str(),
+        Some(format!("0x{:x}", expected_estimate).as_str())
+    );
+
+    let _ = fs::remove_dir_all(&spool_dir);
+}
+
+#[test]
 fn evm_verify_proof_matches_eth_get_proof_and_detects_tamper() {
     let _guard = env_test_guard();
     let backend = GatewayEthTxIndexStoreBackend::Memory;
