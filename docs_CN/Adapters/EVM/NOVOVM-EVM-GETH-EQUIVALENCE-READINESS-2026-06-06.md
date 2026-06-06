@@ -1,0 +1,166 @@
+# NOVOVM EVM / geth 等价性 Readiness 矩阵（2026-06-06）
+
+## 当前结论
+
+当前结论是：
+
+`SUPERVM 已具备 Novo 主网可控 EVM 插件执行闭环，并通过 geth ethapi 样本级 parity；但不能声明等价 geth / 以太坊全节点。`
+
+这个文档用于约束产品口径：
+
+1. 已通过的能力可以作为 Novo 主网 EVM 插件能力线。
+2. 未覆盖的能力不能包装成“以太坊节点等价”。
+3. 每次推进必须用可复现实跑命令更新本矩阵，而不是只更新描述。
+
+## 本轮实跑证据
+
+### 1. 默认 geth parity fixture
+
+命令：
+
+```powershell
+cargo test -p novovm-node mainline_query::tests::eth_end_to_end_geth_sample_batch_parity_report_from_files_v1 -- --nocapture
+```
+
+结果：
+
+- `sampleCount = 11`
+- `totalMismatchCount = 0`
+- `failedSamples = []`
+
+覆盖样本包括：
+
+- blob tx success/failure
+- create contract with access list
+- deploy success/fail
+- dynamic fee failure
+- legacy logs
+- reorg canonical/noncanonical log ownership
+- type2 intrinsic gas / fee edge failure
+
+### 2. 外部 go-ethereum ethapi export parity
+
+本机 go-ethereum：
+
+- path: `D:\WEB3_AI\go-ethereum`
+- commit: `13d8df63f core/types/bal: improve the bal validation (#35110)`
+
+同步 dry-run：
+
+```powershell
+$env:NOVOVM_GETH_REPO_ROOT='D:\WEB3_AI\go-ethereum'
+cargo run -p novovm-node --bin supervm-mainline-geth-sample-sync -- --dry-run
+```
+
+结果：
+
+- `source = D:\WEB3_AI\go-ethereum\internal\ethapi\testdata`
+- `processed = 11`
+
+外部 parity：
+
+```powershell
+$env:NOVOVM_GETH_REPO_ROOT='D:\WEB3_AI\go-ethereum'
+$env:NOVOVM_GETH_PARITY_SAMPLE_DIR='D:\WEB3_AI\SUPERVM\crates\novovm-node\tests\fixtures\geth-parity-external'
+cargo test -p novovm-node mainline_query::tests::eth_end_to_end_geth_sample_batch_parity_report_from_files_v1 -- --nocapture
+```
+
+结果：
+
+- `sampleCount = 11`
+- `totalMismatchCount = 0`
+- `failedSamples = []`
+
+覆盖的外部 geth ethapi 数据包括：
+
+- `eth_getTransactionReceipt-blob-tx.json`
+- `eth_getTransactionReceipt-create-contract-tx.json`
+- `eth_getTransactionReceipt-create-contract-with-access-list.json`
+- `eth_getTransactionReceipt-dynamic-tx-with-logs.json`
+- `eth_getTransactionReceipt-normal-transfer-tx.json`
+- `eth_getTransactionReceipt-with-logs.json`
+- `eth_getBlockReceipts-*` 样本
+
+### 3. Mainline EVM host + BAL 严格扫描
+
+本轮已跑通真实链路：
+
+`novovm-txgen -> novovm-node --mainline-evm-host -> canonical store -> novovmctl evm-block-access-list-scan`
+
+严格扫描结果：
+
+- `scanned = 1`
+- `problems = 0`
+- `payload_present = 1`
+- `complete = 1`
+- `hash_present = 1`
+- `complete_with_hash = 1`
+
+这证明的是 controlled mainline transfer smoke 的 BAL 生产、canonical 落盘和 scanner 校验闭环，不等于全部 EVM 交易类型的 BAL 完整性。
+
+## Readiness 矩阵
+
+| 能力域 | 当前状态 | 证据 | 产品口径 |
+| --- | --- | --- | --- |
+| Novo mainline EVM host 执行闭环 | Pass | `submitted_total=16 processed_total=16 success_total=16 writes_total=16` | 可作为 Novo 主网控制 EVM 插件能力线 |
+| Canonical store + BAL payload | Pass | strict scan `problems=0 complete_with_hash=1` | transfer smoke 可用 |
+| geth ethapi receipt/log parity | Pass | 默认 fixture `sampleCount=11 totalMismatchCount=0` | 样本级兼容可声明 |
+| 最新 go-ethereum ethapi export parity | Pass | external fixture `sampleCount=11 totalMismatchCount=0` | 对当前本机 geth ethapi 测试数据无 mismatch |
+| typed tx failure / revert / fee edge parity | Pass | parity sections `typedTxFailure.mismatchCount=0` | 样本级可声明 |
+| reorg canonical/noncanonical log view | Pass | parity sections `logs.mismatchCount=0` | 样本级可声明 |
+| eth/71 BAL 相关 wire 能力 | Partial | 当前只验证 BAL payload/canonical/scanner；未证明完整 eth/71 peer sync | 不能声明完整 eth/71 等价 |
+| contract call/deploy BAL 完整性 | Partial | 当前只对 transfer path 标完整；复杂路径仍保守 | 不能声明全交易类型 BAL 完整 |
+| Ethereum fork rules / gas accounting / precompiles | Not claimed | 未跑 Ethereum execution-spec 全量 fixture | 不能声明 EVM 语义全等价 |
+| raw Ethereum transaction ingestion/execution | Partial | 有 ethapi receipt/export 对照；未作为主线真实 raw tx 批执行门禁 | 不能声明 raw tx 全等价 |
+| JSON-RPC full-node surface | Partial | mainline query 有样本；未覆盖全 RPC 行为 | 不能声明 geth RPC 等价 |
+| devp2p/RLPx peer sync / block import | Partial | 有 gateway/network 代码和 canary，但未作为本矩阵通过项 | 不能声明以太坊全节点 |
+
+## 当前产品判定
+
+可以声明：
+
+`SUPERVM 当前具备 Novo 主网可控 EVM 插件执行能力，能产出 canonical EVM block metadata，并对 BAL payload 进行严格扫描；对 geth ethapi receipt/log/typed-failure 样本具备 parity。`
+
+不能声明：
+
+`SUPERVM 是 geth 等价实现。`
+
+`SUPERVM 是完整以太坊全节点。`
+
+`SUPERVM 已完整支持 eth/71 P2P 同步和全部 BAL wire 行为。`
+
+## 下一步门禁顺序
+
+1. 扩展 BAL 完整性到 contract call/deploy，并保持 `require_payload + require_complete + require_hash_when_complete` 全通过。
+2. 把 raw Ethereum tx ingestion 作为真实执行链路输入，而不是只从 receipt/export fixture 对照。
+3. 增加 Ethereum execution-spec/fork-rule 样本门禁，至少覆盖 gas、precompile、create/call/revert、storage、logs。
+4. 将 eth/71 BAL wire message 的 encode/decode/peer negotiation 纳入可重复 gate。
+5. 再扩展 JSON-RPC parity，从 receipt/log 样本推进到 block/tx/filter/call/estimateGas/tracing 分层矩阵。
+
+## 回归命令
+
+默认 geth parity：
+
+```powershell
+cargo test -p novovm-node mainline_query::tests::eth_end_to_end_geth_sample_batch_parity_report_from_files_v1 -- --nocapture
+```
+
+外部 geth parity：
+
+```powershell
+$env:NOVOVM_GETH_REPO_ROOT='D:\WEB3_AI\go-ethereum'
+$env:NOVOVM_GETH_PARITY_SAMPLE_DIR='D:\WEB3_AI\SUPERVM\crates\novovm-node\tests\fixtures\geth-parity-external'
+cargo test -p novovm-node mainline_query::tests::eth_end_to_end_geth_sample_batch_parity_report_from_files_v1 -- --nocapture
+```
+
+BAL 严格扫描：
+
+```powershell
+cargo run -p novovmctl -- evm-block-access-list-scan `
+  --store-path artifacts/mainline/evm-bal-real-smoke/canonical-complete.json `
+  --latest-count 16 `
+  --require-payload `
+  --require-complete `
+  --require-hash-when-complete
+```
+

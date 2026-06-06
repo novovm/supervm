@@ -6,13 +6,15 @@
 
 1. 全链路闭环目标（当前执行口径）  
    `NOVOVM-EVM-FULL-LIFECYCLE-CLOSURE-TARGET-2026-03-17.md`
-2. 插件配置/启动/使用手册（运维入口）  
+2. EVM / geth 等价性 readiness 矩阵（当前产品边界）
+   `NOVOVM-EVM-GETH-EQUIVALENCE-READINESS-2026-06-06.md`
+3. 插件配置/启动/使用手册（运维入口）
    `NOVOVM-EVM-PLUGIN-CONFIG-SETUP-USAGE-2026-03-16.md`
-3. EVM 插件边界铁律（目录、边界、性能约束）  
+4. EVM 插件边界铁律（目录、边界、性能约束）
    `NOVOVM-EVM-PLUGIN-BOUNDARY-IRON-LAWS-2026-03-13.md`
-4. 全功能镜像节点模式规范（架构目标）  
+5. 全功能镜像节点模式规范（架构目标）
    `NOVOVM-EVM-FULL-MIRROR-NODE-MODE-SPEC-2026-03-11.md`
-5. 外部入口边界与二进制流水线约束  
+6. 外部入口边界与二进制流水线约束
    `NOVOVM-EXTERNAL-INGRESS-BOUNDARY-AND-BINARY-PIPELINE-ARCH-2026-03-09.md`
 
 ## 2. 历史归档文档（仅背景，不作发布依据）
