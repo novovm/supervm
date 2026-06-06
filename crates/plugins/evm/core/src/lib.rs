@@ -555,6 +555,25 @@ fn rlp_encode_list(items: &[Vec<u8>]) -> Vec<u8> {
     out
 }
 
+#[must_use]
+pub fn evm_address20_from_bytes_m0(address: &[u8]) -> [u8; 20] {
+    let mut out = [0u8; 20];
+    if address.len() >= 20 {
+        out.copy_from_slice(&address[address.len() - 20..]);
+    } else {
+        out[20 - address.len()..].copy_from_slice(address);
+    }
+    out
+}
+
+#[must_use]
+pub fn derive_create_contract_address_m0(from: &[u8], nonce: u64) -> Vec<u8> {
+    let from20 = evm_address20_from_bytes_m0(from);
+    let encoded = rlp_encode_list(&[rlp_encode_bytes(&from20), rlp_encode_u128(nonce as u128)]);
+    let digest = Keccak256::digest(encoded);
+    digest[12..32].to_vec()
+}
+
 fn pad_signature_word_to_32(raw: &[u8], field: &str) -> anyhow::Result<[u8; 32]> {
     if raw.len() > 32 {
         bail!("{field} must be <=32 bytes, got {}", raw.len());
@@ -1641,6 +1660,23 @@ pub fn validate_tx_semantics_m0(profile: &EvmChainProfile, tx: &TxIR) -> anyhow:
 mod tests {
     use super::*;
 
+    fn hex_bytes(raw: &str) -> Vec<u8> {
+        let normalized = raw.trim_start_matches("0x");
+        assert_eq!(normalized.len() % 2, 0, "hex length must be even");
+        let bytes = normalized.as_bytes();
+        let mut out = Vec::with_capacity(normalized.len() / 2);
+        let mut cursor = 0usize;
+        while cursor < bytes.len() {
+            let hi = (bytes[cursor] as char).to_digit(16).expect("hex hi digit");
+            let lo = (bytes[cursor + 1] as char)
+                .to_digit(16)
+                .expect("hex lo digit");
+            out.push(((hi << 4) | lo) as u8);
+            cursor += 2;
+        }
+        out
+    }
+
     fn enc_bytes(raw: &[u8]) -> Vec<u8> {
         if raw.len() == 1 && raw[0] < 0x80 {
             return vec![raw[0]];
@@ -1834,6 +1870,23 @@ mod tests {
         assert!(!active_precompile_set_m0(&profile).is_empty());
         let profile = resolve_evm_profile(ChainType::Avalanche, 43114).expect("profile");
         assert!(!active_precompile_set_m0(&profile).is_empty());
+    }
+
+    #[test]
+    fn derive_create_contract_address_matches_geth_vectors_m0() {
+        let from = hex_bytes("970e8128ab834e8eac17ab8e3812f010678cf791");
+        assert_eq!(
+            derive_create_contract_address_m0(&from, 0),
+            hex_bytes("333c3310824b7c685133f2bedb2ca4b8b4df633d")
+        );
+        assert_eq!(
+            derive_create_contract_address_m0(&from, 1),
+            hex_bytes("8bda78331c916a08481428e4b07c96d3e916d165")
+        );
+        assert_eq!(
+            derive_create_contract_address_m0(&from, 2),
+            hex_bytes("c9ddedf451bc62ce88bf9292afb13df35b670699")
+        );
     }
 
     #[test]

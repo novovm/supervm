@@ -14,9 +14,9 @@ use novovm_adapter_api::{
     TxType, UnifiedAccountError, UnifiedAccountRouter,
 };
 use novovm_adapter_evm_core::{
-    estimate_intrinsic_gas_with_envelope_extras_for_chain_m0, recover_raw_evm_tx_sender_m0,
-    resolve_evm_profile, translate_raw_evm_tx_fields_m0, tx_ir_from_raw_fields_m0,
-    validate_tx_semantics_m0,
+    derive_create_contract_address_m0, estimate_intrinsic_gas_with_envelope_extras_for_chain_m0,
+    recover_raw_evm_tx_sender_m0, resolve_evm_profile, translate_raw_evm_tx_fields_m0,
+    tx_ir_from_raw_fields_m0, validate_tx_semantics_m0,
 };
 use novovm_exec::{
     aoem_failure_recoverability_from_class_v1, classify_failure_from_anchor_v1,
@@ -412,12 +412,7 @@ impl NovoVmAdapter {
     }
 
     fn derive_contract_address(from: &[u8], nonce: u64) -> Vec<u8> {
-        let mut hasher = Sha256::new();
-        hasher.update(b"novovm_contract_address_v1");
-        hasher.update(from);
-        hasher.update(nonce.to_le_bytes());
-        let digest: [u8; 32] = hasher.finalize().into();
-        digest[12..32].to_vec()
+        derive_create_contract_address_m0(from, nonce)
     }
 
     fn tx_hash_or_compute(tx: &TxIR) -> Vec<u8> {
@@ -4096,6 +4091,23 @@ mod tests {
     }
 
     #[test]
+    fn evm_execution_spec_create_address_derivation_matches_geth_v1() {
+        let from = decode_hex_bytes("970e8128ab834e8eac17ab8e3812f010678cf791");
+        assert_eq!(
+            NovoVmAdapter::derive_contract_address(&from, 0),
+            decode_hex_bytes("333c3310824b7c685133f2bedb2ca4b8b4df633d")
+        );
+        assert_eq!(
+            NovoVmAdapter::derive_contract_address(&from, 1),
+            decode_hex_bytes("8bda78331c916a08481428e4b07c96d3e916d165")
+        );
+        assert_eq!(
+            NovoVmAdapter::derive_contract_address(&from, 2),
+            decode_hex_bytes("c9ddedf451bc62ce88bf9292afb13df35b670699")
+        );
+    }
+
+    #[test]
     fn execute_transaction_with_observed_metadata_emits_complete_contract_deploy_evm_bal() {
         let mut adapter = NovoVmAdapter::new(ChainConfig {
             chain_type: ChainType::EVM,
@@ -4107,6 +4119,7 @@ mod tests {
         adapter.initialize().expect("init");
 
         let tx = sample_tx(TxType::ContractDeploy);
+        let expected_contract = NovoVmAdapter::derive_contract_address(&tx.from, tx.nonce);
         let mut runtime_state = StateIR::new();
         let outcome = adapter
             .execute_transaction_with_observed_metadata_v1(&tx, &mut runtime_state, None)
@@ -4123,6 +4136,8 @@ mod tests {
             .contract_address
             .clone()
             .expect("contract address");
+        assert_eq!(contract, expected_contract);
+        assert!(runtime_state.get_account(&expected_contract).is_some());
         let block_access_list = outcome
             .observed_block_access_list
             .block_access_list
@@ -4166,6 +4181,7 @@ mod tests {
         execute_raw_type1_access_list_emits_declared_storage_reads_v1();
         evm_execution_spec_access_list_warm_storage_smoke_v1();
         evm_execution_spec_sload_warm_cold_fee_debit_v1();
+        evm_execution_spec_create_address_derivation_matches_geth_v1();
         execute_transaction_with_observed_metadata_emits_complete_contract_call_evm_bal();
         execute_transaction_with_observed_metadata_emits_complete_contract_deploy_evm_bal();
         evm_execution_spec_create_existing_account_collision_invariants_v1();
@@ -4888,6 +4904,7 @@ mod tests {
 
     #[test]
     fn evm_equivalence_baseline_matrix_receipt_revert_gas_v1() {
+        evm_execution_spec_create_address_derivation_matches_geth_v1();
         evm_execution_spec_create_call_failure_state_invariants_v1();
         evm_execution_spec_account_balance_value_fee_invariants_v1();
         evm_execution_spec_effective_gas_price_fee_debit_v1();
