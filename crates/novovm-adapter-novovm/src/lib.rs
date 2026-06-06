@@ -2410,7 +2410,7 @@ mod tests {
     use novovm_adapter_evm_core::{
         active_precompile_set_m0, apply_eip3529_gas_refund_m0,
         estimate_access_list_execution_warm_savings_m0, estimate_calldata_floor_gas_m0,
-        estimate_eip2929_storage_read_gas_m0, estimate_eip3529_sstore_clear_refund_m0,
+        estimate_eip2929_storage_read_gas_m0, estimate_eip3529_sstore_transition_gas_m0,
         estimate_intrinsic_gas_m0, estimate_intrinsic_gas_with_access_list_rules_m0,
         estimate_intrinsic_gas_with_envelope_extras_m0, recover_raw_evm_tx_sender_m0,
         resolve_evm_profile, translate_raw_evm_tx_fields_m0, tx_ir_from_raw_fields_m0,
@@ -3412,11 +3412,15 @@ mod tests {
         fund_sender_for_test(&mut runtime_state, &tx, initial_balance);
         runtime_state.set_storage(target.clone(), b"clear-me".to_vec(), vec![0x01]);
 
-        let pre_refund_gas_used = 24_000u64;
-        let refund_counter = estimate_eip3529_sstore_clear_refund_m0(true, true, true);
+        let transition =
+            estimate_eip3529_sstore_transition_gas_m0([0x01u8; 32], [0x01u8; 32], [0u8; 32], false);
+        assert_eq!(transition.gas_cost, 5_000);
+        assert_eq!(transition.refund_delta, 4_800);
+        let pre_refund_gas_used =
+            estimate_intrinsic_gas_m0(&tx).saturating_add(transition.gas_cost);
+        let refund_counter = transition.refund_delta.max(0) as u64;
         let refunded_gas_used = apply_eip3529_gas_refund_m0(pre_refund_gas_used, refund_counter);
-        assert_eq!(refund_counter, 4_800);
-        assert_eq!(refunded_gas_used, 19_200);
+        assert_eq!(refunded_gas_used, pre_refund_gas_used.saturating_sub(4_800));
 
         let mut artifact = sample_aoem_artifact(&tx, true, [0x56; 32], None);
         artifact.gas_used = refunded_gas_used;

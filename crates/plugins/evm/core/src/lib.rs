@@ -1174,9 +1174,17 @@ pub const EVM_ACCESS_LIST_ADDRESS_INTRINSIC_GAS_M0: u64 = 2_400;
 pub const EVM_ACCESS_LIST_STORAGE_KEY_INTRINSIC_GAS_M0: u64 = 1_900;
 pub const EVM_SSTORE_SET_GAS_M0: u64 = 20_000;
 pub const EVM_SSTORE_RESET_GAS_M0: u64 = 5_000;
+pub const EVM_SSTORE_RESET_GAS_EIP2929_M0: u64 = EVM_SSTORE_RESET_GAS_M0 - EVM_COLD_SLOAD_GAS_M0;
+pub const EVM_SSTORE_SENTRY_GAS_M0: u64 = 2_300;
 pub const EVM_SSTORE_CLEARS_SCHEDULE_REFUND_EIP3529_M0: u64 =
     EVM_SSTORE_RESET_GAS_M0 - EVM_COLD_SLOAD_GAS_M0 + EVM_ACCESS_LIST_STORAGE_KEY_INTRINSIC_GAS_M0;
 pub const EVM_REFUND_QUOTIENT_EIP3529_M0: u64 = 5;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EvmSstoreTransitionGasM0 {
+    pub gas_cost: u64,
+    pub refund_delta: i64,
+}
 
 #[must_use]
 pub fn estimate_eip2929_account_access_gas_m0(
@@ -1223,6 +1231,70 @@ pub fn estimate_eip3529_sstore_clear_refund_m0(
         EVM_SSTORE_CLEARS_SCHEDULE_REFUND_EIP3529_M0
     } else {
         0
+    }
+}
+
+#[must_use]
+pub fn eip2200_sstore_sentry_allows_m0(gas_left: u64) -> bool {
+    gas_left > EVM_SSTORE_SENTRY_GAS_M0
+}
+
+#[must_use]
+pub fn estimate_eip3529_sstore_transition_gas_m0(
+    original_value: [u8; 32],
+    current_value: [u8; 32],
+    new_value: [u8; 32],
+    slot_warm: bool,
+) -> EvmSstoreTransitionGasM0 {
+    let cold_cost = if slot_warm { 0 } else { EVM_COLD_SLOAD_GAS_M0 };
+    if current_value == new_value {
+        return EvmSstoreTransitionGasM0 {
+            gas_cost: cold_cost.saturating_add(EVM_WARM_ACCESS_GAS_M0),
+            refund_delta: 0,
+        };
+    }
+
+    let zero = [0u8; 32];
+    let original_is_zero = original_value == zero;
+    let current_is_zero = current_value == zero;
+    let new_is_zero = new_value == zero;
+
+    if original_value == current_value {
+        let refund_delta = if !original_is_zero && new_is_zero {
+            EVM_SSTORE_CLEARS_SCHEDULE_REFUND_EIP3529_M0 as i64
+        } else {
+            0
+        };
+        let gas_cost = if original_is_zero {
+            EVM_SSTORE_SET_GAS_M0
+        } else {
+            EVM_SSTORE_RESET_GAS_EIP2929_M0
+        };
+        return EvmSstoreTransitionGasM0 {
+            gas_cost: cold_cost.saturating_add(gas_cost),
+            refund_delta,
+        };
+    }
+
+    let mut refund_delta = 0i64;
+    if !original_is_zero {
+        if current_is_zero {
+            refund_delta -= EVM_SSTORE_CLEARS_SCHEDULE_REFUND_EIP3529_M0 as i64;
+        } else if new_is_zero {
+            refund_delta += EVM_SSTORE_CLEARS_SCHEDULE_REFUND_EIP3529_M0 as i64;
+        }
+    }
+    if original_value == new_value {
+        if original_is_zero {
+            refund_delta += (EVM_SSTORE_SET_GAS_M0 - EVM_WARM_ACCESS_GAS_M0) as i64;
+        } else {
+            refund_delta += (EVM_SSTORE_RESET_GAS_EIP2929_M0 - EVM_WARM_ACCESS_GAS_M0) as i64;
+        }
+    }
+
+    EvmSstoreTransitionGasM0 {
+        gas_cost: cold_cost.saturating_add(EVM_WARM_ACCESS_GAS_M0),
+        refund_delta,
     }
 }
 
@@ -2098,6 +2170,87 @@ mod tests {
         assert_eq!(
             apply_eip3529_gas_refund_with_floor_m0(10_000, refund_counter, 9_000),
             9_000
+        );
+    }
+
+    fn word32(value: u8) -> [u8; 32] {
+        [value; 32]
+    }
+
+    #[test]
+    fn sstore_transition_clean_slots_match_eip3529_m0() {
+        let zero = [0u8; 32];
+        let non_zero = word32(1);
+        let other = word32(2);
+
+        assert!(!eip2200_sstore_sentry_allows_m0(EVM_SSTORE_SENTRY_GAS_M0));
+        assert!(eip2200_sstore_sentry_allows_m0(
+            EVM_SSTORE_SENTRY_GAS_M0 + 1
+        ));
+
+        assert_eq!(
+            estimate_eip3529_sstore_transition_gas_m0(zero, zero, non_zero, false),
+            EvmSstoreTransitionGasM0 {
+                gas_cost: EVM_COLD_SLOAD_GAS_M0 + EVM_SSTORE_SET_GAS_M0,
+                refund_delta: 0,
+            }
+        );
+        assert_eq!(
+            estimate_eip3529_sstore_transition_gas_m0(non_zero, non_zero, zero, false),
+            EvmSstoreTransitionGasM0 {
+                gas_cost: EVM_COLD_SLOAD_GAS_M0 + EVM_SSTORE_RESET_GAS_EIP2929_M0,
+                refund_delta: 4_800,
+            }
+        );
+        assert_eq!(
+            estimate_eip3529_sstore_transition_gas_m0(non_zero, non_zero, other, true),
+            EvmSstoreTransitionGasM0 {
+                gas_cost: EVM_SSTORE_RESET_GAS_EIP2929_M0,
+                refund_delta: 0,
+            }
+        );
+        assert_eq!(
+            estimate_eip3529_sstore_transition_gas_m0(non_zero, non_zero, non_zero, true),
+            EvmSstoreTransitionGasM0 {
+                gas_cost: EVM_WARM_ACCESS_GAS_M0,
+                refund_delta: 0,
+            }
+        );
+    }
+
+    #[test]
+    fn sstore_transition_dirty_slots_match_eip3529_m0() {
+        let zero = [0u8; 32];
+        let original = word32(1);
+        let current = word32(2);
+
+        assert_eq!(
+            estimate_eip3529_sstore_transition_gas_m0(original, zero, current, true),
+            EvmSstoreTransitionGasM0 {
+                gas_cost: EVM_WARM_ACCESS_GAS_M0,
+                refund_delta: -4_800,
+            }
+        );
+        assert_eq!(
+            estimate_eip3529_sstore_transition_gas_m0(original, current, zero, true),
+            EvmSstoreTransitionGasM0 {
+                gas_cost: EVM_WARM_ACCESS_GAS_M0,
+                refund_delta: 4_800,
+            }
+        );
+        assert_eq!(
+            estimate_eip3529_sstore_transition_gas_m0(original, current, original, true),
+            EvmSstoreTransitionGasM0 {
+                gas_cost: EVM_WARM_ACCESS_GAS_M0,
+                refund_delta: 2_800,
+            }
+        );
+        assert_eq!(
+            estimate_eip3529_sstore_transition_gas_m0(zero, current, zero, true),
+            EvmSstoreTransitionGasM0 {
+                gas_cost: EVM_WARM_ACCESS_GAS_M0,
+                refund_delta: 19_900,
+            }
         );
     }
 
