@@ -721,6 +721,33 @@ cargo test -p novovm-adapter-novovm evm_adapter_balance_fee_access_storage_surfa
 
 这证明当前 SUPERVM EVM adapter 已开始消费官方 SLOAD warm/cold state fixture 子集，并覆盖 raw type-1 access-list -> TxIR -> adapter verify -> artifact fee settlement 的产品路径。该门禁仍不是 opcode 级 state-test runner；fixture 中合约执行产生的完整 storage writes 仍由外部 AOEM/host artifact 承载。
 
+### 29. Official state fixture subset: SSTORE refund cap / store clear
+
+本次不引入通用 state-test runner，而是一次性接入官方 SSTORE/refund 相关 grouped 子集：
+
+- fixture: `crates/novovm-adapter-novovm/tests/fixtures/ethereum-official-state-subset/sstore-refund-cap.json`
+- source archive: `ethereum/tests` `fixtures_general_state_tests.tgz`
+- selected sources: `stRefundTest/refundMax.json`、`stRefundTest/refund50percentCap.json`、`stRefundTest/refundSSTORE.json`、`stSStoreTest/sstoreGas.json`、`stTransactionTest/*StoreClears*Success.json`
+- selected labels: `refundMax`、`refund50percentCap`、`refundSSTORE`、`sstoreGas`、`ContractStoreClearsSuccess`、`InternalCallStoreClearsSuccess`、`StoreClearsAndInternalCallStoreClearsSuccess`
+
+命令：
+
+```powershell
+cargo test -p novovm-adapter-novovm official_state_fixture_sstore_refund_cap_fee_debit_v1 -- --nocapture
+cargo test -p novovm-adapter-novovm evm_adapter_balance_fee_access_storage_surface_smoke_v1 -- --nocapture
+```
+
+结果：
+
+- pass
+- 使用 fixture `txbytes` 走 raw EVM sender recovery、field decode 和 adapter verify，不绕过生产验证路径
+- `refundMax gasUsed=48842`，`refund50percentCap gasUsed=76336`，`refundSSTORE gasUsed=21210`
+- `sstoreGas gasUsed=225910`，并保留官方 post storage 中 `0x1006=0x5654`、`0x1007=0x0898`、`0x1008=0x4e20`
+- StoreClears 三组成功路径 gas 排序保持：`80324 > 64305 > 56848`
+- adapter 按 official `gasUsed/gasPrice` 对 sender 做 fee debit，sender post balance 和 BAL sender post balance 对齐 fixture
+
+这证明当前 SUPERVM EVM adapter 已消费官方 SSTORE refund/cap state fixture 子集，并把 raw tx -> TxIR -> adapter verify -> artifact fee settlement -> BAL sender post 的产品路径锁住。该门禁仍不是 opcode 级 state-test runner；fixture 中合约执行产生的完整 storage/internal balance transition 仍由外部 AOEM/host artifact 承载。
+
 ## Readiness 矩阵
 
 | 能力域 | 当前状态 | 证据 | 产品口径 |
@@ -734,7 +761,7 @@ cargo test -p novovm-adapter-novovm evm_adapter_balance_fee_access_storage_surfa
 | typed tx failure / revert / fee edge parity | Pass | parity sections `typedTxFailure.mismatchCount=0` | 样本级可声明 |
 | reorg canonical/noncanonical log view | Pass | parity sections `logs.mismatchCount=0` | 样本级可声明 |
 | eth/71 BAL 相关 wire 能力 | Partial | BAL payload/canonical/scanner pass；eth/71 BAL wire encode/decode/frame + safe negotiation gate pass；未证明完整 eth/71 peer sync | 可声明 eth/71 BAL wire smoke；不能声明完整 eth/71 等价 |
-| Ethereum fork rules / gas accounting / precompiles | Partial | execution-spec/fork-rule smoke matrix pass；adapter balance/fee/access-storage smoke pass；access-list entries 贯通 smoke pass；access-list warm/cold 成本、SLOAD sequence 和 BAL smoke pass；SLOAD warm/cold fee debit smoke pass；EIP-3529 SSTORE refund/cap/transition smoke pass；adapter SSTORE refund cap fee debit smoke pass；CREATE/CREATE2 official geth address fixture subset pass；official EIP-1559 sender balance state fixture subset pass；official SLOAD warm/cold state fixture subset pass；CREATE/CALL failure invariant smoke pass；CREATE existing-account collision smoke pass；CREATE2 artifact collision smoke pass；account balance value/fee invariant smoke pass；EIP-1559 effectiveGasPrice settlement smoke pass；未跑 Ethereum execution-spec state fixture 全量 | 可声明样本级 fork-rule、gas/refund/SLOAD sequence/SSTORE transition、SLOAD warm/cold fee debit、SSTORE refund cap fee debit、CREATE/CREATE2 geth address derivation official fixture subset、EIP-1559 sender balance official state fixture subset、SLOAD warm/cold official state fixture subset、CREATE/CALL failure invariants、CREATE/CREATE2 existing-account collision invariant、account balance value/fee invariants、EIP-1559 effectiveGasPrice settlement、tracked-account fee/value debit、access-list read-set/warm-cold smoke/BAL gate；不能声明 EVM 语义全等价 |
+| Ethereum fork rules / gas accounting / precompiles | Partial | execution-spec/fork-rule smoke matrix pass；adapter balance/fee/access-storage smoke pass；access-list entries 贯通 smoke pass；access-list warm/cold 成本、SLOAD sequence 和 BAL smoke pass；SLOAD warm/cold fee debit smoke pass；EIP-3529 SSTORE refund/cap/transition smoke pass；adapter SSTORE refund cap fee debit smoke pass；CREATE/CREATE2 official geth address fixture subset pass；official EIP-1559 sender balance state fixture subset pass；official SLOAD warm/cold state fixture subset pass；official SSTORE refund cap state fixture subset pass；CREATE/CALL failure invariant smoke pass；CREATE existing-account collision smoke pass；CREATE2 artifact collision smoke pass；account balance value/fee invariant smoke pass；EIP-1559 effectiveGasPrice settlement smoke pass；未跑 Ethereum execution-spec state fixture 全量 | 可声明样本级 fork-rule、gas/refund/SLOAD sequence/SSTORE transition、SLOAD warm/cold fee debit、SSTORE refund cap fee debit、CREATE/CREATE2 geth address derivation official fixture subset、EIP-1559 sender balance official state fixture subset、SLOAD warm/cold official state fixture subset、SSTORE refund cap official state fixture subset、CREATE/CALL failure invariants、CREATE/CREATE2 existing-account collision invariant、account balance value/fee invariants、EIP-1559 effectiveGasPrice settlement、tracked-account fee/value debit、access-list read-set/warm-cold smoke/BAL gate；不能声明 EVM 语义全等价 |
 | raw Ethereum transaction ingestion/execution | Partial | signed legacy/type1/type2/type3 transfer + typed call/deploy smoke pass；raw nonce gap reject pass；gateway raw write surface pass；gateway txpool error surface pass；plugin txpool replacement/reject pass；plugin fee settlement pass；adapter tracked-account value/fee debit pass；adapter account balance value/fee invariant pass；adapter effectiveGasPrice fee debit pass；access-list entries 贯通 pass；BAL strict scan pass | 可声明 raw transfer/call/deploy smoke 可执行，gateway 写入/拒绝面、plugin txpool/fee settlement、adapter tracked-account debit、account balance invariant、effectiveGasPrice settlement、access-list read-set 有 gate；不能声明 raw tx 全等价 |
 | JSON-RPC full-node surface | Partial | mainline query receipt/log 样本 pass；gateway block/tx/filter/call/estimateGas smoke pass；indexed block/tx/receipt/uncle smoke pass；pending/runtime smoke pass；store recovery smoke pass；未覆盖 tracing/debug/admin 和全 geth RPC 行为 | 可声明 gateway JSON-RPC 产品面样本可用；不能声明 geth RPC 等价 |
 | devp2p/RLPx peer sync / block import | Partial | 有 gateway/network 代码和 canary，但未作为本矩阵通过项 | 不能声明以太坊全节点 |
@@ -755,8 +782,8 @@ cargo test -p novovm-adapter-novovm evm_adapter_balance_fee_access_storage_surfa
 
 ## 下一步门禁顺序
 
-1. 已接入第一份官方 geth address fixture 子集、官方 EIP-1559 sender balance state fixture 子集和官方 SLOAD warm/cold state fixture 子集；如要继续提高执行语义置信度，下一步接 SSTORE refund cap 官方 state fixture 子集。
-2. 如要完整验证 access-list warm/cold/refund/failure/account/fee 语义，基于现在已贯通的 `TxIR.evm_access_list`、SLOAD sequence/fee debit smoke、EIP-3529 SSTORE transition/cap fee debit smoke、CREATE/CREATE2 address derivation smoke、CREATE/CALL failure invariant smoke、CREATE/CREATE2 collision invariant smoke、account balance value/fee invariant smoke 和 effectiveGasPrice settlement smoke 接官方 fixture；不要再做包装层。
+1. 已接入官方 geth address fixture 子集、官方 EIP-1559 sender balance state fixture 子集、官方 SLOAD warm/cold state fixture 子集和官方 SSTORE refund cap grouped state fixture 子集。
+2. 如要继续提高执行语义置信度，下一步接 failure/account 或 CREATE2 execution/collision 官方 state fixture 子集；基于现在已贯通的 `TxIR.evm_access_list`、SLOAD sequence/fee debit smoke、EIP-3529 SSTORE transition/cap fee debit smoke、CREATE/CREATE2 address derivation smoke、CREATE/CALL failure invariant smoke、CREATE/CREATE2 collision invariant smoke、account balance value/fee invariant smoke 和 effectiveGasPrice settlement smoke 接官方 fixture；不要再做包装层。
 3. 如继续扩展 JSON-RPC parity，可补更多 batch/mixed-param edge case；tracing/debug/admin 仍不作为 Novo EVM 插件主线优先项。
 4. 如需要提高 eth/71 置信度，再做真实 peer sync/capability negotiation 集成门禁，但仍不把 SUPERVM 产品口径改成 geth 全节点。
 
@@ -852,6 +879,7 @@ Official state fixture subset gate：
 ```powershell
 cargo test -p novovm-adapter-novovm official_state_fixture_eip1559_sender_balance_fee_debit_v1 -- --nocapture
 cargo test -p novovm-adapter-novovm official_state_fixture_sload_warm_cold_fee_debit_v1 -- --nocapture
+cargo test -p novovm-adapter-novovm official_state_fixture_sstore_refund_cap_fee_debit_v1 -- --nocapture
 ```
 
 Execution-spec/fork-rule smoke gate：

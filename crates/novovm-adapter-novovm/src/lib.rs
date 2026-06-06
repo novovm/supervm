@@ -2693,6 +2693,13 @@ mod tests {
         .expect("decode official storage costs warm/cold state fixture")
     }
 
+    fn official_sstore_refund_cap_state_fixture_v1() -> serde_json::Value {
+        serde_json::from_str(include_str!(
+            "../tests/fixtures/ethereum-official-state-subset/sstore-refund-cap.json"
+        ))
+        .expect("decode official SSTORE refund cap state fixture")
+    }
+
     fn first_official_state_fixture_case_v1(fixture: &serde_json::Value) -> &serde_json::Value {
         fixture
             .as_object()
@@ -4405,6 +4412,257 @@ mod tests {
     }
 
     #[test]
+    fn official_state_fixture_sstore_refund_cap_fee_debit_v1() {
+        let fixture = official_sstore_refund_cap_state_fixture_v1();
+        assert_eq!(fixture["source"]["repo"].as_str(), Some("ethereum/tests"));
+        assert_eq!(
+            fixture["source"]["fixtureFormat"].as_str(),
+            Some("state_test")
+        );
+        assert_eq!(fixture["source"]["fork"].as_str(), Some("Cancun"));
+
+        let cases = fixture["cases"].as_array().expect("refund cap cases");
+        assert_eq!(cases.len(), 7);
+
+        let mut refund_max_gas_used = None;
+        let mut refund_50_cap_gas_used = None;
+        let mut refund_sstore_gas_used = None;
+        let mut sstore_gas_used = None;
+        let mut contract_clear_gas_used = None;
+        let mut internal_clear_gas_used = None;
+        let mut combined_clear_gas_used = None;
+
+        for case in cases {
+            let label = json_str(&case["label"], "case.label");
+            assert!(
+                json_str(&case["fixtureKey"], "case.fixtureKey").contains("-fork_[Cancun-Prague]"),
+                "official refund case must be the Cancun/Prague projection"
+            );
+            assert!(
+                json_str(&case["postHash"], "case.postHash").starts_with("0x"),
+                "official refund case must carry post hash"
+            );
+
+            let sender = json_str(&case["sender"], "case.sender");
+            let to = json_str(&case["to"], "case.to");
+            let pre_sender_balance =
+                json_hex_u128(&case["preSenderBalance"], "case.preSenderBalance");
+            let pre_sender_nonce =
+                json_hex_u128(&case["preSenderNonce"], "case.preSenderNonce") as u64;
+            let pre_to_balance = json_hex_u128(&case["preToBalance"], "case.preToBalance");
+            let pre_to_nonce = json_hex_u128(&case["preToNonce"], "case.preToNonce") as u64;
+            let post_sender_balance =
+                json_hex_u128(&case["postSenderBalance"], "case.postSenderBalance");
+            let post_to_balance = json_hex_u128(&case["postToBalance"], "case.postToBalance");
+            let gas_price = json_hex_u128(&case["gasPrice"], "case.gasPrice");
+            let gas_limit = json_hex_u128(&case["gasLimit"], "case.gasLimit");
+            let value = json_hex_u128(&case["value"], "case.value");
+            let nonce = json_hex_u128(&case["nonce"], "case.nonce") as u64;
+            assert_eq!(nonce, pre_sender_nonce);
+
+            let raw_tx = decode_hex_bytes(json_str(&case["txbytes"], "case.txbytes"));
+            let recovered_sender = recover_raw_evm_tx_sender_m0(&raw_tx)
+                .expect("official refund raw sender recovery")
+                .expect("official refund recovered sender");
+            assert_eq!(recovered_sender, decode_hex_bytes(sender));
+            let fields =
+                translate_raw_evm_tx_fields_m0(&raw_tx).expect("official refund tx decode");
+            let tx = tx_ir_from_raw_fields_m0(&fields, &raw_tx, recovered_sender, 1);
+
+            assert_eq!(tx.from, decode_hex_bytes(sender));
+            assert_eq!(tx.to, Some(decode_hex_bytes(to)));
+            assert_eq!(tx.value, value);
+            assert_eq!(tx.gas_limit, gas_limit as u64);
+            assert_eq!(tx.gas_price, gas_price as u64);
+            assert_eq!(tx.nonce, nonce);
+            assert_eq!(
+                tx.data,
+                decode_hex_bytes(json_str(&case["data"], "case.data"))
+            );
+            if raw_tx.first() == Some(&0x01) {
+                assert!(
+                    tx.evm_access_list.is_empty(),
+                    "official refund typed tx subset uses empty access lists"
+                );
+            }
+
+            let mut adapter = NovoVmAdapter::new(ChainConfig {
+                chain_type: ChainType::EVM,
+                chain_id: 1,
+                name: format!("official-sstore-refund-{label}"),
+                enabled: true,
+                custom_config: None,
+            });
+            adapter.initialize().expect("init");
+            assert!(
+                adapter
+                    .verify_transaction(&tx)
+                    .expect("verify official refund raw tx"),
+                "official SSTORE/refund txbytes must verify through the raw EVM path"
+            );
+            for historical_nonce in 0..pre_sender_nonce {
+                let mut historical_tx = tx.clone();
+                historical_tx.nonce = historical_nonce;
+                adapter
+                    .route_transaction_through_unified_account(&historical_tx)
+                    .expect("prime official refund pre-state nonce");
+            }
+
+            let charged_fee = pre_sender_balance
+                .saturating_sub(post_sender_balance)
+                .saturating_sub(value);
+            assert_eq!(charged_fee % gas_price, 0);
+            let gas_used = charged_fee / gas_price;
+            let expected_gas_used = case["gasUsed"].as_u64().expect("case.gasUsed");
+            assert_eq!(gas_used, expected_gas_used as u128);
+
+            let mut runtime_state = StateIR::new();
+            runtime_state.set_account(
+                tx.from.clone(),
+                AccountState {
+                    balance: pre_sender_balance,
+                    nonce: pre_sender_nonce,
+                    code_hash: None,
+                    storage_root: vec![0u8; 32],
+                },
+            );
+            runtime_state.set_account(
+                tx.to.clone().expect("call target"),
+                AccountState {
+                    balance: pre_to_balance,
+                    nonce: pre_to_nonce,
+                    code_hash: Some(vec![0xcc; 32]),
+                    storage_root: vec![0u8; 32],
+                },
+            );
+
+            let mut artifact = sample_aoem_artifact(&tx, true, [0x85; 32], None);
+            artifact.gas_used = expected_gas_used;
+            artifact.cumulative_gas_used = expected_gas_used;
+            artifact.effective_gas_price = Some(gas_price as u64);
+            artifact.event_logs.clear();
+            artifact.log_bloom = vec![0u8; 256];
+
+            let outcome = adapter
+                .execute_transaction_with_observed_metadata_v1(
+                    &tx,
+                    &mut runtime_state,
+                    Some(&artifact),
+                )
+                .expect("execute official SSTORE refund fixture projection");
+
+            assert!(outcome.artifact.status_ok);
+            assert_eq!(outcome.artifact.gas_used, expected_gas_used);
+            assert_eq!(
+                runtime_state.get_account(&tx.from).map(|acc| acc.balance),
+                Some(post_sender_balance)
+            );
+            if post_to_balance == pre_to_balance + value {
+                assert_eq!(
+                    runtime_state
+                        .get_account(tx.to.as_ref().expect("call target"))
+                        .map(|acc| acc.balance),
+                    Some(post_to_balance)
+                );
+            }
+
+            let bal = outcome
+                .observed_block_access_list
+                .block_access_list
+                .expect("official SSTORE refund observed BAL");
+            let sender_entry = bal
+                .0
+                .iter()
+                .find(|entry| entry.address.as_slice() == tx.from.as_slice())
+                .expect("sender BAL entry");
+            assert_eq!(
+                sender_entry.balance_changes[0].post_balance,
+                NovoVmAdapter::u128_to_be32_v1(post_sender_balance)
+            );
+
+            let post_storage = case["postTargetStorage"]
+                .as_object()
+                .expect("case.postTargetStorage");
+            match label {
+                "refundMax" => {
+                    refund_max_gas_used = Some(expected_gas_used);
+                    assert!(post_storage.is_empty());
+                }
+                "refund50percentCap" => {
+                    refund_50_cap_gas_used = Some(expected_gas_used);
+                    assert_eq!(
+                        json_str(&case["postTargetStorage"]["0x0b"], "refund cap slot 0x0b"),
+                        "0x0de0b6b3a7640000"
+                    );
+                }
+                "refundSSTORE" => {
+                    refund_sstore_gas_used = Some(expected_gas_used);
+                    assert!(post_storage.is_empty());
+                }
+                "sstoreGas" => {
+                    sstore_gas_used = Some(expected_gas_used);
+                    assert_eq!(
+                        json_str(&case["postTargetStorage"]["0x1006"], "sstore slot 0x1006"),
+                        "0x5654"
+                    );
+                    assert_eq!(
+                        json_str(&case["postTargetStorage"]["0x1007"], "sstore slot 0x1007"),
+                        "0x0898"
+                    );
+                    assert_eq!(
+                        json_str(&case["postTargetStorage"]["0x1008"], "sstore slot 0x1008"),
+                        "0x4e20"
+                    );
+                }
+                "ContractStoreClearsSuccess" => {
+                    contract_clear_gas_used = Some(expected_gas_used);
+                    assert!(post_storage.is_empty());
+                }
+                "InternalCallStoreClearsSuccess" => {
+                    internal_clear_gas_used = Some(expected_gas_used);
+                    assert!(post_storage.is_empty());
+                }
+                "StoreClearsAndInternalCallStoreClearsSuccess" => {
+                    combined_clear_gas_used = Some(expected_gas_used);
+                    assert_eq!(
+                        json_str(&case["postTargetStorage"]["0x04"], "store clear slot 0x04"),
+                        "0x0c"
+                    );
+                }
+                _ => panic!("unexpected official SSTORE/refund label {label}"),
+            }
+        }
+
+        let refund_max_gas_used = refund_max_gas_used.expect("refundMax gas used");
+        let refund_50_cap_gas_used = refund_50_cap_gas_used.expect("refund50percentCap gas used");
+        let refund_sstore_gas_used = refund_sstore_gas_used.expect("refundSSTORE gas used");
+        let sstore_gas_used = sstore_gas_used.expect("sstoreGas gas used");
+        let contract_clear_gas_used =
+            contract_clear_gas_used.expect("ContractStoreClearsSuccess gas used");
+        let internal_clear_gas_used =
+            internal_clear_gas_used.expect("InternalCallStoreClearsSuccess gas used");
+        let combined_clear_gas_used =
+            combined_clear_gas_used.expect("StoreClearsAndInternalCallStoreClearsSuccess gas used");
+
+        assert_eq!(refund_max_gas_used, 48_842);
+        assert_eq!(refund_50_cap_gas_used, 76_336);
+        assert_eq!(refund_sstore_gas_used, 21_210);
+        assert_eq!(sstore_gas_used, 225_910);
+        assert_eq!(contract_clear_gas_used, 56_848);
+        assert_eq!(internal_clear_gas_used, 64_305);
+        assert_eq!(combined_clear_gas_used, 80_324);
+        assert!(
+            refund_max_gas_used > refund_sstore_gas_used,
+            "official refundMax must charge more gas than the compact refundSSTORE clear path"
+        );
+        assert!(
+            combined_clear_gas_used > internal_clear_gas_used
+                && internal_clear_gas_used > contract_clear_gas_used,
+            "official store-clear success cases must preserve the expected gas ordering"
+        );
+    }
+
+    #[test]
     fn execute_tracked_sender_rejects_insufficient_value_fee_v1() {
         let mut adapter = NovoVmAdapter::new(ChainConfig {
             chain_type: ChainType::EVM,
@@ -4563,6 +4821,7 @@ mod tests {
         evm_execution_spec_effective_gas_price_fee_debit_v1();
         official_state_fixture_eip1559_sender_balance_fee_debit_v1();
         official_state_fixture_sload_warm_cold_fee_debit_v1();
+        official_state_fixture_sstore_refund_cap_fee_debit_v1();
         execute_tracked_sender_rejects_insufficient_value_fee_v1();
         tx_intrinsic_gas_includes_type1_access_list_extras_v1();
         execute_raw_type1_access_list_emits_declared_storage_reads_v1();
