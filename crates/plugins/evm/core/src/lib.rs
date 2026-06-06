@@ -1172,6 +1172,11 @@ pub const EVM_COLD_ACCOUNT_ACCESS_GAS_M0: u64 = 2_600;
 pub const EVM_COLD_SLOAD_GAS_M0: u64 = 2_100;
 pub const EVM_ACCESS_LIST_ADDRESS_INTRINSIC_GAS_M0: u64 = 2_400;
 pub const EVM_ACCESS_LIST_STORAGE_KEY_INTRINSIC_GAS_M0: u64 = 1_900;
+pub const EVM_SSTORE_SET_GAS_M0: u64 = 20_000;
+pub const EVM_SSTORE_RESET_GAS_M0: u64 = 5_000;
+pub const EVM_SSTORE_CLEARS_SCHEDULE_REFUND_EIP3529_M0: u64 =
+    EVM_SSTORE_RESET_GAS_M0 - EVM_COLD_SLOAD_GAS_M0 + EVM_ACCESS_LIST_STORAGE_KEY_INTRINSIC_GAS_M0;
+pub const EVM_REFUND_QUOTIENT_EIP3529_M0: u64 = 5;
 
 #[must_use]
 pub fn estimate_eip2929_account_access_gas_m0(
@@ -1206,6 +1211,43 @@ pub fn estimate_access_list_execution_warm_savings_m0(
             access_list_storage_key_count
                 .saturating_mul(EVM_COLD_SLOAD_GAS_M0.saturating_sub(EVM_WARM_ACCESS_GAS_M0)),
         )
+}
+
+#[must_use]
+pub fn estimate_eip3529_sstore_clear_refund_m0(
+    original_value_is_non_zero: bool,
+    current_value_is_non_zero: bool,
+    new_value_is_zero: bool,
+) -> u64 {
+    if original_value_is_non_zero && current_value_is_non_zero && new_value_is_zero {
+        EVM_SSTORE_CLEARS_SCHEDULE_REFUND_EIP3529_M0
+    } else {
+        0
+    }
+}
+
+#[must_use]
+pub fn cap_eip3529_gas_refund_m0(gas_used_before_refund: u64, refund_counter: u64) -> u64 {
+    refund_counter.min(gas_used_before_refund / EVM_REFUND_QUOTIENT_EIP3529_M0)
+}
+
+#[must_use]
+pub fn apply_eip3529_gas_refund_with_floor_m0(
+    gas_used_before_refund: u64,
+    refund_counter: u64,
+    floor_gas: u64,
+) -> u64 {
+    gas_used_before_refund
+        .saturating_sub(cap_eip3529_gas_refund_m0(
+            gas_used_before_refund,
+            refund_counter,
+        ))
+        .max(floor_gas)
+}
+
+#[must_use]
+pub fn apply_eip3529_gas_refund_m0(gas_used_before_refund: u64, refund_counter: u64) -> u64 {
+    apply_eip3529_gas_refund_with_floor_m0(gas_used_before_refund, refund_counter, 0)
 }
 
 #[must_use]
@@ -2018,6 +2060,44 @@ mod tests {
             estimate_access_list_execution_warm_savings_m0(1, 0)
                 - estimate_access_list_intrinsic_extra_gas_m0(1, 0),
             100
+        );
+    }
+
+    #[test]
+    fn sstore_clear_refund_matches_eip3529_schedule_m0() {
+        assert_eq!(
+            EVM_SSTORE_CLEARS_SCHEDULE_REFUND_EIP3529_M0,
+            EVM_SSTORE_RESET_GAS_M0 - EVM_COLD_SLOAD_GAS_M0
+                + EVM_ACCESS_LIST_STORAGE_KEY_INTRINSIC_GAS_M0
+        );
+        assert_eq!(
+            estimate_eip3529_sstore_clear_refund_m0(true, true, true),
+            4_800
+        );
+        assert_eq!(
+            estimate_eip3529_sstore_clear_refund_m0(false, true, true),
+            0
+        );
+        assert_eq!(
+            estimate_eip3529_sstore_clear_refund_m0(true, false, true),
+            0
+        );
+        assert_eq!(
+            estimate_eip3529_sstore_clear_refund_m0(true, true, false),
+            0
+        );
+    }
+
+    #[test]
+    fn eip3529_refund_cap_limits_refunded_gas_m0() {
+        let refund_counter = estimate_eip3529_sstore_clear_refund_m0(true, true, true);
+        assert_eq!(cap_eip3529_gas_refund_m0(24_000, refund_counter), 4_800);
+        assert_eq!(apply_eip3529_gas_refund_m0(24_000, refund_counter), 19_200);
+        assert_eq!(cap_eip3529_gas_refund_m0(10_000, refund_counter), 2_000);
+        assert_eq!(apply_eip3529_gas_refund_m0(10_000, refund_counter), 8_000);
+        assert_eq!(
+            apply_eip3529_gas_refund_with_floor_m0(10_000, refund_counter, 9_000),
+            9_000
         );
     }
 

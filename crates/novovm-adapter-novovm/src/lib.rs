@@ -2408,8 +2408,9 @@ mod tests {
     use super::*;
     use novovm_adapter_api::EvmAccessListEntryV1;
     use novovm_adapter_evm_core::{
-        active_precompile_set_m0, estimate_access_list_execution_warm_savings_m0,
-        estimate_calldata_floor_gas_m0, estimate_eip2929_storage_read_gas_m0,
+        active_precompile_set_m0, apply_eip3529_gas_refund_m0,
+        estimate_access_list_execution_warm_savings_m0, estimate_calldata_floor_gas_m0,
+        estimate_eip2929_storage_read_gas_m0, estimate_eip3529_sstore_clear_refund_m0,
         estimate_intrinsic_gas_m0, estimate_intrinsic_gas_with_access_list_rules_m0,
         estimate_intrinsic_gas_with_envelope_extras_m0, recover_raw_evm_tx_sender_m0,
         resolve_evm_profile, translate_raw_evm_tx_fields_m0, tx_ir_from_raw_fields_m0,
@@ -3390,6 +3391,57 @@ mod tests {
     }
 
     #[test]
+    fn execute_success_call_debits_refunded_sstore_gas_used_v1() {
+        let mut adapter = NovoVmAdapter::new(ChainConfig {
+            chain_type: ChainType::EVM,
+            chain_id: 1,
+            name: "test".to_string(),
+            enabled: true,
+            custom_config: None,
+        });
+        adapter.initialize().expect("init");
+
+        let mut tx = sample_tx(TxType::ContractCall);
+        tx.value = 0;
+        tx.gas_limit = 120_000;
+        tx.gas_price = 3;
+        tx = resign_tx(tx);
+        let target = tx.to.clone().expect("call target");
+        let mut runtime_state = StateIR::new();
+        let initial_balance = 100_000u128;
+        fund_sender_for_test(&mut runtime_state, &tx, initial_balance);
+        runtime_state.set_storage(target.clone(), b"clear-me".to_vec(), vec![0x01]);
+
+        let pre_refund_gas_used = 24_000u64;
+        let refund_counter = estimate_eip3529_sstore_clear_refund_m0(true, true, true);
+        let refunded_gas_used = apply_eip3529_gas_refund_m0(pre_refund_gas_used, refund_counter);
+        assert_eq!(refund_counter, 4_800);
+        assert_eq!(refunded_gas_used, 19_200);
+
+        let mut artifact = sample_aoem_artifact(&tx, true, [0x56; 32], None);
+        artifact.gas_used = refunded_gas_used;
+        artifact.cumulative_gas_used = refunded_gas_used;
+        artifact.effective_gas_price = Some(tx.gas_price);
+        let expected_fee = (refunded_gas_used as u128) * (tx.gas_price as u128);
+        let unrefunded_fee = (pre_refund_gas_used as u128) * (tx.gas_price as u128);
+
+        let resolved = adapter
+            .execute_transaction_with_artifact(&tx, &mut runtime_state, Some(&artifact))
+            .expect("execute refunded gas call artifact");
+
+        assert!(resolved.status_ok);
+        assert_eq!(resolved.gas_used, refunded_gas_used);
+        assert_eq!(
+            runtime_state.get_account(&tx.from).map(|acc| acc.balance),
+            Some(initial_balance - expected_fee)
+        );
+        assert!(
+            expected_fee < unrefunded_fee,
+            "SSTORE clear refund must reduce charged gas before fee debit"
+        );
+    }
+
+    #[test]
     fn execute_tracked_sender_rejects_insufficient_value_fee_v1() {
         let mut adapter = NovoVmAdapter::new(ChainConfig {
             chain_type: ChainType::EVM,
@@ -3522,6 +3574,7 @@ mod tests {
     fn evm_adapter_balance_fee_access_storage_surface_smoke_v1() {
         execute_transfer_debits_tracked_sender_value_and_fee_v1();
         execute_failed_call_debits_fee_without_value_transfer_v1();
+        execute_success_call_debits_refunded_sstore_gas_used_v1();
         execute_tracked_sender_rejects_insufficient_value_fee_v1();
         tx_intrinsic_gas_includes_type1_access_list_extras_v1();
         execute_raw_type1_access_list_emits_declared_storage_reads_v1();
