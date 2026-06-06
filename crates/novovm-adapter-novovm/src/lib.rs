@@ -900,6 +900,27 @@ impl NovoVmAdapter {
         tx_index.saturating_add(1)
     }
 
+    fn add_observed_storage_write_if_present_v1(
+        out: &mut EvmConstructionBlockAccessListV1,
+        state: &StateIR,
+        block_access_index: u32,
+        address: [u8; 20],
+        owner: &[u8],
+        slot_key: &[u8],
+    ) -> bool {
+        if let Some(post_value) = state.get_storage(owner, slot_key) {
+            out.storage_write(
+                block_access_index,
+                address,
+                Self::bytes_to_bal_word32_v1(b"novovm-bal-slot-v1", slot_key),
+                Self::bytes_to_bal_word32_v1(b"novovm-bal-storage-value-v1", post_value),
+            );
+            true
+        } else {
+            false
+        }
+    }
+
     fn build_observed_block_access_list_for_tx_v1(
         tx: &TxIR,
         state: &StateIR,
@@ -937,16 +958,14 @@ impl NovoVmAdapter {
                             && from_evm.is_some();
                         if tx.tx_type == TxType::ContractCall && resolved_artifact.status_ok {
                             let slot_key = tx.nonce.to_le_bytes();
-                            if let Some(post_value) = state.get_storage(to_bytes, &slot_key) {
-                                out.storage_write(
-                                    block_access_index,
-                                    to,
-                                    Self::bytes_to_bal_word32_v1(b"novovm-bal-slot-v1", &slot_key),
-                                    Self::bytes_to_bal_word32_v1(
-                                        b"novovm-bal-storage-value-v1",
-                                        post_value,
-                                    ),
-                                );
+                            if Self::add_observed_storage_write_if_present_v1(
+                                &mut out,
+                                state,
+                                block_access_index,
+                                to,
+                                to_bytes,
+                                &slot_key,
+                            ) {
                                 block_access_list_complete = from_evm.is_some();
                             }
                         }
@@ -958,6 +977,7 @@ impl NovoVmAdapter {
                     if let Some(contract) = Self::to_evm_address20_v1(contract_bytes) {
                         out.account_read(contract);
                         if resolved_artifact.status_ok {
+                            let mut deploy_complete = from_evm.is_some();
                             if tx.value > 0 {
                                 if let Some(post_balance) = state
                                     .get_account(contract_bytes)
@@ -968,6 +988,8 @@ impl NovoVmAdapter {
                                         contract,
                                         Self::u128_to_be32_v1(post_balance),
                                     );
+                                } else {
+                                    deploy_complete = false;
                                 }
                             }
                             if let Some(runtime_code) =
@@ -976,7 +998,52 @@ impl NovoVmAdapter {
                                 })
                             {
                                 out.code_change(block_access_index, contract, runtime_code);
+                            } else {
+                                deploy_complete = false;
                             }
+                            let init_hash_observed = Self::add_observed_storage_write_if_present_v1(
+                                &mut out,
+                                state,
+                                block_access_index,
+                                contract,
+                                contract_bytes,
+                                b"deploy:init_code_hash",
+                            );
+                            let runtime_hash_observed =
+                                Self::add_observed_storage_write_if_present_v1(
+                                    &mut out,
+                                    state,
+                                    block_access_index,
+                                    contract,
+                                    contract_bytes,
+                                    b"deploy:runtime_code_hash",
+                                );
+                            let _ = Self::add_observed_storage_write_if_present_v1(
+                                &mut out,
+                                state,
+                                block_access_index,
+                                contract,
+                                contract_bytes,
+                                b"deploy:runtime_code_hash_hint",
+                            );
+                            let _ = Self::add_observed_storage_write_if_present_v1(
+                                &mut out,
+                                state,
+                                block_access_index,
+                                contract,
+                                contract_bytes,
+                                b"deploy:runtime_code",
+                            );
+                            let _ = Self::add_observed_storage_write_if_present_v1(
+                                &mut out,
+                                state,
+                                block_access_index,
+                                contract,
+                                contract_bytes,
+                                Self::runtime_code_storage_key(),
+                            );
+                            block_access_list_complete =
+                                deploy_complete && init_hash_observed && runtime_hash_observed;
                         }
                     }
                 }
@@ -3029,6 +3096,64 @@ mod tests {
             target_entry.storage_changes[0].slot_changes[0].post_value,
             NovoVmAdapter::bytes_to_bal_word32_v1(b"novovm-bal-storage-value-v1", &tx.hash)
         );
+    }
+
+    #[test]
+    fn execute_transaction_with_observed_metadata_emits_complete_contract_deploy_evm_bal() {
+        let mut adapter = NovoVmAdapter::new(ChainConfig {
+            chain_type: ChainType::EVM,
+            chain_id: 1,
+            name: "test".to_string(),
+            enabled: true,
+            custom_config: None,
+        });
+        adapter.initialize().expect("init");
+
+        let tx = sample_tx(TxType::ContractDeploy);
+        let mut runtime_state = StateIR::new();
+        let outcome = adapter
+            .execute_transaction_with_observed_metadata_v1(&tx, &mut runtime_state, None)
+            .expect("execute with observed metadata");
+
+        assert!(outcome.artifact.status_ok);
+        assert!(
+            outcome
+                .observed_block_access_list
+                .block_access_list_complete
+        );
+        let contract = outcome
+            .artifact
+            .contract_address
+            .clone()
+            .expect("contract address");
+        let block_access_list = outcome
+            .observed_block_access_list
+            .block_access_list
+            .expect("observed block access list");
+        let contract_entry = block_access_list
+            .0
+            .iter()
+            .find(|entry| entry.address.as_slice() == contract.as_slice())
+            .expect("contract entry");
+        assert_eq!(contract_entry.balance_changes.len(), 1);
+        assert_eq!(contract_entry.code_changes.len(), 1);
+        assert!(
+            contract_entry.storage_changes.len() >= 2,
+            "deploy init/runtime code hash storage changes must be observed"
+        );
+        let slots = contract_entry
+            .storage_changes
+            .iter()
+            .map(|item| item.slot)
+            .collect::<Vec<_>>();
+        assert!(slots.contains(&NovoVmAdapter::bytes_to_bal_word32_v1(
+            b"novovm-bal-slot-v1",
+            b"deploy:init_code_hash"
+        )));
+        assert!(slots.contains(&NovoVmAdapter::bytes_to_bal_word32_v1(
+            b"novovm-bal-slot-v1",
+            b"deploy:runtime_code_hash"
+        )));
     }
 
     #[test]

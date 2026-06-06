@@ -5520,7 +5520,8 @@ mod tests {
         assert!(block_metadata[0].state_version > 0);
         assert_eq!(block_metadata[0].receipt_count, 2);
         assert_eq!(block_metadata[0].accepted_receipt_count, 2);
-        assert_eq!(block_metadata[0].block_access_list_hash, None);
+        assert!(block_metadata[0].block_access_list_complete);
+        assert!(block_metadata[0].block_access_list_hash.is_some());
     }
 
     #[test]
@@ -5565,6 +5566,48 @@ mod tests {
             .expect("target entry");
         assert_eq!(target_entry.storage_changes.len(), 1);
         assert!(!target_entry.storage_changes[0].slot_changes.is_empty());
+    }
+
+    #[test]
+    fn plugin_apply_v2_exports_complete_contract_deploy_bal_metadata() {
+        let _guard = runtime_queue_test_guard();
+        reset_runtime_queues_for_test();
+        let txs = vec![sample_contract_deploy_tx(1, 0)];
+        let tx_bytes = crate::bincode_compat::serialize(&txs).expect("tx encode");
+        let options = NovovmAdapterPluginApplyOptionsV1 {
+            flags: NOVOVM_ADAPTER_PLUGIN_APPLY_FLAG_MAINLINE_RECEIPT_EXPORT_V1
+                | NOVOVM_ADAPTER_PLUGIN_APPLY_FLAG_MAINLINE_RECEIPT_INGEST_V1,
+        };
+        let mut out = NovovmAdapterPluginApplyResultV1::default();
+        let rc = unsafe {
+            novovm_adapter_plugin_apply_v2(
+                1,
+                1,
+                tx_bytes.as_ptr(),
+                tx_bytes.len(),
+                &options as *const NovovmAdapterPluginApplyOptionsV1,
+                &mut out as *mut NovovmAdapterPluginApplyResultV1,
+            )
+        };
+        assert_eq!(rc, NOVOVM_ADAPTER_PLUGIN_RC_OK);
+        assert_eq!(out.verified, 1);
+        assert_eq!(out.applied, 1);
+
+        let block_metadata = drain_block_metadata_for_host(4);
+        assert_eq!(block_metadata.len(), 1);
+        assert!(block_metadata[0].block_access_list_complete);
+        assert!(block_metadata[0].block_access_list_hash.is_some());
+        let block_access_list = block_metadata[0]
+            .block_access_list
+            .as_ref()
+            .expect("block access list");
+        let deploy_entry = block_access_list
+            .0
+            .iter()
+            .find(|entry| !entry.code_changes.is_empty())
+            .expect("deploy contract entry");
+        assert!(!deploy_entry.storage_changes.is_empty());
+        assert!(!deploy_entry.balance_changes.is_empty());
     }
 
     #[test]
