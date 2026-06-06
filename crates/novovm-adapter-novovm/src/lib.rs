@@ -2321,6 +2321,8 @@ pub fn create_native_adapter(config: ChainConfig) -> Result<Box<dyn ChainAdapter
 mod tests {
     use super::*;
     use novovm_adapter_evm_core::{
+        active_precompile_set_m0, estimate_calldata_floor_gas_m0, estimate_intrinsic_gas_m0,
+        estimate_intrinsic_gas_with_access_list_rules_m0,
         estimate_intrinsic_gas_with_envelope_extras_m0, recover_raw_evm_tx_sender_m0,
         resolve_evm_profile, translate_raw_evm_tx_fields_m0, tx_ir_from_raw_fields_m0,
         validate_tx_semantics_m0,
@@ -3444,6 +3446,129 @@ mod tests {
         assert_eq!(rebuilt.event_logs[0].topics, vec![topic0]);
         assert_eq!(rebuilt.event_logs[0].data, data_word.to_vec());
         assert!(rebuilt.log_bloom.iter().any(|byte| *byte != 0));
+    }
+
+    #[test]
+    fn evm_execution_spec_fork_rule_smoke_matrix_v1() {
+        let profile = resolve_evm_profile(ChainType::EVM, 1).expect("eth profile");
+        let precompiles = active_precompile_set_m0(&profile);
+        for required in ["ecrecover", "sha256", "identity", "blake2f"] {
+            assert!(
+                precompiles.contains(&required),
+                "ethereum precompile set must include {required}"
+            );
+        }
+
+        let transfer_tx = sample_tx(TxType::Transfer);
+        assert_eq!(estimate_intrinsic_gas_m0(&transfer_tx), 21_000);
+        validate_tx_semantics_m0(&profile, &transfer_tx).expect("transfer gas gate");
+
+        let mut deploy_tx = sample_tx(TxType::ContractDeploy);
+        deploy_tx.gas_limit = 100_000;
+        deploy_tx = resign_tx(deploy_tx);
+        assert_eq!(estimate_intrinsic_gas_m0(&deploy_tx), 53_042);
+        validate_tx_semantics_m0(&profile, &deploy_tx).expect("deploy gas gate");
+
+        let mut gas_call_tx = sample_tx(TxType::ContractCall);
+        gas_call_tx.data = vec![0x00, 0x11, 0x22];
+        gas_call_tx.gas_limit = 30_000;
+        gas_call_tx = resign_tx(gas_call_tx);
+        assert_eq!(estimate_intrinsic_gas_m0(&gas_call_tx), 21_036);
+        assert_eq!(
+            estimate_intrinsic_gas_with_access_list_rules_m0(&gas_call_tx, 1, 2, false),
+            21_036 + 2_400 + 2 * 1_900
+        );
+        assert!(
+            estimate_intrinsic_gas_with_access_list_rules_m0(&gas_call_tx, 1, 2, true)
+                > estimate_intrinsic_gas_with_access_list_rules_m0(&gas_call_tx, 1, 2, false)
+        );
+        assert!(
+            estimate_calldata_floor_gas_m0(&gas_call_tx, 1, 2, true)
+                > estimate_calldata_floor_gas_m0(&gas_call_tx, 1, 2, false)
+        );
+        validate_tx_semantics_m0(&profile, &gas_call_tx).expect("call gas gate");
+
+        let mut adapter = NovoVmAdapter::new(ChainConfig {
+            chain_type: ChainType::EVM,
+            chain_id: 1,
+            name: "execution-spec-smoke".to_string(),
+            enabled: true,
+            custom_config: None,
+        });
+        adapter.initialize().expect("init adapter");
+        let mut runtime_state = StateIR::new();
+        let contract_address = vec![0x44; 20];
+        let topic0 = [0x99; 32];
+        let data_word = [0x42; 32];
+        let mut deploy_artifact =
+            sample_aoem_artifact(&deploy_tx, true, [0x33; 32], Some(contract_address.clone()));
+        deploy_artifact.event_logs.clear();
+        deploy_artifact.log_bloom = vec![0u8; AOEM_LOG_BLOOM_BYTES_V1];
+        deploy_artifact.runtime_code = Some(runtime_code_emit_single_log(topic0, data_word));
+        deploy_artifact.runtime_code_hash = Some(vec![0x88; 32]);
+
+        let deployed = adapter
+            .execute_transaction_with_artifact(
+                &deploy_tx,
+                &mut runtime_state,
+                Some(&deploy_artifact),
+            )
+            .expect("execute create sample");
+        assert!(deployed.status_ok);
+        assert_eq!(deployed.contract_address, Some(contract_address.clone()));
+        assert_eq!(
+            runtime_state
+                .get_account(&contract_address)
+                .and_then(|account| account.code_hash.clone()),
+            Some(vec![0x88; 32])
+        );
+        assert_eq!(
+            runtime_state.get_storage(&contract_address, b"deploy:runtime_code"),
+            Some(&runtime_code_emit_single_log(topic0, data_word))
+        );
+
+        let mut call_tx = sample_tx(TxType::ContractCall);
+        call_tx.to = Some(contract_address.clone());
+        call_tx.nonce = 1;
+        call_tx.gas_limit = 80_000;
+        call_tx.data = vec![0xaa, 0xbb, 0xcc];
+        let call_tx = resign_tx(call_tx);
+        let call = adapter
+            .execute_transaction_with_artifact(&call_tx, &mut runtime_state, None)
+            .expect("execute call sample");
+        assert!(call.status_ok);
+        assert_eq!(call.event_logs.len(), 1);
+        assert_eq!(call.event_logs[0].emitter, contract_address);
+        assert_eq!(call.event_logs[0].topics, vec![topic0]);
+        assert_eq!(call.event_logs[0].data, data_word.to_vec());
+        assert!(call.log_bloom.iter().any(|byte| *byte != 0));
+        assert_eq!(
+            runtime_state.get_storage(&contract_address, &call_tx.nonce.to_le_bytes()),
+            Some(&NovoVmAdapter::tx_hash_or_compute(&call_tx))
+        );
+
+        let mut revert_tx = sample_tx(TxType::ContractCall);
+        revert_tx.to = Some(contract_address);
+        revert_tx.nonce = 2;
+        revert_tx.gas_limit = 120_000;
+        revert_tx.data = vec![0xde, 0xad];
+        let revert_tx = resign_tx(revert_tx);
+        let revert_artifact = sample_aoem_artifact(&revert_tx, false, [0x55; 32], None);
+        let reverted = adapter
+            .execute_transaction_with_artifact(
+                &revert_tx,
+                &mut runtime_state,
+                Some(&revert_artifact),
+            )
+            .expect("execute revert sample");
+        assert!(!reverted.status_ok);
+        assert_eq!(reverted.revert_data, Some(vec![0xde, 0xad]));
+        assert!(reverted.event_logs.is_empty());
+        assert!(reverted.log_bloom.iter().all(|byte| *byte == 0));
+        assert_eq!(
+            runtime_state.get_storage(&revert_tx.from, b"aoem:last_failure_class"),
+            Some(&b"revert".to_vec())
+        );
     }
 
     #[test]
