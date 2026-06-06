@@ -157,12 +157,15 @@ cargo run -p novovmctl -- evm-block-access-list-scan `
 - typed type2 intrinsic gas too low semantic reject: pass, `intrinsic gas too low`
 - contract failure/revert artifact baseline matrix: pass, covers revert/out-of-gas/invalid/deploy-failed classifications and receipt gas metadata
 - execution-spec/fork-rule smoke matrix: pass, covers intrinsic gas, access-list gas, Amsterdam calldata/access-list floor, precompile set, create/call/revert, storage write and rebuilt logs
+- eth/71 BAL wire smoke: pass, covers GetBlockAccessLists/BlockAccessLists payload encode/decode, frame roundtrip, malformed BAL rejection, and safe negotiation fallback to eth/70 when remote advertises eth/71
 
 这证明 `NOVOVM_ETH_SEND_RAW_TX(_FILE)` 可以作为 Novo mainline EVM host 的真实输入源，执行后产出 canonical batch 和完整 BAL hash。当前覆盖 signed legacy/type1/type2/type3 transfer smoke，以及 type1/type2 call/deploy、type3 call smoke；type3 仍是显式开关能力，不能外推到全部 fork rule / gas / blob sidecar 语义。
 
 失败路径方面，当前已经证明 raw signed transaction 在解码和签名恢复后，会进入 Novo 统一账户控制面并被 nonce gate 拒绝；typed gas 语义和 contract failure/revert artifact 仍是 adapter 层样本门禁，不声明覆盖全部 geth txpool / execution failure 行为。
 
 fork-rule 方面，当前只有最小 smoke matrix：覆盖 EVM core gas/precompile 规则和 adapter create/call/revert 执行结果，不等价于 Ethereum execution-spec 全量 fixture。
+
+eth/71 BAL wire 方面，当前只证明 BAL request/response payload 和 RLPx frame 可解析，并证明本产品不会在未完成 eth/71 peer sync 前误协商到 eth/71；这仍不是完整 eth/71 peer sync。
 
 ## Readiness 矩阵
 
@@ -176,7 +179,7 @@ fork-rule 方面，当前只有最小 smoke matrix：覆盖 EVM core gas/precomp
 | 最新 go-ethereum ethapi export parity | Pass | external fixture `sampleCount=11 totalMismatchCount=0` | 对当前本机 geth ethapi 测试数据无 mismatch |
 | typed tx failure / revert / fee edge parity | Pass | parity sections `typedTxFailure.mismatchCount=0` | 样本级可声明 |
 | reorg canonical/noncanonical log view | Pass | parity sections `logs.mismatchCount=0` | 样本级可声明 |
-| eth/71 BAL 相关 wire 能力 | Partial | 当前只验证 BAL payload/canonical/scanner；未证明完整 eth/71 peer sync | 不能声明完整 eth/71 等价 |
+| eth/71 BAL 相关 wire 能力 | Partial | BAL payload/canonical/scanner pass；eth/71 BAL wire encode/decode/frame + safe negotiation gate pass；未证明完整 eth/71 peer sync | 可声明 eth/71 BAL wire smoke；不能声明完整 eth/71 等价 |
 | Ethereum fork rules / gas accounting / precompiles | Partial | execution-spec/fork-rule smoke matrix pass；未跑 Ethereum execution-spec 全量 fixture | 可声明样本级 fork-rule gate；不能声明 EVM 语义全等价 |
 | raw Ethereum transaction ingestion/execution | Partial | signed legacy/type1/type2/type3 transfer + typed call/deploy smoke pass；raw nonce gap reject pass；typed gas/revert artifact gate pass；BAL strict scan pass | 可声明 raw transfer/call/deploy smoke 可执行且关键失败路径有 gate；不能声明 raw tx 全等价 |
 | JSON-RPC full-node surface | Partial | mainline query 有样本；未覆盖全 RPC 行为 | 不能声明 geth RPC 等价 |
@@ -198,10 +201,10 @@ fork-rule 方面，当前只有最小 smoke matrix：覆盖 EVM core gas/precomp
 
 ## 下一步门禁顺序
 
-1. 将 eth/71 BAL wire message 的 encode/decode/peer negotiation 纳入可重复 gate。
-2. 再扩展 JSON-RPC parity，从 receipt/log 样本推进到 block/tx/filter/call/estimateGas/tracing 分层矩阵。
-3. 如需要继续强化 raw tx 产品面，再补 txpool replacement、account balance/fee debit、access-list/storage warmup 的分层 gate。
-4. 如需要提高 fork-rule 置信度，再接入 Ethereum execution-spec 官方 fixture 子集，但仍作为插件门禁，不改变 SUPERVM 主产品边界。
+1. 再扩展 JSON-RPC parity，从 receipt/log 样本推进到 block/tx/filter/call/estimateGas/tracing 分层矩阵。
+2. 如需要继续强化 raw tx 产品面，再补 txpool replacement、account balance/fee debit、access-list/storage warmup 的分层 gate。
+3. 如需要提高 fork-rule 置信度，再接入 Ethereum execution-spec 官方 fixture 子集，但仍作为插件门禁，不改变 SUPERVM 主产品边界。
+4. 如需要提高 eth/71 置信度，再做真实 peer sync/capability negotiation 集成门禁，但仍不把 SUPERVM 产品口径改成 geth 全节点。
 
 ## 回归命令
 
@@ -267,4 +270,10 @@ Execution-spec/fork-rule smoke gate：
 
 ```powershell
 cargo test -p novovm-adapter-novovm evm_execution_spec_fork_rule_smoke_matrix_v1 -- --nocapture
+```
+
+eth/71 BAL wire smoke gate：
+
+```powershell
+cargo test -p novovm-network eth71_bal_wire_roundtrip_and_negotiation_gate_v1 -- --nocapture
 ```

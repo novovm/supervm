@@ -2354,6 +2354,128 @@ mod tests {
     }
 
     #[test]
+    fn eth71_bal_wire_roundtrip_and_negotiation_gate_v1() {
+        let local_caps = default_eth_rlpx_capabilities_v1();
+        assert!(!local_caps
+            .iter()
+            .any(|cap| cap.name == "eth" && cap.version == 71));
+        let remote_eth71_with_fallback = vec![
+            EthRlpxCapabilityV1 {
+                name: "eth".to_string(),
+                version: 71,
+            },
+            EthRlpxCapabilityV1 {
+                name: "eth".to_string(),
+                version: 70,
+            },
+            EthRlpxCapabilityV1 {
+                name: "snap".to_string(),
+                version: 1,
+            },
+        ];
+        assert_eq!(
+            eth_rlpx_select_shared_eth_version_v1(
+                local_caps.as_slice(),
+                remote_eth71_with_fallback.as_slice()
+            ),
+            Some(EthWireVersion::V70)
+        );
+        assert_eq!(
+            eth_rlpx_select_shared_eth_version_v1(
+                local_caps.as_slice(),
+                &[EthRlpxCapabilityV1 {
+                    name: "eth".to_string(),
+                    version: 71,
+                }]
+            ),
+            None
+        );
+
+        let get_bal_code = ETH_RLPX_BASE_PROTOCOL_OFFSET + ETH_RLPX_ETH_GET_BLOCK_ACCESS_LISTS_MSG;
+        let bal_code = ETH_RLPX_BASE_PROTOCOL_OFFSET + ETH_RLPX_ETH_BLOCK_ACCESS_LISTS_MSG;
+        assert!(eth_rlpx_is_unsupported_eth71_bal_message_v1(get_bal_code));
+        assert!(eth_rlpx_is_unsupported_eth71_bal_message_v1(bal_code));
+
+        let hashes = vec![[0x11; 32], [0x22; 32]];
+        let get_payload = eth_rlpx_build_get_block_access_lists_payload_v1(42, hashes.as_slice());
+        let parsed_get = eth_rlpx_parse_get_block_access_lists_payload_v1(get_payload.as_slice())
+            .expect("parse get BAL payload");
+        assert_eq!(parsed_get.request_id, 42);
+        assert_eq!(parsed_get.hashes, hashes);
+
+        let mut builder = novovm_protocol::EvmConstructionBlockAccessListV1::new();
+        let account = [0x33u8; 20];
+        builder.account_read(account);
+        builder.storage_write(0, account, [0x44; 32], [0x55; 32]);
+        builder.balance_change(1, account, [0x66; 32]);
+        builder.nonce_change(2, account, 7);
+        builder.code_change(3, account, vec![0x60, 0x00, 0x60, 0x01]);
+        let access_list = builder.to_access_list();
+        let access_list_rlp =
+            novovm_protocol::evm_block_access_list_rlp_bytes_v1(&access_list).expect("BAL RLP");
+        let access_list_hash =
+            novovm_protocol::evm_block_access_list_hash_v1(&access_list).expect("BAL hash");
+        assert_ne!(access_list_hash, [0u8; 32]);
+
+        let response_payload = eth_rlpx_build_block_access_lists_payload_v1(
+            42,
+            &[Some(access_list_rlp.clone()), None],
+        );
+        let parsed_response =
+            eth_rlpx_parse_block_access_lists_payload_v1(response_payload.as_slice())
+                .expect("parse BAL response");
+        assert_eq!(parsed_response.request_id, 42);
+        assert_eq!(parsed_response.lists.len(), 2);
+        assert_eq!(parsed_response.lists[0].account_count, Some(1));
+        assert_eq!(
+            parsed_response.lists[0].raw_rlp.as_deref(),
+            Some(access_list_rlp.as_slice())
+        );
+        assert_eq!(parsed_response.lists[1].raw_rlp, None);
+        assert_eq!(parsed_response.lists[1].account_count, None);
+
+        let malformed_response =
+            eth_rlpx_build_block_access_lists_payload_v1(43, &[Some(vec![0x01])]);
+        assert!(
+            eth_rlpx_parse_block_access_lists_payload_v1(malformed_response.as_slice()).is_err(),
+            "BAL response items must be RLP lists or empty-string sentinels"
+        );
+
+        let (mut writer, mut reader) = build_test_session_pair();
+        let mut wire = Vec::<u8>::new();
+        eth_rlpx_write_wire_frame_v1(&mut wire, &mut writer, get_bal_code, get_payload.as_slice())
+            .expect("write get BAL frame");
+        let (decoded_code, decoded_payload) =
+            eth_rlpx_read_wire_frame_v1(&mut wire.as_slice(), &mut reader)
+                .expect("read get BAL frame");
+        assert_eq!(decoded_code, get_bal_code);
+        assert_eq!(
+            eth_rlpx_parse_get_block_access_lists_payload_v1(decoded_payload.as_slice())
+                .expect("parse framed get BAL")
+                .hashes,
+            hashes
+        );
+
+        let mut wire = Vec::<u8>::new();
+        eth_rlpx_write_wire_frame_v1(
+            &mut wire,
+            &mut writer,
+            bal_code,
+            response_payload.as_slice(),
+        )
+        .expect("write BAL response frame");
+        let (decoded_code, decoded_payload) =
+            eth_rlpx_read_wire_frame_v1(&mut wire.as_slice(), &mut reader)
+                .expect("read BAL response frame");
+        assert_eq!(decoded_code, bal_code);
+        let framed_response =
+            eth_rlpx_parse_block_access_lists_payload_v1(decoded_payload.as_slice())
+                .expect("parse framed BAL response");
+        assert_eq!(framed_response.request_id, 42);
+        assert_eq!(framed_response.lists[0].account_count, Some(1));
+    }
+
+    #[test]
     fn responder_handshake_supports_hello_and_status_exchange() {
         let responder_signing = SigningKey::random(&mut OsRng);
         let responder_nodekey: [u8; 32] = responder_signing.to_bytes().into();
