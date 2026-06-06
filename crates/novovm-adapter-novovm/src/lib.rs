@@ -2406,9 +2406,11 @@ pub fn create_native_adapter(config: ChainConfig) -> Result<Box<dyn ChainAdapter
 #[cfg(test)]
 mod tests {
     use super::*;
+    use novovm_adapter_api::EvmAccessListEntryV1;
     use novovm_adapter_evm_core::{
-        active_precompile_set_m0, estimate_calldata_floor_gas_m0, estimate_intrinsic_gas_m0,
-        estimate_intrinsic_gas_with_access_list_rules_m0,
+        active_precompile_set_m0, estimate_access_list_execution_warm_savings_m0,
+        estimate_calldata_floor_gas_m0, estimate_eip2929_storage_read_gas_m0,
+        estimate_intrinsic_gas_m0, estimate_intrinsic_gas_with_access_list_rules_m0,
         estimate_intrinsic_gas_with_envelope_extras_m0, recover_raw_evm_tx_sender_m0,
         resolve_evm_profile, translate_raw_evm_tx_fields_m0, tx_ir_from_raw_fields_m0,
         validate_tx_semantics_m0,
@@ -2881,6 +2883,75 @@ mod tests {
             .find(|entry| entry.address.as_slice() == access_address.as_slice())
             .expect("declared access-list account read");
         assert_eq!(access_entry.storage_reads, vec![[0x01u8; 32]]);
+    }
+
+    #[test]
+    fn evm_execution_spec_access_list_warm_storage_smoke_v1() {
+        let mut tx = sample_tx(TxType::ContractCall);
+        tx.gas_limit = 120_000;
+        let target = tx.to.clone().expect("target");
+        let declared_read_slot = [0x44u8; 32];
+        tx.evm_access_list = vec![EvmAccessListEntryV1 {
+            address: target.clone(),
+            storage_keys: vec![declared_read_slot.to_vec()],
+        }];
+        let tx = resign_tx(tx);
+
+        let cold_read = estimate_eip2929_storage_read_gas_m0(1, 0);
+        let warm_read = estimate_eip2929_storage_read_gas_m0(1, 1);
+        assert_eq!(cold_read - warm_read, 2_000);
+        assert_eq!(estimate_access_list_execution_warm_savings_m0(1, 1), 4_500);
+
+        let mut adapter = NovoVmAdapter::new(ChainConfig {
+            chain_type: ChainType::EVM,
+            chain_id: 1,
+            name: "access-list-warm-storage-smoke".to_string(),
+            enabled: true,
+            custom_config: None,
+        });
+        adapter.initialize().expect("init");
+        let mut runtime_state = StateIR::new();
+        fund_sender_for_test(&mut runtime_state, &tx, 1_000_000);
+
+        let outcome = adapter
+            .execute_transaction_with_observed_metadata_v1(&tx, &mut runtime_state, None)
+            .expect("execute access-list warm storage call");
+        assert!(outcome.artifact.status_ok);
+        assert!(
+            outcome
+                .observed_block_access_list
+                .block_access_list_complete
+        );
+        let block_access_list = outcome
+            .observed_block_access_list
+            .block_access_list
+            .expect("observed block access list");
+        let target_entry = block_access_list
+            .0
+            .iter()
+            .find(|entry| entry.address.as_slice() == target.as_slice())
+            .expect("target entry");
+        assert!(
+            target_entry.storage_reads.contains(&declared_read_slot),
+            "access-list declared storage key must remain observable as a warm read"
+        );
+
+        let write_slot =
+            NovoVmAdapter::bytes_to_bal_word32_v1(b"novovm-bal-slot-v1", &tx.nonce.to_le_bytes());
+        assert!(
+            target_entry
+                .storage_changes
+                .iter()
+                .any(|change| change.slot == write_slot),
+            "contract call SSTORE slot must remain observable as a write"
+        );
+        assert!(
+            target_entry
+                .storage_changes
+                .iter()
+                .all(|change| change.slot != declared_read_slot),
+            "declared warm read must not be collapsed into the SSTORE write slot"
+        );
     }
 
     #[test]
@@ -3454,6 +3525,7 @@ mod tests {
         execute_tracked_sender_rejects_insufficient_value_fee_v1();
         tx_intrinsic_gas_includes_type1_access_list_extras_v1();
         execute_raw_type1_access_list_emits_declared_storage_reads_v1();
+        evm_execution_spec_access_list_warm_storage_smoke_v1();
         execute_transaction_with_observed_metadata_emits_complete_contract_call_evm_bal();
         execute_transaction_with_observed_metadata_emits_complete_contract_deploy_evm_bal();
     }

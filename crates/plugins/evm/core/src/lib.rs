@@ -1160,8 +1160,52 @@ pub fn estimate_access_list_intrinsic_extra_gas_m0(
     access_list_storage_key_count: u64,
 ) -> u64 {
     access_list_address_count
-        .saturating_mul(2_400)
-        .saturating_add(access_list_storage_key_count.saturating_mul(1_900))
+        .saturating_mul(EVM_ACCESS_LIST_ADDRESS_INTRINSIC_GAS_M0)
+        .saturating_add(
+            access_list_storage_key_count
+                .saturating_mul(EVM_ACCESS_LIST_STORAGE_KEY_INTRINSIC_GAS_M0),
+        )
+}
+
+pub const EVM_WARM_ACCESS_GAS_M0: u64 = 100;
+pub const EVM_COLD_ACCOUNT_ACCESS_GAS_M0: u64 = 2_600;
+pub const EVM_COLD_SLOAD_GAS_M0: u64 = 2_100;
+pub const EVM_ACCESS_LIST_ADDRESS_INTRINSIC_GAS_M0: u64 = 2_400;
+pub const EVM_ACCESS_LIST_STORAGE_KEY_INTRINSIC_GAS_M0: u64 = 1_900;
+
+#[must_use]
+pub fn estimate_eip2929_account_access_gas_m0(
+    account_access_count: u64,
+    warm_account_access_count: u64,
+) -> u64 {
+    let warm = warm_account_access_count.min(account_access_count);
+    let cold = account_access_count.saturating_sub(warm);
+    cold.saturating_mul(EVM_COLD_ACCOUNT_ACCESS_GAS_M0)
+        .saturating_add(warm.saturating_mul(EVM_WARM_ACCESS_GAS_M0))
+}
+
+#[must_use]
+pub fn estimate_eip2929_storage_read_gas_m0(
+    storage_read_count: u64,
+    warm_storage_read_count: u64,
+) -> u64 {
+    let warm = warm_storage_read_count.min(storage_read_count);
+    let cold = storage_read_count.saturating_sub(warm);
+    cold.saturating_mul(EVM_COLD_SLOAD_GAS_M0)
+        .saturating_add(warm.saturating_mul(EVM_WARM_ACCESS_GAS_M0))
+}
+
+#[must_use]
+pub fn estimate_access_list_execution_warm_savings_m0(
+    access_list_address_count: u64,
+    access_list_storage_key_count: u64,
+) -> u64 {
+    access_list_address_count
+        .saturating_mul(EVM_COLD_ACCOUNT_ACCESS_GAS_M0.saturating_sub(EVM_WARM_ACCESS_GAS_M0))
+        .saturating_add(
+            access_list_storage_key_count
+                .saturating_mul(EVM_COLD_SLOAD_GAS_M0.saturating_sub(EVM_WARM_ACCESS_GAS_M0)),
+        )
 }
 
 #[must_use]
@@ -1943,6 +1987,38 @@ mod tests {
         let amsterdam = estimate_intrinsic_gas_with_access_list_rules_m0(&tx, 2, 3, true);
         let expected_extra = 2 * 20 * 4 * 16 + 3 * 32 * 4 * 16;
         assert_eq!(amsterdam, pre_amsterdam + expected_extra);
+    }
+
+    #[test]
+    fn access_list_warm_storage_read_reduces_execution_gas_m0() {
+        let cold_read = estimate_eip2929_storage_read_gas_m0(1, 0);
+        let warm_read = estimate_eip2929_storage_read_gas_m0(1, 1);
+
+        assert_eq!(cold_read, EVM_COLD_SLOAD_GAS_M0);
+        assert_eq!(warm_read, EVM_WARM_ACCESS_GAS_M0);
+        assert_eq!(cold_read - warm_read, 2_000);
+        assert_eq!(estimate_access_list_execution_warm_savings_m0(0, 1), 2_000);
+        assert_eq!(
+            estimate_access_list_execution_warm_savings_m0(0, 1)
+                - estimate_access_list_intrinsic_extra_gas_m0(0, 1),
+            100
+        );
+    }
+
+    #[test]
+    fn access_list_warm_account_access_reduces_execution_gas_m0() {
+        let cold_access = estimate_eip2929_account_access_gas_m0(1, 0);
+        let warm_access = estimate_eip2929_account_access_gas_m0(1, 1);
+
+        assert_eq!(cold_access, EVM_COLD_ACCOUNT_ACCESS_GAS_M0);
+        assert_eq!(warm_access, EVM_WARM_ACCESS_GAS_M0);
+        assert_eq!(cold_access - warm_access, 2_500);
+        assert_eq!(estimate_access_list_execution_warm_savings_m0(1, 0), 2_500);
+        assert_eq!(
+            estimate_access_list_execution_warm_savings_m0(1, 0)
+                - estimate_access_list_intrinsic_extra_gas_m0(1, 0),
+            100
+        );
     }
 
     #[test]
