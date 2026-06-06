@@ -153,8 +153,13 @@ cargo run -p novovmctl -- evm-block-access-list-scan `
 - signed type1 contract call/deploy smoke: pass, BAL strict scan `problems=0 complete_with_hash=1`
 - signed type2 contract call/deploy smoke: pass, BAL strict scan `problems=0 complete_with_hash=1`
 - signed type3 contract call smoke: pass with `NOVOVM_EVM_ENABLE_TYPE3_WRITE_CHAIN_1=1`, BAL strict scan `problems=0 complete_with_hash=1`
+- raw signed legacy nonce gap -> adapter unified-account ingress reject: pass, `nonce rejected: expected 1, got 9`
+- typed type2 intrinsic gas too low semantic reject: pass, `intrinsic gas too low`
+- contract failure/revert artifact baseline matrix: pass, covers revert/out-of-gas/invalid/deploy-failed classifications and receipt gas metadata
 
 这证明 `NOVOVM_ETH_SEND_RAW_TX(_FILE)` 可以作为 Novo mainline EVM host 的真实输入源，执行后产出 canonical batch 和完整 BAL hash。当前覆盖 signed legacy/type1/type2/type3 transfer smoke，以及 type1/type2 call/deploy、type3 call smoke；type3 仍是显式开关能力，不能外推到全部 fork rule / gas / blob sidecar 语义。
+
+失败路径方面，当前已经证明 raw signed transaction 在解码和签名恢复后，会进入 Novo 统一账户控制面并被 nonce gate 拒绝；typed gas 语义和 contract failure/revert artifact 仍是 adapter 层样本门禁，不声明覆盖全部 geth txpool / execution failure 行为。
 
 ## Readiness 矩阵
 
@@ -170,7 +175,7 @@ cargo run -p novovmctl -- evm-block-access-list-scan `
 | reorg canonical/noncanonical log view | Pass | parity sections `logs.mismatchCount=0` | 样本级可声明 |
 | eth/71 BAL 相关 wire 能力 | Partial | 当前只验证 BAL payload/canonical/scanner；未证明完整 eth/71 peer sync | 不能声明完整 eth/71 等价 |
 | Ethereum fork rules / gas accounting / precompiles | Not claimed | 未跑 Ethereum execution-spec 全量 fixture | 不能声明 EVM 语义全等价 |
-| raw Ethereum transaction ingestion/execution | Partial | signed legacy/type1/type2/type3 transfer + typed call/deploy smoke pass, BAL strict scan pass | 可声明 raw transfer/call/deploy smoke 可执行；不能声明 raw tx 全等价 |
+| raw Ethereum transaction ingestion/execution | Partial | signed legacy/type1/type2/type3 transfer + typed call/deploy smoke pass；raw nonce gap reject pass；typed gas/revert artifact gate pass；BAL strict scan pass | 可声明 raw transfer/call/deploy smoke 可执行且关键失败路径有 gate；不能声明 raw tx 全等价 |
 | JSON-RPC full-node surface | Partial | mainline query 有样本；未覆盖全 RPC 行为 | 不能声明 geth RPC 等价 |
 | devp2p/RLPx peer sync / block import | Partial | 有 gateway/network 代码和 canary，但未作为本矩阵通过项 | 不能声明以太坊全节点 |
 
@@ -190,10 +195,10 @@ cargo run -p novovmctl -- evm-block-access-list-scan `
 
 ## 下一步门禁顺序
 
-1. 把 raw Ethereum tx smoke 从成功路径扩展到失败/revert，覆盖 invalid nonce、intrinsic gas too low、contract failure artifact。
-2. 增加 Ethereum execution-spec/fork-rule 样本门禁，至少覆盖 gas、precompile、create/call/revert、storage、logs。
-3. 将 eth/71 BAL wire message 的 encode/decode/peer negotiation 纳入可重复 gate。
-4. 再扩展 JSON-RPC parity，从 receipt/log 样本推进到 block/tx/filter/call/estimateGas/tracing 分层矩阵。
+1. 增加 Ethereum execution-spec/fork-rule 样本门禁，至少覆盖 gas、precompile、create/call/revert、storage、logs。
+2. 将 eth/71 BAL wire message 的 encode/decode/peer negotiation 纳入可重复 gate。
+3. 再扩展 JSON-RPC parity，从 receipt/log 样本推进到 block/tx/filter/call/estimateGas/tracing 分层矩阵。
+4. 如需要继续强化 raw tx 产品面，再补 txpool replacement、account balance/fee debit、access-list/storage warmup 的分层 gate。
 
 ## 回归命令
 
@@ -245,4 +250,12 @@ cargo run -p novovmctl -- evm-block-access-list-scan --store-path artifacts/main
 cargo run -p novovmctl -- evm-block-access-list-scan --store-path artifacts/mainline/evm-raw-real-smoke/canonical-type2-call-20260606.json --latest-count 16 --require-payload --require-complete --require-hash-when-complete
 cargo run -p novovmctl -- evm-block-access-list-scan --store-path artifacts/mainline/evm-raw-real-smoke/canonical-type2-deploy-20260606.json --latest-count 16 --require-payload --require-complete --require-hash-when-complete
 cargo run -p novovmctl -- evm-block-access-list-scan --store-path artifacts/mainline/evm-raw-real-smoke/canonical-type3-call-20260606.json --latest-count 16 --require-payload --require-complete --require-hash-when-complete
+```
+
+Raw/failure path regression gates：
+
+```powershell
+cargo test -p novovm-node eth_send_raw_tx_ingress_tests --bin novovm-node -- --nocapture
+cargo test -p novovm-adapter-novovm typed_type2_semantics_reject_intrinsic_gas_too_low_v1 -- --nocapture
+cargo test -p novovm-adapter-novovm evm_equivalence_baseline_matrix_receipt_revert_gas_v1 -- --nocapture
 ```

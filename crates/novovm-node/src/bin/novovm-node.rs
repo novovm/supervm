@@ -332,6 +332,7 @@ fn derive_mainline_host_exec_targets_v1(
 #[cfg(test)]
 mod eth_send_raw_tx_ingress_tests {
     use super::*;
+    use novovm_adapter_api::{ChainAdapter, ChainConfig, StateIR};
 
     static EVM_TYPE3_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
@@ -444,6 +445,62 @@ mod eth_send_raw_tx_ingress_tests {
         assert_eq!(tx.value, 1);
         assert_eq!(tx.tx_type, novovm_adapter_api::TxType::Transfer);
         assert_eq!(tx.signature, payload);
+    }
+
+    #[test]
+    fn eth_send_raw_payload_to_adapter_v1_rejects_nonce_gap() {
+        let nonce0_raw_tx_hex = "0xf864808504a817c800825208943535353535353535353535353535353535353535018025a0cb1ae5eeb22ada6e0cc8090f480d614711af806a2534b7651ab9577617cf6078a0420db11989647a09a73eefbba26361a2b065ffd41c41ba84089584ce267f7fbe";
+        let nonce9_raw_tx_hex = "0xf86c098504a817c800825208943535353535353535353535353535353535353535880de0b6b3a76400008025a028ef61340bd939bc2195fe537567866003e1a15d3c71ff63e1590620aa636276a067cbe9d8997f761aecb703304b3800ccf555c9f3dc64214b297fb1966a3b6d83";
+        let nonce0_payload =
+            decode_hex_payload_v1(nonce0_raw_tx_hex, "nonce0_raw_tx").expect("decode nonce0");
+        let nonce9_payload =
+            decode_hex_payload_v1(nonce9_raw_tx_hex, "nonce9_raw_tx").expect("decode nonce9");
+        let nonce0_tx = eth_send_raw_payload_to_tx_ir_v1(nonce0_payload.as_slice(), 1)
+            .expect("nonce0 signed raw tx should translate to tx ir");
+        let nonce9_tx = eth_send_raw_payload_to_tx_ir_v1(nonce9_payload.as_slice(), 1)
+            .expect("nonce9 signed raw tx should translate to tx ir");
+
+        assert_eq!(
+            nonce0_tx.from, nonce9_tx.from,
+            "fixtures must use the same EVM sender"
+        );
+        assert_eq!(nonce0_tx.nonce, 0);
+        assert_eq!(nonce9_tx.nonce, 9);
+
+        let mut adapter = novovm_adapter_novovm::NovoVmAdapter::new(ChainConfig {
+            chain_type: ChainType::EVM,
+            chain_id: 1,
+            name: "EVM".to_string(),
+            enabled: true,
+            custom_config: None,
+        });
+        adapter.initialize().expect("init evm adapter");
+
+        let mut state = StateIR::new();
+        assert!(
+            adapter
+                .verify_transaction(&nonce0_tx)
+                .expect("verify nonce0 raw tx"),
+            "nonce0 raw tx should pass signature and shape validation"
+        );
+        adapter
+            .execute_transaction(&nonce0_tx, &mut state)
+            .expect("nonce0 raw tx should execute first");
+        assert!(
+            adapter
+                .verify_transaction(&nonce9_tx)
+                .expect("verify nonce9 raw tx"),
+            "nonce9 raw tx should pass signature and shape validation before nonce gate"
+        );
+
+        let err = adapter
+            .execute_transaction(&nonce9_tx, &mut state)
+            .expect_err("nonce gap should be rejected by unified account ingress guard");
+        let err = err.to_string();
+        assert!(
+            err.contains("nonce rejected: expected 1, got 9"),
+            "unexpected nonce rejection error: {err}"
+        );
     }
 
     #[test]
