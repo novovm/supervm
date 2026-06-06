@@ -147,8 +147,11 @@ cargo run -p novovmctl -- evm-block-access-list-scan `
 - signed legacy raw tx -> recovered sender -> EVM `TxIR`: pass
 - raw tx mainline host execution: `submitted_total=1 processed_total=1 success_total=1 canonical_batches_total=1`
 - raw tx canonical BAL strict scan: `problems=0 complete_with_hash=1`
+- signed type1 access-list transfer smoke: pass, BAL strict scan `problems=0 complete_with_hash=1`
+- signed type2 dynamic-fee transfer smoke: pass, BAL strict scan `problems=0 complete_with_hash=1`
+- signed type3 blob transfer smoke: pass with `NOVOVM_EVM_ENABLE_TYPE3_WRITE_CHAIN_1=1`, BAL strict scan `problems=0 complete_with_hash=1`
 
-这证明 `NOVOVM_ETH_SEND_RAW_TX(_FILE)` 可以作为 Novo mainline EVM host 的真实输入源，执行后产出 canonical batch 和完整 BAL hash。当前只覆盖 signed legacy transfer smoke，不能外推到全部 typed transaction / fork rule / gas 语义。
+这证明 `NOVOVM_ETH_SEND_RAW_TX(_FILE)` 可以作为 Novo mainline EVM host 的真实输入源，执行后产出 canonical batch 和完整 BAL hash。当前覆盖 signed legacy/type1/type2/type3 transfer smoke；type3 仍是显式开关能力，不能外推到全部 fork rule / gas / blob sidecar 语义。
 
 ## Readiness 矩阵
 
@@ -164,7 +167,7 @@ cargo run -p novovmctl -- evm-block-access-list-scan `
 | reorg canonical/noncanonical log view | Pass | parity sections `logs.mismatchCount=0` | 样本级可声明 |
 | eth/71 BAL 相关 wire 能力 | Partial | 当前只验证 BAL payload/canonical/scanner；未证明完整 eth/71 peer sync | 不能声明完整 eth/71 等价 |
 | Ethereum fork rules / gas accounting / precompiles | Not claimed | 未跑 Ethereum execution-spec 全量 fixture | 不能声明 EVM 语义全等价 |
-| raw Ethereum transaction ingestion/execution | Partial | signed legacy transfer mainline smoke pass, BAL strict scan pass | 可声明 raw legacy transfer smoke 可执行；不能声明 raw tx 全等价 |
+| raw Ethereum transaction ingestion/execution | Partial | signed legacy/type1/type2/type3 transfer mainline smoke pass, BAL strict scan pass | 可声明 raw transfer smoke 可执行；不能声明 raw tx 全等价 |
 | JSON-RPC full-node surface | Partial | mainline query 有样本；未覆盖全 RPC 行为 | 不能声明 geth RPC 等价 |
 | devp2p/RLPx peer sync / block import | Partial | 有 gateway/network 代码和 canary，但未作为本矩阵通过项 | 不能声明以太坊全节点 |
 
@@ -184,7 +187,7 @@ cargo run -p novovmctl -- evm-block-access-list-scan `
 
 ## 下一步门禁顺序
 
-1. 把 raw Ethereum typed tx（type1/type2/type3）逐步接入真实执行 smoke，先覆盖成功 transfer/call/deploy，再覆盖失败/revert。
+1. 把 raw Ethereum typed tx 从 transfer smoke 扩展到 contract call/deploy，再覆盖失败/revert。
 2. 增加 Ethereum execution-spec/fork-rule 样本门禁，至少覆盖 gas、precompile、create/call/revert、storage、logs。
 3. 将 eth/71 BAL wire message 的 encode/decode/peer negotiation 纳入可重复 gate。
 4. 再扩展 JSON-RPC parity，从 receipt/log 样本推进到 block/tx/filter/call/estimateGas/tracing 分层矩阵。
@@ -226,4 +229,12 @@ cargo run -p novovm-node --bin novovm-node -- `
   --mainline-evm-chain-id 1 `
   --mainline-evm-canonical-store-path artifacts/mainline/evm-raw-real-smoke/canonical-raw-20260606.json `
   --d1-ingress-mode auto
+```
+
+Raw typed tx BAL strict scan stores：
+
+```powershell
+cargo run -p novovmctl -- evm-block-access-list-scan --store-path artifacts/mainline/evm-raw-real-smoke/canonical-type1-20260606.json --latest-count 16 --require-payload --require-complete --require-hash-when-complete
+cargo run -p novovmctl -- evm-block-access-list-scan --store-path artifacts/mainline/evm-raw-real-smoke/canonical-type2-20260606.json --latest-count 16 --require-payload --require-complete --require-hash-when-complete
+cargo run -p novovmctl -- evm-block-access-list-scan --store-path artifacts/mainline/evm-raw-real-smoke/canonical-type3-20260606.json --latest-count 16 --require-payload --require-complete --require-hash-when-complete
 ```

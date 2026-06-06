@@ -419,6 +419,74 @@ mod eth_send_raw_tx_ingress_tests {
     }
 
     #[test]
+    fn eth_send_raw_payload_to_tx_ir_v1_accepts_signed_type1_transfer() {
+        let raw_tx_hex = "0x01f86601808504a817c80082c3509435353535353535353535353535353535353535350180c001a0ed87936dd64fb90fd3a3da715e41ae38298f756d6ed01c56f6b284d4fde599e9a035447ef0a16c86c3826c0108e764ace64d0cc7c96dcdedca7708942b84389e06";
+        let payload = decode_hex_payload_v1(raw_tx_hex, "raw_tx").expect("decode type1 raw tx");
+
+        let tx = eth_send_raw_payload_to_tx_ir_v1(payload.as_slice(), 1)
+            .expect("type1 signed raw tx should translate to tx ir");
+
+        assert_eq!(
+            to_hex_prefixed(&tx.from),
+            "0x9d8a62f656a8d1615c1294fd71e9cfb3e4855a4f"
+        );
+        assert_eq!(tx.chain_id, 1);
+        assert_eq!(tx.nonce, 0);
+        assert_eq!(tx.gas_limit, 50_000);
+        assert_eq!(tx.gas_price, 20_000_000_000);
+        assert_eq!(tx.tx_type, novovm_adapter_api::TxType::Transfer);
+        assert_eq!(tx.signature, payload);
+    }
+
+    #[test]
+    fn eth_send_raw_payload_to_tx_ir_v1_accepts_signed_type2_transfer() {
+        let raw_tx_hex = "0x02f86b0180843b9aca008504a817c80082c3509435353535353535353535353535353535353535350180c080a040f728b9d668b72de626669c08a8d2309a8e27eb219c25c4be462b2d340eb341a07f2a438968937fbaba1b9e75d8b66fd9cc459bf9f69ae613d2c7704ae257a3f3";
+        let payload = decode_hex_payload_v1(raw_tx_hex, "raw_tx").expect("decode type2 raw tx");
+
+        let tx = eth_send_raw_payload_to_tx_ir_v1(payload.as_slice(), 1)
+            .expect("type2 signed raw tx should translate to tx ir");
+
+        assert_eq!(
+            to_hex_prefixed(&tx.from),
+            "0x9d8a62f656a8d1615c1294fd71e9cfb3e4855a4f"
+        );
+        assert_eq!(tx.chain_id, 1);
+        assert_eq!(tx.nonce, 0);
+        assert_eq!(tx.gas_limit, 50_000);
+        assert_eq!(tx.gas_price, 20_000_000_000);
+        assert_eq!(tx.tx_type, novovm_adapter_api::TxType::Transfer);
+        assert_eq!(tx.signature, payload);
+    }
+
+    #[test]
+    fn eth_send_raw_payload_to_tx_ir_v1_accepts_signed_type3_transfer_when_enabled() {
+        let captured = std::env::var("NOVOVM_EVM_ENABLE_TYPE3_WRITE_CHAIN_1").ok();
+        std::env::set_var("NOVOVM_EVM_ENABLE_TYPE3_WRITE_CHAIN_1", "1");
+        let raw_tx_hex = "0x03f8930180843b9aca008504a817c80083030d409435353535353535353535353535353535353535350180c0843b9aca00e1a0010101010101010101010101010101010101010101010101010101010101010180a07bc5f130ef201b9438e86d2c7043c4f364c74eab94f04e001396a2cd87c1c19aa04e02ebc48abe83f9f56dee0d37682a1b01e2f81a24bdd9a00a03cbe8bb9f2865";
+        let payload = decode_hex_payload_v1(raw_tx_hex, "raw_tx").expect("decode type3 raw tx");
+
+        let out = eth_send_raw_payload_to_tx_ir_v1(payload.as_slice(), 1);
+
+        if let Some(value) = captured {
+            std::env::set_var("NOVOVM_EVM_ENABLE_TYPE3_WRITE_CHAIN_1", value);
+        } else {
+            std::env::remove_var("NOVOVM_EVM_ENABLE_TYPE3_WRITE_CHAIN_1");
+        }
+        let tx = out.expect("type3 signed raw tx should translate when enabled");
+
+        assert_eq!(
+            to_hex_prefixed(&tx.from),
+            "0x9d8a62f656a8d1615c1294fd71e9cfb3e4855a4f"
+        );
+        assert_eq!(tx.chain_id, 1);
+        assert_eq!(tx.nonce, 0);
+        assert_eq!(tx.gas_limit, 200_000);
+        assert_eq!(tx.gas_price, 20_000_000_000);
+        assert_eq!(tx.tx_type, novovm_adapter_api::TxType::Transfer);
+        assert_eq!(tx.signature, payload);
+    }
+
+    #[test]
     fn run_eth_send_raw_transaction_from_params_v1_returns_hash_and_tracks_pending() {
         let chain_id = 98_877_662;
         let raw_tx_hex =
