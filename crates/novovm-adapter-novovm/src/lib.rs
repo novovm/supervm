@@ -2661,6 +2661,40 @@ mod tests {
         out
     }
 
+    fn decode_hex_u128(hex: &str) -> u128 {
+        let normalized = hex.trim_start_matches("0x");
+        if normalized.is_empty() {
+            return 0;
+        }
+        u128::from_str_radix(normalized, 16).expect("hex u128")
+    }
+
+    fn json_str<'a>(value: &'a serde_json::Value, field: &str) -> &'a str {
+        value
+            .as_str()
+            .unwrap_or_else(|| panic!("{field} must be a JSON string"))
+    }
+
+    fn json_hex_u128(value: &serde_json::Value, field: &str) -> u128 {
+        decode_hex_u128(json_str(value, field))
+    }
+
+    fn official_eip1559_sender_balance_state_fixture_v1() -> serde_json::Value {
+        serde_json::from_str(include_str!(
+            "../tests/fixtures/ethereum-official-state-subset/senderBalance.json"
+        ))
+        .expect("decode official EIP-1559 sender balance state fixture")
+    }
+
+    fn first_official_state_fixture_case_v1(fixture: &serde_json::Value) -> &serde_json::Value {
+        fixture
+            .as_object()
+            .expect("official state fixture object")
+            .values()
+            .next()
+            .expect("official state fixture case")
+    }
+
     fn test_rlp_encode_len(prefix_small: u8, prefix_long: u8, len: usize) -> Vec<u8> {
         if len <= 55 {
             return vec![prefix_small + (len as u8)];
@@ -4020,6 +4054,176 @@ mod tests {
     }
 
     #[test]
+    fn official_state_fixture_eip1559_sender_balance_fee_debit_v1() {
+        let fixture = official_eip1559_sender_balance_state_fixture_v1();
+        let case = first_official_state_fixture_case_v1(&fixture);
+        assert_eq!(case["_info"]["fixture-format"].as_str(), Some("state_test"));
+        assert_eq!(case["_info"]["repo"].as_str(), Some("ethereum/tests"));
+        assert_eq!(
+            case["_info"]["source"].as_str(),
+            Some("src/GeneralStateTestsFiller/stEIP1559/senderBalanceFiller.yml")
+        );
+
+        let env = &case["env"];
+        let transaction = &case["transaction"];
+        let post = &case["post"]["Cancun"][0];
+        let sender = json_str(&transaction["sender"], "transaction.sender");
+        let to = json_str(&transaction["to"], "transaction.to");
+        let coinbase = json_str(&env["currentCoinbase"], "env.currentCoinbase");
+
+        let pre_sender_balance =
+            json_hex_u128(&case["pre"][sender]["balance"], "pre.sender.balance");
+        let post_sender_balance =
+            json_hex_u128(&post["state"][sender]["balance"], "post.sender.balance");
+        let post_coinbase_balance =
+            json_hex_u128(&post["state"][coinbase]["balance"], "post.coinbase.balance");
+        let execution_visible_sender_balance =
+            json_hex_u128(&post["state"][to]["storage"]["0x00"], "post.to.storage.0");
+        let pre_to_balance = json_hex_u128(&case["pre"][to]["balance"], "pre.to.balance");
+        let post_to_balance = json_hex_u128(&post["state"][to]["balance"], "post.to.balance");
+        let gas_limit = json_hex_u128(&transaction["gasLimit"][0], "transaction.gasLimit[0]");
+        let max_fee_per_gas =
+            json_hex_u128(&transaction["maxFeePerGas"], "transaction.maxFeePerGas");
+        let max_priority_fee_per_gas = json_hex_u128(
+            &transaction["maxPriorityFeePerGas"],
+            "transaction.maxPriorityFeePerGas",
+        );
+        let base_fee = json_hex_u128(&env["currentBaseFee"], "env.currentBaseFee");
+        let effective_gas_price = max_fee_per_gas.min(base_fee + max_priority_fee_per_gas);
+
+        assert_eq!(effective_gas_price, 111);
+        assert_eq!(
+            execution_visible_sender_balance,
+            pre_sender_balance - gas_limit * effective_gas_price,
+            "official state fixture records sender BALANCE after effective-price gas precharge"
+        );
+        assert_ne!(
+            execution_visible_sender_balance,
+            pre_sender_balance - gas_limit * max_fee_per_gas,
+            "official state fixture must not use maxFeePerGas for execution-visible balance"
+        );
+
+        let final_fee = pre_sender_balance - post_sender_balance;
+        assert_eq!(final_fee % effective_gas_price, 0);
+        let gas_used = final_fee / effective_gas_price;
+        assert_eq!(gas_used, 43_205);
+        assert_eq!(
+            post_coinbase_balance,
+            gas_used * max_priority_fee_per_gas,
+            "coinbase receives priority fee; base fee is burned"
+        );
+
+        let mut adapter = NovoVmAdapter::new(ChainConfig {
+            chain_type: ChainType::EVM,
+            chain_id: json_hex_u128(&case["config"]["chainid"], "config.chainid") as u64,
+            name: "official-eip1559-sender-balance".to_string(),
+            enabled: true,
+            custom_config: None,
+        });
+        adapter.initialize().expect("init");
+
+        let raw_tx = decode_hex_bytes(json_str(&post["txbytes"], "post.txbytes"));
+        let recovered_sender = recover_raw_evm_tx_sender_m0(&raw_tx)
+            .expect("official fixture raw sender recovery")
+            .expect("official fixture recovered sender");
+        assert_eq!(recovered_sender, decode_hex_bytes(sender));
+        let fields = translate_raw_evm_tx_fields_m0(&raw_tx).expect("official raw tx decode");
+        let tx = tx_ir_from_raw_fields_m0(
+            &fields,
+            &raw_tx,
+            recovered_sender,
+            json_hex_u128(&case["config"]["chainid"], "config.chainid") as u64,
+        );
+        assert_eq!(tx.from, decode_hex_bytes(sender));
+        assert_eq!(tx.to, Some(decode_hex_bytes(to)));
+        assert_eq!(
+            tx.value,
+            json_hex_u128(&transaction["value"][0], "transaction.value[0]")
+        );
+        assert_eq!(tx.gas_limit, gas_limit as u64);
+        assert_eq!(tx.gas_price, max_fee_per_gas as u64);
+        assert_eq!(
+            tx.nonce,
+            json_hex_u128(&transaction["nonce"], "transaction.nonce") as u64
+        );
+        assert_eq!(
+            tx.data,
+            decode_hex_bytes(json_str(&transaction["data"][0], "transaction.data[0]"))
+        );
+        assert!(
+            adapter
+                .verify_transaction(&tx)
+                .expect("verify official raw tx"),
+            "official state fixture txbytes must verify through the raw EVM path"
+        );
+
+        let mut runtime_state = StateIR::new();
+        runtime_state.set_account(
+            tx.from.clone(),
+            AccountState {
+                balance: pre_sender_balance,
+                nonce: tx.nonce,
+                code_hash: None,
+                storage_root: vec![0u8; 32],
+            },
+        );
+        runtime_state.set_account(
+            tx.to.clone().expect("call target"),
+            AccountState {
+                balance: pre_to_balance,
+                nonce: json_hex_u128(&case["pre"][to]["nonce"], "pre.to.nonce") as u64,
+                code_hash: Some(decode_hex_bytes(json_str(
+                    &case["pre"][to]["code"],
+                    "pre.to.code",
+                ))),
+                storage_root: vec![0u8; 32],
+            },
+        );
+
+        let mut artifact = sample_aoem_artifact(&tx, true, [0x82; 32], None);
+        artifact.gas_used = gas_used as u64;
+        artifact.cumulative_gas_used = gas_used as u64;
+        artifact.effective_gas_price = Some(effective_gas_price as u64);
+        artifact.event_logs.clear();
+        artifact.log_bloom = vec![0u8; 256];
+
+        let outcome = adapter
+            .execute_transaction_with_observed_metadata_v1(&tx, &mut runtime_state, Some(&artifact))
+            .expect("execute official EIP-1559 sender balance fixture projection");
+
+        assert!(outcome.artifact.status_ok);
+        assert_eq!(
+            runtime_state.get_account(&tx.from).map(|acc| acc.balance),
+            Some(post_sender_balance)
+        );
+        assert_ne!(
+            runtime_state.get_account(&tx.from).map(|acc| acc.balance),
+            Some(pre_sender_balance - gas_used * max_fee_per_gas),
+            "SUPERVM adapter must not settle this official fixture using maxFeePerGas"
+        );
+        assert_eq!(
+            runtime_state
+                .get_account(tx.to.as_ref().expect("call target"))
+                .map(|acc| acc.balance),
+            Some(post_to_balance)
+        );
+
+        let bal = outcome
+            .observed_block_access_list
+            .block_access_list
+            .expect("official fixture observed BAL");
+        let sender_entry = bal
+            .0
+            .iter()
+            .find(|entry| entry.address.as_slice() == tx.from.as_slice())
+            .expect("sender BAL entry");
+        assert_eq!(
+            sender_entry.balance_changes[0].post_balance,
+            NovoVmAdapter::u128_to_be32_v1(post_sender_balance)
+        );
+    }
+
+    #[test]
     fn execute_tracked_sender_rejects_insufficient_value_fee_v1() {
         let mut adapter = NovoVmAdapter::new(ChainConfig {
             chain_type: ChainType::EVM,
@@ -4176,6 +4380,7 @@ mod tests {
         evm_execution_spec_sstore_refund_cap_fee_debit_v1();
         evm_execution_spec_account_balance_value_fee_invariants_v1();
         evm_execution_spec_effective_gas_price_fee_debit_v1();
+        official_state_fixture_eip1559_sender_balance_fee_debit_v1();
         execute_tracked_sender_rejects_insufficient_value_fee_v1();
         tx_intrinsic_gas_includes_type1_access_list_extras_v1();
         execute_raw_type1_access_list_emits_declared_storage_reads_v1();
