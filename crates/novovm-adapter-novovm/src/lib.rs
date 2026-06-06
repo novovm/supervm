@@ -14,9 +14,9 @@ use novovm_adapter_api::{
     TxType, UnifiedAccountError, UnifiedAccountRouter,
 };
 use novovm_adapter_evm_core::{
-    estimate_intrinsic_gas_with_envelope_extras_for_chain_m0, recover_raw_evm_tx_sender_m0,
-    resolve_evm_profile, translate_raw_evm_tx_fields_m0, tx_ir_from_raw_fields_m0,
-    validate_tx_semantics_m0,
+    derive_create_contract_address_m0, estimate_intrinsic_gas_with_envelope_extras_for_chain_m0,
+    recover_raw_evm_tx_sender_m0, resolve_evm_profile, translate_raw_evm_tx_fields_m0,
+    tx_ir_from_raw_fields_m0, validate_tx_semantics_m0,
 };
 use novovm_exec::{
     aoem_failure_recoverability_from_class_v1, classify_failure_from_anchor_v1,
@@ -412,12 +412,7 @@ impl NovoVmAdapter {
     }
 
     fn derive_contract_address(from: &[u8], nonce: u64) -> Vec<u8> {
-        let mut hasher = Sha256::new();
-        hasher.update(b"novovm_contract_address_v1");
-        hasher.update(from);
-        hasher.update(nonce.to_le_bytes());
-        let digest: [u8; 32] = hasher.finalize().into();
-        digest[12..32].to_vec()
+        derive_create_contract_address_m0(from, nonce)
     }
 
     fn tx_hash_or_compute(tx: &TxIR) -> Vec<u8> {
@@ -466,11 +461,42 @@ impl NovoVmAdapter {
         is_eip7610_rejected_account_v1(tx.chain_id, &contract_address)
     }
 
-    fn effective_tx_execution_status_ok(
+    fn deploy_contract_address_v1(
         tx: &TxIR,
         artifact: Option<&AoemTxExecutionArtifactV1>,
+    ) -> Vec<u8> {
+        artifact
+            .and_then(|item| item.contract_address.clone())
+            .unwrap_or_else(|| Self::derive_contract_address(&tx.from, tx.nonce))
+    }
+
+    fn deploy_target_has_creation_collision_v1(
+        tx: &TxIR,
+        state: &StateIR,
+        artifact: Option<&AoemTxExecutionArtifactV1>,
     ) -> bool {
-        Self::tx_execution_status_ok(artifact) && !Self::deploy_rejected_by_eip7610_v1(tx, artifact)
+        if tx.tx_type != TxType::ContractDeploy {
+            return false;
+        }
+        let contract_address = Self::deploy_contract_address_v1(tx, artifact);
+        let account_collision = state
+            .get_account(&contract_address)
+            .is_some_and(|account| account.nonce != 0 || account.code_hash.is_some());
+        let storage_collision = state
+            .storage
+            .get(&contract_address)
+            .is_some_and(|slots| !slots.is_empty());
+        account_collision || storage_collision
+    }
+
+    fn effective_tx_execution_status_ok(
+        tx: &TxIR,
+        state: &StateIR,
+        artifact: Option<&AoemTxExecutionArtifactV1>,
+    ) -> bool {
+        Self::tx_execution_status_ok(artifact)
+            && !Self::deploy_rejected_by_eip7610_v1(tx, artifact)
+            && !Self::deploy_target_has_creation_collision_v1(tx, state, artifact)
     }
 
     fn tx_intrinsic_gas_v1(tx: &TxIR) -> u64 {
@@ -1595,11 +1621,11 @@ impl NovoVmAdapter {
             bail!("contract deploy tx missing init code");
         }
 
-        let contract_address = artifact
-            .and_then(|item| item.contract_address.clone())
-            .unwrap_or_else(|| Self::derive_contract_address(&tx.from, tx.nonce));
+        let contract_address = Self::deploy_contract_address_v1(tx, artifact);
         let eip7610_rejected = is_eip7610_rejected_account_v1(tx.chain_id, &contract_address);
-        let status_ok = Self::tx_execution_status_ok(artifact) && !eip7610_rejected;
+        let creation_collision = Self::deploy_target_has_creation_collision_v1(tx, state, artifact);
+        let status_ok =
+            Self::tx_execution_status_ok(artifact) && !eip7610_rejected && !creation_collision;
         Self::debit_tracked_sender_balance_v1(tx, state, artifact, status_ok)?;
         Self::bump_subject_nonce_owner_v1(tx, state, kv);
         if status_ok {
@@ -1663,6 +1689,17 @@ impl NovoVmAdapter {
                     b"deploy:last_reject_contract".to_vec(),
                     EIP7610_REJECTION_CONTRACT_V1.as_bytes().to_vec(),
                 );
+            } else if creation_collision {
+                state.set_storage(
+                    tx.from.clone(),
+                    b"deploy:last_reject_reason".to_vec(),
+                    b"create_collision_existing_account".to_vec(),
+                );
+                state.set_storage(
+                    tx.from.clone(),
+                    b"deploy:last_reject_contract".to_vec(),
+                    contract_address.clone(),
+                );
             }
             let (failure_class, failure_class_source, failure_recoverability) = if eip7610_rejected
             {
@@ -1670,6 +1707,13 @@ impl NovoVmAdapter {
                     AoemFailureClassV1::Invalid.as_str(),
                     AoemFailureClassSourceV1::HeuristicDefault.as_str(),
                     aoem_failure_recoverability_from_class_v1(AoemFailureClassV1::Invalid).as_str(),
+                )
+            } else if creation_collision {
+                (
+                    AoemFailureClassV1::ExecutionFailed.as_str(),
+                    AoemFailureClassSourceV1::HeuristicDefault.as_str(),
+                    aoem_failure_recoverability_from_class_v1(AoemFailureClassV1::ExecutionFailed)
+                        .as_str(),
                 )
             } else {
                 Self::classify_failed_tx_v1(tx, artifact)
@@ -1832,7 +1876,20 @@ impl NovoVmAdapter {
                 self.state.set_account(tx.from.clone(), account);
             }
         }
-        let status_ok = Self::effective_tx_execution_status_ok(tx, artifact);
+        if tx.tx_type == TxType::ContractDeploy {
+            let contract_address = Self::deploy_contract_address_v1(tx, artifact);
+            if self.state.get_account(&contract_address).is_none() {
+                if let Some(account) = state.get_account(&contract_address).cloned() {
+                    self.state.set_account(contract_address.clone(), account);
+                }
+            }
+            if !self.state.storage.contains_key(&contract_address) {
+                if let Some(storage) = state.storage.get(&contract_address).cloned() {
+                    self.state.storage.insert(contract_address, storage);
+                }
+            }
+        }
+        let status_ok = Self::effective_tx_execution_status_ok(tx, state, artifact);
         match tx.tx_type {
             TxType::Transfer => {
                 Self::apply_transfer(tx, state, &mut self.kv, artifact)?;
@@ -2406,12 +2463,16 @@ pub fn create_native_adapter(config: ChainConfig) -> Result<Box<dyn ChainAdapter
 #[cfg(test)]
 mod tests {
     use super::*;
+    use novovm_adapter_api::EvmAccessListEntryV1;
     use novovm_adapter_evm_core::{
-        active_precompile_set_m0, estimate_calldata_floor_gas_m0, estimate_intrinsic_gas_m0,
+        active_precompile_set_m0, apply_eip3529_gas_refund_m0, derive_create2_contract_address_m0,
+        estimate_access_list_execution_warm_savings_m0, estimate_calldata_floor_gas_m0,
+        estimate_eip2929_storage_read_gas_m0, estimate_eip2929_storage_read_sequence_gas_m0,
+        estimate_eip3529_sstore_transition_gas_m0, estimate_intrinsic_gas_m0,
         estimate_intrinsic_gas_with_access_list_rules_m0,
         estimate_intrinsic_gas_with_envelope_extras_m0, recover_raw_evm_tx_sender_m0,
         resolve_evm_profile, translate_raw_evm_tx_fields_m0, tx_ir_from_raw_fields_m0,
-        validate_tx_semantics_m0,
+        validate_tx_semantics_m0, EvmStorageAccessKeyM0,
     };
     use novovm_exec::{
         AoemTxExecutionAnchorV1, AoemTxExecutionArtifactV1, AOEM_LOG_BLOOM_BYTES_V1,
@@ -2884,6 +2945,203 @@ mod tests {
     }
 
     #[test]
+    fn evm_execution_spec_access_list_warm_storage_smoke_v1() {
+        let mut tx = sample_tx(TxType::ContractCall);
+        tx.gas_limit = 120_000;
+        let target = tx.to.clone().expect("target");
+        let mut target20 = [0u8; 20];
+        target20.copy_from_slice(&target);
+        let declared_read_slot = [0x44u8; 32];
+        tx.evm_access_list = vec![EvmAccessListEntryV1 {
+            address: target.clone(),
+            storage_keys: vec![declared_read_slot.to_vec()],
+        }];
+        let tx = resign_tx(tx);
+
+        let cold_read = estimate_eip2929_storage_read_gas_m0(1, 0);
+        let warm_read = estimate_eip2929_storage_read_gas_m0(1, 1);
+        assert_eq!(cold_read - warm_read, 2_000);
+        assert_eq!(estimate_access_list_execution_warm_savings_m0(1, 1), 4_500);
+        let declared_access_key = EvmStorageAccessKeyM0 {
+            address: target20,
+            slot: declared_read_slot,
+        };
+        let cold_access_key = EvmStorageAccessKeyM0 {
+            address: target20,
+            slot: [0x45u8; 32],
+        };
+        assert_eq!(
+            estimate_eip2929_storage_read_sequence_gas_m0(
+                &[declared_access_key],
+                &[declared_access_key, declared_access_key, cold_access_key]
+            ),
+            2 * 100 + 2_100
+        );
+
+        let mut adapter = NovoVmAdapter::new(ChainConfig {
+            chain_type: ChainType::EVM,
+            chain_id: 1,
+            name: "access-list-warm-storage-smoke".to_string(),
+            enabled: true,
+            custom_config: None,
+        });
+        adapter.initialize().expect("init");
+        let mut runtime_state = StateIR::new();
+        fund_sender_for_test(&mut runtime_state, &tx, 1_000_000);
+
+        let outcome = adapter
+            .execute_transaction_with_observed_metadata_v1(&tx, &mut runtime_state, None)
+            .expect("execute access-list warm storage call");
+        assert!(outcome.artifact.status_ok);
+        assert!(
+            outcome
+                .observed_block_access_list
+                .block_access_list_complete
+        );
+        let block_access_list = outcome
+            .observed_block_access_list
+            .block_access_list
+            .expect("observed block access list");
+        let target_entry = block_access_list
+            .0
+            .iter()
+            .find(|entry| entry.address.as_slice() == target.as_slice())
+            .expect("target entry");
+        assert!(
+            target_entry.storage_reads.contains(&declared_read_slot),
+            "access-list declared storage key must remain observable as a warm read"
+        );
+
+        let write_slot =
+            NovoVmAdapter::bytes_to_bal_word32_v1(b"novovm-bal-slot-v1", &tx.nonce.to_le_bytes());
+        assert!(
+            target_entry
+                .storage_changes
+                .iter()
+                .any(|change| change.slot == write_slot),
+            "contract call SSTORE slot must remain observable as a write"
+        );
+        assert!(
+            target_entry
+                .storage_changes
+                .iter()
+                .all(|change| change.slot != declared_read_slot),
+            "declared warm read must not be collapsed into the SSTORE write slot"
+        );
+    }
+
+    #[test]
+    fn evm_execution_spec_sload_warm_cold_fee_debit_v1() {
+        let mut tx = sample_tx(TxType::ContractCall);
+        tx.value = 0;
+        tx.gas_limit = 120_000;
+        tx.gas_price = 5;
+        let target = tx.to.clone().expect("target");
+        let mut target20 = [0u8; 20];
+        target20.copy_from_slice(&target);
+        let warm_slot = [0x46u8; 32];
+        let cold_slot = [0x47u8; 32];
+        tx.evm_access_list = vec![EvmAccessListEntryV1 {
+            address: target.clone(),
+            storage_keys: vec![warm_slot.to_vec()],
+        }];
+        tx = resign_tx(tx);
+
+        let warm_key = EvmStorageAccessKeyM0 {
+            address: target20,
+            slot: warm_slot,
+        };
+        let cold_key = EvmStorageAccessKeyM0 {
+            address: target20,
+            slot: cold_slot,
+        };
+        let sload_sequence_gas = estimate_eip2929_storage_read_sequence_gas_m0(
+            &[warm_key],
+            &[warm_key, warm_key, cold_key, cold_key],
+        );
+        let all_cold_sequence_gas = estimate_eip2929_storage_read_sequence_gas_m0(
+            &[],
+            &[warm_key, warm_key, cold_key, cold_key],
+        );
+        let count_only_cold_gas = estimate_eip2929_storage_read_gas_m0(4, 0);
+        assert_eq!(sload_sequence_gas, 2_400);
+        assert_eq!(all_cold_sequence_gas, 4_400);
+        assert_eq!(count_only_cold_gas, 8_400);
+
+        let intrinsic_with_access_list =
+            estimate_intrinsic_gas_with_access_list_rules_m0(&tx, 1, 1, false);
+        let expected_gas_used = intrinsic_with_access_list.saturating_add(sload_sequence_gas);
+        let all_cold_gas_used = intrinsic_with_access_list.saturating_add(all_cold_sequence_gas);
+        let count_only_cold_gas_used =
+            intrinsic_with_access_list.saturating_add(count_only_cold_gas);
+        assert!(expected_gas_used < all_cold_gas_used);
+        assert!(all_cold_gas_used < count_only_cold_gas_used);
+
+        let mut adapter = NovoVmAdapter::new(ChainConfig {
+            chain_type: ChainType::EVM,
+            chain_id: 1,
+            name: "sload-warm-cold-fee-debit".to_string(),
+            enabled: true,
+            custom_config: None,
+        });
+        adapter.initialize().expect("init");
+        let mut runtime_state = StateIR::new();
+        let initial_balance = 1_000_000u128;
+        fund_sender_for_test(&mut runtime_state, &tx, initial_balance);
+
+        let mut artifact = sample_aoem_artifact(&tx, true, [0x76; 32], None);
+        artifact.gas_used = expected_gas_used;
+        artifact.cumulative_gas_used = expected_gas_used;
+        artifact.effective_gas_price = Some(tx.gas_price);
+        let expected_fee = (expected_gas_used as u128) * (tx.gas_price as u128);
+        let all_cold_fee = (all_cold_gas_used as u128) * (tx.gas_price as u128);
+        let count_only_cold_fee = (count_only_cold_gas_used as u128) * (tx.gas_price as u128);
+
+        let outcome = adapter
+            .execute_transaction_with_observed_metadata_v1(&tx, &mut runtime_state, Some(&artifact))
+            .expect("execute SLOAD warm/cold fee debit call");
+
+        assert!(outcome.artifact.status_ok);
+        assert_eq!(outcome.artifact.gas_used, expected_gas_used);
+        assert_eq!(
+            runtime_state.get_account(&tx.from).map(|acc| acc.balance),
+            Some(initial_balance - expected_fee)
+        );
+        assert_ne!(
+            runtime_state.get_account(&tx.from).map(|acc| acc.balance),
+            Some(initial_balance - all_cold_fee),
+            "fee debit must not treat an access-list warm SLOAD as cold"
+        );
+        assert_ne!(
+            runtime_state.get_account(&tx.from).map(|acc| acc.balance),
+            Some(initial_balance - count_only_cold_fee),
+            "fee debit must not use count-only cold SLOAD gas"
+        );
+        let block_access_list = outcome
+            .observed_block_access_list
+            .block_access_list
+            .expect("SLOAD warm/cold observed BAL");
+        let sender_entry = block_access_list
+            .0
+            .iter()
+            .find(|entry| entry.address.as_slice() == tx.from.as_slice())
+            .expect("sender BAL entry");
+        assert_eq!(
+            sender_entry.balance_changes[0].post_balance,
+            NovoVmAdapter::u128_to_be32_v1(initial_balance - expected_fee)
+        );
+        let target_entry = block_access_list
+            .0
+            .iter()
+            .find(|entry| entry.address.as_slice() == target.as_slice())
+            .expect("target BAL entry");
+        assert!(
+            target_entry.storage_reads.contains(&warm_slot),
+            "access-list warm slot must stay observable as a storage read"
+        );
+    }
+
+    #[test]
     fn tx_intrinsic_gas_includes_type3_blob_extras_v1() {
         let key = "NOVOVM_EVM_ENABLE_TYPE3_WRITE_CHAIN_1";
         let captured = std::env::var(key).ok();
@@ -3319,6 +3577,449 @@ mod tests {
     }
 
     #[test]
+    fn execute_success_call_debits_refunded_sstore_gas_used_v1() {
+        let mut adapter = NovoVmAdapter::new(ChainConfig {
+            chain_type: ChainType::EVM,
+            chain_id: 1,
+            name: "test".to_string(),
+            enabled: true,
+            custom_config: None,
+        });
+        adapter.initialize().expect("init");
+
+        let mut tx = sample_tx(TxType::ContractCall);
+        tx.value = 0;
+        tx.gas_limit = 120_000;
+        tx.gas_price = 3;
+        tx = resign_tx(tx);
+        let target = tx.to.clone().expect("call target");
+        let mut runtime_state = StateIR::new();
+        let initial_balance = 100_000u128;
+        fund_sender_for_test(&mut runtime_state, &tx, initial_balance);
+        runtime_state.set_storage(target.clone(), b"clear-me".to_vec(), vec![0x01]);
+
+        let transition =
+            estimate_eip3529_sstore_transition_gas_m0([0x01u8; 32], [0x01u8; 32], [0u8; 32], false);
+        assert_eq!(transition.gas_cost, 5_000);
+        assert_eq!(transition.refund_delta, 4_800);
+        let pre_refund_gas_used =
+            estimate_intrinsic_gas_m0(&tx).saturating_add(transition.gas_cost);
+        let refund_counter = transition.refund_delta.max(0) as u64;
+        let refunded_gas_used = apply_eip3529_gas_refund_m0(pre_refund_gas_used, refund_counter);
+        assert_eq!(refunded_gas_used, pre_refund_gas_used.saturating_sub(4_800));
+
+        let mut artifact = sample_aoem_artifact(&tx, true, [0x56; 32], None);
+        artifact.gas_used = refunded_gas_used;
+        artifact.cumulative_gas_used = refunded_gas_used;
+        artifact.effective_gas_price = Some(tx.gas_price);
+        let expected_fee = (refunded_gas_used as u128) * (tx.gas_price as u128);
+        let unrefunded_fee = (pre_refund_gas_used as u128) * (tx.gas_price as u128);
+
+        let resolved = adapter
+            .execute_transaction_with_artifact(&tx, &mut runtime_state, Some(&artifact))
+            .expect("execute refunded gas call artifact");
+
+        assert!(resolved.status_ok);
+        assert_eq!(resolved.gas_used, refunded_gas_used);
+        assert_eq!(
+            runtime_state.get_account(&tx.from).map(|acc| acc.balance),
+            Some(initial_balance - expected_fee)
+        );
+        assert!(
+            expected_fee < unrefunded_fee,
+            "SSTORE clear refund must reduce charged gas before fee debit"
+        );
+    }
+
+    #[test]
+    fn evm_execution_spec_sstore_refund_cap_fee_debit_v1() {
+        let mut adapter = NovoVmAdapter::new(ChainConfig {
+            chain_type: ChainType::EVM,
+            chain_id: 1,
+            name: "sstore-refund-cap-fee-debit".to_string(),
+            enabled: true,
+            custom_config: None,
+        });
+        adapter.initialize().expect("init");
+
+        let mut tx = sample_tx(TxType::ContractCall);
+        tx.value = 0;
+        tx.gas_limit = 120_000;
+        tx.gas_price = 4;
+        tx = resign_tx(tx);
+        let mut runtime_state = StateIR::new();
+        let initial_balance = 1_000_000u128;
+        fund_sender_for_test(&mut runtime_state, &tx, initial_balance);
+
+        let pre_refund_gas_used = 24_000u64;
+        let refund_counter = 19_200u64;
+        let capped_refunded_gas_used =
+            apply_eip3529_gas_refund_m0(pre_refund_gas_used, refund_counter);
+        let uncapped_refunded_gas_used = pre_refund_gas_used.saturating_sub(refund_counter);
+        assert_eq!(capped_refunded_gas_used, 19_200);
+        assert_eq!(uncapped_refunded_gas_used, 4_800);
+        assert!(
+            capped_refunded_gas_used > uncapped_refunded_gas_used,
+            "EIP-3529 refund cap must prevent over-refund"
+        );
+
+        let mut artifact = sample_aoem_artifact(&tx, true, [0x75; 32], None);
+        artifact.gas_used = capped_refunded_gas_used;
+        artifact.cumulative_gas_used = capped_refunded_gas_used;
+        artifact.effective_gas_price = Some(tx.gas_price);
+        let expected_capped_fee = (capped_refunded_gas_used as u128) * (tx.gas_price as u128);
+        let uncapped_fee = (uncapped_refunded_gas_used as u128) * (tx.gas_price as u128);
+        assert_eq!(expected_capped_fee, 76_800);
+        assert_eq!(uncapped_fee, 19_200);
+
+        let outcome = adapter
+            .execute_transaction_with_observed_metadata_v1(&tx, &mut runtime_state, Some(&artifact))
+            .expect("execute capped refund call artifact");
+
+        assert!(outcome.artifact.status_ok);
+        assert_eq!(outcome.artifact.gas_used, capped_refunded_gas_used);
+        assert_eq!(
+            runtime_state.get_account(&tx.from).map(|acc| acc.balance),
+            Some(initial_balance - expected_capped_fee)
+        );
+        assert_ne!(
+            runtime_state.get_account(&tx.from).map(|acc| acc.balance),
+            Some(initial_balance - uncapped_fee),
+            "fee debit must not use uncapped refund"
+        );
+        let block_access_list = outcome
+            .observed_block_access_list
+            .block_access_list
+            .expect("capped refund observed BAL");
+        let sender_entry = block_access_list
+            .0
+            .iter()
+            .find(|entry| entry.address.as_slice() == tx.from.as_slice())
+            .expect("sender BAL entry");
+        assert_eq!(
+            sender_entry.balance_changes[0].post_balance,
+            NovoVmAdapter::u128_to_be32_v1(initial_balance - expected_capped_fee)
+        );
+    }
+
+    #[test]
+    fn evm_execution_spec_account_balance_value_fee_invariants_v1() {
+        let mut call_adapter = NovoVmAdapter::new(ChainConfig {
+            chain_type: ChainType::EVM,
+            chain_id: 1,
+            name: "account-balance-call".to_string(),
+            enabled: true,
+            custom_config: None,
+        });
+        call_adapter.initialize().expect("init call adapter");
+
+        let mut call_tx = sample_tx(TxType::ContractCall);
+        call_tx.value = 13;
+        call_tx.gas_limit = 120_000;
+        call_tx.gas_price = 4;
+        call_tx = resign_tx(call_tx);
+        let call_target = call_tx.to.clone().expect("call target");
+        let mut call_state = StateIR::new();
+        let initial_call_sender_balance = 1_000_000u128;
+        let initial_call_target_balance = 7u128;
+        fund_sender_for_test(&mut call_state, &call_tx, initial_call_sender_balance);
+        call_state.set_account(
+            call_target.clone(),
+            AccountState {
+                balance: initial_call_target_balance,
+                nonce: 0,
+                code_hash: None,
+                storage_root: vec![0u8; 32],
+            },
+        );
+        let mut call_artifact = sample_aoem_artifact(&call_tx, true, [0x71; 32], None);
+        call_artifact.gas_used = 26_000;
+        call_artifact.cumulative_gas_used = 26_000;
+        call_artifact.effective_gas_price = Some(call_tx.gas_price);
+        let expected_call_fee =
+            NovoVmAdapter::execution_fee_wei_v1(&call_tx, Some(&call_artifact), true);
+        let expected_call_sender_balance =
+            initial_call_sender_balance - call_tx.value - expected_call_fee;
+        let expected_call_target_balance = initial_call_target_balance + call_tx.value;
+
+        let call_outcome = call_adapter
+            .execute_transaction_with_observed_metadata_v1(
+                &call_tx,
+                &mut call_state,
+                Some(&call_artifact),
+            )
+            .expect("execute successful call with value");
+
+        assert!(call_outcome.artifact.status_ok);
+        assert_eq!(
+            call_state.get_account(&call_tx.from).map(|acc| acc.balance),
+            Some(expected_call_sender_balance)
+        );
+        assert_eq!(
+            call_state.get_account(&call_target).map(|acc| acc.balance),
+            Some(expected_call_target_balance)
+        );
+        let call_bal = call_outcome
+            .observed_block_access_list
+            .block_access_list
+            .expect("successful call observed BAL");
+        let call_sender_entry = call_bal
+            .0
+            .iter()
+            .find(|entry| entry.address.as_slice() == call_tx.from.as_slice())
+            .expect("successful call sender BAL entry");
+        assert_eq!(
+            call_sender_entry.balance_changes[0].post_balance,
+            NovoVmAdapter::u128_to_be32_v1(expected_call_sender_balance)
+        );
+        let call_target_entry = call_bal
+            .0
+            .iter()
+            .find(|entry| entry.address.as_slice() == call_target.as_slice())
+            .expect("successful call target BAL entry");
+        assert_eq!(
+            call_target_entry.balance_changes[0].post_balance,
+            NovoVmAdapter::u128_to_be32_v1(expected_call_target_balance)
+        );
+
+        let mut deploy_adapter = NovoVmAdapter::new(ChainConfig {
+            chain_type: ChainType::EVM,
+            chain_id: 1,
+            name: "account-balance-create".to_string(),
+            enabled: true,
+            custom_config: None,
+        });
+        deploy_adapter.initialize().expect("init deploy adapter");
+
+        let mut deploy_tx = sample_tx(TxType::ContractDeploy);
+        deploy_tx.value = 19;
+        deploy_tx.gas_limit = 120_000;
+        deploy_tx.gas_price = 5;
+        deploy_tx = resign_tx(deploy_tx);
+        let deploy_contract = vec![0x72u8; 20];
+        let mut deploy_state = StateIR::new();
+        let initial_deploy_sender_balance = 1_000_000u128;
+        fund_sender_for_test(&mut deploy_state, &deploy_tx, initial_deploy_sender_balance);
+        let mut deploy_artifact =
+            sample_aoem_artifact(&deploy_tx, true, [0x72; 32], Some(deploy_contract.clone()));
+        deploy_artifact.gas_used = 41_000;
+        deploy_artifact.cumulative_gas_used = 41_000;
+        deploy_artifact.effective_gas_price = Some(deploy_tx.gas_price);
+        deploy_artifact.runtime_code = Some(vec![0x60, 0x00, 0x60, 0x01]);
+        deploy_artifact.runtime_code_hash = Some(vec![0x77; 32]);
+        let expected_deploy_fee =
+            NovoVmAdapter::execution_fee_wei_v1(&deploy_tx, Some(&deploy_artifact), true);
+        let expected_deploy_sender_balance =
+            initial_deploy_sender_balance - deploy_tx.value - expected_deploy_fee;
+
+        let deploy_outcome = deploy_adapter
+            .execute_transaction_with_observed_metadata_v1(
+                &deploy_tx,
+                &mut deploy_state,
+                Some(&deploy_artifact),
+            )
+            .expect("execute successful create with value");
+
+        assert!(deploy_outcome.artifact.status_ok);
+        assert_eq!(
+            deploy_state
+                .get_account(&deploy_tx.from)
+                .map(|acc| acc.balance),
+            Some(expected_deploy_sender_balance)
+        );
+        let deployed_account = deploy_state
+            .get_account(&deploy_contract)
+            .expect("deployed contract account");
+        assert_eq!(deployed_account.balance, deploy_tx.value);
+        assert_eq!(deployed_account.code_hash, Some(vec![0x77; 32]));
+        let deploy_bal = deploy_outcome
+            .observed_block_access_list
+            .block_access_list
+            .expect("successful create observed BAL");
+        let deploy_sender_entry = deploy_bal
+            .0
+            .iter()
+            .find(|entry| entry.address.as_slice() == deploy_tx.from.as_slice())
+            .expect("successful create sender BAL entry");
+        assert_eq!(
+            deploy_sender_entry.balance_changes[0].post_balance,
+            NovoVmAdapter::u128_to_be32_v1(expected_deploy_sender_balance)
+        );
+        let deploy_contract_entry = deploy_bal
+            .0
+            .iter()
+            .find(|entry| entry.address.as_slice() == deploy_contract.as_slice())
+            .expect("successful create contract BAL entry");
+        assert_eq!(
+            deploy_contract_entry.balance_changes[0].post_balance,
+            NovoVmAdapter::u128_to_be32_v1(deploy_tx.value)
+        );
+        assert_eq!(deploy_contract_entry.code_changes.len(), 1);
+
+        let mut failed_deploy_adapter = NovoVmAdapter::new(ChainConfig {
+            chain_type: ChainType::EVM,
+            chain_id: 1,
+            name: "account-balance-failed-create".to_string(),
+            enabled: true,
+            custom_config: None,
+        });
+        failed_deploy_adapter
+            .initialize()
+            .expect("init failed deploy adapter");
+
+        let mut failed_deploy_tx = sample_tx(TxType::ContractDeploy);
+        failed_deploy_tx.value = 23;
+        failed_deploy_tx.gas_limit = 120_000;
+        failed_deploy_tx.gas_price = 6;
+        failed_deploy_tx = resign_tx(failed_deploy_tx);
+        let failed_contract = vec![0x73u8; 20];
+        let mut failed_deploy_state = StateIR::new();
+        let initial_failed_deploy_sender_balance = 1_000_000u128;
+        fund_sender_for_test(
+            &mut failed_deploy_state,
+            &failed_deploy_tx,
+            initial_failed_deploy_sender_balance,
+        );
+        let mut failed_deploy_artifact = sample_aoem_artifact(
+            &failed_deploy_tx,
+            false,
+            [0x73; 32],
+            Some(failed_contract.clone()),
+        );
+        failed_deploy_artifact.revert_data = None;
+        failed_deploy_artifact.gas_used = 39_000;
+        failed_deploy_artifact.cumulative_gas_used = 39_000;
+        failed_deploy_artifact.effective_gas_price = Some(failed_deploy_tx.gas_price);
+        if let Some(anchor) = failed_deploy_artifact.anchor.as_mut() {
+            anchor.return_code = 13;
+            anchor.return_code_name = "out_of_gas".to_string();
+        }
+        let expected_failed_deploy_fee = NovoVmAdapter::execution_fee_wei_v1(
+            &failed_deploy_tx,
+            Some(&failed_deploy_artifact),
+            false,
+        );
+        let expected_failed_deploy_sender_balance =
+            initial_failed_deploy_sender_balance - expected_failed_deploy_fee;
+
+        let failed_deploy_outcome = failed_deploy_adapter
+            .execute_transaction_with_observed_metadata_v1(
+                &failed_deploy_tx,
+                &mut failed_deploy_state,
+                Some(&failed_deploy_artifact),
+            )
+            .expect("execute failed create with value");
+
+        assert!(!failed_deploy_outcome.artifact.status_ok);
+        assert_eq!(
+            failed_deploy_state
+                .get_account(&failed_deploy_tx.from)
+                .map(|acc| acc.balance),
+            Some(expected_failed_deploy_sender_balance)
+        );
+        assert!(
+            failed_deploy_state.get_account(&failed_contract).is_none(),
+            "failed CREATE must not transfer value into a contract account"
+        );
+        assert_eq!(
+            failed_deploy_state.get_storage(
+                &failed_deploy_tx.from,
+                b"deploy:last_failed_contract_address"
+            ),
+            Some(&failed_contract)
+        );
+        let failed_deploy_bal = failed_deploy_outcome
+            .observed_block_access_list
+            .block_access_list
+            .expect("failed create observed BAL");
+        let failed_deploy_sender_entry = failed_deploy_bal
+            .0
+            .iter()
+            .find(|entry| entry.address.as_slice() == failed_deploy_tx.from.as_slice())
+            .expect("failed create sender BAL entry");
+        assert_eq!(
+            failed_deploy_sender_entry.balance_changes[0].post_balance,
+            NovoVmAdapter::u128_to_be32_v1(expected_failed_deploy_sender_balance)
+        );
+        assert!(
+            failed_deploy_bal
+                .0
+                .iter()
+                .all(|entry| entry.address.as_slice() != failed_contract.as_slice()),
+            "failed CREATE must not emit a contract BAL account entry"
+        );
+    }
+
+    #[test]
+    fn evm_execution_spec_effective_gas_price_fee_debit_v1() {
+        let mut adapter = NovoVmAdapter::new(ChainConfig {
+            chain_type: ChainType::EVM,
+            chain_id: 1,
+            name: "effective-gas-price-fee-debit".to_string(),
+            enabled: true,
+            custom_config: None,
+        });
+        adapter.initialize().expect("init");
+
+        let mut tx = sample_tx(TxType::Transfer);
+        tx.value = 5;
+        tx.gas_limit = 80_000;
+        tx.gas_price = 9;
+        tx = resign_tx(tx);
+        let recipient = tx.to.clone().expect("transfer recipient");
+        let mut runtime_state = StateIR::new();
+        let initial_sender_balance = 1_000_000u128;
+        fund_sender_for_test(&mut runtime_state, &tx, initial_sender_balance);
+
+        let mut artifact = sample_aoem_artifact(&tx, true, [0x74; 32], None);
+        artifact.gas_used = 21_000;
+        artifact.cumulative_gas_used = 21_000;
+        artifact.effective_gas_price = Some(3);
+        let expected_effective_fee =
+            NovoVmAdapter::execution_fee_wei_v1(&tx, Some(&artifact), true);
+        let max_fee_cap_debit = (artifact.gas_used as u128) * (tx.gas_price as u128);
+        assert_eq!(expected_effective_fee, 63_000);
+        assert_ne!(
+            expected_effective_fee, max_fee_cap_debit,
+            "EIP-1559 settlement must not charge the max_fee cap when effectiveGasPrice is lower"
+        );
+        let expected_sender_balance = initial_sender_balance - tx.value - expected_effective_fee;
+
+        let outcome = adapter
+            .execute_transaction_with_observed_metadata_v1(&tx, &mut runtime_state, Some(&artifact))
+            .expect("execute effective gas price settlement tx");
+
+        assert!(outcome.artifact.status_ok);
+        assert_eq!(outcome.artifact.effective_gas_price, Some(3));
+        assert_eq!(
+            runtime_state.get_account(&tx.from).map(|acc| acc.balance),
+            Some(expected_sender_balance)
+        );
+        assert_ne!(
+            runtime_state.get_account(&tx.from).map(|acc| acc.balance),
+            Some(initial_sender_balance - tx.value - max_fee_cap_debit)
+        );
+        assert_eq!(
+            runtime_state.get_account(&recipient).map(|acc| acc.balance),
+            Some(tx.value)
+        );
+
+        let block_access_list = outcome
+            .observed_block_access_list
+            .block_access_list
+            .expect("effective gas price observed BAL");
+        let sender_entry = block_access_list
+            .0
+            .iter()
+            .find(|entry| entry.address.as_slice() == tx.from.as_slice())
+            .expect("sender BAL entry");
+        assert_eq!(
+            sender_entry.balance_changes[0].post_balance,
+            NovoVmAdapter::u128_to_be32_v1(expected_sender_balance)
+        );
+    }
+
+    #[test]
     fn execute_tracked_sender_rejects_insufficient_value_fee_v1() {
         let mut adapter = NovoVmAdapter::new(ChainConfig {
             chain_type: ChainType::EVM,
@@ -3390,6 +4091,23 @@ mod tests {
     }
 
     #[test]
+    fn evm_execution_spec_create_address_derivation_matches_geth_v1() {
+        let from = decode_hex_bytes("970e8128ab834e8eac17ab8e3812f010678cf791");
+        assert_eq!(
+            NovoVmAdapter::derive_contract_address(&from, 0),
+            decode_hex_bytes("333c3310824b7c685133f2bedb2ca4b8b4df633d")
+        );
+        assert_eq!(
+            NovoVmAdapter::derive_contract_address(&from, 1),
+            decode_hex_bytes("8bda78331c916a08481428e4b07c96d3e916d165")
+        );
+        assert_eq!(
+            NovoVmAdapter::derive_contract_address(&from, 2),
+            decode_hex_bytes("c9ddedf451bc62ce88bf9292afb13df35b670699")
+        );
+    }
+
+    #[test]
     fn execute_transaction_with_observed_metadata_emits_complete_contract_deploy_evm_bal() {
         let mut adapter = NovoVmAdapter::new(ChainConfig {
             chain_type: ChainType::EVM,
@@ -3401,6 +4119,7 @@ mod tests {
         adapter.initialize().expect("init");
 
         let tx = sample_tx(TxType::ContractDeploy);
+        let expected_contract = NovoVmAdapter::derive_contract_address(&tx.from, tx.nonce);
         let mut runtime_state = StateIR::new();
         let outcome = adapter
             .execute_transaction_with_observed_metadata_v1(&tx, &mut runtime_state, None)
@@ -3417,6 +4136,8 @@ mod tests {
             .contract_address
             .clone()
             .expect("contract address");
+        assert_eq!(contract, expected_contract);
+        assert!(runtime_state.get_account(&expected_contract).is_some());
         let block_access_list = outcome
             .observed_block_access_list
             .block_access_list
@@ -3451,11 +4172,20 @@ mod tests {
     fn evm_adapter_balance_fee_access_storage_surface_smoke_v1() {
         execute_transfer_debits_tracked_sender_value_and_fee_v1();
         execute_failed_call_debits_fee_without_value_transfer_v1();
+        execute_success_call_debits_refunded_sstore_gas_used_v1();
+        evm_execution_spec_sstore_refund_cap_fee_debit_v1();
+        evm_execution_spec_account_balance_value_fee_invariants_v1();
+        evm_execution_spec_effective_gas_price_fee_debit_v1();
         execute_tracked_sender_rejects_insufficient_value_fee_v1();
         tx_intrinsic_gas_includes_type1_access_list_extras_v1();
         execute_raw_type1_access_list_emits_declared_storage_reads_v1();
+        evm_execution_spec_access_list_warm_storage_smoke_v1();
+        evm_execution_spec_sload_warm_cold_fee_debit_v1();
+        evm_execution_spec_create_address_derivation_matches_geth_v1();
         execute_transaction_with_observed_metadata_emits_complete_contract_call_evm_bal();
         execute_transaction_with_observed_metadata_emits_complete_contract_deploy_evm_bal();
+        evm_execution_spec_create_existing_account_collision_invariants_v1();
+        evm_execution_spec_create2_artifact_collision_invariants_v1();
     }
 
     #[test]
@@ -3595,6 +4325,160 @@ mod tests {
     }
 
     #[test]
+    fn evm_execution_spec_create_call_failure_state_invariants_v1() {
+        evm_execution_spec_create_existing_account_collision_invariants_v1();
+        evm_execution_spec_create2_artifact_collision_invariants_v1();
+
+        let mut call_adapter = NovoVmAdapter::new(ChainConfig {
+            chain_type: ChainType::EVM,
+            chain_id: 1,
+            name: "call-failure-invariants".to_string(),
+            enabled: true,
+            custom_config: None,
+        });
+        call_adapter.initialize().expect("init call adapter");
+
+        let mut call_tx = sample_tx(TxType::ContractCall);
+        call_tx.value = 17;
+        call_tx.gas_limit = 120_000;
+        call_tx = resign_tx(call_tx);
+        let call_target = call_tx.to.clone().expect("call target");
+        let mut call_state = StateIR::new();
+        fund_sender_for_test(&mut call_state, &call_tx, 1_000_000);
+        call_state.set_account(
+            call_target.clone(),
+            AccountState {
+                balance: 5,
+                nonce: 0,
+                code_hash: None,
+                storage_root: vec![0u8; 32],
+            },
+        );
+        call_state.set_storage(call_target.clone(), b"existing".to_vec(), vec![0x7a]);
+
+        let mut call_artifact = sample_aoem_artifact(&call_tx, false, [0x61; 32], None);
+        call_artifact.revert_data = None;
+        if let Some(anchor) = call_artifact.anchor.as_mut() {
+            anchor.return_code = 2001;
+            anchor.return_code_name = "engine_exec_failed".to_string();
+        }
+
+        let call_outcome = call_adapter
+            .execute_transaction_with_observed_metadata_v1(
+                &call_tx,
+                &mut call_state,
+                Some(&call_artifact),
+            )
+            .expect("execute failed call");
+        assert!(!call_outcome.artifact.status_ok);
+        assert!(call_outcome.artifact.revert_data.is_none());
+        assert!(call_outcome.artifact.event_logs.is_empty());
+        assert!(call_outcome
+            .artifact
+            .log_bloom
+            .iter()
+            .all(|byte| *byte == 0));
+        assert_eq!(
+            call_state.get_account(&call_target).map(|acc| acc.balance),
+            Some(5),
+            "failed CALL must not transfer value"
+        );
+        assert_eq!(
+            call_state.get_storage(&call_target, b"existing"),
+            Some(&vec![0x7a]),
+            "failed CALL must preserve existing target storage"
+        );
+        assert_eq!(
+            call_state.get_storage(&call_target, &call_tx.nonce.to_le_bytes()),
+            None,
+            "failed CALL must not commit call storage writes"
+        );
+        assert_eq!(
+            call_state.get_storage(&call_tx.from, b"aoem:last_failure_class"),
+            Some(&b"execution_failed".to_vec())
+        );
+        let call_bal = call_outcome
+            .observed_block_access_list
+            .block_access_list
+            .expect("failed call observed BAL");
+        let call_target_entry = call_bal
+            .0
+            .iter()
+            .find(|entry| entry.address.as_slice() == call_target.as_slice())
+            .expect("failed call target account read");
+        assert!(call_target_entry.storage_changes.is_empty());
+
+        let mut deploy_adapter = NovoVmAdapter::new(ChainConfig {
+            chain_type: ChainType::EVM,
+            chain_id: 1,
+            name: "create-failure-invariants".to_string(),
+            enabled: true,
+            custom_config: None,
+        });
+        deploy_adapter.initialize().expect("init deploy adapter");
+
+        let mut deploy_tx = sample_tx(TxType::ContractDeploy);
+        deploy_tx.value = 19;
+        deploy_tx.gas_limit = 120_000;
+        deploy_tx = resign_tx(deploy_tx);
+        let failed_contract = vec![0x66u8; 20];
+        let mut deploy_state = StateIR::new();
+        fund_sender_for_test(&mut deploy_state, &deploy_tx, 1_000_000);
+        let mut deploy_artifact =
+            sample_aoem_artifact(&deploy_tx, false, [0x62; 32], Some(failed_contract.clone()));
+        deploy_artifact.revert_data = None;
+        deploy_artifact.runtime_code = Some(vec![0x60, 0x00, 0x60, 0x01]);
+        deploy_artifact.runtime_code_hash = Some(vec![0x99; 32]);
+        if let Some(anchor) = deploy_artifact.anchor.as_mut() {
+            anchor.return_code = 13;
+            anchor.return_code_name = "out_of_gas".to_string();
+        }
+
+        let deploy_outcome = deploy_adapter
+            .execute_transaction_with_observed_metadata_v1(
+                &deploy_tx,
+                &mut deploy_state,
+                Some(&deploy_artifact),
+            )
+            .expect("execute failed create");
+        assert!(!deploy_outcome.artifact.status_ok);
+        assert!(deploy_outcome.artifact.contract_address.is_none());
+        assert!(deploy_outcome.artifact.runtime_code.is_none());
+        assert!(deploy_outcome.artifact.runtime_code_hash.is_none());
+        assert!(
+            deploy_state.get_account(&failed_contract).is_none(),
+            "failed CREATE must not create the contract account"
+        );
+        for slot in [
+            b"deploy:init_code_hash".as_slice(),
+            b"deploy:runtime_code_hash".as_slice(),
+            b"deploy:runtime_code".as_slice(),
+            NovoVmAdapter::runtime_code_storage_key(),
+        ] {
+            assert_eq!(
+                deploy_state.get_storage(&failed_contract, slot),
+                None,
+                "failed CREATE must not commit contract storage"
+            );
+        }
+        assert_eq!(
+            deploy_state.get_storage(&deploy_tx.from, b"deploy:last_failed_contract_address"),
+            Some(&failed_contract)
+        );
+        let deploy_bal = deploy_outcome
+            .observed_block_access_list
+            .block_access_list
+            .expect("failed create observed BAL");
+        assert!(
+            deploy_bal
+                .0
+                .iter()
+                .all(|entry| entry.address.as_slice() != failed_contract.as_slice()),
+            "failed CREATE must not emit a contract BAL account entry"
+        );
+    }
+
+    #[test]
     fn execute_transaction_with_successful_deploy_artifact_rejects_eip7610_account_mainnet() {
         let mut adapter = NovoVmAdapter::new(ChainConfig {
             chain_type: ChainType::EVM,
@@ -3638,6 +4522,265 @@ mod tests {
         assert_eq!(
             runtime_state.get_storage(&tx.from, b"deploy:last_reject_contract"),
             Some(&EIP7610_REJECTION_CONTRACT_V1.as_bytes().to_vec())
+        );
+    }
+
+    #[test]
+    fn evm_execution_spec_create_existing_account_collision_invariants_v1() {
+        let mut adapter = NovoVmAdapter::new(ChainConfig {
+            chain_type: ChainType::EVM,
+            chain_id: 1,
+            name: "create-existing-account-collision".to_string(),
+            enabled: true,
+            custom_config: None,
+        });
+        adapter.initialize().expect("init");
+
+        let mut tx = sample_tx(TxType::ContractDeploy);
+        tx.value = 17;
+        tx.gas_limit = 120_000;
+        tx.gas_price = 4;
+        tx = resign_tx(tx);
+        let collision_contract = vec![0x79u8; 20];
+        let mut runtime_state = StateIR::new();
+        let initial_sender_balance = 1_000_000u128;
+        let existing_contract_balance = 123u128;
+        let existing_code_hash = vec![0xaau8; 32];
+        let existing_runtime_code = vec![0x60, 0xfe];
+        fund_sender_for_test(&mut runtime_state, &tx, initial_sender_balance);
+        runtime_state.set_account(
+            collision_contract.clone(),
+            AccountState {
+                balance: existing_contract_balance,
+                nonce: 1,
+                code_hash: Some(existing_code_hash.clone()),
+                storage_root: vec![0x11u8; 32],
+            },
+        );
+        runtime_state.set_storage(
+            collision_contract.clone(),
+            b"deploy:runtime_code_hash".to_vec(),
+            existing_code_hash.clone(),
+        );
+        runtime_state.set_storage(
+            collision_contract.clone(),
+            b"deploy:runtime_code".to_vec(),
+            existing_runtime_code.clone(),
+        );
+        runtime_state.set_storage(
+            collision_contract.clone(),
+            NovoVmAdapter::runtime_code_storage_key().to_vec(),
+            existing_runtime_code.clone(),
+        );
+
+        let mut artifact =
+            sample_aoem_artifact(&tx, true, [0x79; 32], Some(collision_contract.clone()));
+        artifact.gas_used = 43_000;
+        artifact.cumulative_gas_used = 43_000;
+        artifact.effective_gas_price = Some(tx.gas_price);
+        artifact.runtime_code = Some(vec![0x60, 0x00, 0x60, 0x01]);
+        artifact.runtime_code_hash = Some(vec![0xbbu8; 32]);
+        let expected_fee = NovoVmAdapter::execution_fee_wei_v1(&tx, Some(&artifact), false);
+        let expected_sender_balance = initial_sender_balance - expected_fee;
+
+        let outcome = adapter
+            .execute_transaction_with_observed_metadata_v1(&tx, &mut runtime_state, Some(&artifact))
+            .expect("execute colliding create artifact");
+
+        assert!(!outcome.artifact.status_ok);
+        assert_eq!(outcome.artifact.contract_address, None);
+        assert_eq!(outcome.artifact.runtime_code, None);
+        assert_eq!(outcome.artifact.runtime_code_hash, None);
+        assert_eq!(
+            runtime_state.get_account(&tx.from).map(|acc| acc.balance),
+            Some(expected_sender_balance)
+        );
+        let post_contract = runtime_state
+            .get_account(&collision_contract)
+            .expect("existing contract must remain");
+        assert_eq!(post_contract.balance, existing_contract_balance);
+        assert_eq!(post_contract.nonce, 1);
+        assert_eq!(post_contract.code_hash, Some(existing_code_hash.clone()));
+        assert_eq!(
+            runtime_state.get_storage(&collision_contract, b"deploy:runtime_code_hash"),
+            Some(&existing_code_hash)
+        );
+        assert_eq!(
+            runtime_state.get_storage(&collision_contract, b"deploy:runtime_code"),
+            Some(&existing_runtime_code)
+        );
+        assert_eq!(
+            runtime_state.get_storage(
+                &collision_contract,
+                NovoVmAdapter::runtime_code_storage_key()
+            ),
+            Some(&existing_runtime_code)
+        );
+        assert_eq!(
+            runtime_state.get_storage(&tx.from, b"deploy:last_failed_contract_address"),
+            Some(&collision_contract)
+        );
+        assert_eq!(
+            runtime_state.get_storage(&tx.from, b"deploy:last_reject_reason"),
+            Some(&b"create_collision_existing_account".to_vec())
+        );
+        assert_eq!(
+            runtime_state.get_storage(&tx.from, b"deploy:last_reject_contract"),
+            Some(&collision_contract)
+        );
+        assert_eq!(
+            runtime_state.get_storage(&tx.from, b"aoem:last_failure_class"),
+            Some(&b"execution_failed".to_vec())
+        );
+
+        let block_access_list = outcome
+            .observed_block_access_list
+            .block_access_list
+            .expect("create collision observed BAL");
+        let sender_entry = block_access_list
+            .0
+            .iter()
+            .find(|entry| entry.address.as_slice() == tx.from.as_slice())
+            .expect("sender BAL entry");
+        assert_eq!(
+            sender_entry.balance_changes[0].post_balance,
+            NovoVmAdapter::u128_to_be32_v1(expected_sender_balance)
+        );
+        assert!(
+            block_access_list
+                .0
+                .iter()
+                .all(|entry| entry.address.as_slice() != collision_contract.as_slice()),
+            "colliding CREATE must not emit a contract BAL account entry"
+        );
+
+        let adapter_contract = adapter
+            .state
+            .get_account(&collision_contract)
+            .expect("adapter state keeps existing contract");
+        assert_eq!(adapter_contract.balance, existing_contract_balance);
+        assert_eq!(adapter_contract.code_hash, Some(existing_code_hash));
+        assert_eq!(
+            adapter
+                .state
+                .get_storage(&collision_contract, b"deploy:runtime_code"),
+            Some(&existing_runtime_code)
+        );
+    }
+
+    #[test]
+    fn evm_execution_spec_create2_artifact_collision_invariants_v1() {
+        let mut adapter = NovoVmAdapter::new(ChainConfig {
+            chain_type: ChainType::EVM,
+            chain_id: 1,
+            name: "create2-artifact-collision".to_string(),
+            enabled: true,
+            custom_config: None,
+        });
+        adapter.initialize().expect("init");
+
+        let mut tx = sample_tx(TxType::ContractDeploy);
+        tx.value = 29;
+        tx.gas_limit = 120_000;
+        tx.gas_price = 5;
+        tx = resign_tx(tx);
+        let empty_init_code_hash =
+            decode_hex_bytes("c5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470");
+        let create2_contract = derive_create2_contract_address_m0(
+            &tx.from,
+            &decode_hex_bytes("cafebabe"),
+            &empty_init_code_hash,
+        );
+        assert_eq!(create2_contract.len(), 20);
+
+        let mut runtime_state = StateIR::new();
+        let initial_sender_balance = 1_000_000u128;
+        let existing_contract_balance = 456u128;
+        let existing_code_hash = vec![0xccu8; 32];
+        let existing_runtime_code = vec![0x60, 0x42, 0x00];
+        fund_sender_for_test(&mut runtime_state, &tx, initial_sender_balance);
+        runtime_state.set_account(
+            create2_contract.clone(),
+            AccountState {
+                balance: existing_contract_balance,
+                nonce: 1,
+                code_hash: Some(existing_code_hash.clone()),
+                storage_root: vec![0x22u8; 32],
+            },
+        );
+        runtime_state.set_storage(
+            create2_contract.clone(),
+            b"deploy:runtime_code_hash".to_vec(),
+            existing_code_hash.clone(),
+        );
+        runtime_state.set_storage(
+            create2_contract.clone(),
+            b"deploy:runtime_code".to_vec(),
+            existing_runtime_code.clone(),
+        );
+
+        let mut artifact =
+            sample_aoem_artifact(&tx, true, [0x7a; 32], Some(create2_contract.clone()));
+        artifact.gas_used = 44_000;
+        artifact.cumulative_gas_used = 44_000;
+        artifact.effective_gas_price = Some(tx.gas_price);
+        artifact.runtime_code = Some(vec![0x60, 0x00, 0x60, 0x01]);
+        artifact.runtime_code_hash = Some(vec![0xddu8; 32]);
+        let expected_fee = NovoVmAdapter::execution_fee_wei_v1(&tx, Some(&artifact), false);
+        let expected_sender_balance = initial_sender_balance - expected_fee;
+
+        let outcome = adapter
+            .execute_transaction_with_observed_metadata_v1(&tx, &mut runtime_state, Some(&artifact))
+            .expect("execute colliding CREATE2-address artifact");
+
+        assert!(!outcome.artifact.status_ok);
+        assert_eq!(outcome.artifact.contract_address, None);
+        assert_eq!(
+            runtime_state.get_account(&tx.from).map(|acc| acc.balance),
+            Some(expected_sender_balance)
+        );
+        let post_contract = runtime_state
+            .get_account(&create2_contract)
+            .expect("existing CREATE2 target must remain");
+        assert_eq!(post_contract.balance, existing_contract_balance);
+        assert_eq!(post_contract.nonce, 1);
+        assert_eq!(post_contract.code_hash, Some(existing_code_hash.clone()));
+        assert_eq!(
+            runtime_state.get_storage(&create2_contract, b"deploy:runtime_code_hash"),
+            Some(&existing_code_hash)
+        );
+        assert_eq!(
+            runtime_state.get_storage(&create2_contract, b"deploy:runtime_code"),
+            Some(&existing_runtime_code)
+        );
+        assert_eq!(
+            runtime_state.get_storage(&tx.from, b"deploy:last_failed_contract_address"),
+            Some(&create2_contract)
+        );
+        assert_eq!(
+            runtime_state.get_storage(&tx.from, b"deploy:last_reject_reason"),
+            Some(&b"create_collision_existing_account".to_vec())
+        );
+
+        let block_access_list = outcome
+            .observed_block_access_list
+            .block_access_list
+            .expect("CREATE2 collision observed BAL");
+        let sender_entry = block_access_list
+            .0
+            .iter()
+            .find(|entry| entry.address.as_slice() == tx.from.as_slice())
+            .expect("sender BAL entry");
+        assert_eq!(
+            sender_entry.balance_changes[0].post_balance,
+            NovoVmAdapter::u128_to_be32_v1(expected_sender_balance)
+        );
+        assert!(
+            block_access_list
+                .0
+                .iter()
+                .all(|entry| entry.address.as_slice() != create2_contract.as_slice()),
+            "colliding CREATE2 target must not emit a contract BAL account entry"
         );
     }
 
@@ -3879,6 +5022,14 @@ mod tests {
 
     #[test]
     fn evm_equivalence_baseline_matrix_receipt_revert_gas_v1() {
+        evm_execution_spec_create_address_derivation_matches_geth_v1();
+        evm_execution_spec_create_call_failure_state_invariants_v1();
+        evm_execution_spec_create2_artifact_collision_invariants_v1();
+        evm_execution_spec_account_balance_value_fee_invariants_v1();
+        evm_execution_spec_effective_gas_price_fee_debit_v1();
+        evm_execution_spec_sstore_refund_cap_fee_debit_v1();
+        evm_execution_spec_sload_warm_cold_fee_debit_v1();
+
         let type3_env_key = "NOVOVM_EVM_ENABLE_TYPE3_WRITE_CHAIN_1";
         let type3_env_captured = std::env::var(type3_env_key).ok();
         std::env::set_var(type3_env_key, "1");

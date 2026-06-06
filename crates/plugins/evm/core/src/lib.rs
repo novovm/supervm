@@ -5,7 +5,7 @@ use aoem_bindings::secp256k1_recover_pubkey_v1_auto;
 use k256::ecdsa::{RecoveryId, Signature, VerifyingKey};
 use novovm_adapter_api::{BlockIR, ChainType, EvmAccessListEntryV1, TxIR, TxType};
 use sha3::{Digest, Keccak256};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::OnceLock;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -553,6 +553,53 @@ fn rlp_encode_list(items: &[Vec<u8>]) -> Vec<u8> {
         out.extend_from_slice(item);
     }
     out
+}
+
+#[must_use]
+pub fn evm_address20_from_bytes_m0(address: &[u8]) -> [u8; 20] {
+    let mut out = [0u8; 20];
+    if address.len() >= 20 {
+        out.copy_from_slice(&address[address.len() - 20..]);
+    } else {
+        out[20 - address.len()..].copy_from_slice(address);
+    }
+    out
+}
+
+#[must_use]
+pub fn evm_word32_from_bytes_m0(bytes: &[u8]) -> [u8; 32] {
+    let mut out = [0u8; 32];
+    if bytes.len() >= 32 {
+        out.copy_from_slice(&bytes[bytes.len() - 32..]);
+    } else {
+        out[32 - bytes.len()..].copy_from_slice(bytes);
+    }
+    out
+}
+
+#[must_use]
+pub fn derive_create_contract_address_m0(from: &[u8], nonce: u64) -> Vec<u8> {
+    let from20 = evm_address20_from_bytes_m0(from);
+    let encoded = rlp_encode_list(&[rlp_encode_bytes(&from20), rlp_encode_u128(nonce as u128)]);
+    let digest = Keccak256::digest(encoded);
+    digest[12..32].to_vec()
+}
+
+#[must_use]
+pub fn derive_create2_contract_address_m0(
+    from: &[u8],
+    salt: &[u8],
+    init_code_hash: &[u8],
+) -> Vec<u8> {
+    let from20 = evm_address20_from_bytes_m0(from);
+    let salt32 = evm_word32_from_bytes_m0(salt);
+    let mut preimage = Vec::with_capacity(1 + 20 + 32 + init_code_hash.len());
+    preimage.push(0xff);
+    preimage.extend_from_slice(&from20);
+    preimage.extend_from_slice(&salt32);
+    preimage.extend_from_slice(init_code_hash);
+    let digest = Keccak256::digest(preimage);
+    digest[12..32].to_vec()
 }
 
 fn pad_signature_word_to_32(raw: &[u8], field: &str) -> anyhow::Result<[u8; 32]> {
@@ -1160,8 +1207,191 @@ pub fn estimate_access_list_intrinsic_extra_gas_m0(
     access_list_storage_key_count: u64,
 ) -> u64 {
     access_list_address_count
-        .saturating_mul(2_400)
-        .saturating_add(access_list_storage_key_count.saturating_mul(1_900))
+        .saturating_mul(EVM_ACCESS_LIST_ADDRESS_INTRINSIC_GAS_M0)
+        .saturating_add(
+            access_list_storage_key_count
+                .saturating_mul(EVM_ACCESS_LIST_STORAGE_KEY_INTRINSIC_GAS_M0),
+        )
+}
+
+pub const EVM_WARM_ACCESS_GAS_M0: u64 = 100;
+pub const EVM_COLD_ACCOUNT_ACCESS_GAS_M0: u64 = 2_600;
+pub const EVM_COLD_SLOAD_GAS_M0: u64 = 2_100;
+pub const EVM_ACCESS_LIST_ADDRESS_INTRINSIC_GAS_M0: u64 = 2_400;
+pub const EVM_ACCESS_LIST_STORAGE_KEY_INTRINSIC_GAS_M0: u64 = 1_900;
+pub const EVM_SSTORE_SET_GAS_M0: u64 = 20_000;
+pub const EVM_SSTORE_RESET_GAS_M0: u64 = 5_000;
+pub const EVM_SSTORE_RESET_GAS_EIP2929_M0: u64 = EVM_SSTORE_RESET_GAS_M0 - EVM_COLD_SLOAD_GAS_M0;
+pub const EVM_SSTORE_SENTRY_GAS_M0: u64 = 2_300;
+pub const EVM_SSTORE_CLEARS_SCHEDULE_REFUND_EIP3529_M0: u64 =
+    EVM_SSTORE_RESET_GAS_M0 - EVM_COLD_SLOAD_GAS_M0 + EVM_ACCESS_LIST_STORAGE_KEY_INTRINSIC_GAS_M0;
+pub const EVM_REFUND_QUOTIENT_EIP3529_M0: u64 = 5;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EvmSstoreTransitionGasM0 {
+    pub gas_cost: u64,
+    pub refund_delta: i64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct EvmStorageAccessKeyM0 {
+    pub address: [u8; 20],
+    pub slot: [u8; 32],
+}
+
+#[must_use]
+pub fn estimate_eip2929_account_access_gas_m0(
+    account_access_count: u64,
+    warm_account_access_count: u64,
+) -> u64 {
+    let warm = warm_account_access_count.min(account_access_count);
+    let cold = account_access_count.saturating_sub(warm);
+    cold.saturating_mul(EVM_COLD_ACCOUNT_ACCESS_GAS_M0)
+        .saturating_add(warm.saturating_mul(EVM_WARM_ACCESS_GAS_M0))
+}
+
+#[must_use]
+pub fn estimate_eip2929_storage_read_gas_m0(
+    storage_read_count: u64,
+    warm_storage_read_count: u64,
+) -> u64 {
+    let warm = warm_storage_read_count.min(storage_read_count);
+    let cold = storage_read_count.saturating_sub(warm);
+    cold.saturating_mul(EVM_COLD_SLOAD_GAS_M0)
+        .saturating_add(warm.saturating_mul(EVM_WARM_ACCESS_GAS_M0))
+}
+
+#[must_use]
+pub fn estimate_eip2929_storage_read_sequence_gas_m0(
+    initial_warm_storage_keys: &[EvmStorageAccessKeyM0],
+    storage_read_sequence: &[EvmStorageAccessKeyM0],
+) -> u64 {
+    let mut warm_storage_keys = initial_warm_storage_keys
+        .iter()
+        .copied()
+        .collect::<HashSet<_>>();
+    storage_read_sequence.iter().fold(0u64, |acc, key| {
+        let cost = if warm_storage_keys.insert(*key) {
+            EVM_COLD_SLOAD_GAS_M0
+        } else {
+            EVM_WARM_ACCESS_GAS_M0
+        };
+        acc.saturating_add(cost)
+    })
+}
+
+#[must_use]
+pub fn estimate_access_list_execution_warm_savings_m0(
+    access_list_address_count: u64,
+    access_list_storage_key_count: u64,
+) -> u64 {
+    access_list_address_count
+        .saturating_mul(EVM_COLD_ACCOUNT_ACCESS_GAS_M0.saturating_sub(EVM_WARM_ACCESS_GAS_M0))
+        .saturating_add(
+            access_list_storage_key_count
+                .saturating_mul(EVM_COLD_SLOAD_GAS_M0.saturating_sub(EVM_WARM_ACCESS_GAS_M0)),
+        )
+}
+
+#[must_use]
+pub fn estimate_eip3529_sstore_clear_refund_m0(
+    original_value_is_non_zero: bool,
+    current_value_is_non_zero: bool,
+    new_value_is_zero: bool,
+) -> u64 {
+    if original_value_is_non_zero && current_value_is_non_zero && new_value_is_zero {
+        EVM_SSTORE_CLEARS_SCHEDULE_REFUND_EIP3529_M0
+    } else {
+        0
+    }
+}
+
+#[must_use]
+pub fn eip2200_sstore_sentry_allows_m0(gas_left: u64) -> bool {
+    gas_left > EVM_SSTORE_SENTRY_GAS_M0
+}
+
+#[must_use]
+pub fn estimate_eip3529_sstore_transition_gas_m0(
+    original_value: [u8; 32],
+    current_value: [u8; 32],
+    new_value: [u8; 32],
+    slot_warm: bool,
+) -> EvmSstoreTransitionGasM0 {
+    let cold_cost = if slot_warm { 0 } else { EVM_COLD_SLOAD_GAS_M0 };
+    if current_value == new_value {
+        return EvmSstoreTransitionGasM0 {
+            gas_cost: cold_cost.saturating_add(EVM_WARM_ACCESS_GAS_M0),
+            refund_delta: 0,
+        };
+    }
+
+    let zero = [0u8; 32];
+    let original_is_zero = original_value == zero;
+    let current_is_zero = current_value == zero;
+    let new_is_zero = new_value == zero;
+
+    if original_value == current_value {
+        let refund_delta = if !original_is_zero && new_is_zero {
+            EVM_SSTORE_CLEARS_SCHEDULE_REFUND_EIP3529_M0 as i64
+        } else {
+            0
+        };
+        let gas_cost = if original_is_zero {
+            EVM_SSTORE_SET_GAS_M0
+        } else {
+            EVM_SSTORE_RESET_GAS_EIP2929_M0
+        };
+        return EvmSstoreTransitionGasM0 {
+            gas_cost: cold_cost.saturating_add(gas_cost),
+            refund_delta,
+        };
+    }
+
+    let mut refund_delta = 0i64;
+    if !original_is_zero {
+        if current_is_zero {
+            refund_delta -= EVM_SSTORE_CLEARS_SCHEDULE_REFUND_EIP3529_M0 as i64;
+        } else if new_is_zero {
+            refund_delta += EVM_SSTORE_CLEARS_SCHEDULE_REFUND_EIP3529_M0 as i64;
+        }
+    }
+    if original_value == new_value {
+        if original_is_zero {
+            refund_delta += (EVM_SSTORE_SET_GAS_M0 - EVM_WARM_ACCESS_GAS_M0) as i64;
+        } else {
+            refund_delta += (EVM_SSTORE_RESET_GAS_EIP2929_M0 - EVM_WARM_ACCESS_GAS_M0) as i64;
+        }
+    }
+
+    EvmSstoreTransitionGasM0 {
+        gas_cost: cold_cost.saturating_add(EVM_WARM_ACCESS_GAS_M0),
+        refund_delta,
+    }
+}
+
+#[must_use]
+pub fn cap_eip3529_gas_refund_m0(gas_used_before_refund: u64, refund_counter: u64) -> u64 {
+    refund_counter.min(gas_used_before_refund / EVM_REFUND_QUOTIENT_EIP3529_M0)
+}
+
+#[must_use]
+pub fn apply_eip3529_gas_refund_with_floor_m0(
+    gas_used_before_refund: u64,
+    refund_counter: u64,
+    floor_gas: u64,
+) -> u64 {
+    gas_used_before_refund
+        .saturating_sub(cap_eip3529_gas_refund_m0(
+            gas_used_before_refund,
+            refund_counter,
+        ))
+        .max(floor_gas)
+}
+
+#[must_use]
+pub fn apply_eip3529_gas_refund_m0(gas_used_before_refund: u64, refund_counter: u64) -> u64 {
+    apply_eip3529_gas_refund_with_floor_m0(gas_used_before_refund, refund_counter, 0)
 }
 
 #[must_use]
@@ -1458,6 +1688,30 @@ pub fn validate_tx_semantics_m0(profile: &EvmChainProfile, tx: &TxIR) -> anyhow:
 mod tests {
     use super::*;
 
+    fn hex_bytes(raw: &str) -> Vec<u8> {
+        let normalized = raw.trim_start_matches("0x");
+        assert_eq!(normalized.len() % 2, 0, "hex length must be even");
+        let bytes = normalized.as_bytes();
+        let mut out = Vec::with_capacity(normalized.len() / 2);
+        let mut cursor = 0usize;
+        while cursor < bytes.len() {
+            let hi = (bytes[cursor] as char).to_digit(16).expect("hex hi digit");
+            let lo = (bytes[cursor + 1] as char)
+                .to_digit(16)
+                .expect("hex lo digit");
+            out.push(((hi << 4) | lo) as u8);
+            cursor += 2;
+        }
+        out
+    }
+
+    fn official_address_fixture_subset_m0() -> serde_json::Value {
+        serde_json::from_str(include_str!(
+            "../tests/fixtures/ethereum-official-address-subset.json"
+        ))
+        .expect("decode official EVM address fixture subset")
+    }
+
     fn enc_bytes(raw: &[u8]) -> Vec<u8> {
         if raw.len() == 1 && raw[0] < 0x80 {
             return vec![raw[0]];
@@ -1651,6 +1905,62 @@ mod tests {
         assert!(!active_precompile_set_m0(&profile).is_empty());
         let profile = resolve_evm_profile(ChainType::Avalanche, 43114).expect("profile");
         assert!(!active_precompile_set_m0(&profile).is_empty());
+    }
+
+    #[test]
+    fn derive_create_contract_address_matches_geth_vectors_m0() {
+        let fixture = official_address_fixture_subset_m0();
+        assert_eq!(
+            fixture["source"]["kind"].as_str(),
+            Some("go-ethereum-official-tests")
+        );
+        let vectors = fixture["create"]
+            .as_array()
+            .expect("create fixture vector array");
+        assert!(
+            !vectors.is_empty(),
+            "create fixture subset must not be empty"
+        );
+        for vector in vectors {
+            let sender = vector["sender"].as_str().expect("create sender");
+            let nonce = vector["nonce"].as_u64().expect("create nonce");
+            let expected = vector["expected"].as_str().expect("create expected");
+            assert_eq!(
+                derive_create_contract_address_m0(&hex_bytes(sender), nonce),
+                hex_bytes(expected)
+            );
+        }
+    }
+
+    #[test]
+    fn derive_create2_contract_address_matches_geth_vectors_m0() {
+        let fixture = official_address_fixture_subset_m0();
+        assert_eq!(
+            fixture["source"]["kind"].as_str(),
+            Some("go-ethereum-official-tests")
+        );
+        let vectors = fixture["create2"]
+            .as_array()
+            .expect("create2 fixture vector array");
+        assert!(
+            !vectors.is_empty(),
+            "create2 fixture subset must not be empty"
+        );
+        for vector in vectors {
+            let origin = vector["origin"].as_str().expect("create2 origin");
+            let salt = vector["salt"].as_str().expect("create2 salt");
+            let init_code = vector["initCode"].as_str().expect("create2 init code");
+            let expected = vector["expected"].as_str().expect("create2 expected");
+            let code_hash = Keccak256::digest(hex_bytes(init_code));
+            assert_eq!(
+                derive_create2_contract_address_m0(
+                    &hex_bytes(origin),
+                    &hex_bytes(salt),
+                    code_hash.as_slice(),
+                ),
+                hex_bytes(expected)
+            );
+        }
     }
 
     #[test]
@@ -1943,6 +2253,196 @@ mod tests {
         let amsterdam = estimate_intrinsic_gas_with_access_list_rules_m0(&tx, 2, 3, true);
         let expected_extra = 2 * 20 * 4 * 16 + 3 * 32 * 4 * 16;
         assert_eq!(amsterdam, pre_amsterdam + expected_extra);
+    }
+
+    #[test]
+    fn access_list_warm_storage_read_reduces_execution_gas_m0() {
+        let cold_read = estimate_eip2929_storage_read_gas_m0(1, 0);
+        let warm_read = estimate_eip2929_storage_read_gas_m0(1, 1);
+
+        assert_eq!(cold_read, EVM_COLD_SLOAD_GAS_M0);
+        assert_eq!(warm_read, EVM_WARM_ACCESS_GAS_M0);
+        assert_eq!(cold_read - warm_read, 2_000);
+        assert_eq!(estimate_access_list_execution_warm_savings_m0(0, 1), 2_000);
+        assert_eq!(
+            estimate_access_list_execution_warm_savings_m0(0, 1)
+                - estimate_access_list_intrinsic_extra_gas_m0(0, 1),
+            100
+        );
+    }
+
+    #[test]
+    fn access_list_warm_account_access_reduces_execution_gas_m0() {
+        let cold_access = estimate_eip2929_account_access_gas_m0(1, 0);
+        let warm_access = estimate_eip2929_account_access_gas_m0(1, 1);
+
+        assert_eq!(cold_access, EVM_COLD_ACCOUNT_ACCESS_GAS_M0);
+        assert_eq!(warm_access, EVM_WARM_ACCESS_GAS_M0);
+        assert_eq!(cold_access - warm_access, 2_500);
+        assert_eq!(estimate_access_list_execution_warm_savings_m0(1, 0), 2_500);
+        assert_eq!(
+            estimate_access_list_execution_warm_savings_m0(1, 0)
+                - estimate_access_list_intrinsic_extra_gas_m0(1, 0),
+            100
+        );
+    }
+
+    #[test]
+    fn sstore_clear_refund_matches_eip3529_schedule_m0() {
+        assert_eq!(
+            EVM_SSTORE_CLEARS_SCHEDULE_REFUND_EIP3529_M0,
+            EVM_SSTORE_RESET_GAS_M0 - EVM_COLD_SLOAD_GAS_M0
+                + EVM_ACCESS_LIST_STORAGE_KEY_INTRINSIC_GAS_M0
+        );
+        assert_eq!(
+            estimate_eip3529_sstore_clear_refund_m0(true, true, true),
+            4_800
+        );
+        assert_eq!(
+            estimate_eip3529_sstore_clear_refund_m0(false, true, true),
+            0
+        );
+        assert_eq!(
+            estimate_eip3529_sstore_clear_refund_m0(true, false, true),
+            0
+        );
+        assert_eq!(
+            estimate_eip3529_sstore_clear_refund_m0(true, true, false),
+            0
+        );
+    }
+
+    #[test]
+    fn eip3529_refund_cap_limits_refunded_gas_m0() {
+        let refund_counter = estimate_eip3529_sstore_clear_refund_m0(true, true, true);
+        assert_eq!(cap_eip3529_gas_refund_m0(24_000, refund_counter), 4_800);
+        assert_eq!(apply_eip3529_gas_refund_m0(24_000, refund_counter), 19_200);
+        assert_eq!(cap_eip3529_gas_refund_m0(10_000, refund_counter), 2_000);
+        assert_eq!(apply_eip3529_gas_refund_m0(10_000, refund_counter), 8_000);
+        assert_eq!(
+            apply_eip3529_gas_refund_with_floor_m0(10_000, refund_counter, 9_000),
+            9_000
+        );
+    }
+
+    fn word32(value: u8) -> [u8; 32] {
+        [value; 32]
+    }
+
+    fn storage_key(address_byte: u8, slot_byte: u8) -> EvmStorageAccessKeyM0 {
+        EvmStorageAccessKeyM0 {
+            address: [address_byte; 20],
+            slot: [slot_byte; 32],
+        }
+    }
+
+    #[test]
+    fn sload_sequence_reuses_warm_storage_key_m0() {
+        let slot = storage_key(1, 7);
+        assert_eq!(
+            estimate_eip2929_storage_read_sequence_gas_m0(&[], &[slot, slot, slot]),
+            EVM_COLD_SLOAD_GAS_M0 + 2 * EVM_WARM_ACCESS_GAS_M0
+        );
+    }
+
+    #[test]
+    fn sload_sequence_respects_access_list_initial_warm_set_m0() {
+        let warm_slot = storage_key(1, 7);
+        let cold_slot = storage_key(1, 8);
+        assert_eq!(
+            estimate_eip2929_storage_read_sequence_gas_m0(
+                &[warm_slot],
+                &[warm_slot, warm_slot, cold_slot]
+            ),
+            2 * EVM_WARM_ACCESS_GAS_M0 + EVM_COLD_SLOAD_GAS_M0
+        );
+    }
+
+    #[test]
+    fn sload_sequence_keeps_address_and_slot_in_access_key_m0() {
+        let left = storage_key(1, 7);
+        let right = storage_key(2, 7);
+        assert_eq!(
+            estimate_eip2929_storage_read_sequence_gas_m0(&[], &[left, right, left]),
+            2 * EVM_COLD_SLOAD_GAS_M0 + EVM_WARM_ACCESS_GAS_M0
+        );
+    }
+
+    #[test]
+    fn sstore_transition_clean_slots_match_eip3529_m0() {
+        let zero = [0u8; 32];
+        let non_zero = word32(1);
+        let other = word32(2);
+
+        assert!(!eip2200_sstore_sentry_allows_m0(EVM_SSTORE_SENTRY_GAS_M0));
+        assert!(eip2200_sstore_sentry_allows_m0(
+            EVM_SSTORE_SENTRY_GAS_M0 + 1
+        ));
+
+        assert_eq!(
+            estimate_eip3529_sstore_transition_gas_m0(zero, zero, non_zero, false),
+            EvmSstoreTransitionGasM0 {
+                gas_cost: EVM_COLD_SLOAD_GAS_M0 + EVM_SSTORE_SET_GAS_M0,
+                refund_delta: 0,
+            }
+        );
+        assert_eq!(
+            estimate_eip3529_sstore_transition_gas_m0(non_zero, non_zero, zero, false),
+            EvmSstoreTransitionGasM0 {
+                gas_cost: EVM_COLD_SLOAD_GAS_M0 + EVM_SSTORE_RESET_GAS_EIP2929_M0,
+                refund_delta: 4_800,
+            }
+        );
+        assert_eq!(
+            estimate_eip3529_sstore_transition_gas_m0(non_zero, non_zero, other, true),
+            EvmSstoreTransitionGasM0 {
+                gas_cost: EVM_SSTORE_RESET_GAS_EIP2929_M0,
+                refund_delta: 0,
+            }
+        );
+        assert_eq!(
+            estimate_eip3529_sstore_transition_gas_m0(non_zero, non_zero, non_zero, true),
+            EvmSstoreTransitionGasM0 {
+                gas_cost: EVM_WARM_ACCESS_GAS_M0,
+                refund_delta: 0,
+            }
+        );
+    }
+
+    #[test]
+    fn sstore_transition_dirty_slots_match_eip3529_m0() {
+        let zero = [0u8; 32];
+        let original = word32(1);
+        let current = word32(2);
+
+        assert_eq!(
+            estimate_eip3529_sstore_transition_gas_m0(original, zero, current, true),
+            EvmSstoreTransitionGasM0 {
+                gas_cost: EVM_WARM_ACCESS_GAS_M0,
+                refund_delta: -4_800,
+            }
+        );
+        assert_eq!(
+            estimate_eip3529_sstore_transition_gas_m0(original, current, zero, true),
+            EvmSstoreTransitionGasM0 {
+                gas_cost: EVM_WARM_ACCESS_GAS_M0,
+                refund_delta: 4_800,
+            }
+        );
+        assert_eq!(
+            estimate_eip3529_sstore_transition_gas_m0(original, current, original, true),
+            EvmSstoreTransitionGasM0 {
+                gas_cost: EVM_WARM_ACCESS_GAS_M0,
+                refund_delta: 2_800,
+            }
+        );
+        assert_eq!(
+            estimate_eip3529_sstore_transition_gas_m0(zero, current, zero, true),
+            EvmSstoreTransitionGasM0 {
+                gas_cost: EVM_WARM_ACCESS_GAS_M0,
+                refund_delta: 19_900,
+            }
+        );
     }
 
     #[test]

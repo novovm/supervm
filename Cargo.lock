@@ -1394,6 +1394,7 @@ dependencies = [
  "aoem-bindings",
  "k256",
  "novovm-adapter-api",
+ "serde_json",
  "sha3",
 ]
 
