@@ -14253,6 +14253,34 @@ fn eth_send_raw_transaction_rejects_type3_when_cancun_not_active() {
 }
 
 #[test]
+fn raw_tx_gateway_write_surface_smoke_v1() {
+    eth_send_transaction_without_nonce_uses_pending_view_nonce();
+    eth_send_transaction_infers_type2_from_eip1559_fee_fields();
+    eth_send_transaction_type2_hash_and_index_use_max_fee_per_gas();
+    eth_send_transaction_rejects_signature_sender_mismatch_when_recoverable();
+    eth_send_transaction_rejects_signature_nonce_mismatch_when_recoverable();
+    eth_send_transaction_rejects_type2_max_fee_below_base_fee();
+    eth_send_transaction_rejects_type2_priority_fee_above_max_fee();
+    eth_send_transaction_infers_type1_from_access_list();
+    eth_send_transaction_rejects_low_gas_when_access_list_intrinsic_not_covered();
+    eth_send_transaction_type3_accepts_blob_fields_when_enabled();
+    eth_send_transaction_rejects_type3_when_cancun_not_active();
+    eth_send_raw_transaction_without_uca_id_uses_binding_owner();
+    eth_send_raw_transaction_passes_execution_policy_into_ingress_record();
+    eth_send_raw_transaction_rejects_explicit_uca_id_mismatch_with_binding_owner();
+    eth_send_raw_transaction_rejects_chain_id_mismatch_for_chain_id_alias();
+    eth_send_raw_transaction_rejects_explicit_tx_type_mismatch();
+    eth_send_raw_transaction_accepts_matching_explicit_tx_type();
+    eth_send_raw_transaction_rejects_intrinsic_gas_too_low();
+    eth_send_raw_transaction_chain_scoped_prague_calldata_floor_gas();
+    eth_send_raw_transaction_rejects_type2_max_fee_below_base_fee();
+    eth_send_raw_transaction_rejects_type2_priority_fee_above_max_fee();
+    eth_send_raw_transaction_rejects_type2_when_write_path_disabled();
+    eth_send_raw_transaction_rejects_type2_when_london_not_active();
+    eth_send_raw_transaction_rejects_type3_when_cancun_not_active();
+}
+
+#[test]
 fn evm_replay_atomic_ready_clears_pending_and_updates_status() {
     let spool_dir = std::env::temp_dir().join(format!(
         "novovm-gateway-replay-atomic-ready-{}-{}",
@@ -15310,6 +15338,15 @@ fn gateway_error_code_prefers_reasons_list_over_counters() {
         gateway_error_code_for_method("eth_sendRawTransaction", raw),
         -32037
     );
+}
+
+#[test]
+fn raw_tx_gateway_txpool_error_surface_smoke_v1() {
+    gateway_error_code_maps_txpool_reject_reasons();
+    gateway_error_message_maps_txpool_codes_to_geth_style_text();
+    gateway_error_data_for_txpool_reject_is_structured();
+    gateway_error_code_prefers_reason_token_over_counters();
+    gateway_error_code_prefers_reasons_list_over_counters();
 }
 
 #[test]

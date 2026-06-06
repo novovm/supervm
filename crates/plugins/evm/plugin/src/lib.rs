@@ -4735,6 +4735,11 @@ mod tests {
     }
 
     #[test]
+    fn fee_settlement_ingress_surface_smoke_v1() {
+        plugin_apply_v1_populates_ingress_and_settlement_totals();
+    }
+
+    #[test]
     fn ingress_txpool_replacement_requires_price_bump() {
         let _guard = runtime_queue_test_guard();
         reset_runtime_queues_for_test();
@@ -5088,6 +5093,21 @@ mod tests {
             second.reject_reasons,
             vec![EvmTxpoolRejectReasonV1::ReplacementUnderpriced]
         );
+    }
+
+    #[test]
+    fn txpool_replacement_and_reject_surface_smoke_v1() {
+        ingress_txpool_replacement_requires_price_bump();
+        ingress_txpool_replacement_accepts_required_price_bump();
+        ingress_txpool_duplicate_tx_is_idempotent_accepted();
+        ingress_txpool_rejects_nonce_gap_beyond_threshold();
+        ingress_txpool_enforces_per_sender_pending_cap();
+        ingress_executable_queue_only_emits_contiguous_nonce_sequence();
+        ingress_pending_drain_and_sender_bucket_snapshot_are_explicit();
+        evict_ingress_tx_hashes_removes_executable_and_pending_frames();
+        evict_stale_ingress_frames_removes_old_runtime_frames();
+        ingress_drain_uses_sender_round_robin_for_pending_queue();
+        runtime_tap_summary_reports_txpool_drop_reason();
     }
 
     #[test]

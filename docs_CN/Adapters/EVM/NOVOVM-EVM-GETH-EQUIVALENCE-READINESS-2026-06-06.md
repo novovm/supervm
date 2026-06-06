@@ -257,6 +257,67 @@ cargo test -p novovm-evm-gateway json_rpc_store_recovery_surface_smoke_v1 -- --n
 
 这证明 gateway 层在内存 scan window 被截断时，仍能从持久化索引恢复常用 JSON-RPC 读取面；这不是完整以太坊历史归档节点声明。
 
+### 10. Gateway raw tx 写入面 smoke
+
+命令：
+
+```powershell
+cargo test -p novovm-evm-gateway raw_tx_gateway_write_surface_smoke_v1 -- --nocapture
+```
+
+结果：
+
+- pass
+- 覆盖 `eth_sendTransaction` pending nonce view
+- 覆盖 type2 dynamic-fee 推断、canonical fee hash/index 和 fee reject
+- 覆盖 recoverable signature sender/nonce mismatch reject
+- 覆盖 type1 access-list 推断和 access-list intrinsic gas reject
+- 覆盖 type3 显式开关写入和 Cancun fork gate
+- 覆盖 `eth_sendRawTransaction` UCA binding owner、execution policy、explicit chain/tx-type mismatch reject
+- 覆盖 raw tx intrinsic gas、Prague calldata floor gas、London/type2 gate、Cancun/type3 gate
+
+这证明 gateway raw 写入面具备独立产品门禁；它证明的是 Novo 控制面如何接收和拒绝 raw/typed transaction，不等同于完整 geth txpool 或完整 Ethereum transaction pool 行为。
+
+### 11. Gateway txpool 错误面 smoke
+
+命令：
+
+```powershell
+cargo test -p novovm-evm-gateway raw_tx_gateway_txpool_error_surface_smoke_v1 -- --nocapture
+```
+
+结果：
+
+- pass
+- 覆盖 replacement underpriced、nonce too low、nonce too high、pool full 的 gateway error code
+- 覆盖 geth-style txpool error message
+- 覆盖 structured txpool reject data
+- 覆盖 reject reason 优先级高于 counters
+
+这证明 gateway 能把 plugin/runtime txpool reject 转成稳定 JSON-RPC 产品错误面；这仍不是完整 geth txpool policy 等价声明。
+
+### 12. EVM plugin txpool / fee settlement smoke
+
+命令：
+
+```powershell
+cargo test -p novovm-adapter-evm-plugin txpool_replacement_and_reject_surface_smoke_v1 -- --nocapture
+cargo test -p novovm-adapter-evm-plugin fee_settlement_ingress_surface_smoke_v1 -- --nocapture
+```
+
+结果：
+
+- pass
+- 覆盖 txpool replacement price bump reject/accept
+- 覆盖 duplicate tx idempotent accept
+- 覆盖 nonce gap、per-sender pending cap、contiguous executable nonce sequence
+- 覆盖 pending sender bucket snapshot、pending drain、sender round-robin drain
+- 覆盖 tx hash eviction、stale frame eviction
+- 覆盖 runtime tap reject reason summary
+- 覆盖 ingress frame、settlement record、payout instruction 和 fee reserve/payout totals
+
+这证明实际 EVM plugin 层已具备 txpool replacement/reject 和 fee settlement 的回归门禁；账户余额扣费和 storage warmup 仍需在 adapter 执行语义层继续补强。
+
 ## Readiness 矩阵
 
 | 能力域 | 当前状态 | 证据 | 产品口径 |
@@ -271,7 +332,7 @@ cargo test -p novovm-evm-gateway json_rpc_store_recovery_surface_smoke_v1 -- --n
 | reorg canonical/noncanonical log view | Pass | parity sections `logs.mismatchCount=0` | 样本级可声明 |
 | eth/71 BAL 相关 wire 能力 | Partial | BAL payload/canonical/scanner pass；eth/71 BAL wire encode/decode/frame + safe negotiation gate pass；未证明完整 eth/71 peer sync | 可声明 eth/71 BAL wire smoke；不能声明完整 eth/71 等价 |
 | Ethereum fork rules / gas accounting / precompiles | Partial | execution-spec/fork-rule smoke matrix pass；未跑 Ethereum execution-spec 全量 fixture | 可声明样本级 fork-rule gate；不能声明 EVM 语义全等价 |
-| raw Ethereum transaction ingestion/execution | Partial | signed legacy/type1/type2/type3 transfer + typed call/deploy smoke pass；raw nonce gap reject pass；typed gas/revert artifact gate pass；BAL strict scan pass | 可声明 raw transfer/call/deploy smoke 可执行且关键失败路径有 gate；不能声明 raw tx 全等价 |
+| raw Ethereum transaction ingestion/execution | Partial | signed legacy/type1/type2/type3 transfer + typed call/deploy smoke pass；raw nonce gap reject pass；gateway raw write surface pass；gateway txpool error surface pass；plugin txpool replacement/reject pass；plugin fee settlement pass；BAL strict scan pass | 可声明 raw transfer/call/deploy smoke 可执行，gateway 写入/拒绝面和 plugin txpool/fee settlement 有 gate；不能声明 raw tx 全等价 |
 | JSON-RPC full-node surface | Partial | mainline query receipt/log 样本 pass；gateway block/tx/filter/call/estimateGas smoke pass；indexed block/tx/receipt/uncle smoke pass；pending/runtime smoke pass；store recovery smoke pass；未覆盖 tracing/debug/admin 和全 geth RPC 行为 | 可声明 gateway JSON-RPC 产品面样本可用；不能声明 geth RPC 等价 |
 | devp2p/RLPx peer sync / block import | Partial | 有 gateway/network 代码和 canary，但未作为本矩阵通过项 | 不能声明以太坊全节点 |
 
@@ -291,7 +352,7 @@ cargo test -p novovm-evm-gateway json_rpc_store_recovery_surface_smoke_v1 -- --n
 
 ## 下一步门禁顺序
 
-1. 继续强化 raw tx 产品面，补 txpool replacement、account balance/fee debit、access-list/storage warmup 的分层 gate。
+1. 继续强化 adapter 执行语义，补 account balance/value/fee debit 和 access-list/storage warmup 的分层 gate。
 2. 如继续扩展 JSON-RPC parity，可补更多 batch/mixed-param edge case；tracing/debug/admin 仍不作为 Novo EVM 插件主线优先项。
 3. 如需要提高 fork-rule 置信度，再接入 Ethereum execution-spec 官方 fixture 子集，但仍作为插件门禁，不改变 SUPERVM 主产品边界。
 4. 如需要提高 eth/71 置信度，再做真实 peer sync/capability negotiation 集成门禁，但仍不把 SUPERVM 产品口径改成 geth 全节点。
@@ -352,6 +413,10 @@ Raw/failure path regression gates：
 
 ```powershell
 cargo test -p novovm-node eth_send_raw_tx_ingress_tests --bin novovm-node -- --nocapture
+cargo test -p novovm-evm-gateway raw_tx_gateway_write_surface_smoke_v1 -- --nocapture
+cargo test -p novovm-evm-gateway raw_tx_gateway_txpool_error_surface_smoke_v1 -- --nocapture
+cargo test -p novovm-adapter-evm-plugin txpool_replacement_and_reject_surface_smoke_v1 -- --nocapture
+cargo test -p novovm-adapter-evm-plugin fee_settlement_ingress_surface_smoke_v1 -- --nocapture
 cargo test -p novovm-adapter-novovm typed_type2_semantics_reject_intrinsic_gas_too_low_v1 -- --nocapture
 cargo test -p novovm-adapter-novovm evm_equivalence_baseline_matrix_receipt_revert_gas_v1 -- --nocapture
 ```
