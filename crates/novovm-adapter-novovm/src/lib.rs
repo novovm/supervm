@@ -602,6 +602,52 @@ impl NovoVmAdapter {
         (gas_used, cumulative_gas_used, AoemFieldSourceV1::AoemRaw)
     }
 
+    fn execution_fee_wei_v1(
+        tx: &TxIR,
+        artifact: Option<&AoemTxExecutionArtifactV1>,
+        status_ok: bool,
+    ) -> u128 {
+        let failed_class = if status_ok {
+            None
+        } else if Self::deploy_rejected_by_eip7610_v1(tx, artifact) {
+            Some(AoemFailureClassV1::Invalid)
+        } else {
+            Some(Self::classify_failed_tx_details_v1(tx, artifact).0)
+        };
+        let (gas_used, _, _) =
+            Self::resolved_execution_gas_fields_v1(tx, artifact, status_ok, failed_class);
+        let effective_gas_price = artifact
+            .and_then(|item| item.effective_gas_price)
+            .unwrap_or(tx.gas_price);
+        (gas_used as u128).saturating_mul(effective_gas_price as u128)
+    }
+
+    fn debit_tracked_sender_balance_v1(
+        tx: &TxIR,
+        state: &mut StateIR,
+        artifact: Option<&AoemTxExecutionArtifactV1>,
+        status_ok: bool,
+    ) -> Result<()> {
+        let Some(mut from_account) = state.get_account(&tx.from).cloned() else {
+            return Ok(());
+        };
+        let value_debit = if status_ok { tx.value } else { 0 };
+        let fee_debit = Self::execution_fee_wei_v1(tx, artifact, status_ok);
+        let total_debit = value_debit.saturating_add(fee_debit);
+        if from_account.balance < total_debit {
+            bail!(
+                "evm tx insufficient balance: balance={} required={} value={} fee={}",
+                from_account.balance,
+                total_debit,
+                value_debit,
+                fee_debit
+            );
+        }
+        from_account.balance -= total_debit;
+        state.set_account(tx.from.clone(), from_account);
+        Ok(())
+    }
+
     fn classify_failed_tx_details_v1(
         tx: &TxIR,
         artifact: Option<&AoemTxExecutionArtifactV1>,
@@ -935,6 +981,13 @@ impl NovoVmAdapter {
         if let Some(from) = from_evm {
             out.account_read(from);
             out.nonce_change(block_access_index, from, tx.nonce.saturating_add(1));
+            if let Some(post_balance) = state.get_account(&tx.from).map(|account| account.balance) {
+                out.balance_change(
+                    block_access_index,
+                    from,
+                    Self::u128_to_be32_v1(post_balance),
+                );
+            }
         }
 
         match tx.tx_type {
@@ -1427,6 +1480,12 @@ impl NovoVmAdapter {
             .to
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("transfer tx missing target address"))?;
+        Self::debit_tracked_sender_balance_v1(
+            tx,
+            state,
+            artifact,
+            Self::tx_execution_status_ok(artifact),
+        )?;
         Self::bump_subject_nonce_owner_v1(tx, state, kv);
 
         if Self::tx_execution_status_ok(artifact) {
@@ -1470,6 +1529,12 @@ impl NovoVmAdapter {
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("contract call tx missing target address"))?;
 
+        Self::debit_tracked_sender_balance_v1(
+            tx,
+            state,
+            artifact,
+            Self::tx_execution_status_ok(artifact),
+        )?;
         Self::bump_subject_nonce_owner_v1(tx, state, kv);
 
         if Self::tx_execution_status_ok(artifact) {
@@ -1518,13 +1583,13 @@ impl NovoVmAdapter {
             bail!("contract deploy tx missing init code");
         }
 
-        Self::bump_subject_nonce_owner_v1(tx, state, kv);
-
         let contract_address = artifact
             .and_then(|item| item.contract_address.clone())
             .unwrap_or_else(|| Self::derive_contract_address(&tx.from, tx.nonce));
         let eip7610_rejected = is_eip7610_rejected_account_v1(tx.chain_id, &contract_address);
         let status_ok = Self::tx_execution_status_ok(artifact) && !eip7610_rejected;
+        Self::debit_tracked_sender_balance_v1(tx, state, artifact, status_ok)?;
+        Self::bump_subject_nonce_owner_v1(tx, state, kv);
         if status_ok {
             let mut contract_account = state
                 .get_account(&contract_address)
@@ -1749,6 +1814,11 @@ impl NovoVmAdapter {
         if let Err(err) = self.route_transaction_through_unified_account(tx) {
             self.reset_execution_receipt_context();
             return Err(err);
+        }
+        if self.state.get_account(&tx.from).is_none() {
+            if let Some(account) = state.get_account(&tx.from).cloned() {
+                self.state.set_account(tx.from.clone(), account);
+            }
         }
         let status_ok = Self::effective_tx_execution_status_ok(tx, artifact);
         match tx.tx_type {
@@ -2381,6 +2451,18 @@ mod tests {
         tx.hash = compute_tx_ir_hash(&tx);
         tx.signature = signature_payload_with_seed_v1(&tx, seed);
         tx
+    }
+
+    fn fund_sender_for_test(state: &mut StateIR, tx: &TxIR, balance: u128) {
+        state.set_account(
+            tx.from.clone(),
+            AccountState {
+                balance,
+                nonce: tx.nonce,
+                code_hash: None,
+                storage_root: vec![0u8; 32],
+            },
+        );
     }
 
     fn sample_privacy_tx_with_invalid_signature() -> TxIR {
@@ -3057,6 +3139,143 @@ mod tests {
     }
 
     #[test]
+    fn execute_transfer_debits_tracked_sender_value_and_fee_v1() {
+        let mut adapter = NovoVmAdapter::new(ChainConfig {
+            chain_type: ChainType::EVM,
+            chain_id: 1,
+            name: "test".to_string(),
+            enabled: true,
+            custom_config: None,
+        });
+        adapter.initialize().expect("init");
+
+        let mut tx = sample_tx(TxType::Transfer);
+        tx.value = 9;
+        tx.gas_price = 3;
+        tx = resign_tx(tx);
+        let mut runtime_state = StateIR::new();
+        let initial_balance = 100_000u128;
+        fund_sender_for_test(&mut runtime_state, &tx, initial_balance);
+        let expected_fee = NovoVmAdapter::execution_fee_wei_v1(&tx, None, true);
+        let expected_sender_balance = initial_balance - tx.value - expected_fee;
+
+        let outcome = adapter
+            .execute_transaction_with_observed_metadata_v1(&tx, &mut runtime_state, None)
+            .expect("execute funded transfer");
+
+        assert_eq!(
+            runtime_state.get_account(&tx.from).map(|acc| acc.balance),
+            Some(expected_sender_balance)
+        );
+        assert_eq!(
+            adapter
+                .get_balance(&tx.from)
+                .expect("adapter sender balance"),
+            expected_sender_balance
+        );
+        assert_eq!(
+            runtime_state
+                .get_account(tx.to.as_ref().expect("recipient"))
+                .map(|acc| acc.balance),
+            Some(tx.value)
+        );
+        let block_access_list = outcome
+            .observed_block_access_list
+            .block_access_list
+            .expect("observed block access list");
+        let sender_entry = block_access_list
+            .0
+            .iter()
+            .find(|entry| entry.address.as_slice() == tx.from.as_slice())
+            .expect("sender entry");
+        assert_eq!(sender_entry.balance_changes.len(), 1);
+        assert_eq!(
+            sender_entry.balance_changes[0].post_balance,
+            NovoVmAdapter::u128_to_be32_v1(expected_sender_balance)
+        );
+    }
+
+    #[test]
+    fn execute_failed_call_debits_fee_without_value_transfer_v1() {
+        let mut adapter = NovoVmAdapter::new(ChainConfig {
+            chain_type: ChainType::EVM,
+            chain_id: 1,
+            name: "test".to_string(),
+            enabled: true,
+            custom_config: None,
+        });
+        adapter.initialize().expect("init");
+
+        let mut tx = sample_tx(TxType::ContractCall);
+        tx.value = 11;
+        tx.gas_limit = 120_000;
+        tx.gas_price = 2;
+        tx = resign_tx(tx);
+        let target = tx.to.clone().expect("call target");
+        let mut runtime_state = StateIR::new();
+        let initial_balance = 100_000u128;
+        fund_sender_for_test(&mut runtime_state, &tx, initial_balance);
+        runtime_state.set_account(
+            target.clone(),
+            AccountState {
+                balance: 5,
+                nonce: 0,
+                code_hash: None,
+                storage_root: vec![0u8; 32],
+            },
+        );
+
+        let mut artifact = sample_aoem_artifact(&tx, false, [0x55; 32], None);
+        artifact.gas_used = 25_000;
+        artifact.cumulative_gas_used = 25_000;
+        artifact.effective_gas_price = Some(tx.gas_price);
+        let expected_fee = NovoVmAdapter::execution_fee_wei_v1(&tx, Some(&artifact), false);
+        let expected_sender_balance = initial_balance - expected_fee;
+
+        let resolved = adapter
+            .execute_transaction_with_artifact(&tx, &mut runtime_state, Some(&artifact))
+            .expect("execute failed call artifact");
+
+        assert!(!resolved.status_ok);
+        assert_eq!(
+            runtime_state.get_account(&tx.from).map(|acc| acc.balance),
+            Some(expected_sender_balance)
+        );
+        assert_eq!(
+            runtime_state.get_account(&target).map(|acc| acc.balance),
+            Some(5),
+            "failed call must not transfer value"
+        );
+    }
+
+    #[test]
+    fn execute_tracked_sender_rejects_insufficient_value_fee_v1() {
+        let mut adapter = NovoVmAdapter::new(ChainConfig {
+            chain_type: ChainType::EVM,
+            chain_id: 1,
+            name: "test".to_string(),
+            enabled: true,
+            custom_config: None,
+        });
+        adapter.initialize().expect("init");
+
+        let tx = sample_tx(TxType::Transfer);
+        let mut runtime_state = StateIR::new();
+        fund_sender_for_test(&mut runtime_state, &tx, 1);
+
+        let err = adapter
+            .execute_transaction_with_artifact(&tx, &mut runtime_state, None)
+            .expect_err("insufficient sender balance must reject before nonce bump");
+
+        assert!(err.to_string().contains("evm tx insufficient balance"));
+        assert_eq!(
+            runtime_state.get_account(&tx.from).map(|acc| acc.balance),
+            Some(1)
+        );
+        assert_eq!(adapter.get_nonce(&tx.from).expect("nonce"), 0);
+    }
+
+    #[test]
     fn execute_transaction_with_observed_metadata_emits_complete_contract_call_evm_bal() {
         let mut adapter = NovoVmAdapter::new(ChainConfig {
             chain_type: ChainType::EVM,
@@ -3159,6 +3378,16 @@ mod tests {
     }
 
     #[test]
+    fn evm_adapter_balance_fee_access_storage_surface_smoke_v1() {
+        execute_transfer_debits_tracked_sender_value_and_fee_v1();
+        execute_failed_call_debits_fee_without_value_transfer_v1();
+        execute_tracked_sender_rejects_insufficient_value_fee_v1();
+        tx_intrinsic_gas_includes_type1_access_list_extras_v1();
+        execute_transaction_with_observed_metadata_emits_complete_contract_call_evm_bal();
+        execute_transaction_with_observed_metadata_emits_complete_contract_deploy_evm_bal();
+    }
+
+    #[test]
     fn execute_transaction_with_failed_call_artifact_records_failure_without_value_transfer() {
         let mut adapter = NovoVmAdapter::new(ChainConfig {
             chain_type: ChainType::EVM,
@@ -3172,10 +3401,11 @@ mod tests {
         let tx = sample_tx(TxType::ContractCall);
         assert!(adapter.verify_transaction(&tx).expect("verify call"));
         let mut runtime_state = StateIR::new();
+        let initial_balance = 100_000u128;
         runtime_state.set_account(
             tx.from.clone(),
             AccountState {
-                balance: 5,
+                balance: initial_balance,
                 nonce: 0,
                 code_hash: None,
                 storage_root: vec![0u8; 32],
@@ -3184,13 +3414,14 @@ mod tests {
         adapter.state.set_account(
             tx.from.clone(),
             AccountState {
-                balance: 5,
+                balance: initial_balance,
                 nonce: 0,
                 code_hash: None,
                 storage_root: vec![0u8; 32],
             },
         );
         let artifact = sample_aoem_artifact(&tx, false, [0x55; 32], None);
+        let expected_fee = NovoVmAdapter::execution_fee_wei_v1(&tx, Some(&artifact), false);
 
         adapter
             .execute_transaction_with_artifact(&tx, &mut runtime_state, Some(&artifact))
@@ -3203,6 +3434,10 @@ mod tests {
                 .map(|acc| acc.balance)
                 .unwrap_or(0),
             0
+        );
+        assert_eq!(
+            runtime_state.get_account(&tx.from).map(|acc| acc.balance),
+            Some(initial_balance - expected_fee)
         );
         assert_eq!(
             runtime_state

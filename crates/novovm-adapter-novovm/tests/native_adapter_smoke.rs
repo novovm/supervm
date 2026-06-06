@@ -1,6 +1,7 @@
 use anyhow::Result;
 use novovm_adapter_api::{
-    default_chain_id, ChainConfig, ChainType, SerializationFormat, StateIR, TxIR, TxType,
+    default_chain_id, AccountState, ChainConfig, ChainType, SerializationFormat, StateIR, TxIR,
+    TxType,
 };
 use novovm_adapter_novovm::{
     address_from_seed_v1, create_native_adapter, signature_payload_with_seed_v1,
@@ -40,6 +41,18 @@ fn sample_transfer(chain_id: u64, nonce: u64, value: u128) -> TxIR {
     tx
 }
 
+fn fund_sender(state: &mut StateIR, tx: &TxIR, balance: u128) {
+    state.set_account(
+        tx.from.clone(),
+        AccountState {
+            balance,
+            nonce: tx.nonce,
+            code_hash: None,
+            storage_root: vec![0u8; 32],
+        },
+    );
+}
+
 #[test]
 fn native_adapter_executes_transfer_and_updates_state() -> Result<()> {
     let chain_id = default_chain_id(ChainType::NovoVM);
@@ -52,11 +65,16 @@ fn native_adapter_executes_transfer_and_updates_state() -> Result<()> {
     assert!(adapter.verify_transaction(&parsed)?);
 
     let mut state = StateIR::new();
+    fund_sender(&mut state, &parsed, 100_000);
     adapter.execute_transaction(&parsed, &mut state)?;
     let root = adapter.state_root()?;
     assert_eq!(root.len(), 32);
     assert_eq!(state.state_root.len(), 32);
     assert_eq!(adapter.get_balance(&encode_address(2000))?, 7);
+    assert_eq!(
+        state.get_account(&parsed.from).map(|acc| acc.balance),
+        Some(78_993)
+    );
     assert_eq!(adapter.get_nonce(&parsed.from)?, 1);
 
     adapter.shutdown()?;
@@ -130,6 +148,7 @@ fn native_adapter_accepts_evm_chain_config() -> Result<()> {
     assert!(adapter.verify_transaction(&tx)?);
 
     let mut state = StateIR::new();
+    fund_sender(&mut state, &tx, 100_000);
     adapter.execute_transaction(&tx, &mut state)?;
     assert_eq!(adapter.get_balance(&encode_address(2000))?, 9);
     adapter.shutdown()?;
@@ -144,6 +163,7 @@ fn native_adapter_unified_account_guard_rejects_replay_nonce() -> Result<()> {
 
     let mut state = StateIR::new();
     let first = sample_transfer(chain_id, 0, 5);
+    fund_sender(&mut state, &first, 100_000);
     adapter.execute_transaction(&first, &mut state)?;
 
     let replay = sample_transfer(chain_id, 0, 3);

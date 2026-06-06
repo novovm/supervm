@@ -318,6 +318,31 @@ cargo test -p novovm-adapter-evm-plugin fee_settlement_ingress_surface_smoke_v1 
 
 这证明实际 EVM plugin 层已具备 txpool replacement/reject 和 fee settlement 的回归门禁；账户余额扣费和 storage warmup 仍需在 adapter 执行语义层继续补强。
 
+### 13. Adapter balance / fee / access-storage smoke
+
+命令：
+
+```powershell
+cargo test -p novovm-adapter-novovm evm_adapter_balance_fee_access_storage_surface_smoke_v1 -- --nocapture
+cargo test -p novovm-adapter-novovm -- --nocapture
+cargo test -p novovm-adapter-evm-plugin -- --nocapture
+```
+
+结果：
+
+- pass
+- 覆盖 tracked sender 成功 transfer 后扣 `value + gas_used * effective_gas_price`
+- 覆盖 tracked sender 失败 contract call 后只扣 fee、不转 value
+- 覆盖余额不足时拒绝执行且不推进 nonce
+- 覆盖 sender post-balance 写入 observed BAL balance change
+- 覆盖 type1 access-list intrinsic gas extras
+- 覆盖 contract call storage write 的 observed BAL
+- 覆盖 contract deploy code/storage/balance observed BAL
+- 覆盖 native adapter smoke 显式 funded sender
+- 覆盖 EVM plugin 全包回归，确认 adapter 扣费语义未破坏 plugin apply/metadata 主线
+
+这证明 adapter 在拿到 sender account pre-state 时，会执行生产级 value/fee debit 和余额不足拒绝；没有 sender account pre-state 的 plugin smoke 仍保持控制面执行，不伪造余额。当前 TxIR 只保留 access-list count，不保留具体 warm address/slot，因此这里证明的是 access-list gas gate + 执行后 storage BAL 观测，不声明完整 EIP-2929 warm set 等价。
+
 ## Readiness 矩阵
 
 | 能力域 | 当前状态 | 证据 | 产品口径 |
@@ -331,8 +356,8 @@ cargo test -p novovm-adapter-evm-plugin fee_settlement_ingress_surface_smoke_v1 
 | typed tx failure / revert / fee edge parity | Pass | parity sections `typedTxFailure.mismatchCount=0` | 样本级可声明 |
 | reorg canonical/noncanonical log view | Pass | parity sections `logs.mismatchCount=0` | 样本级可声明 |
 | eth/71 BAL 相关 wire 能力 | Partial | BAL payload/canonical/scanner pass；eth/71 BAL wire encode/decode/frame + safe negotiation gate pass；未证明完整 eth/71 peer sync | 可声明 eth/71 BAL wire smoke；不能声明完整 eth/71 等价 |
-| Ethereum fork rules / gas accounting / precompiles | Partial | execution-spec/fork-rule smoke matrix pass；未跑 Ethereum execution-spec 全量 fixture | 可声明样本级 fork-rule gate；不能声明 EVM 语义全等价 |
-| raw Ethereum transaction ingestion/execution | Partial | signed legacy/type1/type2/type3 transfer + typed call/deploy smoke pass；raw nonce gap reject pass；gateway raw write surface pass；gateway txpool error surface pass；plugin txpool replacement/reject pass；plugin fee settlement pass；BAL strict scan pass | 可声明 raw transfer/call/deploy smoke 可执行，gateway 写入/拒绝面和 plugin txpool/fee settlement 有 gate；不能声明 raw tx 全等价 |
+| Ethereum fork rules / gas accounting / precompiles | Partial | execution-spec/fork-rule smoke matrix pass；adapter balance/fee/access-storage smoke pass；未跑 Ethereum execution-spec 全量 fixture | 可声明样本级 fork-rule、gas、tracked-account fee/value debit gate；不能声明 EVM 语义全等价 |
+| raw Ethereum transaction ingestion/execution | Partial | signed legacy/type1/type2/type3 transfer + typed call/deploy smoke pass；raw nonce gap reject pass；gateway raw write surface pass；gateway txpool error surface pass；plugin txpool replacement/reject pass；plugin fee settlement pass；adapter tracked-account value/fee debit pass；BAL strict scan pass | 可声明 raw transfer/call/deploy smoke 可执行，gateway 写入/拒绝面、plugin txpool/fee settlement、adapter tracked-account debit 有 gate；不能声明 raw tx 全等价 |
 | JSON-RPC full-node surface | Partial | mainline query receipt/log 样本 pass；gateway block/tx/filter/call/estimateGas smoke pass；indexed block/tx/receipt/uncle smoke pass；pending/runtime smoke pass；store recovery smoke pass；未覆盖 tracing/debug/admin 和全 geth RPC 行为 | 可声明 gateway JSON-RPC 产品面样本可用；不能声明 geth RPC 等价 |
 | devp2p/RLPx peer sync / block import | Partial | 有 gateway/network 代码和 canary，但未作为本矩阵通过项 | 不能声明以太坊全节点 |
 
@@ -352,9 +377,9 @@ cargo test -p novovm-adapter-evm-plugin fee_settlement_ingress_surface_smoke_v1 
 
 ## 下一步门禁顺序
 
-1. 继续强化 adapter 执行语义，补 account balance/value/fee debit 和 access-list/storage warmup 的分层 gate。
-2. 如继续扩展 JSON-RPC parity，可补更多 batch/mixed-param edge case；tracing/debug/admin 仍不作为 Novo EVM 插件主线优先项。
-3. 如需要提高 fork-rule 置信度，再接入 Ethereum execution-spec 官方 fixture 子集，但仍作为插件门禁，不改变 SUPERVM 主产品边界。
+1. 如要继续提高执行语义置信度，接入 Ethereum execution-spec 官方 fixture 子集，优先选账户余额、gas refund、access-list warm/cold、SSTORE/SLOAD、CREATE/CALL failure 样本。
+2. 如要完整验证 access-list warm/cold 语义，先把 raw decoder/gateway 中的具体 access-list address/slot 贯通到 adapter；当前 TxIR 只有 count，不能证明具体 warm set。
+3. 如继续扩展 JSON-RPC parity，可补更多 batch/mixed-param edge case；tracing/debug/admin 仍不作为 Novo EVM 插件主线优先项。
 4. 如需要提高 eth/71 置信度，再做真实 peer sync/capability negotiation 集成门禁，但仍不把 SUPERVM 产品口径改成 geth 全节点。
 
 ## 回归命令
@@ -417,6 +442,7 @@ cargo test -p novovm-evm-gateway raw_tx_gateway_write_surface_smoke_v1 -- --noca
 cargo test -p novovm-evm-gateway raw_tx_gateway_txpool_error_surface_smoke_v1 -- --nocapture
 cargo test -p novovm-adapter-evm-plugin txpool_replacement_and_reject_surface_smoke_v1 -- --nocapture
 cargo test -p novovm-adapter-evm-plugin fee_settlement_ingress_surface_smoke_v1 -- --nocapture
+cargo test -p novovm-adapter-novovm evm_adapter_balance_fee_access_storage_surface_smoke_v1 -- --nocapture
 cargo test -p novovm-adapter-novovm typed_type2_semantics_reject_intrinsic_gas_too_low_v1 -- --nocapture
 cargo test -p novovm-adapter-novovm evm_equivalence_baseline_matrix_receipt_revert_gas_v1 -- --nocapture
 ```
