@@ -98,18 +98,38 @@ cargo test -p novovm-node mainline_query::tests::eth_end_to_end_geth_sample_batc
 
 这证明的是 controlled mainline transfer smoke 的 BAL 生产、canonical 落盘和 scanner 校验闭环，不等于全部 EVM 交易类型的 BAL 完整性。
 
+### 4. Contract call BAL metadata
+
+命令：
+
+```powershell
+cargo test -p novovm-adapter-novovm execute_transaction_with_observed_metadata_emits_complete -- --nocapture
+cargo test -p novovm-adapter-evm-plugin plugin_apply_v2_exports_complete_contract_call_bal_metadata -- --nocapture
+cargo test -p novovm-adapter-evm-plugin plugin_apply_v2_can_export_and_ingest_execution_receipts -- --nocapture
+```
+
+结果：
+
+- transfer BAL complete: pass
+- contract call BAL complete: pass
+- contract call plugin metadata hash: pass
+- contract call + deploy mixed batch remains incomplete/hash absent: pass
+
+这证明成功 contract call 路径的 nonce、balance 和 storage write 已进入 BAL，并能上升到 plugin block metadata hash；deploy 仍保持保守 partial。
+
 ## Readiness 矩阵
 
 | 能力域 | 当前状态 | 证据 | 产品口径 |
 | --- | --- | --- | --- |
 | Novo mainline EVM host 执行闭环 | Pass | `submitted_total=16 processed_total=16 success_total=16 writes_total=16` | 可作为 Novo 主网控制 EVM 插件能力线 |
 | Canonical store + BAL payload | Pass | strict scan `problems=0 complete_with_hash=1` | transfer smoke 可用 |
+| contract call BAL 完整性 | Pass | adapter + plugin metadata tests pass, hash present | 成功 contract call 样本可声明 BAL 完整 |
 | geth ethapi receipt/log parity | Pass | 默认 fixture `sampleCount=11 totalMismatchCount=0` | 样本级兼容可声明 |
 | 最新 go-ethereum ethapi export parity | Pass | external fixture `sampleCount=11 totalMismatchCount=0` | 对当前本机 geth ethapi 测试数据无 mismatch |
 | typed tx failure / revert / fee edge parity | Pass | parity sections `typedTxFailure.mismatchCount=0` | 样本级可声明 |
 | reorg canonical/noncanonical log view | Pass | parity sections `logs.mismatchCount=0` | 样本级可声明 |
 | eth/71 BAL 相关 wire 能力 | Partial | 当前只验证 BAL payload/canonical/scanner；未证明完整 eth/71 peer sync | 不能声明完整 eth/71 等价 |
-| contract call/deploy BAL 完整性 | Partial | 当前只对 transfer path 标完整；复杂路径仍保守 | 不能声明全交易类型 BAL 完整 |
+| contract deploy BAL 完整性 | Partial | 混合批次仍保持 incomplete/hash absent | 不能声明 deploy BAL 完整 |
 | Ethereum fork rules / gas accounting / precompiles | Not claimed | 未跑 Ethereum execution-spec 全量 fixture | 不能声明 EVM 语义全等价 |
 | raw Ethereum transaction ingestion/execution | Partial | 有 ethapi receipt/export 对照；未作为主线真实 raw tx 批执行门禁 | 不能声明 raw tx 全等价 |
 | JSON-RPC full-node surface | Partial | mainline query 有样本；未覆盖全 RPC 行为 | 不能声明 geth RPC 等价 |
@@ -131,7 +151,7 @@ cargo test -p novovm-node mainline_query::tests::eth_end_to_end_geth_sample_batc
 
 ## 下一步门禁顺序
 
-1. 扩展 BAL 完整性到 contract call/deploy，并保持 `require_payload + require_complete + require_hash_when_complete` 全通过。
+1. 扩展 BAL 完整性到 contract deploy，并保持混合批次不会误标完整。
 2. 把 raw Ethereum tx ingestion 作为真实执行链路输入，而不是只从 receipt/export fixture 对照。
 3. 增加 Ethereum execution-spec/fork-rule 样本门禁，至少覆盖 gas、precompile、create/call/revert、storage、logs。
 4. 将 eth/71 BAL wire message 的 encode/decode/peer negotiation 纳入可重复 gate。
@@ -163,4 +183,3 @@ cargo run -p novovmctl -- evm-block-access-list-scan `
   --require-complete `
   --require-hash-when-complete
 ```
-

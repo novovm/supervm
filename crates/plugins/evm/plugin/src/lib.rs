@@ -5524,6 +5524,50 @@ mod tests {
     }
 
     #[test]
+    fn plugin_apply_v2_exports_complete_contract_call_bal_metadata() {
+        let _guard = runtime_queue_test_guard();
+        reset_runtime_queues_for_test();
+        let tx = sample_contract_call_tx(1, 0);
+        let target = tx.to.clone().expect("call target");
+        let txs = vec![tx];
+        let tx_bytes = crate::bincode_compat::serialize(&txs).expect("tx encode");
+        let options = NovovmAdapterPluginApplyOptionsV1 {
+            flags: NOVOVM_ADAPTER_PLUGIN_APPLY_FLAG_MAINLINE_RECEIPT_EXPORT_V1
+                | NOVOVM_ADAPTER_PLUGIN_APPLY_FLAG_MAINLINE_RECEIPT_INGEST_V1,
+        };
+        let mut out = NovovmAdapterPluginApplyResultV1::default();
+        let rc = unsafe {
+            novovm_adapter_plugin_apply_v2(
+                1,
+                1,
+                tx_bytes.as_ptr(),
+                tx_bytes.len(),
+                &options as *const NovovmAdapterPluginApplyOptionsV1,
+                &mut out as *mut NovovmAdapterPluginApplyResultV1,
+            )
+        };
+        assert_eq!(rc, NOVOVM_ADAPTER_PLUGIN_RC_OK);
+        assert_eq!(out.verified, 1);
+        assert_eq!(out.applied, 1);
+
+        let block_metadata = drain_block_metadata_for_host(4);
+        assert_eq!(block_metadata.len(), 1);
+        assert!(block_metadata[0].block_access_list_complete);
+        assert!(block_metadata[0].block_access_list_hash.is_some());
+        let block_access_list = block_metadata[0]
+            .block_access_list
+            .as_ref()
+            .expect("block access list");
+        let target_entry = block_access_list
+            .0
+            .iter()
+            .find(|entry| entry.address.as_slice() == target.as_slice())
+            .expect("target entry");
+        assert_eq!(target_entry.storage_changes.len(), 1);
+        assert!(!target_entry.storage_changes[0].slot_changes.is_empty());
+    }
+
+    #[test]
     fn block_metadata_builder_prefers_aoem_bal_hash_when_present() {
         let txs = vec![
             sample_contract_call_tx(1, 0),

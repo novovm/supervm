@@ -878,6 +878,24 @@ impl NovoVmAdapter {
         out
     }
 
+    fn bytes_to_bal_word32_v1(domain: &[u8], raw: &[u8]) -> [u8; 32] {
+        if raw.len() == 32 {
+            let mut out = [0u8; 32];
+            out.copy_from_slice(raw);
+            return out;
+        }
+        if raw.len() < 32 {
+            let mut out = [0u8; 32];
+            out[(32 - raw.len())..].copy_from_slice(raw);
+            return out;
+        }
+
+        let mut hasher = Sha256::new();
+        hasher.update(domain);
+        hasher.update(raw);
+        hasher.finalize().into()
+    }
+
     fn block_access_index_from_tx_index_v1(tx_index: u32) -> u32 {
         tx_index.saturating_add(1)
     }
@@ -917,6 +935,21 @@ impl NovoVmAdapter {
                         block_access_list_complete = tx.tx_type == TxType::Transfer
                             && resolved_artifact.status_ok
                             && from_evm.is_some();
+                        if tx.tx_type == TxType::ContractCall && resolved_artifact.status_ok {
+                            let slot_key = tx.nonce.to_le_bytes();
+                            if let Some(post_value) = state.get_storage(to_bytes, &slot_key) {
+                                out.storage_write(
+                                    block_access_index,
+                                    to,
+                                    Self::bytes_to_bal_word32_v1(b"novovm-bal-slot-v1", &slot_key),
+                                    Self::bytes_to_bal_word32_v1(
+                                        b"novovm-bal-storage-value-v1",
+                                        post_value,
+                                    ),
+                                );
+                                block_access_list_complete = from_evm.is_some();
+                            }
+                        }
                     }
                 }
             }
@@ -2952,6 +2985,50 @@ mod tests {
             .find(|entry| entry.address.as_slice() == recipient.as_slice())
             .expect("recipient entry");
         assert_eq!(recipient_entry.balance_changes.len(), 1);
+    }
+
+    #[test]
+    fn execute_transaction_with_observed_metadata_emits_complete_contract_call_evm_bal() {
+        let mut adapter = NovoVmAdapter::new(ChainConfig {
+            chain_type: ChainType::EVM,
+            chain_id: 1,
+            name: "test".to_string(),
+            enabled: true,
+            custom_config: None,
+        });
+        adapter.initialize().expect("init");
+
+        let tx = sample_tx(TxType::ContractCall);
+        let mut runtime_state = StateIR::new();
+        let outcome = adapter
+            .execute_transaction_with_observed_metadata_v1(&tx, &mut runtime_state, None)
+            .expect("execute with observed metadata");
+
+        assert!(outcome.artifact.status_ok);
+        assert!(
+            outcome
+                .observed_block_access_list
+                .block_access_list_complete
+        );
+        let block_access_list = outcome
+            .observed_block_access_list
+            .block_access_list
+            .expect("observed block access list");
+        let target = tx.to.clone().expect("target");
+        let target_entry = block_access_list
+            .0
+            .iter()
+            .find(|entry| entry.address.as_slice() == target.as_slice())
+            .expect("target entry");
+        assert_eq!(target_entry.storage_changes.len(), 1);
+        assert_eq!(
+            target_entry.storage_changes[0].slot,
+            NovoVmAdapter::bytes_to_bal_word32_v1(b"novovm-bal-slot-v1", &tx.nonce.to_le_bytes())
+        );
+        assert_eq!(
+            target_entry.storage_changes[0].slot_changes[0].post_value,
+            NovoVmAdapter::bytes_to_bal_word32_v1(b"novovm-bal-storage-value-v1", &tx.hash)
+        );
     }
 
     #[test]
