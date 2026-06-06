@@ -890,8 +890,10 @@ impl NovoVmAdapter {
     ) -> NovoVmObservedBlockAccessListV1 {
         let mut out = EvmConstructionBlockAccessListV1::new();
         let block_access_index = Self::block_access_index_from_tx_index_v1(tx_index);
+        let from_evm = Self::to_evm_address20_v1(&tx.from);
+        let mut block_access_list_complete = false;
 
-        if let Some(from) = Self::to_evm_address20_v1(&tx.from) {
+        if let Some(from) = from_evm {
             out.account_read(from);
             out.nonce_change(block_access_index, from, tx.nonce.saturating_add(1));
         }
@@ -912,6 +914,9 @@ impl NovoVmAdapter {
                                 );
                             }
                         }
+                        block_access_list_complete = tx.tx_type == TxType::Transfer
+                            && resolved_artifact.status_ok
+                            && from_evm.is_some();
                     }
                 }
             }
@@ -955,8 +960,7 @@ impl NovoVmAdapter {
             } else {
                 Some(out.to_access_list())
             },
-            // Adapter path currently captures only a safe EVM-addressable subset.
-            block_access_list_complete: false,
+            block_access_list_complete,
         }
     }
 
@@ -2907,7 +2911,7 @@ mod tests {
     }
 
     #[test]
-    fn execute_transaction_with_observed_metadata_emits_incomplete_evm_bal_subset() {
+    fn execute_transaction_with_observed_metadata_emits_complete_transfer_evm_bal() {
         let mut adapter = NovoVmAdapter::new(ChainConfig {
             chain_type: ChainType::EVM,
             chain_id: 1,
@@ -2925,7 +2929,7 @@ mod tests {
 
         assert!(outcome.artifact.status_ok);
         assert!(
-            !outcome
+            outcome
                 .observed_block_access_list
                 .block_access_list_complete
         );

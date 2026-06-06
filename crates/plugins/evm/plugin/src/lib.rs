@@ -2379,7 +2379,17 @@ pub fn drain_execution_receipts_for_host(max_items: usize) -> Vec<SupervmEvmExec
     let shards = resolve_evm_runtime_shards();
     let shard_count = shards.len();
     let start = runtime_shard_start_index(shard_count);
-    let mut out = Vec::with_capacity(max_items);
+    let capacity = shards
+        .iter()
+        .filter_map(|shard| {
+            shard
+                .lock()
+                .ok()
+                .map(|runtime| runtime.execution_receipts.len())
+        })
+        .fold(0usize, usize::saturating_add)
+        .min(max_items);
+    let mut out = Vec::with_capacity(capacity);
     for offset in 0..shard_count {
         if out.len() >= max_items {
             break;
@@ -2408,7 +2418,17 @@ pub fn drain_state_mirror_updates_for_host(max_items: usize) -> Vec<SupervmEvmSt
     let shards = resolve_evm_runtime_shards();
     let shard_count = shards.len();
     let start = runtime_shard_start_index(shard_count);
-    let mut out = Vec::with_capacity(max_items);
+    let capacity = shards
+        .iter()
+        .filter_map(|shard| {
+            shard
+                .lock()
+                .ok()
+                .map(|runtime| runtime.state_mirror_updates.len())
+        })
+        .fold(0usize, usize::saturating_add)
+        .min(max_items);
+    let mut out = Vec::with_capacity(capacity);
     for offset in 0..shard_count {
         if out.len() >= max_items {
             break;
@@ -2437,7 +2457,17 @@ pub fn drain_block_metadata_for_host(max_items: usize) -> Vec<SupervmEvmBlockMet
     let shards = resolve_evm_runtime_shards();
     let shard_count = shards.len();
     let start = runtime_shard_start_index(shard_count);
-    let mut out = Vec::with_capacity(max_items);
+    let capacity = shards
+        .iter()
+        .filter_map(|shard| {
+            shard
+                .lock()
+                .ok()
+                .map(|runtime| runtime.block_metadata_updates.len())
+        })
+        .fold(0usize, usize::saturating_add)
+        .min(max_items);
+    let mut out = Vec::with_capacity(capacity);
     for offset in 0..shard_count {
         if out.len() >= max_items {
             break;

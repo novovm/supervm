@@ -641,13 +641,249 @@ enum D1IngressMode {
     OpsV2,
 }
 
-fn ingress_mode_env() -> Result<D1IngressMode> {
+impl D1IngressMode {
+    fn parse(raw: &str) -> Result<Self> {
+        match raw.trim().to_ascii_lowercase().as_str() {
+            "auto" => Ok(Self::Auto),
+            "ops_wire_v1" | "wire_v1" => Ok(Self::OpsWireV1),
+            "ops_v2" | "v2" => Ok(Self::OpsV2),
+            _ => bail!("invalid D1 ingress mode={raw}; valid: auto|ops_wire_v1|ops_v2"),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+struct NodeCliOverridesV1 {
+    mainline_evm_host_enabled: Option<bool>,
+    mainline_evm_atomic_guard_enabled: Option<bool>,
+    mainline_evm_chain_id: Option<u64>,
+    mainline_evm_canonical_store_path: Option<PathBuf>,
+    tx_wire_path: Option<PathBuf>,
+    d1_ingress_mode: Option<D1IngressMode>,
+}
+
+fn parse_bool_arg_v1(raw: &str, field: &str) -> Result<bool> {
+    let normalized = raw.trim();
+    if normalized == "1"
+        || normalized.eq_ignore_ascii_case("true")
+        || normalized.eq_ignore_ascii_case("on")
+        || normalized.eq_ignore_ascii_case("yes")
+    {
+        return Ok(true);
+    }
+    if normalized == "0"
+        || normalized.eq_ignore_ascii_case("false")
+        || normalized.eq_ignore_ascii_case("off")
+        || normalized.eq_ignore_ascii_case("no")
+    {
+        return Ok(false);
+    }
+    bail!("invalid bool for {field}: {raw}; valid: true|false|1|0")
+}
+
+fn parse_u64_arg_v1(raw: &str, field: &str) -> Result<u64> {
+    raw.trim()
+        .parse::<u64>()
+        .with_context(|| format!("invalid u64 for {field}: {raw}"))
+}
+
+fn parse_node_cli_overrides_v1_from<I, S>(args: I) -> Result<NodeCliOverridesV1>
+where
+    I: IntoIterator<Item = S>,
+    S: Into<String>,
+{
+    let mut overrides = NodeCliOverridesV1::default();
+    let mut iter = args.into_iter().map(Into::into).peekable();
+    while let Some(arg) = iter.next() {
+        match arg.as_str() {
+            "--mainline-evm-host" => {
+                overrides.mainline_evm_host_enabled = Some(true);
+            }
+            "--no-mainline-evm-host" => {
+                overrides.mainline_evm_host_enabled = Some(false);
+            }
+            "--mainline-evm-atomic-guard" => {
+                overrides.mainline_evm_atomic_guard_enabled = Some(true);
+            }
+            "--no-mainline-evm-atomic-guard" => {
+                overrides.mainline_evm_atomic_guard_enabled = Some(false);
+            }
+            "--mainline-evm-host-enabled" => {
+                let value = iter.next().ok_or_else(|| {
+                    anyhow::anyhow!("--mainline-evm-host-enabled requires a bool value")
+                })?;
+                overrides.mainline_evm_host_enabled =
+                    Some(parse_bool_arg_v1(&value, "--mainline-evm-host-enabled")?);
+            }
+            "--mainline-evm-chain-id" => {
+                let value = iter
+                    .next()
+                    .ok_or_else(|| anyhow::anyhow!("--mainline-evm-chain-id requires a value"))?;
+                overrides.mainline_evm_chain_id =
+                    Some(parse_u64_arg_v1(&value, "--mainline-evm-chain-id")?);
+            }
+            "--mainline-evm-canonical-store"
+            | "--mainline-evm-canonical-store-path"
+            | "--canonical-store" => {
+                let value = iter.next().ok_or_else(|| {
+                    anyhow::anyhow!("{arg} requires a canonical store path value")
+                })?;
+                overrides.mainline_evm_canonical_store_path = Some(PathBuf::from(value));
+            }
+            "--tx-wire-file" => {
+                let value = iter
+                    .next()
+                    .ok_or_else(|| anyhow::anyhow!("--tx-wire-file requires a path value"))?;
+                overrides.tx_wire_path = Some(PathBuf::from(value));
+            }
+            "--d1-ingress-mode" => {
+                let value = iter
+                    .next()
+                    .ok_or_else(|| anyhow::anyhow!("--d1-ingress-mode requires a value"))?;
+                overrides.d1_ingress_mode = Some(D1IngressMode::parse(&value)?);
+            }
+            _ => {
+                if let Some(value) = arg.strip_prefix("--mainline-evm-host-enabled=") {
+                    overrides.mainline_evm_host_enabled =
+                        Some(parse_bool_arg_v1(value, "--mainline-evm-host-enabled")?);
+                } else if let Some(value) = arg.strip_prefix("--mainline-evm-chain-id=") {
+                    overrides.mainline_evm_chain_id =
+                        Some(parse_u64_arg_v1(value, "--mainline-evm-chain-id")?);
+                } else if let Some(value) = arg.strip_prefix("--mainline-evm-canonical-store-path=")
+                {
+                    overrides.mainline_evm_canonical_store_path = Some(PathBuf::from(value));
+                } else if let Some(value) = arg.strip_prefix("--mainline-evm-canonical-store=") {
+                    overrides.mainline_evm_canonical_store_path = Some(PathBuf::from(value));
+                } else if let Some(value) = arg.strip_prefix("--canonical-store=") {
+                    overrides.mainline_evm_canonical_store_path = Some(PathBuf::from(value));
+                } else if let Some(value) = arg.strip_prefix("--tx-wire-file=") {
+                    overrides.tx_wire_path = Some(PathBuf::from(value));
+                } else if let Some(value) = arg.strip_prefix("--d1-ingress-mode=") {
+                    overrides.d1_ingress_mode = Some(D1IngressMode::parse(value)?);
+                }
+            }
+        }
+    }
+    Ok(overrides)
+}
+
+fn parse_node_cli_overrides_v1() -> Result<NodeCliOverridesV1> {
+    parse_node_cli_overrides_v1_from(std::env::args().skip(1))
+}
+
+fn ingress_mode_env(cli: &NodeCliOverridesV1) -> Result<D1IngressMode> {
+    if let Some(mode) = cli.d1_ingress_mode {
+        return Ok(mode);
+    }
     let raw = std::env::var("NOVOVM_D1_INGRESS_MODE").unwrap_or_else(|_| "auto".to_string());
-    match raw.trim().to_ascii_lowercase().as_str() {
-        "auto" => Ok(D1IngressMode::Auto),
-        "ops_wire_v1" | "wire_v1" => Ok(D1IngressMode::OpsWireV1),
-        "ops_v2" | "v2" => Ok(D1IngressMode::OpsV2),
-        _ => bail!("invalid NOVOVM_D1_INGRESS_MODE={raw}; valid: auto|ops_wire_v1|ops_v2"),
+    D1IngressMode::parse(&raw).with_context(|| "invalid NOVOVM_D1_INGRESS_MODE")
+}
+
+fn tx_wire_path_from_config_v1(cli: &NodeCliOverridesV1) -> Option<PathBuf> {
+    cli.tx_wire_path
+        .clone()
+        .or_else(|| string_env_nonempty("NOVOVM_TX_WIRE_FILE").map(PathBuf::from))
+}
+
+fn ops_wire_path_from_config_v1(cli: &NodeCliOverridesV1) -> Option<PathBuf> {
+    if cli.tx_wire_path.is_some() {
+        return None;
+    }
+    string_env_nonempty("NOVOVM_OPS_WIRE_FILE").map(PathBuf::from)
+}
+
+fn ops_wire_dir_from_config_v1(cli: &NodeCliOverridesV1) -> Option<PathBuf> {
+    if cli.tx_wire_path.is_some() {
+        return None;
+    }
+    string_env_nonempty("NOVOVM_OPS_WIRE_DIR").map(PathBuf::from)
+}
+
+fn ops_wire_watch_from_config_v1(cli: &NodeCliOverridesV1) -> bool {
+    if cli.tx_wire_path.is_some() {
+        return false;
+    }
+    bool_env("NOVOVM_OPS_WIRE_WATCH")
+}
+
+fn mainline_evm_host_enabled(cli: &NodeCliOverridesV1) -> bool {
+    cli.mainline_evm_host_enabled
+        .unwrap_or_else(|| bool_env("NOVOVM_MAINLINE_EVM_HOST_ENABLED"))
+}
+
+fn mainline_evm_atomic_guard_enabled(cli: &NodeCliOverridesV1) -> bool {
+    cli.mainline_evm_atomic_guard_enabled
+        .unwrap_or_else(|| bool_env("NOVOVM_MAINLINE_EVM_ATOMIC_GUARD_ENABLED"))
+}
+
+fn mainline_evm_chain_id(cli: &NodeCliOverridesV1) -> Result<u64> {
+    if let Some(value) = cli.mainline_evm_chain_id {
+        return Ok(value);
+    }
+    u64_env_allow_zero("NOVOVM_MAINLINE_EVM_CHAIN_ID", 1)
+}
+
+fn mainline_evm_canonical_store_path(cli: &NodeCliOverridesV1) -> PathBuf {
+    cli.mainline_evm_canonical_store_path
+        .clone()
+        .or_else(|| {
+            string_env_nonempty("NOVOVM_MAINLINE_EVM_CANONICAL_STORE_PATH").map(PathBuf::from)
+        })
+        .unwrap_or_else(|| PathBuf::from("artifacts/mainline/evm-canonical-artifacts.json"))
+}
+
+#[cfg(test)]
+mod mainline_evm_cli_tests {
+    use super::*;
+
+    #[test]
+    fn node_cli_overrides_parse_mainline_evm_host_flags_v1() {
+        let out = parse_node_cli_overrides_v1_from([
+            "--profile",
+            "prod",
+            "--role-profile",
+            "validator",
+            "--mainline-evm-host",
+            "--tx-wire-file",
+            "artifacts/ingress/batch.txw",
+            "--mainline-evm-chain-id=777",
+            "--mainline-evm-canonical-store-path",
+            "artifacts/mainline/canonical.json",
+            "--d1-ingress-mode",
+            "ops_wire_v1",
+        ])
+        .expect("parse cli overrides");
+
+        assert_eq!(out.mainline_evm_host_enabled, Some(true));
+        assert_eq!(out.mainline_evm_chain_id, Some(777));
+        assert_eq!(
+            out.tx_wire_path.as_deref(),
+            Some(Path::new("artifacts/ingress/batch.txw"))
+        );
+        assert_eq!(
+            out.mainline_evm_canonical_store_path.as_deref(),
+            Some(Path::new("artifacts/mainline/canonical.json"))
+        );
+        assert_eq!(out.d1_ingress_mode, Some(D1IngressMode::OpsWireV1));
+    }
+
+    #[test]
+    fn node_cli_overrides_accept_boolean_value_forms_v1() {
+        let out = parse_node_cli_overrides_v1_from([
+            "--mainline-evm-host-enabled=false",
+            "--mainline-evm-atomic-guard",
+        ])
+        .expect("parse bool forms");
+
+        assert_eq!(out.mainline_evm_host_enabled, Some(false));
+        assert_eq!(out.mainline_evm_atomic_guard_enabled, Some(true));
+    }
+
+    #[test]
+    fn node_cli_overrides_reject_invalid_d1_ingress_mode_v1() {
+        let err = parse_node_cli_overrides_v1_from(["--d1-ingress-mode", "bad-mode"])
+            .expect_err("invalid d1 ingress mode should fail");
+        assert!(err.to_string().contains("invalid D1 ingress mode"));
     }
 }
 
@@ -684,24 +920,6 @@ fn string_env_nonempty(name: &str) -> Option<String> {
             Some(trimmed.to_string())
         }
     })
-}
-
-fn mainline_evm_host_enabled() -> bool {
-    bool_env("NOVOVM_MAINLINE_EVM_HOST_ENABLED")
-}
-
-fn mainline_evm_atomic_guard_enabled() -> bool {
-    bool_env("NOVOVM_MAINLINE_EVM_ATOMIC_GUARD_ENABLED")
-}
-
-fn mainline_evm_chain_id() -> Result<u64> {
-    u64_env_allow_zero("NOVOVM_MAINLINE_EVM_CHAIN_ID", 1)
-}
-
-fn mainline_evm_canonical_store_path() -> PathBuf {
-    string_env_nonempty("NOVOVM_MAINLINE_EVM_CANONICAL_STORE_PATH")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("artifacts/mainline/evm-canonical-artifacts.json"))
 }
 
 const MANUAL_ROUTE_ENV_LOCK_KEYS: [&str; 30] = [
@@ -23891,6 +24109,7 @@ struct PreparedBatch {
 }
 
 fn main() -> Result<()> {
+    let cli_overrides = parse_node_cli_overrides_v1()?;
     let verbose = bool_env("NOVOVM_NODE_VERBOSE");
     if let Some(method) = mainline_query_method_from_env() {
         let params = mainline_query_params_from_env()
@@ -24048,9 +24267,9 @@ fn main() -> Result<()> {
         );
     }
 
-    let tx_wire_path = string_env_nonempty("NOVOVM_TX_WIRE_FILE").map(PathBuf::from);
-    let ops_wire_path = string_env_nonempty("NOVOVM_OPS_WIRE_FILE").map(PathBuf::from);
-    let ops_wire_dir = string_env_nonempty("NOVOVM_OPS_WIRE_DIR").map(PathBuf::from);
+    let tx_wire_path = tx_wire_path_from_config_v1(&cli_overrides);
+    let ops_wire_path = ops_wire_path_from_config_v1(&cli_overrides);
+    let ops_wire_dir = ops_wire_dir_from_config_v1(&cli_overrides);
     let source_count =
         tx_wire_path.iter().count() + ops_wire_path.iter().count() + ops_wire_dir.iter().count();
     if source_count != 1 {
@@ -24059,7 +24278,7 @@ fn main() -> Result<()> {
         );
     }
     let selected_codec = string_env_nonempty("NOVOVM_D1_CODEC");
-    let ingress_mode = ingress_mode_env()?;
+    let ingress_mode = ingress_mode_env(&cli_overrides)?;
     let supports_wire_v1 = facade.supports_ops_wire_v1();
     let use_wire_v1 = match ingress_mode {
         D1IngressMode::Auto => supports_wire_v1,
@@ -24192,16 +24411,16 @@ fn main() -> Result<()> {
     if ops_wire_dir.is_some() && repeat_count != 1 {
         bail!("NOVOVM_TX_REPEAT_COUNT must be 1 when NOVOVM_OPS_WIRE_DIR is used");
     }
-    let watch_mode = bool_env("NOVOVM_OPS_WIRE_WATCH");
-    let mainline_evm_host = mainline_evm_host_enabled();
+    let watch_mode = ops_wire_watch_from_config_v1(&cli_overrides);
+    let mainline_evm_host = mainline_evm_host_enabled(&cli_overrides);
     let mainline_evm_chain_id = if mainline_evm_host {
-        Some(mainline_evm_chain_id()?)
+        Some(mainline_evm_chain_id(&cli_overrides)?)
     } else {
         None
     };
-    let mainline_evm_atomic_guard = mainline_evm_atomic_guard_enabled();
+    let mainline_evm_atomic_guard = mainline_evm_atomic_guard_enabled(&cli_overrides);
     let canonical_store_path = if mainline_evm_host {
-        Some(mainline_evm_canonical_store_path())
+        Some(mainline_evm_canonical_store_path(&cli_overrides))
     } else {
         None
     };

@@ -713,10 +713,20 @@ pub fn encode_adapter_address(seed: u64) -> Vec<u8> {
     out
 }
 
+fn local_tx_record_adapter_signing_seed_v1(account: u64) -> [u8; 32] {
+    use sha2::{Digest, Sha256};
+
+    let mut hasher = Sha256::new();
+    hasher.update(b"novovm-mainline-local-tx-adapter-seed-v1");
+    hasher.update(account.to_le_bytes());
+    hasher.finalize().into()
+}
+
 pub fn tx_ingress_record_to_adapter_tx_ir(record: &TxIngressRecord, chain_id: u64) -> TxIR {
+    let signing_seed = local_tx_record_adapter_signing_seed_v1(record.account);
     let mut ir = TxIR {
         hash: Vec::new(),
-        from: encode_adapter_address(record.account),
+        from: novovm_adapter_novovm::address_from_seed_v1(signing_seed),
         account_id: None,
         fee_owner_account_id: None,
         nonce_owner_account_id: None,
@@ -726,7 +736,7 @@ pub fn tx_ingress_record_to_adapter_tx_ir(record: &TxIngressRecord, chain_id: u6
         gas_price: record.fee,
         nonce: record.nonce,
         data: Vec::new(),
-        signature: record.signature.to_vec(),
+        signature: Vec::new(),
         chain_id,
         tx_type: TxType::Transfer,
         execution_policy: TxExecutionPolicyV1::Standard,
@@ -734,6 +744,7 @@ pub fn tx_ingress_record_to_adapter_tx_ir(record: &TxIngressRecord, chain_id: u6
         target_chain: None,
     };
     ir.compute_hash();
+    ir.signature = novovm_adapter_novovm::signature_payload_with_seed_v1(&ir, signing_seed);
     ir
 }
 
@@ -6540,7 +6551,7 @@ mod tests {
     }
 
     #[test]
-    fn tx_ingress_record_maps_to_adapter_tx_ir_with_fee_and_signature() {
+    fn tx_ingress_record_maps_to_adapter_verifiable_tx_ir() {
         let record = TxIngressRecord {
             account: 7,
             key: 9,
@@ -6556,10 +6567,23 @@ mod tests {
         assert_eq!(ir.gas_limit, 21_000);
         assert_eq!(ir.gas_price, 17);
         assert_eq!(ir.nonce, 13);
-        assert_eq!(ir.signature, vec![0xab; 32]);
+        assert_eq!(ir.signature.len(), 96);
         assert_eq!(ir.from.len(), 20);
         assert_eq!(ir.to.as_ref().map(Vec::len), Some(20));
         assert!(!ir.hash.is_empty());
+
+        let mut adapter =
+            novovm_adapter_novovm::create_native_adapter(novovm_adapter_api::ChainConfig {
+                chain_type: novovm_adapter_api::ChainType::EVM,
+                chain_id: 1,
+                name: "test-evm".to_string(),
+                enabled: true,
+                custom_config: None,
+            })
+            .expect("create adapter");
+        adapter.initialize().expect("initialize adapter");
+        assert!(adapter.verify_transaction(&ir).expect("verify tx ir"));
+        adapter.shutdown().expect("shutdown adapter");
     }
 
     #[test]
