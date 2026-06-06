@@ -2974,6 +2974,117 @@ mod tests {
     }
 
     #[test]
+    fn evm_execution_spec_sload_warm_cold_fee_debit_v1() {
+        let mut tx = sample_tx(TxType::ContractCall);
+        tx.value = 0;
+        tx.gas_limit = 120_000;
+        tx.gas_price = 5;
+        let target = tx.to.clone().expect("target");
+        let mut target20 = [0u8; 20];
+        target20.copy_from_slice(&target);
+        let warm_slot = [0x46u8; 32];
+        let cold_slot = [0x47u8; 32];
+        tx.evm_access_list = vec![EvmAccessListEntryV1 {
+            address: target.clone(),
+            storage_keys: vec![warm_slot.to_vec()],
+        }];
+        tx = resign_tx(tx);
+
+        let warm_key = EvmStorageAccessKeyM0 {
+            address: target20,
+            slot: warm_slot,
+        };
+        let cold_key = EvmStorageAccessKeyM0 {
+            address: target20,
+            slot: cold_slot,
+        };
+        let sload_sequence_gas = estimate_eip2929_storage_read_sequence_gas_m0(
+            &[warm_key],
+            &[warm_key, warm_key, cold_key, cold_key],
+        );
+        let all_cold_sequence_gas = estimate_eip2929_storage_read_sequence_gas_m0(
+            &[],
+            &[warm_key, warm_key, cold_key, cold_key],
+        );
+        let count_only_cold_gas = estimate_eip2929_storage_read_gas_m0(4, 0);
+        assert_eq!(sload_sequence_gas, 2_400);
+        assert_eq!(all_cold_sequence_gas, 4_400);
+        assert_eq!(count_only_cold_gas, 8_400);
+
+        let intrinsic_with_access_list =
+            estimate_intrinsic_gas_with_access_list_rules_m0(&tx, 1, 1, false);
+        let expected_gas_used = intrinsic_with_access_list.saturating_add(sload_sequence_gas);
+        let all_cold_gas_used = intrinsic_with_access_list.saturating_add(all_cold_sequence_gas);
+        let count_only_cold_gas_used =
+            intrinsic_with_access_list.saturating_add(count_only_cold_gas);
+        assert!(expected_gas_used < all_cold_gas_used);
+        assert!(all_cold_gas_used < count_only_cold_gas_used);
+
+        let mut adapter = NovoVmAdapter::new(ChainConfig {
+            chain_type: ChainType::EVM,
+            chain_id: 1,
+            name: "sload-warm-cold-fee-debit".to_string(),
+            enabled: true,
+            custom_config: None,
+        });
+        adapter.initialize().expect("init");
+        let mut runtime_state = StateIR::new();
+        let initial_balance = 1_000_000u128;
+        fund_sender_for_test(&mut runtime_state, &tx, initial_balance);
+
+        let mut artifact = sample_aoem_artifact(&tx, true, [0x76; 32], None);
+        artifact.gas_used = expected_gas_used;
+        artifact.cumulative_gas_used = expected_gas_used;
+        artifact.effective_gas_price = Some(tx.gas_price);
+        let expected_fee = (expected_gas_used as u128) * (tx.gas_price as u128);
+        let all_cold_fee = (all_cold_gas_used as u128) * (tx.gas_price as u128);
+        let count_only_cold_fee = (count_only_cold_gas_used as u128) * (tx.gas_price as u128);
+
+        let outcome = adapter
+            .execute_transaction_with_observed_metadata_v1(&tx, &mut runtime_state, Some(&artifact))
+            .expect("execute SLOAD warm/cold fee debit call");
+
+        assert!(outcome.artifact.status_ok);
+        assert_eq!(outcome.artifact.gas_used, expected_gas_used);
+        assert_eq!(
+            runtime_state.get_account(&tx.from).map(|acc| acc.balance),
+            Some(initial_balance - expected_fee)
+        );
+        assert_ne!(
+            runtime_state.get_account(&tx.from).map(|acc| acc.balance),
+            Some(initial_balance - all_cold_fee),
+            "fee debit must not treat an access-list warm SLOAD as cold"
+        );
+        assert_ne!(
+            runtime_state.get_account(&tx.from).map(|acc| acc.balance),
+            Some(initial_balance - count_only_cold_fee),
+            "fee debit must not use count-only cold SLOAD gas"
+        );
+        let block_access_list = outcome
+            .observed_block_access_list
+            .block_access_list
+            .expect("SLOAD warm/cold observed BAL");
+        let sender_entry = block_access_list
+            .0
+            .iter()
+            .find(|entry| entry.address.as_slice() == tx.from.as_slice())
+            .expect("sender BAL entry");
+        assert_eq!(
+            sender_entry.balance_changes[0].post_balance,
+            NovoVmAdapter::u128_to_be32_v1(initial_balance - expected_fee)
+        );
+        let target_entry = block_access_list
+            .0
+            .iter()
+            .find(|entry| entry.address.as_slice() == target.as_slice())
+            .expect("target BAL entry");
+        assert!(
+            target_entry.storage_reads.contains(&warm_slot),
+            "access-list warm slot must stay observable as a storage read"
+        );
+    }
+
+    #[test]
     fn tx_intrinsic_gas_includes_type3_blob_extras_v1() {
         let key = "NOVOVM_EVM_ENABLE_TYPE3_WRITE_CHAIN_1";
         let captured = std::env::var(key).ok();
@@ -3992,6 +4103,7 @@ mod tests {
         tx_intrinsic_gas_includes_type1_access_list_extras_v1();
         execute_raw_type1_access_list_emits_declared_storage_reads_v1();
         evm_execution_spec_access_list_warm_storage_smoke_v1();
+        evm_execution_spec_sload_warm_cold_fee_debit_v1();
         execute_transaction_with_observed_metadata_emits_complete_contract_call_evm_bal();
         execute_transaction_with_observed_metadata_emits_complete_contract_deploy_evm_bal();
     }
@@ -4572,6 +4684,7 @@ mod tests {
         evm_execution_spec_account_balance_value_fee_invariants_v1();
         evm_execution_spec_effective_gas_price_fee_debit_v1();
         evm_execution_spec_sstore_refund_cap_fee_debit_v1();
+        evm_execution_spec_sload_warm_cold_fee_debit_v1();
 
         let type3_env_key = "NOVOVM_EVM_ENABLE_TYPE3_WRITE_CHAIN_1";
         let type3_env_captured = std::env::var(type3_env_key).ok();
