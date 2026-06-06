@@ -340,6 +340,7 @@ cargo test -p novovm-adapter-evm-plugin -- --nocapture
 - 覆盖 tracked sender 成功 contract deploy 后扣 `value + fee`，contract 增加 `value`，contract balance/code 写入 observed BAL
 - 覆盖 tracked sender 失败 contract deploy 后只扣 fee、不转 value、不创建 contract account、不产出 contract BAL entry
 - 覆盖 CREATE existing-account collision：artifact 声称成功但目标已有 nonce/code/storage 时，降级失败、只扣 fee、不覆盖原 account/code/storage、不产出 contract BAL entry
+- 覆盖 CREATE2 artifact collision：artifact 携带 CREATE2 派生地址且目标已存在时，同样降级失败、只扣 fee、不覆盖原 account/code/storage、不产出 contract BAL entry
 - 覆盖 CREATE fallback contract address：无 artifact contract address 时，adapter 使用 geth `crypto.CreateAddress(sender, nonce)` / `keccak256(rlp([sender, nonce]))[12:]` 地址派生
 - 覆盖 EIP-1559 `effectiveGasPrice` fee settlement：当 `effectiveGasPrice < max_fee/gas_price` 时，sender fee debit 使用 `effectiveGasPrice`，不按 max fee cap 多扣
 - 覆盖余额不足时拒绝执行且不推进 nonce
@@ -356,7 +357,7 @@ cargo test -p novovm-adapter-evm-plugin -- --nocapture
 - 覆盖 native adapter smoke 显式 funded sender
 - 覆盖 EVM plugin 全包回归，确认 adapter 扣费语义未破坏 plugin apply/metadata 主线
 
-这证明 adapter 在拿到 sender account pre-state 时，会执行生产级 value/fee debit、EIP-1559 effectiveGasPrice fee settlement、成功 value transfer、失败 fee-only debit、CREATE geth 地址派生、CREATE existing-account collision 拒绝和余额不足拒绝；没有 sender account pre-state 的 plugin smoke 仍保持控制面执行，不伪造余额。当前已贯通 raw / gateway access-list entries 到 TxIR，并能把 declared storage read 写入 observed BAL；已补最小 warm/cold 成本、SLOAD accessed_storage_keys 顺序语义和 warm/cold fee debit、EIP-3529 refund/cap fee debit、SSTORE transition、CREATE/CALL failure invariant、CREATE collision invariant、CREATE address derivation、账户余额 value/fee invariant、effectiveGasPrice settlement 和 BAL 执行观测门禁，但仍未跑 Ethereum execution-spec 官方 warm/cold/refund/account/fee fixture，因此不声明完整 EVM gas/refund/account/fee 等价。
+这证明 adapter 在拿到 sender account pre-state 时，会执行生产级 value/fee debit、EIP-1559 effectiveGasPrice fee settlement、成功 value transfer、失败 fee-only debit、CREATE geth 地址派生、CREATE/CREATE2 existing-account collision 拒绝和余额不足拒绝；没有 sender account pre-state 的 plugin smoke 仍保持控制面执行，不伪造余额。当前已贯通 raw / gateway access-list entries 到 TxIR，并能把 declared storage read 写入 observed BAL；已补最小 warm/cold 成本、SLOAD accessed_storage_keys 顺序语义和 warm/cold fee debit、EIP-3529 refund/cap fee debit、SSTORE transition、CREATE/CALL failure invariant、CREATE/CREATE2 collision invariant、CREATE/CREATE2 address derivation、账户余额 value/fee invariant、effectiveGasPrice settlement 和 BAL 执行观测门禁，但仍未跑 Ethereum execution-spec 官方 warm/cold/refund/account/fee fixture，因此不声明完整 EVM gas/refund/account/fee 等价。
 
 ### 14. Access-list entries 贯通 smoke
 
@@ -462,9 +463,10 @@ cargo test -p novovm-adapter-novovm evm_equivalence_baseline_matrix_receipt_reve
 - failed CREATE 不创建 contract account，不写 deploy/runtime storage，不产出 contract BAL account entry
 - CREATE existing-account collision 即使 artifact 声称成功，也会降级为 failed execution
 - CREATE existing-account collision 不转 value、不覆盖 existing contract account/code/storage，不产出 contract BAL account entry
+- CREATE2 artifact collision 复用相同状态不变式：不转 value、不覆盖 existing contract account/code/storage，不产出 contract BAL account entry
 - failure classification 仍落到 sender 侧 metadata，不伪造成合约状态变更
 
-这证明当前 adapter 产品面已经把 CREATE/CALL 失败路径和 CREATE existing-account collision 的状态不变式锁住。它仍不是官方 execution-spec 全量 fixture；后续要声明等价，需要把这些 invariant 接入官方 failure/account fixture 子集。
+这证明当前 adapter 产品面已经把 CREATE/CALL 失败路径和 CREATE/CREATE2 existing-account collision 的状态不变式锁住。它仍不是官方 execution-spec 全量 fixture；后续要声明等价，需要把这些 invariant 接入官方 failure/account fixture 子集。
 
 ### 18. Execution-spec account balance value/fee invariants smoke
 
@@ -614,6 +616,29 @@ cargo test -p novovm-adapter-evm-core -- --nocapture
 
 这证明当前 EVM core 地址语义已经锁住 CREATE2 地址派生公式。它仍不是 CREATE2 opcode 执行器，也未声明 CREATE2 state/account collision 全量等价；后续要声明完整等价，需要把 CREATE2 执行和碰撞样本接入官方 fixture 子集。
 
+### 25. Execution-spec CREATE2 artifact collision smoke
+
+命令：
+
+```powershell
+cargo test -p novovm-adapter-novovm evm_execution_spec_create2_artifact_collision_invariants_v1 -- --nocapture
+cargo test -p novovm-adapter-novovm evm_execution_spec_create_call_failure_state_invariants_v1 -- --nocapture
+cargo test -p novovm-adapter-novovm evm_adapter_balance_fee_access_storage_surface_smoke_v1 -- --nocapture
+cargo test -p novovm-adapter-novovm evm_equivalence_baseline_matrix_receipt_revert_gas_v1 -- --nocapture
+```
+
+结果：
+
+- pass
+- 使用 core `derive_create2_contract_address_m0` 生成 CREATE2 派生地址
+- artifact 声称 deploy 成功并携带该 CREATE2 address 时，如果目标已有 nonce/code/storage，adapter 降级为失败
+- sender 只扣 fee，不转 `value`
+- existing contract balance / nonce / code_hash / runtime storage 保持不变
+- 不产出 contract BAL account entry
+- 该门禁挂入 CREATE/CALL failure invariant、adapter balance/fee 聚合 smoke 和 baseline matrix
+
+这证明当前 adapter 主路径已经对 AOEM/host 传入的 CREATE2 派生地址执行 existing-account collision 保护，不会覆盖既有合约账户。它仍不是 CREATE2 opcode 执行器；后续要声明完整等价，需要接入官方 CREATE2 execution/collision fixture 子集。
+
 ## Readiness 矩阵
 
 | 能力域 | 当前状态 | 证据 | 产品口径 |
@@ -621,13 +646,13 @@ cargo test -p novovm-adapter-evm-core -- --nocapture
 | Novo mainline EVM host 执行闭环 | Pass | `submitted_total=16 processed_total=16 success_total=16 writes_total=16` | 可作为 Novo 主网控制 EVM 插件能力线 |
 | Canonical store + BAL payload | Pass | strict scan `problems=0 complete_with_hash=1` | transfer smoke 可用 |
 | contract call BAL 完整性 | Pass | adapter + plugin metadata tests pass, hash present | 成功 contract call 样本可声明 BAL 完整 |
-| contract deploy BAL 完整性 | Pass | adapter + plugin metadata tests pass, hash present；CREATE fallback address derivation matches geth vectors；CREATE2 address derivation matches geth vectors | 成功 contract deploy 样本可声明 BAL 完整，fallback contract address 使用 geth CREATE 规则；CREATE2 地址公式已在 core 锁定 |
+| contract deploy BAL 完整性 | Pass | adapter + plugin metadata tests pass, hash present；CREATE fallback address derivation matches geth vectors；CREATE2 address derivation matches geth vectors；CREATE2 artifact collision smoke pass | 成功 contract deploy 样本可声明 BAL 完整，fallback contract address 使用 geth CREATE 规则；CREATE2 地址公式和 artifact collision 已有门禁 |
 | geth ethapi receipt/log parity | Pass | 默认 fixture `sampleCount=11 totalMismatchCount=0` | 样本级兼容可声明 |
 | 最新 go-ethereum ethapi export parity | Pass | external fixture `sampleCount=11 totalMismatchCount=0` | 对当前本机 geth ethapi 测试数据无 mismatch |
 | typed tx failure / revert / fee edge parity | Pass | parity sections `typedTxFailure.mismatchCount=0` | 样本级可声明 |
 | reorg canonical/noncanonical log view | Pass | parity sections `logs.mismatchCount=0` | 样本级可声明 |
 | eth/71 BAL 相关 wire 能力 | Partial | BAL payload/canonical/scanner pass；eth/71 BAL wire encode/decode/frame + safe negotiation gate pass；未证明完整 eth/71 peer sync | 可声明 eth/71 BAL wire smoke；不能声明完整 eth/71 等价 |
-| Ethereum fork rules / gas accounting / precompiles | Partial | execution-spec/fork-rule smoke matrix pass；adapter balance/fee/access-storage smoke pass；access-list entries 贯通 smoke pass；access-list warm/cold 成本、SLOAD sequence 和 BAL smoke pass；SLOAD warm/cold fee debit smoke pass；EIP-3529 SSTORE refund/cap/transition smoke pass；adapter SSTORE refund cap fee debit smoke pass；CREATE address derivation smoke pass；CREATE2 address derivation smoke pass；CREATE/CALL failure invariant smoke pass；CREATE existing-account collision smoke pass；account balance value/fee invariant smoke pass；EIP-1559 effectiveGasPrice settlement smoke pass；未跑 Ethereum execution-spec 全量 fixture | 可声明样本级 fork-rule、gas/refund/SLOAD sequence/SSTORE transition、SLOAD warm/cold fee debit、SSTORE refund cap fee debit、CREATE/CREATE2 geth address derivation、CREATE/CALL failure invariants、CREATE existing-account collision invariant、account balance value/fee invariants、EIP-1559 effectiveGasPrice settlement、tracked-account fee/value debit、access-list read-set/warm-cold smoke/BAL gate；不能声明 EVM 语义全等价 |
+| Ethereum fork rules / gas accounting / precompiles | Partial | execution-spec/fork-rule smoke matrix pass；adapter balance/fee/access-storage smoke pass；access-list entries 贯通 smoke pass；access-list warm/cold 成本、SLOAD sequence 和 BAL smoke pass；SLOAD warm/cold fee debit smoke pass；EIP-3529 SSTORE refund/cap/transition smoke pass；adapter SSTORE refund cap fee debit smoke pass；CREATE address derivation smoke pass；CREATE2 address derivation smoke pass；CREATE/CALL failure invariant smoke pass；CREATE existing-account collision smoke pass；CREATE2 artifact collision smoke pass；account balance value/fee invariant smoke pass；EIP-1559 effectiveGasPrice settlement smoke pass；未跑 Ethereum execution-spec 全量 fixture | 可声明样本级 fork-rule、gas/refund/SLOAD sequence/SSTORE transition、SLOAD warm/cold fee debit、SSTORE refund cap fee debit、CREATE/CREATE2 geth address derivation、CREATE/CALL failure invariants、CREATE/CREATE2 existing-account collision invariant、account balance value/fee invariants、EIP-1559 effectiveGasPrice settlement、tracked-account fee/value debit、access-list read-set/warm-cold smoke/BAL gate；不能声明 EVM 语义全等价 |
 | raw Ethereum transaction ingestion/execution | Partial | signed legacy/type1/type2/type3 transfer + typed call/deploy smoke pass；raw nonce gap reject pass；gateway raw write surface pass；gateway txpool error surface pass；plugin txpool replacement/reject pass；plugin fee settlement pass；adapter tracked-account value/fee debit pass；adapter account balance value/fee invariant pass；adapter effectiveGasPrice fee debit pass；access-list entries 贯通 pass；BAL strict scan pass | 可声明 raw transfer/call/deploy smoke 可执行，gateway 写入/拒绝面、plugin txpool/fee settlement、adapter tracked-account debit、account balance invariant、effectiveGasPrice settlement、access-list read-set 有 gate；不能声明 raw tx 全等价 |
 | JSON-RPC full-node surface | Partial | mainline query receipt/log 样本 pass；gateway block/tx/filter/call/estimateGas smoke pass；indexed block/tx/receipt/uncle smoke pass；pending/runtime smoke pass；store recovery smoke pass；未覆盖 tracing/debug/admin 和全 geth RPC 行为 | 可声明 gateway JSON-RPC 产品面样本可用；不能声明 geth RPC 等价 |
 | devp2p/RLPx peer sync / block import | Partial | 有 gateway/network 代码和 canary，但未作为本矩阵通过项 | 不能声明以太坊全节点 |
@@ -649,7 +674,7 @@ cargo test -p novovm-adapter-evm-core -- --nocapture
 ## 下一步门禁顺序
 
 1. 如要继续提高执行语义置信度，接入 Ethereum execution-spec 官方 fixture 子集，优先选账户余额 edge、CREATE/CALL failure edge、CREATE/CREATE2 address edge、CREATE/CREATE2 collision edge、SSTORE refund cap edge、SLOAD warm/cold edge 和 EIP-1559 fee edge 样本。
-2. 如要完整验证 access-list warm/cold/refund/failure/account/fee 语义，基于现在已贯通的 `TxIR.evm_access_list`、SLOAD sequence/fee debit smoke、EIP-3529 SSTORE transition/cap fee debit smoke、CREATE/CREATE2 address derivation smoke、CREATE/CALL failure invariant smoke、CREATE collision invariant smoke、account balance value/fee invariant smoke 和 effectiveGasPrice settlement smoke 接官方 fixture；不要再做包装层。
+2. 如要完整验证 access-list warm/cold/refund/failure/account/fee 语义，基于现在已贯通的 `TxIR.evm_access_list`、SLOAD sequence/fee debit smoke、EIP-3529 SSTORE transition/cap fee debit smoke、CREATE/CREATE2 address derivation smoke、CREATE/CALL failure invariant smoke、CREATE/CREATE2 collision invariant smoke、account balance value/fee invariant smoke 和 effectiveGasPrice settlement smoke 接官方 fixture；不要再做包装层。
 3. 如继续扩展 JSON-RPC parity，可补更多 batch/mixed-param edge case；tracing/debug/admin 仍不作为 Novo EVM 插件主线优先项。
 4. 如需要提高 eth/71 置信度，再做真实 peer sync/capability negotiation 集成门禁，但仍不把 SUPERVM 产品口径改成 geth 全节点。
 
