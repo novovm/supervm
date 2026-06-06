@@ -2778,6 +2778,13 @@ mod tests {
         .expect("decode official LOG/receipt state fixture")
     }
 
+    fn official_log4_oog_receipt_state_fixture_v1() -> serde_json::Value {
+        serde_json::from_str(include_str!(
+            "../tests/fixtures/ethereum-official-state-subset/log4-oog-receipt.json"
+        ))
+        .expect("decode official LOG4/OOG receipt state fixture")
+    }
+
     fn official_return_data_state_fixture_v1() -> serde_json::Value {
         serde_json::from_str(include_str!(
             "../tests/fixtures/ethereum-official-state-subset/return-data.json"
@@ -5967,6 +5974,338 @@ mod tests {
     }
 
     #[test]
+    fn official_state_fixture_log4_oog_receipt_grouped_projection_v1() {
+        let fixture = official_log4_oog_receipt_state_fixture_v1();
+        assert_eq!(fixture["source"]["repo"].as_str(), Some("ethereum/tests"));
+        assert_eq!(
+            fixture["source"]["fixtureFormat"].as_str(),
+            Some("state_test")
+        );
+        assert_eq!(fixture["source"]["fork"].as_str(), Some("Cancun"));
+
+        let empty_logs_hash = json_str(&fixture["emptyLogsHash"], "emptyLogsHash");
+        let cases = fixture["cases"].as_array().expect("LOG4/OOG cases");
+        assert_eq!(cases.len(), 10);
+
+        let mut log4_success_cases = 0usize;
+        let mut no_log_cases = 0usize;
+        let mut topic_count_sum = 0usize;
+        let mut empty_data_log_cases = 0usize;
+        let mut non_empty_data_log_cases = 0usize;
+        let mut storage_fact_cases = 0usize;
+        let mut non_empty_logs_hashes = std::collections::HashSet::new();
+        let mut gas_by_label = std::collections::HashMap::new();
+
+        for case in cases {
+            let label = json_str(&case["label"], "case.label");
+            let mode = json_str(&case["mode"], "case.mode");
+            assert!(
+                json_str(&case["fixtureKey"], "case.fixtureKey")
+                    .contains("GeneralStateTests/VMTests/vmLogTest/log4.json"),
+                "official LOG4/OOG case must come from VMTests/vmLogTest/log4.json"
+            );
+            assert!(
+                json_str(&case["fixtureKey"], "case.fixtureKey").contains("-fork_[Cancun-Prague]"),
+                "official LOG4/OOG case must be the Cancun/Prague projection"
+            );
+            assert!(
+                json_str(&case["postHash"], "case.postHash").starts_with("0x"),
+                "official LOG4/OOG case must carry post hash"
+            );
+            let logs_hash = json_str(&case["logsHash"], "case.logsHash");
+            let logs_expected = case["logsExpected"]
+                .as_bool()
+                .expect("case.logsExpected bool");
+            assert_eq!(logs_expected, logs_hash != empty_logs_hash);
+            if logs_expected {
+                non_empty_logs_hashes.insert(logs_hash.to_string());
+            }
+
+            let sender = json_str(&case["sender"], "case.sender");
+            let to = json_str(&case["to"], "case.to");
+            let pre_sender_balance =
+                json_hex_u128(&case["preSenderBalance"], "case.preSenderBalance");
+            let pre_sender_nonce =
+                json_hex_u128(&case["preSenderNonce"], "case.preSenderNonce") as u64;
+            let post_sender_balance =
+                json_hex_u128(&case["postSenderBalance"], "case.postSenderBalance");
+            let pre_to_balance = json_hex_u128(&case["preToBalance"], "case.preToBalance");
+            let pre_to_nonce = json_hex_u128(&case["preToNonce"], "case.preToNonce") as u64;
+            let post_to_balance = json_hex_u128(&case["postToBalance"], "case.postToBalance");
+            let post_to_nonce = json_hex_u128(&case["postToNonce"], "case.postToNonce") as u64;
+            let gas_price = json_hex_u128(&case["gasPrice"], "case.gasPrice");
+            let gas_limit = json_hex_u128(&case["gasLimit"], "case.gasLimit");
+            let value = json_hex_u128(&case["value"], "case.value");
+            let nonce = json_hex_u128(&case["nonce"], "case.nonce") as u64;
+            assert_eq!(nonce, pre_sender_nonce);
+            assert!(
+                value > 0,
+                "selected official LOG4/OOG subset covers simple top-level value transfer"
+            );
+            assert_eq!(post_to_balance, pre_to_balance + value);
+
+            let raw_tx = decode_hex_bytes(json_str(&case["txbytes"], "case.txbytes"));
+            let recovered_sender = recover_raw_evm_tx_sender_m0(&raw_tx)
+                .expect("official LOG4/OOG raw sender recovery")
+                .expect("official LOG4/OOG recovered sender");
+            assert_eq!(recovered_sender, decode_hex_bytes(sender));
+            let fields =
+                translate_raw_evm_tx_fields_m0(&raw_tx).expect("official LOG4/OOG tx decode");
+            let tx = tx_ir_from_raw_fields_m0(&fields, &raw_tx, recovered_sender, 1);
+
+            assert_eq!(
+                tx.tx_type,
+                TxType::ContractCall,
+                "VMTests LOG4 fixture uses calldata and must decode as a contract call"
+            );
+            assert_eq!(tx.from, decode_hex_bytes(sender));
+            assert_eq!(tx.to, Some(decode_hex_bytes(to)));
+            assert_eq!(tx.value, value);
+            assert_eq!(tx.gas_limit, gas_limit as u64);
+            assert_eq!(tx.gas_price, gas_price as u64);
+            assert_eq!(tx.nonce, nonce);
+            assert_eq!(
+                tx.data,
+                decode_hex_bytes(json_str(&case["data"], "case.data"))
+            );
+            assert_eq!(
+                tx.data.len(),
+                case["dataLen"].as_u64().expect("case.dataLen") as usize
+            );
+            assert_eq!(
+                Sha256::digest(&tx.data).to_vec(),
+                decode_hex_bytes(json_str(&case["dataSha256"], "case.dataSha256"))
+            );
+
+            let mut adapter = NovoVmAdapter::new(ChainConfig {
+                chain_type: ChainType::EVM,
+                chain_id: 1,
+                name: format!("official-log4-oog-receipt-{label}"),
+                enabled: true,
+                custom_config: None,
+            });
+            adapter.initialize().expect("init");
+            assert!(
+                adapter
+                    .verify_transaction(&tx)
+                    .expect("verify official LOG4/OOG raw tx"),
+                "official LOG4/OOG txbytes must verify through raw EVM path"
+            );
+            for historical_nonce in 0..pre_sender_nonce {
+                let mut historical_tx = tx.clone();
+                historical_tx.nonce = historical_nonce;
+                adapter
+                    .route_transaction_through_unified_account(&historical_tx)
+                    .expect("prime official LOG4/OOG pre-state nonce");
+            }
+
+            let charged_fee = pre_sender_balance
+                .saturating_sub(post_sender_balance)
+                .saturating_sub(value);
+            assert_eq!(charged_fee % gas_price, 0);
+            let gas_used = charged_fee / gas_price;
+            let expected_gas_used = case["gasUsed"].as_u64().expect("case.gasUsed");
+            assert_eq!(gas_used, expected_gas_used as u128);
+
+            let mut runtime_state = StateIR::new();
+            runtime_state.set_account(
+                tx.from.clone(),
+                AccountState {
+                    balance: pre_sender_balance,
+                    nonce: pre_sender_nonce,
+                    code_hash: None,
+                    storage_root: vec![0u8; 32],
+                },
+            );
+            runtime_state.set_account(
+                tx.to.clone().expect("call target"),
+                AccountState {
+                    balance: pre_to_balance,
+                    nonce: pre_to_nonce,
+                    code_hash: Some(vec![0xce; 32]),
+                    storage_root: vec![0u8; 32],
+                },
+            );
+            assert_eq!(
+                NovoVmAdapter::effective_execution_tx_v1(&tx, &runtime_state).tx_type,
+                TxType::ContractCall,
+                "target code in pre-state must promote LOG4/OOG fixture tx to contract call execution"
+            );
+
+            let mut artifact = sample_aoem_artifact(&tx, true, [0x8b; 32], None);
+            artifact.gas_used = expected_gas_used;
+            artifact.cumulative_gas_used = expected_gas_used;
+            artifact.effective_gas_price = Some(gas_price as u64);
+            artifact.receipt_type = None;
+            artifact.anchor = None;
+            if logs_expected {
+                let topic_count =
+                    case["logTopicCount"].as_u64().expect("case.logTopicCount") as usize;
+                assert_eq!(topic_count, 4);
+                topic_count_sum += topic_count;
+                let topics = (0..topic_count)
+                    .map(|idx| {
+                        let mut topic = [0u8; 32];
+                        topic[0] = 4;
+                        topic[31] = idx as u8;
+                        topic
+                    })
+                    .collect::<Vec<_>>();
+                let data_kind = json_str(&case["logDataKind"], "case.logDataKind");
+                let data = if matches!(data_kind, "emptyMem" | "memSizeZero") {
+                    empty_data_log_cases += 1;
+                    Vec::new()
+                } else {
+                    non_empty_data_log_cases += 1;
+                    vec![0x4c, 0x4f, 0x47, 0x34]
+                };
+                artifact.event_logs = vec![AoemEventLogV1 {
+                    emitter: tx.to.clone().expect("log emitter"),
+                    topics,
+                    data,
+                    log_index: 0,
+                }];
+                artifact.log_bloom = vec![0x45; AOEM_LOG_BLOOM_BYTES_V1];
+            } else {
+                artifact.event_logs.clear();
+                artifact.log_bloom = vec![0u8; AOEM_LOG_BLOOM_BYTES_V1];
+            }
+
+            let outcome = adapter
+                .execute_transaction_with_observed_metadata_v1(
+                    &tx,
+                    &mut runtime_state,
+                    Some(&artifact),
+                )
+                .expect("execute official LOG4/OOG receipt fixture projection");
+
+            assert!(outcome.artifact.status_ok);
+            assert_eq!(outcome.artifact.gas_used, expected_gas_used);
+            assert_eq!(
+                runtime_state.get_account(&tx.from).map(|acc| acc.balance),
+                Some(post_sender_balance)
+            );
+            assert_eq!(
+                runtime_state
+                    .get_account(tx.to.as_ref().expect("call target"))
+                    .map(|acc| acc.balance),
+                Some(post_to_balance)
+            );
+            assert_eq!(
+                runtime_state
+                    .get_account(tx.to.as_ref().expect("call target"))
+                    .map(|acc| acc.nonce),
+                Some(post_to_nonce)
+            );
+            assert_eq!(
+                runtime_state.get_storage(&tx.from, b"aoem:last_log_bloom"),
+                Some(&outcome.artifact.log_bloom)
+            );
+
+            let post_storage_facts = case["postStorageFacts"]
+                .as_object()
+                .expect("case.postStorageFacts");
+            match mode {
+                "log4SuccessProjection" => {
+                    log4_success_cases += 1;
+                    assert_eq!(outcome.artifact.event_logs.len(), 1);
+                    assert_eq!(outcome.artifact.event_logs[0].topics.len(), 4);
+                    assert!(outcome.artifact.log_bloom.iter().any(|byte| *byte != 0));
+                    assert!(!post_storage_facts.is_empty());
+                    assert_eq!(
+                        json_str(&case["postStorageFacts"]["0x00"], "log4 storage fact"),
+                        "0x600d"
+                    );
+                    storage_fact_cases += 1;
+                    assert!(
+                        runtime_state
+                            .get_storage(&tx.from, b"aoem:last_event_logs")
+                            .is_some(),
+                        "AOEM log projection must be persisted for non-empty official logs hash cases"
+                    );
+                }
+                "log4NoLogProjection" => {
+                    no_log_cases += 1;
+                    assert!(!logs_expected);
+                    assert!(outcome.artifact.event_logs.is_empty());
+                    assert!(outcome.artifact.log_bloom.iter().all(|byte| *byte == 0));
+                    assert_eq!(
+                        json_str(&case["postStorageFacts"]["0x00"], "no-log storage fact"),
+                        "0x0bad"
+                    );
+                    storage_fact_cases += 1;
+                    assert!(
+                        runtime_state
+                            .get_storage(&tx.from, b"aoem:last_event_logs")
+                            .is_none(),
+                        "no-log official OOG cases must not persist AOEM logs"
+                    );
+                }
+                _ => panic!("unexpected official LOG4/OOG mode {mode}"),
+            }
+
+            let bal = outcome
+                .observed_block_access_list
+                .block_access_list
+                .expect("official LOG4/OOG observed BAL");
+            let sender_entry = bal
+                .0
+                .iter()
+                .find(|entry| entry.address.as_slice() == tx.from.as_slice())
+                .expect("sender BAL entry");
+            assert_eq!(
+                sender_entry.balance_changes[0].post_balance,
+                NovoVmAdapter::u128_to_be32_v1(post_sender_balance)
+            );
+            let to_entry = bal
+                .0
+                .iter()
+                .find(|entry| {
+                    entry.address.as_slice() == tx.to.as_ref().expect("call target").as_slice()
+                })
+                .expect("value-transfer target BAL entry");
+            assert_eq!(
+                to_entry.balance_changes[0].post_balance,
+                NovoVmAdapter::u128_to_be32_v1(post_to_balance)
+            );
+
+            assert!(
+                gas_by_label
+                    .insert(label.to_string(), expected_gas_used)
+                    .is_none(),
+                "duplicate official LOG4 label {label}"
+            );
+        }
+
+        assert_eq!(log4_success_cases, 8);
+        assert_eq!(no_log_cases, 2);
+        assert_eq!(topic_count_sum, 32);
+        assert_eq!(empty_data_log_cases, 2);
+        assert_eq!(non_empty_data_log_cases, 6);
+        assert_eq!(storage_fact_cases, 10);
+        assert_eq!(non_empty_logs_hashes.len(), 7);
+
+        let gas = |label: &str| {
+            *gas_by_label
+                .get(label)
+                .unwrap_or_else(|| panic!("missing official LOG4 gas label {label}"))
+        };
+        assert_eq!(gas("log4EmptyMem"), 30_717);
+        assert_eq!(gas("log4MemSizeZero"), 30_741);
+        assert_eq!(gas("log4NonEmptyMem"), 30_997);
+        assert_eq!(gas("log4Log01"), 30_749);
+        assert_eq!(gas("log4Log311"), 30_749);
+        assert_eq!(gas("log4Caller"), 30_996);
+        assert_eq!(gas("log4MaxTopic"), 30_773);
+        assert_eq!(gas("log4Pc"), 30_745);
+        assert_eq!(gas("log4MemStartTooHigh"), 78_750_373);
+        assert_eq!(gas("log4MemSizeTooHigh"), 78_750_373);
+        assert_eq!(gas("log4Log01"), gas("log4Log311"));
+        assert_eq!(gas("log4MemStartTooHigh"), gas("log4MemSizeTooHigh"));
+        assert!(gas("log4MemStartTooHigh") > gas("log4NonEmptyMem"));
+    }
+
+    #[test]
     fn official_state_fixture_return_data_grouped_projection_v1() {
         let fixture = official_return_data_state_fixture_v1();
         assert_eq!(fixture["source"]["repo"].as_str(), Some("ethereum/tests"));
@@ -6450,6 +6789,7 @@ mod tests {
         official_state_fixture_create_account_grouped_projection_v1();
         official_state_fixture_staticcall_precompile_return_grouped_projection_v1();
         official_state_fixture_log_receipt_grouped_projection_v1();
+        official_state_fixture_log4_oog_receipt_grouped_projection_v1();
         official_state_fixture_return_data_grouped_projection_v1();
         execute_tracked_sender_rejects_insufficient_value_fee_v1();
         tx_intrinsic_gas_includes_type1_access_list_extras_v1();
