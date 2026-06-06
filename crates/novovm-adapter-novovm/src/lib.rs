@@ -3464,6 +3464,77 @@ mod tests {
     }
 
     #[test]
+    fn evm_execution_spec_sstore_refund_cap_fee_debit_v1() {
+        let mut adapter = NovoVmAdapter::new(ChainConfig {
+            chain_type: ChainType::EVM,
+            chain_id: 1,
+            name: "sstore-refund-cap-fee-debit".to_string(),
+            enabled: true,
+            custom_config: None,
+        });
+        adapter.initialize().expect("init");
+
+        let mut tx = sample_tx(TxType::ContractCall);
+        tx.value = 0;
+        tx.gas_limit = 120_000;
+        tx.gas_price = 4;
+        tx = resign_tx(tx);
+        let mut runtime_state = StateIR::new();
+        let initial_balance = 1_000_000u128;
+        fund_sender_for_test(&mut runtime_state, &tx, initial_balance);
+
+        let pre_refund_gas_used = 24_000u64;
+        let refund_counter = 19_200u64;
+        let capped_refunded_gas_used =
+            apply_eip3529_gas_refund_m0(pre_refund_gas_used, refund_counter);
+        let uncapped_refunded_gas_used = pre_refund_gas_used.saturating_sub(refund_counter);
+        assert_eq!(capped_refunded_gas_used, 19_200);
+        assert_eq!(uncapped_refunded_gas_used, 4_800);
+        assert!(
+            capped_refunded_gas_used > uncapped_refunded_gas_used,
+            "EIP-3529 refund cap must prevent over-refund"
+        );
+
+        let mut artifact = sample_aoem_artifact(&tx, true, [0x75; 32], None);
+        artifact.gas_used = capped_refunded_gas_used;
+        artifact.cumulative_gas_used = capped_refunded_gas_used;
+        artifact.effective_gas_price = Some(tx.gas_price);
+        let expected_capped_fee = (capped_refunded_gas_used as u128) * (tx.gas_price as u128);
+        let uncapped_fee = (uncapped_refunded_gas_used as u128) * (tx.gas_price as u128);
+        assert_eq!(expected_capped_fee, 76_800);
+        assert_eq!(uncapped_fee, 19_200);
+
+        let outcome = adapter
+            .execute_transaction_with_observed_metadata_v1(&tx, &mut runtime_state, Some(&artifact))
+            .expect("execute capped refund call artifact");
+
+        assert!(outcome.artifact.status_ok);
+        assert_eq!(outcome.artifact.gas_used, capped_refunded_gas_used);
+        assert_eq!(
+            runtime_state.get_account(&tx.from).map(|acc| acc.balance),
+            Some(initial_balance - expected_capped_fee)
+        );
+        assert_ne!(
+            runtime_state.get_account(&tx.from).map(|acc| acc.balance),
+            Some(initial_balance - uncapped_fee),
+            "fee debit must not use uncapped refund"
+        );
+        let block_access_list = outcome
+            .observed_block_access_list
+            .block_access_list
+            .expect("capped refund observed BAL");
+        let sender_entry = block_access_list
+            .0
+            .iter()
+            .find(|entry| entry.address.as_slice() == tx.from.as_slice())
+            .expect("sender BAL entry");
+        assert_eq!(
+            sender_entry.balance_changes[0].post_balance,
+            NovoVmAdapter::u128_to_be32_v1(initial_balance - expected_capped_fee)
+        );
+    }
+
+    #[test]
     fn evm_execution_spec_account_balance_value_fee_invariants_v1() {
         let mut call_adapter = NovoVmAdapter::new(ChainConfig {
             chain_type: ChainType::EVM,
@@ -3914,6 +3985,7 @@ mod tests {
         execute_transfer_debits_tracked_sender_value_and_fee_v1();
         execute_failed_call_debits_fee_without_value_transfer_v1();
         execute_success_call_debits_refunded_sstore_gas_used_v1();
+        evm_execution_spec_sstore_refund_cap_fee_debit_v1();
         evm_execution_spec_account_balance_value_fee_invariants_v1();
         evm_execution_spec_effective_gas_price_fee_debit_v1();
         execute_tracked_sender_rejects_insufficient_value_fee_v1();
@@ -4499,6 +4571,7 @@ mod tests {
         evm_execution_spec_create_call_failure_state_invariants_v1();
         evm_execution_spec_account_balance_value_fee_invariants_v1();
         evm_execution_spec_effective_gas_price_fee_debit_v1();
+        evm_execution_spec_sstore_refund_cap_fee_debit_v1();
 
         let type3_env_key = "NOVOVM_EVM_ENABLE_TYPE3_WRITE_CHAIN_1";
         let type3_env_captured = std::env::var(type3_env_key).ok();
