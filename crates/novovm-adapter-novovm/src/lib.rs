@@ -2771,6 +2771,13 @@ mod tests {
         .expect("decode official STATICCALL/precompile/return-data state fixture")
     }
 
+    fn official_precompile_failure_oog_state_fixture_v1() -> serde_json::Value {
+        serde_json::from_str(include_str!(
+            "../tests/fixtures/ethereum-official-state-subset/precompile-failure-oog.json"
+        ))
+        .expect("decode official precompile failure/OOG state fixture")
+    }
+
     fn official_log_receipt_state_fixture_v1() -> serde_json::Value {
         serde_json::from_str(include_str!(
             "../tests/fixtures/ethereum-official-state-subset/log-receipt.json"
@@ -5670,6 +5677,339 @@ mod tests {
     }
 
     #[test]
+    fn official_state_fixture_precompile_failure_oog_grouped_projection_v1() {
+        let fixture = official_precompile_failure_oog_state_fixture_v1();
+        assert_eq!(fixture["source"]["repo"].as_str(), Some("ethereum/tests"));
+        assert_eq!(
+            fixture["source"]["fixtureFormat"].as_str(),
+            Some("state_test")
+        );
+        assert_eq!(fixture["source"]["fork"].as_str(), Some("Cancun"));
+
+        let profile = resolve_evm_profile(ChainType::EVM, 1).expect("eth profile");
+        let precompiles = active_precompile_set_m0(&profile);
+        for required in ["ecrecover", "sha256", "ripemd160", "identity"] {
+            assert!(
+                precompiles.contains(&required),
+                "ethereum precompile set must include {required}"
+            );
+        }
+
+        let empty_logs_hash = json_str(&fixture["emptyLogsHash"], "emptyLogsHash");
+        let cases = fixture["cases"]
+            .as_array()
+            .expect("precompile failure/OOG cases");
+        assert_eq!(cases.len(), 9);
+
+        let mut gas_failure_cases = 0usize;
+        let mut boundary_success_cases = 0usize;
+        let mut input_validation_cases = 0usize;
+        let mut empty_storage_cases = 0usize;
+        let mut success_marker_cases = 0usize;
+        let mut gas_by_label = std::collections::HashMap::new();
+
+        for case in cases {
+            let label = json_str(&case["label"], "case.label");
+            let mode = json_str(&case["mode"], "case.mode");
+            assert!(
+                json_str(&case["fixtureKey"], "case.fixtureKey")
+                    .contains("GeneralStateTests/stStaticCall/static_Call"),
+                "official precompile failure/OOG case must come from stStaticCall"
+            );
+            assert!(
+                json_str(&case["fixtureKey"], "case.fixtureKey").contains("-fork_[Cancun-Prague]"),
+                "official precompile failure/OOG case must be the Cancun/Prague projection"
+            );
+            assert!(
+                json_str(&case["postHash"], "case.postHash").starts_with("0x"),
+                "official precompile failure/OOG case must carry post hash"
+            );
+            assert_eq!(
+                json_str(&case["logsHash"], "case.logsHash"),
+                empty_logs_hash
+            );
+
+            let sender = json_str(&case["sender"], "case.sender");
+            let to = json_str(&case["to"], "case.to");
+            let pre_sender_balance =
+                json_hex_u128(&case["preSenderBalance"], "case.preSenderBalance");
+            let pre_sender_nonce =
+                json_hex_u128(&case["preSenderNonce"], "case.preSenderNonce") as u64;
+            let post_sender_balance =
+                json_hex_u128(&case["postSenderBalance"], "case.postSenderBalance");
+            let pre_to_balance = json_hex_u128(&case["preToBalance"], "case.preToBalance");
+            let pre_to_nonce = json_hex_u128(&case["preToNonce"], "case.preToNonce") as u64;
+            let post_to_balance = json_hex_u128(&case["postToBalance"], "case.postToBalance");
+            let post_to_nonce = json_hex_u128(&case["postToNonce"], "case.postToNonce") as u64;
+            let gas_price = json_hex_u128(&case["gasPrice"], "case.gasPrice");
+            let gas_limit = json_hex_u128(&case["gasLimit"], "case.gasLimit");
+            let value = json_hex_u128(&case["value"], "case.value");
+            let nonce = json_hex_u128(&case["nonce"], "case.nonce") as u64;
+            assert_eq!(nonce, pre_sender_nonce);
+            assert!(value > 0);
+            assert_eq!(
+                post_to_balance,
+                pre_to_balance + value,
+                "selected precompile failure/OOG subset keeps top-level value transfer simple"
+            );
+
+            let raw_tx = decode_hex_bytes(json_str(&case["txbytes"], "case.txbytes"));
+            let recovered_sender = recover_raw_evm_tx_sender_m0(&raw_tx)
+                .expect("official precompile failure/OOG raw sender recovery")
+                .expect("official precompile failure/OOG recovered sender");
+            assert_eq!(recovered_sender, decode_hex_bytes(sender));
+            let fields = translate_raw_evm_tx_fields_m0(&raw_tx)
+                .expect("official precompile failure/OOG tx decode");
+            let tx = tx_ir_from_raw_fields_m0(&fields, &raw_tx, recovered_sender, 1);
+
+            assert_eq!(
+                tx.tx_type,
+                TxType::Transfer,
+                "raw empty-calldata precompile fixture tx is state-agnostic before execution"
+            );
+            assert_eq!(tx.from, decode_hex_bytes(sender));
+            assert_eq!(tx.to, Some(decode_hex_bytes(to)));
+            assert_eq!(tx.value, value);
+            assert_eq!(tx.gas_limit, gas_limit as u64);
+            assert_eq!(tx.gas_price, gas_price as u64);
+            assert_eq!(tx.nonce, nonce);
+            assert_eq!(
+                tx.data,
+                decode_hex_bytes(json_str(&case["data"], "case.data"))
+            );
+            assert_eq!(
+                tx.data.len(),
+                case["dataLen"].as_u64().expect("case.dataLen") as usize
+            );
+            assert_eq!(
+                Sha256::digest(&tx.data).to_vec(),
+                decode_hex_bytes(json_str(&case["dataSha256"], "case.dataSha256"))
+            );
+
+            let mut adapter = NovoVmAdapter::new(ChainConfig {
+                chain_type: ChainType::EVM,
+                chain_id: 1,
+                name: format!("official-precompile-failure-oog-{label}"),
+                enabled: true,
+                custom_config: None,
+            });
+            adapter.initialize().expect("init");
+            assert!(
+                adapter
+                    .verify_transaction(&tx)
+                    .expect("verify official precompile failure/OOG raw tx"),
+                "official precompile failure/OOG txbytes must verify through raw EVM path"
+            );
+            for historical_nonce in 0..pre_sender_nonce {
+                let mut historical_tx = tx.clone();
+                historical_tx.nonce = historical_nonce;
+                adapter
+                    .route_transaction_through_unified_account(&historical_tx)
+                    .expect("prime official precompile failure/OOG pre-state nonce");
+            }
+
+            let charged_fee = pre_sender_balance
+                .saturating_sub(post_sender_balance)
+                .saturating_sub(value);
+            assert_eq!(charged_fee % gas_price, 0);
+            let gas_used = charged_fee / gas_price;
+            let expected_gas_used = case["gasUsed"].as_u64().expect("case.gasUsed");
+            assert_eq!(gas_used, expected_gas_used as u128);
+
+            let mut runtime_state = StateIR::new();
+            runtime_state.set_account(
+                tx.from.clone(),
+                AccountState {
+                    balance: pre_sender_balance,
+                    nonce: pre_sender_nonce,
+                    code_hash: None,
+                    storage_root: vec![0u8; 32],
+                },
+            );
+            runtime_state.set_account(
+                tx.to.clone().expect("call target"),
+                AccountState {
+                    balance: pre_to_balance,
+                    nonce: pre_to_nonce,
+                    code_hash: Some(vec![0xcf; 32]),
+                    storage_root: vec![0u8; 32],
+                },
+            );
+            assert_eq!(
+                NovoVmAdapter::effective_execution_tx_v1(&tx, &runtime_state).tx_type,
+                TxType::ContractCall,
+                "target code in pre-state must promote precompile fixture tx to contract call execution"
+            );
+
+            let mut artifact = sample_aoem_artifact(&tx, true, [0x8c; 32], None);
+            artifact.gas_used = expected_gas_used;
+            artifact.cumulative_gas_used = expected_gas_used;
+            artifact.effective_gas_price = Some(gas_price as u64);
+            artifact.receipt_type = None;
+            artifact.event_logs.clear();
+            artifact.log_bloom = vec![0u8; AOEM_LOG_BLOOM_BYTES_V1];
+            artifact.anchor = None;
+
+            let outcome = adapter
+                .execute_transaction_with_observed_metadata_v1(
+                    &tx,
+                    &mut runtime_state,
+                    Some(&artifact),
+                )
+                .expect("execute official precompile failure/OOG fixture projection");
+
+            assert!(outcome.artifact.status_ok);
+            assert_eq!(outcome.artifact.gas_used, expected_gas_used);
+            assert!(outcome.artifact.event_logs.is_empty());
+            assert!(outcome.artifact.log_bloom.iter().all(|byte| *byte == 0));
+            assert_eq!(
+                runtime_state.get_storage(&tx.from, b"aoem:last_log_bloom"),
+                Some(&vec![0u8; AOEM_LOG_BLOOM_BYTES_V1])
+            );
+            assert_eq!(
+                runtime_state.get_account(&tx.from).map(|acc| acc.balance),
+                Some(post_sender_balance)
+            );
+            assert_eq!(
+                runtime_state
+                    .get_account(tx.to.as_ref().expect("call target"))
+                    .map(|acc| acc.balance),
+                Some(post_to_balance)
+            );
+            assert_eq!(
+                runtime_state
+                    .get_account(tx.to.as_ref().expect("call target"))
+                    .map(|acc| acc.nonce),
+                Some(post_to_nonce)
+            );
+
+            let post_storage_facts = case["postStorageFacts"]
+                .as_object()
+                .expect("case.postStorageFacts");
+            if post_storage_facts.is_empty() {
+                empty_storage_cases += 1;
+            }
+            if post_storage_facts.contains_key("0x02") {
+                assert_eq!(
+                    json_str(
+                        &case["postStorageFacts"]["0x02"],
+                        "precompile success marker"
+                    ),
+                    "0x01"
+                );
+                success_marker_cases += 1;
+            }
+            for (slot, value) in post_storage_facts {
+                assert!(slot.starts_with("0x"));
+                assert!(json_str(value, "postStorageFacts.value").starts_with("0x"));
+            }
+
+            match mode {
+                "precompileGasFailureProjection" => gas_failure_cases += 1,
+                "precompileBoundarySuccessProjection" => boundary_success_cases += 1,
+                "precompileInputValidationProjection" => input_validation_cases += 1,
+                _ => panic!("unexpected official precompile failure/OOG mode {mode}"),
+            }
+            match label {
+                "ecrecoverNoGas" | "ecrecoverGas2999" => {
+                    assert!(post_storage_facts.is_empty());
+                }
+                "identityGas17" | "ripemd160Gas719" => {
+                    assert_eq!(
+                        json_str(
+                            &case["postStorageFacts"]["0x00"],
+                            "failed precompile sentinel"
+                        ),
+                        "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+                    );
+                }
+                "ecrecoverGas3000" | "ecrecoverCheckLength" => {
+                    assert_eq!(
+                        json_str(&case["postStorageFacts"]["0x00"], "ecrecover output"),
+                        sender
+                    );
+                }
+                "sha256Gas99" => {
+                    assert_eq!(
+                        json_str(&case["postStorageFacts"]["0x00"], "sha256 low-gas output"),
+                        "0xaf9613760f72635fbdb44a5a0a63c39f12af30f950a6ee5c971be188e89c4051"
+                    );
+                }
+                "identityGas18" => {
+                    assert_eq!(
+                        json_str(&case["postStorageFacts"]["0x00"], "identity gas18 output"),
+                        "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+                    );
+                }
+                "ecrecoverCheckLengthWrongV" => {
+                    assert_eq!(
+                        json_str(&case["postStorageFacts"]["0x00"], "wrong-v output"),
+                        "0x1122334455667788990011223344556677889900112233445566778899001122"
+                    );
+                    assert_ne!(
+                        json_str(&case["postStorageFacts"]["0x00"], "wrong-v output"),
+                        sender
+                    );
+                }
+                _ => panic!("unexpected official precompile failure/OOG label {label}"),
+            }
+            assert!(
+                gas_by_label
+                    .insert(label.to_string(), expected_gas_used)
+                    .is_none(),
+                "duplicate official precompile label {label}"
+            );
+
+            let bal = outcome
+                .observed_block_access_list
+                .block_access_list
+                .expect("official precompile failure/OOG observed BAL");
+            let sender_entry = bal
+                .0
+                .iter()
+                .find(|entry| entry.address.as_slice() == tx.from.as_slice())
+                .expect("sender BAL entry");
+            assert_eq!(
+                sender_entry.balance_changes[0].post_balance,
+                NovoVmAdapter::u128_to_be32_v1(post_sender_balance)
+            );
+            let to_entry = bal
+                .0
+                .iter()
+                .find(|entry| {
+                    entry.address.as_slice() == tx.to.as_ref().expect("call target").as_slice()
+                })
+                .expect("value-transfer target BAL entry");
+            assert_eq!(
+                to_entry.balance_changes[0].post_balance,
+                NovoVmAdapter::u128_to_be32_v1(post_to_balance)
+            );
+        }
+
+        assert_eq!(gas_failure_cases, 4);
+        assert_eq!(boundary_success_cases, 3);
+        assert_eq!(input_validation_cases, 2);
+        assert_eq!(empty_storage_cases, 2);
+        assert_eq!(success_marker_cases, 5);
+
+        let gas = |label: &str| {
+            *gas_by_label
+                .get(label)
+                .unwrap_or_else(|| panic!("missing official precompile gas label {label}"))
+        };
+        assert_eq!(gas("ecrecoverGas2999") - gas("ecrecoverNoGas"), 2_999);
+        assert!(gas("ecrecoverGas3000") > gas("ecrecoverGas2999"));
+        assert!(gas("identityGas18") > gas("identityGas17"));
+        assert!(gas("sha256Gas99") > gas("identityGas18"));
+        assert!(gas("ripemd160Gas719") > gas("identityGas17"));
+        assert_eq!(
+            gas("ecrecoverCheckLengthWrongV"),
+            gas("ecrecoverCheckLength")
+        );
+        assert!(gas("ecrecoverGas3000") > gas("ecrecoverCheckLength"));
+    }
+
+    #[test]
     fn official_state_fixture_log_receipt_grouped_projection_v1() {
         let fixture = official_log_receipt_state_fixture_v1();
         assert_eq!(fixture["source"]["repo"].as_str(), Some("ethereum/tests"));
@@ -6788,6 +7128,7 @@ mod tests {
         official_state_fixture_failure_account_fee_debit_v1();
         official_state_fixture_create_account_grouped_projection_v1();
         official_state_fixture_staticcall_precompile_return_grouped_projection_v1();
+        official_state_fixture_precompile_failure_oog_grouped_projection_v1();
         official_state_fixture_log_receipt_grouped_projection_v1();
         official_state_fixture_log4_oog_receipt_grouped_projection_v1();
         official_state_fixture_return_data_grouped_projection_v1();
