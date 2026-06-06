@@ -1634,6 +1634,7 @@ impl NovoVmAdapter {
                 .cloned()
                 .unwrap_or_else(Self::default_account);
             contract_account.balance = contract_account.balance.saturating_add(tx.value);
+            contract_account.nonce = contract_account.nonce.max(1);
             let fallback_init_code_hash: [u8; 32] = Sha256::digest(&tx.data).into();
             let runtime_code_hash = artifact
                 .and_then(|item| item.runtime_code_hash.clone())
@@ -2705,6 +2706,13 @@ mod tests {
             "../tests/fixtures/ethereum-official-state-subset/failure-account.json"
         ))
         .expect("decode official failure/account state fixture")
+    }
+
+    fn official_create_account_state_fixture_v1() -> serde_json::Value {
+        serde_json::from_str(include_str!(
+            "../tests/fixtures/ethereum-official-state-subset/create-account.json"
+        ))
+        .expect("decode official CREATE/account state fixture")
     }
 
     fn first_official_state_fixture_case_v1(fixture: &serde_json::Value) -> &serde_json::Value {
@@ -4924,6 +4932,317 @@ mod tests {
     }
 
     #[test]
+    fn official_state_fixture_create_account_grouped_projection_v1() {
+        let fixture = official_create_account_state_fixture_v1();
+        assert_eq!(fixture["source"]["repo"].as_str(), Some("ethereum/tests"));
+        assert_eq!(
+            fixture["source"]["fixtureFormat"].as_str(),
+            Some("state_test")
+        );
+        assert_eq!(fixture["source"]["fork"].as_str(), Some("Cancun"));
+
+        let cases = fixture["cases"].as_array().expect("CREATE/account cases");
+        assert_eq!(cases.len(), 9);
+
+        let mut deploy_success_cases = 0usize;
+        let mut deploy_collision_cases = 0usize;
+        let mut internal_projection_cases = 0usize;
+        let mut create2_projection_cases = 0usize;
+
+        for case in cases {
+            let label = json_str(&case["label"], "case.label");
+            let mode = json_str(&case["mode"], "case.mode");
+            assert!(
+                json_str(&case["fixtureKey"], "case.fixtureKey").contains("-fork_[Cancun-Prague]"),
+                "official CREATE/account case must be the Cancun/Prague projection"
+            );
+            assert!(
+                json_str(&case["postHash"], "case.postHash").starts_with("0x"),
+                "official CREATE/account case must carry post hash"
+            );
+
+            let sender = json_str(&case["sender"], "case.sender");
+            let expected_to = case["to"].as_str().map(decode_hex_bytes);
+            let pre_sender_balance =
+                json_hex_u128(&case["preSenderBalance"], "case.preSenderBalance");
+            let pre_sender_nonce =
+                json_hex_u128(&case["preSenderNonce"], "case.preSenderNonce") as u64;
+            let post_sender_balance =
+                json_hex_u128(&case["postSenderBalance"], "case.postSenderBalance");
+            let gas_price = json_hex_u128(&case["gasPrice"], "case.gasPrice");
+            let gas_limit = json_hex_u128(&case["gasLimit"], "case.gasLimit");
+            let value = json_hex_u128(&case["value"], "case.value");
+            let nonce = json_hex_u128(&case["nonce"], "case.nonce") as u64;
+            assert_eq!(nonce, pre_sender_nonce);
+
+            let raw_tx = decode_hex_bytes(json_str(&case["txbytes"], "case.txbytes"));
+            let recovered_sender = recover_raw_evm_tx_sender_m0(&raw_tx)
+                .expect("official CREATE/account raw sender recovery")
+                .expect("official CREATE/account recovered sender");
+            assert_eq!(recovered_sender, decode_hex_bytes(sender));
+            let fields =
+                translate_raw_evm_tx_fields_m0(&raw_tx).expect("official CREATE tx decode");
+            let tx = tx_ir_from_raw_fields_m0(&fields, &raw_tx, recovered_sender, 1);
+
+            assert_eq!(tx.from, decode_hex_bytes(sender));
+            assert_eq!(tx.to, expected_to);
+            assert_eq!(tx.value, value);
+            assert_eq!(tx.gas_limit, gas_limit as u64);
+            assert_eq!(tx.gas_price, gas_price as u64);
+            assert_eq!(tx.nonce, nonce);
+            assert_eq!(
+                tx.data,
+                decode_hex_bytes(json_str(&case["data"], "case.data"))
+            );
+            if mode.starts_with("topLevelDeploy") {
+                assert_eq!(tx.tx_type, TxType::ContractDeploy);
+            }
+
+            let mut adapter = NovoVmAdapter::new(ChainConfig {
+                chain_type: ChainType::EVM,
+                chain_id: 1,
+                name: format!("official-create-account-{label}"),
+                enabled: true,
+                custom_config: None,
+            });
+            adapter.initialize().expect("init");
+            assert!(
+                adapter
+                    .verify_transaction(&tx)
+                    .expect("verify official CREATE/account raw tx"),
+                "official CREATE/account txbytes must verify through the raw EVM path"
+            );
+            for historical_nonce in 0..pre_sender_nonce {
+                let mut historical_tx = tx.clone();
+                historical_tx.nonce = historical_nonce;
+                adapter
+                    .route_transaction_through_unified_account(&historical_tx)
+                    .expect("prime official CREATE/account pre-state nonce");
+            }
+
+            let mut value_transferred = false;
+            if mode == "topLevelDeploySuccess" {
+                value_transferred = true;
+            } else if case["preToBalance"].is_string() && case["postToBalance"].is_string() {
+                let pre_to_balance = json_hex_u128(&case["preToBalance"], "case.preToBalance");
+                let post_to_balance = json_hex_u128(&case["postToBalance"], "case.postToBalance");
+                value_transferred = post_to_balance == pre_to_balance + value;
+            }
+            let charged_fee = pre_sender_balance
+                .saturating_sub(post_sender_balance)
+                .saturating_sub(if value_transferred { value } else { 0 });
+            assert_eq!(charged_fee % gas_price, 0);
+            let gas_used = charged_fee / gas_price;
+            let expected_gas_used = case["gasUsed"].as_u64().expect("case.gasUsed");
+            assert_eq!(gas_used, expected_gas_used as u128);
+
+            let mut runtime_state = StateIR::new();
+            runtime_state.set_account(
+                tx.from.clone(),
+                AccountState {
+                    balance: pre_sender_balance,
+                    nonce: pre_sender_nonce,
+                    code_hash: None,
+                    storage_root: vec![0u8; 32],
+                },
+            );
+            if let Some(to) = tx.to.as_ref() {
+                runtime_state.set_account(
+                    to.clone(),
+                    AccountState {
+                        balance: json_hex_u128(&case["preToBalance"], "case.preToBalance"),
+                        nonce: json_hex_u128(&case["preToNonce"], "case.preToNonce") as u64,
+                        code_hash: Some(vec![0xcc; 32]),
+                        storage_root: vec![0u8; 32],
+                    },
+                );
+            }
+
+            let contract_address = case["contractAddress"].as_str().map(decode_hex_bytes);
+            if mode == "topLevelDeployCollision" {
+                let contract_address = contract_address.clone().expect("collision contract");
+                let pre_code = decode_hex_bytes(json_str(&case["preContractCode"], "pre code"));
+                runtime_state.set_account(
+                    contract_address.clone(),
+                    AccountState {
+                        balance: json_hex_u128(
+                            &case["preContractBalance"],
+                            "case.preContractBalance",
+                        ),
+                        nonce: json_hex_u128(&case["preContractNonce"], "case.preContractNonce")
+                            as u64,
+                        code_hash: if pre_code.is_empty() {
+                            None
+                        } else {
+                            Some(Sha256::digest(&pre_code).to_vec())
+                        },
+                        storage_root: vec![0u8; 32],
+                    },
+                );
+                if !pre_code.is_empty() {
+                    runtime_state.set_storage(
+                        contract_address,
+                        NovoVmAdapter::runtime_code_storage_key().to_vec(),
+                        pre_code,
+                    );
+                }
+            }
+
+            let mut artifact = sample_aoem_artifact(
+                &tx,
+                true,
+                [0x87; 32],
+                contract_address.clone().or_else(|| {
+                    if tx.tx_type == TxType::ContractDeploy {
+                        Some(derive_create_contract_address_m0(&tx.from, tx.nonce))
+                    } else {
+                        None
+                    }
+                }),
+            );
+            artifact.gas_used = expected_gas_used;
+            artifact.cumulative_gas_used = expected_gas_used;
+            artifact.effective_gas_price = Some(gas_price as u64);
+            artifact.event_logs.clear();
+            artifact.log_bloom = vec![0u8; 256];
+            if mode == "topLevelDeploySuccess" {
+                let runtime_code =
+                    decode_hex_bytes(json_str(&case["postContractCode"], "postContractCode"));
+                artifact.runtime_code = Some(runtime_code.clone());
+                artifact.runtime_code_hash = Some(Sha256::digest(&runtime_code).to_vec());
+            }
+
+            let outcome = adapter
+                .execute_transaction_with_observed_metadata_v1(
+                    &tx,
+                    &mut runtime_state,
+                    Some(&artifact),
+                )
+                .expect("execute official CREATE/account fixture projection");
+
+            assert_eq!(
+                runtime_state.get_account(&tx.from).map(|acc| acc.balance),
+                Some(post_sender_balance)
+            );
+            let bal = outcome
+                .observed_block_access_list
+                .block_access_list
+                .expect("official CREATE/account observed BAL");
+            let sender_entry = bal
+                .0
+                .iter()
+                .find(|entry| entry.address.as_slice() == tx.from.as_slice())
+                .expect("sender BAL entry");
+            assert_eq!(
+                sender_entry.balance_changes[0].post_balance,
+                NovoVmAdapter::u128_to_be32_v1(post_sender_balance)
+            );
+
+            match mode {
+                "topLevelDeploySuccess" => {
+                    deploy_success_cases += 1;
+                    assert!(outcome.artifact.status_ok);
+                    let contract_address = contract_address.expect("success contract");
+                    assert_eq!(
+                        derive_create_contract_address_m0(&tx.from, tx.nonce),
+                        contract_address
+                    );
+                    assert_eq!(
+                        outcome.artifact.contract_address,
+                        Some(contract_address.clone())
+                    );
+                    let contract = runtime_state
+                        .get_account(&contract_address)
+                        .expect("official CREATE success contract account");
+                    assert_eq!(
+                        contract.balance,
+                        json_hex_u128(&case["postContractBalance"], "postContractBalance")
+                    );
+                    assert_eq!(
+                        contract.nonce,
+                        json_hex_u128(&case["postContractNonce"], "postContractNonce") as u64
+                    );
+                    assert_eq!(
+                        runtime_state.get_storage(
+                            &contract_address,
+                            NovoVmAdapter::runtime_code_storage_key()
+                        ),
+                        Some(&decode_hex_bytes(json_str(
+                            &case["postContractCode"],
+                            "postContractCode"
+                        )))
+                    );
+                    assert!(
+                        bal.0
+                            .iter()
+                            .any(|entry| entry.address.as_slice() == contract_address.as_slice()),
+                        "official CREATE success must emit a contract BAL entry"
+                    );
+                }
+                "topLevelDeployCollision" => {
+                    deploy_collision_cases += 1;
+                    assert!(!outcome.artifact.status_ok);
+                    assert_eq!(outcome.artifact.contract_address, None);
+                    let contract_address = contract_address.expect("collision contract");
+                    let contract = runtime_state
+                        .get_account(&contract_address)
+                        .expect("official CREATE collision target remains");
+                    assert_eq!(
+                        contract.balance,
+                        json_hex_u128(&case["postContractBalance"], "postContractBalance")
+                    );
+                    assert_eq!(
+                        contract.nonce,
+                        json_hex_u128(&case["postContractNonce"], "postContractNonce") as u64
+                    );
+                    assert_eq!(
+                        runtime_state.get_storage(&tx.from, b"deploy:last_reject_reason"),
+                        Some(&b"create_collision_existing_account".to_vec())
+                    );
+                    assert!(
+                        bal.0
+                            .iter()
+                            .all(|entry| entry.address.as_slice() != contract_address.as_slice()),
+                        "official CREATE collision must not emit a contract BAL entry"
+                    );
+                }
+                "internalCreateProjection" => {
+                    internal_projection_cases += 1;
+                    if label.contains("create2") {
+                        create2_projection_cases += 1;
+                    }
+                    assert!(outcome.artifact.status_ok);
+                    if let Some(to) = tx.to.as_ref() {
+                        assert_eq!(
+                            runtime_state.get_account(to).map(|acc| acc.balance),
+                            Some(json_hex_u128(&case["postToBalance"], "postToBalance"))
+                        );
+                    }
+                    assert!(
+                        case["internalCreatedAddresses"]
+                            .as_array()
+                            .expect("internalCreatedAddresses")
+                            .iter()
+                            .all(|addr| runtime_state
+                                .get_account(&decode_hex_bytes(json_str(
+                                    addr,
+                                    "internalCreatedAddress"
+                                )))
+                                .is_none()),
+                        "internal CREATE/CREATE2 accounts remain host/AOEM responsibility"
+                    );
+                }
+                _ => panic!("unexpected official CREATE/account mode {mode}"),
+            }
+        }
+
+        assert_eq!(deploy_success_cases, 2);
+        assert_eq!(deploy_collision_cases, 2);
+        assert_eq!(internal_projection_cases, 5);
+        assert_eq!(create2_projection_cases, 2);
+    }
+
+    #[test]
     fn execute_tracked_sender_rejects_insufficient_value_fee_v1() {
         let mut adapter = NovoVmAdapter::new(ChainConfig {
             chain_type: ChainType::EVM,
@@ -5084,6 +5403,7 @@ mod tests {
         official_state_fixture_sload_warm_cold_fee_debit_v1();
         official_state_fixture_sstore_refund_cap_fee_debit_v1();
         official_state_fixture_failure_account_fee_debit_v1();
+        official_state_fixture_create_account_grouped_projection_v1();
         execute_tracked_sender_rejects_insufficient_value_fee_v1();
         tx_intrinsic_gas_includes_type1_access_list_extras_v1();
         execute_raw_type1_access_list_emits_declared_storage_reads_v1();
