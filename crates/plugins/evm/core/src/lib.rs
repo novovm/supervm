@@ -5,7 +5,7 @@ use aoem_bindings::secp256k1_recover_pubkey_v1_auto;
 use k256::ecdsa::{RecoveryId, Signature, VerifyingKey};
 use novovm_adapter_api::{BlockIR, ChainType, EvmAccessListEntryV1, TxIR, TxType};
 use sha3::{Digest, Keccak256};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::OnceLock;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1186,6 +1186,12 @@ pub struct EvmSstoreTransitionGasM0 {
     pub refund_delta: i64,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct EvmStorageAccessKeyM0 {
+    pub address: [u8; 20],
+    pub slot: [u8; 32],
+}
+
 #[must_use]
 pub fn estimate_eip2929_account_access_gas_m0(
     account_access_count: u64,
@@ -1206,6 +1212,25 @@ pub fn estimate_eip2929_storage_read_gas_m0(
     let cold = storage_read_count.saturating_sub(warm);
     cold.saturating_mul(EVM_COLD_SLOAD_GAS_M0)
         .saturating_add(warm.saturating_mul(EVM_WARM_ACCESS_GAS_M0))
+}
+
+#[must_use]
+pub fn estimate_eip2929_storage_read_sequence_gas_m0(
+    initial_warm_storage_keys: &[EvmStorageAccessKeyM0],
+    storage_read_sequence: &[EvmStorageAccessKeyM0],
+) -> u64 {
+    let mut warm_storage_keys = initial_warm_storage_keys
+        .iter()
+        .copied()
+        .collect::<HashSet<_>>();
+    storage_read_sequence.iter().fold(0u64, |acc, key| {
+        let cost = if warm_storage_keys.insert(*key) {
+            EVM_COLD_SLOAD_GAS_M0
+        } else {
+            EVM_WARM_ACCESS_GAS_M0
+        };
+        acc.saturating_add(cost)
+    })
 }
 
 #[must_use]
@@ -2175,6 +2200,45 @@ mod tests {
 
     fn word32(value: u8) -> [u8; 32] {
         [value; 32]
+    }
+
+    fn storage_key(address_byte: u8, slot_byte: u8) -> EvmStorageAccessKeyM0 {
+        EvmStorageAccessKeyM0 {
+            address: [address_byte; 20],
+            slot: [slot_byte; 32],
+        }
+    }
+
+    #[test]
+    fn sload_sequence_reuses_warm_storage_key_m0() {
+        let slot = storage_key(1, 7);
+        assert_eq!(
+            estimate_eip2929_storage_read_sequence_gas_m0(&[], &[slot, slot, slot]),
+            EVM_COLD_SLOAD_GAS_M0 + 2 * EVM_WARM_ACCESS_GAS_M0
+        );
+    }
+
+    #[test]
+    fn sload_sequence_respects_access_list_initial_warm_set_m0() {
+        let warm_slot = storage_key(1, 7);
+        let cold_slot = storage_key(1, 8);
+        assert_eq!(
+            estimate_eip2929_storage_read_sequence_gas_m0(
+                &[warm_slot],
+                &[warm_slot, warm_slot, cold_slot]
+            ),
+            2 * EVM_WARM_ACCESS_GAS_M0 + EVM_COLD_SLOAD_GAS_M0
+        );
+    }
+
+    #[test]
+    fn sload_sequence_keeps_address_and_slot_in_access_key_m0() {
+        let left = storage_key(1, 7);
+        let right = storage_key(2, 7);
+        assert_eq!(
+            estimate_eip2929_storage_read_sequence_gas_m0(&[], &[left, right, left]),
+            2 * EVM_COLD_SLOAD_GAS_M0 + EVM_WARM_ACCESS_GAS_M0
+        );
     }
 
     #[test]

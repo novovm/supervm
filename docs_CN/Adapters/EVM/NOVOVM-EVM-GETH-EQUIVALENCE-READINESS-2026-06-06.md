@@ -338,14 +338,14 @@ cargo test -p novovm-adapter-evm-plugin -- --nocapture
 - 覆盖 type1 access-list intrinsic gas extras
 - 覆盖 raw type1 access-list address/storage key 贯通到 TxIR
 - 覆盖 raw type1 access-list declared storage read 写入 observed BAL
-- 覆盖 access-list warm storage read 的最小 EIP-2929 成本边界和 adapter observed BAL
+- 覆盖 access-list warm storage read、SLOAD accessed_storage_keys 顺序语义和 adapter observed BAL
 - 覆盖 EIP-3529 SSTORE clear refund `4800`、refund cap `1/5`、SSTORE clean/dirty transition gas/refund delta 和 adapter post-refund gas fee debit
 - 覆盖 contract call storage write 的 observed BAL
 - 覆盖 contract deploy code/storage/balance observed BAL
 - 覆盖 native adapter smoke 显式 funded sender
 - 覆盖 EVM plugin 全包回归，确认 adapter 扣费语义未破坏 plugin apply/metadata 主线
 
-这证明 adapter 在拿到 sender account pre-state 时，会执行生产级 value/fee debit 和余额不足拒绝；没有 sender account pre-state 的 plugin smoke 仍保持控制面执行，不伪造余额。当前已贯通 raw / gateway access-list entries 到 TxIR，并能把 declared storage read 写入 observed BAL；已补最小 warm/cold 成本、EIP-3529 refund、SSTORE transition 和 BAL 执行观测门禁，但仍未跑 Ethereum execution-spec 官方 warm/cold/refund fixture，因此不声明完整 EVM gas/refund 等价。
+这证明 adapter 在拿到 sender account pre-state 时，会执行生产级 value/fee debit 和余额不足拒绝；没有 sender account pre-state 的 plugin smoke 仍保持控制面执行，不伪造余额。当前已贯通 raw / gateway access-list entries 到 TxIR，并能把 declared storage read 写入 observed BAL；已补最小 warm/cold 成本、SLOAD accessed_storage_keys 顺序语义、EIP-3529 refund、SSTORE transition 和 BAL 执行观测门禁，但仍未跑 Ethereum execution-spec 官方 warm/cold/refund fixture，因此不声明完整 EVM gas/refund 等价。
 
 ### 14. Access-list entries 贯通 smoke
 
@@ -375,6 +375,9 @@ cargo test -p novovm-evm-gateway eth_send_transaction_infers_type1_from_access_l
 ```powershell
 cargo test -p novovm-adapter-evm-core access_list_warm_storage_read_reduces_execution_gas_m0 -- --nocapture
 cargo test -p novovm-adapter-evm-core access_list_warm_account_access_reduces_execution_gas_m0 -- --nocapture
+cargo test -p novovm-adapter-evm-core sload_sequence_reuses_warm_storage_key_m0 -- --nocapture
+cargo test -p novovm-adapter-evm-core sload_sequence_respects_access_list_initial_warm_set_m0 -- --nocapture
+cargo test -p novovm-adapter-evm-core sload_sequence_keeps_address_and_slot_in_access_key_m0 -- --nocapture
 cargo test -p novovm-adapter-novovm evm_execution_spec_access_list_warm_storage_smoke_v1 -- --nocapture
 cargo test -p novovm-adapter-novovm evm_adapter_balance_fee_access_storage_surface_smoke_v1 -- --nocapture
 cargo test -p novovm-adapter-evm-core -- --nocapture
@@ -387,10 +390,11 @@ cargo test -p novovm-adapter-evm-plugin -- --nocapture
 - pass
 - core 固化 EIP-2929 风格 cold account access `2600`、cold SLOAD `2100`、warm access/storage read `100`
 - core 固化 access-list address 执行侧节省 `2500`，storage key 执行侧节省 `2000`
-- adapter 使用真实 `TxIR.evm_access_list` 执行 contract call，observed BAL 同时保留 declared warm storage read 和实际 contract call storage write
+- core 固化单交易内 `(address, storageKey)` accessed_storage_keys 顺序语义：首次 cold、重复 warm、access-list initial warm、不同 address 不共享 slot warmth
+- adapter 使用真实 `TxIR.evm_access_list` 执行 contract call，observed BAL 同时保留 declared warm storage read 和实际 contract call storage write，并用 SLOAD sequence 模型验证 declared slot 首读 warm
 - core/adapter/plugin full package tests pass
 
-这证明 Novo EVM 插件当前不是只记录 access-list intrinsic gas；它已经具备最小 warm/cold 成本模型和执行观测门禁。该门禁仍不是 opcode 级 geth EVM，也不是 Ethereum execution-spec 官方 fixture 全量通过。
+这证明 Novo EVM 插件当前不是只记录 access-list intrinsic gas；它已经具备最小 warm/cold 成本模型、SLOAD accessed_storage_keys 顺序语义和执行观测门禁。该门禁仍不是 opcode 级 geth EVM，也不是 Ethereum execution-spec 官方 fixture 全量通过。
 
 ### 16. Execution-spec SSTORE refund / transition smoke
 
@@ -436,7 +440,7 @@ cargo test -p novovm-adapter-evm-plugin -- --nocapture
 | typed tx failure / revert / fee edge parity | Pass | parity sections `typedTxFailure.mismatchCount=0` | 样本级可声明 |
 | reorg canonical/noncanonical log view | Pass | parity sections `logs.mismatchCount=0` | 样本级可声明 |
 | eth/71 BAL 相关 wire 能力 | Partial | BAL payload/canonical/scanner pass；eth/71 BAL wire encode/decode/frame + safe negotiation gate pass；未证明完整 eth/71 peer sync | 可声明 eth/71 BAL wire smoke；不能声明完整 eth/71 等价 |
-| Ethereum fork rules / gas accounting / precompiles | Partial | execution-spec/fork-rule smoke matrix pass；adapter balance/fee/access-storage smoke pass；access-list entries 贯通 smoke pass；access-list warm/cold 成本和 BAL smoke pass；EIP-3529 SSTORE refund/cap/transition smoke pass；未跑 Ethereum execution-spec 全量 fixture | 可声明样本级 fork-rule、gas/refund/SSTORE transition、tracked-account fee/value debit、access-list read-set/warm-cold smoke/BAL gate；不能声明 EVM 语义全等价 |
+| Ethereum fork rules / gas accounting / precompiles | Partial | execution-spec/fork-rule smoke matrix pass；adapter balance/fee/access-storage smoke pass；access-list entries 贯通 smoke pass；access-list warm/cold 成本、SLOAD sequence 和 BAL smoke pass；EIP-3529 SSTORE refund/cap/transition smoke pass；未跑 Ethereum execution-spec 全量 fixture | 可声明样本级 fork-rule、gas/refund/SLOAD sequence/SSTORE transition、tracked-account fee/value debit、access-list read-set/warm-cold smoke/BAL gate；不能声明 EVM 语义全等价 |
 | raw Ethereum transaction ingestion/execution | Partial | signed legacy/type1/type2/type3 transfer + typed call/deploy smoke pass；raw nonce gap reject pass；gateway raw write surface pass；gateway txpool error surface pass；plugin txpool replacement/reject pass；plugin fee settlement pass；adapter tracked-account value/fee debit pass；access-list entries 贯通 pass；BAL strict scan pass | 可声明 raw transfer/call/deploy smoke 可执行，gateway 写入/拒绝面、plugin txpool/fee settlement、adapter tracked-account debit、access-list read-set 有 gate；不能声明 raw tx 全等价 |
 | JSON-RPC full-node surface | Partial | mainline query receipt/log 样本 pass；gateway block/tx/filter/call/estimateGas smoke pass；indexed block/tx/receipt/uncle smoke pass；pending/runtime smoke pass；store recovery smoke pass；未覆盖 tracing/debug/admin 和全 geth RPC 行为 | 可声明 gateway JSON-RPC 产品面样本可用；不能声明 geth RPC 等价 |
 | devp2p/RLPx peer sync / block import | Partial | 有 gateway/network 代码和 canary，但未作为本矩阵通过项 | 不能声明以太坊全节点 |
@@ -457,8 +461,8 @@ cargo test -p novovm-adapter-evm-plugin -- --nocapture
 
 ## 下一步门禁顺序
 
-1. 如要继续提高执行语义置信度，接入 Ethereum execution-spec 官方 fixture 子集，优先选 CREATE/CALL failure、账户余额、SSTORE refund cap edge 和 SLOAD warm/cold 样本。
-2. 如要完整验证 access-list warm/cold/refund 语义，基于现在已贯通的 `TxIR.evm_access_list`、最小 warm/cold smoke 和 EIP-3529 SSTORE transition smoke 接官方 fixture；不要再做包装层。
+1. 如要继续提高执行语义置信度，接入 Ethereum execution-spec 官方 fixture 子集，优先选 CREATE/CALL failure、账户余额、SSTORE refund cap edge 和 SLOAD warm/cold edge 样本。
+2. 如要完整验证 access-list warm/cold/refund 语义，基于现在已贯通的 `TxIR.evm_access_list`、SLOAD sequence smoke 和 EIP-3529 SSTORE transition smoke 接官方 fixture；不要再做包装层。
 3. 如继续扩展 JSON-RPC parity，可补更多 batch/mixed-param edge case；tracing/debug/admin 仍不作为 Novo EVM 插件主线优先项。
 4. 如需要提高 eth/71 置信度，再做真实 peer sync/capability negotiation 集成门禁，但仍不把 SUPERVM 产品口径改成 geth 全节点。
 
@@ -526,6 +530,9 @@ cargo test -p novovm-adapter-novovm evm_adapter_balance_fee_access_storage_surfa
 cargo test -p novovm-adapter-evm-core translate_type1_fields_extracts_access_list_intrinsic_counts -- --nocapture
 cargo test -p novovm-adapter-evm-core access_list_warm_storage_read_reduces_execution_gas_m0 -- --nocapture
 cargo test -p novovm-adapter-evm-core access_list_warm_account_access_reduces_execution_gas_m0 -- --nocapture
+cargo test -p novovm-adapter-evm-core sload_sequence_reuses_warm_storage_key_m0 -- --nocapture
+cargo test -p novovm-adapter-evm-core sload_sequence_respects_access_list_initial_warm_set_m0 -- --nocapture
+cargo test -p novovm-adapter-evm-core sload_sequence_keeps_address_and_slot_in_access_key_m0 -- --nocapture
 cargo test -p novovm-adapter-evm-core sstore_clear_refund_matches_eip3529_schedule_m0 -- --nocapture
 cargo test -p novovm-adapter-evm-core eip3529_refund_cap_limits_refunded_gas_m0 -- --nocapture
 cargo test -p novovm-adapter-evm-core sstore_transition_clean_slots_match_eip3529_m0 -- --nocapture
@@ -543,6 +550,9 @@ Execution-spec/fork-rule smoke gate：
 ```powershell
 cargo test -p novovm-adapter-evm-core access_list_warm_storage_read_reduces_execution_gas_m0 -- --nocapture
 cargo test -p novovm-adapter-evm-core access_list_warm_account_access_reduces_execution_gas_m0 -- --nocapture
+cargo test -p novovm-adapter-evm-core sload_sequence_reuses_warm_storage_key_m0 -- --nocapture
+cargo test -p novovm-adapter-evm-core sload_sequence_respects_access_list_initial_warm_set_m0 -- --nocapture
+cargo test -p novovm-adapter-evm-core sload_sequence_keeps_address_and_slot_in_access_key_m0 -- --nocapture
 cargo test -p novovm-adapter-evm-core sstore_clear_refund_matches_eip3529_schedule_m0 -- --nocapture
 cargo test -p novovm-adapter-evm-core eip3529_refund_cap_limits_refunded_gas_m0 -- --nocapture
 cargo test -p novovm-adapter-evm-core sstore_transition_clean_slots_match_eip3529_m0 -- --nocapture

@@ -2410,11 +2410,12 @@ mod tests {
     use novovm_adapter_evm_core::{
         active_precompile_set_m0, apply_eip3529_gas_refund_m0,
         estimate_access_list_execution_warm_savings_m0, estimate_calldata_floor_gas_m0,
-        estimate_eip2929_storage_read_gas_m0, estimate_eip3529_sstore_transition_gas_m0,
-        estimate_intrinsic_gas_m0, estimate_intrinsic_gas_with_access_list_rules_m0,
+        estimate_eip2929_storage_read_gas_m0, estimate_eip2929_storage_read_sequence_gas_m0,
+        estimate_eip3529_sstore_transition_gas_m0, estimate_intrinsic_gas_m0,
+        estimate_intrinsic_gas_with_access_list_rules_m0,
         estimate_intrinsic_gas_with_envelope_extras_m0, recover_raw_evm_tx_sender_m0,
         resolve_evm_profile, translate_raw_evm_tx_fields_m0, tx_ir_from_raw_fields_m0,
-        validate_tx_semantics_m0,
+        validate_tx_semantics_m0, EvmStorageAccessKeyM0,
     };
     use novovm_exec::{
         AoemTxExecutionAnchorV1, AoemTxExecutionArtifactV1, AOEM_LOG_BLOOM_BYTES_V1,
@@ -2891,6 +2892,8 @@ mod tests {
         let mut tx = sample_tx(TxType::ContractCall);
         tx.gas_limit = 120_000;
         let target = tx.to.clone().expect("target");
+        let mut target20 = [0u8; 20];
+        target20.copy_from_slice(&target);
         let declared_read_slot = [0x44u8; 32];
         tx.evm_access_list = vec![EvmAccessListEntryV1 {
             address: target.clone(),
@@ -2902,6 +2905,21 @@ mod tests {
         let warm_read = estimate_eip2929_storage_read_gas_m0(1, 1);
         assert_eq!(cold_read - warm_read, 2_000);
         assert_eq!(estimate_access_list_execution_warm_savings_m0(1, 1), 4_500);
+        let declared_access_key = EvmStorageAccessKeyM0 {
+            address: target20,
+            slot: declared_read_slot,
+        };
+        let cold_access_key = EvmStorageAccessKeyM0 {
+            address: target20,
+            slot: [0x45u8; 32],
+        };
+        assert_eq!(
+            estimate_eip2929_storage_read_sequence_gas_m0(
+                &[declared_access_key],
+                &[declared_access_key, declared_access_key, cold_access_key]
+            ),
+            2 * 100 + 2_100
+        );
 
         let mut adapter = NovoVmAdapter::new(ChainConfig {
             chain_type: ChainType::EVM,
