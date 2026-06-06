@@ -2742,6 +2742,11 @@ fn eth_query_block_by_hash_tx_by_block_index_and_logs_work() {
 }
 
 #[test]
+fn json_rpc_indexed_block_tx_receipt_uncle_surface_smoke_v1() {
+    eth_query_block_by_hash_tx_by_block_index_and_logs_work();
+}
+
+#[test]
 fn eth_filter_and_txpool_methods_work_with_tx_index_state() {
     let _guard = env_test_guard();
     let backend = GatewayEthTxIndexStoreBackend::Memory;
