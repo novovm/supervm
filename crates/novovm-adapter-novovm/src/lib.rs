@@ -3742,6 +3742,157 @@ mod tests {
     }
 
     #[test]
+    fn evm_execution_spec_create_call_failure_state_invariants_v1() {
+        let mut call_adapter = NovoVmAdapter::new(ChainConfig {
+            chain_type: ChainType::EVM,
+            chain_id: 1,
+            name: "call-failure-invariants".to_string(),
+            enabled: true,
+            custom_config: None,
+        });
+        call_adapter.initialize().expect("init call adapter");
+
+        let mut call_tx = sample_tx(TxType::ContractCall);
+        call_tx.value = 17;
+        call_tx.gas_limit = 120_000;
+        call_tx = resign_tx(call_tx);
+        let call_target = call_tx.to.clone().expect("call target");
+        let mut call_state = StateIR::new();
+        fund_sender_for_test(&mut call_state, &call_tx, 1_000_000);
+        call_state.set_account(
+            call_target.clone(),
+            AccountState {
+                balance: 5,
+                nonce: 0,
+                code_hash: None,
+                storage_root: vec![0u8; 32],
+            },
+        );
+        call_state.set_storage(call_target.clone(), b"existing".to_vec(), vec![0x7a]);
+
+        let mut call_artifact = sample_aoem_artifact(&call_tx, false, [0x61; 32], None);
+        call_artifact.revert_data = None;
+        if let Some(anchor) = call_artifact.anchor.as_mut() {
+            anchor.return_code = 2001;
+            anchor.return_code_name = "engine_exec_failed".to_string();
+        }
+
+        let call_outcome = call_adapter
+            .execute_transaction_with_observed_metadata_v1(
+                &call_tx,
+                &mut call_state,
+                Some(&call_artifact),
+            )
+            .expect("execute failed call");
+        assert!(!call_outcome.artifact.status_ok);
+        assert!(call_outcome.artifact.revert_data.is_none());
+        assert!(call_outcome.artifact.event_logs.is_empty());
+        assert!(call_outcome
+            .artifact
+            .log_bloom
+            .iter()
+            .all(|byte| *byte == 0));
+        assert_eq!(
+            call_state.get_account(&call_target).map(|acc| acc.balance),
+            Some(5),
+            "failed CALL must not transfer value"
+        );
+        assert_eq!(
+            call_state.get_storage(&call_target, b"existing"),
+            Some(&vec![0x7a]),
+            "failed CALL must preserve existing target storage"
+        );
+        assert_eq!(
+            call_state.get_storage(&call_target, &call_tx.nonce.to_le_bytes()),
+            None,
+            "failed CALL must not commit call storage writes"
+        );
+        assert_eq!(
+            call_state.get_storage(&call_tx.from, b"aoem:last_failure_class"),
+            Some(&b"execution_failed".to_vec())
+        );
+        let call_bal = call_outcome
+            .observed_block_access_list
+            .block_access_list
+            .expect("failed call observed BAL");
+        let call_target_entry = call_bal
+            .0
+            .iter()
+            .find(|entry| entry.address.as_slice() == call_target.as_slice())
+            .expect("failed call target account read");
+        assert!(call_target_entry.storage_changes.is_empty());
+
+        let mut deploy_adapter = NovoVmAdapter::new(ChainConfig {
+            chain_type: ChainType::EVM,
+            chain_id: 1,
+            name: "create-failure-invariants".to_string(),
+            enabled: true,
+            custom_config: None,
+        });
+        deploy_adapter.initialize().expect("init deploy adapter");
+
+        let mut deploy_tx = sample_tx(TxType::ContractDeploy);
+        deploy_tx.value = 19;
+        deploy_tx.gas_limit = 120_000;
+        deploy_tx = resign_tx(deploy_tx);
+        let failed_contract = vec![0x66u8; 20];
+        let mut deploy_state = StateIR::new();
+        fund_sender_for_test(&mut deploy_state, &deploy_tx, 1_000_000);
+        let mut deploy_artifact =
+            sample_aoem_artifact(&deploy_tx, false, [0x62; 32], Some(failed_contract.clone()));
+        deploy_artifact.revert_data = None;
+        deploy_artifact.runtime_code = Some(vec![0x60, 0x00, 0x60, 0x01]);
+        deploy_artifact.runtime_code_hash = Some(vec![0x99; 32]);
+        if let Some(anchor) = deploy_artifact.anchor.as_mut() {
+            anchor.return_code = 13;
+            anchor.return_code_name = "out_of_gas".to_string();
+        }
+
+        let deploy_outcome = deploy_adapter
+            .execute_transaction_with_observed_metadata_v1(
+                &deploy_tx,
+                &mut deploy_state,
+                Some(&deploy_artifact),
+            )
+            .expect("execute failed create");
+        assert!(!deploy_outcome.artifact.status_ok);
+        assert!(deploy_outcome.artifact.contract_address.is_none());
+        assert!(deploy_outcome.artifact.runtime_code.is_none());
+        assert!(deploy_outcome.artifact.runtime_code_hash.is_none());
+        assert!(
+            deploy_state.get_account(&failed_contract).is_none(),
+            "failed CREATE must not create the contract account"
+        );
+        for slot in [
+            b"deploy:init_code_hash".as_slice(),
+            b"deploy:runtime_code_hash".as_slice(),
+            b"deploy:runtime_code".as_slice(),
+            NovoVmAdapter::runtime_code_storage_key(),
+        ] {
+            assert_eq!(
+                deploy_state.get_storage(&failed_contract, slot),
+                None,
+                "failed CREATE must not commit contract storage"
+            );
+        }
+        assert_eq!(
+            deploy_state.get_storage(&deploy_tx.from, b"deploy:last_failed_contract_address"),
+            Some(&failed_contract)
+        );
+        let deploy_bal = deploy_outcome
+            .observed_block_access_list
+            .block_access_list
+            .expect("failed create observed BAL");
+        assert!(
+            deploy_bal
+                .0
+                .iter()
+                .all(|entry| entry.address.as_slice() != failed_contract.as_slice()),
+            "failed CREATE must not emit a contract BAL account entry"
+        );
+    }
+
+    #[test]
     fn execute_transaction_with_successful_deploy_artifact_rejects_eip7610_account_mainnet() {
         let mut adapter = NovoVmAdapter::new(ChainConfig {
             chain_type: ChainType::EVM,
@@ -4026,6 +4177,8 @@ mod tests {
 
     #[test]
     fn evm_equivalence_baseline_matrix_receipt_revert_gas_v1() {
+        evm_execution_spec_create_call_failure_state_invariants_v1();
+
         let type3_env_key = "NOVOVM_EVM_ENABLE_TYPE3_WRITE_CHAIN_1";
         let type3_env_captured = std::env::var(type3_env_key).ok();
         std::env::set_var(type3_env_key, "1");

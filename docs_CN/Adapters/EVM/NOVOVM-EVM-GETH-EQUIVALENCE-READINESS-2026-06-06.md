@@ -156,6 +156,7 @@ cargo run -p novovmctl -- evm-block-access-list-scan `
 - raw signed legacy nonce gap -> adapter unified-account ingress reject: pass, `nonce rejected: expected 1, got 9`
 - typed type2 intrinsic gas too low semantic reject: pass, `intrinsic gas too low`
 - contract failure/revert artifact baseline matrix: pass, covers revert/out-of-gas/invalid/deploy-failed classifications and receipt gas metadata
+- CREATE/CALL failure state invariant smoke: pass, covers failed CALL no value/storage/log commit and failed CREATE no contract account/code/storage/BAL contract entry
 - execution-spec/fork-rule smoke matrix: pass, covers intrinsic gas, access-list gas, Amsterdam calldata/access-list floor, precompile set, create/call/revert, storage write and rebuilt logs
 - eth/71 BAL wire smoke: pass, covers GetBlockAccessLists/BlockAccessLists payload encode/decode, frame roundtrip, malformed BAL rejection, and safe negotiation fallback to eth/70 when remote advertises eth/71
 
@@ -164,6 +165,8 @@ cargo run -p novovmctl -- evm-block-access-list-scan `
 失败路径方面，当前已经证明 raw signed transaction 在解码和签名恢复后，会进入 Novo 统一账户控制面并被 nonce gate 拒绝；typed gas 语义和 contract failure/revert artifact 仍是 adapter 层样本门禁，不声明覆盖全部 geth txpool / execution failure 行为。
 
 fork-rule 方面，当前只有最小 smoke matrix：覆盖 EVM core gas/precompile 规则和 adapter create/call/revert 执行结果，不等价于 Ethereum execution-spec 全量 fixture。
+
+CREATE/CALL failure 方面，当前已证明 failed CALL 不提交 value transfer、target storage write、event logs；failed CREATE 即使 artifact 携带 contract_address/runtime_code，也不会创建 contract account/code/storage，也不会产出 contract BAL entry。
 
 eth/71 BAL wire 方面，当前只证明 BAL request/response payload 和 RLPx frame 可解析，并证明本产品不会在未完成 eth/71 peer sync 前误协商到 eth/71；这仍不是完整 eth/71 peer sync。
 
@@ -427,6 +430,27 @@ cargo test -p novovm-adapter-evm-plugin -- --nocapture
 
 这证明当前产品面已经能处理 post-refund gas fee settlement，并把 SSTORE clear refund、refund cap、clean/dirty transition 的关键数值锁进 core gate。它仍不是 opcode 级 SSTORE 执行器全量实现，后续若要声明完整等价，需要接 Ethereum execution-spec 官方 SSTORE fixture。
 
+### 17. Execution-spec CREATE/CALL failure invariants smoke
+
+命令：
+
+```powershell
+cargo test -p novovm-adapter-novovm evm_execution_spec_create_call_failure_state_invariants_v1 -- --nocapture
+cargo test -p novovm-adapter-novovm evm_equivalence_baseline_matrix_receipt_revert_gas_v1 -- --nocapture
+```
+
+结果：
+
+- pass
+- failed CALL 不提交 value transfer
+- failed CALL 不写 target storage，且不产生 event logs / log bloom
+- failed CALL 的 target BAL account entry 不包含 storage changes
+- failed CREATE 即使 artifact 携带 `contract_address` / `runtime_code` / `runtime_code_hash`，resolved artifact 也会清空 contract/runtime 字段
+- failed CREATE 不创建 contract account，不写 deploy/runtime storage，不产出 contract BAL account entry
+- failure classification 仍落到 sender 侧 metadata，不伪造成合约状态变更
+
+这证明当前 adapter 产品面已经把 CREATE/CALL 失败路径的状态不变式锁住。它仍不是官方 execution-spec 全量 fixture；后续要声明等价，需要把这些 invariant 接入官方 failure fixture 子集。
+
 ## Readiness 矩阵
 
 | 能力域 | 当前状态 | 证据 | 产品口径 |
@@ -440,7 +464,7 @@ cargo test -p novovm-adapter-evm-plugin -- --nocapture
 | typed tx failure / revert / fee edge parity | Pass | parity sections `typedTxFailure.mismatchCount=0` | 样本级可声明 |
 | reorg canonical/noncanonical log view | Pass | parity sections `logs.mismatchCount=0` | 样本级可声明 |
 | eth/71 BAL 相关 wire 能力 | Partial | BAL payload/canonical/scanner pass；eth/71 BAL wire encode/decode/frame + safe negotiation gate pass；未证明完整 eth/71 peer sync | 可声明 eth/71 BAL wire smoke；不能声明完整 eth/71 等价 |
-| Ethereum fork rules / gas accounting / precompiles | Partial | execution-spec/fork-rule smoke matrix pass；adapter balance/fee/access-storage smoke pass；access-list entries 贯通 smoke pass；access-list warm/cold 成本、SLOAD sequence 和 BAL smoke pass；EIP-3529 SSTORE refund/cap/transition smoke pass；未跑 Ethereum execution-spec 全量 fixture | 可声明样本级 fork-rule、gas/refund/SLOAD sequence/SSTORE transition、tracked-account fee/value debit、access-list read-set/warm-cold smoke/BAL gate；不能声明 EVM 语义全等价 |
+| Ethereum fork rules / gas accounting / precompiles | Partial | execution-spec/fork-rule smoke matrix pass；adapter balance/fee/access-storage smoke pass；access-list entries 贯通 smoke pass；access-list warm/cold 成本、SLOAD sequence 和 BAL smoke pass；EIP-3529 SSTORE refund/cap/transition smoke pass；CREATE/CALL failure invariant smoke pass；未跑 Ethereum execution-spec 全量 fixture | 可声明样本级 fork-rule、gas/refund/SLOAD sequence/SSTORE transition、CREATE/CALL failure invariants、tracked-account fee/value debit、access-list read-set/warm-cold smoke/BAL gate；不能声明 EVM 语义全等价 |
 | raw Ethereum transaction ingestion/execution | Partial | signed legacy/type1/type2/type3 transfer + typed call/deploy smoke pass；raw nonce gap reject pass；gateway raw write surface pass；gateway txpool error surface pass；plugin txpool replacement/reject pass；plugin fee settlement pass；adapter tracked-account value/fee debit pass；access-list entries 贯通 pass；BAL strict scan pass | 可声明 raw transfer/call/deploy smoke 可执行，gateway 写入/拒绝面、plugin txpool/fee settlement、adapter tracked-account debit、access-list read-set 有 gate；不能声明 raw tx 全等价 |
 | JSON-RPC full-node surface | Partial | mainline query receipt/log 样本 pass；gateway block/tx/filter/call/estimateGas smoke pass；indexed block/tx/receipt/uncle smoke pass；pending/runtime smoke pass；store recovery smoke pass；未覆盖 tracing/debug/admin 和全 geth RPC 行为 | 可声明 gateway JSON-RPC 产品面样本可用；不能声明 geth RPC 等价 |
 | devp2p/RLPx peer sync / block import | Partial | 有 gateway/network 代码和 canary，但未作为本矩阵通过项 | 不能声明以太坊全节点 |
@@ -461,8 +485,8 @@ cargo test -p novovm-adapter-evm-plugin -- --nocapture
 
 ## 下一步门禁顺序
 
-1. 如要继续提高执行语义置信度，接入 Ethereum execution-spec 官方 fixture 子集，优先选 CREATE/CALL failure、账户余额、SSTORE refund cap edge 和 SLOAD warm/cold edge 样本。
-2. 如要完整验证 access-list warm/cold/refund 语义，基于现在已贯通的 `TxIR.evm_access_list`、SLOAD sequence smoke 和 EIP-3529 SSTORE transition smoke 接官方 fixture；不要再做包装层。
+1. 如要继续提高执行语义置信度，接入 Ethereum execution-spec 官方 fixture 子集，优先选账户余额、CREATE/CALL failure edge、SSTORE refund cap edge 和 SLOAD warm/cold edge 样本。
+2. 如要完整验证 access-list warm/cold/refund/failure 语义，基于现在已贯通的 `TxIR.evm_access_list`、SLOAD sequence smoke、EIP-3529 SSTORE transition smoke 和 CREATE/CALL failure invariant smoke 接官方 fixture；不要再做包装层。
 3. 如继续扩展 JSON-RPC parity，可补更多 batch/mixed-param edge case；tracing/debug/admin 仍不作为 Novo EVM 插件主线优先项。
 4. 如需要提高 eth/71 置信度，再做真实 peer sync/capability negotiation 集成门禁，但仍不把 SUPERVM 产品口径改成 geth 全节点。
 
@@ -541,6 +565,7 @@ cargo test -p novovm-adapter-novovm execute_raw_type1_access_list_emits_declared
 cargo test -p novovm-adapter-novovm evm_execution_spec_access_list_warm_storage_smoke_v1 -- --nocapture
 cargo test -p novovm-adapter-novovm execute_success_call_debits_refunded_sstore_gas_used_v1 -- --nocapture
 cargo test -p novovm-evm-gateway eth_send_transaction_infers_type1_from_access_list -- --nocapture
+cargo test -p novovm-adapter-novovm evm_execution_spec_create_call_failure_state_invariants_v1 -- --nocapture
 cargo test -p novovm-adapter-novovm typed_type2_semantics_reject_intrinsic_gas_too_low_v1 -- --nocapture
 cargo test -p novovm-adapter-novovm evm_equivalence_baseline_matrix_receipt_revert_gas_v1 -- --nocapture
 ```
@@ -560,6 +585,7 @@ cargo test -p novovm-adapter-evm-core sstore_transition_dirty_slots_match_eip352
 cargo test -p novovm-adapter-novovm evm_execution_spec_fork_rule_smoke_matrix_v1 -- --nocapture
 cargo test -p novovm-adapter-novovm evm_execution_spec_access_list_warm_storage_smoke_v1 -- --nocapture
 cargo test -p novovm-adapter-novovm execute_success_call_debits_refunded_sstore_gas_used_v1 -- --nocapture
+cargo test -p novovm-adapter-novovm evm_execution_spec_create_call_failure_state_invariants_v1 -- --nocapture
 ```
 
 eth/71 BAL wire smoke gate：
