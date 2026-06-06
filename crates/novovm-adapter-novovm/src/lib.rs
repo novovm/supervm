@@ -989,6 +989,18 @@ impl NovoVmAdapter {
                 );
             }
         }
+        for entry in &tx.evm_access_list {
+            if let Some(address) = Self::to_evm_address20_v1(&entry.address) {
+                out.account_read(address);
+                for storage_key in &entry.storage_keys {
+                    if storage_key.len() == 32 {
+                        let mut slot = [0u8; 32];
+                        slot.copy_from_slice(storage_key);
+                        out.storage_read(address, slot);
+                    }
+                }
+            }
+        }
 
         match tx.tx_type {
             TxType::Transfer | TxType::ContractCall => {
@@ -2081,6 +2093,7 @@ pub fn build_privacy_tx_ir_unsigned_v1(envelope: &PrivacyTxEnvelopeV1) -> Result
         chain_id: envelope.chain_id,
         tx_type: TxType::Privacy,
         execution_policy: Default::default(),
+        evm_access_list: Vec::new(),
         source_chain: None,
         target_chain: None,
     };
@@ -2181,6 +2194,9 @@ fn verify_evm_raw_tx_signature_v1(chain_type: ChainType, tx: &TxIR) -> Result<bo
     let canonical =
         tx_ir_from_raw_fields_m0(&parsed_fields, &tx.signature, recovered_from, tx.chain_id);
     if tx.hash != canonical.hash {
+        return Ok(false);
+    }
+    if tx.evm_access_list != canonical.evm_access_list {
         return Ok(false);
     }
     let profile = match resolve_evm_profile(chain_type, tx.chain_id) {
@@ -2431,6 +2447,7 @@ mod tests {
             chain_id: 1,
             tx_type,
             execution_policy: Default::default(),
+            evm_access_list: Vec::new(),
             source_chain: None,
             target_chain: None,
         };
@@ -2811,6 +2828,59 @@ mod tests {
             intrinsic > NovoVmAdapter::tx_intrinsic_gas_v1(&tx),
             "type1 intrinsic should exceed plain intrinsic when access list is present"
         );
+    }
+
+    #[test]
+    fn execute_raw_type1_access_list_emits_declared_storage_reads_v1() {
+        let to = vec![0x55u8; 20];
+        let access_address = vec![0x10u8; 20];
+        let access_slot = vec![0x01u8; 32];
+        let access_list = test_rlp_encode_list(&[test_rlp_encode_list(&[
+            test_rlp_encode_bytes(&access_address),
+            test_rlp_encode_list(&[test_rlp_encode_bytes(&access_slot)]),
+        ])]);
+        let payload = test_rlp_encode_list(&[
+            test_rlp_encode_u64(1),
+            test_rlp_encode_u64(0),
+            test_rlp_encode_u64(2),
+            test_rlp_encode_u64(100_000),
+            test_rlp_encode_bytes(&to),
+            test_rlp_encode_u128(3),
+            test_rlp_encode_bytes(&[0xaa]),
+            access_list,
+            test_rlp_encode_u64(1),
+            test_rlp_encode_u64(1),
+            test_rlp_encode_u64(1),
+        ]);
+        let mut raw = vec![0x01u8];
+        raw.extend_from_slice(&payload);
+        let fields = translate_raw_evm_tx_fields_m0(&raw).expect("type1 raw decode");
+        let tx = tx_ir_from_raw_fields_m0(&fields, &raw, vec![0x77; 20], 1);
+        assert_eq!(tx.evm_access_list.len(), 1);
+
+        let mut adapter = NovoVmAdapter::new(ChainConfig {
+            chain_type: ChainType::EVM,
+            chain_id: 1,
+            name: "test".to_string(),
+            enabled: true,
+            custom_config: None,
+        });
+        adapter.initialize().expect("init");
+        adapter.verified_tx_cache.insert(tx.hash.clone());
+        let mut runtime_state = StateIR::new();
+        let outcome = adapter
+            .execute_transaction_with_observed_metadata_v1(&tx, &mut runtime_state, None)
+            .expect("execute raw type1 access list");
+        let block_access_list = outcome
+            .observed_block_access_list
+            .block_access_list
+            .expect("observed block access list");
+        let access_entry = block_access_list
+            .0
+            .iter()
+            .find(|entry| entry.address.as_slice() == access_address.as_slice())
+            .expect("declared access-list account read");
+        assert_eq!(access_entry.storage_reads, vec![[0x01u8; 32]]);
     }
 
     #[test]
@@ -3383,6 +3453,7 @@ mod tests {
         execute_failed_call_debits_fee_without_value_transfer_v1();
         execute_tracked_sender_rejects_insufficient_value_fee_v1();
         tx_intrinsic_gas_includes_type1_access_list_extras_v1();
+        execute_raw_type1_access_list_emits_declared_storage_reads_v1();
         execute_transaction_with_observed_metadata_emits_complete_contract_call_evm_bal();
         execute_transaction_with_observed_metadata_emits_complete_contract_deploy_evm_bal();
     }

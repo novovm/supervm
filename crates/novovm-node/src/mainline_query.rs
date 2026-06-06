@@ -4105,6 +4105,7 @@ mod tests {
             chain_id: input.chain_id,
             tx_type: input.tx_type,
             execution_policy: Default::default(),
+            evm_access_list: Vec::new(),
             source_chain: None,
             target_chain: None,
         };

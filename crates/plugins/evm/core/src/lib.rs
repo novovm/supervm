@@ -3,7 +3,7 @@
 use anyhow::bail;
 use aoem_bindings::secp256k1_recover_pubkey_v1_auto;
 use k256::ecdsa::{RecoveryId, Signature, VerifyingKey};
-use novovm_adapter_api::{BlockIR, ChainType, TxIR, TxType};
+use novovm_adapter_api::{BlockIR, ChainType, EvmAccessListEntryV1, TxIR, TxType};
 use sha3::{Digest, Keccak256};
 use std::collections::HashMap;
 use std::sync::OnceLock;
@@ -67,6 +67,7 @@ pub struct EvmRawTxFieldsM0 {
     pub blob_hash_count: Option<u64>,
     pub access_list_address_count: Option<u64>,
     pub access_list_storage_key_count: Option<u64>,
+    pub access_list: Vec<EvmAccessListEntryV1>,
     pub to: Option<Vec<u8>>,
     pub value: Option<u128>,
     pub data: Option<Vec<u8>>,
@@ -720,10 +721,12 @@ fn rlp_item_as_list_items<'a>(
     }
 }
 
-fn rlp_access_list_intrinsic_counts(item: &RlpItem<'_>, field: &str) -> anyhow::Result<(u64, u64)> {
+fn rlp_access_list_entries(
+    item: &RlpItem<'_>,
+    field: &str,
+) -> anyhow::Result<Vec<EvmAccessListEntryV1>> {
     let entries = rlp_item_as_list_items(item, field)?;
-    let mut address_count = 0u64;
-    let mut storage_key_count = 0u64;
+    let mut out = Vec::with_capacity(entries.len());
     for (entry_idx, entry) in entries.iter().enumerate() {
         let entry_field = format!("{}[{}]", field, entry_idx);
         let entry_items = rlp_item_as_list_items(entry, &entry_field)?;
@@ -739,20 +742,32 @@ fn rlp_access_list_intrinsic_counts(item: &RlpItem<'_>, field: &str) -> anyhow::
                 address_raw.len()
             );
         }
-        address_count = address_count.saturating_add(1);
 
         let storage_keys_field = format!("{}.storageKeys", entry_field);
         let storage_keys = rlp_item_as_list_items(&entry_items[1], &storage_keys_field)?;
+        let mut parsed_storage_keys = Vec::with_capacity(storage_keys.len());
         for (key_idx, storage_key) in storage_keys.iter().enumerate() {
             let key_field = format!("{}[{}]", storage_keys_field, key_idx);
             let key_raw = rlp_item_as_bytes(storage_key, &key_field)?;
             if key_raw.len() != 32 {
                 bail!("{} must be 32 bytes, got {}", key_field, key_raw.len());
             }
-            storage_key_count = storage_key_count.saturating_add(1);
+            parsed_storage_keys.push(key_raw.to_vec());
         }
+        out.push(EvmAccessListEntryV1 {
+            address: address_raw.to_vec(),
+            storage_keys: parsed_storage_keys,
+        });
     }
-    Ok((address_count, storage_key_count))
+    Ok(out)
+}
+
+fn access_list_intrinsic_counts(entries: &[EvmAccessListEntryV1]) -> (u64, u64) {
+    let address_count = entries.len() as u64;
+    let storage_key_count = entries.iter().fold(0u64, |acc: u64, entry| {
+        acc.saturating_add(entry.storage_keys.len() as u64)
+    });
+    (address_count, storage_key_count)
 }
 
 fn tx_fields_from_legacy_list(
@@ -792,6 +807,7 @@ fn tx_fields_from_legacy_list(
         blob_hash_count: None,
         access_list_address_count: None,
         access_list_storage_key_count: None,
+        access_list: Vec::new(),
         to,
         value: Some(value),
         data: Some(data),
@@ -812,8 +828,9 @@ fn tx_fields_from_type1_list(
     let to = rlp_item_as_address(&items[4], "type1.to")?;
     let value = rlp_item_as_u128(&items[5], "type1.value")?;
     let data = rlp_item_as_bytes(&items[6], "type1.data")?.to_vec();
+    let access_list = rlp_access_list_entries(&items[7], "type1.access_list")?;
     let (access_list_address_count, access_list_storage_key_count) =
-        rlp_access_list_intrinsic_counts(&items[7], "type1.access_list")?;
+        access_list_intrinsic_counts(&access_list);
     Ok(EvmRawTxFieldsM0 {
         hint,
         chain_id: Some(chain_id),
@@ -825,6 +842,7 @@ fn tx_fields_from_type1_list(
         blob_hash_count: None,
         access_list_address_count: Some(access_list_address_count),
         access_list_storage_key_count: Some(access_list_storage_key_count),
+        access_list,
         to,
         value: Some(value),
         data: Some(data),
@@ -846,8 +864,9 @@ fn tx_fields_from_type2_list(
     let to = rlp_item_as_address(&items[5], "type2.to")?;
     let value = rlp_item_as_u128(&items[6], "type2.value")?;
     let data = rlp_item_as_bytes(&items[7], "type2.data")?.to_vec();
+    let access_list = rlp_access_list_entries(&items[8], "type2.access_list")?;
     let (access_list_address_count, access_list_storage_key_count) =
-        rlp_access_list_intrinsic_counts(&items[8], "type2.access_list")?;
+        access_list_intrinsic_counts(&access_list);
     Ok(EvmRawTxFieldsM0 {
         hint,
         chain_id: Some(chain_id),
@@ -859,6 +878,7 @@ fn tx_fields_from_type2_list(
         blob_hash_count: None,
         access_list_address_count: Some(access_list_address_count),
         access_list_storage_key_count: Some(access_list_storage_key_count),
+        access_list,
         to,
         value: Some(value),
         data: Some(data),
@@ -901,8 +921,9 @@ fn tx_fields_from_type3_list(
     let to = rlp_item_as_address(&items[5], "type3.to")?;
     let value = rlp_item_as_u128(&items[6], "type3.value")?;
     let data = rlp_item_as_bytes(&items[7], "type3.data")?.to_vec();
+    let access_list = rlp_access_list_entries(&items[8], "type3.access_list")?;
     let (access_list_address_count, access_list_storage_key_count) =
-        rlp_access_list_intrinsic_counts(&items[8], "type3.access_list")?;
+        access_list_intrinsic_counts(&access_list);
     let max_fee_per_blob_gas = rlp_item_as_u64(&items[9], "type3.max_fee_per_blob_gas")?;
     let blob_hash_count = rlp_blob_hash_count(&items[10], "type3.blob_versioned_hashes")?;
     Ok(EvmRawTxFieldsM0 {
@@ -916,6 +937,7 @@ fn tx_fields_from_type3_list(
         blob_hash_count: Some(blob_hash_count),
         access_list_address_count: Some(access_list_address_count),
         access_list_storage_key_count: Some(access_list_storage_key_count),
+        access_list,
         to,
         value: Some(value),
         data: Some(data),
@@ -961,6 +983,7 @@ pub fn translate_raw_evm_tx_fields_m0(raw: &[u8]) -> anyhow::Result<EvmRawTxFiel
             blob_hash_count: None,
             access_list_address_count: None,
             access_list_storage_key_count: None,
+            access_list: Vec::new(),
             to: None,
             value: None,
             data: None,
@@ -1050,6 +1073,7 @@ pub fn tx_ir_from_raw_fields_m0(
         chain_id,
         tx_type,
         execution_policy: Default::default(),
+        evm_access_list: fields.access_list.clone(),
         source_chain: None,
         target_chain: None,
     };
@@ -1526,6 +1550,7 @@ mod tests {
             chain_id,
             tx_type: TxType::Transfer,
             execution_policy: Default::default(),
+            evm_access_list: Vec::new(),
             source_chain: None,
             target_chain: None,
         }
@@ -1869,6 +1894,16 @@ mod tests {
         let fields = translate_raw_evm_tx_fields_m0(&raw).expect("type1 tx decode");
         assert_eq!(fields.access_list_address_count, Some(2));
         assert_eq!(fields.access_list_storage_key_count, Some(3));
+        assert_eq!(fields.access_list.len(), 2);
+        assert_eq!(fields.access_list[0].address, vec![0x10; 20]);
+        assert_eq!(
+            fields.access_list[0].storage_keys,
+            vec![vec![0x01; 32], vec![0x02; 32]]
+        );
+        assert_eq!(fields.access_list[1].address, vec![0x20; 20]);
+        assert_eq!(fields.access_list[1].storage_keys, vec![vec![0x03; 32]]);
+        let tx = tx_ir_from_raw_fields_m0(&fields, &raw, vec![0x77; 20], 1);
+        assert_eq!(tx.evm_access_list, fields.access_list);
     }
 
     #[test]

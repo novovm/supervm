@@ -740,6 +740,7 @@ pub fn tx_ingress_record_to_adapter_tx_ir(record: &TxIngressRecord, chain_id: u6
         chain_id,
         tx_type: TxType::Transfer,
         execution_policy: TxExecutionPolicyV1::Standard,
+        evm_access_list: Vec::new(),
         source_chain: None,
         target_chain: None,
     };
@@ -958,6 +959,7 @@ pub fn nov_native_tx_to_adapter_tx_ir_v1(tx: &NovNativeTxWireV1) -> Result<TxIR>
             chain_id: tx.chain_id,
             tx_type: TxType::Transfer,
             execution_policy: TxExecutionPolicyV1::Standard,
+            evm_access_list: Vec::new(),
             source_chain: None,
             target_chain: None,
         },
@@ -979,6 +981,7 @@ pub fn nov_native_tx_to_adapter_tx_ir_v1(tx: &NovNativeTxWireV1) -> Result<TxIR>
                 chain_id: tx.chain_id,
                 tx_type: TxType::ContractCall,
                 execution_policy: tx_execution_policy_from_nov_v1(execute.execution_policy),
+                evm_access_list: Vec::new(),
                 source_chain: None,
                 target_chain: None,
             }
@@ -999,6 +1002,7 @@ pub fn nov_native_tx_to_adapter_tx_ir_v1(tx: &NovNativeTxWireV1) -> Result<TxIR>
             chain_id: tx.chain_id,
             tx_type: TxType::Privacy,
             execution_policy: TxExecutionPolicyV1::Standard,
+            evm_access_list: Vec::new(),
             source_chain: None,
             target_chain: None,
         },

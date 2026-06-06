@@ -16,7 +16,8 @@ pub use evm_mirror::{
     EvmMempoolIngressFrameV1, EvmMirrorNodeAdapterExt, EvmNodeServiceRole,
 };
 pub use ir::{
-    AccountState, BlockIR, SerializationFormat, StateIR, TxExecutionPolicyV1, TxIR, TxType,
+    AccountState, BlockIR, EvmAccessListEntryV1, SerializationFormat, StateIR, TxExecutionPolicyV1,
+    TxIR, TxType,
 };
 pub use mapped_asset::{
     MappedAssetLockProof, MappedAssetOperation, MappedAssetOperationKind, MappedAssetRecord,

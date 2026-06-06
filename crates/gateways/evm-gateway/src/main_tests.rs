@@ -9826,6 +9826,7 @@ fn json_rpc_parity_surface_smoke_block_tx_filter_call_estimate_v1() {
         chain_id: 1,
         tx_type: TxType::ContractCall,
         execution_policy: Default::default(),
+        evm_access_list: Vec::new(),
         source_chain: None,
         target_chain: None,
     };
@@ -10166,6 +10167,7 @@ fn eth_estimate_gas_deploy_includes_access_list_intrinsic_cost() {
         chain_id: 1,
         tx_type: TxType::ContractDeploy,
         execution_policy: Default::default(),
+        evm_access_list: Vec::new(),
         source_chain: None,
         target_chain: None,
     };
@@ -10303,6 +10305,7 @@ fn eth_estimate_gas_chain_scoped_amsterdam_access_list_intrinsic_gas() {
         chain_id: DISABLED_CHAIN_ID,
         tx_type: TxType::ContractDeploy,
         execution_policy: Default::default(),
+        evm_access_list: Vec::new(),
         source_chain: None,
         target_chain: None,
     };
@@ -10407,6 +10410,7 @@ fn eth_estimate_gas_type3_includes_blob_intrinsic_cost_when_enabled() {
         chain_id: 1,
         tx_type: TxType::Transfer,
         execution_policy: Default::default(),
+        evm_access_list: Vec::new(),
         source_chain: None,
         target_chain: None,
     };
@@ -10534,6 +10538,7 @@ fn eth_estimate_gas_contract_call_adds_exec_surcharge_and_respects_gas_cap() {
         chain_id: 1,
         tx_type: TxType::ContractCall,
         execution_policy: Default::default(),
+        evm_access_list: Vec::new(),
         source_chain: None,
         target_chain: None,
     };
@@ -12559,6 +12564,7 @@ fn eth_send_transaction_accepts_camel_case_signature_domain_alias() {
 
 #[test]
 fn eth_send_transaction_infers_type1_from_access_list() {
+    reset_runtime_host_state_for_test();
     let backend = GatewayEthTxIndexStoreBackend::Memory;
     let mut router = UnifiedAccountRouter::new();
     let mut eth_tx_index = HashMap::new();
@@ -12612,6 +12618,24 @@ fn eth_send_transaction_infers_type1_from_access_list() {
         .add_binding(&uca_id, AccountRole::Owner, persona, now)
         .expect("add binding");
 
+    let params = serde_json::json!([{
+        "from": format!("0x{}", to_hex(&sender)),
+        "to": format!("0x{}", to_hex(&receiver)),
+        "nonce": "0x0",
+        "value": "0x1",
+        "gas": "0x62d4",
+        "gasPrice": "0x1",
+        "accessList": [{
+            "address": format!("0x{}", to_hex(&access_addr)),
+            "storageKeys": [storage_key]
+        }]
+    }]);
+    let parsed_access_list =
+        super::parse_eth_access_list_entries(&params).expect("parse access list entries");
+    assert_eq!(parsed_access_list.len(), 1);
+    assert_eq!(parsed_access_list[0].address, access_addr);
+    assert_eq!(parsed_access_list[0].storage_keys, vec![vec![0x11u8; 32]]);
+
     let (tx_hash_json, changed) = run_gateway_method(
         &mut router,
         &mut eth_tx_index,
@@ -12620,18 +12644,7 @@ fn eth_send_transaction_infers_type1_from_access_list() {
         &mut evm_pending_payout_by_settlement,
         &mut ctx,
         "eth_sendTransaction",
-        &serde_json::json!([{
-            "from": format!("0x{}", to_hex(&sender)),
-            "to": format!("0x{}", to_hex(&receiver)),
-            "nonce": "0x0",
-            "value": "0x1",
-            "gas": "0x62d4",
-            "gasPrice": "0x1",
-            "accessList": [{
-                "address": format!("0x{}", to_hex(&access_addr)),
-                "storageKeys": [storage_key]
-            }]
-        }]),
+        &params,
     )
     .expect("eth_sendTransaction with accessList should infer type1");
     assert!(changed);

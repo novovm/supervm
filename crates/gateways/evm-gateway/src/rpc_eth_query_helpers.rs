@@ -239,6 +239,17 @@ pub(super) fn parse_eth_tx_count_block_tag(params: &serde_json::Value) -> Option
 pub(super) fn parse_eth_access_list_intrinsic_counts(
     params: &serde_json::Value,
 ) -> Result<(u64, u64)> {
+    let access_list = parse_eth_access_list_entries(params)?;
+    let address_count = access_list.len() as u64;
+    let storage_key_count = access_list.iter().fold(0u64, |acc: u64, entry| {
+        acc.saturating_add(entry.storage_keys.len() as u64)
+    });
+    Ok((address_count, storage_key_count))
+}
+
+pub(super) fn parse_eth_access_list_entries(
+    params: &serde_json::Value,
+) -> Result<Vec<EvmAccessListEntryV1>> {
     let access_list_value = params_object_with_any_keys(params, &["accessList", "access_list"])
         .and_then(|map| map.get("accessList").or_else(|| map.get("access_list")))
         .or_else(|| {
@@ -248,13 +259,12 @@ pub(super) fn parse_eth_access_list_intrinsic_counts(
             })
         });
     let Some(access_list_value) = access_list_value else {
-        return Ok((0, 0));
+        return Ok(Vec::new());
     };
     let Some(access_list) = access_list_value.as_array() else {
         bail!("accessList must be array");
     };
-    let mut address_count = 0u64;
-    let mut storage_key_count = 0u64;
+    let mut entries = Vec::with_capacity(access_list.len());
     for (entry_idx, item) in access_list.iter().enumerate() {
         let Some(item_map) = item.as_object() else {
             bail!("accessList[{}] must be object", entry_idx);
@@ -271,17 +281,22 @@ pub(super) fn parse_eth_access_list_intrinsic_counts(
                 address.len()
             );
         }
-        address_count = address_count.saturating_add(1);
 
+        let mut decoded_storage_keys = Vec::new();
         let Some(storage_keys_value) = item_map
             .get("storageKeys")
             .or_else(|| item_map.get("storage_keys"))
         else {
+            entries.push(EvmAccessListEntryV1 {
+                address,
+                storage_keys: decoded_storage_keys,
+            });
             continue;
         };
         let Some(storage_keys) = storage_keys_value.as_array() else {
             bail!("accessList[{}].storageKeys must be string[]", entry_idx);
         };
+        decoded_storage_keys.reserve(storage_keys.len());
         for (key_idx, key) in storage_keys.iter().enumerate() {
             let key_raw = value_to_string(key).ok_or_else(|| {
                 anyhow::anyhow!(
@@ -299,10 +314,14 @@ pub(super) fn parse_eth_access_list_intrinsic_counts(
                     decoded.len()
                 );
             }
-            storage_key_count = storage_key_count.saturating_add(1);
+            decoded_storage_keys.push(decoded);
         }
+        entries.push(EvmAccessListEntryV1 {
+            address,
+            storage_keys: decoded_storage_keys,
+        });
     }
-    Ok((address_count, storage_key_count))
+    Ok(entries)
 }
 
 pub(super) fn parse_eth_blob_intrinsic_fields(params: &serde_json::Value) -> Result<(u64, u64)> {

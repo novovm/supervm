@@ -4472,6 +4472,7 @@ mod tests {
             chain_id,
             tx_type: TxType::Transfer,
             execution_policy: Default::default(),
+            evm_access_list: Vec::new(),
             source_chain: None,
             target_chain: None,
         };

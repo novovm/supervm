@@ -48,10 +48,19 @@ pub struct TxIR {
     pub tx_type: TxType,
     #[serde(default)]
     pub execution_policy: TxExecutionPolicyV1,
+    #[serde(default)]
+    pub evm_access_list: Vec<EvmAccessListEntryV1>,
 
     // Phase 5.3 (optional cross-chain hints)
     pub source_chain: Option<u64>,
     pub target_chain: Option<u64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct EvmAccessListEntryV1 {
+    pub address: Vec<u8>,
+    #[serde(default)]
+    pub storage_keys: Vec<Vec<u8>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -150,6 +159,7 @@ impl TxIR {
             chain_id,
             tx_type: TxType::Transfer,
             execution_policy: TxExecutionPolicyV1::Standard,
+            evm_access_list: Vec::new(),
             source_chain: None,
             target_chain: None,
         }
@@ -193,6 +203,7 @@ impl TxIR {
             chain_id: source_chain,
             tx_type: TxType::CrossChainTransfer,
             execution_policy: TxExecutionPolicyV1::Standard,
+            evm_access_list: Vec::new(),
             source_chain: Some(source_chain),
             target_chain: Some(target_chain),
         }

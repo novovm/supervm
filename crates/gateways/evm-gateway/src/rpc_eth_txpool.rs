@@ -149,6 +149,7 @@ pub(super) fn gateway_eth_tx_ir_from_index_entry(entry: &GatewayEthTxIndexEntry)
         chain_id: entry.chain_id,
         tx_type,
         execution_policy: TxExecutionPolicyV1::Standard,
+        evm_access_list: Vec::new(),
         source_chain: None,
         target_chain: None,
     }

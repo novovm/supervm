@@ -5,9 +5,10 @@ use ed25519_dalek::{Signature as Ed25519Signature, Verifier, VerifyingKey};
 mod bincode_compat;
 use novovm_adapter_api::{
     AccountPolicy, AccountRole, AtomicBroadcastReadyV1, AtomicIntentReceiptV1, AtomicIntentStatus,
-    EvmFeePayoutInstructionV1, EvmFeeSettlementRecordV1, EvmMempoolIngressFrameV1, KycPolicyMode,
-    NonceScope, PersonaAddress, PersonaType, ProtocolKind, RouteDecision, RouteRequest,
-    SerializationFormat, TxExecutionPolicyV1, TxIR, TxType, Type4PolicyMode, UnifiedAccountRouter,
+    EvmAccessListEntryV1, EvmFeePayoutInstructionV1, EvmFeeSettlementRecordV1,
+    EvmMempoolIngressFrameV1, KycPolicyMode, NonceScope, PersonaAddress, PersonaType, ProtocolKind,
+    RouteDecision, RouteRequest, SerializationFormat, TxExecutionPolicyV1, TxIR, TxType,
+    Type4PolicyMode, UnifiedAccountRouter,
 };
 #[cfg(test)]
 use novovm_adapter_evm_core::{
@@ -9203,8 +9204,11 @@ fn run_gateway_method(
                 return Ok((upstream, false));
             }
             let eth_default_gas_price = gateway_eth_default_gas_price_wei(chain_id);
-            let (access_list_address_count, access_list_storage_key_count) =
-                parse_eth_access_list_intrinsic_counts(params)?;
+            let evm_access_list = parse_eth_access_list_entries(params)?;
+            let access_list_address_count = evm_access_list.len() as u64;
+            let access_list_storage_key_count = evm_access_list.iter().fold(0u64, |acc, entry| {
+                acc.saturating_add(entry.storage_keys.len() as u64)
+            });
             let (max_fee_per_blob_gas, blob_hash_count) =
                 parse_eth_blob_intrinsic_fields(params)?;
             let from = match extract_eth_persona_address_param(params) {
@@ -9293,6 +9297,7 @@ fn run_gateway_method(
                 chain_id,
                 tx_type,
                 execution_policy: TxExecutionPolicyV1::Standard,
+                evm_access_list,
                 source_chain: None,
                 target_chain: None,
             };
@@ -12547,8 +12552,11 @@ fn run_gateway_method(
                 None => Vec::new(),
             };
             let value = param_as_u128_any_with_tx(params, &["value"]).unwrap_or(0);
-            let (access_list_address_count, access_list_storage_key_count) =
-                parse_eth_access_list_intrinsic_counts(params)?;
+            let evm_access_list = parse_eth_access_list_entries(params)?;
+            let access_list_address_count = evm_access_list.len() as u64;
+            let access_list_storage_key_count = evm_access_list.iter().fold(0u64, |acc, entry| {
+                acc.saturating_add(entry.storage_keys.len() as u64)
+            });
             let (max_fee_per_blob_gas, blob_hash_count) =
                 parse_eth_blob_intrinsic_fields(params)?;
             let has_access_list_intrinsic =
@@ -12725,6 +12733,7 @@ fn run_gateway_method(
                 chain_id,
                 tx_type: tx_ir_type,
                 execution_policy,
+                evm_access_list,
                 source_chain: None,
                 target_chain: None,
             };

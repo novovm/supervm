@@ -1445,6 +1445,7 @@ fn to_adapter_tx_ir(tx: &LocalTx, chain_id: u64) -> TxIR {
         chain_id,
         tx_type: TxType::Transfer,
         execution_policy: Default::default(),
+        evm_access_list: Vec::new(),
         source_chain: None,
         target_chain: None,
     };
@@ -6352,6 +6353,7 @@ fn parse_eth_send_transaction_ir(
         chain_id,
         tx_type,
         execution_policy: Default::default(),
+        evm_access_list: Vec::new(),
         source_chain: None,
         target_chain: None,
     };
