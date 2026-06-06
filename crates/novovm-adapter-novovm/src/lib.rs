@@ -489,6 +489,25 @@ impl NovoVmAdapter {
         account_collision || storage_collision
     }
 
+    fn target_account_has_runtime_code_v1(tx: &TxIR, state: &StateIR) -> bool {
+        let Some(to) = tx.to.as_deref() else {
+            return false;
+        };
+        state
+            .get_account(to)
+            .is_some_and(|account| account.code_hash.is_some())
+            || Self::read_runtime_code_for_address(state, to)
+                .is_some_and(|runtime_code| !runtime_code.is_empty())
+    }
+
+    fn effective_execution_tx_v1(tx: &TxIR, state: &StateIR) -> TxIR {
+        let mut execution_tx = tx.clone();
+        if tx.tx_type == TxType::Transfer && Self::target_account_has_runtime_code_v1(tx, state) {
+            execution_tx.tx_type = TxType::ContractCall;
+        }
+        execution_tx
+    }
+
     fn effective_tx_execution_status_ok(
         tx: &TxIR,
         state: &StateIR,
@@ -1877,8 +1896,21 @@ impl NovoVmAdapter {
                 self.state.set_account(tx.from.clone(), account);
             }
         }
-        if tx.tx_type == TxType::ContractDeploy {
-            let contract_address = Self::deploy_contract_address_v1(tx, artifact);
+        if let Some(to) = tx.to.as_ref() {
+            if self.state.get_account(to).is_none() {
+                if let Some(account) = state.get_account(to).cloned() {
+                    self.state.set_account(to.clone(), account);
+                }
+            }
+            if !self.state.storage.contains_key(to) {
+                if let Some(storage) = state.storage.get(to).cloned() {
+                    self.state.storage.insert(to.clone(), storage);
+                }
+            }
+        }
+        let execution_tx = Self::effective_execution_tx_v1(tx, state);
+        if execution_tx.tx_type == TxType::ContractDeploy {
+            let contract_address = Self::deploy_contract_address_v1(&execution_tx, artifact);
             if self.state.get_account(&contract_address).is_none() {
                 if let Some(account) = state.get_account(&contract_address).cloned() {
                     self.state.set_account(contract_address.clone(), account);
@@ -1890,27 +1922,35 @@ impl NovoVmAdapter {
                 }
             }
         }
-        let status_ok = Self::effective_tx_execution_status_ok(tx, state, artifact);
-        match tx.tx_type {
+        let status_ok = Self::effective_tx_execution_status_ok(&execution_tx, state, artifact);
+        match execution_tx.tx_type {
             TxType::Transfer => {
-                Self::apply_transfer(tx, state, &mut self.kv, artifact)?;
-                Self::apply_transfer(tx, &mut self.state, &mut self.kv, artifact)?;
+                Self::apply_transfer(&execution_tx, state, &mut self.kv, artifact)?;
+                Self::apply_transfer(&execution_tx, &mut self.state, &mut self.kv, artifact)?;
             }
             TxType::ContractCall => {
-                Self::apply_contract_call(tx, state, &mut self.kv, artifact)?;
-                Self::apply_contract_call(tx, &mut self.state, &mut self.kv, artifact)?;
+                Self::apply_contract_call(&execution_tx, state, &mut self.kv, artifact)?;
+                Self::apply_contract_call(&execution_tx, &mut self.state, &mut self.kv, artifact)?;
             }
             TxType::ContractDeploy => {
-                Self::apply_contract_deploy(tx, state, &mut self.kv, artifact)?;
-                Self::apply_contract_deploy(tx, &mut self.state, &mut self.kv, artifact)?;
+                Self::apply_contract_deploy(&execution_tx, state, &mut self.kv, artifact)?;
+                Self::apply_contract_deploy(
+                    &execution_tx,
+                    &mut self.state,
+                    &mut self.kv,
+                    artifact,
+                )?;
             }
             TxType::Privacy => {
-                Self::apply_privacy_transfer(tx, state, &mut self.kv, false)?;
-                Self::apply_privacy_transfer(tx, &mut self.state, &mut self.kv, true)?;
+                Self::apply_privacy_transfer(&execution_tx, state, &mut self.kv, false)?;
+                Self::apply_privacy_transfer(&execution_tx, &mut self.state, &mut self.kv, true)?;
             }
             _ => {
                 self.reset_execution_receipt_context();
-                bail!("unsupported tx_type for native adapter: {:?}", tx.tx_type)
+                bail!(
+                    "unsupported tx_type for native adapter: {:?}",
+                    execution_tx.tx_type
+                )
             }
         }
 
@@ -1934,8 +1974,12 @@ impl NovoVmAdapter {
             tx_index: self.execution_current_tx_index,
             raw_execution_logs: raw_execution_logs.as_slice(),
         };
-        let reconstruction_input =
-            self.build_execution_reconstruction_input(tx, state, artifact, reconstruction_context);
+        let reconstruction_input = self.build_execution_reconstruction_input(
+            &execution_tx,
+            state,
+            artifact,
+            reconstruction_context,
+        );
         let reconstruction_rules =
             self.execution_reconstruction_rules(self.runtime_log_rebuild_enabled());
         let resolved_artifact = match reconstruct_tx_execution_artifact_v1(
@@ -1964,10 +2008,15 @@ impl NovoVmAdapter {
             }
         };
 
-        Self::record_execution_artifact(tx, state, &mut self.kv, &resolved_artifact)?;
-        Self::record_execution_artifact(tx, &mut self.state, &mut self.kv, &resolved_artifact)?;
+        Self::record_execution_artifact(&execution_tx, state, &mut self.kv, &resolved_artifact)?;
+        Self::record_execution_artifact(
+            &execution_tx,
+            &mut self.state,
+            &mut self.kv,
+            &resolved_artifact,
+        )?;
         let observed_block_access_list = Self::build_observed_block_access_list_for_tx_v1(
-            tx,
+            &execution_tx,
             state,
             &resolved_artifact,
             self.execution_current_tx_index,
@@ -2713,6 +2762,13 @@ mod tests {
             "../tests/fixtures/ethereum-official-state-subset/create-account.json"
         ))
         .expect("decode official CREATE/account state fixture")
+    }
+
+    fn official_staticcall_precompile_return_state_fixture_v1() -> serde_json::Value {
+        serde_json::from_str(include_str!(
+            "../tests/fixtures/ethereum-official-state-subset/staticcall-precompile-return.json"
+        ))
+        .expect("decode official STATICCALL/precompile/return-data state fixture")
     }
 
     fn first_official_state_fixture_case_v1(fixture: &serde_json::Value) -> &serde_json::Value {
@@ -5243,6 +5299,356 @@ mod tests {
     }
 
     #[test]
+    fn official_state_fixture_staticcall_precompile_return_grouped_projection_v1() {
+        let fixture = official_staticcall_precompile_return_state_fixture_v1();
+        assert_eq!(fixture["source"]["repo"].as_str(), Some("ethereum/tests"));
+        assert_eq!(
+            fixture["source"]["fixtureFormat"].as_str(),
+            Some("state_test")
+        );
+        assert_eq!(fixture["source"]["fork"].as_str(), Some("Cancun"));
+
+        let profile = resolve_evm_profile(ChainType::EVM, 1).expect("eth profile");
+        let precompiles = active_precompile_set_m0(&profile);
+        for required in ["ecrecover", "sha256", "ripemd160", "identity"] {
+            assert!(
+                precompiles.contains(&required),
+                "ethereum precompile set must include {required}"
+            );
+        }
+
+        let cases = fixture["cases"]
+            .as_array()
+            .expect("STATICCALL/precompile/return cases");
+        assert_eq!(cases.len(), 9);
+
+        let empty_logs_hash = "0x1dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347";
+        let mut static_precompile_cases = 0usize;
+        let mut return_projection_cases = 0usize;
+        let mut nested_account_fact_cases = 0usize;
+        let mut direct_precompile_suite_gas = None;
+        let mut called_precompile_suite_gas = None;
+        let mut sha256_gas = None;
+        let mut identity_gas = None;
+        let mut ripemd160_gas = None;
+        let mut ecrecover_gas = None;
+        let mut return_test_gas = None;
+        let mut call_to_return_gas = None;
+        let mut call_output_partial_gas = None;
+
+        for case in cases {
+            let label = json_str(&case["label"], "case.label");
+            let mode = json_str(&case["mode"], "case.mode");
+            assert!(
+                json_str(&case["fixtureKey"], "case.fixtureKey").contains("-fork_[Cancun-Prague]"),
+                "official STATICCALL/precompile/return case must be the Cancun/Prague projection"
+            );
+            assert!(
+                json_str(&case["postHash"], "case.postHash").starts_with("0x"),
+                "official STATICCALL/precompile/return case must carry post hash"
+            );
+            assert_eq!(
+                json_str(&case["logsHash"], "case.logsHash"),
+                empty_logs_hash
+            );
+
+            let sender = json_str(&case["sender"], "case.sender");
+            let to = json_str(&case["to"], "case.to");
+            let pre_sender_balance =
+                json_hex_u128(&case["preSenderBalance"], "case.preSenderBalance");
+            let pre_sender_nonce =
+                json_hex_u128(&case["preSenderNonce"], "case.preSenderNonce") as u64;
+            let post_sender_balance =
+                json_hex_u128(&case["postSenderBalance"], "case.postSenderBalance");
+            let pre_to_balance = json_hex_u128(&case["preToBalance"], "case.preToBalance");
+            let pre_to_nonce = json_hex_u128(&case["preToNonce"], "case.preToNonce") as u64;
+            let post_to_balance = json_hex_u128(&case["postToBalance"], "case.postToBalance");
+            let post_to_nonce = json_hex_u128(&case["postToNonce"], "case.postToNonce") as u64;
+            let gas_price = json_hex_u128(&case["gasPrice"], "case.gasPrice");
+            let gas_limit = json_hex_u128(&case["gasLimit"], "case.gasLimit");
+            let value = json_hex_u128(&case["value"], "case.value");
+            let nonce = json_hex_u128(&case["nonce"], "case.nonce") as u64;
+            assert_eq!(nonce, pre_sender_nonce);
+
+            let raw_tx = decode_hex_bytes(json_str(&case["txbytes"], "case.txbytes"));
+            let recovered_sender = recover_raw_evm_tx_sender_m0(&raw_tx)
+                .expect("official STATICCALL/precompile/return raw sender recovery")
+                .expect("official STATICCALL/precompile/return recovered sender");
+            assert_eq!(recovered_sender, decode_hex_bytes(sender));
+            let fields = translate_raw_evm_tx_fields_m0(&raw_tx)
+                .expect("official STATICCALL/precompile/return tx decode");
+            let tx = tx_ir_from_raw_fields_m0(&fields, &raw_tx, recovered_sender, 1);
+
+            assert_eq!(
+                tx.tx_type,
+                TxType::Transfer,
+                "raw empty-calldata tx classification is state-agnostic before execution"
+            );
+            assert_eq!(tx.from, decode_hex_bytes(sender));
+            assert_eq!(tx.to, Some(decode_hex_bytes(to)));
+            assert_eq!(tx.value, value);
+            assert_eq!(tx.gas_limit, gas_limit as u64);
+            assert_eq!(tx.gas_price, gas_price as u64);
+            assert_eq!(tx.nonce, nonce);
+            assert_eq!(
+                tx.data.len(),
+                case["dataLen"].as_u64().expect("case.dataLen") as usize
+            );
+            assert_eq!(
+                Sha256::digest(&tx.data).to_vec(),
+                decode_hex_bytes(json_str(&case["dataSha256"], "case.dataSha256"))
+            );
+
+            let mut adapter = NovoVmAdapter::new(ChainConfig {
+                chain_type: ChainType::EVM,
+                chain_id: 1,
+                name: format!("official-staticcall-precompile-return-{label}"),
+                enabled: true,
+                custom_config: None,
+            });
+            adapter.initialize().expect("init");
+            assert!(
+                adapter
+                    .verify_transaction(&tx)
+                    .expect("verify official STATICCALL/precompile/return raw tx"),
+                "official STATICCALL/precompile/return txbytes must verify through raw EVM path"
+            );
+            for historical_nonce in 0..pre_sender_nonce {
+                let mut historical_tx = tx.clone();
+                historical_tx.nonce = historical_nonce;
+                adapter
+                    .route_transaction_through_unified_account(&historical_tx)
+                    .expect("prime official STATICCALL/precompile/return pre-state nonce");
+            }
+
+            let value_transferred = post_to_balance == pre_to_balance + value;
+            let charged_fee = pre_sender_balance
+                .saturating_sub(post_sender_balance)
+                .saturating_sub(if value_transferred { value } else { 0 });
+            assert_eq!(charged_fee % gas_price, 0);
+            let gas_used = charged_fee / gas_price;
+            let expected_gas_used = case["gasUsed"].as_u64().expect("case.gasUsed");
+            assert_eq!(gas_used, expected_gas_used as u128);
+
+            let mut runtime_state = StateIR::new();
+            runtime_state.set_account(
+                tx.from.clone(),
+                AccountState {
+                    balance: pre_sender_balance,
+                    nonce: pre_sender_nonce,
+                    code_hash: None,
+                    storage_root: vec![0u8; 32],
+                },
+            );
+            runtime_state.set_account(
+                tx.to.clone().expect("call target"),
+                AccountState {
+                    balance: pre_to_balance,
+                    nonce: pre_to_nonce,
+                    code_hash: Some(vec![0xcc; 32]),
+                    storage_root: vec![0u8; 32],
+                },
+            );
+            assert_eq!(
+                NovoVmAdapter::effective_execution_tx_v1(&tx, &runtime_state).tx_type,
+                TxType::ContractCall,
+                "target code in pre-state must promote empty-calldata tx to contract call execution"
+            );
+
+            let mut artifact = sample_aoem_artifact(&tx, true, [0x88; 32], None);
+            artifact.gas_used = expected_gas_used;
+            artifact.cumulative_gas_used = expected_gas_used;
+            artifact.effective_gas_price = Some(gas_price as u64);
+            artifact.receipt_type = None;
+            artifact.event_logs.clear();
+            artifact.log_bloom = vec![0u8; AOEM_LOG_BLOOM_BYTES_V1];
+            artifact.anchor = None;
+
+            let outcome = adapter
+                .execute_transaction_with_observed_metadata_v1(
+                    &tx,
+                    &mut runtime_state,
+                    Some(&artifact),
+                )
+                .expect("execute official STATICCALL/precompile/return fixture projection");
+
+            assert!(outcome.artifact.status_ok);
+            assert_eq!(outcome.artifact.gas_used, expected_gas_used);
+            assert!(outcome.artifact.event_logs.is_empty());
+            assert!(outcome.artifact.log_bloom.iter().all(|byte| *byte == 0));
+            assert_eq!(
+                runtime_state.get_storage(&tx.from, b"aoem:last_log_bloom"),
+                Some(&vec![0u8; AOEM_LOG_BLOOM_BYTES_V1])
+            );
+            assert_eq!(
+                runtime_state.get_account(&tx.from).map(|acc| acc.balance),
+                Some(post_sender_balance)
+            );
+            assert_eq!(
+                runtime_state
+                    .get_account(tx.to.as_ref().expect("call target"))
+                    .map(|acc| acc.balance),
+                Some(post_to_balance)
+            );
+            assert_eq!(
+                runtime_state
+                    .get_account(tx.to.as_ref().expect("call target"))
+                    .map(|acc| acc.nonce),
+                Some(pre_to_nonce),
+                "adapter must not claim opcode-level target nonce projection"
+            );
+            assert_eq!(
+                post_to_nonce, pre_to_nonce,
+                "selected official STATICCALL/precompile/return subset keeps target nonce stable"
+            );
+
+            let post_storage_facts = case["postStorageFacts"]
+                .as_object()
+                .expect("case.postStorageFacts");
+            assert!(
+                !post_storage_facts.is_empty(),
+                "official STATICCALL/precompile/return case must pin at least one storage fact"
+            );
+            for (slot, value) in post_storage_facts {
+                assert!(slot.starts_with("0x"));
+                assert!(json_str(value, "postStorageFacts.value").starts_with("0x"));
+            }
+            if case["nestedAccountFacts"].is_object() {
+                nested_account_fact_cases += 1;
+                let nested = &case["nestedAccountFacts"];
+                assert!(json_str(&nested["address"], "nested.address").starts_with("0x"));
+                assert_eq!(
+                    json_hex_u128(&nested["postBalance"], "nested.postBalance"),
+                    0
+                );
+                assert_eq!(json_hex_u128(&nested["postNonce"], "nested.postNonce"), 0);
+                assert!(
+                    nested["postStorageFacts"]
+                        .as_object()
+                        .expect("nested.postStorageFacts")
+                        .len()
+                        >= 5
+                );
+                assert!(
+                    runtime_state
+                        .get_account(&decode_hex_bytes(json_str(
+                            &nested["address"],
+                            "nested.address"
+                        )))
+                        .is_none(),
+                    "nested STATICCALL/precompile account state remains host/AOEM responsibility"
+                );
+            }
+
+            let bal = outcome
+                .observed_block_access_list
+                .block_access_list
+                .expect("official STATICCALL/precompile/return observed BAL");
+            let sender_entry = bal
+                .0
+                .iter()
+                .find(|entry| entry.address.as_slice() == tx.from.as_slice())
+                .expect("sender BAL entry");
+            assert_eq!(
+                sender_entry.balance_changes[0].post_balance,
+                NovoVmAdapter::u128_to_be32_v1(post_sender_balance)
+            );
+            if value_transferred && value > 0 {
+                let to_entry = bal
+                    .0
+                    .iter()
+                    .find(|entry| {
+                        entry.address.as_slice() == tx.to.as_ref().expect("call target").as_slice()
+                    })
+                    .expect("value-transfer target BAL entry");
+                assert_eq!(
+                    to_entry.balance_changes[0].post_balance,
+                    NovoVmAdapter::u128_to_be32_v1(post_to_balance)
+                );
+            }
+
+            match mode {
+                "staticPrecompileProjection" => static_precompile_cases += 1,
+                "returnDataProjection" => return_projection_cases += 1,
+                _ => panic!("unexpected official STATICCALL/precompile/return mode {mode}"),
+            }
+            match label {
+                "staticcallPrecompileFromTransaction" => {
+                    direct_precompile_suite_gas = Some(expected_gas_used);
+                    assert_eq!(
+                        json_str(&case["postStorageFacts"]["0x05"], "sha256 suite slot"),
+                        "0x73f5062fb68ed2a1ec82ff8c73f9251bb9cf53a623bc93527e16bc5ae29dad74"
+                    );
+                }
+                "staticcallPrecompileFromCalledContract" => {
+                    called_precompile_suite_gas = Some(expected_gas_used);
+                }
+                "staticCallSha256" => {
+                    sha256_gas = Some(expected_gas_used);
+                    assert_eq!(
+                        json_str(&case["postStorageFacts"]["0x00"], "sha256 output"),
+                        json_str(&case["dataSha256"], "sha256 empty input")
+                    );
+                }
+                "staticCallIdentity" => {
+                    identity_gas = Some(expected_gas_used);
+                    assert_eq!(
+                        json_str(&case["postStorageFacts"]["0x00"], "identity output"),
+                        "0xf34578907f"
+                    );
+                }
+                "staticCallRipemd160" => {
+                    ripemd160_gas = Some(expected_gas_used);
+                    assert_eq!(
+                        json_str(&case["postStorageFacts"]["0x00"], "ripemd160 output"),
+                        "0x9c1185a5c5e9fc54612808977ee8f548b2258d31"
+                    );
+                }
+                "staticCallEcrecover" => {
+                    ecrecover_gas = Some(expected_gas_used);
+                    assert_eq!(
+                        json_str(&case["postStorageFacts"]["0x00"], "ecrecover output"),
+                        sender
+                    );
+                }
+                "staticReturnTest2" => return_test_gas = Some(expected_gas_used),
+                "staticCallToReturn1" => call_to_return_gas = Some(expected_gas_used),
+                "staticCallOutput3partial" => {
+                    call_output_partial_gas = Some(expected_gas_used);
+                    assert_eq!(
+                        json_str(&case["postStorageFacts"]["0x00"], "partial output").len(),
+                        66
+                    );
+                }
+                _ => panic!("unexpected official STATICCALL/precompile/return label {label}"),
+            }
+        }
+
+        assert_eq!(static_precompile_cases, 6);
+        assert_eq!(return_projection_cases, 3);
+        assert_eq!(nested_account_fact_cases, 1);
+        let direct_precompile_suite_gas =
+            direct_precompile_suite_gas.expect("direct precompile suite gas");
+        let called_precompile_suite_gas =
+            called_precompile_suite_gas.expect("called precompile suite gas");
+        let sha256_gas = sha256_gas.expect("sha256 gas");
+        let identity_gas = identity_gas.expect("identity gas");
+        let ripemd160_gas = ripemd160_gas.expect("ripemd160 gas");
+        let ecrecover_gas = ecrecover_gas.expect("ecrecover gas");
+        let return_test_gas = return_test_gas.expect("return test gas");
+        let call_to_return_gas = call_to_return_gas.expect("call-to-return gas");
+        let call_output_partial_gas = call_output_partial_gas.expect("partial output gas");
+
+        assert!(called_precompile_suite_gas > direct_precompile_suite_gas);
+        assert!(direct_precompile_suite_gas > ecrecover_gas);
+        assert!(ecrecover_gas > ripemd160_gas);
+        assert!(ripemd160_gas > sha256_gas);
+        assert!(sha256_gas > identity_gas);
+        assert!(call_output_partial_gas > return_test_gas);
+        assert!(return_test_gas > call_to_return_gas);
+    }
+
+    #[test]
     fn execute_tracked_sender_rejects_insufficient_value_fee_v1() {
         let mut adapter = NovoVmAdapter::new(ChainConfig {
             chain_type: ChainType::EVM,
@@ -5404,6 +5810,7 @@ mod tests {
         official_state_fixture_sstore_refund_cap_fee_debit_v1();
         official_state_fixture_failure_account_fee_debit_v1();
         official_state_fixture_create_account_grouped_projection_v1();
+        official_state_fixture_staticcall_precompile_return_grouped_projection_v1();
         execute_tracked_sender_rejects_insufficient_value_fee_v1();
         tx_intrinsic_gas_includes_type1_access_list_extras_v1();
         execute_raw_type1_access_list_emits_declared_storage_reads_v1();
