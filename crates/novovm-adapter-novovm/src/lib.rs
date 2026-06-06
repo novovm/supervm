@@ -2700,6 +2700,13 @@ mod tests {
         .expect("decode official SSTORE refund cap state fixture")
     }
 
+    fn official_failure_account_state_fixture_v1() -> serde_json::Value {
+        serde_json::from_str(include_str!(
+            "../tests/fixtures/ethereum-official-state-subset/failure-account.json"
+        ))
+        .expect("decode official failure/account state fixture")
+    }
+
     fn first_official_state_fixture_case_v1(fixture: &serde_json::Value) -> &serde_json::Value {
         fixture
             .as_object()
@@ -4663,6 +4670,260 @@ mod tests {
     }
 
     #[test]
+    fn official_state_fixture_failure_account_fee_debit_v1() {
+        let fixture = official_failure_account_state_fixture_v1();
+        assert_eq!(fixture["source"]["repo"].as_str(), Some("ethereum/tests"));
+        assert_eq!(
+            fixture["source"]["fixtureFormat"].as_str(),
+            Some("state_test")
+        );
+        assert_eq!(fixture["source"]["fork"].as_str(), Some("Cancun"));
+
+        let cases = fixture["cases"].as_array().expect("failure/account cases");
+        assert_eq!(cases.len(), 7);
+
+        let mut top_level_revert_seen = false;
+        let mut deploy_revert_seen = false;
+        let mut no_value_transfer_cases = 0usize;
+        let mut storage_no_commit_seen = false;
+        let mut out_of_gas_cases = 0usize;
+
+        for case in cases {
+            let label = json_str(&case["label"], "case.label");
+            assert!(
+                json_str(&case["fixtureKey"], "case.fixtureKey").contains("-fork_[Cancun-Prague]"),
+                "official failure/account case must be the Cancun/Prague projection"
+            );
+            assert!(
+                json_str(&case["postHash"], "case.postHash").starts_with("0x"),
+                "official failure/account case must carry post hash"
+            );
+
+            let sender = json_str(&case["sender"], "case.sender");
+            let expected_to = case["to"].as_str().map(decode_hex_bytes);
+            let pre_sender_balance =
+                json_hex_u128(&case["preSenderBalance"], "case.preSenderBalance");
+            let pre_sender_nonce =
+                json_hex_u128(&case["preSenderNonce"], "case.preSenderNonce") as u64;
+            let post_sender_balance =
+                json_hex_u128(&case["postSenderBalance"], "case.postSenderBalance");
+            let gas_price = json_hex_u128(&case["gasPrice"], "case.gasPrice");
+            let gas_limit = json_hex_u128(&case["gasLimit"], "case.gasLimit");
+            let value = json_hex_u128(&case["value"], "case.value");
+            let nonce = json_hex_u128(&case["nonce"], "case.nonce") as u64;
+            assert_eq!(nonce, pre_sender_nonce);
+
+            let raw_tx = decode_hex_bytes(json_str(&case["txbytes"], "case.txbytes"));
+            let recovered_sender = recover_raw_evm_tx_sender_m0(&raw_tx)
+                .expect("official failure/account raw sender recovery")
+                .expect("official failure/account recovered sender");
+            assert_eq!(recovered_sender, decode_hex_bytes(sender));
+            let fields =
+                translate_raw_evm_tx_fields_m0(&raw_tx).expect("official failure tx decode");
+            let tx = tx_ir_from_raw_fields_m0(&fields, &raw_tx, recovered_sender, 1);
+
+            assert_eq!(tx.from, decode_hex_bytes(sender));
+            assert_eq!(tx.to, expected_to);
+            assert_eq!(tx.value, value);
+            assert_eq!(tx.gas_limit, gas_limit as u64);
+            assert_eq!(tx.gas_price, gas_price as u64);
+            assert_eq!(tx.nonce, nonce);
+            assert_eq!(
+                tx.data,
+                decode_hex_bytes(json_str(&case["data"], "case.data"))
+            );
+
+            let mut adapter = NovoVmAdapter::new(ChainConfig {
+                chain_type: ChainType::EVM,
+                chain_id: 1,
+                name: format!("official-failure-account-{label}"),
+                enabled: true,
+                custom_config: None,
+            });
+            adapter.initialize().expect("init");
+            assert!(
+                adapter
+                    .verify_transaction(&tx)
+                    .expect("verify official failure/account raw tx"),
+                "official failure/account txbytes must verify through the raw EVM path"
+            );
+            for historical_nonce in 0..pre_sender_nonce {
+                let mut historical_tx = tx.clone();
+                historical_tx.nonce = historical_nonce;
+                adapter
+                    .route_transaction_through_unified_account(&historical_tx)
+                    .expect("prime official failure/account pre-state nonce");
+            }
+
+            let charged_fee = pre_sender_balance.saturating_sub(post_sender_balance);
+            assert_eq!(charged_fee % gas_price, 0);
+            let gas_used = charged_fee / gas_price;
+            let expected_gas_used = case["gasUsed"].as_u64().expect("case.gasUsed");
+            assert_eq!(gas_used, expected_gas_used as u128);
+
+            let mut runtime_state = StateIR::new();
+            runtime_state.set_account(
+                tx.from.clone(),
+                AccountState {
+                    balance: pre_sender_balance,
+                    nonce: pre_sender_nonce,
+                    code_hash: None,
+                    storage_root: vec![0u8; 32],
+                },
+            );
+
+            if let Some(to) = tx.to.as_ref() {
+                let pre_to_balance = json_hex_u128(&case["preToBalance"], "case.preToBalance");
+                let pre_to_nonce = json_hex_u128(&case["preToNonce"], "case.preToNonce") as u64;
+                runtime_state.set_account(
+                    to.clone(),
+                    AccountState {
+                        balance: pre_to_balance,
+                        nonce: pre_to_nonce,
+                        code_hash: Some(vec![0xcc; 32]),
+                        storage_root: vec![0u8; 32],
+                    },
+                );
+                for (slot, value) in case["preTargetStorage"]
+                    .as_object()
+                    .expect("case.preTargetStorage")
+                {
+                    runtime_state.set_storage(
+                        to.clone(),
+                        decode_hex_bytes(slot),
+                        decode_hex_bytes(json_str(value, "preTargetStorage.value")),
+                    );
+                }
+            }
+
+            let deploy_address = if tx.tx_type == TxType::ContractDeploy {
+                Some(derive_create_contract_address_m0(&tx.from, tx.nonce))
+            } else {
+                None
+            };
+            let mut artifact = sample_aoem_artifact(&tx, false, [0x86; 32], deploy_address.clone());
+            artifact.gas_used = expected_gas_used;
+            artifact.cumulative_gas_used = expected_gas_used;
+            artifact.effective_gas_price = Some(gas_price as u64);
+            artifact.event_logs.clear();
+            artifact.log_bloom = vec![0u8; 256];
+            let failure_class = json_str(&case["failureClass"], "case.failureClass");
+            if failure_class == "revert" {
+                artifact.revert_data = Some(vec![0xfd]);
+            } else {
+                artifact.revert_data = None;
+            }
+            if let Some(anchor) = artifact.anchor.as_mut() {
+                anchor.return_code = match failure_class {
+                    "revert" => 0,
+                    "out_of_gas" => 13,
+                    "invalid" => 14,
+                    _ => 2001,
+                };
+                anchor.return_code_name = failure_class.to_string();
+            }
+
+            let outcome = adapter
+                .execute_transaction_with_observed_metadata_v1(
+                    &tx,
+                    &mut runtime_state,
+                    Some(&artifact),
+                )
+                .expect("execute official failure/account fixture projection");
+
+            assert!(!outcome.artifact.status_ok);
+            assert_eq!(outcome.artifact.gas_used, expected_gas_used);
+            assert!(outcome.artifact.event_logs.is_empty());
+            assert!(outcome.artifact.log_bloom.iter().all(|byte| *byte == 0));
+            assert_eq!(
+                runtime_state.get_account(&tx.from).map(|acc| acc.balance),
+                Some(post_sender_balance)
+            );
+            assert_eq!(
+                runtime_state.get_storage(&tx.from, b"aoem:last_failure_class"),
+                Some(&failure_class.as_bytes().to_vec())
+            );
+
+            if let Some(to) = tx.to.as_ref() {
+                let post_to_balance = json_hex_u128(&case["postToBalance"], "case.postToBalance");
+                assert_eq!(
+                    runtime_state.get_account(to).map(|acc| acc.balance),
+                    Some(post_to_balance)
+                );
+                if value > 0 && !case["valueTransferred"].as_bool().unwrap_or(false) {
+                    no_value_transfer_cases += 1;
+                    assert_eq!(
+                        runtime_state.get_account(to).map(|acc| acc.balance),
+                        Some(json_hex_u128(&case["preToBalance"], "case.preToBalance"))
+                    );
+                }
+                for (slot, value) in case["postTargetStorage"]
+                    .as_object()
+                    .expect("case.postTargetStorage")
+                {
+                    assert_eq!(
+                        runtime_state.get_storage(to, &decode_hex_bytes(slot)),
+                        Some(&decode_hex_bytes(json_str(
+                            value,
+                            "postTargetStorage.value"
+                        )))
+                    );
+                    storage_no_commit_seen = true;
+                }
+                assert!(
+                    runtime_state
+                        .get_storage(to, &tx.nonce.to_le_bytes().to_vec())
+                        .is_none(),
+                    "failed official case must not add adapter synthetic target storage"
+                );
+            } else {
+                let deploy_address = deploy_address.as_ref().expect("deploy address");
+                assert!(
+                    runtime_state.get_account(deploy_address).is_none(),
+                    "failed official deploy must not create a contract account"
+                );
+            }
+
+            let bal = outcome
+                .observed_block_access_list
+                .block_access_list
+                .expect("official failure/account observed BAL");
+            let sender_entry = bal
+                .0
+                .iter()
+                .find(|entry| entry.address.as_slice() == tx.from.as_slice())
+                .expect("sender BAL entry");
+            assert_eq!(
+                sender_entry.balance_changes[0].post_balance,
+                NovoVmAdapter::u128_to_be32_v1(post_sender_balance)
+            );
+            if let Some(deploy_address) = deploy_address.as_ref() {
+                assert!(
+                    bal.0
+                        .iter()
+                        .all(|entry| entry.address.as_slice() != deploy_address.as_slice()),
+                    "failed official deploy must not emit a contract BAL entry"
+                );
+            }
+
+            match label {
+                "topLevelRevertOpcode" => top_level_revert_seen = true,
+                "deployInitRevertOpcode" => deploy_revert_seen = true,
+                _ => {}
+            }
+            if failure_class == "out_of_gas" {
+                out_of_gas_cases += 1;
+            }
+        }
+
+        assert!(top_level_revert_seen);
+        assert!(deploy_revert_seen);
+        assert_eq!(no_value_transfer_cases, 4);
+        assert!(storage_no_commit_seen);
+        assert_eq!(out_of_gas_cases, 4);
+    }
+
+    #[test]
     fn execute_tracked_sender_rejects_insufficient_value_fee_v1() {
         let mut adapter = NovoVmAdapter::new(ChainConfig {
             chain_type: ChainType::EVM,
@@ -4822,6 +5083,7 @@ mod tests {
         official_state_fixture_eip1559_sender_balance_fee_debit_v1();
         official_state_fixture_sload_warm_cold_fee_debit_v1();
         official_state_fixture_sstore_refund_cap_fee_debit_v1();
+        official_state_fixture_failure_account_fee_debit_v1();
         execute_tracked_sender_rejects_insufficient_value_fee_v1();
         tx_intrinsic_gas_includes_type1_access_list_extras_v1();
         execute_raw_type1_access_list_emits_declared_storage_reads_v1();
