@@ -2778,6 +2778,13 @@ mod tests {
         .expect("decode official LOG/receipt state fixture")
     }
 
+    fn official_return_data_state_fixture_v1() -> serde_json::Value {
+        serde_json::from_str(include_str!(
+            "../tests/fixtures/ethereum-official-state-subset/return-data.json"
+        ))
+        .expect("decode official RETURNDATA state fixture")
+    }
+
     fn first_official_state_fixture_case_v1(fixture: &serde_json::Value) -> &serde_json::Value {
         fixture
             .as_object()
@@ -5960,6 +5967,326 @@ mod tests {
     }
 
     #[test]
+    fn official_state_fixture_return_data_grouped_projection_v1() {
+        let fixture = official_return_data_state_fixture_v1();
+        assert_eq!(fixture["source"]["repo"].as_str(), Some("ethereum/tests"));
+        assert_eq!(
+            fixture["source"]["fixtureFormat"].as_str(),
+            Some("state_test")
+        );
+        assert_eq!(fixture["source"]["fork"].as_str(), Some("Cancun"));
+
+        let empty_logs_hash = json_str(&fixture["emptyLogsHash"], "emptyLogsHash");
+        let cases = fixture["cases"].as_array().expect("RETURNDATA cases");
+        assert_eq!(cases.len(), 7);
+
+        let mut size_projection_cases = 0usize;
+        let mut copy_projection_cases = 0usize;
+        let mut staticcall_projection_cases = 0usize;
+        let mut empty_post_storage_cases = 0usize;
+        let mut non_empty_post_storage_cases = 0usize;
+        let mut initial_size_gas = None;
+        let mut initial_zero_read_gas = None;
+        let mut following_call_gas = None;
+        let mut following_revert_gas = None;
+        let mut following_call_fact = None::<String>;
+        let mut following_revert_fact = None::<String>;
+        let mut successful_staticcall_copy_gas = None;
+        let mut successful_staticcall_size_gas = None;
+        let mut failing_staticcall_size_gas = None;
+
+        for case in cases {
+            let label = json_str(&case["label"], "case.label");
+            let mode = json_str(&case["mode"], "case.mode");
+            assert!(
+                json_str(&case["fixtureKey"], "case.fixtureKey")
+                    .contains("GeneralStateTests/stReturnDataTest/"),
+                "official RETURNDATA case must come from stReturnDataTest"
+            );
+            assert!(
+                json_str(&case["fixtureKey"], "case.fixtureKey").contains("-fork_[Cancun-Prague]"),
+                "official RETURNDATA case must be the Cancun/Prague projection"
+            );
+            assert!(
+                json_str(&case["postHash"], "case.postHash").starts_with("0x"),
+                "official RETURNDATA case must carry post hash"
+            );
+            assert_eq!(
+                json_str(&case["logsHash"], "case.logsHash"),
+                empty_logs_hash
+            );
+
+            let sender = json_str(&case["sender"], "case.sender");
+            let to = json_str(&case["to"], "case.to");
+            let pre_sender_balance =
+                json_hex_u128(&case["preSenderBalance"], "case.preSenderBalance");
+            let pre_sender_nonce =
+                json_hex_u128(&case["preSenderNonce"], "case.preSenderNonce") as u64;
+            let post_sender_balance =
+                json_hex_u128(&case["postSenderBalance"], "case.postSenderBalance");
+            let pre_to_balance = json_hex_u128(&case["preToBalance"], "case.preToBalance");
+            let pre_to_nonce = json_hex_u128(&case["preToNonce"], "case.preToNonce") as u64;
+            let post_to_balance = json_hex_u128(&case["postToBalance"], "case.postToBalance");
+            let post_to_nonce = json_hex_u128(&case["postToNonce"], "case.postToNonce") as u64;
+            let gas_price = json_hex_u128(&case["gasPrice"], "case.gasPrice");
+            let gas_limit = json_hex_u128(&case["gasLimit"], "case.gasLimit");
+            let value = json_hex_u128(&case["value"], "case.value");
+            let nonce = json_hex_u128(&case["nonce"], "case.nonce") as u64;
+            assert_eq!(nonce, pre_sender_nonce);
+            assert_eq!(
+                value, 0,
+                "RETURNDATA subset intentionally keeps value-flow out of this adapter gate"
+            );
+
+            let raw_tx = decode_hex_bytes(json_str(&case["txbytes"], "case.txbytes"));
+            let recovered_sender = recover_raw_evm_tx_sender_m0(&raw_tx)
+                .expect("official RETURNDATA raw sender recovery")
+                .expect("official RETURNDATA recovered sender");
+            assert_eq!(recovered_sender, decode_hex_bytes(sender));
+            let fields =
+                translate_raw_evm_tx_fields_m0(&raw_tx).expect("official RETURNDATA tx decode");
+            let tx = tx_ir_from_raw_fields_m0(&fields, &raw_tx, recovered_sender, 1);
+
+            assert_eq!(
+                tx.tx_type,
+                TxType::Transfer,
+                "raw empty-calldata RETURNDATA fixture tx is state-agnostic before execution"
+            );
+            assert_eq!(tx.from, decode_hex_bytes(sender));
+            assert_eq!(tx.to, Some(decode_hex_bytes(to)));
+            assert_eq!(tx.value, value);
+            assert_eq!(tx.gas_limit, gas_limit as u64);
+            assert_eq!(tx.gas_price, gas_price as u64);
+            assert_eq!(tx.nonce, nonce);
+            assert_eq!(
+                tx.data,
+                decode_hex_bytes(json_str(&case["data"], "case.data"))
+            );
+            assert!(tx.data.is_empty());
+
+            let mut adapter = NovoVmAdapter::new(ChainConfig {
+                chain_type: ChainType::EVM,
+                chain_id: 1,
+                name: format!("official-return-data-{label}"),
+                enabled: true,
+                custom_config: None,
+            });
+            adapter.initialize().expect("init");
+            assert!(
+                adapter
+                    .verify_transaction(&tx)
+                    .expect("verify official RETURNDATA raw tx"),
+                "official RETURNDATA txbytes must verify through raw EVM path"
+            );
+            for historical_nonce in 0..pre_sender_nonce {
+                let mut historical_tx = tx.clone();
+                historical_tx.nonce = historical_nonce;
+                adapter
+                    .route_transaction_through_unified_account(&historical_tx)
+                    .expect("prime official RETURNDATA pre-state nonce");
+            }
+
+            let charged_fee = pre_sender_balance.saturating_sub(post_sender_balance);
+            assert_eq!(charged_fee % gas_price, 0);
+            let gas_used = charged_fee / gas_price;
+            let expected_gas_used = case["gasUsed"].as_u64().expect("case.gasUsed");
+            assert_eq!(gas_used, expected_gas_used as u128);
+
+            let mut runtime_state = StateIR::new();
+            runtime_state.set_account(
+                tx.from.clone(),
+                AccountState {
+                    balance: pre_sender_balance,
+                    nonce: pre_sender_nonce,
+                    code_hash: None,
+                    storage_root: vec![0u8; 32],
+                },
+            );
+            runtime_state.set_account(
+                tx.to.clone().expect("call target"),
+                AccountState {
+                    balance: pre_to_balance,
+                    nonce: pre_to_nonce,
+                    code_hash: Some(vec![0xcd; 32]),
+                    storage_root: vec![0u8; 32],
+                },
+            );
+            assert_eq!(
+                NovoVmAdapter::effective_execution_tx_v1(&tx, &runtime_state).tx_type,
+                TxType::ContractCall,
+                "target code in pre-state must promote RETURNDATA fixture tx to contract call execution"
+            );
+
+            let mut artifact = sample_aoem_artifact(&tx, true, [0x8a; 32], None);
+            artifact.gas_used = expected_gas_used;
+            artifact.cumulative_gas_used = expected_gas_used;
+            artifact.effective_gas_price = Some(gas_price as u64);
+            artifact.receipt_type = None;
+            artifact.event_logs.clear();
+            artifact.log_bloom = vec![0u8; AOEM_LOG_BLOOM_BYTES_V1];
+            artifact.anchor = None;
+
+            let outcome = adapter
+                .execute_transaction_with_observed_metadata_v1(
+                    &tx,
+                    &mut runtime_state,
+                    Some(&artifact),
+                )
+                .expect("execute official RETURNDATA fixture projection");
+
+            assert!(outcome.artifact.status_ok);
+            assert_eq!(outcome.artifact.gas_used, expected_gas_used);
+            assert!(outcome.artifact.event_logs.is_empty());
+            assert!(outcome.artifact.log_bloom.iter().all(|byte| *byte == 0));
+            assert_eq!(
+                runtime_state.get_storage(&tx.from, b"aoem:last_log_bloom"),
+                Some(&vec![0u8; AOEM_LOG_BLOOM_BYTES_V1])
+            );
+            assert_eq!(
+                runtime_state.get_account(&tx.from).map(|acc| acc.balance),
+                Some(post_sender_balance)
+            );
+            assert_eq!(
+                runtime_state
+                    .get_account(tx.to.as_ref().expect("call target"))
+                    .map(|acc| acc.balance),
+                Some(post_to_balance)
+            );
+            assert_eq!(
+                runtime_state
+                    .get_account(tx.to.as_ref().expect("call target"))
+                    .map(|acc| acc.nonce),
+                Some(post_to_nonce)
+            );
+
+            let pre_storage_facts = case["preStorageFacts"]
+                .as_object()
+                .expect("case.preStorageFacts");
+            assert!(
+                !pre_storage_facts.is_empty(),
+                "selected RETURNDATA cases pin the pre-state storage fact that drives the official opcode path"
+            );
+            for (slot, value) in pre_storage_facts {
+                assert!(slot.starts_with("0x"));
+                assert!(json_str(value, "preStorageFacts.value").starts_with("0x"));
+            }
+            let post_storage_facts = case["postStorageFacts"]
+                .as_object()
+                .expect("case.postStorageFacts");
+            if post_storage_facts.is_empty() {
+                empty_post_storage_cases += 1;
+            } else {
+                non_empty_post_storage_cases += 1;
+            }
+            for (slot, value) in post_storage_facts {
+                assert!(slot.starts_with("0x"));
+                assert!(json_str(value, "postStorageFacts.value").starts_with("0x"));
+            }
+
+            match mode {
+                "returnDataSizeProjection" => size_projection_cases += 1,
+                "returnDataCopyProjection" => copy_projection_cases += 1,
+                "returnDataStaticcallProjection" => staticcall_projection_cases += 1,
+                _ => panic!("unexpected official RETURNDATA mode {mode}"),
+            }
+            match label {
+                "returndatasizeInitial" => {
+                    initial_size_gas = Some(expected_gas_used);
+                    assert!(post_storage_facts.is_empty());
+                }
+                "returndatasizeInitialZeroRead" => {
+                    initial_zero_read_gas = Some(expected_gas_used);
+                    assert!(post_storage_facts.is_empty());
+                }
+                "returndatacopyFollowingCall" => {
+                    following_call_gas = Some(expected_gas_used);
+                    following_call_fact = Some(
+                        json_str(
+                            &case["postStorageFacts"]["0x00"],
+                            "following call return data",
+                        )
+                        .to_string(),
+                    );
+                }
+                "returndatacopyFollowingRevert" => {
+                    following_revert_gas = Some(expected_gas_used);
+                    following_revert_fact = Some(
+                        json_str(
+                            &case["postStorageFacts"]["0x00"],
+                            "following revert return data",
+                        )
+                        .to_string(),
+                    );
+                }
+                "returndatacopyAfterSuccessfulStaticcall" => {
+                    successful_staticcall_copy_gas = Some(expected_gas_used);
+                    assert_eq!(
+                        json_str(
+                            &case["postStorageFacts"]["0x00"],
+                            "successful staticcall copied return data"
+                        ),
+                        to
+                    );
+                }
+                "returndatasizeAfterSuccessfulStaticcall" => {
+                    successful_staticcall_size_gas = Some(expected_gas_used);
+                    assert_eq!(
+                        json_str(
+                            &case["postStorageFacts"]["0x00"],
+                            "successful staticcall return data size"
+                        ),
+                        "0x06"
+                    );
+                }
+                "returndatasizeAfterFailingStaticcall" => {
+                    failing_staticcall_size_gas = Some(expected_gas_used);
+                    assert!(post_storage_facts.is_empty());
+                }
+                _ => panic!("unexpected official RETURNDATA label {label}"),
+            }
+
+            let bal = outcome
+                .observed_block_access_list
+                .block_access_list
+                .expect("official RETURNDATA observed BAL");
+            let sender_entry = bal
+                .0
+                .iter()
+                .find(|entry| entry.address.as_slice() == tx.from.as_slice())
+                .expect("sender BAL entry");
+            assert_eq!(
+                sender_entry.balance_changes[0].post_balance,
+                NovoVmAdapter::u128_to_be32_v1(post_sender_balance)
+            );
+        }
+
+        assert_eq!(size_projection_cases, 2);
+        assert_eq!(copy_projection_cases, 2);
+        assert_eq!(staticcall_projection_cases, 3);
+        assert_eq!(empty_post_storage_cases, 3);
+        assert_eq!(non_empty_post_storage_cases, 4);
+
+        let initial_size_gas = initial_size_gas.expect("initial size gas");
+        let initial_zero_read_gas = initial_zero_read_gas.expect("initial zero-read gas");
+        let following_call_gas = following_call_gas.expect("following call gas");
+        let following_revert_gas = following_revert_gas.expect("following revert gas");
+        let successful_staticcall_copy_gas =
+            successful_staticcall_copy_gas.expect("successful staticcall copy gas");
+        let successful_staticcall_size_gas =
+            successful_staticcall_size_gas.expect("successful staticcall size gas");
+        let failing_staticcall_size_gas =
+            failing_staticcall_size_gas.expect("failing staticcall size gas");
+        assert_eq!(initial_zero_read_gas - initial_size_gas, 19);
+        assert_eq!(following_call_gas, following_revert_gas);
+        assert_eq!(
+            following_call_fact.expect("following call storage fact"),
+            following_revert_fact.expect("following revert storage fact")
+        );
+        assert!(successful_staticcall_copy_gas > successful_staticcall_size_gas);
+        assert!(failing_staticcall_size_gas > successful_staticcall_copy_gas);
+    }
+
+    #[test]
     fn execute_tracked_sender_rejects_insufficient_value_fee_v1() {
         let mut adapter = NovoVmAdapter::new(ChainConfig {
             chain_type: ChainType::EVM,
@@ -6123,6 +6450,7 @@ mod tests {
         official_state_fixture_create_account_grouped_projection_v1();
         official_state_fixture_staticcall_precompile_return_grouped_projection_v1();
         official_state_fixture_log_receipt_grouped_projection_v1();
+        official_state_fixture_return_data_grouped_projection_v1();
         execute_tracked_sender_rejects_insufficient_value_fee_v1();
         tx_intrinsic_gas_includes_type1_access_list_extras_v1();
         execute_raw_type1_access_list_emits_declared_storage_reads_v1();
