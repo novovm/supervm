@@ -89,6 +89,10 @@ $envMap = @{
     NOVOVM_EXEC_PATH = "ffi_v2"
     NOVOVM_TX_WIRE_FILE = $txWirePath
     NOVOVM_ENABLE_HOST_ADMISSION = "0"
+    NOVOVM_NODE_MODE = "full"
+    NOVOVM_NODE_VERBOSE = "1"
+    NOVOVM_TX_REPEAT_COUNT = "1"
+    NOVOVM_AVAILABILITY_FORCE_MODE = "normal"
 }
 $previousEnv = @{}
 foreach ($entry in $envMap.GetEnumerator()) {
@@ -100,19 +104,21 @@ $sw = [System.Diagnostics.Stopwatch]::StartNew()
 try {
     $psi = [System.Diagnostics.ProcessStartInfo]::new()
     $psi.FileName = $exePath
-    $psi.WorkingDirectory = (Split-Path $exePath -Parent)
+    $psi.WorkingDirectory = $RepoRoot
     $psi.UseShellExecute = $false
     $psi.RedirectStandardOutput = $true
     $psi.RedirectStandardError = $true
     $proc = [System.Diagnostics.Process]::Start($psi)
+    $stdoutTask = $proc.StandardOutput.ReadToEndAsync()
+    $stderrTask = $proc.StandardError.ReadToEndAsync()
     $timedOut = -not $proc.WaitForExit($TimeoutSec * 1000)
     $sw.Stop()
     if ($timedOut) {
         try { $proc.Kill() } catch {}
         throw "novovm-node timed out after $TimeoutSec sec"
     }
-    $stdoutText = $proc.StandardOutput.ReadToEnd()
-    $stderrText = $proc.StandardError.ReadToEnd()
+    $stdoutText = $stdoutTask.GetAwaiter().GetResult()
+    $stderrText = $stderrTask.GetAwaiter().GetResult()
     $proc.Refresh()
     $exitCode = $proc.ExitCode
     $stdoutText | Set-Content -Path $stdoutPath -Encoding UTF8
@@ -129,22 +135,48 @@ try {
 }
 
 $stdoutText = if (Test-Path $stdoutPath) { Get-Content $stdoutPath -Raw } else { "" }
-$modeLine = ($stdoutText -split "`r?`n" | Where-Object { $_ -match "^mode=ffi_v2 variant=" } | Select-Object -Last 1)
+$modeLine = ($stdoutText -split "`r?`n" | Where-Object { $_ -match "^mode=ffi_v2(?:_aggregate)? " } | Select-Object -Last 1)
 $ingressLine = ($stdoutText -split "`r?`n" | Where-Object { $_ -match "^tx_ingress_source:" } | Select-Object -Last 1)
 $contractLine = ($stdoutText -split "`r?`n" | Where-Object { $_ -match "^d1_ingress_contract:" } | Select-Object -Last 1)
-$modeMatch = [regex]::Match(
-    [string]$modeLine,
+
+$modeInput = if ($null -eq $modeLine) { "" } else { [string]$modeLine }
+$ingressInput = if ($null -eq $ingressLine) { "" } else { [string]$ingressLine }
+$contractInput = if ($null -eq $contractLine) { "" } else { [string]$contractLine }
+$singleModeMatch = [regex]::Match(
+    $modeInput,
     "^mode=ffi_v2 variant=(?<variant>\w+) dll=(?<dll>.+?) rc=(?<rc>\d+)\((?<rc_name>[^)]+)\) submitted=(?<submitted>\d+) processed=(?<processed>\d+) success=(?<success>\d+) writes=(?<writes>\d+) elapsed_us=(?<elapsed>\d+)$"
 )
+$aggregateModeMatch = [regex]::Match(
+    $modeInput,
+    "^mode=ffi_v2_aggregate variant=(?<variant>\w+) dll=(?<dll>.+?) rc=(?<rc>\d+)\((?<rc_name>[^)]+)\) batches=(?<batches>\d+) repeats=(?<repeats>\d+) submitted_total=(?<submitted>\d+) processed_total=(?<processed>\d+) success_total=(?<success>\d+) writes_total=(?<writes>\d+) queued_total=(?<queued>\d+) availability_mode=(?<availability>\S+) host_exec_us=(?<host_exec>\d+) aoem_exec_us=(?<aoem_exec>\d+)$"
+)
 $ingressMatch = [regex]::Match(
-    [string]$ingressLine,
-    "^tx_ingress_source: mode=(?<mode>\w+) txs=(?<txs>\d+) host_admission=(?<host_admission>true|false)$"
+    $ingressInput,
+    "^tx_ingress_source: mode=(?<mode>\w+)(?: batches=(?<batches>\d+))? txs=(?<txs>\d+) host_admission=(?<host_admission>true|false)$"
 )
 $contractMatch = [regex]::Match(
-    [string]$contractLine,
-    "^d1_ingress_contract: mode=(?<mode>\S+) source=(?<source>\S+) codec=(?<codec>\S+) aoem_ingress_path=(?<path>\S+)$"
+    $contractInput,
+    "^d1_ingress_contract: mode=(?<mode>\S+) source=(?<source>\S+) codec=(?<codec>\S+) aoem_ingress_path=(?<path>\S+)(?: batches=(?<batches>\d+))?$"
 )
 $exitCode = if ($null -ne $exitCode) { $exitCode } else { 1 }
+
+$modeMatch = if ($aggregateModeMatch.Success) { $aggregateModeMatch } else { $singleModeMatch }
+$modeKind = if ($aggregateModeMatch.Success) { "aggregate" } elseif ($singleModeMatch.Success) { "single" } else { "missing" }
+$submitted = if ($modeMatch.Success) { [int64]$modeMatch.Groups["submitted"].Value } else { -1 }
+$processed = if ($modeMatch.Success) { [int64]$modeMatch.Groups["processed"].Value } else { -1 }
+$success = if ($modeMatch.Success) { [int64]$modeMatch.Groups["success"].Value } else { -1 }
+$queued = if ($aggregateModeMatch.Success) { [int64]$aggregateModeMatch.Groups["queued"].Value } else { 0 }
+$availabilityMode = if ($aggregateModeMatch.Success) { $aggregateModeMatch.Groups["availability"].Value } else { "-" }
+$executionOk = (
+    $modeMatch.Success `
+    -and $submitted -eq $Txs `
+    -and $processed -eq $Txs `
+    -and $success -eq $Txs `
+    -and $queued -eq 0
+)
+if ($aggregateModeMatch.Success) {
+    $executionOk = $executionOk -and $availabilityMode -eq "normal"
+}
 
 $pass = (
     $exitCode -eq 0 `
@@ -152,7 +184,8 @@ $pass = (
     -and $ingressMatch.Success `
     -and $contractMatch.Success `
     -and $ingressMatch.Groups["mode"].Value -eq "tx_wire" `
-    -and $contractMatch.Groups["source"].Value -eq "tx_wire"
+    -and $contractMatch.Groups["source"].Value -eq "tx_wire" `
+    -and $executionOk
 )
 
 $summary = [ordered]@{
@@ -166,6 +199,12 @@ $summary = [ordered]@{
     elapsed_ms = [Math]::Round($sw.Elapsed.TotalMilliseconds, 2)
     exit_code = $exitCode
     mode_line = $modeLine
+    mode_kind = $modeKind
+    submitted = $submitted
+    processed = $processed
+    success = $success
+    queued = $queued
+    availability_mode = $availabilityMode
     ingress_line = $ingressLine
     contract_line = $contractLine
     stdout = $stdoutPath
@@ -185,6 +224,12 @@ $md += "- txs: $Txs"
 $md += "- accounts: $Accounts"
 $md += "- elapsed_ms: $([Math]::Round($sw.Elapsed.TotalMilliseconds, 2))"
 $md += "- exit_code: $exitCode"
+$md += "- mode_kind: $modeKind"
+$md += "- availability_mode: $availabilityMode"
+$md += "- submitted: $submitted"
+$md += "- processed: $processed"
+$md += "- success: $success"
+$md += "- queued: $queued"
 $md += "- ingress_line: $ingressLine"
 $md += "- contract_line: $contractLine"
 $md += "- mode_line: $modeLine"
