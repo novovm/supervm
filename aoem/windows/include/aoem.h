@@ -783,6 +783,8 @@ AOEM_API int32_t aoem_execute_primitive_v1(
 );
 // Batch fast discard mode:
 // - pass output_ptr=NULL and output_len=NULL
+// Production ABI: memory release and per-handle error inspection.
+// Any AOEM-owned output buffer returned by this header must be released with aoem_free.
 AOEM_API void aoem_free(uint8_t* ptr, size_t len);
 AOEM_API const char* aoem_last_error(void* handle);
 

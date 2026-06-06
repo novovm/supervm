@@ -2,7 +2,7 @@
   "package": "aoem-fullmax-supervm-host",
   "layout": "single_layer_fullmax_package",
   "runtime_baseline": {
-    "id": "AOEM FULLMAX Runtime Baseline 2026-05-23",
+    "id": "AOEM FULLMAX Runtime Baseline 2026-06-06",
     "stage": "windows_linux_fullmax_trusted_release",
     "windows_included_and_verified": true,
     "linux_included_and_verified": true,
@@ -14,7 +14,7 @@
   "runtime_canon_changed": false,
   "public_ffi_abi_changed": false,
   "source_artifacts": {
-    "windows_fullmax_bundle": "D:\\WorksArea\\AOEM\\artifacts\\ffi-bundles\\fullmax\\windows\\20260523-181655",
+    "windows_fullmax_bundle": "D:\\WorksArea\\AOEM\\artifacts\\ffi-bundles\\fullmax\\windows\\20260606-161254",
     "linux_fullmax_bundle": "D:\\WorksArea\\AOEM\\artifacts\\ffi-bundles\\fullmax\\linux\\20260524-103416",
     "proof_engine_host_integration": "D:\\WorksArea\\AOEM\\dist\\aoem-compute-native-proof-v1.1-host-integration",
     "linux_fullmax_build_log": "D:\\WorksArea\\AOEM\\tmp\\linux_fullmax_20260524-103416.log",
@@ -36,7 +36,7 @@
       "name": "core",
       "platform": "windows-x86_64",
       "dll": "windows/core/bin/aoem_ffi.dll",
-      "sha256": "0879941e58f6879ecfcd7f1c49105fe6ba45ddad588550922307b808adf0a49d",
+      "sha256": "f533036e18d0e1f34d1e7208ed26e62eed0ba91e9ef8f61ba3b0aa2ec2bbe1a9",
       "abi_expected": 1,
       "capabilities_required": {
         "execute_ops_v2": true
@@ -46,7 +46,7 @@
   "platforms": {
     "windows-x86_64": {
       "status": "included",
-      "source_bundle": "D:\\WorksArea\\AOEM\\artifacts\\ffi-bundles\\fullmax\\windows\\20260523-181655"
+      "source_bundle": "D:\\WorksArea\\AOEM\\artifacts\\ffi-bundles\\fullmax\\windows\\20260606-161254"
     },
     "linux-x86_64": {
       "status": "included",

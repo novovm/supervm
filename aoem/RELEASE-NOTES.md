@@ -15,14 +15,14 @@ stage:   Windows + Linux FULLMAX included, macOS pending rebuild
 
 ```text
 Runtime baseline:
-  AOEM FULLMAX Runtime Baseline 2026-05-23
+  AOEM FULLMAX Runtime Baseline 2026-06-06
   Windows included and verified
   Linux included and verified
   macOS pending, not bundled, not advertised as available
 
 Windows:
   AOEM SUPERVM v1.2 FULLMAX freshly generated and installed
-  artifact: D:\WorksArea\AOEM\artifacts\ffi-bundles\fullmax\windows\20260523-181655
+  artifact: D:\WorksArea\AOEM\artifacts\ffi-bundles\fullmax\windows\20260606-161254
   core: aoem/windows/core/bin/aoem_ffi.dll
 
 Linux:

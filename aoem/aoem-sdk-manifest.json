@@ -4,7 +4,7 @@
   "package_stage": "windows-linux-fullmax-host-package",
   "layout": "single_layer_fullmax_package",
   "runtime_baseline": {
-    "id": "AOEM FULLMAX Runtime Baseline 2026-05-23",
+    "id": "AOEM FULLMAX Runtime Baseline 2026-06-06",
     "stage": "windows_linux_fullmax_trusted_release",
     "windows_included_and_verified": true,
     "linux_included_and_verified": true,
@@ -126,9 +126,9 @@
     "windows-x86_64": {
       "status": "included",
       "library": "windows/core/bin/aoem_ffi.dll",
-      "library_sha256": "0879941e58f6879ecfcd7f1c49105fe6ba45ddad588550922307b808adf0a49d",
+      "library_sha256": "f533036e18d0e1f34d1e7208ed26e62eed0ba91e9ef8f61ba3b0aa2ec2bbe1a9",
       "fullmax_sidecars": "included",
-      "source_bundle": "D:\\WorksArea\\AOEM\\artifacts\\ffi-bundles\\fullmax\\windows\\20260523-181655"
+      "source_bundle": "D:\\WorksArea\\AOEM\\artifacts\\ffi-bundles\\fullmax\\windows\\20260606-161254"
     },
     "linux-x86_64": {
       "status": "included",

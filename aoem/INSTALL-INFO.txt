@@ -1,7 +1,7 @@
 AOEM runtime in SUPERVM is packaged as a single-layer FULLMAX host bundle.
 
 Runtime baseline:
-  AOEM FULLMAX Runtime Baseline 2026-05-23
+  AOEM FULLMAX Runtime Baseline 2026-06-06
   Windows included and verified.
   Linux included and verified.
   macOS pending, not bundled, not advertised as available.
@@ -12,7 +12,7 @@ Primary host model:
 
 Current core upgrade:
   Windows is installed from a freshly generated AOEM FULLMAX bundle:
-    D:\WorksArea\AOEM\artifacts\ffi-bundles\fullmax\windows\20260523-181655
+    D:\WorksArea\AOEM\artifacts\ffi-bundles\fullmax\windows\20260606-161254
 
   Linux is installed from a freshly generated AOEM FULLMAX bundle:
     D:\WorksArea\AOEM\artifacts\ffi-bundles\fullmax\linux\20260524-103416
@@ -47,7 +47,7 @@ Boundary:
 
 Source artifacts:
   Windows FULLMAX bundle:
-    D:\WorksArea\AOEM\artifacts\ffi-bundles\fullmax\windows\20260523-181655
+    D:\WorksArea\AOEM\artifacts\ffi-bundles\fullmax\windows\20260606-161254
   Linux FULLMAX bundle:
     D:\WorksArea\AOEM\artifacts\ffi-bundles\fullmax\linux\20260524-103416
   Proof Engine host integration examples/schemas:

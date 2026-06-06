@@ -46,7 +46,7 @@ current v1.2 FULLMAX output.
 
 ```text
 Runtime baseline:
-  AOEM FULLMAX Runtime Baseline 2026-05-23
+  AOEM FULLMAX Runtime Baseline 2026-06-06
   Windows included and verified
   Linux included and verified
   macOS pending, not bundled, not advertised as available
@@ -54,7 +54,7 @@ Runtime baseline:
 Windows:
   included
   freshly generated AOEM SUPERVM v1.2 FULLMAX bundle
-  source: D:\WorksArea\AOEM\artifacts\ffi-bundles\fullmax\windows\20260523-181655
+  source: D:\WorksArea\AOEM\artifacts\ffi-bundles\fullmax\windows\20260606-161254
 
 Linux:
   included
