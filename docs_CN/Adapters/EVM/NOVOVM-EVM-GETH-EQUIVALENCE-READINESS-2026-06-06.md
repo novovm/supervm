@@ -120,6 +120,36 @@ cargo test -p novovm-adapter-evm-plugin plugin_apply_v2_can_export_and_ingest_ex
 
 这证明成功 contract call 路径的 nonce、balance 和 storage write 已进入 BAL；成功 contract deploy 路径的合约账户、余额、runtime code、deploy code-hash storage 已进入 BAL，并能上升到 plugin block metadata hash。
 
+### 5. Raw Ethereum transaction mainline host smoke
+
+命令：
+
+```powershell
+$env:NOVOVM_AVAILABILITY_FORCE_MODE='normal'
+$env:NOVOVM_NODE_VERBOSE='1'
+$env:NOVOVM_ETH_SEND_RAW_TX='0xf864808504a817c800825208943535353535353535353535353535353535353535018025a0cb1ae5eeb22ada6e0cc8090f480d614711af806a2534b7651ab9577617cf6078a0420db11989647a09a73eefbba26361a2b065ffd41c41ba84089584ce267f7fbe'
+cargo run -p novovm-node --bin novovm-node -- `
+  --mainline-evm-host `
+  --mainline-evm-chain-id 1 `
+  --mainline-evm-canonical-store-path artifacts/mainline/evm-raw-real-smoke/canonical-raw-20260606.json `
+  --d1-ingress-mode auto
+
+cargo run -p novovmctl -- evm-block-access-list-scan `
+  --store-path artifacts/mainline/evm-raw-real-smoke/canonical-raw-20260606.json `
+  --latest-count 16 `
+  --require-payload `
+  --require-complete `
+  --require-hash-when-complete
+```
+
+结果：
+
+- signed legacy raw tx -> recovered sender -> EVM `TxIR`: pass
+- raw tx mainline host execution: `submitted_total=1 processed_total=1 success_total=1 canonical_batches_total=1`
+- raw tx canonical BAL strict scan: `problems=0 complete_with_hash=1`
+
+这证明 `NOVOVM_ETH_SEND_RAW_TX(_FILE)` 可以作为 Novo mainline EVM host 的真实输入源，执行后产出 canonical batch 和完整 BAL hash。当前只覆盖 signed legacy transfer smoke，不能外推到全部 typed transaction / fork rule / gas 语义。
+
 ## Readiness 矩阵
 
 | 能力域 | 当前状态 | 证据 | 产品口径 |
@@ -134,7 +164,7 @@ cargo test -p novovm-adapter-evm-plugin plugin_apply_v2_can_export_and_ingest_ex
 | reorg canonical/noncanonical log view | Pass | parity sections `logs.mismatchCount=0` | 样本级可声明 |
 | eth/71 BAL 相关 wire 能力 | Partial | 当前只验证 BAL payload/canonical/scanner；未证明完整 eth/71 peer sync | 不能声明完整 eth/71 等价 |
 | Ethereum fork rules / gas accounting / precompiles | Not claimed | 未跑 Ethereum execution-spec 全量 fixture | 不能声明 EVM 语义全等价 |
-| raw Ethereum transaction ingestion/execution | Partial | 有 ethapi receipt/export 对照；未作为主线真实 raw tx 批执行门禁 | 不能声明 raw tx 全等价 |
+| raw Ethereum transaction ingestion/execution | Partial | signed legacy transfer mainline smoke pass, BAL strict scan pass | 可声明 raw legacy transfer smoke 可执行；不能声明 raw tx 全等价 |
 | JSON-RPC full-node surface | Partial | mainline query 有样本；未覆盖全 RPC 行为 | 不能声明 geth RPC 等价 |
 | devp2p/RLPx peer sync / block import | Partial | 有 gateway/network 代码和 canary，但未作为本矩阵通过项 | 不能声明以太坊全节点 |
 
@@ -154,7 +184,7 @@ cargo test -p novovm-adapter-evm-plugin plugin_apply_v2_can_export_and_ingest_ex
 
 ## 下一步门禁顺序
 
-1. 把 raw Ethereum tx ingestion 作为真实执行链路输入，而不是只从 receipt/export fixture 对照。
+1. 把 raw Ethereum typed tx（type1/type2/type3）逐步接入真实执行 smoke，先覆盖成功 transfer/call/deploy，再覆盖失败/revert。
 2. 增加 Ethereum execution-spec/fork-rule 样本门禁，至少覆盖 gas、precompile、create/call/revert、storage、logs。
 3. 将 eth/71 BAL wire message 的 encode/decode/peer negotiation 纳入可重复 gate。
 4. 再扩展 JSON-RPC parity，从 receipt/log 样本推进到 block/tx/filter/call/estimateGas/tracing 分层矩阵。
@@ -184,4 +214,16 @@ cargo run -p novovmctl -- evm-block-access-list-scan `
   --require-payload `
   --require-complete `
   --require-hash-when-complete
+```
+
+Raw Ethereum tx mainline host smoke：
+
+```powershell
+$env:NOVOVM_AVAILABILITY_FORCE_MODE='normal'
+$env:NOVOVM_ETH_SEND_RAW_TX='0xf864808504a817c800825208943535353535353535353535353535353535353535018025a0cb1ae5eeb22ada6e0cc8090f480d614711af806a2534b7651ab9577617cf6078a0420db11989647a09a73eefbba26361a2b065ffd41c41ba84089584ce267f7fbe'
+cargo run -p novovm-node --bin novovm-node -- `
+  --mainline-evm-host `
+  --mainline-evm-chain-id 1 `
+  --mainline-evm-canonical-store-path artifacts/mainline/evm-raw-real-smoke/canonical-raw-20260606.json `
+  --d1-ingress-mode auto
 ```

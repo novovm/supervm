@@ -6,6 +6,9 @@
 
 use anyhow::{bail, Context, Result};
 use novovm_adapter_api::{ChainType, TxIR};
+use novovm_adapter_evm_core::{
+    recover_raw_evm_tx_sender_m0, translate_raw_evm_tx_fields_m0, tx_ir_from_raw_fields_m0,
+};
 use novovm_adapter_evm_plugin::{
     drain_block_metadata_for_host, drain_execution_receipts_for_host,
     drain_state_mirror_updates_for_host, submit_internal_batch_to_mainline_v1,
@@ -132,12 +135,44 @@ fn observe_eth_send_raw_tx_local_ingress_v1(chain_id: u64, payload: &[u8]) -> Re
     ingest_local_eth_raw_tx_payload_v1(chain_id, payload)
 }
 
+fn eth_send_raw_payload_to_tx_ir_v1(payload: &[u8], fallback_chain_id: u64) -> Result<TxIR> {
+    let Some(sender) =
+        recover_raw_evm_tx_sender_m0(payload).context("recover eth raw tx sender failed")?
+    else {
+        bail!("eth raw tx sender recovery failed");
+    };
+    let fields = translate_raw_evm_tx_fields_m0(payload).context("decode eth raw tx failed")?;
+    Ok(tx_ir_from_raw_fields_m0(
+        &fields,
+        payload,
+        sender,
+        fallback_chain_id,
+    ))
+}
+
+fn eth_send_raw_payloads_to_tx_irs_v1(
+    payloads: &[Vec<u8>],
+    fallback_chain_id: u64,
+) -> Result<Vec<TxIR>> {
+    let mut tx_irs = Vec::with_capacity(payloads.len());
+    for (idx, payload) in payloads.iter().enumerate() {
+        tx_irs.push(
+            eth_send_raw_payload_to_tx_ir_v1(payload.as_slice(), fallback_chain_id)
+                .with_context(|| format!("translate eth raw tx payload #{} failed", idx + 1))?,
+        );
+    }
+    Ok(tx_irs)
+}
+
 fn resolve_eth_send_raw_chain_id_v1(mainline_evm_chain_id: Option<u64>) -> u64 {
     mainline_evm_chain_id.unwrap_or(1)
 }
 
-fn ingest_eth_send_raw_tx_env_v1(chain_id: u64, verbose: bool) -> Result<Vec<[u8; 32]>> {
-    let payloads = load_eth_send_raw_tx_payloads_from_env_v1()?;
+fn observe_eth_send_raw_tx_payloads_v1(
+    chain_id: u64,
+    payloads: &[Vec<u8>],
+    verbose: bool,
+) -> Result<Vec<[u8; 32]>> {
     let mut hashes = Vec::with_capacity(payloads.len());
     for payload in payloads {
         let tx_hash = observe_eth_send_raw_tx_local_ingress_v1(chain_id, payload.as_slice())?;
@@ -335,6 +370,52 @@ mod eth_send_raw_tx_ingress_tests {
         assert!(candidates.iter().any(|item| {
             item.tx_hash == expected_hash && item.tx_payload_len > 0 && !item.tx_payload.is_empty()
         }));
+    }
+
+    #[test]
+    fn eth_send_raw_payload_to_tx_ir_v1_recovers_signed_legacy_transfer() {
+        let raw_tx_hex = "0xf86c098504a817c800825208943535353535353535353535353535353535353535880de0b6b3a76400008025a028ef61340bd939bc2195fe537567866003e1a15d3c71ff63e1590620aa636276a067cbe9d8997f761aecb703304b3800ccf555c9f3dc64214b297fb1966a3b6d83";
+        let payload = decode_hex_payload_v1(raw_tx_hex, "raw_tx").expect("decode raw tx");
+
+        let tx = eth_send_raw_payload_to_tx_ir_v1(payload.as_slice(), 1)
+            .expect("signed raw tx should translate to tx ir");
+
+        assert_eq!(
+            to_hex_prefixed(&tx.from),
+            "0x9d8a62f656a8d1615c1294fd71e9cfb3e4855a4f"
+        );
+        assert_eq!(
+            tx.to.as_ref().map(|to| to_hex_prefixed(to)).as_deref(),
+            Some("0x3535353535353535353535353535353535353535")
+        );
+        assert_eq!(tx.chain_id, 1);
+        assert_eq!(tx.nonce, 9);
+        assert_eq!(tx.gas_limit, 21_000);
+        assert_eq!(tx.gas_price, 20_000_000_000);
+        assert_eq!(tx.value, 1_000_000_000_000_000_000);
+        assert!(tx.data.is_empty());
+        assert_eq!(tx.tx_type, novovm_adapter_api::TxType::Transfer);
+        assert_eq!(tx.signature, payload);
+        assert_eq!(tx.hash.len(), 32);
+    }
+
+    #[test]
+    fn eth_send_raw_payload_to_tx_ir_v1_accepts_nonce0_signed_legacy_transfer() {
+        let raw_tx_hex = "0xf864808504a817c800825208943535353535353535353535353535353535353535018025a0cb1ae5eeb22ada6e0cc8090f480d614711af806a2534b7651ab9577617cf6078a0420db11989647a09a73eefbba26361a2b065ffd41c41ba84089584ce267f7fbe";
+        let payload = decode_hex_payload_v1(raw_tx_hex, "raw_tx").expect("decode raw tx");
+
+        let tx = eth_send_raw_payload_to_tx_ir_v1(payload.as_slice(), 1)
+            .expect("nonce0 signed raw tx should translate to tx ir");
+
+        assert_eq!(
+            to_hex_prefixed(&tx.from),
+            "0x9d8a62f656a8d1615c1294fd71e9cfb3e4855a4f"
+        );
+        assert_eq!(tx.chain_id, 1);
+        assert_eq!(tx.nonce, 0);
+        assert_eq!(tx.value, 1);
+        assert_eq!(tx.tx_type, novovm_adapter_api::TxType::Transfer);
+        assert_eq!(tx.signature, payload);
     }
 
     #[test]
@@ -24106,6 +24187,7 @@ struct PreparedBatch {
     batch: EitherBatch,
     source_detail: String,
     tx_records: Option<Vec<TxIngressRecord>>,
+    host_tx_irs: Option<Vec<TxIR>>,
 }
 
 fn main() -> Result<()> {
@@ -24270,11 +24352,30 @@ fn main() -> Result<()> {
     let tx_wire_path = tx_wire_path_from_config_v1(&cli_overrides);
     let ops_wire_path = ops_wire_path_from_config_v1(&cli_overrides);
     let ops_wire_dir = ops_wire_dir_from_config_v1(&cli_overrides);
-    let source_count =
-        tx_wire_path.iter().count() + ops_wire_path.iter().count() + ops_wire_dir.iter().count();
+    let mainline_evm_host = mainline_evm_host_enabled(&cli_overrides);
+    let mainline_evm_chain_id = if mainline_evm_host {
+        Some(mainline_evm_chain_id(&cli_overrides)?)
+    } else {
+        None
+    };
+    let mainline_evm_atomic_guard = mainline_evm_atomic_guard_enabled(&cli_overrides);
+    let canonical_store_path = if mainline_evm_host {
+        Some(mainline_evm_canonical_store_path(&cli_overrides))
+    } else {
+        None
+    };
+    let eth_send_raw_payloads = load_eth_send_raw_tx_payloads_from_env_v1()?;
+    let eth_send_raw_source = !eth_send_raw_payloads.is_empty();
+    if eth_send_raw_source && !mainline_evm_host {
+        bail!("NOVOVM_ETH_SEND_RAW_TX/NOVOVM_ETH_SEND_RAW_TX_FILE require NOVOVM_MAINLINE_EVM_HOST_ENABLED");
+    }
+    let source_count = tx_wire_path.iter().count()
+        + ops_wire_path.iter().count()
+        + ops_wire_dir.iter().count()
+        + if eth_send_raw_source { 1 } else { 0 };
     if source_count != 1 {
         bail!(
-            "ingress source conflict: set exactly one of NOVOVM_TX_WIRE_FILE | NOVOVM_OPS_WIRE_FILE | NOVOVM_OPS_WIRE_DIR"
+            "ingress source conflict: set exactly one of NOVOVM_TX_WIRE_FILE | NOVOVM_OPS_WIRE_FILE | NOVOVM_OPS_WIRE_DIR | NOVOVM_ETH_SEND_RAW_TX(_FILE)"
         );
     }
     let selected_codec = string_env_nonempty("NOVOVM_D1_CODEC");
@@ -24291,7 +24392,32 @@ fn main() -> Result<()> {
         D1IngressMode::OpsV2 => false,
     };
     let mut prepared_batches = Vec::new();
-    let (input_source, d1_codec, aoem_ingress_path) = if use_wire_v1 {
+    let (input_source, d1_codec, aoem_ingress_path) = if eth_send_raw_source {
+        if selected_codec.is_some() {
+            bail!("NOVOVM_D1_CODEC is not used with NOVOVM_ETH_SEND_RAW_TX(_FILE)");
+        }
+        let chain_id = mainline_evm_chain_id.expect("host mode chain id must be initialized");
+        let tx_irs = eth_send_raw_payloads_to_tx_irs_v1(&eth_send_raw_payloads, chain_id)?;
+        let tx_count = tx_irs.len();
+        prepared_batches.push(PreparedBatch {
+            tx_count,
+            batch: EitherBatch::Wire(Vec::new()),
+            source_detail: format!("NOVOVM_ETH_SEND_RAW_TX#payloads={tx_count}"),
+            tx_records: None,
+            host_tx_irs: Some(tx_irs),
+        });
+        if verbose {
+            println!(
+                "d1_ingress_mode: selected=mainline_evm_raw_tx requested={:?} auto_supported={}",
+                ingress_mode, supports_wire_v1
+            );
+        }
+        (
+            "eth_send_raw_tx".to_string(),
+            "-".to_string(),
+            "mainline_evm_raw_tx".to_string(),
+        )
+    } else if use_wire_v1 {
         if selected_codec.is_some() && (ops_wire_path.is_some() || ops_wire_dir.is_some()) {
             bail!("NOVOVM_D1_CODEC is only allowed with NOVOVM_TX_WIRE_FILE (raw tx payload mode)");
         }
@@ -24302,6 +24428,7 @@ fn main() -> Result<()> {
                 batch: EitherBatch::Wire(payload.bytes),
                 source_detail: path.display().to_string(),
                 tx_records: None,
+                host_tx_irs: None,
             });
             "ops_wire_v1".to_string()
         } else if let Some(dir) = ops_wire_dir.as_ref() {
@@ -24316,6 +24443,7 @@ fn main() -> Result<()> {
                     batch: EitherBatch::Wire(payload.bytes),
                     source_detail: path.display().to_string(),
                     tx_records: None,
+                    host_tx_irs: None,
                 });
             }
             "ops_wire_dir".to_string()
@@ -24340,6 +24468,7 @@ fn main() -> Result<()> {
                 batch: EitherBatch::Wire(payload.bytes),
                 source_detail: path.display().to_string(),
                 tx_records: Some(tx_records),
+                host_tx_irs: None,
             });
             "tx_wire".to_string()
         };
@@ -24376,6 +24505,7 @@ fn main() -> Result<()> {
             batch: EitherBatch::Ops(payload.ops),
             source_detail: ingress_path.display().to_string(),
             tx_records: Some(tx_records),
+            host_tx_irs: None,
         });
         let path_mode = if ingress_mode == D1IngressMode::Auto && !supports_wire_v1 {
             "ops_v2_fallback".to_string()
@@ -24392,9 +24522,16 @@ fn main() -> Result<()> {
     };
     if verbose {
         let total_txs: usize = prepared_batches.iter().map(|b| b.tx_count).sum();
+        let d1_contract_mode = if eth_send_raw_source {
+            "mainline_evm_raw_tx"
+        } else if use_wire_v1 {
+            "ops_wire_v1"
+        } else {
+            "ops_v2"
+        };
         println!(
             "d1_ingress_contract: mode={} source={} codec={} aoem_ingress_path={} batches={}",
-            if use_wire_v1 { "ops_wire_v1" } else { "ops_v2" },
+            d1_contract_mode,
             input_source,
             d1_codec,
             aoem_ingress_path,
@@ -24412,30 +24549,25 @@ fn main() -> Result<()> {
         bail!("NOVOVM_TX_REPEAT_COUNT must be 1 when NOVOVM_OPS_WIRE_DIR is used");
     }
     let watch_mode = ops_wire_watch_from_config_v1(&cli_overrides);
-    let mainline_evm_host = mainline_evm_host_enabled(&cli_overrides);
-    let mainline_evm_chain_id = if mainline_evm_host {
-        Some(mainline_evm_chain_id(&cli_overrides)?)
-    } else {
-        None
-    };
-    let mainline_evm_atomic_guard = mainline_evm_atomic_guard_enabled(&cli_overrides);
-    let canonical_store_path = if mainline_evm_host {
-        Some(mainline_evm_canonical_store_path(&cli_overrides))
-    } else {
-        None
-    };
     if mainline_evm_host {
         if watch_mode {
             bail!("NOVOVM_MAINLINE_EVM_HOST_ENABLED does not support NOVOVM_OPS_WIRE_WATCH");
         }
-        if tx_wire_path.is_none() || ops_wire_path.is_some() || ops_wire_dir.is_some() {
+        if (tx_wire_path.is_none() && !eth_send_raw_source)
+            || ops_wire_path.is_some()
+            || ops_wire_dir.is_some()
+        {
             bail!(
-                "NOVOVM_MAINLINE_EVM_HOST_ENABLED requires NOVOVM_TX_WIRE_FILE and forbids NOVOVM_OPS_WIRE_FILE/NOVOVM_OPS_WIRE_DIR"
+                "NOVOVM_MAINLINE_EVM_HOST_ENABLED requires NOVOVM_TX_WIRE_FILE or NOVOVM_ETH_SEND_RAW_TX(_FILE), and forbids NOVOVM_OPS_WIRE_FILE/NOVOVM_OPS_WIRE_DIR"
             );
         }
     }
     let eth_send_raw_chain_id = resolve_eth_send_raw_chain_id_v1(mainline_evm_chain_id);
-    let _local_eth_send_raw_hashes = ingest_eth_send_raw_tx_env_v1(eth_send_raw_chain_id, verbose)?;
+    let _local_eth_send_raw_hashes = observe_eth_send_raw_tx_payloads_v1(
+        eth_send_raw_chain_id,
+        &eth_send_raw_payloads,
+        verbose,
+    )?;
     let l1l4_anchor_file_path = string_env_nonempty("NOVOVM_L1L4_ANCHOR_PATH").map(PathBuf::from);
     let l1l4_anchor_ledger_enabled = bool_env("NOVOVM_L1L4_ANCHOR_LEDGER_ENABLED");
     let l1l4_anchor_ledger_key_prefix = string_env_nonempty("NOVOVM_L1L4_ANCHOR_LEDGER_KEY_PREFIX")
@@ -26586,7 +26718,12 @@ fn main() -> Result<()> {
                         })?;
                         ops_wire.bytes
                     }
-                    EitherBatch::Wire(wire) => wire.clone(),
+                    EitherBatch::Wire(wire) => {
+                        if wire.is_empty() && prepared.host_tx_irs.is_some() {
+                            bail!("availability queue-only does not support NOVOVM_ETH_SEND_RAW_TX(_FILE) mainline host source");
+                        }
+                        wire.clone()
+                    }
                 };
                 let queued = queue_request(
                     format!("batch:{}:{}:{}", batch_idx + 1, idx + 1, now_unix_ms()),
@@ -26604,14 +26741,19 @@ fn main() -> Result<()> {
             if mainline_evm_host {
                 let chain_id =
                     mainline_evm_chain_id.expect("host mode chain id must be initialized");
-                let tx_records = prepared.tx_records.as_ref().ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "NOVOVM_MAINLINE_EVM_HOST_ENABLED requires tx ingress records: source={}",
-                        prepared.source_detail
-                    )
-                })?;
-                let tx_irs = tx_ingress_records_to_adapter_tx_irs(tx_records, chain_id);
-                observe_local_tx_records_pending_ingress_v1(chain_id, tx_records, &tx_irs);
+                let tx_irs = if let Some(host_tx_irs) = prepared.host_tx_irs.as_ref() {
+                    host_tx_irs.clone()
+                } else {
+                    let tx_records = prepared.tx_records.as_ref().ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "NOVOVM_MAINLINE_EVM_HOST_ENABLED requires tx ingress records or host tx irs: source={}",
+                            prepared.source_detail
+                        )
+                    })?;
+                    let tx_irs = tx_ingress_records_to_adapter_tx_irs(tx_records, chain_id);
+                    observe_local_tx_records_pending_ingress_v1(chain_id, tx_records, &tx_irs);
+                    tx_irs
+                };
                 let mut work_queue = std::mem::take(&mut host_exec_deferred_batches);
                 work_queue.push_back(HostExecDeferredBatchV1 {
                     source_detail: format!(
