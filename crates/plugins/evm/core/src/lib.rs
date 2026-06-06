@@ -1705,6 +1705,13 @@ mod tests {
         out
     }
 
+    fn official_address_fixture_subset_m0() -> serde_json::Value {
+        serde_json::from_str(include_str!(
+            "../tests/fixtures/ethereum-official-address-subset.json"
+        ))
+        .expect("decode official EVM address fixture subset")
+    }
+
     fn enc_bytes(raw: &[u8]) -> Vec<u8> {
         if raw.len() == 1 && raw[0] < 0x80 {
             return vec![raw[0]];
@@ -1902,68 +1909,49 @@ mod tests {
 
     #[test]
     fn derive_create_contract_address_matches_geth_vectors_m0() {
-        let from = hex_bytes("970e8128ab834e8eac17ab8e3812f010678cf791");
+        let fixture = official_address_fixture_subset_m0();
         assert_eq!(
-            derive_create_contract_address_m0(&from, 0),
-            hex_bytes("333c3310824b7c685133f2bedb2ca4b8b4df633d")
+            fixture["source"]["kind"].as_str(),
+            Some("go-ethereum-official-tests")
         );
-        assert_eq!(
-            derive_create_contract_address_m0(&from, 1),
-            hex_bytes("8bda78331c916a08481428e4b07c96d3e916d165")
+        let vectors = fixture["create"]
+            .as_array()
+            .expect("create fixture vector array");
+        assert!(
+            !vectors.is_empty(),
+            "create fixture subset must not be empty"
         );
-        assert_eq!(
-            derive_create_contract_address_m0(&from, 2),
-            hex_bytes("c9ddedf451bc62ce88bf9292afb13df35b670699")
-        );
+        for vector in vectors {
+            let sender = vector["sender"].as_str().expect("create sender");
+            let nonce = vector["nonce"].as_u64().expect("create nonce");
+            let expected = vector["expected"].as_str().expect("create expected");
+            assert_eq!(
+                derive_create_contract_address_m0(&hex_bytes(sender), nonce),
+                hex_bytes(expected)
+            );
+        }
     }
 
     #[test]
     fn derive_create2_contract_address_matches_geth_vectors_m0() {
-        for (origin, salt, code, expected) in [
-            (
-                "0x0000000000000000000000000000000000000000",
-                "0x0000000000000000000000000000000000000000",
-                "0x00",
-                "0x4d1a2e2bb4f88f0250f26ffff098b0b30b26bf38",
-            ),
-            (
-                "0xdeadbeef00000000000000000000000000000000",
-                "0x0000000000000000000000000000000000000000",
-                "0x00",
-                "0xB928f69Bb1D91Cd65274e3c79d8986362984fDA3",
-            ),
-            (
-                "0xdeadbeef00000000000000000000000000000000",
-                "0xfeed000000000000000000000000000000000000",
-                "0x00",
-                "0xD04116cDd17beBE565EB2422F2497E06cC1C9833",
-            ),
-            (
-                "0x0000000000000000000000000000000000000000",
-                "0x0000000000000000000000000000000000000000",
-                "0xdeadbeef",
-                "0x70f2b2914A2a4b783FaEFb75f459A580616Fcb5e",
-            ),
-            (
-                "0x00000000000000000000000000000000deadbeef",
-                "0xcafebabe",
-                "0xdeadbeef",
-                "0x60f3f640a8508fC6a86d45DF051962668E1e8AC7",
-            ),
-            (
-                "0x00000000000000000000000000000000deadbeef",
-                "0xcafebabe",
-                "0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
-                "0x1d8bfDC5D46DC4f61D6b6115972536eBE6A8854C",
-            ),
-            (
-                "0x0000000000000000000000000000000000000000",
-                "0x0000000000000000000000000000000000000000",
-                "0x",
-                "0xE33C0C7F7df4809055C3ebA6c09CFe4BaF1BD9e0",
-            ),
-        ] {
-            let code_hash = Keccak256::digest(hex_bytes(code));
+        let fixture = official_address_fixture_subset_m0();
+        assert_eq!(
+            fixture["source"]["kind"].as_str(),
+            Some("go-ethereum-official-tests")
+        );
+        let vectors = fixture["create2"]
+            .as_array()
+            .expect("create2 fixture vector array");
+        assert!(
+            !vectors.is_empty(),
+            "create2 fixture subset must not be empty"
+        );
+        for vector in vectors {
+            let origin = vector["origin"].as_str().expect("create2 origin");
+            let salt = vector["salt"].as_str().expect("create2 salt");
+            let init_code = vector["initCode"].as_str().expect("create2 init code");
+            let expected = vector["expected"].as_str().expect("create2 expected");
+            let code_hash = Keccak256::digest(hex_bytes(init_code));
             assert_eq!(
                 derive_create2_contract_address_m0(
                     &hex_bytes(origin),
