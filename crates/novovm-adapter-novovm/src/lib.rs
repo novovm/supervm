@@ -2686,6 +2686,13 @@ mod tests {
         .expect("decode official EIP-1559 sender balance state fixture")
     }
 
+    fn official_storage_costs_warm_cold_state_fixture_v1() -> serde_json::Value {
+        serde_json::from_str(include_str!(
+            "../tests/fixtures/ethereum-official-state-subset/storageCosts-warm-cold.json"
+        ))
+        .expect("decode official storage costs warm/cold state fixture")
+    }
+
     fn first_official_state_fixture_case_v1(fixture: &serde_json::Value) -> &serde_json::Value {
         fixture
             .as_object()
@@ -4224,6 +4231,180 @@ mod tests {
     }
 
     #[test]
+    fn official_state_fixture_sload_warm_cold_fee_debit_v1() {
+        let fixture = official_storage_costs_warm_cold_state_fixture_v1();
+        assert_eq!(fixture["source"]["repo"].as_str(), Some("ethereum/tests"));
+        assert_eq!(
+            fixture["source"]["fixtureFormat"].as_str(),
+            Some("state_test")
+        );
+        assert_eq!(
+            fixture["source"]["source"].as_str(),
+            Some("src/GeneralStateTestsFiller/stEIP2930/storageCostsFiller.yml")
+        );
+
+        let transaction = &fixture["transaction"];
+        let sender = json_str(&transaction["sender"], "transaction.sender");
+        let to = json_str(&transaction["to"], "transaction.to");
+        let pre_sender_balance = json_hex_u128(
+            &transaction["preSenderBalance"],
+            "transaction.preSenderBalance",
+        );
+        let pre_to_balance =
+            json_hex_u128(&transaction["preToBalance"], "transaction.preToBalance");
+        let post_to_balance =
+            json_hex_u128(&transaction["postToBalance"], "transaction.postToBalance");
+        let gas_price = json_hex_u128(&transaction["gasPrice"], "transaction.gasPrice");
+        let gas_limit = json_hex_u128(&transaction["gasLimit"], "transaction.gasLimit");
+        let value = json_hex_u128(&transaction["value"], "transaction.value");
+        assert_eq!(post_to_balance, pre_to_balance + value);
+
+        let mut warm_gas_used = None;
+        let mut cold_gas_used = None;
+        let cases = fixture["cases"].as_array().expect("warm/cold cases");
+        assert_eq!(cases.len(), 2);
+
+        for case in cases {
+            let label = json_str(&case["label"], "case.label");
+            let raw_tx = decode_hex_bytes(json_str(&case["txbytes"], "case.txbytes"));
+            let recovered_sender = recover_raw_evm_tx_sender_m0(&raw_tx)
+                .expect("official storage costs raw sender recovery")
+                .expect("official storage costs recovered sender");
+            assert_eq!(recovered_sender, decode_hex_bytes(sender));
+            let fields = translate_raw_evm_tx_fields_m0(&raw_tx).expect("official type1 decode");
+            let tx = tx_ir_from_raw_fields_m0(&fields, &raw_tx, recovered_sender, 1);
+
+            assert_eq!(tx.tx_type, TxType::ContractCall);
+            assert_eq!(tx.from, decode_hex_bytes(sender));
+            assert_eq!(tx.to, Some(decode_hex_bytes(to)));
+            assert_eq!(tx.value, value);
+            assert_eq!(tx.gas_limit, gas_limit as u64);
+            assert_eq!(tx.gas_price, gas_price as u64);
+            assert_eq!(
+                tx.data,
+                decode_hex_bytes(json_str(&case["data"], "case.data"))
+            );
+            assert_eq!(tx.evm_access_list.len(), 1);
+            assert_eq!(
+                tx.evm_access_list[0].address,
+                decode_hex_bytes(json_str(
+                    &case["accessList"][0]["address"],
+                    "accessList.address"
+                ))
+            );
+            assert_eq!(
+                tx.evm_access_list[0].storage_keys[0],
+                decode_hex_bytes(json_str(
+                    &case["accessList"][0]["storageKeys"][0],
+                    "accessList.storageKeys[0]"
+                ))
+            );
+
+            let mut adapter = NovoVmAdapter::new(ChainConfig {
+                chain_type: ChainType::EVM,
+                chain_id: 1,
+                name: format!("official-storage-costs-{label}"),
+                enabled: true,
+                custom_config: None,
+            });
+            adapter.initialize().expect("init");
+            assert!(
+                adapter
+                    .verify_transaction(&tx)
+                    .expect("verify official storage costs raw tx"),
+                "official storageCosts txbytes must verify through the raw EVM path"
+            );
+
+            let post_sender_balance =
+                json_hex_u128(&case["postSenderBalance"], "case.postSenderBalance");
+            let charged_fee = pre_sender_balance
+                .saturating_sub(post_sender_balance)
+                .saturating_sub(value);
+            assert_eq!(charged_fee % gas_price, 0);
+            let gas_used = charged_fee / gas_price;
+            assert_eq!(
+                gas_used,
+                case["gasUsed"].as_u64().expect("case.gasUsed") as u128
+            );
+
+            let mut runtime_state = StateIR::new();
+            runtime_state.set_account(
+                tx.from.clone(),
+                AccountState {
+                    balance: pre_sender_balance,
+                    nonce: tx.nonce,
+                    code_hash: None,
+                    storage_root: vec![0u8; 32],
+                },
+            );
+            runtime_state.set_account(
+                tx.to.clone().expect("call target"),
+                AccountState {
+                    balance: pre_to_balance,
+                    nonce: 0,
+                    code_hash: Some(vec![0xcc; 32]),
+                    storage_root: vec![0u8; 32],
+                },
+            );
+
+            let mut artifact = sample_aoem_artifact(&tx, true, [0x83; 32], None);
+            artifact.gas_used = gas_used as u64;
+            artifact.cumulative_gas_used = gas_used as u64;
+            artifact.effective_gas_price = Some(gas_price as u64);
+            artifact.event_logs.clear();
+            artifact.log_bloom = vec![0u8; 256];
+
+            let outcome = adapter
+                .execute_transaction_with_observed_metadata_v1(
+                    &tx,
+                    &mut runtime_state,
+                    Some(&artifact),
+                )
+                .expect("execute official storageCosts fixture projection");
+
+            assert!(outcome.artifact.status_ok);
+            assert_eq!(
+                runtime_state.get_account(&tx.from).map(|acc| acc.balance),
+                Some(post_sender_balance)
+            );
+            assert_eq!(
+                runtime_state
+                    .get_account(tx.to.as_ref().expect("call target"))
+                    .map(|acc| acc.balance),
+                Some(post_to_balance)
+            );
+
+            let bal = outcome
+                .observed_block_access_list
+                .block_access_list
+                .expect("official storage costs observed BAL");
+            let sender_entry = bal
+                .0
+                .iter()
+                .find(|entry| entry.address.as_slice() == tx.from.as_slice())
+                .expect("sender BAL entry");
+            assert_eq!(
+                sender_entry.balance_changes[0].post_balance,
+                NovoVmAdapter::u128_to_be32_v1(post_sender_balance)
+            );
+
+            match label {
+                "declaredKeyRead" => warm_gas_used = Some(gas_used),
+                "undeclaredKeyRead" => cold_gas_used = Some(gas_used),
+                _ => panic!("unexpected storageCosts label {label}"),
+            }
+        }
+
+        let warm_gas_used = warm_gas_used.expect("declaredKeyRead gas used");
+        let cold_gas_used = cold_gas_used.expect("undeclaredKeyRead gas used");
+        assert_eq!(
+            cold_gas_used - warm_gas_used,
+            2_000,
+            "official storageCosts fixture must preserve EIP-2929 SLOAD warm/cold delta"
+        );
+    }
+
+    #[test]
     fn execute_tracked_sender_rejects_insufficient_value_fee_v1() {
         let mut adapter = NovoVmAdapter::new(ChainConfig {
             chain_type: ChainType::EVM,
@@ -4381,6 +4562,7 @@ mod tests {
         evm_execution_spec_account_balance_value_fee_invariants_v1();
         evm_execution_spec_effective_gas_price_fee_debit_v1();
         official_state_fixture_eip1559_sender_balance_fee_debit_v1();
+        official_state_fixture_sload_warm_cold_fee_debit_v1();
         execute_tracked_sender_rejects_insufficient_value_fee_v1();
         tx_intrinsic_gas_includes_type1_access_list_extras_v1();
         execute_raw_type1_access_list_emits_declared_storage_reads_v1();

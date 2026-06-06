@@ -1,0 +1,72 @@
+{
+  "source": {
+    "repo": "ethereum/tests",
+    "archive": "fixtures_general_state_tests.tgz",
+    "path": "GeneralStateTests/stEIP2930/storageCosts.json",
+    "fixtureFormat": "state_test",
+    "fixtureKey": "GeneralStateTests/stEIP2930/storageCosts.json::storageCosts-fork_[Cancun-Prague]-d[0-35]g0v0",
+    "hash": "0xd0ad4defb1a383c399ded30489ec712c8b2114a4cf51d72aca57aefd09a5f863",
+    "source": "src/GeneralStateTestsFiller/stEIP2930/storageCostsFiller.yml",
+    "sourceHash": "0x61a10e881aaa64fa44560f62684b37569957e77b058aeaa9fc6baee2219dadc1"
+  },
+  "env": {
+    "currentBaseFee": "0x0a"
+  },
+  "transaction": {
+    "sender": "0xa94f5374fce5edbc8e2a8697c15331677e6ebf0b",
+    "to": "0xcccccccccccccccccccccccccccccccccccccccc",
+    "preSenderBalance": "0x0de0b6b3a7640000",
+    "preToBalance": "0x0ba1a9ce0ba1a9ce",
+    "postToBalance": "0x0ba1a9ce0ba3306e",
+    "gasLimit": "0x061a80",
+    "gasPrice": "0x0a",
+    "nonce": "0x00",
+    "value": "0x0186a0"
+  },
+  "cases": [
+    {
+      "label": "declaredKeyRead",
+      "dataIndex": 1,
+      "data": "0x693c61390000000000000000000000000000000000000000000000000000000000000001",
+      "accessList": [
+        {
+          "address": "0x0000000000000000000000000000000000001001",
+          "storageKeys": [
+            "0x0000000000000000000000000000000000000000000000000000000000000000"
+          ]
+        }
+      ],
+      "txbytes": "0x01f8c201800a83061a8094cccccccccccccccccccccccccccccccccccccccc830186a0a4693c61390000000000000000000000000000000000000000000000000000000000000001f838f7940000000000000000000000000000000000001001e1a0000000000000000000000000000000000000000000000000000000000000000080a0f8a1a2dda693fb7a3b0ad24de8dbb80d976e40d1b6f0d893fac1ef09212f2663a02dc4718b210a69ac6b04b341aeae0a483dc6bde9d1f952c37f1a6ac5b8291c85",
+      "postSenderBalance": "0x0de0b6b3a750b766",
+      "gasUsed": 116377,
+      "postTargetStorage": {
+        "0x00": "0x02",
+        "0x01": "0x0834",
+        "0x02": "0x5654",
+        "0x60a7": "0xdead"
+      }
+    },
+    {
+      "label": "undeclaredKeyRead",
+      "dataIndex": 7,
+      "data": "0x693c61390000000000000000000000000000000000000000000000000000000000000001",
+      "accessList": [
+        {
+          "address": "0x0000000000000000000000000000000000001001",
+          "storageKeys": [
+            "0x0000000000000000000000000000000000000000000000000000000000000010"
+          ]
+        }
+      ],
+      "txbytes": "0x01f8c201800a83061a8094cccccccccccccccccccccccccccccccccccccccc830186a0a4693c61390000000000000000000000000000000000000000000000000000000000000001f838f7940000000000000000000000000000000000001001e1a0000000000000000000000000000000000000000000000000000000000000001001a05ca8feb6f64cc7ca6857105d85c652215afe9178eb39ec729efe8671efad7e7ba067a28eecacad9c438fd74f0678414ab76df1ededa09cf3827dfdeacae1e231f6",
+      "postSenderBalance": "0x0de0b6b3a7506946",
+      "gasUsed": 118377,
+      "postTargetStorage": {
+        "0x00": "0x02",
+        "0x01": "0x0834",
+        "0x02": "0x5654",
+        "0x60a7": "0xdead"
+      }
+    }
+  ]
+}
