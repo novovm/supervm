@@ -2771,6 +2771,13 @@ mod tests {
         .expect("decode official STATICCALL/precompile/return-data state fixture")
     }
 
+    fn official_log_receipt_state_fixture_v1() -> serde_json::Value {
+        serde_json::from_str(include_str!(
+            "../tests/fixtures/ethereum-official-state-subset/log-receipt.json"
+        ))
+        .expect("decode official LOG/receipt state fixture")
+    }
+
     fn first_official_state_fixture_case_v1(fixture: &serde_json::Value) -> &serde_json::Value {
         fixture
             .as_object()
@@ -5649,6 +5656,310 @@ mod tests {
     }
 
     #[test]
+    fn official_state_fixture_log_receipt_grouped_projection_v1() {
+        let fixture = official_log_receipt_state_fixture_v1();
+        assert_eq!(fixture["source"]["repo"].as_str(), Some("ethereum/tests"));
+        assert_eq!(
+            fixture["source"]["fixtureFormat"].as_str(),
+            Some("state_test")
+        );
+        assert_eq!(fixture["source"]["fork"].as_str(), Some("Cancun"));
+
+        let empty_logs_hash = json_str(&fixture["emptyLogsHash"], "emptyLogsHash");
+        let cases = fixture["cases"].as_array().expect("LOG/receipt cases");
+        assert_eq!(cases.len(), 4);
+
+        let mut log_success_cases = 0usize;
+        let mut no_log_cases = 0usize;
+        let mut empty_mem_cases = 0usize;
+        let mut non_empty_mem_cases = 0usize;
+        let mut topic_count_sum = 0usize;
+        let mut empty_topic_gas = Vec::new();
+        let mut non_empty_topic_gas = Vec::new();
+        let mut non_empty_logs_hashes = std::collections::HashSet::new();
+
+        for case in cases {
+            let label = json_str(&case["label"], "case.label");
+            let mode = json_str(&case["mode"], "case.mode");
+            assert!(
+                json_str(&case["fixtureKey"], "case.fixtureKey").contains("-fork_[Cancun-Prague]"),
+                "official LOG/receipt case must be the Cancun/Prague projection"
+            );
+            assert!(
+                json_str(&case["postHash"], "case.postHash").starts_with("0x"),
+                "official LOG/receipt case must carry post hash"
+            );
+            let logs_hash = json_str(&case["logsHash"], "case.logsHash");
+            let logs_expected = case["logsExpected"]
+                .as_bool()
+                .expect("case.logsExpected bool");
+            assert_eq!(logs_expected, logs_hash != empty_logs_hash);
+            if logs_expected {
+                assert!(non_empty_logs_hashes.insert(logs_hash.to_string()));
+            }
+
+            let sender = json_str(&case["sender"], "case.sender");
+            let to = json_str(&case["to"], "case.to");
+            let pre_sender_balance =
+                json_hex_u128(&case["preSenderBalance"], "case.preSenderBalance");
+            let pre_sender_nonce =
+                json_hex_u128(&case["preSenderNonce"], "case.preSenderNonce") as u64;
+            let post_sender_balance =
+                json_hex_u128(&case["postSenderBalance"], "case.postSenderBalance");
+            let pre_to_balance = json_hex_u128(&case["preToBalance"], "case.preToBalance");
+            let pre_to_nonce = json_hex_u128(&case["preToNonce"], "case.preToNonce") as u64;
+            let post_to_balance = json_hex_u128(&case["postToBalance"], "case.postToBalance");
+            let post_to_nonce = json_hex_u128(&case["postToNonce"], "case.postToNonce") as u64;
+            let gas_price = json_hex_u128(&case["gasPrice"], "case.gasPrice");
+            let gas_limit = json_hex_u128(&case["gasLimit"], "case.gasLimit");
+            let value = json_hex_u128(&case["value"], "case.value");
+            let nonce = json_hex_u128(&case["nonce"], "case.nonce") as u64;
+            assert_eq!(nonce, pre_sender_nonce);
+
+            let raw_tx = decode_hex_bytes(json_str(&case["txbytes"], "case.txbytes"));
+            let recovered_sender = recover_raw_evm_tx_sender_m0(&raw_tx)
+                .expect("official LOG/receipt raw sender recovery")
+                .expect("official LOG/receipt recovered sender");
+            assert_eq!(recovered_sender, decode_hex_bytes(sender));
+            let fields =
+                translate_raw_evm_tx_fields_m0(&raw_tx).expect("official LOG/receipt tx decode");
+            let tx = tx_ir_from_raw_fields_m0(&fields, &raw_tx, recovered_sender, 1);
+
+            assert_eq!(
+                tx.tx_type,
+                TxType::Transfer,
+                "raw empty-calldata LOG fixture tx is state-agnostic before execution"
+            );
+            assert_eq!(tx.from, decode_hex_bytes(sender));
+            assert_eq!(tx.to, Some(decode_hex_bytes(to)));
+            assert_eq!(tx.value, value);
+            assert_eq!(tx.gas_limit, gas_limit as u64);
+            assert_eq!(tx.gas_price, gas_price as u64);
+            assert_eq!(tx.nonce, nonce);
+            assert_eq!(
+                tx.data,
+                decode_hex_bytes(json_str(&case["data"], "case.data"))
+            );
+
+            let mut adapter = NovoVmAdapter::new(ChainConfig {
+                chain_type: ChainType::EVM,
+                chain_id: 1,
+                name: format!("official-log-receipt-{label}"),
+                enabled: true,
+                custom_config: None,
+            });
+            adapter.initialize().expect("init");
+            assert!(
+                adapter
+                    .verify_transaction(&tx)
+                    .expect("verify official LOG/receipt raw tx"),
+                "official LOG/receipt txbytes must verify through raw EVM path"
+            );
+            for historical_nonce in 0..pre_sender_nonce {
+                let mut historical_tx = tx.clone();
+                historical_tx.nonce = historical_nonce;
+                adapter
+                    .route_transaction_through_unified_account(&historical_tx)
+                    .expect("prime official LOG/receipt pre-state nonce");
+            }
+
+            let value_transferred = post_to_balance == pre_to_balance + value;
+            let charged_fee = pre_sender_balance
+                .saturating_sub(post_sender_balance)
+                .saturating_sub(if value_transferred { value } else { 0 });
+            assert_eq!(charged_fee % gas_price, 0);
+            let gas_used = charged_fee / gas_price;
+            let expected_gas_used = case["gasUsed"].as_u64().expect("case.gasUsed");
+            assert_eq!(gas_used, expected_gas_used as u128);
+
+            let mut runtime_state = StateIR::new();
+            runtime_state.set_account(
+                tx.from.clone(),
+                AccountState {
+                    balance: pre_sender_balance,
+                    nonce: pre_sender_nonce,
+                    code_hash: None,
+                    storage_root: vec![0u8; 32],
+                },
+            );
+            runtime_state.set_account(
+                tx.to.clone().expect("call target"),
+                AccountState {
+                    balance: pre_to_balance,
+                    nonce: pre_to_nonce,
+                    code_hash: Some(vec![0xcc; 32]),
+                    storage_root: vec![0u8; 32],
+                },
+            );
+            assert_eq!(
+                NovoVmAdapter::effective_execution_tx_v1(&tx, &runtime_state).tx_type,
+                TxType::ContractCall,
+                "target code in pre-state must promote LOG fixture tx to contract call execution"
+            );
+
+            let mut artifact = sample_aoem_artifact(&tx, true, [0x89; 32], None);
+            artifact.gas_used = expected_gas_used;
+            artifact.cumulative_gas_used = expected_gas_used;
+            artifact.effective_gas_price = Some(gas_price as u64);
+            artifact.receipt_type = None;
+            artifact.anchor = None;
+            if logs_expected {
+                let topic_count =
+                    case["logTopicCount"].as_u64().expect("case.logTopicCount") as usize;
+                topic_count_sum += topic_count;
+                let topics = (0..topic_count)
+                    .map(|idx| {
+                        let mut topic = [0u8; 32];
+                        topic[0] = topic_count as u8;
+                        topic[31] = idx as u8;
+                        topic
+                    })
+                    .collect::<Vec<_>>();
+                let data = if json_str(&case["logDataKind"], "case.logDataKind") == "nonEmpty" {
+                    vec![0x4c, 0x4f, 0x47]
+                } else {
+                    Vec::new()
+                };
+                artifact.event_logs = vec![AoemEventLogV1 {
+                    emitter: tx.to.clone().expect("log emitter"),
+                    topics,
+                    data,
+                    log_index: 0,
+                }];
+                artifact.log_bloom = vec![0x44; AOEM_LOG_BLOOM_BYTES_V1];
+            } else {
+                artifact.event_logs.clear();
+                artifact.log_bloom = vec![0u8; AOEM_LOG_BLOOM_BYTES_V1];
+            }
+
+            let outcome = adapter
+                .execute_transaction_with_observed_metadata_v1(
+                    &tx,
+                    &mut runtime_state,
+                    Some(&artifact),
+                )
+                .expect("execute official LOG/receipt fixture projection");
+
+            assert!(outcome.artifact.status_ok);
+            assert_eq!(outcome.artifact.gas_used, expected_gas_used);
+            assert_eq!(
+                runtime_state.get_account(&tx.from).map(|acc| acc.balance),
+                Some(post_sender_balance)
+            );
+            assert_eq!(
+                runtime_state
+                    .get_account(tx.to.as_ref().expect("call target"))
+                    .map(|acc| acc.balance),
+                Some(post_to_balance)
+            );
+            assert_eq!(
+                runtime_state
+                    .get_account(tx.to.as_ref().expect("call target"))
+                    .map(|acc| acc.nonce),
+                Some(post_to_nonce)
+            );
+
+            if logs_expected {
+                log_success_cases += 1;
+                assert_eq!(outcome.artifact.event_logs.len(), 1);
+                let event_log = &outcome.artifact.event_logs[0];
+                assert_eq!(
+                    event_log.topics.len(),
+                    case["logTopicCount"].as_u64().expect("case.logTopicCount") as usize
+                );
+                let non_empty_data =
+                    json_str(&case["logDataKind"], "case.logDataKind") == "nonEmpty";
+                assert_eq!(!event_log.data.is_empty(), non_empty_data);
+                assert!(outcome.artifact.log_bloom.iter().any(|byte| *byte != 0));
+                assert!(
+                    runtime_state
+                        .get_storage(&tx.from, b"aoem:last_event_logs")
+                        .is_some(),
+                    "AOEM log projection must be persisted for non-empty official logs hash cases"
+                );
+            } else {
+                no_log_cases += 1;
+                assert!(outcome.artifact.event_logs.is_empty());
+                assert!(outcome.artifact.log_bloom.iter().all(|byte| *byte == 0));
+                assert!(runtime_state
+                    .get_storage(&tx.from, b"aoem:last_event_logs")
+                    .is_none());
+            }
+            assert_eq!(
+                runtime_state.get_storage(&tx.from, b"aoem:last_log_bloom"),
+                Some(&outcome.artifact.log_bloom)
+            );
+
+            let post_storage_facts = case["postStorageFacts"]
+                .as_object()
+                .expect("case.postStorageFacts");
+            match mode {
+                "logSuccessProjection" => {
+                    assert!(post_storage_facts.is_empty());
+                    if json_str(&case["logDataKind"], "case.logDataKind") == "empty" {
+                        empty_mem_cases += 1;
+                        empty_topic_gas.push((
+                            case["logTopicCount"].as_u64().expect("topic count"),
+                            expected_gas_used,
+                        ));
+                    } else {
+                        non_empty_mem_cases += 1;
+                        non_empty_topic_gas.push((
+                            case["logTopicCount"].as_u64().expect("topic count"),
+                            expected_gas_used,
+                        ));
+                    }
+                }
+                "oogNoLogProjection" => {
+                    assert!(post_storage_facts.is_empty());
+                }
+                _ => panic!("unexpected official LOG/receipt mode {mode}"),
+            }
+
+            let bal = outcome
+                .observed_block_access_list
+                .block_access_list
+                .expect("official LOG/receipt observed BAL");
+            let sender_entry = bal
+                .0
+                .iter()
+                .find(|entry| entry.address.as_slice() == tx.from.as_slice())
+                .expect("sender BAL entry");
+            assert_eq!(
+                sender_entry.balance_changes[0].post_balance,
+                NovoVmAdapter::u128_to_be32_v1(post_sender_balance)
+            );
+            if value_transferred && value > 0 {
+                let to_entry = bal
+                    .0
+                    .iter()
+                    .find(|entry| {
+                        entry.address.as_slice() == tx.to.as_ref().expect("call target").as_slice()
+                    })
+                    .expect("value-transfer target BAL entry");
+                assert_eq!(
+                    to_entry.balance_changes[0].post_balance,
+                    NovoVmAdapter::u128_to_be32_v1(post_to_balance)
+                );
+            }
+        }
+
+        assert_eq!(log_success_cases, 4);
+        assert_eq!(no_log_cases, 0);
+        assert_eq!(empty_mem_cases, 0);
+        assert_eq!(non_empty_mem_cases, 4);
+        assert_eq!(topic_count_sum, 6);
+        assert_eq!(non_empty_logs_hashes.len(), 4);
+        empty_topic_gas.sort_by_key(|(topic_count, _)| *topic_count);
+        non_empty_topic_gas.sort_by_key(|(topic_count, _)| *topic_count);
+        assert!(empty_topic_gas.is_empty());
+        assert_eq!(non_empty_topic_gas.len(), 4);
+        for window in non_empty_topic_gas.windows(2) {
+            assert_eq!(window[1].1 - window[0].1, 478);
+        }
+    }
+
+    #[test]
     fn execute_tracked_sender_rejects_insufficient_value_fee_v1() {
         let mut adapter = NovoVmAdapter::new(ChainConfig {
             chain_type: ChainType::EVM,
@@ -5811,6 +6122,7 @@ mod tests {
         official_state_fixture_failure_account_fee_debit_v1();
         official_state_fixture_create_account_grouped_projection_v1();
         official_state_fixture_staticcall_precompile_return_grouped_projection_v1();
+        official_state_fixture_log_receipt_grouped_projection_v1();
         execute_tracked_sender_rejects_insufficient_value_fee_v1();
         tx_intrinsic_gas_includes_type1_access_list_extras_v1();
         execute_raw_type1_access_list_emits_declared_storage_reads_v1();
