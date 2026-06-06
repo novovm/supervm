@@ -333,6 +333,34 @@ fn derive_mainline_host_exec_targets_v1(
 mod eth_send_raw_tx_ingress_tests {
     use super::*;
 
+    static EVM_TYPE3_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    struct EnvRestoreV1 {
+        key: &'static str,
+        captured: Option<String>,
+    }
+
+    impl Drop for EnvRestoreV1 {
+        fn drop(&mut self) {
+            if let Some(value) = self.captured.as_ref() {
+                std::env::set_var(self.key, value);
+            } else {
+                std::env::remove_var(self.key);
+            }
+        }
+    }
+
+    fn with_type3_chain1_write_enabled_v1<T>(f: impl FnOnce() -> T) -> T {
+        let _guard = EVM_TYPE3_ENV_LOCK.lock().expect("type3 env lock");
+        let key = "NOVOVM_EVM_ENABLE_TYPE3_WRITE_CHAIN_1";
+        let _restore = EnvRestoreV1 {
+            key,
+            captured: std::env::var(key).ok(),
+        };
+        std::env::set_var(key, "1");
+        f()
+    }
+
     #[test]
     fn decode_hex_payload_v1_accepts_prefixed_payload() {
         let payload = decode_hex_payload_v1("0x0102a0", "raw_tx").expect("decode should succeed");
@@ -460,19 +488,13 @@ mod eth_send_raw_tx_ingress_tests {
 
     #[test]
     fn eth_send_raw_payload_to_tx_ir_v1_accepts_signed_type3_transfer_when_enabled() {
-        let captured = std::env::var("NOVOVM_EVM_ENABLE_TYPE3_WRITE_CHAIN_1").ok();
-        std::env::set_var("NOVOVM_EVM_ENABLE_TYPE3_WRITE_CHAIN_1", "1");
-        let raw_tx_hex = "0x03f8930180843b9aca008504a817c80083030d409435353535353535353535353535353535353535350180c0843b9aca00e1a0010101010101010101010101010101010101010101010101010101010101010180a07bc5f130ef201b9438e86d2c7043c4f364c74eab94f04e001396a2cd87c1c19aa04e02ebc48abe83f9f56dee0d37682a1b01e2f81a24bdd9a00a03cbe8bb9f2865";
-        let payload = decode_hex_payload_v1(raw_tx_hex, "raw_tx").expect("decode type3 raw tx");
-
-        let out = eth_send_raw_payload_to_tx_ir_v1(payload.as_slice(), 1);
-
-        if let Some(value) = captured {
-            std::env::set_var("NOVOVM_EVM_ENABLE_TYPE3_WRITE_CHAIN_1", value);
-        } else {
-            std::env::remove_var("NOVOVM_EVM_ENABLE_TYPE3_WRITE_CHAIN_1");
-        }
-        let tx = out.expect("type3 signed raw tx should translate when enabled");
+        let (tx, payload) = with_type3_chain1_write_enabled_v1(|| {
+            let raw_tx_hex = "0x03f8930180843b9aca008504a817c80083030d409435353535353535353535353535353535353535350180c0843b9aca00e1a0010101010101010101010101010101010101010101010101010101010101010180a07bc5f130ef201b9438e86d2c7043c4f364c74eab94f04e001396a2cd87c1c19aa04e02ebc48abe83f9f56dee0d37682a1b01e2f81a24bdd9a00a03cbe8bb9f2865";
+            let payload = decode_hex_payload_v1(raw_tx_hex, "raw_tx").expect("decode type3 raw tx");
+            let tx = eth_send_raw_payload_to_tx_ir_v1(payload.as_slice(), 1)
+                .expect("type3 signed raw tx should translate when enabled");
+            (tx, payload)
+        });
 
         assert_eq!(
             to_hex_prefixed(&tx.from),
@@ -484,6 +506,80 @@ mod eth_send_raw_tx_ingress_tests {
         assert_eq!(tx.gas_price, 20_000_000_000);
         assert_eq!(tx.tx_type, novovm_adapter_api::TxType::Transfer);
         assert_eq!(tx.signature, payload);
+    }
+
+    #[test]
+    fn eth_send_raw_payload_to_tx_ir_v1_maps_typed_call_and_deploy_smoke_fixtures() {
+        let cases = [
+            (
+                "type1_call",
+                "0x01f86b01808504a817c80083013880943535353535353535353535353535353535353535018460006000c080a06a21c73275f7fea52988440bef29a816af66c6f20ecd532f4764653289539fb0a06154a0576e1e1975159aa8cf49f2c68e0d69fdf827ae582846104d69d5b9b7ad",
+                novovm_adapter_api::TxType::ContractCall,
+                true,
+                80_000,
+                false,
+            ),
+            (
+                "type1_deploy",
+                "0x01f85701808504a817c800830186a080018460006000c080a069eecc9463de72d91a7f7bc0b40d86cd6772d3b1092a7d609148129706dbadc3a069ce8f53fb6f3bcce7a4ebbd6f0420ddf0f171cc0eea2daa0b792892feb0fa29",
+                novovm_adapter_api::TxType::ContractDeploy,
+                false,
+                100_000,
+                false,
+            ),
+            (
+                "type2_call",
+                "0x02f8700180843b9aca008504a817c80083013880943535353535353535353535353535353535353535018460006000c001a0dda041876b1a865d64ec1560e90973957ccfc4d85c9042a6e8237c196b38237ca017e6622ad9dab969abe48557088f949259b7557051d45778e700540cf3198e97",
+                novovm_adapter_api::TxType::ContractCall,
+                true,
+                80_000,
+                false,
+            ),
+            (
+                "type2_deploy",
+                "0x02f85c0180843b9aca008504a817c800830186a080018460006000c001a0aa75e795f5c2f779e8dde66d9fc3630ed85d3bab46f52cff0de77badc8fca478a076b5b5ea9eb3400c4fa436de7192e34b452757c189758b59eb2289b638b6deb7",
+                novovm_adapter_api::TxType::ContractDeploy,
+                false,
+                100_000,
+                false,
+            ),
+            (
+                "type3_call",
+                "0x03f8970180843b9aca008504a817c80083035b60943535353535353535353535353535353535353535018460006000c0843b9aca00e1a0010101010101010101010101010101010101010101010101010101010101010180a0204c86df9c6af6fc1d745be472692d34735eb546d4a1b41797bced37ad220577a05eab9b1a193a57fcac1a303ff34bc4e616627cd7d9609152d99e31c20dd373c3",
+                novovm_adapter_api::TxType::ContractCall,
+                true,
+                220_000,
+                true,
+            ),
+        ];
+
+        for (name, raw_tx_hex, expected_type, expect_to, expected_gas_limit, enable_type3) in cases
+        {
+            let payload = decode_hex_payload_v1(raw_tx_hex, name).expect("decode typed raw tx");
+            let tx_result = if enable_type3 {
+                with_type3_chain1_write_enabled_v1(|| {
+                    eth_send_raw_payload_to_tx_ir_v1(payload.as_slice(), 1)
+                })
+            } else {
+                eth_send_raw_payload_to_tx_ir_v1(payload.as_slice(), 1)
+            };
+            let tx =
+                tx_result.unwrap_or_else(|err| panic!("{name} should translate to tx ir: {err}"));
+
+            assert_eq!(
+                to_hex_prefixed(&tx.from),
+                "0x9d8a62f656a8d1615c1294fd71e9cfb3e4855a4f"
+            );
+            assert_eq!(tx.chain_id, 1, "{name}");
+            assert_eq!(tx.nonce, 0, "{name}");
+            assert_eq!(tx.gas_limit, expected_gas_limit, "{name}");
+            assert_eq!(tx.gas_price, 20_000_000_000, "{name}");
+            assert_eq!(tx.value, 1, "{name}");
+            assert_eq!(tx.data, vec![0x60, 0x00, 0x60, 0x00], "{name}");
+            assert_eq!(tx.to.is_some(), expect_to, "{name}");
+            assert_eq!(tx.tx_type, expected_type, "{name}");
+            assert_eq!(tx.signature, payload, "{name}");
+        }
     }
 
     #[test]
