@@ -567,10 +567,38 @@ pub fn evm_address20_from_bytes_m0(address: &[u8]) -> [u8; 20] {
 }
 
 #[must_use]
+pub fn evm_word32_from_bytes_m0(bytes: &[u8]) -> [u8; 32] {
+    let mut out = [0u8; 32];
+    if bytes.len() >= 32 {
+        out.copy_from_slice(&bytes[bytes.len() - 32..]);
+    } else {
+        out[32 - bytes.len()..].copy_from_slice(bytes);
+    }
+    out
+}
+
+#[must_use]
 pub fn derive_create_contract_address_m0(from: &[u8], nonce: u64) -> Vec<u8> {
     let from20 = evm_address20_from_bytes_m0(from);
     let encoded = rlp_encode_list(&[rlp_encode_bytes(&from20), rlp_encode_u128(nonce as u128)]);
     let digest = Keccak256::digest(encoded);
+    digest[12..32].to_vec()
+}
+
+#[must_use]
+pub fn derive_create2_contract_address_m0(
+    from: &[u8],
+    salt: &[u8],
+    init_code_hash: &[u8],
+) -> Vec<u8> {
+    let from20 = evm_address20_from_bytes_m0(from);
+    let salt32 = evm_word32_from_bytes_m0(salt);
+    let mut preimage = Vec::with_capacity(1 + 20 + 32 + init_code_hash.len());
+    preimage.push(0xff);
+    preimage.extend_from_slice(&from20);
+    preimage.extend_from_slice(&salt32);
+    preimage.extend_from_slice(init_code_hash);
+    let digest = Keccak256::digest(preimage);
     digest[12..32].to_vec()
 }
 
@@ -1887,6 +1915,64 @@ mod tests {
             derive_create_contract_address_m0(&from, 2),
             hex_bytes("c9ddedf451bc62ce88bf9292afb13df35b670699")
         );
+    }
+
+    #[test]
+    fn derive_create2_contract_address_matches_geth_vectors_m0() {
+        for (origin, salt, code, expected) in [
+            (
+                "0x0000000000000000000000000000000000000000",
+                "0x0000000000000000000000000000000000000000",
+                "0x00",
+                "0x4d1a2e2bb4f88f0250f26ffff098b0b30b26bf38",
+            ),
+            (
+                "0xdeadbeef00000000000000000000000000000000",
+                "0x0000000000000000000000000000000000000000",
+                "0x00",
+                "0xB928f69Bb1D91Cd65274e3c79d8986362984fDA3",
+            ),
+            (
+                "0xdeadbeef00000000000000000000000000000000",
+                "0xfeed000000000000000000000000000000000000",
+                "0x00",
+                "0xD04116cDd17beBE565EB2422F2497E06cC1C9833",
+            ),
+            (
+                "0x0000000000000000000000000000000000000000",
+                "0x0000000000000000000000000000000000000000",
+                "0xdeadbeef",
+                "0x70f2b2914A2a4b783FaEFb75f459A580616Fcb5e",
+            ),
+            (
+                "0x00000000000000000000000000000000deadbeef",
+                "0xcafebabe",
+                "0xdeadbeef",
+                "0x60f3f640a8508fC6a86d45DF051962668E1e8AC7",
+            ),
+            (
+                "0x00000000000000000000000000000000deadbeef",
+                "0xcafebabe",
+                "0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+                "0x1d8bfDC5D46DC4f61D6b6115972536eBE6A8854C",
+            ),
+            (
+                "0x0000000000000000000000000000000000000000",
+                "0x0000000000000000000000000000000000000000",
+                "0x",
+                "0xE33C0C7F7df4809055C3ebA6c09CFe4BaF1BD9e0",
+            ),
+        ] {
+            let code_hash = Keccak256::digest(hex_bytes(code));
+            assert_eq!(
+                derive_create2_contract_address_m0(
+                    &hex_bytes(origin),
+                    &hex_bytes(salt),
+                    code_hash.as_slice(),
+                ),
+                hex_bytes(expected)
+            );
+        }
     }
 
     #[test]
