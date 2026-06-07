@@ -26,11 +26,10 @@ use novovm_network::{
     eth_discv4_build_ping_packet_v1, eth_discv4_build_pong_packet_v1,
     eth_discv4_parse_neighbors_packet_v1, eth_discv4_parse_packet_v1,
     eth_discv4_parse_pong_ping_hash_v1, eth_rlpx_local_static_nodekey_bytes_v1,
-    eth_rlpx_local_static_pubkey_v1, evaluate_advisory_first,
-    get_network_runtime_native_body_snapshot_v1, get_network_runtime_native_header_snapshot_v1,
-    get_network_runtime_native_receipt_snapshot_v1, get_network_runtime_native_sync_status,
-    get_network_runtime_sync_status, ingest_runtime_relay_membership,
-    is_eth_fullnode_runtime_query_method,
+    evaluate_advisory_first, get_network_runtime_native_body_snapshot_v1,
+    get_network_runtime_native_header_snapshot_v1, get_network_runtime_native_receipt_snapshot_v1,
+    get_network_runtime_native_sync_status, get_network_runtime_sync_status,
+    ingest_runtime_relay_membership, is_eth_fullnode_runtime_query_method,
     observe_network_runtime_native_execution_budget_target_v1,
     observe_network_runtime_native_execution_budget_throttle_v1,
     observe_network_runtime_native_pending_tx_local_ingress_with_payload_v1, parse_enode_endpoint,
@@ -49,11 +48,11 @@ use novovm_network::{
     NetworkRuntimeNativeSyncPhaseV1, NetworkRuntimeSyncStatus, PluginPeerEndpoint, QueueStore,
     QueuedRequest, Reachability, RelayCapacityClass, RelayClient, RelayHealth, RelayMembership,
     RelayRef, RelayServer, ReplayResult, RouteSelector, RoutingSource, SelectedPath,
-    ETH_DISCV4_PACKET_HASH_LEN, ETH_DISCV4_PING_PACKET_TYPE, L3_BASELINE_FINGERPRINT,
-    L3_BASELINE_LOCK_VERSION, L3_BASELINE_PHASE, L3_POLICY_BASELINE_VERSION,
-    L3_READONLY_EXPORT_BASELINE_VERSION, L3_REGRESSION_LOCKSET, L3_RELAY_RUNTIME_FEEDBACK_SCALE,
-    L3_RELAY_SCORE_SCALE, L3_RELAY_SELECTED_STICKY_MARGIN, L3_RELAY_SOURCE_BONUS_CONFIGURED,
-    L3_RELAY_SOURCE_BONUS_POOL, L3_RELAY_SOURCE_BONUS_SNAPSHOT,
+    ETH_DISCV4_PACKET_HASH_LEN, ETH_DISCV4_PING_PACKET_TYPE, ETH_RLPX_PUB_LEN,
+    L3_BASELINE_FINGERPRINT, L3_BASELINE_LOCK_VERSION, L3_BASELINE_PHASE,
+    L3_POLICY_BASELINE_VERSION, L3_READONLY_EXPORT_BASELINE_VERSION, L3_REGRESSION_LOCKSET,
+    L3_RELAY_RUNTIME_FEEDBACK_SCALE, L3_RELAY_SCORE_SCALE, L3_RELAY_SELECTED_STICKY_MARGIN,
+    L3_RELAY_SOURCE_BONUS_CONFIGURED, L3_RELAY_SOURCE_BONUS_POOL, L3_RELAY_SOURCE_BONUS_SNAPSHOT,
 };
 use novovm_node::governance_surface::{
     default_mainline_governance_store_path, is_mainline_governance_query_method,
@@ -79,6 +78,7 @@ use novovm_node::unified_account_surface::{
     default_mainline_unified_account_store_path, is_mainline_unified_account_query_method,
 };
 use novovm_protocol::{encode_local_tx_wire_v1 as encode_tx_wire_v1, LocalTxWireV1, NodeId};
+use rand::RngCore;
 use sha2::{Digest, Sha256};
 use std::collections::{hash_map::DefaultHasher, HashMap, HashSet, VecDeque};
 use std::fs::{self, OpenOptions};
@@ -1800,6 +1800,12 @@ fn eth_discv4_reply_to_ping_packet_v1(
     socket.send_to(pong.as_slice(), from).is_ok()
 }
 
+fn eth_discv4_random_lookup_target_v1() -> [u8; ETH_RLPX_PUB_LEN] {
+    let mut target = [0u8; ETH_RLPX_PUB_LEN];
+    rand::thread_rng().fill_bytes(&mut target);
+    target
+}
+
 fn eth_discv4_discover_peer_endpoints_v1(
     chain_id: u64,
     limit: usize,
@@ -1819,15 +1825,6 @@ fn eth_discv4_discover_peer_endpoints_v1(
     .unwrap_or(ETH_RLPX_MAINNET_BOOTNODES_V1.len())
     .clamp(1, ETH_RLPX_MAINNET_BOOTNODES_V1.len());
     let nodekey = eth_rlpx_local_static_nodekey_bytes_v1();
-    let target = match eth_rlpx_local_static_pubkey_v1() {
-        Ok(target) => target,
-        Err(err) => {
-            if verbose {
-                println!("eth_discv4_discovery_skip: local_nodekey_error={err}");
-            }
-            return Vec::new();
-        }
-    };
     let expiration_unix_s = now_unix_ms().saturating_div(1000).saturating_add(600);
     let mut endpoints = Vec::<PluginPeerEndpoint>::new();
     let mut seen = HashSet::<String>::new();
@@ -1853,6 +1850,7 @@ fn eth_discv4_discover_peer_endpoints_v1(
         let Ok(remote_addr) = boot_endpoint.addr_hint.parse::<std::net::SocketAddr>() else {
             continue;
         };
+        let target = eth_discv4_random_lookup_target_v1();
         let Ok(socket) = std::net::UdpSocket::bind("0.0.0.0:0") else {
             continue;
         };
@@ -2934,6 +2932,13 @@ mod mainline_evm_cli_tests {
             node_id: [0x22; 64],
         };
         assert!(eth_discv4_neighbor_to_peer_endpoint_v1(&private_neighbor).is_none());
+    }
+
+    #[test]
+    fn eth_discv4_random_lookup_target_is_not_all_zero_v1() {
+        let target = eth_discv4_random_lookup_target_v1();
+        assert_eq!(target.len(), ETH_RLPX_PUB_LEN);
+        assert!(target.iter().any(|byte| *byte != 0));
     }
 
     #[test]
