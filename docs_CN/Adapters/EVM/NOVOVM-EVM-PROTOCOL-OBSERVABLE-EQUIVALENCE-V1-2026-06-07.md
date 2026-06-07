@@ -54,7 +54,7 @@ cargo test -p novovm-adapter-evm-plugin evm_protocol_observable_equivalence_plug
 
 本轮 v2 不再继续增加官方 fixture 子集，而是先修复可被外部 RPC 客户端直接观察到的区块根字段：
 
-- `eth_getBlockByNumber/eth_getBlockByHash` 的 `transactionsRoot` 不再返回 `null`，改为基于 canonical receipt projection 的 MPT 32-byte root。
+- `eth_getBlockByNumber/eth_getBlockByHash` 的 `transactionsRoot` 不再返回 `null`；canonical batch 带 raw tx RLP 时按 Ethereum raw transaction trie 计算，缺 raw RLP 时回落到 canonical receipt projection 的 MPT 32-byte root。
 - `eth_getBlockByNumber/eth_getBlockByHash` 的 `receiptsRoot` 不再返回 `null`，改为基于 receipt status、cumulative gas、logsBloom、logs 的 MPT 32-byte root。
 - geth parity report 新增 `observableProjection` section，锁住 `transactionsRoot`、`receiptsRoot`、`stateRoot`、`gasUsed`、`cumulativeGasUsed`、`logsBloom`。
 - 默认 11 个 geth parity 样本当前 `totalMismatchCount=0`，`observableProjection.mismatchCount=0`。
@@ -71,13 +71,13 @@ cargo test -p novovm-node evm_protocol_observable_equivalence_geth_rpc_blackbox_
 
 当前 v2 不能声明：
 
-`transactionsRoot/receiptsRoot 已等同真实 mainnet raw transaction trie root。`
+`transactionsRoot/receiptsRoot 已覆盖全量 mainnet block replay 和所有交易类型组合。`
 
 `stateRoot 已完成 geth/reth devnet 同输入 replay 对齐。`
 
 ## v2b 当前推进：真实 geth block fixture 差分
 
-本轮已接入一个真实 go-ethereum `ethapi/testdata` fullTx block fixture，新增 v2b 差分 gate：
+本轮已接入一个真实 go-ethereum `ethapi/testdata` fullTx block fixture，并把 raw tx RLP 接入 canonical block projection 路径，v2b 差分 gate：
 
 ```powershell
 cargo test -p novovm-node evm_protocol_observable_equivalence_geth_real_block_diff_gate_v2b -- --nocapture
@@ -86,14 +86,15 @@ cargo test -p novovm-node evm_protocol_observable_equivalence_geth_real_block_di
 该 gate 做两件事：
 
 - 从 geth fullTx block fixture 的 legacy tx 字段复算 raw transaction RLP trie root，并确认复算值等于 geth fixture 的 `transactionsRoot`。
+- 把同一 raw tx RLP 写入 SUPERVM canonical batch，使 `eth_getBlockByNumber/eth_getBlockByHash` 的 `transactionsRoot` 使用 Ethereum raw transaction trie root。
 - 用同一 block/receipt 形态构造 SUPERVM canonical projection，和 geth block 对比 `number`、`gasUsed`、`logsBloom`、`receiptsRoot`、`stateRoot`、`transactionsRoot`。
 
 当前结果：
 
-- 已匹配：`number`、`gasUsed`、`logsBloom`、`receiptsRoot`、`stateRoot`。
-- 已暴露 gap：`transactionsRoot`。原因是 SUPERVM 当前 canonical projection 还没有把 raw tx RLP 带入 block root 计算，仍使用 receipt/tx-hash projection root。
+- 已匹配：`number`、`gasUsed`、`logsBloom`、`transactionsRoot`、`receiptsRoot`、`stateRoot`。
+- 已知 gap：无。`knownGapCount=0`，`requiresRawTxRlpForFullTransactionsRootEquivalence=false`。
 
-这一步的意义是把 v2b 从口头目标变成可运行的真实 geth block 差分报告。下一步不是继续加 fixture，而是把 raw tx RLP 或 native header `transactionsRoot` 接入 canonical block projection 路径。
+这一步的意义是把 v2b 从口头目标变成可运行的真实 geth block 差分报告，并完成 raw tx RLP 驱动的 `transactionsRoot` 收口。下一步不应继续堆内部 smoke，而是进入 v3 网络可观察等价，或在 v3 暴露具体差异时补对应真实 block/tx 类型差分。
 
 ## 剩余阶段
 
@@ -101,7 +102,7 @@ cargo test -p novovm-node evm_protocol_observable_equivalence_geth_real_block_di
 | --- | --- | --- |
 | v1 | 插件产品面协议可观察等价 | 本文 3 个聚合 gate 全绿 |
 | v2a | RPC 黑盒投影根门禁 | `evm_protocol_observable_equivalence_geth_rpc_blackbox_projection_gate_v2` 全绿 |
-| v2b | 真 geth/reth 黑盒差分 | 已有真实 geth block diff gate；退出还需 raw tx RLP/native txRoot 接入后 `transactionsRoot` 也一致 |
+| v2b | 真 geth/reth 黑盒差分 | 真实 geth fullTx block diff gate 全绿；raw tx RLP 存在时 `transactionsRoot` 也一致 |
 | v3 | 网络可观察等价 | devp2p/eth handshake、tx/block broadcast、import/reorg 行为被其它节点接受 |
 | v4 | 长稳生产封口 | 多节点 devnet soak、重启恢复、恶意/边界输入、BAL/receipt/RPC 长稳无漂移 |
 
@@ -113,8 +114,8 @@ cargo test -p novovm-node evm_protocol_observable_equivalence_geth_real_block_di
 
 1. 先让 v1 三个聚合 gate 进入固定回归清单。
 2. 已完成 v2a：RPC block root projection 不再返回 `null`，并进入 geth parity batch report。
-3. 已推进 v2b：真实 geth fullTx block fixture 差分已接入，当前唯一明确 gap 是 `transactionsRoot` 缺 raw tx RLP。
-4. 下一步补 raw tx RLP/native header txRoot 进入 canonical block projection，让 `transactionsRoot` 从 gap 变成 match。
-5. 最后做 v3：真实 eth/66-eth/71 peer handshake 和 import/broadcast 可观察行为。
+3. 已完成 v2b：真实 geth fullTx block fixture 差分已接入，raw tx RLP 进入 canonical block projection，`transactionsRoot` 从 gap 变成 match。
+4. 下一步做 v3：真实 eth/66-eth/71 peer handshake 和 import/broadcast 可观察行为。
+5. 如果 v3 或真实 block replay 暴露具体交易类型/root 差异，再补对应最小真实 fixture，不回到开放式 smoke 堆叠。
 
 这会把“等价”从开放式 fixture 堆叠改成有限的协议验收。

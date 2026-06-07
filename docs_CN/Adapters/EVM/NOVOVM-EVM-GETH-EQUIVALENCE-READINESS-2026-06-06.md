@@ -1213,9 +1213,9 @@ cargo test -p novovm-adapter-novovm evm_adapter_balance_fee_access_storage_surfa
 1. 已接入官方 geth address fixture 子集、官方 EIP-1559 sender balance state fixture 子集、官方 SLOAD warm/cold state fixture 子集、官方 SSTORE refund cap grouped state fixture 子集、官方 failure/account grouped state fixture 子集、官方 CREATE/CREATE2/account grouped state fixture 子集、官方 STATICCALL/precompile/return-data grouped state fixture 子集、官方 precompile failure/OOG grouped state fixture 子集、官方 CALL output grouped state fixture 子集、官方 CALL high-value/OOG grouped state fixture 子集、官方 CALL depth/OOG grouped state fixture 子集、官方 DELEGATECALL/CALLCODE account-context grouped state fixture 子集、官方 zero-value calls revert no-commit grouped state fixture 子集、官方 SELFDESTRUCT zero-value account-preservation grouped state fixture 子集、官方 STATICCALL state-change/SUICIDE no-commit grouped state fixture 子集、官方 STATICCALL OOG no-commit grouped state fixture 子集、官方 LOG/receipt grouped state fixture 子集、官方 RETURNDATA grouped state fixture 子集和官方 LOG4/OOG receipt grouped state fixture 子集。
 2. 不再把继续堆官方 fixture 子集作为默认下一步。只有 v2/v3 黑盒差分暴露具体语义缺口时，才按缺口补对应官方子集。
 3. 已完成 v2a：`eth_getBlockByNumber/eth_getBlockByHash` 的 `transactionsRoot/receiptsRoot` 不再返回 `null`，geth parity report 新增 `observableProjection`，默认 11 个样本 `mismatchCount=0`。
-4. 已推进 v2b：真实 geth fullTx block fixture 差分已接入，当前 `number/gasUsed/logsBloom/receiptsRoot/stateRoot` match，唯一明确 gap 是 `transactionsRoot` 缺 raw tx RLP/native txRoot。
-5. 下一步优先补 raw tx RLP 或 native header `transactionsRoot` 进入 canonical block projection 路径。
-6. 再推进 v3：真实 eth/66-eth/71 peer handshake、tx/block broadcast、import/reorg 可观察行为；仍不把 SUPERVM 产品口径改成完整 geth 全节点。
+4. 已完成 v2b：真实 geth fullTx block fixture 差分已接入，raw tx RLP 进入 canonical block projection，当前 `number/gasUsed/logsBloom/transactionsRoot/receiptsRoot/stateRoot` 全部 match，`knownGapCount=0`。
+5. 下一步推进 v3：真实 eth/66-eth/71 peer handshake、tx/block broadcast、import/reorg 可观察行为；仍不把 SUPERVM 产品口径改成完整 geth 全节点。
+6. 如果 v3 或真实 block replay 暴露具体交易类型/root 差异，再补对应最小真实 fixture，不回到开放式 smoke 堆叠。
 
 ## 回归命令
 

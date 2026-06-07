@@ -35,6 +35,8 @@ pub struct MainlineCanonicalBatchRecordV1 {
     pub state_version: u64,
     pub ingress_bypassed: bool,
     pub atomic_guard_enabled: bool,
+    #[serde(default)]
+    pub raw_tx_rlps: Vec<Vec<u8>>,
     pub receipts: Vec<SupervmEvmExecutionReceiptV1>,
     pub state_mirror_updates: Vec<SupervmEvmStateMirrorUpdateV1>,
 }
@@ -309,6 +311,7 @@ mod tests {
                 state_version: 9,
                 ingress_bypassed: true,
                 atomic_guard_enabled: false,
+                raw_tx_rlps: Vec::new(),
                 receipts: Vec::new(),
                 state_mirror_updates: Vec::new(),
             },
@@ -402,6 +405,7 @@ mod tests {
                     state_version: 7,
                     ingress_bypassed: true,
                     atomic_guard_enabled: false,
+                    raw_tx_rlps: Vec::new(),
                     receipts: vec![SupervmEvmExecutionReceiptV1 {
                         chain_type: ChainType::EVM,
                         chain_id: 1,
@@ -440,6 +444,7 @@ mod tests {
                     state_version: 8,
                     ingress_bypassed: true,
                     atomic_guard_enabled: false,
+                    raw_tx_rlps: Vec::new(),
                     receipts: vec![SupervmEvmExecutionReceiptV1 {
                         chain_type: ChainType::EVM,
                         chain_id: 1,
@@ -504,6 +509,7 @@ mod tests {
                     state_version: 7,
                     ingress_bypassed: true,
                     atomic_guard_enabled: false,
+                    raw_tx_rlps: Vec::new(),
                     receipts: vec![SupervmEvmExecutionReceiptV1 {
                         chain_type: ChainType::EVM,
                         chain_id: 1,
@@ -542,6 +548,7 @@ mod tests {
                     state_version: 8,
                     ingress_bypassed: true,
                     atomic_guard_enabled: false,
+                    raw_tx_rlps: Vec::new(),
                     receipts: vec![SupervmEvmExecutionReceiptV1 {
                         chain_type: ChainType::EVM,
                         chain_id: 1,
@@ -610,6 +617,7 @@ mod tests {
                 state_version: 9,
                 ingress_bypassed: true,
                 atomic_guard_enabled: false,
+                raw_tx_rlps: Vec::new(),
                 receipts: vec![SupervmEvmExecutionReceiptV1 {
                     chain_type: ChainType::EVM,
                     chain_id: 1,

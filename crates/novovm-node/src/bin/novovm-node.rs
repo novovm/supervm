@@ -13,7 +13,9 @@ use novovm_adapter_evm_plugin::{
     drain_block_metadata_for_host, drain_execution_receipts_for_host,
     drain_state_mirror_updates_for_host, submit_internal_batch_to_mainline_v1,
 };
-use novovm_exec::{AoemRuntimeConfig, AoemSubmitReport, OpsWireOp, OpsWireV1Builder};
+use novovm_exec::{
+    AoemRuntimeConfig, AoemSubmitReport, OpsWireOp, OpsWireV1Builder, SupervmEvmExecutionReceiptV1,
+};
 use novovm_network::transport::snapshot_local_observed_peers;
 use novovm_network::{
     assess_read_only_impact, build_reconcile_report_with_replay, capability_state_token,
@@ -162,6 +164,30 @@ fn eth_send_raw_payloads_to_tx_irs_v1(
         );
     }
     Ok(tx_irs)
+}
+
+fn raw_tx_rlps_for_included_receipts_v1(
+    tx_irs: &[TxIR],
+    raw_tx_rlps: &[Vec<u8>],
+    receipts: &[SupervmEvmExecutionReceiptV1],
+) -> Vec<Vec<u8>> {
+    if raw_tx_rlps.len() != tx_irs.len() || receipts.is_empty() {
+        return Vec::new();
+    }
+    let mut raw_by_hash = HashMap::<Vec<u8>, Vec<u8>>::with_capacity(tx_irs.len());
+    for (tx_ir, raw_tx_rlp) in tx_irs.iter().zip(raw_tx_rlps.iter()) {
+        if !raw_tx_rlp.is_empty() {
+            raw_by_hash.insert(tx_ir.hash.clone(), raw_tx_rlp.clone());
+        }
+    }
+    let mut out = Vec::with_capacity(receipts.len());
+    for receipt in receipts {
+        let Some(raw_tx_rlp) = raw_by_hash.get(&receipt.tx_hash) else {
+            return Vec::new();
+        };
+        out.push(raw_tx_rlp.clone());
+    }
+    out
 }
 
 fn resolve_eth_send_raw_chain_id_v1(mainline_evm_chain_id: Option<u64>) -> u64 {
@@ -24409,6 +24435,7 @@ struct PreparedBatch {
     source_detail: String,
     tx_records: Option<Vec<TxIngressRecord>>,
     host_tx_irs: Option<Vec<TxIR>>,
+    raw_tx_rlps: Vec<Vec<u8>>,
 }
 
 fn main() -> Result<()> {
@@ -24626,6 +24653,7 @@ fn main() -> Result<()> {
             source_detail: format!("NOVOVM_ETH_SEND_RAW_TX#payloads={tx_count}"),
             tx_records: None,
             host_tx_irs: Some(tx_irs),
+            raw_tx_rlps: eth_send_raw_payloads.clone(),
         });
         if verbose {
             println!(
@@ -24650,6 +24678,7 @@ fn main() -> Result<()> {
                 source_detail: path.display().to_string(),
                 tx_records: None,
                 host_tx_irs: None,
+                raw_tx_rlps: Vec::new(),
             });
             "ops_wire_v1".to_string()
         } else if let Some(dir) = ops_wire_dir.as_ref() {
@@ -24665,6 +24694,7 @@ fn main() -> Result<()> {
                     source_detail: path.display().to_string(),
                     tx_records: None,
                     host_tx_irs: None,
+                    raw_tx_rlps: Vec::new(),
                 });
             }
             "ops_wire_dir".to_string()
@@ -24690,6 +24720,7 @@ fn main() -> Result<()> {
                 source_detail: path.display().to_string(),
                 tx_records: Some(tx_records),
                 host_tx_irs: None,
+                raw_tx_rlps: Vec::new(),
             });
             "tx_wire".to_string()
         };
@@ -24727,6 +24758,7 @@ fn main() -> Result<()> {
             source_detail: ingress_path.display().to_string(),
             tx_records: Some(tx_records),
             host_tx_irs: None,
+            raw_tx_rlps: Vec::new(),
         });
         let path_mode = if ingress_mode == D1IngressMode::Auto && !supports_wire_v1 {
             "ops_v2_fallback".to_string()
@@ -26656,6 +26688,7 @@ fn main() -> Result<()> {
     struct HostExecDeferredBatchV1 {
         source_detail: String,
         tx_irs: Vec<TxIR>,
+        raw_tx_rlps: Vec<Vec<u8>>,
     }
 
     let mut host_exec_deferred_batches = VecDeque::<HostExecDeferredBatchV1>::new();
@@ -26773,10 +26806,19 @@ fn main() -> Result<()> {
             }
 
             if (work.tx_irs.len() as u64) > remaining_budget {
-                let remainder = work.tx_irs.split_off(remaining_budget as usize);
+                let split_at = remaining_budget as usize;
+                let split_raw_tx_rlps = work.raw_tx_rlps.len() == work.tx_irs.len();
+                let remainder = work.tx_irs.split_off(split_at);
+                let remainder_raw_tx_rlps = if split_raw_tx_rlps {
+                    work.raw_tx_rlps.split_off(split_at)
+                } else {
+                    work.raw_tx_rlps.clear();
+                    Vec::new()
+                };
                 work_queue.push_front(HostExecDeferredBatchV1 {
                     source_detail: work.source_detail.clone(),
                     tx_irs: remainder,
+                    raw_tx_rlps: remainder_raw_tx_rlps,
                 });
             }
 
@@ -26823,6 +26865,10 @@ fn main() -> Result<()> {
                     .sum::<u64>(),
             );
             tick_processed = tick_processed.saturating_add(work.tx_irs.len() as u64);
+            let tx_count = work.tx_irs.len();
+            let raw_tx_rlps =
+                raw_tx_rlps_for_included_receipts_v1(&work.tx_irs, &work.raw_tx_rlps, &receipts);
+            let source_detail = work.source_detail;
 
             let store_path = canonical_store_path
                 .as_ref()
@@ -26833,8 +26879,8 @@ fn main() -> Result<()> {
                 chain_id,
                 MainlineCanonicalBatchRecordV1 {
                     seq: *canonical_batch_total_ref,
-                    source_detail: work.source_detail,
-                    tx_count: work.tx_irs.len(),
+                    source_detail,
+                    tx_count,
                     tap_requested: report.tap_summary.requested as u64,
                     tap_accepted: report.tap_summary.accepted,
                     tap_dropped: report.tap_summary.dropped,
@@ -26856,6 +26902,7 @@ fn main() -> Result<()> {
                     state_version: report.state_version,
                     ingress_bypassed: report.ingress_bypassed,
                     atomic_guard_enabled: report.atomic_guard_enabled,
+                    raw_tx_rlps,
                     receipts,
                     state_mirror_updates,
                 },
@@ -26975,6 +27022,11 @@ fn main() -> Result<()> {
                     observe_local_tx_records_pending_ingress_v1(chain_id, tx_records, &tx_irs);
                     tx_irs
                 };
+                let raw_tx_rlps = if prepared.raw_tx_rlps.len() == tx_irs.len() {
+                    prepared.raw_tx_rlps.clone()
+                } else {
+                    Vec::new()
+                };
                 let mut work_queue = std::mem::take(&mut host_exec_deferred_batches);
                 work_queue.push_back(HostExecDeferredBatchV1 {
                     source_detail: format!(
@@ -26986,6 +27038,7 @@ fn main() -> Result<()> {
                         repeat_count
                     ),
                     tx_irs,
+                    raw_tx_rlps,
                 });
                 let deferred_tx_total = work_queue
                     .iter()

@@ -1051,6 +1051,29 @@ fn projected_transactions_root_v1(receipts: &[SupervmEvmExecutionReceiptV1]) -> 
     eth_mpt_root_from_kv_pairs_v1(&kv_pairs)
 }
 
+fn raw_transactions_root_v1(
+    receipts: &[SupervmEvmExecutionReceiptV1],
+    raw_tx_rlps: &[Vec<u8>],
+) -> Option<[u8; 32]> {
+    if raw_tx_rlps.len() != receipts.len() || raw_tx_rlps.iter().any(|raw| raw.is_empty()) {
+        return None;
+    }
+    let kv_pairs = receipts
+        .iter()
+        .zip(raw_tx_rlps.iter())
+        .map(|(receipt, raw)| (eth_rlp_encode_u64_v1(receipt.tx_index as u64), raw.clone()))
+        .collect::<Vec<_>>();
+    Some(eth_mpt_root_from_kv_pairs_v1(&kv_pairs))
+}
+
+fn canonical_transactions_root_v1(
+    receipts: &[SupervmEvmExecutionReceiptV1],
+    raw_tx_rlps: &[Vec<u8>],
+) -> [u8; 32] {
+    raw_transactions_root_v1(receipts, raw_tx_rlps)
+        .unwrap_or_else(|| projected_transactions_root_v1(receipts))
+}
+
 fn projected_receipts_root_v1(receipts: &[SupervmEvmExecutionReceiptV1]) -> [u8; 32] {
     let kv_pairs = receipts
         .iter()
@@ -1501,6 +1524,7 @@ fn cleanup_pressure_status_v1(
 fn block_context_to_eth_json(
     block_context: &EthFullnodeBlockContextV1,
     receipts: &[SupervmEvmExecutionReceiptV1],
+    raw_tx_rlps: &[Vec<u8>],
     full_transactions: bool,
     native_lifecycle: &NativeBlockLifecycleResolutionV1,
 ) -> Value {
@@ -1511,7 +1535,7 @@ fn block_context_to_eth_json(
         .unwrap_or(gas_used);
     let transactions = block_transactions_json(block_context, receipts, full_transactions);
     let logs_bloom = combine_receipt_log_bloom(receipts);
-    let transactions_root = projected_transactions_root_v1(receipts);
+    let transactions_root = canonical_transactions_root_v1(receipts, raw_tx_rlps);
     let receipts_root = projected_receipts_root_v1(receipts);
     let mut out = json!({
         "number": format!("0x{:x}", block_context.block_number),
@@ -3785,6 +3809,7 @@ pub fn run_mainline_query(
                 let block = block_context_to_eth_json(
                     block_context,
                     &batch.receipts,
+                    &batch.raw_tx_rlps,
                     full_transactions,
                     &native_lifecycle,
                 );
@@ -3827,6 +3852,7 @@ pub fn run_mainline_query(
                 let block = block_context_to_eth_json(
                     block_context,
                     &batch.receipts,
+                    &batch.raw_tx_rlps,
                     full_transactions,
                     &native_lifecycle,
                 );
@@ -4142,6 +4168,7 @@ mod tests {
                 state_version: 9,
                 ingress_bypassed: true,
                 atomic_guard_enabled: false,
+                raw_tx_rlps: Vec::new(),
                 receipts: vec![SupervmEvmExecutionReceiptV1 {
                     chain_type: ChainType::EVM,
                     chain_id: 1,
@@ -4237,6 +4264,7 @@ mod tests {
                 state_version: 10,
                 ingress_bypassed: true,
                 atomic_guard_enabled: false,
+                raw_tx_rlps: Vec::new(),
                 receipts: vec![
                     SupervmEvmExecutionReceiptV1 {
                         chain_type: ChainType::EVM,
@@ -4318,6 +4346,7 @@ mod tests {
                 state_version: 12,
                 ingress_bypassed: true,
                 atomic_guard_enabled: false,
+                raw_tx_rlps: Vec::new(),
                 receipts: vec![
                     SupervmEvmExecutionReceiptV1 {
                         chain_type: ChainType::EVM,
@@ -4666,6 +4695,7 @@ mod tests {
                 state_version,
                 ingress_bypassed: true,
                 atomic_guard_enabled: false,
+                raw_tx_rlps: Vec::new(),
                 receipts,
                 state_mirror_updates: Vec::new(),
             }],
@@ -4783,6 +4813,7 @@ mod tests {
                 state_version,
                 ingress_bypassed: true,
                 atomic_guard_enabled: false,
+                raw_tx_rlps: Vec::new(),
                 receipts: vec![receipt],
                 state_mirror_updates: Vec::new(),
             }],
@@ -5677,6 +5708,7 @@ mod tests {
                 state_version: 1,
                 ingress_bypassed: true,
                 atomic_guard_enabled: false,
+                raw_tx_rlps: Vec::new(),
                 receipts: out_receipts,
                 state_mirror_updates: Vec::new(),
             }],
@@ -5811,8 +5843,9 @@ mod tests {
         let block_out = run_mainline_query(store, "eth_getBlockByNumber", &json!(["latest", true]))
             .expect("block by number");
         let block = &block_out["block"];
-        let expected_transactions_root = to_hex_prefixed(&projected_transactions_root_v1(
+        let expected_transactions_root = to_hex_prefixed(&canonical_transactions_root_v1(
             store.batches[0].receipts.as_slice(),
+            store.batches[0].raw_tx_rlps.as_slice(),
         ));
         let expected_receipts_root = to_hex_prefixed(&projected_receipts_root_v1(
             store.batches[0].receipts.as_slice(),
@@ -6915,6 +6948,7 @@ mod tests {
         let out = block_context_to_eth_json(
             &block_context,
             &[],
+            &[],
             false,
             &NativeBlockLifecycleResolutionV1::untracked(),
         );
@@ -7514,8 +7548,9 @@ mod tests {
                 "{field} must parse as h256: {value}"
             );
         }
-        let expected_transactions_root = to_hex_prefixed(&projected_transactions_root_v1(
+        let expected_transactions_root = to_hex_prefixed(&canonical_transactions_root_v1(
             store.batches[0].receipts.as_slice(),
+            store.batches[0].raw_tx_rlps.as_slice(),
         ));
         let expected_receipts_root = to_hex_prefixed(&projected_receipts_root_v1(
             store.batches[0].receipts.as_slice(),
@@ -7641,6 +7676,7 @@ mod tests {
             read_geth_replay_diff_fixture_v1("eth_getTransactionReceipt-normal-transfer-tx.json");
 
         let recomputed_geth_tx_root = geth_fulltx_block_transactions_root_v1(&geth_block);
+        let geth_raw_tx_rlp = geth_full_legacy_tx_rlp_v1(&geth_block["transactions"][0]);
         assert_eq!(
             Some(recomputed_geth_tx_root.as_str()),
             geth_block["transactionsRoot"].as_str(),
@@ -7670,6 +7706,7 @@ mod tests {
         store.batches[0].seq = block_number;
         store.batches[0].source_detail = "geth-replay-diff-fulltx-v2b".to_string();
         store.batches[0].apply_state_root = geth_state_root;
+        store.batches[0].raw_tx_rlps = vec![geth_raw_tx_rlp];
         store.batches[0].receipts[0].tx_hash = geth_tx_hash;
 
         clear_eth_fullnode_native_worker_runtime_snapshot_for_chain_v1(store.chain_id);
@@ -7689,6 +7726,7 @@ mod tests {
             ("number", geth_block["number"].clone()),
             ("gasUsed", geth_block["gasUsed"].clone()),
             ("logsBloom", geth_logs_bloom.clone()),
+            ("transactionsRoot", geth_block["transactionsRoot"].clone()),
             ("receiptsRoot", geth_block["receiptsRoot"].clone()),
             ("stateRoot", geth_block["stateRoot"].clone()),
         ];
@@ -7705,16 +7743,6 @@ mod tests {
             }
         }
         let tx_root_matches = geth_block["transactionsRoot"] == supervm_block["transactionsRoot"];
-        if !tx_root_matches {
-            known_gaps.push(json!({
-                "scope": "geth_real_block_diff",
-                "field": "transactionsRoot",
-                "expected": geth_block["transactionsRoot"],
-                "actual": supervm_block["transactionsRoot"],
-                "reason": "supervm canonical projection does not yet carry raw tx rlp into block root calculation"
-            }));
-        }
-
         let report = json!({
             "schema": "supervm-e2e-geth-real-block-diff-report/v2b",
             "sample": "eth_getBlockByHash-hash-latest-1-fullTx",
@@ -7754,13 +7782,13 @@ mod tests {
 
         assert_eq!(
             report["result"]["knownGapCount"].as_u64(),
-            Some(1),
-            "v2b should expose exactly the current raw-tx-root gap: {}",
+            Some(0),
+            "v2b should match geth real block observable roots when raw tx rlp is present: {}",
             serde_json::to_string_pretty(&report).expect("render v2b mismatch")
         );
         assert_eq!(
             report["result"]["requiresRawTxRlpForFullTransactionsRootEquivalence"].as_bool(),
-            Some(true)
+            Some(false)
         );
     }
 

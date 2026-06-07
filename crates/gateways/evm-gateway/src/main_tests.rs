@@ -734,6 +734,7 @@ fn supervm_get_eth_canonical_block_access_list_by_hash_reads_mainline_store() {
             state_version: 1,
             ingress_bypassed: true,
             atomic_guard_enabled: false,
+            raw_tx_rlps: Vec::new(),
             receipts: Vec::new(),
             state_mirror_updates: Vec::new(),
         }],
