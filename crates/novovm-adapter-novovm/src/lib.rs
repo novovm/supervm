@@ -2778,6 +2778,13 @@ mod tests {
         .expect("decode official STATICCALL state-change/no-commit state fixture")
     }
 
+    fn official_staticcall_oog_no_commit_state_fixture_v1() -> serde_json::Value {
+        serde_json::from_str(include_str!(
+            "../tests/fixtures/ethereum-official-state-subset/staticcall-oog-no-commit.json"
+        ))
+        .expect("decode official STATICCALL OOG no-commit state fixture")
+    }
+
     fn official_create_account_state_fixture_v1() -> serde_json::Value {
         serde_json::from_str(include_str!(
             "../tests/fixtures/ethereum-official-state-subset/create-account.json"
@@ -6293,6 +6300,414 @@ mod tests {
             gas_by_label.get("staticZeroValueSuicideOogRevert"),
             Some(&1_000_000)
         );
+    }
+
+    #[test]
+    fn official_state_fixture_staticcall_oog_no_commit_grouped_projection_v1() {
+        let fixture = official_staticcall_oog_no_commit_state_fixture_v1();
+        assert_eq!(fixture["source"]["repo"].as_str(), Some("ethereum/tests"));
+        assert_eq!(
+            fixture["source"]["fixtureFormat"].as_str(),
+            Some("state_test")
+        );
+        assert_eq!(fixture["source"]["fork"].as_str(), Some("Cancun"));
+
+        let empty_logs_hash = json_str(&fixture["emptyLogsHash"], "emptyLogsHash");
+        let cases = fixture["cases"]
+            .as_array()
+            .expect("STATICCALL OOG no-commit cases");
+        assert_eq!(cases.len(), 10);
+
+        let mut fixture_keys = std::collections::HashSet::new();
+        let mut fixture_hashes = std::collections::HashSet::new();
+        let mut txbytes_seen = std::collections::HashSet::new();
+        let mut create_oog_cases = 0usize;
+        let mut nested_call_oog_cases = 0usize;
+        let mut touched_account_count = 0usize;
+        let mut code_preservation_facts = 0usize;
+        let mut gas_by_label = std::collections::HashMap::new();
+
+        for case in cases {
+            let label = json_str(&case["label"], "case.label");
+            let mode = json_str(&case["mode"], "case.mode");
+            assert_eq!(json_str(&case["kind"], "case.kind"), "static-oog-no-commit");
+            assert_eq!(case["statusOk"].as_bool(), Some(false));
+            assert_eq!(case["failureClass"].as_str(), Some("out_of_gas"));
+            assert!(
+                json_str(&case["fixtureKey"], "case.fixtureKey")
+                    .contains("GeneralStateTests/stStaticCall/static_"),
+                "official STATICCALL OOG no-commit case must come from stStaticCall"
+            );
+            assert!(
+                json_str(&case["fixtureKey"], "case.fixtureKey").contains("-fork_[Cancun-Prague]"),
+                "official STATICCALL OOG no-commit case must be the Cancun/Prague projection"
+            );
+            assert!(
+                fixture_keys.insert(json_str(&case["fixtureKey"], "case.fixtureKey")),
+                "official STATICCALL OOG no-commit fixture key must be unique"
+            );
+            fixture_hashes.insert(json_str(&case["fixtureHash"], "case.fixtureHash"));
+            assert!(
+                json_str(&case["generatedTestHash"], "case.generatedTestHash").starts_with("0x")
+            );
+            assert!(json_str(&case["sourceHash"], "case.sourceHash").starts_with("0x"));
+            assert!(json_str(&case["postHash"], "case.postHash").starts_with("0x"));
+            assert_eq!(
+                json_str(&case["logsHash"], "case.logsHash"),
+                empty_logs_hash
+            );
+
+            let sender = json_str(&case["sender"], "case.sender");
+            let to = json_str(&case["to"], "case.to");
+            let pre_sender_balance =
+                json_hex_u128(&case["preSenderBalance"], "case.preSenderBalance");
+            let pre_sender_nonce =
+                json_hex_u128(&case["preSenderNonce"], "case.preSenderNonce") as u64;
+            let post_sender_balance =
+                json_hex_u128(&case["postSenderBalance"], "case.postSenderBalance");
+            let post_sender_nonce =
+                json_hex_u128(&case["postSenderNonce"], "case.postSenderNonce") as u64;
+            let pre_to_balance = json_hex_u128(&case["preToBalance"], "case.preToBalance");
+            let pre_to_nonce = json_hex_u128(&case["preToNonce"], "case.preToNonce") as u64;
+            let post_to_balance = json_hex_u128(&case["postToBalance"], "case.postToBalance");
+            let post_to_nonce = json_hex_u128(&case["postToNonce"], "case.postToNonce") as u64;
+            let pre_to_code_bytes = case["preTargetCodeBytes"]
+                .as_u64()
+                .expect("case.preTargetCodeBytes");
+            let post_to_code_bytes = case["postTargetCodeBytes"]
+                .as_u64()
+                .expect("case.postTargetCodeBytes");
+            let gas_price = json_hex_u128(&case["gasPrice"], "case.gasPrice");
+            let gas_limit = json_hex_u128(&case["gasLimit"], "case.gasLimit");
+            let value = json_hex_u128(&case["value"], "case.value");
+            let nonce = json_hex_u128(&case["nonce"], "case.nonce") as u64;
+
+            assert_eq!(nonce, pre_sender_nonce);
+            assert_eq!(post_sender_nonce, pre_sender_nonce + 1);
+            assert_eq!(value, 0);
+            assert_eq!(post_to_balance, pre_to_balance);
+            assert_eq!(post_to_nonce, pre_to_nonce);
+            assert_eq!(post_to_code_bytes, pre_to_code_bytes);
+            assert_eq!(
+                json_str(&case["postTargetCodeSha256"], "case.postTargetCodeSha256"),
+                json_str(&case["preTargetCodeSha256"], "case.preTargetCodeSha256")
+            );
+            assert_eq!(
+                case["preTargetStorageFacts"], case["postTargetStorageFacts"],
+                "official STATICCALL OOG target storage must be preserved"
+            );
+            code_preservation_facts += 1;
+
+            let raw_tx = decode_hex_bytes(json_str(&case["txbytes"], "case.txbytes"));
+            txbytes_seen.insert(json_str(&case["txbytes"], "case.txbytes"));
+            let recovered_sender = recover_raw_evm_tx_sender_m0(&raw_tx)
+                .expect("official STATICCALL OOG raw sender recovery")
+                .expect("official STATICCALL OOG recovered sender");
+            assert_eq!(recovered_sender, decode_hex_bytes(sender));
+            let fields =
+                translate_raw_evm_tx_fields_m0(&raw_tx).expect("official STATICCALL OOG tx decode");
+            let tx = tx_ir_from_raw_fields_m0(&fields, &raw_tx, recovered_sender, 1);
+
+            let data = decode_hex_bytes(json_str(&case["data"], "case.data"));
+            if data.is_empty() {
+                assert_eq!(
+                    tx.tx_type,
+                    TxType::Transfer,
+                    "raw empty-calldata STATICCALL OOG fixture tx is state-agnostic before execution"
+                );
+            } else {
+                assert_eq!(
+                    tx.tx_type,
+                    TxType::ContractCall,
+                    "raw calldata STATICCALL OOG fixture tx is contract-call-shaped before state promotion"
+                );
+            }
+            assert_eq!(tx.from, decode_hex_bytes(sender));
+            assert_eq!(tx.to, Some(decode_hex_bytes(to)));
+            assert_eq!(tx.value, value);
+            assert_eq!(tx.gas_limit, gas_limit as u64);
+            assert_eq!(tx.gas_price, gas_price as u64);
+            assert_eq!(tx.nonce, nonce);
+            assert_eq!(tx.data, data);
+            assert_eq!(
+                tx.data.len(),
+                case["dataLen"].as_u64().expect("case.dataLen") as usize
+            );
+            assert_eq!(
+                Sha256::digest(&tx.data).to_vec(),
+                decode_hex_bytes(json_str(&case["dataSha256"], "case.dataSha256"))
+            );
+
+            let mut adapter = NovoVmAdapter::new(ChainConfig {
+                chain_type: ChainType::EVM,
+                chain_id: 1,
+                name: format!("official-staticcall-oog-no-commit-{label}"),
+                enabled: true,
+                custom_config: None,
+            });
+            adapter.initialize().expect("init");
+            assert!(
+                adapter
+                    .verify_transaction(&tx)
+                    .expect("verify official STATICCALL OOG raw tx"),
+                "official STATICCALL OOG txbytes must verify through raw EVM path"
+            );
+
+            let charged_fee = pre_sender_balance.saturating_sub(post_sender_balance);
+            assert_eq!(charged_fee % gas_price, 0);
+            let gas_used = charged_fee / gas_price;
+            let expected_gas_used = case["gasUsed"].as_u64().expect("case.gasUsed");
+            assert_eq!(gas_used, expected_gas_used as u128);
+            assert_eq!(
+                expected_gas_used, tx.gas_limit,
+                "official STATICCALL OOG no-commit cases must consume full gas limit"
+            );
+
+            let target_code_hash = if pre_to_code_bytes == 0 {
+                None
+            } else {
+                Some(decode_hex_bytes(json_str(
+                    &case["preTargetCodeSha256"],
+                    "case.preTargetCodeSha256",
+                )))
+            };
+            let mut runtime_state = StateIR::new();
+            runtime_state.set_account(
+                tx.from.clone(),
+                AccountState {
+                    balance: pre_sender_balance,
+                    nonce: pre_sender_nonce,
+                    code_hash: None,
+                    storage_root: vec![0u8; 32],
+                },
+            );
+            runtime_state.set_account(
+                tx.to.clone().expect("call target"),
+                AccountState {
+                    balance: pre_to_balance,
+                    nonce: pre_to_nonce,
+                    code_hash: target_code_hash.clone(),
+                    storage_root: vec![0u8; 32],
+                },
+            );
+            for (slot, value) in case["preTargetStorageFacts"]
+                .as_object()
+                .expect("case.preTargetStorageFacts")
+            {
+                runtime_state.set_storage(
+                    tx.to.clone().expect("call target"),
+                    decode_hex_bytes(slot),
+                    decode_hex_bytes(json_str(value, "preTargetStorageFacts.value")),
+                );
+            }
+
+            let mut touched_accounts = Vec::new();
+            for account in case["touchedAccounts"]
+                .as_array()
+                .expect("case.touchedAccounts")
+            {
+                touched_account_count += 1;
+                let address = decode_hex_bytes(json_str(&account["address"], "account.address"));
+                let pre_balance = json_hex_u128(&account["preBalance"], "account.preBalance");
+                let pre_nonce = json_hex_u128(&account["preNonce"], "account.preNonce") as u64;
+                let pre_code_bytes = account["preCodeBytes"]
+                    .as_u64()
+                    .expect("account.preCodeBytes");
+                let post_code_bytes = account["postCodeBytes"]
+                    .as_u64()
+                    .expect("account.postCodeBytes");
+                assert_eq!(post_code_bytes, pre_code_bytes);
+                assert_eq!(
+                    json_str(&account["postCodeSha256"], "account.postCodeSha256"),
+                    json_str(&account["preCodeSha256"], "account.preCodeSha256")
+                );
+                assert_eq!(
+                    account["preStorageFacts"], account["postStorageFacts"],
+                    "official STATICCALL OOG touched storage must be preserved"
+                );
+                code_preservation_facts += 1;
+                let code_hash = if pre_code_bytes == 0 {
+                    None
+                } else {
+                    Some(decode_hex_bytes(json_str(
+                        &account["preCodeSha256"],
+                        "account.preCodeSha256",
+                    )))
+                };
+                runtime_state.set_account(
+                    address.clone(),
+                    AccountState {
+                        balance: pre_balance,
+                        nonce: pre_nonce,
+                        code_hash: code_hash.clone(),
+                        storage_root: vec![0u8; 32],
+                    },
+                );
+                for (slot, value) in account["preStorageFacts"]
+                    .as_object()
+                    .expect("account.preStorageFacts")
+                {
+                    runtime_state.set_storage(
+                        address.clone(),
+                        decode_hex_bytes(slot),
+                        decode_hex_bytes(json_str(value, "preStorageFacts.value")),
+                    );
+                }
+                touched_accounts.push((address, code_hash, account));
+            }
+
+            assert_eq!(
+                NovoVmAdapter::effective_execution_tx_v1(&tx, &runtime_state).tx_type,
+                TxType::ContractCall,
+                "target code in pre-state must route STATICCALL OOG fixture tx as contract call execution"
+            );
+
+            let mut artifact = sample_aoem_artifact(&tx, false, [0x94; 32], None);
+            artifact.gas_used = expected_gas_used;
+            artifact.cumulative_gas_used = expected_gas_used;
+            artifact.effective_gas_price = Some(gas_price as u64);
+            artifact.receipt_type = None;
+            artifact.event_logs.clear();
+            artifact.log_bloom = vec![0u8; AOEM_LOG_BLOOM_BYTES_V1];
+            artifact.revert_data = None;
+            if let Some(anchor) = artifact.anchor.as_mut() {
+                anchor.return_code = 13;
+                anchor.return_code_name = "out_of_gas".to_string();
+            }
+
+            let outcome = adapter
+                .execute_transaction_with_observed_metadata_v1(
+                    &tx,
+                    &mut runtime_state,
+                    Some(&artifact),
+                )
+                .expect("execute official STATICCALL OOG no-commit fixture projection");
+
+            assert!(!outcome.artifact.status_ok);
+            assert_eq!(outcome.artifact.gas_used, expected_gas_used);
+            assert!(outcome.artifact.event_logs.is_empty());
+            assert!(outcome.artifact.log_bloom.iter().all(|byte| *byte == 0));
+            assert_eq!(
+                runtime_state.get_account(&tx.from).map(|acc| acc.balance),
+                Some(post_sender_balance)
+            );
+            assert_eq!(
+                runtime_state.get_storage(&tx.from, b"aoem:last_failure_class"),
+                Some(&b"out_of_gas".to_vec())
+            );
+            assert_eq!(
+                runtime_state
+                    .get_account(tx.to.as_ref().expect("call target"))
+                    .map(|acc| acc.balance),
+                Some(post_to_balance)
+            );
+            assert_eq!(
+                runtime_state
+                    .get_account(tx.to.as_ref().expect("call target"))
+                    .map(|acc| acc.nonce),
+                Some(post_to_nonce)
+            );
+            assert_eq!(
+                runtime_state
+                    .get_account(tx.to.as_ref().expect("call target"))
+                    .map(|acc| acc.code_hash.clone()),
+                Some(target_code_hash)
+            );
+            assert!(
+                runtime_state
+                    .get_storage(
+                        tx.to.as_ref().expect("call target"),
+                        &tx.nonce.to_le_bytes().to_vec()
+                    )
+                    .is_none(),
+                "failed STATICCALL OOG projection must not add adapter synthetic target storage"
+            );
+            for (slot, value) in case["postTargetStorageFacts"]
+                .as_object()
+                .expect("case.postTargetStorageFacts")
+            {
+                assert_eq!(
+                    runtime_state.get_storage(
+                        tx.to.as_ref().expect("call target"),
+                        &decode_hex_bytes(slot)
+                    ),
+                    Some(&decode_hex_bytes(json_str(
+                        value,
+                        "postTargetStorageFacts.value"
+                    )))
+                );
+            }
+
+            for (address, code_hash, account) in touched_accounts {
+                let post_balance = json_hex_u128(&account["postBalance"], "account.postBalance");
+                let post_nonce = json_hex_u128(&account["postNonce"], "account.postNonce") as u64;
+                assert_eq!(
+                    runtime_state.get_account(&address).map(|acc| acc.balance),
+                    Some(post_balance)
+                );
+                assert_eq!(
+                    runtime_state.get_account(&address).map(|acc| acc.nonce),
+                    Some(post_nonce)
+                );
+                assert_eq!(
+                    runtime_state
+                        .get_account(&address)
+                        .map(|acc| acc.code_hash.clone()),
+                    Some(code_hash)
+                );
+            }
+
+            let bal = outcome
+                .observed_block_access_list
+                .block_access_list
+                .expect("official STATICCALL OOG observed BAL");
+            let sender_entry = bal
+                .0
+                .iter()
+                .find(|entry| entry.address.as_slice() == tx.from.as_slice())
+                .expect("sender BAL entry");
+            assert_eq!(
+                sender_entry.balance_changes[0].post_balance,
+                NovoVmAdapter::u128_to_be32_v1(post_sender_balance)
+            );
+            assert!(
+                bal.0
+                    .iter()
+                    .filter(|entry| entry.address.as_slice() != tx.from.as_slice())
+                    .all(|entry| entry.balance_changes.is_empty()),
+                "zero-value STATICCALL OOG no-commit cases must not emit non-sender balance changes"
+            );
+
+            if mode.contains("CREATE") {
+                create_oog_cases += 1;
+            }
+            if mode.contains("SECOND_LEVEL") || mode.contains("CALL_CALLCODE") {
+                nested_call_oog_cases += 1;
+            }
+            assert!(
+                gas_by_label
+                    .insert(label.to_string(), expected_gas_used)
+                    .is_none(),
+                "duplicate official STATICCALL OOG no-commit label {label}"
+            );
+        }
+
+        assert_eq!(fixture_keys.len(), 10);
+        assert_eq!(fixture_hashes.len(), 10);
+        assert_eq!(txbytes_seen.len(), 9);
+        assert_eq!(create_oog_cases, 2);
+        assert_eq!(nested_call_oog_cases, 3);
+        assert_eq!(touched_account_count, 13);
+        assert_eq!(code_preservation_facts, 23);
+        assert_eq!(
+            gas_by_label.get("staticCallContractToCreateContractAndCallItOog"),
+            Some(&2_000_000)
+        );
+        assert_eq!(
+            gas_by_label.get("staticZeroValueCallOogRevert"),
+            Some(&1_350_000)
+        );
+        assert_eq!(gas_by_label.get("staticCheckCallCostOog"), Some(&22_000));
     }
 
     #[test]
@@ -9839,6 +10254,7 @@ mod tests {
         official_state_fixture_zero_calls_revert_no_commit_grouped_projection_v1();
         official_state_fixture_selfdestruct_zero_value_account_preservation_grouped_projection_v1();
         official_state_fixture_staticcall_state_change_no_commit_grouped_projection_v1();
+        official_state_fixture_staticcall_oog_no_commit_grouped_projection_v1();
         official_state_fixture_create_account_grouped_projection_v1();
         official_state_fixture_staticcall_precompile_return_grouped_projection_v1();
         official_state_fixture_precompile_failure_oog_grouped_projection_v1();
