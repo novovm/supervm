@@ -843,6 +843,10 @@ fn eth_fullnode_rlpx_error_is_timeout_v1(raw: &str) -> bool {
         || raw.contains("没有反应")
 }
 
+fn eth_fullnode_rlpx_error_is_remote_closed_v1(raw: &str) -> bool {
+    raw.contains("eof read=0") || raw.contains("failed:eof")
+}
+
 fn observe_eth_fullnode_connect_error_v1(chain_id: u64, peer_id: u64, err: &NetworkError) {
     match err {
         NetworkError::AddressParse(_) => observe_network_runtime_eth_peer_connect_failure_v1(
@@ -1397,6 +1401,8 @@ fn drive_eth_fullnode_native_rlpx_peer_session_once_v1(
                     session.endpoint.addr_hint
                 ))
             })?;
+        let _ =
+            observe_network_runtime_peer_head(chain_id, peer.0, session.remote_status.latest_block);
 
         loop {
             match eth_rlpx_read_wire_frame_v1(&mut session.stream, &mut session.frame_session) {
@@ -1962,12 +1968,25 @@ fn drive_eth_fullnode_native_rlpx_peer_session_once_v1(
                     {
                         break;
                     }
+                    if eth_fullnode_rlpx_error_is_remote_closed_v1(err.as_str()) {
+                        observe_network_runtime_eth_peer_disconnect_v1(chain_id, peer.0, None);
+                        let _ = unregister_network_runtime_peer(chain_id, peer.0);
+                        disconnected = true;
+                        disconnect_error = Some(NetworkError::Io(format!(
+                            "rlpx_remote_closed:endpoint={}:{}",
+                            session.endpoint.addr_hint, err
+                        )));
+                        break;
+                    }
                     observe_network_runtime_eth_peer_decode_failure_v1(
                         chain_id,
                         peer.0,
                         "frame_decode_failed",
                     );
-                    return Err(NetworkError::Decode(err));
+                    let _ = unregister_network_runtime_peer(chain_id, peer.0);
+                    disconnected = true;
+                    disconnect_error = Some(NetworkError::Decode(err));
+                    break;
                 }
             }
         }
@@ -5580,6 +5599,16 @@ mod tests {
         assert!(matches!(
             recv,
             Some(ProtocolMessage::Gossip(GossipMessage::Heartbeat { .. }))
+        ));
+    }
+
+    #[test]
+    fn rlpx_remote_closed_errors_are_not_plain_timeouts() {
+        let eof = "rlpx_frame_header_read_failed:eof read=0/16";
+        assert!(eth_fullnode_rlpx_error_is_remote_closed_v1(eof));
+        assert!(!eth_fullnode_rlpx_error_is_timeout_v1(eof));
+        assert!(eth_fullnode_rlpx_error_is_timeout_v1(
+            "operation would block"
         ));
     }
 

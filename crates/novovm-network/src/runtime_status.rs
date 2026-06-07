@@ -4431,6 +4431,30 @@ mod tests {
     }
 
     #[test]
+    fn same_head_observation_renews_peer_liveness() {
+        let chain_id = 2028_1_u64;
+        clear_runtime_sync_status_for_test(chain_id);
+        observe_network_runtime_local_head(chain_id, 10).expect("observe local");
+        register_network_runtime_peer(chain_id, 42).expect("register peer");
+        observe_network_runtime_peer_head(chain_id, 42, 100).expect("observe peer");
+
+        if let Ok(mut observed) = runtime_sync_observed_state_map().lock() {
+            observed
+                .peer_last_seen_millis_by_chain
+                .entry(chain_id)
+                .or_default()
+                .insert(42, 0);
+            observed.next_stale_check_at_by_chain.insert(chain_id, 0);
+        }
+
+        observe_network_runtime_peer_head(chain_id, 42, 100).expect("renew same head");
+        let status = get_network_runtime_sync_status(chain_id).expect("status after renew");
+        assert_eq!(status.peer_count, 1);
+        assert_eq!(status.current_block, 10);
+        assert_eq!(status.highest_block, 100);
+    }
+
+    #[test]
     fn stale_peer_is_pruned_on_read_path() {
         let chain_id = 2029_u64;
         clear_runtime_sync_status_for_test(chain_id);
