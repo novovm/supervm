@@ -2822,19 +2822,19 @@ fn restore_eth_rlpx_native_head_store_v1(stored: &EthRlpxNativeHeadStoreV1) -> R
     if let Some(body) = body.as_ref() {
         set_network_runtime_native_body_snapshot_v1(stored.chain_id, body.clone());
     }
-    if let Some(receipt) = stored
+    let receipt = stored
         .receipt
         .as_ref()
         .map(|receipt| eth_rlpx_native_receipt_snapshot_from_store_v1(stored.chain_id, receipt))
-        .transpose()?
-    {
-        set_network_runtime_native_receipt_snapshot_v1(stored.chain_id, receipt);
+        .transpose()?;
+    if let Some(receipt) = receipt.as_ref() {
+        set_network_runtime_native_receipt_snapshot_v1(stored.chain_id, receipt.clone());
     }
     set_network_runtime_native_head_snapshot_v1(
         stored.chain_id,
         NetworkRuntimeNativeHeadSnapshotV1 {
             chain_id: stored.chain_id,
-            phase: NetworkRuntimeNativeSyncPhaseV1::Headers,
+            phase: eth_rlpx_restored_native_head_phase_v1(body.as_ref(), receipt.as_ref()),
             peer_count: 0,
             block_number: header.number,
             block_hash: header.hash,
@@ -2850,6 +2850,19 @@ fn restore_eth_rlpx_native_head_store_v1(stored: &EthRlpxNativeHeadStoreV1) -> R
         },
     );
     Ok(header.number.max(stored.current_block))
+}
+
+fn eth_rlpx_restored_native_head_phase_v1(
+    body: Option<&NetworkRuntimeNativeBodySnapshotV1>,
+    receipt: Option<&NetworkRuntimeNativeReceiptSnapshotV1>,
+) -> NetworkRuntimeNativeSyncPhaseV1 {
+    if receipt.is_some_and(|receipt| receipt.receipts_available) {
+        return NetworkRuntimeNativeSyncPhaseV1::State;
+    }
+    if body.is_some_and(|body| body.body_available) {
+        return NetworkRuntimeNativeSyncPhaseV1::Bodies;
+    }
+    NetworkRuntimeNativeSyncPhaseV1::Headers
 }
 
 fn eth_rlpx_native_head_store_header_number_v1(stored: &EthRlpxNativeHeadStoreV1) -> u64 {
@@ -3100,11 +3113,24 @@ fn restore_eth_rlpx_native_history_store_v1(
         return Ok(store.current_block);
     };
     let header = eth_rlpx_native_header_snapshot_from_store_v1(store.chain_id, &head_block.header)?;
+    let head_body = head_block
+        .body
+        .as_ref()
+        .map(|body| eth_rlpx_native_body_snapshot_from_store_v1(store.chain_id, body))
+        .transpose()?;
+    let head_receipt = head_block
+        .receipt
+        .as_ref()
+        .map(|receipt| eth_rlpx_native_receipt_snapshot_from_store_v1(store.chain_id, receipt))
+        .transpose()?;
     set_network_runtime_native_head_snapshot_v1(
         store.chain_id,
         NetworkRuntimeNativeHeadSnapshotV1 {
             chain_id: store.chain_id,
-            phase: NetworkRuntimeNativeSyncPhaseV1::Headers,
+            phase: eth_rlpx_restored_native_head_phase_v1(
+                head_body.as_ref(),
+                head_receipt.as_ref(),
+            ),
             peer_count: 0,
             block_number: header.number,
             block_hash: header.hash,
@@ -3114,10 +3140,7 @@ fn restore_eth_rlpx_native_history_store_v1(
             safe: head_block.safe,
             finalized: head_block.finalized,
             reorg_depth_hint: head_block.reorg_depth_hint,
-            body_available: head_block
-                .body
-                .as_ref()
-                .is_some_and(|body| body.body_available),
+            body_available: head_body.as_ref().is_some_and(|body| body.body_available),
             source_peer_id: header.source_peer_id,
             observed_unix_ms: header.observed_unix_ms,
         },
@@ -3793,6 +3816,12 @@ mod mainline_evm_cli_tests {
                 .raw_receipts,
             vec![vec![1, 2, 3]]
         );
+        assert_eq!(
+            get_network_runtime_native_head_snapshot_v1(chain_id)
+                .expect("runtime head")
+                .phase,
+            NetworkRuntimeNativeSyncPhaseV1::State
+        );
 
         let _ = fs::remove_file(path);
     }
@@ -3983,6 +4012,12 @@ mod mainline_evm_cli_tests {
         assert!(canonical_blocks
             .iter()
             .any(|block| block.hash == header_hash_b && block.canonical));
+        assert_eq!(
+            get_network_runtime_native_head_snapshot_v1(chain_id)
+                .expect("runtime head")
+                .phase,
+            NetworkRuntimeNativeSyncPhaseV1::State
+        );
 
         let _ = fs::remove_file(path);
     }
