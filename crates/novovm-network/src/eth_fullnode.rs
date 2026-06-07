@@ -2293,6 +2293,7 @@ fn eth_peer_long_term_calibration_delta_v1(
 fn eth_peer_short_term_veto_active_v1(stats: &EthPeerRecentWindowStatsV1) -> bool {
     stats.validation_reject_rounds > 0
         || stats.decode_failure_rounds > 0
+        || stats.capacity_reject_rounds > 0
         || stats.timeout_failure_rounds >= 2
         || stats.selected_without_progress_rounds >= 3
 }
@@ -2302,6 +2303,7 @@ fn eth_peer_medium_term_stable_v1(stats: &EthPeerRecentWindowStatsV1) -> bool {
         && stats.selection_hit_rate_bps >= 4_500
         && stats.header_success_rate_bps >= 4_000
         && stats.timeout_failure_rounds <= 2
+        && stats.capacity_reject_rounds == 0
         && stats.decode_failure_rounds == 0
         && stats.validation_reject_rounds == 0
 }
@@ -2310,6 +2312,7 @@ fn eth_peer_long_term_trusted_v1(stats: &EthPeerRecentWindowStatsV1) -> bool {
     stats.window_rounds >= 64
         && stats.selection_hit_rate_bps >= 4_000
         && stats.body_success_rate_bps >= 2_000
+        && stats.capacity_reject_rounds <= 4
         && stats.validation_reject_rounds == 0
         && stats.decode_failure_rounds == 0
 }
@@ -2324,7 +2327,7 @@ fn eth_peer_short_window_signal_v1(stats: &EthPeerRecentWindowStatsV1) -> i64 {
     score -= (stats.timeout_failure_rounds.min(16) * 900) as i64;
     score -= (stats.decode_failure_rounds.min(16) * 1_200) as i64;
     score -= (stats.validation_reject_rounds.min(16) * 10_000) as i64;
-    score -= (stats.capacity_reject_rounds.min(16) * 150) as i64;
+    score -= (stats.capacity_reject_rounds.min(16) * 1_200) as i64;
     if eth_peer_short_term_veto_active_v1(stats) {
         score -= 25_000;
     }
@@ -2340,7 +2343,7 @@ fn eth_peer_medium_window_signal_v1(stats: &EthPeerRecentWindowStatsV1) -> i64 {
     score -= (stats.selected_without_progress_rounds.min(64) * 250) as i64;
     score -= (stats.timeout_failure_rounds.min(64) * 320) as i64;
     score -= (stats.decode_failure_rounds.min(64) * 450) as i64;
-    score -= (stats.capacity_reject_rounds.min(64) * 80) as i64;
+    score -= (stats.capacity_reject_rounds.min(64) * 350) as i64;
     if eth_peer_medium_term_stable_v1(stats) {
         score += 1_200;
     }
@@ -2356,7 +2359,7 @@ fn eth_peer_long_window_signal_v1(stats: &EthPeerRecentWindowStatsV1) -> i64 {
     score -= (stats.selected_without_progress_rounds.min(256) * 90) as i64;
     score -= (stats.timeout_failure_rounds.min(256) * 110) as i64;
     score -= (stats.decode_failure_rounds.min(256) * 150) as i64;
-    score -= (stats.capacity_reject_rounds.min(256) * 35) as i64;
+    score -= (stats.capacity_reject_rounds.min(256) * 90) as i64;
     if eth_peer_long_term_trusted_v1(stats) {
         score += 1_800;
     }
@@ -2810,7 +2813,9 @@ fn eth_peer_sync_score_v1(snapshot: &EthPeerSessionSnapshot, now: u64) -> EthPee
         + snapshot.decode_failure_count.saturating_mul(1_200)
         + snapshot.timeout_count.saturating_mul(950)
         + snapshot.validation_reject_count.saturating_mul(10_000)
-        + snapshot.disconnect_too_many_peers_count.saturating_mul(250)
+        + snapshot
+            .disconnect_too_many_peers_count
+            .saturating_mul(2_000)
         + snapshot.disconnect_count.saturating_mul(300)
         + snapshot.consecutive_failures.saturating_mul(700)
         + snapshot
@@ -2828,7 +2833,7 @@ fn eth_peer_sync_score_v1(snapshot: &EthPeerSessionSnapshot, now: u64) -> EthPee
         + snapshot
             .recent_window
             .capacity_reject_rounds
-            .saturating_mul(180);
+            .saturating_mul(1_000);
     if snapshot.connect_failure_count > 0 {
         reasons.push(format!(
             "penalty_connect_failure_count={}",
@@ -2871,6 +2876,12 @@ fn eth_peer_sync_score_v1(snapshot: &EthPeerSessionSnapshot, now: u64) -> EthPee
             "recent_body_success_rate_bps={}",
             snapshot.recent_window.body_success_rate_bps
         ));
+        if snapshot.recent_window.capacity_reject_rounds > 0 {
+            reasons.push(format!(
+                "recent_capacity_reject_rounds={}",
+                snapshot.recent_window.capacity_reject_rounds
+            ));
+        }
     }
     if window_layers.short_term.stats.window_rounds > 0 {
         reasons.push(format!(
@@ -3041,7 +3052,9 @@ fn eth_peer_bootstrap_score_v1(
         + snapshot.decode_failure_count.saturating_mul(1_050)
         + snapshot.timeout_count.saturating_mul(900)
         + snapshot.validation_reject_count.saturating_mul(10_000)
-        + snapshot.disconnect_too_many_peers_count.saturating_mul(250)
+        + snapshot
+            .disconnect_too_many_peers_count
+            .saturating_mul(2_000)
         + snapshot.disconnect_count.saturating_mul(300)
         + snapshot.consecutive_failures.saturating_mul(800)
         + snapshot
@@ -3059,7 +3072,11 @@ fn eth_peer_bootstrap_score_v1(
         + snapshot
             .recent_window
             .timeout_failure_rounds
-            .saturating_mul(550);
+            .saturating_mul(550)
+        + snapshot
+            .recent_window
+            .capacity_reject_rounds
+            .saturating_mul(1_000);
     if snapshot.connect_failure_count > 0 {
         reasons.push(format!(
             "penalty_connect_failure_count={}",
@@ -3102,6 +3119,12 @@ fn eth_peer_bootstrap_score_v1(
             "recent_timeout_failure_rounds={}",
             snapshot.recent_window.timeout_failure_rounds
         ));
+        if snapshot.recent_window.capacity_reject_rounds > 0 {
+            reasons.push(format!(
+                "recent_capacity_reject_rounds={}",
+                snapshot.recent_window.capacity_reject_rounds
+            ));
+        }
     }
     if window_layers.short_term.stats.window_rounds > 0 {
         reasons.push(format!(
@@ -4563,6 +4586,79 @@ mod tests {
         let selected =
             select_eth_fullnode_native_bootstrap_candidates_v1(chain_id, &[peer, fallback], 2);
         assert_eq!(selected, vec![fallback]);
+    }
+
+    #[test]
+    fn capacity_rejected_bootstrap_peer_rotates_to_pristine_candidate_after_cooldown() {
+        let chain_id = 99_160_322_u64;
+        let overloaded = NodeId(604);
+        let fresh = NodeId(605);
+        let _ = upsert_network_runtime_eth_peer_session(
+            chain_id,
+            overloaded.0,
+            &[68, 70],
+            &[1],
+            Some(512),
+        )
+        .expect("previously useful peer");
+
+        observe_network_runtime_eth_peer_disconnect_v1(chain_id, overloaded.0, Some(0x04));
+        observe_network_runtime_eth_peer_selection_round_v1(
+            chain_id,
+            EthPeerSelectionRoundObservationV1 {
+                peers: &[overloaded, fresh],
+                selected_bootstrap_peers: &[overloaded],
+                selected_sync_peers: &[],
+                header_success_peers: &[],
+                body_success_peers: &[],
+                connect_failure_peers: &[],
+                handshake_failure_peers: &[],
+                decode_failure_peers: &[],
+                timeout_failure_peers: &[],
+                validation_reject_peers: &[],
+                disconnect_peers: &[overloaded.0],
+                capacity_reject_peers: &[overloaded.0],
+            },
+        );
+
+        {
+            let mut guard = eth_peer_sessions()
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let chain = guard.get_mut(&chain_id).expect("chain state");
+            let state = chain.get_mut(&overloaded.0).expect("overloaded peer");
+            state.cooldown_until_unix_ms = 0;
+        }
+
+        let selected =
+            select_eth_fullnode_native_bootstrap_candidates_v1(chain_id, &[overloaded, fresh], 1);
+        assert_eq!(selected, vec![fresh]);
+
+        let (scores, summary, _) = snapshot_eth_fullnode_peer_selection_scores_v1(
+            chain_id,
+            &[overloaded, fresh],
+            &[fresh],
+            &[],
+        );
+        let overloaded_score = scores
+            .iter()
+            .find(|score| {
+                score.peer_id == overloaded.0
+                    && matches!(score.role, EthPeerSelectionRoleV1::Bootstrap)
+            })
+            .expect("overloaded score");
+        let fresh_score = scores
+            .iter()
+            .find(|score| {
+                score.peer_id == fresh.0 && matches!(score.role, EthPeerSelectionRoleV1::Bootstrap)
+            })
+            .expect("fresh score");
+        assert!(fresh_score.score > overloaded_score.score);
+        assert!(overloaded_score
+            .reasons
+            .iter()
+            .any(|reason| reason == "short_term_veto_active"));
+        assert_eq!(summary.selected_bootstrap_peer_ids, vec![fresh.0]);
     }
 
     #[test]

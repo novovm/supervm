@@ -2262,20 +2262,24 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
     let chain_id = u64_env_allow_zero("NOVOVM_ETH_RLPX_CHAIN_ID", 1)?;
     let local_node_id = u64_env_allow_zero("NOVOVM_ETH_RLPX_LOCAL_NODE", 9_990_001)?;
     let max_peers = usize_env_allow_zero("NOVOVM_ETH_RLPX_MAX_PEERS", 4)?.clamp(1, 16);
-    let candidate_limit =
+    let mut candidate_limit =
         usize_env_allow_zero("NOVOVM_ETH_RLPX_CANDIDATE_PEERS", max_peers.max(64))?
             .clamp(max_peers, 128);
+    let adaptive_candidate_limit = usize_env_allow_zero(
+        "NOVOVM_ETH_RLPX_ADAPTIVE_CANDIDATE_PEERS_MAX",
+        candidate_limit.max(128),
+    )?
+    .clamp(candidate_limit, 512);
     let ticks = usize_env_allow_zero("NOVOVM_ETH_RLPX_TICKS", 0)?;
     let sleep_ms = u64_env_clamped("NOVOVM_ETH_RLPX_SLEEP_MS", 600, 10, 60_000);
     let recv_budget = usize_env_allow_zero("NOVOVM_ETH_RLPX_RECV_BUDGET", 16)?.clamp(1, 1024);
     let sync_target_fanout =
         usize_env_allow_zero("NOVOVM_ETH_RLPX_SYNC_TARGET_FANOUT", max_peers)?.clamp(1, max_peers);
-    let peer_endpoints = eth_rlpx_sync_peer_endpoints_v1(chain_id, candidate_limit, verbose);
+    let mut peer_endpoints = eth_rlpx_sync_peer_endpoints_v1(chain_id, candidate_limit, verbose);
     if peer_endpoints.is_empty() {
         bail!("no Ethereum RLPx peer endpoints resolved from env, DNS discovery, or bootnodes");
     }
-    let candidate_count = peer_endpoints.len();
-    let peers = peer_endpoints
+    let mut peers = peer_endpoints
         .iter()
         .map(|endpoint| NodeId(endpoint.node_hint.max(1)))
         .collect::<Vec<_>>();
@@ -2362,14 +2366,14 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
             );
         }
     }
-    let worker = EthFullnodeNativePeerWorkerV1::new(EthFullnodeNativePeerWorkerConfigV1 {
+    let mut worker = EthFullnodeNativePeerWorkerV1::new(EthFullnodeNativePeerWorkerConfigV1 {
         chain_id,
         local_node: NodeId(local_node_id),
-        peers,
-        peer_endpoints,
+        peers: peers.clone(),
+        peer_endpoints: peer_endpoints.clone(),
         recv_budget,
         sync_target_fanout,
-        budget_hooks: budget,
+        budget_hooks: budget.clone(),
     });
     let mut tick = 0usize;
     loop {
@@ -2396,7 +2400,7 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
             "eth_rlpx_sync_tick: chain_id={} tick={} candidates={} connected={} ready={} status_updates={} sync_requests={} headers={} bodies={} receipts={} current={} highest={} native_phase={} header_number={} header_hash={} body_available={} failures={} last_failure={}",
             chain_id,
             tick,
-            candidate_count,
+            peer_endpoints.len(),
             report.connected_peers,
             report.ready_peers,
             report.status_updates,
@@ -2448,6 +2452,44 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
                 body.as_ref(),
                 receipt.as_ref(),
             )?;
+        }
+        let candidate_pool_exhausted = report.ready_peers == 0
+            && report.scheduled_bootstrap_peers == 0
+            && report.scheduled_sync_peers == 0
+            && report.selection_quality_summary.candidate_peer_count > 0
+            && report.selection_quality_summary.skipped_cooldown_peers
+                >= report.selection_quality_summary.candidate_peer_count;
+        if candidate_pool_exhausted && candidate_limit < adaptive_candidate_limit {
+            let next_candidate_limit = candidate_limit
+                .saturating_mul(2)
+                .max(candidate_limit.saturating_add(max_peers))
+                .min(adaptive_candidate_limit);
+            candidate_limit = next_candidate_limit;
+            let refreshed_endpoints =
+                eth_rlpx_sync_peer_endpoints_v1(chain_id, next_candidate_limit, verbose);
+            if refreshed_endpoints.len() > peer_endpoints.len() {
+                peer_endpoints = refreshed_endpoints;
+                peers = peer_endpoints
+                    .iter()
+                    .map(|endpoint| NodeId(endpoint.node_hint.max(1)))
+                    .collect::<Vec<_>>();
+                budget.active_native_peer_hard_limit = candidate_limit as u64;
+                worker = EthFullnodeNativePeerWorkerV1::new(EthFullnodeNativePeerWorkerConfigV1 {
+                    chain_id,
+                    local_node: NodeId(local_node_id),
+                    peers: peers.clone(),
+                    peer_endpoints: peer_endpoints.clone(),
+                    recv_budget,
+                    sync_target_fanout,
+                    budget_hooks: budget.clone(),
+                });
+                println!(
+                    "eth_rlpx_peer_refresh: chain_id={} tick={} reason=all_candidate_peers_in_cooldown candidates={}",
+                    chain_id,
+                    tick,
+                    peer_endpoints.len()
+                );
+            }
         }
         if ticks != 0 && tick >= ticks {
             break;
