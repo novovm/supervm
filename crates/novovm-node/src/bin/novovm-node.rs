@@ -1846,6 +1846,54 @@ fn eth_peer_endpoints_include_new_entries_v1(
         .any(|endpoint| !current_keys.contains(&eth_peer_endpoint_key_v1(endpoint)))
 }
 
+fn eth_rlpx_peer_refresh_plan_v1(
+    candidate_pool_exhausted: bool,
+    progress_stalled: bool,
+    refresh_exhausted_enabled: bool,
+    candidate_limit: usize,
+    adaptive_candidate_limit: usize,
+    max_peers: usize,
+    tick: usize,
+    last_peer_refresh_tick: usize,
+    exhausted_refresh_interval_ticks: usize,
+    stalled_refresh_interval_ticks: usize,
+) -> Option<(usize, &'static str)> {
+    if candidate_pool_exhausted && candidate_limit < adaptive_candidate_limit {
+        return Some((
+            candidate_limit
+                .saturating_mul(2)
+                .max(candidate_limit.saturating_add(max_peers))
+                .min(adaptive_candidate_limit),
+            "all_candidate_peers_in_cooldown_expand",
+        ));
+    }
+    if progress_stalled
+        && candidate_limit < adaptive_candidate_limit
+        && tick.saturating_sub(last_peer_refresh_tick) >= stalled_refresh_interval_ticks
+    {
+        return Some((
+            candidate_limit
+                .saturating_mul(2)
+                .max(candidate_limit.saturating_add(max_peers))
+                .min(adaptive_candidate_limit),
+            "no_ready_sync_progress_stalled_expand",
+        ));
+    }
+    if candidate_pool_exhausted
+        && refresh_exhausted_enabled
+        && tick.saturating_sub(last_peer_refresh_tick) >= exhausted_refresh_interval_ticks
+    {
+        return Some((candidate_limit, "all_candidate_peers_in_cooldown_refresh"));
+    }
+    if progress_stalled
+        && refresh_exhausted_enabled
+        && tick.saturating_sub(last_peer_refresh_tick) >= stalled_refresh_interval_ticks
+    {
+        return Some((candidate_limit, "no_ready_sync_progress_stalled_refresh"));
+    }
+    None
+}
+
 fn eth_parse_enode_endpoints_v1(raw: &str, limit: usize) -> Vec<PluginPeerEndpoint> {
     raw.split([',', ';', '\n', '\r', '\t', ' '])
         .map(str::trim)
@@ -3179,12 +3227,12 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
     let max_peers = usize_env_allow_zero("NOVOVM_ETH_RLPX_MAX_PEERS", 4)?.clamp(1, 16);
     let mut candidate_limit =
         usize_env_allow_zero("NOVOVM_ETH_RLPX_CANDIDATE_PEERS", max_peers.max(64))?
-            .clamp(max_peers, 128);
+            .clamp(max_peers, 512);
     let adaptive_candidate_limit = usize_env_allow_zero(
         "NOVOVM_ETH_RLPX_ADAPTIVE_CANDIDATE_PEERS_MAX",
-        candidate_limit.max(128),
+        candidate_limit.max(256),
     )?
-    .clamp(candidate_limit, 512);
+    .clamp(candidate_limit, 1024);
     let ticks = usize_env_allow_zero("NOVOVM_ETH_RLPX_TICKS", 0)?;
     let sleep_ms = u64_env_clamped("NOVOVM_ETH_RLPX_SLEEP_MS", 600, 10, 60_000);
     let recv_budget = usize_env_allow_zero("NOVOVM_ETH_RLPX_RECV_BUDGET", 16)?.clamp(1, 1024);
@@ -3192,6 +3240,9 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
         usize_env_allow_zero("NOVOVM_ETH_RLPX_SYNC_TARGET_FANOUT", max_peers)?.clamp(1, max_peers);
     let exhausted_refresh_interval_ticks =
         usize_env_allow_zero("NOVOVM_ETH_RLPX_EXHAUSTED_REFRESH_INTERVAL_TICKS", 8)?
+            .clamp(1, 10_000);
+    let stalled_refresh_interval_ticks =
+        usize_env_allow_zero("NOVOVM_ETH_RLPX_STALLED_REFRESH_INTERVAL_TICKS", 16)?
             .clamp(1, 10_000);
     let mut peer_endpoints = eth_rlpx_sync_peer_endpoints_v1(chain_id, candidate_limit, verbose);
     if peer_endpoints.is_empty() {
@@ -3342,6 +3393,8 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
     });
     let mut tick = 0usize;
     let mut last_peer_refresh_tick = 0usize;
+    let mut last_sync_progress_tick = 0usize;
+    let mut last_sync_progress_block = current_block;
     loop {
         tick = tick.saturating_add(1);
         let report = worker
@@ -3355,6 +3408,16 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
             get_network_runtime_native_receipt_snapshot_v1(chain_id, snapshot.hash)
         });
         let head_snapshot = get_network_runtime_native_head_snapshot_v1(chain_id);
+        let current_sync_block = sync_status.map(|status| status.current_block).unwrap_or(0);
+        let highest_sync_block = sync_status.map(|status| status.highest_block).unwrap_or(0);
+        if current_sync_block > last_sync_progress_block
+            || report.header_updates > 0
+            || report.body_updates > 0
+            || report.receipt_updates > 0
+        {
+            last_sync_progress_tick = tick;
+            last_sync_progress_block = last_sync_progress_block.max(current_sync_block);
+        }
         let last_failure = report.peer_failures.last().map(|failure| {
             format!(
                 "{}:{}:{}",
@@ -3375,8 +3438,8 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
             report.header_updates,
             report.body_updates,
             report.receipt_updates,
-            sync_status.map(|status| status.current_block).unwrap_or(0),
-            sync_status.map(|status| status.highest_block).unwrap_or(0),
+            current_sync_block,
+            highest_sync_block,
             native_sync
                 .map(|status| status.phase.as_str().to_string())
                 .unwrap_or_else(|| "-".to_string()),
@@ -3442,23 +3505,21 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
             && report.selection_quality_summary.candidate_peer_count > 0
             && report.selection_quality_summary.skipped_cooldown_peers
                 >= report.selection_quality_summary.candidate_peer_count;
-        let refresh_plan = if candidate_pool_exhausted && candidate_limit < adaptive_candidate_limit
-        {
-            Some((
-                candidate_limit
-                    .saturating_mul(2)
-                    .max(candidate_limit.saturating_add(max_peers))
-                    .min(adaptive_candidate_limit),
-                "all_candidate_peers_in_cooldown_expand",
-            ))
-        } else if candidate_pool_exhausted
-            && bool_env_default_true("NOVOVM_ETH_RLPX_REFRESH_EXHAUSTED_CANDIDATES_ENABLED")
-            && tick.saturating_sub(last_peer_refresh_tick) >= exhausted_refresh_interval_ticks
-        {
-            Some((candidate_limit, "all_candidate_peers_in_cooldown_refresh"))
-        } else {
-            None
-        };
+        let progress_stalled = report.ready_peers == 0
+            && highest_sync_block > current_sync_block
+            && tick.saturating_sub(last_sync_progress_tick) >= stalled_refresh_interval_ticks;
+        let refresh_plan = eth_rlpx_peer_refresh_plan_v1(
+            candidate_pool_exhausted,
+            progress_stalled,
+            bool_env_default_true("NOVOVM_ETH_RLPX_REFRESH_EXHAUSTED_CANDIDATES_ENABLED"),
+            candidate_limit,
+            adaptive_candidate_limit,
+            max_peers,
+            tick,
+            last_peer_refresh_tick,
+            exhausted_refresh_interval_ticks,
+            stalled_refresh_interval_ticks,
+        );
         if let Some((next_candidate_limit, refresh_reason)) = refresh_plan {
             last_peer_refresh_tick = tick;
             let refreshed_endpoints =
@@ -3706,6 +3767,24 @@ mod mainline_evm_cli_tests {
         assert!(eth_peer_endpoints_include_new_entries_v1(
             &current, &changed
         ));
+    }
+
+    #[test]
+    fn eth_rlpx_peer_refresh_plan_expands_on_stalled_progress_v1() {
+        let plan = eth_rlpx_peer_refresh_plan_v1(false, true, true, 128, 512, 6, 16, 0, 8, 16);
+        assert_eq!(plan, Some((256, "no_ready_sync_progress_stalled_expand")));
+    }
+
+    #[test]
+    fn eth_rlpx_peer_refresh_plan_refreshes_stalled_at_adaptive_cap_v1() {
+        let plan = eth_rlpx_peer_refresh_plan_v1(false, true, true, 512, 512, 6, 32, 8, 8, 16);
+        assert_eq!(plan, Some((512, "no_ready_sync_progress_stalled_refresh")));
+    }
+
+    #[test]
+    fn eth_rlpx_peer_refresh_plan_keeps_exhausted_expand_priority_v1() {
+        let plan = eth_rlpx_peer_refresh_plan_v1(true, true, true, 64, 256, 6, 4, 0, 8, 16);
+        assert_eq!(plan, Some((128, "all_candidate_peers_in_cooldown_expand")));
     }
 
     #[test]
