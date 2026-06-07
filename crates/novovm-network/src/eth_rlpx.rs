@@ -1206,7 +1206,7 @@ pub fn eth_rlpx_capabilities_for_hello_profile_v1(profile: &str) -> Vec<EthRlpxC
         .filter(|version| eth_wire_version_supported_by_native_v1(*version))
         .filter(|version| {
             if profile.eq_ignore_ascii_case("geth") {
-                version.as_u8() >= 68
+                version.as_u8() >= 69
             } else {
                 true
             }
@@ -1329,7 +1329,7 @@ pub fn eth_rlpx_select_shared_eth_version_v1(
     local_caps: &[EthRlpxCapabilityV1],
     remote_caps: &[EthRlpxCapabilityV1],
 ) -> Option<EthWireVersion> {
-    [71_u8, 70, 69, 68, 67, 66]
+    [71_u8, 70, 69]
         .into_iter()
         .find(|version| {
             local_caps
@@ -3814,6 +3814,9 @@ mod tests {
         assert!(caps
             .iter()
             .any(|cap| cap.name == "eth" && cap.version == 69));
+        assert!(caps
+            .iter()
+            .all(|cap| { cap.name != "eth" || (69..=71).contains(&(cap.version as u8)) }));
         assert!(caps.iter().all(|cap| {
             cap.name != "eth"
                 || cap.version
@@ -3829,7 +3832,7 @@ mod tests {
         let caps = eth_rlpx_capabilities_for_hello_profile_v1("geth");
         assert!(caps
             .iter()
-            .all(|cap| { cap.name != "eth" || (68..=71).contains(&(cap.version as u8)) }));
+            .all(|cap| { cap.name != "eth" || (69..=71).contains(&(cap.version as u8)) }));
         assert!(caps
             .iter()
             .any(|cap| cap.name == "eth" && cap.version == 71));

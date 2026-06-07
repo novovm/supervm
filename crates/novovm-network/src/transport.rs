@@ -7323,7 +7323,7 @@ mod tests {
         let peer_b = NodeId(1_107);
         let peer_c = NodeId(1_108);
 
-        let _ = upsert_network_runtime_eth_peer_session(chain_id, peer_a.0, &[68, 70], &[1], None)
+        let _ = upsert_network_runtime_eth_peer_session(chain_id, peer_a.0, &[69, 70], &[1], None)
             .expect("hello-only peer");
         observe_network_runtime_eth_peer_disconnect_v1(chain_id, peer_a.0, Some(0x04));
         observe_network_runtime_eth_peer_validation_reject_v1(
@@ -7522,10 +7522,10 @@ mod tests {
         let peer_a = NodeId(1_121);
         let peer_b = NodeId(1_122);
         let _ =
-            upsert_network_runtime_eth_peer_session(chain_id, peer_a.0, &[66, 68], &[1], Some(120))
+            upsert_network_runtime_eth_peer_session(chain_id, peer_a.0, &[69, 70], &[1], Some(120))
                 .expect("session a");
         let _ =
-            upsert_network_runtime_eth_peer_session(chain_id, peer_b.0, &[66, 68], &[1], Some(240))
+            upsert_network_runtime_eth_peer_session(chain_id, peer_b.0, &[69, 70], &[1], Some(240))
                 .expect("session b");
         set_network_runtime_sync_status(
             chain_id,
@@ -8629,6 +8629,7 @@ mod tests {
             );
 
             let mut header_response_count = 0usize;
+            let mut body_response_count = 0usize;
             let mut receipt_response_count = 0usize;
             loop {
                 let (code, payload) =
@@ -8691,6 +8692,11 @@ mod tests {
                         bodies_payload.as_slice(),
                     )
                     .expect("write block bodies");
+                    body_response_count = body_response_count.saturating_add(1);
+                    if body_response_count >= 2 && receipt_response_count >= 1 {
+                        thread::sleep(Duration::from_millis(250));
+                        break;
+                    }
                     continue;
                 }
                 if code
@@ -8718,7 +8724,7 @@ mod tests {
                     )
                     .expect("write receipts");
                     receipt_response_count = receipt_response_count.saturating_add(1);
-                    if receipt_response_count >= 2 {
+                    if body_response_count >= 2 && receipt_response_count >= 1 {
                         thread::sleep(Duration::from_millis(250));
                         break;
                     }

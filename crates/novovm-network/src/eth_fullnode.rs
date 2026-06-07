@@ -84,7 +84,7 @@ impl EthWireVersion {
 
 #[must_use]
 pub fn eth_wire_version_supported_by_native_v1(version: EthWireVersion) -> bool {
-    version.as_u8() <= ETH_NATIVE_MAX_SUPPORTED_ETH_PROTOCOL_VERSION
+    (69..=ETH_NATIVE_MAX_SUPPORTED_ETH_PROTOCOL_VERSION).contains(&version.as_u8())
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -1069,9 +1069,6 @@ pub fn default_eth_native_capabilities() -> EthNativeCapabilities {
             EthWireVersion::V71,
             EthWireVersion::V70,
             EthWireVersion::V69,
-            EthWireVersion::V68,
-            EthWireVersion::V67,
-            EthWireVersion::V66,
         ]
         .into_iter()
         .filter(|version| eth_wire_version_supported_by_native_v1(*version))
@@ -1788,7 +1785,7 @@ const ETH_PEER_SELECTION_LONG_WINDOW_ROUNDS_V1: usize = 256;
 
 fn default_eth_peer_negotiated_capabilities_v1() -> EthNegotiatedCapabilities {
     EthNegotiatedCapabilities {
-        eth_version: EthWireVersion::V66,
+        eth_version: EthWireVersion::V69,
         snap_version: None,
     }
 }
@@ -4444,12 +4441,21 @@ mod tests {
     use super::*;
 
     #[test]
-    fn negotiate_eth_native_caps_prefers_highest_shared() {
+    fn negotiate_eth_native_caps_prefers_highest_current_geth_shared() {
         let local = default_eth_native_capabilities();
         let negotiated =
-            negotiate_eth_native_capabilities(&local, &[66, 67], &[1]).expect("must negotiate");
-        assert_eq!(negotiated.eth_version, EthWireVersion::V67);
+            negotiate_eth_native_capabilities(&local, &[69, 70], &[1]).expect("must negotiate");
+        assert_eq!(negotiated.eth_version, EthWireVersion::V70);
         assert_eq!(negotiated.snap_version, Some(SnapWireVersion::V1));
+    }
+
+    #[test]
+    fn negotiate_eth_native_caps_rejects_pre_geth_current_versions() {
+        let local = default_eth_native_capabilities();
+        assert!(
+            negotiate_eth_native_capabilities(&local, &[66, 67, 68], &[1]).is_none(),
+            "public RLPx profile must not negotiate legacy Status semantics"
+        );
     }
 
     #[test]
@@ -4489,15 +4495,15 @@ mod tests {
         let chain_id = 1;
         let peer_id = 42;
         let negotiated =
-            upsert_network_runtime_eth_peer_session(chain_id, peer_id, &[66, 68], &[1], Some(128))
+            upsert_network_runtime_eth_peer_session(chain_id, peer_id, &[69, 70], &[1], Some(128))
                 .expect("negotiated");
-        assert_eq!(negotiated.eth_version, EthWireVersion::V68);
+        assert_eq!(negotiated.eth_version, EthWireVersion::V70);
         observe_network_runtime_eth_peer_head(chain_id, peer_id, 256);
         let snapshots = snapshot_network_runtime_eth_peer_sessions(chain_id);
         assert_eq!(snapshots.len(), 1);
         assert!(snapshots[0].session_ready);
         assert_eq!(snapshots[0].last_head_height, 256);
-        assert_eq!(snapshots[0].negotiated.eth_version, EthWireVersion::V68);
+        assert_eq!(snapshots[0].negotiated.eth_version, EthWireVersion::V70);
         assert_eq!(snapshots[0].lifecycle_stage, EthPeerLifecycleStageV1::Ready);
         assert!(!snapshots[0].retry_eligible);
     }
@@ -4507,7 +4513,7 @@ mod tests {
         let chain_id = 99_160_314_u64;
         let peer_id = 314;
         let _ =
-            upsert_network_runtime_eth_peer_session(chain_id, peer_id, &[68, 70], &[1], Some(512))
+            upsert_network_runtime_eth_peer_session(chain_id, peer_id, &[69, 70], &[1], Some(512))
                 .expect("ready session");
 
         mark_network_runtime_eth_peer_session_closed_v1(chain_id, peer_id);
@@ -4546,7 +4552,7 @@ mod tests {
             "status_payload_decode_failed",
         );
         let _ =
-            upsert_network_runtime_eth_peer_session(chain_id, peer_c.0, &[68, 70], &[1], Some(64))
+            upsert_network_runtime_eth_peer_session(chain_id, peer_c.0, &[69, 70], &[1], Some(64))
                 .expect("ready session");
         observe_network_runtime_eth_peer_syncing_v1(chain_id, peer_c.0);
 
@@ -4623,7 +4629,7 @@ mod tests {
         let chain_id = 99_160_317_u64;
         let peer = NodeId(317);
         let _ =
-            upsert_network_runtime_eth_peer_session(chain_id, peer.0, &[68, 70], &[1], Some(512))
+            upsert_network_runtime_eth_peer_session(chain_id, peer.0, &[69, 70], &[1], Some(512))
                 .expect("ready session");
 
         observe_network_runtime_eth_peer_decode_failure_v1(
@@ -4678,7 +4684,7 @@ mod tests {
         let peer = NodeId(602);
         let fallback = NodeId(603);
         let _ =
-            upsert_network_runtime_eth_peer_session(chain_id, peer.0, &[68, 70], &[1], Some(512))
+            upsert_network_runtime_eth_peer_session(chain_id, peer.0, &[69, 70], &[1], Some(512))
                 .expect("ready peer");
 
         observe_network_runtime_eth_peer_disconnect_v1(chain_id, peer.0, None);
@@ -4722,7 +4728,7 @@ mod tests {
         let _ = upsert_network_runtime_eth_peer_session(
             chain_id,
             overloaded.0,
-            &[68, 70],
+            &[69, 70],
             &[1],
             Some(512),
         )
@@ -4794,13 +4800,13 @@ mod tests {
         let peer_b = NodeId(402);
         let peer_c = NodeId(403);
         let _ =
-            upsert_network_runtime_eth_peer_session(chain_id, peer_a.0, &[66, 68], &[1], Some(120))
+            upsert_network_runtime_eth_peer_session(chain_id, peer_a.0, &[69, 70], &[1], Some(120))
                 .expect("session a");
         let _ =
-            upsert_network_runtime_eth_peer_session(chain_id, peer_b.0, &[66, 68], &[1], Some(220))
+            upsert_network_runtime_eth_peer_session(chain_id, peer_b.0, &[69, 70], &[1], Some(220))
                 .expect("session b");
         let _ =
-            upsert_network_runtime_eth_peer_session(chain_id, peer_c.0, &[66, 68], &[1], Some(180))
+            upsert_network_runtime_eth_peer_session(chain_id, peer_c.0, &[69, 70], &[1], Some(180))
                 .expect("session c");
 
         let selected =
@@ -4816,7 +4822,7 @@ mod tests {
         let _ = upsert_network_runtime_eth_peer_session(
             chain_id,
             stable_peer.0,
-            &[66, 68, 70],
+            &[69, 70],
             &[1],
             Some(10_000),
         )
@@ -4824,7 +4830,7 @@ mod tests {
         let _ = upsert_network_runtime_eth_peer_session(
             chain_id,
             flaky_peer.0,
-            &[66, 68, 70],
+            &[69, 70],
             &[1],
             Some(10_064),
         )
@@ -4892,7 +4898,7 @@ mod tests {
         let _ = upsert_network_runtime_eth_peer_session(
             chain_id,
             trusted_peer.0,
-            &[66, 68, 70],
+            &[69, 70],
             &[1],
             Some(12_000),
         )
@@ -4900,7 +4906,7 @@ mod tests {
         let _ = upsert_network_runtime_eth_peer_session(
             chain_id,
             ephemeral_peer.0,
-            &[66, 68, 70],
+            &[69, 70],
             &[1],
             Some(13_000),
         )
@@ -5040,7 +5046,7 @@ mod tests {
         let peer_a = NodeId(501);
         let peer_b = NodeId(502);
         let peer_c = NodeId(503);
-        let _ = upsert_network_runtime_eth_peer_session(chain_id, peer_a.0, &[66, 68], &[1], None)
+        let _ = upsert_network_runtime_eth_peer_session(chain_id, peer_a.0, &[69, 70], &[1], None)
             .expect("hello-only peer");
         observe_network_runtime_eth_peer_disconnect_v1(chain_id, peer_a.0, Some(0x04));
         observe_network_runtime_eth_peer_validation_reject_v1(
@@ -5061,7 +5067,7 @@ mod tests {
     fn parity_progress_for_chain_marks_native_snap_state_machine_ready_after_full_cycle() {
         let chain_id = 99_160_316_u64;
         let peer_id = 88_u64;
-        let _ = upsert_network_runtime_eth_peer_session(chain_id, peer_id, &[66, 68], &[1], None)
+        let _ = upsert_network_runtime_eth_peer_session(chain_id, peer_id, &[69, 70], &[1], None)
             .expect("negotiated");
 
         observe_eth_native_headers_pull(chain_id);
