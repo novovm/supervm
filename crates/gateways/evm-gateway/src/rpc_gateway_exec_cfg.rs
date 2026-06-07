@@ -513,12 +513,15 @@ const GATEWAY_ETH_PLUGIN_RLPX_P2P_PING_MSG: u64 = 0x02;
 const GATEWAY_ETH_PLUGIN_RLPX_P2P_PONG_MSG: u64 = 0x03;
 const GATEWAY_ETH_PLUGIN_RLPX_BASE_PROTOCOL_OFFSET: u64 = 0x10;
 const GATEWAY_ETH_PLUGIN_RLPX_ZERO_HEADER: [u8; 3] = [0xC2, 0x80, 0x80];
+const GATEWAY_ETH_PLUGIN_RLPX_ETH_PROTO_71: u64 = 71;
+const GATEWAY_ETH_PLUGIN_RLPX_ETH_PROTO_70: u64 = 70;
 const GATEWAY_ETH_PLUGIN_RLPX_ETH_PROTO_69: u64 = 69;
 const GATEWAY_ETH_PLUGIN_RLPX_ETH_PROTO_68: u64 = 68;
 const GATEWAY_ETH_PLUGIN_RLPX_ETH_PROTO_67: u64 = 67;
 const GATEWAY_ETH_PLUGIN_RLPX_ETH_PROTO_66: u64 = 66;
-const GATEWAY_ETH_PLUGIN_RLPX_MAX_SUPPORTED_ETH_PROTO: u64 = GATEWAY_ETH_PLUGIN_RLPX_ETH_PROTO_69;
-const GATEWAY_ETH_PLUGIN_RLPX_ETH_PROTO_LEN_69: u64 = 18;
+const GATEWAY_ETH_PLUGIN_RLPX_MAX_SUPPORTED_ETH_PROTO: u64 = GATEWAY_ETH_PLUGIN_RLPX_ETH_PROTO_71;
+const GATEWAY_ETH_PLUGIN_RLPX_ETH_PROTO_LEN_71: u64 = 20;
+const GATEWAY_ETH_PLUGIN_RLPX_ETH_PROTO_LEN_69_70: u64 = 18;
 const GATEWAY_ETH_PLUGIN_RLPX_ETH_PROTO_LEN_66_68: u64 = 17;
 const GATEWAY_ETH_PLUGIN_RLPX_ETH_STATUS_MSG: u64 = 0x00;
 const GATEWAY_ETH_PLUGIN_RLPX_ETH_TRANSACTIONS_MSG: u64 = 0x02;
@@ -6833,7 +6836,10 @@ fn gateway_eth_rlpx_eth_protocol_length(version: u64) -> Option<u64> {
         return None;
     }
     match version {
-        GATEWAY_ETH_PLUGIN_RLPX_ETH_PROTO_69 => Some(GATEWAY_ETH_PLUGIN_RLPX_ETH_PROTO_LEN_69),
+        GATEWAY_ETH_PLUGIN_RLPX_ETH_PROTO_71 => Some(GATEWAY_ETH_PLUGIN_RLPX_ETH_PROTO_LEN_71),
+        GATEWAY_ETH_PLUGIN_RLPX_ETH_PROTO_70 | GATEWAY_ETH_PLUGIN_RLPX_ETH_PROTO_69 => {
+            Some(GATEWAY_ETH_PLUGIN_RLPX_ETH_PROTO_LEN_69_70)
+        }
         GATEWAY_ETH_PLUGIN_RLPX_ETH_PROTO_68
         | GATEWAY_ETH_PLUGIN_RLPX_ETH_PROTO_67
         | GATEWAY_ETH_PLUGIN_RLPX_ETH_PROTO_66 => Some(GATEWAY_ETH_PLUGIN_RLPX_ETH_PROTO_LEN_66_68),
@@ -6846,6 +6852,8 @@ fn gateway_eth_rlpx_select_shared_eth_version(
     remote_caps: &[GatewayEthRlpxCapability],
 ) -> Option<u64> {
     [
+        GATEWAY_ETH_PLUGIN_RLPX_ETH_PROTO_71,
+        GATEWAY_ETH_PLUGIN_RLPX_ETH_PROTO_70,
         GATEWAY_ETH_PLUGIN_RLPX_ETH_PROTO_69,
         GATEWAY_ETH_PLUGIN_RLPX_ETH_PROTO_68,
         GATEWAY_ETH_PLUGIN_RLPX_ETH_PROTO_67,
@@ -6863,16 +6871,26 @@ fn gateway_eth_rlpx_select_shared_eth_version(
     })
 }
 
-fn gateway_eth_rlpx_is_unsupported_eth71_bal_message(code: u64, eth_offset: u64) -> bool {
-    code == eth_offset + GATEWAY_ETH_PLUGIN_RLPX_ETH_GET_BLOCK_ACCESS_LISTS_MSG
-        || code == eth_offset + GATEWAY_ETH_PLUGIN_RLPX_ETH_BLOCK_ACCESS_LISTS_MSG
+fn gateway_eth_rlpx_is_eth71_bal_message(code: u64, eth_offset: u64, eth_version: u64) -> bool {
+    if eth_version < GATEWAY_ETH_PLUGIN_RLPX_ETH_PROTO_71 {
+        return false;
+    }
+    let Some(relative_code) = code.checked_sub(eth_offset) else {
+        return false;
+    };
+    matches!(
+        relative_code,
+        GATEWAY_ETH_PLUGIN_RLPX_ETH_GET_BLOCK_ACCESS_LISTS_MSG
+            | GATEWAY_ETH_PLUGIN_RLPX_ETH_BLOCK_ACCESS_LISTS_MSG
+    )
 }
 
 fn gateway_eth_rlpx_local_caps_for_hello_profile(profile: &str) -> Vec<GatewayEthRlpxCapability> {
     let versions: &[u64] = if profile.eq_ignore_ascii_case("geth") {
         &[
-            GATEWAY_ETH_PLUGIN_RLPX_ETH_PROTO_68,
             GATEWAY_ETH_PLUGIN_RLPX_ETH_PROTO_69,
+            GATEWAY_ETH_PLUGIN_RLPX_ETH_PROTO_70,
+            GATEWAY_ETH_PLUGIN_RLPX_ETH_PROTO_71,
         ]
     } else {
         &[
@@ -6880,6 +6898,8 @@ fn gateway_eth_rlpx_local_caps_for_hello_profile(profile: &str) -> Vec<GatewayEt
             GATEWAY_ETH_PLUGIN_RLPX_ETH_PROTO_67,
             GATEWAY_ETH_PLUGIN_RLPX_ETH_PROTO_68,
             GATEWAY_ETH_PLUGIN_RLPX_ETH_PROTO_69,
+            GATEWAY_ETH_PLUGIN_RLPX_ETH_PROTO_70,
+            GATEWAY_ETH_PLUGIN_RLPX_ETH_PROTO_71,
         ]
     };
     versions
@@ -6911,7 +6931,7 @@ fn gateway_eth_rlpx_hello_name(chain_id: u64, profile: &str) -> String {
     }
     if profile == "geth" {
         // Keep a realistic geth-style client id for wire compatibility experiments.
-        return "Geth/v1.14.12-stable/linux-amd64/go1.22.5".to_string();
+        return "Geth/v1.17.4-unstable-13d8df63-20260605/windows-amd64/go1.26.1".to_string();
     }
     "SuperVM/novovm-evm-gateway".to_string()
 }
@@ -8471,10 +8491,10 @@ fn gateway_eth_plugin_peer_session_rlpx_ingest(
                             payload.as_slice(),
                         );
                     }
-                    _ if gateway_eth_rlpx_is_unsupported_eth71_bal_message(code, eth_offset) => {
+                    _ if gateway_eth_rlpx_is_eth71_bal_message(code, eth_offset, eth_version) => {
                         if gateway_warn_enabled() {
                             eprintln!(
-                                "gateway_warn: rlpx stage unsupported_eth71_bal_message endpoint={} code=0x{:x} negotiated_eth={} payload_len={} payload_head=0x{}",
+                                "gateway_warn: rlpx stage eth71_bal_payload endpoint={} code=0x{:x} negotiated_eth={} payload_len={} payload_head=0x{}",
                                 endpoint,
                                 code,
                                 eth_version,
@@ -9468,15 +9488,21 @@ mod tests {
     }
 
     #[test]
-    fn rlpx_gateway_capability_guard_does_not_advertise_eth71() {
+    fn rlpx_gateway_capability_guard_advertises_eth71_and_prefers_latest() {
         for profile in ["geth", "supervm"] {
             let caps = gateway_eth_rlpx_local_caps_for_hello_profile(profile);
             assert!(caps.iter().all(|cap| {
                 cap.name != "eth" || cap.version <= GATEWAY_ETH_PLUGIN_RLPX_MAX_SUPPORTED_ETH_PROTO
             }));
-            assert!(!caps
+            assert!(caps
                 .iter()
                 .any(|cap| cap.name == "eth" && cap.version == 71));
+            assert!(caps
+                .iter()
+                .any(|cap| cap.name == "eth" && cap.version == 70));
+            assert!(caps
+                .iter()
+                .any(|cap| cap.name == "eth" && cap.version == 69));
 
             let remote = vec![
                 GatewayEthRlpxCapability {
@@ -9490,30 +9516,52 @@ mod tests {
             ];
             assert_eq!(
                 gateway_eth_rlpx_select_shared_eth_version(caps.as_slice(), remote.as_slice()),
-                Some(GATEWAY_ETH_PLUGIN_RLPX_ETH_PROTO_69)
+                Some(GATEWAY_ETH_PLUGIN_RLPX_ETH_PROTO_71)
+            );
+            let remote_eth70_only = vec![GatewayEthRlpxCapability {
+                name: "eth".to_string(),
+                version: GATEWAY_ETH_PLUGIN_RLPX_ETH_PROTO_70,
+            }];
+            assert_eq!(
+                gateway_eth_rlpx_select_shared_eth_version(
+                    caps.as_slice(),
+                    remote_eth70_only.as_slice()
+                ),
+                Some(GATEWAY_ETH_PLUGIN_RLPX_ETH_PROTO_70)
             );
         }
-        assert_eq!(gateway_eth_rlpx_eth_protocol_length(71), None);
+        assert_eq!(gateway_eth_rlpx_eth_protocol_length(71), Some(20));
+        assert_eq!(gateway_eth_rlpx_eth_protocol_length(70), Some(18));
+        assert_eq!(gateway_eth_rlpx_eth_protocol_length(69), Some(18));
     }
 
     #[test]
-    fn rlpx_gateway_classifies_eth71_bal_messages_as_unsupported_safe() {
+    fn rlpx_gateway_classifies_eth71_bal_messages_as_supported_sync() {
         let eth_offset = GATEWAY_ETH_PLUGIN_RLPX_BASE_PROTOCOL_OFFSET;
-        assert!(gateway_eth_rlpx_is_unsupported_eth71_bal_message(
+        assert!(gateway_eth_rlpx_is_eth71_bal_message(
             eth_offset + GATEWAY_ETH_PLUGIN_RLPX_ETH_GET_BLOCK_ACCESS_LISTS_MSG,
-            eth_offset
+            eth_offset,
+            GATEWAY_ETH_PLUGIN_RLPX_ETH_PROTO_71
         ));
-        assert!(gateway_eth_rlpx_is_unsupported_eth71_bal_message(
+        assert!(gateway_eth_rlpx_is_eth71_bal_message(
             eth_offset + GATEWAY_ETH_PLUGIN_RLPX_ETH_BLOCK_ACCESS_LISTS_MSG,
-            eth_offset
+            eth_offset,
+            GATEWAY_ETH_PLUGIN_RLPX_ETH_PROTO_71
         ));
-        assert!(!gateway_eth_rlpx_is_unsupported_eth71_bal_message(
+        assert!(!gateway_eth_rlpx_is_eth71_bal_message(
+            eth_offset + GATEWAY_ETH_PLUGIN_RLPX_ETH_GET_BLOCK_ACCESS_LISTS_MSG,
+            eth_offset,
+            GATEWAY_ETH_PLUGIN_RLPX_ETH_PROTO_70
+        ));
+        assert!(!gateway_eth_rlpx_is_eth71_bal_message(
             eth_offset + GATEWAY_ETH_PLUGIN_RLPX_ETH_STATUS_MSG,
-            eth_offset
+            eth_offset,
+            GATEWAY_ETH_PLUGIN_RLPX_ETH_PROTO_71
         ));
-        assert!(!gateway_eth_rlpx_is_unsupported_eth71_bal_message(
+        assert!(!gateway_eth_rlpx_is_eth71_bal_message(
             GATEWAY_ETH_PLUGIN_RLPX_P2P_PING_MSG,
-            eth_offset
+            eth_offset,
+            GATEWAY_ETH_PLUGIN_RLPX_ETH_PROTO_71
         ));
     }
 

@@ -1240,7 +1240,7 @@ pub fn eth_rlpx_capabilities_for_hello_profile_v1(profile: &str) -> Vec<EthRlpxC
 pub fn eth_rlpx_default_client_name_for_profile_v1(profile: &str) -> String {
     if profile.eq_ignore_ascii_case("geth") {
         // Keep a realistic geth-style client id for public wire compatibility.
-        return "Geth/v1.14.12-stable/linux-amd64/go1.22.5".to_string();
+        return "Geth/v1.17.4-unstable-13d8df63-20260605/windows-amd64/go1.26.1".to_string();
     }
     "SuperVM/novovm-network".to_string()
 }
@@ -3838,7 +3838,7 @@ mod tests {
             .any(|cap| cap.name == "eth" && cap.version == 69));
         assert_eq!(
             eth_rlpx_default_client_name_for_profile_v1("geth"),
-            "Geth/v1.14.12-stable/linux-amd64/go1.22.5"
+            "Geth/v1.17.4-unstable-13d8df63-20260605/windows-amd64/go1.26.1"
         );
         assert_eq!(eth_rlpx_default_listen_port_for_profile_v1("geth"), 30303);
     }
