@@ -2032,6 +2032,18 @@ fn eth_discv4_random_lookup_target_v1() -> [u8; ETH_RLPX_PUB_LEN] {
     target
 }
 
+fn eth_discv4_should_continue_findnode_v1(
+    endpoints_before: usize,
+    endpoints_after: usize,
+    answered_ping_during_findnode: bool,
+    reached_limit: bool,
+) -> bool {
+    if reached_limit {
+        return false;
+    }
+    answered_ping_during_findnode || endpoints_after > endpoints_before
+}
+
 fn eth_discv4_discover_peer_endpoints_v1(
     chain_id: u64,
     limit: usize,
@@ -2050,6 +2062,10 @@ fn eth_discv4_discover_peer_endpoints_v1(
     )
     .unwrap_or(ETH_RLPX_MAINNET_BOOTNODES_V1.len())
     .clamp(1, ETH_RLPX_MAINNET_BOOTNODES_V1.len());
+    let lookup_attempts_per_bootnode =
+        usize_env_allow_zero("NOVOVM_ETH_DISCV4_DISCOVERY_LOOKUPS_PER_BOOTNODE", 4)
+            .unwrap_or(4)
+            .clamp(1, 64);
     let nodekey = eth_rlpx_local_static_nodekey_bytes_v1();
     let expiration_unix_s = now_unix_ms().saturating_div(1000).saturating_add(600);
     let mut endpoints = Vec::<PluginPeerEndpoint>::new();
@@ -2076,7 +2092,6 @@ fn eth_discv4_discover_peer_endpoints_v1(
         let Ok(remote_addr) = boot_endpoint.addr_hint.parse::<std::net::SocketAddr>() else {
             continue;
         };
-        let target = eth_discv4_random_lookup_target_v1();
         let Ok(socket) = std::net::UdpSocket::bind("0.0.0.0:0") else {
             continue;
         };
@@ -2153,8 +2168,9 @@ fn eth_discv4_discover_peer_endpoints_v1(
         let mut neighbor_packets = 0usize;
         let mut neighbor_parse_errors = 0usize;
         let mut findnode_attempts = 0usize;
-        while findnode_attempts < 2 && endpoints.len() < limit {
+        while findnode_attempts < lookup_attempts_per_bootnode && endpoints.len() < limit {
             findnode_attempts = findnode_attempts.saturating_add(1);
+            let target = eth_discv4_random_lookup_target_v1();
             let Ok(findnode) =
                 eth_discv4_build_findnode_packet_v1(&nodekey, &target, expiration_unix_s)
             else {
@@ -2163,6 +2179,7 @@ fn eth_discv4_discover_peer_endpoints_v1(
             if socket.send_to(findnode.as_slice(), remote_addr).is_err() {
                 break;
             }
+            let endpoints_before_attempt = endpoints.len();
             let mut answered_ping_during_findnode = false;
             eth_discv4_recv_until_timeout_v1(&socket, timeout, |packet, from| {
                 if from != remote_addr {
@@ -2195,7 +2212,12 @@ fn eth_discv4_discover_peer_endpoints_v1(
                 }
                 false
             });
-            if endpoints.len() >= limit || !answered_ping_during_findnode {
+            if !eth_discv4_should_continue_findnode_v1(
+                endpoints_before_attempt,
+                endpoints.len(),
+                answered_ping_during_findnode,
+                endpoints.len() >= limit,
+            ) {
                 break;
             }
         }
@@ -3743,6 +3765,14 @@ mod mainline_evm_cli_tests {
         let target = eth_discv4_random_lookup_target_v1();
         assert_eq!(target.len(), ETH_RLPX_PUB_LEN);
         assert!(target.iter().any(|byte| *byte != 0));
+    }
+
+    #[test]
+    fn eth_discv4_findnode_continues_when_lookup_adds_candidates_v1() {
+        assert!(eth_discv4_should_continue_findnode_v1(3, 5, false, false));
+        assert!(eth_discv4_should_continue_findnode_v1(3, 3, true, false));
+        assert!(!eth_discv4_should_continue_findnode_v1(3, 3, false, false));
+        assert!(!eth_discv4_should_continue_findnode_v1(3, 5, true, true));
     }
 
     #[test]
