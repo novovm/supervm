@@ -2285,6 +2285,41 @@ fn ingest_real_rlpx_pooled_transactions_v1(
     session.pending_pooled_transaction_hashes.clear();
 }
 
+fn validate_snap_account_range_proof_presence_v1(
+    chain_id: u64,
+    source_peer_id: u64,
+    response: &EthRlpxAccountRangeResponseV1,
+) -> Result<(), NetworkError> {
+    if response.accounts.is_empty() || !response.proof.is_empty() {
+        return Ok(());
+    }
+    let reason = format!(
+        "snap_account_range_non_empty_without_proof:accounts={}",
+        response.accounts.len()
+    );
+    observe_network_runtime_eth_peer_decode_failure_v1(chain_id, source_peer_id, reason.as_str());
+    Err(NetworkError::Decode(reason))
+}
+
+fn validate_snap_storage_ranges_proof_presence_v1(
+    chain_id: u64,
+    source_peer_id: u64,
+    response: &EthRlpxStorageRangesResponseV1,
+) -> Result<(), NetworkError> {
+    let non_empty_slotsets = response
+        .slots
+        .iter()
+        .filter(|slots| !slots.is_empty())
+        .count();
+    if non_empty_slotsets == 0 || !response.proof.is_empty() {
+        return Ok(());
+    }
+    let reason =
+        format!("snap_storage_ranges_non_empty_without_proof:slotsets={non_empty_slotsets}");
+    observe_network_runtime_eth_peer_decode_failure_v1(chain_id, source_peer_id, reason.as_str());
+    Err(NetworkError::Decode(reason))
+}
+
 fn ingest_real_rlpx_snap_account_range_v1(
     chain_id: u64,
     source_peer_id: u64,
@@ -2309,6 +2344,7 @@ fn ingest_real_rlpx_snap_account_range_v1(
         response.accounts.len(),
         response.proof.len(),
     );
+    validate_snap_account_range_proof_presence_v1(chain_id, source_peer_id, response)?;
     session.last_snap_account_range_request_id = None;
     let Some(snap_offset) = eth_rlpx_snap_base_offset_v1(
         session._negotiated_eth_version,
@@ -2468,6 +2504,7 @@ fn ingest_real_rlpx_snap_storage_ranges_v1(
         );
         return Err(NetworkError::Decode(reason));
     }
+    validate_snap_storage_ranges_proof_presence_v1(chain_id, source_peer_id, response)?;
     observe_eth_native_snap_response(chain_id);
     eprintln!(
         "network_info: rlpx stage snap_storage_ranges_received chain_id={} peer={} endpoint={} negotiated_eth={} negotiated_snap={:?} request_id={} slotsets={} proof_nodes={}",
@@ -9758,6 +9795,61 @@ mod tests {
         assert!(responded, "BAL request must receive protocol response");
 
         server.join().expect("server join");
+    }
+
+    #[test]
+    fn rlpx_snap_rejects_non_empty_account_or_storage_without_proof_v1() {
+        let account_without_proof = crate::EthRlpxAccountRangeResponseV1 {
+            request_id: 1,
+            accounts: vec![crate::EthRlpxSnapAccountDataV1 {
+                hash: [0x11; 32],
+                body_rlp: vec![0xc0],
+            }],
+            proof: Vec::new(),
+        };
+        let account_err =
+            validate_snap_account_range_proof_presence_v1(9_943, 1, &account_without_proof)
+                .expect_err("non-empty AccountRange without proof must be rejected");
+        assert!(
+            account_err
+                .to_string()
+                .contains("snap_account_range_non_empty_without_proof"),
+            "{account_err}"
+        );
+
+        let empty_account_without_proof = crate::EthRlpxAccountRangeResponseV1 {
+            request_id: 2,
+            accounts: Vec::new(),
+            proof: Vec::new(),
+        };
+        validate_snap_account_range_proof_presence_v1(9_943, 1, &empty_account_without_proof)
+            .expect("empty AccountRange without proof remains protocol-tolerated here");
+
+        let storage_without_proof = crate::EthRlpxStorageRangesResponseV1 {
+            request_id: 3,
+            slots: vec![vec![crate::EthRlpxSnapStorageDataV1 {
+                hash: [0x22; 32],
+                body: vec![0x80],
+            }]],
+            proof: Vec::new(),
+        };
+        let storage_err =
+            validate_snap_storage_ranges_proof_presence_v1(9_943, 1, &storage_without_proof)
+                .expect_err("non-empty StorageRanges without proof must be rejected");
+        assert!(
+            storage_err
+                .to_string()
+                .contains("snap_storage_ranges_non_empty_without_proof"),
+            "{storage_err}"
+        );
+
+        let empty_storage_without_proof = crate::EthRlpxStorageRangesResponseV1 {
+            request_id: 4,
+            slots: vec![Vec::new()],
+            proof: Vec::new(),
+        };
+        validate_snap_storage_ranges_proof_presence_v1(9_943, 1, &empty_storage_without_proof)
+            .expect("empty storage slotsets without proof remain protocol-tolerated here");
     }
 
     #[test]
