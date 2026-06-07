@@ -1668,6 +1668,23 @@ fn eth_push_peer_endpoint_v1(
     }
 }
 
+fn eth_peer_endpoint_key_v1(endpoint: &PluginPeerEndpoint) -> String {
+    format!("{}@{}", endpoint.node_hint, endpoint.addr_hint)
+}
+
+fn eth_peer_endpoints_include_new_entries_v1(
+    current: &[PluginPeerEndpoint],
+    refreshed: &[PluginPeerEndpoint],
+) -> bool {
+    let current_keys = current
+        .iter()
+        .map(eth_peer_endpoint_key_v1)
+        .collect::<HashSet<_>>();
+    refreshed
+        .iter()
+        .any(|endpoint| !current_keys.contains(&eth_peer_endpoint_key_v1(endpoint)))
+}
+
 fn eth_parse_enode_endpoints_v1(raw: &str, limit: usize) -> Vec<PluginPeerEndpoint> {
     raw.split([',', ';', '\n', '\r', '\t', ' '])
         .map(str::trim)
@@ -2602,6 +2619,9 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
     let recv_budget = usize_env_allow_zero("NOVOVM_ETH_RLPX_RECV_BUDGET", 16)?.clamp(1, 1024);
     let sync_target_fanout =
         usize_env_allow_zero("NOVOVM_ETH_RLPX_SYNC_TARGET_FANOUT", max_peers)?.clamp(1, max_peers);
+    let exhausted_refresh_interval_ticks =
+        usize_env_allow_zero("NOVOVM_ETH_RLPX_EXHAUSTED_REFRESH_INTERVAL_TICKS", 8)?
+            .clamp(1, 10_000);
     let mut peer_endpoints = eth_rlpx_sync_peer_endpoints_v1(chain_id, candidate_limit, verbose);
     if peer_endpoints.is_empty() {
         bail!("no Ethereum RLPx peer endpoints resolved from env, DNS discovery, or bootnodes");
@@ -2703,6 +2723,7 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
         budget_hooks: budget.clone(),
     });
     let mut tick = 0usize;
+    let mut last_peer_refresh_tick = 0usize;
     loop {
         tick = tick.saturating_add(1);
         let report = worker
@@ -2786,15 +2807,34 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
             && report.selection_quality_summary.candidate_peer_count > 0
             && report.selection_quality_summary.skipped_cooldown_peers
                 >= report.selection_quality_summary.candidate_peer_count;
-        if candidate_pool_exhausted && candidate_limit < adaptive_candidate_limit {
-            let next_candidate_limit = candidate_limit
-                .saturating_mul(2)
-                .max(candidate_limit.saturating_add(max_peers))
-                .min(adaptive_candidate_limit);
-            candidate_limit = next_candidate_limit;
+        let refresh_plan = if candidate_pool_exhausted && candidate_limit < adaptive_candidate_limit
+        {
+            Some((
+                candidate_limit
+                    .saturating_mul(2)
+                    .max(candidate_limit.saturating_add(max_peers))
+                    .min(adaptive_candidate_limit),
+                "all_candidate_peers_in_cooldown_expand",
+            ))
+        } else if candidate_pool_exhausted
+            && bool_env_default_true("NOVOVM_ETH_RLPX_REFRESH_EXHAUSTED_CANDIDATES_ENABLED")
+            && tick.saturating_sub(last_peer_refresh_tick) >= exhausted_refresh_interval_ticks
+        {
+            Some((candidate_limit, "all_candidate_peers_in_cooldown_refresh"))
+        } else {
+            None
+        };
+        if let Some((next_candidate_limit, refresh_reason)) = refresh_plan {
+            last_peer_refresh_tick = tick;
             let refreshed_endpoints =
                 eth_rlpx_sync_peer_endpoints_v1(chain_id, next_candidate_limit, verbose);
-            if refreshed_endpoints.len() > peer_endpoints.len() {
+            if refreshed_endpoints.len() > peer_endpoints.len()
+                || eth_peer_endpoints_include_new_entries_v1(
+                    peer_endpoints.as_slice(),
+                    refreshed_endpoints.as_slice(),
+                )
+            {
+                candidate_limit = next_candidate_limit;
                 peer_endpoints = refreshed_endpoints;
                 peers = peer_endpoints
                     .iter()
@@ -2811,9 +2851,18 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
                     budget_hooks: budget.clone(),
                 });
                 println!(
-                    "eth_rlpx_peer_refresh: chain_id={} tick={} reason=all_candidate_peers_in_cooldown candidates={}",
+                    "eth_rlpx_peer_refresh: chain_id={} tick={} reason={} candidates={}",
                     chain_id,
                     tick,
+                    refresh_reason,
+                    peer_endpoints.len()
+                );
+            } else if verbose {
+                println!(
+                    "eth_rlpx_peer_refresh_skip: chain_id={} tick={} reason={} candidates={}",
+                    chain_id,
+                    tick,
+                    refresh_reason,
                     peer_endpoints.len()
                 );
             }
@@ -2939,6 +2988,30 @@ mod mainline_evm_cli_tests {
         let target = eth_discv4_random_lookup_target_v1();
         assert_eq!(target.len(), ETH_RLPX_PUB_LEN);
         assert!(target.iter().any(|byte| *byte != 0));
+    }
+
+    #[test]
+    fn eth_peer_endpoint_refresh_detects_new_entries_at_same_len_v1() {
+        let current = vec![PluginPeerEndpoint {
+            endpoint: "enode://1111111111111111@18.138.108.67:30303".to_string(),
+            node_hint: 0x1111_1111_1111_1111,
+            addr_hint: "18.138.108.67:30303".to_string(),
+        }];
+        let same = vec![PluginPeerEndpoint {
+            endpoint: "enode://1111111111111111@18.138.108.67:30303".to_string(),
+            node_hint: 0x1111_1111_1111_1111,
+            addr_hint: "18.138.108.67:30303".to_string(),
+        }];
+        let changed = vec![PluginPeerEndpoint {
+            endpoint: "enode://2222222222222222@3.209.45.79:30303".to_string(),
+            node_hint: 0x2222_2222_2222_2222,
+            addr_hint: "3.209.45.79:30303".to_string(),
+        }];
+
+        assert!(!eth_peer_endpoints_include_new_entries_v1(&current, &same));
+        assert!(eth_peer_endpoints_include_new_entries_v1(
+            &current, &changed
+        ));
     }
 
     #[test]
