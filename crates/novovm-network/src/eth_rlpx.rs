@@ -55,6 +55,13 @@ pub const ETH_RLPX_ETH_GET_RECEIPTS_MSG: u64 = 0x0f;
 pub const ETH_RLPX_ETH_RECEIPTS_MSG: u64 = 0x10;
 pub const ETH_RLPX_ETH_GET_BLOCK_ACCESS_LISTS_MSG: u64 = 0x12;
 pub const ETH_RLPX_ETH_BLOCK_ACCESS_LISTS_MSG: u64 = 0x13;
+pub const ETH_RLPX_ETH_PRE_69_PROTOCOL_LENGTH: u64 = 17;
+pub const ETH_RLPX_ETH_69_70_PROTOCOL_LENGTH: u64 = 18;
+pub const ETH_RLPX_ETH_71_PROTOCOL_LENGTH: u64 = 20;
+pub const ETH_RLPX_SNAP_1_PROTOCOL_LENGTH: u64 = 8;
+pub const ETH_RLPX_SNAP_GET_ACCOUNT_RANGE_MSG: u64 = 0x00;
+pub const ETH_RLPX_SNAP_ACCOUNT_RANGE_MSG: u64 = 0x01;
+pub const ETH_RLPX_SNAP_DEFAULT_ACCOUNT_RANGE_BYTES: u64 = 384 * 1024;
 pub const ETH_RLPX_EMPTY_TRIE_ROOT_V1: [u8; 32] = [
     0x56, 0xe8, 0x1f, 0x17, 0x1b, 0xcc, 0x55, 0xa6, 0xff, 0x83, 0x45, 0xe6, 0x92, 0xc0, 0xf8, 0x6e,
     0x5b, 0x48, 0xe0, 0x1b, 0x99, 0x6c, 0xad, 0xc0, 0x01, 0x62, 0x2f, 0xb5, 0xe3, 0x63, 0xb4, 0x21,
@@ -443,6 +450,28 @@ pub struct EthRlpxBlockAccessListRecordV1 {
 pub struct EthRlpxBlockAccessListsResponseV1 {
     pub request_id: u64,
     pub lists: Vec<EthRlpxBlockAccessListRecordV1>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EthRlpxGetAccountRangeRequestV1 {
+    pub request_id: u64,
+    pub root: [u8; 32],
+    pub origin: [u8; 32],
+    pub limit: [u8; 32],
+    pub byte_limit: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EthRlpxSnapAccountDataV1 {
+    pub hash: [u8; 32],
+    pub body_rlp: Vec<u8>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EthRlpxAccountRangeResponseV1 {
+    pub request_id: u64,
+    pub accounts: Vec<EthRlpxSnapAccountDataV1>,
+    pub proof: Vec<Vec<u8>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -960,6 +989,39 @@ pub fn eth_rlpx_is_unsupported_eth71_bal_message_v1(code: u64) -> bool {
     eth_rlpx_is_eth71_bal_message_v1(code)
 }
 
+#[must_use]
+pub fn eth_rlpx_protocol_length_for_eth_version_v1(version: u8) -> u64 {
+    match version {
+        71..=u8::MAX => ETH_RLPX_ETH_71_PROTOCOL_LENGTH,
+        69 | 70 => ETH_RLPX_ETH_69_70_PROTOCOL_LENGTH,
+        _ => ETH_RLPX_ETH_PRE_69_PROTOCOL_LENGTH,
+    }
+}
+
+#[must_use]
+pub fn eth_rlpx_snap_base_offset_v1(
+    negotiated_eth_version: u8,
+    negotiated_snap_version: Option<u8>,
+) -> Option<u64> {
+    if negotiated_snap_version != Some(1) {
+        return None;
+    }
+    Some(
+        ETH_RLPX_BASE_PROTOCOL_OFFSET
+            + eth_rlpx_protocol_length_for_eth_version_v1(negotiated_eth_version),
+    )
+}
+
+#[must_use]
+pub fn eth_rlpx_is_snap1_message_code_v1(
+    code: u64,
+    negotiated_eth_version: u8,
+    negotiated_snap_version: Option<u8>,
+) -> bool {
+    eth_rlpx_snap_base_offset_v1(negotiated_eth_version, negotiated_snap_version)
+        .is_some_and(|offset| code >= offset && code < offset + ETH_RLPX_SNAP_1_PROTOCOL_LENGTH)
+}
+
 pub fn eth_rlpx_select_shared_eth_version_v1(
     local_caps: &[EthRlpxCapabilityV1],
     remote_caps: &[EthRlpxCapabilityV1],
@@ -1261,6 +1323,22 @@ pub fn eth_rlpx_build_get_block_access_lists_payload_v1(
     ])
 }
 
+pub fn eth_rlpx_build_get_account_range_payload_v1(
+    request_id: u64,
+    root: [u8; 32],
+    origin: [u8; 32],
+    limit: [u8; 32],
+    byte_limit: u64,
+) -> Vec<u8> {
+    eth_rlpx_encode_list_v1(&[
+        eth_rlpx_encode_u64_v1(request_id),
+        eth_rlpx_encode_bytes_v1(&root),
+        eth_rlpx_encode_bytes_v1(&origin),
+        eth_rlpx_encode_bytes_v1(&limit),
+        eth_rlpx_encode_u64_v1(byte_limit),
+    ])
+}
+
 pub fn eth_rlpx_build_get_receipts_payload_v1(
     request_id: u64,
     first_block_receipt_index: u64,
@@ -1349,6 +1427,31 @@ pub fn eth_rlpx_build_receipts_payload_v1(
         ]);
     }
     eth_rlpx_encode_list_v1(&[eth_rlpx_encode_u64_v1(request_id), blocks_list])
+}
+
+pub fn eth_rlpx_build_account_range_payload_v1(
+    request_id: u64,
+    accounts: &[EthRlpxSnapAccountDataV1],
+    proof: &[Vec<u8>],
+) -> Vec<u8> {
+    let account_items = accounts
+        .iter()
+        .map(|account| {
+            eth_rlpx_encode_list_v1(&[
+                eth_rlpx_encode_bytes_v1(&account.hash),
+                account.body_rlp.clone(),
+            ])
+        })
+        .collect::<Vec<_>>();
+    let proof_items = proof
+        .iter()
+        .map(|node| eth_rlpx_encode_bytes_v1(node))
+        .collect::<Vec<_>>();
+    eth_rlpx_encode_list_v1(&[
+        eth_rlpx_encode_u64_v1(request_id),
+        eth_rlpx_encode_list_v1(&account_items),
+        eth_rlpx_encode_list_v1(&proof_items),
+    ])
 }
 
 pub fn eth_rlpx_parse_new_block_hashes_payload_v1(
@@ -1545,6 +1648,46 @@ pub fn eth_rlpx_parse_get_block_access_lists_payload_v1(
     Ok(EthRlpxGetBlockAccessListsRequestV1 {
         request_id: eth_rlpx_decode_u64_bytes_v1(request_id_bytes)?,
         hashes,
+    })
+}
+
+pub fn eth_rlpx_parse_get_account_range_payload_v1(
+    payload: &[u8],
+) -> Result<EthRlpxGetAccountRangeRequestV1, String> {
+    let (root, consumed) = eth_rlpx_parse_item_v1(payload)?;
+    if consumed != payload.len() {
+        return Err("rlpx_snap_get_account_range_trailing".to_string());
+    }
+    let EthRlpxRlpItemV1::List(root_payload) = root else {
+        return Err("rlpx_snap_get_account_range_not_list".to_string());
+    };
+    let fields = eth_rlpx_parse_list_items_v1(root_payload)?;
+    if fields.len() < 5 {
+        return Err("rlpx_snap_get_account_range_fields_short".to_string());
+    }
+    let EthRlpxRlpItemV1::Bytes(request_id_bytes) = fields[0] else {
+        return Err("rlpx_snap_get_account_range_request_id_not_bytes".to_string());
+    };
+    let read_hash = |idx: usize, name: &str| -> Result<[u8; 32], String> {
+        let Some(EthRlpxRlpItemV1::Bytes(bytes)) = fields.get(idx) else {
+            return Err(format!("rlpx_snap_get_account_range_{name}_not_bytes"));
+        };
+        if bytes.len() != 32 {
+            return Err(format!("rlpx_snap_get_account_range_{name}_len_invalid"));
+        }
+        let mut out = [0u8; 32];
+        out.copy_from_slice(bytes);
+        Ok(out)
+    };
+    let EthRlpxRlpItemV1::Bytes(byte_limit_bytes) = fields[4] else {
+        return Err("rlpx_snap_get_account_range_byte_limit_not_bytes".to_string());
+    };
+    Ok(EthRlpxGetAccountRangeRequestV1 {
+        request_id: eth_rlpx_decode_u64_bytes_v1(request_id_bytes)?,
+        root: read_hash(1, "root")?,
+        origin: read_hash(2, "origin")?,
+        limit: read_hash(3, "limit")?,
+        byte_limit: eth_rlpx_decode_u64_bytes_v1(byte_limit_bytes)?,
     })
 }
 
@@ -2203,6 +2346,74 @@ pub fn eth_rlpx_parse_block_access_lists_payload_v1(
     Ok(EthRlpxBlockAccessListsResponseV1 {
         request_id: eth_rlpx_decode_u64_bytes_v1(request_id_bytes)?,
         lists,
+    })
+}
+
+pub fn eth_rlpx_parse_account_range_payload_v1(
+    payload: &[u8],
+) -> Result<EthRlpxAccountRangeResponseV1, String> {
+    let (root, consumed) = eth_rlpx_parse_item_v1(payload)?;
+    if consumed != payload.len() {
+        return Err("rlpx_snap_account_range_trailing".to_string());
+    }
+    let EthRlpxRlpItemV1::List(root_payload) = root else {
+        return Err("rlpx_snap_account_range_not_list".to_string());
+    };
+    let fields = eth_rlpx_parse_list_items_v1(root_payload)?;
+    if fields.len() < 3 {
+        return Err("rlpx_snap_account_range_fields_short".to_string());
+    }
+    let EthRlpxRlpItemV1::Bytes(request_id_bytes) = fields[0] else {
+        return Err("rlpx_snap_account_range_request_id_not_bytes".to_string());
+    };
+    let EthRlpxRlpItemV1::List(accounts_payload) = fields[1] else {
+        return Err("rlpx_snap_account_range_accounts_not_list".to_string());
+    };
+    let EthRlpxRlpItemV1::List(proof_payload) = fields[2] else {
+        return Err("rlpx_snap_account_range_proof_not_list".to_string());
+    };
+    let raw_accounts = eth_rlpx_split_list_raw_items_v1(accounts_payload)?;
+    let mut accounts = Vec::with_capacity(raw_accounts.len());
+    for raw_account in raw_accounts {
+        let (item, consumed) = eth_rlpx_parse_item_v1(raw_account)?;
+        if consumed != raw_account.len() {
+            return Err("rlpx_snap_account_range_account_trailing".to_string());
+        }
+        let EthRlpxRlpItemV1::List(account_payload) = item else {
+            return Err("rlpx_snap_account_range_account_not_list".to_string());
+        };
+        let account_fields = eth_rlpx_parse_list_items_v1(account_payload)?;
+        if account_fields.len() < 2 {
+            return Err("rlpx_snap_account_range_account_fields_short".to_string());
+        }
+        let EthRlpxRlpItemV1::Bytes(hash_bytes) = account_fields[0] else {
+            return Err("rlpx_snap_account_range_account_hash_not_bytes".to_string());
+        };
+        if hash_bytes.len() != 32 {
+            return Err("rlpx_snap_account_range_account_hash_len_invalid".to_string());
+        }
+        let raw_account_fields = eth_rlpx_split_list_raw_items_v1(account_payload)?;
+        let Some(body_rlp) = raw_account_fields.get(1) else {
+            return Err("rlpx_snap_account_range_account_body_missing".to_string());
+        };
+        let mut hash = [0u8; 32];
+        hash.copy_from_slice(hash_bytes);
+        accounts.push(EthRlpxSnapAccountDataV1 {
+            hash,
+            body_rlp: body_rlp.to_vec(),
+        });
+    }
+    let mut proof = Vec::new();
+    for item in eth_rlpx_parse_list_items_v1(proof_payload)? {
+        let EthRlpxRlpItemV1::Bytes(node_bytes) = item else {
+            return Err("rlpx_snap_account_range_proof_node_not_bytes".to_string());
+        };
+        proof.push(node_bytes.to_vec());
+    }
+    Ok(EthRlpxAccountRangeResponseV1 {
+        request_id: eth_rlpx_decode_u64_bytes_v1(request_id_bytes)?,
+        accounts,
+        proof,
     })
 }
 
@@ -2899,6 +3110,62 @@ mod tests {
             ETH_RLPX_BASE_PROTOCOL_OFFSET + ETH_RLPX_ETH_STATUS_MSG
         ));
         assert!(!eth_rlpx_is_eth71_bal_message_v1(ETH_RLPX_P2P_PING_MSG));
+    }
+
+    #[test]
+    fn snap_account_range_offset_and_payload_roundtrip_match_eth70_layout() {
+        let snap_offset = eth_rlpx_snap_base_offset_v1(70, Some(1)).expect("snap offset");
+        assert_eq!(
+            snap_offset,
+            ETH_RLPX_BASE_PROTOCOL_OFFSET + ETH_RLPX_ETH_69_70_PROTOCOL_LENGTH
+        );
+        assert_eq!(
+            snap_offset + ETH_RLPX_SNAP_GET_ACCOUNT_RANGE_MSG,
+            ETH_RLPX_BASE_PROTOCOL_OFFSET + ETH_RLPX_ETH_GET_BLOCK_ACCESS_LISTS_MSG
+        );
+        assert!(eth_rlpx_is_snap1_message_code_v1(
+            snap_offset + ETH_RLPX_SNAP_ACCOUNT_RANGE_MSG,
+            70,
+            Some(1)
+        ));
+        assert!(!eth_rlpx_is_snap1_message_code_v1(
+            snap_offset + ETH_RLPX_SNAP_ACCOUNT_RANGE_MSG,
+            70,
+            None
+        ));
+
+        let request_payload = eth_rlpx_build_get_account_range_payload_v1(
+            99,
+            [0x11; 32],
+            [0x22; 32],
+            [0xff; 32],
+            ETH_RLPX_SNAP_DEFAULT_ACCOUNT_RANGE_BYTES,
+        );
+        let request = eth_rlpx_parse_get_account_range_payload_v1(request_payload.as_slice())
+            .expect("parse get account range");
+        assert_eq!(request.request_id, 99);
+        assert_eq!(request.root, [0x11; 32]);
+        assert_eq!(request.origin, [0x22; 32]);
+        assert_eq!(request.limit, [0xff; 32]);
+        assert_eq!(
+            request.byte_limit,
+            ETH_RLPX_SNAP_DEFAULT_ACCOUNT_RANGE_BYTES
+        );
+
+        let account = EthRlpxSnapAccountDataV1 {
+            hash: [0x33; 32],
+            body_rlp: vec![0xc0],
+        };
+        let response_payload = eth_rlpx_build_account_range_payload_v1(
+            99,
+            std::slice::from_ref(&account),
+            &[vec![0x01, 0x02]],
+        );
+        let response = eth_rlpx_parse_account_range_payload_v1(response_payload.as_slice())
+            .expect("parse account range");
+        assert_eq!(response.request_id, 99);
+        assert_eq!(response.accounts, vec![account]);
+        assert_eq!(response.proof, vec![vec![0x01, 0x02]]);
     }
 
     #[test]

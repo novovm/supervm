@@ -130,12 +130,13 @@ cargo test -p novovm-network evm_protocol_observable_equivalence_network_rlpx_ne
 - `BlockBodies` 返回后，SUPERVM 继续发 eth/70 `GetReceipts(firstBlockReceiptIndex=0)`；收到 receipts 后会拒绝 `lastBlockIncomplete=true`、block count mismatch 和 receipt count mismatch，解析 `Receipts(lastBlockIncomplete=false)` 后按 raw receipt MPT 校验 header `receiptsRoot`；对 empty/no-withdrawal block，如果父块已保留，还会校验子块 `stateRoot` 与父块 `stateRoot` 连续；通过后落地 native receipt snapshot、更新 canonical block receipt/stateRoot readiness，并把本轮 peer sync 标记 ready；本地响应 `GetReceipts` 时优先回放已验证 raw receipts，只有能证明空交易 body 时才响应空 receipts，不伪造缺失 receipt 数据。
 - 真实 RLPx peer 顺序返回 120A 和 121B 分支，runtime canonical head 从 120A reorg 到 121B。
 - 120A 中已 canonical included 的 pending tx 回到 `ReorgedBackToPending`，并携 raw RLP 重新进入 broadcast candidate。
-- 远端 peer 发送真实 `GetBlockAccessLists` frame，SUPERVM 返回协议合法 `BlockAccessLists` frame，保持 request_id 和 requested hash 数量一致。
+- 无 snap 协商的插件路径里，远端 peer 发送真实 `GetBlockAccessLists` frame，SUPERVM 返回协议合法 `BlockAccessLists` frame，保持 request_id 和 requested hash 数量一致。
+- eth/70+snap/1 路径里，global code `0x22/0x23` 归 snap `GetAccountRange/AccountRange`，SUPERVM 在 State phase 使用 native head `stateRoot` 发起 `GetAccountRange` 并记录匹配响应，不让 BAL 插件抢占主网 snap code。
 - mainline canonical batch append 后会把 persisted block BAL materialize 到 network runtime；对本地已 materialize 的 block BAL payload，响应返回真实 BAL RLP；对未 materialize 的 hash，响应使用 Ethereum RLPx BAL missing sentinel，不伪造 block access list。
 - 远端 peer 发送真实非空 `NewBlock` announcement，SUPERVM 按 Ethereum raw transaction trie 校验 `transactionsRoot`，同时保留 empty ommers/withdrawals 校验，再解析并导入 native header/body snapshot，更新 peer head/highest，并继续发 `GetReceipts`；收到 receipts 后按 raw receipt MPT 校验 `receiptsRoot`。
 - 远端 peer 发送真实 `NewBlockHashes` announcement，SUPERVM 解析公告高度，更新 peer head/highest，并主动发出后续 `GetBlockHeaders`，不再只依赖初始 `Status` 触发同步。
 
-当前 v3 结论：tx propagation 的入站/出站网络可观察语义、pooled tx hash/request/response 链路、RLPx header/body/receipts sync 链路、`NewBlock`/`NewBlockHashes` announcement 路径、`NewBlock`/`BlockBodies` transaction trie root validation、`Receipts` completeness/count/root validation、validated native receipt snapshot + local `GetReceipts` replay、empty/no-withdrawal stateRoot continuity validation、最小 reorg 回池路径、BAL 请求/响应路径已具备真实 gate；BAL 响应已能返回 canonical/materialized 本地 payload，并对缺失 payload 使用协议 missing sentinel。尚未因此声明完整 eth/71 peer sync、长连接主网接受度、完整 BAL 可用性、完整历史 receipt store、snap 全面同步、完整 state root execution validation 或复杂多分支 reorg 全覆盖。
+当前 v3 结论：tx propagation 的入站/出站网络可观察语义、pooled tx hash/request/response 链路、RLPx header/body/receipts sync 链路、`NewBlock`/`NewBlockHashes` announcement 路径、`NewBlock`/`BlockBodies` transaction trie root validation、`Receipts` completeness/count/root validation、validated native receipt snapshot + local `GetReceipts` replay、empty/no-withdrawal stateRoot continuity validation、最小 reorg 回池路径、无 snap BAL 插件请求/响应路径、snap/1 AccountRange request/response 路径已具备真实 gate；BAL 响应已能返回 canonical/materialized 本地 payload，并对缺失 payload 使用协议 missing sentinel。尚未因此声明完整 eth/71 peer sync、长连接主网接受度、完整 BAL 可用性、完整历史 receipt store、完整 snap state heal/download/store、完整 state root execution validation 或复杂多分支 reorg 全覆盖。
 
 ## 剩余阶段
 
