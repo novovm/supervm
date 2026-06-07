@@ -1580,6 +1580,90 @@ fn eth_rlpx_sync_peer_endpoints_v1(
     endpoints
 }
 
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+struct EthRlpxSyncCheckpointV1 {
+    schema: String,
+    chain_id: u64,
+    current_block: u64,
+    highest_block: u64,
+    header_number: u64,
+    header_hash: Option<String>,
+    updated_at_unix_ms: u64,
+}
+
+fn eth_rlpx_sync_checkpoint_path_v1() -> PathBuf {
+    string_env_nonempty("NOVOVM_ETH_RLPX_CHECKPOINT_PATH")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            let mut path = default_mainline_runtime_snapshot_path();
+            path.set_file_name("eth_rlpx_sync_checkpoint_v1.json");
+            path
+        })
+}
+
+fn load_eth_rlpx_sync_checkpoint_v1(
+    path: &Path,
+    chain_id: u64,
+) -> Result<Option<EthRlpxSyncCheckpointV1>> {
+    if !path.exists() {
+        return Ok(None);
+    }
+    let raw = fs::read(path)
+        .with_context(|| format!("read eth rlpx sync checkpoint failed: {}", path.display()))?;
+    let checkpoint = serde_json::from_slice::<EthRlpxSyncCheckpointV1>(raw.as_slice())
+        .with_context(|| format!("parse eth rlpx sync checkpoint failed: {}", path.display()))?;
+    if checkpoint.schema != "supervm-eth-rlpx-sync-checkpoint/v1" {
+        bail!(
+            "unsupported eth rlpx sync checkpoint schema: {}",
+            checkpoint.schema
+        );
+    }
+    if checkpoint.chain_id != chain_id {
+        bail!(
+            "eth rlpx sync checkpoint chain mismatch: checkpoint={} requested={}",
+            checkpoint.chain_id,
+            chain_id
+        );
+    }
+    Ok(Some(checkpoint))
+}
+
+fn write_eth_rlpx_sync_checkpoint_v1(
+    path: &Path,
+    chain_id: u64,
+    sync_status: Option<NetworkRuntimeSyncStatus>,
+    header_number: u64,
+    header_hash: Option<String>,
+) -> Result<()> {
+    let Some(sync_status) = sync_status else {
+        return Ok(());
+    };
+    let checkpoint = EthRlpxSyncCheckpointV1 {
+        schema: "supervm-eth-rlpx-sync-checkpoint/v1".to_string(),
+        chain_id,
+        current_block: sync_status.current_block,
+        highest_block: sync_status.highest_block.max(sync_status.current_block),
+        header_number,
+        header_hash,
+        updated_at_unix_ms: now_unix_ms(),
+    };
+    if let Some(parent) = path.parent() {
+        if !parent.as_os_str().is_empty() {
+            fs::create_dir_all(parent).with_context(|| {
+                format!(
+                    "create eth rlpx checkpoint dir failed: {}",
+                    parent.display()
+                )
+            })?;
+        }
+    }
+    let raw =
+        serde_json::to_vec_pretty(&checkpoint).context("encode eth rlpx sync checkpoint failed")?;
+    fs::write(path, raw)
+        .with_context(|| format!("write eth rlpx sync checkpoint failed: {}", path.display()))?;
+    Ok(())
+}
+
 fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
     let chain_id = u64_env_allow_zero("NOVOVM_ETH_RLPX_CHAIN_ID", 1)?;
     let local_node_id = u64_env_allow_zero("NOVOVM_ETH_RLPX_LOCAL_NODE", 9_990_001)?;
@@ -1604,15 +1688,48 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
     let mut budget = resolve_eth_fullnode_budget_hooks_v1(chain_id);
     budget.active_native_peer_soft_limit = max_peers as u64;
     budget.active_native_peer_hard_limit = candidate_limit as u64;
+    let checkpoint_enabled = bool_env_default_true("NOVOVM_ETH_RLPX_CHECKPOINT_ENABLED");
+    let checkpoint_path = eth_rlpx_sync_checkpoint_path_v1();
+    let checkpoint = if checkpoint_enabled {
+        load_eth_rlpx_sync_checkpoint_v1(&checkpoint_path, chain_id)?
+    } else {
+        None
+    };
+    let current_block = checkpoint
+        .as_ref()
+        .map(|checkpoint| checkpoint.current_block)
+        .unwrap_or(0);
+    let highest_block = checkpoint
+        .as_ref()
+        .map(|checkpoint| checkpoint.highest_block)
+        .unwrap_or(current_block)
+        .max(current_block);
     set_network_runtime_sync_status(
         chain_id,
         NetworkRuntimeSyncStatus {
             peer_count: 0,
-            starting_block: 0,
-            current_block: 0,
-            highest_block: 0,
+            starting_block: current_block,
+            current_block,
+            highest_block,
         },
     );
+    if verbose && checkpoint_enabled {
+        if let Some(checkpoint) = checkpoint.as_ref() {
+            println!(
+                "eth_rlpx_sync_checkpoint: loaded path={} current={} highest={} header_number={} header_hash={}",
+                checkpoint_path.display(),
+                checkpoint.current_block,
+                checkpoint.highest_block,
+                checkpoint.header_number,
+                checkpoint.header_hash.as_deref().unwrap_or("-")
+            );
+        } else {
+            println!(
+                "eth_rlpx_sync_checkpoint: initialized path={}",
+                checkpoint_path.display()
+            );
+        }
+    }
     let worker = EthFullnodeNativePeerWorkerV1::new(EthFullnodeNativePeerWorkerConfigV1 {
         chain_id,
         local_node: NodeId(local_node_id),
@@ -1676,6 +1793,17 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
                 report.selection_quality_summary.candidate_peer_count,
             );
         }
+        if checkpoint_enabled {
+            write_eth_rlpx_sync_checkpoint_v1(
+                &checkpoint_path,
+                chain_id,
+                sync_status,
+                header.as_ref().map(|snapshot| snapshot.number).unwrap_or(0),
+                header
+                    .as_ref()
+                    .map(|snapshot| to_hex_prefixed(&snapshot.hash)),
+            )?;
+        }
         if ticks != 0 && tick >= ticks {
             break;
         }
@@ -1720,6 +1848,41 @@ mod mainline_evm_cli_tests {
         assert!(endpoint.endpoint.starts_with("enode://"));
         assert_eq!(endpoint.addr_hint, "4.157.240.54:9000");
         assert!(endpoint.node_hint > 0);
+    }
+
+    #[test]
+    fn eth_rlpx_sync_checkpoint_roundtrips_v1() {
+        let path = std::env::temp_dir().join(format!(
+            "supervm-eth-rlpx-sync-checkpoint-test-{}-{}.json",
+            std::process::id(),
+            now_unix_ms()
+        ));
+        let chain_id = 1_u64;
+        write_eth_rlpx_sync_checkpoint_v1(
+            &path,
+            chain_id,
+            Some(NetworkRuntimeSyncStatus {
+                peer_count: 2,
+                starting_block: 1024,
+                current_block: 5120,
+                highest_block: 25_267_550,
+            }),
+            5120,
+            Some("0xabc".to_string()),
+        )
+        .expect("write checkpoint");
+
+        let loaded = load_eth_rlpx_sync_checkpoint_v1(&path, chain_id)
+            .expect("load checkpoint")
+            .expect("checkpoint present");
+        assert_eq!(loaded.schema, "supervm-eth-rlpx-sync-checkpoint/v1");
+        assert_eq!(loaded.chain_id, chain_id);
+        assert_eq!(loaded.current_block, 5120);
+        assert_eq!(loaded.highest_block, 25_267_550);
+        assert_eq!(loaded.header_number, 5120);
+        assert_eq!(loaded.header_hash.as_deref(), Some("0xabc"));
+
+        let _ = fs::remove_file(path);
     }
 
     #[test]
