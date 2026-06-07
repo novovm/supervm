@@ -3847,6 +3847,22 @@ pub fn mark_network_runtime_eth_peer_session_ready_v1(
     entry.last_success_unix_ms = now;
 }
 
+pub fn mark_network_runtime_eth_peer_session_closed_v1(chain_id: u64, peer_id: u64) {
+    let now = eth_peer_now_unix_ms_v1();
+    let mut guard = eth_peer_sessions()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let chain = guard.entry(chain_id).or_default();
+    let entry = chain
+        .entry(peer_id)
+        .or_insert_with(|| eth_peer_session_state_default_v1(now));
+    entry.session_ready = false;
+    if !entry.permanently_rejected {
+        entry.cooldown_until_unix_ms = 0;
+    }
+    eth_peer_mark_progress_stage_v1(entry, EthPeerLifecycleProgressStageV1::Discovered, now);
+}
+
 pub fn observe_network_runtime_eth_peer_validation_reject_v1(
     chain_id: u64,
     peer_id: u64,
@@ -4414,6 +4430,30 @@ mod tests {
         assert_eq!(snapshots[0].negotiated.eth_version, EthWireVersion::V68);
         assert_eq!(snapshots[0].lifecycle_stage, EthPeerLifecycleStageV1::Ready);
         assert!(!snapshots[0].retry_eligible);
+    }
+
+    #[test]
+    fn session_closed_without_penalty_becomes_retryable() {
+        let chain_id = 99_160_314_u64;
+        let peer_id = 314;
+        let _ =
+            upsert_network_runtime_eth_peer_session(chain_id, peer_id, &[68, 70], &[1], Some(512))
+                .expect("ready session");
+
+        mark_network_runtime_eth_peer_session_closed_v1(chain_id, peer_id);
+
+        let snapshot =
+            snapshot_network_runtime_eth_peer_sessions_for_peers_v1(chain_id, &[NodeId(peer_id)])
+                .into_iter()
+                .next()
+                .expect("peer snapshot");
+        assert!(!snapshot.session_ready);
+        assert_eq!(
+            snapshot.lifecycle_stage,
+            EthPeerLifecycleStageV1::Discovered
+        );
+        assert!(snapshot.retry_eligible);
+        assert_eq!(snapshot.cooldown_until_unix_ms, 0);
     }
 
     #[test]

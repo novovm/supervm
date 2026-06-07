@@ -39,11 +39,11 @@ use crate::{
     get_network_runtime_native_pending_tx_payload_v1,
     get_network_runtime_native_receipt_snapshot_v1, get_network_runtime_native_sync_status,
     get_network_runtime_peer_heads_top_k, get_network_runtime_sync_status,
-    has_network_runtime_eth_peer_session, mark_network_runtime_eth_peer_session_ready_v1,
-    observe_eth_native_bodies_pull, observe_eth_native_bodies_response,
-    observe_eth_native_discovery, observe_eth_native_headers_pull,
-    observe_eth_native_headers_response, observe_eth_native_hello, observe_eth_native_rlpx_auth,
-    observe_eth_native_rlpx_auth_ack, observe_eth_native_snap_pull,
+    has_network_runtime_eth_peer_session, mark_network_runtime_eth_peer_session_closed_v1,
+    mark_network_runtime_eth_peer_session_ready_v1, observe_eth_native_bodies_pull,
+    observe_eth_native_bodies_response, observe_eth_native_discovery,
+    observe_eth_native_headers_pull, observe_eth_native_headers_response, observe_eth_native_hello,
+    observe_eth_native_rlpx_auth, observe_eth_native_rlpx_auth_ack, observe_eth_native_snap_pull,
     observe_eth_native_snap_response, observe_eth_native_status,
     observe_network_runtime_eth_peer_body_success_v1,
     observe_network_runtime_eth_peer_connect_failure_v1,
@@ -844,7 +844,10 @@ fn eth_fullnode_rlpx_error_is_timeout_v1(raw: &str) -> bool {
 }
 
 fn eth_fullnode_rlpx_error_is_remote_closed_v1(raw: &str) -> bool {
-    raw.contains("eof read=0") || raw.contains("failed:eof")
+    raw.contains("eof read=0")
+        || raw.contains("failed:eof")
+        || raw.contains("read=0/")
+        || raw.contains("os error 10053")
 }
 
 fn observe_eth_fullnode_connect_error_v1(chain_id: u64, peer_id: u64, err: &NetworkError) {
@@ -1969,7 +1972,7 @@ fn drive_eth_fullnode_native_rlpx_peer_session_once_v1(
                         break;
                     }
                     if eth_fullnode_rlpx_error_is_remote_closed_v1(err.as_str()) {
-                        observe_network_runtime_eth_peer_disconnect_v1(chain_id, peer.0, None);
+                        mark_network_runtime_eth_peer_session_closed_v1(chain_id, peer.0);
                         let _ = unregister_network_runtime_peer(chain_id, peer.0);
                         disconnected = true;
                         disconnect_error = Some(NetworkError::Io(format!(
@@ -5605,7 +5608,9 @@ mod tests {
     #[test]
     fn rlpx_remote_closed_errors_are_not_plain_timeouts() {
         let eof = "rlpx_frame_header_read_failed:eof read=0/16";
+        let aborted = "rlpx_frame_body_read_failed:connection aborted (os error 10053) read=0/48";
         assert!(eth_fullnode_rlpx_error_is_remote_closed_v1(eof));
+        assert!(eth_fullnode_rlpx_error_is_remote_closed_v1(aborted));
         assert!(!eth_fullnode_rlpx_error_is_timeout_v1(eof));
         assert!(eth_fullnode_rlpx_error_is_timeout_v1(
             "operation would block"
