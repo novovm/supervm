@@ -3568,6 +3568,17 @@ pub fn get_network_runtime_native_pending_tx_v1(
 }
 
 #[must_use]
+pub fn get_network_runtime_native_pending_tx_payload_v1(
+    chain_id: u64,
+    tx_hash: [u8; 32],
+) -> Option<Vec<u8>> {
+    let guard = runtime_native_pending_tx_payload_map().lock().ok()?;
+    guard
+        .get(&chain_id)
+        .and_then(|chain| chain.get(&tx_hash).cloned())
+}
+
+#[must_use]
 pub fn snapshot_network_runtime_native_pending_tx_tombstones_v1(
     chain_id: u64,
     limit: usize,

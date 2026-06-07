@@ -186,10 +186,13 @@ EVM protocol-observable equivalence scope (CN):
 - v2b real geth block diff gate: `cargo test -p novovm-node evm_protocol_observable_equivalence_geth_real_block_diff_gate_v2b -- --nocapture` (raw tx RLP present => `transactionsRoot` matches geth fixture)
 - v3 RLPx tx ingress gate: `cargo test -p novovm-network evm_protocol_observable_equivalence_network_rlpx_tx_ingress_gate_v3 -- --nocapture` (real RLPx `Transactions` frame => remote pending tx with raw RLP broadcast candidate)
 - v3 RLPx tx outbound gate: `cargo test -p novovm-network evm_protocol_observable_equivalence_network_rlpx_tx_outbound_broadcast_gate_v3 -- --nocapture` (local pending raw tx => real RLPx `Transactions` broadcast)
+- v3 RLPx pooled tx gate: `cargo test -p novovm-network evm_protocol_observable_equivalence_network_rlpx_pooled_tx_gate_v3 -- --nocapture` (real `NewPooledTransactionHashes` => `GetPooledTransactions` => raw `PooledTransactions` materialized)
+- v3 RLPx pooled tx response gate: `cargo test -p novovm-network evm_protocol_observable_equivalence_network_rlpx_pooled_tx_response_gate_v3 -- --nocapture` (real `GetPooledTransactions` => local raw tx `PooledTransactions` response)
 - v3 RLPx block body import gate: `cargo test -p novovm-network evm_protocol_observable_equivalence_network_rlpx_block_body_import_gate_v3 -- --nocapture` (real `BlockHeaders`/`BlockBodies` => native body snapshot)
 - v3 RLPx receipts gate: `cargo test -p novovm-network evm_protocol_observable_equivalence_network_rlpx_receipts_gate_v3 -- --nocapture` (real `BlockHeaders`/`BlockBodies` => follow-up eth/70 `GetReceipts` => `Receipts` parsed)
 - v3 RLPx reorg gate: `cargo test -p novovm-network evm_protocol_observable_equivalence_network_rlpx_reorg_gate_v3 -- --nocapture` (real RLPx branch switch => canonical reorg + pending tx back to broadcast candidate)
 - v3 RLPx BAL response gate: `cargo test -p novovm-network evm_protocol_observable_equivalence_network_rlpx_bal_response_gate_v3 -- --nocapture` (real `GetBlockAccessLists` => protocol-valid `BlockAccessLists` response; canonical/materialized local BAL RLP returned, unavailable hashes use missing sentinel)
+- v3 RLPx new block gate: `cargo test -p novovm-network evm_protocol_observable_equivalence_network_rlpx_new_block_gate_v3 -- --nocapture` (real `NewBlock` => native header/body import + follow-up `GetReceipts`)
 - v3 RLPx new block hashes gate: `cargo test -p novovm-network evm_protocol_observable_equivalence_network_rlpx_new_block_hashes_gate_v3 -- --nocapture` (real `NewBlockHashes` announcement => peer head update + follow-up `GetBlockHeaders`)
 
 Manual local run:
