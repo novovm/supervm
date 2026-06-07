@@ -2792,6 +2792,13 @@ mod tests {
         .expect("decode official CALL high-value state fixture")
     }
 
+    fn official_call_depth_oog_state_fixture_v1() -> serde_json::Value {
+        serde_json::from_str(include_str!(
+            "../tests/fixtures/ethereum-official-state-subset/call-depth-oog.json"
+        ))
+        .expect("decode official CALL depth/OOG state fixture")
+    }
+
     fn official_log_receipt_state_fixture_v1() -> serde_json::Value {
         serde_json::from_str(include_str!(
             "../tests/fixtures/ethereum-official-state-subset/log-receipt.json"
@@ -6772,6 +6779,325 @@ mod tests {
     }
 
     #[test]
+    fn official_state_fixture_call_depth_oog_grouped_projection_v1() {
+        let fixture = official_call_depth_oog_state_fixture_v1();
+        assert_eq!(fixture["source"]["repo"].as_str(), Some("ethereum/tests"));
+        assert_eq!(
+            fixture["source"]["fixtureFormat"].as_str(),
+            Some("state_test")
+        );
+        assert_eq!(fixture["source"]["fork"].as_str(), Some("Cancun"));
+
+        let empty_logs_hash = json_str(&fixture["emptyLogsHash"], "emptyLogsHash");
+        let cases = fixture["cases"].as_array().expect("CALL depth/OOG cases");
+        assert_eq!(cases.len(), 6);
+
+        let mut balance_too_low_cases = 0usize;
+        let mut depth_oog_cases = 0usize;
+        let mut lose_gas_oog_cases = 0usize;
+        let mut two_slot_storage_cases = 0usize;
+        let mut three_slot_storage_cases = 0usize;
+        let mut gas_by_label = std::collections::HashMap::new();
+        let mut post_hashes = std::collections::HashSet::new();
+        let mut txbytes_seen = std::collections::HashSet::new();
+
+        for case in cases {
+            let label = json_str(&case["label"], "case.label");
+            let mode = json_str(&case["mode"], "case.mode");
+            assert!(
+                json_str(&case["fixtureKey"], "case.fixtureKey")
+                    .contains("GeneralStateTests/stCallCreateCallCodeTest/Call"),
+                "official CALL depth/OOG case must come from stCallCreateCallCodeTest/Call*"
+            );
+            assert!(
+                json_str(&case["fixtureKey"], "case.fixtureKey").contains("-fork_[Cancun-Prague]"),
+                "official CALL depth/OOG case must be the Cancun/Prague projection"
+            );
+            assert!(
+                post_hashes.insert(json_str(&case["postHash"], "case.postHash")),
+                "official CALL depth/OOG post hash must be unique"
+            );
+            assert_eq!(
+                json_str(&case["logsHash"], "case.logsHash"),
+                empty_logs_hash
+            );
+
+            let sender = json_str(&case["sender"], "case.sender");
+            let to = json_str(&case["to"], "case.to");
+            let pre_sender_balance =
+                json_hex_u128(&case["preSenderBalance"], "case.preSenderBalance");
+            let pre_sender_nonce =
+                json_hex_u128(&case["preSenderNonce"], "case.preSenderNonce") as u64;
+            let post_sender_balance =
+                json_hex_u128(&case["postSenderBalance"], "case.postSenderBalance");
+            let post_sender_nonce =
+                json_hex_u128(&case["postSenderNonce"], "case.postSenderNonce") as u64;
+            let pre_to_balance = json_hex_u128(&case["preToBalance"], "case.preToBalance");
+            let pre_to_nonce = json_hex_u128(&case["preToNonce"], "case.preToNonce") as u64;
+            let post_to_balance = json_hex_u128(&case["postToBalance"], "case.postToBalance");
+            let post_to_nonce = json_hex_u128(&case["postToNonce"], "case.postToNonce") as u64;
+            let gas_price = json_hex_u128(&case["gasPrice"], "case.gasPrice");
+            let gas_limit = json_hex_u128(&case["gasLimit"], "case.gasLimit");
+            let value = json_hex_u128(&case["value"], "case.value");
+            let nonce = json_hex_u128(&case["nonce"], "case.nonce") as u64;
+
+            assert_eq!(nonce, pre_sender_nonce);
+            assert_eq!(post_sender_nonce, pre_sender_nonce + 1);
+            assert_eq!(value, 10);
+            assert_eq!(
+                post_to_balance,
+                pre_to_balance + value,
+                "selected CALL depth/OOG cases keep top-level value flow directly attributable"
+            );
+            assert_eq!(post_to_nonce, pre_to_nonce);
+
+            let raw_tx = decode_hex_bytes(json_str(&case["txbytes"], "case.txbytes"));
+            assert!(txbytes_seen.insert(json_str(&case["txbytes"], "case.txbytes")));
+            let recovered_sender = recover_raw_evm_tx_sender_m0(&raw_tx)
+                .expect("official CALL depth/OOG raw sender recovery")
+                .expect("official CALL depth/OOG recovered sender");
+            assert_eq!(recovered_sender, decode_hex_bytes(sender));
+            let fields =
+                translate_raw_evm_tx_fields_m0(&raw_tx).expect("official CALL depth/OOG tx decode");
+            let tx = tx_ir_from_raw_fields_m0(&fields, &raw_tx, recovered_sender, 1);
+
+            assert_eq!(
+                tx.tx_type,
+                TxType::Transfer,
+                "raw empty-calldata CALL depth/OOG fixture tx is state-agnostic before execution"
+            );
+            assert_eq!(tx.from, decode_hex_bytes(sender));
+            assert_eq!(tx.to, Some(decode_hex_bytes(to)));
+            assert_eq!(tx.value, value);
+            assert_eq!(tx.gas_limit, gas_limit as u64);
+            assert_eq!(tx.gas_price, gas_price as u64);
+            assert_eq!(tx.nonce, nonce);
+            assert_eq!(
+                tx.data,
+                decode_hex_bytes(json_str(&case["data"], "case.data"))
+            );
+            assert_eq!(
+                tx.data.len(),
+                case["dataLen"].as_u64().expect("case.dataLen") as usize
+            );
+            assert_eq!(
+                Sha256::digest(&tx.data).to_vec(),
+                decode_hex_bytes(json_str(&case["dataSha256"], "case.dataSha256"))
+            );
+
+            let mut adapter = NovoVmAdapter::new(ChainConfig {
+                chain_type: ChainType::EVM,
+                chain_id: 1,
+                name: format!("official-call-depth-oog-{label}"),
+                enabled: true,
+                custom_config: None,
+            });
+            adapter.initialize().expect("init");
+            assert!(
+                adapter
+                    .verify_transaction(&tx)
+                    .expect("verify official CALL depth/OOG raw tx"),
+                "official CALL depth/OOG txbytes must verify through raw EVM path"
+            );
+            for historical_nonce in 0..pre_sender_nonce {
+                let mut historical_tx = tx.clone();
+                historical_tx.nonce = historical_nonce;
+                adapter
+                    .route_transaction_through_unified_account(&historical_tx)
+                    .expect("prime official CALL depth/OOG pre-state nonce");
+            }
+
+            let charged_fee = pre_sender_balance
+                .saturating_sub(post_sender_balance)
+                .saturating_sub(value);
+            assert_eq!(charged_fee % gas_price, 0);
+            let gas_used = charged_fee / gas_price;
+            let expected_gas_used = case["gasUsed"].as_u64().expect("case.gasUsed");
+            assert_eq!(gas_used, expected_gas_used as u128);
+
+            let mut runtime_state = StateIR::new();
+            runtime_state.set_account(
+                tx.from.clone(),
+                AccountState {
+                    balance: pre_sender_balance,
+                    nonce: pre_sender_nonce,
+                    code_hash: None,
+                    storage_root: vec![0u8; 32],
+                },
+            );
+            runtime_state.set_account(
+                tx.to.clone().expect("call target"),
+                AccountState {
+                    balance: pre_to_balance,
+                    nonce: pre_to_nonce,
+                    code_hash: Some(vec![0xd2; 32]),
+                    storage_root: vec![0u8; 32],
+                },
+            );
+            assert_eq!(
+                NovoVmAdapter::effective_execution_tx_v1(&tx, &runtime_state).tx_type,
+                TxType::ContractCall,
+                "target code in pre-state must promote CALL depth/OOG fixture tx to contract call execution"
+            );
+
+            let mut artifact = sample_aoem_artifact(&tx, true, [0x8d; 32], None);
+            artifact.gas_used = expected_gas_used;
+            artifact.cumulative_gas_used = expected_gas_used;
+            artifact.effective_gas_price = Some(gas_price as u64);
+            artifact.receipt_type = None;
+            artifact.event_logs.clear();
+            artifact.log_bloom = vec![0u8; AOEM_LOG_BLOOM_BYTES_V1];
+            artifact.anchor = None;
+
+            let outcome = adapter
+                .execute_transaction_with_observed_metadata_v1(
+                    &tx,
+                    &mut runtime_state,
+                    Some(&artifact),
+                )
+                .expect("execute official CALL depth/OOG fixture projection");
+
+            assert!(outcome.artifact.status_ok);
+            assert_eq!(outcome.artifact.gas_used, expected_gas_used);
+            assert!(outcome.artifact.event_logs.is_empty());
+            assert!(outcome.artifact.log_bloom.iter().all(|byte| *byte == 0));
+            assert_eq!(
+                runtime_state.get_storage(&tx.from, b"aoem:last_log_bloom"),
+                Some(&vec![0u8; AOEM_LOG_BLOOM_BYTES_V1])
+            );
+            assert_eq!(
+                runtime_state.get_account(&tx.from).map(|acc| acc.balance),
+                Some(post_sender_balance)
+            );
+            assert_eq!(
+                runtime_state
+                    .get_account(tx.to.as_ref().expect("call target"))
+                    .map(|acc| acc.balance),
+                Some(post_to_balance)
+            );
+            assert_eq!(
+                runtime_state
+                    .get_account(tx.to.as_ref().expect("call target"))
+                    .map(|acc| acc.nonce),
+                Some(post_to_nonce)
+            );
+
+            let pre_target_storage = case["preTargetStorageFacts"]
+                .as_object()
+                .expect("case.preTargetStorageFacts");
+            let post_target_storage = case["postTargetStorageFacts"]
+                .as_object()
+                .expect("case.postTargetStorageFacts");
+            assert!(pre_target_storage.is_empty());
+            match post_target_storage.len() {
+                2 => two_slot_storage_cases += 1,
+                3 => three_slot_storage_cases += 1,
+                other => panic!("unexpected CALL depth/OOG post storage slots {other}"),
+            }
+
+            match mode {
+                "callDepthBalanceTooLowProjection" => {
+                    balance_too_low_cases += 1;
+                    assert_eq!(label, "Call1024BalanceTooLow");
+                    assert_eq!(
+                        json_str(&case["postTargetStorageFacts"]["0x00"], "depth slot0"),
+                        "0x0401"
+                    );
+                    assert_eq!(
+                        json_str(
+                            &case["postTargetStorageFacts"]["0x01"],
+                            "depth success marker"
+                        ),
+                        "0x01"
+                    );
+                }
+                "callDepthOogProjection" => {
+                    depth_oog_cases += 1;
+                    assert_eq!(
+                        json_str(
+                            &case["postTargetStorageFacts"]["0x01"],
+                            "OOG success marker"
+                        ),
+                        "0x01"
+                    );
+                    assert!(
+                        json_str(&case["postTargetStorageFacts"]["0x02"], "OOG gas slot")
+                            .starts_with("0x")
+                    );
+                }
+                "callLoseGasOogProjection" => {
+                    lose_gas_oog_cases += 1;
+                    assert_eq!(label, "CallLoseGasOOG");
+                    assert_eq!(
+                        json_str(&case["postTargetStorageFacts"]["0x00"], "lose gas slot0"),
+                        "0x01"
+                    );
+                    assert_eq!(
+                        json_str(&case["postTargetStorageFacts"]["0x02"], "lose gas slot2"),
+                        "0x03e9"
+                    );
+                }
+                _ => panic!("unexpected official CALL depth/OOG mode {mode}"),
+            }
+            assert!(
+                gas_by_label
+                    .insert(label.to_string(), expected_gas_used)
+                    .is_none(),
+                "duplicate official CALL depth/OOG label {label}"
+            );
+
+            let bal = outcome
+                .observed_block_access_list
+                .block_access_list
+                .expect("official CALL depth/OOG observed BAL");
+            let sender_entry = bal
+                .0
+                .iter()
+                .find(|entry| entry.address.as_slice() == tx.from.as_slice())
+                .expect("sender BAL entry");
+            assert_eq!(
+                sender_entry.balance_changes[0].post_balance,
+                NovoVmAdapter::u128_to_be32_v1(post_sender_balance)
+            );
+            let to_entry = bal
+                .0
+                .iter()
+                .find(|entry| {
+                    entry.address.as_slice() == tx.to.as_ref().expect("call target").as_slice()
+                })
+                .expect("value-transfer target BAL entry");
+            assert_eq!(
+                to_entry.balance_changes[0].post_balance,
+                NovoVmAdapter::u128_to_be32_v1(post_to_balance)
+            );
+        }
+
+        assert_eq!(balance_too_low_cases, 1);
+        assert_eq!(depth_oog_cases, 4);
+        assert_eq!(lose_gas_oog_cases, 1);
+        assert_eq!(two_slot_storage_cases, 2);
+        assert_eq!(three_slot_storage_cases, 4);
+        assert_eq!(txbytes_seen.len(), 6);
+
+        let gas = |label: &str| {
+            *gas_by_label
+                .get(label)
+                .unwrap_or_else(|| panic!("missing official CALL depth/OOG gas label {label}"))
+        };
+        assert_eq!(gas("Call1024BalanceTooLow"), 7_481_800);
+        assert_eq!(gas("Call1024OOGGas0"), 1_751_479);
+        assert_eq!(gas("Call1024OOGGas1"), 1_716_608);
+        assert_eq!(gas("Call1024OOGGas2"), 1_748_187);
+        assert_eq!(gas("Call1024OOGGas3"), 1_745_038);
+        assert_eq!(gas("CallLoseGasOOG"), 167_771);
+        assert!(gas("Call1024BalanceTooLow") > gas("Call1024OOGGas0"));
+        assert!(gas("Call1024OOGGas0") > gas("Call1024OOGGas2"));
+        assert!(gas("Call1024OOGGas2") > gas("Call1024OOGGas3"));
+        assert!(gas("Call1024OOGGas3") > gas("Call1024OOGGas1"));
+        assert!(gas("Call1024OOGGas1") > gas("CallLoseGasOOG"));
+    }
+
+    #[test]
     fn official_state_fixture_log_receipt_grouped_projection_v1() {
         let fixture = official_log_receipt_state_fixture_v1();
         assert_eq!(fixture["source"]["repo"].as_str(), Some("ethereum/tests"));
@@ -7893,6 +8219,7 @@ mod tests {
         official_state_fixture_precompile_failure_oog_grouped_projection_v1();
         official_state_fixture_call_output_grouped_projection_v1();
         official_state_fixture_call_high_value_grouped_projection_v1();
+        official_state_fixture_call_depth_oog_grouped_projection_v1();
         official_state_fixture_log_receipt_grouped_projection_v1();
         official_state_fixture_log4_oog_receipt_grouped_projection_v1();
         official_state_fixture_return_data_grouped_projection_v1();
