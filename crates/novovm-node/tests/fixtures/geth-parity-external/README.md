@@ -15,12 +15,19 @@ $env:NOVOVM_GETH_PARITY_SAMPLE_DIR="D:\WEB3_AI\SUPERVM\crates\novovm-node\tests\
 cargo test -p novovm-node mainline_query::tests::eth_end_to_end_geth_sample_batch_parity_report_from_files_v1 -- --nocapture
 ```
 
+With the same env vars, the RPC observable projection gate is:
+
+```powershell
+cargo test -p novovm-node evm_protocol_observable_equivalence_geth_rpc_blackbox_projection_gate_v2 -- --nocapture
+```
+
 ## Notes
 
 - `store_format: "geth-export-receipt/v1"` tells loader to parse receipt-style geth JSON.
 - `store_format: "geth-export-receipts/v1"` parses receipt-array exports (for example `eth_getBlockReceipts-*`).
 - `store_path` supports `${NOVOVM_GETH_REPO_ROOT}` placeholder.
 - Batch report schema remains `supervm-e2e-geth-parity-batch-report/v1`.
+- Batch report includes `observableProjection` checks for block roots, gas, and logs bloom.
 
 ## Auto-generate Sample Descriptors
 

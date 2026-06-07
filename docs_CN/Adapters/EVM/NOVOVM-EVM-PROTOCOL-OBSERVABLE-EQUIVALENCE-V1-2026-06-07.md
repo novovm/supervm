@@ -50,12 +50,38 @@ cargo test -p novovm-adapter-evm-plugin evm_protocol_observable_equivalence_plug
 
 `SUPERVM 已通过 Ethereum execution-spec 全量 state tests 或 mainnet block replay。`
 
+## v2 当前推进：RPC 黑盒投影根门禁
+
+本轮 v2 不再继续增加官方 fixture 子集，而是先修复可被外部 RPC 客户端直接观察到的区块根字段：
+
+- `eth_getBlockByNumber/eth_getBlockByHash` 的 `transactionsRoot` 不再返回 `null`，改为基于 canonical receipt projection 的 MPT 32-byte root。
+- `eth_getBlockByNumber/eth_getBlockByHash` 的 `receiptsRoot` 不再返回 `null`，改为基于 receipt status、cumulative gas、logsBloom、logs 的 MPT 32-byte root。
+- geth parity report 新增 `observableProjection` section，锁住 `transactionsRoot`、`receiptsRoot`、`stateRoot`、`gasUsed`、`cumulativeGasUsed`、`logsBloom`。
+- 默认 11 个 geth parity 样本当前 `totalMismatchCount=0`，`observableProjection.mismatchCount=0`。
+
+v2 projection gate：
+
+```powershell
+cargo test -p novovm-node evm_protocol_observable_equivalence_geth_rpc_blackbox_projection_gate_v2 -- --nocapture
+```
+
+当前 v2 口径可以声明：
+
+`SUPERVM EVM RPC/geth parity 样本已具备 block/receipt/log/gas/root projection 的黑盒可观察一致性门禁，避免区块对象根字段因 null 被外部客户端直接区分。`
+
+当前 v2 不能声明：
+
+`transactionsRoot/receiptsRoot 已等同真实 mainnet raw transaction trie root。`
+
+`stateRoot 已完成 geth/reth devnet 同输入 replay 对齐。`
+
 ## 剩余阶段
 
 | 阶段 | 目标 | 退出标准 |
 | --- | --- | --- |
 | v1 | 插件产品面协议可观察等价 | 本文 3 个聚合 gate 全绿 |
-| v2 | 真 geth/reth 黑盒差分 | 同一批 raw tx/block 输入，state root、receipt root、logs bloom、gas/failure/RPC 输出一致 |
+| v2a | RPC 黑盒投影根门禁 | `evm_protocol_observable_equivalence_geth_rpc_blackbox_projection_gate_v2` 全绿 |
+| v2b | 真 geth/reth 黑盒差分 | 同一批 raw tx/block 输入，state root、receipt root、logs bloom、gas/failure/RPC 输出一致 |
 | v3 | 网络可观察等价 | devp2p/eth handshake、tx/block broadcast、import/reorg 行为被其它节点接受 |
 | v4 | 长稳生产封口 | 多节点 devnet soak、重启恢复、恶意/边界输入、BAL/receipt/RPC 长稳无漂移 |
 
@@ -66,7 +92,8 @@ cargo test -p novovm-adapter-evm-plugin evm_protocol_observable_equivalence_plug
 优先顺序：
 
 1. 先让 v1 三个聚合 gate 进入固定回归清单。
-2. 再做 v2：用 geth/reth 对照节点喂同一批 raw tx/block，比较 state root、receipt root、logs bloom、RPC 输出。
-3. 最后做 v3：真实 eth/66-eth/71 peer handshake 和 import/broadcast 可观察行为。
+2. 已完成 v2a：RPC block root projection 不再返回 `null`，并进入 geth parity batch report。
+3. 再做 v2b：用 geth/reth 对照节点喂同一批 raw tx/block，比较真实 state root、receipt root、logs bloom、RPC 输出。
+4. 最后做 v3：真实 eth/66-eth/71 peer handshake 和 import/broadcast 可观察行为。
 
 这会把“等价”从开放式 fixture 堆叠改成有限的协议验收。

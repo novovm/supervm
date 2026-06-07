@@ -17,6 +17,7 @@ use novovm_network::{
 };
 use novovm_protocol::evm_block_access_list_item_count_v1;
 use serde_json::{json, Value};
+use sha3::{Digest as Sha3Digest, Keccak256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -50,6 +51,8 @@ const ETH_NATIVE_SYNC_RUNTIME_SUMMARY_SCHEMA_V1: &str =
     "supervm-eth-native-sync-runtime-summary/v1";
 const ETH_NATIVE_SYNC_DEGRADATION_SUMMARY_SCHEMA_V1: &str =
     "supervm-eth-native-sync-degradation-summary/v1";
+const ETH_EMPTY_TRIE_ROOT_HEX_V1: &str =
+    "0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421";
 
 fn to_hex_prefixed(bytes: &[u8]) -> String {
     let mut out = String::with_capacity(bytes.len() * 2 + 2);
@@ -753,6 +756,314 @@ fn zero_hash_hex() -> String {
     to_hex_prefixed(&[0u8; 32])
 }
 
+fn eth_empty_trie_root_bytes_v1() -> [u8; 32] {
+    parse_hex_h256(ETH_EMPTY_TRIE_ROOT_HEX_V1).unwrap_or([0u8; 32])
+}
+
+fn eth_rlp_encode_length_v1(prefix_short: u8, prefix_long: u8, len: usize) -> Vec<u8> {
+    if len <= 55 {
+        return vec![prefix_short + len as u8];
+    }
+    let mut len_bytes = Vec::new();
+    let mut value = len;
+    while value > 0 {
+        len_bytes.push((value & 0xff) as u8);
+        value >>= 8;
+    }
+    len_bytes.reverse();
+    let mut out = Vec::with_capacity(1 + len_bytes.len());
+    out.push(prefix_long + len_bytes.len() as u8);
+    out.extend_from_slice(&len_bytes);
+    out
+}
+
+fn eth_rlp_encode_bytes_v1(bytes: &[u8]) -> Vec<u8> {
+    if bytes.is_empty() {
+        return vec![0x80];
+    }
+    if bytes.len() == 1 && bytes[0] < 0x80 {
+        return vec![bytes[0]];
+    }
+    let mut out = eth_rlp_encode_length_v1(0x80, 0xb7, bytes.len());
+    out.extend_from_slice(bytes);
+    out
+}
+
+fn eth_rlp_encode_u64_v1(value: u64) -> Vec<u8> {
+    if value == 0 {
+        return eth_rlp_encode_bytes_v1(&[]);
+    }
+    let bytes = value.to_be_bytes();
+    let first_non_zero = bytes
+        .iter()
+        .position(|byte| *byte != 0)
+        .unwrap_or(bytes.len() - 1);
+    eth_rlp_encode_bytes_v1(&bytes[first_non_zero..])
+}
+
+fn eth_rlp_encode_list_v1(items: &[Vec<u8>]) -> Vec<u8> {
+    let payload_len = items.iter().map(Vec::len).sum();
+    let mut out = eth_rlp_encode_length_v1(0xc0, 0xf7, payload_len);
+    for item in items {
+        out.extend_from_slice(item);
+    }
+    out
+}
+
+#[derive(Debug, Clone)]
+enum MainlineEthMptNodeV1 {
+    Leaf {
+        path_nibbles: Vec<u8>,
+        value: Vec<u8>,
+    },
+    Extension {
+        path_nibbles: Vec<u8>,
+        child: Box<MainlineEthMptNodeV1>,
+    },
+    Branch {
+        children: [Option<Box<MainlineEthMptNodeV1>>; 16],
+        value: Option<Vec<u8>>,
+    },
+}
+
+fn eth_mpt_nibbles_from_key_v1(key: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(key.len() * 2);
+    for byte in key {
+        out.push(byte >> 4);
+        out.push(byte & 0x0f);
+    }
+    out
+}
+
+fn eth_mpt_hex_prefix_encode_v1(path_nibbles: &[u8], is_leaf: bool) -> Vec<u8> {
+    let mut out = Vec::with_capacity(path_nibbles.len() / 2 + 1);
+    let flag = if is_leaf { 2u8 } else { 0u8 };
+    let mut idx = 0usize;
+    if path_nibbles.len() % 2 == 1 {
+        out.push(((flag + 1) << 4) | (path_nibbles[0] & 0x0f));
+        idx = 1;
+    } else {
+        out.push(flag << 4);
+    }
+    while idx < path_nibbles.len() {
+        out.push(((path_nibbles[idx] & 0x0f) << 4) | (path_nibbles[idx + 1] & 0x0f));
+        idx += 2;
+    }
+    out
+}
+
+fn eth_mpt_common_prefix_len_v1(keys: &[Vec<u8>]) -> usize {
+    if keys.is_empty() {
+        return 0;
+    }
+    let mut prefix = keys[0].len();
+    for key in keys.iter().skip(1) {
+        let mut idx = 0usize;
+        let max = prefix.min(key.len());
+        while idx < max && keys[0][idx] == key[idx] {
+            idx += 1;
+        }
+        prefix = idx;
+        if prefix == 0 {
+            break;
+        }
+    }
+    prefix
+}
+
+fn eth_mpt_build_from_nibbles_v1(entries: Vec<(Vec<u8>, Vec<u8>)>) -> Option<MainlineEthMptNodeV1> {
+    if entries.is_empty() {
+        return None;
+    }
+    if entries.len() == 1 {
+        let (path_nibbles, value) = entries.into_iter().next()?;
+        return Some(MainlineEthMptNodeV1::Leaf {
+            path_nibbles,
+            value,
+        });
+    }
+
+    let keys = entries
+        .iter()
+        .map(|(key, _)| key.clone())
+        .collect::<Vec<_>>();
+    let common = eth_mpt_common_prefix_len_v1(&keys);
+    if common > 0 {
+        let prefix = keys[0][..common].to_vec();
+        let stripped = entries
+            .into_iter()
+            .map(|(key, value)| (key[common..].to_vec(), value))
+            .collect::<Vec<_>>();
+        let child = eth_mpt_build_from_nibbles_v1(stripped)?;
+        return Some(MainlineEthMptNodeV1::Extension {
+            path_nibbles: prefix,
+            child: Box::new(child),
+        });
+    }
+
+    let mut buckets: [Vec<(Vec<u8>, Vec<u8>)>; 16] = std::array::from_fn(|_| Vec::new());
+    let mut branch_value = None;
+    for (key, value) in entries {
+        if key.is_empty() {
+            branch_value = Some(value);
+            continue;
+        }
+        let idx = key[0] as usize;
+        if idx < 16 {
+            buckets[idx].push((key[1..].to_vec(), value));
+        }
+    }
+
+    let mut children: [Option<Box<MainlineEthMptNodeV1>>; 16] = std::array::from_fn(|_| None);
+    for (idx, bucket) in buckets.iter_mut().enumerate() {
+        if let Some(child) = eth_mpt_build_from_nibbles_v1(std::mem::take(bucket)) {
+            children[idx] = Some(Box::new(child));
+        }
+    }
+    Some(MainlineEthMptNodeV1::Branch {
+        children,
+        value: branch_value,
+    })
+}
+
+fn eth_mpt_node_rlp_v1(node: &MainlineEthMptNodeV1) -> Vec<u8> {
+    match node {
+        MainlineEthMptNodeV1::Leaf {
+            path_nibbles,
+            value,
+        } => eth_rlp_encode_list_v1(&[
+            eth_rlp_encode_bytes_v1(&eth_mpt_hex_prefix_encode_v1(path_nibbles, true)),
+            eth_rlp_encode_bytes_v1(value),
+        ]),
+        MainlineEthMptNodeV1::Extension {
+            path_nibbles,
+            child,
+        } => {
+            let child_rlp = eth_mpt_node_rlp_v1(child);
+            let child_ref = if child_rlp.len() < 32 {
+                child_rlp
+            } else {
+                let child_hash: [u8; 32] = Keccak256::digest(&child_rlp).into();
+                eth_rlp_encode_bytes_v1(&child_hash)
+            };
+            eth_rlp_encode_list_v1(&[
+                eth_rlp_encode_bytes_v1(&eth_mpt_hex_prefix_encode_v1(path_nibbles, false)),
+                child_ref,
+            ])
+        }
+        MainlineEthMptNodeV1::Branch { children, value } => {
+            let mut items = Vec::with_capacity(17);
+            for child in children {
+                if let Some(child) = child {
+                    let child_rlp = eth_mpt_node_rlp_v1(child);
+                    if child_rlp.len() < 32 {
+                        items.push(child_rlp);
+                    } else {
+                        let child_hash: [u8; 32] = Keccak256::digest(&child_rlp).into();
+                        items.push(eth_rlp_encode_bytes_v1(&child_hash));
+                    }
+                } else {
+                    items.push(eth_rlp_encode_bytes_v1(&[]));
+                }
+            }
+            items.push(eth_rlp_encode_bytes_v1(
+                value.as_deref().unwrap_or_default(),
+            ));
+            eth_rlp_encode_list_v1(&items)
+        }
+    }
+}
+
+fn eth_mpt_root_from_kv_pairs_v1(kv_pairs: &[(Vec<u8>, Vec<u8>)]) -> [u8; 32] {
+    let mut dedup = BTreeMap::<Vec<u8>, Vec<u8>>::new();
+    for (key, value) in kv_pairs {
+        dedup.insert(eth_mpt_nibbles_from_key_v1(key), value.clone());
+    }
+    let Some(root) = eth_mpt_build_from_nibbles_v1(dedup.into_iter().collect()) else {
+        return eth_empty_trie_root_bytes_v1();
+    };
+    Keccak256::digest(eth_mpt_node_rlp_v1(&root)).into()
+}
+
+fn projected_transaction_leaf_payload_v1(receipt: &SupervmEvmExecutionReceiptV1) -> Vec<u8> {
+    let contract_address = if receipt.status_ok {
+        receipt.contract_address.as_deref().unwrap_or_default()
+    } else {
+        &[]
+    };
+    eth_rlp_encode_list_v1(&[
+        eth_rlp_encode_bytes_v1(&receipt.tx_hash),
+        eth_rlp_encode_u64_v1(receipt.receipt_type.unwrap_or_default() as u64),
+        eth_rlp_encode_u64_v1(receipt.tx_index as u64),
+        eth_rlp_encode_u64_v1(u64::from(receipt.status_ok)),
+        eth_rlp_encode_u64_v1(receipt.gas_used),
+        eth_rlp_encode_u64_v1(receipt.cumulative_gas_used),
+        eth_rlp_encode_bytes_v1(contract_address),
+        eth_rlp_encode_bytes_v1(&receipt.state_root),
+    ])
+}
+
+fn projected_receipt_log_payload_v1(log: &SupervmEvmExecutionLogV1) -> Vec<u8> {
+    let topics = log
+        .topics
+        .iter()
+        .map(|topic| eth_rlp_encode_bytes_v1(topic))
+        .collect::<Vec<_>>();
+    eth_rlp_encode_list_v1(&[
+        eth_rlp_encode_bytes_v1(&log.emitter),
+        eth_rlp_encode_list_v1(&topics),
+        eth_rlp_encode_bytes_v1(&log.data),
+    ])
+}
+
+fn projected_receipt_leaf_payload_v1(receipt: &SupervmEvmExecutionReceiptV1) -> Vec<u8> {
+    let logs = effective_receipt_logs_v1(receipt)
+        .iter()
+        .map(projected_receipt_log_payload_v1)
+        .collect::<Vec<_>>();
+    let core = eth_rlp_encode_list_v1(&[
+        eth_rlp_encode_u64_v1(u64::from(receipt.status_ok)),
+        eth_rlp_encode_u64_v1(receipt.cumulative_gas_used),
+        eth_rlp_encode_bytes_v1(&normalized_receipt_log_bloom_v1(receipt)),
+        eth_rlp_encode_list_v1(&logs),
+    ]);
+    match receipt.receipt_type {
+        Some(value) if value > 0 => {
+            let mut out = Vec::with_capacity(core.len() + 1);
+            out.push(value);
+            out.extend_from_slice(&core);
+            out
+        }
+        _ => core,
+    }
+}
+
+fn projected_transactions_root_v1(receipts: &[SupervmEvmExecutionReceiptV1]) -> [u8; 32] {
+    let kv_pairs = receipts
+        .iter()
+        .map(|receipt| {
+            (
+                eth_rlp_encode_u64_v1(receipt.tx_index as u64),
+                projected_transaction_leaf_payload_v1(receipt),
+            )
+        })
+        .collect::<Vec<_>>();
+    eth_mpt_root_from_kv_pairs_v1(&kv_pairs)
+}
+
+fn projected_receipts_root_v1(receipts: &[SupervmEvmExecutionReceiptV1]) -> [u8; 32] {
+    let kv_pairs = receipts
+        .iter()
+        .map(|receipt| {
+            (
+                eth_rlp_encode_u64_v1(receipt.tx_index as u64),
+                projected_receipt_leaf_payload_v1(receipt),
+            )
+        })
+        .collect::<Vec<_>>();
+    eth_mpt_root_from_kv_pairs_v1(&kv_pairs)
+}
+
 fn now_unix_millis_v1() -> u128 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -1200,6 +1511,8 @@ fn block_context_to_eth_json(
         .unwrap_or(gas_used);
     let transactions = block_transactions_json(block_context, receipts, full_transactions);
     let logs_bloom = combine_receipt_log_bloom(receipts);
+    let transactions_root = projected_transactions_root_v1(receipts);
+    let receipts_root = projected_receipts_root_v1(receipts);
     let mut out = json!({
         "number": format!("0x{:x}", block_context.block_number),
         "hash": to_hex_prefixed(&block_context.block_hash),
@@ -1207,9 +1520,9 @@ fn block_context_to_eth_json(
         "nonce": Value::Null,
         "sha3Uncles": zero_hash_hex(),
         "logsBloom": to_hex_prefixed(&logs_bloom),
-        "transactionsRoot": Value::Null,
+        "transactionsRoot": to_hex_prefixed(&transactions_root),
         "stateRoot": to_hex_prefixed(&block_context.state_root),
-        "receiptsRoot": Value::Null,
+        "receiptsRoot": to_hex_prefixed(&receipts_root),
         "miner": Value::Null,
         "difficulty": "0x0",
         "totalDifficulty": "0x0",
@@ -3671,7 +3984,16 @@ mod tests {
     use serde::Deserialize;
     use serde_json::{json, Value};
     use sha2::{Digest, Sha256};
-    use std::{fs, path::PathBuf};
+    use std::{
+        fs,
+        path::PathBuf,
+        sync::{Mutex, OnceLock},
+    };
+
+    fn geth_parity_test_lock_v1() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
 
     fn unique_native_execution_store_path(label: &str) -> PathBuf {
         let nonce = std::time::SystemTime::now()
@@ -5484,10 +5806,70 @@ mod tests {
         let mut receipt_mismatches = Vec::new();
         let mut log_mismatches = Vec::new();
         let mut typed_failure_mismatches = Vec::new();
+        let mut observable_projection_mismatches = Vec::new();
 
         let block_out = run_mainline_query(store, "eth_getBlockByNumber", &json!(["latest", true]))
             .expect("block by number");
         let block = &block_out["block"];
+        let expected_transactions_root = to_hex_prefixed(&projected_transactions_root_v1(
+            store.batches[0].receipts.as_slice(),
+        ));
+        let expected_receipts_root = to_hex_prefixed(&projected_receipts_root_v1(
+            store.batches[0].receipts.as_slice(),
+        ));
+        let expected_state_root = to_hex_prefixed(&block_context.state_root);
+        let expected_gas_used = store.batches[0]
+            .receipts
+            .iter()
+            .map(|receipt| receipt.gas_used)
+            .sum::<u64>();
+        let expected_cumulative_gas_used = store.batches[0]
+            .receipts
+            .last()
+            .map(|receipt| receipt.cumulative_gas_used)
+            .unwrap_or(expected_gas_used);
+        record_mismatch_v1(
+            &mut observable_projection_mismatches,
+            "block.observable",
+            "transactionsRoot",
+            json!(expected_transactions_root),
+            block["transactionsRoot"].clone(),
+        );
+        record_mismatch_v1(
+            &mut observable_projection_mismatches,
+            "block.observable",
+            "receiptsRoot",
+            json!(expected_receipts_root),
+            block["receiptsRoot"].clone(),
+        );
+        record_mismatch_v1(
+            &mut observable_projection_mismatches,
+            "block.observable",
+            "stateRoot",
+            json!(expected_state_root),
+            block["stateRoot"].clone(),
+        );
+        record_mismatch_v1(
+            &mut observable_projection_mismatches,
+            "block.observable",
+            "gasUsed",
+            json!(format!("0x{:x}", expected_gas_used)),
+            block["gasUsed"].clone(),
+        );
+        record_mismatch_v1(
+            &mut observable_projection_mismatches,
+            "block.observable",
+            "cumulativeGasUsed",
+            json!(format!("0x{:x}", expected_cumulative_gas_used)),
+            block["cumulativeGasUsed"].clone(),
+        );
+        record_mismatch_v1(
+            &mut observable_projection_mismatches,
+            "block.observable",
+            "logsBloom",
+            json!(computed_logs_bloom.clone()),
+            block["logsBloom"].clone(),
+        );
         if let Some(number) = expected.block.number.as_ref() {
             record_mismatch_v1(
                 &mut block_mismatches,
@@ -5804,17 +6186,23 @@ mod tests {
                 "typedTxFailure": {
                     "mismatchCount": typed_failure_mismatches.len(),
                     "mismatches": typed_failure_mismatches
+                },
+                "observableProjection": {
+                    "mismatchCount": observable_projection_mismatches.len(),
+                    "mismatches": observable_projection_mismatches
                 }
             },
             "result": {
                 "parity": block_mismatches.is_empty()
                     && receipt_mismatches.is_empty()
                     && log_mismatches.is_empty()
-                    && typed_failure_mismatches.is_empty(),
+                    && typed_failure_mismatches.is_empty()
+                    && observable_projection_mismatches.is_empty(),
                 "totalMismatchCount": block_mismatches.len()
                     + receipt_mismatches.len()
                     + log_mismatches.len()
                     + typed_failure_mismatches.len()
+                    + observable_projection_mismatches.len()
             }
         })
     }
@@ -6671,6 +7059,9 @@ mod tests {
 
     #[test]
     fn eth_end_to_end_geth_sample_batch_parity_report_v1() {
+        let _guard = geth_parity_test_lock_v1()
+            .lock()
+            .expect("geth parity test lock");
         let chain_id = 99_160_715_u64;
         clear_eth_fullnode_native_worker_runtime_snapshot_for_chain_v1(chain_id);
         let store = build_adapter_to_canonical_store_v1(chain_id);
@@ -6993,6 +7384,9 @@ mod tests {
 
     #[test]
     fn eth_end_to_end_geth_sample_batch_parity_report_from_files_v1() {
+        let _guard = geth_parity_test_lock_v1()
+            .lock()
+            .expect("geth parity test lock");
         let sample_dir = std::env::var("NOVOVM_GETH_PARITY_SAMPLE_DIR")
             .ok()
             .map(PathBuf::from)
@@ -7101,6 +7495,53 @@ mod tests {
     fn evm_protocol_observable_equivalence_geth_rpc_fixture_gate_v1() {
         eth_end_to_end_geth_sample_batch_parity_report_v1();
         eth_end_to_end_geth_sample_batch_parity_report_from_files_v1();
+    }
+
+    #[test]
+    fn eth_get_block_returns_projected_root_fields_for_observable_diff_v2() {
+        let store = sample_store_with_success_receipts();
+        let block_out =
+            run_mainline_query(&store, "eth_getBlockByNumber", &json!(["latest", true]))
+                .expect("block by number");
+        let block = &block_out["block"];
+        for field in ["transactionsRoot", "receiptsRoot", "stateRoot"] {
+            let value = block[field]
+                .as_str()
+                .unwrap_or_else(|| panic!("{field} must be hex string"));
+            assert_eq!(value.len(), 66, "{field} must be 32-byte hex");
+            assert!(
+                parse_hex_h256(value).is_some(),
+                "{field} must parse as h256: {value}"
+            );
+        }
+        let expected_transactions_root = to_hex_prefixed(&projected_transactions_root_v1(
+            store.batches[0].receipts.as_slice(),
+        ));
+        let expected_receipts_root = to_hex_prefixed(&projected_receipts_root_v1(
+            store.batches[0].receipts.as_slice(),
+        ));
+        let expected_state_root = to_hex_prefixed(&store.batches[0].apply_state_root);
+        assert_eq!(
+            block["transactionsRoot"].as_str(),
+            Some(expected_transactions_root.as_str())
+        );
+        assert_eq!(
+            block["receiptsRoot"].as_str(),
+            Some(expected_receipts_root.as_str())
+        );
+        assert_eq!(
+            block["stateRoot"].as_str(),
+            Some(expected_state_root.as_str())
+        );
+        assert_ne!(block["transactionsRoot"], Value::Null);
+        assert_ne!(block["receiptsRoot"], Value::Null);
+    }
+
+    #[test]
+    fn evm_protocol_observable_equivalence_geth_rpc_blackbox_projection_gate_v2() {
+        eth_end_to_end_geth_sample_batch_parity_report_v1();
+        eth_end_to_end_geth_sample_batch_parity_report_from_files_v1();
+        eth_get_block_returns_projected_root_fields_for_observable_diff_v2();
     }
 
     #[test]

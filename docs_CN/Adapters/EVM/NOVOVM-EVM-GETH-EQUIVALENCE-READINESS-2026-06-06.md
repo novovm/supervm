@@ -1212,8 +1212,9 @@ cargo test -p novovm-adapter-novovm evm_adapter_balance_fee_access_storage_surfa
 
 1. 已接入官方 geth address fixture 子集、官方 EIP-1559 sender balance state fixture 子集、官方 SLOAD warm/cold state fixture 子集、官方 SSTORE refund cap grouped state fixture 子集、官方 failure/account grouped state fixture 子集、官方 CREATE/CREATE2/account grouped state fixture 子集、官方 STATICCALL/precompile/return-data grouped state fixture 子集、官方 precompile failure/OOG grouped state fixture 子集、官方 CALL output grouped state fixture 子集、官方 CALL high-value/OOG grouped state fixture 子集、官方 CALL depth/OOG grouped state fixture 子集、官方 DELEGATECALL/CALLCODE account-context grouped state fixture 子集、官方 zero-value calls revert no-commit grouped state fixture 子集、官方 SELFDESTRUCT zero-value account-preservation grouped state fixture 子集、官方 STATICCALL state-change/SUICIDE no-commit grouped state fixture 子集、官方 STATICCALL OOG no-commit grouped state fixture 子集、官方 LOG/receipt grouped state fixture 子集、官方 RETURNDATA grouped state fixture 子集和官方 LOG4/OOG receipt grouped state fixture 子集。
 2. 不再把继续堆官方 fixture 子集作为默认下一步。只有 v2/v3 黑盒差分暴露具体语义缺口时，才按缺口补对应官方子集。
-3. 下一步优先 v2：用 geth/reth 对照节点喂同一批 raw tx/block，比较 state root、receipt root、logs bloom、gas/failure/RPC 输出。
-4. 再推进 v3：真实 eth/66-eth/71 peer handshake、tx/block broadcast、import/reorg 可观察行为；仍不把 SUPERVM 产品口径改成完整 geth 全节点。
+3. 已完成 v2a：`eth_getBlockByNumber/eth_getBlockByHash` 的 `transactionsRoot/receiptsRoot` 不再返回 `null`，geth parity report 新增 `observableProjection`，默认 11 个样本 `mismatchCount=0`。
+4. 下一步优先 v2b：用 geth/reth 对照节点喂同一批 raw tx/block，比较真实 state root、receipt root、logs bloom、gas/failure/RPC 输出。
+5. 再推进 v3：真实 eth/66-eth/71 peer handshake、tx/block broadcast、import/reorg 可观察行为；仍不把 SUPERVM 产品口径改成完整 geth 全节点。
 
 ## 回归命令
 
@@ -1223,6 +1224,7 @@ cargo test -p novovm-adapter-novovm evm_adapter_balance_fee_access_storage_surfa
 cargo test -p novovm-adapter-novovm evm_protocol_observable_equivalence_execution_gate_v1 -- --nocapture
 cargo test -p novovm-node evm_protocol_observable_equivalence_geth_rpc_fixture_gate_v1 -- --nocapture
 cargo test -p novovm-adapter-evm-plugin evm_protocol_observable_equivalence_plugin_receipt_bal_gate_v1 -- --nocapture
+cargo test -p novovm-node evm_protocol_observable_equivalence_geth_rpc_blackbox_projection_gate_v2 -- --nocapture
 ```
 
 默认 geth parity：

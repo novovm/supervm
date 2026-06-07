@@ -71,6 +71,14 @@ Default fixture directory:
 cargo test -p novovm-node mainline_query::tests::eth_end_to_end_geth_sample_batch_parity_report_from_files_v1 -- --nocapture
 ```
 
+RPC observable projection gate:
+
+```powershell
+cargo test -p novovm-node evm_protocol_observable_equivalence_geth_rpc_blackbox_projection_gate_v2 -- --nocapture
+```
+
+The batch report includes `observableProjection` checks for block `transactionsRoot`, `receiptsRoot`, `stateRoot`, `gasUsed`, `cumulativeGasUsed`, and `logsBloom`.
+
 External sample directory:
 
 ```powershell
