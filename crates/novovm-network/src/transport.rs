@@ -7308,7 +7308,7 @@ mod tests {
                 responder.session.set_snappy(true);
             }
             let status = crate::EthRlpxStatusV1 {
-                protocol_version: 70,
+                protocol_version: crate::ETH_NATIVE_MAX_SUPPORTED_ETH_PROTOCOL_VERSION as u32,
                 network_id: chain_id,
                 genesis_hash: crate::eth_chain_config_genesis_hash_v1(chain_id),
                 fork_id: crate::build_eth_fork_id_from_chain_config_v1(
@@ -7597,7 +7597,7 @@ mod tests {
                 responder.session.set_snappy(true);
             }
             let status = crate::EthRlpxStatusV1 {
-                protocol_version: 70,
+                protocol_version: crate::ETH_NATIVE_MAX_SUPPORTED_ETH_PROTOCOL_VERSION as u32,
                 network_id: chain_id,
                 genesis_hash: [0u8; 32],
                 fork_id: crate::build_eth_fork_id_from_chain_config_v1(
@@ -7627,10 +7627,15 @@ mod tests {
             let peer_status =
                 crate::eth_rlpx_parse_status_payload_v1(peer_status_payload.as_slice())
                     .expect("parse peer status");
-            let expected_local_status =
-                crate::build_eth_fullnode_native_rlpx_status_v1(chain_id, 70);
+            let expected_local_status = crate::build_eth_fullnode_native_rlpx_status_v1(
+                chain_id,
+                crate::ETH_NATIVE_MAX_SUPPORTED_ETH_PROTOCOL_VERSION as u32,
+            );
             assert_eq!(peer_status.network_id, chain_id);
-            assert_eq!(peer_status.protocol_version, 70);
+            assert_eq!(
+                peer_status.protocol_version,
+                crate::ETH_NATIVE_MAX_SUPPORTED_ETH_PROTOCOL_VERSION as u32
+            );
             assert_eq!(peer_status.latest_block, expected_local_status.latest_block);
             assert_eq!(
                 peer_status.genesis_hash, expected_local_status.genesis_hash,
@@ -7831,7 +7836,7 @@ mod tests {
                 responder.session.set_snappy(true);
             }
             let status = crate::EthRlpxStatusV1 {
-                protocol_version: 70,
+                protocol_version: crate::ETH_NATIVE_MAX_SUPPORTED_ETH_PROTOCOL_VERSION as u32,
                 network_id: chain_id,
                 genesis_hash: crate::eth_chain_config_genesis_hash_v1(chain_id),
                 fork_id: crate::build_eth_fork_id_from_chain_config_v1(
@@ -7862,7 +7867,10 @@ mod tests {
                 crate::eth_rlpx_parse_status_payload_v1(peer_status_payload.as_slice())
                     .expect("parse peer status");
             assert_eq!(peer_status.network_id, chain_id);
-            assert_eq!(peer_status.protocol_version, 70);
+            assert_eq!(
+                peer_status.protocol_version,
+                crate::ETH_NATIVE_MAX_SUPPORTED_ETH_PROTOCOL_VERSION as u32
+            );
 
             loop {
                 let (code, payload) =
@@ -8094,7 +8102,7 @@ mod tests {
                 responder.session.set_snappy(true);
             }
             let status = crate::EthRlpxStatusV1 {
-                protocol_version: 70,
+                protocol_version: crate::ETH_NATIVE_MAX_SUPPORTED_ETH_PROTOCOL_VERSION as u32,
                 network_id: chain_id,
                 genesis_hash: crate::eth_chain_config_genesis_hash_v1(chain_id),
                 fork_id: crate::build_eth_fork_id_from_chain_config_v1(
@@ -8125,7 +8133,10 @@ mod tests {
                 crate::eth_rlpx_parse_status_payload_v1(peer_status_payload.as_slice())
                     .expect("parse peer status");
             assert_eq!(peer_status.network_id, chain_id);
-            assert_eq!(peer_status.protocol_version, 70);
+            assert_eq!(
+                peer_status.protocol_version,
+                crate::ETH_NATIVE_MAX_SUPPORTED_ETH_PROTOCOL_VERSION as u32
+            );
 
             loop {
                 let (code, payload) =
@@ -8439,7 +8450,7 @@ mod tests {
                 responder.session.set_snappy(true);
             }
             let status = crate::EthRlpxStatusV1 {
-                protocol_version: 70,
+                protocol_version: crate::ETH_NATIVE_MAX_SUPPORTED_ETH_PROTOCOL_VERSION as u32,
                 network_id: chain_id,
                 genesis_hash: crate::eth_chain_config_genesis_hash_v1(chain_id),
                 fork_id: crate::build_eth_fork_id_from_chain_config_v1(
@@ -8470,7 +8481,10 @@ mod tests {
                 crate::eth_rlpx_parse_status_payload_v1(peer_status_payload.as_slice())
                     .expect("parse peer status");
             assert_eq!(peer_status.network_id, chain_id);
-            assert_eq!(peer_status.protocol_version, 70);
+            assert_eq!(
+                peer_status.protocol_version,
+                crate::ETH_NATIVE_MAX_SUPPORTED_ETH_PROTOCOL_VERSION as u32
+            );
 
             let mut header_response_count = 0usize;
             let mut receipt_response_count = 0usize;
@@ -8727,7 +8741,7 @@ mod tests {
                 responder.session.set_snappy(true);
             }
             let status = crate::EthRlpxStatusV1 {
-                protocol_version: 70,
+                protocol_version: crate::ETH_NATIVE_MAX_SUPPORTED_ETH_PROTOCOL_VERSION as u32,
                 network_id: chain_id,
                 genesis_hash: crate::eth_chain_config_genesis_hash_v1(chain_id),
                 fork_id: crate::build_eth_fork_id_from_chain_config_v1(
@@ -8758,7 +8772,10 @@ mod tests {
                 crate::eth_rlpx_parse_status_payload_v1(peer_status_payload.as_slice())
                     .expect("parse peer status");
             assert_eq!(peer_status.network_id, chain_id);
-            assert_eq!(peer_status.protocol_version, 70);
+            assert_eq!(
+                peer_status.protocol_version,
+                crate::ETH_NATIVE_MAX_SUPPORTED_ETH_PROTOCOL_VERSION as u32
+            );
 
             let tx_payload = crate::eth_rlpx_build_transactions_payload_v1(&[server_tx]);
             crate::eth_rlpx_write_wire_frame_v1(
@@ -8904,7 +8921,7 @@ mod tests {
                 responder.session.set_snappy(true);
             }
             let status = crate::EthRlpxStatusV1 {
-                protocol_version: 70,
+                protocol_version: crate::ETH_NATIVE_MAX_SUPPORTED_ETH_PROTOCOL_VERSION as u32,
                 network_id: chain_id,
                 genesis_hash: crate::eth_chain_config_genesis_hash_v1(chain_id),
                 fork_id: crate::build_eth_fork_id_from_chain_config_v1(
@@ -8935,7 +8952,10 @@ mod tests {
                 crate::eth_rlpx_parse_status_payload_v1(peer_status_payload.as_slice())
                     .expect("parse peer status");
             assert_eq!(peer_status.network_id, chain_id);
-            assert_eq!(peer_status.protocol_version, 70);
+            assert_eq!(
+                peer_status.protocol_version,
+                crate::ETH_NATIVE_MAX_SUPPORTED_ETH_PROTOCOL_VERSION as u32
+            );
 
             let announcement = crate::eth_rlpx_build_new_pooled_transaction_hashes_payload_v1(
                 &[0],
@@ -9121,7 +9141,7 @@ mod tests {
                 responder.session.set_snappy(true);
             }
             let status = crate::EthRlpxStatusV1 {
-                protocol_version: 70,
+                protocol_version: crate::ETH_NATIVE_MAX_SUPPORTED_ETH_PROTOCOL_VERSION as u32,
                 network_id: chain_id,
                 genesis_hash: crate::eth_chain_config_genesis_hash_v1(chain_id),
                 fork_id: crate::build_eth_fork_id_from_chain_config_v1(
@@ -9152,7 +9172,10 @@ mod tests {
                 crate::eth_rlpx_parse_status_payload_v1(peer_status_payload.as_slice())
                     .expect("parse peer status");
             assert_eq!(peer_status.network_id, chain_id);
-            assert_eq!(peer_status.protocol_version, 70);
+            assert_eq!(
+                peer_status.protocol_version,
+                crate::ETH_NATIVE_MAX_SUPPORTED_ETH_PROTOCOL_VERSION as u32
+            );
 
             let request_id = 77;
             let request =
@@ -9315,7 +9338,7 @@ mod tests {
                 responder.session.set_snappy(true);
             }
             let status = crate::EthRlpxStatusV1 {
-                protocol_version: 70,
+                protocol_version: crate::ETH_NATIVE_MAX_SUPPORTED_ETH_PROTOCOL_VERSION as u32,
                 network_id: chain_id,
                 genesis_hash: crate::eth_chain_config_genesis_hash_v1(chain_id),
                 fork_id: crate::build_eth_fork_id_from_chain_config_v1(
@@ -9346,7 +9369,10 @@ mod tests {
                 crate::eth_rlpx_parse_status_payload_v1(peer_status_payload.as_slice())
                     .expect("parse peer status");
             assert_eq!(peer_status.network_id, chain_id);
-            assert_eq!(peer_status.protocol_version, 70);
+            assert_eq!(
+                peer_status.protocol_version,
+                crate::ETH_NATIVE_MAX_SUPPORTED_ETH_PROTOCOL_VERSION as u32
+            );
 
             loop {
                 let (code, payload) =
@@ -9509,7 +9535,7 @@ mod tests {
                 responder.session.set_snappy(true);
             }
             let status = crate::EthRlpxStatusV1 {
-                protocol_version: 70,
+                protocol_version: crate::ETH_NATIVE_MAX_SUPPORTED_ETH_PROTOCOL_VERSION as u32,
                 network_id: chain_id,
                 genesis_hash: crate::eth_chain_config_genesis_hash_v1(chain_id),
                 fork_id: crate::build_eth_fork_id_from_chain_config_v1(
@@ -9540,7 +9566,10 @@ mod tests {
                 crate::eth_rlpx_parse_status_payload_v1(peer_status_payload.as_slice())
                     .expect("parse peer status");
             assert_eq!(peer_status.network_id, chain_id);
-            assert_eq!(peer_status.protocol_version, 70);
+            assert_eq!(
+                peer_status.protocol_version,
+                crate::ETH_NATIVE_MAX_SUPPORTED_ETH_PROTOCOL_VERSION as u32
+            );
 
             let requested_hashes = vec![available_hash, [0x22; 32], [0x33; 32]];
             let get_payload =
@@ -9718,7 +9747,7 @@ mod tests {
                 responder.session.set_snappy(true);
             }
             let status = crate::EthRlpxStatusV1 {
-                protocol_version: 70,
+                protocol_version: crate::ETH_NATIVE_MAX_SUPPORTED_ETH_PROTOCOL_VERSION as u32,
                 network_id: chain_id,
                 genesis_hash: crate::eth_chain_config_genesis_hash_v1(chain_id),
                 fork_id: crate::build_eth_fork_id_from_chain_config_v1(
@@ -9749,7 +9778,10 @@ mod tests {
                 crate::eth_rlpx_parse_status_payload_v1(peer_status_payload.as_slice())
                     .expect("parse peer status");
             assert_eq!(peer_status.network_id, chain_id);
-            assert_eq!(peer_status.protocol_version, 70);
+            assert_eq!(
+                peer_status.protocol_version,
+                crate::ETH_NATIVE_MAX_SUPPORTED_ETH_PROTOCOL_VERSION as u32
+            );
             let snap_offset =
                 crate::eth_rlpx_snap_base_offset_v1(peer_status.protocol_version as u8, Some(1))
                     .expect("snap offset");
@@ -9911,7 +9943,7 @@ mod tests {
                 responder.session.set_snappy(true);
             }
             let status = crate::EthRlpxStatusV1 {
-                protocol_version: 70,
+                protocol_version: crate::ETH_NATIVE_MAX_SUPPORTED_ETH_PROTOCOL_VERSION as u32,
                 network_id: chain_id,
                 genesis_hash: crate::eth_chain_config_genesis_hash_v1(chain_id),
                 fork_id: crate::build_eth_fork_id_from_chain_config_v1(
@@ -9942,7 +9974,10 @@ mod tests {
                 crate::eth_rlpx_parse_status_payload_v1(peer_status_payload.as_slice())
                     .expect("parse peer status");
             assert_eq!(peer_status.network_id, chain_id);
-            assert_eq!(peer_status.protocol_version, 70);
+            assert_eq!(
+                peer_status.protocol_version,
+                crate::ETH_NATIVE_MAX_SUPPORTED_ETH_PROTOCOL_VERSION as u32
+            );
             let snap_offset =
                 crate::eth_rlpx_snap_base_offset_v1(peer_status.protocol_version as u8, Some(1))
                     .expect("snap offset");
@@ -10206,7 +10241,7 @@ mod tests {
                 responder.session.set_snappy(true);
             }
             let status = crate::EthRlpxStatusV1 {
-                protocol_version: 70,
+                protocol_version: crate::ETH_NATIVE_MAX_SUPPORTED_ETH_PROTOCOL_VERSION as u32,
                 network_id: chain_id,
                 genesis_hash: crate::eth_chain_config_genesis_hash_v1(chain_id),
                 fork_id: crate::build_eth_fork_id_from_chain_config_v1(
@@ -10531,7 +10566,7 @@ mod tests {
                 responder.session.set_snappy(true);
             }
             let status = crate::EthRlpxStatusV1 {
-                protocol_version: 70,
+                protocol_version: crate::ETH_NATIVE_MAX_SUPPORTED_ETH_PROTOCOL_VERSION as u32,
                 network_id: chain_id,
                 genesis_hash: crate::eth_chain_config_genesis_hash_v1(chain_id),
                 fork_id: crate::build_eth_fork_id_from_chain_config_v1(
@@ -10562,7 +10597,10 @@ mod tests {
                 crate::eth_rlpx_parse_status_payload_v1(peer_status_payload.as_slice())
                     .expect("parse peer status");
             assert_eq!(peer_status.network_id, chain_id);
-            assert_eq!(peer_status.protocol_version, 70);
+            assert_eq!(
+                peer_status.protocol_version,
+                crate::ETH_NATIVE_MAX_SUPPORTED_ETH_PROTOCOL_VERSION as u32
+            );
 
             let new_block =
                 crate::eth_rlpx_build_new_block_payload_v1(&header_record, &body_payload, 1_000);
@@ -10732,7 +10770,7 @@ mod tests {
                 responder.session.set_snappy(true);
             }
             let status = crate::EthRlpxStatusV1 {
-                protocol_version: 70,
+                protocol_version: crate::ETH_NATIVE_MAX_SUPPORTED_ETH_PROTOCOL_VERSION as u32,
                 network_id: chain_id,
                 genesis_hash: crate::eth_chain_config_genesis_hash_v1(chain_id),
                 fork_id: crate::build_eth_fork_id_from_chain_config_v1(
@@ -10763,7 +10801,10 @@ mod tests {
                 crate::eth_rlpx_parse_status_payload_v1(peer_status_payload.as_slice())
                     .expect("parse peer status");
             assert_eq!(peer_status.network_id, chain_id);
-            assert_eq!(peer_status.protocol_version, 70);
+            assert_eq!(
+                peer_status.protocol_version,
+                crate::ETH_NATIVE_MAX_SUPPORTED_ETH_PROTOCOL_VERSION as u32
+            );
 
             let announced_hash = [0x91; 32];
             let announcement = crate::eth_rlpx_build_new_block_hashes_payload_v1(&[
@@ -10909,7 +10950,7 @@ mod tests {
                 responder.session.set_snappy(true);
             }
             let wrong_status = crate::EthRlpxStatusV1 {
-                protocol_version: 70,
+                protocol_version: crate::ETH_NATIVE_MAX_SUPPORTED_ETH_PROTOCOL_VERSION as u32,
                 network_id: chain_id + 1,
                 genesis_hash: [0u8; 32],
                 fork_id: crate::EthForkIdV1 {

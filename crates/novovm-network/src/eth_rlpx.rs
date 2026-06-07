@@ -1288,7 +1288,8 @@ pub fn eth_rlpx_is_eth71_bal_message_v1(code: u64) -> bool {
 
 #[must_use]
 pub fn eth_rlpx_is_unsupported_eth71_bal_message_v1(code: u64) -> bool {
-    eth_rlpx_is_eth71_bal_message_v1(code)
+    let _ = code;
+    false
 }
 
 #[must_use]
@@ -1328,7 +1329,7 @@ pub fn eth_rlpx_select_shared_eth_version_v1(
     local_caps: &[EthRlpxCapabilityV1],
     remote_caps: &[EthRlpxCapabilityV1],
 ) -> Option<EthWireVersion> {
-    [70_u8, 69, 68, 67, 66]
+    [71_u8, 70, 69, 68, 67, 66]
         .into_iter()
         .find(|version| {
             local_caps
@@ -3806,6 +3807,9 @@ mod tests {
         let caps = default_eth_rlpx_capabilities_v1();
         assert!(caps
             .iter()
+            .any(|cap| cap.name == "eth" && cap.version == 71));
+        assert!(caps
+            .iter()
             .any(|cap| cap.name == "eth" && cap.version == 70));
         assert!(caps
             .iter()
@@ -3815,9 +3819,6 @@ mod tests {
                 || cap.version
                     <= crate::eth_fullnode::ETH_NATIVE_MAX_SUPPORTED_ETH_PROTOCOL_VERSION as u64
         }));
-        assert!(!caps
-            .iter()
-            .any(|cap| cap.name == "eth" && cap.version == 71));
         assert!(caps
             .iter()
             .any(|cap| cap.name == "snap" && cap.version == 1));
@@ -3828,8 +3829,8 @@ mod tests {
         let caps = eth_rlpx_capabilities_for_hello_profile_v1("geth");
         assert!(caps
             .iter()
-            .all(|cap| { cap.name != "eth" || (68..=70).contains(&(cap.version as u8)) }));
-        assert!(!caps
+            .all(|cap| { cap.name != "eth" || (68..=71).contains(&(cap.version as u8)) }));
+        assert!(caps
             .iter()
             .any(|cap| cap.name == "eth" && cap.version == 71));
         assert!(caps
@@ -3843,7 +3844,7 @@ mod tests {
     }
 
     #[test]
-    fn eth71_bal_message_codes_are_classified_without_enabling_eth71_sync() {
+    fn eth71_bal_message_codes_are_classified_as_supported_eth71_sync() {
         assert!(eth_rlpx_is_eth71_bal_message_v1(
             ETH_RLPX_BASE_PROTOCOL_OFFSET + ETH_RLPX_ETH_GET_BLOCK_ACCESS_LISTS_MSG
         ));
@@ -3854,6 +3855,9 @@ mod tests {
             ETH_RLPX_BASE_PROTOCOL_OFFSET + ETH_RLPX_ETH_STATUS_MSG
         ));
         assert!(!eth_rlpx_is_eth71_bal_message_v1(ETH_RLPX_P2P_PING_MSG));
+        assert!(!eth_rlpx_is_unsupported_eth71_bal_message_v1(
+            ETH_RLPX_BASE_PROTOCOL_OFFSET + ETH_RLPX_ETH_GET_BLOCK_ACCESS_LISTS_MSG
+        ));
     }
 
     #[test]
@@ -3865,6 +3869,16 @@ mod tests {
         );
         assert_eq!(
             snap_offset + ETH_RLPX_SNAP_GET_ACCOUNT_RANGE_MSG,
+            ETH_RLPX_BASE_PROTOCOL_OFFSET + ETH_RLPX_ETH_GET_BLOCK_ACCESS_LISTS_MSG
+        );
+        let snap_offset_eth71 =
+            eth_rlpx_snap_base_offset_v1(71, Some(1)).expect("eth71 snap offset");
+        assert_eq!(
+            snap_offset_eth71,
+            ETH_RLPX_BASE_PROTOCOL_OFFSET + ETH_RLPX_ETH_71_PROTOCOL_LENGTH
+        );
+        assert_ne!(
+            snap_offset_eth71 + ETH_RLPX_SNAP_GET_ACCOUNT_RANGE_MSG,
             ETH_RLPX_BASE_PROTOCOL_OFFSET + ETH_RLPX_ETH_GET_BLOCK_ACCESS_LISTS_MSG
         );
         assert!(eth_rlpx_is_snap1_message_code_v1(
@@ -4145,7 +4159,7 @@ mod tests {
                 default_eth_rlpx_capabilities_v1().as_slice(),
                 parsed.capabilities.as_slice()
             ),
-            Some(EthWireVersion::V70)
+            Some(EthWireVersion::V71)
         );
     }
 
@@ -4487,7 +4501,7 @@ mod tests {
     #[test]
     fn eth71_bal_wire_roundtrip_and_negotiation_gate_v1() {
         let local_caps = default_eth_rlpx_capabilities_v1();
-        assert!(!local_caps
+        assert!(local_caps
             .iter()
             .any(|cap| cap.name == "eth" && cap.version == 71));
         let remote_eth71_with_fallback = vec![
@@ -4509,7 +4523,7 @@ mod tests {
                 local_caps.as_slice(),
                 remote_eth71_with_fallback.as_slice()
             ),
-            Some(EthWireVersion::V70)
+            Some(EthWireVersion::V71)
         );
         assert_eq!(
             eth_rlpx_select_shared_eth_version_v1(
@@ -4519,7 +4533,17 @@ mod tests {
                     version: 71,
                 }]
             ),
-            None
+            Some(EthWireVersion::V71)
+        );
+        assert_eq!(
+            eth_rlpx_select_shared_eth_version_v1(
+                local_caps.as_slice(),
+                &[EthRlpxCapabilityV1 {
+                    name: "eth".to_string(),
+                    version: 70,
+                }]
+            ),
+            Some(EthWireVersion::V70)
         );
 
         let get_bal_code = ETH_RLPX_BASE_PROTOCOL_OFFSET + ETH_RLPX_ETH_GET_BLOCK_ACCESS_LISTS_MSG;

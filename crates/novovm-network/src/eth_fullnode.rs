@@ -37,9 +37,10 @@ pub enum EthWireVersion {
     V68,
     V69,
     V70,
+    V71,
 }
 
-pub const ETH_NATIVE_MAX_SUPPORTED_ETH_PROTOCOL_VERSION: u8 = 70;
+pub const ETH_NATIVE_MAX_SUPPORTED_ETH_PROTOCOL_VERSION: u8 = 71;
 const ETH_PEER_INCOMPATIBLE_STATUS_DECODE_REJECT_AFTER_V1: u64 = 2;
 
 impl EthWireVersion {
@@ -51,6 +52,7 @@ impl EthWireVersion {
             Self::V68 => 68,
             Self::V69 => 69,
             Self::V70 => 70,
+            Self::V71 => 71,
         }
     }
 
@@ -62,6 +64,7 @@ impl EthWireVersion {
             Self::V68 => "eth/68",
             Self::V69 => "eth/69",
             Self::V70 => "eth/70",
+            Self::V71 => "eth/71",
         }
     }
 
@@ -73,6 +76,7 @@ impl EthWireVersion {
             68 => Some(Self::V68),
             69 => Some(Self::V69),
             70 => Some(Self::V70),
+            71 => Some(Self::V71),
             _ => None,
         }
     }
@@ -1062,6 +1066,7 @@ impl EthNativeCapabilities {
 pub fn default_eth_native_capabilities() -> EthNativeCapabilities {
     EthNativeCapabilities {
         eth_versions: vec![
+            EthWireVersion::V71,
             EthWireVersion::V70,
             EthWireVersion::V69,
             EthWireVersion::V68,
@@ -4444,6 +4449,16 @@ mod tests {
         let negotiated =
             negotiate_eth_native_capabilities(&local, &[66, 67], &[1]).expect("must negotiate");
         assert_eq!(negotiated.eth_version, EthWireVersion::V67);
+        assert_eq!(negotiated.snap_version, Some(SnapWireVersion::V1));
+    }
+
+    #[test]
+    fn negotiate_eth_native_caps_prefers_eth71_when_shared() {
+        let local = default_eth_native_capabilities();
+        assert_eq!(local.highest_eth_version(), Some(EthWireVersion::V71));
+        let negotiated =
+            negotiate_eth_native_capabilities(&local, &[69, 70, 71], &[1]).expect("negotiate");
+        assert_eq!(negotiated.eth_version, EthWireVersion::V71);
         assert_eq!(negotiated.snap_version, Some(SnapWireVersion::V1));
     }
 
