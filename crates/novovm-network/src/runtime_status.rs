@@ -422,6 +422,10 @@ pub struct NetworkRuntimeNativeCanonicalBlockStateV1 {
     pub receipt_count: Option<usize>,
     #[serde(default)]
     pub receipts_root: Option<[u8; 32]>,
+    #[serde(default)]
+    pub state_root_validated: bool,
+    #[serde(default)]
+    pub state_root_validation_method: Option<String>,
     pub lifecycle_stage: NetworkRuntimeNativeBlockLifecycleStageV1,
     pub canonical: bool,
     pub safe: bool,
@@ -1545,6 +1549,8 @@ fn runtime_native_canonical_chain_upsert_header_v1(
             receipts_available: false,
             receipt_count: None,
             receipts_root: None,
+            state_root_validated: false,
+            state_root_validation_method: None,
             lifecycle_stage: NetworkRuntimeNativeBlockLifecycleStageV1::HeaderOnly,
             canonical: false,
             safe: false,
@@ -1585,6 +1591,8 @@ fn runtime_native_canonical_chain_upsert_body_v1(
             receipts_available: false,
             receipt_count: None,
             receipts_root: None,
+            state_root_validated: false,
+            state_root_validation_method: None,
             lifecycle_stage: NetworkRuntimeNativeBlockLifecycleStageV1::Seen,
             canonical: false,
             safe: false,
@@ -1621,6 +1629,8 @@ fn runtime_native_canonical_chain_upsert_receipt_v1(
             receipts_available: receipt.receipts_available,
             receipt_count: Some(receipt.receipt_count),
             receipts_root: Some(receipt.receipts_root),
+            state_root_validated: false,
+            state_root_validation_method: None,
             lifecycle_stage: NetworkRuntimeNativeBlockLifecycleStageV1::Seen,
             canonical: false,
             safe: false,
@@ -1767,6 +1777,8 @@ fn runtime_native_canonical_chain_apply_head_v1(
                 receipts_available: false,
                 receipt_count: None,
                 receipts_root: None,
+                state_root_validated: false,
+                state_root_validation_method: None,
                 lifecycle_stage: NetworkRuntimeNativeBlockLifecycleStageV1::Canonical,
                 canonical: head.canonical,
                 safe: head.safe,
@@ -1809,6 +1821,8 @@ fn runtime_native_canonical_chain_apply_head_v1(
             receipts_available: false,
             receipt_count: None,
             receipts_root: None,
+            state_root_validated: false,
+            state_root_validation_method: None,
             lifecycle_stage: NetworkRuntimeNativeBlockLifecycleStageV1::Canonical,
             canonical: head.canonical,
             safe: head.safe,
@@ -2385,6 +2399,52 @@ pub fn set_network_runtime_native_receipt_snapshot_v1(
             .native_snapshot_updated_at_by_chain
             .insert(chain_id, normalized.observed_unix_ms);
         hint_runtime_stale_check_deadline(&mut observed, chain_id, normalized.observed_unix_ms);
+    }
+}
+
+pub fn set_network_runtime_native_state_root_validation_v1(
+    chain_id: u64,
+    block_hash: [u8; 32],
+    validated: bool,
+    method: &str,
+    observed_unix_ms: u128,
+) {
+    if let Ok(mut guard) = runtime_native_canonical_chain_map().lock() {
+        let state = guard
+            .entry(chain_id)
+            .or_insert_with(|| runtime_native_canonical_chain_internal_default_v1(chain_id));
+        if let Some(block) = state.blocks_by_hash.get_mut(&block_hash) {
+            block.state_root_validated = validated;
+            block.state_root_validation_method = if method.is_empty() {
+                None
+            } else {
+                Some(method.to_string())
+            };
+            block.observed_unix_ms = block.observed_unix_ms.max(observed_unix_ms);
+        }
+        if state
+            .snapshot
+            .head
+            .as_ref()
+            .is_some_and(|head| head.hash == block_hash)
+        {
+            if let Some(head) = state.snapshot.head.as_mut() {
+                head.state_root_validated = validated;
+                head.state_root_validation_method = if method.is_empty() {
+                    None
+                } else {
+                    Some(method.to_string())
+                };
+                head.observed_unix_ms = head.observed_unix_ms.max(observed_unix_ms);
+            }
+        }
+        runtime_native_canonical_chain_refresh_snapshot_v1(state);
+    }
+    if let Ok(mut observed) = runtime_sync_observed_state_map().lock() {
+        observed
+            .native_snapshot_updated_at_by_chain
+            .insert(chain_id, observed_unix_ms);
+        hint_runtime_stale_check_deadline(&mut observed, chain_id, observed_unix_ms);
     }
 }
 

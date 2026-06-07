@@ -62,6 +62,7 @@ use crate::{
     set_network_runtime_native_body_snapshot_v1, set_network_runtime_native_budget_hooks_v1,
     set_network_runtime_native_head_snapshot_v1, set_network_runtime_native_header_snapshot_v1,
     set_network_runtime_native_receipt_snapshot_v1,
+    set_network_runtime_native_state_root_validation_v1,
     snapshot_eth_fullnode_native_head_block_object_v1,
     snapshot_eth_fullnode_peer_selection_scores_v1,
     snapshot_network_runtime_eth_peer_lifecycle_summary_v1,
@@ -692,9 +693,12 @@ struct EthFullnodeNativeRlpxLivePeerSessionV1 {
 struct EthFullnodeNativePendingBodyHeaderV1 {
     number: u64,
     hash: [u8; 32],
+    parent_hash: [u8; 32],
+    state_root: [u8; 32],
     transactions_root: [u8; 32],
     receipts_root: [u8; 32],
     tx_count: Option<usize>,
+    withdrawal_count: Option<usize>,
 }
 
 type EthFullnodeNativeRlpxSessionKeyV1 = (u64, u64);
@@ -1978,9 +1982,12 @@ fn ingest_real_rlpx_new_block_v1(
     session.pending_body_headers = vec![EthFullnodeNativePendingBodyHeaderV1 {
         number: block.header.number,
         hash: block.header.hash,
+        parent_hash: block.header.parent_hash,
+        state_root: block.header.state_root,
         transactions_root: block.header.transactions_root,
         receipts_root: block.header.receipts_root,
         tx_count: Some(block.body.tx_hashes.len()),
+        withdrawal_count: block.body.withdrawal_count,
     }];
     session.last_headers_request_id = None;
     session.last_bodies_request_id = None;
@@ -2015,9 +2022,12 @@ fn ingest_real_rlpx_block_headers_v1(
         .map(|header| EthFullnodeNativePendingBodyHeaderV1 {
             number: header.number,
             hash: header.hash,
+            parent_hash: header.parent_hash,
+            state_root: header.state_root,
             transactions_root: header.transactions_root,
             receipts_root: header.receipts_root,
             tx_count: None,
+            withdrawal_count: None,
         })
         .collect();
     if let Some(best) = headers.headers.iter().max_by_key(|header| header.number) {
@@ -2093,6 +2103,7 @@ fn ingest_real_rlpx_block_bodies_v1(
                 return Err(NetworkError::Decode(err));
             }
             pending.tx_count = Some(body.tx_hashes.len());
+            pending.withdrawal_count = body.withdrawal_count;
             let body_wire =
                 evm_native_body_wire_from_rlpx_body_v1(pending.number, pending.hash, body);
             ingest_runtime_native_body_from_evm_wire(chain_id, source_peer_id, &body_wire);
@@ -2157,6 +2168,11 @@ fn ingest_real_rlpx_receipts_v1(
         session.pending_body_headers.as_slice(),
         receipts,
     )?;
+    validate_real_rlpx_state_root_continuity_v1(
+        chain_id,
+        source_peer_id,
+        session.pending_body_headers.as_slice(),
+    )?;
     ingest_validated_real_rlpx_receipt_snapshots_v1(
         chain_id,
         source_peer_id,
@@ -2204,6 +2220,43 @@ fn ingest_validated_real_rlpx_receipt_snapshots_v1(
             },
         );
     }
+}
+
+fn validate_real_rlpx_state_root_continuity_v1(
+    chain_id: u64,
+    source_peer_id: u64,
+    pending_body_headers: &[EthFullnodeNativePendingBodyHeaderV1],
+) -> Result<(), NetworkError> {
+    let retained_blocks = snapshot_network_runtime_native_canonical_blocks_v1(chain_id, 4096);
+    for pending in pending_body_headers {
+        if pending.tx_count != Some(0) || pending.withdrawal_count != Some(0) {
+            continue;
+        }
+        let Some(parent) = retained_blocks
+            .iter()
+            .find(|block| block.hash == pending.parent_hash)
+        else {
+            continue;
+        };
+        if pending.state_root != parent.state_root {
+            let err = format!(
+                "rlpx_state_root_continuity_mismatch:number={} hash=0x{} parent=0x{}",
+                pending.number,
+                hex32_v1(&pending.hash),
+                hex32_v1(&pending.parent_hash)
+            );
+            observe_network_runtime_eth_peer_decode_failure_v1(chain_id, source_peer_id, &err);
+            return Err(NetworkError::Decode(err));
+        }
+        set_network_runtime_native_state_root_validation_v1(
+            chain_id,
+            pending.hash,
+            true,
+            "empty_body_parent_state_root_continuity",
+            now_unix_millis_u128(),
+        );
+    }
+    Ok(())
 }
 
 fn validate_real_rlpx_receipts_response_v1(
@@ -4685,11 +4738,14 @@ mod tests {
         let pending = vec![EthFullnodeNativePendingBodyHeaderV1 {
             number: 120,
             hash: [0x12; 32],
+            parent_hash: [0x11; 32],
+            state_root: [0x22; 32],
             transactions_root: crate::eth_rlpx_empty_trie_root_v1(),
             receipts_root: crate::eth_rlpx_receipts_root_from_raw_receipts_v1(
                 raw_receipts.as_slice(),
             ),
             tx_count: Some(1),
+            withdrawal_count: Some(0),
         }];
         let valid = crate::EthRlpxReceiptsResponseV1 {
             request_id: 1,
@@ -4756,6 +4812,117 @@ mod tests {
         .expect_err("receipt root mismatch must reject")
         .to_string()
         .contains("rlpx_receipts_root_mismatch"));
+    }
+
+    #[test]
+    fn rlpx_state_root_continuity_validates_empty_withdrawal_block() {
+        let chain_id = 9_926_101_u64;
+        let peer_id = 1_300_101_u64;
+        clear_network_runtime_native_snapshots_for_chain_v1(chain_id);
+
+        let parent_hash = [0x41; 32];
+        let child_hash = [0x42; 32];
+        let parent_state_root = [0x51; 32];
+        set_network_runtime_native_header_snapshot_v1(
+            chain_id,
+            crate::runtime_status::NetworkRuntimeNativeHeaderSnapshotV1 {
+                chain_id,
+                number: 120,
+                hash: parent_hash,
+                parent_hash: [0x40; 32],
+                state_root: parent_state_root,
+                transactions_root: crate::eth_rlpx_empty_trie_root_v1(),
+                receipts_root: crate::eth_rlpx_empty_trie_root_v1(),
+                ommers_hash: crate::eth_rlpx_empty_ommers_hash_v1(),
+                logs_bloom: vec![0u8; 256],
+                gas_limit: Some(30_000_000),
+                gas_used: Some(0),
+                timestamp: Some(1_900_000_000),
+                base_fee_per_gas: Some(7),
+                withdrawals_root: Some(crate::eth_rlpx_empty_trie_root_v1()),
+                blob_gas_used: None,
+                excess_blob_gas: None,
+                block_access_list_hash: None,
+                source_peer_id: Some(peer_id),
+                observed_unix_ms: 1,
+            },
+        );
+        set_network_runtime_native_head_snapshot_v1(
+            chain_id,
+            crate::runtime_status::NetworkRuntimeNativeHeadSnapshotV1 {
+                chain_id,
+                phase: crate::runtime_status::NetworkRuntimeNativeSyncPhaseV1::Bodies,
+                peer_count: 1,
+                block_number: 120,
+                block_hash: parent_hash,
+                parent_block_hash: [0x40; 32],
+                state_root: parent_state_root,
+                canonical: true,
+                safe: false,
+                finalized: false,
+                reorg_depth_hint: None,
+                body_available: true,
+                source_peer_id: Some(peer_id),
+                observed_unix_ms: 2,
+            },
+        );
+        set_network_runtime_native_header_snapshot_v1(
+            chain_id,
+            crate::runtime_status::NetworkRuntimeNativeHeaderSnapshotV1 {
+                chain_id,
+                number: 121,
+                hash: child_hash,
+                parent_hash,
+                state_root: parent_state_root,
+                transactions_root: crate::eth_rlpx_empty_trie_root_v1(),
+                receipts_root: crate::eth_rlpx_empty_trie_root_v1(),
+                ommers_hash: crate::eth_rlpx_empty_ommers_hash_v1(),
+                logs_bloom: vec![0u8; 256],
+                gas_limit: Some(30_000_000),
+                gas_used: Some(0),
+                timestamp: Some(1_900_000_012),
+                base_fee_per_gas: Some(7),
+                withdrawals_root: Some(crate::eth_rlpx_empty_trie_root_v1()),
+                blob_gas_used: None,
+                excess_blob_gas: None,
+                block_access_list_hash: None,
+                source_peer_id: Some(peer_id),
+                observed_unix_ms: 3,
+            },
+        );
+
+        let valid = vec![EthFullnodeNativePendingBodyHeaderV1 {
+            number: 121,
+            hash: child_hash,
+            parent_hash,
+            state_root: parent_state_root,
+            transactions_root: crate::eth_rlpx_empty_trie_root_v1(),
+            receipts_root: crate::eth_rlpx_empty_trie_root_v1(),
+            tx_count: Some(0),
+            withdrawal_count: Some(0),
+        }];
+        validate_real_rlpx_state_root_continuity_v1(chain_id, peer_id, valid.as_slice())
+            .expect("empty block stateRoot continuity");
+        let child = snapshot_network_runtime_native_canonical_blocks_v1(chain_id, 8)
+            .into_iter()
+            .find(|block| block.hash == child_hash)
+            .expect("child canonical block state");
+        assert!(child.state_root_validated);
+        assert_eq!(
+            child.state_root_validation_method.as_deref(),
+            Some("empty_body_parent_state_root_continuity")
+        );
+
+        let invalid = vec![EthFullnodeNativePendingBodyHeaderV1 {
+            state_root: [0x99; 32],
+            ..valid[0]
+        }];
+        assert!(
+            validate_real_rlpx_state_root_continuity_v1(chain_id, peer_id, invalid.as_slice())
+                .expect_err("stateRoot mismatch must reject")
+                .to_string()
+                .contains("rlpx_state_root_continuity_mismatch")
+        );
     }
 
     #[test]
