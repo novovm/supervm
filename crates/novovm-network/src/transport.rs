@@ -22,9 +22,10 @@ use crate::{
     eth_rlpx_parse_new_block_payload_v1, eth_rlpx_parse_new_pooled_transaction_hashes_payload_v1,
     eth_rlpx_parse_pooled_transactions_payload_v1, eth_rlpx_parse_receipts_payload_v1,
     eth_rlpx_parse_status_payload_v1, eth_rlpx_parse_transactions_payload_v1,
-    eth_rlpx_read_wire_frame_v1, eth_rlpx_select_shared_eth_version_v1,
-    eth_rlpx_select_shared_snap_version_v1, eth_rlpx_validate_block_empty_body_roots_v1,
-    eth_rlpx_write_wire_frame_v1, get_network_runtime_native_block_access_list_payload_v1,
+    eth_rlpx_read_wire_frame_v1, eth_rlpx_receipts_root_from_raw_receipts_v1,
+    eth_rlpx_select_shared_eth_version_v1, eth_rlpx_select_shared_snap_version_v1,
+    eth_rlpx_validate_block_empty_body_roots_v1, eth_rlpx_write_wire_frame_v1,
+    get_network_runtime_native_block_access_list_payload_v1,
     get_network_runtime_native_body_snapshot_v1, get_network_runtime_native_head_snapshot_v1,
     get_network_runtime_native_header_snapshot_v1,
     get_network_runtime_native_pending_tx_payload_v1, get_network_runtime_native_sync_status,
@@ -681,7 +682,7 @@ struct EthFullnodeNativeRlpxLivePeerSessionV1 {
     last_receipts_request_id: Option<u64>,
     last_pooled_transactions_request_id: Option<u64>,
     last_tx_broadcast_unix_ms: u64,
-    pending_body_headers: Vec<(u64, [u8; 32])>,
+    pending_body_headers: Vec<(u64, [u8; 32], [u8; 32])>,
     pending_pooled_transaction_hashes: Vec<[u8; 32]>,
 }
 
@@ -783,6 +784,13 @@ fn format_eth_fullnode_rlpx_disconnect_reason_v1(payload: &[u8], phase: &str) ->
         reason.unwrap_or(u64::MAX),
         eth_rlpx_disconnect_reason_name_v1(reason.unwrap_or(u64::MAX)),
     )
+}
+
+fn hex32_v1(bytes: &[u8; 32]) -> String {
+    bytes
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>()
 }
 
 fn eth_fullnode_rlpx_error_is_timeout_v1(raw: &str) -> bool {
@@ -1658,7 +1666,7 @@ fn drive_eth_fullnode_native_rlpx_peer_session_once_v1(
                             session,
                             &receipts,
                             &mut report,
-                        );
+                        )?;
                         continue;
                     }
                     if code == eth_offset + ETH_RLPX_ETH_GET_BLOCK_ACCESS_LISTS_MSG {
@@ -1948,7 +1956,11 @@ fn ingest_real_rlpx_new_block_v1(
         );
         NetworkError::Io(err)
     })?;
-    session.pending_body_headers = vec![(block.header.number, block.header.hash)];
+    session.pending_body_headers = vec![(
+        block.header.number,
+        block.header.hash,
+        block.header.receipts_root,
+    )];
     session.last_headers_request_id = None;
     session.last_bodies_request_id = None;
     session.last_receipts_request_id = Some(request_id);
@@ -1979,7 +1991,7 @@ fn ingest_real_rlpx_block_headers_v1(
     session.pending_body_headers = headers
         .headers
         .iter()
-        .map(|header| (header.number, header.hash))
+        .map(|header| (header.number, header.hash, header.receipts_root))
         .collect();
     if let Some(best) = headers.headers.iter().max_by_key(|header| header.number) {
         let header_wire = evm_native_header_wire_from_rlpx_header_v1(best);
@@ -1989,7 +2001,7 @@ fn ingest_real_rlpx_block_headers_v1(
     let hashes = session
         .pending_body_headers
         .iter()
-        .map(|(_, hash)| *hash)
+        .map(|(_, hash, _)| *hash)
         .collect::<Vec<_>>();
     if !hashes.is_empty() {
         let request_id = next_eth_fullnode_native_rlpx_request_id_v1();
@@ -2034,7 +2046,8 @@ fn ingest_real_rlpx_block_bodies_v1(
     observe_eth_native_bodies_response(chain_id);
     session.last_headers_request_id = None;
     for (idx, body) in bodies.bodies.iter().enumerate() {
-        if let Some((number, hash)) = session.pending_body_headers.get(idx).copied() {
+        if let Some((number, hash, _receipts_root)) = session.pending_body_headers.get(idx).copied()
+        {
             let body_wire = evm_native_body_wire_from_rlpx_body_v1(number, hash, body);
             ingest_runtime_native_body_from_evm_wire(chain_id, source_peer_id, &body_wire);
             report.body_updates = report.body_updates.saturating_add(1);
@@ -2044,7 +2057,7 @@ fn ingest_real_rlpx_block_bodies_v1(
     let hashes = session
         .pending_body_headers
         .iter()
-        .map(|(_, hash)| *hash)
+        .map(|(_, hash, _)| *hash)
         .collect::<Vec<_>>();
     if hashes.is_empty() {
         session.pending_body_headers.clear();
@@ -2085,12 +2098,32 @@ fn ingest_real_rlpx_receipts_v1(
     session: &mut EthFullnodeNativeRlpxLivePeerSessionV1,
     receipts: &EthRlpxReceiptsResponseV1,
     report: &mut EthFullnodeNativeRlpxPeerTickReportV1,
-) {
+) -> Result<(), NetworkError> {
     if session
         .last_receipts_request_id
         .is_some_and(|request_id| request_id != receipts.request_id)
     {
-        return;
+        return Ok(());
+    }
+    for (idx, block_receipts) in receipts.blocks.iter().enumerate() {
+        if receipts.last_block_incomplete && idx + 1 == receipts.blocks.len() {
+            continue;
+        }
+        let Some((number, hash, expected_receipts_root)) =
+            session.pending_body_headers.get(idx).copied()
+        else {
+            break;
+        };
+        let observed_receipts_root =
+            eth_rlpx_receipts_root_from_raw_receipts_v1(block_receipts.raw_receipts.as_slice());
+        if observed_receipts_root != expected_receipts_root {
+            let err = format!(
+                "rlpx_receipts_root_mismatch:number={number} hash=0x{}",
+                hex32_v1(&hash)
+            );
+            observe_network_runtime_eth_peer_decode_failure_v1(chain_id, source_peer_id, &err);
+            return Err(NetworkError::Decode(err));
+        }
     }
     report.receipt_updates = report.receipt_updates.saturating_add(receipts.blocks.len());
     eprintln!(
@@ -2106,6 +2139,7 @@ fn ingest_real_rlpx_receipts_v1(
     session.last_receipts_request_id = None;
     session.pending_body_headers.clear();
     mark_network_runtime_eth_peer_session_ready_v1(chain_id, source_peer_id, None);
+    Ok(())
 }
 
 fn dispatch_eth_fullnode_native_rlpx_tx_broadcast_v1(
@@ -6666,20 +6700,23 @@ mod tests {
         .expect("decode raw transaction");
         let tx_hash = crate::eth_rlpx_transaction_hash_v1(raw_tx.as_slice());
         let status_head_hash = [0x77; 32];
+        let empty_root = crate::eth_rlpx_empty_trie_root_v1();
+        let empty_ommers_hash = crate::eth_rlpx_empty_ommers_hash_v1();
+        let receipt_blocks = vec![vec![vec![0xc0]]];
         let header_record = crate::EthRlpxBlockHeaderRecordV1 {
             number: 120,
             hash: [0u8; 32],
             parent_hash: [0x10; 32],
             state_root: [0x20; 32],
-            transactions_root: [0x30; 32],
-            receipts_root: [0x40; 32],
-            ommers_hash: [0x50; 32],
+            transactions_root: crate::eth_rlpx_transactions_root_from_raw_txs_v1(&[raw_tx.clone()]),
+            receipts_root: crate::eth_rlpx_receipts_root_from_raw_receipts_v1(&receipt_blocks[0]),
+            ommers_hash: empty_ommers_hash,
             logs_bloom: vec![0u8; 256],
             gas_limit: Some(30_000_000),
-            gas_used: Some(100_000),
+            gas_used: Some(21_000),
             timestamp: Some(1_234_567),
             base_fee_per_gas: Some(15),
-            withdrawals_root: None,
+            withdrawals_root: Some(empty_root),
             blob_gas_used: None,
             excess_blob_gas: None,
             block_access_list_hash: None,
@@ -6692,6 +6729,7 @@ mod tests {
         .headers[0]
             .hash;
         let server_header_record = header_record.clone();
+        let server_receipt_blocks = receipt_blocks.clone();
 
         let responder_signing = k256::ecdsa::SigningKey::random(&mut rand::rngs::OsRng);
         let responder_nodekey: [u8; 32] = responder_signing.to_bytes().into();
@@ -6841,7 +6879,7 @@ mod tests {
                     let receipts_payload = crate::eth_rlpx_build_receipts_payload_v1(
                         request.request_id,
                         false,
-                        &[vec![vec![0xc0]]],
+                        server_receipt_blocks.as_slice(),
                         70,
                     );
                     crate::eth_rlpx_write_wire_frame_v1(
@@ -6919,20 +6957,28 @@ mod tests {
         let remote = NodeId(1_301);
         clear_network_runtime_native_snapshots_for_chain_v1(chain_id);
 
+        let empty_root = crate::eth_rlpx_empty_trie_root_v1();
+        let empty_ommers_hash = crate::eth_rlpx_empty_ommers_hash_v1();
+        let raw_tx = crate::eth_rlpx_decode_hex_v1(
+            "f86c098504a817c800825208943535353535353535353535353535353535353535880de0b6b3a76400008025a028ef61340bd939bc2195fe537567866003e1a15d3c71ff63e1590620aa636276a067cbe9d8997f761aecb703304b3800ccf555c9f3dc64214b297fb1966a3b6d83",
+        )
+        .expect("decode receipts gate raw transaction");
+        let tx_hash = crate::eth_rlpx_transaction_hash_v1(raw_tx.as_slice());
+        let receipt_blocks = vec![vec![vec![0xc0]]];
         let header_record = crate::EthRlpxBlockHeaderRecordV1 {
             number: 120,
             hash: [0u8; 32],
             parent_hash: [0x10; 32],
             state_root: [0x20; 32],
-            transactions_root: [0x30; 32],
-            receipts_root: [0x40; 32],
-            ommers_hash: [0x50; 32],
+            transactions_root: crate::eth_rlpx_transactions_root_from_raw_txs_v1(&[raw_tx.clone()]),
+            receipts_root: crate::eth_rlpx_receipts_root_from_raw_receipts_v1(&receipt_blocks[0]),
+            ommers_hash: empty_ommers_hash,
             logs_bloom: vec![0u8; 256],
             gas_limit: Some(30_000_000),
-            gas_used: Some(0),
+            gas_used: Some(21_000),
             timestamp: Some(1_234_567),
             base_fee_per_gas: Some(15),
-            withdrawals_root: None,
+            withdrawals_root: Some(empty_root),
             blob_gas_used: None,
             excess_blob_gas: None,
             block_access_list_hash: None,
@@ -6945,6 +6991,8 @@ mod tests {
         .headers[0]
             .hash;
         let server_header_record = header_record.clone();
+        let server_raw_tx = raw_tx.clone();
+        let server_receipt_blocks = receipt_blocks.clone();
 
         let responder_signing = k256::ecdsa::SigningKey::random(&mut rand::rngs::OsRng);
         let responder_nodekey: [u8; 32] = responder_signing.to_bytes().into();
@@ -7070,7 +7118,7 @@ mod tests {
                     let bodies_payload = crate::eth_rlpx_build_block_bodies_payload_v1(
                         request.request_id,
                         &[crate::EthRlpxBlockBodyPayloadV1 {
-                            tx_rlp_items: Vec::new(),
+                            tx_rlp_items: vec![server_raw_tx.clone()],
                             ommer_header_rlp_items: Vec::new(),
                             withdrawal_rlp_items: Some(Vec::new()),
                         }],
@@ -7094,7 +7142,7 @@ mod tests {
                     let receipts_payload = crate::eth_rlpx_build_receipts_payload_v1(
                         request.request_id,
                         false,
-                        &[Vec::new()],
+                        server_receipt_blocks.as_slice(),
                         70,
                     );
                     crate::eth_rlpx_write_wire_frame_v1(
@@ -7142,7 +7190,7 @@ mod tests {
         let body_snapshot =
             get_network_runtime_native_body_snapshot_v1(chain_id).expect("body snapshot");
         assert_eq!(body_snapshot.block_hash, header_hash);
-        assert!(body_snapshot.tx_hashes.is_empty());
+        assert_eq!(body_snapshot.tx_hashes, vec![tx_hash]);
 
         server.join().expect("server join");
     }
@@ -7219,20 +7267,23 @@ mod tests {
             Some(raw_tx.as_slice()),
         );
 
+        let empty_root = crate::eth_rlpx_empty_trie_root_v1();
+        let empty_ommers_hash = crate::eth_rlpx_empty_ommers_hash_v1();
+        let header_a_receipts = vec![vec![0xc0]];
         let header_a = crate::EthRlpxBlockHeaderRecordV1 {
             number: 120,
             hash: [0u8; 32],
             parent_hash: ancestor_hash,
             state_root: [0x20; 32],
-            transactions_root: [0x30; 32],
-            receipts_root: [0x40; 32],
-            ommers_hash: [0x50; 32],
+            transactions_root: crate::eth_rlpx_transactions_root_from_raw_txs_v1(&[raw_tx.clone()]),
+            receipts_root: crate::eth_rlpx_receipts_root_from_raw_receipts_v1(&header_a_receipts),
+            ommers_hash: empty_ommers_hash,
             logs_bloom: vec![0u8; 256],
             gas_limit: Some(30_000_000),
-            gas_used: Some(100_000),
+            gas_used: Some(21_000),
             timestamp: Some(1_234_567),
             base_fee_per_gas: Some(15),
-            withdrawals_root: None,
+            withdrawals_root: Some(empty_root),
             blob_gas_used: None,
             excess_blob_gas: None,
             block_access_list_hash: None,
@@ -7242,15 +7293,15 @@ mod tests {
             hash: [0u8; 32],
             parent_hash: ancestor_hash,
             state_root: [0x21; 32],
-            transactions_root: [0x31; 32],
-            receipts_root: [0x41; 32],
-            ommers_hash: [0x51; 32],
+            transactions_root: empty_root,
+            receipts_root: empty_root,
+            ommers_hash: empty_ommers_hash,
             logs_bloom: vec![0u8; 256],
             gas_limit: Some(30_000_000),
-            gas_used: Some(90_000),
+            gas_used: Some(0),
             timestamp: Some(1_234_568),
             base_fee_per_gas: Some(15),
-            withdrawals_root: None,
+            withdrawals_root: Some(empty_root),
             blob_gas_used: None,
             excess_blob_gas: None,
             block_access_list_hash: None,
@@ -8534,6 +8585,7 @@ mod tests {
             ommer_header_rlp_items: Vec::new(),
             withdrawal_rlp_items: Some(Vec::new()),
         };
+        let receipt_blocks = vec![vec![vec![0xc0]]];
         let header_record = crate::EthRlpxBlockHeaderRecordV1 {
             number: 121,
             hash: [0u8; 32],
@@ -8542,7 +8594,7 @@ mod tests {
             transactions_root: crate::eth_rlpx_transactions_root_from_raw_txs_v1(
                 body_payload.tx_rlp_items.as_slice(),
             ),
-            receipts_root: [0x93; 32],
+            receipts_root: crate::eth_rlpx_receipts_root_from_raw_receipts_v1(&receipt_blocks[0]),
             ommers_hash: empty_ommers_hash,
             logs_bloom: vec![0u8; 256],
             gas_limit: Some(30_000_000),
@@ -8560,6 +8612,7 @@ mod tests {
         )
         .expect("derive new block hash");
         let new_block_hash = parsed_new_block.header.hash;
+        let server_receipt_blocks = receipt_blocks.clone();
 
         let responder_signing = k256::ecdsa::SigningKey::random(&mut rand::rngs::OsRng);
         let responder_nodekey: [u8; 32] = responder_signing.to_bytes().into();
@@ -8683,7 +8736,7 @@ mod tests {
                 let receipts = crate::eth_rlpx_build_receipts_payload_v1(
                     request.request_id,
                     false,
-                    &[vec![vec![0xc0]]],
+                    server_receipt_blocks.as_slice(),
                     70,
                 );
                 crate::eth_rlpx_write_wire_frame_v1(

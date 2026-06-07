@@ -389,6 +389,16 @@ pub fn eth_rlpx_transactions_root_from_raw_txs_v1(raw_txs: &[Vec<u8>]) -> [u8; 3
     eth_rlpx_transactions_root_from_raw_tx_slices_v1(&slices)
 }
 
+#[must_use]
+pub fn eth_rlpx_receipts_root_from_raw_receipts_v1(raw_receipts: &[Vec<u8>]) -> [u8; 32] {
+    let kv_pairs = raw_receipts
+        .iter()
+        .enumerate()
+        .map(|(idx, raw)| (eth_rlpx_encode_u64_v1(idx as u64), raw.clone()))
+        .collect::<Vec<_>>();
+    eth_rlpx_mpt_root_from_kv_pairs_v1(&kv_pairs)
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EthRlpxGetBlockBodiesRequestV1 {
     pub request_id: u64,
