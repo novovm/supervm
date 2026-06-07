@@ -58,6 +58,28 @@ type NetworkRuntimeNativeBlockAccessListPayloadByChainV1 =
 static NETWORK_RUNTIME_NATIVE_BLOCK_ACCESS_LIST_PAYLOADS: OnceLock<
     Mutex<NetworkRuntimeNativeBlockAccessListPayloadByChainV1>,
 > = OnceLock::new();
+type NetworkRuntimeNativeSnapAccountKeyV1 = ([u8; 32], [u8; 32]);
+type NetworkRuntimeNativeSnapAccountSnapshotByKeyV1 =
+    HashMap<NetworkRuntimeNativeSnapAccountKeyV1, NetworkRuntimeNativeSnapAccountSnapshotV1>;
+type NetworkRuntimeNativeSnapAccountSnapshotByChainV1 =
+    HashMap<u64, NetworkRuntimeNativeSnapAccountSnapshotByKeyV1>;
+static NETWORK_RUNTIME_NATIVE_SNAP_ACCOUNT_SNAPSHOTS: OnceLock<
+    Mutex<NetworkRuntimeNativeSnapAccountSnapshotByChainV1>,
+> = OnceLock::new();
+type NetworkRuntimeNativeSnapStorageSnapshotByKeyV1 =
+    HashMap<NetworkRuntimeNativeSnapAccountKeyV1, NetworkRuntimeNativeSnapAccountStorageSnapshotV1>;
+type NetworkRuntimeNativeSnapStorageSnapshotByChainV1 =
+    HashMap<u64, NetworkRuntimeNativeSnapStorageSnapshotByKeyV1>;
+static NETWORK_RUNTIME_NATIVE_SNAP_STORAGE_SNAPSHOTS: OnceLock<
+    Mutex<NetworkRuntimeNativeSnapStorageSnapshotByChainV1>,
+> = OnceLock::new();
+type NetworkRuntimeNativeSnapCodeSnapshotByHashV1 =
+    HashMap<[u8; 32], NetworkRuntimeNativeSnapCodeSnapshotV1>;
+type NetworkRuntimeNativeSnapCodeSnapshotByChainV1 =
+    HashMap<u64, NetworkRuntimeNativeSnapCodeSnapshotByHashV1>;
+static NETWORK_RUNTIME_NATIVE_SNAP_CODE_SNAPSHOTS: OnceLock<
+    Mutex<NetworkRuntimeNativeSnapCodeSnapshotByChainV1>,
+> = OnceLock::new();
 static NETWORK_RUNTIME_NATIVE_HEAD_SNAPSHOTS: OnceLock<
     Mutex<HashMap<u64, NetworkRuntimeNativeHeadSnapshotV1>>,
 > = OnceLock::new();
@@ -124,6 +146,21 @@ fn runtime_native_receipt_snapshot_map(
 fn runtime_native_block_access_list_payload_map(
 ) -> &'static Mutex<NetworkRuntimeNativeBlockAccessListPayloadByChainV1> {
     NETWORK_RUNTIME_NATIVE_BLOCK_ACCESS_LIST_PAYLOADS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn runtime_native_snap_account_snapshot_map(
+) -> &'static Mutex<NetworkRuntimeNativeSnapAccountSnapshotByChainV1> {
+    NETWORK_RUNTIME_NATIVE_SNAP_ACCOUNT_SNAPSHOTS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn runtime_native_snap_storage_snapshot_map(
+) -> &'static Mutex<NetworkRuntimeNativeSnapStorageSnapshotByChainV1> {
+    NETWORK_RUNTIME_NATIVE_SNAP_STORAGE_SNAPSHOTS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn runtime_native_snap_code_snapshot_map(
+) -> &'static Mutex<NetworkRuntimeNativeSnapCodeSnapshotByChainV1> {
+    NETWORK_RUNTIME_NATIVE_SNAP_CODE_SNAPSHOTS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
 fn runtime_native_head_snapshot_map(
@@ -317,6 +354,70 @@ impl NetworkRuntimeNativeReceiptSnapshotV1 {
     pub fn normalized(mut self, chain_id: u64) -> Self {
         self.chain_id = chain_id;
         self.receipt_count = self.raw_receipts.len();
+        self
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NetworkRuntimeNativeSnapAccountSnapshotV1 {
+    pub chain_id: u64,
+    pub state_root: [u8; 32],
+    pub account_hash: [u8; 32],
+    pub body_rlp: Vec<u8>,
+    pub storage_root: Option<[u8; 32]>,
+    pub code_hash: Option<[u8; 32]>,
+    pub has_storage: bool,
+    pub has_code: bool,
+    pub source_peer_id: Option<u64>,
+    pub observed_unix_ms: u128,
+}
+
+impl NetworkRuntimeNativeSnapAccountSnapshotV1 {
+    #[must_use]
+    pub fn normalized(mut self, chain_id: u64) -> Self {
+        self.chain_id = chain_id;
+        self
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NetworkRuntimeNativeSnapStorageSlotSnapshotV1 {
+    pub hash: [u8; 32],
+    pub body: Vec<u8>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NetworkRuntimeNativeSnapAccountStorageSnapshotV1 {
+    pub chain_id: u64,
+    pub state_root: [u8; 32],
+    pub account_hash: [u8; 32],
+    pub slots: Vec<NetworkRuntimeNativeSnapStorageSlotSnapshotV1>,
+    pub proof_nodes: Vec<Vec<u8>>,
+    pub source_peer_id: Option<u64>,
+    pub observed_unix_ms: u128,
+}
+
+impl NetworkRuntimeNativeSnapAccountStorageSnapshotV1 {
+    #[must_use]
+    pub fn normalized(mut self, chain_id: u64) -> Self {
+        self.chain_id = chain_id;
+        self
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NetworkRuntimeNativeSnapCodeSnapshotV1 {
+    pub chain_id: u64,
+    pub code_hash: [u8; 32],
+    pub code: Vec<u8>,
+    pub source_peer_id: Option<u64>,
+    pub observed_unix_ms: u128,
+}
+
+impl NetworkRuntimeNativeSnapCodeSnapshotV1 {
+    #[must_use]
+    pub fn normalized(mut self, chain_id: u64) -> Self {
+        self.chain_id = chain_id;
         self
     }
 }
@@ -2477,6 +2578,98 @@ pub fn get_network_runtime_native_block_access_list_payload_v1(
         .and_then(|payloads| payloads.get(&block_hash).cloned())
 }
 
+pub fn set_network_runtime_native_snap_account_snapshot_v1(
+    chain_id: u64,
+    snapshot: NetworkRuntimeNativeSnapAccountSnapshotV1,
+) {
+    let normalized = snapshot.normalized(chain_id);
+    if let Ok(mut guard) = runtime_native_snap_account_snapshot_map().lock() {
+        guard.entry(chain_id).or_default().insert(
+            (normalized.state_root, normalized.account_hash),
+            normalized.clone(),
+        );
+    }
+    if let Ok(mut observed) = runtime_sync_observed_state_map().lock() {
+        observed
+            .native_snapshot_updated_at_by_chain
+            .insert(chain_id, normalized.observed_unix_ms);
+        hint_runtime_stale_check_deadline(&mut observed, chain_id, normalized.observed_unix_ms);
+    }
+}
+
+#[must_use]
+pub fn get_network_runtime_native_snap_account_snapshot_v1(
+    chain_id: u64,
+    state_root: [u8; 32],
+    account_hash: [u8; 32],
+) -> Option<NetworkRuntimeNativeSnapAccountSnapshotV1> {
+    let guard = runtime_native_snap_account_snapshot_map().lock().ok()?;
+    guard
+        .get(&chain_id)
+        .and_then(|accounts| accounts.get(&(state_root, account_hash)).cloned())
+}
+
+pub fn set_network_runtime_native_snap_account_storage_snapshot_v1(
+    chain_id: u64,
+    snapshot: NetworkRuntimeNativeSnapAccountStorageSnapshotV1,
+) {
+    let normalized = snapshot.normalized(chain_id);
+    if let Ok(mut guard) = runtime_native_snap_storage_snapshot_map().lock() {
+        guard.entry(chain_id).or_default().insert(
+            (normalized.state_root, normalized.account_hash),
+            normalized.clone(),
+        );
+    }
+    if let Ok(mut observed) = runtime_sync_observed_state_map().lock() {
+        observed
+            .native_snapshot_updated_at_by_chain
+            .insert(chain_id, normalized.observed_unix_ms);
+        hint_runtime_stale_check_deadline(&mut observed, chain_id, normalized.observed_unix_ms);
+    }
+}
+
+#[must_use]
+pub fn get_network_runtime_native_snap_account_storage_snapshot_v1(
+    chain_id: u64,
+    state_root: [u8; 32],
+    account_hash: [u8; 32],
+) -> Option<NetworkRuntimeNativeSnapAccountStorageSnapshotV1> {
+    let guard = runtime_native_snap_storage_snapshot_map().lock().ok()?;
+    guard
+        .get(&chain_id)
+        .and_then(|accounts| accounts.get(&(state_root, account_hash)).cloned())
+}
+
+pub fn set_network_runtime_native_snap_code_snapshot_v1(
+    chain_id: u64,
+    snapshot: NetworkRuntimeNativeSnapCodeSnapshotV1,
+) {
+    let normalized = snapshot.normalized(chain_id);
+    if let Ok(mut guard) = runtime_native_snap_code_snapshot_map().lock() {
+        guard
+            .entry(chain_id)
+            .or_default()
+            .insert(normalized.code_hash, normalized.clone());
+    }
+    if let Ok(mut observed) = runtime_sync_observed_state_map().lock() {
+        observed
+            .native_snapshot_updated_at_by_chain
+            .insert(chain_id, normalized.observed_unix_ms);
+        hint_runtime_stale_check_deadline(&mut observed, chain_id, normalized.observed_unix_ms);
+    }
+}
+
+#[must_use]
+pub fn get_network_runtime_native_snap_code_snapshot_v1(
+    chain_id: u64,
+    code_hash: [u8; 32],
+) -> Option<NetworkRuntimeNativeSnapCodeSnapshotV1> {
+    let guard = runtime_native_snap_code_snapshot_map().lock().ok()?;
+    guard
+        .get(&chain_id)
+        .and_then(|codes| codes.get(&code_hash).cloned())
+}
+
 pub fn set_network_runtime_native_head_snapshot_v1(
     chain_id: u64,
     snapshot: NetworkRuntimeNativeHeadSnapshotV1,
@@ -3128,6 +3321,15 @@ pub fn clear_network_runtime_native_snapshots_for_chain_v1(chain_id: u64) {
         guard.remove(&chain_id);
     }
     if let Ok(mut guard) = runtime_native_block_access_list_payload_map().lock() {
+        guard.remove(&chain_id);
+    }
+    if let Ok(mut guard) = runtime_native_snap_account_snapshot_map().lock() {
+        guard.remove(&chain_id);
+    }
+    if let Ok(mut guard) = runtime_native_snap_storage_snapshot_map().lock() {
+        guard.remove(&chain_id);
+    }
+    if let Ok(mut guard) = runtime_native_snap_code_snapshot_map().lock() {
         guard.remove(&chain_id);
     }
     if let Ok(mut guard) = runtime_native_head_snapshot_map().lock() {

@@ -2193,6 +2193,11 @@ pub fn eth_rlpx_transaction_hash_v1(raw_tx: &[u8]) -> [u8; 32] {
     eth_rlpx_keccak256_bytes_v1(raw_tx)
 }
 
+#[must_use]
+pub fn eth_rlpx_code_hash_v1(code: &[u8]) -> [u8; 32] {
+    eth_rlpx_keccak256_bytes_v1(code)
+}
+
 fn eth_rlpx_build_block_header_record_rlp_v1(header: &EthRlpxBlockHeaderRecordV1) -> Vec<u8> {
     let zero_coinbase = [0u8; 20];
     let zero_mix_digest = [0u8; 32];

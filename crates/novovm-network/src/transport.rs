@@ -15,7 +15,7 @@ use crate::{
     eth_rlpx_build_pooled_transactions_payload_v1, eth_rlpx_build_receipts_payload_v1,
     eth_rlpx_build_status_payload_v1, eth_rlpx_build_storage_ranges_payload_v1,
     eth_rlpx_build_transactions_payload_v1, eth_rlpx_build_trie_nodes_payload_v1,
-    eth_rlpx_default_client_name_v1, eth_rlpx_default_listen_port_v1,
+    eth_rlpx_code_hash_v1, eth_rlpx_default_client_name_v1, eth_rlpx_default_listen_port_v1,
     eth_rlpx_disconnect_reason_name_v1, eth_rlpx_handshake_initiator_v1, eth_rlpx_hello_profile_v1,
     eth_rlpx_parse_account_range_payload_v1, eth_rlpx_parse_block_access_lists_payload_v1,
     eth_rlpx_parse_block_bodies_payload_v1, eth_rlpx_parse_block_headers_payload_v1,
@@ -70,6 +70,9 @@ use crate::{
     set_network_runtime_native_body_snapshot_v1, set_network_runtime_native_budget_hooks_v1,
     set_network_runtime_native_head_snapshot_v1, set_network_runtime_native_header_snapshot_v1,
     set_network_runtime_native_receipt_snapshot_v1,
+    set_network_runtime_native_snap_account_snapshot_v1,
+    set_network_runtime_native_snap_account_storage_snapshot_v1,
+    set_network_runtime_native_snap_code_snapshot_v1,
     set_network_runtime_native_state_root_validation_v1,
     snapshot_eth_fullnode_native_head_block_object_v1,
     snapshot_eth_fullnode_peer_selection_scores_v1,
@@ -92,7 +95,9 @@ use crate::{
     EthRlpxFrameSessionV1, EthRlpxGetAccountRangeRequestV1, EthRlpxNewBlockPayloadV1,
     EthRlpxPooledTransactionsPayloadV1, EthRlpxReceiptsResponseV1, EthRlpxStatusV1,
     EthRlpxStorageRangesResponseV1, NetworkRuntimeNativePendingTxPropagationStopReasonV1,
-    NetworkRuntimeNativeReceiptSnapshotV1, NetworkRuntimeNativeSyncPhaseV1,
+    NetworkRuntimeNativeReceiptSnapshotV1, NetworkRuntimeNativeSnapAccountSnapshotV1,
+    NetworkRuntimeNativeSnapAccountStorageSnapshotV1, NetworkRuntimeNativeSnapCodeSnapshotV1,
+    NetworkRuntimeNativeSnapStorageSlotSnapshotV1, NetworkRuntimeNativeSyncPhaseV1,
     ETH_FULLNODE_NATIVE_WORKER_RUNTIME_SCHEMA_V1, ETH_RLPX_BASE_PROTOCOL_OFFSET,
     ETH_RLPX_ETH_BLOCK_ACCESS_LISTS_MSG, ETH_RLPX_ETH_BLOCK_BODIES_MSG,
     ETH_RLPX_ETH_BLOCK_HEADERS_MSG, ETH_RLPX_ETH_GET_BLOCK_ACCESS_LISTS_MSG,
@@ -702,6 +707,8 @@ struct EthFullnodeNativeRlpxLivePeerSessionV1 {
     last_snap_storage_ranges_request_id: Option<u64>,
     last_snap_byte_codes_request_id: Option<u64>,
     last_snap_state_root: Option<[u8; 32]>,
+    pending_snap_storage_accounts: Vec<[u8; 32]>,
+    pending_snap_code_hashes: Vec<[u8; 32]>,
     last_pooled_transactions_request_id: Option<u64>,
     last_tx_broadcast_unix_ms: u64,
     pending_body_headers: Vec<EthFullnodeNativePendingBodyHeaderV1>,
@@ -1351,6 +1358,8 @@ fn connect_eth_fullnode_native_rlpx_peer_v1(
             last_snap_storage_ranges_request_id: None,
             last_snap_byte_codes_request_id: None,
             last_snap_state_root: None,
+            pending_snap_storage_accounts: Vec::new(),
+            pending_snap_code_hashes: Vec::new(),
             last_pooled_transactions_request_id: None,
             last_tx_broadcast_unix_ms: 0,
             pending_body_headers: Vec::new(),
@@ -1833,7 +1842,7 @@ fn drive_eth_fullnode_native_rlpx_peer_session_once_v1(
                                     })?;
                             ingest_real_rlpx_snap_storage_ranges_v1(
                                 chain_id, peer.0, session, &response,
-                            );
+                            )?;
                             continue;
                         }
                         if code == snap_offset + ETH_RLPX_SNAP_BYTE_CODES_MSG {
@@ -1848,7 +1857,7 @@ fn drive_eth_fullnode_native_rlpx_peer_session_once_v1(
                                 })?;
                             ingest_real_rlpx_snap_byte_codes_v1(
                                 chain_id, peer.0, session, &response,
-                            );
+                            )?;
                             continue;
                         }
                         if code == snap_offset + ETH_RLPX_SNAP_TRIE_NODES_MSG {
@@ -2136,6 +2145,8 @@ fn drive_eth_fullnode_native_rlpx_peer_session_once_v1(
                     session.last_snap_storage_ranges_request_id = None;
                     session.last_snap_byte_codes_request_id = None;
                     session.last_snap_state_root = Some(root);
+                    session.pending_snap_storage_accounts.clear();
+                    session.pending_snap_code_hashes.clear();
                     session.last_snap_account_range_request_id = Some(request_id);
                     session.last_sync_request_unix_ms = now_ms;
                     report.sync_requests = report.sync_requests.saturating_add(1);
@@ -2213,6 +2224,8 @@ fn clear_eth_fullnode_native_snap_request_state_v1(
     session.last_snap_storage_ranges_request_id = None;
     session.last_snap_byte_codes_request_id = None;
     session.last_snap_state_root = None;
+    session.pending_snap_storage_accounts.clear();
+    session.pending_snap_code_hashes.clear();
 }
 
 fn build_eth_fullnode_native_pooled_transactions_response_v1(
@@ -2289,8 +2302,29 @@ fn ingest_real_rlpx_snap_account_range_v1(
     let mut storage_accounts = Vec::new();
     let mut code_hashes = Vec::new();
     let mut seen_code_hashes = HashSet::new();
-    for account in response.accounts.iter().take(256) {
+    let observed_unix_ms = now_unix_ms() as u128;
+    for (idx, account) in response.accounts.iter().enumerate() {
         let parsed = eth_rlpx_parse_snap_slim_account_fields_v1(account.body_rlp.as_slice()).ok();
+        let storage_root = parsed.map(|fields| fields.storage_root);
+        let code_hash = parsed.map(|fields| fields.code_hash);
+        set_network_runtime_native_snap_account_snapshot_v1(
+            chain_id,
+            NetworkRuntimeNativeSnapAccountSnapshotV1 {
+                chain_id,
+                state_root: root,
+                account_hash: account.hash,
+                body_rlp: account.body_rlp.clone(),
+                storage_root,
+                code_hash,
+                has_storage: parsed.is_some_and(|fields| fields.has_storage),
+                has_code: parsed.is_some_and(|fields| fields.has_code),
+                source_peer_id: Some(source_peer_id),
+                observed_unix_ms,
+            },
+        );
+        if idx >= 256 {
+            continue;
+        }
         if match parsed {
             Some(fields) => fields.has_storage,
             None => true,
@@ -2331,6 +2365,7 @@ fn ingest_real_rlpx_snap_account_range_v1(
         observe_eth_native_snap_pull(chain_id);
         observe_network_runtime_eth_peer_syncing_v1(chain_id, source_peer_id);
         session.last_snap_storage_ranges_request_id = Some(request_id);
+        session.pending_snap_storage_accounts = storage_accounts.clone();
         session.last_sync_request_unix_ms = now_unix_ms();
         eprintln!(
             "network_info: rlpx stage snap_storage_ranges_requested chain_id={} peer={} endpoint={} request_id={} accounts={} root=0x{}",
@@ -2366,6 +2401,7 @@ fn ingest_real_rlpx_snap_account_range_v1(
         observe_eth_native_snap_pull(chain_id);
         observe_network_runtime_eth_peer_syncing_v1(chain_id, source_peer_id);
         session.last_snap_byte_codes_request_id = Some(request_id);
+        session.pending_snap_code_hashes = code_hashes.clone();
         session.last_sync_request_unix_ms = now_unix_ms();
         eprintln!(
             "network_info: rlpx stage snap_byte_codes_requested chain_id={} peer={} endpoint={} request_id={} hashes={}",
@@ -2390,12 +2426,25 @@ fn ingest_real_rlpx_snap_storage_ranges_v1(
     source_peer_id: u64,
     session: &mut EthFullnodeNativeRlpxLivePeerSessionV1,
     response: &EthRlpxStorageRangesResponseV1,
-) {
+) -> Result<(), NetworkError> {
     if session
         .last_snap_storage_ranges_request_id
         .is_some_and(|request_id| request_id != response.request_id)
     {
-        return;
+        return Ok(());
+    }
+    if response.slots.len() > session.pending_snap_storage_accounts.len() {
+        let reason = format!(
+            "snap_storage_ranges_slotset_count_exceeds_requested:slotsets={} requested={}",
+            response.slots.len(),
+            session.pending_snap_storage_accounts.len()
+        );
+        observe_network_runtime_eth_peer_decode_failure_v1(
+            chain_id,
+            source_peer_id,
+            reason.as_str(),
+        );
+        return Err(NetworkError::Decode(reason));
     }
     observe_eth_native_snap_response(chain_id);
     eprintln!(
@@ -2409,13 +2458,41 @@ fn ingest_real_rlpx_snap_storage_ranges_v1(
         response.slots.len(),
         response.proof.len(),
     );
+    if let Some(root) = session.last_snap_state_root {
+        let observed_unix_ms = now_unix_ms() as u128;
+        for (idx, slots) in response.slots.iter().enumerate() {
+            let Some(account_hash) = session.pending_snap_storage_accounts.get(idx).copied() else {
+                continue;
+            };
+            set_network_runtime_native_snap_account_storage_snapshot_v1(
+                chain_id,
+                NetworkRuntimeNativeSnapAccountStorageSnapshotV1 {
+                    chain_id,
+                    state_root: root,
+                    account_hash,
+                    slots: slots
+                        .iter()
+                        .map(|slot| NetworkRuntimeNativeSnapStorageSlotSnapshotV1 {
+                            hash: slot.hash,
+                            body: slot.body.clone(),
+                        })
+                        .collect(),
+                    proof_nodes: response.proof.clone(),
+                    source_peer_id: Some(source_peer_id),
+                    observed_unix_ms,
+                },
+            );
+        }
+    }
     session.last_snap_storage_ranges_request_id = None;
+    session.pending_snap_storage_accounts.clear();
     if session.last_snap_account_range_request_id.is_none()
         && session.last_snap_byte_codes_request_id.is_none()
     {
         session.last_snap_state_root = None;
         mark_network_runtime_eth_peer_session_ready_v1(chain_id, source_peer_id, None);
     }
+    Ok(())
 }
 
 fn ingest_real_rlpx_snap_byte_codes_v1(
@@ -2423,12 +2500,25 @@ fn ingest_real_rlpx_snap_byte_codes_v1(
     source_peer_id: u64,
     session: &mut EthFullnodeNativeRlpxLivePeerSessionV1,
     response: &EthRlpxByteCodesResponseV1,
-) {
+) -> Result<(), NetworkError> {
     if session
         .last_snap_byte_codes_request_id
         .is_some_and(|request_id| request_id != response.request_id)
     {
-        return;
+        return Ok(());
+    }
+    if response.codes.len() > session.pending_snap_code_hashes.len() {
+        let reason = format!(
+            "snap_byte_codes_count_exceeds_requested:codes={} requested={}",
+            response.codes.len(),
+            session.pending_snap_code_hashes.len()
+        );
+        observe_network_runtime_eth_peer_decode_failure_v1(
+            chain_id,
+            source_peer_id,
+            reason.as_str(),
+        );
+        return Err(NetworkError::Decode(reason));
     }
     observe_eth_native_snap_response(chain_id);
     eprintln!(
@@ -2441,13 +2531,46 @@ fn ingest_real_rlpx_snap_byte_codes_v1(
         response.request_id,
         response.codes.len(),
     );
+    let pending_hashes = session
+        .pending_snap_code_hashes
+        .iter()
+        .copied()
+        .collect::<HashSet<_>>();
+    let observed_unix_ms = now_unix_ms() as u128;
+    for code in response.codes.iter() {
+        let code_hash = eth_rlpx_code_hash_v1(code.as_slice());
+        if !pending_hashes.contains(&code_hash) {
+            let reason = format!(
+                "snap_byte_code_hash_mismatch:hash=0x{}",
+                hex32_v1(&code_hash)
+            );
+            observe_network_runtime_eth_peer_decode_failure_v1(
+                chain_id,
+                source_peer_id,
+                reason.as_str(),
+            );
+            return Err(NetworkError::Decode(reason));
+        }
+        set_network_runtime_native_snap_code_snapshot_v1(
+            chain_id,
+            NetworkRuntimeNativeSnapCodeSnapshotV1 {
+                chain_id,
+                code_hash,
+                code: code.clone(),
+                source_peer_id: Some(source_peer_id),
+                observed_unix_ms,
+            },
+        );
+    }
     session.last_snap_byte_codes_request_id = None;
+    session.pending_snap_code_hashes.clear();
     if session.last_snap_account_range_request_id.is_none()
         && session.last_snap_storage_ranges_request_id.is_none()
     {
         session.last_snap_state_root = None;
         mark_network_runtime_eth_peer_session_ready_v1(chain_id, source_peer_id, None);
     }
+    Ok(())
 }
 
 fn ingest_real_rlpx_new_block_v1(
@@ -10008,7 +10131,12 @@ mod tests {
 
             let account_hash = [0x34; 32];
             let storage_root = [0x35; 32];
-            let code_hash = [0x36; 32];
+            let bytecode = vec![0x60, 0x00];
+            let code_hash = crate::eth_rlpx_code_hash_v1(bytecode.as_slice());
+            let storage_slot = crate::EthRlpxSnapStorageDataV1 {
+                hash: [0x37; 32],
+                body: vec![0x80],
+            };
             let (mut accepted, _) = listener.accept().expect("accept rlpx");
             accepted
                 .set_read_timeout(Some(Duration::from_secs(5)))
@@ -10143,10 +10271,11 @@ mod tests {
                     assert_eq!(request.accounts, vec![account_hash]);
                     assert!(request.origin.is_empty());
                     assert!(request.limit.is_empty());
+                    let slotsets = vec![vec![storage_slot.clone()]];
                     let response = crate::eth_rlpx_build_storage_ranges_payload_v1(
                         request.request_id,
-                        &[],
-                        &[],
+                        slotsets.as_slice(),
+                        &[vec![0x99, 0x03]],
                     );
                     crate::eth_rlpx_write_wire_frame_v1(
                         &mut accepted,
@@ -10165,7 +10294,7 @@ mod tests {
                     assert_eq!(request.hashes, vec![code_hash]);
                     let response = crate::eth_rlpx_build_byte_codes_payload_v1(
                         request.request_id,
-                        &[vec![0x60, 0x00]],
+                        &[bytecode.clone()],
                     );
                     crate::eth_rlpx_write_wire_frame_v1(
                         &mut accepted,
@@ -10223,6 +10352,35 @@ mod tests {
         let evidence = snapshot_eth_native_sync_evidence(chain_id);
         assert!(evidence.snap_pull_seen);
         assert!(evidence.snap_response_seen);
+        let account = crate::get_network_runtime_native_snap_account_snapshot_v1(
+            chain_id,
+            local_state_root,
+            [0x34; 32],
+        )
+        .expect("snap account snapshot");
+        assert_eq!(account.storage_root, Some([0x35; 32]));
+        assert_eq!(
+            account.code_hash,
+            Some(crate::eth_rlpx_code_hash_v1(&[0x60, 0x00]))
+        );
+        assert!(account.has_storage);
+        assert!(account.has_code);
+        let storage = crate::get_network_runtime_native_snap_account_storage_snapshot_v1(
+            chain_id,
+            local_state_root,
+            [0x34; 32],
+        )
+        .expect("snap storage snapshot");
+        assert_eq!(storage.slots.len(), 1);
+        assert_eq!(storage.slots[0].hash, [0x37; 32]);
+        assert_eq!(storage.slots[0].body, vec![0x80]);
+        assert_eq!(storage.proof_nodes, vec![vec![0x99, 0x03]]);
+        let code = crate::get_network_runtime_native_snap_code_snapshot_v1(
+            chain_id,
+            crate::eth_rlpx_code_hash_v1(&[0x60, 0x00]),
+        )
+        .expect("snap code snapshot");
+        assert_eq!(code.code, vec![0x60, 0x00]);
 
         server.join().expect("server join");
     }
