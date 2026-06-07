@@ -80,6 +80,7 @@ use novovm_node::unified_account_surface::{
     default_mainline_unified_account_store_path, is_mainline_unified_account_query_method,
 };
 use novovm_protocol::{encode_local_tx_wire_v1 as encode_tx_wire_v1, LocalTxWireV1, NodeId};
+use rand::seq::SliceRandom;
 use rand::RngCore;
 use sha2::{Digest, Sha256};
 use std::collections::{hash_map::DefaultHasher, HashMap, HashSet, VecDeque};
@@ -1184,8 +1185,35 @@ const ETH_RLPX_MAINNET_BOOTNODES_V1: [&str; 4] = [
     "enode://4aeb4ab6c14b23e2c4cfdce879c04b0748a20d8e9b59e25ded2a08143e265c6c25936e74cbc8e641e3312ca288673d91f2f93f8e277de3cfa444ecdaaf982052@157.90.35.166:30303",
 ];
 
-const ETH_DNS_DISCOVERY_MAINNET_ROOT_V1: &str = "all.mainnet.ethdisco.net";
+const ETH_DNS_DISCOVERY_MAINNET_ROOT_V1: &str =
+    "enrtree://AKA3AM6LPBYEUDMVNU3BSVQJ5AD45Y7YPOHJLEF6W26QOE4VTUDPE@all.mainnet.ethdisco.net";
 const ETH_DNS_DISCOVERY_DOH_URL_V1: &str = "https://dns.google/resolve";
+const ETH_DNS_ENRTREE_ROOT_PREFIX_V1: &str = "enrtree-root:v1";
+const ETH_DNS_ENRTREE_LINK_PREFIX_V1: &str = "enrtree://";
+const ETH_DNS_ENRTREE_BRANCH_PREFIX_V1: &str = "enrtree-branch:";
+const ETH_DNS_ENRTREE_MIN_HASH_BYTES_V1: usize = 12;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct EthDnsEnrTreeLinkV1 {
+    domain: String,
+    pubkey_sec1: Vec<u8>,
+}
+
+#[derive(Clone, Debug)]
+struct EthDnsTreeQueueItemV1 {
+    domain: String,
+    tree_domain: String,
+    pubkey_sec1: Option<Vec<u8>>,
+    expected_hash: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct EthDnsEnrTreeRootV1 {
+    entry_root: String,
+    link_root: String,
+    seq: u64,
+    signature: Vec<u8>,
+}
 
 #[derive(Clone, Copy)]
 enum EthDnsRlpItemV1<'a> {
@@ -1275,6 +1303,146 @@ fn eth_dns_base64url_decode_v1(raw: &str) -> Option<Vec<u8>> {
         .decode(raw)
         .or_else(|_| base64::engine::general_purpose::URL_SAFE.decode(raw))
         .ok()
+}
+
+fn eth_dns_base32_decode_no_pad_v1(raw: &str) -> Option<Vec<u8>> {
+    let mut bits = 0u32;
+    let mut bit_count = 0u8;
+    let mut out = Vec::<u8>::new();
+    let mut seen_padding = false;
+    for ch in raw.trim().chars() {
+        if ch == '=' {
+            seen_padding = true;
+            continue;
+        }
+        if seen_padding {
+            return None;
+        }
+        let value = match ch {
+            'A'..='Z' => ch as u8 - b'A',
+            'a'..='z' => ch as u8 - b'a',
+            '2'..='7' => ch as u8 - b'2' + 26,
+            _ => return None,
+        } as u32;
+        bits = (bits << 5) | value;
+        bit_count = bit_count.saturating_add(5);
+        while bit_count >= 8 {
+            bit_count -= 8;
+            out.push(((bits >> bit_count) & 0xff) as u8);
+        }
+    }
+    if bit_count > 0 && (bits & ((1u32 << bit_count) - 1)) != 0 {
+        return None;
+    }
+    Some(out)
+}
+
+fn eth_dns_enrtree_hash_valid_v1(raw: &str) -> bool {
+    if raw.contains(['\n', '\r']) {
+        return false;
+    }
+    eth_dns_base32_decode_no_pad_v1(raw)
+        .is_some_and(|decoded| (ETH_DNS_ENRTREE_MIN_HASH_BYTES_V1..=32).contains(&decoded.len()))
+}
+
+fn eth_dns_enrtree_record_hash_matches_v1(record: &str, expected_hash: &str) -> bool {
+    let Some(expected) = eth_dns_base32_decode_no_pad_v1(expected_hash) else {
+        return false;
+    };
+    if !(ETH_DNS_ENRTREE_MIN_HASH_BYTES_V1..=32).contains(&expected.len()) {
+        return false;
+    }
+    let mut hasher = sha3::Keccak256::new();
+    hasher.update(record.as_bytes());
+    let digest = hasher.finalize();
+    digest.as_slice().starts_with(expected.as_slice())
+}
+
+fn eth_dns_parse_enrtree_link_v1(record: &str) -> Option<EthDnsEnrTreeLinkV1> {
+    let raw = record.trim().strip_prefix(ETH_DNS_ENRTREE_LINK_PREFIX_V1)?;
+    let (pubkey_raw, domain_raw) = raw.split_once('@')?;
+    let pubkey_sec1 = eth_dns_base32_decode_no_pad_v1(pubkey_raw)?;
+    if pubkey_sec1.len() != 33 || k256::PublicKey::from_sec1_bytes(pubkey_sec1.as_slice()).is_err()
+    {
+        return None;
+    }
+    let domain = domain_raw.trim().trim_end_matches('.').to_string();
+    (!domain.is_empty()).then_some(EthDnsEnrTreeLinkV1 {
+        domain,
+        pubkey_sec1,
+    })
+}
+
+fn eth_dns_parse_enrtree_root_v1(record: &str) -> Option<EthDnsEnrTreeRootV1> {
+    if !record.starts_with(ETH_DNS_ENRTREE_ROOT_PREFIX_V1) {
+        return None;
+    }
+    let mut entry_root = None::<String>;
+    let mut link_root = None::<String>;
+    let mut seq = None::<u64>;
+    let mut signature = None::<Vec<u8>>;
+    for part in record.split_whitespace().skip(1) {
+        if let Some(value) = part.strip_prefix("e=") {
+            if eth_dns_enrtree_hash_valid_v1(value) {
+                entry_root = Some(value.to_string());
+            }
+            continue;
+        }
+        if let Some(value) = part.strip_prefix("l=") {
+            if eth_dns_enrtree_hash_valid_v1(value) {
+                link_root = Some(value.to_string());
+            }
+            continue;
+        }
+        if let Some(value) = part.strip_prefix("seq=") {
+            seq = value.parse::<u64>().ok();
+            continue;
+        }
+        if let Some(value) = part.strip_prefix("sig=") {
+            let decoded = eth_dns_base64url_decode_v1(value)?;
+            if decoded.len() == 65 {
+                signature = Some(decoded);
+            }
+        }
+    }
+    Some(EthDnsEnrTreeRootV1 {
+        entry_root: entry_root?,
+        link_root: link_root?,
+        seq: seq?,
+        signature: signature?,
+    })
+}
+
+fn eth_dns_enrtree_root_sig_hash_v1(root: &EthDnsEnrTreeRootV1) -> [u8; 32] {
+    let mut hasher = sha3::Keccak256::new();
+    hasher.update(format!(
+        "{} e={} l={} seq={}",
+        ETH_DNS_ENRTREE_ROOT_PREFIX_V1, root.entry_root, root.link_root, root.seq
+    ));
+    let digest = hasher.finalize();
+    let mut out = [0u8; 32];
+    out.copy_from_slice(digest.as_slice());
+    out
+}
+
+fn eth_dns_verify_enrtree_root_signature_v1(
+    root: &EthDnsEnrTreeRootV1,
+    pubkey_sec1: &[u8],
+) -> bool {
+    use k256::ecdsa::signature::hazmat::PrehashVerifier;
+
+    if root.signature.len() != 65 {
+        return false;
+    }
+    let Ok(verifying_key) = k256::ecdsa::VerifyingKey::from_sec1_bytes(pubkey_sec1) else {
+        return false;
+    };
+    let Ok(signature) = k256::ecdsa::Signature::try_from(&root.signature[..64]) else {
+        return false;
+    };
+    verifying_key
+        .verify_prehash(&eth_dns_enrtree_root_sig_hash_v1(root), &signature)
+        .is_ok()
 }
 
 fn eth_dns_sec1_pubkey_to_enode_hex_v1(sec1: &[u8]) -> Option<String> {
@@ -1605,35 +1773,22 @@ fn eth_dns_discovery_root_for_chain_v1(chain_id: u64) -> Option<String> {
         .or_else(|| (chain_id == 1).then(|| ETH_DNS_DISCOVERY_MAINNET_ROOT_V1.to_string()))
 }
 
-fn eth_dns_enrtree_domain_v1(record: &str) -> Option<String> {
-    let raw = record.trim().strip_prefix("enrtree://")?;
-    let (_, domain) = raw.split_once('@')?;
-    Some(domain.trim().trim_end_matches('.').to_string())
-}
-
+#[cfg(test)]
 fn eth_dns_root_children_v1(record: &str) -> Vec<String> {
-    if !record.starts_with("enrtree-root:v1") {
-        return Vec::new();
-    }
-    record
-        .split_whitespace()
-        .filter_map(|part| {
-            part.strip_prefix("e=")
-                .or_else(|| part.strip_prefix("l="))
-                .map(str::to_string)
-        })
-        .collect()
+    eth_dns_parse_enrtree_root_v1(record)
+        .map(|root| vec![root.entry_root, root.link_root])
+        .unwrap_or_default()
 }
 
 fn eth_dns_branch_children_v1(record: &str) -> Vec<String> {
     record
         .trim()
-        .strip_prefix("enrtree-branch:")
+        .strip_prefix(ETH_DNS_ENRTREE_BRANCH_PREFIX_V1)
         .map(|children| {
             children
                 .split(',')
                 .map(str::trim)
-                .filter(|child| !child.is_empty())
+                .filter(|child| eth_dns_enrtree_hash_valid_v1(child))
                 .map(str::to_string)
                 .collect()
         })
@@ -1641,8 +1796,8 @@ fn eth_dns_branch_children_v1(record: &str) -> Vec<String> {
 }
 
 fn eth_dns_child_domain_v1(child: &str, root: &str) -> Option<String> {
-    if let Some(domain) = eth_dns_enrtree_domain_v1(child) {
-        return Some(domain);
+    if let Some(link) = eth_dns_parse_enrtree_link_v1(child) {
+        return Some(link.domain);
     }
     let trimmed = child.trim().trim_end_matches('.');
     if trimmed.is_empty() {
@@ -2023,9 +2178,16 @@ fn eth_dns_discover_peer_endpoints_v1(
     if limit == 0 || !bool_env_default_true("NOVOVM_ETH_DNS_DISCOVERY_ENABLED") {
         return Vec::new();
     }
-    let Some(root) = eth_dns_discovery_root_for_chain_v1(chain_id) else {
+    let Some(root_spec) = eth_dns_discovery_root_for_chain_v1(chain_id) else {
         return Vec::new();
     };
+    let root_link = eth_dns_parse_enrtree_link_v1(root_spec.as_str());
+    let root = root_link
+        .as_ref()
+        .map(|link| link.domain.clone())
+        .unwrap_or_else(|| root_spec.trim().trim_end_matches('.').to_string());
+    let root_pubkey_sec1 = root_link.map(|link| link.pubkey_sec1);
+    let require_signed_root = bool_env_default_true("NOVOVM_ETH_DNS_DISCOVERY_REQUIRE_SIGNED_ROOT");
     let doh_url = string_env_nonempty("NOVOVM_ETH_DNS_DISCOVERY_DOH_URL")
         .unwrap_or_else(|| ETH_DNS_DISCOVERY_DOH_URL_V1.to_string());
     let timeout_ms = u64_env_clamped("NOVOVM_ETH_DNS_DISCOVERY_TIMEOUT_MS", 2_500, 100, 30_000);
@@ -2039,12 +2201,18 @@ fn eth_dns_discover_peer_endpoints_v1(
     let mut endpoints = Vec::<PluginPeerEndpoint>::new();
     let mut seen_endpoints = HashSet::<String>::new();
     let mut seen_domains = HashSet::<String>::new();
-    let mut queue = VecDeque::<String>::from([root.clone()]);
+    let mut queue = VecDeque::<EthDnsTreeQueueItemV1>::from([EthDnsTreeQueueItemV1 {
+        domain: root.clone(),
+        tree_domain: root.clone(),
+        pubkey_sec1: root_pubkey_sec1,
+        expected_hash: None,
+    }]);
     let mut queries = 0usize;
-    while let Some(domain) = queue.pop_front() {
+    while let Some(item) = queue.pop_front() {
         if queries >= max_queries || endpoints.len() >= limit {
             break;
         }
+        let domain = item.domain;
         if !seen_domains.insert(domain.clone()) {
             continue;
         }
@@ -2059,20 +2227,69 @@ fn eth_dns_discover_peer_endpoints_v1(
             }
         };
         for record in records {
+            if let Some(expected_hash) = item.expected_hash.as_deref() {
+                if !eth_dns_enrtree_record_hash_matches_v1(record.as_str(), expected_hash) {
+                    if verbose {
+                        println!(
+                            "eth_dns_discovery_skip: domain={} reason=entry_hash_mismatch",
+                            domain
+                        );
+                    }
+                    continue;
+                }
+            }
             if let Some(endpoint) = eth_dns_decode_enr_to_endpoint_v1(record.as_str()) {
                 eth_push_peer_endpoint_v1(&mut endpoints, &mut seen_endpoints, endpoint, limit);
                 continue;
             }
-            if let Some(domain) = eth_dns_enrtree_domain_v1(record.as_str()) {
-                queue.push_back(domain);
+            if let Some(link) = eth_dns_parse_enrtree_link_v1(record.as_str()) {
+                queue.push_back(EthDnsTreeQueueItemV1 {
+                    domain: link.domain.clone(),
+                    tree_domain: link.domain,
+                    pubkey_sec1: Some(link.pubkey_sec1),
+                    expected_hash: None,
+                });
                 continue;
             }
-            for child in eth_dns_root_children_v1(record.as_str())
-                .into_iter()
-                .chain(eth_dns_branch_children_v1(record.as_str()))
-            {
-                if let Some(domain) = eth_dns_child_domain_v1(child.as_str(), root.as_str()) {
-                    queue.push_back(domain);
+            if let Some(root_record) = eth_dns_parse_enrtree_root_v1(record.as_str()) {
+                let root_verified = item.pubkey_sec1.as_deref().is_some_and(|pubkey| {
+                    eth_dns_verify_enrtree_root_signature_v1(&root_record, pubkey)
+                });
+                if require_signed_root && !root_verified {
+                    if verbose {
+                        println!(
+                            "eth_dns_discovery_skip: domain={} reason=root_signature_invalid_or_missing",
+                            domain
+                        );
+                    }
+                    continue;
+                }
+                for child in [root_record.entry_root, root_record.link_root] {
+                    if let Some(domain) =
+                        eth_dns_child_domain_v1(child.as_str(), item.tree_domain.as_str())
+                    {
+                        queue.push_back(EthDnsTreeQueueItemV1 {
+                            domain,
+                            tree_domain: item.tree_domain.clone(),
+                            pubkey_sec1: item.pubkey_sec1.clone(),
+                            expected_hash: Some(child),
+                        });
+                    }
+                }
+                continue;
+            }
+            let mut children = eth_dns_branch_children_v1(record.as_str());
+            children.shuffle(&mut rand::thread_rng());
+            for child in children.into_iter().rev() {
+                if let Some(domain) =
+                    eth_dns_child_domain_v1(child.as_str(), item.tree_domain.as_str())
+                {
+                    queue.push_front(EthDnsTreeQueueItemV1 {
+                        domain,
+                        tree_domain: item.tree_domain.clone(),
+                        pubkey_sec1: item.pubkey_sec1.clone(),
+                        expected_hash: Some(child),
+                    });
                 }
             }
         }
@@ -3252,24 +3469,74 @@ mod mainline_evm_cli_tests {
     #[test]
     fn eth_dns_discovery_txt_records_parse_tree_children_v1() {
         let root = eth_dns_txt_unquote_v1(
-            "\"enrtree-root:v1 e=entry-root l=link-root seq=7 sig=test-signature\"",
+            "\"enrtree-root:v1 e=JWXYDBPXYWG6FX3GMDIBFA6CJ4 l=C7HRFPF3BLGF3YR4DY5KX3SMBE seq=1 sig=o908WmNp7LibOfPsr4btQwatZJ5URBr2ZAuxvK4UWHlsB9sUOTJQaGAlLPVAhM__XJesCHxLISo94z5Z2a463gA\"",
         );
         assert_eq!(
             root,
-            "enrtree-root:v1 e=entry-root l=link-root seq=7 sig=test-signature"
+            "enrtree-root:v1 e=JWXYDBPXYWG6FX3GMDIBFA6CJ4 l=C7HRFPF3BLGF3YR4DY5KX3SMBE seq=1 sig=o908WmNp7LibOfPsr4btQwatZJ5URBr2ZAuxvK4UWHlsB9sUOTJQaGAlLPVAhM__XJesCHxLISo94z5Z2a463gA"
         );
         assert_eq!(
             eth_dns_root_children_v1(root.as_str()),
-            vec!["entry-root".to_string(), "link-root".to_string()]
+            vec![
+                "JWXYDBPXYWG6FX3GMDIBFA6CJ4".to_string(),
+                "C7HRFPF3BLGF3YR4DY5KX3SMBE".to_string()
+            ]
         );
         assert_eq!(
-            eth_dns_branch_children_v1("enrtree-branch:a,b,c"),
-            vec!["a".to_string(), "b".to_string(), "c".to_string()]
+            eth_dns_branch_children_v1(
+                "enrtree-branch:JWXYDBPXYWG6FX3GMDIBFA6CJ4,C7HRFPF3BLGF3YR4DY5KX3SMBE"
+            ),
+            vec![
+                "JWXYDBPXYWG6FX3GMDIBFA6CJ4".to_string(),
+                "C7HRFPF3BLGF3YR4DY5KX3SMBE".to_string()
+            ]
         );
         assert_eq!(
             eth_dns_child_domain_v1("child", "all.mainnet.ethdisco.net").as_deref(),
             Some("child.all.mainnet.ethdisco.net")
         );
+    }
+
+    #[test]
+    fn eth_dns_discovery_root_signature_verifies_geth_vector_v1() {
+        let link = eth_dns_parse_enrtree_link_v1(
+            "enrtree://AKPYQIUQIL7PSIACI32J7FGZW56E5FKHEFCCOFHILBIMW3M6LWXS2@nodes.example.org",
+        )
+        .expect("parse geth enrtree link vector");
+        assert_eq!(link.domain, "nodes.example.org");
+        assert_eq!(link.pubkey_sec1.len(), 33);
+
+        let root = eth_dns_parse_enrtree_root_v1(
+            "enrtree-root:v1 e=JWXYDBPXYWG6FX3GMDIBFA6CJ4 l=C7HRFPF3BLGF3YR4DY5KX3SMBE seq=1 sig=o908WmNp7LibOfPsr4btQwatZJ5URBr2ZAuxvK4UWHlsB9sUOTJQaGAlLPVAhM__XJesCHxLISo94z5Z2a463gA",
+        )
+        .expect("parse geth client root vector");
+        assert!(eth_dns_verify_enrtree_root_signature_v1(
+            &root,
+            link.pubkey_sec1.as_slice()
+        ));
+
+        let mut tampered = root.clone();
+        tampered.seq = tampered.seq.saturating_add(1);
+        assert!(!eth_dns_verify_enrtree_root_signature_v1(
+            &tampered,
+            link.pubkey_sec1.as_slice()
+        ));
+    }
+
+    #[test]
+    fn eth_dns_discovery_entry_hash_matches_geth_tree_vector_v1() {
+        assert!(eth_dns_enrtree_record_hash_matches_v1(
+            "enrtree-branch:2XS2367YHAXJFGLZHVAWLQD4ZY,H4FHT4B454P6UXFD7JCYQ5PWDY,MHTDO6TMUBRIA2XWG5LUDACK24",
+            "JWXYDBPXYWG6FX3GMDIBFA6CJ4",
+        ));
+        assert!(eth_dns_enrtree_record_hash_matches_v1(
+            "enrtree://AM5FCQLWIZX2QFPNJAP7VUERCCRNGRHWZG3YYHIUV7BVDQ5FDPRT2@morenodes.example.org",
+            "C7HRFPF3BLGF3YR4DY5KX3SMBE",
+        ));
+        assert!(!eth_dns_enrtree_record_hash_matches_v1(
+            "enrtree-branch:2XS2367YHAXJFGLZHVAWLQD4ZY,H4FHT4B454P6UXFD7JCYQ5PWDY,MHTDO6TMUBRIA2XWG5LUDACK24",
+            "C7HRFPF3BLGF3YR4DY5KX3SMBE",
+        ));
     }
 
     #[test]
