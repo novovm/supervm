@@ -28,7 +28,8 @@ use crate::{
     get_network_runtime_native_block_access_list_payload_v1,
     get_network_runtime_native_body_snapshot_v1, get_network_runtime_native_head_snapshot_v1,
     get_network_runtime_native_header_snapshot_v1,
-    get_network_runtime_native_pending_tx_payload_v1, get_network_runtime_native_sync_status,
+    get_network_runtime_native_pending_tx_payload_v1,
+    get_network_runtime_native_receipt_snapshot_v1, get_network_runtime_native_sync_status,
     get_network_runtime_peer_heads_top_k, get_network_runtime_sync_status,
     has_network_runtime_eth_peer_session, mark_network_runtime_eth_peer_session_ready_v1,
     observe_eth_native_bodies_pull, observe_eth_native_bodies_response,
@@ -60,6 +61,7 @@ use crate::{
     select_eth_fullnode_native_sync_targets_v1, set_eth_fullnode_native_worker_runtime_snapshot_v1,
     set_network_runtime_native_body_snapshot_v1, set_network_runtime_native_budget_hooks_v1,
     set_network_runtime_native_head_snapshot_v1, set_network_runtime_native_header_snapshot_v1,
+    set_network_runtime_native_receipt_snapshot_v1,
     snapshot_eth_fullnode_native_head_block_object_v1,
     snapshot_eth_fullnode_peer_selection_scores_v1,
     snapshot_network_runtime_eth_peer_lifecycle_summary_v1,
@@ -79,13 +81,13 @@ use crate::{
     EthPeerSelectionRoundObservationV1, EthPeerSelectionScoreV1, EthRlpxBlockBodiesResponseV1,
     EthRlpxBlockHeadersResponseV1, EthRlpxFrameSessionV1, EthRlpxNewBlockPayloadV1,
     EthRlpxPooledTransactionsPayloadV1, EthRlpxReceiptsResponseV1, EthRlpxStatusV1,
-    NetworkRuntimeNativePendingTxPropagationStopReasonV1, NetworkRuntimeNativeSyncPhaseV1,
-    ETH_FULLNODE_NATIVE_WORKER_RUNTIME_SCHEMA_V1, ETH_RLPX_BASE_PROTOCOL_OFFSET,
-    ETH_RLPX_ETH_BLOCK_ACCESS_LISTS_MSG, ETH_RLPX_ETH_BLOCK_BODIES_MSG,
-    ETH_RLPX_ETH_BLOCK_HEADERS_MSG, ETH_RLPX_ETH_GET_BLOCK_ACCESS_LISTS_MSG,
-    ETH_RLPX_ETH_GET_BLOCK_BODIES_MSG, ETH_RLPX_ETH_GET_BLOCK_HEADERS_MSG,
-    ETH_RLPX_ETH_GET_POOLED_TRANSACTIONS_MSG, ETH_RLPX_ETH_GET_RECEIPTS_MSG,
-    ETH_RLPX_ETH_NEW_BLOCK_HASHES_MSG, ETH_RLPX_ETH_NEW_BLOCK_MSG,
+    NetworkRuntimeNativePendingTxPropagationStopReasonV1, NetworkRuntimeNativeReceiptSnapshotV1,
+    NetworkRuntimeNativeSyncPhaseV1, ETH_FULLNODE_NATIVE_WORKER_RUNTIME_SCHEMA_V1,
+    ETH_RLPX_BASE_PROTOCOL_OFFSET, ETH_RLPX_ETH_BLOCK_ACCESS_LISTS_MSG,
+    ETH_RLPX_ETH_BLOCK_BODIES_MSG, ETH_RLPX_ETH_BLOCK_HEADERS_MSG,
+    ETH_RLPX_ETH_GET_BLOCK_ACCESS_LISTS_MSG, ETH_RLPX_ETH_GET_BLOCK_BODIES_MSG,
+    ETH_RLPX_ETH_GET_BLOCK_HEADERS_MSG, ETH_RLPX_ETH_GET_POOLED_TRANSACTIONS_MSG,
+    ETH_RLPX_ETH_GET_RECEIPTS_MSG, ETH_RLPX_ETH_NEW_BLOCK_HASHES_MSG, ETH_RLPX_ETH_NEW_BLOCK_MSG,
     ETH_RLPX_ETH_NEW_POOLED_TRANSACTION_HASHES_MSG, ETH_RLPX_ETH_POOLED_TRANSACTIONS_MSG,
     ETH_RLPX_ETH_RECEIPTS_MSG, ETH_RLPX_ETH_STATUS_MSG, ETH_RLPX_ETH_TRANSACTIONS_MSG,
     ETH_RLPX_P2P_DISCONNECT_MSG, ETH_RLPX_P2P_HELLO_MSG, ETH_RLPX_P2P_PING_MSG,
@@ -1872,11 +1874,19 @@ fn build_eth_fullnode_native_receipts_response_blocks_v1(
     chain_id: u64,
     hashes: &[[u8; 32]],
 ) -> Vec<Vec<Vec<u8>>> {
-    let Some(body) = get_network_runtime_native_body_snapshot_v1(chain_id) else {
-        return Vec::new();
-    };
+    let body = get_network_runtime_native_body_snapshot_v1(chain_id);
     let mut out = Vec::new();
     for hash in hashes {
+        if let Some(receipt) = get_network_runtime_native_receipt_snapshot_v1(chain_id, *hash) {
+            if !receipt.receipts_available {
+                break;
+            }
+            out.push(receipt.raw_receipts);
+            continue;
+        }
+        let Some(body) = body.as_ref() else {
+            break;
+        };
         if body.block_hash != *hash || !body.body_available {
             break;
         }
@@ -2147,6 +2157,12 @@ fn ingest_real_rlpx_receipts_v1(
         session.pending_body_headers.as_slice(),
         receipts,
     )?;
+    ingest_validated_real_rlpx_receipt_snapshots_v1(
+        chain_id,
+        source_peer_id,
+        session.pending_body_headers.as_slice(),
+        receipts,
+    );
     report.receipt_updates = report.receipt_updates.saturating_add(receipts.blocks.len());
     eprintln!(
         "network_info: rlpx stage receipts_received chain_id={} peer={} endpoint={} negotiated_eth={} request_id={} blocks={} last_block_incomplete={}",
@@ -2162,6 +2178,32 @@ fn ingest_real_rlpx_receipts_v1(
     session.pending_body_headers.clear();
     mark_network_runtime_eth_peer_session_ready_v1(chain_id, source_peer_id, None);
     Ok(())
+}
+
+fn ingest_validated_real_rlpx_receipt_snapshots_v1(
+    chain_id: u64,
+    source_peer_id: u64,
+    pending_body_headers: &[EthFullnodeNativePendingBodyHeaderV1],
+    receipts: &EthRlpxReceiptsResponseV1,
+) {
+    for (pending, block_receipts) in pending_body_headers.iter().zip(receipts.blocks.iter()) {
+        let receipts_root =
+            eth_rlpx_receipts_root_from_raw_receipts_v1(block_receipts.raw_receipts.as_slice());
+        set_network_runtime_native_receipt_snapshot_v1(
+            chain_id,
+            NetworkRuntimeNativeReceiptSnapshotV1 {
+                chain_id,
+                number: pending.number,
+                block_hash: pending.hash,
+                receipts_root,
+                raw_receipts: block_receipts.raw_receipts.clone(),
+                receipt_count: block_receipts.receipt_count,
+                receipts_available: block_receipts.receipts_available,
+                source_peer_id: Some(source_peer_id),
+                observed_unix_ms: now_unix_millis_u128(),
+            },
+        );
+    }
 }
 
 fn validate_real_rlpx_receipts_response_v1(
@@ -4583,7 +4625,8 @@ mod tests {
         derive_eth_fullnode_sync_view_with_native_preference_v1,
         get_network_runtime_native_body_snapshot_v1, get_network_runtime_native_head_snapshot_v1,
         get_network_runtime_native_header_snapshot_v1, get_network_runtime_native_pending_tx_v1,
-        get_network_runtime_native_sync_status, get_network_runtime_sync_status,
+        get_network_runtime_native_receipt_snapshot_v1, get_network_runtime_native_sync_status,
+        get_network_runtime_sync_status,
         observe_network_runtime_native_pending_tx_local_ingress_with_payload_v1,
         parse_enode_endpoint, set_network_runtime_native_block_access_list_payload_v1,
         set_network_runtime_native_body_snapshot_v1, set_network_runtime_native_head_snapshot_v1,
@@ -7353,6 +7396,26 @@ mod tests {
             get_network_runtime_native_body_snapshot_v1(chain_id).expect("body snapshot");
         assert_eq!(body_snapshot.block_hash, header_hash);
         assert_eq!(body_snapshot.tx_hashes, vec![tx_hash]);
+        let receipt_snapshot =
+            get_network_runtime_native_receipt_snapshot_v1(chain_id, header_hash)
+                .expect("receipt snapshot");
+        assert_eq!(receipt_snapshot.number, 120);
+        assert_eq!(receipt_snapshot.block_hash, header_hash);
+        assert_eq!(receipt_snapshot.raw_receipts, receipt_blocks[0]);
+        assert_eq!(receipt_snapshot.receipt_count, 1);
+        assert!(receipt_snapshot.receipts_available);
+        assert_eq!(
+            build_eth_fullnode_native_receipts_response_blocks_v1(chain_id, &[header_hash]),
+            receipt_blocks
+        );
+        let blocks = snapshot_network_runtime_native_canonical_blocks_v1(chain_id, 8);
+        let imported = blocks
+            .iter()
+            .find(|block| block.hash == header_hash)
+            .expect("canonical block state for receipt snapshot");
+        assert!(imported.receipts_available);
+        assert_eq!(imported.receipt_count, Some(1));
+        assert_eq!(imported.receipts_root, Some(header_record.receipts_root));
 
         server.join().expect("server join");
     }

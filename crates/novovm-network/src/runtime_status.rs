@@ -45,6 +45,13 @@ static NETWORK_RUNTIME_NATIVE_HEADER_SNAPSHOTS: OnceLock<
 static NETWORK_RUNTIME_NATIVE_BODY_SNAPSHOTS: OnceLock<
     Mutex<HashMap<u64, NetworkRuntimeNativeBodySnapshotV1>>,
 > = OnceLock::new();
+type NetworkRuntimeNativeReceiptSnapshotByHashV1 =
+    HashMap<[u8; 32], NetworkRuntimeNativeReceiptSnapshotV1>;
+type NetworkRuntimeNativeReceiptSnapshotByChainV1 =
+    HashMap<u64, NetworkRuntimeNativeReceiptSnapshotByHashV1>;
+static NETWORK_RUNTIME_NATIVE_RECEIPT_SNAPSHOTS: OnceLock<
+    Mutex<NetworkRuntimeNativeReceiptSnapshotByChainV1>,
+> = OnceLock::new();
 type NetworkRuntimeNativeBlockAccessListPayloadByHashV1 = HashMap<[u8; 32], Vec<u8>>;
 type NetworkRuntimeNativeBlockAccessListPayloadByChainV1 =
     HashMap<u64, NetworkRuntimeNativeBlockAccessListPayloadByHashV1>;
@@ -107,6 +114,11 @@ fn runtime_native_header_snapshot_map(
 fn runtime_native_body_snapshot_map(
 ) -> &'static Mutex<HashMap<u64, NetworkRuntimeNativeBodySnapshotV1>> {
     NETWORK_RUNTIME_NATIVE_BODY_SNAPSHOTS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn runtime_native_receipt_snapshot_map(
+) -> &'static Mutex<NetworkRuntimeNativeReceiptSnapshotByChainV1> {
+    NETWORK_RUNTIME_NATIVE_RECEIPT_SNAPSHOTS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
 fn runtime_native_block_access_list_payload_map(
@@ -288,6 +300,28 @@ impl NetworkRuntimeNativeBodySnapshotV1 {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NetworkRuntimeNativeReceiptSnapshotV1 {
+    pub chain_id: u64,
+    pub number: u64,
+    pub block_hash: [u8; 32],
+    pub receipts_root: [u8; 32],
+    pub raw_receipts: Vec<Vec<u8>>,
+    pub receipt_count: usize,
+    pub receipts_available: bool,
+    pub source_peer_id: Option<u64>,
+    pub observed_unix_ms: u128,
+}
+
+impl NetworkRuntimeNativeReceiptSnapshotV1 {
+    #[must_use]
+    pub fn normalized(mut self, chain_id: u64) -> Self {
+        self.chain_id = chain_id;
+        self.receipt_count = self.raw_receipts.len();
+        self
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NetworkRuntimeNativeHeadSnapshotV1 {
     pub chain_id: u64,
     pub phase: NetworkRuntimeNativeSyncPhaseV1,
@@ -382,6 +416,12 @@ pub struct NetworkRuntimeNativeCanonicalBlockStateV1 {
     pub state_root: [u8; 32],
     pub header_observed: bool,
     pub body_available: bool,
+    #[serde(default)]
+    pub receipts_available: bool,
+    #[serde(default)]
+    pub receipt_count: Option<usize>,
+    #[serde(default)]
+    pub receipts_root: Option<[u8; 32]>,
     pub lifecycle_stage: NetworkRuntimeNativeBlockLifecycleStageV1,
     pub canonical: bool,
     pub safe: bool,
@@ -1502,6 +1542,9 @@ fn runtime_native_canonical_chain_upsert_header_v1(
             state_root: header.state_root,
             header_observed: true,
             body_available: false,
+            receipts_available: false,
+            receipt_count: None,
+            receipts_root: None,
             lifecycle_stage: NetworkRuntimeNativeBlockLifecycleStageV1::HeaderOnly,
             canonical: false,
             safe: false,
@@ -1539,6 +1582,9 @@ fn runtime_native_canonical_chain_upsert_body_v1(
             state_root: [0u8; 32],
             header_observed: false,
             body_available: body.body_available,
+            receipts_available: false,
+            receipt_count: None,
+            receipts_root: None,
             lifecycle_stage: NetworkRuntimeNativeBlockLifecycleStageV1::Seen,
             canonical: false,
             safe: false,
@@ -1550,6 +1596,45 @@ fn runtime_native_canonical_chain_upsert_body_v1(
     entry.number = body.number;
     entry.body_available |= body.body_available;
     entry.observed_unix_ms = entry.observed_unix_ms.max(body.observed_unix_ms);
+    entry.lifecycle_stage = runtime_native_canonical_chain_infer_block_lifecycle_v1(
+        entry,
+        &state.canonical_hash_by_number,
+    );
+    runtime_native_canonical_chain_prune_v1(state);
+}
+
+fn runtime_native_canonical_chain_upsert_receipt_v1(
+    state: &mut NetworkRuntimeNativeCanonicalChainStateInternalV1,
+    receipt: &NetworkRuntimeNativeReceiptSnapshotV1,
+) {
+    let entry = state
+        .blocks_by_hash
+        .entry(receipt.block_hash)
+        .or_insert_with(|| NetworkRuntimeNativeCanonicalBlockStateV1 {
+            chain_id: receipt.chain_id,
+            number: receipt.number,
+            hash: receipt.block_hash,
+            parent_hash: [0u8; 32],
+            state_root: [0u8; 32],
+            header_observed: false,
+            body_available: false,
+            receipts_available: receipt.receipts_available,
+            receipt_count: Some(receipt.receipt_count),
+            receipts_root: Some(receipt.receipts_root),
+            lifecycle_stage: NetworkRuntimeNativeBlockLifecycleStageV1::Seen,
+            canonical: false,
+            safe: false,
+            finalized: false,
+            source_peer_id: receipt.source_peer_id,
+            observed_unix_ms: receipt.observed_unix_ms,
+        });
+    entry.chain_id = receipt.chain_id;
+    entry.number = receipt.number;
+    entry.receipts_available |= receipt.receipts_available;
+    entry.receipt_count = Some(receipt.receipt_count);
+    entry.receipts_root = Some(receipt.receipts_root);
+    entry.source_peer_id = receipt.source_peer_id.or(entry.source_peer_id);
+    entry.observed_unix_ms = entry.observed_unix_ms.max(receipt.observed_unix_ms);
     entry.lifecycle_stage = runtime_native_canonical_chain_infer_block_lifecycle_v1(
         entry,
         &state.canonical_hash_by_number,
@@ -1679,6 +1764,9 @@ fn runtime_native_canonical_chain_apply_head_v1(
                 state_root: head.state_root,
                 header_observed: true,
                 body_available: head.body_available,
+                receipts_available: false,
+                receipt_count: None,
+                receipts_root: None,
                 lifecycle_stage: NetworkRuntimeNativeBlockLifecycleStageV1::Canonical,
                 canonical: head.canonical,
                 safe: head.safe,
@@ -1718,6 +1806,9 @@ fn runtime_native_canonical_chain_apply_head_v1(
             state_root: head.state_root,
             header_observed: true,
             body_available: head.body_available,
+            receipts_available: false,
+            receipt_count: None,
+            receipts_root: None,
             lifecycle_stage: NetworkRuntimeNativeBlockLifecycleStageV1::Canonical,
             canonical: head.canonical,
             safe: head.safe,
@@ -2256,6 +2347,45 @@ pub fn set_network_runtime_native_body_snapshot_v1(
     runtime_native_pending_tx_observe_body_v1(chain_id, &normalized);
     runtime_native_pending_tx_reconcile_against_canonical_chain_v1(chain_id);
     runtime_native_pending_tx_cleanup_v1(chain_id, normalized.observed_unix_ms);
+}
+
+pub fn set_network_runtime_native_receipt_snapshot_v1(
+    chain_id: u64,
+    snapshot: NetworkRuntimeNativeReceiptSnapshotV1,
+) {
+    let normalized = snapshot.normalized(chain_id);
+    if let Ok(mut guard) = runtime_native_receipt_snapshot_map().lock() {
+        guard
+            .entry(chain_id)
+            .or_default()
+            .insert(normalized.block_hash, normalized.clone());
+    }
+    if let Ok(mut guard) = runtime_native_canonical_chain_map().lock() {
+        let state = guard
+            .entry(chain_id)
+            .or_insert_with(|| runtime_native_canonical_chain_internal_default_v1(chain_id));
+        runtime_native_canonical_chain_upsert_receipt_v1(state, &normalized);
+        if state
+            .snapshot
+            .head
+            .as_ref()
+            .is_some_and(|head| head.hash == normalized.block_hash)
+        {
+            if let Some(head) = state.snapshot.head.as_mut() {
+                head.receipts_available |= normalized.receipts_available;
+                head.receipt_count = Some(normalized.receipt_count);
+                head.receipts_root = Some(normalized.receipts_root);
+                head.observed_unix_ms = head.observed_unix_ms.max(normalized.observed_unix_ms);
+            }
+        }
+        runtime_native_canonical_chain_refresh_snapshot_v1(state);
+    }
+    if let Ok(mut observed) = runtime_sync_observed_state_map().lock() {
+        observed
+            .native_snapshot_updated_at_by_chain
+            .insert(chain_id, normalized.observed_unix_ms);
+        hint_runtime_stale_check_deadline(&mut observed, chain_id, normalized.observed_unix_ms);
+    }
 }
 
 pub fn set_network_runtime_native_block_access_list_payload_v1(
@@ -2934,6 +3064,9 @@ pub fn clear_network_runtime_native_snapshots_for_chain_v1(chain_id: u64) {
     if let Ok(mut guard) = runtime_native_body_snapshot_map().lock() {
         guard.remove(&chain_id);
     }
+    if let Ok(mut guard) = runtime_native_receipt_snapshot_map().lock() {
+        guard.remove(&chain_id);
+    }
     if let Ok(mut guard) = runtime_native_block_access_list_payload_map().lock() {
         guard.remove(&chain_id);
     }
@@ -3304,6 +3437,17 @@ pub fn get_network_runtime_native_body_snapshot_v1(
 ) -> Option<NetworkRuntimeNativeBodySnapshotV1> {
     let guard = runtime_native_body_snapshot_map().lock().ok()?;
     guard.get(&chain_id).cloned()
+}
+
+#[must_use]
+pub fn get_network_runtime_native_receipt_snapshot_v1(
+    chain_id: u64,
+    block_hash: [u8; 32],
+) -> Option<NetworkRuntimeNativeReceiptSnapshotV1> {
+    let guard = runtime_native_receipt_snapshot_map().lock().ok()?;
+    guard
+        .get(&chain_id)
+        .and_then(|receipts| receipts.get(&block_hash).cloned())
 }
 
 #[must_use]
