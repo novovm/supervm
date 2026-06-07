@@ -1768,6 +1768,10 @@ fn eth_dns_query_txt_v1(agent: &ureq::Agent, doh_url: &str, name: &str) -> Resul
     }
 }
 
+fn eth_dns_discovery_default_max_queries_v1(limit: usize) -> usize {
+    limit.saturating_mul(4).clamp(16, 128)
+}
+
 fn eth_dns_discovery_root_for_chain_v1(chain_id: u64) -> Option<String> {
     string_env_nonempty("NOVOVM_ETH_DNS_DISCOVERY_ROOT")
         .or_else(|| (chain_id == 1).then(|| ETH_DNS_DISCOVERY_MAINNET_ROOT_V1.to_string()))
@@ -2191,9 +2195,18 @@ fn eth_dns_discover_peer_endpoints_v1(
     let doh_url = string_env_nonempty("NOVOVM_ETH_DNS_DISCOVERY_DOH_URL")
         .unwrap_or_else(|| ETH_DNS_DISCOVERY_DOH_URL_V1.to_string());
     let timeout_ms = u64_env_clamped("NOVOVM_ETH_DNS_DISCOVERY_TIMEOUT_MS", 2_500, 100, 30_000);
-    let max_queries = usize_env_allow_zero("NOVOVM_ETH_DNS_DISCOVERY_MAX_QUERIES", 512)
-        .unwrap_or(512)
-        .clamp(1, 1024);
+    let max_queries_default = eth_dns_discovery_default_max_queries_v1(limit);
+    let max_queries =
+        usize_env_allow_zero("NOVOVM_ETH_DNS_DISCOVERY_MAX_QUERIES", max_queries_default)
+            .unwrap_or(max_queries_default)
+            .clamp(1, 1024);
+    let total_timeout = Duration::from_millis(u64_env_clamped(
+        "NOVOVM_ETH_DNS_DISCOVERY_TOTAL_TIMEOUT_MS",
+        12_000,
+        100,
+        120_000,
+    ));
+    let started = Instant::now();
     let agent = ureq::AgentBuilder::new()
         .timeout(Duration::from_millis(timeout_ms))
         .build();
@@ -2210,6 +2223,18 @@ fn eth_dns_discover_peer_endpoints_v1(
     let mut queries = 0usize;
     while let Some(item) = queue.pop_front() {
         if queries >= max_queries || endpoints.len() >= limit {
+            break;
+        }
+        if started.elapsed() >= total_timeout {
+            if verbose {
+                println!(
+                    "eth_dns_discovery_budget_exhausted: root={} queries={} endpoints={} timeout_ms={}",
+                    root,
+                    queries,
+                    endpoints.len(),
+                    total_timeout.as_millis()
+                );
+            }
             break;
         }
         let domain = item.domain;
@@ -3560,6 +3585,15 @@ mod mainline_evm_cli_tests {
             "enrtree-branch:2XS2367YHAXJFGLZHVAWLQD4ZY,H4FHT4B454P6UXFD7JCYQ5PWDY,MHTDO6TMUBRIA2XWG5LUDACK24",
             "C7HRFPF3BLGF3YR4DY5KX3SMBE",
         ));
+    }
+
+    #[test]
+    fn eth_dns_discovery_default_max_queries_is_startup_bounded_v1() {
+        assert_eq!(eth_dns_discovery_default_max_queries_v1(0), 16);
+        assert_eq!(eth_dns_discovery_default_max_queries_v1(1), 16);
+        assert_eq!(eth_dns_discovery_default_max_queries_v1(16), 64);
+        assert_eq!(eth_dns_discovery_default_max_queries_v1(64), 128);
+        assert_eq!(eth_dns_discovery_default_max_queries_v1(1_000), 128);
     }
 
     #[test]
