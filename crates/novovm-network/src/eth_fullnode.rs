@@ -2710,6 +2710,16 @@ fn eth_peer_recent_body_bonus_v1(last_body_success_unix_ms: u64, now: u64) -> i6
     }
 }
 
+fn eth_peer_bootstrap_rotation_bonus_v1(chain_id: u64, peer_id: u64, now: u64) -> i64 {
+    let epoch = now / 60_000;
+    let mixed = peer_id
+        .wrapping_mul(0x9e37_79b9_7f4a_7c15)
+        .rotate_left((epoch % 63) as u32)
+        ^ chain_id.wrapping_mul(0xbf58_476d_1ce4_e5b9)
+        ^ epoch.wrapping_mul(0x94d0_49bb_1331_11eb);
+    (mixed % 500) as i64
+}
+
 fn eth_peer_sync_score_v1(snapshot: &EthPeerSessionSnapshot, now: u64) -> EthPeerSelectionScoreV1 {
     let recent_window = snapshot.recent_window.clone();
     let long_term = snapshot.long_term.clone();
@@ -3021,6 +3031,9 @@ fn eth_peer_bootstrap_score_v1(
 
     score += (snapshot.successful_sessions.min(1_000) * 900) as i64;
     score += eth_peer_recent_success_bonus_v1(snapshot.last_success_unix_ms, now);
+    let bootstrap_rotation_bonus =
+        eth_peer_bootstrap_rotation_bonus_v1(chain_id, snapshot.peer_id, now);
+    score += bootstrap_rotation_bonus;
     score += (snapshot.recent_window.selection_hit_rate_bps / 35) as i64;
     score += (snapshot.recent_window.sync_contribution_rounds.min(64) * 80) as i64;
     let short_term_weighted_signal = eth_peer_weighted_window_signal_v1(
@@ -3046,6 +3059,9 @@ fn eth_peer_bootstrap_score_v1(
     score += long_term_calibration_delta;
     let long_term_score = eth_peer_long_term_signal_v1(&long_term) / 2;
     score += long_term_score;
+    reasons.push(format!(
+        "bootstrap_rotation_bonus={bootstrap_rotation_bonus}"
+    ));
 
     let penalty = snapshot.connect_failure_count.saturating_mul(1_100)
         + snapshot.handshake_failure_count.saturating_mul(1_000)
@@ -4586,6 +4602,25 @@ mod tests {
         let selected =
             select_eth_fullnode_native_bootstrap_candidates_v1(chain_id, &[peer, fallback], 2);
         assert_eq!(selected, vec![fallback]);
+    }
+
+    #[test]
+    fn bootstrap_rotation_bonus_is_bounded_and_epoch_sensitive() {
+        let chain_id = 99_160_323_u64;
+        let peer_ids = [701_u64, 702, 703, 704];
+        let first_epoch =
+            peer_ids.map(|peer_id| eth_peer_bootstrap_rotation_bonus_v1(chain_id, peer_id, 60_000));
+        let same_epoch =
+            peer_ids.map(|peer_id| eth_peer_bootstrap_rotation_bonus_v1(chain_id, peer_id, 60_000));
+        let next_epoch = peer_ids
+            .map(|peer_id| eth_peer_bootstrap_rotation_bonus_v1(chain_id, peer_id, 120_000));
+
+        assert_eq!(first_epoch, same_epoch);
+        assert_ne!(first_epoch, next_epoch);
+        assert!(first_epoch
+            .iter()
+            .chain(next_epoch.iter())
+            .all(|bonus| (0..500).contains(bonus)));
     }
 
     #[test]
