@@ -40,6 +40,7 @@ pub enum EthWireVersion {
 }
 
 pub const ETH_NATIVE_MAX_SUPPORTED_ETH_PROTOCOL_VERSION: u8 = 70;
+const ETH_PEER_INCOMPATIBLE_STATUS_DECODE_REJECT_AFTER_V1: u64 = 2;
 
 impl EthWireVersion {
     #[must_use]
@@ -1867,6 +1868,13 @@ fn eth_peer_validation_is_permanent_v1(reason: EthChainConfigPeerValidationReaso
     )
 }
 
+fn eth_peer_decode_failure_is_incompatible_status_v1(reason_name: &str) -> bool {
+    let reason = reason_name.to_ascii_lowercase();
+    reason.contains("rlpx_eth_status_fields_short")
+        || reason.contains("status_payload_decode_failed")
+        || reason.contains("eth_status_payload_decode_failed")
+}
+
 fn eth_peer_failure_count_for_class_v1(
     state: &EthPeerSessionState,
     class: EthPeerFailureClassV1,
@@ -3650,6 +3658,7 @@ pub fn observe_network_runtime_eth_peer_decode_failure_v1(
     peer_id: u64,
     reason_name: impl Into<String>,
 ) {
+    let reason_name = reason_name.into();
     let now = eth_peer_now_unix_ms_v1();
     let mut guard = eth_peer_sessions()
         .lock()
@@ -3658,15 +3667,22 @@ pub fn observe_network_runtime_eth_peer_decode_failure_v1(
     let entry = chain
         .entry(peer_id)
         .or_insert_with(|| eth_peer_session_state_default_v1(now));
-    let cooldown_ms =
-        eth_peer_failure_cooldown_ms_v1(entry, EthPeerFailureClassV1::DecodeFailure, None, None);
+    let permanently_reject = entry.successful_sessions == 0
+        && eth_peer_decode_failure_is_incompatible_status_v1(reason_name.as_str())
+        && entry.decode_failure_count.saturating_add(1)
+            >= ETH_PEER_INCOMPATIBLE_STATUS_DECODE_REJECT_AFTER_V1;
+    let cooldown_ms = if permanently_reject {
+        0
+    } else {
+        eth_peer_failure_cooldown_ms_v1(entry, EthPeerFailureClassV1::DecodeFailure, None, None)
+    };
     eth_peer_record_failure_v1(
         entry,
         EthPeerFailureClassV1::DecodeFailure,
         None,
         reason_name,
         cooldown_ms,
-        false,
+        permanently_reject,
         now,
     );
 }
@@ -4555,6 +4571,66 @@ mod tests {
         assert_eq!(summary.connect_failure_count, 1);
         assert_eq!(summary.decode_failure_count, 1);
         assert_eq!(summary.retry_eligible_count, 1);
+    }
+
+    #[test]
+    fn repeated_incompatible_status_decode_permanently_rejects_pristine_peer() {
+        let chain_id = 99_160_316_u64;
+        let peer = NodeId(316);
+
+        observe_network_runtime_eth_peer_decode_failure_v1(
+            chain_id,
+            peer.0,
+            "decode failed: rlpx_eth_status_fields_short",
+        );
+        let first =
+            snapshot_network_runtime_eth_peer_sessions_for_peers_v1(chain_id, &[peer])[0].clone();
+        assert_eq!(first.lifecycle_stage, EthPeerLifecycleStageV1::Cooldown);
+        assert!(!first.permanently_rejected);
+
+        observe_network_runtime_eth_peer_decode_failure_v1(
+            chain_id,
+            peer.0,
+            "decode failed: rlpx_eth_status_fields_short",
+        );
+        let second =
+            snapshot_network_runtime_eth_peer_sessions_for_peers_v1(chain_id, &[peer])[0].clone();
+        assert_eq!(
+            second.lifecycle_stage,
+            EthPeerLifecycleStageV1::PermanentlyRejected
+        );
+        assert!(second.permanently_rejected);
+        assert_eq!(second.decode_failure_count, 2);
+    }
+
+    #[test]
+    fn incompatible_status_decode_does_not_permanently_reject_prior_success() {
+        let chain_id = 99_160_317_u64;
+        let peer = NodeId(317);
+        let _ =
+            upsert_network_runtime_eth_peer_session(chain_id, peer.0, &[68, 70], &[1], Some(512))
+                .expect("ready session");
+
+        observe_network_runtime_eth_peer_decode_failure_v1(
+            chain_id,
+            peer.0,
+            "decode failed: rlpx_eth_status_fields_short",
+        );
+        observe_network_runtime_eth_peer_decode_failure_v1(
+            chain_id,
+            peer.0,
+            "decode failed: rlpx_eth_status_fields_short",
+        );
+
+        let snapshot =
+            snapshot_network_runtime_eth_peer_sessions_for_peers_v1(chain_id, &[peer])[0].clone();
+        assert!(!snapshot.permanently_rejected);
+        assert_ne!(
+            snapshot.lifecycle_stage,
+            EthPeerLifecycleStageV1::PermanentlyRejected
+        );
+        assert!(snapshot.successful_sessions > 0);
+        assert_eq!(snapshot.decode_failure_count, 2);
     }
 
     #[test]
