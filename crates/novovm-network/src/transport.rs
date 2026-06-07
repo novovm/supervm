@@ -2087,98 +2087,108 @@ fn drive_eth_fullnode_native_rlpx_peer_session_once_v1(
             && now_ms.saturating_sub(session.last_sync_request_unix_ms)
                 >= budget_hooks.sync_request_interval_ms.max(1)
         {
-            let Some(msg) = build_eth_fullnode_native_sync_request_v1(local_node, chain_id) else {
-                return Ok(report);
-            };
-            match msg {
-                ProtocolMessage::EvmNative(EvmNativeMessage::GetBlockHeaders {
-                    start_height,
-                    max,
-                    skip,
-                    reverse,
-                    ..
-                }) => {
-                    let request_id = next_eth_fullnode_native_rlpx_request_id_v1();
-                    let payload = eth_rlpx_build_get_block_headers_payload_v1(
-                        request_id,
+            let recovered_missing_receipts =
+                dispatch_eth_fullnode_native_rlpx_missing_receipts_recovery_v1(
+                    chain_id,
+                    peer,
+                    session,
+                    &mut report,
+                )?;
+            if !recovered_missing_receipts {
+                let Some(msg) = build_eth_fullnode_native_sync_request_v1(local_node, chain_id)
+                else {
+                    return Ok(report);
+                };
+                match msg {
+                    ProtocolMessage::EvmNative(EvmNativeMessage::GetBlockHeaders {
                         start_height,
                         max,
                         skip,
                         reverse,
-                    );
-                    eth_rlpx_write_wire_frame_v1(
-                        &mut session.stream,
-                        &mut session.frame_session,
-                        ETH_RLPX_BASE_PROTOCOL_OFFSET + ETH_RLPX_ETH_GET_BLOCK_HEADERS_MSG,
-                        payload.as_slice(),
-                    )
-                    .map_err(|err| {
-                        observe_network_runtime_eth_peer_handshake_failure_v1(
-                            chain_id,
-                            peer.0,
-                            "headers_request_write_failed",
+                        ..
+                    }) => {
+                        let request_id = next_eth_fullnode_native_rlpx_request_id_v1();
+                        let payload = eth_rlpx_build_get_block_headers_payload_v1(
+                            request_id,
+                            start_height,
+                            max,
+                            skip,
+                            reverse,
                         );
-                        NetworkError::Io(err)
-                    })?;
-                    observe_eth_native_headers_pull(chain_id);
-                    observe_network_runtime_eth_peer_syncing_v1(chain_id, peer.0);
-                    session.last_headers_request_id = Some(request_id);
-                    session.last_bodies_request_id = None;
-                    session.last_receipts_request_id = None;
-                    clear_eth_fullnode_native_snap_request_state_v1(session);
-                    session.last_sync_request_unix_ms = now_ms;
-                    report.sync_requests = report.sync_requests.saturating_add(1);
-                }
-                ProtocolMessage::EvmNative(EvmNativeMessage::SnapGetAccountRange {
-                    block_hash,
-                    origin,
-                    limit,
-                    ..
-                }) => {
-                    let Some(snap_offset) = eth_rlpx_snap_base_offset_v1(
-                        session._negotiated_eth_version,
-                        session._negotiated_snap_version,
-                    ) else {
-                        return Ok(report);
-                    };
-                    let request_id = next_eth_fullnode_native_rlpx_request_id_v1();
-                    let root = eth_fullnode_native_rlpx_snap_root_hint_v1(chain_id, block_hash);
-                    let limit_hash = [0xffu8; 32];
-                    let byte_limit = limit
-                        .saturating_mul(16 * 1024)
-                        .clamp(16 * 1024, ETH_RLPX_SNAP_DEFAULT_ACCOUNT_RANGE_BYTES);
-                    let payload = eth_rlpx_build_get_account_range_payload_v1(
-                        request_id, root, origin, limit_hash, byte_limit,
-                    );
-                    eth_rlpx_write_wire_frame_v1(
-                        &mut session.stream,
-                        &mut session.frame_session,
-                        snap_offset + ETH_RLPX_SNAP_GET_ACCOUNT_RANGE_MSG,
-                        payload.as_slice(),
-                    )
-                    .map_err(|err| {
-                        observe_network_runtime_eth_peer_handshake_failure_v1(
-                            chain_id,
-                            peer.0,
-                            "snap_account_range_request_write_failed",
+                        eth_rlpx_write_wire_frame_v1(
+                            &mut session.stream,
+                            &mut session.frame_session,
+                            ETH_RLPX_BASE_PROTOCOL_OFFSET + ETH_RLPX_ETH_GET_BLOCK_HEADERS_MSG,
+                            payload.as_slice(),
+                        )
+                        .map_err(|err| {
+                            observe_network_runtime_eth_peer_handshake_failure_v1(
+                                chain_id,
+                                peer.0,
+                                "headers_request_write_failed",
+                            );
+                            NetworkError::Io(err)
+                        })?;
+                        observe_eth_native_headers_pull(chain_id);
+                        observe_network_runtime_eth_peer_syncing_v1(chain_id, peer.0);
+                        session.last_headers_request_id = Some(request_id);
+                        session.last_bodies_request_id = None;
+                        session.last_receipts_request_id = None;
+                        clear_eth_fullnode_native_snap_request_state_v1(session);
+                        session.last_sync_request_unix_ms = now_ms;
+                        report.sync_requests = report.sync_requests.saturating_add(1);
+                    }
+                    ProtocolMessage::EvmNative(EvmNativeMessage::SnapGetAccountRange {
+                        block_hash,
+                        origin,
+                        limit,
+                        ..
+                    }) => {
+                        let Some(snap_offset) = eth_rlpx_snap_base_offset_v1(
+                            session._negotiated_eth_version,
+                            session._negotiated_snap_version,
+                        ) else {
+                            return Ok(report);
+                        };
+                        let request_id = next_eth_fullnode_native_rlpx_request_id_v1();
+                        let root = eth_fullnode_native_rlpx_snap_root_hint_v1(chain_id, block_hash);
+                        let limit_hash = [0xffu8; 32];
+                        let byte_limit = limit
+                            .saturating_mul(16 * 1024)
+                            .clamp(16 * 1024, ETH_RLPX_SNAP_DEFAULT_ACCOUNT_RANGE_BYTES);
+                        let payload = eth_rlpx_build_get_account_range_payload_v1(
+                            request_id, root, origin, limit_hash, byte_limit,
                         );
-                        NetworkError::Io(err)
-                    })?;
-                    observe_eth_native_snap_pull(chain_id);
-                    observe_network_runtime_eth_peer_syncing_v1(chain_id, peer.0);
-                    session.last_headers_request_id = None;
-                    session.last_bodies_request_id = None;
-                    session.last_receipts_request_id = None;
-                    session.last_snap_storage_ranges_request_id = None;
-                    session.last_snap_byte_codes_request_id = None;
-                    session.last_snap_state_root = Some(root);
-                    session.pending_snap_storage_accounts.clear();
-                    session.pending_snap_code_hashes.clear();
-                    session.last_snap_account_range_request_id = Some(request_id);
-                    session.last_sync_request_unix_ms = now_ms;
-                    report.sync_requests = report.sync_requests.saturating_add(1);
+                        eth_rlpx_write_wire_frame_v1(
+                            &mut session.stream,
+                            &mut session.frame_session,
+                            snap_offset + ETH_RLPX_SNAP_GET_ACCOUNT_RANGE_MSG,
+                            payload.as_slice(),
+                        )
+                        .map_err(|err| {
+                            observe_network_runtime_eth_peer_handshake_failure_v1(
+                                chain_id,
+                                peer.0,
+                                "snap_account_range_request_write_failed",
+                            );
+                            NetworkError::Io(err)
+                        })?;
+                        observe_eth_native_snap_pull(chain_id);
+                        observe_network_runtime_eth_peer_syncing_v1(chain_id, peer.0);
+                        session.last_headers_request_id = None;
+                        session.last_bodies_request_id = None;
+                        session.last_receipts_request_id = None;
+                        session.last_snap_storage_ranges_request_id = None;
+                        session.last_snap_byte_codes_request_id = None;
+                        session.last_snap_state_root = Some(root);
+                        session.pending_snap_storage_accounts.clear();
+                        session.pending_snap_code_hashes.clear();
+                        session.last_snap_account_range_request_id = Some(request_id);
+                        session.last_sync_request_unix_ms = now_ms;
+                        report.sync_requests = report.sync_requests.saturating_add(1);
+                    }
+                    _ => {}
                 }
-                _ => {}
             }
         }
         if !disconnected
@@ -2230,6 +2240,97 @@ fn build_eth_fullnode_native_receipts_response_blocks_v1(
         out.push(Vec::new());
     }
     out
+}
+
+fn build_eth_fullnode_native_missing_receipts_pending_v1(
+    chain_id: u64,
+) -> Option<EthFullnodeNativePendingBodyHeaderV1> {
+    let header = get_network_runtime_native_header_snapshot_v1(chain_id)?;
+    let body = get_network_runtime_native_body_snapshot_v1(chain_id)?;
+    if header.hash != body.block_hash || !body.body_available {
+        return None;
+    }
+    if get_network_runtime_native_receipt_snapshot_v1(chain_id, header.hash)
+        .is_some_and(|receipt| receipt.receipts_available)
+    {
+        return None;
+    }
+    Some(EthFullnodeNativePendingBodyHeaderV1 {
+        number: header.number,
+        hash: header.hash,
+        parent_hash: header.parent_hash,
+        state_root: header.state_root,
+        transactions_root: header.transactions_root,
+        receipts_root: header.receipts_root,
+        tx_count: Some(body.tx_hashes.len()),
+        withdrawal_count: body.withdrawal_count,
+    })
+}
+
+fn dispatch_eth_fullnode_native_rlpx_missing_receipts_recovery_v1(
+    chain_id: u64,
+    peer: NodeId,
+    session: &mut EthFullnodeNativeRlpxLivePeerSessionV1,
+    report: &mut EthFullnodeNativeRlpxPeerTickReportV1,
+) -> Result<bool, NetworkError> {
+    if session.last_headers_request_id.is_some()
+        || session.last_bodies_request_id.is_some()
+        || session.last_receipts_request_id.is_some()
+        || session.last_snap_account_range_request_id.is_some()
+        || session.last_snap_storage_ranges_request_id.is_some()
+        || session.last_snap_byte_codes_request_id.is_some()
+        || !session.pending_body_headers.is_empty()
+    {
+        return Ok(false);
+    }
+    let Some(pending) = build_eth_fullnode_native_missing_receipts_pending_v1(chain_id) else {
+        return Ok(false);
+    };
+    let mut pending_headers = vec![pending];
+    let empty_receipts = materialize_empty_receipts_for_pending_body_headers_v1(
+        chain_id,
+        peer.0,
+        &mut pending_headers,
+    )?;
+    report.receipt_updates = report.receipt_updates.saturating_add(empty_receipts);
+    if pending_headers.is_empty() {
+        mark_network_runtime_eth_peer_session_ready_v1(chain_id, peer.0, None);
+        return Ok(true);
+    }
+    let hashes = pending_headers
+        .iter()
+        .map(|pending| pending.hash)
+        .collect::<Vec<_>>();
+    let request_id = next_eth_fullnode_native_rlpx_request_id_v1();
+    let payload = eth_rlpx_build_get_receipts_payload_v1(
+        request_id,
+        0,
+        hashes.as_slice(),
+        session._negotiated_eth_version,
+    );
+    eth_rlpx_write_wire_frame_v1(
+        &mut session.stream,
+        &mut session.frame_session,
+        ETH_RLPX_BASE_PROTOCOL_OFFSET + ETH_RLPX_ETH_GET_RECEIPTS_MSG,
+        payload.as_slice(),
+    )
+    .map_err(|err| {
+        observe_network_runtime_eth_peer_handshake_failure_v1(
+            chain_id,
+            peer.0,
+            "missing_receipts_recovery_request_write_failed",
+        );
+        NetworkError::Io(err)
+    })?;
+    observe_network_runtime_eth_peer_syncing_v1(chain_id, peer.0);
+    session.pending_body_headers = pending_headers;
+    session.last_headers_request_id = None;
+    session.last_bodies_request_id = None;
+    session.last_receipts_request_id = Some(request_id);
+    clear_eth_fullnode_native_snap_request_state_v1(session);
+    session.last_sync_request_unix_ms = now_unix_ms();
+    report.sync_requests = report.sync_requests.saturating_add(1);
+    Ok(true)
 }
 
 fn build_eth_fullnode_native_snap_account_range_response_payload_v1(
@@ -5687,6 +5788,304 @@ mod tests {
         assert!(block.receipts_available);
         assert_eq!(block.receipt_count, Some(0));
         assert_eq!(block.receipts_root, Some(empty_root));
+    }
+
+    #[test]
+    fn rlpx_missing_receipts_recovery_rebuilds_pending_from_latest_body_header() {
+        let chain_id = 9_926_103_u64;
+        let peer_id = 1_300_103_u64;
+        clear_network_runtime_native_snapshots_for_chain_v1(chain_id);
+
+        let block_hash = [0x73; 32];
+        let parent_hash = [0x72; 32];
+        let tx_hashes = vec![[0x91; 32], [0x92; 32]];
+        let raw_receipts = vec![vec![0xc0], vec![0xc1]];
+        let receipts_root =
+            crate::eth_rlpx_receipts_root_from_raw_receipts_v1(raw_receipts.as_slice());
+        set_network_runtime_native_header_snapshot_v1(
+            chain_id,
+            crate::runtime_status::NetworkRuntimeNativeHeaderSnapshotV1 {
+                chain_id,
+                number: 1_024,
+                hash: block_hash,
+                parent_hash,
+                state_root: [0x74; 32],
+                transactions_root: [0x75; 32],
+                receipts_root,
+                ommers_hash: crate::eth_rlpx_empty_ommers_hash_v1(),
+                logs_bloom: vec![0u8; 256],
+                gas_limit: Some(30_000_000),
+                gas_used: Some(21_000),
+                timestamp: Some(1_900_000_000),
+                base_fee_per_gas: Some(7),
+                withdrawals_root: Some(crate::eth_rlpx_empty_trie_root_v1()),
+                blob_gas_used: None,
+                excess_blob_gas: None,
+                block_access_list_hash: None,
+                source_peer_id: Some(peer_id),
+                observed_unix_ms: 1,
+            },
+        );
+        set_network_runtime_native_body_snapshot_v1(
+            chain_id,
+            crate::runtime_status::NetworkRuntimeNativeBodySnapshotV1 {
+                chain_id,
+                number: 1_024,
+                block_hash,
+                tx_hashes: tx_hashes.clone(),
+                ommer_hashes: Vec::new(),
+                withdrawal_count: Some(0),
+                body_available: true,
+                txs_materialized: true,
+                observed_unix_ms: 2,
+            },
+        );
+
+        let pending = build_eth_fullnode_native_missing_receipts_pending_v1(chain_id)
+            .expect("missing receipts pending");
+        assert_eq!(pending.number, 1_024);
+        assert_eq!(pending.hash, block_hash);
+        assert_eq!(pending.parent_hash, parent_hash);
+        assert_eq!(pending.receipts_root, receipts_root);
+        assert_eq!(pending.tx_count, Some(tx_hashes.len()));
+        assert_eq!(pending.withdrawal_count, Some(0));
+
+        set_network_runtime_native_receipt_snapshot_v1(
+            chain_id,
+            NetworkRuntimeNativeReceiptSnapshotV1 {
+                chain_id,
+                number: 1_024,
+                block_hash,
+                receipts_root,
+                raw_receipts,
+                receipt_count: tx_hashes.len(),
+                receipts_available: true,
+                source_peer_id: Some(peer_id),
+                observed_unix_ms: 3,
+            },
+        );
+        assert!(
+            build_eth_fullnode_native_missing_receipts_pending_v1(chain_id).is_none(),
+            "available receipts must not be requested again"
+        );
+    }
+
+    #[test]
+    fn real_rlpx_worker_recovers_missing_receipts_before_new_header_pull() {
+        let chain_id = 9_926_104_u64;
+        let local = NodeId(1_300_104);
+        let remote = NodeId(1_300_105);
+        clear_network_runtime_native_snapshots_for_chain_v1(chain_id);
+
+        let block_hash = [0xa3; 32];
+        let raw_receipts = vec![vec![0xc0]];
+        let receipts_root =
+            crate::eth_rlpx_receipts_root_from_raw_receipts_v1(raw_receipts.as_slice());
+        set_network_runtime_native_header_snapshot_v1(
+            chain_id,
+            crate::runtime_status::NetworkRuntimeNativeHeaderSnapshotV1 {
+                chain_id,
+                number: 1_024,
+                hash: block_hash,
+                parent_hash: [0xa2; 32],
+                state_root: [0xa4; 32],
+                transactions_root: [0xa5; 32],
+                receipts_root,
+                ommers_hash: crate::eth_rlpx_empty_ommers_hash_v1(),
+                logs_bloom: vec![0u8; 256],
+                gas_limit: Some(30_000_000),
+                gas_used: Some(21_000),
+                timestamp: Some(1_900_000_000),
+                base_fee_per_gas: Some(7),
+                withdrawals_root: Some(crate::eth_rlpx_empty_trie_root_v1()),
+                blob_gas_used: None,
+                excess_blob_gas: None,
+                block_access_list_hash: None,
+                source_peer_id: Some(remote.0),
+                observed_unix_ms: 1,
+            },
+        );
+        set_network_runtime_native_body_snapshot_v1(
+            chain_id,
+            crate::runtime_status::NetworkRuntimeNativeBodySnapshotV1 {
+                chain_id,
+                number: 1_024,
+                block_hash,
+                tx_hashes: vec![[0xb1; 32]],
+                ommer_hashes: Vec::new(),
+                withdrawal_count: Some(0),
+                body_available: true,
+                txs_materialized: true,
+                observed_unix_ms: 2,
+            },
+        );
+        set_network_runtime_sync_status(
+            chain_id,
+            NetworkRuntimeSyncStatus {
+                peer_count: 1,
+                starting_block: 1_024,
+                current_block: 1_024,
+                highest_block: 2_048,
+            },
+        );
+
+        let responder_signing = k256::ecdsa::SigningKey::random(&mut rand::rngs::OsRng);
+        let responder_nodekey: [u8; 32] = responder_signing.to_bytes().into();
+        let responder_pub = crate::eth_rlpx_pubkey_from_nodekey_bytes_v1(&responder_nodekey)
+            .expect("derive responder pubkey");
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind rlpx listener");
+        let listen_addr = listener.local_addr().expect("rlpx listener addr");
+        let endpoint = PluginPeerEndpoint {
+            endpoint: format!(
+                "enode://{}@{}",
+                responder_pub
+                    .iter()
+                    .map(|b| format!("{b:02x}"))
+                    .collect::<String>(),
+                listen_addr
+            ),
+            node_hint: remote.0,
+            addr_hint: listen_addr.to_string(),
+        };
+        let server_receipts = raw_receipts.clone();
+        let server = thread::spawn(move || {
+            let (mut accepted, _) = listener.accept().expect("accept rlpx");
+            accepted
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .expect("set server read timeout");
+            accepted
+                .set_write_timeout(Some(Duration::from_secs(5)))
+                .expect("set server write timeout");
+            let mut responder = crate::eth_rlpx_handshake_responder_with_nodekey_v1(
+                &responder_nodekey,
+                &mut accepted,
+            )
+            .expect("responder handshake");
+            let (hello_code, hello_payload) =
+                crate::eth_rlpx_read_wire_frame_v1(&mut accepted, &mut responder.session)
+                    .expect("read initiator hello");
+            assert_eq!(hello_code, crate::ETH_RLPX_P2P_HELLO_MSG);
+            let initiator_hello = crate::eth_rlpx_parse_hello_payload_v1(hello_payload.as_slice())
+                .expect("parse initiator hello");
+            let responder_hello = crate::eth_rlpx_build_hello_payload_v1(
+                &responder.local_static_pub,
+                crate::default_eth_rlpx_capabilities_v1().as_slice(),
+                "SuperVM/missing-receipts-recovery-test",
+                listen_addr.port().into(),
+            );
+            crate::eth_rlpx_write_wire_frame_v1(
+                &mut accepted,
+                &mut responder.session,
+                crate::ETH_RLPX_P2P_HELLO_MSG,
+                responder_hello.as_slice(),
+            )
+            .expect("write responder hello");
+            if initiator_hello.protocol_version >= 5 {
+                responder.session.set_snappy(true);
+            }
+            let status = crate::EthRlpxStatusV1 {
+                protocol_version: crate::ETH_NATIVE_MAX_SUPPORTED_ETH_PROTOCOL_VERSION as u32,
+                network_id: chain_id,
+                genesis_hash: [0u8; 32],
+                fork_id: crate::build_eth_fork_id_from_chain_config_v1(
+                    &crate::resolve_eth_chain_config_v1(chain_id),
+                    0,
+                    0,
+                ),
+                earliest_block: 1,
+                latest_block: 2_048,
+                latest_block_hash: [0xd1; 32],
+            };
+            let status_payload = crate::eth_rlpx_build_status_payload_v1(status);
+            crate::eth_rlpx_write_wire_frame_v1(
+                &mut accepted,
+                &mut responder.session,
+                crate::ETH_RLPX_BASE_PROTOCOL_OFFSET + crate::ETH_RLPX_ETH_STATUS_MSG,
+                status_payload.as_slice(),
+            )
+            .expect("write responder status");
+            let (peer_status_code, _) =
+                crate::eth_rlpx_read_wire_frame_v1(&mut accepted, &mut responder.session)
+                    .expect("read peer status");
+            assert_eq!(
+                peer_status_code,
+                crate::ETH_RLPX_BASE_PROTOCOL_OFFSET + crate::ETH_RLPX_ETH_STATUS_MSG
+            );
+
+            loop {
+                let (code, payload) =
+                    crate::eth_rlpx_read_wire_frame_v1(&mut accepted, &mut responder.session)
+                        .expect("read worker request");
+                assert_ne!(
+                    code,
+                    crate::ETH_RLPX_BASE_PROTOCOL_OFFSET
+                        + crate::ETH_RLPX_ETH_GET_BLOCK_HEADERS_MSG,
+                    "missing receipt recovery must run before a new header pull"
+                );
+                if code
+                    == crate::ETH_RLPX_BASE_PROTOCOL_OFFSET + crate::ETH_RLPX_ETH_GET_RECEIPTS_MSG
+                {
+                    let request = crate::eth_rlpx_parse_get_receipts_payload_v1(payload.as_slice())
+                        .expect("parse get receipts");
+                    assert_eq!(request.hashes, vec![block_hash]);
+                    assert_eq!(request.first_block_receipt_index, 0);
+                    let response_blocks = vec![server_receipts];
+                    let receipts_payload = crate::eth_rlpx_build_receipts_payload_v1(
+                        request.request_id,
+                        false,
+                        response_blocks.as_slice(),
+                        crate::ETH_NATIVE_MAX_SUPPORTED_ETH_PROTOCOL_VERSION,
+                    );
+                    crate::eth_rlpx_write_wire_frame_v1(
+                        &mut accepted,
+                        &mut responder.session,
+                        crate::ETH_RLPX_BASE_PROTOCOL_OFFSET + crate::ETH_RLPX_ETH_RECEIPTS_MSG,
+                        receipts_payload.as_slice(),
+                    )
+                    .expect("write receipts");
+                    thread::sleep(Duration::from_millis(100));
+                    break;
+                }
+            }
+        });
+
+        let mut budget = default_eth_fullnode_budget_hooks_v1();
+        budget.active_native_peer_soft_limit = 1;
+        budget.active_native_peer_hard_limit = 1;
+        budget.tx_broadcast_interval_ms = u64::MAX;
+        let worker = EthFullnodeNativePeerWorkerV1::new(EthFullnodeNativePeerWorkerConfigV1 {
+            chain_id,
+            local_node: local,
+            peers: vec![remote],
+            peer_endpoints: vec![endpoint],
+            recv_budget: 1,
+            sync_target_fanout: 1,
+            budget_hooks: budget,
+        });
+
+        let report0 = worker.drive_real_network_once().expect("connect tick");
+        assert_eq!(report0.connected_peers, 1);
+        let report1 = worker
+            .drive_real_network_once()
+            .expect("missing receipts request tick");
+        assert_eq!(report1.sync_requests, 1);
+
+        let started = std::time::Instant::now();
+        while started.elapsed() < Duration::from_secs(2)
+            && get_network_runtime_native_receipt_snapshot_v1(chain_id, block_hash).is_none()
+        {
+            let _ = worker
+                .drive_real_network_once()
+                .expect("receipts response tick");
+            thread::sleep(Duration::from_millis(5));
+        }
+        let receipt = get_network_runtime_native_receipt_snapshot_v1(chain_id, block_hash)
+            .expect("recovered receipt snapshot");
+        assert!(receipt.receipts_available);
+        assert_eq!(receipt.receipt_count, 1);
+        assert_eq!(receipt.raw_receipts, raw_receipts);
+
+        server.join().expect("server join");
     }
 
     #[test]
