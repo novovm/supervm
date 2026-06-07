@@ -6491,6 +6491,363 @@ mod tests {
     }
 
     #[test]
+    fn evm_protocol_observable_equivalence_network_rlpx_reorg_gate_v3() {
+        let chain_id = 9_922_u64;
+        let local = NodeId(1_260);
+        let remote = NodeId(1_261);
+        clear_network_runtime_native_snapshots_for_chain_v1(chain_id);
+
+        let ancestor_hash = [0x19; 32];
+        set_network_runtime_native_header_snapshot_v1(
+            chain_id,
+            crate::runtime_status::NetworkRuntimeNativeHeaderSnapshotV1 {
+                chain_id,
+                number: 119,
+                hash: ancestor_hash,
+                parent_hash: [0x18; 32],
+                state_root: [0xa9; 32],
+                transactions_root: [0xb9; 32],
+                receipts_root: [0xc9; 32],
+                ommers_hash: [0xd9; 32],
+                logs_bloom: vec![0u8; 256],
+                gas_limit: Some(30_000_000),
+                gas_used: Some(90_000),
+                timestamp: Some(1_234_566),
+                base_fee_per_gas: Some(15),
+                withdrawals_root: None,
+                blob_gas_used: None,
+                excess_blob_gas: None,
+                block_access_list_hash: None,
+                source_peer_id: Some(local.0),
+                observed_unix_ms: 1,
+            },
+        );
+        set_network_runtime_native_head_snapshot_v1(
+            chain_id,
+            crate::runtime_status::NetworkRuntimeNativeHeadSnapshotV1 {
+                chain_id,
+                phase: NetworkRuntimeNativeSyncPhaseV1::Bodies,
+                peer_count: 1,
+                block_number: 119,
+                block_hash: ancestor_hash,
+                parent_block_hash: [0x18; 32],
+                state_root: [0xa9; 32],
+                canonical: true,
+                safe: false,
+                finalized: false,
+                reorg_depth_hint: None,
+                body_available: true,
+                source_peer_id: Some(local.0),
+                observed_unix_ms: 2,
+            },
+        );
+        set_network_runtime_sync_status(
+            chain_id,
+            NetworkRuntimeSyncStatus {
+                peer_count: 1,
+                starting_block: 119,
+                current_block: 119,
+                highest_block: 121,
+            },
+        );
+
+        let raw_tx = crate::eth_rlpx_decode_hex_v1(
+            "f86c098504a817c800825208943535353535353535353535353535353535353535880de0b6b3a76400008025a028ef61340bd939bc2195fe537567866003e1a15d3c71ff63e1590620aa636276a067cbe9d8997f761aecb703304b3800ccf555c9f3dc64214b297fb1966a3b6d83",
+        )
+        .expect("decode raw transaction");
+        let tx_hash = crate::eth_rlpx_transaction_hash_v1(raw_tx.as_slice());
+        observe_network_runtime_native_pending_tx_local_ingress_with_payload_v1(
+            chain_id,
+            tx_hash,
+            Some(raw_tx.as_slice()),
+        );
+
+        let header_a = crate::EthRlpxBlockHeaderRecordV1 {
+            number: 120,
+            hash: [0u8; 32],
+            parent_hash: ancestor_hash,
+            state_root: [0x20; 32],
+            transactions_root: [0x30; 32],
+            receipts_root: [0x40; 32],
+            ommers_hash: [0x50; 32],
+            logs_bloom: vec![0u8; 256],
+            gas_limit: Some(30_000_000),
+            gas_used: Some(100_000),
+            timestamp: Some(1_234_567),
+            base_fee_per_gas: Some(15),
+            withdrawals_root: None,
+            blob_gas_used: None,
+            excess_blob_gas: None,
+            block_access_list_hash: None,
+        };
+        let header_b = crate::EthRlpxBlockHeaderRecordV1 {
+            number: 121,
+            hash: [0u8; 32],
+            parent_hash: ancestor_hash,
+            state_root: [0x21; 32],
+            transactions_root: [0x31; 32],
+            receipts_root: [0x41; 32],
+            ommers_hash: [0x51; 32],
+            logs_bloom: vec![0u8; 256],
+            gas_limit: Some(30_000_000),
+            gas_used: Some(90_000),
+            timestamp: Some(1_234_568),
+            base_fee_per_gas: Some(15),
+            withdrawals_root: None,
+            blob_gas_used: None,
+            excess_blob_gas: None,
+            block_access_list_hash: None,
+        };
+        let derive_header_hash = |header: &crate::EthRlpxBlockHeaderRecordV1| {
+            crate::eth_rlpx_parse_block_headers_payload_v1(
+                crate::eth_rlpx_build_block_headers_payload_v1(1, std::slice::from_ref(header))
+                    .as_slice(),
+            )
+            .expect("derive wire header hash")
+            .headers[0]
+                .hash
+        };
+        let header_a_hash = derive_header_hash(&header_a);
+        let header_b_hash = derive_header_hash(&header_b);
+        let server_raw_tx = raw_tx.clone();
+
+        let responder_signing = k256::ecdsa::SigningKey::random(&mut rand::rngs::OsRng);
+        let responder_nodekey: [u8; 32] = responder_signing.to_bytes().into();
+        let responder_pub = crate::eth_rlpx_pubkey_from_nodekey_bytes_v1(&responder_nodekey)
+            .expect("derive responder pubkey");
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind rlpx listener");
+        let listen_addr = listener.local_addr().expect("rlpx listener addr");
+        let endpoint = PluginPeerEndpoint {
+            endpoint: format!(
+                "enode://{}@{}",
+                responder_pub
+                    .iter()
+                    .map(|b| format!("{b:02x}"))
+                    .collect::<String>(),
+                listen_addr
+            ),
+            node_hint: remote.0,
+            addr_hint: listen_addr.to_string(),
+        };
+
+        let server = thread::spawn(move || {
+            let (mut accepted, _) = listener.accept().expect("accept rlpx");
+            accepted
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .expect("set server read timeout");
+            accepted
+                .set_write_timeout(Some(Duration::from_secs(5)))
+                .expect("set server write timeout");
+            let mut responder = crate::eth_rlpx_handshake_responder_with_nodekey_v1(
+                &responder_nodekey,
+                &mut accepted,
+            )
+            .expect("responder handshake");
+            let (hello_code, hello_payload) =
+                crate::eth_rlpx_read_wire_frame_v1(&mut accepted, &mut responder.session)
+                    .expect("read initiator hello");
+            assert_eq!(hello_code, crate::ETH_RLPX_P2P_HELLO_MSG);
+            let initiator_hello = crate::eth_rlpx_parse_hello_payload_v1(hello_payload.as_slice())
+                .expect("parse initiator hello");
+            let responder_hello = crate::eth_rlpx_build_hello_payload_v1(
+                &responder.local_static_pub,
+                crate::default_eth_rlpx_capabilities_v1().as_slice(),
+                "SuperVM/reorg-gate",
+                listen_addr.port().into(),
+            );
+            crate::eth_rlpx_write_wire_frame_v1(
+                &mut accepted,
+                &mut responder.session,
+                crate::ETH_RLPX_P2P_HELLO_MSG,
+                responder_hello.as_slice(),
+            )
+            .expect("write responder hello");
+            if initiator_hello.protocol_version >= 5 {
+                responder.session.set_snappy(true);
+            }
+            let status = crate::EthRlpxStatusV1 {
+                protocol_version: 70,
+                network_id: chain_id,
+                genesis_hash: crate::eth_chain_config_genesis_hash_v1(chain_id),
+                fork_id: crate::build_eth_fork_id_from_chain_config_v1(
+                    &crate::resolve_eth_chain_config_v1(chain_id),
+                    0,
+                    0,
+                ),
+                earliest_block: 119,
+                latest_block: 121,
+                latest_block_hash: header_b_hash,
+            };
+            let status_payload = crate::eth_rlpx_build_status_payload_v1(status);
+            crate::eth_rlpx_write_wire_frame_v1(
+                &mut accepted,
+                &mut responder.session,
+                crate::ETH_RLPX_BASE_PROTOCOL_OFFSET + crate::ETH_RLPX_ETH_STATUS_MSG,
+                status_payload.as_slice(),
+            )
+            .expect("write responder status");
+            let (peer_status_code, peer_status_payload) =
+                crate::eth_rlpx_read_wire_frame_v1(&mut accepted, &mut responder.session)
+                    .expect("read peer status");
+            assert_eq!(
+                peer_status_code,
+                crate::ETH_RLPX_BASE_PROTOCOL_OFFSET + crate::ETH_RLPX_ETH_STATUS_MSG
+            );
+            let peer_status =
+                crate::eth_rlpx_parse_status_payload_v1(peer_status_payload.as_slice())
+                    .expect("parse peer status");
+            assert_eq!(peer_status.network_id, chain_id);
+            assert_eq!(peer_status.protocol_version, 70);
+
+            let mut header_response_count = 0usize;
+            loop {
+                let (code, payload) =
+                    crate::eth_rlpx_read_wire_frame_v1(&mut accepted, &mut responder.session)
+                        .expect("read worker frame");
+                if code
+                    == crate::ETH_RLPX_BASE_PROTOCOL_OFFSET
+                        + crate::ETH_RLPX_ETH_GET_BLOCK_HEADERS_MSG
+                {
+                    let request =
+                        crate::eth_rlpx_parse_get_block_headers_payload_v1(payload.as_slice())
+                            .expect("parse get block headers");
+                    let selected_header = if header_response_count == 0 {
+                        &header_a
+                    } else {
+                        &header_b
+                    };
+                    header_response_count = header_response_count.saturating_add(1);
+                    let headers_payload = crate::eth_rlpx_build_block_headers_payload_v1(
+                        request.request_id,
+                        std::slice::from_ref(selected_header),
+                    );
+                    crate::eth_rlpx_write_wire_frame_v1(
+                        &mut accepted,
+                        &mut responder.session,
+                        crate::ETH_RLPX_BASE_PROTOCOL_OFFSET
+                            + crate::ETH_RLPX_ETH_BLOCK_HEADERS_MSG,
+                        headers_payload.as_slice(),
+                    )
+                    .expect("write block headers");
+                    continue;
+                }
+                if code
+                    == crate::ETH_RLPX_BASE_PROTOCOL_OFFSET
+                        + crate::ETH_RLPX_ETH_GET_BLOCK_BODIES_MSG
+                {
+                    let request =
+                        crate::eth_rlpx_parse_get_block_bodies_payload_v1(payload.as_slice())
+                            .expect("parse get block bodies");
+                    let body = if request.hashes == vec![header_a_hash] {
+                        crate::EthRlpxBlockBodyPayloadV1 {
+                            tx_rlp_items: vec![server_raw_tx.clone()],
+                            ommer_header_rlp_items: Vec::new(),
+                            withdrawal_rlp_items: Some(Vec::new()),
+                        }
+                    } else {
+                        assert_eq!(request.hashes, vec![header_b_hash]);
+                        crate::EthRlpxBlockBodyPayloadV1 {
+                            tx_rlp_items: Vec::new(),
+                            ommer_header_rlp_items: Vec::new(),
+                            withdrawal_rlp_items: Some(Vec::new()),
+                        }
+                    };
+                    let bodies_payload =
+                        crate::eth_rlpx_build_block_bodies_payload_v1(request.request_id, &[body]);
+                    crate::eth_rlpx_write_wire_frame_v1(
+                        &mut accepted,
+                        &mut responder.session,
+                        crate::ETH_RLPX_BASE_PROTOCOL_OFFSET + crate::ETH_RLPX_ETH_BLOCK_BODIES_MSG,
+                        bodies_payload.as_slice(),
+                    )
+                    .expect("write block bodies");
+                    if header_response_count >= 2 {
+                        thread::sleep(Duration::from_millis(250));
+                        break;
+                    }
+                }
+            }
+        });
+
+        let mut budget = default_eth_fullnode_budget_hooks_v1();
+        budget.active_native_peer_soft_limit = 1;
+        budget.active_native_peer_hard_limit = 1;
+        budget.sync_request_interval_ms = 1;
+        budget.tx_broadcast_interval_ms = u64::MAX;
+        let worker = EthFullnodeNativePeerWorkerV1::new(EthFullnodeNativePeerWorkerConfigV1 {
+            chain_id,
+            local_node: local,
+            peers: vec![remote],
+            peer_endpoints: vec![endpoint],
+            recv_budget: 1,
+            sync_target_fanout: 1,
+            budget_hooks: budget,
+        });
+
+        let report0 = worker.drive_real_network_once().expect("connect tick");
+        assert_eq!(report0.connected_peers, 1);
+        let started = std::time::Instant::now();
+        while started.elapsed() < Duration::from_secs(2) {
+            let _ = worker.drive_real_network_once().expect("network tick");
+            let reorg_ready = snapshot_network_runtime_native_canonical_chain_v1(chain_id)
+                .is_some_and(|chain| chain.reorg_count == 1);
+            let body_ready = get_network_runtime_native_body_snapshot_v1(chain_id)
+                .is_some_and(|body| body.block_hash == header_b_hash);
+            let tx_ready =
+                get_network_runtime_native_pending_tx_v1(chain_id, tx_hash).is_some_and(|tx| {
+                    tx.lifecycle_stage
+                        == NetworkRuntimeNativePendingTxLifecycleStageV1::ReorgedBackToPending
+                });
+            if reorg_ready && body_ready && tx_ready {
+                break;
+            }
+            thread::sleep(Duration::from_millis(5));
+        }
+
+        let chain =
+            snapshot_network_runtime_native_canonical_chain_v1(chain_id).expect("canonical chain");
+        assert_eq!(chain.reorg_count, 1);
+        assert_eq!(chain.last_reorg_depth, Some(1));
+        assert_eq!(
+            chain.head.as_ref().map(|head| (head.number, head.hash)),
+            Some((121, header_b_hash))
+        );
+        assert_eq!(chain.block_lifecycle_summary.reorged_out_count, 1);
+
+        let body_snapshot =
+            get_network_runtime_native_body_snapshot_v1(chain_id).expect("body snapshot");
+        assert_eq!(body_snapshot.number, 121);
+        assert_eq!(body_snapshot.block_hash, header_b_hash);
+        assert!(body_snapshot.tx_hashes.is_empty());
+
+        let reorged =
+            get_network_runtime_native_pending_tx_v1(chain_id, tx_hash).expect("reorged tx");
+        assert_eq!(
+            reorged.lifecycle_stage,
+            NetworkRuntimeNativePendingTxLifecycleStageV1::ReorgedBackToPending
+        );
+        assert_eq!(reorged.reorg_back_count, 1);
+        assert_eq!(reorged.last_block_hash, Some(header_a_hash));
+        assert_eq!(reorged.last_block_number, Some(120));
+
+        let summary = snapshot_network_runtime_native_pending_tx_summary_v1(chain_id);
+        assert_eq!(summary.reorged_back_to_pending_count, 1);
+        let candidates =
+            snapshot_network_runtime_native_pending_tx_broadcast_candidates_v1(chain_id, 16, 3);
+        let candidate = candidates
+            .iter()
+            .find(|candidate| candidate.tx_hash == tx_hash)
+            .expect("reorged tx must re-enter broadcast candidates");
+        assert_eq!(
+            candidate.lifecycle_stage,
+            NetworkRuntimeNativePendingTxLifecycleStageV1::ReorgedBackToPending
+        );
+        assert_eq!(candidate.tx_payload, raw_tx);
+
+        server.join().expect("server join");
+    }
+
+    #[test]
     fn evm_protocol_observable_equivalence_network_rlpx_tx_ingress_gate_v3() {
         let chain_id = 9_919_u64;
         let local = NodeId(1_230);
@@ -6629,11 +6986,13 @@ mod tests {
 
         let report0 = worker.drive_real_network_once().expect("connect tick");
         assert_eq!(report0.connected_peers, 1);
-        let report1 = worker.drive_real_network_once().expect("transactions tick");
-        assert!(
-            report1.inbound_frames >= 1,
-            "worker must ingest at least the remote Transactions frame"
-        );
+        let started = std::time::Instant::now();
+        while started.elapsed() < Duration::from_secs(2)
+            && get_network_runtime_native_pending_tx_v1(chain_id, tx_hash).is_none()
+        {
+            let _ = worker.drive_real_network_once().expect("transactions tick");
+            thread::sleep(Duration::from_millis(5));
+        }
 
         let pending =
             get_network_runtime_native_pending_tx_v1(chain_id, tx_hash).expect("pending tx");
