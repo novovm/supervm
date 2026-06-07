@@ -27,9 +27,10 @@ use novovm_network::{
     eth_discv4_parse_neighbors_packet_v1, eth_discv4_parse_packet_v1,
     eth_discv4_parse_pong_ping_hash_v1, eth_rlpx_local_static_nodekey_bytes_v1,
     evaluate_advisory_first, get_network_runtime_native_body_snapshot_v1,
-    get_network_runtime_native_header_snapshot_v1, get_network_runtime_native_receipt_snapshot_v1,
-    get_network_runtime_native_sync_status, get_network_runtime_sync_status,
-    ingest_runtime_relay_membership, is_eth_fullnode_runtime_query_method,
+    get_network_runtime_native_head_snapshot_v1, get_network_runtime_native_header_snapshot_v1,
+    get_network_runtime_native_receipt_snapshot_v1, get_network_runtime_native_sync_status,
+    get_network_runtime_sync_status, ingest_runtime_relay_membership,
+    is_eth_fullnode_runtime_query_method,
     observe_network_runtime_native_execution_budget_target_v1,
     observe_network_runtime_native_execution_budget_throttle_v1,
     observe_network_runtime_native_pending_tx_local_ingress_with_payload_v1, parse_enode_endpoint,
@@ -37,22 +38,23 @@ use novovm_network::{
     resolve_eth_fullnode_canonical_query_method, run_replay_with,
     set_network_runtime_native_body_snapshot_v1, set_network_runtime_native_head_snapshot_v1,
     set_network_runtime_native_header_snapshot_v1, set_network_runtime_native_receipt_snapshot_v1,
-    set_network_runtime_sync_status, snapshot_network_runtime_native_pending_tx_summary_v1,
-    AvailabilityController, AvailabilityDecision, AvailabilityMode, CapabilityReadiness,
-    CapabilityRouteHint, EthDiscv4EndpointV1, EthDiscv4NeighborV1,
-    EthFullnodeNativePeerWorkerConfigV1, EthFullnodeNativePeerWorkerV1, FileQueueStore,
-    GossipMessage, InMemoryQueueStore, L3RegionalRoutingTable, L4LocalRoutingTable, L4PeerRef,
-    MessageType, NetworkRuntimeNativeBodySnapshotV1,
-    NetworkRuntimeNativeExecutionBudgetTargetObservationV1, NetworkRuntimeNativeHeadSnapshotV1,
-    NetworkRuntimeNativeHeaderSnapshotV1, NetworkRuntimeNativeReceiptSnapshotV1,
-    NetworkRuntimeNativeSyncPhaseV1, NetworkRuntimeSyncStatus, PluginPeerEndpoint, QueueStore,
-    QueuedRequest, Reachability, RelayCapacityClass, RelayClient, RelayHealth, RelayMembership,
-    RelayRef, RelayServer, ReplayResult, RouteSelector, RoutingSource, SelectedPath,
-    ETH_DISCV4_PACKET_HASH_LEN, ETH_DISCV4_PING_PACKET_TYPE, ETH_RLPX_PUB_LEN,
-    L3_BASELINE_FINGERPRINT, L3_BASELINE_LOCK_VERSION, L3_BASELINE_PHASE,
-    L3_POLICY_BASELINE_VERSION, L3_READONLY_EXPORT_BASELINE_VERSION, L3_REGRESSION_LOCKSET,
-    L3_RELAY_RUNTIME_FEEDBACK_SCALE, L3_RELAY_SCORE_SCALE, L3_RELAY_SELECTED_STICKY_MARGIN,
-    L3_RELAY_SOURCE_BONUS_CONFIGURED, L3_RELAY_SOURCE_BONUS_POOL, L3_RELAY_SOURCE_BONUS_SNAPSHOT,
+    set_network_runtime_sync_status, snapshot_network_runtime_native_canonical_blocks_v1,
+    snapshot_network_runtime_native_pending_tx_summary_v1, AvailabilityController,
+    AvailabilityDecision, AvailabilityMode, CapabilityReadiness, CapabilityRouteHint,
+    EthDiscv4EndpointV1, EthDiscv4NeighborV1, EthFullnodeNativePeerWorkerConfigV1,
+    EthFullnodeNativePeerWorkerV1, FileQueueStore, GossipMessage, InMemoryQueueStore,
+    L3RegionalRoutingTable, L4LocalRoutingTable, L4PeerRef, MessageType,
+    NetworkRuntimeNativeBodySnapshotV1, NetworkRuntimeNativeExecutionBudgetTargetObservationV1,
+    NetworkRuntimeNativeHeadSnapshotV1, NetworkRuntimeNativeHeaderSnapshotV1,
+    NetworkRuntimeNativeReceiptSnapshotV1, NetworkRuntimeNativeSyncPhaseV1,
+    NetworkRuntimeSyncStatus, PluginPeerEndpoint, QueueStore, QueuedRequest, Reachability,
+    RelayCapacityClass, RelayClient, RelayHealth, RelayMembership, RelayRef, RelayServer,
+    ReplayResult, RouteSelector, RoutingSource, SelectedPath, ETH_DISCV4_PACKET_HASH_LEN,
+    ETH_DISCV4_PING_PACKET_TYPE, ETH_RLPX_PUB_LEN, L3_BASELINE_FINGERPRINT,
+    L3_BASELINE_LOCK_VERSION, L3_BASELINE_PHASE, L3_POLICY_BASELINE_VERSION,
+    L3_READONLY_EXPORT_BASELINE_VERSION, L3_REGRESSION_LOCKSET, L3_RELAY_RUNTIME_FEEDBACK_SCALE,
+    L3_RELAY_SCORE_SCALE, L3_RELAY_SELECTED_STICKY_MARGIN, L3_RELAY_SOURCE_BONUS_CONFIGURED,
+    L3_RELAY_SOURCE_BONUS_POOL, L3_RELAY_SOURCE_BONUS_SNAPSHOT,
 };
 use novovm_node::governance_surface::{
     default_mainline_governance_store_path, is_mainline_governance_query_method,
@@ -2271,12 +2273,43 @@ struct EthRlpxNativeReceiptStoreV1 {
     observed_unix_ms: u128,
 }
 
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+struct EthRlpxNativeHistoryStoreV1 {
+    schema: String,
+    chain_id: u64,
+    current_block: u64,
+    highest_block: u64,
+    blocks: Vec<EthRlpxNativeHistoryBlockStoreV1>,
+    updated_at_unix_ms: u64,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+struct EthRlpxNativeHistoryBlockStoreV1 {
+    header: EthRlpxNativeHeaderStoreV1,
+    body: Option<EthRlpxNativeBodyStoreV1>,
+    receipt: Option<EthRlpxNativeReceiptStoreV1>,
+    canonical: bool,
+    safe: bool,
+    finalized: bool,
+    reorg_depth_hint: Option<u64>,
+}
+
 fn eth_rlpx_native_head_store_path_v1() -> PathBuf {
     string_env_nonempty("NOVOVM_ETH_RLPX_NATIVE_HEAD_STORE_PATH")
         .map(PathBuf::from)
         .unwrap_or_else(|| {
             let mut path = default_mainline_runtime_snapshot_path();
             path.set_file_name("eth_rlpx_native_head_store_v1.json");
+            path
+        })
+}
+
+fn eth_rlpx_native_history_store_path_v1() -> PathBuf {
+    string_env_nonempty("NOVOVM_ETH_RLPX_NATIVE_HISTORY_STORE_PATH")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            let mut path = default_mainline_runtime_snapshot_path();
+            path.set_file_name("eth_rlpx_native_history_store_v1.json");
             path
         })
 }
@@ -2602,6 +2635,279 @@ fn restore_eth_rlpx_native_head_store_v1(stored: &EthRlpxNativeHeadStoreV1) -> R
     Ok(header.number.max(stored.current_block))
 }
 
+fn eth_rlpx_native_head_store_header_number_v1(stored: &EthRlpxNativeHeadStoreV1) -> u64 {
+    stored
+        .header
+        .as_ref()
+        .map(|header| header.number)
+        .unwrap_or(stored.current_block)
+}
+
+fn eth_rlpx_native_history_store_empty_v1(chain_id: u64) -> EthRlpxNativeHistoryStoreV1 {
+    EthRlpxNativeHistoryStoreV1 {
+        schema: "supervm-eth-rlpx-native-history-store/v1".to_string(),
+        chain_id,
+        current_block: 0,
+        highest_block: 0,
+        blocks: Vec::new(),
+        updated_at_unix_ms: now_unix_ms(),
+    }
+}
+
+fn eth_rlpx_native_history_prune_v1(store: &mut EthRlpxNativeHistoryStoreV1, retention: usize) {
+    let retention = retention.max(1);
+    store.blocks.sort_by(|a, b| {
+        b.header
+            .number
+            .cmp(&a.header.number)
+            .then_with(|| b.header.observed_unix_ms.cmp(&a.header.observed_unix_ms))
+            .then_with(|| b.header.hash.cmp(&a.header.hash))
+    });
+    let mut seen = HashSet::new();
+    store
+        .blocks
+        .retain(|block| seen.insert(block.header.hash.to_ascii_lowercase()));
+    if store.blocks.len() > retention {
+        store.blocks.truncate(retention);
+    }
+    store.blocks.sort_by(|a, b| {
+        a.header
+            .number
+            .cmp(&b.header.number)
+            .then_with(|| a.header.hash.cmp(&b.header.hash))
+    });
+}
+
+fn eth_rlpx_native_history_reconcile_canonical_flags_v1(
+    store: &mut EthRlpxNativeHistoryStoreV1,
+    retention: usize,
+) {
+    let canonical_blocks =
+        snapshot_network_runtime_native_canonical_blocks_v1(store.chain_id, retention.max(1));
+    if canonical_blocks.is_empty() {
+        return;
+    }
+    let block_flags = canonical_blocks
+        .into_iter()
+        .map(|block| (block.hash, (block.canonical, block.safe, block.finalized)))
+        .collect::<HashMap<_, _>>();
+    for block in &mut store.blocks {
+        let Ok(hash) = eth_rlpx_hex_h256_from_store_v1(&block.header.hash, "history.header.hash")
+        else {
+            continue;
+        };
+        if let Some((canonical, safe, finalized)) = block_flags.get(&hash).copied() {
+            block.canonical = canonical;
+            block.safe = safe;
+            block.finalized = finalized;
+        }
+    }
+}
+
+fn update_eth_rlpx_native_history_store_from_snapshots_v1(
+    store: &mut EthRlpxNativeHistoryStoreV1,
+    chain_id: u64,
+    sync_status: Option<NetworkRuntimeSyncStatus>,
+    header: Option<&NetworkRuntimeNativeHeaderSnapshotV1>,
+    body: Option<&NetworkRuntimeNativeBodySnapshotV1>,
+    receipt: Option<&NetworkRuntimeNativeReceiptSnapshotV1>,
+    head: Option<&NetworkRuntimeNativeHeadSnapshotV1>,
+    retention: usize,
+) -> bool {
+    let Some(header) = header else {
+        return false;
+    };
+    store.schema = "supervm-eth-rlpx-native-history-store/v1".to_string();
+    store.chain_id = chain_id;
+    let current_block = sync_status
+        .map(|status| status.current_block)
+        .unwrap_or(header.number)
+        .max(header.number);
+    store.current_block = current_block;
+    store.highest_block = sync_status
+        .map(|status| status.highest_block)
+        .unwrap_or(current_block)
+        .max(current_block);
+    store.updated_at_unix_ms = now_unix_ms();
+
+    let body_store = body
+        .filter(|body| body.number == header.number && body.block_hash == header.hash)
+        .map(eth_rlpx_native_body_store_from_snapshot_v1);
+    let receipt_store = receipt
+        .filter(|receipt| receipt.number == header.number && receipt.block_hash == header.hash)
+        .map(eth_rlpx_native_receipt_store_from_snapshot_v1);
+    let matching_head = head.filter(|head| {
+        head.chain_id == chain_id
+            && head.block_number == header.number
+            && head.block_hash == header.hash
+    });
+    let next_block = EthRlpxNativeHistoryBlockStoreV1 {
+        header: eth_rlpx_native_header_store_from_snapshot_v1(header),
+        body: body_store,
+        receipt: receipt_store,
+        canonical: matching_head.is_some_and(|head| head.canonical),
+        safe: matching_head.is_some_and(|head| head.safe),
+        finalized: matching_head.is_some_and(|head| head.finalized),
+        reorg_depth_hint: matching_head.and_then(|head| head.reorg_depth_hint),
+    };
+
+    if let Some(existing) = store.blocks.iter_mut().find(|block| {
+        block
+            .header
+            .hash
+            .eq_ignore_ascii_case(&next_block.header.hash)
+    }) {
+        existing.header = next_block.header;
+        if next_block.body.is_some() || existing.body.is_none() {
+            existing.body = next_block.body;
+        }
+        if next_block.receipt.is_some() || existing.receipt.is_none() {
+            existing.receipt = next_block.receipt;
+        }
+        if next_block.canonical {
+            existing.canonical = true;
+            existing.safe = next_block.safe;
+            existing.finalized = next_block.finalized;
+            existing.reorg_depth_hint = next_block.reorg_depth_hint;
+        }
+    } else {
+        store.blocks.push(next_block);
+    }
+
+    eth_rlpx_native_history_reconcile_canonical_flags_v1(store, retention);
+    eth_rlpx_native_history_prune_v1(store, retention);
+    true
+}
+
+fn write_eth_rlpx_native_history_store_v1(
+    path: &Path,
+    store: &EthRlpxNativeHistoryStoreV1,
+) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        if !parent.as_os_str().is_empty() {
+            fs::create_dir_all(parent).with_context(|| {
+                format!(
+                    "create eth rlpx native history store dir failed: {}",
+                    parent.display()
+                )
+            })?;
+        }
+    }
+    let raw = serde_json::to_vec_pretty(store).context("encode native history store failed")?;
+    fs::write(path, raw).with_context(|| {
+        format!(
+            "write eth rlpx native history store failed: {}",
+            path.display()
+        )
+    })?;
+    Ok(())
+}
+
+fn load_eth_rlpx_native_history_store_v1(
+    path: &Path,
+    chain_id: u64,
+) -> Result<Option<EthRlpxNativeHistoryStoreV1>> {
+    if !path.exists() {
+        return Ok(None);
+    }
+    let raw = fs::read(path).with_context(|| {
+        format!(
+            "read eth rlpx native history store failed: {}",
+            path.display()
+        )
+    })?;
+    let stored = serde_json::from_slice::<EthRlpxNativeHistoryStoreV1>(raw.as_slice())
+        .with_context(|| {
+            format!(
+                "parse eth rlpx native history store failed: {}",
+                path.display()
+            )
+        })?;
+    if stored.schema != "supervm-eth-rlpx-native-history-store/v1" {
+        bail!(
+            "unsupported eth rlpx native history store schema: {}",
+            stored.schema
+        );
+    }
+    if stored.chain_id != chain_id {
+        bail!(
+            "eth rlpx native history store chain mismatch: store={} requested={}",
+            stored.chain_id,
+            chain_id
+        );
+    }
+    Ok(Some(stored))
+}
+
+fn restore_eth_rlpx_native_history_store_v1(
+    stored: &EthRlpxNativeHistoryStoreV1,
+    retention: usize,
+) -> Result<u64> {
+    let mut store = stored.clone();
+    eth_rlpx_native_history_prune_v1(&mut store, retention);
+    let mut restored_head = None::<EthRlpxNativeHistoryBlockStoreV1>;
+    for block in &store.blocks {
+        let header = eth_rlpx_native_header_snapshot_from_store_v1(store.chain_id, &block.header)?;
+        set_network_runtime_native_header_snapshot_v1(store.chain_id, header);
+        if let Some(body) = block
+            .body
+            .as_ref()
+            .map(|body| eth_rlpx_native_body_snapshot_from_store_v1(store.chain_id, body))
+            .transpose()?
+        {
+            set_network_runtime_native_body_snapshot_v1(store.chain_id, body);
+        }
+        if let Some(receipt) = block
+            .receipt
+            .as_ref()
+            .map(|receipt| eth_rlpx_native_receipt_snapshot_from_store_v1(store.chain_id, receipt))
+            .transpose()?
+        {
+            set_network_runtime_native_receipt_snapshot_v1(store.chain_id, receipt);
+        }
+        let should_replace_head = restored_head
+            .as_ref()
+            .map(|current| {
+                (block.canonical && !current.canonical)
+                    || block.header.number > current.header.number
+                    || (block.header.number == current.header.number
+                        && block.header.observed_unix_ms > current.header.observed_unix_ms)
+            })
+            .unwrap_or(true);
+        if should_replace_head {
+            restored_head = Some(block.clone());
+        }
+    }
+
+    let Some(head_block) = restored_head else {
+        return Ok(store.current_block);
+    };
+    let header = eth_rlpx_native_header_snapshot_from_store_v1(store.chain_id, &head_block.header)?;
+    set_network_runtime_native_head_snapshot_v1(
+        store.chain_id,
+        NetworkRuntimeNativeHeadSnapshotV1 {
+            chain_id: store.chain_id,
+            phase: NetworkRuntimeNativeSyncPhaseV1::Headers,
+            peer_count: 0,
+            block_number: header.number,
+            block_hash: header.hash,
+            parent_block_hash: header.parent_hash,
+            state_root: header.state_root,
+            canonical: true,
+            safe: head_block.safe,
+            finalized: head_block.finalized,
+            reorg_depth_hint: head_block.reorg_depth_hint,
+            body_available: head_block
+                .body
+                .as_ref()
+                .is_some_and(|body| body.body_available),
+            source_peer_id: header.source_peer_id,
+            observed_unix_ms: header.observed_unix_ms,
+        },
+    );
+    Ok(header.number.max(store.current_block))
+}
+
 fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
     let chain_id = u64_env_allow_zero("NOVOVM_ETH_RLPX_CHAIN_ID", 1)?;
     let local_node_id = u64_env_allow_zero("NOVOVM_ETH_RLPX_LOCAL_NODE", 9_990_001)?;
@@ -2648,11 +2954,40 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
     } else {
         None
     };
-    let restored_native_block = native_head_store
-        .as_ref()
-        .map(restore_eth_rlpx_native_head_store_v1)
-        .transpose()?
-        .unwrap_or(0);
+    let native_history_store_enabled =
+        bool_env_default_true("NOVOVM_ETH_RLPX_NATIVE_HISTORY_STORE_ENABLED");
+    let native_history_store_retention =
+        usize_env_allow_zero("NOVOVM_ETH_RLPX_NATIVE_HISTORY_STORE_BLOCKS", 256)?.clamp(1, 4096);
+    let native_history_store_path = eth_rlpx_native_history_store_path_v1();
+    let loaded_native_history_store = if native_history_store_enabled {
+        load_eth_rlpx_native_history_store_v1(&native_history_store_path, chain_id)?
+    } else {
+        None
+    };
+    let native_history_store_loaded = loaded_native_history_store.is_some();
+    let mut native_history_store = if native_history_store_enabled {
+        Some(
+            loaded_native_history_store
+                .unwrap_or_else(|| eth_rlpx_native_history_store_empty_v1(chain_id)),
+        )
+    } else {
+        None
+    };
+    let restored_history_block = if let Some(stored) = native_history_store.as_ref() {
+        restore_eth_rlpx_native_history_store_v1(stored, native_history_store_retention)?
+    } else {
+        0
+    };
+    let restored_head_block = if let Some(stored) = native_head_store.as_ref() {
+        if eth_rlpx_native_head_store_header_number_v1(stored) >= restored_history_block {
+            restore_eth_rlpx_native_head_store_v1(stored)?
+        } else {
+            0
+        }
+    } else {
+        0
+    };
+    let restored_native_block = restored_history_block.max(restored_head_block);
     let current_block = checkpoint
         .as_ref()
         .map(|checkpoint| checkpoint.current_block)
@@ -2713,6 +3048,24 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
             );
         }
     }
+    if verbose && native_history_store_enabled {
+        if let Some(stored) = native_history_store.as_ref() {
+            let status = if native_history_store_loaded {
+                "loaded"
+            } else {
+                "initialized"
+            };
+            println!(
+                "eth_rlpx_native_history_store: {} path={} blocks={} retention={} current={} highest={}",
+                status,
+                native_history_store_path.display(),
+                stored.blocks.len(),
+                native_history_store_retention,
+                stored.current_block,
+                stored.highest_block
+            );
+        }
+    }
     let mut worker = EthFullnodeNativePeerWorkerV1::new(EthFullnodeNativePeerWorkerConfigV1 {
         chain_id,
         local_node: NodeId(local_node_id),
@@ -2736,6 +3089,7 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
         let receipt = header.as_ref().and_then(|snapshot| {
             get_network_runtime_native_receipt_snapshot_v1(chain_id, snapshot.hash)
         });
+        let head_snapshot = get_network_runtime_native_head_snapshot_v1(chain_id);
         let last_failure = report.peer_failures.last().map(|failure| {
             format!(
                 "{}:{}:{}",
@@ -2800,6 +3154,22 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
                 body.as_ref(),
                 receipt.as_ref(),
             )?;
+        }
+        if native_history_store_enabled {
+            if let Some(store) = native_history_store.as_mut() {
+                if update_eth_rlpx_native_history_store_from_snapshots_v1(
+                    store,
+                    chain_id,
+                    sync_status,
+                    header.as_ref(),
+                    body.as_ref(),
+                    receipt.as_ref(),
+                    head_snapshot.as_ref(),
+                    native_history_store_retention,
+                ) {
+                    write_eth_rlpx_native_history_store_v1(&native_history_store_path, store)?;
+                }
+            }
         }
         let candidate_pool_exhausted = report.ready_peers == 0
             && report.scheduled_bootstrap_peers == 0
@@ -3156,6 +3526,196 @@ mod mainline_evm_cli_tests {
                 .raw_receipts,
             vec![vec![1, 2, 3]]
         );
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn eth_rlpx_native_history_store_roundtrips_and_restores_window_v1() {
+        let path = std::env::temp_dir().join(format!(
+            "supervm-eth-rlpx-native-history-store-test-{}-{}.json",
+            std::process::id(),
+            now_unix_ms()
+        ));
+        let chain_id = 9_991_772_u64;
+        let observed = now_unix_ms() as u128;
+        let parent_hash = [0x10_u8; 32];
+        let header_hash_a = [0x11_u8; 32];
+        let header_hash_b = [0x12_u8; 32];
+        let header_a = NetworkRuntimeNativeHeaderSnapshotV1 {
+            chain_id,
+            number: 76,
+            hash: header_hash_a,
+            parent_hash,
+            state_root: [0x21_u8; 32],
+            transactions_root: [0x31_u8; 32],
+            receipts_root: [0x41_u8; 32],
+            ommers_hash: [0x51_u8; 32],
+            logs_bloom: vec![0xab; 256],
+            gas_limit: Some(30_000_000),
+            gas_used: Some(0),
+            timestamp: Some(1_780_860_000),
+            base_fee_per_gas: Some(7),
+            withdrawals_root: Some([0x61_u8; 32]),
+            blob_gas_used: Some(0),
+            excess_blob_gas: Some(0),
+            block_access_list_hash: Some([0x71_u8; 32]),
+            source_peer_id: Some(42),
+            observed_unix_ms: observed,
+        };
+        let header_b = NetworkRuntimeNativeHeaderSnapshotV1 {
+            chain_id,
+            number: 77,
+            hash: header_hash_b,
+            parent_hash: header_hash_a,
+            state_root: [0x22_u8; 32],
+            transactions_root: [0x32_u8; 32],
+            receipts_root: [0x42_u8; 32],
+            ommers_hash: [0x52_u8; 32],
+            logs_bloom: vec![0xcd; 256],
+            gas_limit: Some(30_000_000),
+            gas_used: Some(21_000),
+            timestamp: Some(1_780_860_012),
+            base_fee_per_gas: Some(8),
+            withdrawals_root: Some([0x62_u8; 32]),
+            blob_gas_used: Some(0),
+            excess_blob_gas: Some(0),
+            block_access_list_hash: Some([0x72_u8; 32]),
+            source_peer_id: Some(42),
+            observed_unix_ms: observed + 1,
+        };
+        let body_a = NetworkRuntimeNativeBodySnapshotV1 {
+            chain_id,
+            number: 76,
+            block_hash: header_hash_a,
+            tx_hashes: Vec::new(),
+            ommer_hashes: Vec::new(),
+            withdrawal_count: Some(0),
+            body_available: true,
+            txs_materialized: true,
+            observed_unix_ms: observed,
+        };
+        let body_b = NetworkRuntimeNativeBodySnapshotV1 {
+            chain_id,
+            number: 77,
+            block_hash: header_hash_b,
+            tx_hashes: vec![[0x88_u8; 32]],
+            ommer_hashes: Vec::new(),
+            withdrawal_count: Some(0),
+            body_available: true,
+            txs_materialized: true,
+            observed_unix_ms: observed + 1,
+        };
+        let receipt_b = NetworkRuntimeNativeReceiptSnapshotV1 {
+            chain_id,
+            number: 77,
+            block_hash: header_hash_b,
+            receipts_root: [0x42_u8; 32],
+            raw_receipts: vec![vec![1, 2, 3, 4]],
+            receipt_count: 1,
+            receipts_available: true,
+            source_peer_id: Some(42),
+            observed_unix_ms: observed + 1,
+        };
+        let head_a = NetworkRuntimeNativeHeadSnapshotV1 {
+            chain_id,
+            phase: NetworkRuntimeNativeSyncPhaseV1::Headers,
+            peer_count: 1,
+            block_number: 76,
+            block_hash: header_hash_a,
+            parent_block_hash: parent_hash,
+            state_root: [0x21_u8; 32],
+            canonical: true,
+            safe: false,
+            finalized: false,
+            reorg_depth_hint: None,
+            body_available: true,
+            source_peer_id: Some(42),
+            observed_unix_ms: observed,
+        };
+        let head_b = NetworkRuntimeNativeHeadSnapshotV1 {
+            chain_id,
+            phase: NetworkRuntimeNativeSyncPhaseV1::Headers,
+            peer_count: 1,
+            block_number: 77,
+            block_hash: header_hash_b,
+            parent_block_hash: header_hash_a,
+            state_root: [0x22_u8; 32],
+            canonical: true,
+            safe: false,
+            finalized: false,
+            reorg_depth_hint: None,
+            body_available: true,
+            source_peer_id: Some(42),
+            observed_unix_ms: observed + 1,
+        };
+
+        let mut store = eth_rlpx_native_history_store_empty_v1(chain_id);
+        assert!(update_eth_rlpx_native_history_store_from_snapshots_v1(
+            &mut store,
+            chain_id,
+            Some(NetworkRuntimeSyncStatus {
+                peer_count: 1,
+                starting_block: 76,
+                current_block: 76,
+                highest_block: 77,
+            }),
+            Some(&header_a),
+            Some(&body_a),
+            None,
+            Some(&head_a),
+            8,
+        ));
+        assert!(update_eth_rlpx_native_history_store_from_snapshots_v1(
+            &mut store,
+            chain_id,
+            Some(NetworkRuntimeSyncStatus {
+                peer_count: 1,
+                starting_block: 76,
+                current_block: 77,
+                highest_block: 99,
+            }),
+            Some(&header_b),
+            Some(&body_b),
+            Some(&receipt_b),
+            Some(&head_b),
+            8,
+        ));
+        write_eth_rlpx_native_history_store_v1(&path, &store).expect("write native history store");
+
+        let loaded = load_eth_rlpx_native_history_store_v1(&path, chain_id)
+            .expect("load native history store")
+            .expect("native history store present");
+        assert_eq!(loaded.schema, "supervm-eth-rlpx-native-history-store/v1");
+        assert_eq!(loaded.blocks.len(), 2);
+        assert_eq!(loaded.current_block, 77);
+        assert_eq!(loaded.highest_block, 99);
+
+        let restored =
+            restore_eth_rlpx_native_history_store_v1(&loaded, 8).expect("restore history store");
+        assert_eq!(restored, 77);
+        assert_eq!(
+            get_network_runtime_native_header_snapshot_v1(chain_id)
+                .expect("runtime header")
+                .number,
+            77
+        );
+        assert_eq!(
+            get_network_runtime_native_body_snapshot_v1(chain_id)
+                .expect("runtime body")
+                .tx_hashes,
+            vec![[0x88_u8; 32]]
+        );
+        assert_eq!(
+            get_network_runtime_native_receipt_snapshot_v1(chain_id, header_hash_b)
+                .expect("runtime receipt")
+                .raw_receipts,
+            vec![vec![1, 2, 3, 4]]
+        );
+        let canonical_blocks = snapshot_network_runtime_native_canonical_blocks_v1(chain_id, 8);
+        assert!(canonical_blocks
+            .iter()
+            .any(|block| block.hash == header_hash_b && block.canonical));
 
         let _ = fs::remove_file(path);
     }
