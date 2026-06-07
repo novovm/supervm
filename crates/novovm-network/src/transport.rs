@@ -23,8 +23,8 @@ use crate::{
     eth_rlpx_parse_pooled_transactions_payload_v1, eth_rlpx_parse_receipts_payload_v1,
     eth_rlpx_parse_status_payload_v1, eth_rlpx_parse_transactions_payload_v1,
     eth_rlpx_read_wire_frame_v1, eth_rlpx_select_shared_eth_version_v1,
-    eth_rlpx_select_shared_snap_version_v1, eth_rlpx_write_wire_frame_v1,
-    get_network_runtime_native_block_access_list_payload_v1,
+    eth_rlpx_select_shared_snap_version_v1, eth_rlpx_validate_block_empty_body_roots_v1,
+    eth_rlpx_write_wire_frame_v1, get_network_runtime_native_block_access_list_payload_v1,
     get_network_runtime_native_body_snapshot_v1, get_network_runtime_native_head_snapshot_v1,
     get_network_runtime_native_header_snapshot_v1,
     get_network_runtime_native_pending_tx_payload_v1, get_network_runtime_native_sync_status,
@@ -1913,6 +1913,10 @@ fn ingest_real_rlpx_new_block_v1(
     block: &EthRlpxNewBlockPayloadV1,
     report: &mut EthFullnodeNativeRlpxPeerTickReportV1,
 ) -> Result<(), NetworkError> {
+    eth_rlpx_validate_block_empty_body_roots_v1(&block.header, &block.body).map_err(|err| {
+        observe_network_runtime_eth_peer_decode_failure_v1(chain_id, source_peer_id, err.as_str());
+        NetworkError::Decode(err)
+    })?;
     let header_wire = evm_native_header_wire_from_rlpx_header_v1(&block.header);
     ingest_runtime_native_header_from_evm_wire(chain_id, source_peer_id, &header_wire);
     report.header_updates = report.header_updates.saturating_add(1);
@@ -8518,20 +8522,22 @@ mod tests {
             },
         );
 
+        let empty_root = crate::eth_rlpx_empty_trie_root_v1();
+        let empty_ommers_hash = crate::eth_rlpx_empty_ommers_hash_v1();
         let header_record = crate::EthRlpxBlockHeaderRecordV1 {
             number: 121,
             hash: [0u8; 32],
             parent_hash: [0x90; 32],
             state_root: [0x91; 32],
-            transactions_root: [0x92; 32],
-            receipts_root: [0x93; 32],
-            ommers_hash: [0x94; 32],
+            transactions_root: empty_root,
+            receipts_root: empty_root,
+            ommers_hash: empty_ommers_hash,
             logs_bloom: vec![0u8; 256],
             gas_limit: Some(30_000_000),
             gas_used: Some(0),
             timestamp: Some(1_234_568),
             base_fee_per_gas: Some(15),
-            withdrawals_root: None,
+            withdrawals_root: Some(empty_root),
             blob_gas_used: None,
             excess_blob_gas: None,
             block_access_list_hash: None,

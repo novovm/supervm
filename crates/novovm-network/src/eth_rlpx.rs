@@ -55,6 +55,14 @@ pub const ETH_RLPX_ETH_GET_RECEIPTS_MSG: u64 = 0x0f;
 pub const ETH_RLPX_ETH_RECEIPTS_MSG: u64 = 0x10;
 pub const ETH_RLPX_ETH_GET_BLOCK_ACCESS_LISTS_MSG: u64 = 0x12;
 pub const ETH_RLPX_ETH_BLOCK_ACCESS_LISTS_MSG: u64 = 0x13;
+pub const ETH_RLPX_EMPTY_TRIE_ROOT_V1: [u8; 32] = [
+    0x56, 0xe8, 0x1f, 0x17, 0x1b, 0xcc, 0x55, 0xa6, 0xff, 0x83, 0x45, 0xe6, 0x92, 0xc0, 0xf8, 0x6e,
+    0x5b, 0x48, 0xe0, 0x1b, 0x99, 0x6c, 0xad, 0xc0, 0x01, 0x62, 0x2f, 0xb5, 0xe3, 0x63, 0xb4, 0x21,
+];
+pub const ETH_RLPX_EMPTY_OMMERS_HASH_V1: [u8; 32] = [
+    0x1d, 0xcc, 0x4d, 0xe8, 0xde, 0xc7, 0x5d, 0x7a, 0xab, 0x85, 0xb5, 0x67, 0xb6, 0xcc, 0xd4, 0x1a,
+    0xd3, 0x12, 0x45, 0x1b, 0x94, 0x8a, 0x74, 0x13, 0xf0, 0xa1, 0x42, 0xfd, 0x40, 0xd4, 0x93, 0x47,
+];
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EthRlpxCapabilityV1 {
@@ -149,6 +157,44 @@ pub struct EthRlpxBlockBodyRecordV1 {
 pub struct EthRlpxBlockBodiesResponseV1 {
     pub request_id: u64,
     pub bodies: Vec<EthRlpxBlockBodyRecordV1>,
+}
+
+#[must_use]
+pub fn eth_rlpx_empty_trie_root_v1() -> [u8; 32] {
+    ETH_RLPX_EMPTY_TRIE_ROOT_V1
+}
+
+#[must_use]
+pub fn eth_rlpx_empty_ommers_hash_v1() -> [u8; 32] {
+    ETH_RLPX_EMPTY_OMMERS_HASH_V1
+}
+
+pub fn eth_rlpx_validate_block_empty_body_roots_v1(
+    header: &EthRlpxBlockHeaderRecordV1,
+    body: &EthRlpxBlockBodyRecordV1,
+) -> Result<(), String> {
+    if !body.body_available {
+        return Ok(());
+    }
+    if body.txs_materialized && body.tx_hashes.is_empty() {
+        if header.transactions_root != ETH_RLPX_EMPTY_TRIE_ROOT_V1 {
+            return Err("rlpx_block_transactions_root_mismatch_empty_body".to_string());
+        }
+        if header.receipts_root != ETH_RLPX_EMPTY_TRIE_ROOT_V1 {
+            return Err("rlpx_block_receipts_root_mismatch_empty_body".to_string());
+        }
+    }
+    if body.ommer_hashes.is_empty() && header.ommers_hash != ETH_RLPX_EMPTY_OMMERS_HASH_V1 {
+        return Err("rlpx_block_ommers_hash_mismatch_empty_body".to_string());
+    }
+    if body.withdrawal_count == Some(0)
+        && header
+            .withdrawals_root
+            .is_some_and(|root| root != ETH_RLPX_EMPTY_TRIE_ROOT_V1)
+    {
+        return Err("rlpx_block_withdrawals_root_mismatch_empty_body".to_string());
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2860,6 +2906,41 @@ mod tests {
         assert_eq!(parsed_new_block.total_difficulty, 1_000);
         assert_eq!(parsed_new_block.body.tx_hashes.len(), 2);
         assert_eq!(parsed_new_block.body.withdrawal_count, Some(0));
+
+        let empty_root = eth_rlpx_empty_trie_root_v1();
+        let empty_ommers_hash = eth_rlpx_empty_ommers_hash_v1();
+        let empty_header = EthRlpxBlockHeaderRecordV1 {
+            number: 129,
+            hash: [0x00; 32],
+            parent_hash: [0x33; 32],
+            state_root: [0x44; 32],
+            transactions_root: empty_root,
+            receipts_root: empty_root,
+            ommers_hash: empty_ommers_hash,
+            logs_bloom: vec![0u8; 256],
+            gas_limit: Some(30_000_000),
+            gas_used: Some(0),
+            timestamp: Some(1235),
+            base_fee_per_gas: Some(15),
+            withdrawals_root: Some(empty_root),
+            blob_gas_used: None,
+            excess_blob_gas: None,
+            block_access_list_hash: None,
+        };
+        let empty_body = EthRlpxBlockBodyRecordV1 {
+            tx_hashes: Vec::new(),
+            ommer_hashes: Vec::new(),
+            withdrawal_count: Some(0),
+            body_available: true,
+            txs_materialized: true,
+        };
+        assert!(eth_rlpx_validate_block_empty_body_roots_v1(&empty_header, &empty_body).is_ok());
+        let mut invalid_empty_header = empty_header.clone();
+        invalid_empty_header.transactions_root = [0x99; 32];
+        assert_eq!(
+            eth_rlpx_validate_block_empty_body_roots_v1(&invalid_empty_header, &empty_body),
+            Err("rlpx_block_transactions_root_mismatch_empty_body".to_string())
+        );
 
         let bodies_payload = eth_rlpx_build_block_bodies_payload_v1(
             11,
