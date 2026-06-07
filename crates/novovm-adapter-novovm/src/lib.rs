@@ -2799,6 +2799,13 @@ mod tests {
         .expect("decode official CALL depth/OOG state fixture")
     }
 
+    fn official_delegatecall_callcode_context_state_fixture_v1() -> serde_json::Value {
+        serde_json::from_str(include_str!(
+            "../tests/fixtures/ethereum-official-state-subset/delegatecall-callcode-context.json"
+        ))
+        .expect("decode official DELEGATECALL/CALLCODE context state fixture")
+    }
+
     fn official_log_receipt_state_fixture_v1() -> serde_json::Value {
         serde_json::from_str(include_str!(
             "../tests/fixtures/ethereum-official-state-subset/log-receipt.json"
@@ -7098,6 +7105,369 @@ mod tests {
     }
 
     #[test]
+    fn official_state_fixture_delegatecall_callcode_context_grouped_projection_v1() {
+        let fixture = official_delegatecall_callcode_context_state_fixture_v1();
+        assert_eq!(fixture["source"]["repo"].as_str(), Some("ethereum/tests"));
+        assert_eq!(
+            fixture["source"]["fixtureFormat"].as_str(),
+            Some("state_test")
+        );
+        assert_eq!(fixture["source"]["fork"].as_str(), Some("Cancun"));
+
+        let empty_logs_hash = json_str(&fixture["emptyLogsHash"], "emptyLogsHash");
+        let cases = fixture["cases"]
+            .as_array()
+            .expect("DELEGATECALL/CALLCODE context cases");
+        assert_eq!(cases.len(), 6);
+
+        let mut delegatecall_cases = 0usize;
+        let mut callcode_cases = 0usize;
+        let mut zero_value_cases = 0usize;
+        let mut value_transfer_cases = 0usize;
+        let mut one_slot_storage_cases = 0usize;
+        let mut two_slot_storage_cases = 0usize;
+        let mut gas_by_label = std::collections::HashMap::new();
+        let mut post_hashes = std::collections::HashSet::new();
+        let mut txbytes_seen = std::collections::HashSet::new();
+
+        for case in cases {
+            let label = json_str(&case["label"], "case.label");
+            let mode = json_str(&case["mode"], "case.mode");
+            assert!(
+                json_str(&case["fixtureKey"], "case.fixtureKey")
+                    .contains("GeneralStateTests/stDelegatecallTestHomestead/"),
+                "official context case must come from stDelegatecallTestHomestead"
+            );
+            assert!(
+                json_str(&case["fixtureKey"], "case.fixtureKey").contains("-fork_[Cancun-Prague]"),
+                "official context case must be the Cancun/Prague projection"
+            );
+            assert!(
+                post_hashes.insert(json_str(&case["postHash"], "case.postHash")),
+                "official context post hash must be unique"
+            );
+            assert_eq!(
+                json_str(&case["logsHash"], "case.logsHash"),
+                empty_logs_hash
+            );
+
+            let sender = json_str(&case["sender"], "case.sender");
+            let to = json_str(&case["to"], "case.to");
+            let pre_sender_balance =
+                json_hex_u128(&case["preSenderBalance"], "case.preSenderBalance");
+            let pre_sender_nonce =
+                json_hex_u128(&case["preSenderNonce"], "case.preSenderNonce") as u64;
+            let post_sender_balance =
+                json_hex_u128(&case["postSenderBalance"], "case.postSenderBalance");
+            let post_sender_nonce =
+                json_hex_u128(&case["postSenderNonce"], "case.postSenderNonce") as u64;
+            let pre_to_balance = json_hex_u128(&case["preToBalance"], "case.preToBalance");
+            let pre_to_nonce = json_hex_u128(&case["preToNonce"], "case.preToNonce") as u64;
+            let post_to_balance = json_hex_u128(&case["postToBalance"], "case.postToBalance");
+            let post_to_nonce = json_hex_u128(&case["postToNonce"], "case.postToNonce") as u64;
+            let gas_price = json_hex_u128(&case["gasPrice"], "case.gasPrice");
+            let gas_limit = json_hex_u128(&case["gasLimit"], "case.gasLimit");
+            let value = json_hex_u128(&case["value"], "case.value");
+            let nonce = json_hex_u128(&case["nonce"], "case.nonce") as u64;
+
+            assert_eq!(nonce, pre_sender_nonce);
+            assert_eq!(post_sender_nonce, pre_sender_nonce + 1);
+            assert_eq!(
+                post_to_balance,
+                pre_to_balance + value,
+                "selected DELEGATECALL/CALLCODE context cases keep top-level value flow directly attributable"
+            );
+            assert_eq!(post_to_nonce, pre_to_nonce);
+            if value == 0 {
+                zero_value_cases += 1;
+            } else {
+                value_transfer_cases += 1;
+            }
+
+            let raw_tx = decode_hex_bytes(json_str(&case["txbytes"], "case.txbytes"));
+            txbytes_seen.insert(json_str(&case["txbytes"], "case.txbytes"));
+            let recovered_sender = recover_raw_evm_tx_sender_m0(&raw_tx)
+                .expect("official context raw sender recovery")
+                .expect("official context recovered sender");
+            assert_eq!(recovered_sender, decode_hex_bytes(sender));
+            let fields =
+                translate_raw_evm_tx_fields_m0(&raw_tx).expect("official context tx decode");
+            let tx = tx_ir_from_raw_fields_m0(&fields, &raw_tx, recovered_sender, 1);
+
+            assert_eq!(
+                tx.tx_type,
+                TxType::Transfer,
+                "raw empty-calldata context fixture tx is state-agnostic before execution"
+            );
+            assert_eq!(tx.from, decode_hex_bytes(sender));
+            assert_eq!(tx.to, Some(decode_hex_bytes(to)));
+            assert_eq!(tx.value, value);
+            assert_eq!(tx.gas_limit, gas_limit as u64);
+            assert_eq!(tx.gas_price, gas_price as u64);
+            assert_eq!(tx.nonce, nonce);
+            assert_eq!(
+                tx.data,
+                decode_hex_bytes(json_str(&case["data"], "case.data"))
+            );
+            assert_eq!(
+                tx.data.len(),
+                case["dataLen"].as_u64().expect("case.dataLen") as usize
+            );
+            assert_eq!(
+                Sha256::digest(&tx.data).to_vec(),
+                decode_hex_bytes(json_str(&case["dataSha256"], "case.dataSha256"))
+            );
+
+            let mut adapter = NovoVmAdapter::new(ChainConfig {
+                chain_type: ChainType::EVM,
+                chain_id: 1,
+                name: format!("official-context-{label}"),
+                enabled: true,
+                custom_config: None,
+            });
+            adapter.initialize().expect("init");
+            assert!(
+                adapter
+                    .verify_transaction(&tx)
+                    .expect("verify official context raw tx"),
+                "official context txbytes must verify through raw EVM path"
+            );
+            for historical_nonce in 0..pre_sender_nonce {
+                let mut historical_tx = tx.clone();
+                historical_tx.nonce = historical_nonce;
+                adapter
+                    .route_transaction_through_unified_account(&historical_tx)
+                    .expect("prime official context pre-state nonce");
+            }
+
+            let charged_fee = pre_sender_balance
+                .saturating_sub(post_sender_balance)
+                .saturating_sub(value);
+            assert_eq!(charged_fee % gas_price, 0);
+            let gas_used = charged_fee / gas_price;
+            let expected_gas_used = case["gasUsed"].as_u64().expect("case.gasUsed");
+            assert_eq!(gas_used, expected_gas_used as u128);
+
+            let mut runtime_state = StateIR::new();
+            runtime_state.set_account(
+                tx.from.clone(),
+                AccountState {
+                    balance: pre_sender_balance,
+                    nonce: pre_sender_nonce,
+                    code_hash: None,
+                    storage_root: vec![0u8; 32],
+                },
+            );
+            runtime_state.set_account(
+                tx.to.clone().expect("call target"),
+                AccountState {
+                    balance: pre_to_balance,
+                    nonce: pre_to_nonce,
+                    code_hash: Some(vec![0xd3; 32]),
+                    storage_root: vec![0u8; 32],
+                },
+            );
+            assert_eq!(
+                NovoVmAdapter::effective_execution_tx_v1(&tx, &runtime_state).tx_type,
+                TxType::ContractCall,
+                "target code in pre-state must promote context fixture tx to contract call execution"
+            );
+
+            let mut artifact = sample_aoem_artifact(&tx, true, [0x8e; 32], None);
+            artifact.gas_used = expected_gas_used;
+            artifact.cumulative_gas_used = expected_gas_used;
+            artifact.effective_gas_price = Some(gas_price as u64);
+            artifact.receipt_type = None;
+            artifact.event_logs.clear();
+            artifact.log_bloom = vec![0u8; AOEM_LOG_BLOOM_BYTES_V1];
+            artifact.anchor = None;
+
+            let outcome = adapter
+                .execute_transaction_with_observed_metadata_v1(
+                    &tx,
+                    &mut runtime_state,
+                    Some(&artifact),
+                )
+                .expect("execute official context fixture projection");
+
+            assert!(outcome.artifact.status_ok);
+            assert_eq!(outcome.artifact.gas_used, expected_gas_used);
+            assert!(outcome.artifact.event_logs.is_empty());
+            assert!(outcome.artifact.log_bloom.iter().all(|byte| *byte == 0));
+            assert_eq!(
+                runtime_state.get_storage(&tx.from, b"aoem:last_log_bloom"),
+                Some(&vec![0u8; AOEM_LOG_BLOOM_BYTES_V1])
+            );
+            assert_eq!(
+                runtime_state.get_account(&tx.from).map(|acc| acc.balance),
+                Some(post_sender_balance)
+            );
+            assert_eq!(
+                runtime_state
+                    .get_account(tx.to.as_ref().expect("call target"))
+                    .map(|acc| acc.balance),
+                Some(post_to_balance)
+            );
+            assert_eq!(
+                runtime_state
+                    .get_account(tx.to.as_ref().expect("call target"))
+                    .map(|acc| acc.nonce),
+                Some(post_to_nonce)
+            );
+
+            let pre_target_storage = case["preTargetStorageFacts"]
+                .as_object()
+                .expect("case.preTargetStorageFacts");
+            let post_target_storage = case["postTargetStorageFacts"]
+                .as_object()
+                .expect("case.postTargetStorageFacts");
+            assert!(pre_target_storage.is_empty());
+            match post_target_storage.len() {
+                1 => one_slot_storage_cases += 1,
+                2 => two_slot_storage_cases += 1,
+                other => panic!("unexpected context post storage slots {other}"),
+            }
+
+            match mode {
+                "delegatecallBasicProjection" => {
+                    delegatecall_cases += 1;
+                    assert_eq!(label, "delegatecallBasic");
+                    assert_eq!(
+                        json_str(&case["postTargetStorageFacts"]["0x00"], "basic slot0"),
+                        "0x01"
+                    );
+                    assert_eq!(
+                        json_str(&case["postTargetStorageFacts"]["0x01"], "basic slot1"),
+                        "0x01"
+                    );
+                }
+                "delegatecallSenderContextProjection" => {
+                    delegatecall_cases += 1;
+                    assert_eq!(label, "delegatecallSenderCheck");
+                    assert_eq!(
+                        json_str(&case["postTargetStorageFacts"]["0x01"], "sender context"),
+                        sender
+                    );
+                }
+                "delegatecallValueContextProjection" => {
+                    delegatecall_cases += 1;
+                    assert_eq!(label, "delegatecallValueCheck");
+                    assert_eq!(value, 23);
+                    assert_eq!(
+                        json_str(&case["postTargetStorageFacts"]["0x01"], "value context"),
+                        "0x17"
+                    );
+                }
+                "delegatecallOogInCallProjection" => {
+                    delegatecall_cases += 1;
+                    assert_eq!(label, "delegatecallOOGinCall");
+                    assert_eq!(
+                        json_str(
+                            &case["postTargetStorageFacts"]["0x00"],
+                            "delegatecall OOG slot0"
+                        ),
+                        "0x01"
+                    );
+                }
+                "callcodeOutputContextProjection" => {
+                    callcode_cases += 1;
+                    assert_eq!(label, "callcodeOutput3");
+                    assert_eq!(value, 100_000);
+                    assert_eq!(
+                        json_str(&case["postTargetStorageFacts"]["0x00"], "callcode output"),
+                        "0x5e20a0453cecd065ea59c37ac63e079ee08998b6045136a8ce6635c7912ec0b6"
+                    );
+                }
+                "callcodeHighValueOogProjection" => {
+                    callcode_cases += 1;
+                    assert_eq!(label, "callcodeWithHighValueAndGasOOG");
+                    assert_eq!(value, 100_000);
+                    assert_eq!(
+                        json_str(
+                            &case["postTargetStorageFacts"]["0x00"],
+                            "callcode OOG slot0"
+                        ),
+                        "0x01"
+                    );
+                    assert_eq!(
+                        json_str(
+                            &case["postTargetStorageFacts"]["0x01"],
+                            "callcode OOG slot1"
+                        ),
+                        "0x01"
+                    );
+                }
+                _ => panic!("unexpected official context mode {mode}"),
+            }
+            assert!(
+                gas_by_label
+                    .insert(label.to_string(), expected_gas_used)
+                    .is_none(),
+                "duplicate official context label {label}"
+            );
+
+            let bal = outcome
+                .observed_block_access_list
+                .block_access_list
+                .expect("official context observed BAL");
+            let sender_entry = bal
+                .0
+                .iter()
+                .find(|entry| entry.address.as_slice() == tx.from.as_slice())
+                .expect("sender BAL entry");
+            assert_eq!(
+                sender_entry.balance_changes[0].post_balance,
+                NovoVmAdapter::u128_to_be32_v1(post_sender_balance)
+            );
+            if value > 0 {
+                let to_entry = bal
+                    .0
+                    .iter()
+                    .find(|entry| {
+                        entry.address.as_slice() == tx.to.as_ref().expect("call target").as_slice()
+                    })
+                    .expect("value-transfer target BAL entry");
+                assert_eq!(
+                    to_entry.balance_changes[0].post_balance,
+                    NovoVmAdapter::u128_to_be32_v1(post_to_balance)
+                );
+            }
+        }
+
+        assert_eq!(delegatecall_cases, 4);
+        assert_eq!(callcode_cases, 2);
+        assert_eq!(zero_value_cases, 3);
+        assert_eq!(value_transfer_cases, 3);
+        assert_eq!(one_slot_storage_cases, 2);
+        assert_eq!(two_slot_storage_cases, 4);
+        assert_eq!(
+            txbytes_seen.len(),
+            4,
+            "selected official context subset reuses one zero-value txbytes across several delegatecall pre-states"
+        );
+
+        let gas = |label: &str| {
+            *gas_by_label
+                .get(label)
+                .unwrap_or_else(|| panic!("missing official context gas label {label}"))
+        };
+        assert_eq!(gas("delegatecallBasic"), 67_851);
+        assert_eq!(gas("delegatecallSenderCheck"), 67_832);
+        assert_eq!(gas("delegatecallValueCheck"), 67_832);
+        assert_eq!(gas("delegatecallOOGinCall"), 55_727);
+        assert_eq!(gas("callcodeOutput3"), 45_853);
+        assert_eq!(gas("callcodeWithHighValueAndGasOOG"), 67_869);
+        assert!(gas("callcodeWithHighValueAndGasOOG") > gas("delegatecallBasic"));
+        assert!(gas("delegatecallBasic") > gas("delegatecallSenderCheck"));
+        assert_eq!(
+            gas("delegatecallSenderCheck"),
+            gas("delegatecallValueCheck")
+        );
+        assert!(gas("delegatecallValueCheck") > gas("delegatecallOOGinCall"));
+        assert!(gas("delegatecallOOGinCall") > gas("callcodeOutput3"));
+    }
+
+    #[test]
     fn official_state_fixture_log_receipt_grouped_projection_v1() {
         let fixture = official_log_receipt_state_fixture_v1();
         assert_eq!(fixture["source"]["repo"].as_str(), Some("ethereum/tests"));
@@ -8220,6 +8590,7 @@ mod tests {
         official_state_fixture_call_output_grouped_projection_v1();
         official_state_fixture_call_high_value_grouped_projection_v1();
         official_state_fixture_call_depth_oog_grouped_projection_v1();
+        official_state_fixture_delegatecall_callcode_context_grouped_projection_v1();
         official_state_fixture_log_receipt_grouped_projection_v1();
         official_state_fixture_log4_oog_receipt_grouped_projection_v1();
         official_state_fixture_return_data_grouped_projection_v1();
