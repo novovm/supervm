@@ -1846,6 +1846,22 @@ fn eth_peer_endpoints_include_new_entries_v1(
         .any(|endpoint| !current_keys.contains(&eth_peer_endpoint_key_v1(endpoint)))
 }
 
+fn eth_merge_peer_endpoint_refresh_v1(
+    current: &[PluginPeerEndpoint],
+    refreshed: &[PluginPeerEndpoint],
+    limit: usize,
+) -> Vec<PluginPeerEndpoint> {
+    let mut out = Vec::<PluginPeerEndpoint>::new();
+    let mut seen = HashSet::<String>::new();
+    for endpoint in refreshed.iter().chain(current.iter()) {
+        eth_push_peer_endpoint_v1(&mut out, &mut seen, endpoint.clone(), limit);
+        if out.len() >= limit {
+            break;
+        }
+    }
+    out
+}
+
 fn eth_rlpx_peer_refresh_plan_v1(
     candidate_pool_exhausted: bool,
     progress_stalled: bool,
@@ -3558,14 +3574,19 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
             last_peer_refresh_tick = tick;
             let refreshed_endpoints =
                 eth_rlpx_sync_peer_endpoints_v1(chain_id, next_candidate_limit, verbose);
-            if refreshed_endpoints.len() > peer_endpoints.len()
+            let merged_endpoints = eth_merge_peer_endpoint_refresh_v1(
+                peer_endpoints.as_slice(),
+                refreshed_endpoints.as_slice(),
+                next_candidate_limit,
+            );
+            if merged_endpoints.len() > peer_endpoints.len()
                 || eth_peer_endpoints_include_new_entries_v1(
                     peer_endpoints.as_slice(),
                     refreshed_endpoints.as_slice(),
                 )
             {
                 candidate_limit = next_candidate_limit;
-                peer_endpoints = refreshed_endpoints;
+                peer_endpoints = merged_endpoints;
                 peers = peer_endpoints
                     .iter()
                     .map(|endpoint| NodeId(endpoint.node_hint.max(1)))
@@ -3809,6 +3830,37 @@ mod mainline_evm_cli_tests {
         assert!(eth_peer_endpoints_include_new_entries_v1(
             &current, &changed
         ));
+    }
+
+    #[test]
+    fn eth_peer_endpoint_refresh_merge_does_not_shrink_pool_v1() {
+        let current = vec![
+            PluginPeerEndpoint {
+                endpoint: "enode://1111111111111111@18.138.108.67:30303".to_string(),
+                node_hint: 0x1111_1111_1111_1111,
+                addr_hint: "18.138.108.67:30303".to_string(),
+            },
+            PluginPeerEndpoint {
+                endpoint: "enode://2222222222222222@3.209.45.79:30303".to_string(),
+                node_hint: 0x2222_2222_2222_2222,
+                addr_hint: "3.209.45.79:30303".to_string(),
+            },
+        ];
+        let refreshed = vec![PluginPeerEndpoint {
+            endpoint: "enode://3333333333333333@65.108.70.101:30303".to_string(),
+            node_hint: 0x3333_3333_3333_3333,
+            addr_hint: "65.108.70.101:30303".to_string(),
+        }];
+
+        let merged = eth_merge_peer_endpoint_refresh_v1(&current, &refreshed, 4);
+        assert_eq!(merged.len(), 3);
+        assert_eq!(merged[0].node_hint, 0x3333_3333_3333_3333);
+        assert!(merged
+            .iter()
+            .any(|endpoint| endpoint.node_hint == 0x1111_1111_1111_1111));
+        assert!(merged
+            .iter()
+            .any(|endpoint| endpoint.node_hint == 0x2222_2222_2222_2222));
     }
 
     #[test]
