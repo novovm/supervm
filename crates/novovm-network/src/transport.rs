@@ -7,23 +7,27 @@ use crate::{
     derive_eth_fullnode_head_view_with_native_preference_v1,
     derive_eth_fullnode_sync_view_with_native_preference_v1,
     eth_rlpx_build_account_range_payload_v1, eth_rlpx_build_block_access_lists_payload_v1,
-    eth_rlpx_build_disconnect_payload_v1, eth_rlpx_build_get_account_range_payload_v1,
-    eth_rlpx_build_get_block_bodies_payload_v1, eth_rlpx_build_get_block_headers_payload_v1,
-    eth_rlpx_build_get_pooled_transactions_payload_v1, eth_rlpx_build_get_receipts_payload_v1,
-    eth_rlpx_build_hello_payload_v1, eth_rlpx_build_pooled_transactions_payload_v1,
-    eth_rlpx_build_receipts_payload_v1, eth_rlpx_build_status_payload_v1,
-    eth_rlpx_build_transactions_payload_v1, eth_rlpx_default_client_name_v1,
-    eth_rlpx_default_listen_port_v1, eth_rlpx_disconnect_reason_name_v1,
-    eth_rlpx_handshake_initiator_v1, eth_rlpx_hello_profile_v1,
+    eth_rlpx_build_byte_codes_payload_v1, eth_rlpx_build_disconnect_payload_v1,
+    eth_rlpx_build_get_account_range_payload_v1, eth_rlpx_build_get_block_bodies_payload_v1,
+    eth_rlpx_build_get_block_headers_payload_v1, eth_rlpx_build_get_pooled_transactions_payload_v1,
+    eth_rlpx_build_get_receipts_payload_v1, eth_rlpx_build_hello_payload_v1,
+    eth_rlpx_build_pooled_transactions_payload_v1, eth_rlpx_build_receipts_payload_v1,
+    eth_rlpx_build_status_payload_v1, eth_rlpx_build_storage_ranges_payload_v1,
+    eth_rlpx_build_transactions_payload_v1, eth_rlpx_build_trie_nodes_payload_v1,
+    eth_rlpx_default_client_name_v1, eth_rlpx_default_listen_port_v1,
+    eth_rlpx_disconnect_reason_name_v1, eth_rlpx_handshake_initiator_v1, eth_rlpx_hello_profile_v1,
     eth_rlpx_parse_account_range_payload_v1, eth_rlpx_parse_block_access_lists_payload_v1,
     eth_rlpx_parse_block_bodies_payload_v1, eth_rlpx_parse_block_headers_payload_v1,
-    eth_rlpx_parse_disconnect_reason_v1, eth_rlpx_parse_get_account_range_payload_v1,
-    eth_rlpx_parse_get_block_access_lists_payload_v1,
-    eth_rlpx_parse_get_pooled_transactions_payload_v1, eth_rlpx_parse_get_receipts_payload_v1,
-    eth_rlpx_parse_hello_payload_v1, eth_rlpx_parse_new_block_hashes_payload_v1,
-    eth_rlpx_parse_new_block_payload_v1, eth_rlpx_parse_new_pooled_transaction_hashes_payload_v1,
+    eth_rlpx_parse_byte_codes_payload_v1, eth_rlpx_parse_disconnect_reason_v1,
+    eth_rlpx_parse_get_account_range_payload_v1, eth_rlpx_parse_get_block_access_lists_payload_v1,
+    eth_rlpx_parse_get_byte_codes_payload_v1, eth_rlpx_parse_get_pooled_transactions_payload_v1,
+    eth_rlpx_parse_get_receipts_payload_v1, eth_rlpx_parse_get_storage_ranges_payload_v1,
+    eth_rlpx_parse_get_trie_nodes_payload_v1, eth_rlpx_parse_hello_payload_v1,
+    eth_rlpx_parse_new_block_hashes_payload_v1, eth_rlpx_parse_new_block_payload_v1,
+    eth_rlpx_parse_new_pooled_transaction_hashes_payload_v1,
     eth_rlpx_parse_pooled_transactions_payload_v1, eth_rlpx_parse_receipts_payload_v1,
-    eth_rlpx_parse_status_payload_v1, eth_rlpx_parse_transactions_payload_v1,
+    eth_rlpx_parse_status_payload_v1, eth_rlpx_parse_storage_ranges_payload_v1,
+    eth_rlpx_parse_transactions_payload_v1, eth_rlpx_parse_trie_nodes_payload_v1,
     eth_rlpx_read_wire_frame_v1, eth_rlpx_receipts_root_from_raw_receipts_v1,
     eth_rlpx_select_shared_eth_version_v1, eth_rlpx_select_shared_snap_version_v1,
     eth_rlpx_snap_base_offset_v1, eth_rlpx_validate_block_empty_body_roots_v1,
@@ -95,8 +99,11 @@ use crate::{
     ETH_RLPX_ETH_NEW_POOLED_TRANSACTION_HASHES_MSG, ETH_RLPX_ETH_POOLED_TRANSACTIONS_MSG,
     ETH_RLPX_ETH_RECEIPTS_MSG, ETH_RLPX_ETH_STATUS_MSG, ETH_RLPX_ETH_TRANSACTIONS_MSG,
     ETH_RLPX_P2P_DISCONNECT_MSG, ETH_RLPX_P2P_HELLO_MSG, ETH_RLPX_P2P_PING_MSG,
-    ETH_RLPX_P2P_PONG_MSG, ETH_RLPX_SNAP_ACCOUNT_RANGE_MSG,
+    ETH_RLPX_P2P_PONG_MSG, ETH_RLPX_SNAP_ACCOUNT_RANGE_MSG, ETH_RLPX_SNAP_BYTE_CODES_MSG,
     ETH_RLPX_SNAP_DEFAULT_ACCOUNT_RANGE_BYTES, ETH_RLPX_SNAP_GET_ACCOUNT_RANGE_MSG,
+    ETH_RLPX_SNAP_GET_BYTE_CODES_MSG, ETH_RLPX_SNAP_GET_STORAGE_RANGES_MSG,
+    ETH_RLPX_SNAP_GET_TRIE_NODES_MSG, ETH_RLPX_SNAP_STORAGE_RANGES_MSG,
+    ETH_RLPX_SNAP_TRIE_NODES_MSG,
 };
 use dashmap::DashMap;
 use novovm_protocol::{
@@ -1719,6 +1726,75 @@ fn drive_eth_fullnode_native_rlpx_peer_session_once_v1(
                             .map_err(NetworkError::Io)?;
                             continue;
                         }
+                        if code == snap_offset + ETH_RLPX_SNAP_GET_STORAGE_RANGES_MSG {
+                            let request =
+                                eth_rlpx_parse_get_storage_ranges_payload_v1(payload.as_slice())
+                                    .map_err(|err| {
+                                        observe_network_runtime_eth_peer_decode_failure_v1(
+                                            chain_id,
+                                            peer.0,
+                                            "snap_get_storage_ranges_payload_decode_failed",
+                                        );
+                                        NetworkError::Decode(err)
+                                    })?;
+                            let response_payload = eth_rlpx_build_storage_ranges_payload_v1(
+                                request.request_id,
+                                &[],
+                                &[],
+                            );
+                            eth_rlpx_write_wire_frame_v1(
+                                &mut session.stream,
+                                &mut session.frame_session,
+                                snap_offset + ETH_RLPX_SNAP_STORAGE_RANGES_MSG,
+                                response_payload.as_slice(),
+                            )
+                            .map_err(NetworkError::Io)?;
+                            continue;
+                        }
+                        if code == snap_offset + ETH_RLPX_SNAP_GET_BYTE_CODES_MSG {
+                            let request =
+                                eth_rlpx_parse_get_byte_codes_payload_v1(payload.as_slice())
+                                    .map_err(|err| {
+                                        observe_network_runtime_eth_peer_decode_failure_v1(
+                                            chain_id,
+                                            peer.0,
+                                            "snap_get_byte_codes_payload_decode_failed",
+                                        );
+                                        NetworkError::Decode(err)
+                                    })?;
+                            let response_payload =
+                                eth_rlpx_build_byte_codes_payload_v1(request.request_id, &[]);
+                            eth_rlpx_write_wire_frame_v1(
+                                &mut session.stream,
+                                &mut session.frame_session,
+                                snap_offset + ETH_RLPX_SNAP_BYTE_CODES_MSG,
+                                response_payload.as_slice(),
+                            )
+                            .map_err(NetworkError::Io)?;
+                            continue;
+                        }
+                        if code == snap_offset + ETH_RLPX_SNAP_GET_TRIE_NODES_MSG {
+                            let request =
+                                eth_rlpx_parse_get_trie_nodes_payload_v1(payload.as_slice())
+                                    .map_err(|err| {
+                                        observe_network_runtime_eth_peer_decode_failure_v1(
+                                            chain_id,
+                                            peer.0,
+                                            "snap_get_trie_nodes_payload_decode_failed",
+                                        );
+                                        NetworkError::Decode(err)
+                                    })?;
+                            let response_payload =
+                                eth_rlpx_build_trie_nodes_payload_v1(request.request_id, &[]);
+                            eth_rlpx_write_wire_frame_v1(
+                                &mut session.stream,
+                                &mut session.frame_session,
+                                snap_offset + ETH_RLPX_SNAP_TRIE_NODES_MSG,
+                                response_payload.as_slice(),
+                            )
+                            .map_err(NetworkError::Io)?;
+                            continue;
+                        }
                         if code == snap_offset + ETH_RLPX_SNAP_ACCOUNT_RANGE_MSG {
                             let response =
                                 eth_rlpx_parse_account_range_payload_v1(payload.as_slice())
@@ -1732,6 +1808,77 @@ fn drive_eth_fullnode_native_rlpx_peer_session_once_v1(
                                     })?;
                             ingest_real_rlpx_snap_account_range_v1(
                                 chain_id, peer.0, session, &response,
+                            );
+                            continue;
+                        }
+                        if code == snap_offset + ETH_RLPX_SNAP_STORAGE_RANGES_MSG {
+                            let response =
+                                eth_rlpx_parse_storage_ranges_payload_v1(payload.as_slice())
+                                    .map_err(|err| {
+                                        observe_network_runtime_eth_peer_decode_failure_v1(
+                                            chain_id,
+                                            peer.0,
+                                            "snap_storage_ranges_payload_decode_failed",
+                                        );
+                                        NetworkError::Decode(err)
+                                    })?;
+                            observe_eth_native_snap_response(chain_id);
+                            eprintln!(
+                                "network_info: rlpx stage snap_storage_ranges_received chain_id={} peer={} endpoint={} negotiated_eth={} negotiated_snap={:?} request_id={} slotsets={} proof_nodes={}",
+                                chain_id,
+                                peer.0,
+                                session.endpoint.addr_hint,
+                                session._negotiated_eth_version,
+                                session._negotiated_snap_version,
+                                response.request_id,
+                                response.slots.len(),
+                                response.proof.len(),
+                            );
+                            continue;
+                        }
+                        if code == snap_offset + ETH_RLPX_SNAP_BYTE_CODES_MSG {
+                            let response = eth_rlpx_parse_byte_codes_payload_v1(payload.as_slice())
+                                .map_err(|err| {
+                                    observe_network_runtime_eth_peer_decode_failure_v1(
+                                        chain_id,
+                                        peer.0,
+                                        "snap_byte_codes_payload_decode_failed",
+                                    );
+                                    NetworkError::Decode(err)
+                                })?;
+                            observe_eth_native_snap_response(chain_id);
+                            eprintln!(
+                                "network_info: rlpx stage snap_byte_codes_received chain_id={} peer={} endpoint={} negotiated_eth={} negotiated_snap={:?} request_id={} codes={}",
+                                chain_id,
+                                peer.0,
+                                session.endpoint.addr_hint,
+                                session._negotiated_eth_version,
+                                session._negotiated_snap_version,
+                                response.request_id,
+                                response.codes.len(),
+                            );
+                            continue;
+                        }
+                        if code == snap_offset + ETH_RLPX_SNAP_TRIE_NODES_MSG {
+                            let response = eth_rlpx_parse_trie_nodes_payload_v1(payload.as_slice())
+                                .map_err(|err| {
+                                    observe_network_runtime_eth_peer_decode_failure_v1(
+                                        chain_id,
+                                        peer.0,
+                                        "snap_trie_nodes_payload_decode_failed",
+                                    );
+                                    NetworkError::Decode(err)
+                                })?;
+                            observe_eth_native_snap_response(chain_id);
+                            eprintln!(
+                                "network_info: rlpx stage snap_trie_nodes_received chain_id={} peer={} endpoint={} negotiated_eth={} negotiated_snap={:?} request_id={} nodes={}",
+                                chain_id,
+                                peer.0,
+                                session.endpoint.addr_hint,
+                                session._negotiated_eth_version,
+                                session._negotiated_snap_version,
+                                response.request_id,
+                                response.nodes.len(),
                             );
                             continue;
                         }
@@ -9320,6 +9467,265 @@ mod tests {
         let evidence = snapshot_eth_native_sync_evidence(chain_id);
         assert!(evidence.snap_pull_seen);
         assert!(evidence.snap_response_seen);
+        let sessions = snapshot_network_runtime_eth_peer_sessions(chain_id);
+        assert_eq!(
+            sessions[0].negotiated.snap_version,
+            Some(crate::SnapWireVersion::V1)
+        );
+
+        server.join().expect("server join");
+    }
+
+    #[test]
+    fn evm_protocol_observable_equivalence_network_rlpx_snap_service_sidecars_gate_v3() {
+        let chain_id = 9_941_u64;
+        let local = NodeId(1_390);
+        let remote = NodeId(1_391);
+        clear_network_runtime_native_snapshots_for_chain_v1(chain_id);
+        set_network_runtime_sync_status(
+            chain_id,
+            NetworkRuntimeSyncStatus {
+                peer_count: 1,
+                starting_block: 21_000,
+                current_block: 21_000,
+                highest_block: 21_000,
+            },
+        );
+
+        let responder_signing = k256::ecdsa::SigningKey::random(&mut rand::rngs::OsRng);
+        let responder_nodekey: [u8; 32] = responder_signing.to_bytes().into();
+        let responder_pub = crate::eth_rlpx_pubkey_from_nodekey_bytes_v1(&responder_nodekey)
+            .expect("derive responder pubkey");
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind rlpx listener");
+        let listen_addr = listener.local_addr().expect("rlpx listener addr");
+        let endpoint = PluginPeerEndpoint {
+            endpoint: format!(
+                "enode://{}@{}",
+                responder_pub
+                    .iter()
+                    .map(|b| format!("{b:02x}"))
+                    .collect::<String>(),
+                listen_addr
+            ),
+            node_hint: remote.0,
+            addr_hint: listen_addr.to_string(),
+        };
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+
+        let server = thread::spawn(move || {
+            let (mut accepted, _) = listener.accept().expect("accept rlpx");
+            accepted
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .expect("set server read timeout");
+            accepted
+                .set_write_timeout(Some(Duration::from_secs(5)))
+                .expect("set server write timeout");
+            let mut responder = crate::eth_rlpx_handshake_responder_with_nodekey_v1(
+                &responder_nodekey,
+                &mut accepted,
+            )
+            .expect("responder handshake");
+            let (hello_code, hello_payload) =
+                crate::eth_rlpx_read_wire_frame_v1(&mut accepted, &mut responder.session)
+                    .expect("read initiator hello");
+            assert_eq!(hello_code, crate::ETH_RLPX_P2P_HELLO_MSG);
+            let initiator_hello = crate::eth_rlpx_parse_hello_payload_v1(hello_payload.as_slice())
+                .expect("parse initiator hello");
+            let responder_hello = crate::eth_rlpx_build_hello_payload_v1(
+                &responder.local_static_pub,
+                crate::default_eth_rlpx_capabilities_v1().as_slice(),
+                "SuperVM/snap-sidecars-gate",
+                listen_addr.port().into(),
+            );
+            crate::eth_rlpx_write_wire_frame_v1(
+                &mut accepted,
+                &mut responder.session,
+                crate::ETH_RLPX_P2P_HELLO_MSG,
+                responder_hello.as_slice(),
+            )
+            .expect("write responder hello");
+            if initiator_hello.protocol_version >= 5 {
+                responder.session.set_snappy(true);
+            }
+            let status = crate::EthRlpxStatusV1 {
+                protocol_version: 70,
+                network_id: chain_id,
+                genesis_hash: crate::eth_chain_config_genesis_hash_v1(chain_id),
+                fork_id: crate::build_eth_fork_id_from_chain_config_v1(
+                    &crate::resolve_eth_chain_config_v1(chain_id),
+                    21_000,
+                    0,
+                ),
+                earliest_block: 1,
+                latest_block: 21_000,
+                latest_block_hash: [0x43; 32],
+            };
+            let status_payload = crate::eth_rlpx_build_status_payload_v1(status);
+            crate::eth_rlpx_write_wire_frame_v1(
+                &mut accepted,
+                &mut responder.session,
+                crate::ETH_RLPX_BASE_PROTOCOL_OFFSET + crate::ETH_RLPX_ETH_STATUS_MSG,
+                status_payload.as_slice(),
+            )
+            .expect("write responder status");
+            let (peer_status_code, peer_status_payload) =
+                crate::eth_rlpx_read_wire_frame_v1(&mut accepted, &mut responder.session)
+                    .expect("read peer status");
+            assert_eq!(
+                peer_status_code,
+                crate::ETH_RLPX_BASE_PROTOCOL_OFFSET + crate::ETH_RLPX_ETH_STATUS_MSG
+            );
+            let peer_status =
+                crate::eth_rlpx_parse_status_payload_v1(peer_status_payload.as_slice())
+                    .expect("parse peer status");
+            assert_eq!(peer_status.network_id, chain_id);
+            assert_eq!(peer_status.protocol_version, 70);
+            let snap_offset =
+                crate::eth_rlpx_snap_base_offset_v1(peer_status.protocol_version as u8, Some(1))
+                    .expect("snap offset");
+
+            let storage_request = crate::eth_rlpx_build_get_storage_ranges_payload_v1(
+                11,
+                [0xa5; 32],
+                &[[0x01; 32]],
+                &[0x00],
+                &[0xff],
+                4096,
+            );
+            crate::eth_rlpx_write_wire_frame_v1(
+                &mut accepted,
+                &mut responder.session,
+                snap_offset + crate::ETH_RLPX_SNAP_GET_STORAGE_RANGES_MSG,
+                storage_request.as_slice(),
+            )
+            .expect("write get storage ranges");
+            loop {
+                let (code, payload) =
+                    crate::eth_rlpx_read_wire_frame_v1(&mut accepted, &mut responder.session)
+                        .expect("read storage ranges response");
+                if code == crate::ETH_RLPX_P2P_PING_MSG {
+                    crate::eth_rlpx_write_wire_frame_v1(
+                        &mut accepted,
+                        &mut responder.session,
+                        crate::ETH_RLPX_P2P_PONG_MSG,
+                        &[],
+                    )
+                    .expect("write pong");
+                    continue;
+                }
+                assert_eq!(code, snap_offset + crate::ETH_RLPX_SNAP_STORAGE_RANGES_MSG);
+                let response = crate::eth_rlpx_parse_storage_ranges_payload_v1(payload.as_slice())
+                    .expect("parse storage ranges response");
+                assert_eq!(response.request_id, 11);
+                assert!(response.slots.is_empty());
+                assert!(response.proof.is_empty());
+                break;
+            }
+
+            let byte_codes_request =
+                crate::eth_rlpx_build_get_byte_codes_payload_v1(12, &[[0x02; 32]], 4096);
+            crate::eth_rlpx_write_wire_frame_v1(
+                &mut accepted,
+                &mut responder.session,
+                snap_offset + crate::ETH_RLPX_SNAP_GET_BYTE_CODES_MSG,
+                byte_codes_request.as_slice(),
+            )
+            .expect("write get byte codes");
+            loop {
+                let (code, payload) =
+                    crate::eth_rlpx_read_wire_frame_v1(&mut accepted, &mut responder.session)
+                        .expect("read byte codes response");
+                if code == crate::ETH_RLPX_P2P_PING_MSG {
+                    crate::eth_rlpx_write_wire_frame_v1(
+                        &mut accepted,
+                        &mut responder.session,
+                        crate::ETH_RLPX_P2P_PONG_MSG,
+                        &[],
+                    )
+                    .expect("write pong");
+                    continue;
+                }
+                assert_eq!(code, snap_offset + crate::ETH_RLPX_SNAP_BYTE_CODES_MSG);
+                let response = crate::eth_rlpx_parse_byte_codes_payload_v1(payload.as_slice())
+                    .expect("parse byte codes response");
+                assert_eq!(response.request_id, 12);
+                assert!(response.codes.is_empty());
+                break;
+            }
+
+            let trie_nodes_request = crate::eth_rlpx_build_get_trie_nodes_payload_v1(
+                13,
+                [0xa5; 32],
+                &[vec![vec![0x01], vec![0x02]]],
+                4096,
+            );
+            crate::eth_rlpx_write_wire_frame_v1(
+                &mut accepted,
+                &mut responder.session,
+                snap_offset + crate::ETH_RLPX_SNAP_GET_TRIE_NODES_MSG,
+                trie_nodes_request.as_slice(),
+            )
+            .expect("write get trie nodes");
+            loop {
+                let (code, payload) =
+                    crate::eth_rlpx_read_wire_frame_v1(&mut accepted, &mut responder.session)
+                        .expect("read trie nodes response");
+                if code == crate::ETH_RLPX_P2P_PING_MSG {
+                    crate::eth_rlpx_write_wire_frame_v1(
+                        &mut accepted,
+                        &mut responder.session,
+                        crate::ETH_RLPX_P2P_PONG_MSG,
+                        &[],
+                    )
+                    .expect("write pong");
+                    continue;
+                }
+                assert_eq!(code, snap_offset + crate::ETH_RLPX_SNAP_TRIE_NODES_MSG);
+                let response = crate::eth_rlpx_parse_trie_nodes_payload_v1(payload.as_slice())
+                    .expect("parse trie nodes response");
+                assert_eq!(response.request_id, 13);
+                assert!(response.nodes.is_empty());
+                break;
+            }
+
+            done_tx.send(()).expect("signal snap sidecars gate");
+            thread::sleep(Duration::from_millis(50));
+        });
+
+        let mut budget = default_eth_fullnode_budget_hooks_v1();
+        budget.active_native_peer_soft_limit = 1;
+        budget.active_native_peer_hard_limit = 1;
+        budget.sync_request_interval_ms = u64::MAX;
+        budget.tx_broadcast_interval_ms = u64::MAX;
+        let worker = EthFullnodeNativePeerWorkerV1::new(EthFullnodeNativePeerWorkerConfigV1 {
+            chain_id,
+            local_node: local,
+            peers: vec![remote],
+            peer_endpoints: vec![endpoint],
+            recv_budget: 1,
+            sync_target_fanout: 1,
+            budget_hooks: budget,
+        });
+
+        let report0 = worker.drive_real_network_once().expect("connect tick");
+        assert_eq!(report0.connected_peers, 1);
+        let started = std::time::Instant::now();
+        let mut responded = false;
+        while started.elapsed() < Duration::from_secs(2) {
+            if done_rx.try_recv().is_ok() {
+                responded = true;
+                break;
+            }
+            let _ = worker
+                .drive_real_network_once()
+                .expect("snap sidecars tick");
+            thread::sleep(Duration::from_millis(5));
+        }
+        assert!(
+            responded,
+            "snap sidecar requests must receive protocol responses"
+        );
+
         let sessions = snapshot_network_runtime_eth_peer_sessions(chain_id);
         assert_eq!(
             sessions[0].negotiated.snap_version,

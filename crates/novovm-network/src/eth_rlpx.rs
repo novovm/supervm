@@ -61,6 +61,12 @@ pub const ETH_RLPX_ETH_71_PROTOCOL_LENGTH: u64 = 20;
 pub const ETH_RLPX_SNAP_1_PROTOCOL_LENGTH: u64 = 8;
 pub const ETH_RLPX_SNAP_GET_ACCOUNT_RANGE_MSG: u64 = 0x00;
 pub const ETH_RLPX_SNAP_ACCOUNT_RANGE_MSG: u64 = 0x01;
+pub const ETH_RLPX_SNAP_GET_STORAGE_RANGES_MSG: u64 = 0x02;
+pub const ETH_RLPX_SNAP_STORAGE_RANGES_MSG: u64 = 0x03;
+pub const ETH_RLPX_SNAP_GET_BYTE_CODES_MSG: u64 = 0x04;
+pub const ETH_RLPX_SNAP_BYTE_CODES_MSG: u64 = 0x05;
+pub const ETH_RLPX_SNAP_GET_TRIE_NODES_MSG: u64 = 0x06;
+pub const ETH_RLPX_SNAP_TRIE_NODES_MSG: u64 = 0x07;
 pub const ETH_RLPX_SNAP_DEFAULT_ACCOUNT_RANGE_BYTES: u64 = 384 * 1024;
 pub const ETH_RLPX_EMPTY_TRIE_ROOT_V1: [u8; 32] = [
     0x56, 0xe8, 0x1f, 0x17, 0x1b, 0xcc, 0x55, 0xa6, 0xff, 0x83, 0x45, 0xe6, 0x92, 0xc0, 0xf8, 0x6e,
@@ -472,6 +478,56 @@ pub struct EthRlpxAccountRangeResponseV1 {
     pub request_id: u64,
     pub accounts: Vec<EthRlpxSnapAccountDataV1>,
     pub proof: Vec<Vec<u8>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EthRlpxGetStorageRangesRequestV1 {
+    pub request_id: u64,
+    pub root: [u8; 32],
+    pub accounts: Vec<[u8; 32]>,
+    pub origin: Vec<u8>,
+    pub limit: Vec<u8>,
+    pub byte_limit: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EthRlpxSnapStorageDataV1 {
+    pub hash: [u8; 32],
+    pub body: Vec<u8>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EthRlpxStorageRangesResponseV1 {
+    pub request_id: u64,
+    pub slots: Vec<Vec<EthRlpxSnapStorageDataV1>>,
+    pub proof: Vec<Vec<u8>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EthRlpxGetByteCodesRequestV1 {
+    pub request_id: u64,
+    pub hashes: Vec<[u8; 32]>,
+    pub byte_limit: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EthRlpxByteCodesResponseV1 {
+    pub request_id: u64,
+    pub codes: Vec<Vec<u8>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EthRlpxGetTrieNodesRequestV1 {
+    pub request_id: u64,
+    pub root: [u8; 32],
+    pub paths: Vec<Vec<Vec<u8>>>,
+    pub byte_limit: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EthRlpxTrieNodesResponseV1 {
+    pub request_id: u64,
+    pub nodes: Vec<Vec<u8>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1339,6 +1395,68 @@ pub fn eth_rlpx_build_get_account_range_payload_v1(
     ])
 }
 
+pub fn eth_rlpx_build_get_storage_ranges_payload_v1(
+    request_id: u64,
+    root: [u8; 32],
+    accounts: &[[u8; 32]],
+    origin: &[u8],
+    limit: &[u8],
+    byte_limit: u64,
+) -> Vec<u8> {
+    let account_items = accounts
+        .iter()
+        .map(|account| eth_rlpx_encode_bytes_v1(account))
+        .collect::<Vec<_>>();
+    eth_rlpx_encode_list_v1(&[
+        eth_rlpx_encode_u64_v1(request_id),
+        eth_rlpx_encode_bytes_v1(&root),
+        eth_rlpx_encode_list_v1(&account_items),
+        eth_rlpx_encode_bytes_v1(origin),
+        eth_rlpx_encode_bytes_v1(limit),
+        eth_rlpx_encode_u64_v1(byte_limit),
+    ])
+}
+
+pub fn eth_rlpx_build_get_byte_codes_payload_v1(
+    request_id: u64,
+    hashes: &[[u8; 32]],
+    byte_limit: u64,
+) -> Vec<u8> {
+    let hash_items = hashes
+        .iter()
+        .map(|hash| eth_rlpx_encode_bytes_v1(hash))
+        .collect::<Vec<_>>();
+    eth_rlpx_encode_list_v1(&[
+        eth_rlpx_encode_u64_v1(request_id),
+        eth_rlpx_encode_list_v1(&hash_items),
+        eth_rlpx_encode_u64_v1(byte_limit),
+    ])
+}
+
+pub fn eth_rlpx_build_get_trie_nodes_payload_v1(
+    request_id: u64,
+    root: [u8; 32],
+    paths: &[Vec<Vec<u8>>],
+    byte_limit: u64,
+) -> Vec<u8> {
+    let path_items = paths
+        .iter()
+        .map(|pathset| {
+            let segments = pathset
+                .iter()
+                .map(|segment| eth_rlpx_encode_bytes_v1(segment))
+                .collect::<Vec<_>>();
+            eth_rlpx_encode_list_v1(&segments)
+        })
+        .collect::<Vec<_>>();
+    eth_rlpx_encode_list_v1(&[
+        eth_rlpx_encode_u64_v1(request_id),
+        eth_rlpx_encode_bytes_v1(&root),
+        eth_rlpx_encode_list_v1(&path_items),
+        eth_rlpx_encode_u64_v1(byte_limit),
+    ])
+}
+
 pub fn eth_rlpx_build_get_receipts_payload_v1(
     request_id: u64,
     first_block_receipt_index: u64,
@@ -1451,6 +1569,59 @@ pub fn eth_rlpx_build_account_range_payload_v1(
         eth_rlpx_encode_u64_v1(request_id),
         eth_rlpx_encode_list_v1(&account_items),
         eth_rlpx_encode_list_v1(&proof_items),
+    ])
+}
+
+pub fn eth_rlpx_build_storage_ranges_payload_v1(
+    request_id: u64,
+    slots: &[Vec<EthRlpxSnapStorageDataV1>],
+    proof: &[Vec<u8>],
+) -> Vec<u8> {
+    let slot_sets = slots
+        .iter()
+        .map(|slotset| {
+            let slot_items = slotset
+                .iter()
+                .map(|slot| {
+                    eth_rlpx_encode_list_v1(&[
+                        eth_rlpx_encode_bytes_v1(&slot.hash),
+                        eth_rlpx_encode_bytes_v1(&slot.body),
+                    ])
+                })
+                .collect::<Vec<_>>();
+            eth_rlpx_encode_list_v1(&slot_items)
+        })
+        .collect::<Vec<_>>();
+    let proof_items = proof
+        .iter()
+        .map(|node| eth_rlpx_encode_bytes_v1(node))
+        .collect::<Vec<_>>();
+    eth_rlpx_encode_list_v1(&[
+        eth_rlpx_encode_u64_v1(request_id),
+        eth_rlpx_encode_list_v1(&slot_sets),
+        eth_rlpx_encode_list_v1(&proof_items),
+    ])
+}
+
+pub fn eth_rlpx_build_byte_codes_payload_v1(request_id: u64, codes: &[Vec<u8>]) -> Vec<u8> {
+    let code_items = codes
+        .iter()
+        .map(|code| eth_rlpx_encode_bytes_v1(code))
+        .collect::<Vec<_>>();
+    eth_rlpx_encode_list_v1(&[
+        eth_rlpx_encode_u64_v1(request_id),
+        eth_rlpx_encode_list_v1(&code_items),
+    ])
+}
+
+pub fn eth_rlpx_build_trie_nodes_payload_v1(request_id: u64, nodes: &[Vec<u8>]) -> Vec<u8> {
+    let node_items = nodes
+        .iter()
+        .map(|node| eth_rlpx_encode_bytes_v1(node))
+        .collect::<Vec<_>>();
+    eth_rlpx_encode_list_v1(&[
+        eth_rlpx_encode_u64_v1(request_id),
+        eth_rlpx_encode_list_v1(&node_items),
     ])
 }
 
@@ -1651,6 +1822,26 @@ pub fn eth_rlpx_parse_get_block_access_lists_payload_v1(
     })
 }
 
+fn eth_rlpx_parse_hash_bytes_v1(bytes: &[u8], err_prefix: &str) -> Result<[u8; 32], String> {
+    if bytes.len() != 32 {
+        return Err(format!("{err_prefix}_len_invalid"));
+    }
+    let mut hash = [0u8; 32];
+    hash.copy_from_slice(bytes);
+    Ok(hash)
+}
+
+fn eth_rlpx_parse_hash_list_v1(payload: &[u8], err_prefix: &str) -> Result<Vec<[u8; 32]>, String> {
+    let mut hashes = Vec::new();
+    for item in eth_rlpx_parse_list_items_v1(payload)? {
+        let EthRlpxRlpItemV1::Bytes(hash_bytes) = item else {
+            return Err(format!("{err_prefix}_hash_not_bytes"));
+        };
+        hashes.push(eth_rlpx_parse_hash_bytes_v1(hash_bytes, err_prefix)?);
+    }
+    Ok(hashes)
+}
+
 pub fn eth_rlpx_parse_get_account_range_payload_v1(
     payload: &[u8],
 ) -> Result<EthRlpxGetAccountRangeRequestV1, String> {
@@ -1687,6 +1878,129 @@ pub fn eth_rlpx_parse_get_account_range_payload_v1(
         root: read_hash(1, "root")?,
         origin: read_hash(2, "origin")?,
         limit: read_hash(3, "limit")?,
+        byte_limit: eth_rlpx_decode_u64_bytes_v1(byte_limit_bytes)?,
+    })
+}
+
+pub fn eth_rlpx_parse_get_storage_ranges_payload_v1(
+    payload: &[u8],
+) -> Result<EthRlpxGetStorageRangesRequestV1, String> {
+    let (root, consumed) = eth_rlpx_parse_item_v1(payload)?;
+    if consumed != payload.len() {
+        return Err("rlpx_snap_get_storage_ranges_trailing".to_string());
+    }
+    let EthRlpxRlpItemV1::List(root_payload) = root else {
+        return Err("rlpx_snap_get_storage_ranges_not_list".to_string());
+    };
+    let fields = eth_rlpx_parse_list_items_v1(root_payload)?;
+    if fields.len() < 6 {
+        return Err("rlpx_snap_get_storage_ranges_fields_short".to_string());
+    }
+    let EthRlpxRlpItemV1::Bytes(request_id_bytes) = fields[0] else {
+        return Err("rlpx_snap_get_storage_ranges_request_id_not_bytes".to_string());
+    };
+    let EthRlpxRlpItemV1::Bytes(root_bytes) = fields[1] else {
+        return Err("rlpx_snap_get_storage_ranges_root_not_bytes".to_string());
+    };
+    let EthRlpxRlpItemV1::List(accounts_payload) = fields[2] else {
+        return Err("rlpx_snap_get_storage_ranges_accounts_not_list".to_string());
+    };
+    let EthRlpxRlpItemV1::Bytes(origin_bytes) = fields[3] else {
+        return Err("rlpx_snap_get_storage_ranges_origin_not_bytes".to_string());
+    };
+    let EthRlpxRlpItemV1::Bytes(limit_bytes) = fields[4] else {
+        return Err("rlpx_snap_get_storage_ranges_limit_not_bytes".to_string());
+    };
+    let EthRlpxRlpItemV1::Bytes(byte_limit_bytes) = fields[5] else {
+        return Err("rlpx_snap_get_storage_ranges_byte_limit_not_bytes".to_string());
+    };
+    Ok(EthRlpxGetStorageRangesRequestV1 {
+        request_id: eth_rlpx_decode_u64_bytes_v1(request_id_bytes)?,
+        root: eth_rlpx_parse_hash_bytes_v1(root_bytes, "rlpx_snap_get_storage_ranges_root")?,
+        accounts: eth_rlpx_parse_hash_list_v1(
+            accounts_payload,
+            "rlpx_snap_get_storage_ranges_account",
+        )?,
+        origin: origin_bytes.to_vec(),
+        limit: limit_bytes.to_vec(),
+        byte_limit: eth_rlpx_decode_u64_bytes_v1(byte_limit_bytes)?,
+    })
+}
+
+pub fn eth_rlpx_parse_get_byte_codes_payload_v1(
+    payload: &[u8],
+) -> Result<EthRlpxGetByteCodesRequestV1, String> {
+    let (root, consumed) = eth_rlpx_parse_item_v1(payload)?;
+    if consumed != payload.len() {
+        return Err("rlpx_snap_get_byte_codes_trailing".to_string());
+    }
+    let EthRlpxRlpItemV1::List(root_payload) = root else {
+        return Err("rlpx_snap_get_byte_codes_not_list".to_string());
+    };
+    let fields = eth_rlpx_parse_list_items_v1(root_payload)?;
+    if fields.len() < 3 {
+        return Err("rlpx_snap_get_byte_codes_fields_short".to_string());
+    }
+    let EthRlpxRlpItemV1::Bytes(request_id_bytes) = fields[0] else {
+        return Err("rlpx_snap_get_byte_codes_request_id_not_bytes".to_string());
+    };
+    let EthRlpxRlpItemV1::List(hashes_payload) = fields[1] else {
+        return Err("rlpx_snap_get_byte_codes_hashes_not_list".to_string());
+    };
+    let EthRlpxRlpItemV1::Bytes(byte_limit_bytes) = fields[2] else {
+        return Err("rlpx_snap_get_byte_codes_byte_limit_not_bytes".to_string());
+    };
+    Ok(EthRlpxGetByteCodesRequestV1 {
+        request_id: eth_rlpx_decode_u64_bytes_v1(request_id_bytes)?,
+        hashes: eth_rlpx_parse_hash_list_v1(hashes_payload, "rlpx_snap_get_byte_codes")?,
+        byte_limit: eth_rlpx_decode_u64_bytes_v1(byte_limit_bytes)?,
+    })
+}
+
+pub fn eth_rlpx_parse_get_trie_nodes_payload_v1(
+    payload: &[u8],
+) -> Result<EthRlpxGetTrieNodesRequestV1, String> {
+    let (root, consumed) = eth_rlpx_parse_item_v1(payload)?;
+    if consumed != payload.len() {
+        return Err("rlpx_snap_get_trie_nodes_trailing".to_string());
+    }
+    let EthRlpxRlpItemV1::List(root_payload) = root else {
+        return Err("rlpx_snap_get_trie_nodes_not_list".to_string());
+    };
+    let fields = eth_rlpx_parse_list_items_v1(root_payload)?;
+    if fields.len() < 4 {
+        return Err("rlpx_snap_get_trie_nodes_fields_short".to_string());
+    }
+    let EthRlpxRlpItemV1::Bytes(request_id_bytes) = fields[0] else {
+        return Err("rlpx_snap_get_trie_nodes_request_id_not_bytes".to_string());
+    };
+    let EthRlpxRlpItemV1::Bytes(root_bytes) = fields[1] else {
+        return Err("rlpx_snap_get_trie_nodes_root_not_bytes".to_string());
+    };
+    let EthRlpxRlpItemV1::List(paths_payload) = fields[2] else {
+        return Err("rlpx_snap_get_trie_nodes_paths_not_list".to_string());
+    };
+    let EthRlpxRlpItemV1::Bytes(byte_limit_bytes) = fields[3] else {
+        return Err("rlpx_snap_get_trie_nodes_byte_limit_not_bytes".to_string());
+    };
+    let mut paths = Vec::new();
+    for pathset in eth_rlpx_parse_list_items_v1(paths_payload)? {
+        let EthRlpxRlpItemV1::List(pathset_payload) = pathset else {
+            return Err("rlpx_snap_get_trie_nodes_pathset_not_list".to_string());
+        };
+        let mut segments = Vec::new();
+        for segment in eth_rlpx_parse_list_items_v1(pathset_payload)? {
+            let EthRlpxRlpItemV1::Bytes(segment_bytes) = segment else {
+                return Err("rlpx_snap_get_trie_nodes_path_segment_not_bytes".to_string());
+            };
+            segments.push(segment_bytes.to_vec());
+        }
+        paths.push(segments);
+    }
+    Ok(EthRlpxGetTrieNodesRequestV1 {
+        request_id: eth_rlpx_decode_u64_bytes_v1(request_id_bytes)?,
+        root: eth_rlpx_parse_hash_bytes_v1(root_bytes, "rlpx_snap_get_trie_nodes_root")?,
+        paths,
         byte_limit: eth_rlpx_decode_u64_bytes_v1(byte_limit_bytes)?,
     })
 }
@@ -2414,6 +2728,147 @@ pub fn eth_rlpx_parse_account_range_payload_v1(
         request_id: eth_rlpx_decode_u64_bytes_v1(request_id_bytes)?,
         accounts,
         proof,
+    })
+}
+
+pub fn eth_rlpx_parse_storage_ranges_payload_v1(
+    payload: &[u8],
+) -> Result<EthRlpxStorageRangesResponseV1, String> {
+    let (root, consumed) = eth_rlpx_parse_item_v1(payload)?;
+    if consumed != payload.len() {
+        return Err("rlpx_snap_storage_ranges_trailing".to_string());
+    }
+    let EthRlpxRlpItemV1::List(root_payload) = root else {
+        return Err("rlpx_snap_storage_ranges_not_list".to_string());
+    };
+    let fields = eth_rlpx_parse_list_items_v1(root_payload)?;
+    if fields.len() < 3 {
+        return Err("rlpx_snap_storage_ranges_fields_short".to_string());
+    }
+    let EthRlpxRlpItemV1::Bytes(request_id_bytes) = fields[0] else {
+        return Err("rlpx_snap_storage_ranges_request_id_not_bytes".to_string());
+    };
+    let EthRlpxRlpItemV1::List(slots_payload) = fields[1] else {
+        return Err("rlpx_snap_storage_ranges_slots_not_list".to_string());
+    };
+    let EthRlpxRlpItemV1::List(proof_payload) = fields[2] else {
+        return Err("rlpx_snap_storage_ranges_proof_not_list".to_string());
+    };
+    let mut slots = Vec::new();
+    for raw_slotset in eth_rlpx_split_list_raw_items_v1(slots_payload)? {
+        let (slotset_item, consumed) = eth_rlpx_parse_item_v1(raw_slotset)?;
+        if consumed != raw_slotset.len() {
+            return Err("rlpx_snap_storage_ranges_slotset_trailing".to_string());
+        }
+        let EthRlpxRlpItemV1::List(slotset_payload) = slotset_item else {
+            return Err("rlpx_snap_storage_ranges_slotset_not_list".to_string());
+        };
+        let mut slotset = Vec::new();
+        for raw_slot in eth_rlpx_split_list_raw_items_v1(slotset_payload)? {
+            let (slot_item, consumed) = eth_rlpx_parse_item_v1(raw_slot)?;
+            if consumed != raw_slot.len() {
+                return Err("rlpx_snap_storage_ranges_slot_trailing".to_string());
+            }
+            let EthRlpxRlpItemV1::List(slot_payload) = slot_item else {
+                return Err("rlpx_snap_storage_ranges_slot_not_list".to_string());
+            };
+            let slot_fields = eth_rlpx_parse_list_items_v1(slot_payload)?;
+            if slot_fields.len() < 2 {
+                return Err("rlpx_snap_storage_ranges_slot_fields_short".to_string());
+            }
+            let EthRlpxRlpItemV1::Bytes(hash_bytes) = slot_fields[0] else {
+                return Err("rlpx_snap_storage_ranges_slot_hash_not_bytes".to_string());
+            };
+            let EthRlpxRlpItemV1::Bytes(body_bytes) = slot_fields[1] else {
+                return Err("rlpx_snap_storage_ranges_slot_body_not_bytes".to_string());
+            };
+            slotset.push(EthRlpxSnapStorageDataV1 {
+                hash: eth_rlpx_parse_hash_bytes_v1(
+                    hash_bytes,
+                    "rlpx_snap_storage_ranges_slot_hash",
+                )?,
+                body: body_bytes.to_vec(),
+            });
+        }
+        slots.push(slotset);
+    }
+    let mut proof = Vec::new();
+    for item in eth_rlpx_parse_list_items_v1(proof_payload)? {
+        let EthRlpxRlpItemV1::Bytes(node_bytes) = item else {
+            return Err("rlpx_snap_storage_ranges_proof_node_not_bytes".to_string());
+        };
+        proof.push(node_bytes.to_vec());
+    }
+    Ok(EthRlpxStorageRangesResponseV1 {
+        request_id: eth_rlpx_decode_u64_bytes_v1(request_id_bytes)?,
+        slots,
+        proof,
+    })
+}
+
+pub fn eth_rlpx_parse_byte_codes_payload_v1(
+    payload: &[u8],
+) -> Result<EthRlpxByteCodesResponseV1, String> {
+    let (root, consumed) = eth_rlpx_parse_item_v1(payload)?;
+    if consumed != payload.len() {
+        return Err("rlpx_snap_byte_codes_trailing".to_string());
+    }
+    let EthRlpxRlpItemV1::List(root_payload) = root else {
+        return Err("rlpx_snap_byte_codes_not_list".to_string());
+    };
+    let fields = eth_rlpx_parse_list_items_v1(root_payload)?;
+    if fields.len() < 2 {
+        return Err("rlpx_snap_byte_codes_fields_short".to_string());
+    }
+    let EthRlpxRlpItemV1::Bytes(request_id_bytes) = fields[0] else {
+        return Err("rlpx_snap_byte_codes_request_id_not_bytes".to_string());
+    };
+    let EthRlpxRlpItemV1::List(codes_payload) = fields[1] else {
+        return Err("rlpx_snap_byte_codes_codes_not_list".to_string());
+    };
+    let mut codes = Vec::new();
+    for item in eth_rlpx_parse_list_items_v1(codes_payload)? {
+        let EthRlpxRlpItemV1::Bytes(code_bytes) = item else {
+            return Err("rlpx_snap_byte_codes_code_not_bytes".to_string());
+        };
+        codes.push(code_bytes.to_vec());
+    }
+    Ok(EthRlpxByteCodesResponseV1 {
+        request_id: eth_rlpx_decode_u64_bytes_v1(request_id_bytes)?,
+        codes,
+    })
+}
+
+pub fn eth_rlpx_parse_trie_nodes_payload_v1(
+    payload: &[u8],
+) -> Result<EthRlpxTrieNodesResponseV1, String> {
+    let (root, consumed) = eth_rlpx_parse_item_v1(payload)?;
+    if consumed != payload.len() {
+        return Err("rlpx_snap_trie_nodes_trailing".to_string());
+    }
+    let EthRlpxRlpItemV1::List(root_payload) = root else {
+        return Err("rlpx_snap_trie_nodes_not_list".to_string());
+    };
+    let fields = eth_rlpx_parse_list_items_v1(root_payload)?;
+    if fields.len() < 2 {
+        return Err("rlpx_snap_trie_nodes_fields_short".to_string());
+    }
+    let EthRlpxRlpItemV1::Bytes(request_id_bytes) = fields[0] else {
+        return Err("rlpx_snap_trie_nodes_request_id_not_bytes".to_string());
+    };
+    let EthRlpxRlpItemV1::List(nodes_payload) = fields[1] else {
+        return Err("rlpx_snap_trie_nodes_nodes_not_list".to_string());
+    };
+    let mut nodes = Vec::new();
+    for item in eth_rlpx_parse_list_items_v1(nodes_payload)? {
+        let EthRlpxRlpItemV1::Bytes(node_bytes) = item else {
+            return Err("rlpx_snap_trie_nodes_node_not_bytes".to_string());
+        };
+        nodes.push(node_bytes.to_vec());
+    }
+    Ok(EthRlpxTrieNodesResponseV1 {
+        request_id: eth_rlpx_decode_u64_bytes_v1(request_id_bytes)?,
+        nodes,
     })
 }
 
@@ -3166,6 +3621,79 @@ mod tests {
         assert_eq!(response.request_id, 99);
         assert_eq!(response.accounts, vec![account]);
         assert_eq!(response.proof, vec![vec![0x01, 0x02]]);
+    }
+
+    #[test]
+    fn snap_state_sidecar_payloads_roundtrip_match_snap1_layout() {
+        let storage_request_payload = eth_rlpx_build_get_storage_ranges_payload_v1(
+            100,
+            [0x11; 32],
+            &[[0x44; 32], [0x45; 32]],
+            &[0x00],
+            &[0xff],
+            ETH_RLPX_SNAP_DEFAULT_ACCOUNT_RANGE_BYTES,
+        );
+        let storage_request =
+            eth_rlpx_parse_get_storage_ranges_payload_v1(storage_request_payload.as_slice())
+                .expect("parse get storage ranges");
+        assert_eq!(storage_request.request_id, 100);
+        assert_eq!(storage_request.root, [0x11; 32]);
+        assert_eq!(storage_request.accounts, vec![[0x44; 32], [0x45; 32]]);
+        assert_eq!(storage_request.origin, vec![0x00]);
+        assert_eq!(storage_request.limit, vec![0xff]);
+        assert_eq!(
+            storage_request.byte_limit,
+            ETH_RLPX_SNAP_DEFAULT_ACCOUNT_RANGE_BYTES
+        );
+
+        let slot = EthRlpxSnapStorageDataV1 {
+            hash: [0x55; 32],
+            body: vec![0x80],
+        };
+        let storage_response_payload =
+            eth_rlpx_build_storage_ranges_payload_v1(100, &[vec![slot.clone()]], &[vec![0x02]]);
+        let storage_response =
+            eth_rlpx_parse_storage_ranges_payload_v1(storage_response_payload.as_slice())
+                .expect("parse storage ranges");
+        assert_eq!(storage_response.request_id, 100);
+        assert_eq!(storage_response.slots, vec![vec![slot]]);
+        assert_eq!(storage_response.proof, vec![vec![0x02]]);
+
+        let byte_codes_request_payload =
+            eth_rlpx_build_get_byte_codes_payload_v1(101, &[[0x66; 32]], 4096);
+        let byte_codes_request =
+            eth_rlpx_parse_get_byte_codes_payload_v1(byte_codes_request_payload.as_slice())
+                .expect("parse get byte codes");
+        assert_eq!(byte_codes_request.request_id, 101);
+        assert_eq!(byte_codes_request.hashes, vec![[0x66; 32]]);
+        assert_eq!(byte_codes_request.byte_limit, 4096);
+
+        let byte_codes_response_payload =
+            eth_rlpx_build_byte_codes_payload_v1(101, &[vec![0x60, 0x00]]);
+        let byte_codes_response =
+            eth_rlpx_parse_byte_codes_payload_v1(byte_codes_response_payload.as_slice())
+                .expect("parse byte codes");
+        assert_eq!(byte_codes_response.request_id, 101);
+        assert_eq!(byte_codes_response.codes, vec![vec![0x60, 0x00]]);
+
+        let trie_paths = vec![vec![vec![0x01], vec![0x02, 0x03]]];
+        let trie_nodes_request_payload =
+            eth_rlpx_build_get_trie_nodes_payload_v1(102, [0x77; 32], &trie_paths, 8192);
+        let trie_nodes_request =
+            eth_rlpx_parse_get_trie_nodes_payload_v1(trie_nodes_request_payload.as_slice())
+                .expect("parse get trie nodes");
+        assert_eq!(trie_nodes_request.request_id, 102);
+        assert_eq!(trie_nodes_request.root, [0x77; 32]);
+        assert_eq!(trie_nodes_request.paths, trie_paths);
+        assert_eq!(trie_nodes_request.byte_limit, 8192);
+
+        let trie_nodes_response_payload =
+            eth_rlpx_build_trie_nodes_payload_v1(102, &[vec![0xf8, 0x01]]);
+        let trie_nodes_response =
+            eth_rlpx_parse_trie_nodes_payload_v1(trie_nodes_response_payload.as_slice())
+                .expect("parse trie nodes");
+        assert_eq!(trie_nodes_response.request_id, 102);
+        assert_eq!(trie_nodes_response.nodes, vec![vec![0xf8, 0x01]]);
     }
 
     #[test]
