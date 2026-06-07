@@ -2616,6 +2616,30 @@ fn ingest_real_rlpx_new_block_v1(
     let _ = observe_network_runtime_peer_head(chain_id, source_peer_id, block.header.number);
     observe_network_runtime_eth_peer_head(chain_id, source_peer_id, block.header.number);
 
+    session.pending_body_headers = vec![EthFullnodeNativePendingBodyHeaderV1 {
+        number: block.header.number,
+        hash: block.header.hash,
+        parent_hash: block.header.parent_hash,
+        state_root: block.header.state_root,
+        transactions_root: block.header.transactions_root,
+        receipts_root: block.header.receipts_root,
+        tx_count: Some(block.body.tx_hashes.len()),
+        withdrawal_count: block.body.withdrawal_count,
+    }];
+    let empty_receipts = materialize_empty_receipts_for_pending_body_headers_v1(
+        chain_id,
+        source_peer_id,
+        &mut session.pending_body_headers,
+    )?;
+    report.receipt_updates = report.receipt_updates.saturating_add(empty_receipts);
+    if session.pending_body_headers.is_empty() {
+        session.last_headers_request_id = None;
+        session.last_bodies_request_id = None;
+        session.last_receipts_request_id = None;
+        clear_eth_fullnode_native_snap_request_state_v1(session);
+        mark_network_runtime_eth_peer_session_ready_v1(chain_id, source_peer_id, None);
+        return Ok(());
+    }
     let request_id = next_eth_fullnode_native_rlpx_request_id_v1();
     let payload = eth_rlpx_build_get_receipts_payload_v1(
         request_id,
@@ -2637,16 +2661,6 @@ fn ingest_real_rlpx_new_block_v1(
         );
         NetworkError::Io(err)
     })?;
-    session.pending_body_headers = vec![EthFullnodeNativePendingBodyHeaderV1 {
-        number: block.header.number,
-        hash: block.header.hash,
-        parent_hash: block.header.parent_hash,
-        state_root: block.header.state_root,
-        transactions_root: block.header.transactions_root,
-        receipts_root: block.header.receipts_root,
-        tx_count: Some(block.body.tx_hashes.len()),
-        withdrawal_count: block.body.withdrawal_count,
-    }];
     session.last_headers_request_id = None;
     session.last_bodies_request_id = None;
     session.last_receipts_request_id = Some(request_id);
@@ -2771,6 +2785,12 @@ fn ingest_real_rlpx_block_bodies_v1(
         }
     }
     session.last_bodies_request_id = None;
+    let empty_receipts = materialize_empty_receipts_for_pending_body_headers_v1(
+        chain_id,
+        source_peer_id,
+        &mut session.pending_body_headers,
+    )?;
+    report.receipt_updates = report.receipt_updates.saturating_add(empty_receipts);
     let hashes = session
         .pending_body_headers
         .iter()
@@ -2808,6 +2828,49 @@ fn ingest_real_rlpx_block_bodies_v1(
     session.last_sync_request_unix_ms = now_unix_ms();
     report.sync_requests = report.sync_requests.saturating_add(1);
     Ok(())
+}
+
+fn pending_body_header_can_materialize_empty_receipts_v1(
+    pending: &EthFullnodeNativePendingBodyHeaderV1,
+) -> bool {
+    pending.tx_count == Some(0) && pending.receipts_root == crate::eth_rlpx_empty_trie_root_v1()
+}
+
+fn materialize_empty_receipts_for_pending_body_headers_v1(
+    chain_id: u64,
+    source_peer_id: u64,
+    pending_body_headers: &mut Vec<EthFullnodeNativePendingBodyHeaderV1>,
+) -> Result<usize, NetworkError> {
+    validate_real_rlpx_state_root_continuity_v1(
+        chain_id,
+        source_peer_id,
+        pending_body_headers.as_slice(),
+    )?;
+    let mut remaining = Vec::with_capacity(pending_body_headers.len());
+    let mut materialized = 0usize;
+    for pending in pending_body_headers.drain(..) {
+        if pending_body_header_can_materialize_empty_receipts_v1(&pending) {
+            set_network_runtime_native_receipt_snapshot_v1(
+                chain_id,
+                NetworkRuntimeNativeReceiptSnapshotV1 {
+                    chain_id,
+                    number: pending.number,
+                    block_hash: pending.hash,
+                    receipts_root: pending.receipts_root,
+                    raw_receipts: Vec::new(),
+                    receipt_count: 0,
+                    receipts_available: true,
+                    source_peer_id: Some(source_peer_id),
+                    observed_unix_ms: now_unix_millis_u128(),
+                },
+            );
+            materialized = materialized.saturating_add(1);
+        } else {
+            remaining.push(pending);
+        }
+    }
+    *pending_body_headers = remaining;
+    Ok(materialized)
 }
 
 fn ingest_real_rlpx_receipts_v1(
@@ -5473,6 +5536,48 @@ mod tests {
         .expect_err("receipt root mismatch must reject")
         .to_string()
         .contains("rlpx_receipts_root_mismatch"));
+    }
+
+    #[test]
+    fn rlpx_empty_body_materializes_empty_receipts_without_remote_receipts() {
+        let chain_id = 9_926_102_u64;
+        let peer_id = 1_300_102_u64;
+        clear_network_runtime_native_snapshots_for_chain_v1(chain_id);
+
+        let block_hash = [0x23; 32];
+        let empty_root = crate::eth_rlpx_empty_trie_root_v1();
+        let mut pending = vec![EthFullnodeNativePendingBodyHeaderV1 {
+            number: 1_024,
+            hash: block_hash,
+            parent_hash: [0x22; 32],
+            state_root: [0x33; 32],
+            transactions_root: empty_root,
+            receipts_root: empty_root,
+            tx_count: Some(0),
+            withdrawal_count: None,
+        }];
+
+        let materialized =
+            materialize_empty_receipts_for_pending_body_headers_v1(chain_id, peer_id, &mut pending)
+                .expect("materialize empty receipts");
+        assert_eq!(materialized, 1);
+        assert!(pending.is_empty());
+
+        let receipt = get_network_runtime_native_receipt_snapshot_v1(chain_id, block_hash)
+            .expect("empty receipt snapshot");
+        assert_eq!(receipt.number, 1_024);
+        assert_eq!(receipt.receipts_root, empty_root);
+        assert!(receipt.raw_receipts.is_empty());
+        assert_eq!(receipt.receipt_count, 0);
+        assert!(receipt.receipts_available);
+
+        let block = snapshot_network_runtime_native_canonical_blocks_v1(chain_id, 8)
+            .into_iter()
+            .find(|block| block.hash == block_hash)
+            .expect("canonical block receipt state");
+        assert!(block.receipts_available);
+        assert_eq!(block.receipt_count, Some(0));
+        assert_eq!(block.receipts_root, Some(empty_root));
     }
 
     #[test]
