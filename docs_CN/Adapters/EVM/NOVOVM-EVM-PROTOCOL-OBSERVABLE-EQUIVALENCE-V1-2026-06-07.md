@@ -98,21 +98,25 @@ cargo test -p novovm-node evm_protocol_observable_equivalence_geth_real_block_di
 
 ## v3 网络可观察等价进展
 
-新增 gate：
+新增 gates：
 
 ```powershell
 cargo test -p novovm-network evm_protocol_observable_equivalence_network_rlpx_tx_ingress_gate_v3 -- --nocapture
+cargo test -p novovm-network evm_protocol_observable_equivalence_network_rlpx_tx_outbound_broadcast_gate_v3 -- --nocapture
 ```
 
-该 gate 使用真实 TCP socket 和 RLPx frame，不走内存 transport：
+这些 gate 使用真实 TCP socket 和 RLPx frame，不走内存 transport：
 
 - 完成 RLPx auth、P2P Hello 和 eth Status 网络校验。
 - 远端 peer 发送标准 eth `Transactions` frame。
 - SUPERVM 解析 raw transaction RLP，按以太坊 tx hash 计算进入 native pending tx。
 - pending tx 标记为 remote origin，保留 source peer。
 - 原始 tx RLP 保留为后续 `Transactions` broadcast candidate。
+- 本地 pending raw tx 经过 worker budget 触发 `Transactions` outbound broadcast。
+- 远端 peer 解析 SUPERVM 发出的 `Transactions` frame，确认 tx hash 和 raw RLP payload 一致。
+- 本地 pending tx 标记为 propagated，并记录目标 peer 和 broadcast runtime summary。
 
-当前 v3 结论：入站 tx propagation 的网络可观察语义已具备最小真实 gate。尚未因此声明完整 eth/71 peer sync、长连接主网接受度、完整 block import/reorg 等价。
+当前 v3 结论：tx propagation 的入站和出站网络可观察语义已具备最小真实 gate。尚未因此声明完整 eth/71 peer sync、长连接主网接受度、完整 block import/reorg 等价。
 
 ## 剩余阶段
 
@@ -121,7 +125,7 @@ cargo test -p novovm-network evm_protocol_observable_equivalence_network_rlpx_tx
 | v1 | 插件产品面协议可观察等价 | 本文 3 个聚合 gate 全绿 |
 | v2a | RPC 黑盒投影根门禁 | `evm_protocol_observable_equivalence_geth_rpc_blackbox_projection_gate_v2` 全绿 |
 | v2b | 真 geth/reth 黑盒差分 | 真实 geth fullTx block diff gate 全绿；raw tx RLP 存在时 `transactionsRoot` 也一致 |
-| v3 | 网络可观察等价 | 已覆盖真实 RLPx handshake/Status + 入站 `Transactions` -> pending tx raw RLP；继续覆盖 tx outbound broadcast、block import/reorg |
+| v3 | 网络可观察等价 | 已覆盖真实 RLPx handshake/Status + 入站 `Transactions` -> pending tx raw RLP + 出站 `Transactions` broadcast；继续覆盖 block import/reorg |
 | v4 | 长稳生产封口 | 多节点 devnet soak、重启恢复、恶意/边界输入、BAL/receipt/RPC 长稳无漂移 |
 
 ## 下一步
@@ -133,7 +137,7 @@ cargo test -p novovm-network evm_protocol_observable_equivalence_network_rlpx_tx
 1. 先让 v1 三个聚合 gate 进入固定回归清单。
 2. 已完成 v2a：RPC block root projection 不再返回 `null`，并进入 geth parity batch report。
 3. 已完成 v2b：真实 geth fullTx block fixture 差分已接入，raw tx RLP 进入 canonical block projection，`transactionsRoot` 从 gap 变成 match。
-4. 已开始 v3：真实 RLPx handshake/Status + 入站 `Transactions` -> pending tx raw RLP gate 通过；下一步补 tx outbound broadcast 或 block import/reorg 的真实可观察 gate。
+4. 已开始 v3：真实 RLPx handshake/Status + 入站 `Transactions` -> pending tx raw RLP gate 通过；出站 `Transactions` broadcast gate 通过；下一步补 block import/reorg 的真实可观察 gate。
 5. 如果 v3 或真实 block replay 暴露具体交易类型/root 差异，再补对应最小真实 fixture，不回到开放式 smoke 堆叠。
 
 这会把“等价”从开放式 fixture 堆叠改成有限的协议验收。

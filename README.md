@@ -185,6 +185,7 @@ EVM protocol-observable equivalence scope (CN):
 - v2 RPC projection gate: `cargo test -p novovm-node evm_protocol_observable_equivalence_geth_rpc_blackbox_projection_gate_v2 -- --nocapture`
 - v2b real geth block diff gate: `cargo test -p novovm-node evm_protocol_observable_equivalence_geth_real_block_diff_gate_v2b -- --nocapture` (raw tx RLP present => `transactionsRoot` matches geth fixture)
 - v3 RLPx tx ingress gate: `cargo test -p novovm-network evm_protocol_observable_equivalence_network_rlpx_tx_ingress_gate_v3 -- --nocapture` (real RLPx `Transactions` frame => remote pending tx with raw RLP broadcast candidate)
+- v3 RLPx tx outbound gate: `cargo test -p novovm-network evm_protocol_observable_equivalence_network_rlpx_tx_outbound_broadcast_gate_v3 -- --nocapture` (local pending raw tx => real RLPx `Transactions` broadcast)
 
 Manual local run:
 
