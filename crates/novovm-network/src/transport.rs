@@ -682,7 +682,7 @@ struct EthFullnodeNativeRlpxLivePeerSessionV1 {
     last_receipts_request_id: Option<u64>,
     last_pooled_transactions_request_id: Option<u64>,
     last_tx_broadcast_unix_ms: u64,
-    pending_body_headers: Vec<(u64, [u8; 32], [u8; 32])>,
+    pending_body_headers: Vec<(u64, [u8; 32], [u8; 32], [u8; 32])>,
     pending_pooled_transaction_hashes: Vec<[u8; 32]>,
 }
 
@@ -1959,6 +1959,7 @@ fn ingest_real_rlpx_new_block_v1(
     session.pending_body_headers = vec![(
         block.header.number,
         block.header.hash,
+        block.header.transactions_root,
         block.header.receipts_root,
     )];
     session.last_headers_request_id = None;
@@ -1991,7 +1992,14 @@ fn ingest_real_rlpx_block_headers_v1(
     session.pending_body_headers = headers
         .headers
         .iter()
-        .map(|header| (header.number, header.hash, header.receipts_root))
+        .map(|header| {
+            (
+                header.number,
+                header.hash,
+                header.transactions_root,
+                header.receipts_root,
+            )
+        })
         .collect();
     if let Some(best) = headers.headers.iter().max_by_key(|header| header.number) {
         let header_wire = evm_native_header_wire_from_rlpx_header_v1(best);
@@ -2001,7 +2009,7 @@ fn ingest_real_rlpx_block_headers_v1(
     let hashes = session
         .pending_body_headers
         .iter()
-        .map(|(_, hash, _)| *hash)
+        .map(|(_, hash, _, _)| *hash)
         .collect::<Vec<_>>();
     if !hashes.is_empty() {
         let request_id = next_eth_fullnode_native_rlpx_request_id_v1();
@@ -2046,8 +2054,17 @@ fn ingest_real_rlpx_block_bodies_v1(
     observe_eth_native_bodies_response(chain_id);
     session.last_headers_request_id = None;
     for (idx, body) in bodies.bodies.iter().enumerate() {
-        if let Some((number, hash, _receipts_root)) = session.pending_body_headers.get(idx).copied()
+        if let Some((number, hash, expected_transactions_root, _receipts_root)) =
+            session.pending_body_headers.get(idx).copied()
         {
+            if body.transactions_root != expected_transactions_root {
+                let err = format!(
+                    "rlpx_block_body_transactions_root_mismatch:number={number} hash=0x{}",
+                    hex32_v1(&hash)
+                );
+                observe_network_runtime_eth_peer_decode_failure_v1(chain_id, source_peer_id, &err);
+                return Err(NetworkError::Decode(err));
+            }
             let body_wire = evm_native_body_wire_from_rlpx_body_v1(number, hash, body);
             ingest_runtime_native_body_from_evm_wire(chain_id, source_peer_id, &body_wire);
             report.body_updates = report.body_updates.saturating_add(1);
@@ -2057,7 +2074,7 @@ fn ingest_real_rlpx_block_bodies_v1(
     let hashes = session
         .pending_body_headers
         .iter()
-        .map(|(_, hash, _)| *hash)
+        .map(|(_, hash, _, _)| *hash)
         .collect::<Vec<_>>();
     if hashes.is_empty() {
         session.pending_body_headers.clear();
@@ -2109,7 +2126,7 @@ fn ingest_real_rlpx_receipts_v1(
         if receipts.last_block_incomplete && idx + 1 == receipts.blocks.len() {
             continue;
         }
-        let Some((number, hash, expected_receipts_root)) =
+        let Some((number, hash, _expected_transactions_root, expected_receipts_root)) =
             session.pending_body_headers.get(idx).copied()
         else {
             break;

@@ -147,6 +147,7 @@ pub struct EthRlpxNewBlockPayloadV1 {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EthRlpxBlockBodyRecordV1 {
     pub tx_hashes: Vec<[u8; 32]>,
+    pub transactions_root: [u8; 32],
     pub ommer_hashes: Vec<[u8; 32]>,
     pub withdrawal_count: Option<usize>,
     pub body_available: bool,
@@ -2008,6 +2009,7 @@ pub fn eth_rlpx_parse_new_block_payload_v1(
     });
     let body = EthRlpxBlockBodyRecordV1 {
         tx_hashes,
+        transactions_root,
         ommer_hashes,
         withdrawal_count,
         body_available: true,
@@ -2060,7 +2062,10 @@ pub fn eth_rlpx_parse_block_bodies_payload_v1(
         let EthRlpxRlpItemV1::List(uncles_payload) = body_fields[1] else {
             return Err("rlpx_block_body_uncles_not_list".to_string());
         };
-        let tx_hashes = eth_rlpx_split_list_raw_items_v1(txs_payload)?
+        let raw_tx_items = eth_rlpx_split_list_raw_items_v1(txs_payload)?;
+        let transactions_root =
+            eth_rlpx_transactions_root_from_raw_tx_slices_v1(raw_tx_items.as_slice());
+        let tx_hashes = raw_tx_items
             .into_iter()
             .map(eth_rlpx_keccak256_bytes_v1)
             .collect::<Vec<_>>();
@@ -2076,6 +2081,7 @@ pub fn eth_rlpx_parse_block_bodies_payload_v1(
         });
         bodies.push(EthRlpxBlockBodyRecordV1 {
             tx_hashes,
+            transactions_root,
             ommer_hashes,
             withdrawal_count,
             body_available: true,
@@ -3153,6 +3159,7 @@ mod tests {
         };
         let empty_body = EthRlpxBlockBodyRecordV1 {
             tx_hashes: Vec::new(),
+            transactions_root: empty_root,
             ommer_hashes: Vec::new(),
             withdrawal_count: Some(0),
             body_available: true,
