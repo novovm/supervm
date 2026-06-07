@@ -105,6 +105,7 @@ cargo test -p novovm-network evm_protocol_observable_equivalence_network_rlpx_tx
 cargo test -p novovm-network evm_protocol_observable_equivalence_network_rlpx_tx_outbound_broadcast_gate_v3 -- --nocapture
 cargo test -p novovm-network evm_protocol_observable_equivalence_network_rlpx_block_body_import_gate_v3 -- --nocapture
 cargo test -p novovm-network evm_protocol_observable_equivalence_network_rlpx_reorg_gate_v3 -- --nocapture
+cargo test -p novovm-network evm_protocol_observable_equivalence_network_rlpx_bal_response_gate_v3 -- --nocapture
 ```
 
 这些 gate 使用真实 TCP socket 和 RLPx frame，不走内存 transport：
@@ -121,8 +122,10 @@ cargo test -p novovm-network evm_protocol_observable_equivalence_network_rlpx_re
 - 远端 peer 通过 `BlockBodies` 返回含 raw tx 的 body，SUPERVM 导入 native body snapshot，保留 block hash、tx hash、withdrawal count 和 materialized 状态。
 - 真实 RLPx peer 顺序返回 120A 和 121B 分支，runtime canonical head 从 120A reorg 到 121B。
 - 120A 中已 canonical included 的 pending tx 回到 `ReorgedBackToPending`，并携 raw RLP 重新进入 broadcast candidate。
+- 远端 peer 发送真实 `GetBlockAccessLists` frame，SUPERVM 返回协议合法 `BlockAccessLists` frame，保持 request_id 和 requested hash 数量一致。
+- 在本地尚未 materialize 对应 block BAL payload 时，响应使用 Ethereum RLPx BAL missing sentinel，不伪造 block access list。
 
-当前 v3 结论：tx propagation 的入站/出站网络可观察语义、RLPx header/body import、最小 reorg 回池路径已具备真实 gate。尚未因此声明完整 eth/71 peer sync、长连接主网接受度或复杂多分支 reorg 全覆盖。
+当前 v3 结论：tx propagation 的入站/出站网络可观察语义、RLPx header/body import、最小 reorg 回池路径、BAL 请求/响应路径已具备真实 gate。尚未因此声明完整 eth/71 peer sync、长连接主网接受度、完整 BAL 可用性或复杂多分支 reorg 全覆盖。
 
 ## 剩余阶段
 

@@ -635,7 +635,7 @@ pub fn eth_rlpx_default_listen_port_v1() -> u64 {
 }
 
 #[must_use]
-pub fn eth_rlpx_is_unsupported_eth71_bal_message_v1(code: u64) -> bool {
+pub fn eth_rlpx_is_eth71_bal_message_v1(code: u64) -> bool {
     if code < ETH_RLPX_BASE_PROTOCOL_OFFSET {
         return false;
     }
@@ -643,6 +643,11 @@ pub fn eth_rlpx_is_unsupported_eth71_bal_message_v1(code: u64) -> bool {
         code - ETH_RLPX_BASE_PROTOCOL_OFFSET,
         ETH_RLPX_ETH_GET_BLOCK_ACCESS_LISTS_MSG | ETH_RLPX_ETH_BLOCK_ACCESS_LISTS_MSG
     )
+}
+
+#[must_use]
+pub fn eth_rlpx_is_unsupported_eth71_bal_message_v1(code: u64) -> bool {
+    eth_rlpx_is_eth71_bal_message_v1(code)
 }
 
 pub fn eth_rlpx_select_shared_eth_version_v1(
@@ -2094,19 +2099,17 @@ mod tests {
     }
 
     #[test]
-    fn eth71_bal_message_codes_are_classified_as_unsupported_safe() {
-        assert!(eth_rlpx_is_unsupported_eth71_bal_message_v1(
+    fn eth71_bal_message_codes_are_classified_without_enabling_eth71_sync() {
+        assert!(eth_rlpx_is_eth71_bal_message_v1(
             ETH_RLPX_BASE_PROTOCOL_OFFSET + ETH_RLPX_ETH_GET_BLOCK_ACCESS_LISTS_MSG
         ));
-        assert!(eth_rlpx_is_unsupported_eth71_bal_message_v1(
+        assert!(eth_rlpx_is_eth71_bal_message_v1(
             ETH_RLPX_BASE_PROTOCOL_OFFSET + ETH_RLPX_ETH_BLOCK_ACCESS_LISTS_MSG
         ));
-        assert!(!eth_rlpx_is_unsupported_eth71_bal_message_v1(
+        assert!(!eth_rlpx_is_eth71_bal_message_v1(
             ETH_RLPX_BASE_PROTOCOL_OFFSET + ETH_RLPX_ETH_STATUS_MSG
         ));
-        assert!(!eth_rlpx_is_unsupported_eth71_bal_message_v1(
-            ETH_RLPX_P2P_PING_MSG
-        ));
+        assert!(!eth_rlpx_is_eth71_bal_message_v1(ETH_RLPX_P2P_PING_MSG));
     }
 
     #[test]
@@ -2393,8 +2396,8 @@ mod tests {
 
         let get_bal_code = ETH_RLPX_BASE_PROTOCOL_OFFSET + ETH_RLPX_ETH_GET_BLOCK_ACCESS_LISTS_MSG;
         let bal_code = ETH_RLPX_BASE_PROTOCOL_OFFSET + ETH_RLPX_ETH_BLOCK_ACCESS_LISTS_MSG;
-        assert!(eth_rlpx_is_unsupported_eth71_bal_message_v1(get_bal_code));
-        assert!(eth_rlpx_is_unsupported_eth71_bal_message_v1(bal_code));
+        assert!(eth_rlpx_is_eth71_bal_message_v1(get_bal_code));
+        assert!(eth_rlpx_is_eth71_bal_message_v1(bal_code));
 
         let hashes = vec![[0x11; 32], [0x22; 32]];
         let get_payload = eth_rlpx_build_get_block_access_lists_payload_v1(42, hashes.as_slice());

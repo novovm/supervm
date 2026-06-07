@@ -163,6 +163,7 @@ cargo run -p novovmctl -- evm-block-access-list-scan `
 - CREATE/CALL failure state invariant smoke: pass, covers failed CALL no value/storage/log commit and failed CREATE no contract account/code/storage/BAL contract entry
 - execution-spec/fork-rule smoke matrix: pass, covers intrinsic gas, access-list gas, Amsterdam calldata/access-list floor, precompile set, create/call/revert, storage write and rebuilt logs
 - eth/71 BAL wire smoke: pass, covers GetBlockAccessLists/BlockAccessLists payload encode/decode, frame roundtrip, malformed BAL rejection, and safe negotiation fallback to eth/70 when remote advertises eth/71
+- eth/71 BAL real RLPx response gate: pass, covers inbound real `GetBlockAccessLists` frame -> protocol-valid `BlockAccessLists` response with request_id/count preserved and missing sentinel for unavailable local BAL payload
 
 这证明 `NOVOVM_ETH_SEND_RAW_TX(_FILE)` 可以作为 Novo mainline EVM host 的真实输入源，执行后产出 canonical batch 和完整 BAL hash。当前覆盖 signed legacy/type1/type2/type3 transfer smoke，以及 type1/type2 call/deploy、type3 call smoke；type3 仍是显式开关能力，不能外推到全部 fork rule / gas / blob sidecar 语义。
 
@@ -172,7 +173,7 @@ fork-rule 方面，当前只有最小 smoke matrix：覆盖 EVM core gas/precomp
 
 CREATE/CALL failure 方面，当前已证明 failed CALL 不提交 value transfer、target storage write、event logs；failed CREATE 即使 artifact 携带 contract_address/runtime_code，也不会创建 contract account/code/storage，也不会产出 contract BAL entry。
 
-eth/71 BAL wire 方面，当前只证明 BAL request/response payload 和 RLPx frame 可解析，并证明本产品不会在未完成 eth/71 peer sync 前误协商到 eth/71；这仍不是完整 eth/71 peer sync。
+eth/71 BAL wire 方面，当前已证明 BAL request/response payload 和 RLPx frame 可解析，真实 RLPx peer 请求 BAL 时产品会返回协议合法响应，并证明本产品不会在未完成 eth/71 peer sync 前误协商到 eth/71；这仍不是完整 eth/71 peer sync，也不声明所有 block BAL payload 都已可用。
 
 ### 6. Gateway JSON-RPC 产品面 smoke
 
@@ -1186,7 +1187,7 @@ cargo test -p novovm-adapter-novovm evm_adapter_balance_fee_access_storage_surfa
 | 最新 go-ethereum ethapi export parity | Pass | external fixture `sampleCount=11 totalMismatchCount=0` | 对当前本机 geth ethapi 测试数据无 mismatch |
 | typed tx failure / revert / fee edge parity | Pass | parity sections `typedTxFailure.mismatchCount=0` | 样本级可声明 |
 | reorg canonical/noncanonical log view | Pass | parity sections `logs.mismatchCount=0` | 样本级可声明 |
-| eth/71 BAL 相关 wire 能力 | Partial | BAL payload/canonical/scanner pass；eth/71 BAL wire encode/decode/frame + safe negotiation gate pass；未证明完整 eth/71 peer sync | 可声明 eth/71 BAL wire smoke；不能声明完整 eth/71 等价 |
+| eth/71 BAL 相关 wire 能力 | Partial | BAL payload/canonical/scanner pass；eth/71 BAL wire encode/decode/frame + safe negotiation gate pass；真实 RLPx `GetBlockAccessLists` -> `BlockAccessLists` response gate pass；未证明完整 eth/71 peer sync 和完整 BAL payload availability | 可声明 eth/71 BAL wire smoke 和真实请求/响应样本；不能声明完整 eth/71 等价 |
 | Ethereum fork rules / gas accounting / precompiles | Partial | execution-spec/fork-rule smoke matrix pass；adapter balance/fee/access-storage smoke pass；access-list entries 贯通 smoke pass；access-list warm/cold 成本、SLOAD sequence 和 BAL smoke pass；SLOAD warm/cold fee debit smoke pass；EIP-3529 SSTORE refund/cap/transition smoke pass；adapter SSTORE refund cap fee debit smoke pass；CREATE/CREATE2 official geth address fixture subset pass；official EIP-1559 sender balance state fixture subset pass；official SLOAD warm/cold state fixture subset pass；official SSTORE refund cap state fixture subset pass；official failure/account state fixture subset pass；official CREATE/CREATE2 account grouped state fixture subset pass；official STATICCALL/precompile/return-data grouped state fixture subset pass；official precompile failure/OOG grouped state fixture subset pass；official CALL output grouped state fixture subset pass；official CALL high-value/OOG grouped state fixture subset pass；official CALL depth/OOG grouped state fixture subset pass；official DELEGATECALL/CALLCODE account-context grouped state fixture subset pass；official zero-value calls revert no-commit grouped state fixture subset pass；official SELFDESTRUCT zero-value account-preservation grouped state fixture subset pass；official STATICCALL state-change/SUICIDE no-commit grouped state fixture subset pass；official STATICCALL OOG no-commit grouped state fixture subset pass；official LOG/receipt grouped state fixture subset pass；official RETURNDATA grouped state fixture subset pass；official LOG4/OOG receipt grouped state fixture subset pass；CREATE/CALL failure invariant smoke pass；CREATE existing-account collision smoke pass；CREATE2 artifact collision smoke pass；account balance value/fee invariant smoke pass；EIP-1559 effectiveGasPrice settlement smoke pass；未跑 Ethereum execution-spec state fixture 全量 | 可声明样本级 fork-rule、gas/refund/SLOAD sequence/SSTORE transition、SLOAD warm/cold fee debit、SSTORE refund cap fee debit、CREATE/CREATE2 geth address derivation official fixture subset、EIP-1559 sender balance official state fixture subset、SLOAD warm/cold official state fixture subset、SSTORE refund cap official state fixture subset、failure/account official state fixture subset、CREATE/CREATE2 account official grouped state fixture subset、STATICCALL/precompile/return-data official grouped state fixture subset、precompile failure/OOG official grouped state fixture subset、CALL output official grouped state fixture subset、CALL high-value/OOG official grouped state fixture subset、CALL depth/OOG official grouped state fixture subset、DELEGATECALL/CALLCODE account-context official grouped state fixture subset、zero-value calls revert no-commit official grouped state fixture subset、SELFDESTRUCT zero-value account-preservation official grouped state fixture subset、STATICCALL state-change/SUICIDE no-commit official grouped state fixture subset、STATICCALL OOG no-commit official grouped state fixture subset、LOG/receipt official grouped state fixture subset、RETURNDATA official grouped state fixture subset、LOG4/OOG receipt official grouped state fixture subset、CREATE/CALL failure invariants、CREATE/CREATE2 existing-account collision invariant、account balance value/fee invariants、EIP-1559 effectiveGasPrice settlement、tracked-account fee/value debit、access-list read-set/warm-cold smoke/BAL gate；不能声明 EVM 语义全等价 |
 | raw Ethereum transaction ingestion/execution | Partial | signed legacy/type1/type2/type3 transfer + typed call/deploy smoke pass；raw nonce gap reject pass；gateway raw write surface pass；gateway txpool error surface pass；plugin txpool replacement/reject pass；plugin fee settlement pass；adapter tracked-account value/fee debit pass；adapter account balance value/fee invariant pass；adapter effectiveGasPrice fee debit pass；access-list entries 贯通 pass；BAL strict scan pass | 可声明 raw transfer/call/deploy smoke 可执行，gateway 写入/拒绝面、plugin txpool/fee settlement、adapter tracked-account debit、account balance invariant、effectiveGasPrice settlement、access-list read-set 有 gate；不能声明 raw tx 全等价 |
 | JSON-RPC full-node surface | Partial | mainline query receipt/log 样本 pass；gateway block/tx/filter/call/estimateGas smoke pass；indexed block/tx/receipt/uncle smoke pass；pending/runtime smoke pass；store recovery smoke pass；未覆盖 tracing/debug/admin 和全 geth RPC 行为 | 可声明 gateway JSON-RPC 产品面样本可用；不能声明 geth RPC 等价 |
@@ -1231,6 +1232,7 @@ cargo test -p novovm-network evm_protocol_observable_equivalence_network_rlpx_tx
 cargo test -p novovm-network evm_protocol_observable_equivalence_network_rlpx_tx_outbound_broadcast_gate_v3 -- --nocapture
 cargo test -p novovm-network evm_protocol_observable_equivalence_network_rlpx_block_body_import_gate_v3 -- --nocapture
 cargo test -p novovm-network evm_protocol_observable_equivalence_network_rlpx_reorg_gate_v3 -- --nocapture
+cargo test -p novovm-network evm_protocol_observable_equivalence_network_rlpx_bal_response_gate_v3 -- --nocapture
 ```
 
 默认 geth parity：
@@ -1363,6 +1365,7 @@ eth/71 BAL wire smoke gate：
 
 ```powershell
 cargo test -p novovm-network eth71_bal_wire_roundtrip_and_negotiation_gate_v1 -- --nocapture
+cargo test -p novovm-network evm_protocol_observable_equivalence_network_rlpx_bal_response_gate_v3 -- --nocapture
 ```
 
 Gateway JSON-RPC 产品面 smoke：
