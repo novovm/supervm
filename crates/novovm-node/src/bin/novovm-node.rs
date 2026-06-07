@@ -1363,7 +1363,7 @@ fn eth_dns_txt_unquote_v1(data: &str) -> String {
     out
 }
 
-fn eth_dns_query_txt_v1(agent: &ureq::Agent, doh_url: &str, name: &str) -> Result<Vec<String>> {
+fn eth_dns_query_txt_doh_v1(agent: &ureq::Agent, doh_url: &str, name: &str) -> Result<Vec<String>> {
     let response = agent
         .get(doh_url)
         .query("name", name)
@@ -1390,6 +1390,206 @@ fn eth_dns_query_txt_v1(agent: &ureq::Agent, doh_url: &str, name: &str) -> Resul
         }
     }
     Ok(out)
+}
+
+fn eth_dns_udp_servers_v1() -> Vec<String> {
+    string_env_nonempty("NOVOVM_ETH_DNS_DISCOVERY_UDP_SERVERS")
+        .unwrap_or_else(|| "8.8.8.8:53,1.1.1.1:53".to_string())
+        .split([',', ';', ' ', '\n', '\r', '\t'])
+        .map(str::trim)
+        .filter(|server| !server.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+fn eth_dns_encode_query_name_v1(name: &str, out: &mut Vec<u8>) -> Result<()> {
+    let trimmed = name.trim().trim_end_matches('.');
+    if trimmed.is_empty() {
+        bail!("dns query name is empty");
+    }
+    for label in trimmed.split('.') {
+        let label = label.trim();
+        if label.is_empty() || label.len() > 63 {
+            bail!("invalid dns query label in {name}");
+        }
+        out.push(label.len() as u8);
+        out.extend_from_slice(label.as_bytes());
+    }
+    out.push(0);
+    Ok(())
+}
+
+fn eth_dns_read_name_v1(packet: &[u8], cursor: &mut usize, depth: usize) -> Result<String> {
+    if depth > 16 {
+        bail!("dns name compression depth exceeded");
+    }
+    let mut labels = Vec::<String>::new();
+    loop {
+        if *cursor >= packet.len() {
+            bail!("dns name read out of bounds");
+        }
+        let len = packet[*cursor];
+        *cursor = cursor.saturating_add(1);
+        if len == 0 {
+            break;
+        }
+        if len & 0xc0 == 0xc0 {
+            if *cursor >= packet.len() {
+                bail!("dns compression pointer out of bounds");
+            }
+            let next = packet[*cursor];
+            *cursor = cursor.saturating_add(1);
+            let offset = (((len & 0x3f) as usize) << 8) | next as usize;
+            if offset >= packet.len() {
+                bail!("dns compression pointer invalid");
+            }
+            let mut jumped = offset;
+            let suffix = eth_dns_read_name_v1(packet, &mut jumped, depth.saturating_add(1))?;
+            if !suffix.is_empty() {
+                labels.push(suffix);
+            }
+            break;
+        }
+        let len = len as usize;
+        if *cursor + len > packet.len() {
+            bail!("dns label read out of bounds");
+        }
+        labels.push(String::from_utf8_lossy(&packet[*cursor..*cursor + len]).to_string());
+        *cursor += len;
+    }
+    Ok(labels.join("."))
+}
+
+fn eth_dns_parse_txt_response_v1(packet: &[u8], query_id: u16) -> Result<Vec<String>> {
+    if packet.len() < 12 {
+        bail!("dns response too short");
+    }
+    let response_id = u16::from_be_bytes([packet[0], packet[1]]);
+    if response_id != query_id {
+        bail!("dns response id mismatch");
+    }
+    let flags = u16::from_be_bytes([packet[2], packet[3]]);
+    if flags & 0x0200 != 0 {
+        bail!("dns response truncated");
+    }
+    if flags & 0x000f != 0 {
+        return Ok(Vec::new());
+    }
+    let qdcount = u16::from_be_bytes([packet[4], packet[5]]) as usize;
+    let ancount = u16::from_be_bytes([packet[6], packet[7]]) as usize;
+    let mut cursor = 12usize;
+    for _ in 0..qdcount {
+        let _ = eth_dns_read_name_v1(packet, &mut cursor, 0)?;
+        if cursor + 4 > packet.len() {
+            bail!("dns question out of bounds");
+        }
+        cursor += 4;
+    }
+    let mut out = Vec::<String>::new();
+    for _ in 0..ancount {
+        let _ = eth_dns_read_name_v1(packet, &mut cursor, 0)?;
+        if cursor + 10 > packet.len() {
+            bail!("dns answer header out of bounds");
+        }
+        let answer_type = u16::from_be_bytes([packet[cursor], packet[cursor + 1]]);
+        let answer_class = u16::from_be_bytes([packet[cursor + 2], packet[cursor + 3]]);
+        cursor += 8;
+        let rdlen = u16::from_be_bytes([packet[cursor], packet[cursor + 1]]) as usize;
+        cursor += 2;
+        if cursor + rdlen > packet.len() {
+            bail!("dns answer data out of bounds");
+        }
+        let answer_end = cursor + rdlen;
+        if answer_type == 16 && answer_class == 1 {
+            let mut txt = String::new();
+            while cursor < answer_end {
+                let chunk_len = packet[cursor] as usize;
+                cursor += 1;
+                if cursor + chunk_len > answer_end {
+                    bail!("dns txt chunk out of bounds");
+                }
+                txt.push_str(&String::from_utf8_lossy(
+                    &packet[cursor..cursor + chunk_len],
+                ));
+                cursor += chunk_len;
+            }
+            if !txt.trim().is_empty() {
+                out.push(eth_dns_txt_unquote_v1(txt.as_str()));
+            }
+        } else {
+            cursor = answer_end;
+        }
+    }
+    Ok(out)
+}
+
+fn eth_dns_query_txt_udp_once_v1(server: &str, name: &str, timeout_ms: u64) -> Result<Vec<String>> {
+    let query_id = (now_unix_ms() as u16) ^ 0x5e17;
+    let mut packet = Vec::<u8>::with_capacity(512);
+    packet.extend_from_slice(&query_id.to_be_bytes());
+    packet.extend_from_slice(&0x0100_u16.to_be_bytes());
+    packet.extend_from_slice(&1_u16.to_be_bytes());
+    packet.extend_from_slice(&0_u16.to_be_bytes());
+    packet.extend_from_slice(&0_u16.to_be_bytes());
+    packet.extend_from_slice(&0_u16.to_be_bytes());
+    eth_dns_encode_query_name_v1(name, &mut packet)?;
+    packet.extend_from_slice(&16_u16.to_be_bytes());
+    packet.extend_from_slice(&1_u16.to_be_bytes());
+
+    let socket = std::net::UdpSocket::bind("0.0.0.0:0")
+        .with_context(|| format!("dns udp bind failed for {name}"))?;
+    let timeout = Duration::from_millis(timeout_ms);
+    socket
+        .set_read_timeout(Some(timeout))
+        .with_context(|| format!("dns udp read timeout setup failed for {name}"))?;
+    socket
+        .set_write_timeout(Some(timeout))
+        .with_context(|| format!("dns udp write timeout setup failed for {name}"))?;
+    socket
+        .send_to(packet.as_slice(), server)
+        .with_context(|| format!("dns udp query send failed:{server}:{name}"))?;
+    let mut response = [0u8; 4096];
+    let (len, _) = socket
+        .recv_from(&mut response)
+        .with_context(|| format!("dns udp query recv failed:{server}:{name}"))?;
+    eth_dns_parse_txt_response_v1(&response[..len], query_id)
+}
+
+fn eth_dns_query_txt_udp_v1(name: &str) -> Result<Vec<String>> {
+    if !bool_env_default_true("NOVOVM_ETH_DNS_DISCOVERY_UDP_FALLBACK_ENABLED") {
+        return Ok(Vec::new());
+    }
+    let timeout_ms = u64_env_clamped(
+        "NOVOVM_ETH_DNS_DISCOVERY_UDP_TIMEOUT_MS",
+        2_500,
+        100,
+        30_000,
+    );
+    let mut last_error = None;
+    for server in eth_dns_udp_servers_v1() {
+        match eth_dns_query_txt_udp_once_v1(server.as_str(), name, timeout_ms) {
+            Ok(records) if !records.is_empty() => return Ok(records),
+            Ok(_) => {}
+            Err(err) => last_error = Some(err),
+        }
+    }
+    if let Some(err) = last_error {
+        Err(err)
+    } else {
+        Ok(Vec::new())
+    }
+}
+
+fn eth_dns_query_txt_v1(agent: &ureq::Agent, doh_url: &str, name: &str) -> Result<Vec<String>> {
+    match eth_dns_query_txt_doh_v1(agent, doh_url, name) {
+        Ok(records) if !records.is_empty() => Ok(records),
+        Ok(_) => eth_dns_query_txt_udp_v1(name),
+        Err(doh_err) => match eth_dns_query_txt_udp_v1(name) {
+            Ok(records) if !records.is_empty() => Ok(records),
+            Ok(_) => Err(doh_err),
+            Err(udp_err) => Err(udp_err).with_context(|| format!("doh_fallback_failed:{doh_err}")),
+        },
+    }
 }
 
 fn eth_dns_discovery_root_for_chain_v1(chain_id: u64) -> Option<String> {
@@ -2293,6 +2493,39 @@ mod mainline_evm_cli_tests {
         assert!(endpoint.endpoint.starts_with("enode://"));
         assert_eq!(endpoint.addr_hint, "4.157.240.54:9000");
         assert!(endpoint.node_hint > 0);
+    }
+
+    #[test]
+    fn eth_dns_udp_txt_response_parser_concatenates_split_strings_v1() {
+        let query_id = 0x1234_u16;
+        let name = "branch.all.mainnet.ethdisco.net";
+        let mut packet = Vec::<u8>::new();
+        packet.extend_from_slice(&query_id.to_be_bytes());
+        packet.extend_from_slice(&0x8180_u16.to_be_bytes());
+        packet.extend_from_slice(&1_u16.to_be_bytes());
+        packet.extend_from_slice(&1_u16.to_be_bytes());
+        packet.extend_from_slice(&0_u16.to_be_bytes());
+        packet.extend_from_slice(&0_u16.to_be_bytes());
+        eth_dns_encode_query_name_v1(name, &mut packet).expect("encode dns query name");
+        packet.extend_from_slice(&16_u16.to_be_bytes());
+        packet.extend_from_slice(&1_u16.to_be_bytes());
+        packet.extend_from_slice(&0xc00c_u16.to_be_bytes());
+        packet.extend_from_slice(&16_u16.to_be_bytes());
+        packet.extend_from_slice(&1_u16.to_be_bytes());
+        packet.extend_from_slice(&0_u32.to_be_bytes());
+        let first = b"enrtree-branch:ABCDE,";
+        let second = b"FGHIJ";
+        let rdlen = first.len() + second.len() + 2;
+        packet.extend_from_slice(&(rdlen as u16).to_be_bytes());
+        packet.push(first.len() as u8);
+        packet.extend_from_slice(first);
+        packet.push(second.len() as u8);
+        packet.extend_from_slice(second);
+
+        assert_eq!(
+            eth_dns_parse_txt_response_v1(packet.as_slice(), query_id).expect("parse dns txt"),
+            vec!["enrtree-branch:ABCDE,FGHIJ".to_string()]
+        );
     }
 
     #[test]
