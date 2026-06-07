@@ -2764,6 +2764,13 @@ mod tests {
         .expect("decode official zero-calls revert state fixture")
     }
 
+    fn official_selfdestruct_zero_value_state_fixture_v1() -> serde_json::Value {
+        serde_json::from_str(include_str!(
+            "../tests/fixtures/ethereum-official-state-subset/selfdestruct-zero-value.json"
+        ))
+        .expect("decode official selfdestruct zero-value state fixture")
+    }
+
     fn official_create_account_state_fixture_v1() -> serde_json::Value {
         serde_json::from_str(include_str!(
             "../tests/fixtures/ethereum-official-state-subset/create-account.json"
@@ -5432,6 +5439,408 @@ mod tests {
             gas_by_label.get("zeroValue_SUICIDE_ToOneStorageKey_OOGRevert"),
             Some(&75_000)
         );
+    }
+
+    #[test]
+    fn official_state_fixture_selfdestruct_zero_value_account_preservation_grouped_projection_v1() {
+        let fixture = official_selfdestruct_zero_value_state_fixture_v1();
+        assert_eq!(fixture["source"]["repo"].as_str(), Some("ethereum/tests"));
+        assert_eq!(
+            fixture["source"]["fixtureFormat"].as_str(),
+            Some("state_test")
+        );
+        assert_eq!(fixture["source"]["fork"].as_str(), Some("Cancun"));
+
+        let empty_logs_hash = json_str(&fixture["emptyLogsHash"], "emptyLogsHash");
+        let cases = fixture["cases"]
+            .as_array()
+            .expect("selfdestruct zero-value cases");
+        assert_eq!(cases.len(), 4);
+
+        let mut fixture_hashes = std::collections::HashSet::new();
+        let mut post_hashes = std::collections::HashSet::new();
+        let mut txbytes_seen = std::collections::HashSet::new();
+        let mut touched_account_count = 0usize;
+        let mut code_preservation_facts = 0usize;
+        let mut storage_preservation_facts = 0usize;
+        let mut gas_by_label = std::collections::HashMap::new();
+
+        for case in cases {
+            let label = json_str(&case["label"], "case.label");
+            let mode = json_str(&case["mode"], "case.mode");
+            assert!(
+                json_str(&case["fixtureKey"], "case.fixtureKey")
+                    .contains("GeneralStateTests/stZeroCallsTest/ZeroValue_SUICIDE"),
+                "official SELFDESTRUCT zero-value case must come from stZeroCallsTest"
+            );
+            assert!(
+                json_str(&case["fixtureKey"], "case.fixtureKey").contains("-fork_[Cancun-Prague]"),
+                "official SELFDESTRUCT zero-value case must be the Cancun/Prague projection"
+            );
+            assert!(
+                fixture_hashes.insert(json_str(&case["fixtureHash"], "case.fixtureHash")),
+                "official SELFDESTRUCT zero-value fixture hash must be unique"
+            );
+            assert!(
+                post_hashes.insert(json_str(&case["postHash"], "case.postHash")),
+                "official SELFDESTRUCT zero-value post hash must be unique"
+            );
+            assert_eq!(
+                json_str(&case["logsHash"], "case.logsHash"),
+                empty_logs_hash
+            );
+            assert!(mode.starts_with("SUICIDE"));
+
+            let sender = json_str(&case["sender"], "case.sender");
+            let to = json_str(&case["to"], "case.to");
+            let pre_sender_balance =
+                json_hex_u128(&case["preSenderBalance"], "case.preSenderBalance");
+            let pre_sender_nonce =
+                json_hex_u128(&case["preSenderNonce"], "case.preSenderNonce") as u64;
+            let post_sender_balance =
+                json_hex_u128(&case["postSenderBalance"], "case.postSenderBalance");
+            let post_sender_nonce =
+                json_hex_u128(&case["postSenderNonce"], "case.postSenderNonce") as u64;
+            let pre_to_balance = json_hex_u128(&case["preToBalance"], "case.preToBalance");
+            let pre_to_nonce = json_hex_u128(&case["preToNonce"], "case.preToNonce") as u64;
+            let post_to_balance = json_hex_u128(&case["postToBalance"], "case.postToBalance");
+            let post_to_nonce = json_hex_u128(&case["postToNonce"], "case.postToNonce") as u64;
+            let pre_to_code_bytes = case["preTargetCodeBytes"]
+                .as_u64()
+                .expect("case.preTargetCodeBytes");
+            let post_to_code_bytes = case["postTargetCodeBytes"]
+                .as_u64()
+                .expect("case.postTargetCodeBytes");
+            let gas_price = json_hex_u128(&case["gasPrice"], "case.gasPrice");
+            let gas_limit = json_hex_u128(&case["gasLimit"], "case.gasLimit");
+            let value = json_hex_u128(&case["value"], "case.value");
+            let nonce = json_hex_u128(&case["nonce"], "case.nonce") as u64;
+
+            assert_eq!(nonce, pre_sender_nonce);
+            assert_eq!(post_sender_nonce, pre_sender_nonce + 1);
+            assert_eq!(value, 0);
+            assert_eq!(post_to_balance, pre_to_balance);
+            assert_eq!(post_to_nonce, pre_to_nonce);
+            assert_eq!(post_to_code_bytes, pre_to_code_bytes);
+            assert_eq!(
+                json_str(&case["postTargetCodeSha256"], "case.postTargetCodeSha256"),
+                json_str(&case["preTargetCodeSha256"], "case.preTargetCodeSha256")
+            );
+            code_preservation_facts += 1;
+            assert_eq!(
+                case["preTargetStorageFacts"], case["postTargetStorageFacts"],
+                "official Cancun/Prague SELFDESTRUCT zero-value target storage must be preserved"
+            );
+            if !case["postTargetStorageFacts"]
+                .as_object()
+                .expect("case.postTargetStorageFacts")
+                .is_empty()
+            {
+                storage_preservation_facts += 1;
+            }
+
+            let raw_tx = decode_hex_bytes(json_str(&case["txbytes"], "case.txbytes"));
+            txbytes_seen.insert(json_str(&case["txbytes"], "case.txbytes"));
+            let recovered_sender = recover_raw_evm_tx_sender_m0(&raw_tx)
+                .expect("official SELFDESTRUCT zero-value raw sender recovery")
+                .expect("official SELFDESTRUCT zero-value recovered sender");
+            assert_eq!(recovered_sender, decode_hex_bytes(sender));
+            let fields = translate_raw_evm_tx_fields_m0(&raw_tx)
+                .expect("official SELFDESTRUCT zero-value tx decode");
+            let tx = tx_ir_from_raw_fields_m0(&fields, &raw_tx, recovered_sender, 1);
+
+            assert_eq!(
+                tx.tx_type,
+                TxType::Transfer,
+                "raw empty-calldata SELFDESTRUCT fixture tx is state-agnostic before execution"
+            );
+            assert_eq!(tx.from, decode_hex_bytes(sender));
+            assert_eq!(tx.to, Some(decode_hex_bytes(to)));
+            assert_eq!(tx.value, value);
+            assert_eq!(tx.gas_limit, gas_limit as u64);
+            assert_eq!(tx.gas_price, gas_price as u64);
+            assert_eq!(tx.nonce, nonce);
+            assert_eq!(
+                tx.data,
+                decode_hex_bytes(json_str(&case["data"], "case.data"))
+            );
+            assert_eq!(
+                tx.data.len(),
+                case["dataLen"].as_u64().expect("case.dataLen") as usize
+            );
+            assert_eq!(
+                Sha256::digest(&tx.data).to_vec(),
+                decode_hex_bytes(json_str(&case["dataSha256"], "case.dataSha256"))
+            );
+
+            let mut adapter = NovoVmAdapter::new(ChainConfig {
+                chain_type: ChainType::EVM,
+                chain_id: 1,
+                name: format!("official-selfdestruct-zero-value-{label}"),
+                enabled: true,
+                custom_config: None,
+            });
+            adapter.initialize().expect("init");
+            assert!(
+                adapter
+                    .verify_transaction(&tx)
+                    .expect("verify official SELFDESTRUCT zero-value raw tx"),
+                "official SELFDESTRUCT zero-value txbytes must verify through raw EVM path"
+            );
+            for historical_nonce in 0..pre_sender_nonce {
+                let mut historical_tx = tx.clone();
+                historical_tx.nonce = historical_nonce;
+                adapter
+                    .route_transaction_through_unified_account(&historical_tx)
+                    .expect("prime official SELFDESTRUCT zero-value pre-state nonce");
+            }
+
+            let charged_fee = pre_sender_balance
+                .saturating_sub(post_sender_balance)
+                .saturating_sub(value);
+            assert_eq!(charged_fee % gas_price, 0);
+            let gas_used = charged_fee / gas_price;
+            let expected_gas_used = case["gasUsed"].as_u64().expect("case.gasUsed");
+            assert_eq!(gas_used, expected_gas_used as u128);
+
+            let target_code_hash = if pre_to_code_bytes == 0 {
+                None
+            } else {
+                Some(decode_hex_bytes(json_str(
+                    &case["preTargetCodeSha256"],
+                    "case.preTargetCodeSha256",
+                )))
+            };
+            let mut runtime_state = StateIR::new();
+            runtime_state.set_account(
+                tx.from.clone(),
+                AccountState {
+                    balance: pre_sender_balance,
+                    nonce: pre_sender_nonce,
+                    code_hash: None,
+                    storage_root: vec![0u8; 32],
+                },
+            );
+            runtime_state.set_account(
+                tx.to.clone().expect("call target"),
+                AccountState {
+                    balance: pre_to_balance,
+                    nonce: pre_to_nonce,
+                    code_hash: target_code_hash.clone(),
+                    storage_root: vec![0u8; 32],
+                },
+            );
+            for (slot, value) in case["preTargetStorageFacts"]
+                .as_object()
+                .expect("case.preTargetStorageFacts")
+            {
+                runtime_state.set_storage(
+                    tx.to.clone().expect("call target"),
+                    decode_hex_bytes(slot),
+                    decode_hex_bytes(json_str(value, "preTargetStorageFacts.value")),
+                );
+            }
+
+            let mut touched_accounts = Vec::new();
+            for account in case["touchedAccounts"]
+                .as_array()
+                .expect("case.touchedAccounts")
+            {
+                touched_account_count += 1;
+                let address = decode_hex_bytes(json_str(&account["address"], "account.address"));
+                let pre_balance = json_hex_u128(&account["preBalance"], "account.preBalance");
+                let pre_nonce = json_hex_u128(&account["preNonce"], "account.preNonce") as u64;
+                let pre_code_bytes = account["preCodeBytes"]
+                    .as_u64()
+                    .expect("account.preCodeBytes");
+                let post_code_bytes = account["postCodeBytes"]
+                    .as_u64()
+                    .expect("account.postCodeBytes");
+                assert_eq!(post_code_bytes, pre_code_bytes);
+                assert_eq!(
+                    json_str(&account["postCodeSha256"], "account.postCodeSha256"),
+                    json_str(&account["preCodeSha256"], "account.preCodeSha256")
+                );
+                code_preservation_facts += 1;
+                assert_eq!(
+                    account["preStorageFacts"],
+                    account["postStorageFacts"],
+                    "official Cancun/Prague SELFDESTRUCT zero-value touched storage must be preserved"
+                );
+                if !account["postStorageFacts"]
+                    .as_object()
+                    .expect("account.postStorageFacts")
+                    .is_empty()
+                {
+                    storage_preservation_facts += 1;
+                }
+                let code_hash = if pre_code_bytes == 0 {
+                    None
+                } else {
+                    Some(decode_hex_bytes(json_str(
+                        &account["preCodeSha256"],
+                        "account.preCodeSha256",
+                    )))
+                };
+                runtime_state.set_account(
+                    address.clone(),
+                    AccountState {
+                        balance: pre_balance,
+                        nonce: pre_nonce,
+                        code_hash: code_hash.clone(),
+                        storage_root: vec![0u8; 32],
+                    },
+                );
+                for (slot, value) in account["preStorageFacts"]
+                    .as_object()
+                    .expect("account.preStorageFacts")
+                {
+                    runtime_state.set_storage(
+                        address.clone(),
+                        decode_hex_bytes(slot),
+                        decode_hex_bytes(json_str(value, "preStorageFacts.value")),
+                    );
+                }
+                touched_accounts.push((address, code_hash, account));
+            }
+
+            assert_eq!(
+                NovoVmAdapter::effective_execution_tx_v1(&tx, &runtime_state).tx_type,
+                TxType::ContractCall,
+                "target code in pre-state must promote SELFDESTRUCT zero-value fixture tx to contract call execution"
+            );
+
+            let mut artifact = sample_aoem_artifact(&tx, true, [0x92; 32], None);
+            artifact.gas_used = expected_gas_used;
+            artifact.cumulative_gas_used = expected_gas_used;
+            artifact.effective_gas_price = Some(gas_price as u64);
+            artifact.receipt_type = None;
+            artifact.event_logs.clear();
+            artifact.log_bloom = vec![0u8; AOEM_LOG_BLOOM_BYTES_V1];
+            artifact.anchor = None;
+
+            let outcome = adapter
+                .execute_transaction_with_observed_metadata_v1(
+                    &tx,
+                    &mut runtime_state,
+                    Some(&artifact),
+                )
+                .expect("execute official SELFDESTRUCT zero-value fixture projection");
+
+            assert!(outcome.artifact.status_ok);
+            assert_eq!(outcome.artifact.gas_used, expected_gas_used);
+            assert!(outcome.artifact.event_logs.is_empty());
+            assert!(outcome.artifact.log_bloom.iter().all(|byte| *byte == 0));
+            assert_eq!(
+                runtime_state.get_account(&tx.from).map(|acc| acc.balance),
+                Some(post_sender_balance)
+            );
+            assert_eq!(
+                runtime_state
+                    .get_account(tx.to.as_ref().expect("call target"))
+                    .map(|acc| acc.balance),
+                Some(post_to_balance)
+            );
+            assert_eq!(
+                runtime_state
+                    .get_account(tx.to.as_ref().expect("call target"))
+                    .map(|acc| acc.nonce),
+                Some(post_to_nonce)
+            );
+            assert_eq!(
+                runtime_state
+                    .get_account(tx.to.as_ref().expect("call target"))
+                    .map(|acc| acc.code_hash.clone()),
+                Some(target_code_hash)
+            );
+            for (slot, value) in case["postTargetStorageFacts"]
+                .as_object()
+                .expect("case.postTargetStorageFacts")
+            {
+                assert_eq!(
+                    runtime_state.get_storage(
+                        tx.to.as_ref().expect("call target"),
+                        &decode_hex_bytes(slot)
+                    ),
+                    Some(&decode_hex_bytes(json_str(
+                        value,
+                        "postTargetStorageFacts.value"
+                    )))
+                );
+            }
+
+            for (address, code_hash, account) in touched_accounts {
+                let post_balance = json_hex_u128(&account["postBalance"], "account.postBalance");
+                let post_nonce = json_hex_u128(&account["postNonce"], "account.postNonce") as u64;
+                assert_eq!(
+                    runtime_state.get_account(&address).map(|acc| acc.balance),
+                    Some(post_balance)
+                );
+                assert_eq!(
+                    runtime_state.get_account(&address).map(|acc| acc.nonce),
+                    Some(post_nonce)
+                );
+                assert_eq!(
+                    runtime_state
+                        .get_account(&address)
+                        .map(|acc| acc.code_hash.clone()),
+                    Some(code_hash)
+                );
+                for (slot, value) in account["postStorageFacts"]
+                    .as_object()
+                    .expect("account.postStorageFacts")
+                {
+                    assert_eq!(
+                        runtime_state.get_storage(&address, &decode_hex_bytes(slot)),
+                        Some(&decode_hex_bytes(json_str(value, "postStorageFacts.value")))
+                    );
+                }
+            }
+
+            let bal = outcome
+                .observed_block_access_list
+                .block_access_list
+                .expect("official SELFDESTRUCT zero-value observed BAL");
+            let sender_entry = bal
+                .0
+                .iter()
+                .find(|entry| entry.address.as_slice() == tx.from.as_slice())
+                .expect("sender BAL entry");
+            assert_eq!(
+                sender_entry.balance_changes[0].post_balance,
+                NovoVmAdapter::u128_to_be32_v1(post_sender_balance)
+            );
+            assert!(
+                bal.0
+                    .iter()
+                    .filter(|entry| entry.address.as_slice() != tx.from.as_slice())
+                    .all(|entry| entry.balance_changes.is_empty()),
+                "zero-value SELFDESTRUCT success must not emit non-sender balance changes"
+            );
+            assert!(
+                gas_by_label
+                    .insert(label.to_string(), expected_gas_used)
+                    .is_none(),
+                "duplicate official SELFDESTRUCT zero-value label {label}"
+            );
+        }
+
+        assert_eq!(txbytes_seen.len(), 1);
+        assert_eq!(touched_account_count, 3);
+        assert_eq!(code_preservation_facts, 7);
+        assert_eq!(storage_preservation_facts, 2);
+        for label in [
+            "zeroValue_SUICIDE",
+            "zeroValue_SUICIDE_ToEmpty",
+            "zeroValue_SUICIDE_ToNonZeroBalance",
+            "zeroValue_SUICIDE_ToOneStorageKey",
+        ] {
+            assert_eq!(
+                gas_by_label.get(label),
+                Some(&28_603),
+                "{label} must preserve official SELFDESTRUCT zero-value gas used"
+            );
+        }
     }
 
     #[test]
@@ -8976,6 +9385,7 @@ mod tests {
         official_state_fixture_sstore_refund_cap_fee_debit_v1();
         official_state_fixture_failure_account_fee_debit_v1();
         official_state_fixture_zero_calls_revert_no_commit_grouped_projection_v1();
+        official_state_fixture_selfdestruct_zero_value_account_preservation_grouped_projection_v1();
         official_state_fixture_create_account_grouped_projection_v1();
         official_state_fixture_staticcall_precompile_return_grouped_projection_v1();
         official_state_fixture_precompile_failure_oog_grouped_projection_v1();
