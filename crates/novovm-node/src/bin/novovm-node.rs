@@ -1585,7 +1585,7 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
     let local_node_id = u64_env_allow_zero("NOVOVM_ETH_RLPX_LOCAL_NODE", 9_990_001)?;
     let max_peers = usize_env_allow_zero("NOVOVM_ETH_RLPX_MAX_PEERS", 4)?.clamp(1, 16);
     let candidate_limit =
-        usize_env_allow_zero("NOVOVM_ETH_RLPX_CANDIDATE_PEERS", max_peers.max(32))?
+        usize_env_allow_zero("NOVOVM_ETH_RLPX_CANDIDATE_PEERS", max_peers.max(64))?
             .clamp(max_peers, 128);
     let ticks = usize_env_allow_zero("NOVOVM_ETH_RLPX_TICKS", 0)?;
     let sleep_ms = u64_env_clamped("NOVOVM_ETH_RLPX_SLEEP_MS", 600, 10, 60_000);
