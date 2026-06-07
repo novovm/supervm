@@ -2757,6 +2757,13 @@ mod tests {
         .expect("decode official failure/account state fixture")
     }
 
+    fn official_zero_calls_revert_state_fixture_v1() -> serde_json::Value {
+        serde_json::from_str(include_str!(
+            "../tests/fixtures/ethereum-official-state-subset/zero-calls-revert.json"
+        ))
+        .expect("decode official zero-calls revert state fixture")
+    }
+
     fn official_create_account_state_fixture_v1() -> serde_json::Value {
         serde_json::from_str(include_str!(
             "../tests/fixtures/ethereum-official-state-subset/create-account.json"
@@ -5041,6 +5048,390 @@ mod tests {
         assert_eq!(no_value_transfer_cases, 4);
         assert!(storage_no_commit_seen);
         assert_eq!(out_of_gas_cases, 4);
+    }
+
+    #[test]
+    fn official_state_fixture_zero_calls_revert_no_commit_grouped_projection_v1() {
+        let fixture = official_zero_calls_revert_state_fixture_v1();
+        assert_eq!(fixture["source"]["repo"].as_str(), Some("ethereum/tests"));
+        assert_eq!(
+            fixture["source"]["fixtureFormat"].as_str(),
+            Some("state_test")
+        );
+        assert_eq!(fixture["source"]["fork"].as_str(), Some("Cancun"));
+
+        let empty_logs_hash = json_str(&fixture["emptyLogsHash"], "emptyLogsHash");
+        let cases = fixture["cases"]
+            .as_array()
+            .expect("zero-calls revert cases");
+        assert_eq!(cases.len(), 16);
+
+        let mut op_counts = std::collections::HashMap::<String, usize>::new();
+        let mut fixture_hashes = std::collections::HashSet::new();
+        let mut post_hashes = std::collections::HashSet::new();
+        let mut txbytes_seen = std::collections::HashSet::new();
+        let mut touched_account_cases = 0usize;
+        let mut storage_preservation_cases = 0usize;
+        let mut gas_by_label = std::collections::HashMap::new();
+
+        for case in cases {
+            let label = json_str(&case["label"], "case.label");
+            let mode = json_str(&case["mode"], "case.mode");
+            assert!(
+                json_str(&case["fixtureKey"], "case.fixtureKey")
+                    .contains("GeneralStateTests/stZeroCallsRevert"),
+                "official zero-calls revert case must come from stZeroCallsRevert"
+            );
+            assert!(
+                json_str(&case["fixtureKey"], "case.fixtureKey").contains("-fork_[Cancun-Prague]"),
+                "official zero-calls revert case must be the Cancun/Prague projection"
+            );
+            assert!(
+                fixture_hashes.insert(json_str(&case["fixtureHash"], "case.fixtureHash")),
+                "official zero-calls revert fixture hash must be unique"
+            );
+            assert!(
+                post_hashes.insert(json_str(&case["postHash"], "case.postHash")),
+                "official zero-calls revert post hash must be unique"
+            );
+            assert_eq!(
+                json_str(&case["logsHash"], "case.logsHash"),
+                empty_logs_hash
+            );
+
+            let sender = json_str(&case["sender"], "case.sender");
+            let to = json_str(&case["to"], "case.to");
+            let pre_sender_balance =
+                json_hex_u128(&case["preSenderBalance"], "case.preSenderBalance");
+            let pre_sender_nonce =
+                json_hex_u128(&case["preSenderNonce"], "case.preSenderNonce") as u64;
+            let post_sender_balance =
+                json_hex_u128(&case["postSenderBalance"], "case.postSenderBalance");
+            let post_sender_nonce =
+                json_hex_u128(&case["postSenderNonce"], "case.postSenderNonce") as u64;
+            let pre_to_balance = json_hex_u128(&case["preToBalance"], "case.preToBalance");
+            let pre_to_nonce = json_hex_u128(&case["preToNonce"], "case.preToNonce") as u64;
+            let post_to_balance = json_hex_u128(&case["postToBalance"], "case.postToBalance");
+            let post_to_nonce = json_hex_u128(&case["postToNonce"], "case.postToNonce") as u64;
+            let gas_price = json_hex_u128(&case["gasPrice"], "case.gasPrice");
+            let gas_limit = json_hex_u128(&case["gasLimit"], "case.gasLimit");
+            let value = json_hex_u128(&case["value"], "case.value");
+            let nonce = json_hex_u128(&case["nonce"], "case.nonce") as u64;
+
+            assert_eq!(nonce, pre_sender_nonce);
+            assert_eq!(post_sender_nonce, pre_sender_nonce + 1);
+            assert_eq!(value, 0);
+            assert_eq!(post_to_balance, pre_to_balance);
+            assert_eq!(post_to_nonce, pre_to_nonce);
+
+            let raw_tx = decode_hex_bytes(json_str(&case["txbytes"], "case.txbytes"));
+            txbytes_seen.insert(json_str(&case["txbytes"], "case.txbytes"));
+            let recovered_sender = recover_raw_evm_tx_sender_m0(&raw_tx)
+                .expect("official zero-calls revert raw sender recovery")
+                .expect("official zero-calls revert recovered sender");
+            assert_eq!(recovered_sender, decode_hex_bytes(sender));
+            let fields = translate_raw_evm_tx_fields_m0(&raw_tx)
+                .expect("official zero-calls revert tx decode");
+            let tx = tx_ir_from_raw_fields_m0(&fields, &raw_tx, recovered_sender, 1);
+
+            assert_eq!(
+                tx.tx_type,
+                TxType::Transfer,
+                "raw empty-calldata zero-calls revert fixture tx is state-agnostic before execution"
+            );
+            assert_eq!(tx.from, decode_hex_bytes(sender));
+            assert_eq!(tx.to, Some(decode_hex_bytes(to)));
+            assert_eq!(tx.value, value);
+            assert_eq!(tx.gas_limit, gas_limit as u64);
+            assert_eq!(tx.gas_price, gas_price as u64);
+            assert_eq!(tx.nonce, nonce);
+            assert_eq!(
+                tx.data,
+                decode_hex_bytes(json_str(&case["data"], "case.data"))
+            );
+            assert_eq!(
+                tx.data.len(),
+                case["dataLen"].as_u64().expect("case.dataLen") as usize
+            );
+            assert_eq!(
+                Sha256::digest(&tx.data).to_vec(),
+                decode_hex_bytes(json_str(&case["dataSha256"], "case.dataSha256"))
+            );
+
+            let mut adapter = NovoVmAdapter::new(ChainConfig {
+                chain_type: ChainType::EVM,
+                chain_id: 1,
+                name: format!("official-zero-calls-revert-{label}"),
+                enabled: true,
+                custom_config: None,
+            });
+            adapter.initialize().expect("init");
+            assert!(
+                adapter
+                    .verify_transaction(&tx)
+                    .expect("verify official zero-calls revert raw tx"),
+                "official zero-calls revert txbytes must verify through raw EVM path"
+            );
+            for historical_nonce in 0..pre_sender_nonce {
+                let mut historical_tx = tx.clone();
+                historical_tx.nonce = historical_nonce;
+                adapter
+                    .route_transaction_through_unified_account(&historical_tx)
+                    .expect("prime official zero-calls revert pre-state nonce");
+            }
+
+            let charged_fee = pre_sender_balance.saturating_sub(post_sender_balance);
+            assert_eq!(charged_fee % gas_price, 0);
+            let gas_used = charged_fee / gas_price;
+            let expected_gas_used = case["gasUsed"].as_u64().expect("case.gasUsed");
+            assert_eq!(gas_used, expected_gas_used as u128);
+            assert_eq!(
+                expected_gas_used, tx.gas_limit,
+                "official zero-calls revert cases consume the full top-level gas limit"
+            );
+
+            let mut runtime_state = StateIR::new();
+            runtime_state.set_account(
+                tx.from.clone(),
+                AccountState {
+                    balance: pre_sender_balance,
+                    nonce: pre_sender_nonce,
+                    code_hash: None,
+                    storage_root: vec![0u8; 32],
+                },
+            );
+            runtime_state.set_account(
+                tx.to.clone().expect("call target"),
+                AccountState {
+                    balance: pre_to_balance,
+                    nonce: pre_to_nonce,
+                    code_hash: Some(vec![0xe1; 32]),
+                    storage_root: vec![0u8; 32],
+                },
+            );
+            for (slot, value) in case["preTargetStorageFacts"]
+                .as_object()
+                .expect("case.preTargetStorageFacts")
+            {
+                runtime_state.set_storage(
+                    tx.to.clone().expect("call target"),
+                    decode_hex_bytes(slot),
+                    decode_hex_bytes(json_str(value, "preTargetStorageFacts.value")),
+                );
+            }
+
+            for account in case["touchedAccounts"]
+                .as_array()
+                .expect("case.touchedAccounts")
+            {
+                touched_account_cases += 1;
+                let address = decode_hex_bytes(json_str(&account["address"], "account.address"));
+                let pre_balance = json_hex_u128(&account["preBalance"], "account.preBalance");
+                let pre_nonce = json_hex_u128(&account["preNonce"], "account.preNonce") as u64;
+                runtime_state.set_account(
+                    address.clone(),
+                    AccountState {
+                        balance: pre_balance,
+                        nonce: pre_nonce,
+                        code_hash: None,
+                        storage_root: vec![0u8; 32],
+                    },
+                );
+                for (slot, value) in account["preStorageFacts"]
+                    .as_object()
+                    .expect("account.preStorageFacts")
+                {
+                    runtime_state.set_storage(
+                        address.clone(),
+                        decode_hex_bytes(slot),
+                        decode_hex_bytes(json_str(value, "preStorageFacts.value")),
+                    );
+                }
+            }
+
+            assert_eq!(
+                NovoVmAdapter::effective_execution_tx_v1(&tx, &runtime_state).tx_type,
+                TxType::ContractCall,
+                "target code in pre-state must promote zero-calls revert fixture tx to contract call execution"
+            );
+
+            let mut artifact = sample_aoem_artifact(&tx, false, [0x91; 32], None);
+            artifact.gas_used = expected_gas_used;
+            artifact.cumulative_gas_used = expected_gas_used;
+            artifact.effective_gas_price = Some(gas_price as u64);
+            artifact.receipt_type = None;
+            artifact.event_logs.clear();
+            artifact.log_bloom = vec![0u8; AOEM_LOG_BLOOM_BYTES_V1];
+            artifact.revert_data = None;
+            if let Some(anchor) = artifact.anchor.as_mut() {
+                anchor.return_code = 13;
+                anchor.return_code_name = "out_of_gas".to_string();
+            }
+
+            let outcome = adapter
+                .execute_transaction_with_observed_metadata_v1(
+                    &tx,
+                    &mut runtime_state,
+                    Some(&artifact),
+                )
+                .expect("execute official zero-calls revert fixture projection");
+
+            assert!(!outcome.artifact.status_ok);
+            assert_eq!(outcome.artifact.gas_used, expected_gas_used);
+            assert!(outcome.artifact.event_logs.is_empty());
+            assert!(outcome.artifact.log_bloom.iter().all(|byte| *byte == 0));
+            assert!(outcome.artifact.revert_data.is_none());
+            assert_eq!(
+                runtime_state.get_account(&tx.from).map(|acc| acc.balance),
+                Some(post_sender_balance)
+            );
+            assert_eq!(
+                runtime_state.get_storage(&tx.from, b"aoem:last_failure_class"),
+                Some(&b"out_of_gas".to_vec())
+            );
+            assert_eq!(
+                runtime_state
+                    .get_account(tx.to.as_ref().expect("call target"))
+                    .map(|acc| acc.balance),
+                Some(post_to_balance)
+            );
+            assert_eq!(
+                runtime_state
+                    .get_account(tx.to.as_ref().expect("call target"))
+                    .map(|acc| acc.nonce),
+                Some(post_to_nonce)
+            );
+            assert!(
+                runtime_state
+                    .get_storage(
+                        tx.to.as_ref().expect("call target"),
+                        &tx.nonce.to_le_bytes().to_vec()
+                    )
+                    .is_none(),
+                "failed zero-calls revert must not add adapter synthetic target storage"
+            );
+            let post_target_storage = case["postTargetStorageFacts"]
+                .as_object()
+                .expect("case.postTargetStorageFacts");
+            if !post_target_storage.is_empty() {
+                storage_preservation_cases += 1;
+            }
+            for (slot, value) in post_target_storage {
+                assert_eq!(
+                    runtime_state.get_storage(
+                        tx.to.as_ref().expect("call target"),
+                        &decode_hex_bytes(slot)
+                    ),
+                    Some(&decode_hex_bytes(json_str(
+                        value,
+                        "postTargetStorageFacts.value"
+                    )))
+                );
+            }
+
+            for account in case["touchedAccounts"]
+                .as_array()
+                .expect("case.touchedAccounts")
+            {
+                let address = decode_hex_bytes(json_str(&account["address"], "account.address"));
+                let post_balance = json_hex_u128(&account["postBalance"], "account.postBalance");
+                let post_nonce = json_hex_u128(&account["postNonce"], "account.postNonce") as u64;
+                assert_eq!(
+                    runtime_state.get_account(&address).map(|acc| acc.balance),
+                    Some(post_balance)
+                );
+                assert_eq!(
+                    runtime_state.get_account(&address).map(|acc| acc.nonce),
+                    Some(post_nonce)
+                );
+                let post_storage = account["postStorageFacts"]
+                    .as_object()
+                    .expect("account.postStorageFacts");
+                if !post_storage.is_empty() {
+                    storage_preservation_cases += 1;
+                }
+                for (slot, value) in post_storage {
+                    assert_eq!(
+                        runtime_state.get_storage(&address, &decode_hex_bytes(slot)),
+                        Some(&decode_hex_bytes(json_str(value, "postStorageFacts.value")))
+                    );
+                }
+            }
+
+            let bal = outcome
+                .observed_block_access_list
+                .block_access_list
+                .expect("official zero-calls revert observed BAL");
+            let sender_entry = bal
+                .0
+                .iter()
+                .find(|entry| entry.address.as_slice() == tx.from.as_slice())
+                .expect("sender BAL entry");
+            assert_eq!(
+                sender_entry.balance_changes[0].post_balance,
+                NovoVmAdapter::u128_to_be32_v1(post_sender_balance)
+            );
+            assert!(
+                bal.0
+                    .iter()
+                    .filter(|entry| entry.address.as_slice() != tx.from.as_slice())
+                    .all(|entry| entry.balance_changes.is_empty()),
+                "zero-value failed calls must not emit non-sender balance changes"
+            );
+
+            let op = mode.split('_').next().expect("mode op");
+            *op_counts.entry(op.to_string()).or_default() += 1;
+            assert!(
+                gas_by_label
+                    .insert(label.to_string(), expected_gas_used)
+                    .is_none(),
+                "duplicate official zero-calls revert label {label}"
+            );
+        }
+
+        assert_eq!(op_counts.get("CALL"), Some(&4));
+        assert_eq!(op_counts.get("CALLCODE"), Some(&4));
+        assert_eq!(op_counts.get("DELEGATECALL"), Some(&4));
+        assert_eq!(op_counts.get("SUICIDE"), Some(&4));
+        assert_eq!(txbytes_seen.len(), 3);
+        assert_eq!(touched_account_cases, 16);
+        assert_eq!(storage_preservation_cases, 6);
+        for label in [
+            "zeroValue_CALL_OOGRevert",
+            "zeroValue_CALL_ToEmpty_OOGRevert",
+            "zeroValue_CALL_ToNonZeroBalance_OOGRevert",
+            "zeroValue_CALL_ToOneStorageKey_OOGRevert",
+            "zeroValue_CALLCODE_OOGRevert",
+            "zeroValue_CALLCODE_ToEmpty_OOGRevert",
+            "zeroValue_CALLCODE_ToNonZeroBalance_OOGRevert",
+            "zeroValue_CALLCODE_ToOneStorageKey_OOGRevert",
+            "zeroValue_DELEGATECALL_OOGRevert",
+            "zeroValue_DELEGATECALL_ToEmpty_OOGRevert",
+            "zeroValue_DELEGATECALL_ToNonZeroBalance_OOGRevert",
+            "zeroValue_DELEGATECALL_ToOneStorageKey_OOGRevert",
+        ] {
+            assert_eq!(
+                gas_by_label.get(label),
+                Some(&135_000),
+                "{label} must consume full 135000 gas"
+            );
+        }
+        assert_eq!(
+            gas_by_label.get("zeroValue_SUICIDE_OOGRevert"),
+            Some(&100_000)
+        );
+        assert_eq!(
+            gas_by_label.get("zeroValue_SUICIDE_ToEmpty_OOGRevert"),
+            Some(&75_000)
+        );
+        assert_eq!(
+            gas_by_label.get("zeroValue_SUICIDE_ToNonZeroBalance_OOGRevert"),
+            Some(&75_000)
+        );
+        assert_eq!(
+            gas_by_label.get("zeroValue_SUICIDE_ToOneStorageKey_OOGRevert"),
+            Some(&75_000)
+        );
     }
 
     #[test]
@@ -8584,6 +8975,7 @@ mod tests {
         official_state_fixture_sload_warm_cold_fee_debit_v1();
         official_state_fixture_sstore_refund_cap_fee_debit_v1();
         official_state_fixture_failure_account_fee_debit_v1();
+        official_state_fixture_zero_calls_revert_no_commit_grouped_projection_v1();
         official_state_fixture_create_account_grouped_projection_v1();
         official_state_fixture_staticcall_precompile_return_grouped_projection_v1();
         official_state_fixture_precompile_failure_oog_grouped_projection_v1();
