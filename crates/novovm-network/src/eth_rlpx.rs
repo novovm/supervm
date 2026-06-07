@@ -1425,6 +1425,14 @@ pub fn eth_rlpx_parse_block_access_lists_payload_v1(
     })
 }
 
+#[must_use]
+pub fn eth_rlpx_validate_block_access_list_rlp_v1(raw_list: &[u8]) -> bool {
+    let Ok((item, consumed)) = eth_rlpx_parse_item_v1(raw_list) else {
+        return false;
+    };
+    consumed == raw_list.len() && matches!(item, EthRlpxRlpItemV1::List(_))
+}
+
 #[derive(Clone)]
 enum EthRlpxHashStateV1 {
     Keccak(sha3::Keccak256),

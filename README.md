@@ -188,7 +188,7 @@ EVM protocol-observable equivalence scope (CN):
 - v3 RLPx tx outbound gate: `cargo test -p novovm-network evm_protocol_observable_equivalence_network_rlpx_tx_outbound_broadcast_gate_v3 -- --nocapture` (local pending raw tx => real RLPx `Transactions` broadcast)
 - v3 RLPx block body import gate: `cargo test -p novovm-network evm_protocol_observable_equivalence_network_rlpx_block_body_import_gate_v3 -- --nocapture` (real `BlockHeaders`/`BlockBodies` => native body snapshot)
 - v3 RLPx reorg gate: `cargo test -p novovm-network evm_protocol_observable_equivalence_network_rlpx_reorg_gate_v3 -- --nocapture` (real RLPx branch switch => canonical reorg + pending tx back to broadcast candidate)
-- v3 RLPx BAL response gate: `cargo test -p novovm-network evm_protocol_observable_equivalence_network_rlpx_bal_response_gate_v3 -- --nocapture` (real `GetBlockAccessLists` => protocol-valid `BlockAccessLists` response; missing sentinel until local BAL payload is materialized)
+- v3 RLPx BAL response gate: `cargo test -p novovm-network evm_protocol_observable_equivalence_network_rlpx_bal_response_gate_v3 -- --nocapture` (real `GetBlockAccessLists` => protocol-valid `BlockAccessLists` response; canonical/materialized local BAL RLP returned, unavailable hashes use missing sentinel)
 
 Manual local run:
 

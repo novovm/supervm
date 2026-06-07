@@ -18,6 +18,7 @@ use crate::{
     eth_rlpx_parse_status_payload_v1, eth_rlpx_parse_transactions_payload_v1,
     eth_rlpx_read_wire_frame_v1, eth_rlpx_select_shared_eth_version_v1,
     eth_rlpx_select_shared_snap_version_v1, eth_rlpx_write_wire_frame_v1,
+    get_network_runtime_native_block_access_list_payload_v1,
     get_network_runtime_native_body_snapshot_v1, get_network_runtime_native_head_snapshot_v1,
     get_network_runtime_native_header_snapshot_v1, get_network_runtime_native_sync_status,
     get_network_runtime_peer_heads_top_k, get_network_runtime_sync_status,
@@ -1482,10 +1483,18 @@ fn drive_eth_fullnode_native_rlpx_peer_session_once_v1(
                                     );
                                     NetworkError::Decode(err)
                                 })?;
-                        let missing_lists = vec![None; request.hashes.len()];
+                        let response_lists = request
+                            .hashes
+                            .iter()
+                            .map(|hash| {
+                                get_network_runtime_native_block_access_list_payload_v1(
+                                    chain_id, *hash,
+                                )
+                            })
+                            .collect::<Vec<_>>();
                         let response_payload = eth_rlpx_build_block_access_lists_payload_v1(
                             request.request_id,
-                            missing_lists.as_slice(),
+                            response_lists.as_slice(),
                         );
                         eth_rlpx_write_wire_frame_v1(
                             &mut session.stream,
@@ -4090,10 +4099,11 @@ mod tests {
         get_network_runtime_native_header_snapshot_v1, get_network_runtime_native_pending_tx_v1,
         get_network_runtime_native_sync_status, get_network_runtime_sync_status,
         observe_network_runtime_native_pending_tx_local_ingress_with_payload_v1,
-        parse_enode_endpoint, set_network_runtime_native_body_snapshot_v1,
-        set_network_runtime_native_head_snapshot_v1, set_network_runtime_native_header_snapshot_v1,
-        set_network_runtime_sync_status, snapshot_eth_fullnode_native_head_block_object_v1,
-        snapshot_eth_native_sync_evidence, snapshot_network_runtime_eth_peer_sessions,
+        parse_enode_endpoint, set_network_runtime_native_block_access_list_payload_v1,
+        set_network_runtime_native_body_snapshot_v1, set_network_runtime_native_head_snapshot_v1,
+        set_network_runtime_native_header_snapshot_v1, set_network_runtime_sync_status,
+        snapshot_eth_fullnode_native_head_block_object_v1, snapshot_eth_native_sync_evidence,
+        snapshot_network_runtime_eth_peer_sessions,
         snapshot_network_runtime_eth_peer_sessions_for_peers_v1,
         snapshot_network_runtime_native_pending_tx_broadcast_candidates_v1,
         snapshot_network_runtime_native_pending_tx_summary_v1,
@@ -7238,6 +7248,22 @@ mod tests {
             },
         );
 
+        let available_hash = [0x11; 32];
+        let mut bal_builder = novovm_protocol::EvmConstructionBlockAccessListV1::new();
+        let bal_account = [0x44u8; 20];
+        bal_builder.account_read(bal_account);
+        bal_builder.storage_write(0, bal_account, [0x55; 32], [0x66; 32]);
+        bal_builder.balance_change(1, bal_account, [0x77; 32]);
+        let expected_bal_rlp =
+            novovm_protocol::evm_block_access_list_rlp_bytes_v1(&bal_builder.to_access_list())
+                .expect("BAL RLP");
+        set_network_runtime_native_block_access_list_payload_v1(
+            chain_id,
+            available_hash,
+            expected_bal_rlp.as_slice(),
+        )
+        .expect("store native BAL payload");
+
         let responder_signing = k256::ecdsa::SigningKey::random(&mut rand::rngs::OsRng);
         let responder_nodekey: [u8; 32] = responder_signing.to_bytes().into();
         let responder_pub = crate::eth_rlpx_pubkey_from_nodekey_bytes_v1(&responder_nodekey)
@@ -7327,7 +7353,7 @@ mod tests {
             assert_eq!(peer_status.network_id, chain_id);
             assert_eq!(peer_status.protocol_version, 70);
 
-            let requested_hashes = vec![[0x11; 32], [0x22; 32], [0x33; 32]];
+            let requested_hashes = vec![available_hash, [0x22; 32], [0x33; 32]];
             let get_payload =
                 crate::eth_rlpx_build_get_block_access_lists_payload_v1(77, &requested_hashes);
             crate::eth_rlpx_write_wire_frame_v1(
@@ -7363,9 +7389,15 @@ mod tests {
                         .expect("parse BAL response");
                 assert_eq!(response.request_id, 77);
                 assert_eq!(response.lists.len(), requested_hashes.len());
-                assert!(response.lists.iter().all(|item| item.raw_rlp.is_none()));
-                assert!(response
-                    .lists
+                assert_eq!(
+                    response.lists[0].raw_rlp.as_deref(),
+                    Some(expected_bal_rlp.as_slice())
+                );
+                assert_eq!(response.lists[0].account_count, Some(1));
+                assert!(response.lists[1..]
+                    .iter()
+                    .all(|item| item.raw_rlp.is_none()));
+                assert!(response.lists[1..]
                     .iter()
                     .all(|item| item.account_count.is_none()));
                 done_tx.send(()).expect("signal BAL response gate");

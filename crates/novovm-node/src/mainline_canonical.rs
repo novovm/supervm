@@ -3,10 +3,10 @@
 use anyhow::{Context, Result};
 use novovm_exec::{SupervmEvmExecutionReceiptV1, SupervmEvmStateMirrorUpdateV1};
 use novovm_network::{
-    derive_eth_fullnode_chain_view_v1, EthFullnodeBlockContextV1, EthFullnodeBlockViewSource,
-    EthFullnodeChainViewV1,
+    derive_eth_fullnode_chain_view_v1, set_network_runtime_native_block_access_list_payload_v1,
+    EthFullnodeBlockContextV1, EthFullnodeBlockViewSource, EthFullnodeChainViewV1,
 };
-use novovm_protocol::EvmBlockAccessListV1;
+use novovm_protocol::{evm_block_access_list_rlp_bytes_v1, EvmBlockAccessListV1};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::fs;
@@ -165,6 +165,34 @@ pub fn derive_mainline_eth_block_access_list_by_hash_v1(
     None
 }
 
+pub fn materialize_mainline_eth_block_access_lists_to_network_runtime_v1(
+    store: &MainlineCanonicalStoreV1,
+) -> usize {
+    if store.chain_type != "evm" {
+        return 0;
+    }
+    let contexts = derive_mainline_eth_block_contexts_v1(store);
+    let mut materialized = 0usize;
+    for (batch, context) in store.batches.iter().zip(contexts.iter()) {
+        let Some(block_access_list) = batch.block_access_list.as_ref() else {
+            continue;
+        };
+        let Ok(raw_rlp) = evm_block_access_list_rlp_bytes_v1(block_access_list) else {
+            continue;
+        };
+        if set_network_runtime_native_block_access_list_payload_v1(
+            store.chain_id,
+            context.block_hash,
+            raw_rlp.as_slice(),
+        )
+        .is_ok()
+        {
+            materialized = materialized.saturating_add(1);
+        }
+    }
+    materialized
+}
+
 pub fn project_mainline_eth_block_context_to_fullnode_v1(
     context: &MainlineEthBlockContextV1,
 ) -> EthFullnodeBlockContextV1 {
@@ -251,6 +279,7 @@ pub fn append_mainline_canonical_batch(
     store.chain_id = chain_id;
     store.batches.push(batch);
     save_mainline_canonical_store(path, &store)?;
+    let _ = materialize_mainline_eth_block_access_lists_to_network_runtime_v1(&store);
     Ok(store)
 }
 
@@ -590,6 +619,27 @@ mod tests {
         assert_eq!(second.block_access_list_hash, None);
 
         assert!(derive_mainline_eth_block_access_list_by_hash_v1(&store, [0xff; 32]).is_none());
+
+        assert_eq!(
+            materialize_mainline_eth_block_access_lists_to_network_runtime_v1(&store),
+            1
+        );
+        let expected_rlp =
+            evm_block_access_list_rlp_bytes_v1(&sample_block_access_list()).expect("BAL RLP");
+        assert_eq!(
+            novovm_network::get_network_runtime_native_block_access_list_payload_v1(
+                store.chain_id,
+                contexts[0].block_hash
+            ),
+            Some(expected_rlp)
+        );
+        assert_eq!(
+            novovm_network::get_network_runtime_native_block_access_list_payload_v1(
+                store.chain_id,
+                contexts[1].block_hash
+            ),
+            None
+        );
     }
 
     #[test]

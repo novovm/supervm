@@ -2,7 +2,11 @@
 
 use crate::{
     default_eth_fullnode_budget_hooks_v1,
-    eth_rlpx::eth_rlpx_validate_transaction_envelope_payload_v1, EthFullnodeBudgetHooksV1,
+    eth_rlpx::{
+        eth_rlpx_validate_block_access_list_rlp_v1,
+        eth_rlpx_validate_transaction_envelope_payload_v1,
+    },
+    EthFullnodeBudgetHooksV1,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -40,6 +44,12 @@ static NETWORK_RUNTIME_NATIVE_HEADER_SNAPSHOTS: OnceLock<
 > = OnceLock::new();
 static NETWORK_RUNTIME_NATIVE_BODY_SNAPSHOTS: OnceLock<
     Mutex<HashMap<u64, NetworkRuntimeNativeBodySnapshotV1>>,
+> = OnceLock::new();
+type NetworkRuntimeNativeBlockAccessListPayloadByHashV1 = HashMap<[u8; 32], Vec<u8>>;
+type NetworkRuntimeNativeBlockAccessListPayloadByChainV1 =
+    HashMap<u64, NetworkRuntimeNativeBlockAccessListPayloadByHashV1>;
+static NETWORK_RUNTIME_NATIVE_BLOCK_ACCESS_LIST_PAYLOADS: OnceLock<
+    Mutex<NetworkRuntimeNativeBlockAccessListPayloadByChainV1>,
 > = OnceLock::new();
 static NETWORK_RUNTIME_NATIVE_HEAD_SNAPSHOTS: OnceLock<
     Mutex<HashMap<u64, NetworkRuntimeNativeHeadSnapshotV1>>,
@@ -97,6 +107,11 @@ fn runtime_native_header_snapshot_map(
 fn runtime_native_body_snapshot_map(
 ) -> &'static Mutex<HashMap<u64, NetworkRuntimeNativeBodySnapshotV1>> {
     NETWORK_RUNTIME_NATIVE_BODY_SNAPSHOTS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn runtime_native_block_access_list_payload_map(
+) -> &'static Mutex<NetworkRuntimeNativeBlockAccessListPayloadByChainV1> {
+    NETWORK_RUNTIME_NATIVE_BLOCK_ACCESS_LIST_PAYLOADS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
 fn runtime_native_head_snapshot_map(
@@ -2243,6 +2258,35 @@ pub fn set_network_runtime_native_body_snapshot_v1(
     runtime_native_pending_tx_cleanup_v1(chain_id, normalized.observed_unix_ms);
 }
 
+pub fn set_network_runtime_native_block_access_list_payload_v1(
+    chain_id: u64,
+    block_hash: [u8; 32],
+    raw_rlp: &[u8],
+) -> Result<(), String> {
+    if !eth_rlpx_validate_block_access_list_rlp_v1(raw_rlp) {
+        return Err("native_block_access_list_payload_not_rlp_list".to_string());
+    }
+    let mut guard = runtime_native_block_access_list_payload_map()
+        .lock()
+        .map_err(|_| "native_block_access_list_payload_lock_poisoned".to_string())?;
+    guard
+        .entry(chain_id)
+        .or_default()
+        .insert(block_hash, raw_rlp.to_vec());
+    Ok(())
+}
+
+#[must_use]
+pub fn get_network_runtime_native_block_access_list_payload_v1(
+    chain_id: u64,
+    block_hash: [u8; 32],
+) -> Option<Vec<u8>> {
+    let guard = runtime_native_block_access_list_payload_map().lock().ok()?;
+    guard
+        .get(&chain_id)
+        .and_then(|payloads| payloads.get(&block_hash).cloned())
+}
+
 pub fn set_network_runtime_native_head_snapshot_v1(
     chain_id: u64,
     snapshot: NetworkRuntimeNativeHeadSnapshotV1,
@@ -2888,6 +2932,9 @@ pub fn clear_network_runtime_native_snapshots_for_chain_v1(chain_id: u64) {
         guard.remove(&chain_id);
     }
     if let Ok(mut guard) = runtime_native_body_snapshot_map().lock() {
+        guard.remove(&chain_id);
+    }
+    if let Ok(mut guard) = runtime_native_block_access_list_payload_map().lock() {
         guard.remove(&chain_id);
     }
     if let Ok(mut guard) = runtime_native_head_snapshot_map().lock() {
