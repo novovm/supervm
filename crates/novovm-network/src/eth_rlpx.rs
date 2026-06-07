@@ -41,6 +41,7 @@ pub const ETH_RLPX_P2P_PROTOCOL_VERSION: u64 = 5;
 pub const ETH_RLPX_BASE_PROTOCOL_OFFSET: u64 = 0x10;
 pub const ETH_RLPX_ZERO_HEADER: [u8; 3] = [0xC2, 0x80, 0x80];
 pub const ETH_RLPX_ETH_STATUS_MSG: u64 = 0x00;
+pub const ETH_RLPX_ETH_NEW_BLOCK_HASHES_MSG: u64 = 0x01;
 pub const ETH_RLPX_ETH_TRANSACTIONS_MSG: u64 = 0x02;
 pub const ETH_RLPX_ETH_GET_BLOCK_HEADERS_MSG: u64 = 0x03;
 pub const ETH_RLPX_ETH_BLOCK_HEADERS_MSG: u64 = 0x04;
@@ -114,6 +115,12 @@ pub struct EthRlpxGetBlockHeadersRequestV1 {
     pub max_headers: u64,
     pub skip: u64,
     pub reverse: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EthRlpxNewBlockHashV1 {
+    pub hash: [u8; 32],
+    pub number: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -913,6 +920,19 @@ pub fn eth_rlpx_build_get_block_headers_payload_v1(
     ])
 }
 
+pub fn eth_rlpx_build_new_block_hashes_payload_v1(blocks: &[EthRlpxNewBlockHashV1]) -> Vec<u8> {
+    let block_items = blocks
+        .iter()
+        .map(|block| {
+            eth_rlpx_encode_list_v1(&[
+                eth_rlpx_encode_bytes_v1(&block.hash),
+                eth_rlpx_encode_u64_v1(block.number),
+            ])
+        })
+        .collect::<Vec<_>>();
+    eth_rlpx_encode_list_v1(&block_items)
+}
+
 pub fn eth_rlpx_build_get_block_bodies_payload_v1(request_id: u64, hashes: &[[u8; 32]]) -> Vec<u8> {
     let hash_items = hashes
         .iter()
@@ -940,6 +960,44 @@ pub fn eth_rlpx_build_get_block_access_lists_payload_v1(
 
 pub fn eth_rlpx_build_transactions_payload_v1(tx_rlp_items: &[Vec<u8>]) -> Vec<u8> {
     eth_rlpx_encode_list_v1(tx_rlp_items)
+}
+
+pub fn eth_rlpx_parse_new_block_hashes_payload_v1(
+    payload: &[u8],
+) -> Result<Vec<EthRlpxNewBlockHashV1>, String> {
+    let (root, consumed) = eth_rlpx_parse_item_v1(payload)?;
+    if consumed != payload.len() {
+        return Err("rlpx_new_block_hashes_trailing".to_string());
+    }
+    let EthRlpxRlpItemV1::List(blocks_payload) = root else {
+        return Err("rlpx_new_block_hashes_not_list".to_string());
+    };
+    let mut blocks = Vec::new();
+    for block_payload in eth_rlpx_parse_list_items_v1(blocks_payload)? {
+        let EthRlpxRlpItemV1::List(fields_payload) = block_payload else {
+            return Err("rlpx_new_block_hash_entry_not_list".to_string());
+        };
+        let fields = eth_rlpx_parse_list_items_v1(fields_payload)?;
+        if fields.len() < 2 {
+            return Err("rlpx_new_block_hash_entry_fields_short".to_string());
+        }
+        let EthRlpxRlpItemV1::Bytes(hash_bytes) = fields[0] else {
+            return Err("rlpx_new_block_hash_hash_not_bytes".to_string());
+        };
+        let EthRlpxRlpItemV1::Bytes(number_bytes) = fields[1] else {
+            return Err("rlpx_new_block_hash_number_not_bytes".to_string());
+        };
+        if hash_bytes.len() != 32 {
+            return Err("rlpx_new_block_hash_hash_len_invalid".to_string());
+        }
+        let mut hash = [0u8; 32];
+        hash.copy_from_slice(hash_bytes);
+        blocks.push(EthRlpxNewBlockHashV1 {
+            hash,
+            number: eth_rlpx_decode_u64_bytes_v1(number_bytes)?,
+        });
+    }
+    Ok(blocks)
 }
 
 pub fn eth_rlpx_parse_get_block_headers_payload_v1(
@@ -2270,6 +2328,23 @@ mod tests {
             .expect("parse get bodies");
         assert_eq!(parsed_bodies.request_id, 9);
         assert_eq!(parsed_bodies.hashes, hashes);
+
+        let announced_blocks = vec![
+            EthRlpxNewBlockHashV1 {
+                hash: [0x31; 32],
+                number: 129,
+            },
+            EthRlpxNewBlockHashV1 {
+                hash: [0x32; 32],
+                number: 130,
+            },
+        ];
+        let new_block_hashes =
+            eth_rlpx_build_new_block_hashes_payload_v1(announced_blocks.as_slice());
+        let parsed_new_block_hashes =
+            eth_rlpx_parse_new_block_hashes_payload_v1(new_block_hashes.as_slice())
+                .expect("parse new block hashes");
+        assert_eq!(parsed_new_block_hashes, announced_blocks);
 
         let get_access_lists =
             eth_rlpx_build_get_block_access_lists_payload_v1(10, hashes.as_slice());

@@ -106,6 +106,7 @@ cargo test -p novovm-network evm_protocol_observable_equivalence_network_rlpx_tx
 cargo test -p novovm-network evm_protocol_observable_equivalence_network_rlpx_block_body_import_gate_v3 -- --nocapture
 cargo test -p novovm-network evm_protocol_observable_equivalence_network_rlpx_reorg_gate_v3 -- --nocapture
 cargo test -p novovm-network evm_protocol_observable_equivalence_network_rlpx_bal_response_gate_v3 -- --nocapture
+cargo test -p novovm-network evm_protocol_observable_equivalence_network_rlpx_new_block_hashes_gate_v3 -- --nocapture
 ```
 
 这些 gate 使用真实 TCP socket 和 RLPx frame，不走内存 transport：
@@ -124,8 +125,9 @@ cargo test -p novovm-network evm_protocol_observable_equivalence_network_rlpx_ba
 - 120A 中已 canonical included 的 pending tx 回到 `ReorgedBackToPending`，并携 raw RLP 重新进入 broadcast candidate。
 - 远端 peer 发送真实 `GetBlockAccessLists` frame，SUPERVM 返回协议合法 `BlockAccessLists` frame，保持 request_id 和 requested hash 数量一致。
 - mainline canonical batch append 后会把 persisted block BAL materialize 到 network runtime；对本地已 materialize 的 block BAL payload，响应返回真实 BAL RLP；对未 materialize 的 hash，响应使用 Ethereum RLPx BAL missing sentinel，不伪造 block access list。
+- 远端 peer 发送真实 `NewBlockHashes` announcement，SUPERVM 解析公告高度，更新 peer head/highest，并主动发出后续 `GetBlockHeaders`，不再只依赖初始 `Status` 触发同步。
 
-当前 v3 结论：tx propagation 的入站/出站网络可观察语义、RLPx header/body import、最小 reorg 回池路径、BAL 请求/响应路径已具备真实 gate；BAL 响应已能返回 canonical/materialized 本地 payload，并对缺失 payload 使用协议 missing sentinel。尚未因此声明完整 eth/71 peer sync、长连接主网接受度、完整 BAL 可用性或复杂多分支 reorg 全覆盖。
+当前 v3 结论：tx propagation 的入站/出站网络可观察语义、RLPx header/body import、最小 reorg 回池路径、BAL 请求/响应路径、`NewBlockHashes` 公告驱动的 follow-up header pull 已具备真实 gate；BAL 响应已能返回 canonical/materialized 本地 payload，并对缺失 payload 使用协议 missing sentinel。尚未因此声明完整 eth/71 peer sync、长连接主网接受度、完整 BAL 可用性、receipts/pooled-tx/snap 全面同步或复杂多分支 reorg 全覆盖。
 
 ## 剩余阶段
 
@@ -134,7 +136,7 @@ cargo test -p novovm-network evm_protocol_observable_equivalence_network_rlpx_ba
 | v1 | 插件产品面协议可观察等价 | 本文 3 个聚合 gate 全绿 |
 | v2a | RPC 黑盒投影根门禁 | `evm_protocol_observable_equivalence_geth_rpc_blackbox_projection_gate_v2` 全绿 |
 | v2b | 真 geth/reth 黑盒差分 | 真实 geth fullTx block diff gate 全绿；raw tx RLP 存在时 `transactionsRoot` 也一致 |
-| v3 | 网络可观察等价 | 已覆盖真实 RLPx handshake/Status + 入站 `Transactions` -> pending tx raw RLP + 出站 `Transactions` broadcast + header/body import + 最小 reorg 回池 |
+| v3 | 网络可观察等价 | 已覆盖真实 RLPx handshake/Status + 入站 `Transactions` -> pending tx raw RLP + 出站 `Transactions` broadcast + header/body import + 最小 reorg 回池 + BAL request/response + `NewBlockHashes` follow-up header pull |
 | v4 | 长稳生产封口 | 多节点 devnet soak、重启恢复、恶意/边界输入、BAL/receipt/RPC 长稳无漂移 |
 
 ## 下一步
