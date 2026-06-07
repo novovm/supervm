@@ -5,6 +5,8 @@
 #![forbid(unsafe_code)]
 
 use anyhow::{bail, Context, Result};
+use base64::Engine;
+use k256::elliptic_curve::sec1::ToEncodedPoint;
 use novovm_adapter_api::{ChainType, TxIR};
 use novovm_adapter_evm_core::{
     recover_raw_evm_tx_sender_m0, translate_raw_evm_tx_fields_m0, tx_ir_from_raw_fields_m0,
@@ -1169,10 +1171,293 @@ const ETH_RLPX_MAINNET_BOOTNODES_V1: [&str; 4] = [
     "enode://4aeb4ab6c14b23e2c4cfdce879c04b0748a20d8e9b59e25ded2a08143e265c6c25936e74cbc8e641e3312ca288673d91f2f93f8e277de3cfa444ecdaaf982052@157.90.35.166:30303",
 ];
 
-fn eth_rlpx_sync_peer_endpoints_v1(max_peers: usize) -> Vec<PluginPeerEndpoint> {
-    let raw = string_env_nonempty("NOVOVM_ETH_RLPX_ENODES")
-        .or_else(|| string_env_nonempty("NOVOVM_ETH_LIVE_SMOKE_ENODES"))
-        .unwrap_or_else(|| ETH_RLPX_MAINNET_BOOTNODES_V1.join(","));
+const ETH_DNS_DISCOVERY_MAINNET_ROOT_V1: &str = "all.mainnet.ethdisco.net";
+const ETH_DNS_DISCOVERY_DOH_URL_V1: &str = "https://dns.google/resolve";
+
+#[derive(Clone, Copy)]
+enum EthDnsRlpItemV1<'a> {
+    Bytes(&'a [u8]),
+    List(&'a [u8]),
+}
+
+fn eth_node_hex_lower_v1(bytes: &[u8]) -> String {
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        out.push_str(&format!("{byte:02x}"));
+    }
+    out
+}
+
+fn eth_dns_rlp_parse_item_v1(input: &[u8]) -> Option<(EthDnsRlpItemV1<'_>, usize)> {
+    let lead = *input.first()?;
+    match lead {
+        0x00..=0x7f => Some((EthDnsRlpItemV1::Bytes(&input[..1]), 1)),
+        0x80..=0xb7 => {
+            let len = (lead - 0x80) as usize;
+            (input.len() >= 1 + len)
+                .then_some((EthDnsRlpItemV1::Bytes(&input[1..1 + len]), 1 + len))
+        }
+        0xb8..=0xbf => {
+            let len_of_len = (lead - 0xb7) as usize;
+            if input.len() < 1 + len_of_len {
+                return None;
+            }
+            let mut len = 0usize;
+            for byte in &input[1..1 + len_of_len] {
+                len = len.checked_shl(8)?.checked_add(*byte as usize)?;
+            }
+            (input.len() >= 1 + len_of_len + len).then_some((
+                EthDnsRlpItemV1::Bytes(&input[1 + len_of_len..1 + len_of_len + len]),
+                1 + len_of_len + len,
+            ))
+        }
+        0xc0..=0xf7 => {
+            let len = (lead - 0xc0) as usize;
+            (input.len() >= 1 + len).then_some((EthDnsRlpItemV1::List(&input[1..1 + len]), 1 + len))
+        }
+        _ => {
+            let len_of_len = (lead - 0xf7) as usize;
+            if input.len() < 1 + len_of_len {
+                return None;
+            }
+            let mut len = 0usize;
+            for byte in &input[1..1 + len_of_len] {
+                len = len.checked_shl(8)?.checked_add(*byte as usize)?;
+            }
+            (input.len() >= 1 + len_of_len + len).then_some((
+                EthDnsRlpItemV1::List(&input[1 + len_of_len..1 + len_of_len + len]),
+                1 + len_of_len + len,
+            ))
+        }
+    }
+}
+
+fn eth_dns_rlp_parse_list_items_v1(payload: &[u8]) -> Option<Vec<EthDnsRlpItemV1<'_>>> {
+    let mut items = Vec::new();
+    let mut cursor = 0usize;
+    while cursor < payload.len() {
+        let (item, consumed) = eth_dns_rlp_parse_item_v1(&payload[cursor..])?;
+        if consumed == 0 {
+            return None;
+        }
+        items.push(item);
+        cursor = cursor.checked_add(consumed)?;
+    }
+    (cursor == payload.len()).then_some(items)
+}
+
+fn eth_dns_rlp_u64_v1(bytes: &[u8]) -> Option<u64> {
+    if bytes.len() > 8 {
+        return None;
+    }
+    let mut out = 0u64;
+    for byte in bytes {
+        out = out.checked_shl(8)?.checked_add(*byte as u64)?;
+    }
+    Some(out)
+}
+
+fn eth_dns_base64url_decode_v1(raw: &str) -> Option<Vec<u8>> {
+    base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(raw)
+        .or_else(|_| base64::engine::general_purpose::URL_SAFE.decode(raw))
+        .ok()
+}
+
+fn eth_dns_sec1_pubkey_to_enode_hex_v1(sec1: &[u8]) -> Option<String> {
+    let public_key = k256::PublicKey::from_sec1_bytes(sec1).ok()?;
+    let uncompressed = public_key.to_encoded_point(false);
+    let bytes = uncompressed.as_bytes();
+    if bytes.len() != 65 || bytes[0] != 0x04 {
+        return None;
+    }
+    Some(eth_node_hex_lower_v1(&bytes[1..]))
+}
+
+fn eth_dns_decode_enr_to_endpoint_v1(record: &str) -> Option<PluginPeerEndpoint> {
+    let raw = record.trim().strip_prefix("enr:")?;
+    let bytes = eth_dns_base64url_decode_v1(raw)?;
+    let (root, consumed) = eth_dns_rlp_parse_item_v1(bytes.as_slice())?;
+    if consumed != bytes.len() {
+        return None;
+    }
+    let EthDnsRlpItemV1::List(payload) = root else {
+        return None;
+    };
+    let fields = eth_dns_rlp_parse_list_items_v1(payload)?;
+    if fields.len() < 3 {
+        return None;
+    }
+
+    let mut ip4 = None::<[u8; 4]>;
+    let mut tcp_port = None::<u16>;
+    let mut pubkey = None::<Vec<u8>>;
+    let mut cursor = 2usize;
+    while cursor + 1 < fields.len() {
+        let EthDnsRlpItemV1::Bytes(key) = fields[cursor] else {
+            cursor = cursor.saturating_add(2);
+            continue;
+        };
+        match (key, fields[cursor + 1]) {
+            (b"ip", EthDnsRlpItemV1::Bytes(value)) if value.len() == 4 => {
+                ip4 = Some([value[0], value[1], value[2], value[3]]);
+            }
+            (b"tcp", EthDnsRlpItemV1::Bytes(value)) => {
+                let port = eth_dns_rlp_u64_v1(value)?;
+                if (1..=u16::MAX as u64).contains(&port) {
+                    tcp_port = Some(port as u16);
+                }
+            }
+            (b"secp256k1", EthDnsRlpItemV1::Bytes(value)) => {
+                pubkey = Some(value.to_vec());
+            }
+            _ => {}
+        }
+        cursor = cursor.saturating_add(2);
+    }
+
+    let ip = ip4?;
+    let port = tcp_port?;
+    let pubkey_hex = eth_dns_sec1_pubkey_to_enode_hex_v1(pubkey.as_deref()?)?;
+    let addr = format!("{}.{}.{}.{}:{port}", ip[0], ip[1], ip[2], ip[3]);
+    let endpoint = format!("enode://{pubkey_hex}@{addr}");
+    let (node_hint, addr_hint) = parse_enode_endpoint(endpoint.as_str())?;
+    Some(PluginPeerEndpoint {
+        endpoint,
+        node_hint,
+        addr_hint,
+    })
+}
+
+fn eth_dns_txt_unquote_v1(data: &str) -> String {
+    let trimmed = data.trim();
+    if !trimmed.contains('"') {
+        return trimmed.to_string();
+    }
+    let mut out = String::new();
+    let mut in_quote = false;
+    let mut escaped = false;
+    for ch in trimmed.chars() {
+        if escaped {
+            out.push(ch);
+            escaped = false;
+            continue;
+        }
+        if in_quote && ch == '\\' {
+            escaped = true;
+            continue;
+        }
+        if ch == '"' {
+            in_quote = !in_quote;
+            continue;
+        }
+        if in_quote {
+            out.push(ch);
+        }
+    }
+    out
+}
+
+fn eth_dns_query_txt_v1(agent: &ureq::Agent, doh_url: &str, name: &str) -> Result<Vec<String>> {
+    let response = agent
+        .get(doh_url)
+        .query("name", name)
+        .query("type", "TXT")
+        .call()
+        .with_context(|| format!("dns_discovery_txt_query_failed:{name}"))?;
+    let text = response
+        .into_string()
+        .with_context(|| format!("dns_discovery_txt_response_read_failed:{name}"))?;
+    let value: serde_json::Value = serde_json::from_str(text.as_str())
+        .with_context(|| format!("dns_discovery_txt_response_json_failed:{name}"))?;
+    if value.get("Status").and_then(|status| status.as_u64()) != Some(0) {
+        return Ok(Vec::new());
+    }
+    let mut out = Vec::new();
+    if let Some(answers) = value.get("Answer").and_then(|answer| answer.as_array()) {
+        for answer in answers {
+            if answer.get("type").and_then(|kind| kind.as_u64()) != Some(16) {
+                continue;
+            }
+            if let Some(data) = answer.get("data").and_then(|data| data.as_str()) {
+                out.push(eth_dns_txt_unquote_v1(data));
+            }
+        }
+    }
+    Ok(out)
+}
+
+fn eth_dns_discovery_root_for_chain_v1(chain_id: u64) -> Option<String> {
+    string_env_nonempty("NOVOVM_ETH_DNS_DISCOVERY_ROOT")
+        .or_else(|| (chain_id == 1).then(|| ETH_DNS_DISCOVERY_MAINNET_ROOT_V1.to_string()))
+}
+
+fn eth_dns_enrtree_domain_v1(record: &str) -> Option<String> {
+    let raw = record.trim().strip_prefix("enrtree://")?;
+    let (_, domain) = raw.split_once('@')?;
+    Some(domain.trim().trim_end_matches('.').to_string())
+}
+
+fn eth_dns_root_children_v1(record: &str) -> Vec<String> {
+    if !record.starts_with("enrtree-root:v1") {
+        return Vec::new();
+    }
+    record
+        .split_whitespace()
+        .filter_map(|part| {
+            part.strip_prefix("e=")
+                .or_else(|| part.strip_prefix("l="))
+                .map(str::to_string)
+        })
+        .collect()
+}
+
+fn eth_dns_branch_children_v1(record: &str) -> Vec<String> {
+    record
+        .trim()
+        .strip_prefix("enrtree-branch:")
+        .map(|children| {
+            children
+                .split(',')
+                .map(str::trim)
+                .filter(|child| !child.is_empty())
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn eth_dns_child_domain_v1(child: &str, root: &str) -> Option<String> {
+    if let Some(domain) = eth_dns_enrtree_domain_v1(child) {
+        return Some(domain);
+    }
+    let trimmed = child.trim().trim_end_matches('.');
+    if trimmed.is_empty() {
+        return None;
+    }
+    Some(if trimmed.contains('.') {
+        trimmed.to_string()
+    } else {
+        format!("{trimmed}.{root}")
+    })
+}
+
+fn eth_push_peer_endpoint_v1(
+    endpoints: &mut Vec<PluginPeerEndpoint>,
+    seen: &mut HashSet<String>,
+    endpoint: PluginPeerEndpoint,
+    limit: usize,
+) {
+    if endpoints.len() >= limit {
+        return;
+    }
+    let key = format!("{}@{}", endpoint.node_hint, endpoint.addr_hint);
+    if seen.insert(key) {
+        endpoints.push(endpoint);
+    }
+}
+
+fn eth_parse_enode_endpoints_v1(raw: &str, limit: usize) -> Vec<PluginPeerEndpoint> {
     raw.split([',', ';', '\n', '\r', '\t', ' '])
         .map(str::trim)
         .filter(|entry| !entry.is_empty())
@@ -1184,30 +1469,141 @@ fn eth_rlpx_sync_peer_endpoints_v1(max_peers: usize) -> Vec<PluginPeerEndpoint> 
                 addr_hint,
             })
         })
-        .take(max_peers)
+        .take(limit)
         .collect()
+}
+
+fn eth_dns_discover_peer_endpoints_v1(
+    chain_id: u64,
+    limit: usize,
+    verbose: bool,
+) -> Vec<PluginPeerEndpoint> {
+    if limit == 0 || !bool_env_default_true("NOVOVM_ETH_DNS_DISCOVERY_ENABLED") {
+        return Vec::new();
+    }
+    let Some(root) = eth_dns_discovery_root_for_chain_v1(chain_id) else {
+        return Vec::new();
+    };
+    let doh_url = string_env_nonempty("NOVOVM_ETH_DNS_DISCOVERY_DOH_URL")
+        .unwrap_or_else(|| ETH_DNS_DISCOVERY_DOH_URL_V1.to_string());
+    let timeout_ms = u64_env_clamped("NOVOVM_ETH_DNS_DISCOVERY_TIMEOUT_MS", 2_500, 100, 30_000);
+    let max_queries = usize_env_allow_zero("NOVOVM_ETH_DNS_DISCOVERY_MAX_QUERIES", 512)
+        .unwrap_or(512)
+        .clamp(1, 1024);
+    let agent = ureq::AgentBuilder::new()
+        .timeout(Duration::from_millis(timeout_ms))
+        .build();
+
+    let mut endpoints = Vec::<PluginPeerEndpoint>::new();
+    let mut seen_endpoints = HashSet::<String>::new();
+    let mut seen_domains = HashSet::<String>::new();
+    let mut queue = VecDeque::<String>::from([root.clone()]);
+    let mut queries = 0usize;
+    while let Some(domain) = queue.pop_front() {
+        if queries >= max_queries || endpoints.len() >= limit {
+            break;
+        }
+        if !seen_domains.insert(domain.clone()) {
+            continue;
+        }
+        queries = queries.saturating_add(1);
+        let records = match eth_dns_query_txt_v1(&agent, doh_url.as_str(), domain.as_str()) {
+            Ok(records) => records,
+            Err(err) => {
+                if verbose {
+                    println!("eth_dns_discovery_skip: domain={domain} error={err}");
+                }
+                continue;
+            }
+        };
+        for record in records {
+            if let Some(endpoint) = eth_dns_decode_enr_to_endpoint_v1(record.as_str()) {
+                eth_push_peer_endpoint_v1(&mut endpoints, &mut seen_endpoints, endpoint, limit);
+                continue;
+            }
+            if let Some(domain) = eth_dns_enrtree_domain_v1(record.as_str()) {
+                queue.push_back(domain);
+                continue;
+            }
+            for child in eth_dns_root_children_v1(record.as_str())
+                .into_iter()
+                .chain(eth_dns_branch_children_v1(record.as_str()))
+            {
+                if let Some(domain) = eth_dns_child_domain_v1(child.as_str(), root.as_str()) {
+                    queue.push_back(domain);
+                }
+            }
+        }
+    }
+    if verbose {
+        println!(
+            "eth_dns_discovery: root={} queries={} endpoints={}",
+            root,
+            queries,
+            endpoints.len()
+        );
+    }
+    endpoints
+}
+
+fn eth_rlpx_sync_peer_endpoints_v1(
+    chain_id: u64,
+    candidate_limit: usize,
+    verbose: bool,
+) -> Vec<PluginPeerEndpoint> {
+    let mut endpoints = Vec::<PluginPeerEndpoint>::new();
+    let mut seen = HashSet::<String>::new();
+    if let Some(raw) = string_env_nonempty("NOVOVM_ETH_RLPX_ENODES")
+        .or_else(|| string_env_nonempty("NOVOVM_ETH_LIVE_SMOKE_ENODES"))
+    {
+        for endpoint in eth_parse_enode_endpoints_v1(raw.as_str(), candidate_limit) {
+            eth_push_peer_endpoint_v1(&mut endpoints, &mut seen, endpoint, candidate_limit);
+        }
+    }
+    if endpoints.len() < candidate_limit {
+        for endpoint in eth_parse_enode_endpoints_v1(
+            ETH_RLPX_MAINNET_BOOTNODES_V1.join(",").as_str(),
+            candidate_limit.saturating_sub(endpoints.len()),
+        ) {
+            eth_push_peer_endpoint_v1(&mut endpoints, &mut seen, endpoint, candidate_limit);
+        }
+    }
+    if endpoints.len() < candidate_limit {
+        for endpoint in eth_dns_discover_peer_endpoints_v1(
+            chain_id,
+            candidate_limit.saturating_sub(endpoints.len()),
+            verbose,
+        ) {
+            eth_push_peer_endpoint_v1(&mut endpoints, &mut seen, endpoint, candidate_limit);
+        }
+    }
+    endpoints
 }
 
 fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
     let chain_id = u64_env_allow_zero("NOVOVM_ETH_RLPX_CHAIN_ID", 1)?;
     let local_node_id = u64_env_allow_zero("NOVOVM_ETH_RLPX_LOCAL_NODE", 9_990_001)?;
     let max_peers = usize_env_allow_zero("NOVOVM_ETH_RLPX_MAX_PEERS", 4)?.clamp(1, 16);
+    let candidate_limit =
+        usize_env_allow_zero("NOVOVM_ETH_RLPX_CANDIDATE_PEERS", max_peers.max(32))?
+            .clamp(max_peers, 128);
     let ticks = usize_env_allow_zero("NOVOVM_ETH_RLPX_TICKS", 0)?;
     let sleep_ms = u64_env_clamped("NOVOVM_ETH_RLPX_SLEEP_MS", 600, 10, 60_000);
     let recv_budget = usize_env_allow_zero("NOVOVM_ETH_RLPX_RECV_BUDGET", 16)?.clamp(1, 1024);
     let sync_target_fanout =
         usize_env_allow_zero("NOVOVM_ETH_RLPX_SYNC_TARGET_FANOUT", max_peers)?.clamp(1, max_peers);
-    let peer_endpoints = eth_rlpx_sync_peer_endpoints_v1(max_peers);
+    let peer_endpoints = eth_rlpx_sync_peer_endpoints_v1(chain_id, candidate_limit, verbose);
     if peer_endpoints.is_empty() {
-        bail!("NOVOVM_ETH_RLPX_ENODES has no valid enode endpoints");
+        bail!("no Ethereum RLPx peer endpoints resolved from env, DNS discovery, or bootnodes");
     }
+    let candidate_count = peer_endpoints.len();
     let peers = peer_endpoints
         .iter()
         .map(|endpoint| NodeId(endpoint.node_hint.max(1)))
         .collect::<Vec<_>>();
     let mut budget = resolve_eth_fullnode_budget_hooks_v1(chain_id);
     budget.active_native_peer_soft_limit = max_peers as u64;
-    budget.active_native_peer_hard_limit = max_peers as u64;
+    budget.active_native_peer_hard_limit = candidate_limit as u64;
     set_network_runtime_sync_status(
         chain_id,
         NetworkRuntimeSyncStatus {
@@ -1245,9 +1641,10 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
             )
         });
         println!(
-            "eth_rlpx_sync_tick: chain_id={} tick={} connected={} ready={} status_updates={} sync_requests={} headers={} bodies={} receipts={} current={} highest={} native_phase={} header_number={} header_hash={} body_available={} failures={} last_failure={}",
+            "eth_rlpx_sync_tick: chain_id={} tick={} candidates={} connected={} ready={} status_updates={} sync_requests={} headers={} bodies={} receipts={} current={} highest={} native_phase={} header_number={} header_hash={} body_available={} failures={} last_failure={}",
             chain_id,
             tick,
+            candidate_count,
             report.connected_peers,
             report.ready_peers,
             report.status_updates,
@@ -1290,6 +1687,40 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
 #[cfg(test)]
 mod mainline_evm_cli_tests {
     use super::*;
+
+    #[test]
+    fn eth_dns_discovery_txt_records_parse_tree_children_v1() {
+        let root = eth_dns_txt_unquote_v1(
+            "\"enrtree-root:v1 e=entry-root l=link-root seq=7 sig=test-signature\"",
+        );
+        assert_eq!(
+            root,
+            "enrtree-root:v1 e=entry-root l=link-root seq=7 sig=test-signature"
+        );
+        assert_eq!(
+            eth_dns_root_children_v1(root.as_str()),
+            vec!["entry-root".to_string(), "link-root".to_string()]
+        );
+        assert_eq!(
+            eth_dns_branch_children_v1("enrtree-branch:a,b,c"),
+            vec!["a".to_string(), "b".to_string(), "c".to_string()]
+        );
+        assert_eq!(
+            eth_dns_child_domain_v1("child", "all.mainnet.ethdisco.net").as_deref(),
+            Some("child.all.mainnet.ethdisco.net")
+        );
+    }
+
+    #[test]
+    fn eth_dns_discovery_enr_record_decodes_to_enode_endpoint_v1() {
+        let endpoint = eth_dns_decode_enr_to_endpoint_v1(
+            "enr:-KG4QMOEswP62yzDjSwWS4YEjtTZ5PO6r65CPqYBkgTTkrpaedQ8uEUo1uMALtJIvb2w_WWEVmg5yt1UAuK1ftxUU7QDhGV0aDKQu6TalgMAAAD__________4JpZIJ2NIJpcIQEnfA2iXNlY3AyNTZrMaEDfol8oLr6XJ7FsdAYE7lpJhKMls4G_v6qQOGKJUWGb_uDdGNwgiMog3VkcIIjKA",
+        )
+        .expect("decode geth mainnet v5 bootnode ENR");
+        assert!(endpoint.endpoint.starts_with("enode://"));
+        assert_eq!(endpoint.addr_hint, "4.157.240.54:9000");
+        assert!(endpoint.node_hint > 0);
+    }
 
     #[test]
     fn node_cli_overrides_parse_mainline_evm_host_flags_v1() {

@@ -8,6 +8,7 @@ autobins = false
 [dependencies]
 anyhow = "1"
 aoem-bindings = { path = "../aoem-bindings" }
+base64 = "0.22"
 novovm-exec = { path = "../novovm-exec" }
 novovm-consensus = { path = "../novovm-consensus" }
 novovm-network = { path = "../novovm-network" }
