@@ -4,7 +4,11 @@
 
 当前结论是：
 
-`SUPERVM 已具备 Novo 主网可控 EVM 插件执行闭环，并通过 geth ethapi 样本级 parity；但不能声明等价 geth / 以太坊全节点。`
+`SUPERVM 已具备 Novo 主网可控 EVM 插件执行闭环，并通过 geth ethapi 样本级 parity；可以按有限门禁声明协议可观察等价 v1，但不能声明完整 geth / 以太坊全节点。`
+
+协议可观察等价 v1 的收口标准见：
+
+- `docs_CN/Adapters/EVM/NOVOVM-EVM-PROTOCOL-OBSERVABLE-EQUIVALENCE-V1-2026-06-07.md`
 
 这个文档用于约束产品口径：
 
@@ -1194,9 +1198,11 @@ cargo test -p novovm-adapter-novovm evm_adapter_balance_fee_access_storage_surfa
 
 `SUPERVM 当前具备 Novo 主网可控 EVM 插件执行能力，能产出 canonical EVM block metadata，并对 BAL payload 进行严格扫描；对 geth ethapi receipt/log/typed-failure 样本具备 parity。`
 
+`在本文门禁范围内，SUPERVM EVM 插件具备协议可观察等价 v1：execution observable、geth/RPC fixture observable、plugin receipt/BAL observable 均有聚合回归 gate。`
+
 不能声明：
 
-`SUPERVM 是 geth 等价实现。`
+`SUPERVM 是完整 geth 替代品。`
 
 `SUPERVM 是完整以太坊全节点。`
 
@@ -1205,11 +1211,19 @@ cargo test -p novovm-adapter-novovm evm_adapter_balance_fee_access_storage_surfa
 ## 下一步门禁顺序
 
 1. 已接入官方 geth address fixture 子集、官方 EIP-1559 sender balance state fixture 子集、官方 SLOAD warm/cold state fixture 子集、官方 SSTORE refund cap grouped state fixture 子集、官方 failure/account grouped state fixture 子集、官方 CREATE/CREATE2/account grouped state fixture 子集、官方 STATICCALL/precompile/return-data grouped state fixture 子集、官方 precompile failure/OOG grouped state fixture 子集、官方 CALL output grouped state fixture 子集、官方 CALL high-value/OOG grouped state fixture 子集、官方 CALL depth/OOG grouped state fixture 子集、官方 DELEGATECALL/CALLCODE account-context grouped state fixture 子集、官方 zero-value calls revert no-commit grouped state fixture 子集、官方 SELFDESTRUCT zero-value account-preservation grouped state fixture 子集、官方 STATICCALL state-change/SUICIDE no-commit grouped state fixture 子集、官方 STATICCALL OOG no-commit grouped state fixture 子集、官方 LOG/receipt grouped state fixture 子集、官方 RETURNDATA grouped state fixture 子集和官方 LOG4/OOG receipt grouped state fixture 子集。
-2. 如要继续提高执行语义置信度，下一步只接更小缺口的官方 state fixture 子集，例如 STATICCALL CREATE/CREATE2 成功创建 projection 子集、CALL depth pre-call 内部 value-flow 的 projection 子集、DELEGATECALL/CALLCODE OOG/collision 边界或 SELFDESTRUCT value-transfer / same-tx create-destroy projection 子集；基于现在已贯通的 `TxIR.evm_access_list`、SLOAD sequence/fee debit smoke、EIP-3529 SSTORE transition/cap fee debit smoke、CREATE/CREATE2 address derivation smoke、CREATE/CALL failure invariant smoke、CREATE/CREATE2 collision invariant smoke、account balance value/fee invariant smoke、effectiveGasPrice settlement smoke 和 state-aware empty-calldata contract-call execution 接官方 fixture；不要再做包装层或通用 runner。
-3. 如继续扩展 JSON-RPC parity，可补更多 batch/mixed-param edge case；tracing/debug/admin 仍不作为 Novo EVM 插件主线优先项。
-4. 如需要提高 eth/71 置信度，再做真实 peer sync/capability negotiation 集成门禁，但仍不把 SUPERVM 产品口径改成 geth 全节点。
+2. 不再把继续堆官方 fixture 子集作为默认下一步。只有 v2/v3 黑盒差分暴露具体语义缺口时，才按缺口补对应官方子集。
+3. 下一步优先 v2：用 geth/reth 对照节点喂同一批 raw tx/block，比较 state root、receipt root、logs bloom、gas/failure/RPC 输出。
+4. 再推进 v3：真实 eth/66-eth/71 peer handshake、tx/block broadcast、import/reorg 可观察行为；仍不把 SUPERVM 产品口径改成完整 geth 全节点。
 
 ## 回归命令
+
+协议可观察等价 v1 聚合 gate：
+
+```powershell
+cargo test -p novovm-adapter-novovm evm_protocol_observable_equivalence_execution_gate_v1 -- --nocapture
+cargo test -p novovm-node evm_protocol_observable_equivalence_geth_rpc_fixture_gate_v1 -- --nocapture
+cargo test -p novovm-adapter-evm-plugin evm_protocol_observable_equivalence_plugin_receipt_bal_gate_v1 -- --nocapture
+```
 
 默认 geth parity：
 

@@ -10278,6 +10278,13 @@ mod tests {
     }
 
     #[test]
+    fn evm_protocol_observable_equivalence_execution_gate_v1() {
+        evm_adapter_balance_fee_access_storage_surface_smoke_v1();
+        evm_equivalence_baseline_matrix_receipt_revert_gas_v1();
+        evm_execution_spec_fork_rule_smoke_matrix_v1();
+    }
+
+    #[test]
     fn execute_transaction_with_failed_call_artifact_records_failure_without_value_transfer() {
         let mut adapter = NovoVmAdapter::new(ChainConfig {
             chain_type: ChainType::EVM,

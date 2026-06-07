@@ -179,6 +179,10 @@ Operations SOP (CN):
 - `docs_CN/NOVOVM-NETWORK/NOVOVM-EVM-NIGHTLY-SOAK-SOP-2026-04-17.md`
 - `docs_CN/CURRENT-AUTHORITATIVE-ENTRYPOINT-2026-04-17.md`
 
+EVM protocol-observable equivalence scope (CN):
+
+- `docs_CN/Adapters/EVM/NOVOVM-EVM-PROTOCOL-OBSERVABLE-EQUIVALENCE-V1-2026-06-07.md`
+
 Manual local run:
 
 ```powershell

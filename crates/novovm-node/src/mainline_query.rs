@@ -7098,6 +7098,12 @@ mod tests {
     }
 
     #[test]
+    fn evm_protocol_observable_equivalence_geth_rpc_fixture_gate_v1() {
+        eth_end_to_end_geth_sample_batch_parity_report_v1();
+        eth_end_to_end_geth_sample_batch_parity_report_from_files_v1();
+    }
+
+    #[test]
     fn eth_syncing_uses_formal_chain_view_and_runtime_gap() {
         let mut store = sample_store();
         store.chain_id = 99_160_401;

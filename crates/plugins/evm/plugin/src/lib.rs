@@ -5755,6 +5755,18 @@ mod tests {
     }
 
     #[test]
+    fn evm_protocol_observable_equivalence_plugin_receipt_bal_gate_v1() {
+        fee_settlement_ingress_surface_smoke_v1();
+        txpool_replacement_and_reject_surface_smoke_v1();
+        plugin_apply_v2_can_export_and_ingest_execution_receipts();
+        plugin_apply_v2_exports_complete_contract_call_bal_metadata();
+        plugin_apply_v2_exports_complete_contract_deploy_bal_metadata();
+        block_metadata_builder_prefers_aoem_bal_hash_when_present();
+        block_metadata_builder_keeps_hash_absent_for_incomplete_raw_bal();
+        execution_receipt_builder_prefers_aoem_contract();
+    }
+
+    #[test]
     fn execution_receipt_builder_prefers_aoem_contract() {
         let txs = vec![
             sample_contract_call_tx(1, 0),
