@@ -41,20 +41,20 @@ use novovm_network::{
     set_network_runtime_sync_status, snapshot_network_runtime_native_canonical_blocks_v1,
     snapshot_network_runtime_native_pending_tx_summary_v1, AvailabilityController,
     AvailabilityDecision, AvailabilityMode, CapabilityReadiness, CapabilityRouteHint,
-    EthDiscv4EndpointV1, EthDiscv4NeighborV1, EthFullnodeNativePeerWorkerConfigV1,
-    EthFullnodeNativePeerWorkerV1, FileQueueStore, GossipMessage, InMemoryQueueStore,
-    L3RegionalRoutingTable, L4LocalRoutingTable, L4PeerRef, MessageType,
-    NetworkRuntimeNativeBodySnapshotV1, NetworkRuntimeNativeExecutionBudgetTargetObservationV1,
-    NetworkRuntimeNativeHeadSnapshotV1, NetworkRuntimeNativeHeaderSnapshotV1,
-    NetworkRuntimeNativeReceiptSnapshotV1, NetworkRuntimeNativeSyncPhaseV1,
-    NetworkRuntimeSyncStatus, PluginPeerEndpoint, QueueStore, QueuedRequest, Reachability,
-    RelayCapacityClass, RelayClient, RelayHealth, RelayMembership, RelayRef, RelayServer,
-    ReplayResult, RouteSelector, RoutingSource, SelectedPath, ETH_DISCV4_PACKET_HASH_LEN,
-    ETH_DISCV4_PING_PACKET_TYPE, ETH_RLPX_PUB_LEN, L3_BASELINE_FINGERPRINT,
-    L3_BASELINE_LOCK_VERSION, L3_BASELINE_PHASE, L3_POLICY_BASELINE_VERSION,
-    L3_READONLY_EXPORT_BASELINE_VERSION, L3_REGRESSION_LOCKSET, L3_RELAY_RUNTIME_FEEDBACK_SCALE,
-    L3_RELAY_SCORE_SCALE, L3_RELAY_SELECTED_STICKY_MARGIN, L3_RELAY_SOURCE_BONUS_CONFIGURED,
-    L3_RELAY_SOURCE_BONUS_POOL, L3_RELAY_SOURCE_BONUS_SNAPSHOT,
+    EthDiscv4EndpointV1, EthDiscv4NeighborV1, EthFullnodeBudgetHooksV1,
+    EthFullnodeNativePeerWorkerConfigV1, EthFullnodeNativePeerWorkerV1, FileQueueStore,
+    GossipMessage, InMemoryQueueStore, L3RegionalRoutingTable, L4LocalRoutingTable, L4PeerRef,
+    MessageType, NetworkRuntimeNativeBodySnapshotV1,
+    NetworkRuntimeNativeExecutionBudgetTargetObservationV1, NetworkRuntimeNativeHeadSnapshotV1,
+    NetworkRuntimeNativeHeaderSnapshotV1, NetworkRuntimeNativeReceiptSnapshotV1,
+    NetworkRuntimeNativeSyncPhaseV1, NetworkRuntimeSyncStatus, PluginPeerEndpoint, QueueStore,
+    QueuedRequest, Reachability, RelayCapacityClass, RelayClient, RelayHealth, RelayMembership,
+    RelayRef, RelayServer, ReplayResult, RouteSelector, RoutingSource, SelectedPath,
+    ETH_DISCV4_PACKET_HASH_LEN, ETH_DISCV4_PING_PACKET_TYPE, ETH_RLPX_PUB_LEN,
+    L3_BASELINE_FINGERPRINT, L3_BASELINE_LOCK_VERSION, L3_BASELINE_PHASE,
+    L3_POLICY_BASELINE_VERSION, L3_READONLY_EXPORT_BASELINE_VERSION, L3_REGRESSION_LOCKSET,
+    L3_RELAY_RUNTIME_FEEDBACK_SCALE, L3_RELAY_SCORE_SCALE, L3_RELAY_SELECTED_STICKY_MARGIN,
+    L3_RELAY_SOURCE_BONUS_CONFIGURED, L3_RELAY_SOURCE_BONUS_POOL, L3_RELAY_SOURCE_BONUS_SNAPSHOT,
 };
 use novovm_node::governance_surface::{
     default_mainline_governance_store_path, is_mainline_governance_query_method,
@@ -1894,6 +1894,15 @@ fn eth_rlpx_peer_refresh_plan_v1(
     None
 }
 
+fn eth_rlpx_apply_public_sync_batch_defaults_v1(
+    budget: &mut EthFullnodeBudgetHooksV1,
+    headers_batch: u64,
+    bodies_batch: u64,
+) {
+    budget.sync_pull_headers_batch = budget.sync_pull_headers_batch.min(headers_batch.max(1));
+    budget.sync_pull_bodies_batch = budget.sync_pull_bodies_batch.min(bodies_batch.max(1));
+}
+
 fn eth_parse_enode_endpoints_v1(raw: &str, limit: usize) -> Vec<PluginPeerEndpoint> {
     raw.split([',', ';', '\n', '\r', '\t', ' '])
         .map(str::trim)
@@ -3260,6 +3269,8 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
     let recv_budget = usize_env_allow_zero("NOVOVM_ETH_RLPX_RECV_BUDGET", 16)?.clamp(1, 1024);
     let sync_target_fanout =
         usize_env_allow_zero("NOVOVM_ETH_RLPX_SYNC_TARGET_FANOUT", max_peers)?.clamp(1, max_peers);
+    let headers_batch = u64_env_clamped("NOVOVM_ETH_RLPX_HEADERS_BATCH", 128, 1, 2_048);
+    let bodies_batch = u64_env_clamped("NOVOVM_ETH_RLPX_BODIES_BATCH", 64, 1, 256);
     let exhausted_refresh_interval_ticks =
         usize_env_allow_zero("NOVOVM_ETH_RLPX_EXHAUSTED_REFRESH_INTERVAL_TICKS", 8)?
             .clamp(1, 10_000);
@@ -3277,6 +3288,7 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
     let mut budget = resolve_eth_fullnode_budget_hooks_v1(chain_id);
     budget.active_native_peer_soft_limit = max_peers as u64;
     budget.active_native_peer_hard_limit = candidate_limit as u64;
+    eth_rlpx_apply_public_sync_batch_defaults_v1(&mut budget, headers_batch, bodies_batch);
     let checkpoint_enabled = bool_env_default_true("NOVOVM_ETH_RLPX_CHECKPOINT_ENABLED");
     let checkpoint_path = eth_rlpx_sync_checkpoint_path_v1();
     let checkpoint = if checkpoint_enabled {
@@ -3815,6 +3827,20 @@ mod mainline_evm_cli_tests {
     fn eth_rlpx_peer_refresh_plan_keeps_exhausted_expand_priority_v1() {
         let plan = eth_rlpx_peer_refresh_plan_v1(true, true, true, 64, 256, 6, 4, 0, 8, 16);
         assert_eq!(plan, Some((128, "all_candidate_peers_in_cooldown_expand")));
+    }
+
+    #[test]
+    fn eth_rlpx_public_sync_batch_defaults_are_conservative_v1() {
+        let mut budget = EthFullnodeBudgetHooksV1::default();
+        eth_rlpx_apply_public_sync_batch_defaults_v1(&mut budget, 128, 64);
+        assert_eq!(budget.sync_pull_headers_batch, 128);
+        assert_eq!(budget.sync_pull_bodies_batch, 64);
+
+        budget.sync_pull_headers_batch = 32;
+        budget.sync_pull_bodies_batch = 8;
+        eth_rlpx_apply_public_sync_batch_defaults_v1(&mut budget, 128, 64);
+        assert_eq!(budget.sync_pull_headers_batch, 32);
+        assert_eq!(budget.sync_pull_bodies_batch, 8);
     }
 
     #[test]
