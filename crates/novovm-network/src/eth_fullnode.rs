@@ -41,7 +41,7 @@ pub enum EthWireVersion {
 }
 
 pub const ETH_NATIVE_MAX_SUPPORTED_ETH_PROTOCOL_VERSION: u8 = 71;
-const ETH_PEER_INCOMPATIBLE_STATUS_DECODE_REJECT_AFTER_V1: u64 = 2;
+const ETH_PEER_INCOMPATIBLE_STATUS_DECODE_REJECT_AFTER_V1: u64 = 1;
 
 impl EthWireVersion {
     #[must_use]
@@ -1875,6 +1875,8 @@ fn eth_peer_decode_failure_is_incompatible_status_v1(reason_name: &str) -> bool 
     reason.contains("rlpx_eth_status_fields_short")
         || reason.contains("status_payload_decode_failed")
         || reason.contains("eth_status_payload_decode_failed")
+        || reason.contains("rlpx_eth_capability_not_found")
+        || reason.contains("eth_capability_not_found")
 }
 
 fn eth_peer_failure_count_for_class_v1(
@@ -4570,7 +4572,7 @@ mod tests {
         );
         assert_eq!(
             stages.get(&peer_b.0),
-            Some(&EthPeerLifecycleStageV1::Cooldown)
+            Some(&EthPeerLifecycleStageV1::PermanentlyRejected)
         );
         assert_eq!(
             stages.get(&peer_c.0),
@@ -4586,7 +4588,8 @@ mod tests {
             &[peer_a, peer_b, peer_c, peer_d],
         );
         assert_eq!(summary.peer_count, 4);
-        assert_eq!(summary.cooldown_count, 2);
+        assert_eq!(summary.cooldown_count, 1);
+        assert_eq!(summary.permanently_rejected_count, 1);
         assert_eq!(summary.syncing_count, 1);
         assert_eq!(summary.discovered_count, 1);
         assert_eq!(summary.connect_failure_count, 1);
@@ -4595,7 +4598,7 @@ mod tests {
     }
 
     #[test]
-    fn repeated_incompatible_status_decode_permanently_rejects_pristine_peer() {
+    fn incompatible_status_decode_immediately_rejects_pristine_peer() {
         let chain_id = 99_160_316_u64;
         let peer = NodeId(316);
 
@@ -4604,24 +4607,31 @@ mod tests {
             peer.0,
             "decode failed: rlpx_eth_status_fields_short",
         );
-        let first =
-            snapshot_network_runtime_eth_peer_sessions_for_peers_v1(chain_id, &[peer])[0].clone();
-        assert_eq!(first.lifecycle_stage, EthPeerLifecycleStageV1::Cooldown);
-        assert!(!first.permanently_rejected);
-
-        observe_network_runtime_eth_peer_decode_failure_v1(
-            chain_id,
-            peer.0,
-            "decode failed: rlpx_eth_status_fields_short",
-        );
-        let second =
+        let snapshot =
             snapshot_network_runtime_eth_peer_sessions_for_peers_v1(chain_id, &[peer])[0].clone();
         assert_eq!(
-            second.lifecycle_stage,
+            snapshot.lifecycle_stage,
             EthPeerLifecycleStageV1::PermanentlyRejected
         );
-        assert!(second.permanently_rejected);
-        assert_eq!(second.decode_failure_count, 2);
+        assert!(snapshot.permanently_rejected);
+        assert_eq!(snapshot.decode_failure_count, 1);
+    }
+
+    #[test]
+    fn incompatible_capability_decode_immediately_rejects_pristine_peer() {
+        let chain_id = 99_160_318_u64;
+        let peer = NodeId(318);
+        let reason = "rlpx_eth_capability_not_found:local_caps=eth/69,eth/70,eth/71,snap/1 remote_caps=eth/67,eth/68,snap/1";
+
+        observe_network_runtime_eth_peer_decode_failure_v1(chain_id, peer.0, reason);
+        let snapshot =
+            snapshot_network_runtime_eth_peer_sessions_for_peers_v1(chain_id, &[peer])[0].clone();
+        assert_eq!(
+            snapshot.lifecycle_stage,
+            EthPeerLifecycleStageV1::PermanentlyRejected
+        );
+        assert!(snapshot.permanently_rejected);
+        assert_eq!(snapshot.decode_failure_count, 1);
     }
 
     #[test]

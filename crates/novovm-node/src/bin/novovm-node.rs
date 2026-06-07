@@ -2345,9 +2345,10 @@ fn eth_rlpx_sync_peer_endpoints_v1(
         }
     }
     if endpoints.len() < candidate_limit {
-        for endpoint in eth_parse_enode_endpoints_v1(
-            ETH_RLPX_MAINNET_BOOTNODES_V1.join(",").as_str(),
+        for endpoint in eth_dns_discover_peer_endpoints_v1(
+            chain_id,
             candidate_limit.saturating_sub(endpoints.len()),
+            verbose,
         ) {
             eth_push_peer_endpoint_v1(&mut endpoints, &mut seen, endpoint, candidate_limit);
         }
@@ -2362,10 +2363,9 @@ fn eth_rlpx_sync_peer_endpoints_v1(
         }
     }
     if endpoints.len() < candidate_limit {
-        for endpoint in eth_dns_discover_peer_endpoints_v1(
-            chain_id,
+        for endpoint in eth_parse_enode_endpoints_v1(
+            ETH_RLPX_MAINNET_BOOTNODES_V1.join(",").as_str(),
             candidate_limit.saturating_sub(endpoints.len()),
-            verbose,
         ) {
             eth_push_peer_endpoint_v1(&mut endpoints, &mut seen, endpoint, candidate_limit);
         }

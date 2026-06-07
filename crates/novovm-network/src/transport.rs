@@ -32,12 +32,13 @@ use crate::{
     eth_rlpx_parse_trie_nodes_payload_v1, eth_rlpx_read_wire_frame_v1,
     eth_rlpx_receipts_root_from_raw_receipts_v1, eth_rlpx_select_shared_eth_version_v1,
     eth_rlpx_select_shared_snap_version_v1, eth_rlpx_snap_base_offset_v1,
-    eth_rlpx_validate_block_empty_body_roots_v1, eth_rlpx_write_wire_frame_v1,
-    get_network_runtime_native_block_access_list_payload_v1,
+    eth_rlpx_snap_storage_root_from_range_v1, eth_rlpx_validate_block_empty_body_roots_v1,
+    eth_rlpx_write_wire_frame_v1, get_network_runtime_native_block_access_list_payload_v1,
     get_network_runtime_native_body_snapshot_v1, get_network_runtime_native_head_snapshot_v1,
     get_network_runtime_native_header_snapshot_v1,
     get_network_runtime_native_pending_tx_payload_v1,
-    get_network_runtime_native_receipt_snapshot_v1, get_network_runtime_native_sync_status,
+    get_network_runtime_native_receipt_snapshot_v1,
+    get_network_runtime_native_snap_account_snapshot_v1, get_network_runtime_native_sync_status,
     get_network_runtime_peer_heads_top_k, get_network_runtime_sync_status,
     has_network_runtime_eth_peer_session, mark_network_runtime_eth_peer_session_ready_v1,
     observe_eth_native_bodies_pull, observe_eth_native_bodies_response,
@@ -661,6 +662,7 @@ pub enum EthFullnodeNativePeerFailureClassV1 {
     LocalNodeMismatch,
     AddressParse,
     Io,
+    Timeout,
     Encode,
     Decode,
 }
@@ -674,6 +676,7 @@ impl EthFullnodeNativePeerFailureClassV1 {
             Self::LocalNodeMismatch => "local_node_mismatch",
             Self::AddressParse => "address_parse",
             Self::Io => "io",
+            Self::Timeout => "timeout",
             Self::Encode => "encode",
             Self::Decode => "decode",
         }
@@ -869,12 +872,11 @@ fn observe_eth_fullnode_connect_error_v1(chain_id: u64, peer_id: u64, err: &Netw
                 false,
             );
         }
-        NetworkError::Decode(_) => {
-            observe_network_runtime_eth_peer_handshake_failure_v1(
-                chain_id,
-                peer_id,
-                "connect_decode_failed",
-            );
+        NetworkError::Decode(raw) if eth_fullnode_rlpx_error_is_timeout_v1(raw) => {
+            observe_network_runtime_eth_peer_timeout_v1(chain_id, peer_id, "connect_timeout");
+        }
+        NetworkError::Decode(raw) => {
+            observe_network_runtime_eth_peer_decode_failure_v1(chain_id, peer_id, raw.as_str());
         }
         _ => observe_network_runtime_eth_peer_connect_failure_v1(
             chain_id,
@@ -897,6 +899,9 @@ fn classify_eth_fullnode_peer_failure_v1(
         NetworkError::AddressParse(_) => EthFullnodeNativePeerFailureClassV1::AddressParse,
         NetworkError::Io(_) => EthFullnodeNativePeerFailureClassV1::Io,
         NetworkError::Encode(_) => EthFullnodeNativePeerFailureClassV1::Encode,
+        NetworkError::Decode(raw) if eth_fullnode_rlpx_error_is_timeout_v1(raw) => {
+            EthFullnodeNativePeerFailureClassV1::Timeout
+        }
         NetworkError::Decode(_) => EthFullnodeNativePeerFailureClassV1::Decode,
     }
 }
@@ -2301,23 +2306,84 @@ fn validate_snap_account_range_proof_presence_v1(
     Err(NetworkError::Decode(reason))
 }
 
-fn validate_snap_storage_ranges_proof_presence_v1(
+fn validate_snap_storage_ranges_proof_semantics_v1(
     chain_id: u64,
     source_peer_id: u64,
+    state_root: Option<[u8; 32]>,
+    pending_accounts: &[[u8; 32]],
     response: &EthRlpxStorageRangesResponseV1,
 ) -> Result<(), NetworkError> {
-    let non_empty_slotsets = response
-        .slots
-        .iter()
-        .filter(|slots| !slots.is_empty())
-        .count();
-    if non_empty_slotsets == 0 || !response.proof.is_empty() {
+    if !response.proof.is_empty() || response.slots.is_empty() {
         return Ok(());
     }
-    let reason =
-        format!("snap_storage_ranges_non_empty_without_proof:slotsets={non_empty_slotsets}");
-    observe_network_runtime_eth_peer_decode_failure_v1(chain_id, source_peer_id, reason.as_str());
-    Err(NetworkError::Decode(reason))
+    let Some(state_root) = state_root else {
+        let reason = "snap_storage_ranges_state_root_missing".to_string();
+        observe_network_runtime_eth_peer_decode_failure_v1(
+            chain_id,
+            source_peer_id,
+            reason.as_str(),
+        );
+        return Err(NetworkError::Decode(reason));
+    };
+    for (idx, slots) in response.slots.iter().enumerate() {
+        let Some(account_hash) = pending_accounts.get(idx).copied() else {
+            let reason = format!(
+                "snap_storage_ranges_slotset_account_missing:idx={} slotsets={} requested={}",
+                idx,
+                response.slots.len(),
+                pending_accounts.len()
+            );
+            observe_network_runtime_eth_peer_decode_failure_v1(
+                chain_id,
+                source_peer_id,
+                reason.as_str(),
+            );
+            return Err(NetworkError::Decode(reason));
+        };
+        let Some(account) =
+            get_network_runtime_native_snap_account_snapshot_v1(chain_id, state_root, account_hash)
+        else {
+            let reason = format!(
+                "snap_storage_ranges_account_root_missing:idx={} account=0x{}",
+                idx,
+                hex32_v1(&account_hash)
+            );
+            observe_network_runtime_eth_peer_decode_failure_v1(
+                chain_id,
+                source_peer_id,
+                reason.as_str(),
+            );
+            return Err(NetworkError::Decode(reason));
+        };
+        let expected = account
+            .storage_root
+            .unwrap_or_else(crate::eth_rlpx_empty_trie_root_v1);
+        let actual = eth_rlpx_snap_storage_root_from_range_v1(slots.as_slice()).map_err(|err| {
+            let reason = format!("snap_storage_ranges_root_rebuild_failed:{err}");
+            observe_network_runtime_eth_peer_decode_failure_v1(
+                chain_id,
+                source_peer_id,
+                reason.as_str(),
+            );
+            NetworkError::Decode(reason)
+        })?;
+        if actual != expected {
+            let reason = format!(
+                "snap_storage_ranges_root_mismatch:idx={} account=0x{} expected=0x{} got=0x{}",
+                idx,
+                hex32_v1(&account_hash),
+                hex32_v1(&expected),
+                hex32_v1(&actual)
+            );
+            observe_network_runtime_eth_peer_decode_failure_v1(
+                chain_id,
+                source_peer_id,
+                reason.as_str(),
+            );
+            return Err(NetworkError::Decode(reason));
+        }
+    }
+    Ok(())
 }
 
 fn ingest_real_rlpx_snap_account_range_v1(
@@ -2504,7 +2570,13 @@ fn ingest_real_rlpx_snap_storage_ranges_v1(
         );
         return Err(NetworkError::Decode(reason));
     }
-    validate_snap_storage_ranges_proof_presence_v1(chain_id, source_peer_id, response)?;
+    validate_snap_storage_ranges_proof_semantics_v1(
+        chain_id,
+        source_peer_id,
+        session.last_snap_state_root,
+        session.pending_snap_storage_accounts.as_slice(),
+        response,
+    )?;
     observe_eth_native_snap_response(chain_id);
     eprintln!(
         "network_info: rlpx stage snap_storage_ranges_received chain_id={} peer={} endpoint={} negotiated_eth={} negotiated_snap={:?} request_id={} slotsets={} proof_nodes={}",
@@ -7383,6 +7455,35 @@ mod tests {
     }
 
     #[test]
+    fn rlpx_connect_decode_wrapped_timeout_records_timeout_lifecycle_state() {
+        let chain_id = 9_914_002_100_u64;
+        let peer = NodeId(1_110_100);
+        let err = NetworkError::Decode(
+            "rlpx_ack_prefix_read_failed: connection attempt failed (os error 10060) read=0/2"
+                .to_string(),
+        );
+        assert_eq!(
+            classify_eth_fullnode_peer_failure_v1(&err),
+            EthFullnodeNativePeerFailureClassV1::Timeout
+        );
+
+        observe_eth_fullnode_connect_error_v1(chain_id, peer.0, &err);
+
+        let snapshot =
+            snapshot_network_runtime_eth_peer_sessions_for_peers_v1(chain_id, &[peer])[0].clone();
+        assert_eq!(
+            snapshot.last_failure_class,
+            Some(crate::EthPeerFailureClassV1::Timeout)
+        );
+        assert_eq!(
+            snapshot.last_failure_reason_name.as_deref(),
+            Some("connect_timeout")
+        );
+        assert_eq!(snapshot.timeout_count, 1);
+        assert_eq!(snapshot.decode_failure_count, 0);
+    }
+
+    #[test]
     fn real_rlpx_worker_keeps_running_other_peers_when_one_bootstrap_fails() {
         let chain_id = 9_914_003_u64;
         let local = NodeId(1_111);
@@ -9804,7 +9905,12 @@ mod tests {
     }
 
     #[test]
-    fn rlpx_snap_rejects_non_empty_account_or_storage_without_proof_v1() {
+    fn rlpx_snap_range_proof_semantics_match_geth_complete_storage_v1() {
+        let chain_id = 9_943;
+        let state_root = [0x44; 32];
+        let account_hash = [0x23; 32];
+        clear_network_runtime_native_snapshots_for_chain_v1(chain_id);
+
         let account_without_proof = crate::EthRlpxAccountRangeResponseV1 {
             request_id: 1,
             accounts: vec![crate::EthRlpxSnapAccountDataV1 {
@@ -9831,31 +9937,79 @@ mod tests {
         validate_snap_account_range_proof_presence_v1(9_943, 1, &empty_account_without_proof)
             .expect("empty AccountRange without proof remains protocol-tolerated here");
 
+        let complete_slot = crate::EthRlpxSnapStorageDataV1 {
+            hash: [0x22; 32],
+            body: vec![0x80],
+        };
+        let complete_storage_root =
+            crate::eth_rlpx_snap_storage_root_from_range_v1(std::slice::from_ref(&complete_slot))
+                .expect("complete storage root");
+        set_network_runtime_native_snap_account_snapshot_v1(
+            chain_id,
+            NetworkRuntimeNativeSnapAccountSnapshotV1 {
+                chain_id,
+                state_root,
+                account_hash,
+                body_rlp: Vec::new(),
+                storage_root: Some(complete_storage_root),
+                code_hash: None,
+                has_storage: true,
+                has_code: false,
+                source_peer_id: Some(1),
+                observed_unix_ms: 1,
+            },
+        );
         let storage_without_proof = crate::EthRlpxStorageRangesResponseV1 {
             request_id: 3,
+            slots: vec![vec![complete_slot]],
+            proof: Vec::new(),
+        };
+        validate_snap_storage_ranges_proof_semantics_v1(
+            chain_id,
+            1,
+            Some(state_root),
+            &[account_hash],
+            &storage_without_proof,
+        )
+        .expect("complete StorageRanges without proof must validate by rebuilt root");
+
+        let mismatched_storage_without_proof = crate::EthRlpxStorageRangesResponseV1 {
+            request_id: 4,
             slots: vec![vec![crate::EthRlpxSnapStorageDataV1 {
                 hash: [0x22; 32],
-                body: vec![0x80],
+                body: vec![0x81, 0x01],
             }]],
             proof: Vec::new(),
         };
-        let storage_err =
-            validate_snap_storage_ranges_proof_presence_v1(9_943, 1, &storage_without_proof)
-                .expect_err("non-empty StorageRanges without proof must be rejected");
+        let storage_err = validate_snap_storage_ranges_proof_semantics_v1(
+            chain_id,
+            1,
+            Some(state_root),
+            &[account_hash],
+            &mismatched_storage_without_proof,
+        )
+        .expect_err("StorageRanges without proof must reject root mismatch");
         assert!(
             storage_err
                 .to_string()
-                .contains("snap_storage_ranges_non_empty_without_proof"),
+                .contains("snap_storage_ranges_root_mismatch"),
             "{storage_err}"
         );
 
         let empty_storage_without_proof = crate::EthRlpxStorageRangesResponseV1 {
-            request_id: 4,
-            slots: vec![Vec::new()],
+            request_id: 5,
+            slots: Vec::new(),
             proof: Vec::new(),
         };
-        validate_snap_storage_ranges_proof_presence_v1(9_943, 1, &empty_storage_without_proof)
-            .expect("empty storage slotsets without proof remain protocol-tolerated here");
+        validate_snap_storage_ranges_proof_semantics_v1(
+            chain_id,
+            1,
+            Some(state_root),
+            &[account_hash],
+            &empty_storage_without_proof,
+        )
+        .expect("empty StorageRanges response without proof remains protocol-tolerated here");
+        clear_network_runtime_native_snapshots_for_chain_v1(chain_id);
     }
 
     #[test]
@@ -11296,8 +11450,9 @@ mod tests {
         );
         assert_eq!(
             snapshot.lifecycle_stage,
-            crate::EthPeerLifecycleStageV1::Cooldown
+            crate::EthPeerLifecycleStageV1::PermanentlyRejected
         );
+        assert!(snapshot.permanently_rejected);
         server.join().expect("server join");
     }
 

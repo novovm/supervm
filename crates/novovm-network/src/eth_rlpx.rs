@@ -425,6 +425,82 @@ pub fn eth_rlpx_receipts_root_from_raw_receipts_v1(raw_receipts: &[Vec<u8>]) -> 
     eth_rlpx_mpt_root_from_kv_pairs_v1(&kv_pairs)
 }
 
+pub fn eth_rlpx_snap_full_account_rlp_from_slim_v1(body_rlp: &[u8]) -> Result<Vec<u8>, String> {
+    let (root, consumed) = eth_rlpx_parse_item_v1(body_rlp)?;
+    if consumed != body_rlp.len() {
+        return Err("rlpx_snap_slim_account_trailing".to_string());
+    }
+    let EthRlpxRlpItemV1::List(root_payload) = root else {
+        return Err("rlpx_snap_slim_account_not_list".to_string());
+    };
+    let fields = eth_rlpx_parse_list_items_v1(root_payload)?;
+    let raw_fields = eth_rlpx_split_list_raw_items_v1(root_payload)?;
+    if fields.len() < 4 || raw_fields.len() < 4 {
+        return Err("rlpx_snap_slim_account_fields_short".to_string());
+    }
+    let EthRlpxRlpItemV1::Bytes(storage_root_bytes) = fields[2] else {
+        return Err("rlpx_snap_slim_account_storage_root_not_bytes".to_string());
+    };
+    let EthRlpxRlpItemV1::Bytes(code_hash_bytes) = fields[3] else {
+        return Err("rlpx_snap_slim_account_code_hash_not_bytes".to_string());
+    };
+    let storage_root = if storage_root_bytes.is_empty() {
+        ETH_RLPX_EMPTY_TRIE_ROOT_V1
+    } else {
+        eth_rlpx_parse_hash_bytes_v1(storage_root_bytes, "rlpx_snap_slim_account_storage_root")?
+    };
+    let code_hash = if code_hash_bytes.is_empty() {
+        ETH_RLPX_EMPTY_CODE_HASH_V1
+    } else {
+        eth_rlpx_parse_hash_bytes_v1(code_hash_bytes, "rlpx_snap_slim_account_code_hash")?
+    };
+    Ok(eth_rlpx_encode_list_v1(&[
+        raw_fields[0].to_vec(),
+        raw_fields[1].to_vec(),
+        eth_rlpx_encode_bytes_v1(&storage_root),
+        eth_rlpx_encode_bytes_v1(&code_hash),
+    ]))
+}
+
+pub fn eth_rlpx_snap_account_root_from_range_v1(
+    accounts: &[EthRlpxSnapAccountDataV1],
+) -> Result<[u8; 32], String> {
+    let mut kv_pairs = Vec::with_capacity(accounts.len());
+    for (idx, account) in accounts.iter().enumerate() {
+        if account.body_rlp.is_empty() {
+            return Err(format!("rlpx_snap_account_range_deletion:idx={idx}"));
+        }
+        if let Some(next) = accounts.get(idx + 1) {
+            if account.hash >= next.hash {
+                return Err(format!("rlpx_snap_account_range_not_monotonic:idx={idx}"));
+            }
+        }
+        kv_pairs.push((
+            account.hash.to_vec(),
+            eth_rlpx_snap_full_account_rlp_from_slim_v1(account.body_rlp.as_slice())?,
+        ));
+    }
+    Ok(eth_rlpx_mpt_root_from_kv_pairs_v1(&kv_pairs))
+}
+
+pub fn eth_rlpx_snap_storage_root_from_range_v1(
+    slots: &[EthRlpxSnapStorageDataV1],
+) -> Result<[u8; 32], String> {
+    let mut kv_pairs = Vec::with_capacity(slots.len());
+    for (idx, slot) in slots.iter().enumerate() {
+        if slot.body.is_empty() {
+            return Err(format!("rlpx_snap_storage_range_deletion:idx={idx}"));
+        }
+        if let Some(next) = slots.get(idx + 1) {
+            if slot.hash >= next.hash {
+                return Err(format!("rlpx_snap_storage_range_not_monotonic:idx={idx}"));
+            }
+        }
+        kv_pairs.push((slot.hash.to_vec(), slot.body.clone()));
+    }
+    Ok(eth_rlpx_mpt_root_from_kv_pairs_v1(&kv_pairs))
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EthRlpxGetBlockBodiesRequestV1 {
     pub request_id: u64,
