@@ -4543,6 +4543,29 @@ mod tests {
     }
 
     #[test]
+    fn remote_closed_disconnect_is_not_immediately_bootstrap_eligible() {
+        let chain_id = 99_160_321_u64;
+        let peer = NodeId(602);
+        let fallback = NodeId(603);
+        let _ =
+            upsert_network_runtime_eth_peer_session(chain_id, peer.0, &[68, 70], &[1], Some(512))
+                .expect("ready peer");
+
+        observe_network_runtime_eth_peer_disconnect_v1(chain_id, peer.0, None);
+
+        let snapshot =
+            snapshot_network_runtime_eth_peer_sessions_for_peers_v1(chain_id, &[peer])[0].clone();
+        assert!(!snapshot.session_ready);
+        assert_eq!(snapshot.lifecycle_stage, EthPeerLifecycleStageV1::Cooldown);
+        assert!(!snapshot.retry_eligible);
+        assert!(snapshot.cooldown_until_unix_ms > eth_peer_now_unix_ms_v1());
+
+        let selected =
+            select_eth_fullnode_native_bootstrap_candidates_v1(chain_id, &[peer, fallback], 2);
+        assert_eq!(selected, vec![fallback]);
+    }
+
+    #[test]
     fn select_native_sync_targets_prefers_highest_observed_peer_head() {
         let chain_id = 99_160_318_u64;
         let peer_a = NodeId(401);
