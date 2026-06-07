@@ -183,6 +183,7 @@ EVM protocol-observable equivalence scope (CN):
 
 - `docs_CN/Adapters/EVM/NOVOVM-EVM-PROTOCOL-OBSERVABLE-EQUIVALENCE-V1-2026-06-07.md`
 - v2 RPC projection gate: `cargo test -p novovm-node evm_protocol_observable_equivalence_geth_rpc_blackbox_projection_gate_v2 -- --nocapture`
+- v2b real geth block diff gate: `cargo test -p novovm-node evm_protocol_observable_equivalence_geth_real_block_diff_gate_v2b -- --nocapture`
 
 Manual local run:
 

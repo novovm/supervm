@@ -75,13 +75,33 @@ cargo test -p novovm-node evm_protocol_observable_equivalence_geth_rpc_blackbox_
 
 `stateRoot 已完成 geth/reth devnet 同输入 replay 对齐。`
 
+## v2b 当前推进：真实 geth block fixture 差分
+
+本轮已接入一个真实 go-ethereum `ethapi/testdata` fullTx block fixture，新增 v2b 差分 gate：
+
+```powershell
+cargo test -p novovm-node evm_protocol_observable_equivalence_geth_real_block_diff_gate_v2b -- --nocapture
+```
+
+该 gate 做两件事：
+
+- 从 geth fullTx block fixture 的 legacy tx 字段复算 raw transaction RLP trie root，并确认复算值等于 geth fixture 的 `transactionsRoot`。
+- 用同一 block/receipt 形态构造 SUPERVM canonical projection，和 geth block 对比 `number`、`gasUsed`、`logsBloom`、`receiptsRoot`、`stateRoot`、`transactionsRoot`。
+
+当前结果：
+
+- 已匹配：`number`、`gasUsed`、`logsBloom`、`receiptsRoot`、`stateRoot`。
+- 已暴露 gap：`transactionsRoot`。原因是 SUPERVM 当前 canonical projection 还没有把 raw tx RLP 带入 block root 计算，仍使用 receipt/tx-hash projection root。
+
+这一步的意义是把 v2b 从口头目标变成可运行的真实 geth block 差分报告。下一步不是继续加 fixture，而是把 raw tx RLP 或 native header `transactionsRoot` 接入 canonical block projection 路径。
+
 ## 剩余阶段
 
 | 阶段 | 目标 | 退出标准 |
 | --- | --- | --- |
 | v1 | 插件产品面协议可观察等价 | 本文 3 个聚合 gate 全绿 |
 | v2a | RPC 黑盒投影根门禁 | `evm_protocol_observable_equivalence_geth_rpc_blackbox_projection_gate_v2` 全绿 |
-| v2b | 真 geth/reth 黑盒差分 | 同一批 raw tx/block 输入，state root、receipt root、logs bloom、gas/failure/RPC 输出一致 |
+| v2b | 真 geth/reth 黑盒差分 | 已有真实 geth block diff gate；退出还需 raw tx RLP/native txRoot 接入后 `transactionsRoot` 也一致 |
 | v3 | 网络可观察等价 | devp2p/eth handshake、tx/block broadcast、import/reorg 行为被其它节点接受 |
 | v4 | 长稳生产封口 | 多节点 devnet soak、重启恢复、恶意/边界输入、BAL/receipt/RPC 长稳无漂移 |
 
@@ -93,7 +113,8 @@ cargo test -p novovm-node evm_protocol_observable_equivalence_geth_rpc_blackbox_
 
 1. 先让 v1 三个聚合 gate 进入固定回归清单。
 2. 已完成 v2a：RPC block root projection 不再返回 `null`，并进入 geth parity batch report。
-3. 再做 v2b：用 geth/reth 对照节点喂同一批 raw tx/block，比较真实 state root、receipt root、logs bloom、RPC 输出。
-4. 最后做 v3：真实 eth/66-eth/71 peer handshake 和 import/broadcast 可观察行为。
+3. 已推进 v2b：真实 geth fullTx block fixture 差分已接入，当前唯一明确 gap 是 `transactionsRoot` 缺 raw tx RLP。
+4. 下一步补 raw tx RLP/native header txRoot 进入 canonical block projection，让 `transactionsRoot` 从 gap 变成 match。
+5. 最后做 v3：真实 eth/66-eth/71 peer handshake 和 import/broadcast 可观察行为。
 
 这会把“等价”从开放式 fixture 堆叠改成有限的协议验收。

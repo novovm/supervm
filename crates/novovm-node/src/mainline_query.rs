@@ -7544,6 +7544,226 @@ mod tests {
         eth_get_block_returns_projected_root_fields_for_observable_diff_v2();
     }
 
+    fn geth_replay_diff_fixture_dir_v1() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests")
+            .join("fixtures")
+            .join("geth-replay-diff")
+    }
+
+    fn read_geth_replay_diff_fixture_v1(name: &str) -> Value {
+        let path = geth_replay_diff_fixture_dir_v1().join(name);
+        let payload = fs::read_to_string(&path).unwrap_or_else(|error| {
+            panic!("read geth replay diff fixture failed {path:?}: {error}")
+        });
+        serde_json::from_str(payload.as_str()).unwrap_or_else(|error| {
+            panic!("parse geth replay diff fixture failed {path:?}: {error}")
+        })
+    }
+
+    fn hex_scalar_rlp_payload_v1(raw: &str) -> Vec<u8> {
+        let trimmed = raw.trim();
+        let payload = trimmed
+            .strip_prefix("0x")
+            .or_else(|| trimmed.strip_prefix("0X"))
+            .unwrap_or(trimmed);
+        let normalized = if payload.len() % 2 == 1 {
+            format!("0x0{payload}")
+        } else {
+            format!("0x{payload}")
+        };
+        let bytes = decode_hex_bytes_v1(normalized.as_str()).expect("decode scalar hex");
+        let first_non_zero = bytes.iter().position(|byte| *byte != 0);
+        match first_non_zero {
+            Some(idx) => bytes[idx..].to_vec(),
+            None => Vec::new(),
+        }
+    }
+
+    fn geth_full_legacy_tx_rlp_v1(tx: &Value) -> Vec<u8> {
+        assert_eq!(
+            tx["type"].as_str(),
+            Some("0x0"),
+            "v2b fixture currently covers legacy tx root first"
+        );
+        let to = tx["to"]
+            .as_str()
+            .map(|raw| decode_hex_bytes_v1(raw).expect("decode tx.to"))
+            .unwrap_or_default();
+        let input =
+            decode_hex_bytes_v1(tx["input"].as_str().unwrap_or("0x")).expect("decode tx input");
+        eth_rlp_encode_list_v1(&[
+            eth_rlp_encode_bytes_v1(&hex_scalar_rlp_payload_v1(
+                tx["nonce"].as_str().expect("tx.nonce"),
+            )),
+            eth_rlp_encode_bytes_v1(&hex_scalar_rlp_payload_v1(
+                tx["gasPrice"].as_str().expect("tx.gasPrice"),
+            )),
+            eth_rlp_encode_bytes_v1(&hex_scalar_rlp_payload_v1(
+                tx["gas"].as_str().expect("tx.gas"),
+            )),
+            eth_rlp_encode_bytes_v1(&to),
+            eth_rlp_encode_bytes_v1(&hex_scalar_rlp_payload_v1(
+                tx["value"].as_str().expect("tx.value"),
+            )),
+            eth_rlp_encode_bytes_v1(&input),
+            eth_rlp_encode_bytes_v1(&hex_scalar_rlp_payload_v1(tx["v"].as_str().expect("tx.v"))),
+            eth_rlp_encode_bytes_v1(&hex_scalar_rlp_payload_v1(tx["r"].as_str().expect("tx.r"))),
+            eth_rlp_encode_bytes_v1(&hex_scalar_rlp_payload_v1(tx["s"].as_str().expect("tx.s"))),
+        ])
+    }
+
+    fn geth_fulltx_block_transactions_root_v1(block: &Value) -> String {
+        let txs = block["transactions"]
+            .as_array()
+            .expect("block.transactions must be array");
+        let kv_pairs = txs
+            .iter()
+            .enumerate()
+            .map(|(idx, tx)| {
+                (
+                    eth_rlp_encode_u64_v1(idx as u64),
+                    geth_full_legacy_tx_rlp_v1(tx),
+                )
+            })
+            .collect::<Vec<_>>();
+        to_hex_prefixed(&eth_mpt_root_from_kv_pairs_v1(&kv_pairs))
+    }
+
+    #[test]
+    fn evm_protocol_observable_equivalence_geth_real_block_diff_gate_v2b() {
+        let _guard = geth_parity_test_lock_v1()
+            .lock()
+            .expect("geth replay diff test lock");
+        let geth_block =
+            read_geth_replay_diff_fixture_v1("eth_getBlockByHash-hash-latest-1-fullTx.json");
+        let geth_receipt =
+            read_geth_replay_diff_fixture_v1("eth_getTransactionReceipt-normal-transfer-tx.json");
+
+        let recomputed_geth_tx_root = geth_fulltx_block_transactions_root_v1(&geth_block);
+        assert_eq!(
+            Some(recomputed_geth_tx_root.as_str()),
+            geth_block["transactionsRoot"].as_str(),
+            "must be able to reproduce geth transactionsRoot from fullTx fixture"
+        );
+
+        let receipt_path = geth_replay_diff_fixture_dir_v1()
+            .join("eth_getTransactionReceipt-normal-transfer-tx.json");
+        let receipts = parse_geth_export_receipts_from_value_v1(&geth_receipt)
+            .expect("parse geth receipt fixture");
+        let mut store = build_store_from_geth_export_receipts_v1(&receipt_path, 1, receipts)
+            .expect("build canonical store from geth receipt");
+        let block_number = parse_hex_u64_required_v1(
+            geth_block["number"].as_str().expect("block.number"),
+            "block.number",
+        )
+        .expect("parse block.number");
+        let geth_state_root =
+            decode_fixed_32_hex_v1(geth_block["stateRoot"].as_str().expect("block.stateRoot"))
+                .expect("decode stateRoot");
+        let geth_tx_hash = decode_hex_bytes_v1(
+            geth_block["transactions"][0]["hash"]
+                .as_str()
+                .expect("block tx hash"),
+        )
+        .expect("decode block tx hash");
+        store.batches[0].seq = block_number;
+        store.batches[0].source_detail = "geth-replay-diff-fulltx-v2b".to_string();
+        store.batches[0].apply_state_root = geth_state_root;
+        store.batches[0].receipts[0].tx_hash = geth_tx_hash;
+
+        clear_eth_fullnode_native_worker_runtime_snapshot_for_chain_v1(store.chain_id);
+        let block_out =
+            run_mainline_query(&store, "eth_getBlockByNumber", &json!(["latest", true]))
+                .expect("supervm block projection");
+        clear_eth_fullnode_native_worker_runtime_snapshot_for_chain_v1(store.chain_id);
+        let supervm_block = &block_out["block"];
+        let geth_logs_bloom = geth_block
+            .get("logsBloom")
+            .cloned()
+            .unwrap_or_else(|| json!(to_hex_prefixed(&vec![0u8; AOEM_LOG_BLOOM_BYTES_V1])));
+
+        let mut matched_fields = Vec::<Value>::new();
+        let mut known_gaps = Vec::<Value>::new();
+        let expected_fields = [
+            ("number", geth_block["number"].clone()),
+            ("gasUsed", geth_block["gasUsed"].clone()),
+            ("logsBloom", geth_logs_bloom.clone()),
+            ("receiptsRoot", geth_block["receiptsRoot"].clone()),
+            ("stateRoot", geth_block["stateRoot"].clone()),
+        ];
+        for (field, expected) in expected_fields {
+            record_mismatch_v1(
+                &mut known_gaps,
+                "geth_real_block_diff",
+                field,
+                expected.clone(),
+                supervm_block[field].clone(),
+            );
+            if expected == supervm_block[field] {
+                matched_fields.push(json!(field));
+            }
+        }
+        let tx_root_matches = geth_block["transactionsRoot"] == supervm_block["transactionsRoot"];
+        if !tx_root_matches {
+            known_gaps.push(json!({
+                "scope": "geth_real_block_diff",
+                "field": "transactionsRoot",
+                "expected": geth_block["transactionsRoot"],
+                "actual": supervm_block["transactionsRoot"],
+                "reason": "supervm canonical projection does not yet carry raw tx rlp into block root calculation"
+            }));
+        }
+
+        let report = json!({
+            "schema": "supervm-e2e-geth-real-block-diff-report/v2b",
+            "sample": "eth_getBlockByHash-hash-latest-1-fullTx",
+            "geth": {
+                "blockHash": geth_block["hash"],
+                "number": geth_block["number"],
+                "transactionsRoot": geth_block["transactionsRoot"],
+                "receiptsRoot": geth_block["receiptsRoot"],
+                "stateRoot": geth_block["stateRoot"],
+                "gasUsed": geth_block["gasUsed"],
+                "logsBloom": geth_logs_bloom
+            },
+            "supervm": {
+                "blockHash": supervm_block["hash"],
+                "number": supervm_block["number"],
+                "transactionsRoot": supervm_block["transactionsRoot"],
+                "receiptsRoot": supervm_block["receiptsRoot"],
+                "stateRoot": supervm_block["stateRoot"],
+                "gasUsed": supervm_block["gasUsed"],
+                "logsBloom": supervm_block["logsBloom"]
+            },
+            "recomputed": {
+                "gethTransactionsRootFromFullTx": recomputed_geth_tx_root,
+                "gethTransactionsRootRecomputedMatchesFixture": true
+            },
+            "result": {
+                "matchedFields": matched_fields,
+                "knownGapCount": known_gaps.len(),
+                "knownGaps": known_gaps,
+                "requiresRawTxRlpForFullTransactionsRootEquivalence": !tx_root_matches
+            }
+        });
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&report).expect("render geth real block diff report")
+        );
+
+        assert_eq!(
+            report["result"]["knownGapCount"].as_u64(),
+            Some(1),
+            "v2b should expose exactly the current raw-tx-root gap: {}",
+            serde_json::to_string_pretty(&report).expect("render v2b mismatch")
+        );
+        assert_eq!(
+            report["result"]["requiresRawTxRlpForFullTransactionsRootEquivalence"].as_bool(),
+            Some(true)
+        );
+    }
+
     #[test]
     fn eth_syncing_uses_formal_chain_view_and_runtime_gap() {
         let mut store = sample_store();
