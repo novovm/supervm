@@ -682,8 +682,17 @@ struct EthFullnodeNativeRlpxLivePeerSessionV1 {
     last_receipts_request_id: Option<u64>,
     last_pooled_transactions_request_id: Option<u64>,
     last_tx_broadcast_unix_ms: u64,
-    pending_body_headers: Vec<(u64, [u8; 32], [u8; 32], [u8; 32])>,
+    pending_body_headers: Vec<EthFullnodeNativePendingBodyHeaderV1>,
     pending_pooled_transaction_hashes: Vec<[u8; 32]>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct EthFullnodeNativePendingBodyHeaderV1 {
+    number: u64,
+    hash: [u8; 32],
+    transactions_root: [u8; 32],
+    receipts_root: [u8; 32],
+    tx_count: Option<usize>,
 }
 
 type EthFullnodeNativeRlpxSessionKeyV1 = (u64, u64);
@@ -1956,12 +1965,13 @@ fn ingest_real_rlpx_new_block_v1(
         );
         NetworkError::Io(err)
     })?;
-    session.pending_body_headers = vec![(
-        block.header.number,
-        block.header.hash,
-        block.header.transactions_root,
-        block.header.receipts_root,
-    )];
+    session.pending_body_headers = vec![EthFullnodeNativePendingBodyHeaderV1 {
+        number: block.header.number,
+        hash: block.header.hash,
+        transactions_root: block.header.transactions_root,
+        receipts_root: block.header.receipts_root,
+        tx_count: Some(block.body.tx_hashes.len()),
+    }];
     session.last_headers_request_id = None;
     session.last_bodies_request_id = None;
     session.last_receipts_request_id = Some(request_id);
@@ -1992,13 +2002,12 @@ fn ingest_real_rlpx_block_headers_v1(
     session.pending_body_headers = headers
         .headers
         .iter()
-        .map(|header| {
-            (
-                header.number,
-                header.hash,
-                header.transactions_root,
-                header.receipts_root,
-            )
+        .map(|header| EthFullnodeNativePendingBodyHeaderV1 {
+            number: header.number,
+            hash: header.hash,
+            transactions_root: header.transactions_root,
+            receipts_root: header.receipts_root,
+            tx_count: None,
         })
         .collect();
     if let Some(best) = headers.headers.iter().max_by_key(|header| header.number) {
@@ -2009,7 +2018,7 @@ fn ingest_real_rlpx_block_headers_v1(
     let hashes = session
         .pending_body_headers
         .iter()
-        .map(|(_, hash, _, _)| *hash)
+        .map(|pending| pending.hash)
         .collect::<Vec<_>>();
     if !hashes.is_empty() {
         let request_id = next_eth_fullnode_native_rlpx_request_id_v1();
@@ -2053,19 +2062,29 @@ fn ingest_real_rlpx_block_bodies_v1(
     }
     observe_eth_native_bodies_response(chain_id);
     session.last_headers_request_id = None;
+    if bodies.bodies.len() != session.pending_body_headers.len() {
+        let err = format!(
+            "rlpx_block_bodies_count_mismatch:expected={} observed={}",
+            session.pending_body_headers.len(),
+            bodies.bodies.len()
+        );
+        observe_network_runtime_eth_peer_decode_failure_v1(chain_id, source_peer_id, &err);
+        return Err(NetworkError::Decode(err));
+    }
     for (idx, body) in bodies.bodies.iter().enumerate() {
-        if let Some((number, hash, expected_transactions_root, _receipts_root)) =
-            session.pending_body_headers.get(idx).copied()
-        {
-            if body.transactions_root != expected_transactions_root {
+        if let Some(pending) = session.pending_body_headers.get_mut(idx) {
+            if body.transactions_root != pending.transactions_root {
                 let err = format!(
                     "rlpx_block_body_transactions_root_mismatch:number={number} hash=0x{}",
-                    hex32_v1(&hash)
+                    hex32_v1(&pending.hash),
+                    number = pending.number
                 );
                 observe_network_runtime_eth_peer_decode_failure_v1(chain_id, source_peer_id, &err);
                 return Err(NetworkError::Decode(err));
             }
-            let body_wire = evm_native_body_wire_from_rlpx_body_v1(number, hash, body);
+            pending.tx_count = Some(body.tx_hashes.len());
+            let body_wire =
+                evm_native_body_wire_from_rlpx_body_v1(pending.number, pending.hash, body);
             ingest_runtime_native_body_from_evm_wire(chain_id, source_peer_id, &body_wire);
             report.body_updates = report.body_updates.saturating_add(1);
         }
@@ -2074,7 +2093,7 @@ fn ingest_real_rlpx_block_bodies_v1(
     let hashes = session
         .pending_body_headers
         .iter()
-        .map(|(_, hash, _, _)| *hash)
+        .map(|pending| pending.hash)
         .collect::<Vec<_>>();
     if hashes.is_empty() {
         session.pending_body_headers.clear();
@@ -2122,26 +2141,12 @@ fn ingest_real_rlpx_receipts_v1(
     {
         return Ok(());
     }
-    for (idx, block_receipts) in receipts.blocks.iter().enumerate() {
-        if receipts.last_block_incomplete && idx + 1 == receipts.blocks.len() {
-            continue;
-        }
-        let Some((number, hash, _expected_transactions_root, expected_receipts_root)) =
-            session.pending_body_headers.get(idx).copied()
-        else {
-            break;
-        };
-        let observed_receipts_root =
-            eth_rlpx_receipts_root_from_raw_receipts_v1(block_receipts.raw_receipts.as_slice());
-        if observed_receipts_root != expected_receipts_root {
-            let err = format!(
-                "rlpx_receipts_root_mismatch:number={number} hash=0x{}",
-                hex32_v1(&hash)
-            );
-            observe_network_runtime_eth_peer_decode_failure_v1(chain_id, source_peer_id, &err);
-            return Err(NetworkError::Decode(err));
-        }
-    }
+    validate_real_rlpx_receipts_response_v1(
+        chain_id,
+        source_peer_id,
+        session.pending_body_headers.as_slice(),
+        receipts,
+    )?;
     report.receipt_updates = report.receipt_updates.saturating_add(receipts.blocks.len());
     eprintln!(
         "network_info: rlpx stage receipts_received chain_id={} peer={} endpoint={} negotiated_eth={} request_id={} blocks={} last_block_incomplete={}",
@@ -2156,6 +2161,65 @@ fn ingest_real_rlpx_receipts_v1(
     session.last_receipts_request_id = None;
     session.pending_body_headers.clear();
     mark_network_runtime_eth_peer_session_ready_v1(chain_id, source_peer_id, None);
+    Ok(())
+}
+
+fn validate_real_rlpx_receipts_response_v1(
+    chain_id: u64,
+    source_peer_id: u64,
+    pending_body_headers: &[EthFullnodeNativePendingBodyHeaderV1],
+    receipts: &EthRlpxReceiptsResponseV1,
+) -> Result<(), NetworkError> {
+    if receipts.last_block_incomplete {
+        let err = "rlpx_receipts_last_block_incomplete".to_string();
+        observe_network_runtime_eth_peer_decode_failure_v1(chain_id, source_peer_id, &err);
+        return Err(NetworkError::Decode(err));
+    }
+    if receipts.blocks.len() != pending_body_headers.len() {
+        let err = format!(
+            "rlpx_receipts_block_count_mismatch:expected={} observed={}",
+            pending_body_headers.len(),
+            receipts.blocks.len()
+        );
+        observe_network_runtime_eth_peer_decode_failure_v1(chain_id, source_peer_id, &err);
+        return Err(NetworkError::Decode(err));
+    }
+    for (idx, block_receipts) in receipts.blocks.iter().enumerate() {
+        let Some(pending) = pending_body_headers.get(idx).copied() else {
+            break;
+        };
+        let Some(expected_tx_count) = pending.tx_count else {
+            let err = format!(
+                "rlpx_receipts_without_materialized_body:number={} hash=0x{}",
+                pending.number,
+                hex32_v1(&pending.hash)
+            );
+            observe_network_runtime_eth_peer_decode_failure_v1(chain_id, source_peer_id, &err);
+            return Err(NetworkError::Decode(err));
+        };
+        if block_receipts.receipt_count != expected_tx_count {
+            let err = format!(
+                "rlpx_receipts_count_mismatch:number={} hash=0x{} expected={} observed={}",
+                pending.number,
+                hex32_v1(&pending.hash),
+                expected_tx_count,
+                block_receipts.receipt_count
+            );
+            observe_network_runtime_eth_peer_decode_failure_v1(chain_id, source_peer_id, &err);
+            return Err(NetworkError::Decode(err));
+        }
+        let observed_receipts_root =
+            eth_rlpx_receipts_root_from_raw_receipts_v1(block_receipts.raw_receipts.as_slice());
+        if observed_receipts_root != pending.receipts_root {
+            let err = format!(
+                "rlpx_receipts_root_mismatch:number={} hash=0x{}",
+                pending.number,
+                hex32_v1(&pending.hash)
+            );
+            observe_network_runtime_eth_peer_decode_failure_v1(chain_id, source_peer_id, &err);
+            return Err(NetworkError::Decode(err));
+        }
+    }
     Ok(())
 }
 
@@ -4568,6 +4632,87 @@ mod tests {
                 })
             })
             .collect()
+    }
+
+    #[test]
+    fn rlpx_receipts_validation_rejects_incomplete_and_mismatched_counts() {
+        let chain_id = 9_926_100_u64;
+        let peer_id = 1_300_100_u64;
+        let raw_receipts = vec![vec![0xc0]];
+        let pending = vec![EthFullnodeNativePendingBodyHeaderV1 {
+            number: 120,
+            hash: [0x12; 32],
+            transactions_root: crate::eth_rlpx_empty_trie_root_v1(),
+            receipts_root: crate::eth_rlpx_receipts_root_from_raw_receipts_v1(
+                raw_receipts.as_slice(),
+            ),
+            tx_count: Some(1),
+        }];
+        let valid = crate::EthRlpxReceiptsResponseV1 {
+            request_id: 1,
+            last_block_incomplete: false,
+            blocks: vec![crate::EthRlpxReceiptBlockV1 {
+                raw_receipts: raw_receipts.clone(),
+                receipt_count: 1,
+                receipts_available: true,
+            }],
+        };
+        assert!(validate_real_rlpx_receipts_response_v1(
+            chain_id,
+            peer_id,
+            pending.as_slice(),
+            &valid
+        )
+        .is_ok());
+
+        let mut incomplete = valid.clone();
+        incomplete.last_block_incomplete = true;
+        assert!(validate_real_rlpx_receipts_response_v1(
+            chain_id,
+            peer_id,
+            pending.as_slice(),
+            &incomplete
+        )
+        .expect_err("incomplete receipts must reject")
+        .to_string()
+        .contains("rlpx_receipts_last_block_incomplete"));
+
+        let mut missing_block = valid.clone();
+        missing_block.blocks.clear();
+        assert!(validate_real_rlpx_receipts_response_v1(
+            chain_id,
+            peer_id,
+            pending.as_slice(),
+            &missing_block
+        )
+        .expect_err("missing receipts block must reject")
+        .to_string()
+        .contains("rlpx_receipts_block_count_mismatch"));
+
+        let mut count_mismatch = valid.clone();
+        count_mismatch.blocks[0].raw_receipts.clear();
+        count_mismatch.blocks[0].receipt_count = 0;
+        assert!(validate_real_rlpx_receipts_response_v1(
+            chain_id,
+            peer_id,
+            pending.as_slice(),
+            &count_mismatch
+        )
+        .expect_err("receipt count mismatch must reject")
+        .to_string()
+        .contains("rlpx_receipts_count_mismatch"));
+
+        let mut root_mismatch_pending = pending.clone();
+        root_mismatch_pending[0].receipts_root = [0x99; 32];
+        assert!(validate_real_rlpx_receipts_response_v1(
+            chain_id,
+            peer_id,
+            root_mismatch_pending.as_slice(),
+            &valid
+        )
+        .expect_err("receipt root mismatch must reject")
+        .to_string()
+        .contains("rlpx_receipts_root_mismatch"));
     }
 
     #[test]
