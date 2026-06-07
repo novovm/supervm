@@ -21,24 +21,26 @@ use novovm_network::{
     assess_read_only_impact, build_reconcile_report_with_replay, capability_state_token,
     decode_relay_membership_message, derive_advisory, detect_capabilities,
     drain_runtime_relay_membership, evaluate_advisory_first,
-    get_network_runtime_native_sync_status, ingest_runtime_relay_membership,
-    is_eth_fullnode_runtime_query_method,
+    get_network_runtime_native_body_snapshot_v1, get_network_runtime_native_header_snapshot_v1,
+    get_network_runtime_native_sync_status, get_network_runtime_sync_status,
+    ingest_runtime_relay_membership, is_eth_fullnode_runtime_query_method,
     observe_network_runtime_native_execution_budget_target_v1,
     observe_network_runtime_native_execution_budget_throttle_v1,
-    observe_network_runtime_native_pending_tx_local_ingress_with_payload_v1,
+    observe_network_runtime_native_pending_tx_local_ingress_with_payload_v1, parse_enode_endpoint,
     relay_convergence_policy_view, resolve_eth_fullnode_budget_hooks_v1,
-    resolve_eth_fullnode_canonical_query_method, run_replay_with,
+    resolve_eth_fullnode_canonical_query_method, run_replay_with, set_network_runtime_sync_status,
     snapshot_network_runtime_native_pending_tx_summary_v1, AvailabilityController,
     AvailabilityDecision, AvailabilityMode, CapabilityReadiness, CapabilityRouteHint,
-    FileQueueStore, GossipMessage, InMemoryQueueStore, L3RegionalRoutingTable, L4LocalRoutingTable,
-    L4PeerRef, MessageType, NetworkRuntimeNativeExecutionBudgetTargetObservationV1,
-    NetworkRuntimeNativeSyncPhaseV1, QueueStore, QueuedRequest, Reachability, RelayCapacityClass,
-    RelayClient, RelayHealth, RelayMembership, RelayRef, RelayServer, ReplayResult, RouteSelector,
-    RoutingSource, SelectedPath, L3_BASELINE_FINGERPRINT, L3_BASELINE_LOCK_VERSION,
-    L3_BASELINE_PHASE, L3_POLICY_BASELINE_VERSION, L3_READONLY_EXPORT_BASELINE_VERSION,
-    L3_REGRESSION_LOCKSET, L3_RELAY_RUNTIME_FEEDBACK_SCALE, L3_RELAY_SCORE_SCALE,
-    L3_RELAY_SELECTED_STICKY_MARGIN, L3_RELAY_SOURCE_BONUS_CONFIGURED, L3_RELAY_SOURCE_BONUS_POOL,
-    L3_RELAY_SOURCE_BONUS_SNAPSHOT,
+    EthFullnodeNativePeerWorkerConfigV1, EthFullnodeNativePeerWorkerV1, FileQueueStore,
+    GossipMessage, InMemoryQueueStore, L3RegionalRoutingTable, L4LocalRoutingTable, L4PeerRef,
+    MessageType, NetworkRuntimeNativeExecutionBudgetTargetObservationV1,
+    NetworkRuntimeNativeSyncPhaseV1, NetworkRuntimeSyncStatus, PluginPeerEndpoint, QueueStore,
+    QueuedRequest, Reachability, RelayCapacityClass, RelayClient, RelayHealth, RelayMembership,
+    RelayRef, RelayServer, ReplayResult, RouteSelector, RoutingSource, SelectedPath,
+    L3_BASELINE_FINGERPRINT, L3_BASELINE_LOCK_VERSION, L3_BASELINE_PHASE,
+    L3_POLICY_BASELINE_VERSION, L3_READONLY_EXPORT_BASELINE_VERSION, L3_REGRESSION_LOCKSET,
+    L3_RELAY_RUNTIME_FEEDBACK_SCALE, L3_RELAY_SCORE_SCALE, L3_RELAY_SELECTED_STICKY_MARGIN,
+    L3_RELAY_SOURCE_BONUS_CONFIGURED, L3_RELAY_SOURCE_BONUS_POOL, L3_RELAY_SOURCE_BONUS_SNAPSHOT,
 };
 use novovm_node::governance_surface::{
     default_mainline_governance_store_path, is_mainline_governance_query_method,
@@ -63,7 +65,7 @@ use novovm_node::tx_ingress::{
 use novovm_node::unified_account_surface::{
     default_mainline_unified_account_store_path, is_mainline_unified_account_query_method,
 };
-use novovm_protocol::{encode_local_tx_wire_v1 as encode_tx_wire_v1, LocalTxWireV1};
+use novovm_protocol::{encode_local_tx_wire_v1 as encode_tx_wire_v1, LocalTxWireV1, NodeId};
 use sha2::{Digest, Sha256};
 use std::collections::{hash_map::DefaultHasher, HashMap, HashSet, VecDeque};
 use std::fs::{self, OpenOptions};
@@ -1158,6 +1160,131 @@ fn mainline_evm_canonical_store_path(cli: &NodeCliOverridesV1) -> PathBuf {
             string_env_nonempty("NOVOVM_MAINLINE_EVM_CANONICAL_STORE_PATH").map(PathBuf::from)
         })
         .unwrap_or_else(|| PathBuf::from("artifacts/mainline/evm-canonical-artifacts.json"))
+}
+
+const ETH_RLPX_MAINNET_BOOTNODES_V1: [&str; 4] = [
+    "enode://d860a01f9722d78051619d1e2351aba3f43f943f6f00718d1b9baa4101932a1f5011f16bb2b1bb35db20d6fe28fa0bf09636d26a87d31de9ec6203eeedb1f666@18.138.108.67:30303",
+    "enode://22a8232c3abc76a16ae9d6c3b164f98775fe226f0917b0ca871128a74a8e9630b458460865bab457221f1d448dd9791d24c4e5d88786180ac185df813a68d4de@3.209.45.79:30303",
+    "enode://2b252ab6a1d0f971d9722cb839a42cb81db019ba44c08754628ab4a823487071b5695317c8ccd085219c3a03af063495b2f1da8d18218da2d6a82981b45e6ffc@65.108.70.101:30303",
+    "enode://4aeb4ab6c14b23e2c4cfdce879c04b0748a20d8e9b59e25ded2a08143e265c6c25936e74cbc8e641e3312ca288673d91f2f93f8e277de3cfa444ecdaaf982052@157.90.35.166:30303",
+];
+
+fn eth_rlpx_sync_peer_endpoints_v1(max_peers: usize) -> Vec<PluginPeerEndpoint> {
+    let raw = string_env_nonempty("NOVOVM_ETH_RLPX_ENODES")
+        .or_else(|| string_env_nonempty("NOVOVM_ETH_LIVE_SMOKE_ENODES"))
+        .unwrap_or_else(|| ETH_RLPX_MAINNET_BOOTNODES_V1.join(","));
+    raw.split([',', ';', '\n', '\r', '\t', ' '])
+        .map(str::trim)
+        .filter(|entry| !entry.is_empty())
+        .filter_map(|entry| {
+            let (node_hint, addr_hint) = parse_enode_endpoint(entry)?;
+            Some(PluginPeerEndpoint {
+                endpoint: entry.to_string(),
+                node_hint,
+                addr_hint,
+            })
+        })
+        .take(max_peers)
+        .collect()
+}
+
+fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
+    let chain_id = u64_env_allow_zero("NOVOVM_ETH_RLPX_CHAIN_ID", 1)?;
+    let local_node_id = u64_env_allow_zero("NOVOVM_ETH_RLPX_LOCAL_NODE", 9_990_001)?;
+    let max_peers = usize_env_allow_zero("NOVOVM_ETH_RLPX_MAX_PEERS", 4)?.clamp(1, 16);
+    let ticks = usize_env_allow_zero("NOVOVM_ETH_RLPX_TICKS", 0)?;
+    let sleep_ms = u64_env_clamped("NOVOVM_ETH_RLPX_SLEEP_MS", 600, 10, 60_000);
+    let recv_budget = usize_env_allow_zero("NOVOVM_ETH_RLPX_RECV_BUDGET", 16)?.clamp(1, 1024);
+    let sync_target_fanout =
+        usize_env_allow_zero("NOVOVM_ETH_RLPX_SYNC_TARGET_FANOUT", max_peers)?.clamp(1, max_peers);
+    let peer_endpoints = eth_rlpx_sync_peer_endpoints_v1(max_peers);
+    if peer_endpoints.is_empty() {
+        bail!("NOVOVM_ETH_RLPX_ENODES has no valid enode endpoints");
+    }
+    let peers = peer_endpoints
+        .iter()
+        .map(|endpoint| NodeId(endpoint.node_hint.max(1)))
+        .collect::<Vec<_>>();
+    let mut budget = resolve_eth_fullnode_budget_hooks_v1(chain_id);
+    budget.active_native_peer_soft_limit = max_peers as u64;
+    budget.active_native_peer_hard_limit = max_peers as u64;
+    set_network_runtime_sync_status(
+        chain_id,
+        NetworkRuntimeSyncStatus {
+            peer_count: 0,
+            starting_block: 0,
+            current_block: 0,
+            highest_block: 0,
+        },
+    );
+    let worker = EthFullnodeNativePeerWorkerV1::new(EthFullnodeNativePeerWorkerConfigV1 {
+        chain_id,
+        local_node: NodeId(local_node_id),
+        peers,
+        peer_endpoints,
+        recv_budget,
+        sync_target_fanout,
+        budget_hooks: budget,
+    });
+    let mut tick = 0usize;
+    loop {
+        tick = tick.saturating_add(1);
+        let report = worker
+            .drive_real_network_once()
+            .with_context(|| format!("eth rlpx sync tick {tick} failed"))?;
+        let sync_status = get_network_runtime_sync_status(chain_id);
+        let native_sync = get_network_runtime_native_sync_status(chain_id);
+        let header = get_network_runtime_native_header_snapshot_v1(chain_id);
+        let body = get_network_runtime_native_body_snapshot_v1(chain_id);
+        let last_failure = report.peer_failures.last().map(|failure| {
+            format!(
+                "{}:{}:{}",
+                failure.phase.as_str(),
+                failure.class.as_str(),
+                failure.error
+            )
+        });
+        println!(
+            "eth_rlpx_sync_tick: chain_id={} tick={} connected={} ready={} status_updates={} sync_requests={} headers={} bodies={} receipts={} current={} highest={} native_phase={} header_number={} header_hash={} body_available={} failures={} last_failure={}",
+            chain_id,
+            tick,
+            report.connected_peers,
+            report.ready_peers,
+            report.status_updates,
+            report.sync_requests,
+            report.header_updates,
+            report.body_updates,
+            report.receipt_updates,
+            sync_status.map(|status| status.current_block).unwrap_or(0),
+            sync_status.map(|status| status.highest_block).unwrap_or(0),
+            native_sync
+                .map(|status| status.phase.as_str().to_string())
+                .unwrap_or_else(|| "-".to_string()),
+            header.as_ref().map(|snapshot| snapshot.number).unwrap_or(0),
+            header
+                .as_ref()
+                .map(|snapshot| to_hex_prefixed(&snapshot.hash))
+                .unwrap_or_else(|| "-".to_string()),
+            body.as_ref()
+                .map(|snapshot| snapshot.body_available)
+                .unwrap_or(false),
+            report.peer_failures.len(),
+            last_failure.unwrap_or_else(|| "-".to_string())
+        );
+        if verbose {
+            println!(
+                "eth_rlpx_sync_runtime: lifecycle_ready={} lifecycle_cooldown={} selection_candidates={}",
+                report.lifecycle_summary.ready_count,
+                report.lifecycle_summary.cooldown_count,
+                report.selection_quality_summary.candidate_peer_count,
+            );
+        }
+        if ticks != 0 && tick >= ticks {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(sleep_ms));
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -24538,6 +24665,12 @@ fn main() -> Result<()> {
         return Ok(());
     }
     let node_mode = std::env::var("NOVOVM_NODE_MODE").unwrap_or_else(|_| "full".to_string());
+    if node_mode.eq_ignore_ascii_case("eth_rlpx_sync")
+        || node_mode.eq_ignore_ascii_case("evm_rlpx_sync")
+        || node_mode.eq_ignore_ascii_case("ethereum_rlpx_sync")
+    {
+        return run_eth_rlpx_sync_node_mode_v1(verbose);
+    }
     if !node_mode.eq_ignore_ascii_case("full") {
         bail!("non-full node_mode is disabled: novovm-node keeps only production path");
     }
