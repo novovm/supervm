@@ -227,6 +227,8 @@ struct NetworkRuntimeSyncObservedState {
     native_peer_count_by_chain: HashMap<u64, u64>,
     native_remote_best_by_chain: HashMap<u64, u64>,
     native_snapshot_updated_at_by_chain: HashMap<u64, u128>,
+    remote_best_hint_by_chain: HashMap<u64, u64>,
+    remote_best_hint_updated_at_by_chain: HashMap<u64, u128>,
     sync_anchor_by_chain: HashMap<u64, u64>,
 }
 
@@ -2047,6 +2049,7 @@ fn empty_runtime_sync_status() -> NetworkRuntimeSyncStatus {
 }
 
 const DEFAULT_RUNTIME_PEER_STALE_TIMEOUT_MILLIS: u128 = 30_000;
+const DEFAULT_RUNTIME_REMOTE_BEST_HINT_TIMEOUT_MILLIS: u128 = 300_000;
 const NATIVE_SYNC_GAP_HEADERS_THRESHOLD: u64 = 8_192;
 const NATIVE_SYNC_GAP_BODIES_THRESHOLD: u64 = 1_024;
 const NATIVE_SYNC_GAP_STATE_THRESHOLD: u64 = 128;
@@ -2094,6 +2097,16 @@ fn recompute_runtime_stale_check_deadline(
         let snapshot_due =
             snapshot_updated_at.saturating_add(DEFAULT_RUNTIME_PEER_STALE_TIMEOUT_MILLIS);
         next_due = Some(next_due.map_or(snapshot_due, |existing| existing.min(snapshot_due)));
+    }
+
+    if let Some(hint_updated_at) = observed
+        .remote_best_hint_updated_at_by_chain
+        .get(&chain_id)
+        .copied()
+    {
+        let hint_due =
+            hint_updated_at.saturating_add(DEFAULT_RUNTIME_REMOTE_BEST_HINT_TIMEOUT_MILLIS);
+        next_due = Some(next_due.map_or(hint_due, |existing| existing.min(hint_due)));
     }
 
     if let Some(due) = next_due {
@@ -2255,6 +2268,9 @@ fn prune_stale_runtime_peers(chain_id: u64, observed: &mut NetworkRuntimeSyncObs
         && !observed
             .native_snapshot_updated_at_by_chain
             .contains_key(&chain_id)
+        && !observed
+            .remote_best_hint_updated_at_by_chain
+            .contains_key(&chain_id)
     {
         observed.next_stale_check_at_by_chain.remove(&chain_id);
         return;
@@ -2307,6 +2323,18 @@ fn prune_stale_runtime_peers(chain_id: u64, observed: &mut NetworkRuntimeSyncObs
                 .remove(&chain_id);
         }
     }
+    if let Some(updated_at) = observed
+        .remote_best_hint_updated_at_by_chain
+        .get(&chain_id)
+        .copied()
+    {
+        if now.saturating_sub(updated_at) > DEFAULT_RUNTIME_REMOTE_BEST_HINT_TIMEOUT_MILLIS {
+            observed.remote_best_hint_by_chain.remove(&chain_id);
+            observed
+                .remote_best_hint_updated_at_by_chain
+                .remove(&chain_id);
+        }
+    }
     recompute_runtime_stale_check_deadline(chain_id, observed);
 }
 
@@ -2328,14 +2356,13 @@ fn recompute_runtime_sync_status_from_observed(
         .copied()
         .unwrap_or(0);
     let native_remote_best = observed.native_remote_best_by_chain.get(&chain_id).copied();
+    let remote_best_hint = observed.remote_best_hint_by_chain.get(&chain_id).copied();
     let has_peer_observation_history = observed.peer_observed_once_by_chain.contains(&chain_id);
     let remote_best = peer_map.and_then(|m| m.values().copied().max());
-    let effective_remote_best = match (remote_best, native_remote_best) {
-        (Some(a), Some(b)) => Some(a.max(b)),
-        (Some(a), None) => Some(a),
-        (None, Some(b)) => Some(b),
-        (None, None) => None,
-    };
+    let effective_remote_best = [remote_best, native_remote_best, remote_best_hint]
+        .into_iter()
+        .flatten()
+        .max();
     let local_head = observed.local_head_by_chain.get(&chain_id).copied();
     let observed_peer_count = peer_map.map(|m| m.len() as u64).unwrap_or(0);
     let effective_peer_count = observed_peer_count.max(native_peer_count);
@@ -3510,6 +3537,14 @@ pub fn observe_network_runtime_peer_head_with_local_head_max(
         .entry(chain_id)
         .or_default()
         .insert(peer_id, peer_head);
+    observed
+        .remote_best_hint_by_chain
+        .entry(chain_id)
+        .and_modify(|best| *best = (*best).max(peer_head))
+        .or_insert(peer_head);
+    observed
+        .remote_best_hint_updated_at_by_chain
+        .insert(chain_id, now);
     observed.peer_observed_once_by_chain.insert(chain_id);
     observed
         .peer_last_seen_millis_by_chain
@@ -3593,6 +3628,15 @@ pub fn ingest_network_runtime_native_sync_snapshot(
     let previous_remote_best = observed
         .native_remote_best_by_chain
         .insert(chain_id, next_remote_best);
+    let previous_remote_best_hint = observed.remote_best_hint_by_chain.get(&chain_id).copied();
+    observed
+        .remote_best_hint_by_chain
+        .entry(chain_id)
+        .and_modify(|best| *best = (*best).max(next_remote_best))
+        .or_insert(next_remote_best);
+    observed
+        .remote_best_hint_updated_at_by_chain
+        .insert(chain_id, now);
     let observed_once_before = observed.peer_observed_once_by_chain.contains(&chain_id);
     observed
         .native_snapshot_updated_at_by_chain
@@ -3602,6 +3646,7 @@ pub fn ingest_network_runtime_native_sync_snapshot(
     let snapshot_changed = previous_local != Some(snapshot.local_head)
         || previous_peer_count != Some(snapshot.peer_count)
         || previous_remote_best != Some(next_remote_best)
+        || previous_remote_best_hint.is_none_or(|best| next_remote_best > best)
         || !observed_once_before;
     if !snapshot_changed && !runtime_sync_recompute_due(chain_id, &statuses, &observed, true) {
         let current = statuses.get(&chain_id).copied();
@@ -4239,6 +4284,10 @@ mod tests {
             observed
                 .native_snapshot_updated_at_by_chain
                 .remove(&chain_id);
+            observed.remote_best_hint_by_chain.remove(&chain_id);
+            observed
+                .remote_best_hint_updated_at_by_chain
+                .remove(&chain_id);
             observed.next_stale_check_at_by_chain.remove(&chain_id);
             observed.dirty_chains.remove(&chain_id);
             observed.sync_anchor_by_chain.remove(&chain_id);
@@ -4323,7 +4372,7 @@ mod tests {
     }
 
     #[test]
-    fn unregister_peer_drops_highest_to_local_when_remote_disappears() {
+    fn unregister_peer_keeps_remote_best_hint_until_expiry() {
         let chain_id = 2027_u64;
         clear_runtime_sync_status_for_test(chain_id);
         observe_network_runtime_local_head(chain_id, 10).expect("observe local head");
@@ -4338,7 +4387,20 @@ mod tests {
             get_network_runtime_sync_status(chain_id).expect("status after remove");
         assert_eq!(status_after_remove.peer_count, 0);
         assert_eq!(status_after_remove.current_block, 10);
-        assert_eq!(status_after_remove.highest_block, 10);
+        assert_eq!(status_after_remove.highest_block, 100);
+
+        if let Ok(mut observed) = runtime_sync_observed_state_map().lock() {
+            observed
+                .remote_best_hint_updated_at_by_chain
+                .insert(chain_id, 0);
+            observed.next_stale_check_at_by_chain.insert(chain_id, 0);
+        }
+        observe_network_runtime_local_head(chain_id, 10).expect("expire remote best hint");
+        let status_after_hint_expiry =
+            get_network_runtime_sync_status(chain_id).expect("status after hint expiry");
+        assert_eq!(status_after_hint_expiry.peer_count, 0);
+        assert_eq!(status_after_hint_expiry.current_block, 10);
+        assert_eq!(status_after_hint_expiry.highest_block, 10);
     }
 
     #[test]
@@ -4365,7 +4427,7 @@ mod tests {
         let after = get_network_runtime_sync_status(chain_id).expect("status after prune");
         assert_eq!(after.peer_count, 0);
         assert_eq!(after.current_block, 10);
-        assert_eq!(after.highest_block, 10);
+        assert_eq!(after.highest_block, 100);
     }
 
     #[test]
@@ -4388,7 +4450,7 @@ mod tests {
         let status = get_network_runtime_sync_status(chain_id).expect("status on read");
         assert_eq!(status.peer_count, 0);
         assert_eq!(status.current_block, 10);
-        assert_eq!(status.highest_block, 10);
+        assert_eq!(status.highest_block, 120);
     }
 
     #[test]
@@ -5091,6 +5153,9 @@ mod tests {
         if let Ok(mut observed) = runtime_sync_observed_state_map().lock() {
             observed
                 .native_snapshot_updated_at_by_chain
+                .insert(chain_id, 0);
+            observed
+                .remote_best_hint_updated_at_by_chain
                 .insert(chain_id, 0);
             observed.next_stale_check_at_by_chain.insert(chain_id, 0);
         }
