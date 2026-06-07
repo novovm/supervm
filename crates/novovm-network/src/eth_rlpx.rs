@@ -15,7 +15,7 @@ use rand::rngs::OsRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use sha3::Digest;
-use std::sync::OnceLock;
+use std::{collections::BTreeMap, sync::OnceLock};
 
 type EthRlpxHmacSha256V1 = Hmac<sha2::Sha256>;
 type EthRlpxAes128CtrV1 = ctr::Ctr128BE<Aes128>;
@@ -159,6 +159,22 @@ pub struct EthRlpxBlockBodiesResponseV1 {
     pub bodies: Vec<EthRlpxBlockBodyRecordV1>,
 }
 
+#[derive(Debug, Clone)]
+enum EthRlpxMptNodeV1 {
+    Leaf {
+        path_nibbles: Vec<u8>,
+        value: Vec<u8>,
+    },
+    Extension {
+        path_nibbles: Vec<u8>,
+        child: Box<EthRlpxMptNodeV1>,
+    },
+    Branch {
+        children: [Option<Box<EthRlpxMptNodeV1>>; 16],
+        value: Option<Vec<u8>>,
+    },
+}
+
 #[must_use]
 pub fn eth_rlpx_empty_trie_root_v1() -> [u8; 32] {
     ETH_RLPX_EMPTY_TRIE_ROOT_V1
@@ -195,6 +211,182 @@ pub fn eth_rlpx_validate_block_empty_body_roots_v1(
         return Err("rlpx_block_withdrawals_root_mismatch_empty_body".to_string());
     }
     Ok(())
+}
+
+fn eth_rlpx_mpt_nibbles_from_key_v1(key: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(key.len() * 2);
+    for byte in key {
+        out.push(byte >> 4);
+        out.push(byte & 0x0f);
+    }
+    out
+}
+
+fn eth_rlpx_mpt_hex_prefix_encode_v1(path_nibbles: &[u8], is_leaf: bool) -> Vec<u8> {
+    let mut out = Vec::with_capacity(path_nibbles.len() / 2 + 1);
+    let flag = if is_leaf { 2u8 } else { 0u8 };
+    let mut idx = 0usize;
+    if path_nibbles.len() % 2 == 1 {
+        out.push(((flag + 1) << 4) | (path_nibbles[0] & 0x0f));
+        idx = 1;
+    } else {
+        out.push(flag << 4);
+    }
+    while idx < path_nibbles.len() {
+        out.push(((path_nibbles[idx] & 0x0f) << 4) | (path_nibbles[idx + 1] & 0x0f));
+        idx += 2;
+    }
+    out
+}
+
+fn eth_rlpx_mpt_common_prefix_len_v1(keys: &[Vec<u8>]) -> usize {
+    if keys.is_empty() {
+        return 0;
+    }
+    let mut prefix = keys[0].len();
+    for key in keys.iter().skip(1) {
+        let mut idx = 0usize;
+        let max = prefix.min(key.len());
+        while idx < max && keys[0][idx] == key[idx] {
+            idx += 1;
+        }
+        prefix = idx;
+        if prefix == 0 {
+            break;
+        }
+    }
+    prefix
+}
+
+fn eth_rlpx_mpt_build_from_nibbles_v1(
+    entries: Vec<(Vec<u8>, Vec<u8>)>,
+) -> Option<EthRlpxMptNodeV1> {
+    if entries.is_empty() {
+        return None;
+    }
+    if entries.len() == 1 {
+        let (path_nibbles, value) = entries.into_iter().next()?;
+        return Some(EthRlpxMptNodeV1::Leaf {
+            path_nibbles,
+            value,
+        });
+    }
+
+    let keys = entries
+        .iter()
+        .map(|(key, _)| key.clone())
+        .collect::<Vec<_>>();
+    let common = eth_rlpx_mpt_common_prefix_len_v1(&keys);
+    if common > 0 {
+        let prefix = keys[0][..common].to_vec();
+        let stripped = entries
+            .into_iter()
+            .map(|(key, value)| (key[common..].to_vec(), value))
+            .collect::<Vec<_>>();
+        let child = eth_rlpx_mpt_build_from_nibbles_v1(stripped)?;
+        return Some(EthRlpxMptNodeV1::Extension {
+            path_nibbles: prefix,
+            child: Box::new(child),
+        });
+    }
+
+    let mut buckets: [Vec<(Vec<u8>, Vec<u8>)>; 16] = std::array::from_fn(|_| Vec::new());
+    let mut branch_value = None;
+    for (key, value) in entries {
+        if key.is_empty() {
+            branch_value = Some(value);
+            continue;
+        }
+        let idx = key[0] as usize;
+        if idx < 16 {
+            buckets[idx].push((key[1..].to_vec(), value));
+        }
+    }
+
+    let mut children: [Option<Box<EthRlpxMptNodeV1>>; 16] = std::array::from_fn(|_| None);
+    for (idx, bucket) in buckets.iter_mut().enumerate() {
+        if let Some(child) = eth_rlpx_mpt_build_from_nibbles_v1(std::mem::take(bucket)) {
+            children[idx] = Some(Box::new(child));
+        }
+    }
+    Some(EthRlpxMptNodeV1::Branch {
+        children,
+        value: branch_value,
+    })
+}
+
+fn eth_rlpx_mpt_node_rlp_v1(node: &EthRlpxMptNodeV1) -> Vec<u8> {
+    match node {
+        EthRlpxMptNodeV1::Leaf {
+            path_nibbles,
+            value,
+        } => eth_rlpx_encode_list_v1(&[
+            eth_rlpx_encode_bytes_v1(&eth_rlpx_mpt_hex_prefix_encode_v1(path_nibbles, true)),
+            eth_rlpx_encode_bytes_v1(value),
+        ]),
+        EthRlpxMptNodeV1::Extension {
+            path_nibbles,
+            child,
+        } => {
+            let child_rlp = eth_rlpx_mpt_node_rlp_v1(child);
+            let child_ref = if child_rlp.len() < 32 {
+                child_rlp
+            } else {
+                eth_rlpx_encode_bytes_v1(&eth_rlpx_keccak256_bytes_v1(&child_rlp))
+            };
+            eth_rlpx_encode_list_v1(&[
+                eth_rlpx_encode_bytes_v1(&eth_rlpx_mpt_hex_prefix_encode_v1(path_nibbles, false)),
+                child_ref,
+            ])
+        }
+        EthRlpxMptNodeV1::Branch { children, value } => {
+            let mut items = Vec::with_capacity(17);
+            for child in children {
+                if let Some(child) = child {
+                    let child_rlp = eth_rlpx_mpt_node_rlp_v1(child);
+                    if child_rlp.len() < 32 {
+                        items.push(child_rlp);
+                    } else {
+                        items.push(eth_rlpx_encode_bytes_v1(&eth_rlpx_keccak256_bytes_v1(
+                            &child_rlp,
+                        )));
+                    }
+                } else {
+                    items.push(eth_rlpx_encode_bytes_v1(&[]));
+                }
+            }
+            items.push(eth_rlpx_encode_bytes_v1(
+                value.as_deref().unwrap_or_default(),
+            ));
+            eth_rlpx_encode_list_v1(&items)
+        }
+    }
+}
+
+fn eth_rlpx_mpt_root_from_kv_pairs_v1(kv_pairs: &[(Vec<u8>, Vec<u8>)]) -> [u8; 32] {
+    let mut dedup = BTreeMap::<Vec<u8>, Vec<u8>>::new();
+    for (key, value) in kv_pairs {
+        dedup.insert(eth_rlpx_mpt_nibbles_from_key_v1(key), value.clone());
+    }
+    let Some(root) = eth_rlpx_mpt_build_from_nibbles_v1(dedup.into_iter().collect()) else {
+        return ETH_RLPX_EMPTY_TRIE_ROOT_V1;
+    };
+    eth_rlpx_keccak256_bytes_v1(&eth_rlpx_mpt_node_rlp_v1(&root))
+}
+
+fn eth_rlpx_transactions_root_from_raw_tx_slices_v1(raw_txs: &[&[u8]]) -> [u8; 32] {
+    let kv_pairs = raw_txs
+        .iter()
+        .enumerate()
+        .map(|(idx, raw)| (eth_rlpx_encode_u64_v1(idx as u64), raw.to_vec()))
+        .collect::<Vec<_>>();
+    eth_rlpx_mpt_root_from_kv_pairs_v1(&kv_pairs)
+}
+
+#[must_use]
+pub fn eth_rlpx_transactions_root_from_raw_txs_v1(raw_txs: &[Vec<u8>]) -> [u8; 32] {
+    let slices = raw_txs.iter().map(Vec::as_slice).collect::<Vec<&[u8]>>();
+    eth_rlpx_transactions_root_from_raw_tx_slices_v1(&slices)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1784,7 +1976,13 @@ pub fn eth_rlpx_parse_new_block_payload_v1(
     let EthRlpxRlpItemV1::List(uncles_payload) = block_fields[2] else {
         return Err("rlpx_new_block_uncles_not_list".to_string());
     };
-    let tx_hashes = eth_rlpx_split_list_raw_items_v1(txs_payload)?
+    let raw_tx_items = eth_rlpx_split_list_raw_items_v1(txs_payload)?;
+    let transactions_root =
+        eth_rlpx_transactions_root_from_raw_tx_slices_v1(raw_tx_items.as_slice());
+    if header.transactions_root != transactions_root {
+        return Err("rlpx_new_block_transactions_root_mismatch".to_string());
+    }
+    let tx_hashes = raw_tx_items
         .into_iter()
         .map(eth_rlpx_keccak256_bytes_v1)
         .collect::<Vec<_>>();
@@ -2863,20 +3061,23 @@ mod tests {
         assert_eq!(parsed_access_lists.request_id, 10);
         assert_eq!(parsed_access_lists.hashes, hashes);
 
+        let empty_root = eth_rlpx_empty_trie_root_v1();
+        let empty_ommers_hash = eth_rlpx_empty_ommers_hash_v1();
+        let tx_rlp_items = vec![vec![0xc0], vec![0xc1, 0x01]];
         let header_record = EthRlpxBlockHeaderRecordV1 {
             number: 128,
             hash: [0x00; 32],
             parent_hash: [0x33; 32],
             state_root: [0x44; 32],
-            transactions_root: [0x55; 32],
+            transactions_root: eth_rlpx_transactions_root_from_raw_txs_v1(tx_rlp_items.as_slice()),
             receipts_root: [0x66; 32],
-            ommers_hash: [0x77; 32],
+            ommers_hash: empty_ommers_hash,
             logs_bloom: vec![0u8; 256],
             gas_limit: Some(30_000_000),
             gas_used: Some(84_000),
             timestamp: Some(1234),
             base_fee_per_gas: Some(15),
-            withdrawals_root: None,
+            withdrawals_root: Some(empty_root),
             blob_gas_used: None,
             excess_blob_gas: None,
             block_access_list_hash: None,
@@ -2894,7 +3095,7 @@ mod tests {
         let new_block_payload = eth_rlpx_build_new_block_payload_v1(
             &header_record,
             &EthRlpxBlockBodyPayloadV1 {
-                tx_rlp_items: vec![vec![0xc0], vec![0xc1, 0x01]],
+                tx_rlp_items: tx_rlp_items.clone(),
                 ommer_header_rlp_items: Vec::new(),
                 withdrawal_rlp_items: Some(Vec::new()),
             },
@@ -2906,9 +3107,22 @@ mod tests {
         assert_eq!(parsed_new_block.total_difficulty, 1_000);
         assert_eq!(parsed_new_block.body.tx_hashes.len(), 2);
         assert_eq!(parsed_new_block.body.withdrawal_count, Some(0));
+        let mut invalid_tx_root_header = header_record.clone();
+        invalid_tx_root_header.transactions_root = [0x55; 32];
+        let invalid_new_block_payload = eth_rlpx_build_new_block_payload_v1(
+            &invalid_tx_root_header,
+            &EthRlpxBlockBodyPayloadV1 {
+                tx_rlp_items: tx_rlp_items.clone(),
+                ommer_header_rlp_items: Vec::new(),
+                withdrawal_rlp_items: Some(Vec::new()),
+            },
+            1_000,
+        );
+        assert_eq!(
+            eth_rlpx_parse_new_block_payload_v1(invalid_new_block_payload.as_slice()),
+            Err("rlpx_new_block_transactions_root_mismatch".to_string())
+        );
 
-        let empty_root = eth_rlpx_empty_trie_root_v1();
-        let empty_ommers_hash = eth_rlpx_empty_ommers_hash_v1();
         let empty_header = EthRlpxBlockHeaderRecordV1 {
             number: 129,
             hash: [0x00; 32],

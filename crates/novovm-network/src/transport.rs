@@ -8524,28 +8524,35 @@ mod tests {
 
         let empty_root = crate::eth_rlpx_empty_trie_root_v1();
         let empty_ommers_hash = crate::eth_rlpx_empty_ommers_hash_v1();
+        let raw_tx = crate::eth_rlpx_decode_hex_v1(
+            "f86c098504a817c800825208943535353535353535353535353535353535353535880de0b6b3a76400008025a028ef61340bd939bc2195fe537567866003e1a15d3c71ff63e1590620aa636276a067cbe9d8997f761aecb703304b3800ccf555c9f3dc64214b297fb1966a3b6d83",
+        )
+        .expect("decode new block raw transaction");
+        let expected_tx_hash = crate::eth_rlpx_transaction_hash_v1(raw_tx.as_slice());
+        let body_payload = crate::EthRlpxBlockBodyPayloadV1 {
+            tx_rlp_items: vec![raw_tx],
+            ommer_header_rlp_items: Vec::new(),
+            withdrawal_rlp_items: Some(Vec::new()),
+        };
         let header_record = crate::EthRlpxBlockHeaderRecordV1 {
             number: 121,
             hash: [0u8; 32],
             parent_hash: [0x90; 32],
             state_root: [0x91; 32],
-            transactions_root: empty_root,
-            receipts_root: empty_root,
+            transactions_root: crate::eth_rlpx_transactions_root_from_raw_txs_v1(
+                body_payload.tx_rlp_items.as_slice(),
+            ),
+            receipts_root: [0x93; 32],
             ommers_hash: empty_ommers_hash,
             logs_bloom: vec![0u8; 256],
             gas_limit: Some(30_000_000),
-            gas_used: Some(0),
+            gas_used: Some(21_000),
             timestamp: Some(1_234_568),
             base_fee_per_gas: Some(15),
             withdrawals_root: Some(empty_root),
             blob_gas_used: None,
             excess_blob_gas: None,
             block_access_list_hash: None,
-        };
-        let body_payload = crate::EthRlpxBlockBodyPayloadV1 {
-            tx_rlp_items: Vec::new(),
-            ommer_header_rlp_items: Vec::new(),
-            withdrawal_rlp_items: Some(Vec::new()),
         };
         let parsed_new_block = crate::eth_rlpx_parse_new_block_payload_v1(
             crate::eth_rlpx_build_new_block_payload_v1(&header_record, &body_payload, 1_000)
@@ -8676,7 +8683,7 @@ mod tests {
                 let receipts = crate::eth_rlpx_build_receipts_payload_v1(
                     request.request_id,
                     false,
-                    &[Vec::new()],
+                    &[vec![vec![0xc0]]],
                     70,
                 );
                 crate::eth_rlpx_write_wire_frame_v1(
@@ -8730,6 +8737,7 @@ mod tests {
         assert_eq!(header.hash, new_block_hash);
         let body = get_network_runtime_native_body_snapshot_v1(chain_id).expect("body snapshot");
         assert_eq!(body.block_hash, new_block_hash);
+        assert_eq!(body.tx_hashes, vec![expected_tx_hash]);
         assert_eq!(body.withdrawal_count, Some(0));
         let sync_status = get_network_runtime_sync_status(chain_id).expect("sync status");
         assert_eq!(sync_status.highest_block, 121);
