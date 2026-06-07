@@ -110,6 +110,7 @@ cargo test -p novovm-network evm_protocol_observable_equivalence_network_rlpx_re
 cargo test -p novovm-network evm_protocol_observable_equivalence_network_rlpx_reorg_gate_v3 -- --nocapture
 cargo test -p novovm-network evm_protocol_observable_equivalence_network_rlpx_bal_response_gate_v3 -- --nocapture
 cargo test -p novovm-network evm_protocol_observable_equivalence_network_rlpx_snap_account_range_gate_v3 -- --nocapture
+cargo test -p novovm-network evm_protocol_observable_equivalence_network_rlpx_snap_account_to_storage_code_gate_v3 -- --nocapture
 cargo test -p novovm-network evm_protocol_observable_equivalence_network_rlpx_snap_service_sidecars_gate_v3 -- --nocapture
 cargo test -p novovm-network evm_protocol_observable_equivalence_network_rlpx_new_block_gate_v3 -- --nocapture
 cargo test -p novovm-network evm_protocol_observable_equivalence_network_rlpx_new_block_hashes_gate_v3 -- --nocapture
@@ -134,12 +135,13 @@ cargo test -p novovm-network evm_protocol_observable_equivalence_network_rlpx_ne
 - 120A 中已 canonical included 的 pending tx 回到 `ReorgedBackToPending`，并携 raw RLP 重新进入 broadcast candidate。
 - 无 snap 协商的插件路径里，远端 peer 发送真实 `GetBlockAccessLists` frame，SUPERVM 返回协议合法 `BlockAccessLists` frame，保持 request_id 和 requested hash 数量一致。
 - eth/70+snap/1 路径里，global code `0x22/0x23` 归 snap `GetAccountRange/AccountRange`，SUPERVM 在 State phase 使用 native head `stateRoot` 发起 `GetAccountRange` 并记录匹配响应，不让 BAL 插件抢占主网 snap code。
+- `AccountRange` 返回非空 slim account 时，SUPERVM 会解析 storage root / code hash，继续发出真实 `GetStorageRanges` 和 `GetByteCodes` 请求，并用匹配 request_id 的响应清理 snap pending 状态；这打通 state sync 下一跳，但还未声明 storage/code 持久化、proof verification 或 trie heal 完整。
 - 已协商 snap/1 路径里，远端 peer 发送真实 `GetStorageRanges`、`GetByteCodes`、`GetTrieNodes` 请求时，SUPERVM 返回协议合法空 `StorageRanges`、`ByteCodes`、`TrieNodes` 响应，request_id 保持一致；这只封住服务面丢包，不等于完整 snap state heal/download/store。
 - mainline canonical batch append 后会把 persisted block BAL materialize 到 network runtime；对本地已 materialize 的 block BAL payload，响应返回真实 BAL RLP；对未 materialize 的 hash，响应使用 Ethereum RLPx BAL missing sentinel，不伪造 block access list。
 - 远端 peer 发送真实非空 `NewBlock` announcement，SUPERVM 按 Ethereum raw transaction trie 校验 `transactionsRoot`，同时保留 empty ommers/withdrawals 校验，再解析并导入 native header/body snapshot，更新 peer head/highest，并继续发 `GetReceipts`；收到 receipts 后按 raw receipt MPT 校验 `receiptsRoot`。
 - 远端 peer 发送真实 `NewBlockHashes` announcement，SUPERVM 解析公告高度，更新 peer head/highest，并主动发出后续 `GetBlockHeaders`，不再只依赖初始 `Status` 触发同步。
 
-当前 v3 结论：tx propagation 的入站/出站网络可观察语义、pooled tx hash/request/response 链路、RLPx header/body/receipts sync 链路、`NewBlock`/`NewBlockHashes` announcement 路径、`NewBlock`/`BlockBodies` transaction trie root validation、`Receipts` completeness/count/root validation、validated native receipt snapshot + local `GetReceipts` replay、empty/no-withdrawal stateRoot continuity validation、最小 reorg 回池路径、无 snap BAL 插件请求/响应路径、snap/1 AccountRange request/response 路径和 snap/1 sidecar 空响应服务面已具备真实 gate；BAL 响应已能返回 canonical/materialized 本地 payload，并对缺失 payload 使用协议 missing sentinel。尚未因此声明完整 eth/71 peer sync、长连接主网接受度、完整 BAL 可用性、完整历史 receipt store、完整 snap state heal/download/store、完整 state root execution validation 或复杂多分支 reorg 全覆盖。
+当前 v3 结论：tx propagation 的入站/出站网络可观察语义、pooled tx hash/request/response 链路、RLPx header/body/receipts sync 链路、`NewBlock`/`NewBlockHashes` announcement 路径、`NewBlock`/`BlockBodies` transaction trie root validation、`Receipts` completeness/count/root validation、validated native receipt snapshot + local `GetReceipts` replay、empty/no-withdrawal stateRoot continuity validation、最小 reorg 回池路径、无 snap BAL 插件请求/响应路径、snap/1 AccountRange request/response 路径、AccountRange -> StorageRanges/ByteCodes follow-up 路径和 snap/1 sidecar 空响应服务面已具备真实 gate；BAL 响应已能返回 canonical/materialized 本地 payload，并对缺失 payload 使用协议 missing sentinel。尚未因此声明完整 eth/71 peer sync、长连接主网接受度、完整 BAL 可用性、完整历史 receipt store、完整 snap state heal/download/store、完整 state root execution validation 或复杂多分支 reorg 全覆盖。
 
 ## 剩余阶段
 
@@ -148,7 +150,7 @@ cargo test -p novovm-network evm_protocol_observable_equivalence_network_rlpx_ne
 | v1 | 插件产品面协议可观察等价 | 本文 3 个聚合 gate 全绿 |
 | v2a | RPC 黑盒投影根门禁 | `evm_protocol_observable_equivalence_geth_rpc_blackbox_projection_gate_v2` 全绿 |
 | v2b | 真 geth/reth 黑盒差分 | 真实 geth fullTx block diff gate 全绿；raw tx RLP 存在时 `transactionsRoot` 也一致 |
-| v3 | 网络可观察等价 | 已覆盖真实 RLPx handshake/Status + 入站 `Transactions` -> pending tx raw RLP + 出站 `Transactions` broadcast + pooled tx hash/request/response + header/body/receipts import 链路 + `NewBlock`/`NewBlockHashes` announcement + `NewBlock`/`BlockBodies` transaction trie root validation + `Receipts` completeness/count/root validation + native receipt snapshot/local `GetReceipts` replay + empty/no-withdrawal stateRoot continuity validation + 最小 reorg 回池 + BAL request/response + snap AccountRange + snap sidecar 空响应服务面 |
+| v3 | 网络可观察等价 | 已覆盖真实 RLPx handshake/Status + 入站 `Transactions` -> pending tx raw RLP + 出站 `Transactions` broadcast + pooled tx hash/request/response + header/body/receipts import 链路 + `NewBlock`/`NewBlockHashes` announcement + `NewBlock`/`BlockBodies` transaction trie root validation + `Receipts` completeness/count/root validation + native receipt snapshot/local `GetReceipts` replay + empty/no-withdrawal stateRoot continuity validation + 最小 reorg 回池 + BAL request/response + snap AccountRange + AccountRange -> StorageRanges/ByteCodes follow-up + snap sidecar 空响应服务面 |
 | v4 | 长稳生产封口 | 多节点 devnet soak、重启恢复、恶意/边界输入、BAL/receipt/RPC 长稳无漂移 |
 
 ## 下一步
@@ -160,7 +162,7 @@ cargo test -p novovm-network evm_protocol_observable_equivalence_network_rlpx_ne
 1. 先让 v1 三个聚合 gate 进入固定回归清单。
 2. 已完成 v2a：RPC block root projection 不再返回 `null`，并进入 geth parity batch report。
 3. 已完成 v2b：真实 geth fullTx block fixture 差分已接入，raw tx RLP 进入 canonical block projection，`transactionsRoot` 从 gap 变成 match。
-4. 已开始 v3：真实 RLPx handshake/Status + 入站 `Transactions` -> pending tx raw RLP gate 通过；出站 `Transactions` broadcast gate 通过；pooled tx hash/request/response gate 通过；header/body/receipts sync gate 通过；最小 reorg 回池 gate 通过；`NewBlock`/`NewBlockHashes` gate 通过；`NewBlock`/`BlockBodies` transaction trie root validation、`Receipts` completeness/count/root validation、native receipt snapshot、本地 `GetReceipts` replay、empty/no-withdrawal stateRoot continuity validation、snap AccountRange 和 snap sidecar 空响应服务面通过。
+4. 已开始 v3：真实 RLPx handshake/Status + 入站 `Transactions` -> pending tx raw RLP gate 通过；出站 `Transactions` broadcast gate 通过；pooled tx hash/request/response gate 通过；header/body/receipts sync gate 通过；最小 reorg 回池 gate 通过；`NewBlock`/`NewBlockHashes` gate 通过；`NewBlock`/`BlockBodies` transaction trie root validation、`Receipts` completeness/count/root validation、native receipt snapshot、本地 `GetReceipts` replay、empty/no-withdrawal stateRoot continuity validation、snap AccountRange、AccountRange -> StorageRanges/ByteCodes follow-up 和 snap sidecar 空响应服务面通过。
 5. 如果 v3 或真实 block replay 暴露具体交易类型/root 差异，再补对应最小真实 fixture，不回到开放式 smoke 堆叠。
 
 这会把“等价”从开放式 fixture 堆叠改成有限的协议验收。

@@ -68,6 +68,10 @@ pub const ETH_RLPX_SNAP_BYTE_CODES_MSG: u64 = 0x05;
 pub const ETH_RLPX_SNAP_GET_TRIE_NODES_MSG: u64 = 0x06;
 pub const ETH_RLPX_SNAP_TRIE_NODES_MSG: u64 = 0x07;
 pub const ETH_RLPX_SNAP_DEFAULT_ACCOUNT_RANGE_BYTES: u64 = 384 * 1024;
+pub const ETH_RLPX_EMPTY_CODE_HASH_V1: [u8; 32] = [
+    0xc5, 0xd2, 0x46, 0x01, 0x86, 0xf7, 0x23, 0x3c, 0x92, 0x7e, 0x7d, 0xb2, 0xdc, 0xc7, 0x03, 0xc0,
+    0xe5, 0x00, 0xb6, 0x53, 0xca, 0x82, 0x27, 0x3b, 0x7b, 0xfa, 0xd8, 0x04, 0x5d, 0x85, 0xa4, 0x70,
+];
 pub const ETH_RLPX_EMPTY_TRIE_ROOT_V1: [u8; 32] = [
     0x56, 0xe8, 0x1f, 0x17, 0x1b, 0xcc, 0x55, 0xa6, 0xff, 0x83, 0x45, 0xe6, 0x92, 0xc0, 0xf8, 0x6e,
     0x5b, 0x48, 0xe0, 0x1b, 0x99, 0x6c, 0xad, 0xc0, 0x01, 0x62, 0x2f, 0xb5, 0xe3, 0x63, 0xb4, 0x21,
@@ -478,6 +482,14 @@ pub struct EthRlpxAccountRangeResponseV1 {
     pub request_id: u64,
     pub accounts: Vec<EthRlpxSnapAccountDataV1>,
     pub proof: Vec<Vec<u8>>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EthRlpxSnapSlimAccountFieldsV1 {
+    pub storage_root: [u8; 32],
+    pub code_hash: [u8; 32],
+    pub has_storage: bool,
+    pub has_code: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2731,6 +2743,44 @@ pub fn eth_rlpx_parse_account_range_payload_v1(
     })
 }
 
+pub fn eth_rlpx_parse_snap_slim_account_fields_v1(
+    body_rlp: &[u8],
+) -> Result<EthRlpxSnapSlimAccountFieldsV1, String> {
+    let (root, consumed) = eth_rlpx_parse_item_v1(body_rlp)?;
+    if consumed != body_rlp.len() {
+        return Err("rlpx_snap_slim_account_trailing".to_string());
+    }
+    let EthRlpxRlpItemV1::List(root_payload) = root else {
+        return Err("rlpx_snap_slim_account_not_list".to_string());
+    };
+    let fields = eth_rlpx_parse_list_items_v1(root_payload)?;
+    if fields.len() < 4 {
+        return Err("rlpx_snap_slim_account_fields_short".to_string());
+    }
+    let EthRlpxRlpItemV1::Bytes(storage_root_bytes) = fields[2] else {
+        return Err("rlpx_snap_slim_account_storage_root_not_bytes".to_string());
+    };
+    let EthRlpxRlpItemV1::Bytes(code_hash_bytes) = fields[3] else {
+        return Err("rlpx_snap_slim_account_code_hash_not_bytes".to_string());
+    };
+    let storage_root = if storage_root_bytes.is_empty() {
+        ETH_RLPX_EMPTY_TRIE_ROOT_V1
+    } else {
+        eth_rlpx_parse_hash_bytes_v1(storage_root_bytes, "rlpx_snap_slim_account_storage_root")?
+    };
+    let code_hash = if code_hash_bytes.is_empty() {
+        ETH_RLPX_EMPTY_CODE_HASH_V1
+    } else {
+        eth_rlpx_parse_hash_bytes_v1(code_hash_bytes, "rlpx_snap_slim_account_code_hash")?
+    };
+    Ok(EthRlpxSnapSlimAccountFieldsV1 {
+        storage_root,
+        code_hash,
+        has_storage: storage_root != ETH_RLPX_EMPTY_TRIE_ROOT_V1,
+        has_code: code_hash != ETH_RLPX_EMPTY_CODE_HASH_V1,
+    })
+}
+
 pub fn eth_rlpx_parse_storage_ranges_payload_v1(
     payload: &[u8],
 ) -> Result<EthRlpxStorageRangesResponseV1, String> {
@@ -3694,6 +3744,35 @@ mod tests {
                 .expect("parse trie nodes");
         assert_eq!(trie_nodes_response.request_id, 102);
         assert_eq!(trie_nodes_response.nodes, vec![vec![0xf8, 0x01]]);
+    }
+
+    #[test]
+    fn snap_slim_account_fields_decode_storage_root_and_code_hash() {
+        let empty_slim = eth_rlpx_encode_list_v1(&[
+            eth_rlpx_encode_u64_v1(1),
+            eth_rlpx_encode_u64_v1(0),
+            eth_rlpx_encode_bytes_v1(&[]),
+            eth_rlpx_encode_bytes_v1(&[]),
+        ]);
+        let empty = eth_rlpx_parse_snap_slim_account_fields_v1(empty_slim.as_slice())
+            .expect("parse empty slim account");
+        assert_eq!(empty.storage_root, ETH_RLPX_EMPTY_TRIE_ROOT_V1);
+        assert_eq!(empty.code_hash, ETH_RLPX_EMPTY_CODE_HASH_V1);
+        assert!(!empty.has_storage);
+        assert!(!empty.has_code);
+
+        let stateful_slim = eth_rlpx_encode_list_v1(&[
+            eth_rlpx_encode_u64_v1(2),
+            eth_rlpx_encode_u64_v1(1),
+            eth_rlpx_encode_bytes_v1(&[0x33; 32]),
+            eth_rlpx_encode_bytes_v1(&[0x44; 32]),
+        ]);
+        let stateful = eth_rlpx_parse_snap_slim_account_fields_v1(stateful_slim.as_slice())
+            .expect("parse stateful slim account");
+        assert_eq!(stateful.storage_root, [0x33; 32]);
+        assert_eq!(stateful.code_hash, [0x44; 32]);
+        assert!(stateful.has_storage);
+        assert!(stateful.has_code);
     }
 
     #[test]
