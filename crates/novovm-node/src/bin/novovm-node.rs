@@ -22,7 +22,11 @@ use novovm_network::transport::snapshot_local_observed_peers;
 use novovm_network::{
     assess_read_only_impact, build_reconcile_report_with_replay, capability_state_token,
     decode_relay_membership_message, derive_advisory, detect_capabilities,
-    drain_runtime_relay_membership, evaluate_advisory_first,
+    drain_runtime_relay_membership, eth_discv4_build_findnode_packet_v1,
+    eth_discv4_build_ping_packet_v1, eth_discv4_build_pong_packet_v1,
+    eth_discv4_parse_neighbors_packet_v1, eth_discv4_parse_packet_v1,
+    eth_discv4_parse_pong_ping_hash_v1, eth_rlpx_local_static_nodekey_bytes_v1,
+    eth_rlpx_local_static_pubkey_v1, evaluate_advisory_first,
     get_network_runtime_native_body_snapshot_v1, get_network_runtime_native_header_snapshot_v1,
     get_network_runtime_native_receipt_snapshot_v1, get_network_runtime_native_sync_status,
     get_network_runtime_sync_status, ingest_runtime_relay_membership,
@@ -36,18 +40,20 @@ use novovm_network::{
     set_network_runtime_native_header_snapshot_v1, set_network_runtime_native_receipt_snapshot_v1,
     set_network_runtime_sync_status, snapshot_network_runtime_native_pending_tx_summary_v1,
     AvailabilityController, AvailabilityDecision, AvailabilityMode, CapabilityReadiness,
-    CapabilityRouteHint, EthFullnodeNativePeerWorkerConfigV1, EthFullnodeNativePeerWorkerV1,
-    FileQueueStore, GossipMessage, InMemoryQueueStore, L3RegionalRoutingTable, L4LocalRoutingTable,
-    L4PeerRef, MessageType, NetworkRuntimeNativeBodySnapshotV1,
+    CapabilityRouteHint, EthDiscv4EndpointV1, EthDiscv4NeighborV1,
+    EthFullnodeNativePeerWorkerConfigV1, EthFullnodeNativePeerWorkerV1, FileQueueStore,
+    GossipMessage, InMemoryQueueStore, L3RegionalRoutingTable, L4LocalRoutingTable, L4PeerRef,
+    MessageType, NetworkRuntimeNativeBodySnapshotV1,
     NetworkRuntimeNativeExecutionBudgetTargetObservationV1, NetworkRuntimeNativeHeadSnapshotV1,
     NetworkRuntimeNativeHeaderSnapshotV1, NetworkRuntimeNativeReceiptSnapshotV1,
     NetworkRuntimeNativeSyncPhaseV1, NetworkRuntimeSyncStatus, PluginPeerEndpoint, QueueStore,
     QueuedRequest, Reachability, RelayCapacityClass, RelayClient, RelayHealth, RelayMembership,
     RelayRef, RelayServer, ReplayResult, RouteSelector, RoutingSource, SelectedPath,
-    L3_BASELINE_FINGERPRINT, L3_BASELINE_LOCK_VERSION, L3_BASELINE_PHASE,
-    L3_POLICY_BASELINE_VERSION, L3_READONLY_EXPORT_BASELINE_VERSION, L3_REGRESSION_LOCKSET,
-    L3_RELAY_RUNTIME_FEEDBACK_SCALE, L3_RELAY_SCORE_SCALE, L3_RELAY_SELECTED_STICKY_MARGIN,
-    L3_RELAY_SOURCE_BONUS_CONFIGURED, L3_RELAY_SOURCE_BONUS_POOL, L3_RELAY_SOURCE_BONUS_SNAPSHOT,
+    ETH_DISCV4_PACKET_HASH_LEN, ETH_DISCV4_PING_PACKET_TYPE, L3_BASELINE_FINGERPRINT,
+    L3_BASELINE_LOCK_VERSION, L3_BASELINE_PHASE, L3_POLICY_BASELINE_VERSION,
+    L3_READONLY_EXPORT_BASELINE_VERSION, L3_REGRESSION_LOCKSET, L3_RELAY_RUNTIME_FEEDBACK_SCALE,
+    L3_RELAY_SCORE_SCALE, L3_RELAY_SELECTED_STICKY_MARGIN, L3_RELAY_SOURCE_BONUS_CONFIGURED,
+    L3_RELAY_SOURCE_BONUS_POOL, L3_RELAY_SOURCE_BONUS_SNAPSHOT,
 };
 use novovm_node::governance_surface::{
     default_mainline_governance_store_path, is_mainline_governance_query_method,
@@ -1678,6 +1684,320 @@ fn eth_parse_enode_endpoints_v1(raw: &str, limit: usize) -> Vec<PluginPeerEndpoi
         .collect()
 }
 
+fn eth_discv4_ipv4_is_public_routable_v1(ip: [u8; 4]) -> bool {
+    if ip[0] == 0 || ip[0] == 10 || ip[0] == 127 || ip[0] >= 224 {
+        return false;
+    }
+    if ip[0] == 100 && (64..=127).contains(&ip[1]) {
+        return false;
+    }
+    if ip[0] == 169 && ip[1] == 254 {
+        return false;
+    }
+    if ip[0] == 172 && (16..=31).contains(&ip[1]) {
+        return false;
+    }
+    if ip[0] == 192 && ip[1] == 168 {
+        return false;
+    }
+    true
+}
+
+fn eth_discv4_endpoint_from_addr_hint_v1(addr_hint: &str) -> Option<EthDiscv4EndpointV1> {
+    let addr = addr_hint.parse::<std::net::SocketAddr>().ok()?;
+    eth_discv4_endpoint_from_socket_addr_v1(addr, addr.port())
+}
+
+fn eth_discv4_endpoint_from_socket_addr_v1(
+    addr: std::net::SocketAddr,
+    tcp_port: u16,
+) -> Option<EthDiscv4EndpointV1> {
+    let std::net::IpAddr::V4(ip) = addr.ip() else {
+        return None;
+    };
+    Some(EthDiscv4EndpointV1 {
+        ip: ip.octets(),
+        udp_port: addr.port(),
+        tcp_port,
+    })
+}
+
+fn eth_discv4_neighbor_to_peer_endpoint_v1(
+    neighbor: &EthDiscv4NeighborV1,
+) -> Option<PluginPeerEndpoint> {
+    let endpoint = neighbor.endpoint;
+    if endpoint.tcp_port == 0 || !eth_discv4_ipv4_is_public_routable_v1(endpoint.ip) {
+        return None;
+    }
+    let enode = format!(
+        "enode://{}@{}.{}.{}.{}:{}",
+        eth_node_hex_lower_v1(&neighbor.node_id),
+        endpoint.ip[0],
+        endpoint.ip[1],
+        endpoint.ip[2],
+        endpoint.ip[3],
+        endpoint.tcp_port
+    );
+    let (node_hint, addr_hint) = parse_enode_endpoint(enode.as_str())?;
+    Some(PluginPeerEndpoint {
+        endpoint: enode,
+        node_hint,
+        addr_hint,
+    })
+}
+
+fn eth_discv4_recv_until_timeout_v1<F>(
+    socket: &std::net::UdpSocket,
+    timeout: Duration,
+    mut handle_packet: F,
+) where
+    F: FnMut(&[u8], std::net::SocketAddr) -> bool,
+{
+    let started = Instant::now();
+    let mut buffer = [0u8; 4096];
+    while started.elapsed() < timeout {
+        match socket.recv_from(&mut buffer) {
+            Ok((len, from)) => {
+                if handle_packet(&buffer[..len], from) {
+                    break;
+                }
+            }
+            Err(err)
+                if err.kind() == std::io::ErrorKind::WouldBlock
+                    || err.kind() == std::io::ErrorKind::TimedOut =>
+            {
+                break;
+            }
+            Err(_) => break,
+        }
+    }
+}
+
+fn eth_discv4_reply_to_ping_packet_v1(
+    socket: &std::net::UdpSocket,
+    nodekey: &[u8; 32],
+    from: std::net::SocketAddr,
+    packet: &[u8],
+    expiration_unix_s: u64,
+) -> bool {
+    let Ok(parsed) = eth_discv4_parse_packet_v1(packet) else {
+        return false;
+    };
+    if parsed.packet_type != ETH_DISCV4_PING_PACKET_TYPE {
+        return false;
+    }
+    let Some(to_endpoint) = eth_discv4_endpoint_from_socket_addr_v1(from, 0) else {
+        return false;
+    };
+    let Ok(pong) = eth_discv4_build_pong_packet_v1(
+        nodekey,
+        to_endpoint,
+        &parsed.packet_hash,
+        expiration_unix_s,
+    ) else {
+        return false;
+    };
+    socket.send_to(pong.as_slice(), from).is_ok()
+}
+
+fn eth_discv4_discover_peer_endpoints_v1(
+    chain_id: u64,
+    limit: usize,
+    verbose: bool,
+) -> Vec<PluginPeerEndpoint> {
+    if limit == 0 || chain_id != 1 || !bool_env_default_true("NOVOVM_ETH_DISCV4_DISCOVERY_ENABLED")
+    {
+        return Vec::new();
+    }
+
+    let timeout_ms = u64_env_clamped("NOVOVM_ETH_DISCV4_DISCOVERY_TIMEOUT_MS", 1_500, 100, 10_000);
+    let timeout = Duration::from_millis(timeout_ms);
+    let max_bootnodes = usize_env_allow_zero(
+        "NOVOVM_ETH_DISCV4_DISCOVERY_BOOTNODES",
+        ETH_RLPX_MAINNET_BOOTNODES_V1.len(),
+    )
+    .unwrap_or(ETH_RLPX_MAINNET_BOOTNODES_V1.len())
+    .clamp(1, ETH_RLPX_MAINNET_BOOTNODES_V1.len());
+    let nodekey = eth_rlpx_local_static_nodekey_bytes_v1();
+    let target = match eth_rlpx_local_static_pubkey_v1() {
+        Ok(target) => target,
+        Err(err) => {
+            if verbose {
+                println!("eth_discv4_discovery_skip: local_nodekey_error={err}");
+            }
+            return Vec::new();
+        }
+    };
+    let expiration_unix_s = now_unix_ms().saturating_div(1000).saturating_add(600);
+    let mut endpoints = Vec::<PluginPeerEndpoint>::new();
+    let mut seen = HashSet::<String>::new();
+    let mut bootnodes_scanned = 0usize;
+
+    for bootnode in ETH_RLPX_MAINNET_BOOTNODES_V1.iter().take(max_bootnodes) {
+        if endpoints.len() >= limit {
+            break;
+        }
+        let Some(boot_endpoint) = eth_parse_enode_endpoints_v1(bootnode, 1).into_iter().next()
+        else {
+            continue;
+        };
+        let Some(to_endpoint) =
+            eth_discv4_endpoint_from_addr_hint_v1(boot_endpoint.addr_hint.as_str())
+        else {
+            continue;
+        };
+        let to_endpoint = EthDiscv4EndpointV1 {
+            tcp_port: 0,
+            ..to_endpoint
+        };
+        let Ok(remote_addr) = boot_endpoint.addr_hint.parse::<std::net::SocketAddr>() else {
+            continue;
+        };
+        let Ok(socket) = std::net::UdpSocket::bind("0.0.0.0:0") else {
+            continue;
+        };
+        let _ = socket.set_read_timeout(Some(timeout));
+        let _ = socket.set_write_timeout(Some(timeout));
+        let local_udp_port = socket
+            .local_addr()
+            .ok()
+            .map(|addr| addr.port())
+            .unwrap_or(0);
+        let from_endpoint = EthDiscv4EndpointV1 {
+            ip: [0, 0, 0, 0],
+            udp_port: local_udp_port,
+            tcp_port: 0,
+        };
+        let Ok(ping) = eth_discv4_build_ping_packet_v1(
+            &nodekey,
+            from_endpoint,
+            to_endpoint,
+            expiration_unix_s,
+        ) else {
+            continue;
+        };
+
+        bootnodes_scanned = bootnodes_scanned.saturating_add(1);
+        if socket.send_to(ping.as_slice(), remote_addr).is_err() {
+            continue;
+        }
+        let ping_hash = &ping[..ETH_DISCV4_PACKET_HASH_LEN];
+        let mut bonded = false;
+        let mut pong_packets = 0usize;
+        let mut pong_parse_errors = 0usize;
+        let mut inbound_pongs_sent = 0usize;
+        eth_discv4_recv_until_timeout_v1(&socket, timeout, |packet, from| {
+            if from != remote_addr {
+                return false;
+            }
+            if eth_discv4_reply_to_ping_packet_v1(
+                &socket,
+                &nodekey,
+                from,
+                packet,
+                expiration_unix_s,
+            ) {
+                inbound_pongs_sent = inbound_pongs_sent.saturating_add(1);
+                return false;
+            }
+            pong_packets = pong_packets.saturating_add(1);
+            match eth_discv4_parse_pong_ping_hash_v1(packet) {
+                Ok(observed_hash) if observed_hash.as_slice() == ping_hash => {
+                    bonded = true;
+                    true
+                }
+                Err(_) => {
+                    pong_parse_errors = pong_parse_errors.saturating_add(1);
+                    false
+                }
+                _ => false,
+            }
+        });
+        if !bonded {
+            if verbose {
+                println!(
+                    "eth_discv4_bootnode_skip: addr={} pong_packets={} pong_parse_errors={} inbound_pongs_sent={} reason=no_matching_pong",
+                    boot_endpoint.addr_hint,
+                    pong_packets,
+                    pong_parse_errors,
+                    inbound_pongs_sent
+                );
+            }
+            continue;
+        }
+
+        let mut neighbor_packets = 0usize;
+        let mut neighbor_parse_errors = 0usize;
+        let mut findnode_attempts = 0usize;
+        while findnode_attempts < 2 && endpoints.len() < limit {
+            findnode_attempts = findnode_attempts.saturating_add(1);
+            let Ok(findnode) =
+                eth_discv4_build_findnode_packet_v1(&nodekey, &target, expiration_unix_s)
+            else {
+                break;
+            };
+            if socket.send_to(findnode.as_slice(), remote_addr).is_err() {
+                break;
+            }
+            let mut answered_ping_during_findnode = false;
+            eth_discv4_recv_until_timeout_v1(&socket, timeout, |packet, from| {
+                if from != remote_addr {
+                    return false;
+                }
+                if eth_discv4_reply_to_ping_packet_v1(
+                    &socket,
+                    &nodekey,
+                    from,
+                    packet,
+                    expiration_unix_s,
+                ) {
+                    inbound_pongs_sent = inbound_pongs_sent.saturating_add(1);
+                    answered_ping_during_findnode = true;
+                    return false;
+                }
+                neighbor_packets = neighbor_packets.saturating_add(1);
+                let Ok(neighbors) = eth_discv4_parse_neighbors_packet_v1(packet) else {
+                    neighbor_parse_errors = neighbor_parse_errors.saturating_add(1);
+                    return false;
+                };
+                for neighbor in neighbors {
+                    let Some(endpoint) = eth_discv4_neighbor_to_peer_endpoint_v1(&neighbor) else {
+                        continue;
+                    };
+                    eth_push_peer_endpoint_v1(&mut endpoints, &mut seen, endpoint, limit);
+                    if endpoints.len() >= limit {
+                        return true;
+                    }
+                }
+                false
+            });
+            if endpoints.len() >= limit || !answered_ping_during_findnode {
+                break;
+            }
+        }
+        if verbose {
+            println!(
+                "eth_discv4_bootnode_result: addr={} findnode_attempts={} neighbor_packets={} neighbor_parse_errors={} inbound_pongs_sent={} endpoints_now={}",
+                boot_endpoint.addr_hint,
+                findnode_attempts,
+                neighbor_packets,
+                neighbor_parse_errors,
+                inbound_pongs_sent,
+                endpoints.len()
+            );
+        }
+    }
+
+    if verbose {
+        println!(
+            "eth_discv4_discovery: bootnodes={} endpoints={}",
+            bootnodes_scanned,
+            endpoints.len()
+        );
+    }
+    endpoints
+}
+
 fn eth_dns_discover_peer_endpoints_v1(
     chain_id: u64,
     limit: usize,
@@ -1769,6 +2089,15 @@ fn eth_rlpx_sync_peer_endpoints_v1(
         for endpoint in eth_parse_enode_endpoints_v1(
             ETH_RLPX_MAINNET_BOOTNODES_V1.join(",").as_str(),
             candidate_limit.saturating_sub(endpoints.len()),
+        ) {
+            eth_push_peer_endpoint_v1(&mut endpoints, &mut seen, endpoint, candidate_limit);
+        }
+    }
+    if endpoints.len() < candidate_limit {
+        for endpoint in eth_discv4_discover_peer_endpoints_v1(
+            chain_id,
+            candidate_limit.saturating_sub(endpoints.len()),
+            verbose,
         ) {
             eth_push_peer_endpoint_v1(&mut endpoints, &mut seen, endpoint, candidate_limit);
         }
@@ -2568,6 +2897,43 @@ mod mainline_evm_cli_tests {
             eth_dns_parse_txt_response_v1(packet.as_slice(), query_id).expect("parse dns txt"),
             vec!["enrtree-branch:ABCDE,FGHIJ".to_string()]
         );
+    }
+
+    #[test]
+    fn eth_discv4_addr_hint_parses_ipv4_endpoint_v1() {
+        let endpoint =
+            eth_discv4_endpoint_from_addr_hint_v1("18.138.108.67:30303").expect("ipv4 endpoint");
+        assert_eq!(endpoint.ip, [18, 138, 108, 67]);
+        assert_eq!(endpoint.udp_port, 30303);
+        assert_eq!(endpoint.tcp_port, 30303);
+        assert!(eth_discv4_endpoint_from_addr_hint_v1("[::1]:30303").is_none());
+    }
+
+    #[test]
+    fn eth_discv4_neighbor_materializes_public_enode_endpoint_v1() {
+        let neighbor = EthDiscv4NeighborV1 {
+            endpoint: EthDiscv4EndpointV1 {
+                ip: [65, 108, 70, 101],
+                udp_port: 30303,
+                tcp_port: 30303,
+            },
+            node_id: [0x11; 64],
+        };
+        let endpoint =
+            eth_discv4_neighbor_to_peer_endpoint_v1(&neighbor).expect("neighbor endpoint");
+        assert!(endpoint.endpoint.starts_with("enode://"));
+        assert_eq!(endpoint.addr_hint, "65.108.70.101:30303");
+        assert_eq!(endpoint.node_hint, 0x1111_1111_1111_1111);
+
+        let private_neighbor = EthDiscv4NeighborV1 {
+            endpoint: EthDiscv4EndpointV1 {
+                ip: [192, 168, 1, 5],
+                udp_port: 30303,
+                tcp_port: 30303,
+            },
+            node_id: [0x22; 64],
+        };
+        assert!(eth_discv4_neighbor_to_peer_endpoint_v1(&private_neighbor).is_none());
     }
 
     #[test]

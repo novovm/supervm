@@ -33,6 +33,14 @@ pub const ETH_RLPX_FRAME_HEADER_LEN: usize = 16;
 pub const ETH_RLPX_FRAME_HEADER_MAC_LEN: usize = 16;
 pub const ETH_RLPX_FRAME_MAC_LEN: usize = 16;
 pub const ETH_RLPX_FRAME_MAX_SIZE: usize = (1 << 24) - 1;
+pub const ETH_DISCV4_PACKET_HASH_LEN: usize = 32;
+pub const ETH_DISCV4_PACKET_SIG_LEN: usize = 65;
+pub const ETH_DISCV4_PACKET_HEADER_LEN: usize =
+    ETH_DISCV4_PACKET_HASH_LEN + ETH_DISCV4_PACKET_SIG_LEN + 1;
+pub const ETH_DISCV4_PING_PACKET_TYPE: u8 = 0x01;
+pub const ETH_DISCV4_PONG_PACKET_TYPE: u8 = 0x02;
+pub const ETH_DISCV4_FINDNODE_PACKET_TYPE: u8 = 0x03;
+pub const ETH_DISCV4_NEIGHBORS_PACKET_TYPE: u8 = 0x04;
 pub const ETH_RLPX_P2P_HELLO_MSG: u64 = 0x00;
 pub const ETH_RLPX_P2P_DISCONNECT_MSG: u64 = 0x01;
 pub const ETH_RLPX_P2P_PING_MSG: u64 = 0x02;
@@ -575,6 +583,26 @@ pub struct EthRlpxBlockBodyPayloadV1 {
     pub withdrawal_rlp_items: Option<Vec<Vec<u8>>>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EthDiscv4EndpointV1 {
+    pub ip: [u8; 4],
+    pub udp_port: u16,
+    pub tcp_port: u16,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EthDiscv4NeighborV1 {
+    pub endpoint: EthDiscv4EndpointV1,
+    pub node_id: [u8; ETH_RLPX_PUB_LEN],
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EthDiscv4PacketV1 {
+    pub packet_hash: [u8; ETH_DISCV4_PACKET_HASH_LEN],
+    pub packet_type: u8,
+    pub payload: Vec<u8>,
+}
+
 #[derive(Clone, Copy)]
 enum EthRlpxRlpItemV1<'a> {
     Bytes(&'a [u8]),
@@ -665,6 +693,212 @@ pub fn eth_rlpx_pubkey_from_nodekey_bytes_v1(
     let signing = SigningKey::from_bytes(nodekey.into())
         .map_err(|e| format!("rlpx_static_signing_key_invalid:{e}"))?;
     Ok(eth_rlpx_pubkey_64_from_signing_key_v1(&signing))
+}
+
+fn eth_discv4_encode_endpoint_v1(endpoint: EthDiscv4EndpointV1) -> Vec<u8> {
+    eth_rlpx_encode_list_v1(&[
+        eth_rlpx_encode_bytes_v1(&endpoint.ip),
+        eth_rlpx_encode_u64_v1(endpoint.udp_port as u64),
+        eth_rlpx_encode_u64_v1(endpoint.tcp_port as u64),
+    ])
+}
+
+fn eth_discv4_decode_endpoint_v1(
+    item: EthRlpxRlpItemV1<'_>,
+) -> Result<EthDiscv4EndpointV1, String> {
+    let EthRlpxRlpItemV1::List(payload) = item else {
+        return Err("discv4_endpoint_not_list".to_string());
+    };
+    let fields = eth_rlpx_parse_list_items_v1(payload)?;
+    if fields.len() < 3 {
+        return Err("discv4_endpoint_fields_missing".to_string());
+    }
+    let EthRlpxRlpItemV1::Bytes(ip_bytes) = fields[0] else {
+        return Err("discv4_endpoint_ip_not_bytes".to_string());
+    };
+    if ip_bytes.len() != 4 {
+        return Err("discv4_endpoint_ipv4_len_invalid".to_string());
+    }
+    let EthRlpxRlpItemV1::Bytes(udp_bytes) = fields[1] else {
+        return Err("discv4_endpoint_udp_not_bytes".to_string());
+    };
+    let EthRlpxRlpItemV1::Bytes(tcp_bytes) = fields[2] else {
+        return Err("discv4_endpoint_tcp_not_bytes".to_string());
+    };
+    let udp_port = eth_rlpx_decode_u64_bytes_v1(udp_bytes)?;
+    let tcp_port = eth_rlpx_decode_u64_bytes_v1(tcp_bytes)?;
+    if udp_port > u16::MAX as u64 || tcp_port > u16::MAX as u64 {
+        return Err("discv4_endpoint_port_invalid".to_string());
+    }
+    let mut ip = [0u8; 4];
+    ip.copy_from_slice(ip_bytes);
+    Ok(EthDiscv4EndpointV1 {
+        ip,
+        udp_port: udp_port as u16,
+        tcp_port: tcp_port as u16,
+    })
+}
+
+fn eth_discv4_sign_packet_v1(
+    nodekey: &[u8; 32],
+    packet_type: u8,
+    payload: Vec<u8>,
+) -> Result<Vec<u8>, String> {
+    let signing = SigningKey::from_bytes(nodekey.into())
+        .map_err(|e| format!("discv4_signing_key_invalid:{e}"))?;
+    let mut sign_data = Vec::with_capacity(1 + payload.len());
+    sign_data.push(packet_type);
+    sign_data.extend_from_slice(payload.as_slice());
+    let message_hash = eth_rlpx_keccak256_bytes_v1(sign_data.as_slice());
+    let (signature, recovery_id) = signing
+        .sign_prehash_recoverable(message_hash.as_slice())
+        .map_err(|e| format!("discv4_packet_sign_failed:{e}"))?;
+    let mut signed = Vec::with_capacity(ETH_DISCV4_PACKET_HEADER_LEN + payload.len());
+    signed.extend_from_slice(signature.to_bytes().as_slice());
+    signed.push(recovery_id.to_byte());
+    signed.push(packet_type);
+    signed.extend_from_slice(payload.as_slice());
+    let packet_hash = eth_rlpx_keccak256_bytes_v1(signed.as_slice());
+    let mut packet = Vec::with_capacity(ETH_DISCV4_PACKET_HASH_LEN + signed.len());
+    packet.extend_from_slice(packet_hash.as_slice());
+    packet.extend_from_slice(signed.as_slice());
+    Ok(packet)
+}
+
+pub fn eth_discv4_build_ping_packet_v1(
+    nodekey: &[u8; 32],
+    from: EthDiscv4EndpointV1,
+    to: EthDiscv4EndpointV1,
+    expiration_unix_s: u64,
+) -> Result<Vec<u8>, String> {
+    let payload = eth_rlpx_encode_list_v1(&[
+        eth_rlpx_encode_u64_v1(4),
+        eth_discv4_encode_endpoint_v1(from),
+        eth_discv4_encode_endpoint_v1(to),
+        eth_rlpx_encode_u64_v1(expiration_unix_s),
+        eth_rlpx_encode_u64_v1(0),
+    ]);
+    eth_discv4_sign_packet_v1(nodekey, ETH_DISCV4_PING_PACKET_TYPE, payload)
+}
+
+pub fn eth_discv4_build_pong_packet_v1(
+    nodekey: &[u8; 32],
+    to: EthDiscv4EndpointV1,
+    ping_hash: &[u8; ETH_DISCV4_PACKET_HASH_LEN],
+    expiration_unix_s: u64,
+) -> Result<Vec<u8>, String> {
+    let payload = eth_rlpx_encode_list_v1(&[
+        eth_discv4_encode_endpoint_v1(to),
+        eth_rlpx_encode_bytes_v1(ping_hash),
+        eth_rlpx_encode_u64_v1(expiration_unix_s),
+        eth_rlpx_encode_u64_v1(0),
+    ]);
+    eth_discv4_sign_packet_v1(nodekey, ETH_DISCV4_PONG_PACKET_TYPE, payload)
+}
+
+pub fn eth_discv4_build_findnode_packet_v1(
+    nodekey: &[u8; 32],
+    target_node_id: &[u8; ETH_RLPX_PUB_LEN],
+    expiration_unix_s: u64,
+) -> Result<Vec<u8>, String> {
+    let payload = eth_rlpx_encode_list_v1(&[
+        eth_rlpx_encode_bytes_v1(target_node_id),
+        eth_rlpx_encode_u64_v1(expiration_unix_s),
+    ]);
+    eth_discv4_sign_packet_v1(nodekey, ETH_DISCV4_FINDNODE_PACKET_TYPE, payload)
+}
+
+pub fn eth_discv4_parse_packet_v1(packet: &[u8]) -> Result<EthDiscv4PacketV1, String> {
+    if packet.len() < ETH_DISCV4_PACKET_HEADER_LEN {
+        return Err("discv4_packet_too_short".to_string());
+    }
+    let expected_hash = eth_rlpx_keccak256_bytes_v1(&packet[ETH_DISCV4_PACKET_HASH_LEN..]);
+    if packet[..ETH_DISCV4_PACKET_HASH_LEN] != expected_hash {
+        return Err("discv4_packet_hash_mismatch".to_string());
+    }
+    let mut packet_hash = [0u8; ETH_DISCV4_PACKET_HASH_LEN];
+    packet_hash.copy_from_slice(&packet[..ETH_DISCV4_PACKET_HASH_LEN]);
+    Ok(EthDiscv4PacketV1 {
+        packet_hash,
+        packet_type: packet[ETH_DISCV4_PACKET_HASH_LEN + ETH_DISCV4_PACKET_SIG_LEN],
+        payload: packet[ETH_DISCV4_PACKET_HEADER_LEN..].to_vec(),
+    })
+}
+
+pub fn eth_discv4_parse_pong_ping_hash_v1(packet: &[u8]) -> Result<[u8; 32], String> {
+    let parsed = eth_discv4_parse_packet_v1(packet)?;
+    if parsed.packet_type != ETH_DISCV4_PONG_PACKET_TYPE {
+        return Err("discv4_packet_not_pong".to_string());
+    }
+    let (item, consumed) = eth_rlpx_parse_item_v1(parsed.payload.as_slice())?;
+    if consumed != parsed.payload.len() {
+        return Err("discv4_pong_payload_trailing".to_string());
+    }
+    let EthRlpxRlpItemV1::List(payload) = item else {
+        return Err("discv4_pong_payload_not_list".to_string());
+    };
+    let fields = eth_rlpx_parse_list_items_v1(payload)?;
+    if fields.len() < 2 {
+        return Err("discv4_pong_fields_missing".to_string());
+    }
+    let EthRlpxRlpItemV1::Bytes(ping_hash) = fields[1] else {
+        return Err("discv4_pong_ping_hash_not_bytes".to_string());
+    };
+    if ping_hash.len() != 32 {
+        return Err("discv4_pong_ping_hash_len_invalid".to_string());
+    }
+    let mut out = [0u8; 32];
+    out.copy_from_slice(ping_hash);
+    Ok(out)
+}
+
+pub fn eth_discv4_parse_neighbors_packet_v1(
+    packet: &[u8],
+) -> Result<Vec<EthDiscv4NeighborV1>, String> {
+    let parsed = eth_discv4_parse_packet_v1(packet)?;
+    if parsed.packet_type != ETH_DISCV4_NEIGHBORS_PACKET_TYPE {
+        return Err("discv4_packet_not_neighbors".to_string());
+    }
+    let (item, consumed) = eth_rlpx_parse_item_v1(parsed.payload.as_slice())?;
+    if consumed != parsed.payload.len() {
+        return Err("discv4_neighbors_payload_trailing".to_string());
+    }
+    let EthRlpxRlpItemV1::List(payload) = item else {
+        return Err("discv4_neighbors_payload_not_list".to_string());
+    };
+    let fields = eth_rlpx_parse_list_items_v1(payload)?;
+    if fields.is_empty() {
+        return Err("discv4_neighbors_fields_missing".to_string());
+    }
+    let EthRlpxRlpItemV1::List(nodes_payload) = fields[0] else {
+        return Err("discv4_neighbors_nodes_not_list".to_string());
+    };
+    let node_items = eth_rlpx_parse_list_items_v1(nodes_payload)?;
+    let mut neighbors = Vec::with_capacity(node_items.len());
+    for item in node_items {
+        let EthRlpxRlpItemV1::List(node_payload) = item else {
+            return Err("discv4_neighbor_not_list".to_string());
+        };
+        let node_fields = eth_rlpx_parse_list_items_v1(node_payload)?;
+        if node_fields.len() < 4 {
+            return Err("discv4_neighbor_fields_missing".to_string());
+        }
+        let endpoint = match eth_discv4_decode_endpoint_v1(EthRlpxRlpItemV1::List(node_payload)) {
+            Ok(endpoint) => endpoint,
+            Err(err) if err == "discv4_endpoint_ipv4_len_invalid" => continue,
+            Err(err) => return Err(err),
+        };
+        let EthRlpxRlpItemV1::Bytes(node_id_bytes) = node_fields[3] else {
+            return Err("discv4_neighbor_node_id_not_bytes".to_string());
+        };
+        if node_id_bytes.len() != ETH_RLPX_PUB_LEN {
+            return Err("discv4_neighbor_node_id_len_invalid".to_string());
+        }
+        let mut node_id = [0u8; ETH_RLPX_PUB_LEN];
+        node_id.copy_from_slice(node_id_bytes);
+        neighbors.push(EthDiscv4NeighborV1 { endpoint, node_id });
+    }
+    Ok(neighbors)
 }
 
 fn eth_rlpx_concat_kdf_sha256_v1(z: &[u8], s1: &[u8], len: usize) -> Vec<u8> {
@@ -3809,6 +4043,87 @@ mod tests {
         let parsed = eth_rlpx_parse_enode_pubkey_v1(endpoint.as_str()).expect("parse enode");
         let encoded = parsed.to_encoded_point(false);
         assert_eq!(&encoded.as_bytes()[1..65], pubkey.as_slice());
+    }
+
+    #[test]
+    fn discv4_ping_and_findnode_packets_are_hash_checked() {
+        let key = SigningKey::random(&mut OsRng);
+        let nodekey: [u8; 32] = key.to_bytes().into();
+        let from = EthDiscv4EndpointV1 {
+            ip: [127, 0, 0, 1],
+            udp_port: 30303,
+            tcp_port: 30303,
+        };
+        let to = EthDiscv4EndpointV1 {
+            ip: [18, 138, 108, 67],
+            udp_port: 30303,
+            tcp_port: 30303,
+        };
+
+        let ping = eth_discv4_build_ping_packet_v1(&nodekey, from, to, 1_900_000_000)
+            .expect("build discv4 ping");
+        let parsed_ping = eth_discv4_parse_packet_v1(ping.as_slice()).expect("parse ping");
+        assert_eq!(parsed_ping.packet_type, ETH_DISCV4_PING_PACKET_TYPE);
+        assert_eq!(&ping[..32], parsed_ping.packet_hash);
+        let pong =
+            eth_discv4_build_pong_packet_v1(&nodekey, to, &parsed_ping.packet_hash, 1_900_000_000)
+                .expect("build discv4 pong");
+        assert_eq!(
+            eth_discv4_parse_pong_ping_hash_v1(pong.as_slice()).expect("parse pong"),
+            parsed_ping.packet_hash
+        );
+
+        let target = eth_rlpx_pubkey_from_nodekey_bytes_v1(&nodekey).expect("local pubkey");
+        let findnode = eth_discv4_build_findnode_packet_v1(&nodekey, &target, 1_900_000_000)
+            .expect("build findnode");
+        let parsed_findnode =
+            eth_discv4_parse_packet_v1(findnode.as_slice()).expect("parse findnode");
+        assert_eq!(parsed_findnode.packet_type, ETH_DISCV4_FINDNODE_PACKET_TYPE);
+
+        let mut tampered = findnode;
+        let last = tampered.len().saturating_sub(1);
+        tampered[last] ^= 0x01;
+        assert_eq!(
+            eth_discv4_parse_packet_v1(tampered.as_slice()),
+            Err("discv4_packet_hash_mismatch".to_string())
+        );
+    }
+
+    #[test]
+    fn discv4_neighbors_packet_decodes_nodes() {
+        let key = SigningKey::random(&mut OsRng);
+        let nodekey: [u8; 32] = key.to_bytes().into();
+        let neighbor_node_id =
+            eth_rlpx_pubkey_from_nodekey_bytes_v1(&nodekey).expect("neighbor node id");
+        let node = eth_rlpx_encode_list_v1(&[
+            eth_rlpx_encode_bytes_v1(&[65, 108, 70, 101]),
+            eth_rlpx_encode_u64_v1(30303),
+            eth_rlpx_encode_u64_v1(30303),
+            eth_rlpx_encode_bytes_v1(&neighbor_node_id),
+        ]);
+        let ipv6_node = eth_rlpx_encode_list_v1(&[
+            eth_rlpx_encode_bytes_v1(&[
+                0x20, 0x01, 0x0d, 0xb8, 0x00, 0x3c, 0x4d, 0x15, 0x00, 0x00, 0x00, 0x00, 0xab, 0xcd,
+                0xef, 0x12,
+            ]),
+            eth_rlpx_encode_u64_v1(30303),
+            eth_rlpx_encode_u64_v1(30303),
+            eth_rlpx_encode_bytes_v1(&neighbor_node_id),
+        ]);
+        let payload = eth_rlpx_encode_list_v1(&[
+            eth_rlpx_encode_list_v1(&[node, ipv6_node]),
+            eth_rlpx_encode_u64_v1(1_900_000_000),
+        ]);
+        let packet = eth_discv4_sign_packet_v1(&nodekey, ETH_DISCV4_NEIGHBORS_PACKET_TYPE, payload)
+            .expect("sign neighbors");
+
+        let neighbors =
+            eth_discv4_parse_neighbors_packet_v1(packet.as_slice()).expect("parse neighbors");
+        assert_eq!(neighbors.len(), 1);
+        assert_eq!(neighbors[0].endpoint.ip, [65, 108, 70, 101]);
+        assert_eq!(neighbors[0].endpoint.udp_port, 30303);
+        assert_eq!(neighbors[0].endpoint.tcp_port, 30303);
+        assert_eq!(neighbors[0].node_id, neighbor_node_id);
     }
 
     #[test]
