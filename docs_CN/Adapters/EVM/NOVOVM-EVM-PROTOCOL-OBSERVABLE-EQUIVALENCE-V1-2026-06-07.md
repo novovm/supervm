@@ -104,6 +104,7 @@ cargo test -p novovm-node evm_protocol_observable_equivalence_geth_real_block_di
 cargo test -p novovm-network evm_protocol_observable_equivalence_network_rlpx_tx_ingress_gate_v3 -- --nocapture
 cargo test -p novovm-network evm_protocol_observable_equivalence_network_rlpx_tx_outbound_broadcast_gate_v3 -- --nocapture
 cargo test -p novovm-network evm_protocol_observable_equivalence_network_rlpx_block_body_import_gate_v3 -- --nocapture
+cargo test -p novovm-network evm_protocol_observable_equivalence_network_rlpx_receipts_gate_v3 -- --nocapture
 cargo test -p novovm-network evm_protocol_observable_equivalence_network_rlpx_reorg_gate_v3 -- --nocapture
 cargo test -p novovm-network evm_protocol_observable_equivalence_network_rlpx_bal_response_gate_v3 -- --nocapture
 cargo test -p novovm-network evm_protocol_observable_equivalence_network_rlpx_new_block_hashes_gate_v3 -- --nocapture
@@ -121,13 +122,14 @@ cargo test -p novovm-network evm_protocol_observable_equivalence_network_rlpx_ne
 - 本地 pending tx 标记为 propagated，并记录目标 peer 和 broadcast runtime summary。
 - 远端 peer 通过 `BlockHeaders` 返回真实 RLP header，SUPERVM 按 wire header RLP hash 发起 `GetBlockBodies`。
 - 远端 peer 通过 `BlockBodies` 返回含 raw tx 的 body，SUPERVM 导入 native body snapshot，保留 block hash、tx hash、withdrawal count 和 materialized 状态。
+- `BlockBodies` 返回后，SUPERVM 继续发 eth/70 `GetReceipts(firstBlockReceiptIndex=0)`，解析 `Receipts(lastBlockIncomplete=false)` 后才把本轮 peer sync 标记 ready；本地只在能证明空交易 body 时响应空 receipts，不伪造有交易块的 receipt 数据。
 - 真实 RLPx peer 顺序返回 120A 和 121B 分支，runtime canonical head 从 120A reorg 到 121B。
 - 120A 中已 canonical included 的 pending tx 回到 `ReorgedBackToPending`，并携 raw RLP 重新进入 broadcast candidate。
 - 远端 peer 发送真实 `GetBlockAccessLists` frame，SUPERVM 返回协议合法 `BlockAccessLists` frame，保持 request_id 和 requested hash 数量一致。
 - mainline canonical batch append 后会把 persisted block BAL materialize 到 network runtime；对本地已 materialize 的 block BAL payload，响应返回真实 BAL RLP；对未 materialize 的 hash，响应使用 Ethereum RLPx BAL missing sentinel，不伪造 block access list。
 - 远端 peer 发送真实 `NewBlockHashes` announcement，SUPERVM 解析公告高度，更新 peer head/highest，并主动发出后续 `GetBlockHeaders`，不再只依赖初始 `Status` 触发同步。
 
-当前 v3 结论：tx propagation 的入站/出站网络可观察语义、RLPx header/body import、最小 reorg 回池路径、BAL 请求/响应路径、`NewBlockHashes` 公告驱动的 follow-up header pull 已具备真实 gate；BAL 响应已能返回 canonical/materialized 本地 payload，并对缺失 payload 使用协议 missing sentinel。尚未因此声明完整 eth/71 peer sync、长连接主网接受度、完整 BAL 可用性、receipts/pooled-tx/snap 全面同步或复杂多分支 reorg 全覆盖。
+当前 v3 结论：tx propagation 的入站/出站网络可观察语义、RLPx header/body/receipts sync 链路、最小 reorg 回池路径、BAL 请求/响应路径、`NewBlockHashes` 公告驱动的 follow-up header pull 已具备真实 gate；BAL 响应已能返回 canonical/materialized 本地 payload，并对缺失 payload 使用协议 missing sentinel。尚未因此声明完整 eth/71 peer sync、长连接主网接受度、完整 BAL 可用性、完整 receipt store、pooled-tx/snap 全面同步或复杂多分支 reorg 全覆盖。
 
 ## 剩余阶段
 
@@ -136,7 +138,7 @@ cargo test -p novovm-network evm_protocol_observable_equivalence_network_rlpx_ne
 | v1 | 插件产品面协议可观察等价 | 本文 3 个聚合 gate 全绿 |
 | v2a | RPC 黑盒投影根门禁 | `evm_protocol_observable_equivalence_geth_rpc_blackbox_projection_gate_v2` 全绿 |
 | v2b | 真 geth/reth 黑盒差分 | 真实 geth fullTx block diff gate 全绿；raw tx RLP 存在时 `transactionsRoot` 也一致 |
-| v3 | 网络可观察等价 | 已覆盖真实 RLPx handshake/Status + 入站 `Transactions` -> pending tx raw RLP + 出站 `Transactions` broadcast + header/body import + 最小 reorg 回池 + BAL request/response + `NewBlockHashes` follow-up header pull |
+| v3 | 网络可观察等价 | 已覆盖真实 RLPx handshake/Status + 入站 `Transactions` -> pending tx raw RLP + 出站 `Transactions` broadcast + header/body/receipts import 链路 + 最小 reorg 回池 + BAL request/response + `NewBlockHashes` follow-up header pull |
 | v4 | 长稳生产封口 | 多节点 devnet soak、重启恢复、恶意/边界输入、BAL/receipt/RPC 长稳无漂移 |
 
 ## 下一步
@@ -148,7 +150,7 @@ cargo test -p novovm-network evm_protocol_observable_equivalence_network_rlpx_ne
 1. 先让 v1 三个聚合 gate 进入固定回归清单。
 2. 已完成 v2a：RPC block root projection 不再返回 `null`，并进入 geth parity batch report。
 3. 已完成 v2b：真实 geth fullTx block fixture 差分已接入，raw tx RLP 进入 canonical block projection，`transactionsRoot` 从 gap 变成 match。
-4. 已开始 v3：真实 RLPx handshake/Status + 入站 `Transactions` -> pending tx raw RLP gate 通过；出站 `Transactions` broadcast gate 通过；header/body import gate 通过；最小 reorg 回池 gate 通过。
+4. 已开始 v3：真实 RLPx handshake/Status + 入站 `Transactions` -> pending tx raw RLP gate 通过；出站 `Transactions` broadcast gate 通过；header/body/receipts sync gate 通过；最小 reorg 回池 gate 通过；`NewBlockHashes` follow-up header pull gate 通过。
 5. 如果 v3 或真实 block replay 暴露具体交易类型/root 差异，再补对应最小真实 fixture，不回到开放式 smoke 堆叠。
 
 这会把“等价”从开放式 fixture 堆叠改成有限的协议验收。
