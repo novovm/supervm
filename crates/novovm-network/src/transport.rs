@@ -403,6 +403,33 @@ impl EthFullnodeNativePeerWorkerV1 {
                     report.connected_peers = report.connected_peers.saturating_add(1);
                     report.ready_peers = report.ready_peers.saturating_add(1);
                     report.status_updates = report.status_updates.saturating_add(1);
+                    match drive_eth_fullnode_native_rlpx_peer_session_once_v1(
+                        plan.chain_id,
+                        plan.local_node,
+                        peer,
+                        &endpoint,
+                        &plan.budget_hooks,
+                    ) {
+                        Ok(peer_report) => {
+                            absorb_eth_fullnode_native_rlpx_peer_tick_report_v1(
+                                &mut report,
+                                peer,
+                                peer_report,
+                            );
+                        }
+                        Err(err) => {
+                            report.failed_sync_peers = report.failed_sync_peers.saturating_add(1);
+                            report
+                                .peer_failures
+                                .push(build_eth_fullnode_peer_failure_report_v1(
+                                    plan.chain_id,
+                                    peer,
+                                    Some(&endpoint),
+                                    EthFullnodeNativePeerDrivePhaseV1::Sync,
+                                    &err,
+                                ));
+                        }
+                    }
                 }
                 Err(err) => {
                     report.failed_bootstrap_peers = report.failed_bootstrap_peers.saturating_add(1);
@@ -434,32 +461,11 @@ impl EthFullnodeNativePeerWorkerV1 {
             ) {
                 Ok(peer_report) => {
                     report.ready_peers = report.ready_peers.saturating_add(1);
-                    report.status_updates = report
-                        .status_updates
-                        .saturating_add(peer_report.status_updates);
-                    report.header_updates = report
-                        .header_updates
-                        .saturating_add(peer_report.header_updates);
-                    report.body_updates =
-                        report.body_updates.saturating_add(peer_report.body_updates);
-                    report.receipt_updates = report
-                        .receipt_updates
-                        .saturating_add(peer_report.receipt_updates);
-                    report.sync_requests = report
-                        .sync_requests
-                        .saturating_add(peer_report.sync_requests);
-                    report.inbound_frames = report
-                        .inbound_frames
-                        .saturating_add(peer_report.inbound_frames);
-                    if peer_report.header_updates > 0 {
-                        report.header_updated_peer_ids.push(peer.0);
-                    }
-                    if peer_report.body_updates > 0 {
-                        report.body_updated_peer_ids.push(peer.0);
-                    }
-                    if peer_report.receipt_updates > 0 {
-                        report.receipt_updated_peer_ids.push(peer.0);
-                    }
+                    absorb_eth_fullnode_native_rlpx_peer_tick_report_v1(
+                        &mut report,
+                        peer,
+                        peer_report,
+                    );
                 }
                 Err(err) => {
                     report.failed_sync_peers = report.failed_sync_peers.saturating_add(1);
@@ -819,6 +825,38 @@ struct EthFullnodeNativeRlpxPeerTickReportV1 {
     receipt_updates: usize,
     sync_requests: usize,
     inbound_frames: usize,
+}
+
+fn absorb_eth_fullnode_native_rlpx_peer_tick_report_v1(
+    report: &mut EthFullnodeNativeRealDriveReportV1,
+    peer: NodeId,
+    peer_report: EthFullnodeNativeRlpxPeerTickReportV1,
+) {
+    report.status_updates = report
+        .status_updates
+        .saturating_add(peer_report.status_updates);
+    report.header_updates = report
+        .header_updates
+        .saturating_add(peer_report.header_updates);
+    report.body_updates = report.body_updates.saturating_add(peer_report.body_updates);
+    report.receipt_updates = report
+        .receipt_updates
+        .saturating_add(peer_report.receipt_updates);
+    report.sync_requests = report
+        .sync_requests
+        .saturating_add(peer_report.sync_requests);
+    report.inbound_frames = report
+        .inbound_frames
+        .saturating_add(peer_report.inbound_frames);
+    if peer_report.header_updates > 0 {
+        report.header_updated_peer_ids.push(peer.0);
+    }
+    if peer_report.body_updates > 0 {
+        report.body_updated_peer_ids.push(peer.0);
+    }
+    if peer_report.receipt_updates > 0 {
+        report.receipt_updated_peer_ids.push(peer.0);
+    }
 }
 
 fn format_eth_fullnode_rlpx_disconnect_reason_v1(payload: &[u8], phase: &str) -> String {
@@ -6065,10 +6103,7 @@ mod tests {
 
         let report0 = worker.drive_real_network_once().expect("connect tick");
         assert_eq!(report0.connected_peers, 1);
-        let report1 = worker
-            .drive_real_network_once()
-            .expect("missing receipts request tick");
-        assert_eq!(report1.sync_requests, 1);
+        assert_eq!(report0.sync_requests, 1);
 
         let started = std::time::Instant::now();
         while started.elapsed() < Duration::from_secs(2)
@@ -7977,11 +8012,13 @@ mod tests {
                 peer_status_code,
                 crate::ETH_RLPX_BASE_PROTOCOL_OFFSET + crate::ETH_RLPX_ETH_STATUS_MSG
             );
+            thread::sleep(Duration::from_millis(300));
         });
 
         let mut budget = default_eth_fullnode_budget_hooks_v1();
         budget.active_native_peer_soft_limit = 2;
         budget.active_native_peer_hard_limit = 2;
+        budget.sync_request_interval_ms = u64::MAX;
         let worker = EthFullnodeNativePeerWorkerV1::new(EthFullnodeNativePeerWorkerConfigV1 {
             chain_id,
             local_node: local,
@@ -8351,13 +8388,9 @@ mod tests {
 
         let report0 = worker.drive_real_network_once().expect("connect tick");
         assert_eq!(report0.connected_peers, 1);
+        assert_eq!(report0.sync_requests, 1);
         let status_after_connect = get_network_runtime_sync_status(chain_id).expect("sync status");
         assert_eq!(status_after_connect.highest_block, 120);
-
-        let report1 = worker
-            .drive_real_network_once()
-            .expect("header request tick");
-        assert_eq!(report1.sync_requests, 1);
 
         let started = std::time::Instant::now();
         while started.elapsed() < Duration::from_secs(2)
@@ -8606,15 +8639,17 @@ mod tests {
 
         let report0 = worker.drive_real_network_once().expect("connect tick");
         assert_eq!(report0.connected_peers, 1);
+        assert_eq!(report0.sync_requests, 1);
         let report1 = worker
             .drive_real_network_once()
-            .expect("header request tick");
-        assert_eq!(report1.sync_requests, 1);
+            .expect("headers/body request tick");
         let report2 = worker
             .drive_real_network_once()
             .expect("headers/bodies tick");
-        let mut body_updates = report2.body_updates;
-        let mut receipt_updates = report2.receipt_updates;
+        let mut body_updates = report1.body_updates.saturating_add(report2.body_updates);
+        let mut receipt_updates = report1
+            .receipt_updates
+            .saturating_add(report2.receipt_updates);
         let started = std::time::Instant::now();
         while started.elapsed() < Duration::from_secs(2)
             && (body_updates == 0 || receipt_updates == 0)
@@ -11425,9 +11460,9 @@ mod tests {
         let report0 = worker.drive_real_network_once().expect("connect tick");
         assert_eq!(report0.connected_peers, 1);
         let started = std::time::Instant::now();
-        let mut header_updates = 0usize;
-        let mut body_updates = 0usize;
-        let mut receipt_updates = 0usize;
+        let mut header_updates = report0.header_updates;
+        let mut body_updates = report0.body_updates;
+        let mut receipt_updates = report0.receipt_updates;
         while started.elapsed() < Duration::from_secs(2)
             && (header_updates == 0 || body_updates == 0 || receipt_updates == 0)
         {
