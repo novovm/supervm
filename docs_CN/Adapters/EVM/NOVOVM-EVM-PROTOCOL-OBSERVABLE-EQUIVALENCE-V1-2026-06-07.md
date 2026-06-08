@@ -168,7 +168,7 @@ $env:NOVOVM_NODE_MODE='eth_rlpx_sync'; $env:NOVOVM_ETH_RLPX_TICKS='8'; cargo run
 
 重启恢复时，latest native head store 和 native history window store 会按已持久化材料恢复 runtime head phase：只有 header 为 `Headers`，已有 body 为 `Bodies`，已有 receipt 为 `State`；这避免已验证 receipts 的 head 在重启后退回 header 阶段重复同步。
 
-DNS discovery 启动阶段现在受 `NOVOVM_ETH_DNS_DISCOVERY_TOTAL_TIMEOUT_MS` 总预算约束，默认 DNS tree max queries 随候选目标收敛到 `min(max(limit*4,16),128)`；DoH TXT 每次查询都会按剩余 global discovery deadline 重新设置 timeout，deadline 已过则直接跳过网络查询。这避免产品入口为了扩充候选池在 DoH/UDP fallback 上长期阻塞；128-candidate bounded probe 在 10.5s 内进入 tick 并拿到 ready peer，但公网 peer 饱和仍会导致后续同步不稳定。
+DNS discovery 启动阶段现在受 `NOVOVM_ETH_DNS_DISCOVERY_TOTAL_TIMEOUT_MS` 总预算约束，默认 5s，默认 DNS tree max queries 随候选目标收敛到 `min(max(limit*4,16),128)`；DoH TXT 每次查询都会按剩余 global discovery deadline 重新设置 timeout，deadline 已过则直接跳过网络查询。这避免产品入口为了扩充候选池在 DoH/UDP fallback 上长期阻塞，也给 10s peer discovery 总预算里的 discv4 bootnode discovery 留出时间；128-candidate bounded probe 在 10.5s 内进入 tick 并拿到 ready peer；默认 5s DNS budget 的 30 tick trusted-pivot probe 后续 refresh 经 discv4/DNS 把 candidates 扩到 46，并推进到 `current=25270152/body_available=true`、无 root/tx/receipt mismatch，但公网 peer 饱和仍会导致后续同步不稳定。
 
 Public RLPx 默认能力面现在与当前本地 geth `ProtocolVersions = [eth/71, eth/70, eth/69]` 对齐，只广告 `eth/69,70,71` + `snap/1`；旧 `eth/66-68` peer 不再协商进入短 Status payload 语义，而是作为 capability mismatch 进入 decode-failure 生命周期过滤；pristine peer 的短 Status/capability mismatch 会立即 permanent reject，Decode 包装的 TCP timeout 会归入 timeout 生命周期。8 tick live run 未再出现 `rlpx_eth_status_fields_short`，但公网 `too_many_peers`/EOF/TCP timeout 仍未封口。
 

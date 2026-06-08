@@ -2397,7 +2397,7 @@ fn eth_dns_discover_peer_endpoints_v1(
             .clamp(1, 1024);
     let configured_total_timeout = Duration::from_millis(u64_env_clamped(
         "NOVOVM_ETH_DNS_DISCOVERY_TOTAL_TIMEOUT_MS",
-        12_000,
+        5_000,
         100,
         120_000,
     ));
