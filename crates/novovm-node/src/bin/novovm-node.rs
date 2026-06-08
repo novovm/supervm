@@ -2035,6 +2035,13 @@ fn eth_rlpx_peer_refresh_discovery_limit_v1(
         .clamp(next_candidate_limit, 1024)
 }
 
+fn eth_rlpx_default_adaptive_candidate_limit_v1(candidate_limit: usize) -> usize {
+    candidate_limit
+        .saturating_mul(2)
+        .max(512)
+        .clamp(candidate_limit, 1024)
+}
+
 fn eth_rlpx_apply_public_sync_batch_defaults_v1(
     budget: &mut EthFullnodeBudgetHooksV1,
     headers_batch: u64,
@@ -4294,7 +4301,7 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
             .clamp(max_peers, 512);
     let adaptive_candidate_limit = usize_env_allow_zero(
         "NOVOVM_ETH_RLPX_ADAPTIVE_CANDIDATE_PEERS_MAX",
-        candidate_limit.max(256),
+        eth_rlpx_default_adaptive_candidate_limit_v1(candidate_limit),
     )?
     .clamp(candidate_limit, 1024);
     let ticks = usize_env_allow_zero("NOVOVM_ETH_RLPX_TICKS", 0)?;
@@ -5193,6 +5200,13 @@ mod mainline_evm_cli_tests {
         let plan =
             eth_rlpx_peer_refresh_plan_v1(false, true, false, true, 512, 512, 6, 32, 8, 8, 16);
         assert_eq!(plan, Some((512, "sync_progress_stalled_refresh")));
+    }
+
+    #[test]
+    fn eth_rlpx_default_adaptive_candidate_limit_expands_public_pool_v1() {
+        assert_eq!(eth_rlpx_default_adaptive_candidate_limit_v1(256), 512);
+        assert_eq!(eth_rlpx_default_adaptive_candidate_limit_v1(512), 1024);
+        assert_eq!(eth_rlpx_default_adaptive_candidate_limit_v1(900), 1024);
     }
 
     #[test]
