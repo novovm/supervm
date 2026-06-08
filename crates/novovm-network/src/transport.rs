@@ -2874,6 +2874,149 @@ fn snap_proof_value_missing_is_tolerated_v1(err: &str) -> bool {
     err.contains("rlpx_mpt_proof_node_missing") || err.contains("rlpx_mpt_proof_root_missing")
 }
 
+fn validate_snap_account_range_response_preconditions_v1(
+    chain_id: u64,
+    source_peer_id: u64,
+    origin: [u8; 32],
+    limit: [u8; 32],
+    response: &EthRlpxAccountRangeResponseV1,
+) -> Result<(), NetworkError> {
+    let mut previous = None;
+    for (idx, account) in response.accounts.iter().enumerate() {
+        if account.body_rlp.is_empty() {
+            let reason = format!(
+                "snap_account_range_deletion:idx={} account=0x{}",
+                idx,
+                hex32_v1(&account.hash)
+            );
+            observe_network_runtime_eth_peer_decode_failure_v1(
+                chain_id,
+                source_peer_id,
+                reason.as_str(),
+            );
+            return Err(NetworkError::Decode(reason));
+        }
+        if account.hash < origin || account.hash > limit {
+            let reason = format!(
+                "snap_account_range_account_out_of_bounds:idx={} origin=0x{} limit=0x{} account=0x{}",
+                idx,
+                hex32_v1(&origin),
+                hex32_v1(&limit),
+                hex32_v1(&account.hash)
+            );
+            observe_network_runtime_eth_peer_decode_failure_v1(
+                chain_id,
+                source_peer_id,
+                reason.as_str(),
+            );
+            return Err(NetworkError::Decode(reason));
+        }
+        if previous.is_some_and(|prev| account.hash <= prev) {
+            let reason = format!(
+                "snap_account_range_account_not_monotonic:idx={} account=0x{}",
+                idx,
+                hex32_v1(&account.hash)
+            );
+            observe_network_runtime_eth_peer_decode_failure_v1(
+                chain_id,
+                source_peer_id,
+                reason.as_str(),
+            );
+            return Err(NetworkError::Decode(reason));
+        }
+        eth_rlpx_snap_full_account_rlp_from_slim_v1(account.body_rlp.as_slice()).map_err(
+            |err| {
+                let reason = format!(
+                    "snap_account_range_account_body_invalid:idx={} account=0x{} err={}",
+                    idx,
+                    hex32_v1(&account.hash),
+                    err
+                );
+                observe_network_runtime_eth_peer_decode_failure_v1(
+                    chain_id,
+                    source_peer_id,
+                    reason.as_str(),
+                );
+                NetworkError::Decode(reason)
+            },
+        )?;
+        previous = Some(account.hash);
+    }
+    Ok(())
+}
+
+fn validate_snap_storage_ranges_response_preconditions_v1(
+    chain_id: u64,
+    source_peer_id: u64,
+    origin: &[u8],
+    limit: &[u8],
+    response: &EthRlpxStorageRangesResponseV1,
+) -> Result<(), NetworkError> {
+    for (slotset_idx, slots) in response.slots.iter().enumerate() {
+        let mut previous = None;
+        for (idx, slot) in slots.iter().enumerate() {
+            if slot.body.is_empty() {
+                let reason = format!(
+                    "snap_storage_ranges_deletion:slotset={} idx={} slot=0x{}",
+                    slotset_idx,
+                    idx,
+                    hex32_v1(&slot.hash)
+                );
+                observe_network_runtime_eth_peer_decode_failure_v1(
+                    chain_id,
+                    source_peer_id,
+                    reason.as_str(),
+                );
+                return Err(NetworkError::Decode(reason));
+            }
+            if !origin.is_empty() && slot.hash.as_slice() < origin {
+                let reason = format!(
+                    "snap_storage_ranges_slot_before_origin:slotset={} idx={} slot=0x{}",
+                    slotset_idx,
+                    idx,
+                    hex32_v1(&slot.hash)
+                );
+                observe_network_runtime_eth_peer_decode_failure_v1(
+                    chain_id,
+                    source_peer_id,
+                    reason.as_str(),
+                );
+                return Err(NetworkError::Decode(reason));
+            }
+            if !limit.is_empty() && slot.hash.as_slice() > limit {
+                let reason = format!(
+                    "snap_storage_ranges_slot_after_limit:slotset={} idx={} slot=0x{}",
+                    slotset_idx,
+                    idx,
+                    hex32_v1(&slot.hash)
+                );
+                observe_network_runtime_eth_peer_decode_failure_v1(
+                    chain_id,
+                    source_peer_id,
+                    reason.as_str(),
+                );
+                return Err(NetworkError::Decode(reason));
+            }
+            if previous.is_some_and(|prev| slot.hash <= prev) {
+                let reason = format!(
+                    "snap_storage_ranges_slot_not_monotonic:slotset={} idx={} slot=0x{}",
+                    slotset_idx,
+                    idx,
+                    hex32_v1(&slot.hash)
+                );
+                observe_network_runtime_eth_peer_decode_failure_v1(
+                    chain_id,
+                    source_peer_id,
+                    reason.as_str(),
+                );
+                return Err(NetworkError::Decode(reason));
+            }
+            previous = Some(slot.hash);
+        }
+    }
+    Ok(())
+}
+
 fn validate_snap_account_range_proof_values_v1(
     chain_id: u64,
     source_peer_id: u64,
@@ -3143,6 +3286,7 @@ fn validate_snap_account_range_proof_semantics_v1(
     source_peer_id: u64,
     state_root: Option<[u8; 32]>,
     origin: [u8; 32],
+    limit: [u8; 32],
     response: &EthRlpxAccountRangeResponseV1,
 ) -> Result<(), NetworkError> {
     if response.proof.is_empty() {
@@ -3160,6 +3304,13 @@ fn validate_snap_account_range_proof_semantics_v1(
         );
         return Err(NetworkError::Decode(reason));
     }
+    validate_snap_account_range_response_preconditions_v1(
+        chain_id,
+        source_peer_id,
+        origin,
+        limit,
+        response,
+    )?;
     let Some(root) = state_root else {
         let reason = "snap_account_range_state_root_missing_for_proof".to_string();
         observe_network_runtime_eth_peer_decode_failure_v1(
@@ -3243,6 +3394,13 @@ fn validate_snap_storage_ranges_proof_semantics_v1(
     if response.proof.is_empty() && response.slots.is_empty() {
         return Ok(());
     }
+    validate_snap_storage_ranges_response_preconditions_v1(
+        chain_id,
+        source_peer_id,
+        &[],
+        &[],
+        response,
+    )?;
     let Some(state_root) = state_root else {
         let reason = "snap_storage_ranges_state_root_missing".to_string();
         observe_network_runtime_eth_peer_decode_failure_v1(
@@ -3357,6 +3515,7 @@ fn ingest_real_rlpx_snap_account_range_v1(
         source_peer_id,
         session.last_snap_state_root,
         account_origin,
+        account_limit,
         response,
     )?;
     session.pending_snap_next_account_origin =
@@ -11375,6 +11534,7 @@ mod tests {
             node
         };
         let account_state_root = crate::eth_rlpx_trie_node_hash_v1(account_root_node.as_slice());
+        let valid_slim_account = vec![0xc4, 0x01, 0x80, 0x80, 0x80];
         clear_network_runtime_native_snapshots_for_chain_v1(chain_id);
 
         let account_without_proof = crate::EthRlpxAccountRangeResponseV1 {
@@ -11390,6 +11550,7 @@ mod tests {
             1,
             Some(account_state_root),
             [0u8; 32],
+            [0xffu8; 32],
             &account_without_proof,
         )
         .expect_err("non-empty AccountRange without proof must be rejected");
@@ -11410,6 +11571,7 @@ mod tests {
             1,
             Some(account_state_root),
             [0u8; 32],
+            [0xffu8; 32],
             &empty_account_without_proof,
         )
         .expect("empty AccountRange without proof remains protocol-tolerated here");
@@ -11424,6 +11586,7 @@ mod tests {
             1,
             Some(account_state_root),
             [0u8; 32],
+            [0xffu8; 32],
             &empty_account_with_terminal_proof,
         )
         .expect("empty AccountRange proof with no right-side elements may complete");
@@ -11432,7 +11595,7 @@ mod tests {
             request_id: 6,
             accounts: vec![crate::EthRlpxSnapAccountDataV1 {
                 hash: [0x12; 32],
-                body_rlp: vec![0xc0],
+                body_rlp: valid_slim_account.clone(),
             }],
             proof: vec![account_root_node.clone()],
         };
@@ -11441,6 +11604,7 @@ mod tests {
             1,
             Some(account_state_root),
             [0u8; 32],
+            [0xffu8; 32],
             &account_with_valid_proof,
         )
         .expect("AccountRange proof root node must match requested stateRoot");
@@ -11455,6 +11619,7 @@ mod tests {
             1,
             Some(account_state_root),
             [0u8; 32],
+            [0xffu8; 32],
             &account_with_corrupt_proof,
         )
         .expect_err("corrupt AccountRange proof node must be rejected");
@@ -11488,6 +11653,7 @@ mod tests {
             1,
             Some(account_leaf_root),
             [0u8; 32],
+            [0xffu8; 32],
             &account_with_leaf_proof,
         )
         .expect("AccountRange proof value must match response account body");
@@ -11502,6 +11668,7 @@ mod tests {
             1,
             Some(account_leaf_root),
             [0u8; 32],
+            [0xffu8; 32],
             &empty_account_with_more_right_proof,
         )
         .expect_err("empty AccountRange proof must prove there are no more entries");
@@ -11518,13 +11685,14 @@ mod tests {
                 hash: leaf_account_hash,
                 body_rlp: vec![0xc4, 0x02, 0x80, 0x80, 0x80],
             }],
-            proof: vec![account_leaf_node],
+            proof: vec![account_leaf_node.clone()],
         };
         let account_value_err = validate_snap_account_range_proof_semantics_v1(
             9_943,
             1,
             Some(account_leaf_root),
             [0u8; 32],
+            [0xffu8; 32],
             &account_with_mismatched_leaf_proof,
         )
         .expect_err("AccountRange proof leaf value mismatch must be rejected");
@@ -11533,6 +11701,84 @@ mod tests {
                 .to_string()
                 .contains("snap_account_range_proof_value_mismatch"),
             "{account_value_err}"
+        );
+
+        let account_before_origin = crate::EthRlpxAccountRangeResponseV1 {
+            request_id: 16,
+            accounts: vec![crate::EthRlpxSnapAccountDataV1 {
+                hash: leaf_account_hash,
+                body_rlp: valid_slim_account.clone(),
+            }],
+            proof: vec![account_leaf_node.clone()],
+        };
+        let account_before_origin_err = validate_snap_account_range_proof_semantics_v1(
+            9_943,
+            1,
+            Some(account_leaf_root),
+            [0x20; 32],
+            [0xffu8; 32],
+            &account_before_origin,
+        )
+        .expect_err("AccountRange keys before origin must be rejected before cache");
+        assert!(
+            account_before_origin_err
+                .to_string()
+                .contains("snap_account_range_account_out_of_bounds"),
+            "{account_before_origin_err}"
+        );
+
+        let account_duplicate = crate::EthRlpxAccountRangeResponseV1 {
+            request_id: 17,
+            accounts: vec![
+                crate::EthRlpxSnapAccountDataV1 {
+                    hash: leaf_account_hash,
+                    body_rlp: valid_slim_account.clone(),
+                },
+                crate::EthRlpxSnapAccountDataV1 {
+                    hash: leaf_account_hash,
+                    body_rlp: valid_slim_account.clone(),
+                },
+            ],
+            proof: vec![account_leaf_node.clone()],
+        };
+        let account_duplicate_err = validate_snap_account_range_proof_semantics_v1(
+            9_943,
+            1,
+            Some(account_leaf_root),
+            [0u8; 32],
+            [0xffu8; 32],
+            &account_duplicate,
+        )
+        .expect_err("AccountRange must be strictly monotonic");
+        assert!(
+            account_duplicate_err
+                .to_string()
+                .contains("snap_account_range_account_not_monotonic"),
+            "{account_duplicate_err}"
+        );
+
+        let account_invalid_body = crate::EthRlpxAccountRangeResponseV1 {
+            request_id: 18,
+            accounts: vec![crate::EthRlpxSnapAccountDataV1 {
+                hash: leaf_account_hash,
+                body_rlp: vec![0xc0],
+            }],
+            proof: vec![account_leaf_node.clone()],
+        };
+        let account_invalid_body_err = validate_snap_account_range_proof_semantics_v1(
+            9_943,
+            1,
+            Some(account_leaf_root),
+            [0u8; 32],
+            [0xffu8; 32],
+            &account_invalid_body,
+        )
+        .expect_err("AccountRange slim account body must decode before cache");
+        assert!(
+            account_invalid_body_err
+                .to_string()
+                .contains("snap_account_range_account_body_invalid"),
+            "{account_invalid_body_err}"
         );
 
         let complete_slot = crate::EthRlpxSnapStorageDataV1 {
@@ -11684,8 +11930,51 @@ mod tests {
             "{storage_empty_more_err}"
         );
 
+        let storage_duplicate = crate::EthRlpxStorageRangesResponseV1 {
+            request_id: 16,
+            slots: vec![vec![leaf_slot.clone(), leaf_slot.clone()]],
+            proof: vec![storage_leaf_node.clone()],
+        };
+        let storage_duplicate_err = validate_snap_storage_ranges_proof_semantics_v1(
+            chain_id,
+            1,
+            Some(state_root),
+            &[leaf_storage_account_hash],
+            &storage_duplicate,
+        )
+        .expect_err("StorageRanges slots must be strictly monotonic");
+        assert!(
+            storage_duplicate_err
+                .to_string()
+                .contains("snap_storage_ranges_slot_not_monotonic"),
+            "{storage_duplicate_err}"
+        );
+
+        let storage_deletion = crate::EthRlpxStorageRangesResponseV1 {
+            request_id: 17,
+            slots: vec![vec![crate::EthRlpxSnapStorageDataV1 {
+                hash: leaf_slot.hash,
+                body: Vec::new(),
+            }]],
+            proof: vec![storage_leaf_node.clone()],
+        };
+        let storage_deletion_err = validate_snap_storage_ranges_proof_semantics_v1(
+            chain_id,
+            1,
+            Some(state_root),
+            &[leaf_storage_account_hash],
+            &storage_deletion,
+        )
+        .expect_err("StorageRanges deletion values must be rejected");
+        assert!(
+            storage_deletion_err
+                .to_string()
+                .contains("snap_storage_ranges_deletion"),
+            "{storage_deletion_err}"
+        );
+
         let storage_with_mismatched_leaf_proof = crate::EthRlpxStorageRangesResponseV1 {
-            request_id: 15,
+            request_id: 18,
             slots: vec![vec![crate::EthRlpxSnapStorageDataV1 {
                 hash: leaf_slot.hash,
                 body: vec![0x01],
