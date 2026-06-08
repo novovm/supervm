@@ -1962,7 +1962,7 @@ fn eth_rlpx_apply_public_sync_batch_defaults_v1(
 fn eth_rlpx_peer_discovery_total_timeout_v1() -> Duration {
     Duration::from_millis(u64_env_clamped(
         "NOVOVM_ETH_RLPX_PEER_DISCOVERY_TOTAL_TIMEOUT_MS",
-        30_000,
+        10_000,
         1_000,
         180_000,
     ))
@@ -4001,7 +4001,7 @@ fn restore_eth_rlpx_native_history_store_v1(
 fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
     let chain_id = u64_env_allow_zero("NOVOVM_ETH_RLPX_CHAIN_ID", 1)?;
     let local_node_id = u64_env_allow_zero("NOVOVM_ETH_RLPX_LOCAL_NODE", 9_990_001)?;
-    let max_peers = usize_env_allow_zero("NOVOVM_ETH_RLPX_MAX_PEERS", 4)?.clamp(1, 16);
+    let max_peers = usize_env_allow_zero("NOVOVM_ETH_RLPX_MAX_PEERS", 8)?.clamp(1, 16);
     let mut candidate_limit =
         usize_env_allow_zero("NOVOVM_ETH_RLPX_CANDIDATE_PEERS", max_peers.max(64))?
             .clamp(max_peers, 512);
@@ -4021,8 +4021,7 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
         usize_env_allow_zero("NOVOVM_ETH_RLPX_EXHAUSTED_REFRESH_INTERVAL_TICKS", 8)?
             .clamp(1, 10_000);
     let stalled_refresh_interval_ticks =
-        usize_env_allow_zero("NOVOVM_ETH_RLPX_STALLED_REFRESH_INTERVAL_TICKS", 16)?
-            .clamp(1, 10_000);
+        usize_env_allow_zero("NOVOVM_ETH_RLPX_STALLED_REFRESH_INTERVAL_TICKS", 8)?.clamp(1, 10_000);
     let mut peer_endpoints = eth_rlpx_sync_peer_endpoints_v1(chain_id, candidate_limit, verbose);
     if peer_endpoints.is_empty() {
         bail!("no Ethereum RLPx peer endpoints resolved from env, DNS discovery, or bootnodes");
