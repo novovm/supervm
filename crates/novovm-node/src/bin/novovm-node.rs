@@ -3003,6 +3003,20 @@ fn eth_rlpx_native_receipt_snapshot_from_store_v1(
     })
 }
 
+fn eth_rlpx_native_body_matches_header_v1(
+    header: &NetworkRuntimeNativeHeaderSnapshotV1,
+    body: &NetworkRuntimeNativeBodySnapshotV1,
+) -> bool {
+    body.number == header.number && body.block_hash == header.hash
+}
+
+fn eth_rlpx_native_receipt_matches_header_v1(
+    header: &NetworkRuntimeNativeHeaderSnapshotV1,
+    receipt: &NetworkRuntimeNativeReceiptSnapshotV1,
+) -> bool {
+    receipt.number == header.number && receipt.block_hash == header.hash
+}
+
 fn eth_rlpx_native_snap_account_store_from_snapshot_v1(
     snapshot: &NetworkRuntimeNativeSnapAccountSnapshotV1,
 ) -> EthRlpxNativeSnapAccountStoreV1 {
@@ -3188,10 +3202,10 @@ fn write_eth_rlpx_native_head_store_v1(
         highest_block,
         header: Some(eth_rlpx_native_header_store_from_snapshot_v1(header)),
         body: body
-            .filter(|body| body.number == header.number && body.block_hash == header.hash)
+            .filter(|body| eth_rlpx_native_body_matches_header_v1(header, body))
             .map(eth_rlpx_native_body_store_from_snapshot_v1),
         receipt: receipt
-            .filter(|receipt| receipt.number == header.number && receipt.block_hash == header.hash)
+            .filter(|receipt| eth_rlpx_native_receipt_matches_header_v1(header, receipt))
             .map(eth_rlpx_native_receipt_store_from_snapshot_v1),
         snap_accounts: snap_accounts
             .iter()
@@ -3806,6 +3820,15 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
         let receipt = header.as_ref().and_then(|snapshot| {
             get_network_runtime_native_receipt_snapshot_v1(chain_id, snapshot.hash)
         });
+        let body_for_header = header.as_ref().and_then(|header| {
+            body.as_ref()
+                .filter(|body| eth_rlpx_native_body_matches_header_v1(header, body))
+        });
+        let receipt_for_header = header.as_ref().and_then(|header| {
+            receipt
+                .as_ref()
+                .filter(|receipt| eth_rlpx_native_receipt_matches_header_v1(header, receipt))
+        });
         let head_snapshot = get_network_runtime_native_head_snapshot_v1(chain_id);
         let current_sync_block = sync_status.map(|status| status.current_block).unwrap_or(0);
         let highest_sync_block = sync_status.map(|status| status.highest_block).unwrap_or(0);
@@ -3847,7 +3870,7 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
                 .as_ref()
                 .map(|snapshot| to_hex_prefixed(&snapshot.hash))
                 .unwrap_or_else(|| "-".to_string()),
-            body.as_ref()
+            body_for_header
                 .map(|snapshot| snapshot.body_available)
                 .unwrap_or(false),
             report.peer_failures.len(),
@@ -3878,8 +3901,8 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
                 chain_id,
                 sync_status,
                 header.as_ref(),
-                body.as_ref(),
-                receipt.as_ref(),
+                body_for_header,
+                receipt_for_header,
             )?;
         }
         if native_history_store_enabled {
@@ -3889,8 +3912,8 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
                     chain_id,
                     sync_status,
                     header.as_ref(),
-                    body.as_ref(),
-                    receipt.as_ref(),
+                    body_for_header,
+                    receipt_for_header,
                     head_snapshot.as_ref(),
                     native_history_store_retention,
                 ) {
@@ -4499,6 +4522,80 @@ mod mainline_evm_cli_tests {
         );
 
         let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn eth_rlpx_native_body_and_receipt_match_current_header_v1() {
+        let header = NetworkRuntimeNativeHeaderSnapshotV1 {
+            chain_id: 1,
+            number: 7,
+            hash: [0x11; 32],
+            parent_hash: [0x10; 32],
+            state_root: [0x21; 32],
+            transactions_root: [0x22; 32],
+            receipts_root: [0x23; 32],
+            ommers_hash: [0x24; 32],
+            logs_bloom: Vec::new(),
+            gas_limit: None,
+            gas_used: None,
+            timestamp: None,
+            base_fee_per_gas: None,
+            withdrawals_root: None,
+            blob_gas_used: None,
+            excess_blob_gas: None,
+            block_access_list_hash: None,
+            source_peer_id: None,
+            observed_unix_ms: 1,
+        };
+        let matching_body = NetworkRuntimeNativeBodySnapshotV1 {
+            chain_id: 1,
+            number: 7,
+            block_hash: [0x11; 32],
+            tx_hashes: Vec::new(),
+            ommer_hashes: Vec::new(),
+            withdrawal_count: Some(0),
+            body_available: true,
+            txs_materialized: true,
+            observed_unix_ms: 2,
+        };
+        let stale_body = NetworkRuntimeNativeBodySnapshotV1 {
+            number: 6,
+            block_hash: [0x10; 32],
+            ..matching_body.clone()
+        };
+        let matching_receipt = NetworkRuntimeNativeReceiptSnapshotV1 {
+            chain_id: 1,
+            number: 7,
+            block_hash: [0x11; 32],
+            receipts_root: [0x23; 32],
+            raw_receipts: Vec::new(),
+            receipt_count: 0,
+            receipts_available: true,
+            source_peer_id: None,
+            observed_unix_ms: 3,
+        };
+        let stale_receipt = NetworkRuntimeNativeReceiptSnapshotV1 {
+            number: 6,
+            block_hash: [0x10; 32],
+            ..matching_receipt.clone()
+        };
+
+        assert!(eth_rlpx_native_body_matches_header_v1(
+            &header,
+            &matching_body
+        ));
+        assert!(!eth_rlpx_native_body_matches_header_v1(
+            &header,
+            &stale_body
+        ));
+        assert!(eth_rlpx_native_receipt_matches_header_v1(
+            &header,
+            &matching_receipt
+        ));
+        assert!(!eth_rlpx_native_receipt_matches_header_v1(
+            &header,
+            &stale_receipt
+        ));
     }
 
     #[test]
