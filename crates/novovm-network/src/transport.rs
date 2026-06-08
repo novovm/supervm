@@ -11655,6 +11655,44 @@ mod tests {
                 }
                 panic!("unexpected snap follow-up code {code}");
             }
+            let continuation_request = loop {
+                let (code, payload) =
+                    crate::eth_rlpx_read_wire_frame_v1(&mut accepted, &mut responder.session)
+                        .expect("read post-storage account continuation");
+                if code == crate::ETH_RLPX_P2P_PING_MSG {
+                    crate::eth_rlpx_write_wire_frame_v1(
+                        &mut accepted,
+                        &mut responder.session,
+                        crate::ETH_RLPX_P2P_PONG_MSG,
+                        &[],
+                    )
+                    .expect("write pong");
+                    continue;
+                }
+                assert_eq!(
+                    code,
+                    snap_offset + crate::ETH_RLPX_SNAP_GET_ACCOUNT_RANGE_MSG
+                );
+                break crate::eth_rlpx_parse_get_account_range_payload_v1(payload.as_slice())
+                    .expect("parse post-storage account continuation");
+            };
+            let expected_next_origin =
+                eth_rlpx_account_hash_next_v1(account_hash).expect("next account hash");
+            assert_eq!(continuation_request.root, local_state_root);
+            assert_eq!(continuation_request.origin, expected_next_origin);
+            assert_eq!(continuation_request.limit, [0xff; 32]);
+            let done_response = crate::eth_rlpx_build_account_range_payload_v1(
+                continuation_request.request_id,
+                &[],
+                &[],
+            );
+            crate::eth_rlpx_write_wire_frame_v1(
+                &mut accepted,
+                &mut responder.session,
+                snap_offset + crate::ETH_RLPX_SNAP_ACCOUNT_RANGE_MSG,
+                done_response.as_slice(),
+            )
+            .expect("write post-storage account continuation done");
             done_tx.send(()).expect("signal snap follow-up gate");
             thread::sleep(Duration::from_millis(50));
         });
