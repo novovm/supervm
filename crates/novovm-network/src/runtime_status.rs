@@ -588,9 +588,13 @@ pub struct NetworkRuntimeNativeCanonicalBlockStateV1 {
     pub header_observed: bool,
     pub body_available: bool,
     #[serde(default)]
+    pub tx_hashes: Vec<[u8; 32]>,
+    #[serde(default)]
     pub raw_tx_rlps: Vec<Vec<u8>>,
     #[serde(default)]
     pub withdrawal_rlp_items: Option<Vec<Vec<u8>>>,
+    #[serde(default)]
+    pub withdrawal_count: Option<usize>,
     #[serde(default)]
     pub receipts_available: bool,
     #[serde(default)]
@@ -1721,8 +1725,10 @@ fn runtime_native_canonical_chain_upsert_header_v1(
             state_root: header.state_root,
             header_observed: true,
             body_available: false,
+            tx_hashes: Vec::new(),
             raw_tx_rlps: Vec::new(),
             withdrawal_rlp_items: None,
+            withdrawal_count: None,
             receipts_available: false,
             receipt_count: None,
             receipts_root: None,
@@ -1765,8 +1771,10 @@ fn runtime_native_canonical_chain_upsert_body_v1(
             state_root: [0u8; 32],
             header_observed: false,
             body_available: body.body_available,
+            tx_hashes: body.tx_hashes.clone(),
             raw_tx_rlps: body.raw_tx_rlps.clone(),
             withdrawal_rlp_items: body.withdrawal_rlp_items.clone(),
+            withdrawal_count: body.withdrawal_count,
             receipts_available: false,
             receipt_count: None,
             receipts_root: None,
@@ -1782,11 +1790,17 @@ fn runtime_native_canonical_chain_upsert_body_v1(
     entry.chain_id = body.chain_id;
     entry.number = body.number;
     entry.body_available |= body.body_available;
+    if !body.tx_hashes.is_empty() {
+        entry.tx_hashes = body.tx_hashes.clone();
+    }
     if !body.raw_tx_rlps.is_empty() {
         entry.raw_tx_rlps = body.raw_tx_rlps.clone();
     }
     if body.withdrawal_rlp_items.is_some() {
         entry.withdrawal_rlp_items = body.withdrawal_rlp_items.clone();
+    }
+    if body.withdrawal_count.is_some() {
+        entry.withdrawal_count = body.withdrawal_count;
     }
     entry.observed_unix_ms = entry.observed_unix_ms.max(body.observed_unix_ms);
     entry.lifecycle_stage = runtime_native_canonical_chain_infer_block_lifecycle_v1(
@@ -1811,8 +1825,10 @@ fn runtime_native_canonical_chain_upsert_receipt_v1(
             state_root: [0u8; 32],
             header_observed: false,
             body_available: false,
+            tx_hashes: Vec::new(),
             raw_tx_rlps: Vec::new(),
             withdrawal_rlp_items: None,
+            withdrawal_count: None,
             receipts_available: receipt.receipts_available,
             receipt_count: Some(receipt.receipt_count),
             receipts_root: Some(receipt.receipts_root),
@@ -1961,8 +1977,10 @@ fn runtime_native_canonical_chain_apply_head_v1(
                 state_root: head.state_root,
                 header_observed: true,
                 body_available: head.body_available,
+                tx_hashes: Vec::new(),
                 raw_tx_rlps: Vec::new(),
                 withdrawal_rlp_items: None,
+                withdrawal_count: None,
                 receipts_available: false,
                 receipt_count: None,
                 receipts_root: None,
@@ -2007,8 +2025,10 @@ fn runtime_native_canonical_chain_apply_head_v1(
             state_root: head.state_root,
             header_observed: true,
             body_available: head.body_available,
+            tx_hashes: Vec::new(),
             raw_tx_rlps: Vec::new(),
             withdrawal_rlp_items: None,
+            withdrawal_count: None,
             receipts_available: false,
             receipt_count: None,
             receipts_root: None,

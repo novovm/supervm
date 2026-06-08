@@ -502,7 +502,7 @@ fn eth_chain_id_and_net_version_accept_chain_params() {
 }
 
 #[test]
-fn engine_exchange_capabilities_is_probe_only_and_does_not_enable_payload_control() {
+fn engine_exchange_capabilities_keep_payload_control_disabled_v1() {
     let backend = GatewayEthTxIndexStoreBackend::Memory;
     let mut router = UnifiedAccountRouter::new();
     let mut eth_tx_index = HashMap::new();
@@ -547,13 +547,15 @@ fn engine_exchange_capabilities_is_probe_only_and_does_not_enable_payload_contro
         "engine_exchangeCapabilities",
         &serde_json::json!([["engine_newPayloadV3", "engine_forkchoiceUpdatedV3"]]),
     )
-    .expect("engine_exchangeCapabilities should be probeable");
+    .expect("engine_exchangeCapabilities should be readable");
     assert!(!changed);
     assert_eq!(
         capabilities,
         serde_json::json!([
             "engine_exchangeTransitionConfigurationV1",
-            "engine_getClientVersionV1"
+            "engine_getClientVersionV1",
+            "engine_getPayloadBodiesByHashV1",
+            "engine_getPayloadBodiesByRangeV1"
         ])
     );
     assert_eq!(
@@ -570,6 +572,18 @@ fn engine_exchange_capabilities_is_probe_only_and_does_not_enable_payload_contro
     );
     assert_eq!(
         gateway_runtime_method_domain_json("engine_getClientVersionV1")
+            ["control_namespace_disabled"]
+            .as_bool(),
+        Some(false)
+    );
+    assert_eq!(
+        gateway_runtime_method_domain_json("engine_getPayloadBodiesByHashV1")
+            ["control_namespace_disabled"]
+            .as_bool(),
+        Some(false)
+    );
+    assert_eq!(
+        gateway_runtime_method_domain_json("engine_getPayloadBodiesByRangeV1")
             ["control_namespace_disabled"]
             .as_bool(),
         Some(false)
@@ -687,6 +701,236 @@ fn engine_exchange_capabilities_is_probe_only_and_does_not_enable_payload_contro
 }
 
 #[test]
+fn engine_payload_bodies_read_native_rlpx_canonical_material_v1() {
+    let backend = GatewayEthTxIndexStoreBackend::Memory;
+    let mut router = UnifiedAccountRouter::new();
+    let mut eth_tx_index = HashMap::new();
+    let mut evm_settlement_index_by_id = HashMap::new();
+    let mut evm_settlement_index_by_tx = HashMap::new();
+    let mut evm_pending_payout_by_settlement = HashMap::new();
+    let spool_dir = std::env::temp_dir().join(format!(
+        "novovm-gateway-engine-bodies-{}-{}",
+        std::process::id(),
+        now_unix_millis()
+    ));
+    fs::create_dir_all(&spool_dir).expect("create spool dir");
+    let mut eth_filters = GatewayEthFilterState::default();
+    let chain_id = 9_991_991_u64;
+    let mut ctx = GatewayMethodContext {
+        eth_tx_index_store: &backend,
+        eth_default_chain_id: chain_id,
+        spool_dir: &spool_dir,
+        overlay_node_id: "test-overlay".to_string(),
+        overlay_session_id: "test-session".to_string(),
+        overlay_route_id: "route:test".to_string(),
+        overlay_route_epoch: 0,
+        overlay_route_mask_bits: 40,
+        overlay_route_mode: "fast".to_string(),
+        overlay_route_region: "global".to_string(),
+        overlay_route_relay_bucket: 0,
+        overlay_route_relay_set_size: 1,
+        overlay_route_relay_round: 0,
+        overlay_route_relay_index: 0,
+        overlay_route_relay_id: "rly:global:0:0".to_string(),
+        overlay_route_strategy: "direct".to_string(),
+        overlay_route_hop_count: 1,
+        eth_filters: &mut eth_filters,
+    };
+
+    let block_hash = [0xa7_u8; 32];
+    let raw_tx = vec![0x02, 0xc0];
+    let withdrawal_address = [0x33_u8; 20];
+    let withdrawal_rlp = test_rlp_encode_list(&[
+        test_rlp_encode_u64(1),
+        test_rlp_encode_u64(2),
+        test_rlp_encode_bytes(&withdrawal_address),
+        test_rlp_encode_u64(3),
+    ]);
+    novovm_network::set_network_runtime_native_header_snapshot_v1(
+        chain_id,
+        novovm_network::NetworkRuntimeNativeHeaderSnapshotV1 {
+            chain_id,
+            number: 10,
+            hash: block_hash,
+            parent_hash: [0xa6_u8; 32],
+            state_root: [0x11_u8; 32],
+            transactions_root: [0x22_u8; 32],
+            receipts_root: [0x23_u8; 32],
+            ommers_hash: [0x24_u8; 32],
+            logs_bloom: Vec::new(),
+            gas_limit: Some(30_000_000),
+            gas_used: Some(21_000),
+            timestamp: Some(1_780_000_000),
+            base_fee_per_gas: Some(7),
+            withdrawals_root: Some([0x25_u8; 32]),
+            blob_gas_used: Some(0),
+            excess_blob_gas: Some(0),
+            block_access_list_hash: None,
+            source_peer_id: Some(1),
+            observed_unix_ms: 1,
+        },
+    );
+    novovm_network::set_network_runtime_native_body_snapshot_v1(
+        chain_id,
+        novovm_network::NetworkRuntimeNativeBodySnapshotV1 {
+            chain_id,
+            number: 10,
+            block_hash,
+            tx_hashes: vec![[0x44_u8; 32]],
+            raw_tx_rlps: vec![raw_tx.clone()],
+            ommer_hashes: Vec::new(),
+            withdrawal_rlp_items: Some(vec![withdrawal_rlp]),
+            withdrawal_count: Some(1),
+            body_available: true,
+            txs_materialized: true,
+            observed_unix_ms: 2,
+        },
+    );
+    novovm_network::set_network_runtime_native_head_snapshot_v1(
+        chain_id,
+        novovm_network::NetworkRuntimeNativeHeadSnapshotV1 {
+            chain_id,
+            phase: novovm_network::NetworkRuntimeNativeSyncPhaseV1::Bodies,
+            peer_count: 1,
+            block_number: 10,
+            block_hash,
+            parent_block_hash: [0xa6_u8; 32],
+            state_root: [0x11_u8; 32],
+            canonical: true,
+            safe: true,
+            finalized: false,
+            reorg_depth_hint: None,
+            body_available: true,
+            source_peer_id: Some(1),
+            observed_unix_ms: 3,
+        },
+    );
+
+    let expected_body = serde_json::json!({
+        "transactions": [format!("0x{}", to_hex(&raw_tx))],
+        "withdrawals": [{
+            "index": "0x1",
+            "validatorIndex": "0x2",
+            "address": format!("0x{}", to_hex(&withdrawal_address)),
+            "amount": "0x3",
+        }],
+    });
+    let (by_hash, changed) = run_gateway_method(
+        &mut router,
+        &mut eth_tx_index,
+        &mut evm_settlement_index_by_id,
+        &mut evm_settlement_index_by_tx,
+        &mut evm_pending_payout_by_settlement,
+        &mut ctx,
+        "engine_getPayloadBodiesByHashV1",
+        &serde_json::json!([[
+            format!("0x{}", to_hex(&block_hash)),
+            format!("0x{}", "55".repeat(32))
+        ]]),
+    )
+    .expect("engine_getPayloadBodiesByHashV1 should read native material");
+    assert!(!changed);
+    assert_eq!(
+        by_hash,
+        serde_json::json!([expected_body.clone(), serde_json::Value::Null])
+    );
+
+    let (by_range, changed) = run_gateway_method(
+        &mut router,
+        &mut eth_tx_index,
+        &mut evm_settlement_index_by_id,
+        &mut evm_settlement_index_by_tx,
+        &mut evm_pending_payout_by_settlement,
+        &mut ctx,
+        "engine_getPayloadBodiesByRangeV1",
+        &serde_json::json!(["0xa", "0x1"]),
+    )
+    .expect("engine_getPayloadBodiesByRangeV1 should read native material");
+    assert!(!changed);
+    assert_eq!(by_range, serde_json::json!([expected_body]));
+
+    let incomplete_hash = [0xb7_u8; 32];
+    novovm_network::set_network_runtime_native_body_snapshot_v1(
+        chain_id,
+        novovm_network::NetworkRuntimeNativeBodySnapshotV1 {
+            chain_id,
+            number: 11,
+            block_hash: incomplete_hash,
+            tx_hashes: vec![[0x45_u8; 32]],
+            raw_tx_rlps: Vec::new(),
+            ommer_hashes: Vec::new(),
+            withdrawal_rlp_items: Some(Vec::new()),
+            withdrawal_count: Some(0),
+            body_available: true,
+            txs_materialized: true,
+            observed_unix_ms: 4,
+        },
+    );
+    novovm_network::set_network_runtime_native_head_snapshot_v1(
+        chain_id,
+        novovm_network::NetworkRuntimeNativeHeadSnapshotV1 {
+            chain_id,
+            phase: novovm_network::NetworkRuntimeNativeSyncPhaseV1::Bodies,
+            peer_count: 1,
+            block_number: 11,
+            block_hash: incomplete_hash,
+            parent_block_hash: block_hash,
+            state_root: [0x12_u8; 32],
+            canonical: true,
+            safe: true,
+            finalized: false,
+            reorg_depth_hint: None,
+            body_available: true,
+            source_peer_id: Some(1),
+            observed_unix_ms: 5,
+        },
+    );
+    let (incomplete, changed) = run_gateway_method(
+        &mut router,
+        &mut eth_tx_index,
+        &mut evm_settlement_index_by_id,
+        &mut evm_settlement_index_by_tx,
+        &mut evm_pending_payout_by_settlement,
+        &mut ctx,
+        "engine_getPayloadBodiesByHashV1",
+        &serde_json::json!([[format!("0x{}", to_hex(&incomplete_hash))]]),
+    )
+    .expect("engine body query should not fail when material is incomplete");
+    assert!(!changed);
+    assert_eq!(incomplete, serde_json::json!([serde_json::Value::Null]));
+
+    let too_large_range = run_gateway_method(
+        &mut router,
+        &mut eth_tx_index,
+        &mut evm_settlement_index_by_id,
+        &mut evm_settlement_index_by_tx,
+        &mut evm_pending_payout_by_settlement,
+        &mut ctx,
+        "engine_getPayloadBodiesByRangeV1",
+        &serde_json::json!(["0x1", "0x401"]),
+    )
+    .expect_err("engine body range must enforce geth-compatible count cap");
+    assert!(too_large_range.to_string().contains("count exceeds"));
+
+    let payload_err = run_gateway_method(
+        &mut router,
+        &mut eth_tx_index,
+        &mut evm_settlement_index_by_id,
+        &mut evm_settlement_index_by_tx,
+        &mut evm_pending_payout_by_settlement,
+        &mut ctx,
+        "engine_getPayloadV3",
+        &serde_json::json!(["0x01"]),
+    )
+    .expect_err("payload production must remain disabled");
+    assert!(payload_err
+        .to_string()
+        .contains("standalone evm control namespace disabled"));
+
+    let _ = fs::remove_dir_all(&spool_dir);
+}
+
+#[test]
 fn novovm_surface_map_lists_mainnet_and_evm_plugin_domains() {
     let backend = GatewayEthTxIndexStoreBackend::Memory;
     let mut router = UnifiedAccountRouter::new();
@@ -758,6 +1002,12 @@ fn novovm_surface_map_lists_mainnet_and_evm_plugin_domains() {
                     && methods
                         .iter()
                         .any(|method| method.as_str() == Some("engine_getClientVersionV1"))
+                    && methods
+                        .iter()
+                        .any(|method| method.as_str() == Some("engine_getPayloadBodiesByHashV1"))
+                    && methods
+                        .iter()
+                        .any(|method| method.as_str() == Some("engine_getPayloadBodiesByRangeV1"))
             })
     }));
     assert!(domains.iter().any(|item| {

@@ -37,7 +37,8 @@ use novovm_exec::{OpsWireOp, OpsWireV1Builder};
 use novovm_network::{
     get_network_runtime_native_sync_status, get_network_runtime_sync_status,
     network_runtime_native_sync_is_active, observe_network_runtime_local_head_max,
-    plan_network_runtime_sync_pull_window,
+    plan_network_runtime_sync_pull_window, snapshot_network_runtime_native_canonical_blocks_v1,
+    NetworkRuntimeNativeCanonicalBlockStateV1,
 };
 use novovm_node::mainline_query::{
     default_mainline_query_store_path, run_mainline_query_from_path,
@@ -6408,6 +6409,8 @@ fn is_gateway_engine_probe_method_v1(method: &str) -> bool {
         "engine_exchangeCapabilities"
             | "engine_exchangeTransitionConfigurationV1"
             | "engine_getClientVersionV1"
+            | "engine_getPayloadBodiesByHashV1"
+            | "engine_getPayloadBodiesByRangeV1"
     )
 }
 
@@ -6486,6 +6489,8 @@ fn gateway_runtime_surface_map_json() -> serde_json::Value {
                     "engine_exchangeCapabilities",
                     "engine_exchangeTransitionConfigurationV1",
                     "engine_getClientVersionV1",
+                    "engine_getPayloadBodiesByHashV1",
+                    "engine_getPayloadBodiesByRangeV1",
                     "txpool_content"
                 ]
             },
@@ -6501,7 +6506,7 @@ fn gateway_runtime_surface_map_json() -> serde_json::Value {
         "notes": [
             "supervm mainnet remains the single host chain",
             "eth_* namespace is compatibility surface provided by evm plugin gateway",
-            "engine_exchangeCapabilities, engine_exchangeTransitionConfigurationV1 and engine_getClientVersionV1 are probe-only Engine API entries and do not declare payload or forkchoice support",
+            "Engine API support is read-only: capabilities, transition configuration, client version, and payload body lookup from native RLPx material; payload production and forkchoice remain disabled",
             "supervm_getEthCanonicalBlockAccessListBy* remains internal plugin diagnostics and does not expose a public eth/71 surface"
         ]
     })
@@ -6538,11 +6543,14 @@ fn gateway_runtime_method_domain_json(method: &str) -> serde_json::Value {
 const GATEWAY_ENGINE_MAINNET_TTD_HEX_V1: &str = "0xc70d808a128d7380000";
 const GATEWAY_ENGINE_ZERO_HASH_V1: &str =
     "0x0000000000000000000000000000000000000000000000000000000000000000";
+const GATEWAY_ENGINE_PAYLOAD_BODIES_RANGE_LIMIT_V1: u64 = 1024;
 
 fn gateway_engine_supported_capabilities_v1() -> serde_json::Value {
     serde_json::json!([
         "engine_exchangeTransitionConfigurationV1",
-        "engine_getClientVersionV1"
+        "engine_getClientVersionV1",
+        "engine_getPayloadBodiesByHashV1",
+        "engine_getPayloadBodiesByRangeV1"
     ])
 }
 
@@ -6629,6 +6637,297 @@ fn gateway_engine_get_client_version_v1(params: &serde_json::Value) -> Result<se
     }]))
 }
 
+fn gateway_hex_quantity_u128_v1(value: u128) -> String {
+    format!("0x{value:x}")
+}
+
+fn gateway_engine_parse_hashes_v1(params: &serde_json::Value) -> Result<Vec<[u8; 32]>> {
+    let raw_hashes = match params {
+        serde_json::Value::Array(items) if items.len() == 1 && items[0].is_array() => {
+            items[0].as_array().ok_or_else(|| {
+                anyhow::anyhow!("engine_getPayloadBodiesByHashV1 requires hash array")
+            })?
+        }
+        serde_json::Value::Array(items) if items.iter().all(|value| value.is_string()) => items,
+        serde_json::Value::Object(map) => {
+            map.get("hashes")
+                .and_then(serde_json::Value::as_array)
+                .ok_or_else(|| anyhow::anyhow!("engine_getPayloadBodiesByHashV1 requires hashes"))?
+        }
+        _ => bail!("engine_getPayloadBodiesByHashV1 requires hash array params"),
+    };
+    raw_hashes
+        .iter()
+        .enumerate()
+        .map(|(idx, value)| {
+            let raw = value
+                .as_str()
+                .ok_or_else(|| anyhow::anyhow!("hashes[{idx}] must be a hex string"))?;
+            vec_to_32(
+                decode_hex_bytes(raw, &format!("hashes[{idx}]"))?.as_slice(),
+                &format!("hashes[{idx}]"),
+            )
+        })
+        .collect()
+}
+
+fn gateway_engine_parse_range_v1(params: &serde_json::Value) -> Result<(u64, u64)> {
+    let (start, count) = match params {
+        serde_json::Value::Array(items) if items.len() == 2 => {
+            let start = value_to_u64(&items[0])
+                .ok_or_else(|| anyhow::anyhow!("engine payload body range start is invalid"))?;
+            let count = value_to_u64(&items[1])
+                .ok_or_else(|| anyhow::anyhow!("engine payload body range count is invalid"))?;
+            (start, count)
+        }
+        serde_json::Value::Object(map) => {
+            let start = map
+                .get("start")
+                .or_else(|| map.get("startBlock"))
+                .and_then(value_to_u64)
+                .ok_or_else(|| anyhow::anyhow!("engine payload body range start is required"))?;
+            let count = map
+                .get("count")
+                .and_then(value_to_u64)
+                .ok_or_else(|| anyhow::anyhow!("engine payload body range count is required"))?;
+            (start, count)
+        }
+        _ => bail!("engine_getPayloadBodiesByRangeV1 requires [start, count] params"),
+    };
+    if start == 0 {
+        bail!("engine_getPayloadBodiesByRangeV1 start must be greater than zero");
+    }
+    if count == 0 {
+        bail!("engine_getPayloadBodiesByRangeV1 count must be greater than zero");
+    }
+    if count > GATEWAY_ENGINE_PAYLOAD_BODIES_RANGE_LIMIT_V1 {
+        bail!(
+            "engine_getPayloadBodiesByRangeV1 count exceeds {}",
+            GATEWAY_ENGINE_PAYLOAD_BODIES_RANGE_LIMIT_V1
+        );
+    }
+    Ok((start, count))
+}
+
+#[derive(Debug, Clone, Copy)]
+enum GatewayRlpItemRefV1<'a> {
+    Bytes(&'a [u8]),
+    List(&'a [u8]),
+}
+
+fn gateway_rlp_decode_payload_len_v1(
+    raw: &[u8],
+    offset: usize,
+    len_of_len: usize,
+) -> Result<(usize, usize)> {
+    if raw.len() < offset.saturating_add(len_of_len) {
+        bail!("rlp length prefix truncated");
+    }
+    let mut len = 0usize;
+    for byte in &raw[offset..offset + len_of_len] {
+        len = len
+            .checked_mul(256)
+            .and_then(|value| value.checked_add(*byte as usize))
+            .ok_or_else(|| anyhow::anyhow!("rlp length overflow"))?;
+    }
+    Ok((len, offset + len_of_len))
+}
+
+fn gateway_rlp_parse_item_ref_v1(raw: &[u8]) -> Result<(GatewayRlpItemRefV1<'_>, usize)> {
+    let Some(prefix) = raw.first().copied() else {
+        bail!("rlp item is empty");
+    };
+    if prefix < 0x80 {
+        return Ok((GatewayRlpItemRefV1::Bytes(&raw[..1]), 1));
+    }
+    if prefix <= 0xb7 {
+        let len = (prefix - 0x80) as usize;
+        let start = 1usize;
+        let end = start.saturating_add(len);
+        if raw.len() < end {
+            bail!("rlp short bytes truncated");
+        }
+        return Ok((GatewayRlpItemRefV1::Bytes(&raw[start..end]), end));
+    }
+    if prefix <= 0xbf {
+        let len_of_len = (prefix - 0xb7) as usize;
+        let (len, start) = gateway_rlp_decode_payload_len_v1(raw, 1, len_of_len)?;
+        let end = start.saturating_add(len);
+        if raw.len() < end {
+            bail!("rlp long bytes truncated");
+        }
+        return Ok((GatewayRlpItemRefV1::Bytes(&raw[start..end]), end));
+    }
+    if prefix <= 0xf7 {
+        let len = (prefix - 0xc0) as usize;
+        let start = 1usize;
+        let end = start.saturating_add(len);
+        if raw.len() < end {
+            bail!("rlp short list truncated");
+        }
+        return Ok((GatewayRlpItemRefV1::List(&raw[start..end]), end));
+    }
+    let len_of_len = (prefix - 0xf7) as usize;
+    let (len, start) = gateway_rlp_decode_payload_len_v1(raw, 1, len_of_len)?;
+    let end = start.saturating_add(len);
+    if raw.len() < end {
+        bail!("rlp long list truncated");
+    }
+    Ok((GatewayRlpItemRefV1::List(&raw[start..end]), end))
+}
+
+fn gateway_rlp_parse_list_items_ref_v1(payload: &[u8]) -> Result<Vec<GatewayRlpItemRefV1<'_>>> {
+    let mut items = Vec::new();
+    let mut offset = 0usize;
+    while offset < payload.len() {
+        let (item, consumed) = gateway_rlp_parse_item_ref_v1(&payload[offset..])?;
+        if consumed == 0 {
+            bail!("rlp parser consumed zero bytes");
+        }
+        offset = offset
+            .checked_add(consumed)
+            .ok_or_else(|| anyhow::anyhow!("rlp offset overflow"))?;
+        items.push(item);
+    }
+    Ok(items)
+}
+
+fn gateway_rlp_bytes_u128_v1(raw: &[u8], field: &str) -> Result<u128> {
+    if raw.len() > 16 {
+        bail!("{field} exceeds u128");
+    }
+    let mut value = 0u128;
+    for byte in raw {
+        value = (value << 8) | (*byte as u128);
+    }
+    Ok(value)
+}
+
+fn gateway_engine_withdrawal_json_v1(raw: &[u8]) -> Result<serde_json::Value> {
+    let (item, consumed) = gateway_rlp_parse_item_ref_v1(raw)?;
+    if consumed != raw.len() {
+        bail!("withdrawal rlp has trailing bytes");
+    }
+    let GatewayRlpItemRefV1::List(payload) = item else {
+        bail!("withdrawal rlp must be a list");
+    };
+    let fields = gateway_rlp_parse_list_items_ref_v1(payload)?;
+    if fields.len() != 4 {
+        bail!("withdrawal rlp field count mismatch");
+    }
+    let field_bytes = |idx: usize, name: &str| -> Result<&[u8]> {
+        match fields[idx] {
+            GatewayRlpItemRefV1::Bytes(bytes) => Ok(bytes),
+            GatewayRlpItemRefV1::List(_) => bail!("withdrawal {name} must be bytes"),
+        }
+    };
+    let index = gateway_rlp_bytes_u128_v1(field_bytes(0, "index")?, "withdrawal.index")?;
+    let validator_index = gateway_rlp_bytes_u128_v1(
+        field_bytes(1, "validatorIndex")?,
+        "withdrawal.validatorIndex",
+    )?;
+    let address = field_bytes(2, "address")?;
+    if address.len() != 20 {
+        bail!("withdrawal address must be 20 bytes");
+    }
+    let amount = gateway_rlp_bytes_u128_v1(field_bytes(3, "amount")?, "withdrawal.amount")?;
+    Ok(serde_json::json!({
+        "index": gateway_hex_quantity_u128_v1(index),
+        "validatorIndex": gateway_hex_quantity_u128_v1(validator_index),
+        "address": format!("0x{}", to_hex(address)),
+        "amount": gateway_hex_quantity_u128_v1(amount),
+    }))
+}
+
+fn gateway_engine_payload_body_from_canonical_block_v1(
+    block: &NetworkRuntimeNativeCanonicalBlockStateV1,
+) -> serde_json::Value {
+    if !block.canonical || !block.body_available {
+        return serde_json::Value::Null;
+    }
+    if block.raw_tx_rlps.len() != block.tx_hashes.len() {
+        return serde_json::Value::Null;
+    }
+    let Some(withdrawal_rlp_items) = block.withdrawal_rlp_items.as_ref() else {
+        return serde_json::Value::Null;
+    };
+    if block
+        .withdrawal_count
+        .is_some_and(|expected| expected != withdrawal_rlp_items.len())
+    {
+        return serde_json::Value::Null;
+    }
+    let withdrawals = match withdrawal_rlp_items
+        .iter()
+        .map(|raw| gateway_engine_withdrawal_json_v1(raw.as_slice()))
+        .collect::<Result<Vec<_>>>()
+    {
+        Ok(items) => items,
+        Err(_) => return serde_json::Value::Null,
+    };
+    let transactions = block
+        .raw_tx_rlps
+        .iter()
+        .map(|raw| serde_json::Value::String(format!("0x{}", to_hex(raw))))
+        .collect::<Vec<_>>();
+    serde_json::json!({
+        "transactions": transactions,
+        "withdrawals": withdrawals,
+    })
+}
+
+fn gateway_engine_canonical_blocks_by_hash_v1(
+    chain_id: u64,
+) -> HashMap<[u8; 32], NetworkRuntimeNativeCanonicalBlockStateV1> {
+    snapshot_network_runtime_native_canonical_blocks_v1(chain_id, 0)
+        .into_iter()
+        .filter(|block| block.canonical)
+        .map(|block| (block.hash, block))
+        .collect()
+}
+
+fn gateway_engine_get_payload_bodies_by_hash_v1(
+    chain_id: u64,
+    params: &serde_json::Value,
+) -> Result<serde_json::Value> {
+    let hashes = gateway_engine_parse_hashes_v1(params)?;
+    let by_hash = gateway_engine_canonical_blocks_by_hash_v1(chain_id);
+    let bodies = hashes
+        .iter()
+        .map(|hash| {
+            by_hash
+                .get(hash)
+                .map(gateway_engine_payload_body_from_canonical_block_v1)
+                .unwrap_or(serde_json::Value::Null)
+        })
+        .collect::<Vec<_>>();
+    Ok(serde_json::Value::Array(bodies))
+}
+
+fn gateway_engine_get_payload_bodies_by_range_v1(
+    chain_id: u64,
+    params: &serde_json::Value,
+) -> Result<serde_json::Value> {
+    let (start, count) = gateway_engine_parse_range_v1(params)?;
+    let by_number = snapshot_network_runtime_native_canonical_blocks_v1(chain_id, 0)
+        .into_iter()
+        .filter(|block| block.canonical)
+        .map(|block| (block.number, block))
+        .collect::<HashMap<_, _>>();
+    let bodies = (0..count)
+        .map(|offset| {
+            let Some(number) = start.checked_add(offset) else {
+                return serde_json::Value::Null;
+            };
+            by_number
+                .get(&number)
+                .map(gateway_engine_payload_body_from_canonical_block_v1)
+                .unwrap_or(serde_json::Value::Null)
+        })
+        .collect::<Vec<_>>();
+    Ok(serde_json::Value::Array(bodies))
+}
+
 fn ensure_eth_no_params(method: &str, params: &serde_json::Value) -> Result<()> {
     match params {
         serde_json::Value::Null => Ok(()),
@@ -6662,6 +6961,14 @@ fn run_gateway_method(
             false,
         )),
         "engine_getClientVersionV1" => Ok((gateway_engine_get_client_version_v1(params)?, false)),
+        "engine_getPayloadBodiesByHashV1" => Ok((
+            gateway_engine_get_payload_bodies_by_hash_v1(ctx.eth_default_chain_id, params)?,
+            false,
+        )),
+        "engine_getPayloadBodiesByRangeV1" => Ok((
+            gateway_engine_get_payload_bodies_by_range_v1(ctx.eth_default_chain_id, params)?,
+            false,
+        )),
         "novovm_getSurfaceMap" | "novovm_get_surface_map" => {
             Ok((gateway_runtime_surface_map_json(), false))
         }
