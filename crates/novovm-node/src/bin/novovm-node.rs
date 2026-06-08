@@ -38,8 +38,14 @@ use novovm_network::{
     resolve_eth_fullnode_canonical_query_method, run_replay_with,
     set_network_runtime_native_body_snapshot_v1, set_network_runtime_native_head_snapshot_v1,
     set_network_runtime_native_header_snapshot_v1, set_network_runtime_native_receipt_snapshot_v1,
-    set_network_runtime_sync_status, snapshot_network_runtime_native_canonical_blocks_v1,
-    snapshot_network_runtime_native_pending_tx_summary_v1, AvailabilityController,
+    set_network_runtime_native_snap_account_snapshot_v1,
+    set_network_runtime_native_snap_account_storage_snapshot_v1,
+    set_network_runtime_native_snap_code_snapshot_v1, set_network_runtime_sync_status,
+    snapshot_network_runtime_native_canonical_blocks_v1,
+    snapshot_network_runtime_native_pending_tx_summary_v1,
+    snapshot_network_runtime_native_snap_account_snapshots_v1,
+    snapshot_network_runtime_native_snap_account_storage_snapshots_v1,
+    snapshot_network_runtime_native_snap_code_snapshots_v1, AvailabilityController,
     AvailabilityDecision, AvailabilityMode, CapabilityReadiness, CapabilityRouteHint,
     EthDiscv4EndpointV1, EthDiscv4NeighborV1, EthFullnodeBudgetHooksV1,
     EthFullnodeNativePeerWorkerConfigV1, EthFullnodeNativePeerWorkerV1, FileQueueStore,
@@ -47,6 +53,8 @@ use novovm_network::{
     MessageType, NetworkRuntimeNativeBodySnapshotV1,
     NetworkRuntimeNativeExecutionBudgetTargetObservationV1, NetworkRuntimeNativeHeadSnapshotV1,
     NetworkRuntimeNativeHeaderSnapshotV1, NetworkRuntimeNativeReceiptSnapshotV1,
+    NetworkRuntimeNativeSnapAccountSnapshotV1, NetworkRuntimeNativeSnapAccountStorageSnapshotV1,
+    NetworkRuntimeNativeSnapCodeSnapshotV1, NetworkRuntimeNativeSnapStorageSlotSnapshotV1,
     NetworkRuntimeNativeSyncPhaseV1, NetworkRuntimeSyncStatus, PluginPeerEndpoint, QueueStore,
     QueuedRequest, Reachability, RelayCapacityClass, RelayClient, RelayHealth, RelayMembership,
     RelayRef, RelayServer, ReplayResult, RouteSelector, RoutingSource, SelectedPath,
@@ -2658,6 +2666,12 @@ struct EthRlpxNativeHeadStoreV1 {
     header: Option<EthRlpxNativeHeaderStoreV1>,
     body: Option<EthRlpxNativeBodyStoreV1>,
     receipt: Option<EthRlpxNativeReceiptStoreV1>,
+    #[serde(default)]
+    snap_accounts: Vec<EthRlpxNativeSnapAccountStoreV1>,
+    #[serde(default)]
+    snap_storages: Vec<EthRlpxNativeSnapAccountStorageStoreV1>,
+    #[serde(default)]
+    snap_codes: Vec<EthRlpxNativeSnapCodeStoreV1>,
     updated_at_unix_ms: u64,
 }
 
@@ -2708,6 +2722,43 @@ struct EthRlpxNativeReceiptStoreV1 {
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+struct EthRlpxNativeSnapAccountStoreV1 {
+    state_root: String,
+    account_hash: String,
+    body_rlp_b64: String,
+    storage_root: Option<String>,
+    code_hash: Option<String>,
+    has_storage: bool,
+    has_code: bool,
+    source_peer_id: Option<u64>,
+    observed_unix_ms: u128,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+struct EthRlpxNativeSnapStorageSlotStoreV1 {
+    hash: String,
+    body_b64: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+struct EthRlpxNativeSnapAccountStorageStoreV1 {
+    state_root: String,
+    account_hash: String,
+    slots: Vec<EthRlpxNativeSnapStorageSlotStoreV1>,
+    proof_nodes_b64: Vec<String>,
+    source_peer_id: Option<u64>,
+    observed_unix_ms: u128,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+struct EthRlpxNativeSnapCodeStoreV1 {
+    code_hash: String,
+    code_b64: String,
+    source_peer_id: Option<u64>,
+    observed_unix_ms: u128,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
 struct EthRlpxNativeHistoryStoreV1 {
     schema: String,
     chain_id: u64,
@@ -2727,6 +2778,8 @@ struct EthRlpxNativeHistoryBlockStoreV1 {
     finalized: bool,
     reorg_depth_hint: Option<u64>,
 }
+
+const ETH_RLPX_NATIVE_HEAD_STORE_SNAP_ITEMS_LIMIT_V1: usize = 64;
 
 fn eth_rlpx_native_head_store_path_v1() -> PathBuf {
     string_env_nonempty("NOVOVM_ETH_RLPX_NATIVE_HEAD_STORE_PATH")
@@ -2776,6 +2829,16 @@ fn eth_rlpx_h256_vec_from_store_v1(values: &[String], field: &str) -> Result<Vec
         .enumerate()
         .map(|(idx, value)| eth_rlpx_hex_h256_from_store_v1(value, &format!("{field}[{idx}]")))
         .collect()
+}
+
+fn eth_rlpx_b64_to_store_v1(value: &[u8]) -> String {
+    base64::engine::general_purpose::STANDARD.encode(value)
+}
+
+fn eth_rlpx_b64_from_store_v1(raw: &str, field: &str) -> Result<Vec<u8>> {
+    base64::engine::general_purpose::STANDARD
+        .decode(raw.as_bytes())
+        .with_context(|| format!("decode {field} failed"))
 }
 
 fn eth_rlpx_native_header_store_from_snapshot_v1(
@@ -2940,6 +3003,146 @@ fn eth_rlpx_native_receipt_snapshot_from_store_v1(
     })
 }
 
+fn eth_rlpx_native_snap_account_store_from_snapshot_v1(
+    snapshot: &NetworkRuntimeNativeSnapAccountSnapshotV1,
+) -> EthRlpxNativeSnapAccountStoreV1 {
+    EthRlpxNativeSnapAccountStoreV1 {
+        state_root: eth_rlpx_hex_h256_to_store_v1(&snapshot.state_root),
+        account_hash: eth_rlpx_hex_h256_to_store_v1(&snapshot.account_hash),
+        body_rlp_b64: eth_rlpx_b64_to_store_v1(snapshot.body_rlp.as_slice()),
+        storage_root: snapshot
+            .storage_root
+            .as_ref()
+            .map(eth_rlpx_hex_h256_to_store_v1),
+        code_hash: snapshot
+            .code_hash
+            .as_ref()
+            .map(eth_rlpx_hex_h256_to_store_v1),
+        has_storage: snapshot.has_storage,
+        has_code: snapshot.has_code,
+        source_peer_id: snapshot.source_peer_id,
+        observed_unix_ms: snapshot.observed_unix_ms,
+    }
+}
+
+fn eth_rlpx_native_snap_account_snapshot_from_store_v1(
+    chain_id: u64,
+    stored: &EthRlpxNativeSnapAccountStoreV1,
+) -> Result<NetworkRuntimeNativeSnapAccountSnapshotV1> {
+    Ok(NetworkRuntimeNativeSnapAccountSnapshotV1 {
+        chain_id,
+        state_root: eth_rlpx_hex_h256_from_store_v1(&stored.state_root, "snap_account.state_root")?,
+        account_hash: eth_rlpx_hex_h256_from_store_v1(
+            &stored.account_hash,
+            "snap_account.account_hash",
+        )?,
+        body_rlp: eth_rlpx_b64_from_store_v1(&stored.body_rlp_b64, "snap_account.body_rlp_b64")?,
+        storage_root: eth_rlpx_optional_h256_from_store_v1(
+            stored.storage_root.as_deref(),
+            "snap_account.storage_root",
+        )?,
+        code_hash: eth_rlpx_optional_h256_from_store_v1(
+            stored.code_hash.as_deref(),
+            "snap_account.code_hash",
+        )?,
+        has_storage: stored.has_storage,
+        has_code: stored.has_code,
+        source_peer_id: stored.source_peer_id,
+        observed_unix_ms: stored.observed_unix_ms,
+    })
+}
+
+fn eth_rlpx_native_snap_storage_store_from_snapshot_v1(
+    snapshot: &NetworkRuntimeNativeSnapAccountStorageSnapshotV1,
+) -> EthRlpxNativeSnapAccountStorageStoreV1 {
+    EthRlpxNativeSnapAccountStorageStoreV1 {
+        state_root: eth_rlpx_hex_h256_to_store_v1(&snapshot.state_root),
+        account_hash: eth_rlpx_hex_h256_to_store_v1(&snapshot.account_hash),
+        slots: snapshot
+            .slots
+            .iter()
+            .map(|slot| EthRlpxNativeSnapStorageSlotStoreV1 {
+                hash: eth_rlpx_hex_h256_to_store_v1(&slot.hash),
+                body_b64: eth_rlpx_b64_to_store_v1(slot.body.as_slice()),
+            })
+            .collect(),
+        proof_nodes_b64: snapshot
+            .proof_nodes
+            .iter()
+            .map(|node| eth_rlpx_b64_to_store_v1(node.as_slice()))
+            .collect(),
+        source_peer_id: snapshot.source_peer_id,
+        observed_unix_ms: snapshot.observed_unix_ms,
+    }
+}
+
+fn eth_rlpx_native_snap_storage_snapshot_from_store_v1(
+    chain_id: u64,
+    stored: &EthRlpxNativeSnapAccountStorageStoreV1,
+) -> Result<NetworkRuntimeNativeSnapAccountStorageSnapshotV1> {
+    let slots = stored
+        .slots
+        .iter()
+        .enumerate()
+        .map(|(idx, slot)| {
+            Ok(NetworkRuntimeNativeSnapStorageSlotSnapshotV1 {
+                hash: eth_rlpx_hex_h256_from_store_v1(
+                    &slot.hash,
+                    &format!("snap_storage.slots[{idx}].hash"),
+                )?,
+                body: eth_rlpx_b64_from_store_v1(
+                    &slot.body_b64,
+                    &format!("snap_storage.slots[{idx}].body_b64"),
+                )?,
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let proof_nodes = stored
+        .proof_nodes_b64
+        .iter()
+        .enumerate()
+        .map(|(idx, node)| {
+            eth_rlpx_b64_from_store_v1(node, &format!("snap_storage.proof_nodes_b64[{idx}]"))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    Ok(NetworkRuntimeNativeSnapAccountStorageSnapshotV1 {
+        chain_id,
+        state_root: eth_rlpx_hex_h256_from_store_v1(&stored.state_root, "snap_storage.state_root")?,
+        account_hash: eth_rlpx_hex_h256_from_store_v1(
+            &stored.account_hash,
+            "snap_storage.account_hash",
+        )?,
+        slots,
+        proof_nodes,
+        source_peer_id: stored.source_peer_id,
+        observed_unix_ms: stored.observed_unix_ms,
+    })
+}
+
+fn eth_rlpx_native_snap_code_store_from_snapshot_v1(
+    snapshot: &NetworkRuntimeNativeSnapCodeSnapshotV1,
+) -> EthRlpxNativeSnapCodeStoreV1 {
+    EthRlpxNativeSnapCodeStoreV1 {
+        code_hash: eth_rlpx_hex_h256_to_store_v1(&snapshot.code_hash),
+        code_b64: eth_rlpx_b64_to_store_v1(snapshot.code.as_slice()),
+        source_peer_id: snapshot.source_peer_id,
+        observed_unix_ms: snapshot.observed_unix_ms,
+    }
+}
+
+fn eth_rlpx_native_snap_code_snapshot_from_store_v1(
+    chain_id: u64,
+    stored: &EthRlpxNativeSnapCodeStoreV1,
+) -> Result<NetworkRuntimeNativeSnapCodeSnapshotV1> {
+    Ok(NetworkRuntimeNativeSnapCodeSnapshotV1 {
+        chain_id,
+        code_hash: eth_rlpx_hex_h256_from_store_v1(&stored.code_hash, "snap_code.code_hash")?,
+        code: eth_rlpx_b64_from_store_v1(&stored.code_b64, "snap_code.code_b64")?,
+        source_peer_id: stored.source_peer_id,
+        observed_unix_ms: stored.observed_unix_ms,
+    })
+}
+
 fn write_eth_rlpx_native_head_store_v1(
     path: &Path,
     chain_id: u64,
@@ -2959,6 +3162,25 @@ fn write_eth_rlpx_native_head_store_v1(
         .map(|status| status.highest_block)
         .unwrap_or(current_block)
         .max(current_block);
+    let snap_accounts = snapshot_network_runtime_native_snap_account_snapshots_v1(
+        chain_id,
+        header.state_root,
+        ETH_RLPX_NATIVE_HEAD_STORE_SNAP_ITEMS_LIMIT_V1,
+    );
+    let snap_storages = snapshot_network_runtime_native_snap_account_storage_snapshots_v1(
+        chain_id,
+        header.state_root,
+        ETH_RLPX_NATIVE_HEAD_STORE_SNAP_ITEMS_LIMIT_V1,
+    );
+    let snap_code_hashes = snap_accounts
+        .iter()
+        .filter_map(|account| account.code_hash)
+        .collect::<Vec<_>>();
+    let snap_codes = snapshot_network_runtime_native_snap_code_snapshots_v1(
+        chain_id,
+        snap_code_hashes.as_slice(),
+        ETH_RLPX_NATIVE_HEAD_STORE_SNAP_ITEMS_LIMIT_V1,
+    );
     let stored = EthRlpxNativeHeadStoreV1 {
         schema: "supervm-eth-rlpx-native-head-store/v1".to_string(),
         chain_id,
@@ -2971,6 +3193,18 @@ fn write_eth_rlpx_native_head_store_v1(
         receipt: receipt
             .filter(|receipt| receipt.number == header.number && receipt.block_hash == header.hash)
             .map(eth_rlpx_native_receipt_store_from_snapshot_v1),
+        snap_accounts: snap_accounts
+            .iter()
+            .map(eth_rlpx_native_snap_account_store_from_snapshot_v1)
+            .collect(),
+        snap_storages: snap_storages
+            .iter()
+            .map(eth_rlpx_native_snap_storage_store_from_snapshot_v1)
+            .collect(),
+        snap_codes: snap_codes
+            .iter()
+            .map(eth_rlpx_native_snap_code_store_from_snapshot_v1)
+            .collect(),
         updated_at_unix_ms: now_unix_ms(),
     };
     if let Some(parent) = path.parent() {
@@ -3046,6 +3280,24 @@ fn restore_eth_rlpx_native_head_store_v1(stored: &EthRlpxNativeHeadStoreV1) -> R
         .transpose()?;
     if let Some(receipt) = receipt.as_ref() {
         set_network_runtime_native_receipt_snapshot_v1(stored.chain_id, receipt.clone());
+    }
+    for account in &stored.snap_accounts {
+        let snapshot =
+            eth_rlpx_native_snap_account_snapshot_from_store_v1(stored.chain_id, account)?;
+        if snapshot.state_root == header.state_root {
+            set_network_runtime_native_snap_account_snapshot_v1(stored.chain_id, snapshot);
+        }
+    }
+    for storage in &stored.snap_storages {
+        let snapshot =
+            eth_rlpx_native_snap_storage_snapshot_from_store_v1(stored.chain_id, storage)?;
+        if snapshot.state_root == header.state_root {
+            set_network_runtime_native_snap_account_storage_snapshot_v1(stored.chain_id, snapshot);
+        }
+    }
+    for code in &stored.snap_codes {
+        let snapshot = eth_rlpx_native_snap_code_snapshot_from_store_v1(stored.chain_id, code)?;
+        set_network_runtime_native_snap_code_snapshot_v1(stored.chain_id, snapshot);
     }
     set_network_runtime_native_head_snapshot_v1(
         stored.chain_id,
@@ -4104,6 +4356,49 @@ mod mainline_evm_cli_tests {
             source_peer_id: Some(42),
             observed_unix_ms: now_unix_ms() as u128,
         };
+        let account_hash = [0x99_u8; 32];
+        let storage_root = [0xaa_u8; 32];
+        let code_hash = [0xbb_u8; 32];
+        set_network_runtime_native_snap_account_snapshot_v1(
+            chain_id,
+            NetworkRuntimeNativeSnapAccountSnapshotV1 {
+                chain_id,
+                state_root: header.state_root,
+                account_hash,
+                body_rlp: vec![0xf8, 0x01, 0x80],
+                storage_root: Some(storage_root),
+                code_hash: Some(code_hash),
+                has_storage: true,
+                has_code: true,
+                source_peer_id: Some(42),
+                observed_unix_ms: now_unix_ms() as u128,
+            },
+        );
+        set_network_runtime_native_snap_account_storage_snapshot_v1(
+            chain_id,
+            NetworkRuntimeNativeSnapAccountStorageSnapshotV1 {
+                chain_id,
+                state_root: header.state_root,
+                account_hash,
+                slots: vec![NetworkRuntimeNativeSnapStorageSlotSnapshotV1 {
+                    hash: [0xcc_u8; 32],
+                    body: vec![0x01, 0x02],
+                }],
+                proof_nodes: vec![vec![0xde, 0xad]],
+                source_peer_id: Some(42),
+                observed_unix_ms: now_unix_ms() as u128,
+            },
+        );
+        set_network_runtime_native_snap_code_snapshot_v1(
+            chain_id,
+            NetworkRuntimeNativeSnapCodeSnapshotV1 {
+                chain_id,
+                code_hash,
+                code: vec![0x60, 0x00],
+                source_peer_id: Some(42),
+                observed_unix_ms: now_unix_ms() as u128,
+            },
+        );
 
         write_eth_rlpx_native_head_store_v1(
             &path,
@@ -4139,31 +4434,68 @@ mod mainline_evm_cli_tests {
                 .map(|receipt| receipt.receipts_available),
             Some(true)
         );
+        assert_eq!(loaded.snap_accounts.len(), 1);
+        assert_eq!(loaded.snap_storages.len(), 1);
+        assert_eq!(loaded.snap_codes.len(), 1);
 
-        let restored = restore_eth_rlpx_native_head_store_v1(&loaded).expect("restore native head");
+        let restore_chain_id = chain_id + 10_000;
+        let mut restore_store = loaded.clone();
+        restore_store.chain_id = restore_chain_id;
+        let restored =
+            restore_eth_rlpx_native_head_store_v1(&restore_store).expect("restore native head");
         assert_eq!(restored, 77);
         assert_eq!(
-            get_network_runtime_native_header_snapshot_v1(chain_id)
+            get_network_runtime_native_header_snapshot_v1(restore_chain_id)
                 .expect("runtime header")
                 .number,
             77
         );
         assert!(
-            get_network_runtime_native_body_snapshot_v1(chain_id)
+            get_network_runtime_native_body_snapshot_v1(restore_chain_id)
                 .expect("runtime body")
                 .body_available
         );
         assert_eq!(
-            get_network_runtime_native_receipt_snapshot_v1(chain_id, header_hash)
+            get_network_runtime_native_receipt_snapshot_v1(restore_chain_id, header_hash)
                 .expect("runtime receipt")
                 .raw_receipts,
             vec![vec![1, 2, 3]]
         );
         assert_eq!(
-            get_network_runtime_native_head_snapshot_v1(chain_id)
+            get_network_runtime_native_head_snapshot_v1(restore_chain_id)
                 .expect("runtime head")
                 .phase,
             NetworkRuntimeNativeSyncPhaseV1::State
+        );
+        assert_eq!(
+            novovm_network::get_network_runtime_native_snap_account_snapshot_v1(
+                restore_chain_id,
+                header.state_root,
+                account_hash
+            )
+            .expect("restored snap account")
+            .body_rlp,
+            vec![0xf8, 0x01, 0x80]
+        );
+        assert_eq!(
+            novovm_network::get_network_runtime_native_snap_account_storage_snapshot_v1(
+                restore_chain_id,
+                header.state_root,
+                account_hash
+            )
+            .expect("restored snap storage")
+            .slots[0]
+                .body,
+            vec![0x01, 0x02]
+        );
+        assert_eq!(
+            novovm_network::get_network_runtime_native_snap_code_snapshot_v1(
+                restore_chain_id,
+                code_hash
+            )
+            .expect("restored snap code")
+            .code,
+            vec![0x60, 0x00]
         );
 
         let _ = fs::remove_file(path);

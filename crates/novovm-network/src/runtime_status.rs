@@ -2636,6 +2636,33 @@ pub fn get_network_runtime_native_snap_account_snapshot_v1(
         .and_then(|accounts| accounts.get(&(state_root, account_hash)).cloned())
 }
 
+#[must_use]
+pub fn snapshot_network_runtime_native_snap_account_snapshots_v1(
+    chain_id: u64,
+    state_root: [u8; 32],
+    limit: usize,
+) -> Vec<NetworkRuntimeNativeSnapAccountSnapshotV1> {
+    if limit == 0 {
+        return Vec::new();
+    }
+    let Ok(guard) = runtime_native_snap_account_snapshot_map().lock() else {
+        return Vec::new();
+    };
+    let mut out = guard
+        .get(&chain_id)
+        .map(|accounts| {
+            accounts
+                .values()
+                .filter(|snapshot| snapshot.state_root == state_root)
+                .cloned()
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    out.sort_by(|a, b| a.account_hash.cmp(&b.account_hash));
+    out.truncate(limit);
+    out
+}
+
 pub fn set_network_runtime_native_snap_account_storage_snapshot_v1(
     chain_id: u64,
     snapshot: NetworkRuntimeNativeSnapAccountStorageSnapshotV1,
@@ -2667,6 +2694,33 @@ pub fn get_network_runtime_native_snap_account_storage_snapshot_v1(
         .and_then(|accounts| accounts.get(&(state_root, account_hash)).cloned())
 }
 
+#[must_use]
+pub fn snapshot_network_runtime_native_snap_account_storage_snapshots_v1(
+    chain_id: u64,
+    state_root: [u8; 32],
+    limit: usize,
+) -> Vec<NetworkRuntimeNativeSnapAccountStorageSnapshotV1> {
+    if limit == 0 {
+        return Vec::new();
+    }
+    let Ok(guard) = runtime_native_snap_storage_snapshot_map().lock() else {
+        return Vec::new();
+    };
+    let mut out = guard
+        .get(&chain_id)
+        .map(|accounts| {
+            accounts
+                .values()
+                .filter(|snapshot| snapshot.state_root == state_root)
+                .cloned()
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    out.sort_by(|a, b| a.account_hash.cmp(&b.account_hash));
+    out.truncate(limit);
+    out
+}
+
 pub fn set_network_runtime_native_snap_code_snapshot_v1(
     chain_id: u64,
     snapshot: NetworkRuntimeNativeSnapCodeSnapshotV1,
@@ -2695,6 +2749,38 @@ pub fn get_network_runtime_native_snap_code_snapshot_v1(
     guard
         .get(&chain_id)
         .and_then(|codes| codes.get(&code_hash).cloned())
+}
+
+#[must_use]
+pub fn snapshot_network_runtime_native_snap_code_snapshots_v1(
+    chain_id: u64,
+    code_hashes: &[[u8; 32]],
+    limit: usize,
+) -> Vec<NetworkRuntimeNativeSnapCodeSnapshotV1> {
+    if limit == 0 || code_hashes.is_empty() {
+        return Vec::new();
+    }
+    let Ok(guard) = runtime_native_snap_code_snapshot_map().lock() else {
+        return Vec::new();
+    };
+    let Some(codes) = guard.get(&chain_id) else {
+        return Vec::new();
+    };
+    let mut seen = HashSet::new();
+    let mut out = Vec::new();
+    for hash in code_hashes {
+        if !seen.insert(*hash) {
+            continue;
+        }
+        if let Some(snapshot) = codes.get(hash) {
+            out.push(snapshot.clone());
+            if out.len() >= limit {
+                break;
+            }
+        }
+    }
+    out.sort_by(|a, b| a.code_hash.cmp(&b.code_hash));
+    out
 }
 
 pub fn set_network_runtime_native_head_snapshot_v1(
@@ -4274,6 +4360,15 @@ mod tests {
         if let Ok(mut heads) = runtime_native_head_snapshot_map().lock() {
             heads.remove(&chain_id);
         }
+        if let Ok(mut accounts) = runtime_native_snap_account_snapshot_map().lock() {
+            accounts.remove(&chain_id);
+        }
+        if let Ok(mut storages) = runtime_native_snap_storage_snapshot_map().lock() {
+            storages.remove(&chain_id);
+        }
+        if let Ok(mut codes) = runtime_native_snap_code_snapshot_map().lock() {
+            codes.remove(&chain_id);
+        }
         if let Ok(mut observed) = runtime_sync_observed_state_map().lock() {
             observed.local_head_by_chain.remove(&chain_id);
             observed.peer_height_by_chain.remove(&chain_id);
@@ -5392,6 +5487,102 @@ mod tests {
         assert!(head.safe);
         assert_eq!(runtime.current_block, 88);
         assert_eq!(runtime.highest_block, 88);
+    }
+
+    #[test]
+    fn native_snap_snapshot_lists_filter_by_state_root_and_limit() {
+        let chain_id = 2043_u64;
+        clear_runtime_sync_status_for_test(chain_id);
+        let state_root = [0x21; 32];
+        let other_state_root = [0x22; 32];
+        let account_a = [0x01; 32];
+        let account_b = [0x02; 32];
+        let code_hash = [0x03; 32];
+
+        set_network_runtime_native_snap_account_snapshot_v1(
+            chain_id,
+            NetworkRuntimeNativeSnapAccountSnapshotV1 {
+                chain_id,
+                state_root,
+                account_hash: account_b,
+                body_rlp: vec![0xb2],
+                storage_root: None,
+                code_hash: Some(code_hash),
+                has_storage: false,
+                has_code: true,
+                source_peer_id: Some(2),
+                observed_unix_ms: 2,
+            },
+        );
+        set_network_runtime_native_snap_account_snapshot_v1(
+            chain_id,
+            NetworkRuntimeNativeSnapAccountSnapshotV1 {
+                chain_id,
+                state_root,
+                account_hash: account_a,
+                body_rlp: vec![0xa1],
+                storage_root: None,
+                code_hash: None,
+                has_storage: false,
+                has_code: false,
+                source_peer_id: Some(1),
+                observed_unix_ms: 1,
+            },
+        );
+        set_network_runtime_native_snap_account_snapshot_v1(
+            chain_id,
+            NetworkRuntimeNativeSnapAccountSnapshotV1 {
+                chain_id,
+                state_root: other_state_root,
+                account_hash: [0xff; 32],
+                body_rlp: vec![0xff],
+                storage_root: None,
+                code_hash: None,
+                has_storage: false,
+                has_code: false,
+                source_peer_id: None,
+                observed_unix_ms: 3,
+            },
+        );
+        set_network_runtime_native_snap_account_storage_snapshot_v1(
+            chain_id,
+            NetworkRuntimeNativeSnapAccountStorageSnapshotV1 {
+                chain_id,
+                state_root,
+                account_hash: account_b,
+                slots: vec![NetworkRuntimeNativeSnapStorageSlotSnapshotV1 {
+                    hash: [0x04; 32],
+                    body: vec![0x05],
+                }],
+                proof_nodes: Vec::new(),
+                source_peer_id: Some(2),
+                observed_unix_ms: 4,
+            },
+        );
+        set_network_runtime_native_snap_code_snapshot_v1(
+            chain_id,
+            NetworkRuntimeNativeSnapCodeSnapshotV1 {
+                chain_id,
+                code_hash,
+                code: vec![0x60, 0x00],
+                source_peer_id: Some(2),
+                observed_unix_ms: 5,
+            },
+        );
+
+        let accounts =
+            snapshot_network_runtime_native_snap_account_snapshots_v1(chain_id, state_root, 1);
+        assert_eq!(accounts.len(), 1);
+        assert_eq!(accounts[0].account_hash, account_a);
+        let storages = snapshot_network_runtime_native_snap_account_storage_snapshots_v1(
+            chain_id, state_root, 8,
+        );
+        assert_eq!(storages.len(), 1);
+        assert_eq!(storages[0].account_hash, account_b);
+        let codes =
+            snapshot_network_runtime_native_snap_code_snapshots_v1(chain_id, &[code_hash], 8);
+        assert_eq!(codes.len(), 1);
+        assert_eq!(codes[0].code, vec![0x60, 0x00]);
     }
 
     #[test]
