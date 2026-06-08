@@ -3219,6 +3219,53 @@ fn validate_snap_account_range_empty_proof_no_more_v1(
     Ok(())
 }
 
+fn validate_snap_account_range_origin_value_v1(
+    chain_id: u64,
+    source_peer_id: u64,
+    root: [u8; 32],
+    origin: [u8; 32],
+    response: &EthRlpxAccountRangeResponseV1,
+) -> Result<(), NetworkError> {
+    let Some(first) = response.accounts.first() else {
+        return Ok(());
+    };
+    let proven = match eth_rlpx_mpt_verify_proof_value_v1(
+        root,
+        origin.as_slice(),
+        response.proof.as_slice(),
+    ) {
+        Ok(value) => value,
+        Err(err) if snap_proof_value_missing_is_tolerated_v1(err.as_str()) => return Ok(()),
+        Err(err) => {
+            let reason = format!(
+                "snap_account_range_origin_value_verify_failed:origin=0x{} err={}",
+                hex32_v1(&origin),
+                err
+            );
+            observe_network_runtime_eth_peer_decode_failure_v1(
+                chain_id,
+                source_peer_id,
+                reason.as_str(),
+            );
+            return Err(NetworkError::Decode(reason));
+        }
+    };
+    if proven.is_some() && first.hash != origin {
+        let reason = format!(
+            "snap_account_range_origin_value_omitted:origin=0x{} first=0x{}",
+            hex32_v1(&origin),
+            hex32_v1(&first.hash)
+        );
+        observe_network_runtime_eth_peer_decode_failure_v1(
+            chain_id,
+            source_peer_id,
+            reason.as_str(),
+        );
+        return Err(NetworkError::Decode(reason));
+    }
+    Ok(())
+}
+
 fn validate_snap_storage_ranges_empty_proof_no_more_v1(
     chain_id: u64,
     source_peer_id: u64,
@@ -3334,6 +3381,7 @@ fn validate_snap_account_range_proof_semantics_v1(
         origin,
         response,
     )?;
+    validate_snap_account_range_origin_value_v1(chain_id, source_peer_id, root, origin, response)?;
     validate_snap_account_range_proof_values_v1(chain_id, source_peer_id, root, response)
 }
 
@@ -11658,8 +11706,32 @@ mod tests {
         )
         .expect("AccountRange proof value must match response account body");
 
+        let account_omits_origin_value = crate::EthRlpxAccountRangeResponseV1 {
+            request_id: 13,
+            accounts: vec![crate::EthRlpxSnapAccountDataV1 {
+                hash: [0x14; 32],
+                body_rlp: valid_slim_account.clone(),
+            }],
+            proof: vec![account_leaf_node.clone()],
+        };
+        let account_omits_origin_err = validate_snap_account_range_proof_semantics_v1(
+            9_943,
+            1,
+            Some(account_leaf_root),
+            leaf_account_hash,
+            [0xffu8; 32],
+            &account_omits_origin_value,
+        )
+        .expect_err("AccountRange must include origin when proof proves origin value");
+        assert!(
+            account_omits_origin_err
+                .to_string()
+                .contains("snap_account_range_origin_value_omitted"),
+            "{account_omits_origin_err}"
+        );
+
         let empty_account_with_more_right_proof = crate::EthRlpxAccountRangeResponseV1 {
-            request_id: 12,
+            request_id: 14,
             accounts: Vec::new(),
             proof: vec![account_leaf_node.clone()],
         };
@@ -11680,7 +11752,7 @@ mod tests {
         );
 
         let account_with_mismatched_leaf_proof = crate::EthRlpxAccountRangeResponseV1 {
-            request_id: 11,
+            request_id: 15,
             accounts: vec![crate::EthRlpxSnapAccountDataV1 {
                 hash: leaf_account_hash,
                 body_rlp: vec![0xc4, 0x02, 0x80, 0x80, 0x80],
