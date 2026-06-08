@@ -15,7 +15,10 @@ use rand::rngs::OsRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use sha3::Digest;
-use std::{collections::BTreeMap, sync::OnceLock};
+use std::{
+    collections::{BTreeMap, HashMap},
+    sync::OnceLock,
+};
 
 type EthRlpxHmacSha256V1 = Hmac<sha2::Sha256>;
 type EthRlpxAes128CtrV1 = ctr::Ctr128BE<Aes128>;
@@ -265,6 +268,27 @@ fn eth_rlpx_mpt_hex_prefix_encode_v1(path_nibbles: &[u8], is_leaf: bool) -> Vec<
     out
 }
 
+fn eth_rlpx_mpt_hex_prefix_decode_v1(encoded: &[u8]) -> Result<(Vec<u8>, bool), String> {
+    if encoded.is_empty() {
+        return Err("rlpx_mpt_hex_prefix_empty".to_string());
+    }
+    let flag = encoded[0] >> 4;
+    if flag > 3 {
+        return Err("rlpx_mpt_hex_prefix_flag_invalid".to_string());
+    }
+    let is_leaf = flag >= 2;
+    let odd = flag % 2 == 1;
+    let mut out = Vec::with_capacity(encoded.len() * 2);
+    if odd {
+        out.push(encoded[0] & 0x0f);
+    }
+    for byte in encoded.iter().skip(1) {
+        out.push(byte >> 4);
+        out.push(byte & 0x0f);
+    }
+    Ok((out, is_leaf))
+}
+
 fn eth_rlpx_mpt_common_prefix_len_v1(keys: &[Vec<u8>]) -> usize {
     if keys.is_empty() {
         return 0;
@@ -398,6 +422,151 @@ fn eth_rlpx_mpt_root_from_kv_pairs_v1(kv_pairs: &[(Vec<u8>, Vec<u8>)]) -> [u8; 3
         return ETH_RLPX_EMPTY_TRIE_ROOT_V1;
     };
     eth_rlpx_keccak256_bytes_v1(&eth_rlpx_mpt_node_rlp_v1(&root))
+}
+
+#[must_use]
+pub fn eth_rlpx_mpt_single_leaf_node_rlp_v1(key: &[u8], value: &[u8]) -> Vec<u8> {
+    eth_rlpx_encode_list_v1(&[
+        eth_rlpx_encode_bytes_v1(&eth_rlpx_mpt_hex_prefix_encode_v1(
+            eth_rlpx_mpt_nibbles_from_key_v1(key).as_slice(),
+            true,
+        )),
+        eth_rlpx_encode_bytes_v1(value),
+    ])
+}
+
+fn eth_rlpx_mpt_proof_db_v1(proof: &[Vec<u8>]) -> Result<HashMap<[u8; 32], Vec<u8>>, String> {
+    let mut db = HashMap::new();
+    for (idx, node) in proof.iter().enumerate() {
+        let Ok((item, consumed)) = eth_rlpx_parse_item_v1(node.as_slice()) else {
+            return Err(format!("rlpx_mpt_proof_node_rlp_invalid:idx={idx}"));
+        };
+        if consumed != node.len() || !matches!(item, EthRlpxRlpItemV1::List(_)) {
+            return Err(format!("rlpx_mpt_proof_node_not_list:idx={idx}"));
+        }
+        db.insert(eth_rlpx_keccak256_bytes_v1(node.as_slice()), node.clone());
+    }
+    Ok(db)
+}
+
+fn eth_rlpx_mpt_child_node_rlp_v1(
+    child: EthRlpxRlpItemV1<'_>,
+    child_raw: &[u8],
+    proof_db: &HashMap<[u8; 32], Vec<u8>>,
+) -> Result<Option<Vec<u8>>, String> {
+    match child {
+        EthRlpxRlpItemV1::List(_) => Ok(Some(child_raw.to_vec())),
+        EthRlpxRlpItemV1::Bytes(bytes) if bytes.is_empty() => Ok(None),
+        EthRlpxRlpItemV1::Bytes(bytes) if bytes.len() == 32 => {
+            let mut hash = [0u8; 32];
+            hash.copy_from_slice(bytes);
+            proof_db
+                .get(&hash)
+                .cloned()
+                .map(Some)
+                .ok_or_else(|| "rlpx_mpt_proof_node_missing".to_string())
+        }
+        EthRlpxRlpItemV1::Bytes(_) => Err("rlpx_mpt_child_ref_invalid".to_string()),
+    }
+}
+
+fn eth_rlpx_mpt_verify_node_value_v1(
+    node_rlp: &[u8],
+    key_nibbles: &[u8],
+    proof_db: &HashMap<[u8; 32], Vec<u8>>,
+    depth: usize,
+) -> Result<Option<Vec<u8>>, String> {
+    if depth
+        > key_nibbles
+            .len()
+            .saturating_add(proof_db.len())
+            .saturating_add(16)
+    {
+        return Err("rlpx_mpt_proof_depth_exceeded".to_string());
+    }
+    let (item, consumed) = eth_rlpx_parse_item_v1(node_rlp)?;
+    if consumed != node_rlp.len() {
+        return Err("rlpx_mpt_node_trailing".to_string());
+    }
+    let EthRlpxRlpItemV1::List(payload) = item else {
+        return Err("rlpx_mpt_node_not_list".to_string());
+    };
+    let fields = eth_rlpx_parse_list_items_v1(payload)?;
+    let raw_fields = eth_rlpx_split_list_raw_items_v1(payload)?;
+    match fields.len() {
+        2 => {
+            let EthRlpxRlpItemV1::Bytes(path_encoded) = fields[0] else {
+                return Err("rlpx_mpt_short_path_not_bytes".to_string());
+            };
+            let (path, is_leaf) = eth_rlpx_mpt_hex_prefix_decode_v1(path_encoded)?;
+            if !key_nibbles.starts_with(path.as_slice()) {
+                return Ok(None);
+            }
+            let rest = &key_nibbles[path.len()..];
+            if is_leaf {
+                if !rest.is_empty() {
+                    return Ok(None);
+                }
+                let EthRlpxRlpItemV1::Bytes(value) = fields[1] else {
+                    return Err("rlpx_mpt_leaf_value_not_bytes".to_string());
+                };
+                return Ok(Some(value.to_vec()));
+            }
+            let Some(child_rlp) =
+                eth_rlpx_mpt_child_node_rlp_v1(fields[1], raw_fields[1], proof_db)?
+            else {
+                return Ok(None);
+            };
+            eth_rlpx_mpt_verify_node_value_v1(child_rlp.as_slice(), rest, proof_db, depth + 1)
+        }
+        17 => {
+            if key_nibbles.is_empty() {
+                let EthRlpxRlpItemV1::Bytes(value) = fields[16] else {
+                    return Err("rlpx_mpt_branch_value_not_bytes".to_string());
+                };
+                if value.is_empty() {
+                    return Ok(None);
+                }
+                return Ok(Some(value.to_vec()));
+            }
+            let child_idx = key_nibbles[0] as usize;
+            if child_idx >= 16 {
+                return Err("rlpx_mpt_key_nibble_invalid".to_string());
+            }
+            let Some(child_rlp) =
+                eth_rlpx_mpt_child_node_rlp_v1(fields[child_idx], raw_fields[child_idx], proof_db)?
+            else {
+                return Ok(None);
+            };
+            eth_rlpx_mpt_verify_node_value_v1(
+                child_rlp.as_slice(),
+                &key_nibbles[1..],
+                proof_db,
+                depth + 1,
+            )
+        }
+        _ => Err("rlpx_mpt_node_arity_invalid".to_string()),
+    }
+}
+
+pub fn eth_rlpx_mpt_verify_proof_value_v1(
+    root: [u8; 32],
+    key: &[u8],
+    proof: &[Vec<u8>],
+) -> Result<Option<Vec<u8>>, String> {
+    if root == ETH_RLPX_EMPTY_TRIE_ROOT_V1 {
+        return Ok(None);
+    }
+    let proof_db = eth_rlpx_mpt_proof_db_v1(proof)?;
+    let root_node = proof_db
+        .get(&root)
+        .ok_or_else(|| "rlpx_mpt_proof_root_missing".to_string())?;
+    eth_rlpx_mpt_verify_node_value_v1(
+        root_node.as_slice(),
+        eth_rlpx_mpt_nibbles_from_key_v1(key).as_slice(),
+        &proof_db,
+        0,
+    )
 }
 
 fn eth_rlpx_transactions_root_from_raw_tx_slices_v1(raw_txs: &[&[u8]]) -> [u8; 32] {
@@ -4019,6 +4188,24 @@ mod tests {
         assert_eq!(response.request_id, 99);
         assert_eq!(response.accounts, vec![account]);
         assert_eq!(response.proof, vec![vec![0x01, 0x02]]);
+    }
+
+    #[test]
+    fn mpt_proof_value_verifies_single_leaf_and_absence_v1() {
+        let key = [0x34; 32];
+        let value = vec![0xc4, 0x01, 0x80, 0x80, 0x80];
+        let node = eth_rlpx_mpt_single_leaf_node_rlp_v1(&key, value.as_slice());
+        let root = eth_rlpx_trie_node_hash_v1(node.as_slice());
+
+        let proven = eth_rlpx_mpt_verify_proof_value_v1(root, &key, &[node.clone()])
+            .expect("verify single leaf")
+            .expect("leaf value");
+        assert_eq!(proven, value);
+
+        let missing_key = [0x35; 32];
+        let missing = eth_rlpx_mpt_verify_proof_value_v1(root, &missing_key, &[node])
+            .expect("verify missing key");
+        assert!(missing.is_none());
     }
 
     #[test]
