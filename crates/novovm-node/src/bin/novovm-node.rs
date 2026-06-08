@@ -1731,7 +1731,7 @@ fn eth_dns_query_txt_udp_once_v1(server: &str, name: &str, timeout_ms: u64) -> R
     eth_dns_parse_txt_response_v1(&response[..len], query_id)
 }
 
-fn eth_dns_query_txt_udp_v1(name: &str) -> Result<Vec<String>> {
+fn eth_dns_query_txt_udp_v1(name: &str, deadline: Option<Instant>) -> Result<Vec<String>> {
     if !bool_env_default_true("NOVOVM_ETH_DNS_DISCOVERY_UDP_FALLBACK_ENABLED") {
         return Ok(Vec::new());
     }
@@ -1743,6 +1743,12 @@ fn eth_dns_query_txt_udp_v1(name: &str) -> Result<Vec<String>> {
     );
     let mut last_error = None;
     for server in eth_dns_udp_servers_v1() {
+        let Some(timeout) =
+            eth_discovery_remaining_timeout_v1(deadline, Duration::from_millis(timeout_ms))
+        else {
+            break;
+        };
+        let timeout_ms = timeout.as_millis().max(1).min(u64::MAX as u128) as u64;
         match eth_dns_query_txt_udp_once_v1(server.as_str(), name, timeout_ms) {
             Ok(records) if !records.is_empty() => return Ok(records),
             Ok(_) => {}
@@ -1756,11 +1762,16 @@ fn eth_dns_query_txt_udp_v1(name: &str) -> Result<Vec<String>> {
     }
 }
 
-fn eth_dns_query_txt_v1(agent: &ureq::Agent, doh_url: &str, name: &str) -> Result<Vec<String>> {
+fn eth_dns_query_txt_v1(
+    agent: &ureq::Agent,
+    doh_url: &str,
+    name: &str,
+    deadline: Option<Instant>,
+) -> Result<Vec<String>> {
     match eth_dns_query_txt_doh_v1(agent, doh_url, name) {
         Ok(records) if !records.is_empty() => Ok(records),
-        Ok(_) => eth_dns_query_txt_udp_v1(name),
-        Err(doh_err) => match eth_dns_query_txt_udp_v1(name) {
+        Ok(_) => eth_dns_query_txt_udp_v1(name, deadline),
+        Err(doh_err) => match eth_dns_query_txt_udp_v1(name, deadline) {
             Ok(records) if !records.is_empty() => Ok(records),
             Ok(_) => Err(doh_err),
             Err(udp_err) => Err(udp_err).with_context(|| format!("doh_fallback_failed:{doh_err}")),
@@ -1919,6 +1930,37 @@ fn eth_rlpx_apply_public_sync_batch_defaults_v1(
     budget.sync_pull_bodies_batch = budget.sync_pull_bodies_batch.min(bodies_batch.max(1));
 }
 
+fn eth_rlpx_peer_discovery_total_timeout_v1() -> Duration {
+    Duration::from_millis(u64_env_clamped(
+        "NOVOVM_ETH_RLPX_PEER_DISCOVERY_TOTAL_TIMEOUT_MS",
+        30_000,
+        1_000,
+        180_000,
+    ))
+}
+
+fn eth_discovery_deadline_expired_v1(deadline: Option<Instant>) -> bool {
+    deadline.is_some_and(|deadline| Instant::now() >= deadline)
+}
+
+fn eth_discovery_remaining_timeout_v1(
+    deadline: Option<Instant>,
+    fallback: Duration,
+) -> Option<Duration> {
+    if fallback.is_zero() {
+        return None;
+    }
+    let Some(deadline) = deadline else {
+        return Some(fallback);
+    };
+    let remaining = deadline.checked_duration_since(Instant::now())?;
+    if remaining.is_zero() {
+        None
+    } else {
+        Some(remaining.min(fallback))
+    }
+}
+
 fn eth_parse_enode_endpoints_v1(raw: &str, limit: usize) -> Vec<PluginPeerEndpoint> {
     raw.split([',', ';', '\n', '\r', '\t', ' '])
         .map(str::trim)
@@ -2073,14 +2115,25 @@ fn eth_discv4_discover_peer_endpoints_v1(
     chain_id: u64,
     limit: usize,
     verbose: bool,
+    deadline: Option<Instant>,
 ) -> Vec<PluginPeerEndpoint> {
     if limit == 0 || chain_id != 1 || !bool_env_default_true("NOVOVM_ETH_DISCV4_DISCOVERY_ENABLED")
     {
         return Vec::new();
     }
+    if eth_discovery_deadline_expired_v1(deadline) {
+        if verbose {
+            println!("eth_discv4_discovery_budget_exhausted: endpoints=0");
+        }
+        return Vec::new();
+    }
 
-    let timeout_ms = u64_env_clamped("NOVOVM_ETH_DISCV4_DISCOVERY_TIMEOUT_MS", 1_500, 100, 10_000);
-    let timeout = Duration::from_millis(timeout_ms);
+    let configured_timeout = Duration::from_millis(u64_env_clamped(
+        "NOVOVM_ETH_DISCV4_DISCOVERY_TIMEOUT_MS",
+        1_500,
+        100,
+        10_000,
+    ));
     let max_bootnodes = usize_env_allow_zero(
         "NOVOVM_ETH_DISCV4_DISCOVERY_BOOTNODES",
         ETH_RLPX_MAINNET_BOOTNODES_V1.len(),
@@ -2101,6 +2154,9 @@ fn eth_discv4_discover_peer_endpoints_v1(
         if endpoints.len() >= limit {
             break;
         }
+        let Some(timeout) = eth_discovery_remaining_timeout_v1(deadline, configured_timeout) else {
+            break;
+        };
         let Some(boot_endpoint) = eth_parse_enode_endpoints_v1(bootnode, 1).into_iter().next()
         else {
             continue;
@@ -2193,7 +2249,10 @@ fn eth_discv4_discover_peer_endpoints_v1(
         let mut neighbor_packets = 0usize;
         let mut neighbor_parse_errors = 0usize;
         let mut findnode_attempts = 0usize;
-        while findnode_attempts < lookup_attempts_per_bootnode && endpoints.len() < limit {
+        while findnode_attempts < lookup_attempts_per_bootnode
+            && endpoints.len() < limit
+            && !eth_discovery_deadline_expired_v1(deadline)
+        {
             findnode_attempts = findnode_attempts.saturating_add(1);
             let target = eth_discv4_random_lookup_target_v1();
             let Ok(findnode) =
@@ -2204,9 +2263,14 @@ fn eth_discv4_discover_peer_endpoints_v1(
             if socket.send_to(findnode.as_slice(), remote_addr).is_err() {
                 break;
             }
+            let Some(findnode_timeout) =
+                eth_discovery_remaining_timeout_v1(deadline, configured_timeout)
+            else {
+                break;
+            };
             let endpoints_before_attempt = endpoints.len();
             let mut answered_ping_during_findnode = false;
-            eth_discv4_recv_until_timeout_v1(&socket, timeout, |packet, from| {
+            eth_discv4_recv_until_timeout_v1(&socket, findnode_timeout, |packet, from| {
                 if from != remote_addr {
                     return false;
                 }
@@ -2273,8 +2337,15 @@ fn eth_dns_discover_peer_endpoints_v1(
     chain_id: u64,
     limit: usize,
     verbose: bool,
+    deadline: Option<Instant>,
 ) -> Vec<PluginPeerEndpoint> {
     if limit == 0 || !bool_env_default_true("NOVOVM_ETH_DNS_DISCOVERY_ENABLED") {
+        return Vec::new();
+    }
+    if eth_discovery_deadline_expired_v1(deadline) {
+        if verbose {
+            println!("eth_dns_discovery_budget_exhausted: queries=0 endpoints=0");
+        }
         return Vec::new();
     }
     let Some(root_spec) = eth_dns_discovery_root_for_chain_v1(chain_id) else {
@@ -2295,16 +2366,28 @@ fn eth_dns_discover_peer_endpoints_v1(
         usize_env_allow_zero("NOVOVM_ETH_DNS_DISCOVERY_MAX_QUERIES", max_queries_default)
             .unwrap_or(max_queries_default)
             .clamp(1, 1024);
-    let total_timeout = Duration::from_millis(u64_env_clamped(
+    let configured_total_timeout = Duration::from_millis(u64_env_clamped(
         "NOVOVM_ETH_DNS_DISCOVERY_TOTAL_TIMEOUT_MS",
         12_000,
         100,
         120_000,
     ));
+    let Some(total_timeout) =
+        eth_discovery_remaining_timeout_v1(deadline, configured_total_timeout)
+    else {
+        if verbose {
+            println!(
+                "eth_dns_discovery_budget_exhausted: root={} queries=0 endpoints=0 timeout_ms=0",
+                root
+            );
+        }
+        return Vec::new();
+    };
+    let query_timeout =
+        eth_discovery_remaining_timeout_v1(deadline, Duration::from_millis(timeout_ms))
+            .unwrap_or_else(|| Duration::from_millis(1));
     let started = Instant::now();
-    let agent = ureq::AgentBuilder::new()
-        .timeout(Duration::from_millis(timeout_ms))
-        .build();
+    let agent = ureq::AgentBuilder::new().timeout(query_timeout).build();
 
     let mut endpoints = Vec::<PluginPeerEndpoint>::new();
     let mut seen_endpoints = HashSet::<String>::new();
@@ -2320,7 +2403,7 @@ fn eth_dns_discover_peer_endpoints_v1(
         if queries >= max_queries || endpoints.len() >= limit {
             break;
         }
-        if started.elapsed() >= total_timeout {
+        if started.elapsed() >= total_timeout || eth_discovery_deadline_expired_v1(deadline) {
             if verbose {
                 println!(
                     "eth_dns_discovery_budget_exhausted: root={} queries={} endpoints={} timeout_ms={}",
@@ -2337,15 +2420,16 @@ fn eth_dns_discover_peer_endpoints_v1(
             continue;
         }
         queries = queries.saturating_add(1);
-        let records = match eth_dns_query_txt_v1(&agent, doh_url.as_str(), domain.as_str()) {
-            Ok(records) => records,
-            Err(err) => {
-                if verbose {
-                    println!("eth_dns_discovery_skip: domain={domain} error={err}");
+        let records =
+            match eth_dns_query_txt_v1(&agent, doh_url.as_str(), domain.as_str(), deadline) {
+                Ok(records) => records,
+                Err(err) => {
+                    if verbose {
+                        println!("eth_dns_discovery_skip: domain={domain} error={err}");
+                    }
+                    continue;
                 }
-                continue;
-            }
-        };
+            };
         for record in records {
             if let Some(expected_hash) = item.expected_hash.as_deref() {
                 if !eth_dns_enrtree_record_hash_matches_v1(record.as_str(), expected_hash) {
@@ -2430,6 +2514,7 @@ fn eth_rlpx_sync_peer_endpoints_v1(
     candidate_limit: usize,
     verbose: bool,
 ) -> Vec<PluginPeerEndpoint> {
+    let discovery_deadline = Instant::now().checked_add(eth_rlpx_peer_discovery_total_timeout_v1());
     let mut endpoints = Vec::<PluginPeerEndpoint>::new();
     let mut seen = HashSet::<String>::new();
     if let Some(raw) = string_env_nonempty("NOVOVM_ETH_RLPX_ENODES")
@@ -2439,23 +2524,35 @@ fn eth_rlpx_sync_peer_endpoints_v1(
             eth_push_peer_endpoint_v1(&mut endpoints, &mut seen, endpoint, candidate_limit);
         }
     }
-    if endpoints.len() < candidate_limit {
+    if endpoints.len() < candidate_limit && !eth_discovery_deadline_expired_v1(discovery_deadline) {
         for endpoint in eth_dns_discover_peer_endpoints_v1(
             chain_id,
             candidate_limit.saturating_sub(endpoints.len()),
             verbose,
+            discovery_deadline,
         ) {
             eth_push_peer_endpoint_v1(&mut endpoints, &mut seen, endpoint, candidate_limit);
         }
     }
-    if endpoints.len() < candidate_limit {
+    if endpoints.len() < candidate_limit && !eth_discovery_deadline_expired_v1(discovery_deadline) {
         for endpoint in eth_discv4_discover_peer_endpoints_v1(
             chain_id,
             candidate_limit.saturating_sub(endpoints.len()),
             verbose,
+            discovery_deadline,
         ) {
             eth_push_peer_endpoint_v1(&mut endpoints, &mut seen, endpoint, candidate_limit);
         }
+    }
+    if verbose
+        && endpoints.len() < candidate_limit
+        && eth_discovery_deadline_expired_v1(discovery_deadline)
+    {
+        println!(
+            "eth_rlpx_peer_discovery_budget_exhausted: candidates={} limit={}",
+            endpoints.len(),
+            candidate_limit
+        );
     }
     if endpoints.len() < candidate_limit {
         for endpoint in eth_parse_enode_endpoints_v1(
@@ -3893,6 +3990,31 @@ mod mainline_evm_cli_tests {
         eth_rlpx_apply_public_sync_batch_defaults_v1(&mut budget, 128, 64);
         assert_eq!(budget.sync_pull_headers_batch, 32);
         assert_eq!(budget.sync_pull_bodies_batch, 8);
+    }
+
+    #[test]
+    fn eth_rlpx_peer_discovery_deadline_caps_phase_timeout_v1() {
+        let fallback = Duration::from_millis(500);
+        assert_eq!(
+            eth_discovery_remaining_timeout_v1(None, fallback),
+            Some(fallback)
+        );
+        assert!(eth_discovery_remaining_timeout_v1(None, Duration::from_millis(0)).is_none());
+
+        let expired = Instant::now()
+            .checked_sub(Duration::from_millis(1))
+            .expect("expired instant");
+        assert!(eth_discovery_deadline_expired_v1(Some(expired)));
+        assert!(eth_discovery_remaining_timeout_v1(Some(expired), fallback).is_none());
+
+        let future = Instant::now()
+            .checked_add(Duration::from_millis(1_000))
+            .expect("future instant");
+        let capped = eth_discovery_remaining_timeout_v1(Some(future), Duration::from_secs(30))
+            .expect("capped timeout");
+        assert!(capped <= Duration::from_secs(30));
+        assert!(capped <= Duration::from_millis(1_000));
+        assert!(capped > Duration::from_millis(0));
     }
 
     #[test]
