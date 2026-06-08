@@ -1776,12 +1776,16 @@ fn eth_dns_query_txt_udp_v1(name: &str, deadline: Option<Instant>) -> Result<Vec
 }
 
 fn eth_dns_query_txt_v1(
-    agent: &ureq::Agent,
     doh_url: &str,
     name: &str,
     deadline: Option<Instant>,
+    fallback_timeout: Duration,
 ) -> Result<Vec<String>> {
-    match eth_dns_query_txt_doh_v1(agent, doh_url, name) {
+    let Some(query_timeout) = eth_discovery_remaining_timeout_v1(deadline, fallback_timeout) else {
+        return Ok(Vec::new());
+    };
+    let agent = ureq::AgentBuilder::new().timeout(query_timeout).build();
+    match eth_dns_query_txt_doh_v1(&agent, doh_url, name) {
         Ok(records) if !records.is_empty() => Ok(records),
         Ok(_) => eth_dns_query_txt_udp_v1(name, deadline),
         Err(doh_err) => match eth_dns_query_txt_udp_v1(name, deadline) {
@@ -2408,11 +2412,7 @@ fn eth_dns_discover_peer_endpoints_v1(
         }
         return Vec::new();
     };
-    let query_timeout =
-        eth_discovery_remaining_timeout_v1(deadline, Duration::from_millis(timeout_ms))
-            .unwrap_or_else(|| Duration::from_millis(1));
     let started = Instant::now();
-    let agent = ureq::AgentBuilder::new().timeout(query_timeout).build();
 
     let mut endpoints = Vec::<PluginPeerEndpoint>::new();
     let mut seen_endpoints = HashSet::<String>::new();
@@ -2445,16 +2445,20 @@ fn eth_dns_discover_peer_endpoints_v1(
             continue;
         }
         queries = queries.saturating_add(1);
-        let records =
-            match eth_dns_query_txt_v1(&agent, doh_url.as_str(), domain.as_str(), deadline) {
-                Ok(records) => records,
-                Err(err) => {
-                    if verbose {
-                        println!("eth_dns_discovery_skip: domain={domain} error={err}");
-                    }
-                    continue;
+        let records = match eth_dns_query_txt_v1(
+            doh_url.as_str(),
+            domain.as_str(),
+            deadline,
+            Duration::from_millis(timeout_ms),
+        ) {
+            Ok(records) => records,
+            Err(err) => {
+                if verbose {
+                    println!("eth_dns_discovery_skip: domain={domain} error={err}");
                 }
-            };
+                continue;
+            }
+        };
         for record in records {
             if let Some(expected_hash) = item.expected_hash.as_deref() {
                 if !eth_dns_enrtree_record_hash_matches_v1(record.as_str(), expected_hash) {
@@ -4458,6 +4462,21 @@ mod mainline_evm_cli_tests {
         assert!(capped <= Duration::from_secs(30));
         assert!(capped <= Duration::from_millis(1_000));
         assert!(capped > Duration::from_millis(0));
+    }
+
+    #[test]
+    fn eth_dns_query_txt_respects_expired_discovery_deadline_v1() {
+        let expired = Instant::now()
+            .checked_sub(Duration::from_millis(1))
+            .expect("expired instant");
+        let records = eth_dns_query_txt_v1(
+            "http://127.0.0.1:9/dns-query",
+            "all.mainnet.ethdisco.net",
+            Some(expired),
+            Duration::from_secs(30),
+        )
+        .expect("expired deadline should skip network query");
+        assert!(records.is_empty());
     }
 
     #[test]

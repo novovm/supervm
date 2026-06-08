@@ -113,6 +113,7 @@ cargo test -p novovm-node eth_rlpx_public_sync_batch_defaults_are_conservative_v
 cargo test -p novovm-node eth_rlpx_peer_refresh_plan -- --nocapture
 cargo test -p novovm-node eth_peer_endpoint_refresh_merge_does_not_shrink_pool_v1 -- --nocapture
 cargo test -p novovm-node eth_rlpx_peer_discovery_deadline_caps_phase_timeout_v1 -- --nocapture
+cargo test -p novovm-node eth_dns_query_txt_respects_expired_discovery_deadline_v1 -- --nocapture
 cargo test -p novovm-node eth_discv4_findnode_continues_when_lookup_adds_candidates_v1 -- --nocapture
 cargo test -p novovm-network evm_protocol_observable_equivalence_network_rlpx_reorg_gate_v3 -- --nocapture
 cargo test -p novovm-network evm_protocol_observable_equivalence_network_rlpx_bal_response_gate_v3 -- --nocapture
@@ -163,7 +164,7 @@ $env:NOVOVM_NODE_MODE='eth_rlpx_sync'; $env:NOVOVM_ETH_RLPX_TICKS='8'; cargo run
 
 重启恢复时，latest native head store 和 native history window store 会按已持久化材料恢复 runtime head phase：只有 header 为 `Headers`，已有 body 为 `Bodies`，已有 receipt 为 `State`；这避免已验证 receipts 的 head 在重启后退回 header 阶段重复同步。
 
-DNS discovery 启动阶段现在受 `NOVOVM_ETH_DNS_DISCOVERY_TOTAL_TIMEOUT_MS` 总预算约束，默认 DNS tree max queries 随候选目标收敛到 `min(max(limit*4,16),128)`；这避免产品入口为了扩充候选池在 DoH/UDP fallback 上长期阻塞，短 live run 已验证可按 tick 正常退出，但公网 peer 饱和仍会导致未拿到 ready peer。
+DNS discovery 启动阶段现在受 `NOVOVM_ETH_DNS_DISCOVERY_TOTAL_TIMEOUT_MS` 总预算约束，默认 DNS tree max queries 随候选目标收敛到 `min(max(limit*4,16),128)`；DoH TXT 每次查询都会按剩余 global discovery deadline 重新设置 timeout，deadline 已过则直接跳过网络查询。这避免产品入口为了扩充候选池在 DoH/UDP fallback 上长期阻塞；128-candidate bounded probe 在 10.5s 内进入 tick 并拿到 ready peer，但公网 peer 饱和仍会导致后续同步不稳定。
 
 Public RLPx 默认能力面现在与当前本地 geth `ProtocolVersions = [eth/71, eth/70, eth/69]` 对齐，只广告 `eth/69,70,71` + `snap/1`；旧 `eth/66-68` peer 不再协商进入短 Status payload 语义，而是作为 capability mismatch 进入 decode-failure 生命周期过滤；pristine peer 的短 Status/capability mismatch 会立即 permanent reject，Decode 包装的 TCP timeout 会归入 timeout 生命周期。8 tick live run 未再出现 `rlpx_eth_status_fields_short`，但公网 `too_many_peers`/EOF/TCP timeout 仍未封口。
 
