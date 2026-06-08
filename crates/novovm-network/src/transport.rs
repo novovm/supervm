@@ -2348,6 +2348,9 @@ fn build_eth_fullnode_native_missing_body_pending_v1(
     chain_id: u64,
 ) -> Option<EthFullnodeNativePendingBodyHeaderV1> {
     let header = get_network_runtime_native_header_snapshot_v1(chain_id)?;
+    if !eth_fullnode_native_header_can_recover_missing_body_v1(&header) {
+        return None;
+    }
     if get_network_runtime_native_body_snapshot_v1(chain_id).is_some_and(|body| {
         body.block_hash == header.hash && body.body_available && body.txs_materialized
     }) {
@@ -2363,6 +2366,20 @@ fn build_eth_fullnode_native_missing_body_pending_v1(
         tx_count: None,
         withdrawal_count: None,
     })
+}
+
+fn eth_fullnode_native_header_can_recover_missing_body_v1(
+    header: &crate::runtime_status::NetworkRuntimeNativeHeaderSnapshotV1,
+) -> bool {
+    let looks_like_minimal_operator_anchor = header.source_peer_id.is_none()
+        && header.transactions_root == crate::eth_rlpx_empty_trie_root_v1()
+        && header.receipts_root == crate::eth_rlpx_empty_trie_root_v1()
+        && header.ommers_hash == crate::eth_rlpx_empty_ommers_hash_v1()
+        && header.logs_bloom.is_empty()
+        && header.gas_limit.is_none()
+        && header.gas_used.is_none()
+        && header.timestamp.is_none();
+    !looks_like_minimal_operator_anchor
 }
 
 fn dispatch_eth_fullnode_native_rlpx_missing_body_recovery_v1(
@@ -7781,6 +7798,84 @@ mod tests {
             build_eth_fullnode_native_missing_body_pending_v1(chain_id).is_none(),
             "available body must not be requested again"
         );
+    }
+
+    #[test]
+    fn rlpx_minimal_trusted_pivot_skips_body_recovery_and_pulls_next_headers() {
+        let chain_id = 9_926_106_u64;
+        let local = NodeId(1_300_107);
+        let pivot_number = 25_271_223_u64;
+        let pivot_hash = [0xc8; 32];
+        let parent_hash = [0xb7; 32];
+        let state_root = [0xff; 32];
+        let empty_root = crate::eth_rlpx_empty_trie_root_v1();
+        clear_network_runtime_native_snapshots_for_chain_v1(chain_id);
+
+        set_network_runtime_native_header_snapshot_v1(
+            chain_id,
+            crate::runtime_status::NetworkRuntimeNativeHeaderSnapshotV1 {
+                chain_id,
+                number: pivot_number,
+                hash: pivot_hash,
+                parent_hash,
+                state_root,
+                transactions_root: empty_root,
+                receipts_root: empty_root,
+                ommers_hash: crate::eth_rlpx_empty_ommers_hash_v1(),
+                logs_bloom: Vec::new(),
+                gas_limit: None,
+                gas_used: None,
+                timestamp: None,
+                base_fee_per_gas: None,
+                withdrawals_root: None,
+                blob_gas_used: None,
+                excess_blob_gas: None,
+                block_access_list_hash: None,
+                source_peer_id: None,
+                observed_unix_ms: 1,
+            },
+        );
+        set_network_runtime_native_head_snapshot_v1(
+            chain_id,
+            crate::runtime_status::NetworkRuntimeNativeHeadSnapshotV1 {
+                chain_id,
+                phase: crate::runtime_status::NetworkRuntimeNativeSyncPhaseV1::State,
+                peer_count: 1,
+                block_number: pivot_number,
+                block_hash: pivot_hash,
+                parent_block_hash: parent_hash,
+                state_root,
+                canonical: true,
+                safe: false,
+                finalized: false,
+                reorg_depth_hint: None,
+                body_available: false,
+                source_peer_id: None,
+                observed_unix_ms: 2,
+            },
+        );
+        set_network_runtime_sync_status(
+            chain_id,
+            NetworkRuntimeSyncStatus {
+                peer_count: 1,
+                starting_block: pivot_number,
+                current_block: pivot_number,
+                highest_block: pivot_number + 64,
+            },
+        );
+
+        assert!(
+            build_eth_fullnode_native_missing_body_pending_v1(chain_id).is_none(),
+            "minimal trusted pivot is a sync anchor, not a body validation target"
+        );
+        let request = build_eth_fullnode_native_sync_request_v1(local, chain_id)
+            .expect("header pull after trusted pivot");
+        match request {
+            ProtocolMessage::EvmNative(EvmNativeMessage::GetBlockHeaders {
+                start_height, ..
+            }) => assert_eq!(start_height, pivot_number + 1),
+            other => panic!("expected GetBlockHeaders after trusted pivot, got {other:?}"),
+        }
     }
 
     #[test]
