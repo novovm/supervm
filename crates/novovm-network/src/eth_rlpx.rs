@@ -18,6 +18,7 @@ use sha3::Digest;
 use std::{
     collections::{BTreeMap, HashMap},
     sync::OnceLock,
+    time::{Duration, Instant},
 };
 
 type EthRlpxHmacSha256V1 = Hmac<sha2::Sha256>;
@@ -2022,7 +2023,7 @@ pub fn eth_rlpx_hello_profile_v1() -> String {
         .ok()
         .map(|raw| raw.trim().to_ascii_lowercase())
         .filter(|raw| !raw.is_empty())
-        .unwrap_or_else(|| "supervm".to_string())
+        .unwrap_or_else(|| "geth".to_string())
 }
 
 pub fn eth_rlpx_capabilities_for_hello_profile_v1(profile: &str) -> Vec<EthRlpxCapabilityV1> {
@@ -4298,13 +4299,33 @@ fn eth_rlpx_is_timeout_like_v1(err: &str) -> bool {
         || err.contains("没有反应")
 }
 
-fn eth_rlpx_read_exact_with_partial_v1<R: std::io::Read>(
+fn eth_rlpx_partial_read_timeout_v1() -> Duration {
+    let timeout_ms = std::env::var("NOVOVM_ETH_RLPX_PARTIAL_READ_TIMEOUT_MS")
+        .ok()
+        .and_then(|raw| raw.trim().parse::<u64>().ok())
+        .unwrap_or(5_000)
+        .clamp(50, 60_000);
+    Duration::from_millis(timeout_ms)
+}
+
+fn eth_rlpx_read_exact_with_partial_deadline_v1<R: std::io::Read>(
     stream: &mut R,
     buf: &mut [u8],
     error_prefix: &str,
+    partial_read_timeout: Duration,
 ) -> Result<(), String> {
     let mut read_total = 0usize;
+    let mut partial_started = None::<Instant>;
     while read_total < buf.len() {
+        if let Some(started) = partial_started {
+            if started.elapsed() >= partial_read_timeout {
+                return Err(format!(
+                    "{error_prefix}:partial_read_timeout read={read_total}/{} deadline_ms={}",
+                    buf.len(),
+                    partial_read_timeout.as_millis()
+                ));
+            }
+        }
         match stream.read(&mut buf[read_total..]) {
             Ok(0) => {
                 return Err(format!(
@@ -4313,6 +4334,9 @@ fn eth_rlpx_read_exact_with_partial_v1<R: std::io::Read>(
                 ));
             }
             Ok(read_now) => {
+                if read_total == 0 && read_now > 0 {
+                    partial_started = Some(Instant::now());
+                }
                 read_total += read_now;
             }
             Err(err) => {
@@ -4328,6 +4352,19 @@ fn eth_rlpx_read_exact_with_partial_v1<R: std::io::Read>(
         }
     }
     Ok(())
+}
+
+fn eth_rlpx_read_exact_with_partial_v1<R: std::io::Read>(
+    stream: &mut R,
+    buf: &mut [u8],
+    error_prefix: &str,
+) -> Result<(), String> {
+    eth_rlpx_read_exact_with_partial_deadline_v1(
+        stream,
+        buf,
+        error_prefix,
+        eth_rlpx_partial_read_timeout_v1(),
+    )
 }
 
 pub fn eth_rlpx_write_wire_frame_v1<W: std::io::Write>(
@@ -4668,6 +4705,39 @@ mod tests {
     use k256::elliptic_curve::sec1::ToEncodedPoint;
     use std::net::{TcpListener, TcpStream};
     use std::thread;
+
+    struct PartialWouldBlockReaderV1 {
+        emitted: bool,
+    }
+
+    impl std::io::Read for PartialWouldBlockReaderV1 {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            if !self.emitted {
+                self.emitted = true;
+                buf[0] = 0xaa;
+                return Ok(1);
+            }
+            Err(std::io::Error::new(
+                std::io::ErrorKind::WouldBlock,
+                "operation would block",
+            ))
+        }
+    }
+
+    #[test]
+    fn partial_frame_read_timeout_stops_infinite_timeout_retry_v1() {
+        let mut reader = PartialWouldBlockReaderV1 { emitted: false };
+        let mut buf = [0u8; 4];
+        let err = eth_rlpx_read_exact_with_partial_deadline_v1(
+            &mut reader,
+            &mut buf,
+            "rlpx_frame_body_read_failed",
+            Duration::ZERO,
+        )
+        .expect_err("partial read deadline must stop retry loop");
+        assert!(err.contains("rlpx_frame_body_read_failed:partial_read_timeout"));
+        assert!(err.contains("read=1/4"));
+    }
 
     #[test]
     fn default_capabilities_include_latest_eth_versions() {

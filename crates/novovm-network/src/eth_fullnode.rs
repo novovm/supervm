@@ -1880,6 +1880,16 @@ fn eth_peer_decode_failure_is_incompatible_status_v1(reason_name: &str) -> bool 
         || reason.contains("eth_capability_not_found")
 }
 
+fn eth_peer_disconnect_is_permanent_protocol_reject_v1(
+    state: &EthPeerSessionState,
+    reason_code: Option<u64>,
+) -> bool {
+    reason_code == Some(0x10)
+        && state.header_response_count == 0
+        && state.body_response_count == 0
+        && state.sync_contribution_count == 0
+}
+
 fn eth_peer_failure_count_for_class_v1(
     state: &EthPeerSessionState,
     class: EthPeerFailureClassV1,
@@ -3917,9 +3927,6 @@ pub fn mark_network_runtime_eth_peer_session_closed_v1(chain_id: u64, peer_id: u
         .entry(peer_id)
         .or_insert_with(|| eth_peer_session_state_default_v1(now));
     entry.session_ready = false;
-    if !entry.permanently_rejected {
-        entry.cooldown_until_unix_ms = 0;
-    }
     eth_peer_mark_progress_stage_v1(entry, EthPeerLifecycleProgressStageV1::Discovered, now);
 }
 
@@ -3968,19 +3975,19 @@ pub fn observe_network_runtime_eth_peer_disconnect_v1(
     let entry = chain
         .entry(peer_id)
         .or_insert_with(|| eth_peer_session_state_default_v1(now));
-    let cooldown_ms = eth_peer_failure_cooldown_ms_v1(
-        entry,
-        EthPeerFailureClassV1::Disconnect,
-        reason_code,
-        None,
-    );
+    let permanent = eth_peer_disconnect_is_permanent_protocol_reject_v1(entry, reason_code);
+    let cooldown_ms = if permanent {
+        0
+    } else {
+        eth_peer_failure_cooldown_ms_v1(entry, EthPeerFailureClassV1::Disconnect, reason_code, None)
+    };
     eth_peer_record_failure_v1(
         entry,
         EthPeerFailureClassV1::Disconnect,
         reason_code,
         eth_rlpx_disconnect_reason_name_v1(reason_code.unwrap_or(u64::MAX)),
         cooldown_ms,
-        false,
+        permanent,
         now,
     );
 }
@@ -4557,6 +4564,35 @@ mod tests {
     }
 
     #[test]
+    fn session_closed_does_not_clear_cooldown_after_capacity_reject() {
+        let chain_id = 99_160_316_u64;
+        let peer_id = 316;
+        let _ =
+            upsert_network_runtime_eth_peer_session(chain_id, peer_id, &[69, 70], &[1], Some(512))
+                .expect("ready session");
+
+        observe_network_runtime_eth_peer_disconnect_v1(chain_id, peer_id, Some(0x04));
+        let after_reject =
+            snapshot_network_runtime_eth_peer_sessions_for_peers_v1(chain_id, &[NodeId(peer_id)])
+                [0]
+            .clone();
+        assert!(after_reject.cooldown_until_unix_ms > eth_peer_now_unix_ms_v1());
+        let previous_cooldown = after_reject.cooldown_until_unix_ms;
+
+        mark_network_runtime_eth_peer_session_closed_v1(chain_id, peer_id);
+
+        let after_close =
+            snapshot_network_runtime_eth_peer_sessions_for_peers_v1(chain_id, &[NodeId(peer_id)])
+                [0]
+            .clone();
+        assert_eq!(after_close.cooldown_until_unix_ms, previous_cooldown);
+        assert_eq!(
+            after_close.lifecycle_stage,
+            EthPeerLifecycleStageV1::Cooldown
+        );
+    }
+
+    #[test]
     fn lifecycle_summary_includes_discovered_failure_and_ready_states() {
         let chain_id = 99_160_315_u64;
         let peer_a = NodeId(301);
@@ -4684,6 +4720,59 @@ mod tests {
         );
         assert!(snapshot.successful_sessions > 0);
         assert_eq!(snapshot.decode_failure_count, 2);
+    }
+
+    #[test]
+    fn subprotocol_error_disconnect_rejects_peer_without_sync_contribution() {
+        let chain_id = 99_160_319_u64;
+        let peer = NodeId(319);
+        let _ = upsert_network_runtime_eth_peer_session(
+            chain_id,
+            peer.0,
+            &[69, 70, 71],
+            &[1],
+            Some(512),
+        )
+        .expect("status-ok session");
+
+        observe_network_runtime_eth_peer_disconnect_v1(chain_id, peer.0, Some(0x10));
+
+        let snapshot =
+            snapshot_network_runtime_eth_peer_sessions_for_peers_v1(chain_id, &[peer])[0].clone();
+        assert_eq!(snapshot.disconnect_count, 1);
+        assert_eq!(snapshot.last_disconnect_reason_code, Some(0x10));
+        assert!(snapshot.permanently_rejected);
+        assert_eq!(
+            snapshot.lifecycle_stage,
+            EthPeerLifecycleStageV1::PermanentlyRejected
+        );
+    }
+
+    #[test]
+    fn subprotocol_error_disconnect_keeps_prior_sync_contributor_retryable() {
+        let chain_id = 99_160_321_u64;
+        let peer = NodeId(321);
+        let _ = upsert_network_runtime_eth_peer_session(
+            chain_id,
+            peer.0,
+            &[69, 70, 71],
+            &[1],
+            Some(512),
+        )
+        .expect("status-ok session");
+        observe_network_runtime_eth_peer_header_success_v1(chain_id, peer.0, 512);
+
+        observe_network_runtime_eth_peer_disconnect_v1(chain_id, peer.0, Some(0x10));
+
+        let snapshot =
+            snapshot_network_runtime_eth_peer_sessions_for_peers_v1(chain_id, &[peer])[0].clone();
+        assert_eq!(snapshot.disconnect_count, 1);
+        assert_eq!(snapshot.last_disconnect_reason_code, Some(0x10));
+        assert!(!snapshot.permanently_rejected);
+        assert_ne!(
+            snapshot.lifecycle_stage,
+            EthPeerLifecycleStageV1::PermanentlyRejected
+        );
     }
 
     #[test]

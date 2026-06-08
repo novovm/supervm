@@ -2513,7 +2513,10 @@ fn recompute_runtime_sync_status_from_observed(
     }
     status.current_block = local_head.unwrap_or(status.current_block);
     status.highest_block = if let Some(remote_best) = effective_remote_best {
-        status.current_block.max(remote_best)
+        status
+            .highest_block
+            .max(status.current_block)
+            .max(remote_best)
     } else if has_peer_observation_history {
         status.current_block
     } else {
@@ -4730,6 +4733,33 @@ mod tests {
         assert_eq!(status_after_remove.peer_count, 0);
         assert_eq!(status_after_remove.current_block, 120);
         assert_eq!(status_after_remove.highest_block, 120);
+    }
+
+    #[test]
+    fn lagging_peer_observation_does_not_lower_known_highest() {
+        let chain_id = 2026_1_u64;
+        clear_runtime_sync_status_for_test(chain_id);
+        set_network_runtime_sync_status(
+            chain_id,
+            NetworkRuntimeSyncStatus {
+                peer_count: 1,
+                starting_block: 900,
+                current_block: 900,
+                highest_block: 25_274_604,
+            },
+        );
+
+        register_network_runtime_peer(chain_id, 10).expect("register lagging peer");
+        observe_network_runtime_peer_head(chain_id, 10, 23_935_723).expect("observe lagging peer");
+        let after_lagging_peer =
+            get_network_runtime_sync_status(chain_id).expect("status after lagging peer");
+        assert_eq!(after_lagging_peer.current_block, 900);
+        assert_eq!(after_lagging_peer.highest_block, 25_274_604);
+
+        observe_network_runtime_peer_head(chain_id, 11, 25_274_632).expect("observe higher peer");
+        let after_higher_peer =
+            get_network_runtime_sync_status(chain_id).expect("status after higher peer");
+        assert_eq!(after_higher_peer.highest_block, 25_274_632);
     }
 
     #[test]

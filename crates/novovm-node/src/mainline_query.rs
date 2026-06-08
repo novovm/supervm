@@ -5844,6 +5844,10 @@ mod tests {
         let computed_logs_bloom = to_hex_prefixed(&combine_receipt_log_bloom(
             store.batches[0].receipts.as_slice(),
         ));
+        set_eth_fullnode_native_worker_runtime_snapshot_v1(
+            chain_id,
+            sample_native_runtime_snapshot_for_block_context(chain_id, &block_context, None),
+        );
 
         let mut block_mismatches = Vec::new();
         let mut receipt_mismatches = Vec::new();

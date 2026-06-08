@@ -264,7 +264,7 @@ impl EthFullnodeNativePeerWorkerV1 {
             .active_native_peer_soft_limit
             .max(1) as usize;
         let candidate_peers = self.config.peers.clone();
-        let bootstrap_window = soft_limit.max(1);
+        let bootstrap_window = soft_limit.min(self.config.sync_target_fanout.max(4)).max(1);
 
         let mut session_peers = Vec::new();
         for peer in &candidate_peers {
@@ -798,6 +798,15 @@ fn connect_eth_fullnode_native_rlpx_addr_v1(
     ))
 }
 
+fn eth_fullnode_native_rlpx_connect_timeout_v1() -> Duration {
+    let timeout_ms = std::env::var("NOVOVM_ETH_RLPX_CONNECT_TIMEOUT_MS")
+        .ok()
+        .and_then(|raw| raw.trim().parse::<u64>().ok())
+        .unwrap_or(1_500)
+        .clamp(250, 5_000);
+    Duration::from_millis(timeout_ms)
+}
+
 fn evm_native_header_wire_from_rlpx_header_v1(
     header: &crate::EthRlpxBlockHeaderRecordV1,
 ) -> EvmNativeBlockHeaderWireV1 {
@@ -900,6 +909,7 @@ fn hex32_v1(bytes: &[u8; 32]) -> String {
 fn eth_fullnode_rlpx_error_is_timeout_v1(raw: &str) -> bool {
     raw.contains("timed out")
         || raw.contains("would block")
+        || raw.contains("partial_read_timeout")
         || raw.contains("os error 10060")
         || raw.contains("os error 10035")
         || raw.contains("没有正确答复")
@@ -907,10 +917,19 @@ fn eth_fullnode_rlpx_error_is_timeout_v1(raw: &str) -> bool {
 }
 
 fn eth_fullnode_rlpx_error_is_remote_closed_v1(raw: &str) -> bool {
+    if eth_fullnode_rlpx_error_is_timeout_v1(raw) {
+        return false;
+    }
     raw.contains("eof read=0")
         || raw.contains("failed:eof")
         || raw.contains("read=0/")
         || raw.contains("os error 10053")
+        || raw.contains("os error 10054")
+        || raw.contains("远程主机强迫关闭")
+}
+
+fn eth_fullnode_rlpx_error_is_session_desync_v1(raw: &str) -> bool {
+    raw.contains("rlpx_frame_header_mac_mismatch") || raw.contains("rlpx_frame_mac_mismatch")
 }
 
 fn observe_eth_fullnode_connect_error_v1(chain_id: u64, peer_id: u64, err: &NetworkError) {
@@ -961,6 +980,9 @@ fn classify_eth_fullnode_peer_failure_v1(
         NetworkError::Encode(_) => EthFullnodeNativePeerFailureClassV1::Encode,
         NetworkError::Decode(raw) if eth_fullnode_rlpx_error_is_timeout_v1(raw) => {
             EthFullnodeNativePeerFailureClassV1::Timeout
+        }
+        NetworkError::Decode(raw) if eth_fullnode_rlpx_error_is_session_desync_v1(raw) => {
+            EthFullnodeNativePeerFailureClassV1::Io
         }
         NetworkError::Decode(_) => EthFullnodeNativePeerFailureClassV1::Decode,
     }
@@ -1155,7 +1177,7 @@ fn connect_eth_fullnode_native_rlpx_peer_v1(
         return Ok(());
     }
 
-    let timeout = Duration::from_secs(5);
+    let timeout = eth_fullnode_native_rlpx_connect_timeout_v1();
     observe_network_runtime_eth_peer_connecting_v1(chain_id, peer.0);
     let mut stream = connect_eth_fullnode_native_rlpx_addr_v1(endpoint.addr_hint.as_str(), timeout)
         .inspect_err(|err| {
@@ -1194,15 +1216,27 @@ fn connect_eth_fullnode_native_rlpx_peer_v1(
     observe_eth_native_rlpx_auth(chain_id);
     let mut handshake = eth_rlpx_handshake_initiator_v1(endpoint.endpoint.as_str(), &mut stream)
         .map_err(|err| {
-            observe_network_runtime_eth_peer_handshake_failure_v1(
-                chain_id,
-                peer.0,
-                "rlpx_auth_failed",
-            );
-            NetworkError::Decode(format!(
+            let err = format!(
                 "{err}:endpoint={} hello_profile={}",
                 endpoint.addr_hint, hello_profile
-            ))
+            );
+            if eth_fullnode_rlpx_error_is_remote_closed_v1(err.as_str()) {
+                observe_network_runtime_eth_peer_disconnect_v1(chain_id, peer.0, None);
+                NetworkError::Io(format!(
+                    "rlpx_remote_closed_before_auth:endpoint={}:{}",
+                    endpoint.addr_hint, err
+                ))
+            } else if eth_fullnode_rlpx_error_is_timeout_v1(err.as_str()) {
+                observe_network_runtime_eth_peer_timeout_v1(chain_id, peer.0, "auth_timeout");
+                NetworkError::Decode(err)
+            } else {
+                observe_network_runtime_eth_peer_handshake_failure_v1(
+                    chain_id,
+                    peer.0,
+                    "rlpx_auth_failed",
+                );
+                NetworkError::Decode(err)
+            }
         })?;
     observe_eth_native_rlpx_auth_ack(chain_id);
 
@@ -1225,6 +1259,13 @@ fn connect_eth_fullnode_native_rlpx_peer_v1(
     let remote_hello = loop {
         let (code, payload) = eth_rlpx_read_wire_frame_v1(&mut stream, &mut handshake.session)
             .map_err(|err| {
+                if eth_fullnode_rlpx_error_is_remote_closed_v1(err.as_str()) {
+                    observe_network_runtime_eth_peer_disconnect_v1(chain_id, peer.0, None);
+                    return NetworkError::Io(format!(
+                        "rlpx_remote_closed_before_hello:endpoint={}:{}",
+                        endpoint.addr_hint, err
+                    ));
+                }
                 if eth_fullnode_rlpx_error_is_timeout_v1(err.as_str()) {
                     observe_network_runtime_eth_peer_timeout_v1(chain_id, peer.0, "hello_timeout");
                 } else {
@@ -1277,7 +1318,7 @@ fn connect_eth_fullnode_native_rlpx_peer_v1(
         remote_hello.capabilities.as_slice(),
     )
     .ok_or_else(|| {
-        NetworkError::Decode(format!(
+        let reason = format!(
             "rlpx_eth_capability_not_found:local_caps={} remote_caps={} endpoint={} hello_profile={}",
             local_caps
                 .iter()
@@ -1292,7 +1333,9 @@ fn connect_eth_fullnode_native_rlpx_peer_v1(
                 .join(","),
             endpoint.addr_hint,
             hello_profile,
-        ))
+        );
+        observe_network_runtime_eth_peer_decode_failure_v1(chain_id, peer.0, reason.as_str());
+        NetworkError::Decode(reason)
     })?;
     let negotiated_snap = eth_rlpx_select_shared_snap_version_v1(
         local_caps.as_slice(),
@@ -1315,6 +1358,13 @@ fn connect_eth_fullnode_native_rlpx_peer_v1(
     let remote_status_payload = loop {
         let (code, payload) = eth_rlpx_read_wire_frame_v1(&mut stream, &mut handshake.session)
             .map_err(|err| {
+                if eth_fullnode_rlpx_error_is_remote_closed_v1(err.as_str()) {
+                    observe_network_runtime_eth_peer_disconnect_v1(chain_id, peer.0, None);
+                    return NetworkError::Io(format!(
+                        "rlpx_remote_closed_before_status:endpoint={}:{}",
+                        endpoint.addr_hint, err
+                    ));
+                }
                 if eth_fullnode_rlpx_error_is_timeout_v1(err.as_str()) {
                     observe_network_runtime_eth_peer_timeout_v1(chain_id, peer.0, "status_timeout");
                 } else {
@@ -2031,6 +2081,7 @@ fn drive_eth_fullnode_native_rlpx_peer_session_once_v1(
                 Err(err) => {
                     if err.contains("timed out")
                         || err.contains("would block")
+                        || err.contains("partial_read_timeout")
                         || err.contains("os error 10060")
                         || err.contains("os error 10035")
                         || err.contains("没有正确答复")
@@ -2038,7 +2089,9 @@ fn drive_eth_fullnode_native_rlpx_peer_session_once_v1(
                     {
                         break;
                     }
-                    if eth_fullnode_rlpx_error_is_remote_closed_v1(err.as_str()) {
+                    if eth_fullnode_rlpx_error_is_remote_closed_v1(err.as_str())
+                        || eth_fullnode_rlpx_error_is_session_desync_v1(err.as_str())
+                    {
                         let pending_request =
                             eth_fullnode_native_rlpx_session_has_pending_request_v1(session);
                         if pending_request {
@@ -2050,7 +2103,7 @@ fn drive_eth_fullnode_native_rlpx_peer_session_once_v1(
                         disconnected = true;
                         if pending_request {
                             disconnect_error = Some(NetworkError::Io(format!(
-                                "rlpx_remote_closed:endpoint={}:{}",
+                                "rlpx_session_closed:endpoint={}:{}",
                                 session.endpoint.addr_hint, err
                             )));
                         }
@@ -2403,7 +2456,7 @@ fn build_eth_fullnode_native_missing_body_pending_headers_v1(
         if seen.contains(&block.hash)
             || !block.header_observed
             || block.body_available
-            || block.source_peer_id.is_none()
+            || !eth_fullnode_native_canonical_block_can_recover_missing_body_v1(&block)
         {
             continue;
         }
@@ -2433,6 +2486,17 @@ fn build_eth_fullnode_native_missing_body_pending_headers_v1(
     pending.sort_by(|a, b| a.number.cmp(&b.number).then_with(|| a.hash.cmp(&b.hash)));
     pending.truncate(ETH_FULLNODE_NATIVE_MISSING_BODY_RECOVERY_BATCH_MAX_V1);
     pending
+}
+
+fn eth_fullnode_native_canonical_block_can_recover_missing_body_v1(
+    block: &crate::runtime_status::NetworkRuntimeNativeCanonicalBlockStateV1,
+) -> bool {
+    let looks_like_minimal_operator_anchor = block.transactions_root
+        == Some(crate::eth_rlpx_empty_trie_root_v1())
+        && block.receipts_root == Some(crate::eth_rlpx_empty_trie_root_v1())
+        && block.ommers_hash == Some(crate::eth_rlpx_empty_ommers_hash_v1())
+        && block.source_peer_id.is_none();
+    !looks_like_minimal_operator_anchor
 }
 
 fn eth_fullnode_native_header_can_recover_missing_body_v1(
@@ -7997,6 +8061,112 @@ mod tests {
     }
 
     #[test]
+    fn rlpx_missing_body_recovery_rebuilds_batch_without_source_peer_id() {
+        let chain_id = 9_926_108_u64;
+        let peer_id = 1_300_109_u64;
+        clear_network_runtime_native_snapshots_for_chain_v1(chain_id);
+
+        let zero_root = [0x10_u8; 32];
+        set_network_runtime_native_header_snapshot_v1(
+            chain_id,
+            crate::runtime_status::NetworkRuntimeNativeHeaderSnapshotV1 {
+                chain_id,
+                number: 4_002,
+                hash: [0xa2; 32],
+                parent_hash: [0xa1; 32],
+                state_root: [0xb0; 32],
+                transactions_root: zero_root,
+                receipts_root: zero_root,
+                ommers_hash: [0x33; 32],
+                logs_bloom: vec![0u8; 256],
+                gas_limit: Some(30_000_000),
+                gas_used: Some(21_000),
+                timestamp: Some(1_900_000_000),
+                base_fee_per_gas: Some(7),
+                withdrawals_root: Some(crate::eth_rlpx_empty_trie_root_v1()),
+                blob_gas_used: None,
+                excess_blob_gas: None,
+                block_access_list_hash: None,
+                source_peer_id: None,
+                observed_unix_ms: 1,
+            },
+        );
+        set_network_runtime_native_header_snapshot_v1(
+            chain_id,
+            crate::runtime_status::NetworkRuntimeNativeHeaderSnapshotV1 {
+                chain_id,
+                number: 4_001,
+                hash: [0xa1; 32],
+                parent_hash: [0xa0; 32],
+                state_root: [0xaf; 32],
+                transactions_root: [0x12; 32],
+                receipts_root: [0x13; 32],
+                ommers_hash: [0x33; 32],
+                logs_bloom: vec![0u8; 256],
+                gas_limit: Some(30_000_000),
+                gas_used: Some(21_000),
+                timestamp: Some(1_900_000_001),
+                base_fee_per_gas: Some(7),
+                withdrawals_root: Some(crate::eth_rlpx_empty_trie_root_v1()),
+                blob_gas_used: None,
+                excess_blob_gas: None,
+                block_access_list_hash: None,
+                source_peer_id: Some(peer_id),
+                observed_unix_ms: 2,
+            },
+        );
+        set_network_runtime_native_header_snapshot_v1(
+            chain_id,
+            crate::runtime_status::NetworkRuntimeNativeHeaderSnapshotV1 {
+                chain_id,
+                number: 4_000,
+                hash: [0xa0; 32],
+                parent_hash: [0x9f; 32],
+                state_root: [0xae; 32],
+                transactions_root: [0x14; 32],
+                receipts_root: [0x15; 32],
+                ommers_hash: [0x33; 32],
+                logs_bloom: vec![0u8; 256],
+                gas_limit: Some(30_000_000),
+                gas_used: Some(21_000),
+                timestamp: Some(1_900_000_002),
+                base_fee_per_gas: Some(7),
+                withdrawals_root: Some(crate::eth_rlpx_empty_trie_root_v1()),
+                blob_gas_used: None,
+                excess_blob_gas: None,
+                block_access_list_hash: None,
+                source_peer_id: Some(peer_id),
+                observed_unix_ms: 3,
+            },
+        );
+        set_network_runtime_native_body_snapshot_v1(
+            chain_id,
+            crate::runtime_status::NetworkRuntimeNativeBodySnapshotV1 {
+                chain_id,
+                number: 4_000,
+                block_hash: [0xa0; 32],
+                tx_hashes: Vec::new(),
+                raw_tx_rlps: Vec::new(),
+                ommer_hashes: Vec::new(),
+                withdrawal_rlp_items: None,
+                withdrawal_count: Some(0),
+                body_available: true,
+                txs_materialized: true,
+                observed_unix_ms: 9,
+            },
+        );
+
+        let pending = build_eth_fullnode_native_missing_body_pending_headers_v1(chain_id);
+        assert_eq!(
+            pending
+                .iter()
+                .map(|header| header.number)
+                .collect::<Vec<_>>(),
+            vec![4_001, 4_002]
+        );
+    }
+
+    #[test]
     fn real_rlpx_worker_recovers_missing_receipts_before_new_header_pull() {
         let chain_id = 9_926_104_u64;
         let local = NodeId(1_300_104);
@@ -8346,9 +8516,28 @@ mod tests {
     #[test]
     fn rlpx_remote_closed_errors_are_not_plain_timeouts() {
         let eof = "rlpx_frame_header_read_failed:eof read=0/16";
+        let auth_ack_eof = "rlpx_ack_prefix_read_failed:eof read=0/2";
+        let auth_ack_timeout =
+            "rlpx_ack_prefix_read_failed:connection attempt failed (os error 10060) read=0/2";
         let aborted = "rlpx_frame_body_read_failed:connection aborted (os error 10053) read=0/48";
+        let reset_mid_body = "rlpx_frame_body_read_failed:远程主机强迫关闭了一个现有的连接。 (os error 10054) read=107008/171040";
         assert!(eth_fullnode_rlpx_error_is_remote_closed_v1(eof));
+        assert!(eth_fullnode_rlpx_error_is_remote_closed_v1(auth_ack_eof));
+        assert!(!eth_fullnode_rlpx_error_is_remote_closed_v1(
+            auth_ack_timeout
+        ));
+        assert!(eth_fullnode_rlpx_error_is_timeout_v1(auth_ack_timeout));
+        assert!(eth_fullnode_rlpx_error_is_timeout_v1(
+            "rlpx_frame_body_read_failed:partial_read_timeout read=184284/400576 deadline_ms=4000"
+        ));
         assert!(eth_fullnode_rlpx_error_is_remote_closed_v1(aborted));
+        assert!(eth_fullnode_rlpx_error_is_remote_closed_v1(reset_mid_body));
+        assert!(eth_fullnode_rlpx_error_is_session_desync_v1(
+            "rlpx_frame_header_mac_mismatch"
+        ));
+        assert!(eth_fullnode_rlpx_error_is_session_desync_v1(
+            "rlpx_frame_mac_mismatch"
+        ));
         assert!(!eth_fullnode_rlpx_error_is_timeout_v1(eof));
         assert!(eth_fullnode_rlpx_error_is_timeout_v1(
             "operation would block"
@@ -9910,6 +10099,29 @@ mod tests {
         let plan = worker.plan();
         assert_eq!(plan.candidate_peers.len(), 3);
         assert_eq!(plan.bootstrap_peers.len(), 2);
+        assert!(plan.sync_peers.is_empty());
+    }
+
+    #[test]
+    fn native_peer_worker_plan_caps_public_bootstrap_fanout_per_tick() {
+        let chain_id = 9_914_000_201_u64;
+        let local = NodeId(1_100_201);
+        let peers = (1_100_202..1_100_210).map(NodeId).collect::<Vec<_>>();
+        let mut budget = default_eth_fullnode_budget_hooks_v1();
+        budget.active_native_peer_soft_limit = 8;
+        budget.active_native_peer_hard_limit = 8;
+        let worker = EthFullnodeNativePeerWorkerV1::new(EthFullnodeNativePeerWorkerConfigV1 {
+            chain_id,
+            local_node: local,
+            peers,
+            peer_endpoints: Vec::new(),
+            recv_budget: 16,
+            sync_target_fanout: 1,
+            budget_hooks: budget,
+        });
+
+        let plan = worker.plan();
+        assert_eq!(plan.bootstrap_peers.len(), 4);
         assert!(plan.sync_peers.is_empty());
     }
 

@@ -43,6 +43,7 @@ use novovm_network::{
     set_network_runtime_native_snap_account_storage_snapshot_v1,
     set_network_runtime_native_snap_code_snapshot_v1,
     set_network_runtime_native_snap_trie_node_snapshot_v1, set_network_runtime_sync_status,
+    snapshot_network_runtime_eth_peer_sessions_for_peers_v1,
     snapshot_network_runtime_native_canonical_blocks_v1,
     snapshot_network_runtime_native_pending_tx_summary_v1,
     snapshot_network_runtime_native_snap_account_range_progress_v1,
@@ -1775,7 +1776,7 @@ fn eth_dns_query_txt_udp_v1(name: &str, deadline: Option<Instant>) -> Result<Vec
     }
 }
 
-fn eth_dns_query_txt_v1(
+fn eth_dns_query_txt_doh_with_deadline_v1(
     doh_url: &str,
     name: &str,
     deadline: Option<Instant>,
@@ -1785,14 +1786,47 @@ fn eth_dns_query_txt_v1(
         return Ok(Vec::new());
     };
     let agent = ureq::AgentBuilder::new().timeout(query_timeout).build();
-    match eth_dns_query_txt_doh_v1(&agent, doh_url, name) {
-        Ok(records) if !records.is_empty() => Ok(records),
-        Ok(_) => eth_dns_query_txt_udp_v1(name, deadline),
-        Err(doh_err) => match eth_dns_query_txt_udp_v1(name, deadline) {
+    eth_dns_query_txt_doh_v1(&agent, doh_url, name)
+}
+
+fn eth_dns_query_txt_v1(
+    doh_url: &str,
+    name: &str,
+    deadline: Option<Instant>,
+    fallback_timeout: Duration,
+) -> Result<Vec<String>> {
+    if bool_env("NOVOVM_ETH_DNS_DISCOVERY_DOH_FIRST") {
+        return match eth_dns_query_txt_doh_with_deadline_v1(
+            doh_url,
+            name,
+            deadline,
+            fallback_timeout,
+        ) {
             Ok(records) if !records.is_empty() => Ok(records),
-            Ok(_) => Err(doh_err),
-            Err(udp_err) => Err(udp_err).with_context(|| format!("doh_fallback_failed:{doh_err}")),
-        },
+            Ok(_) => eth_dns_query_txt_udp_v1(name, deadline),
+            Err(doh_err) => match eth_dns_query_txt_udp_v1(name, deadline) {
+                Ok(records) if !records.is_empty() => Ok(records),
+                Ok(_) => Err(doh_err),
+                Err(udp_err) => {
+                    Err(udp_err).with_context(|| format!("doh_fallback_failed:{doh_err}"))
+                }
+            },
+        };
+    }
+
+    match eth_dns_query_txt_udp_v1(name, deadline) {
+        Ok(records) if !records.is_empty() => Ok(records),
+        Ok(_) => eth_dns_query_txt_doh_with_deadline_v1(doh_url, name, deadline, fallback_timeout),
+        Err(udp_err) => {
+            match eth_dns_query_txt_doh_with_deadline_v1(doh_url, name, deadline, fallback_timeout)
+            {
+                Ok(records) if !records.is_empty() => Ok(records),
+                Ok(_) => Err(udp_err),
+                Err(doh_err) => {
+                    Err(doh_err).with_context(|| format!("udp_fallback_failed:{udp_err}"))
+                }
+            }
+        }
     }
 }
 
@@ -1881,6 +1915,19 @@ fn eth_merge_peer_endpoint_refresh_v1(
 ) -> Vec<PluginPeerEndpoint> {
     let mut out = Vec::<PluginPeerEndpoint>::new();
     let mut seen = HashSet::<String>::new();
+    let current_keys = current
+        .iter()
+        .map(eth_peer_endpoint_key_v1)
+        .collect::<HashSet<_>>();
+    for endpoint in refreshed
+        .iter()
+        .filter(|endpoint| !current_keys.contains(&eth_peer_endpoint_key_v1(endpoint)))
+    {
+        eth_push_peer_endpoint_v1(&mut out, &mut seen, endpoint.clone(), limit);
+        if out.len() >= limit {
+            return out;
+        }
+    }
     for endpoint in refreshed.iter().chain(current.iter()) {
         eth_push_peer_endpoint_v1(&mut out, &mut seen, endpoint.clone(), limit);
         if out.len() >= limit {
@@ -1888,6 +1935,30 @@ fn eth_merge_peer_endpoint_refresh_v1(
         }
     }
     out
+}
+
+fn eth_prune_peer_endpoints_permanently_rejected_v1(
+    chain_id: u64,
+    endpoints: &[PluginPeerEndpoint],
+) -> Vec<PluginPeerEndpoint> {
+    let peers = endpoints
+        .iter()
+        .map(|endpoint| NodeId(endpoint.node_hint.max(1)))
+        .collect::<Vec<_>>();
+    let rejected =
+        snapshot_network_runtime_eth_peer_sessions_for_peers_v1(chain_id, peers.as_slice())
+            .into_iter()
+            .filter(|snapshot| snapshot.permanently_rejected)
+            .map(|snapshot| snapshot.peer_id)
+            .collect::<HashSet<_>>();
+    if rejected.is_empty() {
+        return endpoints.to_vec();
+    }
+    endpoints
+        .iter()
+        .filter(|endpoint| !rejected.contains(&endpoint.node_hint.max(1)))
+        .cloned()
+        .collect()
 }
 
 fn eth_rlpx_peer_refresh_plan_v1(
@@ -1950,6 +2021,20 @@ fn eth_rlpx_peer_refresh_plan_v1(
     None
 }
 
+fn eth_rlpx_peer_refresh_discovery_limit_v1(
+    next_candidate_limit: usize,
+    adaptive_candidate_limit: usize,
+    refresh_reason: &str,
+) -> usize {
+    if !refresh_reason.ends_with("_refresh") {
+        return next_candidate_limit;
+    }
+    next_candidate_limit
+        .saturating_mul(4)
+        .max(adaptive_candidate_limit)
+        .clamp(next_candidate_limit, 1024)
+}
+
 fn eth_rlpx_apply_public_sync_batch_defaults_v1(
     budget: &mut EthFullnodeBudgetHooksV1,
     headers_batch: u64,
@@ -1957,6 +2042,16 @@ fn eth_rlpx_apply_public_sync_batch_defaults_v1(
 ) {
     budget.sync_pull_headers_batch = budget.sync_pull_headers_batch.min(headers_batch.max(1));
     budget.sync_pull_bodies_batch = budget.sync_pull_bodies_batch.min(bodies_batch.max(1));
+}
+
+fn eth_rlpx_apply_public_sync_runtime_defaults_v1(
+    budget: &mut EthFullnodeBudgetHooksV1,
+    headers_batch: u64,
+    bodies_batch: u64,
+    sync_target_fanout: usize,
+) {
+    eth_rlpx_apply_public_sync_batch_defaults_v1(budget, headers_batch, bodies_batch);
+    budget.sync_target_fanout = sync_target_fanout.max(1) as u64;
 }
 
 fn eth_rlpx_peer_discovery_total_timeout_v1() -> Duration {
@@ -1970,6 +2065,14 @@ fn eth_rlpx_peer_discovery_total_timeout_v1() -> Duration {
 
 fn eth_discovery_deadline_expired_v1(deadline: Option<Instant>) -> bool {
     deadline.is_some_and(|deadline| Instant::now() >= deadline)
+}
+
+fn eth_discovery_min_deadline_v1(left: Option<Instant>, right: Option<Instant>) -> Option<Instant> {
+    match (left, right) {
+        (Some(left), Some(right)) => Some(if left <= right { left } else { right }),
+        (Some(deadline), None) | (None, Some(deadline)) => Some(deadline),
+        (None, None) => None,
+    }
 }
 
 fn eth_discovery_remaining_timeout_v1(
@@ -2413,6 +2516,7 @@ fn eth_dns_discover_peer_endpoints_v1(
         return Vec::new();
     };
     let started = Instant::now();
+    let dns_deadline = started.checked_add(total_timeout);
 
     let mut endpoints = Vec::<PluginPeerEndpoint>::new();
     let mut seen_endpoints = HashSet::<String>::new();
@@ -2448,7 +2552,7 @@ fn eth_dns_discover_peer_endpoints_v1(
         let records = match eth_dns_query_txt_v1(
             doh_url.as_str(),
             domain.as_str(),
-            deadline,
+            eth_discovery_min_deadline_v1(deadline, dns_deadline),
             Duration::from_millis(timeout_ms),
         ) {
             Ok(records) => records,
@@ -2675,6 +2779,99 @@ fn write_eth_rlpx_sync_checkpoint_v1(
         serde_json::to_vec_pretty(&checkpoint).context("encode eth rlpx sync checkpoint failed")?;
     fs::write(path, raw)
         .with_context(|| format!("write eth rlpx sync checkpoint failed: {}", path.display()))?;
+    Ok(())
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+struct EthRlpxPeerEndpointCacheV1 {
+    schema: String,
+    chain_id: u64,
+    endpoints: Vec<PluginPeerEndpoint>,
+    updated_at_unix_ms: u64,
+}
+
+fn eth_rlpx_peer_endpoint_cache_path_v1() -> PathBuf {
+    string_env_nonempty("NOVOVM_ETH_RLPX_PEER_CACHE_PATH")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            let mut path = default_mainline_runtime_snapshot_path();
+            path.set_file_name("eth_rlpx_peer_endpoints_cache_v1.json");
+            path
+        })
+}
+
+fn load_eth_rlpx_peer_endpoint_cache_v1(
+    path: &Path,
+    chain_id: u64,
+) -> Result<Option<EthRlpxPeerEndpointCacheV1>> {
+    if !path.exists() {
+        return Ok(None);
+    }
+    let raw = fs::read(path).with_context(|| {
+        format!(
+            "read eth rlpx peer endpoint cache failed: {}",
+            path.display()
+        )
+    })?;
+    let cache = serde_json::from_slice::<EthRlpxPeerEndpointCacheV1>(raw.as_slice()).with_context(
+        || {
+            format!(
+                "parse eth rlpx peer endpoint cache failed: {}",
+                path.display()
+            )
+        },
+    )?;
+    if cache.schema != "supervm-eth-rlpx-peer-endpoint-cache/v1" {
+        bail!(
+            "unsupported eth rlpx peer endpoint cache schema: {}",
+            cache.schema
+        );
+    }
+    if cache.chain_id != chain_id {
+        bail!(
+            "eth rlpx peer endpoint cache chain mismatch: cache={} requested={}",
+            cache.chain_id,
+            chain_id
+        );
+    }
+    Ok(Some(cache))
+}
+
+fn write_eth_rlpx_peer_endpoint_cache_v1(
+    path: &Path,
+    chain_id: u64,
+    endpoints: &[PluginPeerEndpoint],
+    limit: usize,
+) -> Result<()> {
+    let mut deduped = Vec::<PluginPeerEndpoint>::new();
+    let mut seen = HashSet::<String>::new();
+    for endpoint in endpoints {
+        eth_push_peer_endpoint_v1(&mut deduped, &mut seen, endpoint.clone(), limit.max(1));
+    }
+    let cache = EthRlpxPeerEndpointCacheV1 {
+        schema: "supervm-eth-rlpx-peer-endpoint-cache/v1".to_string(),
+        chain_id,
+        endpoints: deduped,
+        updated_at_unix_ms: now_unix_ms(),
+    };
+    if let Some(parent) = path.parent() {
+        if !parent.as_os_str().is_empty() {
+            fs::create_dir_all(parent).with_context(|| {
+                format!(
+                    "create eth rlpx peer endpoint cache dir failed: {}",
+                    parent.display()
+                )
+            })?;
+        }
+    }
+    let raw =
+        serde_json::to_vec_pretty(&cache).context("encode eth rlpx peer endpoint cache failed")?;
+    fs::write(path, raw).with_context(|| {
+        format!(
+            "write eth rlpx peer endpoint cache failed: {}",
+            path.display()
+        )
+    })?;
     Ok(())
 }
 
@@ -4042,9 +4239,9 @@ fn restore_eth_rlpx_native_history_store_v1(
 fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
     let chain_id = u64_env_allow_zero("NOVOVM_ETH_RLPX_CHAIN_ID", 1)?;
     let local_node_id = u64_env_allow_zero("NOVOVM_ETH_RLPX_LOCAL_NODE", 9_990_001)?;
-    let max_peers = usize_env_allow_zero("NOVOVM_ETH_RLPX_MAX_PEERS", 8)?.clamp(1, 16);
+    let max_peers = usize_env_allow_zero("NOVOVM_ETH_RLPX_MAX_PEERS", 16)?.clamp(1, 32);
     let mut candidate_limit =
-        usize_env_allow_zero("NOVOVM_ETH_RLPX_CANDIDATE_PEERS", max_peers.max(64))?
+        usize_env_allow_zero("NOVOVM_ETH_RLPX_CANDIDATE_PEERS", max_peers.max(256))?
             .clamp(max_peers, 512);
     let adaptive_candidate_limit = usize_env_allow_zero(
         "NOVOVM_ETH_RLPX_ADAPTIVE_CANDIDATE_PEERS_MAX",
@@ -4062,10 +4259,43 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
         usize_env_allow_zero("NOVOVM_ETH_RLPX_EXHAUSTED_REFRESH_INTERVAL_TICKS", 8)?
             .clamp(1, 10_000);
     let stalled_refresh_interval_ticks =
-        usize_env_allow_zero("NOVOVM_ETH_RLPX_STALLED_REFRESH_INTERVAL_TICKS", 8)?.clamp(1, 10_000);
-    let mut peer_endpoints = eth_rlpx_sync_peer_endpoints_v1(chain_id, candidate_limit, verbose);
+        usize_env_allow_zero("NOVOVM_ETH_RLPX_STALLED_REFRESH_INTERVAL_TICKS", 4)?.clamp(1, 10_000);
+    let peer_endpoint_cache_enabled = bool_env_default_true("NOVOVM_ETH_RLPX_PEER_CACHE_ENABLED");
+    let peer_endpoint_cache_path = eth_rlpx_peer_endpoint_cache_path_v1();
+    let peer_endpoint_cache = if peer_endpoint_cache_enabled {
+        load_eth_rlpx_peer_endpoint_cache_v1(&peer_endpoint_cache_path, chain_id)?
+    } else {
+        None
+    };
+    let discovered_peer_endpoints =
+        eth_rlpx_sync_peer_endpoints_v1(chain_id, candidate_limit, verbose);
+    let mut peer_endpoints = if let Some(cache) = peer_endpoint_cache.as_ref() {
+        eth_merge_peer_endpoint_refresh_v1(
+            cache.endpoints.as_slice(),
+            discovered_peer_endpoints.as_slice(),
+            candidate_limit,
+        )
+    } else {
+        discovered_peer_endpoints
+    };
     if peer_endpoints.is_empty() {
         bail!("no Ethereum RLPx peer endpoints resolved from env, DNS discovery, or bootnodes");
+    }
+    if peer_endpoint_cache_enabled {
+        write_eth_rlpx_peer_endpoint_cache_v1(
+            &peer_endpoint_cache_path,
+            chain_id,
+            peer_endpoints.as_slice(),
+            candidate_limit,
+        )?;
+    }
+    if verbose && peer_endpoint_cache_enabled {
+        println!(
+            "eth_rlpx_peer_endpoint_cache: path={} loaded={} endpoints={}",
+            peer_endpoint_cache_path.display(),
+            peer_endpoint_cache.is_some(),
+            peer_endpoints.len()
+        );
     }
     let mut peers = peer_endpoints
         .iter()
@@ -4074,7 +4304,12 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
     let mut budget = resolve_eth_fullnode_budget_hooks_v1(chain_id);
     budget.active_native_peer_soft_limit = max_peers as u64;
     budget.active_native_peer_hard_limit = candidate_limit as u64;
-    eth_rlpx_apply_public_sync_batch_defaults_v1(&mut budget, headers_batch, bodies_batch);
+    eth_rlpx_apply_public_sync_runtime_defaults_v1(
+        &mut budget,
+        headers_batch,
+        bodies_batch,
+        sync_target_fanout,
+    );
     let checkpoint_enabled = bool_env_default_true("NOVOVM_ETH_RLPX_CHECKPOINT_ENABLED");
     let checkpoint_path = eth_rlpx_sync_checkpoint_path_v1();
     let checkpoint = if checkpoint_enabled {
@@ -4360,6 +4595,44 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
                 }
             }
         }
+        if peer_endpoint_cache_enabled && report.lifecycle_summary.permanently_rejected_count > 0 {
+            let pruned_endpoints = eth_prune_peer_endpoints_permanently_rejected_v1(
+                chain_id,
+                peer_endpoints.as_slice(),
+            );
+            if pruned_endpoints.len() < peer_endpoints.len() && !pruned_endpoints.is_empty() {
+                let old_len = peer_endpoints.len();
+                peer_endpoints = pruned_endpoints;
+                peers = peer_endpoints
+                    .iter()
+                    .map(|endpoint| NodeId(endpoint.node_hint.max(1)))
+                    .collect::<Vec<_>>();
+                write_eth_rlpx_peer_endpoint_cache_v1(
+                    &peer_endpoint_cache_path,
+                    chain_id,
+                    peer_endpoints.as_slice(),
+                    candidate_limit,
+                )?;
+                worker = EthFullnodeNativePeerWorkerV1::new(EthFullnodeNativePeerWorkerConfigV1 {
+                    chain_id,
+                    local_node: NodeId(local_node_id),
+                    peers: peers.clone(),
+                    peer_endpoints: peer_endpoints.clone(),
+                    recv_budget,
+                    sync_target_fanout,
+                    budget_hooks: budget.clone(),
+                });
+                if verbose {
+                    println!(
+                        "eth_rlpx_peer_endpoint_cache_prune: chain_id={} tick={} reason=permanently_rejected old_candidates={} candidates={}",
+                        chain_id,
+                        tick,
+                        old_len,
+                        peer_endpoints.len()
+                    );
+                }
+            }
+        }
         let candidate_pool_exhausted = report.ready_peers == 0
             && report.scheduled_bootstrap_peers == 0
             && report.scheduled_sync_peers == 0
@@ -4390,12 +4663,21 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
         );
         if let Some((next_candidate_limit, refresh_reason)) = refresh_plan {
             last_peer_refresh_tick = tick;
+            let discovery_candidate_limit = eth_rlpx_peer_refresh_discovery_limit_v1(
+                next_candidate_limit,
+                adaptive_candidate_limit,
+                refresh_reason,
+            );
             let refreshed_endpoints =
-                eth_rlpx_sync_peer_endpoints_v1(chain_id, next_candidate_limit, verbose);
+                eth_rlpx_sync_peer_endpoints_v1(chain_id, discovery_candidate_limit, verbose);
             let merged_endpoints = eth_merge_peer_endpoint_refresh_v1(
                 peer_endpoints.as_slice(),
                 refreshed_endpoints.as_slice(),
                 next_candidate_limit,
+            );
+            let merged_endpoints = eth_prune_peer_endpoints_permanently_rejected_v1(
+                chain_id,
+                merged_endpoints.as_slice(),
             );
             if merged_endpoints.len() > peer_endpoints.len()
                 || eth_peer_endpoints_include_new_entries_v1(
@@ -4410,6 +4692,14 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
                     .map(|endpoint| NodeId(endpoint.node_hint.max(1)))
                     .collect::<Vec<_>>();
                 budget.active_native_peer_hard_limit = candidate_limit as u64;
+                if peer_endpoint_cache_enabled {
+                    write_eth_rlpx_peer_endpoint_cache_v1(
+                        &peer_endpoint_cache_path,
+                        chain_id,
+                        peer_endpoints.as_slice(),
+                        candidate_limit,
+                    )?;
+                }
                 worker = EthFullnodeNativePeerWorkerV1::new(EthFullnodeNativePeerWorkerConfigV1 {
                     chain_id,
                     local_node: NodeId(local_node_id),
@@ -4420,19 +4710,21 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
                     budget_hooks: budget.clone(),
                 });
                 println!(
-                    "eth_rlpx_peer_refresh: chain_id={} tick={} reason={} candidates={}",
+                    "eth_rlpx_peer_refresh: chain_id={} tick={} reason={} candidates={} sample_candidates={}",
                     chain_id,
                     tick,
                     refresh_reason,
-                    peer_endpoints.len()
+                    peer_endpoints.len(),
+                    refreshed_endpoints.len()
                 );
             } else if verbose {
                 println!(
-                    "eth_rlpx_peer_refresh_skip: chain_id={} tick={} reason={} candidates={}",
+                    "eth_rlpx_peer_refresh_skip: chain_id={} tick={} reason={} candidates={} sample_candidates={}",
                     chain_id,
                     tick,
                     refresh_reason,
-                    peer_endpoints.len()
+                    peer_endpoints.len(),
+                    refreshed_endpoints.len()
                 );
             }
         }
@@ -4583,6 +4875,28 @@ mod mainline_evm_cli_tests {
         assert_eq!(eth_dns_discovery_default_max_queries_v1(16), 64);
         assert_eq!(eth_dns_discovery_default_max_queries_v1(64), 128);
         assert_eq!(eth_dns_discovery_default_max_queries_v1(1_000), 128);
+    }
+
+    #[test]
+    fn eth_discovery_min_deadline_prefers_earlier_budget_v1() {
+        let now = Instant::now();
+        let early = now + Duration::from_millis(50);
+        let late = now + Duration::from_millis(500);
+
+        assert_eq!(
+            eth_discovery_min_deadline_v1(Some(late), Some(early)),
+            Some(early)
+        );
+        assert_eq!(
+            eth_discovery_min_deadline_v1(Some(early), Some(late)),
+            Some(early)
+        );
+        assert_eq!(
+            eth_discovery_min_deadline_v1(None, Some(early)),
+            Some(early)
+        );
+        assert_eq!(eth_discovery_min_deadline_v1(Some(late), None), Some(late));
+        assert_eq!(eth_discovery_min_deadline_v1(None, None), None);
     }
 
     #[test]
@@ -4737,6 +5051,68 @@ mod mainline_evm_cli_tests {
     }
 
     #[test]
+    fn eth_peer_endpoint_refresh_merge_prefers_new_sample_entries_at_cap_v1() {
+        let current = vec![
+            PluginPeerEndpoint {
+                endpoint: "enode://1111111111111111@18.138.108.67:30303".to_string(),
+                node_hint: 0x1111_1111_1111_1111,
+                addr_hint: "18.138.108.67:30303".to_string(),
+            },
+            PluginPeerEndpoint {
+                endpoint: "enode://2222222222222222@3.209.45.79:30303".to_string(),
+                node_hint: 0x2222_2222_2222_2222,
+                addr_hint: "3.209.45.79:30303".to_string(),
+            },
+        ];
+        let refreshed = vec![
+            current[0].clone(),
+            current[1].clone(),
+            PluginPeerEndpoint {
+                endpoint: "enode://3333333333333333@65.108.70.101:30303".to_string(),
+                node_hint: 0x3333_3333_3333_3333,
+                addr_hint: "65.108.70.101:30303".to_string(),
+            },
+        ];
+
+        let merged = eth_merge_peer_endpoint_refresh_v1(&current, &refreshed, 2);
+        assert_eq!(merged.len(), 2);
+        assert_eq!(merged[0].node_hint, 0x3333_3333_3333_3333);
+        assert!(merged
+            .iter()
+            .any(|endpoint| endpoint.node_hint == 0x1111_1111_1111_1111));
+    }
+
+    #[test]
+    fn eth_peer_endpoint_cache_prunes_runtime_permanent_rejects_v1() {
+        let chain_id = 8_881_229_001_u64;
+        let rejected_peer = 0x1111_1111_1111_1111_u64;
+        let kept_peer = 0x2222_2222_2222_2222_u64;
+        let endpoints = vec![
+            PluginPeerEndpoint {
+                endpoint: "enode://1111111111111111@18.138.108.67:30303".to_string(),
+                node_hint: rejected_peer,
+                addr_hint: "18.138.108.67:30303".to_string(),
+            },
+            PluginPeerEndpoint {
+                endpoint: "enode://2222222222222222@3.209.45.79:30303".to_string(),
+                node_hint: kept_peer,
+                addr_hint: "3.209.45.79:30303".to_string(),
+            },
+        ];
+        novovm_network::observe_network_runtime_eth_peer_decode_failure_v1(
+            chain_id,
+            rejected_peer,
+            "rlpx_eth_capability_not_found:local_caps=eth/69,eth/70,eth/71 remote_caps=eth/68",
+        );
+
+        let pruned =
+            eth_prune_peer_endpoints_permanently_rejected_v1(chain_id, endpoints.as_slice());
+
+        assert_eq!(pruned.len(), 1);
+        assert_eq!(pruned[0].node_hint, kept_peer);
+    }
+
+    #[test]
     fn eth_rlpx_peer_refresh_plan_expands_on_stalled_progress_v1() {
         let plan =
             eth_rlpx_peer_refresh_plan_v1(false, true, false, true, 128, 512, 6, 16, 0, 8, 16);
@@ -4748,6 +5124,22 @@ mod mainline_evm_cli_tests {
         let plan =
             eth_rlpx_peer_refresh_plan_v1(false, true, false, true, 512, 512, 6, 32, 8, 8, 16);
         assert_eq!(plan, Some((512, "sync_progress_stalled_refresh")));
+    }
+
+    #[test]
+    fn eth_rlpx_peer_refresh_discovery_limit_widens_only_for_refresh_v1() {
+        assert_eq!(
+            eth_rlpx_peer_refresh_discovery_limit_v1(256, 512, "sync_progress_stalled_expand"),
+            256
+        );
+        assert_eq!(
+            eth_rlpx_peer_refresh_discovery_limit_v1(256, 512, "sync_progress_stalled_refresh"),
+            1024
+        );
+        assert_eq!(
+            eth_rlpx_peer_refresh_discovery_limit_v1(512, 512, "bootstrap_stalled_refresh"),
+            1024
+        );
     }
 
     #[test]
@@ -4775,6 +5167,18 @@ mod mainline_evm_cli_tests {
         eth_rlpx_apply_public_sync_batch_defaults_v1(&mut budget, 128, 8);
         assert_eq!(budget.sync_pull_headers_batch, 32);
         assert_eq!(budget.sync_pull_bodies_batch, 4);
+    }
+
+    #[test]
+    fn eth_rlpx_public_sync_runtime_defaults_honor_entry_fanout_v1() {
+        let mut budget = EthFullnodeBudgetHooksV1::default();
+        assert_eq!(budget.sync_target_fanout, 1);
+
+        eth_rlpx_apply_public_sync_runtime_defaults_v1(&mut budget, 128, 8, 8);
+
+        assert_eq!(budget.sync_target_fanout, 8);
+        assert_eq!(budget.sync_pull_headers_batch, 128);
+        assert_eq!(budget.sync_pull_bodies_batch, 8);
     }
 
     #[test]
@@ -4962,6 +5366,39 @@ mod mainline_evm_cli_tests {
         assert_eq!(loaded.highest_block, 25_267_550);
         assert_eq!(loaded.header_number, 5120);
         assert_eq!(loaded.header_hash.as_deref(), Some("0xabc"));
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn eth_rlpx_peer_endpoint_cache_roundtrips_v1() {
+        let path = std::env::temp_dir().join(format!(
+            "supervm-eth-rlpx-peer-cache-test-{}-{}.json",
+            std::process::id(),
+            now_unix_ms()
+        ));
+        let chain_id = 1_u64;
+        let endpoints = vec![
+            PluginPeerEndpoint {
+                endpoint: "enode://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa@127.0.0.1:30303".to_string(),
+                node_hint: 11,
+                addr_hint: "127.0.0.1:30303".to_string(),
+            },
+            PluginPeerEndpoint {
+                endpoint: "enode://bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb@127.0.0.1:30304".to_string(),
+                node_hint: 12,
+                addr_hint: "127.0.0.1:30304".to_string(),
+            },
+        ];
+
+        write_eth_rlpx_peer_endpoint_cache_v1(&path, chain_id, endpoints.as_slice(), 16)
+            .expect("write peer endpoint cache");
+        let loaded = load_eth_rlpx_peer_endpoint_cache_v1(&path, chain_id)
+            .expect("load peer endpoint cache")
+            .expect("peer endpoint cache present");
+        assert_eq!(loaded.schema, "supervm-eth-rlpx-peer-endpoint-cache/v1");
+        assert_eq!(loaded.chain_id, chain_id);
+        assert_eq!(loaded.endpoints, endpoints);
 
         let _ = fs::remove_file(path);
     }
