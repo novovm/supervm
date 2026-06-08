@@ -2729,6 +2729,8 @@ struct EthRlpxNativeBodyStoreV1 {
     tx_hashes: Vec<String>,
     #[serde(default)]
     raw_tx_rlps_b64: Vec<String>,
+    #[serde(default)]
+    withdrawal_rlp_items_b64: Option<Vec<String>>,
     ommer_hashes: Vec<String>,
     withdrawal_count: Option<usize>,
     body_available: bool,
@@ -2936,6 +2938,12 @@ fn eth_rlpx_native_body_store_from_snapshot_v1(
             .iter()
             .map(|raw| base64::engine::general_purpose::STANDARD.encode(raw.as_slice()))
             .collect(),
+        withdrawal_rlp_items_b64: snapshot.withdrawal_rlp_items.as_ref().map(|items| {
+            items
+                .iter()
+                .map(|raw| base64::engine::general_purpose::STANDARD.encode(raw.as_slice()))
+                .collect()
+        }),
         ommer_hashes: snapshot
             .ommer_hashes
             .iter()
@@ -3027,6 +3035,22 @@ fn eth_rlpx_native_body_snapshot_from_store_v1(
                     .with_context(|| format!("decode body.raw_tx_rlps_b64[{idx}] failed"))
             })
             .collect::<Result<Vec<_>>>()?,
+        withdrawal_rlp_items: stored
+            .withdrawal_rlp_items_b64
+            .as_ref()
+            .map(|items| {
+                items
+                    .iter()
+                    .enumerate()
+                    .map(|(idx, raw)| {
+                        eth_rlpx_b64_from_store_v1(
+                            raw,
+                            &format!("body.withdrawal_rlp_items_b64[{idx}]"),
+                        )
+                    })
+                    .collect::<Result<Vec<_>>>()
+            })
+            .transpose()?,
         ommer_hashes: eth_rlpx_h256_vec_from_store_v1(&stored.ommer_hashes, "body.ommer_hashes")?,
         withdrawal_count: stored.withdrawal_count,
         body_available: stored.body_available,
@@ -4978,6 +5002,7 @@ mod mainline_evm_cli_tests {
             block_hash: header_hash,
             tx_hashes: vec![[0x88_u8; 32]],
             raw_tx_rlps: Vec::new(),
+            withdrawal_rlp_items: Some(Vec::new()),
             ommer_hashes: Vec::new(),
             withdrawal_count: Some(0),
             body_available: true,
@@ -5229,6 +5254,7 @@ mod mainline_evm_cli_tests {
             block_hash: [0x11; 32],
             tx_hashes: Vec::new(),
             raw_tx_rlps: Vec::new(),
+            withdrawal_rlp_items: None,
             ommer_hashes: Vec::new(),
             withdrawal_count: Some(0),
             body_available: true,
@@ -5335,6 +5361,7 @@ mod mainline_evm_cli_tests {
             block_hash: header_hash_a,
             tx_hashes: Vec::new(),
             raw_tx_rlps: Vec::new(),
+            withdrawal_rlp_items: Some(Vec::new()),
             ommer_hashes: Vec::new(),
             withdrawal_count: Some(0),
             body_available: true,
@@ -5347,6 +5374,7 @@ mod mainline_evm_cli_tests {
             block_hash: header_hash_b,
             tx_hashes: vec![[0x88_u8; 32]],
             raw_tx_rlps: vec![vec![0xf8, 0x01, 0x80]],
+            withdrawal_rlp_items: Some(Vec::new()),
             ommer_hashes: Vec::new(),
             withdrawal_count: Some(0),
             body_available: true,
@@ -5458,6 +5486,12 @@ mod mainline_evm_cli_tests {
                 .expect("runtime body")
                 .raw_tx_rlps,
             vec![vec![0xf8, 0x01, 0x80]]
+        );
+        assert_eq!(
+            get_network_runtime_native_body_snapshot_v1(chain_id)
+                .expect("runtime body")
+                .withdrawal_rlp_items,
+            Some(Vec::new())
         );
         assert_eq!(
             get_network_runtime_native_receipt_snapshot_v1(chain_id, header_hash_b)

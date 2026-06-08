@@ -178,6 +178,7 @@ pub struct EthRlpxBlockBodyRecordV1 {
     pub tx_hashes: Vec<[u8; 32]>,
     pub transactions_root: [u8; 32],
     pub ommer_hashes: Vec<[u8; 32]>,
+    pub withdrawal_rlp_items: Option<Vec<Vec<u8>>>,
     pub withdrawal_count: Option<usize>,
     pub body_available: bool,
     pub txs_materialized: bool,
@@ -3579,17 +3580,19 @@ pub fn eth_rlpx_parse_new_block_payload_v1(
         .into_iter()
         .map(eth_rlpx_keccak256_bytes_v1)
         .collect::<Vec<_>>();
-    let withdrawal_count = block_fields.get(3).and_then(|field| match field {
+    let withdrawal_rlp_items = block_fields.get(3).and_then(|field| match field {
         EthRlpxRlpItemV1::List(payload) => eth_rlpx_split_list_raw_items_v1(payload)
             .ok()
-            .map(|items| items.len()),
+            .map(|items| items.into_iter().map(Vec::from).collect()),
         _ => None,
     });
+    let withdrawal_count = withdrawal_rlp_items.as_ref().map(Vec::len);
     let body = EthRlpxBlockBodyRecordV1 {
         tx_rlp_items: tx_rlp_items.clone(),
         tx_hashes,
         transactions_root,
         ommer_hashes,
+        withdrawal_rlp_items,
         withdrawal_count,
         body_available: true,
         txs_materialized: true,
@@ -3655,17 +3658,19 @@ pub fn eth_rlpx_parse_block_bodies_payload_v1(
             .into_iter()
             .map(eth_rlpx_keccak256_bytes_v1)
             .collect::<Vec<_>>();
-        let withdrawal_count = body_fields.get(2).and_then(|field| match field {
+        let withdrawal_rlp_items = body_fields.get(2).and_then(|field| match field {
             EthRlpxRlpItemV1::List(payload) => eth_rlpx_split_list_raw_items_v1(payload)
                 .ok()
-                .map(|items| items.len()),
+                .map(|items| items.into_iter().map(Vec::from).collect()),
             _ => None,
         });
+        let withdrawal_count = withdrawal_rlp_items.as_ref().map(Vec::len);
         bodies.push(EthRlpxBlockBodyRecordV1 {
             tx_rlp_items,
             tx_hashes,
             transactions_root,
             ommer_hashes,
+            withdrawal_rlp_items,
             withdrawal_count,
             body_available: true,
             txs_materialized: true,
@@ -5307,6 +5312,7 @@ mod tests {
             tx_hashes: Vec::new(),
             transactions_root: empty_root,
             ommer_hashes: Vec::new(),
+            withdrawal_rlp_items: Some(Vec::new()),
             withdrawal_count: Some(0),
             body_available: true,
             txs_materialized: true,

@@ -123,6 +123,8 @@ pub struct EvmNativeBlockBodyWireV1 {
     #[serde(default)]
     pub raw_tx_rlps: Vec<Vec<u8>>,
     pub ommer_hashes: Vec<[u8; 32]>,
+    #[serde(default)]
+    pub withdrawal_rlp_items: Option<Vec<Vec<u8>>>,
     pub withdrawal_count: Option<usize>,
     pub body_available: bool,
     pub txs_materialized: bool,
