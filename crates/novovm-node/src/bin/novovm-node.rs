@@ -3503,6 +3503,145 @@ fn eth_rlpx_restored_native_head_phase_v1(
     NetworkRuntimeNativeSyncPhaseV1::Headers
 }
 
+#[derive(Debug, Clone)]
+struct EthRlpxTrustedHeadPivotV1 {
+    header: NetworkRuntimeNativeHeaderSnapshotV1,
+    head: NetworkRuntimeNativeHeadSnapshotV1,
+    highest_block: u64,
+}
+
+fn eth_rlpx_u64_from_trusted_env_v1(raw: &str, field: &str) -> Result<u64> {
+    let trimmed = raw.trim();
+    if let Some(hex) = trimmed
+        .strip_prefix("0x")
+        .or_else(|| trimmed.strip_prefix("0X"))
+    {
+        if hex.is_empty() {
+            bail!("{field} hex value is empty");
+        }
+        return u64::from_str_radix(hex, 16).with_context(|| format!("invalid {field}={raw}"));
+    }
+    trimmed
+        .parse::<u64>()
+        .with_context(|| format!("invalid {field}={raw}"))
+}
+
+fn eth_rlpx_trusted_head_pivot_from_env_v1(
+    chain_id: u64,
+) -> Result<Option<EthRlpxTrustedHeadPivotV1>> {
+    let number_raw = string_env_nonempty("NOVOVM_ETH_RLPX_TRUSTED_HEAD_NUMBER");
+    let hash_raw = string_env_nonempty("NOVOVM_ETH_RLPX_TRUSTED_HEAD_HASH");
+    let state_root_raw = string_env_nonempty("NOVOVM_ETH_RLPX_TRUSTED_HEAD_STATE_ROOT");
+    let parent_hash_raw = string_env_nonempty("NOVOVM_ETH_RLPX_TRUSTED_HEAD_PARENT_HASH");
+    let transactions_root_raw =
+        string_env_nonempty("NOVOVM_ETH_RLPX_TRUSTED_HEAD_TRANSACTIONS_ROOT");
+    let receipts_root_raw = string_env_nonempty("NOVOVM_ETH_RLPX_TRUSTED_HEAD_RECEIPTS_ROOT");
+    let ommers_hash_raw = string_env_nonempty("NOVOVM_ETH_RLPX_TRUSTED_HEAD_OMMERS_HASH");
+    let highest_raw = string_env_nonempty("NOVOVM_ETH_RLPX_TRUSTED_HEAD_HIGHEST");
+    if number_raw.is_none()
+        && hash_raw.is_none()
+        && state_root_raw.is_none()
+        && parent_hash_raw.is_none()
+        && transactions_root_raw.is_none()
+        && receipts_root_raw.is_none()
+        && ommers_hash_raw.is_none()
+        && highest_raw.is_none()
+    {
+        return Ok(None);
+    }
+    let Some(number_raw) = number_raw else {
+        bail!("NOVOVM_ETH_RLPX_TRUSTED_HEAD_NUMBER is required with trusted head pivot");
+    };
+    let Some(hash_raw) = hash_raw else {
+        bail!("NOVOVM_ETH_RLPX_TRUSTED_HEAD_HASH is required with trusted head pivot");
+    };
+    let Some(state_root_raw) = state_root_raw else {
+        bail!("NOVOVM_ETH_RLPX_TRUSTED_HEAD_STATE_ROOT is required with trusted head pivot");
+    };
+
+    let number =
+        eth_rlpx_u64_from_trusted_env_v1(&number_raw, "NOVOVM_ETH_RLPX_TRUSTED_HEAD_NUMBER")?;
+    let hash = eth_rlpx_hex_h256_from_store_v1(&hash_raw, "NOVOVM_ETH_RLPX_TRUSTED_HEAD_HASH")?;
+    let state_root = eth_rlpx_hex_h256_from_store_v1(
+        &state_root_raw,
+        "NOVOVM_ETH_RLPX_TRUSTED_HEAD_STATE_ROOT",
+    )?;
+    let parent_hash = eth_rlpx_optional_h256_from_store_v1(
+        parent_hash_raw.as_deref(),
+        "NOVOVM_ETH_RLPX_TRUSTED_HEAD_PARENT_HASH",
+    )?
+    .unwrap_or([0u8; 32]);
+    let transactions_root = eth_rlpx_optional_h256_from_store_v1(
+        transactions_root_raw.as_deref(),
+        "NOVOVM_ETH_RLPX_TRUSTED_HEAD_TRANSACTIONS_ROOT",
+    )?
+    .unwrap_or_else(novovm_network::eth_rlpx_empty_trie_root_v1);
+    let receipts_root = eth_rlpx_optional_h256_from_store_v1(
+        receipts_root_raw.as_deref(),
+        "NOVOVM_ETH_RLPX_TRUSTED_HEAD_RECEIPTS_ROOT",
+    )?
+    .unwrap_or_else(novovm_network::eth_rlpx_empty_trie_root_v1);
+    let ommers_hash = eth_rlpx_optional_h256_from_store_v1(
+        ommers_hash_raw.as_deref(),
+        "NOVOVM_ETH_RLPX_TRUSTED_HEAD_OMMERS_HASH",
+    )?
+    .unwrap_or_else(novovm_network::eth_rlpx_empty_ommers_hash_v1);
+    let highest_block = highest_raw
+        .map(|raw| eth_rlpx_u64_from_trusted_env_v1(&raw, "NOVOVM_ETH_RLPX_TRUSTED_HEAD_HIGHEST"))
+        .transpose()?
+        .unwrap_or(number)
+        .max(number);
+    let observed_unix_ms = now_unix_ms() as u128;
+    let header = NetworkRuntimeNativeHeaderSnapshotV1 {
+        chain_id,
+        number,
+        hash,
+        parent_hash,
+        state_root,
+        transactions_root,
+        receipts_root,
+        ommers_hash,
+        logs_bloom: Vec::new(),
+        gas_limit: None,
+        gas_used: None,
+        timestamp: None,
+        base_fee_per_gas: None,
+        withdrawals_root: None,
+        blob_gas_used: None,
+        excess_blob_gas: None,
+        block_access_list_hash: None,
+        source_peer_id: None,
+        observed_unix_ms,
+    };
+    let head = NetworkRuntimeNativeHeadSnapshotV1 {
+        chain_id,
+        phase: NetworkRuntimeNativeSyncPhaseV1::State,
+        peer_count: 0,
+        block_number: number,
+        block_hash: hash,
+        parent_block_hash: parent_hash,
+        state_root,
+        canonical: true,
+        safe: false,
+        finalized: false,
+        reorg_depth_hint: None,
+        body_available: false,
+        source_peer_id: None,
+        observed_unix_ms,
+    };
+    Ok(Some(EthRlpxTrustedHeadPivotV1 {
+        header,
+        head,
+        highest_block,
+    }))
+}
+
+fn install_eth_rlpx_trusted_head_pivot_v1(chain_id: u64, pivot: &EthRlpxTrustedHeadPivotV1) -> u64 {
+    set_network_runtime_native_header_snapshot_v1(chain_id, pivot.header.clone());
+    set_network_runtime_native_head_snapshot_v1(chain_id, pivot.head.clone());
+    pivot.header.number
+}
+
 fn eth_rlpx_native_head_store_header_number_v1(stored: &EthRlpxNativeHeadStoreV1) -> u64 {
     stored
         .header
@@ -3872,11 +4011,24 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
         0
     };
     let restored_native_block = restored_history_block.max(restored_head_block);
-    let current_block = checkpoint
+    let checkpoint_current_block = checkpoint
         .as_ref()
         .map(|checkpoint| checkpoint.current_block)
-        .unwrap_or(0)
-        .max(restored_native_block);
+        .unwrap_or(0);
+    let trusted_head_pivot = eth_rlpx_trusted_head_pivot_from_env_v1(chain_id)?;
+    let trusted_head_install_floor = checkpoint_current_block.max(restored_native_block);
+    let trusted_head_block = trusted_head_pivot
+        .as_ref()
+        .filter(|pivot| pivot.header.number >= trusted_head_install_floor)
+        .map(|pivot| install_eth_rlpx_trusted_head_pivot_v1(chain_id, pivot))
+        .unwrap_or(0);
+    let trusted_highest_block = trusted_head_pivot
+        .as_ref()
+        .map(|pivot| pivot.highest_block)
+        .unwrap_or(0);
+    let current_block = checkpoint_current_block
+        .max(restored_native_block)
+        .max(trusted_head_block);
     let highest_block = checkpoint
         .as_ref()
         .map(|checkpoint| checkpoint.highest_block)
@@ -3887,6 +4039,7 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
                 .map(|stored| stored.highest_block)
                 .unwrap_or(current_block),
         )
+        .max(trusted_highest_block)
         .max(current_block);
     set_network_runtime_sync_status(
         chain_id,
@@ -3912,6 +4065,24 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
                 "eth_rlpx_sync_checkpoint: initialized path={}",
                 checkpoint_path.display()
             );
+        }
+    }
+    if verbose {
+        if let Some(pivot) = trusted_head_pivot.as_ref() {
+            if trusted_head_block == pivot.header.number {
+                println!(
+                    "eth_rlpx_trusted_head: installed number={} hash={} state_root={} highest={}",
+                    pivot.header.number,
+                    to_hex_prefixed(&pivot.header.hash),
+                    to_hex_prefixed(&pivot.header.state_root),
+                    pivot.highest_block
+                );
+            } else {
+                println!(
+                    "eth_rlpx_trusted_head: skipped stale number={} install_floor={} highest={}",
+                    pivot.header.number, trusted_head_install_floor, pivot.highest_block
+                );
+            }
         }
     }
     if verbose && native_head_store_enabled {
@@ -4164,6 +4335,52 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
 #[cfg(test)]
 mod mainline_evm_cli_tests {
     use super::*;
+
+    static ETH_RLPX_TRUSTED_HEAD_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    const ETH_RLPX_TRUSTED_HEAD_ENV_KEYS: [&str; 8] = [
+        "NOVOVM_ETH_RLPX_TRUSTED_HEAD_NUMBER",
+        "NOVOVM_ETH_RLPX_TRUSTED_HEAD_HASH",
+        "NOVOVM_ETH_RLPX_TRUSTED_HEAD_STATE_ROOT",
+        "NOVOVM_ETH_RLPX_TRUSTED_HEAD_PARENT_HASH",
+        "NOVOVM_ETH_RLPX_TRUSTED_HEAD_TRANSACTIONS_ROOT",
+        "NOVOVM_ETH_RLPX_TRUSTED_HEAD_RECEIPTS_ROOT",
+        "NOVOVM_ETH_RLPX_TRUSTED_HEAD_OMMERS_HASH",
+        "NOVOVM_ETH_RLPX_TRUSTED_HEAD_HIGHEST",
+    ];
+
+    struct TrustedHeadEnvRestoreV1 {
+        captured: Vec<(&'static str, Option<String>)>,
+    }
+
+    impl Drop for TrustedHeadEnvRestoreV1 {
+        fn drop(&mut self) {
+            for (key, value) in self.captured.drain(..) {
+                if let Some(value) = value {
+                    std::env::set_var(key, value);
+                } else {
+                    std::env::remove_var(key);
+                }
+            }
+        }
+    }
+
+    fn with_clean_trusted_head_env_v1<T>(f: impl FnOnce() -> T) -> T {
+        let _guard = ETH_RLPX_TRUSTED_HEAD_ENV_LOCK
+            .lock()
+            .expect("trusted head env lock");
+        let _restore = TrustedHeadEnvRestoreV1 {
+            captured: ETH_RLPX_TRUSTED_HEAD_ENV_KEYS
+                .iter()
+                .copied()
+                .map(|key| (key, std::env::var(key).ok()))
+                .collect(),
+        };
+        for key in ETH_RLPX_TRUSTED_HEAD_ENV_KEYS {
+            std::env::remove_var(key);
+        }
+        f()
+    }
 
     #[test]
     fn eth_dns_discovery_txt_records_parse_tree_children_v1() {
@@ -4437,6 +4654,87 @@ mod mainline_evm_cli_tests {
         eth_rlpx_apply_public_sync_batch_defaults_v1(&mut budget, 128, 64);
         assert_eq!(budget.sync_pull_headers_batch, 32);
         assert_eq!(budget.sync_pull_bodies_batch, 8);
+    }
+
+    #[test]
+    fn eth_rlpx_trusted_head_pivot_from_env_installs_runtime_head_v1() {
+        with_clean_trusted_head_env_v1(|| {
+            let chain_id = 8_881_001;
+            let number = 25_270_000_u64;
+            let highest = number + 128;
+            let hash = [0x11_u8; 32];
+            let state_root = [0x22_u8; 32];
+            let parent_hash = [0x10_u8; 32];
+            std::env::set_var(
+                "NOVOVM_ETH_RLPX_TRUSTED_HEAD_NUMBER",
+                format!("0x{number:x}"),
+            );
+            std::env::set_var("NOVOVM_ETH_RLPX_TRUSTED_HEAD_HASH", to_hex_prefixed(&hash));
+            std::env::set_var(
+                "NOVOVM_ETH_RLPX_TRUSTED_HEAD_STATE_ROOT",
+                to_hex_prefixed(&state_root),
+            );
+            std::env::set_var(
+                "NOVOVM_ETH_RLPX_TRUSTED_HEAD_PARENT_HASH",
+                to_hex_prefixed(&parent_hash),
+            );
+            std::env::set_var(
+                "NOVOVM_ETH_RLPX_TRUSTED_HEAD_HIGHEST",
+                format!("0x{highest:x}"),
+            );
+
+            let pivot = eth_rlpx_trusted_head_pivot_from_env_v1(chain_id)
+                .expect("trusted head pivot should parse")
+                .expect("trusted head pivot should exist");
+            assert_eq!(pivot.header.number, number);
+            assert_eq!(pivot.header.hash, hash);
+            assert_eq!(pivot.header.state_root, state_root);
+            assert_eq!(pivot.header.parent_hash, parent_hash);
+            assert_eq!(
+                pivot.header.transactions_root,
+                novovm_network::eth_rlpx_empty_trie_root_v1()
+            );
+            assert_eq!(pivot.head.phase, NetworkRuntimeNativeSyncPhaseV1::State);
+            assert_eq!(pivot.highest_block, highest);
+
+            let installed = install_eth_rlpx_trusted_head_pivot_v1(chain_id, &pivot);
+            assert_eq!(installed, number);
+            assert_eq!(
+                get_network_runtime_native_header_snapshot_v1(chain_id)
+                    .expect("runtime trusted header")
+                    .state_root,
+                state_root
+            );
+            let runtime_head = get_network_runtime_native_head_snapshot_v1(chain_id)
+                .expect("runtime trusted head");
+            assert_eq!(runtime_head.block_number, number);
+            assert_eq!(runtime_head.block_hash, hash);
+            assert!(!runtime_head.body_available);
+        });
+    }
+
+    #[test]
+    fn eth_rlpx_trusted_head_pivot_from_env_rejects_partial_anchor_v1() {
+        with_clean_trusted_head_env_v1(|| {
+            std::env::set_var("NOVOVM_ETH_RLPX_TRUSTED_HEAD_NUMBER", "25");
+            let err = eth_rlpx_trusted_head_pivot_from_env_v1(8_881_002)
+                .expect_err("partial trusted head pivot should fail");
+            assert!(err
+                .to_string()
+                .contains("NOVOVM_ETH_RLPX_TRUSTED_HEAD_HASH"));
+        });
+    }
+
+    #[test]
+    fn eth_rlpx_trusted_head_pivot_from_env_rejects_optional_only_anchor_v1() {
+        with_clean_trusted_head_env_v1(|| {
+            std::env::set_var("NOVOVM_ETH_RLPX_TRUSTED_HEAD_HIGHEST", "128");
+            let err = eth_rlpx_trusted_head_pivot_from_env_v1(8_881_003)
+                .expect_err("optional-only trusted head pivot should fail");
+            assert!(err
+                .to_string()
+                .contains("NOVOVM_ETH_RLPX_TRUSTED_HEAD_NUMBER"));
+        });
     }
 
     #[test]
