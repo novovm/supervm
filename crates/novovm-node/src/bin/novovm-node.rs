@@ -1912,18 +1912,18 @@ fn eth_rlpx_peer_refresh_plan_v1(
             "all_candidate_peers_in_cooldown_expand",
         ));
     }
-    let no_ready_stalled = progress_stalled || bootstrap_stalled;
+    let stalled = progress_stalled || bootstrap_stalled;
     let stalled_expand_reason = if bootstrap_stalled && !progress_stalled {
-        "no_ready_bootstrap_stalled_expand"
+        "bootstrap_stalled_expand"
     } else {
-        "no_ready_sync_progress_stalled_expand"
+        "sync_progress_stalled_expand"
     };
     let stalled_refresh_reason = if bootstrap_stalled && !progress_stalled {
-        "no_ready_bootstrap_stalled_refresh"
+        "bootstrap_stalled_refresh"
     } else {
-        "no_ready_sync_progress_stalled_refresh"
+        "sync_progress_stalled_refresh"
     };
-    if no_ready_stalled
+    if stalled
         && candidate_limit < adaptive_candidate_limit
         && tick.saturating_sub(last_peer_refresh_tick) >= stalled_refresh_interval_ticks
     {
@@ -1941,7 +1941,7 @@ fn eth_rlpx_peer_refresh_plan_v1(
     {
         return Some((candidate_limit, "all_candidate_peers_in_cooldown_refresh"));
     }
-    if no_ready_stalled
+    if stalled
         && refresh_exhausted_enabled
         && tick.saturating_sub(last_peer_refresh_tick) >= stalled_refresh_interval_ticks
     {
@@ -4325,8 +4325,7 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
             && report.selection_quality_summary.candidate_peer_count > 0
             && report.selection_quality_summary.skipped_cooldown_peers
                 >= report.selection_quality_summary.candidate_peer_count;
-        let progress_stalled = report.ready_peers == 0
-            && highest_sync_block > current_sync_block
+        let progress_stalled = highest_sync_block > current_sync_block
             && tick.saturating_sub(last_sync_progress_tick) >= stalled_refresh_interval_ticks;
         let bootstrap_stalled = report.ready_peers == 0
             && report.connected_peers == 0
@@ -4700,14 +4699,14 @@ mod mainline_evm_cli_tests {
     fn eth_rlpx_peer_refresh_plan_expands_on_stalled_progress_v1() {
         let plan =
             eth_rlpx_peer_refresh_plan_v1(false, true, false, true, 128, 512, 6, 16, 0, 8, 16);
-        assert_eq!(plan, Some((256, "no_ready_sync_progress_stalled_expand")));
+        assert_eq!(plan, Some((256, "sync_progress_stalled_expand")));
     }
 
     #[test]
     fn eth_rlpx_peer_refresh_plan_refreshes_stalled_at_adaptive_cap_v1() {
         let plan =
             eth_rlpx_peer_refresh_plan_v1(false, true, false, true, 512, 512, 6, 32, 8, 8, 16);
-        assert_eq!(plan, Some((512, "no_ready_sync_progress_stalled_refresh")));
+        assert_eq!(plan, Some((512, "sync_progress_stalled_refresh")));
     }
 
     #[test]
@@ -4720,7 +4719,7 @@ mod mainline_evm_cli_tests {
     fn eth_rlpx_peer_refresh_plan_expands_on_bootstrap_stall_without_remote_highest_v1() {
         let plan =
             eth_rlpx_peer_refresh_plan_v1(false, false, true, true, 64, 128, 4, 16, 0, 8, 16);
-        assert_eq!(plan, Some((128, "no_ready_bootstrap_stalled_expand")));
+        assert_eq!(plan, Some((128, "bootstrap_stalled_expand")));
     }
 
     #[test]
