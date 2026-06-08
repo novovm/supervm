@@ -80,6 +80,14 @@ type NetworkRuntimeNativeSnapCodeSnapshotByChainV1 =
 static NETWORK_RUNTIME_NATIVE_SNAP_CODE_SNAPSHOTS: OnceLock<
     Mutex<NetworkRuntimeNativeSnapCodeSnapshotByChainV1>,
 > = OnceLock::new();
+type NetworkRuntimeNativeSnapTrieNodePathKeyV1 = ([u8; 32], Vec<u8>);
+type NetworkRuntimeNativeSnapTrieNodeSnapshotByPathV1 =
+    HashMap<NetworkRuntimeNativeSnapTrieNodePathKeyV1, NetworkRuntimeNativeSnapTrieNodeSnapshotV1>;
+type NetworkRuntimeNativeSnapTrieNodeSnapshotByChainV1 =
+    HashMap<u64, NetworkRuntimeNativeSnapTrieNodeSnapshotByPathV1>;
+static NETWORK_RUNTIME_NATIVE_SNAP_TRIE_NODE_SNAPSHOTS: OnceLock<
+    Mutex<NetworkRuntimeNativeSnapTrieNodeSnapshotByChainV1>,
+> = OnceLock::new();
 type NetworkRuntimeNativeSnapAccountRangeProgressByRootV1 =
     HashMap<[u8; 32], NetworkRuntimeNativeSnapAccountRangeProgressV1>;
 type NetworkRuntimeNativeSnapAccountRangeProgressByChainV1 =
@@ -168,6 +176,11 @@ fn runtime_native_snap_storage_snapshot_map(
 fn runtime_native_snap_code_snapshot_map(
 ) -> &'static Mutex<NetworkRuntimeNativeSnapCodeSnapshotByChainV1> {
     NETWORK_RUNTIME_NATIVE_SNAP_CODE_SNAPSHOTS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn runtime_native_snap_trie_node_snapshot_map(
+) -> &'static Mutex<NetworkRuntimeNativeSnapTrieNodeSnapshotByChainV1> {
+    NETWORK_RUNTIME_NATIVE_SNAP_TRIE_NODE_SNAPSHOTS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
 fn runtime_native_snap_account_range_progress_map(
@@ -429,6 +442,25 @@ pub struct NetworkRuntimeNativeSnapCodeSnapshotV1 {
 }
 
 impl NetworkRuntimeNativeSnapCodeSnapshotV1 {
+    #[must_use]
+    pub fn normalized(mut self, chain_id: u64) -> Self {
+        self.chain_id = chain_id;
+        self
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NetworkRuntimeNativeSnapTrieNodeSnapshotV1 {
+    pub chain_id: u64,
+    pub state_root: [u8; 32],
+    pub path_segments: Vec<Vec<u8>>,
+    pub node_hash: [u8; 32],
+    pub node_rlp: Vec<u8>,
+    pub source_peer_id: Option<u64>,
+    pub observed_unix_ms: u128,
+}
+
+impl NetworkRuntimeNativeSnapTrieNodeSnapshotV1 {
     #[must_use]
     pub fn normalized(mut self, chain_id: u64) -> Self {
         self.chain_id = chain_id;
@@ -2817,6 +2849,85 @@ pub fn snapshot_network_runtime_native_snap_code_snapshots_v1(
     out
 }
 
+fn network_runtime_native_snap_trie_node_path_key_v1(
+    state_root: [u8; 32],
+    path_segments: &[Vec<u8>],
+) -> NetworkRuntimeNativeSnapTrieNodePathKeyV1 {
+    let mut encoded = Vec::new();
+    for segment in path_segments {
+        encoded.extend_from_slice(&(segment.len() as u32).to_be_bytes());
+        encoded.extend_from_slice(segment.as_slice());
+    }
+    (state_root, encoded)
+}
+
+pub fn set_network_runtime_native_snap_trie_node_snapshot_v1(
+    chain_id: u64,
+    snapshot: NetworkRuntimeNativeSnapTrieNodeSnapshotV1,
+) {
+    let normalized = snapshot.normalized(chain_id);
+    let key = network_runtime_native_snap_trie_node_path_key_v1(
+        normalized.state_root,
+        normalized.path_segments.as_slice(),
+    );
+    if let Ok(mut guard) = runtime_native_snap_trie_node_snapshot_map().lock() {
+        guard
+            .entry(chain_id)
+            .or_default()
+            .insert(key, normalized.clone());
+    }
+    if let Ok(mut observed) = runtime_sync_observed_state_map().lock() {
+        observed
+            .native_snapshot_updated_at_by_chain
+            .insert(chain_id, normalized.observed_unix_ms);
+        hint_runtime_stale_check_deadline(&mut observed, chain_id, normalized.observed_unix_ms);
+    }
+}
+
+#[must_use]
+pub fn get_network_runtime_native_snap_trie_node_snapshot_v1(
+    chain_id: u64,
+    state_root: [u8; 32],
+    path_segments: &[Vec<u8>],
+) -> Option<NetworkRuntimeNativeSnapTrieNodeSnapshotV1> {
+    let key = network_runtime_native_snap_trie_node_path_key_v1(state_root, path_segments);
+    let guard = runtime_native_snap_trie_node_snapshot_map().lock().ok()?;
+    guard
+        .get(&chain_id)
+        .and_then(|nodes| nodes.get(&key).cloned())
+}
+
+#[must_use]
+pub fn snapshot_network_runtime_native_snap_trie_node_snapshots_v1(
+    chain_id: u64,
+    state_root: [u8; 32],
+    limit: usize,
+) -> Vec<NetworkRuntimeNativeSnapTrieNodeSnapshotV1> {
+    if limit == 0 {
+        return Vec::new();
+    }
+    let Ok(guard) = runtime_native_snap_trie_node_snapshot_map().lock() else {
+        return Vec::new();
+    };
+    let mut out = guard
+        .get(&chain_id)
+        .map(|nodes| {
+            nodes
+                .values()
+                .filter(|snapshot| snapshot.state_root == state_root)
+                .cloned()
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    out.sort_by(|a, b| {
+        a.path_segments
+            .cmp(&b.path_segments)
+            .then_with(|| a.node_hash.cmp(&b.node_hash))
+    });
+    out.truncate(limit);
+    out
+}
+
 pub fn set_network_runtime_native_snap_account_range_progress_v1(
     chain_id: u64,
     progress: NetworkRuntimeNativeSnapAccountRangeProgressV1,
@@ -3517,6 +3628,9 @@ pub fn clear_network_runtime_native_snapshots_for_chain_v1(chain_id: u64) {
         guard.remove(&chain_id);
     }
     if let Ok(mut guard) = runtime_native_snap_code_snapshot_map().lock() {
+        guard.remove(&chain_id);
+    }
+    if let Ok(mut guard) = runtime_native_snap_trie_node_snapshot_map().lock() {
         guard.remove(&chain_id);
     }
     if let Ok(mut guard) = runtime_native_snap_account_range_progress_map().lock() {

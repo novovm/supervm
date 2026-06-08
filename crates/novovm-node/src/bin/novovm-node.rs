@@ -41,13 +41,15 @@ use novovm_network::{
     set_network_runtime_native_snap_account_range_progress_v1,
     set_network_runtime_native_snap_account_snapshot_v1,
     set_network_runtime_native_snap_account_storage_snapshot_v1,
-    set_network_runtime_native_snap_code_snapshot_v1, set_network_runtime_sync_status,
+    set_network_runtime_native_snap_code_snapshot_v1,
+    set_network_runtime_native_snap_trie_node_snapshot_v1, set_network_runtime_sync_status,
     snapshot_network_runtime_native_canonical_blocks_v1,
     snapshot_network_runtime_native_pending_tx_summary_v1,
     snapshot_network_runtime_native_snap_account_range_progress_v1,
     snapshot_network_runtime_native_snap_account_snapshots_v1,
     snapshot_network_runtime_native_snap_account_storage_snapshots_v1,
-    snapshot_network_runtime_native_snap_code_snapshots_v1, AvailabilityController,
+    snapshot_network_runtime_native_snap_code_snapshots_v1,
+    snapshot_network_runtime_native_snap_trie_node_snapshots_v1, AvailabilityController,
     AvailabilityDecision, AvailabilityMode, CapabilityReadiness, CapabilityRouteHint,
     EthDiscv4EndpointV1, EthDiscv4NeighborV1, EthFullnodeBudgetHooksV1,
     EthFullnodeNativePeerWorkerConfigV1, EthFullnodeNativePeerWorkerV1, FileQueueStore,
@@ -57,15 +59,15 @@ use novovm_network::{
     NetworkRuntimeNativeHeaderSnapshotV1, NetworkRuntimeNativeReceiptSnapshotV1,
     NetworkRuntimeNativeSnapAccountRangeProgressV1, NetworkRuntimeNativeSnapAccountSnapshotV1,
     NetworkRuntimeNativeSnapAccountStorageSnapshotV1, NetworkRuntimeNativeSnapCodeSnapshotV1,
-    NetworkRuntimeNativeSnapStorageSlotSnapshotV1, NetworkRuntimeNativeSyncPhaseV1,
-    NetworkRuntimeSyncStatus, PluginPeerEndpoint, QueueStore, QueuedRequest, Reachability,
-    RelayCapacityClass, RelayClient, RelayHealth, RelayMembership, RelayRef, RelayServer,
-    ReplayResult, RouteSelector, RoutingSource, SelectedPath, ETH_DISCV4_PACKET_HASH_LEN,
-    ETH_DISCV4_PING_PACKET_TYPE, ETH_RLPX_PUB_LEN, L3_BASELINE_FINGERPRINT,
-    L3_BASELINE_LOCK_VERSION, L3_BASELINE_PHASE, L3_POLICY_BASELINE_VERSION,
-    L3_READONLY_EXPORT_BASELINE_VERSION, L3_REGRESSION_LOCKSET, L3_RELAY_RUNTIME_FEEDBACK_SCALE,
-    L3_RELAY_SCORE_SCALE, L3_RELAY_SELECTED_STICKY_MARGIN, L3_RELAY_SOURCE_BONUS_CONFIGURED,
-    L3_RELAY_SOURCE_BONUS_POOL, L3_RELAY_SOURCE_BONUS_SNAPSHOT,
+    NetworkRuntimeNativeSnapStorageSlotSnapshotV1, NetworkRuntimeNativeSnapTrieNodeSnapshotV1,
+    NetworkRuntimeNativeSyncPhaseV1, NetworkRuntimeSyncStatus, PluginPeerEndpoint, QueueStore,
+    QueuedRequest, Reachability, RelayCapacityClass, RelayClient, RelayHealth, RelayMembership,
+    RelayRef, RelayServer, ReplayResult, RouteSelector, RoutingSource, SelectedPath,
+    ETH_DISCV4_PACKET_HASH_LEN, ETH_DISCV4_PING_PACKET_TYPE, ETH_RLPX_PUB_LEN,
+    L3_BASELINE_FINGERPRINT, L3_BASELINE_LOCK_VERSION, L3_BASELINE_PHASE,
+    L3_POLICY_BASELINE_VERSION, L3_READONLY_EXPORT_BASELINE_VERSION, L3_REGRESSION_LOCKSET,
+    L3_RELAY_RUNTIME_FEEDBACK_SCALE, L3_RELAY_SCORE_SCALE, L3_RELAY_SELECTED_STICKY_MARGIN,
+    L3_RELAY_SOURCE_BONUS_CONFIGURED, L3_RELAY_SOURCE_BONUS_POOL, L3_RELAY_SOURCE_BONUS_SNAPSHOT,
 };
 use novovm_node::governance_surface::{
     default_mainline_governance_store_path, is_mainline_governance_query_method,
@@ -2676,6 +2678,8 @@ struct EthRlpxNativeHeadStoreV1 {
     #[serde(default)]
     snap_codes: Vec<EthRlpxNativeSnapCodeStoreV1>,
     #[serde(default)]
+    snap_trie_nodes: Vec<EthRlpxNativeSnapTrieNodeStoreV1>,
+    #[serde(default)]
     snap_account_range_progress: Option<EthRlpxNativeSnapAccountRangeProgressStoreV1>,
     updated_at_unix_ms: u64,
 }
@@ -2759,6 +2763,16 @@ struct EthRlpxNativeSnapAccountStorageStoreV1 {
 struct EthRlpxNativeSnapCodeStoreV1 {
     code_hash: String,
     code_b64: String,
+    source_peer_id: Option<u64>,
+    observed_unix_ms: u128,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+struct EthRlpxNativeSnapTrieNodeStoreV1 {
+    state_root: String,
+    path_segments_b64: Vec<String>,
+    node_hash: String,
+    node_rlp_b64: String,
     source_peer_id: Option<u64>,
     observed_unix_ms: u128,
 }
@@ -3172,6 +3186,49 @@ fn eth_rlpx_native_snap_code_snapshot_from_store_v1(
     })
 }
 
+fn eth_rlpx_native_snap_trie_node_store_from_snapshot_v1(
+    snapshot: &NetworkRuntimeNativeSnapTrieNodeSnapshotV1,
+) -> EthRlpxNativeSnapTrieNodeStoreV1 {
+    EthRlpxNativeSnapTrieNodeStoreV1 {
+        state_root: eth_rlpx_hex_h256_to_store_v1(&snapshot.state_root),
+        path_segments_b64: snapshot
+            .path_segments
+            .iter()
+            .map(|segment| eth_rlpx_b64_to_store_v1(segment.as_slice()))
+            .collect(),
+        node_hash: eth_rlpx_hex_h256_to_store_v1(&snapshot.node_hash),
+        node_rlp_b64: eth_rlpx_b64_to_store_v1(snapshot.node_rlp.as_slice()),
+        source_peer_id: snapshot.source_peer_id,
+        observed_unix_ms: snapshot.observed_unix_ms,
+    }
+}
+
+fn eth_rlpx_native_snap_trie_node_snapshot_from_store_v1(
+    chain_id: u64,
+    stored: &EthRlpxNativeSnapTrieNodeStoreV1,
+) -> Result<NetworkRuntimeNativeSnapTrieNodeSnapshotV1> {
+    let path_segments = stored
+        .path_segments_b64
+        .iter()
+        .enumerate()
+        .map(|(idx, segment)| {
+            eth_rlpx_b64_from_store_v1(segment, &format!("snap_trie_node.path_segments_b64[{idx}]"))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    Ok(NetworkRuntimeNativeSnapTrieNodeSnapshotV1 {
+        chain_id,
+        state_root: eth_rlpx_hex_h256_from_store_v1(
+            &stored.state_root,
+            "snap_trie_node.state_root",
+        )?,
+        path_segments,
+        node_hash: eth_rlpx_hex_h256_from_store_v1(&stored.node_hash, "snap_trie_node.node_hash")?,
+        node_rlp: eth_rlpx_b64_from_store_v1(&stored.node_rlp_b64, "snap_trie_node.node_rlp_b64")?,
+        source_peer_id: stored.source_peer_id,
+        observed_unix_ms: stored.observed_unix_ms,
+    })
+}
+
 fn eth_rlpx_native_snap_account_range_progress_store_from_snapshot_v1(
     snapshot: &NetworkRuntimeNativeSnapAccountRangeProgressV1,
 ) -> EthRlpxNativeSnapAccountRangeProgressStoreV1 {
@@ -3247,6 +3304,11 @@ fn write_eth_rlpx_native_head_store_v1(
         snap_code_hashes.as_slice(),
         ETH_RLPX_NATIVE_HEAD_STORE_SNAP_ITEMS_LIMIT_V1,
     );
+    let snap_trie_nodes = snapshot_network_runtime_native_snap_trie_node_snapshots_v1(
+        chain_id,
+        header.state_root,
+        ETH_RLPX_NATIVE_HEAD_STORE_SNAP_ITEMS_LIMIT_V1,
+    );
     let snap_account_range_progress =
         snapshot_network_runtime_native_snap_account_range_progress_v1(chain_id, header.state_root);
     let stored = EthRlpxNativeHeadStoreV1 {
@@ -3272,6 +3334,10 @@ fn write_eth_rlpx_native_head_store_v1(
         snap_codes: snap_codes
             .iter()
             .map(eth_rlpx_native_snap_code_store_from_snapshot_v1)
+            .collect(),
+        snap_trie_nodes: snap_trie_nodes
+            .iter()
+            .map(eth_rlpx_native_snap_trie_node_store_from_snapshot_v1)
             .collect(),
         snap_account_range_progress: snap_account_range_progress
             .as_ref()
@@ -3369,6 +3435,13 @@ fn restore_eth_rlpx_native_head_store_v1(stored: &EthRlpxNativeHeadStoreV1) -> R
     for code in &stored.snap_codes {
         let snapshot = eth_rlpx_native_snap_code_snapshot_from_store_v1(stored.chain_id, code)?;
         set_network_runtime_native_snap_code_snapshot_v1(stored.chain_id, snapshot);
+    }
+    for node in &stored.snap_trie_nodes {
+        let snapshot =
+            eth_rlpx_native_snap_trie_node_snapshot_from_store_v1(stored.chain_id, node)?;
+        if snapshot.state_root == header.state_root {
+            set_network_runtime_native_snap_trie_node_snapshot_v1(stored.chain_id, snapshot);
+        }
     }
     if let Some(progress) = stored.snap_account_range_progress.as_ref() {
         let snapshot = eth_rlpx_native_snap_account_range_progress_snapshot_from_store_v1(
@@ -4449,6 +4522,13 @@ mod mainline_evm_cli_tests {
         let storage_root = [0xaa_u8; 32];
         let code_hash = [0xbb_u8; 32];
         let next_account_origin = [0xdd_u8; 32];
+        let trie_node_path = vec![vec![0_u8]];
+        let trie_node_rlp = {
+            let mut node = vec![0xd1_u8];
+            node.extend(std::iter::repeat(0x80_u8).take(17));
+            node
+        };
+        let trie_node_hash = novovm_network::eth_rlpx_trie_node_hash_v1(trie_node_rlp.as_slice());
         set_network_runtime_native_snap_account_snapshot_v1(
             chain_id,
             NetworkRuntimeNativeSnapAccountSnapshotV1 {
@@ -4485,6 +4565,18 @@ mod mainline_evm_cli_tests {
                 chain_id,
                 code_hash,
                 code: vec![0x60, 0x00],
+                source_peer_id: Some(42),
+                observed_unix_ms: now_unix_ms() as u128,
+            },
+        );
+        set_network_runtime_native_snap_trie_node_snapshot_v1(
+            chain_id,
+            NetworkRuntimeNativeSnapTrieNodeSnapshotV1 {
+                chain_id,
+                state_root: header.state_root,
+                path_segments: trie_node_path.clone(),
+                node_hash: trie_node_hash,
+                node_rlp: trie_node_rlp.clone(),
                 source_peer_id: Some(42),
                 observed_unix_ms: now_unix_ms() as u128,
             },
@@ -4539,6 +4631,7 @@ mod mainline_evm_cli_tests {
         assert_eq!(loaded.snap_accounts.len(), 1);
         assert_eq!(loaded.snap_storages.len(), 1);
         assert_eq!(loaded.snap_codes.len(), 1);
+        assert_eq!(loaded.snap_trie_nodes.len(), 1);
         let expected_next_origin_hex = eth_rlpx_hex_h256_to_store_v1(&next_account_origin);
         assert_eq!(
             loaded
@@ -4606,6 +4699,16 @@ mod mainline_evm_cli_tests {
             .expect("restored snap code")
             .code,
             vec![0x60, 0x00]
+        );
+        assert_eq!(
+            novovm_network::get_network_runtime_native_snap_trie_node_snapshot_v1(
+                restore_chain_id,
+                header.state_root,
+                trie_node_path.as_slice()
+            )
+            .expect("restored snap trie node")
+            .node_rlp,
+            trie_node_rlp
         );
         assert_eq!(
             novovm_network::get_network_runtime_native_snap_account_range_progress_v1(

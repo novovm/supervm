@@ -2509,6 +2509,22 @@ pub fn eth_rlpx_code_hash_v1(code: &[u8]) -> [u8; 32] {
     eth_rlpx_keccak256_bytes_v1(code)
 }
 
+#[must_use]
+pub fn eth_rlpx_trie_node_hash_v1(node_rlp: &[u8]) -> [u8; 32] {
+    eth_rlpx_keccak256_bytes_v1(node_rlp)
+}
+
+#[must_use]
+pub fn eth_rlpx_validate_trie_node_rlp_v1(node_rlp: &[u8]) -> bool {
+    if node_rlp.is_empty() {
+        return true;
+    }
+    let Ok((item, consumed)) = eth_rlpx_parse_item_v1(node_rlp) else {
+        return false;
+    };
+    consumed == node_rlp.len() && matches!(item, EthRlpxRlpItemV1::List(_))
+}
+
 fn eth_rlpx_build_block_header_record_rlp_v1(header: &EthRlpxBlockHeaderRecordV1) -> Vec<u8> {
     let zero_coinbase = [0u8; 20];
     let zero_mix_digest = [0u8; 32];
