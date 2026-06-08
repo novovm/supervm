@@ -633,6 +633,169 @@ fn eth_rlpx_mpt_has_right_element_node_v1(
     }
 }
 
+fn eth_rlpx_mpt_nibbles_in_range_v1(key: &[u8], lower: &[u8], upper: &[u8]) -> bool {
+    key >= lower && key < upper
+}
+
+fn eth_rlpx_mpt_subtree_bounds_v1(prefix: &[u8], width: usize) -> (Vec<u8>, Vec<u8>) {
+    let mut min = prefix.to_vec();
+    let mut max = prefix.to_vec();
+    if min.len() < width {
+        min.extend(std::iter::repeat(0u8).take(width - min.len()));
+    }
+    if max.len() < width {
+        max.extend(std::iter::repeat(0x0fu8).take(width - max.len()));
+    }
+    (min, max)
+}
+
+fn eth_rlpx_mpt_subtree_intersects_range_v1(
+    prefix: &[u8],
+    lower: &[u8],
+    upper: &[u8],
+    width: usize,
+) -> bool {
+    if lower >= upper {
+        return false;
+    }
+    let (min, max) = eth_rlpx_mpt_subtree_bounds_v1(prefix, width);
+    max.as_slice() >= lower && min.as_slice() < upper
+}
+
+fn eth_rlpx_mpt_subtree_inside_range_v1(
+    prefix: &[u8],
+    lower: &[u8],
+    upper: &[u8],
+    width: usize,
+) -> bool {
+    if lower >= upper {
+        return false;
+    }
+    let (min, max) = eth_rlpx_mpt_subtree_bounds_v1(prefix, width);
+    min.as_slice() >= lower && max.as_slice() < upper
+}
+
+fn eth_rlpx_mpt_node_has_element_in_range_v1(
+    node_rlp: &[u8],
+    prefix_nibbles: &[u8],
+    lower_nibbles: &[u8],
+    upper_nibbles: &[u8],
+    proof_db: &HashMap<[u8; 32], Vec<u8>>,
+    depth: usize,
+    width: usize,
+) -> Result<bool, String> {
+    if depth > width.saturating_add(proof_db.len()).saturating_add(16) {
+        return Err("rlpx_mpt_range_proof_depth_exceeded".to_string());
+    }
+    if !eth_rlpx_mpt_subtree_intersects_range_v1(
+        prefix_nibbles,
+        lower_nibbles,
+        upper_nibbles,
+        width,
+    ) {
+        return Ok(false);
+    }
+    let (item, consumed) = eth_rlpx_parse_item_v1(node_rlp)?;
+    if consumed != node_rlp.len() {
+        return Err("rlpx_mpt_node_trailing".to_string());
+    }
+    let EthRlpxRlpItemV1::List(payload) = item else {
+        return Err("rlpx_mpt_node_not_list".to_string());
+    };
+    let fields = eth_rlpx_parse_list_items_v1(payload)?;
+    let raw_fields = eth_rlpx_split_list_raw_items_v1(payload)?;
+    match fields.len() {
+        2 => {
+            let EthRlpxRlpItemV1::Bytes(path_encoded) = fields[0] else {
+                return Err("rlpx_mpt_short_path_not_bytes".to_string());
+            };
+            let (path, is_leaf) = eth_rlpx_mpt_hex_prefix_decode_v1(path_encoded)?;
+            let mut node_key = prefix_nibbles.to_vec();
+            node_key.extend_from_slice(path.as_slice());
+            if is_leaf {
+                return Ok(eth_rlpx_mpt_nibbles_in_range_v1(
+                    node_key.as_slice(),
+                    lower_nibbles,
+                    upper_nibbles,
+                ));
+            }
+            if !eth_rlpx_mpt_subtree_intersects_range_v1(
+                node_key.as_slice(),
+                lower_nibbles,
+                upper_nibbles,
+                width,
+            ) {
+                return Ok(false);
+            }
+            let Some(child_rlp) =
+                eth_rlpx_mpt_child_node_rlp_v1(fields[1], raw_fields[1], proof_db)?
+            else {
+                return Ok(false);
+            };
+            eth_rlpx_mpt_node_has_element_in_range_v1(
+                child_rlp.as_slice(),
+                node_key.as_slice(),
+                lower_nibbles,
+                upper_nibbles,
+                proof_db,
+                depth + 1,
+                width,
+            )
+        }
+        17 => {
+            if !matches!(fields[16], EthRlpxRlpItemV1::Bytes(bytes) if bytes.is_empty())
+                && eth_rlpx_mpt_nibbles_in_range_v1(prefix_nibbles, lower_nibbles, upper_nibbles)
+            {
+                return Ok(true);
+            }
+            for child_idx in 0..16 {
+                if !eth_rlpx_mpt_child_ref_exists_v1(fields[child_idx]) {
+                    continue;
+                }
+                let mut child_prefix = prefix_nibbles.to_vec();
+                child_prefix.push(child_idx as u8);
+                if !eth_rlpx_mpt_subtree_intersects_range_v1(
+                    child_prefix.as_slice(),
+                    lower_nibbles,
+                    upper_nibbles,
+                    width,
+                ) {
+                    continue;
+                }
+                if eth_rlpx_mpt_subtree_inside_range_v1(
+                    child_prefix.as_slice(),
+                    lower_nibbles,
+                    upper_nibbles,
+                    width,
+                ) {
+                    return Ok(true);
+                }
+                let Some(child_rlp) = eth_rlpx_mpt_child_node_rlp_v1(
+                    fields[child_idx],
+                    raw_fields[child_idx],
+                    proof_db,
+                )?
+                else {
+                    continue;
+                };
+                if eth_rlpx_mpt_node_has_element_in_range_v1(
+                    child_rlp.as_slice(),
+                    child_prefix.as_slice(),
+                    lower_nibbles,
+                    upper_nibbles,
+                    proof_db,
+                    depth + 1,
+                    width,
+                )? {
+                    return Ok(true);
+                }
+            }
+            Ok(false)
+        }
+        _ => Err("rlpx_mpt_node_arity_invalid".to_string()),
+    }
+}
+
 pub fn eth_rlpx_mpt_verify_proof_value_v1(
     root: [u8; 32],
     key: &[u8],
@@ -670,6 +833,33 @@ pub fn eth_rlpx_mpt_proof_has_right_element_v1(
         eth_rlpx_mpt_nibbles_from_key_v1(key).as_slice(),
         &proof_db,
         0,
+    )
+}
+
+pub fn eth_rlpx_mpt_proof_has_element_in_range_v1(
+    root: [u8; 32],
+    lower_key: &[u8],
+    upper_key: &[u8],
+    proof: &[Vec<u8>],
+) -> Result<bool, String> {
+    if lower_key >= upper_key || root == ETH_RLPX_EMPTY_TRIE_ROOT_V1 {
+        return Ok(false);
+    }
+    let lower_nibbles = eth_rlpx_mpt_nibbles_from_key_v1(lower_key);
+    let upper_nibbles = eth_rlpx_mpt_nibbles_from_key_v1(upper_key);
+    let proof_db = eth_rlpx_mpt_proof_db_v1(proof)?;
+    let root_node = proof_db
+        .get(&root)
+        .ok_or_else(|| "rlpx_mpt_proof_root_missing".to_string())?;
+    let width = lower_nibbles.len().max(upper_nibbles.len()).max(64);
+    eth_rlpx_mpt_node_has_element_in_range_v1(
+        root_node.as_slice(),
+        &[],
+        lower_nibbles.as_slice(),
+        upper_nibbles.as_slice(),
+        &proof_db,
+        0,
+        width,
     )
 }
 
@@ -4334,6 +4524,35 @@ mod tests {
             eth_rlpx_mpt_proof_has_right_element_v1(leaf_root, &[0u8; 32], &[leaf_node])
                 .expect("right-side leaf proof")
         );
+    }
+
+    #[test]
+    fn mpt_proof_has_element_in_range_detects_partial_range_gap_v1() {
+        let leaf_key = [0x20; 32];
+        let leaf_node = eth_rlpx_mpt_single_leaf_node_rlp_v1(&leaf_key, &[0x80]);
+        let leaf_root = eth_rlpx_trie_node_hash_v1(leaf_node.as_slice());
+
+        assert!(eth_rlpx_mpt_proof_has_element_in_range_v1(
+            leaf_root,
+            &[0x10; 32],
+            &[0x30; 32],
+            std::slice::from_ref(&leaf_node),
+        )
+        .expect("leaf inside range"));
+        assert!(!eth_rlpx_mpt_proof_has_element_in_range_v1(
+            leaf_root,
+            &[0x21; 32],
+            &[0x30; 32],
+            std::slice::from_ref(&leaf_node),
+        )
+        .expect("range starts after leaf"));
+        assert!(!eth_rlpx_mpt_proof_has_element_in_range_v1(
+            leaf_root,
+            &[0x00; 32],
+            &[0x20; 32],
+            &[leaf_node],
+        )
+        .expect("upper edge is exclusive"));
     }
 
     #[test]
