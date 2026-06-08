@@ -6402,8 +6402,15 @@ fn resolve_gateway_eth_pending_block_for_runtime_view(
     ))
 }
 
+fn is_gateway_engine_probe_method_v1(method: &str) -> bool {
+    matches!(
+        method,
+        "engine_exchangeCapabilities" | "engine_exchangeTransitionConfigurationV1"
+    )
+}
+
 fn is_gateway_standalone_evm_control_namespace(method: &str) -> bool {
-    (method.starts_with("engine_") && method != "engine_exchangeCapabilities")
+    (method.starts_with("engine_") && !is_gateway_engine_probe_method_v1(method))
         || method.starts_with("admin_")
         || method.starts_with("debug_")
         || method.starts_with("miner_")
@@ -6475,6 +6482,7 @@ fn gateway_runtime_surface_map_json() -> serde_json::Value {
                     "eth_sendRawTransaction",
                     "eth_getLogs",
                     "engine_exchangeCapabilities",
+                    "engine_exchangeTransitionConfigurationV1",
                     "txpool_content"
                 ]
             },
@@ -6490,7 +6498,7 @@ fn gateway_runtime_surface_map_json() -> serde_json::Value {
         "notes": [
             "supervm mainnet remains the single host chain",
             "eth_* namespace is compatibility surface provided by evm plugin gateway",
-            "engine_exchangeCapabilities is a probe-only Engine API entry and does not declare payload or forkchoice support",
+            "engine_exchangeCapabilities and engine_exchangeTransitionConfigurationV1 are probe-only Engine API entries and do not declare payload or forkchoice support",
             "supervm_getEthCanonicalBlockAccessListBy* remains internal plugin diagnostics and does not expose a public eth/71 surface"
         ]
     })
@@ -6503,7 +6511,7 @@ fn gateway_runtime_method_domain(method: &str) -> &'static str {
         "evm_plugin"
     } else if method.starts_with("eth_")
         || method.starts_with("evm_")
-        || method == "engine_exchangeCapabilities"
+        || is_gateway_engine_probe_method_v1(method)
         || method.starts_with("txpool_")
         || method.starts_with("net_")
         || method.starts_with("web3_")
@@ -6524,6 +6532,17 @@ fn gateway_runtime_method_domain_json(method: &str) -> serde_json::Value {
     })
 }
 
+const GATEWAY_ENGINE_MAINNET_TTD_HEX_V1: &str = "0xc70d808a128d7380000";
+const GATEWAY_ENGINE_ZERO_HASH_V1: &str =
+    "0x0000000000000000000000000000000000000000000000000000000000000000";
+
+fn gateway_engine_supported_capabilities_v1() -> serde_json::Value {
+    serde_json::json!([
+        "engine_exchangeCapabilities",
+        "engine_exchangeTransitionConfigurationV1"
+    ])
+}
+
 fn gateway_engine_exchange_capabilities_v1(
     params: &serde_json::Value,
 ) -> Result<serde_json::Value> {
@@ -6533,7 +6552,50 @@ fn gateway_engine_exchange_capabilities_v1(
         serde_json::Value::Object(map) if map.is_empty() => {}
         _ => bail!("engine_exchangeCapabilities params must be null or a JSON-RPC params array"),
     }
-    Ok(serde_json::json!(["engine_exchangeCapabilities"]))
+    Ok(gateway_engine_supported_capabilities_v1())
+}
+
+fn gateway_engine_transition_config_param_v1(
+    params: &serde_json::Value,
+) -> Result<&serde_json::Map<String, serde_json::Value>> {
+    match params {
+        serde_json::Value::Array(items) if items.len() == 1 => items[0]
+            .as_object()
+            .ok_or_else(|| anyhow::anyhow!("engine transition config must be an object")),
+        serde_json::Value::Object(map) => Ok(map),
+        _ => {
+            bail!("engine_exchangeTransitionConfigurationV1 requires one transition config object")
+        }
+    }
+}
+
+fn gateway_engine_exchange_transition_configuration_v1(
+    params: &serde_json::Value,
+) -> Result<serde_json::Value> {
+    let config = gateway_engine_transition_config_param_v1(params)?;
+    let ttd = config
+        .get("terminalTotalDifficulty")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| anyhow::anyhow!("invalid terminal total difficulty"))?;
+    if !ttd.eq_ignore_ascii_case(GATEWAY_ENGINE_MAINNET_TTD_HEX_V1) {
+        bail!(
+            "invalid ttd: execution {} consensus {}",
+            GATEWAY_ENGINE_MAINNET_TTD_HEX_V1,
+            ttd
+        );
+    }
+    let terminal_hash = config
+        .get("terminalBlockHash")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or(GATEWAY_ENGINE_ZERO_HASH_V1);
+    if !terminal_hash.eq_ignore_ascii_case(GATEWAY_ENGINE_ZERO_HASH_V1) {
+        bail!("invalid terminal block hash");
+    }
+    Ok(serde_json::json!({
+        "terminalTotalDifficulty": GATEWAY_ENGINE_MAINNET_TTD_HEX_V1,
+        "terminalBlockHash": GATEWAY_ENGINE_ZERO_HASH_V1,
+        "terminalBlockNumber": "0x0",
+    }))
 }
 
 fn ensure_eth_no_params(method: &str, params: &serde_json::Value) -> Result<()> {
@@ -6564,6 +6626,10 @@ fn run_gateway_method(
     }
     match method {
         "engine_exchangeCapabilities" => Ok((gateway_engine_exchange_capabilities_v1(params)?, false)),
+        "engine_exchangeTransitionConfigurationV1" => Ok((
+            gateway_engine_exchange_transition_configuration_v1(params)?,
+            false,
+        )),
         "novovm_getSurfaceMap" | "novovm_get_surface_map" => {
             Ok((gateway_runtime_surface_map_json(), false))
         }

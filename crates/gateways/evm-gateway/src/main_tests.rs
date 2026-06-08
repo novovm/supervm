@@ -551,10 +551,19 @@ fn engine_exchange_capabilities_is_probe_only_and_does_not_enable_payload_contro
     assert!(!changed);
     assert_eq!(
         capabilities,
-        serde_json::json!(["engine_exchangeCapabilities"])
+        serde_json::json!([
+            "engine_exchangeCapabilities",
+            "engine_exchangeTransitionConfigurationV1"
+        ])
     );
     assert_eq!(
         gateway_runtime_method_domain_json("engine_exchangeCapabilities")
+            ["control_namespace_disabled"]
+            .as_bool(),
+        Some(false)
+    );
+    assert_eq!(
+        gateway_runtime_method_domain_json("engine_exchangeTransitionConfigurationV1")
             ["control_namespace_disabled"]
             .as_bool(),
         Some(false)
@@ -564,6 +573,67 @@ fn engine_exchange_capabilities_is_probe_only_and_does_not_enable_payload_contro
             .as_bool(),
         Some(true)
     );
+
+    let (transition_config, changed) = run_gateway_method(
+        &mut router,
+        &mut eth_tx_index,
+        &mut evm_settlement_index_by_id,
+        &mut evm_settlement_index_by_tx,
+        &mut evm_pending_payout_by_settlement,
+        &mut ctx,
+        "engine_exchangeTransitionConfigurationV1",
+        &serde_json::json!([{
+            "terminalTotalDifficulty": GATEWAY_ENGINE_MAINNET_TTD_HEX_V1,
+            "terminalBlockHash": GATEWAY_ENGINE_ZERO_HASH_V1,
+            "terminalBlockNumber": "0x0"
+        }]),
+    )
+    .expect("engine_exchangeTransitionConfigurationV1 should accept mainnet merge config");
+    assert!(!changed);
+    assert_eq!(
+        transition_config,
+        serde_json::json!({
+            "terminalTotalDifficulty": GATEWAY_ENGINE_MAINNET_TTD_HEX_V1,
+            "terminalBlockHash": GATEWAY_ENGINE_ZERO_HASH_V1,
+            "terminalBlockNumber": "0x0"
+        })
+    );
+
+    let invalid_ttd = run_gateway_method(
+        &mut router,
+        &mut eth_tx_index,
+        &mut evm_settlement_index_by_id,
+        &mut evm_settlement_index_by_tx,
+        &mut evm_pending_payout_by_settlement,
+        &mut ctx,
+        "engine_exchangeTransitionConfigurationV1",
+        &serde_json::json!([{
+            "terminalTotalDifficulty": "0x0",
+            "terminalBlockHash": GATEWAY_ENGINE_ZERO_HASH_V1,
+            "terminalBlockNumber": "0x0"
+        }]),
+    )
+    .expect_err("engine transition config must reject invalid mainnet TTD");
+    assert!(invalid_ttd.to_string().contains("invalid ttd"));
+
+    let invalid_terminal_hash = run_gateway_method(
+        &mut router,
+        &mut eth_tx_index,
+        &mut evm_settlement_index_by_id,
+        &mut evm_settlement_index_by_tx,
+        &mut evm_pending_payout_by_settlement,
+        &mut ctx,
+        "engine_exchangeTransitionConfigurationV1",
+        &serde_json::json!([{
+            "terminalTotalDifficulty": GATEWAY_ENGINE_MAINNET_TTD_HEX_V1,
+            "terminalBlockHash": "0x0100000000000000000000000000000000000000000000000000000000000000",
+            "terminalBlockNumber": "0x0"
+        }]),
+    )
+    .expect_err("engine transition config must reject unknown terminal hash");
+    assert!(invalid_terminal_hash
+        .to_string()
+        .contains("invalid terminal block hash"));
 
     let payload_err = run_gateway_method(
         &mut router,
@@ -649,6 +719,9 @@ fn novovm_surface_map_lists_mainnet_and_evm_plugin_domains() {
                 methods
                     .iter()
                     .any(|method| method.as_str() == Some("engine_exchangeCapabilities"))
+                    && methods.iter().any(|method| {
+                        method.as_str() == Some("engine_exchangeTransitionConfigurationV1")
+                    })
             })
     }));
     assert!(domains.iter().any(|item| {
