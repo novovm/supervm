@@ -16,6 +16,17 @@
 2. 未覆盖的能力不能包装成“以太坊节点等价”。
 3. 每次推进必须用可复现实跑命令更新本矩阵，而不是只更新描述。
 
+## 2026-06-09 GitHub 推送诊断
+
+本轮阶段性诊断已经同步到 GitHub：
+
+- local HEAD: `f143fd45938a8ff28ba605910a7967d70dc647ca` (`Expand default RLPx adaptive peer pool`)
+- remote HEAD: `f143fd45938a8ff28ba605910a7967d70dc647ca` (`refs/heads/main`)
+- 显式 SSH push: `git push git@github.com:novovm/supervm.git main` 返回 `Everything up-to-date`
+- 本机 `origin` 已切到 `git@github.com:novovm/supervm.git`，后续普通 `git push` 和 VS Code Git 推送走同一 SSH 通道
+
+该诊断只证明阶段性提交已上远端，不改变产品口径：SUPERVM 仍不能声明已经像 geth 一样无差别加入 Ethereum 主网并长期同步；下一步仍要继续用 `NOVOVM_NODE_MODE=eth_rlpx_sync cargo run -p novovm-node --bin novovm-node` 做主网长同步推进和真实阻塞点修复。
+
 ## 本轮实跑证据
 
 ### 1. 默认 geth parity fixture
