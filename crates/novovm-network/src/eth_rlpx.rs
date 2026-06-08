@@ -151,6 +151,7 @@ pub struct EthRlpxBlockHeaderRecordV1 {
     pub blob_gas_used: Option<u64>,
     pub excess_blob_gas: Option<u64>,
     pub block_access_list_hash: Option<[u8; 32]>,
+    pub raw_rlp: Option<Vec<u8>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -163,6 +164,7 @@ pub struct EthRlpxBlockHeadersResponseV1 {
 pub struct EthRlpxGetBlockHeadersRequestV1 {
     pub request_id: u64,
     pub start_height: u64,
+    pub origin_hash: Option<[u8; 32]>,
     pub max_headers: u64,
     pub skip: u64,
     pub reverse: bool,
@@ -2472,6 +2474,24 @@ pub fn eth_rlpx_build_get_block_headers_payload_v1(
     ])
 }
 
+pub fn eth_rlpx_build_get_block_headers_by_hash_payload_v1(
+    request_id: u64,
+    origin_hash: [u8; 32],
+    max: u64,
+    skip: u64,
+    reverse: bool,
+) -> Vec<u8> {
+    eth_rlpx_encode_list_v1(&[
+        eth_rlpx_encode_u64_v1(request_id),
+        eth_rlpx_encode_list_v1(&[
+            eth_rlpx_encode_bytes_v1(&origin_hash),
+            eth_rlpx_encode_u64_v1(max),
+            eth_rlpx_encode_u64_v1(skip),
+            eth_rlpx_encode_bool_v1(reverse),
+        ]),
+    ])
+}
+
 pub fn eth_rlpx_build_new_block_hashes_payload_v1(blocks: &[EthRlpxNewBlockHashV1]) -> Vec<u8> {
     let block_items = blocks
         .iter()
@@ -2838,9 +2858,21 @@ pub fn eth_rlpx_parse_get_block_headers_payload_v1(
             _ => Err(format!("rlpx_get_block_headers_{name}_not_bytes")),
         }
     };
+    let origin_bytes = get_param_bytes(0, "origin")?;
+    let (start_height, origin_hash) = if origin_bytes.len() == 32 {
+        let mut hash = [0u8; 32];
+        hash.copy_from_slice(origin_bytes);
+        (0, Some(hash))
+    } else {
+        (
+            eth_rlpx_decode_u64_bytes_v1(origin_bytes)?,
+            None::<[u8; 32]>,
+        )
+    };
     Ok(EthRlpxGetBlockHeadersRequestV1 {
         request_id: eth_rlpx_decode_u64_bytes_v1(request_id_bytes)?,
-        start_height: eth_rlpx_decode_u64_bytes_v1(get_param_bytes(0, "start_height")?)?,
+        start_height,
+        origin_hash,
         max_headers: eth_rlpx_decode_u64_bytes_v1(get_param_bytes(1, "max_headers")?)?,
         skip: eth_rlpx_decode_u64_bytes_v1(get_param_bytes(2, "skip")?)?,
         reverse: eth_rlpx_decode_u64_bytes_v1(get_param_bytes(3, "reverse")?)? != 0,
@@ -3347,6 +3379,11 @@ pub fn eth_rlpx_validate_trie_node_rlp_v1(node_rlp: &[u8]) -> bool {
 }
 
 fn eth_rlpx_build_block_header_record_rlp_v1(header: &EthRlpxBlockHeaderRecordV1) -> Vec<u8> {
+    if let Some(raw_rlp) = &header.raw_rlp {
+        if !raw_rlp.is_empty() {
+            return raw_rlp.clone();
+        }
+    }
     let zero_coinbase = [0u8; 20];
     let zero_mix_digest = [0u8; 32];
     let zero_nonce = [0u8; 8];
@@ -3572,6 +3609,7 @@ pub fn eth_rlpx_parse_block_headers_payload_v1(
             blob_gas_used,
             excess_blob_gas,
             block_access_list_hash: None,
+            raw_rlp: Some(raw_header.to_vec()),
         });
     }
     Ok(EthRlpxBlockHeadersResponseV1 {
@@ -5349,8 +5387,21 @@ mod tests {
             .expect("parse get headers");
         assert_eq!(parsed_headers.request_id, 7);
         assert_eq!(parsed_headers.start_height, 128);
+        assert_eq!(parsed_headers.origin_hash, None);
         assert_eq!(parsed_headers.max_headers, 16);
         assert!(!parsed_headers.reverse);
+
+        let origin_hash = [0x44; 32];
+        let get_headers_by_hash =
+            eth_rlpx_build_get_block_headers_by_hash_payload_v1(8, origin_hash, 3, 1, true);
+        let parsed_hash_headers =
+            eth_rlpx_parse_get_block_headers_payload_v1(get_headers_by_hash.as_slice())
+                .expect("parse get headers by hash");
+        assert_eq!(parsed_hash_headers.request_id, 8);
+        assert_eq!(parsed_hash_headers.origin_hash, Some(origin_hash));
+        assert_eq!(parsed_hash_headers.max_headers, 3);
+        assert_eq!(parsed_hash_headers.skip, 1);
+        assert!(parsed_hash_headers.reverse);
 
         let hashes = vec![[0x11; 32], [0x22; 32]];
         let get_bodies = eth_rlpx_build_get_block_bodies_payload_v1(9, hashes.as_slice());
@@ -5405,6 +5456,7 @@ mod tests {
             blob_gas_used: None,
             excess_blob_gas: None,
             block_access_list_hash: None,
+            raw_rlp: None,
         };
         let headers_payload =
             eth_rlpx_build_block_headers_payload_v1(7, std::slice::from_ref(&header_record));
@@ -5464,6 +5516,7 @@ mod tests {
             blob_gas_used: None,
             excess_blob_gas: None,
             block_access_list_hash: None,
+            raw_rlp: None,
         };
         let empty_body = EthRlpxBlockBodyRecordV1 {
             tx_rlp_items: Vec::new(),

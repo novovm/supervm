@@ -45,6 +45,10 @@ static NETWORK_RUNTIME_NATIVE_HEADER_SNAPSHOTS: OnceLock<
 static NETWORK_RUNTIME_NATIVE_BODY_SNAPSHOTS: OnceLock<
     Mutex<HashMap<u64, NetworkRuntimeNativeBodySnapshotV1>>,
 > = OnceLock::new();
+type NetworkRuntimeNativeHeaderRlpByHashV1 = HashMap<[u8; 32], Vec<u8>>;
+type NetworkRuntimeNativeHeaderRlpByChainV1 = HashMap<u64, NetworkRuntimeNativeHeaderRlpByHashV1>;
+static NETWORK_RUNTIME_NATIVE_HEADER_RLPS: OnceLock<Mutex<NetworkRuntimeNativeHeaderRlpByChainV1>> =
+    OnceLock::new();
 type NetworkRuntimeNativeReceiptSnapshotByHashV1 =
     HashMap<[u8; 32], NetworkRuntimeNativeReceiptSnapshotV1>;
 type NetworkRuntimeNativeReceiptSnapshotByChainV1 =
@@ -151,6 +155,10 @@ fn runtime_native_header_snapshot_map(
 fn runtime_native_body_snapshot_map(
 ) -> &'static Mutex<HashMap<u64, NetworkRuntimeNativeBodySnapshotV1>> {
     NETWORK_RUNTIME_NATIVE_BODY_SNAPSHOTS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn runtime_native_header_rlp_map() -> &'static Mutex<NetworkRuntimeNativeHeaderRlpByChainV1> {
+    NETWORK_RUNTIME_NATIVE_HEADER_RLPS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
 fn runtime_native_receipt_snapshot_map(
@@ -2651,6 +2659,22 @@ pub fn set_network_runtime_native_body_snapshot_v1(
     runtime_native_pending_tx_cleanup_v1(chain_id, normalized.observed_unix_ms);
 }
 
+pub fn set_network_runtime_native_header_rlp_v1(
+    chain_id: u64,
+    block_hash: [u8; 32],
+    raw_rlp: &[u8],
+) {
+    if raw_rlp.is_empty() {
+        return;
+    }
+    if let Ok(mut guard) = runtime_native_header_rlp_map().lock() {
+        guard
+            .entry(chain_id)
+            .or_default()
+            .insert(block_hash, raw_rlp.to_vec());
+    }
+}
+
 pub fn set_network_runtime_native_receipt_snapshot_v1(
     chain_id: u64,
     snapshot: NetworkRuntimeNativeReceiptSnapshotV1,
@@ -3709,6 +3733,9 @@ pub fn clear_network_runtime_native_snapshots_for_chain_v1(chain_id: u64) {
     if let Ok(mut guard) = runtime_native_body_snapshot_map().lock() {
         guard.remove(&chain_id);
     }
+    if let Ok(mut guard) = runtime_native_header_rlp_map().lock() {
+        guard.remove(&chain_id);
+    }
     if let Ok(mut guard) = runtime_native_receipt_snapshot_map().lock() {
         guard.remove(&chain_id);
     }
@@ -4115,6 +4142,17 @@ pub fn get_network_runtime_native_body_snapshot_v1(
 ) -> Option<NetworkRuntimeNativeBodySnapshotV1> {
     let guard = runtime_native_body_snapshot_map().lock().ok()?;
     guard.get(&chain_id).cloned()
+}
+
+#[must_use]
+pub fn get_network_runtime_native_header_rlp_v1(
+    chain_id: u64,
+    block_hash: [u8; 32],
+) -> Option<Vec<u8>> {
+    let guard = runtime_native_header_rlp_map().lock().ok()?;
+    guard
+        .get(&chain_id)
+        .and_then(|headers| headers.get(&block_hash).cloned())
 }
 
 #[must_use]
