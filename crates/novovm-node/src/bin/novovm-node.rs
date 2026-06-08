@@ -4016,7 +4016,7 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
     let sync_target_fanout =
         usize_env_allow_zero("NOVOVM_ETH_RLPX_SYNC_TARGET_FANOUT", max_peers)?.clamp(1, max_peers);
     let headers_batch = u64_env_clamped("NOVOVM_ETH_RLPX_HEADERS_BATCH", 128, 1, 2_048);
-    let bodies_batch = u64_env_clamped("NOVOVM_ETH_RLPX_BODIES_BATCH", 64, 1, 256);
+    let bodies_batch = u64_env_clamped("NOVOVM_ETH_RLPX_BODIES_BATCH", 8, 1, 256);
     let exhausted_refresh_interval_ticks =
         usize_env_allow_zero("NOVOVM_ETH_RLPX_EXHAUSTED_REFRESH_INTERVAL_TICKS", 8)?
             .clamp(1, 10_000);
@@ -4727,15 +4727,15 @@ mod mainline_evm_cli_tests {
     #[test]
     fn eth_rlpx_public_sync_batch_defaults_are_conservative_v1() {
         let mut budget = EthFullnodeBudgetHooksV1::default();
-        eth_rlpx_apply_public_sync_batch_defaults_v1(&mut budget, 128, 64);
+        eth_rlpx_apply_public_sync_batch_defaults_v1(&mut budget, 128, 8);
         assert_eq!(budget.sync_pull_headers_batch, 128);
-        assert_eq!(budget.sync_pull_bodies_batch, 64);
+        assert_eq!(budget.sync_pull_bodies_batch, 8);
 
         budget.sync_pull_headers_batch = 32;
-        budget.sync_pull_bodies_batch = 8;
-        eth_rlpx_apply_public_sync_batch_defaults_v1(&mut budget, 128, 64);
+        budget.sync_pull_bodies_batch = 4;
+        eth_rlpx_apply_public_sync_batch_defaults_v1(&mut budget, 128, 8);
         assert_eq!(budget.sync_pull_headers_batch, 32);
-        assert_eq!(budget.sync_pull_bodies_batch, 8);
+        assert_eq!(budget.sync_pull_bodies_batch, 4);
     }
 
     #[test]

@@ -888,6 +888,293 @@ pub fn eth_rlpx_receipts_root_from_raw_receipts_v1(raw_receipts: &[Vec<u8>]) -> 
     eth_rlpx_mpt_root_from_kv_pairs_v1(&kv_pairs)
 }
 
+fn eth_rlpx_transaction_envelope_from_list_item_v1(raw_item: &[u8]) -> Result<Vec<u8>, String> {
+    let (item, consumed) = eth_rlpx_parse_item_v1(raw_item)?;
+    if consumed != raw_item.len() {
+        return Err("rlpx_transaction_list_item_trailing".to_string());
+    }
+    match item {
+        EthRlpxRlpItemV1::List(_) => Ok(raw_item.to_vec()),
+        EthRlpxRlpItemV1::Bytes(bytes) => {
+            if eth_rlpx_validate_transaction_envelope_payload_v1(bytes) {
+                Ok(bytes.to_vec())
+            } else {
+                Err("rlpx_transaction_typed_envelope_invalid".to_string())
+            }
+        }
+    }
+}
+
+fn eth_rlpx_transaction_list_item_from_envelope_v1(envelope: &[u8]) -> Vec<u8> {
+    if let Ok((EthRlpxRlpItemV1::List(_), consumed)) = eth_rlpx_parse_item_v1(envelope) {
+        if consumed == envelope.len() {
+            return envelope.to_vec();
+        }
+    }
+    if eth_rlpx_validate_transaction_envelope_payload_v1(envelope) {
+        return eth_rlpx_encode_bytes_v1(envelope);
+    }
+    if let Ok((EthRlpxRlpItemV1::Bytes(bytes), consumed)) = eth_rlpx_parse_item_v1(envelope) {
+        if consumed == envelope.len() && eth_rlpx_validate_transaction_envelope_payload_v1(bytes) {
+            return envelope.to_vec();
+        }
+    }
+    envelope.to_vec()
+}
+
+fn eth_rlpx_transaction_envelopes_from_list_payload_v1(
+    payload: &[u8],
+) -> Result<Vec<Vec<u8>>, String> {
+    eth_rlpx_split_list_raw_items_v1(payload)?
+        .into_iter()
+        .map(eth_rlpx_transaction_envelope_from_list_item_v1)
+        .collect()
+}
+
+fn eth_rlpx_receipt_envelope_from_list_item_v1(raw_item: &[u8]) -> Result<Vec<u8>, String> {
+    let (item, consumed) = eth_rlpx_parse_item_v1(raw_item)?;
+    if consumed != raw_item.len() {
+        return Err("rlpx_receipt_item_trailing".to_string());
+    }
+    match item {
+        EthRlpxRlpItemV1::List(payload) => {
+            eth_rlpx_network_receipt_list_item_to_consensus_envelope_v1(payload)
+                .or_else(|_| Ok(raw_item.to_vec()))
+        }
+        EthRlpxRlpItemV1::Bytes(bytes) => {
+            if eth_rlpx_validate_receipt_envelope_payload_v1(bytes) {
+                Ok(bytes.to_vec())
+            } else {
+                Err("rlpx_receipt_typed_envelope_invalid".to_string())
+            }
+        }
+    }
+}
+
+fn eth_rlpx_receipt_list_item_from_envelope_v1(envelope: &[u8]) -> Vec<u8> {
+    if let Ok(item) = eth_rlpx_consensus_receipt_envelope_to_network_list_item_v1(envelope) {
+        return item;
+    }
+    if let Ok((EthRlpxRlpItemV1::List(payload), consumed)) = eth_rlpx_parse_item_v1(envelope) {
+        if consumed == envelope.len()
+            && eth_rlpx_network_receipt_fields_from_payload_v1(payload).is_ok()
+        {
+            return envelope.to_vec();
+        }
+    }
+    if let Ok((EthRlpxRlpItemV1::Bytes(bytes), consumed)) = eth_rlpx_parse_item_v1(envelope) {
+        if consumed == envelope.len() && eth_rlpx_validate_receipt_envelope_payload_v1(bytes) {
+            return eth_rlpx_consensus_receipt_envelope_to_network_list_item_v1(bytes)
+                .unwrap_or_else(|_| envelope.to_vec());
+        }
+    }
+    envelope.to_vec()
+}
+
+fn eth_rlpx_receipt_envelopes_from_list_payload_v1(payload: &[u8]) -> Result<Vec<Vec<u8>>, String> {
+    eth_rlpx_split_list_raw_items_v1(payload)?
+        .into_iter()
+        .map(eth_rlpx_receipt_envelope_from_list_item_v1)
+        .collect()
+}
+
+#[derive(Debug, Clone)]
+struct EthRlpxReceiptNetworkFieldsV1 {
+    tx_type: u8,
+    post_state_or_status: Vec<u8>,
+    cumulative_gas_used: u64,
+    logs_raw: Vec<u8>,
+}
+
+fn eth_rlpx_validate_receipt_status_or_post_state_v1(bytes: &[u8]) -> bool {
+    bytes.len() <= 1 || bytes.len() == 32
+}
+
+fn eth_rlpx_network_receipt_fields_from_payload_v1(
+    payload: &[u8],
+) -> Result<EthRlpxReceiptNetworkFieldsV1, String> {
+    let fields = eth_rlpx_parse_list_items_v1(payload)?;
+    let raw_fields = eth_rlpx_split_list_raw_items_v1(payload)?;
+    if fields.len() != 4 || raw_fields.len() != 4 {
+        return Err("rlpx_receipt_network_fields_invalid".to_string());
+    }
+    let EthRlpxRlpItemV1::Bytes(tx_type_bytes) = fields[0] else {
+        return Err("rlpx_receipt_network_tx_type_not_bytes".to_string());
+    };
+    let tx_type = eth_rlpx_decode_u64_bytes_v1(tx_type_bytes)?;
+    if tx_type > 0x7f {
+        return Err("rlpx_receipt_network_tx_type_invalid".to_string());
+    }
+    let EthRlpxRlpItemV1::Bytes(status_bytes) = fields[1] else {
+        return Err("rlpx_receipt_network_status_not_bytes".to_string());
+    };
+    if !eth_rlpx_validate_receipt_status_or_post_state_v1(status_bytes) {
+        return Err("rlpx_receipt_network_status_invalid".to_string());
+    }
+    let EthRlpxRlpItemV1::Bytes(gas_bytes) = fields[2] else {
+        return Err("rlpx_receipt_network_gas_not_bytes".to_string());
+    };
+    let cumulative_gas_used = eth_rlpx_decode_u64_bytes_v1(gas_bytes)?;
+    let EthRlpxRlpItemV1::List(logs_payload) = fields[3] else {
+        return Err("rlpx_receipt_network_logs_not_list".to_string());
+    };
+    eth_rlpx_logs_bloom_from_logs_payload_v1(logs_payload)?;
+    Ok(EthRlpxReceiptNetworkFieldsV1 {
+        tx_type: tx_type as u8,
+        post_state_or_status: status_bytes.to_vec(),
+        cumulative_gas_used,
+        logs_raw: raw_fields[3].to_vec(),
+    })
+}
+
+fn eth_rlpx_consensus_receipt_fields_from_payload_v1(
+    tx_type: u8,
+    payload: &[u8],
+) -> Result<EthRlpxReceiptNetworkFieldsV1, String> {
+    let fields = eth_rlpx_parse_list_items_v1(payload)?;
+    let raw_fields = eth_rlpx_split_list_raw_items_v1(payload)?;
+    if fields.len() != 4 || raw_fields.len() != 4 {
+        return Err("rlpx_receipt_consensus_fields_invalid".to_string());
+    }
+    let EthRlpxRlpItemV1::Bytes(status_bytes) = fields[0] else {
+        return Err("rlpx_receipt_consensus_status_not_bytes".to_string());
+    };
+    if !eth_rlpx_validate_receipt_status_or_post_state_v1(status_bytes) {
+        return Err("rlpx_receipt_consensus_status_invalid".to_string());
+    }
+    let EthRlpxRlpItemV1::Bytes(gas_bytes) = fields[1] else {
+        return Err("rlpx_receipt_consensus_gas_not_bytes".to_string());
+    };
+    let cumulative_gas_used = eth_rlpx_decode_u64_bytes_v1(gas_bytes)?;
+    let EthRlpxRlpItemV1::Bytes(bloom_bytes) = fields[2] else {
+        return Err("rlpx_receipt_consensus_bloom_not_bytes".to_string());
+    };
+    if bloom_bytes.len() != 256 {
+        return Err("rlpx_receipt_consensus_bloom_len_invalid".to_string());
+    }
+    let EthRlpxRlpItemV1::List(_) = fields[3] else {
+        return Err("rlpx_receipt_consensus_logs_not_list".to_string());
+    };
+    Ok(EthRlpxReceiptNetworkFieldsV1 {
+        tx_type,
+        post_state_or_status: status_bytes.to_vec(),
+        cumulative_gas_used,
+        logs_raw: raw_fields[3].to_vec(),
+    })
+}
+
+fn eth_rlpx_consensus_receipt_fields_from_envelope_v1(
+    envelope: &[u8],
+) -> Result<EthRlpxReceiptNetworkFieldsV1, String> {
+    if envelope.is_empty() {
+        return Err("rlpx_receipt_consensus_empty".to_string());
+    }
+    if envelope[0] <= 0x7f && envelope.len() > 1 {
+        let (item, consumed) = eth_rlpx_parse_item_v1(&envelope[1..])?;
+        if consumed + 1 != envelope.len() {
+            return Err("rlpx_receipt_consensus_typed_trailing".to_string());
+        }
+        let EthRlpxRlpItemV1::List(payload) = item else {
+            return Err("rlpx_receipt_consensus_typed_not_list".to_string());
+        };
+        return eth_rlpx_consensus_receipt_fields_from_payload_v1(envelope[0], payload);
+    }
+    let (item, consumed) = eth_rlpx_parse_item_v1(envelope)?;
+    if consumed != envelope.len() {
+        return Err("rlpx_receipt_consensus_trailing".to_string());
+    }
+    let EthRlpxRlpItemV1::List(payload) = item else {
+        return Err("rlpx_receipt_consensus_not_list".to_string());
+    };
+    eth_rlpx_consensus_receipt_fields_from_payload_v1(0, payload)
+}
+
+fn eth_rlpx_consensus_receipt_envelope_from_network_fields_v1(
+    fields: &EthRlpxReceiptNetworkFieldsV1,
+) -> Vec<u8> {
+    let logs_payload = match eth_rlpx_parse_item_v1(fields.logs_raw.as_slice()) {
+        Ok((EthRlpxRlpItemV1::List(payload), consumed)) if consumed == fields.logs_raw.len() => {
+            payload
+        }
+        _ => &[][..],
+    };
+    let bloom = eth_rlpx_logs_bloom_from_logs_payload_v1(logs_payload).unwrap_or([0u8; 256]);
+    let inner = eth_rlpx_encode_list_v1(&[
+        eth_rlpx_encode_bytes_v1(fields.post_state_or_status.as_slice()),
+        eth_rlpx_encode_u64_v1(fields.cumulative_gas_used),
+        eth_rlpx_encode_bytes_v1(&bloom),
+        fields.logs_raw.clone(),
+    ]);
+    if fields.tx_type == 0 {
+        return inner;
+    }
+    let mut typed = Vec::with_capacity(1 + inner.len());
+    typed.push(fields.tx_type);
+    typed.extend(inner);
+    typed
+}
+
+fn eth_rlpx_network_receipt_list_item_to_consensus_envelope_v1(
+    payload: &[u8],
+) -> Result<Vec<u8>, String> {
+    let fields = eth_rlpx_network_receipt_fields_from_payload_v1(payload)?;
+    Ok(eth_rlpx_consensus_receipt_envelope_from_network_fields_v1(
+        &fields,
+    ))
+}
+
+fn eth_rlpx_consensus_receipt_envelope_to_network_list_item_v1(
+    envelope: &[u8],
+) -> Result<Vec<u8>, String> {
+    let fields = eth_rlpx_consensus_receipt_fields_from_envelope_v1(envelope)?;
+    Ok(eth_rlpx_encode_list_v1(&[
+        eth_rlpx_encode_u64_v1(fields.tx_type.into()),
+        eth_rlpx_encode_bytes_v1(fields.post_state_or_status.as_slice()),
+        eth_rlpx_encode_u64_v1(fields.cumulative_gas_used),
+        fields.logs_raw,
+    ]))
+}
+
+fn eth_rlpx_logs_bloom_from_logs_payload_v1(logs_payload: &[u8]) -> Result<[u8; 256], String> {
+    let mut bloom = [0u8; 256];
+    for raw_log in eth_rlpx_split_list_raw_items_v1(logs_payload)? {
+        let (log_item, consumed) = eth_rlpx_parse_item_v1(raw_log)?;
+        if consumed != raw_log.len() {
+            return Err("rlpx_receipt_log_trailing".to_string());
+        }
+        let EthRlpxRlpItemV1::List(log_payload) = log_item else {
+            return Err("rlpx_receipt_log_not_list".to_string());
+        };
+        let fields = eth_rlpx_parse_list_items_v1(log_payload)?;
+        if fields.len() < 2 {
+            return Err("rlpx_receipt_log_fields_short".to_string());
+        }
+        let EthRlpxRlpItemV1::Bytes(address) = fields[0] else {
+            return Err("rlpx_receipt_log_address_not_bytes".to_string());
+        };
+        eth_rlpx_logs_bloom_add_v1(&mut bloom, address);
+        let EthRlpxRlpItemV1::List(topics_payload) = fields[1] else {
+            return Err("rlpx_receipt_log_topics_not_list".to_string());
+        };
+        for topic in eth_rlpx_parse_list_items_v1(topics_payload)? {
+            let EthRlpxRlpItemV1::Bytes(topic_bytes) = topic else {
+                return Err("rlpx_receipt_log_topic_not_bytes".to_string());
+            };
+            eth_rlpx_logs_bloom_add_v1(&mut bloom, topic_bytes);
+        }
+    }
+    Ok(bloom)
+}
+
+fn eth_rlpx_logs_bloom_add_v1(bloom: &mut [u8; 256], data: &[u8]) {
+    let hash = eth_rlpx_keccak256_bytes_v1(data);
+    for pair in [0usize, 2, 4] {
+        let bit = ((((hash[pair] as u16) << 8) | hash[pair + 1] as u16) & 0x07ff) as usize;
+        let byte_index = 256usize.saturating_sub(bit >> 3).saturating_sub(1);
+        bloom[byte_index] |= 1u8 << (hash[pair + 1] & 0x07);
+    }
+}
+
 pub fn eth_rlpx_snap_full_account_rlp_from_slim_v1(body_rlp: &[u8]) -> Result<Vec<u8>, String> {
     let (root, consumed) = eth_rlpx_parse_item_v1(body_rlp)?;
     if consumed != body_rlp.len() {
@@ -2265,7 +2552,11 @@ pub fn eth_rlpx_build_get_receipts_payload_v1(
 }
 
 pub fn eth_rlpx_build_transactions_payload_v1(tx_rlp_items: &[Vec<u8>]) -> Vec<u8> {
-    eth_rlpx_encode_list_v1(tx_rlp_items)
+    let tx_items = tx_rlp_items
+        .iter()
+        .map(|tx| eth_rlpx_transaction_list_item_from_envelope_v1(tx))
+        .collect::<Vec<_>>();
+    eth_rlpx_encode_list_v1(&tx_items)
 }
 
 pub fn eth_rlpx_build_new_pooled_transaction_hashes_payload_v1(
@@ -2306,9 +2597,13 @@ pub fn eth_rlpx_build_pooled_transactions_payload_v1(
     request_id: u64,
     tx_rlp_items: &[Vec<u8>],
 ) -> Vec<u8> {
+    let tx_items = tx_rlp_items
+        .iter()
+        .map(|tx| eth_rlpx_transaction_list_item_from_envelope_v1(tx))
+        .collect::<Vec<_>>();
     eth_rlpx_encode_list_v1(&[
         eth_rlpx_encode_u64_v1(request_id),
-        eth_rlpx_encode_list_v1(tx_rlp_items),
+        eth_rlpx_encode_list_v1(&tx_items),
     ])
 }
 
@@ -2320,7 +2615,13 @@ pub fn eth_rlpx_build_receipts_payload_v1(
 ) -> Vec<u8> {
     let block_items = receipt_blocks
         .iter()
-        .map(|receipts| eth_rlpx_encode_list_v1(receipts.as_slice()))
+        .map(|receipts| {
+            let receipt_items = receipts
+                .iter()
+                .map(|receipt| eth_rlpx_receipt_list_item_from_envelope_v1(receipt))
+                .collect::<Vec<_>>();
+            eth_rlpx_encode_list_v1(&receipt_items)
+        })
         .collect::<Vec<_>>();
     let blocks_list = eth_rlpx_encode_list_v1(&block_items);
     if eth_version >= 70 {
@@ -2801,10 +3102,7 @@ pub fn eth_rlpx_parse_transactions_payload_v1(
     let EthRlpxRlpItemV1::List(txs_payload) = root else {
         return Err("rlpx_transactions_not_list".to_string());
     };
-    let tx_rlp_items = eth_rlpx_split_list_raw_items_v1(txs_payload)?
-        .into_iter()
-        .map(|item| item.to_vec())
-        .collect::<Vec<_>>();
+    let tx_rlp_items = eth_rlpx_transaction_envelopes_from_list_payload_v1(txs_payload)?;
     let tx_hashes = tx_rlp_items
         .iter()
         .map(|item| eth_rlpx_keccak256_bytes_v1(item.as_slice()))
@@ -2929,10 +3227,7 @@ pub fn eth_rlpx_parse_pooled_transactions_payload_v1(
     let EthRlpxRlpItemV1::List(txs_payload) = fields[1] else {
         return Err("rlpx_pooled_transactions_txs_not_list".to_string());
     };
-    let tx_rlp_items = eth_rlpx_split_list_raw_items_v1(txs_payload)?
-        .into_iter()
-        .map(|item| item.to_vec())
-        .collect::<Vec<_>>();
+    let tx_rlp_items = eth_rlpx_transaction_envelopes_from_list_payload_v1(txs_payload)?;
     let tx_hashes = tx_rlp_items
         .iter()
         .map(|item| eth_rlpx_keccak256_bytes_v1(item.as_slice()))
@@ -2960,6 +3255,11 @@ pub fn eth_rlpx_validate_transaction_envelope_payload_v1(payload: &[u8]) -> bool
         }
     }
     false
+}
+
+#[must_use]
+pub fn eth_rlpx_validate_receipt_envelope_payload_v1(payload: &[u8]) -> bool {
+    eth_rlpx_consensus_receipt_fields_from_envelope_v1(payload).is_ok()
 }
 
 #[must_use]
@@ -3043,7 +3343,12 @@ pub fn eth_rlpx_build_new_block_payload_v1(
     body: &EthRlpxBlockBodyPayloadV1,
     total_difficulty: u128,
 ) -> Vec<u8> {
-    let txs = eth_rlpx_encode_list_v1(body.tx_rlp_items.as_slice());
+    let tx_items = body
+        .tx_rlp_items
+        .iter()
+        .map(|tx| eth_rlpx_transaction_list_item_from_envelope_v1(tx))
+        .collect::<Vec<_>>();
+    let txs = eth_rlpx_encode_list_v1(&tx_items);
     let ommers = eth_rlpx_encode_list_v1(body.ommer_header_rlp_items.as_slice());
     let mut block_fields = vec![
         eth_rlpx_build_block_header_record_rlp_v1(header),
@@ -3066,7 +3371,12 @@ pub fn eth_rlpx_build_block_bodies_payload_v1(
     let body_items = bodies
         .iter()
         .map(|body| {
-            let txs = eth_rlpx_encode_list_v1(body.tx_rlp_items.as_slice());
+            let tx_items = body
+                .tx_rlp_items
+                .iter()
+                .map(|tx| eth_rlpx_transaction_list_item_from_envelope_v1(tx))
+                .collect::<Vec<_>>();
+            let txs = eth_rlpx_encode_list_v1(&tx_items);
             let ommers = eth_rlpx_encode_list_v1(body.ommer_header_rlp_items.as_slice());
             let mut fields = vec![txs, ommers];
             if let Some(withdrawals) = &body.withdrawal_rlp_items {
@@ -3251,15 +3561,18 @@ pub fn eth_rlpx_parse_new_block_payload_v1(
     let EthRlpxRlpItemV1::List(uncles_payload) = block_fields[2] else {
         return Err("rlpx_new_block_uncles_not_list".to_string());
     };
-    let raw_tx_items = eth_rlpx_split_list_raw_items_v1(txs_payload)?;
-    let transactions_root =
-        eth_rlpx_transactions_root_from_raw_tx_slices_v1(raw_tx_items.as_slice());
+    let tx_rlp_items = eth_rlpx_transaction_envelopes_from_list_payload_v1(txs_payload)?;
+    let tx_slices = tx_rlp_items
+        .iter()
+        .map(Vec::as_slice)
+        .collect::<Vec<&[u8]>>();
+    let transactions_root = eth_rlpx_transactions_root_from_raw_tx_slices_v1(&tx_slices);
     if header.transactions_root != transactions_root {
         return Err("rlpx_new_block_transactions_root_mismatch".to_string());
     }
-    let tx_hashes = raw_tx_items
-        .into_iter()
-        .map(eth_rlpx_keccak256_bytes_v1)
+    let tx_hashes = tx_rlp_items
+        .iter()
+        .map(|tx| eth_rlpx_keccak256_bytes_v1(tx.as_slice()))
         .collect::<Vec<_>>();
     let ommer_hashes = eth_rlpx_split_list_raw_items_v1(uncles_payload)?
         .into_iter()
@@ -3326,12 +3639,15 @@ pub fn eth_rlpx_parse_block_bodies_payload_v1(
         let EthRlpxRlpItemV1::List(uncles_payload) = body_fields[1] else {
             return Err("rlpx_block_body_uncles_not_list".to_string());
         };
-        let raw_tx_items = eth_rlpx_split_list_raw_items_v1(txs_payload)?;
-        let transactions_root =
-            eth_rlpx_transactions_root_from_raw_tx_slices_v1(raw_tx_items.as_slice());
-        let tx_hashes = raw_tx_items
-            .into_iter()
-            .map(eth_rlpx_keccak256_bytes_v1)
+        let tx_rlp_items = eth_rlpx_transaction_envelopes_from_list_payload_v1(txs_payload)?;
+        let tx_slices = tx_rlp_items
+            .iter()
+            .map(Vec::as_slice)
+            .collect::<Vec<&[u8]>>();
+        let transactions_root = eth_rlpx_transactions_root_from_raw_tx_slices_v1(&tx_slices);
+        let tx_hashes = tx_rlp_items
+            .iter()
+            .map(|tx| eth_rlpx_keccak256_bytes_v1(tx.as_slice()))
             .collect::<Vec<_>>();
         let ommer_hashes = eth_rlpx_split_list_raw_items_v1(uncles_payload)?
             .into_iter()
@@ -3392,19 +3708,7 @@ pub fn eth_rlpx_parse_receipts_payload_v1(
         let EthRlpxRlpItemV1::List(receipts_payload) = item else {
             return Err("rlpx_receipts_block_not_list".to_string());
         };
-        let raw_receipts = eth_rlpx_split_list_raw_items_v1(receipts_payload)?;
-        let mut receipts = Vec::with_capacity(raw_receipts.len());
-        for raw_receipt in raw_receipts {
-            let (receipt_item, receipt_consumed) = eth_rlpx_parse_item_v1(raw_receipt)?;
-            if receipt_consumed != raw_receipt.len() {
-                return Err("rlpx_receipt_item_trailing".to_string());
-            }
-            match receipt_item {
-                EthRlpxRlpItemV1::Bytes(_) | EthRlpxRlpItemV1::List(_) => {
-                    receipts.push(raw_receipt.to_vec());
-                }
-            }
-        }
+        let receipts = eth_rlpx_receipt_envelopes_from_list_payload_v1(receipts_payload)?;
         blocks.push(EthRlpxReceiptBlockV1 {
             receipt_count: receipts.len(),
             raw_receipts: receipts,
@@ -4917,6 +5221,7 @@ mod tests {
         let empty_root = eth_rlpx_empty_trie_root_v1();
         let empty_ommers_hash = eth_rlpx_empty_ommers_hash_v1();
         let tx_rlp_items = vec![vec![0xc0], vec![0xc1, 0x01]];
+        let typed_tx = vec![0x02, 0xc0];
         let header_record = EthRlpxBlockHeaderRecordV1 {
             number: 128,
             hash: [0x00; 32],
@@ -5025,6 +5330,53 @@ mod tests {
         assert_eq!(parsed_bodies_response.bodies.len(), 1);
         assert!(parsed_bodies_response.bodies[0].body_available);
 
+        let typed_header = EthRlpxBlockHeaderRecordV1 {
+            transactions_root: eth_rlpx_transactions_root_from_raw_txs_v1(std::slice::from_ref(
+                &typed_tx,
+            )),
+            ..header_record.clone()
+        };
+        let typed_bodies_payload = eth_rlpx_build_block_bodies_payload_v1(
+            13,
+            &[EthRlpxBlockBodyPayloadV1 {
+                tx_rlp_items: vec![typed_tx.clone()],
+                ommer_header_rlp_items: Vec::new(),
+                withdrawal_rlp_items: Some(Vec::new()),
+            }],
+        );
+        let typed_bodies_response =
+            eth_rlpx_parse_block_bodies_payload_v1(typed_bodies_payload.as_slice())
+                .expect("parse typed bodies response");
+        assert_eq!(typed_bodies_response.request_id, 13);
+        assert_eq!(
+            typed_bodies_response.bodies[0].transactions_root,
+            typed_header.transactions_root
+        );
+        assert_eq!(
+            typed_bodies_response.bodies[0].tx_hashes,
+            vec![eth_rlpx_transaction_hash_v1(typed_tx.as_slice())]
+        );
+        let typed_new_block_payload = eth_rlpx_build_new_block_payload_v1(
+            &typed_header,
+            &EthRlpxBlockBodyPayloadV1 {
+                tx_rlp_items: vec![typed_tx.clone()],
+                ommer_header_rlp_items: Vec::new(),
+                withdrawal_rlp_items: Some(Vec::new()),
+            },
+            1_000,
+        );
+        let typed_new_block =
+            eth_rlpx_parse_new_block_payload_v1(typed_new_block_payload.as_slice())
+                .expect("parse typed new block");
+        assert_eq!(
+            typed_new_block.body.transactions_root,
+            typed_header.transactions_root
+        );
+        assert_eq!(
+            typed_new_block.body.tx_hashes,
+            vec![eth_rlpx_transaction_hash_v1(typed_tx.as_slice())]
+        );
+
         let access_lists_payload = eth_rlpx_build_block_access_lists_payload_v1(
             12,
             &[None, Some(vec![0xc0]), Some(vec![0xc1, 0xc0])],
@@ -5062,16 +5414,51 @@ mod tests {
         assert_eq!(parsed_get_receipts_legacy.first_block_receipt_index, 0);
         assert_eq!(parsed_get_receipts_legacy.hashes, hashes);
 
-        let receipts_payload =
-            eth_rlpx_build_receipts_payload_v1(15, false, &[vec![vec![0xc0]], Vec::new()], 70);
+        let empty_logs = eth_rlpx_encode_list_v1(&[]);
+        let zero_bloom = vec![0u8; 256];
+        let legacy_receipt = eth_rlpx_encode_list_v1(&[
+            eth_rlpx_encode_bytes_v1(&[0x01]),
+            eth_rlpx_encode_u64_v1(21_000),
+            eth_rlpx_encode_bytes_v1(zero_bloom.as_slice()),
+            empty_logs.clone(),
+        ]);
+        let receipts_payload = eth_rlpx_build_receipts_payload_v1(
+            15,
+            false,
+            &[vec![legacy_receipt.clone()], Vec::new()],
+            70,
+        );
         let parsed_receipts = eth_rlpx_parse_receipts_payload_v1(receipts_payload.as_slice())
             .expect("parse receipts response");
         assert_eq!(parsed_receipts.request_id, 15);
         assert!(!parsed_receipts.last_block_incomplete);
         assert_eq!(parsed_receipts.blocks.len(), 2);
         assert_eq!(parsed_receipts.blocks[0].receipt_count, 1);
-        assert_eq!(parsed_receipts.blocks[0].raw_receipts[0], vec![0xc0]);
+        assert_eq!(parsed_receipts.blocks[0].raw_receipts[0], legacy_receipt);
         assert_eq!(parsed_receipts.blocks[1].receipt_count, 0);
+        let mut typed_receipt = vec![0x02];
+        typed_receipt.extend(eth_rlpx_encode_list_v1(&[
+            eth_rlpx_encode_bytes_v1(&[0x01]),
+            eth_rlpx_encode_u64_v1(42_000),
+            eth_rlpx_encode_bytes_v1(zero_bloom.as_slice()),
+            empty_logs.clone(),
+        ]));
+        let typed_receipts_payload =
+            eth_rlpx_build_receipts_payload_v1(19, false, &[vec![typed_receipt.clone()]], 70);
+        let parsed_typed_receipts =
+            eth_rlpx_parse_receipts_payload_v1(typed_receipts_payload.as_slice())
+                .expect("parse typed receipts response");
+        assert_eq!(parsed_typed_receipts.request_id, 19);
+        assert_eq!(
+            parsed_typed_receipts.blocks[0].raw_receipts,
+            vec![typed_receipt.clone()]
+        );
+        assert_eq!(
+            eth_rlpx_receipts_root_from_raw_receipts_v1(
+                parsed_typed_receipts.blocks[0].raw_receipts.as_slice()
+            ),
+            eth_rlpx_receipts_root_from_raw_receipts_v1(std::slice::from_ref(&typed_receipt))
+        );
 
         let tx_items = vec![vec![0xc0], vec![0xc1, 0x01]];
         let tx_payload = eth_rlpx_build_transactions_payload_v1(tx_items.as_slice());
@@ -5083,6 +5470,15 @@ mod tests {
         assert_eq!(
             parsed_txs.tx_hashes[0],
             eth_rlpx_transaction_hash_v1(parsed_txs.tx_rlp_items[0].as_slice())
+        );
+        let typed_tx_payload =
+            eth_rlpx_build_transactions_payload_v1(std::slice::from_ref(&typed_tx));
+        let parsed_typed_txs = eth_rlpx_parse_transactions_payload_v1(typed_tx_payload.as_slice())
+            .expect("parse typed txs");
+        assert_eq!(parsed_typed_txs.tx_rlp_items, vec![typed_tx.clone()]);
+        assert_eq!(
+            parsed_typed_txs.tx_hashes,
+            vec![eth_rlpx_transaction_hash_v1(typed_tx.as_slice())]
         );
         let pooled_hashes = parsed_txs.tx_hashes.clone();
         let pooled_types = vec![0x00, 0x02];
@@ -5118,11 +5514,32 @@ mod tests {
         assert_eq!(parsed_pooled_txs.request_id, 17);
         assert_eq!(parsed_pooled_txs.tx_rlp_items, tx_items);
         assert_eq!(parsed_pooled_txs.tx_hashes, pooled_hashes);
+        let typed_pooled_txs =
+            eth_rlpx_build_pooled_transactions_payload_v1(18, std::slice::from_ref(&typed_tx));
+        let parsed_typed_pooled_txs =
+            eth_rlpx_parse_pooled_transactions_payload_v1(typed_pooled_txs.as_slice())
+                .expect("parse typed pooled txs");
+        assert_eq!(parsed_typed_pooled_txs.request_id, 18);
+        assert_eq!(parsed_typed_pooled_txs.tx_rlp_items, vec![typed_tx.clone()]);
+        assert_eq!(
+            parsed_typed_pooled_txs.tx_hashes,
+            vec![eth_rlpx_transaction_hash_v1(typed_tx.as_slice())]
+        );
         assert!(eth_rlpx_validate_transaction_envelope_payload_v1(&[0xc0]));
         assert!(eth_rlpx_validate_transaction_envelope_payload_v1(&[
             0x02, 0xc0
         ]));
         assert!(!eth_rlpx_validate_transaction_envelope_payload_v1(
+            b"NTX1\x01\x00"
+        ));
+        assert!(eth_rlpx_validate_receipt_envelope_payload_v1(
+            parsed_receipts.blocks[0].raw_receipts[0].as_slice()
+        ));
+        assert!(eth_rlpx_validate_receipt_envelope_payload_v1(
+            typed_receipt.as_slice()
+        ));
+        assert!(!eth_rlpx_validate_receipt_envelope_payload_v1(&[0xc0]));
+        assert!(!eth_rlpx_validate_receipt_envelope_payload_v1(
             b"NTX1\x01\x00"
         ));
     }

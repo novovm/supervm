@@ -45,11 +45,11 @@ use crate::{
     get_network_runtime_native_snap_account_snapshot_v1,
     get_network_runtime_native_snap_trie_node_snapshot_v1, get_network_runtime_native_sync_status,
     get_network_runtime_peer_heads_top_k, get_network_runtime_sync_status,
-    has_network_runtime_eth_peer_session, mark_network_runtime_eth_peer_session_ready_v1,
-    observe_eth_native_bodies_pull, observe_eth_native_bodies_response,
-    observe_eth_native_discovery, observe_eth_native_headers_pull,
-    observe_eth_native_headers_response, observe_eth_native_hello, observe_eth_native_rlpx_auth,
-    observe_eth_native_rlpx_auth_ack, observe_eth_native_snap_pull,
+    has_network_runtime_eth_peer_session, mark_network_runtime_eth_peer_session_closed_v1,
+    mark_network_runtime_eth_peer_session_ready_v1, observe_eth_native_bodies_pull,
+    observe_eth_native_bodies_response, observe_eth_native_discovery,
+    observe_eth_native_headers_pull, observe_eth_native_headers_response, observe_eth_native_hello,
+    observe_eth_native_rlpx_auth, observe_eth_native_rlpx_auth_ack, observe_eth_native_snap_pull,
     observe_eth_native_snap_response, observe_eth_native_status,
     observe_network_runtime_eth_peer_body_success_v1,
     observe_network_runtime_eth_peer_connect_failure_v1,
@@ -737,6 +737,7 @@ struct EthFullnodeNativeRlpxLivePeerSessionV1 {
     last_tx_broadcast_unix_ms: u64,
     pending_body_headers: Vec<EthFullnodeNativePendingBodyHeaderV1>,
     pending_body_request_offset: usize,
+    pending_receipt_request_offset: usize,
     pending_pooled_transaction_hashes: Vec<[u8; 32]>,
 }
 
@@ -1438,6 +1439,7 @@ fn connect_eth_fullnode_native_rlpx_peer_v1(
             last_tx_broadcast_unix_ms: 0,
             pending_body_headers: Vec::new(),
             pending_body_request_offset: 0,
+            pending_receipt_request_offset: 0,
             pending_pooled_transaction_hashes: Vec::new(),
         },
     );
@@ -1722,6 +1724,7 @@ fn drive_eth_fullnode_native_rlpx_peer_session_once_v1(
                             peer.0,
                             session,
                             &headers,
+                            budget_hooks,
                             &mut report,
                         )?;
                         continue;
@@ -2032,13 +2035,21 @@ fn drive_eth_fullnode_native_rlpx_peer_session_once_v1(
                         break;
                     }
                     if eth_fullnode_rlpx_error_is_remote_closed_v1(err.as_str()) {
-                        observe_network_runtime_eth_peer_disconnect_v1(chain_id, peer.0, None);
+                        let pending_request =
+                            eth_fullnode_native_rlpx_session_has_pending_request_v1(session);
+                        if pending_request {
+                            observe_network_runtime_eth_peer_disconnect_v1(chain_id, peer.0, None);
+                        } else {
+                            mark_network_runtime_eth_peer_session_closed_v1(chain_id, peer.0);
+                        }
                         let _ = unregister_network_runtime_peer(chain_id, peer.0);
                         disconnected = true;
-                        disconnect_error = Some(NetworkError::Io(format!(
-                            "rlpx_remote_closed:endpoint={}:{}",
-                            session.endpoint.addr_hint, err
-                        )));
+                        if pending_request {
+                            disconnect_error = Some(NetworkError::Io(format!(
+                                "rlpx_remote_closed:endpoint={}:{}",
+                                session.endpoint.addr_hint, err
+                            )));
+                        }
                         break;
                     }
                     observe_network_runtime_eth_peer_decode_failure_v1(
@@ -2157,90 +2168,101 @@ fn drive_eth_fullnode_native_rlpx_peer_session_once_v1(
             && now_ms.saturating_sub(session.last_sync_request_unix_ms)
                 >= budget_hooks.sync_request_interval_ms.max(1)
         {
-            let recovered_missing_receipts =
-                dispatch_eth_fullnode_native_rlpx_missing_receipts_recovery_v1(
+            let recovered_missing_body =
+                dispatch_eth_fullnode_native_rlpx_missing_body_recovery_v1(
                     chain_id,
                     peer,
                     session,
                     &mut report,
                 )?;
-            if !recovered_missing_receipts {
-                let Some(msg) = build_eth_fullnode_native_sync_request_v1(local_node, chain_id)
-                else {
-                    return Ok(report);
-                };
-                match msg {
-                    ProtocolMessage::EvmNative(EvmNativeMessage::GetBlockHeaders {
-                        start_height,
-                        max,
-                        skip,
-                        reverse,
-                        ..
-                    }) => {
-                        let request_id = next_eth_fullnode_native_rlpx_request_id_v1();
-                        let payload = eth_rlpx_build_get_block_headers_payload_v1(
-                            request_id,
+            if !recovered_missing_body {
+                let recovered_missing_receipts =
+                    dispatch_eth_fullnode_native_rlpx_missing_receipts_recovery_v1(
+                        chain_id,
+                        peer,
+                        session,
+                        &mut report,
+                    )?;
+                if !recovered_missing_receipts {
+                    let Some(msg) = build_eth_fullnode_native_sync_request_v1(local_node, chain_id)
+                    else {
+                        return Ok(report);
+                    };
+                    match msg {
+                        ProtocolMessage::EvmNative(EvmNativeMessage::GetBlockHeaders {
                             start_height,
                             max,
                             skip,
                             reverse,
-                        );
-                        eth_rlpx_write_wire_frame_v1(
-                            &mut session.stream,
-                            &mut session.frame_session,
-                            ETH_RLPX_BASE_PROTOCOL_OFFSET + ETH_RLPX_ETH_GET_BLOCK_HEADERS_MSG,
-                            payload.as_slice(),
-                        )
-                        .map_err(|err| {
-                            observe_network_runtime_eth_peer_handshake_failure_v1(
+                            ..
+                        }) => {
+                            let request_id = next_eth_fullnode_native_rlpx_request_id_v1();
+                            let payload = eth_rlpx_build_get_block_headers_payload_v1(
+                                request_id,
+                                start_height,
+                                max,
+                                skip,
+                                reverse,
+                            );
+                            eth_rlpx_write_wire_frame_v1(
+                                &mut session.stream,
+                                &mut session.frame_session,
+                                ETH_RLPX_BASE_PROTOCOL_OFFSET + ETH_RLPX_ETH_GET_BLOCK_HEADERS_MSG,
+                                payload.as_slice(),
+                            )
+                            .map_err(|err| {
+                                observe_network_runtime_eth_peer_handshake_failure_v1(
+                                    chain_id,
+                                    peer.0,
+                                    "headers_request_write_failed",
+                                );
+                                NetworkError::Io(err)
+                            })?;
+                            observe_eth_native_headers_pull(chain_id);
+                            observe_network_runtime_eth_peer_syncing_v1(chain_id, peer.0);
+                            session.last_headers_request_id = Some(request_id);
+                            session.last_bodies_request_id = None;
+                            session.pending_body_request_offset = 0;
+                            session.last_receipts_request_id = None;
+                            session.pending_receipt_request_offset = 0;
+                            clear_eth_fullnode_native_snap_request_state_v1(session);
+                            session.last_sync_request_unix_ms = now_ms;
+                            report.sync_requests = report.sync_requests.saturating_add(1);
+                        }
+                        ProtocolMessage::EvmNative(EvmNativeMessage::SnapGetAccountRange {
+                            block_hash,
+                            origin,
+                            limit,
+                            ..
+                        }) => {
+                            if eth_rlpx_snap_base_offset_v1(
+                                session._negotiated_eth_version,
+                                session._negotiated_snap_version,
+                            )
+                            .is_none()
+                            {
+                                return Ok(report);
+                            }
+                            let root =
+                                eth_fullnode_native_rlpx_snap_root_hint_v1(chain_id, block_hash);
+                            let limit_hash = [0xffu8; 32];
+                            let byte_limit = limit
+                                .saturating_mul(16 * 1024)
+                                .clamp(16 * 1024, ETH_RLPX_SNAP_DEFAULT_ACCOUNT_RANGE_BYTES);
+                            dispatch_eth_fullnode_native_snap_account_range_request_v1(
                                 chain_id,
                                 peer.0,
-                                "headers_request_write_failed",
-                            );
-                            NetworkError::Io(err)
-                        })?;
-                        observe_eth_native_headers_pull(chain_id);
-                        observe_network_runtime_eth_peer_syncing_v1(chain_id, peer.0);
-                        session.last_headers_request_id = Some(request_id);
-                        session.last_bodies_request_id = None;
-                        session.pending_body_request_offset = 0;
-                        session.last_receipts_request_id = None;
-                        clear_eth_fullnode_native_snap_request_state_v1(session);
-                        session.last_sync_request_unix_ms = now_ms;
-                        report.sync_requests = report.sync_requests.saturating_add(1);
-                    }
-                    ProtocolMessage::EvmNative(EvmNativeMessage::SnapGetAccountRange {
-                        block_hash,
-                        origin,
-                        limit,
-                        ..
-                    }) => {
-                        if eth_rlpx_snap_base_offset_v1(
-                            session._negotiated_eth_version,
-                            session._negotiated_snap_version,
-                        )
-                        .is_none()
-                        {
-                            return Ok(report);
+                                session,
+                                root,
+                                origin,
+                                limit_hash,
+                                byte_limit,
+                                "snap_account_range_request_write_failed",
+                            )?;
+                            report.sync_requests = report.sync_requests.saturating_add(1);
                         }
-                        let root = eth_fullnode_native_rlpx_snap_root_hint_v1(chain_id, block_hash);
-                        let limit_hash = [0xffu8; 32];
-                        let byte_limit = limit
-                            .saturating_mul(16 * 1024)
-                            .clamp(16 * 1024, ETH_RLPX_SNAP_DEFAULT_ACCOUNT_RANGE_BYTES);
-                        dispatch_eth_fullnode_native_snap_account_range_request_v1(
-                            chain_id,
-                            peer.0,
-                            session,
-                            root,
-                            origin,
-                            limit_hash,
-                            byte_limit,
-                            "snap_account_range_request_write_failed",
-                        )?;
-                        report.sync_requests = report.sync_requests.saturating_add(1);
+                        _ => {}
                     }
-                    _ => {}
                 }
             }
         }
@@ -2320,6 +2342,69 @@ fn build_eth_fullnode_native_missing_receipts_pending_v1(
     })
 }
 
+fn build_eth_fullnode_native_missing_body_pending_v1(
+    chain_id: u64,
+) -> Option<EthFullnodeNativePendingBodyHeaderV1> {
+    let header = get_network_runtime_native_header_snapshot_v1(chain_id)?;
+    if get_network_runtime_native_body_snapshot_v1(chain_id).is_some_and(|body| {
+        body.block_hash == header.hash && body.body_available && body.txs_materialized
+    }) {
+        return None;
+    }
+    Some(EthFullnodeNativePendingBodyHeaderV1 {
+        number: header.number,
+        hash: header.hash,
+        parent_hash: header.parent_hash,
+        state_root: header.state_root,
+        transactions_root: header.transactions_root,
+        receipts_root: header.receipts_root,
+        tx_count: None,
+        withdrawal_count: None,
+    })
+}
+
+fn dispatch_eth_fullnode_native_rlpx_missing_body_recovery_v1(
+    chain_id: u64,
+    peer: NodeId,
+    session: &mut EthFullnodeNativeRlpxLivePeerSessionV1,
+    report: &mut EthFullnodeNativeRlpxPeerTickReportV1,
+) -> Result<bool, NetworkError> {
+    if eth_fullnode_native_rlpx_session_has_pending_request_v1(session) {
+        return Ok(false);
+    }
+    let Some(pending) = build_eth_fullnode_native_missing_body_pending_v1(chain_id) else {
+        return Ok(false);
+    };
+    let request_id = next_eth_fullnode_native_rlpx_request_id_v1();
+    let payload = eth_rlpx_build_get_block_bodies_payload_v1(request_id, &[pending.hash]);
+    eth_rlpx_write_wire_frame_v1(
+        &mut session.stream,
+        &mut session.frame_session,
+        ETH_RLPX_BASE_PROTOCOL_OFFSET + ETH_RLPX_ETH_GET_BLOCK_BODIES_MSG,
+        payload.as_slice(),
+    )
+    .map_err(|err| {
+        observe_network_runtime_eth_peer_handshake_failure_v1(
+            chain_id,
+            peer.0,
+            "missing_body_recovery_request_write_failed",
+        );
+        NetworkError::Io(err)
+    })?;
+    observe_eth_native_bodies_pull(chain_id);
+    observe_network_runtime_eth_peer_syncing_v1(chain_id, peer.0);
+    session.pending_body_headers = vec![pending];
+    session.last_headers_request_id = None;
+    session.last_bodies_request_id = Some(request_id);
+    session.pending_body_request_offset = 0;
+    session.last_receipts_request_id = None;
+    session.pending_receipt_request_offset = 0;
+    clear_eth_fullnode_native_snap_request_state_v1(session);
+    session.last_sync_request_unix_ms = now_unix_ms();
+    report.sync_requests = report.sync_requests.saturating_add(1);
+    Ok(true)
+}
+
 fn dispatch_eth_fullnode_native_rlpx_missing_receipts_recovery_v1(
     chain_id: u64,
     peer: NodeId,
@@ -2381,6 +2466,7 @@ fn dispatch_eth_fullnode_native_rlpx_missing_receipts_recovery_v1(
     session.last_headers_request_id = None;
     session.last_bodies_request_id = None;
     session.last_receipts_request_id = Some(request_id);
+    session.pending_receipt_request_offset = 0;
     clear_eth_fullnode_native_snap_request_state_v1(session);
     session.last_sync_request_unix_ms = now_unix_ms();
     report.sync_requests = report.sync_requests.saturating_add(1);
@@ -2462,6 +2548,19 @@ fn clear_eth_fullnode_native_snap_request_state_v1(
     session.pending_snap_trie_node_retry_count = 0;
 }
 
+fn eth_fullnode_native_rlpx_session_has_pending_request_v1(
+    session: &EthFullnodeNativeRlpxLivePeerSessionV1,
+) -> bool {
+    session.last_headers_request_id.is_some()
+        || session.last_bodies_request_id.is_some()
+        || session.last_receipts_request_id.is_some()
+        || session.last_snap_account_range_request_id.is_some()
+        || session.last_snap_storage_ranges_request_id.is_some()
+        || session.last_snap_byte_codes_request_id.is_some()
+        || session.last_snap_trie_nodes_request_id.is_some()
+        || !session.pending_body_headers.is_empty()
+}
+
 fn dispatch_eth_fullnode_native_snap_account_range_request_v1(
     chain_id: u64,
     source_peer_id: u64,
@@ -2502,6 +2601,7 @@ fn dispatch_eth_fullnode_native_snap_account_range_request_v1(
     session.last_headers_request_id = None;
     session.last_bodies_request_id = None;
     session.last_receipts_request_id = None;
+    session.pending_receipt_request_offset = 0;
     session.last_snap_storage_ranges_request_id = None;
     session.last_snap_byte_codes_request_id = None;
     session.last_snap_trie_nodes_request_id = None;
@@ -4380,6 +4480,7 @@ fn ingest_real_rlpx_new_block_v1(
         session.last_headers_request_id = None;
         session.last_bodies_request_id = None;
         session.last_receipts_request_id = None;
+        session.pending_receipt_request_offset = 0;
         clear_eth_fullnode_native_snap_request_state_v1(session);
         mark_network_runtime_eth_peer_session_ready_v1(chain_id, source_peer_id, None);
         return Ok(());
@@ -4408,6 +4509,7 @@ fn ingest_real_rlpx_new_block_v1(
     session.last_headers_request_id = None;
     session.last_bodies_request_id = None;
     session.last_receipts_request_id = Some(request_id);
+    session.pending_receipt_request_offset = 0;
     clear_eth_fullnode_native_snap_request_state_v1(session);
     session.last_sync_request_unix_ms = now_unix_ms();
     report.sync_requests = report.sync_requests.saturating_add(1);
@@ -4419,6 +4521,7 @@ fn ingest_real_rlpx_block_headers_v1(
     source_peer_id: u64,
     session: &mut EthFullnodeNativeRlpxLivePeerSessionV1,
     headers: &EthRlpxBlockHeadersResponseV1,
+    budget_hooks: &EthFullnodeBudgetHooksV1,
     report: &mut EthFullnodeNativeRlpxPeerTickReportV1,
 ) -> Result<(), NetworkError> {
     if session
@@ -4433,8 +4536,15 @@ fn ingest_real_rlpx_block_headers_v1(
         session.last_headers_request_id = None;
         return Ok(());
     }
-    session.pending_body_headers = headers
+    let body_request_cap = usize::try_from(budget_hooks.sync_pull_bodies_batch.max(1))
+        .unwrap_or(usize::MAX)
+        .max(1);
+    let selected_headers = headers
         .headers
+        .iter()
+        .take(body_request_cap)
+        .collect::<Vec<_>>();
+    session.pending_body_headers = selected_headers
         .iter()
         .map(|header| EthFullnodeNativePendingBodyHeaderV1 {
             number: header.number,
@@ -4447,7 +4557,11 @@ fn ingest_real_rlpx_block_headers_v1(
             withdrawal_count: None,
         })
         .collect();
-    if let Some(best) = headers.headers.iter().max_by_key(|header| header.number) {
+    if let Some(best) = selected_headers
+        .iter()
+        .copied()
+        .max_by_key(|header| header.number)
+    {
         let header_wire = evm_native_header_wire_from_rlpx_header_v1(best);
         ingest_runtime_native_header_from_evm_wire(chain_id, source_peer_id, &header_wire);
         report.header_updates = report.header_updates.saturating_add(1);
@@ -4479,6 +4593,7 @@ fn ingest_real_rlpx_block_headers_v1(
         session.last_bodies_request_id = Some(request_id);
         session.pending_body_request_offset = 0;
         session.last_receipts_request_id = None;
+        session.pending_receipt_request_offset = 0;
         clear_eth_fullnode_native_snap_request_state_v1(session);
         session.last_sync_request_unix_ms = now_unix_ms();
         report.sync_requests = report.sync_requests.saturating_add(1);
@@ -4674,6 +4789,7 @@ fn ingest_real_rlpx_block_bodies_v1(
     })?;
     observe_network_runtime_eth_peer_syncing_v1(chain_id, source_peer_id);
     session.last_receipts_request_id = Some(request_id);
+    session.pending_receipt_request_offset = 0;
     clear_eth_fullnode_native_snap_request_state_v1(session);
     session.last_sync_request_unix_ms = now_unix_ms();
     report.sync_requests = report.sync_requests.saturating_add(1);
@@ -4736,21 +4852,38 @@ fn ingest_real_rlpx_receipts_v1(
     {
         return Ok(());
     }
+    let request_offset = session
+        .pending_receipt_request_offset
+        .min(session.pending_body_headers.len());
+    let expected_receipts = session
+        .pending_body_headers
+        .len()
+        .saturating_sub(request_offset);
+    let observed_receipts = receipts.blocks.len();
+    let receipt_end = request_offset.saturating_add(observed_receipts);
+    let Some(pending_receipt_headers) = session
+        .pending_body_headers
+        .get(request_offset..receipt_end)
+    else {
+        let err = format!(
+            "rlpx_receipts_block_count_mismatch:expected={} observed={}",
+            expected_receipts, observed_receipts
+        );
+        observe_network_runtime_eth_peer_decode_failure_v1(chain_id, source_peer_id, &err);
+        return Err(NetworkError::Decode(err));
+    };
     validate_real_rlpx_receipts_response_v1(
         chain_id,
         source_peer_id,
-        session.pending_body_headers.as_slice(),
+        pending_receipt_headers,
+        expected_receipts,
         receipts,
     )?;
-    validate_real_rlpx_state_root_continuity_v1(
-        chain_id,
-        source_peer_id,
-        session.pending_body_headers.as_slice(),
-    )?;
+    validate_real_rlpx_state_root_continuity_v1(chain_id, source_peer_id, pending_receipt_headers)?;
     ingest_validated_real_rlpx_receipt_snapshots_v1(
         chain_id,
         source_peer_id,
-        session.pending_body_headers.as_slice(),
+        pending_receipt_headers,
         receipts,
     );
     report.receipt_updates = report.receipt_updates.saturating_add(receipts.blocks.len());
@@ -4765,6 +4898,54 @@ fn ingest_real_rlpx_receipts_v1(
         receipts.last_block_incomplete,
     );
     session.last_receipts_request_id = None;
+    session.pending_receipt_request_offset = 0;
+    if observed_receipts < expected_receipts {
+        let next_request_offset = receipt_end;
+        let missing_hashes = session
+            .pending_body_headers
+            .iter()
+            .skip(next_request_offset)
+            .map(|pending| pending.hash)
+            .collect::<Vec<_>>();
+        if !missing_hashes.is_empty() {
+            let request_id = next_eth_fullnode_native_rlpx_request_id_v1();
+            let payload = eth_rlpx_build_get_receipts_payload_v1(
+                request_id,
+                0,
+                missing_hashes.as_slice(),
+                session._negotiated_eth_version,
+            );
+            eth_rlpx_write_wire_frame_v1(
+                &mut session.stream,
+                &mut session.frame_session,
+                ETH_RLPX_BASE_PROTOCOL_OFFSET + ETH_RLPX_ETH_GET_RECEIPTS_MSG,
+                payload.as_slice(),
+            )
+            .map_err(|err| {
+                observe_network_runtime_eth_peer_handshake_failure_v1(
+                    chain_id,
+                    source_peer_id,
+                    "partial_receipts_retry_request_write_failed",
+                );
+                NetworkError::Io(err)
+            })?;
+            observe_network_runtime_eth_peer_syncing_v1(chain_id, source_peer_id);
+            session.last_receipts_request_id = Some(request_id);
+            session.pending_receipt_request_offset = next_request_offset;
+            session.last_sync_request_unix_ms = now_unix_ms();
+            report.sync_requests = report.sync_requests.saturating_add(1);
+            eprintln!(
+                "network_info: rlpx stage receipts_partial_retry chain_id={} peer={} endpoint={} request_id={} received={} missing={}",
+                chain_id,
+                source_peer_id,
+                session.endpoint.addr_hint,
+                request_id,
+                observed_receipts,
+                missing_hashes.len()
+            );
+            return Ok(());
+        }
+    }
     session.pending_body_headers.clear();
     mark_network_runtime_eth_peer_session_ready_v1(chain_id, source_peer_id, None);
     Ok(())
@@ -4837,6 +5018,7 @@ fn validate_real_rlpx_receipts_response_v1(
     chain_id: u64,
     source_peer_id: u64,
     pending_body_headers: &[EthFullnodeNativePendingBodyHeaderV1],
+    expected_receipt_blocks: usize,
     receipts: &EthRlpxReceiptsResponseV1,
 ) -> Result<(), NetworkError> {
     if receipts.last_block_incomplete {
@@ -4844,10 +5026,10 @@ fn validate_real_rlpx_receipts_response_v1(
         observe_network_runtime_eth_peer_decode_failure_v1(chain_id, source_peer_id, &err);
         return Err(NetworkError::Decode(err));
     }
-    if receipts.blocks.len() != pending_body_headers.len() {
+    if receipts.blocks.len() > expected_receipt_blocks {
         let err = format!(
             "rlpx_receipts_block_count_mismatch:expected={} observed={}",
-            pending_body_headers.len(),
+            expected_receipt_blocks,
             receipts.blocks.len()
         );
         observe_network_runtime_eth_peer_decode_failure_v1(chain_id, source_peer_id, &err);
@@ -7334,6 +7516,7 @@ mod tests {
             chain_id,
             peer_id,
             pending.as_slice(),
+            pending.len(),
             &valid
         )
         .is_ok());
@@ -7344,23 +7527,40 @@ mod tests {
             chain_id,
             peer_id,
             pending.as_slice(),
+            pending.len(),
             &incomplete
         )
         .expect_err("incomplete receipts must reject")
         .to_string()
         .contains("rlpx_receipts_last_block_incomplete"));
 
-        let mut missing_block = valid.clone();
-        missing_block.blocks.clear();
+        let mut extra_block = valid.clone();
+        extra_block.blocks.push(crate::EthRlpxReceiptBlockV1 {
+            raw_receipts: raw_receipts.clone(),
+            receipt_count: 1,
+            receipts_available: true,
+        });
         assert!(validate_real_rlpx_receipts_response_v1(
             chain_id,
             peer_id,
             pending.as_slice(),
-            &missing_block
+            pending.len(),
+            &extra_block
         )
-        .expect_err("missing receipts block must reject")
+        .expect_err("extra receipts block must reject")
         .to_string()
         .contains("rlpx_receipts_block_count_mismatch"));
+
+        let mut short_response = valid.clone();
+        short_response.blocks.clear();
+        assert!(validate_real_rlpx_receipts_response_v1(
+            chain_id,
+            peer_id,
+            pending.as_slice(),
+            pending.len(),
+            &short_response
+        )
+        .is_ok());
 
         let mut count_mismatch = valid.clone();
         count_mismatch.blocks[0].raw_receipts.clear();
@@ -7369,6 +7569,7 @@ mod tests {
             chain_id,
             peer_id,
             pending.as_slice(),
+            pending.len(),
             &count_mismatch
         )
         .expect_err("receipt count mismatch must reject")
@@ -7381,6 +7582,7 @@ mod tests {
             chain_id,
             peer_id,
             root_mismatch_pending.as_slice(),
+            root_mismatch_pending.len(),
             &valid
         )
         .expect_err("receipt root mismatch must reject")
@@ -7507,6 +7709,67 @@ mod tests {
         assert!(
             build_eth_fullnode_native_missing_receipts_pending_v1(chain_id).is_none(),
             "available receipts must not be requested again"
+        );
+    }
+
+    #[test]
+    fn rlpx_missing_body_recovery_rebuilds_pending_from_latest_header() {
+        let chain_id = 9_926_105_u64;
+        let peer_id = 1_300_106_u64;
+        clear_network_runtime_native_snapshots_for_chain_v1(chain_id);
+
+        let block_hash = [0x83; 32];
+        let parent_hash = [0x82; 32];
+        set_network_runtime_native_header_snapshot_v1(
+            chain_id,
+            crate::runtime_status::NetworkRuntimeNativeHeaderSnapshotV1 {
+                chain_id,
+                number: 2_048,
+                hash: block_hash,
+                parent_hash,
+                state_root: [0x84; 32],
+                transactions_root: [0x85; 32],
+                receipts_root: [0x86; 32],
+                ommers_hash: crate::eth_rlpx_empty_ommers_hash_v1(),
+                logs_bloom: vec![0u8; 256],
+                gas_limit: Some(30_000_000),
+                gas_used: Some(21_000),
+                timestamp: Some(1_900_000_001),
+                base_fee_per_gas: Some(9),
+                withdrawals_root: Some(crate::eth_rlpx_empty_trie_root_v1()),
+                blob_gas_used: None,
+                excess_blob_gas: None,
+                block_access_list_hash: None,
+                source_peer_id: Some(peer_id),
+                observed_unix_ms: 1,
+            },
+        );
+
+        let pending = build_eth_fullnode_native_missing_body_pending_v1(chain_id)
+            .expect("missing body pending");
+        assert_eq!(pending.number, 2_048);
+        assert_eq!(pending.hash, block_hash);
+        assert_eq!(pending.parent_hash, parent_hash);
+        assert_eq!(pending.tx_count, None);
+        assert_eq!(pending.withdrawal_count, None);
+
+        set_network_runtime_native_body_snapshot_v1(
+            chain_id,
+            crate::runtime_status::NetworkRuntimeNativeBodySnapshotV1 {
+                chain_id,
+                number: 2_048,
+                block_hash,
+                tx_hashes: Vec::new(),
+                ommer_hashes: Vec::new(),
+                withdrawal_count: Some(0),
+                body_available: true,
+                txs_materialized: true,
+                observed_unix_ms: 2,
+            },
+        );
+        assert!(
+            build_eth_fullnode_native_missing_body_pending_v1(chain_id).is_none(),
+            "available body must not be requested again"
         );
     }
 
@@ -9638,14 +9901,19 @@ mod tests {
         assert_eq!(report.attempted_bootstrap_peers, 2);
         assert_eq!(report.connected_peers, 1);
         assert_eq!(report.failed_bootstrap_peers, 1);
-        assert_eq!(report.peer_failures.len(), 1);
-        assert_eq!(report.peer_failures[0].peer_id, bad_peer.0);
+        let bootstrap_failures = report
+            .peer_failures
+            .iter()
+            .filter(|failure| failure.phase == EthFullnodeNativePeerDrivePhaseV1::Bootstrap)
+            .collect::<Vec<_>>();
+        assert_eq!(bootstrap_failures.len(), 1);
+        assert_eq!(bootstrap_failures[0].peer_id, bad_peer.0);
         assert_eq!(
-            report.peer_failures[0].phase,
+            bootstrap_failures[0].phase,
             EthFullnodeNativePeerDrivePhaseV1::Bootstrap
         );
         assert_eq!(
-            report.peer_failures[0].class,
+            bootstrap_failures[0].class,
             EthFullnodeNativePeerFailureClassV1::AddressParse
         );
         assert_eq!(report.lifecycle_summary.permanently_rejected_count, 1);
@@ -10311,8 +10579,8 @@ mod tests {
         )
         .expect("decode receipts gate raw transaction");
         let tx_hash = crate::eth_rlpx_transaction_hash_v1(raw_tx.as_slice());
-        let receipt_blocks = vec![vec![vec![0xc0]]];
-        let header_record = crate::EthRlpxBlockHeaderRecordV1 {
+        let receipt_blocks = vec![vec![vec![0xc0]], vec![vec![0xc0]]];
+        let header_record_1 = crate::EthRlpxBlockHeaderRecordV1 {
             number: 120,
             hash: [0u8; 32],
             parent_hash: [0x10; 32],
@@ -10331,13 +10599,44 @@ mod tests {
             block_access_list_hash: None,
         };
         let header_hash = crate::eth_rlpx_parse_block_headers_payload_v1(
-            crate::eth_rlpx_build_block_headers_payload_v1(1, std::slice::from_ref(&header_record))
-                .as_slice(),
+            crate::eth_rlpx_build_block_headers_payload_v1(
+                1,
+                std::slice::from_ref(&header_record_1),
+            )
+            .as_slice(),
         )
         .expect("derive wire header hash")
         .headers[0]
             .hash;
-        let server_header_record = header_record.clone();
+        let header_record_2 = crate::EthRlpxBlockHeaderRecordV1 {
+            number: 121,
+            hash: [0u8; 32],
+            parent_hash: header_hash,
+            state_root: [0x21; 32],
+            transactions_root: crate::eth_rlpx_transactions_root_from_raw_txs_v1(&[raw_tx.clone()]),
+            receipts_root: crate::eth_rlpx_receipts_root_from_raw_receipts_v1(&receipt_blocks[1]),
+            ommers_hash: empty_ommers_hash,
+            logs_bloom: vec![0u8; 256],
+            gas_limit: Some(30_000_000),
+            gas_used: Some(21_000),
+            timestamp: Some(1_234_568),
+            base_fee_per_gas: Some(15),
+            withdrawals_root: Some(empty_root),
+            blob_gas_used: None,
+            excess_blob_gas: None,
+            block_access_list_hash: None,
+        };
+        let header_hash_2 = crate::eth_rlpx_parse_block_headers_payload_v1(
+            crate::eth_rlpx_build_block_headers_payload_v1(
+                1,
+                std::slice::from_ref(&header_record_2),
+            )
+            .as_slice(),
+        )
+        .expect("derive second wire header hash")
+        .headers[0]
+            .hash;
+        let server_header_records = vec![header_record_1.clone(), header_record_2.clone()];
         let server_raw_tx = raw_tx.clone();
         let server_receipt_blocks = receipt_blocks.clone();
 
@@ -10445,7 +10744,7 @@ mod tests {
                             .expect("parse get block headers");
                     let headers_payload = crate::eth_rlpx_build_block_headers_payload_v1(
                         request.request_id,
-                        std::slice::from_ref(&server_header_record),
+                        server_header_records.as_slice(),
                     );
                     crate::eth_rlpx_write_wire_frame_v1(
                         &mut accepted,
@@ -10464,14 +10763,21 @@ mod tests {
                     let request =
                         crate::eth_rlpx_parse_get_block_bodies_payload_v1(payload.as_slice())
                             .expect("parse get block bodies");
-                    assert_eq!(request.hashes, vec![header_hash]);
+                    assert_eq!(request.hashes, vec![header_hash, header_hash_2]);
                     let bodies_payload = crate::eth_rlpx_build_block_bodies_payload_v1(
                         request.request_id,
-                        &[crate::EthRlpxBlockBodyPayloadV1 {
-                            tx_rlp_items: vec![server_raw_tx.clone()],
-                            ommer_header_rlp_items: Vec::new(),
-                            withdrawal_rlp_items: Some(Vec::new()),
-                        }],
+                        &[
+                            crate::EthRlpxBlockBodyPayloadV1 {
+                                tx_rlp_items: vec![server_raw_tx.clone()],
+                                ommer_header_rlp_items: Vec::new(),
+                                withdrawal_rlp_items: Some(Vec::new()),
+                            },
+                            crate::EthRlpxBlockBodyPayloadV1 {
+                                tx_rlp_items: vec![server_raw_tx.clone()],
+                                ommer_header_rlp_items: Vec::new(),
+                                withdrawal_rlp_items: Some(Vec::new()),
+                            },
+                        ],
                     );
                     crate::eth_rlpx_write_wire_frame_v1(
                         &mut accepted,
@@ -10487,23 +10793,41 @@ mod tests {
                 {
                     let request = crate::eth_rlpx_parse_get_receipts_payload_v1(payload.as_slice())
                         .expect("parse get receipts");
-                    assert_eq!(request.hashes, vec![header_hash]);
                     assert_eq!(request.first_block_receipt_index, 0);
-                    let receipts_payload = crate::eth_rlpx_build_receipts_payload_v1(
-                        request.request_id,
-                        false,
-                        server_receipt_blocks.as_slice(),
-                        70,
-                    );
-                    crate::eth_rlpx_write_wire_frame_v1(
-                        &mut accepted,
-                        &mut responder.session,
-                        crate::ETH_RLPX_BASE_PROTOCOL_OFFSET + crate::ETH_RLPX_ETH_RECEIPTS_MSG,
-                        receipts_payload.as_slice(),
-                    )
-                    .expect("write receipts");
-                    thread::sleep(Duration::from_millis(250));
-                    break;
+                    if request.hashes == vec![header_hash, header_hash_2] {
+                        let receipts_payload = crate::eth_rlpx_build_receipts_payload_v1(
+                            request.request_id,
+                            false,
+                            &server_receipt_blocks[0..1],
+                            70,
+                        );
+                        crate::eth_rlpx_write_wire_frame_v1(
+                            &mut accepted,
+                            &mut responder.session,
+                            crate::ETH_RLPX_BASE_PROTOCOL_OFFSET + crate::ETH_RLPX_ETH_RECEIPTS_MSG,
+                            receipts_payload.as_slice(),
+                        )
+                        .expect("write partial receipts");
+                        continue;
+                    }
+                    if request.hashes == vec![header_hash_2] {
+                        let receipts_payload = crate::eth_rlpx_build_receipts_payload_v1(
+                            request.request_id,
+                            false,
+                            &server_receipt_blocks[1..2],
+                            70,
+                        );
+                        crate::eth_rlpx_write_wire_frame_v1(
+                            &mut accepted,
+                            &mut responder.session,
+                            crate::ETH_RLPX_BASE_PROTOCOL_OFFSET + crate::ETH_RLPX_ETH_RECEIPTS_MSG,
+                            receipts_payload.as_slice(),
+                        )
+                        .expect("write retried receipts");
+                        thread::sleep(Duration::from_millis(250));
+                        break;
+                    }
+                    panic!("unexpected receipt hashes");
                 }
             }
         });
@@ -10528,39 +10852,42 @@ mod tests {
         let mut body_updates = 0usize;
         let mut receipt_updates = 0usize;
         while started.elapsed() < Duration::from_secs(2)
-            && (body_updates == 0 || receipt_updates == 0)
+            && (body_updates < 2 || receipt_updates < 2)
         {
             let report = worker.drive_real_network_once().expect("network tick");
             body_updates = body_updates.saturating_add(report.body_updates);
             receipt_updates = receipt_updates.saturating_add(report.receipt_updates);
             thread::sleep(Duration::from_millis(5));
         }
-        assert_eq!(body_updates, 1);
-        assert_eq!(receipt_updates, 1);
+        assert_eq!(body_updates, 2);
+        assert_eq!(receipt_updates, 2);
         let body_snapshot =
             get_network_runtime_native_body_snapshot_v1(chain_id).expect("body snapshot");
-        assert_eq!(body_snapshot.block_hash, header_hash);
+        assert_eq!(body_snapshot.block_hash, header_hash_2);
         assert_eq!(body_snapshot.tx_hashes, vec![tx_hash]);
         let receipt_snapshot =
-            get_network_runtime_native_receipt_snapshot_v1(chain_id, header_hash)
+            get_network_runtime_native_receipt_snapshot_v1(chain_id, header_hash_2)
                 .expect("receipt snapshot");
-        assert_eq!(receipt_snapshot.number, 120);
-        assert_eq!(receipt_snapshot.block_hash, header_hash);
-        assert_eq!(receipt_snapshot.raw_receipts, receipt_blocks[0]);
+        assert_eq!(receipt_snapshot.number, 121);
+        assert_eq!(receipt_snapshot.block_hash, header_hash_2);
+        assert_eq!(receipt_snapshot.raw_receipts, receipt_blocks[1]);
         assert_eq!(receipt_snapshot.receipt_count, 1);
         assert!(receipt_snapshot.receipts_available);
         assert_eq!(
-            build_eth_fullnode_native_receipts_response_blocks_v1(chain_id, &[header_hash]),
+            build_eth_fullnode_native_receipts_response_blocks_v1(
+                chain_id,
+                &[header_hash, header_hash_2]
+            ),
             receipt_blocks
         );
         let blocks = snapshot_network_runtime_native_canonical_blocks_v1(chain_id, 8);
         let imported = blocks
             .iter()
-            .find(|block| block.hash == header_hash)
+            .find(|block| block.hash == header_hash_2)
             .expect("canonical block state for receipt snapshot");
         assert!(imported.receipts_available);
         assert_eq!(imported.receipt_count, Some(1));
-        assert_eq!(imported.receipts_root, Some(header_record.receipts_root));
+        assert_eq!(imported.receipts_root, Some(header_record_2.receipts_root));
 
         server.join().expect("server join");
     }
@@ -10614,6 +10941,34 @@ mod tests {
                 body_available: true,
                 source_peer_id: Some(local.0),
                 observed_unix_ms: 2,
+            },
+        );
+        set_network_runtime_native_body_snapshot_v1(
+            chain_id,
+            crate::runtime_status::NetworkRuntimeNativeBodySnapshotV1 {
+                chain_id,
+                number: 119,
+                block_hash: ancestor_hash,
+                tx_hashes: Vec::new(),
+                ommer_hashes: Vec::new(),
+                withdrawal_count: None,
+                body_available: true,
+                txs_materialized: true,
+                observed_unix_ms: 3,
+            },
+        );
+        set_network_runtime_native_receipt_snapshot_v1(
+            chain_id,
+            NetworkRuntimeNativeReceiptSnapshotV1 {
+                chain_id,
+                number: 119,
+                block_hash: ancestor_hash,
+                receipts_root: [0xc9; 32],
+                raw_receipts: Vec::new(),
+                receipt_count: 0,
+                receipts_available: true,
+                source_peer_id: Some(local.0),
+                observed_unix_ms: 4,
             },
         );
         set_network_runtime_sync_status(
@@ -12865,6 +13220,29 @@ mod tests {
                 observed_unix_ms: 1,
             },
         );
+        crate::runtime_status::set_network_runtime_native_sync_status(
+            chain_id,
+            crate::runtime_status::NetworkRuntimeNativeSyncStatusV1 {
+                phase: NetworkRuntimeNativeSyncPhaseV1::State,
+                peer_count: 1,
+                starting_block: 19_800,
+                current_block: 19_850,
+                highest_block: 20_000,
+                updated_at_unix_millis: 1,
+            },
+        );
+        set_network_runtime_native_snap_account_range_progress_v1(
+            chain_id,
+            NetworkRuntimeNativeSnapAccountRangeProgressV1 {
+                chain_id,
+                state_root: local_state_root,
+                next_account_origin: Some([0u8; 32]),
+                limit: [0xff; 32],
+                completed: false,
+                source_peer_id: Some(local.0),
+                observed_unix_ms: 1,
+            },
+        );
 
         let responder_signing = k256::ecdsa::SigningKey::random(&mut rand::rngs::OsRng);
         let responder_nodekey: [u8; 32] = responder_signing.to_bytes().into();
@@ -13084,6 +13462,29 @@ mod tests {
                 finalized: false,
                 reorg_depth_hint: None,
                 body_available: true,
+                source_peer_id: Some(local.0),
+                observed_unix_ms: 1,
+            },
+        );
+        crate::runtime_status::set_network_runtime_native_sync_status(
+            chain_id,
+            crate::runtime_status::NetworkRuntimeNativeSyncStatusV1 {
+                phase: NetworkRuntimeNativeSyncPhaseV1::State,
+                peer_count: 1,
+                starting_block: 22_800,
+                current_block: 22_850,
+                highest_block: 23_000,
+                updated_at_unix_millis: 1,
+            },
+        );
+        set_network_runtime_native_snap_account_range_progress_v1(
+            chain_id,
+            NetworkRuntimeNativeSnapAccountRangeProgressV1 {
+                chain_id,
+                state_root: local_state_root,
+                next_account_origin: Some([0u8; 32]),
+                limit: [0xff; 32],
+                completed: false,
                 source_peer_id: Some(local.0),
                 observed_unix_ms: 1,
             },
@@ -13665,6 +14066,29 @@ mod tests {
                 finalized: false,
                 reorg_depth_hint: None,
                 body_available: true,
+                source_peer_id: Some(local.0),
+                observed_unix_ms: 1,
+            },
+        );
+        crate::runtime_status::set_network_runtime_native_sync_status(
+            chain_id,
+            crate::runtime_status::NetworkRuntimeNativeSyncStatusV1 {
+                phase: NetworkRuntimeNativeSyncPhaseV1::State,
+                peer_count: 1,
+                starting_block: 21_900,
+                current_block: 21_950,
+                highest_block: 22_100,
+                updated_at_unix_millis: 1,
+            },
+        );
+        set_network_runtime_native_snap_account_range_progress_v1(
+            chain_id,
+            NetworkRuntimeNativeSnapAccountRangeProgressV1 {
+                chain_id,
+                state_root: local_state_root,
+                next_account_origin: Some([0u8; 32]),
+                limit: [0xff; 32],
+                completed: false,
                 source_peer_id: Some(local.0),
                 observed_unix_ms: 1,
             },

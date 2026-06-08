@@ -4343,8 +4343,23 @@ pub fn build_eth_fullnode_native_sync_request_v1(
         .saturating_sub(window.from_block)
         .saturating_add(1)
         .max(1);
+    let state_head = get_network_runtime_native_head_snapshot_v1(chain_id);
+    let has_active_snap_cursor = state_head.as_ref().is_some_and(|head| {
+        get_network_runtime_native_snap_account_range_progress_v1(chain_id, head.state_root)
+            .is_some_and(|progress| !progress.completed && progress.next_account_origin.is_some())
+    });
+    let should_pull_headers_before_state =
+        matches!(window.phase, NetworkRuntimeNativeSyncPhaseV1::State)
+            && state_head.as_ref().is_some_and(|head| {
+                !head.body_available || (!has_active_snap_cursor && span >= 16)
+            });
+    let header_pull_span = if should_pull_headers_before_state {
+        span.min(16)
+    } else {
+        span
+    };
     Some(match window.phase {
-        NetworkRuntimeNativeSyncPhaseV1::State => {
+        NetworkRuntimeNativeSyncPhaseV1::State if !should_pull_headers_before_state => {
             let origin = get_network_runtime_native_head_snapshot_v1(chain_id)
                 .and_then(|head| {
                     get_network_runtime_native_snap_account_range_progress_v1(
@@ -4365,7 +4380,7 @@ pub fn build_eth_fullnode_native_sync_request_v1(
         _ => ProtocolMessage::EvmNative(EvmNativeMessage::GetBlockHeaders {
             from: local_node,
             start_height: window.from_block,
-            max: span,
+            max: header_pull_span,
             skip: 0,
             reverse: false,
         }),
@@ -5132,6 +5147,116 @@ mod tests {
         };
         assert_eq!(origin, [0u8; 32]);
         assert_eq!(limit, 1);
+    }
+
+    #[test]
+    fn native_state_phase_with_missing_body_continues_header_pull() {
+        let chain_id = 99_160_318_u64;
+        crate::runtime_status::set_network_runtime_sync_status(
+            chain_id,
+            NetworkRuntimeSyncStatus {
+                peer_count: 1,
+                starting_block: 64,
+                current_block: 128,
+                highest_block: 256,
+            },
+        );
+        crate::runtime_status::set_network_runtime_native_sync_status(
+            chain_id,
+            NetworkRuntimeNativeSyncStatusV1 {
+                phase: NetworkRuntimeNativeSyncPhaseV1::State,
+                peer_count: 1,
+                starting_block: 64,
+                current_block: 128,
+                highest_block: 256,
+                updated_at_unix_millis: 1,
+            },
+        );
+        crate::runtime_status::set_network_runtime_native_head_snapshot_v1(
+            chain_id,
+            NetworkRuntimeNativeHeadSnapshotV1 {
+                chain_id,
+                phase: NetworkRuntimeNativeSyncPhaseV1::State,
+                peer_count: 1,
+                block_number: 128,
+                block_hash: [0x66u8; 32],
+                parent_block_hash: [0x65u8; 32],
+                state_root: [0x77u8; 32],
+                canonical: true,
+                safe: false,
+                finalized: false,
+                reorg_depth_hint: None,
+                body_available: false,
+                source_peer_id: Some(7),
+                observed_unix_ms: 1,
+            },
+        );
+
+        let request = build_eth_fullnode_native_sync_request_v1(NodeId(7), chain_id)
+            .expect("state phase should still produce request");
+        let ProtocolMessage::EvmNative(EvmNativeMessage::GetBlockHeaders {
+            start_height, max, ..
+        }) = request
+        else {
+            panic!("missing-body state phase should pull headers before snap");
+        };
+        assert_eq!(start_height, 129);
+        assert_eq!(max, 16);
+    }
+
+    #[test]
+    fn native_state_phase_without_snap_cursor_keeps_forward_header_pull() {
+        let chain_id = 99_160_319_u64;
+        crate::runtime_status::set_network_runtime_sync_status(
+            chain_id,
+            NetworkRuntimeSyncStatus {
+                peer_count: 1,
+                starting_block: 64,
+                current_block: 128,
+                highest_block: 384,
+            },
+        );
+        crate::runtime_status::set_network_runtime_native_sync_status(
+            chain_id,
+            NetworkRuntimeNativeSyncStatusV1 {
+                phase: NetworkRuntimeNativeSyncPhaseV1::State,
+                peer_count: 1,
+                starting_block: 64,
+                current_block: 128,
+                highest_block: 384,
+                updated_at_unix_millis: 1,
+            },
+        );
+        crate::runtime_status::set_network_runtime_native_head_snapshot_v1(
+            chain_id,
+            NetworkRuntimeNativeHeadSnapshotV1 {
+                chain_id,
+                phase: NetworkRuntimeNativeSyncPhaseV1::State,
+                peer_count: 1,
+                block_number: 128,
+                block_hash: [0x66u8; 32],
+                parent_block_hash: [0x65u8; 32],
+                state_root: [0x77u8; 32],
+                canonical: true,
+                safe: false,
+                finalized: false,
+                reorg_depth_hint: None,
+                body_available: true,
+                source_peer_id: Some(7),
+                observed_unix_ms: 1,
+            },
+        );
+
+        let request = build_eth_fullnode_native_sync_request_v1(NodeId(7), chain_id)
+            .expect("state phase should still produce request");
+        let ProtocolMessage::EvmNative(EvmNativeMessage::GetBlockHeaders {
+            start_height, max, ..
+        }) = request
+        else {
+            panic!("state phase without snap cursor should keep forward header pull");
+        };
+        assert_eq!(start_height, 129);
+        assert_eq!(max, 16);
     }
 
     #[test]
