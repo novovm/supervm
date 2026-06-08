@@ -71,6 +71,56 @@ NOVOVM_NODE_MODE=eth_rlpx_sync cargo run -p novovm-node --bin novovm-node
 
 该证据只证明 RLPx 公网 peer 中途断开后的恢复语义已改善，不声明 SUPERVM 已完成 geth 级长期主网同步。
 
+## 2026-06-09 RLPx 长窗口续跑证据
+
+本轮继续使用直接产品入口，不创建脚本：
+
+```powershell
+NOVOVM_NODE_MODE=eth_rlpx_sync cargo run -p novovm-node --bin novovm-node
+```
+
+运行参数只设置观测窗口：
+
+- `NOVOVM_ETH_RLPX_TICKS=300`
+- `NOVOVM_ETH_RLPX_SLEEP_MS=600`
+- 未显式覆盖 `NOVOVM_ETH_RLPX_MAX_PEERS`，因此继续使用产品默认 32 active peer window。
+
+起点：
+
+- checkpoint/head store: `current=1317/highest=25275535`
+- current head body/receipt: available
+- peer cache: `256` endpoints
+
+观测到的推进：
+
+- tick 3：`1317 -> 1325`，`headers=8/bodies=8/receipts=8`
+- tick 6：`1325 -> 1333`，`headers=8/bodies=8/receipts=8`
+- tick 12：`1341 -> 1349`，`headers=8/bodies=8/receipts=8`
+- tick 18：`1357 -> 1365`，`headers=8/bodies=8/receipts=8`
+- tick 20：`1365 -> 1373`，`headers=8/bodies=8/receipts=8`
+- tick 27：block `1389` 从 header-only 恢复，`bodies=1/receipts=1`
+- tick 41：block `1413` 从 header-only 恢复，`headers=8/bodies=8/receipts=8`
+- tick 54：推进到 `current=1429/highest=25275675`，当前 head body/receipt available
+
+期间反复出现公网 peer 中途断开导致的短暂 `body_available=false`，包括 `1381`、`1389`、`1397`、`1405`、`1413`、`1421`；后续 ready peer 均能重新补齐到 current body/receipt available。
+
+候选池行为：
+
+- tick 33：`reason=sync_progress_stalled_expand`，discovery limit `512`，候选刷新到 `255`
+- tick 38：`reason=sync_progress_stalled_refresh`，discovery limit `1024`，候选刷新到 `282`
+- tick 49：再次 `sync_progress_stalled_refresh`，候选刷新到 `310`
+- tick 53：再次 refresh，候选刷新到 `313`
+
+仍然存在的主要外部失败类别：
+
+- public peer `too_many_peers`
+- pre-auth close / EOF
+- mid-body frame close
+- TCP timeout
+- 旧 `eth/66-68` peer capability mismatch 被按当前 geth capability floor 剔除
+
+本轮没有发现新的协议 decode mismatch 或 root mismatch。该证据只扩大了“公网 churn 下可以持续恢复并前进”的窗口，不等价于完整 geth 长期主网同步完成；完整 snap state heal、完整 state DB、完整历史 DB、discv5 和长稳公网接受度仍未封口。
+
 ## 本轮实跑证据
 
 ### 1. 默认 geth parity fixture
