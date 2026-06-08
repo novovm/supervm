@@ -1802,6 +1802,22 @@ fn runtime_native_canonical_chain_upsert_body_v1(
     if body.withdrawal_count.is_some() {
         entry.withdrawal_count = body.withdrawal_count;
     }
+    let fill_canonical_gap = state
+        .snapshot
+        .head
+        .as_ref()
+        .is_some_and(|head| head.canonical && body.number <= head.number)
+        && state
+            .canonical_hash_by_number
+            .get(&body.number)
+            .is_none_or(|hash| *hash == body.block_hash);
+    if fill_canonical_gap {
+        state
+            .canonical_hash_by_number
+            .insert(body.number, body.block_hash);
+        entry.canonical = true;
+        entry.lifecycle_stage = NetworkRuntimeNativeBlockLifecycleStageV1::Canonical;
+    }
     entry.observed_unix_ms = entry.observed_unix_ms.max(body.observed_unix_ms);
     entry.lifecycle_stage = runtime_native_canonical_chain_infer_block_lifecycle_v1(
         entry,
@@ -5040,6 +5056,87 @@ mod tests {
         );
         assert_eq!(chain.block_lifecycle_summary.canonical_count, 2);
         assert_eq!(chain.block_lifecycle_summary.reorged_out_count, 0);
+    }
+
+    #[test]
+    fn native_canonical_chain_marks_late_body_material_under_current_head() {
+        let chain_id = 20338_u64;
+        clear_runtime_sync_status_for_test(chain_id);
+        clear_network_runtime_native_snapshots_for_chain_v1(chain_id);
+
+        set_network_runtime_native_head_snapshot_v1(
+            chain_id,
+            NetworkRuntimeNativeHeadSnapshotV1 {
+                chain_id,
+                phase: NetworkRuntimeNativeSyncPhaseV1::Bodies,
+                peer_count: 2,
+                block_number: 200,
+                block_hash: [0x20; 32],
+                parent_block_hash: [0x1f; 32],
+                state_root: [0xa0; 32],
+                canonical: true,
+                safe: false,
+                finalized: false,
+                reorg_depth_hint: None,
+                body_available: false,
+                source_peer_id: Some(3),
+                observed_unix_ms: 2_000,
+            },
+        );
+        set_network_runtime_native_body_snapshot_v1(
+            chain_id,
+            NetworkRuntimeNativeBodySnapshotV1 {
+                chain_id,
+                number: 196,
+                block_hash: [0x96; 32],
+                tx_hashes: vec![[0x61; 32]],
+                raw_tx_rlps: vec![vec![0xc0]],
+                ommer_hashes: Vec::new(),
+                withdrawal_rlp_items: Some(Vec::new()),
+                withdrawal_count: Some(0),
+                body_available: true,
+                txs_materialized: true,
+                observed_unix_ms: 2_001,
+            },
+        );
+        set_network_runtime_native_body_snapshot_v1(
+            chain_id,
+            NetworkRuntimeNativeBodySnapshotV1 {
+                chain_id,
+                number: 196,
+                block_hash: [0x97; 32],
+                tx_hashes: vec![[0x62; 32]],
+                raw_tx_rlps: vec![vec![0xc1]],
+                ommer_hashes: Vec::new(),
+                withdrawal_rlp_items: Some(Vec::new()),
+                withdrawal_count: Some(0),
+                body_available: true,
+                txs_materialized: true,
+                observed_unix_ms: 2_002,
+            },
+        );
+
+        let blocks = snapshot_network_runtime_native_canonical_blocks_v1(chain_id, 0);
+        let canonical_gap = blocks
+            .iter()
+            .find(|block| block.hash == [0x96; 32])
+            .expect("late body material");
+        assert!(canonical_gap.canonical);
+        assert_eq!(
+            canonical_gap.lifecycle_stage,
+            NetworkRuntimeNativeBlockLifecycleStageV1::Canonical
+        );
+        let competing_gap = blocks
+            .iter()
+            .find(|block| block.hash == [0x97; 32])
+            .expect("competing body material");
+        assert!(!competing_gap.canonical);
+
+        let chain =
+            snapshot_network_runtime_native_canonical_chain_v1(chain_id).expect("canonical chain");
+        assert_eq!(chain.canonical_block_count, 2);
+        assert_eq!(chain.block_lifecycle_summary.canonical_count, 2);
+        assert_eq!(chain.block_lifecycle_summary.non_canonical_count, 1);
     }
 
     #[test]
