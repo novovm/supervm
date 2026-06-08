@@ -71,6 +71,7 @@ use crate::{
     set_network_runtime_native_body_snapshot_v1, set_network_runtime_native_budget_hooks_v1,
     set_network_runtime_native_head_snapshot_v1, set_network_runtime_native_header_snapshot_v1,
     set_network_runtime_native_receipt_snapshot_v1,
+    set_network_runtime_native_snap_account_range_progress_v1,
     set_network_runtime_native_snap_account_snapshot_v1,
     set_network_runtime_native_snap_account_storage_snapshot_v1,
     set_network_runtime_native_snap_code_snapshot_v1,
@@ -96,15 +97,15 @@ use crate::{
     EthRlpxFrameSessionV1, EthRlpxGetAccountRangeRequestV1, EthRlpxNewBlockPayloadV1,
     EthRlpxPooledTransactionsPayloadV1, EthRlpxReceiptsResponseV1, EthRlpxStatusV1,
     EthRlpxStorageRangesResponseV1, NetworkRuntimeNativePendingTxPropagationStopReasonV1,
-    NetworkRuntimeNativeReceiptSnapshotV1, NetworkRuntimeNativeSnapAccountSnapshotV1,
-    NetworkRuntimeNativeSnapAccountStorageSnapshotV1, NetworkRuntimeNativeSnapCodeSnapshotV1,
-    NetworkRuntimeNativeSnapStorageSlotSnapshotV1, NetworkRuntimeNativeSyncPhaseV1,
-    ETH_FULLNODE_NATIVE_WORKER_RUNTIME_SCHEMA_V1, ETH_RLPX_BASE_PROTOCOL_OFFSET,
-    ETH_RLPX_ETH_BLOCK_ACCESS_LISTS_MSG, ETH_RLPX_ETH_BLOCK_BODIES_MSG,
-    ETH_RLPX_ETH_BLOCK_HEADERS_MSG, ETH_RLPX_ETH_GET_BLOCK_ACCESS_LISTS_MSG,
-    ETH_RLPX_ETH_GET_BLOCK_BODIES_MSG, ETH_RLPX_ETH_GET_BLOCK_HEADERS_MSG,
-    ETH_RLPX_ETH_GET_POOLED_TRANSACTIONS_MSG, ETH_RLPX_ETH_GET_RECEIPTS_MSG,
-    ETH_RLPX_ETH_NEW_BLOCK_HASHES_MSG, ETH_RLPX_ETH_NEW_BLOCK_MSG,
+    NetworkRuntimeNativeReceiptSnapshotV1, NetworkRuntimeNativeSnapAccountRangeProgressV1,
+    NetworkRuntimeNativeSnapAccountSnapshotV1, NetworkRuntimeNativeSnapAccountStorageSnapshotV1,
+    NetworkRuntimeNativeSnapCodeSnapshotV1, NetworkRuntimeNativeSnapStorageSlotSnapshotV1,
+    NetworkRuntimeNativeSyncPhaseV1, ETH_FULLNODE_NATIVE_WORKER_RUNTIME_SCHEMA_V1,
+    ETH_RLPX_BASE_PROTOCOL_OFFSET, ETH_RLPX_ETH_BLOCK_ACCESS_LISTS_MSG,
+    ETH_RLPX_ETH_BLOCK_BODIES_MSG, ETH_RLPX_ETH_BLOCK_HEADERS_MSG,
+    ETH_RLPX_ETH_GET_BLOCK_ACCESS_LISTS_MSG, ETH_RLPX_ETH_GET_BLOCK_BODIES_MSG,
+    ETH_RLPX_ETH_GET_BLOCK_HEADERS_MSG, ETH_RLPX_ETH_GET_POOLED_TRANSACTIONS_MSG,
+    ETH_RLPX_ETH_GET_RECEIPTS_MSG, ETH_RLPX_ETH_NEW_BLOCK_HASHES_MSG, ETH_RLPX_ETH_NEW_BLOCK_MSG,
     ETH_RLPX_ETH_NEW_POOLED_TRANSACTION_HASHES_MSG, ETH_RLPX_ETH_POOLED_TRANSACTIONS_MSG,
     ETH_RLPX_ETH_RECEIPTS_MSG, ETH_RLPX_ETH_STATUS_MSG, ETH_RLPX_ETH_TRANSACTIONS_MSG,
     ETH_RLPX_P2P_DISCONNECT_MSG, ETH_RLPX_P2P_HELLO_MSG, ETH_RLPX_P2P_PING_MSG,
@@ -2483,6 +2484,28 @@ fn dispatch_eth_fullnode_native_snap_account_range_request_v1(
     Ok(request_id)
 }
 
+fn record_eth_fullnode_native_snap_account_range_progress_v1(
+    chain_id: u64,
+    source_peer_id: u64,
+    root: [u8; 32],
+    next_account_origin: Option<[u8; 32]>,
+    limit: [u8; 32],
+    completed: bool,
+) {
+    set_network_runtime_native_snap_account_range_progress_v1(
+        chain_id,
+        NetworkRuntimeNativeSnapAccountRangeProgressV1 {
+            chain_id,
+            state_root: root,
+            next_account_origin,
+            limit,
+            completed,
+            source_peer_id: Some(source_peer_id),
+            observed_unix_ms: now_unix_ms() as u128,
+        },
+    );
+}
+
 fn maybe_continue_eth_fullnode_native_snap_account_range_v1(
     chain_id: u64,
     source_peer_id: u64,
@@ -2498,14 +2521,39 @@ fn maybe_continue_eth_fullnode_native_snap_account_range_v1(
         return Ok(false);
     };
     let Some(origin) = session.pending_snap_next_account_origin.take() else {
+        let limit = session.last_snap_account_limit.unwrap_or([0xffu8; 32]);
+        record_eth_fullnode_native_snap_account_range_progress_v1(
+            chain_id,
+            source_peer_id,
+            root,
+            None,
+            limit,
+            true,
+        );
         clear_eth_fullnode_native_snap_request_state_v1(session);
         return Ok(false);
     };
     let limit = session.last_snap_account_limit.unwrap_or([0xffu8; 32]);
     if origin > limit {
+        record_eth_fullnode_native_snap_account_range_progress_v1(
+            chain_id,
+            source_peer_id,
+            root,
+            None,
+            limit,
+            true,
+        );
         clear_eth_fullnode_native_snap_request_state_v1(session);
         return Ok(false);
     }
+    record_eth_fullnode_native_snap_account_range_progress_v1(
+        chain_id,
+        source_peer_id,
+        root,
+        Some(origin),
+        limit,
+        false,
+    );
     let request_id = dispatch_eth_fullnode_native_snap_account_range_request_v1(
         chain_id,
         source_peer_id,

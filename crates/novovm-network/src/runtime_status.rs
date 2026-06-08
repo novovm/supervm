@@ -80,6 +80,13 @@ type NetworkRuntimeNativeSnapCodeSnapshotByChainV1 =
 static NETWORK_RUNTIME_NATIVE_SNAP_CODE_SNAPSHOTS: OnceLock<
     Mutex<NetworkRuntimeNativeSnapCodeSnapshotByChainV1>,
 > = OnceLock::new();
+type NetworkRuntimeNativeSnapAccountRangeProgressByRootV1 =
+    HashMap<[u8; 32], NetworkRuntimeNativeSnapAccountRangeProgressV1>;
+type NetworkRuntimeNativeSnapAccountRangeProgressByChainV1 =
+    HashMap<u64, NetworkRuntimeNativeSnapAccountRangeProgressByRootV1>;
+static NETWORK_RUNTIME_NATIVE_SNAP_ACCOUNT_RANGE_PROGRESS: OnceLock<
+    Mutex<NetworkRuntimeNativeSnapAccountRangeProgressByChainV1>,
+> = OnceLock::new();
 static NETWORK_RUNTIME_NATIVE_HEAD_SNAPSHOTS: OnceLock<
     Mutex<HashMap<u64, NetworkRuntimeNativeHeadSnapshotV1>>,
 > = OnceLock::new();
@@ -161,6 +168,11 @@ fn runtime_native_snap_storage_snapshot_map(
 fn runtime_native_snap_code_snapshot_map(
 ) -> &'static Mutex<NetworkRuntimeNativeSnapCodeSnapshotByChainV1> {
     NETWORK_RUNTIME_NATIVE_SNAP_CODE_SNAPSHOTS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn runtime_native_snap_account_range_progress_map(
+) -> &'static Mutex<NetworkRuntimeNativeSnapAccountRangeProgressByChainV1> {
+    NETWORK_RUNTIME_NATIVE_SNAP_ACCOUNT_RANGE_PROGRESS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
 fn runtime_native_head_snapshot_map(
@@ -420,6 +432,28 @@ impl NetworkRuntimeNativeSnapCodeSnapshotV1 {
     #[must_use]
     pub fn normalized(mut self, chain_id: u64) -> Self {
         self.chain_id = chain_id;
+        self
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NetworkRuntimeNativeSnapAccountRangeProgressV1 {
+    pub chain_id: u64,
+    pub state_root: [u8; 32],
+    pub next_account_origin: Option<[u8; 32]>,
+    pub limit: [u8; 32],
+    pub completed: bool,
+    pub source_peer_id: Option<u64>,
+    pub observed_unix_ms: u128,
+}
+
+impl NetworkRuntimeNativeSnapAccountRangeProgressV1 {
+    #[must_use]
+    pub fn normalized(mut self, chain_id: u64) -> Self {
+        self.chain_id = chain_id;
+        if self.completed {
+            self.next_account_origin = None;
+        }
         self
     }
 }
@@ -2783,6 +2817,46 @@ pub fn snapshot_network_runtime_native_snap_code_snapshots_v1(
     out
 }
 
+pub fn set_network_runtime_native_snap_account_range_progress_v1(
+    chain_id: u64,
+    progress: NetworkRuntimeNativeSnapAccountRangeProgressV1,
+) {
+    let normalized = progress.normalized(chain_id);
+    if let Ok(mut guard) = runtime_native_snap_account_range_progress_map().lock() {
+        guard
+            .entry(chain_id)
+            .or_default()
+            .insert(normalized.state_root, normalized.clone());
+    }
+    if let Ok(mut observed) = runtime_sync_observed_state_map().lock() {
+        observed
+            .native_snapshot_updated_at_by_chain
+            .insert(chain_id, normalized.observed_unix_ms);
+        hint_runtime_stale_check_deadline(&mut observed, chain_id, normalized.observed_unix_ms);
+    }
+}
+
+#[must_use]
+pub fn get_network_runtime_native_snap_account_range_progress_v1(
+    chain_id: u64,
+    state_root: [u8; 32],
+) -> Option<NetworkRuntimeNativeSnapAccountRangeProgressV1> {
+    let guard = runtime_native_snap_account_range_progress_map()
+        .lock()
+        .ok()?;
+    guard
+        .get(&chain_id)
+        .and_then(|progress| progress.get(&state_root).cloned())
+}
+
+#[must_use]
+pub fn snapshot_network_runtime_native_snap_account_range_progress_v1(
+    chain_id: u64,
+    state_root: [u8; 32],
+) -> Option<NetworkRuntimeNativeSnapAccountRangeProgressV1> {
+    get_network_runtime_native_snap_account_range_progress_v1(chain_id, state_root)
+}
+
 pub fn set_network_runtime_native_head_snapshot_v1(
     chain_id: u64,
     snapshot: NetworkRuntimeNativeHeadSnapshotV1,
@@ -3443,6 +3517,9 @@ pub fn clear_network_runtime_native_snapshots_for_chain_v1(chain_id: u64) {
         guard.remove(&chain_id);
     }
     if let Ok(mut guard) = runtime_native_snap_code_snapshot_map().lock() {
+        guard.remove(&chain_id);
+    }
+    if let Ok(mut guard) = runtime_native_snap_account_range_progress_map().lock() {
         guard.remove(&chain_id);
     }
     if let Ok(mut guard) = runtime_native_head_snapshot_map().lock() {

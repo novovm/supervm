@@ -11,15 +11,16 @@ use crate::eth_runtime_config::{
 };
 use crate::runtime_status::{
     get_network_runtime_native_body_snapshot_v1, get_network_runtime_native_head_snapshot_v1,
-    get_network_runtime_native_header_snapshot_v1, get_network_runtime_native_sync_status,
-    get_network_runtime_sync_status, network_runtime_native_sync_is_active,
-    plan_network_runtime_sync_pull_window, snapshot_network_runtime_native_canonical_chain_v1,
-    NetworkRuntimeNativeBodySnapshotV1, NetworkRuntimeNativeCanonicalBlockStateV1,
-    NetworkRuntimeNativeCanonicalChainStateV1, NetworkRuntimeNativeExecutionBudgetRuntimeSummaryV1,
-    NetworkRuntimeNativeHeadSnapshotV1, NetworkRuntimeNativeHeaderSnapshotV1,
-    NetworkRuntimeNativePendingTxBroadcastRuntimeSummaryV1, NetworkRuntimeNativePendingTxStateV1,
-    NetworkRuntimeNativePendingTxSummaryV1, NetworkRuntimeNativeSyncPhaseV1,
-    NetworkRuntimeNativeSyncStatusV1, NetworkRuntimeSyncStatus,
+    get_network_runtime_native_header_snapshot_v1,
+    get_network_runtime_native_snap_account_range_progress_v1,
+    get_network_runtime_native_sync_status, get_network_runtime_sync_status,
+    network_runtime_native_sync_is_active, plan_network_runtime_sync_pull_window,
+    snapshot_network_runtime_native_canonical_chain_v1, NetworkRuntimeNativeBodySnapshotV1,
+    NetworkRuntimeNativeCanonicalBlockStateV1, NetworkRuntimeNativeCanonicalChainStateV1,
+    NetworkRuntimeNativeExecutionBudgetRuntimeSummaryV1, NetworkRuntimeNativeHeadSnapshotV1,
+    NetworkRuntimeNativeHeaderSnapshotV1, NetworkRuntimeNativePendingTxBroadcastRuntimeSummaryV1,
+    NetworkRuntimeNativePendingTxStateV1, NetworkRuntimeNativePendingTxSummaryV1,
+    NetworkRuntimeNativeSyncPhaseV1, NetworkRuntimeNativeSyncStatusV1, NetworkRuntimeSyncStatus,
 };
 use novovm_protocol::{EvmNativeMessage, NodeId, ProtocolMessage};
 use serde::{Deserialize, Serialize};
@@ -4344,10 +4345,20 @@ pub fn build_eth_fullnode_native_sync_request_v1(
         .max(1);
     Some(match window.phase {
         NetworkRuntimeNativeSyncPhaseV1::State => {
+            let origin = get_network_runtime_native_head_snapshot_v1(chain_id)
+                .and_then(|head| {
+                    get_network_runtime_native_snap_account_range_progress_v1(
+                        chain_id,
+                        head.state_root,
+                    )
+                })
+                .filter(|progress| !progress.completed)
+                .and_then(|progress| progress.next_account_origin)
+                .unwrap_or([0u8; 32]);
             ProtocolMessage::EvmNative(EvmNativeMessage::SnapGetAccountRange {
                 from: local_node,
                 block_hash: eth_native_head_hash_hint_v1(chain_id),
-                origin: [0u8; 32],
+                origin,
                 limit: span,
             })
         }
@@ -5121,6 +5132,74 @@ mod tests {
         };
         assert_eq!(origin, [0u8; 32]);
         assert_eq!(limit, 1);
+    }
+
+    #[test]
+    fn native_state_sync_request_resumes_snap_account_range_from_runtime_progress() {
+        let chain_id = 99_160_314_u64;
+        let state_root = [0x77u8; 32];
+        let mut next_origin = [0u8; 32];
+        next_origin[31] = 0x09;
+        crate::runtime_status::set_network_runtime_sync_status(
+            chain_id,
+            NetworkRuntimeSyncStatus {
+                peer_count: 1,
+                starting_block: 64,
+                current_block: 128,
+                highest_block: 256,
+            },
+        );
+        crate::runtime_status::set_network_runtime_native_sync_status(
+            chain_id,
+            NetworkRuntimeNativeSyncStatusV1 {
+                phase: NetworkRuntimeNativeSyncPhaseV1::State,
+                peer_count: 1,
+                starting_block: 64,
+                current_block: 128,
+                highest_block: 256,
+                updated_at_unix_millis: 1,
+            },
+        );
+        crate::runtime_status::set_network_runtime_native_head_snapshot_v1(
+            chain_id,
+            NetworkRuntimeNativeHeadSnapshotV1 {
+                chain_id,
+                phase: NetworkRuntimeNativeSyncPhaseV1::State,
+                peer_count: 1,
+                block_number: 128,
+                block_hash: [0x66u8; 32],
+                parent_block_hash: [0x65u8; 32],
+                state_root,
+                canonical: true,
+                safe: false,
+                finalized: false,
+                reorg_depth_hint: None,
+                body_available: true,
+                source_peer_id: Some(7),
+                observed_unix_ms: 1,
+            },
+        );
+        crate::runtime_status::set_network_runtime_native_snap_account_range_progress_v1(
+            chain_id,
+            crate::runtime_status::NetworkRuntimeNativeSnapAccountRangeProgressV1 {
+                chain_id,
+                state_root,
+                next_account_origin: Some(next_origin),
+                limit: [0xffu8; 32],
+                completed: false,
+                source_peer_id: Some(7),
+                observed_unix_ms: 1,
+            },
+        );
+
+        let request = build_eth_fullnode_native_sync_request_v1(NodeId(7), chain_id)
+            .expect("state sync request");
+        let ProtocolMessage::EvmNative(EvmNativeMessage::SnapGetAccountRange { origin, .. }) =
+            request
+        else {
+            panic!("state phase should request snap AccountRange");
+        };
+        assert_eq!(origin, next_origin);
     }
 
     #[test]
