@@ -828,6 +828,7 @@ fn evm_native_body_wire_from_rlpx_body_v1(
         number,
         block_hash,
         tx_hashes: body.tx_hashes.clone(),
+        raw_tx_rlps: body.tx_rlp_items.clone(),
         ommer_hashes: body.ommer_hashes.clone(),
         withdrawal_count: body.withdrawal_count,
         body_available: body.body_available,
@@ -6539,6 +6540,7 @@ fn evm_native_block_body_wire_from_runtime_snapshot(
         number: snapshot.number,
         block_hash: snapshot.block_hash,
         tx_hashes: snapshot.tx_hashes.clone(),
+        raw_tx_rlps: snapshot.raw_tx_rlps.clone(),
         ommer_hashes: snapshot.ommer_hashes.clone(),
         withdrawal_count: snapshot.withdrawal_count,
         body_available: snapshot.body_available,
@@ -6585,6 +6587,7 @@ fn runtime_native_body_snapshot_from_evm_wire(
         number: body.number,
         block_hash: body.block_hash,
         tx_hashes: body.tx_hashes.clone(),
+        raw_tx_rlps: body.raw_tx_rlps.clone(),
         ommer_hashes: body.ommer_hashes.clone(),
         withdrawal_count: body.withdrawal_count,
         body_available: body.body_available,
@@ -7675,6 +7678,7 @@ mod tests {
                 number: 1_024,
                 block_hash,
                 tx_hashes: tx_hashes.clone(),
+                raw_tx_rlps: Vec::new(),
                 ommer_hashes: Vec::new(),
                 withdrawal_count: Some(0),
                 body_available: true,
@@ -7760,6 +7764,7 @@ mod tests {
                 number: 2_048,
                 block_hash,
                 tx_hashes: Vec::new(),
+                raw_tx_rlps: Vec::new(),
                 ommer_hashes: Vec::new(),
                 withdrawal_count: Some(0),
                 body_available: true,
@@ -7815,6 +7820,7 @@ mod tests {
                 number: 1_024,
                 block_hash,
                 tx_hashes: vec![[0xb1; 32]],
+                raw_tx_rlps: Vec::new(),
                 ommer_hashes: Vec::new(),
                 withdrawal_count: Some(0),
                 body_available: true,
@@ -9602,6 +9608,7 @@ mod tests {
                 number: 88,
                 block_hash: [0xc1; 32],
                 tx_hashes: vec![[0xe1; 32], [0xe2; 32]],
+                raw_tx_rlps: Vec::new(),
                 ommer_hashes: vec![[0xf1; 32]],
                 withdrawal_count: Some(0),
                 body_available: true,
@@ -10012,6 +10019,7 @@ mod tests {
                 number: 72,
                 block_hash: [0x91; 32],
                 tx_hashes: vec![[0xa1; 32], [0xa2; 32]],
+                raw_tx_rlps: Vec::new(),
                 ommer_hashes: vec![[0xb1; 32]],
                 withdrawal_count: Some(0),
                 body_available: true,
@@ -10375,6 +10383,7 @@ mod tests {
             addr_hint: listen_addr.to_string(),
         };
 
+        let expected_raw_tx = raw_tx.clone();
         let server = thread::spawn(move || {
             let (mut accepted, _) = listener.accept().expect("accept rlpx");
             accepted
@@ -10558,6 +10567,7 @@ mod tests {
         assert_eq!(body_snapshot.number, 120);
         assert_eq!(body_snapshot.block_hash, header_hash);
         assert_eq!(body_snapshot.tx_hashes, vec![tx_hash]);
+        assert_eq!(body_snapshot.raw_tx_rlps, vec![expected_raw_tx]);
         assert_eq!(body_snapshot.withdrawal_count, Some(0));
         assert!(body_snapshot.body_available);
         assert!(body_snapshot.txs_materialized);
@@ -10950,6 +10960,7 @@ mod tests {
                 number: 119,
                 block_hash: ancestor_hash,
                 tx_hashes: Vec::new(),
+                raw_tx_rlps: Vec::new(),
                 ommer_hashes: Vec::new(),
                 withdrawal_count: None,
                 body_available: true,

@@ -5821,6 +5821,7 @@ mod tests {
                 number: 77,
                 block_hash: [0xc1; 32],
                 tx_hashes: vec![[0xe1; 32], [0xe2; 32]],
+                raw_tx_rlps: Vec::new(),
                 ommer_hashes: vec![[0xf1; 32]],
                 withdrawal_count: Some(0),
                 body_available: true,

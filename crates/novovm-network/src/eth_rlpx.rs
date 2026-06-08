@@ -174,6 +174,7 @@ pub struct EthRlpxNewBlockPayloadV1 {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EthRlpxBlockBodyRecordV1 {
+    pub tx_rlp_items: Vec<Vec<u8>>,
     pub tx_hashes: Vec<[u8; 32]>,
     pub transactions_root: [u8; 32],
     pub ommer_hashes: Vec<[u8; 32]>,
@@ -3585,6 +3586,7 @@ pub fn eth_rlpx_parse_new_block_payload_v1(
         _ => None,
     });
     let body = EthRlpxBlockBodyRecordV1 {
+        tx_rlp_items: tx_rlp_items.clone(),
         tx_hashes,
         transactions_root,
         ommer_hashes,
@@ -3660,6 +3662,7 @@ pub fn eth_rlpx_parse_block_bodies_payload_v1(
             _ => None,
         });
         bodies.push(EthRlpxBlockBodyRecordV1 {
+            tx_rlp_items,
             tx_hashes,
             transactions_root,
             ommer_hashes,
@@ -5300,6 +5303,7 @@ mod tests {
             block_access_list_hash: None,
         };
         let empty_body = EthRlpxBlockBodyRecordV1 {
+            tx_rlp_items: Vec::new(),
             tx_hashes: Vec::new(),
             transactions_root: empty_root,
             ommer_hashes: Vec::new(),
