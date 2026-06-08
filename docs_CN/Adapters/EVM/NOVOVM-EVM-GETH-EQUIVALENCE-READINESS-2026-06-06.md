@@ -27,6 +27,50 @@
 
 该诊断只证明阶段性提交已上远端，不改变产品口径：SUPERVM 仍不能声明已经像 geth 一样无差别加入 Ethereum 主网并长期同步；下一步仍要继续用 `NOVOVM_NODE_MODE=eth_rlpx_sync cargo run -p novovm-node --bin novovm-node` 做主网长同步推进和真实阻塞点修复。
 
+## 2026-06-09 go-ethereum 更新审阅
+
+本机 `D:\WEB3_AI\go-ethereum` 已执行 `git pull --ff-only`，当前为：
+
+- `1f87331fb eth/protocols/eth: track announced tx hashes only after send (#35122)`
+- `e774a8fca cmd/utils: validates trimmed string but parses the untrimmed one (#35116)`
+- `31d227ea8 cmd/devp2p: swap want and got (#35125)`
+- `0ee70187f accounts/abi, core, metrics, miner, rlp, signer, triedb: fix all incorrect variable usages in error strings (#35121)`
+- `f1b2573dd accounts/abi: array-parse error reports the wrong character (#35106)`
+
+影响判断：
+
+- 唯一主网可观察协议面变更是 `#35122`：geth 的 `sendPooledTransactionHashes` 现在先成功发送 `NewPooledTransactionHashes` wire frame，再把这些 hash 记入 peer known-tx 集合，避免失败写入后误判该 peer 已被通知。
+- SUPERVM 当前产品路径没有主动 outbound hash-only `NewPooledTransactionHashes` 宣告；现有本地 pending tx outbound 使用完整 `TransactionsMsg`，并且已经是 wire-frame 写成功后才记录 propagated，写失败只记录 failure，因此不需要新增 hash-only 宣告产品面。
+- 本轮同步修复的是更直接影响长期同步的 RLPx live session 语义：`Ping/Pong`、pooled tx 请求/响应、`NewBlock`/headers/bodies/receipts ingest、snap sidecar 响应、eth/71 BAL 响应、missing body/receipt recovery、headers/snap sync request、tx broadcast 等路径，只要在 live session 内写失败或 ingest 失败，都会先 unregister peer 并删除 session，再返回错误，避免旧 stream 残留导致下一 tick 不能重连恢复。
+
+本轮验证：
+
+```powershell
+cargo fmt --check
+cargo test -p novovm-network evm_protocol_observable_equivalence_network_rlpx_tx_outbound_broadcast_gate_v3 -- --nocapture
+cargo test -p novovm-network missing_body_recovery -- --nocapture
+cargo test -p novovm-network real_rlpx_worker_recovers_missing_receipts_before_new_header_pull -- --nocapture
+cargo test -p novovm-network evm_protocol_observable_equivalence_network_rlpx_bal_response_gate_v3 -- --nocapture
+cargo test -p novovm-network rlpx_ -- --nocapture
+```
+
+结果：全部通过，其中 `rlpx_` 集合为 `36 passed`。
+
+真实主网产品入口短验证：
+
+```powershell
+NOVOVM_NODE_MODE=eth_rlpx_sync cargo run -p novovm-node --bin novovm-node
+```
+
+使用默认 32 active peer window，从恢复的 `current=1301/highest=25275430`、`body=null/receipt=null` 开始：
+
+- tick 5：block `1301` 由缺 body/receipt 状态恢复到 `body_available=true`。
+- tick 7：推进到 `1309`，遇到 public peer mid-body close，短暂 `body_available=false`。
+- tick 9：block `1309` 再次恢复为 `body_available=true`。
+- tick 11：导入 `headers=8/bodies=8/receipts=8`，推进到 `current=1317/highest=25275535`，head store 当前 body 和 receipts 均 available。
+
+该证据只证明 RLPx 公网 peer 中途断开后的恢复语义已改善，不声明 SUPERVM 已完成 geth 级长期主网同步。
+
 ## 本轮实跑证据
 
 ### 1. 默认 geth parity fixture
@@ -58,7 +102,7 @@ cargo test -p novovm-node mainline_query::tests::eth_end_to_end_geth_sample_batc
 本机 go-ethereum：
 
 - path: `D:\WEB3_AI\go-ethereum`
-- commit: `13d8df63f core/types/bal: improve the bal validation (#35110)`
+- parity 证据当时 commit: `13d8df63f core/types/bal: improve the bal validation (#35110)`；当前最新 pull 状态见上方 `2026-06-09 go-ethereum 更新审阅`
 
 同步 dry-run：
 

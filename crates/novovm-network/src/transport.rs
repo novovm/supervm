@@ -1501,6 +1501,18 @@ fn connect_eth_fullnode_native_rlpx_peer_v1(
     Ok(())
 }
 
+fn mark_eth_fullnode_native_rlpx_session_disconnected_v1(
+    chain_id: u64,
+    peer_id: u64,
+    disconnected: &mut bool,
+    disconnect_error: &mut Option<NetworkError>,
+    err: NetworkError,
+) {
+    let _ = unregister_network_runtime_peer(chain_id, peer_id);
+    *disconnected = true;
+    *disconnect_error = Some(err);
+}
+
 fn drive_eth_fullnode_native_rlpx_peer_session_once_v1(
     chain_id: u64,
     local_node: NodeId,
@@ -1536,13 +1548,23 @@ fn drive_eth_fullnode_native_rlpx_peer_session_once_v1(
                 Ok((code, payload)) => {
                     report.inbound_frames = report.inbound_frames.saturating_add(1);
                     if code == ETH_RLPX_P2P_PING_MSG {
-                        eth_rlpx_write_wire_frame_v1(
+                        if let Err(err) = eth_rlpx_write_wire_frame_v1(
                             &mut session.stream,
                             &mut session.frame_session,
                             ETH_RLPX_P2P_PONG_MSG,
                             &[],
                         )
-                        .map_err(NetworkError::Io)?;
+                        .map_err(NetworkError::Io)
+                        {
+                            mark_eth_fullnode_native_rlpx_session_disconnected_v1(
+                                chain_id,
+                                peer.0,
+                                &mut disconnected,
+                                &mut disconnect_error,
+                                err,
+                            );
+                            break;
+                        }
                         continue;
                     }
                     if code == ETH_RLPX_P2P_DISCONNECT_MSG {
@@ -1659,13 +1681,22 @@ fn drive_eth_fullnode_native_rlpx_peer_session_once_v1(
                                 );
                                 NetworkError::Decode(err)
                             })?;
-                        ingest_real_rlpx_new_block_v1(
+                        if let Err(err) = ingest_real_rlpx_new_block_v1(
                             chain_id,
                             peer.0,
                             session,
                             &block,
                             &mut report,
-                        )?;
+                        ) {
+                            mark_eth_fullnode_native_rlpx_session_disconnected_v1(
+                                chain_id,
+                                peer.0,
+                                &mut disconnected,
+                                &mut disconnect_error,
+                                err,
+                            );
+                            break;
+                        }
                         continue;
                     }
                     if code == eth_offset + ETH_RLPX_ETH_TRANSACTIONS_MSG {
@@ -1709,13 +1740,23 @@ fn drive_eth_fullnode_native_rlpx_peer_session_once_v1(
                                 request_id,
                                 announcement.tx_hashes.as_slice(),
                             );
-                            eth_rlpx_write_wire_frame_v1(
+                            if let Err(err) = eth_rlpx_write_wire_frame_v1(
                                 &mut session.stream,
                                 &mut session.frame_session,
                                 eth_offset + ETH_RLPX_ETH_GET_POOLED_TRANSACTIONS_MSG,
                                 request_payload.as_slice(),
                             )
-                            .map_err(NetworkError::Io)?;
+                            .map_err(NetworkError::Io)
+                            {
+                                mark_eth_fullnode_native_rlpx_session_disconnected_v1(
+                                    chain_id,
+                                    peer.0,
+                                    &mut disconnected,
+                                    &mut disconnect_error,
+                                    err,
+                                );
+                                break;
+                            }
                             session.last_pooled_transactions_request_id = Some(request_id);
                             session.pending_pooled_transaction_hashes = announcement.tx_hashes;
                         }
@@ -1741,13 +1782,23 @@ fn drive_eth_fullnode_native_rlpx_peer_session_once_v1(
                             request.request_id,
                             response_txs.as_slice(),
                         );
-                        eth_rlpx_write_wire_frame_v1(
+                        if let Err(err) = eth_rlpx_write_wire_frame_v1(
                             &mut session.stream,
                             &mut session.frame_session,
                             eth_offset + ETH_RLPX_ETH_POOLED_TRANSACTIONS_MSG,
                             response_payload.as_slice(),
                         )
-                        .map_err(NetworkError::Io)?;
+                        .map_err(NetworkError::Io)
+                        {
+                            mark_eth_fullnode_native_rlpx_session_disconnected_v1(
+                                chain_id,
+                                peer.0,
+                                &mut disconnected,
+                                &mut disconnect_error,
+                                err,
+                            );
+                            break;
+                        }
                         continue;
                     }
                     if code == eth_offset + ETH_RLPX_ETH_POOLED_TRANSACTIONS_MSG {
@@ -1773,14 +1824,23 @@ fn drive_eth_fullnode_native_rlpx_peer_session_once_v1(
                             );
                             NetworkError::Decode(err)
                         })?;
-                        ingest_real_rlpx_block_headers_v1(
+                        if let Err(err) = ingest_real_rlpx_block_headers_v1(
                             chain_id,
                             peer.0,
                             session,
                             &headers,
                             budget_hooks,
                             &mut report,
-                        )?;
+                        ) {
+                            mark_eth_fullnode_native_rlpx_session_disconnected_v1(
+                                chain_id,
+                                peer.0,
+                                &mut disconnected,
+                                &mut disconnect_error,
+                                err,
+                            );
+                            break;
+                        }
                         continue;
                     }
                     if code == eth_offset + ETH_RLPX_ETH_BLOCK_BODIES_MSG {
@@ -1793,13 +1853,22 @@ fn drive_eth_fullnode_native_rlpx_peer_session_once_v1(
                                 );
                                 NetworkError::Decode(err)
                             })?;
-                        ingest_real_rlpx_block_bodies_v1(
+                        if let Err(err) = ingest_real_rlpx_block_bodies_v1(
                             chain_id,
                             peer.0,
                             session,
                             &bodies,
                             &mut report,
-                        )?;
+                        ) {
+                            mark_eth_fullnode_native_rlpx_session_disconnected_v1(
+                                chain_id,
+                                peer.0,
+                                &mut disconnected,
+                                &mut disconnect_error,
+                                err,
+                            );
+                            break;
+                        }
                         continue;
                     }
                     if code == eth_offset + ETH_RLPX_ETH_GET_RECEIPTS_MSG {
@@ -1822,13 +1891,23 @@ fn drive_eth_fullnode_native_rlpx_peer_session_once_v1(
                             response_blocks.as_slice(),
                             session._negotiated_eth_version,
                         );
-                        eth_rlpx_write_wire_frame_v1(
+                        if let Err(err) = eth_rlpx_write_wire_frame_v1(
                             &mut session.stream,
                             &mut session.frame_session,
                             eth_offset + ETH_RLPX_ETH_RECEIPTS_MSG,
                             response_payload.as_slice(),
                         )
-                        .map_err(NetworkError::Io)?;
+                        .map_err(NetworkError::Io)
+                        {
+                            mark_eth_fullnode_native_rlpx_session_disconnected_v1(
+                                chain_id,
+                                peer.0,
+                                &mut disconnected,
+                                &mut disconnect_error,
+                                err,
+                            );
+                            break;
+                        }
                         continue;
                     }
                     if code == eth_offset + ETH_RLPX_ETH_RECEIPTS_MSG {
@@ -1841,13 +1920,22 @@ fn drive_eth_fullnode_native_rlpx_peer_session_once_v1(
                                 );
                                 NetworkError::Decode(err)
                             })?;
-                        ingest_real_rlpx_receipts_v1(
+                        if let Err(err) = ingest_real_rlpx_receipts_v1(
                             chain_id,
                             peer.0,
                             session,
                             &receipts,
                             &mut report,
-                        )?;
+                        ) {
+                            mark_eth_fullnode_native_rlpx_session_disconnected_v1(
+                                chain_id,
+                                peer.0,
+                                &mut disconnected,
+                                &mut disconnect_error,
+                                err,
+                            );
+                            break;
+                        }
                         continue;
                     }
                     if let Some(snap_offset) = eth_rlpx_snap_base_offset_v1(
@@ -1869,13 +1957,23 @@ fn drive_eth_fullnode_native_rlpx_peer_session_once_v1(
                                 build_eth_fullnode_native_snap_account_range_response_payload_v1(
                                     &request,
                                 );
-                            eth_rlpx_write_wire_frame_v1(
+                            if let Err(err) = eth_rlpx_write_wire_frame_v1(
                                 &mut session.stream,
                                 &mut session.frame_session,
                                 snap_offset + ETH_RLPX_SNAP_ACCOUNT_RANGE_MSG,
                                 response_payload.as_slice(),
                             )
-                            .map_err(NetworkError::Io)?;
+                            .map_err(NetworkError::Io)
+                            {
+                                mark_eth_fullnode_native_rlpx_session_disconnected_v1(
+                                    chain_id,
+                                    peer.0,
+                                    &mut disconnected,
+                                    &mut disconnect_error,
+                                    err,
+                                );
+                                break;
+                            }
                             continue;
                         }
                         if code == snap_offset + ETH_RLPX_SNAP_GET_STORAGE_RANGES_MSG {
@@ -1894,13 +1992,23 @@ fn drive_eth_fullnode_native_rlpx_peer_session_once_v1(
                                 &[],
                                 &[],
                             );
-                            eth_rlpx_write_wire_frame_v1(
+                            if let Err(err) = eth_rlpx_write_wire_frame_v1(
                                 &mut session.stream,
                                 &mut session.frame_session,
                                 snap_offset + ETH_RLPX_SNAP_STORAGE_RANGES_MSG,
                                 response_payload.as_slice(),
                             )
-                            .map_err(NetworkError::Io)?;
+                            .map_err(NetworkError::Io)
+                            {
+                                mark_eth_fullnode_native_rlpx_session_disconnected_v1(
+                                    chain_id,
+                                    peer.0,
+                                    &mut disconnected,
+                                    &mut disconnect_error,
+                                    err,
+                                );
+                                break;
+                            }
                             continue;
                         }
                         if code == snap_offset + ETH_RLPX_SNAP_GET_BYTE_CODES_MSG {
@@ -1916,13 +2024,23 @@ fn drive_eth_fullnode_native_rlpx_peer_session_once_v1(
                                     })?;
                             let response_payload =
                                 eth_rlpx_build_byte_codes_payload_v1(request.request_id, &[]);
-                            eth_rlpx_write_wire_frame_v1(
+                            if let Err(err) = eth_rlpx_write_wire_frame_v1(
                                 &mut session.stream,
                                 &mut session.frame_session,
                                 snap_offset + ETH_RLPX_SNAP_BYTE_CODES_MSG,
                                 response_payload.as_slice(),
                             )
-                            .map_err(NetworkError::Io)?;
+                            .map_err(NetworkError::Io)
+                            {
+                                mark_eth_fullnode_native_rlpx_session_disconnected_v1(
+                                    chain_id,
+                                    peer.0,
+                                    &mut disconnected,
+                                    &mut disconnect_error,
+                                    err,
+                                );
+                                break;
+                            }
                             continue;
                         }
                         if code == snap_offset + ETH_RLPX_SNAP_GET_TRIE_NODES_MSG {
@@ -1938,13 +2056,23 @@ fn drive_eth_fullnode_native_rlpx_peer_session_once_v1(
                                     })?;
                             let response_payload =
                                 eth_rlpx_build_trie_nodes_payload_v1(request.request_id, &[]);
-                            eth_rlpx_write_wire_frame_v1(
+                            if let Err(err) = eth_rlpx_write_wire_frame_v1(
                                 &mut session.stream,
                                 &mut session.frame_session,
                                 snap_offset + ETH_RLPX_SNAP_TRIE_NODES_MSG,
                                 response_payload.as_slice(),
                             )
-                            .map_err(NetworkError::Io)?;
+                            .map_err(NetworkError::Io)
+                            {
+                                mark_eth_fullnode_native_rlpx_session_disconnected_v1(
+                                    chain_id,
+                                    peer.0,
+                                    &mut disconnected,
+                                    &mut disconnect_error,
+                                    err,
+                                );
+                                break;
+                            }
                             continue;
                         }
                         if code == snap_offset + ETH_RLPX_SNAP_ACCOUNT_RANGE_MSG {
@@ -1958,9 +2086,18 @@ fn drive_eth_fullnode_native_rlpx_peer_session_once_v1(
                                         );
                                         NetworkError::Decode(err)
                                     })?;
-                            ingest_real_rlpx_snap_account_range_v1(
+                            if let Err(err) = ingest_real_rlpx_snap_account_range_v1(
                                 chain_id, peer.0, session, &response,
-                            )?;
+                            ) {
+                                mark_eth_fullnode_native_rlpx_session_disconnected_v1(
+                                    chain_id,
+                                    peer.0,
+                                    &mut disconnected,
+                                    &mut disconnect_error,
+                                    err,
+                                );
+                                break;
+                            }
                             continue;
                         }
                         if code == snap_offset + ETH_RLPX_SNAP_STORAGE_RANGES_MSG {
@@ -1974,9 +2111,18 @@ fn drive_eth_fullnode_native_rlpx_peer_session_once_v1(
                                         );
                                         NetworkError::Decode(err)
                                     })?;
-                            ingest_real_rlpx_snap_storage_ranges_v1(
+                            if let Err(err) = ingest_real_rlpx_snap_storage_ranges_v1(
                                 chain_id, peer.0, session, &response,
-                            )?;
+                            ) {
+                                mark_eth_fullnode_native_rlpx_session_disconnected_v1(
+                                    chain_id,
+                                    peer.0,
+                                    &mut disconnected,
+                                    &mut disconnect_error,
+                                    err,
+                                );
+                                break;
+                            }
                             continue;
                         }
                         if code == snap_offset + ETH_RLPX_SNAP_BYTE_CODES_MSG {
@@ -1989,9 +2135,18 @@ fn drive_eth_fullnode_native_rlpx_peer_session_once_v1(
                                     );
                                     NetworkError::Decode(err)
                                 })?;
-                            ingest_real_rlpx_snap_byte_codes_v1(
+                            if let Err(err) = ingest_real_rlpx_snap_byte_codes_v1(
                                 chain_id, peer.0, session, &response,
-                            )?;
+                            ) {
+                                mark_eth_fullnode_native_rlpx_session_disconnected_v1(
+                                    chain_id,
+                                    peer.0,
+                                    &mut disconnected,
+                                    &mut disconnect_error,
+                                    err,
+                                );
+                                break;
+                            }
                             continue;
                         }
                         if code == snap_offset + ETH_RLPX_SNAP_TRIE_NODES_MSG {
@@ -2004,9 +2159,18 @@ fn drive_eth_fullnode_native_rlpx_peer_session_once_v1(
                                     );
                                     NetworkError::Decode(err)
                                 })?;
-                            ingest_real_rlpx_snap_trie_nodes_v1(
+                            if let Err(err) = ingest_real_rlpx_snap_trie_nodes_v1(
                                 chain_id, peer.0, session, &response,
-                            )?;
+                            ) {
+                                mark_eth_fullnode_native_rlpx_session_disconnected_v1(
+                                    chain_id,
+                                    peer.0,
+                                    &mut disconnected,
+                                    &mut disconnect_error,
+                                    err,
+                                );
+                                break;
+                            }
                             continue;
                         }
                     }
@@ -2037,13 +2201,23 @@ fn drive_eth_fullnode_native_rlpx_peer_session_once_v1(
                             request.request_id,
                             response_lists.as_slice(),
                         );
-                        eth_rlpx_write_wire_frame_v1(
+                        if let Err(err) = eth_rlpx_write_wire_frame_v1(
                             &mut session.stream,
                             &mut session.frame_session,
                             eth_offset + ETH_RLPX_ETH_BLOCK_ACCESS_LISTS_MSG,
                             response_payload.as_slice(),
                         )
-                        .map_err(NetworkError::Io)?;
+                        .map_err(NetworkError::Io)
+                        {
+                            mark_eth_fullnode_native_rlpx_session_disconnected_v1(
+                                chain_id,
+                                peer.0,
+                                &mut disconnected,
+                                &mut disconnect_error,
+                                err,
+                            );
+                            break;
+                        }
                         continue;
                     }
                     if (session._negotiated_eth_version >= 71
@@ -2226,21 +2400,45 @@ fn drive_eth_fullnode_native_rlpx_peer_session_once_v1(
                 >= budget_hooks.sync_request_interval_ms.max(1)
         {
             let recovered_missing_body =
-                dispatch_eth_fullnode_native_rlpx_missing_body_recovery_v1(
+                match dispatch_eth_fullnode_native_rlpx_missing_body_recovery_v1(
                     chain_id,
                     peer,
                     session,
                     &mut report,
-                )?;
-            if !recovered_missing_body {
+                ) {
+                    Ok(recovered) => recovered,
+                    Err(err) => {
+                        mark_eth_fullnode_native_rlpx_session_disconnected_v1(
+                            chain_id,
+                            peer.0,
+                            &mut disconnected,
+                            &mut disconnect_error,
+                            err,
+                        );
+                        false
+                    }
+                };
+            if !disconnected && !recovered_missing_body {
                 let recovered_missing_receipts =
-                    dispatch_eth_fullnode_native_rlpx_missing_receipts_recovery_v1(
+                    match dispatch_eth_fullnode_native_rlpx_missing_receipts_recovery_v1(
                         chain_id,
                         peer,
                         session,
                         &mut report,
-                    )?;
-                if !recovered_missing_receipts {
+                    ) {
+                        Ok(recovered) => recovered,
+                        Err(err) => {
+                            mark_eth_fullnode_native_rlpx_session_disconnected_v1(
+                                chain_id,
+                                peer.0,
+                                &mut disconnected,
+                                &mut disconnect_error,
+                                err,
+                            );
+                            false
+                        }
+                    };
+                if !disconnected && !recovered_missing_receipts {
                     let Some(msg) = build_eth_fullnode_native_sync_request_v1(local_node, chain_id)
                     else {
                         return Ok(report);
@@ -2261,7 +2459,7 @@ fn drive_eth_fullnode_native_rlpx_peer_session_once_v1(
                                 skip,
                                 reverse,
                             );
-                            eth_rlpx_write_wire_frame_v1(
+                            if let Err(err) = eth_rlpx_write_wire_frame_v1(
                                 &mut session.stream,
                                 &mut session.frame_session,
                                 ETH_RLPX_BASE_PROTOCOL_OFFSET + ETH_RLPX_ETH_GET_BLOCK_HEADERS_MSG,
@@ -2274,17 +2472,26 @@ fn drive_eth_fullnode_native_rlpx_peer_session_once_v1(
                                     "headers_request_write_failed",
                                 );
                                 NetworkError::Io(err)
-                            })?;
-                            observe_eth_native_headers_pull(chain_id);
-                            observe_network_runtime_eth_peer_syncing_v1(chain_id, peer.0);
-                            session.last_headers_request_id = Some(request_id);
-                            session.last_bodies_request_id = None;
-                            session.pending_body_request_offset = 0;
-                            session.last_receipts_request_id = None;
-                            session.pending_receipt_request_offset = 0;
-                            clear_eth_fullnode_native_snap_request_state_v1(session);
-                            session.last_sync_request_unix_ms = now_ms;
-                            report.sync_requests = report.sync_requests.saturating_add(1);
+                            }) {
+                                mark_eth_fullnode_native_rlpx_session_disconnected_v1(
+                                    chain_id,
+                                    peer.0,
+                                    &mut disconnected,
+                                    &mut disconnect_error,
+                                    err,
+                                );
+                            } else {
+                                observe_eth_native_headers_pull(chain_id);
+                                observe_network_runtime_eth_peer_syncing_v1(chain_id, peer.0);
+                                session.last_headers_request_id = Some(request_id);
+                                session.last_bodies_request_id = None;
+                                session.pending_body_request_offset = 0;
+                                session.last_receipts_request_id = None;
+                                session.pending_receipt_request_offset = 0;
+                                clear_eth_fullnode_native_snap_request_state_v1(session);
+                                session.last_sync_request_unix_ms = now_ms;
+                                report.sync_requests = report.sync_requests.saturating_add(1);
+                            }
                         }
                         ProtocolMessage::EvmNative(EvmNativeMessage::SnapGetAccountRange {
                             block_hash,
@@ -2306,17 +2513,28 @@ fn drive_eth_fullnode_native_rlpx_peer_session_once_v1(
                             let byte_limit = limit
                                 .saturating_mul(16 * 1024)
                                 .clamp(16 * 1024, ETH_RLPX_SNAP_DEFAULT_ACCOUNT_RANGE_BYTES);
-                            dispatch_eth_fullnode_native_snap_account_range_request_v1(
-                                chain_id,
-                                peer.0,
-                                session,
-                                root,
-                                origin,
-                                limit_hash,
-                                byte_limit,
-                                "snap_account_range_request_write_failed",
-                            )?;
-                            report.sync_requests = report.sync_requests.saturating_add(1);
+                            if let Err(err) =
+                                dispatch_eth_fullnode_native_snap_account_range_request_v1(
+                                    chain_id,
+                                    peer.0,
+                                    session,
+                                    root,
+                                    origin,
+                                    limit_hash,
+                                    byte_limit,
+                                    "snap_account_range_request_write_failed",
+                                )
+                            {
+                                mark_eth_fullnode_native_rlpx_session_disconnected_v1(
+                                    chain_id,
+                                    peer.0,
+                                    &mut disconnected,
+                                    &mut disconnect_error,
+                                    err,
+                                );
+                            } else {
+                                report.sync_requests = report.sync_requests.saturating_add(1);
+                            }
                         }
                         _ => {}
                     }
@@ -2327,14 +2545,23 @@ fn drive_eth_fullnode_native_rlpx_peer_session_once_v1(
             && now_ms.saturating_sub(session.last_tx_broadcast_unix_ms)
                 >= budget_hooks.tx_broadcast_interval_ms.max(1)
         {
-            dispatch_eth_fullnode_native_rlpx_tx_broadcast_v1(
+            if let Err(err) = dispatch_eth_fullnode_native_rlpx_tx_broadcast_v1(
                 chain_id,
                 local_node,
                 peer,
                 session,
                 budget_hooks,
-            )?;
-            session.last_tx_broadcast_unix_ms = now_ms;
+            ) {
+                mark_eth_fullnode_native_rlpx_session_disconnected_v1(
+                    chain_id,
+                    peer.0,
+                    &mut disconnected,
+                    &mut disconnect_error,
+                    err,
+                );
+            } else {
+                session.last_tx_broadcast_unix_ms = now_ms;
+            }
         }
     }
     if disconnected {
