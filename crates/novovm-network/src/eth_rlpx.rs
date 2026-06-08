@@ -549,6 +549,90 @@ fn eth_rlpx_mpt_verify_node_value_v1(
     }
 }
 
+fn eth_rlpx_mpt_child_ref_exists_v1(child: EthRlpxRlpItemV1<'_>) -> bool {
+    match child {
+        EthRlpxRlpItemV1::List(_) => true,
+        EthRlpxRlpItemV1::Bytes(bytes) => !bytes.is_empty(),
+    }
+}
+
+fn eth_rlpx_mpt_has_right_element_node_v1(
+    node_rlp: &[u8],
+    key_nibbles: &[u8],
+    proof_db: &HashMap<[u8; 32], Vec<u8>>,
+    depth: usize,
+) -> Result<bool, String> {
+    if depth
+        > key_nibbles
+            .len()
+            .saturating_add(proof_db.len())
+            .saturating_add(16)
+    {
+        return Err("rlpx_mpt_proof_depth_exceeded".to_string());
+    }
+    let (item, consumed) = eth_rlpx_parse_item_v1(node_rlp)?;
+    if consumed != node_rlp.len() {
+        return Err("rlpx_mpt_node_trailing".to_string());
+    }
+    let EthRlpxRlpItemV1::List(payload) = item else {
+        return Err("rlpx_mpt_node_not_list".to_string());
+    };
+    let fields = eth_rlpx_parse_list_items_v1(payload)?;
+    let raw_fields = eth_rlpx_split_list_raw_items_v1(payload)?;
+    match fields.len() {
+        2 => {
+            let EthRlpxRlpItemV1::Bytes(path_encoded) = fields[0] else {
+                return Err("rlpx_mpt_short_path_not_bytes".to_string());
+            };
+            let (path, is_leaf) = eth_rlpx_mpt_hex_prefix_decode_v1(path_encoded)?;
+            if !key_nibbles.starts_with(path.as_slice()) {
+                return Ok(path.as_slice() > key_nibbles);
+            }
+            let rest = &key_nibbles[path.len()..];
+            if is_leaf {
+                return Ok(false);
+            }
+            let Some(child_rlp) =
+                eth_rlpx_mpt_child_node_rlp_v1(fields[1], raw_fields[1], proof_db)?
+            else {
+                return Ok(false);
+            };
+            eth_rlpx_mpt_has_right_element_node_v1(child_rlp.as_slice(), rest, proof_db, depth + 1)
+        }
+        17 => {
+            if key_nibbles.is_empty() {
+                return Ok(fields[..16]
+                    .iter()
+                    .copied()
+                    .any(eth_rlpx_mpt_child_ref_exists_v1));
+            }
+            let child_idx = key_nibbles[0] as usize;
+            if child_idx >= 16 {
+                return Err("rlpx_mpt_key_nibble_invalid".to_string());
+            }
+            if fields[child_idx + 1..16]
+                .iter()
+                .copied()
+                .any(eth_rlpx_mpt_child_ref_exists_v1)
+            {
+                return Ok(true);
+            }
+            let Some(child_rlp) =
+                eth_rlpx_mpt_child_node_rlp_v1(fields[child_idx], raw_fields[child_idx], proof_db)?
+            else {
+                return Ok(false);
+            };
+            eth_rlpx_mpt_has_right_element_node_v1(
+                child_rlp.as_slice(),
+                &key_nibbles[1..],
+                proof_db,
+                depth + 1,
+            )
+        }
+        _ => Err("rlpx_mpt_node_arity_invalid".to_string()),
+    }
+}
+
 pub fn eth_rlpx_mpt_verify_proof_value_v1(
     root: [u8; 32],
     key: &[u8],
@@ -562,6 +646,26 @@ pub fn eth_rlpx_mpt_verify_proof_value_v1(
         .get(&root)
         .ok_or_else(|| "rlpx_mpt_proof_root_missing".to_string())?;
     eth_rlpx_mpt_verify_node_value_v1(
+        root_node.as_slice(),
+        eth_rlpx_mpt_nibbles_from_key_v1(key).as_slice(),
+        &proof_db,
+        0,
+    )
+}
+
+pub fn eth_rlpx_mpt_proof_has_right_element_v1(
+    root: [u8; 32],
+    key: &[u8],
+    proof: &[Vec<u8>],
+) -> Result<bool, String> {
+    if root == ETH_RLPX_EMPTY_TRIE_ROOT_V1 {
+        return Ok(false);
+    }
+    let proof_db = eth_rlpx_mpt_proof_db_v1(proof)?;
+    let root_node = proof_db
+        .get(&root)
+        .ok_or_else(|| "rlpx_mpt_proof_root_missing".to_string())?;
+    eth_rlpx_mpt_has_right_element_node_v1(
         root_node.as_slice(),
         eth_rlpx_mpt_nibbles_from_key_v1(key).as_slice(),
         &proof_db,
@@ -4206,6 +4310,30 @@ mod tests {
         let missing = eth_rlpx_mpt_verify_proof_value_v1(root, &missing_key, &[node])
             .expect("verify missing key");
         assert!(missing.is_none());
+    }
+
+    #[test]
+    fn mpt_proof_has_right_element_detects_empty_range_completion_v1() {
+        let empty_branch = {
+            let mut node = vec![0xd1_u8];
+            node.extend(std::iter::repeat(0x80_u8).take(17));
+            node
+        };
+        let empty_branch_root = eth_rlpx_trie_node_hash_v1(empty_branch.as_slice());
+        assert!(!eth_rlpx_mpt_proof_has_right_element_v1(
+            empty_branch_root,
+            &[0u8; 32],
+            &[empty_branch],
+        )
+        .expect("empty branch proof"));
+
+        let leaf_key = [0x34; 32];
+        let leaf_node = eth_rlpx_mpt_single_leaf_node_rlp_v1(&leaf_key, &[0x80]);
+        let leaf_root = eth_rlpx_trie_node_hash_v1(leaf_node.as_slice());
+        assert!(
+            eth_rlpx_mpt_proof_has_right_element_v1(leaf_root, &[0u8; 32], &[leaf_node])
+                .expect("right-side leaf proof")
+        );
     }
 
     #[test]
