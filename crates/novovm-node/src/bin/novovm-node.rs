@@ -3511,6 +3511,11 @@ struct EthRlpxTrustedHeadPivotV1 {
 }
 
 fn eth_rlpx_u64_from_trusted_env_v1(raw: &str, field: &str) -> Result<u64> {
+    let value = eth_rlpx_u128_from_trusted_env_v1(raw, field)?;
+    u64::try_from(value).with_context(|| format!("{field} exceeds u64: {raw}"))
+}
+
+fn eth_rlpx_u128_from_trusted_env_v1(raw: &str, field: &str) -> Result<u128> {
     let trimmed = raw.trim();
     if let Some(hex) = trimmed
         .strip_prefix("0x")
@@ -3519,10 +3524,10 @@ fn eth_rlpx_u64_from_trusted_env_v1(raw: &str, field: &str) -> Result<u64> {
         if hex.is_empty() {
             bail!("{field} hex value is empty");
         }
-        return u64::from_str_radix(hex, 16).with_context(|| format!("invalid {field}={raw}"));
+        return u128::from_str_radix(hex, 16).with_context(|| format!("invalid {field}={raw}"));
     }
     trimmed
-        .parse::<u64>()
+        .parse::<u128>()
         .with_context(|| format!("invalid {field}={raw}"))
 }
 
@@ -3538,14 +3543,37 @@ fn eth_rlpx_trusted_head_pivot_from_env_v1(
     let receipts_root_raw = string_env_nonempty("NOVOVM_ETH_RLPX_TRUSTED_HEAD_RECEIPTS_ROOT");
     let ommers_hash_raw = string_env_nonempty("NOVOVM_ETH_RLPX_TRUSTED_HEAD_OMMERS_HASH");
     let highest_raw = string_env_nonempty("NOVOVM_ETH_RLPX_TRUSTED_HEAD_HIGHEST");
-    if number_raw.is_none()
-        && hash_raw.is_none()
-        && state_root_raw.is_none()
-        && parent_hash_raw.is_none()
-        && transactions_root_raw.is_none()
-        && receipts_root_raw.is_none()
-        && ommers_hash_raw.is_none()
-        && highest_raw.is_none()
+    let logs_bloom_raw = string_env_nonempty("NOVOVM_ETH_RLPX_TRUSTED_HEAD_LOGS_BLOOM");
+    let gas_limit_raw = string_env_nonempty("NOVOVM_ETH_RLPX_TRUSTED_HEAD_GAS_LIMIT");
+    let gas_used_raw = string_env_nonempty("NOVOVM_ETH_RLPX_TRUSTED_HEAD_GAS_USED");
+    let timestamp_raw = string_env_nonempty("NOVOVM_ETH_RLPX_TRUSTED_HEAD_TIMESTAMP");
+    let base_fee_raw = string_env_nonempty("NOVOVM_ETH_RLPX_TRUSTED_HEAD_BASE_FEE_PER_GAS");
+    let withdrawals_root_raw = string_env_nonempty("NOVOVM_ETH_RLPX_TRUSTED_HEAD_WITHDRAWALS_ROOT");
+    let blob_gas_used_raw = string_env_nonempty("NOVOVM_ETH_RLPX_TRUSTED_HEAD_BLOB_GAS_USED");
+    let excess_blob_gas_raw = string_env_nonempty("NOVOVM_ETH_RLPX_TRUSTED_HEAD_EXCESS_BLOB_GAS");
+    let block_access_list_hash_raw =
+        string_env_nonempty("NOVOVM_ETH_RLPX_TRUSTED_HEAD_BLOCK_ACCESS_LIST_HASH");
+    if [
+        &number_raw,
+        &hash_raw,
+        &state_root_raw,
+        &parent_hash_raw,
+        &transactions_root_raw,
+        &receipts_root_raw,
+        &ommers_hash_raw,
+        &highest_raw,
+        &logs_bloom_raw,
+        &gas_limit_raw,
+        &gas_used_raw,
+        &timestamp_raw,
+        &base_fee_raw,
+        &withdrawals_root_raw,
+        &blob_gas_used_raw,
+        &excess_blob_gas_raw,
+        &block_access_list_hash_raw,
+    ]
+    .iter()
+    .all(|raw| raw.is_none())
     {
         return Ok(None);
     }
@@ -3591,6 +3619,51 @@ fn eth_rlpx_trusted_head_pivot_from_env_v1(
         .transpose()?
         .unwrap_or(number)
         .max(number);
+    let logs_bloom = logs_bloom_raw
+        .map(|raw| {
+            let bloom = decode_hex_payload_v1(&raw, "NOVOVM_ETH_RLPX_TRUSTED_HEAD_LOGS_BLOOM")?;
+            if bloom.len() != 256 {
+                bail!(
+                    "NOVOVM_ETH_RLPX_TRUSTED_HEAD_LOGS_BLOOM must be 256 bytes, got {}",
+                    bloom.len()
+                );
+            }
+            Ok(bloom)
+        })
+        .transpose()?
+        .unwrap_or_default();
+    let gas_limit = gas_limit_raw
+        .map(|raw| eth_rlpx_u64_from_trusted_env_v1(&raw, "NOVOVM_ETH_RLPX_TRUSTED_HEAD_GAS_LIMIT"))
+        .transpose()?;
+    let gas_used = gas_used_raw
+        .map(|raw| eth_rlpx_u64_from_trusted_env_v1(&raw, "NOVOVM_ETH_RLPX_TRUSTED_HEAD_GAS_USED"))
+        .transpose()?;
+    let timestamp = timestamp_raw
+        .map(|raw| eth_rlpx_u64_from_trusted_env_v1(&raw, "NOVOVM_ETH_RLPX_TRUSTED_HEAD_TIMESTAMP"))
+        .transpose()?;
+    let base_fee_per_gas = base_fee_raw
+        .map(|raw| {
+            eth_rlpx_u128_from_trusted_env_v1(&raw, "NOVOVM_ETH_RLPX_TRUSTED_HEAD_BASE_FEE_PER_GAS")
+        })
+        .transpose()?;
+    let withdrawals_root = eth_rlpx_optional_h256_from_store_v1(
+        withdrawals_root_raw.as_deref(),
+        "NOVOVM_ETH_RLPX_TRUSTED_HEAD_WITHDRAWALS_ROOT",
+    )?;
+    let blob_gas_used = blob_gas_used_raw
+        .map(|raw| {
+            eth_rlpx_u64_from_trusted_env_v1(&raw, "NOVOVM_ETH_RLPX_TRUSTED_HEAD_BLOB_GAS_USED")
+        })
+        .transpose()?;
+    let excess_blob_gas = excess_blob_gas_raw
+        .map(|raw| {
+            eth_rlpx_u64_from_trusted_env_v1(&raw, "NOVOVM_ETH_RLPX_TRUSTED_HEAD_EXCESS_BLOB_GAS")
+        })
+        .transpose()?;
+    let block_access_list_hash = eth_rlpx_optional_h256_from_store_v1(
+        block_access_list_hash_raw.as_deref(),
+        "NOVOVM_ETH_RLPX_TRUSTED_HEAD_BLOCK_ACCESS_LIST_HASH",
+    )?;
     let observed_unix_ms = now_unix_ms() as u128;
     let header = NetworkRuntimeNativeHeaderSnapshotV1 {
         chain_id,
@@ -3601,15 +3674,15 @@ fn eth_rlpx_trusted_head_pivot_from_env_v1(
         transactions_root,
         receipts_root,
         ommers_hash,
-        logs_bloom: Vec::new(),
-        gas_limit: None,
-        gas_used: None,
-        timestamp: None,
-        base_fee_per_gas: None,
-        withdrawals_root: None,
-        blob_gas_used: None,
-        excess_blob_gas: None,
-        block_access_list_hash: None,
+        logs_bloom,
+        gas_limit,
+        gas_used,
+        timestamp,
+        base_fee_per_gas,
+        withdrawals_root,
+        blob_gas_used,
+        excess_blob_gas,
+        block_access_list_hash,
         source_peer_id: None,
         observed_unix_ms,
     };
@@ -4338,7 +4411,7 @@ mod mainline_evm_cli_tests {
 
     static ETH_RLPX_TRUSTED_HEAD_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
-    const ETH_RLPX_TRUSTED_HEAD_ENV_KEYS: [&str; 8] = [
+    const ETH_RLPX_TRUSTED_HEAD_ENV_KEYS: [&str; 17] = [
         "NOVOVM_ETH_RLPX_TRUSTED_HEAD_NUMBER",
         "NOVOVM_ETH_RLPX_TRUSTED_HEAD_HASH",
         "NOVOVM_ETH_RLPX_TRUSTED_HEAD_STATE_ROOT",
@@ -4347,6 +4420,15 @@ mod mainline_evm_cli_tests {
         "NOVOVM_ETH_RLPX_TRUSTED_HEAD_RECEIPTS_ROOT",
         "NOVOVM_ETH_RLPX_TRUSTED_HEAD_OMMERS_HASH",
         "NOVOVM_ETH_RLPX_TRUSTED_HEAD_HIGHEST",
+        "NOVOVM_ETH_RLPX_TRUSTED_HEAD_LOGS_BLOOM",
+        "NOVOVM_ETH_RLPX_TRUSTED_HEAD_GAS_LIMIT",
+        "NOVOVM_ETH_RLPX_TRUSTED_HEAD_GAS_USED",
+        "NOVOVM_ETH_RLPX_TRUSTED_HEAD_TIMESTAMP",
+        "NOVOVM_ETH_RLPX_TRUSTED_HEAD_BASE_FEE_PER_GAS",
+        "NOVOVM_ETH_RLPX_TRUSTED_HEAD_WITHDRAWALS_ROOT",
+        "NOVOVM_ETH_RLPX_TRUSTED_HEAD_BLOB_GAS_USED",
+        "NOVOVM_ETH_RLPX_TRUSTED_HEAD_EXCESS_BLOB_GAS",
+        "NOVOVM_ETH_RLPX_TRUSTED_HEAD_BLOCK_ACCESS_LIST_HASH",
     ];
 
     struct TrustedHeadEnvRestoreV1 {
@@ -4665,6 +4747,9 @@ mod mainline_evm_cli_tests {
             let hash = [0x11_u8; 32];
             let state_root = [0x22_u8; 32];
             let parent_hash = [0x10_u8; 32];
+            let logs_bloom = vec![0x33_u8; 256];
+            let withdrawals_root = [0x44_u8; 32];
+            let block_access_list_hash = [0x55_u8; 32];
             std::env::set_var(
                 "NOVOVM_ETH_RLPX_TRUSTED_HEAD_NUMBER",
                 format!("0x{number:x}"),
@@ -4682,6 +4767,24 @@ mod mainline_evm_cli_tests {
                 "NOVOVM_ETH_RLPX_TRUSTED_HEAD_HIGHEST",
                 format!("0x{highest:x}"),
             );
+            std::env::set_var(
+                "NOVOVM_ETH_RLPX_TRUSTED_HEAD_LOGS_BLOOM",
+                to_hex_prefixed(&logs_bloom),
+            );
+            std::env::set_var("NOVOVM_ETH_RLPX_TRUSTED_HEAD_GAS_LIMIT", "0x3938700");
+            std::env::set_var("NOVOVM_ETH_RLPX_TRUSTED_HEAD_GAS_USED", "0x5208");
+            std::env::set_var("NOVOVM_ETH_RLPX_TRUSTED_HEAD_TIMESTAMP", "1780898703");
+            std::env::set_var("NOVOVM_ETH_RLPX_TRUSTED_HEAD_BASE_FEE_PER_GAS", "0x6a3b37c");
+            std::env::set_var(
+                "NOVOVM_ETH_RLPX_TRUSTED_HEAD_WITHDRAWALS_ROOT",
+                to_hex_prefixed(&withdrawals_root),
+            );
+            std::env::set_var("NOVOVM_ETH_RLPX_TRUSTED_HEAD_BLOB_GAS_USED", "0x20000");
+            std::env::set_var("NOVOVM_ETH_RLPX_TRUSTED_HEAD_EXCESS_BLOB_GAS", "0xaf0d9f1");
+            std::env::set_var(
+                "NOVOVM_ETH_RLPX_TRUSTED_HEAD_BLOCK_ACCESS_LIST_HASH",
+                to_hex_prefixed(&block_access_list_hash),
+            );
 
             let pivot = eth_rlpx_trusted_head_pivot_from_env_v1(chain_id)
                 .expect("trusted head pivot should parse")
@@ -4693,6 +4796,18 @@ mod mainline_evm_cli_tests {
             assert_eq!(
                 pivot.header.transactions_root,
                 novovm_network::eth_rlpx_empty_trie_root_v1()
+            );
+            assert_eq!(pivot.header.logs_bloom, logs_bloom);
+            assert_eq!(pivot.header.gas_limit, Some(60_000_000));
+            assert_eq!(pivot.header.gas_used, Some(21_000));
+            assert_eq!(pivot.header.timestamp, Some(1_780_898_703));
+            assert_eq!(pivot.header.base_fee_per_gas, Some(111_391_612));
+            assert_eq!(pivot.header.withdrawals_root, Some(withdrawals_root));
+            assert_eq!(pivot.header.blob_gas_used, Some(131_072));
+            assert_eq!(pivot.header.excess_blob_gas, Some(183_556_593));
+            assert_eq!(
+                pivot.header.block_access_list_hash,
+                Some(block_access_list_hash)
             );
             assert_eq!(pivot.head.phase, NetworkRuntimeNativeSyncPhaseV1::State);
             assert_eq!(pivot.highest_block, highest);
