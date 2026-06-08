@@ -2432,6 +2432,11 @@ fn build_eth_fullnode_native_latest_missing_body_pending_v1(
     })
 }
 
+fn eth_fullnode_native_is_chasing_remote_head_v1(chain_id: u64) -> bool {
+    get_network_runtime_sync_status(chain_id)
+        .is_some_and(|status| status.highest_block > status.current_block)
+}
+
 fn build_eth_fullnode_native_missing_body_pending_headers_v1(
     chain_id: u64,
 ) -> Vec<EthFullnodeNativePendingBodyHeaderV1> {
@@ -2440,6 +2445,12 @@ fn build_eth_fullnode_native_missing_body_pending_headers_v1(
     if let Some(latest) = build_eth_fullnode_native_latest_missing_body_pending_v1(chain_id) {
         seen.insert(latest.hash);
         pending.push(latest);
+    }
+
+    if eth_fullnode_native_is_chasing_remote_head_v1(chain_id) {
+        pending.sort_by(|a, b| a.number.cmp(&b.number).then_with(|| a.hash.cmp(&b.hash)));
+        pending.truncate(ETH_FULLNODE_NATIVE_MISSING_BODY_RECOVERY_BATCH_MAX_V1);
+        return pending;
     }
 
     let mut retained_blocks = snapshot_network_runtime_native_canonical_blocks_v1(chain_id, 4096);
@@ -8058,6 +8069,71 @@ mod tests {
         );
         assert_eq!(pending[0].transactions_root, [0xb0; 32]);
         assert_eq!(pending[1].transactions_root, [0xb2; 32]);
+    }
+
+    #[test]
+    fn rlpx_missing_body_recovery_does_not_block_forward_chase_with_old_gaps() {
+        let chain_id = 9_926_117_u64;
+        let peer_id = 1_300_118_u64;
+        clear_network_runtime_native_snapshots_for_chain_v1(chain_id);
+
+        for offset in 0..3u8 {
+            let number = 5_000 + u64::from(offset);
+            set_network_runtime_native_header_snapshot_v1(
+                chain_id,
+                crate::runtime_status::NetworkRuntimeNativeHeaderSnapshotV1 {
+                    chain_id,
+                    number,
+                    hash: [0xd0 + offset; 32],
+                    parent_hash: [0xc0 + offset; 32],
+                    state_root: [0xe0 + offset; 32],
+                    transactions_root: [0xf0 + offset; 32],
+                    receipts_root: [0x70 + offset; 32],
+                    ommers_hash: crate::eth_rlpx_empty_ommers_hash_v1(),
+                    logs_bloom: vec![0u8; 256],
+                    gas_limit: Some(30_000_000),
+                    gas_used: Some(21_000),
+                    timestamp: Some(1_900_010_000 + u64::from(offset)),
+                    base_fee_per_gas: Some(7),
+                    withdrawals_root: Some(crate::eth_rlpx_empty_trie_root_v1()),
+                    blob_gas_used: None,
+                    excess_blob_gas: None,
+                    block_access_list_hash: None,
+                    source_peer_id: Some(peer_id),
+                    observed_unix_ms: 1 + u128::from(offset),
+                },
+            );
+        }
+        set_network_runtime_native_body_snapshot_v1(
+            chain_id,
+            crate::runtime_status::NetworkRuntimeNativeBodySnapshotV1 {
+                chain_id,
+                number: 5_002,
+                block_hash: [0xd2; 32],
+                tx_hashes: Vec::new(),
+                raw_tx_rlps: Vec::new(),
+                ommer_hashes: Vec::new(),
+                withdrawal_rlp_items: None,
+                withdrawal_count: Some(0),
+                body_available: true,
+                txs_materialized: true,
+                observed_unix_ms: 8,
+            },
+        );
+        set_network_runtime_sync_status(
+            chain_id,
+            NetworkRuntimeSyncStatus {
+                peer_count: 1,
+                starting_block: 5_000,
+                current_block: 5_002,
+                highest_block: 5_064,
+            },
+        );
+
+        assert!(
+            build_eth_fullnode_native_missing_body_pending_headers_v1(chain_id).is_empty(),
+            "historical body gaps must not block forward header pulls while highest > current"
+        );
     }
 
     #[test]
