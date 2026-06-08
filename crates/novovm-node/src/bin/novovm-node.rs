@@ -55,7 +55,7 @@ use novovm_network::{
     EthDiscv4EndpointV1, EthDiscv4NeighborV1, EthFullnodeBudgetHooksV1,
     EthFullnodeNativePeerWorkerConfigV1, EthFullnodeNativePeerWorkerV1, FileQueueStore,
     GossipMessage, InMemoryQueueStore, L3RegionalRoutingTable, L4LocalRoutingTable, L4PeerRef,
-    MessageType, NetworkRuntimeNativeBodySnapshotV1,
+    MessageType, NetworkRuntimeNativeBodySnapshotV1, NetworkRuntimeNativeCanonicalBlockStateV1,
     NetworkRuntimeNativeExecutionBudgetTargetObservationV1, NetworkRuntimeNativeHeadSnapshotV1,
     NetworkRuntimeNativeHeaderSnapshotV1, NetworkRuntimeNativeReceiptSnapshotV1,
     NetworkRuntimeNativeSnapAccountRangeProgressV1, NetworkRuntimeNativeSnapAccountSnapshotV1,
@@ -3300,6 +3300,55 @@ fn eth_rlpx_native_receipt_matches_header_v1(
     receipt.number == header.number && receipt.block_hash == header.hash
 }
 
+fn eth_rlpx_native_canonical_block_for_header_v1(
+    chain_id: u64,
+    header: &NetworkRuntimeNativeHeaderSnapshotV1,
+) -> Option<NetworkRuntimeNativeCanonicalBlockStateV1> {
+    snapshot_network_runtime_native_canonical_blocks_v1(chain_id, 0)
+        .into_iter()
+        .find(|block| block.number == header.number && block.hash == header.hash)
+}
+
+fn eth_rlpx_native_body_snapshot_from_canonical_block_v1(
+    block: &NetworkRuntimeNativeCanonicalBlockStateV1,
+) -> Option<NetworkRuntimeNativeBodySnapshotV1> {
+    if !block.body_available {
+        return None;
+    }
+    Some(NetworkRuntimeNativeBodySnapshotV1 {
+        chain_id: block.chain_id,
+        number: block.number,
+        block_hash: block.hash,
+        tx_hashes: block.tx_hashes.clone(),
+        raw_tx_rlps: block.raw_tx_rlps.clone(),
+        ommer_hashes: block.ommer_hashes.clone(),
+        withdrawal_rlp_items: block.withdrawal_rlp_items.clone(),
+        withdrawal_count: block.withdrawal_count,
+        body_available: true,
+        txs_materialized: block.tx_hashes.len() == block.raw_tx_rlps.len(),
+        observed_unix_ms: block.observed_unix_ms,
+    })
+}
+
+fn eth_rlpx_native_receipt_snapshot_from_canonical_block_v1(
+    block: &NetworkRuntimeNativeCanonicalBlockStateV1,
+) -> Option<NetworkRuntimeNativeReceiptSnapshotV1> {
+    if !block.receipts_available {
+        return None;
+    }
+    Some(NetworkRuntimeNativeReceiptSnapshotV1 {
+        chain_id: block.chain_id,
+        number: block.number,
+        block_hash: block.hash,
+        receipts_root: block.receipts_root?,
+        raw_receipts: block.raw_receipts.clone(),
+        receipt_count: block.receipt_count.unwrap_or(block.raw_receipts.len()),
+        receipts_available: true,
+        source_peer_id: block.source_peer_id,
+        observed_unix_ms: block.observed_unix_ms,
+    })
+}
+
 fn eth_rlpx_native_snap_account_store_from_snapshot_v1(
     snapshot: &NetworkRuntimeNativeSnapAccountSnapshotV1,
 ) -> EthRlpxNativeSnapAccountStoreV1 {
@@ -4494,14 +4543,33 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
         let receipt = header.as_ref().and_then(|snapshot| {
             get_network_runtime_native_receipt_snapshot_v1(chain_id, snapshot.hash)
         });
+        let canonical_block_for_header = header
+            .as_ref()
+            .and_then(|header| eth_rlpx_native_canonical_block_for_header_v1(chain_id, header));
         let body_for_header = header.as_ref().and_then(|header| {
-            body.as_ref()
+            canonical_block_for_header
+                .as_ref()
+                .and_then(eth_rlpx_native_body_snapshot_from_canonical_block_v1)
                 .filter(|body| eth_rlpx_native_body_matches_header_v1(header, body))
+                .or_else(|| {
+                    body.as_ref()
+                        .filter(|body| eth_rlpx_native_body_matches_header_v1(header, body))
+                        .cloned()
+                })
         });
         let receipt_for_header = header.as_ref().and_then(|header| {
-            receipt
+            canonical_block_for_header
                 .as_ref()
+                .and_then(eth_rlpx_native_receipt_snapshot_from_canonical_block_v1)
                 .filter(|receipt| eth_rlpx_native_receipt_matches_header_v1(header, receipt))
+                .or_else(|| {
+                    receipt
+                        .as_ref()
+                        .filter(|receipt| {
+                            eth_rlpx_native_receipt_matches_header_v1(header, receipt)
+                        })
+                        .cloned()
+                })
         });
         let head_snapshot = get_network_runtime_native_head_snapshot_v1(chain_id);
         let current_sync_block = sync_status.map(|status| status.current_block).unwrap_or(0);
@@ -4545,6 +4613,7 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
                 .map(|snapshot| to_hex_prefixed(&snapshot.hash))
                 .unwrap_or_else(|| "-".to_string()),
             body_for_header
+                .as_ref()
                 .map(|snapshot| snapshot.body_available)
                 .unwrap_or(false),
             report.peer_failures.len(),
@@ -4575,8 +4644,8 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
                 chain_id,
                 sync_status,
                 header.as_ref(),
-                body_for_header,
-                receipt_for_header,
+                body_for_header.as_ref(),
+                receipt_for_header.as_ref(),
             )?;
         }
         if native_history_store_enabled {
@@ -4586,8 +4655,8 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
                     chain_id,
                     sync_status,
                     header.as_ref(),
-                    body_for_header,
-                    receipt_for_header,
+                    body_for_header.as_ref(),
+                    receipt_for_header.as_ref(),
                     head_snapshot.as_ref(),
                     native_history_store_retention,
                 ) {
@@ -5736,6 +5805,57 @@ mod mainline_evm_cli_tests {
             &header,
             &stale_receipt
         ));
+    }
+
+    #[test]
+    fn eth_rlpx_native_current_store_rebuilds_from_canonical_material_v1() {
+        let block = NetworkRuntimeNativeCanonicalBlockStateV1 {
+            chain_id: 1,
+            number: 1101,
+            hash: [0x11; 32],
+            parent_hash: [0x10; 32],
+            state_root: [0x21; 32],
+            transactions_root: Some([0x22; 32]),
+            header_observed: true,
+            body_available: true,
+            tx_hashes: vec![[0x31; 32]],
+            raw_tx_rlps: vec![vec![0xc0]],
+            ommer_hashes: vec![[0x41; 32]],
+            withdrawal_rlp_items: None,
+            withdrawal_count: None,
+            receipts_available: true,
+            receipt_count: Some(1),
+            raw_receipts: vec![vec![0xf9, 0x01]],
+            receipts_root: Some([0x23; 32]),
+            ommers_hash: Some([0x24; 32]),
+            state_root_validated: false,
+            state_root_validation_method: None,
+            lifecycle_stage: novovm_network::NetworkRuntimeNativeBlockLifecycleStageV1::Canonical,
+            canonical: true,
+            safe: false,
+            finalized: false,
+            source_peer_id: Some(7),
+            observed_unix_ms: 9,
+        };
+
+        let body =
+            eth_rlpx_native_body_snapshot_from_canonical_block_v1(&block).expect("canonical body");
+        assert_eq!(body.number, 1101);
+        assert_eq!(body.block_hash, [0x11; 32]);
+        assert_eq!(body.tx_hashes, vec![[0x31; 32]]);
+        assert_eq!(body.raw_tx_rlps, vec![vec![0xc0]]);
+        assert_eq!(body.ommer_hashes, vec![[0x41; 32]]);
+        assert!(body.body_available);
+        assert!(body.txs_materialized);
+
+        let receipt = eth_rlpx_native_receipt_snapshot_from_canonical_block_v1(&block)
+            .expect("canonical receipt");
+        assert_eq!(receipt.number, 1101);
+        assert_eq!(receipt.block_hash, [0x11; 32]);
+        assert_eq!(receipt.receipts_root, [0x23; 32]);
+        assert_eq!(receipt.raw_receipts, vec![vec![0xf9, 0x01]]);
+        assert_eq!(receipt.receipt_count, 1);
+        assert!(receipt.receipts_available);
     }
 
     #[test]

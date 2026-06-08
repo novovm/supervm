@@ -594,6 +594,8 @@ pub struct NetworkRuntimeNativeCanonicalBlockStateV1 {
     #[serde(default)]
     pub raw_tx_rlps: Vec<Vec<u8>>,
     #[serde(default)]
+    pub ommer_hashes: Vec<[u8; 32]>,
+    #[serde(default)]
     pub withdrawal_rlp_items: Option<Vec<Vec<u8>>>,
     #[serde(default)]
     pub withdrawal_count: Option<usize>,
@@ -601,6 +603,8 @@ pub struct NetworkRuntimeNativeCanonicalBlockStateV1 {
     pub receipts_available: bool,
     #[serde(default)]
     pub receipt_count: Option<usize>,
+    #[serde(default)]
+    pub raw_receipts: Vec<Vec<u8>>,
     #[serde(default)]
     pub receipts_root: Option<[u8; 32]>,
     #[serde(default)]
@@ -1732,10 +1736,12 @@ fn runtime_native_canonical_chain_upsert_header_v1(
             body_available: false,
             tx_hashes: Vec::new(),
             raw_tx_rlps: Vec::new(),
+            ommer_hashes: Vec::new(),
             withdrawal_rlp_items: None,
             withdrawal_count: None,
             receipts_available: false,
             receipt_count: None,
+            raw_receipts: Vec::new(),
             receipts_root: Some(header.receipts_root),
             ommers_hash: Some(header.ommers_hash),
             state_root_validated: false,
@@ -1783,10 +1789,12 @@ fn runtime_native_canonical_chain_upsert_body_v1(
             body_available: body.body_available,
             tx_hashes: body.tx_hashes.clone(),
             raw_tx_rlps: body.raw_tx_rlps.clone(),
+            ommer_hashes: body.ommer_hashes.clone(),
             withdrawal_rlp_items: body.withdrawal_rlp_items.clone(),
             withdrawal_count: body.withdrawal_count,
             receipts_available: false,
             receipt_count: None,
+            raw_receipts: Vec::new(),
             receipts_root: None,
             ommers_hash: None,
             state_root_validated: false,
@@ -1807,6 +1815,7 @@ fn runtime_native_canonical_chain_upsert_body_v1(
     if !body.raw_tx_rlps.is_empty() {
         entry.raw_tx_rlps = body.raw_tx_rlps.clone();
     }
+    entry.ommer_hashes = body.ommer_hashes.clone();
     if body.withdrawal_rlp_items.is_some() {
         entry.withdrawal_rlp_items = body.withdrawal_rlp_items.clone();
     }
@@ -1855,10 +1864,12 @@ fn runtime_native_canonical_chain_upsert_receipt_v1(
             body_available: false,
             tx_hashes: Vec::new(),
             raw_tx_rlps: Vec::new(),
+            ommer_hashes: Vec::new(),
             withdrawal_rlp_items: None,
             withdrawal_count: None,
             receipts_available: receipt.receipts_available,
             receipt_count: Some(receipt.receipt_count),
+            raw_receipts: receipt.raw_receipts.clone(),
             receipts_root: Some(receipt.receipts_root),
             ommers_hash: None,
             state_root_validated: false,
@@ -1874,6 +1885,7 @@ fn runtime_native_canonical_chain_upsert_receipt_v1(
     entry.number = receipt.number;
     entry.receipts_available |= receipt.receipts_available;
     entry.receipt_count = Some(receipt.receipt_count);
+    entry.raw_receipts = receipt.raw_receipts.clone();
     entry.receipts_root = Some(receipt.receipts_root);
     entry.source_peer_id = receipt.source_peer_id.or(entry.source_peer_id);
     entry.observed_unix_ms = entry.observed_unix_ms.max(receipt.observed_unix_ms);
@@ -2009,10 +2021,12 @@ fn runtime_native_canonical_chain_apply_head_v1(
                 body_available: head.body_available,
                 tx_hashes: Vec::new(),
                 raw_tx_rlps: Vec::new(),
+                ommer_hashes: Vec::new(),
                 withdrawal_rlp_items: None,
                 withdrawal_count: None,
                 receipts_available: false,
                 receipt_count: None,
+                raw_receipts: Vec::new(),
                 receipts_root: None,
                 ommers_hash: None,
                 state_root_validated: false,
@@ -2059,10 +2073,12 @@ fn runtime_native_canonical_chain_apply_head_v1(
             body_available: head.body_available,
             tx_hashes: Vec::new(),
             raw_tx_rlps: Vec::new(),
+            ommer_hashes: Vec::new(),
             withdrawal_rlp_items: None,
             withdrawal_count: None,
             receipts_available: false,
             receipt_count: None,
+            raw_receipts: Vec::new(),
             receipts_root: None,
             ommers_hash: None,
             state_root_validated: false,
