@@ -6405,7 +6405,9 @@ fn resolve_gateway_eth_pending_block_for_runtime_view(
 fn is_gateway_engine_probe_method_v1(method: &str) -> bool {
     matches!(
         method,
-        "engine_exchangeCapabilities" | "engine_exchangeTransitionConfigurationV1"
+        "engine_exchangeCapabilities"
+            | "engine_exchangeTransitionConfigurationV1"
+            | "engine_getClientVersionV1"
     )
 }
 
@@ -6483,6 +6485,7 @@ fn gateway_runtime_surface_map_json() -> serde_json::Value {
                     "eth_getLogs",
                     "engine_exchangeCapabilities",
                     "engine_exchangeTransitionConfigurationV1",
+                    "engine_getClientVersionV1",
                     "txpool_content"
                 ]
             },
@@ -6498,7 +6501,7 @@ fn gateway_runtime_surface_map_json() -> serde_json::Value {
         "notes": [
             "supervm mainnet remains the single host chain",
             "eth_* namespace is compatibility surface provided by evm plugin gateway",
-            "engine_exchangeCapabilities and engine_exchangeTransitionConfigurationV1 are probe-only Engine API entries and do not declare payload or forkchoice support",
+            "engine_exchangeCapabilities, engine_exchangeTransitionConfigurationV1 and engine_getClientVersionV1 are probe-only Engine API entries and do not declare payload or forkchoice support",
             "supervm_getEthCanonicalBlockAccessListBy* remains internal plugin diagnostics and does not expose a public eth/71 surface"
         ]
     })
@@ -6538,8 +6541,8 @@ const GATEWAY_ENGINE_ZERO_HASH_V1: &str =
 
 fn gateway_engine_supported_capabilities_v1() -> serde_json::Value {
     serde_json::json!([
-        "engine_exchangeCapabilities",
-        "engine_exchangeTransitionConfigurationV1"
+        "engine_exchangeTransitionConfigurationV1",
+        "engine_getClientVersionV1"
     ])
 }
 
@@ -6598,6 +6601,34 @@ fn gateway_engine_exchange_transition_configuration_v1(
     }))
 }
 
+fn gateway_engine_client_commit_v1() -> String {
+    if let Some(raw) = string_env_nonempty("NOVOVM_GATEWAY_ENGINE_CLIENT_COMMIT") {
+        let trimmed = raw
+            .trim()
+            .strip_prefix("0x")
+            .or_else(|| raw.trim().strip_prefix("0X"))
+            .unwrap_or(raw.trim());
+        if trimmed.len() >= 8 && trimmed.chars().take(8).all(|c| c.is_ascii_hexdigit()) {
+            return format!("0x{}", trimmed[..8].to_ascii_lowercase());
+        }
+    }
+    "0x00000000".to_string()
+}
+
+fn gateway_engine_get_client_version_v1(params: &serde_json::Value) -> Result<serde_json::Value> {
+    match params {
+        serde_json::Value::Array(items) if items.len() == 1 && items[0].is_object() => {}
+        serde_json::Value::Object(_) => {}
+        _ => bail!("engine_getClientVersionV1 requires one client version object"),
+    }
+    Ok(serde_json::json!([{
+        "code": "NV",
+        "name": "novovm",
+        "version": env!("CARGO_PKG_VERSION"),
+        "commit": gateway_engine_client_commit_v1(),
+    }]))
+}
+
 fn ensure_eth_no_params(method: &str, params: &serde_json::Value) -> Result<()> {
     match params {
         serde_json::Value::Null => Ok(()),
@@ -6630,6 +6661,7 @@ fn run_gateway_method(
             gateway_engine_exchange_transition_configuration_v1(params)?,
             false,
         )),
+        "engine_getClientVersionV1" => Ok((gateway_engine_get_client_version_v1(params)?, false)),
         "novovm_getSurfaceMap" | "novovm_get_surface_map" => {
             Ok((gateway_runtime_surface_map_json(), false))
         }

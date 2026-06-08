@@ -552,8 +552,8 @@ fn engine_exchange_capabilities_is_probe_only_and_does_not_enable_payload_contro
     assert_eq!(
         capabilities,
         serde_json::json!([
-            "engine_exchangeCapabilities",
-            "engine_exchangeTransitionConfigurationV1"
+            "engine_exchangeTransitionConfigurationV1",
+            "engine_getClientVersionV1"
         ])
     );
     assert_eq!(
@@ -569,9 +569,42 @@ fn engine_exchange_capabilities_is_probe_only_and_does_not_enable_payload_contro
         Some(false)
     );
     assert_eq!(
+        gateway_runtime_method_domain_json("engine_getClientVersionV1")
+            ["control_namespace_disabled"]
+            .as_bool(),
+        Some(false)
+    );
+    assert_eq!(
         gateway_runtime_method_domain_json("engine_getPayloadV3")["control_namespace_disabled"]
             .as_bool(),
         Some(true)
+    );
+
+    let (client_versions, changed) = run_gateway_method(
+        &mut router,
+        &mut eth_tx_index,
+        &mut evm_settlement_index_by_id,
+        &mut evm_settlement_index_by_tx,
+        &mut evm_pending_payout_by_settlement,
+        &mut ctx,
+        "engine_getClientVersionV1",
+        &serde_json::json!([{
+            "code": "LC",
+            "name": "lighthouse",
+            "version": "0.0.0",
+            "commit": "0x11111111"
+        }]),
+    )
+    .expect("engine_getClientVersionV1 should return SUPERVM execution client info");
+    assert!(!changed);
+    assert_eq!(
+        client_versions,
+        serde_json::json!([{
+            "code": "NV",
+            "name": "novovm",
+            "version": env!("CARGO_PKG_VERSION"),
+            "commit": "0x00000000"
+        }])
     );
 
     let (transition_config, changed) = run_gateway_method(
@@ -722,6 +755,9 @@ fn novovm_surface_map_lists_mainnet_and_evm_plugin_domains() {
                     && methods.iter().any(|method| {
                         method.as_str() == Some("engine_exchangeTransitionConfigurationV1")
                     })
+                    && methods
+                        .iter()
+                        .any(|method| method.as_str() == Some("engine_getClientVersionV1"))
             })
     }));
     assert!(domains.iter().any(|item| {
