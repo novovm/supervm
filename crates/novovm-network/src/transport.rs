@@ -12,9 +12,9 @@ use crate::{
     eth_rlpx_build_get_block_headers_payload_v1, eth_rlpx_build_get_byte_codes_payload_v1,
     eth_rlpx_build_get_pooled_transactions_payload_v1, eth_rlpx_build_get_receipts_payload_v1,
     eth_rlpx_build_get_storage_ranges_payload_v1, eth_rlpx_build_get_trie_nodes_payload_v1,
-    eth_rlpx_build_hello_payload_v1, eth_rlpx_build_pooled_transactions_payload_v1,
-    eth_rlpx_build_receipts_payload_v1, eth_rlpx_build_status_payload_v1,
-    eth_rlpx_build_storage_ranges_payload_v1, eth_rlpx_build_transactions_payload_v1,
+    eth_rlpx_build_hello_payload_v1, eth_rlpx_build_new_pooled_transaction_hashes_payload_v1,
+    eth_rlpx_build_pooled_transactions_payload_v1, eth_rlpx_build_receipts_payload_v1,
+    eth_rlpx_build_status_payload_v1, eth_rlpx_build_storage_ranges_payload_v1,
     eth_rlpx_build_trie_nodes_payload_v1, eth_rlpx_code_hash_v1, eth_rlpx_default_client_name_v1,
     eth_rlpx_default_listen_port_v1, eth_rlpx_disconnect_reason_name_v1,
     eth_rlpx_handshake_initiator_v1, eth_rlpx_hello_profile_v1,
@@ -5479,16 +5479,29 @@ fn dispatch_eth_fullnode_native_rlpx_tx_broadcast_v1(
         return Ok(());
     }
     let candidate_count = candidates.len() as u64;
-    let payload = eth_rlpx_build_transactions_payload_v1(
-        &candidates
-            .iter()
-            .map(|candidate| candidate.tx_payload.clone())
-            .collect::<Vec<_>>(),
+    let tx_types = candidates
+        .iter()
+        .map(|candidate| {
+            eth_rlpx_tx_announce_type_from_envelope_v1(candidate.tx_payload.as_slice())
+        })
+        .collect::<Vec<_>>();
+    let tx_sizes = candidates
+        .iter()
+        .map(|candidate| candidate.tx_payload_len.min(u32::MAX as usize) as u32)
+        .collect::<Vec<_>>();
+    let tx_hashes = candidates
+        .iter()
+        .map(|candidate| candidate.tx_hash)
+        .collect::<Vec<_>>();
+    let payload = eth_rlpx_build_new_pooled_transaction_hashes_payload_v1(
+        tx_types.as_slice(),
+        tx_sizes.as_slice(),
+        tx_hashes.as_slice(),
     );
     eth_rlpx_write_wire_frame_v1(
         &mut session.stream,
         &mut session.frame_session,
-        ETH_RLPX_BASE_PROTOCOL_OFFSET + ETH_RLPX_ETH_TRANSACTIONS_MSG,
+        ETH_RLPX_BASE_PROTOCOL_OFFSET + ETH_RLPX_ETH_NEW_POOLED_TRANSACTION_HASHES_MSG,
         payload.as_slice(),
     )
     .map_err(|err| {
@@ -5498,7 +5511,7 @@ fn dispatch_eth_fullnode_native_rlpx_tx_broadcast_v1(
                 candidate.tx_hash,
                 Some(peer.0),
                 NetworkRuntimeNativePendingTxPropagationStopReasonV1::IoWriteFailure,
-                "transactions_dispatch",
+                "pooled_tx_hash_announce_dispatch",
             );
         }
         observe_network_runtime_native_pending_tx_broadcast_dispatch_v1(
@@ -5511,7 +5524,7 @@ fn dispatch_eth_fullnode_native_rlpx_tx_broadcast_v1(
         observe_network_runtime_eth_peer_handshake_failure_v1(
             chain_id,
             peer.0,
-            "transactions_write_failed",
+            "pooled_tx_hashes_write_failed",
         );
         NetworkError::Io(err)
     })?;
@@ -5520,7 +5533,7 @@ fn dispatch_eth_fullnode_native_rlpx_tx_broadcast_v1(
             chain_id,
             candidate.tx_hash,
             Some(peer.0),
-            Some("transactions_dispatch"),
+            Some("pooled_tx_hash_announce_dispatch"),
             Some(budget_hooks.tx_broadcast_max_propagations.max(1)),
         );
     }
@@ -5532,6 +5545,14 @@ fn dispatch_eth_fullnode_native_rlpx_tx_broadcast_v1(
         true,
     );
     Ok(())
+}
+
+fn eth_rlpx_tx_announce_type_from_envelope_v1(envelope: &[u8]) -> u8 {
+    if envelope.len() > 1 && envelope[0] <= 0x7f {
+        envelope[0]
+    } else {
+        0
+    }
 }
 
 pub fn drive_eth_fullnode_native_peer_once_v1<T: Transport>(
@@ -12685,6 +12706,7 @@ mod tests {
             Some(raw_tx.as_slice()),
         );
         let expected_tx = raw_tx.clone();
+        let expected_size = expected_tx.len() as u32;
 
         let responder_signing = k256::ecdsa::SigningKey::random(&mut rand::rngs::OsRng);
         let responder_nodekey: [u8; 32] = responder_signing.to_bytes().into();
@@ -12704,6 +12726,7 @@ mod tests {
             node_hint: remote.0,
             addr_hint: listen_addr.to_string(),
         };
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
 
         let server = thread::spawn(move || {
             let (mut accepted, _) = listener.accept().expect("accept rlpx");
@@ -12793,12 +12816,61 @@ mod tests {
                 }
                 assert_eq!(
                     code,
-                    crate::ETH_RLPX_BASE_PROTOCOL_OFFSET + crate::ETH_RLPX_ETH_TRANSACTIONS_MSG
+                    crate::ETH_RLPX_BASE_PROTOCOL_OFFSET
+                        + crate::ETH_RLPX_ETH_NEW_POOLED_TRANSACTION_HASHES_MSG
                 );
-                let txs = crate::eth_rlpx_parse_transactions_payload_v1(payload.as_slice())
-                    .expect("parse outbound transactions");
-                assert_eq!(txs.tx_hashes, vec![tx_hash]);
-                assert_eq!(txs.tx_rlp_items, vec![expected_tx]);
+                let announcement = crate::eth_rlpx_parse_new_pooled_transaction_hashes_payload_v1(
+                    payload.as_slice(),
+                )
+                .expect("parse outbound pooled tx hash announce");
+                assert_eq!(announcement.tx_types, vec![0]);
+                assert_eq!(announcement.tx_sizes, vec![expected_size]);
+                assert_eq!(announcement.tx_hashes, vec![tx_hash]);
+
+                let request_id = 88;
+                let request = crate::eth_rlpx_build_get_pooled_transactions_payload_v1(
+                    request_id,
+                    &[tx_hash],
+                );
+                crate::eth_rlpx_write_wire_frame_v1(
+                    &mut accepted,
+                    &mut responder.session,
+                    crate::ETH_RLPX_BASE_PROTOCOL_OFFSET
+                        + crate::ETH_RLPX_ETH_GET_POOLED_TRANSACTIONS_MSG,
+                    request.as_slice(),
+                )
+                .expect("write get pooled txs after announce");
+                loop {
+                    let (response_code, response_payload) =
+                        crate::eth_rlpx_read_wire_frame_v1(&mut accepted, &mut responder.session)
+                            .expect("read pooled tx response after announce");
+                    if response_code == crate::ETH_RLPX_P2P_PING_MSG {
+                        crate::eth_rlpx_write_wire_frame_v1(
+                            &mut accepted,
+                            &mut responder.session,
+                            crate::ETH_RLPX_P2P_PONG_MSG,
+                            &[],
+                        )
+                        .expect("write pong");
+                        continue;
+                    }
+                    assert_eq!(
+                        response_code,
+                        crate::ETH_RLPX_BASE_PROTOCOL_OFFSET
+                            + crate::ETH_RLPX_ETH_POOLED_TRANSACTIONS_MSG
+                    );
+                    let response = crate::eth_rlpx_parse_pooled_transactions_payload_v1(
+                        response_payload.as_slice(),
+                    )
+                    .expect("parse pooled tx response after announce");
+                    assert_eq!(response.request_id, request_id);
+                    assert_eq!(response.tx_hashes, vec![tx_hash]);
+                    assert_eq!(response.tx_rlp_items, vec![expected_tx]);
+                    done_tx
+                        .send(())
+                        .expect("signal outbound hash announce gate");
+                    break;
+                }
                 break;
             }
         });
@@ -12823,6 +12895,22 @@ mod tests {
         let report0 = worker.drive_real_network_once().expect("connect tick");
         assert_eq!(report0.connected_peers, 1);
         let _report1 = worker.drive_real_network_once().expect("broadcast tick");
+        let started = std::time::Instant::now();
+        let mut responded = false;
+        while started.elapsed() < Duration::from_secs(2) {
+            if done_rx.try_recv().is_ok() {
+                responded = true;
+                break;
+            }
+            let _ = worker
+                .drive_real_network_once()
+                .expect("pooled tx response tick");
+            thread::sleep(Duration::from_millis(5));
+        }
+        assert!(
+            responded,
+            "hash-only announcement must serve GetPooledTransactions"
+        );
 
         let pending =
             get_network_runtime_native_pending_tx_v1(chain_id, tx_hash).expect("pending tx");

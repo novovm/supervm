@@ -40,7 +40,7 @@
 影响判断：
 
 - 唯一主网可观察协议面变更是 `#35122`：geth 的 `sendPooledTransactionHashes` 现在先成功发送 `NewPooledTransactionHashes` wire frame，再把这些 hash 记入 peer known-tx 集合，避免失败写入后误判该 peer 已被通知。
-- SUPERVM 当前产品路径没有主动 outbound hash-only `NewPooledTransactionHashes` 宣告；现有本地 pending tx outbound 使用完整 `TransactionsMsg`，并且已经是 wire-frame 写成功后才记录 propagated，写失败只记录 failure，因此不需要新增 hash-only 宣告产品面。
+- SUPERVM 当前产品路径已切到 outbound hash-only `NewPooledTransactionHashes` 宣告；本地 pending tx 先成功写出 announce frame，才记录 propagated，peer 后续 `GetPooledTransactions` 会收到本地 raw `PooledTransactions` 响应；写失败只记录 failure，不误标记远端已知。
 - 本轮同步修复的是更直接影响长期同步的 RLPx live session 语义：`Ping/Pong`、pooled tx 请求/响应、`NewBlock`/headers/bodies/receipts ingest、snap sidecar 响应、eth/71 BAL 响应、missing body/receipt recovery、headers/snap sync request、tx broadcast 等路径，只要在 live session 内写失败或 ingest 失败，都会先 unregister peer 并删除 session，再返回错误，避免旧 stream 残留导致下一 tick 不能重连恢复。
 
 ### 2026-06-09 go-ethereum 复拉审阅
@@ -58,7 +58,7 @@ git pull --ff-only
 - after: `1f87331fbc58702b812a7b14e65aa7a28776cc46`
 - `origin/master` / `origin/HEAD` 仍指向 `1f87331fb`
 
-本次没有新增 geth 提交需要同步到 SUPERVM。复读 `eth/protocols/eth/peer.go` 最新 diff 后，影响判断保持不变：geth 只把 `sendPooledTransactionHashes` 的 known-tx 标记从发送前移到成功发送 `NewPooledTransactionHashes` 后；SUPERVM 产品路径目前不主动发送 hash-only `NewPooledTransactionHashes`，现有完整 `TransactionsMsg` outbound 在 `eth_rlpx_write_wire_frame_v1` 成功后才记录 propagated，写失败路径记录 propagation failure。因此本次复拉不需要 Rust 代码改动，只保留诊断记录。
+本次没有新增 geth 提交需要同步到 SUPERVM。复读 `eth/protocols/eth/peer.go` 最新 diff 后，影响判断保持不变：geth 只把 `sendPooledTransactionHashes` 的 known-tx 标记从发送前移到成功发送 `NewPooledTransactionHashes` 后；SUPERVM 产品路径已按该语义改为主动发送 hash-only `NewPooledTransactionHashes`，在 `eth_rlpx_write_wire_frame_v1` 成功后才记录 propagated，写失败路径记录 propagation failure。
 
 本轮验证：
 
@@ -253,7 +253,7 @@ git pull --ff-only
 - `git pull --ff-only`: `Already up to date`
 - 当前 geth 仍为 `1f87331fb`：`eth/protocols/eth: track announced tx hashes only after send (#35122)`
 
-重新审阅该提交后，对 SUPERVM 的同步判断不变：该 geth 改动只把 `sendPooledTransactionHashes` 的 known-tx 标记移动到 `NewPooledTransactionHashes` frame 发送成功之后。SUPERVM 当前产品出站传播仍是 full `TransactionsMsg`，并且只在 `eth_rlpx_write_wire_frame_v1` 成功后记录 `propagated`；写失败会记录 `IoWriteFailure` 并标记 peer write failure。因此本轮没有新的 Rust 代码同步项。后续如果 SUPERVM 增加 hash-only outbound pooled-tx announce 产品路径，该路径必须复用同一语义：先成功写帧，再把该 peer 视作已知该 tx hash。
+重新审阅该提交后，对 SUPERVM 的同步判断已落到代码：该 geth 改动只把 `sendPooledTransactionHashes` 的 known-tx 标记移动到 `NewPooledTransactionHashes` frame 发送成功之后。SUPERVM 当前产品出站传播也使用 hash-only `NewPooledTransactionHashes`，并且只在 `eth_rlpx_write_wire_frame_v1` 成功后记录 `propagated`；写失败会记录 `IoWriteFailure` 并标记 peer write failure。远端收到 announce 后发 `GetPooledTransactions` 时，SUPERVM 回放本地 raw tx payload。
 
 ## 本轮实跑证据
 
@@ -439,7 +439,7 @@ cargo run -p novovmctl -- evm-block-access-list-scan `
 - RLPx missing-receipts recovery gate: pass, covers peer disconnect after latest header/body import but before receipt response；next ready RLPx worker rebuilds pending receipt state from latest native header/body and sends `GetReceipts(firstBlockReceiptIndex=0)` before any new `GetBlockHeaders` pull, then validates/writes the recovered receipt snapshot
 - RLPx same-tick sync dispatch gate: pass, real RLPx worker 在 Status 成功后同一 tick 立即 drive 已 ready session 并发出首个 `GetBlockHeaders`/sync request，减少公网 peer 在下一 scheduler tick 前关闭导致的 ready 空窗；由 `real_rlpx_peer_worker_ingests_runtime_native_snapshots` 覆盖
 - novovm-node RLPx public sync batch gate: pass, `eth_rlpx_sync` 产品入口默认把公网 `GetBlockHeaders`/`GetBlockBodies` 批量收敛到 `NOVOVM_ETH_RLPX_HEADERS_BATCH=128`、`NOVOVM_ETH_RLPX_BODIES_BATCH=32`，比旧默认 8 更适合产品入口追赶主网；公网 peer 如果持续出现大 frame 中途 EOF，仍可通过 env 显式下调 body batch。该收敛只作用于产品入口 worker budget，不改变底层 native fullnode 默认 2048/256 能力。
-- RLPx pooled tx gates: pass, covers inbound real `NewPooledTransactionHashes` -> `GetPooledTransactions` -> raw `PooledTransactions` materialized into pending tx payload, and inbound real `GetPooledTransactions` -> local raw tx `PooledTransactions` response
+- RLPx pooled tx gates: pass, covers inbound real `NewPooledTransactionHashes` -> `GetPooledTransactions` -> raw `PooledTransactions` materialized into pending tx payload, outbound local pending tx -> real `NewPooledTransactionHashes` after write success -> peer `GetPooledTransactions` -> local raw `PooledTransactions` response, and inbound real `GetPooledTransactions` -> local raw tx response
 - RLPx NewBlock gate: pass, covers inbound real non-empty `NewBlock` announcement -> Ethereum transaction trie `transactionsRoot` validation -> empty ommers/withdrawals validation -> native header/body snapshot import -> peer head/highest update -> follow-up `GetReceipts` -> raw receipt MPT `receiptsRoot` validation -> native receipt snapshot
 
 这证明 `NOVOVM_ETH_SEND_RAW_TX(_FILE)` 可以作为 Novo mainline EVM host 的真实输入源，执行后产出 canonical batch 和完整 BAL hash。当前覆盖 signed legacy/type1/type2/type3 transfer smoke，以及 type1/type2 call/deploy、type3 call smoke；type3 仍是显式开关能力，不能外推到全部 fork rule / gas / blob sidecar 语义。
@@ -1498,7 +1498,7 @@ cargo test -p novovm-adapter-novovm evm_adapter_balance_fee_access_storage_surfa
 2. 不再把继续堆官方 fixture 子集作为默认下一步。只有 v2/v3 黑盒差分暴露具体语义缺口时，才按缺口补对应官方子集。
 3. 已完成 v2a：`eth_getBlockByNumber/eth_getBlockByHash` 的 `transactionsRoot/receiptsRoot` 不再返回 `null`，geth parity report 新增 `observableProjection`，默认 11 个样本 `mismatchCount=0`。
 4. 已完成 v2b：真实 geth fullTx block fixture 差分已接入，raw tx RLP 进入 canonical block projection，当前 `number/gasUsed/logsBloom/transactionsRoot/receiptsRoot/stateRoot` 全部 match，`knownGapCount=0`。
-5. 已开始 v3：真实 RLPx handshake/Status + 入站 `Transactions` -> native pending tx raw RLP gate 通过；出站 `Transactions` broadcast gate 通过；pooled tx hash/request/response gate 通过；block header/body/receipts sync gate 通过；最小 reorg 回池 gate 通过；`NewBlock` / `NewBlockHashes` gates 通过；`NewBlock` / `BlockBodies` transaction trie root validation、`Receipts` completeness/count/root validation、native receipt snapshot、本地 `GetReceipts` replay、缺 receipt 重连恢复、empty/no-withdrawal stateRoot continuity validation、snap/1 AccountRange、AccountRange cursor 续扫/重启恢复、AccountRange -> StorageRanges/ByteCodes/state+storage-root GetTrieNodes follow-up/native cache/codeHash/ordered trie-node hash match + bounded retry、AccountRange/StorageRanges proof node RLP/root membership/resolvable leaf value guard、partial range 左边界/内部 gap guard、StorageRanges 无 proof 完整范围 storageRoot 校验、StorageRanges last-slotset proof 语义、node direct RLPx sync 入口、geth DNS discovery ENR 候选池扩容/UDP fallback、discv4 bootnode bonding/FindNode/Neighbors 候选池扩容、capacity-reject peer 轮换、全冷却/追高 stalled/启动 no-ready 候选池自适应刷新和 snap/1 service sidecars gate 通过，仍不把 SUPERVM 产品口径改成完整 geth 全节点。
+5. 已开始 v3：真实 RLPx handshake/Status + 入站 `Transactions` -> native pending tx raw RLP gate 通过；出站 hash-only `NewPooledTransactionHashes` announce + peer `GetPooledTransactions` raw tx response gate 通过；pooled tx hash/request/response gate 通过；block header/body/receipts sync gate 通过；最小 reorg 回池 gate 通过；`NewBlock` / `NewBlockHashes` gates 通过；`NewBlock` / `BlockBodies` transaction trie root validation、`Receipts` completeness/count/root validation、native receipt snapshot、本地 `GetReceipts` replay、缺 receipt 重连恢复、empty/no-withdrawal stateRoot continuity validation、snap/1 AccountRange、AccountRange cursor 续扫/重启恢复、AccountRange -> StorageRanges/ByteCodes/state+storage-root GetTrieNodes follow-up/native cache/codeHash/ordered trie-node hash match + bounded retry、AccountRange/StorageRanges proof node RLP/root membership/resolvable leaf value guard、partial range 左边界/内部 gap guard、StorageRanges 无 proof 完整范围 storageRoot 校验、StorageRanges last-slotset proof 语义、node direct RLPx sync 入口、geth DNS discovery ENR 候选池扩容/UDP fallback、discv4 bootnode bonding/FindNode/Neighbors 候选池扩容、capacity-reject peer 轮换、全冷却/追高 stalled/启动 no-ready 候选池自适应刷新和 snap/1 service sidecars gate 通过，仍不把 SUPERVM 产品口径改成完整 geth 全节点。
 6. 如果 v3 或真实 block replay 暴露具体交易类型/root 差异，再补对应最小真实 fixture，不回到开放式 smoke 堆叠。
 
 ## 回归命令
