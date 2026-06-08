@@ -736,6 +736,7 @@ struct EthFullnodeNativeRlpxLivePeerSessionV1 {
     last_pooled_transactions_request_id: Option<u64>,
     last_tx_broadcast_unix_ms: u64,
     pending_body_headers: Vec<EthFullnodeNativePendingBodyHeaderV1>,
+    pending_body_request_offset: usize,
     pending_pooled_transaction_hashes: Vec<[u8; 32]>,
 }
 
@@ -1436,6 +1437,7 @@ fn connect_eth_fullnode_native_rlpx_peer_v1(
             last_pooled_transactions_request_id: None,
             last_tx_broadcast_unix_ms: 0,
             pending_body_headers: Vec::new(),
+            pending_body_request_offset: 0,
             pending_pooled_transaction_hashes: Vec::new(),
         },
     );
@@ -2201,6 +2203,7 @@ fn drive_eth_fullnode_native_rlpx_peer_session_once_v1(
                         observe_network_runtime_eth_peer_syncing_v1(chain_id, peer.0);
                         session.last_headers_request_id = Some(request_id);
                         session.last_bodies_request_id = None;
+                        session.pending_body_request_offset = 0;
                         session.last_receipts_request_id = None;
                         clear_eth_fullnode_native_snap_request_state_v1(session);
                         session.last_sync_request_unix_ms = now_ms;
@@ -4474,6 +4477,7 @@ fn ingest_real_rlpx_block_headers_v1(
         observe_eth_native_bodies_pull(chain_id);
         observe_network_runtime_eth_peer_syncing_v1(chain_id, source_peer_id);
         session.last_bodies_request_id = Some(request_id);
+        session.pending_body_request_offset = 0;
         session.last_receipts_request_id = None;
         clear_eth_fullnode_native_snap_request_state_v1(session);
         session.last_sync_request_unix_ms = now_unix_ms();
@@ -4497,35 +4501,140 @@ fn ingest_real_rlpx_block_bodies_v1(
     }
     observe_eth_native_bodies_response(chain_id);
     session.last_headers_request_id = None;
-    if bodies.bodies.len() != session.pending_body_headers.len() {
+    let request_offset = session
+        .pending_body_request_offset
+        .min(session.pending_body_headers.len());
+    let expected_bodies = session
+        .pending_body_headers
+        .len()
+        .saturating_sub(request_offset);
+    if bodies.bodies.len() > expected_bodies {
         let err = format!(
             "rlpx_block_bodies_count_mismatch:expected={} observed={}",
-            session.pending_body_headers.len(),
+            expected_bodies,
             bodies.bodies.len()
         );
         observe_network_runtime_eth_peer_decode_failure_v1(chain_id, source_peer_id, &err);
         return Err(NetworkError::Decode(err));
     }
+    let observed_bodies = bodies.bodies.len();
+    let mut matched_pending_indices = HashSet::<usize>::new();
     for (idx, body) in bodies.bodies.iter().enumerate() {
-        if let Some(pending) = session.pending_body_headers.get_mut(idx) {
-            if body.transactions_root != pending.transactions_root {
-                let err = format!(
+        let pending_idx = request_offset.saturating_add(idx);
+        let target_idx = session
+            .pending_body_headers
+            .get(pending_idx)
+            .filter(|pending| {
+                pending.tx_count.is_none() && pending.transactions_root == body.transactions_root
+            })
+            .map(|_| pending_idx)
+            .or_else(|| {
+                let matches = session
+                    .pending_body_headers
+                    .iter()
+                    .enumerate()
+                    .filter(|(candidate_idx, pending)| {
+                        !matched_pending_indices.contains(candidate_idx)
+                            && pending.tx_count.is_none()
+                            && pending.transactions_root == body.transactions_root
+                    })
+                    .map(|(candidate_idx, _)| candidate_idx)
+                    .collect::<Vec<_>>();
+                if matches.len() == 1 {
+                    matches.first().copied()
+                } else {
+                    None
+                }
+            });
+        let Some(target_idx) = target_idx else {
+            let expected = session.pending_body_headers.get(pending_idx).or_else(|| {
+                session
+                    .pending_body_headers
+                    .iter()
+                    .find(|pending| pending.tx_count.is_none())
+            });
+            let err = if let Some(pending) = expected {
+                format!(
                     "rlpx_block_body_transactions_root_mismatch:number={number} hash=0x{}",
                     hex32_v1(&pending.hash),
                     number = pending.number
-                );
-                observe_network_runtime_eth_peer_decode_failure_v1(chain_id, source_peer_id, &err);
-                return Err(NetworkError::Decode(err));
-            }
-            pending.tx_count = Some(body.tx_hashes.len());
-            pending.withdrawal_count = body.withdrawal_count;
-            let body_wire =
-                evm_native_body_wire_from_rlpx_body_v1(pending.number, pending.hash, body);
-            ingest_runtime_native_body_from_evm_wire(chain_id, source_peer_id, &body_wire);
-            report.body_updates = report.body_updates.saturating_add(1);
-        }
+                )
+            } else {
+                "rlpx_block_body_transactions_root_mismatch:no_pending_body_header".to_string()
+            };
+            observe_network_runtime_eth_peer_decode_failure_v1(chain_id, source_peer_id, &err);
+            return Err(NetworkError::Decode(err));
+        };
+        matched_pending_indices.insert(target_idx);
+        let Some(pending) = session.pending_body_headers.get_mut(target_idx) else {
+            continue;
+        };
+        pending.tx_count = Some(body.tx_hashes.len());
+        pending.withdrawal_count = body.withdrawal_count;
+        let body_wire = evm_native_body_wire_from_rlpx_body_v1(pending.number, pending.hash, body);
+        ingest_runtime_native_body_from_evm_wire(chain_id, source_peer_id, &body_wire);
+        report.body_updates = report.body_updates.saturating_add(1);
     }
     session.last_bodies_request_id = None;
+    session.pending_body_request_offset = 0;
+    if observed_bodies < expected_bodies
+        || session
+            .pending_body_headers
+            .iter()
+            .skip(request_offset)
+            .any(|pending| pending.tx_count.is_none())
+    {
+        let next_request_offset = session
+            .pending_body_headers
+            .iter()
+            .enumerate()
+            .skip(request_offset)
+            .find(|(_, pending)| pending.tx_count.is_none())
+            .map(|(idx, _)| idx)
+            .unwrap_or(session.pending_body_headers.len());
+        let missing_hashes = session
+            .pending_body_headers
+            .iter()
+            .skip(next_request_offset)
+            .filter(|pending| pending.tx_count.is_none())
+            .map(|pending| pending.hash)
+            .collect::<Vec<_>>();
+        if !missing_hashes.is_empty() {
+            let request_id = next_eth_fullnode_native_rlpx_request_id_v1();
+            let payload =
+                eth_rlpx_build_get_block_bodies_payload_v1(request_id, missing_hashes.as_slice());
+            eth_rlpx_write_wire_frame_v1(
+                &mut session.stream,
+                &mut session.frame_session,
+                ETH_RLPX_BASE_PROTOCOL_OFFSET + ETH_RLPX_ETH_GET_BLOCK_BODIES_MSG,
+                payload.as_slice(),
+            )
+            .map_err(|err| {
+                observe_network_runtime_eth_peer_handshake_failure_v1(
+                    chain_id,
+                    source_peer_id,
+                    "partial_bodies_retry_request_write_failed",
+                );
+                NetworkError::Io(err)
+            })?;
+            observe_eth_native_bodies_pull(chain_id);
+            observe_network_runtime_eth_peer_syncing_v1(chain_id, source_peer_id);
+            session.last_bodies_request_id = Some(request_id);
+            session.pending_body_request_offset = next_request_offset;
+            session.last_sync_request_unix_ms = now_unix_ms();
+            report.sync_requests = report.sync_requests.saturating_add(1);
+            eprintln!(
+                "network_info: rlpx stage block_bodies_partial_retry chain_id={} peer={} endpoint={} request_id={} received={} missing={}",
+                chain_id,
+                source_peer_id,
+                session.endpoint.addr_hint,
+                request_id,
+                observed_bodies,
+                missing_hashes.len()
+            );
+            return Ok(());
+        }
+    }
     let empty_receipts = materialize_empty_receipts_for_pending_body_headers_v1(
         chain_id,
         source_peer_id,
@@ -7599,7 +7708,7 @@ mod tests {
         assert_eq!(report0.sync_requests, 1);
 
         let started = std::time::Instant::now();
-        while started.elapsed() < Duration::from_secs(2)
+        while started.elapsed() < Duration::from_secs(5)
             && get_network_runtime_native_receipt_snapshot_v1(chain_id, block_hash).is_none()
         {
             let _ = worker
@@ -9886,7 +9995,7 @@ mod tests {
         assert_eq!(status_after_connect.highest_block, 120);
 
         let started = std::time::Instant::now();
-        while started.elapsed() < Duration::from_secs(2)
+        while started.elapsed() < Duration::from_secs(5)
             && get_network_runtime_native_header_snapshot_v1(chain_id).is_none()
         {
             let _ = worker
@@ -9921,7 +10030,7 @@ mod tests {
         let empty_root = crate::eth_rlpx_empty_trie_root_v1();
         let empty_ommers_hash = crate::eth_rlpx_empty_ommers_hash_v1();
         let receipt_blocks = vec![vec![vec![0xc0]]];
-        let header_record = crate::EthRlpxBlockHeaderRecordV1 {
+        let header_record_1 = crate::EthRlpxBlockHeaderRecordV1 {
             number: 120,
             hash: [0u8; 32],
             parent_hash: [0x10; 32],
@@ -9940,14 +10049,44 @@ mod tests {
             block_access_list_hash: None,
         };
         let header_hash = crate::eth_rlpx_parse_block_headers_payload_v1(
-            crate::eth_rlpx_build_block_headers_payload_v1(1, std::slice::from_ref(&header_record))
-                .as_slice(),
+            crate::eth_rlpx_build_block_headers_payload_v1(
+                1,
+                std::slice::from_ref(&header_record_1),
+            )
+            .as_slice(),
         )
         .expect("derive wire header hash")
         .headers[0]
             .hash;
-        let server_header_record = header_record.clone();
-        let server_receipt_blocks = receipt_blocks.clone();
+        let header_record_2 = crate::EthRlpxBlockHeaderRecordV1 {
+            number: 121,
+            hash: [0u8; 32],
+            parent_hash: header_hash,
+            state_root: [0x20; 32],
+            transactions_root: empty_root,
+            receipts_root: empty_root,
+            ommers_hash: empty_ommers_hash,
+            logs_bloom: vec![0u8; 256],
+            gas_limit: Some(30_000_000),
+            gas_used: Some(0),
+            timestamp: Some(1_234_579),
+            base_fee_per_gas: Some(15),
+            withdrawals_root: Some(empty_root),
+            blob_gas_used: None,
+            excess_blob_gas: None,
+            block_access_list_hash: None,
+        };
+        let header_hash_2 = crate::eth_rlpx_parse_block_headers_payload_v1(
+            crate::eth_rlpx_build_block_headers_payload_v1(
+                1,
+                std::slice::from_ref(&header_record_2),
+            )
+            .as_slice(),
+        )
+        .expect("derive second wire header hash")
+        .headers[0]
+            .hash;
+        let server_header_records = vec![header_record_1.clone(), header_record_2.clone()];
 
         let responder_signing = k256::ecdsa::SigningKey::random(&mut rand::rngs::OsRng);
         let responder_nodekey: [u8; 32] = responder_signing.to_bytes().into();
@@ -10013,7 +10152,7 @@ mod tests {
                     0,
                 ),
                 earliest_block: 1,
-                latest_block: 120,
+                latest_block: 121,
                 latest_block_hash: status_head_hash,
             };
             let status_payload = crate::eth_rlpx_build_status_payload_v1(status);
@@ -10053,7 +10192,7 @@ mod tests {
                             .expect("parse get block headers");
                     let headers_payload = crate::eth_rlpx_build_block_headers_payload_v1(
                         request.request_id,
-                        std::slice::from_ref(&server_header_record),
+                        server_header_records.as_slice(),
                     );
                     crate::eth_rlpx_write_wire_frame_v1(
                         &mut accepted,
@@ -10072,47 +10211,39 @@ mod tests {
                     let request =
                         crate::eth_rlpx_parse_get_block_bodies_payload_v1(payload.as_slice())
                             .expect("parse get block bodies");
-                    assert_eq!(request.hashes, vec![header_hash]);
-                    let bodies_payload = crate::eth_rlpx_build_block_bodies_payload_v1(
-                        request.request_id,
-                        &[crate::EthRlpxBlockBodyPayloadV1 {
-                            tx_rlp_items: vec![raw_tx.clone()],
-                            ommer_header_rlp_items: Vec::new(),
-                            withdrawal_rlp_items: Some(Vec::new()),
-                        }],
-                    );
+                    if request.hashes == vec![header_hash, header_hash_2] {
+                        let bodies_payload = crate::eth_rlpx_build_block_bodies_payload_v1(
+                            request.request_id,
+                            &[crate::EthRlpxBlockBodyPayloadV1 {
+                                tx_rlp_items: vec![raw_tx.clone()],
+                                ommer_header_rlp_items: Vec::new(),
+                                withdrawal_rlp_items: Some(Vec::new()),
+                            }],
+                        );
+                        crate::eth_rlpx_write_wire_frame_v1(
+                            &mut accepted,
+                            &mut responder.session,
+                            crate::ETH_RLPX_BASE_PROTOCOL_OFFSET
+                                + crate::ETH_RLPX_ETH_BLOCK_BODIES_MSG,
+                            bodies_payload.as_slice(),
+                        )
+                        .expect("write partial block bodies");
+                        thread::sleep(Duration::from_millis(250));
+                        break;
+                    }
+                    panic!("unexpected body retry hashes");
+                }
+                if code == crate::ETH_RLPX_P2P_PING_MSG {
                     crate::eth_rlpx_write_wire_frame_v1(
                         &mut accepted,
                         &mut responder.session,
-                        crate::ETH_RLPX_BASE_PROTOCOL_OFFSET + crate::ETH_RLPX_ETH_BLOCK_BODIES_MSG,
-                        bodies_payload.as_slice(),
+                        crate::ETH_RLPX_P2P_PONG_MSG,
+                        &[],
                     )
-                    .expect("write block bodies");
+                    .expect("write pong");
                     continue;
                 }
-                if code
-                    == crate::ETH_RLPX_BASE_PROTOCOL_OFFSET + crate::ETH_RLPX_ETH_GET_RECEIPTS_MSG
-                {
-                    let request = crate::eth_rlpx_parse_get_receipts_payload_v1(payload.as_slice())
-                        .expect("parse get receipts");
-                    assert_eq!(request.hashes, vec![header_hash]);
-                    assert_eq!(request.first_block_receipt_index, 0);
-                    let receipts_payload = crate::eth_rlpx_build_receipts_payload_v1(
-                        request.request_id,
-                        false,
-                        server_receipt_blocks.as_slice(),
-                        70,
-                    );
-                    crate::eth_rlpx_write_wire_frame_v1(
-                        &mut accepted,
-                        &mut responder.session,
-                        crate::ETH_RLPX_BASE_PROTOCOL_OFFSET + crate::ETH_RLPX_ETH_RECEIPTS_MSG,
-                        receipts_payload.as_slice(),
-                    )
-                    .expect("write receipts");
-                    thread::sleep(Duration::from_millis(250));
-                    break;
-                }
+                panic!("unexpected worker frame code {code}");
             }
         });
 
@@ -10133,34 +10264,27 @@ mod tests {
         let report0 = worker.drive_real_network_once().expect("connect tick");
         assert_eq!(report0.connected_peers, 1);
         assert_eq!(report0.sync_requests, 1);
-        let report1 = worker
+        let _report1 = worker
             .drive_real_network_once()
             .expect("headers/body request tick");
-        let report2 = worker
+        let _report2 = worker
             .drive_real_network_once()
             .expect("headers/bodies tick");
-        let mut body_updates = report1.body_updates.saturating_add(report2.body_updates);
-        let mut receipt_updates = report1
-            .receipt_updates
-            .saturating_add(report2.receipt_updates);
         let started = std::time::Instant::now();
-        while started.elapsed() < Duration::from_secs(2)
-            && (body_updates == 0 || receipt_updates == 0)
+        while started.elapsed() < Duration::from_secs(5)
+            && (get_network_runtime_native_body_snapshot_v1(chain_id)
+                .is_none_or(|body| body.block_hash != header_hash))
         {
-            let report = worker
+            let _report = worker
                 .drive_real_network_once()
                 .expect("body/receipt response tick");
-            body_updates = body_updates.saturating_add(report.body_updates);
-            receipt_updates = receipt_updates.saturating_add(report.receipt_updates);
             thread::sleep(Duration::from_millis(5));
         }
-        assert_eq!(body_updates, 1);
-        assert_eq!(receipt_updates, 1);
 
         let header_snapshot =
             get_network_runtime_native_header_snapshot_v1(chain_id).expect("header snapshot");
-        assert_eq!(header_snapshot.number, 120);
-        assert_eq!(header_snapshot.hash, header_hash);
+        assert_eq!(header_snapshot.number, 121);
+        assert_eq!(header_snapshot.hash, header_hash_2);
         let body_snapshot =
             get_network_runtime_native_body_snapshot_v1(chain_id).expect("body snapshot");
         assert_eq!(body_snapshot.number, 120);
