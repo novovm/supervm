@@ -716,6 +716,9 @@ struct EthFullnodeNativeRlpxLivePeerSessionV1 {
     last_snap_storage_ranges_request_id: Option<u64>,
     last_snap_byte_codes_request_id: Option<u64>,
     last_snap_state_root: Option<[u8; 32]>,
+    last_snap_account_origin: Option<[u8; 32]>,
+    last_snap_account_limit: Option<[u8; 32]>,
+    pending_snap_next_account_origin: Option<[u8; 32]>,
     pending_snap_storage_accounts: Vec<[u8; 32]>,
     pending_snap_code_hashes: Vec<[u8; 32]>,
     last_pooled_transactions_request_id: Option<u64>,
@@ -1408,6 +1411,9 @@ fn connect_eth_fullnode_native_rlpx_peer_v1(
             last_snap_storage_ranges_request_id: None,
             last_snap_byte_codes_request_id: None,
             last_snap_state_root: None,
+            last_snap_account_origin: None,
+            last_snap_account_limit: None,
+            pending_snap_next_account_origin: None,
             pending_snap_storage_accounts: Vec::new(),
             pending_snap_code_hashes: Vec::new(),
             last_pooled_transactions_request_id: None,
@@ -2182,47 +2188,29 @@ fn drive_eth_fullnode_native_rlpx_peer_session_once_v1(
                         limit,
                         ..
                     }) => {
-                        let Some(snap_offset) = eth_rlpx_snap_base_offset_v1(
+                        if eth_rlpx_snap_base_offset_v1(
                             session._negotiated_eth_version,
                             session._negotiated_snap_version,
-                        ) else {
+                        )
+                        .is_none()
+                        {
                             return Ok(report);
-                        };
-                        let request_id = next_eth_fullnode_native_rlpx_request_id_v1();
+                        }
                         let root = eth_fullnode_native_rlpx_snap_root_hint_v1(chain_id, block_hash);
                         let limit_hash = [0xffu8; 32];
                         let byte_limit = limit
                             .saturating_mul(16 * 1024)
                             .clamp(16 * 1024, ETH_RLPX_SNAP_DEFAULT_ACCOUNT_RANGE_BYTES);
-                        let payload = eth_rlpx_build_get_account_range_payload_v1(
-                            request_id, root, origin, limit_hash, byte_limit,
-                        );
-                        eth_rlpx_write_wire_frame_v1(
-                            &mut session.stream,
-                            &mut session.frame_session,
-                            snap_offset + ETH_RLPX_SNAP_GET_ACCOUNT_RANGE_MSG,
-                            payload.as_slice(),
-                        )
-                        .map_err(|err| {
-                            observe_network_runtime_eth_peer_handshake_failure_v1(
-                                chain_id,
-                                peer.0,
-                                "snap_account_range_request_write_failed",
-                            );
-                            NetworkError::Io(err)
-                        })?;
-                        observe_eth_native_snap_pull(chain_id);
-                        observe_network_runtime_eth_peer_syncing_v1(chain_id, peer.0);
-                        session.last_headers_request_id = None;
-                        session.last_bodies_request_id = None;
-                        session.last_receipts_request_id = None;
-                        session.last_snap_storage_ranges_request_id = None;
-                        session.last_snap_byte_codes_request_id = None;
-                        session.last_snap_state_root = Some(root);
-                        session.pending_snap_storage_accounts.clear();
-                        session.pending_snap_code_hashes.clear();
-                        session.last_snap_account_range_request_id = Some(request_id);
-                        session.last_sync_request_unix_ms = now_ms;
+                        dispatch_eth_fullnode_native_snap_account_range_request_v1(
+                            chain_id,
+                            peer.0,
+                            session,
+                            root,
+                            origin,
+                            limit_hash,
+                            byte_limit,
+                            "snap_account_range_request_write_failed",
+                        )?;
                         report.sync_requests = report.sync_requests.saturating_add(1);
                     }
                     _ => {}
@@ -2383,6 +2371,51 @@ fn eth_fullnode_native_rlpx_snap_root_hint_v1(chain_id: u64, fallback: [u8; 32])
         .unwrap_or(fallback)
 }
 
+fn eth_rlpx_account_hash_next_v1(mut value: [u8; 32]) -> Option<[u8; 32]> {
+    for byte in value.iter_mut().rev() {
+        if *byte < u8::MAX {
+            *byte = byte.saturating_add(1);
+            return Some(value);
+        }
+        *byte = 0;
+    }
+    None
+}
+
+fn eth_rlpx_snap_account_range_next_origin_v1(
+    origin: [u8; 32],
+    limit: [u8; 32],
+    response: &EthRlpxAccountRangeResponseV1,
+) -> Result<Option<[u8; 32]>, NetworkError> {
+    let Some(last) = response.accounts.last().map(|account| account.hash) else {
+        return Ok(None);
+    };
+    let mut previous = None;
+    for (idx, account) in response.accounts.iter().enumerate() {
+        if account.hash < origin || account.hash > limit {
+            return Err(NetworkError::Decode(format!(
+                "snap_account_range_account_out_of_bounds:idx={} origin=0x{} limit=0x{} account=0x{}",
+                idx,
+                hex32_v1(&origin),
+                hex32_v1(&limit),
+                hex32_v1(&account.hash)
+            )));
+        }
+        if previous.is_some_and(|prev| account.hash <= prev) {
+            return Err(NetworkError::Decode(format!(
+                "snap_account_range_account_not_monotonic:idx={} account=0x{}",
+                idx,
+                hex32_v1(&account.hash)
+            )));
+        }
+        previous = Some(account.hash);
+    }
+    if last >= limit {
+        return Ok(None);
+    }
+    Ok(eth_rlpx_account_hash_next_v1(last).filter(|next| *next <= limit))
+}
+
 fn clear_eth_fullnode_native_snap_request_state_v1(
     session: &mut EthFullnodeNativeRlpxLivePeerSessionV1,
 ) {
@@ -2390,8 +2423,110 @@ fn clear_eth_fullnode_native_snap_request_state_v1(
     session.last_snap_storage_ranges_request_id = None;
     session.last_snap_byte_codes_request_id = None;
     session.last_snap_state_root = None;
+    session.last_snap_account_origin = None;
+    session.last_snap_account_limit = None;
+    session.pending_snap_next_account_origin = None;
     session.pending_snap_storage_accounts.clear();
     session.pending_snap_code_hashes.clear();
+}
+
+fn dispatch_eth_fullnode_native_snap_account_range_request_v1(
+    chain_id: u64,
+    source_peer_id: u64,
+    session: &mut EthFullnodeNativeRlpxLivePeerSessionV1,
+    root: [u8; 32],
+    origin: [u8; 32],
+    limit: [u8; 32],
+    byte_limit: u64,
+    failure_reason: &'static str,
+) -> Result<u64, NetworkError> {
+    let Some(snap_offset) = eth_rlpx_snap_base_offset_v1(
+        session._negotiated_eth_version,
+        session._negotiated_snap_version,
+    ) else {
+        return Err(NetworkError::Decode(
+            "snap_account_range_without_negotiated_snap".to_string(),
+        ));
+    };
+    let request_id = next_eth_fullnode_native_rlpx_request_id_v1();
+    let payload =
+        eth_rlpx_build_get_account_range_payload_v1(request_id, root, origin, limit, byte_limit);
+    eth_rlpx_write_wire_frame_v1(
+        &mut session.stream,
+        &mut session.frame_session,
+        snap_offset + ETH_RLPX_SNAP_GET_ACCOUNT_RANGE_MSG,
+        payload.as_slice(),
+    )
+    .map_err(|err| {
+        observe_network_runtime_eth_peer_handshake_failure_v1(
+            chain_id,
+            source_peer_id,
+            failure_reason,
+        );
+        NetworkError::Io(err)
+    })?;
+    observe_eth_native_snap_pull(chain_id);
+    observe_network_runtime_eth_peer_syncing_v1(chain_id, source_peer_id);
+    session.last_headers_request_id = None;
+    session.last_bodies_request_id = None;
+    session.last_receipts_request_id = None;
+    session.last_snap_storage_ranges_request_id = None;
+    session.last_snap_byte_codes_request_id = None;
+    session.last_snap_state_root = Some(root);
+    session.last_snap_account_origin = Some(origin);
+    session.last_snap_account_limit = Some(limit);
+    session.pending_snap_next_account_origin = None;
+    session.pending_snap_storage_accounts.clear();
+    session.pending_snap_code_hashes.clear();
+    session.last_snap_account_range_request_id = Some(request_id);
+    session.last_sync_request_unix_ms = now_unix_ms();
+    Ok(request_id)
+}
+
+fn maybe_continue_eth_fullnode_native_snap_account_range_v1(
+    chain_id: u64,
+    source_peer_id: u64,
+    session: &mut EthFullnodeNativeRlpxLivePeerSessionV1,
+) -> Result<bool, NetworkError> {
+    if session.last_snap_account_range_request_id.is_some()
+        || session.last_snap_storage_ranges_request_id.is_some()
+        || session.last_snap_byte_codes_request_id.is_some()
+    {
+        return Ok(false);
+    }
+    let Some(root) = session.last_snap_state_root else {
+        return Ok(false);
+    };
+    let Some(origin) = session.pending_snap_next_account_origin.take() else {
+        clear_eth_fullnode_native_snap_request_state_v1(session);
+        return Ok(false);
+    };
+    let limit = session.last_snap_account_limit.unwrap_or([0xffu8; 32]);
+    if origin > limit {
+        clear_eth_fullnode_native_snap_request_state_v1(session);
+        return Ok(false);
+    }
+    let request_id = dispatch_eth_fullnode_native_snap_account_range_request_v1(
+        chain_id,
+        source_peer_id,
+        session,
+        root,
+        origin,
+        limit,
+        ETH_RLPX_SNAP_DEFAULT_ACCOUNT_RANGE_BYTES,
+        "snap_account_range_continuation_request_write_failed",
+    )?;
+    eprintln!(
+        "network_info: rlpx stage snap_account_range_continuation_requested chain_id={} peer={} endpoint={} request_id={} origin=0x{} limit=0x{} root=0x{}",
+        chain_id,
+        source_peer_id,
+        session.endpoint.addr_hint,
+        request_id,
+        hex32_v1(&origin),
+        hex32_v1(&limit),
+        hex32_v1(&root),
+    );
+    Ok(true)
 }
 
 fn build_eth_fullnode_native_pooled_transactions_response_v1(
@@ -2550,6 +2685,10 @@ fn ingest_real_rlpx_snap_account_range_v1(
         response.proof.len(),
     );
     validate_snap_account_range_proof_presence_v1(chain_id, source_peer_id, response)?;
+    let account_origin = session.last_snap_account_origin.unwrap_or([0u8; 32]);
+    let account_limit = session.last_snap_account_limit.unwrap_or([0xffu8; 32]);
+    session.pending_snap_next_account_origin =
+        eth_rlpx_snap_account_range_next_origin_v1(account_origin, account_limit, response)?;
     session.last_snap_account_range_request_id = None;
     let Some(snap_offset) = eth_rlpx_snap_base_offset_v1(
         session._negotiated_eth_version,
@@ -2678,7 +2817,13 @@ fn ingest_real_rlpx_snap_account_range_v1(
     if session.last_snap_storage_ranges_request_id.is_none()
         && session.last_snap_byte_codes_request_id.is_none()
     {
-        session.last_snap_state_root = None;
+        if maybe_continue_eth_fullnode_native_snap_account_range_v1(
+            chain_id,
+            source_peer_id,
+            session,
+        )? {
+            return Ok(());
+        }
         mark_network_runtime_eth_peer_session_ready_v1(chain_id, source_peer_id, None);
     }
     Ok(())
@@ -2759,7 +2904,13 @@ fn ingest_real_rlpx_snap_storage_ranges_v1(
     if session.last_snap_account_range_request_id.is_none()
         && session.last_snap_byte_codes_request_id.is_none()
     {
-        session.last_snap_state_root = None;
+        if maybe_continue_eth_fullnode_native_snap_account_range_v1(
+            chain_id,
+            source_peer_id,
+            session,
+        )? {
+            return Ok(());
+        }
         mark_network_runtime_eth_peer_session_ready_v1(chain_id, source_peer_id, None);
     }
     Ok(())
@@ -2837,7 +2988,13 @@ fn ingest_real_rlpx_snap_byte_codes_v1(
     if session.last_snap_account_range_request_id.is_none()
         && session.last_snap_storage_ranges_request_id.is_none()
     {
-        session.last_snap_state_root = None;
+        if maybe_continue_eth_fullnode_native_snap_account_range_v1(
+            chain_id,
+            source_peer_id,
+            session,
+        )? {
+            return Ok(());
+        }
         mark_network_runtime_eth_peer_session_ready_v1(chain_id, source_peer_id, None);
     }
     Ok(())
@@ -10447,6 +10604,62 @@ mod tests {
     }
 
     #[test]
+    fn rlpx_snap_account_range_cursor_advances_and_rejects_bad_ranges_v1() {
+        let origin = [0u8; 32];
+        let mut limit = [0xffu8; 32];
+        limit[31] = 0x10;
+        let mut account_a = [0u8; 32];
+        account_a[31] = 0x01;
+        let mut account_b = [0u8; 32];
+        account_b[31] = 0x02;
+        let response = crate::EthRlpxAccountRangeResponseV1 {
+            request_id: 1,
+            accounts: vec![
+                crate::EthRlpxSnapAccountDataV1 {
+                    hash: account_a,
+                    body_rlp: vec![0xc0],
+                },
+                crate::EthRlpxSnapAccountDataV1 {
+                    hash: account_b,
+                    body_rlp: vec![0xc0],
+                },
+            ],
+            proof: vec![vec![0x01]],
+        };
+
+        let next = eth_rlpx_snap_account_range_next_origin_v1(origin, limit, &response)
+            .expect("next cursor")
+            .expect("continuation");
+        let mut expected = [0u8; 32];
+        expected[31] = 0x03;
+        assert_eq!(next, expected);
+
+        let bad_order = crate::EthRlpxAccountRangeResponseV1 {
+            accounts: vec![
+                crate::EthRlpxSnapAccountDataV1 {
+                    hash: account_b,
+                    body_rlp: vec![0xc0],
+                },
+                crate::EthRlpxSnapAccountDataV1 {
+                    hash: account_a,
+                    body_rlp: vec![0xc0],
+                },
+            ],
+            ..response.clone()
+        };
+        assert!(eth_rlpx_snap_account_range_next_origin_v1(origin, limit, &bad_order).is_err());
+
+        let out_of_bounds = crate::EthRlpxAccountRangeResponseV1 {
+            accounts: vec![crate::EthRlpxSnapAccountDataV1 {
+                hash: [0xff; 32],
+                body_rlp: vec![0xc0],
+            }],
+            ..response
+        };
+        assert!(eth_rlpx_snap_account_range_next_origin_v1(origin, limit, &out_of_bounds).is_err());
+    }
+
+    #[test]
     fn evm_protocol_observable_equivalence_network_rlpx_snap_account_range_gate_v3() {
         let chain_id = 9_934_u64;
         let local = NodeId(1_380);
@@ -10599,6 +10812,7 @@ mod tests {
                     crate::eth_rlpx_parse_get_account_range_payload_v1(payload.as_slice())
                         .expect("parse snap get account range");
                 assert_eq!(request.root, local_state_root);
+                assert_eq!(request.origin, [0u8; 32]);
                 assert_eq!(request.limit, [0xff; 32]);
                 assert!(request.byte_limit > 0);
                 let response = crate::eth_rlpx_build_account_range_payload_v1(
@@ -10658,6 +10872,279 @@ mod tests {
             sessions[0].negotiated.snap_version,
             Some(crate::SnapWireVersion::V1)
         );
+
+        server.join().expect("server join");
+    }
+
+    #[test]
+    fn evm_protocol_observable_equivalence_network_rlpx_snap_account_range_continuation_gate_v3() {
+        let chain_id = 9_944_u64;
+        let local = NodeId(1_394);
+        let remote = NodeId(1_395);
+        clear_network_runtime_native_snapshots_for_chain_v1(chain_id);
+        let local_state_root = [0xa7; 32];
+        set_network_runtime_sync_status(
+            chain_id,
+            NetworkRuntimeSyncStatus {
+                peer_count: 1,
+                starting_block: 22_800,
+                current_block: 22_850,
+                highest_block: 23_000,
+            },
+        );
+        set_network_runtime_native_head_snapshot_v1(
+            chain_id,
+            crate::runtime_status::NetworkRuntimeNativeHeadSnapshotV1 {
+                chain_id,
+                phase: NetworkRuntimeNativeSyncPhaseV1::State,
+                peer_count: 1,
+                block_number: 22_850,
+                block_hash: [0xb7; 32],
+                parent_block_hash: [0xb6; 32],
+                state_root: local_state_root,
+                canonical: true,
+                safe: false,
+                finalized: false,
+                reorg_depth_hint: None,
+                body_available: true,
+                source_peer_id: Some(local.0),
+                observed_unix_ms: 1,
+            },
+        );
+
+        let responder_signing = k256::ecdsa::SigningKey::random(&mut rand::rngs::OsRng);
+        let responder_nodekey: [u8; 32] = responder_signing.to_bytes().into();
+        let responder_pub = crate::eth_rlpx_pubkey_from_nodekey_bytes_v1(&responder_nodekey)
+            .expect("derive responder pubkey");
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind rlpx listener");
+        let listen_addr = listener.local_addr().expect("rlpx listener addr");
+        let endpoint = PluginPeerEndpoint {
+            endpoint: format!(
+                "enode://{}@{}",
+                responder_pub
+                    .iter()
+                    .map(|b| format!("{b:02x}"))
+                    .collect::<String>(),
+                listen_addr
+            ),
+            node_hint: remote.0,
+            addr_hint: listen_addr.to_string(),
+        };
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+
+        let server = thread::spawn(move || {
+            let mut account_hash = [0u8; 32];
+            account_hash[31] = 0x07;
+            let mut expected_next_origin = [0u8; 32];
+            expected_next_origin[31] = 0x08;
+            let empty_slim_account_body = vec![0xc4, 0x01, 0x80, 0x80, 0x80];
+
+            let (mut accepted, _) = listener.accept().expect("accept rlpx");
+            accepted
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .expect("set server read timeout");
+            accepted
+                .set_write_timeout(Some(Duration::from_secs(5)))
+                .expect("set server write timeout");
+            let mut responder = crate::eth_rlpx_handshake_responder_with_nodekey_v1(
+                &responder_nodekey,
+                &mut accepted,
+            )
+            .expect("responder handshake");
+            let (hello_code, hello_payload) =
+                crate::eth_rlpx_read_wire_frame_v1(&mut accepted, &mut responder.session)
+                    .expect("read initiator hello");
+            assert_eq!(hello_code, crate::ETH_RLPX_P2P_HELLO_MSG);
+            let initiator_hello = crate::eth_rlpx_parse_hello_payload_v1(hello_payload.as_slice())
+                .expect("parse initiator hello");
+            let responder_hello = crate::eth_rlpx_build_hello_payload_v1(
+                &responder.local_static_pub,
+                crate::default_eth_rlpx_capabilities_v1().as_slice(),
+                "SuperVM/snap-account-range-continuation-gate",
+                listen_addr.port().into(),
+            );
+            crate::eth_rlpx_write_wire_frame_v1(
+                &mut accepted,
+                &mut responder.session,
+                crate::ETH_RLPX_P2P_HELLO_MSG,
+                responder_hello.as_slice(),
+            )
+            .expect("write responder hello");
+            if initiator_hello.protocol_version >= 5 {
+                responder.session.set_snappy(true);
+            }
+            let status = crate::EthRlpxStatusV1 {
+                protocol_version: crate::ETH_NATIVE_MAX_SUPPORTED_ETH_PROTOCOL_VERSION as u32,
+                network_id: chain_id,
+                genesis_hash: crate::eth_chain_config_genesis_hash_v1(chain_id),
+                fork_id: crate::build_eth_fork_id_from_chain_config_v1(
+                    &crate::resolve_eth_chain_config_v1(chain_id),
+                    23_000,
+                    0,
+                ),
+                earliest_block: 1,
+                latest_block: 23_000,
+                latest_block_hash: [0x45; 32],
+            };
+            let status_payload = crate::eth_rlpx_build_status_payload_v1(status);
+            crate::eth_rlpx_write_wire_frame_v1(
+                &mut accepted,
+                &mut responder.session,
+                crate::ETH_RLPX_BASE_PROTOCOL_OFFSET + crate::ETH_RLPX_ETH_STATUS_MSG,
+                status_payload.as_slice(),
+            )
+            .expect("write responder status");
+            let (peer_status_code, peer_status_payload) =
+                crate::eth_rlpx_read_wire_frame_v1(&mut accepted, &mut responder.session)
+                    .expect("read peer status");
+            assert_eq!(
+                peer_status_code,
+                crate::ETH_RLPX_BASE_PROTOCOL_OFFSET + crate::ETH_RLPX_ETH_STATUS_MSG
+            );
+            let peer_status =
+                crate::eth_rlpx_parse_status_payload_v1(peer_status_payload.as_slice())
+                    .expect("parse peer status");
+            assert_eq!(peer_status.network_id, chain_id);
+            let snap_offset =
+                crate::eth_rlpx_snap_base_offset_v1(peer_status.protocol_version as u8, Some(1))
+                    .expect("snap offset");
+
+            let first_request = loop {
+                let (code, payload) =
+                    crate::eth_rlpx_read_wire_frame_v1(&mut accepted, &mut responder.session)
+                        .expect("read first snap account request");
+                if code == crate::ETH_RLPX_P2P_PING_MSG {
+                    crate::eth_rlpx_write_wire_frame_v1(
+                        &mut accepted,
+                        &mut responder.session,
+                        crate::ETH_RLPX_P2P_PONG_MSG,
+                        &[],
+                    )
+                    .expect("write pong");
+                    continue;
+                }
+                assert_eq!(
+                    code,
+                    snap_offset + crate::ETH_RLPX_SNAP_GET_ACCOUNT_RANGE_MSG
+                );
+                break crate::eth_rlpx_parse_get_account_range_payload_v1(payload.as_slice())
+                    .expect("parse first snap get account range");
+            };
+            assert_eq!(first_request.root, local_state_root);
+            assert_eq!(first_request.origin, [0u8; 32]);
+            assert_eq!(first_request.limit, [0xff; 32]);
+            assert!(first_request.byte_limit > 0);
+
+            let account = crate::EthRlpxSnapAccountDataV1 {
+                hash: account_hash,
+                body_rlp: empty_slim_account_body,
+            };
+            let response = crate::eth_rlpx_build_account_range_payload_v1(
+                first_request.request_id,
+                &[account],
+                &[vec![0x99, 0x04]],
+            );
+            crate::eth_rlpx_write_wire_frame_v1(
+                &mut accepted,
+                &mut responder.session,
+                snap_offset + crate::ETH_RLPX_SNAP_ACCOUNT_RANGE_MSG,
+                response.as_slice(),
+            )
+            .expect("write first account range");
+
+            let second_request = loop {
+                let (code, payload) =
+                    crate::eth_rlpx_read_wire_frame_v1(&mut accepted, &mut responder.session)
+                        .expect("read continuation snap account request");
+                if code == crate::ETH_RLPX_P2P_PING_MSG {
+                    crate::eth_rlpx_write_wire_frame_v1(
+                        &mut accepted,
+                        &mut responder.session,
+                        crate::ETH_RLPX_P2P_PONG_MSG,
+                        &[],
+                    )
+                    .expect("write pong");
+                    continue;
+                }
+                assert_eq!(
+                    code,
+                    snap_offset + crate::ETH_RLPX_SNAP_GET_ACCOUNT_RANGE_MSG
+                );
+                break crate::eth_rlpx_parse_get_account_range_payload_v1(payload.as_slice())
+                    .expect("parse continuation snap get account range");
+            };
+            assert_ne!(second_request.request_id, first_request.request_id);
+            assert_eq!(second_request.root, local_state_root);
+            assert_eq!(second_request.origin, expected_next_origin);
+            assert_eq!(second_request.limit, [0xff; 32]);
+            assert!(second_request.byte_limit > 0);
+
+            let done_response =
+                crate::eth_rlpx_build_account_range_payload_v1(second_request.request_id, &[], &[]);
+            crate::eth_rlpx_write_wire_frame_v1(
+                &mut accepted,
+                &mut responder.session,
+                snap_offset + crate::ETH_RLPX_SNAP_ACCOUNT_RANGE_MSG,
+                done_response.as_slice(),
+            )
+            .expect("write final empty account range");
+            done_tx
+                .send(())
+                .expect("signal snap account continuation gate");
+            thread::sleep(Duration::from_millis(50));
+        });
+
+        let mut budget = default_eth_fullnode_budget_hooks_v1();
+        budget.active_native_peer_soft_limit = 1;
+        budget.active_native_peer_hard_limit = 1;
+        budget.sync_request_interval_ms = 1;
+        budget.tx_broadcast_interval_ms = u64::MAX;
+        let worker = EthFullnodeNativePeerWorkerV1::new(EthFullnodeNativePeerWorkerConfigV1 {
+            chain_id,
+            local_node: local,
+            peers: vec![remote],
+            peer_endpoints: vec![endpoint],
+            recv_budget: 1,
+            sync_target_fanout: 1,
+            budget_hooks: budget,
+        });
+
+        let report0 = worker.drive_real_network_once().expect("connect tick");
+        assert_eq!(report0.connected_peers, 1);
+        let started = std::time::Instant::now();
+        let mut continued = false;
+        while started.elapsed() < Duration::from_secs(5) {
+            if done_rx.try_recv().is_ok() {
+                continued = true;
+                break;
+            }
+            let _ = worker
+                .drive_real_network_once()
+                .expect("snap continuation tick");
+            if done_rx.try_recv().is_ok() {
+                continued = true;
+                break;
+            }
+            thread::sleep(Duration::from_millis(5));
+        }
+        assert!(
+            continued,
+            "AccountRange response must drive cursor continuation request"
+        );
+        let evidence = snapshot_eth_native_sync_evidence(chain_id);
+        assert!(evidence.snap_pull_seen);
+        assert!(evidence.snap_response_seen);
+        let account = crate::get_network_runtime_native_snap_account_snapshot_v1(
+            chain_id,
+            local_state_root,
+            [
+                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                0, 0, 0, 7,
+            ],
+        )
+        .expect("snap account snapshot");
+        assert!(!account.has_storage);
+        assert!(!account.has_code);
 
         server.join().expect("server join");
     }

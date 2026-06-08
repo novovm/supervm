@@ -4347,11 +4347,7 @@ pub fn build_eth_fullnode_native_sync_request_v1(
             ProtocolMessage::EvmNative(EvmNativeMessage::SnapGetAccountRange {
                 from: local_node,
                 block_hash: eth_native_head_hash_hint_v1(chain_id),
-                origin: {
-                    let mut origin = [0u8; 32];
-                    origin[0..8].copy_from_slice(&window.from_block.to_le_bytes());
-                    origin
-                },
+                origin: [0u8; 32],
                 limit: span,
             })
         }
@@ -5089,6 +5085,42 @@ mod tests {
 
         let progress = current_eth_native_parity_progress_for_chain(chain_id);
         assert!(progress.native_snap_sync_state_machine);
+    }
+
+    #[test]
+    fn native_state_sync_request_starts_snap_account_range_at_zero_origin() {
+        let chain_id = 99_160_315_u64;
+        crate::runtime_status::set_network_runtime_sync_status(
+            chain_id,
+            NetworkRuntimeSyncStatus {
+                peer_count: 1,
+                starting_block: 64,
+                current_block: 128,
+                highest_block: 129,
+            },
+        );
+        crate::runtime_status::set_network_runtime_native_sync_status(
+            chain_id,
+            NetworkRuntimeNativeSyncStatusV1 {
+                phase: NetworkRuntimeNativeSyncPhaseV1::State,
+                peer_count: 1,
+                starting_block: 64,
+                current_block: 128,
+                highest_block: 129,
+                updated_at_unix_millis: 1,
+            },
+        );
+
+        let request = build_eth_fullnode_native_sync_request_v1(NodeId(7), chain_id)
+            .expect("state sync request");
+        let ProtocolMessage::EvmNative(EvmNativeMessage::SnapGetAccountRange {
+            origin, limit, ..
+        }) = request
+        else {
+            panic!("state phase should request snap AccountRange");
+        };
+        assert_eq!(origin, [0u8; 32]);
+        assert_eq!(limit, 1);
     }
 
     #[test]
