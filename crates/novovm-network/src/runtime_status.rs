@@ -585,6 +585,8 @@ pub struct NetworkRuntimeNativeCanonicalBlockStateV1 {
     pub hash: [u8; 32],
     pub parent_hash: [u8; 32],
     pub state_root: [u8; 32],
+    #[serde(default)]
+    pub transactions_root: Option<[u8; 32]>,
     pub header_observed: bool,
     pub body_available: bool,
     #[serde(default)]
@@ -601,6 +603,8 @@ pub struct NetworkRuntimeNativeCanonicalBlockStateV1 {
     pub receipt_count: Option<usize>,
     #[serde(default)]
     pub receipts_root: Option<[u8; 32]>,
+    #[serde(default)]
+    pub ommers_hash: Option<[u8; 32]>,
     #[serde(default)]
     pub state_root_validated: bool,
     #[serde(default)]
@@ -1723,6 +1727,7 @@ fn runtime_native_canonical_chain_upsert_header_v1(
             hash: header.hash,
             parent_hash: header.parent_hash,
             state_root: header.state_root,
+            transactions_root: Some(header.transactions_root),
             header_observed: true,
             body_available: false,
             tx_hashes: Vec::new(),
@@ -1731,7 +1736,8 @@ fn runtime_native_canonical_chain_upsert_header_v1(
             withdrawal_count: None,
             receipts_available: false,
             receipt_count: None,
-            receipts_root: None,
+            receipts_root: Some(header.receipts_root),
+            ommers_hash: Some(header.ommers_hash),
             state_root_validated: false,
             state_root_validation_method: None,
             lifecycle_stage: NetworkRuntimeNativeBlockLifecycleStageV1::HeaderOnly,
@@ -1746,7 +1752,10 @@ fn runtime_native_canonical_chain_upsert_header_v1(
     entry.number = header.number;
     entry.parent_hash = header.parent_hash;
     entry.state_root = header.state_root;
+    entry.transactions_root = Some(header.transactions_root);
     entry.header_observed = true;
+    entry.receipts_root = Some(header.receipts_root);
+    entry.ommers_hash = Some(header.ommers_hash);
     entry.source_peer_id = header.source_peer_id.or(entry.source_peer_id);
     entry.observed_unix_ms = entry.observed_unix_ms.max(header.observed_unix_ms);
     entry.lifecycle_stage = runtime_native_canonical_chain_infer_block_lifecycle_v1(
@@ -1769,6 +1778,7 @@ fn runtime_native_canonical_chain_upsert_body_v1(
             hash: body.block_hash,
             parent_hash: [0u8; 32],
             state_root: [0u8; 32],
+            transactions_root: None,
             header_observed: false,
             body_available: body.body_available,
             tx_hashes: body.tx_hashes.clone(),
@@ -1778,6 +1788,7 @@ fn runtime_native_canonical_chain_upsert_body_v1(
             receipts_available: false,
             receipt_count: None,
             receipts_root: None,
+            ommers_hash: None,
             state_root_validated: false,
             state_root_validation_method: None,
             lifecycle_stage: NetworkRuntimeNativeBlockLifecycleStageV1::Seen,
@@ -1839,6 +1850,7 @@ fn runtime_native_canonical_chain_upsert_receipt_v1(
             hash: receipt.block_hash,
             parent_hash: [0u8; 32],
             state_root: [0u8; 32],
+            transactions_root: None,
             header_observed: false,
             body_available: false,
             tx_hashes: Vec::new(),
@@ -1848,6 +1860,7 @@ fn runtime_native_canonical_chain_upsert_receipt_v1(
             receipts_available: receipt.receipts_available,
             receipt_count: Some(receipt.receipt_count),
             receipts_root: Some(receipt.receipts_root),
+            ommers_hash: None,
             state_root_validated: false,
             state_root_validation_method: None,
             lifecycle_stage: NetworkRuntimeNativeBlockLifecycleStageV1::Seen,
@@ -1991,6 +2004,7 @@ fn runtime_native_canonical_chain_apply_head_v1(
                 hash: head.block_hash,
                 parent_hash: head.parent_block_hash,
                 state_root: head.state_root,
+                transactions_root: None,
                 header_observed: true,
                 body_available: head.body_available,
                 tx_hashes: Vec::new(),
@@ -2000,6 +2014,7 @@ fn runtime_native_canonical_chain_apply_head_v1(
                 receipts_available: false,
                 receipt_count: None,
                 receipts_root: None,
+                ommers_hash: None,
                 state_root_validated: false,
                 state_root_validation_method: None,
                 lifecycle_stage: NetworkRuntimeNativeBlockLifecycleStageV1::Canonical,
@@ -2039,6 +2054,7 @@ fn runtime_native_canonical_chain_apply_head_v1(
             hash: head.block_hash,
             parent_hash: head.parent_block_hash,
             state_root: head.state_root,
+            transactions_root: None,
             header_observed: true,
             body_available: head.body_available,
             tx_hashes: Vec::new(),
@@ -2048,6 +2064,7 @@ fn runtime_native_canonical_chain_apply_head_v1(
             receipts_available: false,
             receipt_count: None,
             receipts_root: None,
+            ommers_hash: None,
             state_root_validated: false,
             state_root_validation_method: None,
             lifecycle_stage: NetworkRuntimeNativeBlockLifecycleStageV1::Canonical,
