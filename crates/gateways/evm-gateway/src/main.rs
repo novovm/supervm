@@ -6839,10 +6839,11 @@ fn gateway_engine_withdrawal_json_v1(raw: &[u8]) -> Result<serde_json::Value> {
     }))
 }
 
-fn gateway_engine_payload_body_from_canonical_block_v1(
+fn gateway_engine_payload_body_from_native_block_v1(
     block: &NetworkRuntimeNativeCanonicalBlockStateV1,
+    require_canonical: bool,
 ) -> serde_json::Value {
-    if !block.canonical || !block.body_available {
+    if (require_canonical && !block.canonical) || !block.body_available {
         return serde_json::Value::Null;
     }
     if block.raw_tx_rlps.len() != block.tx_hashes.len() {
@@ -6876,12 +6877,11 @@ fn gateway_engine_payload_body_from_canonical_block_v1(
     })
 }
 
-fn gateway_engine_canonical_blocks_by_hash_v1(
+fn gateway_engine_native_blocks_by_hash_v1(
     chain_id: u64,
 ) -> HashMap<[u8; 32], NetworkRuntimeNativeCanonicalBlockStateV1> {
     snapshot_network_runtime_native_canonical_blocks_v1(chain_id, 0)
         .into_iter()
-        .filter(|block| block.canonical)
         .map(|block| (block.hash, block))
         .collect()
 }
@@ -6891,13 +6891,13 @@ fn gateway_engine_get_payload_bodies_by_hash_v1(
     params: &serde_json::Value,
 ) -> Result<serde_json::Value> {
     let hashes = gateway_engine_parse_hashes_v1(params)?;
-    let by_hash = gateway_engine_canonical_blocks_by_hash_v1(chain_id);
+    let by_hash = gateway_engine_native_blocks_by_hash_v1(chain_id);
     let bodies = hashes
         .iter()
         .map(|hash| {
             by_hash
                 .get(hash)
-                .map(gateway_engine_payload_body_from_canonical_block_v1)
+                .map(|block| gateway_engine_payload_body_from_native_block_v1(block, false))
                 .unwrap_or(serde_json::Value::Null)
         })
         .collect::<Vec<_>>();
@@ -6909,19 +6909,28 @@ fn gateway_engine_get_payload_bodies_by_range_v1(
     params: &serde_json::Value,
 ) -> Result<serde_json::Value> {
     let (start, count) = gateway_engine_parse_range_v1(params)?;
-    let by_number = snapshot_network_runtime_native_canonical_blocks_v1(chain_id, 0)
-        .into_iter()
-        .filter(|block| block.canonical)
-        .map(|block| (block.number, block))
-        .collect::<HashMap<_, _>>();
+    let mut by_number = HashMap::<u64, Vec<NetworkRuntimeNativeCanonicalBlockStateV1>>::new();
+    for block in snapshot_network_runtime_native_canonical_blocks_v1(chain_id, 0) {
+        by_number.entry(block.number).or_default().push(block);
+    }
     let bodies = (0..count)
         .map(|offset| {
             let Some(number) = start.checked_add(offset) else {
                 return serde_json::Value::Null;
             };
-            by_number
-                .get(&number)
-                .map(gateway_engine_payload_body_from_canonical_block_v1)
+            let Some(candidates) = by_number.get(&number) else {
+                return serde_json::Value::Null;
+            };
+            candidates
+                .iter()
+                .map(|block| gateway_engine_payload_body_from_native_block_v1(block, true))
+                .find(|body| !body.is_null())
+                .or_else(|| {
+                    candidates
+                        .iter()
+                        .map(|block| gateway_engine_payload_body_from_native_block_v1(block, false))
+                        .find(|body| !body.is_null())
+                })
                 .unwrap_or(serde_json::Value::Null)
         })
         .collect::<Vec<_>>();

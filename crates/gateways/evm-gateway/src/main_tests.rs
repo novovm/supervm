@@ -849,6 +849,57 @@ fn engine_payload_bodies_read_native_rlpx_canonical_material_v1() {
     assert!(!changed);
     assert_eq!(by_range, serde_json::json!([expected_body]));
 
+    let observed_body_hash = [0xc7_u8; 32];
+    novovm_network::set_network_runtime_native_body_snapshot_v1(
+        chain_id,
+        novovm_network::NetworkRuntimeNativeBodySnapshotV1 {
+            chain_id,
+            number: 12,
+            block_hash: observed_body_hash,
+            tx_hashes: Vec::new(),
+            raw_tx_rlps: Vec::new(),
+            ommer_hashes: Vec::new(),
+            withdrawal_rlp_items: Some(Vec::new()),
+            withdrawal_count: Some(0),
+            body_available: true,
+            txs_materialized: true,
+            observed_unix_ms: 4,
+        },
+    );
+    let observed_empty_body = serde_json::json!({
+        "transactions": [],
+        "withdrawals": [],
+    });
+    let (observed_by_hash, changed) = run_gateway_method(
+        &mut router,
+        &mut eth_tx_index,
+        &mut evm_settlement_index_by_id,
+        &mut evm_settlement_index_by_tx,
+        &mut evm_pending_payout_by_settlement,
+        &mut ctx,
+        "engine_getPayloadBodiesByHashV1",
+        &serde_json::json!([[format!("0x{}", to_hex(&observed_body_hash))]]),
+    )
+    .expect("engine body by hash should expose observed native body material");
+    assert!(!changed);
+    assert_eq!(
+        observed_by_hash,
+        serde_json::json!([observed_empty_body.clone()])
+    );
+    let (observed_by_range, changed) = run_gateway_method(
+        &mut router,
+        &mut eth_tx_index,
+        &mut evm_settlement_index_by_id,
+        &mut evm_settlement_index_by_tx,
+        &mut evm_pending_payout_by_settlement,
+        &mut ctx,
+        "engine_getPayloadBodiesByRangeV1",
+        &serde_json::json!(["0xc", "0x1"]),
+    )
+    .expect("engine body range should fallback to observed native body material");
+    assert!(!changed);
+    assert_eq!(observed_by_range, serde_json::json!([observed_empty_body]));
+
     let incomplete_hash = [0xb7_u8; 32];
     novovm_network::set_network_runtime_native_body_snapshot_v1(
         chain_id,
