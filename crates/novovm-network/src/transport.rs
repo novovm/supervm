@@ -2701,6 +2701,40 @@ fn maybe_continue_eth_fullnode_native_snap_account_range_v1(
     Ok(true)
 }
 
+fn match_eth_fullnode_native_snap_trie_nodes_v1(
+    expected_hashes: &[[u8; 32]],
+    nodes: &[Vec<u8>],
+) -> Result<Vec<(usize, [u8; 32])>, String> {
+    let mut matched = Vec::new();
+    let mut search_from = 0usize;
+    for (response_idx, node) in nodes.iter().enumerate() {
+        if !eth_rlpx_validate_trie_node_rlp_v1(node.as_slice()) {
+            return Err(format!(
+                "snap_trie_nodes_node_rlp_invalid:idx={response_idx}"
+            ));
+        }
+        let node_hash = eth_rlpx_trie_node_hash_v1(node.as_slice());
+        let mut matched_index = None;
+        while search_from < expected_hashes.len() {
+            if expected_hashes[search_from] == node_hash {
+                matched_index = Some(search_from);
+                search_from = search_from.saturating_add(1);
+                break;
+            }
+            search_from = search_from.saturating_add(1);
+        }
+        let Some(expected_idx) = matched_index else {
+            return Err(format!(
+                "snap_trie_nodes_unexpected_hash:idx={} got=0x{}",
+                response_idx,
+                hex32_v1(&node_hash)
+            ));
+        };
+        matched.push((expected_idx, node_hash));
+    }
+    Ok(matched)
+}
+
 fn build_eth_fullnode_native_pooled_transactions_response_v1(
     chain_id: u64,
     hashes: &[[u8; 32]],
@@ -3213,19 +3247,6 @@ fn ingest_real_rlpx_snap_trie_nodes_v1(
         );
         return Err(NetworkError::Decode(reason));
     }
-    if response.nodes.len() < session.pending_snap_trie_node_pathsets.len() {
-        let reason = format!(
-            "snap_trie_nodes_count_missing:nodes={} requested={}",
-            response.nodes.len(),
-            session.pending_snap_trie_node_pathsets.len()
-        );
-        observe_network_runtime_eth_peer_decode_failure_v1(
-            chain_id,
-            source_peer_id,
-            reason.as_str(),
-        );
-        return Err(NetworkError::Decode(reason));
-    }
     let Some(root) = session.last_snap_state_root else {
         let reason = "snap_trie_nodes_state_root_missing".to_string();
         observe_network_runtime_eth_peer_decode_failure_v1(
@@ -3235,40 +3256,35 @@ fn ingest_real_rlpx_snap_trie_nodes_v1(
         );
         return Err(NetworkError::Decode(reason));
     };
-    for (idx, node) in response.nodes.iter().enumerate() {
-        if !eth_rlpx_validate_trie_node_rlp_v1(node.as_slice()) {
-            let reason = format!("snap_trie_nodes_node_rlp_invalid:idx={idx}");
-            observe_network_runtime_eth_peer_decode_failure_v1(
-                chain_id,
-                source_peer_id,
-                reason.as_str(),
-            );
-            return Err(NetworkError::Decode(reason));
-        }
-        let node_hash = eth_rlpx_trie_node_hash_v1(node.as_slice());
-        let expected_hash = session
-            .pending_snap_trie_node_hashes
-            .get(idx)
-            .copied()
-            .unwrap_or(root);
-        if node_hash != expected_hash {
-            let reason = format!(
-                "snap_trie_nodes_hash_mismatch:idx={} expected=0x{} got=0x{}",
-                idx,
-                hex32_v1(&expected_hash),
-                hex32_v1(&node_hash)
-            );
-            observe_network_runtime_eth_peer_decode_failure_v1(
-                chain_id,
-                source_peer_id,
-                reason.as_str(),
-            );
-            return Err(NetworkError::Decode(reason));
-        }
+    let mut expected_hashes = session.pending_snap_trie_node_hashes.clone();
+    while expected_hashes.len() < session.pending_snap_trie_node_pathsets.len() {
+        expected_hashes.push(root);
+    }
+    let matched_nodes = match_eth_fullnode_native_snap_trie_nodes_v1(
+        expected_hashes.as_slice(),
+        response.nodes.as_slice(),
+    )
+    .map_err(|reason| {
+        observe_network_runtime_eth_peer_decode_failure_v1(
+            chain_id,
+            source_peer_id,
+            reason.as_str(),
+        );
+        NetworkError::Decode(reason)
+    })?;
+    if response.nodes.is_empty() {
+        eprintln!(
+            "network_info: rlpx stage snap_trie_nodes_empty chain_id={} peer={} endpoint={} request_id={} requested={}",
+            chain_id,
+            source_peer_id,
+            session.endpoint.addr_hint,
+            response.request_id,
+            session.pending_snap_trie_node_pathsets.len(),
+        );
     }
     observe_eth_native_snap_response(chain_id);
     eprintln!(
-        "network_info: rlpx stage snap_trie_nodes_received chain_id={} peer={} endpoint={} negotiated_eth={} negotiated_snap={:?} request_id={} nodes={}",
+        "network_info: rlpx stage snap_trie_nodes_received chain_id={} peer={} endpoint={} negotiated_eth={} negotiated_snap={:?} request_id={} nodes={} matched={} missing={}",
         chain_id,
         source_peer_id,
         session.endpoint.addr_hint,
@@ -3276,10 +3292,22 @@ fn ingest_real_rlpx_snap_trie_nodes_v1(
         session._negotiated_snap_version,
         response.request_id,
         response.nodes.len(),
+        matched_nodes.len(),
+        session
+            .pending_snap_trie_node_pathsets
+            .len()
+            .saturating_sub(matched_nodes.len()),
     );
     let observed_unix_ms = now_unix_ms() as u128;
-    for (idx, node) in response.nodes.iter().enumerate() {
-        let Some(path_segments) = session.pending_snap_trie_node_pathsets.get(idx).cloned() else {
+    for (response_idx, (expected_idx, node_hash)) in matched_nodes.iter().enumerate() {
+        let Some(node) = response.nodes.get(response_idx) else {
+            continue;
+        };
+        let Some(path_segments) = session
+            .pending_snap_trie_node_pathsets
+            .get(*expected_idx)
+            .cloned()
+        else {
             continue;
         };
         set_network_runtime_native_snap_trie_node_snapshot_v1(
@@ -3288,7 +3316,7 @@ fn ingest_real_rlpx_snap_trie_nodes_v1(
                 chain_id,
                 state_root: root,
                 path_segments,
-                node_hash: eth_rlpx_trie_node_hash_v1(node.as_slice()),
+                node_hash: *node_hash,
                 node_rlp: node.clone(),
                 source_peer_id: Some(source_peer_id),
                 observed_unix_ms,
@@ -10971,6 +10999,63 @@ mod tests {
             ..response
         };
         assert!(eth_rlpx_snap_account_range_next_origin_v1(origin, limit, &out_of_bounds).is_err());
+    }
+
+    #[test]
+    fn rlpx_snap_trie_nodes_partial_response_matches_geth_heal_semantics_v1() {
+        let root_node = {
+            let mut node = vec![0xd1_u8];
+            node.extend(std::iter::repeat(0x80_u8).take(17));
+            node
+        };
+        let storage_node = {
+            let mut node = vec![0xd1_u8, 0x01];
+            node.extend(std::iter::repeat(0x80_u8).take(16));
+            node
+        };
+        let unexpected_node = {
+            let mut node = vec![0xd1_u8, 0x02];
+            node.extend(std::iter::repeat(0x80_u8).take(16));
+            node
+        };
+        let root_hash = crate::eth_rlpx_trie_node_hash_v1(root_node.as_slice());
+        let storage_hash = crate::eth_rlpx_trie_node_hash_v1(storage_node.as_slice());
+        let expected = vec![root_hash, storage_hash];
+
+        let partial =
+            match_eth_fullnode_native_snap_trie_nodes_v1(expected.as_slice(), &[storage_node])
+                .expect("missing earlier trie node should remain a heal gap");
+        assert_eq!(partial, vec![(1, storage_hash)]);
+
+        let full = match_eth_fullnode_native_snap_trie_nodes_v1(
+            expected.as_slice(),
+            &[root_node.clone(), {
+                let mut node = vec![0xd1_u8, 0x01];
+                node.extend(std::iter::repeat(0x80_u8).take(16));
+                node
+            }],
+        )
+        .expect("complete ordered trie nodes");
+        assert_eq!(full, vec![(0, root_hash), (1, storage_hash)]);
+
+        let out_of_order = match_eth_fullnode_native_snap_trie_nodes_v1(
+            expected.as_slice(),
+            &[
+                {
+                    let mut node = vec![0xd1_u8, 0x01];
+                    node.extend(std::iter::repeat(0x80_u8).take(16));
+                    node
+                },
+                root_node,
+            ],
+        )
+        .expect_err("out-of-order trie nodes are not geth-compatible");
+        assert!(out_of_order.contains("snap_trie_nodes_unexpected_hash"));
+
+        let unexpected =
+            match_eth_fullnode_native_snap_trie_nodes_v1(expected.as_slice(), &[unexpected_node])
+                .expect_err("unrequested trie node must be rejected");
+        assert!(unexpected.contains("snap_trie_nodes_unexpected_hash"));
     }
 
     #[test]
