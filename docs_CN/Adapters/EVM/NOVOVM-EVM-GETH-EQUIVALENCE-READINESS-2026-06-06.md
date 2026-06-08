@@ -138,6 +138,58 @@ NOVOVM_NODE_MODE=eth_rlpx_sync cargo run -p novovm-node --bin novovm-node
 
 本轮没有发现新的协议 decode mismatch 或 root mismatch。该证据只扩大了“公网 churn 下可以持续恢复并前进”的窗口，不等价于完整 geth 长期主网同步完成；完整 snap state heal、完整 state DB、完整历史 DB、discv5 和长稳公网接受度仍未封口。
 
+## 2026-06-09 RLPx body batch 32 推进证据
+
+本轮发现真实产品入口在默认 `NOVOVM_ETH_RLPX_BODIES_BATCH=8` 下只能以 8 块为主要步长追赶主网，虽然安全但吞吐离 geth 式长期同步目标过远。产品入口默认值已调整为：
+
+- `NOVOVM_ETH_RLPX_HEADERS_BATCH=128`
+- `NOVOVM_ETH_RLPX_BODIES_BATCH=32`
+
+显式 env 仍可把 body batch 下调到 8 或更低；底层 native fullnode 默认 2048/256 不变。
+
+验证命令：
+
+```powershell
+NOVOVM_NODE_MODE=eth_rlpx_sync cargo run -p novovm-node --bin novovm-node
+```
+
+本轮运行使用默认 32 active peer、默认 batch-32，起点：
+
+- checkpoint/head store: `current=1469/highest=25275734`
+- current head body/receipt: available
+
+观测结果：
+
+- tick 4：公网 peer admission 不足触发 `reason=sync_progress_stalled_expand`，候选扩到 `268`
+- tick 6：拿到 ready peer，`highest` 更新到 `25275763`
+- tick 7：一次导入 `headers=32/bodies=32/receipts=32`，`current=1469 -> 1501`，body/receipt available
+- tick 10：第二个 32-header 窗口推进到 `current=1533`，但遇到 public peer write/close，短暂 `body_available=false`
+- tick 12：missing-body/receipt recovery 把 `1533` 恢复到 current body/receipt available
+
+最终停止时：
+
+- checkpoint/head store: `current=1533/highest=25275777`
+- current head body/receipt: available
+
+本轮回归验证：
+
+```powershell
+cargo fmt --check
+cargo test -p novovm-node eth_rlpx_public_sync -- --nocapture
+cargo test -p novovm-node eth_rlpx_ -- --nocapture
+cargo test -p novovm-node -- --nocapture
+cargo test -p novovm-network missing_body_recovery -- --nocapture
+```
+
+结果：
+
+- `eth_rlpx_public_sync`: 2 passed
+- `eth_rlpx_`: 19 passed
+- `novovm-node`: pass；其中 geth parity batch `sampleCount=11`、`totalMismatchCount=0`
+- `missing_body_recovery`: 4 passed
+
+该证据说明默认 batch-32 能把主要前进步长从 8 提到 32，并且现有断线/缺 body 恢复路径仍能把当前 head 恢复到 body/receipt 可用。它不改变未完成边界：完整 snap state heal、完整 state DB、完整历史 DB、discv5、Engine/CL 配合和长稳公网接受度仍未封口。
+
 ## 本轮实跑证据
 
 ### 1. 默认 geth parity fixture
@@ -321,7 +373,7 @@ cargo run -p novovmctl -- evm-block-access-list-scan `
 - RLPx empty-body receipt materialization gate: pass, covers materialized empty body + empty `receiptsRoot` -> local empty native receipt snapshot without waiting for a remote `Receipts` response；this removes the observed long-run stall where block `1024` had header/body available but `receipt=null`
 - RLPx missing-receipts recovery gate: pass, covers peer disconnect after latest header/body import but before receipt response；next ready RLPx worker rebuilds pending receipt state from latest native header/body and sends `GetReceipts(firstBlockReceiptIndex=0)` before any new `GetBlockHeaders` pull, then validates/writes the recovered receipt snapshot
 - RLPx same-tick sync dispatch gate: pass, real RLPx worker 在 Status 成功后同一 tick 立即 drive 已 ready session 并发出首个 `GetBlockHeaders`/sync request，减少公网 peer 在下一 scheduler tick 前关闭导致的 ready 空窗；由 `real_rlpx_peer_worker_ingests_runtime_native_snapshots` 覆盖
-- novovm-node RLPx public sync batch gate: pass, `eth_rlpx_sync` 产品入口默认把公网 `GetBlockHeaders`/`GetBlockBodies` 批量收敛到 `NOVOVM_ETH_RLPX_HEADERS_BATCH=128`、`NOVOVM_ETH_RLPX_BODIES_BATCH=8`，保持主网同步可用吞吐，同时减少 churny public peer 上的大 frame 中途 EOF 压力；该收敛只作用于产品入口 worker budget，不改变底层 native fullnode 默认 2048/256 能力
+- novovm-node RLPx public sync batch gate: pass, `eth_rlpx_sync` 产品入口默认把公网 `GetBlockHeaders`/`GetBlockBodies` 批量收敛到 `NOVOVM_ETH_RLPX_HEADERS_BATCH=128`、`NOVOVM_ETH_RLPX_BODIES_BATCH=32`，比旧默认 8 更适合产品入口追赶主网；公网 peer 如果持续出现大 frame 中途 EOF，仍可通过 env 显式下调 body batch。该收敛只作用于产品入口 worker budget，不改变底层 native fullnode 默认 2048/256 能力。
 - RLPx pooled tx gates: pass, covers inbound real `NewPooledTransactionHashes` -> `GetPooledTransactions` -> raw `PooledTransactions` materialized into pending tx payload, and inbound real `GetPooledTransactions` -> local raw tx `PooledTransactions` response
 - RLPx NewBlock gate: pass, covers inbound real non-empty `NewBlock` announcement -> Ethereum transaction trie `transactionsRoot` validation -> empty ommers/withdrawals validation -> native header/body snapshot import -> peer head/highest update -> follow-up `GetReceipts` -> raw receipt MPT `receiptsRoot` validation -> native receipt snapshot
 
