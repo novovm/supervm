@@ -216,6 +216,7 @@ EVM protocol-observable equivalence scope (CN):
 - node Ethereum discv4 multi-target lookup gate: `cargo test -p novovm-node eth_discv4_findnode_continues_when_lookup_adds_candidates_v1 -- --nocapture` (`NOVOVM_ETH_DISCV4_DISCOVERY_LOOKUPS_PER_BOOTNODE`, default 4, uses fresh random FindNode targets per bonded bootnode and continues while candidates are added)
 - v3 RLPx new block gate: `cargo test -p novovm-network evm_protocol_observable_equivalence_network_rlpx_new_block_gate_v3 -- --nocapture` (real non-empty `NewBlock` => transaction trie root validation + native header/body import + follow-up `GetReceipts` + receipts trie root validation + native receipt snapshot)
 - v3 RLPx new block hashes gate: `cargo test -p novovm-network evm_protocol_observable_equivalence_network_rlpx_new_block_hashes_gate_v3 -- --nocapture` (real `NewBlockHashes` announcement => peer head update + follow-up `GetBlockHeaders`)
+- EVM gateway Engine API probe gate: `cargo test -p novovm-evm-gateway engine_exchange_capabilities_is_probe_only_and_does_not_enable_payload_control -- --nocapture` (`engine_exchangeCapabilities` is exposed as a probe-only Engine API entry; payload/forkchoice methods remain disabled until real execution/forkchoice semantics exist)
 
 Manual local run:
 

@@ -6403,7 +6403,7 @@ fn resolve_gateway_eth_pending_block_for_runtime_view(
 }
 
 fn is_gateway_standalone_evm_control_namespace(method: &str) -> bool {
-    method.starts_with("engine_")
+    (method.starts_with("engine_") && method != "engine_exchangeCapabilities")
         || method.starts_with("admin_")
         || method.starts_with("debug_")
         || method.starts_with("miner_")
@@ -6474,6 +6474,7 @@ fn gateway_runtime_surface_map_json() -> serde_json::Value {
                     "eth_getTransactionReceipt",
                     "eth_sendRawTransaction",
                     "eth_getLogs",
+                    "engine_exchangeCapabilities",
                     "txpool_content"
                 ]
             },
@@ -6489,6 +6490,7 @@ fn gateway_runtime_surface_map_json() -> serde_json::Value {
         "notes": [
             "supervm mainnet remains the single host chain",
             "eth_* namespace is compatibility surface provided by evm plugin gateway",
+            "engine_exchangeCapabilities is a probe-only Engine API entry and does not declare payload or forkchoice support",
             "supervm_getEthCanonicalBlockAccessListBy* remains internal plugin diagnostics and does not expose a public eth/71 surface"
         ]
     })
@@ -6501,6 +6503,7 @@ fn gateway_runtime_method_domain(method: &str) -> &'static str {
         "evm_plugin"
     } else if method.starts_with("eth_")
         || method.starts_with("evm_")
+        || method == "engine_exchangeCapabilities"
         || method.starts_with("txpool_")
         || method.starts_with("net_")
         || method.starts_with("web3_")
@@ -6519,6 +6522,18 @@ fn gateway_runtime_method_domain_json(method: &str) -> serde_json::Value {
         "domain": gateway_runtime_method_domain(method),
         "control_namespace_disabled": is_gateway_standalone_evm_control_namespace(method),
     })
+}
+
+fn gateway_engine_exchange_capabilities_v1(
+    params: &serde_json::Value,
+) -> Result<serde_json::Value> {
+    match params {
+        serde_json::Value::Null => {}
+        serde_json::Value::Array(_) => {}
+        serde_json::Value::Object(map) if map.is_empty() => {}
+        _ => bail!("engine_exchangeCapabilities params must be null or a JSON-RPC params array"),
+    }
+    Ok(serde_json::json!(["engine_exchangeCapabilities"]))
 }
 
 fn ensure_eth_no_params(method: &str, params: &serde_json::Value) -> Result<()> {
@@ -6548,6 +6563,7 @@ fn run_gateway_method(
         );
     }
     match method {
+        "engine_exchangeCapabilities" => Ok((gateway_engine_exchange_capabilities_v1(params)?, false)),
         "novovm_getSurfaceMap" | "novovm_get_surface_map" => {
             Ok((gateway_runtime_surface_map_json(), false))
         }

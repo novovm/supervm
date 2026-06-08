@@ -502,6 +502,88 @@ fn eth_chain_id_and_net_version_accept_chain_params() {
 }
 
 #[test]
+fn engine_exchange_capabilities_is_probe_only_and_does_not_enable_payload_control() {
+    let backend = GatewayEthTxIndexStoreBackend::Memory;
+    let mut router = UnifiedAccountRouter::new();
+    let mut eth_tx_index = HashMap::new();
+    let mut evm_settlement_index_by_id = HashMap::new();
+    let mut evm_settlement_index_by_tx = HashMap::new();
+    let mut evm_pending_payout_by_settlement = HashMap::new();
+    let spool_dir = std::env::temp_dir().join(format!(
+        "novovm-gateway-engine-capabilities-{}-{}",
+        std::process::id(),
+        now_unix_millis()
+    ));
+    fs::create_dir_all(&spool_dir).expect("create spool dir");
+    let mut eth_filters = GatewayEthFilterState::default();
+    let mut ctx = GatewayMethodContext {
+        eth_tx_index_store: &backend,
+        eth_default_chain_id: 1,
+        spool_dir: &spool_dir,
+        overlay_node_id: "test-overlay".to_string(),
+        overlay_session_id: "test-session".to_string(),
+        overlay_route_id: "route:test".to_string(),
+        overlay_route_epoch: 0,
+        overlay_route_mask_bits: 40,
+        overlay_route_mode: "fast".to_string(),
+        overlay_route_region: "global".to_string(),
+        overlay_route_relay_bucket: 0,
+        overlay_route_relay_set_size: 1,
+        overlay_route_relay_round: 0,
+        overlay_route_relay_index: 0,
+        overlay_route_relay_id: "rly:global:0:0".to_string(),
+        overlay_route_strategy: "direct".to_string(),
+        overlay_route_hop_count: 1,
+        eth_filters: &mut eth_filters,
+    };
+
+    let (capabilities, changed) = run_gateway_method(
+        &mut router,
+        &mut eth_tx_index,
+        &mut evm_settlement_index_by_id,
+        &mut evm_settlement_index_by_tx,
+        &mut evm_pending_payout_by_settlement,
+        &mut ctx,
+        "engine_exchangeCapabilities",
+        &serde_json::json!([["engine_newPayloadV3", "engine_forkchoiceUpdatedV3"]]),
+    )
+    .expect("engine_exchangeCapabilities should be probeable");
+    assert!(!changed);
+    assert_eq!(
+        capabilities,
+        serde_json::json!(["engine_exchangeCapabilities"])
+    );
+    assert_eq!(
+        gateway_runtime_method_domain_json("engine_exchangeCapabilities")
+            ["control_namespace_disabled"]
+            .as_bool(),
+        Some(false)
+    );
+    assert_eq!(
+        gateway_runtime_method_domain_json("engine_getPayloadV3")["control_namespace_disabled"]
+            .as_bool(),
+        Some(true)
+    );
+
+    let payload_err = run_gateway_method(
+        &mut router,
+        &mut eth_tx_index,
+        &mut evm_settlement_index_by_id,
+        &mut evm_settlement_index_by_tx,
+        &mut evm_pending_payout_by_settlement,
+        &mut ctx,
+        "engine_getPayloadV3",
+        &serde_json::json!(["0x01"]),
+    )
+    .expect_err("engine payload control must remain disabled");
+    assert!(payload_err
+        .to_string()
+        .contains("standalone evm control namespace disabled"));
+
+    let _ = fs::remove_dir_all(&spool_dir);
+}
+
+#[test]
 fn novovm_surface_map_lists_mainnet_and_evm_plugin_domains() {
     let backend = GatewayEthTxIndexStoreBackend::Memory;
     let mut router = UnifiedAccountRouter::new();
@@ -560,6 +642,15 @@ fn novovm_surface_map_lists_mainnet_and_evm_plugin_domains() {
     assert!(domains
         .iter()
         .any(|item| item["domain"].as_str() == Some("evm_plugin")));
+    assert!(domains.iter().any(|item| {
+        item["domain"].as_str() == Some("evm_plugin")
+            && item["scope"].as_str() == Some("compatibility")
+            && item["entry_methods"].as_array().is_some_and(|methods| {
+                methods
+                    .iter()
+                    .any(|method| method.as_str() == Some("engine_exchangeCapabilities"))
+            })
+    }));
     assert!(domains.iter().any(|item| {
         item["domain"].as_str() == Some("evm_plugin")
             && item["scope"].as_str() == Some("internal_diagnostics")
