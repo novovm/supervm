@@ -2042,6 +2042,10 @@ fn eth_rlpx_default_adaptive_candidate_limit_v1(candidate_limit: usize) -> usize
         .clamp(candidate_limit, 1024)
 }
 
+fn eth_rlpx_default_max_peers_v1() -> usize {
+    32
+}
+
 fn eth_rlpx_apply_public_sync_batch_defaults_v1(
     budget: &mut EthFullnodeBudgetHooksV1,
     headers_batch: u64,
@@ -4295,7 +4299,9 @@ fn restore_eth_rlpx_native_history_store_v1(
 fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
     let chain_id = u64_env_allow_zero("NOVOVM_ETH_RLPX_CHAIN_ID", 1)?;
     let local_node_id = u64_env_allow_zero("NOVOVM_ETH_RLPX_LOCAL_NODE", 9_990_001)?;
-    let max_peers = usize_env_allow_zero("NOVOVM_ETH_RLPX_MAX_PEERS", 16)?.clamp(1, 32);
+    let max_peers =
+        usize_env_allow_zero("NOVOVM_ETH_RLPX_MAX_PEERS", eth_rlpx_default_max_peers_v1())?
+            .clamp(1, 32);
     let mut candidate_limit =
         usize_env_allow_zero("NOVOVM_ETH_RLPX_CANDIDATE_PEERS", max_peers.max(256))?
             .clamp(max_peers, 512);
@@ -5207,6 +5213,11 @@ mod mainline_evm_cli_tests {
         assert_eq!(eth_rlpx_default_adaptive_candidate_limit_v1(256), 512);
         assert_eq!(eth_rlpx_default_adaptive_candidate_limit_v1(512), 1024);
         assert_eq!(eth_rlpx_default_adaptive_candidate_limit_v1(900), 1024);
+    }
+
+    #[test]
+    fn eth_rlpx_default_max_peers_matches_public_mainnet_window_v1() {
+        assert_eq!(eth_rlpx_default_max_peers_v1(), 32);
     }
 
     #[test]
