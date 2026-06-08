@@ -65,6 +65,7 @@ pub const ETH_RLPX_ETH_GET_POOLED_TRANSACTIONS_MSG: u64 = 0x09;
 pub const ETH_RLPX_ETH_POOLED_TRANSACTIONS_MSG: u64 = 0x0a;
 pub const ETH_RLPX_ETH_GET_RECEIPTS_MSG: u64 = 0x0f;
 pub const ETH_RLPX_ETH_RECEIPTS_MSG: u64 = 0x10;
+pub const ETH_RLPX_ETH_BLOCK_RANGE_UPDATE_MSG: u64 = 0x11;
 pub const ETH_RLPX_ETH_GET_BLOCK_ACCESS_LISTS_MSG: u64 = 0x12;
 pub const ETH_RLPX_ETH_BLOCK_ACCESS_LISTS_MSG: u64 = 0x13;
 pub const ETH_RLPX_ETH_PRE_69_PROTOCOL_LENGTH: u64 = 17;
@@ -120,6 +121,13 @@ pub struct EthRlpxStatusV1 {
     pub network_id: u64,
     pub genesis_hash: [u8; 32],
     pub fork_id: EthForkIdV1,
+    pub earliest_block: u64,
+    pub latest_block: u64,
+    pub latest_block_hash: [u8; 32],
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EthRlpxBlockRangeUpdateV1 {
     pub earliest_block: u64,
     pub latest_block: u64,
     pub latest_block_hash: [u8; 32],
@@ -2357,6 +2365,53 @@ pub fn eth_rlpx_parse_status_payload_v1(payload: &[u8]) -> Result<EthRlpxStatusV
         latest_block: eth_rlpx_decode_u64_bytes_v1(latest_block_bytes)?,
         latest_block_hash,
     })
+}
+
+pub fn eth_rlpx_build_block_range_update_payload_v1(update: EthRlpxBlockRangeUpdateV1) -> Vec<u8> {
+    eth_rlpx_encode_list_v1(&[
+        eth_rlpx_encode_u64_v1(update.earliest_block),
+        eth_rlpx_encode_u64_v1(update.latest_block),
+        eth_rlpx_encode_bytes_v1(&update.latest_block_hash),
+    ])
+}
+
+pub fn eth_rlpx_parse_block_range_update_payload_v1(
+    payload: &[u8],
+) -> Result<EthRlpxBlockRangeUpdateV1, String> {
+    let (root, consumed) = eth_rlpx_parse_item_v1(payload)?;
+    if consumed != payload.len() {
+        return Err("rlpx_block_range_update_trailing".to_string());
+    }
+    let EthRlpxRlpItemV1::List(root_payload) = root else {
+        return Err("rlpx_block_range_update_not_list".to_string());
+    };
+    let fields = eth_rlpx_parse_list_items_v1(root_payload)?;
+    if fields.len() < 3 {
+        return Err("rlpx_block_range_update_fields_short".to_string());
+    }
+    let EthRlpxRlpItemV1::Bytes(earliest_block_bytes) = fields[0] else {
+        return Err("rlpx_block_range_update_earliest_not_bytes".to_string());
+    };
+    let EthRlpxRlpItemV1::Bytes(latest_block_bytes) = fields[1] else {
+        return Err("rlpx_block_range_update_latest_not_bytes".to_string());
+    };
+    let EthRlpxRlpItemV1::Bytes(latest_block_hash_bytes) = fields[2] else {
+        return Err("rlpx_block_range_update_hash_not_bytes".to_string());
+    };
+    let latest_block_hash =
+        eth_rlpx_parse_hash_bytes_v1(latest_block_hash_bytes, "rlpx_block_range_update_hash")?;
+    if latest_block_hash == [0u8; 32] {
+        return Err("rlpx_block_range_update_zero_latest_hash".to_string());
+    }
+    let update = EthRlpxBlockRangeUpdateV1 {
+        earliest_block: eth_rlpx_decode_u64_bytes_v1(earliest_block_bytes)?,
+        latest_block: eth_rlpx_decode_u64_bytes_v1(latest_block_bytes)?,
+        latest_block_hash,
+    };
+    if update.earliest_block > update.latest_block {
+        return Err("rlpx_block_range_update_earliest_gt_latest".to_string());
+    }
+    Ok(update)
 }
 
 #[must_use]
@@ -5191,6 +5246,39 @@ mod tests {
         let payload = eth_rlpx_build_status_payload_v1(status);
         let parsed = eth_rlpx_parse_status_payload_v1(payload.as_slice()).expect("parse status");
         assert_eq!(parsed, status);
+    }
+
+    #[test]
+    fn block_range_update_payload_roundtrip_matches_geth_shape() {
+        let update = EthRlpxBlockRangeUpdateV1 {
+            earliest_block: 8,
+            latest_block: 64,
+            latest_block_hash: [0x44; 32],
+        };
+        let payload = eth_rlpx_build_block_range_update_payload_v1(update);
+        let parsed = eth_rlpx_parse_block_range_update_payload_v1(payload.as_slice())
+            .expect("parse block range update");
+        assert_eq!(parsed, update);
+
+        let reversed = eth_rlpx_build_block_range_update_payload_v1(EthRlpxBlockRangeUpdateV1 {
+            earliest_block: 65,
+            latest_block: 64,
+            latest_block_hash: [0x44; 32],
+        });
+        assert_eq!(
+            eth_rlpx_parse_block_range_update_payload_v1(reversed.as_slice()).unwrap_err(),
+            "rlpx_block_range_update_earliest_gt_latest"
+        );
+
+        let zero_hash = eth_rlpx_build_block_range_update_payload_v1(EthRlpxBlockRangeUpdateV1 {
+            earliest_block: 8,
+            latest_block: 64,
+            latest_block_hash: [0x00; 32],
+        });
+        assert_eq!(
+            eth_rlpx_parse_block_range_update_payload_v1(zero_hash.as_slice()).unwrap_err(),
+            "rlpx_block_range_update_zero_latest_hash"
+        );
     }
 
     #[test]

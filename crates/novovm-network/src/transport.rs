@@ -21,13 +21,14 @@ use crate::{
     eth_rlpx_mpt_proof_has_element_in_range_v1, eth_rlpx_mpt_proof_has_right_element_v1,
     eth_rlpx_mpt_verify_proof_value_v1, eth_rlpx_parse_account_range_payload_v1,
     eth_rlpx_parse_block_access_lists_payload_v1, eth_rlpx_parse_block_bodies_payload_v1,
-    eth_rlpx_parse_block_headers_payload_v1, eth_rlpx_parse_byte_codes_payload_v1,
-    eth_rlpx_parse_disconnect_reason_v1, eth_rlpx_parse_get_account_range_payload_v1,
-    eth_rlpx_parse_get_block_access_lists_payload_v1, eth_rlpx_parse_get_byte_codes_payload_v1,
-    eth_rlpx_parse_get_pooled_transactions_payload_v1, eth_rlpx_parse_get_receipts_payload_v1,
-    eth_rlpx_parse_get_storage_ranges_payload_v1, eth_rlpx_parse_get_trie_nodes_payload_v1,
-    eth_rlpx_parse_hello_payload_v1, eth_rlpx_parse_new_block_hashes_payload_v1,
-    eth_rlpx_parse_new_block_payload_v1, eth_rlpx_parse_new_pooled_transaction_hashes_payload_v1,
+    eth_rlpx_parse_block_headers_payload_v1, eth_rlpx_parse_block_range_update_payload_v1,
+    eth_rlpx_parse_byte_codes_payload_v1, eth_rlpx_parse_disconnect_reason_v1,
+    eth_rlpx_parse_get_account_range_payload_v1, eth_rlpx_parse_get_block_access_lists_payload_v1,
+    eth_rlpx_parse_get_byte_codes_payload_v1, eth_rlpx_parse_get_pooled_transactions_payload_v1,
+    eth_rlpx_parse_get_receipts_payload_v1, eth_rlpx_parse_get_storage_ranges_payload_v1,
+    eth_rlpx_parse_get_trie_nodes_payload_v1, eth_rlpx_parse_hello_payload_v1,
+    eth_rlpx_parse_new_block_hashes_payload_v1, eth_rlpx_parse_new_block_payload_v1,
+    eth_rlpx_parse_new_pooled_transaction_hashes_payload_v1,
     eth_rlpx_parse_pooled_transactions_payload_v1, eth_rlpx_parse_receipts_payload_v1,
     eth_rlpx_parse_snap_slim_account_fields_v1, eth_rlpx_parse_status_payload_v1,
     eth_rlpx_parse_storage_ranges_payload_v1, eth_rlpx_parse_transactions_payload_v1,
@@ -110,9 +111,10 @@ use crate::{
     NetworkRuntimeNativeSyncPhaseV1, ETH_FULLNODE_NATIVE_WORKER_RUNTIME_SCHEMA_V1,
     ETH_RLPX_BASE_PROTOCOL_OFFSET, ETH_RLPX_ETH_BLOCK_ACCESS_LISTS_MSG,
     ETH_RLPX_ETH_BLOCK_BODIES_MSG, ETH_RLPX_ETH_BLOCK_HEADERS_MSG,
-    ETH_RLPX_ETH_GET_BLOCK_ACCESS_LISTS_MSG, ETH_RLPX_ETH_GET_BLOCK_BODIES_MSG,
-    ETH_RLPX_ETH_GET_BLOCK_HEADERS_MSG, ETH_RLPX_ETH_GET_POOLED_TRANSACTIONS_MSG,
-    ETH_RLPX_ETH_GET_RECEIPTS_MSG, ETH_RLPX_ETH_NEW_BLOCK_HASHES_MSG, ETH_RLPX_ETH_NEW_BLOCK_MSG,
+    ETH_RLPX_ETH_BLOCK_RANGE_UPDATE_MSG, ETH_RLPX_ETH_GET_BLOCK_ACCESS_LISTS_MSG,
+    ETH_RLPX_ETH_GET_BLOCK_BODIES_MSG, ETH_RLPX_ETH_GET_BLOCK_HEADERS_MSG,
+    ETH_RLPX_ETH_GET_POOLED_TRANSACTIONS_MSG, ETH_RLPX_ETH_GET_RECEIPTS_MSG,
+    ETH_RLPX_ETH_NEW_BLOCK_HASHES_MSG, ETH_RLPX_ETH_NEW_BLOCK_MSG,
     ETH_RLPX_ETH_NEW_POOLED_TRANSACTION_HASHES_MSG, ETH_RLPX_ETH_POOLED_TRANSACTIONS_MSG,
     ETH_RLPX_ETH_RECEIPTS_MSG, ETH_RLPX_ETH_STATUS_MSG, ETH_RLPX_ETH_TRANSACTIONS_MSG,
     ETH_RLPX_P2P_DISCONNECT_MSG, ETH_RLPX_P2P_HELLO_MSG, ETH_RLPX_P2P_PING_MSG,
@@ -1649,6 +1651,33 @@ fn drive_eth_fullnode_native_rlpx_peer_session_once_v1(
                             chain_id,
                             peer.0,
                             Some(status.latest_block),
+                        );
+                        report.status_updates = report.status_updates.saturating_add(1);
+                        continue;
+                    }
+                    if code == eth_offset + ETH_RLPX_ETH_BLOCK_RANGE_UPDATE_MSG {
+                        let update =
+                            eth_rlpx_parse_block_range_update_payload_v1(payload.as_slice())
+                                .map_err(|err| {
+                                    observe_network_runtime_eth_peer_decode_failure_v1(
+                                        chain_id,
+                                        peer.0,
+                                        "block_range_update_payload_decode_failed",
+                                    );
+                                    NetworkError::Decode(err)
+                                })?;
+                        session.remote_status.earliest_block = update.earliest_block;
+                        session.remote_status.latest_block = update.latest_block;
+                        session.remote_status.latest_block_hash = update.latest_block_hash;
+                        let _ = observe_network_runtime_peer_head(
+                            chain_id,
+                            peer.0,
+                            update.latest_block,
+                        );
+                        observe_network_runtime_eth_peer_head(
+                            chain_id,
+                            peer.0,
+                            update.latest_block,
                         );
                         report.status_updates = report.status_updates.saturating_add(1);
                         continue;
@@ -12030,7 +12059,11 @@ mod tests {
         while started.elapsed() < Duration::from_secs(2) {
             let _ = worker.drive_real_network_once().expect("network tick");
             let reorg_ready = snapshot_network_runtime_native_canonical_chain_v1(chain_id)
-                .is_some_and(|chain| chain.reorg_count == 1);
+                .is_some_and(|chain| {
+                    chain.reorg_count == 1
+                        && chain.last_reorg_depth == Some(1)
+                        && chain.block_lifecycle_summary.reorged_out_count == 1
+                });
             let body_ready = get_network_runtime_native_body_snapshot_v1(chain_id)
                 .is_some_and(|body| body.block_hash == header_b_hash);
             let tx_ready =
@@ -15544,6 +15577,165 @@ mod tests {
         assert_eq!(body.withdrawal_count, Some(0));
         let sync_status = get_network_runtime_sync_status(chain_id).expect("sync status");
         assert_eq!(sync_status.highest_block, 121);
+
+        server.join().expect("server join");
+    }
+
+    #[test]
+    fn evm_protocol_observable_equivalence_network_rlpx_block_range_update_gate_v3() {
+        let chain_id = 9_945_u64;
+        let local = NodeId(1_450);
+        let remote = NodeId(1_451);
+        clear_network_runtime_native_snapshots_for_chain_v1(chain_id);
+        set_network_runtime_sync_status(
+            chain_id,
+            NetworkRuntimeSyncStatus {
+                peer_count: 1,
+                starting_block: 120,
+                current_block: 120,
+                highest_block: 120,
+            },
+        );
+
+        let responder_signing = k256::ecdsa::SigningKey::random(&mut rand::rngs::OsRng);
+        let responder_nodekey: [u8; 32] = responder_signing.to_bytes().into();
+        let responder_pub = crate::eth_rlpx_pubkey_from_nodekey_bytes_v1(&responder_nodekey)
+            .expect("derive responder pubkey");
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind rlpx listener");
+        let listen_addr = listener.local_addr().expect("rlpx listener addr");
+        let endpoint = PluginPeerEndpoint {
+            endpoint: format!(
+                "enode://{}@{}",
+                responder_pub
+                    .iter()
+                    .map(|b| format!("{b:02x}"))
+                    .collect::<String>(),
+                listen_addr
+            ),
+            node_hint: remote.0,
+            addr_hint: listen_addr.to_string(),
+        };
+
+        let server = thread::spawn(move || {
+            let (mut accepted, _) = listener.accept().expect("accept rlpx");
+            accepted
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .expect("set server read timeout");
+            accepted
+                .set_write_timeout(Some(Duration::from_secs(5)))
+                .expect("set server write timeout");
+            let mut responder = crate::eth_rlpx_handshake_responder_with_nodekey_v1(
+                &responder_nodekey,
+                &mut accepted,
+            )
+            .expect("responder handshake");
+            let (hello_code, hello_payload) =
+                crate::eth_rlpx_read_wire_frame_v1(&mut accepted, &mut responder.session)
+                    .expect("read initiator hello");
+            assert_eq!(hello_code, crate::ETH_RLPX_P2P_HELLO_MSG);
+            let initiator_hello = crate::eth_rlpx_parse_hello_payload_v1(hello_payload.as_slice())
+                .expect("parse initiator hello");
+            let responder_hello = crate::eth_rlpx_build_hello_payload_v1(
+                &responder.local_static_pub,
+                crate::default_eth_rlpx_capabilities_v1().as_slice(),
+                "SuperVM/block-range-update-gate",
+                listen_addr.port().into(),
+            );
+            crate::eth_rlpx_write_wire_frame_v1(
+                &mut accepted,
+                &mut responder.session,
+                crate::ETH_RLPX_P2P_HELLO_MSG,
+                responder_hello.as_slice(),
+            )
+            .expect("write responder hello");
+            if initiator_hello.protocol_version >= 5 {
+                responder.session.set_snappy(true);
+            }
+            let status = crate::EthRlpxStatusV1 {
+                protocol_version: crate::ETH_NATIVE_MAX_SUPPORTED_ETH_PROTOCOL_VERSION as u32,
+                network_id: chain_id,
+                genesis_hash: crate::eth_chain_config_genesis_hash_v1(chain_id),
+                fork_id: crate::build_eth_fork_id_from_chain_config_v1(
+                    &crate::resolve_eth_chain_config_v1(chain_id),
+                    120,
+                    0,
+                ),
+                earliest_block: 120,
+                latest_block: 120,
+                latest_block_hash: [0x42; 32],
+            };
+            let status_payload = crate::eth_rlpx_build_status_payload_v1(status);
+            crate::eth_rlpx_write_wire_frame_v1(
+                &mut accepted,
+                &mut responder.session,
+                crate::ETH_RLPX_BASE_PROTOCOL_OFFSET + crate::ETH_RLPX_ETH_STATUS_MSG,
+                status_payload.as_slice(),
+            )
+            .expect("write responder status");
+            let (peer_status_code, peer_status_payload) =
+                crate::eth_rlpx_read_wire_frame_v1(&mut accepted, &mut responder.session)
+                    .expect("read peer status");
+            assert_eq!(
+                peer_status_code,
+                crate::ETH_RLPX_BASE_PROTOCOL_OFFSET + crate::ETH_RLPX_ETH_STATUS_MSG
+            );
+            let peer_status =
+                crate::eth_rlpx_parse_status_payload_v1(peer_status_payload.as_slice())
+                    .expect("parse peer status");
+            assert_eq!(peer_status.network_id, chain_id);
+
+            let update = crate::EthRlpxBlockRangeUpdateV1 {
+                earliest_block: 64,
+                latest_block: 512,
+                latest_block_hash: [0x51; 32],
+            };
+            let payload = crate::eth_rlpx_build_block_range_update_payload_v1(update);
+            crate::eth_rlpx_write_wire_frame_v1(
+                &mut accepted,
+                &mut responder.session,
+                crate::ETH_RLPX_BASE_PROTOCOL_OFFSET + crate::ETH_RLPX_ETH_BLOCK_RANGE_UPDATE_MSG,
+                payload.as_slice(),
+            )
+            .expect("write block range update");
+            thread::sleep(Duration::from_millis(250));
+        });
+
+        let mut budget = default_eth_fullnode_budget_hooks_v1();
+        budget.active_native_peer_soft_limit = 1;
+        budget.active_native_peer_hard_limit = 1;
+        budget.sync_request_interval_ms = u64::MAX;
+        budget.tx_broadcast_interval_ms = u64::MAX;
+        let worker = EthFullnodeNativePeerWorkerV1::new(EthFullnodeNativePeerWorkerConfigV1 {
+            chain_id,
+            local_node: local,
+            peers: vec![remote],
+            peer_endpoints: vec![endpoint],
+            recv_budget: 1,
+            sync_target_fanout: 1,
+            budget_hooks: budget,
+        });
+
+        let report0 = worker.drive_real_network_once().expect("connect tick");
+        assert_eq!(report0.connected_peers, 1);
+        let started = std::time::Instant::now();
+        while started.elapsed() < Duration::from_secs(2) {
+            let sync_status = get_network_runtime_sync_status(chain_id).expect("sync status");
+            if sync_status.highest_block >= 512 {
+                break;
+            }
+            let _ = worker
+                .drive_real_network_once()
+                .expect("block range update tick");
+            thread::sleep(Duration::from_millis(5));
+        }
+
+        let sync_status = get_network_runtime_sync_status(chain_id).expect("sync status");
+        assert_eq!(sync_status.highest_block, 512);
+        let peer_heads = get_network_runtime_peer_heads_top_k(chain_id, 1);
+        assert_eq!(peer_heads, vec![(remote.0, 512)]);
+        let snapshot =
+            snapshot_network_runtime_eth_peer_sessions_for_peers_v1(chain_id, &[remote])[0].clone();
+        assert_eq!(snapshot.last_head_height, 512);
 
         server.join().expect("server join");
     }
