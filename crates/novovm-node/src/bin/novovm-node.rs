@@ -53,9 +53,10 @@ use novovm_network::{
     snapshot_network_runtime_native_snap_trie_node_snapshots_v1, AvailabilityController,
     AvailabilityDecision, AvailabilityMode, CapabilityReadiness, CapabilityRouteHint,
     EthDiscv4EndpointV1, EthDiscv4NeighborV1, EthFullnodeBudgetHooksV1,
-    EthFullnodeNativePeerWorkerConfigV1, EthFullnodeNativePeerWorkerV1, FileQueueStore,
-    GossipMessage, InMemoryQueueStore, L3RegionalRoutingTable, L4LocalRoutingTable, L4PeerRef,
-    MessageType, NetworkRuntimeNativeBodySnapshotV1, NetworkRuntimeNativeCanonicalBlockStateV1,
+    EthFullnodeNativePeerWorkerConfigV1, EthFullnodeNativePeerWorkerV1, EthPeerLifecycleStageV1,
+    FileQueueStore, GossipMessage, InMemoryQueueStore, L3RegionalRoutingTable, L4LocalRoutingTable,
+    L4PeerRef, MessageType, NetworkRuntimeNativeBodySnapshotV1,
+    NetworkRuntimeNativeCanonicalBlockStateV1,
     NetworkRuntimeNativeExecutionBudgetTargetObservationV1, NetworkRuntimeNativeHeadSnapshotV1,
     NetworkRuntimeNativeHeaderSnapshotV1, NetworkRuntimeNativeReceiptSnapshotV1,
     NetworkRuntimeNativeSnapAccountRangeProgressV1, NetworkRuntimeNativeSnapAccountSnapshotV1,
@@ -1959,6 +1960,53 @@ fn eth_prune_peer_endpoints_permanently_rejected_v1(
         .filter(|endpoint| !rejected.contains(&endpoint.node_hint.max(1)))
         .cloned()
         .collect()
+}
+
+fn eth_successful_peer_ids_from_runtime_v1(
+    chain_id: u64,
+    endpoints: &[PluginPeerEndpoint],
+) -> HashSet<u64> {
+    let peers = endpoints
+        .iter()
+        .map(|endpoint| NodeId(endpoint.node_hint.max(1)))
+        .collect::<Vec<_>>();
+    snapshot_network_runtime_eth_peer_sessions_for_peers_v1(chain_id, peers.as_slice())
+        .into_iter()
+        .filter(|snapshot| !snapshot.permanently_rejected)
+        .filter(|snapshot| {
+            snapshot.session_ready
+                || matches!(
+                    snapshot.lifecycle_stage,
+                    EthPeerLifecycleStageV1::Ready | EthPeerLifecycleStageV1::Syncing
+                )
+                || snapshot.last_success_unix_ms > 0
+                || snapshot.header_response_count > 0
+                || snapshot.body_response_count > 0
+                || snapshot.sync_contribution_count > 0
+        })
+        .map(|snapshot| snapshot.peer_id)
+        .collect()
+}
+
+fn eth_promote_successful_peer_endpoints_v1(
+    chain_id: u64,
+    endpoints: &[PluginPeerEndpoint],
+) -> Vec<PluginPeerEndpoint> {
+    let successful = eth_successful_peer_ids_from_runtime_v1(chain_id, endpoints);
+    if successful.is_empty() {
+        return endpoints.to_vec();
+    }
+    let mut promoted = Vec::with_capacity(endpoints.len());
+    let mut rest = Vec::with_capacity(endpoints.len());
+    for endpoint in endpoints {
+        if successful.contains(&endpoint.node_hint.max(1)) {
+            promoted.push(endpoint.clone());
+        } else {
+            rest.push(endpoint.clone());
+        }
+    }
+    promoted.extend(rest);
+    promoted
 }
 
 fn eth_rlpx_peer_refresh_plan_v1(
@@ -4677,6 +4725,33 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
                 }
             }
         }
+        if peer_endpoint_cache_enabled
+            && (report.ready_peers > 0
+                || report.status_updates > 0
+                || report.header_updates > 0
+                || report.body_updates > 0
+                || report.receipt_updates > 0)
+        {
+            let promoted_endpoints =
+                eth_promote_successful_peer_endpoints_v1(chain_id, peer_endpoints.as_slice());
+            if promoted_endpoints != peer_endpoints {
+                peer_endpoints = promoted_endpoints;
+                write_eth_rlpx_peer_endpoint_cache_v1(
+                    &peer_endpoint_cache_path,
+                    chain_id,
+                    peer_endpoints.as_slice(),
+                    candidate_limit,
+                )?;
+                if verbose {
+                    println!(
+                        "eth_rlpx_peer_endpoint_cache_promote: chain_id={} tick={} reason=successful_peer candidates={}",
+                        chain_id,
+                        tick,
+                        peer_endpoints.len()
+                    );
+                }
+            }
+        }
         if peer_endpoint_cache_enabled && report.lifecycle_summary.permanently_rejected_count > 0 {
             let pruned_endpoints = eth_prune_peer_endpoints_permanently_rejected_v1(
                 chain_id,
@@ -5192,6 +5267,32 @@ mod mainline_evm_cli_tests {
 
         assert_eq!(pruned.len(), 1);
         assert_eq!(pruned[0].node_hint, kept_peer);
+    }
+
+    #[test]
+    fn eth_peer_endpoint_cache_promotes_runtime_successes_v1() {
+        let chain_id = 8_881_229_002_u64;
+        let slow_peer = 0x1111_1111_1111_1111_u64;
+        let successful_peer = 0x2222_2222_2222_2222_u64;
+        let endpoints = vec![
+            PluginPeerEndpoint {
+                endpoint: "enode://1111111111111111@18.138.108.67:30303".to_string(),
+                node_hint: slow_peer,
+                addr_hint: "18.138.108.67:30303".to_string(),
+            },
+            PluginPeerEndpoint {
+                endpoint: "enode://2222222222222222@3.209.45.79:30303".to_string(),
+                node_hint: successful_peer,
+                addr_hint: "3.209.45.79:30303".to_string(),
+            },
+        ];
+        novovm_network::observe_network_runtime_eth_peer_syncing_v1(chain_id, successful_peer);
+
+        let promoted = eth_promote_successful_peer_endpoints_v1(chain_id, endpoints.as_slice());
+
+        assert_eq!(promoted.len(), 2);
+        assert_eq!(promoted[0].node_hint, successful_peer);
+        assert_eq!(promoted[1].node_hint, slow_peer);
     }
 
     #[test]

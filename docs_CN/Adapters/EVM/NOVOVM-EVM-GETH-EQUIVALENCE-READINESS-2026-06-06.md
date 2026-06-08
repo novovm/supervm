@@ -190,6 +190,71 @@ cargo test -p novovm-network missing_body_recovery -- --nocapture
 
 该证据说明默认 batch-32 能把主要前进步长从 8 提到 32，并且现有断线/缺 body 恢复路径仍能把当前 head 恢复到 body/receipt 可用。它不改变未完成边界：完整 snap state heal、完整 state DB、完整历史 DB、discv5、Engine/CL 配合和长稳公网接受度仍未封口。
 
+## 2026-06-09 RLPx 成功 peer cache 前置证据
+
+batch-32 后，新的瓶颈回到公网 peer admission：重启时 cache 中大量 stale/saturated endpoint 会先消耗连接窗口，直到 runtime prune/refresh 后才拿到可用 peer。本轮做的不是复杂评分系统，而是最小产品语义：
+
+- cache schema 不变，仍只存 endpoint 列表；
+- runtime 中 `Ready` / `Syncing` / `session_ready` / 有成功时间或 header/body/sync 贡献的 peer，对应 endpoint 会被稳定前置；
+- permanent reject 仍按原逻辑 prune；
+- 当前 worker 不因前置而强制重建，避免打断 live session；前置主要服务重启和后续 refresh/cache 写回。
+
+本轮回归：
+
+```powershell
+cargo fmt --check
+cargo test -p novovm-node eth_peer_endpoint_cache_ -- --nocapture
+cargo test -p novovm-node eth_rlpx_ -- --nocapture
+```
+
+结果：
+
+- `eth_peer_endpoint_cache_`: 2 passed
+- `eth_rlpx_`: 19 passed
+
+真实主网产品入口验证：
+
+```powershell
+NOVOVM_NODE_MODE=eth_rlpx_sync cargo run -p novovm-node --bin novovm-node
+```
+
+起点：
+
+- checkpoint/head store: `current=1533/highest=25275818`
+- current head body/receipt: available
+
+观测结果：
+
+- tick 1：拿到 ready/status peer，写出 `eth_rlpx_peer_endpoint_cache_promote`
+- tick 2：32-header 前进到 `current=1565`，public peer mid-body close，短暂 header-only
+- tick 5 / 10 / 12：再次看到 `eth_rlpx_peer_endpoint_cache_promote`
+- tick 11：`1565` 恢复为 current body/receipt available
+- tick 13：导入 `headers=32/bodies=32/receipts=32`，推进到 `current=1597/highest=25275853`
+
+最终停止时：
+
+- checkpoint/head store: `current=1597/highest=25275853`
+- current head body/receipt: available
+
+该证据降低了产品入口重启后被旧 cache 坏 peer 排在前面拖慢的风险，但不等于完整 peer reputation 或完整 discv4/discv5 table。完整 snap state heal、完整 state DB、完整历史 DB、discv5、Engine/CL 配合和长稳公网接受度仍未封口。
+
+## 2026-06-09 geth 再次下拉审阅
+
+本轮按要求在 `D:\WEB3_AI\go-ethereum` 重新执行 upstream 同步：
+
+```powershell
+git fetch --prune origin
+git pull --ff-only
+```
+
+结果：
+
+- `HEAD...origin/master = 0 0`
+- `git pull --ff-only`: `Already up to date`
+- 当前 geth 仍为 `1f87331fb`：`eth/protocols/eth: track announced tx hashes only after send (#35122)`
+
+重新审阅该提交后，对 SUPERVM 的同步判断不变：该 geth 改动只把 `sendPooledTransactionHashes` 的 known-tx 标记移动到 `NewPooledTransactionHashes` frame 发送成功之后。SUPERVM 当前产品出站传播仍是 full `TransactionsMsg`，并且只在 `eth_rlpx_write_wire_frame_v1` 成功后记录 `propagated`；写失败会记录 `IoWriteFailure` 并标记 peer write failure。因此本轮没有新的 Rust 代码同步项。后续如果 SUPERVM 增加 hash-only outbound pooled-tx announce 产品路径，该路径必须复用同一语义：先成功写帧，再把该 peer 视作已知该 tx hash。
+
 ## 本轮实跑证据
 
 ### 1. 默认 geth parity fixture
