@@ -2795,34 +2795,102 @@ fn ingest_real_rlpx_pooled_transactions_v1(
     session.pending_pooled_transaction_hashes.clear();
 }
 
-fn validate_snap_account_range_proof_presence_v1(
+fn validate_snap_proof_nodes_match_roots_v1(
     chain_id: u64,
     source_peer_id: u64,
-    response: &EthRlpxAccountRangeResponseV1,
+    kind: &str,
+    expected_roots: &[[u8; 32]],
+    proof: &[Vec<u8>],
 ) -> Result<(), NetworkError> {
-    if response.accounts.is_empty() || !response.proof.is_empty() {
-        return Ok(());
+    if expected_roots.is_empty() {
+        let reason = format!(
+            "{kind}_proof_expected_roots_missing:proof_nodes={}",
+            proof.len()
+        );
+        observe_network_runtime_eth_peer_decode_failure_v1(
+            chain_id,
+            source_peer_id,
+            reason.as_str(),
+        );
+        return Err(NetworkError::Decode(reason));
     }
-    let reason = format!(
-        "snap_account_range_non_empty_without_proof:accounts={}",
-        response.accounts.len()
-    );
-    observe_network_runtime_eth_peer_decode_failure_v1(chain_id, source_peer_id, reason.as_str());
-    Err(NetworkError::Decode(reason))
+    let mut root_seen = vec![false; expected_roots.len()];
+    for (idx, node) in proof.iter().enumerate() {
+        if !eth_rlpx_validate_trie_node_rlp_v1(node.as_slice()) {
+            let reason = format!("{kind}_proof_node_rlp_invalid:idx={idx}");
+            observe_network_runtime_eth_peer_decode_failure_v1(
+                chain_id,
+                source_peer_id,
+                reason.as_str(),
+            );
+            return Err(NetworkError::Decode(reason));
+        }
+        let node_hash = eth_rlpx_trie_node_hash_v1(node.as_slice());
+        for (root_idx, expected_root) in expected_roots.iter().enumerate() {
+            if *expected_root == node_hash {
+                root_seen[root_idx] = true;
+            }
+        }
+    }
+    let empty_root = crate::eth_rlpx_empty_trie_root_v1();
+    for (idx, expected_root) in expected_roots.iter().enumerate() {
+        if *expected_root == empty_root {
+            if !proof.is_empty() {
+                let reason = format!(
+                    "{kind}_proof_unexpected_for_empty_root:idx={} proof_nodes={}",
+                    idx,
+                    proof.len()
+                );
+                observe_network_runtime_eth_peer_decode_failure_v1(
+                    chain_id,
+                    source_peer_id,
+                    reason.as_str(),
+                );
+                return Err(NetworkError::Decode(reason));
+            }
+            continue;
+        }
+        if !root_seen[idx] {
+            let reason = format!(
+                "{kind}_proof_root_missing:idx={} root=0x{} proof_nodes={}",
+                idx,
+                hex32_v1(expected_root),
+                proof.len()
+            );
+            observe_network_runtime_eth_peer_decode_failure_v1(
+                chain_id,
+                source_peer_id,
+                reason.as_str(),
+            );
+            return Err(NetworkError::Decode(reason));
+        }
+    }
+    Ok(())
 }
 
-fn validate_snap_storage_ranges_proof_semantics_v1(
+fn validate_snap_account_range_proof_semantics_v1(
     chain_id: u64,
     source_peer_id: u64,
     state_root: Option<[u8; 32]>,
-    pending_accounts: &[[u8; 32]],
-    response: &EthRlpxStorageRangesResponseV1,
+    response: &EthRlpxAccountRangeResponseV1,
 ) -> Result<(), NetworkError> {
-    if !response.proof.is_empty() || response.slots.is_empty() {
-        return Ok(());
+    if response.proof.is_empty() {
+        if response.accounts.is_empty() {
+            return Ok(());
+        }
+        let reason = format!(
+            "snap_account_range_non_empty_without_proof:accounts={}",
+            response.accounts.len()
+        );
+        observe_network_runtime_eth_peer_decode_failure_v1(
+            chain_id,
+            source_peer_id,
+            reason.as_str(),
+        );
+        return Err(NetworkError::Decode(reason));
     }
-    let Some(state_root) = state_root else {
-        let reason = "snap_storage_ranges_state_root_missing".to_string();
+    let Some(root) = state_root else {
+        let reason = "snap_account_range_state_root_missing_for_proof".to_string();
         observe_network_runtime_eth_peer_decode_failure_v1(
             chain_id,
             source_peer_id,
@@ -2830,12 +2898,29 @@ fn validate_snap_storage_ranges_proof_semantics_v1(
         );
         return Err(NetworkError::Decode(reason));
     };
-    for (idx, slots) in response.slots.iter().enumerate() {
+    validate_snap_proof_nodes_match_roots_v1(
+        chain_id,
+        source_peer_id,
+        "snap_account_range",
+        &[root],
+        response.proof.as_slice(),
+    )
+}
+
+fn snap_storage_range_expected_roots_v1(
+    chain_id: u64,
+    source_peer_id: u64,
+    state_root: [u8; 32],
+    pending_accounts: &[[u8; 32]],
+    slotset_count: usize,
+) -> Result<Vec<[u8; 32]>, NetworkError> {
+    let mut roots = Vec::new();
+    for idx in 0..slotset_count {
         let Some(account_hash) = pending_accounts.get(idx).copied() else {
             let reason = format!(
                 "snap_storage_ranges_slotset_account_missing:idx={} slotsets={} requested={}",
                 idx,
-                response.slots.len(),
+                slotset_count,
                 pending_accounts.len()
             );
             observe_network_runtime_eth_peer_decode_failure_v1(
@@ -2860,9 +2945,67 @@ fn validate_snap_storage_ranges_proof_semantics_v1(
             );
             return Err(NetworkError::Decode(reason));
         };
-        let expected = account
-            .storage_root
-            .unwrap_or_else(crate::eth_rlpx_empty_trie_root_v1);
+        roots.push(
+            account
+                .storage_root
+                .unwrap_or_else(crate::eth_rlpx_empty_trie_root_v1),
+        );
+    }
+    Ok(roots)
+}
+
+fn validate_snap_storage_ranges_proof_semantics_v1(
+    chain_id: u64,
+    source_peer_id: u64,
+    state_root: Option<[u8; 32]>,
+    pending_accounts: &[[u8; 32]],
+    response: &EthRlpxStorageRangesResponseV1,
+) -> Result<(), NetworkError> {
+    if response.proof.is_empty() && response.slots.is_empty() {
+        return Ok(());
+    }
+    let Some(state_root) = state_root else {
+        let reason = "snap_storage_ranges_state_root_missing".to_string();
+        observe_network_runtime_eth_peer_decode_failure_v1(
+            chain_id,
+            source_peer_id,
+            reason.as_str(),
+        );
+        return Err(NetworkError::Decode(reason));
+    };
+    if !response.proof.is_empty() {
+        let slotset_count = if response.slots.is_empty() {
+            pending_accounts.len().min(1)
+        } else {
+            response.slots.len()
+        };
+        let expected_roots = snap_storage_range_expected_roots_v1(
+            chain_id,
+            source_peer_id,
+            state_root,
+            pending_accounts,
+            slotset_count,
+        )?;
+        return validate_snap_proof_nodes_match_roots_v1(
+            chain_id,
+            source_peer_id,
+            "snap_storage_ranges",
+            expected_roots.as_slice(),
+            response.proof.as_slice(),
+        );
+    }
+    let expected_roots = snap_storage_range_expected_roots_v1(
+        chain_id,
+        source_peer_id,
+        state_root,
+        pending_accounts,
+        response.slots.len(),
+    )?;
+    for (idx, slots) in response.slots.iter().enumerate() {
+        let Some(expected) = expected_roots.get(idx).copied() else {
+            continue;
+        };
+        let account_hash = pending_accounts[idx];
         let actual = eth_rlpx_snap_storage_root_from_range_v1(slots.as_slice()).map_err(|err| {
             let reason = format!("snap_storage_ranges_root_rebuild_failed:{err}");
             observe_network_runtime_eth_peer_decode_failure_v1(
@@ -2915,7 +3058,12 @@ fn ingest_real_rlpx_snap_account_range_v1(
         response.accounts.len(),
         response.proof.len(),
     );
-    validate_snap_account_range_proof_presence_v1(chain_id, source_peer_id, response)?;
+    validate_snap_account_range_proof_semantics_v1(
+        chain_id,
+        source_peer_id,
+        session.last_snap_state_root,
+        response,
+    )?;
     let account_origin = session.last_snap_account_origin.unwrap_or([0u8; 32]);
     let account_limit = session.last_snap_account_limit.unwrap_or([0xffu8; 32]);
     session.pending_snap_next_account_origin =
@@ -10928,6 +11076,12 @@ mod tests {
         let chain_id = 9_943;
         let state_root = [0x44; 32];
         let account_hash = [0x23; 32];
+        let account_root_node = {
+            let mut node = vec![0xd1_u8];
+            node.extend(std::iter::repeat(0x80_u8).take(17));
+            node
+        };
+        let account_state_root = crate::eth_rlpx_trie_node_hash_v1(account_root_node.as_slice());
         clear_network_runtime_native_snapshots_for_chain_v1(chain_id);
 
         let account_without_proof = crate::EthRlpxAccountRangeResponseV1 {
@@ -10938,9 +11092,13 @@ mod tests {
             }],
             proof: Vec::new(),
         };
-        let account_err =
-            validate_snap_account_range_proof_presence_v1(9_943, 1, &account_without_proof)
-                .expect_err("non-empty AccountRange without proof must be rejected");
+        let account_err = validate_snap_account_range_proof_semantics_v1(
+            9_943,
+            1,
+            Some(account_state_root),
+            &account_without_proof,
+        )
+        .expect_err("non-empty AccountRange without proof must be rejected");
         assert!(
             account_err
                 .to_string()
@@ -10953,8 +11111,48 @@ mod tests {
             accounts: Vec::new(),
             proof: Vec::new(),
         };
-        validate_snap_account_range_proof_presence_v1(9_943, 1, &empty_account_without_proof)
-            .expect("empty AccountRange without proof remains protocol-tolerated here");
+        validate_snap_account_range_proof_semantics_v1(
+            9_943,
+            1,
+            Some(account_state_root),
+            &empty_account_without_proof,
+        )
+        .expect("empty AccountRange without proof remains protocol-tolerated here");
+
+        let account_with_valid_proof = crate::EthRlpxAccountRangeResponseV1 {
+            request_id: 6,
+            accounts: vec![crate::EthRlpxSnapAccountDataV1 {
+                hash: [0x12; 32],
+                body_rlp: vec![0xc0],
+            }],
+            proof: vec![account_root_node.clone()],
+        };
+        validate_snap_account_range_proof_semantics_v1(
+            9_943,
+            1,
+            Some(account_state_root),
+            &account_with_valid_proof,
+        )
+        .expect("AccountRange proof root node must match requested stateRoot");
+
+        let account_with_corrupt_proof = crate::EthRlpxAccountRangeResponseV1 {
+            request_id: 7,
+            proof: vec![vec![0x99, 0x02]],
+            ..account_with_valid_proof
+        };
+        let proof_err = validate_snap_account_range_proof_semantics_v1(
+            9_943,
+            1,
+            Some(account_state_root),
+            &account_with_corrupt_proof,
+        )
+        .expect_err("corrupt AccountRange proof node must be rejected");
+        assert!(
+            proof_err
+                .to_string()
+                .contains("snap_account_range_proof_node_rlp_invalid"),
+            "{proof_err}"
+        );
 
         let complete_slot = crate::EthRlpxSnapStorageDataV1 {
             hash: [0x22; 32],
@@ -10991,6 +11189,62 @@ mod tests {
             &storage_without_proof,
         )
         .expect("complete StorageRanges without proof must validate by rebuilt root");
+
+        let proof_account_hash = [0x24; 32];
+        let storage_proof_node = {
+            let mut node = vec![0xd1_u8, 0x01];
+            node.extend(std::iter::repeat(0x80_u8).take(16));
+            node
+        };
+        let proof_storage_root = crate::eth_rlpx_trie_node_hash_v1(storage_proof_node.as_slice());
+        set_network_runtime_native_snap_account_snapshot_v1(
+            chain_id,
+            NetworkRuntimeNativeSnapAccountSnapshotV1 {
+                chain_id,
+                state_root,
+                account_hash: proof_account_hash,
+                body_rlp: Vec::new(),
+                storage_root: Some(proof_storage_root),
+                code_hash: None,
+                has_storage: true,
+                has_code: false,
+                source_peer_id: Some(1),
+                observed_unix_ms: 1,
+            },
+        );
+        let storage_with_valid_proof = crate::EthRlpxStorageRangesResponseV1 {
+            request_id: 8,
+            slots: vec![Vec::new()],
+            proof: vec![storage_proof_node],
+        };
+        validate_snap_storage_ranges_proof_semantics_v1(
+            chain_id,
+            1,
+            Some(state_root),
+            &[proof_account_hash],
+            &storage_with_valid_proof,
+        )
+        .expect("StorageRanges proof root node must match account storageRoot");
+
+        let storage_with_corrupt_proof = crate::EthRlpxStorageRangesResponseV1 {
+            request_id: 9,
+            proof: vec![vec![0x99, 0x03]],
+            ..storage_with_valid_proof
+        };
+        let storage_proof_err = validate_snap_storage_ranges_proof_semantics_v1(
+            chain_id,
+            1,
+            Some(state_root),
+            &[proof_account_hash],
+            &storage_with_corrupt_proof,
+        )
+        .expect_err("corrupt StorageRanges proof node must be rejected");
+        assert!(
+            storage_proof_err
+                .to_string()
+                .contains("snap_storage_ranges_proof_node_rlp_invalid"),
+            "{storage_proof_err}"
+        );
 
         let mismatched_storage_without_proof = crate::EthRlpxStorageRangesResponseV1 {
             request_id: 4,
@@ -11150,7 +11404,12 @@ mod tests {
         let local = NodeId(1_380);
         let remote = NodeId(1_381);
         clear_network_runtime_native_snapshots_for_chain_v1(chain_id);
-        let local_state_root = [0xa5; 32];
+        let root_trie_node = {
+            let mut node = vec![0xd1_u8];
+            node.extend(std::iter::repeat(0x80_u8).take(17));
+            node
+        };
+        let local_state_root = crate::eth_rlpx_trie_node_hash_v1(root_trie_node.as_slice());
         set_network_runtime_sync_status(
             chain_id,
             NetworkRuntimeSyncStatus {
@@ -11201,6 +11460,7 @@ mod tests {
         let (done_tx, done_rx) = std::sync::mpsc::channel();
 
         let server = thread::spawn(move || {
+            let root_trie_node = root_trie_node;
             let (mut accepted, _) = listener.accept().expect("accept rlpx");
             accepted
                 .set_read_timeout(Some(Duration::from_secs(5)))
@@ -11303,7 +11563,7 @@ mod tests {
                 let response = crate::eth_rlpx_build_account_range_payload_v1(
                     request.request_id,
                     &[],
-                    &[vec![0x99, 0x01]],
+                    &[root_trie_node.clone()],
                 );
                 crate::eth_rlpx_write_wire_frame_v1(
                     &mut accepted,
@@ -11533,7 +11793,7 @@ mod tests {
             let response = crate::eth_rlpx_build_account_range_payload_v1(
                 first_request.request_id,
                 &[account],
-                &[vec![0x99, 0x04]],
+                &[root_trie_node.clone()],
             );
             crate::eth_rlpx_write_wire_frame_v1(
                 &mut accepted,
@@ -12001,6 +12261,7 @@ mod tests {
             addr_hint: listen_addr.to_string(),
         };
         let (done_tx, done_rx) = std::sync::mpsc::channel();
+        let expected_storage_proof_node = storage_root_trie_node.clone();
 
         let server = thread::spawn(move || {
             fn slim_account_body(storage_root: [u8; 32], code_hash: [u8; 32]) -> Vec<u8> {
@@ -12120,7 +12381,7 @@ mod tests {
             let response = crate::eth_rlpx_build_account_range_payload_v1(
                 account_request_id,
                 &[account],
-                &[vec![0x99, 0x02]],
+                &[root_trie_node.clone()],
             );
             crate::eth_rlpx_write_wire_frame_v1(
                 &mut accepted,
@@ -12160,7 +12421,7 @@ mod tests {
                     let response = crate::eth_rlpx_build_storage_ranges_payload_v1(
                         request.request_id,
                         slotsets.as_slice(),
-                        &[vec![0x99, 0x03]],
+                        &[storage_root_trie_node.clone()],
                     );
                     crate::eth_rlpx_write_wire_frame_v1(
                         &mut accepted,
@@ -12330,7 +12591,7 @@ mod tests {
         assert_eq!(storage.slots.len(), 1);
         assert_eq!(storage.slots[0].hash, [0x37; 32]);
         assert_eq!(storage.slots[0].body, vec![0x80]);
-        assert_eq!(storage.proof_nodes, vec![vec![0x99, 0x03]]);
+        assert_eq!(storage.proof_nodes, vec![expected_storage_proof_node]);
         let code = crate::get_network_runtime_native_snap_code_snapshot_v1(
             chain_id,
             crate::eth_rlpx_code_hash_v1(&[0x60, 0x00]),
