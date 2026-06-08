@@ -43,6 +43,23 @@
 - SUPERVM 当前产品路径没有主动 outbound hash-only `NewPooledTransactionHashes` 宣告；现有本地 pending tx outbound 使用完整 `TransactionsMsg`，并且已经是 wire-frame 写成功后才记录 propagated，写失败只记录 failure，因此不需要新增 hash-only 宣告产品面。
 - 本轮同步修复的是更直接影响长期同步的 RLPx live session 语义：`Ping/Pong`、pooled tx 请求/响应、`NewBlock`/headers/bodies/receipts ingest、snap sidecar 响应、eth/71 BAL 响应、missing body/receipt recovery、headers/snap sync request、tx broadcast 等路径，只要在 live session 内写失败或 ingest 失败，都会先 unregister peer 并删除 session，再返回错误，避免旧 stream 残留导致下一 tick 不能重连恢复。
 
+### 2026-06-09 go-ethereum 复拉审阅
+
+按最新请求再次在 `D:\WEB3_AI\go-ethereum` 执行：
+
+```powershell
+git pull --ff-only
+```
+
+结果为：
+
+- `Already up to date.`
+- before: `1f87331fbc58702b812a7b14e65aa7a28776cc46`
+- after: `1f87331fbc58702b812a7b14e65aa7a28776cc46`
+- `origin/master` / `origin/HEAD` 仍指向 `1f87331fb`
+
+本次没有新增 geth 提交需要同步到 SUPERVM。复读 `eth/protocols/eth/peer.go` 最新 diff 后，影响判断保持不变：geth 只把 `sendPooledTransactionHashes` 的 known-tx 标记从发送前移到成功发送 `NewPooledTransactionHashes` 后；SUPERVM 产品路径目前不主动发送 hash-only `NewPooledTransactionHashes`，现有完整 `TransactionsMsg` outbound 在 `eth_rlpx_write_wire_frame_v1` 成功后才记录 propagated，写失败路径记录 propagation failure。因此本次复拉不需要 Rust 代码改动，只保留诊断记录。
+
 本轮验证：
 
 ```powershell
