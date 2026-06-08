@@ -729,6 +729,7 @@ struct EthFullnodeNativeRlpxLivePeerSessionV1 {
     pending_snap_storage_accounts: Vec<[u8; 32]>,
     pending_snap_code_hashes: Vec<[u8; 32]>,
     pending_snap_trie_node_pathsets: Vec<Vec<Vec<u8>>>,
+    pending_snap_trie_node_hashes: Vec<[u8; 32]>,
     last_pooled_transactions_request_id: Option<u64>,
     last_tx_broadcast_unix_ms: u64,
     pending_body_headers: Vec<EthFullnodeNativePendingBodyHeaderV1>,
@@ -1426,6 +1427,7 @@ fn connect_eth_fullnode_native_rlpx_peer_v1(
             pending_snap_storage_accounts: Vec::new(),
             pending_snap_code_hashes: Vec::new(),
             pending_snap_trie_node_pathsets: Vec::new(),
+            pending_snap_trie_node_hashes: Vec::new(),
             last_pooled_transactions_request_id: None,
             last_tx_broadcast_unix_ms: 0,
             pending_body_headers: Vec::new(),
@@ -2448,6 +2450,7 @@ fn clear_eth_fullnode_native_snap_request_state_v1(
     session.pending_snap_storage_accounts.clear();
     session.pending_snap_code_hashes.clear();
     session.pending_snap_trie_node_pathsets.clear();
+    session.pending_snap_trie_node_hashes.clear();
 }
 
 fn dispatch_eth_fullnode_native_snap_account_range_request_v1(
@@ -2500,6 +2503,7 @@ fn dispatch_eth_fullnode_native_snap_account_range_request_v1(
     session.pending_snap_storage_accounts.clear();
     session.pending_snap_code_hashes.clear();
     session.pending_snap_trie_node_pathsets.clear();
+    session.pending_snap_trie_node_hashes.clear();
     session.last_snap_account_range_request_id = Some(request_id);
     session.last_sync_request_unix_ms = now_unix_ms();
     Ok(request_id)
@@ -2531,10 +2535,15 @@ fn eth_fullnode_native_snap_root_trie_pathset_v1() -> Vec<Vec<u8>> {
     vec![vec![0u8]]
 }
 
-fn maybe_request_eth_fullnode_native_snap_root_trie_node_v1(
+fn eth_fullnode_native_snap_storage_root_trie_pathset_v1(account_hash: [u8; 32]) -> Vec<Vec<u8>> {
+    vec![account_hash.to_vec(), vec![0u8]]
+}
+
+fn maybe_request_eth_fullnode_native_snap_trie_nodes_v1(
     chain_id: u64,
     source_peer_id: u64,
     session: &mut EthFullnodeNativeRlpxLivePeerSessionV1,
+    candidates: &[(Vec<Vec<u8>>, [u8; 32])],
 ) -> Result<bool, NetworkError> {
     if session.last_snap_trie_nodes_request_id.is_some() {
         return Ok(false);
@@ -2542,10 +2551,29 @@ fn maybe_request_eth_fullnode_native_snap_root_trie_node_v1(
     let Some(root) = session.last_snap_state_root else {
         return Ok(false);
     };
+    let empty_root = crate::eth_rlpx_empty_trie_root_v1();
     let root_path = eth_fullnode_native_snap_root_trie_pathset_v1();
+    let mut pending = Vec::<(Vec<Vec<u8>>, [u8; 32])>::new();
     if get_network_runtime_native_snap_trie_node_snapshot_v1(chain_id, root, root_path.as_slice())
-        .is_some()
+        .is_none()
     {
+        pending.push((root_path, root));
+    }
+    for (pathset, expected_hash) in candidates {
+        if *expected_hash == empty_root
+            || pending.iter().any(|(existing, _)| existing == pathset)
+            || get_network_runtime_native_snap_trie_node_snapshot_v1(
+                chain_id,
+                root,
+                pathset.as_slice(),
+            )
+            .is_some()
+        {
+            continue;
+        }
+        pending.push((pathset.clone(), *expected_hash));
+    }
+    if pending.is_empty() {
         return Ok(false);
     }
     let Some(snap_offset) = eth_rlpx_snap_base_offset_v1(
@@ -2555,7 +2583,14 @@ fn maybe_request_eth_fullnode_native_snap_root_trie_node_v1(
         return Ok(false);
     };
     let request_id = next_eth_fullnode_native_rlpx_request_id_v1();
-    let pathsets = vec![root_path];
+    let pathsets = pending
+        .iter()
+        .map(|(pathset, _)| pathset.clone())
+        .collect::<Vec<_>>();
+    let expected_hashes = pending
+        .iter()
+        .map(|(_, expected_hash)| *expected_hash)
+        .collect::<Vec<_>>();
     let payload = eth_rlpx_build_get_trie_nodes_payload_v1(
         request_id,
         root,
@@ -2580,13 +2615,15 @@ fn maybe_request_eth_fullnode_native_snap_root_trie_node_v1(
     observe_network_runtime_eth_peer_syncing_v1(chain_id, source_peer_id);
     session.last_snap_trie_nodes_request_id = Some(request_id);
     session.pending_snap_trie_node_pathsets = pathsets;
+    session.pending_snap_trie_node_hashes = expected_hashes;
     session.last_sync_request_unix_ms = now_unix_ms();
     eprintln!(
-        "network_info: rlpx stage snap_trie_nodes_requested chain_id={} peer={} endpoint={} request_id={} paths=1 root=0x{}",
+        "network_info: rlpx stage snap_trie_nodes_requested chain_id={} peer={} endpoint={} request_id={} paths={} root=0x{}",
         chain_id,
         source_peer_id,
         session.endpoint.addr_hint,
         request_id,
+        session.pending_snap_trie_node_pathsets.len(),
         hex32_v1(&root),
     );
     Ok(true)
@@ -2838,6 +2875,7 @@ fn ingest_real_rlpx_snap_account_range_v1(
     };
     let mut storage_accounts = Vec::new();
     let mut code_hashes = Vec::new();
+    let mut trie_node_candidates = Vec::<(Vec<Vec<u8>>, [u8; 32])>::new();
     let mut seen_code_hashes = HashSet::new();
     let observed_unix_ms = now_unix_ms() as u128;
     for (idx, account) in response.accounts.iter().enumerate() {
@@ -2867,6 +2905,12 @@ fn ingest_real_rlpx_snap_account_range_v1(
             None => true,
         } {
             storage_accounts.push(account.hash);
+            if let Some(fields) = parsed {
+                trie_node_candidates.push((
+                    eth_fullnode_native_snap_storage_root_trie_pathset_v1(account.hash),
+                    fields.storage_root,
+                ));
+            }
         }
         if let Some(fields) = parsed {
             if fields.has_code && seen_code_hashes.insert(fields.code_hash) {
@@ -2949,10 +2993,11 @@ fn ingest_real_rlpx_snap_account_range_v1(
             code_hashes.len(),
         );
     }
-    let _ = maybe_request_eth_fullnode_native_snap_root_trie_node_v1(
+    let _ = maybe_request_eth_fullnode_native_snap_trie_nodes_v1(
         chain_id,
         source_peer_id,
         session,
+        trie_node_candidates.as_slice(),
     )?;
     if session.last_snap_storage_ranges_request_id.is_none()
         && session.last_snap_byte_codes_request_id.is_none()
@@ -3168,6 +3213,19 @@ fn ingest_real_rlpx_snap_trie_nodes_v1(
         );
         return Err(NetworkError::Decode(reason));
     }
+    if response.nodes.len() < session.pending_snap_trie_node_pathsets.len() {
+        let reason = format!(
+            "snap_trie_nodes_count_missing:nodes={} requested={}",
+            response.nodes.len(),
+            session.pending_snap_trie_node_pathsets.len()
+        );
+        observe_network_runtime_eth_peer_decode_failure_v1(
+            chain_id,
+            source_peer_id,
+            reason.as_str(),
+        );
+        return Err(NetworkError::Decode(reason));
+    }
     let Some(root) = session.last_snap_state_root else {
         let reason = "snap_trie_nodes_state_root_missing".to_string();
         observe_network_runtime_eth_peer_decode_failure_v1(
@@ -3177,21 +3235,6 @@ fn ingest_real_rlpx_snap_trie_nodes_v1(
         );
         return Err(NetworkError::Decode(reason));
     };
-    let root_path = eth_fullnode_native_snap_root_trie_pathset_v1();
-    if response.nodes.is_empty()
-        && session
-            .pending_snap_trie_node_pathsets
-            .first()
-            .is_some_and(|pathset| pathset == &root_path)
-    {
-        let reason = "snap_trie_nodes_root_node_missing".to_string();
-        observe_network_runtime_eth_peer_decode_failure_v1(
-            chain_id,
-            source_peer_id,
-            reason.as_str(),
-        );
-        return Err(NetworkError::Decode(reason));
-    }
     for (idx, node) in response.nodes.iter().enumerate() {
         if !eth_rlpx_validate_trie_node_rlp_v1(node.as_slice()) {
             let reason = format!("snap_trie_nodes_node_rlp_invalid:idx={idx}");
@@ -3203,16 +3246,16 @@ fn ingest_real_rlpx_snap_trie_nodes_v1(
             return Err(NetworkError::Decode(reason));
         }
         let node_hash = eth_rlpx_trie_node_hash_v1(node.as_slice());
-        if session
-            .pending_snap_trie_node_pathsets
+        let expected_hash = session
+            .pending_snap_trie_node_hashes
             .get(idx)
-            .is_some_and(|pathset| pathset == &root_path)
-            && node_hash != root
-        {
+            .copied()
+            .unwrap_or(root);
+        if node_hash != expected_hash {
             let reason = format!(
-                "snap_trie_nodes_root_hash_mismatch:idx={} expected=0x{} got=0x{}",
+                "snap_trie_nodes_hash_mismatch:idx={} expected=0x{} got=0x{}",
                 idx,
-                hex32_v1(&root),
+                hex32_v1(&expected_hash),
                 hex32_v1(&node_hash)
             );
             observe_network_runtime_eth_peer_decode_failure_v1(
@@ -3254,6 +3297,7 @@ fn ingest_real_rlpx_snap_trie_nodes_v1(
     }
     session.last_snap_trie_nodes_request_id = None;
     session.pending_snap_trie_node_pathsets.clear();
+    session.pending_snap_trie_node_hashes.clear();
     if session.last_snap_account_range_request_id.is_none()
         && session.last_snap_storage_ranges_request_id.is_none()
         && session.last_snap_byte_codes_request_id.is_none()
@@ -11731,7 +11775,13 @@ mod tests {
             node.extend(std::iter::repeat(0x80_u8).take(17));
             node
         };
+        let storage_root_trie_node = {
+            let mut node = vec![0xd1_u8, 0x01];
+            node.extend(std::iter::repeat(0x80_u8).take(16));
+            node
+        };
         let local_state_root = crate::eth_rlpx_trie_node_hash_v1(root_trie_node.as_slice());
+        let storage_root = crate::eth_rlpx_trie_node_hash_v1(storage_root_trie_node.as_slice());
         set_network_runtime_sync_status(
             chain_id,
             NetworkRuntimeSyncStatus {
@@ -11791,7 +11841,6 @@ mod tests {
             }
 
             let account_hash = [0x34; 32];
-            let storage_root = [0x35; 32];
             let bytecode = vec![0x60, 0x00];
             let code_hash = crate::eth_rlpx_code_hash_v1(bytecode.as_slice());
             let storage_slot = crate::EthRlpxSnapStorageDataV1 {
@@ -11799,6 +11848,7 @@ mod tests {
                 body: vec![0x80],
             };
             let root_trie_node = root_trie_node;
+            let storage_root_trie_node = storage_root_trie_node;
             let (mut accepted, _) = listener.accept().expect("accept rlpx");
             accepted
                 .set_read_timeout(Some(Duration::from_secs(5)))
@@ -11974,10 +12024,13 @@ mod tests {
                         crate::eth_rlpx_parse_get_trie_nodes_payload_v1(payload.as_slice())
                             .expect("parse get trie nodes");
                     assert_eq!(request.root, local_state_root);
-                    assert_eq!(request.paths, vec![vec![vec![0_u8]]]);
+                    assert_eq!(
+                        request.paths,
+                        vec![vec![vec![0_u8]], vec![account_hash.to_vec(), vec![0_u8]]]
+                    );
                     let response = crate::eth_rlpx_build_trie_nodes_payload_v1(
                         request.request_id,
-                        &[root_trie_node.clone()],
+                        &[root_trie_node.clone(), storage_root_trie_node.clone()],
                     );
                     crate::eth_rlpx_write_wire_frame_v1(
                         &mut accepted,
@@ -12079,7 +12132,7 @@ mod tests {
             [0x34; 32],
         )
         .expect("snap account snapshot");
-        assert_eq!(account.storage_root, Some([0x35; 32]));
+        assert_eq!(account.storage_root, Some(storage_root));
         assert_eq!(
             account.code_hash,
             Some(crate::eth_rlpx_code_hash_v1(&[0x60, 0x00]))
@@ -12109,6 +12162,13 @@ mod tests {
         )
         .expect("snap root trie node snapshot");
         assert_eq!(trie_node.node_hash, local_state_root);
+        let storage_trie_node = crate::get_network_runtime_native_snap_trie_node_snapshot_v1(
+            chain_id,
+            local_state_root,
+            &[vec![0x34; 32], vec![0_u8]],
+        )
+        .expect("snap storage root trie node snapshot");
+        assert_eq!(storage_trie_node.node_hash, storage_root);
 
         server.join().expect("server join");
     }
