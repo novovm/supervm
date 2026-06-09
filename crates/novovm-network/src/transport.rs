@@ -842,6 +842,7 @@ const ETH_FULLNODE_NATIVE_MISSING_BODY_CHASE_HEAD_BATCH_MAX_V1: usize = 1;
 const ETH_FULLNODE_NATIVE_RECOVERY_INFLIGHT_BODY_KIND_V1: u8 = 1;
 const ETH_FULLNODE_NATIVE_RECOVERY_INFLIGHT_RECEIPT_KIND_V1: u8 = 2;
 const ETH_FULLNODE_NATIVE_RECOVERY_INFLIGHT_TTL_MS_V1: u64 = 30_000;
+const ETH_FULLNODE_NATIVE_HEADER_INFLIGHT_TTL_MS_V1: u64 = 30_000;
 
 type EthFullnodeNativeRlpxSessionKeyV1 = (u64, u64);
 type EthFullnodeNativeRlpxSessionMapV1 =
@@ -862,6 +863,19 @@ struct EthFullnodeNativeRecoveryInflightV1 {
 static ETH_FULLNODE_NATIVE_RECOVERY_INFLIGHT: OnceLock<
     Mutex<EthFullnodeNativeRecoveryInflightMapV1>,
 > = OnceLock::new();
+type EthFullnodeNativeHeaderInflightKeyV1 = (u64, u64, u64, bool);
+type EthFullnodeNativeHeaderInflightMapV1 =
+    HashMap<EthFullnodeNativeHeaderInflightKeyV1, EthFullnodeNativeHeaderInflightV1>;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct EthFullnodeNativeHeaderInflightV1 {
+    peer_id: u64,
+    request_id: u64,
+    observed_unix_ms: u64,
+}
+
+static ETH_FULLNODE_NATIVE_HEADER_INFLIGHT: OnceLock<Mutex<EthFullnodeNativeHeaderInflightMapV1>> =
+    OnceLock::new();
 
 fn eth_fullnode_native_rlpx_sessions_v1() -> &'static Mutex<EthFullnodeNativeRlpxSessionMapV1> {
     ETH_FULLNODE_NATIVE_RLPX_SESSIONS.get_or_init(|| Mutex::new(HashMap::new()))
@@ -870,6 +884,11 @@ fn eth_fullnode_native_rlpx_sessions_v1() -> &'static Mutex<EthFullnodeNativeRlp
 fn eth_fullnode_native_recovery_inflight_v1(
 ) -> &'static Mutex<EthFullnodeNativeRecoveryInflightMapV1> {
     ETH_FULLNODE_NATIVE_RECOVERY_INFLIGHT.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn eth_fullnode_native_header_inflight_v1() -> &'static Mutex<EthFullnodeNativeHeaderInflightMapV1>
+{
+    ETH_FULLNODE_NATIVE_HEADER_INFLIGHT.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
 fn eth_fullnode_native_rlpx_live_peer_ids_v1(chain_id: u64) -> HashSet<u64> {
@@ -970,6 +989,78 @@ fn clear_eth_fullnode_native_recovery_inflight_peer_v1(chain_id: u64, peer_id: u
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     inflight.retain(|(entry_chain_id, _, _), entry| {
+        *entry_chain_id != chain_id || entry.peer_id != peer_id
+    });
+}
+
+fn prune_eth_fullnode_native_header_inflight_locked_v1(
+    inflight: &mut EthFullnodeNativeHeaderInflightMapV1,
+    now_ms: u64,
+) {
+    inflight.retain(|_, entry| {
+        now_ms.saturating_sub(entry.observed_unix_ms)
+            <= ETH_FULLNODE_NATIVE_HEADER_INFLIGHT_TTL_MS_V1
+    });
+}
+
+fn should_dispatch_eth_fullnode_native_header_request_v1(
+    chain_id: u64,
+    peer_id: u64,
+    start_height: u64,
+    skip: u64,
+    reverse: bool,
+) -> bool {
+    let now_ms = now_unix_ms();
+    let mut inflight = eth_fullnode_native_header_inflight_v1()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    prune_eth_fullnode_native_header_inflight_locked_v1(&mut inflight, now_ms);
+    inflight
+        .get(&(chain_id, start_height, skip, reverse))
+        .map_or(true, |entry| entry.peer_id == peer_id)
+}
+
+fn mark_eth_fullnode_native_header_inflight_v1(
+    chain_id: u64,
+    peer_id: u64,
+    request_id: u64,
+    start_height: u64,
+    skip: u64,
+    reverse: bool,
+) {
+    let now_ms = now_unix_ms();
+    let mut inflight = eth_fullnode_native_header_inflight_v1()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    prune_eth_fullnode_native_header_inflight_locked_v1(&mut inflight, now_ms);
+    inflight.insert(
+        (chain_id, start_height, skip, reverse),
+        EthFullnodeNativeHeaderInflightV1 {
+            peer_id,
+            request_id,
+            observed_unix_ms: now_ms,
+        },
+    );
+}
+
+fn clear_eth_fullnode_native_header_inflight_request_v1(
+    chain_id: u64,
+    peer_id: u64,
+    request_id: u64,
+) {
+    let mut inflight = eth_fullnode_native_header_inflight_v1()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    inflight.retain(|(entry_chain_id, _, _, _), entry| {
+        *entry_chain_id != chain_id || entry.peer_id != peer_id || entry.request_id != request_id
+    });
+}
+
+fn clear_eth_fullnode_native_header_inflight_peer_v1(chain_id: u64, peer_id: u64) {
+    let mut inflight = eth_fullnode_native_header_inflight_v1()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    inflight.retain(|(entry_chain_id, _, _, _), entry| {
         *entry_chain_id != chain_id || entry.peer_id != peer_id
     });
 }
@@ -1916,6 +2007,7 @@ fn mark_eth_fullnode_native_rlpx_session_disconnected_v1(
     err: NetworkError,
 ) {
     clear_eth_fullnode_native_recovery_inflight_peer_v1(chain_id, peer_id);
+    clear_eth_fullnode_native_header_inflight_peer_v1(chain_id, peer_id);
     let _ = unregister_network_runtime_peer(chain_id, peer_id);
     *disconnected = true;
     *disconnect_error = Some(err);
@@ -3015,6 +3107,15 @@ fn drive_eth_fullnode_native_rlpx_peer_session_once_v1(
                                     max,
                                     budget_hooks,
                                 );
+                                if !should_dispatch_eth_fullnode_native_header_request_v1(
+                                    chain_id,
+                                    peer.0,
+                                    start_height,
+                                    skip,
+                                    reverse,
+                                ) {
+                                    return Ok(report);
+                                }
                                 let request_id = next_eth_fullnode_native_rlpx_request_id_v1();
                                 let payload = eth_rlpx_build_get_block_headers_payload_v1(
                                     request_id,
@@ -3049,6 +3150,14 @@ fn drive_eth_fullnode_native_rlpx_peer_session_once_v1(
                                 } else {
                                     observe_eth_native_headers_pull(chain_id);
                                     observe_network_runtime_eth_peer_syncing_v1(chain_id, peer.0);
+                                    mark_eth_fullnode_native_header_inflight_v1(
+                                        chain_id,
+                                        peer.0,
+                                        request_id,
+                                        start_height,
+                                        skip,
+                                        reverse,
+                                    );
                                     session.last_headers_request_id = Some(request_id);
                                     session.pending_headers_request =
                                         Some(EthRlpxGetBlockHeadersRequestV1 {
@@ -3150,6 +3259,7 @@ fn drive_eth_fullnode_native_rlpx_peer_session_once_v1(
     }
     if disconnected {
         clear_eth_fullnode_native_recovery_inflight_peer_v1(chain_id, peer.0);
+        clear_eth_fullnode_native_header_inflight_peer_v1(chain_id, peer.0);
         sessions.remove(&(chain_id, peer.0));
     }
     if let Some(err) = disconnect_error {
@@ -6824,6 +6934,11 @@ fn ingest_real_rlpx_block_headers_v1(
     if pending_request.request_id != headers.request_id {
         return Ok(());
     }
+    clear_eth_fullnode_native_header_inflight_request_v1(
+        chain_id,
+        source_peer_id,
+        pending_request.request_id,
+    );
     observe_eth_native_headers_response(chain_id);
     let all_headers = headers.headers.iter().collect::<Vec<_>>();
     if let Err(err) = validate_eth_fullnode_native_rlpx_block_headers_response_matches_request_v1(
@@ -11986,6 +12101,46 @@ mod tests {
                 .map(|header| header.number)
                 .collect::<Vec<_>>(),
             vec![7_000, 7_003]
+        );
+    }
+
+    #[test]
+    fn rlpx_header_inflight_filter_skips_duplicate_forward_start_v1() {
+        let chain_id = 9_926_121_u64;
+        let peer_a = 1_300_122_u64;
+        let peer_b = 1_300_123_u64;
+        clear_eth_fullnode_native_header_inflight_peer_v1(chain_id, peer_a);
+        clear_eth_fullnode_native_header_inflight_peer_v1(chain_id, peer_b);
+
+        assert!(should_dispatch_eth_fullnode_native_header_request_v1(
+            chain_id, peer_a, 8_000, 0, false
+        ));
+        mark_eth_fullnode_native_header_inflight_v1(chain_id, peer_a, 51, 8_000, 0, false);
+        assert!(
+            should_dispatch_eth_fullnode_native_header_request_v1(
+                chain_id, peer_a, 8_000, 0, false
+            ),
+            "the owning peer may continue its own pending header request"
+        );
+        assert!(
+            !should_dispatch_eth_fullnode_native_header_request_v1(
+                chain_id, peer_b, 8_000, 0, false
+            ),
+            "another peer must not duplicate the same forward header start"
+        );
+        assert!(
+            should_dispatch_eth_fullnode_native_header_request_v1(
+                chain_id, peer_b, 8_001, 0, false
+            ),
+            "a different start remains dispatchable"
+        );
+
+        clear_eth_fullnode_native_header_inflight_request_v1(chain_id, peer_a, 51);
+        assert!(
+            should_dispatch_eth_fullnode_native_header_request_v1(
+                chain_id, peer_b, 8_000, 0, false
+            ),
+            "response/failure cleanup must release the header start"
         );
     }
 
