@@ -2385,6 +2385,18 @@ fn eth_rlpx_complete_head_made_progress_v1(
     current_block > previous_progress_block && header_present && body_available && receipt_available
 }
 
+fn eth_rlpx_forward_progress_stalled_v1(
+    highest_block: u64,
+    current_block: u64,
+    tick: usize,
+    last_complete_head_progress_tick: usize,
+    stalled_refresh_interval_ticks: usize,
+) -> bool {
+    highest_block > current_block
+        && tick.saturating_sub(last_complete_head_progress_tick)
+            >= stalled_refresh_interval_ticks.max(1)
+}
+
 fn eth_rlpx_apply_public_sync_batch_defaults_v1(
     budget: &mut EthFullnodeBudgetHooksV1,
     headers_batch: u64,
@@ -2397,6 +2409,7 @@ fn eth_rlpx_apply_public_sync_batch_defaults_v1(
 const ETH_RLPX_PUBLIC_SYNC_DEFAULT_REQUEST_TIMEOUT_MS_V1: u64 = 5_000;
 const ETH_RLPX_PUBLIC_SYNC_DEFAULT_REQUEST_INTERVAL_MS_V1: u64 = 250;
 const ETH_RLPX_PUBLIC_SYNC_DEFAULT_RUNTIME_SNAPSHOT_BLOCKS_V1: u64 = 8;
+const ETH_RLPX_PUBLIC_SYNC_DEFAULT_RUNTIME_PENDING_TXS_V1: u64 = 128;
 
 fn eth_rlpx_apply_public_sync_runtime_defaults_v1(
     budget: &mut EthFullnodeBudgetHooksV1,
@@ -2406,6 +2419,7 @@ fn eth_rlpx_apply_public_sync_runtime_defaults_v1(
     rlpx_request_timeout_ms: u64,
     sync_request_interval_ms: u64,
     runtime_snapshot_blocks: u64,
+    runtime_pending_txs: u64,
 ) {
     eth_rlpx_apply_public_sync_batch_defaults_v1(budget, headers_batch, bodies_batch);
     budget.sync_target_fanout = sync_target_fanout.max(1) as u64;
@@ -2416,6 +2430,9 @@ fn eth_rlpx_apply_public_sync_runtime_defaults_v1(
     budget.runtime_block_snapshot_limit = budget
         .runtime_block_snapshot_limit
         .min(runtime_snapshot_blocks.max(1));
+    budget.runtime_pending_tx_snapshot_limit = budget
+        .runtime_pending_tx_snapshot_limit
+        .min(runtime_pending_txs.max(1));
 }
 
 fn eth_rlpx_peer_discovery_total_timeout_v1() -> Duration {
@@ -5101,6 +5118,12 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
         1,
         1_024,
     );
+    let runtime_pending_txs = u64_env_clamped(
+        "NOVOVM_ETH_RLPX_RUNTIME_PENDING_TXS",
+        ETH_RLPX_PUBLIC_SYNC_DEFAULT_RUNTIME_PENDING_TXS_V1,
+        1,
+        2_048,
+    );
     let exhausted_refresh_interval_ticks =
         usize_env_allow_zero("NOVOVM_ETH_RLPX_EXHAUSTED_REFRESH_INTERVAL_TICKS", 8)?
             .clamp(1, 10_000);
@@ -5194,6 +5217,7 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
         rlpx_request_timeout_ms,
         sync_request_interval_ms,
         runtime_snapshot_blocks,
+        runtime_pending_txs,
     );
     let max_runtime_headers_batch = budget.sync_pull_headers_batch.max(1);
     let max_runtime_bodies_batch = budget.sync_pull_bodies_batch.max(1);
@@ -5371,6 +5395,8 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
     let mut last_peer_refresh_tick = 0usize;
     let mut last_sync_progress_tick = 0usize;
     let mut last_sync_progress_block = current_block;
+    let mut last_complete_head_progress_tick = 0usize;
+    let mut last_complete_head_progress_block = current_block;
     loop {
         tick = tick.saturating_add(1);
         let report = worker
@@ -5431,7 +5457,7 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
         );
         let complete_head_made_progress = eth_rlpx_complete_head_made_progress_v1(
             current_sync_block,
-            last_sync_progress_block,
+            last_complete_head_progress_block,
             current_head_present,
             current_head_body_available,
             current_head_receipt_available,
@@ -5443,6 +5469,11 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
         if sync_made_progress {
             last_sync_progress_tick = tick;
             last_sync_progress_block = last_sync_progress_block.max(current_sync_block);
+        }
+        if complete_head_made_progress {
+            last_complete_head_progress_tick = tick;
+            last_complete_head_progress_block =
+                last_complete_head_progress_block.max(current_sync_block);
         }
         let last_failure = report.peer_failures.last().map(|failure| {
             format!(
@@ -5685,8 +5716,13 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
             && report.selection_quality_summary.candidate_peer_count > 0
             && report.selection_quality_summary.skipped_cooldown_peers
                 >= report.selection_quality_summary.candidate_peer_count;
-        let progress_stalled = highest_sync_block > current_sync_block
-            && tick.saturating_sub(last_sync_progress_tick) >= stalled_refresh_interval_ticks;
+        let progress_stalled = eth_rlpx_forward_progress_stalled_v1(
+            highest_sync_block,
+            current_sync_block,
+            tick,
+            last_complete_head_progress_tick,
+            stalled_refresh_interval_ticks,
+        );
         let body_recovery_stalled = current_head_body_missing
             && report.ready_peers == 0
             && report.body_updates == 0
@@ -5701,7 +5737,8 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
             && report.scheduled_sync_peers == 0
             && current_sync_block == 0
             && highest_sync_block == 0
-            && tick.saturating_sub(last_sync_progress_tick) >= stalled_refresh_interval_ticks;
+            && tick.saturating_sub(last_complete_head_progress_tick)
+                >= stalled_refresh_interval_ticks;
         if adaptive_bootstrap_fanout_enabled && !sync_target_fanout_explicit {
             let next_sync_target_fanout = eth_rlpx_adaptive_bootstrap_fanout_v1(
                 runtime_sync_target_fanout,
@@ -6584,6 +6621,21 @@ mod mainline_evm_cli_tests {
     }
 
     #[test]
+    fn eth_rlpx_forward_refresh_stall_uses_complete_head_progress_tick_v1() {
+        assert!(eth_rlpx_forward_progress_stalled_v1(
+            25_282_179, 25_281_886, 16, 10, 4,
+        ));
+        assert!(
+            !eth_rlpx_forward_progress_stalled_v1(25_282_179, 25_281_886, 13, 10, 4),
+            "do not refresh before the complete-head stall interval elapses"
+        );
+        assert!(
+            !eth_rlpx_forward_progress_stalled_v1(25_281_886, 25_281_886, 16, 10, 4),
+            "already caught up heads must not trigger forward refresh"
+        );
+    }
+
+    #[test]
     fn eth_rlpx_adaptive_public_sync_batch_backs_off_and_restores_v1() {
         assert_eq!(
             eth_rlpx_adaptive_public_sync_batch_v1(192, 192, 64, false, true),
@@ -6782,6 +6834,7 @@ mod mainline_evm_cli_tests {
             ETH_RLPX_PUBLIC_SYNC_DEFAULT_REQUEST_TIMEOUT_MS_V1,
             ETH_RLPX_PUBLIC_SYNC_DEFAULT_REQUEST_INTERVAL_MS_V1,
             ETH_RLPX_PUBLIC_SYNC_DEFAULT_RUNTIME_SNAPSHOT_BLOCKS_V1,
+            ETH_RLPX_PUBLIC_SYNC_DEFAULT_RUNTIME_PENDING_TXS_V1,
         );
 
         assert_eq!(budget.sync_target_fanout, 8);
@@ -6797,12 +6850,17 @@ mod mainline_evm_cli_tests {
             budget.runtime_block_snapshot_limit,
             ETH_RLPX_PUBLIC_SYNC_DEFAULT_RUNTIME_SNAPSHOT_BLOCKS_V1
         );
+        assert_eq!(
+            budget.runtime_pending_tx_snapshot_limit,
+            ETH_RLPX_PUBLIC_SYNC_DEFAULT_RUNTIME_PENDING_TXS_V1
+        );
     }
 
     #[test]
     fn eth_rlpx_public_sync_runtime_defaults_preserve_smaller_snapshot_cap_v1() {
         let mut budget = EthFullnodeBudgetHooksV1::default();
         budget.runtime_block_snapshot_limit = 4;
+        budget.runtime_pending_tx_snapshot_limit = 32;
 
         eth_rlpx_apply_public_sync_runtime_defaults_v1(
             &mut budget,
@@ -6812,9 +6870,11 @@ mod mainline_evm_cli_tests {
             ETH_RLPX_PUBLIC_SYNC_DEFAULT_REQUEST_TIMEOUT_MS_V1,
             ETH_RLPX_PUBLIC_SYNC_DEFAULT_REQUEST_INTERVAL_MS_V1,
             ETH_RLPX_PUBLIC_SYNC_DEFAULT_RUNTIME_SNAPSHOT_BLOCKS_V1,
+            ETH_RLPX_PUBLIC_SYNC_DEFAULT_RUNTIME_PENDING_TXS_V1,
         );
 
         assert_eq!(budget.runtime_block_snapshot_limit, 4);
+        assert_eq!(budget.runtime_pending_tx_snapshot_limit, 32);
     }
 
     #[test]
