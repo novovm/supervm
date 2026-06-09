@@ -837,7 +837,7 @@ struct EthFullnodeNativePendingBlockAccessListV1 {
     tx_count: Option<usize>,
 }
 
-const ETH_FULLNODE_NATIVE_MISSING_BODY_RECOVERY_BATCH_MAX_V1: usize = 16;
+const ETH_FULLNODE_NATIVE_MISSING_BODY_RECOVERY_BATCH_MAX_V1: usize = 4;
 const ETH_FULLNODE_NATIVE_MISSING_BODY_CHASE_HEAD_BATCH_MAX_V1: usize = 1;
 
 type EthFullnodeNativeRlpxSessionKeyV1 = (u64, u64);
@@ -11604,6 +11604,54 @@ mod tests {
         );
         assert_eq!(pending[0].transactions_root, [0xb0; 32]);
         assert_eq!(pending[1].transactions_root, [0xb2; 32]);
+    }
+
+    #[test]
+    fn rlpx_missing_body_idle_backfill_caps_historical_batch_v1() {
+        let chain_id = 9_926_119_u64;
+        let peer_id = 1_300_119_u64;
+        clear_network_runtime_native_snapshots_for_chain_v1(chain_id);
+
+        for offset in 0..6u8 {
+            let number = 6_000 + u64::from(offset);
+            set_network_runtime_native_header_snapshot_v1(
+                chain_id,
+                crate::runtime_status::NetworkRuntimeNativeHeaderSnapshotV1 {
+                    chain_id,
+                    number,
+                    hash: [0x20 + offset; 32],
+                    parent_hash: [0x10 + offset; 32],
+                    state_root: [0x30 + offset; 32],
+                    transactions_root: [0x40 + offset; 32],
+                    receipts_root: [0x50 + offset; 32],
+                    ommers_hash: crate::eth_rlpx_empty_ommers_hash_v1(),
+                    logs_bloom: vec![0u8; 256],
+                    gas_limit: Some(30_000_000),
+                    gas_used: Some(21_000),
+                    timestamp: Some(1_900_020_000 + u64::from(offset)),
+                    base_fee_per_gas: Some(7),
+                    withdrawals_root: Some(crate::eth_rlpx_empty_trie_root_v1()),
+                    blob_gas_used: None,
+                    excess_blob_gas: None,
+                    block_access_list_hash: None,
+                    source_peer_id: Some(peer_id),
+                    observed_unix_ms: 1 + u128::from(offset),
+                },
+            );
+        }
+
+        let pending = build_eth_fullnode_native_missing_body_pending_headers_v1(chain_id);
+        assert_eq!(
+            pending.len(),
+            ETH_FULLNODE_NATIVE_MISSING_BODY_RECOVERY_BATCH_MAX_V1
+        );
+        assert_eq!(
+            pending
+                .iter()
+                .map(|header| header.number)
+                .collect::<Vec<_>>(),
+            vec![6_000, 6_001, 6_002, 6_005]
+        );
     }
 
     #[test]
