@@ -2981,7 +2981,7 @@ fn load_eth_rlpx_sync_checkpoint_v1(
     }
     let raw = fs::read(path)
         .with_context(|| format!("read eth rlpx sync checkpoint failed: {}", path.display()))?;
-    let checkpoint = serde_json::from_slice::<EthRlpxSyncCheckpointV1>(raw.as_slice())
+    let mut checkpoint = serde_json::from_slice::<EthRlpxSyncCheckpointV1>(raw.as_slice())
         .with_context(|| format!("parse eth rlpx sync checkpoint failed: {}", path.display()))?;
     if checkpoint.schema != "supervm-eth-rlpx-sync-checkpoint/v1" {
         bail!(
@@ -2996,6 +2996,10 @@ fn load_eth_rlpx_sync_checkpoint_v1(
             chain_id
         );
     }
+    if checkpoint.header_number > 0 && checkpoint.current_block > checkpoint.header_number {
+        checkpoint.current_block = checkpoint.header_number;
+    }
+    checkpoint.highest_block = checkpoint.highest_block.max(checkpoint.current_block);
     Ok(Some(checkpoint))
 }
 
@@ -3009,11 +3013,12 @@ fn write_eth_rlpx_sync_checkpoint_v1(
     let Some(sync_status) = sync_status else {
         return Ok(());
     };
+    let current_block = sync_status.current_block.min(header_number);
     let checkpoint = EthRlpxSyncCheckpointV1 {
         schema: "supervm-eth-rlpx-sync-checkpoint/v1".to_string(),
         chain_id,
-        current_block: sync_status.current_block,
-        highest_block: sync_status.highest_block.max(sync_status.current_block),
+        current_block,
+        highest_block: sync_status.highest_block.max(current_block),
         header_number,
         header_hash,
         updated_at_unix_ms: now_unix_ms(),
@@ -3881,10 +3886,7 @@ fn write_eth_rlpx_native_head_store_v1(
     let Some(header) = header else {
         return Ok(());
     };
-    let current_block = sync_status
-        .map(|status| status.current_block)
-        .unwrap_or(header.number)
-        .max(header.number);
+    let current_block = header.number;
     let highest_block = sync_status
         .map(|status| status.highest_block)
         .unwrap_or(current_block)
@@ -4075,7 +4077,7 @@ fn restore_eth_rlpx_native_head_store_v1(stored: &EthRlpxNativeHeadStoreV1) -> R
             observed_unix_ms: header.observed_unix_ms,
         },
     );
-    Ok(header.number.max(stored.current_block))
+    Ok(header.number)
 }
 
 fn eth_rlpx_restored_native_head_phase_v1(
@@ -4415,10 +4417,7 @@ fn update_eth_rlpx_native_history_store_from_snapshots_v1(
     };
     store.schema = "supervm-eth-rlpx-native-history-store/v1".to_string();
     store.chain_id = chain_id;
-    let current_block = sync_status
-        .map(|status| status.current_block)
-        .unwrap_or(header.number)
-        .max(header.number);
+    let current_block = header.number;
     store.current_block = current_block;
     store.highest_block = sync_status
         .map(|status| status.highest_block)
@@ -4614,7 +4613,7 @@ fn restore_eth_rlpx_native_history_store_v1(
             observed_unix_ms: header.observed_unix_ms,
         },
     );
-    Ok(header.number.max(store.current_block))
+    Ok(header.number)
 }
 
 fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
@@ -6374,6 +6373,39 @@ mod mainline_evm_cli_tests {
     }
 
     #[test]
+    fn eth_rlpx_sync_checkpoint_current_does_not_exceed_header_number_v1() {
+        let path = std::env::temp_dir().join(format!(
+            "supervm-eth-rlpx-sync-checkpoint-current-test-{}-{}.json",
+            std::process::id(),
+            now_unix_ms()
+        ));
+        let chain_id = 1_u64;
+        write_eth_rlpx_sync_checkpoint_v1(
+            &path,
+            chain_id,
+            Some(NetworkRuntimeSyncStatus {
+                peer_count: 2,
+                starting_block: 1024,
+                current_block: 5120,
+                highest_block: 25_267_550,
+            }),
+            4096,
+            Some("0xdef".to_string()),
+        )
+        .expect("write checkpoint");
+
+        let loaded = load_eth_rlpx_sync_checkpoint_v1(&path, chain_id)
+            .expect("load checkpoint")
+            .expect("checkpoint present");
+        assert_eq!(loaded.current_block, 4096);
+        assert_eq!(loaded.highest_block, 25_267_550);
+        assert_eq!(loaded.header_number, 4096);
+        assert_eq!(loaded.header_hash.as_deref(), Some("0xdef"));
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
     fn eth_rlpx_peer_endpoint_cache_roundtrips_v1() {
         let path = std::env::temp_dir().join(format!(
             "supervm-eth-rlpx-peer-cache-test-{}-{}.json",
@@ -6672,6 +6704,82 @@ mod mainline_evm_cli_tests {
             .next_account_origin,
             Some(next_account_origin)
         );
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn eth_rlpx_native_stores_current_tracks_material_header_v1() {
+        let path = std::env::temp_dir().join(format!(
+            "supervm-eth-rlpx-native-head-store-current-test-{}-{}.json",
+            std::process::id(),
+            now_unix_ms()
+        ));
+        let chain_id = 9_991_774_u64;
+        let header_hash = [0x44_u8; 32];
+        let header = NetworkRuntimeNativeHeaderSnapshotV1 {
+            chain_id,
+            number: 77,
+            hash: header_hash,
+            parent_hash: [0x43_u8; 32],
+            state_root: [0x45_u8; 32],
+            transactions_root: [0x46_u8; 32],
+            receipts_root: [0x47_u8; 32],
+            ommers_hash: [0x48_u8; 32],
+            logs_bloom: Vec::new(),
+            gas_limit: Some(30_000_000),
+            gas_used: Some(21_000),
+            timestamp: Some(1_780_860_000),
+            base_fee_per_gas: Some(7),
+            withdrawals_root: None,
+            blob_gas_used: None,
+            excess_blob_gas: None,
+            block_access_list_hash: None,
+            source_peer_id: Some(42),
+            observed_unix_ms: now_unix_ms() as u128,
+        };
+        let sync_status = NetworkRuntimeSyncStatus {
+            peer_count: 2,
+            starting_block: 76,
+            current_block: 99,
+            highest_block: 120,
+        };
+
+        write_eth_rlpx_native_head_store_v1(
+            &path,
+            chain_id,
+            Some(sync_status),
+            Some(&header),
+            None,
+            None,
+        )
+        .expect("write native head store");
+        let loaded = load_eth_rlpx_native_head_store_v1(&path, chain_id)
+            .expect("load native head store")
+            .expect("native head store present");
+        assert_eq!(loaded.current_block, 77);
+        assert_eq!(loaded.highest_block, 120);
+        assert_eq!(loaded.header.as_ref().map(|header| header.number), Some(77));
+        let restored =
+            restore_eth_rlpx_native_head_store_v1(&loaded).expect("restore native head store");
+        assert_eq!(restored, 77);
+
+        let mut history = eth_rlpx_native_history_store_empty_v1(chain_id);
+        assert!(update_eth_rlpx_native_history_store_from_snapshots_v1(
+            &mut history,
+            chain_id,
+            Some(sync_status),
+            Some(&header),
+            None,
+            None,
+            None,
+            8,
+        ));
+        assert_eq!(history.current_block, 77);
+        assert_eq!(history.highest_block, 120);
+        let restored_history =
+            restore_eth_rlpx_native_history_store_v1(&history, 8).expect("restore history store");
+        assert_eq!(restored_history, 77);
 
         let _ = fs::remove_file(path);
     }

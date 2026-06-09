@@ -2603,7 +2603,12 @@ pub fn set_network_runtime_native_header_snapshot_v1(
 ) {
     let normalized = snapshot.normalized(chain_id);
     if let Ok(mut guard) = runtime_native_header_snapshot_map().lock() {
-        guard.insert(chain_id, normalized.clone());
+        let should_replace = guard
+            .get(&chain_id)
+            .is_none_or(|current| runtime_native_header_should_replace_v1(current, &normalized));
+        if should_replace {
+            guard.insert(chain_id, normalized.clone());
+        }
     }
     if let Ok(mut guard) = runtime_native_canonical_chain_map().lock() {
         let state = guard
@@ -2617,6 +2622,14 @@ pub fn set_network_runtime_native_header_snapshot_v1(
             .insert(chain_id, normalized.observed_unix_ms);
         hint_runtime_stale_check_deadline(&mut observed, chain_id, normalized.observed_unix_ms);
     }
+}
+
+fn runtime_native_header_should_replace_v1(
+    current: &NetworkRuntimeNativeHeaderSnapshotV1,
+    next: &NetworkRuntimeNativeHeaderSnapshotV1,
+) -> bool {
+    next.number > current.number
+        || (next.number == current.number && next.observed_unix_ms >= current.observed_unix_ms)
 }
 
 pub fn set_network_runtime_native_body_snapshot_v1(
@@ -3092,14 +3105,32 @@ pub fn set_network_runtime_native_head_snapshot_v1(
     let normalized = snapshot.normalized(chain_id);
     let observed_unix_ms = normalized.observed_unix_ms;
     let block_number = normalized.block_number;
+    let mut should_replace_head = true;
     if let Ok(mut guard) = runtime_native_head_snapshot_map().lock() {
-        guard.insert(chain_id, normalized.clone());
+        should_replace_head = guard
+            .get(&chain_id)
+            .is_none_or(|current| runtime_native_head_should_replace_v1(current, &normalized));
+        if should_replace_head {
+            guard.insert(chain_id, normalized.clone());
+        }
     }
-    if let Ok(mut guard) = runtime_native_canonical_chain_map().lock() {
+    if should_replace_head {
+        if let Ok(mut guard) = runtime_native_canonical_chain_map().lock() {
+            let state = guard
+                .entry(chain_id)
+                .or_insert_with(|| runtime_native_canonical_chain_internal_default_v1(chain_id));
+            runtime_native_canonical_chain_apply_head_v1(state, &normalized);
+        }
+    } else if let Ok(mut guard) = runtime_native_canonical_chain_map().lock() {
         let state = guard
             .entry(chain_id)
             .or_insert_with(|| runtime_native_canonical_chain_internal_default_v1(chain_id));
-        runtime_native_canonical_chain_apply_head_v1(state, &normalized);
+        if let Some(block) = state.blocks_by_hash.get_mut(&normalized.block_hash) {
+            block.safe |= normalized.safe;
+            block.finalized |= normalized.finalized;
+            block.source_peer_id = normalized.source_peer_id.or(block.source_peer_id);
+            block.observed_unix_ms = block.observed_unix_ms.max(normalized.observed_unix_ms);
+        }
     }
     if let Ok(mut observed) = runtime_sync_observed_state_map().lock() {
         observed
@@ -3110,6 +3141,15 @@ pub fn set_network_runtime_native_head_snapshot_v1(
     let _ = observe_network_runtime_local_head_max(chain_id, block_number);
     runtime_native_pending_tx_reconcile_against_canonical_chain_v1(chain_id);
     runtime_native_pending_tx_cleanup_v1(chain_id, observed_unix_ms);
+}
+
+fn runtime_native_head_should_replace_v1(
+    current: &NetworkRuntimeNativeHeadSnapshotV1,
+    next: &NetworkRuntimeNativeHeadSnapshotV1,
+) -> bool {
+    next.block_number > current.block_number
+        || (next.block_number == current.block_number
+            && next.observed_unix_ms >= current.observed_unix_ms)
 }
 
 pub fn observe_network_runtime_native_pending_tx_ingress_v1(
@@ -5156,6 +5196,118 @@ mod tests {
         );
         assert_eq!(chain.block_lifecycle_summary.canonical_count, 2);
         assert_eq!(chain.block_lifecycle_summary.reorged_out_count, 0);
+    }
+
+    #[test]
+    fn native_header_and_head_snapshots_do_not_regress_to_lower_height() {
+        let chain_id = 20336_u64;
+        clear_runtime_sync_status_for_test(chain_id);
+        clear_network_runtime_native_snapshots_for_chain_v1(chain_id);
+
+        set_network_runtime_native_header_snapshot_v1(
+            chain_id,
+            NetworkRuntimeNativeHeaderSnapshotV1 {
+                chain_id,
+                number: 200,
+                hash: [0x20; 32],
+                parent_hash: [0x19; 32],
+                state_root: [0x21; 32],
+                transactions_root: [0x31; 32],
+                receipts_root: [0x41; 32],
+                ommers_hash: [0x51; 32],
+                logs_bloom: Vec::new(),
+                gas_limit: None,
+                gas_used: None,
+                timestamp: Some(1_700_000_200),
+                base_fee_per_gas: None,
+                withdrawals_root: None,
+                blob_gas_used: None,
+                excess_blob_gas: None,
+                block_access_list_hash: None,
+                source_peer_id: Some(1),
+                observed_unix_ms: 2_000,
+            },
+        );
+        set_network_runtime_native_head_snapshot_v1(
+            chain_id,
+            NetworkRuntimeNativeHeadSnapshotV1 {
+                chain_id,
+                phase: NetworkRuntimeNativeSyncPhaseV1::Bodies,
+                peer_count: 2,
+                block_number: 200,
+                block_hash: [0x20; 32],
+                parent_block_hash: [0x19; 32],
+                state_root: [0x21; 32],
+                canonical: true,
+                safe: false,
+                finalized: false,
+                reorg_depth_hint: None,
+                body_available: false,
+                source_peer_id: Some(1),
+                observed_unix_ms: 2_001,
+            },
+        );
+
+        set_network_runtime_native_header_snapshot_v1(
+            chain_id,
+            NetworkRuntimeNativeHeaderSnapshotV1 {
+                chain_id,
+                number: 160,
+                hash: [0x16; 32],
+                parent_hash: [0x15; 32],
+                state_root: [0x22; 32],
+                transactions_root: [0x32; 32],
+                receipts_root: [0x42; 32],
+                ommers_hash: [0x52; 32],
+                logs_bloom: Vec::new(),
+                gas_limit: None,
+                gas_used: None,
+                timestamp: Some(1_700_000_160),
+                base_fee_per_gas: None,
+                withdrawals_root: None,
+                blob_gas_used: None,
+                excess_blob_gas: None,
+                block_access_list_hash: None,
+                source_peer_id: Some(2),
+                observed_unix_ms: 3_000,
+            },
+        );
+        set_network_runtime_native_head_snapshot_v1(
+            chain_id,
+            NetworkRuntimeNativeHeadSnapshotV1 {
+                chain_id,
+                phase: NetworkRuntimeNativeSyncPhaseV1::Bodies,
+                peer_count: 2,
+                block_number: 160,
+                block_hash: [0x16; 32],
+                parent_block_hash: [0x15; 32],
+                state_root: [0x22; 32],
+                canonical: true,
+                safe: false,
+                finalized: false,
+                reorg_depth_hint: None,
+                body_available: false,
+                source_peer_id: Some(2),
+                observed_unix_ms: 3_001,
+            },
+        );
+
+        assert_eq!(
+            get_network_runtime_native_header_snapshot_v1(chain_id)
+                .expect("latest header")
+                .number,
+            200
+        );
+        assert_eq!(
+            get_network_runtime_native_head_snapshot_v1(chain_id)
+                .expect("latest head")
+                .block_number,
+            200
+        );
+        let retained = snapshot_network_runtime_native_canonical_blocks_v1(chain_id, 0);
+        assert!(retained
+            .iter()
+            .any(|block| block.number == 160 && block.hash == [0x16; 32]));
     }
 
     #[test]
