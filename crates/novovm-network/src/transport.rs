@@ -155,6 +155,7 @@ use thiserror::Error;
 const ETH_FULLNODE_NATIVE_HEADERS_SERVE_MAX_V1: usize = 192;
 const ETH_FULLNODE_NATIVE_BODIES_SERVE_MAX_V1: usize = 128;
 const ETH_FULLNODE_NATIVE_STATUS_HEAD_PIVOT_MIN_GAP_V1: u64 = 8_192;
+const ETH_FULLNODE_NATIVE_RUNTIME_PEER_DETAIL_LIMIT_V1: usize = 64;
 
 #[derive(Debug, Error)]
 pub enum NetworkError {
@@ -1208,6 +1209,49 @@ fn build_eth_fullnode_peer_failure_report_v1(
     }
 }
 
+fn push_eth_fullnode_native_runtime_detail_peer_v1(
+    peers: &mut Vec<NodeId>,
+    seen: &mut HashSet<u64>,
+    peer: NodeId,
+) {
+    if peers.len() < ETH_FULLNODE_NATIVE_RUNTIME_PEER_DETAIL_LIMIT_V1 && seen.insert(peer.0) {
+        peers.push(peer);
+    }
+}
+
+fn eth_fullnode_native_runtime_detail_peers_v1(
+    plan: &EthFullnodeNativePeerWorkerPlanV1,
+    report: &EthFullnodeNativeRealDriveReportV1,
+) -> Vec<NodeId> {
+    let mut peers = Vec::new();
+    let mut seen = HashSet::new();
+    for &peer in plan.bootstrap_peers.iter().chain(plan.sync_peers.iter()) {
+        push_eth_fullnode_native_runtime_detail_peer_v1(&mut peers, &mut seen, peer);
+    }
+    for peer_id in report
+        .header_updated_peer_ids
+        .iter()
+        .chain(report.body_updated_peer_ids.iter())
+        .chain(report.receipt_updated_peer_ids.iter())
+    {
+        push_eth_fullnode_native_runtime_detail_peer_v1(&mut peers, &mut seen, NodeId(*peer_id));
+    }
+    for failure in &report.peer_failures {
+        push_eth_fullnode_native_runtime_detail_peer_v1(
+            &mut peers,
+            &mut seen,
+            NodeId(failure.peer_id),
+        );
+    }
+    for &peer in &plan.candidate_peers {
+        push_eth_fullnode_native_runtime_detail_peer_v1(&mut peers, &mut seen, peer);
+        if peers.len() >= ETH_FULLNODE_NATIVE_RUNTIME_PEER_DETAIL_LIMIT_V1 {
+            break;
+        }
+    }
+    peers
+}
+
 fn build_eth_fullnode_native_worker_runtime_snapshot_v1(
     plan: &EthFullnodeNativePeerWorkerPlanV1,
     report: &EthFullnodeNativeRealDriveReportV1,
@@ -1220,6 +1264,15 @@ fn build_eth_fullnode_native_worker_runtime_snapshot_v1(
             &plan.bootstrap_peers,
             &plan.sync_peers,
         );
+    let runtime_detail_peers = eth_fullnode_native_runtime_detail_peers_v1(plan, report);
+    let runtime_detail_peer_ids = runtime_detail_peers
+        .iter()
+        .map(|peer| peer.0)
+        .collect::<HashSet<_>>();
+    let peer_selection_scores = peer_selection_scores
+        .into_iter()
+        .filter(|score| runtime_detail_peer_ids.contains(&score.peer_id))
+        .collect::<Vec<_>>();
     let native_head_block = snapshot_eth_fullnode_native_head_block_object_v1(plan.chain_id);
     let native_canonical_chain = snapshot_network_runtime_native_canonical_chain_v1(plan.chain_id);
     let native_canonical_blocks = snapshot_network_runtime_native_canonical_blocks_v1(
@@ -1253,7 +1306,7 @@ fn build_eth_fullnode_native_worker_runtime_snapshot_v1(
     );
     let peer_sessions = snapshot_network_runtime_eth_peer_sessions_for_peers_v1(
         plan.chain_id,
-        &plan.candidate_peers,
+        &runtime_detail_peers,
     );
     let peer_failures = report
         .peer_failures
@@ -9758,6 +9811,58 @@ mod tests {
         "enode://2b252ab6a1d0f971d9722cb839a42cb81db019ba44c08754628ab4a823487071b5695317c8ccd085219c3a03af063495b2f1da8d18218da2d6a82981b45e6ffc@65.108.70.101:30303",
         "enode://4aeb4ab6c14b23e2c4cfdce879c04b0748a20d8e9b59e25ded2a08143e265c6c25936e74cbc8e641e3312ca288673d91f2f93f8e277de3cfa444ecdaaf982052@157.90.35.166:30303",
     ];
+
+    #[test]
+    fn native_runtime_snapshot_bounds_peer_detail_payload_v1() {
+        let chain_id = 9_926_201_u64;
+        clear_network_runtime_native_snapshots_for_chain_v1(chain_id);
+        let candidate_peers = (1_u64..=100).map(NodeId).collect::<Vec<_>>();
+        let mut budget = default_eth_fullnode_budget_hooks_v1();
+        budget.runtime_block_snapshot_limit = 8;
+        let plan = EthFullnodeNativePeerWorkerPlanV1 {
+            chain_id,
+            local_node: NodeId(1),
+            candidate_peers: candidate_peers.clone(),
+            candidate_peer_endpoints: Vec::new(),
+            lifecycle_summary: EthPeerLifecycleSummaryV1::default(),
+            selection_quality_summary: EthPeerSelectionQualitySummaryV1::default(),
+            selection_scores: Vec::new(),
+            bootstrap_peers: candidate_peers.iter().copied().take(10).collect(),
+            sync_peers: vec![NodeId(90)],
+            recv_budget: 1,
+            budget_hooks: budget,
+        };
+        let report = EthFullnodeNativeRealDriveReportV1 {
+            peer_failures: vec![EthFullnodeNativePeerFailureV1 {
+                peer_id: 88,
+                endpoint: Some("127.0.0.1:30303".to_string()),
+                phase: EthFullnodeNativePeerDrivePhaseV1::Bootstrap,
+                class: EthFullnodeNativePeerFailureClassV1::Io,
+                lifecycle_class: Some(crate::EthPeerFailureClassV1::ConnectFailure),
+                reason_code: None,
+                reason_name: Some("connect_failed".to_string()),
+                error: "connect_failed".to_string(),
+            }],
+            ..EthFullnodeNativeRealDriveReportV1::default()
+        };
+
+        let snapshot = build_eth_fullnode_native_worker_runtime_snapshot_v1(&plan, &report);
+
+        assert_eq!(snapshot.candidate_peer_ids.len(), 100);
+        assert_eq!(
+            snapshot.peer_sessions.len(),
+            ETH_FULLNODE_NATIVE_RUNTIME_PEER_DETAIL_LIMIT_V1
+        );
+        assert!(
+            snapshot.peer_selection_scores.len()
+                <= ETH_FULLNODE_NATIVE_RUNTIME_PEER_DETAIL_LIMIT_V1 * 2
+        );
+        assert!(snapshot
+            .peer_sessions
+            .iter()
+            .any(|session| session.peer_id == 88));
+        assert_eq!(snapshot.selection_quality_summary.candidate_peer_count, 100);
+    }
 
     fn dummy_rlpx_live_session_pair(
         chain_id: u64,
