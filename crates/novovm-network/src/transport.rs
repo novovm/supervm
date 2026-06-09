@@ -1292,7 +1292,8 @@ fn build_eth_fullnode_native_worker_runtime_snapshot_v1(
     plan: &EthFullnodeNativePeerWorkerPlanV1,
     report: &EthFullnodeNativeRealDriveReportV1,
 ) -> EthFullnodeNativeWorkerRuntimeSnapshotV1 {
-    let runtime_config = resolve_eth_fullnode_native_runtime_config_v1(plan.chain_id);
+    let mut runtime_config = resolve_eth_fullnode_native_runtime_config_v1(plan.chain_id);
+    runtime_config.budget_hooks = plan.budget_hooks.clone();
     let (peer_selection_scores, selection_quality_summary, selection_long_term_summary) =
         snapshot_eth_fullnode_peer_selection_scores_v1(
             plan.chain_id,

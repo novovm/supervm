@@ -2220,10 +2220,6 @@ const NATIVE_SYNC_GAP_HEADERS_THRESHOLD: u64 = 8_192;
 const NATIVE_SYNC_GAP_BODIES_THRESHOLD: u64 = 1_024;
 const NATIVE_SYNC_GAP_STATE_THRESHOLD: u64 = 128;
 const NATIVE_SYNC_GAP_FINALIZE_THRESHOLD: u64 = 8;
-const NATIVE_SYNC_PULL_HEADERS_BATCH: u64 = 2_048;
-const NATIVE_SYNC_PULL_BODIES_BATCH: u64 = 256;
-const NATIVE_SYNC_PULL_STATE_BATCH: u64 = 64;
-const NATIVE_SYNC_PULL_FINALIZE_BATCH: u64 = 16;
 
 fn now_unix_millis() -> u128 {
     SystemTime::now()
@@ -2335,13 +2331,16 @@ fn native_sync_phase_from_runtime_status(
     NetworkRuntimeNativeSyncPhaseV1::Finalize
 }
 
-fn native_sync_pull_batch_by_phase(phase: NetworkRuntimeNativeSyncPhaseV1) -> Option<u64> {
+fn native_sync_pull_batch_by_phase(
+    phase: NetworkRuntimeNativeSyncPhaseV1,
+    budget: &EthFullnodeBudgetHooksV1,
+) -> Option<u64> {
     match phase {
         NetworkRuntimeNativeSyncPhaseV1::Idle | NetworkRuntimeNativeSyncPhaseV1::Discovery => None,
-        NetworkRuntimeNativeSyncPhaseV1::Headers => Some(NATIVE_SYNC_PULL_HEADERS_BATCH),
-        NetworkRuntimeNativeSyncPhaseV1::Bodies => Some(NATIVE_SYNC_PULL_BODIES_BATCH),
-        NetworkRuntimeNativeSyncPhaseV1::State => Some(NATIVE_SYNC_PULL_STATE_BATCH),
-        NetworkRuntimeNativeSyncPhaseV1::Finalize => Some(NATIVE_SYNC_PULL_FINALIZE_BATCH),
+        NetworkRuntimeNativeSyncPhaseV1::Headers => Some(budget.sync_pull_headers_batch.max(1)),
+        NetworkRuntimeNativeSyncPhaseV1::Bodies => Some(budget.sync_pull_bodies_batch.max(1)),
+        NetworkRuntimeNativeSyncPhaseV1::State => Some(budget.sync_pull_state_batch.max(1)),
+        NetworkRuntimeNativeSyncPhaseV1::Finalize => Some(budget.sync_pull_finalize_batch.max(1)),
     }
 }
 
@@ -2358,7 +2357,8 @@ pub fn plan_network_runtime_sync_pull_window(
         .filter(network_runtime_native_sync_is_active)
         .map(|status| status.phase)
         .unwrap_or_else(|| native_sync_phase_from_runtime_status(&runtime));
-    let batch_size = native_sync_pull_batch_by_phase(phase)?;
+    let budget = get_network_runtime_native_budget_hooks_v1(chain_id);
+    let batch_size = native_sync_pull_batch_by_phase(phase, &budget)?;
     let from_block = runtime.current_block.saturating_add(1);
     if from_block > runtime.highest_block {
         return None;
@@ -4713,6 +4713,9 @@ mod tests {
         if let Ok(mut native) = runtime_native_sync_status_map().lock() {
             native.remove(&chain_id);
         }
+        if let Ok(mut budgets) = runtime_native_budget_hooks_map().lock() {
+            budgets.remove(&chain_id);
+        }
         if let Ok(mut headers) = runtime_native_header_snapshot_map().lock() {
             headers.remove(&chain_id);
         }
@@ -5928,7 +5931,7 @@ mod tests {
         assert_eq!(window_headers.from_block, 101);
         assert_eq!(
             window_headers.to_block,
-            101 + NATIVE_SYNC_PULL_HEADERS_BATCH - 1
+            101 + default_eth_fullnode_budget_hooks_v1().sync_pull_headers_batch - 1
         );
 
         set_network_runtime_native_sync_status(
@@ -5959,6 +5962,30 @@ mod tests {
         );
         assert_eq!(window_finalize.from_block, 29_991);
         assert_eq!(window_finalize.to_block, 30_000);
+    }
+
+    #[test]
+    fn plan_sync_pull_window_uses_runtime_budget_finalize_batch_v1() {
+        let chain_id = 20_395_u64;
+        clear_runtime_sync_status_for_test(chain_id);
+        let mut budget = default_eth_fullnode_budget_hooks_v1();
+        budget.sync_pull_finalize_batch = 64;
+        set_network_runtime_native_budget_hooks_v1(chain_id, budget);
+
+        set_network_runtime_sync_status(
+            chain_id,
+            NetworkRuntimeSyncStatus {
+                peer_count: 2,
+                starting_block: 100,
+                current_block: 29_900,
+                highest_block: 30_000,
+            },
+        );
+
+        let window = plan_network_runtime_sync_pull_window(chain_id).expect("finalize window");
+        assert_eq!(window.phase, NetworkRuntimeNativeSyncPhaseV1::Finalize);
+        assert_eq!(window.from_block, 29_901);
+        assert_eq!(window.to_block, 29_964);
     }
 
     #[test]

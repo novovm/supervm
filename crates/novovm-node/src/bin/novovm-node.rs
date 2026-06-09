@@ -2357,6 +2357,22 @@ fn eth_rlpx_adaptive_headers_batch_input_v1(
         current_batch
             .min(ETH_RLPX_PUBLIC_SYNC_STATE_LAG_EFFECTIVE_HEADERS_BATCH_V1)
             .max(1)
+    } else if request_transport_failure
+        && current_head_body_available
+        && matches!(
+            native_phase,
+            Some(
+                NetworkRuntimeNativeSyncPhaseV1::Finalize
+                    | NetworkRuntimeNativeSyncPhaseV1::Discovery
+            )
+        )
+        && highest_block > current_block
+        && highest_block.saturating_sub(current_block)
+            <= ETH_RLPX_PUBLIC_SYNC_STATE_LAG_HEADER_LAG_THRESHOLD_V1
+    {
+        current_batch
+            .min(ETH_RLPX_PUBLIC_SYNC_STATE_LAG_EFFECTIVE_HEADERS_BATCH_V1)
+            .max(1)
     } else {
         current_batch.max(1)
     }
@@ -2410,6 +2426,7 @@ const ETH_RLPX_PUBLIC_SYNC_DEFAULT_REQUEST_TIMEOUT_MS_V1: u64 = 5_000;
 const ETH_RLPX_PUBLIC_SYNC_DEFAULT_REQUEST_INTERVAL_MS_V1: u64 = 250;
 const ETH_RLPX_PUBLIC_SYNC_DEFAULT_RUNTIME_SNAPSHOT_BLOCKS_V1: u64 = 8;
 const ETH_RLPX_PUBLIC_SYNC_DEFAULT_RUNTIME_PENDING_TXS_V1: u64 = 128;
+const ETH_RLPX_PUBLIC_SYNC_DEFAULT_FINALIZE_HEADERS_BATCH_V1: u64 = 64;
 
 fn eth_rlpx_apply_public_sync_runtime_defaults_v1(
     budget: &mut EthFullnodeBudgetHooksV1,
@@ -2420,6 +2437,7 @@ fn eth_rlpx_apply_public_sync_runtime_defaults_v1(
     sync_request_interval_ms: u64,
     runtime_snapshot_blocks: u64,
     runtime_pending_txs: u64,
+    finalize_headers_batch: u64,
 ) {
     eth_rlpx_apply_public_sync_batch_defaults_v1(budget, headers_batch, bodies_batch);
     budget.sync_target_fanout = sync_target_fanout.max(1) as u64;
@@ -2433,6 +2451,7 @@ fn eth_rlpx_apply_public_sync_runtime_defaults_v1(
     budget.runtime_pending_tx_snapshot_limit = budget
         .runtime_pending_tx_snapshot_limit
         .min(runtime_pending_txs.max(1));
+    budget.sync_pull_finalize_batch = finalize_headers_batch.max(1);
 }
 
 fn eth_rlpx_peer_discovery_total_timeout_v1() -> Duration {
@@ -5124,6 +5143,12 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
         1,
         2_048,
     );
+    let finalize_headers_batch = u64_env_clamped(
+        "NOVOVM_ETH_RLPX_FINALIZE_HEADERS_BATCH",
+        ETH_RLPX_PUBLIC_SYNC_DEFAULT_FINALIZE_HEADERS_BATCH_V1,
+        1,
+        headers_batch.max(1),
+    );
     let exhausted_refresh_interval_ticks =
         usize_env_allow_zero("NOVOVM_ETH_RLPX_EXHAUSTED_REFRESH_INTERVAL_TICKS", 8)?
             .clamp(1, 10_000);
@@ -5218,6 +5243,7 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
         sync_request_interval_ms,
         runtime_snapshot_blocks,
         runtime_pending_txs,
+        finalize_headers_batch,
     );
     let max_runtime_headers_batch = budget.sync_pull_headers_batch.max(1);
     let max_runtime_bodies_batch = budget.sync_pull_bodies_batch.max(1);
@@ -5591,6 +5617,8 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
                 runtime_bodies_batch = next_bodies_batch;
                 budget.sync_pull_headers_batch = runtime_headers_batch;
                 budget.sync_pull_bodies_batch = runtime_bodies_batch;
+                budget.sync_pull_finalize_batch =
+                    runtime_headers_batch.min(finalize_headers_batch).max(1);
                 worker = EthFullnodeNativePeerWorkerV1::new(EthFullnodeNativePeerWorkerConfigV1 {
                     chain_id,
                     local_node: NodeId(local_node_id),
@@ -6765,6 +6793,49 @@ mod mainline_evm_cli_tests {
     }
 
     #[test]
+    fn eth_rlpx_finalize_transport_failure_backs_off_effective_header_window_v1() {
+        let input = eth_rlpx_adaptive_headers_batch_input_v1(
+            192,
+            Some(NetworkRuntimeNativeSyncPhaseV1::Finalize),
+            25_282_222,
+            25_282_303,
+            true,
+            true,
+        );
+
+        assert_eq!(input, 64);
+        assert_eq!(
+            eth_rlpx_adaptive_public_sync_batch_v1(input, 192, 16, false, true),
+            32,
+            "near-head finalize failure must reduce the next actual 64-header request"
+        );
+        assert_eq!(
+            eth_rlpx_adaptive_headers_batch_input_v1(
+                192,
+                Some(NetworkRuntimeNativeSyncPhaseV1::Discovery),
+                25_282_222,
+                25_282_303,
+                true,
+                true,
+            ),
+            64,
+            "after a finalize live session drops, discovery still represents the same near-head chase"
+        );
+        assert_eq!(
+            eth_rlpx_adaptive_headers_batch_input_v1(
+                192,
+                Some(NetworkRuntimeNativeSyncPhaseV1::Finalize),
+                25_282_222,
+                25_282_303,
+                false,
+                true,
+            ),
+            192,
+            "missing body recovery must not shrink forward header configuration"
+        );
+    }
+
+    #[test]
     fn eth_rlpx_adaptive_public_sync_batch_does_not_restore_bodies_on_header_only_progress_v1() {
         let header_batch = eth_rlpx_adaptive_public_sync_batch_v1(96, 192, 64, true, false);
         let body_batch = eth_rlpx_adaptive_public_sync_batch_v1(128, 128, 32, false, true);
@@ -6835,11 +6906,16 @@ mod mainline_evm_cli_tests {
             ETH_RLPX_PUBLIC_SYNC_DEFAULT_REQUEST_INTERVAL_MS_V1,
             ETH_RLPX_PUBLIC_SYNC_DEFAULT_RUNTIME_SNAPSHOT_BLOCKS_V1,
             ETH_RLPX_PUBLIC_SYNC_DEFAULT_RUNTIME_PENDING_TXS_V1,
+            ETH_RLPX_PUBLIC_SYNC_DEFAULT_FINALIZE_HEADERS_BATCH_V1,
         );
 
         assert_eq!(budget.sync_target_fanout, 8);
         assert_eq!(budget.sync_pull_headers_batch, 192);
         assert_eq!(budget.sync_pull_bodies_batch, 128);
+        assert_eq!(
+            budget.sync_pull_finalize_batch,
+            ETH_RLPX_PUBLIC_SYNC_DEFAULT_FINALIZE_HEADERS_BATCH_V1
+        );
         assert_eq!(
             budget.rlpx_request_timeout_ms,
             ETH_RLPX_PUBLIC_SYNC_DEFAULT_REQUEST_TIMEOUT_MS_V1
@@ -6871,6 +6947,7 @@ mod mainline_evm_cli_tests {
             ETH_RLPX_PUBLIC_SYNC_DEFAULT_REQUEST_INTERVAL_MS_V1,
             ETH_RLPX_PUBLIC_SYNC_DEFAULT_RUNTIME_SNAPSHOT_BLOCKS_V1,
             ETH_RLPX_PUBLIC_SYNC_DEFAULT_RUNTIME_PENDING_TXS_V1,
+            ETH_RLPX_PUBLIC_SYNC_DEFAULT_FINALIZE_HEADERS_BATCH_V1,
         );
 
         assert_eq!(budget.runtime_block_snapshot_limit, 4);
