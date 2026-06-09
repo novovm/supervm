@@ -2653,7 +2653,6 @@ fn drive_eth_fullnode_native_rlpx_peer_session_once_v1(
                         ProtocolMessage::EvmNative(EvmNativeMessage::SnapGetAccountRange {
                             block_hash,
                             origin,
-                            limit,
                             ..
                         }) => {
                             if eth_rlpx_snap_base_offset_v1(
@@ -2667,9 +2666,6 @@ fn drive_eth_fullnode_native_rlpx_peer_session_once_v1(
                             let root =
                                 eth_fullnode_native_rlpx_snap_root_hint_v1(chain_id, block_hash);
                             let limit_hash = [0xffu8; 32];
-                            let byte_limit = limit
-                                .saturating_mul(16 * 1024)
-                                .clamp(16 * 1024, ETH_RLPX_SNAP_DEFAULT_ACCOUNT_RANGE_BYTES);
                             if let Err(err) =
                                 dispatch_eth_fullnode_native_snap_account_range_request_v1(
                                     chain_id,
@@ -2678,7 +2674,7 @@ fn drive_eth_fullnode_native_rlpx_peer_session_once_v1(
                                     root,
                                     origin,
                                     limit_hash,
-                                    byte_limit,
+                                    ETH_RLPX_SNAP_DEFAULT_ACCOUNT_RANGE_BYTES,
                                     "snap_account_range_request_write_failed",
                                 )
                             {
@@ -16106,7 +16102,10 @@ mod tests {
                 assert_eq!(request.root, local_state_root);
                 assert_eq!(request.origin, [0u8; 32]);
                 assert_eq!(request.limit, [0xff; 32]);
-                assert!(request.byte_limit > 0);
+                assert_eq!(
+                    request.byte_limit,
+                    crate::ETH_RLPX_SNAP_DEFAULT_ACCOUNT_RANGE_BYTES
+                );
                 let response = crate::eth_rlpx_build_account_range_payload_v1(
                     request.request_id,
                     &[],
@@ -16354,7 +16353,10 @@ mod tests {
             assert_eq!(first_request.root, local_state_root);
             assert_eq!(first_request.origin, [0u8; 32]);
             assert_eq!(first_request.limit, [0xff; 32]);
-            assert!(first_request.byte_limit > 0);
+            assert_eq!(
+                first_request.byte_limit,
+                crate::ETH_RLPX_SNAP_DEFAULT_ACCOUNT_RANGE_BYTES
+            );
 
             let account = crate::EthRlpxSnapAccountDataV1 {
                 hash: account_hash,
@@ -16431,7 +16433,10 @@ mod tests {
             assert_eq!(second_request.root, local_state_root);
             assert_eq!(second_request.origin, expected_next_origin);
             assert_eq!(second_request.limit, [0xff; 32]);
-            assert!(second_request.byte_limit > 0);
+            assert_eq!(
+                second_request.byte_limit,
+                crate::ETH_RLPX_SNAP_DEFAULT_ACCOUNT_RANGE_BYTES
+            );
 
             let done_response =
                 crate::eth_rlpx_build_account_range_payload_v1(second_request.request_id, &[], &[]);
