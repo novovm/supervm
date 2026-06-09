@@ -4893,10 +4893,19 @@ fn ingest_real_rlpx_snap_account_range_v1(
     session: &mut EthFullnodeNativeRlpxLivePeerSessionV1,
     response: &EthRlpxAccountRangeResponseV1,
 ) -> Result<(), NetworkError> {
-    if session
-        .last_snap_account_range_request_id
-        .is_some_and(|request_id| request_id != response.request_id)
-    {
+    let Some(request_id) = session.last_snap_account_range_request_id else {
+        let reason = format!(
+            "snap_account_range_unexpected_response:request_id={}",
+            response.request_id
+        );
+        observe_network_runtime_eth_peer_decode_failure_v1(
+            chain_id,
+            source_peer_id,
+            reason.as_str(),
+        );
+        return Err(NetworkError::Decode(reason));
+    };
+    if request_id != response.request_id {
         return Ok(());
     }
     observe_eth_native_snap_response(chain_id);
@@ -5083,10 +5092,19 @@ fn ingest_real_rlpx_snap_storage_ranges_v1(
     session: &mut EthFullnodeNativeRlpxLivePeerSessionV1,
     response: &EthRlpxStorageRangesResponseV1,
 ) -> Result<(), NetworkError> {
-    if session
-        .last_snap_storage_ranges_request_id
-        .is_some_and(|request_id| request_id != response.request_id)
-    {
+    let Some(request_id) = session.last_snap_storage_ranges_request_id else {
+        let reason = format!(
+            "snap_storage_ranges_unexpected_response:request_id={}",
+            response.request_id
+        );
+        observe_network_runtime_eth_peer_decode_failure_v1(
+            chain_id,
+            source_peer_id,
+            reason.as_str(),
+        );
+        return Err(NetworkError::Decode(reason));
+    };
+    if request_id != response.request_id {
         return Ok(());
     }
     if response.slots.len() > session.pending_snap_storage_accounts.len() {
@@ -5171,10 +5189,19 @@ fn ingest_real_rlpx_snap_byte_codes_v1(
     session: &mut EthFullnodeNativeRlpxLivePeerSessionV1,
     response: &EthRlpxByteCodesResponseV1,
 ) -> Result<(), NetworkError> {
-    if session
-        .last_snap_byte_codes_request_id
-        .is_some_and(|request_id| request_id != response.request_id)
-    {
+    let Some(request_id) = session.last_snap_byte_codes_request_id else {
+        let reason = format!(
+            "snap_byte_codes_unexpected_response:request_id={}",
+            response.request_id
+        );
+        observe_network_runtime_eth_peer_decode_failure_v1(
+            chain_id,
+            source_peer_id,
+            reason.as_str(),
+        );
+        return Err(NetworkError::Decode(reason));
+    };
+    if request_id != response.request_id {
         return Ok(());
     }
     if response.codes.len() > session.pending_snap_code_hashes.len() {
@@ -5256,10 +5283,19 @@ fn ingest_real_rlpx_snap_trie_nodes_v1(
     session: &mut EthFullnodeNativeRlpxLivePeerSessionV1,
     response: &EthRlpxTrieNodesResponseV1,
 ) -> Result<(), NetworkError> {
-    if session
-        .last_snap_trie_nodes_request_id
-        .is_some_and(|request_id| request_id != response.request_id)
-    {
+    let Some(request_id) = session.last_snap_trie_nodes_request_id else {
+        let reason = format!(
+            "snap_trie_nodes_unexpected_response:request_id={}",
+            response.request_id
+        );
+        observe_network_runtime_eth_peer_decode_failure_v1(
+            chain_id,
+            source_peer_id,
+            reason.as_str(),
+        );
+        return Err(NetworkError::Decode(reason));
+    };
+    if request_id != response.request_id {
         return Ok(());
     }
     if response.nodes.len() > session.pending_snap_trie_node_pathsets.len() {
@@ -8621,7 +8657,8 @@ mod tests {
         get_network_runtime_native_block_access_list_payload_v1,
         get_network_runtime_native_body_snapshot_v1, get_network_runtime_native_head_snapshot_v1,
         get_network_runtime_native_header_snapshot_v1, get_network_runtime_native_pending_tx_v1,
-        get_network_runtime_native_receipt_snapshot_v1, get_network_runtime_native_sync_status,
+        get_network_runtime_native_receipt_snapshot_v1,
+        get_network_runtime_native_snap_code_snapshot_v1, get_network_runtime_native_sync_status,
         get_network_runtime_sync_status,
         observe_network_runtime_native_pending_tx_local_ingress_with_payload_v1,
         parse_enode_endpoint, set_network_runtime_native_block_access_list_payload_v1,
@@ -8927,6 +8964,78 @@ mod tests {
             session.pending_body_headers.len(),
             1,
             "unsolicited BAL response must not clear pending body headers"
+        );
+    }
+
+    #[test]
+    fn rlpx_snap_response_ingest_rejects_unrequested_response_messages_v1() {
+        let chain_id = 9_930_u64;
+        let mut session = dummy_rlpx_live_session(chain_id);
+
+        let account_range = EthRlpxAccountRangeResponseV1 {
+            request_id: 21,
+            accounts: Vec::new(),
+            proof: Vec::new(),
+        };
+        let err =
+            ingest_real_rlpx_snap_account_range_v1(chain_id, 77, &mut session, &account_range)
+                .expect_err("unsolicited AccountRange must reject");
+        assert!(
+            err.to_string()
+                .contains("snap_account_range_unexpected_response"),
+            "unexpected error: {err}"
+        );
+
+        let storage_ranges = EthRlpxStorageRangesResponseV1 {
+            request_id: 22,
+            slots: Vec::new(),
+            proof: Vec::new(),
+        };
+        let err =
+            ingest_real_rlpx_snap_storage_ranges_v1(chain_id, 77, &mut session, &storage_ranges)
+                .expect_err("unsolicited StorageRanges must reject");
+        assert!(
+            err.to_string()
+                .contains("snap_storage_ranges_unexpected_response"),
+            "unexpected error: {err}"
+        );
+
+        let code = vec![0x60, 0x00];
+        let code_hash = eth_rlpx_code_hash_v1(code.as_slice());
+        let byte_codes = EthRlpxByteCodesResponseV1 {
+            request_id: 23,
+            codes: vec![code],
+        };
+        let err = ingest_real_rlpx_snap_byte_codes_v1(chain_id, 77, &mut session, &byte_codes)
+            .expect_err("unsolicited ByteCodes must reject");
+        assert!(
+            err.to_string()
+                .contains("snap_byte_codes_unexpected_response"),
+            "unexpected error: {err}"
+        );
+        assert!(
+            get_network_runtime_native_snap_code_snapshot_v1(chain_id, code_hash).is_none(),
+            "unsolicited ByteCodes response must not cache code"
+        );
+
+        let trie_nodes = EthRlpxTrieNodesResponseV1 {
+            request_id: 24,
+            nodes: vec![vec![0xc0]],
+        };
+        let err = ingest_real_rlpx_snap_trie_nodes_v1(chain_id, 77, &mut session, &trie_nodes)
+            .expect_err("unsolicited TrieNodes must reject");
+        assert!(
+            err.to_string()
+                .contains("snap_trie_nodes_unexpected_response"),
+            "unexpected error: {err}"
+        );
+
+        assert!(
+            session.last_snap_account_range_request_id.is_none()
+                && session.last_snap_storage_ranges_request_id.is_none()
+                && session.last_snap_byte_codes_request_id.is_none()
+                && session.last_snap_trie_nodes_request_id.is_none(),
+            "unsolicited snap responses must not synthesize pending requests"
         );
     }
 
