@@ -290,17 +290,39 @@ cargo run -p novovm-node --bin novovm-node
 
 结果：从 `current=1853/highest=25277388`、`body_available=false`、`receipt_available=false` 恢复启动；16 个 tick 内没有拿到 ready peer，失败类别仍是 `too_many_peers`、legacy capability mismatch、pre-auth close 和 connect timeout；没有出现新的 root mismatch、receipt mismatch 或 RLPx payload decode mismatch。由于没有 ready peer，本轮未能用 128 body window 恢复 block `1853` 的 body/receipt，当前 head 仍停在 header-only。这个结果把下一瓶颈限定在公网 peer admission/reputation/候选排序，而不是新的 EVM 执行语义或 eth wire 编解码不等价。
 
+## 2026-06-09 RLPx runtime reputation cache reorder
+
+上一轮 16 tick 结果说明：光有 runtime cooldown 还不够，endpoint cache 的持久顺序仍可能让重启或 refresh 后继续从近期 `too_many_peers`、connect/auth timeout、pre-hello close 或 legacy capability peer 开始烧连接窗口。本轮把产品入口的 peer endpoint cache 从“成功 peer 前置 + 永久拒绝删除”扩展为 runtime reputation reorder：
+
+- 有 `Ready` / `Syncing` / successful session / header/body/sync contribution 的 peer 继续前置。
+- 没有贡献且近期出现 `too_many_peers`、connect/auth/hello/status timeout、pre-hello close 或连续失败的 peer 后置到 fresh candidate 之后。
+- cache 顺序变化后立即重建当前 `EthFullnodeNativePeerWorkerV1`，不再只写 cache 等待下次重启或 refresh 生效。
+- cache schema 不变，避免把这个修复做成新的工程化存储结构。
+
+本轮产品入口实跑：
+
+```powershell
+$env:NOVOVM_NODE_MODE='eth_rlpx_sync'
+$env:NOVOVM_NODE_VERBOSE='1'
+$env:NOVOVM_ETH_RLPX_TICKS='8'
+$env:NOVOVM_ETH_RLPX_SLEEP_MS='600'
+cargo run -p novovm-node --bin novovm-node
+```
+
+结果：从 `current=1853/highest=25277388`、`body_available=false` 恢复启动；tick 1-8 每个 tick 都触发 `eth_rlpx_peer_endpoint_cache_reorder: reason=runtime_reputation`，tick 2/4/5/8 继续 prune 永久不兼容 peer，tick 4 以 `sync_progress_stalled_expand` 扩到 258 candidates，tick 8 以 `sync_progress_stalled_refresh` 扩到 285 candidates。短跑仍未拿到 ready peer，也未恢复 block `1853` 的 body/receipt；失败类别仍集中在 `too_many_peers`、connect/auth timeout、pre-hello close 和 legacy capability mismatch。该证据证明本轮修复已把 admission 失败反馈带回候选顺序并即时生效，但不声明公网 ready peer 接受度、长期同步或 header-only 恢复已经完成。
+
 回归：
 
 ```powershell
 cargo fmt
+cargo test -p novovm-node eth_peer_endpoint_cache_ -- --nocapture
 cargo test -p novovm-node eth_rlpx_ -- --nocapture
 cargo test -p novovm-network missing_body_recovery -- --nocapture
 cargo check --workspace
 git diff --check
 ```
 
-结果：通过，`novovm-node eth_rlpx_` 集合为 `20 passed`，`novovm-network missing_body_recovery` 集合为 `4 passed`，全工作区 `cargo check` 通过，`git diff --check` 未发现空白错误。
+结果：通过，`novovm-node eth_peer_endpoint_cache_` 集合为 `3 passed`，`novovm-node eth_rlpx_` 集合为 `20 passed`，`novovm-network missing_body_recovery` 集合为 `4 passed`，全工作区 `cargo check` 通过，`git diff --check` 未发现空白错误。
 
 ## 2026-06-09 RLPx 成功 peer cache 前置证据
 
@@ -553,6 +575,7 @@ cargo run -p novovmctl -- evm-block-access-list-scan `
 - RLPx missing-receipts recovery gate: pass, covers peer disconnect after latest header/body import but before receipt response；next ready RLPx worker rebuilds pending receipt state from latest native header/body and sends `GetReceipts(firstBlockReceiptIndex=0)` before any new `GetBlockHeaders` pull, then validates/writes the recovered receipt snapshot
 - RLPx same-tick sync dispatch gate: pass, real RLPx worker 在 Status 成功后同一 tick 立即 drive 已 ready session 并发出首个 `GetBlockHeaders`/sync request，减少公网 peer 在下一 scheduler tick 前关闭导致的 ready 空窗；由 `real_rlpx_peer_worker_ingests_runtime_native_snapshots` 覆盖
 - novovm-node RLPx public sync batch/fanout gate: pass, `eth_rlpx_sync` 产品入口默认使用 geth downloader-style `NOVOVM_ETH_RLPX_HEADERS_BATCH=192`、`NOVOVM_ETH_RLPX_BODIES_BATCH=128`；默认 `NOVOVM_ETH_RLPX_SYNC_TARGET_FANOUT` 收敛为 8，避免首 tick 串行尝试 32 个公网 endpoint 导致长时间无 tick 输出；公网 peer 如果持续出现大 frame 中途 EOF，仍可通过 env 显式下调 body batch 或 fanout。该修订提高默认 forward chase 吞吐上限和启动可观察性，但不声明完整 geth snap sync 或长期主网同步已经完成。
+- novovm-node RLPx runtime-reputation endpoint cache gate: pass, 产品入口会把 successful/ready/header-body-sync contributing peers 前置，把无贡献且近期 `too_many_peers`、timeout、pre-hello close 或连续失败的 endpoint 后置到 fresh candidates 之后；cache 顺序变化后立即重建当前 worker 并写回 cache，避免同一进程继续反复优先连接近期饱和或 stale peer。8 tick live run 已观察到每 tick 触发 `eth_rlpx_peer_endpoint_cache_reorder`，但仍未拿到 ready peer，因此不声明公网 admission 已完成。
 - RLPx pooled tx gates: pass, covers inbound real `NewPooledTransactionHashes` -> `GetPooledTransactions` -> raw `PooledTransactions` materialized into pending tx payload, outbound local pending tx -> real `NewPooledTransactionHashes` after write success -> peer `GetPooledTransactions` -> local raw `PooledTransactions` response, and inbound real `GetPooledTransactions` -> local raw tx response
 - RLPx BlockRangeUpdate gate: pass, covers geth eth/69+ `BlockRangeUpdate` code `0x11` wire shape `[earliestBlock, latestBlock, latestBlockHash]`, rejects `earliest > latest` and zero latest hash, and real RLPx inbound update refreshes runtime peer head/highest without requiring a new `Status`; this is a peer range/head observation gate, not a full downloader range store
 - RLPx header/body service gate: pass, covers real inbound `GetBlockHeaders` hash-origin and `GetBlockBodies` from a geth-like peer; SUPERVM returns canonical native header raw RLP and materialized body raw tx RLP with matching request_id, and preserves short/empty response semantics for missing/non-canonical/unmaterialized data instead of fabricating history
