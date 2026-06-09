@@ -3404,17 +3404,54 @@ fn eth_rlpx_build_block_header_record_rlp_v1(header: &EthRlpxBlockHeaderRecordV1
         eth_rlpx_encode_bytes_v1(&zero_mix_digest),
         eth_rlpx_encode_bytes_v1(&zero_nonce),
     ];
-    if let Some(base_fee_per_gas) = header.base_fee_per_gas {
-        fields.push(eth_rlpx_encode_u128_v1(base_fee_per_gas));
+    let has_base_fee = header.base_fee_per_gas.is_some();
+    let has_withdrawals = header.withdrawals_root.is_some();
+    let has_blob_gas = header.blob_gas_used.is_some();
+    let has_excess_blob_gas = header.excess_blob_gas.is_some();
+    let has_block_access_list = header.block_access_list_hash.is_some();
+    if has_base_fee
+        || has_withdrawals
+        || has_blob_gas
+        || has_excess_blob_gas
+        || has_block_access_list
+    {
+        fields.push(
+            header
+                .base_fee_per_gas
+                .map(eth_rlpx_encode_u128_v1)
+                .unwrap_or_else(|| eth_rlpx_encode_bytes_v1(&[])),
+        );
     }
-    if let Some(withdrawals_root) = header.withdrawals_root {
-        fields.push(eth_rlpx_encode_bytes_v1(&withdrawals_root));
+    if has_withdrawals || has_blob_gas || has_excess_blob_gas || has_block_access_list {
+        fields.push(
+            header
+                .withdrawals_root
+                .map(|withdrawals_root| eth_rlpx_encode_bytes_v1(&withdrawals_root))
+                .unwrap_or_else(|| eth_rlpx_encode_bytes_v1(&[])),
+        );
     }
-    if let Some(blob_gas_used) = header.blob_gas_used {
-        fields.push(eth_rlpx_encode_u64_v1(blob_gas_used));
+    if has_blob_gas || has_excess_blob_gas || has_block_access_list {
+        fields.push(
+            header
+                .blob_gas_used
+                .map(eth_rlpx_encode_u64_v1)
+                .unwrap_or_else(|| eth_rlpx_encode_bytes_v1(&[])),
+        );
     }
-    if let Some(excess_blob_gas) = header.excess_blob_gas {
-        fields.push(eth_rlpx_encode_u64_v1(excess_blob_gas));
+    if has_excess_blob_gas || has_block_access_list {
+        fields.push(
+            header
+                .excess_blob_gas
+                .map(eth_rlpx_encode_u64_v1)
+                .unwrap_or_else(|| eth_rlpx_encode_bytes_v1(&[])),
+        );
+    }
+    if has_block_access_list {
+        fields.push(eth_rlpx_encode_bytes_v1(&[]));
+        fields.push(eth_rlpx_encode_bytes_v1(&[]));
+        if let Some(block_access_list_hash) = header.block_access_list_hash {
+            fields.push(eth_rlpx_encode_bytes_v1(&block_access_list_hash));
+        }
     }
     eth_rlpx_encode_list_v1(&fields)
 }
@@ -3573,6 +3610,14 @@ pub fn eth_rlpx_parse_block_headers_payload_v1(
             EthRlpxRlpItemV1::Bytes(bytes) => eth_rlpx_decode_u64_bytes_v1(bytes).ok(),
             _ => None,
         });
+        let block_access_list_hash = header_fields.get(21).and_then(|field| match field {
+            EthRlpxRlpItemV1::Bytes(bytes) if bytes.len() == 32 => {
+                let mut out = [0u8; 32];
+                out.copy_from_slice(bytes);
+                Some(out)
+            }
+            _ => None,
+        });
 
         let mut parent_hash_arr = [0u8; 32];
         let mut ommers_hash_arr = [0u8; 32];
@@ -3608,7 +3653,7 @@ pub fn eth_rlpx_parse_block_headers_payload_v1(
             withdrawals_root,
             blob_gas_used,
             excess_blob_gas,
-            block_access_list_hash: None,
+            block_access_list_hash,
             raw_rlp: Some(raw_header.to_vec()),
         });
     }
@@ -5467,6 +5512,17 @@ mod tests {
         assert_eq!(parsed_headers_response.headers.len(), 1);
         assert_eq!(parsed_headers_response.headers[0].number, 128);
         assert_eq!(parsed_headers_response.headers[0].parent_hash, [0x33; 32]);
+        let mut bal_header_record = header_record.clone();
+        bal_header_record.block_access_list_hash = Some([0x91; 32]);
+        let bal_headers_payload =
+            eth_rlpx_build_block_headers_payload_v1(8, std::slice::from_ref(&bal_header_record));
+        let parsed_bal_headers_response =
+            eth_rlpx_parse_block_headers_payload_v1(bal_headers_payload.as_slice())
+                .expect("parse BAL headers response");
+        assert_eq!(
+            parsed_bal_headers_response.headers[0].block_access_list_hash,
+            Some([0x91; 32])
+        );
 
         let new_block_payload = eth_rlpx_build_new_block_payload_v1(
             &header_record,

@@ -1552,6 +1552,7 @@ cargo test -p novovm-network evm_protocol_observable_equivalence_network_rlpx_bl
 cargo test -p novovm-network evm_protocol_observable_equivalence_network_rlpx_receipts_gate_v3 -- --nocapture
 cargo test -p novovm-network evm_protocol_observable_equivalence_network_rlpx_reorg_gate_v3 -- --nocapture
 cargo test -p novovm-network evm_protocol_observable_equivalence_network_rlpx_bal_response_gate_v3 -- --nocapture
+cargo test -p novovm-network evm_protocol_observable_equivalence_network_rlpx_bal_request_materializes_gate_v3 -- --nocapture
 cargo test -p novovm-network negotiate_eth_native_caps_rejects_pre_geth_current_versions -- --nocapture
 cargo test -p novovm-network evm_protocol_observable_equivalence_network_rlpx_snap_account_range_gate_v3 -- --nocapture
 cargo test -p novovm-network evm_protocol_observable_equivalence_network_rlpx_snap_account_range_continuation_gate_v3 -- --nocapture
