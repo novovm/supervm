@@ -5339,6 +5339,15 @@ fn ingest_real_rlpx_snap_trie_nodes_v1(
         );
         return Err(NetworkError::Decode(reason));
     }
+    if response.nodes.is_empty() {
+        let reason = "snap_trie_nodes_empty_response".to_string();
+        observe_network_runtime_eth_peer_decode_failure_v1(
+            chain_id,
+            source_peer_id,
+            reason.as_str(),
+        );
+        return Err(NetworkError::Decode(reason));
+    }
     let Some(root) = session.last_snap_state_root else {
         let reason = "snap_trie_nodes_state_root_missing".to_string();
         observe_network_runtime_eth_peer_decode_failure_v1(
@@ -5389,16 +5398,6 @@ fn ingest_real_rlpx_snap_trie_nodes_v1(
             Some((pathset.clone(), expected_hash))
         })
         .collect::<Vec<_>>();
-    if response.nodes.is_empty() {
-        eprintln!(
-            "network_info: rlpx stage snap_trie_nodes_empty chain_id={} peer={} endpoint={} request_id={} requested={}",
-            chain_id,
-            source_peer_id,
-            session.endpoint.addr_hint,
-            response.request_id,
-            session.pending_snap_trie_node_pathsets.len(),
-        );
-    }
     observe_eth_native_snap_response(chain_id);
     eprintln!(
         "network_info: rlpx stage snap_trie_nodes_received chain_id={} peer={} endpoint={} negotiated_eth={} negotiated_snap={:?} request_id={} nodes={} matched={} missing={}",
@@ -9129,6 +9128,45 @@ mod tests {
         assert!(
             get_network_runtime_native_snap_code_snapshot_v1(chain_id, code_hash).is_none(),
             "empty ByteCodes response must not cache or synthesize code"
+        );
+    }
+
+    #[test]
+    fn rlpx_snap_trie_nodes_empty_response_keeps_pending_request_v1() {
+        let chain_id = 9_932_u64;
+        let mut session = dummy_rlpx_live_session(chain_id);
+        let root = [0x44; 32];
+        let pathset = vec![vec![0_u8]];
+        let expected_hash = [0x55; 32];
+        session.last_snap_state_root = Some(root);
+        session.last_snap_trie_nodes_request_id = Some(45);
+        session.pending_snap_trie_node_pathsets = vec![pathset.clone()];
+        session.pending_snap_trie_node_hashes = vec![expected_hash];
+
+        let response = EthRlpxTrieNodesResponseV1 {
+            request_id: 45,
+            nodes: Vec::new(),
+        };
+        let err = ingest_real_rlpx_snap_trie_nodes_v1(chain_id, 77, &mut session, &response)
+            .expect_err("empty TrieNodes must be treated as peer state rejection");
+        assert!(
+            err.to_string().contains("snap_trie_nodes_empty_response"),
+            "unexpected error: {err}"
+        );
+        assert_eq!(session.last_snap_trie_nodes_request_id, Some(45));
+        assert_eq!(
+            session.pending_snap_trie_node_pathsets,
+            vec![pathset.clone()]
+        );
+        assert_eq!(session.pending_snap_trie_node_hashes, vec![expected_hash]);
+        assert!(
+            get_network_runtime_native_snap_trie_node_snapshot_v1(
+                chain_id,
+                root,
+                pathset.as_slice()
+            )
+            .is_none(),
+            "empty TrieNodes response must not cache or synthesize trie nodes"
         );
     }
 
