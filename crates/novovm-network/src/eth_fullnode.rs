@@ -409,6 +409,7 @@ pub const ETH_FULLNODE_DEFAULT_SYNC_PULL_HEADERS_BATCH: u64 = 2_048;
 pub const ETH_FULLNODE_DEFAULT_SYNC_PULL_BODIES_BATCH: u64 = 256;
 pub const ETH_FULLNODE_DEFAULT_SYNC_PULL_STATE_BATCH: u64 = 64;
 pub const ETH_FULLNODE_DEFAULT_SYNC_PULL_FINALIZE_BATCH: u64 = 16;
+const ETH_FULLNODE_NATIVE_SNAP_NEAR_HEAD_MAX_HEADER_LAG_V1: u64 = 128;
 pub const ETH_FULLNODE_DEFAULT_SYNC_DECODE_CONCURRENCY: u64 = 1;
 pub const ETH_FULLNODE_DEFAULT_SYNC_APPLY_CONCURRENCY: u64 = 1;
 pub const ETH_FULLNODE_DEFAULT_NATIVE_BLOCK_STORE_FLUSH_BATCH: u64 = 64;
@@ -4399,10 +4400,12 @@ pub fn build_eth_fullnode_native_sync_request_v1(
     let has_completed_snap_cursor = snap_progress
         .as_ref()
         .is_some_and(|progress| progress.completed);
+    let header_lag = window.highest_block.saturating_sub(window.current_block);
     let should_pull_headers_before_state =
         matches!(window.phase, NetworkRuntimeNativeSyncPhaseV1::State)
             && state_head.as_ref().is_some_and(|head| {
                 !head.body_available
+                    || header_lag > ETH_FULLNODE_NATIVE_SNAP_NEAR_HEAD_MAX_HEADER_LAG_V1
                     || has_completed_snap_cursor
                     || (!has_active_snap_cursor && span >= 16)
             });
@@ -5511,6 +5514,76 @@ mod tests {
             panic!("state phase should request snap AccountRange");
         };
         assert_eq!(origin, next_origin);
+    }
+
+    #[test]
+    fn native_state_sync_request_prioritizes_headers_when_snap_cursor_lags_head() {
+        let chain_id = 99_160_321_u64;
+        let state_root = [0x77u8; 32];
+        let mut next_origin = [0u8; 32];
+        next_origin[31] = 0x09;
+        crate::runtime_status::set_network_runtime_sync_status(
+            chain_id,
+            NetworkRuntimeSyncStatus {
+                peer_count: 1,
+                starting_block: 64,
+                current_block: 128,
+                highest_block: 384,
+            },
+        );
+        crate::runtime_status::set_network_runtime_native_sync_status(
+            chain_id,
+            NetworkRuntimeNativeSyncStatusV1 {
+                phase: NetworkRuntimeNativeSyncPhaseV1::State,
+                peer_count: 1,
+                starting_block: 64,
+                current_block: 128,
+                highest_block: 384,
+                updated_at_unix_millis: 1,
+            },
+        );
+        crate::runtime_status::set_network_runtime_native_head_snapshot_v1(
+            chain_id,
+            NetworkRuntimeNativeHeadSnapshotV1 {
+                chain_id,
+                phase: NetworkRuntimeNativeSyncPhaseV1::State,
+                peer_count: 1,
+                block_number: 128,
+                block_hash: [0x66u8; 32],
+                parent_block_hash: [0x65u8; 32],
+                state_root,
+                canonical: true,
+                safe: false,
+                finalized: false,
+                reorg_depth_hint: None,
+                body_available: true,
+                source_peer_id: Some(7),
+                observed_unix_ms: 1,
+            },
+        );
+        crate::runtime_status::set_network_runtime_native_snap_account_range_progress_v1(
+            chain_id,
+            crate::runtime_status::NetworkRuntimeNativeSnapAccountRangeProgressV1 {
+                chain_id,
+                state_root,
+                next_account_origin: Some(next_origin),
+                limit: [0xffu8; 32],
+                completed: false,
+                source_peer_id: Some(7),
+                observed_unix_ms: 1,
+            },
+        );
+
+        let request = build_eth_fullnode_native_sync_request_v1(NodeId(7), chain_id)
+            .expect("state phase should still produce request");
+        let ProtocolMessage::EvmNative(EvmNativeMessage::GetBlockHeaders {
+            start_height, max, ..
+        }) = request
+        else {
+            panic!("state phase should chase headers before snap when lagging head");
+        };
+        assert_eq!(start_height, 129);
+        assert_eq!(max, 16);
     }
 
     #[test]
