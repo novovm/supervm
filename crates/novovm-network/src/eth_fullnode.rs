@@ -3253,6 +3253,15 @@ fn eth_peer_selection_sort_key_v1(score: &EthPeerSelectionScoreV1) -> (u8, i64, 
     )
 }
 
+fn eth_native_sync_request_requires_snap_peer_v1(chain_id: u64) -> bool {
+    matches!(
+        build_eth_fullnode_native_sync_request_v1(NodeId(0), chain_id),
+        Some(ProtocolMessage::EvmNative(
+            EvmNativeMessage::SnapGetAccountRange { .. }
+        ))
+    )
+}
+
 fn build_eth_fullnode_peer_selection_quality_summary_v1(
     chain_id: u64,
     scores: &[EthPeerSelectionScoreV1],
@@ -4137,12 +4146,40 @@ pub fn select_eth_fullnode_native_sync_targets_v1(
     }
 
     let now = eth_peer_now_unix_ms_v1();
-    let mut ranked = snapshot_network_runtime_eth_peer_sessions_for_peers_v1(chain_id, peers)
+    let snapshots = snapshot_network_runtime_eth_peer_sessions_for_peers_v1(chain_id, peers);
+    let prefer_snap_peer = eth_native_sync_request_requires_snap_peer_v1(chain_id);
+    let snap_peer_ids = snapshots
+        .iter()
+        .filter(|session| session.negotiated.snap_version.is_some())
+        .map(|session| session.peer_id)
+        .collect::<std::collections::HashSet<_>>();
+    let mut ranked = snapshots
         .into_iter()
         .map(|session| eth_peer_sync_score_v1(&session, now))
         .filter(|score| peer_order.iter().any(|peer| peer.0 == score.peer_id))
         .collect::<Vec<_>>();
-    ranked.sort_by_key(eth_peer_selection_sort_key_v1);
+    if prefer_snap_peer {
+        for score in &mut ranked {
+            if score.eligible && snap_peer_ids.contains(&score.peer_id) {
+                score.reasons.push("snap_sync_capable_peer".to_string());
+            } else if score.eligible {
+                score
+                    .reasons
+                    .push("snap_sync_deprioritized_without_snap".to_string());
+            }
+        }
+        ranked.sort_by_key(|score| {
+            let base = eth_peer_selection_sort_key_v1(score);
+            let snap_rank = if score.eligible && !snap_peer_ids.contains(&score.peer_id) {
+                1u8
+            } else {
+                0u8
+            };
+            (base.0, snap_rank, base.1, base.2)
+        });
+    } else {
+        ranked.sort_by_key(eth_peer_selection_sort_key_v1);
+    }
 
     let mut selected = Vec::new();
     for score in ranked {
@@ -4940,6 +4977,57 @@ mod tests {
         let selected =
             select_eth_fullnode_native_sync_targets_v1(chain_id, &[peer_a, peer_b, peer_c], 2);
         assert_eq!(selected, vec![peer_b, peer_c]);
+    }
+
+    #[test]
+    fn sync_selection_prefers_snap_peer_for_state_account_range_request() {
+        let chain_id = 991_603_183_u64;
+        let no_snap_peer = NodeId(431);
+        let snap_peer = NodeId(432);
+        crate::runtime_status::set_network_runtime_sync_status(
+            chain_id,
+            NetworkRuntimeSyncStatus {
+                peer_count: 2,
+                starting_block: 64,
+                current_block: 128,
+                highest_block: 129,
+            },
+        );
+        crate::runtime_status::set_network_runtime_native_sync_status(
+            chain_id,
+            NetworkRuntimeNativeSyncStatusV1 {
+                phase: NetworkRuntimeNativeSyncPhaseV1::State,
+                peer_count: 2,
+                starting_block: 64,
+                current_block: 128,
+                highest_block: 129,
+                updated_at_unix_millis: 1,
+            },
+        );
+        let _ = upsert_network_runtime_eth_peer_session(
+            chain_id,
+            no_snap_peer.0,
+            &[69, 70, 71],
+            &[],
+            Some(10_000),
+        )
+        .expect("no-snap eth peer");
+        let _ = upsert_network_runtime_eth_peer_session(
+            chain_id,
+            snap_peer.0,
+            &[69, 70, 71],
+            &[1],
+            Some(9_000),
+        )
+        .expect("snap eth peer");
+
+        assert!(
+            eth_native_sync_request_requires_snap_peer_v1(chain_id),
+            "state account range request must be snap-capable"
+        );
+        let selected =
+            select_eth_fullnode_native_sync_targets_v1(chain_id, &[no_snap_peer, snap_peer], 1);
+        assert_eq!(selected, vec![snap_peer]);
     }
 
     #[test]
