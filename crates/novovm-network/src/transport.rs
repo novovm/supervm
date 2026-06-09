@@ -2261,7 +2261,10 @@ fn drive_eth_fullnode_native_rlpx_peer_session_once_v1(
                                 chain_id, peer.0, *tx_hash, None,
                             );
                         }
-                        if !announcement.tx_hashes.is_empty() {
+                        if eth_fullnode_native_should_request_pooled_transactions_v1(
+                            session,
+                            announcement.tx_hashes.as_slice(),
+                        ) {
                             let request_id = next_eth_fullnode_native_rlpx_request_id_v1();
                             let request_payload = eth_rlpx_build_get_pooled_transactions_payload_v1(
                                 request_id,
@@ -4689,6 +4692,13 @@ fn build_eth_fullnode_native_pooled_transactions_response_v1(
         .iter()
         .filter_map(|hash| get_network_runtime_native_pending_tx_payload_v1(chain_id, *hash))
         .collect()
+}
+
+fn eth_fullnode_native_should_request_pooled_transactions_v1(
+    session: &EthFullnodeNativeRlpxLivePeerSessionV1,
+    hashes: &[[u8; 32]],
+) -> bool {
+    !hashes.is_empty() && session.last_pooled_transactions_request_id.is_none()
 }
 
 fn ingest_real_rlpx_pooled_transactions_v1(
@@ -11440,6 +11450,36 @@ mod tests {
         assert!(
             err.contains("rlpx_pooled_transactions_unrequested_hash"),
             "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn rlpx_pooled_transactions_request_does_not_overwrite_pending_request_v1() {
+        let chain_id = 9_926_122_u64;
+        let mut session = dummy_rlpx_live_session(chain_id);
+        let hashes = [[0x44; 32]];
+
+        assert!(
+            eth_fullnode_native_should_request_pooled_transactions_v1(&session, &hashes),
+            "first pooled tx hash announcement should be requestable"
+        );
+        session.last_pooled_transactions_request_id = Some(99);
+        session.pending_pooled_transaction_hashes = hashes.to_vec();
+        assert!(
+            !eth_fullnode_native_should_request_pooled_transactions_v1(&session, &[[0x55; 32]]),
+            "second announcement must not overwrite an in-flight pooled tx request"
+        );
+
+        let response = EthRlpxPooledTransactionsPayloadV1 {
+            request_id: 99,
+            tx_rlp_items: Vec::new(),
+            tx_hashes: Vec::new(),
+        };
+        ingest_real_rlpx_pooled_transactions_v1(chain_id, 77, &mut session, &response)
+            .expect("empty ordered response clears pending request");
+        assert!(
+            eth_fullnode_native_should_request_pooled_transactions_v1(&session, &[[0x55; 32]]),
+            "after response cleanup, a later announcement can be requested"
         );
     }
 
