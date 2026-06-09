@@ -728,6 +728,7 @@ struct EthFullnodeNativeRlpxLivePeerSessionV1 {
     remote_status: EthRlpxStatusV1,
     last_sync_request_unix_ms: u64,
     last_headers_request_id: Option<u64>,
+    pending_headers_request: Option<EthRlpxGetBlockHeadersRequestV1>,
     last_bodies_request_id: Option<u64>,
     last_receipts_request_id: Option<u64>,
     last_snap_account_range_request_id: Option<u64>,
@@ -1495,6 +1496,7 @@ fn connect_eth_fullnode_native_rlpx_peer_v1(
             remote_status,
             last_sync_request_unix_ms: 0,
             last_headers_request_id: None,
+            pending_headers_request: None,
             last_bodies_request_id: None,
             last_receipts_request_id: None,
             last_snap_account_range_request_id: None,
@@ -2619,6 +2621,15 @@ fn drive_eth_fullnode_native_rlpx_peer_session_once_v1(
                                 observe_eth_native_headers_pull(chain_id);
                                 observe_network_runtime_eth_peer_syncing_v1(chain_id, peer.0);
                                 session.last_headers_request_id = Some(request_id);
+                                session.pending_headers_request =
+                                    Some(EthRlpxGetBlockHeadersRequestV1 {
+                                        request_id,
+                                        start_height,
+                                        origin_hash: None,
+                                        max_headers: max,
+                                        skip,
+                                        reverse,
+                                    });
                                 session.last_bodies_request_id = None;
                                 session.pending_body_request_offset = 0;
                                 session.last_receipts_request_id = None;
@@ -3063,7 +3074,7 @@ fn dispatch_eth_fullnode_native_rlpx_missing_body_recovery_v1(
     observe_eth_native_bodies_pull(chain_id);
     observe_network_runtime_eth_peer_syncing_v1(chain_id, peer.0);
     session.pending_body_headers = pending_headers;
-    session.last_headers_request_id = None;
+    clear_eth_fullnode_native_headers_request_state_v1(session);
     session.last_bodies_request_id = Some(request_id);
     session.pending_body_request_offset = 0;
     session.last_receipts_request_id = None;
@@ -3132,7 +3143,7 @@ fn dispatch_eth_fullnode_native_rlpx_missing_receipts_recovery_v1(
     })?;
     observe_network_runtime_eth_peer_syncing_v1(chain_id, peer.0);
     session.pending_body_headers = pending_headers;
-    session.last_headers_request_id = None;
+    clear_eth_fullnode_native_headers_request_state_v1(session);
     session.last_bodies_request_id = None;
     session.last_receipts_request_id = Some(request_id);
     session.pending_receipt_request_offset = 0;
@@ -3215,6 +3226,13 @@ fn clear_eth_fullnode_native_snap_request_state_v1(
     session.pending_snap_trie_node_pathsets.clear();
     session.pending_snap_trie_node_hashes.clear();
     session.pending_snap_trie_node_retry_count = 0;
+}
+
+fn clear_eth_fullnode_native_headers_request_state_v1(
+    session: &mut EthFullnodeNativeRlpxLivePeerSessionV1,
+) {
+    session.last_headers_request_id = None;
+    session.pending_headers_request = None;
 }
 
 fn clear_eth_fullnode_native_block_access_list_request_state_v1(
@@ -3386,7 +3404,7 @@ fn dispatch_eth_fullnode_native_snap_account_range_request_v1(
     })?;
     observe_eth_native_snap_pull(chain_id);
     observe_network_runtime_eth_peer_syncing_v1(chain_id, source_peer_id);
-    session.last_headers_request_id = None;
+    clear_eth_fullnode_native_headers_request_state_v1(session);
     session.last_bodies_request_id = None;
     session.last_receipts_request_id = None;
     session.pending_receipt_request_offset = 0;
@@ -5402,7 +5420,7 @@ fn ingest_real_rlpx_new_block_v1(
     )?;
     report.receipt_updates = report.receipt_updates.saturating_add(empty_receipts);
     if session.pending_body_headers.is_empty() {
-        session.last_headers_request_id = None;
+        clear_eth_fullnode_native_headers_request_state_v1(session);
         session.last_bodies_request_id = None;
         session.last_receipts_request_id = None;
         session.pending_receipt_request_offset = 0;
@@ -5439,7 +5457,7 @@ fn ingest_real_rlpx_new_block_v1(
         );
         NetworkError::Io(err)
     })?;
-    session.last_headers_request_id = None;
+    clear_eth_fullnode_native_headers_request_state_v1(session);
     session.last_bodies_request_id = None;
     session.last_receipts_request_id = Some(request_id);
     session.pending_receipt_request_offset = 0;
@@ -5457,18 +5475,31 @@ fn ingest_real_rlpx_block_headers_v1(
     budget_hooks: &EthFullnodeBudgetHooksV1,
     report: &mut EthFullnodeNativeRlpxPeerTickReportV1,
 ) -> Result<(), NetworkError> {
-    if session
-        .last_headers_request_id
-        .is_some_and(|request_id| request_id != headers.request_id)
-    {
+    let Some(pending_request) = session.pending_headers_request else {
+        let err = format!(
+            "rlpx_block_headers_unexpected_response:request_id={}",
+            headers.request_id
+        );
+        observe_network_runtime_eth_peer_decode_failure_v1(chain_id, source_peer_id, &err);
+        return Err(NetworkError::Decode(err));
+    };
+    if pending_request.request_id != headers.request_id {
         return Ok(());
     }
     observe_eth_native_headers_response(chain_id);
-    session.last_headers_request_id = Some(headers.request_id);
+    let all_headers = headers.headers.iter().collect::<Vec<_>>();
+    if let Err(err) = validate_eth_fullnode_native_rlpx_block_headers_response_matches_request_v1(
+        &pending_request,
+        all_headers.as_slice(),
+    ) {
+        observe_network_runtime_eth_peer_decode_failure_v1(chain_id, source_peer_id, &err);
+        return Err(NetworkError::Decode(err));
+    }
     if headers.headers.is_empty() {
-        session.last_headers_request_id = None;
+        clear_eth_fullnode_native_headers_request_state_v1(session);
         return Ok(());
     }
+    clear_eth_fullnode_native_headers_request_state_v1(session);
     let body_request_cap = usize::try_from(budget_hooks.sync_pull_bodies_batch.max(1))
         .unwrap_or(usize::MAX)
         .max(1);
@@ -5477,12 +5508,6 @@ fn ingest_real_rlpx_block_headers_v1(
         .iter()
         .take(body_request_cap)
         .collect::<Vec<_>>();
-    if let Err(err) =
-        validate_eth_fullnode_native_rlpx_block_headers_contiguous_v1(selected_headers.as_slice())
-    {
-        observe_network_runtime_eth_peer_decode_failure_v1(chain_id, source_peer_id, &err);
-        return Err(NetworkError::Decode(err));
-    }
     session.pending_body_headers = selected_headers
         .iter()
         .map(|header| EthFullnodeNativePendingBodyHeaderV1 {
@@ -5547,31 +5572,102 @@ fn ingest_real_rlpx_block_headers_v1(
     Ok(())
 }
 
-fn validate_eth_fullnode_native_rlpx_block_headers_contiguous_v1(
+fn validate_eth_fullnode_native_rlpx_block_headers_response_matches_request_v1(
+    request: &EthRlpxGetBlockHeadersRequestV1,
     headers: &[&EthRlpxBlockHeaderRecordV1],
 ) -> Result<(), String> {
+    if headers.is_empty() {
+        return Ok(());
+    }
+    if request.max_headers == 0 {
+        return Err(format!(
+            "rlpx_block_headers_unrequested_nonempty:request_id={} observed={}",
+            request.request_id,
+            headers.len()
+        ));
+    }
+    if headers.len() as u64 > request.max_headers {
+        return Err(format!(
+            "rlpx_block_headers_count_exceeds_request:request_id={} requested={} observed={}",
+            request.request_id,
+            request.max_headers,
+            headers.len()
+        ));
+    }
+    let first = headers[0];
+    if let Some(origin_hash) = request.origin_hash {
+        if first.hash != origin_hash {
+            return Err(format!(
+                "rlpx_block_headers_origin_hash_mismatch:request_id={} observed=0x{} expected=0x{}",
+                request.request_id,
+                hex32_v1(&first.hash),
+                hex32_v1(&origin_hash)
+            ));
+        }
+    } else if first.number != request.start_height {
+        return Err(format!(
+            "rlpx_block_headers_origin_number_mismatch:request_id={} observed={} expected={}",
+            request.request_id, first.number, request.start_height
+        ));
+    }
+    let Some(step) = request.skip.checked_add(1) else {
+        return Err(format!(
+            "rlpx_block_headers_step_overflow:request_id={} skip={}",
+            request.request_id, request.skip
+        ));
+    };
     for pair in headers.windows(2) {
         let parent = pair[0];
         let child = pair[1];
-        let Some(expected_number) = parent.number.checked_add(1) else {
-            return Err(format!(
-                "rlpx_block_headers_number_overflow:parent_number={} parent_hash=0x{}",
-                parent.number,
-                hex32_v1(&parent.hash)
-            ));
+        let expected_number = if request.reverse {
+            let Some(expected_number) = parent.number.checked_sub(step) else {
+                return Err(format!(
+                    "rlpx_block_headers_number_underflow:request_id={} parent_number={} parent_hash=0x{}",
+                    request.request_id,
+                    parent.number,
+                    hex32_v1(&parent.hash)
+                ));
+            };
+            expected_number
+        } else {
+            let Some(expected_number) = parent.number.checked_add(step) else {
+                return Err(format!(
+                    "rlpx_block_headers_number_overflow:request_id={} parent_number={} parent_hash=0x{}",
+                    request.request_id,
+                    parent.number,
+                    hex32_v1(&parent.hash)
+                ));
+            };
+            expected_number
         };
         if child.number != expected_number {
             return Err(format!(
-                "rlpx_block_headers_number_gap:parent_number={} child_number={} parent_hash=0x{} child_hash=0x{}",
+                "rlpx_block_headers_number_gap:request_id={} parent_number={} child_number={} expected_child_number={} parent_hash=0x{} child_hash=0x{}",
+                request.request_id,
                 parent.number,
                 child.number,
+                expected_number,
                 hex32_v1(&parent.hash),
                 hex32_v1(&child.hash)
             ));
         }
-        if child.parent_hash != parent.hash {
+        if step != 1 {
+            continue;
+        }
+        if request.reverse {
+            if parent.parent_hash != child.hash {
+                return Err(format!(
+                    "rlpx_block_headers_reverse_parent_mismatch:request_id={} parent_number={} observed_parent=0x{} expected_parent=0x{}",
+                    request.request_id,
+                    parent.number,
+                    hex32_v1(&parent.parent_hash),
+                    hex32_v1(&child.hash)
+                ));
+            }
+        } else if child.parent_hash != parent.hash {
             return Err(format!(
-                "rlpx_block_headers_parent_mismatch:child_number={} child_parent=0x{} expected_parent=0x{}",
+                "rlpx_block_headers_parent_mismatch:request_id={} child_number={} child_parent=0x{} expected_parent=0x{}",
+                request.request_id,
                 child.number,
                 hex32_v1(&child.parent_hash),
                 hex32_v1(&parent.hash)
@@ -5595,7 +5691,7 @@ fn ingest_real_rlpx_block_bodies_v1(
         return Ok(());
     }
     observe_eth_native_bodies_response(chain_id);
-    session.last_headers_request_id = None;
+    clear_eth_fullnode_native_headers_request_state_v1(session);
     let request_offset = session
         .pending_body_request_offset
         .min(session.pending_body_headers.len());
@@ -8518,13 +8614,46 @@ mod tests {
         let header_a = make_header(120, 0xa1, [0x90; 32]);
         let header_b = make_header(121, 0xa2, header_a.hash);
         let linked = [&header_a, &header_b];
-        validate_eth_fullnode_native_rlpx_block_headers_contiguous_v1(linked.as_slice())
-            .expect("linked headers must pass");
+        let request = EthRlpxGetBlockHeadersRequestV1 {
+            request_id: 7,
+            start_height: 120,
+            origin_hash: None,
+            max_headers: 2,
+            skip: 0,
+            reverse: false,
+        };
+        validate_eth_fullnode_native_rlpx_block_headers_response_matches_request_v1(
+            &request,
+            linked.as_slice(),
+        )
+        .expect("linked headers must pass");
+
+        let origin_mismatch = EthRlpxGetBlockHeadersRequestV1 {
+            start_height: 119,
+            ..request
+        };
+        let err = validate_eth_fullnode_native_rlpx_block_headers_response_matches_request_v1(
+            &origin_mismatch,
+            linked.as_slice(),
+        )
+        .expect_err("origin mismatch must reject");
+        assert!(
+            err.contains("rlpx_block_headers_origin_number_mismatch"),
+            "unexpected error: {err}"
+        );
 
         let header_gap = make_header(123, 0xa3, header_b.hash);
         let gap = [&header_b, &header_gap];
-        let err = validate_eth_fullnode_native_rlpx_block_headers_contiguous_v1(gap.as_slice())
-            .expect_err("number gap must reject");
+        let gap_request = EthRlpxGetBlockHeadersRequestV1 {
+            start_height: 121,
+            max_headers: 2,
+            ..request
+        };
+        let err = validate_eth_fullnode_native_rlpx_block_headers_response_matches_request_v1(
+            &gap_request,
+            gap.as_slice(),
+        )
+        .expect_err("number gap must reject");
         assert!(
             err.contains("rlpx_block_headers_number_gap"),
             "unexpected error: {err}"
@@ -8532,12 +8661,124 @@ mod tests {
 
         let header_wrong_parent = make_header(122, 0xa4, [0xff; 32]);
         let wrong_parent = [&header_b, &header_wrong_parent];
-        let err =
-            validate_eth_fullnode_native_rlpx_block_headers_contiguous_v1(wrong_parent.as_slice())
-                .expect_err("wrong parent hash must reject");
+        let err = validate_eth_fullnode_native_rlpx_block_headers_response_matches_request_v1(
+            &gap_request,
+            wrong_parent.as_slice(),
+        )
+        .expect_err("wrong parent hash must reject");
         assert!(
             err.contains("rlpx_block_headers_parent_mismatch"),
             "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn rlpx_block_headers_ingest_rejects_unrequested_response_v1() {
+        let chain_id = 9_928_u64;
+        let local_stream = {
+            let listener = TcpListener::bind("127.0.0.1:0").expect("bind dummy listener");
+            let addr = listener.local_addr().expect("dummy listener addr");
+            let stream = TcpStream::connect(addr).expect("connect dummy stream");
+            let _accepted = listener.accept().expect("accept dummy stream");
+            stream
+        };
+        let frame_session =
+            EthRlpxFrameSessionV1::from_secrets([0x11; 32], [0x22; 32], &[0x33; 32], &[0x44; 32])
+                .expect("dummy frame session");
+        let mut session = EthFullnodeNativeRlpxLivePeerSessionV1 {
+            endpoint: PluginPeerEndpoint {
+                endpoint: "enode://dummy@127.0.0.1:0".to_string(),
+                node_hint: 1,
+                addr_hint: "127.0.0.1:0".to_string(),
+            },
+            stream: local_stream,
+            frame_session,
+            _negotiated_eth_version: 71,
+            _negotiated_snap_version: Some(1),
+            remote_status: EthRlpxStatusV1 {
+                protocol_version: 71,
+                network_id: chain_id,
+                genesis_hash: [0u8; 32],
+                fork_id: crate::EthForkIdV1 {
+                    hash: [0u8; 4],
+                    next: 0,
+                },
+                earliest_block: 0,
+                latest_block: 120,
+                latest_block_hash: [0x55; 32],
+            },
+            last_sync_request_unix_ms: 0,
+            last_headers_request_id: None,
+            pending_headers_request: None,
+            last_bodies_request_id: None,
+            last_receipts_request_id: None,
+            last_snap_account_range_request_id: None,
+            last_snap_storage_ranges_request_id: None,
+            last_snap_byte_codes_request_id: None,
+            last_snap_trie_nodes_request_id: None,
+            last_snap_state_root: None,
+            last_snap_account_origin: None,
+            last_snap_account_limit: None,
+            pending_snap_next_account_origin: None,
+            pending_snap_storage_accounts: Vec::new(),
+            pending_snap_code_hashes: Vec::new(),
+            pending_snap_trie_node_pathsets: Vec::new(),
+            pending_snap_trie_node_hashes: Vec::new(),
+            pending_snap_trie_node_retry_count: 0,
+            last_block_access_lists_request_id: None,
+            queued_block_access_lists: Vec::new(),
+            pending_block_access_lists: Vec::new(),
+            last_pooled_transactions_request_id: None,
+            last_tx_broadcast_unix_ms: 0,
+            pending_body_headers: Vec::new(),
+            pending_body_request_offset: 0,
+            pending_receipt_request_offset: 0,
+            pending_pooled_transaction_hashes: Vec::new(),
+        };
+        let header = crate::EthRlpxBlockHeaderRecordV1 {
+            number: 120,
+            hash: [0xa1; 32],
+            parent_hash: [0x90; 32],
+            state_root: [0x20; 32],
+            transactions_root: crate::eth_rlpx_empty_trie_root_v1(),
+            receipts_root: crate::eth_rlpx_empty_trie_root_v1(),
+            ommers_hash: crate::eth_rlpx_empty_ommers_hash_v1(),
+            logs_bloom: vec![0u8; 256],
+            gas_limit: Some(30_000_000),
+            gas_used: Some(0),
+            timestamp: Some(1_234_687),
+            base_fee_per_gas: Some(15),
+            withdrawals_root: Some(crate::eth_rlpx_empty_trie_root_v1()),
+            blob_gas_used: None,
+            excess_blob_gas: None,
+            block_access_list_hash: None,
+            raw_rlp: None,
+        };
+        let response = EthRlpxBlockHeadersResponseV1 {
+            request_id: 99,
+            headers: vec![header],
+        };
+        let mut budget = default_eth_fullnode_budget_hooks_v1();
+        budget.sync_pull_bodies_batch = 1;
+        let mut report = EthFullnodeNativeRlpxPeerTickReportV1::default();
+
+        let err = ingest_real_rlpx_block_headers_v1(
+            chain_id,
+            77,
+            &mut session,
+            &response,
+            &budget,
+            &mut report,
+        )
+        .expect_err("unsolicited headers must reject");
+        assert!(
+            err.to_string()
+                .contains("rlpx_block_headers_unexpected_response"),
+            "unexpected error: {err}"
+        );
+        assert!(
+            get_network_runtime_native_header_snapshot_v1(chain_id).is_none(),
+            "unsolicited header must not materialize"
         );
     }
 
@@ -11545,6 +11786,15 @@ mod tests {
             node_hint: remote.0,
             addr_hint: listen_addr.to_string(),
         };
+        set_network_runtime_sync_status(
+            chain_id,
+            NetworkRuntimeSyncStatus {
+                peer_count: 1,
+                starting_block: 119,
+                current_block: 119,
+                highest_block: 120,
+            },
+        );
         let server = thread::spawn(move || {
             let (mut accepted, _) = listener.accept().expect("accept rlpx");
             accepted
@@ -11812,6 +12062,15 @@ mod tests {
             node_hint: remote.0,
             addr_hint: listen_addr.to_string(),
         };
+        set_network_runtime_sync_status(
+            chain_id,
+            NetworkRuntimeSyncStatus {
+                peer_count: 1,
+                starting_block: 119,
+                current_block: 119,
+                highest_block: 121,
+            },
+        );
 
         let expected_raw_tx = raw_tx.clone();
         let server = thread::spawn(move || {
@@ -12437,6 +12696,15 @@ mod tests {
             node_hint: remote.0,
             addr_hint: listen_addr.to_string(),
         };
+        set_network_runtime_sync_status(
+            chain_id,
+            NetworkRuntimeSyncStatus {
+                peer_count: 1,
+                starting_block: 119,
+                current_block: 119,
+                highest_block: 121,
+            },
+        );
 
         let server = thread::spawn(move || {
             let (mut accepted, _) = listener.accept().expect("accept rlpx");
@@ -12483,7 +12751,7 @@ mod tests {
                     0,
                 ),
                 earliest_block: 1,
-                latest_block: 120,
+                latest_block: 121,
                 latest_block_hash: [0x77; 32],
             };
             let status_payload = crate::eth_rlpx_build_status_payload_v1(status);
@@ -14228,6 +14496,15 @@ mod tests {
             node_hint: remote.0,
             addr_hint: listen_addr.to_string(),
         };
+        set_network_runtime_sync_status(
+            chain_id,
+            NetworkRuntimeSyncStatus {
+                peer_count: 1,
+                starting_block: 119,
+                current_block: 119,
+                highest_block: 120,
+            },
+        );
         let (done_tx, done_rx) = std::sync::mpsc::channel();
 
         let expected_bal_for_server = expected_bal_rlp.clone();
