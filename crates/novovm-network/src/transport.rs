@@ -148,7 +148,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::{Read, Write};
 use std::net::{IpAddr, SocketAddr, TcpListener, TcpStream, ToSocketAddrs, UdpSocket};
 use std::sync::{Arc, Mutex, OnceLock};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use thiserror::Error;
 
 const ETH_FULLNODE_NATIVE_HEADERS_SERVE_MAX_V1: usize = 192;
@@ -409,7 +409,19 @@ impl EthFullnodeNativePeerWorkerV1 {
             selection_quality_summary: plan.selection_quality_summary.clone(),
             ..EthFullnodeNativeRealDriveReportV1::default()
         };
+        let bootstrap_started = Instant::now();
+        let bootstrap_tick_budget = eth_fullnode_native_rlpx_bootstrap_tick_budget_v1();
         for &peer in plan.bootstrap_peers.iter() {
+            if report.attempted_bootstrap_peers > 0
+                && bootstrap_started.elapsed() >= bootstrap_tick_budget
+            {
+                report.skipped_bootstrap_budget_peers = plan
+                    .bootstrap_peers
+                    .len()
+                    .saturating_sub(report.attempted_bootstrap_peers)
+                    .saturating_sub(report.skipped_missing_endpoint_peers);
+                break;
+            }
             let Some(endpoint) = self.endpoint_for_peer(peer) else {
                 report.skipped_missing_endpoint_peers =
                     report.skipped_missing_endpoint_peers.saturating_add(1);
@@ -652,6 +664,7 @@ pub struct EthFullnodeNativeRealDriveReportV1 {
     pub failed_bootstrap_peers: usize,
     pub failed_sync_peers: usize,
     pub skipped_missing_endpoint_peers: usize,
+    pub skipped_bootstrap_budget_peers: usize,
     pub connected_peers: usize,
     pub ready_peers: usize,
     pub status_updates: usize,
@@ -834,6 +847,15 @@ fn eth_fullnode_native_rlpx_connect_timeout_v1() -> Duration {
         .and_then(|raw| raw.trim().parse::<u64>().ok())
         .unwrap_or(1_500)
         .clamp(250, 5_000);
+    Duration::from_millis(timeout_ms)
+}
+
+fn eth_fullnode_native_rlpx_bootstrap_tick_budget_v1() -> Duration {
+    let timeout_ms = std::env::var("NOVOVM_ETH_RLPX_BOOTSTRAP_TICK_BUDGET_MS")
+        .ok()
+        .and_then(|raw| raw.trim().parse::<u64>().ok())
+        .unwrap_or(12_000)
+        .clamp(1_000, 60_000);
     Duration::from_millis(timeout_ms)
 }
 
@@ -1147,6 +1169,7 @@ fn build_eth_fullnode_native_worker_runtime_snapshot_v1(
         failed_bootstrap_peers: report.failed_bootstrap_peers as u64,
         failed_sync_peers: report.failed_sync_peers as u64,
         skipped_missing_endpoint_peers: report.skipped_missing_endpoint_peers as u64,
+        skipped_bootstrap_budget_peers: report.skipped_bootstrap_budget_peers as u64,
         connected_peers: report.connected_peers as u64,
         ready_peers: report.ready_peers as u64,
         status_updates: report.status_updates as u64,
@@ -9337,8 +9360,35 @@ mod tests {
     };
     use std::collections::{HashMap, HashSet};
     use std::net::TcpListener;
+    use std::sync::{Mutex, OnceLock};
     use std::thread;
-    use std::time::Duration;
+    use std::time::{Duration, Instant};
+
+    fn eth_rlpx_env_test_lock_v1() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
+
+    struct EnvVarRestoreV1 {
+        key: &'static str,
+        previous: Option<std::ffi::OsString>,
+    }
+
+    impl Drop for EnvVarRestoreV1 {
+        fn drop(&mut self) {
+            if let Some(previous) = self.previous.as_ref() {
+                std::env::set_var(self.key, previous);
+            } else {
+                std::env::remove_var(self.key);
+            }
+        }
+    }
+
+    fn set_test_env_var_v1(key: &'static str, value: &'static str) -> EnvVarRestoreV1 {
+        let previous = std::env::var_os(key);
+        std::env::set_var(key, value);
+        EnvVarRestoreV1 { key, previous }
+    }
 
     const LIVE_MAINNET_BOOTNODES: [&str; 4] = [
         "enode://d860a01f9722d78051619d1e2351aba3f43f943f6f00718d1b9baa4101932a1f5011f16bb2b1bb35db20d6fe28fa0bf09636d26a87d31de9ec6203eeedb1f666@18.138.108.67:30303",
@@ -13083,6 +13133,81 @@ mod tests {
         assert!(report.lifecycle_summary.ready_count >= 1);
 
         server.join().expect("server join");
+    }
+
+    #[test]
+    fn real_rlpx_bootstrap_tick_budget_defers_slow_connects_v1() {
+        let _guard = eth_rlpx_env_test_lock_v1()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let _connect_timeout = set_test_env_var_v1("NOVOVM_ETH_RLPX_CONNECT_TIMEOUT_MS", "250");
+        let _tick_budget = set_test_env_var_v1("NOVOVM_ETH_RLPX_BOOTSTRAP_TICK_BUDGET_MS", "1000");
+
+        let chain_id = 99_160_332_u64;
+        let local = NodeId(555_100);
+        let mut listeners = Vec::new();
+        let mut endpoints = Vec::new();
+        let mut peers = Vec::new();
+        for idx in 0..6_u64 {
+            let listener = TcpListener::bind("127.0.0.1:0").expect("bind stalled peer");
+            let listen_addr = listener.local_addr().expect("listener addr");
+            let responder_signing = k256::ecdsa::SigningKey::random(&mut rand::rngs::OsRng);
+            let responder_nodekey: [u8; 32] = responder_signing.to_bytes().into();
+            let responder_pub = crate::eth_rlpx_pubkey_from_nodekey_bytes_v1(&responder_nodekey)
+                .expect("derive stalled pubkey");
+            let peer = NodeId(555_101 + idx);
+            peers.push(peer);
+            endpoints.push(PluginPeerEndpoint {
+                endpoint: format!(
+                    "enode://{}@{}",
+                    responder_pub
+                        .iter()
+                        .map(|b| format!("{b:02x}"))
+                        .collect::<String>(),
+                    listen_addr
+                ),
+                node_hint: peer.0,
+                addr_hint: listen_addr.to_string(),
+            });
+            listeners.push(listener);
+        }
+
+        let mut budget = default_eth_fullnode_budget_hooks_v1();
+        budget.active_native_peer_soft_limit = 6;
+        budget.active_native_peer_hard_limit = 6;
+        budget.sync_target_fanout = 6;
+        budget.sync_request_interval_ms = u64::MAX;
+        let worker = EthFullnodeNativePeerWorkerV1::new(EthFullnodeNativePeerWorkerConfigV1 {
+            chain_id,
+            local_node: local,
+            peers,
+            peer_endpoints: endpoints,
+            recv_budget: 1,
+            sync_target_fanout: 6,
+            budget_hooks: budget,
+        });
+
+        let started = Instant::now();
+        let report = worker
+            .drive_real_network_once()
+            .expect("bootstrap tick should be budgeted");
+        assert_eq!(report.scheduled_bootstrap_peers, 6);
+        assert!(
+            report.attempted_bootstrap_peers < report.scheduled_bootstrap_peers,
+            "bootstrap tick budget must defer slow peers instead of trying all"
+        );
+        assert!(report.skipped_bootstrap_budget_peers > 0);
+        assert_eq!(
+            report.attempted_bootstrap_peers
+                + report.skipped_bootstrap_budget_peers
+                + report.skipped_missing_endpoint_peers,
+            report.scheduled_bootstrap_peers
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(3),
+            "bootstrap tick should stay bounded even with stalled local peers"
+        );
+        drop(listeners);
     }
 
     #[test]

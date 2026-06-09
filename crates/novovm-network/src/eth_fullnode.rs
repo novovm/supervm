@@ -1534,6 +1534,8 @@ pub struct EthFullnodeNativeWorkerRuntimeSnapshotV1 {
     pub failed_bootstrap_peers: u64,
     pub failed_sync_peers: u64,
     pub skipped_missing_endpoint_peers: u64,
+    #[serde(default)]
+    pub skipped_bootstrap_budget_peers: u64,
     pub connected_peers: u64,
     pub ready_peers: u64,
     pub status_updates: u64,
@@ -6471,6 +6473,7 @@ mod tests {
             failed_bootstrap_peers: 1,
             failed_sync_peers: 0,
             skipped_missing_endpoint_peers: 0,
+            skipped_bootstrap_budget_peers: 0,
             connected_peers: 1,
             ready_peers: 1,
             status_updates: 1,
