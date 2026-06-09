@@ -845,7 +845,7 @@ fn eth_fullnode_native_rlpx_connect_timeout_v1() -> Duration {
     let timeout_ms = std::env::var("NOVOVM_ETH_RLPX_CONNECT_TIMEOUT_MS")
         .ok()
         .and_then(|raw| raw.trim().parse::<u64>().ok())
-        .unwrap_or(1_500)
+        .unwrap_or(750)
         .clamp(250, 5_000);
     Duration::from_millis(timeout_ms)
 }

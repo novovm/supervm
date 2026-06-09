@@ -2097,6 +2097,7 @@ fn eth_rlpx_peer_refresh_plan_v1(
     candidate_pool_exhausted: bool,
     progress_stalled: bool,
     bootstrap_stalled: bool,
+    body_recovery_stalled: bool,
     refresh_exhausted_enabled: bool,
     candidate_limit: usize,
     adaptive_candidate_limit: usize,
@@ -2116,6 +2117,24 @@ fn eth_rlpx_peer_refresh_plan_v1(
         ));
     }
     let stalled = progress_stalled || bootstrap_stalled;
+    if body_recovery_stalled
+        && candidate_limit < adaptive_candidate_limit
+        && tick.saturating_sub(last_peer_refresh_tick) >= 1
+    {
+        return Some((
+            candidate_limit
+                .saturating_mul(2)
+                .max(candidate_limit.saturating_add(max_peers))
+                .min(adaptive_candidate_limit),
+            "body_recovery_stalled_expand",
+        ));
+    }
+    if body_recovery_stalled
+        && refresh_exhausted_enabled
+        && tick.saturating_sub(last_peer_refresh_tick) >= 1
+    {
+        return Some((candidate_limit, "body_recovery_stalled_refresh"));
+    }
     let stalled_expand_reason = if bootstrap_stalled && !progress_stalled {
         "bootstrap_stalled_expand"
     } else {
@@ -2172,6 +2191,20 @@ fn eth_rlpx_default_adaptive_candidate_limit_v1(candidate_limit: usize) -> usize
         .saturating_mul(2)
         .max(512)
         .clamp(candidate_limit, 1024)
+}
+
+fn eth_rlpx_cache_warmed_candidate_limit_v1(
+    candidate_limit: usize,
+    max_peers: usize,
+    cache_endpoint_count: usize,
+    candidate_limit_explicit: bool,
+) -> usize {
+    if candidate_limit_explicit || cache_endpoint_count == 0 {
+        return candidate_limit.clamp(max_peers.max(1), 512);
+    }
+    candidate_limit
+        .max(cache_endpoint_count)
+        .clamp(max_peers.max(1), 512)
 }
 
 fn eth_rlpx_default_max_peers_v1() -> usize {
@@ -4512,14 +4545,10 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
     let max_peers =
         usize_env_allow_zero("NOVOVM_ETH_RLPX_MAX_PEERS", eth_rlpx_default_max_peers_v1())?
             .clamp(1, 32);
+    let candidate_limit_explicit = std::env::var_os("NOVOVM_ETH_RLPX_CANDIDATE_PEERS").is_some();
     let mut candidate_limit =
         usize_env_allow_zero("NOVOVM_ETH_RLPX_CANDIDATE_PEERS", max_peers.max(256))?
             .clamp(max_peers, 512);
-    let adaptive_candidate_limit = usize_env_allow_zero(
-        "NOVOVM_ETH_RLPX_ADAPTIVE_CANDIDATE_PEERS_MAX",
-        eth_rlpx_default_adaptive_candidate_limit_v1(candidate_limit),
-    )?
-    .clamp(candidate_limit, 1024);
     let ticks = usize_env_allow_zero("NOVOVM_ETH_RLPX_TICKS", 0)?;
     let sleep_ms = u64_env_clamped("NOVOVM_ETH_RLPX_SLEEP_MS", 600, 10, 60_000);
     let recv_budget = usize_env_allow_zero("NOVOVM_ETH_RLPX_RECV_BUDGET", 16)?.clamp(1, 1024);
@@ -4571,6 +4600,20 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
     } else {
         None
     };
+    candidate_limit = eth_rlpx_cache_warmed_candidate_limit_v1(
+        candidate_limit,
+        max_peers,
+        peer_endpoint_cache
+            .as_ref()
+            .map(|cache| cache.endpoints.len())
+            .unwrap_or(0),
+        candidate_limit_explicit,
+    );
+    let adaptive_candidate_limit = usize_env_allow_zero(
+        "NOVOVM_ETH_RLPX_ADAPTIVE_CANDIDATE_PEERS_MAX",
+        eth_rlpx_default_adaptive_candidate_limit_v1(candidate_limit),
+    )?
+    .clamp(candidate_limit, 1024);
     let discovered_peer_endpoints =
         eth_rlpx_sync_peer_endpoints_v1(chain_id, candidate_limit, verbose);
     let mut peer_endpoints = if let Some(cache) = peer_endpoint_cache.as_ref() {
@@ -5065,6 +5108,14 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
                 >= report.selection_quality_summary.candidate_peer_count;
         let progress_stalled = highest_sync_block > current_sync_block
             && tick.saturating_sub(last_sync_progress_tick) >= stalled_refresh_interval_ticks;
+        let body_recovery_stalled = highest_sync_block > current_sync_block
+            && header.is_some()
+            && !body_for_header
+                .as_ref()
+                .is_some_and(|body| body.body_available)
+            && report.ready_peers == 0
+            && report.body_updates == 0
+            && tick.saturating_sub(last_sync_progress_tick) >= 1;
         let bootstrap_stalled = report.ready_peers == 0
             && report.connected_peers == 0
             && report.scheduled_bootstrap_peers == 0
@@ -5077,7 +5128,7 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
                 runtime_sync_target_fanout,
                 adaptive_bootstrap_fanout,
                 max_peers,
-                progress_stalled,
+                progress_stalled || body_recovery_stalled,
                 report.ready_peers,
                 highest_sync_block,
                 current_sync_block,
@@ -5105,6 +5156,7 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
             candidate_pool_exhausted,
             progress_stalled,
             bootstrap_stalled,
+            body_recovery_stalled,
             bool_env_default_true("NOVOVM_ETH_RLPX_REFRESH_EXHAUSTED_CANDIDATES_ENABLED"),
             candidate_limit,
             adaptive_candidate_limit,
@@ -5644,16 +5696,31 @@ mod mainline_evm_cli_tests {
 
     #[test]
     fn eth_rlpx_peer_refresh_plan_expands_on_stalled_progress_v1() {
-        let plan =
-            eth_rlpx_peer_refresh_plan_v1(false, true, false, true, 128, 512, 6, 16, 0, 8, 16);
+        let plan = eth_rlpx_peer_refresh_plan_v1(
+            false, true, false, false, true, 128, 512, 6, 16, 0, 8, 16,
+        );
         assert_eq!(plan, Some((256, "sync_progress_stalled_expand")));
     }
 
     #[test]
     fn eth_rlpx_peer_refresh_plan_refreshes_stalled_at_adaptive_cap_v1() {
-        let plan =
-            eth_rlpx_peer_refresh_plan_v1(false, true, false, true, 512, 512, 6, 32, 8, 8, 16);
+        let plan = eth_rlpx_peer_refresh_plan_v1(
+            false, true, false, false, true, 512, 512, 6, 32, 8, 8, 16,
+        );
         assert_eq!(plan, Some((512, "sync_progress_stalled_refresh")));
+    }
+
+    #[test]
+    fn eth_rlpx_peer_refresh_plan_expands_immediately_on_body_recovery_stall_v1() {
+        let plan = eth_rlpx_peer_refresh_plan_v1(
+            false, false, false, true, true, 256, 512, 32, 1, 0, 8, 16,
+        );
+        assert_eq!(plan, Some((512, "body_recovery_stalled_expand")));
+
+        let refresh = eth_rlpx_peer_refresh_plan_v1(
+            false, false, false, true, true, 512, 512, 32, 2, 1, 8, 16,
+        );
+        assert_eq!(refresh, Some((512, "body_recovery_stalled_refresh")));
     }
 
     #[test]
@@ -5661,6 +5728,22 @@ mod mainline_evm_cli_tests {
         assert_eq!(eth_rlpx_default_adaptive_candidate_limit_v1(256), 512);
         assert_eq!(eth_rlpx_default_adaptive_candidate_limit_v1(512), 1024);
         assert_eq!(eth_rlpx_default_adaptive_candidate_limit_v1(900), 1024);
+    }
+
+    #[test]
+    fn eth_rlpx_cache_warmed_candidate_limit_preserves_expanded_pool_v1() {
+        assert_eq!(
+            eth_rlpx_cache_warmed_candidate_limit_v1(256, 32, 292, false),
+            292
+        );
+        assert_eq!(
+            eth_rlpx_cache_warmed_candidate_limit_v1(256, 32, 700, false),
+            512
+        );
+        assert_eq!(
+            eth_rlpx_cache_warmed_candidate_limit_v1(256, 32, 292, true),
+            256
+        );
     }
 
     #[test]
@@ -5745,14 +5828,16 @@ mod mainline_evm_cli_tests {
 
     #[test]
     fn eth_rlpx_peer_refresh_plan_keeps_exhausted_expand_priority_v1() {
-        let plan = eth_rlpx_peer_refresh_plan_v1(true, true, true, true, 64, 256, 6, 4, 0, 8, 16);
+        let plan =
+            eth_rlpx_peer_refresh_plan_v1(true, true, true, true, true, 64, 256, 6, 4, 0, 8, 16);
         assert_eq!(plan, Some((128, "all_candidate_peers_in_cooldown_expand")));
     }
 
     #[test]
     fn eth_rlpx_peer_refresh_plan_expands_on_bootstrap_stall_without_remote_highest_v1() {
-        let plan =
-            eth_rlpx_peer_refresh_plan_v1(false, false, true, true, 64, 128, 4, 16, 0, 8, 16);
+        let plan = eth_rlpx_peer_refresh_plan_v1(
+            false, false, true, false, true, 64, 128, 4, 16, 0, 8, 16,
+        );
         assert_eq!(plan, Some((128, "bootstrap_stalled_expand")));
     }
 
