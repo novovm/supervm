@@ -3079,7 +3079,18 @@ struct EthRlpxPeerEndpointCacheV1 {
     schema: String,
     chain_id: u64,
     endpoints: Vec<PluginPeerEndpoint>,
+    #[serde(default)]
+    capacity_rejects: Vec<EthRlpxPeerEndpointCapacityRejectV1>,
     updated_at_unix_ms: u64,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+struct EthRlpxPeerEndpointCapacityRejectV1 {
+    endpoint: String,
+    node_hint: u64,
+    addr_hint: String,
+    reject_until_unix_ms: u64,
+    observed_at_unix_ms: u64,
 }
 
 fn eth_rlpx_peer_endpoint_cache_path_v1() -> PathBuf {
@@ -3129,6 +3140,27 @@ fn load_eth_rlpx_peer_endpoint_cache_v1(
     Ok(Some(cache))
 }
 
+fn restore_eth_rlpx_peer_endpoint_cache_capacity_rejects_v1(
+    cache: &EthRlpxPeerEndpointCacheV1,
+    chain_id: u64,
+) -> usize {
+    let now = now_unix_ms();
+    let mut restored = 0usize;
+    for reject in cache
+        .capacity_rejects
+        .iter()
+        .filter(|reject| reject.reject_until_unix_ms > now)
+    {
+        novovm_network::observe_network_runtime_eth_peer_disconnect_v1(
+            chain_id,
+            reject.node_hint.max(1),
+            Some(0x04),
+        );
+        restored = restored.saturating_add(1);
+    }
+    restored
+}
+
 fn write_eth_rlpx_peer_endpoint_cache_v1(
     path: &Path,
     chain_id: u64,
@@ -3140,11 +3172,40 @@ fn write_eth_rlpx_peer_endpoint_cache_v1(
     for endpoint in endpoints {
         eth_push_peer_endpoint_v1(&mut deduped, &mut seen, endpoint.clone(), limit.max(1));
     }
+    let now = now_unix_ms();
+    let peers = deduped
+        .iter()
+        .map(|endpoint| NodeId(endpoint.node_hint.max(1)))
+        .collect::<Vec<_>>();
+    let snapshots = snapshot_network_runtime_eth_peer_sessions_for_peers_v1(chain_id, &peers)
+        .into_iter()
+        .map(|snapshot| (snapshot.peer_id, snapshot))
+        .collect::<HashMap<_, _>>();
+    let capacity_rejects = deduped
+        .iter()
+        .filter_map(|endpoint| {
+            let snapshot = snapshots.get(&endpoint.node_hint.max(1))?;
+            if snapshot.cooldown_until_unix_ms <= now
+                || (snapshot.disconnect_too_many_peers_count == 0
+                    && snapshot.last_failure_reason_name.as_deref() != Some("too_many_peers"))
+            {
+                return None;
+            }
+            Some(EthRlpxPeerEndpointCapacityRejectV1 {
+                endpoint: endpoint.endpoint.clone(),
+                node_hint: endpoint.node_hint.max(1),
+                addr_hint: endpoint.addr_hint.clone(),
+                reject_until_unix_ms: snapshot.cooldown_until_unix_ms,
+                observed_at_unix_ms: snapshot.last_failure_unix_ms.max(now),
+            })
+        })
+        .collect::<Vec<_>>();
     let cache = EthRlpxPeerEndpointCacheV1 {
         schema: "supervm-eth-rlpx-peer-endpoint-cache/v1".to_string(),
         chain_id,
         endpoints: deduped,
-        updated_at_unix_ms: now_unix_ms(),
+        capacity_rejects,
+        updated_at_unix_ms: now,
     };
     if let Some(parent) = path.parent() {
         if !parent.as_os_str().is_empty() {
@@ -4717,6 +4778,10 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
     } else {
         None
     };
+    let restored_capacity_rejects = peer_endpoint_cache
+        .as_ref()
+        .map(|cache| restore_eth_rlpx_peer_endpoint_cache_capacity_rejects_v1(cache, chain_id))
+        .unwrap_or(0);
     candidate_limit = eth_rlpx_cache_warmed_candidate_limit_v1(
         candidate_limit,
         max_peers,
@@ -4757,10 +4822,11 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
     }
     if verbose && peer_endpoint_cache_enabled {
         println!(
-            "eth_rlpx_peer_endpoint_cache: path={} loaded={} endpoints={}",
+            "eth_rlpx_peer_endpoint_cache: path={} loaded={} endpoints={} restored_capacity_rejects={}",
             peer_endpoint_cache_path.display(),
             peer_endpoint_cache.is_some(),
-            peer_endpoints.len()
+            peer_endpoints.len(),
+            restored_capacity_rejects
         );
     }
     let mut peers = peer_endpoints
@@ -6549,8 +6615,115 @@ mod mainline_evm_cli_tests {
         assert_eq!(loaded.schema, "supervm-eth-rlpx-peer-endpoint-cache/v1");
         assert_eq!(loaded.chain_id, chain_id);
         assert_eq!(loaded.endpoints, endpoints);
+        assert!(loaded.capacity_rejects.is_empty());
 
         let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn eth_rlpx_peer_endpoint_cache_loads_legacy_v1_without_capacity_rejects_v1() {
+        let path = std::env::temp_dir().join(format!(
+            "supervm-eth-rlpx-peer-cache-legacy-test-{}-{}.json",
+            std::process::id(),
+            now_unix_ms()
+        ));
+        let chain_id = 9_991_773_u64;
+        fs::write(
+            &path,
+            r#"{
+  "schema": "supervm-eth-rlpx-peer-endpoint-cache/v1",
+  "chain_id": 9991773,
+  "endpoints": [
+    {
+      "endpoint": "enode://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa@127.0.0.1:30303",
+      "node_hint": 77,
+      "addr_hint": "127.0.0.1:30303"
+    }
+  ],
+  "updated_at_unix_ms": 1
+}"#,
+        )
+        .expect("write legacy peer endpoint cache");
+        let loaded = load_eth_rlpx_peer_endpoint_cache_v1(&path, chain_id)
+            .expect("load legacy cache")
+            .expect("legacy cache present");
+        assert_eq!(loaded.endpoints.len(), 1);
+        assert!(loaded.capacity_rejects.is_empty());
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn eth_rlpx_peer_endpoint_cache_persists_capacity_reject_cooldown_v1() {
+        let path = std::env::temp_dir().join(format!(
+            "supervm-eth-rlpx-peer-cache-capacity-test-{}-{}.json",
+            std::process::id(),
+            now_unix_ms()
+        ));
+        let chain_id = 9_991_774_u64;
+        let peer_id = 88_u64;
+        let endpoint = PluginPeerEndpoint {
+            endpoint: "enode://bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb@127.0.0.1:30304".to_string(),
+            node_hint: peer_id,
+            addr_hint: "127.0.0.1:30304".to_string(),
+        };
+        novovm_network::observe_network_runtime_eth_peer_disconnect_v1(
+            chain_id,
+            peer_id,
+            Some(0x04),
+        );
+
+        write_eth_rlpx_peer_endpoint_cache_v1(&path, chain_id, &[endpoint.clone()], 16)
+            .expect("write peer endpoint cache with capacity reject");
+        let loaded = load_eth_rlpx_peer_endpoint_cache_v1(&path, chain_id)
+            .expect("load capacity cache")
+            .expect("capacity cache present");
+        assert_eq!(loaded.endpoints, vec![endpoint]);
+        assert_eq!(loaded.capacity_rejects.len(), 1);
+        assert_eq!(loaded.capacity_rejects[0].node_hint, peer_id);
+        assert_eq!(loaded.capacity_rejects[0].addr_hint, "127.0.0.1:30304");
+        assert!(loaded.capacity_rejects[0].reject_until_unix_ms > now_unix_ms());
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn eth_rlpx_peer_endpoint_cache_restores_capacity_reject_cooldown_v1() {
+        let chain_id = 9_991_775_u64;
+        let peer_id = 89_u64;
+        let cache = EthRlpxPeerEndpointCacheV1 {
+            schema: "supervm-eth-rlpx-peer-endpoint-cache/v1".to_string(),
+            chain_id,
+            endpoints: vec![PluginPeerEndpoint {
+                endpoint: "enode://cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc@127.0.0.1:30305".to_string(),
+                node_hint: peer_id,
+                addr_hint: "127.0.0.1:30305".to_string(),
+            }],
+            capacity_rejects: vec![EthRlpxPeerEndpointCapacityRejectV1 {
+                endpoint: "enode://cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc@127.0.0.1:30305".to_string(),
+                node_hint: peer_id,
+                addr_hint: "127.0.0.1:30305".to_string(),
+                reject_until_unix_ms: now_unix_ms().saturating_add(60_000),
+                observed_at_unix_ms: now_unix_ms(),
+            }],
+            updated_at_unix_ms: now_unix_ms(),
+        };
+
+        assert_eq!(
+            restore_eth_rlpx_peer_endpoint_cache_capacity_rejects_v1(&cache, chain_id),
+            1
+        );
+        let snapshot =
+            snapshot_network_runtime_eth_peer_sessions_for_peers_v1(chain_id, &[NodeId(peer_id)])
+                .into_iter()
+                .next()
+                .expect("restored peer snapshot");
+        assert_eq!(snapshot.disconnect_too_many_peers_count, 1);
+        assert_eq!(
+            snapshot.last_failure_reason_name.as_deref(),
+            Some("too_many_peers")
+        );
+        assert!(snapshot.cooldown_until_unix_ms > now_unix_ms());
     }
 
     #[test]
