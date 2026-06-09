@@ -616,6 +616,7 @@ impl EthFullnodeNativePeerWorkerV1 {
             })
             .map(|failure| failure.peer_id)
             .collect::<Vec<_>>();
+        let material_success_peers = eth_fullnode_native_material_success_peer_ids_v1(&report);
         observe_network_runtime_eth_peer_selection_round_v1(
             plan.chain_id,
             EthPeerSelectionRoundObservationV1 {
@@ -623,7 +624,7 @@ impl EthFullnodeNativePeerWorkerV1 {
                 selected_bootstrap_peers: &plan.bootstrap_peers,
                 selected_sync_peers: &plan.sync_peers,
                 header_success_peers: &report.header_updated_peer_ids,
-                body_success_peers: &report.body_updated_peer_ids,
+                body_success_peers: &material_success_peers,
                 connect_failure_peers: &connect_failure_peers,
                 handshake_failure_peers: &handshake_failure_peers,
                 decode_failure_peers: &decode_failure_peers,
@@ -968,6 +969,27 @@ fn absorb_eth_fullnode_native_rlpx_peer_tick_report_v1(
     if peer_report.receipt_updates > 0 {
         report.receipt_updated_peer_ids.push(peer.0);
     }
+}
+
+fn eth_fullnode_native_material_success_peer_ids_v1(
+    report: &EthFullnodeNativeRealDriveReportV1,
+) -> Vec<u64> {
+    let mut peers = Vec::with_capacity(
+        report
+            .body_updated_peer_ids
+            .len()
+            .saturating_add(report.receipt_updated_peer_ids.len()),
+    );
+    for peer_id in report
+        .body_updated_peer_ids
+        .iter()
+        .chain(report.receipt_updated_peer_ids.iter())
+    {
+        if !peers.contains(peer_id) {
+            peers.push(*peer_id);
+        }
+    }
+    peers
 }
 
 fn drive_eth_fullnode_native_rlpx_bootstrap_peer_once_v1(
@@ -6506,6 +6528,14 @@ fn ingest_real_rlpx_new_block_v1(
     clear_eth_fullnode_native_snap_request_state_v1(session);
     session.last_sync_request_unix_ms = now_unix_ms();
     report.sync_requests = report.sync_requests.saturating_add(1);
+    eprintln!(
+        "network_info: rlpx stage receipts_requested chain_id={} peer={} endpoint={} request_id={} blocks={}",
+        chain_id,
+        source_peer_id,
+        session.endpoint.addr_hint,
+        request_id,
+        session.pending_body_headers.len()
+    );
     Ok(())
 }
 
@@ -11816,6 +11846,26 @@ mod tests {
         assert_eq!(capacity_reject.last_failure_reason_code, Some(0x04));
         assert_eq!(capacity_reject.last_disconnect_reason_code, Some(0x04));
         assert_eq!(capacity_reject.disconnect_too_many_peers_count, 1);
+    }
+
+    #[test]
+    fn rlpx_receipt_updates_count_as_material_peer_success_v1() {
+        let mut report = EthFullnodeNativeRealDriveReportV1 {
+            body_updated_peer_ids: vec![11, 12],
+            receipt_updated_peer_ids: vec![12, 13],
+            ..EthFullnodeNativeRealDriveReportV1::default()
+        };
+
+        assert_eq!(
+            eth_fullnode_native_material_success_peer_ids_v1(&report),
+            vec![11, 12, 13]
+        );
+
+        report.body_updated_peer_ids.clear();
+        assert_eq!(
+            eth_fullnode_native_material_success_peer_ids_v1(&report),
+            vec![12, 13]
+        );
     }
 
     #[test]
