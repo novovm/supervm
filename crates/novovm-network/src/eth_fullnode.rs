@@ -4860,11 +4860,15 @@ pub fn build_eth_fullnode_native_sync_request_v1(
                     || has_completed_snap_cursor
                     || (!has_active_snap_cursor && span >= 16)
             });
-    let header_pull_span = if should_pull_headers_before_state {
-        span.min(16)
-    } else {
-        span
-    };
+    let should_use_full_state_header_window = should_pull_headers_before_state
+        && header_lag > ETH_FULLNODE_NATIVE_SNAP_NEAR_HEAD_MAX_HEADER_LAG_V1
+        && state_head.as_ref().is_some_and(|head| head.body_available);
+    let header_pull_span =
+        if should_pull_headers_before_state && !should_use_full_state_header_window {
+            span.min(16)
+        } else {
+            span
+        };
     Some(match window.phase {
         NetworkRuntimeNativeSyncPhaseV1::State if !should_pull_headers_before_state => {
             let origin = get_network_runtime_native_head_snapshot_v1(chain_id)
@@ -6583,7 +6587,7 @@ mod tests {
             panic!("state phase without snap cursor should keep forward header pull");
         };
         assert_eq!(start_height, 129);
-        assert_eq!(max, 16);
+        assert_eq!(max, 64);
     }
 
     #[test]
@@ -6721,7 +6725,7 @@ mod tests {
             panic!("state phase should chase headers before snap when lagging head");
         };
         assert_eq!(start_height, 129);
-        assert_eq!(max, 16);
+        assert_eq!(max, 64);
     }
 
     #[test]
