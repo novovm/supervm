@@ -1892,6 +1892,8 @@ fn eth_peer_validation_is_permanent_v1(reason: EthChainConfigPeerValidationReaso
 fn eth_peer_decode_failure_is_incompatible_status_v1(reason_name: &str) -> bool {
     let reason = reason_name.to_ascii_lowercase();
     reason.contains("rlpx_eth_status_fields_short")
+        || reason.contains("rlpx_eth_status_fork_id_not_list")
+        || reason.contains("rlpx_eth_status_fork_id_fields_short")
         || reason.contains("status_payload_decode_failed")
         || reason.contains("eth_status_payload_decode_failed")
         || reason.contains("rlpx_eth_capability_not_found")
@@ -5042,6 +5044,34 @@ mod tests {
         );
         assert!(snapshot.permanently_rejected);
         assert_eq!(snapshot.decode_failure_count, 1);
+    }
+
+    #[test]
+    fn malformed_status_fork_id_decode_immediately_rejects_pristine_peer() {
+        let chain_id = 99_160_319_u64;
+        let cases = [
+            (
+                NodeId(319),
+                "decode failed: rlpx_eth_status_fork_id_not_list",
+            ),
+            (
+                NodeId(320),
+                "decode failed: rlpx_eth_status_fork_id_fields_short",
+            ),
+        ];
+
+        for (peer, reason) in cases {
+            observe_network_runtime_eth_peer_decode_failure_v1(chain_id, peer.0, reason);
+            let snapshot =
+                snapshot_network_runtime_eth_peer_sessions_for_peers_v1(chain_id, &[peer])[0]
+                    .clone();
+            assert_eq!(
+                snapshot.lifecycle_stage,
+                EthPeerLifecycleStageV1::PermanentlyRejected
+            );
+            assert!(snapshot.permanently_rejected);
+            assert_eq!(snapshot.decode_failure_count, 1);
+        }
     }
 
     #[test]

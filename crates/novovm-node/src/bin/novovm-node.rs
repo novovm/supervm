@@ -3081,6 +3081,8 @@ struct EthRlpxPeerEndpointCacheV1 {
     endpoints: Vec<PluginPeerEndpoint>,
     #[serde(default)]
     capacity_rejects: Vec<EthRlpxPeerEndpointCapacityRejectV1>,
+    #[serde(default)]
+    permanent_rejects: Vec<EthRlpxPeerEndpointPermanentRejectV1>,
     updated_at_unix_ms: u64,
 }
 
@@ -3092,6 +3094,18 @@ struct EthRlpxPeerEndpointCapacityRejectV1 {
     reject_until_unix_ms: u64,
     observed_at_unix_ms: u64,
 }
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+struct EthRlpxPeerEndpointPermanentRejectV1 {
+    endpoint: String,
+    node_hint: u64,
+    addr_hint: String,
+    reason: String,
+    observed_at_unix_ms: u64,
+    expires_at_unix_ms: u64,
+}
+
+const ETH_RLPX_PEER_ENDPOINT_PERMANENT_REJECT_TTL_MS_V1: u64 = 24 * 60 * 60 * 1_000;
 
 fn eth_rlpx_peer_endpoint_cache_path_v1() -> PathBuf {
     string_env_nonempty("NOVOVM_ETH_RLPX_PEER_CACHE_PATH")
@@ -3161,6 +3175,34 @@ fn restore_eth_rlpx_peer_endpoint_cache_capacity_rejects_v1(
     restored
 }
 
+fn restore_eth_rlpx_peer_endpoint_cache_permanent_rejects_v1(
+    cache: &EthRlpxPeerEndpointCacheV1,
+    chain_id: u64,
+) -> usize {
+    let now = now_unix_ms();
+    let mut restored = 0usize;
+    for reject in cache
+        .permanent_rejects
+        .iter()
+        .filter(|reject| reject.expires_at_unix_ms > now)
+    {
+        novovm_network::observe_network_runtime_eth_peer_decode_failure_v1(
+            chain_id,
+            reject.node_hint.max(1),
+            reject.reason.as_str(),
+        );
+        restored = restored.saturating_add(1);
+    }
+    restored
+}
+
+fn eth_rlpx_peer_endpoint_persistable_permanent_reject_reason_v1(reason: &str) -> bool {
+    reason.contains("rlpx_eth_capability_not_found")
+        || reason.contains("rlpx_eth_status_fields_short")
+        || reason.contains("rlpx_eth_status_fork_id_not_list")
+        || reason.contains("rlpx_eth_status_fork_id_fields_short")
+}
+
 fn write_eth_rlpx_peer_endpoint_cache_v1(
     path: &Path,
     chain_id: u64,
@@ -3181,30 +3223,85 @@ fn write_eth_rlpx_peer_endpoint_cache_v1(
         .into_iter()
         .map(|snapshot| (snapshot.peer_id, snapshot))
         .collect::<HashMap<_, _>>();
-    let capacity_rejects = deduped
-        .iter()
-        .filter_map(|endpoint| {
-            let snapshot = snapshots.get(&endpoint.node_hint.max(1))?;
-            if snapshot.cooldown_until_unix_ms <= now
-                || (snapshot.disconnect_too_many_peers_count == 0
-                    && snapshot.last_failure_reason_name.as_deref() != Some("too_many_peers"))
-            {
-                return None;
-            }
-            Some(EthRlpxPeerEndpointCapacityRejectV1 {
-                endpoint: endpoint.endpoint.clone(),
-                node_hint: endpoint.node_hint.max(1),
-                addr_hint: endpoint.addr_hint.clone(),
-                reject_until_unix_ms: snapshot.cooldown_until_unix_ms,
-                observed_at_unix_ms: snapshot.last_failure_unix_ms.max(now),
-            })
+    let previous_cache = load_eth_rlpx_peer_endpoint_cache_v1(path, chain_id)
+        .ok()
+        .flatten();
+    let mut capacity_rejects_by_peer = previous_cache
+        .as_ref()
+        .map(|cache| {
+            cache
+                .capacity_rejects
+                .iter()
+                .filter(|reject| reject.reject_until_unix_ms > now)
+                .map(|reject| (reject.node_hint.max(1), reject.clone()))
+                .collect::<HashMap<_, _>>()
         })
-        .collect::<Vec<_>>();
+        .unwrap_or_default();
+    let mut permanent_rejects_by_peer = previous_cache
+        .as_ref()
+        .map(|cache| {
+            cache
+                .permanent_rejects
+                .iter()
+                .filter(|reject| reject.expires_at_unix_ms > now)
+                .map(|reject| (reject.node_hint.max(1), reject.clone()))
+                .collect::<HashMap<_, _>>()
+        })
+        .unwrap_or_default();
+    for endpoint in deduped.iter() {
+        if let Some(snapshot) = snapshots.get(&endpoint.node_hint.max(1)) {
+            if snapshot.cooldown_until_unix_ms > now
+                && (snapshot.disconnect_too_many_peers_count > 0
+                    || snapshot.last_failure_reason_name.as_deref() == Some("too_many_peers"))
+            {
+                capacity_rejects_by_peer.insert(
+                    endpoint.node_hint.max(1),
+                    EthRlpxPeerEndpointCapacityRejectV1 {
+                        endpoint: endpoint.endpoint.clone(),
+                        node_hint: endpoint.node_hint.max(1),
+                        addr_hint: endpoint.addr_hint.clone(),
+                        reject_until_unix_ms: snapshot.cooldown_until_unix_ms,
+                        observed_at_unix_ms: snapshot.last_failure_unix_ms.max(now),
+                    },
+                );
+            }
+            if snapshot.permanently_rejected {
+                if let Some(reason) =
+                    snapshot
+                        .last_failure_reason_name
+                        .as_deref()
+                        .filter(|reason| {
+                            eth_rlpx_peer_endpoint_persistable_permanent_reject_reason_v1(reason)
+                        })
+                {
+                    permanent_rejects_by_peer.insert(
+                        endpoint.node_hint.max(1),
+                        EthRlpxPeerEndpointPermanentRejectV1 {
+                            endpoint: endpoint.endpoint.clone(),
+                            node_hint: endpoint.node_hint.max(1),
+                            addr_hint: endpoint.addr_hint.clone(),
+                            reason: reason.to_string(),
+                            observed_at_unix_ms: snapshot.last_failure_unix_ms.max(now),
+                            expires_at_unix_ms: snapshot
+                                .last_failure_unix_ms
+                                .max(now)
+                                .saturating_add(ETH_RLPX_PEER_ENDPOINT_PERMANENT_REJECT_TTL_MS_V1),
+                        },
+                    );
+                }
+            }
+        }
+    }
+    let mut capacity_rejects = capacity_rejects_by_peer.into_values().collect::<Vec<_>>();
+    capacity_rejects.sort_by(|a, b| a.node_hint.cmp(&b.node_hint));
+    let mut permanent_rejects = permanent_rejects_by_peer.into_values().collect::<Vec<_>>();
+    permanent_rejects.sort_by(|a, b| a.node_hint.cmp(&b.node_hint));
     let cache = EthRlpxPeerEndpointCacheV1 {
         schema: "supervm-eth-rlpx-peer-endpoint-cache/v1".to_string(),
         chain_id,
         endpoints: deduped,
         capacity_rejects,
+        permanent_rejects,
         updated_at_unix_ms: now,
     };
     if let Some(parent) = path.parent() {
@@ -4782,6 +4879,10 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
         .as_ref()
         .map(|cache| restore_eth_rlpx_peer_endpoint_cache_capacity_rejects_v1(cache, chain_id))
         .unwrap_or(0);
+    let restored_permanent_rejects = peer_endpoint_cache
+        .as_ref()
+        .map(|cache| restore_eth_rlpx_peer_endpoint_cache_permanent_rejects_v1(cache, chain_id))
+        .unwrap_or(0);
     candidate_limit = eth_rlpx_cache_warmed_candidate_limit_v1(
         candidate_limit,
         max_peers,
@@ -4822,11 +4923,12 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
     }
     if verbose && peer_endpoint_cache_enabled {
         println!(
-            "eth_rlpx_peer_endpoint_cache: path={} loaded={} endpoints={} restored_capacity_rejects={}",
+            "eth_rlpx_peer_endpoint_cache: path={} loaded={} endpoints={} restored_capacity_rejects={} restored_permanent_rejects={}",
             peer_endpoint_cache_path.display(),
             peer_endpoint_cache.is_some(),
             peer_endpoints.len(),
-            restored_capacity_rejects
+            restored_capacity_rejects,
+            restored_permanent_rejects
         );
     }
     let mut peers = peer_endpoints
@@ -6616,6 +6718,7 @@ mod mainline_evm_cli_tests {
         assert_eq!(loaded.chain_id, chain_id);
         assert_eq!(loaded.endpoints, endpoints);
         assert!(loaded.capacity_rejects.is_empty());
+        assert!(loaded.permanent_rejects.is_empty());
 
         let _ = fs::remove_file(path);
     }
@@ -6649,6 +6752,7 @@ mod mainline_evm_cli_tests {
             .expect("legacy cache present");
         assert_eq!(loaded.endpoints.len(), 1);
         assert!(loaded.capacity_rejects.is_empty());
+        assert!(loaded.permanent_rejects.is_empty());
 
         let _ = fs::remove_file(path);
     }
@@ -6683,6 +6787,7 @@ mod mainline_evm_cli_tests {
         assert_eq!(loaded.capacity_rejects[0].node_hint, peer_id);
         assert_eq!(loaded.capacity_rejects[0].addr_hint, "127.0.0.1:30304");
         assert!(loaded.capacity_rejects[0].reject_until_unix_ms > now_unix_ms());
+        assert!(loaded.permanent_rejects.is_empty());
 
         let _ = fs::remove_file(path);
     }
@@ -6706,6 +6811,7 @@ mod mainline_evm_cli_tests {
                 reject_until_unix_ms: now_unix_ms().saturating_add(60_000),
                 observed_at_unix_ms: now_unix_ms(),
             }],
+            permanent_rejects: Vec::new(),
             updated_at_unix_ms: now_unix_ms(),
         };
 
@@ -6724,6 +6830,95 @@ mod mainline_evm_cli_tests {
             Some("too_many_peers")
         );
         assert!(snapshot.cooldown_until_unix_ms > now_unix_ms());
+    }
+
+    #[test]
+    fn eth_rlpx_peer_endpoint_cache_persists_permanent_reject_v1() {
+        let path = std::env::temp_dir().join(format!(
+            "supervm-eth-rlpx-peer-cache-permanent-test-{}-{}.json",
+            std::process::id(),
+            now_unix_ms()
+        ));
+        let chain_id = 9_991_776_u64;
+        let peer_id = 90_u64;
+        let endpoint = PluginPeerEndpoint {
+            endpoint: "enode://dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd@127.0.0.1:30306".to_string(),
+            node_hint: peer_id,
+            addr_hint: "127.0.0.1:30306".to_string(),
+        };
+        let reason = "rlpx_eth_capability_not_found:local_caps=eth/69,eth/70,eth/71,snap/1 remote_caps=eth/66,eth/67,eth/68,snap/1";
+        novovm_network::observe_network_runtime_eth_peer_decode_failure_v1(
+            chain_id, peer_id, reason,
+        );
+
+        write_eth_rlpx_peer_endpoint_cache_v1(&path, chain_id, &[endpoint.clone()], 16)
+            .expect("write peer endpoint cache with permanent reject");
+        let loaded = load_eth_rlpx_peer_endpoint_cache_v1(&path, chain_id)
+            .expect("load permanent cache")
+            .expect("permanent cache present");
+        assert_eq!(loaded.endpoints, vec![endpoint]);
+        assert_eq!(loaded.permanent_rejects.len(), 1);
+        assert_eq!(loaded.permanent_rejects[0].node_hint, peer_id);
+        assert_eq!(loaded.permanent_rejects[0].reason, reason);
+        assert!(loaded.permanent_rejects[0].expires_at_unix_ms > now_unix_ms());
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn eth_rlpx_peer_endpoint_cache_accepts_status_fork_id_permanent_rejects_v1() {
+        assert!(
+            eth_rlpx_peer_endpoint_persistable_permanent_reject_reason_v1(
+                "decode failed: rlpx_eth_status_fork_id_not_list"
+            )
+        );
+        assert!(
+            eth_rlpx_peer_endpoint_persistable_permanent_reject_reason_v1(
+                "decode failed: rlpx_eth_status_fork_id_fields_short"
+            )
+        );
+    }
+
+    #[test]
+    fn eth_rlpx_peer_endpoint_cache_restores_permanent_reject_v1() {
+        let chain_id = 9_991_777_u64;
+        let peer_id = 91_u64;
+        let reason = "rlpx_eth_capability_not_found:local_caps=eth/69,eth/70,eth/71,snap/1 remote_caps=eth/66,eth/67,eth/68,snap/1";
+        let cache = EthRlpxPeerEndpointCacheV1 {
+            schema: "supervm-eth-rlpx-peer-endpoint-cache/v1".to_string(),
+            chain_id,
+            endpoints: vec![PluginPeerEndpoint {
+                endpoint: "enode://eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee@127.0.0.1:30307".to_string(),
+                node_hint: peer_id,
+                addr_hint: "127.0.0.1:30307".to_string(),
+            }],
+            capacity_rejects: Vec::new(),
+            permanent_rejects: vec![EthRlpxPeerEndpointPermanentRejectV1 {
+                endpoint: "enode://eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee@127.0.0.1:30307".to_string(),
+                node_hint: peer_id,
+                addr_hint: "127.0.0.1:30307".to_string(),
+                reason: reason.to_string(),
+                observed_at_unix_ms: now_unix_ms(),
+                expires_at_unix_ms: now_unix_ms().saturating_add(60_000),
+            }],
+            updated_at_unix_ms: now_unix_ms(),
+        };
+
+        assert_eq!(
+            restore_eth_rlpx_peer_endpoint_cache_permanent_rejects_v1(&cache, chain_id),
+            1
+        );
+        let snapshot =
+            snapshot_network_runtime_eth_peer_sessions_for_peers_v1(chain_id, &[NodeId(peer_id)])
+                .into_iter()
+                .next()
+                .expect("restored permanent peer snapshot");
+        assert!(snapshot.permanently_rejected);
+        assert_eq!(
+            snapshot.lifecycle_stage,
+            EthPeerLifecycleStageV1::PermanentlyRejected
+        );
+        assert_eq!(snapshot.last_failure_reason_name.as_deref(), Some(reason));
     }
 
     #[test]
