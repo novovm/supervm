@@ -3011,6 +3011,8 @@ struct EthRlpxNativeSnapAccountStoreV1 {
     state_root: String,
     account_hash: String,
     body_rlp_b64: String,
+    #[serde(default)]
+    proof_nodes_b64: Vec<String>,
     storage_root: Option<String>,
     code_hash: Option<String>,
     has_storage: bool,
@@ -3415,6 +3417,11 @@ fn eth_rlpx_native_snap_account_store_from_snapshot_v1(
         state_root: eth_rlpx_hex_h256_to_store_v1(&snapshot.state_root),
         account_hash: eth_rlpx_hex_h256_to_store_v1(&snapshot.account_hash),
         body_rlp_b64: eth_rlpx_b64_to_store_v1(snapshot.body_rlp.as_slice()),
+        proof_nodes_b64: snapshot
+            .proof_nodes
+            .iter()
+            .map(|node| eth_rlpx_b64_to_store_v1(node.as_slice()))
+            .collect(),
         storage_root: snapshot
             .storage_root
             .as_ref()
@@ -3434,6 +3441,14 @@ fn eth_rlpx_native_snap_account_snapshot_from_store_v1(
     chain_id: u64,
     stored: &EthRlpxNativeSnapAccountStoreV1,
 ) -> Result<NetworkRuntimeNativeSnapAccountSnapshotV1> {
+    let proof_nodes = stored
+        .proof_nodes_b64
+        .iter()
+        .enumerate()
+        .map(|(idx, node)| {
+            eth_rlpx_b64_from_store_v1(node, &format!("snap_account.proof_nodes_b64[{idx}]"))
+        })
+        .collect::<Result<Vec<_>>>()?;
     Ok(NetworkRuntimeNativeSnapAccountSnapshotV1 {
         chain_id,
         state_root: eth_rlpx_hex_h256_from_store_v1(&stored.state_root, "snap_account.state_root")?,
@@ -3442,6 +3457,7 @@ fn eth_rlpx_native_snap_account_snapshot_from_store_v1(
             "snap_account.account_hash",
         )?,
         body_rlp: eth_rlpx_b64_from_store_v1(&stored.body_rlp_b64, "snap_account.body_rlp_b64")?,
+        proof_nodes,
         storage_root: eth_rlpx_optional_h256_from_store_v1(
             stored.storage_root.as_deref(),
             "snap_account.storage_root",
@@ -5670,6 +5686,7 @@ mod mainline_evm_cli_tests {
                 state_root: header.state_root,
                 account_hash,
                 body_rlp: vec![0xf8, 0x01, 0x80],
+                proof_nodes: vec![vec![0xab, 0xcd]],
                 storage_root: Some(storage_root),
                 code_hash: Some(code_hash),
                 has_storage: true,
@@ -5813,6 +5830,16 @@ mod mainline_evm_cli_tests {
             .expect("restored snap account")
             .body_rlp,
             vec![0xf8, 0x01, 0x80]
+        );
+        assert_eq!(
+            novovm_network::get_network_runtime_native_snap_account_snapshot_v1(
+                restore_chain_id,
+                header.state_root,
+                account_hash
+            )
+            .expect("restored snap account")
+            .proof_nodes,
+            vec![vec![0xab, 0xcd]]
         );
         assert_eq!(
             novovm_network::get_network_runtime_native_snap_account_storage_snapshot_v1(

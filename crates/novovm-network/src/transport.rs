@@ -99,7 +99,8 @@ use crate::{
     snapshot_network_runtime_native_pending_tx_broadcast_candidates_v1,
     snapshot_network_runtime_native_pending_tx_broadcast_runtime_summary_v1,
     snapshot_network_runtime_native_pending_tx_summary_v1,
-    snapshot_network_runtime_native_pending_txs_v1, unregister_network_runtime_peer,
+    snapshot_network_runtime_native_pending_txs_v1,
+    snapshot_network_runtime_native_snap_account_snapshots_v1, unregister_network_runtime_peer,
     upsert_network_runtime_eth_peer_session, validate_eth_chain_config_peer_status_v1,
     write_eth_fullnode_native_worker_runtime_snapshot_default_path_v1,
     EthChainConfigPeerValidationReasonV1, EthFullnodeBudgetHooksV1,
@@ -2112,7 +2113,7 @@ fn drive_eth_fullnode_native_rlpx_peer_session_once_v1(
                                     })?;
                             let response_payload =
                                 build_eth_fullnode_native_snap_account_range_response_payload_v1(
-                                    &request,
+                                    chain_id, &request,
                                 );
                             if let Err(err) = eth_rlpx_write_wire_frame_v1(
                                 &mut session.stream,
@@ -3185,9 +3186,103 @@ fn dispatch_eth_fullnode_native_rlpx_missing_receipts_recovery_v1(
 }
 
 fn build_eth_fullnode_native_snap_account_range_response_payload_v1(
+    chain_id: u64,
     request: &EthRlpxGetAccountRangeRequestV1,
 ) -> Vec<u8> {
-    eth_rlpx_build_account_range_payload_v1(request.request_id, &[], &[])
+    let fallback = || {
+        let root_path = eth_fullnode_native_snap_root_trie_pathset_v1();
+        let proof = get_network_runtime_native_snap_trie_node_snapshot_v1(
+            chain_id,
+            request.root,
+            root_path.as_slice(),
+        )
+        .map(|snapshot| vec![snapshot.node_rlp])
+        .unwrap_or_default();
+        if !proof.is_empty()
+            && eth_rlpx_mpt_proof_has_right_element_v1(
+                request.root,
+                request.origin.as_slice(),
+                proof.as_slice(),
+            )
+            .is_ok_and(|has_right| !has_right)
+            && eth_rlpx_mpt_verify_proof_value_v1(
+                request.root,
+                request.origin.as_slice(),
+                proof.as_slice(),
+            )
+            .is_ok_and(|value| value.is_none())
+        {
+            return eth_rlpx_build_account_range_payload_v1(
+                request.request_id,
+                &[],
+                proof.as_slice(),
+            );
+        }
+        eth_rlpx_build_account_range_payload_v1(request.request_id, &[], &[])
+    };
+
+    let mut used = 0u64;
+    let mut accounts = Vec::<crate::EthRlpxSnapAccountDataV1>::new();
+    let mut proof = Vec::<Vec<u8>>::new();
+    let mut seen_proof_nodes = HashSet::<[u8; 32]>::new();
+    for snapshot in
+        snapshot_network_runtime_native_snap_account_snapshots_v1(chain_id, request.root, 4096)
+    {
+        if snapshot.account_hash < request.origin || snapshot.account_hash > request.limit {
+            continue;
+        }
+        if snapshot.body_rlp.is_empty() || snapshot.proof_nodes.is_empty() {
+            break;
+        }
+        let next_len = snapshot
+            .body_rlp
+            .len()
+            .saturating_add(snapshot.account_hash.len());
+        if !eth_fullnode_native_snap_budget_allows_v1(used, next_len, request.byte_limit) {
+            break;
+        }
+        used = used.saturating_add(next_len as u64);
+        for node in &snapshot.proof_nodes {
+            let node_hash = eth_rlpx_trie_node_hash_v1(node.as_slice());
+            if !seen_proof_nodes.insert(node_hash) {
+                continue;
+            }
+            if !eth_fullnode_native_snap_budget_allows_v1(used, node.len(), request.byte_limit) {
+                return fallback();
+            }
+            used = used.saturating_add(node.len() as u64);
+            proof.push(node.clone());
+        }
+        accounts.push(crate::EthRlpxSnapAccountDataV1 {
+            hash: snapshot.account_hash,
+            body_rlp: snapshot.body_rlp,
+        });
+    }
+    if accounts.is_empty() || proof.is_empty() {
+        return fallback();
+    }
+    let response = EthRlpxAccountRangeResponseV1 {
+        request_id: request.request_id,
+        accounts,
+        proof,
+    };
+    if validate_snap_account_range_proof_semantics_v1(
+        chain_id,
+        0,
+        Some(request.root),
+        request.origin,
+        request.limit,
+        &response,
+    )
+    .is_err()
+    {
+        return fallback();
+    }
+    eth_rlpx_build_account_range_payload_v1(
+        response.request_id,
+        response.accounts.as_slice(),
+        response.proof.as_slice(),
+    )
 }
 
 fn eth_fullnode_native_snap_budget_allows_v1(used: u64, next_len: usize, byte_limit: u64) -> bool {
@@ -5353,6 +5448,7 @@ fn ingest_real_rlpx_snap_account_range_v1(
                 state_root: root,
                 account_hash: account.hash,
                 body_rlp: account.body_rlp.clone(),
+                proof_nodes: response.proof.clone(),
                 storage_root,
                 code_hash,
                 has_storage: parsed.is_some_and(|fields| fields.has_storage),
@@ -9758,6 +9854,7 @@ mod tests {
                     state_root,
                     account_hash,
                     body_rlp: Vec::new(),
+                    proof_nodes: Vec::new(),
                     storage_root: Some(storage_root),
                     code_hash: None,
                     has_storage: true,
@@ -9851,6 +9948,7 @@ mod tests {
                     state_root,
                     account_hash,
                     body_rlp: Vec::new(),
+                    proof_nodes: Vec::new(),
                     storage_root: Some(storage_root),
                     code_hash: None,
                     has_storage: true,
@@ -16395,6 +16493,7 @@ mod tests {
                 state_root,
                 account_hash,
                 body_rlp: Vec::new(),
+                proof_nodes: Vec::new(),
                 storage_root: Some(complete_storage_root),
                 code_hash: None,
                 has_storage: true,
@@ -16433,6 +16532,7 @@ mod tests {
                 state_root,
                 account_hash: proof_account_hash,
                 body_rlp: Vec::new(),
+                proof_nodes: Vec::new(),
                 storage_root: Some(proof_storage_root),
                 code_hash: None,
                 has_storage: true,
@@ -16505,6 +16605,7 @@ mod tests {
                     state_root,
                     account_hash,
                     body_rlp: Vec::new(),
+                    proof_nodes: Vec::new(),
                     storage_root: Some(storage_root),
                     code_hash: None,
                     has_storage: true,
@@ -16545,6 +16646,7 @@ mod tests {
                 state_root,
                 account_hash: leaf_storage_account_hash,
                 body_rlp: Vec::new(),
+                proof_nodes: Vec::new(),
                 storage_root: Some(leaf_storage_root),
                 code_hash: None,
                 has_storage: true,
@@ -16584,6 +16686,7 @@ mod tests {
                 state_root,
                 account_hash: gap_storage_account_hash,
                 body_rlp: Vec::new(),
+                proof_nodes: Vec::new(),
                 storage_root: Some(gap_storage_root),
                 code_hash: None,
                 has_storage: true,
@@ -16635,6 +16738,7 @@ mod tests {
                 state_root,
                 account_hash: internal_gap_storage_account_hash,
                 body_rlp: Vec::new(),
+                proof_nodes: Vec::new(),
                 storage_root: Some(internal_gap_storage_root),
                 code_hash: None,
                 has_storage: true,
@@ -17717,6 +17821,16 @@ mod tests {
         clear_network_runtime_native_snapshots_for_chain_v1(chain_id);
         let state_root = [0xa5; 32];
         let account_hash = [0x01; 32];
+        let account_range_hash = [0x21; 32];
+        let account_slim_body = vec![0xc4, 0x01, 0x80, 0x80, 0x80];
+        let account_full_body =
+            crate::eth_rlpx_snap_full_account_rlp_from_slim_v1(account_slim_body.as_slice())
+                .expect("full account from slim");
+        let account_proof_node = crate::eth_rlpx_mpt_single_leaf_node_rlp_v1(
+            &account_range_hash,
+            account_full_body.as_slice(),
+        );
+        let account_state_root = crate::eth_rlpx_trie_node_hash_v1(account_proof_node.as_slice());
         let slot_hash = [0x10; 32];
         let slot_body = vec![0x80];
         let storage_proof_node =
@@ -17730,6 +17844,22 @@ mod tests {
             node
         };
         let trie_node_hash = crate::eth_rlpx_trie_node_hash_v1(trie_node.as_slice());
+        set_network_runtime_native_snap_account_snapshot_v1(
+            chain_id,
+            NetworkRuntimeNativeSnapAccountSnapshotV1 {
+                chain_id,
+                state_root: account_state_root,
+                account_hash: account_range_hash,
+                body_rlp: account_slim_body.clone(),
+                proof_nodes: vec![account_proof_node.clone()],
+                storage_root: None,
+                code_hash: None,
+                has_storage: false,
+                has_code: false,
+                source_peer_id: Some(local.0),
+                observed_unix_ms: 1,
+            },
+        );
         set_network_runtime_native_snap_account_storage_snapshot_v1(
             chain_id,
             NetworkRuntimeNativeSnapAccountStorageSnapshotV1 {
@@ -17798,6 +17928,10 @@ mod tests {
         let (done_tx, done_rx) = std::sync::mpsc::channel();
 
         let server = thread::spawn(move || {
+            let account_state_root = account_state_root;
+            let account_range_hash = account_range_hash;
+            let account_slim_body = account_slim_body;
+            let account_proof_node = account_proof_node;
             let state_root = state_root;
             let account_hash = account_hash;
             let slot_hash = slot_hash;
@@ -17880,6 +18014,45 @@ mod tests {
             let snap_offset =
                 crate::eth_rlpx_snap_base_offset_v1(peer_status.protocol_version as u8, Some(1))
                     .expect("snap offset");
+
+            let account_request = crate::eth_rlpx_build_get_account_range_payload_v1(
+                10,
+                account_state_root,
+                [0u8; 32],
+                [0xff; 32],
+                4096,
+            );
+            crate::eth_rlpx_write_wire_frame_v1(
+                &mut accepted,
+                &mut responder.session,
+                snap_offset + crate::ETH_RLPX_SNAP_GET_ACCOUNT_RANGE_MSG,
+                account_request.as_slice(),
+            )
+            .expect("write get account range");
+            loop {
+                let (code, payload) =
+                    crate::eth_rlpx_read_wire_frame_v1(&mut accepted, &mut responder.session)
+                        .expect("read account range response");
+                if code == crate::ETH_RLPX_P2P_PING_MSG {
+                    crate::eth_rlpx_write_wire_frame_v1(
+                        &mut accepted,
+                        &mut responder.session,
+                        crate::ETH_RLPX_P2P_PONG_MSG,
+                        &[],
+                    )
+                    .expect("write pong");
+                    continue;
+                }
+                assert_eq!(code, snap_offset + crate::ETH_RLPX_SNAP_ACCOUNT_RANGE_MSG);
+                let response = crate::eth_rlpx_parse_account_range_payload_v1(payload.as_slice())
+                    .expect("parse account range response");
+                assert_eq!(response.request_id, 10);
+                assert_eq!(response.accounts.len(), 1);
+                assert_eq!(response.accounts[0].hash, account_range_hash);
+                assert_eq!(response.accounts[0].body_rlp, account_slim_body);
+                assert_eq!(response.proof, vec![account_proof_node.clone()]);
+                break;
+            }
 
             let storage_request = crate::eth_rlpx_build_get_storage_ranges_payload_v1(
                 11,
