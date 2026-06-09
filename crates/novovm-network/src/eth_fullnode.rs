@@ -1797,6 +1797,7 @@ fn eth_peer_now_unix_ms_v1() -> u64 {
 const ETH_PEER_FAILURE_BACKOFF_BASE_MS_V1: u64 = 2_500;
 const ETH_PEER_FAILURE_BACKOFF_MAX_MS_V1: u64 = 300_000;
 const ETH_PEER_PRODUCTIVE_DISCONNECT_RETRY_MS_V1: u64 = 750;
+const ETH_PEER_PRODUCTIVE_CAPACITY_REJECT_RETRY_MS_V1: u64 = 10_000;
 const ETH_PEER_CAPACITY_REJECT_BACKOFF_BASE_MS_V1: u64 = 60_000;
 const ETH_PEER_CAPACITY_REJECT_BACKOFF_MAX_MS_V1: u64 = 900_000;
 const ETH_PEER_PROTOCOL_BACKOFF_FLOOR_MS_V1: u64 = 10_000;
@@ -1883,6 +1884,15 @@ fn eth_peer_has_material_progress_v1(state: &EthPeerSessionState) -> bool {
 
 fn eth_peer_capacity_reject_cooldown_ms_v1(state: &EthPeerSessionState) -> u64 {
     let count = state.disconnect_too_many_peers_count.saturating_add(1);
+    if eth_peer_has_material_progress_v1(state) {
+        let shift = count.saturating_sub(1).min(2) as u32;
+        return ETH_PEER_PRODUCTIVE_CAPACITY_REJECT_RETRY_MS_V1
+            .saturating_mul(1u64 << shift)
+            .clamp(
+                ETH_PEER_PRODUCTIVE_CAPACITY_REJECT_RETRY_MS_V1,
+                ETH_PEER_CAPACITY_REJECT_BACKOFF_BASE_MS_V1,
+            );
+    }
     let shift = count.saturating_sub(1).min(4) as u32;
     ETH_PEER_CAPACITY_REJECT_BACKOFF_BASE_MS_V1
         .saturating_mul(1u64 << shift)
@@ -1973,15 +1983,16 @@ fn eth_peer_failure_cooldown_ms_v1(
         {
             ETH_PEER_PRODUCTIVE_DISCONNECT_RETRY_MS_V1
         }
+        EthPeerFailureClassV1::Disconnect if reason_code == Some(0x04) => {
+            eth_peer_failure_backoff_ms_v1(
+                eth_peer_failure_count_for_class_v1(state, class).saturating_add(1),
+            )
+            .max(eth_peer_capacity_reject_cooldown_ms_v1(state))
+        }
         EthPeerFailureClassV1::Disconnect => eth_peer_failure_backoff_ms_v1(
             eth_peer_failure_count_for_class_v1(state, class).saturating_add(1),
         )
-        .max(eth_peer_disconnect_cooldown_ms_v1(reason_code))
-        .max(if reason_code == Some(0x04) {
-            eth_peer_capacity_reject_cooldown_ms_v1(state)
-        } else {
-            0
-        }),
+        .max(eth_peer_disconnect_cooldown_ms_v1(reason_code)),
     }
 }
 
@@ -5438,7 +5449,7 @@ mod tests {
     }
 
     #[test]
-    fn productive_capacity_reject_keeps_long_backoff() {
+    fn productive_capacity_reject_uses_short_retry_backoff() {
         let chain_id = 99_160_325_u64;
         let peer = NodeId(607);
         let _ =
@@ -5452,10 +5463,40 @@ mod tests {
         let snapshot =
             snapshot_network_runtime_eth_peer_sessions_for_peers_v1(chain_id, &[peer])[0].clone();
         assert_eq!(snapshot.disconnect_too_many_peers_count, 1);
-        assert!(
-            snapshot.cooldown_until_unix_ms
-                >= before.saturating_add(ETH_PEER_CAPACITY_REJECT_BACKOFF_BASE_MS_V1)
-        );
+        let remaining = snapshot.cooldown_until_unix_ms.saturating_sub(before);
+        assert!(remaining >= ETH_PEER_PRODUCTIVE_CAPACITY_REJECT_RETRY_MS_V1);
+        assert!(remaining < ETH_PEER_CAPACITY_REJECT_BACKOFF_BASE_MS_V1);
+    }
+
+    #[test]
+    fn repeated_productive_capacity_rejects_backoff_but_stay_below_plain_capacity_floor() {
+        let chain_id = 99_160_326_u64;
+        let peer = NodeId(608);
+        let _ =
+            upsert_network_runtime_eth_peer_session(chain_id, peer.0, &[69, 70], &[1], Some(2048))
+                .expect("ready peer");
+        observe_network_runtime_eth_peer_body_success_v1(chain_id, peer.0, 2048);
+
+        observe_network_runtime_eth_peer_disconnect_v1(chain_id, peer.0, Some(0x04));
+        {
+            let mut guard = eth_peer_sessions()
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let chain = guard.get_mut(&chain_id).expect("chain state");
+            let state = chain.get_mut(&peer.0).expect("peer");
+            state.cooldown_until_unix_ms = 0;
+        }
+        let before_second = eth_peer_now_unix_ms_v1();
+        observe_network_runtime_eth_peer_disconnect_v1(chain_id, peer.0, Some(0x04));
+
+        let snapshot =
+            snapshot_network_runtime_eth_peer_sessions_for_peers_v1(chain_id, &[peer])[0].clone();
+        assert_eq!(snapshot.disconnect_too_many_peers_count, 2);
+        let remaining = snapshot
+            .cooldown_until_unix_ms
+            .saturating_sub(before_second);
+        assert!(remaining >= ETH_PEER_PRODUCTIVE_CAPACITY_REJECT_RETRY_MS_V1.saturating_mul(2));
+        assert!(remaining < ETH_PEER_CAPACITY_REJECT_BACKOFF_BASE_MS_V1);
     }
 
     #[test]

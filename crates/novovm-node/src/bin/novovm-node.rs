@@ -2273,7 +2273,7 @@ fn eth_rlpx_cache_warmed_candidate_limit_v1(
     }
     candidate_limit
         .max(cache_endpoint_count)
-        .clamp(max_peers.max(1), 512)
+        .clamp(max_peers.max(1), 1024)
 }
 
 fn eth_rlpx_default_max_peers_v1() -> usize {
@@ -6605,11 +6605,15 @@ mod mainline_evm_cli_tests {
         );
         assert_eq!(
             eth_rlpx_cache_warmed_candidate_limit_v1(256, 32, 700, false),
-            512
+            700
         );
         assert_eq!(
             eth_rlpx_cache_warmed_candidate_limit_v1(256, 32, 292, true),
             256
+        );
+        assert_eq!(
+            eth_rlpx_cache_warmed_candidate_limit_v1(256, 32, 1_500, false),
+            1024
         );
     }
 
