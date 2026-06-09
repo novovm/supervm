@@ -4510,17 +4510,17 @@ pub fn select_eth_fullnode_native_bootstrap_candidates_v1(
         .collect::<HashMap<_, _>>();
     let now = eth_peer_now_unix_ms_v1();
     let prefer_body_peer = eth_native_current_head_missing_material_v1(chain_id);
-    let prefer_candidate_prefix = eth_native_current_head_missing_body_v1(chain_id);
     let body_peer_ids = snapshots
         .values()
         .filter(|session| eth_peer_has_body_material_history_v1(session))
         .map(|session| session.peer_id)
         .collect::<std::collections::HashSet<_>>();
-    let ordered_candidate_prefix_peer_ids = peers
+    let candidate_prefix_peer_ranks = peers
         .iter()
         .take(max_targets)
-        .map(|peer| peer.0)
-        .collect::<std::collections::HashSet<_>>();
+        .enumerate()
+        .map(|(rank, peer)| (peer.0, rank))
+        .collect::<HashMap<_, _>>();
     let material_source_peer_ids =
         eth_native_current_head_available_material_source_peer_ids_v1(chain_id);
     let source_peer_ids = eth_native_current_head_material_source_peer_ids_v1(chain_id);
@@ -4548,10 +4548,7 @@ pub fn select_eth_fullnode_native_bootstrap_candidates_v1(
                 score
                     .reasons
                     .push("body_recovery_bootstrap_current_source_peer".to_string());
-            } else if prefer_candidate_prefix
-                && score.eligible
-                && ordered_candidate_prefix_peer_ids.contains(&score.peer_id)
-            {
+            } else if score.eligible && candidate_prefix_peer_ranks.contains_key(&score.peer_id) {
                 score
                     .reasons
                     .push("body_recovery_bootstrap_candidate_prefix_peer".to_string());
@@ -4569,15 +4566,16 @@ pub fn select_eth_fullnode_native_bootstrap_candidates_v1(
                 1u8
             } else if score.eligible && source_peer_ids.contains(&score.peer_id) {
                 2u8
-            } else if prefer_candidate_prefix
-                && score.eligible
-                && ordered_candidate_prefix_peer_ids.contains(&score.peer_id)
-            {
+            } else if score.eligible && candidate_prefix_peer_ranks.contains_key(&score.peer_id) {
                 3u8
             } else {
                 4u8
             };
-            (base.0, body_rank, base.1, base.2)
+            let prefix_rank = candidate_prefix_peer_ranks
+                .get(&score.peer_id)
+                .copied()
+                .unwrap_or(max_targets);
+            (base.0, body_rank, prefix_rank, base.1, base.2)
         });
     } else if prefer_header_peer && !header_peer_ids.is_empty() {
         for score in &mut ranked {
@@ -4599,6 +4597,32 @@ pub fn select_eth_fullnode_native_bootstrap_candidates_v1(
                 0u8
             };
             (base.0, header_rank, base.1, base.2)
+        });
+    } else if !candidate_prefix_peer_ranks.is_empty() {
+        for score in &mut ranked {
+            if score.eligible && candidate_prefix_peer_ranks.contains_key(&score.peer_id) {
+                score
+                    .reasons
+                    .push("bootstrap_candidate_prefix_peer".to_string());
+            } else if score.eligible {
+                score
+                    .reasons
+                    .push("bootstrap_without_candidate_prefix".to_string());
+            }
+        }
+        ranked.sort_by_key(|score| {
+            let base = eth_peer_selection_sort_key_v1(score);
+            let prefix_rank = candidate_prefix_peer_ranks
+                .get(&score.peer_id)
+                .copied()
+                .unwrap_or(max_targets);
+            let prefix_group =
+                if score.eligible && candidate_prefix_peer_ranks.contains_key(&score.peer_id) {
+                    0u8
+                } else {
+                    1u8
+                };
+            (base.0, prefix_group, prefix_rank, base.1, base.2)
         });
     } else {
         ranked.sort_by_key(eth_peer_selection_sort_key_v1);
@@ -5805,6 +5829,25 @@ mod tests {
                 observed_unix_ms: 10,
             },
         );
+        observe_network_runtime_eth_peer_discovered_v1(chain_id, preferred_peer.0);
+        observe_network_runtime_eth_peer_discovered_v1(chain_id, rotated_peer.0);
+
+        let selected = select_eth_fullnode_native_bootstrap_candidates_v1(
+            chain_id,
+            &[preferred_peer, rotated_peer],
+            1,
+        );
+
+        assert_eq!(selected, vec![preferred_peer]);
+    }
+
+    #[test]
+    fn bootstrap_selection_preserves_candidate_prefix_for_forward_sync_without_history() {
+        let chain_id = 991_603_193_u64;
+        let preferred_peer = NodeId(473);
+        let rotated_peer = NodeId(474);
+
+        crate::runtime_status::clear_network_runtime_native_snapshots_for_chain_v1(chain_id);
         observe_network_runtime_eth_peer_discovered_v1(chain_id, preferred_peer.0);
         observe_network_runtime_eth_peer_discovered_v1(chain_id, rotated_peer.0);
 
