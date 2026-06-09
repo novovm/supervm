@@ -6576,12 +6576,14 @@ fn ingest_real_rlpx_block_headers_v1(
     let body_request_cap = usize::try_from(budget_hooks.sync_pull_bodies_batch.max(1))
         .unwrap_or(usize::MAX)
         .max(1);
-    let selected_headers = headers
+    let imported_headers = headers
         .headers
         .iter()
         .take(body_request_cap)
         .collect::<Vec<_>>();
-    session.pending_body_headers = selected_headers
+    let body_followup_headers =
+        select_eth_fullnode_native_header_followup_body_headers_v1(chain_id, &imported_headers);
+    session.pending_body_headers = body_followup_headers
         .iter()
         .map(|header| EthFullnodeNativePendingBodyHeaderV1 {
             number: header.number,
@@ -6594,7 +6596,7 @@ fn ingest_real_rlpx_block_headers_v1(
             withdrawal_count: None,
         })
         .collect();
-    for header in selected_headers.iter().copied() {
+    for header in imported_headers.iter().copied() {
         if let Some(raw_rlp) = header.raw_rlp.as_deref() {
             set_network_runtime_native_header_rlp_v1(chain_id, header.hash, raw_rlp);
         }
@@ -6652,6 +6654,22 @@ fn ingest_real_rlpx_block_headers_v1(
         );
     }
     Ok(())
+}
+
+fn select_eth_fullnode_native_header_followup_body_headers_v1<'a>(
+    chain_id: u64,
+    headers: &[&'a EthRlpxBlockHeaderRecordV1],
+) -> Vec<&'a EthRlpxBlockHeaderRecordV1> {
+    let Some(latest) = headers.last().copied() else {
+        return Vec::new();
+    };
+    if headers.len() > 1
+        && get_network_runtime_sync_status(chain_id)
+            .is_some_and(|status| status.highest_block > latest.number)
+    {
+        return vec![latest];
+    }
+    headers.to_vec()
 }
 
 fn validate_eth_fullnode_native_rlpx_block_headers_response_matches_request_v1(
@@ -9964,6 +9982,98 @@ mod tests {
             get_network_runtime_native_header_snapshot_v1(chain_id).is_none(),
             "unsolicited header must not materialize"
         );
+    }
+
+    #[test]
+    fn rlpx_header_batch_import_requests_current_body_only_while_chasing_v1() {
+        let chain_id = 9_928_001_u64;
+        let peer_id = 77_u64;
+        clear_network_runtime_native_snapshots_for_chain_v1(chain_id);
+        set_network_runtime_sync_status(
+            chain_id,
+            NetworkRuntimeSyncStatus {
+                peer_count: 1,
+                starting_block: 120,
+                current_block: 120,
+                highest_block: 256,
+            },
+        );
+
+        let (mut session, _accepted, _peer_frame_session) = dummy_rlpx_live_session_pair(chain_id);
+        session.pending_headers_request = Some(EthRlpxGetBlockHeadersRequestV1 {
+            request_id: 11,
+            start_height: 121,
+            origin_hash: None,
+            max_headers: 16,
+            skip: 0,
+            reverse: false,
+        });
+
+        let mut parent_hash = [0x40; 32];
+        let mut headers = Vec::new();
+        for offset in 0..16u8 {
+            let number = 121 + u64::from(offset);
+            let hash = [0x50 + offset; 32];
+            headers.push(crate::EthRlpxBlockHeaderRecordV1 {
+                number,
+                hash,
+                parent_hash,
+                state_root: [0x60 + offset; 32],
+                transactions_root: [0x70 + offset; 32],
+                receipts_root: [0x80 + offset; 32],
+                ommers_hash: crate::eth_rlpx_empty_ommers_hash_v1(),
+                logs_bloom: vec![0u8; 256],
+                gas_limit: Some(30_000_000),
+                gas_used: Some(21_000),
+                timestamp: Some(1_900_000_000 + u64::from(offset)),
+                base_fee_per_gas: Some(7),
+                withdrawals_root: Some(crate::eth_rlpx_empty_trie_root_v1()),
+                blob_gas_used: None,
+                excess_blob_gas: None,
+                block_access_list_hash: None,
+                raw_rlp: None,
+            });
+            parent_hash = hash;
+        }
+        let response = EthRlpxBlockHeadersResponseV1 {
+            request_id: 11,
+            headers,
+        };
+        let mut budget = default_eth_fullnode_budget_hooks_v1();
+        budget.sync_pull_bodies_batch = 16;
+        let mut report = EthFullnodeNativeRlpxPeerTickReportV1::default();
+
+        ingest_real_rlpx_block_headers_v1(
+            chain_id,
+            peer_id,
+            &mut session,
+            &response,
+            &budget,
+            &mut report,
+        )
+        .expect("header batch ingest");
+
+        assert_eq!(report.header_updates, 16);
+        assert_eq!(session.pending_body_headers.len(), 1);
+        assert_eq!(session.pending_body_headers[0].number, 136);
+        assert_eq!(session.pending_body_headers[0].hash, [0x5f; 32]);
+        assert!(
+            session.last_bodies_request_id.is_some(),
+            "header ingest must dispatch a follow-up body request"
+        );
+
+        let retained = snapshot_network_runtime_native_canonical_blocks_v1(chain_id, 32);
+        assert!(
+            retained.iter().any(|block| block.number == 121),
+            "first imported header must remain in canonical history"
+        );
+        assert!(
+            retained.iter().any(|block| block.number == 136),
+            "latest imported header must remain in canonical history"
+        );
+        let head = get_network_runtime_native_header_snapshot_v1(chain_id).expect("head header");
+        assert_eq!(head.number, 136);
+        assert_eq!(head.hash, [0x5f; 32]);
     }
 
     #[test]
