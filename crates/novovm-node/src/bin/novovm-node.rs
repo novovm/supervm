@@ -2161,6 +2161,7 @@ fn eth_rlpx_peer_refresh_plan_v1(
     candidate_pool_exhausted: bool,
     progress_stalled: bool,
     bootstrap_stalled: bool,
+    head_probe_stalled: bool,
     body_recovery_stalled: bool,
     refresh_exhausted_enabled: bool,
     candidate_limit: usize,
@@ -2180,7 +2181,7 @@ fn eth_rlpx_peer_refresh_plan_v1(
             "all_candidate_peers_in_cooldown_expand",
         ));
     }
-    let stalled = progress_stalled || bootstrap_stalled;
+    let stalled = progress_stalled || bootstrap_stalled || head_probe_stalled;
     if body_recovery_stalled
         && candidate_limit < adaptive_candidate_limit
         && tick.saturating_sub(last_peer_refresh_tick) >= 1
@@ -2199,12 +2200,16 @@ fn eth_rlpx_peer_refresh_plan_v1(
     {
         return Some((candidate_limit, "body_recovery_stalled_refresh"));
     }
-    let stalled_expand_reason = if bootstrap_stalled && !progress_stalled {
+    let stalled_expand_reason = if head_probe_stalled && !progress_stalled && !bootstrap_stalled {
+        "head_probe_stalled_expand"
+    } else if bootstrap_stalled && !progress_stalled {
         "bootstrap_stalled_expand"
     } else {
         "sync_progress_stalled_expand"
     };
-    let stalled_refresh_reason = if bootstrap_stalled && !progress_stalled {
+    let stalled_refresh_reason = if head_probe_stalled && !progress_stalled && !bootstrap_stalled {
+        "head_probe_stalled_refresh"
+    } else if bootstrap_stalled && !progress_stalled {
         "bootstrap_stalled_refresh"
     } else {
         "sync_progress_stalled_refresh"
@@ -2280,7 +2285,7 @@ fn eth_rlpx_default_sync_target_fanout_v1(max_peers: usize) -> usize {
 }
 
 fn eth_rlpx_default_adaptive_bootstrap_fanout_v1(max_peers: usize) -> usize {
-    eth_rlpx_default_sync_target_fanout_v1(max_peers)
+    max_peers.clamp(1, 32)
 }
 
 fn eth_rlpx_adaptive_bootstrap_fanout_v1(
@@ -2418,6 +2423,29 @@ fn eth_rlpx_forward_progress_stalled_v1(
     stalled_refresh_interval_ticks: usize,
 ) -> bool {
     highest_block > current_block
+        && tick.saturating_sub(last_complete_head_progress_tick)
+            >= stalled_refresh_interval_ticks.max(1)
+}
+
+fn eth_rlpx_idle_head_probe_stalled_v1(
+    highest_block: u64,
+    current_block: u64,
+    current_head_present: bool,
+    current_head_body_available: bool,
+    current_head_receipt_available: bool,
+    ready_peers: usize,
+    status_updates: usize,
+    tick: usize,
+    last_complete_head_progress_tick: usize,
+    stalled_refresh_interval_ticks: usize,
+) -> bool {
+    current_block > 0
+        && highest_block == current_block
+        && current_head_present
+        && current_head_body_available
+        && current_head_receipt_available
+        && ready_peers == 0
+        && status_updates == 0
         && tick.saturating_sub(last_complete_head_progress_tick)
             >= stalled_refresh_interval_ticks.max(1)
 }
@@ -5766,6 +5794,18 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
             last_complete_head_progress_tick,
             stalled_refresh_interval_ticks,
         );
+        let head_probe_stalled = eth_rlpx_idle_head_probe_stalled_v1(
+            highest_sync_block,
+            current_sync_block,
+            current_head_present,
+            current_head_body_available,
+            current_head_receipt_available,
+            report.ready_peers,
+            report.status_updates,
+            tick,
+            last_complete_head_progress_tick,
+            stalled_refresh_interval_ticks,
+        );
         let body_recovery_stalled = current_head_body_missing
             && report.ready_peers == 0
             && report.body_updates == 0
@@ -5787,9 +5827,14 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
                 runtime_sync_target_fanout,
                 adaptive_bootstrap_fanout,
                 max_peers,
-                progress_stalled || body_recovery_stalled || receipt_recovery_stalled,
+                progress_stalled
+                    || head_probe_stalled
+                    || body_recovery_stalled
+                    || receipt_recovery_stalled,
                 report.ready_peers,
-                highest_sync_block > current_sync_block || current_head_material_missing,
+                highest_sync_block > current_sync_block
+                    || current_head_material_missing
+                    || head_probe_stalled,
             );
             if next_sync_target_fanout > runtime_sync_target_fanout {
                 let old_fanout = runtime_sync_target_fanout;
@@ -5814,6 +5859,7 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
             candidate_pool_exhausted,
             progress_stalled,
             bootstrap_stalled,
+            head_probe_stalled,
             body_recovery_stalled || receipt_recovery_stalled,
             bool_env_default_true("NOVOVM_ETH_RLPX_REFRESH_EXHAUSTED_CANDIDATES_ENABLED"),
             candidate_limit,
@@ -6476,7 +6522,7 @@ mod mainline_evm_cli_tests {
     #[test]
     fn eth_rlpx_peer_refresh_plan_expands_on_stalled_progress_v1() {
         let plan = eth_rlpx_peer_refresh_plan_v1(
-            false, true, false, false, true, 128, 512, 6, 16, 0, 8, 16,
+            false, true, false, false, false, true, 128, 512, 6, 16, 0, 8, 16,
         );
         assert_eq!(plan, Some((256, "sync_progress_stalled_expand")));
     }
@@ -6484,7 +6530,7 @@ mod mainline_evm_cli_tests {
     #[test]
     fn eth_rlpx_peer_refresh_plan_refreshes_stalled_at_adaptive_cap_v1() {
         let plan = eth_rlpx_peer_refresh_plan_v1(
-            false, true, false, false, true, 512, 512, 6, 32, 8, 8, 16,
+            false, true, false, false, false, true, 512, 512, 6, 32, 8, 8, 16,
         );
         assert_eq!(plan, Some((512, "sync_progress_stalled_refresh")));
     }
@@ -6492,14 +6538,27 @@ mod mainline_evm_cli_tests {
     #[test]
     fn eth_rlpx_peer_refresh_plan_expands_immediately_on_body_recovery_stall_v1() {
         let plan = eth_rlpx_peer_refresh_plan_v1(
-            false, false, false, true, true, 256, 512, 32, 1, 0, 8, 16,
+            false, false, false, false, true, true, 256, 512, 32, 1, 0, 8, 16,
         );
         assert_eq!(plan, Some((512, "body_recovery_stalled_expand")));
 
         let refresh = eth_rlpx_peer_refresh_plan_v1(
-            false, false, false, true, true, 512, 512, 32, 2, 1, 8, 16,
+            false, false, false, false, true, true, 512, 512, 32, 2, 1, 8, 16,
         );
         assert_eq!(refresh, Some((512, "body_recovery_stalled_refresh")));
+    }
+
+    #[test]
+    fn eth_rlpx_peer_refresh_plan_expands_on_idle_head_probe_stall_v1() {
+        let plan = eth_rlpx_peer_refresh_plan_v1(
+            false, false, false, true, false, true, 512, 1024, 50, 8, 2, 8, 4,
+        );
+        assert_eq!(plan, Some((1024, "head_probe_stalled_expand")));
+
+        let refresh = eth_rlpx_peer_refresh_plan_v1(
+            false, false, false, true, false, true, 1024, 1024, 50, 10, 5, 8, 4,
+        );
+        assert_eq!(refresh, Some((1024, "head_probe_stalled_refresh")));
     }
 
     #[test]
@@ -6541,9 +6600,9 @@ mod mainline_evm_cli_tests {
     #[test]
     fn eth_rlpx_adaptive_bootstrap_fanout_raises_only_when_admission_stalled_v1() {
         assert_eq!(eth_rlpx_default_adaptive_bootstrap_fanout_v1(1), 1);
-        assert_eq!(eth_rlpx_default_adaptive_bootstrap_fanout_v1(32), 8);
-        assert_eq!(eth_rlpx_default_adaptive_bootstrap_fanout_v1(50), 8);
-        assert_eq!(eth_rlpx_default_adaptive_bootstrap_fanout_v1(64), 8);
+        assert_eq!(eth_rlpx_default_adaptive_bootstrap_fanout_v1(32), 32);
+        assert_eq!(eth_rlpx_default_adaptive_bootstrap_fanout_v1(50), 32);
+        assert_eq!(eth_rlpx_default_adaptive_bootstrap_fanout_v1(64), 32);
         assert_eq!(
             eth_rlpx_adaptive_bootstrap_fanout_v1(8, 32, 32, true, 0, true),
             32
@@ -6564,6 +6623,29 @@ mod mainline_evm_cli_tests {
             eth_rlpx_adaptive_bootstrap_fanout_v1(8, 50, 50, true, 0, true),
             50,
             "a trusted pivot with current==highest but missing body is still an admission target"
+        );
+        assert_eq!(
+            eth_rlpx_adaptive_bootstrap_fanout_v1(
+                8,
+                50,
+                50,
+                true,
+                0,
+                eth_rlpx_idle_head_probe_stalled_v1(
+                    25_282_495,
+                    25_282_495,
+                    true,
+                    true,
+                    true,
+                    0,
+                    0,
+                    8,
+                    2,
+                    4,
+                ),
+            ),
+            50,
+            "a complete current==highest head with stale status still needs admission for fresh-head probing"
         );
     }
 
@@ -6675,6 +6757,37 @@ mod mainline_evm_cli_tests {
         assert!(
             !eth_rlpx_forward_progress_stalled_v1(25_281_886, 25_281_886, 16, 10, 4),
             "already caught up heads must not trigger forward refresh"
+        );
+    }
+
+    #[test]
+    fn eth_rlpx_idle_head_probe_stall_uses_complete_head_progress_tick_v1() {
+        assert!(eth_rlpx_idle_head_probe_stalled_v1(
+            25_282_495, 25_282_495, true, true, true, 0, 0, 8, 2, 4,
+        ));
+        assert!(
+            !eth_rlpx_idle_head_probe_stalled_v1(
+                25_282_496, 25_282_495, true, true, true, 0, 0, 8, 2, 4,
+            ),
+            "regular forward lag uses the forward-progress stall path"
+        );
+        assert!(
+            !eth_rlpx_idle_head_probe_stalled_v1(
+                25_282_495, 25_282_495, true, true, true, 1, 0, 8, 2, 4,
+            ),
+            "a ready peer can still provide a fresh status/head probe"
+        );
+        assert!(
+            !eth_rlpx_idle_head_probe_stalled_v1(
+                25_282_495, 25_282_495, true, true, true, 0, 1, 8, 2, 4,
+            ),
+            "same-tick status updates prove the head probe is active"
+        );
+        assert!(
+            !eth_rlpx_idle_head_probe_stalled_v1(
+                25_282_495, 25_282_495, true, true, false, 0, 0, 8, 2, 4,
+            ),
+            "missing current-head material uses recovery paths instead of idle probing"
         );
     }
 
@@ -6906,15 +7019,16 @@ mod mainline_evm_cli_tests {
 
     #[test]
     fn eth_rlpx_peer_refresh_plan_keeps_exhausted_expand_priority_v1() {
-        let plan =
-            eth_rlpx_peer_refresh_plan_v1(true, true, true, true, true, 64, 256, 6, 4, 0, 8, 16);
+        let plan = eth_rlpx_peer_refresh_plan_v1(
+            true, true, true, false, true, true, 64, 256, 6, 4, 0, 8, 16,
+        );
         assert_eq!(plan, Some((128, "all_candidate_peers_in_cooldown_expand")));
     }
 
     #[test]
     fn eth_rlpx_peer_refresh_plan_expands_on_bootstrap_stall_without_remote_highest_v1() {
         let plan = eth_rlpx_peer_refresh_plan_v1(
-            false, false, true, false, true, 64, 128, 4, 16, 0, 8, 16,
+            false, false, true, false, false, true, 64, 128, 4, 16, 0, 8, 16,
         );
         assert_eq!(plan, Some((128, "bootstrap_stalled_expand")));
     }
