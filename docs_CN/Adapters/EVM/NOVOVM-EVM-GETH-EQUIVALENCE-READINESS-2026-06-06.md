@@ -48,6 +48,14 @@ cargo check --workspace
 
 该证据只证明 header-only 推进后的 body recovery 窗口不再被错误放大；24 小时长期主网同步仍未完成，不能声明已经像 geth 一样长期无差别加入 Ethereum 主网。
 
+### 2026-06-10 最新 geth 复核与参考意见边界
+
+本机 `D:\WEB3_AI\go-ethereum` 已执行 `git pull --ff-only`，结果为 `Already up to date`；当前本地/远端 `origin/master` 均为 `43b7b4e8d9f9c8bf74d27bc6b13cb6c90a6128f8`（`eth: fix borked test introduced in merging #33347 (#35130)`）。
+
+本次相对上一轮 `08aaa7c5ff9dcb99fb0c6dc9194d49ae9e518f69` 的新增 top commit 只修复 `debug_clearTxpool` 合并后引入的 geth 测试期望；`debug_clearTxpool` 本身也只是 debug RPC 清空本地 txpool。它们不改变 RLPx、snap、headers/bodies/receipts、stateRoot、receiptRoot、tx gossip、BAL 或共识执行语义。
+
+参考意见中“停止继续扩大 fixture/BAL/gateway/JSON-RPC/产品叙事”的判断继续采纳；但不采纳“停止推进”的结论。当前 SUPERVM 只继续推进 `Ethereum 主网长期同步 v1`，成功标准仍是 24 小时真实产品入口长跑和重启续同步，不新增 geth debug RPC 对齐面。
+
 ### 2026-06-09 trusted pivot 近头缺 body admission 修复
 
 继续按 `Ethereum 主网长期同步 v1` 收口推进时，临时 trusted-pivot 验证暴露一个近头同步缺口：当 operator 明示安装的 finalized/trusted header 满足 `current == highest`，但本地还没有该 head 的 body/receipt 时，旧逻辑因为 `highest > current` 为 false，不会把它当作 admission stall，同步入口保持低 fanout，短跑中长期显示 `native_phase=idle`、`body_available=false`。
@@ -1988,6 +1996,8 @@ cargo test -p novovm-adapter-novovm evm_adapter_balance_fee_access_storage_surfa
 30. 2026-06-10 runtime snapshot 写入减负：继续遵守“只修 Ethereum 主网长期同步链路，不扩散 fixture/BAL/gateway/JSON-RPC”的范围。本轮发现真实入口每 tick 重写 `artifacts/mainline/eth-native-worker-runtime.json` 时携带 256 个完整 canonical block 与 500+ 个完整 peer 选择明细，文件达到 59.8MB，会直接拖慢长期同步 loop。现在 public RLPx 入口默认只把 runtime diagnostic 的 canonical block 明细限制到最新 8 个（`NOVOVM_ETH_RLPX_RUNTIME_SNAPSHOT_BLOCKS` 可覆盖），并把 `peer_sessions`/`peer_selection_scores` 明细限制到 64 个本 tick 相关 peer；候选 peer ID 总表、选择 summary、head/history store 不被裁剪。回归 `cargo test -p novovm-network native_runtime_snapshot_bounds_peer_detail_payload_v1 -- --nocapture`、`cargo test -p novovm-node eth_rlpx_public_sync_runtime_defaults -- --nocapture`、`cargo test -p novovm-network real_rlpx_sync_peers_are_bounded_by_tick_budget_v1 -- --nocapture`、`cargo test -p novovm-network rlpx_ -- --nocapture --test-threads=1`、`cargo test -p novovm-node eth_rlpx_ -- --nocapture`、`cargo fmt --check`、`cargo check --workspace`、`git diff --check` 通过。真实入口 2 tick 后 runtime snapshot 降为 2.16MB，字段为 `native_canonical_blocks=8`、`peer_sessions=64`、`peer_selection_scores=128`、`candidate_peer_ids=540`；但 `current=25280158/highest=25281119` 仍为 `body=null/receipt=null`，未拿到 ready/body-serving peer，所以不能声明 24h geth-like 主网长期同步完成。
 
 31. 2026-06-10 material peer 复用收口：当前 `25280158` header-only 的直接原因不是 body/receipt 语义错误，而是成功 material peer 没有稳定进入下一次 bootstrap。启动阶段此前会把新 discovery 样本压到 cache 前面，导致历史成功 peer 在重启后被挤到几十/几百位；即使显式设置 `NOVOVM_ETH_RLPX_ENODES`，重复端点也可能仍停留在 cache 原位置，并被 bootstrap rotation 跳过。现在普通启动保留 peer cache 顺序，显式 ENODE 启动则显式端点覆盖 cache 顺序；body-recovery bootstrap 排序保持 body-history 优先，其次已可用 material source、当前 header source、candidate-prefix，再到普通候选。回归 `cargo test -p novovm-network bootstrap_selection_ -- --nocapture`、`cargo test -p novovm-node eth_peer_endpoint_ -- --nocapture`、`cargo test -p novovm-network rlpx_ -- --nocapture --test-threads=1`、`cargo test -p novovm-node eth_rlpx_ -- --nocapture`、`cargo fmt --check`、`cargo check --workspace` 通过。真实入口使用 direct Rust node 与显式 `NOVOVM_ETH_RLPX_ENODES=157.90.35.166:30303` 后，tick 1 发出 `missing_bodies_requested`，tick 2 收到 `bodies_received` 与 `receipts_received`，head store 已从 `body=null/receipt=null` 变为 `body`/`receipt` 可用，cache index 0 也变为该 material peer。随后 forward `GetBlockHeaders start=25280159` 在同 peer 上遇到公网 `rlpx_frame_header_mac_mismatch`，默认 2 tick 仍未继续追高；因此本轮只声明 material-peer 复用缺口关闭，不声明长期无差别主网同步完成。
+
+32. 2026-06-10 最新官方 geth 复核与范围不扩散：`D:\WEB3_AI\go-ethereum` 执行 `git pull --ff-only` 返回 `Already up to date`，本地/远端 `origin/master` 为 `43b7b4e8d9f9c8bf74d27bc6b13cb6c90a6128f8`。最新新增的 `43b7b4e8d` 只修复 `debug_clearTxpool` 测试，前一个 `08aaa7c5f` 只新增 debug RPC 清空本地 txpool；二者都不改变 RLPx、snap、headers/bodies/receipts、stateRoot、receiptRoot、tx gossip、BAL 或共识执行语义。按本轮参考意见的有效部分，SUPERVM 不新增 JSON-RPC/debug 面，也不继续堆 fixture/BAL/gateway；下一步仍只处理 forward header 追高和长期同步 v1 的真实产品入口链路。
 
 ## 回归命令
 
