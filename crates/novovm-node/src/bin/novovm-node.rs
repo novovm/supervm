@@ -2181,6 +2181,26 @@ fn eth_rlpx_default_sync_target_fanout_v1(max_peers: usize) -> usize {
     max_peers.clamp(1, 8)
 }
 
+fn eth_rlpx_default_adaptive_bootstrap_fanout_v1(max_peers: usize) -> usize {
+    max_peers.max(1)
+}
+
+fn eth_rlpx_adaptive_bootstrap_fanout_v1(
+    current_fanout: usize,
+    target_fanout: usize,
+    max_peers: usize,
+    progress_stalled: bool,
+    ready_peers: usize,
+    highest_block: u64,
+    current_block: u64,
+) -> usize {
+    if progress_stalled && ready_peers == 0 && highest_block > current_block {
+        current_fanout.max(target_fanout.clamp(1, max_peers))
+    } else {
+        current_fanout
+    }
+}
+
 fn eth_rlpx_apply_public_sync_batch_defaults_v1(
     budget: &mut EthFullnodeBudgetHooksV1,
     headers_batch: u64,
@@ -4464,11 +4484,21 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
     let ticks = usize_env_allow_zero("NOVOVM_ETH_RLPX_TICKS", 0)?;
     let sleep_ms = u64_env_clamped("NOVOVM_ETH_RLPX_SLEEP_MS", 600, 10, 60_000);
     let recv_budget = usize_env_allow_zero("NOVOVM_ETH_RLPX_RECV_BUDGET", 16)?.clamp(1, 1024);
-    let sync_target_fanout = usize_env_allow_zero(
+    let sync_target_fanout_explicit =
+        std::env::var_os("NOVOVM_ETH_RLPX_SYNC_TARGET_FANOUT").is_some();
+    let base_sync_target_fanout = usize_env_allow_zero(
         "NOVOVM_ETH_RLPX_SYNC_TARGET_FANOUT",
         eth_rlpx_default_sync_target_fanout_v1(max_peers),
     )?
     .clamp(1, max_peers);
+    let adaptive_bootstrap_fanout_enabled =
+        bool_env_default_true("NOVOVM_ETH_RLPX_ADAPTIVE_BOOTSTRAP_FANOUT_ENABLED");
+    let adaptive_bootstrap_fanout = usize_env_allow_zero(
+        "NOVOVM_ETH_RLPX_ADAPTIVE_BOOTSTRAP_FANOUT",
+        eth_rlpx_default_adaptive_bootstrap_fanout_v1(max_peers),
+    )?
+    .clamp(base_sync_target_fanout, max_peers);
+    let mut runtime_sync_target_fanout = base_sync_target_fanout;
     let headers_batch = u64_env_clamped("NOVOVM_ETH_RLPX_HEADERS_BATCH", 192, 1, 2_048);
     let bodies_batch = u64_env_clamped("NOVOVM_ETH_RLPX_BODIES_BATCH", 128, 1, 256);
     let exhausted_refresh_interval_ticks =
@@ -4524,7 +4554,7 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
         &mut budget,
         headers_batch,
         bodies_batch,
-        sync_target_fanout,
+        runtime_sync_target_fanout,
     );
     let checkpoint_enabled = bool_env_default_true("NOVOVM_ETH_RLPX_CHECKPOINT_ENABLED");
     let checkpoint_path = eth_rlpx_sync_checkpoint_path_v1();
@@ -4691,7 +4721,7 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
         peers: peers.clone(),
         peer_endpoints: peer_endpoints.clone(),
         recv_budget,
-        sync_target_fanout,
+        sync_target_fanout: runtime_sync_target_fanout,
         budget_hooks: budget.clone(),
     });
     let mut tick = 0usize;
@@ -4862,7 +4892,7 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
                     peers: peers.clone(),
                     peer_endpoints: peer_endpoints.clone(),
                     recv_budget,
-                    sync_target_fanout,
+                    sync_target_fanout: runtime_sync_target_fanout,
                     budget_hooks: budget.clone(),
                 });
                 if verbose {
@@ -4899,7 +4929,7 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
                     peers: peers.clone(),
                     peer_endpoints: peer_endpoints.clone(),
                     recv_budget,
-                    sync_target_fanout,
+                    sync_target_fanout: runtime_sync_target_fanout,
                     budget_hooks: budget.clone(),
                 });
                 if verbose {
@@ -4928,6 +4958,35 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
             && current_sync_block == 0
             && highest_sync_block == 0
             && tick.saturating_sub(last_sync_progress_tick) >= stalled_refresh_interval_ticks;
+        if adaptive_bootstrap_fanout_enabled && !sync_target_fanout_explicit {
+            let next_sync_target_fanout = eth_rlpx_adaptive_bootstrap_fanout_v1(
+                runtime_sync_target_fanout,
+                adaptive_bootstrap_fanout,
+                max_peers,
+                progress_stalled,
+                report.ready_peers,
+                highest_sync_block,
+                current_sync_block,
+            );
+            if next_sync_target_fanout > runtime_sync_target_fanout {
+                let old_fanout = runtime_sync_target_fanout;
+                runtime_sync_target_fanout = next_sync_target_fanout;
+                budget.sync_target_fanout = runtime_sync_target_fanout as u64;
+                worker = EthFullnodeNativePeerWorkerV1::new(EthFullnodeNativePeerWorkerConfigV1 {
+                    chain_id,
+                    local_node: NodeId(local_node_id),
+                    peers: peers.clone(),
+                    peer_endpoints: peer_endpoints.clone(),
+                    recv_budget,
+                    sync_target_fanout: runtime_sync_target_fanout,
+                    budget_hooks: budget.clone(),
+                });
+                println!(
+                    "eth_rlpx_adaptive_fanout: chain_id={} tick={} old={} new={} reason=admission_stalled",
+                    chain_id, tick, old_fanout, runtime_sync_target_fanout
+                );
+            }
+        }
         let refresh_plan = eth_rlpx_peer_refresh_plan_v1(
             candidate_pool_exhausted,
             progress_stalled,
@@ -4986,7 +5045,7 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
                     peers: peers.clone(),
                     peer_endpoints: peer_endpoints.clone(),
                     recv_budget,
-                    sync_target_fanout,
+                    sync_target_fanout: runtime_sync_target_fanout,
                     budget_hooks: budget.clone(),
                 });
                 println!(
@@ -5501,6 +5560,29 @@ mod mainline_evm_cli_tests {
         assert_eq!(eth_rlpx_default_sync_target_fanout_v1(4), 4);
         assert_eq!(eth_rlpx_default_sync_target_fanout_v1(32), 8);
         assert_eq!(eth_rlpx_default_sync_target_fanout_v1(64), 8);
+    }
+
+    #[test]
+    fn eth_rlpx_adaptive_bootstrap_fanout_raises_only_when_admission_stalled_v1() {
+        assert_eq!(eth_rlpx_default_adaptive_bootstrap_fanout_v1(1), 1);
+        assert_eq!(eth_rlpx_default_adaptive_bootstrap_fanout_v1(32), 32);
+        assert_eq!(eth_rlpx_default_adaptive_bootstrap_fanout_v1(64), 64);
+        assert_eq!(
+            eth_rlpx_adaptive_bootstrap_fanout_v1(8, 32, 32, true, 0, 25_277_388, 1_853),
+            32
+        );
+        assert_eq!(
+            eth_rlpx_adaptive_bootstrap_fanout_v1(8, 32, 32, false, 0, 25_277_388, 1_853),
+            8
+        );
+        assert_eq!(
+            eth_rlpx_adaptive_bootstrap_fanout_v1(8, 32, 32, true, 1, 25_277_388, 1_853),
+            8
+        );
+        assert_eq!(
+            eth_rlpx_adaptive_bootstrap_fanout_v1(8, 32, 32, true, 0, 1_853, 1_853),
+            8
+        );
     }
 
     #[test]
