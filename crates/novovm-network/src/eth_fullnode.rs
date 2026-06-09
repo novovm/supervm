@@ -4351,14 +4351,21 @@ pub fn build_eth_fullnode_native_sync_request_v1(
         .saturating_add(1)
         .max(1);
     let state_head = get_network_runtime_native_head_snapshot_v1(chain_id);
-    let has_active_snap_cursor = state_head.as_ref().is_some_and(|head| {
+    let snap_progress = state_head.as_ref().and_then(|head| {
         get_network_runtime_native_snap_account_range_progress_v1(chain_id, head.state_root)
-            .is_some_and(|progress| !progress.completed && progress.next_account_origin.is_some())
     });
+    let has_active_snap_cursor = snap_progress
+        .as_ref()
+        .is_some_and(|progress| !progress.completed && progress.next_account_origin.is_some());
+    let has_completed_snap_cursor = snap_progress
+        .as_ref()
+        .is_some_and(|progress| progress.completed);
     let should_pull_headers_before_state =
         matches!(window.phase, NetworkRuntimeNativeSyncPhaseV1::State)
             && state_head.as_ref().is_some_and(|head| {
-                !head.body_available || (!has_active_snap_cursor && span >= 16)
+                !head.body_available
+                    || has_completed_snap_cursor
+                    || (!has_active_snap_cursor && span >= 16)
             });
     let header_pull_span = if should_pull_headers_before_state {
         span.min(16)
@@ -5414,6 +5421,74 @@ mod tests {
             panic!("state phase should request snap AccountRange");
         };
         assert_eq!(origin, next_origin);
+    }
+
+    #[test]
+    fn native_state_sync_request_does_not_rescan_completed_snap_range() {
+        let chain_id = 99_160_320_u64;
+        let state_root = [0x77u8; 32];
+        crate::runtime_status::set_network_runtime_sync_status(
+            chain_id,
+            NetworkRuntimeSyncStatus {
+                peer_count: 1,
+                starting_block: 64,
+                current_block: 128,
+                highest_block: 129,
+            },
+        );
+        crate::runtime_status::set_network_runtime_native_sync_status(
+            chain_id,
+            NetworkRuntimeNativeSyncStatusV1 {
+                phase: NetworkRuntimeNativeSyncPhaseV1::State,
+                peer_count: 1,
+                starting_block: 64,
+                current_block: 128,
+                highest_block: 129,
+                updated_at_unix_millis: 1,
+            },
+        );
+        crate::runtime_status::set_network_runtime_native_head_snapshot_v1(
+            chain_id,
+            NetworkRuntimeNativeHeadSnapshotV1 {
+                chain_id,
+                phase: NetworkRuntimeNativeSyncPhaseV1::State,
+                peer_count: 1,
+                block_number: 128,
+                block_hash: [0x66u8; 32],
+                parent_block_hash: [0x65u8; 32],
+                state_root,
+                canonical: true,
+                safe: false,
+                finalized: false,
+                reorg_depth_hint: None,
+                body_available: true,
+                source_peer_id: Some(7),
+                observed_unix_ms: 1,
+            },
+        );
+        crate::runtime_status::set_network_runtime_native_snap_account_range_progress_v1(
+            chain_id,
+            crate::runtime_status::NetworkRuntimeNativeSnapAccountRangeProgressV1 {
+                chain_id,
+                state_root,
+                next_account_origin: None,
+                limit: [0xffu8; 32],
+                completed: true,
+                source_peer_id: Some(7),
+                observed_unix_ms: 1,
+            },
+        );
+
+        let request = build_eth_fullnode_native_sync_request_v1(NodeId(7), chain_id)
+            .expect("state phase should still produce request");
+        let ProtocolMessage::EvmNative(EvmNativeMessage::GetBlockHeaders {
+            start_height, max, ..
+        }) = request
+        else {
+            panic!("completed snap range should continue header pull, not rescan state");
+        };
+        assert_eq!(start_height, 129);
+        assert_eq!(max, 1);
     }
 
     #[test]
