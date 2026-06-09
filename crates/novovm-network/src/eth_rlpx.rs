@@ -3670,6 +3670,22 @@ pub fn eth_rlpx_parse_block_headers_payload_v1(
     })
 }
 
+pub fn eth_rlpx_parse_raw_block_header_record_v1(
+    raw_header: &[u8],
+) -> Result<EthRlpxBlockHeaderRecordV1, String> {
+    if raw_header.is_empty() {
+        return Err("rlpx_raw_block_header_empty".to_string());
+    }
+    let wrapper = eth_rlpx_encode_list_v1(&[
+        eth_rlpx_encode_u64_v1(0),
+        eth_rlpx_encode_list_v1(&[raw_header.to_vec()]),
+    ]);
+    let mut headers = eth_rlpx_parse_block_headers_payload_v1(wrapper.as_slice())?.headers;
+    headers
+        .pop()
+        .ok_or_else(|| "rlpx_raw_block_header_missing".to_string())
+}
+
 pub fn eth_rlpx_parse_new_block_payload_v1(
     payload: &[u8],
 ) -> Result<EthRlpxNewBlockPayloadV1, String> {
@@ -5875,6 +5891,22 @@ mod tests {
         assert_eq!(parsed_headers_response.headers.len(), 1);
         assert_eq!(parsed_headers_response.headers[0].number, 128);
         assert_eq!(parsed_headers_response.headers[0].parent_hash, [0x33; 32]);
+        let parsed_raw_header = eth_rlpx_parse_raw_block_header_record_v1(
+            parsed_headers_response.headers[0]
+                .raw_rlp
+                .as_deref()
+                .expect("raw header rlp"),
+        )
+        .expect("parse raw header");
+        assert_eq!(
+            parsed_raw_header.hash,
+            parsed_headers_response.headers[0].hash
+        );
+        assert_eq!(parsed_raw_header.number, 128);
+        assert_eq!(
+            parsed_raw_header.transactions_root,
+            header_record.transactions_root
+        );
         let mut bal_header_record = header_record.clone();
         bal_header_record.block_access_list_hash = Some([0x91; 32]);
         let bal_headers_payload =

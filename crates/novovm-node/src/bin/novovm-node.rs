@@ -26,8 +26,9 @@ use novovm_network::{
     eth_discv4_build_ping_packet_v1, eth_discv4_build_pong_packet_v1,
     eth_discv4_parse_neighbors_packet_v1, eth_discv4_parse_packet_v1,
     eth_discv4_parse_pong_ping_hash_v1, eth_rlpx_local_static_nodekey_bytes_v1,
-    evaluate_advisory_first, get_network_runtime_native_body_snapshot_v1,
-    get_network_runtime_native_head_snapshot_v1, get_network_runtime_native_header_snapshot_v1,
+    eth_rlpx_parse_raw_block_header_record_v1, evaluate_advisory_first,
+    get_network_runtime_native_body_snapshot_v1, get_network_runtime_native_head_snapshot_v1,
+    get_network_runtime_native_header_rlp_v1, get_network_runtime_native_header_snapshot_v1,
     get_network_runtime_native_receipt_snapshot_v1, get_network_runtime_native_sync_status,
     get_network_runtime_sync_status, ingest_runtime_relay_membership,
     is_eth_fullnode_runtime_query_method,
@@ -3560,6 +3561,38 @@ fn eth_rlpx_native_canonical_block_for_header_v1(
         .find(|block| block.number == header.number && block.hash == header.hash)
 }
 
+fn eth_rlpx_native_header_snapshot_from_canonical_block_v1(
+    chain_id: u64,
+    block: &NetworkRuntimeNativeCanonicalBlockStateV1,
+) -> Option<NetworkRuntimeNativeHeaderSnapshotV1> {
+    let raw_header = get_network_runtime_native_header_rlp_v1(chain_id, block.hash)?;
+    let header = eth_rlpx_parse_raw_block_header_record_v1(raw_header.as_slice()).ok()?;
+    if header.number != block.number || header.hash != block.hash {
+        return None;
+    }
+    Some(NetworkRuntimeNativeHeaderSnapshotV1 {
+        chain_id,
+        number: header.number,
+        hash: header.hash,
+        parent_hash: header.parent_hash,
+        state_root: header.state_root,
+        transactions_root: header.transactions_root,
+        receipts_root: header.receipts_root,
+        ommers_hash: header.ommers_hash,
+        logs_bloom: header.logs_bloom,
+        gas_limit: header.gas_limit,
+        gas_used: header.gas_used,
+        timestamp: header.timestamp,
+        base_fee_per_gas: header.base_fee_per_gas,
+        withdrawals_root: header.withdrawals_root,
+        blob_gas_used: header.blob_gas_used,
+        excess_blob_gas: header.excess_blob_gas,
+        block_access_list_hash: header.block_access_list_hash,
+        source_peer_id: block.source_peer_id,
+        observed_unix_ms: block.observed_unix_ms,
+    })
+}
+
 fn eth_rlpx_native_body_snapshot_from_canonical_block_v1(
     block: &NetworkRuntimeNativeCanonicalBlockStateV1,
 ) -> Option<NetworkRuntimeNativeBodySnapshotV1> {
@@ -4336,6 +4369,34 @@ fn eth_rlpx_native_history_reconcile_canonical_flags_v1(
     }
 }
 
+fn upsert_eth_rlpx_native_history_block_store_v1(
+    store: &mut EthRlpxNativeHistoryStoreV1,
+    next_block: EthRlpxNativeHistoryBlockStoreV1,
+) {
+    if let Some(existing) = store.blocks.iter_mut().find(|block| {
+        block
+            .header
+            .hash
+            .eq_ignore_ascii_case(&next_block.header.hash)
+    }) {
+        existing.header = next_block.header;
+        if next_block.body.is_some() || existing.body.is_none() {
+            existing.body = next_block.body;
+        }
+        if next_block.receipt.is_some() || existing.receipt.is_none() {
+            existing.receipt = next_block.receipt;
+        }
+        if next_block.canonical {
+            existing.canonical = true;
+            existing.safe = next_block.safe;
+            existing.finalized = next_block.finalized;
+            existing.reorg_depth_hint = next_block.reorg_depth_hint;
+        }
+    } else {
+        store.blocks.push(next_block);
+    }
+}
+
 fn update_eth_rlpx_native_history_store_from_snapshots_v1(
     store: &mut EthRlpxNativeHistoryStoreV1,
     chain_id: u64,
@@ -4383,27 +4444,30 @@ fn update_eth_rlpx_native_history_store_from_snapshots_v1(
         reorg_depth_hint: matching_head.and_then(|head| head.reorg_depth_hint),
     };
 
-    if let Some(existing) = store.blocks.iter_mut().find(|block| {
-        block
-            .header
-            .hash
-            .eq_ignore_ascii_case(&next_block.header.hash)
-    }) {
-        existing.header = next_block.header;
-        if next_block.body.is_some() || existing.body.is_none() {
-            existing.body = next_block.body;
-        }
-        if next_block.receipt.is_some() || existing.receipt.is_none() {
-            existing.receipt = next_block.receipt;
-        }
-        if next_block.canonical {
-            existing.canonical = true;
-            existing.safe = next_block.safe;
-            existing.finalized = next_block.finalized;
-            existing.reorg_depth_hint = next_block.reorg_depth_hint;
-        }
-    } else {
-        store.blocks.push(next_block);
+    upsert_eth_rlpx_native_history_block_store_v1(store, next_block);
+
+    for block in snapshot_network_runtime_native_canonical_blocks_v1(chain_id, retention.max(1)) {
+        let Some(header) =
+            eth_rlpx_native_header_snapshot_from_canonical_block_v1(chain_id, &block)
+        else {
+            continue;
+        };
+        let body = eth_rlpx_native_body_snapshot_from_canonical_block_v1(&block)
+            .map(|body| eth_rlpx_native_body_store_from_snapshot_v1(&body));
+        let receipt = eth_rlpx_native_receipt_snapshot_from_canonical_block_v1(&block)
+            .map(|receipt| eth_rlpx_native_receipt_store_from_snapshot_v1(&receipt));
+        upsert_eth_rlpx_native_history_block_store_v1(
+            store,
+            EthRlpxNativeHistoryBlockStoreV1 {
+                header: eth_rlpx_native_header_store_from_snapshot_v1(&header),
+                body,
+                receipt,
+                canonical: block.canonical,
+                safe: block.safe,
+                finalized: block.finalized,
+                reorg_depth_hint: None,
+            },
+        );
     }
 
     eth_rlpx_native_history_reconcile_canonical_flags_v1(store, retention);
@@ -6831,6 +6895,137 @@ mod mainline_evm_cli_tests {
         );
 
         let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn eth_rlpx_native_history_store_merges_runtime_header_only_window_v1() {
+        let chain_id = 9_991_773_u64;
+        let peer_id = 7_773_u64;
+        let base_number = 8_000_u64;
+        let observed = now_unix_ms() as u128;
+        let mut parent_hash = [0x33_u8; 32];
+        let mut current_header = None::<NetworkRuntimeNativeHeaderSnapshotV1>;
+
+        for offset in 0..5_u8 {
+            let record = novovm_network::EthRlpxBlockHeaderRecordV1 {
+                number: base_number + u64::from(offset),
+                hash: [0u8; 32],
+                parent_hash,
+                state_root: [0x40 + offset; 32],
+                transactions_root: [0x50 + offset; 32],
+                receipts_root: [0x60 + offset; 32],
+                ommers_hash: novovm_network::eth_rlpx_empty_ommers_hash_v1(),
+                logs_bloom: vec![offset; 256],
+                gas_limit: Some(30_000_000),
+                gas_used: Some(21_000 + u64::from(offset)),
+                timestamp: Some(1_900_030_000 + u64::from(offset)),
+                base_fee_per_gas: Some(7 + u128::from(offset)),
+                withdrawals_root: Some(novovm_network::eth_rlpx_empty_trie_root_v1()),
+                blob_gas_used: Some(0),
+                excess_blob_gas: Some(0),
+                block_access_list_hash: None,
+                raw_rlp: None,
+            };
+            let payload = novovm_network::eth_rlpx_build_block_headers_payload_v1(
+                1,
+                std::slice::from_ref(&record),
+            );
+            let parsed =
+                novovm_network::eth_rlpx_parse_block_headers_payload_v1(payload.as_slice())
+                    .expect("parse header payload")
+                    .headers
+                    .pop()
+                    .expect("parsed header");
+            novovm_network::set_network_runtime_native_header_rlp_v1(
+                chain_id,
+                parsed.hash,
+                parsed.raw_rlp.as_deref().expect("raw header rlp"),
+            );
+            let header = NetworkRuntimeNativeHeaderSnapshotV1 {
+                chain_id,
+                number: parsed.number,
+                hash: parsed.hash,
+                parent_hash: parsed.parent_hash,
+                state_root: parsed.state_root,
+                transactions_root: parsed.transactions_root,
+                receipts_root: parsed.receipts_root,
+                ommers_hash: parsed.ommers_hash,
+                logs_bloom: parsed.logs_bloom,
+                gas_limit: parsed.gas_limit,
+                gas_used: parsed.gas_used,
+                timestamp: parsed.timestamp,
+                base_fee_per_gas: parsed.base_fee_per_gas,
+                withdrawals_root: parsed.withdrawals_root,
+                blob_gas_used: parsed.blob_gas_used,
+                excess_blob_gas: parsed.excess_blob_gas,
+                block_access_list_hash: parsed.block_access_list_hash,
+                source_peer_id: Some(peer_id),
+                observed_unix_ms: observed + u128::from(offset),
+            };
+            set_network_runtime_native_header_snapshot_v1(chain_id, header.clone());
+            parent_hash = header.hash;
+            current_header = Some(header);
+        }
+
+        let current_header = current_header.expect("current header");
+        let current_head = NetworkRuntimeNativeHeadSnapshotV1 {
+            chain_id,
+            phase: NetworkRuntimeNativeSyncPhaseV1::State,
+            peer_count: 1,
+            block_number: current_header.number,
+            block_hash: current_header.hash,
+            parent_block_hash: current_header.parent_hash,
+            state_root: current_header.state_root,
+            canonical: true,
+            safe: false,
+            finalized: false,
+            reorg_depth_hint: None,
+            body_available: false,
+            source_peer_id: Some(peer_id),
+            observed_unix_ms: current_header.observed_unix_ms,
+        };
+        set_network_runtime_native_head_snapshot_v1(chain_id, current_head.clone());
+        let sync_status = NetworkRuntimeSyncStatus {
+            peer_count: 1,
+            starting_block: base_number,
+            current_block: current_header.number,
+            highest_block: current_header.number + 64,
+        };
+        set_network_runtime_sync_status(chain_id, sync_status);
+
+        let mut store = eth_rlpx_native_history_store_empty_v1(chain_id);
+        assert!(update_eth_rlpx_native_history_store_from_snapshots_v1(
+            &mut store,
+            chain_id,
+            Some(sync_status),
+            Some(&current_header),
+            None,
+            None,
+            Some(&current_head),
+            16,
+        ));
+        let stored_numbers = store
+            .blocks
+            .iter()
+            .map(|block| block.header.number)
+            .collect::<Vec<_>>();
+        assert_eq!(stored_numbers, vec![8_000, 8_001, 8_002, 8_003, 8_004]);
+        assert!(store
+            .blocks
+            .iter()
+            .all(|block| block.body.is_none() && block.receipt.is_none()));
+
+        let restored =
+            restore_eth_rlpx_native_history_store_v1(&store, 16).expect("restore history store");
+        assert_eq!(restored, current_header.number);
+        let canonical_blocks = snapshot_network_runtime_native_canonical_blocks_v1(chain_id, 16);
+        let mut restored_numbers = canonical_blocks
+            .iter()
+            .filter(|block| block.number >= base_number && block.number <= current_header.number)
+            .map(|block| block.number)
+            .collect::<Vec<_>>();
+        restored_numbers.sort_unstable();
+        assert_eq!(restored_numbers, vec![8_000, 8_001, 8_002, 8_003, 8_004]);
     }
 
     #[test]
