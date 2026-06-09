@@ -2542,8 +2542,6 @@ fn recompute_runtime_sync_status_from_observed(
             .highest_block
             .max(status.current_block)
             .max(remote_best)
-    } else if has_peer_observation_history {
-        status.current_block
     } else {
         status.highest_block.max(status.current_block)
     };
@@ -4818,7 +4816,7 @@ mod tests {
     }
 
     #[test]
-    fn unregister_peer_keeps_remote_best_hint_until_expiry() {
+    fn unregister_peer_keeps_known_highest_after_remote_best_hint_expiry() {
         let chain_id = 2027_u64;
         clear_runtime_sync_status_for_test(chain_id);
         observe_network_runtime_local_head(chain_id, 10).expect("observe local head");
@@ -4846,7 +4844,7 @@ mod tests {
             get_network_runtime_sync_status(chain_id).expect("status after hint expiry");
         assert_eq!(status_after_hint_expiry.peer_count, 0);
         assert_eq!(status_after_hint_expiry.current_block, 10);
-        assert_eq!(status_after_hint_expiry.highest_block, 10);
+        assert_eq!(status_after_hint_expiry.highest_block, 100);
     }
 
     #[test]

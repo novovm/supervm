@@ -221,6 +221,60 @@ cargo run -p novovm-node --bin novovm-node
 
 该证据说明 SUPERVM 长跑产品入口已经具备公网 peer 大帧 reset 后的请求容量退避，不再固定用同一 oversized window 重试；但这仍不是 geth 级长期主网同步完成证明。下一步应继续做更长窗口验证：观察退避后的 `96/64` 请求是否能完成 headers/body/receipts，并在成功后恢复到 `192/128`。
 
+### 2026-06-09 RLPx known highest 单调性修复
+
+继续用产品入口跑更长窗口后，adaptive batch 行为按预期发生，但暴露出更基础的长期同步问题：
+
+```powershell
+$env:NOVOVM_NODE_MODE='eth_rlpx_sync'
+$env:NOVOVM_NODE_VERBOSE='1'
+$env:NOVOVM_ETH_RLPX_TICKS='18'
+$env:NOVOVM_ETH_RLPX_SLEEP_MS='600'
+cargo run -p novovm-node --bin novovm-node
+```
+
+关键观测：
+
+- 起点：`current=1853/highest=25277769`。
+- tick 2：达到 ready peer，`sync_requests=1`，`highest=25277793`。
+- tick 4：active request 失败为 `rlpx_frame_header_mac_mismatch`，adaptive batch 从 `192/128` 降到 `96/64`。
+- tick 12：在公网 peer 持续 churn 且 remote-best freshness hint 过期后，runtime 输出 `current=1853/highest=1853`。
+- tick 14/16：新 ready peer 又把 `highest` 推到 `25277823` / `25277831`。
+- tick 17：在 `96/64` 后仍遇到 `rlpx_frame_body_read_failed read=67520/171088`，adaptive batch 继续降到 `64/32`。
+- 最终 checkpoint 写回 `highest=25277831`，但 tick 12 的短暂降高不符合长期同步语义。
+
+原因：
+
+- `remote_best_hint` 设计为 freshness hint，默认 300 秒过期。
+- 过期后 `recompute_runtime_sync_status_from_observed` 在“有过 peer 观测但当前没有有效 remote best”时把 `highest_block` 降为 `current_block`。
+- 对短期 freshness 来说合理，但对长期主网同步不合理；已知远端最高块/检查点不应因临时无 peer 而回退。
+
+本轮同步到 SUPERVM 的产品语义：
+
+- `highest_block` 作为已知最高块 floor 单调不降。
+- `remote_best_hint` 过期只影响 freshness/peer_count，不清空已知最高块。
+- lagging peer 或短暂无 peer 不再把 `highest` 拉回 `current`。
+
+本轮验证：
+
+```powershell
+cargo test -p novovm-network unregister_peer_keeps_known_highest_after_remote_best_hint_expiry -- --nocapture
+cargo test -p novovm-network lagging_peer_observation_does_not_lower_known_highest -- --nocapture
+cargo test -p novovm-node eth_rlpx_ -- --nocapture
+cargo test -p novovm-network missing_body_recovery -- --nocapture
+cargo check --workspace
+```
+
+结果：
+
+- `unregister_peer_keeps_known_highest_after_remote_best_hint_expiry`: passed
+- `lagging_peer_observation_does_not_lower_known_highest`: passed
+- `novovm-node eth_rlpx_`: `22 passed`
+- `novovm-network missing_body_recovery`: `4 passed`
+- `cargo check --workspace`: passed
+
+该证据修复的是长期同步的基础 runtime 语义，不声明 headers/body 已持续推进完成。下一步仍是继续产品长跑，观察 `64/32` 请求窗口是否能完成 headers/body/receipts；如果仍失败，再继续按公网真实瓶颈收敛请求读取/peer 选择。
+
 ### 2026-06-09 go-ethereum handler-surface 复审
 
 本轮按最新请求再次检查 `D:\WEB3_AI\go-ethereum`：
