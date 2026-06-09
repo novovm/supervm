@@ -22,6 +22,32 @@
 
 长期同步 v1 的成功标准不再是继续堆内部 smoke，而是一次真实产品入口长跑：连续 24 小时运行，`current` 持续追高，当前 head 的 body/receipt/state 不长期缺失，进程重启后能从本地 DB 恢复并继续同步。达成前不能声明完整 geth 全节点或已能长期无差别加入 Ethereum 主网同步。
 
+### 2026-06-09 参考意见采纳与本轮收口
+
+外部参考意见的核心判断是有效的：当前不应继续扩散 EVM fixture、BAL、gateway、JSON-RPC 或产品叙事；本阶段只服务 `Ethereum 主网长期同步 v1`。本轮按该边界执行：
+
+- `D:\WEB3_AI\go-ethereum` 已再次 `git fetch origin --prune` + `git pull --ff-only`，本地 HEAD 与 `origin/master` 均为 `1f87331fbc58702b812a7b14e65aa7a28776cc46`，没有新于该 HEAD 的官方 geth 提交需要迁移。
+- 最近 geth batch 中只有 `eth/protocols/eth: track announced tx hashes only after send (#35122)` 属于主网可观察协议面；SUPERVM 已按成功写出 `NewPooledTransactionHashes` 后才记录 propagated 的语义闭合。`cmd/utils`、`cmd/devp2p`、ABI/错误字符串类提交不要求 SUPERVM 同步产品逻辑。
+- 本轮唯一代码改动收敛在 RLPx 长同步：header-only 推进允许恢复 headers batch 继续追高，但当前 head 没有 body/receipt material 时，bodies batch 不再跟随 header-only progress 放大，而是降档进入 body recovery。
+
+验证：
+
+```powershell
+cargo fmt --check
+cargo test -p novovm-node eth_rlpx_adaptive_public_sync_batch -- --nocapture
+cargo test -p novovm-node eth_rlpx_ -- --nocapture
+cargo check --workspace
+```
+
+真实主网产品入口短验证使用现有 Rust 入口 `target\debug\novovm-node.exe`，未新增脚本。日志 `artifacts/mainline/eth-rlpx-long-sync-v1-20260609-body-backoff.out.log` 显示：
+
+- 从 header-only `current=2909` 恢复，tick 8 取得 `bodies=1/receipts=1`，`body_available=true`。
+- tick 12 推进到 header-only `current=3005`，`headers=96/bodies=0/receipts=0`。
+- 同 tick 立即输出 `eth_rlpx_adaptive_batch ... reason=header_only_body_backoff headers_old=96 headers_new=192 bodies_old=128 bodies_new=64`。
+- tick 13 在 public peer MAC/close failure 后继续降到 `bodies_new=32`。
+
+该证据只证明 header-only 推进后的 body recovery 窗口不再被错误放大；24 小时长期主网同步仍未完成，不能声明已经像 geth 一样长期无差别加入 Ethereum 主网。
+
 ## 2026-06-09 GitHub 推送诊断
 
 本轮阶段性诊断已经同步到 GitHub：

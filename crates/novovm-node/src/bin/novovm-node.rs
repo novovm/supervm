@@ -4881,6 +4881,11 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
             || report.header_updates > 0
             || report.body_updates > 0
             || report.receipt_updates > 0;
+        let body_material_made_progress = report.body_updates > 0
+            || report.receipt_updates > 0
+            || body_for_header
+                .as_ref()
+                .is_some_and(|body| body.body_available);
         if sync_made_progress {
             last_sync_progress_tick = tick;
             last_sync_progress_block = last_sync_progress_block.max(current_sync_block);
@@ -4970,6 +4975,8 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
         if adaptive_batch_enabled {
             let request_transport_failure =
                 eth_rlpx_report_has_request_transport_failure_v1(&report);
+            let body_recovery_pressure =
+                request_transport_failure || (sync_made_progress && !body_material_made_progress);
             let next_headers_batch = eth_rlpx_adaptive_public_sync_batch_v1(
                 runtime_headers_batch,
                 max_runtime_headers_batch,
@@ -4981,8 +4988,8 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
                 runtime_bodies_batch,
                 max_runtime_bodies_batch,
                 adaptive_bodies_min_batch,
-                sync_made_progress,
-                request_transport_failure,
+                body_material_made_progress,
+                body_recovery_pressure,
             );
             if next_headers_batch != runtime_headers_batch
                 || next_bodies_batch != runtime_bodies_batch
@@ -5010,7 +5017,9 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
                     runtime_headers_batch,
                     old_bodies_batch,
                     runtime_bodies_batch,
-                    if sync_made_progress {
+                    if sync_made_progress && !body_material_made_progress {
+                        "header_only_body_backoff"
+                    } else if sync_made_progress || body_material_made_progress {
                         "progress_restore"
                     } else {
                         "request_transport_failure"
@@ -5809,6 +5818,18 @@ mod mainline_evm_cli_tests {
         assert_eq!(
             eth_rlpx_adaptive_public_sync_batch_v1(192, 192, 64, true, false),
             192
+        );
+    }
+
+    #[test]
+    fn eth_rlpx_adaptive_public_sync_batch_does_not_restore_bodies_on_header_only_progress_v1() {
+        let header_batch = eth_rlpx_adaptive_public_sync_batch_v1(96, 192, 64, true, false);
+        let body_batch = eth_rlpx_adaptive_public_sync_batch_v1(128, 128, 32, false, true);
+
+        assert_eq!(header_batch, 192);
+        assert_eq!(
+            body_batch, 64,
+            "header-only progress must back off body requests while latest head lacks body material"
         );
     }
 
