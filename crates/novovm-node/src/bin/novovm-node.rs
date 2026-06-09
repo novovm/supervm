@@ -2268,6 +2268,14 @@ fn eth_rlpx_report_has_request_transport_failure_v1(
     })
 }
 
+fn eth_rlpx_current_head_material_missing_v1(
+    header_present: bool,
+    body_available: bool,
+    receipt_available: bool,
+) -> bool {
+    header_present && (!body_available || !receipt_available)
+}
+
 fn eth_rlpx_apply_public_sync_batch_defaults_v1(
     budget: &mut EthFullnodeBudgetHooksV1,
     headers_batch: u64,
@@ -4876,10 +4884,21 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
         let head_snapshot = get_network_runtime_native_head_snapshot_v1(chain_id);
         let current_sync_block = sync_status.map(|status| status.current_block).unwrap_or(0);
         let highest_sync_block = sync_status.map(|status| status.highest_block).unwrap_or(0);
-        let current_head_body_missing = header.is_some()
-            && !body_for_header
-                .as_ref()
-                .is_some_and(|body| body.body_available);
+        let current_head_present = header.is_some();
+        let current_head_body_available = body_for_header
+            .as_ref()
+            .is_some_and(|body| body.body_available);
+        let current_head_receipt_available = receipt_for_header
+            .as_ref()
+            .is_some_and(|receipt| receipt.receipts_available);
+        let current_head_body_missing = current_head_present && !current_head_body_available;
+        let current_head_receipt_missing =
+            current_head_present && current_head_body_available && !current_head_receipt_available;
+        let current_head_material_missing = eth_rlpx_current_head_material_missing_v1(
+            current_head_present,
+            current_head_body_available,
+            current_head_receipt_available,
+        );
         let sync_made_progress = current_sync_block > last_sync_progress_block
             || report.header_updates > 0
             || report.body_updates > 0
@@ -4902,7 +4921,7 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
             )
         });
         println!(
-            "eth_rlpx_sync_tick: chain_id={} tick={} candidates={} connected={} ready={} status_updates={} sync_requests={} headers={} bodies={} receipts={} current={} highest={} native_phase={} header_number={} header_hash={} body_available={} failures={} last_failure={}",
+            "eth_rlpx_sync_tick: chain_id={} tick={} candidates={} connected={} ready={} status_updates={} sync_requests={} headers={} bodies={} receipts={} current={} highest={} native_phase={} header_number={} header_hash={} body_available={} receipt_available={} failures={} last_failure={}",
             chain_id,
             tick,
             peer_endpoints.len(),
@@ -4923,10 +4942,8 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
                 .as_ref()
                 .map(|snapshot| to_hex_prefixed(&snapshot.hash))
                 .unwrap_or_else(|| "-".to_string()),
-            body_for_header
-                .as_ref()
-                .map(|snapshot| snapshot.body_available)
-                .unwrap_or(false),
+            current_head_body_available,
+            current_head_receipt_available,
             report.peer_failures.len(),
             last_failure.unwrap_or_else(|| "-".to_string())
         );
@@ -5124,6 +5141,10 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
             && report.ready_peers == 0
             && report.body_updates == 0
             && tick.saturating_sub(last_sync_progress_tick) >= 1;
+        let receipt_recovery_stalled = current_head_receipt_missing
+            && report.ready_peers == 0
+            && report.receipt_updates == 0
+            && tick.saturating_sub(last_sync_progress_tick) >= 1;
         let bootstrap_stalled = report.ready_peers == 0
             && report.connected_peers == 0
             && report.scheduled_bootstrap_peers == 0
@@ -5136,9 +5157,9 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
                 runtime_sync_target_fanout,
                 adaptive_bootstrap_fanout,
                 max_peers,
-                progress_stalled || body_recovery_stalled,
+                progress_stalled || body_recovery_stalled || receipt_recovery_stalled,
                 report.ready_peers,
-                highest_sync_block > current_sync_block || current_head_body_missing,
+                highest_sync_block > current_sync_block || current_head_material_missing,
             );
             if next_sync_target_fanout > runtime_sync_target_fanout {
                 let old_fanout = runtime_sync_target_fanout;
@@ -5163,7 +5184,7 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
             candidate_pool_exhausted,
             progress_stalled,
             bootstrap_stalled,
-            body_recovery_stalled,
+            body_recovery_stalled || receipt_recovery_stalled,
             bool_env_default_true("NOVOVM_ETH_RLPX_REFRESH_EXHAUSTED_CANDIDATES_ENABLED"),
             candidate_limit,
             adaptive_candidate_limit,
@@ -5793,6 +5814,33 @@ mod mainline_evm_cli_tests {
             eth_rlpx_adaptive_bootstrap_fanout_v1(8, 50, 50, true, 0, true),
             50,
             "a trusted pivot with current==highest but missing body is still an admission target"
+        );
+    }
+
+    #[test]
+    fn eth_rlpx_current_head_material_missing_includes_receipts_v1() {
+        assert!(!eth_rlpx_current_head_material_missing_v1(
+            false, false, false
+        ));
+        assert!(eth_rlpx_current_head_material_missing_v1(
+            true, false, false
+        ));
+        assert_eq!(
+            eth_rlpx_current_head_material_missing_v1(true, true, false),
+            true,
+            "a near-head pivot with body but missing receipts must stay a sync target"
+        );
+        assert!(!eth_rlpx_current_head_material_missing_v1(true, true, true));
+        assert_eq!(
+            eth_rlpx_adaptive_bootstrap_fanout_v1(
+                8,
+                50,
+                50,
+                true,
+                0,
+                eth_rlpx_current_head_material_missing_v1(true, true, false),
+            ),
+            50
         );
     }
 
