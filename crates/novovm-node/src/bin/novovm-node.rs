@@ -2210,14 +2210,18 @@ fn eth_rlpx_apply_public_sync_batch_defaults_v1(
     budget.sync_pull_bodies_batch = budget.sync_pull_bodies_batch.min(bodies_batch.max(1));
 }
 
+const ETH_RLPX_PUBLIC_SYNC_DEFAULT_REQUEST_TIMEOUT_MS_V1: u64 = 15_000;
+
 fn eth_rlpx_apply_public_sync_runtime_defaults_v1(
     budget: &mut EthFullnodeBudgetHooksV1,
     headers_batch: u64,
     bodies_batch: u64,
     sync_target_fanout: usize,
+    rlpx_request_timeout_ms: u64,
 ) {
     eth_rlpx_apply_public_sync_batch_defaults_v1(budget, headers_batch, bodies_batch);
     budget.sync_target_fanout = sync_target_fanout.max(1) as u64;
+    budget.rlpx_request_timeout_ms = rlpx_request_timeout_ms.max(1);
 }
 
 fn eth_rlpx_peer_discovery_total_timeout_v1() -> Duration {
@@ -4501,6 +4505,12 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
     let mut runtime_sync_target_fanout = base_sync_target_fanout;
     let headers_batch = u64_env_clamped("NOVOVM_ETH_RLPX_HEADERS_BATCH", 192, 1, 2_048);
     let bodies_batch = u64_env_clamped("NOVOVM_ETH_RLPX_BODIES_BATCH", 128, 1, 256);
+    let rlpx_request_timeout_ms = u64_env_clamped(
+        "NOVOVM_ETH_RLPX_REQUEST_TIMEOUT_MS",
+        ETH_RLPX_PUBLIC_SYNC_DEFAULT_REQUEST_TIMEOUT_MS_V1,
+        1_000,
+        120_000,
+    );
     let exhausted_refresh_interval_ticks =
         usize_env_allow_zero("NOVOVM_ETH_RLPX_EXHAUSTED_REFRESH_INTERVAL_TICKS", 8)?
             .clamp(1, 10_000);
@@ -4555,6 +4565,7 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
         headers_batch,
         bodies_batch,
         runtime_sync_target_fanout,
+        rlpx_request_timeout_ms,
     );
     let checkpoint_enabled = bool_env_default_true("NOVOVM_ETH_RLPX_CHECKPOINT_ENABLED");
     let checkpoint_path = eth_rlpx_sync_checkpoint_path_v1();
@@ -5633,11 +5644,21 @@ mod mainline_evm_cli_tests {
         let mut budget = EthFullnodeBudgetHooksV1::default();
         assert_eq!(budget.sync_target_fanout, 1);
 
-        eth_rlpx_apply_public_sync_runtime_defaults_v1(&mut budget, 192, 128, 8);
+        eth_rlpx_apply_public_sync_runtime_defaults_v1(
+            &mut budget,
+            192,
+            128,
+            8,
+            ETH_RLPX_PUBLIC_SYNC_DEFAULT_REQUEST_TIMEOUT_MS_V1,
+        );
 
         assert_eq!(budget.sync_target_fanout, 8);
         assert_eq!(budget.sync_pull_headers_batch, 192);
         assert_eq!(budget.sync_pull_bodies_batch, 128);
+        assert_eq!(
+            budget.rlpx_request_timeout_ms,
+            ETH_RLPX_PUBLIC_SYNC_DEFAULT_REQUEST_TIMEOUT_MS_V1
+        );
     }
 
     #[test]

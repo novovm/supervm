@@ -108,6 +108,68 @@ NOVOVM_NODE_MODE=eth_rlpx_sync cargo run -p novovm-node --bin novovm-node
 
 该证据只证明 RLPx 公网 peer 中途断开后的恢复语义已改善，不声明 SUPERVM 已完成 geth 级长期主网同步。
 
+### 2026-06-09 官方 upstream 复拉与 RLPx 请求超时审阅
+
+按最新请求再次在 `D:\WEB3_AI\go-ethereum` 执行：
+
+```powershell
+git fetch origin --prune
+git pull --ff-only
+```
+
+结果：
+
+- `git pull --ff-only` 返回 `Already up to date.`
+- `HEAD...origin/master = 0 0`
+- 本地和远端仍为 `1f87331fbc58702b812a7b14e65aa7a28776cc46`
+- go-ethereum 工作区仅保留既有未跟踪临时项 `tmp_go_sel/`、`tmp_rlpx_mempool_probe.exe`，未触碰
+
+本轮没有新于 `1f87331fb` 的官方 geth 提交需要迁移；但复审 geth downloader 请求语义后，确认一个影响长期公网同步的可观察差异：geth 在 `eth/downloader/*` 的 header/body/snap 请求使用 `p2p/msgrate.Trackers.TargetTimeout()`，该值按 RTT/confidence 动态计算，`ttlScaling=3`，并被 `ttlLimit=1m` 封顶；SUPERVM 之前公网产品入口沿用核心默认 5s，请求真实公网 peer 时容易过早触发 `rlpx_request_timeout:headers`。
+
+本轮同步到 SUPERVM 的产品语义：
+
+- 保持核心库默认不动，只调整直接产品入口 `novovm-node` 的公网 RLPx sync runtime budget。
+- 新增 `NOVOVM_ETH_RLPX_REQUEST_TIMEOUT_MS`，默认 `15000`，环境变量范围钳制为 `1000..120000`。
+- `eth_rlpx_apply_public_sync_runtime_defaults_v1` 现在把该值写入 `budget.rlpx_request_timeout_ms`，与现有 `headers=192`、`bodies=128`、runtime fanout 一起形成公网同步入口默认。
+
+本轮验证：
+
+```powershell
+cargo fmt
+cargo test -p novovm-node eth_rlpx_ -- --nocapture
+cargo test -p novovm-network missing_body_recovery -- --nocapture
+cargo check --workspace
+git diff --check
+```
+
+结果：
+
+- `novovm-node eth_rlpx_`: `21 passed`
+- `novovm-network missing_body_recovery`: `4 passed`
+- `cargo check --workspace`: passed
+- `git diff --check`: 只有 Windows CRLF 提示，无空白错误
+
+真实主网产品入口短验证：
+
+```powershell
+$env:NOVOVM_NODE_MODE='eth_rlpx_sync'
+$env:NOVOVM_NODE_VERBOSE='1'
+$env:NOVOVM_ETH_RLPX_TICKS='8'
+$env:NOVOVM_ETH_RLPX_SLEEP_MS='600'
+cargo run -p novovm-node --bin novovm-node
+```
+
+结果：
+
+- 起点：`current=1853/highest=25277653`，当前 body/receipt 均 available。
+- tick 4：adaptive fanout 从 `8` 提升到 `32`。
+- tick 5：达到 `ready=1/status_updates=1/sync_requests=1`，`highest=25277696`。
+- tick 7：再次达到 `ready=1/sync_requests=1`，`highest=25277702`。
+- 本轮没有再出现上一轮的 `rlpx_request_timeout:headers`。
+- 当前新瓶颈是公网 peer 中途关闭或大帧读取失败，例如 `rlpx_frame_body_read_failed read=61696/171088`；`current` 尚未越过 `1853`。
+
+该证据说明 SUPERVM 公网入口已补齐 geth 对照下的请求 TTL 语义差异，但仍不能声明已经像 geth 一样长期加入 Ethereum 主网同步；下一步应继续处理公网 peer 中途关闭后的同批请求重试/换 peer 接续，而不是继续堆内部 smoke。
+
 ### 2026-06-09 go-ethereum handler-surface 复审
 
 本轮按最新请求再次检查 `D:\WEB3_AI\go-ethereum`：
