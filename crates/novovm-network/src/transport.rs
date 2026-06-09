@@ -501,10 +501,23 @@ impl EthFullnodeNativePeerWorkerV1 {
                 }
             }
         }
+        let sync_started = Instant::now();
+        let sync_tick_budget = eth_fullnode_native_rlpx_bootstrap_tick_budget_v1();
+        let mut skipped_sync_missing_endpoint_peers = 0usize;
         for &peer in plan.sync_peers.iter() {
+            if report.attempted_sync_peers > 0 && sync_started.elapsed() >= sync_tick_budget {
+                report.skipped_sync_budget_peers = plan
+                    .sync_peers
+                    .len()
+                    .saturating_sub(report.attempted_sync_peers)
+                    .saturating_sub(skipped_sync_missing_endpoint_peers);
+                break;
+            }
             let Some(endpoint) = self.endpoint_for_peer(peer) else {
                 report.skipped_missing_endpoint_peers =
                     report.skipped_missing_endpoint_peers.saturating_add(1);
+                skipped_sync_missing_endpoint_peers =
+                    skipped_sync_missing_endpoint_peers.saturating_add(1);
                 continue;
             };
             report.attempted_sync_peers = report.attempted_sync_peers.saturating_add(1);
@@ -687,6 +700,7 @@ pub struct EthFullnodeNativeRealDriveReportV1 {
     pub failed_sync_peers: usize,
     pub skipped_missing_endpoint_peers: usize,
     pub skipped_bootstrap_budget_peers: usize,
+    pub skipped_sync_budget_peers: usize,
     pub connected_peers: usize,
     pub ready_peers: usize,
     pub status_updates: usize,
@@ -1270,6 +1284,7 @@ fn build_eth_fullnode_native_worker_runtime_snapshot_v1(
         failed_sync_peers: report.failed_sync_peers as u64,
         skipped_missing_endpoint_peers: report.skipped_missing_endpoint_peers as u64,
         skipped_bootstrap_budget_peers: report.skipped_bootstrap_budget_peers as u64,
+        skipped_sync_budget_peers: report.skipped_sync_budget_peers as u64,
         connected_peers: report.connected_peers as u64,
         ready_peers: report.ready_peers as u64,
         status_updates: report.status_updates as u64,
@@ -13891,6 +13906,90 @@ mod tests {
         assert!(
             started.elapsed() < Duration::from_secs(3),
             "bootstrap tick should stay bounded even with stalled local peers"
+        );
+        drop(listeners);
+    }
+
+    #[test]
+    fn real_rlpx_sync_peers_are_bounded_by_tick_budget_v1() {
+        let _guard = eth_rlpx_env_test_lock_v1()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let _connect_timeout = set_test_env_var_v1("NOVOVM_ETH_RLPX_CONNECT_TIMEOUT_MS", "250");
+        let _tick_budget = set_test_env_var_v1("NOVOVM_ETH_RLPX_BOOTSTRAP_TICK_BUDGET_MS", "1000");
+
+        let chain_id = 99_160_333_u64;
+        let local = NodeId(555_200);
+        let mut listeners = Vec::new();
+        let mut endpoints = Vec::new();
+        let mut peers = Vec::new();
+        for idx in 0..6_u64 {
+            let listener = TcpListener::bind("127.0.0.1:0").expect("bind stalled sync peer");
+            let listen_addr = listener.local_addr().expect("listener addr");
+            let responder_signing = k256::ecdsa::SigningKey::random(&mut rand::rngs::OsRng);
+            let responder_nodekey: [u8; 32] = responder_signing.to_bytes().into();
+            let responder_pub = crate::eth_rlpx_pubkey_from_nodekey_bytes_v1(&responder_nodekey)
+                .expect("derive stalled pubkey");
+            let peer = NodeId(555_201 + idx);
+            let _ = upsert_network_runtime_eth_peer_session(
+                chain_id,
+                peer.0,
+                &[69, 70],
+                &[1],
+                Some(64),
+            );
+            peers.push(peer);
+            endpoints.push(PluginPeerEndpoint {
+                endpoint: format!(
+                    "enode://{}@{}",
+                    responder_pub
+                        .iter()
+                        .map(|b| format!("{b:02x}"))
+                        .collect::<String>(),
+                    listen_addr
+                ),
+                node_hint: peer.0,
+                addr_hint: listen_addr.to_string(),
+            });
+            listeners.push(listener);
+        }
+
+        let mut budget = default_eth_fullnode_budget_hooks_v1();
+        budget.active_native_peer_soft_limit = 6;
+        budget.active_native_peer_hard_limit = 6;
+        budget.sync_target_fanout = 6;
+        budget.sync_request_interval_ms = u64::MAX;
+        let worker = EthFullnodeNativePeerWorkerV1::new(EthFullnodeNativePeerWorkerConfigV1 {
+            chain_id,
+            local_node: local,
+            peers,
+            peer_endpoints: endpoints,
+            recv_budget: 1,
+            sync_target_fanout: 6,
+            budget_hooks: budget,
+        });
+
+        let started = Instant::now();
+        let report = worker
+            .drive_real_network_once()
+            .expect("sync tick should be budgeted");
+        assert_eq!(report.scheduled_bootstrap_peers, 0);
+        assert_eq!(report.scheduled_sync_peers, 6);
+        assert!(report.attempted_sync_peers > 0);
+        assert!(
+            report.attempted_sync_peers < report.scheduled_sync_peers,
+            "sync tick should stop before serially exhausting every stalled peer"
+        );
+        assert!(report.skipped_sync_budget_peers > 0);
+        assert_eq!(
+            report.attempted_sync_peers
+                + report.skipped_sync_budget_peers
+                + report.skipped_missing_endpoint_peers,
+            report.scheduled_sync_peers
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(4),
+            "sync tick should stay bounded under stalled ready peers"
         );
         drop(listeners);
     }

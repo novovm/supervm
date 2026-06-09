@@ -2219,7 +2219,7 @@ fn eth_rlpx_default_sync_target_fanout_v1(max_peers: usize) -> usize {
 }
 
 fn eth_rlpx_default_adaptive_bootstrap_fanout_v1(max_peers: usize) -> usize {
-    max_peers.max(1)
+    eth_rlpx_default_sync_target_fanout_v1(max_peers)
 }
 
 fn eth_rlpx_adaptive_bootstrap_fanout_v1(
@@ -5901,9 +5901,9 @@ mod mainline_evm_cli_tests {
     #[test]
     fn eth_rlpx_adaptive_bootstrap_fanout_raises_only_when_admission_stalled_v1() {
         assert_eq!(eth_rlpx_default_adaptive_bootstrap_fanout_v1(1), 1);
-        assert_eq!(eth_rlpx_default_adaptive_bootstrap_fanout_v1(32), 32);
-        assert_eq!(eth_rlpx_default_adaptive_bootstrap_fanout_v1(50), 50);
-        assert_eq!(eth_rlpx_default_adaptive_bootstrap_fanout_v1(64), 64);
+        assert_eq!(eth_rlpx_default_adaptive_bootstrap_fanout_v1(32), 8);
+        assert_eq!(eth_rlpx_default_adaptive_bootstrap_fanout_v1(50), 8);
+        assert_eq!(eth_rlpx_default_adaptive_bootstrap_fanout_v1(64), 8);
         assert_eq!(
             eth_rlpx_adaptive_bootstrap_fanout_v1(8, 32, 32, true, 0, true),
             32
