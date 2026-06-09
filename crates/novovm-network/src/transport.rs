@@ -403,6 +403,10 @@ impl EthFullnodeNativePeerWorkerV1 {
     pub fn drive_real_network_once(
         &self,
     ) -> Result<EthFullnodeNativeRealDriveReportV1, NetworkError> {
+        reconcile_eth_fullnode_native_rlpx_runtime_sessions_with_live_sessions_v1(
+            self.config.chain_id,
+            self.config.peers.as_slice(),
+        );
         let plan = self.plan();
         set_network_runtime_native_budget_hooks_v1(plan.chain_id, plan.budget_hooks.clone());
         let mut report = EthFullnodeNativeRealDriveReportV1 {
@@ -844,6 +848,38 @@ static ETH_FULLNODE_NATIVE_RLPX_SESSIONS: OnceLock<Mutex<EthFullnodeNativeRlpxSe
 
 fn eth_fullnode_native_rlpx_sessions_v1() -> &'static Mutex<EthFullnodeNativeRlpxSessionMapV1> {
     ETH_FULLNODE_NATIVE_RLPX_SESSIONS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn eth_fullnode_native_rlpx_live_peer_ids_v1(chain_id: u64) -> HashSet<u64> {
+    eth_fullnode_native_rlpx_sessions_v1()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .keys()
+        .filter_map(|(session_chain_id, peer_id)| {
+            if *session_chain_id == chain_id {
+                Some(*peer_id)
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+fn reconcile_eth_fullnode_native_rlpx_runtime_sessions_with_live_sessions_v1(
+    chain_id: u64,
+    peers: &[NodeId],
+) {
+    if peers.is_empty() {
+        return;
+    }
+    let live_peer_ids = eth_fullnode_native_rlpx_live_peer_ids_v1(chain_id);
+    for peer in peers {
+        if has_network_runtime_eth_peer_session(chain_id, peer.0)
+            && !live_peer_ids.contains(&peer.0)
+        {
+            mark_network_runtime_eth_peer_session_closed_v1(chain_id, peer.0);
+        }
+    }
 }
 
 static ETH_FULLNODE_NATIVE_RLPX_REQUEST_ID: OnceLock<std::sync::atomic::AtomicU64> =
@@ -9957,6 +9993,60 @@ mod tests {
     }
 
     #[test]
+    fn real_rlpx_worker_reconciles_stale_runtime_ready_without_live_session_v1() {
+        let chain_id = 9_926_800_u64;
+        let local = NodeId(9_926_800_001);
+        let remote = NodeId(9_926_800_002);
+        let endpoint = PluginPeerEndpoint {
+            endpoint: "enode://stale-runtime-ready@127.0.0.1:30303".to_string(),
+            node_hint: remote.0,
+            addr_hint: "127.0.0.1:30303".to_string(),
+        };
+        let _ = upsert_network_runtime_eth_peer_session(
+            chain_id,
+            remote.0,
+            &[69, 70],
+            &[1],
+            Some(25_282_008),
+        )
+        .expect("runtime ready session");
+        eth_fullnode_native_rlpx_sessions_v1()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .remove(&(chain_id, remote.0));
+
+        let mut budget = default_eth_fullnode_budget_hooks_v1();
+        budget.active_native_peer_soft_limit = 1;
+        budget.active_native_peer_hard_limit = 1;
+        let worker = EthFullnodeNativePeerWorkerV1::new(EthFullnodeNativePeerWorkerConfigV1 {
+            chain_id,
+            local_node: local,
+            peers: vec![remote],
+            peer_endpoints: vec![endpoint],
+            recv_budget: 1,
+            sync_target_fanout: 1,
+            budget_hooks: budget,
+        });
+        assert_eq!(worker.plan().sync_peers, vec![remote]);
+
+        reconcile_eth_fullnode_native_rlpx_runtime_sessions_with_live_sessions_v1(
+            chain_id,
+            worker.config().peers.as_slice(),
+        );
+
+        let snapshot = snapshot_network_runtime_eth_peer_sessions_for_peers_v1(chain_id, &[remote])
+            .into_iter()
+            .next()
+            .expect("peer snapshot");
+        assert!(!snapshot.session_ready);
+        assert_eq!(
+            snapshot.lifecycle_stage,
+            crate::EthPeerLifecycleStageV1::Discovered
+        );
+        assert!(worker.plan().sync_peers.is_empty());
+    }
+
+    #[test]
     fn rlpx_block_headers_validation_rejects_non_contiguous_batch_v1() {
         let empty_root = crate::eth_rlpx_empty_trie_root_v1();
         let empty_ommers_hash = crate::eth_rlpx_empty_ommers_hash_v1();
@@ -14044,9 +14134,10 @@ mod tests {
         let chain_id = 99_160_333_u64;
         let local = NodeId(555_200);
         let mut listeners = Vec::new();
+        let mut accepted_streams = Vec::new();
         let mut endpoints = Vec::new();
         let mut peers = Vec::new();
-        for idx in 0..6_u64 {
+        for idx in 0..40_u64 {
             let listener = TcpListener::bind("127.0.0.1:0").expect("bind stalled sync peer");
             let listen_addr = listener.local_addr().expect("listener addr");
             let responder_signing = k256::ecdsa::SigningKey::random(&mut rand::rngs::OsRng);
@@ -14061,6 +14152,14 @@ mod tests {
                 &[1],
                 Some(64),
             );
+            let (mut live_session, accepted, _peer_frame_session) =
+                dummy_rlpx_live_session_pair(chain_id);
+            live_session.endpoint.node_hint = peer.0;
+            eth_fullnode_native_rlpx_sessions_v1()
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .insert((chain_id, peer.0), live_session);
+            accepted_streams.push(accepted);
             peers.push(peer);
             endpoints.push(PluginPeerEndpoint {
                 endpoint: format!(
@@ -14078,9 +14177,9 @@ mod tests {
         }
 
         let mut budget = default_eth_fullnode_budget_hooks_v1();
-        budget.active_native_peer_soft_limit = 6;
-        budget.active_native_peer_hard_limit = 6;
-        budget.sync_target_fanout = 6;
+        budget.active_native_peer_soft_limit = 40;
+        budget.active_native_peer_hard_limit = 40;
+        budget.sync_target_fanout = 40;
         budget.sync_request_interval_ms = u64::MAX;
         let worker = EthFullnodeNativePeerWorkerV1::new(EthFullnodeNativePeerWorkerConfigV1 {
             chain_id,
@@ -14088,7 +14187,7 @@ mod tests {
             peers,
             peer_endpoints: endpoints,
             recv_budget: 1,
-            sync_target_fanout: 6,
+            sync_target_fanout: 40,
             budget_hooks: budget,
         });
 
@@ -14097,7 +14196,7 @@ mod tests {
             .drive_real_network_once()
             .expect("sync tick should be budgeted");
         assert_eq!(report.scheduled_bootstrap_peers, 0);
-        assert_eq!(report.scheduled_sync_peers, 6);
+        assert_eq!(report.scheduled_sync_peers, 40);
         assert!(report.attempted_sync_peers > 0);
         assert!(
             report.attempted_sync_peers < report.scheduled_sync_peers,
@@ -14114,6 +14213,7 @@ mod tests {
             started.elapsed() < Duration::from_secs(4),
             "sync tick should stay bounded under stalled ready peers"
         );
+        drop(accepted_streams);
         drop(listeners);
     }
 

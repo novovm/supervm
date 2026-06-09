@@ -2333,6 +2333,35 @@ fn eth_rlpx_report_has_request_transport_failure_v1(
     })
 }
 
+const ETH_RLPX_PUBLIC_SYNC_STATE_LAG_EFFECTIVE_HEADERS_BATCH_V1: u64 = 64;
+const ETH_RLPX_PUBLIC_SYNC_STATE_LAG_HEADER_LAG_THRESHOLD_V1: u64 = 128;
+
+fn eth_rlpx_adaptive_headers_batch_input_v1(
+    current_batch: u64,
+    native_phase: Option<NetworkRuntimeNativeSyncPhaseV1>,
+    current_block: u64,
+    highest_block: u64,
+    current_head_body_available: bool,
+    request_transport_failure: bool,
+) -> u64 {
+    let phase_can_resume_state_lag_headers = matches!(
+        native_phase,
+        Some(NetworkRuntimeNativeSyncPhaseV1::State | NetworkRuntimeNativeSyncPhaseV1::Discovery)
+    );
+    if request_transport_failure
+        && phase_can_resume_state_lag_headers
+        && current_head_body_available
+        && highest_block.saturating_sub(current_block)
+            > ETH_RLPX_PUBLIC_SYNC_STATE_LAG_HEADER_LAG_THRESHOLD_V1
+    {
+        current_batch
+            .min(ETH_RLPX_PUBLIC_SYNC_STATE_LAG_EFFECTIVE_HEADERS_BATCH_V1)
+            .max(1)
+    } else {
+        current_batch.max(1)
+    }
+}
+
 fn eth_rlpx_current_head_material_missing_v1(
     header_present: bool,
     body_available: bool,
@@ -5486,8 +5515,16 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
                 eth_rlpx_report_has_request_transport_failure_v1(&report);
             let body_recovery_pressure =
                 request_transport_failure || (sync_made_progress && current_head_material_missing);
-            let next_headers_batch = eth_rlpx_adaptive_public_sync_batch_v1(
+            let adaptive_headers_batch_input = eth_rlpx_adaptive_headers_batch_input_v1(
                 runtime_headers_batch,
+                native_sync.map(|status| status.phase),
+                current_sync_block,
+                highest_sync_block,
+                current_head_body_available,
+                request_transport_failure,
+            );
+            let next_headers_batch = eth_rlpx_adaptive_public_sync_batch_v1(
+                adaptive_headers_batch_input,
                 max_runtime_headers_batch,
                 adaptive_headers_min_batch,
                 header_sync_made_progress,
@@ -6589,6 +6626,49 @@ mod mainline_evm_cli_tests {
                 eth_rlpx_report_has_request_transport_failure_v1(&report),
             ),
             96
+        );
+    }
+
+    #[test]
+    fn eth_rlpx_state_lag_transport_failure_backs_off_effective_header_window_v1() {
+        let input = eth_rlpx_adaptive_headers_batch_input_v1(
+            192,
+            Some(NetworkRuntimeNativeSyncPhaseV1::State),
+            25_281_438,
+            25_282_008,
+            true,
+            true,
+        );
+
+        assert_eq!(input, 64);
+        assert_eq!(
+            eth_rlpx_adaptive_public_sync_batch_v1(input, 192, 16, false, true),
+            32,
+            "state-lag forward header failure must reduce the next actual 64-header request"
+        );
+        assert_eq!(
+            eth_rlpx_adaptive_headers_batch_input_v1(
+                192,
+                Some(NetworkRuntimeNativeSyncPhaseV1::State),
+                25_281_438,
+                25_282_008,
+                true,
+                false,
+            ),
+            192,
+            "successful state-lag progress should not lower the configured max batch"
+        );
+        assert_eq!(
+            eth_rlpx_adaptive_headers_batch_input_v1(
+                192,
+                Some(NetworkRuntimeNativeSyncPhaseV1::Discovery),
+                25_281_566,
+                25_282_060,
+                true,
+                true,
+            ),
+            64,
+            "after a live session drops, peer_count can make the same state-lag chase report discovery"
         );
     }
 
