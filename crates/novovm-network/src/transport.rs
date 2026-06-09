@@ -6890,6 +6890,16 @@ fn ingest_real_rlpx_block_bodies_v1(
     }
     session.last_bodies_request_id = None;
     session.pending_body_request_offset = 0;
+    eprintln!(
+        "network_info: rlpx stage bodies_received chain_id={} peer={} endpoint={} negotiated_eth={} request_id={} blocks={} expected_blocks={}",
+        chain_id,
+        source_peer_id,
+        session.endpoint.addr_hint,
+        session._negotiated_eth_version,
+        bodies.request_id,
+        observed_bodies,
+        expected_bodies,
+    );
     if observed_bodies < expected_bodies
         || session
             .pending_body_headers
