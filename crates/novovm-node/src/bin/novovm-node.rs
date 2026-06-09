@@ -2265,6 +2265,7 @@ fn eth_rlpx_report_has_request_transport_failure_v1(
     report.peer_failures.iter().any(|failure| {
         failure.error.contains("rlpx_session_closed")
             || failure.error.contains("rlpx_frame_body_read_failed")
+            || failure.error.contains("rlpx_remote_disconnected_ingest")
             || failure.error.contains("rlpx_request_timeout:headers")
             || failure.error.contains("rlpx_request_timeout:bodies")
             || failure.error.contains("rlpx_request_timeout:receipts")
@@ -6005,6 +6006,36 @@ mod mainline_evm_cli_tests {
         assert_eq!(
             eth_rlpx_adaptive_public_sync_batch_v1(192, 192, 64, true, false),
             192
+        );
+    }
+
+    #[test]
+    fn eth_rlpx_request_disconnect_counts_as_transport_failure_v1() {
+        let mut report = EthFullnodeNativeRealDriveReportV1::default();
+        report
+            .peer_failures
+            .push(novovm_network::EthFullnodeNativePeerFailureV1 {
+                peer_id: 7,
+                endpoint: Some("64.34.94.89:30303".to_string()),
+                phase: novovm_network::EthFullnodeNativePeerDrivePhaseV1::Sync,
+                class: novovm_network::EthFullnodeNativePeerFailureClassV1::Io,
+                lifecycle_class: Some(novovm_network::EthPeerFailureClassV1::Disconnect),
+                reason_code: Some(4),
+                reason_name: Some("too_many_peers".to_string()),
+                error: "rlpx_remote_disconnected_ingest:reason_code=4 reason=too_many_peers"
+                    .to_string(),
+            });
+
+        assert!(eth_rlpx_report_has_request_transport_failure_v1(&report));
+        assert_eq!(
+            eth_rlpx_adaptive_public_sync_batch_v1(
+                192,
+                192,
+                64,
+                false,
+                eth_rlpx_report_has_request_transport_failure_v1(&report),
+            ),
+            96
         );
     }
 
