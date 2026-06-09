@@ -973,6 +973,23 @@ fn eth_fullnode_rlpx_error_is_session_desync_v1(raw: &str) -> bool {
     raw.contains("rlpx_frame_header_mac_mismatch") || raw.contains("rlpx_frame_mac_mismatch")
 }
 
+fn observe_eth_fullnode_rlpx_request_write_error_v1(
+    chain_id: u64,
+    peer_id: u64,
+    failure_reason: &'static str,
+    err: &str,
+) {
+    if eth_fullnode_rlpx_error_is_timeout_v1(err) {
+        observe_network_runtime_eth_peer_timeout_v1(chain_id, peer_id, failure_reason);
+    } else if eth_fullnode_rlpx_error_is_remote_closed_v1(err)
+        || eth_fullnode_rlpx_error_is_session_desync_v1(err)
+    {
+        observe_network_runtime_eth_peer_disconnect_v1(chain_id, peer_id, None);
+    } else {
+        observe_network_runtime_eth_peer_handshake_failure_v1(chain_id, peer_id, failure_reason);
+    }
+}
+
 fn observe_eth_fullnode_connect_error_v1(chain_id: u64, peer_id: u64, err: &NetworkError) {
     match err {
         NetworkError::AddressParse(_) => observe_network_runtime_eth_peer_connect_failure_v1(
@@ -2643,10 +2660,11 @@ fn drive_eth_fullnode_native_rlpx_peer_session_once_v1(
                                 payload.as_slice(),
                             )
                             .map_err(|err| {
-                                observe_network_runtime_eth_peer_handshake_failure_v1(
+                                observe_eth_fullnode_rlpx_request_write_error_v1(
                                     chain_id,
                                     peer.0,
                                     "headers_request_write_failed",
+                                    err.as_str(),
                                 );
                                 NetworkError::Io(err)
                             }) {
@@ -3100,10 +3118,11 @@ fn dispatch_eth_fullnode_native_rlpx_missing_body_recovery_v1(
         payload.as_slice(),
     )
     .map_err(|err| {
-        observe_network_runtime_eth_peer_handshake_failure_v1(
+        observe_eth_fullnode_rlpx_request_write_error_v1(
             chain_id,
             peer.0,
             "missing_body_recovery_request_write_failed",
+            err.as_str(),
         );
         NetworkError::Io(err)
     })?;
@@ -3170,10 +3189,11 @@ fn dispatch_eth_fullnode_native_rlpx_missing_receipts_recovery_v1(
         payload.as_slice(),
     )
     .map_err(|err| {
-        observe_network_runtime_eth_peer_handshake_failure_v1(
+        observe_eth_fullnode_rlpx_request_write_error_v1(
             chain_id,
             peer.0,
             "missing_receipts_recovery_request_write_failed",
+            err.as_str(),
         );
         NetworkError::Io(err)
     })?;
@@ -3648,10 +3668,11 @@ fn dispatch_eth_fullnode_native_rlpx_queued_block_access_lists_v1(
         payload.as_slice(),
     )
     .map_err(|err| {
-        observe_network_runtime_eth_peer_handshake_failure_v1(
+        observe_eth_fullnode_rlpx_request_write_error_v1(
             chain_id,
             source_peer_id,
             "block_access_lists_request_write_failed",
+            err.as_str(),
         );
         NetworkError::Io(err)
     })?;
@@ -3691,10 +3712,11 @@ fn dispatch_eth_fullnode_native_snap_account_range_request_v1(
         payload.as_slice(),
     )
     .map_err(|err| {
-        observe_network_runtime_eth_peer_handshake_failure_v1(
+        observe_eth_fullnode_rlpx_request_write_error_v1(
             chain_id,
             source_peer_id,
             failure_reason,
+            err.as_str(),
         );
         NetworkError::Io(err)
     })?;
@@ -3796,10 +3818,11 @@ fn request_eth_fullnode_native_snap_trie_nodes_batch_v1(
         payload.as_slice(),
     )
     .map_err(|err| {
-        observe_network_runtime_eth_peer_handshake_failure_v1(
+        observe_eth_fullnode_rlpx_request_write_error_v1(
             chain_id,
             source_peer_id,
             "snap_trie_nodes_request_write_failed",
+            err.as_str(),
         );
         NetworkError::Io(err)
     })?;
@@ -5357,10 +5380,11 @@ fn dispatch_eth_fullnode_native_snap_storage_ranges_request_v1(
         payload.as_slice(),
     )
     .map_err(|err| {
-        observe_network_runtime_eth_peer_handshake_failure_v1(
+        observe_eth_fullnode_rlpx_request_write_error_v1(
             chain_id,
             source_peer_id,
             failure_reason,
+            err.as_str(),
         );
         NetworkError::Io(err)
     })?;
@@ -5775,10 +5799,11 @@ fn dispatch_eth_fullnode_native_snap_byte_codes_request_v1(
         payload.as_slice(),
     )
     .map_err(|err| {
-        observe_network_runtime_eth_peer_handshake_failure_v1(
+        observe_eth_fullnode_rlpx_request_write_error_v1(
             chain_id,
             source_peer_id,
             failure_reason,
+            err.as_str(),
         );
         NetworkError::Io(err)
     })?;
@@ -6169,10 +6194,11 @@ fn ingest_real_rlpx_new_block_v1(
         payload.as_slice(),
     )
     .map_err(|err| {
-        observe_network_runtime_eth_peer_handshake_failure_v1(
+        observe_eth_fullnode_rlpx_request_write_error_v1(
             chain_id,
             source_peer_id,
             "new_block_receipts_request_write_failed",
+            err.as_str(),
         );
         NetworkError::Io(err)
     })?;
@@ -6271,10 +6297,11 @@ fn ingest_real_rlpx_block_headers_v1(
             payload.as_slice(),
         )
         .map_err(|err| {
-            observe_network_runtime_eth_peer_handshake_failure_v1(
+            observe_eth_fullnode_rlpx_request_write_error_v1(
                 chain_id,
                 source_peer_id,
                 "bodies_request_write_failed",
+                err.as_str(),
             );
             NetworkError::Io(err)
         })?;
@@ -6536,10 +6563,11 @@ fn ingest_real_rlpx_block_bodies_v1(
                 payload.as_slice(),
             )
             .map_err(|err| {
-                observe_network_runtime_eth_peer_handshake_failure_v1(
+                observe_eth_fullnode_rlpx_request_write_error_v1(
                     chain_id,
                     source_peer_id,
                     "partial_bodies_retry_request_write_failed",
+                    err.as_str(),
                 );
                 NetworkError::Io(err)
             })?;
@@ -6599,10 +6627,11 @@ fn ingest_real_rlpx_block_bodies_v1(
         payload.as_slice(),
     )
     .map_err(|err| {
-        observe_network_runtime_eth_peer_handshake_failure_v1(
+        observe_eth_fullnode_rlpx_request_write_error_v1(
             chain_id,
             source_peer_id,
             "receipts_request_write_failed",
+            err.as_str(),
         );
         NetworkError::Io(err)
     })?;
@@ -6746,10 +6775,11 @@ fn ingest_real_rlpx_receipts_v1(
                 payload.as_slice(),
             )
             .map_err(|err| {
-                observe_network_runtime_eth_peer_handshake_failure_v1(
+                observe_eth_fullnode_rlpx_request_write_error_v1(
                     chain_id,
                     source_peer_id,
                     "partial_receipts_retry_request_write_failed",
+                    err.as_str(),
                 );
                 NetworkError::Io(err)
             })?;
@@ -6964,10 +6994,11 @@ fn dispatch_eth_fullnode_native_rlpx_tx_broadcast_v1(
             0,
             false,
         );
-        observe_network_runtime_eth_peer_handshake_failure_v1(
+        observe_eth_fullnode_rlpx_request_write_error_v1(
             chain_id,
             peer.0,
             "pooled_tx_hashes_write_failed",
+            err.as_str(),
         );
         NetworkError::Io(err)
     })?;
@@ -9304,7 +9335,7 @@ mod tests {
         EvmNativeBlockHeaderWireV1, FinalityMessage, GossipMessage, PacemakerMessage, ShardId,
         CONSENSUS_PLUGIN_CLASS_CODE,
     };
-    use std::collections::HashSet;
+    use std::collections::{HashMap, HashSet};
     use std::net::TcpListener;
     use std::thread;
     use std::time::Duration;
@@ -11144,6 +11175,83 @@ mod tests {
         assert!(eth_fullnode_rlpx_error_is_timeout_v1(
             "operation would block"
         ));
+    }
+
+    #[test]
+    fn rlpx_request_write_errors_use_runtime_failure_class_v1() {
+        let chain_id = 99_160_418_u64;
+        let remote_close_peer = NodeId(418_001);
+        let mac_desync_peer = NodeId(418_002);
+        let timeout_peer = NodeId(418_003);
+        let unknown_peer = NodeId(418_004);
+
+        observe_eth_fullnode_rlpx_request_write_error_v1(
+            chain_id,
+            remote_close_peer.0,
+            "headers_request_write_failed",
+            "rlpx_frame_mac_write_failed:远程主机强迫关闭了一个现有的连接。 (os error 10054)",
+        );
+        observe_eth_fullnode_rlpx_request_write_error_v1(
+            chain_id,
+            mac_desync_peer.0,
+            "headers_request_write_failed",
+            "rlpx_frame_header_mac_mismatch",
+        );
+        observe_eth_fullnode_rlpx_request_write_error_v1(
+            chain_id,
+            timeout_peer.0,
+            "headers_request_write_failed",
+            "rlpx_frame_body_read_failed:partial_read_timeout read=8/16 deadline_ms=4000",
+        );
+        observe_eth_fullnode_rlpx_request_write_error_v1(
+            chain_id,
+            unknown_peer.0,
+            "headers_request_write_failed",
+            "broken pipe",
+        );
+
+        let snapshots = snapshot_network_runtime_eth_peer_sessions_for_peers_v1(
+            chain_id,
+            &[
+                remote_close_peer,
+                mac_desync_peer,
+                timeout_peer,
+                unknown_peer,
+            ],
+        )
+        .into_iter()
+        .map(|snapshot| (snapshot.peer_id, snapshot))
+        .collect::<HashMap<_, _>>();
+
+        let remote_close = snapshots.get(&remote_close_peer.0).expect("remote close");
+        assert_eq!(
+            remote_close.last_failure_class,
+            Some(crate::EthPeerFailureClassV1::Disconnect)
+        );
+        assert_eq!(remote_close.disconnect_count, 1);
+        assert_eq!(remote_close.handshake_failure_count, 0);
+
+        let mac_desync = snapshots.get(&mac_desync_peer.0).expect("mac desync");
+        assert_eq!(
+            mac_desync.last_failure_class,
+            Some(crate::EthPeerFailureClassV1::Disconnect)
+        );
+        assert_eq!(mac_desync.disconnect_count, 1);
+        assert_eq!(mac_desync.handshake_failure_count, 0);
+
+        let timeout = snapshots.get(&timeout_peer.0).expect("timeout");
+        assert_eq!(
+            timeout.last_failure_class,
+            Some(crate::EthPeerFailureClassV1::Timeout)
+        );
+        assert_eq!(timeout.timeout_count, 1);
+
+        let unknown = snapshots.get(&unknown_peer.0).expect("unknown");
+        assert_eq!(
+            unknown.last_failure_class,
+            Some(crate::EthPeerFailureClassV1::HandshakeFailure)
+        );
+        assert_eq!(unknown.handshake_failure_count, 1);
     }
 
     #[test]
