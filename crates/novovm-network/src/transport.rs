@@ -818,7 +818,7 @@ struct EthFullnodeNativePendingBlockAccessListV1 {
     tx_count: Option<usize>,
 }
 
-const ETH_FULLNODE_NATIVE_MISSING_BODY_RECOVERY_BATCH_MAX_V1: usize = 4;
+const ETH_FULLNODE_NATIVE_MISSING_BODY_RECOVERY_BATCH_MAX_V1: usize = 16;
 
 type EthFullnodeNativeRlpxSessionKeyV1 = (u64, u64);
 type EthFullnodeNativeRlpxSessionMapV1 =
@@ -3243,7 +3243,7 @@ fn build_eth_fullnode_native_missing_body_pending_headers_v1(
                 expected_number = block.number.checked_sub(1);
             }
         }
-        pending.sort_by(|a, b| a.number.cmp(&b.number).then_with(|| a.hash.cmp(&b.hash)));
+        // Public peers commonly return a short prefix under churn; recover the current head first.
         pending.truncate(ETH_FULLNODE_NATIVE_MISSING_BODY_RECOVERY_BATCH_MAX_V1);
         return pending;
     }
@@ -11200,7 +11200,7 @@ mod tests {
 
         let base_number = 6_000_u64;
         let mut parent_hash = [0x90; 32];
-        for offset in 0..5u8 {
+        for offset in 0..17u8 {
             let number = base_number + u64::from(offset);
             let hash = [0xa0 + offset; 32];
             set_network_runtime_native_header_snapshot_v1(
@@ -11245,7 +11245,7 @@ mod tests {
                 .iter()
                 .map(|header| header.number)
                 .collect::<Vec<_>>(),
-            vec![6_001, 6_002, 6_003, 6_004]
+            (6_001..=6_016).rev().collect::<Vec<_>>()
         );
         assert!(
             pending.iter().all(|header| header.number >= base_number),
