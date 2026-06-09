@@ -1936,7 +1936,18 @@ fn drive_eth_fullnode_native_rlpx_peer_session_once_v1(
                                 );
                                 NetworkError::Decode(err)
                             })?;
-                        ingest_real_rlpx_pooled_transactions_v1(chain_id, peer.0, session, &txs);
+                        if let Err(err) =
+                            ingest_real_rlpx_pooled_transactions_v1(chain_id, peer.0, session, &txs)
+                        {
+                            mark_eth_fullnode_native_rlpx_session_disconnected_v1(
+                                chain_id,
+                                peer.0,
+                                &mut disconnected,
+                                &mut disconnect_error,
+                                err,
+                            );
+                            break;
+                        }
                         continue;
                     }
                     if code == eth_offset + ETH_RLPX_ETH_BLOCK_HEADERS_MSG {
@@ -3686,13 +3697,26 @@ fn ingest_real_rlpx_pooled_transactions_v1(
     source_peer_id: u64,
     session: &mut EthFullnodeNativeRlpxLivePeerSessionV1,
     txs: &EthRlpxPooledTransactionsPayloadV1,
-) {
-    if session
-        .last_pooled_transactions_request_id
-        .is_some_and(|request_id| request_id != txs.request_id)
-    {
-        return;
+) -> Result<(), NetworkError> {
+    let Some(request_id) = session.last_pooled_transactions_request_id else {
+        let err = format!(
+            "rlpx_pooled_transactions_unexpected_response:request_id={}",
+            txs.request_id
+        );
+        observe_network_runtime_eth_peer_decode_failure_v1(chain_id, source_peer_id, &err);
+        return Err(NetworkError::Decode(err));
+    };
+    if request_id != txs.request_id {
+        return Ok(());
     }
+    validate_eth_fullnode_native_pooled_transactions_match_request_v1(
+        session.pending_pooled_transaction_hashes.as_slice(),
+        txs.tx_hashes.as_slice(),
+    )
+    .map_err(|err| {
+        observe_network_runtime_eth_peer_decode_failure_v1(chain_id, source_peer_id, &err);
+        NetworkError::Decode(err)
+    })?;
     for (idx, tx_hash) in txs.tx_hashes.iter().enumerate() {
         let tx_payload = txs.tx_rlp_items.get(idx).map(|item| item.as_slice());
         observe_network_runtime_native_pending_tx_ingress_with_payload_v1(
@@ -3704,6 +3728,37 @@ fn ingest_real_rlpx_pooled_transactions_v1(
     }
     session.last_pooled_transactions_request_id = None;
     session.pending_pooled_transaction_hashes.clear();
+    Ok(())
+}
+
+fn validate_eth_fullnode_native_pooled_transactions_match_request_v1(
+    requested_hashes: &[[u8; 32]],
+    response_hashes: &[[u8; 32]],
+) -> Result<(), String> {
+    let mut next_search_from = 0usize;
+    let mut seen = HashSet::<[u8; 32]>::new();
+    for response_hash in response_hashes {
+        if !seen.insert(*response_hash) {
+            return Err(format!(
+                "rlpx_pooled_transactions_duplicate_hash:hash=0x{}",
+                hex32_v1(response_hash)
+            ));
+        }
+        let Some(relative_idx) = requested_hashes
+            .iter()
+            .skip(next_search_from)
+            .position(|requested| requested == response_hash)
+        else {
+            return Err(format!(
+                "rlpx_pooled_transactions_unrequested_hash:hash=0x{}",
+                hex32_v1(response_hash)
+            ));
+        };
+        next_search_from = next_search_from
+            .saturating_add(relative_idx)
+            .saturating_add(1);
+    }
+    Ok(())
 }
 
 fn validate_eth_fullnode_native_block_access_list_commitment_v1(
@@ -3754,10 +3809,15 @@ fn ingest_real_rlpx_block_access_lists_v1(
     session: &mut EthFullnodeNativeRlpxLivePeerSessionV1,
     response: &EthRlpxBlockAccessListsResponseV1,
 ) -> Result<(), NetworkError> {
-    if session
-        .last_block_access_lists_request_id
-        .is_some_and(|request_id| request_id != response.request_id)
-    {
+    let Some(request_id) = session.last_block_access_lists_request_id else {
+        let err = format!(
+            "rlpx_block_access_lists_unexpected_response:request_id={}",
+            response.request_id
+        );
+        observe_network_runtime_eth_peer_decode_failure_v1(chain_id, source_peer_id, &err);
+        return Err(NetworkError::Decode(err));
+    };
+    if request_id != response.request_id {
         return Ok(());
     }
     if response.lists.len() > session.pending_block_access_lists.len() {
@@ -5684,10 +5744,15 @@ fn ingest_real_rlpx_block_bodies_v1(
     bodies: &EthRlpxBlockBodiesResponseV1,
     report: &mut EthFullnodeNativeRlpxPeerTickReportV1,
 ) -> Result<(), NetworkError> {
-    if session
-        .last_bodies_request_id
-        .is_some_and(|request_id| request_id != bodies.request_id)
-    {
+    let Some(request_id) = session.last_bodies_request_id else {
+        let err = format!(
+            "rlpx_block_bodies_unexpected_response:request_id={}",
+            bodies.request_id
+        );
+        observe_network_runtime_eth_peer_decode_failure_v1(chain_id, source_peer_id, &err);
+        return Err(NetworkError::Decode(err));
+    };
+    if request_id != bodies.request_id {
         return Ok(());
     }
     observe_eth_native_bodies_response(chain_id);
@@ -5941,10 +6006,15 @@ fn ingest_real_rlpx_receipts_v1(
     receipts: &EthRlpxReceiptsResponseV1,
     report: &mut EthFullnodeNativeRlpxPeerTickReportV1,
 ) -> Result<(), NetworkError> {
-    if session
-        .last_receipts_request_id
-        .is_some_and(|request_id| request_id != receipts.request_id)
-    {
+    let Some(request_id) = session.last_receipts_request_id else {
+        let err = format!(
+            "rlpx_receipts_unexpected_response:request_id={}",
+            receipts.request_id
+        );
+        observe_network_runtime_eth_peer_decode_failure_v1(chain_id, source_peer_id, &err);
+        return Err(NetworkError::Decode(err));
+    };
+    if request_id != receipts.request_id {
         return Ok(());
     }
     let request_offset = session
@@ -8586,6 +8656,66 @@ mod tests {
         "enode://4aeb4ab6c14b23e2c4cfdce879c04b0748a20d8e9b59e25ded2a08143e265c6c25936e74cbc8e641e3312ca288673d91f2f93f8e277de3cfa444ecdaaf982052@157.90.35.166:30303",
     ];
 
+    fn dummy_rlpx_live_session(chain_id: u64) -> EthFullnodeNativeRlpxLivePeerSessionV1 {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind dummy listener");
+        let addr = listener.local_addr().expect("dummy listener addr");
+        let stream = TcpStream::connect(addr).expect("connect dummy stream");
+        let _accepted = listener.accept().expect("accept dummy stream");
+        let frame_session =
+            EthRlpxFrameSessionV1::from_secrets([0x11; 32], [0x22; 32], &[0x33; 32], &[0x44; 32])
+                .expect("dummy frame session");
+        EthFullnodeNativeRlpxLivePeerSessionV1 {
+            endpoint: PluginPeerEndpoint {
+                endpoint: "enode://dummy@127.0.0.1:0".to_string(),
+                node_hint: 1,
+                addr_hint: "127.0.0.1:0".to_string(),
+            },
+            stream,
+            frame_session,
+            _negotiated_eth_version: 71,
+            _negotiated_snap_version: Some(1),
+            remote_status: EthRlpxStatusV1 {
+                protocol_version: 71,
+                network_id: chain_id,
+                genesis_hash: [0u8; 32],
+                fork_id: crate::EthForkIdV1 {
+                    hash: [0u8; 4],
+                    next: 0,
+                },
+                earliest_block: 0,
+                latest_block: 120,
+                latest_block_hash: [0x55; 32],
+            },
+            last_sync_request_unix_ms: 0,
+            last_headers_request_id: None,
+            pending_headers_request: None,
+            last_bodies_request_id: None,
+            last_receipts_request_id: None,
+            last_snap_account_range_request_id: None,
+            last_snap_storage_ranges_request_id: None,
+            last_snap_byte_codes_request_id: None,
+            last_snap_trie_nodes_request_id: None,
+            last_snap_state_root: None,
+            last_snap_account_origin: None,
+            last_snap_account_limit: None,
+            pending_snap_next_account_origin: None,
+            pending_snap_storage_accounts: Vec::new(),
+            pending_snap_code_hashes: Vec::new(),
+            pending_snap_trie_node_pathsets: Vec::new(),
+            pending_snap_trie_node_hashes: Vec::new(),
+            pending_snap_trie_node_retry_count: 0,
+            last_block_access_lists_request_id: None,
+            queued_block_access_lists: Vec::new(),
+            pending_block_access_lists: Vec::new(),
+            last_pooled_transactions_request_id: None,
+            last_tx_broadcast_unix_ms: 0,
+            pending_body_headers: Vec::new(),
+            pending_body_request_offset: 0,
+            pending_receipt_request_offset: 0,
+            pending_pooled_transaction_hashes: Vec::new(),
+        }
+    }
+
     #[test]
     fn rlpx_block_headers_validation_rejects_non_contiguous_batch_v1() {
         let empty_root = crate::eth_rlpx_empty_trie_root_v1();
@@ -8675,66 +8805,7 @@ mod tests {
     #[test]
     fn rlpx_block_headers_ingest_rejects_unrequested_response_v1() {
         let chain_id = 9_928_u64;
-        let local_stream = {
-            let listener = TcpListener::bind("127.0.0.1:0").expect("bind dummy listener");
-            let addr = listener.local_addr().expect("dummy listener addr");
-            let stream = TcpStream::connect(addr).expect("connect dummy stream");
-            let _accepted = listener.accept().expect("accept dummy stream");
-            stream
-        };
-        let frame_session =
-            EthRlpxFrameSessionV1::from_secrets([0x11; 32], [0x22; 32], &[0x33; 32], &[0x44; 32])
-                .expect("dummy frame session");
-        let mut session = EthFullnodeNativeRlpxLivePeerSessionV1 {
-            endpoint: PluginPeerEndpoint {
-                endpoint: "enode://dummy@127.0.0.1:0".to_string(),
-                node_hint: 1,
-                addr_hint: "127.0.0.1:0".to_string(),
-            },
-            stream: local_stream,
-            frame_session,
-            _negotiated_eth_version: 71,
-            _negotiated_snap_version: Some(1),
-            remote_status: EthRlpxStatusV1 {
-                protocol_version: 71,
-                network_id: chain_id,
-                genesis_hash: [0u8; 32],
-                fork_id: crate::EthForkIdV1 {
-                    hash: [0u8; 4],
-                    next: 0,
-                },
-                earliest_block: 0,
-                latest_block: 120,
-                latest_block_hash: [0x55; 32],
-            },
-            last_sync_request_unix_ms: 0,
-            last_headers_request_id: None,
-            pending_headers_request: None,
-            last_bodies_request_id: None,
-            last_receipts_request_id: None,
-            last_snap_account_range_request_id: None,
-            last_snap_storage_ranges_request_id: None,
-            last_snap_byte_codes_request_id: None,
-            last_snap_trie_nodes_request_id: None,
-            last_snap_state_root: None,
-            last_snap_account_origin: None,
-            last_snap_account_limit: None,
-            pending_snap_next_account_origin: None,
-            pending_snap_storage_accounts: Vec::new(),
-            pending_snap_code_hashes: Vec::new(),
-            pending_snap_trie_node_pathsets: Vec::new(),
-            pending_snap_trie_node_hashes: Vec::new(),
-            pending_snap_trie_node_retry_count: 0,
-            last_block_access_lists_request_id: None,
-            queued_block_access_lists: Vec::new(),
-            pending_block_access_lists: Vec::new(),
-            last_pooled_transactions_request_id: None,
-            last_tx_broadcast_unix_ms: 0,
-            pending_body_headers: Vec::new(),
-            pending_body_request_offset: 0,
-            pending_receipt_request_offset: 0,
-            pending_pooled_transaction_hashes: Vec::new(),
-        };
+        let mut session = dummy_rlpx_live_session(chain_id);
         let header = crate::EthRlpxBlockHeaderRecordV1 {
             number: 120,
             hash: [0xa1; 32],
@@ -8779,6 +8850,112 @@ mod tests {
         assert!(
             get_network_runtime_native_header_snapshot_v1(chain_id).is_none(),
             "unsolicited header must not materialize"
+        );
+    }
+
+    #[test]
+    fn rlpx_response_ingest_rejects_unrequested_response_messages_v1() {
+        let chain_id = 9_929_u64;
+        let mut session = dummy_rlpx_live_session(chain_id);
+        let mut report = EthFullnodeNativeRlpxPeerTickReportV1::default();
+        let tx_hash = [0xa1; 32];
+        let pooled = EthRlpxPooledTransactionsPayloadV1 {
+            request_id: 10,
+            tx_rlp_items: vec![vec![0xc0]],
+            tx_hashes: vec![tx_hash],
+        };
+        let err = ingest_real_rlpx_pooled_transactions_v1(chain_id, 77, &mut session, &pooled)
+            .expect_err("unsolicited pooled transactions must reject");
+        assert!(
+            err.to_string()
+                .contains("rlpx_pooled_transactions_unexpected_response"),
+            "unexpected error: {err}"
+        );
+        assert!(
+            get_network_runtime_native_pending_tx_v1(chain_id, tx_hash).is_none(),
+            "unsolicited pooled transaction must not materialize"
+        );
+
+        let bodies = EthRlpxBlockBodiesResponseV1 {
+            request_id: 11,
+            bodies: Vec::new(),
+        };
+        let err =
+            ingest_real_rlpx_block_bodies_v1(chain_id, 77, &mut session, &bodies, &mut report)
+                .expect_err("unsolicited block bodies must reject");
+        assert!(
+            err.to_string()
+                .contains("rlpx_block_bodies_unexpected_response"),
+            "unexpected error: {err}"
+        );
+
+        let receipts = EthRlpxReceiptsResponseV1 {
+            request_id: 12,
+            last_block_incomplete: false,
+            blocks: Vec::new(),
+        };
+        let err = ingest_real_rlpx_receipts_v1(chain_id, 77, &mut session, &receipts, &mut report)
+            .expect_err("unsolicited receipts must reject");
+        assert!(
+            err.to_string()
+                .contains("rlpx_receipts_unexpected_response"),
+            "unexpected error: {err}"
+        );
+
+        session.pending_body_headers = vec![EthFullnodeNativePendingBodyHeaderV1 {
+            number: 120,
+            hash: [0xb1; 32],
+            parent_hash: [0xb0; 32],
+            state_root: [0xb2; 32],
+            transactions_root: crate::eth_rlpx_empty_trie_root_v1(),
+            receipts_root: crate::eth_rlpx_empty_trie_root_v1(),
+            tx_count: Some(0),
+            withdrawal_count: Some(0),
+        }];
+        let bal = EthRlpxBlockAccessListsResponseV1 {
+            request_id: 13,
+            lists: Vec::new(),
+        };
+        let err = ingest_real_rlpx_block_access_lists_v1(chain_id, 77, &mut session, &bal)
+            .expect_err("unsolicited block access lists must reject");
+        assert!(
+            err.to_string()
+                .contains("rlpx_block_access_lists_unexpected_response"),
+            "unexpected error: {err}"
+        );
+        assert_eq!(
+            session.pending_body_headers.len(),
+            1,
+            "unsolicited BAL response must not clear pending body headers"
+        );
+    }
+
+    #[test]
+    fn rlpx_pooled_transactions_response_must_match_requested_hashes_v1() {
+        validate_eth_fullnode_native_pooled_transactions_match_request_v1(
+            &[[0x11; 32], [0x22; 32], [0x33; 32]],
+            &[[0x11; 32], [0x33; 32]],
+        )
+        .expect("ordered subset must pass");
+
+        let err = validate_eth_fullnode_native_pooled_transactions_match_request_v1(
+            &[[0x11; 32], [0x22; 32]],
+            &[[0x33; 32]],
+        )
+        .expect_err("unrequested hash must reject");
+        assert!(
+            err.contains("rlpx_pooled_transactions_unrequested_hash"),
+            "unexpected error: {err}"
+        );
+
+        let err = validate_eth_fullnode_native_pooled_transactions_match_request_v1(
+            &[[0x11; 32], [0x22; 32]],
+            &[[0x22; 32], [0x11; 32]],
+        )
+        .expect_err("out-of-order response must reject");
+        assert!(
+            err.contains("rlpx_pooled_transactions_unrequested_hash"),
+            "unexpected error: {err}"
         );
     }
 

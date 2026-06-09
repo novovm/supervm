@@ -464,6 +464,7 @@ cargo run -p novovmctl -- evm-block-access-list-scan `
 - RLPx NewBlockHashes gate: pass, covers inbound real `NewBlockHashes` announcement -> peer head/highest update -> follow-up `GetBlockHeaders`
 - RLPx BlockBodies gate: pass, covers real `BlockHeaders`/`BlockBodies` sync -> body raw transaction MPT `transactionsRoot` validated -> native body snapshot import；trusted pivot live follow-up 暴露公网 peer 对 16 个 body hash 只返回 12 个 body 的 soft response，当前已改为 index 优先、唯一 `transactionsRoot` 其次的方式接受可匹配 body，导入已返回 bodies，并立即对剩余 hashes 补发 `GetBlockBodies`，不再把短响应直接记为 decode failure；如果 body 的 `transactionsRoot` 不匹配任何 pending header，仍按错误 peer 数据拒绝
 - RLPx BlockHeaders request-match gate: pass, covers inbound `BlockHeaders` validation before native import；响应必须存在匹配的本地 `GetBlockHeaders` pending request，并校验 request_id、origin number/hash、skip/reverse step 和相邻 parentHash；未请求响应、编号跳跃或拼接批次按 peer decode failure 拒绝
+- RLPx response request-match gate: pass, covers `PooledTransactions` / `BlockBodies` / `Receipts` / `BlockAccessLists` response messages；响应必须存在匹配 pending request 才能 materialize，`PooledTransactions` 返回 hash 必须是 requested hashes 的有序子集，未请求响应不能污染 pending tx/body/receipt/BAL 状态
 - RLPx raw body material retention gate: pass, real `BlockBodies` parser/native body snapshot/native head+history store 现在保留已校验 block body 的 raw transaction RLPs；`eth_rlpx_native_history_store_roundtrips_and_restores_window_v1` 覆盖 raw tx RLP 持久化/恢复，避免后续 Engine `getPayloadBodies*` 只能从 tx hash 或网关索引字段重构假 payload
 - RLPx Receipts gate: pass, covers real `BlockHeaders`/`BlockBodies` sync -> follow-up eth/70 `GetReceipts(firstBlockReceiptIndex=0)` -> complete `Receipts(lastBlockIncomplete=false)` parsed -> receipt count 与 body tx count 对齐 -> raw receipt MPT `receiptsRoot` validated before peer sync ready -> native receipt snapshot 落地 -> 本地 `GetReceipts` 可回放已验证 raw receipts -> 父块已保留时 empty/no-withdrawal block stateRoot continuity validation；incomplete/block-count/count/root mismatch 和可判定 stateRoot continuity mismatch 会拒绝
 - RLPx empty-body receipt materialization gate: pass, covers materialized empty body + empty `receiptsRoot` -> local empty native receipt snapshot without waiting for a remote `Receipts` response；this removes the observed long-run stall where block `1024` had header/body available but `receipt=null`
@@ -1551,6 +1552,7 @@ cargo test -p novovm-network evm_protocol_observable_equivalence_network_rlpx_po
 cargo test -p novovm-network evm_protocol_observable_equivalence_network_rlpx_pooled_tx_response_gate_v3 -- --nocapture
 cargo test -p novovm-network evm_protocol_observable_equivalence_network_rlpx_block_body_import_gate_v3 -- --nocapture
 cargo test -p novovm-network rlpx_block_headers_ -- --nocapture
+cargo test -p novovm-network rlpx_ -- --nocapture --test-threads=1
 cargo test -p novovm-network evm_protocol_observable_equivalence_network_rlpx_receipts_gate_v3 -- --nocapture
 cargo test -p novovm-network evm_protocol_observable_equivalence_network_rlpx_reorg_gate_v3 -- --nocapture
 cargo test -p novovm-network evm_protocol_observable_equivalence_network_rlpx_bal_response_gate_v3 -- --nocapture
