@@ -2464,6 +2464,7 @@ const ETH_RLPX_PUBLIC_SYNC_DEFAULT_REQUEST_INTERVAL_MS_V1: u64 = 250;
 const ETH_RLPX_PUBLIC_SYNC_DEFAULT_RUNTIME_SNAPSHOT_BLOCKS_V1: u64 = 8;
 const ETH_RLPX_PUBLIC_SYNC_DEFAULT_RUNTIME_PENDING_TXS_V1: u64 = 128;
 const ETH_RLPX_PUBLIC_SYNC_DEFAULT_FINALIZE_HEADERS_BATCH_V1: u64 = 64;
+const ETH_RLPX_PUBLIC_SYNC_DEFAULT_ADAPTIVE_HEADERS_MIN_BATCH_V1: u64 = 4;
 
 fn eth_rlpx_apply_public_sync_runtime_defaults_v1(
     budget: &mut EthFullnodeBudgetHooksV1,
@@ -5146,7 +5147,7 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
     let adaptive_batch_enabled = bool_env_default_true("NOVOVM_ETH_RLPX_ADAPTIVE_BATCH_ENABLED");
     let adaptive_headers_min_batch = u64_env_clamped(
         "NOVOVM_ETH_RLPX_ADAPTIVE_HEADERS_MIN_BATCH",
-        1,
+        ETH_RLPX_PUBLIC_SYNC_DEFAULT_ADAPTIVE_HEADERS_MIN_BATCH_V1,
         1,
         headers_batch.max(1),
     );
@@ -6844,6 +6845,30 @@ mod mainline_evm_cli_tests {
         assert_eq!(
             eth_rlpx_adaptive_public_sync_batch_v1(bodies, 128, 1, true, false),
             2
+        );
+    }
+
+    #[test]
+    fn eth_rlpx_product_header_floor_keeps_forward_probe_above_single_block_v1() {
+        assert_eq!(
+            ETH_RLPX_PUBLIC_SYNC_DEFAULT_ADAPTIVE_HEADERS_MIN_BATCH_V1,
+            4
+        );
+        assert_eq!(
+            eth_rlpx_adaptive_public_sync_batch_v1(
+                2,
+                192,
+                ETH_RLPX_PUBLIC_SYNC_DEFAULT_ADAPTIVE_HEADERS_MIN_BATCH_V1,
+                false,
+                true,
+            ),
+            ETH_RLPX_PUBLIC_SYNC_DEFAULT_ADAPTIVE_HEADERS_MIN_BATCH_V1,
+            "product forward header probes should not collapse to one block by default"
+        );
+        assert_eq!(
+            eth_rlpx_adaptive_public_sync_batch_v1(2, 128, 1, false, true),
+            1,
+            "body/receipt recovery can still use single-block precision"
         );
     }
 
