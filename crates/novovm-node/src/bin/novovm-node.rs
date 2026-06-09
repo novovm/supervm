@@ -2247,13 +2247,13 @@ fn eth_rlpx_adaptive_public_sync_batch_v1(
     let max_batch = max_batch.max(1);
     let min_batch = min_batch.max(1).min(max_batch);
     let current_batch = current_batch.max(1).clamp(min_batch, max_batch);
-    if made_progress && current_batch < max_batch {
+    if request_transport_failure && current_batch > min_batch {
+        (current_batch / 2).max(min_batch)
+    } else if made_progress && current_batch < max_batch {
         current_batch
             .saturating_mul(2)
             .min(max_batch)
             .max(min_batch)
-    } else if request_transport_failure && current_batch > min_batch {
-        (current_batch / 2).max(min_batch)
     } else {
         current_batch
     }
@@ -4970,6 +4970,8 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
             current_head_body_available,
             current_head_receipt_available,
         );
+        let header_sync_made_progress =
+            current_sync_block > last_sync_progress_block || report.header_updates > 0;
         let sync_made_progress = current_sync_block > last_sync_progress_block
             || report.header_updates > 0
             || report.body_updates > 0
@@ -5069,7 +5071,7 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
                 runtime_headers_batch,
                 max_runtime_headers_batch,
                 adaptive_headers_min_batch,
-                sync_made_progress,
+                header_sync_made_progress,
                 request_transport_failure,
             );
             let next_bodies_batch = eth_rlpx_adaptive_public_sync_batch_v1(
@@ -5109,7 +5111,7 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
                         "request_transport_failure"
                     } else if sync_made_progress && current_head_material_missing {
                         "header_only_body_backoff"
-                    } else if sync_made_progress || body_material_made_progress {
+                    } else if header_sync_made_progress || body_material_made_progress {
                         "progress_restore"
                     } else {
                         "batch_unchanged"
@@ -5982,6 +5984,21 @@ mod mainline_evm_cli_tests {
     }
 
     #[test]
+    fn eth_rlpx_header_batch_restore_requires_header_progress_v1() {
+        let receipt_only_progress = eth_rlpx_body_material_made_progress_v1(0, 1);
+        assert!(receipt_only_progress);
+        assert_eq!(
+            eth_rlpx_adaptive_public_sync_batch_v1(96, 192, 1, false, false),
+            96,
+            "receipt recovery must not re-expand forward header requests before head/header progress"
+        );
+        assert_eq!(
+            eth_rlpx_adaptive_public_sync_batch_v1(96, 192, 1, true, false),
+            192
+        );
+    }
+
+    #[test]
     fn eth_rlpx_adaptive_public_sync_batch_backs_off_and_restores_v1() {
         assert_eq!(
             eth_rlpx_adaptive_public_sync_batch_v1(192, 192, 64, false, true),
@@ -6006,6 +6023,11 @@ mod mainline_evm_cli_tests {
         assert_eq!(
             eth_rlpx_adaptive_public_sync_batch_v1(192, 192, 64, true, false),
             192
+        );
+        assert_eq!(
+            eth_rlpx_adaptive_public_sync_batch_v1(96, 192, 1, true, true),
+            48,
+            "transport failure must dominate same-tick progress on public peers"
         );
     }
 
