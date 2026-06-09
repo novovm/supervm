@@ -3283,8 +3283,8 @@ fn eth_order_peer_endpoints_by_material_success_v1(
     capacity_reject_peer_ids: &HashSet<u64>,
     permanent_reject_peer_ids: &HashSet<u64>,
 ) -> Vec<PluginPeerEndpoint> {
-    if endpoints.is_empty() || material_successes.is_empty() {
-        return endpoints.to_vec();
+    if endpoints.is_empty() {
+        return Vec::new();
     }
     let mut out = Vec::<PluginPeerEndpoint>::with_capacity(endpoints.len());
     let mut seen = HashSet::<String>::new();
@@ -3306,6 +3306,24 @@ fn eth_order_peer_endpoints_by_material_success_v1(
         }
     }
     for endpoint in endpoints {
+        let peer_id = endpoint.node_hint.max(1);
+        if capacity_reject_peer_ids.contains(&peer_id)
+            || permanent_reject_peer_ids.contains(&peer_id)
+        {
+            continue;
+        }
+        let key = eth_peer_endpoint_key_v1(endpoint);
+        if seen.insert(key) {
+            out.push(endpoint.clone());
+        }
+    }
+    for endpoint in endpoints {
+        let peer_id = endpoint.node_hint.max(1);
+        if !capacity_reject_peer_ids.contains(&peer_id)
+            && !permanent_reject_peer_ids.contains(&peer_id)
+        {
+            continue;
+        }
         let key = eth_peer_endpoint_key_v1(endpoint);
         if seen.insert(key) {
             out.push(endpoint.clone());
@@ -5243,6 +5261,12 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
         peer_endpoints.as_slice(),
         explicit_peer_endpoints.as_slice(),
     );
+    peer_endpoints =
+        eth_reorder_peer_endpoints_by_runtime_reputation_v1(chain_id, peer_endpoints.as_slice());
+    peer_endpoints = eth_pin_peer_endpoint_prefix_v1(
+        peer_endpoints.as_slice(),
+        explicit_peer_endpoints.as_slice(),
+    );
     if peer_endpoints.is_empty() {
         bail!("no Ethereum RLPx peer endpoints resolved from env, DNS discovery, or bootnodes");
     }
@@ -5886,6 +5910,10 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
                 next_candidate_limit,
             );
             let merged_endpoints = eth_prune_peer_endpoints_permanently_rejected_v1(
+                chain_id,
+                merged_endpoints.as_slice(),
+            );
+            let merged_endpoints = eth_reorder_peer_endpoints_by_runtime_reputation_v1(
                 chain_id,
                 merged_endpoints.as_slice(),
             );
@@ -7482,6 +7510,47 @@ mod mainline_evm_cli_tests {
             1
         );
         assert!(loaded.permanent_rejects.is_empty());
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn eth_rlpx_peer_endpoint_cache_demotes_capacity_reject_prefix_v1() {
+        let path = std::env::temp_dir().join(format!(
+            "supervm-eth-rlpx-peer-cache-capacity-demote-test-{}-{}.json",
+            std::process::id(),
+            now_unix_ms()
+        ));
+        let chain_id = 9_991_782_u64;
+        let saturated = PluginPeerEndpoint {
+            endpoint: "enode://55555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555@127.0.0.1:30314".to_string(),
+            node_hint: 98,
+            addr_hint: "127.0.0.1:30314".to_string(),
+        };
+        let fresh = PluginPeerEndpoint {
+            endpoint: "enode://66666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666@127.0.0.1:30315".to_string(),
+            node_hint: 99,
+            addr_hint: "127.0.0.1:30315".to_string(),
+        };
+        novovm_network::observe_network_runtime_eth_peer_disconnect_v1(
+            chain_id,
+            saturated.node_hint,
+            Some(0x04),
+        );
+
+        write_eth_rlpx_peer_endpoint_cache_v1(
+            &path,
+            chain_id,
+            &[saturated.clone(), fresh.clone()],
+            16,
+        )
+        .expect("write peer endpoint cache with capacity rejected prefix");
+        let loaded = load_eth_rlpx_peer_endpoint_cache_v1(&path, chain_id)
+            .expect("load capacity demoted cache")
+            .expect("capacity demoted cache present");
+        assert_eq!(loaded.endpoints, vec![fresh, saturated.clone()]);
+        assert_eq!(loaded.capacity_rejects.len(), 1);
+        assert_eq!(loaded.capacity_rejects[0].node_hint, saturated.node_hint);
 
         let _ = fs::remove_file(path);
     }
