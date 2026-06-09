@@ -3158,6 +3158,43 @@ struct EthRlpxPeerEndpointMaterialSuccessV1 {
 const ETH_RLPX_PEER_ENDPOINT_PERMANENT_REJECT_TTL_MS_V1: u64 = 24 * 60 * 60 * 1_000;
 const ETH_RLPX_PEER_ENDPOINT_MATERIAL_SUCCESS_TTL_MS_V1: u64 = 24 * 60 * 60 * 1_000;
 
+fn eth_order_peer_endpoints_by_material_success_v1(
+    endpoints: &[PluginPeerEndpoint],
+    material_successes: &[EthRlpxPeerEndpointMaterialSuccessV1],
+    capacity_reject_peer_ids: &HashSet<u64>,
+    permanent_reject_peer_ids: &HashSet<u64>,
+) -> Vec<PluginPeerEndpoint> {
+    if endpoints.is_empty() || material_successes.is_empty() {
+        return endpoints.to_vec();
+    }
+    let mut out = Vec::<PluginPeerEndpoint>::with_capacity(endpoints.len());
+    let mut seen = HashSet::<String>::new();
+    for success in material_successes {
+        let peer_id = success.node_hint.max(1);
+        if capacity_reject_peer_ids.contains(&peer_id)
+            || permanent_reject_peer_ids.contains(&peer_id)
+        {
+            continue;
+        }
+        for endpoint in endpoints
+            .iter()
+            .filter(|endpoint| endpoint.node_hint.max(1) == peer_id)
+        {
+            let key = eth_peer_endpoint_key_v1(endpoint);
+            if seen.insert(key) {
+                out.push(endpoint.clone());
+            }
+        }
+    }
+    for endpoint in endpoints {
+        let key = eth_peer_endpoint_key_v1(endpoint);
+        if seen.insert(key) {
+            out.push(endpoint.clone());
+        }
+    }
+    out
+}
+
 fn eth_rlpx_peer_endpoint_cache_path_v1() -> PathBuf {
     string_env_nonempty("NOVOVM_ETH_RLPX_PEER_CACHE_PATH")
         .map(PathBuf::from)
@@ -3431,10 +3468,24 @@ fn write_eth_rlpx_peer_endpoint_cache_v1(
             .then_with(|| b.head_height.cmp(&a.head_height))
             .then_with(|| a.node_hint.cmp(&b.node_hint))
     });
+    let capacity_reject_peer_ids = capacity_rejects
+        .iter()
+        .map(|reject| reject.node_hint.max(1))
+        .collect::<HashSet<_>>();
+    let permanent_reject_peer_ids = permanent_rejects
+        .iter()
+        .map(|reject| reject.node_hint.max(1))
+        .collect::<HashSet<_>>();
+    let endpoints = eth_order_peer_endpoints_by_material_success_v1(
+        deduped.as_slice(),
+        material_successes.as_slice(),
+        &capacity_reject_peer_ids,
+        &permanent_reject_peer_ids,
+    );
     let cache = EthRlpxPeerEndpointCacheV1 {
         schema: "supervm-eth-rlpx-peer-endpoint-cache/v1".to_string(),
         chain_id,
-        endpoints: deduped,
+        endpoints,
         capacity_rejects,
         permanent_rejects,
         material_successes,
@@ -7053,6 +7104,103 @@ mod mainline_evm_cli_tests {
         assert_eq!(loaded.material_successes[0].head_height, 2048);
         assert_eq!(loaded.material_successes[0].header_response_count, 1);
         assert_eq!(loaded.material_successes[0].body_response_count, 1);
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn eth_rlpx_peer_endpoint_cache_promotes_material_success_endpoint_v1() {
+        let path = std::env::temp_dir().join(format!(
+            "supervm-eth-rlpx-peer-cache-material-promote-test-{}-{}.json",
+            std::process::id(),
+            now_unix_ms()
+        ));
+        let chain_id = 9_991_780_u64;
+        let fresh = PluginPeerEndpoint {
+            endpoint: "enode://11111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111@127.0.0.1:30310".to_string(),
+            node_hint: 94,
+            addr_hint: "127.0.0.1:30310".to_string(),
+        };
+        let material = PluginPeerEndpoint {
+            endpoint: "enode://22222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222@127.0.0.1:30311".to_string(),
+            node_hint: 95,
+            addr_hint: "127.0.0.1:30311".to_string(),
+        };
+        novovm_network::observe_network_runtime_eth_peer_header_success_v1(
+            chain_id,
+            material.node_hint,
+            8192,
+        );
+        novovm_network::observe_network_runtime_eth_peer_body_success_v1(
+            chain_id,
+            material.node_hint,
+            8192,
+        );
+
+        write_eth_rlpx_peer_endpoint_cache_v1(
+            &path,
+            chain_id,
+            &[fresh.clone(), material.clone()],
+            16,
+        )
+        .expect("write peer endpoint cache with promoted material success");
+        let loaded = load_eth_rlpx_peer_endpoint_cache_v1(&path, chain_id)
+            .expect("load material promoted cache")
+            .expect("material promoted cache present");
+        assert_eq!(loaded.endpoints, vec![material.clone(), fresh]);
+        assert_eq!(loaded.material_successes[0].node_hint, material.node_hint);
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn eth_rlpx_peer_endpoint_cache_does_not_promote_capacity_rejected_material_peer_v1() {
+        let path = std::env::temp_dir().join(format!(
+            "supervm-eth-rlpx-peer-cache-material-capacity-test-{}-{}.json",
+            std::process::id(),
+            now_unix_ms()
+        ));
+        let chain_id = 9_991_781_u64;
+        let fresh = PluginPeerEndpoint {
+            endpoint: "enode://33333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333@127.0.0.1:30312".to_string(),
+            node_hint: 96,
+            addr_hint: "127.0.0.1:30312".to_string(),
+        };
+        let material_rejected = PluginPeerEndpoint {
+            endpoint: "enode://44444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444@127.0.0.1:30313".to_string(),
+            node_hint: 97,
+            addr_hint: "127.0.0.1:30313".to_string(),
+        };
+        novovm_network::observe_network_runtime_eth_peer_header_success_v1(
+            chain_id,
+            material_rejected.node_hint,
+            8193,
+        );
+        novovm_network::observe_network_runtime_eth_peer_disconnect_v1(
+            chain_id,
+            material_rejected.node_hint,
+            Some(0x04),
+        );
+
+        write_eth_rlpx_peer_endpoint_cache_v1(
+            &path,
+            chain_id,
+            &[fresh.clone(), material_rejected.clone()],
+            16,
+        )
+        .expect("write peer endpoint cache with capacity rejected material success");
+        let loaded = load_eth_rlpx_peer_endpoint_cache_v1(&path, chain_id)
+            .expect("load capacity material cache")
+            .expect("capacity material cache present");
+        assert_eq!(loaded.endpoints, vec![fresh, material_rejected.clone()]);
+        assert_eq!(
+            loaded.material_successes[0].node_hint,
+            material_rejected.node_hint
+        );
+        assert_eq!(
+            loaded.capacity_rejects[0].node_hint,
+            material_rejected.node_hint
+        );
 
         let _ = fs::remove_file(path);
     }
