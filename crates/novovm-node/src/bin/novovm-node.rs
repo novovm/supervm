@@ -2355,6 +2355,7 @@ fn eth_rlpx_apply_public_sync_batch_defaults_v1(
 }
 
 const ETH_RLPX_PUBLIC_SYNC_DEFAULT_REQUEST_TIMEOUT_MS_V1: u64 = 5_000;
+const ETH_RLPX_PUBLIC_SYNC_DEFAULT_REQUEST_INTERVAL_MS_V1: u64 = 250;
 const ETH_RLPX_PUBLIC_SYNC_DEFAULT_RUNTIME_SNAPSHOT_BLOCKS_V1: u64 = 8;
 
 fn eth_rlpx_apply_public_sync_runtime_defaults_v1(
@@ -2363,11 +2364,15 @@ fn eth_rlpx_apply_public_sync_runtime_defaults_v1(
     bodies_batch: u64,
     sync_target_fanout: usize,
     rlpx_request_timeout_ms: u64,
+    sync_request_interval_ms: u64,
     runtime_snapshot_blocks: u64,
 ) {
     eth_rlpx_apply_public_sync_batch_defaults_v1(budget, headers_batch, bodies_batch);
     budget.sync_target_fanout = sync_target_fanout.max(1) as u64;
     budget.rlpx_request_timeout_ms = rlpx_request_timeout_ms.max(1);
+    budget.sync_request_interval_ms = budget
+        .sync_request_interval_ms
+        .min(sync_request_interval_ms.max(1));
     budget.runtime_block_snapshot_limit = budget
         .runtime_block_snapshot_limit
         .min(runtime_snapshot_blocks.max(1));
@@ -5044,6 +5049,12 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
         1_000,
         120_000,
     );
+    let sync_request_interval_ms = u64_env_clamped(
+        "NOVOVM_ETH_RLPX_SYNC_REQUEST_INTERVAL_MS",
+        ETH_RLPX_PUBLIC_SYNC_DEFAULT_REQUEST_INTERVAL_MS_V1,
+        10,
+        60_000,
+    );
     let runtime_snapshot_blocks = u64_env_clamped(
         "NOVOVM_ETH_RLPX_RUNTIME_SNAPSHOT_BLOCKS",
         ETH_RLPX_PUBLIC_SYNC_DEFAULT_RUNTIME_SNAPSHOT_BLOCKS_V1,
@@ -5141,6 +5152,7 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
         bodies_batch,
         runtime_sync_target_fanout,
         rlpx_request_timeout_ms,
+        sync_request_interval_ms,
         runtime_snapshot_blocks,
     );
     let max_runtime_headers_batch = budget.sync_pull_headers_batch.max(1);
@@ -6648,6 +6660,7 @@ mod mainline_evm_cli_tests {
             128,
             8,
             ETH_RLPX_PUBLIC_SYNC_DEFAULT_REQUEST_TIMEOUT_MS_V1,
+            ETH_RLPX_PUBLIC_SYNC_DEFAULT_REQUEST_INTERVAL_MS_V1,
             ETH_RLPX_PUBLIC_SYNC_DEFAULT_RUNTIME_SNAPSHOT_BLOCKS_V1,
         );
 
@@ -6659,6 +6672,7 @@ mod mainline_evm_cli_tests {
             ETH_RLPX_PUBLIC_SYNC_DEFAULT_REQUEST_TIMEOUT_MS_V1
         );
         assert_eq!(budget.rlpx_request_timeout_ms, 5_000);
+        assert_eq!(budget.sync_request_interval_ms, 250);
         assert_eq!(
             budget.runtime_block_snapshot_limit,
             ETH_RLPX_PUBLIC_SYNC_DEFAULT_RUNTIME_SNAPSHOT_BLOCKS_V1
@@ -6676,6 +6690,7 @@ mod mainline_evm_cli_tests {
             128,
             8,
             ETH_RLPX_PUBLIC_SYNC_DEFAULT_REQUEST_TIMEOUT_MS_V1,
+            ETH_RLPX_PUBLIC_SYNC_DEFAULT_REQUEST_INTERVAL_MS_V1,
             ETH_RLPX_PUBLIC_SYNC_DEFAULT_RUNTIME_SNAPSHOT_BLOCKS_V1,
         );
 
