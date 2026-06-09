@@ -47,6 +47,8 @@ use crate::{
     get_network_runtime_native_pending_tx_payload_v1,
     get_network_runtime_native_receipt_snapshot_v1,
     get_network_runtime_native_snap_account_snapshot_v1,
+    get_network_runtime_native_snap_account_storage_snapshot_v1,
+    get_network_runtime_native_snap_code_snapshot_v1,
     get_network_runtime_native_snap_trie_node_snapshot_v1, get_network_runtime_native_sync_status,
     get_network_runtime_peer_heads_top_k, get_network_runtime_sync_status,
     has_network_runtime_eth_peer_session, mark_network_runtime_eth_peer_session_closed_v1,
@@ -107,19 +109,21 @@ use crate::{
     EthRlpxBlockAccessListsResponseV1, EthRlpxBlockBodiesResponseV1, EthRlpxBlockBodyPayloadV1,
     EthRlpxBlockHeaderRecordV1, EthRlpxBlockHeadersResponseV1, EthRlpxByteCodesResponseV1,
     EthRlpxFrameSessionV1, EthRlpxGetAccountRangeRequestV1, EthRlpxGetBlockBodiesRequestV1,
-    EthRlpxGetBlockHeadersRequestV1, EthRlpxNewBlockPayloadV1, EthRlpxPooledTransactionsPayloadV1,
-    EthRlpxReceiptsResponseV1, EthRlpxStatusV1, EthRlpxStorageRangesResponseV1,
-    EthRlpxTrieNodesResponseV1, NetworkRuntimeNativePendingTxPropagationStopReasonV1,
-    NetworkRuntimeNativeReceiptSnapshotV1, NetworkRuntimeNativeSnapAccountRangeProgressV1,
-    NetworkRuntimeNativeSnapAccountSnapshotV1, NetworkRuntimeNativeSnapAccountStorageSnapshotV1,
-    NetworkRuntimeNativeSnapCodeSnapshotV1, NetworkRuntimeNativeSnapStorageSlotSnapshotV1,
-    NetworkRuntimeNativeSnapTrieNodeSnapshotV1, NetworkRuntimeNativeSyncPhaseV1,
-    ETH_FULLNODE_NATIVE_WORKER_RUNTIME_SCHEMA_V1, ETH_RLPX_BASE_PROTOCOL_OFFSET,
-    ETH_RLPX_ETH_BLOCK_ACCESS_LISTS_MSG, ETH_RLPX_ETH_BLOCK_BODIES_MSG,
-    ETH_RLPX_ETH_BLOCK_HEADERS_MSG, ETH_RLPX_ETH_BLOCK_RANGE_UPDATE_MSG,
-    ETH_RLPX_ETH_GET_BLOCK_ACCESS_LISTS_MSG, ETH_RLPX_ETH_GET_BLOCK_BODIES_MSG,
-    ETH_RLPX_ETH_GET_BLOCK_HEADERS_MSG, ETH_RLPX_ETH_GET_POOLED_TRANSACTIONS_MSG,
-    ETH_RLPX_ETH_GET_RECEIPTS_MSG, ETH_RLPX_ETH_NEW_BLOCK_HASHES_MSG, ETH_RLPX_ETH_NEW_BLOCK_MSG,
+    EthRlpxGetBlockHeadersRequestV1, EthRlpxGetByteCodesRequestV1,
+    EthRlpxGetStorageRangesRequestV1, EthRlpxGetTrieNodesRequestV1, EthRlpxNewBlockPayloadV1,
+    EthRlpxPooledTransactionsPayloadV1, EthRlpxReceiptsResponseV1, EthRlpxStatusV1,
+    EthRlpxStorageRangesResponseV1, EthRlpxTrieNodesResponseV1,
+    NetworkRuntimeNativePendingTxPropagationStopReasonV1, NetworkRuntimeNativeReceiptSnapshotV1,
+    NetworkRuntimeNativeSnapAccountRangeProgressV1, NetworkRuntimeNativeSnapAccountSnapshotV1,
+    NetworkRuntimeNativeSnapAccountStorageSnapshotV1, NetworkRuntimeNativeSnapCodeSnapshotV1,
+    NetworkRuntimeNativeSnapStorageSlotSnapshotV1, NetworkRuntimeNativeSnapTrieNodeSnapshotV1,
+    NetworkRuntimeNativeSyncPhaseV1, ETH_FULLNODE_NATIVE_WORKER_RUNTIME_SCHEMA_V1,
+    ETH_RLPX_BASE_PROTOCOL_OFFSET, ETH_RLPX_ETH_BLOCK_ACCESS_LISTS_MSG,
+    ETH_RLPX_ETH_BLOCK_BODIES_MSG, ETH_RLPX_ETH_BLOCK_HEADERS_MSG,
+    ETH_RLPX_ETH_BLOCK_RANGE_UPDATE_MSG, ETH_RLPX_ETH_GET_BLOCK_ACCESS_LISTS_MSG,
+    ETH_RLPX_ETH_GET_BLOCK_BODIES_MSG, ETH_RLPX_ETH_GET_BLOCK_HEADERS_MSG,
+    ETH_RLPX_ETH_GET_POOLED_TRANSACTIONS_MSG, ETH_RLPX_ETH_GET_RECEIPTS_MSG,
+    ETH_RLPX_ETH_NEW_BLOCK_HASHES_MSG, ETH_RLPX_ETH_NEW_BLOCK_MSG,
     ETH_RLPX_ETH_NEW_POOLED_TRANSACTION_HASHES_MSG, ETH_RLPX_ETH_POOLED_TRANSACTIONS_MSG,
     ETH_RLPX_ETH_RECEIPTS_MSG, ETH_RLPX_ETH_STATUS_MSG, ETH_RLPX_ETH_TRANSACTIONS_MSG,
     ETH_RLPX_P2P_DISCONNECT_MSG, ETH_RLPX_P2P_HELLO_MSG, ETH_RLPX_P2P_PING_MSG,
@@ -2140,11 +2144,10 @@ fn drive_eth_fullnode_native_rlpx_peer_session_once_v1(
                                         );
                                         NetworkError::Decode(err)
                                     })?;
-                            let response_payload = eth_rlpx_build_storage_ranges_payload_v1(
-                                request.request_id,
-                                &[],
-                                &[],
-                            );
+                            let response_payload =
+                                build_eth_fullnode_native_snap_storage_ranges_response_payload_v1(
+                                    chain_id, &request,
+                                );
                             if let Err(err) = eth_rlpx_write_wire_frame_v1(
                                 &mut session.stream,
                                 &mut session.frame_session,
@@ -2176,7 +2179,9 @@ fn drive_eth_fullnode_native_rlpx_peer_session_once_v1(
                                         NetworkError::Decode(err)
                                     })?;
                             let response_payload =
-                                eth_rlpx_build_byte_codes_payload_v1(request.request_id, &[]);
+                                build_eth_fullnode_native_snap_byte_codes_response_payload_v1(
+                                    chain_id, &request,
+                                );
                             if let Err(err) = eth_rlpx_write_wire_frame_v1(
                                 &mut session.stream,
                                 &mut session.frame_session,
@@ -2208,7 +2213,9 @@ fn drive_eth_fullnode_native_rlpx_peer_session_once_v1(
                                         NetworkError::Decode(err)
                                     })?;
                             let response_payload =
-                                eth_rlpx_build_trie_nodes_payload_v1(request.request_id, &[]);
+                                build_eth_fullnode_native_snap_trie_nodes_response_payload_v1(
+                                    chain_id, &request,
+                                );
                             if let Err(err) = eth_rlpx_write_wire_frame_v1(
                                 &mut session.stream,
                                 &mut session.frame_session,
@@ -3181,6 +3188,118 @@ fn build_eth_fullnode_native_snap_account_range_response_payload_v1(
     request: &EthRlpxGetAccountRangeRequestV1,
 ) -> Vec<u8> {
     eth_rlpx_build_account_range_payload_v1(request.request_id, &[], &[])
+}
+
+fn eth_fullnode_native_snap_budget_allows_v1(used: u64, next_len: usize, byte_limit: u64) -> bool {
+    byte_limit > 0 && used.saturating_add(next_len as u64) <= byte_limit
+}
+
+fn build_eth_fullnode_native_snap_storage_ranges_response_payload_v1(
+    chain_id: u64,
+    request: &EthRlpxGetStorageRangesRequestV1,
+) -> Vec<u8> {
+    let mut used = 0u64;
+    let mut slots = Vec::<Vec<crate::EthRlpxSnapStorageDataV1>>::new();
+    let mut proof = Vec::<Vec<u8>>::new();
+    let mut seen_proof_nodes = HashSet::<[u8; 32]>::new();
+    for account in &request.accounts {
+        let Some(snapshot) = get_network_runtime_native_snap_account_storage_snapshot_v1(
+            chain_id,
+            request.root,
+            *account,
+        ) else {
+            break;
+        };
+        let mut slotset = Vec::new();
+        let mut snapshot_slots = snapshot.slots;
+        snapshot_slots.sort_by(|a, b| a.hash.cmp(&b.hash));
+        for slot in snapshot_slots {
+            if !request.origin.is_empty() && slot.hash.as_slice() < request.origin.as_slice() {
+                continue;
+            }
+            if !request.limit.is_empty() && slot.hash.as_slice() > request.limit.as_slice() {
+                continue;
+            }
+            let next_len = slot.body.len().saturating_add(slot.hash.len());
+            if !eth_fullnode_native_snap_budget_allows_v1(used, next_len, request.byte_limit) {
+                break;
+            }
+            used = used.saturating_add(next_len as u64);
+            slotset.push(crate::EthRlpxSnapStorageDataV1 {
+                hash: slot.hash,
+                body: slot.body,
+            });
+        }
+        for node in snapshot.proof_nodes {
+            let node_hash = eth_rlpx_trie_node_hash_v1(node.as_slice());
+            if !seen_proof_nodes.insert(node_hash) {
+                continue;
+            }
+            if !eth_fullnode_native_snap_budget_allows_v1(used, node.len(), request.byte_limit) {
+                continue;
+            }
+            used = used.saturating_add(node.len() as u64);
+            proof.push(node);
+        }
+        slots.push(slotset);
+    }
+    eth_rlpx_build_storage_ranges_payload_v1(request.request_id, slots.as_slice(), proof.as_slice())
+}
+
+fn build_eth_fullnode_native_snap_byte_codes_response_payload_v1(
+    chain_id: u64,
+    request: &EthRlpxGetByteCodesRequestV1,
+) -> Vec<u8> {
+    let mut used = 0u64;
+    let mut codes = Vec::<Vec<u8>>::new();
+    let mut seen = HashSet::<[u8; 32]>::new();
+    for hash in &request.hashes {
+        if !seen.insert(*hash) {
+            continue;
+        }
+        let Some(snapshot) = get_network_runtime_native_snap_code_snapshot_v1(chain_id, *hash)
+        else {
+            break;
+        };
+        if eth_rlpx_code_hash_v1(snapshot.code.as_slice()) != *hash {
+            break;
+        }
+        if !eth_fullnode_native_snap_budget_allows_v1(used, snapshot.code.len(), request.byte_limit)
+        {
+            break;
+        }
+        used = used.saturating_add(snapshot.code.len() as u64);
+        codes.push(snapshot.code);
+    }
+    eth_rlpx_build_byte_codes_payload_v1(request.request_id, codes.as_slice())
+}
+
+fn build_eth_fullnode_native_snap_trie_nodes_response_payload_v1(
+    chain_id: u64,
+    request: &EthRlpxGetTrieNodesRequestV1,
+) -> Vec<u8> {
+    let mut used = 0u64;
+    let mut nodes = Vec::<Vec<u8>>::new();
+    for pathset in &request.paths {
+        let Some(snapshot) =
+            get_network_runtime_native_snap_trie_node_snapshot_v1(chain_id, request.root, pathset)
+        else {
+            break;
+        };
+        if eth_rlpx_trie_node_hash_v1(snapshot.node_rlp.as_slice()) != snapshot.node_hash {
+            break;
+        }
+        if !eth_fullnode_native_snap_budget_allows_v1(
+            used,
+            snapshot.node_rlp.len(),
+            request.byte_limit,
+        ) {
+            break;
+        }
+        used = used.saturating_add(snapshot.node_rlp.len() as u64);
+        nodes.push(snapshot.node_rlp);
+    }
+    eth_rlpx_build_trie_nodes_payload_v1(request.request_id, nodes.as_slice())
 }
 
 fn eth_fullnode_native_rlpx_snap_root_hint_v1(chain_id: u64, fallback: [u8; 32]) -> [u8; 32] {
@@ -17596,6 +17715,58 @@ mod tests {
         let local = NodeId(1_390);
         let remote = NodeId(1_391);
         clear_network_runtime_native_snapshots_for_chain_v1(chain_id);
+        let state_root = [0xa5; 32];
+        let account_hash = [0x01; 32];
+        let slot_hash = [0x10; 32];
+        let slot_body = vec![0x80];
+        let storage_proof_node =
+            crate::eth_rlpx_mpt_single_leaf_node_rlp_v1(&slot_hash, slot_body.as_slice());
+        let bytecode = vec![0x60, 0x00];
+        let code_hash = crate::eth_rlpx_code_hash_v1(bytecode.as_slice());
+        let trie_path = vec![vec![0x01], vec![0x02]];
+        let trie_node = {
+            let mut node = vec![0xd1_u8, 0x03];
+            node.extend(std::iter::repeat(0x80_u8).take(16));
+            node
+        };
+        let trie_node_hash = crate::eth_rlpx_trie_node_hash_v1(trie_node.as_slice());
+        set_network_runtime_native_snap_account_storage_snapshot_v1(
+            chain_id,
+            NetworkRuntimeNativeSnapAccountStorageSnapshotV1 {
+                chain_id,
+                state_root,
+                account_hash,
+                slots: vec![NetworkRuntimeNativeSnapStorageSlotSnapshotV1 {
+                    hash: slot_hash,
+                    body: slot_body.clone(),
+                }],
+                proof_nodes: vec![storage_proof_node.clone()],
+                source_peer_id: Some(local.0),
+                observed_unix_ms: 1,
+            },
+        );
+        set_network_runtime_native_snap_code_snapshot_v1(
+            chain_id,
+            NetworkRuntimeNativeSnapCodeSnapshotV1 {
+                chain_id,
+                code_hash,
+                code: bytecode.clone(),
+                source_peer_id: Some(local.0),
+                observed_unix_ms: 1,
+            },
+        );
+        set_network_runtime_native_snap_trie_node_snapshot_v1(
+            chain_id,
+            NetworkRuntimeNativeSnapTrieNodeSnapshotV1 {
+                chain_id,
+                state_root,
+                path_segments: trie_path.clone(),
+                node_hash: trie_node_hash,
+                node_rlp: trie_node.clone(),
+                source_peer_id: Some(local.0),
+                observed_unix_ms: 1,
+            },
+        );
         set_network_runtime_sync_status(
             chain_id,
             NetworkRuntimeSyncStatus {
@@ -17627,6 +17798,15 @@ mod tests {
         let (done_tx, done_rx) = std::sync::mpsc::channel();
 
         let server = thread::spawn(move || {
+            let state_root = state_root;
+            let account_hash = account_hash;
+            let slot_hash = slot_hash;
+            let slot_body = slot_body;
+            let storage_proof_node = storage_proof_node;
+            let bytecode = bytecode;
+            let code_hash = code_hash;
+            let trie_path = trie_path;
+            let trie_node = trie_node;
             let (mut accepted, _) = listener.accept().expect("accept rlpx");
             accepted
                 .set_read_timeout(Some(Duration::from_secs(5)))
@@ -17703,8 +17883,8 @@ mod tests {
 
             let storage_request = crate::eth_rlpx_build_get_storage_ranges_payload_v1(
                 11,
-                [0xa5; 32],
-                &[[0x01; 32]],
+                state_root,
+                &[account_hash],
                 &[0x00],
                 &[0xff],
                 4096,
@@ -17734,13 +17914,16 @@ mod tests {
                 let response = crate::eth_rlpx_parse_storage_ranges_payload_v1(payload.as_slice())
                     .expect("parse storage ranges response");
                 assert_eq!(response.request_id, 11);
-                assert!(response.slots.is_empty());
-                assert!(response.proof.is_empty());
+                assert_eq!(response.slots.len(), 1);
+                assert_eq!(response.slots[0].len(), 1);
+                assert_eq!(response.slots[0][0].hash, slot_hash);
+                assert_eq!(response.slots[0][0].body, slot_body);
+                assert_eq!(response.proof, vec![storage_proof_node.clone()]);
                 break;
             }
 
             let byte_codes_request =
-                crate::eth_rlpx_build_get_byte_codes_payload_v1(12, &[[0x02; 32]], 4096);
+                crate::eth_rlpx_build_get_byte_codes_payload_v1(12, &[code_hash], 4096);
             crate::eth_rlpx_write_wire_frame_v1(
                 &mut accepted,
                 &mut responder.session,
@@ -17766,14 +17949,14 @@ mod tests {
                 let response = crate::eth_rlpx_parse_byte_codes_payload_v1(payload.as_slice())
                     .expect("parse byte codes response");
                 assert_eq!(response.request_id, 12);
-                assert!(response.codes.is_empty());
+                assert_eq!(response.codes, vec![bytecode.clone()]);
                 break;
             }
 
             let trie_nodes_request = crate::eth_rlpx_build_get_trie_nodes_payload_v1(
                 13,
-                [0xa5; 32],
-                &[vec![vec![0x01], vec![0x02]]],
+                state_root,
+                std::slice::from_ref(&trie_path),
                 4096,
             );
             crate::eth_rlpx_write_wire_frame_v1(
@@ -17801,7 +17984,7 @@ mod tests {
                 let response = crate::eth_rlpx_parse_trie_nodes_payload_v1(payload.as_slice())
                     .expect("parse trie nodes response");
                 assert_eq!(response.request_id, 13);
-                assert!(response.nodes.is_empty());
+                assert_eq!(response.nodes, vec![trie_node.clone()]);
                 break;
             }
 
