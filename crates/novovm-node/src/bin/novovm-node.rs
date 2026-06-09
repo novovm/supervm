@@ -53,10 +53,11 @@ use novovm_network::{
     snapshot_network_runtime_native_snap_trie_node_snapshots_v1, AvailabilityController,
     AvailabilityDecision, AvailabilityMode, CapabilityReadiness, CapabilityRouteHint,
     EthDiscv4EndpointV1, EthDiscv4NeighborV1, EthFullnodeBudgetHooksV1,
-    EthFullnodeNativePeerWorkerConfigV1, EthFullnodeNativePeerWorkerV1, EthPeerLifecycleStageV1,
-    EthPeerSessionSnapshot, FileQueueStore, GossipMessage, InMemoryQueueStore,
-    L3RegionalRoutingTable, L4LocalRoutingTable, L4PeerRef, MessageType,
-    NetworkRuntimeNativeBodySnapshotV1, NetworkRuntimeNativeCanonicalBlockStateV1,
+    EthFullnodeNativePeerWorkerConfigV1, EthFullnodeNativePeerWorkerV1,
+    EthFullnodeNativeRealDriveReportV1, EthPeerLifecycleStageV1, EthPeerSessionSnapshot,
+    FileQueueStore, GossipMessage, InMemoryQueueStore, L3RegionalRoutingTable, L4LocalRoutingTable,
+    L4PeerRef, MessageType, NetworkRuntimeNativeBodySnapshotV1,
+    NetworkRuntimeNativeCanonicalBlockStateV1,
     NetworkRuntimeNativeExecutionBudgetTargetObservationV1, NetworkRuntimeNativeHeadSnapshotV1,
     NetworkRuntimeNativeHeaderSnapshotV1, NetworkRuntimeNativeReceiptSnapshotV1,
     NetworkRuntimeNativeSnapAccountRangeProgressV1, NetworkRuntimeNativeSnapAccountSnapshotV1,
@@ -2199,6 +2200,40 @@ fn eth_rlpx_adaptive_bootstrap_fanout_v1(
     } else {
         current_fanout
     }
+}
+
+fn eth_rlpx_adaptive_public_sync_batch_v1(
+    current_batch: u64,
+    max_batch: u64,
+    min_batch: u64,
+    made_progress: bool,
+    request_transport_failure: bool,
+) -> u64 {
+    let max_batch = max_batch.max(1);
+    let min_batch = min_batch.max(1).min(max_batch);
+    let current_batch = current_batch.max(1).clamp(min_batch, max_batch);
+    if made_progress && current_batch < max_batch {
+        current_batch
+            .saturating_mul(2)
+            .min(max_batch)
+            .max(min_batch)
+    } else if request_transport_failure && current_batch > min_batch {
+        (current_batch / 2).max(min_batch)
+    } else {
+        current_batch
+    }
+}
+
+fn eth_rlpx_report_has_request_transport_failure_v1(
+    report: &EthFullnodeNativeRealDriveReportV1,
+) -> bool {
+    report.peer_failures.iter().any(|failure| {
+        failure.error.contains("rlpx_session_closed")
+            || failure.error.contains("rlpx_frame_body_read_failed")
+            || failure.error.contains("rlpx_request_timeout:headers")
+            || failure.error.contains("rlpx_request_timeout:bodies")
+            || failure.error.contains("rlpx_request_timeout:receipts")
+    })
 }
 
 fn eth_rlpx_apply_public_sync_batch_defaults_v1(
@@ -4505,6 +4540,19 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
     let mut runtime_sync_target_fanout = base_sync_target_fanout;
     let headers_batch = u64_env_clamped("NOVOVM_ETH_RLPX_HEADERS_BATCH", 192, 1, 2_048);
     let bodies_batch = u64_env_clamped("NOVOVM_ETH_RLPX_BODIES_BATCH", 128, 1, 256);
+    let adaptive_batch_enabled = bool_env_default_true("NOVOVM_ETH_RLPX_ADAPTIVE_BATCH_ENABLED");
+    let adaptive_headers_min_batch = u64_env_clamped(
+        "NOVOVM_ETH_RLPX_ADAPTIVE_HEADERS_MIN_BATCH",
+        headers_batch.min(64).max(1),
+        1,
+        headers_batch.max(1),
+    );
+    let adaptive_bodies_min_batch = u64_env_clamped(
+        "NOVOVM_ETH_RLPX_ADAPTIVE_BODIES_MIN_BATCH",
+        bodies_batch.min(32).max(1),
+        1,
+        bodies_batch.max(1),
+    );
     let rlpx_request_timeout_ms = u64_env_clamped(
         "NOVOVM_ETH_RLPX_REQUEST_TIMEOUT_MS",
         ETH_RLPX_PUBLIC_SYNC_DEFAULT_REQUEST_TIMEOUT_MS_V1,
@@ -4567,6 +4615,10 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
         runtime_sync_target_fanout,
         rlpx_request_timeout_ms,
     );
+    let max_runtime_headers_batch = budget.sync_pull_headers_batch.max(1);
+    let max_runtime_bodies_batch = budget.sync_pull_bodies_batch.max(1);
+    let mut runtime_headers_batch = max_runtime_headers_batch;
+    let mut runtime_bodies_batch = max_runtime_bodies_batch;
     let checkpoint_enabled = bool_env_default_true("NOVOVM_ETH_RLPX_CHECKPOINT_ENABLED");
     let checkpoint_path = eth_rlpx_sync_checkpoint_path_v1();
     let checkpoint = if checkpoint_enabled {
@@ -4782,11 +4834,11 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
         let head_snapshot = get_network_runtime_native_head_snapshot_v1(chain_id);
         let current_sync_block = sync_status.map(|status| status.current_block).unwrap_or(0);
         let highest_sync_block = sync_status.map(|status| status.highest_block).unwrap_or(0);
-        if current_sync_block > last_sync_progress_block
+        let sync_made_progress = current_sync_block > last_sync_progress_block
             || report.header_updates > 0
             || report.body_updates > 0
-            || report.receipt_updates > 0
-        {
+            || report.receipt_updates > 0;
+        if sync_made_progress {
             last_sync_progress_tick = tick;
             last_sync_progress_block = last_sync_progress_block.max(current_sync_block);
         }
@@ -4870,6 +4922,57 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
                 ) {
                     write_eth_rlpx_native_history_store_v1(&native_history_store_path, store)?;
                 }
+            }
+        }
+        if adaptive_batch_enabled {
+            let request_transport_failure =
+                eth_rlpx_report_has_request_transport_failure_v1(&report);
+            let next_headers_batch = eth_rlpx_adaptive_public_sync_batch_v1(
+                runtime_headers_batch,
+                max_runtime_headers_batch,
+                adaptive_headers_min_batch,
+                sync_made_progress,
+                request_transport_failure,
+            );
+            let next_bodies_batch = eth_rlpx_adaptive_public_sync_batch_v1(
+                runtime_bodies_batch,
+                max_runtime_bodies_batch,
+                adaptive_bodies_min_batch,
+                sync_made_progress,
+                request_transport_failure,
+            );
+            if next_headers_batch != runtime_headers_batch
+                || next_bodies_batch != runtime_bodies_batch
+            {
+                let old_headers_batch = runtime_headers_batch;
+                let old_bodies_batch = runtime_bodies_batch;
+                runtime_headers_batch = next_headers_batch;
+                runtime_bodies_batch = next_bodies_batch;
+                budget.sync_pull_headers_batch = runtime_headers_batch;
+                budget.sync_pull_bodies_batch = runtime_bodies_batch;
+                worker = EthFullnodeNativePeerWorkerV1::new(EthFullnodeNativePeerWorkerConfigV1 {
+                    chain_id,
+                    local_node: NodeId(local_node_id),
+                    peers: peers.clone(),
+                    peer_endpoints: peer_endpoints.clone(),
+                    recv_budget,
+                    sync_target_fanout: runtime_sync_target_fanout,
+                    budget_hooks: budget.clone(),
+                });
+                println!(
+                    "eth_rlpx_adaptive_batch: chain_id={} tick={} headers_old={} headers_new={} bodies_old={} bodies_new={} reason={}",
+                    chain_id,
+                    tick,
+                    old_headers_batch,
+                    runtime_headers_batch,
+                    old_bodies_batch,
+                    runtime_bodies_batch,
+                    if sync_made_progress {
+                        "progress_restore"
+                    } else {
+                        "request_transport_failure"
+                    }
+                );
             }
         }
         if peer_endpoint_cache_enabled
@@ -5593,6 +5696,34 @@ mod mainline_evm_cli_tests {
         assert_eq!(
             eth_rlpx_adaptive_bootstrap_fanout_v1(8, 32, 32, true, 0, 1_853, 1_853),
             8
+        );
+    }
+
+    #[test]
+    fn eth_rlpx_adaptive_public_sync_batch_backs_off_and_restores_v1() {
+        assert_eq!(
+            eth_rlpx_adaptive_public_sync_batch_v1(192, 192, 64, false, true),
+            96
+        );
+        assert_eq!(
+            eth_rlpx_adaptive_public_sync_batch_v1(96, 192, 64, false, true),
+            64
+        );
+        assert_eq!(
+            eth_rlpx_adaptive_public_sync_batch_v1(64, 192, 64, false, true),
+            64
+        );
+        assert_eq!(
+            eth_rlpx_adaptive_public_sync_batch_v1(64, 192, 64, true, false),
+            128
+        );
+        assert_eq!(
+            eth_rlpx_adaptive_public_sync_batch_v1(128, 192, 64, true, false),
+            192
+        );
+        assert_eq!(
+            eth_rlpx_adaptive_public_sync_batch_v1(192, 192, 64, true, false),
+            192
         );
     }
 

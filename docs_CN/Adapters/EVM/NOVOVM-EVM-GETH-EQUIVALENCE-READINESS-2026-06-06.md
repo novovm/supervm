@@ -170,6 +170,57 @@ cargo run -p novovm-node --bin novovm-node
 
 该证据说明 SUPERVM 公网入口已补齐 geth 对照下的请求 TTL 语义差异，但仍不能声明已经像 geth 一样长期加入 Ethereum 主网同步；下一步应继续处理公网 peer 中途关闭后的同批请求重试/换 peer 接续，而不是继续堆内部 smoke。
 
+### 2026-06-09 RLPx 公网请求 batch 自适应退避
+
+上一轮真实入口已经把固定 5s 请求超时修正为公网入口默认 15s；继续跑产品入口后，新的实际瓶颈变成：公网 peer 能通过 Status 并接收 headers 请求，但在返回约 `171088` 字节级 RLPx frame 时中途 reset，例如：
+
+- `rlpx_session_closed:endpoint=157.90.35.166:30303:rlpx_frame_body_read_failed:远程主机强迫关闭了一个现有的连接。 (os error 10054) read=52276/171088`
+
+对照 geth downloader 语义，geth 不只是固定请求 `192` headers，还会按 peer rate/RTT 调整实际请求节奏；SUPERVM 之前虽然默认窗口已经对齐 `headers=192`、`bodies=128`，但公网 peer 大帧失败后仍会用同样窗口重试，容易重复撞同类 reset。
+
+本轮同步到 SUPERVM 的产品语义：
+
+- 不改变 wire 协议，不新增脚本，不把 EVM 做成独立工程化产品。
+- 产品入口仍以 `NOVOVM_ETH_RLPX_HEADERS_BATCH=192`、`NOVOVM_ETH_RLPX_BODIES_BATCH=128` 启动。
+- 新增 `NOVOVM_ETH_RLPX_ADAPTIVE_BATCH_ENABLED`，默认开启。
+- 新增最小退避窗口：`NOVOVM_ETH_RLPX_ADAPTIVE_HEADERS_MIN_BATCH` 默认 `64`，`NOVOVM_ETH_RLPX_ADAPTIVE_BODIES_MIN_BATCH` 默认 `32`。
+- 当 sync 请求发生 `rlpx_session_closed`、`rlpx_frame_body_read_failed`、`rlpx_request_timeout:headers/bodies/receipts` 时，当前长跑进程内 headers/bodies batch 临时减半。
+- 一旦收到真实 `headers` / `bodies` / `receipts` 进展，batch 逐步恢复到入口默认值。
+
+本轮验证：
+
+```powershell
+cargo test -p novovm-node eth_rlpx_ -- --nocapture
+cargo test -p novovm-network missing_body_recovery -- --nocapture
+cargo check --workspace
+```
+
+结果：
+
+- `novovm-node eth_rlpx_`: `22 passed`
+- `novovm-network missing_body_recovery`: `4 passed`
+- `cargo check --workspace`: passed
+
+真实主网产品入口短验证：
+
+```powershell
+$env:NOVOVM_NODE_MODE='eth_rlpx_sync'
+$env:NOVOVM_NODE_VERBOSE='1'
+$env:NOVOVM_ETH_RLPX_TICKS='10'
+$env:NOVOVM_ETH_RLPX_SLEEP_MS='600'
+cargo run -p novovm-node --bin novovm-node
+```
+
+结果：
+
+- 起点：`current=1853/highest=25277702`，当前 body/receipt 均 available。
+- tick 4：adaptive fanout 从 `8` 提升到 `32`。
+- tick 9：达到 `ready=1/status_updates=1/sync_requests=1`，`highest=25277769`。
+- tick 10：公网 peer 在 `171088` 字节 frame 读取到 `52276` 字节后 reset。
+- 同一 tick 触发 `eth_rlpx_adaptive_batch: headers_old=192 headers_new=96 bodies_old=128 bodies_new=64 reason=request_transport_failure`。
+
+该证据说明 SUPERVM 长跑产品入口已经具备公网 peer 大帧 reset 后的请求容量退避，不再固定用同一 oversized window 重试；但这仍不是 geth 级长期主网同步完成证明。下一步应继续做更长窗口验证：观察退避后的 `96/64` 请求是否能完成 headers/body/receipts，并在成功后恢复到 `192/128`。
+
 ### 2026-06-09 go-ethereum handler-surface 复审
 
 本轮按最新请求再次检查 `D:\WEB3_AI\go-ethereum`：
