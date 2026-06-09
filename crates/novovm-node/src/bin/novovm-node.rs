@@ -2292,7 +2292,7 @@ fn eth_rlpx_apply_public_sync_batch_defaults_v1(
     budget.sync_pull_bodies_batch = budget.sync_pull_bodies_batch.min(bodies_batch.max(1));
 }
 
-const ETH_RLPX_PUBLIC_SYNC_DEFAULT_REQUEST_TIMEOUT_MS_V1: u64 = 15_000;
+const ETH_RLPX_PUBLIC_SYNC_DEFAULT_REQUEST_TIMEOUT_MS_V1: u64 = 60_000;
 
 fn eth_rlpx_apply_public_sync_runtime_defaults_v1(
     budget: &mut EthFullnodeBudgetHooksV1,
