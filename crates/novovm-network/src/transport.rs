@@ -5162,13 +5162,6 @@ fn ingest_real_rlpx_snap_account_range_v1(
     session.pending_snap_next_account_origin =
         eth_rlpx_snap_account_range_next_origin_v1(account_origin, account_limit, response)?;
     session.last_snap_account_range_request_id = None;
-    let Some(snap_offset) = eth_rlpx_snap_base_offset_v1(
-        session._negotiated_eth_version,
-        session._negotiated_snap_version,
-    ) else {
-        mark_network_runtime_eth_peer_session_ready_v1(chain_id, source_peer_id, None);
-        return Ok(());
-    };
     let Some(root) = session.last_snap_state_root else {
         mark_network_runtime_eth_peer_session_ready_v1(chain_id, source_peer_id, None);
         return Ok(());
@@ -5231,39 +5224,13 @@ fn ingest_real_rlpx_snap_account_range_v1(
         )?;
     }
     if !code_hashes.is_empty() {
-        let request_id = next_eth_fullnode_native_rlpx_request_id_v1();
-        let payload = eth_rlpx_build_get_byte_codes_payload_v1(
-            request_id,
-            code_hashes.as_slice(),
-            ETH_RLPX_SNAP_DEFAULT_ACCOUNT_RANGE_BYTES,
-        );
-        eth_rlpx_write_wire_frame_v1(
-            &mut session.stream,
-            &mut session.frame_session,
-            snap_offset + ETH_RLPX_SNAP_GET_BYTE_CODES_MSG,
-            payload.as_slice(),
-        )
-        .map_err(|err| {
-            observe_network_runtime_eth_peer_handshake_failure_v1(
-                chain_id,
-                source_peer_id,
-                "snap_byte_codes_request_write_failed",
-            );
-            NetworkError::Io(err)
-        })?;
-        observe_eth_native_snap_pull(chain_id);
-        observe_network_runtime_eth_peer_syncing_v1(chain_id, source_peer_id);
-        session.last_snap_byte_codes_request_id = Some(request_id);
-        session.pending_snap_code_hashes = code_hashes.clone();
-        session.last_sync_request_unix_ms = now_unix_ms();
-        eprintln!(
-            "network_info: rlpx stage snap_byte_codes_requested chain_id={} peer={} endpoint={} request_id={} hashes={}",
+        dispatch_eth_fullnode_native_snap_byte_codes_request_v1(
             chain_id,
             source_peer_id,
-            session.endpoint.addr_hint,
-            request_id,
-            code_hashes.len(),
-        );
+            session,
+            code_hashes.as_slice(),
+            "snap_byte_codes_request_write_failed",
+        )?;
     }
     let _ = maybe_request_eth_fullnode_native_snap_trie_nodes_v1(
         chain_id,
@@ -5484,6 +5451,73 @@ fn validate_eth_fullnode_native_snap_byte_codes_match_request_v1(
     Ok(matched)
 }
 
+fn eth_fullnode_native_snap_byte_codes_missing_hashes_v1(
+    requested_hashes: &[[u8; 32]],
+    matched_hashes: &[[u8; 32]],
+) -> Vec<[u8; 32]> {
+    requested_hashes
+        .iter()
+        .copied()
+        .filter(|hash| !matched_hashes.contains(hash))
+        .collect()
+}
+
+fn dispatch_eth_fullnode_native_snap_byte_codes_request_v1(
+    chain_id: u64,
+    source_peer_id: u64,
+    session: &mut EthFullnodeNativeRlpxLivePeerSessionV1,
+    code_hashes: &[[u8; 32]],
+    failure_reason: &'static str,
+) -> Result<u64, NetworkError> {
+    if code_hashes.is_empty() {
+        return Err(NetworkError::Encode(
+            "snap_byte_codes_empty_request".to_string(),
+        ));
+    }
+    let Some(snap_offset) = eth_rlpx_snap_base_offset_v1(
+        session._negotiated_eth_version,
+        session._negotiated_snap_version,
+    ) else {
+        return Err(NetworkError::Decode(
+            "snap_byte_codes_without_negotiated_snap".to_string(),
+        ));
+    };
+    let request_id = next_eth_fullnode_native_rlpx_request_id_v1();
+    let payload = eth_rlpx_build_get_byte_codes_payload_v1(
+        request_id,
+        code_hashes,
+        ETH_RLPX_SNAP_DEFAULT_ACCOUNT_RANGE_BYTES,
+    );
+    eth_rlpx_write_wire_frame_v1(
+        &mut session.stream,
+        &mut session.frame_session,
+        snap_offset + ETH_RLPX_SNAP_GET_BYTE_CODES_MSG,
+        payload.as_slice(),
+    )
+    .map_err(|err| {
+        observe_network_runtime_eth_peer_handshake_failure_v1(
+            chain_id,
+            source_peer_id,
+            failure_reason,
+        );
+        NetworkError::Io(err)
+    })?;
+    observe_eth_native_snap_pull(chain_id);
+    observe_network_runtime_eth_peer_syncing_v1(chain_id, source_peer_id);
+    session.last_snap_byte_codes_request_id = Some(request_id);
+    session.pending_snap_code_hashes = code_hashes.to_vec();
+    session.last_sync_request_unix_ms = now_unix_ms();
+    eprintln!(
+        "network_info: rlpx stage snap_byte_codes_requested chain_id={} peer={} endpoint={} request_id={} hashes={}",
+        chain_id,
+        source_peer_id,
+        session.endpoint.addr_hint,
+        request_id,
+        code_hashes.len(),
+    );
+    Ok(request_id)
+}
+
 fn ingest_real_rlpx_snap_byte_codes_v1(
     chain_id: u64,
     source_peer_id: u64,
@@ -5518,8 +5552,9 @@ fn ingest_real_rlpx_snap_byte_codes_v1(
         );
         return Err(NetworkError::Decode(reason));
     }
+    let requested_code_hashes = session.pending_snap_code_hashes.clone();
     let matched_code_hashes = validate_eth_fullnode_native_snap_byte_codes_match_request_v1(
-        session.pending_snap_code_hashes.as_slice(),
+        requested_code_hashes.as_slice(),
         response.codes.as_slice(),
     )
     .map_err(|reason| {
@@ -5530,6 +5565,10 @@ fn ingest_real_rlpx_snap_byte_codes_v1(
         );
         NetworkError::Decode(reason)
     })?;
+    let missing_code_hashes = eth_fullnode_native_snap_byte_codes_missing_hashes_v1(
+        requested_code_hashes.as_slice(),
+        matched_code_hashes.as_slice(),
+    );
     observe_eth_native_snap_response(chain_id);
     eprintln!(
         "network_info: rlpx stage snap_byte_codes_received chain_id={} peer={} endpoint={} negotiated_eth={} negotiated_snap={:?} request_id={} codes={}",
@@ -5556,6 +5595,16 @@ fn ingest_real_rlpx_snap_byte_codes_v1(
     }
     session.last_snap_byte_codes_request_id = None;
     session.pending_snap_code_hashes.clear();
+    if !missing_code_hashes.is_empty() {
+        dispatch_eth_fullnode_native_snap_byte_codes_request_v1(
+            chain_id,
+            source_peer_id,
+            session,
+            missing_code_hashes.as_slice(),
+            "snap_byte_codes_retry_request_write_failed",
+        )?;
+        return Ok(());
+    }
     if session.last_snap_account_range_request_id.is_none()
         && session.last_snap_storage_ranges_request_id.is_none()
         && session.last_snap_trie_nodes_request_id.is_none()
@@ -9376,6 +9425,11 @@ mod tests {
         )
         .expect("ordered subset with gaps is valid");
         assert_eq!(matched, vec![hash_a, hash_c]);
+        assert_eq!(
+            eth_fullnode_native_snap_byte_codes_missing_hashes_v1(&requested, &matched),
+            vec![hash_b],
+            "missing ByteCodes hashes must be re-requested like geth codeTasks"
+        );
 
         let empty_err =
             validate_eth_fullnode_native_snap_byte_codes_match_request_v1(&requested, &[])
@@ -9395,6 +9449,62 @@ mod tests {
         )
         .expect_err("out-of-order bytecode response must reject");
         assert!(out_of_order_err.contains("snap_byte_codes_unrequested_or_out_of_order_hash"));
+    }
+
+    #[test]
+    fn rlpx_snap_byte_codes_partial_ingest_retries_missing_hashes_v1() {
+        let chain_id = 9_953_u64;
+        let code_a = vec![0x60, 0x01];
+        let code_b = vec![0x60, 0x02];
+        let code_c = vec![0x60, 0x03];
+        let hash_a = eth_rlpx_code_hash_v1(code_a.as_slice());
+        let hash_b = eth_rlpx_code_hash_v1(code_b.as_slice());
+        let hash_c = eth_rlpx_code_hash_v1(code_c.as_slice());
+        clear_network_runtime_native_snapshots_for_chain_v1(chain_id);
+        let (mut session, mut accepted, mut peer_frame_session) =
+            dummy_rlpx_live_session_pair(chain_id);
+        accepted
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .expect("set accepted read timeout");
+        session.last_snap_byte_codes_request_id = Some(92);
+        session.pending_snap_code_hashes = vec![hash_a, hash_b, hash_c];
+        let response = EthRlpxByteCodesResponseV1 {
+            request_id: 92,
+            codes: vec![code_a.clone(), code_c.clone()],
+        };
+
+        ingest_real_rlpx_snap_byte_codes_v1(chain_id, 77, &mut session, &response)
+            .expect("partial ByteCodes response must request missing hashes");
+
+        let snap_offset = crate::eth_rlpx_snap_base_offset_v1(71, Some(1)).expect("snap offset");
+        let (code, payload) =
+            crate::eth_rlpx_read_wire_frame_v1(&mut accepted, &mut peer_frame_session)
+                .expect("read retry get byte codes");
+        assert_eq!(code, snap_offset + crate::ETH_RLPX_SNAP_GET_BYTE_CODES_MSG);
+        let retry = crate::eth_rlpx_parse_get_byte_codes_payload_v1(payload.as_slice())
+            .expect("parse retry get byte codes");
+        assert_eq!(retry.hashes, vec![hash_b]);
+        assert_eq!(session.pending_snap_code_hashes, vec![hash_b]);
+        assert_eq!(
+            session.last_snap_byte_codes_request_id,
+            Some(retry.request_id)
+        );
+        assert_eq!(
+            crate::get_network_runtime_native_snap_code_snapshot_v1(chain_id, hash_a)
+                .expect("code a cached")
+                .code,
+            code_a
+        );
+        assert!(
+            crate::get_network_runtime_native_snap_code_snapshot_v1(chain_id, hash_b).is_none(),
+            "missing bytecode must not be synthesized before retry"
+        );
+        assert_eq!(
+            crate::get_network_runtime_native_snap_code_snapshot_v1(chain_id, hash_c)
+                .expect("code c cached")
+                .code,
+            code_c
+        );
     }
 
     #[test]
