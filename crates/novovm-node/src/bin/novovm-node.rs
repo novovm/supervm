@@ -2208,7 +2208,7 @@ fn eth_rlpx_cache_warmed_candidate_limit_v1(
 }
 
 fn eth_rlpx_default_max_peers_v1() -> usize {
-    32
+    50
 }
 
 fn eth_rlpx_default_sync_target_fanout_v1(max_peers: usize) -> usize {
@@ -4544,7 +4544,7 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
     let local_node_id = u64_env_allow_zero("NOVOVM_ETH_RLPX_LOCAL_NODE", 9_990_001)?;
     let max_peers =
         usize_env_allow_zero("NOVOVM_ETH_RLPX_MAX_PEERS", eth_rlpx_default_max_peers_v1())?
-            .clamp(1, 32);
+            .clamp(1, 50);
     let candidate_limit_explicit = std::env::var_os("NOVOVM_ETH_RLPX_CANDIDATE_PEERS").is_some();
     let mut candidate_limit =
         usize_env_allow_zero("NOVOVM_ETH_RLPX_CANDIDATE_PEERS", max_peers.max(256))?
@@ -5748,7 +5748,7 @@ mod mainline_evm_cli_tests {
 
     #[test]
     fn eth_rlpx_default_max_peers_matches_public_mainnet_window_v1() {
-        assert_eq!(eth_rlpx_default_max_peers_v1(), 32);
+        assert_eq!(eth_rlpx_default_max_peers_v1(), 50);
     }
 
     #[test]
@@ -5763,6 +5763,7 @@ mod mainline_evm_cli_tests {
     fn eth_rlpx_adaptive_bootstrap_fanout_raises_only_when_admission_stalled_v1() {
         assert_eq!(eth_rlpx_default_adaptive_bootstrap_fanout_v1(1), 1);
         assert_eq!(eth_rlpx_default_adaptive_bootstrap_fanout_v1(32), 32);
+        assert_eq!(eth_rlpx_default_adaptive_bootstrap_fanout_v1(50), 50);
         assert_eq!(eth_rlpx_default_adaptive_bootstrap_fanout_v1(64), 64);
         assert_eq!(
             eth_rlpx_adaptive_bootstrap_fanout_v1(8, 32, 32, true, 0, 25_277_388, 1_853),

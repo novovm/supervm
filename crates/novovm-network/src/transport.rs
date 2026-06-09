@@ -411,14 +411,13 @@ impl EthFullnodeNativePeerWorkerV1 {
         };
         let bootstrap_started = Instant::now();
         let bootstrap_tick_budget = eth_fullnode_native_rlpx_bootstrap_tick_budget_v1();
+        let mut bootstrap_jobs = Vec::new();
         for &peer in plan.bootstrap_peers.iter() {
-            if report.attempted_bootstrap_peers > 0
-                && bootstrap_started.elapsed() >= bootstrap_tick_budget
-            {
+            if !bootstrap_jobs.is_empty() && bootstrap_started.elapsed() >= bootstrap_tick_budget {
                 report.skipped_bootstrap_budget_peers = plan
                     .bootstrap_peers
                     .len()
-                    .saturating_sub(report.attempted_bootstrap_peers)
+                    .saturating_sub(bootstrap_jobs.len())
                     .saturating_sub(report.skipped_missing_endpoint_peers);
                 break;
             }
@@ -427,44 +426,64 @@ impl EthFullnodeNativePeerWorkerV1 {
                     report.skipped_missing_endpoint_peers.saturating_add(1);
                 continue;
             };
-            report.attempted_bootstrap_peers = report.attempted_bootstrap_peers.saturating_add(1);
-            match connect_eth_fullnode_native_rlpx_peer_v1(
-                plan.chain_id,
-                plan.local_node,
-                peer,
-                &endpoint,
-            ) {
-                Ok(()) => {
-                    report.connected_peers = report.connected_peers.saturating_add(1);
-                    report.ready_peers = report.ready_peers.saturating_add(1);
-                    report.status_updates = report.status_updates.saturating_add(1);
-                    match drive_eth_fullnode_native_rlpx_peer_session_once_v1(
+            bootstrap_jobs.push((peer, endpoint));
+        }
+        report.attempted_bootstrap_peers = bootstrap_jobs.len();
+        let bootstrap_results = std::thread::scope(|scope| {
+            let mut handles = Vec::with_capacity(bootstrap_jobs.len());
+            for (peer, endpoint) in bootstrap_jobs {
+                let budget_hooks = plan.budget_hooks.clone();
+                handles.push(scope.spawn(move || {
+                    drive_eth_fullnode_native_rlpx_bootstrap_peer_once_v1(
                         plan.chain_id,
                         plan.local_node,
                         peer,
-                        &endpoint,
-                        &plan.budget_hooks,
-                    ) {
-                        Ok(peer_report) => {
-                            absorb_eth_fullnode_native_rlpx_peer_tick_report_v1(
-                                &mut report,
-                                peer,
-                                peer_report,
-                            );
-                        }
-                        Err(err) => {
-                            report.failed_sync_peers = report.failed_sync_peers.saturating_add(1);
-                            report
-                                .peer_failures
-                                .push(build_eth_fullnode_peer_failure_report_v1(
-                                    plan.chain_id,
-                                    peer,
-                                    Some(&endpoint),
-                                    EthFullnodeNativePeerDrivePhaseV1::Sync,
-                                    &err,
-                                ));
-                        }
-                    }
+                        endpoint,
+                        budget_hooks,
+                    )
+                }));
+            }
+            handles
+                .into_iter()
+                .map(|handle| {
+                    handle
+                        .join()
+                        .unwrap_or_else(|_| EthFullnodeNativeBootstrapPeerDriveResultV1 {
+                            peer: NodeId(0),
+                            endpoint: None,
+                            connected: false,
+                            outcome: Err(NetworkError::Io(
+                                "rlpx_bootstrap_thread_panic".to_string(),
+                            )),
+                        })
+                })
+                .collect::<Vec<_>>()
+        });
+        for bootstrap_result in bootstrap_results {
+            if bootstrap_result.connected {
+                report.connected_peers = report.connected_peers.saturating_add(1);
+                report.ready_peers = report.ready_peers.saturating_add(1);
+                report.status_updates = report.status_updates.saturating_add(1);
+            }
+            match bootstrap_result.outcome {
+                Ok(peer_report) => {
+                    absorb_eth_fullnode_native_rlpx_peer_tick_report_v1(
+                        &mut report,
+                        bootstrap_result.peer,
+                        peer_report,
+                    );
+                }
+                Err(err) if bootstrap_result.connected => {
+                    report.failed_sync_peers = report.failed_sync_peers.saturating_add(1);
+                    report
+                        .peer_failures
+                        .push(build_eth_fullnode_peer_failure_report_v1(
+                            plan.chain_id,
+                            bootstrap_result.peer,
+                            bootstrap_result.endpoint.as_ref(),
+                            EthFullnodeNativePeerDrivePhaseV1::Sync,
+                            &err,
+                        ));
                 }
                 Err(err) => {
                     report.failed_bootstrap_peers = report.failed_bootstrap_peers.saturating_add(1);
@@ -472,8 +491,8 @@ impl EthFullnodeNativePeerWorkerV1 {
                         .peer_failures
                         .push(build_eth_fullnode_peer_failure_report_v1(
                             plan.chain_id,
-                            peer,
-                            Some(&endpoint),
+                            bootstrap_result.peer,
+                            bootstrap_result.endpoint.as_ref(),
                             EthFullnodeNativePeerDrivePhaseV1::Bootstrap,
                             &err,
                         ));
@@ -910,6 +929,13 @@ struct EthFullnodeNativeRlpxPeerTickReportV1 {
     inbound_frames: usize,
 }
 
+struct EthFullnodeNativeBootstrapPeerDriveResultV1 {
+    peer: NodeId,
+    endpoint: Option<PluginPeerEndpoint>,
+    connected: bool,
+    outcome: Result<EthFullnodeNativeRlpxPeerTickReportV1, NetworkError>,
+}
+
 fn absorb_eth_fullnode_native_rlpx_peer_tick_report_v1(
     report: &mut EthFullnodeNativeRealDriveReportV1,
     peer: NodeId,
@@ -939,6 +965,35 @@ fn absorb_eth_fullnode_native_rlpx_peer_tick_report_v1(
     }
     if peer_report.receipt_updates > 0 {
         report.receipt_updated_peer_ids.push(peer.0);
+    }
+}
+
+fn drive_eth_fullnode_native_rlpx_bootstrap_peer_once_v1(
+    chain_id: u64,
+    local_node: NodeId,
+    peer: NodeId,
+    endpoint: PluginPeerEndpoint,
+    budget_hooks: EthFullnodeBudgetHooksV1,
+) -> EthFullnodeNativeBootstrapPeerDriveResultV1 {
+    match connect_eth_fullnode_native_rlpx_peer_v1(chain_id, local_node, peer, &endpoint) {
+        Ok(()) => EthFullnodeNativeBootstrapPeerDriveResultV1 {
+            peer,
+            endpoint: Some(endpoint.clone()),
+            connected: true,
+            outcome: drive_eth_fullnode_native_rlpx_peer_session_once_v1(
+                chain_id,
+                local_node,
+                peer,
+                &endpoint,
+                &budget_hooks,
+            ),
+        },
+        Err(err) => EthFullnodeNativeBootstrapPeerDriveResultV1 {
+            peer,
+            endpoint: Some(endpoint),
+            connected: false,
+            outcome: Err(err),
+        },
     }
 }
 
@@ -1251,11 +1306,13 @@ fn connect_eth_fullnode_native_rlpx_peer_v1(
 ) -> Result<(), NetworkError> {
     let key = (chain_id, peer.0);
     observe_network_runtime_eth_peer_discovered_v1(chain_id, peer.0);
-    let mut sessions = eth_fullnode_native_rlpx_sessions_v1()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    if sessions.contains_key(&key) {
-        return Ok(());
+    {
+        let sessions = eth_fullnode_native_rlpx_sessions_v1()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if sessions.contains_key(&key) {
+            return Ok(());
+        }
     }
 
     let timeout = eth_fullnode_native_rlpx_connect_timeout_v1();
@@ -1544,47 +1601,50 @@ fn connect_eth_fullnode_native_rlpx_peer_v1(
         remote_snap_versions.as_slice(),
         Some(remote_status.latest_block),
     );
-    sessions.insert(
-        key,
-        EthFullnodeNativeRlpxLivePeerSessionV1 {
-            endpoint: endpoint.clone(),
-            stream,
-            frame_session: handshake.session,
-            _negotiated_eth_version: negotiated_eth_version.as_u8(),
-            _negotiated_snap_version: negotiated_snap.map(|version| version.as_u8()),
-            remote_status,
-            last_sync_request_unix_ms: 0,
-            last_headers_request_id: None,
-            pending_headers_request: None,
-            last_bodies_request_id: None,
-            last_receipts_request_id: None,
-            last_snap_account_range_request_id: None,
-            last_snap_storage_ranges_request_id: None,
-            last_snap_byte_codes_request_id: None,
-            last_snap_trie_nodes_request_id: None,
-            last_snap_state_root: None,
-            last_snap_account_origin: None,
-            last_snap_account_limit: None,
-            pending_snap_next_account_origin: None,
-            pending_snap_storage_accounts: Vec::new(),
-            pending_snap_storage_origin: Vec::new(),
-            pending_snap_storage_limit: Vec::new(),
-            pending_snap_storage_deferred_accounts: Vec::new(),
-            pending_snap_code_hashes: Vec::new(),
-            pending_snap_trie_node_pathsets: Vec::new(),
-            pending_snap_trie_node_hashes: Vec::new(),
-            pending_snap_trie_node_retry_count: 0,
-            last_block_access_lists_request_id: None,
-            queued_block_access_lists: Vec::new(),
-            pending_block_access_lists: Vec::new(),
-            last_pooled_transactions_request_id: None,
-            last_tx_broadcast_unix_ms: 0,
-            pending_body_headers: Vec::new(),
-            pending_body_request_offset: 0,
-            pending_receipt_request_offset: 0,
-            pending_pooled_transaction_hashes: Vec::new(),
-        },
-    );
+    eth_fullnode_native_rlpx_sessions_v1()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .insert(
+            key,
+            EthFullnodeNativeRlpxLivePeerSessionV1 {
+                endpoint: endpoint.clone(),
+                stream,
+                frame_session: handshake.session,
+                _negotiated_eth_version: negotiated_eth_version.as_u8(),
+                _negotiated_snap_version: negotiated_snap.map(|version| version.as_u8()),
+                remote_status,
+                last_sync_request_unix_ms: 0,
+                last_headers_request_id: None,
+                pending_headers_request: None,
+                last_bodies_request_id: None,
+                last_receipts_request_id: None,
+                last_snap_account_range_request_id: None,
+                last_snap_storage_ranges_request_id: None,
+                last_snap_byte_codes_request_id: None,
+                last_snap_trie_nodes_request_id: None,
+                last_snap_state_root: None,
+                last_snap_account_origin: None,
+                last_snap_account_limit: None,
+                pending_snap_next_account_origin: None,
+                pending_snap_storage_accounts: Vec::new(),
+                pending_snap_storage_origin: Vec::new(),
+                pending_snap_storage_limit: Vec::new(),
+                pending_snap_storage_deferred_accounts: Vec::new(),
+                pending_snap_code_hashes: Vec::new(),
+                pending_snap_trie_node_pathsets: Vec::new(),
+                pending_snap_trie_node_hashes: Vec::new(),
+                pending_snap_trie_node_retry_count: 0,
+                last_block_access_lists_request_id: None,
+                queued_block_access_lists: Vec::new(),
+                pending_block_access_lists: Vec::new(),
+                last_pooled_transactions_request_id: None,
+                last_tx_broadcast_unix_ms: 0,
+                pending_body_headers: Vec::new(),
+                pending_body_request_offset: 0,
+                pending_receipt_request_offset: 0,
+                pending_pooled_transaction_hashes: Vec::new(),
+            },
+        );
     let _ = local_node;
     Ok(())
 }
@@ -13136,7 +13196,7 @@ mod tests {
     }
 
     #[test]
-    fn real_rlpx_bootstrap_tick_budget_defers_slow_connects_v1() {
+    fn real_rlpx_parallel_bootstrap_bounds_slow_connects_v1() {
         let _guard = eth_rlpx_env_test_lock_v1()
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -13192,11 +13252,11 @@ mod tests {
             .drive_real_network_once()
             .expect("bootstrap tick should be budgeted");
         assert_eq!(report.scheduled_bootstrap_peers, 6);
-        assert!(
-            report.attempted_bootstrap_peers < report.scheduled_bootstrap_peers,
-            "bootstrap tick budget must defer slow peers instead of trying all"
+        assert_eq!(
+            report.attempted_bootstrap_peers, report.scheduled_bootstrap_peers,
+            "parallel bootstrap should attempt the selected public fanout in one tick"
         );
-        assert!(report.skipped_bootstrap_budget_peers > 0);
+        assert_eq!(report.skipped_bootstrap_budget_peers, 0);
         assert_eq!(
             report.attempted_bootstrap_peers
                 + report.skipped_bootstrap_budget_peers
