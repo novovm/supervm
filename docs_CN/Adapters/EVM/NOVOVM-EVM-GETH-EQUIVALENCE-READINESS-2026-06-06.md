@@ -192,7 +192,7 @@ git pull --ff-only
 本轮同步到 SUPERVM 的产品语义：
 
 - 保持核心库默认不动，只调整直接产品入口 `novovm-node` 的公网 RLPx sync runtime budget。
-- 新增 `NOVOVM_ETH_RLPX_REQUEST_TIMEOUT_MS`，默认 `15000`，环境变量范围钳制为 `1000..120000`。
+- 新增 `NOVOVM_ETH_RLPX_REQUEST_TIMEOUT_MS`，默认 `5000`，环境变量范围钳制为 `1000..120000`。
 - `eth_rlpx_apply_public_sync_runtime_defaults_v1` 现在把该值写入 `budget.rlpx_request_timeout_ms`，与现有 `headers=192`、`bodies=128`、runtime fanout 一起形成公网同步入口默认。
 
 本轮验证：
