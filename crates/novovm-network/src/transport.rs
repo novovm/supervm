@@ -3055,10 +3055,8 @@ fn build_eth_fullnode_native_missing_receipts_pending_v1(
     chain_id: u64,
 ) -> Option<EthFullnodeNativePendingBodyHeaderV1> {
     let header = get_network_runtime_native_header_snapshot_v1(chain_id)?;
-    let body = get_network_runtime_native_body_snapshot_v1(chain_id)?;
-    if header.hash != body.block_hash || !body.body_available {
-        return None;
-    }
+    let (tx_count, withdrawal_count) =
+        eth_fullnode_native_receipt_recovery_body_hint_v1(chain_id, &header)?;
     if get_network_runtime_native_receipt_snapshot_v1(chain_id, header.hash)
         .is_some_and(|receipt| receipt.receipts_available)
     {
@@ -3071,9 +3069,29 @@ fn build_eth_fullnode_native_missing_receipts_pending_v1(
         state_root: header.state_root,
         transactions_root: header.transactions_root,
         receipts_root: header.receipts_root,
-        tx_count: Some(body.tx_hashes.len()),
-        withdrawal_count: body.withdrawal_count,
+        tx_count: Some(tx_count),
+        withdrawal_count,
     })
+}
+
+fn eth_fullnode_native_receipt_recovery_body_hint_v1(
+    chain_id: u64,
+    header: &crate::runtime_status::NetworkRuntimeNativeHeaderSnapshotV1,
+) -> Option<(usize, Option<usize>)> {
+    if let Some(body) = get_network_runtime_native_body_snapshot_v1(chain_id) {
+        if body.number == header.number && body.block_hash == header.hash && body.body_available {
+            return Some((body.tx_hashes.len(), body.withdrawal_count));
+        }
+    }
+    snapshot_network_runtime_native_canonical_blocks_v1(chain_id, 4096)
+        .into_iter()
+        .find(|block| {
+            block.number == header.number
+                && block.hash == header.hash
+                && block.header_observed
+                && block.body_available
+        })
+        .map(|block| (block.tx_hashes.len(), block.withdrawal_count))
 }
 
 #[cfg(test)]
@@ -3246,6 +3264,14 @@ fn dispatch_eth_fullnode_native_rlpx_missing_body_recovery_v1(
     clear_eth_fullnode_native_snap_request_state_v1(session);
     session.last_sync_request_unix_ms = now_unix_ms();
     report.sync_requests = report.sync_requests.saturating_add(1);
+    eprintln!(
+        "network_info: rlpx stage missing_bodies_requested chain_id={} peer={} endpoint={} request_id={} blocks={}",
+        chain_id,
+        peer.0,
+        session.endpoint.addr_hint,
+        request_id,
+        session.pending_body_headers.len()
+    );
     Ok(true)
 }
 
@@ -3315,6 +3341,14 @@ fn dispatch_eth_fullnode_native_rlpx_missing_receipts_recovery_v1(
     clear_eth_fullnode_native_snap_request_state_v1(session);
     session.last_sync_request_unix_ms = now_unix_ms();
     report.sync_requests = report.sync_requests.saturating_add(1);
+    eprintln!(
+        "network_info: rlpx stage missing_receipts_requested chain_id={} peer={} endpoint={} request_id={} blocks={}",
+        chain_id,
+        peer.0,
+        session.endpoint.addr_hint,
+        request_id,
+        session.pending_body_headers.len()
+    );
     Ok(true)
 }
 
@@ -10668,6 +10702,85 @@ mod tests {
             build_eth_fullnode_native_missing_receipts_pending_v1(chain_id).is_none(),
             "available receipts must not be requested again"
         );
+    }
+
+    #[test]
+    fn rlpx_missing_receipts_recovery_uses_canonical_body_when_latest_body_differs_v1() {
+        let chain_id = 9_926_107_u64;
+        let peer_id = 1_300_108_u64;
+        clear_network_runtime_native_snapshots_for_chain_v1(chain_id);
+
+        let block_hash = [0x93; 32];
+        let parent_hash = [0x92; 32];
+        let tx_hashes = vec![[0x91; 32], [0x92; 32], [0x93; 32]];
+        let raw_receipts = vec![vec![0xc0], vec![0xc1], vec![0xc2]];
+        let receipts_root =
+            crate::eth_rlpx_receipts_root_from_raw_receipts_v1(raw_receipts.as_slice());
+        set_network_runtime_native_header_snapshot_v1(
+            chain_id,
+            crate::runtime_status::NetworkRuntimeNativeHeaderSnapshotV1 {
+                chain_id,
+                number: 2_024,
+                hash: block_hash,
+                parent_hash,
+                state_root: [0x94; 32],
+                transactions_root: [0x95; 32],
+                receipts_root,
+                ommers_hash: crate::eth_rlpx_empty_ommers_hash_v1(),
+                logs_bloom: vec![0u8; 256],
+                gas_limit: Some(30_000_000),
+                gas_used: Some(42_000),
+                timestamp: Some(1_900_000_010),
+                base_fee_per_gas: Some(8),
+                withdrawals_root: Some(crate::eth_rlpx_empty_trie_root_v1()),
+                blob_gas_used: None,
+                excess_blob_gas: None,
+                block_access_list_hash: None,
+                source_peer_id: Some(peer_id),
+                observed_unix_ms: 1,
+            },
+        );
+        set_network_runtime_native_body_snapshot_v1(
+            chain_id,
+            crate::runtime_status::NetworkRuntimeNativeBodySnapshotV1 {
+                chain_id,
+                number: 2_024,
+                block_hash,
+                tx_hashes: tx_hashes.clone(),
+                raw_tx_rlps: vec![vec![0x01], vec![0x02], vec![0x03]],
+                ommer_hashes: Vec::new(),
+                withdrawal_rlp_items: None,
+                withdrawal_count: Some(0),
+                body_available: true,
+                txs_materialized: true,
+                observed_unix_ms: 2,
+            },
+        );
+        set_network_runtime_native_body_snapshot_v1(
+            chain_id,
+            crate::runtime_status::NetworkRuntimeNativeBodySnapshotV1 {
+                chain_id,
+                number: 2_025,
+                block_hash: [0x99; 32],
+                tx_hashes: Vec::new(),
+                raw_tx_rlps: Vec::new(),
+                ommer_hashes: Vec::new(),
+                withdrawal_rlp_items: None,
+                withdrawal_count: Some(0),
+                body_available: true,
+                txs_materialized: true,
+                observed_unix_ms: 3,
+            },
+        );
+
+        let pending = build_eth_fullnode_native_missing_receipts_pending_v1(chain_id)
+            .expect("canonical current body should still drive receipt recovery");
+        assert_eq!(pending.number, 2_024);
+        assert_eq!(pending.hash, block_hash);
+        assert_eq!(pending.parent_hash, parent_hash);
+        assert_eq!(pending.receipts_root, receipts_root);
+        assert_eq!(pending.tx_count, Some(tx_hashes.len()));
+        assert_eq!(pending.withdrawal_count, Some(0));
     }
 
     #[test]
