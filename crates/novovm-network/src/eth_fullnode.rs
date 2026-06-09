@@ -1762,8 +1762,21 @@ pub fn write_eth_fullnode_native_worker_runtime_snapshot_default_path_v1(
     snapshot: &EthFullnodeNativeWorkerRuntimeSnapshotV1,
 ) -> std::io::Result<PathBuf> {
     let path = default_eth_fullnode_native_worker_runtime_snapshot_path_v1();
-    write_eth_fullnode_native_worker_runtime_snapshot_to_path_v1(path.as_path(), snapshot)?;
+    if should_write_eth_fullnode_native_worker_runtime_snapshot_default_path_v1() {
+        write_eth_fullnode_native_worker_runtime_snapshot_to_path_v1(path.as_path(), snapshot)?;
+    }
     Ok(path)
+}
+
+fn should_write_eth_fullnode_native_worker_runtime_snapshot_default_path_v1() -> bool {
+    #[cfg(test)]
+    {
+        std::env::var_os(ETH_FULLNODE_NATIVE_WORKER_RUNTIME_SNAPSHOT_ENV_V1).is_some()
+    }
+    #[cfg(not(test))]
+    {
+        true
+    }
 }
 
 pub fn load_eth_fullnode_native_worker_runtime_snapshot_from_path_v1(
