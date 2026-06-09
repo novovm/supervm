@@ -2295,7 +2295,7 @@ fn eth_rlpx_apply_public_sync_runtime_defaults_v1(
 fn eth_rlpx_peer_discovery_total_timeout_v1() -> Duration {
     Duration::from_millis(u64_env_clamped(
         "NOVOVM_ETH_RLPX_PEER_DISCOVERY_TOTAL_TIMEOUT_MS",
-        10_000,
+        20_000,
         1_000,
         180_000,
     ))
@@ -5245,6 +5245,7 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
 mod mainline_evm_cli_tests {
     use super::*;
 
+    static ETH_RLPX_DISCOVERY_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
     static ETH_RLPX_TRUSTED_HEAD_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     const ETH_RLPX_TRUSTED_HEAD_ENV_KEYS: [&str; 17] = [
@@ -5994,6 +5995,26 @@ mod mainline_evm_cli_tests {
 
     #[test]
     fn eth_rlpx_peer_discovery_deadline_caps_phase_timeout_v1() {
+        let _guard = ETH_RLPX_DISCOVERY_ENV_LOCK
+            .lock()
+            .expect("rlpx discovery env lock");
+        let captured = std::env::var("NOVOVM_ETH_RLPX_PEER_DISCOVERY_TOTAL_TIMEOUT_MS").ok();
+        std::env::remove_var("NOVOVM_ETH_RLPX_PEER_DISCOVERY_TOTAL_TIMEOUT_MS");
+        assert_eq!(
+            eth_rlpx_peer_discovery_total_timeout_v1(),
+            Duration::from_millis(20_000)
+        );
+        std::env::set_var("NOVOVM_ETH_RLPX_PEER_DISCOVERY_TOTAL_TIMEOUT_MS", "3000");
+        assert_eq!(
+            eth_rlpx_peer_discovery_total_timeout_v1(),
+            Duration::from_millis(3_000)
+        );
+        if let Some(value) = captured {
+            std::env::set_var("NOVOVM_ETH_RLPX_PEER_DISCOVERY_TOTAL_TIMEOUT_MS", value);
+        } else {
+            std::env::remove_var("NOVOVM_ETH_RLPX_PEER_DISCOVERY_TOTAL_TIMEOUT_MS");
+        }
+
         let fallback = Duration::from_millis(500);
         assert_eq!(
             eth_discovery_remaining_timeout_v1(None, fallback),
