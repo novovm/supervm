@@ -1940,6 +1940,35 @@ fn eth_merge_peer_endpoint_refresh_v1(
     out
 }
 
+fn eth_merge_peer_endpoint_startup_cache_v1(
+    cached: &[PluginPeerEndpoint],
+    refreshed: &[PluginPeerEndpoint],
+    limit: usize,
+) -> Vec<PluginPeerEndpoint> {
+    let mut out = Vec::<PluginPeerEndpoint>::new();
+    let mut seen = HashSet::<String>::new();
+    for endpoint in cached.iter().chain(refreshed.iter()) {
+        eth_push_peer_endpoint_v1(&mut out, &mut seen, endpoint.clone(), limit);
+        if out.len() >= limit {
+            break;
+        }
+    }
+    out
+}
+
+fn eth_merge_peer_endpoint_startup_v1(
+    cached: &[PluginPeerEndpoint],
+    refreshed: &[PluginPeerEndpoint],
+    limit: usize,
+    explicit_refreshed_order: bool,
+) -> Vec<PluginPeerEndpoint> {
+    if explicit_refreshed_order {
+        eth_merge_peer_endpoint_refresh_v1(cached, refreshed, limit)
+    } else {
+        eth_merge_peer_endpoint_startup_cache_v1(cached, refreshed, limit)
+    }
+}
+
 fn eth_prune_peer_endpoints_permanently_rejected_v1(
     chain_id: u64,
     endpoints: &[PluginPeerEndpoint],
@@ -4704,11 +4733,13 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
     .clamp(candidate_limit, 1024);
     let discovered_peer_endpoints =
         eth_rlpx_sync_peer_endpoints_v1(chain_id, candidate_limit, verbose);
+    let explicit_enodes_present = std::env::var_os("NOVOVM_ETH_RLPX_ENODES").is_some();
     let mut peer_endpoints = if let Some(cache) = peer_endpoint_cache.as_ref() {
-        eth_merge_peer_endpoint_refresh_v1(
+        eth_merge_peer_endpoint_startup_v1(
             cache.endpoints.as_slice(),
             discovered_peer_endpoints.as_slice(),
             candidate_limit,
+            explicit_enodes_present,
         )
     } else {
         discovered_peer_endpoints
@@ -5697,6 +5728,56 @@ mod mainline_evm_cli_tests {
         assert!(merged
             .iter()
             .any(|endpoint| endpoint.node_hint == 0x1111_1111_1111_1111));
+    }
+
+    #[test]
+    fn eth_peer_endpoint_startup_merge_preserves_cached_order_at_cap_v1() {
+        let cached = vec![
+            PluginPeerEndpoint {
+                endpoint: "enode://1111111111111111@18.138.108.67:30303".to_string(),
+                node_hint: 0x1111_1111_1111_1111,
+                addr_hint: "18.138.108.67:30303".to_string(),
+            },
+            PluginPeerEndpoint {
+                endpoint: "enode://2222222222222222@3.209.45.79:30303".to_string(),
+                node_hint: 0x2222_2222_2222_2222,
+                addr_hint: "3.209.45.79:30303".to_string(),
+            },
+        ];
+        let refreshed = vec![PluginPeerEndpoint {
+            endpoint: "enode://3333333333333333@65.108.70.101:30303".to_string(),
+            node_hint: 0x3333_3333_3333_3333,
+            addr_hint: "65.108.70.101:30303".to_string(),
+        }];
+
+        let merged = eth_merge_peer_endpoint_startup_cache_v1(&cached, &refreshed, 2);
+
+        assert_eq!(merged.len(), 2);
+        assert_eq!(merged[0].node_hint, 0x1111_1111_1111_1111);
+        assert_eq!(merged[1].node_hint, 0x2222_2222_2222_2222);
+    }
+
+    #[test]
+    fn eth_peer_endpoint_startup_merge_explicit_enode_overrides_cached_order_v1() {
+        let cached = vec![
+            PluginPeerEndpoint {
+                endpoint: "enode://1111111111111111@18.138.108.67:30303".to_string(),
+                node_hint: 0x1111_1111_1111_1111,
+                addr_hint: "18.138.108.67:30303".to_string(),
+            },
+            PluginPeerEndpoint {
+                endpoint: "enode://2222222222222222@3.209.45.79:30303".to_string(),
+                node_hint: 0x2222_2222_2222_2222,
+                addr_hint: "3.209.45.79:30303".to_string(),
+            },
+        ];
+        let explicit = vec![cached[1].clone()];
+
+        let merged = eth_merge_peer_endpoint_startup_v1(&cached, &explicit, 2, true);
+
+        assert_eq!(merged.len(), 2);
+        assert_eq!(merged[0].node_hint, 0x2222_2222_2222_2222);
+        assert_eq!(merged[1].node_hint, 0x1111_1111_1111_1111);
     }
 
     #[test]
