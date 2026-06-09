@@ -3204,6 +3204,7 @@ fn eth_rlpx_snap_account_range_next_origin_v1(
     origin: [u8; 32],
     limit: [u8; 32],
     response: &EthRlpxAccountRangeResponseV1,
+    has_continuation: bool,
 ) -> Result<Option<[u8; 32]>, NetworkError> {
     let Some(last) = response.accounts.last().map(|account| account.hash) else {
         return Ok(None);
@@ -3228,10 +3229,51 @@ fn eth_rlpx_snap_account_range_next_origin_v1(
         }
         previous = Some(account.hash);
     }
+    if !has_continuation {
+        return Ok(None);
+    }
     if last >= limit {
         return Ok(None);
     }
     Ok(eth_rlpx_account_hash_next_v1(last).filter(|next| *next <= limit))
+}
+
+fn eth_fullnode_native_snap_account_range_has_continuation_v1(
+    chain_id: u64,
+    source_peer_id: u64,
+    state_root: Option<[u8; 32]>,
+    response: &EthRlpxAccountRangeResponseV1,
+) -> Result<bool, NetworkError> {
+    let Some(last_account) = response.accounts.last() else {
+        return Ok(false);
+    };
+    let Some(state_root) = state_root else {
+        let reason = "snap_account_range_state_root_missing_for_continuation".to_string();
+        observe_network_runtime_eth_peer_decode_failure_v1(
+            chain_id,
+            source_peer_id,
+            reason.as_str(),
+        );
+        return Err(NetworkError::Decode(reason));
+    };
+    eth_rlpx_mpt_proof_has_right_element_v1(
+        state_root,
+        last_account.hash.as_slice(),
+        response.proof.as_slice(),
+    )
+    .map_err(|err| {
+        let reason = format!(
+            "snap_account_range_continuation_verify_failed:last=0x{} err={}",
+            hex32_v1(&last_account.hash),
+            err
+        );
+        observe_network_runtime_eth_peer_decode_failure_v1(
+            chain_id,
+            source_peer_id,
+            reason.as_str(),
+        );
+        NetworkError::Decode(reason)
+    })
 }
 
 fn clear_eth_fullnode_native_snap_request_state_v1(
@@ -5159,8 +5201,18 @@ fn ingest_real_rlpx_snap_account_range_v1(
         account_limit,
         response,
     )?;
-    session.pending_snap_next_account_origin =
-        eth_rlpx_snap_account_range_next_origin_v1(account_origin, account_limit, response)?;
+    let has_account_continuation = eth_fullnode_native_snap_account_range_has_continuation_v1(
+        chain_id,
+        source_peer_id,
+        session.last_snap_state_root,
+        response,
+    )?;
+    session.pending_snap_next_account_origin = eth_rlpx_snap_account_range_next_origin_v1(
+        account_origin,
+        account_limit,
+        response,
+        has_account_continuation,
+    )?;
     session.last_snap_account_range_request_id = None;
     let Some(root) = session.last_snap_state_root else {
         mark_network_runtime_eth_peer_session_ready_v1(chain_id, source_peer_id, None);
@@ -16670,12 +16722,18 @@ mod tests {
             proof: vec![vec![0x01]],
         };
 
-        let next = eth_rlpx_snap_account_range_next_origin_v1(origin, limit, &response)
+        let next = eth_rlpx_snap_account_range_next_origin_v1(origin, limit, &response, true)
             .expect("next cursor")
             .expect("continuation");
         let mut expected = [0u8; 32];
         expected[31] = 0x03;
         assert_eq!(next, expected);
+        assert!(
+            eth_rlpx_snap_account_range_next_origin_v1(origin, limit, &response, false)
+                .expect("terminal cursor")
+                .is_none(),
+            "proof-level terminal account range must not advance cursor"
+        );
 
         let bad_order = crate::EthRlpxAccountRangeResponseV1 {
             accounts: vec![
@@ -16690,7 +16748,9 @@ mod tests {
             ],
             ..response.clone()
         };
-        assert!(eth_rlpx_snap_account_range_next_origin_v1(origin, limit, &bad_order).is_err());
+        assert!(
+            eth_rlpx_snap_account_range_next_origin_v1(origin, limit, &bad_order, true).is_err()
+        );
 
         let out_of_bounds = crate::EthRlpxAccountRangeResponseV1 {
             accounts: vec![crate::EthRlpxSnapAccountDataV1 {
@@ -16699,7 +16759,74 @@ mod tests {
             }],
             ..response
         };
-        assert!(eth_rlpx_snap_account_range_next_origin_v1(origin, limit, &out_of_bounds).is_err());
+        assert!(
+            eth_rlpx_snap_account_range_next_origin_v1(origin, limit, &out_of_bounds, true)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn rlpx_snap_account_range_terminal_proof_completes_progress_v1() {
+        let chain_id = 9_954_u64;
+        let source_peer_id = 77_u64;
+        let account_hash = [0x35; 32];
+        let slim_account = vec![0xc4, 0x01, 0x80, 0x80, 0x80];
+        let full_account =
+            crate::eth_rlpx_snap_full_account_rlp_from_slim_v1(slim_account.as_slice())
+                .expect("full account from slim");
+        let account_leaf_node =
+            crate::eth_rlpx_mpt_single_leaf_node_rlp_v1(&account_hash, full_account.as_slice());
+        let state_root = crate::eth_rlpx_trie_node_hash_v1(account_leaf_node.as_slice());
+        clear_network_runtime_native_snapshots_for_chain_v1(chain_id);
+        set_network_runtime_native_snap_trie_node_snapshot_v1(
+            chain_id,
+            NetworkRuntimeNativeSnapTrieNodeSnapshotV1 {
+                chain_id,
+                state_root,
+                path_segments: eth_fullnode_native_snap_root_trie_pathset_v1(),
+                node_hash: state_root,
+                node_rlp: account_leaf_node.clone(),
+                source_peer_id: Some(source_peer_id),
+                observed_unix_ms: 1,
+            },
+        );
+
+        let mut session = dummy_rlpx_live_session(chain_id);
+        session.last_snap_account_range_request_id = Some(93);
+        session.last_snap_state_root = Some(state_root);
+        session.last_snap_account_origin = Some([0u8; 32]);
+        session.last_snap_account_limit = Some([0xff; 32]);
+        let response = crate::EthRlpxAccountRangeResponseV1 {
+            request_id: 93,
+            accounts: vec![crate::EthRlpxSnapAccountDataV1 {
+                hash: account_hash,
+                body_rlp: slim_account,
+            }],
+            proof: vec![account_leaf_node],
+        };
+
+        ingest_real_rlpx_snap_account_range_v1(chain_id, source_peer_id, &mut session, &response)
+            .expect("terminal account range proof must complete");
+
+        assert!(session.last_snap_account_range_request_id.is_none());
+        assert!(session.pending_snap_next_account_origin.is_none());
+        assert!(session.last_snap_storage_ranges_request_id.is_none());
+        assert!(session.last_snap_byte_codes_request_id.is_none());
+        assert!(session.last_snap_trie_nodes_request_id.is_none());
+        let progress =
+            crate::get_network_runtime_native_snap_account_range_progress_v1(chain_id, state_root)
+                .expect("snap account range progress");
+        assert!(progress.completed);
+        assert!(progress.next_account_origin.is_none());
+        assert_eq!(progress.limit, [0xff; 32]);
+        let account = crate::get_network_runtime_native_snap_account_snapshot_v1(
+            chain_id,
+            state_root,
+            account_hash,
+        )
+        .expect("snap account snapshot");
+        assert!(!account.has_storage);
+        assert!(!account.has_code);
     }
 
     #[test]
@@ -17010,15 +17137,123 @@ mod tests {
 
     #[test]
     fn evm_protocol_observable_equivalence_network_rlpx_snap_account_range_continuation_gate_v3() {
+        fn test_rlp_encode_len(prefix: u8, len: usize) -> Vec<u8> {
+            if len <= 55 {
+                return vec![prefix + len as u8];
+            }
+            let bytes = len.to_be_bytes();
+            let first = bytes
+                .iter()
+                .position(|byte| *byte != 0)
+                .unwrap_or(bytes.len() - 1);
+            let len_bytes = &bytes[first..];
+            let mut out = vec![prefix + 55 + len_bytes.len() as u8];
+            out.extend_from_slice(len_bytes);
+            out
+        }
+
+        fn test_rlp_encode_bytes(bytes: &[u8]) -> Vec<u8> {
+            if bytes.len() == 1 && bytes[0] < 0x80 {
+                return vec![bytes[0]];
+            }
+            let mut out = test_rlp_encode_len(0x80, bytes.len());
+            out.extend_from_slice(bytes);
+            out
+        }
+
+        fn test_rlp_encode_list(items: &[Vec<u8>]) -> Vec<u8> {
+            let payload_len = items.iter().map(Vec::len).sum::<usize>();
+            let mut out = test_rlp_encode_len(0xc0, payload_len);
+            for item in items {
+                out.extend_from_slice(item);
+            }
+            out
+        }
+
+        fn test_mpt_nibbles(key: &[u8]) -> Vec<u8> {
+            let mut out = Vec::with_capacity(key.len() * 2);
+            for byte in key {
+                out.push(byte >> 4);
+                out.push(byte & 0x0f);
+            }
+            out
+        }
+
+        fn test_mpt_hex_prefix(path_nibbles: &[u8], is_leaf: bool) -> Vec<u8> {
+            let mut out = Vec::with_capacity(path_nibbles.len() / 2 + 1);
+            let flag = if is_leaf { 2u8 } else { 0u8 };
+            let mut idx = 0usize;
+            if path_nibbles.len() % 2 == 1 {
+                out.push(((flag + 1) << 4) | (path_nibbles[0] & 0x0f));
+                idx = 1;
+            } else {
+                out.push(flag << 4);
+            }
+            while idx < path_nibbles.len() {
+                out.push(((path_nibbles[idx] & 0x0f) << 4) | (path_nibbles[idx + 1] & 0x0f));
+                idx += 2;
+            }
+            out
+        }
+
+        fn test_mpt_leaf_from_path(path_nibbles: &[u8], value: &[u8]) -> Vec<u8> {
+            test_rlp_encode_list(&[
+                test_rlp_encode_bytes(test_mpt_hex_prefix(path_nibbles, true).as_slice()),
+                test_rlp_encode_bytes(value),
+            ])
+        }
+
+        fn test_branch_with_two_leaf_children(
+            left_hash: &[u8; 32],
+            left_value: &[u8],
+            right_hash: &[u8; 32],
+            right_value: &[u8],
+        ) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
+            let left_nibbles = test_mpt_nibbles(left_hash);
+            let right_nibbles = test_mpt_nibbles(right_hash);
+            assert_ne!(left_nibbles[0], right_nibbles[0]);
+            let left_leaf = test_mpt_leaf_from_path(&left_nibbles[1..], left_value);
+            let right_leaf = test_mpt_leaf_from_path(&right_nibbles[1..], right_value);
+            let mut items = Vec::with_capacity(17);
+            for idx in 0..16 {
+                if idx == left_nibbles[0] as usize {
+                    items.push(test_rlp_encode_bytes(&crate::eth_rlpx_trie_node_hash_v1(
+                        left_leaf.as_slice(),
+                    )));
+                } else if idx == right_nibbles[0] as usize {
+                    items.push(test_rlp_encode_bytes(&crate::eth_rlpx_trie_node_hash_v1(
+                        right_leaf.as_slice(),
+                    )));
+                } else {
+                    items.push(test_rlp_encode_bytes(&[]));
+                }
+            }
+            items.push(test_rlp_encode_bytes(&[]));
+            (test_rlp_encode_list(&items), left_leaf, right_leaf)
+        }
+
         let chain_id = 9_944_u64;
         let local = NodeId(1_394);
         let remote = NodeId(1_395);
         clear_network_runtime_native_snapshots_for_chain_v1(chain_id);
-        let root_trie_node = {
-            let mut node = vec![0xd1_u8];
-            node.extend(std::iter::repeat(0x80_u8).take(17));
-            node
-        };
+        let mut account_hash = [0u8; 32];
+        account_hash[0] = 0x10;
+        account_hash[31] = 0x07;
+        let mut expected_next_origin = account_hash;
+        expected_next_origin[31] = 0x08;
+        let mut right_account_hash = [0u8; 32];
+        right_account_hash[0] = 0x20;
+        let empty_slim_account_body = vec![0xc4, 0x01, 0x80, 0x80, 0x80];
+        let full_account =
+            crate::eth_rlpx_snap_full_account_rlp_from_slim_v1(empty_slim_account_body.as_slice())
+                .expect("full account from slim");
+        let (root_trie_node, account_leaf_node, right_leaf_node) =
+            test_branch_with_two_leaf_children(
+                &account_hash,
+                full_account.as_slice(),
+                &right_account_hash,
+                full_account.as_slice(),
+            );
         let local_state_root = crate::eth_rlpx_trie_node_hash_v1(root_trie_node.as_slice());
         set_network_runtime_sync_status(
             chain_id,
@@ -17093,12 +17328,10 @@ mod tests {
         let (done_tx, done_rx) = std::sync::mpsc::channel();
 
         let server = thread::spawn(move || {
-            let mut account_hash = [0u8; 32];
-            account_hash[31] = 0x07;
-            let mut expected_next_origin = [0u8; 32];
-            expected_next_origin[31] = 0x08;
             let empty_slim_account_body = vec![0xc4, 0x01, 0x80, 0x80, 0x80];
             let root_trie_node = root_trie_node;
+            let account_leaf_node = account_leaf_node;
+            let right_leaf_node = right_leaf_node;
 
             let (mut accepted, _) = listener.accept().expect("accept rlpx");
             accepted
@@ -17201,12 +17434,16 @@ mod tests {
 
             let account = crate::EthRlpxSnapAccountDataV1 {
                 hash: account_hash,
-                body_rlp: empty_slim_account_body,
+                body_rlp: empty_slim_account_body.clone(),
             };
             let response = crate::eth_rlpx_build_account_range_payload_v1(
                 first_request.request_id,
                 &[account],
-                &[root_trie_node.clone()],
+                &[
+                    root_trie_node.clone(),
+                    account_leaf_node.clone(),
+                    right_leaf_node.clone(),
+                ],
             );
             crate::eth_rlpx_write_wire_frame_v1(
                 &mut accepted,
@@ -17279,10 +17516,14 @@ mod tests {
                 crate::ETH_RLPX_SNAP_DEFAULT_ACCOUNT_RANGE_BYTES
             );
 
+            let right_account = crate::EthRlpxSnapAccountDataV1 {
+                hash: right_account_hash,
+                body_rlp: empty_slim_account_body,
+            };
             let done_response = crate::eth_rlpx_build_account_range_payload_v1(
                 second_request.request_id,
-                &[],
-                &[root_trie_node.clone()],
+                &[right_account],
+                &[root_trie_node.clone(), right_leaf_node.clone()],
             );
             crate::eth_rlpx_write_wire_frame_v1(
                 &mut accepted,
@@ -17340,10 +17581,7 @@ mod tests {
         let account = crate::get_network_runtime_native_snap_account_snapshot_v1(
             chain_id,
             local_state_root,
-            [
-                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                0, 0, 0, 7,
-            ],
+            account_hash,
         )
         .expect("snap account snapshot");
         assert!(!account.has_storage);
@@ -17930,44 +18168,6 @@ mod tests {
                 }
                 panic!("unexpected snap follow-up code {code}");
             }
-            let continuation_request = loop {
-                let (code, payload) =
-                    crate::eth_rlpx_read_wire_frame_v1(&mut accepted, &mut responder.session)
-                        .expect("read post-storage account continuation");
-                if code == crate::ETH_RLPX_P2P_PING_MSG {
-                    crate::eth_rlpx_write_wire_frame_v1(
-                        &mut accepted,
-                        &mut responder.session,
-                        crate::ETH_RLPX_P2P_PONG_MSG,
-                        &[],
-                    )
-                    .expect("write pong");
-                    continue;
-                }
-                assert_eq!(
-                    code,
-                    snap_offset + crate::ETH_RLPX_SNAP_GET_ACCOUNT_RANGE_MSG
-                );
-                break crate::eth_rlpx_parse_get_account_range_payload_v1(payload.as_slice())
-                    .expect("parse post-storage account continuation");
-            };
-            let expected_next_origin =
-                eth_rlpx_account_hash_next_v1(account_hash).expect("next account hash");
-            assert_eq!(continuation_request.root, local_state_root);
-            assert_eq!(continuation_request.origin, expected_next_origin);
-            assert_eq!(continuation_request.limit, [0xff; 32]);
-            let done_response = crate::eth_rlpx_build_account_range_payload_v1(
-                continuation_request.request_id,
-                &[],
-                &[root_trie_node.clone()],
-            );
-            crate::eth_rlpx_write_wire_frame_v1(
-                &mut accepted,
-                &mut responder.session,
-                snap_offset + crate::ETH_RLPX_SNAP_ACCOUNT_RANGE_MSG,
-                done_response.as_slice(),
-            )
-            .expect("write post-storage account continuation done");
             done_tx.send(()).expect("signal snap follow-up gate");
             thread::sleep(Duration::from_millis(50));
         });
