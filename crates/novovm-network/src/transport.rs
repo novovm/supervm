@@ -1040,7 +1040,8 @@ fn eth_fullnode_rlpx_error_is_remote_closed_v1(raw: &str) -> bool {
     if eth_fullnode_rlpx_error_is_timeout_v1(raw) {
         return false;
     }
-    raw.contains("eof read=0")
+    raw.contains("rlpx_remote_disconnected_")
+        || raw.contains("eof read=0")
         || raw.contains("failed:eof")
         || raw.contains("read=0/")
         || raw.contains("os error 10053")
@@ -1050,6 +1051,21 @@ fn eth_fullnode_rlpx_error_is_remote_closed_v1(raw: &str) -> bool {
 
 fn eth_fullnode_rlpx_error_is_session_desync_v1(raw: &str) -> bool {
     raw.contains("rlpx_frame_header_mac_mismatch") || raw.contains("rlpx_frame_mac_mismatch")
+}
+
+fn eth_fullnode_rlpx_error_disconnect_reason_code_v1(raw: &str) -> Option<u64> {
+    let marker = "reason_code=";
+    let start = raw.find(marker)?.saturating_add(marker.len());
+    let code = raw[start..]
+        .chars()
+        .take_while(|ch| ch.is_ascii_digit())
+        .collect::<String>();
+    if code.is_empty() {
+        return None;
+    }
+    code.parse::<u64>()
+        .ok()
+        .filter(|parsed| *parsed != u64::MAX)
 }
 
 fn observe_eth_fullnode_rlpx_request_write_error_v1(
@@ -1063,7 +1079,11 @@ fn observe_eth_fullnode_rlpx_request_write_error_v1(
     } else if eth_fullnode_rlpx_error_is_remote_closed_v1(err)
         || eth_fullnode_rlpx_error_is_session_desync_v1(err)
     {
-        observe_network_runtime_eth_peer_disconnect_v1(chain_id, peer_id, None);
+        observe_network_runtime_eth_peer_disconnect_v1(
+            chain_id,
+            peer_id,
+            eth_fullnode_rlpx_error_disconnect_reason_code_v1(err),
+        );
     } else {
         observe_network_runtime_eth_peer_handshake_failure_v1(chain_id, peer_id, failure_reason);
     }
@@ -2802,6 +2822,17 @@ fn drive_eth_fullnode_native_rlpx_peer_session_once_v1(
                                     clear_eth_fullnode_native_snap_request_state_v1(session);
                                     session.last_sync_request_unix_ms = now_ms;
                                     report.sync_requests = report.sync_requests.saturating_add(1);
+                                    eprintln!(
+                                        "network_info: rlpx stage headers_requested chain_id={} peer={} endpoint={} request_id={} start={} max={} skip={} reverse={}",
+                                        chain_id,
+                                        peer.0,
+                                        session.endpoint.addr_hint,
+                                        request_id,
+                                        start_height,
+                                        max,
+                                        skip,
+                                        reverse
+                                    );
                                 }
                             }
                             ProtocolMessage::EvmNative(EvmNativeMessage::SnapGetAccountRange {
@@ -11529,6 +11560,21 @@ mod tests {
         assert!(eth_fullnode_rlpx_error_is_session_desync_v1(
             "rlpx_frame_mac_mismatch"
         ));
+        assert!(eth_fullnode_rlpx_error_is_remote_closed_v1(
+            "rlpx_remote_disconnected_ingest:reason_code=4 reason=too_many_peers"
+        ));
+        assert_eq!(
+            eth_fullnode_rlpx_error_disconnect_reason_code_v1(
+                "rlpx_remote_disconnected_ingest:reason_code=4 reason=too_many_peers"
+            ),
+            Some(0x04)
+        );
+        assert_eq!(
+            eth_fullnode_rlpx_error_disconnect_reason_code_v1(
+                "rlpx_remote_disconnected_ingest:reason_code=18446744073709551615 reason=unknown"
+            ),
+            None
+        );
         assert!(!eth_fullnode_rlpx_error_is_timeout_v1(eof));
         assert!(eth_fullnode_rlpx_error_is_timeout_v1(
             "operation would block"
@@ -11542,6 +11588,7 @@ mod tests {
         let mac_desync_peer = NodeId(418_002);
         let timeout_peer = NodeId(418_003);
         let unknown_peer = NodeId(418_004);
+        let capacity_reject_peer = NodeId(418_005);
 
         observe_eth_fullnode_rlpx_request_write_error_v1(
             chain_id,
@@ -11567,6 +11614,12 @@ mod tests {
             "headers_request_write_failed",
             "broken pipe",
         );
+        observe_eth_fullnode_rlpx_request_write_error_v1(
+            chain_id,
+            capacity_reject_peer.0,
+            "headers_request_write_failed",
+            "rlpx_remote_disconnected_ingest:reason_code=4 reason=too_many_peers",
+        );
 
         let snapshots = snapshot_network_runtime_eth_peer_sessions_for_peers_v1(
             chain_id,
@@ -11575,6 +11628,7 @@ mod tests {
                 mac_desync_peer,
                 timeout_peer,
                 unknown_peer,
+                capacity_reject_peer,
             ],
         )
         .into_iter()
@@ -11610,6 +11664,17 @@ mod tests {
             Some(crate::EthPeerFailureClassV1::HandshakeFailure)
         );
         assert_eq!(unknown.handshake_failure_count, 1);
+
+        let capacity_reject = snapshots
+            .get(&capacity_reject_peer.0)
+            .expect("capacity reject");
+        assert_eq!(
+            capacity_reject.last_failure_class,
+            Some(crate::EthPeerFailureClassV1::Disconnect)
+        );
+        assert_eq!(capacity_reject.last_failure_reason_code, Some(0x04));
+        assert_eq!(capacity_reject.last_disconnect_reason_code, Some(0x04));
+        assert_eq!(capacity_reject.disconnect_too_many_peers_count, 1);
     }
 
     #[test]
