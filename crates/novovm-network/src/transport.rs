@@ -6771,12 +6771,14 @@ fn select_eth_fullnode_native_header_followup_body_headers_v1<'a>(
     chain_id: u64,
     headers: &[&'a EthRlpxBlockHeaderRecordV1],
 ) -> Vec<&'a EthRlpxBlockHeaderRecordV1> {
+    const ETH_FULLNODE_NATIVE_HEADER_FOLLOWUP_BODY_ALL_MAX_V1: usize = 16;
     let Some(latest) = headers.last().copied() else {
         return Vec::new();
     };
     if headers.len() > 1
-        && get_network_runtime_sync_status(chain_id)
-            .is_some_and(|status| status.highest_block > latest.number)
+        && (headers.len() > ETH_FULLNODE_NATIVE_HEADER_FOLLOWUP_BODY_ALL_MAX_V1
+            || get_network_runtime_sync_status(chain_id)
+                .is_some_and(|status| status.highest_block > latest.number))
     {
         return vec![latest];
     }
@@ -10301,6 +10303,88 @@ mod tests {
         let head = get_network_runtime_native_header_snapshot_v1(chain_id).expect("head header");
         assert_eq!(head.number, 136);
         assert_eq!(head.hash, [0x5f; 32]);
+    }
+
+    #[test]
+    fn rlpx_large_header_batch_import_requests_current_body_only_at_highest_v1() {
+        let chain_id = 9_928_002_u64;
+        let peer_id = 78_u64;
+        clear_network_runtime_native_snapshots_for_chain_v1(chain_id);
+        set_network_runtime_sync_status(
+            chain_id,
+            NetworkRuntimeSyncStatus {
+                peer_count: 1,
+                starting_block: 200,
+                current_block: 200,
+                highest_block: 261,
+            },
+        );
+
+        let (mut session, _accepted, _peer_frame_session) = dummy_rlpx_live_session_pair(chain_id);
+        session.pending_headers_request = Some(EthRlpxGetBlockHeadersRequestV1 {
+            request_id: 12,
+            start_height: 201,
+            origin_hash: None,
+            max_headers: 61,
+            skip: 0,
+            reverse: false,
+        });
+
+        let mut parent_hash = [0x90; 32];
+        let mut headers = Vec::new();
+        for offset in 0..61u8 {
+            let number = 201 + u64::from(offset);
+            let hash = [0x91 + offset; 32];
+            headers.push(crate::EthRlpxBlockHeaderRecordV1 {
+                number,
+                hash,
+                parent_hash,
+                state_root: [0x30 + offset; 32],
+                transactions_root: [0x40 + offset; 32],
+                receipts_root: [0x50 + offset; 32],
+                ommers_hash: crate::eth_rlpx_empty_ommers_hash_v1(),
+                logs_bloom: vec![0u8; 256],
+                gas_limit: Some(30_000_000),
+                gas_used: Some(21_000),
+                timestamp: Some(1_900_001_000 + u64::from(offset)),
+                base_fee_per_gas: Some(7),
+                withdrawals_root: Some(crate::eth_rlpx_empty_trie_root_v1()),
+                blob_gas_used: None,
+                excess_blob_gas: None,
+                block_access_list_hash: None,
+                raw_rlp: None,
+            });
+            parent_hash = hash;
+        }
+        let response = EthRlpxBlockHeadersResponseV1 {
+            request_id: 12,
+            headers,
+        };
+        let mut budget = default_eth_fullnode_budget_hooks_v1();
+        budget.sync_pull_bodies_batch = 128;
+        let mut report = EthFullnodeNativeRlpxPeerTickReportV1::default();
+
+        ingest_real_rlpx_block_headers_v1(
+            chain_id,
+            peer_id,
+            &mut session,
+            &response,
+            &budget,
+            &mut report,
+        )
+        .expect("header batch ingest");
+
+        assert_eq!(report.header_updates, 61);
+        assert_eq!(
+            session.pending_body_headers.len(),
+            1,
+            "large near-head batches must materialize current head first"
+        );
+        assert_eq!(session.pending_body_headers[0].number, 261);
+        assert_eq!(session.pending_body_headers[0].hash, [0xcd; 32]);
+        let retained = snapshot_network_runtime_native_canonical_blocks_v1(chain_id, 128);
+        assert!(retained.iter().any(|block| block.number == 201));
+        assert!(retained.iter().any(|block| block.number == 261));
     }
 
     #[test]

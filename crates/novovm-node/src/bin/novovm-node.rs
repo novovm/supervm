@@ -2333,6 +2333,15 @@ fn eth_rlpx_report_has_request_transport_failure_v1(
     })
 }
 
+fn eth_rlpx_transport_failure_should_backoff_headers_v1(
+    request_transport_failure: bool,
+    highest_block: u64,
+    current_block: u64,
+    current_head_material_missing: bool,
+) -> bool {
+    request_transport_failure && (highest_block > current_block || current_head_material_missing)
+}
+
 const ETH_RLPX_PUBLIC_SYNC_STATE_LAG_EFFECTIVE_HEADERS_BATCH_V1: u64 = 64;
 const ETH_RLPX_PUBLIC_SYNC_STATE_LAG_HEADER_LAG_THRESHOLD_V1: u64 = 128;
 
@@ -5584,6 +5593,12 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
         if adaptive_batch_enabled {
             let request_transport_failure =
                 eth_rlpx_report_has_request_transport_failure_v1(&report);
+            let header_transport_failure = eth_rlpx_transport_failure_should_backoff_headers_v1(
+                request_transport_failure,
+                highest_sync_block,
+                current_sync_block,
+                current_head_material_missing,
+            );
             let body_recovery_pressure =
                 request_transport_failure || (sync_made_progress && current_head_material_missing);
             let adaptive_headers_batch_input = eth_rlpx_adaptive_headers_batch_input_v1(
@@ -5592,14 +5607,14 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
                 current_sync_block,
                 highest_sync_block,
                 current_head_body_available,
-                request_transport_failure,
+                header_transport_failure,
             );
             let next_headers_batch = eth_rlpx_adaptive_public_sync_batch_v1(
                 adaptive_headers_batch_input,
                 max_runtime_headers_batch,
                 adaptive_headers_min_batch,
                 complete_head_made_progress,
-                request_transport_failure,
+                header_transport_failure,
             );
             let next_bodies_batch = eth_rlpx_adaptive_public_sync_batch_v1(
                 runtime_bodies_batch,
@@ -6832,6 +6847,32 @@ mod mainline_evm_cli_tests {
             ),
             192,
             "missing body recovery must not shrink forward header configuration"
+        );
+    }
+
+    #[test]
+    fn eth_rlpx_idle_backfill_failure_does_not_backoff_header_window_v1() {
+        assert!(!eth_rlpx_transport_failure_should_backoff_headers_v1(
+            true, 25_282_380, 25_282_380, false,
+        ));
+        assert!(eth_rlpx_transport_failure_should_backoff_headers_v1(
+            true, 25_282_383, 25_282_380, false,
+        ));
+        assert!(eth_rlpx_transport_failure_should_backoff_headers_v1(
+            true, 25_282_380, 25_282_380, true,
+        ));
+        assert_eq!(
+            eth_rlpx_adaptive_public_sync_batch_v1(
+                192,
+                192,
+                16,
+                false,
+                eth_rlpx_transport_failure_should_backoff_headers_v1(
+                    true, 25_282_380, 25_282_380, false,
+                ),
+            ),
+            192,
+            "historical backfill failure after a complete head must not shrink the next forward header window"
         );
     }
 
