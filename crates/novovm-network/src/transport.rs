@@ -6,15 +6,15 @@ use crate::{
     build_eth_fullnode_native_sync_request_v1, default_eth_rlpx_capabilities_v1,
     derive_eth_fullnode_head_view_with_native_preference_v1,
     derive_eth_fullnode_sync_view_with_native_preference_v1,
-    eth_rlpx_build_account_range_payload_v1, eth_rlpx_build_block_access_lists_payload_v1,
-    eth_rlpx_build_block_bodies_payload_v1, eth_rlpx_build_block_headers_payload_v1,
-    eth_rlpx_build_byte_codes_payload_v1, eth_rlpx_build_disconnect_payload_v1,
-    eth_rlpx_build_get_account_range_payload_v1, eth_rlpx_build_get_block_access_lists_payload_v1,
-    eth_rlpx_build_get_block_bodies_payload_v1, eth_rlpx_build_get_block_headers_payload_v1,
-    eth_rlpx_build_get_byte_codes_payload_v1, eth_rlpx_build_get_pooled_transactions_payload_v1,
-    eth_rlpx_build_get_receipts_payload_v1, eth_rlpx_build_get_storage_ranges_payload_v1,
-    eth_rlpx_build_get_trie_nodes_payload_v1, eth_rlpx_build_hello_payload_v1,
-    eth_rlpx_build_new_pooled_transaction_hashes_payload_v1,
+    eth_rlpx_block_access_list_hash_from_raw_rlp_v1, eth_rlpx_build_account_range_payload_v1,
+    eth_rlpx_build_block_access_lists_payload_v1, eth_rlpx_build_block_bodies_payload_v1,
+    eth_rlpx_build_block_headers_payload_v1, eth_rlpx_build_byte_codes_payload_v1,
+    eth_rlpx_build_disconnect_payload_v1, eth_rlpx_build_get_account_range_payload_v1,
+    eth_rlpx_build_get_block_access_lists_payload_v1, eth_rlpx_build_get_block_bodies_payload_v1,
+    eth_rlpx_build_get_block_headers_payload_v1, eth_rlpx_build_get_byte_codes_payload_v1,
+    eth_rlpx_build_get_pooled_transactions_payload_v1, eth_rlpx_build_get_receipts_payload_v1,
+    eth_rlpx_build_get_storage_ranges_payload_v1, eth_rlpx_build_get_trie_nodes_payload_v1,
+    eth_rlpx_build_hello_payload_v1, eth_rlpx_build_new_pooled_transaction_hashes_payload_v1,
     eth_rlpx_build_pooled_transactions_payload_v1, eth_rlpx_build_receipts_payload_v1,
     eth_rlpx_build_status_payload_v1, eth_rlpx_build_storage_ranges_payload_v1,
     eth_rlpx_build_trie_nodes_payload_v1, eth_rlpx_code_hash_v1, eth_rlpx_default_client_name_v1,
@@ -744,8 +744,8 @@ struct EthFullnodeNativeRlpxLivePeerSessionV1 {
     pending_snap_trie_node_hashes: Vec<[u8; 32]>,
     pending_snap_trie_node_retry_count: u8,
     last_block_access_lists_request_id: Option<u64>,
-    queued_block_access_list_hashes: Vec<[u8; 32]>,
-    pending_block_access_list_hashes: Vec<[u8; 32]>,
+    queued_block_access_lists: Vec<EthFullnodeNativePendingBlockAccessListV1>,
+    pending_block_access_lists: Vec<EthFullnodeNativePendingBlockAccessListV1>,
     last_pooled_transactions_request_id: Option<u64>,
     last_tx_broadcast_unix_ms: u64,
     pending_body_headers: Vec<EthFullnodeNativePendingBodyHeaderV1>,
@@ -764,6 +764,12 @@ struct EthFullnodeNativePendingBodyHeaderV1 {
     receipts_root: [u8; 32],
     tx_count: Option<usize>,
     withdrawal_count: Option<usize>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct EthFullnodeNativePendingBlockAccessListV1 {
+    block_hash: [u8; 32],
+    block_access_list_hash: [u8; 32],
 }
 
 const ETH_FULLNODE_NATIVE_MISSING_BODY_RECOVERY_BATCH_MAX_V1: usize = 4;
@@ -1503,8 +1509,8 @@ fn connect_eth_fullnode_native_rlpx_peer_v1(
             pending_snap_trie_node_hashes: Vec::new(),
             pending_snap_trie_node_retry_count: 0,
             last_block_access_lists_request_id: None,
-            queued_block_access_list_hashes: Vec::new(),
-            pending_block_access_list_hashes: Vec::new(),
+            queued_block_access_lists: Vec::new(),
+            pending_block_access_lists: Vec::new(),
             last_pooled_transactions_request_id: None,
             last_tx_broadcast_unix_ms: 0,
             pending_body_headers: Vec::new(),
@@ -3213,7 +3219,7 @@ fn clear_eth_fullnode_native_block_access_list_request_state_v1(
     session: &mut EthFullnodeNativeRlpxLivePeerSessionV1,
 ) {
     session.last_block_access_lists_request_id = None;
-    session.pending_block_access_list_hashes.clear();
+    session.pending_block_access_lists.clear();
 }
 
 fn eth_fullnode_native_rlpx_session_has_pending_request_v1(
@@ -3242,18 +3248,27 @@ fn queue_eth_fullnode_native_block_access_list_hash_v1(
     block_hash: [u8; 32],
     block_access_list_hash: Option<[u8; 32]>,
 ) {
-    if block_access_list_hash.is_none()
-        || get_network_runtime_native_block_access_list_payload_v1(chain_id, block_hash).is_some()
+    let Some(block_access_list_hash) = block_access_list_hash else {
+        return;
+    };
+    if get_network_runtime_native_block_access_list_payload_v1(chain_id, block_hash).is_some()
         || session
-            .queued_block_access_list_hashes
-            .contains(&block_hash)
+            .queued_block_access_lists
+            .iter()
+            .any(|pending| pending.block_hash == block_hash)
         || session
-            .pending_block_access_list_hashes
-            .contains(&block_hash)
+            .pending_block_access_lists
+            .iter()
+            .any(|pending| pending.block_hash == block_hash)
     {
         return;
     }
-    session.queued_block_access_list_hashes.push(block_hash);
+    session
+        .queued_block_access_lists
+        .push(EthFullnodeNativePendingBlockAccessListV1 {
+            block_hash,
+            block_access_list_hash,
+        });
 }
 
 fn dispatch_eth_fullnode_native_rlpx_queued_block_access_lists_v1(
@@ -3263,26 +3278,31 @@ fn dispatch_eth_fullnode_native_rlpx_queued_block_access_lists_v1(
     report: &mut EthFullnodeNativeRlpxPeerTickReportV1,
 ) -> Result<bool, NetworkError> {
     if session.last_block_access_lists_request_id.is_some()
-        || session.queued_block_access_list_hashes.is_empty()
+        || session.queued_block_access_lists.is_empty()
     {
         return Ok(false);
     }
     if !eth_fullnode_native_rlpx_supports_block_access_lists_v1(session) {
-        session.queued_block_access_list_hashes.clear();
+        session.queued_block_access_lists.clear();
         return Ok(false);
     }
     let mut seen = HashSet::<[u8; 32]>::new();
-    let hashes = session
-        .queued_block_access_list_hashes
+    let pending = session
+        .queued_block_access_lists
         .drain(..)
-        .filter(|hash| seen.insert(*hash))
-        .filter(|hash| {
-            get_network_runtime_native_block_access_list_payload_v1(chain_id, *hash).is_none()
+        .filter(|pending| seen.insert(pending.block_hash))
+        .filter(|pending| {
+            get_network_runtime_native_block_access_list_payload_v1(chain_id, pending.block_hash)
+                .is_none()
         })
         .collect::<Vec<_>>();
-    if hashes.is_empty() {
+    if pending.is_empty() {
         return Ok(false);
     }
+    let hashes = pending
+        .iter()
+        .map(|pending| pending.block_hash)
+        .collect::<Vec<_>>();
     let request_id = next_eth_fullnode_native_rlpx_request_id_v1();
     let payload = eth_rlpx_build_get_block_access_lists_payload_v1(request_id, hashes.as_slice());
     eth_rlpx_write_wire_frame_v1(
@@ -3301,7 +3321,7 @@ fn dispatch_eth_fullnode_native_rlpx_queued_block_access_lists_v1(
     })?;
     observe_network_runtime_eth_peer_syncing_v1(chain_id, source_peer_id);
     session.last_block_access_lists_request_id = Some(request_id);
-    session.pending_block_access_list_hashes = hashes;
+    session.pending_block_access_lists = pending;
     session.last_sync_request_unix_ms = now_unix_ms();
     report.sync_requests = report.sync_requests.saturating_add(1);
     Ok(true)
@@ -3646,6 +3666,28 @@ fn ingest_real_rlpx_pooled_transactions_v1(
     session.pending_pooled_transaction_hashes.clear();
 }
 
+fn validate_eth_fullnode_native_block_access_list_commitment_v1(
+    pending: &EthFullnodeNativePendingBlockAccessListV1,
+    raw_rlp: &[u8],
+) -> Result<[u8; 32], String> {
+    let observed_hash =
+        eth_rlpx_block_access_list_hash_from_raw_rlp_v1(raw_rlp).map_err(|err| {
+            format!(
+                "rlpx_block_access_list_payload_invalid:block=0x{}:{err}",
+                hex32_v1(&pending.block_hash)
+            )
+        })?;
+    if observed_hash != pending.block_access_list_hash {
+        return Err(format!(
+            "rlpx_block_access_list_hash_mismatch:block=0x{}:expected=0x{}:observed=0x{}",
+            hex32_v1(&pending.block_hash),
+            hex32_v1(&pending.block_access_list_hash),
+            hex32_v1(&observed_hash)
+        ));
+    }
+    Ok(observed_hash)
+}
+
 fn ingest_real_rlpx_block_access_lists_v1(
     chain_id: u64,
     source_peer_id: u64,
@@ -3658,10 +3700,10 @@ fn ingest_real_rlpx_block_access_lists_v1(
     {
         return Ok(());
     }
-    if response.lists.len() > session.pending_block_access_list_hashes.len() {
+    if response.lists.len() > session.pending_block_access_lists.len() {
         let err = format!(
             "rlpx_block_access_lists_count_mismatch:expected={} observed={}",
-            session.pending_block_access_list_hashes.len(),
+            session.pending_block_access_lists.len(),
             response.lists.len()
         );
         observe_network_runtime_eth_peer_decode_failure_v1(chain_id, source_peer_id, &err);
@@ -3669,8 +3711,8 @@ fn ingest_real_rlpx_block_access_lists_v1(
     }
     let mut materialized = 0usize;
     let mut missing = 0usize;
-    for (block_hash, item) in session
-        .pending_block_access_list_hashes
+    for (pending, item) in session
+        .pending_block_access_lists
         .iter()
         .zip(response.lists.iter())
     {
@@ -3678,24 +3720,38 @@ fn ingest_real_rlpx_block_access_lists_v1(
             missing = missing.saturating_add(1);
             continue;
         };
-        set_network_runtime_native_block_access_list_payload_v1(chain_id, *block_hash, raw_rlp)
-            .map_err(|err| {
-                let reason = format!(
-                    "rlpx_block_access_list_payload_invalid:block=0x{}:{err}",
-                    hex32_v1(block_hash)
-                );
+        validate_eth_fullnode_native_block_access_list_commitment_v1(pending, raw_rlp).map_err(
+            |reason| {
                 observe_network_runtime_eth_peer_decode_failure_v1(
                     chain_id,
                     source_peer_id,
                     reason.as_str(),
                 );
                 NetworkError::Decode(reason)
-            })?;
+            },
+        )?;
+        set_network_runtime_native_block_access_list_payload_v1(
+            chain_id,
+            pending.block_hash,
+            raw_rlp,
+        )
+        .map_err(|err| {
+            let reason = format!(
+                "rlpx_block_access_list_payload_invalid:block=0x{}:{err}",
+                hex32_v1(&pending.block_hash)
+            );
+            observe_network_runtime_eth_peer_decode_failure_v1(
+                chain_id,
+                source_peer_id,
+                reason.as_str(),
+            );
+            NetworkError::Decode(reason)
+        })?;
         materialized = materialized.saturating_add(1);
     }
     missing = missing.saturating_add(
         session
-            .pending_block_access_list_hashes
+            .pending_block_access_lists
             .len()
             .saturating_sub(response.lists.len()),
     );
@@ -14225,6 +14281,34 @@ mod tests {
         assert_eq!(materialized, expected_bal_rlp);
 
         server.join().expect("server join");
+    }
+
+    #[test]
+    fn evm_protocol_observable_equivalence_network_rlpx_bal_commitment_rejects_mismatch_gate_v1() {
+        let mut bal_builder = novovm_protocol::EvmConstructionBlockAccessListV1::new();
+        let account = [0x91u8; 20];
+        bal_builder.account_read(account);
+        bal_builder.storage_write(0, account, [0x92; 32], [0x93; 32]);
+        let access_list = bal_builder.to_access_list();
+        let expected_hash =
+            novovm_protocol::evm_block_access_list_hash_v1(&access_list).expect("BAL hash");
+        let empty_bal_rlp =
+            novovm_protocol::evm_block_access_list_rlp_bytes_v1(&Default::default())
+                .expect("empty BAL RLP");
+        let pending = EthFullnodeNativePendingBlockAccessListV1 {
+            block_hash: [0x94; 32],
+            block_access_list_hash: expected_hash,
+        };
+
+        let err = validate_eth_fullnode_native_block_access_list_commitment_v1(
+            &pending,
+            empty_bal_rlp.as_slice(),
+        )
+        .expect_err("BAL payload hash must match header BlockAccessListHash");
+        assert!(
+            err.contains("rlpx_block_access_list_hash_mismatch"),
+            "{err}"
+        );
     }
 
     #[test]

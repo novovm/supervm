@@ -16,7 +16,7 @@ use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use sha3::Digest;
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::{BTreeMap, HashMap, HashSet},
     sync::OnceLock,
     time::{Duration, Instant},
 };
@@ -4170,10 +4170,303 @@ pub fn eth_rlpx_parse_trie_nodes_payload_v1(
 
 #[must_use]
 pub fn eth_rlpx_validate_block_access_list_rlp_v1(raw_list: &[u8]) -> bool {
+    eth_rlpx_validate_block_access_list_rlp_result_v1(raw_list).is_ok()
+}
+
+pub fn eth_rlpx_block_access_list_hash_from_raw_rlp_v1(
+    raw_list: &[u8],
+) -> Result<[u8; 32], String> {
+    eth_rlpx_validate_block_access_list_rlp_result_v1(raw_list)?;
+    Ok(eth_rlpx_keccak256_bytes_v1(raw_list))
+}
+
+fn eth_rlpx_validate_block_access_list_rlp_result_v1(raw_list: &[u8]) -> Result<(), String> {
     let Ok((item, consumed)) = eth_rlpx_parse_item_v1(raw_list) else {
-        return false;
+        return Err("rlpx_bal_root_decode_failed".to_string());
     };
-    consumed == raw_list.len() && matches!(item, EthRlpxRlpItemV1::List(_))
+    if consumed != raw_list.len() {
+        return Err("rlpx_bal_trailing".to_string());
+    }
+    let EthRlpxRlpItemV1::List(payload) = item else {
+        return Err("rlpx_bal_not_list".to_string());
+    };
+    let accounts = eth_rlpx_parse_list_items_v1(payload)?;
+    let mut previous_address: Option<&[u8]> = None;
+    for (account_index, account) in accounts.iter().enumerate() {
+        let fields = eth_rlpx_bal_expect_list_fields_v1(account, "account")?;
+        if fields.len() != 6 {
+            return Err(format!(
+                "rlpx_bal_account_fields_invalid:index={account_index}:fields={}",
+                fields.len()
+            ));
+        }
+        let address = eth_rlpx_bal_expect_bytes_v1(&fields[0], "account_address")?;
+        if address.len() != 20 {
+            return Err(format!(
+                "rlpx_bal_account_address_len_invalid:index={account_index}:len={}",
+                address.len()
+            ));
+        }
+        if previous_address.is_some_and(|previous| previous > address) {
+            return Err(format!(
+                "rlpx_bal_accounts_not_sorted:index={account_index}"
+            ));
+        }
+        previous_address = Some(address);
+        eth_rlpx_validate_bal_account_storage_changes_v1(account_index, &fields[1])?;
+        eth_rlpx_validate_bal_account_storage_reads_v1(account_index, &fields[1], &fields[2])?;
+        eth_rlpx_validate_bal_indexed_uint256_changes_v1(
+            account_index,
+            &fields[3],
+            "balance_changes",
+            "post_balance",
+        )?;
+        eth_rlpx_validate_bal_nonce_changes_v1(account_index, &fields[4])?;
+        eth_rlpx_validate_bal_code_changes_v1(account_index, &fields[5])?;
+    }
+    Ok(())
+}
+
+fn eth_rlpx_bal_expect_list_fields_v1<'a>(
+    item: &EthRlpxRlpItemV1<'a>,
+    kind: &str,
+) -> Result<Vec<EthRlpxRlpItemV1<'a>>, String> {
+    let EthRlpxRlpItemV1::List(payload) = item else {
+        return Err(format!("rlpx_bal_{kind}_not_list"));
+    };
+    eth_rlpx_parse_list_items_v1(payload)
+}
+
+fn eth_rlpx_bal_expect_bytes_v1<'a>(
+    item: &EthRlpxRlpItemV1<'a>,
+    kind: &str,
+) -> Result<&'a [u8], String> {
+    let EthRlpxRlpItemV1::Bytes(bytes) = item else {
+        return Err(format!("rlpx_bal_{kind}_not_bytes"));
+    };
+    Ok(bytes)
+}
+
+fn eth_rlpx_bal_uint256_key_v1(bytes: &[u8], kind: &str) -> Result<[u8; 32], String> {
+    if bytes.len() > 32 {
+        return Err(format!("rlpx_bal_{kind}_uint256_len_invalid"));
+    }
+    let mut out = [0u8; 32];
+    out[32usize.saturating_sub(bytes.len())..].copy_from_slice(bytes);
+    Ok(out)
+}
+
+fn eth_rlpx_bal_u32_v1(bytes: &[u8], kind: &str) -> Result<u32, String> {
+    let value = eth_rlpx_decode_u64_bytes_v1(bytes)?;
+    if value > u64::from(u32::MAX) {
+        return Err(format!("rlpx_bal_{kind}_u32_overflow"));
+    }
+    Ok(value as u32)
+}
+
+fn eth_rlpx_validate_bal_account_storage_changes_v1(
+    account_index: usize,
+    item: &EthRlpxRlpItemV1<'_>,
+) -> Result<(), String> {
+    let slots = eth_rlpx_bal_expect_list_fields_v1(item, "storage_changes")?;
+    let mut previous_slot: Option<[u8; 32]> = None;
+    for (slot_index, slot_item) in slots.iter().enumerate() {
+        let fields = eth_rlpx_bal_expect_list_fields_v1(slot_item, "storage_change")?;
+        if fields.len() != 2 {
+            return Err(format!(
+                "rlpx_bal_storage_change_fields_invalid:account={account_index}:slot={slot_index}:fields={}",
+                fields.len()
+            ));
+        }
+        let slot = eth_rlpx_bal_uint256_key_v1(
+            eth_rlpx_bal_expect_bytes_v1(&fields[0], "storage_change_slot")?,
+            "storage_change_slot",
+        )?;
+        if previous_slot.is_some_and(|previous| previous >= slot) {
+            return Err(format!(
+                "rlpx_bal_storage_change_slots_not_unique_sorted:account={account_index}:slot={slot_index}"
+            ));
+        }
+        previous_slot = Some(slot);
+        let changes = eth_rlpx_bal_expect_list_fields_v1(&fields[1], "slot_changes")?;
+        if changes.is_empty() {
+            return Err(format!(
+                "rlpx_bal_empty_slot_changes:account={account_index}:slot={slot_index}"
+            ));
+        }
+        let mut previous_index: Option<u32> = None;
+        for (change_index, change_item) in changes.iter().enumerate() {
+            let change = eth_rlpx_bal_expect_list_fields_v1(change_item, "slot_change")?;
+            if change.len() != 2 {
+                return Err(format!(
+                    "rlpx_bal_slot_change_fields_invalid:account={account_index}:slot={slot_index}:change={change_index}:fields={}",
+                    change.len()
+                ));
+            }
+            let block_access_index = eth_rlpx_bal_u32_v1(
+                eth_rlpx_bal_expect_bytes_v1(&change[0], "slot_change_block_access_index")?,
+                "slot_change_block_access_index",
+            )?;
+            if previous_index.is_some_and(|previous| previous >= block_access_index) {
+                return Err(format!(
+                    "rlpx_bal_slot_change_indexes_not_unique_sorted:account={account_index}:slot={slot_index}:change={change_index}"
+                ));
+            }
+            previous_index = Some(block_access_index);
+            let post_value = eth_rlpx_bal_expect_bytes_v1(&change[1], "slot_change_post_value")?;
+            let _ = eth_rlpx_bal_uint256_key_v1(post_value, "slot_change_post_value")?;
+        }
+    }
+    Ok(())
+}
+
+fn eth_rlpx_collect_bal_storage_change_slots_v1(
+    account_index: usize,
+    item: &EthRlpxRlpItemV1<'_>,
+) -> Result<HashSet<[u8; 32]>, String> {
+    let slots = eth_rlpx_bal_expect_list_fields_v1(item, "storage_changes")?;
+    let mut out = HashSet::<[u8; 32]>::new();
+    for (slot_index, slot_item) in slots.iter().enumerate() {
+        let fields = eth_rlpx_bal_expect_list_fields_v1(slot_item, "storage_change")?;
+        if fields.len() != 2 {
+            return Err(format!(
+                "rlpx_bal_storage_change_fields_invalid:account={account_index}:slot={slot_index}:fields={}",
+                fields.len()
+            ));
+        }
+        let slot = eth_rlpx_bal_uint256_key_v1(
+            eth_rlpx_bal_expect_bytes_v1(&fields[0], "storage_change_slot")?,
+            "storage_change_slot",
+        )?;
+        let _ = out.insert(slot);
+    }
+    Ok(out)
+}
+
+fn eth_rlpx_validate_bal_account_storage_reads_v1(
+    account_index: usize,
+    storage_changes: &EthRlpxRlpItemV1<'_>,
+    storage_reads: &EthRlpxRlpItemV1<'_>,
+) -> Result<(), String> {
+    let write_slots = eth_rlpx_collect_bal_storage_change_slots_v1(account_index, storage_changes)?;
+    let reads = eth_rlpx_bal_expect_list_fields_v1(storage_reads, "storage_reads")?;
+    let mut previous_read: Option<[u8; 32]> = None;
+    for (read_index, read_item) in reads.iter().enumerate() {
+        let read = eth_rlpx_bal_uint256_key_v1(
+            eth_rlpx_bal_expect_bytes_v1(read_item, "storage_read")?,
+            "storage_read",
+        )?;
+        if previous_read.is_some_and(|previous| previous >= read) {
+            return Err(format!(
+                "rlpx_bal_storage_reads_not_unique_sorted:account={account_index}:read={read_index}"
+            ));
+        }
+        if write_slots.contains(&read) {
+            return Err(format!(
+                "rlpx_bal_storage_read_write_intersection:account={account_index}:read={read_index}"
+            ));
+        }
+        previous_read = Some(read);
+    }
+    Ok(())
+}
+
+fn eth_rlpx_validate_bal_indexed_uint256_changes_v1(
+    account_index: usize,
+    item: &EthRlpxRlpItemV1<'_>,
+    kind: &str,
+    value_kind: &str,
+) -> Result<(), String> {
+    let changes = eth_rlpx_bal_expect_list_fields_v1(item, kind)?;
+    let mut previous_index: Option<u32> = None;
+    for (change_index, change_item) in changes.iter().enumerate() {
+        let fields = eth_rlpx_bal_expect_list_fields_v1(change_item, kind)?;
+        if fields.len() != 2 {
+            return Err(format!(
+                "rlpx_bal_{kind}_fields_invalid:account={account_index}:change={change_index}:fields={}",
+                fields.len()
+            ));
+        }
+        let block_access_index = eth_rlpx_bal_u32_v1(
+            eth_rlpx_bal_expect_bytes_v1(&fields[0], "block_access_index")?,
+            "block_access_index",
+        )?;
+        if previous_index.is_some_and(|previous| previous >= block_access_index) {
+            return Err(format!(
+                "rlpx_bal_{kind}_indexes_not_unique_sorted:account={account_index}:change={change_index}"
+            ));
+        }
+        previous_index = Some(block_access_index);
+        let value = eth_rlpx_bal_expect_bytes_v1(&fields[1], value_kind)?;
+        let _ = eth_rlpx_bal_uint256_key_v1(value, value_kind)?;
+    }
+    Ok(())
+}
+
+fn eth_rlpx_validate_bal_nonce_changes_v1(
+    account_index: usize,
+    item: &EthRlpxRlpItemV1<'_>,
+) -> Result<(), String> {
+    let changes = eth_rlpx_bal_expect_list_fields_v1(item, "nonce_changes")?;
+    let mut previous_index: Option<u32> = None;
+    for (change_index, change_item) in changes.iter().enumerate() {
+        let fields = eth_rlpx_bal_expect_list_fields_v1(change_item, "nonce_change")?;
+        if fields.len() != 2 {
+            return Err(format!(
+                "rlpx_bal_nonce_change_fields_invalid:account={account_index}:change={change_index}:fields={}",
+                fields.len()
+            ));
+        }
+        let block_access_index = eth_rlpx_bal_u32_v1(
+            eth_rlpx_bal_expect_bytes_v1(&fields[0], "nonce_block_access_index")?,
+            "nonce_block_access_index",
+        )?;
+        if previous_index.is_some_and(|previous| previous >= block_access_index) {
+            return Err(format!(
+                "rlpx_bal_nonce_changes_not_unique_sorted:account={account_index}:change={change_index}"
+            ));
+        }
+        previous_index = Some(block_access_index);
+        let nonce = eth_rlpx_bal_expect_bytes_v1(&fields[1], "nonce_post_nonce")?;
+        let _ = eth_rlpx_decode_u64_bytes_v1(nonce)?;
+    }
+    Ok(())
+}
+
+fn eth_rlpx_validate_bal_code_changes_v1(
+    account_index: usize,
+    item: &EthRlpxRlpItemV1<'_>,
+) -> Result<(), String> {
+    const MAX_CODE_BYTES: usize = 24_576;
+    let changes = eth_rlpx_bal_expect_list_fields_v1(item, "code_changes")?;
+    let mut previous_index: Option<u32> = None;
+    for (change_index, change_item) in changes.iter().enumerate() {
+        let fields = eth_rlpx_bal_expect_list_fields_v1(change_item, "code_change")?;
+        if fields.len() != 2 {
+            return Err(format!(
+                "rlpx_bal_code_change_fields_invalid:account={account_index}:change={change_index}:fields={}",
+                fields.len()
+            ));
+        }
+        let block_access_index = eth_rlpx_bal_u32_v1(
+            eth_rlpx_bal_expect_bytes_v1(&fields[0], "code_block_access_index")?,
+            "code_block_access_index",
+        )?;
+        if previous_index.is_some_and(|previous| previous >= block_access_index) {
+            return Err(format!(
+                "rlpx_bal_code_changes_not_unique_sorted:account={account_index}:change={change_index}"
+            ));
+        }
+        previous_index = Some(block_access_index);
+        let code = eth_rlpx_bal_expect_bytes_v1(&fields[1], "code_change_new_code")?;
+        if code.len() > MAX_CODE_BYTES {
+            return Err(format!(
+                "rlpx_bal_code_change_oversized:account={account_index}:change={change_index}:len={}",
+                code.len()
+            ));
+        }
+    }
+    Ok(())
 }
 
 #[derive(Clone)]
@@ -5894,6 +6187,33 @@ mod tests {
         let access_list_hash =
             novovm_protocol::evm_block_access_list_hash_v1(&access_list).expect("BAL hash");
         assert_ne!(access_list_hash, [0u8; 32]);
+        assert!(eth_rlpx_validate_block_access_list_rlp_v1(
+            access_list_rlp.as_slice()
+        ));
+        assert_eq!(
+            eth_rlpx_block_access_list_hash_from_raw_rlp_v1(access_list_rlp.as_slice())
+                .expect("raw BAL hash"),
+            access_list_hash
+        );
+        let empty_slot_changes_bal = eth_rlpx_encode_list_v1(&[eth_rlpx_encode_list_v1(&[
+            eth_rlpx_encode_bytes_v1(&account),
+            eth_rlpx_encode_list_v1(&[eth_rlpx_encode_list_v1(&[
+                eth_rlpx_encode_bytes_v1(&[0x44; 32]),
+                eth_rlpx_encode_list_v1(&[]),
+            ])]),
+            eth_rlpx_encode_list_v1(&[]),
+            eth_rlpx_encode_list_v1(&[]),
+            eth_rlpx_encode_list_v1(&[]),
+            eth_rlpx_encode_list_v1(&[]),
+        ])]);
+        assert!(!eth_rlpx_validate_block_access_list_rlp_v1(
+            empty_slot_changes_bal.as_slice()
+        ));
+        assert!(
+            eth_rlpx_block_access_list_hash_from_raw_rlp_v1(empty_slot_changes_bal.as_slice())
+                .is_err(),
+            "geth #35110 rejects storageChanges entries with empty slotChanges"
+        );
 
         let response_payload = eth_rlpx_build_block_access_lists_payload_v1(
             42,
