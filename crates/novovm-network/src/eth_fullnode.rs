@@ -1796,6 +1796,8 @@ fn eth_peer_now_unix_ms_v1() -> u64 {
 
 const ETH_PEER_FAILURE_BACKOFF_BASE_MS_V1: u64 = 2_500;
 const ETH_PEER_FAILURE_BACKOFF_MAX_MS_V1: u64 = 300_000;
+const ETH_PEER_CAPACITY_REJECT_BACKOFF_BASE_MS_V1: u64 = 60_000;
+const ETH_PEER_CAPACITY_REJECT_BACKOFF_MAX_MS_V1: u64 = 900_000;
 const ETH_PEER_PROTOCOL_BACKOFF_FLOOR_MS_V1: u64 = 10_000;
 const ETH_PEER_TIMEOUT_BACKOFF_FLOOR_MS_V1: u64 = 15_000;
 const ETH_PEER_SELECTION_SHORT_WINDOW_ROUNDS_V1: usize = 16;
@@ -1863,13 +1865,24 @@ fn eth_peer_failure_backoff_ms_v1(consecutive_failures: u64) -> u64 {
 
 fn eth_peer_disconnect_cooldown_ms_v1(reason_code: Option<u64>) -> u64 {
     match reason_code {
-        Some(0x04) => 60_000,
+        Some(0x04) => ETH_PEER_CAPACITY_REJECT_BACKOFF_BASE_MS_V1,
         Some(0x03) => 5_000,
-        Some(0x10) => 60_000,
+        Some(0x10) => ETH_PEER_CAPACITY_REJECT_BACKOFF_BASE_MS_V1,
         Some(0x0b) => 10_000,
         Some(_) => 5_000,
         None => 2_500,
     }
+}
+
+fn eth_peer_capacity_reject_cooldown_ms_v1(state: &EthPeerSessionState) -> u64 {
+    let count = state.disconnect_too_many_peers_count.saturating_add(1);
+    let shift = count.saturating_sub(1).min(4) as u32;
+    ETH_PEER_CAPACITY_REJECT_BACKOFF_BASE_MS_V1
+        .saturating_mul(1u64 << shift)
+        .clamp(
+            ETH_PEER_CAPACITY_REJECT_BACKOFF_BASE_MS_V1,
+            ETH_PEER_CAPACITY_REJECT_BACKOFF_MAX_MS_V1,
+        )
 }
 
 fn eth_peer_validation_cooldown_ms_v1(reason: EthChainConfigPeerValidationReasonV1) -> u64 {
@@ -1951,7 +1964,12 @@ fn eth_peer_failure_cooldown_ms_v1(
         EthPeerFailureClassV1::Disconnect => eth_peer_failure_backoff_ms_v1(
             eth_peer_failure_count_for_class_v1(state, class).saturating_add(1),
         )
-        .max(eth_peer_disconnect_cooldown_ms_v1(reason_code)),
+        .max(eth_peer_disconnect_cooldown_ms_v1(reason_code))
+        .max(if reason_code == Some(0x04) {
+            eth_peer_capacity_reject_cooldown_ms_v1(state)
+        } else {
+            0
+        }),
     }
 }
 
@@ -4176,6 +4194,49 @@ pub fn observe_network_runtime_eth_peer_disconnect_v1(
     );
 }
 
+pub fn restore_network_runtime_eth_peer_capacity_reject_v1(
+    chain_id: u64,
+    peer_id: u64,
+    reject_until_unix_ms: u64,
+    disconnect_too_many_peers_count: u64,
+    observed_at_unix_ms: u64,
+) {
+    let now = eth_peer_now_unix_ms_v1();
+    if reject_until_unix_ms <= now {
+        return;
+    }
+    let mut guard = eth_peer_sessions()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let chain = guard.entry(chain_id).or_default();
+    let entry = chain
+        .entry(peer_id)
+        .or_insert_with(|| eth_peer_session_state_default_v1(now));
+    if entry.permanently_rejected {
+        return;
+    }
+    let count = disconnect_too_many_peers_count.max(1);
+    let observed_at = if observed_at_unix_ms == 0 {
+        now
+    } else {
+        observed_at_unix_ms
+    };
+    entry.session_ready = false;
+    entry.progress_stage = EthPeerLifecycleProgressStageV1::Discovered;
+    entry.disconnect_count = entry.disconnect_count.max(count);
+    entry.disconnect_too_many_peers_count = entry.disconnect_too_many_peers_count.max(count);
+    entry.last_disconnect_reason_code = Some(0x04);
+    entry.last_failure_class = Some(EthPeerFailureClassV1::Disconnect);
+    entry.last_failure_reason_code = Some(0x04);
+    entry.last_failure_reason_name = Some(eth_rlpx_disconnect_reason_name_v1(0x04).to_string());
+    if entry.first_failure_unix_ms == 0 {
+        entry.first_failure_unix_ms = observed_at;
+    }
+    entry.last_failure_unix_ms = entry.last_failure_unix_ms.max(observed_at);
+    entry.cooldown_until_unix_ms = entry.cooldown_until_unix_ms.max(reject_until_unix_ms);
+    entry.last_state_change_unix_ms = now;
+}
+
 #[must_use]
 pub fn snapshot_network_runtime_eth_peer_sessions(chain_id: u64) -> Vec<EthPeerSessionSnapshot> {
     let now = eth_peer_now_unix_ms_v1();
@@ -5172,6 +5233,64 @@ mod tests {
             snapshot.lifecycle_stage,
             EthPeerLifecycleStageV1::PermanentlyRejected
         );
+    }
+
+    #[test]
+    fn repeated_capacity_rejects_backoff_across_ready_sessions() {
+        let chain_id = 99_160_322_u64;
+        let peer = NodeId(322);
+
+        observe_network_runtime_eth_peer_disconnect_v1(chain_id, peer.0, Some(0x04));
+        let first =
+            snapshot_network_runtime_eth_peer_sessions_for_peers_v1(chain_id, &[peer])[0].clone();
+        assert_eq!(first.disconnect_too_many_peers_count, 1);
+        assert!(
+            first
+                .cooldown_until_unix_ms
+                .saturating_sub(first.last_failure_unix_ms)
+                >= ETH_PEER_CAPACITY_REJECT_BACKOFF_BASE_MS_V1
+        );
+
+        mark_network_runtime_eth_peer_session_ready_v1(chain_id, peer.0, Some(512));
+        observe_network_runtime_eth_peer_disconnect_v1(chain_id, peer.0, Some(0x04));
+
+        let second =
+            snapshot_network_runtime_eth_peer_sessions_for_peers_v1(chain_id, &[peer])[0].clone();
+        assert_eq!(second.successful_sessions, 1);
+        assert_eq!(second.disconnect_too_many_peers_count, 2);
+        assert!(
+            second
+                .cooldown_until_unix_ms
+                .saturating_sub(second.last_failure_unix_ms)
+                >= ETH_PEER_CAPACITY_REJECT_BACKOFF_BASE_MS_V1.saturating_mul(2)
+        );
+    }
+
+    #[test]
+    fn capacity_reject_restore_preserves_count_and_deadline() {
+        let chain_id = 99_160_323_u64;
+        let peer = NodeId(323);
+        let now = eth_peer_now_unix_ms_v1();
+        let reject_until = now.saturating_add(240_000);
+
+        restore_network_runtime_eth_peer_capacity_reject_v1(
+            chain_id,
+            peer.0,
+            reject_until,
+            4,
+            now.saturating_sub(1_000),
+        );
+
+        let snapshot =
+            snapshot_network_runtime_eth_peer_sessions_for_peers_v1(chain_id, &[peer])[0].clone();
+        assert_eq!(snapshot.disconnect_too_many_peers_count, 4);
+        assert_eq!(snapshot.disconnect_count, 4);
+        assert_eq!(
+            snapshot.last_failure_reason_name.as_deref(),
+            Some("too_many_peers")
+        );
+        assert!(snapshot.cooldown_until_unix_ms >= reject_until);
+        assert_eq!(snapshot.lifecycle_stage, EthPeerLifecycleStageV1::Cooldown);
     }
 
     #[test]

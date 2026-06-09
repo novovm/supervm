@@ -3092,6 +3092,8 @@ struct EthRlpxPeerEndpointCapacityRejectV1 {
     node_hint: u64,
     addr_hint: String,
     reject_until_unix_ms: u64,
+    #[serde(default)]
+    disconnect_too_many_peers_count: u64,
     observed_at_unix_ms: u64,
 }
 
@@ -3165,10 +3167,12 @@ fn restore_eth_rlpx_peer_endpoint_cache_capacity_rejects_v1(
         .iter()
         .filter(|reject| reject.reject_until_unix_ms > now)
     {
-        novovm_network::observe_network_runtime_eth_peer_disconnect_v1(
+        novovm_network::restore_network_runtime_eth_peer_capacity_reject_v1(
             chain_id,
             reject.node_hint.max(1),
-            Some(0x04),
+            reject.reject_until_unix_ms,
+            reject.disconnect_too_many_peers_count.max(1),
+            reject.observed_at_unix_ms,
         );
         restored = restored.saturating_add(1);
     }
@@ -3233,7 +3237,12 @@ fn write_eth_rlpx_peer_endpoint_cache_v1(
                 .capacity_rejects
                 .iter()
                 .filter(|reject| reject.reject_until_unix_ms > now)
-                .map(|reject| (reject.node_hint.max(1), reject.clone()))
+                .map(|reject| {
+                    let mut reject = reject.clone();
+                    reject.disconnect_too_many_peers_count =
+                        reject.disconnect_too_many_peers_count.max(1);
+                    (reject.node_hint.max(1), reject)
+                })
                 .collect::<HashMap<_, _>>()
         })
         .unwrap_or_default();
@@ -3261,6 +3270,9 @@ fn write_eth_rlpx_peer_endpoint_cache_v1(
                         node_hint: endpoint.node_hint.max(1),
                         addr_hint: endpoint.addr_hint.clone(),
                         reject_until_unix_ms: snapshot.cooldown_until_unix_ms,
+                        disconnect_too_many_peers_count: snapshot
+                            .disconnect_too_many_peers_count
+                            .max(1),
                         observed_at_unix_ms: snapshot.last_failure_unix_ms.max(now),
                     },
                 );
@@ -6787,6 +6799,10 @@ mod mainline_evm_cli_tests {
         assert_eq!(loaded.capacity_rejects[0].node_hint, peer_id);
         assert_eq!(loaded.capacity_rejects[0].addr_hint, "127.0.0.1:30304");
         assert!(loaded.capacity_rejects[0].reject_until_unix_ms > now_unix_ms());
+        assert_eq!(
+            loaded.capacity_rejects[0].disconnect_too_many_peers_count,
+            1
+        );
         assert!(loaded.permanent_rejects.is_empty());
 
         let _ = fs::remove_file(path);
@@ -6809,6 +6825,7 @@ mod mainline_evm_cli_tests {
                 node_hint: peer_id,
                 addr_hint: "127.0.0.1:30305".to_string(),
                 reject_until_unix_ms: now_unix_ms().saturating_add(60_000),
+                disconnect_too_many_peers_count: 3,
                 observed_at_unix_ms: now_unix_ms(),
             }],
             permanent_rejects: Vec::new(),
@@ -6824,7 +6841,7 @@ mod mainline_evm_cli_tests {
                 .into_iter()
                 .next()
                 .expect("restored peer snapshot");
-        assert_eq!(snapshot.disconnect_too_many_peers_count, 1);
+        assert_eq!(snapshot.disconnect_too_many_peers_count, 3);
         assert_eq!(
             snapshot.last_failure_reason_name.as_deref(),
             Some("too_many_peers")
