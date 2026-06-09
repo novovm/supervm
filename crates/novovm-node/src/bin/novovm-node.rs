@@ -2370,8 +2370,19 @@ fn eth_rlpx_current_head_material_missing_v1(
     header_present && (!body_available || !receipt_available)
 }
 
+#[cfg(test)]
 fn eth_rlpx_body_material_made_progress_v1(body_updates: usize, receipt_updates: usize) -> bool {
     body_updates > 0 || receipt_updates > 0
+}
+
+fn eth_rlpx_complete_head_made_progress_v1(
+    current_block: u64,
+    previous_progress_block: u64,
+    header_present: bool,
+    body_available: bool,
+    receipt_available: bool,
+) -> bool {
+    current_block > previous_progress_block && header_present && body_available && receipt_available
 }
 
 fn eth_rlpx_apply_public_sync_batch_defaults_v1(
@@ -5418,14 +5429,17 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
             current_head_body_available,
             current_head_receipt_available,
         );
-        let header_sync_made_progress =
-            current_sync_block > last_sync_progress_block || report.header_updates > 0;
+        let complete_head_made_progress = eth_rlpx_complete_head_made_progress_v1(
+            current_sync_block,
+            last_sync_progress_block,
+            current_head_present,
+            current_head_body_available,
+            current_head_receipt_available,
+        );
         let sync_made_progress = current_sync_block > last_sync_progress_block
             || report.header_updates > 0
             || report.body_updates > 0
             || report.receipt_updates > 0;
-        let body_material_made_progress =
-            eth_rlpx_body_material_made_progress_v1(report.body_updates, report.receipt_updates);
         if sync_made_progress {
             last_sync_progress_tick = tick;
             last_sync_progress_block = last_sync_progress_block.max(current_sync_block);
@@ -5527,14 +5541,14 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
                 adaptive_headers_batch_input,
                 max_runtime_headers_batch,
                 adaptive_headers_min_batch,
-                header_sync_made_progress,
+                complete_head_made_progress,
                 request_transport_failure,
             );
             let next_bodies_batch = eth_rlpx_adaptive_public_sync_batch_v1(
                 runtime_bodies_batch,
                 max_runtime_bodies_batch,
                 adaptive_bodies_min_batch,
-                body_material_made_progress,
+                complete_head_made_progress,
                 body_recovery_pressure,
             );
             if next_headers_batch != runtime_headers_batch
@@ -5567,8 +5581,8 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
                         "request_transport_failure"
                     } else if sync_made_progress && current_head_material_missing {
                         "header_only_body_backoff"
-                    } else if header_sync_made_progress || body_material_made_progress {
-                        "progress_restore"
+                    } else if complete_head_made_progress {
+                        "complete_head_progress_restore"
                     } else {
                         "batch_unchanged"
                     }
@@ -6540,6 +6554,32 @@ mod mainline_evm_cli_tests {
         assert_eq!(
             eth_rlpx_adaptive_public_sync_batch_v1(96, 192, 1, true, false),
             192
+        );
+    }
+
+    #[test]
+    fn eth_rlpx_batch_restore_requires_complete_head_advance_v1() {
+        assert!(!eth_rlpx_complete_head_made_progress_v1(
+            25_281_726, 25_281_726, true, true, true
+        ));
+        assert!(!eth_rlpx_complete_head_made_progress_v1(
+            25_281_758, 25_281_726, true, true, false
+        ));
+        assert!(eth_rlpx_complete_head_made_progress_v1(
+            25_281_758, 25_281_726, true, true, true
+        ));
+
+        let partial_header_batch =
+            eth_rlpx_adaptive_public_sync_batch_v1(32, 192, 16, false, false);
+        let partial_body_batch = eth_rlpx_adaptive_public_sync_batch_v1(64, 128, 32, false, false);
+        assert_eq!(partial_header_batch, 32);
+        assert_eq!(
+            partial_body_batch, 64,
+            "partial header/body material without complete head advance must not restore public batches"
+        );
+        assert_eq!(
+            eth_rlpx_adaptive_public_sync_batch_v1(32, 192, 16, true, false),
+            64
         );
     }
 
