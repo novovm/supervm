@@ -4650,13 +4650,13 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
     let adaptive_batch_enabled = bool_env_default_true("NOVOVM_ETH_RLPX_ADAPTIVE_BATCH_ENABLED");
     let adaptive_headers_min_batch = u64_env_clamped(
         "NOVOVM_ETH_RLPX_ADAPTIVE_HEADERS_MIN_BATCH",
-        headers_batch.min(64).max(1),
+        1,
         1,
         headers_batch.max(1),
     );
     let adaptive_bodies_min_batch = u64_env_clamped(
         "NOVOVM_ETH_RLPX_ADAPTIVE_BODIES_MIN_BATCH",
-        bodies_batch.min(32).max(1),
+        1,
         1,
         bodies_batch.max(1),
     );
@@ -6006,6 +6006,29 @@ mod mainline_evm_cli_tests {
         assert_eq!(
             eth_rlpx_adaptive_public_sync_batch_v1(192, 192, 64, true, false),
             192
+        );
+    }
+
+    #[test]
+    fn eth_rlpx_adaptive_public_sync_batch_can_back_off_to_single_item_v1() {
+        let mut headers = 192;
+        for expected in [96, 48, 24, 12, 6, 3, 1] {
+            headers = eth_rlpx_adaptive_public_sync_batch_v1(headers, 192, 1, false, true);
+            assert_eq!(headers, expected);
+        }
+        assert_eq!(
+            eth_rlpx_adaptive_public_sync_batch_v1(headers, 192, 1, false, true),
+            1
+        );
+
+        let mut bodies = 128;
+        for expected in [64, 32, 16, 8, 4, 2, 1] {
+            bodies = eth_rlpx_adaptive_public_sync_batch_v1(bodies, 128, 1, false, true);
+            assert_eq!(bodies, expected);
+        }
+        assert_eq!(
+            eth_rlpx_adaptive_public_sync_batch_v1(bodies, 128, 1, true, false),
+            2
         );
     }
 
