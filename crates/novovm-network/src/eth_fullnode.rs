@@ -1796,6 +1796,7 @@ fn eth_peer_now_unix_ms_v1() -> u64 {
 
 const ETH_PEER_FAILURE_BACKOFF_BASE_MS_V1: u64 = 2_500;
 const ETH_PEER_FAILURE_BACKOFF_MAX_MS_V1: u64 = 300_000;
+const ETH_PEER_PRODUCTIVE_DISCONNECT_RETRY_MS_V1: u64 = 750;
 const ETH_PEER_CAPACITY_REJECT_BACKOFF_BASE_MS_V1: u64 = 60_000;
 const ETH_PEER_CAPACITY_REJECT_BACKOFF_MAX_MS_V1: u64 = 900_000;
 const ETH_PEER_PROTOCOL_BACKOFF_FLOOR_MS_V1: u64 = 10_000;
@@ -1872,6 +1873,12 @@ fn eth_peer_disconnect_cooldown_ms_v1(reason_code: Option<u64>) -> u64 {
         Some(_) => 5_000,
         None => 2_500,
     }
+}
+
+fn eth_peer_has_material_progress_v1(state: &EthPeerSessionState) -> bool {
+    state.header_response_count > 0
+        || state.body_response_count > 0
+        || state.sync_contribution_count > 0
 }
 
 fn eth_peer_capacity_reject_cooldown_ms_v1(state: &EthPeerSessionState) -> u64 {
@@ -1961,6 +1968,11 @@ fn eth_peer_failure_cooldown_ms_v1(
         EthPeerFailureClassV1::ValidationReject => validation_reason
             .map(eth_peer_validation_cooldown_ms_v1)
             .unwrap_or(ETH_PEER_PROTOCOL_BACKOFF_FLOOR_MS_V1),
+        EthPeerFailureClassV1::Disconnect
+            if reason_code.is_none() && eth_peer_has_material_progress_v1(state) =>
+        {
+            ETH_PEER_PRODUCTIVE_DISCONNECT_RETRY_MS_V1
+        }
         EthPeerFailureClassV1::Disconnect => eth_peer_failure_backoff_ms_v1(
             eth_peer_failure_count_for_class_v1(state, class).saturating_add(1),
         )
@@ -3309,6 +3321,24 @@ fn eth_peer_selection_sort_key_v1(score: &EthPeerSelectionScoreV1) -> (u8, i64, 
     )
 }
 
+fn eth_peer_selection_recent_failure_rank_v1(score: &EthPeerSelectionScoreV1) -> u8 {
+    if !score.eligible {
+        return 2;
+    }
+    if score.consecutive_failures > 0
+        || score.recent_window.connect_failure_rounds > 0
+        || score.recent_window.handshake_failure_rounds > 0
+        || score.recent_window.decode_failure_rounds > 0
+        || score.recent_window.timeout_failure_rounds > 0
+        || score.recent_window.validation_reject_rounds > 0
+        || score.recent_window.capacity_reject_rounds > 0
+    {
+        1
+    } else {
+        0
+    }
+}
+
 fn eth_native_sync_request_requires_snap_peer_v1(chain_id: u64) -> bool {
     matches!(
         build_eth_fullnode_native_sync_request_v1(NodeId(0), chain_id),
@@ -4575,7 +4605,14 @@ pub fn select_eth_fullnode_native_bootstrap_candidates_v1(
                 .get(&score.peer_id)
                 .copied()
                 .unwrap_or(max_targets);
-            (base.0, body_rank, prefix_rank, base.1, base.2)
+            (
+                base.0,
+                body_rank,
+                eth_peer_selection_recent_failure_rank_v1(score),
+                prefix_rank,
+                base.1,
+                base.2,
+            )
         });
     } else if prefer_header_peer && !header_peer_ids.is_empty() {
         for score in &mut ranked {
@@ -4622,7 +4659,14 @@ pub fn select_eth_fullnode_native_bootstrap_candidates_v1(
                 } else {
                     1u8
                 };
-            (base.0, prefix_group, prefix_rank, base.1, base.2)
+            (
+                base.0,
+                eth_peer_selection_recent_failure_rank_v1(score),
+                prefix_group,
+                prefix_rank,
+                base.1,
+                base.2,
+            )
         });
     } else {
         ranked.sort_by_key(eth_peer_selection_sort_key_v1);
@@ -5362,6 +5406,52 @@ mod tests {
         let selected =
             select_eth_fullnode_native_bootstrap_candidates_v1(chain_id, &[peer, fallback], 2);
         assert_eq!(selected, vec![fallback]);
+    }
+
+    #[test]
+    fn productive_remote_close_gets_short_retry_cooldown() {
+        let chain_id = 99_160_324_u64;
+        let peer = NodeId(606);
+        let _ =
+            upsert_network_runtime_eth_peer_session(chain_id, peer.0, &[69, 70], &[1], Some(1024))
+                .expect("ready peer");
+        observe_network_runtime_eth_peer_header_success_v1(chain_id, peer.0, 1024);
+        observe_network_runtime_eth_peer_body_success_v1(chain_id, peer.0, 1024);
+
+        observe_network_runtime_eth_peer_disconnect_v1(chain_id, peer.0, None);
+
+        let snapshot =
+            snapshot_network_runtime_eth_peer_sessions_for_peers_v1(chain_id, &[peer])[0].clone();
+        assert!(!snapshot.session_ready);
+        assert_eq!(snapshot.lifecycle_stage, EthPeerLifecycleStageV1::Cooldown);
+        assert_eq!(snapshot.header_response_count, 1);
+        assert_eq!(snapshot.body_response_count, 1);
+        let remaining = snapshot
+            .cooldown_until_unix_ms
+            .saturating_sub(eth_peer_now_unix_ms_v1());
+        assert!(remaining <= ETH_PEER_PRODUCTIVE_DISCONNECT_RETRY_MS_V1);
+        assert!(remaining < ETH_PEER_FAILURE_BACKOFF_BASE_MS_V1);
+    }
+
+    #[test]
+    fn productive_capacity_reject_keeps_long_backoff() {
+        let chain_id = 99_160_325_u64;
+        let peer = NodeId(607);
+        let _ =
+            upsert_network_runtime_eth_peer_session(chain_id, peer.0, &[69, 70], &[1], Some(1024))
+                .expect("ready peer");
+        observe_network_runtime_eth_peer_header_success_v1(chain_id, peer.0, 1024);
+
+        let before = eth_peer_now_unix_ms_v1();
+        observe_network_runtime_eth_peer_disconnect_v1(chain_id, peer.0, Some(0x04));
+
+        let snapshot =
+            snapshot_network_runtime_eth_peer_sessions_for_peers_v1(chain_id, &[peer])[0].clone();
+        assert_eq!(snapshot.disconnect_too_many_peers_count, 1);
+        assert!(
+            snapshot.cooldown_until_unix_ms
+                >= before.saturating_add(ETH_PEER_CAPACITY_REJECT_BACKOFF_BASE_MS_V1)
+        );
     }
 
     #[test]
