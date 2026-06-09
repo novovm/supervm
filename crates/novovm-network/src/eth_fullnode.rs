@@ -3265,6 +3265,25 @@ fn eth_native_sync_request_requires_snap_peer_v1(chain_id: u64) -> bool {
     )
 }
 
+fn eth_native_current_head_missing_body_v1(chain_id: u64) -> bool {
+    let Some(header) = get_network_runtime_native_header_snapshot_v1(chain_id) else {
+        return false;
+    };
+    !get_network_runtime_native_body_snapshot_v1(chain_id).is_some_and(|body| {
+        body.number == header.number
+            && body.block_hash == header.hash
+            && body.body_available
+            && body.txs_materialized
+    })
+}
+
+fn eth_peer_has_body_material_history_v1(snapshot: &EthPeerSessionSnapshot) -> bool {
+    snapshot.body_response_count > 0
+        || snapshot.last_body_success_unix_ms > 0
+        || snapshot.recent_window.body_success_rounds > 0
+        || snapshot.long_term.total_body_success_rounds > 0
+}
+
 fn build_eth_fullnode_peer_selection_quality_summary_v1(
     chain_id: u64,
     scores: &[EthPeerSelectionScoreV1],
@@ -4150,6 +4169,12 @@ pub fn select_eth_fullnode_native_sync_targets_v1(
 
     let now = eth_peer_now_unix_ms_v1();
     let snapshots = snapshot_network_runtime_eth_peer_sessions_for_peers_v1(chain_id, peers);
+    let prefer_body_peer = eth_native_current_head_missing_body_v1(chain_id);
+    let body_peer_ids = snapshots
+        .iter()
+        .filter(|session| eth_peer_has_body_material_history_v1(session))
+        .map(|session| session.peer_id)
+        .collect::<std::collections::HashSet<_>>();
     let prefer_snap_peer = eth_native_sync_request_requires_snap_peer_v1(chain_id);
     let snap_peer_ids = snapshots
         .iter()
@@ -4161,7 +4186,28 @@ pub fn select_eth_fullnode_native_sync_targets_v1(
         .map(|session| eth_peer_sync_score_v1(&session, now))
         .filter(|score| peer_order.iter().any(|peer| peer.0 == score.peer_id))
         .collect::<Vec<_>>();
-    if prefer_snap_peer {
+    if prefer_body_peer && !body_peer_ids.is_empty() {
+        for score in &mut ranked {
+            if score.eligible && body_peer_ids.contains(&score.peer_id) {
+                score
+                    .reasons
+                    .push("body_recovery_body_history_peer".to_string());
+            } else if score.eligible {
+                score
+                    .reasons
+                    .push("body_recovery_deprioritized_without_body_history".to_string());
+            }
+        }
+        ranked.sort_by_key(|score| {
+            let base = eth_peer_selection_sort_key_v1(score);
+            let body_rank = if score.eligible && !body_peer_ids.contains(&score.peer_id) {
+                1u8
+            } else {
+                0u8
+            };
+            (base.0, body_rank, base.1, base.2)
+        });
+    } else if prefer_snap_peer {
         for score in &mut ranked {
             if score.eligible && snap_peer_ids.contains(&score.peer_id) {
                 score.reasons.push("snap_sync_capable_peer".to_string());
@@ -5107,6 +5153,61 @@ mod tests {
             long_term_summary.top_trusted_sync_peer_id,
             Some(stable_peer.0)
         );
+    }
+
+    #[test]
+    fn sync_selection_prefers_body_history_peer_when_current_head_body_is_missing() {
+        let chain_id = 991_603_184_u64;
+        let body_peer = NodeId(441);
+        let higher_head_peer = NodeId(442);
+
+        crate::runtime_status::clear_network_runtime_native_snapshots_for_chain_v1(chain_id);
+        crate::runtime_status::set_network_runtime_native_header_snapshot_v1(
+            chain_id,
+            crate::runtime_status::NetworkRuntimeNativeHeaderSnapshotV1 {
+                chain_id,
+                number: 20_000,
+                hash: [0xb1; 32],
+                parent_hash: [0xb0; 32],
+                state_root: [0xc1; 32],
+                transactions_root: [0xc2; 32],
+                receipts_root: [0xc3; 32],
+                ommers_hash: [0xc4; 32],
+                logs_bloom: vec![0u8; 256],
+                gas_limit: Some(30_000_000),
+                gas_used: Some(12_345),
+                timestamp: Some(1_700_000_000),
+                base_fee_per_gas: Some(9),
+                withdrawals_root: Some([0xc5; 32]),
+                blob_gas_used: Some(0),
+                excess_blob_gas: Some(0),
+                block_access_list_hash: None,
+                source_peer_id: Some(higher_head_peer.0),
+                observed_unix_ms: 10,
+            },
+        );
+
+        let _ = upsert_network_runtime_eth_peer_session(
+            chain_id,
+            body_peer.0,
+            &[69, 70, 71],
+            &[1],
+            Some(19_500),
+        )
+        .expect("body-serving peer");
+        let _ = upsert_network_runtime_eth_peer_session(
+            chain_id,
+            higher_head_peer.0,
+            &[69, 70, 71],
+            &[1],
+            Some(200_000),
+        )
+        .expect("higher-head peer");
+        observe_network_runtime_eth_peer_body_success_v1(chain_id, body_peer.0, 19_500);
+
+        let selected =
+            select_eth_fullnode_native_sync_targets_v1(chain_id, &[higher_head_peer, body_peer], 1);
+        assert_eq!(selected, vec![body_peer]);
     }
 
     #[test]
