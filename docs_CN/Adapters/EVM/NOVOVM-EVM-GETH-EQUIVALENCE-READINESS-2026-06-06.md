@@ -48,6 +48,37 @@ cargo check --workspace
 
 该证据只证明 header-only 推进后的 body recovery 窗口不再被错误放大；24 小时长期主网同步仍未完成，不能声明已经像 geth 一样长期无差别加入 Ethereum 主网。
 
+### 2026-06-09 trusted pivot 近头缺 body admission 修复
+
+继续按 `Ethereum 主网长期同步 v1` 收口推进时，临时 trusted-pivot 验证暴露一个近头同步缺口：当 operator 明示安装的 finalized/trusted header 满足 `current == highest`，但本地还没有该 head 的 body/receipt 时，旧逻辑因为 `highest > current` 为 false，不会把它当作 admission stall，同步入口保持低 fanout，短跑中长期显示 `native_phase=idle`、`body_available=false`。
+
+本轮修复：
+
+- `body_recovery_stalled` 改为由“当前 head 缺 body material”直接触发，不再要求 `highest > current`。
+- 自适应 bootstrap fanout 的目标判断增加 `sync_target_available`，`current == highest` 但 head 缺 body/receipt 时也会把 fanout 从默认 8 提升到 geth-style active window 50。
+- 单测 `eth_rlpx_adaptive_bootstrap_fanout_raises_only_when_admission_stalled_v1` 覆盖 trusted pivot 当前高度等于最高高度但缺 body 的 admission target。
+
+验证：
+
+```powershell
+cargo fmt --check
+cargo test -p novovm-node eth_rlpx_adaptive_bootstrap_fanout -- --nocapture
+cargo test -p novovm-node eth_rlpx_ -- --nocapture
+cargo check --workspace
+cargo build -p novovm-node --bin novovm-node
+```
+
+真实主网临时验证使用公共 RPC `eth_getBlockByNumber(finalized,false)` 取得 operator trusted header，仅用于本次临时锚点输入；未改主 checkpoint/head/history/cache。锚点为 block `0x181b8f5`，hash `0x3d28560d04eb173c46cb15c8570ddc1cf47426fb1909d2445656563586531ae5`。
+
+验证结果：
+
+- 旧行为复现：安装 trusted head 后 `current=25278709/highest=25278709/native_phase=idle/body_available=false`，18 tick 内未扩大到 50 fanout。
+- 修复后短跑：tick 1 立即输出 `eth_rlpx_adaptive_fanout ... old=8 new=50 reason=admission_stalled`，并触发 `body_recovery_stalled_expand`。
+- 继续同一临时路径短跑：tick 5 取得 ready peer 并更新远端 `highest=25278843/native_phase=state`；tick 6 收到 `bodies=1/receipts=1`，当前 trusted pivot head `body_available=true`。
+- 临时 checkpoint/head/history/peer-cache JSON 已删除，只保留日志 `artifacts/mainline/trusted-pivot-20260609-1651-fanout-fix.out.log` 和 `artifacts/mainline/trusted-pivot-20260609-1651-fanout-fix-continue.out.log` 作为实跑证据。
+
+该修复使“从 operator 明示 trusted/finalized header 近头启动”不再卡在 idle admission；仍不等于完整 trustless geth snap sync，也不声明 24 小时长期同步目标完成。
+
 ## 2026-06-09 GitHub 推送诊断
 
 本轮阶段性诊断已经同步到 GitHub：

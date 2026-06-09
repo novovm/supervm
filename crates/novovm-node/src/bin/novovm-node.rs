@@ -2223,12 +2223,11 @@ fn eth_rlpx_adaptive_bootstrap_fanout_v1(
     current_fanout: usize,
     target_fanout: usize,
     max_peers: usize,
-    progress_stalled: bool,
+    admission_stalled: bool,
     ready_peers: usize,
-    highest_block: u64,
-    current_block: u64,
+    sync_target_available: bool,
 ) -> usize {
-    if progress_stalled && ready_peers == 0 && highest_block > current_block {
+    if admission_stalled && ready_peers == 0 && sync_target_available {
         current_fanout.max(target_fanout.clamp(1, max_peers))
     } else {
         current_fanout
@@ -4877,6 +4876,10 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
         let head_snapshot = get_network_runtime_native_head_snapshot_v1(chain_id);
         let current_sync_block = sync_status.map(|status| status.current_block).unwrap_or(0);
         let highest_sync_block = sync_status.map(|status| status.highest_block).unwrap_or(0);
+        let current_head_body_missing = header.is_some()
+            && !body_for_header
+                .as_ref()
+                .is_some_and(|body| body.body_available);
         let sync_made_progress = current_sync_block > last_sync_progress_block
             || report.header_updates > 0
             || report.body_updates > 0
@@ -5117,11 +5120,7 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
                 >= report.selection_quality_summary.candidate_peer_count;
         let progress_stalled = highest_sync_block > current_sync_block
             && tick.saturating_sub(last_sync_progress_tick) >= stalled_refresh_interval_ticks;
-        let body_recovery_stalled = highest_sync_block > current_sync_block
-            && header.is_some()
-            && !body_for_header
-                .as_ref()
-                .is_some_and(|body| body.body_available)
+        let body_recovery_stalled = current_head_body_missing
             && report.ready_peers == 0
             && report.body_updates == 0
             && tick.saturating_sub(last_sync_progress_tick) >= 1;
@@ -5139,8 +5138,7 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
                 max_peers,
                 progress_stalled || body_recovery_stalled,
                 report.ready_peers,
-                highest_sync_block,
-                current_sync_block,
+                highest_sync_block > current_sync_block || current_head_body_missing,
             );
             if next_sync_target_fanout > runtime_sync_target_fanout {
                 let old_fanout = runtime_sync_target_fanout;
@@ -5776,20 +5774,25 @@ mod mainline_evm_cli_tests {
         assert_eq!(eth_rlpx_default_adaptive_bootstrap_fanout_v1(50), 50);
         assert_eq!(eth_rlpx_default_adaptive_bootstrap_fanout_v1(64), 64);
         assert_eq!(
-            eth_rlpx_adaptive_bootstrap_fanout_v1(8, 32, 32, true, 0, 25_277_388, 1_853),
+            eth_rlpx_adaptive_bootstrap_fanout_v1(8, 32, 32, true, 0, true),
             32
         );
         assert_eq!(
-            eth_rlpx_adaptive_bootstrap_fanout_v1(8, 32, 32, false, 0, 25_277_388, 1_853),
+            eth_rlpx_adaptive_bootstrap_fanout_v1(8, 32, 32, false, 0, true),
             8
         );
         assert_eq!(
-            eth_rlpx_adaptive_bootstrap_fanout_v1(8, 32, 32, true, 1, 25_277_388, 1_853),
+            eth_rlpx_adaptive_bootstrap_fanout_v1(8, 32, 32, true, 1, true),
             8
         );
         assert_eq!(
-            eth_rlpx_adaptive_bootstrap_fanout_v1(8, 32, 32, true, 0, 1_853, 1_853),
+            eth_rlpx_adaptive_bootstrap_fanout_v1(8, 32, 32, true, 0, false),
             8
+        );
+        assert_eq!(
+            eth_rlpx_adaptive_bootstrap_fanout_v1(8, 50, 50, true, 0, true),
+            50,
+            "a trusted pivot with current==highest but missing body is still an admission target"
         );
     }
 
