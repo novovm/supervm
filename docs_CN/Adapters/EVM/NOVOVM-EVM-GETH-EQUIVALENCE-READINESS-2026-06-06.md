@@ -275,6 +275,66 @@ cargo check --workspace
 
 该证据修复的是长期同步的基础 runtime 语义，不声明 headers/body 已持续推进完成。下一步仍是继续产品长跑，观察 `64/32` 请求窗口是否能完成 headers/body/receipts；如果仍失败，再继续按公网真实瓶颈收敛请求读取/peer 选择。
 
+### 2026-06-09 GetBlockHeaders batch budget 生效修复
+
+继续验证 `64/32` 和 `1/1` 小窗口后，发现 adaptive batch 的上一轮实现只改了 node 入口的 `budget_hooks.sync_pull_headers_batch`，但真实 RLPx worker 发送 `GetBlockHeaders` 时仍直接使用 `build_eth_fullnode_native_sync_request_v1` 规划出的 runtime window max。结果是即使显式设置：
+
+```powershell
+$env:NOVOVM_ETH_RLPX_HEADERS_BATCH='1'
+$env:NOVOVM_ETH_RLPX_BODIES_BATCH='1'
+$env:NOVOVM_ETH_RLPX_SYNC_TARGET_FANOUT='32'
+```
+
+仍能在真实公网入口看到约 `171088` 字节 frame：
+
+- `rlpx_session_closed:endpoint=157.90.35.166:30303:rlpx_frame_body_read_failed ... read=137100/171088`
+
+这说明此前 `NOVOVM_ETH_RLPX_HEADERS_BATCH` 和 adaptive headers batch 对真实 `GetBlockHeaders.max` 没有完全生效。
+
+本轮同步到 SUPERVM 的产品语义：
+
+- 真实 RLPx worker 发送 `GetBlockHeaders` 前，用 `budget_hooks.sync_pull_headers_batch` cap runtime 规划出的 `max`。
+- `NOVOVM_ETH_RLPX_HEADERS_BATCH`、adaptive headers batch、以及后续退避窗口现在真正作用到 wire request。
+- body cap 仍沿用已存在的 `sync_pull_bodies_batch` 限制。
+
+本轮验证：
+
+```powershell
+cargo test -p novovm-network rlpx_headers_request_batch_respects_runtime_budget_v1 -- --nocapture
+cargo test -p novovm-node eth_rlpx_ -- --nocapture
+cargo test -p novovm-network missing_body_recovery -- --nocapture
+cargo check --workspace
+```
+
+结果：
+
+- `rlpx_headers_request_batch_respects_runtime_budget_v1`: passed
+- `novovm-node eth_rlpx_`: `22 passed`
+- `novovm-network missing_body_recovery`: `4 passed`
+- `cargo check --workspace`: passed
+
+真实主网产品入口复测：
+
+```powershell
+$env:NOVOVM_NODE_MODE='eth_rlpx_sync'
+$env:NOVOVM_NODE_VERBOSE='1'
+$env:NOVOVM_ETH_RLPX_TICKS='6'
+$env:NOVOVM_ETH_RLPX_SLEEP_MS='600'
+$env:NOVOVM_ETH_RLPX_HEADERS_BATCH='1'
+$env:NOVOVM_ETH_RLPX_BODIES_BATCH='1'
+$env:NOVOVM_ETH_RLPX_SYNC_TARGET_FANOUT='32'
+cargo run -p novovm-node --bin novovm-node
+```
+
+结果：
+
+- 起点：`current=1853/highest=25277909`。
+- tick 5：达到 `ready=1/status_updates=1/sync_requests=1`，`highest=25277944`。
+- 本轮未再出现 `171088` 字节级 headers response 读取。
+- 后续失败变为公网 peer 写帧/连接关闭，例如 `rlpx_frame_mac_write_failed`，说明 batch cap 已生效，剩余瓶颈转向 peer churn/write-close。
+
+该证据修复的是“产品入口配置没有实际控制 wire header request”的关键问题；下一步应继续用默认/自适应窗口长跑，若仍在写帧阶段断开，则收敛 live session 写失败后的 peer 选择和 cooldown，而不是继续调 headers batch。
+
 ### 2026-06-09 go-ethereum handler-surface 复审
 
 本轮按最新请求再次检查 `D:\WEB3_AI\go-ethereum`：

@@ -2624,6 +2624,10 @@ fn drive_eth_fullnode_native_rlpx_peer_session_once_v1(
                             reverse,
                             ..
                         }) => {
+                            let max = eth_fullnode_native_budget_capped_headers_batch_v1(
+                                max,
+                                budget_hooks,
+                            );
                             let request_id = next_eth_fullnode_native_rlpx_request_id_v1();
                             let payload = eth_rlpx_build_get_block_headers_payload_v1(
                                 request_id,
@@ -3537,6 +3541,15 @@ fn eth_fullnode_native_rlpx_session_has_pending_request_v1(
         || session.last_snap_trie_nodes_request_id.is_some()
         || session.last_block_access_lists_request_id.is_some()
         || !session.pending_body_headers.is_empty()
+}
+
+fn eth_fullnode_native_budget_capped_headers_batch_v1(
+    requested: u64,
+    budget_hooks: &EthFullnodeBudgetHooksV1,
+) -> u64 {
+    requested
+        .min(budget_hooks.sync_pull_headers_batch.max(1))
+        .max(1)
 }
 
 fn eth_fullnode_native_rlpx_supports_block_access_lists_v1(
@@ -11131,6 +11144,20 @@ mod tests {
         assert!(eth_fullnode_rlpx_error_is_timeout_v1(
             "operation would block"
         ));
+    }
+
+    #[test]
+    fn rlpx_headers_request_batch_respects_runtime_budget_v1() {
+        let mut budget = EthFullnodeBudgetHooksV1::default();
+        budget.sync_pull_headers_batch = 64;
+        assert_eq!(
+            eth_fullnode_native_budget_capped_headers_batch_v1(2_048, &budget),
+            64
+        );
+        assert_eq!(
+            eth_fullnode_native_budget_capped_headers_batch_v1(32, &budget),
+            32
+        );
     }
 
     #[test]
