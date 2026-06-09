@@ -2824,7 +2824,13 @@ fn drive_eth_fullnode_native_rlpx_peer_session_once_v1(
                             false
                         }
                     };
-                if !disconnected && !recovered_missing_receipts {
+                // Public peers often disconnect when we append a forward header
+                // pull immediately after they served body/receipt material.
+                if !disconnected
+                    && !recovered_missing_receipts
+                    && report.body_updates == 0
+                    && report.receipt_updates == 0
+                {
                     let probed_status_head =
                         match dispatch_eth_fullnode_native_rlpx_status_head_pivot_probe_v1(
                             chain_id,
@@ -11775,7 +11781,19 @@ mod tests {
                         receipts_payload.as_slice(),
                     )
                     .expect("write receipts");
-                    thread::sleep(Duration::from_millis(100));
+                    accepted
+                        .set_read_timeout(Some(Duration::from_millis(500)))
+                        .expect("set post-receipts read timeout");
+                    if let Ok((followup_code, _)) =
+                        crate::eth_rlpx_read_wire_frame_v1(&mut accepted, &mut responder.session)
+                    {
+                        assert_ne!(
+                            followup_code,
+                            crate::ETH_RLPX_BASE_PROTOCOL_OFFSET
+                                + crate::ETH_RLPX_ETH_GET_BLOCK_HEADERS_MSG,
+                            "fresh receipt material must defer the next header pull to a later tick"
+                        );
+                    }
                     break;
                 }
             }

@@ -1999,6 +1999,8 @@ cargo test -p novovm-adapter-novovm evm_adapter_balance_fee_access_storage_surfa
 
 32. 2026-06-10 最新官方 geth 复核与范围不扩散：`D:\WEB3_AI\go-ethereum` 执行 `git pull --ff-only` 返回 `Already up to date`，本地/远端 `origin/master` 为 `43b7b4e8d9f9c8bf74d27bc6b13cb6c90a6128f8`。最新新增的 `43b7b4e8d` 只修复 `debug_clearTxpool` 测试，前一个 `08aaa7c5f` 只新增 debug RPC 清空本地 txpool；二者都不改变 RLPx、snap、headers/bodies/receipts、stateRoot、receiptRoot、tx gossip、BAL 或共识执行语义。按本轮参考意见的有效部分，SUPERVM 不新增 JSON-RPC/debug 面，也不继续堆 fixture/BAL/gateway；下一步仍只处理 forward header 追高和长期同步 v1 的真实产品入口链路。
 
+33. 2026-06-10 fresh material 后续请求收口：上一轮真实日志显示，同一 public peer 先服务 `missing_bodies_requested` 和 `Receipts`，随后 worker 在同一 session/tick 立即追加 `GetBlockHeaders start=25280159 max=192`，最终以 MAC mismatch/close 断开。这是本地调度缺口，不是 EVM root/receipt/BAL 语义差异。本轮修复为：当本 tick 刚 ingest fresh body 或 receipt material 时，worker 不再继续派发 status-head pivot 或普通 forward sync request；下一 tick 再基于更新后的本地 material、batch 和 peer reputation 继续追高。回归 `cargo test -p novovm-network real_rlpx_worker_recovers_missing_receipts_before_new_header_pull -- --nocapture --test-threads=1`、`cargo test -p novovm-network rlpx_request_write_errors_use_runtime_failure_class_v1 -- --nocapture --test-threads=1`、`cargo test -p novovm-network rlpx_ -- --nocapture --test-threads=1`、`cargo test -p novovm-node eth_rlpx_ -- --nocapture`、`cargo fmt --check`、`cargo check --workspace`、`git diff --check` 通过。真实入口短验证从完整 `current=25280158/body_available=true/receipt_available=true` 启动，默认窗口和显式小窗口 `headers=16/bodies=16` 都仍未推进；失败集中在 public peer `too_many_peers`/capacity reject，`highest` 只更新到 `25281414`。因此本阶段只关闭 fresh-material same-session follow-up 缺口；剩余主线是持续 ready peer 获取、capacity reject 冷却/候选轮转和 forward header 服务 peer 获取，不能声明 24h geth-like 主网长期同步完成。
+
 ## 回归命令
 
 协议可观察等价 v1 聚合 gate：
