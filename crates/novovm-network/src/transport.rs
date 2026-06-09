@@ -5477,6 +5477,12 @@ fn ingest_real_rlpx_block_headers_v1(
         .iter()
         .take(body_request_cap)
         .collect::<Vec<_>>();
+    if let Err(err) =
+        validate_eth_fullnode_native_rlpx_block_headers_contiguous_v1(selected_headers.as_slice())
+    {
+        observe_network_runtime_eth_peer_decode_failure_v1(chain_id, source_peer_id, &err);
+        return Err(NetworkError::Decode(err));
+    }
     session.pending_body_headers = selected_headers
         .iter()
         .map(|header| EthFullnodeNativePendingBodyHeaderV1 {
@@ -5537,6 +5543,40 @@ fn ingest_real_rlpx_block_headers_v1(
         clear_eth_fullnode_native_snap_request_state_v1(session);
         session.last_sync_request_unix_ms = now_unix_ms();
         report.sync_requests = report.sync_requests.saturating_add(1);
+    }
+    Ok(())
+}
+
+fn validate_eth_fullnode_native_rlpx_block_headers_contiguous_v1(
+    headers: &[&EthRlpxBlockHeaderRecordV1],
+) -> Result<(), String> {
+    for pair in headers.windows(2) {
+        let parent = pair[0];
+        let child = pair[1];
+        let Some(expected_number) = parent.number.checked_add(1) else {
+            return Err(format!(
+                "rlpx_block_headers_number_overflow:parent_number={} parent_hash=0x{}",
+                parent.number,
+                hex32_v1(&parent.hash)
+            ));
+        };
+        if child.number != expected_number {
+            return Err(format!(
+                "rlpx_block_headers_number_gap:parent_number={} child_number={} parent_hash=0x{} child_hash=0x{}",
+                parent.number,
+                child.number,
+                hex32_v1(&parent.hash),
+                hex32_v1(&child.hash)
+            ));
+        }
+        if child.parent_hash != parent.hash {
+            return Err(format!(
+                "rlpx_block_headers_parent_mismatch:child_number={} child_parent=0x{} expected_parent=0x{}",
+                child.number,
+                hex32_v1(&child.parent_hash),
+                hex32_v1(&parent.hash)
+            ));
+        }
     }
     Ok(())
 }
@@ -8449,6 +8489,57 @@ mod tests {
         "enode://2b252ab6a1d0f971d9722cb839a42cb81db019ba44c08754628ab4a823487071b5695317c8ccd085219c3a03af063495b2f1da8d18218da2d6a82981b45e6ffc@65.108.70.101:30303",
         "enode://4aeb4ab6c14b23e2c4cfdce879c04b0748a20d8e9b59e25ded2a08143e265c6c25936e74cbc8e641e3312ca288673d91f2f93f8e277de3cfa444ecdaaf982052@157.90.35.166:30303",
     ];
+
+    #[test]
+    fn rlpx_block_headers_validation_rejects_non_contiguous_batch_v1() {
+        let empty_root = crate::eth_rlpx_empty_trie_root_v1();
+        let empty_ommers_hash = crate::eth_rlpx_empty_ommers_hash_v1();
+        let make_header =
+            |number: u64, hash_byte: u8, parent_hash: [u8; 32]| crate::EthRlpxBlockHeaderRecordV1 {
+                number,
+                hash: [hash_byte; 32],
+                parent_hash,
+                state_root: [0x20; 32],
+                transactions_root: empty_root,
+                receipts_root: empty_root,
+                ommers_hash: empty_ommers_hash,
+                logs_bloom: vec![0u8; 256],
+                gas_limit: Some(30_000_000),
+                gas_used: Some(0),
+                timestamp: Some(1_234_567 + number),
+                base_fee_per_gas: Some(15),
+                withdrawals_root: Some(empty_root),
+                blob_gas_used: None,
+                excess_blob_gas: None,
+                block_access_list_hash: None,
+                raw_rlp: None,
+            };
+
+        let header_a = make_header(120, 0xa1, [0x90; 32]);
+        let header_b = make_header(121, 0xa2, header_a.hash);
+        let linked = [&header_a, &header_b];
+        validate_eth_fullnode_native_rlpx_block_headers_contiguous_v1(linked.as_slice())
+            .expect("linked headers must pass");
+
+        let header_gap = make_header(123, 0xa3, header_b.hash);
+        let gap = [&header_b, &header_gap];
+        let err = validate_eth_fullnode_native_rlpx_block_headers_contiguous_v1(gap.as_slice())
+            .expect_err("number gap must reject");
+        assert!(
+            err.contains("rlpx_block_headers_number_gap"),
+            "unexpected error: {err}"
+        );
+
+        let header_wrong_parent = make_header(122, 0xa4, [0xff; 32]);
+        let wrong_parent = [&header_b, &header_wrong_parent];
+        let err =
+            validate_eth_fullnode_native_rlpx_block_headers_contiguous_v1(wrong_parent.as_slice())
+                .expect_err("wrong parent hash must reject");
+        assert!(
+            err.contains("rlpx_block_headers_parent_mismatch"),
+            "unexpected error: {err}"
+        );
+    }
 
     fn parse_live_smoke_peer_endpoints() -> Vec<PluginPeerEndpoint> {
         let raw = std::env::var("NOVOVM_ETH_LIVE_SMOKE_ENODES")
