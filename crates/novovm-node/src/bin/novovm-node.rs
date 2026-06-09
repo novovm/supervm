@@ -2094,6 +2094,10 @@ fn eth_rlpx_default_max_peers_v1() -> usize {
     32
 }
 
+fn eth_rlpx_default_sync_target_fanout_v1(max_peers: usize) -> usize {
+    max_peers.clamp(1, 8)
+}
+
 fn eth_rlpx_apply_public_sync_batch_defaults_v1(
     budget: &mut EthFullnodeBudgetHooksV1,
     headers_batch: u64,
@@ -4377,10 +4381,13 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
     let ticks = usize_env_allow_zero("NOVOVM_ETH_RLPX_TICKS", 0)?;
     let sleep_ms = u64_env_clamped("NOVOVM_ETH_RLPX_SLEEP_MS", 600, 10, 60_000);
     let recv_budget = usize_env_allow_zero("NOVOVM_ETH_RLPX_RECV_BUDGET", 16)?.clamp(1, 1024);
-    let sync_target_fanout =
-        usize_env_allow_zero("NOVOVM_ETH_RLPX_SYNC_TARGET_FANOUT", max_peers)?.clamp(1, max_peers);
-    let headers_batch = u64_env_clamped("NOVOVM_ETH_RLPX_HEADERS_BATCH", 128, 1, 2_048);
-    let bodies_batch = u64_env_clamped("NOVOVM_ETH_RLPX_BODIES_BATCH", 32, 1, 256);
+    let sync_target_fanout = usize_env_allow_zero(
+        "NOVOVM_ETH_RLPX_SYNC_TARGET_FANOUT",
+        eth_rlpx_default_sync_target_fanout_v1(max_peers),
+    )?
+    .clamp(1, max_peers);
+    let headers_batch = u64_env_clamped("NOVOVM_ETH_RLPX_HEADERS_BATCH", 2_048, 1, 2_048);
+    let bodies_batch = u64_env_clamped("NOVOVM_ETH_RLPX_BODIES_BATCH", 256, 1, 256);
     let exhausted_refresh_interval_ticks =
         usize_env_allow_zero("NOVOVM_ETH_RLPX_EXHAUSTED_REFRESH_INTERVAL_TICKS", 8)?
             .clamp(1, 10_000);
@@ -5338,6 +5345,14 @@ mod mainline_evm_cli_tests {
     }
 
     #[test]
+    fn eth_rlpx_default_sync_target_fanout_keeps_startup_ticks_bounded_v1() {
+        assert_eq!(eth_rlpx_default_sync_target_fanout_v1(1), 1);
+        assert_eq!(eth_rlpx_default_sync_target_fanout_v1(4), 4);
+        assert_eq!(eth_rlpx_default_sync_target_fanout_v1(32), 8);
+        assert_eq!(eth_rlpx_default_sync_target_fanout_v1(64), 8);
+    }
+
+    #[test]
     fn eth_rlpx_peer_refresh_discovery_limit_widens_only_for_refresh_v1() {
         assert_eq!(
             eth_rlpx_peer_refresh_discovery_limit_v1(256, 512, "sync_progress_stalled_expand"),
@@ -5369,13 +5384,13 @@ mod mainline_evm_cli_tests {
     #[test]
     fn eth_rlpx_public_sync_batch_defaults_are_product_chase_ready_v1() {
         let mut budget = EthFullnodeBudgetHooksV1::default();
-        eth_rlpx_apply_public_sync_batch_defaults_v1(&mut budget, 128, 32);
-        assert_eq!(budget.sync_pull_headers_batch, 128);
-        assert_eq!(budget.sync_pull_bodies_batch, 32);
+        eth_rlpx_apply_public_sync_batch_defaults_v1(&mut budget, 2_048, 256);
+        assert_eq!(budget.sync_pull_headers_batch, 2_048);
+        assert_eq!(budget.sync_pull_bodies_batch, 256);
 
         budget.sync_pull_headers_batch = 32;
         budget.sync_pull_bodies_batch = 4;
-        eth_rlpx_apply_public_sync_batch_defaults_v1(&mut budget, 128, 32);
+        eth_rlpx_apply_public_sync_batch_defaults_v1(&mut budget, 2_048, 256);
         assert_eq!(budget.sync_pull_headers_batch, 32);
         assert_eq!(budget.sync_pull_bodies_batch, 4);
     }
@@ -5385,11 +5400,11 @@ mod mainline_evm_cli_tests {
         let mut budget = EthFullnodeBudgetHooksV1::default();
         assert_eq!(budget.sync_target_fanout, 1);
 
-        eth_rlpx_apply_public_sync_runtime_defaults_v1(&mut budget, 128, 32, 8);
+        eth_rlpx_apply_public_sync_runtime_defaults_v1(&mut budget, 2_048, 256, 8);
 
         assert_eq!(budget.sync_target_fanout, 8);
-        assert_eq!(budget.sync_pull_headers_batch, 128);
-        assert_eq!(budget.sync_pull_bodies_batch, 32);
+        assert_eq!(budget.sync_pull_headers_batch, 2_048);
+        assert_eq!(budget.sync_pull_bodies_batch, 256);
     }
 
     #[test]
