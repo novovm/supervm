@@ -839,15 +839,37 @@ struct EthFullnodeNativePendingBlockAccessListV1 {
 
 const ETH_FULLNODE_NATIVE_MISSING_BODY_RECOVERY_BATCH_MAX_V1: usize = 4;
 const ETH_FULLNODE_NATIVE_MISSING_BODY_CHASE_HEAD_BATCH_MAX_V1: usize = 1;
+const ETH_FULLNODE_NATIVE_RECOVERY_INFLIGHT_BODY_KIND_V1: u8 = 1;
+const ETH_FULLNODE_NATIVE_RECOVERY_INFLIGHT_RECEIPT_KIND_V1: u8 = 2;
+const ETH_FULLNODE_NATIVE_RECOVERY_INFLIGHT_TTL_MS_V1: u64 = 30_000;
 
 type EthFullnodeNativeRlpxSessionKeyV1 = (u64, u64);
 type EthFullnodeNativeRlpxSessionMapV1 =
     HashMap<EthFullnodeNativeRlpxSessionKeyV1, EthFullnodeNativeRlpxLivePeerSessionV1>;
 static ETH_FULLNODE_NATIVE_RLPX_SESSIONS: OnceLock<Mutex<EthFullnodeNativeRlpxSessionMapV1>> =
     OnceLock::new();
+type EthFullnodeNativeRecoveryInflightKeyV1 = (u64, u8, [u8; 32]);
+type EthFullnodeNativeRecoveryInflightMapV1 =
+    HashMap<EthFullnodeNativeRecoveryInflightKeyV1, EthFullnodeNativeRecoveryInflightV1>;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct EthFullnodeNativeRecoveryInflightV1 {
+    peer_id: u64,
+    request_id: u64,
+    observed_unix_ms: u64,
+}
+
+static ETH_FULLNODE_NATIVE_RECOVERY_INFLIGHT: OnceLock<
+    Mutex<EthFullnodeNativeRecoveryInflightMapV1>,
+> = OnceLock::new();
 
 fn eth_fullnode_native_rlpx_sessions_v1() -> &'static Mutex<EthFullnodeNativeRlpxSessionMapV1> {
     ETH_FULLNODE_NATIVE_RLPX_SESSIONS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn eth_fullnode_native_recovery_inflight_v1(
+) -> &'static Mutex<EthFullnodeNativeRecoveryInflightMapV1> {
+    ETH_FULLNODE_NATIVE_RECOVERY_INFLIGHT.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
 fn eth_fullnode_native_rlpx_live_peer_ids_v1(chain_id: u64) -> HashSet<u64> {
@@ -863,6 +885,93 @@ fn eth_fullnode_native_rlpx_live_peer_ids_v1(chain_id: u64) -> HashSet<u64> {
             }
         })
         .collect()
+}
+
+fn prune_eth_fullnode_native_recovery_inflight_locked_v1(
+    inflight: &mut EthFullnodeNativeRecoveryInflightMapV1,
+    now_ms: u64,
+) {
+    inflight.retain(|_, entry| {
+        now_ms.saturating_sub(entry.observed_unix_ms)
+            <= ETH_FULLNODE_NATIVE_RECOVERY_INFLIGHT_TTL_MS_V1
+    });
+}
+
+fn filter_eth_fullnode_native_recovery_inflight_headers_v1(
+    chain_id: u64,
+    peer_id: u64,
+    kind: u8,
+    pending_headers: Vec<EthFullnodeNativePendingBodyHeaderV1>,
+) -> Vec<EthFullnodeNativePendingBodyHeaderV1> {
+    if pending_headers.is_empty() {
+        return pending_headers;
+    }
+    let now_ms = now_unix_ms();
+    let mut inflight = eth_fullnode_native_recovery_inflight_v1()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    prune_eth_fullnode_native_recovery_inflight_locked_v1(&mut inflight, now_ms);
+    pending_headers
+        .into_iter()
+        .filter(|pending| {
+            inflight
+                .get(&(chain_id, kind, pending.hash))
+                .map_or(true, |entry| entry.peer_id == peer_id)
+        })
+        .collect()
+}
+
+fn mark_eth_fullnode_native_recovery_inflight_v1(
+    chain_id: u64,
+    peer_id: u64,
+    request_id: u64,
+    kind: u8,
+    pending_headers: &[EthFullnodeNativePendingBodyHeaderV1],
+) {
+    if pending_headers.is_empty() {
+        return;
+    }
+    let now_ms = now_unix_ms();
+    let mut inflight = eth_fullnode_native_recovery_inflight_v1()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    prune_eth_fullnode_native_recovery_inflight_locked_v1(&mut inflight, now_ms);
+    for pending in pending_headers {
+        inflight.insert(
+            (chain_id, kind, pending.hash),
+            EthFullnodeNativeRecoveryInflightV1 {
+                peer_id,
+                request_id,
+                observed_unix_ms: now_ms,
+            },
+        );
+    }
+}
+
+fn clear_eth_fullnode_native_recovery_inflight_request_v1(
+    chain_id: u64,
+    peer_id: u64,
+    request_id: u64,
+    kind: u8,
+) {
+    let mut inflight = eth_fullnode_native_recovery_inflight_v1()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    inflight.retain(|(entry_chain_id, entry_kind, _), entry| {
+        *entry_chain_id != chain_id
+            || *entry_kind != kind
+            || entry.peer_id != peer_id
+            || entry.request_id != request_id
+    });
+}
+
+fn clear_eth_fullnode_native_recovery_inflight_peer_v1(chain_id: u64, peer_id: u64) {
+    let mut inflight = eth_fullnode_native_recovery_inflight_v1()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    inflight.retain(|(entry_chain_id, _, _), entry| {
+        *entry_chain_id != chain_id || entry.peer_id != peer_id
+    });
 }
 
 fn reconcile_eth_fullnode_native_rlpx_runtime_sessions_with_live_sessions_v1(
@@ -1806,6 +1915,7 @@ fn mark_eth_fullnode_native_rlpx_session_disconnected_v1(
     disconnect_error: &mut Option<NetworkError>,
     err: NetworkError,
 ) {
+    clear_eth_fullnode_native_recovery_inflight_peer_v1(chain_id, peer_id);
     let _ = unregister_network_runtime_peer(chain_id, peer_id);
     *disconnected = true;
     *disconnect_error = Some(err);
@@ -3039,6 +3149,7 @@ fn drive_eth_fullnode_native_rlpx_peer_session_once_v1(
         }
     }
     if disconnected {
+        clear_eth_fullnode_native_recovery_inflight_peer_v1(chain_id, peer.0);
         sessions.remove(&(chain_id, peer.0));
     }
     if let Some(err) = disconnect_error {
@@ -3444,6 +3555,19 @@ fn dispatch_eth_fullnode_native_rlpx_missing_body_recovery_v1(
     if pending_headers.is_empty() {
         return Ok(false);
     };
+    let latest_missing_hash = build_eth_fullnode_native_latest_missing_body_pending_v1(chain_id)
+        .map(|pending| pending.hash);
+    let latest_missing_in_original = latest_missing_hash
+        .is_some_and(|hash| pending_headers.iter().any(|pending| pending.hash == hash));
+    let pending_headers = filter_eth_fullnode_native_recovery_inflight_headers_v1(
+        chain_id,
+        peer.0,
+        ETH_FULLNODE_NATIVE_RECOVERY_INFLIGHT_BODY_KIND_V1,
+        pending_headers,
+    );
+    if pending_headers.is_empty() {
+        return Ok(latest_missing_in_original);
+    }
     let request_id = next_eth_fullnode_native_rlpx_request_id_v1();
     let hashes = pending_headers
         .iter()
@@ -3468,6 +3592,13 @@ fn dispatch_eth_fullnode_native_rlpx_missing_body_recovery_v1(
     observe_eth_native_bodies_pull(chain_id);
     observe_network_runtime_eth_peer_syncing_v1(chain_id, peer.0);
     session.pending_body_headers = pending_headers;
+    mark_eth_fullnode_native_recovery_inflight_v1(
+        chain_id,
+        peer.0,
+        request_id,
+        ETH_FULLNODE_NATIVE_RECOVERY_INFLIGHT_BODY_KIND_V1,
+        session.pending_body_headers.as_slice(),
+    );
     clear_eth_fullnode_native_headers_request_state_v1(session);
     session.last_bodies_request_id = Some(request_id);
     session.pending_body_request_offset = 0;
@@ -3518,6 +3649,15 @@ fn dispatch_eth_fullnode_native_rlpx_missing_receipts_recovery_v1(
         mark_network_runtime_eth_peer_session_ready_v1(chain_id, peer.0, None);
         return Ok(true);
     }
+    let pending_headers = filter_eth_fullnode_native_recovery_inflight_headers_v1(
+        chain_id,
+        peer.0,
+        ETH_FULLNODE_NATIVE_RECOVERY_INFLIGHT_RECEIPT_KIND_V1,
+        pending_headers,
+    );
+    if pending_headers.is_empty() {
+        return Ok(true);
+    }
     let hashes = pending_headers
         .iter()
         .map(|pending| pending.hash)
@@ -3546,6 +3686,13 @@ fn dispatch_eth_fullnode_native_rlpx_missing_receipts_recovery_v1(
     })?;
     observe_network_runtime_eth_peer_syncing_v1(chain_id, peer.0);
     session.pending_body_headers = pending_headers;
+    mark_eth_fullnode_native_recovery_inflight_v1(
+        chain_id,
+        peer.0,
+        request_id,
+        ETH_FULLNODE_NATIVE_RECOVERY_INFLIGHT_RECEIPT_KIND_V1,
+        session.pending_body_headers.as_slice(),
+    );
     clear_eth_fullnode_native_headers_request_state_v1(session);
     session.last_bodies_request_id = None;
     session.last_receipts_request_id = Some(request_id);
@@ -6637,6 +6784,13 @@ fn ingest_real_rlpx_new_block_v1(
     session.last_bodies_request_id = None;
     session.last_receipts_request_id = Some(request_id);
     session.pending_receipt_request_offset = 0;
+    mark_eth_fullnode_native_recovery_inflight_v1(
+        chain_id,
+        source_peer_id,
+        request_id,
+        ETH_FULLNODE_NATIVE_RECOVERY_INFLIGHT_RECEIPT_KIND_V1,
+        session.pending_body_headers.as_slice(),
+    );
     clear_eth_fullnode_native_snap_request_state_v1(session);
     session.last_sync_request_unix_ms = now_unix_ms();
     report.sync_requests = report.sync_requests.saturating_add(1);
@@ -6755,6 +6909,13 @@ fn ingest_real_rlpx_block_headers_v1(
         session.pending_body_request_offset = 0;
         session.last_receipts_request_id = None;
         session.pending_receipt_request_offset = 0;
+        mark_eth_fullnode_native_recovery_inflight_v1(
+            chain_id,
+            source_peer_id,
+            request_id,
+            ETH_FULLNODE_NATIVE_RECOVERY_INFLIGHT_BODY_KIND_V1,
+            session.pending_body_headers.as_slice(),
+        );
         clear_eth_fullnode_native_snap_request_state_v1(session);
         session.last_sync_request_unix_ms = now_unix_ms();
         report.sync_requests = report.sync_requests.saturating_add(1);
@@ -6919,6 +7080,12 @@ fn ingest_real_rlpx_block_bodies_v1(
     if request_id != bodies.request_id {
         return Ok(());
     }
+    clear_eth_fullnode_native_recovery_inflight_request_v1(
+        chain_id,
+        source_peer_id,
+        request_id,
+        ETH_FULLNODE_NATIVE_RECOVERY_INFLIGHT_BODY_KIND_V1,
+    );
     observe_eth_native_bodies_response(chain_id);
     clear_eth_fullnode_native_headers_request_state_v1(session);
     let request_offset = session
@@ -7018,6 +7185,12 @@ fn ingest_real_rlpx_block_bodies_v1(
         observed_bodies,
         expected_bodies,
     );
+    if observed_bodies == 0 && expected_bodies > 0 {
+        return Err(NetworkError::Io(format!(
+            "rlpx_block_bodies_empty_response:request_id={} expected_blocks={}",
+            bodies.request_id, expected_bodies
+        )));
+    }
     if observed_bodies < expected_bodies
         || session
             .pending_body_headers
@@ -7041,6 +7214,13 @@ fn ingest_real_rlpx_block_bodies_v1(
             .map(|pending| pending.hash)
             .collect::<Vec<_>>();
         if !missing_hashes.is_empty() {
+            let retry_pending_headers = session
+                .pending_body_headers
+                .iter()
+                .skip(next_request_offset)
+                .filter(|pending| pending.tx_count.is_none())
+                .copied()
+                .collect::<Vec<_>>();
             let request_id = next_eth_fullnode_native_rlpx_request_id_v1();
             let payload =
                 eth_rlpx_build_get_block_bodies_payload_v1(request_id, missing_hashes.as_slice());
@@ -7063,6 +7243,13 @@ fn ingest_real_rlpx_block_bodies_v1(
             observe_network_runtime_eth_peer_syncing_v1(chain_id, source_peer_id);
             session.last_bodies_request_id = Some(request_id);
             session.pending_body_request_offset = next_request_offset;
+            mark_eth_fullnode_native_recovery_inflight_v1(
+                chain_id,
+                source_peer_id,
+                request_id,
+                ETH_FULLNODE_NATIVE_RECOVERY_INFLIGHT_BODY_KIND_V1,
+                retry_pending_headers.as_slice(),
+            );
             session.last_sync_request_unix_ms = now_unix_ms();
             report.sync_requests = report.sync_requests.saturating_add(1);
             eprintln!(
@@ -7126,6 +7313,13 @@ fn ingest_real_rlpx_block_bodies_v1(
     observe_network_runtime_eth_peer_syncing_v1(chain_id, source_peer_id);
     session.last_receipts_request_id = Some(request_id);
     session.pending_receipt_request_offset = 0;
+    mark_eth_fullnode_native_recovery_inflight_v1(
+        chain_id,
+        source_peer_id,
+        request_id,
+        ETH_FULLNODE_NATIVE_RECOVERY_INFLIGHT_RECEIPT_KIND_V1,
+        session.pending_body_headers.as_slice(),
+    );
     clear_eth_fullnode_native_snap_request_state_v1(session);
     session.last_sync_request_unix_ms = now_unix_ms();
     report.sync_requests = report.sync_requests.saturating_add(1);
@@ -7193,6 +7387,12 @@ fn ingest_real_rlpx_receipts_v1(
     if request_id != receipts.request_id {
         return Ok(());
     }
+    clear_eth_fullnode_native_recovery_inflight_request_v1(
+        chain_id,
+        source_peer_id,
+        request_id,
+        ETH_FULLNODE_NATIVE_RECOVERY_INFLIGHT_RECEIPT_KIND_V1,
+    );
     let request_offset = session
         .pending_receipt_request_offset
         .min(session.pending_body_headers.len());
@@ -7249,6 +7449,12 @@ fn ingest_real_rlpx_receipts_v1(
             .map(|pending| pending.hash)
             .collect::<Vec<_>>();
         if !missing_hashes.is_empty() {
+            let retry_pending_headers = session
+                .pending_body_headers
+                .iter()
+                .skip(next_request_offset)
+                .copied()
+                .collect::<Vec<_>>();
             let request_id = next_eth_fullnode_native_rlpx_request_id_v1();
             let payload = eth_rlpx_build_get_receipts_payload_v1(
                 request_id,
@@ -7274,6 +7480,13 @@ fn ingest_real_rlpx_receipts_v1(
             observe_network_runtime_eth_peer_syncing_v1(chain_id, source_peer_id);
             session.last_receipts_request_id = Some(request_id);
             session.pending_receipt_request_offset = next_request_offset;
+            mark_eth_fullnode_native_recovery_inflight_v1(
+                chain_id,
+                source_peer_id,
+                request_id,
+                ETH_FULLNODE_NATIVE_RECOVERY_INFLIGHT_RECEIPT_KIND_V1,
+                retry_pending_headers.as_slice(),
+            );
             session.last_sync_request_unix_ms = now_unix_ms();
             report.sync_requests = report.sync_requests.saturating_add(1);
             eprintln!(
@@ -10547,6 +10760,42 @@ mod tests {
     }
 
     #[test]
+    fn rlpx_block_bodies_empty_response_does_not_retry_same_peer_v1() {
+        let chain_id = 9_929_001_u64;
+        let (mut session, _accepted, _peer_frame_session) = dummy_rlpx_live_session_pair(chain_id);
+        session.last_bodies_request_id = Some(77);
+        session.pending_body_headers = vec![EthFullnodeNativePendingBodyHeaderV1 {
+            number: 8_000,
+            hash: [0xa1; 32],
+            parent_hash: [0xa0; 32],
+            state_root: [0xa2; 32],
+            transactions_root: [0xa3; 32],
+            receipts_root: [0xa4; 32],
+            tx_count: None,
+            withdrawal_count: None,
+        }];
+        let mut report = EthFullnodeNativeRlpxPeerTickReportV1::default();
+        let bodies = EthRlpxBlockBodiesResponseV1 {
+            request_id: 77,
+            bodies: Vec::new(),
+        };
+
+        let err =
+            ingest_real_rlpx_block_bodies_v1(chain_id, 77, &mut session, &bodies, &mut report)
+                .expect_err("empty body response should release this peer");
+
+        assert!(
+            err.to_string().contains("rlpx_block_bodies_empty_response"),
+            "unexpected error: {err}"
+        );
+        assert_eq!(report.sync_requests, 0);
+        assert!(
+            session.last_bodies_request_id.is_none(),
+            "same peer must not be immediately retried for an empty body response"
+        );
+    }
+
+    #[test]
     fn rlpx_snap_response_ingest_rejects_unrequested_response_messages_v1() {
         let chain_id = 9_930_u64;
         let mut session = dummy_rlpx_live_session(chain_id);
@@ -11651,6 +11900,92 @@ mod tests {
                 .map(|header| header.number)
                 .collect::<Vec<_>>(),
             vec![6_000, 6_001, 6_002, 6_005]
+        );
+    }
+
+    #[test]
+    fn rlpx_recovery_inflight_filter_skips_other_peer_hashes_v1() {
+        let chain_id = 9_926_120_u64;
+        let peer_a = 1_300_120_u64;
+        let peer_b = 1_300_121_u64;
+        clear_eth_fullnode_native_recovery_inflight_peer_v1(chain_id, peer_a);
+        clear_eth_fullnode_native_recovery_inflight_peer_v1(chain_id, peer_b);
+
+        let pending = (0..4u8)
+            .map(|offset| EthFullnodeNativePendingBodyHeaderV1 {
+                number: 7_000 + u64::from(offset),
+                hash: [0x60 + offset; 32],
+                parent_hash: [0x50 + offset; 32],
+                state_root: [0x70 + offset; 32],
+                transactions_root: [0x80 + offset; 32],
+                receipts_root: [0x90 + offset; 32],
+                tx_count: None,
+                withdrawal_count: None,
+            })
+            .collect::<Vec<_>>();
+
+        mark_eth_fullnode_native_recovery_inflight_v1(
+            chain_id,
+            peer_a,
+            41,
+            ETH_FULLNODE_NATIVE_RECOVERY_INFLIGHT_BODY_KIND_V1,
+            &pending[0..2],
+        );
+        let filtered_for_other = filter_eth_fullnode_native_recovery_inflight_headers_v1(
+            chain_id,
+            peer_b,
+            ETH_FULLNODE_NATIVE_RECOVERY_INFLIGHT_BODY_KIND_V1,
+            pending.clone(),
+        );
+        assert_eq!(
+            filtered_for_other
+                .iter()
+                .map(|header| header.number)
+                .collect::<Vec<_>>(),
+            vec![7_002, 7_003]
+        );
+
+        let filtered_for_owner = filter_eth_fullnode_native_recovery_inflight_headers_v1(
+            chain_id,
+            peer_a,
+            ETH_FULLNODE_NATIVE_RECOVERY_INFLIGHT_BODY_KIND_V1,
+            pending.clone(),
+        );
+        assert_eq!(filtered_for_owner.len(), pending.len());
+
+        clear_eth_fullnode_native_recovery_inflight_request_v1(
+            chain_id,
+            peer_a,
+            41,
+            ETH_FULLNODE_NATIVE_RECOVERY_INFLIGHT_BODY_KIND_V1,
+        );
+        let filtered_after_clear = filter_eth_fullnode_native_recovery_inflight_headers_v1(
+            chain_id,
+            peer_b,
+            ETH_FULLNODE_NATIVE_RECOVERY_INFLIGHT_BODY_KIND_V1,
+            pending.clone(),
+        );
+        assert_eq!(filtered_after_clear.len(), pending.len());
+
+        mark_eth_fullnode_native_recovery_inflight_v1(
+            chain_id,
+            peer_a,
+            42,
+            ETH_FULLNODE_NATIVE_RECOVERY_INFLIGHT_RECEIPT_KIND_V1,
+            &pending[1..3],
+        );
+        let receipt_filtered_for_other = filter_eth_fullnode_native_recovery_inflight_headers_v1(
+            chain_id,
+            peer_b,
+            ETH_FULLNODE_NATIVE_RECOVERY_INFLIGHT_RECEIPT_KIND_V1,
+            pending,
+        );
+        assert_eq!(
+            receipt_filtered_for_other
+                .iter()
+                .map(|header| header.number)
+                .collect::<Vec<_>>(),
+            vec![7_000, 7_003]
         );
     }
 
