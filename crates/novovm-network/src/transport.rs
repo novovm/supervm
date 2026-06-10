@@ -4744,7 +4744,13 @@ fn validate_eth_fullnode_native_pooled_transactions_match_request_v1(
     requested_hashes: &[[u8; 32]],
     response_hashes: &[[u8; 32]],
 ) -> Result<(), String> {
-    let mut next_search_from = 0usize;
+    if response_hashes.len() > requested_hashes.len() {
+        return Err(format!(
+            "rlpx_pooled_transactions_too_many_items:requested={} response={}",
+            requested_hashes.len(),
+            response_hashes.len()
+        ));
+    }
     let mut seen = HashSet::<[u8; 32]>::new();
     for response_hash in response_hashes {
         if !seen.insert(*response_hash) {
@@ -4753,19 +4759,6 @@ fn validate_eth_fullnode_native_pooled_transactions_match_request_v1(
                 hex32_v1(response_hash)
             ));
         }
-        let Some(relative_idx) = requested_hashes
-            .iter()
-            .skip(next_search_from)
-            .position(|requested| requested == response_hash)
-        else {
-            return Err(format!(
-                "rlpx_pooled_transactions_unrequested_hash:hash=0x{}",
-                hex32_v1(response_hash)
-            ));
-        };
-        next_search_from = next_search_from
-            .saturating_add(relative_idx)
-            .saturating_add(1);
     }
     Ok(())
 }
@@ -7064,12 +7057,13 @@ fn select_eth_fullnode_native_header_followup_body_headers_v1<'a>(
     let Some(latest) = headers.last().copied() else {
         return Vec::new();
     };
-    let product_current_head_first =
-        budget_hooks.sync_pull_finalize_batch > ETH_FULLNODE_DEFAULT_SYNC_PULL_FINALIZE_BATCH;
+    let product_current_head_first = budget_hooks.prefer_current_head_body_on_header_batch
+        || budget_hooks.sync_pull_finalize_batch > ETH_FULLNODE_DEFAULT_SYNC_PULL_FINALIZE_BATCH;
     if headers.len() > 1
-        && (product_current_head_first
-            || get_network_runtime_sync_status(chain_id)
-                .is_some_and(|status| status.highest_block > latest.number))
+        && get_network_runtime_sync_status(chain_id).is_some_and(|status| {
+            status.highest_block > latest.number
+                || (product_current_head_first && status.highest_block >= latest.number)
+        })
     {
         return vec![latest];
     }
@@ -10808,6 +10802,87 @@ mod tests {
     }
 
     #[test]
+    fn rlpx_product_header_batch_requests_current_body_at_known_highest_v1() {
+        let chain_id = 9_928_004_u64;
+        let peer_id = 80_u64;
+        clear_network_runtime_native_snapshots_for_chain_v1(chain_id);
+        set_network_runtime_sync_status(
+            chain_id,
+            NetworkRuntimeSyncStatus {
+                peer_count: 1,
+                starting_block: 400,
+                current_block: 400,
+                highest_block: 403,
+            },
+        );
+
+        let (mut session, _accepted, _peer_frame_session) = dummy_rlpx_live_session_pair(chain_id);
+        session.pending_headers_request = Some(EthRlpxGetBlockHeadersRequestV1 {
+            request_id: 14,
+            start_height: 401,
+            origin_hash: None,
+            max_headers: 3,
+            skip: 0,
+            reverse: false,
+        });
+
+        let mut parent_hash = [0x30; 32];
+        let mut headers = Vec::new();
+        for offset in 0..3u8 {
+            let number = 401 + u64::from(offset);
+            let hash = [0x31 + offset; 32];
+            headers.push(crate::EthRlpxBlockHeaderRecordV1 {
+                number,
+                hash,
+                parent_hash,
+                state_root: [0x42 + offset; 32],
+                transactions_root: [0x52 + offset; 32],
+                receipts_root: [0x62 + offset; 32],
+                ommers_hash: crate::eth_rlpx_empty_ommers_hash_v1(),
+                logs_bloom: vec![0u8; 256],
+                gas_limit: Some(30_000_000),
+                gas_used: Some(21_000),
+                timestamp: Some(1_900_003_000 + u64::from(offset)),
+                base_fee_per_gas: Some(7),
+                withdrawals_root: Some(crate::eth_rlpx_empty_trie_root_v1()),
+                blob_gas_used: None,
+                excess_blob_gas: None,
+                block_access_list_hash: None,
+                raw_rlp: None,
+            });
+            parent_hash = hash;
+        }
+        let response = EthRlpxBlockHeadersResponseV1 {
+            request_id: 14,
+            headers,
+        };
+        let mut budget = default_eth_fullnode_budget_hooks_v1();
+        budget.sync_pull_bodies_batch = 8;
+        budget.sync_pull_finalize_batch = ETH_FULLNODE_DEFAULT_SYNC_PULL_FINALIZE_BATCH;
+        budget.prefer_current_head_body_on_header_batch = true;
+        let mut report = EthFullnodeNativeRlpxPeerTickReportV1::default();
+
+        ingest_real_rlpx_block_headers_v1(
+            chain_id,
+            peer_id,
+            &mut session,
+            &response,
+            &budget,
+            &mut report,
+        )
+        .expect("header batch ingest");
+
+        assert_eq!(report.header_updates, 3);
+        assert_eq!(
+            session.pending_body_headers.len(),
+            1,
+            "known-highest header batch must not request multiple bodies"
+        );
+        assert_eq!(session.pending_body_headers[0].number, 403);
+        assert_eq!(session.pending_body_headers[0].hash, [0x33; 32]);
+    }
+
+    #[test]
     fn rlpx_response_ingest_rejects_unrequested_response_messages_v1() {
         let chain_id = 9_929_u64;
         let mut session = dummy_rlpx_live_session(chain_id);
@@ -11425,30 +11500,42 @@ mod tests {
     }
 
     #[test]
-    fn rlpx_pooled_transactions_response_must_match_requested_hashes_v1() {
+    fn rlpx_pooled_transactions_response_uses_geth_tracker_window_v1() {
         validate_eth_fullnode_native_pooled_transactions_match_request_v1(
             &[[0x11; 32], [0x22; 32], [0x33; 32]],
             &[[0x11; 32], [0x33; 32]],
         )
         .expect("ordered subset must pass");
 
-        let err = validate_eth_fullnode_native_pooled_transactions_match_request_v1(
+        validate_eth_fullnode_native_pooled_transactions_match_request_v1(
             &[[0x11; 32], [0x22; 32]],
             &[[0x33; 32]],
         )
-        .expect_err("unrequested hash must reject");
+        .expect("geth request tracker accepts same-size pooled tx responses without hash matching");
+
+        validate_eth_fullnode_native_pooled_transactions_match_request_v1(
+            &[[0x11; 32], [0x22; 32]],
+            &[[0x22; 32], [0x11; 32]],
+        )
+        .expect("geth request tracker accepts out-of-order pooled tx responses");
+
+        let err = validate_eth_fullnode_native_pooled_transactions_match_request_v1(
+            &[[0x11; 32], [0x22; 32]],
+            &[[0x11; 32], [0x22; 32], [0x33; 32]],
+        )
+        .expect_err("response larger than request must reject");
         assert!(
-            err.contains("rlpx_pooled_transactions_unrequested_hash"),
+            err.contains("rlpx_pooled_transactions_too_many_items"),
             "unexpected error: {err}"
         );
 
         let err = validate_eth_fullnode_native_pooled_transactions_match_request_v1(
             &[[0x11; 32], [0x22; 32]],
-            &[[0x22; 32], [0x11; 32]],
+            &[[0x22; 32], [0x22; 32]],
         )
-        .expect_err("out-of-order response must reject");
+        .expect_err("duplicate response hash must reject");
         assert!(
-            err.contains("rlpx_pooled_transactions_unrequested_hash"),
+            err.contains("rlpx_pooled_transactions_duplicate_hash"),
             "unexpected error: {err}"
         );
     }
@@ -11480,6 +11567,37 @@ mod tests {
         assert!(
             eth_fullnode_native_should_request_pooled_transactions_v1(&session, &[[0x55; 32]]),
             "after response cleanup, a later announcement can be requested"
+        );
+    }
+
+    #[test]
+    fn rlpx_pooled_transactions_ingests_geth_accepted_unrequested_hash_v1() {
+        let chain_id = 9_926_123_u64;
+        let mut session = dummy_rlpx_live_session(chain_id);
+        let requested_hash = [0x66; 32];
+        let response_hash = [0x77; 32];
+        session.last_pooled_transactions_request_id = Some(101);
+        session.pending_pooled_transaction_hashes = vec![requested_hash];
+
+        let response = EthRlpxPooledTransactionsPayloadV1 {
+            request_id: 101,
+            tx_rlp_items: vec![vec![0xc0]],
+            tx_hashes: vec![response_hash],
+        };
+        ingest_real_rlpx_pooled_transactions_v1(chain_id, 77, &mut session, &response)
+            .expect("geth accepts same-size pooled tx response after request tracker match");
+
+        assert!(
+            session.last_pooled_transactions_request_id.is_none(),
+            "matched response clears the pending pooled tx request"
+        );
+        assert!(
+            session.pending_pooled_transaction_hashes.is_empty(),
+            "matched response clears pending pooled tx hashes"
+        );
+        assert!(
+            get_network_runtime_native_pending_tx_v1(chain_id, response_hash).is_some(),
+            "accepted pooled tx response materializes the delivered tx hash"
         );
     }
 

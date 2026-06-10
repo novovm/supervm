@@ -139,7 +139,7 @@ $env:NOVOVM_NODE_MODE='eth_rlpx_sync'; $env:NOVOVM_ETH_RLPX_TICKS='8'; cargo run
 - 远端 peer 解析 SUPERVM 发出的 `NewPooledTransactionHashes` frame，确认 tx type、size 和 hash，再通过 `GetPooledTransactions` 拉取 raw RLP payload。
 - 本地 pending tx 以 geth 风格 `NewPooledTransactionHashes` 发送 hash-only announce，wire-frame 写成功后才标记 propagated，并记录目标 peer 和 broadcast runtime summary；远端随后发 `GetPooledTransactions` 时，SUPERVM 回放本地 raw tx payload。
 - 远端 peer 发送 `NewPooledTransactionHashes` 后，SUPERVM 会按 hash 发起 `GetPooledTransactions`，收到 raw `PooledTransactions` 后 materialize 到 pending tx payload/broadcast candidate。
-- `PooledTransactions` / `BlockBodies` / `Receipts` / `BlockAccessLists` 这类 response 型消息现在都要求本地存在匹配 pending request；未请求响应按 peer decode failure 拒绝。`PooledTransactions` 返回的 tx hash 还必须是本次 requested hashes 的有序子集，避免把未请求 tx 当 response materialize。
+- `PooledTransactions` / `BlockBodies` / `Receipts` / `BlockAccessLists` 这类 response 型消息现在都要求本地存在匹配 pending request；未请求响应按 peer decode failure 拒绝。`PooledTransactions` 按 geth request tracker 语义要求 response item count 不超过 request count，并拒绝重复 tx hash；匹配 request_id 后不再要求返回 hash 必须是 requested hashes 的有序子集，避免把 geth 可接受的 out-of-bound tx delivery 误判成 wire 协议错误。
 - 远端 peer 发送 `GetPooledTransactions` 请求本地 pending raw tx 时，SUPERVM 返回协议合法 `PooledTransactions` response，不对未知 hash 返回占位。
 - 远端 peer 发送 eth/69+ `BlockRangeUpdate` 后，SUPERVM 按 geth 同形三字段 `[earliestBlock, latestBlock, latestBlockHash]` 校验并更新 runtime peer head/highest；`earliest > latest` 和 zero latest hash 会被拒绝。
 - 远端 peer 通过 `BlockHeaders` 返回真实 RLP header，SUPERVM 按 wire header RLP hash 发起 `GetBlockBodies`。

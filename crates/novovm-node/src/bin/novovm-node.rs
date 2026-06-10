@@ -2490,6 +2490,7 @@ fn eth_rlpx_apply_public_sync_runtime_defaults_v1(
         .runtime_pending_tx_snapshot_limit
         .min(runtime_pending_txs.max(1));
     budget.sync_pull_finalize_batch = finalize_headers_batch.max(1);
+    budget.prefer_current_head_body_on_header_batch = true;
 }
 
 fn eth_rlpx_peer_discovery_total_timeout_v1() -> Duration {
@@ -7141,6 +7142,10 @@ mod mainline_evm_cli_tests {
         assert_eq!(
             budget.runtime_pending_tx_snapshot_limit,
             ETH_RLPX_PUBLIC_SYNC_DEFAULT_RUNTIME_PENDING_TXS_V1
+        );
+        assert!(
+            budget.prefer_current_head_body_on_header_batch,
+            "direct public sync entry must keep current-head body follow-up when adaptive headers fall back to the default window"
         );
     }
 
