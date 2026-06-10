@@ -2994,8 +2994,19 @@ fn drive_eth_fullnode_native_rlpx_peer_session_once_v1(
                     {
                         let pending_request =
                             eth_fullnode_native_rlpx_session_has_pending_request_v1(session);
+                        let pending_kind = eth_fullnode_native_pending_request_kind_v1(session);
                         if pending_request {
-                            observe_network_runtime_eth_peer_disconnect_v1(chain_id, peer.0, None);
+                            if let Some(reason) =
+                                eth_fullnode_native_pending_material_close_reason_v1(session)
+                            {
+                                observe_network_runtime_eth_peer_timeout_v1(
+                                    chain_id, peer.0, reason,
+                                );
+                            } else {
+                                observe_network_runtime_eth_peer_disconnect_v1(
+                                    chain_id, peer.0, None,
+                                );
+                            }
                         } else {
                             mark_network_runtime_eth_peer_session_closed_v1(chain_id, peer.0);
                         }
@@ -3004,9 +3015,7 @@ fn drive_eth_fullnode_native_rlpx_peer_session_once_v1(
                         if pending_request {
                             disconnect_error = Some(NetworkError::Io(format!(
                                 "rlpx_session_closed:pending={}:endpoint={}:{}",
-                                eth_fullnode_native_pending_request_kind_v1(session),
-                                session.endpoint.addr_hint,
-                                err
+                                pending_kind, session.endpoint.addr_hint, err
                             )));
                         }
                         break;
@@ -4519,6 +4528,17 @@ fn eth_fullnode_native_pending_request_kind_v1(
         "body_or_receipt_material"
     } else {
         "none"
+    }
+}
+
+fn eth_fullnode_native_pending_material_close_reason_v1(
+    session: &EthFullnodeNativeRlpxLivePeerSessionV1,
+) -> Option<&'static str> {
+    match eth_fullnode_native_pending_request_kind_v1(session) {
+        "bodies" => Some("bodies_pending_closed"),
+        "receipts" => Some("receipts_pending_closed"),
+        "body_or_receipt_material" => Some("material_pending_closed"),
+        _ => None,
     }
 }
 
@@ -11580,6 +11600,10 @@ mod tests {
             eth_fullnode_native_pending_request_kind_v1(&session),
             "headers"
         );
+        assert_eq!(
+            eth_fullnode_native_pending_material_close_reason_v1(&session),
+            None
+        );
 
         session.last_headers_request_id = None;
         session.last_bodies_request_id = Some(2);
@@ -11587,12 +11611,20 @@ mod tests {
             eth_fullnode_native_pending_request_kind_v1(&session),
             "bodies"
         );
+        assert_eq!(
+            eth_fullnode_native_pending_material_close_reason_v1(&session),
+            Some("bodies_pending_closed")
+        );
 
         session.last_bodies_request_id = None;
         session.last_receipts_request_id = Some(3);
         assert_eq!(
             eth_fullnode_native_pending_request_kind_v1(&session),
             "receipts"
+        );
+        assert_eq!(
+            eth_fullnode_native_pending_material_close_reason_v1(&session),
+            Some("receipts_pending_closed")
         );
 
         session.last_receipts_request_id = None;
@@ -11611,6 +11643,10 @@ mod tests {
         assert_eq!(
             eth_fullnode_native_pending_request_kind_v1(&session),
             "body_or_receipt_material"
+        );
+        assert_eq!(
+            eth_fullnode_native_pending_material_close_reason_v1(&session),
+            Some("material_pending_closed")
         );
     }
 
