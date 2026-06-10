@@ -848,6 +848,7 @@ const ETH_FULLNODE_NATIVE_RECOVERY_INFLIGHT_BODY_KIND_V1: u8 = 1;
 const ETH_FULLNODE_NATIVE_RECOVERY_INFLIGHT_RECEIPT_KIND_V1: u8 = 2;
 const ETH_FULLNODE_NATIVE_RECOVERY_INFLIGHT_TTL_MS_V1: u64 = 30_000;
 const ETH_FULLNODE_NATIVE_HEADER_INFLIGHT_TTL_MS_V1: u64 = 30_000;
+const ETH_FULLNODE_NATIVE_HEADER_RECENT_TTL_MS_V1: u64 = 10_000;
 
 type EthFullnodeNativeRlpxSessionKeyV1 = (u64, u64);
 type EthFullnodeNativeRlpxSessionMapV1 =
@@ -871,6 +872,9 @@ static ETH_FULLNODE_NATIVE_RECOVERY_INFLIGHT: OnceLock<
 type EthFullnodeNativeHeaderInflightKeyV1 = (u64, u64, u64, bool);
 type EthFullnodeNativeHeaderInflightMapV1 =
     HashMap<EthFullnodeNativeHeaderInflightKeyV1, EthFullnodeNativeHeaderInflightV1>;
+type EthFullnodeNativeHeaderRecentKeyV1 = (u64, u64, u64, u64, bool);
+type EthFullnodeNativeHeaderRecentMapV1 =
+    HashMap<EthFullnodeNativeHeaderRecentKeyV1, EthFullnodeNativeHeaderInflightV1>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct EthFullnodeNativeHeaderInflightV1 {
@@ -880,6 +884,8 @@ struct EthFullnodeNativeHeaderInflightV1 {
 }
 
 static ETH_FULLNODE_NATIVE_HEADER_INFLIGHT: OnceLock<Mutex<EthFullnodeNativeHeaderInflightMapV1>> =
+    OnceLock::new();
+static ETH_FULLNODE_NATIVE_HEADER_RECENT: OnceLock<Mutex<EthFullnodeNativeHeaderRecentMapV1>> =
     OnceLock::new();
 
 fn eth_fullnode_native_rlpx_sessions_v1() -> &'static Mutex<EthFullnodeNativeRlpxSessionMapV1> {
@@ -894,6 +900,10 @@ fn eth_fullnode_native_recovery_inflight_v1(
 fn eth_fullnode_native_header_inflight_v1() -> &'static Mutex<EthFullnodeNativeHeaderInflightMapV1>
 {
     ETH_FULLNODE_NATIVE_HEADER_INFLIGHT.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn eth_fullnode_native_header_recent_v1() -> &'static Mutex<EthFullnodeNativeHeaderRecentMapV1> {
+    ETH_FULLNODE_NATIVE_HEADER_RECENT.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
 fn eth_fullnode_native_rlpx_live_peer_ids_v1(chain_id: u64) -> HashSet<u64> {
@@ -1008,6 +1018,15 @@ fn prune_eth_fullnode_native_header_inflight_locked_v1(
     });
 }
 
+fn prune_eth_fullnode_native_header_recent_locked_v1(
+    recent: &mut EthFullnodeNativeHeaderRecentMapV1,
+    now_ms: u64,
+) {
+    recent.retain(|_, entry| {
+        now_ms.saturating_sub(entry.observed_unix_ms) <= ETH_FULLNODE_NATIVE_HEADER_RECENT_TTL_MS_V1
+    });
+}
+
 fn should_dispatch_eth_fullnode_native_header_request_v1(
     chain_id: u64,
     peer_id: u64,
@@ -1020,9 +1039,14 @@ fn should_dispatch_eth_fullnode_native_header_request_v1(
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     prune_eth_fullnode_native_header_inflight_locked_v1(&mut inflight, now_ms);
-    inflight
-        .get(&(chain_id, start_height, skip, reverse))
-        .map_or(true, |entry| entry.peer_id == peer_id)
+    if inflight.contains_key(&(chain_id, start_height, skip, reverse)) {
+        return false;
+    }
+    let mut recent = eth_fullnode_native_header_recent_v1()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    prune_eth_fullnode_native_header_recent_locked_v1(&mut recent, now_ms);
+    !recent.contains_key(&(chain_id, peer_id, start_height, skip, reverse))
 }
 
 fn mark_eth_fullnode_native_header_inflight_v1(
@@ -1040,6 +1064,18 @@ fn mark_eth_fullnode_native_header_inflight_v1(
     prune_eth_fullnode_native_header_inflight_locked_v1(&mut inflight, now_ms);
     inflight.insert(
         (chain_id, start_height, skip, reverse),
+        EthFullnodeNativeHeaderInflightV1 {
+            peer_id,
+            request_id,
+            observed_unix_ms: now_ms,
+        },
+    );
+    let mut recent = eth_fullnode_native_header_recent_v1()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    prune_eth_fullnode_native_header_recent_locked_v1(&mut recent, now_ms);
+    recent.insert(
+        (chain_id, peer_id, start_height, skip, reverse),
         EthFullnodeNativeHeaderInflightV1 {
             peer_id,
             request_id,
@@ -12280,10 +12316,10 @@ mod tests {
         ));
         mark_eth_fullnode_native_header_inflight_v1(chain_id, peer_a, 51, 8_000, 0, false);
         assert!(
-            should_dispatch_eth_fullnode_native_header_request_v1(
+            !should_dispatch_eth_fullnode_native_header_request_v1(
                 chain_id, peer_a, 8_000, 0, false
             ),
-            "the owning peer may continue its own pending header request"
+            "the owning peer must not refresh the same pending header request before response or timeout"
         );
         assert!(
             !should_dispatch_eth_fullnode_native_header_request_v1(
@@ -12300,10 +12336,16 @@ mod tests {
 
         clear_eth_fullnode_native_header_inflight_request_v1(chain_id, peer_a, 51);
         assert!(
+            !should_dispatch_eth_fullnode_native_header_request_v1(
+                chain_id, peer_a, 8_000, 0, false
+            ),
+            "the same peer remains briefly cooled down after its inflight request is cleared"
+        );
+        assert!(
             should_dispatch_eth_fullnode_native_header_request_v1(
                 chain_id, peer_b, 8_000, 0, false
             ),
-            "response/failure cleanup must release the header start"
+            "response/failure cleanup must release the header start for another peer"
         );
     }
 
