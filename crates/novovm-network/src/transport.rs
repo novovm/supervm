@@ -12607,6 +12607,80 @@ mod tests {
     }
 
     #[test]
+    fn rlpx_missing_receipts_recovery_dispatches_get_receipts_for_materialized_body_v1() {
+        let chain_id = 9_926_111_u64;
+        let peer_id = 1_300_111_u64;
+        clear_network_runtime_native_snapshots_for_chain_v1(chain_id);
+        clear_eth_fullnode_native_recovery_inflight_peer_v1(chain_id, peer_id);
+
+        let block_hash = [0x31; 32];
+        let tx_hashes = vec![[0x41; 32]];
+        let raw_receipts = vec![vec![0xc1]];
+        let receipts_root =
+            crate::eth_rlpx_receipts_root_from_raw_receipts_v1(raw_receipts.as_slice());
+        set_network_runtime_native_header_snapshot_v1(
+            chain_id,
+            crate::runtime_status::NetworkRuntimeNativeHeaderSnapshotV1 {
+                chain_id,
+                number: 4_096,
+                hash: block_hash,
+                parent_hash: [0x30; 32],
+                state_root: [0x32; 32],
+                transactions_root: [0x33; 32],
+                receipts_root,
+                ommers_hash: crate::eth_rlpx_empty_ommers_hash_v1(),
+                logs_bloom: vec![0u8; 256],
+                gas_limit: Some(30_000_000),
+                gas_used: Some(21_000),
+                timestamp: Some(1_900_000_020),
+                base_fee_per_gas: Some(9),
+                withdrawals_root: Some(crate::eth_rlpx_empty_trie_root_v1()),
+                blob_gas_used: None,
+                excess_blob_gas: None,
+                block_access_list_hash: None,
+                source_peer_id: Some(peer_id),
+                observed_unix_ms: 1,
+            },
+        );
+        set_network_runtime_native_body_snapshot_v1(
+            chain_id,
+            crate::runtime_status::NetworkRuntimeNativeBodySnapshotV1 {
+                chain_id,
+                number: 4_096,
+                block_hash,
+                tx_hashes,
+                raw_tx_rlps: vec![vec![0x01]],
+                ommer_hashes: Vec::new(),
+                withdrawal_rlp_items: Some(Vec::new()),
+                withdrawal_count: Some(0),
+                body_available: true,
+                txs_materialized: true,
+                observed_unix_ms: 2,
+            },
+        );
+
+        let (mut session, _accepted, _peer_frame_session) = dummy_rlpx_live_session_pair(chain_id);
+        let mut report = EthFullnodeNativeRlpxPeerTickReportV1::default();
+        let recovered = dispatch_eth_fullnode_native_rlpx_missing_receipts_recovery_v1(
+            chain_id,
+            NodeId(peer_id),
+            &mut session,
+            &mut report,
+        )
+        .expect("missing receipts recovery request");
+
+        assert!(recovered);
+        assert_eq!(report.sync_requests, 1);
+        assert_eq!(report.receipt_updates, 0);
+        assert!(session.last_receipts_request_id.is_some());
+        assert!(session.last_bodies_request_id.is_none());
+        assert_eq!(session.pending_body_headers.len(), 1);
+        assert_eq!(session.pending_body_headers[0].hash, block_hash);
+
+        clear_eth_fullnode_native_recovery_inflight_peer_v1(chain_id, peer_id);
+    }
+
+    #[test]
     fn rlpx_missing_receipts_recovery_uses_canonical_body_when_latest_body_differs_v1() {
         let chain_id = 9_926_107_u64;
         let peer_id = 1_300_108_u64;

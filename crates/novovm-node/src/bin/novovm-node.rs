@@ -2501,9 +2501,24 @@ fn eth_rlpx_material_recovery_rollback_stalled_v1(
     ready_peers: usize,
     sync_requests: usize,
 ) -> bool {
-    if !current_head_material_missing
-        || tick.saturating_sub(last_complete_head_progress_tick)
+    if !current_head_material_missing {
+        return false;
+    }
+    if current_head_body_available && !current_head_receipt_available {
+        let receipt_window = stalled_refresh_interval_ticks.max(16);
+        if tick.saturating_sub(last_complete_head_progress_tick)
             < stalled_refresh_interval_ticks.max(4)
+            || tick.saturating_sub(last_sync_progress_tick) < receipt_window
+            || tick.saturating_sub(last_material_recovery_activity_tick) < receipt_window
+        {
+            return false;
+        }
+        return receipt_recovery_stalled
+            && body_material_request_transport_failure
+            && ready_peers == 0
+            && sync_requests == 0;
+    }
+    if tick.saturating_sub(last_complete_head_progress_tick) < stalled_refresh_interval_ticks.max(4)
         || tick.saturating_sub(last_sync_progress_tick) < stalled_refresh_interval_ticks.max(8)
         || tick.saturating_sub(last_material_recovery_activity_tick)
             < stalled_refresh_interval_ticks.max(8)
@@ -2515,9 +2530,6 @@ fn eth_rlpx_material_recovery_rollback_stalled_v1(
             || receipt_recovery_stalled
             || (body_material_request_transport_failure && ready_peers == 0 && sync_requests == 0))
     {
-        return true;
-    }
-    if current_head_body_available && !current_head_receipt_available && receipt_recovery_stalled {
         return true;
     }
     ready_peers == 0
@@ -5430,7 +5442,7 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
     .clamp(base_sync_target_fanout, max_peers);
     let mut runtime_sync_target_fanout = base_sync_target_fanout;
     let headers_batch = u64_env_clamped("NOVOVM_ETH_RLPX_HEADERS_BATCH", 192, 1, 2_048);
-    let bodies_batch = u64_env_clamped("NOVOVM_ETH_RLPX_BODIES_BATCH", 1, 1, 256);
+    let bodies_batch = u64_env_clamped("NOVOVM_ETH_RLPX_BODIES_BATCH", 4, 1, 256);
     let adaptive_batch_enabled = bool_env_default_true("NOVOVM_ETH_RLPX_ADAPTIVE_BATCH_ENABLED");
     let adaptive_headers_min_batch = u64_env_clamped(
         "NOVOVM_ETH_RLPX_ADAPTIVE_HEADERS_MIN_BATCH",
@@ -7324,8 +7336,20 @@ mod mainline_evm_cli_tests {
             ),
             "receipt recovery stall should not rollback before the hard-stall window"
         );
+        assert!(
+            !eth_rlpx_material_recovery_rollback_stalled_v1(
+                true, true, false, 8, 0, 0, 0, 4, false, false, true, 0, 0,
+            ),
+            "receipt-only gaps keep the materialized body while waiting for a serving peer"
+        );
+        assert!(
+            !eth_rlpx_material_recovery_rollback_stalled_v1(
+                true, true, false, 16, 0, 0, 0, 4, false, false, true, 0, 0,
+            ),
+            "receipt-only gaps should not rollback on public admission churn alone"
+        );
         assert!(eth_rlpx_material_recovery_rollback_stalled_v1(
-            true, true, false, 8, 0, 0, 0, 4, false, false, true, 0, 0,
+            true, true, false, 16, 0, 0, 0, 4, true, false, true, 0, 0,
         ));
         assert!(eth_rlpx_material_recovery_rollback_stalled_v1(
             true, false, false, 8, 0, 0, 0, 4, false, false, false, 0, 0,

@@ -4880,6 +4880,24 @@ pub fn build_eth_fullnode_native_bootstrap_messages_v1(
     ]
 }
 
+fn eth_fullnode_native_current_head_material_complete_v1(
+    chain_id: u64,
+    state_head: Option<&NetworkRuntimeNativeHeadSnapshotV1>,
+) -> bool {
+    let Some(head) = state_head else {
+        return false;
+    };
+    if !head.body_available {
+        return false;
+    }
+    let body_available = get_network_runtime_native_body_snapshot_v1(chain_id)
+        .is_some_and(|body| body.block_hash == head.block_hash && body.body_available);
+    let receipt_available =
+        get_network_runtime_native_receipt_snapshot_v1(chain_id, head.block_hash)
+            .is_some_and(|receipt| receipt.receipts_available);
+    body_available && receipt_available
+}
+
 #[must_use]
 pub fn build_eth_fullnode_native_sync_request_v1(
     local_node: NodeId,
@@ -4913,9 +4931,16 @@ pub fn build_eth_fullnode_native_sync_request_v1(
     let should_use_full_state_header_window = should_pull_headers_before_state
         && header_lag > ETH_FULLNODE_NATIVE_SNAP_NEAR_HEAD_MAX_HEADER_LAG_V1
         && state_head.as_ref().is_some_and(|head| head.body_available);
+    let budget = crate::runtime_status::get_network_runtime_native_budget_hooks_v1(chain_id);
+    let current_head_material_complete =
+        eth_fullnode_native_current_head_material_complete_v1(chain_id, state_head.as_ref());
     let header_pull_span =
         if should_pull_headers_before_state && !should_use_full_state_header_window {
             span.min(16)
+        } else if matches!(window.phase, NetworkRuntimeNativeSyncPhaseV1::Bodies)
+            && current_head_material_complete
+        {
+            header_lag.min(budget.sync_pull_headers_batch.max(1)).max(1)
         } else {
             span
         };
@@ -6824,6 +6849,175 @@ mod tests {
         };
         assert_eq!(start_height, 129);
         assert_eq!(max, 64);
+    }
+
+    #[test]
+    fn native_bodies_phase_uses_header_batch_after_current_head_materialized_v1() {
+        let chain_id = 99_160_322_u64;
+        let head_hash = [0x68u8; 32];
+        let receipts_root = [0x69u8; 32];
+        let mut budget =
+            crate::runtime_status::get_network_runtime_native_budget_hooks_v1(chain_id);
+        budget.sync_pull_headers_batch = 64;
+        budget.sync_pull_bodies_batch = 1;
+        crate::runtime_status::set_network_runtime_native_budget_hooks_v1(chain_id, budget);
+        crate::runtime_status::set_network_runtime_sync_status(
+            chain_id,
+            NetworkRuntimeSyncStatus {
+                peer_count: 1,
+                starting_block: 64,
+                current_block: 1_000,
+                highest_block: 2_500,
+            },
+        );
+        crate::runtime_status::set_network_runtime_native_sync_status(
+            chain_id,
+            NetworkRuntimeNativeSyncStatusV1 {
+                phase: NetworkRuntimeNativeSyncPhaseV1::Bodies,
+                peer_count: 1,
+                starting_block: 64,
+                current_block: 1_000,
+                highest_block: 2_500,
+                updated_at_unix_millis: 1,
+            },
+        );
+        crate::runtime_status::set_network_runtime_native_body_snapshot_v1(
+            chain_id,
+            crate::runtime_status::NetworkRuntimeNativeBodySnapshotV1 {
+                chain_id,
+                number: 1_000,
+                block_hash: head_hash,
+                tx_hashes: Vec::new(),
+                raw_tx_rlps: Vec::new(),
+                ommer_hashes: Vec::new(),
+                withdrawal_rlp_items: Some(Vec::new()),
+                withdrawal_count: Some(0),
+                body_available: true,
+                txs_materialized: true,
+                observed_unix_ms: 2,
+            },
+        );
+        crate::runtime_status::set_network_runtime_native_receipt_snapshot_v1(
+            chain_id,
+            crate::runtime_status::NetworkRuntimeNativeReceiptSnapshotV1 {
+                chain_id,
+                number: 1_000,
+                block_hash: head_hash,
+                receipts_root,
+                raw_receipts: Vec::new(),
+                receipt_count: 0,
+                receipts_available: true,
+                source_peer_id: Some(7),
+                observed_unix_ms: 3,
+            },
+        );
+        crate::runtime_status::set_network_runtime_native_head_snapshot_v1(
+            chain_id,
+            NetworkRuntimeNativeHeadSnapshotV1 {
+                chain_id,
+                phase: NetworkRuntimeNativeSyncPhaseV1::Bodies,
+                peer_count: 1,
+                block_number: 1_000,
+                block_hash: head_hash,
+                parent_block_hash: [0x67u8; 32],
+                state_root: [0x70u8; 32],
+                canonical: true,
+                safe: false,
+                finalized: false,
+                reorg_depth_hint: None,
+                body_available: true,
+                source_peer_id: Some(7),
+                observed_unix_ms: 4,
+            },
+        );
+
+        let request = build_eth_fullnode_native_sync_request_v1(NodeId(7), chain_id)
+            .expect("bodies phase should pull next headers");
+        let ProtocolMessage::EvmNative(EvmNativeMessage::GetBlockHeaders {
+            start_height, max, ..
+        }) = request
+        else {
+            panic!("bodies phase should still pull headers");
+        };
+        assert_eq!(start_height, 1_001);
+        assert_eq!(max, 64);
+    }
+
+    #[test]
+    fn native_bodies_phase_keeps_material_window_when_current_head_receipt_missing_v1() {
+        let chain_id = 99_160_323_u64;
+        let head_hash = [0x78u8; 32];
+        let mut budget =
+            crate::runtime_status::get_network_runtime_native_budget_hooks_v1(chain_id);
+        budget.sync_pull_headers_batch = 64;
+        budget.sync_pull_bodies_batch = 1;
+        crate::runtime_status::set_network_runtime_native_budget_hooks_v1(chain_id, budget);
+        crate::runtime_status::set_network_runtime_sync_status(
+            chain_id,
+            NetworkRuntimeSyncStatus {
+                peer_count: 1,
+                starting_block: 64,
+                current_block: 1_000,
+                highest_block: 2_500,
+            },
+        );
+        crate::runtime_status::set_network_runtime_native_sync_status(
+            chain_id,
+            NetworkRuntimeNativeSyncStatusV1 {
+                phase: NetworkRuntimeNativeSyncPhaseV1::Bodies,
+                peer_count: 1,
+                starting_block: 64,
+                current_block: 1_000,
+                highest_block: 2_500,
+                updated_at_unix_millis: 1,
+            },
+        );
+        crate::runtime_status::set_network_runtime_native_body_snapshot_v1(
+            chain_id,
+            crate::runtime_status::NetworkRuntimeNativeBodySnapshotV1 {
+                chain_id,
+                number: 1_000,
+                block_hash: head_hash,
+                tx_hashes: Vec::new(),
+                raw_tx_rlps: Vec::new(),
+                ommer_hashes: Vec::new(),
+                withdrawal_rlp_items: Some(Vec::new()),
+                withdrawal_count: Some(0),
+                body_available: true,
+                txs_materialized: true,
+                observed_unix_ms: 2,
+            },
+        );
+        crate::runtime_status::set_network_runtime_native_head_snapshot_v1(
+            chain_id,
+            NetworkRuntimeNativeHeadSnapshotV1 {
+                chain_id,
+                phase: NetworkRuntimeNativeSyncPhaseV1::Bodies,
+                peer_count: 1,
+                block_number: 1_000,
+                block_hash: head_hash,
+                parent_block_hash: [0x77u8; 32],
+                state_root: [0x80u8; 32],
+                canonical: true,
+                safe: false,
+                finalized: false,
+                reorg_depth_hint: None,
+                body_available: true,
+                source_peer_id: Some(7),
+                observed_unix_ms: 3,
+            },
+        );
+
+        let request = build_eth_fullnode_native_sync_request_v1(NodeId(7), chain_id)
+            .expect("bodies phase should keep material recovery window");
+        let ProtocolMessage::EvmNative(EvmNativeMessage::GetBlockHeaders {
+            start_height, max, ..
+        }) = request
+        else {
+            panic!("bodies phase should still pull headers");
+        };
+        assert_eq!(start_height, 1_001);
+        assert_eq!(max, 1);
     }
 
     #[test]
