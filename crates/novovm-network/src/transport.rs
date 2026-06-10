@@ -322,7 +322,10 @@ impl EthFullnodeNativePeerWorkerV1 {
             if sync_peers.len() >= sync_fanout {
                 break;
             }
-            if candidate_peers.contains(&peer) && !sync_peers.contains(&peer) {
+            if candidate_peers.contains(&peer)
+                && session_peers.contains(&peer)
+                && !sync_peers.contains(&peer)
+            {
                 sync_peers.push(peer);
             }
         }
@@ -10756,6 +10759,81 @@ mod tests {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .remove(&(chain_id, pending_peer.0));
+    }
+
+    #[test]
+    fn real_rlpx_worker_plan_skips_pending_material_session_in_cooldown_v1() {
+        let chain_id = 9_926_802_u64;
+        let local = NodeId(9_926_802_001);
+        let cooldown_pending_peer = NodeId(9_926_802_002);
+        let ready_peer = NodeId(9_926_802_003);
+
+        let _ = upsert_network_runtime_eth_peer_session(
+            chain_id,
+            cooldown_pending_peer.0,
+            &[69, 70],
+            &[1],
+            Some(1_200),
+        )
+        .expect("pending peer session");
+        let _ = upsert_network_runtime_eth_peer_session(
+            chain_id,
+            ready_peer.0,
+            &[69, 70],
+            &[1],
+            Some(2_400),
+        )
+        .expect("ready peer session");
+
+        let mut live_session = dummy_rlpx_live_session(chain_id);
+        live_session.endpoint.node_hint = cooldown_pending_peer.0;
+        live_session.last_bodies_request_id = Some(77);
+        live_session.last_sync_request_unix_ms = now_unix_ms().saturating_sub(5_000);
+        live_session
+            .pending_body_headers
+            .push(EthFullnodeNativePendingBodyHeaderV1 {
+                number: 1_200,
+                hash: [0x77; 32],
+                parent_hash: [0x76; 32],
+                state_root: [0x78; 32],
+                transactions_root: [0x79; 32],
+                receipts_root: [0x7a; 32],
+                tx_count: None,
+                withdrawal_count: None,
+            });
+        eth_fullnode_native_rlpx_sessions_v1()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .insert((chain_id, cooldown_pending_peer.0), live_session);
+        observe_network_runtime_eth_peer_timeout_v1(
+            chain_id,
+            cooldown_pending_peer.0,
+            "bodies_timeout",
+        );
+
+        let mut budget = default_eth_fullnode_budget_hooks_v1();
+        budget.active_native_peer_soft_limit = 2;
+        budget.active_native_peer_hard_limit = 2;
+        budget.sync_target_fanout = 1;
+        let worker = EthFullnodeNativePeerWorkerV1::new(EthFullnodeNativePeerWorkerConfigV1 {
+            chain_id,
+            local_node: local,
+            peers: vec![cooldown_pending_peer, ready_peer],
+            peer_endpoints: Vec::new(),
+            recv_budget: 1,
+            sync_target_fanout: 1,
+            budget_hooks: budget,
+        });
+
+        assert_eq!(
+            worker.plan().sync_peers,
+            vec![ready_peer],
+            "pending material sessions in cooldown must not bypass ready peer selection"
+        );
+        eth_fullnode_native_rlpx_sessions_v1()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .remove(&(chain_id, cooldown_pending_peer.0));
     }
 
     #[test]
