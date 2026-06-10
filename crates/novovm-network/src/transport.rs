@@ -933,7 +933,7 @@ fn prune_eth_fullnode_native_recovery_inflight_locked_v1(
 
 fn filter_eth_fullnode_native_recovery_inflight_headers_v1(
     chain_id: u64,
-    peer_id: u64,
+    _peer_id: u64,
     kind: u8,
     pending_headers: Vec<EthFullnodeNativePendingBodyHeaderV1>,
 ) -> Vec<EthFullnodeNativePendingBodyHeaderV1> {
@@ -947,11 +947,7 @@ fn filter_eth_fullnode_native_recovery_inflight_headers_v1(
     prune_eth_fullnode_native_recovery_inflight_locked_v1(&mut inflight, now_ms);
     pending_headers
         .into_iter()
-        .filter(|pending| {
-            inflight
-                .get(&(chain_id, kind, pending.hash))
-                .map_or(true, |entry| entry.peer_id == peer_id)
-        })
+        .filter(|pending| !inflight.contains_key(&(chain_id, kind, pending.hash)))
         .collect()
 }
 
@@ -12265,7 +12261,14 @@ mod tests {
             ETH_FULLNODE_NATIVE_RECOVERY_INFLIGHT_BODY_KIND_V1,
             pending.clone(),
         );
-        assert_eq!(filtered_for_owner.len(), pending.len());
+        assert_eq!(
+            filtered_for_owner
+                .iter()
+                .map(|header| header.number)
+                .collect::<Vec<_>>(),
+            vec![7_002, 7_003],
+            "the owner peer must not duplicate the same in-flight recovery hashes"
+        );
 
         clear_eth_fullnode_native_recovery_inflight_request_v1(
             chain_id,
