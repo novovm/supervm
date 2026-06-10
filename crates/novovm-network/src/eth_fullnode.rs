@@ -1998,10 +1998,7 @@ fn eth_peer_failure_cooldown_ms_v1(
             ETH_PEER_PRODUCTIVE_DISCONNECT_RETRY_MS_V1
         }
         EthPeerFailureClassV1::Disconnect if reason_code == Some(0x04) => {
-            eth_peer_failure_backoff_ms_v1(
-                eth_peer_failure_count_for_class_v1(state, class).saturating_add(1),
-            )
-            .max(eth_peer_capacity_reject_cooldown_ms_v1(state))
+            eth_peer_capacity_reject_cooldown_ms_v1(state)
         }
         EthPeerFailureClassV1::Disconnect => eth_peer_failure_backoff_ms_v1(
             eth_peer_failure_count_for_class_v1(state, class).saturating_add(1),
@@ -5565,6 +5562,24 @@ mod tests {
             .cooldown_until_unix_ms
             .saturating_sub(before_second);
         assert!(remaining >= ETH_PEER_PRODUCTIVE_CAPACITY_REJECT_RETRY_MS_V1.saturating_mul(2));
+        assert!(remaining < ETH_PEER_CAPACITY_REJECT_BACKOFF_BASE_MS_V1);
+
+        {
+            let mut guard = eth_peer_sessions()
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let chain = guard.get_mut(&chain_id).expect("chain state");
+            let state = chain.get_mut(&peer.0).expect("peer");
+            state.cooldown_until_unix_ms = 0;
+        }
+        let before_third = eth_peer_now_unix_ms_v1();
+        observe_network_runtime_eth_peer_disconnect_v1(chain_id, peer.0, Some(0x04));
+
+        let snapshot =
+            snapshot_network_runtime_eth_peer_sessions_for_peers_v1(chain_id, &[peer])[0].clone();
+        assert_eq!(snapshot.disconnect_too_many_peers_count, 3);
+        let remaining = snapshot.cooldown_until_unix_ms.saturating_sub(before_third);
+        assert!(remaining >= ETH_PEER_PRODUCTIVE_CAPACITY_REJECT_RETRY_MS_V1.saturating_mul(4));
         assert!(remaining < ETH_PEER_CAPACITY_REJECT_BACKOFF_BASE_MS_V1);
     }
 
