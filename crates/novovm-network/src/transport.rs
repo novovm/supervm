@@ -878,6 +878,7 @@ const ETH_FULLNODE_NATIVE_MISSING_BODY_CHASE_HEAD_BATCH_MAX_V1: usize = 4;
 const ETH_FULLNODE_NATIVE_RECOVERY_INFLIGHT_BODY_KIND_V1: u8 = 1;
 const ETH_FULLNODE_NATIVE_RECOVERY_INFLIGHT_RECEIPT_KIND_V1: u8 = 2;
 const ETH_FULLNODE_NATIVE_RECOVERY_INFLIGHT_TTL_MS_V1: u64 = 30_000;
+const ETH_FULLNODE_NATIVE_RECOVERY_HEDGE_AFTER_MS_V1: u64 = 1_000;
 const ETH_FULLNODE_NATIVE_HEADER_INFLIGHT_TTL_MS_V1: u64 = 30_000;
 const ETH_FULLNODE_NATIVE_HEADER_RECENT_TTL_MS_V1: u64 = 30_000;
 const ETH_FULLNODE_NATIVE_HEADER_INFLIGHT_PEER_FANOUT_V1: usize = 2;
@@ -987,7 +988,7 @@ fn prune_eth_fullnode_native_recovery_inflight_locked_v1(
 
 fn filter_eth_fullnode_native_recovery_inflight_headers_v1(
     chain_id: u64,
-    _peer_id: u64,
+    peer_id: u64,
     kind: u8,
     pending_headers: Vec<EthFullnodeNativePendingBodyHeaderV1>,
 ) -> Vec<EthFullnodeNativePendingBodyHeaderV1> {
@@ -1001,7 +1002,16 @@ fn filter_eth_fullnode_native_recovery_inflight_headers_v1(
     prune_eth_fullnode_native_recovery_inflight_locked_v1(&mut inflight, now_ms);
     pending_headers
         .into_iter()
-        .filter(|pending| !inflight.contains_key(&(chain_id, kind, pending.hash)))
+        .filter(|pending| {
+            let Some(entry) = inflight.get(&(chain_id, kind, pending.hash)) else {
+                return true;
+            };
+            if entry.peer_id == peer_id {
+                return false;
+            }
+            now_ms.saturating_sub(entry.observed_unix_ms)
+                >= ETH_FULLNODE_NATIVE_RECOVERY_HEDGE_AFTER_MS_V1
+        })
         .collect()
 }
 
@@ -12961,6 +12971,52 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![7_002, 7_003],
             "the owner peer must not duplicate the same in-flight recovery hashes"
+        );
+
+        {
+            let old_observed = now_unix_ms()
+                .saturating_sub(ETH_FULLNODE_NATIVE_RECOVERY_HEDGE_AFTER_MS_V1)
+                .saturating_sub(1);
+            let mut inflight = eth_fullnode_native_recovery_inflight_v1()
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            for pending in &pending[0..2] {
+                if let Some(entry) = inflight.get_mut(&(
+                    chain_id,
+                    ETH_FULLNODE_NATIVE_RECOVERY_INFLIGHT_BODY_KIND_V1,
+                    pending.hash,
+                )) {
+                    entry.observed_unix_ms = old_observed;
+                }
+            }
+        }
+        let hedged_for_other = filter_eth_fullnode_native_recovery_inflight_headers_v1(
+            chain_id,
+            peer_b,
+            ETH_FULLNODE_NATIVE_RECOVERY_INFLIGHT_BODY_KIND_V1,
+            pending.clone(),
+        );
+        assert_eq!(
+            hedged_for_other
+                .iter()
+                .map(|header| header.number)
+                .collect::<Vec<_>>(),
+            vec![7_000, 7_001, 7_002, 7_003],
+            "a second peer may hedge stale material recovery before the full request timeout"
+        );
+        let hedged_for_owner = filter_eth_fullnode_native_recovery_inflight_headers_v1(
+            chain_id,
+            peer_a,
+            ETH_FULLNODE_NATIVE_RECOVERY_INFLIGHT_BODY_KIND_V1,
+            pending.clone(),
+        );
+        assert_eq!(
+            hedged_for_owner
+                .iter()
+                .map(|header| header.number)
+                .collect::<Vec<_>>(),
+            vec![7_002, 7_003],
+            "the owner peer still must not duplicate its own stale material request"
         );
 
         clear_eth_fullnode_native_recovery_inflight_request_v1(

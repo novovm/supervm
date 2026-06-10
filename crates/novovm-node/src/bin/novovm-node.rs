@@ -2469,6 +2469,33 @@ fn eth_rlpx_forward_progress_stalled_v1(
             >= stalled_refresh_interval_ticks.max(1)
 }
 
+fn eth_rlpx_material_recovery_rollback_stalled_v1(
+    current_head_material_missing: bool,
+    tick: usize,
+    last_complete_head_progress_tick: usize,
+    stalled_refresh_interval_ticks: usize,
+    body_material_request_transport_failure: bool,
+    body_recovery_stalled: bool,
+    receipt_recovery_stalled: bool,
+    ready_peers: usize,
+    sync_requests: usize,
+) -> bool {
+    if !current_head_material_missing
+        || tick.saturating_sub(last_complete_head_progress_tick)
+            < stalled_refresh_interval_ticks.max(4)
+    {
+        return false;
+    }
+    if body_material_request_transport_failure || body_recovery_stalled || receipt_recovery_stalled
+    {
+        return true;
+    }
+    ready_peers == 0
+        && sync_requests == 0
+        && tick.saturating_sub(last_complete_head_progress_tick)
+            >= stalled_refresh_interval_ticks.max(8)
+}
+
 fn eth_rlpx_idle_head_probe_stalled_v1(
     highest_block: u64,
     current_block: u64,
@@ -5879,13 +5906,13 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
                 }
             }
         }
+        let any_request_transport_failure =
+            eth_rlpx_report_has_request_transport_failure_v1(&report);
+        let header_request_transport_failure =
+            eth_rlpx_report_has_header_request_transport_failure_v1(&report);
+        let body_material_request_transport_failure =
+            eth_rlpx_report_has_body_material_request_transport_failure_v1(&report);
         if adaptive_batch_enabled {
-            let any_request_transport_failure =
-                eth_rlpx_report_has_request_transport_failure_v1(&report);
-            let header_request_transport_failure =
-                eth_rlpx_report_has_header_request_transport_failure_v1(&report);
-            let body_material_request_transport_failure =
-                eth_rlpx_report_has_body_material_request_transport_failure_v1(&report);
             let header_transport_failure = eth_rlpx_transport_failure_should_backoff_headers_v1(
                 header_request_transport_failure,
                 highest_sync_block,
@@ -6091,9 +6118,17 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
             && highest_sync_block == 0
             && tick.saturating_sub(last_complete_head_progress_tick)
                 >= stalled_refresh_interval_ticks;
-        let material_recovery_stalled = current_head_material_missing
-            && tick.saturating_sub(last_complete_head_progress_tick)
-                >= stalled_refresh_interval_ticks.max(4);
+        let material_recovery_stalled = eth_rlpx_material_recovery_rollback_stalled_v1(
+            current_head_material_missing,
+            tick,
+            last_complete_head_progress_tick,
+            stalled_refresh_interval_ticks,
+            body_material_request_transport_failure,
+            body_recovery_stalled,
+            receipt_recovery_stalled,
+            report.ready_peers,
+            report.sync_requests,
+        );
         if native_history_store_enabled && material_recovery_stalled {
             if let Some(store) = native_history_store.as_mut() {
                 let rollback_floor = current_sync_block
@@ -7094,6 +7129,31 @@ mod mainline_evm_cli_tests {
             eth_rlpx_adaptive_public_sync_batch_v1(32, 192, 16, true, false),
             64
         );
+    }
+
+    #[test]
+    fn eth_rlpx_material_rollback_waits_for_material_failure_or_hard_stall_v1() {
+        assert!(
+            !eth_rlpx_material_recovery_rollback_stalled_v1(
+                true, 6, 0, 4, false, false, false, 1, 1,
+            ),
+            "ready/sync activity must leave room for material recovery hedging"
+        );
+        assert!(
+            !eth_rlpx_material_recovery_rollback_stalled_v1(
+                true, 6, 0, 4, false, false, false, 0, 0,
+            ),
+            "a short no-activity gap after header-only progress is not enough to rollback"
+        );
+        assert!(eth_rlpx_material_recovery_rollback_stalled_v1(
+            true, 6, 0, 4, true, false, false, 0, 0,
+        ));
+        assert!(eth_rlpx_material_recovery_rollback_stalled_v1(
+            true, 6, 0, 4, false, true, false, 0, 0,
+        ));
+        assert!(eth_rlpx_material_recovery_rollback_stalled_v1(
+            true, 8, 0, 4, false, false, false, 0, 0,
+        ));
     }
 
     #[test]
