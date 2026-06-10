@@ -2079,15 +2079,18 @@ fn eth_promote_successful_peer_endpoints_v1(
 fn eth_peer_snapshot_has_productive_runtime_v1(snapshot: &EthPeerSessionSnapshot) -> bool {
     let successful_after_last_failure = snapshot.last_success_unix_ms > 0
         && snapshot.last_success_unix_ms > snapshot.last_failure_unix_ms;
+    let no_failure_after_material = snapshot.last_failure_unix_ms == 0
+        || snapshot.last_success_unix_ms > snapshot.last_failure_unix_ms;
     snapshot.session_ready
         || matches!(
             snapshot.lifecycle_stage,
             EthPeerLifecycleStageV1::Ready | EthPeerLifecycleStageV1::Syncing
         )
         || successful_after_last_failure
-        || snapshot.header_response_count > 0
-        || snapshot.body_response_count > 0
-        || snapshot.sync_contribution_count > 0
+        || (no_failure_after_material
+            && (snapshot.header_response_count > 0
+                || snapshot.body_response_count > 0
+                || snapshot.sync_contribution_count > 0))
 }
 
 fn eth_peer_snapshot_has_unproductive_recent_failure_v1(
@@ -6860,6 +6863,47 @@ mod mainline_evm_cli_tests {
         assert_eq!(reordered[1].node_hint, fresh_peer);
         assert_eq!(reordered[2].node_hint, saturated_peer);
         assert_eq!(reordered[3].node_hint, timeout_peer);
+    }
+
+    #[test]
+    fn eth_peer_endpoint_cache_demotes_stale_material_peer_after_body_timeout_v1() {
+        let chain_id = 8_881_229_005_u64;
+        let stale_material_peer = 0x1111_1111_1111_1111_u64;
+        let fresh_peer = 0x2222_2222_2222_2222_u64;
+        let endpoints = vec![
+            PluginPeerEndpoint {
+                endpoint: "enode://1111111111111111@157.90.35.166:30303".to_string(),
+                node_hint: stale_material_peer,
+                addr_hint: "157.90.35.166:30303".to_string(),
+            },
+            PluginPeerEndpoint {
+                endpoint: "enode://2222222222222222@65.108.70.101:30303".to_string(),
+                node_hint: fresh_peer,
+                addr_hint: "65.108.70.101:30303".to_string(),
+            },
+        ];
+        novovm_network::observe_network_runtime_eth_peer_header_success_v1(
+            chain_id,
+            stale_material_peer,
+            25_280_000,
+        );
+        novovm_network::observe_network_runtime_eth_peer_body_success_v1(
+            chain_id,
+            stale_material_peer,
+            25_280_000,
+        );
+        novovm_network::observe_network_runtime_eth_peer_timeout_v1(
+            chain_id,
+            stale_material_peer,
+            "bodies_timeout",
+        );
+
+        let reordered =
+            eth_reorder_peer_endpoints_by_runtime_reputation_v1(chain_id, endpoints.as_slice());
+
+        assert_eq!(reordered.len(), 2);
+        assert_eq!(reordered[0].node_hint, fresh_peer);
+        assert_eq!(reordered[1].node_hint, stale_material_peer);
     }
 
     #[test]
