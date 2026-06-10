@@ -472,8 +472,17 @@ impl EthFullnodeNativePeerWorkerV1 {
 
         let bootstrap_started = Instant::now();
         let bootstrap_tick_budget = eth_fullnode_native_rlpx_bootstrap_tick_budget_v1();
+        let bootstrap_job_limit = eth_fullnode_native_rlpx_bootstrap_jobs_per_tick_v1();
         let mut bootstrap_jobs = Vec::new();
         for &peer in plan.bootstrap_peers.iter() {
+            if bootstrap_jobs.len() >= bootstrap_job_limit {
+                report.skipped_bootstrap_budget_peers = plan
+                    .bootstrap_peers
+                    .len()
+                    .saturating_sub(bootstrap_jobs.len())
+                    .saturating_sub(report.skipped_missing_endpoint_peers);
+                break;
+            }
             if !bootstrap_jobs.is_empty() && bootstrap_started.elapsed() >= bootstrap_tick_budget {
                 report.skipped_bootstrap_budget_peers = plan
                     .bootstrap_peers
@@ -1168,6 +1177,14 @@ fn eth_fullnode_native_rlpx_bootstrap_tick_budget_v1() -> Duration {
         .unwrap_or(4_000)
         .clamp(1_000, 60_000);
     Duration::from_millis(timeout_ms)
+}
+
+fn eth_fullnode_native_rlpx_bootstrap_jobs_per_tick_v1() -> usize {
+    std::env::var("NOVOVM_ETH_RLPX_BOOTSTRAP_JOBS_PER_TICK")
+        .ok()
+        .and_then(|raw| raw.trim().parse::<usize>().ok())
+        .unwrap_or(16)
+        .clamp(1, 128)
 }
 
 fn evm_native_header_wire_from_rlpx_header_v1(
@@ -14842,6 +14859,7 @@ mod tests {
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         let _connect_timeout = clear_test_env_var_v1("NOVOVM_ETH_RLPX_CONNECT_TIMEOUT_MS");
         let _tick_budget = clear_test_env_var_v1("NOVOVM_ETH_RLPX_BOOTSTRAP_TICK_BUDGET_MS");
+        let _job_limit = clear_test_env_var_v1("NOVOVM_ETH_RLPX_BOOTSTRAP_JOBS_PER_TICK");
 
         assert_eq!(
             eth_fullnode_native_rlpx_connect_timeout_v1(),
@@ -14851,6 +14869,7 @@ mod tests {
             eth_fullnode_native_rlpx_bootstrap_tick_budget_v1(),
             Duration::from_millis(4_000)
         );
+        assert_eq!(eth_fullnode_native_rlpx_bootstrap_jobs_per_tick_v1(), 16);
     }
 
     #[test]
@@ -14991,6 +15010,52 @@ mod tests {
         assert!(report.lifecycle_summary.ready_count >= 1);
 
         server.join().expect("server join");
+    }
+
+    #[test]
+    fn real_rlpx_bootstrap_job_limit_bounds_public_fanout_v1() {
+        let _guard = eth_rlpx_env_test_lock_v1()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let _job_limit = set_test_env_var_v1("NOVOVM_ETH_RLPX_BOOTSTRAP_JOBS_PER_TICK", "2");
+
+        let chain_id = 9_914_003_201_u64;
+        let local = NodeId(1_113_201);
+        let peers = (0..6_u64)
+            .map(|offset| NodeId(1_113_202 + offset))
+            .collect::<Vec<_>>();
+        let endpoints = peers
+            .iter()
+            .map(|peer| PluginPeerEndpoint {
+                endpoint: format!("enode://00@127.0.0.1:{}", 30303 + peer.0 % 100),
+                node_hint: peer.0,
+                addr_hint: format!("not-a-real-socket-{}", peer.0),
+            })
+            .collect::<Vec<_>>();
+
+        let mut budget = default_eth_fullnode_budget_hooks_v1();
+        budget.active_native_peer_soft_limit = 6;
+        budget.active_native_peer_hard_limit = 6;
+        budget.sync_target_fanout = 6;
+        budget.sync_request_interval_ms = u64::MAX;
+        let worker = EthFullnodeNativePeerWorkerV1::new(EthFullnodeNativePeerWorkerConfigV1 {
+            chain_id,
+            local_node: local,
+            peers,
+            peer_endpoints: endpoints,
+            recv_budget: 1,
+            sync_target_fanout: 6,
+            budget_hooks: budget,
+        });
+
+        let report = worker
+            .drive_real_network_once()
+            .expect("bootstrap job limit tick");
+
+        assert_eq!(report.scheduled_bootstrap_peers, 6);
+        assert_eq!(report.attempted_bootstrap_peers, 2);
+        assert_eq!(report.failed_bootstrap_peers, 2);
+        assert_eq!(report.skipped_bootstrap_budget_peers, 4);
     }
 
     #[test]
