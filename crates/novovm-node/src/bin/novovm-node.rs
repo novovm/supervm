@@ -2477,6 +2477,7 @@ fn eth_rlpx_material_recovery_rollback_stalled_v1(
     current_head_body_available: bool,
     current_head_receipt_available: bool,
     tick: usize,
+    last_sync_progress_tick: usize,
     last_complete_head_progress_tick: usize,
     stalled_refresh_interval_ticks: usize,
     body_material_request_transport_failure: bool,
@@ -2488,13 +2489,14 @@ fn eth_rlpx_material_recovery_rollback_stalled_v1(
     if !current_head_material_missing
         || tick.saturating_sub(last_complete_head_progress_tick)
             < stalled_refresh_interval_ticks.max(4)
+        || tick.saturating_sub(last_sync_progress_tick) < stalled_refresh_interval_ticks.max(4)
     {
         return false;
     }
     if !current_head_body_available
-        && (body_material_request_transport_failure
-            || body_recovery_stalled
-            || receipt_recovery_stalled)
+        && (body_recovery_stalled
+            || receipt_recovery_stalled
+            || (body_material_request_transport_failure && ready_peers == 0 && sync_requests == 0))
     {
         return true;
     }
@@ -6134,6 +6136,7 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
             current_head_body_available,
             current_head_receipt_available,
             tick,
+            last_sync_progress_tick,
             last_complete_head_progress_tick,
             stalled_refresh_interval_ticks,
             body_material_request_transport_failure,
@@ -7189,33 +7192,51 @@ mod mainline_evm_cli_tests {
     fn eth_rlpx_material_rollback_waits_for_material_failure_or_hard_stall_v1() {
         assert!(
             !eth_rlpx_material_recovery_rollback_stalled_v1(
-                true, false, false, 6, 0, 4, false, false, false, 1, 1,
+                true, false, false, 6, 0, 0, 4, false, false, false, 1, 1,
             ),
             "ready/sync activity must leave room for material recovery hedging"
         );
         assert!(
             !eth_rlpx_material_recovery_rollback_stalled_v1(
-                true, false, false, 6, 0, 4, false, false, false, 0, 0,
+                true, false, false, 6, 0, 0, 4, false, false, false, 0, 0,
             ),
             "a short no-activity gap after header-only progress is not enough to rollback"
         );
         assert!(eth_rlpx_material_recovery_rollback_stalled_v1(
-            true, false, false, 6, 0, 4, true, false, false, 0, 0,
-        ));
-        assert!(eth_rlpx_material_recovery_rollback_stalled_v1(
-            true, false, false, 6, 0, 4, false, true, false, 0, 0,
+            true, false, false, 6, 0, 0, 4, true, false, false, 0, 0,
         ));
         assert!(
             !eth_rlpx_material_recovery_rollback_stalled_v1(
-                true, true, false, 6, 0, 4, true, true, false, 1, 1,
+                true, false, false, 6, 0, 0, 4, true, false, false, 2, 1,
+            ),
+            "fresh ready/sync material activity must not rollback on a historical body failure"
+        );
+        assert!(
+            !eth_rlpx_material_recovery_rollback_stalled_v1(
+                true, false, false, 12, 12, 2, 4, true, false, false, 0, 0,
+            ),
+            "fresh header-only progress must give body recovery a full material window"
+        );
+        assert!(eth_rlpx_material_recovery_rollback_stalled_v1(
+            true, false, false, 6, 0, 0, 4, false, true, false, 0, 0,
+        ));
+        assert!(
+            !eth_rlpx_material_recovery_rollback_stalled_v1(
+                true, true, false, 6, 0, 0, 4, true, true, false, 1, 1,
             ),
             "body progress must not be rolled back while receipt recovery still has an active peer"
         );
+        assert!(
+            !eth_rlpx_material_recovery_rollback_stalled_v1(
+                true, true, false, 16, 15, 2, 4, false, false, true, 0, 0,
+            ),
+            "fresh body progress must give receipt recovery a full material window"
+        );
         assert!(eth_rlpx_material_recovery_rollback_stalled_v1(
-            true, true, false, 6, 0, 4, false, false, true, 0, 0,
+            true, true, false, 6, 0, 0, 4, false, false, true, 0, 0,
         ));
         assert!(eth_rlpx_material_recovery_rollback_stalled_v1(
-            true, false, false, 8, 0, 4, false, false, false, 0, 0,
+            true, false, false, 8, 0, 0, 4, false, false, false, 0, 0,
         ));
     }
 
