@@ -2222,6 +2222,14 @@ cargo test -p novovm-evm-gateway rlpx_gateway_capability_guard_advertises_eth71_
 cargo test -p novovm-evm-gateway rlpx_gateway_classifies_eth71_bal_messages_as_supported_sync -- --nocapture
 ```
 
+Current geth upstream impact gate：
+
+```powershell
+git -C D:\WEB3_AI\go-ethereum rev-parse HEAD
+```
+
+2026-06-10 复核结果：本地 geth HEAD 为 `43b7b4e8d9f9c8bf74d27bc6b13cb6c90a6128f8`，GitHub API 返回的 `master` SHA 相同；本轮 shell 里的 `git pull --ff-only`/`git fetch --prune` 因 GitHub transport reset/443 timeout 未完成，但未改变本地仓库。对 SUPERVM 的影响保持收敛：`#35130` 只修 debug clearTxpool 测试，`#33347` 只新增 debug txpool RPC，`#35122` pooled-tx send-after-write 语义已由 SUPERVM outbound announce 写成功后标记 propagated 覆盖，`#35110` BAL 空 `slotChanges` 拒绝已由 raw BAL 校验覆盖。这里不新增 debug/gateway/fixture/BAL 范围，下一步只围绕 Ethereum mainnet long-sync v1。
+
 Gateway JSON-RPC 产品面 smoke：
 
 ```powershell
