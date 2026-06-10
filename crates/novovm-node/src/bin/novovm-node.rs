@@ -54,11 +54,12 @@ use novovm_network::{
     snapshot_network_runtime_native_snap_trie_node_snapshots_v1, AvailabilityController,
     AvailabilityDecision, AvailabilityMode, CapabilityReadiness, CapabilityRouteHint,
     EthDiscv4EndpointV1, EthDiscv4NeighborV1, EthFullnodeBudgetHooksV1,
-    EthFullnodeNativePeerDrivePhaseV1, EthFullnodeNativePeerWorkerConfigV1,
-    EthFullnodeNativePeerWorkerV1, EthFullnodeNativeRealDriveReportV1, EthPeerLifecycleStageV1,
-    EthPeerSessionSnapshot, FileQueueStore, GossipMessage, InMemoryQueueStore,
-    L3RegionalRoutingTable, L4LocalRoutingTable, L4PeerRef, MessageType,
-    NetworkRuntimeNativeBodySnapshotV1, NetworkRuntimeNativeCanonicalBlockStateV1,
+    EthFullnodeNativePeerDrivePhaseV1, EthFullnodeNativePeerFailureV1,
+    EthFullnodeNativePeerWorkerConfigV1, EthFullnodeNativePeerWorkerV1,
+    EthFullnodeNativeRealDriveReportV1, EthPeerLifecycleStageV1, EthPeerSessionSnapshot,
+    FileQueueStore, GossipMessage, InMemoryQueueStore, L3RegionalRoutingTable, L4LocalRoutingTable,
+    L4PeerRef, MessageType, NetworkRuntimeNativeBodySnapshotV1,
+    NetworkRuntimeNativeCanonicalBlockStateV1,
     NetworkRuntimeNativeExecutionBudgetTargetObservationV1, NetworkRuntimeNativeHeadSnapshotV1,
     NetworkRuntimeNativeHeaderSnapshotV1, NetworkRuntimeNativeReceiptSnapshotV1,
     NetworkRuntimeNativeSnapAccountRangeProgressV1, NetworkRuntimeNativeSnapAccountSnapshotV1,
@@ -2328,14 +2329,53 @@ fn eth_rlpx_adaptive_public_sync_batch_v1(
 fn eth_rlpx_report_has_request_transport_failure_v1(
     report: &EthFullnodeNativeRealDriveReportV1,
 ) -> bool {
+    report
+        .peer_failures
+        .iter()
+        .any(eth_rlpx_sync_failure_is_request_transport_failure_v1)
+}
+
+fn eth_rlpx_sync_failure_is_request_transport_failure_v1(
+    failure: &EthFullnodeNativePeerFailureV1,
+) -> bool {
+    matches!(failure.phase, EthFullnodeNativePeerDrivePhaseV1::Sync)
+        && (failure.error.contains("rlpx_session_closed")
+            || failure.error.contains("rlpx_frame_body_read_failed")
+            || failure.error.contains("rlpx_remote_disconnected_ingest")
+            || failure.error.contains("rlpx_request_timeout:headers")
+            || failure.error.contains("rlpx_request_timeout:bodies")
+            || failure.error.contains("rlpx_request_timeout:receipts"))
+}
+
+fn eth_rlpx_report_has_header_request_transport_failure_v1(
+    report: &EthFullnodeNativeRealDriveReportV1,
+) -> bool {
     report.peer_failures.iter().any(|failure| {
         matches!(failure.phase, EthFullnodeNativePeerDrivePhaseV1::Sync)
-            && (failure.error.contains("rlpx_session_closed")
+            && (failure.error.contains("rlpx_request_timeout:headers")
+                || failure
+                    .error
+                    .contains("rlpx_session_closed:pending=headers"))
+    })
+}
+
+fn eth_rlpx_report_has_body_material_request_transport_failure_v1(
+    report: &EthFullnodeNativeRealDriveReportV1,
+) -> bool {
+    report.peer_failures.iter().any(|failure| {
+        matches!(failure.phase, EthFullnodeNativePeerDrivePhaseV1::Sync)
+            && (failure.error.contains("rlpx_request_timeout:bodies")
+                || failure.error.contains("rlpx_request_timeout:receipts")
                 || failure.error.contains("rlpx_frame_body_read_failed")
-                || failure.error.contains("rlpx_remote_disconnected_ingest")
-                || failure.error.contains("rlpx_request_timeout:headers")
-                || failure.error.contains("rlpx_request_timeout:bodies")
-                || failure.error.contains("rlpx_request_timeout:receipts"))
+                || failure.error.contains("rlpx_session_closed:pending=bodies")
+                || failure
+                    .error
+                    .contains("rlpx_session_closed:pending=receipts")
+                || failure
+                    .error
+                    .contains("rlpx_session_closed:pending=body_or_receipt_material")
+                || (failure.error.contains("rlpx_session_closed")
+                    && !failure.error.contains("pending=headers")))
     })
 }
 
@@ -5646,16 +5686,20 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
             }
         }
         if adaptive_batch_enabled {
-            let request_transport_failure =
+            let any_request_transport_failure =
                 eth_rlpx_report_has_request_transport_failure_v1(&report);
+            let header_request_transport_failure =
+                eth_rlpx_report_has_header_request_transport_failure_v1(&report);
+            let body_material_request_transport_failure =
+                eth_rlpx_report_has_body_material_request_transport_failure_v1(&report);
             let header_transport_failure = eth_rlpx_transport_failure_should_backoff_headers_v1(
-                request_transport_failure,
+                header_request_transport_failure,
                 highest_sync_block,
                 current_sync_block,
                 current_head_material_missing,
             );
-            let body_recovery_pressure =
-                request_transport_failure || (sync_made_progress && current_head_material_missing);
+            let body_recovery_pressure = body_material_request_transport_failure
+                || (sync_made_progress && current_head_material_missing);
             let adaptive_headers_batch_input = eth_rlpx_adaptive_headers_batch_input_v1(
                 runtime_headers_batch,
                 native_sync.map(|status| status.phase),
@@ -5706,7 +5750,11 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
                     runtime_headers_batch,
                     old_bodies_batch,
                     runtime_bodies_batch,
-                    if request_transport_failure {
+                    if header_request_transport_failure {
+                        "header_request_transport_failure"
+                    } else if body_material_request_transport_failure {
+                        "body_material_request_transport_failure"
+                    } else if any_request_transport_failure {
                         "request_transport_failure"
                     } else if sync_made_progress && current_head_material_missing {
                         "header_only_body_backoff"
@@ -6966,6 +7014,84 @@ mod mainline_evm_cli_tests {
                 eth_rlpx_report_has_request_transport_failure_v1(&report),
             ),
             192
+        );
+    }
+
+    #[test]
+    fn eth_rlpx_receipt_session_close_does_not_backoff_header_batch_v1() {
+        let mut report = EthFullnodeNativeRealDriveReportV1::default();
+        report
+            .peer_failures
+            .push(novovm_network::EthFullnodeNativePeerFailureV1 {
+                peer_id: 17,
+                endpoint: Some("157.90.35.166:30303".to_string()),
+                phase: novovm_network::EthFullnodeNativePeerDrivePhaseV1::Sync,
+                class: novovm_network::EthFullnodeNativePeerFailureClassV1::Io,
+                lifecycle_class: Some(novovm_network::EthPeerFailureClassV1::Disconnect),
+                reason_code: None,
+                reason_name: Some("unknown".to_string()),
+                error: "rlpx_session_closed:pending=receipts:endpoint=157.90.35.166:30303:eof"
+                    .to_string(),
+            });
+
+        assert!(eth_rlpx_report_has_request_transport_failure_v1(&report));
+        assert!(!eth_rlpx_report_has_header_request_transport_failure_v1(
+            &report
+        ));
+        assert!(eth_rlpx_report_has_body_material_request_transport_failure_v1(&report));
+        assert_eq!(
+            eth_rlpx_adaptive_public_sync_batch_v1(
+                64,
+                192,
+                4,
+                false,
+                eth_rlpx_report_has_header_request_transport_failure_v1(&report),
+            ),
+            64,
+            "receipt transport failures must not shrink forward header throughput"
+        );
+        assert_eq!(
+            eth_rlpx_adaptive_public_sync_batch_v1(
+                64,
+                128,
+                1,
+                false,
+                eth_rlpx_report_has_body_material_request_transport_failure_v1(&report),
+            ),
+            32
+        );
+    }
+
+    #[test]
+    fn eth_rlpx_header_session_close_backs_off_header_batch_v1() {
+        let mut report = EthFullnodeNativeRealDriveReportV1::default();
+        report
+            .peer_failures
+            .push(novovm_network::EthFullnodeNativePeerFailureV1 {
+                peer_id: 18,
+                endpoint: Some("157.90.35.166:30303".to_string()),
+                phase: novovm_network::EthFullnodeNativePeerDrivePhaseV1::Sync,
+                class: novovm_network::EthFullnodeNativePeerFailureClassV1::Io,
+                lifecycle_class: Some(novovm_network::EthPeerFailureClassV1::Disconnect),
+                reason_code: None,
+                reason_name: Some("unknown".to_string()),
+                error: "rlpx_session_closed:pending=headers:endpoint=157.90.35.166:30303:eof"
+                    .to_string(),
+            });
+
+        assert!(eth_rlpx_report_has_request_transport_failure_v1(&report));
+        assert!(eth_rlpx_report_has_header_request_transport_failure_v1(
+            &report
+        ));
+        assert_eq!(
+            eth_rlpx_adaptive_public_sync_batch_v1(
+                64,
+                192,
+                4,
+                false,
+                eth_rlpx_report_has_header_request_transport_failure_v1(&report),
+            ),
+            32
         );
     }
 

@@ -2959,8 +2959,10 @@ fn drive_eth_fullnode_native_rlpx_peer_session_once_v1(
                         disconnected = true;
                         if pending_request {
                             disconnect_error = Some(NetworkError::Io(format!(
-                                "rlpx_session_closed:endpoint={}:{}",
-                                session.endpoint.addr_hint, err
+                                "rlpx_session_closed:pending={}:endpoint={}:{}",
+                                eth_fullnode_native_pending_request_kind_v1(session),
+                                session.endpoint.addr_hint,
+                                err
                             )));
                         }
                         break;
@@ -4335,6 +4337,32 @@ fn eth_fullnode_native_rlpx_session_has_pending_request_v1(
         || session.last_snap_trie_nodes_request_id.is_some()
         || session.last_block_access_lists_request_id.is_some()
         || !session.pending_body_headers.is_empty()
+}
+
+fn eth_fullnode_native_pending_request_kind_v1(
+    session: &EthFullnodeNativeRlpxLivePeerSessionV1,
+) -> &'static str {
+    if session.last_receipts_request_id.is_some() {
+        "receipts"
+    } else if session.last_bodies_request_id.is_some() {
+        "bodies"
+    } else if session.last_headers_request_id.is_some() && session.pending_body_headers.is_empty() {
+        "headers"
+    } else if session.last_block_access_lists_request_id.is_some() {
+        "block_access_lists"
+    } else if session.last_snap_storage_ranges_request_id.is_some() {
+        "snap_storage_ranges"
+    } else if session.last_snap_byte_codes_request_id.is_some() {
+        "snap_byte_codes"
+    } else if session.last_snap_trie_nodes_request_id.is_some() {
+        "snap_trie_nodes"
+    } else if session.last_snap_account_range_request_id.is_some() {
+        "snap_account_range"
+    } else if !session.pending_body_headers.is_empty() {
+        "body_or_receipt_material"
+    } else {
+        "none"
+    }
 }
 
 fn eth_fullnode_native_budget_capped_headers_batch_v1(
@@ -11210,6 +11238,54 @@ mod tests {
         assert!(
             session.last_bodies_request_id.is_none(),
             "same peer must not be immediately retried for an empty body response"
+        );
+    }
+
+    #[test]
+    fn rlpx_pending_request_kind_tracks_active_material_request_v1() {
+        let chain_id = 9_929_002_u64;
+        let mut session = dummy_rlpx_live_session(chain_id);
+        assert_eq!(
+            eth_fullnode_native_pending_request_kind_v1(&session),
+            "none"
+        );
+
+        session.last_headers_request_id = Some(1);
+        assert_eq!(
+            eth_fullnode_native_pending_request_kind_v1(&session),
+            "headers"
+        );
+
+        session.last_headers_request_id = None;
+        session.last_bodies_request_id = Some(2);
+        assert_eq!(
+            eth_fullnode_native_pending_request_kind_v1(&session),
+            "bodies"
+        );
+
+        session.last_bodies_request_id = None;
+        session.last_receipts_request_id = Some(3);
+        assert_eq!(
+            eth_fullnode_native_pending_request_kind_v1(&session),
+            "receipts"
+        );
+
+        session.last_receipts_request_id = None;
+        session
+            .pending_body_headers
+            .push(EthFullnodeNativePendingBodyHeaderV1 {
+                number: 9_000,
+                hash: [0xb1; 32],
+                parent_hash: [0xb0; 32],
+                state_root: [0xb2; 32],
+                transactions_root: [0xb3; 32],
+                receipts_root: [0xb4; 32],
+                tx_count: None,
+                withdrawal_count: None,
+            });
+        assert_eq!(
+            eth_fullnode_native_pending_request_kind_v1(&session),
+            "body_or_receipt_material"
         );
     }
 
