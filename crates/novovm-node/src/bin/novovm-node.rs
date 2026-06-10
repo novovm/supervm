@@ -2474,6 +2474,8 @@ fn eth_rlpx_forward_progress_stalled_v1(
 
 fn eth_rlpx_material_recovery_rollback_stalled_v1(
     current_head_material_missing: bool,
+    current_head_body_available: bool,
+    current_head_receipt_available: bool,
     tick: usize,
     last_complete_head_progress_tick: usize,
     stalled_refresh_interval_ticks: usize,
@@ -2489,8 +2491,14 @@ fn eth_rlpx_material_recovery_rollback_stalled_v1(
     {
         return false;
     }
-    if body_material_request_transport_failure || body_recovery_stalled || receipt_recovery_stalled
+    if !current_head_body_available
+        && (body_material_request_transport_failure
+            || body_recovery_stalled
+            || receipt_recovery_stalled)
     {
+        return true;
+    }
+    if current_head_body_available && !current_head_receipt_available && receipt_recovery_stalled {
         return true;
     }
     ready_peers == 0
@@ -2537,7 +2545,7 @@ const ETH_RLPX_PUBLIC_SYNC_DEFAULT_RUNTIME_SNAPSHOT_BLOCKS_V1: u64 = 8;
 const ETH_RLPX_PUBLIC_SYNC_DEFAULT_RUNTIME_PENDING_TXS_V1: u64 = 128;
 const ETH_RLPX_PUBLIC_SYNC_DEFAULT_FINALIZE_HEADERS_BATCH_V1: u64 = 64;
 const ETH_RLPX_PUBLIC_SYNC_DEFAULT_ADAPTIVE_HEADERS_MIN_BATCH_V1: u64 = 4;
-const ETH_RLPX_PUBLIC_SYNC_DEFAULT_ADAPTIVE_BODIES_MIN_BATCH_V1: u64 = 4;
+const ETH_RLPX_PUBLIC_SYNC_DEFAULT_ADAPTIVE_BODIES_MIN_BATCH_V1: u64 = 1;
 
 fn eth_rlpx_apply_public_sync_runtime_defaults_v1(
     budget: &mut EthFullnodeBudgetHooksV1,
@@ -5403,7 +5411,7 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
     .clamp(base_sync_target_fanout, max_peers);
     let mut runtime_sync_target_fanout = base_sync_target_fanout;
     let headers_batch = u64_env_clamped("NOVOVM_ETH_RLPX_HEADERS_BATCH", 192, 1, 2_048);
-    let bodies_batch = u64_env_clamped("NOVOVM_ETH_RLPX_BODIES_BATCH", 128, 1, 256);
+    let bodies_batch = u64_env_clamped("NOVOVM_ETH_RLPX_BODIES_BATCH", 1, 1, 256);
     let adaptive_batch_enabled = bool_env_default_true("NOVOVM_ETH_RLPX_ADAPTIVE_BATCH_ENABLED");
     let adaptive_headers_min_batch = u64_env_clamped(
         "NOVOVM_ETH_RLPX_ADAPTIVE_HEADERS_MIN_BATCH",
@@ -6123,6 +6131,8 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
                 >= stalled_refresh_interval_ticks;
         let material_recovery_stalled = eth_rlpx_material_recovery_rollback_stalled_v1(
             current_head_material_missing,
+            current_head_body_available,
+            current_head_receipt_available,
             tick,
             last_complete_head_progress_tick,
             stalled_refresh_interval_ticks,
@@ -7179,24 +7189,33 @@ mod mainline_evm_cli_tests {
     fn eth_rlpx_material_rollback_waits_for_material_failure_or_hard_stall_v1() {
         assert!(
             !eth_rlpx_material_recovery_rollback_stalled_v1(
-                true, 6, 0, 4, false, false, false, 1, 1,
+                true, false, false, 6, 0, 4, false, false, false, 1, 1,
             ),
             "ready/sync activity must leave room for material recovery hedging"
         );
         assert!(
             !eth_rlpx_material_recovery_rollback_stalled_v1(
-                true, 6, 0, 4, false, false, false, 0, 0,
+                true, false, false, 6, 0, 4, false, false, false, 0, 0,
             ),
             "a short no-activity gap after header-only progress is not enough to rollback"
         );
         assert!(eth_rlpx_material_recovery_rollback_stalled_v1(
-            true, 6, 0, 4, true, false, false, 0, 0,
+            true, false, false, 6, 0, 4, true, false, false, 0, 0,
         ));
         assert!(eth_rlpx_material_recovery_rollback_stalled_v1(
-            true, 6, 0, 4, false, true, false, 0, 0,
+            true, false, false, 6, 0, 4, false, true, false, 0, 0,
+        ));
+        assert!(
+            !eth_rlpx_material_recovery_rollback_stalled_v1(
+                true, true, false, 6, 0, 4, true, true, false, 1, 1,
+            ),
+            "body progress must not be rolled back while receipt recovery still has an active peer"
+        );
+        assert!(eth_rlpx_material_recovery_rollback_stalled_v1(
+            true, true, false, 6, 0, 4, false, false, true, 0, 0,
         ));
         assert!(eth_rlpx_material_recovery_rollback_stalled_v1(
-            true, 8, 0, 4, false, false, false, 0, 0,
+            true, false, false, 8, 0, 4, false, false, false, 0, 0,
         ));
     }
 
@@ -7319,7 +7338,7 @@ mod mainline_evm_cli_tests {
             ETH_RLPX_PUBLIC_SYNC_DEFAULT_ADAPTIVE_HEADERS_MIN_BATCH_V1,
             "product forward header probes should not collapse to one block by default"
         );
-        assert_eq!(ETH_RLPX_PUBLIC_SYNC_DEFAULT_ADAPTIVE_BODIES_MIN_BATCH_V1, 4);
+        assert_eq!(ETH_RLPX_PUBLIC_SYNC_DEFAULT_ADAPTIVE_BODIES_MIN_BATCH_V1, 1);
         assert_eq!(
             eth_rlpx_adaptive_public_sync_batch_v1(
                 2,
@@ -7329,7 +7348,7 @@ mod mainline_evm_cli_tests {
                 true,
             ),
             ETH_RLPX_PUBLIC_SYNC_DEFAULT_ADAPTIVE_BODIES_MIN_BATCH_V1,
-            "product body/receipt recovery should not collapse to single-block throughput by default"
+            "public body/receipt recovery should prefer single-block stability by default"
         );
     }
 
@@ -7633,15 +7652,15 @@ mod mainline_evm_cli_tests {
     #[test]
     fn eth_rlpx_public_sync_batch_defaults_are_product_chase_ready_v1() {
         let mut budget = EthFullnodeBudgetHooksV1::default();
-        eth_rlpx_apply_public_sync_batch_defaults_v1(&mut budget, 192, 128);
+        eth_rlpx_apply_public_sync_batch_defaults_v1(&mut budget, 192, 1);
         assert_eq!(budget.sync_pull_headers_batch, 192);
-        assert_eq!(budget.sync_pull_bodies_batch, 128);
+        assert_eq!(budget.sync_pull_bodies_batch, 1);
 
         budget.sync_pull_headers_batch = 32;
         budget.sync_pull_bodies_batch = 4;
-        eth_rlpx_apply_public_sync_batch_defaults_v1(&mut budget, 192, 128);
+        eth_rlpx_apply_public_sync_batch_defaults_v1(&mut budget, 192, 1);
         assert_eq!(budget.sync_pull_headers_batch, 32);
-        assert_eq!(budget.sync_pull_bodies_batch, 4);
+        assert_eq!(budget.sync_pull_bodies_batch, 1);
     }
 
     #[test]
@@ -7652,7 +7671,7 @@ mod mainline_evm_cli_tests {
         eth_rlpx_apply_public_sync_runtime_defaults_v1(
             &mut budget,
             192,
-            128,
+            1,
             8,
             ETH_RLPX_PUBLIC_SYNC_DEFAULT_REQUEST_TIMEOUT_MS_V1,
             ETH_RLPX_PUBLIC_SYNC_DEFAULT_REQUEST_INTERVAL_MS_V1,
@@ -7663,7 +7682,7 @@ mod mainline_evm_cli_tests {
 
         assert_eq!(budget.sync_target_fanout, 8);
         assert_eq!(budget.sync_pull_headers_batch, 192);
-        assert_eq!(budget.sync_pull_bodies_batch, 128);
+        assert_eq!(budget.sync_pull_bodies_batch, 1);
         assert_eq!(
             budget.sync_pull_finalize_batch,
             ETH_RLPX_PUBLIC_SYNC_DEFAULT_FINALIZE_HEADERS_BATCH_V1

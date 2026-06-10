@@ -156,6 +156,8 @@ const ETH_FULLNODE_NATIVE_HEADERS_SERVE_MAX_V1: usize = 192;
 const ETH_FULLNODE_NATIVE_BODIES_SERVE_MAX_V1: usize = 128;
 const ETH_FULLNODE_NATIVE_STATUS_HEAD_PIVOT_MIN_GAP_V1: u64 = 8_192;
 const ETH_FULLNODE_NATIVE_RUNTIME_PEER_DETAIL_LIMIT_V1: usize = 64;
+const ETH_FULLNODE_NATIVE_RLPX_DEFAULT_READ_TIMEOUT_MS_V1: u64 = 150;
+const ETH_FULLNODE_NATIVE_RLPX_MATERIAL_READ_TIMEOUT_MAX_MS_V1: u64 = 1_000;
 
 #[derive(Debug, Error)]
 pub enum NetworkError {
@@ -2136,6 +2138,70 @@ fn mark_eth_fullnode_native_rlpx_session_disconnected_v1(
     *disconnect_error = Some(err);
 }
 
+fn eth_fullnode_native_rlpx_stream_has_pending_inbound_v1(stream: &TcpStream) -> bool {
+    let mut probe = [0u8; 1];
+    stream.peek(&mut probe).is_ok_and(|read| read > 0)
+}
+
+fn eth_fullnode_native_rlpx_session_read_timeout_v1(
+    session: &EthFullnodeNativeRlpxLivePeerSessionV1,
+    budget_hooks: &EthFullnodeBudgetHooksV1,
+) -> Duration {
+    let timeout_ms =
+        if session.last_bodies_request_id.is_some() || session.last_receipts_request_id.is_some() {
+            budget_hooks.rlpx_request_timeout_ms.clamp(
+                ETH_FULLNODE_NATIVE_RLPX_DEFAULT_READ_TIMEOUT_MS_V1,
+                ETH_FULLNODE_NATIVE_RLPX_MATERIAL_READ_TIMEOUT_MAX_MS_V1,
+            )
+        } else {
+            ETH_FULLNODE_NATIVE_RLPX_DEFAULT_READ_TIMEOUT_MS_V1
+        };
+    Duration::from_millis(timeout_ms)
+}
+
+fn set_eth_fullnode_native_rlpx_session_read_timeout_v1(
+    session: &EthFullnodeNativeRlpxLivePeerSessionV1,
+    budget_hooks: &EthFullnodeBudgetHooksV1,
+) -> Result<(), NetworkError> {
+    session
+        .stream
+        .set_read_timeout(Some(eth_fullnode_native_rlpx_session_read_timeout_v1(
+            session,
+            budget_hooks,
+        )))
+        .map_err(|e| {
+            NetworkError::Io(format!(
+                "set_session_read_timeout_failed:{}:{e}",
+                session.endpoint.addr_hint
+            ))
+        })
+}
+
+fn dispatch_eth_fullnode_native_rlpx_pre_read_material_recovery_v1(
+    chain_id: u64,
+    peer: NodeId,
+    session: &mut EthFullnodeNativeRlpxLivePeerSessionV1,
+    budget_hooks: &EthFullnodeBudgetHooksV1,
+    report: &mut EthFullnodeNativeRlpxPeerTickReportV1,
+) -> Result<bool, NetworkError> {
+    if !session.pending_body_headers.is_empty() {
+        return Ok(false);
+    }
+    if now_unix_ms().saturating_sub(session.last_sync_request_unix_ms)
+        < budget_hooks.sync_request_interval_ms.max(1)
+    {
+        return Ok(false);
+    }
+    if eth_fullnode_native_rlpx_stream_has_pending_inbound_v1(&session.stream) {
+        return Ok(false);
+    }
+    if dispatch_eth_fullnode_native_rlpx_missing_body_recovery_v1(chain_id, peer, session, report)?
+    {
+        return Ok(true);
+    }
+    dispatch_eth_fullnode_native_rlpx_missing_receipts_recovery_v1(chain_id, peer, session, report)
+}
+
 fn drive_eth_fullnode_native_rlpx_peer_session_once_v1(
     chain_id: u64,
     local_node: NodeId,
@@ -2154,19 +2220,30 @@ fn drive_eth_fullnode_native_rlpx_peer_session_once_v1(
         let Some(session) = sessions.get_mut(&(chain_id, peer.0)) else {
             return Ok(report);
         };
-        session
-            .stream
-            .set_read_timeout(Some(Duration::from_millis(150)))
-            .map_err(|e| {
-                NetworkError::Io(format!(
-                    "set_session_read_timeout_failed:{}:{e}",
-                    session.endpoint.addr_hint
-                ))
-            })?;
+        set_eth_fullnode_native_rlpx_session_read_timeout_v1(session, budget_hooks)?;
         let _ =
             observe_network_runtime_peer_head(chain_id, peer.0, session.remote_status.latest_block);
 
-        loop {
+        if let Err(err) = dispatch_eth_fullnode_native_rlpx_pre_read_material_recovery_v1(
+            chain_id,
+            peer,
+            session,
+            budget_hooks,
+            &mut report,
+        ) {
+            mark_eth_fullnode_native_rlpx_session_disconnected_v1(
+                chain_id,
+                peer.0,
+                &mut disconnected,
+                &mut disconnect_error,
+                err,
+            );
+        }
+        if !disconnected {
+            set_eth_fullnode_native_rlpx_session_read_timeout_v1(session, budget_hooks)?;
+        }
+
+        while !disconnected {
             match eth_rlpx_read_wire_frame_v1(&mut session.stream, &mut session.frame_session) {
                 Ok((code, payload)) => {
                     report.inbound_frames = report.inbound_frames.saturating_add(1);
@@ -10668,6 +10745,24 @@ mod tests {
     }
 
     #[test]
+    fn rlpx_material_pending_uses_wider_session_read_timeout_v1() {
+        let chain_id = 9_926_203_u64;
+        let mut session = dummy_rlpx_live_session(chain_id);
+        let budget = default_eth_fullnode_budget_hooks_v1();
+
+        assert_eq!(
+            eth_fullnode_native_rlpx_session_read_timeout_v1(&session, &budget),
+            Duration::from_millis(ETH_FULLNODE_NATIVE_RLPX_DEFAULT_READ_TIMEOUT_MS_V1)
+        );
+
+        session.last_bodies_request_id = Some(7);
+        assert_eq!(
+            eth_fullnode_native_rlpx_session_read_timeout_v1(&session, &budget),
+            Duration::from_millis(ETH_FULLNODE_NATIVE_RLPX_MATERIAL_READ_TIMEOUT_MAX_MS_V1)
+        );
+    }
+
+    #[test]
     fn real_rlpx_worker_reconciles_stale_runtime_ready_without_live_session_v1() {
         let chain_id = 9_926_800_u64;
         let local = NodeId(9_926_800_001);
@@ -13578,6 +13673,7 @@ mod tests {
         let report0 = worker.drive_real_network_once().expect("connect tick");
         assert_eq!(report0.connected_peers, 1);
         assert_eq!(report0.sync_requests, 1);
+        assert_eq!(report0.receipt_updates, 1);
 
         let started = std::time::Instant::now();
         while started.elapsed() < Duration::from_secs(5)
@@ -13593,6 +13689,209 @@ mod tests {
         assert!(receipt.receipts_available);
         assert_eq!(receipt.receipt_count, 1);
         assert_eq!(receipt.raw_receipts, raw_receipts);
+
+        server.join().expect("server join");
+    }
+
+    #[test]
+    fn real_rlpx_worker_recovers_missing_body_before_read_timeout_v1() {
+        let chain_id = 9_926_106_u64;
+        let local = NodeId(1_300_106);
+        let remote = NodeId(1_300_107);
+        clear_network_runtime_native_snapshots_for_chain_v1(chain_id);
+
+        let empty_root = crate::eth_rlpx_empty_trie_root_v1();
+        let block_hash = [0xc6; 32];
+        set_network_runtime_native_header_snapshot_v1(
+            chain_id,
+            crate::runtime_status::NetworkRuntimeNativeHeaderSnapshotV1 {
+                chain_id,
+                number: 2_048,
+                hash: block_hash,
+                parent_hash: [0xc5; 32],
+                state_root: [0xc4; 32],
+                transactions_root: empty_root,
+                receipts_root: empty_root,
+                ommers_hash: crate::eth_rlpx_empty_ommers_hash_v1(),
+                logs_bloom: vec![0u8; 256],
+                gas_limit: Some(30_000_000),
+                gas_used: Some(0),
+                timestamp: Some(1_900_000_012),
+                base_fee_per_gas: Some(7),
+                withdrawals_root: Some(empty_root),
+                blob_gas_used: None,
+                excess_blob_gas: None,
+                block_access_list_hash: None,
+                source_peer_id: Some(remote.0),
+                observed_unix_ms: 1,
+            },
+        );
+        set_network_runtime_sync_status(
+            chain_id,
+            NetworkRuntimeSyncStatus {
+                peer_count: 1,
+                starting_block: 2_048,
+                current_block: 2_048,
+                highest_block: 2_048,
+            },
+        );
+
+        let responder_signing = k256::ecdsa::SigningKey::random(&mut rand::rngs::OsRng);
+        let responder_nodekey: [u8; 32] = responder_signing.to_bytes().into();
+        let responder_pub = crate::eth_rlpx_pubkey_from_nodekey_bytes_v1(&responder_nodekey)
+            .expect("derive responder pubkey");
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind rlpx listener");
+        let listen_addr = listener.local_addr().expect("rlpx listener addr");
+        let endpoint = PluginPeerEndpoint {
+            endpoint: format!(
+                "enode://{}@{}",
+                responder_pub
+                    .iter()
+                    .map(|b| format!("{b:02x}"))
+                    .collect::<String>(),
+                listen_addr
+            ),
+            node_hint: remote.0,
+            addr_hint: listen_addr.to_string(),
+        };
+        let server = thread::spawn(move || {
+            let (mut accepted, _) = listener.accept().expect("accept rlpx");
+            accepted
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .expect("set server read timeout");
+            accepted
+                .set_write_timeout(Some(Duration::from_secs(5)))
+                .expect("set server write timeout");
+            let mut responder = crate::eth_rlpx_handshake_responder_with_nodekey_v1(
+                &responder_nodekey,
+                &mut accepted,
+            )
+            .expect("responder handshake");
+            let (hello_code, hello_payload) =
+                crate::eth_rlpx_read_wire_frame_v1(&mut accepted, &mut responder.session)
+                    .expect("read initiator hello");
+            assert_eq!(hello_code, crate::ETH_RLPX_P2P_HELLO_MSG);
+            let initiator_hello = crate::eth_rlpx_parse_hello_payload_v1(hello_payload.as_slice())
+                .expect("parse initiator hello");
+            let responder_hello = crate::eth_rlpx_build_hello_payload_v1(
+                &responder.local_static_pub,
+                crate::default_eth_rlpx_capabilities_v1().as_slice(),
+                "SuperVM/missing-body-recovery-test",
+                listen_addr.port().into(),
+            );
+            crate::eth_rlpx_write_wire_frame_v1(
+                &mut accepted,
+                &mut responder.session,
+                crate::ETH_RLPX_P2P_HELLO_MSG,
+                responder_hello.as_slice(),
+            )
+            .expect("write responder hello");
+            if initiator_hello.protocol_version >= 5 {
+                responder.session.set_snappy(true);
+            }
+            let status = crate::EthRlpxStatusV1 {
+                protocol_version: crate::ETH_NATIVE_MAX_SUPPORTED_ETH_PROTOCOL_VERSION as u32,
+                network_id: chain_id,
+                genesis_hash: [0u8; 32],
+                fork_id: crate::build_eth_fork_id_from_chain_config_v1(
+                    &crate::resolve_eth_chain_config_v1(chain_id),
+                    0,
+                    0,
+                ),
+                earliest_block: 1,
+                latest_block: 2_048,
+                latest_block_hash: block_hash,
+            };
+            let status_payload = crate::eth_rlpx_build_status_payload_v1(status);
+            crate::eth_rlpx_write_wire_frame_v1(
+                &mut accepted,
+                &mut responder.session,
+                crate::ETH_RLPX_BASE_PROTOCOL_OFFSET + crate::ETH_RLPX_ETH_STATUS_MSG,
+                status_payload.as_slice(),
+            )
+            .expect("write responder status");
+            let (peer_status_code, _) =
+                crate::eth_rlpx_read_wire_frame_v1(&mut accepted, &mut responder.session)
+                    .expect("read peer status");
+            assert_eq!(
+                peer_status_code,
+                crate::ETH_RLPX_BASE_PROTOCOL_OFFSET + crate::ETH_RLPX_ETH_STATUS_MSG
+            );
+
+            loop {
+                let (code, payload) =
+                    crate::eth_rlpx_read_wire_frame_v1(&mut accepted, &mut responder.session)
+                        .expect("read worker request");
+                assert_ne!(
+                    code,
+                    crate::ETH_RLPX_BASE_PROTOCOL_OFFSET
+                        + crate::ETH_RLPX_ETH_GET_BLOCK_HEADERS_MSG,
+                    "missing body recovery must run before a new header pull"
+                );
+                if code
+                    == crate::ETH_RLPX_BASE_PROTOCOL_OFFSET
+                        + crate::ETH_RLPX_ETH_GET_BLOCK_BODIES_MSG
+                {
+                    let request =
+                        crate::eth_rlpx_parse_get_block_bodies_payload_v1(payload.as_slice())
+                            .expect("parse get block bodies");
+                    assert_eq!(request.hashes, vec![block_hash]);
+                    let body = crate::EthRlpxBlockBodyPayloadV1 {
+                        tx_rlp_items: Vec::new(),
+                        ommer_header_rlp_items: Vec::new(),
+                        withdrawal_rlp_items: Some(Vec::new()),
+                    };
+                    let bodies_payload =
+                        crate::eth_rlpx_build_block_bodies_payload_v1(request.request_id, &[body]);
+                    crate::eth_rlpx_write_wire_frame_v1(
+                        &mut accepted,
+                        &mut responder.session,
+                        crate::ETH_RLPX_BASE_PROTOCOL_OFFSET + crate::ETH_RLPX_ETH_BLOCK_BODIES_MSG,
+                        bodies_payload.as_slice(),
+                    )
+                    .expect("write block bodies");
+                    accepted
+                        .set_read_timeout(Some(Duration::from_millis(500)))
+                        .expect("set post-body read timeout");
+                    if let Ok((followup_code, _)) =
+                        crate::eth_rlpx_read_wire_frame_v1(&mut accepted, &mut responder.session)
+                    {
+                        assert_ne!(
+                            followup_code,
+                            crate::ETH_RLPX_BASE_PROTOCOL_OFFSET
+                                + crate::ETH_RLPX_ETH_GET_BLOCK_HEADERS_MSG,
+                            "fresh body material must defer the next header pull to a later tick"
+                        );
+                    }
+                    break;
+                }
+            }
+        });
+
+        let mut budget = default_eth_fullnode_budget_hooks_v1();
+        budget.active_native_peer_soft_limit = 1;
+        budget.active_native_peer_hard_limit = 1;
+        budget.tx_broadcast_interval_ms = u64::MAX;
+        let worker = EthFullnodeNativePeerWorkerV1::new(EthFullnodeNativePeerWorkerConfigV1 {
+            chain_id,
+            local_node: local,
+            peers: vec![remote],
+            peer_endpoints: vec![endpoint],
+            recv_budget: 1,
+            sync_target_fanout: 1,
+            budget_hooks: budget,
+        });
+
+        let report0 = worker.drive_real_network_once().expect("connect tick");
+        assert_eq!(report0.connected_peers, 1);
+        assert_eq!(report0.sync_requests, 1);
+        assert_eq!(report0.body_updates, 1);
+        let body = get_network_runtime_native_body_snapshot_v1(chain_id).expect("body snapshot");
+        assert_eq!(body.number, 2_048);
+        assert_eq!(body.block_hash, block_hash);
+        assert!(body.body_available);
+        assert!(body.txs_materialized);
+        assert!(body.tx_hashes.is_empty());
 
         server.join().expect("server join");
     }
