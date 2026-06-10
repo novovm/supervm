@@ -1800,6 +1800,7 @@ const ETH_PEER_FAILURE_BACKOFF_BASE_MS_V1: u64 = 2_500;
 const ETH_PEER_FAILURE_BACKOFF_MAX_MS_V1: u64 = 300_000;
 const ETH_PEER_PRODUCTIVE_DISCONNECT_RETRY_MS_V1: u64 = 750;
 const ETH_PEER_PRODUCTIVE_TIMEOUT_RETRY_MS_V1: u64 = 2_500;
+const ETH_PEER_PRODUCTIVE_TIMEOUT_BACKOFF_MAX_MS_V1: u64 = 7_500;
 const ETH_PEER_PRODUCTIVE_CAPACITY_REJECT_RETRY_MS_V1: u64 = 10_000;
 const ETH_PEER_CAPACITY_REJECT_BACKOFF_BASE_MS_V1: u64 = 60_000;
 const ETH_PEER_CAPACITY_REJECT_BACKOFF_MAX_MS_V1: u64 = 900_000;
@@ -1913,7 +1914,7 @@ fn eth_peer_timeout_cooldown_ms_v1(state: &EthPeerSessionState) -> u64 {
             .saturating_mul(1u64 << shift)
             .clamp(
                 ETH_PEER_PRODUCTIVE_TIMEOUT_RETRY_MS_V1,
-                ETH_PEER_TIMEOUT_BACKOFF_FLOOR_MS_V1,
+                ETH_PEER_PRODUCTIVE_TIMEOUT_BACKOFF_MAX_MS_V1,
             );
     }
     eth_peer_failure_backoff_ms_v1(count).max(ETH_PEER_TIMEOUT_BACKOFF_FLOOR_MS_V1)
@@ -5496,7 +5497,28 @@ mod tests {
         assert!(!snapshot.session_ready);
         let remaining = snapshot.cooldown_until_unix_ms.saturating_sub(before);
         assert!(remaining >= ETH_PEER_PRODUCTIVE_TIMEOUT_RETRY_MS_V1);
-        assert!(remaining < ETH_PEER_TIMEOUT_BACKOFF_FLOOR_MS_V1);
+        assert!(remaining <= ETH_PEER_PRODUCTIVE_TIMEOUT_BACKOFF_MAX_MS_V1);
+
+        {
+            let mut guard = eth_peer_sessions()
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let chain = guard.get_mut(&chain_id).expect("chain state");
+            let state = chain.get_mut(&productive.0).expect("peer");
+            state.cooldown_until_unix_ms = 0;
+        }
+        let before_second = eth_peer_now_unix_ms_v1();
+        observe_network_runtime_eth_peer_timeout_v1(chain_id, productive.0, "receipts_timeout");
+
+        let snapshot =
+            snapshot_network_runtime_eth_peer_sessions_for_peers_v1(chain_id, &[productive])[0]
+                .clone();
+        assert_eq!(snapshot.timeout_count, 2);
+        let remaining = snapshot
+            .cooldown_until_unix_ms
+            .saturating_sub(before_second);
+        assert!(remaining >= ETH_PEER_PRODUCTIVE_TIMEOUT_RETRY_MS_V1.saturating_mul(2));
+        assert!(remaining <= ETH_PEER_PRODUCTIVE_TIMEOUT_BACKOFF_MAX_MS_V1);
     }
 
     #[test]
