@@ -1165,7 +1165,7 @@ fn eth_fullnode_native_rlpx_bootstrap_tick_budget_v1() -> Duration {
     let timeout_ms = std::env::var("NOVOVM_ETH_RLPX_BOOTSTRAP_TICK_BUDGET_MS")
         .ok()
         .and_then(|raw| raw.trim().parse::<u64>().ok())
-        .unwrap_or(12_000)
+        .unwrap_or(4_000)
         .clamp(1_000, 60_000);
     Duration::from_millis(timeout_ms)
 }
@@ -7479,6 +7479,14 @@ fn ingest_real_rlpx_block_bodies_v1(
     clear_eth_fullnode_native_snap_request_state_v1(session);
     session.last_sync_request_unix_ms = now_unix_ms();
     report.sync_requests = report.sync_requests.saturating_add(1);
+    eprintln!(
+        "network_info: rlpx stage receipts_requested chain_id={} peer={} endpoint={} request_id={} blocks={}",
+        chain_id,
+        source_peer_id,
+        session.endpoint.addr_hint,
+        request_id,
+        session.pending_body_headers.len()
+    );
     Ok(())
 }
 
@@ -10221,6 +10229,12 @@ mod tests {
     fn set_test_env_var_v1(key: &'static str, value: &'static str) -> EnvVarRestoreV1 {
         let previous = std::env::var_os(key);
         std::env::set_var(key, value);
+        EnvVarRestoreV1 { key, previous }
+    }
+
+    fn clear_test_env_var_v1(key: &'static str) -> EnvVarRestoreV1 {
+        let previous = std::env::var_os(key);
+        std::env::remove_var(key);
         EnvVarRestoreV1 { key, previous }
     }
 
@@ -14819,6 +14833,24 @@ mod tests {
         );
         assert_eq!(snapshot.timeout_count, 1);
         assert_eq!(snapshot.decode_failure_count, 0);
+    }
+
+    #[test]
+    fn rlpx_public_admission_tick_budget_is_bounded_for_long_sync_v1() {
+        let _guard = eth_rlpx_env_test_lock_v1()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let _connect_timeout = clear_test_env_var_v1("NOVOVM_ETH_RLPX_CONNECT_TIMEOUT_MS");
+        let _tick_budget = clear_test_env_var_v1("NOVOVM_ETH_RLPX_BOOTSTRAP_TICK_BUDGET_MS");
+
+        assert_eq!(
+            eth_fullnode_native_rlpx_connect_timeout_v1(),
+            Duration::from_millis(750)
+        );
+        assert_eq!(
+            eth_fullnode_native_rlpx_bootstrap_tick_budget_v1(),
+            Duration::from_millis(4_000)
+        );
     }
 
     #[test]
