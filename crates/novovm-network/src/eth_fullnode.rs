@@ -4595,6 +4595,10 @@ pub fn select_eth_fullnode_native_bootstrap_candidates_v1(
         .filter(|session| eth_peer_has_header_material_history_v1(session))
         .map(|session| session.peer_id)
         .collect::<std::collections::HashSet<_>>();
+    let material_history_peer_ids = body_peer_ids
+        .union(&header_peer_ids)
+        .copied()
+        .collect::<std::collections::HashSet<_>>();
     let mut ranked = peers
         .iter()
         .map(|peer| eth_peer_bootstrap_score_v1(chain_id, snapshots.get(&peer.0), peer.0, now))
@@ -4672,7 +4676,11 @@ pub fn select_eth_fullnode_native_bootstrap_candidates_v1(
         });
     } else if !candidate_prefix_peer_ranks.is_empty() {
         for score in &mut ranked {
-            if score.eligible && candidate_prefix_peer_ranks.contains_key(&score.peer_id) {
+            if score.eligible && material_history_peer_ids.contains(&score.peer_id) {
+                score
+                    .reasons
+                    .push("bootstrap_material_history_peer".to_string());
+            } else if score.eligible && candidate_prefix_peer_ranks.contains_key(&score.peer_id) {
                 score
                     .reasons
                     .push("bootstrap_candidate_prefix_peer".to_string());
@@ -4688,6 +4696,12 @@ pub fn select_eth_fullnode_native_bootstrap_candidates_v1(
                 .get(&score.peer_id)
                 .copied()
                 .unwrap_or(max_targets);
+            let material_rank =
+                if score.eligible && material_history_peer_ids.contains(&score.peer_id) {
+                    0u8
+                } else {
+                    1u8
+                };
             let prefix_group =
                 if score.eligible && candidate_prefix_peer_ranks.contains_key(&score.peer_id) {
                     0u8
@@ -4696,6 +4710,7 @@ pub fn select_eth_fullnode_native_bootstrap_candidates_v1(
                 };
             (
                 base.0,
+                material_rank,
                 eth_peer_selection_bootstrap_health_rank_v1(score),
                 prefix_group,
                 prefix_rank,
@@ -6153,6 +6168,26 @@ mod tests {
         );
 
         assert_eq!(selected, vec![preferred_peer]);
+    }
+
+    #[test]
+    fn bootstrap_selection_prefers_material_history_peer_for_admission_recovery() {
+        let chain_id = 991_603_194_u64;
+        let fresh_peer = NodeId(475);
+        let material_peer = NodeId(476);
+
+        crate::runtime_status::clear_network_runtime_native_snapshots_for_chain_v1(chain_id);
+        observe_network_runtime_eth_peer_discovered_v1(chain_id, fresh_peer.0);
+        observe_network_runtime_eth_peer_header_success_v1(chain_id, material_peer.0, 32_000);
+        observe_network_runtime_eth_peer_body_success_v1(chain_id, material_peer.0, 32_000);
+
+        let selected = select_eth_fullnode_native_bootstrap_candidates_v1(
+            chain_id,
+            &[fresh_peer, material_peer],
+            1,
+        );
+
+        assert_eq!(selected, vec![material_peer]);
     }
 
     #[test]
