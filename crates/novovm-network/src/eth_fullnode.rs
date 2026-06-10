@@ -1799,6 +1799,7 @@ fn eth_peer_now_unix_ms_v1() -> u64 {
 const ETH_PEER_FAILURE_BACKOFF_BASE_MS_V1: u64 = 2_500;
 const ETH_PEER_FAILURE_BACKOFF_MAX_MS_V1: u64 = 300_000;
 const ETH_PEER_PRODUCTIVE_DISCONNECT_RETRY_MS_V1: u64 = 750;
+const ETH_PEER_PRODUCTIVE_TIMEOUT_RETRY_MS_V1: u64 = 2_500;
 const ETH_PEER_PRODUCTIVE_CAPACITY_REJECT_RETRY_MS_V1: u64 = 10_000;
 const ETH_PEER_CAPACITY_REJECT_BACKOFF_BASE_MS_V1: u64 = 60_000;
 const ETH_PEER_CAPACITY_REJECT_BACKOFF_MAX_MS_V1: u64 = 900_000;
@@ -1904,6 +1905,20 @@ fn eth_peer_capacity_reject_cooldown_ms_v1(state: &EthPeerSessionState) -> u64 {
         )
 }
 
+fn eth_peer_timeout_cooldown_ms_v1(state: &EthPeerSessionState) -> u64 {
+    let count = state.timeout_count.saturating_add(1);
+    if eth_peer_has_material_progress_v1(state) {
+        let shift = count.saturating_sub(1).min(3) as u32;
+        return ETH_PEER_PRODUCTIVE_TIMEOUT_RETRY_MS_V1
+            .saturating_mul(1u64 << shift)
+            .clamp(
+                ETH_PEER_PRODUCTIVE_TIMEOUT_RETRY_MS_V1,
+                ETH_PEER_TIMEOUT_BACKOFF_FLOOR_MS_V1,
+            );
+    }
+    eth_peer_failure_backoff_ms_v1(count).max(ETH_PEER_TIMEOUT_BACKOFF_FLOOR_MS_V1)
+}
+
 fn eth_peer_validation_cooldown_ms_v1(reason: EthChainConfigPeerValidationReasonV1) -> u64 {
     match reason {
         EthChainConfigPeerValidationReasonV1::WrongNetwork
@@ -1973,10 +1988,7 @@ fn eth_peer_failure_cooldown_ms_v1(
             )
             .max(ETH_PEER_PROTOCOL_BACKOFF_FLOOR_MS_V1)
         }
-        EthPeerFailureClassV1::Timeout => eth_peer_failure_backoff_ms_v1(
-            eth_peer_failure_count_for_class_v1(state, class).saturating_add(1),
-        )
-        .max(ETH_PEER_TIMEOUT_BACKOFF_FLOOR_MS_V1),
+        EthPeerFailureClassV1::Timeout => eth_peer_timeout_cooldown_ms_v1(state),
         EthPeerFailureClassV1::ValidationReject => validation_reason
             .map(eth_peer_validation_cooldown_ms_v1)
             .unwrap_or(ETH_PEER_PROTOCOL_BACKOFF_FLOOR_MS_V1),
@@ -5460,6 +5472,49 @@ mod tests {
             .saturating_sub(eth_peer_now_unix_ms_v1());
         assert!(remaining <= ETH_PEER_PRODUCTIVE_DISCONNECT_RETRY_MS_V1);
         assert!(remaining < ETH_PEER_FAILURE_BACKOFF_BASE_MS_V1);
+    }
+
+    #[test]
+    fn productive_request_timeout_gets_short_retry_cooldown() {
+        let chain_id = 99_160_327_u64;
+        let productive = NodeId(609);
+        let _ = upsert_network_runtime_eth_peer_session(
+            chain_id,
+            productive.0,
+            &[69, 70],
+            &[1],
+            Some(1024),
+        )
+        .expect("ready peer");
+        observe_network_runtime_eth_peer_header_success_v1(chain_id, productive.0, 1024);
+        observe_network_runtime_eth_peer_body_success_v1(chain_id, productive.0, 1024);
+
+        let before = eth_peer_now_unix_ms_v1();
+        observe_network_runtime_eth_peer_timeout_v1(chain_id, productive.0, "receipts_timeout");
+
+        let snapshot =
+            snapshot_network_runtime_eth_peer_sessions_for_peers_v1(chain_id, &[productive])[0]
+                .clone();
+        assert_eq!(snapshot.timeout_count, 1);
+        assert!(!snapshot.session_ready);
+        let remaining = snapshot.cooldown_until_unix_ms.saturating_sub(before);
+        assert!(remaining >= ETH_PEER_PRODUCTIVE_TIMEOUT_RETRY_MS_V1);
+        assert!(remaining < ETH_PEER_TIMEOUT_BACKOFF_FLOOR_MS_V1);
+    }
+
+    #[test]
+    fn unproductive_request_timeout_keeps_public_timeout_floor() {
+        let chain_id = 99_160_328_u64;
+        let peer = NodeId(610);
+
+        let before = eth_peer_now_unix_ms_v1();
+        observe_network_runtime_eth_peer_timeout_v1(chain_id, peer.0, "connect_timeout");
+
+        let snapshot =
+            snapshot_network_runtime_eth_peer_sessions_for_peers_v1(chain_id, &[peer])[0].clone();
+        assert_eq!(snapshot.timeout_count, 1);
+        let remaining = snapshot.cooldown_until_unix_ms.saturating_sub(before);
+        assert!(remaining >= ETH_PEER_TIMEOUT_BACKOFF_FLOOR_MS_V1);
     }
 
     #[test]
