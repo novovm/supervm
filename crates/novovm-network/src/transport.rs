@@ -416,6 +416,60 @@ impl EthFullnodeNativePeerWorkerV1 {
             selection_quality_summary: plan.selection_quality_summary.clone(),
             ..EthFullnodeNativeRealDriveReportV1::default()
         };
+
+        // Established RLPx sessions are scarce on public mainnet. Service them
+        // before opening new bootstrap dials so head body/receipt recovery is
+        // not delayed behind public admission churn.
+        let sync_started = Instant::now();
+        let sync_tick_budget = eth_fullnode_native_rlpx_bootstrap_tick_budget_v1();
+        let mut skipped_sync_missing_endpoint_peers = 0usize;
+        for &peer in plan.sync_peers.iter() {
+            if report.attempted_sync_peers > 0 && sync_started.elapsed() >= sync_tick_budget {
+                report.skipped_sync_budget_peers = plan
+                    .sync_peers
+                    .len()
+                    .saturating_sub(report.attempted_sync_peers)
+                    .saturating_sub(skipped_sync_missing_endpoint_peers);
+                break;
+            }
+            let Some(endpoint) = self.endpoint_for_peer(peer) else {
+                report.skipped_missing_endpoint_peers =
+                    report.skipped_missing_endpoint_peers.saturating_add(1);
+                skipped_sync_missing_endpoint_peers =
+                    skipped_sync_missing_endpoint_peers.saturating_add(1);
+                continue;
+            };
+            report.attempted_sync_peers = report.attempted_sync_peers.saturating_add(1);
+            match drive_eth_fullnode_native_rlpx_peer_session_once_v1(
+                plan.chain_id,
+                plan.local_node,
+                peer,
+                &endpoint,
+                &plan.budget_hooks,
+            ) {
+                Ok(peer_report) => {
+                    report.ready_peers = report.ready_peers.saturating_add(1);
+                    absorb_eth_fullnode_native_rlpx_peer_tick_report_v1(
+                        &mut report,
+                        peer,
+                        peer_report,
+                    );
+                }
+                Err(err) => {
+                    report.failed_sync_peers = report.failed_sync_peers.saturating_add(1);
+                    report
+                        .peer_failures
+                        .push(build_eth_fullnode_peer_failure_report_v1(
+                            plan.chain_id,
+                            peer,
+                            Some(&endpoint),
+                            EthFullnodeNativePeerDrivePhaseV1::Sync,
+                            &err,
+                        ));
+                }
+            }
+        }
+
         let bootstrap_started = Instant::now();
         let bootstrap_tick_budget = eth_fullnode_native_rlpx_bootstrap_tick_budget_v1();
         let mut bootstrap_jobs = Vec::new();
@@ -501,55 +555,6 @@ impl EthFullnodeNativePeerWorkerV1 {
                             bootstrap_result.peer,
                             bootstrap_result.endpoint.as_ref(),
                             EthFullnodeNativePeerDrivePhaseV1::Bootstrap,
-                            &err,
-                        ));
-                }
-            }
-        }
-        let sync_started = Instant::now();
-        let sync_tick_budget = eth_fullnode_native_rlpx_bootstrap_tick_budget_v1();
-        let mut skipped_sync_missing_endpoint_peers = 0usize;
-        for &peer in plan.sync_peers.iter() {
-            if report.attempted_sync_peers > 0 && sync_started.elapsed() >= sync_tick_budget {
-                report.skipped_sync_budget_peers = plan
-                    .sync_peers
-                    .len()
-                    .saturating_sub(report.attempted_sync_peers)
-                    .saturating_sub(skipped_sync_missing_endpoint_peers);
-                break;
-            }
-            let Some(endpoint) = self.endpoint_for_peer(peer) else {
-                report.skipped_missing_endpoint_peers =
-                    report.skipped_missing_endpoint_peers.saturating_add(1);
-                skipped_sync_missing_endpoint_peers =
-                    skipped_sync_missing_endpoint_peers.saturating_add(1);
-                continue;
-            };
-            report.attempted_sync_peers = report.attempted_sync_peers.saturating_add(1);
-            match drive_eth_fullnode_native_rlpx_peer_session_once_v1(
-                plan.chain_id,
-                plan.local_node,
-                peer,
-                &endpoint,
-                &plan.budget_hooks,
-            ) {
-                Ok(peer_report) => {
-                    report.ready_peers = report.ready_peers.saturating_add(1);
-                    absorb_eth_fullnode_native_rlpx_peer_tick_report_v1(
-                        &mut report,
-                        peer,
-                        peer_report,
-                    );
-                }
-                Err(err) => {
-                    report.failed_sync_peers = report.failed_sync_peers.saturating_add(1);
-                    report
-                        .peer_failures
-                        .push(build_eth_fullnode_peer_failure_report_v1(
-                            plan.chain_id,
-                            peer,
-                            Some(&endpoint),
-                            EthFullnodeNativePeerDrivePhaseV1::Sync,
                             &err,
                         ));
                 }
