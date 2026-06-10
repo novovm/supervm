@@ -3352,6 +3352,18 @@ fn eth_peer_selection_recent_failure_rank_v1(score: &EthPeerSelectionScoreV1) ->
     }
 }
 
+fn eth_peer_selection_bootstrap_health_rank_v1(score: &EthPeerSelectionScoreV1) -> u8 {
+    let recent_failure_rank = eth_peer_selection_recent_failure_rank_v1(score);
+    if recent_failure_rank != 0 {
+        return recent_failure_rank;
+    }
+    if score.score < 0 {
+        1
+    } else {
+        0
+    }
+}
+
 fn eth_native_sync_request_requires_snap_peer_v1(chain_id: u64) -> bool {
     matches!(
         build_eth_fullnode_native_sync_request_v1(NodeId(0), chain_id),
@@ -4621,7 +4633,7 @@ pub fn select_eth_fullnode_native_bootstrap_candidates_v1(
             (
                 base.0,
                 body_rank,
-                eth_peer_selection_recent_failure_rank_v1(score),
+                eth_peer_selection_bootstrap_health_rank_v1(score),
                 prefix_rank,
                 base.1,
                 base.2,
@@ -4674,7 +4686,7 @@ pub fn select_eth_fullnode_native_bootstrap_candidates_v1(
                 };
             (
                 base.0,
-                eth_peer_selection_recent_failure_rank_v1(score),
+                eth_peer_selection_bootstrap_health_rank_v1(score),
                 prefix_group,
                 prefix_rank,
                 base.1,
@@ -5590,6 +5602,60 @@ mod tests {
             .reasons
             .iter()
             .any(|reason| reason == "short_term_veto_active"));
+        assert_eq!(summary.selected_bootstrap_peer_ids, vec![fresh.0]);
+    }
+
+    #[test]
+    fn stale_negative_cache_prefix_bootstrap_peer_yields_to_fresh_candidate() {
+        let chain_id = 99_160_324_u64;
+        let stale_prefix = NodeId(606);
+        let fresh = NodeId(607);
+
+        observe_network_runtime_eth_peer_timeout_v1(chain_id, stale_prefix.0, "connect_timeout");
+        observe_network_runtime_eth_peer_discovered_v1(chain_id, fresh.0);
+        {
+            let mut guard = eth_peer_sessions()
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let chain = guard.get_mut(&chain_id).expect("chain state");
+            let stale = chain.get_mut(&stale_prefix.0).expect("stale peer");
+            stale.timeout_count = 10;
+            stale.consecutive_failures = 0;
+            stale.cooldown_until_unix_ms = 0;
+            stale.recent_rounds.clear();
+            stale.medium_rounds.clear();
+            stale.long_rounds.clear();
+        }
+
+        let selected =
+            select_eth_fullnode_native_bootstrap_candidates_v1(chain_id, &[stale_prefix, fresh], 1);
+        assert_eq!(
+            selected,
+            vec![fresh],
+            "a stale negative-score cache prefix peer must not block fresh public peer exploration"
+        );
+
+        let (scores, summary, _) = snapshot_eth_fullnode_peer_selection_scores_v1(
+            chain_id,
+            &[stale_prefix, fresh],
+            &[fresh],
+            &[],
+        );
+        let stale_score = scores
+            .iter()
+            .find(|score| {
+                score.peer_id == stale_prefix.0
+                    && matches!(score.role, EthPeerSelectionRoleV1::Bootstrap)
+            })
+            .expect("stale bootstrap score");
+        let fresh_score = scores
+            .iter()
+            .find(|score| {
+                score.peer_id == fresh.0 && matches!(score.role, EthPeerSelectionRoleV1::Bootstrap)
+            })
+            .expect("fresh bootstrap score");
+        assert!(stale_score.score < 0);
+        assert!(fresh_score.score > stale_score.score);
         assert_eq!(summary.selected_bootstrap_peer_ids, vec![fresh.0]);
     }
 
