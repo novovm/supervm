@@ -3143,6 +3143,74 @@ pub fn set_network_runtime_native_head_snapshot_v1(
     runtime_native_pending_tx_cleanup_v1(chain_id, observed_unix_ms);
 }
 
+pub fn restore_network_runtime_native_material_head_v1(
+    chain_id: u64,
+    header: NetworkRuntimeNativeHeaderSnapshotV1,
+    body: NetworkRuntimeNativeBodySnapshotV1,
+    receipt: NetworkRuntimeNativeReceiptSnapshotV1,
+    head: NetworkRuntimeNativeHeadSnapshotV1,
+) -> bool {
+    let header = header.normalized(chain_id);
+    let body = body.normalized(chain_id);
+    let receipt = receipt.normalized(chain_id);
+    let head = head.normalized(chain_id);
+    if body.number != header.number
+        || body.block_hash != header.hash
+        || !body.body_available
+        || !body.txs_materialized
+        || receipt.number != header.number
+        || receipt.block_hash != header.hash
+        || receipt.receipts_root != header.receipts_root
+        || !receipt.receipts_available
+        || head.block_number != header.number
+        || head.block_hash != header.hash
+        || head.parent_block_hash != header.parent_hash
+        || head.state_root != header.state_root
+        || !head.body_available
+    {
+        return false;
+    }
+    let observed_unix_ms = header
+        .observed_unix_ms
+        .max(body.observed_unix_ms)
+        .max(receipt.observed_unix_ms)
+        .max(head.observed_unix_ms);
+    if let Ok(mut guard) = runtime_native_header_snapshot_map().lock() {
+        guard.insert(chain_id, header.clone());
+    }
+    if let Ok(mut guard) = runtime_native_body_snapshot_map().lock() {
+        guard.insert(chain_id, body.clone());
+    }
+    if let Ok(mut guard) = runtime_native_receipt_snapshot_map().lock() {
+        guard
+            .entry(chain_id)
+            .or_default()
+            .insert(receipt.block_hash, receipt.clone());
+    }
+    if let Ok(mut guard) = runtime_native_head_snapshot_map().lock() {
+        guard.insert(chain_id, head.clone());
+    }
+    if let Ok(mut guard) = runtime_native_canonical_chain_map().lock() {
+        let state = guard
+            .entry(chain_id)
+            .or_insert_with(|| runtime_native_canonical_chain_internal_default_v1(chain_id));
+        runtime_native_canonical_chain_upsert_header_v1(state, &header);
+        runtime_native_canonical_chain_upsert_body_v1(state, &body);
+        runtime_native_canonical_chain_upsert_receipt_v1(state, &receipt);
+        runtime_native_canonical_chain_apply_head_v1(state, &head);
+    }
+    if let Ok(mut observed) = runtime_sync_observed_state_map().lock() {
+        observed
+            .native_snapshot_updated_at_by_chain
+            .insert(chain_id, observed_unix_ms);
+        hint_runtime_stale_check_deadline(&mut observed, chain_id, observed_unix_ms);
+    }
+    let _ = observe_network_runtime_local_head(chain_id, header.number);
+    runtime_native_pending_tx_reconcile_against_canonical_chain_v1(chain_id);
+    runtime_native_pending_tx_cleanup_v1(chain_id, observed_unix_ms);
+    true
+}
+
 fn runtime_native_head_should_replace_v1(
     current: &NetworkRuntimeNativeHeadSnapshotV1,
     next: &NetworkRuntimeNativeHeadSnapshotV1,

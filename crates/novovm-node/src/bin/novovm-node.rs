@@ -36,15 +36,16 @@ use novovm_network::{
     observe_network_runtime_native_execution_budget_throttle_v1,
     observe_network_runtime_native_pending_tx_local_ingress_with_payload_v1, parse_enode_endpoint,
     relay_convergence_policy_view, resolve_eth_fullnode_budget_hooks_v1,
-    resolve_eth_fullnode_canonical_query_method, run_replay_with,
-    set_network_runtime_native_body_snapshot_v1, set_network_runtime_native_head_snapshot_v1,
-    set_network_runtime_native_header_snapshot_v1, set_network_runtime_native_receipt_snapshot_v1,
+    resolve_eth_fullnode_canonical_query_method, restore_network_runtime_native_material_head_v1,
+    run_replay_with, set_network_runtime_native_body_snapshot_v1,
+    set_network_runtime_native_head_snapshot_v1, set_network_runtime_native_header_snapshot_v1,
+    set_network_runtime_native_receipt_snapshot_v1,
     set_network_runtime_native_snap_account_range_progress_v1,
     set_network_runtime_native_snap_account_snapshot_v1,
     set_network_runtime_native_snap_account_storage_snapshot_v1,
     set_network_runtime_native_snap_code_snapshot_v1,
-    set_network_runtime_native_snap_trie_node_snapshot_v1, set_network_runtime_sync_status,
-    snapshot_network_runtime_eth_peer_sessions_for_peers_v1,
+    set_network_runtime_native_snap_trie_node_snapshot_v1, set_network_runtime_native_sync_status,
+    set_network_runtime_sync_status, snapshot_network_runtime_eth_peer_sessions_for_peers_v1,
     snapshot_network_runtime_native_canonical_blocks_v1,
     snapshot_network_runtime_native_pending_tx_summary_v1,
     snapshot_network_runtime_native_snap_account_range_progress_v1,
@@ -65,11 +66,11 @@ use novovm_network::{
     NetworkRuntimeNativeSnapAccountRangeProgressV1, NetworkRuntimeNativeSnapAccountSnapshotV1,
     NetworkRuntimeNativeSnapAccountStorageSnapshotV1, NetworkRuntimeNativeSnapCodeSnapshotV1,
     NetworkRuntimeNativeSnapStorageSlotSnapshotV1, NetworkRuntimeNativeSnapTrieNodeSnapshotV1,
-    NetworkRuntimeNativeSyncPhaseV1, NetworkRuntimeSyncStatus, PluginPeerEndpoint, QueueStore,
-    QueuedRequest, Reachability, RelayCapacityClass, RelayClient, RelayHealth, RelayMembership,
-    RelayRef, RelayServer, ReplayResult, RouteSelector, RoutingSource, SelectedPath,
-    ETH_DISCV4_PACKET_HASH_LEN, ETH_DISCV4_PING_PACKET_TYPE, ETH_RLPX_PUB_LEN,
-    L3_BASELINE_FINGERPRINT, L3_BASELINE_LOCK_VERSION, L3_BASELINE_PHASE,
+    NetworkRuntimeNativeSyncPhaseV1, NetworkRuntimeNativeSyncStatusV1, NetworkRuntimeSyncStatus,
+    PluginPeerEndpoint, QueueStore, QueuedRequest, Reachability, RelayCapacityClass, RelayClient,
+    RelayHealth, RelayMembership, RelayRef, RelayServer, ReplayResult, RouteSelector,
+    RoutingSource, SelectedPath, ETH_DISCV4_PACKET_HASH_LEN, ETH_DISCV4_PING_PACKET_TYPE,
+    ETH_RLPX_PUB_LEN, L3_BASELINE_FINGERPRINT, L3_BASELINE_LOCK_VERSION, L3_BASELINE_PHASE,
     L3_POLICY_BASELINE_VERSION, L3_READONLY_EXPORT_BASELINE_VERSION, L3_REGRESSION_LOCKSET,
     L3_RELAY_RUNTIME_FEEDBACK_SCALE, L3_RELAY_SCORE_SCALE, L3_RELAY_SELECTED_STICKY_MARGIN,
     L3_RELAY_SOURCE_BONUS_CONFIGURED, L3_RELAY_SOURCE_BONUS_POOL, L3_RELAY_SOURCE_BONUS_SNAPSHOT,
@@ -2506,6 +2507,7 @@ const ETH_RLPX_PUBLIC_SYNC_DEFAULT_RUNTIME_SNAPSHOT_BLOCKS_V1: u64 = 8;
 const ETH_RLPX_PUBLIC_SYNC_DEFAULT_RUNTIME_PENDING_TXS_V1: u64 = 128;
 const ETH_RLPX_PUBLIC_SYNC_DEFAULT_FINALIZE_HEADERS_BATCH_V1: u64 = 64;
 const ETH_RLPX_PUBLIC_SYNC_DEFAULT_ADAPTIVE_HEADERS_MIN_BATCH_V1: u64 = 4;
+const ETH_RLPX_PUBLIC_SYNC_DEFAULT_ADAPTIVE_BODIES_MIN_BATCH_V1: u64 = 4;
 
 fn eth_rlpx_apply_public_sync_runtime_defaults_v1(
     budget: &mut EthFullnodeBudgetHooksV1,
@@ -4871,6 +4873,24 @@ fn eth_rlpx_native_head_store_header_number_v1(stored: &EthRlpxNativeHeadStoreV1
         .unwrap_or(stored.current_block)
 }
 
+fn eth_rlpx_native_head_store_has_complete_material_v1(stored: &EthRlpxNativeHeadStoreV1) -> bool {
+    let Some(header) = stored.header.as_ref() else {
+        return false;
+    };
+    let has_body = stored.body.as_ref().is_some_and(|body| {
+        body.body_available
+            && body.txs_materialized
+            && body.number == header.number
+            && body.block_hash.eq_ignore_ascii_case(&header.hash)
+    });
+    let has_receipt = stored.receipt.as_ref().is_some_and(|receipt| {
+        receipt.receipts_available
+            && receipt.number == header.number
+            && receipt.block_hash.eq_ignore_ascii_case(&header.hash)
+    });
+    has_body && has_receipt
+}
+
 fn eth_rlpx_native_history_store_empty_v1(chain_id: u64) -> EthRlpxNativeHistoryStoreV1 {
     EthRlpxNativeHistoryStoreV1 {
         schema: "supervm-eth-rlpx-native-history-store/v1".to_string(),
@@ -5095,6 +5115,174 @@ fn load_eth_rlpx_native_history_store_v1(
     Ok(Some(stored))
 }
 
+fn eth_rlpx_native_history_block_has_complete_material_v1(
+    block: &EthRlpxNativeHistoryBlockStoreV1,
+) -> bool {
+    let has_body = block.body.as_ref().is_some_and(|body| {
+        body.body_available
+            && body.txs_materialized
+            && body.number == block.header.number
+            && body.block_hash.eq_ignore_ascii_case(&block.header.hash)
+    });
+    let has_receipt = block.receipt.as_ref().is_some_and(|receipt| {
+        receipt.receipts_available
+            && receipt.number == block.header.number
+            && receipt.block_hash.eq_ignore_ascii_case(&block.header.hash)
+    });
+    has_body && has_receipt
+}
+
+fn eth_rlpx_latest_complete_material_history_block_v1(
+    store: &EthRlpxNativeHistoryStoreV1,
+) -> Option<EthRlpxNativeHistoryBlockStoreV1> {
+    store
+        .blocks
+        .iter()
+        .filter(|block| eth_rlpx_native_history_block_has_complete_material_v1(block))
+        .max_by(|left, right| {
+            left.header
+                .number
+                .cmp(&right.header.number)
+                .then_with(|| {
+                    left.header
+                        .observed_unix_ms
+                        .cmp(&right.header.observed_unix_ms)
+                })
+                .then_with(|| left.header.hash.cmp(&right.header.hash))
+        })
+        .cloned()
+}
+
+fn eth_rlpx_latest_complete_material_history_block_below_v1(
+    store: &EthRlpxNativeHistoryStoreV1,
+    current_block: u64,
+) -> Option<EthRlpxNativeHistoryBlockStoreV1> {
+    store
+        .blocks
+        .iter()
+        .filter(|block| block.header.number < current_block)
+        .filter(|block| eth_rlpx_native_history_block_has_complete_material_v1(block))
+        .max_by(|left, right| {
+            left.header
+                .number
+                .cmp(&right.header.number)
+                .then_with(|| {
+                    left.header
+                        .observed_unix_ms
+                        .cmp(&right.header.observed_unix_ms)
+                })
+                .then_with(|| left.header.hash.cmp(&right.header.hash))
+        })
+        .cloned()
+}
+
+fn restore_eth_rlpx_native_history_block_head_v1(
+    store: &EthRlpxNativeHistoryStoreV1,
+    block: &EthRlpxNativeHistoryBlockStoreV1,
+) -> Result<(
+    NetworkRuntimeNativeHeaderSnapshotV1,
+    Option<NetworkRuntimeNativeBodySnapshotV1>,
+    Option<NetworkRuntimeNativeReceiptSnapshotV1>,
+)> {
+    let header = eth_rlpx_native_header_snapshot_from_store_v1(store.chain_id, &block.header)?;
+    let body = block
+        .body
+        .as_ref()
+        .map(|body| eth_rlpx_native_body_snapshot_from_store_v1(store.chain_id, body))
+        .transpose()?
+        .filter(|body| eth_rlpx_native_body_matches_header_v1(&header, body));
+    let receipt = block
+        .receipt
+        .as_ref()
+        .map(|receipt| eth_rlpx_native_receipt_snapshot_from_store_v1(store.chain_id, receipt))
+        .transpose()?
+        .filter(|receipt| eth_rlpx_native_receipt_matches_header_v1(&header, receipt));
+    let head = NetworkRuntimeNativeHeadSnapshotV1 {
+        chain_id: store.chain_id,
+        phase: eth_rlpx_restored_native_head_phase_v1(body.as_ref(), receipt.as_ref()),
+        peer_count: 0,
+        block_number: header.number,
+        block_hash: header.hash,
+        parent_block_hash: header.parent_hash,
+        state_root: header.state_root,
+        canonical: true,
+        safe: block.safe,
+        finalized: block.finalized,
+        reorg_depth_hint: block.reorg_depth_hint,
+        body_available: body.as_ref().is_some_and(|body| body.body_available),
+        source_peer_id: header.source_peer_id,
+        observed_unix_ms: header.observed_unix_ms,
+    };
+    if let (Some(body), Some(receipt)) = (body.as_ref(), receipt.as_ref()) {
+        if restore_network_runtime_native_material_head_v1(
+            store.chain_id,
+            header.clone(),
+            body.clone(),
+            receipt.clone(),
+            head.clone(),
+        ) {
+            return Ok((header, Some(body.clone()), Some(receipt.clone())));
+        }
+    }
+    set_network_runtime_native_header_snapshot_v1(store.chain_id, header.clone());
+    if let Some(body) = body.as_ref() {
+        set_network_runtime_native_body_snapshot_v1(store.chain_id, body.clone());
+    }
+    if let Some(receipt) = receipt.as_ref() {
+        set_network_runtime_native_receipt_snapshot_v1(store.chain_id, receipt.clone());
+    }
+    set_network_runtime_native_head_snapshot_v1(store.chain_id, head);
+    Ok((header, body, receipt))
+}
+
+fn restore_eth_rlpx_native_material_head_from_history_v1(
+    store: &mut EthRlpxNativeHistoryStoreV1,
+    current_block: u64,
+    highest_block: u64,
+    retention: usize,
+) -> Result<Option<u64>> {
+    let Some(block) =
+        eth_rlpx_latest_complete_material_history_block_below_v1(store, current_block)
+    else {
+        return Ok(None);
+    };
+    let (header, body, receipt) = restore_eth_rlpx_native_history_block_head_v1(store, &block)?;
+    if !body.as_ref().is_some_and(|body| body.body_available)
+        || !receipt
+            .as_ref()
+            .is_some_and(|receipt| receipt.receipts_available)
+    {
+        return Ok(None);
+    }
+    let highest_block = highest_block.max(header.number);
+    set_network_runtime_sync_status(
+        store.chain_id,
+        NetworkRuntimeSyncStatus {
+            peer_count: 0,
+            starting_block: header.number,
+            current_block: header.number,
+            highest_block,
+        },
+    );
+    set_network_runtime_native_sync_status(
+        store.chain_id,
+        NetworkRuntimeNativeSyncStatusV1 {
+            phase: NetworkRuntimeNativeSyncPhaseV1::State,
+            peer_count: 0,
+            starting_block: header.number,
+            current_block: header.number,
+            highest_block,
+            updated_at_unix_millis: now_unix_ms() as u128,
+        },
+    );
+    store.current_block = header.number;
+    store.highest_block = store.highest_block.max(highest_block);
+    store.updated_at_unix_ms = now_unix_ms();
+    eth_rlpx_native_history_reconcile_canonical_flags_v1(store, retention);
+    eth_rlpx_native_history_prune_v1(store, retention);
+    Ok(Some(header.number))
+}
+
 fn restore_eth_rlpx_native_history_store_v1(
     stored: &EthRlpxNativeHistoryStoreV1,
     retention: usize,
@@ -5102,6 +5290,7 @@ fn restore_eth_rlpx_native_history_store_v1(
     let mut store = stored.clone();
     eth_rlpx_native_history_prune_v1(&mut store, retention);
     let mut restored_head = None::<EthRlpxNativeHistoryBlockStoreV1>;
+    let mut restored_material_head = None::<EthRlpxNativeHistoryBlockStoreV1>;
     for block in &store.blocks {
         let header = eth_rlpx_native_header_snapshot_from_store_v1(store.chain_id, &block.header)?;
         set_network_runtime_native_header_snapshot_v1(store.chain_id, header);
@@ -5133,44 +5322,25 @@ fn restore_eth_rlpx_native_history_store_v1(
         if should_replace_head {
             restored_head = Some(block.clone());
         }
+        let should_replace_material_head =
+            eth_rlpx_native_history_block_has_complete_material_v1(block)
+                && restored_material_head
+                    .as_ref()
+                    .map(|current| {
+                        block.header.number > current.header.number
+                            || (block.header.number == current.header.number
+                                && block.header.observed_unix_ms > current.header.observed_unix_ms)
+                    })
+                    .unwrap_or(true);
+        if should_replace_material_head {
+            restored_material_head = Some(block.clone());
+        }
     }
 
-    let Some(head_block) = restored_head else {
+    let Some(head_block) = restored_material_head.or(restored_head) else {
         return Ok(store.current_block);
     };
-    let header = eth_rlpx_native_header_snapshot_from_store_v1(store.chain_id, &head_block.header)?;
-    let head_body = head_block
-        .body
-        .as_ref()
-        .map(|body| eth_rlpx_native_body_snapshot_from_store_v1(store.chain_id, body))
-        .transpose()?;
-    let head_receipt = head_block
-        .receipt
-        .as_ref()
-        .map(|receipt| eth_rlpx_native_receipt_snapshot_from_store_v1(store.chain_id, receipt))
-        .transpose()?;
-    set_network_runtime_native_head_snapshot_v1(
-        store.chain_id,
-        NetworkRuntimeNativeHeadSnapshotV1 {
-            chain_id: store.chain_id,
-            phase: eth_rlpx_restored_native_head_phase_v1(
-                head_body.as_ref(),
-                head_receipt.as_ref(),
-            ),
-            peer_count: 0,
-            block_number: header.number,
-            block_hash: header.hash,
-            parent_block_hash: header.parent_hash,
-            state_root: header.state_root,
-            canonical: true,
-            safe: head_block.safe,
-            finalized: head_block.finalized,
-            reorg_depth_hint: head_block.reorg_depth_hint,
-            body_available: head_body.as_ref().is_some_and(|body| body.body_available),
-            source_peer_id: header.source_peer_id,
-            observed_unix_ms: header.observed_unix_ms,
-        },
-    );
+    let (header, _, _) = restore_eth_rlpx_native_history_block_head_v1(&store, &head_block)?;
     Ok(header.number)
 }
 
@@ -5213,7 +5383,7 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
     );
     let adaptive_bodies_min_batch = u64_env_clamped(
         "NOVOVM_ETH_RLPX_ADAPTIVE_BODIES_MIN_BATCH",
-        1,
+        ETH_RLPX_PUBLIC_SYNC_DEFAULT_ADAPTIVE_BODIES_MIN_BATCH_V1,
         1,
         bodies_batch.max(1),
     );
@@ -5392,8 +5562,17 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
     } else {
         0
     };
+    let restored_history_material_block = native_history_store
+        .as_ref()
+        .and_then(eth_rlpx_latest_complete_material_history_block_v1)
+        .map(|block| block.header.number)
+        .unwrap_or(0);
     let restored_head_block = if let Some(stored) = native_head_store.as_ref() {
-        if eth_rlpx_native_head_store_header_number_v1(stored) >= restored_history_block {
+        let head_store_has_complete_material =
+            eth_rlpx_native_head_store_has_complete_material_v1(stored);
+        if eth_rlpx_native_head_store_header_number_v1(stored) >= restored_history_block
+            && (head_store_has_complete_material || restored_history_material_block == 0)
+        {
             restore_eth_rlpx_native_head_store_v1(stored)?
         } else {
             0
@@ -5401,6 +5580,12 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
     } else {
         0
     };
+    let restored_head_material_block = native_head_store
+        .as_ref()
+        .filter(|stored| eth_rlpx_native_head_store_has_complete_material_v1(stored))
+        .map(eth_rlpx_native_head_store_header_number_v1)
+        .unwrap_or(0);
+    let restored_material_block = restored_history_material_block.max(restored_head_material_block);
     let restored_native_block = restored_history_block.max(restored_head_block);
     let checkpoint_current_block = checkpoint
         .as_ref()
@@ -5417,13 +5602,22 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
         .as_ref()
         .map(|pivot| pivot.highest_block)
         .unwrap_or(0);
-    let current_block = checkpoint_current_block
-        .max(restored_native_block)
-        .max(trusted_head_block);
+    let restored_or_checkpoint_block = if restored_material_block > 0 {
+        restored_material_block
+    } else {
+        checkpoint_current_block.max(restored_native_block)
+    };
+    let current_block = restored_or_checkpoint_block.max(trusted_head_block);
     let highest_block = checkpoint
         .as_ref()
         .map(|checkpoint| checkpoint.highest_block)
         .unwrap_or(current_block)
+        .max(
+            native_history_store
+                .as_ref()
+                .map(|stored| stored.highest_block)
+                .unwrap_or(current_block),
+        )
         .max(
             native_head_store
                 .as_ref()
@@ -5897,6 +6091,80 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
             && highest_sync_block == 0
             && tick.saturating_sub(last_complete_head_progress_tick)
                 >= stalled_refresh_interval_ticks;
+        let material_recovery_stalled = current_head_material_missing
+            && tick.saturating_sub(last_complete_head_progress_tick)
+                >= stalled_refresh_interval_ticks.max(4);
+        if native_history_store_enabled && material_recovery_stalled {
+            if let Some(store) = native_history_store.as_mut() {
+                let rollback_floor = current_sync_block
+                    .max(header.as_ref().map(|snapshot| snapshot.number).unwrap_or(0));
+                let rollback_highest = highest_sync_block
+                    .max(store.highest_block)
+                    .max(current_sync_block)
+                    .max(rollback_floor);
+                if let Some(rollback_block) = restore_eth_rlpx_native_material_head_from_history_v1(
+                    store,
+                    rollback_floor,
+                    rollback_highest,
+                    native_history_store_retention,
+                )? {
+                    let rollback_sync_status = get_network_runtime_sync_status(chain_id);
+                    let rollback_header = get_network_runtime_native_header_snapshot_v1(chain_id);
+                    let rollback_body = get_network_runtime_native_body_snapshot_v1(chain_id);
+                    let rollback_receipt = rollback_header.as_ref().and_then(|snapshot| {
+                        get_network_runtime_native_receipt_snapshot_v1(chain_id, snapshot.hash)
+                    });
+                    if checkpoint_enabled {
+                        write_eth_rlpx_sync_checkpoint_v1(
+                            &checkpoint_path,
+                            chain_id,
+                            rollback_sync_status,
+                            rollback_header
+                                .as_ref()
+                                .map(|snapshot| snapshot.number)
+                                .unwrap_or(rollback_block),
+                            rollback_header
+                                .as_ref()
+                                .map(|snapshot| to_hex_prefixed(&snapshot.hash)),
+                        )?;
+                    }
+                    if native_head_store_enabled {
+                        write_eth_rlpx_native_head_store_v1(
+                            &native_head_store_path,
+                            chain_id,
+                            rollback_sync_status,
+                            rollback_header.as_ref(),
+                            rollback_body.as_ref(),
+                            rollback_receipt.as_ref(),
+                        )?;
+                    }
+                    write_eth_rlpx_native_history_store_v1(&native_history_store_path, store)?;
+                    last_sync_progress_tick = tick;
+                    last_sync_progress_block = rollback_block;
+                    last_complete_head_progress_tick = tick;
+                    last_complete_head_progress_block = rollback_block;
+                    worker =
+                        EthFullnodeNativePeerWorkerV1::new(EthFullnodeNativePeerWorkerConfigV1 {
+                            chain_id,
+                            local_node: NodeId(local_node_id),
+                            peers: peers.clone(),
+                            peer_endpoints: peer_endpoints.clone(),
+                            recv_budget,
+                            sync_target_fanout: runtime_sync_target_fanout,
+                            budget_hooks: budget.clone(),
+                        });
+                    println!(
+                        "eth_rlpx_material_rollback: chain_id={} tick={} from={} to={} highest={} reason=stalled_header_only_head",
+                        chain_id, tick, rollback_floor, rollback_block, rollback_highest
+                    );
+                    if ticks != 0 && tick >= ticks {
+                        break;
+                    }
+                    std::thread::sleep(Duration::from_millis(sleep_ms));
+                    continue;
+                }
+            }
+        }
         if adaptive_bootstrap_fanout_enabled && !sync_target_fanout_explicit {
             let next_sync_target_fanout = eth_rlpx_adaptive_bootstrap_fanout_v1(
                 runtime_sync_target_fanout,
@@ -6947,10 +7215,17 @@ mod mainline_evm_cli_tests {
             ETH_RLPX_PUBLIC_SYNC_DEFAULT_ADAPTIVE_HEADERS_MIN_BATCH_V1,
             "product forward header probes should not collapse to one block by default"
         );
+        assert_eq!(ETH_RLPX_PUBLIC_SYNC_DEFAULT_ADAPTIVE_BODIES_MIN_BATCH_V1, 4);
         assert_eq!(
-            eth_rlpx_adaptive_public_sync_batch_v1(2, 128, 1, false, true),
-            1,
-            "body/receipt recovery can still use single-block precision"
+            eth_rlpx_adaptive_public_sync_batch_v1(
+                2,
+                128,
+                ETH_RLPX_PUBLIC_SYNC_DEFAULT_ADAPTIVE_BODIES_MIN_BATCH_V1,
+                false,
+                true,
+            ),
+            ETH_RLPX_PUBLIC_SYNC_DEFAULT_ADAPTIVE_BODIES_MIN_BATCH_V1,
+            "product body/receipt recovery should not collapse to single-block throughput by default"
         );
     }
 
@@ -8709,6 +8984,193 @@ mod mainline_evm_cli_tests {
         );
 
         let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn eth_rlpx_native_material_rollback_restores_latest_complete_history_head_v1() {
+        let chain_id = 9_991_775_u64;
+        let observed = now_unix_ms() as u128;
+        let header_hash_a = [0x91_u8; 32];
+        let header_hash_b = [0x92_u8; 32];
+        let header_a = NetworkRuntimeNativeHeaderSnapshotV1 {
+            chain_id,
+            number: 100,
+            hash: header_hash_a,
+            parent_hash: [0x90_u8; 32],
+            state_root: [0xa1_u8; 32],
+            transactions_root: [0xb1_u8; 32],
+            receipts_root: [0xc1_u8; 32],
+            ommers_hash: [0xd1_u8; 32],
+            logs_bloom: vec![0; 256],
+            gas_limit: Some(30_000_000),
+            gas_used: Some(21_000),
+            timestamp: Some(1_900_100_000),
+            base_fee_per_gas: Some(8),
+            withdrawals_root: Some([0xe1_u8; 32]),
+            blob_gas_used: Some(0),
+            excess_blob_gas: Some(0),
+            block_access_list_hash: None,
+            source_peer_id: Some(11),
+            observed_unix_ms: observed,
+        };
+        let header_b = NetworkRuntimeNativeHeaderSnapshotV1 {
+            chain_id,
+            number: 101,
+            hash: header_hash_b,
+            parent_hash: header_hash_a,
+            state_root: [0xa2_u8; 32],
+            transactions_root: [0xb2_u8; 32],
+            receipts_root: [0xc2_u8; 32],
+            ommers_hash: [0xd2_u8; 32],
+            logs_bloom: vec![0; 256],
+            gas_limit: Some(30_000_000),
+            gas_used: Some(42_000),
+            timestamp: Some(1_900_100_012),
+            base_fee_per_gas: Some(9),
+            withdrawals_root: Some([0xe2_u8; 32]),
+            blob_gas_used: Some(0),
+            excess_blob_gas: Some(0),
+            block_access_list_hash: None,
+            source_peer_id: Some(11),
+            observed_unix_ms: observed + 1,
+        };
+        let body_a = NetworkRuntimeNativeBodySnapshotV1 {
+            chain_id,
+            number: 100,
+            block_hash: header_hash_a,
+            tx_hashes: vec![[0xf1_u8; 32]],
+            raw_tx_rlps: vec![vec![0xf8, 0x01, 0x80]],
+            withdrawal_rlp_items: Some(Vec::new()),
+            ommer_hashes: Vec::new(),
+            withdrawal_count: Some(0),
+            body_available: true,
+            txs_materialized: true,
+            observed_unix_ms: observed,
+        };
+        let receipt_a = NetworkRuntimeNativeReceiptSnapshotV1 {
+            chain_id,
+            number: 100,
+            block_hash: header_hash_a,
+            receipts_root: [0xc1_u8; 32],
+            raw_receipts: vec![vec![1, 2, 3]],
+            receipt_count: 1,
+            receipts_available: true,
+            source_peer_id: Some(11),
+            observed_unix_ms: observed,
+        };
+        let head_a = NetworkRuntimeNativeHeadSnapshotV1 {
+            chain_id,
+            phase: NetworkRuntimeNativeSyncPhaseV1::State,
+            peer_count: 1,
+            block_number: 100,
+            block_hash: header_hash_a,
+            parent_block_hash: [0x90_u8; 32],
+            state_root: [0xa1_u8; 32],
+            canonical: true,
+            safe: false,
+            finalized: false,
+            reorg_depth_hint: None,
+            body_available: true,
+            source_peer_id: Some(11),
+            observed_unix_ms: observed,
+        };
+        let head_b = NetworkRuntimeNativeHeadSnapshotV1 {
+            chain_id,
+            phase: NetworkRuntimeNativeSyncPhaseV1::Headers,
+            peer_count: 1,
+            block_number: 101,
+            block_hash: header_hash_b,
+            parent_block_hash: header_hash_a,
+            state_root: [0xa2_u8; 32],
+            canonical: true,
+            safe: false,
+            finalized: false,
+            reorg_depth_hint: None,
+            body_available: false,
+            source_peer_id: Some(11),
+            observed_unix_ms: observed + 1,
+        };
+
+        let mut store = eth_rlpx_native_history_store_empty_v1(chain_id);
+        assert!(update_eth_rlpx_native_history_store_from_snapshots_v1(
+            &mut store,
+            chain_id,
+            Some(NetworkRuntimeSyncStatus {
+                peer_count: 1,
+                starting_block: 100,
+                current_block: 100,
+                highest_block: 130,
+            }),
+            Some(&header_a),
+            Some(&body_a),
+            Some(&receipt_a),
+            Some(&head_a),
+            8,
+        ));
+        assert!(update_eth_rlpx_native_history_store_from_snapshots_v1(
+            &mut store,
+            chain_id,
+            Some(NetworkRuntimeSyncStatus {
+                peer_count: 1,
+                starting_block: 100,
+                current_block: 101,
+                highest_block: 130,
+            }),
+            Some(&header_b),
+            None,
+            None,
+            Some(&head_b),
+            8,
+        ));
+
+        let restored_startup =
+            restore_eth_rlpx_native_history_store_v1(&store, 8).expect("startup restore");
+        assert_eq!(restored_startup, 100);
+        assert_eq!(
+            get_network_runtime_native_header_snapshot_v1(chain_id)
+                .expect("startup restored header")
+                .number,
+            100
+        );
+        assert_eq!(
+            get_network_runtime_native_head_snapshot_v1(chain_id)
+                .expect("startup restored head")
+                .block_number,
+            100
+        );
+
+        let restored_runtime =
+            restore_eth_rlpx_native_material_head_from_history_v1(&mut store, 101, 130, 8)
+                .expect("runtime material rollback");
+        assert_eq!(restored_runtime, Some(100));
+        assert_eq!(store.current_block, 100);
+        assert_eq!(store.highest_block, 130);
+        assert_eq!(
+            get_network_runtime_sync_status(chain_id)
+                .expect("runtime sync status")
+                .current_block,
+            100
+        );
+        assert_eq!(
+            get_network_runtime_native_header_snapshot_v1(chain_id)
+                .expect("runtime header")
+                .number,
+            100
+        );
+        let native_sync =
+            get_network_runtime_native_sync_status(chain_id).expect("native sync status");
+        assert_eq!(native_sync.phase, NetworkRuntimeNativeSyncPhaseV1::State);
+        assert_eq!(native_sync.current_block, 100);
+        assert!(
+            get_network_runtime_native_body_snapshot_v1(chain_id)
+                .expect("runtime body")
+                .body_available
+        );
+        assert!(
+            get_network_runtime_native_receipt_snapshot_v1(chain_id, header_hash_a)
+                .expect("runtime receipt")
+                .receipts_available
+        );
     }
 
     #[test]

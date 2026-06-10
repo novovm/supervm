@@ -310,11 +310,30 @@ impl EthFullnodeNativePeerWorkerV1 {
                 .collect::<Vec<_>>()
         };
         let sync_fanout = self.config.sync_target_fanout.min(soft_limit);
-        let sync_peers = select_eth_fullnode_native_sync_targets_v1(
+        let pending_request_peers =
+            eth_fullnode_native_rlpx_pending_request_peer_ids_v1(self.config.chain_id);
+        let selected_sync_peers = select_eth_fullnode_native_sync_targets_v1(
             self.config.chain_id,
             &session_peers,
             sync_fanout,
         );
+        let mut sync_peers = Vec::new();
+        for peer in pending_request_peers {
+            if sync_peers.len() >= sync_fanout {
+                break;
+            }
+            if candidate_peers.contains(&peer) && !sync_peers.contains(&peer) {
+                sync_peers.push(peer);
+            }
+        }
+        for peer in selected_sync_peers {
+            if sync_peers.len() >= sync_fanout {
+                break;
+            }
+            if !sync_peers.contains(&peer) {
+                sync_peers.push(peer);
+            }
+        }
         let (selection_scores, selection_quality_summary, _) =
             snapshot_eth_fullnode_peer_selection_scores_v1(
                 self.config.chain_id,
@@ -852,7 +871,7 @@ struct EthFullnodeNativePendingBlockAccessListV1 {
 }
 
 const ETH_FULLNODE_NATIVE_MISSING_BODY_RECOVERY_BATCH_MAX_V1: usize = 4;
-const ETH_FULLNODE_NATIVE_MISSING_BODY_CHASE_HEAD_BATCH_MAX_V1: usize = 1;
+const ETH_FULLNODE_NATIVE_MISSING_BODY_CHASE_HEAD_BATCH_MAX_V1: usize = 4;
 const ETH_FULLNODE_NATIVE_RECOVERY_INFLIGHT_BODY_KIND_V1: u8 = 1;
 const ETH_FULLNODE_NATIVE_RECOVERY_INFLIGHT_RECEIPT_KIND_V1: u8 = 2;
 const ETH_FULLNODE_NATIVE_RECOVERY_INFLIGHT_TTL_MS_V1: u64 = 30_000;
@@ -928,6 +947,28 @@ fn eth_fullnode_native_rlpx_live_peer_ids_v1(chain_id: u64) -> HashSet<u64> {
                 None
             }
         })
+        .collect()
+}
+
+fn eth_fullnode_native_rlpx_pending_request_peer_ids_v1(chain_id: u64) -> Vec<NodeId> {
+    let mut peers = eth_fullnode_native_rlpx_sessions_v1()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .iter()
+        .filter_map(|((session_chain_id, peer_id), session)| {
+            if *session_chain_id == chain_id
+                && eth_fullnode_native_rlpx_session_has_pending_request_v1(session)
+            {
+                Some((session.last_sync_request_unix_ms, *peer_id))
+            } else {
+                None
+            }
+        })
+        .collect::<Vec<_>>();
+    peers.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
+    peers
+        .into_iter()
+        .map(|(_, peer_id)| NodeId(peer_id))
         .collect()
 }
 
@@ -3511,12 +3552,12 @@ fn build_eth_fullnode_native_block_bodies_response_v1(
     out
 }
 
-fn build_eth_fullnode_native_missing_receipts_pending_v1(
+fn eth_fullnode_native_missing_receipts_pending_from_header_v1(
     chain_id: u64,
+    header: &crate::runtime_status::NetworkRuntimeNativeHeaderSnapshotV1,
 ) -> Option<EthFullnodeNativePendingBodyHeaderV1> {
-    let header = get_network_runtime_native_header_snapshot_v1(chain_id)?;
     let (tx_count, withdrawal_count) =
-        eth_fullnode_native_receipt_recovery_body_hint_v1(chain_id, &header)?;
+        eth_fullnode_native_receipt_recovery_body_hint_v1(chain_id, header)?;
     if get_network_runtime_native_receipt_snapshot_v1(chain_id, header.hash)
         .is_some_and(|receipt| receipt.receipts_available)
     {
@@ -3532,6 +3573,118 @@ fn build_eth_fullnode_native_missing_receipts_pending_v1(
         tx_count: Some(tx_count),
         withdrawal_count,
     })
+}
+
+fn eth_fullnode_native_missing_receipts_pending_from_canonical_block_v1(
+    chain_id: u64,
+    block: &crate::runtime_status::NetworkRuntimeNativeCanonicalBlockStateV1,
+) -> Option<EthFullnodeNativePendingBodyHeaderV1> {
+    if !block.header_observed || !block.body_available {
+        return None;
+    }
+    if get_network_runtime_native_receipt_snapshot_v1(chain_id, block.hash)
+        .is_some_and(|receipt| receipt.receipts_available)
+    {
+        return None;
+    }
+    let (Some(transactions_root), Some(receipts_root)) =
+        (block.transactions_root, block.receipts_root)
+    else {
+        return None;
+    };
+    Some(EthFullnodeNativePendingBodyHeaderV1 {
+        number: block.number,
+        hash: block.hash,
+        parent_hash: block.parent_hash,
+        state_root: block.state_root,
+        transactions_root,
+        receipts_root,
+        tx_count: Some(block.tx_hashes.len()),
+        withdrawal_count: block.withdrawal_count,
+    })
+}
+
+fn build_eth_fullnode_native_missing_receipts_pending_headers_v1(
+    chain_id: u64,
+) -> Vec<EthFullnodeNativePendingBodyHeaderV1> {
+    let mut pending = Vec::new();
+    let mut seen = HashSet::<[u8; 32]>::new();
+    if let Some(header) = get_network_runtime_native_header_snapshot_v1(chain_id) {
+        if let Some(latest) =
+            eth_fullnode_native_missing_receipts_pending_from_header_v1(chain_id, &header)
+        {
+            seen.insert(latest.hash);
+            pending.push(latest);
+        }
+    }
+
+    if eth_fullnode_native_is_chasing_remote_head_v1(chain_id) {
+        if let Some(latest) = pending.first().copied() {
+            let retained_blocks =
+                snapshot_network_runtime_native_canonical_blocks_v1(chain_id, 4096);
+            let mut expected_hash = latest.parent_hash;
+            let mut expected_number = latest.number.checked_sub(1);
+            while pending.len() < ETH_FULLNODE_NATIVE_MISSING_BODY_CHASE_HEAD_BATCH_MAX_V1 {
+                let Some(number) = expected_number else {
+                    break;
+                };
+                let Some(block) = retained_blocks
+                    .iter()
+                    .find(|block| block.number == number && block.hash == expected_hash)
+                else {
+                    break;
+                };
+                if seen.contains(&block.hash) || !block.body_available {
+                    break;
+                }
+                if let Some(next) =
+                    eth_fullnode_native_missing_receipts_pending_from_canonical_block_v1(
+                        chain_id, block,
+                    )
+                {
+                    seen.insert(next.hash);
+                    pending.push(next);
+                }
+                expected_hash = block.parent_hash;
+                expected_number = block.number.checked_sub(1);
+            }
+        }
+        pending.truncate(ETH_FULLNODE_NATIVE_MISSING_BODY_CHASE_HEAD_BATCH_MAX_V1);
+        return pending;
+    }
+
+    let mut retained_blocks = snapshot_network_runtime_native_canonical_blocks_v1(chain_id, 4096);
+    retained_blocks.sort_by(|a, b| {
+        a.number
+            .cmp(&b.number)
+            .then_with(|| a.observed_unix_ms.cmp(&b.observed_unix_ms))
+            .then_with(|| a.hash.cmp(&b.hash))
+    });
+    for block in retained_blocks {
+        if pending.len() >= ETH_FULLNODE_NATIVE_MISSING_BODY_RECOVERY_BATCH_MAX_V1 {
+            break;
+        }
+        if seen.contains(&block.hash) {
+            continue;
+        }
+        if let Some(next) =
+            eth_fullnode_native_missing_receipts_pending_from_canonical_block_v1(chain_id, &block)
+        {
+            seen.insert(next.hash);
+            pending.push(next);
+        }
+    }
+    pending.truncate(ETH_FULLNODE_NATIVE_MISSING_BODY_RECOVERY_BATCH_MAX_V1);
+    pending
+}
+
+#[cfg(test)]
+fn build_eth_fullnode_native_missing_receipts_pending_v1(
+    chain_id: u64,
+) -> Option<EthFullnodeNativePendingBodyHeaderV1> {
+    build_eth_fullnode_native_missing_receipts_pending_headers_v1(chain_id)
+        .into_iter()
+        .next()
 }
 
 fn eth_fullnode_native_receipt_recovery_body_hint_v1(
@@ -3819,10 +3972,11 @@ fn dispatch_eth_fullnode_native_rlpx_missing_receipts_recovery_v1(
     {
         return Ok(false);
     }
-    let Some(pending) = build_eth_fullnode_native_missing_receipts_pending_v1(chain_id) else {
+    let pending_headers = build_eth_fullnode_native_missing_receipts_pending_headers_v1(chain_id);
+    if pending_headers.is_empty() {
         return Ok(false);
-    };
-    let mut pending_headers = vec![pending];
+    }
+    let mut pending_headers = pending_headers;
     let empty_receipts = materialize_empty_receipts_for_pending_body_headers_v1(
         chain_id,
         peer.0,
@@ -7194,7 +7348,12 @@ fn select_eth_fullnode_native_header_followup_body_headers_v1<'a>(
                 || (product_current_head_first && status.highest_block >= latest.number)
         })
     {
-        return vec![latest];
+        return headers
+            .iter()
+            .rev()
+            .take(ETH_FULLNODE_NATIVE_MISSING_BODY_CHASE_HEAD_BATCH_MAX_V1)
+            .copied()
+            .collect();
     }
     headers.to_vec()
 }
@@ -10530,6 +10689,76 @@ mod tests {
     }
 
     #[test]
+    fn real_rlpx_worker_plan_prioritizes_pending_material_session_v1() {
+        let chain_id = 9_926_801_u64;
+        let local = NodeId(9_926_801_001);
+        let pending_peer = NodeId(9_926_801_002);
+        let higher_head_peer = NodeId(9_926_801_003);
+
+        let _ = upsert_network_runtime_eth_peer_session(
+            chain_id,
+            pending_peer.0,
+            &[69, 70],
+            &[1],
+            Some(1_200),
+        )
+        .expect("pending peer session");
+        let _ = upsert_network_runtime_eth_peer_session(
+            chain_id,
+            higher_head_peer.0,
+            &[69, 70],
+            &[1],
+            Some(2_400),
+        )
+        .expect("higher peer session");
+
+        let mut live_session = dummy_rlpx_live_session(chain_id);
+        live_session.endpoint.node_hint = pending_peer.0;
+        live_session.last_bodies_request_id = Some(77);
+        live_session.last_sync_request_unix_ms = now_unix_ms().saturating_sub(5_000);
+        live_session
+            .pending_body_headers
+            .push(EthFullnodeNativePendingBodyHeaderV1 {
+                number: 1_200,
+                hash: [0x77; 32],
+                parent_hash: [0x76; 32],
+                state_root: [0x78; 32],
+                transactions_root: [0x79; 32],
+                receipts_root: [0x7a; 32],
+                tx_count: None,
+                withdrawal_count: None,
+            });
+        eth_fullnode_native_rlpx_sessions_v1()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .insert((chain_id, pending_peer.0), live_session);
+
+        let mut budget = default_eth_fullnode_budget_hooks_v1();
+        budget.active_native_peer_soft_limit = 2;
+        budget.active_native_peer_hard_limit = 2;
+        budget.sync_target_fanout = 1;
+        let worker = EthFullnodeNativePeerWorkerV1::new(EthFullnodeNativePeerWorkerConfigV1 {
+            chain_id,
+            local_node: local,
+            peers: vec![pending_peer, higher_head_peer],
+            peer_endpoints: Vec::new(),
+            recv_budget: 1,
+            sync_target_fanout: 1,
+            budget_hooks: budget,
+        });
+
+        assert_eq!(
+            worker.plan().sync_peers,
+            vec![pending_peer],
+            "pending body/receipt sessions must be driven before opening another forward sync target"
+        );
+        eth_fullnode_native_rlpx_sessions_v1()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .remove(&(chain_id, pending_peer.0));
+    }
+
+    #[test]
     fn rlpx_block_headers_validation_rejects_non_contiguous_batch_v1() {
         let empty_root = crate::eth_rlpx_empty_trie_root_v1();
         let empty_ommers_hash = crate::eth_rlpx_empty_ommers_hash_v1();
@@ -10694,7 +10923,7 @@ mod tests {
     }
 
     #[test]
-    fn rlpx_header_batch_import_requests_current_body_only_while_chasing_v1() {
+    fn rlpx_header_batch_import_requests_current_first_body_suffix_while_chasing_v1() {
         let chain_id = 9_928_001_u64;
         let peer_id = 77_u64;
         clear_network_runtime_native_snapshots_for_chain_v1(chain_id);
@@ -10763,8 +10992,14 @@ mod tests {
         .expect("header batch ingest");
 
         assert_eq!(report.header_updates, 16);
-        assert_eq!(session.pending_body_headers.len(), 1);
-        assert_eq!(session.pending_body_headers[0].number, 136);
+        assert_eq!(
+            session
+                .pending_body_headers
+                .iter()
+                .map(|header| header.number)
+                .collect::<Vec<_>>(),
+            vec![136, 135, 134, 133]
+        );
         assert_eq!(session.pending_body_headers[0].hash, [0x5f; 32]);
         assert!(
             session.last_bodies_request_id.is_some(),
@@ -10889,7 +11124,7 @@ mod tests {
     }
 
     #[test]
-    fn rlpx_large_header_batch_import_requests_current_body_only_at_highest_v1() {
+    fn rlpx_large_header_batch_import_requests_current_first_body_suffix_at_highest_v1() {
         let chain_id = 9_928_002_u64;
         let peer_id = 78_u64;
         clear_network_runtime_native_snapshots_for_chain_v1(chain_id);
@@ -10960,11 +11195,14 @@ mod tests {
 
         assert_eq!(report.header_updates, 61);
         assert_eq!(
-            session.pending_body_headers.len(),
-            1,
-            "large near-head batches must materialize current head first"
+            session
+                .pending_body_headers
+                .iter()
+                .map(|header| header.number)
+                .collect::<Vec<_>>(),
+            vec![261, 260, 259, 258],
+            "large near-head batches must materialize current head first and keep a bounded suffix"
         );
-        assert_eq!(session.pending_body_headers[0].number, 261);
         assert_eq!(session.pending_body_headers[0].hash, [0xcd; 32]);
         let retained = snapshot_network_runtime_native_canonical_blocks_v1(chain_id, 128);
         assert!(retained.iter().any(|block| block.number == 201));
@@ -10972,7 +11210,7 @@ mod tests {
     }
 
     #[test]
-    fn rlpx_small_header_batch_import_requests_current_body_only_at_highest_v1() {
+    fn rlpx_small_header_batch_import_requests_current_first_body_suffix_at_highest_v1() {
         let chain_id = 9_928_003_u64;
         let peer_id = 79_u64;
         clear_network_runtime_native_snapshots_for_chain_v1(chain_id);
@@ -11042,8 +11280,14 @@ mod tests {
         .expect("header batch ingest");
 
         assert_eq!(report.header_updates, 4);
-        assert_eq!(session.pending_body_headers.len(), 1);
-        assert_eq!(session.pending_body_headers[0].number, 304);
+        assert_eq!(
+            session
+                .pending_body_headers
+                .iter()
+                .map(|header| header.number)
+                .collect::<Vec<_>>(),
+            vec![304, 303, 302, 301]
+        );
         assert_eq!(session.pending_body_headers[0].hash, [0x24; 32]);
     }
 
@@ -11120,11 +11364,14 @@ mod tests {
 
         assert_eq!(report.header_updates, 3);
         assert_eq!(
-            session.pending_body_headers.len(),
-            1,
-            "known-highest header batch must not request multiple bodies"
+            session
+                .pending_body_headers
+                .iter()
+                .map(|header| header.number)
+                .collect::<Vec<_>>(),
+            vec![403, 402, 401],
+            "known-highest header batch must keep current head first while filling the small suffix"
         );
-        assert_eq!(session.pending_body_headers[0].number, 403);
         assert_eq!(session.pending_body_headers[0].hash, [0x33; 32]);
     }
 
@@ -12220,6 +12467,81 @@ mod tests {
     }
 
     #[test]
+    fn rlpx_missing_receipts_recovery_batches_current_first_suffix_while_chasing() {
+        let chain_id = 9_926_109_u64;
+        let peer_id = 1_300_110_u64;
+        clear_network_runtime_native_snapshots_for_chain_v1(chain_id);
+
+        let base_number = 7_000_u64;
+        let mut parent_hash = [0x70; 32];
+        for offset in 0..8u8 {
+            let number = base_number + u64::from(offset);
+            let hash = [0x80 + offset; 32];
+            let tx_hashes = vec![[0x10 + offset; 32], [0x20 + offset; 32]];
+            set_network_runtime_native_header_snapshot_v1(
+                chain_id,
+                crate::runtime_status::NetworkRuntimeNativeHeaderSnapshotV1 {
+                    chain_id,
+                    number,
+                    hash,
+                    parent_hash,
+                    state_root: [0x90 + offset; 32],
+                    transactions_root: [0xa0 + offset; 32],
+                    receipts_root: [0xb0 + offset; 32],
+                    ommers_hash: crate::eth_rlpx_empty_ommers_hash_v1(),
+                    logs_bloom: vec![0u8; 256],
+                    gas_limit: Some(30_000_000),
+                    gas_used: Some(42_000),
+                    timestamp: Some(1_900_000_100 + u64::from(offset)),
+                    base_fee_per_gas: Some(8),
+                    withdrawals_root: Some(crate::eth_rlpx_empty_trie_root_v1()),
+                    blob_gas_used: None,
+                    excess_blob_gas: None,
+                    block_access_list_hash: None,
+                    source_peer_id: Some(peer_id),
+                    observed_unix_ms: 1 + u128::from(offset),
+                },
+            );
+            set_network_runtime_native_body_snapshot_v1(
+                chain_id,
+                crate::runtime_status::NetworkRuntimeNativeBodySnapshotV1 {
+                    chain_id,
+                    number,
+                    block_hash: hash,
+                    tx_hashes,
+                    raw_tx_rlps: vec![vec![offset], vec![offset.saturating_add(1)]],
+                    ommer_hashes: Vec::new(),
+                    withdrawal_rlp_items: None,
+                    withdrawal_count: Some(0),
+                    body_available: true,
+                    txs_materialized: true,
+                    observed_unix_ms: 10 + u128::from(offset),
+                },
+            );
+            parent_hash = hash;
+        }
+        set_network_runtime_sync_status(
+            chain_id,
+            NetworkRuntimeSyncStatus {
+                peer_count: 1,
+                starting_block: base_number,
+                current_block: base_number + 4,
+                highest_block: base_number + 64,
+            },
+        );
+
+        let pending = build_eth_fullnode_native_missing_receipts_pending_headers_v1(chain_id);
+        assert_eq!(
+            pending
+                .iter()
+                .map(|header| header.number)
+                .collect::<Vec<_>>(),
+            vec![7_007, 7_006, 7_005, 7_004]
+        );
+        assert!(pending.iter().all(|header| header.tx_count == Some(2)));
+    }
+
+    #[test]
     fn rlpx_missing_body_recovery_rebuilds_pending_from_latest_header() {
         let chain_id = 9_926_105_u64;
         let peer_id = 1_300_106_u64;
@@ -12685,7 +13007,7 @@ mod tests {
     }
 
     #[test]
-    fn rlpx_missing_body_recovery_batches_current_header_only_suffix_while_chasing() {
+    fn rlpx_missing_body_recovery_batches_current_first_suffix_while_chasing() {
         let chain_id = 9_926_118_u64;
         let peer_id = 1_300_119_u64;
         clear_network_runtime_native_snapshots_for_chain_v1(chain_id);
@@ -12762,7 +13084,7 @@ mod tests {
                 .iter()
                 .map(|header| header.number)
                 .collect::<Vec<_>>(),
-            vec![6_016]
+            vec![6_016, 6_015, 6_014, 6_013]
         );
         assert!(
             pending.iter().all(|header| header.number >= base_number),
