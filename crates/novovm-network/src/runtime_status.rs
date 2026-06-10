@@ -2353,10 +2353,17 @@ pub fn plan_network_runtime_sync_pull_window(
         return None;
     }
 
+    let runtime_phase = native_sync_phase_from_runtime_status(&runtime);
     let phase = get_network_runtime_native_sync_status(chain_id)
         .filter(network_runtime_native_sync_is_active)
         .map(|status| status.phase)
-        .unwrap_or_else(|| native_sync_phase_from_runtime_status(&runtime));
+        .filter(|phase| {
+            !matches!(
+                phase,
+                NetworkRuntimeNativeSyncPhaseV1::Idle | NetworkRuntimeNativeSyncPhaseV1::Discovery
+            )
+        })
+        .unwrap_or(runtime_phase);
     let budget = get_network_runtime_native_budget_hooks_v1(chain_id);
     let batch_size = native_sync_pull_batch_by_phase(phase, &budget)?;
     let from_block = runtime.current_block.saturating_add(1);
@@ -5974,6 +5981,36 @@ mod tests {
             },
         );
         assert!(plan_network_runtime_sync_pull_window(chain_id).is_none());
+    }
+
+    #[test]
+    fn plan_sync_pull_window_falls_back_from_discovery_with_runtime_gap_v1() {
+        let chain_id = 20_386_u64;
+        clear_runtime_sync_status_for_test(chain_id);
+        set_network_runtime_native_sync_status(
+            chain_id,
+            NetworkRuntimeNativeSyncStatusV1 {
+                phase: NetworkRuntimeNativeSyncPhaseV1::Discovery,
+                peer_count: 0,
+                starting_block: 100,
+                current_block: 100,
+                highest_block: 100,
+                updated_at_unix_millis: now_unix_millis(),
+            },
+        );
+        set_network_runtime_sync_status(
+            chain_id,
+            NetworkRuntimeSyncStatus {
+                peer_count: 2,
+                starting_block: 100,
+                current_block: 100,
+                highest_block: 10_000,
+            },
+        );
+
+        let window = plan_network_runtime_sync_pull_window(chain_id).expect("headers window");
+        assert_eq!(window.phase, NetworkRuntimeNativeSyncPhaseV1::Headers);
+        assert_eq!(window.from_block, 101);
     }
 
     #[test]

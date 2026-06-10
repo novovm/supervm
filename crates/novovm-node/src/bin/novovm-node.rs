@@ -2450,6 +2450,20 @@ fn eth_rlpx_body_material_made_progress_v1(body_updates: usize, receipt_updates:
     body_updates > 0 || receipt_updates > 0
 }
 
+fn eth_rlpx_material_availability_made_progress_v1(
+    current_head_hash: Option<[u8; 32]>,
+    previous_head_hash: Option<[u8; 32]>,
+    current_head_body_available: bool,
+    previous_head_body_available: bool,
+    current_head_receipt_available: bool,
+    previous_head_receipt_available: bool,
+) -> bool {
+    current_head_hash.is_some()
+        && current_head_hash == previous_head_hash
+        && ((current_head_body_available && !previous_head_body_available)
+            || (current_head_receipt_available && !previous_head_receipt_available))
+}
+
 fn eth_rlpx_complete_head_made_progress_v1(
     current_block: u64,
     previous_progress_block: u64,
@@ -2479,6 +2493,7 @@ fn eth_rlpx_material_recovery_rollback_stalled_v1(
     tick: usize,
     last_sync_progress_tick: usize,
     last_complete_head_progress_tick: usize,
+    last_material_recovery_activity_tick: usize,
     stalled_refresh_interval_ticks: usize,
     body_material_request_transport_failure: bool,
     body_recovery_stalled: bool,
@@ -2489,7 +2504,9 @@ fn eth_rlpx_material_recovery_rollback_stalled_v1(
     if !current_head_material_missing
         || tick.saturating_sub(last_complete_head_progress_tick)
             < stalled_refresh_interval_ticks.max(4)
-        || tick.saturating_sub(last_sync_progress_tick) < stalled_refresh_interval_ticks.max(4)
+        || tick.saturating_sub(last_sync_progress_tick) < stalled_refresh_interval_ticks.max(8)
+        || tick.saturating_sub(last_material_recovery_activity_tick)
+            < stalled_refresh_interval_ticks.max(8)
     {
         return false;
     }
@@ -5761,6 +5778,10 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
     let mut last_sync_progress_block = current_block;
     let mut last_complete_head_progress_tick = 0usize;
     let mut last_complete_head_progress_block = current_block;
+    let mut last_material_recovery_activity_tick = 0usize;
+    let mut last_seen_head_hash = None::<[u8; 32]>;
+    let mut last_seen_head_body_available = false;
+    let mut last_seen_head_receipt_available = false;
     loop {
         tick = tick.saturating_add(1);
         let report = worker
@@ -5819,6 +5840,15 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
             current_head_body_available,
             current_head_receipt_available,
         );
+        let current_head_hash = header.as_ref().map(|snapshot| snapshot.hash);
+        let material_availability_made_progress = eth_rlpx_material_availability_made_progress_v1(
+            current_head_hash,
+            last_seen_head_hash,
+            current_head_body_available,
+            last_seen_head_body_available,
+            current_head_receipt_available,
+            last_seen_head_receipt_available,
+        );
         let complete_head_made_progress = eth_rlpx_complete_head_made_progress_v1(
             current_sync_block,
             last_complete_head_progress_block,
@@ -5829,7 +5859,8 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
         let sync_made_progress = current_sync_block > last_sync_progress_block
             || report.header_updates > 0
             || report.body_updates > 0
-            || report.receipt_updates > 0;
+            || report.receipt_updates > 0
+            || material_availability_made_progress;
         if sync_made_progress {
             last_sync_progress_tick = tick;
             last_sync_progress_block = last_sync_progress_block.max(current_sync_block);
@@ -5839,6 +5870,17 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
             last_complete_head_progress_block =
                 last_complete_head_progress_block.max(current_sync_block);
         }
+        if current_head_material_missing
+            && (report.connected_peers > 0
+                || report.ready_peers > 0
+                || report.status_updates > 0
+                || report.sync_requests > 0)
+        {
+            last_material_recovery_activity_tick = tick;
+        }
+        last_seen_head_hash = current_head_hash;
+        last_seen_head_body_available = current_head_body_available;
+        last_seen_head_receipt_available = current_head_receipt_available;
         let last_failure = report.peer_failures.last().map(|failure| {
             format!(
                 "{}:{}:{}",
@@ -6138,6 +6180,7 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
             tick,
             last_sync_progress_tick,
             last_complete_head_progress_tick,
+            last_material_recovery_activity_tick,
             stalled_refresh_interval_ticks,
             body_material_request_transport_failure,
             body_recovery_stalled,
@@ -7163,6 +7206,28 @@ mod mainline_evm_cli_tests {
     }
 
     #[test]
+    fn eth_rlpx_material_availability_transition_counts_as_progress_v1() {
+        let head = Some([0x42; 32]);
+        assert!(eth_rlpx_material_availability_made_progress_v1(
+            head, head, true, false, false, false,
+        ));
+        assert!(eth_rlpx_material_availability_made_progress_v1(
+            head, head, true, true, true, false,
+        ));
+        assert!(!eth_rlpx_material_availability_made_progress_v1(
+            Some([0x43; 32]),
+            head,
+            true,
+            false,
+            false,
+            false,
+        ));
+        assert!(!eth_rlpx_material_availability_made_progress_v1(
+            head, head, true, true, false, false,
+        ));
+    }
+
+    #[test]
     fn eth_rlpx_batch_restore_requires_complete_head_advance_v1() {
         assert!(!eth_rlpx_complete_head_made_progress_v1(
             25_281_726, 25_281_726, true, true, true
@@ -7192,51 +7257,78 @@ mod mainline_evm_cli_tests {
     fn eth_rlpx_material_rollback_waits_for_material_failure_or_hard_stall_v1() {
         assert!(
             !eth_rlpx_material_recovery_rollback_stalled_v1(
-                true, false, false, 6, 0, 0, 4, false, false, false, 1, 1,
+                true, false, false, 6, 0, 0, 0, 4, false, false, false, 1, 1,
             ),
             "ready/sync activity must leave room for material recovery hedging"
         );
         assert!(
             !eth_rlpx_material_recovery_rollback_stalled_v1(
-                true, false, false, 6, 0, 0, 4, false, false, false, 0, 0,
+                true, false, false, 6, 0, 0, 0, 4, false, false, false, 0, 0,
             ),
             "a short no-activity gap after header-only progress is not enough to rollback"
         );
+        assert!(
+            !eth_rlpx_material_recovery_rollback_stalled_v1(
+                true, false, false, 6, 0, 0, 0, 4, true, false, false, 0, 0,
+            ),
+            "body recovery should wait for the hard-stall window after recent sync progress"
+        );
         assert!(eth_rlpx_material_recovery_rollback_stalled_v1(
-            true, false, false, 6, 0, 0, 4, true, false, false, 0, 0,
+            true, false, false, 8, 0, 0, 0, 4, true, false, false, 0, 0,
         ));
         assert!(
             !eth_rlpx_material_recovery_rollback_stalled_v1(
-                true, false, false, 6, 0, 0, 4, true, false, false, 2, 1,
+                true, false, false, 6, 0, 0, 0, 4, true, false, false, 2, 1,
             ),
             "fresh ready/sync material activity must not rollback on a historical body failure"
         );
         assert!(
             !eth_rlpx_material_recovery_rollback_stalled_v1(
-                true, false, false, 12, 12, 2, 4, true, false, false, 0, 0,
+                true, false, false, 12, 12, 2, 0, 4, true, false, false, 0, 0,
             ),
             "fresh header-only progress must give body recovery a full material window"
         );
+        assert!(
+            !eth_rlpx_material_recovery_rollback_stalled_v1(
+                true, false, false, 6, 0, 0, 0, 4, false, true, false, 0, 0,
+            ),
+            "body recovery stall should not rollback before the hard-stall window"
+        );
         assert!(eth_rlpx_material_recovery_rollback_stalled_v1(
-            true, false, false, 6, 0, 0, 4, false, true, false, 0, 0,
+            true, false, false, 8, 0, 0, 0, 4, false, true, false, 0, 0,
         ));
         assert!(
             !eth_rlpx_material_recovery_rollback_stalled_v1(
-                true, true, false, 6, 0, 0, 4, true, true, false, 1, 1,
+                true, false, false, 19, 11, 1, 18, 4, false, true, false, 0, 0,
+            ),
+            "recent material recovery activity must keep a header-only head in recovery"
+        );
+        assert!(eth_rlpx_material_recovery_rollback_stalled_v1(
+            true, false, false, 27, 11, 1, 18, 4, false, true, false, 0, 0,
+        ));
+        assert!(
+            !eth_rlpx_material_recovery_rollback_stalled_v1(
+                true, true, false, 6, 0, 0, 0, 4, true, true, false, 1, 1,
             ),
             "body progress must not be rolled back while receipt recovery still has an active peer"
         );
         assert!(
             !eth_rlpx_material_recovery_rollback_stalled_v1(
-                true, true, false, 16, 15, 2, 4, false, false, true, 0, 0,
+                true, true, false, 16, 15, 2, 0, 4, false, false, true, 0, 0,
             ),
             "fresh body progress must give receipt recovery a full material window"
         );
+        assert!(
+            !eth_rlpx_material_recovery_rollback_stalled_v1(
+                true, true, false, 6, 0, 0, 0, 4, false, false, true, 0, 0,
+            ),
+            "receipt recovery stall should not rollback before the hard-stall window"
+        );
         assert!(eth_rlpx_material_recovery_rollback_stalled_v1(
-            true, true, false, 6, 0, 0, 4, false, false, true, 0, 0,
+            true, true, false, 8, 0, 0, 0, 4, false, false, true, 0, 0,
         ));
         assert!(eth_rlpx_material_recovery_rollback_stalled_v1(
-            true, false, false, 8, 0, 0, 4, false, false, false, 0, 0,
+            true, false, false, 8, 0, 0, 0, 4, false, false, false, 0, 0,
         ));
     }
 
