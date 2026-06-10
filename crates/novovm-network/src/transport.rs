@@ -4287,6 +4287,20 @@ fn clear_eth_fullnode_native_headers_request_state_v1(
     session.pending_headers_request = None;
 }
 
+fn eth_fullnode_native_empty_forward_headers_is_unproductive_v1(
+    chain_id: u64,
+    request: &EthRlpxGetBlockHeadersRequestV1,
+) -> bool {
+    if request.origin_hash.is_some() || request.reverse || request.skip != 0 {
+        return false;
+    }
+    let Some(status) = get_network_runtime_sync_status(chain_id) else {
+        return false;
+    };
+    status.highest_block > status.current_block
+        && request.start_height == status.current_block.saturating_add(1)
+}
+
 fn clear_eth_fullnode_native_block_access_list_request_state_v1(
     session: &mut EthFullnodeNativeRlpxLivePeerSessionV1,
 ) {
@@ -7006,6 +7020,24 @@ fn ingest_real_rlpx_block_headers_v1(
         return Err(NetworkError::Decode(err));
     }
     if headers.headers.is_empty() {
+        if eth_fullnode_native_empty_forward_headers_is_unproductive_v1(chain_id, &pending_request)
+        {
+            let err = format!(
+                "rlpx_empty_headers_forward_gap:request_id={} start={} highest={}",
+                pending_request.request_id,
+                pending_request.start_height,
+                get_network_runtime_sync_status(chain_id)
+                    .map(|status| status.highest_block)
+                    .unwrap_or(pending_request.start_height)
+            );
+            observe_network_runtime_eth_peer_timeout_v1(
+                chain_id,
+                source_peer_id,
+                "empty_headers_forward_gap",
+            );
+            clear_eth_fullnode_native_headers_request_state_v1(session);
+            return Err(NetworkError::Io(err));
+        }
         clear_eth_fullnode_native_headers_request_state_v1(session);
         return Ok(());
     }
@@ -10708,6 +10740,109 @@ mod tests {
         let head = get_network_runtime_native_header_snapshot_v1(chain_id).expect("head header");
         assert_eq!(head.number, 136);
         assert_eq!(head.hash, [0x5f; 32]);
+    }
+
+    #[test]
+    fn rlpx_empty_forward_headers_gap_releases_unproductive_peer_v1() {
+        let chain_id = 9_928_003_u64;
+        let peer_id = 79_u64;
+        set_network_runtime_sync_status(
+            chain_id,
+            NetworkRuntimeSyncStatus {
+                peer_count: 1,
+                starting_block: 240,
+                current_block: 240,
+                highest_block: 256,
+            },
+        );
+        let _ =
+            upsert_network_runtime_eth_peer_session(chain_id, peer_id, &[69, 70], &[1], Some(256))
+                .expect("ready peer");
+        let (mut session, _accepted, _peer_frame_session) = dummy_rlpx_live_session_pair(chain_id);
+        session.pending_headers_request = Some(EthRlpxGetBlockHeadersRequestV1 {
+            request_id: 13,
+            start_height: 241,
+            origin_hash: None,
+            max_headers: 16,
+            skip: 0,
+            reverse: false,
+        });
+        let response = EthRlpxBlockHeadersResponseV1 {
+            request_id: 13,
+            headers: Vec::new(),
+        };
+        let budget = default_eth_fullnode_budget_hooks_v1();
+        let mut report = EthFullnodeNativeRlpxPeerTickReportV1::default();
+
+        let err = ingest_real_rlpx_block_headers_v1(
+            chain_id,
+            peer_id,
+            &mut session,
+            &response,
+            &budget,
+            &mut report,
+        )
+        .expect_err("empty forward headers while behind must release peer");
+
+        assert!(
+            err.to_string().contains("rlpx_empty_headers_forward_gap"),
+            "unexpected error: {err}"
+        );
+        assert!(session.pending_headers_request.is_none());
+        assert!(session.last_headers_request_id.is_none());
+        let snapshot =
+            snapshot_network_runtime_eth_peer_sessions_for_peers_v1(chain_id, &[NodeId(peer_id)])
+                .into_iter()
+                .next()
+                .expect("peer snapshot");
+        assert_eq!(snapshot.timeout_count, 1);
+        assert_eq!(
+            snapshot.last_failure_class,
+            Some(crate::EthPeerFailureClassV1::Timeout)
+        );
+    }
+
+    #[test]
+    fn rlpx_empty_headers_without_gap_stays_protocol_valid_v1() {
+        let chain_id = 9_928_004_u64;
+        let peer_id = 80_u64;
+        set_network_runtime_sync_status(
+            chain_id,
+            NetworkRuntimeSyncStatus {
+                peer_count: 1,
+                starting_block: 512,
+                current_block: 512,
+                highest_block: 512,
+            },
+        );
+        let (mut session, _accepted, _peer_frame_session) = dummy_rlpx_live_session_pair(chain_id);
+        session.pending_headers_request = Some(EthRlpxGetBlockHeadersRequestV1 {
+            request_id: 14,
+            start_height: 513,
+            origin_hash: None,
+            max_headers: 1,
+            skip: 0,
+            reverse: false,
+        });
+        let response = EthRlpxBlockHeadersResponseV1 {
+            request_id: 14,
+            headers: Vec::new(),
+        };
+        let budget = default_eth_fullnode_budget_hooks_v1();
+        let mut report = EthFullnodeNativeRlpxPeerTickReportV1::default();
+
+        ingest_real_rlpx_block_headers_v1(
+            chain_id,
+            peer_id,
+            &mut session,
+            &response,
+            &budget,
+            &mut report,
+        )
+        .expect("empty headers are valid when no forward gap exists");
+
+        assert!(session.pending_headers_request.is_none());
+        assert!(session.last_headers_request_id.is_none());
     }
 
     #[test]
