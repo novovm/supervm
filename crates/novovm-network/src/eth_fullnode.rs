@@ -5079,6 +5079,23 @@ mod tests {
     }
 
     #[test]
+    fn negotiate_eth_native_caps_keeps_snap2_experimental_opt_out_v1() {
+        let local = default_eth_native_capabilities();
+        assert_eq!(local.snap_versions, vec![SnapWireVersion::V1]);
+        assert_eq!(SnapWireVersion::parse(2), None);
+
+        let negotiated =
+            negotiate_eth_native_capabilities(&local, &[69, 70, 71], &[2, 1]).expect("negotiate");
+        assert_eq!(negotiated.eth_version, EthWireVersion::V71);
+        assert_eq!(negotiated.snap_version, Some(SnapWireVersion::V1));
+
+        let snap2_only =
+            negotiate_eth_native_capabilities(&local, &[69, 70, 71], &[2]).expect("eth negotiate");
+        assert_eq!(snap2_only.eth_version, EthWireVersion::V71);
+        assert_eq!(snap2_only.snap_version, None);
+    }
+
+    #[test]
     fn negotiate_eth_native_caps_none_if_no_eth_intersection() {
         let local = default_eth_native_capabilities();
         let negotiated = negotiate_eth_native_capabilities(&local, &[64, 65], &[1]);

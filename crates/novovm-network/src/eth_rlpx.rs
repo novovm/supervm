@@ -5279,6 +5279,11 @@ mod tests {
         assert!(caps
             .iter()
             .any(|cap| cap.name == "snap" && cap.version == 1));
+        assert!(
+            caps.iter()
+                .all(|cap| cap.name != "snap" || cap.version == 1),
+            "geth keeps snap/2 opt-in and unsafe for public default; SUPERVM must not advertise it by default"
+        );
     }
 
     #[test]
