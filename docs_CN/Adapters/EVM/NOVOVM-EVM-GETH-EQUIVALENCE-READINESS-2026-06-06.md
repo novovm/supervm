@@ -201,7 +201,7 @@ git pull --ff-only
 
 - 保持核心库默认不动，只调整直接产品入口 `novovm-node` 的公网 RLPx sync runtime budget。
 - 新增 `NOVOVM_ETH_RLPX_REQUEST_TIMEOUT_MS`，默认 `5000`，环境变量范围钳制为 `1000..120000`。
-- `eth_rlpx_apply_public_sync_runtime_defaults_v1` 现在把该值写入 `budget.rlpx_request_timeout_ms`，与现有 `headers=192`、`bodies=128`、runtime fanout 一起形成公网同步入口默认。
+- `eth_rlpx_apply_public_sync_runtime_defaults_v1` 现在把该值写入 `budget.rlpx_request_timeout_ms`，与现有 `headers=192`、`bodies=16`、runtime fanout 一起形成公网同步入口默认。
 
 本轮验证：
 
@@ -252,7 +252,7 @@ cargo run -p novovm-node --bin novovm-node
 本轮同步到 SUPERVM 的产品语义：
 
 - 不改变 wire 协议，不新增脚本，不把 EVM 做成独立工程化产品。
-- 产品入口仍以 `NOVOVM_ETH_RLPX_HEADERS_BATCH=192`、`NOVOVM_ETH_RLPX_BODIES_BATCH=128` 启动。
+- 产品入口当前以 `NOVOVM_ETH_RLPX_HEADERS_BATCH=192`、`NOVOVM_ETH_RLPX_BODIES_BATCH=16` 启动，并保留 adaptive body batch 回退/恢复。
 - 新增 `NOVOVM_ETH_RLPX_ADAPTIVE_BATCH_ENABLED`，默认开启。
 - 新增最小退避窗口：`NOVOVM_ETH_RLPX_ADAPTIVE_HEADERS_MIN_BATCH` 默认 `64`，`NOVOVM_ETH_RLPX_ADAPTIVE_BODIES_MIN_BATCH` 默认 `32`。
 - 当 sync 请求发生 `rlpx_session_closed`、`rlpx_frame_body_read_failed`、`rlpx_request_timeout:headers/bodies/receipts` 时，当前长跑进程内 headers/bodies batch 临时减半。
@@ -900,7 +900,7 @@ cargo run -p novovmctl -- evm-block-access-list-scan `
 - RLPx empty-body receipt materialization gate: pass, covers materialized empty body + empty `receiptsRoot` -> local empty native receipt snapshot without waiting for a remote `Receipts` response；this removes the observed long-run stall where block `1024` had header/body available but `receipt=null`
 - RLPx missing-receipts recovery gate: pass, covers peer disconnect after latest header/body import but before receipt response；next ready RLPx worker rebuilds pending receipt state from latest native header/body and sends `GetReceipts(firstBlockReceiptIndex=0)` before any new `GetBlockHeaders` pull, then validates/writes the recovered receipt snapshot
 - RLPx same-tick sync dispatch gate: pass, real RLPx worker 在 Status 成功后同一 tick 立即 drive 已 ready session 并发出首个 `GetBlockHeaders`/sync request，减少公网 peer 在下一 scheduler tick 前关闭导致的 ready 空窗；由 `real_rlpx_peer_worker_ingests_runtime_native_snapshots` 覆盖
-- novovm-node RLPx public sync batch/fanout gate: pass, `eth_rlpx_sync` 产品入口默认使用 geth downloader-style `NOVOVM_ETH_RLPX_HEADERS_BATCH=192`、`NOVOVM_ETH_RLPX_BODIES_BATCH=128`；默认 `NOVOVM_ETH_RLPX_SYNC_TARGET_FANOUT` 首 tick 收敛为 8，stalled admission 后默认 adaptive bootstrap fanout 可升到 bounded 32，避免正常启动直接扩散成 50-peer 调参长跑；需要更高 fanout 探测时仍可显式设置 `NOVOVM_ETH_RLPX_SYNC_TARGET_FANOUT` / `NOVOVM_ETH_RLPX_ADAPTIVE_BOOTSTRAP_FANOUT`。该修订保留启动可观察性和可控公网探测能力，但不声明完整 geth snap sync 或长期主网同步已经完成。
+- novovm-node RLPx public sync batch/fanout gate: pass, `eth_rlpx_sync` 产品入口默认使用 `NOVOVM_ETH_RLPX_HEADERS_BATCH=192`、`NOVOVM_ETH_RLPX_BODIES_BATCH=16`；默认 `NOVOVM_ETH_RLPX_SYNC_TARGET_FANOUT` 首 tick 收敛为 8，stalled admission 后默认 adaptive bootstrap fanout 可升到 bounded 32，避免正常启动直接扩散成 50-peer 调参长跑；需要更高 fanout 探测时仍可显式设置 `NOVOVM_ETH_RLPX_SYNC_TARGET_FANOUT` / `NOVOVM_ETH_RLPX_ADAPTIVE_BOOTSTRAP_FANOUT`。64 tick batch16 live gate 从完整 `25284823` pivot 到公网头 `25293082`，59/64 tick body+receipt 完整，5 个短暂 header-only 头均恢复，`bodies_received=13`、`receipts_received=13`、`rollback=0`；该修订保留启动可观察性和可控公网探测能力，但不声明完整 geth snap sync 或 24h 长期主网同步已经完成。
 - novovm-node RLPx runtime-reputation endpoint cache gate: pass, 产品入口会把 successful/ready/header-body-sync contributing peers 前置，把无贡献且近期 `too_many_peers`、timeout、pre-hello close 或连续失败的 endpoint 后置到 fresh candidates 之后；cache 顺序变化后立即重建当前 worker 并写回 cache，避免同一进程继续反复优先连接近期饱和或 stale peer。8 tick live run 已观察到每 tick 触发 `eth_rlpx_peer_endpoint_cache_reorder`，但仍未拿到 ready peer，因此不声明公网 admission 已完成。
 - RLPx pooled tx gates: pass, covers inbound real `NewPooledTransactionHashes` -> `GetPooledTransactions` -> raw `PooledTransactions` materialized into pending tx payload, outbound local pending tx -> real `NewPooledTransactionHashes` after write success -> peer `GetPooledTransactions` -> local raw `PooledTransactions` response, and inbound real `GetPooledTransactions` -> local raw tx response
 - RLPx BlockRangeUpdate gate: pass, covers geth eth/69+ `BlockRangeUpdate` code `0x11` wire shape `[earliestBlock, latestBlock, latestBlockHash]`, rejects `earliest > latest` and zero latest hash, and real RLPx inbound update refreshes runtime peer head/highest without requiring a new `Status`; this is a peer range/head observation gate, not a full downloader range store

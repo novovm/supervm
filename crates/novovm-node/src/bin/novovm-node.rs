@@ -2575,6 +2575,7 @@ const ETH_RLPX_PUBLIC_SYNC_DEFAULT_REQUEST_INTERVAL_MS_V1: u64 = 250;
 const ETH_RLPX_PUBLIC_SYNC_DEFAULT_RUNTIME_SNAPSHOT_BLOCKS_V1: u64 = 8;
 const ETH_RLPX_PUBLIC_SYNC_DEFAULT_RUNTIME_PENDING_TXS_V1: u64 = 128;
 const ETH_RLPX_PUBLIC_SYNC_DEFAULT_FINALIZE_HEADERS_BATCH_V1: u64 = 64;
+const ETH_RLPX_PUBLIC_SYNC_DEFAULT_BODIES_BATCH_V1: u64 = 16;
 const ETH_RLPX_PUBLIC_SYNC_DEFAULT_ADAPTIVE_HEADERS_MIN_BATCH_V1: u64 = 4;
 const ETH_RLPX_PUBLIC_SYNC_DEFAULT_ADAPTIVE_BODIES_MIN_BATCH_V1: u64 = 1;
 
@@ -5442,7 +5443,12 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
     .clamp(base_sync_target_fanout, max_peers);
     let mut runtime_sync_target_fanout = base_sync_target_fanout;
     let headers_batch = u64_env_clamped("NOVOVM_ETH_RLPX_HEADERS_BATCH", 192, 1, 2_048);
-    let bodies_batch = u64_env_clamped("NOVOVM_ETH_RLPX_BODIES_BATCH", 4, 1, 256);
+    let bodies_batch = u64_env_clamped(
+        "NOVOVM_ETH_RLPX_BODIES_BATCH",
+        ETH_RLPX_PUBLIC_SYNC_DEFAULT_BODIES_BATCH_V1,
+        1,
+        256,
+    );
     let adaptive_batch_enabled = bool_env_default_true("NOVOVM_ETH_RLPX_ADAPTIVE_BATCH_ENABLED");
     let adaptive_headers_min_batch = u64_env_clamped(
         "NOVOVM_ETH_RLPX_ADAPTIVE_HEADERS_MIN_BATCH",
@@ -7789,15 +7795,26 @@ mod mainline_evm_cli_tests {
     #[test]
     fn eth_rlpx_public_sync_batch_defaults_are_product_chase_ready_v1() {
         let mut budget = EthFullnodeBudgetHooksV1::default();
-        eth_rlpx_apply_public_sync_batch_defaults_v1(&mut budget, 192, 1);
+        eth_rlpx_apply_public_sync_batch_defaults_v1(
+            &mut budget,
+            192,
+            ETH_RLPX_PUBLIC_SYNC_DEFAULT_BODIES_BATCH_V1,
+        );
         assert_eq!(budget.sync_pull_headers_batch, 192);
-        assert_eq!(budget.sync_pull_bodies_batch, 1);
+        assert_eq!(
+            budget.sync_pull_bodies_batch,
+            ETH_RLPX_PUBLIC_SYNC_DEFAULT_BODIES_BATCH_V1
+        );
 
         budget.sync_pull_headers_batch = 32;
         budget.sync_pull_bodies_batch = 4;
-        eth_rlpx_apply_public_sync_batch_defaults_v1(&mut budget, 192, 1);
+        eth_rlpx_apply_public_sync_batch_defaults_v1(
+            &mut budget,
+            192,
+            ETH_RLPX_PUBLIC_SYNC_DEFAULT_BODIES_BATCH_V1,
+        );
         assert_eq!(budget.sync_pull_headers_batch, 32);
-        assert_eq!(budget.sync_pull_bodies_batch, 1);
+        assert_eq!(budget.sync_pull_bodies_batch, 4);
     }
 
     #[test]
@@ -7808,7 +7825,7 @@ mod mainline_evm_cli_tests {
         eth_rlpx_apply_public_sync_runtime_defaults_v1(
             &mut budget,
             192,
-            1,
+            ETH_RLPX_PUBLIC_SYNC_DEFAULT_BODIES_BATCH_V1,
             8,
             ETH_RLPX_PUBLIC_SYNC_DEFAULT_REQUEST_TIMEOUT_MS_V1,
             ETH_RLPX_PUBLIC_SYNC_DEFAULT_REQUEST_INTERVAL_MS_V1,
@@ -7819,7 +7836,10 @@ mod mainline_evm_cli_tests {
 
         assert_eq!(budget.sync_target_fanout, 8);
         assert_eq!(budget.sync_pull_headers_batch, 192);
-        assert_eq!(budget.sync_pull_bodies_batch, 1);
+        assert_eq!(
+            budget.sync_pull_bodies_batch,
+            ETH_RLPX_PUBLIC_SYNC_DEFAULT_BODIES_BATCH_V1
+        );
         assert_eq!(
             budget.sync_pull_finalize_batch,
             ETH_RLPX_PUBLIC_SYNC_DEFAULT_FINALIZE_HEADERS_BATCH_V1
