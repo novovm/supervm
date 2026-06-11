@@ -3342,6 +3342,29 @@ fn write_eth_rlpx_sync_checkpoint_v1(
     Ok(())
 }
 
+fn eth_rlpx_material_safe_checkpoint_v1(
+    sync_status: Option<NetworkRuntimeSyncStatus>,
+    header_number: u64,
+    header_hash: Option<String>,
+    current_head_complete: bool,
+    last_complete_material_block: u64,
+) -> (Option<NetworkRuntimeSyncStatus>, u64, Option<String>) {
+    let Some(mut status) = sync_status else {
+        return (None, header_number, header_hash);
+    };
+    if current_head_complete
+        || last_complete_material_block == 0
+        || status.current_block <= last_complete_material_block
+    {
+        return (Some(status), header_number, header_hash);
+    }
+    let material_current = last_complete_material_block.min(status.current_block);
+    status.current_block = material_current;
+    status.highest_block = status.highest_block.max(material_current);
+    status.starting_block = status.starting_block.min(material_current);
+    (Some(status), material_current, None)
+}
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
 struct EthRlpxPeerEndpointCacheV1 {
     schema: String,
@@ -5943,14 +5966,24 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
             );
         }
         if checkpoint_enabled {
+            let (checkpoint_sync_status, checkpoint_header_number, checkpoint_header_hash) =
+                eth_rlpx_material_safe_checkpoint_v1(
+                    sync_status,
+                    header.as_ref().map(|snapshot| snapshot.number).unwrap_or(0),
+                    header
+                        .as_ref()
+                        .map(|snapshot| to_hex_prefixed(&snapshot.hash)),
+                    current_head_present
+                        && current_head_body_available
+                        && current_head_receipt_available,
+                    last_complete_head_progress_block,
+                );
             write_eth_rlpx_sync_checkpoint_v1(
                 &checkpoint_path,
                 chain_id,
-                sync_status,
-                header.as_ref().map(|snapshot| snapshot.number).unwrap_or(0),
-                header
-                    .as_ref()
-                    .map(|snapshot| to_hex_prefixed(&snapshot.hash)),
+                checkpoint_sync_status,
+                checkpoint_header_number,
+                checkpoint_header_hash,
             )?;
         }
         if native_head_store_enabled {
@@ -8126,6 +8159,45 @@ mod mainline_evm_cli_tests {
         assert_eq!(loaded.header_hash.as_deref(), Some("0xdef"));
 
         let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn eth_rlpx_sync_checkpoint_uses_latest_complete_material_head_v1() {
+        let sync_status = NetworkRuntimeSyncStatus {
+            peer_count: 2,
+            starting_block: 100,
+            current_block: 105,
+            highest_block: 130,
+        };
+
+        let (safe_status, safe_header_number, safe_header_hash) =
+            eth_rlpx_material_safe_checkpoint_v1(
+                Some(sync_status),
+                105,
+                Some("0xheaderonly".to_string()),
+                false,
+                104,
+            );
+
+        let safe_status = safe_status.expect("safe status");
+        assert_eq!(safe_status.current_block, 104);
+        assert_eq!(safe_status.highest_block, 130);
+        assert_eq!(safe_status.starting_block, 100);
+        assert_eq!(safe_header_number, 104);
+        assert!(safe_header_hash.is_none());
+
+        let (complete_status, complete_header_number, complete_header_hash) =
+            eth_rlpx_material_safe_checkpoint_v1(
+                Some(sync_status),
+                105,
+                Some("0xcomplete".to_string()),
+                true,
+                104,
+            );
+
+        assert_eq!(complete_status.expect("complete status").current_block, 105);
+        assert_eq!(complete_header_number, 105);
+        assert_eq!(complete_header_hash.as_deref(), Some("0xcomplete"));
     }
 
     #[test]
