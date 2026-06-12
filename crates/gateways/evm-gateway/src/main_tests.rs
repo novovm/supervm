@@ -13877,6 +13877,156 @@ fn gateway_pending_consumer_executes_raw_tx_into_mainline_canonical() {
 }
 
 #[test]
+fn json_rpc_eth_send_raw_then_receipt_product_smoke() {
+    let _guard = env_test_guard();
+    let captured = capture_env_vars(&[
+        "NOVOVM_MAINLINE_QUERY_STORE_PATH",
+        "NOVOVM_GATEWAY_ETH_UPSTREAM_RPC",
+        "NOVOVM_GATEWAY_ETH_UPSTREAM_RPC_CHAIN_1",
+    ]);
+    std::env::remove_var("NOVOVM_GATEWAY_ETH_UPSTREAM_RPC");
+    std::env::remove_var("NOVOVM_GATEWAY_ETH_UPSTREAM_RPC_CHAIN_1");
+
+    let root = std::env::temp_dir().join(format!(
+        "novovm-gateway-jsonrpc-product-smoke-{}-{}",
+        std::process::id(),
+        now_unix_millis()
+    ));
+    let spool_dir = root.join("spool");
+    let store_path = root.join("canonical.json");
+    fs::create_dir_all(&spool_dir).expect("create spool dir");
+    std::env::set_var("NOVOVM_MAINLINE_QUERY_STORE_PATH", &store_path);
+
+    let chain_id = 1u64;
+    let raw_tx_hex = "0xf864808504a817c800825208943535353535353535353535353535353535353535018025a0cb1ae5eeb22ada6e0cc8090f480d614711af806a2534b7651ab9577617cf6078a0420db11989647a09a73eefbba26361a2b065ffd41c41ba84089584ce267f7fbe";
+    let raw_tx = decode_hex_bytes(raw_tx_hex, "raw_tx").expect("decode raw tx");
+    let sender = recover_raw_evm_tx_sender_m0(&raw_tx)
+        .expect("recover sender should not fail")
+        .expect("sender should recover");
+
+    let mut router = UnifiedAccountRouter::new();
+    let uca_id = "uca:jsonrpc-product-smoke".to_string();
+    router
+        .create_uca(uca_id.clone(), vec![0x34u8; 32], now_unix_sec())
+        .expect("create uca");
+    router
+        .add_binding(
+            &uca_id,
+            AccountRole::Owner,
+            PersonaAddress {
+                persona_type: PersonaType::Evm,
+                chain_id,
+                external_address: sender,
+            },
+            now_unix_sec(),
+        )
+        .expect("bind sender");
+
+    let server = tiny_http::Server::http("127.0.0.1:0").expect("start test gateway server");
+    let addr = server
+        .server_addr()
+        .to_ip()
+        .expect("test gateway must listen on TCP");
+    let url = format!("http://{}", addr);
+    let mut runtime = GatewayRuntime {
+        bind: addr.to_string(),
+        spool_dir: spool_dir.clone(),
+        max_body_bytes: 8192,
+        max_requests: 2,
+        evm_payout_autoreplay_max: 0,
+        evm_payout_autoreplay_cooldown_ms: 0,
+        evm_payout_pending_warn_threshold: usize::MAX,
+        evm_payout_last_autoreplay_at_ms: 0,
+        evm_payout_last_warn_at_ms: 0,
+        evm_atomic_broadcast_autoreplay_max: 0,
+        evm_atomic_broadcast_autoreplay_cooldown_ms: 0,
+        evm_atomic_broadcast_pending_warn_threshold: usize::MAX,
+        evm_atomic_broadcast_autoreplay_use_external_executor: false,
+        evm_atomic_broadcast_last_autoreplay_at_ms: 0,
+        evm_atomic_broadcast_last_warn_at_ms: 0,
+        eth_public_broadcast_autoreplay_max: 0,
+        eth_public_broadcast_autoreplay_cooldown_ms: 0,
+        eth_public_broadcast_pending_warn_threshold: usize::MAX,
+        eth_public_broadcast_last_autoreplay_at_ms: 0,
+        eth_public_broadcast_last_warn_at_ms: 0,
+        evm_host_exec_pending_max: 4,
+        evm_host_exec_pending_cooldown_ms: 0,
+        evm_host_exec_last_run_at_ms: 0,
+        eth_default_chain_id: chain_id,
+        ua_store: GatewayUaStoreBackend::BincodeFile {
+            path: root.join("ua-store.bin"),
+        },
+        eth_tx_index_store: GatewayEthTxIndexStoreBackend::Memory,
+        eth_tx_index: HashMap::new(),
+        eth_filters: GatewayEthFilterState::default(),
+        evm_settlement_index_by_id: HashMap::new(),
+        evm_settlement_index_by_tx: HashMap::new(),
+        evm_pending_payout_by_settlement: HashMap::new(),
+        router,
+    };
+    let server_thread = std::thread::spawn(move || {
+        for _ in 0..2 {
+            let request = server.recv().expect("receive json-rpc request");
+            handle_gateway_request(&mut runtime, request).expect("handle json-rpc request");
+        }
+    });
+
+    let send_response: serde_json::Value = ureq::post(&url)
+        .set("Content-Type", "application/json")
+        .send_json(serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "eth_sendRawTransaction",
+            "params": [raw_tx_hex],
+        }))
+        .expect("send raw tx json-rpc should succeed")
+        .into_json()
+        .expect("decode send raw tx response");
+    assert_eq!(send_response["jsonrpc"].as_str(), Some("2.0"));
+    assert!(send_response.get("error").is_none(), "{send_response}");
+    let tx_hash_hex = send_response["result"]
+        .as_str()
+        .expect("eth_sendRawTransaction should return tx hash");
+    assert!(tx_hash_hex.starts_with("0x"));
+    assert_eq!(tx_hash_hex.len(), 66);
+
+    let receipt_response: serde_json::Value = ureq::post(&url)
+        .set("Content-Type", "application/json")
+        .send_json(serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "eth_getTransactionReceipt",
+            "params": [tx_hash_hex],
+        }))
+        .expect("receipt json-rpc should succeed")
+        .into_json()
+        .expect("decode receipt response");
+    assert_eq!(receipt_response["jsonrpc"].as_str(), Some("2.0"));
+    assert!(
+        receipt_response.get("error").is_none(),
+        "{receipt_response}"
+    );
+    let receipt = &receipt_response["result"];
+    assert_eq!(receipt["status"].as_str(), Some("0x1"));
+    assert_eq!(receipt["transactionHash"].as_str(), Some(tx_hash_hex));
+    assert!(receipt["blockHash"]
+        .as_str()
+        .is_some_and(|value| value.len() == 66));
+    assert!(receipt["blockNumber"]
+        .as_str()
+        .is_some_and(|value| value.starts_with("0x")));
+    assert!(receipt["gasUsed"]
+        .as_str()
+        .is_some_and(|value| value.starts_with("0x")));
+
+    server_thread
+        .join()
+        .expect("test gateway thread should join");
+    restore_env_vars(&captured);
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
 fn eth_send_raw_transaction_passes_execution_policy_into_ingress_record() {
     let backend = GatewayEthTxIndexStoreBackend::Memory;
     let mut router = UnifiedAccountRouter::new();
