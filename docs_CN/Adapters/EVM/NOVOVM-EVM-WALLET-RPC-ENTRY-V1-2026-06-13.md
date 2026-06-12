@@ -27,6 +27,8 @@ NOVO Wallet / EIP-1193 provider
 - `eth_call`
 - `eth_estimateGas`
 
+这些接口由 `evm-gateway` 作为 EVM RPC adapter 对外提供。gateway 不承载统一账户写入口，也不持有统一账户本地状态。
+
 本阶段不要求钱包依赖：
 
 - `debug_*`
@@ -73,6 +75,14 @@ novovm-node -> mainline_query -> unified_account_surface
 ```
 
 绑定后，`eth_sendRawTransaction` 可以从 raw transaction 恢复 sender，并映射到 UCA owner。
+
+入口统一修正（2026-06-13）：
+
+- gateway 已冻结为 adapter-only，tag 为 `evm-gateway-adapter-only-v1`。
+- 账户注册、persona 绑定、策略、mapped asset、`account_balance/account_assets` 只能通过 mainline `unified_account_surface`。
+- `eth_sendRawTransaction` / `eth_sendTransaction` 在 gateway 侧只做 EVM envelope 校验和 pending ingress；UCA route/policy 校验由 mainline `ua_checkRoute` 只读完成。
+- `ua_checkRoute` 不推进 nonce，不写入账户状态。
+- mainline UCA 不可用或拒绝时，gateway 必须 fail closed，不能 fallback 到任何本地 UCA store。
 
 ## 钱包发送交易
 
@@ -171,9 +181,12 @@ cargo test -p novovm-evm-gateway json_rpc_eth_send_raw_then_receipt_product_smok
 下一步只做最小用户入口接入：
 
 1. NOVO Wallet 配置 RPC endpoint。
-2. 钱包地址绑定到 UCA。
+2. 钱包/账户服务通过 mainline `unified_account_surface` 创建 UCA 并绑定钱包地址。
 3. 钱包本地签名 raw transaction。
 4. 通过 `eth_sendRawTransaction` 提交。
 5. 通过 `eth_getTransactionReceipt` 展示状态。
+6. 通过 mainline `account_balance/account_assets` 展示统一账户资产视图。
 
 不在本阶段扩展 debug/admin/trace，也不重新打开 geth 全节点追平目标。
+
+注意：`novovm-node/src/main.rs` 仍存在 legacy public RPC UCA 分支。钱包产品接入不得依赖该 legacy 路径；UCA 产品入口以 `mainline_query -> unified_account_surface` 为准。

@@ -15,14 +15,30 @@ NOVOVM 现在已经具备“统一身份 + EVM 产品入口 + native NOV 经济�
 - native NOV 经济模块已有余额、treasury reserve、fee settlement、redeem、AMM swap、credit vault/mint debt asset 等本地执行与 receipt。
 - `account_balance` / `account_assets` 已经能把 native liquid balance、mapped asset、credit vault、treasury exposure 汇总成账户视图。
 - 统一账户唯一入口已收敛为 `novovm-node -> mainline_query -> unified_account_surface`；`evm-gateway` 不再拥有本地 UCA store/router，只保留 EVM RPC adapter 职责。
+- gateway adapter-only 边界已冻结并打 tag：`evm-gateway-adapter-only-v1`。
 
 不能过度声明的部分：
 
 - 当前没有发现 NOVO Wallet 前端/钱包应用代码；仓库里是 RPC/节点/gateway 能力，不是完整用户 App。
+- `novovm-node/src/main.rs` 仍保留 legacy public RPC UCA 分支（`run_public_rpc -> run_unified_account_rpc`）。它不应作为当前产品口径的统一账户入口；钱包、gateway 和后续产品接入必须走 `mainline_query -> unified_account_surface`。
 - ETH 锁仓合约不是已部署真实 Solidity lock contract 路径；当前 `ua_registerMappedLock` 是 MVP 内部 proof digest 校验，目标资产为 `NETH`，不是真实 Ethereum receipt/log Merkle proof。
 - 没有发现“Ethereum lock event -> 自动验证 -> 自动 mint NOV”的完整接线。NOV mint 在 consensus token runtime 中存在，但不是直接接在 ETH lock proof 上。
 - EVM 合约币可以在 EVM 产品面执行/查询 receipt，但和 NOV native account balance/treasury 是两套状态面，当前没有完整 ERC20 -> native asset 自动映射桥。
 - 并发量不能直接引用 README 的 L0/L1 百万 TPS 来代表钱包/gateway 入口吞吐。gateway 当前是单 HTTP loop，EVM pending consumer 默认 16 笔/250ms；native NOV store 是 JSON load-modify-write，适合单进程顺序产品闭环，不适合多进程高并发账本写入口。
+
+## 1.1 主线 `unified_account_surface` 产品闭环审阅
+
+当前可签收：
+
+- `mainline_query` 已将 `ua_createUca`、`ua_bindPersona`、`ua_setPolicy`、`ua_registerMappedLock`、`account_balance`、`account_assets` 等统一账户方法路由到 `run_mainline_unified_account_query`。
+- `unified_account_surface` 持久化 `UnifiedAccountRouter`、audit cursor 和 `UnifiedMappedAssetState`，mapped asset 能进入 `account_balance/account_assets` 聚合视图。
+- `ua_checkRoute` 使用 clone/probe 路径做只读预检，返回 `read_only: true`，不推进 nonce，不写 UCA 状态。
+- `evm-gateway` 的 `eth_sendRawTransaction` / `eth_sendTransaction` 只通过 mainline `ua_checkRoute` 做只读 route/policy 校验；gateway 不再持有本地 UCA store/router。
+
+当前需要收口：
+
+- `novovm-node/src/main.rs` 的 legacy public RPC UCA runtime 仍可从 public RPC server 分支初始化并调用旧 `run_unified_account_rpc`。该路径缺少当前 mainline surface 的 mapped asset state 口径，容易重新形成主线内部第二 surface。
+- 在完成代码退役或桥接前，产品入口文档只能声明 `mainline_query -> unified_account_surface` 为唯一统一账户入口；legacy public RPC UCA 分支只能视为待收敛兼容残留。
 
 ## 2. 生命周期现状
 
@@ -283,6 +299,23 @@ native NOV 入口：
   - poll receipt
   - query account_assets
 
+### P1：主线内部 legacy public RPC UCA 分支仍需退役或桥接
+
+影响：
+
+- 即使 gateway 已清理，`novovm-node/src/main.rs` 仍存在旧 public RPC UCA surface。后续开发如果误用该路径，可能绕开 `mainline_query -> unified_account_surface` 的 mapped asset state 和新审计口径。
+
+证据：
+
+- `run_rpc_server_instance` 的 public role 会初始化 `UnifiedAccountRuntime`。
+- `run_public_rpc` 对 `is_unified_account_method` 调用旧 `run_unified_account_rpc`。
+- 旧路径与 `crates/novovm-node/src/unified_account_surface.rs` 的 `run_mainline_unified_account_query` 并存。
+
+建议：
+
+- 最小收敛方案是让 public RPC UCA 方法直接桥接到 `run_mainline_query_from_path`，或明确禁用 legacy public RPC UCA 方法。
+- 不要复制 `unified_account_surface` 到 `main.rs`，也不要新增第三套 UCA runtime。
+
 ### P1：native NOV 账本写入后端不适合多 writer
 
 影响：
@@ -356,7 +389,8 @@ native NOV 入口：
 ua_createUca
   -> ua_bindPersona(Evm, chain_id, address)
   -> eth_sendRawTransaction(raw_tx)
-  -> gateway validates chain/sender/nonce/policy
+  -> gateway validates EVM envelope(chain/sender/nonce/tx type/fork/fee)
+  -> mainline ua_checkRoute validates UCA route/policy(read-only)
   -> native pending
   -> gateway background consumer
   -> mainline EVM execution

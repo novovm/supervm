@@ -60,7 +60,7 @@ EVM、SVM、Solana、BTC、BNB 等链能力在 `superVM` 中以“插件/扩展�
 
 ## 5. 后续实施清单（按优先级）
 
-1. 建立独立边界层组件（网关/边车），承接 `eth_*` / `web30_*` 外部调用。
+1. 建立独立边界层组件（网关/边车），承接 `eth_*` 外部调用；`web30_*` / `ua_*` / `account_*` 统一账户能力不进入 gateway 产品面。
 2. 网关到内核仅输出二进制 ingress（禁止文本协议穿透 D1/D2/D3）。
 3. 在 adapter/plugin 内完成一次性解析与归一化，避免二次解析开销。
 4. 为“入口稳定性规则”增加 CI 约束（防止插件需求反向污染主入口）。
@@ -72,7 +72,7 @@ EVM、SVM、Solana、BTC、BNB 等链能力在 `superVM` 中以“插件/扩展�
 1. 边界层组件 `crates/gateways/evm-gateway` 已落地：当前对外只作为 EVM RPC adapter 受理 `eth_*`/`evm_*` 兼容入口（例如 `eth_sendRawTransaction`），对内输出 `ops_wire_v1` 二进制；统一账户 `ua_*` 入口已迁回 mainline unified-account surface。
 2. `novovm-node` 生产 bin 保持唯一入口，并新增通用 `NOVOVM_OPS_WIRE_DIR` 批量消费能力（仅 `.opsw1`），用于承接边界层二进制落盘队列。
 3. `NOVOVM_OPS_WIRE_DIR` 与 `NOVOVM_TX_WIRE_FILE` / `NOVOVM_OPS_WIRE_FILE` 互斥，避免入口语义歧义；`ops_wire_dir` 场景下禁止 `repeat` 压测语义混入生产消费语义。
-4. 一键生产路径脚本已落地：`scripts/migration/run_gateway_node_pipeline.ps1`（边界网关 -> `.opsw1` -> `novovm-node`）。
+4. 迁移验证脚本已落地：`scripts/migration/run_gateway_node_pipeline.ps1`（边界网关 -> `.opsw1` -> `novovm-node`），仅用于本地 smoke/迁移验证，不作为生产产品入口。
 5. gateway 已补齐 `eth_sendTransaction`（对象/`tx` 子对象/数组参数）的生产接线，统一落 `.opsw1` 并进入同一主链路消费；`web30_sendTransaction` 不再作为 gateway 产品入口，避免 host 账户入口分叉。
 6. gateway 已补齐 `eth_getTransactionByHash` / `eth_getTransactionReceipt` 查询入口；ETH 查询索引后端支持 `memory|rocksdb`（默认 `memory`），通过 `NOVOVM_GATEWAY_ETH_TX_INDEX_BACKEND` / `NOVOVM_GATEWAY_ETH_TX_INDEX_PATH` 控制。默认保持性能优先，必要时可切 rocksdb 获得重启后可查询能力。`eth_sendRawTransaction/eth_sendTransaction` 对外结果已收敛为标准哈希字符串，`eth_getTransactionCount` 收敛为标准 hex quantity，并补齐 `eth_chainId/net_version/eth_gasPrice/eth_estimateGas/eth_getCode/eth_getStorageAt` 边界兼容（均不进入内部 `.opsw1` 主线；`eth_getCode/eth_getStorageAt` 走最小状态投影只读语义，不再是占位返回）。
 7. EVM 迁移脚本已支持“插件二进制优先、源码可选”模式：`run_evm_backend_compare_signal.ps1` 优先从外部二进制路径解析插件（支持 `-PluginPath`/`NOVOVM_EVM_PLUGIN_PATH`/`NOVOVM_ADAPTER_PLUGIN_PATH`），`run_evm_tx_type_signal.ps1` 可通过 `AllowPluginSourceTests` 关闭源码插件单测，以便主仓库开源时剥离插件源码而不破坏主线验证。
@@ -89,3 +89,18 @@ EVM、SVM、Solana、BTC、BNB 等链能力在 `superVM` 中以“插件/扩展�
 ```powershell
 .\scripts\migration\run_gateway_node_smoke.ps1
 ```
+
+## 7. 2026-06-13 入口统一冻结
+
+本轮冻结后的产品边界：
+
+- `evm-gateway = EVM RPC adapter only`。
+- `evm-gateway` 只保留 `eth_*` / `evm_*` 兼容、pending consumer、receipt/tx/block 查询等 EVM 适配职责。
+- 统一账户唯一入口为 `novovm-node -> mainline_query -> unified_account_surface`。
+- `ua_createUca` / `ua_bindPersona` / `ua_setPolicy` / `ua_registerMappedLock` / `account_balance` / `account_assets` 不允许从 gateway 暴露或落本地状态。
+- `eth_sendRawTransaction` / `eth_sendTransaction` 只能通过 mainline `ua_checkRoute` 做只读预检；mainline UCA 不可用时 fail closed，不 fallback 到 gateway 本地状态。
+- 已推送冻结 tag：`evm-gateway-adapter-only-v1`。
+
+审阅提醒：
+
+- `novovm-node/src/main.rs` 中仍保留 legacy public RPC UCA 分支（`run_public_rpc -> run_unified_account_rpc`）。它不是本轮冻结后的统一账户产品入口；产品文档、钱包接入和后续开发应以 `mainline_query -> unified_account_surface` 为准，后续可单独收敛或退役该 legacy 分支。
