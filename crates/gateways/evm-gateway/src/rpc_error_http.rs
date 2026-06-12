@@ -60,6 +60,9 @@ pub(super) fn gateway_error_code_for_method(method: &str, message: &str) -> i64 
     if lower.contains("standalone evm control namespace disabled on supervm host mode") {
         return -32601;
     }
+    if lower.contains("gateway host/unified-account entry disabled") {
+        return -32601;
+    }
     let is_evm_write_method = method == "eth_sendRawTransaction"
         || method == "eth_sendTransaction"
         || method == "evm_sendRawTransaction"
@@ -73,9 +76,7 @@ pub(super) fn gateway_error_code_for_method(method: &str, message: &str) -> i64 
         || method == "evm_publicSendRawTransactionBatch"
         || method == "evm_public_send_raw_transaction_batch"
         || method == "evm_publicSendTransactionBatch"
-        || method == "evm_public_send_transaction_batch"
-        || method == "web30_sendRawTransaction"
-        || method == "web30_sendTransaction";
+        || method == "evm_public_send_transaction_batch";
     if is_evm_write_method && lower.contains("plugin_atomic_gate_rejected") {
         return -32036;
     }
@@ -261,31 +262,6 @@ pub(super) fn gateway_error_code_for_method(method: &str, message: &str) -> i64 
     {
         return -32033;
     }
-    if (method == "web30_sendRawTransaction" || method == "web30_sendTransaction")
-        && (lower.contains("nonce mismatch")
-            || lower.contains("chain_id mismatch")
-            || lower.contains("binding")
-            || lower.contains("domain mismatch")
-            || lower.contains("nonce")
-            || lower.contains("address")
-            || lower.contains("external_address")
-            || lower.contains("payload")
-            || lower.contains("privacy")
-            || lower.contains("ring_members")
-            || lower.contains("signer_index")
-            || lower.contains("stealth"))
-    {
-        return -32033;
-    }
-    if method == "ua_createUca"
-        || method == "ua_rotatePrimaryKey"
-        || method == "ua_bindPersona"
-        || method == "ua_revokePersona"
-        || method == "ua_getBindingOwner"
-        || method == "ua_setPolicy"
-    {
-        return -32010;
-    }
     -32000
 }
 
@@ -307,9 +283,7 @@ pub(super) fn gateway_error_message_for_method(
         || method == "evm_publicSendRawTransactionBatch"
         || method == "evm_public_send_raw_transaction_batch"
         || method == "evm_publicSendTransactionBatch"
-        || method == "evm_public_send_transaction_batch"
-        || method == "web30_sendRawTransaction"
-        || method == "web30_sendTransaction";
+        || method == "evm_public_send_transaction_batch";
     if is_evm_write_method {
         return match code {
             -32034 => "replacement transaction underpriced".to_string(),
@@ -344,9 +318,7 @@ pub(super) fn gateway_error_data_for_method(
         || method == "evm_publicSendRawTransactionBatch"
         || method == "evm_public_send_raw_transaction_batch"
         || method == "evm_publicSendTransactionBatch"
-        || method == "evm_public_send_transaction_batch"
-        || method == "web30_sendRawTransaction"
-        || method == "web30_sendTransaction";
+        || method == "evm_public_send_transaction_batch";
     if !is_evm_write_method {
         return None;
     }

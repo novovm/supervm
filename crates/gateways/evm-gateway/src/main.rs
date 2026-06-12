@@ -6501,20 +6501,15 @@ fn gateway_runtime_surface_map_json() -> serde_json::Value {
     serde_json::json!({
         "host_chain": "supervm_mainnet",
         "evm_plugin_enabled": true,
-        "mode": "host_chain_plus_plugin",
+        "mode": "evm_rpc_adapter_only",
+        "unified_account_source_of_truth": "novovm-node->mainline_query->unified_account_surface",
         "domains": [
             {
                 "domain": "novovm_mainnet",
                 "scope": "native",
                 "entry_methods": [
                     "novovm_getSurfaceMap",
-                    "novovm_getMethodDomain",
-                    "ua_createUca",
-                    "ua_rotatePrimaryKey",
-                    "ua_bindPersona",
-                    "ua_setPolicy",
-                    "web30_sendTransaction",
-                    "web30_sendRawTransaction"
+                    "novovm_getMethodDomain"
                 ]
             },
             {
@@ -6551,14 +6546,41 @@ fn gateway_runtime_surface_map_json() -> serde_json::Value {
         "notes": [
             "supervm mainnet remains the single host chain",
             "eth_* namespace is compatibility surface provided by evm plugin gateway",
+            "unified account and Web30 host entries are mainline-only: novovm-node -> mainline_query -> unified_account_surface",
             "Engine API support is read-only: capabilities, transition configuration, client version, and payload body lookup from native RLPx material; payload production and forkchoice remain disabled",
             "supervm_getEthCanonicalBlockAccessListBy* remains internal plugin diagnostics and does not expose a public eth/71 surface"
         ]
     })
 }
 
+fn is_gateway_unified_account_method(method: &str) -> bool {
+    method.starts_with("ua_")
+        || matches!(
+            method,
+            "account_balance"
+                | "account_assets"
+                | "ua_createUca"
+                | "ua_rotatePrimaryKey"
+                | "ua_bindPersona"
+                | "ua_revokePersona"
+                | "ua_getBindingOwner"
+                | "ua_setPolicy"
+                | "ua_route"
+                | "ua_registerMappedLock"
+                | "ua_getMappedAsset"
+                | "ua_burnMappedAsset"
+                | "ua_releaseMappedLock"
+        )
+}
+
+fn is_gateway_mainline_only_host_entry_method(method: &str) -> bool {
+    is_gateway_unified_account_method(method) || method.starts_with("web30_")
+}
+
 fn gateway_runtime_method_domain(method: &str) -> &'static str {
-    if method.starts_with("ua_") || method.starts_with("web30_") || method.starts_with("novovm_") {
+    if is_gateway_mainline_only_host_entry_method(method) {
+        "novovm_mainnet_mainline_only"
+    } else if method.starts_with("novovm_") {
         "novovm_mainnet"
     } else if is_gateway_internal_evm_diagnostic_method(method) {
         "evm_plugin"
@@ -6582,6 +6604,12 @@ fn gateway_runtime_method_domain_json(method: &str) -> serde_json::Value {
         "method": method,
         "domain": gateway_runtime_method_domain(method),
         "control_namespace_disabled": is_gateway_standalone_evm_control_namespace(method),
+        "gateway_entry_disabled": is_gateway_mainline_only_host_entry_method(method),
+        "canonical_entry": if is_gateway_mainline_only_host_entry_method(method) {
+            "novovm-node->mainline_query->unified_account_surface"
+        } else {
+            "evm-gateway"
+        },
     })
 }
 
@@ -7005,6 +7033,12 @@ fn run_gateway_method(
     if is_gateway_standalone_evm_control_namespace(method) {
         bail!(
             "standalone evm control namespace disabled on supervm host mode: {}",
+            method
+        );
+    }
+    if is_gateway_mainline_only_host_entry_method(method) {
+        bail!(
+            "gateway host/unified-account entry disabled: method={} canonical_entry=novovm-node->mainline_query->unified_account_surface",
             method
         );
     }
@@ -13791,7 +13825,7 @@ fn run_gateway_method(
             ))
         }
         _ => bail!(
-            "unknown method: {}; valid: novovm_getSurfaceMap|novovm_get_surface_map|novovm_getMethodDomain|novovm_get_method_domain|ua_createUca|ua_rotatePrimaryKey|ua_bindPersona|ua_revokePersona|ua_getBindingOwner|ua_setPolicy|eth_chainId|net_version|web3_clientVersion|web3_sha3|eth_protocolVersion|net_listening|net_peerCount|eth_accounts|eth_coinbase|eth_mining|eth_hashrate|eth_maxPriorityFeePerGas|eth_capabilities|eth_baseFee|eth_feeHistory|eth_syncing|eth_pendingTransactions|eth_blockNumber|eth_getBalance|eth_getBlockByNumber|eth_getBlockByHash|eth_getTransactionByBlockNumberAndIndex|eth_getTransactionByBlockHashAndIndex|eth_getBlockTransactionCountByNumber|eth_getBlockTransactionCountByHash|eth_getBlockReceipts|eth_getUncleCountByBlockNumber|eth_getUncleCountByBlockHash|eth_getUncleByBlockNumberAndIndex|eth_getUncleByBlockHashAndIndex|eth_getLogs|eth_subscribe|eth_unsubscribe|eth_newFilter|eth_newBlockFilter|eth_newPendingTransactionFilter|eth_getFilterChanges|eth_getFilterLogs|eth_uninstallFilter|txpool_content|txpool_contentFrom|txpool_inspect|txpool_inspectFrom|txpool_status|txpool_statusFrom|eth_gasPrice|eth_call|eth_estimateGas|eth_getCode|eth_getStorageAt|eth_getProof|eth_sendRawTransaction|eth_sendTransaction|eth_getTransactionCount|eth_getTransactionByHash|eth_getTransactionReceipt|evm_sendRawTransaction|evm_send_raw_transaction|evm_sendTransaction|evm_send_transaction|evm_publicSendRawTransaction|evm_public_send_raw_transaction|evm_publicSendRawTransactionBatch|evm_public_send_raw_transaction_batch|evm_publicSendTransaction|evm_public_send_transaction|evm_publicSendTransactionBatch|evm_public_send_transaction_batch|evm_getLogs|evm_get_logs|evm_getLogsBatch|evm_get_logs_batch|evm_getTransactionReceipt|evm_get_transaction_receipt|evm_getTransactionReceiptBatch|evm_get_transaction_receipt_batch|evm_getTransactionByHashBatch|evm_get_transaction_by_hash_batch|evm_subscribe|evm_unsubscribe|evm_newFilter|evm_new_filter|evm_newBlockFilter|evm_new_block_filter|evm_newPendingTransactionFilter|evm_new_pending_transaction_filter|evm_getFilterChanges|evm_get_filter_changes|evm_getFilterChangesBatch|evm_get_filter_changes_batch|evm_getFilterLogs|evm_get_filter_logs|evm_getFilterLogsBatch|evm_get_filter_logs_batch|evm_uninstallFilter|evm_uninstall_filter|evm_chainId|evm_chain_id|evm_clientVersion|evm_client_version|evm_sha3|evm_protocolVersion|evm_protocol_version|evm_listening|evm_peerCount|evm_peer_count|evm_accounts|evm_coinbase|evm_mining|evm_hashrate|evm_netVersion|evm_net_version|evm_syncing|evm_blockNumber|evm_block_number|evm_getBalance|evm_get_balance|evm_getBlockByNumber|evm_get_block_by_number|evm_getBlockByHash|evm_get_block_by_hash|evm_getBlockReceipts|evm_get_block_receipts|evm_getTransactionByHash|evm_get_transaction_by_hash|evm_getTransactionCount|evm_get_transaction_count|evm_gasPrice|evm_gas_price|evm_call|evm_estimateGas|evm_estimate_gas|evm_getCode|evm_get_code|evm_getStorageAt|evm_get_storage_at|evm_getProof|evm_get_proof|evm_verifyProof|evm_verify_proof|evm_maxPriorityFeePerGas|evm_max_priority_fee_per_gas|evm_feeHistory|evm_fee_history|evm_getTransactionByBlockNumberAndIndex|evm_get_transaction_by_block_number_and_index|evm_getTransactionByBlockHashAndIndex|evm_get_transaction_by_block_hash_and_index|evm_getBlockTransactionCountByNumber|evm_get_block_transaction_count_by_number|evm_getBlockTransactionCountByHash|evm_get_block_transaction_count_by_hash|evm_getUncleCountByBlockNumber|evm_get_uncle_count_by_block_number|evm_getUncleCountByBlockHash|evm_get_uncle_count_by_block_hash|evm_getUncleByBlockNumberAndIndex|evm_get_uncle_by_block_number_and_index|evm_getUncleByBlockHashAndIndex|evm_get_uncle_by_block_hash_and_index|evm_pendingTransactions|evm_pending_transactions|evm_txpoolContent|evm_txpool_content|evm_txpoolContentFrom|evm_txpool_contentFrom|evm_txpool_content_from|evm_txpoolInspect|evm_txpool_inspect|evm_txpoolInspectFrom|evm_txpool_inspectFrom|evm_txpool_inspect_from|evm_txpoolStatus|evm_txpool_status|evm_txpoolStatusFrom|evm_txpool_statusFrom|evm_txpool_status_from|evm_snapshotPendingIngress|evm_snapshot_pending_ingress|evm_snapshotExecutableIngress|evm_snapshot_executable_ingress|evm_drainExecutableIngress|evm_drain_executable_ingress|evm_drainPendingIngress|evm_drain_pending_ingress|evm_snapshotPendingSenderBuckets|evm_snapshot_pending_sender_buckets|evm_getPublicBroadcastStatus|evm_get_public_broadcast_status|evm_getBroadcastStatus|evm_get_broadcast_status|evm_getPublicBroadcastStatusBatch|evm_get_public_broadcast_status_batch|evm_getBroadcastStatusBatch|evm_get_broadcast_status_batch|evm_getUpstreamConsumerBundle|evm_get_upstream_consumer_bundle|evm_getTransactionLifecycleBatch|evm_get_transaction_lifecycle_batch|evm_getTxSubmitStatusBatch|evm_get_tx_submit_status_batch|evm_replayPublicBroadcast|evm_replay_public_broadcast|evm_replayPublicBroadcastBatch|evm_replay_public_broadcast_batch|evm_getTransactionLifecycle|evm_get_transaction_lifecycle|evm_getTxSubmitStatus|evm_get_tx_submit_status|evm_getSettlementById|evm_get_settlement_by_id|evm_getSettlementByTxHash|evm_get_settlement_by_tx_hash|evm_replaySettlementPayout|evm_replay_settlement_payout|evm_getAtomicReadyByIntentId|evm_get_atomic_ready_by_intent_id|evm_replayAtomicReady|evm_replay_atomic_ready|evm_queueAtomicBroadcast|evm_queue_atomic_broadcast|evm_replayAtomicBroadcastQueue|evm_replay_atomic_broadcast_queue|evm_markAtomicBroadcastFailed|evm_mark_atomic_broadcast_failed|evm_markAtomicBroadcasted|evm_mark_atomic_broadcasted|evm_executeAtomicBroadcast|evm_execute_atomic_broadcast|evm_executePendingAtomicBroadcasts|evm_execute_pending_atomic_broadcasts|web30_sendRawTransaction|web30_sendTransaction",
+            "unknown gateway EVM adapter method: {}; valid families: novovm_getSurfaceMap|novovm_getMethodDomain|eth_*|evm_*|txpool_*|net_*|web3_*|engine_exchangeCapabilities|engine_exchangeTransitionConfigurationV1|engine_getClientVersionV1|engine_getPayloadBodiesByHashV1|engine_getPayloadBodiesByRangeV1. Unified account/Web30 host methods are mainline-only via novovm-node->mainline_query->unified_account_surface.",
             method
         ),
     }

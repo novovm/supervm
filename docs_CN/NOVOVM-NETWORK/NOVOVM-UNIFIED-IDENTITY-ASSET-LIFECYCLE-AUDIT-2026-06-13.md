@@ -14,6 +14,7 @@ NOVOVM 现在已经具备“统一身份 + EVM 产品入口 + native NOV 经济�
 - EVM 用户路径已经进入宿主：`eth_sendRawTransaction -> gateway -> native pending -> host execution -> canonical receipt -> eth_getTransactionReceipt`。
 - native NOV 经济模块已有余额、treasury reserve、fee settlement、redeem、AMM swap、credit vault/mint debt asset 等本地执行与 receipt。
 - `account_balance` / `account_assets` 已经能把 native liquid balance、mapped asset、credit vault、treasury exposure 汇总成账户视图。
+- 统一账户唯一写入口已收敛为 `novovm-node -> mainline_query -> unified_account_surface`；`evm-gateway` 只保留 EVM RPC adapter 职责。
 
 不能过度声明的部分：
 
@@ -35,13 +36,12 @@ NOVOVM 现在已经具备“统一身份 + EVM 产品入口 + native NOV 经济�
 
 - `crates/novovm-adapter-api/src/unified_account.rs`
 - `crates/novovm-node/src/unified_account_surface.rs`
-- `crates/gateways/evm-gateway/src/main.rs`
 
 生命周期：
 
 1. 用户提供 `uca_id/account_id` 和主密钥信息。
 2. `UnifiedAccountRouter` 创建 UCA，状态为 active。
-3. surface/gateway 持久化 UCA snapshot，并写审计事件。
+3. `unified_account_surface` 持久化 UCA snapshot，并写审计事件。
 
 状态：可用。
 
@@ -54,8 +54,6 @@ NOVOVM 现在已经具备“统一身份 + EVM 产品入口 + native NOV 经济�
 入口：
 
 - `ua_bindPersona`
-- `web30_sendRawTransaction`
-- `web30_sendTransaction`
 
 生命周期：
 
@@ -67,7 +65,7 @@ NOVOVM 现在已经具备“统一身份 + EVM 产品入口 + native NOV 经济�
 
 风险：
 
-- Web30 交易入口已经能进入 gateway/native pending，但完整用户钱包体验不在仓库内。
+- Web30/统一账户 host 入口必须走 `novovm-node -> mainline_query -> unified_account_surface`，不能从 `evm-gateway` 创建第二份账户状态。
 
 ### 2.3 绑定 Ethereum 账户
 
@@ -81,7 +79,7 @@ NOVOVM 现在已经具备“统一身份 + EVM 产品入口 + native NOV 经济�
 1. 用户先绑定 `PersonaType::Evm`，`chain_id=1` 或目标 EVM chain。
 2. `eth_sendRawTransaction` 会从 raw tx 恢复 sender。
 3. 如果 sender 已绑定 UCA，则可省略 `uca_id`；如果未绑定，则必须显式提供 `uca_id`。
-4. gateway 对 raw tx 执行 chain id、nonce、tx type、fork activation、sender、fee、signature domain、KYC/session/policy 校验。
+4. gateway 只作为 EVM RPC adapter 对 raw tx 执行 chain id、nonce、tx type、fork activation、sender、fee 等 EVM 兼容校验；统一账户状态的注册/绑定/策略以 mainline surface 为准。
 
 状态：可用。
 
@@ -432,4 +430,3 @@ Ethereum lock contract
 3. NOV native treasury smoke：跑 `treasury.deposit_reserve -> treasury.redeem -> account_balance/account_assets`，验证 native 余额和 journal。
 
 如果这三条 smoke 都稳定，才能进入“真实钱包入口接入”。如果目标是“ETH 锁仓合约 -> NOV 铸造”，应单独开一个小阶段，不要混进 EVM v1。
-

@@ -39,7 +39,13 @@ NOVO Wallet / EIP-1193 provider
 
 NovoVM 宿主仍以 UCA 作为账户主体。EVM 钱包地址作为 persona 绑定到 UCA。
 
-产品接入时，钱包或上层账户服务必须先完成：
+产品接入时，钱包或上层账户服务必须先通过主线统一账户入口完成。该入口唯一归属：
+
+```text
+novovm-node -> mainline_query -> unified_account_surface
+```
+
+`evm-gateway` 不再作为 UCA 创建、绑定、策略或资产入口；它只作为 EVM RPC adapter。账户服务必须先完成：
 
 ```json
 {
@@ -96,7 +102,7 @@ NovoVM 宿主仍以 UCA 作为账户主体。EVM 钱包地址作为 persona 绑�
 约束：
 
 - `eth_sendRawTransaction` 不等待执行完成。
-- gateway 接收后写入 native pending runtime。
+- gateway 作为 EVM RPC adapter 接收后写入 native pending runtime。
 - 后台 consumer 负责进入 mainline EVM execution。
 - 用户通过 receipt 轮询观察最终结果。
 
@@ -171,4 +177,3 @@ cargo test -p novovm-evm-gateway json_rpc_eth_send_raw_then_receipt_product_smok
 5. 通过 `eth_getTransactionReceipt` 展示状态。
 
 不在本阶段扩展 debug/admin/trace，也不重新打开 geth 全节点追平目标。
-

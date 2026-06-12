@@ -67,11 +67,13 @@ EVM、SVM、Solana、BTC、BNB 等链能力在 `superVM` 中以“插件/扩展�
 
 ## 6. 已落地实现（2026-03-09）
 
-1. 边界层组件 `crates/gateways/evm-gateway` 已落地：对外受理 `ua_createUca` / `ua_bindPersona` / `eth_sendRawTransaction`，对内输出 `ops_wire_v1` 二进制。
+> 2026-06-13 收敛说明：统一账户入口已去重，`ua_*`、`account_balance/account_assets`、`web30_*` host 方法不再属于 `evm-gateway` 产品入口。唯一统一账户写入口为 `novovm-node -> mainline_query -> unified_account_surface`。`evm-gateway` 若保留，只作为 EVM RPC adapter，负责 `eth_*`/`evm_*` 兼容入口、pending consumer 和 EVM 查询。
+
+1. 边界层组件 `crates/gateways/evm-gateway` 已落地：当前对外只作为 EVM RPC adapter 受理 `eth_*`/`evm_*` 兼容入口（例如 `eth_sendRawTransaction`），对内输出 `ops_wire_v1` 二进制；统一账户 `ua_*` 入口已迁回 mainline unified-account surface。
 2. `novovm-node` 生产 bin 保持唯一入口，并新增通用 `NOVOVM_OPS_WIRE_DIR` 批量消费能力（仅 `.opsw1`），用于承接边界层二进制落盘队列。
 3. `NOVOVM_OPS_WIRE_DIR` 与 `NOVOVM_TX_WIRE_FILE` / `NOVOVM_OPS_WIRE_FILE` 互斥，避免入口语义歧义；`ops_wire_dir` 场景下禁止 `repeat` 压测语义混入生产消费语义。
 4. 一键生产路径脚本已落地：`scripts/migration/run_gateway_node_pipeline.ps1`（边界网关 -> `.opsw1` -> `novovm-node`）。
-5. gateway 已补齐 `eth_sendTransaction`（对象/`tx` 子对象/数组参数）与 `web30_sendTransaction` 的生产接线，统一落 `.opsw1` 并进入同一主链路消费。
+5. gateway 已补齐 `eth_sendTransaction`（对象/`tx` 子对象/数组参数）的生产接线，统一落 `.opsw1` 并进入同一主链路消费；`web30_sendTransaction` 不再作为 gateway 产品入口，避免 host 账户入口分叉。
 6. gateway 已补齐 `eth_getTransactionByHash` / `eth_getTransactionReceipt` 查询入口；ETH 查询索引后端支持 `memory|rocksdb`（默认 `memory`），通过 `NOVOVM_GATEWAY_ETH_TX_INDEX_BACKEND` / `NOVOVM_GATEWAY_ETH_TX_INDEX_PATH` 控制。默认保持性能优先，必要时可切 rocksdb 获得重启后可查询能力。`eth_sendRawTransaction/eth_sendTransaction` 对外结果已收敛为标准哈希字符串，`eth_getTransactionCount` 收敛为标准 hex quantity，并补齐 `eth_chainId/net_version/eth_gasPrice/eth_estimateGas/eth_getCode/eth_getStorageAt` 边界兼容（均不进入内部 `.opsw1` 主线；`eth_getCode/eth_getStorageAt` 走最小状态投影只读语义，不再是占位返回）。
 7. EVM 迁移脚本已支持“插件二进制优先、源码可选”模式：`run_evm_backend_compare_signal.ps1` 优先从外部二进制路径解析插件（支持 `-PluginPath`/`NOVOVM_EVM_PLUGIN_PATH`/`NOVOVM_ADAPTER_PLUGIN_PATH`），`run_evm_tx_type_signal.ps1` 可通过 `AllowPluginSourceTests` 关闭源码插件单测，以便主仓库开源时剥离插件源码而不破坏主线验证。
 8. AOEM sidecar 插件目录支持“自适应热插拔”解析：`novovm-exec` 新增 `NOVOVM_AOEM_PLUGIN_DIRS`/`AOEM_FFI_PLUGIN_DIRS`（分号/逗号分隔）并按插件匹配度与最近修改时间自动选目录。该能力仅在启动阶段选择目录，不引入运行期轮询，保持主线性能稳定。

@@ -15,7 +15,6 @@ use novovm_protocol::{
     ProtocolMessage,
 };
 use std::cell::Cell;
-use web30_core::privacy::generate_ring_keypair;
 
 fn capture_env_vars(keys: &[&str]) -> Vec<(String, Option<String>)> {
     keys.iter()
@@ -347,39 +346,6 @@ fn decode_single_ops_wire_value(bytes: &[u8]) -> Result<Vec<u8>> {
     }
     off += key_len;
     Ok(bytes[off..off + value_len].to_vec())
-}
-
-fn aoem_privacy_env_available() -> bool {
-    string_env_nonempty("NOVOVM_AOEM_DLL")
-        .or_else(|| string_env_nonempty("AOEM_DLL"))
-        .or_else(|| string_env_nonempty("AOEM_FFI_DLL"))
-        .is_some()
-}
-
-#[test]
-fn parse_gateway_web30_privacy_plan_reads_required_fields() {
-    let params = serde_json::json!({
-        "privacy": {
-            "value": "0x11",
-            "gas_limit": "0x5208",
-            "gas_price": "0x2",
-            "view_key": format!("0x{}", "11".repeat(32)),
-            "spend_key": format!("0x{}", "22".repeat(32)),
-            "ring_members": [
-                format!("0x{}", "33".repeat(32))
-            ],
-            "signer_index": 0,
-            "private_key": format!("0x{}", "44".repeat(32)),
-        }
-    });
-    let plan = parse_gateway_web30_privacy_plan(&params)
-        .expect("parse privacy plan")
-        .expect("privacy plan should exist");
-    assert_eq!(plan.value, 0x11);
-    assert_eq!(plan.gas_limit, 0x5208);
-    assert_eq!(plan.gas_price, 0x2);
-    assert_eq!(plan.ring_members.len(), 1);
-    assert_eq!(plan.signer_index, 0);
 }
 
 #[test]
@@ -1035,6 +1001,11 @@ fn novovm_surface_map_lists_mainnet_and_evm_plugin_domains() {
     assert!(!changed);
     assert_eq!(surface["host_chain"].as_str(), Some("supervm_mainnet"));
     assert_eq!(surface["evm_plugin_enabled"].as_bool(), Some(true));
+    assert_eq!(surface["mode"].as_str(), Some("evm_rpc_adapter_only"));
+    assert_eq!(
+        surface["unified_account_source_of_truth"].as_str(),
+        Some("novovm-node->mainline_query->unified_account_surface")
+    );
     let domains = surface["domains"]
         .as_array()
         .expect("domains should be an array");
@@ -1074,6 +1045,20 @@ fn novovm_surface_map_lists_mainnet_and_evm_plugin_domains() {
                 })
             })
     }));
+    let all_methods = domains
+        .iter()
+        .flat_map(|item| {
+            item["entry_methods"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|method| method.as_str())
+        })
+        .collect::<Vec<_>>();
+    assert!(!all_methods.iter().any(|method| method.starts_with("ua_")));
+    assert!(!all_methods
+        .iter()
+        .any(|method| method.starts_with("web30_")));
 
     let _ = fs::remove_dir_all(&spool_dir);
 }
@@ -1145,7 +1130,18 @@ fn novovm_method_domain_reports_mainnet_vs_evm_plugin() {
     )
     .expect("mainnet method domain query should succeed");
     assert!(!changed_mainnet_method);
-    assert_eq!(mainnet_method["domain"].as_str(), Some("novovm_mainnet"));
+    assert_eq!(
+        mainnet_method["domain"].as_str(),
+        Some("novovm_mainnet_mainline_only")
+    );
+    assert_eq!(
+        mainnet_method["gateway_entry_disabled"].as_bool(),
+        Some(true)
+    );
+    assert_eq!(
+        mainnet_method["canonical_entry"].as_str(),
+        Some("novovm-node->mainline_query->unified_account_surface")
+    );
 
     let (control_method, changed_control_method) = run_gateway_method(
         &mut router,
@@ -1196,6 +1192,77 @@ fn novovm_method_domain_reports_mainnet_vs_evm_plugin() {
     .expect("unknown method domain query should succeed");
     assert!(!changed_unknown_method);
     assert_eq!(unknown_method["domain"].as_str(), Some("unknown"));
+
+    let _ = fs::remove_dir_all(&spool_dir);
+}
+
+#[test]
+fn gateway_rejects_mainline_only_unified_account_and_web30_entries() {
+    let backend = GatewayEthTxIndexStoreBackend::Memory;
+    let mut router = UnifiedAccountRouter::new();
+    let mut eth_tx_index = HashMap::new();
+    let mut evm_settlement_index_by_id = HashMap::new();
+    let mut evm_settlement_index_by_tx = HashMap::new();
+    let mut evm_pending_payout_by_settlement = HashMap::new();
+    let spool_dir = std::env::temp_dir().join(format!(
+        "novovm-gateway-mainline-only-{}-{}",
+        std::process::id(),
+        now_unix_millis()
+    ));
+    fs::create_dir_all(&spool_dir).expect("create spool dir");
+    let mut eth_filters = GatewayEthFilterState::default();
+    let mut ctx = GatewayMethodContext {
+        eth_tx_index_store: &backend,
+        eth_default_chain_id: 1,
+        spool_dir: &spool_dir,
+        overlay_node_id: "test-overlay".to_string(),
+        overlay_session_id: "test-session".to_string(),
+        overlay_route_id: "route:test".to_string(),
+        overlay_route_epoch: 0,
+        overlay_route_mask_bits: 40,
+        overlay_route_mode: "fast".to_string(),
+        overlay_route_region: "global".to_string(),
+        overlay_route_relay_bucket: 0,
+        overlay_route_relay_set_size: 1,
+        overlay_route_relay_round: 0,
+        overlay_route_relay_index: 0,
+        overlay_route_relay_id: "rly:global:0:0".to_string(),
+        overlay_route_strategy: "direct".to_string(),
+        overlay_route_hop_count: 1,
+        eth_filters: &mut eth_filters,
+    };
+
+    for method in [
+        "ua_createUca",
+        "ua_bindPersona",
+        "ua_setPolicy",
+        "ua_registerMappedLock",
+        "account_balance",
+        "account_assets",
+        "web30_sendTransaction",
+        "web30_sendRawTransaction",
+    ] {
+        let err = run_gateway_method(
+            &mut router,
+            &mut eth_tx_index,
+            &mut evm_settlement_index_by_id,
+            &mut evm_settlement_index_by_tx,
+            &mut evm_pending_payout_by_settlement,
+            &mut ctx,
+            method,
+            &serde_json::json!({}),
+        )
+        .expect_err("mainline-only host entry must be disabled in gateway");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("gateway host/unified-account entry disabled"),
+            "unexpected error for {method}: {msg}"
+        );
+        assert!(
+            msg.contains("canonical_entry=novovm-node->mainline_query->unified_account_surface"),
+            "missing canonical entry for {method}: {msg}"
+        );
+    }
 
     let _ = fs::remove_dir_all(&spool_dir);
 }
@@ -1551,38 +1618,8 @@ fn eth_tx_hash_queries_respect_default_chain_scope_unless_overridden() {
 }
 
 #[test]
-fn web30_send_transaction_privacy_spools_signed_tx_ir_when_aoem_available() {
-    if !aoem_privacy_env_available() {
-        return;
-    }
-    let (decoy_pub, _decoy_secret) = match generate_ring_keypair() {
-        Ok(v) => v,
-        Err(_) => return,
-    };
-    let (real_pub, real_secret) = match generate_ring_keypair() {
-        Ok(v) => v,
-        Err(_) => return,
-    };
-    let from_hex = format!("0x{}", to_hex(&real_pub));
-    let decoy_hex = format!("0x{}", to_hex(&decoy_pub));
-    let real_hex = format!("0x{}", to_hex(&real_pub));
-    let secret_hex = format!("0x{}", to_hex(&real_secret));
+fn web30_send_transaction_is_mainline_only_not_gateway_entry() {
     let mut router = UnifiedAccountRouter::new();
-    router
-        .create_uca("uca-privacy".to_string(), vec![0xabu8; 32], 10)
-        .expect("create uca");
-    router
-        .add_binding(
-            "uca-privacy",
-            AccountRole::Owner,
-            PersonaAddress {
-                persona_type: PersonaType::Web30,
-                chain_id: 20260303,
-                external_address: real_pub.to_vec(),
-            },
-            11,
-        )
-        .expect("bind web30 persona");
     let mut eth_tx_index = HashMap::new();
     let mut evm_settlement_index_by_id = HashMap::new();
     let mut evm_settlement_index_by_tx = HashMap::new();
@@ -1593,23 +1630,6 @@ fn web30_send_transaction_privacy_spools_signed_tx_ir_when_aoem_available() {
         now_unix_millis()
     ));
     fs::create_dir_all(&spool_dir).expect("create spool dir");
-    let params = serde_json::json!({
-        "uca_id": "uca-privacy",
-        "role": "owner",
-        "chain_id": 20260303u64,
-        "nonce": 0u64,
-        "external_address": from_hex,
-        "privacy": {
-            "value": "0x9",
-            "gas_limit": "0x5208",
-            "gas_price": "0x1",
-            "view_key": format!("0x{}", "55".repeat(32)),
-            "spend_key": format!("0x{}", "66".repeat(32)),
-            "ring_members": [decoy_hex, real_hex],
-            "signer_index": 1u64,
-            "private_key": secret_hex,
-        }
-    });
     let mut eth_filters = GatewayEthFilterState::default();
     let mut ctx = GatewayMethodContext {
         eth_tx_index_store: &GatewayEthTxIndexStoreBackend::Memory,
@@ -1631,7 +1651,7 @@ fn web30_send_transaction_privacy_spools_signed_tx_ir_when_aoem_available() {
         overlay_route_hop_count: 1,
         eth_filters: &mut eth_filters,
     };
-    let (response, changed) = run_gateway_method(
+    let err = run_gateway_method(
         &mut router,
         &mut eth_tx_index,
         &mut evm_settlement_index_by_id,
@@ -1639,34 +1659,12 @@ fn web30_send_transaction_privacy_spools_signed_tx_ir_when_aoem_available() {
         &mut evm_pending_payout_by_settlement,
         &mut ctx,
         "web30_sendTransaction",
-        &params,
+        &serde_json::json!({}),
     )
-    .expect("web30 privacy send should succeed");
-    assert!(changed);
-    assert_eq!(
-        response["payload_kind"].as_str(),
-        Some("signed_privacy_tx_ir_bincode_v1")
-    );
-    assert_eq!(response["tx_ir_type"].as_str(), Some("privacy"));
-    let spool_file = PathBuf::from(
-        response["spool_file"]
-            .as_str()
-            .expect("spool_file should be present"),
-    );
-    let wire = fs::read(&spool_file).expect("read spool ops-wire");
-    let value = decode_single_ops_wire_value(&wire).expect("decode ops-wire value");
-    let record: GatewayIngressWeb30RecordV1 =
-        crate::bincode_compat::deserialize(&value).expect("decode web30 ingress record");
-    let tx = TxIR::deserialize(&record.payload, SerializationFormat::Bincode)
-        .expect("decode signed privacy tx ir");
-    assert_eq!(tx.tx_type, TxType::Privacy);
-    assert!(tx.to.is_none());
-    assert!(!tx.signature.is_empty());
-    assert_eq!(tx.chain_id, 20260303);
-    assert_eq!(tx.nonce, 0);
-    assert_eq!(tx.value, 9);
-    assert_eq!(record.tx_hash.to_vec(), tx.hash);
-    let _ = fs::remove_file(&spool_file);
+    .expect_err("web30 host entry must be mainline-only");
+    assert!(err
+        .to_string()
+        .contains("gateway host/unified-account entry disabled"));
     let _ = fs::remove_dir_all(&spool_dir);
 }
 
@@ -16119,17 +16117,24 @@ fn gateway_error_code_maps_txpool_reject_reasons() {
         -32037
     );
     assert_eq!(
-        gateway_error_code_for_method("web30_sendTransaction", &over_capacity),
+        gateway_error_code_for_method("evm_sendTransaction", &over_capacity),
         -32038
     );
     assert_eq!(
-        gateway_error_code_for_method("web30_sendRawTransaction", &unknown),
+        gateway_error_code_for_method("evm_sendRawTransaction", &unknown),
         -32030
     );
     assert_eq!(
         gateway_error_code_for_method(
             "engine_getPayloadV3",
             "standalone evm control namespace disabled on supervm host mode: engine_getPayloadV3"
+        ),
+        -32601
+    );
+    assert_eq!(
+        gateway_error_code_for_method(
+            "ua_createUca",
+            "gateway host/unified-account entry disabled: method=ua_createUca canonical_entry=novovm-node->mainline_query->unified_account_surface"
         ),
         -32601
     );
@@ -16151,17 +16156,21 @@ fn gateway_error_message_maps_txpool_codes_to_geth_style_text() {
         "nonce too high"
     );
     assert_eq!(
-        gateway_error_message_for_method("web30_sendTransaction", -32038, raw),
+        gateway_error_message_for_method("evm_sendTransaction", -32038, raw),
         "txpool is full"
     );
     assert_eq!(
-        gateway_error_message_for_method("web30_sendRawTransaction", -32030, raw),
+        gateway_error_message_for_method("evm_sendRawTransaction", -32030, raw),
         "transaction rejected"
     );
-    // Non-EVM write methods keep original message.
+    // Mainline-only host methods keep original disabled message.
     assert_eq!(
-        gateway_error_message_for_method("ua_createUca", -32010, "uca exists"),
-        "uca exists"
+        gateway_error_message_for_method(
+            "ua_createUca",
+            -32601,
+            "gateway host/unified-account entry disabled"
+        ),
+        "gateway host/unified-account entry disabled"
     );
 }
 
@@ -16229,7 +16238,7 @@ fn gateway_error_code_maps_atomic_gate_failures() {
         -32036
     );
     assert_eq!(
-        gateway_error_code_for_method("web30_sendTransaction", not_ready),
+        gateway_error_code_for_method("evm_sendTransaction", not_ready),
         -32039
     );
 }
@@ -16273,7 +16282,11 @@ fn gateway_error_code_and_data_for_public_broadcast_failure() {
 
 #[test]
 fn gateway_error_data_for_non_txpool_returns_none() {
-    let data = gateway_error_data_for_method("ua_createUca", -32010, "uca exists");
+    let data = gateway_error_data_for_method(
+        "ua_createUca",
+        -32601,
+        "gateway host/unified-account entry disabled",
+    );
     assert!(data.is_none());
 }
 
