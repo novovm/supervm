@@ -4,7 +4,10 @@ use anyhow::{Context, Result};
 use novovm_exec::{SupervmEvmExecutionReceiptV1, SupervmEvmStateMirrorUpdateV1};
 use novovm_network::{
     derive_eth_fullnode_chain_view_v1, set_network_runtime_native_block_access_list_payload_v1,
+    set_network_runtime_native_body_snapshot_v1, set_network_runtime_native_head_snapshot_v1,
     EthFullnodeBlockContextV1, EthFullnodeBlockViewSource, EthFullnodeChainViewV1,
+    NetworkRuntimeNativeBodySnapshotV1, NetworkRuntimeNativeHeadSnapshotV1,
+    NetworkRuntimeNativeSyncPhaseV1,
 };
 use novovm_protocol::{evm_block_access_list_rlp_bytes_v1, EvmBlockAccessListV1};
 use serde::{Deserialize, Serialize};
@@ -193,6 +196,74 @@ pub fn materialize_mainline_eth_block_access_lists_to_network_runtime_v1(
     materialized
 }
 
+pub fn materialize_mainline_eth_canonical_blocks_to_network_runtime_v1(
+    store: &MainlineCanonicalStoreV1,
+) -> usize {
+    if store.chain_type != "evm" {
+        return 0;
+    }
+    let contexts = derive_mainline_eth_block_contexts_v1(store);
+    let observed_unix_ms = now_unix_ms() as u128;
+    let mut materialized = 0usize;
+    for (batch, context) in store.batches.iter().zip(contexts.iter()) {
+        let tx_hashes = batch
+            .receipts
+            .iter()
+            .filter_map(|receipt| {
+                if receipt.tx_hash.len() != 32 {
+                    return None;
+                }
+                let mut tx_hash = [0u8; 32];
+                tx_hash.copy_from_slice(receipt.tx_hash.as_slice());
+                Some(tx_hash)
+            })
+            .collect::<Vec<_>>();
+        let raw_tx_rlps = if batch.raw_tx_rlps.len() == tx_hashes.len() {
+            batch.raw_tx_rlps.clone()
+        } else {
+            Vec::new()
+        };
+        let body_available = batch.tx_count == 0 || tx_hashes.len() == batch.tx_count;
+        set_network_runtime_native_body_snapshot_v1(
+            store.chain_id,
+            NetworkRuntimeNativeBodySnapshotV1 {
+                chain_id: store.chain_id,
+                number: context.block_number,
+                block_hash: context.block_hash,
+                tx_hashes,
+                raw_tx_rlps,
+                ommer_hashes: Vec::new(),
+                withdrawal_rlp_items: None,
+                withdrawal_count: Some(0),
+                body_available,
+                txs_materialized: body_available,
+                observed_unix_ms,
+            },
+        );
+        set_network_runtime_native_head_snapshot_v1(
+            store.chain_id,
+            NetworkRuntimeNativeHeadSnapshotV1 {
+                chain_id: store.chain_id,
+                phase: NetworkRuntimeNativeSyncPhaseV1::Bodies,
+                peer_count: 0,
+                block_number: context.block_number,
+                block_hash: context.block_hash,
+                parent_block_hash: context.parent_block_hash,
+                state_root: context.state_root,
+                canonical: true,
+                safe: false,
+                finalized: false,
+                reorg_depth_hint: None,
+                body_available,
+                source_peer_id: None,
+                observed_unix_ms,
+            },
+        );
+        materialized = materialized.saturating_add(1);
+    }
+    materialized
+}
+
 pub fn project_mainline_eth_block_context_to_fullnode_v1(
     context: &MainlineEthBlockContextV1,
 ) -> EthFullnodeBlockContextV1 {
@@ -280,6 +351,7 @@ pub fn append_mainline_canonical_batch(
     store.batches.push(batch);
     save_mainline_canonical_store(path, &store)?;
     let _ = materialize_mainline_eth_block_access_lists_to_network_runtime_v1(&store);
+    let _ = materialize_mainline_eth_canonical_blocks_to_network_runtime_v1(&store);
     Ok(store)
 }
 
@@ -357,6 +429,88 @@ mod tests {
             Some(sample_block_access_list())
         );
         assert_eq!(loaded.batches[0].block_access_list_hash, Some([0xabu8; 32]));
+
+        let _ = fs::remove_file(PathBuf::from(&store_path));
+        let _ = fs::remove_dir_all(temp_root);
+    }
+
+    #[test]
+    fn append_mainline_canonical_batch_marks_pending_tx_included_canonical() {
+        let chain_id = 91_000_000 + (now_unix_ms() % 100_000);
+        let temp_root =
+            std::env::temp_dir().join(format!("novovm-node-canonical-pending-{}", now_unix_ms()));
+        let store_path = temp_root.join("canonical.json");
+        let tx_hash = [0x42u8; 32];
+        novovm_network::observe_network_runtime_native_pending_tx_local_ingress_with_payload_v1(
+            chain_id, tx_hash, None,
+        );
+
+        let appended = append_mainline_canonical_batch(
+            &store_path,
+            "evm",
+            chain_id,
+            MainlineCanonicalBatchRecordV1 {
+                seq: 1,
+                source_detail: "pending-to-canonical-test".to_string(),
+                tx_count: 1,
+                tap_requested: 1,
+                tap_accepted: 1,
+                tap_dropped: 0,
+                apply_verified: true,
+                apply_applied: true,
+                apply_state_root: [0x77u8; 32],
+                block_access_list: None,
+                block_access_list_complete: false,
+                block_access_list_hash: None,
+                exported_receipt_count: 1,
+                mirrored_receipt_count: 1,
+                state_version: 11,
+                ingress_bypassed: true,
+                atomic_guard_enabled: false,
+                raw_tx_rlps: vec![vec![0xc0]],
+                receipts: vec![SupervmEvmExecutionReceiptV1 {
+                    chain_type: ChainType::EVM,
+                    chain_id,
+                    tx_hash: tx_hash.to_vec(),
+                    tx_index: 0,
+                    tx_type: TxType::Transfer,
+                    receipt_type: Some(2),
+                    status_ok: true,
+                    gas_used: 21_000,
+                    cumulative_gas_used: 21_000,
+                    effective_gas_price: Some(7),
+                    log_bloom: vec![0u8; 256],
+                    revert_data: None,
+                    state_root: [0x77u8; 32],
+                    state_version: 11,
+                    contract_address: None,
+                    logs: Vec::new(),
+                }],
+                state_mirror_updates: Vec::new(),
+            },
+        )
+        .expect("append canonical batch");
+        let context = derive_mainline_eth_block_context_by_seq_v1(&appended, 1).expect("context");
+        let pending = novovm_network::get_network_runtime_native_pending_tx_v1(chain_id, tx_hash)
+            .expect("pending tx should remain visible as included canonical");
+        assert_eq!(
+            pending.lifecycle_stage,
+            novovm_network::NetworkRuntimeNativePendingTxLifecycleStageV1::IncludedCanonical
+        );
+        assert_eq!(pending.last_block_number, Some(1));
+        assert_eq!(pending.last_block_hash, Some(context.block_hash));
+        assert_eq!(pending.canonical_inclusion, Some(true));
+
+        let body = novovm_network::get_network_runtime_native_body_snapshot_v1(chain_id)
+            .expect("native body snapshot");
+        assert_eq!(body.block_hash, context.block_hash);
+        assert_eq!(body.tx_hashes, vec![tx_hash]);
+        assert_eq!(body.raw_tx_rlps, vec![vec![0xc0]]);
+        let head = novovm_network::get_network_runtime_native_head_snapshot_v1(chain_id)
+            .expect("native head snapshot");
+        assert_eq!(head.block_hash, context.block_hash);
+        assert!(head.canonical);
+        assert!(head.body_available);
 
         let _ = fs::remove_file(PathBuf::from(&store_path));
         let _ = fs::remove_dir_all(temp_root);
