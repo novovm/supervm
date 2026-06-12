@@ -37,6 +37,7 @@ use novovm_exec::{OpsWireOp, OpsWireV1Builder};
 use novovm_network::{
     get_network_runtime_native_sync_status, get_network_runtime_sync_status,
     network_runtime_native_sync_is_active, observe_network_runtime_local_head_max,
+    observe_network_runtime_native_pending_tx_local_ingress_with_payload_v1,
     plan_network_runtime_sync_pull_window, snapshot_network_runtime_native_canonical_blocks_v1,
     NetworkRuntimeNativeCanonicalBlockStateV1,
 };
@@ -12782,6 +12783,11 @@ fn run_gateway_method(
             let wire = encode_gateway_ingress_ops_wire_v1_eth(&record)?;
             let spool_file = write_spool_ops_wire_v1(ctx.spool_dir, &wire)?;
             upsert_gateway_eth_tx_index(eth_tx_index, ctx.eth_tx_index_store, &record);
+            observe_network_runtime_native_pending_tx_local_ingress_with_payload_v1(
+                record.chain_id,
+                record.tx_hash,
+                Some(record.signature.as_slice()),
+            );
             persist_gateway_eth_submit_success_status(
                 ctx.eth_tx_index_store,
                 record.tx_hash,

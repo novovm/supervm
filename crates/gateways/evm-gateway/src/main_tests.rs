@@ -1,5 +1,9 @@
 use super::*;
-use novovm_network::{set_network_runtime_sync_status, NetworkRuntimeSyncStatus};
+use novovm_network::{
+    get_network_runtime_native_pending_tx_payload_v1, get_network_runtime_native_pending_tx_v1,
+    set_network_runtime_sync_status, NetworkRuntimeNativePendingTxLifecycleStageV1,
+    NetworkRuntimeNativePendingTxOriginV1, NetworkRuntimeSyncStatus,
+};
 use novovm_node::mainline_canonical::{
     derive_mainline_eth_block_contexts_v1, save_mainline_canonical_store,
     MainlineCanonicalBatchRecordV1, MainlineCanonicalStoreV1,
@@ -13669,6 +13673,16 @@ fn eth_send_raw_transaction_without_uca_id_uses_binding_owner() {
     assert_eq!(indexed.chain_id, chain_id);
     assert_eq!(indexed.from, sender);
     assert_eq!(indexed.nonce, 0);
+    let pending = get_network_runtime_native_pending_tx_v1(chain_id, tx_hash)
+        .expect("gateway raw tx should enter native pending runtime");
+    assert_eq!(pending.origin, NetworkRuntimeNativePendingTxOriginV1::Local);
+    assert_eq!(
+        pending.lifecycle_stage,
+        NetworkRuntimeNativePendingTxLifecycleStageV1::Pending
+    );
+    let pending_payload = get_network_runtime_native_pending_tx_payload_v1(chain_id, tx_hash)
+        .expect("gateway raw tx should store native pending payload");
+    assert_eq!(pending_payload, raw_tx);
 
     let _ = fs::remove_file(&spool_file);
     let _ = fs::remove_dir_all(&spool_dir);
