@@ -22,7 +22,8 @@
 ## 冻结指针
 
 - product tag: `evm-product-v1`
-- product commit: `8d99321 Add EVM JSON-RPC product smoke`
+- product implementation commit: `8d99321 Add EVM JSON-RPC product smoke`
+- signoff document commit: `af62e9e Document EVM product v1 signoff`
 - prerequisite tag: `evm-mainnet-long-sync-v1`
 - prerequisite commit: `d48846475bb42abdc12ee5cbd179f5f7bc756065`
 
@@ -81,4 +82,3 @@ git diff --check
 - 用户通过 `eth_getTransactionReceipt` 查询交易结果。
 - EVM persona 映射到 NovoVM 账户体系。
 - 必要时补齐 `eth_getTransactionByHash`、`eth_getBlockByNumber`、`eth_call`、`eth_estimateGas` 的产品 smoke，但不扩大到 debug/admin/trace。
-
