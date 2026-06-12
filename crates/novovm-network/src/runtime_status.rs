@@ -2205,6 +2205,72 @@ fn runtime_sync_observed_state_map() -> &'static Mutex<NetworkRuntimeSyncObserve
         .get_or_init(|| Mutex::new(NetworkRuntimeSyncObservedState::default()))
 }
 
+pub fn clear_network_runtime_native_state_for_host_tests_v1() {
+    if let Ok(mut guard) = runtime_sync_status_map().lock() {
+        guard.clear();
+    }
+    if let Ok(mut guard) = runtime_native_sync_status_map().lock() {
+        guard.clear();
+    }
+    if let Ok(mut guard) = runtime_native_header_snapshot_map().lock() {
+        guard.clear();
+    }
+    if let Ok(mut guard) = runtime_native_body_snapshot_map().lock() {
+        guard.clear();
+    }
+    if let Ok(mut guard) = runtime_native_header_rlp_map().lock() {
+        guard.clear();
+    }
+    if let Ok(mut guard) = runtime_native_receipt_snapshot_map().lock() {
+        guard.clear();
+    }
+    if let Ok(mut guard) = runtime_native_block_access_list_payload_map().lock() {
+        guard.clear();
+    }
+    if let Ok(mut guard) = runtime_native_snap_account_snapshot_map().lock() {
+        guard.clear();
+    }
+    if let Ok(mut guard) = runtime_native_snap_storage_snapshot_map().lock() {
+        guard.clear();
+    }
+    if let Ok(mut guard) = runtime_native_snap_code_snapshot_map().lock() {
+        guard.clear();
+    }
+    if let Ok(mut guard) = runtime_native_snap_trie_node_snapshot_map().lock() {
+        guard.clear();
+    }
+    if let Ok(mut guard) = runtime_native_snap_account_range_progress_map().lock() {
+        guard.clear();
+    }
+    if let Ok(mut guard) = runtime_native_head_snapshot_map().lock() {
+        guard.clear();
+    }
+    if let Ok(mut guard) = runtime_native_canonical_chain_map().lock() {
+        guard.clear();
+    }
+    if let Ok(mut guard) = runtime_native_pending_tx_map().lock() {
+        guard.clear();
+    }
+    if let Ok(mut guard) = runtime_native_pending_tx_payload_map().lock() {
+        guard.clear();
+    }
+    if let Ok(mut guard) = runtime_native_pending_tx_tombstone_map().lock() {
+        guard.clear();
+    }
+    if let Ok(mut guard) = runtime_native_pending_tx_broadcast_runtime_map().lock() {
+        guard.clear();
+    }
+    if let Ok(mut guard) = runtime_native_execution_budget_runtime_map().lock() {
+        guard.clear();
+    }
+    if let Ok(mut guard) = runtime_native_budget_hooks_map().lock() {
+        guard.clear();
+    }
+    if let Ok(mut guard) = runtime_sync_observed_state_map().lock() {
+        *guard = NetworkRuntimeSyncObservedState::default();
+    }
+}
+
 fn empty_runtime_sync_status() -> NetworkRuntimeSyncStatus {
     NetworkRuntimeSyncStatus {
         peer_count: 0,

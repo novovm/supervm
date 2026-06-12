@@ -6,11 +6,10 @@ mod bincode_compat;
 #[cfg(test)]
 use novovm_adapter_api::UnifiedAccountError;
 use novovm_adapter_api::{
-    AccountPolicy, AccountRole, AtomicBroadcastReadyV1, AtomicIntentReceiptV1, AtomicIntentStatus,
+    AccountRole, AtomicBroadcastReadyV1, AtomicIntentReceiptV1, AtomicIntentStatus,
     EvmAccessListEntryV1, EvmFeePayoutInstructionV1, EvmFeeSettlementRecordV1,
-    EvmMempoolIngressFrameV1, KycPolicyMode, NonceScope, PersonaAddress, PersonaType, ProtocolKind,
-    RouteDecision, RouteRequest, SerializationFormat, TxExecutionPolicyV1, TxIR, TxType,
-    Type4PolicyMode, UnifiedAccountRouter,
+    EvmMempoolIngressFrameV1, PersonaAddress, PersonaType, ProtocolKind, RouteDecision,
+    RouteRequest, SerializationFormat, TxExecutionPolicyV1, TxIR, TxType, UnifiedAccountRouter,
 };
 #[cfg(test)]
 use novovm_adapter_evm_core::{
@@ -23,6 +22,8 @@ use novovm_adapter_evm_core::{
     translate_raw_evm_tx_fields_m0, tx_ir_from_raw_fields_m0, validate_tx_semantics_m0,
     EvmRawTxEnvelopeType, EvmRawTxFieldsM0,
 };
+#[cfg(test)]
+use novovm_adapter_evm_plugin::reset_evm_plugin_runtime_for_host_tests_v1;
 use novovm_adapter_evm_plugin::{
     apply_ir_batch_v1, drain_atomic_broadcast_ready_for_host, drain_atomic_receipts_for_host,
     drain_block_metadata_for_host, drain_executable_ingress_frames_for_host,
@@ -38,6 +39,8 @@ use novovm_adapter_novovm::{
     build_privacy_tx_ir_signed_from_raw_v1, PrivacyTxRawEnvelopeV1, PrivacyTxRawSignerV1,
 };
 use novovm_exec::{OpsWireOp, OpsWireV1Builder};
+#[cfg(test)]
+use novovm_network::clear_network_runtime_native_state_for_host_tests_v1;
 use novovm_network::{
     get_network_runtime_native_pending_tx_payload_v1, get_network_runtime_native_pending_tx_v1,
     get_network_runtime_native_sync_status, get_network_runtime_sync_status,
@@ -127,7 +130,6 @@ const GATEWAY_EVM_ATOMIC_BROADCAST_PAYLOAD_ROCKSDB_KEY_PREFIX: &[u8] =
     b"gateway:evm:atomic_broadcast:payload:v1:";
 const GATEWAY_ETH_PUBLIC_BROADCAST_PENDING_ROCKSDB_KEY_PREFIX: &[u8] =
     b"gateway:eth:public_broadcast:pending:v1:";
-const GATEWAY_UA_PRIMARY_KEY_DOMAIN: &[u8] = b"novovm_gateway_uca_primary_key_ref_v1";
 const GATEWAY_INGRESS_RECORD_VERSION: u16 = 1;
 const GATEWAY_INGRESS_PROTOCOL_ETH: u8 = 1;
 const GATEWAY_INGRESS_PROTOCOL_WEB30: u8 = 2;
@@ -10050,119 +10052,6 @@ fn run_gateway_method(
                 false,
             ))
         }
-        "ua_createUca" => {
-            let uca_id_raw = param_as_string(params, "uca_id")
-                .ok_or_else(|| anyhow::anyhow!("uca_id is required for ua_createUca"))?;
-            let uca_id = validate_uca_id_policy(&uca_id_raw)?;
-            let now = param_as_u64(params, "now").unwrap_or_else(now_unix_sec);
-            let primary_key_ref = parse_primary_key_ref(params, &uca_id)?;
-            router.create_uca(uca_id.clone(), primary_key_ref, now)?;
-            Ok((
-                serde_json::json!({
-                    "method": method,
-                    "created": true,
-                    "uca_id": uca_id,
-                }),
-                true,
-            ))
-        }
-        "ua_rotatePrimaryKey" => {
-            let uca_id = param_as_string(params, "uca_id")
-                .ok_or_else(|| anyhow::anyhow!("uca_id is required for ua_rotatePrimaryKey"))?;
-            let role = parse_account_role(params)?;
-            let now = param_as_u64(params, "now").unwrap_or_else(now_unix_sec);
-            let next_primary_key_ref =
-                if let Some(raw) = param_as_string(params, "next_primary_key_ref") {
-                    decode_hex_bytes(&raw, "next_primary_key_ref")?
-                } else {
-                    parse_primary_key_ref(params, &format!("{}:rotated:{}", uca_id, now))?
-                };
-            router.rotate_primary_key(&uca_id, role, next_primary_key_ref, now)?;
-            Ok((
-                serde_json::json!({
-                    "method": method,
-                    "rotated": true,
-                    "uca_id": uca_id,
-                }),
-                true,
-            ))
-        }
-        "ua_bindPersona" => {
-            let uca_id = param_as_string(params, "uca_id")
-                .ok_or_else(|| anyhow::anyhow!("uca_id is required for ua_bindPersona"))?;
-            let role = parse_account_role(params)?;
-            let persona_type = parse_persona_type(params, "persona_type")?;
-            let chain_id = param_as_u64(params, "chain_id")
-                .ok_or_else(|| anyhow::anyhow!("chain_id is required for ua_bindPersona"))?;
-            let external_address = parse_external_address(params, "external_address")?;
-            let now = param_as_u64(params, "now").unwrap_or_else(now_unix_sec);
-            let persona = PersonaAddress {
-                persona_type,
-                chain_id,
-                external_address,
-            };
-            router.add_binding(&uca_id, role, persona.clone(), now)?;
-            Ok((
-                serde_json::json!({
-                    "method": method,
-                    "bound": true,
-                    "uca_id": uca_id,
-                    "persona_type": persona.persona_type.as_str(),
-                    "chain_id": persona.chain_id,
-                }),
-                true,
-            ))
-        }
-        "ua_revokePersona" => {
-            let uca_id = param_as_string(params, "uca_id")
-                .ok_or_else(|| anyhow::anyhow!("uca_id is required for ua_revokePersona"))?;
-            let role = parse_account_role(params)?;
-            let persona_type = parse_persona_type(params, "persona_type")?;
-            let chain_id = param_as_u64(params, "chain_id")
-                .ok_or_else(|| anyhow::anyhow!("chain_id is required for ua_revokePersona"))?;
-            let external_address = parse_external_address(params, "external_address")?;
-            let cooldown_seconds = param_as_u64(params, "cooldown_seconds").unwrap_or(0);
-            let now = param_as_u64(params, "now").unwrap_or_else(now_unix_sec);
-            let persona = PersonaAddress {
-                persona_type,
-                chain_id,
-                external_address,
-            };
-            router.revoke_binding(&uca_id, role, persona.clone(), cooldown_seconds, now)?;
-            Ok((
-                serde_json::json!({
-                    "method": method,
-                    "revoked": true,
-                    "uca_id": uca_id,
-                    "persona_type": persona.persona_type.as_str(),
-                    "chain_id": persona.chain_id,
-                    "cooldown_seconds": cooldown_seconds,
-                }),
-                true,
-            ))
-        }
-        "ua_getBindingOwner" => {
-            let persona_type = parse_persona_type(params, "persona_type")?;
-            let chain_id = param_as_u64(params, "chain_id")
-                .ok_or_else(|| anyhow::anyhow!("chain_id is required for ua_getBindingOwner"))?;
-            let external_address = parse_external_address(params, "external_address")?;
-            let persona = PersonaAddress {
-                persona_type,
-                chain_id,
-                external_address,
-            };
-            let owner = router.resolve_binding_owner(&persona).map(str::to_string);
-            Ok((
-                serde_json::json!({
-                    "method": method,
-                    "found": owner.is_some(),
-                    "owner_uca_id": owner,
-                    "persona_type": persona.persona_type.as_str(),
-                    "chain_id": persona.chain_id,
-                }),
-                false,
-            ))
-        }
         "eth_getTransactionCount" => {
             let chain_id = param_as_u64_any_with_tx(params, &["chain_id", "chainId"])
                 .unwrap_or(ctx.eth_default_chain_id);
@@ -10359,11 +10248,6 @@ fn run_gateway_method(
                 .ok_or_else(|| anyhow::anyhow!("tx_hash (or hash) is required"))?;
             let tx_hash_bytes = decode_hex_bytes(&tx_hash_raw, "tx_hash")?;
             let tx_hash = vec_to_32(&tx_hash_bytes, "tx_hash")?;
-            if let Some(mainline_receipt) =
-                run_gateway_mainline_query_if_non_null_v1("eth_getTransactionReceipt", params)?
-            {
-                return Ok((mainline_receipt, false));
-            }
             if let Some(entry) = eth_tx_index.get(&tx_hash) {
                 if chain_hint.is_some_and(|chain_id| entry.chain_id != chain_id) {
                     return Ok((serde_json::Value::Null, false));
@@ -10422,7 +10306,11 @@ fn run_gateway_method(
                 }
                 Ok((gateway_eth_tx_receipt_json(&pending_entry), false))
             } else {
-                Ok((serde_json::Value::Null, false))
+                Ok((
+                    run_gateway_mainline_query_if_non_null_v1("eth_getTransactionReceipt", params)?
+                        .unwrap_or(serde_json::Value::Null),
+                    false,
+                ))
             }
         }
         "evm_getLogsBatch" | "evm_get_logs_batch" => {
@@ -12309,90 +12197,6 @@ fn run_gateway_method(
                     "total_attempts": total_attempts,
                 }),
                 false,
-            ))
-        }
-        "ua_setPolicy" => {
-            let uca_id = param_as_string(params, "uca_id")
-                .ok_or_else(|| anyhow::anyhow!("uca_id is required for ua_setPolicy"))?;
-            let role = parse_account_role(params)?;
-            let now = param_as_u64(params, "now").unwrap_or_else(now_unix_sec);
-            let nonce_scope = match param_as_string(params, "nonce_scope")
-                .unwrap_or_else(|| "persona".to_string())
-                .to_ascii_lowercase()
-                .as_str()
-            {
-                "persona" => NonceScope::Persona,
-                "chain" => NonceScope::Chain,
-                "global" => NonceScope::Global,
-                other => bail!("invalid nonce_scope: {}; valid: persona|chain|global", other),
-            };
-            let allow_type4_with_delegate_or_session =
-                param_as_bool(params, "allow_type4_with_delegate_or_session").unwrap_or(false);
-            let type4_policy_mode = if let Some(raw) = param_as_string(params, "type4_policy_mode")
-            {
-                match raw.trim().to_ascii_lowercase().as_str() {
-                    "supported" => Type4PolicyMode::Supported,
-                    "rejected" => Type4PolicyMode::Rejected,
-                    "degraded" => Type4PolicyMode::Degraded,
-                    other => bail!(
-                        "invalid type4_policy_mode: {}; valid: supported|rejected|degraded",
-                        other
-                    ),
-                }
-            } else if allow_type4_with_delegate_or_session {
-                Type4PolicyMode::Supported
-            } else {
-                Type4PolicyMode::Rejected
-            };
-            let kyc_policy_mode = if let Some(raw) = param_as_string(params, "kyc_policy_mode") {
-                match raw.trim().to_ascii_lowercase().as_str() {
-                    "disabled" => KycPolicyMode::Disabled,
-                    "informational" => KycPolicyMode::Informational,
-                    "required_non_owner" | "required-non-owner" | "requiredfornonowner" => {
-                        KycPolicyMode::RequiredForNonOwner
-                    }
-                    other => bail!(
-                        "invalid kyc_policy_mode: {}; valid: disabled|informational|required_non_owner",
-                        other
-                    ),
-                }
-            } else {
-                KycPolicyMode::Disabled
-            };
-            router.update_policy(
-                &uca_id,
-                role,
-                AccountPolicy {
-                    nonce_scope,
-                    type4_policy_mode,
-                    allow_type4_with_delegate_or_session,
-                    kyc_policy_mode,
-                },
-                now,
-            )?;
-            Ok((
-                serde_json::json!({
-                    "method": method,
-                    "updated": true,
-                    "uca_id": uca_id,
-                    "nonce_scope": match nonce_scope {
-                        NonceScope::Persona => "persona",
-                        NonceScope::Chain => "chain",
-                        NonceScope::Global => "global",
-                    },
-                    "type4_policy_mode": match type4_policy_mode {
-                        Type4PolicyMode::Supported => "supported",
-                        Type4PolicyMode::Rejected => "rejected",
-                        Type4PolicyMode::Degraded => "degraded",
-                    },
-                    "kyc_policy_mode": match kyc_policy_mode {
-                        KycPolicyMode::Disabled => "disabled",
-                        KycPolicyMode::Informational => "informational",
-                        KycPolicyMode::RequiredForNonOwner => "required_non_owner",
-                    },
-                    "allow_type4_with_delegate_or_session": allow_type4_with_delegate_or_session,
-                }),
-                true,
             ))
         }
         "eth_sendRawTransaction" => {

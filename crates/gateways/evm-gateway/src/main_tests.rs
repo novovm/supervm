@@ -50,6 +50,14 @@ impl Drop for EnvTestGuard {
 }
 
 fn env_test_guard() -> EnvTestGuard {
+    env_test_guard_inner(true)
+}
+
+fn env_test_lock_guard() -> EnvTestGuard {
+    env_test_guard_inner(false)
+}
+
+fn env_test_guard_inner(reset_state: bool) -> EnvTestGuard {
     let should_lock = ENV_LOCK_DEPTH.with(|depth| {
         let current = depth.get();
         depth.set(current.saturating_add(1));
@@ -63,7 +71,7 @@ fn env_test_guard() -> EnvTestGuard {
     } else {
         None
     };
-    if should_lock {
+    if should_lock && reset_state {
         reset_runtime_host_state_for_test();
     }
     EnvTestGuard { _guard: guard }
@@ -96,6 +104,16 @@ fn sample_gateway_block_access_list_v1() -> EvmBlockAccessListV1 {
 }
 
 fn reset_runtime_host_state_for_test() {
+    super::reset_evm_plugin_runtime_for_host_tests_v1();
+    super::clear_network_runtime_native_state_for_host_tests_v1();
+    super::SPOOL_SEQ.store(0, Ordering::Relaxed);
+    if let Ok(mut map) = super::gateway_eth_broadcast_status_store().lock() {
+        map.clear();
+    }
+    if let Ok(mut map) = super::gateway_eth_submit_status_store().lock() {
+        map.clear();
+    }
+
     let drain_max = 1_000_000usize;
     loop {
         let executable = super::drain_executable_ingress_frames_for_host(drain_max);
@@ -159,7 +177,7 @@ fn run_gateway_method(
     method: &str,
     params: &serde_json::Value,
 ) -> Result<(serde_json::Value, bool)> {
-    let _guard = env_test_guard();
+    let _guard = env_test_lock_guard();
     let test_router = router.clone();
     super::with_gateway_test_mainline_uca_router(&test_router, || {
         super::run_gateway_method(
@@ -181,7 +199,7 @@ fn runtime_tap_ir_batch_v1(
     txs: &[TxIR],
     flags: u64,
 ) -> std::result::Result<novovm_adapter_evm_plugin::EvmRuntimeTapSummaryV1, i32> {
-    let _guard = env_test_guard();
+    let _guard = env_test_lock_guard();
     super::runtime_tap_ir_batch_v1(chain_type, chain_id, txs, flags)
 }
 
@@ -707,6 +725,7 @@ fn engine_exchange_capabilities_keep_payload_control_disabled_v1() {
 
 #[test]
 fn engine_payload_bodies_read_native_rlpx_canonical_material_v1() {
+    let _guard = env_test_guard();
     let backend = GatewayEthTxIndexStoreBackend::Memory;
     let mut router = UnifiedAccountRouter::new();
     let mut eth_tx_index = HashMap::new();
@@ -1300,6 +1319,23 @@ fn gateway_rejects_mainline_only_unified_account_and_web30_entries() {
     }
 
     let _ = fs::remove_dir_all(&spool_dir);
+}
+
+#[test]
+#[allow(non_snake_case)]
+fn gateway_uses_mainline_ua_checkRoute_for_eth_sendRawTransaction() {
+    let source = include_str!("main.rs");
+    assert!(!source.contains("GatewayUaStoreBackend"));
+    assert!(!source.contains("gateway_ua_store"));
+    assert!(!source.contains("resolve_gateway_ua_store"));
+    assert!(!source.contains("\"ua_createUca\" =>"));
+    assert!(!source.contains("\"ua_bindPersona\" =>"));
+    assert!(!source.contains("\"ua_setPolicy\" =>"));
+    assert!(!source.contains("\"ua_registerMappedLock\" =>"));
+    assert!(source.contains("fn gateway_mainline_check_route_v1"));
+    assert!(source.contains("\"ua_checkRoute\""));
+    assert!(source.contains("run_mainline_query_from_path(&gateway_mainline_query_store_path_v1()"));
+    assert!(source.contains("mainline UCA readonly check failed closed"));
 }
 
 #[test]
@@ -13888,7 +13924,7 @@ fn gateway_pending_consumer_executes_raw_tx_into_mainline_canonical() {
     .expect("gateway receipt query should read mainline canonical fallback");
     assert_eq!(receipt["status"].as_str(), Some("0x1"));
     assert_eq!(receipt["transactionHash"].as_str(), Some(tx_hash_hex));
-    assert_eq!(receipt["blockNumber"].as_str(), Some("0x1"));
+    assert_eq!(receipt["blockNumber"].as_str(), Some("0x0"));
 
     restore_env_vars(&captured);
     let _ = fs::remove_dir_all(&root);

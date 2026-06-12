@@ -387,6 +387,7 @@ pub(super) fn parse_account_role(params: &serde_json::Value) -> Result<AccountRo
     }
 }
 
+#[cfg(test)]
 pub(super) fn parse_persona_type(params: &serde_json::Value, key: &str) -> Result<PersonaType> {
     let raw = param_as_string(params, key)
         .ok_or_else(|| anyhow::anyhow!("{} is required", key))?
@@ -400,40 +401,7 @@ pub(super) fn parse_persona_type(params: &serde_json::Value, key: &str) -> Resul
     })
 }
 
-pub(super) fn parse_primary_key_ref(params: &serde_json::Value, uca_id: &str) -> Result<Vec<u8>> {
-    if let Some(raw) = param_as_string(params, "primary_key_ref") {
-        return decode_hex_bytes(&raw, "primary_key_ref");
-    }
-    let mut hasher = Sha256::new();
-    hasher.update(GATEWAY_UA_PRIMARY_KEY_DOMAIN);
-    hasher.update(uca_id.as_bytes());
-    Ok(hasher.finalize().to_vec())
-}
-
-pub(super) fn validate_uca_id_policy(uca_id_raw: &str) -> Result<String> {
-    let uca_id = uca_id_raw.trim();
-    if uca_id.is_empty() {
-        bail!("uca_id must not be empty");
-    }
-    if uca_id.len() > 128 {
-        bail!("uca_id too long: {} (max 128)", uca_id.len());
-    }
-    if uca_id.chars().all(|ch| ch.is_ascii_digit()) {
-        let numeric = uca_id
-            .parse::<u64>()
-            .map_err(|_| anyhow::anyhow!("uca_id numeric segment parse failed: {}", uca_id))?;
-        const UCA_BUSINESS_SEGMENT_START: u64 = 1_000_000;
-        if numeric < UCA_BUSINESS_SEGMENT_START {
-            bail!(
-                "uca_id in reserved numeric segment: {} (business segment starts at {})",
-                numeric,
-                UCA_BUSINESS_SEGMENT_START
-            );
-        }
-    }
-    Ok(uca_id.to_string())
-}
-
+#[cfg(test)]
 pub(super) fn parse_external_address(params: &serde_json::Value, key: &str) -> Result<Vec<u8>> {
     let raw = param_as_string(params, key).ok_or_else(|| anyhow::anyhow!("{} is required", key))?;
     decode_hex_bytes(&raw, key)

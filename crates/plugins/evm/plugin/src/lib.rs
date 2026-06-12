@@ -856,6 +856,45 @@ fn resolve_evm_txpool_shards() -> &'static [Mutex<EvmTxpoolState>] {
         .as_slice()
 }
 
+pub fn reset_evm_plugin_runtime_for_host_tests_v1() {
+    EVM_RUNTIME_SETTLEMENT_SEQ.store(0, Ordering::Relaxed);
+    EVM_EXECUTION_STATE_VERSION.store(0, Ordering::Relaxed);
+    for shard in resolve_evm_runtime_shards() {
+        let mut runtime = shard
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        runtime.settlement_seq = 0;
+        runtime.reserve_total_wei = 0;
+        runtime.payout_total_units = 0;
+        runtime.atomic_receipts.clear();
+        runtime.settlement_records.clear();
+        runtime.payout_instructions.clear();
+        runtime.atomic_broadcast_ready.clear();
+        runtime.execution_receipts.clear();
+        runtime.state_mirror_updates.clear();
+        runtime.block_metadata_updates.clear();
+    }
+    for shard in resolve_evm_txpool_shards() {
+        let mut txpool = shard
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        txpool.ingress_frames.clear();
+        txpool.executable_ingress_frames.clear();
+        txpool.pending_by_nonce.clear();
+        txpool.pending_by_sender.clear();
+        txpool.next_nonce_by_sender.clear();
+    }
+    if let Some(runtime) = UA_PLUGIN_RUNTIME.get() {
+        let mut runtime = runtime
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        *runtime = UaPluginRuntime::default();
+    }
+    let config = resolve_ua_plugin_standalone_config();
+    remove_path_if_present(&config.store_path);
+    remove_path_if_present(&config.audit_path);
+}
+
 fn txpool_shard_index(chain_id: u64, shard_count: usize) -> usize {
     let mixed = chain_id ^ (chain_id >> 32);
     (mixed as usize) % shard_count.max(1)
@@ -2210,7 +2249,6 @@ pub fn ingest_execution_receipts_bincode_for_host(
     ingest_execution_receipts_for_host(chain_id, state_version, receipts.as_slice())
 }
 
-#[cfg(test)]
 fn remove_path_if_present(path: &Path) {
     if path.as_os_str().is_empty() || !path.exists() {
         return;
@@ -4422,42 +4460,7 @@ mod tests {
     }
 
     fn reset_runtime_queues_for_test() {
-        EVM_RUNTIME_SETTLEMENT_SEQ.store(0, Ordering::Relaxed);
-        EVM_EXECUTION_STATE_VERSION.store(0, Ordering::Relaxed);
-        for shard in resolve_evm_runtime_shards() {
-            let mut runtime = shard
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            runtime.settlement_seq = 0;
-            runtime.reserve_total_wei = 0;
-            runtime.payout_total_units = 0;
-            runtime.atomic_receipts.clear();
-            runtime.settlement_records.clear();
-            runtime.payout_instructions.clear();
-            runtime.atomic_broadcast_ready.clear();
-            runtime.execution_receipts.clear();
-            runtime.state_mirror_updates.clear();
-            runtime.block_metadata_updates.clear();
-        }
-        for shard in resolve_evm_txpool_shards() {
-            let mut txpool = shard
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            txpool.ingress_frames.clear();
-            txpool.executable_ingress_frames.clear();
-            txpool.pending_by_nonce.clear();
-            txpool.pending_by_sender.clear();
-            txpool.next_nonce_by_sender.clear();
-        }
-        if let Some(runtime) = UA_PLUGIN_RUNTIME.get() {
-            let mut runtime = runtime
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            *runtime = UaPluginRuntime::default();
-        }
-        let config = resolve_ua_plugin_standalone_config();
-        remove_path_if_present(&config.store_path);
-        remove_path_if_present(&config.audit_path);
+        reset_evm_plugin_runtime_for_host_tests_v1();
     }
 
     fn encode_address(seed: u64) -> Vec<u8> {
