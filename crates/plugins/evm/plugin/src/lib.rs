@@ -3613,7 +3613,18 @@ pub fn runtime_tap_ir_batch_v1(
     {
         return Err(NOVOVM_ADAPTER_PLUGIN_RC_UA_SELF_GUARD_FAILED);
     }
-    let ingress = push_ingress_frames_prepared(chain_id, &prepared_txs);
+    let ingress = if flags & NOVOVM_ADAPTER_PLUGIN_APPLY_FLAG_MAINLINE_INGRESS_BYPASS_V1 != 0 {
+        EvmIngressPushOutcome {
+            summary: EvmRuntimeTapSummaryV1 {
+                requested: prepared_txs.len(),
+                accepted: prepared_txs.len(),
+                ..Default::default()
+            },
+            accepted_txs: prepared_txs.clone(),
+        }
+    } else {
+        push_ingress_frames_prepared(chain_id, &prepared_txs)
+    };
     let atomic_guard_requested =
         flags & NOVOVM_ADAPTER_PLUGIN_APPLY_FLAG_ATOMIC_INTENT_GUARD_V1 != 0;
     if atomic_guard_requested {
@@ -5945,7 +5956,7 @@ mod tests {
         assert_eq!(report.mirrored_receipt_count, 2);
         assert!(report.ingress_bypassed);
         let ingress = drain_plugin_ingress_frames_for_host(16);
-        assert_eq!(ingress.len(), 2);
+        assert_eq!(ingress.len(), 0);
         let receipts = drain_execution_receipts_for_host(16);
         assert_eq!(receipts.len(), 2);
         let mirror_updates = drain_state_mirror_updates_for_host(16);

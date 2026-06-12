@@ -23,11 +23,13 @@ use novovm_adapter_evm_core::{
 };
 use novovm_adapter_evm_plugin::{
     apply_ir_batch_v1, drain_atomic_broadcast_ready_for_host, drain_atomic_receipts_for_host,
-    drain_executable_ingress_frames_for_host, drain_payout_instructions_for_host,
+    drain_block_metadata_for_host, drain_executable_ingress_frames_for_host,
+    drain_execution_receipts_for_host, drain_payout_instructions_for_host,
     drain_pending_ingress_frames_for_host, drain_settlement_records_for_host,
-    evict_stale_ingress_frames_for_host, runtime_tap_ir_batch_v1,
-    snapshot_executable_ingress_frames_for_host, snapshot_pending_ingress_frames_for_host,
-    snapshot_pending_sender_buckets_for_host, EvmPendingSenderBucketV1,
+    drain_state_mirror_updates_for_host, evict_stale_ingress_frames_for_host,
+    runtime_tap_ir_batch_v1, snapshot_executable_ingress_frames_for_host,
+    snapshot_pending_ingress_frames_for_host, snapshot_pending_sender_buckets_for_host,
+    submit_internal_batch_to_mainline_v1, EvmPendingSenderBucketV1,
     NovovmAdapterPluginApplyResultV1, NOVOVM_ADAPTER_PLUGIN_APPLY_FLAG_ATOMIC_INTENT_GUARD_V1,
 };
 use novovm_adapter_novovm::{
@@ -35,11 +37,16 @@ use novovm_adapter_novovm::{
 };
 use novovm_exec::{OpsWireOp, OpsWireV1Builder};
 use novovm_network::{
+    get_network_runtime_native_pending_tx_payload_v1, get_network_runtime_native_pending_tx_v1,
     get_network_runtime_native_sync_status, get_network_runtime_sync_status,
     network_runtime_native_sync_is_active, observe_network_runtime_local_head_max,
     observe_network_runtime_native_pending_tx_local_ingress_with_payload_v1,
     plan_network_runtime_sync_pull_window, snapshot_network_runtime_native_canonical_blocks_v1,
-    NetworkRuntimeNativeCanonicalBlockStateV1,
+    snapshot_network_runtime_native_pending_txs_v1, NetworkRuntimeNativeCanonicalBlockStateV1,
+    NetworkRuntimeNativePendingTxLifecycleStageV1,
+};
+use novovm_node::mainline_canonical::{
+    append_mainline_canonical_batch, load_mainline_canonical_store, MainlineCanonicalBatchRecordV1,
 };
 use novovm_node::mainline_query::{
     default_mainline_query_store_path, run_mainline_query_from_path,
@@ -608,6 +615,9 @@ struct GatewayRuntime {
     eth_public_broadcast_pending_warn_threshold: usize,
     eth_public_broadcast_last_autoreplay_at_ms: u128,
     eth_public_broadcast_last_warn_at_ms: u128,
+    evm_host_exec_pending_max: usize,
+    evm_host_exec_pending_cooldown_ms: u64,
+    evm_host_exec_last_run_at_ms: u128,
     eth_default_chain_id: u64,
     ua_store: GatewayUaStoreBackend,
     eth_tx_index_store: GatewayEthTxIndexStoreBackend,
@@ -1673,7 +1683,7 @@ fn main() -> Result<()> {
     let mut reconcile_next_run_at_unix_ms = 0u128;
     let mut reconcile_first_cycle = true;
     gateway_summary!(
-        "gateway_in: bind={} spool_dir={} max_body={} max_requests={} evm_payout_autoreplay_max={} evm_payout_autoreplay_cooldown_ms={} evm_payout_pending_warn_threshold={} evm_atomic_broadcast_autoreplay_max={} evm_atomic_broadcast_autoreplay_cooldown_ms={} evm_atomic_broadcast_pending_warn_threshold={} evm_atomic_broadcast_autoreplay_use_external_executor={} eth_public_broadcast_autoreplay_max={} eth_public_broadcast_autoreplay_cooldown_ms={} eth_public_broadcast_pending_warn_threshold={} eth_default_chain_id={} ua_store_backend={} ua_store_path={} eth_tx_index_backend={} eth_tx_index_path={} internal_ingress=ops_wire_v1",
+        "gateway_in: bind={} spool_dir={} max_body={} max_requests={} evm_payout_autoreplay_max={} evm_payout_autoreplay_cooldown_ms={} evm_payout_pending_warn_threshold={} evm_atomic_broadcast_autoreplay_max={} evm_atomic_broadcast_autoreplay_cooldown_ms={} evm_atomic_broadcast_pending_warn_threshold={} evm_atomic_broadcast_autoreplay_use_external_executor={} eth_public_broadcast_autoreplay_max={} eth_public_broadcast_autoreplay_cooldown_ms={} eth_public_broadcast_pending_warn_threshold={} evm_host_exec_pending_max={} evm_host_exec_pending_cooldown_ms={} eth_default_chain_id={} ua_store_backend={} ua_store_path={} eth_tx_index_backend={} eth_tx_index_path={} internal_ingress=ops_wire_v1",
         runtime.bind,
         runtime.spool_dir.display(),
         runtime.max_body_bytes,
@@ -1688,6 +1698,8 @@ fn main() -> Result<()> {
         runtime.eth_public_broadcast_autoreplay_max,
         runtime.eth_public_broadcast_autoreplay_cooldown_ms,
         runtime.eth_public_broadcast_pending_warn_threshold,
+        runtime.evm_host_exec_pending_max,
+        runtime.evm_host_exec_pending_cooldown_ms,
         runtime.eth_default_chain_id,
         runtime.ua_store.backend_name(),
         runtime.ua_store.path().display(),
@@ -1697,6 +1709,7 @@ fn main() -> Result<()> {
     auto_replay_pending_payouts(&mut runtime);
     auto_replay_pending_atomic_broadcasts(&mut runtime);
     auto_replay_pending_public_broadcasts(&mut runtime);
+    auto_execute_pending_mainline_evm(&mut runtime);
     ensure_gateway_eth_plugin_mempool_ingest_runtime(runtime.eth_default_chain_id);
 
     let run_result = (|| -> Result<()> {
@@ -1744,7 +1757,9 @@ fn main() -> Result<()> {
                         break;
                     }
                 }
-                Ok(None) => {}
+                Ok(None) => {
+                    auto_execute_pending_mainline_evm(&mut runtime);
+                }
                 Err(e) => {
                     bail!("gateway receive request failed: {}", e);
                 }
@@ -1802,6 +1817,10 @@ impl GatewayRuntime {
             "NOVOVM_GATEWAY_ETH_PUBLIC_BROADCAST_PENDING_WARN_THRESHOLD",
             512,
         ) as usize;
+        let evm_host_exec_pending_max =
+            u32_env_allow_zero("NOVOVM_GATEWAY_EVM_HOST_EXEC_PENDING_MAX", 16) as usize;
+        let evm_host_exec_pending_cooldown_ms =
+            u64_env("NOVOVM_GATEWAY_EVM_HOST_EXEC_PENDING_COOLDOWN_MS", 250);
         let eth_default_chain_id = u64_env("NOVOVM_GATEWAY_ETH_DEFAULT_CHAIN_ID", 1);
         let ua_store = resolve_gateway_ua_store_backend()?;
         let eth_tx_index_store = resolve_gateway_eth_tx_index_store_backend()?;
@@ -1849,6 +1868,9 @@ impl GatewayRuntime {
             eth_public_broadcast_pending_warn_threshold,
             eth_public_broadcast_last_autoreplay_at_ms: 0,
             eth_public_broadcast_last_warn_at_ms: 0,
+            evm_host_exec_pending_max,
+            evm_host_exec_pending_cooldown_ms,
+            evm_host_exec_last_run_at_ms: 0,
             eth_default_chain_id,
             ua_store,
             eth_tx_index_store,
@@ -5966,6 +5988,7 @@ fn handle_gateway_request(
     auto_replay_pending_payouts(runtime);
     auto_replay_pending_atomic_broadcasts(runtime);
     auto_replay_pending_public_broadcasts(runtime);
+    auto_execute_pending_mainline_evm(runtime);
     Ok(())
 }
 
@@ -6451,6 +6474,27 @@ fn run_gateway_internal_evm_diagnostic_query_v1(
             store_path.display()
         )
     })
+}
+
+fn run_gateway_mainline_query_if_non_null_v1(
+    method: &str,
+    params: &serde_json::Value,
+) -> Result<Option<serde_json::Value>> {
+    let store_path = gateway_mainline_query_store_path_v1();
+    let value = run_mainline_query_from_path(&store_path, method, params).with_context(|| {
+        format!(
+            "gateway mainline query fallback failed: method={} store={}",
+            method,
+            store_path.display()
+        )
+    })?;
+    if value.is_null() {
+        Ok(None)
+    } else if method == "eth_getTransactionReceipt" {
+        Ok(value.get("receipt").cloned().or(Some(value)))
+    } else {
+        Ok(Some(value))
+    }
 }
 
 fn gateway_runtime_surface_map_json() -> serde_json::Value {
@@ -10492,6 +10536,11 @@ fn run_gateway_method(
                 .ok_or_else(|| anyhow::anyhow!("tx_hash (or hash) is required"))?;
             let tx_hash_bytes = decode_hex_bytes(&tx_hash_raw, "tx_hash")?;
             let tx_hash = vec_to_32(&tx_hash_bytes, "tx_hash")?;
+            if let Some(mainline_receipt) =
+                run_gateway_mainline_query_if_non_null_v1("eth_getTransactionReceipt", params)?
+            {
+                return Ok((mainline_receipt, false));
+            }
             if let Some(entry) = eth_tx_index.get(&tx_hash) {
                 if chain_hint.is_some_and(|chain_id| entry.chain_id != chain_id) {
                     return Ok((serde_json::Value::Null, false));
@@ -16399,6 +16448,256 @@ fn auto_replay_pending_public_broadcasts(runtime: &mut GatewayRuntime) {
             runtime.eth_public_broadcast_autoreplay_max
         );
     }
+}
+
+#[derive(Debug, Default)]
+struct GatewayEvmHostExecPendingReportV1 {
+    scanned: usize,
+    executed: usize,
+    failed: usize,
+    last_error: Option<String>,
+}
+
+fn gateway_evm_host_exec_pending_stage_v1(
+    stage: NetworkRuntimeNativePendingTxLifecycleStageV1,
+) -> bool {
+    matches!(
+        stage,
+        NetworkRuntimeNativePendingTxLifecycleStageV1::Pending
+            | NetworkRuntimeNativePendingTxLifecycleStageV1::Propagated
+            | NetworkRuntimeNativePendingTxLifecycleStageV1::ReorgedBackToPending
+    )
+}
+
+fn gateway_evm_tx_ir_from_pending_raw_payload_v1(
+    chain_id: u64,
+    tx_hash: [u8; 32],
+    payload: &[u8],
+    indexed: Option<&GatewayEthTxIndexEntry>,
+) -> Result<TxIR> {
+    let Some(sender) =
+        recover_raw_evm_tx_sender_m0(payload).context("recover pending raw tx sender failed")?
+    else {
+        bail!(
+            "recover pending raw tx sender returned none: chain_id={} tx_hash=0x{}",
+            chain_id,
+            to_hex(&tx_hash)
+        );
+    };
+    let fields = translate_raw_evm_tx_fields_m0(payload).context("decode pending raw tx failed")?;
+    let mut tx_ir = tx_ir_from_raw_fields_m0(&fields, payload, sender, chain_id);
+    let observed_hash = vec_to_32(&tx_ir.hash, "pending raw tx hash")?;
+    if observed_hash != tx_hash {
+        bail!(
+            "pending raw tx hash mismatch: expected=0x{} observed=0x{}",
+            to_hex(&tx_hash),
+            to_hex(&observed_hash)
+        );
+    }
+    if let Some(entry) = indexed {
+        if !entry.uca_id.is_empty() {
+            tx_ir.account_id = Some(entry.uca_id.clone());
+            tx_ir.fee_owner_account_id = Some(entry.uca_id.clone());
+            tx_ir.nonce_owner_account_id = Some(entry.uca_id.clone());
+        }
+    }
+    Ok(tx_ir)
+}
+
+fn gateway_mainline_raw_tx_rlps_for_receipts_v1(
+    txs: &[TxIR],
+    raw_tx_rlps: &[Vec<u8>],
+    receipts: &[novovm_exec::SupervmEvmExecutionReceiptV1],
+) -> Vec<Vec<u8>> {
+    if txs.len() != raw_tx_rlps.len() || receipts.is_empty() {
+        return Vec::new();
+    }
+    let mut raw_by_hash = HashMap::<Vec<u8>, Vec<u8>>::with_capacity(txs.len());
+    for (tx, raw) in txs.iter().zip(raw_tx_rlps.iter()) {
+        if !raw.is_empty() {
+            raw_by_hash.insert(tx.hash.clone(), raw.clone());
+        }
+    }
+    let mut out = Vec::with_capacity(receipts.len());
+    for receipt in receipts {
+        let Some(raw) = raw_by_hash.get(&receipt.tx_hash) else {
+            return Vec::new();
+        };
+        out.push(raw.clone());
+    }
+    out
+}
+
+fn execute_gateway_pending_mainline_evm_once_v1(
+    runtime: &mut GatewayRuntime,
+    chain_id: u64,
+    tx_hash: [u8; 32],
+    payload: Vec<u8>,
+) -> Result<()> {
+    let indexed = runtime.eth_tx_index.get(&tx_hash).cloned().or_else(|| {
+        runtime
+            .eth_tx_index_store
+            .load_eth_tx(&tx_hash)
+            .ok()
+            .flatten()
+    });
+    let tx_ir = gateway_evm_tx_ir_from_pending_raw_payload_v1(
+        chain_id,
+        tx_hash,
+        payload.as_slice(),
+        indexed.as_ref(),
+    )?;
+    let _ = drain_block_metadata_for_host(usize::MAX);
+    let _ = drain_execution_receipts_for_host(usize::MAX);
+    let _ = drain_state_mirror_updates_for_host(usize::MAX);
+    let report = submit_internal_batch_to_mainline_v1(
+        evm_chain_type_for_gateway(chain_id),
+        chain_id,
+        std::slice::from_ref(&tx_ir),
+        false,
+    )
+    .context("submit pending raw tx to mainline evm failed")?;
+    let receipts = drain_execution_receipts_for_host(
+        (report.exported_receipt_count as usize).saturating_add(1),
+    );
+    let state_mirror_updates = drain_state_mirror_updates_for_host(
+        (report.mirrored_receipt_count as usize).saturating_add(1),
+    );
+    let block_metadata = drain_block_metadata_for_host(1).into_iter().last();
+    let store_path = gateway_mainline_query_store_path_v1();
+    let previous = load_mainline_canonical_store(&store_path)?;
+    let seq = previous
+        .batches
+        .last()
+        .map(|batch| batch.seq.saturating_add(1))
+        .unwrap_or(1);
+    let raw_tx_rlps = gateway_mainline_raw_tx_rlps_for_receipts_v1(
+        std::slice::from_ref(&tx_ir),
+        std::slice::from_ref(&payload),
+        receipts.as_slice(),
+    );
+    append_mainline_canonical_batch(
+        &store_path,
+        "evm",
+        chain_id,
+        MainlineCanonicalBatchRecordV1 {
+            seq,
+            source_detail: format!("gateway_pending_consumer:0x{}", to_hex(&tx_hash)),
+            tx_count: 1,
+            tap_requested: report.tap_summary.requested as u64,
+            tap_accepted: report.tap_summary.accepted,
+            tap_dropped: report.tap_summary.dropped,
+            apply_verified: report.apply_result.verified != 0,
+            apply_applied: report.apply_result.applied != 0,
+            apply_state_root: report.apply_result.state_root,
+            block_access_list: block_metadata
+                .as_ref()
+                .and_then(|metadata| metadata.block_access_list.clone()),
+            block_access_list_complete: block_metadata
+                .as_ref()
+                .map(|metadata| metadata.block_access_list_complete)
+                .unwrap_or(false),
+            block_access_list_hash: block_metadata
+                .as_ref()
+                .and_then(|metadata| metadata.block_access_list_hash),
+            exported_receipt_count: receipts.len(),
+            mirrored_receipt_count: state_mirror_updates.len(),
+            state_version: report.state_version,
+            ingress_bypassed: report.ingress_bypassed,
+            atomic_guard_enabled: report.atomic_guard_enabled,
+            raw_tx_rlps,
+            receipts: receipts.clone(),
+            state_mirror_updates,
+        },
+    )?;
+    let onchain_failed = receipts.iter().any(|receipt| !receipt.status_ok);
+    persist_gateway_eth_submit_onchain_status(
+        &runtime.eth_tx_index_store,
+        tx_hash,
+        chain_id,
+        onchain_failed,
+    );
+    Ok(())
+}
+
+fn auto_execute_pending_mainline_evm(
+    runtime: &mut GatewayRuntime,
+) -> GatewayEvmHostExecPendingReportV1 {
+    if runtime.evm_host_exec_pending_max == 0 {
+        return GatewayEvmHostExecPendingReportV1::default();
+    }
+    let now_ms = now_unix_millis();
+    if runtime.evm_host_exec_last_run_at_ms > 0
+        && now_ms
+            < runtime
+                .evm_host_exec_last_run_at_ms
+                .saturating_add(runtime.evm_host_exec_pending_cooldown_ms as u128)
+    {
+        return GatewayEvmHostExecPendingReportV1::default();
+    }
+    runtime.evm_host_exec_last_run_at_ms = now_ms;
+    let chain_id = runtime.eth_default_chain_id;
+    let mut queued = runtime
+        .eth_tx_index
+        .values()
+        .filter(|entry| entry.chain_id == chain_id)
+        .filter_map(|entry| {
+            let pending = get_network_runtime_native_pending_tx_v1(chain_id, entry.tx_hash)?;
+            if !gateway_evm_host_exec_pending_stage_v1(pending.lifecycle_stage) {
+                return None;
+            }
+            let payload =
+                get_network_runtime_native_pending_tx_payload_v1(chain_id, entry.tx_hash)?;
+            Some((entry.tx_hash, payload))
+        })
+        .collect::<Vec<_>>();
+    queued.sort_by(|a, b| a.0.cmp(&b.0));
+    let mut seen = queued
+        .iter()
+        .map(|(tx_hash, _)| *tx_hash)
+        .collect::<BTreeSet<_>>();
+    let candidates = snapshot_network_runtime_native_pending_txs_v1(
+        chain_id,
+        runtime.evm_host_exec_pending_max.saturating_mul(4).max(1),
+    );
+    for candidate in candidates {
+        if !seen.insert(candidate.tx_hash) {
+            continue;
+        }
+        if !gateway_evm_host_exec_pending_stage_v1(candidate.lifecycle_stage) {
+            continue;
+        }
+        let Some(payload) =
+            get_network_runtime_native_pending_tx_payload_v1(chain_id, candidate.tx_hash)
+        else {
+            continue;
+        };
+        queued.push((candidate.tx_hash, payload));
+    }
+    let mut report = GatewayEvmHostExecPendingReportV1::default();
+    for (tx_hash, payload) in queued {
+        if report.executed.saturating_add(report.failed) >= runtime.evm_host_exec_pending_max {
+            break;
+        }
+        report.scanned = report.scanned.saturating_add(1);
+        match execute_gateway_pending_mainline_evm_once_v1(runtime, chain_id, tx_hash, payload) {
+            Ok(()) => {
+                report.executed = report.executed.saturating_add(1);
+            }
+            Err(e) => {
+                let message = format!("{e:#}");
+                report.failed = report.failed.saturating_add(1);
+                report.last_error = Some(message.clone());
+                gateway_warn!(
+                    "gateway_warn: pending mainline evm execution failed: chain_id={} tx_hash=0x{} err={}",
+                    chain_id,
+                    to_hex(&tx_hash),
+                    message
+                );
+            }
+        }
+    }
+    report
 }
 
 fn persist_gateway_payout_with_compensation(

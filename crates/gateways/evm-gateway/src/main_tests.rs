@@ -13689,6 +13689,194 @@ fn eth_send_raw_transaction_without_uca_id_uses_binding_owner() {
 }
 
 #[test]
+fn gateway_pending_consumer_executes_raw_tx_into_mainline_canonical() {
+    let _guard = env_test_guard();
+    let captured = capture_env_vars(&[
+        "NOVOVM_MAINLINE_QUERY_STORE_PATH",
+        "NOVOVM_GATEWAY_ETH_UPSTREAM_RPC",
+        "NOVOVM_GATEWAY_ETH_UPSTREAM_RPC_CHAIN_1",
+    ]);
+    std::env::remove_var("NOVOVM_GATEWAY_ETH_UPSTREAM_RPC");
+    std::env::remove_var("NOVOVM_GATEWAY_ETH_UPSTREAM_RPC_CHAIN_1");
+
+    let root = std::env::temp_dir().join(format!(
+        "novovm-gateway-pending-consumer-{}-{}",
+        std::process::id(),
+        now_unix_millis()
+    ));
+    let spool_dir = root.join("spool");
+    let store_path = root.join("canonical.json");
+    fs::create_dir_all(&spool_dir).expect("create spool dir");
+    std::env::set_var("NOVOVM_MAINLINE_QUERY_STORE_PATH", &store_path);
+
+    let backend = GatewayEthTxIndexStoreBackend::Memory;
+    let mut router = UnifiedAccountRouter::new();
+    let mut eth_tx_index = HashMap::new();
+    let mut evm_settlement_index_by_id = HashMap::new();
+    let mut evm_settlement_index_by_tx = HashMap::new();
+    let mut evm_pending_payout_by_settlement = HashMap::new();
+    let mut eth_filters = GatewayEthFilterState::default();
+    let chain_id = 1u64;
+    let raw_tx_hex = "0xf864808504a817c800825208943535353535353535353535353535353535353535018025a0cb1ae5eeb22ada6e0cc8090f480d614711af806a2534b7651ab9577617cf6078a0420db11989647a09a73eefbba26361a2b065ffd41c41ba84089584ce267f7fbe";
+    let raw_tx = decode_hex_bytes(raw_tx_hex, "raw_tx").expect("decode raw tx");
+    let sender = recover_raw_evm_tx_sender_m0(&raw_tx)
+        .expect("recover sender should not fail")
+        .expect("sender should recover");
+    let uca_id = "uca:pending-consumer".to_string();
+    let persona = PersonaAddress {
+        persona_type: PersonaType::Evm,
+        chain_id,
+        external_address: sender.clone(),
+    };
+    router
+        .create_uca(uca_id.clone(), vec![0x12u8; 32], now_unix_sec())
+        .expect("create uca");
+    router
+        .add_binding(&uca_id, AccountRole::Owner, persona, now_unix_sec())
+        .expect("bind sender");
+    let mut ctx = GatewayMethodContext {
+        eth_tx_index_store: &backend,
+        eth_default_chain_id: chain_id,
+        spool_dir: &spool_dir,
+        overlay_node_id: "node-test".to_string(),
+        overlay_session_id: "session-test".to_string(),
+        overlay_route_id: "route-test".to_string(),
+        overlay_route_epoch: 0,
+        overlay_route_mask_bits: 40,
+        overlay_route_mode: "fast".to_string(),
+        overlay_route_region: "global".to_string(),
+        overlay_route_relay_bucket: 0,
+        overlay_route_relay_set_size: 1,
+        overlay_route_relay_round: 0,
+        overlay_route_relay_index: 0,
+        overlay_route_relay_id: "rly:global:0:0".to_string(),
+        overlay_route_strategy: "direct".to_string(),
+        overlay_route_hop_count: 1,
+        eth_filters: &mut eth_filters,
+    };
+    let (tx_hash_json, changed) = run_gateway_method(
+        &mut router,
+        &mut eth_tx_index,
+        &mut evm_settlement_index_by_id,
+        &mut evm_settlement_index_by_tx,
+        &mut evm_pending_payout_by_settlement,
+        &mut ctx,
+        "eth_sendRawTransaction",
+        &serde_json::json!({
+            "raw_tx": raw_tx_hex,
+        }),
+    )
+    .expect("eth_sendRawTransaction should accept raw tx");
+    assert!(changed);
+    let tx_hash_hex = tx_hash_json
+        .as_str()
+        .expect("sendRaw should keep standard tx hash return");
+    let tx_hash_bytes = decode_hex_bytes(tx_hash_hex, "tx_hash").expect("decode tx hash");
+    let tx_hash = vec_to_32(&tx_hash_bytes, "tx_hash").expect("tx hash length");
+    let pending_before =
+        get_network_runtime_native_pending_tx_v1(chain_id, tx_hash).expect("pending before exec");
+    assert_eq!(
+        pending_before.lifecycle_stage,
+        NetworkRuntimeNativePendingTxLifecycleStageV1::Pending
+    );
+
+    let mut runtime = GatewayRuntime {
+        bind: "127.0.0.1:0".to_string(),
+        spool_dir: spool_dir.clone(),
+        max_body_bytes: 1024,
+        max_requests: 0,
+        evm_payout_autoreplay_max: 0,
+        evm_payout_autoreplay_cooldown_ms: 0,
+        evm_payout_pending_warn_threshold: usize::MAX,
+        evm_payout_last_autoreplay_at_ms: 0,
+        evm_payout_last_warn_at_ms: 0,
+        evm_atomic_broadcast_autoreplay_max: 0,
+        evm_atomic_broadcast_autoreplay_cooldown_ms: 0,
+        evm_atomic_broadcast_pending_warn_threshold: usize::MAX,
+        evm_atomic_broadcast_autoreplay_use_external_executor: false,
+        evm_atomic_broadcast_last_autoreplay_at_ms: 0,
+        evm_atomic_broadcast_last_warn_at_ms: 0,
+        eth_public_broadcast_autoreplay_max: 0,
+        eth_public_broadcast_autoreplay_cooldown_ms: 0,
+        eth_public_broadcast_pending_warn_threshold: usize::MAX,
+        eth_public_broadcast_last_autoreplay_at_ms: 0,
+        eth_public_broadcast_last_warn_at_ms: 0,
+        evm_host_exec_pending_max: 4,
+        evm_host_exec_pending_cooldown_ms: 0,
+        evm_host_exec_last_run_at_ms: 0,
+        eth_default_chain_id: chain_id,
+        ua_store: GatewayUaStoreBackend::BincodeFile {
+            path: root.join("ua-store.bin"),
+        },
+        eth_tx_index_store: backend,
+        eth_tx_index,
+        eth_filters: GatewayEthFilterState::default(),
+        evm_settlement_index_by_id,
+        evm_settlement_index_by_tx,
+        evm_pending_payout_by_settlement,
+        router,
+    };
+    let report = auto_execute_pending_mainline_evm(&mut runtime);
+    assert_eq!(
+        report.executed,
+        1,
+        "report={report:?} indexed={}",
+        runtime.eth_tx_index.len()
+    );
+    assert_eq!(report.failed, 0);
+    let pending_after =
+        get_network_runtime_native_pending_tx_v1(chain_id, tx_hash).expect("pending after exec");
+    assert_eq!(
+        pending_after.lifecycle_stage,
+        NetworkRuntimeNativePendingTxLifecycleStageV1::IncludedCanonical
+    );
+    assert_eq!(pending_after.canonical_inclusion, Some(true));
+    let status = gateway_eth_submit_status_by_tx(&runtime.eth_tx_index_store, &tx_hash)
+        .expect("submit status");
+    assert!(!status.pending);
+    assert!(status.onchain);
+
+    let mut query_filters = GatewayEthFilterState::default();
+    let mut query_ctx = GatewayMethodContext {
+        eth_tx_index_store: &runtime.eth_tx_index_store,
+        eth_default_chain_id: chain_id,
+        spool_dir: &runtime.spool_dir,
+        overlay_node_id: "node-test".to_string(),
+        overlay_session_id: "session-test".to_string(),
+        overlay_route_id: "route-test".to_string(),
+        overlay_route_epoch: 0,
+        overlay_route_mask_bits: 40,
+        overlay_route_mode: "fast".to_string(),
+        overlay_route_region: "global".to_string(),
+        overlay_route_relay_bucket: 0,
+        overlay_route_relay_set_size: 1,
+        overlay_route_relay_round: 0,
+        overlay_route_relay_index: 0,
+        overlay_route_relay_id: "rly:global:0:0".to_string(),
+        overlay_route_strategy: "direct".to_string(),
+        overlay_route_hop_count: 1,
+        eth_filters: &mut query_filters,
+    };
+    let (receipt, _) = run_gateway_method(
+        &mut runtime.router,
+        &mut runtime.eth_tx_index,
+        &mut runtime.evm_settlement_index_by_id,
+        &mut runtime.evm_settlement_index_by_tx,
+        &mut runtime.evm_pending_payout_by_settlement,
+        &mut query_ctx,
+        "eth_getTransactionReceipt",
+        &serde_json::json!([tx_hash_hex]),
+    )
+    .expect("gateway receipt query should read mainline canonical fallback");
+    assert_eq!(receipt["status"].as_str(), Some("0x1"));
+    assert_eq!(receipt["transactionHash"].as_str(), Some(tx_hash_hex));
+    assert_eq!(receipt["blockNumber"].as_str(), Some("0x1"));
+
+    restore_env_vars(&captured);
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
 fn eth_send_raw_transaction_passes_execution_policy_into_ingress_record() {
     let backend = GatewayEthTxIndexStoreBackend::Memory;
     let mut router = UnifiedAccountRouter::new();
@@ -15622,6 +15810,9 @@ fn auto_replay_pending_payouts_respects_cap_and_advances_status() {
         eth_public_broadcast_pending_warn_threshold: usize::MAX,
         eth_public_broadcast_last_autoreplay_at_ms: 0,
         eth_public_broadcast_last_warn_at_ms: 0,
+        evm_host_exec_pending_max: 0,
+        evm_host_exec_pending_cooldown_ms: 0,
+        evm_host_exec_last_run_at_ms: 0,
         eth_default_chain_id: 1,
         ua_store: GatewayUaStoreBackend::BincodeFile {
             path: spool_dir.join("ua-store.bin"),
