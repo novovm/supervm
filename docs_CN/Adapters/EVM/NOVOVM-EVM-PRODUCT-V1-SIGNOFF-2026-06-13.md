@@ -82,3 +82,7 @@ git diff --check
 - 用户通过 `eth_getTransactionReceipt` 查询交易结果。
 - EVM persona 映射到 NovoVM 账户体系。
 - 必要时补齐 `eth_getTransactionByHash`、`eth_getBlockByNumber`、`eth_call`、`eth_estimateGas` 的产品 smoke，但不扩大到 debug/admin/trace。
+
+钱包/用户入口接入契约见：
+
+- `docs_CN/Adapters/EVM/NOVOVM-EVM-WALLET-RPC-ENTRY-V1-2026-06-13.md`
