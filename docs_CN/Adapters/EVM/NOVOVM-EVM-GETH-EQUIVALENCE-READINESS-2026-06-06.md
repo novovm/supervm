@@ -2230,6 +2230,16 @@ git -C D:\WEB3_AI\go-ethereum rev-parse HEAD
 
 2026-06-10 复核结果：本地 geth HEAD 为 `43b7b4e8d9f9c8bf74d27bc6b13cb6c90a6128f8`，GitHub API 返回的 `master` SHA 相同；本轮 shell 里的 `git pull --ff-only`/`git fetch --prune` 因 GitHub transport reset/443 timeout 未完成，但未改变本地仓库。对 SUPERVM 的影响保持收敛：`#35130` 只修 debug clearTxpool 测试，`#33347` 只新增 debug txpool RPC，`#35122` pooled-tx send-after-write 语义已由 SUPERVM outbound announce 写成功后标记 propagated 覆盖，`#35110` BAL 空 `slotChanges` 拒绝已由 raw BAL 校验覆盖。这里不新增 debug/gateway/fixture/BAL 范围，下一步只围绕 Ethereum mainnet long-sync v1。
 
+2026-06-13 冻结前上游差异审查：`D:\WEB3_AI\go-ethereum` 已执行 `git fetch origin --prune` 与 `git pull --ff-only`，从 `e595aedcd067304d77480fdccf504f5f121352f6` 快进到 `9059157eba227b6a4d4cc2e147e65f9919294360`。新增提交为：
+
+- `9059157eb core: implement EIP-8037, state creation gas cost increase (#33601)`
+- `d93dda49c internal/memlimit: respect cgroup memory cap (#34947)`
+- `906727089 p2p/discover: optimize findnodeByID (#33348)`
+
+影响判定：`#33601` 触达 `core/state_transition`、`core/vm`、`core/txpool/validation`、`params/protocol_params`，属于共识/EVM 可观察风险，但实现被挂在 `IsAmsterdam`/EIP-8037 规则下；当前 geth `MainnetChainConfig` 只配置到 `PragueTime=1746612311`、`OsakaTime=1764798551`、`BPO1Time=1765290071`、`BPO2Time=1767747671`，未设置 `AmsterdamTime`。SUPERVM 当前 mainnet fork-id schedule 已覆盖 `Shanghai/Cancun/Prague/Osaka/BPO1/BPO2`，与当前 geth 主网握手时间线一致。因此 EIP-8037 不进入本次 `evm-mainnet-long-sync-v1` 代码冻结，只作为未来 Amsterdam fork watch item。`#34947` 仅影响 geth 进程内存限制探测，`#33348` 仅优化 discv4 `findnodeByID` 查找路径，不改变 eth/71、RLP、txpool、receipt/root、state/root、snap/1 或 JSON-RPC 产品可观察语义。
+
+结论：本轮 upstream review clean；SUPERVM 不新增 EVM fixture/gateway/BAL/snap 功能，不移植未激活 Amsterdam/EIP-8037 代码。结合已签收的 6h 与 24h direct product entry soak/restart gates，`EVM v1` 进入冻结：后续只允许 bugfix 或已激活主网 fork 的必要兼容，不再扩展完整 geth 全节点目标。
+
 Gateway JSON-RPC 产品面 smoke：
 
 ```powershell
