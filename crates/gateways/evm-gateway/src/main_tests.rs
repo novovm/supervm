@@ -116,6 +116,38 @@ fn reset_runtime_host_state_for_test() {
     }
 }
 
+fn seed_mainline_uca_binding_for_test(
+    query_store_path: &std::path::Path,
+    account_id: &str,
+    chain_id: u64,
+    external_address: &[u8],
+    primary_key_byte: u8,
+) {
+    run_mainline_query_from_path(
+        query_store_path,
+        "ua_createUca",
+        &serde_json::json!({
+            "account_id": account_id,
+            "primary_key_ref": format!("0x{}", to_hex(&[primary_key_byte; 32])),
+            "now": now_unix_sec(),
+        }),
+    )
+    .expect("seed mainline UCA account");
+    run_mainline_query_from_path(
+        query_store_path,
+        "ua_bindPersona",
+        &serde_json::json!({
+            "account_id": account_id,
+            "role": "owner",
+            "persona_type": "evm",
+            "chain_id": chain_id,
+            "external_address": format!("0x{}", to_hex(external_address)),
+            "now": now_unix_sec(),
+        }),
+    )
+    .expect("seed mainline UCA EVM binding");
+}
+
 #[allow(clippy::too_many_arguments)]
 fn run_gateway_method(
     router: &mut UnifiedAccountRouter,
@@ -128,16 +160,19 @@ fn run_gateway_method(
     params: &serde_json::Value,
 ) -> Result<(serde_json::Value, bool)> {
     let _guard = env_test_guard();
-    super::run_gateway_method(
-        router,
-        eth_tx_index,
-        evm_settlement_index_by_id,
-        evm_settlement_index_by_tx,
-        evm_pending_payout_by_settlement,
-        ctx,
-        method,
-        params,
-    )
+    let test_router = router.clone();
+    super::with_gateway_test_mainline_uca_router(&test_router, || {
+        super::run_gateway_method(
+            router,
+            eth_tx_index,
+            evm_settlement_index_by_id,
+            evm_settlement_index_by_tx,
+            evm_pending_payout_by_settlement,
+            ctx,
+            method,
+            params,
+        )
+    })
 }
 
 fn runtime_tap_ir_batch_v1(
@@ -13593,7 +13628,6 @@ fn eth_send_raw_transaction_without_uca_id_uses_binding_owner() {
     let fallback_sender = vec![0x71u8; 20];
     let receiver = vec![0x72u8; 20];
     let uca_id = "uca:raw-auto-owner".to_string();
-    let now = now_unix_sec();
     let raw_tx = test_rlp_encode_list(&[
         test_rlp_encode_u64(0),
         test_rlp_encode_u64(1),
@@ -13612,10 +13646,10 @@ fn eth_send_raw_transaction_without_uca_id_uses_binding_owner() {
         external_address: sender.clone(),
     };
     router
-        .create_uca(uca_id.clone(), vec![0x11u8; 32], now)
+        .create_uca(uca_id.clone(), vec![0x11u8; 32], now_unix_sec())
         .expect("create uca");
     router
-        .add_binding(&uca_id, AccountRole::Owner, persona, now)
+        .add_binding(&uca_id, AccountRole::Owner, persona, now_unix_sec())
         .expect("add binding");
 
     // Minimal legacy raw tx: [nonce, gasPrice, gasLimit, to, value, data, v, r, s]
@@ -13721,17 +13755,7 @@ fn gateway_pending_consumer_executes_raw_tx_into_mainline_canonical() {
         .expect("recover sender should not fail")
         .expect("sender should recover");
     let uca_id = "uca:pending-consumer".to_string();
-    let persona = PersonaAddress {
-        persona_type: PersonaType::Evm,
-        chain_id,
-        external_address: sender.clone(),
-    };
-    router
-        .create_uca(uca_id.clone(), vec![0x12u8; 32], now_unix_sec())
-        .expect("create uca");
-    router
-        .add_binding(&uca_id, AccountRole::Owner, persona, now_unix_sec())
-        .expect("bind sender");
+    seed_mainline_uca_binding_for_test(&store_path, &uca_id, chain_id, &sender, 0x12);
     let mut ctx = GatewayMethodContext {
         eth_tx_index_store: &backend,
         eth_default_chain_id: chain_id,
@@ -13803,16 +13827,12 @@ fn gateway_pending_consumer_executes_raw_tx_into_mainline_canonical() {
         evm_host_exec_pending_cooldown_ms: 0,
         evm_host_exec_last_run_at_ms: 0,
         eth_default_chain_id: chain_id,
-        ua_store: GatewayUaStoreBackend::BincodeFile {
-            path: root.join("ua-store.bin"),
-        },
         eth_tx_index_store: backend,
         eth_tx_index,
         eth_filters: GatewayEthFilterState::default(),
         evm_settlement_index_by_id,
         evm_settlement_index_by_tx,
         evm_pending_payout_by_settlement,
-        router,
     };
     let report = auto_execute_pending_mainline_evm(&mut runtime);
     assert_eq!(
@@ -13856,7 +13876,7 @@ fn gateway_pending_consumer_executes_raw_tx_into_mainline_canonical() {
         eth_filters: &mut query_filters,
     };
     let (receipt, _) = run_gateway_method(
-        &mut runtime.router,
+        &mut UnifiedAccountRouter::new(),
         &mut runtime.eth_tx_index,
         &mut runtime.evm_settlement_index_by_id,
         &mut runtime.evm_settlement_index_by_tx,
@@ -13902,23 +13922,8 @@ fn json_rpc_eth_send_raw_then_receipt_product_smoke() {
         .expect("recover sender should not fail")
         .expect("sender should recover");
 
-    let mut router = UnifiedAccountRouter::new();
     let uca_id = "uca:jsonrpc-product-smoke".to_string();
-    router
-        .create_uca(uca_id.clone(), vec![0x34u8; 32], now_unix_sec())
-        .expect("create uca");
-    router
-        .add_binding(
-            &uca_id,
-            AccountRole::Owner,
-            PersonaAddress {
-                persona_type: PersonaType::Evm,
-                chain_id,
-                external_address: sender,
-            },
-            now_unix_sec(),
-        )
-        .expect("bind sender");
+    seed_mainline_uca_binding_for_test(&store_path, &uca_id, chain_id, &sender, 0x34);
 
     let server = tiny_http::Server::http("127.0.0.1:0").expect("start test gateway server");
     let addr = server
@@ -13951,16 +13956,12 @@ fn json_rpc_eth_send_raw_then_receipt_product_smoke() {
         evm_host_exec_pending_cooldown_ms: 0,
         evm_host_exec_last_run_at_ms: 0,
         eth_default_chain_id: chain_id,
-        ua_store: GatewayUaStoreBackend::BincodeFile {
-            path: root.join("ua-store.bin"),
-        },
         eth_tx_index_store: GatewayEthTxIndexStoreBackend::Memory,
         eth_tx_index: HashMap::new(),
         eth_filters: GatewayEthFilterState::default(),
         evm_settlement_index_by_id: HashMap::new(),
         evm_settlement_index_by_tx: HashMap::new(),
         evm_pending_payout_by_settlement: HashMap::new(),
-        router,
     };
     let server_thread = std::thread::spawn(move || {
         for _ in 0..2 {
@@ -14064,7 +14065,6 @@ fn eth_send_raw_transaction_passes_execution_policy_into_ingress_record() {
     let fallback_sender = vec![0x81u8; 20];
     let receiver = vec![0x82u8; 20];
     let uca_id = "uca:raw-policy-pass-through".to_string();
-    let now = now_unix_sec();
     let raw_tx = test_rlp_encode_list(&[
         test_rlp_encode_u64(0),
         test_rlp_encode_u64(1),
@@ -14083,10 +14083,10 @@ fn eth_send_raw_transaction_passes_execution_policy_into_ingress_record() {
         external_address: sender.clone(),
     };
     router
-        .create_uca(uca_id.clone(), vec![0x21u8; 32], now)
+        .create_uca(uca_id.clone(), vec![0x21u8; 32], now_unix_sec())
         .expect("create uca");
     router
-        .add_binding(&uca_id, AccountRole::Owner, persona, now)
+        .add_binding(&uca_id, AccountRole::Owner, persona, now_unix_sec())
         .expect("add binding");
 
     let raw_tx_hex = format!("0x{}", to_hex(&raw_tx));
@@ -14168,7 +14168,6 @@ fn eth_send_raw_transaction_rejects_explicit_uca_id_mismatch_with_binding_owner(
     let fallback_sender = vec![0x43u8; 20];
     let receiver = vec![0x44u8; 20];
     let owner_uca = "uca:raw-owner".to_string();
-    let now = now_unix_sec();
     let raw_tx = test_rlp_encode_list(&[
         test_rlp_encode_u64(0),
         test_rlp_encode_u64(1),
@@ -14187,10 +14186,10 @@ fn eth_send_raw_transaction_rejects_explicit_uca_id_mismatch_with_binding_owner(
         external_address: sender.clone(),
     };
     router
-        .create_uca(owner_uca.clone(), vec![0x22u8; 32], now)
+        .create_uca(owner_uca.clone(), vec![0x22u8; 32], now_unix_sec())
         .expect("create owner uca");
     router
-        .add_binding(&owner_uca, AccountRole::Owner, persona, now)
+        .add_binding(&owner_uca, AccountRole::Owner, persona, now_unix_sec())
         .expect("add binding");
     let raw_tx_hex = format!("0x{}", to_hex(&raw_tx));
 
@@ -15751,185 +15750,6 @@ fn evm_execute_pending_atomic_broadcasts_native_forced_succeeds() {
 }
 
 #[test]
-fn ua_router_envelope_roundtrip_and_unsupported_version_are_diagnostic() {
-    let _guard = env_test_guard();
-    let router = UnifiedAccountRouter::new();
-    let encoded = encode_gateway_ua_store_state(&router).expect("encode ua state envelope");
-    assert!(encoded.starts_with(GATEWAY_UA_STORE_ENVELOPE_MAGIC));
-
-    let decoded = decode_gateway_ua_store_state(
-        encoded.as_slice(),
-        Path::new("ua-test.rocksdb"),
-        GATEWAY_UA_STORE_BACKEND_ROCKSDB,
-        false,
-    )
-    .expect("decode ua state envelope");
-    assert!(!decoded.rewrite_envelope);
-
-    let mut unsupported = encoded;
-    unsupported[8..12].copy_from_slice(&999u32.to_le_bytes());
-    let err = decode_gateway_ua_store_state(
-        unsupported.as_slice(),
-        Path::new("ua-test.rocksdb"),
-        GATEWAY_UA_STORE_BACKEND_ROCKSDB,
-        false,
-    )
-    .expect_err("unsupported schema should fail");
-    let msg = format!("{err:#}");
-    assert!(msg.contains("unified_account_router_state_decode_failed"));
-    assert!(msg.contains("classification=unsupported_version"));
-    assert!(msg.contains("safe_action="));
-}
-
-#[test]
-fn ua_router_legacy_state_requires_explicit_migration() {
-    let _guard = env_test_guard();
-    #[derive(Serialize)]
-    struct LegacyEnvelopeRef<'a> {
-        version: u32,
-        router: &'a UnifiedAccountRouter,
-    }
-    let router = UnifiedAccountRouter::new();
-    let legacy = crate::bincode_compat::serialize(&LegacyEnvelopeRef {
-        version: GATEWAY_UA_STORE_LEGACY_ENVELOPE_VERSION,
-        router: &router,
-    })
-    .expect("serialize legacy ua envelope");
-
-    let err = decode_gateway_ua_store_state(
-        legacy.as_slice(),
-        Path::new("legacy-ua.rocksdb"),
-        GATEWAY_UA_STORE_BACKEND_ROCKSDB,
-        false,
-    )
-    .expect_err("legacy state must require explicit migration");
-    let msg = format!("{err:#}");
-    assert!(msg.contains("classification=schema_mismatch"));
-    assert!(msg.contains(GATEWAY_UA_STORE_MIGRATE_LEGACY_ENV));
-
-    let migrated = decode_gateway_ua_store_state(
-        legacy.as_slice(),
-        Path::new("legacy-ua.rocksdb"),
-        GATEWAY_UA_STORE_BACKEND_ROCKSDB,
-        true,
-    )
-    .expect("explicit legacy migration should decode");
-    assert!(migrated.rewrite_envelope);
-}
-
-#[test]
-fn ua_router_explicit_migration_rewrites_legacy_file_state() {
-    let _guard = env_test_guard();
-    #[derive(Serialize)]
-    struct LegacyEnvelopeRef<'a> {
-        version: u32,
-        router: &'a UnifiedAccountRouter,
-    }
-    let keys = [
-        GATEWAY_UA_STORE_MIGRATE_LEGACY_ENV,
-        GATEWAY_UA_STORE_RESET_ENV,
-    ];
-    let captured = capture_env_vars(&keys);
-    let root = std::env::temp_dir().join(format!(
-        "novovm-gateway-ua-migrate-{}-{}",
-        std::process::id(),
-        now_unix_millis()
-    ));
-    let state_path = root.join("unified-account-router.bin");
-    fs::create_dir_all(&root).expect("create migration test root");
-    let router = UnifiedAccountRouter::new();
-    let legacy = crate::bincode_compat::serialize(&LegacyEnvelopeRef {
-        version: GATEWAY_UA_STORE_LEGACY_ENVELOPE_VERSION,
-        router: &router,
-    })
-    .expect("serialize legacy ua envelope");
-    fs::write(&state_path, legacy).expect("write legacy state");
-    std::env::set_var(GATEWAY_UA_STORE_MIGRATE_LEGACY_ENV, "1");
-
-    let backend = GatewayUaStoreBackend::BincodeFile {
-        path: state_path.clone(),
-    };
-    let _router = backend
-        .load_router()
-        .expect("explicit migration should load router");
-    let rewritten = fs::read(&state_path).expect("read rewritten ua state");
-    assert!(rewritten.starts_with(GATEWAY_UA_STORE_ENVELOPE_MAGIC));
-
-    restore_env_vars(&captured);
-    let _ = fs::remove_dir_all(&root);
-}
-
-#[test]
-fn ua_router_rocksdb_stale_state_reports_classified_error() {
-    let _guard = env_test_guard();
-    let path = std::env::temp_dir().join(format!(
-        "novovm-gateway-ua-stale-{}-{}",
-        std::process::id(),
-        now_unix_millis()
-    ));
-    let backend = GatewayUaStoreBackend::RocksDb { path: path.clone() };
-    {
-        let db = open_gateway_ua_rocksdb(path.as_path()).expect("open ua rocksdb");
-        let cf = db
-            .cf_handle(GATEWAY_UA_STORE_ROCKSDB_CF_STATE)
-            .expect("ua state cf");
-        db.put_cf(cf, GATEWAY_UA_STORE_ROCKSDB_KEY_ROUTER, b"stale-bincode")
-            .expect("write stale ua bytes");
-    }
-
-    let err = backend
-        .load_router()
-        .expect_err("stale ua state should fail clearly");
-    let msg = format!("{err:#}");
-    assert!(msg.contains("unified_account_router_state_decode_failed"));
-    assert!(msg.contains("classification=stale_state"));
-    assert!(msg.contains("decode_attempts="));
-    assert!(msg.contains("safe_action="));
-    let _ = fs::remove_dir_all(&path);
-}
-
-#[test]
-fn ua_router_explicit_reset_quarantines_existing_state() {
-    let _guard = env_test_guard();
-    let keys = [
-        GATEWAY_UA_STORE_RESET_ENV,
-        GATEWAY_UA_STORE_QUARANTINE_DIR_ENV,
-        GATEWAY_UA_STORE_MIGRATE_LEGACY_ENV,
-    ];
-    let captured = capture_env_vars(&keys);
-    let root = std::env::temp_dir().join(format!(
-        "novovm-gateway-ua-reset-{}-{}",
-        std::process::id(),
-        now_unix_millis()
-    ));
-    let state_path = root.join("unified-account-router.bin");
-    let quarantine = root.join("quarantine");
-    fs::create_dir_all(&root).expect("create reset test root");
-    fs::write(&state_path, b"old-state").expect("write old state");
-    std::env::set_var(GATEWAY_UA_STORE_RESET_ENV, "1");
-    std::env::set_var(
-        GATEWAY_UA_STORE_QUARANTINE_DIR_ENV,
-        quarantine.display().to_string(),
-    );
-    let backend = GatewayUaStoreBackend::BincodeFile {
-        path: state_path.clone(),
-    };
-
-    let _router = backend
-        .load_router()
-        .expect("explicit reset should load empty router");
-    assert!(!state_path.exists());
-    let quarantined = fs::read_dir(&quarantine)
-        .expect("read quarantine dir")
-        .filter_map(|entry| entry.ok())
-        .collect::<Vec<_>>();
-    assert_eq!(quarantined.len(), 1);
-
-    restore_env_vars(&captured);
-    let _ = fs::remove_dir_all(&root);
-}
-
-#[test]
 fn auto_replay_pending_payouts_respects_cap_and_advances_status() {
     let spool_dir = std::env::temp_dir().join(format!(
         "novovm-gateway-auto-replay-{}-{}",
@@ -15962,16 +15782,12 @@ fn auto_replay_pending_payouts_respects_cap_and_advances_status() {
         evm_host_exec_pending_cooldown_ms: 0,
         evm_host_exec_last_run_at_ms: 0,
         eth_default_chain_id: 1,
-        ua_store: GatewayUaStoreBackend::BincodeFile {
-            path: spool_dir.join("ua-store.bin"),
-        },
         eth_tx_index_store: GatewayEthTxIndexStoreBackend::Memory,
         eth_tx_index: HashMap::new(),
         eth_filters: GatewayEthFilterState::default(),
         evm_settlement_index_by_id: HashMap::new(),
         evm_settlement_index_by_tx: HashMap::new(),
         evm_pending_payout_by_settlement: HashMap::new(),
-        router: UnifiedAccountRouter::new(),
     };
     let settlement_a = EvmFeeSettlementRecordV1 {
         income: novovm_adapter_api::EvmFeeIncomeRecordV1 {

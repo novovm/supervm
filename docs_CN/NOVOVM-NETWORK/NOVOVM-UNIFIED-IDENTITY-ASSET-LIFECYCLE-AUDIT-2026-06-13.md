@@ -14,7 +14,7 @@ NOVOVM 现在已经具备“统一身份 + EVM 产品入口 + native NOV 经济�
 - EVM 用户路径已经进入宿主：`eth_sendRawTransaction -> gateway -> native pending -> host execution -> canonical receipt -> eth_getTransactionReceipt`。
 - native NOV 经济模块已有余额、treasury reserve、fee settlement、redeem、AMM swap、credit vault/mint debt asset 等本地执行与 receipt。
 - `account_balance` / `account_assets` 已经能把 native liquid balance、mapped asset、credit vault、treasury exposure 汇总成账户视图。
-- 统一账户唯一写入口已收敛为 `novovm-node -> mainline_query -> unified_account_surface`；`evm-gateway` 只保留 EVM RPC adapter 职责。
+- 统一账户唯一入口已收敛为 `novovm-node -> mainline_query -> unified_account_surface`；`evm-gateway` 不再拥有本地 UCA store/router，只保留 EVM RPC adapter 职责。
 
 不能过度声明的部分：
 
@@ -78,14 +78,15 @@ NOVOVM 现在已经具备“统一身份 + EVM 产品入口 + native NOV 经济�
 
 1. 用户先绑定 `PersonaType::Evm`，`chain_id=1` 或目标 EVM chain。
 2. `eth_sendRawTransaction` 会从 raw tx 恢复 sender。
-3. 如果 sender 已绑定 UCA，则可省略 `uca_id`；如果未绑定，则必须显式提供 `uca_id`。
-4. gateway 只作为 EVM RPC adapter 对 raw tx 执行 chain id、nonce、tx type、fork activation、sender、fee 等 EVM 兼容校验；统一账户状态的注册/绑定/策略以 mainline surface 为准。
+3. 如果 sender 已绑定 UCA，则可省略 `uca_id`；如果显式提供 `uca_id`，必须与 mainline 绑定 owner 一致。
+4. `eth_sendRawTransaction` 通过 mainline `ua_checkRoute` 做只读预检；mainline UCA 不可用或策略拒绝时 fail closed，不 fallback 到 gateway 本地状态。
+5. gateway 只作为 EVM RPC adapter 对 raw tx 执行 chain id、nonce、tx type、fork activation、sender、fee 等 EVM 兼容校验；统一账户状态的注册/绑定/策略以 mainline surface 为准。
 
 状态：可用。
 
 风险：
 
-- 如果外部钱包不先做绑定，`eth_sendRawTransaction` 仍可要求 `uca_id`，但这不是 MetaMask 原生习惯；钱包接入层需要封装注册/绑定引导。
+- 外部钱包必须先完成 mainline UCA/EVM persona 绑定；仅传 `uca_id` 不能绕过绑定与策略预检。钱包接入层需要封装注册/绑定引导。
 
 ### 2.4 查询账户、绑定、余额、资产
 

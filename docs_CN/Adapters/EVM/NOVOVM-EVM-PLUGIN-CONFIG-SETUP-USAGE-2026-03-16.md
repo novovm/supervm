@@ -95,7 +95,7 @@
 
 ## 4.2 NOVOVM EVM 插件（当前）
 
-- **统一账户存储（Unified Account Store）**：默认 `rocksdb` 持久化。
+- **统一账户存储（Unified Account Store）**：不在 gateway 内持久化；唯一状态源为 `novovm-node -> mainline_query -> unified_account_surface`。
 - **EVM 交易索引（ETH TX Index）**：默认 `memory`（重启丢失，不持续吃盘）。
 - 可显式改为 `rocksdb` 获得重启可恢复能力。
 
@@ -103,8 +103,6 @@
 
 | 变量 | 默认 | 说明 |
 |---|---|---|
-| `NOVOVM_GATEWAY_UA_STORE_BACKEND` | `rocksdb` | `rocksdb` 或 `bincode_file` |
-| `NOVOVM_GATEWAY_UA_STORE_PATH` | `artifacts/gateway/unified-account-router.rocksdb` | UA 存储路径 |
 | `NOVOVM_GATEWAY_ETH_TX_INDEX_BACKEND` | `memory` | `memory` 或 `rocksdb` |
 | `NOVOVM_GATEWAY_ETH_TX_INDEX_PATH` | `artifacts/gateway/eth-tx-index.rocksdb` | TX 索引路径 |
 

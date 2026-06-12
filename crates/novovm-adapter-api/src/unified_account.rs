@@ -432,7 +432,7 @@ struct UcaRecord {
 ///
 /// This router is intentionally in-memory and deterministic so upper layers can
 /// integrate first, then swap in a persistent backend.
-#[derive(Debug, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct UnifiedAccountRouter {
     ucas: HashMap<String, UcaRecord>,
     binding_owner: HashMap<PersonaKey, String>,

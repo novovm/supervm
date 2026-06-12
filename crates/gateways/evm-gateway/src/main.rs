@@ -3,6 +3,8 @@
 use anyhow::{bail, Context, Result};
 use ed25519_dalek::{Signature as Ed25519Signature, Verifier, VerifyingKey};
 mod bincode_compat;
+#[cfg(test)]
+use novovm_adapter_api::UnifiedAccountError;
 use novovm_adapter_api::{
     AccountPolicy, AccountRole, AtomicBroadcastReadyV1, AtomicIntentReceiptV1, AtomicIntentStatus,
     EvmAccessListEntryV1, EvmFeePayoutInstructionV1, EvmFeeSettlementRecordV1,
@@ -91,18 +93,6 @@ use rpc_gateway_ops::*;
 mod rpc_gateway_exec_cfg;
 use rpc_gateway_exec_cfg::*;
 
-const GATEWAY_UA_STORE_LEGACY_ENVELOPE_VERSION: u32 = 1;
-const GATEWAY_UA_STORE_ENVELOPE_MAGIC: &[u8; 8] = b"NVUAENV1";
-const GATEWAY_UA_STORE_SCHEMA_VERSION: u32 = 1;
-const GATEWAY_UA_STORE_CODEC_BINCODE: u8 = 1;
-const GATEWAY_UA_STORE_ENVELOPE_HEADER_LEN: usize = 8 + 4 + 1 + 3 + 8 + 32;
-const GATEWAY_UA_STORE_MIGRATE_LEGACY_ENV: &str = "NOVOVM_GATEWAY_UA_STORE_MIGRATE_LEGACY";
-const GATEWAY_UA_STORE_RESET_ENV: &str = "NOVOVM_GATEWAY_UA_STORE_RESET";
-const GATEWAY_UA_STORE_QUARANTINE_DIR_ENV: &str = "NOVOVM_GATEWAY_UA_STORE_QUARANTINE_DIR";
-const GATEWAY_UA_STORE_BACKEND_FILE: &str = "bincode_file";
-const GATEWAY_UA_STORE_BACKEND_ROCKSDB: &str = "rocksdb";
-const GATEWAY_UA_STORE_ROCKSDB_CF_STATE: &str = "ua_gateway_state_v1";
-const GATEWAY_UA_STORE_ROCKSDB_KEY_ROUTER: &[u8] = b"ua_gateway:router:v1";
 const GATEWAY_ETH_TX_INDEX_RECORD_VERSION: u32 = 1;
 const GATEWAY_EVM_SETTLEMENT_INDEX_RECORD_VERSION: u32 = 1;
 const GATEWAY_EVM_PAYOUT_PENDING_RECORD_VERSION: u32 = 1;
@@ -191,6 +181,25 @@ static GATEWAY_ETH_BROADCAST_STATUS_BY_TX: OnceLock<
 static GATEWAY_ETH_SUBMIT_STATUS_BY_TX: OnceLock<Mutex<HashMap<[u8; 32], GatewayEthSubmitStatus>>> =
     OnceLock::new();
 
+#[cfg(test)]
+thread_local! {
+    static GATEWAY_TEST_MAINLINE_UCA_ROUTER: std::cell::RefCell<Option<UnifiedAccountRouter>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(test)]
+fn with_gateway_test_mainline_uca_router<R>(
+    router: &UnifiedAccountRouter,
+    f: impl FnOnce() -> R,
+) -> R {
+    GATEWAY_TEST_MAINLINE_UCA_ROUTER.with(|slot| {
+        let previous = slot.replace(Some(router.clone()));
+        let out = f();
+        slot.replace(previous);
+        out
+    })
+}
+
 macro_rules! gateway_warn {
     ($($arg:tt)*) => {{
         if gateway_warn_enabled() {
@@ -205,50 +214,6 @@ macro_rules! gateway_summary {
             println!($($arg)*);
         }
     }};
-}
-
-#[derive(Debug, Deserialize)]
-struct GatewayUaStoreEnvelopeV1 {
-    version: u32,
-    router: UnifiedAccountRouter,
-}
-
-#[derive(Debug)]
-struct GatewayUaStoreLoadOutcome {
-    router: UnifiedAccountRouter,
-    rewrite_envelope: bool,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum GatewayUaStateClassification {
-    SchemaMismatch,
-    StaleState,
-    CorruptState,
-    UnsupportedVersion,
-}
-
-impl GatewayUaStateClassification {
-    fn as_str(self) -> &'static str {
-        match self {
-            Self::SchemaMismatch => "schema_mismatch",
-            Self::StaleState => "stale_state",
-            Self::CorruptState => "corrupt_state",
-            Self::UnsupportedVersion => "unsupported_version",
-        }
-    }
-}
-
-#[derive(Debug)]
-struct GatewayUaStateDecodeFailure {
-    classification: GatewayUaStateClassification,
-    decode_attempts: Vec<&'static str>,
-    detail: String,
-}
-
-#[derive(Debug, Clone)]
-enum GatewayUaStoreBackend {
-    BincodeFile { path: PathBuf },
-    RocksDb { path: PathBuf },
 }
 
 #[derive(Debug, Clone)]
@@ -460,6 +425,281 @@ fn gateway_resolve_account_subject_v1(
     }
 }
 
+fn gateway_mainline_uca_query_v1(
+    method: &str,
+    params: &serde_json::Value,
+) -> Result<serde_json::Value> {
+    #[cfg(test)]
+    if let Some(out) = gateway_test_mainline_uca_query_v1(method, params) {
+        return out;
+    }
+    run_mainline_query_from_path(&gateway_mainline_query_store_path_v1(), method, params)
+        .with_context(|| {
+            format!(
+                "mainline UCA readonly check failed closed: method={} source=novovm-node->mainline_query->unified_account_surface",
+                method
+            )
+        })
+}
+
+#[cfg(test)]
+fn gateway_test_mainline_uca_query_v1(
+    method: &str,
+    params: &serde_json::Value,
+) -> Option<Result<serde_json::Value>> {
+    GATEWAY_TEST_MAINLINE_UCA_ROUTER.with(|slot| {
+        let router = slot.borrow();
+        let router = router.as_ref()?;
+        match method {
+            "ua_getBindingOwner" => {
+                let persona = gateway_test_parse_persona_v1(params).ok()?;
+                let owner = router.resolve_binding_owner(&persona).map(str::to_string)?;
+                Some(Ok(serde_json::json!({
+                    "method": method,
+                    "found": true,
+                    "owner_account_id": owner,
+                    "owner_uca_id": owner,
+                    "persona_type": persona.persona_type.as_str(),
+                    "chain_id": persona.chain_id,
+                })))
+            }
+            "ua_getNextNonce" => {
+                let account_id = gateway_explicit_account_id_param(params)?;
+                let persona = gateway_test_parse_persona_v1(params).ok()?;
+                match router.next_nonce_for_persona(&account_id, &persona) {
+                    Ok(nonce) => Some(Ok(serde_json::json!({
+                        "method": method,
+                        "found": true,
+                        "account_id": account_id,
+                        "uca_id": account_id,
+                        "persona_type": persona.persona_type.as_str(),
+                        "chain_id": persona.chain_id,
+                        "nonce": nonce,
+                        "nonce_hex": format!("0x{nonce:x}"),
+                    }))),
+                    Err(UnifiedAccountError::UcaNotFound { .. })
+                    | Err(UnifiedAccountError::BindingNotFound) => None,
+                    Err(err) => Some(Err(anyhow::anyhow!(err))),
+                }
+            }
+            "ua_checkRoute" => {
+                let account_id = gateway_explicit_account_id_param(params)?;
+                let persona = gateway_test_parse_persona_v1(params).ok()?;
+                let role = parse_account_role(params).ok()?;
+                let protocol = gateway_test_parse_protocol_kind_v1(params);
+                let signature_domain =
+                    param_as_string(params, "signature_domain").unwrap_or_else(|| match protocol {
+                        ProtocolKind::Eth => format!("evm:{}", persona.chain_id),
+                        ProtocolKind::Web30 => format!("web30:{}", persona.chain_id),
+                        ProtocolKind::Other(ref other) => {
+                            format!("{}:{}", other, persona.chain_id)
+                        }
+                    });
+                let nonce = param_as_u64(params, "nonce")
+                    .or_else(|| router.next_nonce_for_persona(&account_id, &persona).ok())?;
+                let mut probe = router.clone();
+                let decision = probe.route(RouteRequest {
+                    uca_id: account_id.clone(),
+                    persona: persona.clone(),
+                    role,
+                    protocol,
+                    signature_domain: signature_domain.clone(),
+                    nonce,
+                    kyc_attestation_provided: param_as_bool(params, "kyc_attestation_provided")
+                        .unwrap_or(false),
+                    kyc_verified: param_as_bool(params, "kyc_verified").unwrap_or(false),
+                    wants_cross_chain_atomic: param_as_bool(params, "wants_cross_chain_atomic")
+                        .unwrap_or(false),
+                    tx_type4: param_as_bool(params, "tx_type4").unwrap_or(false),
+                    session_expires_at: param_as_u64(params, "session_expires_at"),
+                    now: param_as_u64(params, "now").unwrap_or_else(now_unix_sec),
+                });
+                match decision {
+                    Ok(RouteDecision::FastPath) => Some(Ok(serde_json::json!({
+                        "method": method,
+                        "accepted": true,
+                        "account_id": account_id,
+                        "uca_id": account_id,
+                        "decision": {"kind": "fast_path"},
+                        "signature_domain": signature_domain,
+                        "nonce": nonce,
+                        "read_only": true,
+                    }))),
+                    Ok(RouteDecision::Adapter { chain_id }) => Some(Ok(serde_json::json!({
+                        "method": method,
+                        "accepted": true,
+                        "account_id": account_id,
+                        "uca_id": account_id,
+                        "decision": {"kind": "adapter", "chain_id": chain_id},
+                        "signature_domain": signature_domain,
+                        "nonce": nonce,
+                        "read_only": true,
+                    }))),
+                    Err(UnifiedAccountError::UcaNotFound { .. })
+                    | Err(UnifiedAccountError::BindingNotFound) => None,
+                    Err(err) => Some(Err(anyhow::anyhow!(err))),
+                }
+            }
+            _ => None,
+        }
+    })
+}
+
+#[cfg(test)]
+fn gateway_test_parse_persona_v1(params: &serde_json::Value) -> Result<PersonaAddress> {
+    let persona_type = parse_persona_type(params, "persona_type")?;
+    let chain_id =
+        param_as_u64(params, "chain_id").ok_or_else(|| anyhow::anyhow!("chain_id is required"))?;
+    let external_address = parse_external_address(params, "external_address")?;
+    Ok(PersonaAddress {
+        persona_type,
+        chain_id,
+        external_address,
+    })
+}
+
+#[cfg(test)]
+fn gateway_test_parse_protocol_kind_v1(params: &serde_json::Value) -> ProtocolKind {
+    match param_as_string(params, "protocol")
+        .unwrap_or_else(|| "other".to_string())
+        .trim()
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "eth" => ProtocolKind::Eth,
+        "web30" | "nov" | "novovm" => ProtocolKind::Web30,
+        other => ProtocolKind::Other(other.to_string()),
+    }
+}
+
+fn gateway_persona_query_json_v1(persona: &PersonaAddress) -> serde_json::Value {
+    serde_json::json!({
+        "persona_type": persona.persona_type.as_str(),
+        "chain_id": persona.chain_id,
+        "external_address": format!("0x{}", to_hex(&persona.external_address)),
+    })
+}
+
+fn gateway_mainline_binding_owner_v1(persona: &PersonaAddress) -> Result<Option<String>> {
+    let out = gateway_mainline_uca_query_v1(
+        "ua_getBindingOwner",
+        &gateway_persona_query_json_v1(persona),
+    )?;
+    Ok(out
+        .get("owner_account_id")
+        .or_else(|| out.get("owner_uca_id"))
+        .and_then(|value| value.as_str())
+        .filter(|value| !value.trim().is_empty())
+        .map(str::to_string))
+}
+
+fn gateway_resolve_account_subject_mainline_v1(
+    params: &serde_json::Value,
+    persona: &PersonaAddress,
+    unbound_error: &str,
+) -> anyhow::Result<String> {
+    let explicit_account_id = gateway_explicit_account_id_param(params);
+    let binding_owner = gateway_mainline_binding_owner_v1(persona)?;
+    match (explicit_account_id, binding_owner) {
+        (Some(explicit), Some(owner)) => {
+            if explicit != owner {
+                bail!(
+                    "uca_id mismatch for address binding: explicit={} binding_owner={}",
+                    explicit,
+                    owner
+                );
+            }
+            Ok(explicit)
+        }
+        (Some(explicit), None) => Ok(explicit),
+        (None, Some(owner)) => Ok(owner),
+        (None, None) => bail!("{}", unbound_error),
+    }
+}
+
+fn gateway_mainline_next_nonce_v1(
+    account_id: &str,
+    persona: &PersonaAddress,
+) -> Result<Option<u64>> {
+    let mut params = gateway_persona_query_json_v1(persona);
+    if let Some(map) = params.as_object_mut() {
+        map.insert("account_id".to_string(), serde_json::json!(account_id));
+        map.insert("uca_id".to_string(), serde_json::json!(account_id));
+    }
+    let out = gateway_mainline_uca_query_v1("ua_getNextNonce", &params)?;
+    Ok(out.get("nonce").and_then(|value| value.as_u64()))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn gateway_mainline_check_route_v1(
+    account_id: &str,
+    persona: &PersonaAddress,
+    role: AccountRole,
+    protocol: ProtocolKind,
+    signature_domain: &str,
+    nonce: u64,
+    kyc_attestation_provided: bool,
+    kyc_verified: bool,
+    wants_cross_chain_atomic: bool,
+    tx_type4: bool,
+    session_expires_at: Option<u64>,
+    now: u64,
+) -> Result<()> {
+    let mut params = gateway_persona_query_json_v1(persona);
+    if let Some(map) = params.as_object_mut() {
+        map.insert("account_id".to_string(), serde_json::json!(account_id));
+        map.insert("uca_id".to_string(), serde_json::json!(account_id));
+        map.insert(
+            "role".to_string(),
+            serde_json::json!(match role {
+                AccountRole::Owner => "owner",
+                AccountRole::Delegate => "delegate",
+                AccountRole::SessionKey => "session_key",
+            }),
+        );
+        map.insert(
+            "protocol".to_string(),
+            serde_json::json!(match protocol {
+                ProtocolKind::Eth => "eth",
+                ProtocolKind::Web30 => "web30",
+                ProtocolKind::Other(ref other) => other.as_str(),
+            }),
+        );
+        map.insert(
+            "signature_domain".to_string(),
+            serde_json::json!(signature_domain),
+        );
+        map.insert("nonce".to_string(), serde_json::json!(nonce));
+        map.insert(
+            "kyc_attestation_provided".to_string(),
+            serde_json::json!(kyc_attestation_provided),
+        );
+        map.insert("kyc_verified".to_string(), serde_json::json!(kyc_verified));
+        map.insert(
+            "wants_cross_chain_atomic".to_string(),
+            serde_json::json!(wants_cross_chain_atomic),
+        );
+        map.insert("tx_type4".to_string(), serde_json::json!(tx_type4));
+        if let Some(expires_at) = session_expires_at {
+            map.insert(
+                "session_expires_at".to_string(),
+                serde_json::json!(expires_at),
+            );
+        }
+        map.insert("now".to_string(), serde_json::json!(now));
+    }
+    let out = gateway_mainline_uca_query_v1("ua_checkRoute", &params)?;
+    if out
+        .get("accepted")
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false)
+    {
+        Ok(())
+    } else {
+        bail!("mainline UCA route check rejected");
+    }
+}
+
 fn gateway_resolve_subject_owner_account_ids_v1(
     params: &serde_json::Value,
     account_id: &str,
@@ -619,14 +859,12 @@ struct GatewayRuntime {
     evm_host_exec_pending_cooldown_ms: u64,
     evm_host_exec_last_run_at_ms: u128,
     eth_default_chain_id: u64,
-    ua_store: GatewayUaStoreBackend,
     eth_tx_index_store: GatewayEthTxIndexStoreBackend,
     eth_tx_index: HashMap<[u8; 32], GatewayEthTxIndexEntry>,
     eth_filters: GatewayEthFilterState,
     evm_settlement_index_by_id: HashMap<String, GatewayEvmSettlementIndexEntry>,
     evm_settlement_index_by_tx: HashMap<GatewaySettlementTxKey, String>,
     evm_pending_payout_by_settlement: HashMap<String, EvmFeePayoutInstructionV1>,
-    router: UnifiedAccountRouter,
 }
 
 struct GatewayMethodContext<'a> {
@@ -1683,7 +1921,7 @@ fn main() -> Result<()> {
     let mut reconcile_next_run_at_unix_ms = 0u128;
     let mut reconcile_first_cycle = true;
     gateway_summary!(
-        "gateway_in: bind={} spool_dir={} max_body={} max_requests={} evm_payout_autoreplay_max={} evm_payout_autoreplay_cooldown_ms={} evm_payout_pending_warn_threshold={} evm_atomic_broadcast_autoreplay_max={} evm_atomic_broadcast_autoreplay_cooldown_ms={} evm_atomic_broadcast_pending_warn_threshold={} evm_atomic_broadcast_autoreplay_use_external_executor={} eth_public_broadcast_autoreplay_max={} eth_public_broadcast_autoreplay_cooldown_ms={} eth_public_broadcast_pending_warn_threshold={} evm_host_exec_pending_max={} evm_host_exec_pending_cooldown_ms={} eth_default_chain_id={} ua_store_backend={} ua_store_path={} eth_tx_index_backend={} eth_tx_index_path={} internal_ingress=ops_wire_v1",
+        "gateway_in: bind={} spool_dir={} max_body={} max_requests={} evm_payout_autoreplay_max={} evm_payout_autoreplay_cooldown_ms={} evm_payout_pending_warn_threshold={} evm_atomic_broadcast_autoreplay_max={} evm_atomic_broadcast_autoreplay_cooldown_ms={} evm_atomic_broadcast_pending_warn_threshold={} evm_atomic_broadcast_autoreplay_use_external_executor={} eth_public_broadcast_autoreplay_max={} eth_public_broadcast_autoreplay_cooldown_ms={} eth_public_broadcast_pending_warn_threshold={} evm_host_exec_pending_max={} evm_host_exec_pending_cooldown_ms={} eth_default_chain_id={} unified_account_source=mainline_readonly eth_tx_index_backend={} eth_tx_index_path={} internal_ingress=ops_wire_v1",
         runtime.bind,
         runtime.spool_dir.display(),
         runtime.max_body_bytes,
@@ -1701,8 +1939,6 @@ fn main() -> Result<()> {
         runtime.evm_host_exec_pending_max,
         runtime.evm_host_exec_pending_cooldown_ms,
         runtime.eth_default_chain_id,
-        runtime.ua_store.backend_name(),
-        runtime.ua_store.path().display(),
         runtime.eth_tx_index_store.backend_name(),
         runtime.eth_tx_index_store.path().display(),
     );
@@ -1822,12 +2058,7 @@ impl GatewayRuntime {
         let evm_host_exec_pending_cooldown_ms =
             u64_env("NOVOVM_GATEWAY_EVM_HOST_EXEC_PENDING_COOLDOWN_MS", 250);
         let eth_default_chain_id = u64_env("NOVOVM_GATEWAY_ETH_DEFAULT_CHAIN_ID", 1);
-        let ua_store = resolve_gateway_ua_store_backend()?;
         let eth_tx_index_store = resolve_gateway_eth_tx_index_store_backend()?;
-        let router = ua_store.load_router()?;
-        ua_store
-            .save_router(&router)
-            .context("bootstrap gateway unified-account store writable check failed")?;
         let mut evm_pending_payout_by_settlement = HashMap::new();
         if evm_payout_pending_hydrate_max > 0 {
             match eth_tx_index_store
@@ -1872,14 +2103,12 @@ impl GatewayRuntime {
             evm_host_exec_pending_cooldown_ms,
             evm_host_exec_last_run_at_ms: 0,
             eth_default_chain_id,
-            ua_store,
             eth_tx_index_store,
             eth_tx_index: HashMap::new(),
             eth_filters: GatewayEthFilterState::default(),
             evm_settlement_index_by_id: HashMap::new(),
             evm_settlement_index_by_tx: HashMap::new(),
             evm_pending_payout_by_settlement,
-            router,
         })
     }
 }
@@ -3667,391 +3896,6 @@ fn execute_gateway_evm_executable_ingress_frames(
     Ok((txs, sampled_hashes, dropped_unparsed))
 }
 
-impl GatewayUaStoreBackend {
-    fn backend_name(&self) -> &'static str {
-        match self {
-            GatewayUaStoreBackend::BincodeFile { .. } => GATEWAY_UA_STORE_BACKEND_FILE,
-            GatewayUaStoreBackend::RocksDb { .. } => GATEWAY_UA_STORE_BACKEND_ROCKSDB,
-        }
-    }
-
-    fn path(&self) -> &Path {
-        match self {
-            GatewayUaStoreBackend::BincodeFile { path } => path.as_path(),
-            GatewayUaStoreBackend::RocksDb { path } => path.as_path(),
-        }
-    }
-
-    fn load_router(&self) -> Result<UnifiedAccountRouter> {
-        if gateway_ua_store_reset_requested() {
-            self.quarantine_existing_state()?;
-            return Ok(UnifiedAccountRouter::new());
-        }
-        let migrate_legacy = gateway_ua_store_migrate_legacy_requested();
-        match self {
-            GatewayUaStoreBackend::BincodeFile { path } => {
-                if !path.exists() {
-                    return Ok(UnifiedAccountRouter::new());
-                }
-                let raw = fs::read(path)
-                    .with_context(|| format!("read gateway ua store failed: {}", path.display()))?;
-                if raw.is_empty() {
-                    return Ok(UnifiedAccountRouter::new());
-                }
-                let outcome =
-                    decode_gateway_ua_store_state(&raw, path, self.backend_name(), migrate_legacy)?;
-                if outcome.rewrite_envelope {
-                    self.save_router(&outcome.router)?;
-                }
-                Ok(outcome.router)
-            }
-            GatewayUaStoreBackend::RocksDb { path } => {
-                let raw = {
-                    let db = open_gateway_ua_rocksdb(path)?;
-                    let state_cf =
-                        db.cf_handle(GATEWAY_UA_STORE_ROCKSDB_CF_STATE)
-                            .ok_or_else(|| {
-                                anyhow::anyhow!(
-                                    "missing gateway ua rocksdb column family '{}' for {}",
-                                    GATEWAY_UA_STORE_ROCKSDB_CF_STATE,
-                                    path.display()
-                                )
-                            })?;
-                    db.get_cf(state_cf, GATEWAY_UA_STORE_ROCKSDB_KEY_ROUTER)
-                        .with_context(|| {
-                            format!(
-                                "read gateway ua router key from cf '{}' failed: {}",
-                                GATEWAY_UA_STORE_ROCKSDB_CF_STATE,
-                                path.display()
-                            )
-                        })?
-                };
-                let Some(raw) = raw else {
-                    return Ok(UnifiedAccountRouter::new());
-                };
-                if raw.is_empty() {
-                    return Ok(UnifiedAccountRouter::new());
-                }
-                let outcome =
-                    decode_gateway_ua_store_state(&raw, path, self.backend_name(), migrate_legacy)?;
-                if outcome.rewrite_envelope {
-                    self.save_router(&outcome.router)?;
-                }
-                Ok(outcome.router)
-            }
-        }
-    }
-
-    fn save_router(&self, router: &UnifiedAccountRouter) -> Result<()> {
-        let encoded = encode_gateway_ua_store_state(router)?;
-        match self {
-            GatewayUaStoreBackend::BincodeFile { path } => {
-                ensure_parent_dir(path, "gateway ua store")?;
-                fs::write(path, encoded).with_context(|| {
-                    format!("write gateway ua store failed: {}", path.display())
-                })?;
-                Ok(())
-            }
-            GatewayUaStoreBackend::RocksDb { path } => {
-                let db = open_gateway_ua_rocksdb(path)?;
-                let state_cf =
-                    db.cf_handle(GATEWAY_UA_STORE_ROCKSDB_CF_STATE)
-                        .ok_or_else(|| {
-                            anyhow::anyhow!(
-                                "missing gateway ua rocksdb column family '{}' for {}",
-                                GATEWAY_UA_STORE_ROCKSDB_CF_STATE,
-                                path.display()
-                            )
-                        })?;
-                db.put_cf(state_cf, GATEWAY_UA_STORE_ROCKSDB_KEY_ROUTER, encoded)
-                    .with_context(|| {
-                        format!(
-                            "write gateway ua router key into cf '{}' failed: {}",
-                            GATEWAY_UA_STORE_ROCKSDB_CF_STATE,
-                            path.display()
-                        )
-                    })?;
-                Ok(())
-            }
-        }
-    }
-
-    fn quarantine_existing_state(&self) -> Result<Option<PathBuf>> {
-        let path = self.path();
-        if !path.exists() {
-            return Ok(None);
-        }
-        let quarantine_dir = gateway_ua_store_quarantine_dir(path);
-        ensure_dir(quarantine_dir.as_path(), "gateway ua quarantine dir")?;
-        let file_name = path
-            .file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or("unified-account-router");
-        let target = quarantine_dir.join(format!(
-            "{}.{}.{}.quarantine",
-            file_name,
-            now_unix_millis(),
-            std::process::id()
-        ));
-        fs::rename(path, target.as_path()).with_context(|| {
-            format!(
-                "explicit gateway ua store reset failed: move {} to {}",
-                path.display(),
-                target.display()
-            )
-        })?;
-        gateway_warn!(
-            "unified_account_router_state_reset: path={} quarantined_to={} backend={}",
-            path.display(),
-            target.display(),
-            self.backend_name()
-        );
-        Ok(Some(target))
-    }
-}
-
-fn gateway_ua_store_migrate_legacy_requested() -> bool {
-    bool_env(GATEWAY_UA_STORE_MIGRATE_LEGACY_ENV, false)
-}
-
-fn gateway_ua_store_reset_requested() -> bool {
-    bool_env(GATEWAY_UA_STORE_RESET_ENV, false)
-}
-
-fn gateway_ua_store_quarantine_dir(path: &Path) -> PathBuf {
-    if let Some(custom) = string_env_nonempty(GATEWAY_UA_STORE_QUARANTINE_DIR_ENV) {
-        return PathBuf::from(custom);
-    }
-    path.parent()
-        .unwrap_or_else(|| Path::new("."))
-        .join("quarantine")
-}
-
-fn encode_gateway_ua_store_state(router: &UnifiedAccountRouter) -> Result<Vec<u8>> {
-    let payload = crate::bincode_compat::serialize(router)
-        .context("serialize gateway ua router payload failed")?;
-    let payload_len = u64::try_from(payload.len()).context("gateway ua payload too large")?;
-    let checksum = gateway_ua_store_checksum(payload.as_slice());
-    let mut out = Vec::with_capacity(GATEWAY_UA_STORE_ENVELOPE_HEADER_LEN + payload.len());
-    out.extend_from_slice(GATEWAY_UA_STORE_ENVELOPE_MAGIC);
-    out.extend_from_slice(&GATEWAY_UA_STORE_SCHEMA_VERSION.to_le_bytes());
-    out.push(GATEWAY_UA_STORE_CODEC_BINCODE);
-    out.extend_from_slice(&[0u8; 3]);
-    out.extend_from_slice(&payload_len.to_le_bytes());
-    out.extend_from_slice(&checksum);
-    out.extend_from_slice(payload.as_slice());
-    Ok(out)
-}
-
-fn decode_gateway_ua_store_state(
-    raw: &[u8],
-    path: &Path,
-    backend: &str,
-    migrate_legacy: bool,
-) -> Result<GatewayUaStoreLoadOutcome> {
-    match decode_gateway_ua_store_envelope(raw) {
-        Ok(router) => {
-            return Ok(GatewayUaStoreLoadOutcome {
-                router,
-                rewrite_envelope: false,
-            })
-        }
-        Err(envelope_failure) if migrate_legacy => match decode_gateway_ua_store_legacy(raw) {
-            Ok(router) => {
-                gateway_warn!(
-                        "unified_account_router_state_migrated: path={} backend={} from=legacy to=envelope schema_version={}",
-                        path.display(),
-                        backend,
-                        GATEWAY_UA_STORE_SCHEMA_VERSION
-                    );
-                return Ok(GatewayUaStoreLoadOutcome {
-                    router,
-                    rewrite_envelope: true,
-                });
-            }
-            Err(legacy_failure) => {
-                let failure = merge_gateway_ua_decode_failures(envelope_failure, legacy_failure);
-                return Err(format_gateway_ua_state_decode_error(
-                    path, backend, &failure, true,
-                ));
-            }
-        },
-        Err(envelope_failure) => {
-            let failure = match decode_gateway_ua_store_legacy(raw) {
-                Ok(_) => GatewayUaStateDecodeFailure {
-                    classification: GatewayUaStateClassification::SchemaMismatch,
-                    decode_attempts: vec!["envelope_v1", "legacy_envelope_v1", "legacy_router"],
-                    detail: format!(
-                        "legacy state detected; set {}=1 for explicit migration",
-                        GATEWAY_UA_STORE_MIGRATE_LEGACY_ENV
-                    ),
-                },
-                Err(legacy_failure) => {
-                    merge_gateway_ua_decode_failures(envelope_failure, legacy_failure)
-                }
-            };
-            Err(format_gateway_ua_state_decode_error(
-                path, backend, &failure, false,
-            ))
-        }
-    }
-}
-
-fn decode_gateway_ua_store_envelope(
-    raw: &[u8],
-) -> std::result::Result<UnifiedAccountRouter, GatewayUaStateDecodeFailure> {
-    if raw.len() < GATEWAY_UA_STORE_ENVELOPE_MAGIC.len()
-        || &raw[..GATEWAY_UA_STORE_ENVELOPE_MAGIC.len()] != GATEWAY_UA_STORE_ENVELOPE_MAGIC
-    {
-        return Err(GatewayUaStateDecodeFailure {
-            classification: GatewayUaStateClassification::SchemaMismatch,
-            decode_attempts: vec!["envelope_v1"],
-            detail: "missing gateway ua envelope magic".to_string(),
-        });
-    }
-    if raw.len() < GATEWAY_UA_STORE_ENVELOPE_HEADER_LEN {
-        return Err(GatewayUaStateDecodeFailure {
-            classification: GatewayUaStateClassification::CorruptState,
-            decode_attempts: vec!["envelope_v1"],
-            detail: format!(
-                "envelope header too short: len={} min={}",
-                raw.len(),
-                GATEWAY_UA_STORE_ENVELOPE_HEADER_LEN
-            ),
-        });
-    }
-    let version = u32::from_le_bytes(raw[8..12].try_into().unwrap_or([0u8; 4]));
-    if version != GATEWAY_UA_STORE_SCHEMA_VERSION {
-        return Err(GatewayUaStateDecodeFailure {
-            classification: GatewayUaStateClassification::UnsupportedVersion,
-            decode_attempts: vec!["envelope_v1"],
-            detail: format!(
-                "unsupported schema_version={} expected={}",
-                version, GATEWAY_UA_STORE_SCHEMA_VERSION
-            ),
-        });
-    }
-    let codec = raw[12];
-    if codec != GATEWAY_UA_STORE_CODEC_BINCODE {
-        return Err(GatewayUaStateDecodeFailure {
-            classification: GatewayUaStateClassification::UnsupportedVersion,
-            decode_attempts: vec!["envelope_v1"],
-            detail: format!(
-                "unsupported codec={} expected={}",
-                codec, GATEWAY_UA_STORE_CODEC_BINCODE
-            ),
-        });
-    }
-    let payload_len = u64::from_le_bytes(raw[16..24].try_into().unwrap_or([0u8; 8])) as usize;
-    let payload = &raw[GATEWAY_UA_STORE_ENVELOPE_HEADER_LEN..];
-    if payload_len != payload.len() {
-        return Err(GatewayUaStateDecodeFailure {
-            classification: GatewayUaStateClassification::CorruptState,
-            decode_attempts: vec!["envelope_v1"],
-            detail: format!(
-                "payload_len mismatch: declared={} actual={}",
-                payload_len,
-                payload.len()
-            ),
-        });
-    }
-    let expected_checksum = &raw[24..56];
-    let actual_checksum = gateway_ua_store_checksum(payload);
-    if expected_checksum != actual_checksum.as_slice() {
-        return Err(GatewayUaStateDecodeFailure {
-            classification: GatewayUaStateClassification::CorruptState,
-            decode_attempts: vec!["envelope_v1"],
-            detail: "payload checksum mismatch".to_string(),
-        });
-    }
-    crate::bincode_compat::deserialize::<UnifiedAccountRouter>(payload).map_err(|err| {
-        GatewayUaStateDecodeFailure {
-            classification: GatewayUaStateClassification::CorruptState,
-            decode_attempts: vec!["envelope_v1"],
-            detail: format!("payload decode failed: {err}"),
-        }
-    })
-}
-
-fn decode_gateway_ua_store_legacy(
-    raw: &[u8],
-) -> std::result::Result<UnifiedAccountRouter, GatewayUaStateDecodeFailure> {
-    let mut details = Vec::new();
-    match crate::bincode_compat::deserialize::<GatewayUaStoreEnvelopeV1>(raw) {
-        Ok(envelope) => {
-            if envelope.version == GATEWAY_UA_STORE_LEGACY_ENVELOPE_VERSION {
-                return Ok(envelope.router);
-            }
-            return Err(GatewayUaStateDecodeFailure {
-                classification: GatewayUaStateClassification::UnsupportedVersion,
-                decode_attempts: vec!["legacy_envelope_v1"],
-                detail: format!("unsupported legacy envelope version={}", envelope.version),
-            });
-        }
-        Err(err) => details.push(format!("legacy_envelope_v1={err}")),
-    }
-    match crate::bincode_compat::deserialize::<UnifiedAccountRouter>(raw) {
-        Ok(router) => Ok(router),
-        Err(err) => {
-            details.push(format!("legacy_router={err}"));
-            Err(GatewayUaStateDecodeFailure {
-                classification: GatewayUaStateClassification::StaleState,
-                decode_attempts: vec!["legacy_envelope_v1", "legacy_router"],
-                detail: details.join("; "),
-            })
-        }
-    }
-}
-
-fn merge_gateway_ua_decode_failures(
-    envelope_failure: GatewayUaStateDecodeFailure,
-    legacy_failure: GatewayUaStateDecodeFailure,
-) -> GatewayUaStateDecodeFailure {
-    if envelope_failure.classification != GatewayUaStateClassification::SchemaMismatch {
-        envelope_failure
-    } else {
-        legacy_failure
-    }
-}
-
-fn format_gateway_ua_state_decode_error(
-    path: &Path,
-    backend: &str,
-    failure: &GatewayUaStateDecodeFailure,
-    migrate_legacy: bool,
-) -> anyhow::Error {
-    let safe_action = if migrate_legacy {
-        format!(
-            "inspect state bytes, restore a compatible backup, or set {}=1 to quarantine and reset explicitly",
-            GATEWAY_UA_STORE_RESET_ENV
-        )
-    } else {
-        format!(
-            "use an isolated state path, run with {}=1 for known legacy migration, or set {}=1 to quarantine and reset explicitly",
-            GATEWAY_UA_STORE_MIGRATE_LEGACY_ENV,
-            GATEWAY_UA_STORE_RESET_ENV
-        )
-    };
-    anyhow::anyhow!(
-        "unified_account_router_state_decode_failed: path={} backend={} classification={} decode_attempts={} safe_action=\"{}\" detail=\"{}\"",
-        path.display(),
-        backend,
-        failure.classification.as_str(),
-        failure.decode_attempts.join(","),
-        safe_action,
-        failure.detail.replace('"', "'")
-    )
-}
-
-fn gateway_ua_store_checksum(payload: &[u8]) -> [u8; 32] {
-    let mut hasher = Sha256::new();
-    hasher.update(GATEWAY_UA_STORE_ENVELOPE_MAGIC);
-    hasher.update(GATEWAY_UA_STORE_SCHEMA_VERSION.to_le_bytes());
-    hasher.update([GATEWAY_UA_STORE_CODEC_BINCODE]);
-    hasher.update(payload);
-    hasher.finalize().into()
-}
-
 impl GatewayEthTxIndexStoreBackend {
     fn backend_name(&self) -> &'static str {
         match self {
@@ -5710,42 +5554,6 @@ impl GatewayEthTxIndexStoreBackend {
     }
 }
 
-fn resolve_gateway_ua_store_backend() -> Result<GatewayUaStoreBackend> {
-    let backend = string_env(
-        "NOVOVM_GATEWAY_UA_STORE_BACKEND",
-        GATEWAY_UA_STORE_BACKEND_ROCKSDB,
-    )
-    .trim()
-    .to_ascii_lowercase();
-    let path = if let Some(custom) = string_env_nonempty("NOVOVM_GATEWAY_UA_STORE_PATH") {
-        PathBuf::from(custom)
-    } else {
-        match backend.as_str() {
-            GATEWAY_UA_STORE_BACKEND_ROCKSDB => {
-                PathBuf::from("artifacts/gateway/unified-account-router.rocksdb")
-            }
-            _ => PathBuf::from("artifacts/gateway/unified-account-router.bin"),
-        }
-    };
-    match backend.as_str() {
-        "rocksdb" => Ok(GatewayUaStoreBackend::RocksDb { path }),
-        "bincode_file" | "file" | "bincode" => {
-            if bool_env("NOVOVM_ALLOW_NON_PROD_UA_BACKEND", false) {
-                Ok(GatewayUaStoreBackend::BincodeFile { path })
-            } else {
-                bail!(
-                    "NOVOVM_GATEWAY_UA_STORE_BACKEND={} is non-production; use rocksdb or set NOVOVM_ALLOW_NON_PROD_UA_BACKEND=1 for explicit override",
-                    backend
-                )
-            }
-        }
-        _ => bail!(
-            "invalid NOVOVM_GATEWAY_UA_STORE_BACKEND={}; valid: rocksdb|bincode_file|file|bincode",
-            backend
-        ),
-    }
-}
-
 fn resolve_gateway_eth_tx_index_store_backend() -> Result<GatewayEthTxIndexStoreBackend> {
     let backend = string_env(
         "NOVOVM_GATEWAY_ETH_TX_INDEX_BACKEND",
@@ -5778,19 +5586,6 @@ fn resolve_gateway_eth_tx_index_store_backend() -> Result<GatewayEthTxIndexStore
             backend
         ),
     }
-}
-
-fn open_gateway_ua_rocksdb(path: &Path) -> Result<RocksDb> {
-    ensure_parent_dir(path, "gateway ua rocksdb")?;
-    let mut opts = RocksDbOptions::default();
-    opts.create_if_missing(true);
-    opts.create_missing_column_families(true);
-    let cf_descriptors = vec![
-        ColumnFamilyDescriptor::new(DEFAULT_COLUMN_FAMILY_NAME, RocksDbOptions::default()),
-        ColumnFamilyDescriptor::new(GATEWAY_UA_STORE_ROCKSDB_CF_STATE, RocksDbOptions::default()),
-    ];
-    RocksDb::open_cf_descriptors(&opts, path, cf_descriptors)
-        .with_context(|| format!("open gateway ua rocksdb failed: {}", path.display()))
 }
 
 fn open_gateway_eth_tx_index_rocksdb(path: &Path) -> Result<RocksDb> {
@@ -5941,8 +5736,9 @@ fn handle_gateway_request(
         overlay_route_hop_count,
         eth_filters: &mut runtime.eth_filters,
     };
+    let mut gateway_uca_disabled_router = UnifiedAccountRouter::new();
     match run_gateway_method(
-        &mut runtime.router,
+        &mut gateway_uca_disabled_router,
         &mut runtime.eth_tx_index,
         &mut runtime.evm_settlement_index_by_id,
         &mut runtime.evm_settlement_index_by_tx,
@@ -5951,10 +5747,7 @@ fn handle_gateway_request(
         method,
         &params,
     ) {
-        Ok((result, changed)) => {
-            if changed {
-                runtime.ua_store.save_router(&runtime.router)?;
-            }
+        Ok((result, _changed)) => {
             let body = serde_json::json!({
                 "jsonrpc": "2.0",
                 "id": id,
@@ -5963,17 +5756,13 @@ fn handle_gateway_request(
             respond_json_http(request, 200, &body)?;
         }
         Err(e) => {
-            // Keep state consistency if any runtime step failed after mutation.
-            if let Ok(restored) = runtime.ua_store.load_router() {
-                runtime.router = restored;
-            }
             let raw_message = e.to_string();
             let code = gateway_error_code_for_method(method, &raw_message);
             let message = gateway_error_message_for_method(method, code, &raw_message);
             let data = gateway_error_data_for_method(method, code, &raw_message);
             persist_gateway_eth_submit_failure_status_from_error(
                 &runtime.eth_tx_index_store,
-                Some(&runtime.router),
+                None,
                 method,
                 &params,
                 &raw_message,
@@ -10391,7 +10180,7 @@ fn run_gateway_method(
                 external_address: external_address.clone(),
             };
             let explicit_account_id = gateway_explicit_account_id_param(params);
-            let binding_owner = router.resolve_binding_owner(&persona).map(str::to_string);
+            let binding_owner = gateway_mainline_binding_owner_v1(&persona)?;
             if let (Some(explicit), Some(owner_id)) =
                 (explicit_account_id.as_ref(), binding_owner.as_ref())
             {
@@ -10432,10 +10221,10 @@ fn run_gateway_method(
                 parse_eth_tx_count_block_tag(params).unwrap_or_else(|| "latest".to_string());
             let normalized_tag = block_tag.trim().trim_matches('"');
             let nonce = if normalized_tag.eq_ignore_ascii_case("pending") {
-                let pending_nonce_from_router = effective_account_id
-                    .clone()
-                    .and_then(|uca_id| router.next_nonce_for_persona(&uca_id, &persona).ok());
-                let pending_nonce = pending_nonce_from_router
+                let pending_nonce_from_mainline = effective_account_id.clone().and_then(|uca_id| {
+                    gateway_mainline_next_nonce_v1(&uca_id, &persona).ok().flatten()
+                });
+                let pending_nonce = pending_nonce_from_mainline
                     .map(|nonce| nonce.max(latest_nonce))
                     .unwrap_or(latest_nonce);
                 let pending_nonce_from_runtime = gateway_eth_pending_nonce_from_runtime(
@@ -10879,7 +10668,7 @@ fn run_gateway_method(
                             gateway_error_data_for_method("eth_sendRawTransaction", code, &raw_message);
                         persist_gateway_eth_submit_failure_status_from_error(
                             ctx.eth_tx_index_store,
-                            Some(router),
+                            None,
                             "evm_publicSendRawTransaction",
                             &forwarded,
                             &raw_message,
@@ -10961,7 +10750,7 @@ fn run_gateway_method(
                             gateway_error_data_for_method("eth_sendTransaction", code, &raw_message);
                         persist_gateway_eth_submit_failure_status_from_error(
                             ctx.eth_tx_index_store,
-                            Some(router),
+                            None,
                             "evm_publicSendTransaction",
                             &forwarded,
                             &raw_message,
@@ -12722,8 +12511,7 @@ fn run_gateway_method(
                 chain_id,
                 external_address: from.clone(),
             };
-            let account_id = gateway_resolve_account_subject_v1(
-                router,
+            let account_id = gateway_resolve_account_subject_mainline_v1(
                 params,
                 &persona,
                 "uca_id is required for eth_sendRawTransaction when from is not bound",
@@ -12752,20 +12540,20 @@ fn run_gateway_method(
                 param_as_u64_any_with_tx(params, &["session_expires_at", "sessionExpiresAt"]);
             let now = param_as_u64(params, "now").unwrap_or_else(now_unix_sec);
 
-            let _decision = router.route(RouteRequest {
-                uca_id: account_id.clone(),
-                persona,
+            gateway_mainline_check_route_v1(
+                &account_id,
+                &persona,
                 role,
-                protocol: ProtocolKind::Eth,
-                signature_domain: signature_domain.clone(),
+                ProtocolKind::Eth,
+                &signature_domain,
                 nonce,
-                kyc_attestation_provided: kyc.provided,
-                kyc_verified: kyc.verified,
+                kyc.provided,
+                kyc.verified,
                 wants_cross_chain_atomic,
-                tx_type4: fields.hint.tx_type4,
+                fields.hint.tx_type4,
                 session_expires_at,
                 now,
-            })?;
+            )?;
             let mut tx_ir = tx_ir_from_raw_fields_m0(&fields, &raw_tx, from.clone(), chain_id);
             tx_ir.account_id = Some(account_id.clone());
             tx_ir.fee_owner_account_id = Some(fee_owner_account_id.clone());
@@ -12999,8 +12787,7 @@ fn run_gateway_method(
                 chain_id,
                 external_address: from.clone(),
             };
-            let account_id = gateway_resolve_account_subject_v1(
-                router,
+            let account_id = gateway_resolve_account_subject_mainline_v1(
                 params,
                 &persona,
                 "uca_id is required for eth_sendTransaction when from is not bound",
@@ -13034,9 +12821,9 @@ fn run_gateway_method(
                     .map(|entry| entry.nonce.saturating_add(1))
                     .max()
                     .unwrap_or(0);
-                let pending_nonce_from_router =
-                    router.next_nonce_for_persona(&account_id, &persona).ok();
-                let pending_nonce = pending_nonce_from_router
+                let pending_nonce_from_mainline =
+                    gateway_mainline_next_nonce_v1(&account_id, &persona).ok().flatten();
+                let pending_nonce = pending_nonce_from_mainline
                     .map(|value| value.max(latest_nonce))
                     .unwrap_or(latest_nonce);
                 let pending_nonce_from_runtime = gateway_eth_pending_nonce_from_runtime(
@@ -13214,20 +13001,20 @@ fn run_gateway_method(
                 tx_type4,
             )?;
 
-            let _decision = router.route(RouteRequest {
-                uca_id: account_id.clone(),
-                persona,
+            gateway_mainline_check_route_v1(
+                &account_id,
+                &persona,
                 role,
-                protocol: ProtocolKind::Eth,
-                signature_domain: signature_domain.clone(),
+                ProtocolKind::Eth,
+                &signature_domain,
                 nonce,
-                kyc_attestation_provided: kyc.provided,
-                kyc_verified: kyc.verified,
+                kyc.provided,
+                kyc.verified,
                 wants_cross_chain_atomic,
                 tx_type4,
                 session_expires_at,
                 now,
-            })?;
+            )?;
             let tx_hash = compute_gateway_eth_tx_hash(&tx_hash_input);
             let tx_ir_type = if to.is_none() {
                 TxType::ContractDeploy

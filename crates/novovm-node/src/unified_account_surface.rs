@@ -114,6 +114,7 @@ pub fn is_mainline_unified_account_query_method(method: &str) -> bool {
             | "ua_getPolicy"
             | "ua_listBindings"
             | "ua_getNextNonce"
+            | "ua_checkRoute"
             | "ua_route"
             | "ua_registerMappedLock"
             | "ua_getMappedAsset"
@@ -469,6 +470,59 @@ fn run_unified_account_surface_rpc(
                     "chain_id": persona.chain_id,
                     "nonce": nonce,
                     "nonce_hex": format!("0x{nonce:x}"),
+                }),
+                false,
+            ))
+        }
+        "ua_checkRoute" => {
+            let account_id = parse_account_id(params)?;
+            let role = parse_account_role(params)?;
+            let protocol = parse_protocol_kind(params)?;
+            let persona = parse_persona(params, true)?;
+            let signature_domain = param_as_string_any(params, &["signature_domain"])
+                .unwrap_or_else(|| default_signature_domain(&persona, &protocol));
+            let nonce = match param_as_u64(params, "nonce") {
+                Some(nonce) => nonce,
+                None => router.next_nonce_for_persona(&account_id, &persona)?,
+            };
+            let wants_cross_chain_atomic =
+                param_as_bool(params, "wants_cross_chain_atomic").unwrap_or(false);
+            let tx_type4 = param_as_bool(params, "tx_type4").unwrap_or(false);
+            let session_expires_at = param_as_u64(params, "session_expires_at");
+            let now = param_as_u64(params, "now").unwrap_or_else(now_unix_sec);
+            let kyc_attestation_provided =
+                param_as_bool(params, "kyc_attestation_provided").unwrap_or(false);
+            let kyc_verified = param_as_bool(params, "kyc_verified").unwrap_or(false);
+            let mut probe = router.clone();
+            let decision = probe.route(RouteRequest {
+                uca_id: account_id.clone(),
+                persona,
+                role,
+                protocol,
+                signature_domain: signature_domain.clone(),
+                nonce,
+                kyc_attestation_provided,
+                kyc_verified,
+                wants_cross_chain_atomic,
+                tx_type4,
+                session_expires_at,
+                now,
+            })?;
+            Ok((
+                json!({
+                    "method": method,
+                    "accepted": true,
+                    "account_id": account_id,
+                    "uca_id": account_id,
+                    "decision": route_decision_to_json(&decision),
+                    "signature_domain": signature_domain,
+                    "nonce": nonce,
+                    "tx_type4": tx_type4,
+                    "wants_cross_chain_atomic": wants_cross_chain_atomic,
+                    "kyc_attestation_provided": kyc_attestation_provided,
+                    "kyc_verified": kyc_verified,
+                    "session_expires_at": session_expires_at,
+                    "read_only": true,
                 }),
                 false,
             ))
@@ -3477,6 +3531,7 @@ mod tests {
             "ua_getPolicy",
             "ua_listBindings",
             "ua_getNextNonce",
+            "ua_checkRoute",
             "ua_route",
             "ua_registerMappedLock",
             "ua_getMappedAsset",
@@ -4475,6 +4530,90 @@ mod tests {
             ),
         );
         assert!(err.contains("nonce rejected"));
+    }
+
+    #[test]
+    fn unified_account_gate_ua_g06b_check_route_is_read_only() {
+        let (base, store, audit) = temp_paths("g06b");
+        let evm_addr = ua_hex(0x66, 20);
+        ua_create(&base, &store, &audit, "uca-a", 10);
+        ua_bind(
+            &base, &store, &audit, "uca-a", "owner", "evm", 1, &evm_addr, 11,
+        );
+        let checked = run_query(
+            &base,
+            "ua_checkRoute",
+            params_with_paths(
+                &store,
+                &audit,
+                json!({
+                    "account_id": "uca-a",
+                    "role": "owner",
+                    "persona_type": "evm",
+                    "chain_id": 1,
+                    "external_address": evm_addr.as_str(),
+                    "protocol": "eth",
+                    "signature_domain": "evm:1",
+                    "nonce": 0,
+                    "now": 12,
+                }),
+            ),
+        );
+        assert_eq!(checked["accepted"].as_bool(), Some(true));
+        assert_eq!(checked["read_only"].as_bool(), Some(true));
+
+        let next_after_check = run_query(
+            &base,
+            "ua_getNextNonce",
+            params_with_paths(
+                &store,
+                &audit,
+                json!({
+                    "account_id": "uca-a",
+                    "persona_type": "evm",
+                    "chain_id": 1,
+                    "external_address": evm_addr.as_str(),
+                }),
+            ),
+        );
+        assert_eq!(next_after_check["nonce"].as_u64(), Some(0));
+
+        let routed = run_query(
+            &base,
+            "ua_route",
+            params_with_paths(
+                &store,
+                &audit,
+                json!({
+                    "account_id": "uca-a",
+                    "role": "owner",
+                    "persona_type": "evm",
+                    "chain_id": 1,
+                    "external_address": evm_addr.as_str(),
+                    "protocol": "eth",
+                    "signature_domain": "evm:1",
+                    "nonce": 0,
+                    "now": 13,
+                }),
+            ),
+        );
+        assert_eq!(routed["accepted"].as_bool(), Some(true));
+
+        let next_after_route = run_query(
+            &base,
+            "ua_getNextNonce",
+            params_with_paths(
+                &store,
+                &audit,
+                json!({
+                    "account_id": "uca-a",
+                    "persona_type": "evm",
+                    "chain_id": 1,
+                    "external_address": evm_addr.as_str(),
+                }),
+            ),
+        );
+        assert_eq!(next_after_route["nonce"].as_u64(), Some(1));
     }
 
     #[test]

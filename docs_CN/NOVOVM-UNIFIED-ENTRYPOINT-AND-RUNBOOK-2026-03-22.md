@@ -52,43 +52,41 @@ novovmctl up --profile prod -NoGateway
 2. `NOVOVM_EXEC_PATH=ffi_v2`  
 3. `NOVOVM_HOST_ADMISSION=disabled`  
 4. `NOVOVM_GATEWAY_SPOOL_DIR=artifacts/ingress/spool`  
-5. `NOVOVM_GATEWAY_UA_STORE_BACKEND=rocksdb`  
-6. `NOVOVM_GATEWAY_UA_STORE_PATH=artifacts/gateway/unified-account-router.rocksdb`  
-7. `NOVOVM_GATEWAY_ETH_TX_INDEX_BACKEND=rocksdb`  
-8. `NOVOVM_GATEWAY_ETH_TX_INDEX_PATH=artifacts/gateway/eth-tx-index.rocksdb`  
-9. `NOVOVM_ADAPTER_PLUGIN_UA_STORE_BACKEND=rocksdb`  
-10. `NOVOVM_ADAPTER_PLUGIN_UA_STORE_PATH=artifacts/migration/unifiedaccount/ua-plugin-self-guard-router.rocksdb`  
-11. `NOVOVM_ADAPTER_PLUGIN_UA_AUDIT_BACKEND=rocksdb`  
-12. `NOVOVM_ADAPTER_PLUGIN_UA_AUDIT_PATH=artifacts/migration/unifiedaccount/ua-plugin-self-guard-audit.rocksdb`  
-13. `NOVOVM_ALLOW_NON_PROD_PLUGIN_BACKEND=0`  
-14. `NOVOVM_OVERLAY_NODE_ID=<host>`  
-15. `NOVOVM_OVERLAY_SESSION_ID=sess-<unix_ms>`  
-16. `NOVOVM_OVERLAY_ROUTE_MODE=secure|fast`（`prod` 默认 `secure`，其他 profile 默认 `fast`）  
-17. `NOVOVM_OVERLAY_ROUTE_REGION=global`  
-18. `NOVOVM_OVERLAY_ROUTE_RELAY_BUCKETS`（`secure` 默认 `8`，`fast` 默认 `1`）  
-19. `NOVOVM_OVERLAY_ROUTE_RELAY_SET_SIZE`（`secure` 默认 `3`，`fast` 默认 `1`）  
-20. `NOVOVM_OVERLAY_ROUTE_RELAY_ROTATE_SECONDS`（`secure` 默认 `60`，`fast` 默认 `300`）  
-21. `NOVOVM_OVERLAY_ROUTE_RELAY_CANDIDATES`（可选，逗号/分号分隔 relay_id；配置后 `overlay_route_relay_id` 优先从候选集中选取）  
-22. `overlay.route.runtime.json` 模板字段：`relay_candidates_by_region`（按区域候选集覆盖）  
-23. `overlay.route.runtime.json` 模板字段：`relay_candidates_by_role`（按角色候选集覆盖）  
-24. `-OverlayRouteRuntimeFile`（默认 `config/runtime/lifecycle/overlay.route.runtime.json`）  
-25. `-OverlayRouteRuntimeProfile`（默认跟随 `-Profile`）  
-26. `-OverlayRouteRelayCandidates`（可选，计划级/命令级显式下发候选集，优先于模板）  
-27. `-OverlayRouteRelayCandidatesByRegion`（可选，JSON 映射：按 region 选择候选集）  
-28. `-OverlayRouteRelayCandidatesByRole`（可选，JSON 映射：按 role 选择候选集）  
-29. `-OverlayRouteRelayDirectoryFile`（可选，真实中继目录文件）  
-30. `-OverlayRouteRelayHealthMin`（可选，健康阈值，范围 `0..1`）  
-31. `-OverlayRouteRelayPenaltyStateFile`（可选，惩罚状态文件）  
-32. `-OverlayRouteRelayPenaltyDelta`（可选，JSON 惩罚增量映射）  
-33. `-OverlayRouteRelayPenaltyRecoverPerRun`（可选，每次运行恢复步长，范围 `0..1`）  
-34. `-EnableAutoProfile`（可选，启用 Rust `novovm-overlay-auto-profile` 自动选择 `prod-cn/prod-eu/prod-us`）  
-35. `-AutoProfileStateFile`（可选，自动 profile 状态文件）  
-36. `-AutoProfileProfiles`（可选，候选 profile 列表，逗号/分号分隔）  
-37. `-AutoProfileMinHoldSeconds`（可选，最小持有秒数）  
-38. `-AutoProfileSwitchMargin`（可选，切换分差阈值，范围 `0..1`）  
-39. `-AutoProfileSwitchbackCooldownSeconds`（可选，回切冷却秒数）  
-40. `-AutoProfileRecheckSeconds`（可选，决策重算周期秒数）  
-41. `-AutoProfileBinaryPath`（可选，Rust selector 二进制路径；未指定时优先 `target/release/novovm-overlay-auto-profile(.exe)`，否则回退 `cargo run`）  
+5. `NOVOVM_GATEWAY_ETH_TX_INDEX_BACKEND=rocksdb`  
+6. `NOVOVM_GATEWAY_ETH_TX_INDEX_PATH=artifacts/gateway/eth-tx-index.rocksdb`  
+7. `NOVOVM_ADAPTER_PLUGIN_UA_STORE_BACKEND=rocksdb`  
+8. `NOVOVM_ADAPTER_PLUGIN_UA_STORE_PATH=artifacts/migration/unifiedaccount/ua-plugin-self-guard-router.rocksdb`  
+9. `NOVOVM_ADAPTER_PLUGIN_UA_AUDIT_BACKEND=rocksdb`  
+10. `NOVOVM_ADAPTER_PLUGIN_UA_AUDIT_PATH=artifacts/migration/unifiedaccount/ua-plugin-self-guard-audit.rocksdb`  
+11. `NOVOVM_ALLOW_NON_PROD_PLUGIN_BACKEND=0`  
+12. `NOVOVM_OVERLAY_NODE_ID=<host>`  
+13. `NOVOVM_OVERLAY_SESSION_ID=sess-<unix_ms>`  
+14. `NOVOVM_OVERLAY_ROUTE_MODE=secure|fast`（`prod` 默认 `secure`，其他 profile 默认 `fast`）  
+15. `NOVOVM_OVERLAY_ROUTE_REGION=global`  
+16. `NOVOVM_OVERLAY_ROUTE_RELAY_BUCKETS`（`secure` 默认 `8`，`fast` 默认 `1`）  
+17. `NOVOVM_OVERLAY_ROUTE_RELAY_SET_SIZE`（`secure` 默认 `3`，`fast` 默认 `1`）  
+18. `NOVOVM_OVERLAY_ROUTE_RELAY_ROTATE_SECONDS`（`secure` 默认 `60`，`fast` 默认 `300`）  
+19. `NOVOVM_OVERLAY_ROUTE_RELAY_CANDIDATES`（可选，逗号/分号分隔 relay_id；配置后 `overlay_route_relay_id` 优先从候选集中选取）  
+20. `overlay.route.runtime.json` 模板字段：`relay_candidates_by_region`（按区域候选集覆盖）  
+21. `overlay.route.runtime.json` 模板字段：`relay_candidates_by_role`（按角色候选集覆盖）  
+22. `-OverlayRouteRuntimeFile`（默认 `config/runtime/lifecycle/overlay.route.runtime.json`）  
+23. `-OverlayRouteRuntimeProfile`（默认跟随 `-Profile`）  
+24. `-OverlayRouteRelayCandidates`（可选，计划级/命令级显式下发候选集，优先于模板）  
+25. `-OverlayRouteRelayCandidatesByRegion`（可选，JSON 映射：按 region 选择候选集）  
+26. `-OverlayRouteRelayCandidatesByRole`（可选，JSON 映射：按 role 选择候选集）  
+27. `-OverlayRouteRelayDirectoryFile`（可选，真实中继目录文件）  
+28. `-OverlayRouteRelayHealthMin`（可选，健康阈值，范围 `0..1`）  
+29. `-OverlayRouteRelayPenaltyStateFile`（可选，惩罚状态文件）  
+30. `-OverlayRouteRelayPenaltyDelta`（可选，JSON 惩罚增量映射）  
+31. `-OverlayRouteRelayPenaltyRecoverPerRun`（可选，每次运行恢复步长，范围 `0..1`）  
+32. `-EnableAutoProfile`（可选，启用 Rust `novovm-overlay-auto-profile` 自动选择 `prod-cn/prod-eu/prod-us`）  
+33. `-AutoProfileStateFile`（可选，自动 profile 状态文件）  
+34. `-AutoProfileProfiles`（可选，候选 profile 列表，逗号/分号分隔）  
+35. `-AutoProfileMinHoldSeconds`（可选，最小持有秒数）  
+36. `-AutoProfileSwitchMargin`（可选，切换分差阈值，范围 `0..1`）  
+37. `-AutoProfileSwitchbackCooldownSeconds`（可选，回切冷却秒数）  
+38. `-AutoProfileRecheckSeconds`（可选，决策重算周期秒数）  
+39. `-AutoProfileBinaryPath`（可选，Rust selector 二进制路径；未指定时优先 `target/release/novovm-overlay-auto-profile(.exe)`，否则回退 `cargo run`）  
 
 ## 5. 运行边界
 
@@ -99,7 +97,7 @@ novovmctl up --profile prod -NoGateway
 ## 6. 生产硬约束（`-Profile prod` 自动强制）
 
 1. 强制 `NOVOVM_NODE_MODE=full`、`NOVOVM_EXEC_PATH=ffi_v2`、`NOVOVM_HOST_ADMISSION=disabled`。  
-2. 强制 `NOVOVM_GATEWAY_UA_STORE_BACKEND=rocksdb`，并关闭 `NOVOVM_ALLOW_NON_PROD_UA_BACKEND`。  
+2. gateway 不再拥有统一账户 store；统一账户状态只允许来自 `novovm-node -> mainline_query -> unified_account_surface`。  
 3. 强制 `NOVOVM_GATEWAY_ETH_TX_INDEX_BACKEND=rocksdb`，并关闭 `NOVOVM_ALLOW_NON_PROD_GATEWAY_BACKEND`。  
 4. 强制插件 UA store/audit 后端为 `rocksdb`，并关闭 `NOVOVM_ALLOW_NON_PROD_PLUGIN_BACKEND`。  
 5. 生产默认 `NOVOVM_OVERLAY_ROUTE_MODE=secure`（可显式传 `-OverlayRouteMode fast` 切换快速模式）。  

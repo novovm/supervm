@@ -14,9 +14,11 @@
 
 默认覆盖路径（rocksdb）：
 
-1. `artifacts/gateway/unified-account-router.rocksdb`
+1. `novovm-node -> mainline_query -> unified_account_surface` 对应的主线 UA store
 2. `artifacts/migration/unifiedaccount/ua-plugin-self-guard-router.rocksdb`
 3. `artifacts/migration/unifiedaccount/ua-plugin-self-guard-audit.rocksdb`
+
+说明：`artifacts/gateway/unified-account-router.rocksdb` 已退役；gateway 不再拥有统一账户 store。
 
 ### 2.1 备份
 
