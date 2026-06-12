@@ -23,7 +23,7 @@
 
 - product tag: `evm-product-v1`
 - product implementation commit: `8d99321 Add EVM JSON-RPC product smoke`
-- signoff document commit: `af62e9e Document EVM product v1 signoff`
+- product tag target: 包含本签收文档的提交
 - prerequisite tag: `evm-mainnet-long-sync-v1`
 - prerequisite commit: `d48846475bb42abdc12ee5cbd179f5f7bc756065`
 
