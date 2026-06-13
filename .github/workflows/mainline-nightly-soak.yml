@@ -194,6 +194,14 @@ jobs:
           $env:NOVOVM_NATIVE_PIPELINE_FAULT_REPORT_PATH = "artifacts/native-pipeline/native-pipeline-network-fault-injection-report.json"
           cargo run -p novovm-node --bin supervm-native-pipeline-network-fault-gate
 
+      - name: Run native pipeline pending crash recovery gate
+        shell: pwsh
+        run: |
+          Remove-Item Env:CARGO_TARGET_DIR -ErrorAction SilentlyContinue
+          cargo build -p novovm-node --bins
+          $env:NOVOVM_NATIVE_PIPELINE_PENDING_CRASH_REPORT_PATH = "artifacts/native-pipeline/native-pipeline-pending-crash-recovery-report.json"
+          cargo run -p novovm-node --bin supervm-native-pipeline-pending-crash-recovery-gate
+
       - name: Generate duty report from nightly artifacts
         shell: pwsh
         run: |
@@ -227,4 +235,5 @@ jobs:
             artifacts/native-pipeline/native-pipeline-production-soak-30min-summary.json
             artifacts/native-pipeline/native-pipeline-rocksdb-recovery-report.json
             artifacts/native-pipeline/native-pipeline-network-fault-injection-report.json
+            artifacts/native-pipeline/native-pipeline-pending-crash-recovery-report.json
           if-no-files-found: warn

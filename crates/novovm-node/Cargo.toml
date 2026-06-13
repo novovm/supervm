@@ -84,3 +84,7 @@ path = "src/bin/supervm-native-pipeline-rocksdb-recovery-gate.rs"
 [[bin]]
 name = "supervm-native-pipeline-network-fault-gate"
 path = "src/bin/supervm-native-pipeline-network-fault-gate.rs"
+
+[[bin]]
+name = "supervm-native-pipeline-pending-crash-recovery-gate"
+path = "src/bin/supervm-native-pipeline-pending-crash-recovery-gate.rs"

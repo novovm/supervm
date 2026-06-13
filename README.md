@@ -369,6 +369,16 @@ cargo run -p novovm-node --bin supervm-native-pipeline-network-fault-gate
 
 The fault gate starts a receiver `novovm-node` in `native_execution_pipeline` mode, injects UDP packet loss, duplicate packets, delay, and reorder from the gate process, and verifies receiver AOEM/canonical convergence. It requires `duplicate_canonical_included = 0`, semantic head recovery, receipt index consistency, and a drained pending queue under the configured unique-loss budget.
 
+Pending crash recovery gate:
+
+```powershell
+cargo build -p novovm-node --bins
+$env:NOVOVM_NATIVE_PIPELINE_PENDING_CRASH_REPORT_PATH="artifacts/native-pipeline/native-pipeline-pending-crash-recovery-report.json"
+cargo run -p novovm-node --bin supervm-native-pipeline-pending-crash-recovery-gate
+```
+
+The pending crash gate signs the current pending queue policy honestly. `pending_policy = volatile`: transactions that crash before AOEM tick / dirty commit are not recovered from RocksDB. Already canonical included transactions are recovered through the native execution store and must not execute again after restart. The gate verifies partial-commit restart protection, duplicate receipt protection, semantic head recovery, receipt index consistency, and keeps canonical body/head recovery out of scope.
+
 Paced fanout network ingress gate:
 
 ```powershell

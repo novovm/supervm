@@ -85,8 +85,6 @@ cargo run -p novovm-node --bin supervm-native-pipeline-production-soak
 - `native_store_rocksdb_enabled = true`
 - `native_store_transactional_commit = true`
 
-## 5. 未完成项
-
 ## 5. 第二刀：RocksDB Recovery Gate
 
 已新增独立 gate：
@@ -169,11 +167,61 @@ schema = novovm-native-pipeline-network-fault-injection-report/v1
 - 不让 Rust host 成为执行并发调度器。
 - 不新增账户/资产真相源。
 
-## 7. 未完成项
+## 7. 第四刀：Pending Queue Crash Recovery Gate
+
+已新增独立 gate：
+
+```text
+cargo run -p novovm-node --bin supervm-native-pipeline-pending-crash-recovery-gate
+```
+
+该 gate 只验证 pending queue 崩溃语义，不修改 lifecycle：
+
+- 当前 `network_runtime_native_pending` 是进程内 volatile runtime。
+- crash 前只进入 pending、尚未 AOEM tick / dirty commit 的交易不保证恢复。
+- 报告必须明确 `pending_policy = volatile`。
+- 报告必须明确 `volatile_pending_not_recovered = true`。
+- 已经 AOEM 执行、proof、dirty commit、canonical included 的交易通过 RocksDB native execution store 恢复。
+- 重启后已 included 交易不得重复 AOEM 执行。
+- 重启后不得生成重复 receipt。
+- receipt/state 仍只能由 AOEM tick 生命周期产出。
+
+默认场景：
+
+```text
+crash_before_aoem_tick:
+  pending_submitted_count = 16
+  pending_policy = volatile
+  pending_lost_count = 16
+
+crash_after_partial_commit:
+  submitted = 32
+  canonical_before_restart = 8
+  pending_lost_count = 24
+  duplicate_canonical_after_restart = 0
+  duplicate_receipt_after_restart = 0
+```
+
+报告：
+
+```text
+artifacts/native-pipeline/native-pipeline-pending-crash-recovery-report.json
+schema = novovm-native-pipeline-pending-crash-recovery-report/v1
+```
+
+本刀边界：
+
+- 不实现 persistent pending queue。
+- 不伪装 crash 前 pending 可恢复。
+- 不声明 canonical body/head persistence。
+- 不修改 pending-only 产品入口。
+- 不绕过 AOEM tick。
+- 不新增账户/资产真相源。
+
+## 8. 未完成项
 
 以下仍待后续刀完成：
 
-- Pending queue crash recovery gate。
 - Remote reentry dedup gate。
 - Cross-machine UDP soak：sender host / receiver host / env-config peer address。
 - Persistent canonical body/head recovery gate。
