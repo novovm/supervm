@@ -467,6 +467,7 @@ pub fn is_mainline_native_execution_query_method(method: &str) -> bool {
             | "nov_getProtocolClearingPrice"
             | "nov_getFeeOracleRates"
             | "nov_getPrivacyCapabilityStatus"
+            | "nov_getPrivacyAuditPolicy"
             | "nov_verifyPrivacyDisclosureReceipt"
             | "nov_getM2BridgeRiskStatus"
             | "nov_runMappedAssetAutoHeal"
@@ -973,6 +974,57 @@ fn run_mainline_privacy_capability_status_v1(params: &Value) -> Result<Value> {
     }))
 }
 
+fn run_mainline_privacy_audit_policy_v1(_params: &Value) -> Result<Value> {
+    Ok(json!({
+        "method": "nov_getPrivacyAuditPolicy",
+        "found": true,
+        "version": "v1",
+        "read_only": true,
+        "truth_source": "mainline_unified_account_surface/native_execution_store",
+        "gateway_bypass_allowed": false,
+        "user_m2_detail_default": "redacted",
+        "leakage_policy": "fail_closed_redaction",
+        "protected_user_m2_query_methods": [
+            "nov_getAssetBalance",
+            "account_balance",
+            "account_assets"
+        ],
+        "disclosure_receipt_required_for_authorized_m2_detail": true,
+        "disclosure_receipt_field": "privacy_disclosure",
+        "receipt_result_commitment_required": true,
+        "receipt_verification_method": "nov_verifyPrivacyDisclosureReceipt",
+        "privacy_capability_status_method": "nov_getPrivacyCapabilityStatus",
+        "proof_generation_performed": false,
+        "proof_system": "none",
+        "proof_upgrade_path": ["ringct", "zk"],
+        "mldsa_role": "pq_signature_only",
+        "public_system_query_classes": [
+            "treasury_reserve",
+            "m2_liability",
+            "reserve_proof",
+            "protocol_clearing_price",
+            "risk_status",
+            "governance_policy"
+        ],
+        "policy": {
+            "nov_is_m0_m1": true,
+            "native_nasset_is_m2": true,
+            "no_second_ledger": true,
+            "gateway_role": "evm_rpc_adapter_only",
+            "wallet_dapp_site_scope": false,
+            "ringct_zk_can_upgrade_disclosure_proofs": true,
+            "mldsa_is_not_privacy_system": true
+        },
+        "non_claims": [
+            "not_encrypted_balance_ledger",
+            "not_complete_ringct_private_transaction",
+            "not_complete_zk_disclosure_proof",
+            "not_open_public_balance_query",
+            "not_wallet_dapp_site_scope"
+        ],
+    }))
+}
+
 fn mainline_hex_eq_v1(left: &str, right: &str) -> bool {
     left.trim().eq_ignore_ascii_case(right.trim())
 }
@@ -1433,6 +1485,7 @@ fn run_mainline_native_execution_query(method: &str, params: &Value) -> Result<V
             }))
         }
         "nov_getPrivacyCapabilityStatus" => run_mainline_privacy_capability_status_v1(params),
+        "nov_getPrivacyAuditPolicy" => run_mainline_privacy_audit_policy_v1(params),
         "nov_verifyPrivacyDisclosureReceipt" => {
             run_mainline_verify_privacy_disclosure_receipt_v1(params)
         }
@@ -10900,6 +10953,7 @@ mod tests {
             "nov_getProtocolClearingPrice",
             "nov_getFeeOracleRates",
             "nov_getPrivacyCapabilityStatus",
+            "nov_getPrivacyAuditPolicy",
             "nov_verifyPrivacyDisclosureReceipt",
             "nov_getM2BridgeRiskStatus",
             "nov_runMappedAssetAutoHeal",
@@ -11008,6 +11062,7 @@ mod tests {
             ("nov_getProtocolClearingPrice", json!({"asset": "USDT"})),
             ("nov_getFeeOracleRates", json!({})),
             ("nov_getPrivacyCapabilityStatus", json!({})),
+            ("nov_getPrivacyAuditPolicy", json!({})),
             (
                 "nov_verifyPrivacyDisclosureReceipt",
                 json!({
@@ -11151,6 +11206,75 @@ mod tests {
                 .and_then(Value::as_bool),
             Some(false)
         );
+    }
+
+    #[test]
+    fn privacy_audit_policy_locks_m2_query_surface() {
+        let bogus_canonical_store =
+            std::path::Path::new("this-canonical-store-does-not-exist.json");
+        let out = run_mainline_query_from_path(
+            bogus_canonical_store,
+            "nov_getPrivacyAuditPolicy",
+            &json!({}),
+        )
+        .expect("privacy audit policy should not require stores");
+
+        assert_eq!(
+            out.get("method").and_then(Value::as_str),
+            Some("nov_getPrivacyAuditPolicy")
+        );
+        assert_eq!(out.get("found").and_then(Value::as_bool), Some(true));
+        assert_eq!(out.get("read_only").and_then(Value::as_bool), Some(true));
+        assert_eq!(
+            out.get("gateway_bypass_allowed").and_then(Value::as_bool),
+            Some(false)
+        );
+        assert_eq!(
+            out.get("user_m2_detail_default").and_then(Value::as_str),
+            Some("redacted")
+        );
+        assert_eq!(
+            out.get("disclosure_receipt_required_for_authorized_m2_detail")
+                .and_then(Value::as_bool),
+            Some(true)
+        );
+        assert_eq!(
+            out.get("receipt_verification_method")
+                .and_then(Value::as_str),
+            Some("nov_verifyPrivacyDisclosureReceipt")
+        );
+        assert_eq!(
+            out.get("proof_generation_performed")
+                .and_then(Value::as_bool),
+            Some(false)
+        );
+        assert_eq!(out.get("proof_system").and_then(Value::as_str), Some("none"));
+        assert_eq!(
+            out.get("mldsa_role").and_then(Value::as_str),
+            Some("pq_signature_only")
+        );
+        assert_eq!(
+            out.pointer("/policy/no_second_ledger")
+                .and_then(Value::as_bool),
+            Some(true)
+        );
+        assert_eq!(
+            out.pointer("/policy/mldsa_is_not_privacy_system")
+                .and_then(Value::as_bool),
+            Some(true)
+        );
+        let protected_methods = out
+            .get("protected_user_m2_query_methods")
+            .and_then(Value::as_array)
+            .expect("protected method list should exist");
+        for method in ["nov_getAssetBalance", "account_balance", "account_assets"] {
+            assert!(
+                protected_methods
+                    .iter()
+                    .any(|value| value.as_str() == Some(method)),
+                "privacy audit policy should protect {method}"
+            );
+        }
     }
 
     #[test]
