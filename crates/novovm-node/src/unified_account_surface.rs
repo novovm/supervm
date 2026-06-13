@@ -651,6 +651,8 @@ fn run_unified_account_surface_rpc(
             for signer in &disabled_signers {
                 validate_mapped_header_attestation_signer_v1(signer)?;
             }
+            let disabled_signer_reasons =
+                parse_mapped_header_attestation_disabled_reasons_v1(params, &disabled_signers)?;
             if required && allowed_signers.is_empty() {
                 bail!(
                     "ERR_MAPPED_HEADER_ATTESTATION_POLICY_INVALID: required policy needs at least one allowed attestation signer"
@@ -680,6 +682,9 @@ fn run_unified_account_surface_rpc(
             store
                 .module_state
                 .mapped_header_attestation_disabled_signers = disabled_signers;
+            store
+                .module_state
+                .mapped_header_attestation_disabled_signer_reasons = disabled_signer_reasons;
             store.module_state.mapped_header_attestation_min_quorum = min_quorum;
             store.module_state.mapped_header_attestation_policy_source = source;
             store.module_state.mapped_header_attestation_policy_version = version;
@@ -2335,6 +2340,7 @@ fn mapped_header_attestation_policy_to_json_v1(
         "required": store.module_state.mapped_header_attestation_required,
         "allowed_signers": store.module_state.mapped_header_attestation_allowed_signers,
         "disabled_signers": store.module_state.mapped_header_attestation_disabled_signers,
+        "disabled_signer_reasons": store.module_state.mapped_header_attestation_disabled_signer_reasons,
         "active_allowed_signers": active_allowed_signers,
         "min_attestation_quorum": store.module_state.mapped_header_attestation_min_quorum,
         "policy_source": store.module_state.mapped_header_attestation_policy_source,
@@ -2384,6 +2390,58 @@ fn validate_mapped_header_attestation_signer_v1(signer: &str) -> Result<()> {
         )
     })?;
     Ok(())
+}
+
+fn parse_mapped_header_attestation_disabled_reasons_v1(
+    params: &Value,
+    disabled_signers: &[String],
+) -> Result<BTreeMap<String, String>> {
+    let default_reason = param_as_string_any(params, &["disable_reason", "slashing_reason"])
+        .unwrap_or_else(|| "governance_disabled".to_string());
+    let mut out = BTreeMap::new();
+    if let Some(value) = param_value_any(
+        params,
+        &[
+            "disabled_signer_reasons",
+            "disabled_attestation_signer_reasons",
+            "slashing_reasons",
+        ],
+    ) {
+        let Value::Object(map) = value else {
+            bail!(
+                "ERR_MAPPED_HEADER_ATTESTATION_POLICY_INVALID: disabled_signer_reasons must be object"
+            );
+        };
+        for (raw_signer, value) in map {
+            let signer = normalize_mapped_header_attestation_signer_v1(raw_signer);
+            validate_mapped_header_attestation_signer_v1(signer.as_str())?;
+            if !disabled_signers.contains(&signer) {
+                bail!(
+                    "ERR_MAPPED_HEADER_ATTESTATION_POLICY_INVALID: disabled_signer_reasons contains non-disabled signer {}",
+                    signer
+                );
+            }
+            let Some(raw_reason) = value.as_str() else {
+                bail!(
+                    "ERR_MAPPED_HEADER_ATTESTATION_POLICY_INVALID: disabled_signer_reasons[{}] must be string",
+                    signer
+                );
+            };
+            let reason = raw_reason.trim();
+            if reason.is_empty() {
+                bail!(
+                    "ERR_MAPPED_HEADER_ATTESTATION_POLICY_INVALID: disabled_signer_reasons[{}] must not be empty",
+                    signer
+                );
+            }
+            out.insert(signer, reason.to_string());
+        }
+    }
+    for signer in disabled_signers {
+        out.entry(signer.clone())
+            .or_insert_with(|| default_reason.clone());
+    }
+    Ok(out)
 }
 
 fn mapped_header_attestation_items_v1(params: &Value) -> Result<Vec<(String, Vec<u8>)>> {
@@ -7161,6 +7219,11 @@ mod tests {
         let signer_b_pub = signer_b.verifying_key().to_bytes();
         let signer_a_ref = to_hex_lower(&signer_a_pub);
         let signer_b_ref = to_hex_lower(&signer_b_pub);
+        let mut disabled_reasons = serde_json::Map::new();
+        disabled_reasons.insert(
+            signer_b_ref.clone(),
+            Value::String("reorg_mismatch".to_string()),
+        );
 
         let policy = run_query(
             &base,
@@ -7173,6 +7236,7 @@ mod tests {
                     "required": true,
                     "allowed_signers": [signer_a_ref, signer_b_ref],
                     "disabled_signers": [signer_b_ref],
+                    "disabled_signer_reasons": Value::Object(disabled_reasons),
                     "min_attestation_quorum": 2u64,
                     "policy_source": "governance_test",
                     "policy_version": 11u64,
@@ -7188,6 +7252,10 @@ mod tests {
                 .as_array()
                 .map(Vec::len),
             Some(1)
+        );
+        assert_eq!(
+            policy["policy"]["disabled_signer_reasons"][signer_b_ref.as_str()].as_str(),
+            Some("reorg_mismatch")
         );
 
         let mut blocked_map =
@@ -7244,6 +7312,7 @@ mod tests {
                     "required": true,
                     "allowed_signers": [signer_a_ref, signer_b_ref],
                     "disabled_signers": [],
+                    "disabled_signer_reasons": {},
                     "min_attestation_quorum": 2u64,
                     "policy_source": "governance_test",
                     "policy_version": 12u64,
