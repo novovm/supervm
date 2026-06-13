@@ -574,6 +574,18 @@ pub struct NovNativeExecutionModuleStateV1 {
     #[serde(default)]
     pub mapped_header_source_policy_updated_unix_ms: u128,
     #[serde(default)]
+    pub mapped_header_attestation_required: bool,
+    #[serde(default)]
+    pub mapped_header_attestation_allowed_signers: Vec<String>,
+    #[serde(default)]
+    pub mapped_header_attestation_min_quorum: u32,
+    #[serde(default)]
+    pub mapped_header_attestation_policy_source: String,
+    #[serde(default)]
+    pub mapped_header_attestation_policy_version: u32,
+    #[serde(default)]
+    pub mapped_header_attestation_policy_updated_unix_ms: u128,
+    #[serde(default)]
     pub treasury_reserve_share_bps: u32,
     #[serde(default)]
     pub treasury_fee_share_bps: u32,
@@ -688,6 +700,12 @@ impl Default for NovNativeExecutionModuleStateV1 {
             mapped_header_source_policy_source: "config_path".to_string(),
             mapped_header_source_policy_version: 1,
             mapped_header_source_policy_updated_unix_ms: 0,
+            mapped_header_attestation_required: false,
+            mapped_header_attestation_allowed_signers: Vec::new(),
+            mapped_header_attestation_min_quorum: 1,
+            mapped_header_attestation_policy_source: "config_path".to_string(),
+            mapped_header_attestation_policy_version: 1,
+            mapped_header_attestation_policy_updated_unix_ms: 0,
             treasury_reserve_share_bps: 0,
             treasury_fee_share_bps: 0,
             treasury_risk_buffer_share_bps: 0,

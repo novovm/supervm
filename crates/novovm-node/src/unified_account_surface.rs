@@ -136,6 +136,8 @@ pub fn is_mainline_unified_account_query_method(method: &str) -> bool {
             | "ua_autoHealMappedAssets"
             | "ua_setMappedHeaderSourcePolicy"
             | "ua_getMappedHeaderSourcePolicy"
+            | "ua_setMappedHeaderAttestationPolicy"
+            | "ua_getMappedHeaderAttestationPolicy"
             | "ua_releaseMappedLock"
             | "account_balance"
             | "account_assets"
@@ -602,6 +604,86 @@ fn run_unified_account_surface_rpc(
                 json!({
                     "method": method,
                     "policy": mapped_header_source_policy_to_json_v1(&store),
+                    "store_path": store_path.display().to_string(),
+                }),
+                false,
+            ))
+        }
+        "ua_setMappedHeaderAttestationPolicy" => {
+            let required = param_as_bool(params, "required")
+                .or_else(|| param_as_bool(params, "mapped_header_attestation_required"))
+                .unwrap_or(true);
+            let allowed_signers = param_as_string_list_any(
+                params,
+                &[
+                    "allowed_signers",
+                    "attestation_signers",
+                    "finality_source_signers",
+                ],
+            )
+            .unwrap_or_default()
+            .into_iter()
+            .map(|raw| normalize_mapped_header_attestation_signer_v1(raw.as_str()))
+            .filter(|raw| !raw.is_empty())
+            .collect::<Vec<_>>();
+            let mut allowed_signers = allowed_signers;
+            allowed_signers.sort();
+            allowed_signers.dedup();
+            for signer in &allowed_signers {
+                validate_mapped_header_attestation_signer_v1(signer)?;
+            }
+            if required && allowed_signers.is_empty() {
+                bail!(
+                    "ERR_MAPPED_HEADER_ATTESTATION_POLICY_INVALID: required policy needs at least one allowed attestation signer"
+                );
+            }
+            let min_quorum = param_as_u64(params, "min_attestation_quorum")
+                .or_else(|| param_as_u64(params, "attestation_quorum"))
+                .unwrap_or(1)
+                .clamp(1, u64::from(u32::MAX)) as u32;
+            if required && allowed_signers.len() < min_quorum as usize {
+                bail!(
+                    "ERR_MAPPED_HEADER_ATTESTATION_POLICY_INVALID: allowed attestation signer count {} is below min_attestation_quorum {}",
+                    allowed_signers.len(),
+                    min_quorum
+                );
+            }
+            let source = param_as_string_any(params, &["source", "policy_source"])
+                .unwrap_or_else(|| "governance_path".to_string());
+            let version = param_as_u64(params, "policy_version")
+                .unwrap_or(1)
+                .clamp(1, u64::from(u32::MAX)) as u32;
+            let now = param_as_u64(params, "now").unwrap_or_else(now_unix_sec);
+            let store_path = native_execution_store_path_from_params_or_env_v1(params);
+            let mut store = load_nov_native_execution_store_v1(store_path.as_path())?;
+            store.module_state.mapped_header_attestation_required = required;
+            store.module_state.mapped_header_attestation_allowed_signers = allowed_signers;
+            store.module_state.mapped_header_attestation_min_quorum = min_quorum;
+            store.module_state.mapped_header_attestation_policy_source = source;
+            store.module_state.mapped_header_attestation_policy_version = version;
+            store
+                .module_state
+                .mapped_header_attestation_policy_updated_unix_ms =
+                u128::from(now).saturating_mul(1000);
+            store.last_updated_unix_ms = u128::from(now).saturating_mul(1000);
+            save_nov_native_execution_store_v1(store_path.as_path(), &store)?;
+            Ok((
+                json!({
+                    "method": method,
+                    "updated": true,
+                    "policy": mapped_header_attestation_policy_to_json_v1(&store),
+                    "store_path": store_path.display().to_string(),
+                }),
+                true,
+            ))
+        }
+        "ua_getMappedHeaderAttestationPolicy" => {
+            let store_path = native_execution_store_path_from_params_or_env_v1(params);
+            let store = load_nov_native_execution_store_v1(store_path.as_path())?;
+            Ok((
+                json!({
+                    "method": method,
+                    "policy": mapped_header_attestation_policy_to_json_v1(&store),
                     "store_path": store_path.display().to_string(),
                 }),
                 false,
@@ -2212,6 +2294,183 @@ fn require_mapped_header_source_policy_v1(
     }))
 }
 
+fn mapped_header_attestation_policy_to_json_v1(
+    store: &crate::tx_ingress::NovNativeExecutionStoreV1,
+) -> Value {
+    json!({
+        "required": store.module_state.mapped_header_attestation_required,
+        "allowed_signers": store.module_state.mapped_header_attestation_allowed_signers,
+        "min_attestation_quorum": store.module_state.mapped_header_attestation_min_quorum,
+        "policy_source": store.module_state.mapped_header_attestation_policy_source,
+        "policy_version": store.module_state.mapped_header_attestation_policy_version,
+        "updated_unix_ms": store.module_state.mapped_header_attestation_policy_updated_unix_ms,
+        "note": "governed ed25519 header attestation quorum",
+    })
+}
+
+fn normalize_mapped_header_attestation_signer_v1(raw: &str) -> String {
+    let lowered = raw.trim().to_ascii_lowercase();
+    lowered
+        .strip_prefix("0x")
+        .unwrap_or(lowered.as_str())
+        .to_string()
+}
+
+fn mapped_header_attestation_message_v1(
+    chain_id: u64,
+    block_number: u64,
+    block_hash: [u8; 32],
+    receipts_root: [u8; 32],
+) -> Vec<u8> {
+    let mut out = Vec::new();
+    out.extend_from_slice(b"novovm-mapped-header-attestation-v1");
+    out.push(0);
+    out.extend_from_slice(&chain_id.to_be_bytes());
+    out.push(0);
+    out.extend_from_slice(&block_number.to_be_bytes());
+    out.push(0);
+    out.extend_from_slice(&block_hash);
+    out.push(0);
+    out.extend_from_slice(&receipts_root);
+    out
+}
+
+fn validate_mapped_header_attestation_signer_v1(signer: &str) -> Result<()> {
+    let public_key = decode_hex_bytes(signer, "mapped_header_attestation_allowed_signer")?;
+    let public_key: [u8; 32] = public_key.try_into().map_err(|_| {
+        anyhow::anyhow!(
+            "ERR_MAPPED_HEADER_ATTESTATION_POLICY_INVALID: ed25519 signer public key must be 32 bytes"
+        )
+    })?;
+    Ed25519VerifyingKey::from_bytes(&public_key).map_err(|err| {
+        anyhow::anyhow!(
+            "ERR_MAPPED_HEADER_ATTESTATION_POLICY_INVALID: invalid ed25519 public key: {err}"
+        )
+    })?;
+    Ok(())
+}
+
+fn mapped_header_attestation_items_v1(params: &Value) -> Result<Vec<(String, Vec<u8>)>> {
+    let Some(value) = param_value_any(params, &["header_attestations", "attestations"]) else {
+        return Ok(Vec::new());
+    };
+    let Value::Array(items) = value else {
+        bail!("ERR_MAPPED_HEADER_ATTESTATION_INVALID: header_attestations must be array");
+    };
+    items
+        .iter()
+        .enumerate()
+        .map(|(idx, item)| {
+            let signer = item
+                .get("signer")
+                .or_else(|| item.get("public_key"))
+                .and_then(Value::as_str)
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "ERR_MAPPED_HEADER_ATTESTATION_INVALID: header_attestations[{idx}].signer is required"
+                    )
+                })?;
+            let signature = item
+                .get("signature")
+                .and_then(Value::as_str)
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "ERR_MAPPED_HEADER_ATTESTATION_INVALID: header_attestations[{idx}].signature is required"
+                    )
+                })?;
+            Ok((
+                normalize_mapped_header_attestation_signer_v1(signer),
+                decode_hex_bytes(
+                    signature,
+                    &format!("header_attestations[{idx}].signature"),
+                )?,
+            ))
+        })
+        .collect()
+}
+
+fn require_mapped_header_attestation_policy_v1(
+    params: &Value,
+    chain_id: u64,
+    block_number: u64,
+    block_hash: [u8; 32],
+    receipts_root: [u8; 32],
+) -> Result<Value> {
+    let store_path = native_execution_store_path_from_params_or_env_v1(params);
+    let store = load_nov_native_execution_store_v1(store_path.as_path())?;
+    let policy = mapped_header_attestation_policy_to_json_v1(&store);
+    if !store.module_state.mapped_header_attestation_required {
+        return Ok(json!({
+            "state": "not_required",
+            "policy": policy,
+        }));
+    }
+    let message =
+        mapped_header_attestation_message_v1(chain_id, block_number, block_hash, receipts_root);
+    let mut observed_signers = Vec::new();
+    let mut observed_allowed_signers = Vec::new();
+    for (signer, signature) in mapped_header_attestation_items_v1(params)? {
+        if signer.is_empty() {
+            continue;
+        }
+        observed_signers.push(signer.clone());
+        if !store
+            .module_state
+            .mapped_header_attestation_allowed_signers
+            .contains(&signer)
+        {
+            continue;
+        }
+        let public_key = decode_hex_bytes(&signer, "header_attestation_signer")?;
+        let public_key: [u8; 32] = public_key.try_into().map_err(|_| {
+            anyhow::anyhow!(
+                "ERR_MAPPED_HEADER_ATTESTATION_INVALID: ed25519 signer public key must be 32 bytes"
+            )
+        })?;
+        let verifying_key = Ed25519VerifyingKey::from_bytes(&public_key).map_err(|err| {
+            anyhow::anyhow!(
+                "ERR_MAPPED_HEADER_ATTESTATION_INVALID: invalid ed25519 public key: {err}"
+            )
+        })?;
+        let signature = Ed25519Signature::from_slice(signature.as_slice()).map_err(|err| {
+            anyhow::anyhow!(
+                "ERR_MAPPED_HEADER_ATTESTATION_INVALID: invalid ed25519 signature: {err}"
+            )
+        })?;
+        verifying_key
+            .verify(message.as_slice(), &signature)
+            .map_err(|err| {
+                anyhow::anyhow!(
+                    "ERR_MAPPED_HEADER_ATTESTATION_INVALID: signature verification failed for signer {}: {}",
+                    signer,
+                    err
+                )
+            })?;
+        observed_allowed_signers.push(signer);
+    }
+    observed_signers.sort();
+    observed_signers.dedup();
+    observed_allowed_signers.sort();
+    observed_allowed_signers.dedup();
+    let observed_attestation_quorum = observed_allowed_signers.len() as u32;
+    if observed_attestation_quorum < store.module_state.mapped_header_attestation_min_quorum {
+        bail!(
+            "ERR_MAPPED_HEADER_ATTESTATION_QUORUM_UNMET: observed_attestation_quorum={} min_attestation_quorum={} chain_id={} block_number={}",
+            observed_attestation_quorum,
+            store.module_state.mapped_header_attestation_min_quorum,
+            chain_id,
+            block_number
+        );
+    }
+    Ok(json!({
+        "state": "ok",
+        "observed_signers": observed_signers,
+        "observed_allowed_signers": observed_allowed_signers,
+        "observed_attestation_quorum": observed_attestation_quorum,
+        "policy": policy,
+    }))
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct MappedAssetAnchorStatusV1 {
     state: &'static str,
@@ -2978,6 +3237,44 @@ fn param_as_u64_list_any(params: &Value, keys: &[&str]) -> Option<Vec<u64>> {
     keys.iter().find_map(|key| param_as_u64_list(params, key))
 }
 
+fn value_as_string_list(value: &Value) -> Option<Vec<String>> {
+    match value {
+        Value::Array(items) => Some(
+            items
+                .iter()
+                .filter_map(|item| item.as_str())
+                .map(str::trim)
+                .filter(|item| !item.is_empty())
+                .map(str::to_string)
+                .collect(),
+        ),
+        Value::String(raw) => Some(
+            raw.split([',', ';', ' '])
+                .map(str::trim)
+                .filter(|item| !item.is_empty())
+                .map(str::to_string)
+                .collect(),
+        ),
+        _ => None,
+    }
+}
+
+fn param_as_string_list(params: &Value, key: &str) -> Option<Vec<String>> {
+    match params {
+        Value::Object(map) => map.get(key).and_then(value_as_string_list),
+        Value::Array(items) => items
+            .first()
+            .and_then(|value| value.get(key))
+            .and_then(value_as_string_list),
+        _ => None,
+    }
+}
+
+fn param_as_string_list_any(params: &Value, keys: &[&str]) -> Option<Vec<String>> {
+    keys.iter()
+        .find_map(|key| param_as_string_list(params, key))
+}
+
 fn value_as_u128(value: &Value) -> Option<u128> {
     match value {
         Value::Number(number) => number
@@ -3579,6 +3876,13 @@ fn verify_ethereum_lock_event_trusted_anchor_v1(
         evidence.block_number,
         evidence.block_hash,
         block.source_peer_id,
+    )?;
+    require_mapped_header_attestation_policy_v1(
+        params,
+        evidence.chain_id,
+        evidence.block_number,
+        evidence.block_hash,
+        evidence.receipts_root,
     )?;
     Ok(())
 }
@@ -6795,6 +7099,136 @@ mod tests {
             params_with_paths_and_native_store(&store, &audit, &native_store, json!({})),
         );
         assert_eq!(get_policy["policy"]["policy_version"].as_u64(), Some(8));
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn unified_account_live_mapped_lock_enforces_governed_header_attestation_policy() {
+        let _env_lock = ENV_TEST_LOCK.lock().expect("env test lock poisoned");
+        let _shadow_guard = EnvVarGuard::set(NOVOVM_UA_PHASE4_SHADOW_MODE_ENFORCE_ENV, "false");
+        let (base, store, audit) = temp_paths("mapped-live-header-attestation-policy");
+        let root = base
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .to_path_buf();
+        let native_store = root.join("native-execution-store.json");
+        ensure_native_store(native_store.as_path());
+        ua_create(&base, &store, &audit, "acct-map-live-attestation", 10);
+        let signer_a = Ed25519SigningKey::from_bytes(&[0xa1u8; 32]);
+        let signer_b = Ed25519SigningKey::from_bytes(&[0xb2u8; 32]);
+        let signer_a_pub = signer_a.verifying_key().to_bytes();
+        let signer_b_pub = signer_b.verifying_key().to_bytes();
+        let signer_a_ref = to_hex_lower(&signer_a_pub);
+        let signer_b_ref = to_hex_lower(&signer_b_pub);
+
+        let policy = run_query(
+            &base,
+            "ua_setMappedHeaderAttestationPolicy",
+            params_with_paths_and_native_store(
+                &store,
+                &audit,
+                &native_store,
+                json!({
+                    "required": true,
+                    "allowed_signers": [signer_a_ref, signer_b_ref],
+                    "min_attestation_quorum": 2u64,
+                    "policy_source": "governance_test",
+                    "policy_version": 11u64,
+                    "now": 12u64,
+                }),
+            ),
+        );
+        assert_eq!(policy["updated"].as_bool(), Some(true));
+        assert_eq!(policy["policy"]["required"].as_bool(), Some(true));
+        assert_eq!(policy["policy"]["min_attestation_quorum"].as_u64(), Some(2));
+
+        let mut blocked_map =
+            match mapped_lock_live_event_proof_params("acct-map-live-attestation", 0x47, 124u128) {
+                Value::Object(map) => map,
+                other => panic!("expected mapped lock proof params object, got {other:?}"),
+            };
+        seed_mapped_lock_trusted_block_from_params(&Value::Object(blocked_map.clone()), true);
+        let blocked_message = mapped_header_attestation_message_v1(
+            mapped_lock_param_u64(&Value::Object(blocked_map.clone()), "source_chain_id"),
+            mapped_lock_param_u64(&Value::Object(blocked_map.clone()), "block_number"),
+            mapped_lock_param_hash(&Value::Object(blocked_map.clone()), "block_hash"),
+            mapped_lock_param_hash(&Value::Object(blocked_map.clone()), "receipts_root"),
+        );
+        let blocked_sig_a = signer_a.sign(blocked_message.as_slice()).to_bytes();
+        blocked_map.insert("phase4_mode".to_string(), Value::String("live".to_string()));
+        blocked_map.insert(
+            "header_attestations".to_string(),
+            json!([{
+                "signer": format!("0x{}", signer_a_ref),
+                "signature": format!("0x{}", to_hex_lower(&blocked_sig_a)),
+            }]),
+        );
+        let blocked_err = run_query_err(
+            &base,
+            "ua_registerMappedLock",
+            params_with_paths_and_native_store(
+                &store,
+                &audit,
+                &native_store,
+                Value::Object(blocked_map),
+            ),
+        );
+        assert!(
+            blocked_err.contains("ERR_MAPPED_HEADER_ATTESTATION_QUORUM_UNMET"),
+            "single attestation signer should fail closed, got: {blocked_err}"
+        );
+
+        let mut accepted_map =
+            match mapped_lock_live_event_proof_params("acct-map-live-attestation", 0x48, 125u128) {
+                Value::Object(map) => map,
+                other => panic!("expected mapped lock proof params object, got {other:?}"),
+            };
+        seed_mapped_lock_trusted_block_from_params(&Value::Object(accepted_map.clone()), true);
+        let accepted_message = mapped_header_attestation_message_v1(
+            mapped_lock_param_u64(&Value::Object(accepted_map.clone()), "source_chain_id"),
+            mapped_lock_param_u64(&Value::Object(accepted_map.clone()), "block_number"),
+            mapped_lock_param_hash(&Value::Object(accepted_map.clone()), "block_hash"),
+            mapped_lock_param_hash(&Value::Object(accepted_map.clone()), "receipts_root"),
+        );
+        let accepted_sig_a = signer_a.sign(accepted_message.as_slice()).to_bytes();
+        let accepted_sig_b = signer_b.sign(accepted_message.as_slice()).to_bytes();
+        accepted_map.insert("phase4_mode".to_string(), Value::String("live".to_string()));
+        accepted_map.insert(
+            "header_attestations".to_string(),
+            json!([
+                {
+                    "signer": format!("0x{}", signer_a_ref),
+                    "signature": format!("0x{}", to_hex_lower(&accepted_sig_a)),
+                },
+                {
+                    "signer": format!("0x{}", signer_b_ref),
+                    "signature": format!("0x{}", to_hex_lower(&accepted_sig_b)),
+                },
+            ]),
+        );
+        let accepted = run_query(
+            &base,
+            "ua_registerMappedLock",
+            params_with_paths_and_native_store(
+                &store,
+                &audit,
+                &native_store,
+                Value::Object(accepted_map),
+            ),
+        );
+        assert_eq!(accepted["accepted"].as_bool(), Some(true));
+        assert_eq!(
+            accepted["settlement_effect"].as_str(),
+            Some("neth_m2_credit")
+        );
+
+        let get_policy = run_query(
+            &base,
+            "ua_getMappedHeaderAttestationPolicy",
+            params_with_paths_and_native_store(&store, &audit, &native_store, json!({})),
+        );
+        assert_eq!(get_policy["policy"]["policy_version"].as_u64(), Some(11));
 
         let _ = fs::remove_dir_all(&root);
     }
