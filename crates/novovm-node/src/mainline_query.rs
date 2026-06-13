@@ -4071,6 +4071,7 @@ mod tests {
     use serde::Deserialize;
     use serde_json::{json, Value};
     use sha2::{Digest, Sha256};
+    use sha3::Keccak256;
     use std::{
         fs,
         path::PathBuf,
@@ -4206,6 +4207,266 @@ mod tests {
             "phase4_mode": "shadow",
             "now": 11u64,
         })
+    }
+
+    fn mainline_test_rlp_encode_len(prefix_small: u8, prefix_long: u8, len: usize) -> Vec<u8> {
+        if len <= 55 {
+            return vec![prefix_small + len as u8];
+        }
+        let mut len_bytes = Vec::new();
+        let mut cursor = len;
+        while cursor > 0 {
+            len_bytes.push((cursor & 0xff) as u8);
+            cursor >>= 8;
+        }
+        len_bytes.reverse();
+        let mut out = Vec::with_capacity(1 + len_bytes.len());
+        out.push(prefix_long + len_bytes.len() as u8);
+        out.extend(len_bytes);
+        out
+    }
+
+    fn mainline_test_rlp_encode_bytes(bytes: &[u8]) -> Vec<u8> {
+        if bytes.len() == 1 && bytes[0] < 0x80 {
+            return vec![bytes[0]];
+        }
+        let mut out = mainline_test_rlp_encode_len(0x80, 0xb7, bytes.len());
+        out.extend_from_slice(bytes);
+        out
+    }
+
+    fn mainline_test_rlp_encode_list(items: &[Vec<u8>]) -> Vec<u8> {
+        let payload_len = items.iter().map(Vec::len).sum();
+        let mut out = mainline_test_rlp_encode_len(0xc0, 0xf7, payload_len);
+        for item in items {
+            out.extend_from_slice(item);
+        }
+        out
+    }
+
+    fn mainline_test_rlp_encode_u64(value: u64) -> Vec<u8> {
+        if value == 0 {
+            return vec![0x80];
+        }
+        if value < 0x80 {
+            return vec![value as u8];
+        }
+        let mut bytes = Vec::new();
+        let mut cursor = value;
+        while cursor > 0 {
+            bytes.push((cursor & 0xff) as u8);
+            cursor >>= 8;
+        }
+        bytes.reverse();
+        let mut out = Vec::with_capacity(1 + bytes.len());
+        out.push(0x80 + bytes.len() as u8);
+        out.extend(bytes);
+        out
+    }
+
+    fn mainline_test_keccak32(bytes: &[u8]) -> [u8; 32] {
+        let mut hasher = Keccak256::new();
+        hasher.update(bytes);
+        hasher.finalize().into()
+    }
+
+    fn mainline_eth_lock_event_topic0() -> [u8; 32] {
+        mainline_test_keccak32(b"Locked(address,bytes32,uint256,string)")
+    }
+
+    fn mainline_mapped_lock_receipt_proof_fields(
+        contract_address: &[u8; 20],
+        topic0: &[u8; 32],
+        receipt_index: u64,
+    ) -> (Vec<u8>, [u8; 32], Vec<Vec<u8>>) {
+        let log = mainline_test_rlp_encode_list(&[
+            mainline_test_rlp_encode_bytes(contract_address),
+            mainline_test_rlp_encode_list(&[mainline_test_rlp_encode_bytes(topic0)]),
+            mainline_test_rlp_encode_bytes(&[]),
+        ]);
+        let receipt = mainline_test_rlp_encode_list(&[
+            mainline_test_rlp_encode_bytes(&[1]),
+            mainline_test_rlp_encode_u64(21_000),
+            mainline_test_rlp_encode_bytes(&[0u8; 256]),
+            mainline_test_rlp_encode_list(&[log]),
+        ]);
+        let proof_node = novovm_network::eth_rlpx_mpt_single_leaf_node_rlp_v1(
+            mainline_test_rlp_encode_u64(receipt_index).as_slice(),
+            receipt.as_slice(),
+        );
+        (
+            receipt,
+            mainline_test_keccak32(proof_node.as_slice()),
+            vec![proof_node],
+        )
+    }
+
+    fn mapped_lock_live_smoke_params(account_id: &str, lock_byte: u8, amount: u128) -> Value {
+        let lock_id = [lock_byte; 32];
+        let source_tx_hash = vec![lock_byte.saturating_add(1); 32];
+        let external_owner_ref = vec![lock_byte.saturating_add(2); 20];
+        let contract_address = [0x11u8; 20];
+        let topic0 = mainline_eth_lock_event_topic0();
+        let chain_id = 100_000u64 + u64::from(lock_byte);
+        let block_number = 100u64;
+        let block_hash = [lock_byte.saturating_add(3); 32];
+        let receipt_index = 0u64;
+        let (receipt, receipts_root, receipt_proof) =
+            mainline_mapped_lock_receipt_proof_fields(&contract_address, &topic0, receipt_index);
+        let finalized_block_number = 112u64;
+        let log_index = u64::from(lock_byte);
+        let receipt_log_index = 0u64;
+        let mut ref_hasher = Sha256::new();
+        ref_hasher.update(b"novovm-ethereum-lock-event-ref-v1");
+        ref_hasher.update([0u8]);
+        ref_hasher.update(chain_id.to_be_bytes());
+        ref_hasher.update([0u8]);
+        ref_hasher.update(contract_address);
+        ref_hasher.update([0u8]);
+        ref_hasher.update(topic0);
+        ref_hasher.update([0u8]);
+        ref_hasher.update(block_number.to_be_bytes());
+        ref_hasher.update([0u8]);
+        ref_hasher.update(block_hash);
+        ref_hasher.update([0u8]);
+        ref_hasher.update(finalized_block_number.to_be_bytes());
+        ref_hasher.update([0u8]);
+        ref_hasher.update(log_index.to_be_bytes());
+        ref_hasher.update([0u8]);
+        ref_hasher.update(receipts_root);
+        ref_hasher.update([0u8]);
+        ref_hasher.update(receipt_index.to_be_bytes());
+        ref_hasher.update([0u8]);
+        ref_hasher.update(receipt_log_index.to_be_bytes());
+        ref_hasher.update([0u8]);
+        ref_hasher.update(source_tx_hash.as_slice());
+        ref_hasher.update([0u8]);
+        ref_hasher.update(lock_id);
+        ref_hasher.update([0u8]);
+        ref_hasher.update(external_owner_ref.as_slice());
+        ref_hasher.update([0u8]);
+        ref_hasher.update(account_id.as_bytes());
+        ref_hasher.update([0u8]);
+        ref_hasher.update(amount.to_be_bytes());
+        let source_lock_ref: [u8; 32] = ref_hasher.finalize().into();
+        let mut hasher = Sha256::new();
+        hasher.update(b"novovm-mapped-lock-proof-v1");
+        hasher.update([0u8]);
+        hasher.update(lock_id);
+        hasher.update([0u8]);
+        hasher.update(b"ethereum");
+        hasher.update([0u8]);
+        hasher.update(b"ETH");
+        hasher.update([0u8]);
+        hasher.update(source_tx_hash.as_slice());
+        hasher.update([0u8]);
+        hasher.update(source_lock_ref);
+        hasher.update([0u8]);
+        hasher.update(external_owner_ref.as_slice());
+        hasher.update([0u8]);
+        hasher.update(account_id.as_bytes());
+        hasher.update([0u8]);
+        hasher.update(amount.to_be_bytes());
+        let proof_digest: [u8; 32] = hasher.finalize().into();
+
+        novovm_network::clear_network_runtime_native_state_for_host_tests_v1();
+        novovm_network::set_network_runtime_native_header_snapshot_v1(
+            chain_id,
+            novovm_network::NetworkRuntimeNativeHeaderSnapshotV1 {
+                chain_id,
+                number: block_number,
+                hash: block_hash,
+                parent_hash: [0x09; 32],
+                state_root: [0x21; 32],
+                transactions_root: [0x31; 32],
+                receipts_root,
+                ommers_hash: [0x51; 32],
+                logs_bloom: vec![0u8; 256],
+                gas_limit: None,
+                gas_used: None,
+                timestamp: Some(1_700_000_000),
+                base_fee_per_gas: None,
+                withdrawals_root: None,
+                blob_gas_used: None,
+                excess_blob_gas: None,
+                block_access_list_hash: None,
+                source_peer_id: Some(1),
+                observed_unix_ms: 1000,
+            },
+        );
+        novovm_network::set_network_runtime_native_head_snapshot_v1(
+            chain_id,
+            novovm_network::NetworkRuntimeNativeHeadSnapshotV1 {
+                chain_id,
+                phase: novovm_network::NetworkRuntimeNativeSyncPhaseV1::Finalize,
+                peer_count: 1,
+                block_number,
+                block_hash,
+                parent_block_hash: [0x09; 32],
+                state_root: [0x21; 32],
+                canonical: true,
+                safe: true,
+                finalized: true,
+                reorg_depth_hint: None,
+                body_available: true,
+                source_peer_id: Some(1),
+                observed_unix_ms: 1001,
+            },
+        );
+
+        json!({
+            "lock_id": format!("0x{}", mainline_test_hex_lower(&lock_id)),
+            "source_chain": "ethereum",
+            "source_asset_symbol": "ETH",
+            "source_tx_hash": format!("0x{}", mainline_test_hex_lower(&source_tx_hash)),
+            "source_lock_ref": format!("0x{}", mainline_test_hex_lower(&source_lock_ref)),
+            "external_owner_ref": format!("0x{}", mainline_test_hex_lower(&external_owner_ref)),
+            "target_account_id": account_id,
+            "amount": amount.to_string(),
+            "proof_format": "ethereum_lock_event_v1",
+            "proof_payload": format!("0x{}", mainline_test_hex_lower(&proof_digest)),
+            "source_chain_id": chain_id,
+            "lock_contract_address": format!("0x{}", mainline_test_hex_lower(&contract_address)),
+            "expected_lock_contract_address": format!("0x{}", mainline_test_hex_lower(&contract_address)),
+            "event_topic0": format!("0x{}", mainline_test_hex_lower(&topic0)),
+            "block_number": block_number,
+            "block_hash": format!("0x{}", mainline_test_hex_lower(&block_hash)),
+            "finalized_block_number": finalized_block_number,
+            "log_index": log_index,
+            "receipt_index": receipt_index,
+            "receipt_log_index": receipt_log_index,
+            "receipt_envelope": format!("0x{}", mainline_test_hex_lower(&receipt)),
+            "receipts_root": format!("0x{}", mainline_test_hex_lower(&receipts_root)),
+            "receipt_proof": receipt_proof
+                .iter()
+                .map(|node| Value::String(format!("0x{}", mainline_test_hex_lower(node))))
+                .collect::<Vec<_>>(),
+            "phase4_mode": "live",
+            "now": 11u64,
+        })
+    }
+
+    struct MainlineEnvVarGuard {
+        name: &'static str,
+        previous: Option<String>,
+    }
+
+    impl MainlineEnvVarGuard {
+        fn set(name: &'static str, value: &str) -> Self {
+            let previous = std::env::var(name).ok();
+            std::env::set_var(name, value);
+            Self { name, previous }
+        }
+    }
+
+    impl Drop for MainlineEnvVarGuard {
+        fn drop(&mut self) {
+            if let Some(previous) = &self.previous {
+                std::env::set_var(self.name, previous);
+            } else {
+                std::env::remove_var(self.name);
+            }
+        }
     }
 
     fn unique_unified_account_paths(label: &str) -> (PathBuf, PathBuf, PathBuf) {
@@ -11337,6 +11598,185 @@ mod tests {
             Some("none")
         );
 
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn mainline_query_live_mapped_asset_m2_credit_product_smoke() {
+        let _env_lock = geth_parity_test_lock_v1()
+            .lock()
+            .expect("mainline env test lock poisoned");
+        let _shadow_guard =
+            MainlineEnvVarGuard::set("NOVOVM_UA_PHASE4_SHADOW_MODE_ENFORCE", "false");
+        let (base, store, audit) = unique_unified_account_test_paths("mapped-live-smoke");
+        let root = base
+            .parent()
+            .unwrap_or_else(|| std::path::Path::new("."))
+            .to_path_buf();
+        let native_store = root.join("native-execution-store.json");
+        save_nov_native_execution_store_v1(
+            native_store.as_path(),
+            &NovNativeExecutionStoreV1::default(),
+        )
+        .expect("seed native execution store for mapped live smoke");
+        let account_id = "acct-mainline-map-live";
+        create_mainline_uca_for_smoke(&base, &store, &audit, &native_store, account_id);
+
+        let register = run_mainline_query_from_path(
+            base.as_path(),
+            "ua_registerMappedLock",
+            &params_with_ua_and_native_paths(
+                store.as_path(),
+                audit.as_path(),
+                native_store.as_path(),
+                mapped_lock_live_smoke_params(account_id, 0x72, 700),
+            ),
+        )
+        .expect("live ua_registerMappedLock should succeed through mainline query");
+        assert_eq!(register["accepted"].as_bool(), Some(true));
+        assert_eq!(register["status"].as_str(), Some("active"));
+        assert_eq!(register["phase4_mode"].as_str(), Some("live"));
+        assert_eq!(
+            register["settlement_effect"].as_str(),
+            Some("neth_m2_credit")
+        );
+        assert_eq!(
+            register["native_settlement"]["effect"].as_str(),
+            Some("neth_m2_credit")
+        );
+        assert_eq!(
+            register["native_settlement"]["nov_minted"].as_u64(),
+            Some(0)
+        );
+        let mapping_id = register["mapping_id"]
+            .as_str()
+            .expect("mapping_id should exist")
+            .to_string();
+
+        let neth_balance = run_mainline_query_from_path(
+            base.as_path(),
+            "account_balance",
+            &params_with_ua_and_native_paths(
+                store.as_path(),
+                audit.as_path(),
+                native_store.as_path(),
+                json!({"account_id": account_id, "asset_id": "NETH"}),
+            ),
+        )
+        .expect("account_balance should show live NETH credit");
+        assert_eq!(neth_balance["balance"].as_u64(), Some(700));
+        assert_eq!(
+            neth_balance["mapped_asset_active_balance"].as_u64(),
+            Some(700)
+        );
+
+        let snapshot_after_register = run_mainline_query_from_path(
+            base.as_path(),
+            "nov_getTreasuryReserveSnapshot",
+            &json!({
+                "native_execution_store_path": native_store.display().to_string(),
+            }),
+        )
+        .expect("treasury snapshot should show live NETH reserve");
+        assert_eq!(
+            snapshot_after_register["reserve_snapshot"]["reserves"]["NETH"].as_u64(),
+            Some(700)
+        );
+
+        let burn = run_mainline_query_from_path(
+            base.as_path(),
+            "ua_burnMappedAsset",
+            &params_with_ua_and_native_paths(
+                store.as_path(),
+                audit.as_path(),
+                native_store.as_path(),
+                json!({
+                    "account_id": account_id,
+                    "mapping_id": mapping_id,
+                    "now": 12u64,
+                }),
+            ),
+        )
+        .expect("live ua_burnMappedAsset should succeed through mainline query");
+        assert_eq!(burn["burned"].as_bool(), Some(true));
+        assert_eq!(burn["status"].as_str(), Some("burn_pending"));
+        assert_eq!(
+            burn["native_settlement"]["effect"].as_str(),
+            Some("neth_m2_burn_pending")
+        );
+
+        let neth_after_burn = run_mainline_query_from_path(
+            base.as_path(),
+            "account_balance",
+            &params_with_ua_and_native_paths(
+                store.as_path(),
+                audit.as_path(),
+                native_store.as_path(),
+                json!({"account_id": account_id, "asset_id": "NETH"}),
+            ),
+        )
+        .expect("account_balance should show live NETH burned from liquid balance");
+        assert_eq!(neth_after_burn["balance"].as_u64(), Some(0));
+        assert_eq!(
+            neth_after_burn["mapped_asset_active_balance"].as_u64(),
+            Some(0)
+        );
+
+        let release = run_mainline_query_from_path(
+            base.as_path(),
+            "ua_releaseMappedLock",
+            &params_with_ua_and_native_paths(
+                store.as_path(),
+                audit.as_path(),
+                native_store.as_path(),
+                json!({
+                    "account_id": account_id,
+                    "mapping_id": register["mapping_id"],
+                    "now": 13u64,
+                }),
+            ),
+        )
+        .expect("live ua_releaseMappedLock should succeed through mainline query");
+        assert_eq!(release["released"].as_bool(), Some(true));
+        assert_eq!(release["status"].as_str(), Some("released"));
+        assert_eq!(
+            release["native_settlement"]["effect"].as_str(),
+            Some("source_release_reserve_debit")
+        );
+
+        let snapshot_after_release = run_mainline_query_from_path(
+            base.as_path(),
+            "nov_getTreasuryReserveSnapshot",
+            &json!({
+                "native_execution_store_path": native_store.display().to_string(),
+            }),
+        )
+        .expect("treasury snapshot should show live NETH reserve release");
+        assert_eq!(
+            snapshot_after_release["reserve_snapshot"]["reserves"]["NETH"].as_u64(),
+            Some(0)
+        );
+
+        let journal = run_mainline_query_from_path(
+            base.as_path(),
+            "nov_getTreasurySettlementJournal",
+            &json!({
+                "limit": 10,
+                "native_execution_store_path": native_store.display().to_string(),
+            }),
+        )
+        .expect("settlement journal should include live mapped lifecycle");
+        let kinds = journal["journal"]["entries"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|entry| entry["kind"].as_str().unwrap_or_default().to_string())
+            .collect::<Vec<_>>();
+        assert!(kinds.contains(&"mapped_lock_m2_credit".to_string()));
+        assert!(kinds.contains(&"mapped_asset_m2_burn_pending".to_string()));
+        assert!(kinds.contains(&"mapped_lock_source_release".to_string()));
+
+        novovm_network::clear_network_runtime_native_state_for_host_tests_v1();
         let _ = fs::remove_dir_all(root);
     }
 
