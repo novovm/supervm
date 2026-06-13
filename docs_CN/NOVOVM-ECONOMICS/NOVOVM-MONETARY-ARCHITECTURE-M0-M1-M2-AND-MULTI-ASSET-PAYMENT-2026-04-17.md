@@ -132,7 +132,8 @@ _2026-04-17_
 8. M2 auto heal v1 已落代码：`ua_autoHealMappedAssets` 默认 dry-run，只报告 unsafe source anchor 和每个候选的 `required_policy/policy_would_apply`；governance/Treasury policy 可用 `mapped_asset_reorg_response_policy` 统一配置为 `report_only / freeze_only / freeze_and_rollback`。`apply=true` 必须先开启对应策略，否则 fail-closed 或只报告。`freeze_only` 可自动冻结 active/burn_pending live NETH，扣减用户 native 可用余额并保留 Treasury reserve；`freeze_and_rollback` 额外允许对已 frozen 且 source anchor 仍 unsafe 的资产执行内部 rollback：扣回 Treasury NETH reserve、把 mapped asset 置为 `rejected`。它不赔付、不链上出金、不 mint NOV。
 9. M2 finality policy v1 已落代码：`mapped_lock_min_confirmations` 可由 governance/Treasury policy 设置；live ETH lock proof 会优先使用 native store policy，未设置时才 fallback 到 env/default。它只管理最小 finalized confirmations，不等于完整 finality source 管理。
 10. Treasury reserve proof v1 已具备最小治理登记/查询面：`governance.set_reserve_proof` 可按资产登记 proof type/digest/source/reference/amount/status；`treasury.get_reserve_proof` 和 `treasury.get_reserve_snapshot` 可只读暴露 effective status 与 non-claim 标记。该路径不做自动外部验真、不授权 NOV mint、不授权外部赎回。
-11. 当前仍不声明真实外部桥、完整 external finality source 管理、治理赔付、真实链上出金、完整自动 reserve proof verification、完整桥接铸造/赎回自动化或多进程高并发账本入口完成；当前 finality source 管理只覆盖 source peer whitelist/quorum、disabled peer slashing reason/fail-closed、source peer rotation 记录、Ed25519 attestation quorum、disabled signer reason/fail-closed、signer rotation 记录、最小 confirmations 和 `ua_getMappedFinalitySourceStatus` 只读状态聚合。治理层 oracle source allowlist 已具备最小执行约束，但不是开放喂价系统，也不等于完整 oracle 网络。
+11. Native execution store 已具备最小 lockfile single-writer guard：主写路径先获取写锁，再执行 load/modify/save，适合单机/低并发产品闭环；该 guard 不是 RocksDB/事务后端，也不代表高并发账本入口完成。
+12. 当前仍不声明真实外部桥、完整 external finality source 管理、治理赔付、真实链上出金、完整自动 reserve proof verification、完整桥接铸造/赎回自动化或多进程高并发账本入口完成；当前 finality source 管理只覆盖 source peer whitelist/quorum、disabled peer slashing reason/fail-closed、source peer rotation 记录、Ed25519 attestation quorum、disabled signer reason/fail-closed、signer rotation 记录、最小 confirmations 和 `ua_getMappedFinalitySourceStatus` 只读状态聚合。治理层 oracle source allowlist 已具备最小执行约束，但不是开放喂价系统，也不等于完整 oracle 网络。
 
 ## 9. 术语冻结
 
@@ -151,7 +152,7 @@ _2026-04-17_
 
 1. 把当前治理化 header source whitelist/quorum/disabled peer gate 和 Ed25519 header attestation quorum gate 继续升级到完整 external finality source 管理，包括 reorg response policy、赔付规则和自动处置；`receipts_root` 已不再只信任用户输入，quorum 已按同一 `block_hash` 的多 source 观测计数，source peer slashing reason、source peer rotation、最小 finalized confirmations、attestation signature quorum、disabled signer、disabled reason 和 signer rotation 已可由 mainline policy 设置。
 2. 把 `ua_autoHealMappedAssets` 接到主线调度：当前 freeze apply 和 frozen unsafe rollback apply 已分别由 governance/Treasury policy 控制，但仍需要策略化触发、治理赔付规则和外部 finality source 管理。
-3. 升级 native store 写入后端或加单 writer 队列，避免 M2 credit/redeem 在多 writer 下出现 JSON load-modify-write 竞争。
+3. 把当前 native store lockfile single-writer guard 升级为真正单 writer 队列或 RocksDB/事务后端，支撑公测级并发写入。
 4. 把当前最小 reserve proof 登记/查询面升级为真实自动 reserve proof verification，并把当前最小治理 oracle source allowlist 扩展为更完整的 signer/source 轮换、停用和审计流程。
 
 ---

@@ -30,6 +30,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
+use std::time::{Duration, Instant};
 
 pub const LOCAL_TX_WIRE_V1_BYTES: usize = 4 + 1 + (8 * 5) + 32;
 pub const NOV_NATIVE_GOVERNANCE_ALLOWLIST_ENV: &str = "NOVOVM_NATIVE_GOVERNANCE_PROPOSERS";
@@ -76,6 +77,9 @@ pub const NOV_NATIVE_CLEARING_CONSTRAINED_STRATEGY_ENV: &str =
 pub const NOV_NATIVE_PROTOCOL_CLEARING_EPOCH_MS_ENV: &str =
     "NOVOVM_NATIVE_PROTOCOL_CLEARING_EPOCH_MS";
 const NOV_NATIVE_EXECUTION_STORE_SCHEMA_V1: &str = "novovm-native-execution-runtime/v1";
+const NOV_NATIVE_EXECUTION_STORE_LOCK_TIMEOUT_MS_V1: u64 = 10_000;
+const NOV_NATIVE_EXECUTION_STORE_LOCK_STALE_MS_V1: u64 = 60_000;
+const NOV_NATIVE_EXECUTION_STORE_LOCK_POLL_MS_V1: u64 = 10;
 const NOV_FEE_RATE_PPM_DENOMINATOR_V1: u128 = 1_000_000;
 const NOV_FEE_RATE_PPM_NOV_V1: u128 = NOV_FEE_RATE_PPM_DENOMINATOR_V1;
 const NOV_FEE_RATE_PPM_USDT_V1: u128 = 2_000_000;
@@ -1593,6 +1597,102 @@ pub fn nov_native_execution_store_path_v1() -> PathBuf {
     std::env::var(NOV_NATIVE_EXECUTION_STORE_ENV)
         .map(PathBuf::from)
         .unwrap_or_else(|_| PathBuf::from("artifacts").join("novovm-native-execution-store.json"))
+}
+
+fn nov_native_execution_store_lock_path_v1(path: &Path) -> PathBuf {
+    let mut raw = path.as_os_str().to_os_string();
+    raw.push(".lock");
+    PathBuf::from(raw)
+}
+
+struct NovNativeExecutionStoreWriteLockV1 {
+    path: PathBuf,
+    _file: fs::File,
+}
+
+impl Drop for NovNativeExecutionStoreWriteLockV1 {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(self.path.as_path());
+    }
+}
+
+fn is_stale_native_execution_store_lock_v1(path: &Path, now: std::time::SystemTime) -> bool {
+    let Ok(metadata) = fs::metadata(path) else {
+        return false;
+    };
+    let Ok(modified) = metadata.modified() else {
+        return false;
+    };
+    now.duration_since(modified)
+        .map(|age| age.as_millis() > u128::from(NOV_NATIVE_EXECUTION_STORE_LOCK_STALE_MS_V1))
+        .unwrap_or(false)
+}
+
+fn acquire_nov_native_execution_store_write_lock_v1(
+    path: &Path,
+) -> Result<NovNativeExecutionStoreWriteLockV1> {
+    let lock_path = nov_native_execution_store_lock_path_v1(path);
+    if let Some(parent) = lock_path.parent() {
+        if !parent.as_os_str().is_empty() {
+            fs::create_dir_all(parent).with_context(|| {
+                format!(
+                    "create nov native execution store lock parent dir failed: {}",
+                    parent.display()
+                )
+            })?;
+        }
+    }
+    let started = Instant::now();
+    loop {
+        match fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(lock_path.as_path())
+        {
+            Ok(mut file) => {
+                use std::io::Write;
+                let _ = writeln!(
+                    file,
+                    "pid={} acquired_unix_ms={}",
+                    std::process::id(),
+                    now_unix_millis_v1()
+                );
+                return Ok(NovNativeExecutionStoreWriteLockV1 {
+                    path: lock_path,
+                    _file: file,
+                });
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {
+                if is_stale_native_execution_store_lock_v1(
+                    lock_path.as_path(),
+                    std::time::SystemTime::now(),
+                ) {
+                    let _ = fs::remove_file(lock_path.as_path());
+                    continue;
+                }
+                if started.elapsed()
+                    >= Duration::from_millis(NOV_NATIVE_EXECUTION_STORE_LOCK_TIMEOUT_MS_V1)
+                {
+                    bail!(
+                        "nov native execution store write lock timeout: store={} lock={}",
+                        path.display(),
+                        lock_path.display()
+                    );
+                }
+                std::thread::sleep(Duration::from_millis(
+                    NOV_NATIVE_EXECUTION_STORE_LOCK_POLL_MS_V1,
+                ));
+            }
+            Err(err) => {
+                return Err(err).with_context(|| {
+                    format!(
+                        "acquire nov native execution store write lock failed: {}",
+                        lock_path.display()
+                    )
+                });
+            }
+        }
+    }
 }
 
 pub fn load_nov_native_execution_store_v1(path: &Path) -> Result<NovNativeExecutionStoreV1> {
@@ -5820,6 +5920,7 @@ fn dispatch_and_persist_nov_execution_request_with_subjects_and_store_path_v1(
     requested_behavior: Option<&NovRequestedExecutionBehaviorV1>,
     unified_account_store_path: Option<&Path>,
 ) -> Result<NovNativeExecutionReceiptV1> {
+    let _write_lock = acquire_nov_native_execution_store_write_lock_v1(path)?;
     let mut store = load_nov_native_execution_store_v1(path)?;
     let now_ms = now_unix_millis_v1();
     let effective_subject_meta = subject_meta
@@ -7605,7 +7706,9 @@ mod tests {
             .as_nanos();
         path.push(format!("novovm-native-exec-store-{}.json", nonce));
         let out = test_fn(path.clone());
+        let lock_path = nov_native_execution_store_lock_path_v1(path.as_path());
         let _ = fs::remove_file(path);
+        let _ = fs::remove_file(lock_path);
         out
     }
 
@@ -7635,6 +7738,56 @@ mod tests {
             previous,
         };
         test_fn()
+    }
+
+    #[test]
+    fn native_execution_store_write_lock_is_scoped_to_dispatch() {
+        with_test_native_execution_store_path_v1(|path| {
+            let lock_path = nov_native_execution_store_lock_path_v1(path.as_path());
+            {
+                let _guard = acquire_nov_native_execution_store_write_lock_v1(path.as_path())
+                    .expect("write lock should be acquired");
+                assert!(
+                    lock_path.exists(),
+                    "lock file should exist while guard lives"
+                );
+            }
+            assert!(
+                !lock_path.exists(),
+                "lock file should be removed when guard drops"
+            );
+
+            let request = NovExecutionRequestV1 {
+                tx_hash: [0x92; 32],
+                chain_id: 7092,
+                caller: vec![0x92; 20],
+                target: NovExecutionRequestTargetV1::NativeModule("treasury".to_string()),
+                method: "deposit_reserve".to_string(),
+                args: serde_json::to_vec(&serde_json::json!({
+                    "asset": "NOV",
+                    "amount": 1u64
+                }))
+                .expect("encode args"),
+                fee_pay_asset: "NOV".to_string(),
+                fee_max_pay_amount: 10_000,
+                fee_slippage_bps: 50,
+                gas_like_limit: Some(90_000),
+                nonce: 92,
+            };
+            let receipt = dispatch_and_persist_nov_execution_request_with_store_path_v1(
+                path.as_path(),
+                &request,
+            )
+            .expect("dispatch should succeed under write lock guard");
+            assert!(receipt.status);
+            assert!(
+                !lock_path.exists(),
+                "dispatch should release native execution store write lock"
+            );
+            let stored = load_nov_native_execution_store_v1(path.as_path())
+                .expect("store should remain readable after dispatch");
+            assert!(stored.receipts.contains_key(receipt.tx_hash.as_str()));
+        });
     }
 
     #[test]

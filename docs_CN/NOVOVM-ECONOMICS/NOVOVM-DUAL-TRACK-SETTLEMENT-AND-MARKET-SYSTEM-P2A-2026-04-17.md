@@ -267,7 +267,8 @@ asset_out[A] = nov_amount / P_redeem[A]
 - M2 auto heal v1 已接入 `ua_autoHealMappedAssets`：默认 dry-run 报告 unsafe anchor，并对每个候选返回 `required_policy/policy_would_apply`；governance/Treasury policy 可用 `mapped_asset_reorg_response_policy` 统一配置为 `report_only / freeze_only / freeze_and_rollback`。`freeze_only` 可自动冻结 active/burn_pending live NETH，扣用户 native 可用余额、保留 Treasury reserve；`freeze_and_rollback` 额外允许对已 frozen 且 source anchor 仍 unsafe 的资产自动执行内部 rollback，扣回 Treasury NETH reserve 并把 mapped asset 置为 `rejected`。该路径不赔付、不链上出金、不 mint NOV。
 - M2 finality policy v1 已接入 governance/Treasury policy：`mapped_lock_min_confirmations` 可治理设置，live ETH lock proof 优先使用 native store policy，未设置时 fallback 到 env/default。
 - Treasury reserve proof v1 已接入最小治理登记/查询面：`governance.set_reserve_proof` 登记 proof metadata；`treasury.get_reserve_proof` / `treasury.get_reserve_snapshot` 只读暴露 proof effective status 与 non-claim 标记。
-- 当前仍不声明完整 external finality source 管理、治理赔付、真实链上出金、真实自动 reserve proof verification、跨链自动 mint/redeem、NOV 直接铸造或钱包/DAPP/网站完成；当前 finality source 管理只覆盖 source peer whitelist/quorum、disabled peer slashing reason/fail-closed、source peer rotation 记录、Ed25519 attestation quorum、disabled signer reason/fail-closed、signer rotation 记录、最小 confirmations 和 `ua_getMappedFinalitySourceStatus` 只读状态聚合。
+- Native execution store 主写路径已加 lockfile single-writer guard，用于单机/低并发 load-modify-save 互斥；该 guard 不是高并发事务后端。
+- 当前仍不声明完整 external finality source 管理、治理赔付、真实链上出金、真实自动 reserve proof verification、跨链自动 mint/redeem、NOV 直接铸造、高并发账本入口或钱包/DAPP/网站完成；当前 finality source 管理只覆盖 source peer whitelist/quorum、disabled peer slashing reason/fail-closed、source peer rotation 记录、Ed25519 attestation quorum、disabled signer reason/fail-closed、signer rotation 记录、最小 confirmations 和 `ua_getMappedFinalitySourceStatus` 只读状态聚合。
 
 ## 10. 本稿替换与冲突规则
 

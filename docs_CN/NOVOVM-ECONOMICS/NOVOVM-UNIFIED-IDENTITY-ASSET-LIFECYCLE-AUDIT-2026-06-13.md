@@ -31,7 +31,7 @@ NOVOVM 现在已经具备“统一身份 + EVM 产品入口 + native NOV 经济�
 - M2 finality policy v1 已接入 governance/Treasury policy：`mapped_lock_min_confirmations` 可治理设置，live ETH lock proof 优先使用 native store policy，未设置时 fallback 到 env/default。
 - 仍没有真实“完整 external finality source 管理 -> compensation -> Treasury policy -> NOV emission”的完整链上桥接。治理化 header source peer quorum、disabled peer slashing reason/fail-closed、source peer rotation 记录、Ed25519 header attestation signature quorum、disabled signer reason/fail-closed、signer rotation 记录和 `ua_getMappedFinalitySourceStatus` 只读状态聚合已有，但 NOV mint 在 consensus token runtime 中存在，不能直接接在 ETH lock proof 上。
 - EVM 合约币可以在 EVM 产品面执行/查询 receipt，但和 NOV native account balance/treasury 是两套状态面，当前没有完整 ERC20 -> native asset 自动映射桥。
-- 并发量不能直接引用 README 的 L0/L1 百万 TPS 来代表钱包/gateway 入口吞吐。gateway 当前是单 HTTP loop，EVM pending consumer 默认 16 笔/250ms；native NOV store 是 JSON load-modify-write，适合单进程顺序产品闭环，不适合多进程高并发账本写入口。
+- 并发量不能直接引用 README 的 L0/L1 百万 TPS 来代表钱包/gateway 入口吞吐。gateway 当前是单 HTTP loop，EVM pending consumer 默认 16 笔/250ms；native NOV store 仍是 JSON store，但主写路径已加 lockfile single-writer guard，适合单机/低并发生产闭环，不等同 RocksDB/事务后端或多进程高并发账本入口。
 - 当前不声明 DAPP、网站、钱包进入本轮范围；本轮已完成上层经济规则、协议清算价 v1 和审阅边界，但不声明真实外部桥接自动闭环。
 
 ## 1.1 主线 `unified_account_surface` 产品闭环审阅
@@ -392,21 +392,23 @@ native NOV 入口：
 - 所有统一账户产品接入继续走 `mainline_query -> unified_account_surface`。
 - 后续若要彻底清理，可单独做 dead source 删除/归档任务，并先确认没有外部脚本依赖。
 
-### P1：native NOV 账本写入后端不适合多 writer
+### P1：native NOV 账本写入后端已有 single-writer guard，但仍不是高并发数据库
 
 影响：
 
-- `novovm-native-execution-store.json` 是 load-modify-write；如果多个进程同时写，会丢更新。
+- `novovm-native-execution-store.json` 仍是 JSON store。
+- 主写路径 `dispatch_and_persist_nov_execution_request_*` 已使用 lockfile single-writer guard，把 load-modify-save 包进跨进程临界区，降低覆盖写风险。
+- 该 guard 解决的是单机写入互斥，不提供数据库级事务、批量并发写入、崩溃恢复日志或集群写一致性。
 
 证据：
 
 - `load_nov_native_execution_store_v1` 直接读 JSON。
-- `save_nov_native_execution_store_v1` 直接 `fs::write`。
+- `dispatch_and_persist_nov_execution_request_with_subjects_and_store_path_v1` 会先获取 native execution store write lock，再 load/modify/save。
 
 建议：
 
-- 产品部署上先规定单 gateway writer。
-- 如果要并发写入，最小改法是把 native execution store 切 RocksDB 或加单进程队列，不要做复杂工程化。
+- 产品部署上仍应规定单 gateway writer 或低并发写入口。
+- 如果要公测高并发，最小改法是把 native execution store 切 RocksDB 或加单进程队列，不要把 lockfile guard 误写成高并发账本后端。
 
 ### P1：余额视图需要前端解释 source/component
 
@@ -447,7 +449,7 @@ native NOV 入口：
 
 - AOEM/consensus benchmark：文档内有百万级 TPS seal，但属于内核/consensus plane。
 - EVM gateway 用户入口：`tiny_http` 单 loop；默认 pending execution `16` 笔/`250ms`。
-- native NOV store：JSON store，单 writer 可用，不是高并发存储层。
+- native NOV store：JSON store + lockfile single-writer guard，单机/低并发可用，不是高并发存储层。
 
 建议：
 
@@ -466,7 +468,7 @@ native NOV 入口：
 - `P_redeem` 已接入 `treasury.redeem` 的 `asset_out + nov_amount` 形态：先扣用户 NOV，再按反向保守价从 Treasury reserve 出资产。
 - 许可 oracle source allowlist 已接入最小治理路径：`apply_treasury_policy` 可持久化 `fee_oracle_allowed_sources`；`get_fee_oracle_rates` 和 `get_protocol_clearing_price` 会暴露 `oracle_source_allowed`，非白名单 source 不进入协议清算价。
 - Treasury reserve proof 已接入最小治理登记/查询路径：`governance.set_reserve_proof` 可登记 proof metadata；`treasury.get_reserve_proof` / `treasury.get_reserve_snapshot` 可查询 proof effective status 和 non-claim 标记。
-- 仍未完成真实外部桥自动化、真实自动 reserve proof verification、NOV emission policy 自动接线、真实外部链出金和高并发事务后端。
+- 仍未完成真实外部桥自动化、真实自动 reserve proof verification、NOV emission policy 自动接线、真实外部链出金和高并发事务后端；当前 native store single-writer guard 只是写入互斥，不是事务数据库。
 
 建议：
 
