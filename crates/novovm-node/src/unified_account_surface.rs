@@ -50,6 +50,10 @@ const NOVOVM_UA_PHASE4_NOGO_ENFORCE_ENV: &str = "NOVOVM_UA_PHASE4_NOGO_ENFORCE";
 const NOVOVM_UA_PHASE4_SHADOW_MODE_ENFORCE_ENV: &str = "NOVOVM_UA_PHASE4_SHADOW_MODE_ENFORCE";
 const NOVOVM_UA_ETH_LOCK_CONTRACT_ADDRESS_ENV: &str = "NOVOVM_UA_ETH_LOCK_CONTRACT_ADDRESS";
 const NOVOVM_UA_ETH_LOCK_MIN_CONFIRMATIONS_ENV: &str = "NOVOVM_UA_ETH_LOCK_MIN_CONFIRMATIONS";
+const NOVOVM_UA_MAPPED_ASSET_BRIDGE_PAUSED_ENV: &str = "NOVOVM_UA_MAPPED_ASSET_BRIDGE_PAUSED";
+const NOVOVM_UA_MAPPED_LOCK_BRIDGE_PAUSED_ENV: &str = "NOVOVM_UA_MAPPED_LOCK_BRIDGE_PAUSED";
+const NOVOVM_UA_MAPPED_ASSET_BURN_PAUSED_ENV: &str = "NOVOVM_UA_MAPPED_ASSET_BURN_PAUSED";
+const NOVOVM_UA_MAPPED_ASSET_RELEASE_PAUSED_ENV: &str = "NOVOVM_UA_MAPPED_ASSET_RELEASE_PAUSED";
 const ETH_LOCK_EVENT_SIGNATURE_V1: &str = "Locked(address,bytes32,uint256,string)";
 
 #[derive(Debug)]
@@ -716,6 +720,9 @@ fn run_unified_account_surface_rpc(
                     now,
                 ),
             };
+            if !shadow_mode {
+                require_mapped_bridge_gate_open_v1(params, MappedBridgeGateV1::Register)?;
+            }
             mapped_asset_state
                 .mapping_id_by_lock_id
                 .insert(lock_key, mapping_key.clone());
@@ -1580,6 +1587,89 @@ fn append_ua_treasury_journal_v1(
     store.module_state.treasury_settlement_journal.push(entry);
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MappedBridgeGateV1 {
+    Register,
+    Burn,
+    Release,
+}
+
+impl MappedBridgeGateV1 {
+    fn error_code(self) -> &'static str {
+        match self {
+            Self::Register => "ERR_MAPPED_BRIDGE_PAUSED",
+            Self::Burn => "ERR_MAPPED_BURN_PAUSED",
+            Self::Release => "ERR_MAPPED_RELEASE_PAUSED",
+        }
+    }
+
+    fn store_field(self) -> &'static str {
+        match self {
+            Self::Register => "mapped_lock_bridge_paused",
+            Self::Burn => "mapped_asset_burn_paused",
+            Self::Release => "mapped_asset_release_paused",
+        }
+    }
+
+    fn env_name(self) -> &'static str {
+        match self {
+            Self::Register => NOVOVM_UA_MAPPED_LOCK_BRIDGE_PAUSED_ENV,
+            Self::Burn => NOVOVM_UA_MAPPED_ASSET_BURN_PAUSED_ENV,
+            Self::Release => NOVOVM_UA_MAPPED_ASSET_RELEASE_PAUSED_ENV,
+        }
+    }
+
+    fn method(self) -> &'static str {
+        match self {
+            Self::Register => "ua_registerMappedLock",
+            Self::Burn => "ua_burnMappedAsset",
+            Self::Release => "ua_releaseMappedLock",
+        }
+    }
+}
+
+fn mapped_bridge_gate_paused_in_store_v1(
+    store: &crate::tx_ingress::NovNativeExecutionStoreV1,
+    gate: MappedBridgeGateV1,
+) -> bool {
+    match gate {
+        MappedBridgeGateV1::Register => store.module_state.mapped_lock_bridge_paused,
+        MappedBridgeGateV1::Burn => store.module_state.mapped_asset_burn_paused,
+        MappedBridgeGateV1::Release => store.module_state.mapped_asset_release_paused,
+    }
+}
+
+fn mapped_bridge_gate_paused_by_env_v1(gate: MappedBridgeGateV1) -> bool {
+    bool_env_default(NOVOVM_UA_MAPPED_ASSET_BRIDGE_PAUSED_ENV, false)
+        || bool_env_default(gate.env_name(), false)
+}
+
+fn require_mapped_bridge_gate_open_v1(params: &Value, gate: MappedBridgeGateV1) -> Result<()> {
+    let store_path = native_execution_store_path_from_params_or_env_v1(params);
+    let store = load_nov_native_execution_store_v1(store_path.as_path())?;
+    let store_paused = mapped_bridge_gate_paused_in_store_v1(&store, gate);
+    let env_paused = mapped_bridge_gate_paused_by_env_v1(gate);
+    if store_paused || env_paused {
+        bail!(
+            "{}: {} paused by {}{}{}",
+            gate.error_code(),
+            gate.method(),
+            if store_paused {
+                gate.store_field()
+            } else {
+                gate.env_name()
+            },
+            if store_paused && env_paused { "+" } else { "" },
+            if store_paused && env_paused {
+                gate.env_name()
+            } else {
+                ""
+            }
+        );
+    }
+    Ok(())
+}
+
 fn mapped_asset_live_settlement_journal_v1(
     kind: &str,
     record: &MappedAssetRecord,
@@ -1636,6 +1726,7 @@ fn apply_live_mapped_lock_m2_credit_v1(
             "reason": "shadow mode does not mutate native balances or treasury reserves",
         }));
     }
+    require_mapped_bridge_gate_open_v1(params, MappedBridgeGateV1::Register)?;
     let store_path = native_execution_store_path_from_params_or_env_v1(params);
     let account_key = normalize_account_view_key_v1(&record.target_account_id);
     let asset_key = normalize_asset_view_symbol_v1(&record.target_asset_symbol);
@@ -1700,6 +1791,7 @@ fn apply_live_mapped_asset_m2_burn_v1(
             "reason": "shadow mode does not mutate native balances",
         }));
     }
+    require_mapped_bridge_gate_open_v1(params, MappedBridgeGateV1::Burn)?;
     let store_path = native_execution_store_path_from_params_or_env_v1(params);
     let account_key = normalize_account_view_key_v1(&record.target_account_id);
     let asset_key = normalize_asset_view_symbol_v1(&record.target_asset_symbol);
@@ -1762,6 +1854,7 @@ fn apply_live_mapped_lock_source_release_v1(
             "reason": "shadow mode does not mutate treasury reserves",
         }));
     }
+    require_mapped_bridge_gate_open_v1(params, MappedBridgeGateV1::Release)?;
     let store_path = native_execution_store_path_from_params_or_env_v1(params);
     let asset_key = normalize_asset_view_symbol_v1(&record.target_asset_symbol);
     let mut store = load_nov_native_execution_store_v1(store_path.as_path())?;
@@ -5530,6 +5623,237 @@ mod tests {
             unfinalized_anchor_err.contains("trusted Ethereum block is not finalized"),
             "unfinalized trusted block should fail closed, got: {unfinalized_anchor_err}"
         );
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn unified_account_live_mapped_lock_bridge_pause_blocks_register_without_state() {
+        let _env_lock = ENV_TEST_LOCK.lock().expect("env test lock poisoned");
+        let _shadow_guard = EnvVarGuard::set(NOVOVM_UA_PHASE4_SHADOW_MODE_ENFORCE_ENV, "false");
+        let (base, store, audit) = temp_paths("mapped-live-bridge-register-paused");
+        let root = base
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .to_path_buf();
+        let native_store = root.join("native-execution-store.json");
+        ensure_native_store(native_store.as_path());
+        ua_create(&base, &store, &audit, "acct-map-live-bridge-paused", 10);
+
+        let mut register_map = match mapped_lock_live_event_proof_params(
+            "acct-map-live-bridge-paused",
+            0x3b,
+            96u128,
+        ) {
+            Value::Object(map) => map,
+            other => panic!("expected mapped lock proof params object, got {other:?}"),
+        };
+        seed_mapped_lock_trusted_block_from_params(&Value::Object(register_map.clone()), true);
+        register_map.insert("phase4_mode".to_string(), Value::String("live".to_string()));
+        register_map.insert("now".to_string(), Value::from(11u64));
+
+        let mut paused_store = load_nov_native_execution_store_v1(native_store.as_path())
+            .expect("load native store before bridge pause");
+        paused_store.module_state.mapped_lock_bridge_paused = true;
+        save_nov_native_execution_store_v1(native_store.as_path(), &paused_store)
+            .expect("save paused native store");
+        let paused_err = run_query_err(
+            &base,
+            "ua_registerMappedLock",
+            params_with_paths_and_native_store(
+                &store,
+                &audit,
+                &native_store,
+                Value::Object(register_map.clone()),
+            ),
+        );
+        assert!(
+            paused_err.contains("ERR_MAPPED_BRIDGE_PAUSED"),
+            "paused register should fail closed, got: {paused_err}"
+        );
+
+        let mut unpaused_store = load_nov_native_execution_store_v1(native_store.as_path())
+            .expect("load native store before bridge unpause");
+        unpaused_store.module_state.mapped_lock_bridge_paused = false;
+        save_nov_native_execution_store_v1(native_store.as_path(), &unpaused_store)
+            .expect("save unpaused native store");
+        let register = run_query(
+            &base,
+            "ua_registerMappedLock",
+            params_with_paths_and_native_store(
+                &store,
+                &audit,
+                &native_store,
+                Value::Object(register_map),
+            ),
+        );
+        assert_eq!(register["accepted"].as_bool(), Some(true));
+        assert_eq!(
+            register["native_settlement"]["effect"].as_str(),
+            Some("neth_m2_credit")
+        );
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn unified_account_live_mapped_asset_bridge_pause_blocks_burn_and_release() {
+        let _env_lock = ENV_TEST_LOCK.lock().expect("env test lock poisoned");
+        let _shadow_guard = EnvVarGuard::set(NOVOVM_UA_PHASE4_SHADOW_MODE_ENFORCE_ENV, "false");
+        let (base, store, audit) = temp_paths("mapped-live-bridge-burn-release-paused");
+        let root = base
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .to_path_buf();
+        let native_store = root.join("native-execution-store.json");
+        ensure_native_store(native_store.as_path());
+        ua_create(&base, &store, &audit, "acct-map-live-bridge-burn", 10);
+
+        let mut register_map =
+            match mapped_lock_live_event_proof_params("acct-map-live-bridge-burn", 0x3c, 97u128) {
+                Value::Object(map) => map,
+                other => panic!("expected mapped lock proof params object, got {other:?}"),
+            };
+        seed_mapped_lock_trusted_block_from_params(&Value::Object(register_map.clone()), true);
+        register_map.insert("phase4_mode".to_string(), Value::String("live".to_string()));
+        register_map.insert("now".to_string(), Value::from(11u64));
+        let register = run_query(
+            &base,
+            "ua_registerMappedLock",
+            params_with_paths_and_native_store(
+                &store,
+                &audit,
+                &native_store,
+                Value::Object(register_map),
+            ),
+        );
+        let mapping_id = register["mapping_id"].clone();
+
+        let mut paused_burn_store = load_nov_native_execution_store_v1(native_store.as_path())
+            .expect("load native store before burn pause");
+        paused_burn_store.module_state.mapped_asset_burn_paused = true;
+        save_nov_native_execution_store_v1(native_store.as_path(), &paused_burn_store)
+            .expect("save burn paused native store");
+        let burn_err = run_query_err(
+            &base,
+            "ua_burnMappedAsset",
+            params_with_paths_and_native_store(
+                &store,
+                &audit,
+                &native_store,
+                json!({
+                    "account_id": "acct-map-live-bridge-burn",
+                    "mapping_id": mapping_id,
+                    "now": 12u64,
+                }),
+            ),
+        );
+        assert!(
+            burn_err.contains("ERR_MAPPED_BURN_PAUSED"),
+            "paused burn should fail closed, got: {burn_err}"
+        );
+        let after_burn_pause = run_query(
+            &base,
+            "ua_getMappedAsset",
+            params_with_paths(
+                &store,
+                &audit,
+                json!({
+                    "account_id": "acct-map-live-bridge-burn",
+                    "mapping_id": register["mapping_id"],
+                }),
+            ),
+        );
+        assert_eq!(
+            after_burn_pause["mapped_asset"]["status"].as_str(),
+            Some("active")
+        );
+
+        let mut unpaused_burn_store = load_nov_native_execution_store_v1(native_store.as_path())
+            .expect("load native store before burn unpause");
+        unpaused_burn_store.module_state.mapped_asset_burn_paused = false;
+        save_nov_native_execution_store_v1(native_store.as_path(), &unpaused_burn_store)
+            .expect("save burn unpaused native store");
+        let burn = run_query(
+            &base,
+            "ua_burnMappedAsset",
+            params_with_paths_and_native_store(
+                &store,
+                &audit,
+                &native_store,
+                json!({
+                    "account_id": "acct-map-live-bridge-burn",
+                    "mapping_id": register["mapping_id"],
+                    "now": 13u64,
+                }),
+            ),
+        );
+        assert_eq!(burn["burned"].as_bool(), Some(true));
+
+        let mut paused_release_store = load_nov_native_execution_store_v1(native_store.as_path())
+            .expect("load native store before release pause");
+        paused_release_store
+            .module_state
+            .mapped_asset_release_paused = true;
+        save_nov_native_execution_store_v1(native_store.as_path(), &paused_release_store)
+            .expect("save release paused native store");
+        let release_err = run_query_err(
+            &base,
+            "ua_releaseMappedLock",
+            params_with_paths_and_native_store(
+                &store,
+                &audit,
+                &native_store,
+                json!({
+                    "account_id": "acct-map-live-bridge-burn",
+                    "mapping_id": register["mapping_id"],
+                    "now": 14u64,
+                }),
+            ),
+        );
+        assert!(
+            release_err.contains("ERR_MAPPED_RELEASE_PAUSED"),
+            "paused release should fail closed, got: {release_err}"
+        );
+        let after_release_pause = run_query(
+            &base,
+            "ua_getMappedAsset",
+            params_with_paths(
+                &store,
+                &audit,
+                json!({
+                    "account_id": "acct-map-live-bridge-burn",
+                    "mapping_id": register["mapping_id"],
+                }),
+            ),
+        );
+        assert_eq!(
+            after_release_pause["mapped_asset"]["status"].as_str(),
+            Some("burn_pending")
+        );
+
+        let mut unpaused_release_store = load_nov_native_execution_store_v1(native_store.as_path())
+            .expect("load native store before release unpause");
+        unpaused_release_store
+            .module_state
+            .mapped_asset_release_paused = false;
+        save_nov_native_execution_store_v1(native_store.as_path(), &unpaused_release_store)
+            .expect("save release unpaused native store");
+        let release = run_query(
+            &base,
+            "ua_releaseMappedLock",
+            params_with_paths_and_native_store(
+                &store,
+                &audit,
+                &native_store,
+                json!({
+                    "account_id": "acct-map-live-bridge-burn",
+                    "mapping_id": register["mapping_id"],
+                    "now": 15u64,
+                }),
+            ),
+        );
+        assert_eq!(release["released"].as_bool(), Some(true));
 
         let _ = fs::remove_dir_all(&root);
     }

@@ -441,6 +441,9 @@ pub struct NovTreasurySettlementPolicyV1 {
     pub min_risk_buffer_nov: u128,
     pub settlement_paused: bool,
     pub redeem_paused: bool,
+    pub mapped_lock_bridge_paused: bool,
+    pub mapped_asset_burn_paused: bool,
+    pub mapped_asset_release_paused: bool,
     pub clearing_enabled: bool,
     pub clearing_daily_nov_hard_limit: u128,
     pub clearing_daily_nov_used: u128,
@@ -546,6 +549,12 @@ pub struct NovNativeExecutionModuleStateV1 {
     #[serde(default)]
     pub treasury_redeem_paused: bool,
     #[serde(default)]
+    pub mapped_lock_bridge_paused: bool,
+    #[serde(default)]
+    pub mapped_asset_burn_paused: bool,
+    #[serde(default)]
+    pub mapped_asset_release_paused: bool,
+    #[serde(default)]
     pub treasury_reserve_share_bps: u32,
     #[serde(default)]
     pub treasury_fee_share_bps: u32,
@@ -649,6 +658,9 @@ impl Default for NovNativeExecutionModuleStateV1 {
             treasury_settlement_failure_counts: BTreeMap::new(),
             treasury_settlement_paused: false,
             treasury_redeem_paused: false,
+            mapped_lock_bridge_paused: false,
+            mapped_asset_burn_paused: false,
+            mapped_asset_release_paused: false,
             treasury_reserve_share_bps: 0,
             treasury_fee_share_bps: 0,
             treasury_risk_buffer_share_bps: 0,
@@ -2049,6 +2061,9 @@ fn resolve_treasury_settlement_policy_v1(
             min_risk_buffer_nov: store.module_state.treasury_min_risk_buffer_nov.max(1),
             settlement_paused: store.module_state.treasury_settlement_paused,
             redeem_paused: store.module_state.treasury_redeem_paused,
+            mapped_lock_bridge_paused: store.module_state.mapped_lock_bridge_paused,
+            mapped_asset_burn_paused: store.module_state.mapped_asset_burn_paused,
+            mapped_asset_release_paused: store.module_state.mapped_asset_release_paused,
             clearing_enabled,
             clearing_daily_nov_hard_limit,
             clearing_daily_nov_used,
@@ -2152,6 +2167,9 @@ fn resolve_treasury_settlement_policy_v1(
         min_risk_buffer_nov,
         settlement_paused,
         redeem_paused,
+        mapped_lock_bridge_paused: store.module_state.mapped_lock_bridge_paused,
+        mapped_asset_burn_paused: store.module_state.mapped_asset_burn_paused,
+        mapped_asset_release_paused: store.module_state.mapped_asset_release_paused,
         clearing_enabled,
         clearing_daily_nov_hard_limit,
         clearing_daily_nov_used,
@@ -5099,6 +5117,21 @@ fn dispatch_native_module_execute_v1(
                 .get("clearing_enabled")
                 .and_then(|value| value.as_bool())
                 .unwrap_or(active_policy.clearing_enabled);
+            let mapped_lock_bridge_paused = args_json
+                .get("mapped_lock_bridge_paused")
+                .or_else(|| args_json.get("bridge_mint_paused"))
+                .and_then(|value| value.as_bool())
+                .unwrap_or(active_policy.mapped_lock_bridge_paused);
+            let mapped_asset_burn_paused = args_json
+                .get("mapped_asset_burn_paused")
+                .or_else(|| args_json.get("bridge_burn_paused"))
+                .and_then(|value| value.as_bool())
+                .unwrap_or(active_policy.mapped_asset_burn_paused);
+            let mapped_asset_release_paused = args_json
+                .get("mapped_asset_release_paused")
+                .or_else(|| args_json.get("bridge_release_paused"))
+                .and_then(|value| value.as_bool())
+                .unwrap_or(active_policy.mapped_asset_release_paused);
             let clearing_require_healthy_risk_buffer = args_json
                 .get("clearing_require_healthy_risk_buffer")
                 .and_then(|value| value.as_bool())
@@ -5168,6 +5201,9 @@ fn dispatch_native_module_execute_v1(
             store.module_state.treasury_min_fee_bucket_nov = min_fee_bucket_nov;
             store.module_state.treasury_min_risk_buffer_nov = min_risk_buffer_nov;
             store.module_state.clearing_enabled = clearing_enabled;
+            store.module_state.mapped_lock_bridge_paused = mapped_lock_bridge_paused;
+            store.module_state.mapped_asset_burn_paused = mapped_asset_burn_paused;
+            store.module_state.mapped_asset_release_paused = mapped_asset_release_paused;
             store.module_state.clearing_require_healthy_risk_buffer =
                 clearing_require_healthy_risk_buffer;
             store.module_state.clearing_daily_nov_hard_limit = clearing_daily_nov_hard_limit;
@@ -5195,6 +5231,9 @@ fn dispatch_native_module_execute_v1(
                     "min_fee_bucket_nov": min_fee_bucket_nov,
                     "min_risk_buffer_nov": min_risk_buffer_nov,
                     "clearing_enabled": clearing_enabled,
+                    "mapped_lock_bridge_paused": mapped_lock_bridge_paused,
+                    "mapped_asset_burn_paused": mapped_asset_burn_paused,
+                    "mapped_asset_release_paused": mapped_asset_release_paused,
                     "clearing_require_healthy_risk_buffer": clearing_require_healthy_risk_buffer,
                     "clearing_daily_nov_hard_limit": clearing_daily_nov_hard_limit,
                     "clearing_constrained_max_slippage_bps": clearing_constrained_max_slippage_bps,
@@ -8622,6 +8661,9 @@ mod tests {
                     "min_reserve_bucket_nov": 120u64,
                     "min_fee_bucket_nov": 80u64,
                     "min_risk_buffer_nov": 400u64,
+                    "mapped_lock_bridge_paused": true,
+                    "mapped_asset_burn_paused": true,
+                    "mapped_asset_release_paused": true,
                     "clearing_constrained_max_slippage_bps": 25u64,
                     "clearing_constrained_daily_usage_bps": 7500u64,
                     "clearing_constrained_strategy": "treasury_direct_only"
@@ -8684,6 +8726,18 @@ mod tests {
             assert_eq!(
                 out["result"]["policy"]["clearing_constrained_strategy"].as_str(),
                 Some("treasury_direct_only")
+            );
+            assert_eq!(
+                out["result"]["policy"]["mapped_lock_bridge_paused"].as_bool(),
+                Some(true)
+            );
+            assert_eq!(
+                out["result"]["policy"]["mapped_asset_burn_paused"].as_bool(),
+                Some(true)
+            );
+            assert_eq!(
+                out["result"]["policy"]["mapped_asset_release_paused"].as_bool(),
+                Some(true)
             );
             let policy_contract_id = out["result"]["policy_contract_id"]
                 .as_str()

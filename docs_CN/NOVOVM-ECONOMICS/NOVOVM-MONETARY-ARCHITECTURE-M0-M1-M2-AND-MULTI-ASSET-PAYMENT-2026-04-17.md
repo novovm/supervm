@@ -125,7 +125,8 @@ _2026-04-17_
 2. 原生 `nov_*` 入口虽已存在基础能力，但 NOV 原生执行与费用术语仍需进一步“主链优先化”。  
 3. 多币支付路由、清算、国库 settlement 已有 native execution store v1 主线；`phase4_mode=live` mapped lock 已要求结构化 Ethereum lock event evidence、receipt MPT proof 和本地 `novovm-network` runtime canonical finalized block anchor，并能把通过校验的 ETH lock MVP 映射为 `NETH` M2 credit、写入 native account balance / Treasury reserve / settlement journal，并在 burn/release 时扣减 NETH credit 和 reserve。
 4. 协议清算价 v1 已落代码：`P_epoch/P_pay/P_redeem` 按 epoch 固定，输入为显式 AMM TWAP、Treasury NAV、许可 oracle reference 和上一 epoch 价格；AMM spot 不参与清算。
-5. 当前仍不声明真实外部桥、治理化 Ethereum header/finality source 管理、reorg heal、真实链上出金、治理层 oracle 白名单管理、完整桥接铸造/赎回自动化或多进程高并发账本入口完成。
+5. M2 bridge 风险门禁 v1 已落代码：native execution store / governance policy 可持久化 `mapped_lock_bridge_paused`、`mapped_asset_burn_paused`、`mapped_asset_release_paused`；env 可紧急暂停 live register、burn、release，暂停时 fail-closed 且不推进 mapped asset 生命周期。
+6. 当前仍不声明真实外部桥、治理化 Ethereum header/finality source 管理、reorg heal、真实链上出金、治理层 oracle 白名单管理、完整桥接铸造/赎回自动化或多进程高并发账本入口完成。
 
 ## 9. 术语冻结
 
@@ -143,7 +144,7 @@ _2026-04-17_
 ## 10. 执行优先级（仅列下一刀）
 
 1. 把当前本地 runtime canonical finalized block anchor 升级为治理化 Ethereum header/finality source，并补 reorg heal；`receipts_root` 已不再只信任用户输入。
-2. 补 M2 风险边界（NETH 负债、Treasury reserve、暂停开关、bridge reorg/rollback 处理）。
+2. 补 bridge reorg/rollback 处理：当已入账的 lock 所在 block 被 reorg out 时，必须冻结对应 NETH credit/release 路径并进入人工/治理恢复。
 3. 升级 native store 写入后端或加单 writer 队列，避免 M2 credit/redeem 在多 writer 下出现 JSON load-modify-write 竞争。
 4. 补治理层 oracle 白名单和 reserve proof 管理面。
 
