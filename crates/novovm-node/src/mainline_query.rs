@@ -616,6 +616,8 @@ fn run_mainline_nov_m2_bridge_risk_status_v1(params: &Value) -> Result<Value> {
             || reason.starts_with("reserve_proof_effective_status=unknown")
             || reason.starts_with("reserve_proof_effective_status=revoked")
             || reason.starts_with("reserve_proof_effective_status=expired")
+            || reason == "mapped_lock_contract_address_unset"
+            || reason == "mapped_lock_min_confirmations_unset"
             || reason.starts_with("native_execution_store_unavailable")
     });
     let risk_state = if blocked {
@@ -12533,8 +12535,60 @@ mod tests {
             .flatten()
             .any(|item| item.as_str() == Some("reserve_proof_missing")));
 
+        let unset_policy_store =
+            unique_native_execution_store_path("m2-bridge-risk-status-policy-unset");
+        let mut unset_policy = NovNativeExecutionStoreV1::default();
+        unset_policy
+            .module_state
+            .treasury_reserves
+            .insert("NETH".to_string(), 1_000);
+        unset_policy.module_state.treasury_reserve_proofs.insert(
+            "NETH".to_string(),
+            NovTreasuryReserveProofV1 {
+                asset: "NETH".to_string(),
+                reserve_amount: 1_000,
+                proof_type: "custody_statement_v1".to_string(),
+                proof_digest: "0xm2bridgeriskpolicyunset01".to_string(),
+                proof_source: "treasury_committee".to_string(),
+                proof_reference: "m2-bridge-risk-status-policy-unset-001".to_string(),
+                observed_at_unix_ms: 1,
+                expires_at_unix_ms: 0,
+                policy_version: 1,
+                policy_source: "governance_path".to_string(),
+                status: "active".to_string(),
+                automated_verification: false,
+                verification_mode: "manual_governance_attestation".to_string(),
+            },
+        );
+        unset_policy.module_state.mapped_header_source_required = true;
+        unset_policy.module_state.mapped_header_source_allowed_peer_ids = vec![41, 42];
+        unset_policy.module_state.mapped_header_source_min_quorum = 2;
+        save_nov_native_execution_store_v1(unset_policy_store.as_path(), &unset_policy)
+            .expect("seed unset lock policy M2 risk status smoke store");
+        let unset_status = run_mainline_query_from_path(
+            bogus_canonical_store,
+            "nov_getM2BridgeRiskStatus",
+            &json!({
+                "asset": "NETH",
+                "native_execution_store_path": unset_policy_store.display().to_string(),
+            }),
+        )
+        .expect("nov_getM2BridgeRiskStatus should fail closed on unset bridge policy");
+        assert_eq!(unset_status["risk_state"].as_str(), Some("blocked"));
+        assert!(unset_status["reasons"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .any(|item| item.as_str() == Some("mapped_lock_contract_address_unset")));
+        assert!(unset_status["reasons"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .any(|item| item.as_str() == Some("mapped_lock_min_confirmations_unset")));
+
         let _ = fs::remove_file(native_store);
         let _ = fs::remove_file(missing_store);
+        let _ = fs::remove_file(unset_policy_store);
     }
 
     #[test]
