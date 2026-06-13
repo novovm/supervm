@@ -6,6 +6,7 @@
 
 - 本目录负责 `NOV / M0 / M1 / M2 / Treasury / AMM / Protocol Clearing Price` 等经济规则。
 - `docs_CN/NOVOVM-NETWORK` 负责网络、节点、入口、执行与运行体系。
+- 经济边界条款不得放入 `docs_CN/NOVOVM-NETWORK`，避免把货币制度、清算制度与节点运行文档混在一起。
 - DAPP、网站、钱包不属于本目录当前范围。
 
 当前权威文档：

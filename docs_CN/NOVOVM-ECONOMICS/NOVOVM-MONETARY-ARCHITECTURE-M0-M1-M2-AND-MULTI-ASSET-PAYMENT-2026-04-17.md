@@ -118,14 +118,14 @@ _2026-04-17_
 4. AMM spot price 禁止进入协议清算。
 5. 外部 oracle 只能作为治理许可参考源，用于偏离检测、熔断和兜底。
 6. 外部 oracle 不能开放给任意第三方喂价，不能单独决定协议清算价。
-7. 许可 oracle source 由治理/Treasury policy 管理；`fee_oracle_allowed_sources` 是当前执行约束，非白名单 `fee_oracle_source` 不进入 `P_ref`。
+7. 许可 oracle source 由治理/Treasury policy 管理；`fee_oracle_allowed_sources` 是当前执行约束，非白名单 `fee_oracle_source` 不进入 `P_ref`；`fee_oracle_disabled_sources`、禁用原因和 source rotation 记录用于治理停用异常源。
 
 ## 8. 当前代码差距（P0 可执行）
 
 1. 原生 `tx_wire` 仍偏 transfer，需升级为原生执行/治理可表达结构。  
 2. 原生 `nov_*` 入口虽已存在基础能力，但 NOV 原生执行与费用术语仍需进一步“主链优先化”。  
 3. 多币支付路由、清算、国库 settlement 已有 native execution store v1 主线；`phase4_mode=live` mapped lock 已要求结构化 Ethereum lock event evidence、receipt MPT proof 和本地 `novovm-network` runtime canonical finalized block anchor，并能把通过校验的 ETH lock MVP 映射为 `NETH` M2 credit、写入 native account balance / Treasury reserve / settlement journal，并在 burn/release 时扣减 NETH credit 和 reserve。
-4. 协议清算价 v1 已落代码：`P_epoch/P_pay/P_redeem` 按 epoch 固定，输入为显式 AMM TWAP、Treasury NAV、许可 oracle reference 和上一 epoch 价格；AMM spot 不参与清算；`fee_oracle_allowed_sources` 已由 governance/Treasury policy 持久化并在清算价构建时执行，非白名单 oracle source 会进入 rejected source，不参与清算。
+4. 协议清算价 v1 已落代码：`P_epoch/P_pay/P_redeem` 按 epoch 固定，输入为显式 AMM TWAP、Treasury NAV、许可 oracle reference 和上一 epoch 价格；AMM spot 不参与清算；`fee_oracle_allowed_sources` 已由 governance/Treasury policy 持久化并在清算价构建时执行，非白名单 oracle source 会进入 rejected source，不参与清算；被 `fee_oracle_disabled_sources` 禁用的 source 即使仍在 allowlist 中也不能参与清算，并会暴露 disabled reason / rotation target。
 5. M2 bridge 风险门禁 v1 已落代码：native execution store / governance policy 可持久化 `mapped_lock_bridge_paused`、`mapped_asset_burn_paused`、`mapped_asset_release_paused`；env 可紧急暂停 live register、burn、release，暂停时 fail-closed 且不推进 mapped asset 生命周期。
 6. M2 source anchor reorg gate v1 已落代码：live register 会持久化 `source_chain_id/block_number/block_hash/receipts_root` 等 anchor；`ua_getMappedAsset` 会暴露 `source_anchor_status`；burn/release 前会复查本地 runtime canonical finalized block，source anchor unsafe 时拒绝推进生命周期。治理化 header source whitelist/quorum gate v1 已接入 native execution store：`ua_setMappedHeaderSourcePolicy` 可要求 live lock proof 的 runtime header 必须来自治理许可 `source_peer_id`，并配置 `min_source_quorum`；runtime 会按同一 `block_hash` 已观测到的许可 source peer 集合计算 quorum，不满足时 fail-closed。该 policy 已支持 `disabled_peer_ids`、`disabled_peer_reasons/slashing_reasons` 和 `peer_rotations`，治理可带原因禁用异常 source peer，并记录 old peer -> new peer 轮换关系；被禁用 peer 即使在 allowed 列表里也不能作为证明来源或计入 quorum。治理化 Ed25519 header attestation quorum v1 已接入 native execution store：`ua_setMappedHeaderAttestationPolicy` 可要求 live lock proof 携带治理许可 `header_attestations`，每个 attestation 用许可 public key 对 `chain_id/block_number/block_hash/receipts_root` 签名，并配置 `min_attestation_quorum`；签名无效或 quorum 不足时 fail-closed。该 policy 已支持 `disabled_signers`、`disabled_signer_reasons` 和 `signer_rotations`，治理可带原因禁用旧 attestation key，并记录 old signer -> new signer 轮换关系；被禁用 key 即使签名有效也不计入 quorum。
 7. M2 manual freeze/recovery/rollback v1 已落代码：`ua_freezeMappedAsset` 可把 active/burn_pending mapped asset 标记为 `frozen`；对 active live NETH 会扣减用户 native 可用余额，但保留 Treasury reserve，不触发链上出金。`ua_unfreezeMappedAsset` 只允许在 source anchor 重新通过 canonical finalized 校验后，把 frozen NETH 恢复为 active 并返还用户 native 可用余额。`ua_rollbackFrozenMappedAsset` 只允许 frozen 且 source anchor 仍 unsafe 时执行，把内部 NETH/M2 reserve 暴露扣回并把 mapped asset 置为 `rejected`，不返还用户余额、不 mint NOV、不触发外部链释放。
@@ -133,7 +133,7 @@ _2026-04-17_
 9. M2 finality policy v1 已落代码：`mapped_lock_min_confirmations` 可由 governance/Treasury policy 设置；live ETH lock proof 会优先使用 native store policy，未设置时才 fallback 到 env/default。它只管理最小 finalized confirmations，不等于完整 finality source 管理。
 10. Treasury reserve proof v1 已具备最小治理登记/查询面：`governance.set_reserve_proof` 可按资产登记 proof type/digest/source/reference/amount/status；`treasury.get_reserve_proof` 和 `treasury.get_reserve_snapshot` 可只读暴露 effective status 与 non-claim 标记。该路径不做自动外部验真、不授权 NOV mint、不授权外部赎回。
 11. Native execution store 已具备最小 lockfile single-writer guard：主写路径先获取写锁，再执行 load/modify/save，适合单机/低并发产品闭环；该 guard 不是 RocksDB/事务后端，也不代表高并发账本入口完成。
-12. 当前仍不声明真实外部桥、完整 external finality source 管理、治理赔付、真实链上出金、完整自动 reserve proof verification、完整桥接铸造/赎回自动化或多进程高并发账本入口完成；当前 finality source 管理只覆盖 source peer whitelist/quorum、disabled peer slashing reason/fail-closed、source peer rotation 记录、Ed25519 attestation quorum、disabled signer reason/fail-closed、signer rotation 记录、最小 confirmations 和 `ua_getMappedFinalitySourceStatus` 只读状态聚合。治理层 oracle source allowlist 已具备最小执行约束，但不是开放喂价系统，也不等于完整 oracle 网络。
+12. 当前仍不声明真实外部桥、完整 external finality source 管理、治理赔付、真实链上出金、完整自动 reserve proof verification、完整桥接铸造/赎回自动化或多进程高并发账本入口完成；当前 finality source 管理只覆盖 source peer whitelist/quorum、disabled peer slashing reason/fail-closed、source peer rotation 记录、Ed25519 attestation quorum、disabled signer reason/fail-closed、signer rotation 记录、最小 confirmations 和 `ua_getMappedFinalitySourceStatus` 只读状态聚合。治理层 oracle source allowlist / disabled reason / rotation 已具备最小执行约束，但不是开放喂价系统，也不等于完整 oracle 网络。
 
 ## 9. 术语冻结
 
@@ -153,7 +153,7 @@ _2026-04-17_
 1. 把当前治理化 header source whitelist/quorum/disabled peer gate 和 Ed25519 header attestation quorum gate 继续升级到完整 external finality source 管理，包括 reorg response policy、赔付规则和自动处置；`receipts_root` 已不再只信任用户输入，quorum 已按同一 `block_hash` 的多 source 观测计数，source peer slashing reason、source peer rotation、最小 finalized confirmations、attestation signature quorum、disabled signer、disabled reason 和 signer rotation 已可由 mainline policy 设置。
 2. 把 `ua_autoHealMappedAssets` 接到主线调度：当前 freeze apply 和 frozen unsafe rollback apply 已分别由 governance/Treasury policy 控制，但仍需要策略化触发、治理赔付规则和外部 finality source 管理。
 3. 把当前 native store lockfile single-writer guard 升级为真正单 writer 队列或 RocksDB/事务后端，支撑公测级并发写入。
-4. 把当前最小 reserve proof 登记/查询面升级为真实自动 reserve proof verification，并把当前最小治理 oracle source allowlist 扩展为更完整的 signer/source 轮换、停用和审计流程。
+4. 把当前最小 reserve proof 登记/查询面升级为真实自动 reserve proof verification，并把当前最小治理 oracle source allowlist / disabled / rotation 扩展为更完整的签名验证、来源轮换、停用和审计流程。
 
 ---
 

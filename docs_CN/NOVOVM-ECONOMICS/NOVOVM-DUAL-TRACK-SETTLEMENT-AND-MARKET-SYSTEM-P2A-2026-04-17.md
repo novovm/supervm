@@ -234,7 +234,7 @@ asset_out[A] = nov_amount / P_redeem[A]
 7. AMM TWAP 必须满足最小时间窗口、最小池深度、最小成交量、最大偏离阈值。
 8. 单 epoch 清算价涨跌必须有限幅，防止几分钟内价格污染 NOV 宏观结算。
 9. 低流动性时不使用 AMM 价，降级到 NAV/oracle 兜底或进入 `constrained/blocked`。
-10. oracle 只允许治理白名单来源；不能由外部用户注册价格源；当前代码用 `fee_oracle_allowed_sources` 约束可参与清算的 `fee_oracle_source`。
+10. oracle 只允许治理白名单来源；不能由外部用户注册价格源；当前代码用 `fee_oracle_allowed_sources` 约束可参与清算的 `fee_oracle_source`，并用 `fee_oracle_disabled_sources`、disabled reason、source rotation 记录治理停用异常源。
 11. oracle 不能单独决定价格，只能参与 `weighted_median`、偏离检测、熔断和兜底。
 12. AMM、NAV、oracle 三者偏离过大时，暂停该资产新支付或只允许 NOV 支付。
 13. MCP 镜像托管池资产不得挪入 AMM 做市，不得作为系统自由支配储备。
@@ -249,7 +249,7 @@ asset_out[A] = nov_amount / P_redeem[A]
 4. clearing result 继续进入 settlement 主线，不绕开 NOV 内部结算。
 5. 文档与实现不得出现“AMM 即时报价直接决定 gas/Execution Fee 清算价”的路径。
 6. `P_clear` 必须按 epoch 固定，不按每笔交易实时波动；代码 v1 已以 `protocol_clearing_prices` 快照记录 `P_epoch/P_pay/P_redeem`。
-7. oracle 必须是许可参考源，不是开放喂价系统；代码 v1 只读取 governance/runtime 许可参考价，不提供开放喂价入口；`get_fee_oracle_rates` / `get_protocol_clearing_price` 必须暴露 `oracle_allowed_sources`、`oracle_source_allowed`、`oracle_open_feed_allowed=false`。
+7. oracle 必须是许可参考源，不是开放喂价系统；代码 v1 只读取 governance/runtime 许可参考价，不提供开放喂价入口；`get_fee_oracle_rates` / `get_protocol_clearing_price` 必须暴露 `oracle_allowed_sources`、`oracle_disabled_sources`、`oracle_source_allowed`、`oracle_source_disabled`、`oracle_open_feed_allowed=false`。
 8. `cargo check / clippy / test / supervm-mainline-gate` 全绿。
 
 ## 9.1 2026-06-13 代码落地状态
@@ -258,8 +258,8 @@ asset_out[A] = nov_amount / P_redeem[A]
 - fee quote 优先使用 `P_pay`，支付资产按保守价折算为 NOV value。
 - Treasury direct clearing route 使用同一协议清算价，不再直接使用 AMM spot。
 - `treasury.redeem` 在 `asset_out + nov_amount` 形态下使用 `P_redeem`，先扣用户 NOV，再按反向保守价从 Treasury reserve 出资产。
-- 只读查询 `nov_call treasury.get_protocol_clearing_price` 可返回 `P_epoch/P_pay/P_redeem`、source、rejected source、epoch、attack-resistance 状态和 oracle source allowlist 状态；非白名单 oracle source 会被记录为 rejected source，不进入 `P_ref`。
-- governance/Treasury policy 可写入 `fee_oracle_allowed_sources`；`nov_call treasury.get_fee_oracle_rates` 暴露当前 oracle source、allowlist、source 是否允许和 `oracle_open_feed_allowed=false`。
+- 只读查询 `nov_call treasury.get_protocol_clearing_price` 可返回 `P_epoch/P_pay/P_redeem`、source、rejected source、epoch、attack-resistance 状态和 oracle source allowlist/disabled/rotation 状态；非白名单或已禁用 oracle source 会被记录为 rejected source，不进入 `P_ref`。
+- governance/Treasury policy 可写入 `fee_oracle_allowed_sources`、`fee_oracle_disabled_sources`、禁用原因和 source rotations；`nov_call treasury.get_fee_oracle_rates` 暴露当前 oracle source、allowlist、disabled list、source 是否允许/禁用和 `oracle_open_feed_allowed=false`。
 - `ua_registerMappedLock(phase4_mode=live)` 已要求结构化 Ethereum lock event evidence、receipt MPT proof 和本地 `novovm-network` runtime canonical finalized block anchor，并能把通过校验的 ETH lock MVP 映射为 `NETH` M2 credit，写入 native account balance、Treasury reserve 和 settlement journal；`ua_burnMappedAsset -> ua_releaseMappedLock` 已能扣减用户 NETH credit 并释放 Treasury NETH reserve。
 - M2 bridge pause v1 已接到 native execution store 和 governance policy：`mapped_lock_bridge_paused` 阻断 live register；`mapped_asset_burn_paused` 阻断 burn；`mapped_asset_release_paused` 阻断 release；env 级全局/单项暂停用于紧急 fail-closed。
 - M2 source anchor reorg gate v1 已接入 mapped asset record：live register 持久化 source anchor；`ua_getMappedAsset` 暴露 `source_anchor_status`；burn/release 前复查本地 canonical finalized anchor，unsafe 时 fail-closed，不推进状态。治理化 header source whitelist/quorum gate v1 已接入 native execution store：`ua_setMappedHeaderSourcePolicy` 可要求 live lock proof 的 runtime header 必须来自治理许可 `source_peer_id`，并配置 `min_source_quorum`；runtime 会按同一 `block_hash` 已观测到的许可 source peer 集合计算 quorum，不满足时 fail-closed。该 policy 已支持 `disabled_peer_ids`、`disabled_peer_reasons/slashing_reasons` 和 `peer_rotations`，被治理禁用的 source peer 不得作为证明来源且不计入 quorum，old peer -> new peer 的 `peer_rotations` 可作为治理 source rotation 记录。治理化 Ed25519 header attestation quorum v1 已接入 native execution store：`ua_setMappedHeaderAttestationPolicy` 可要求 live lock proof 携带治理许可 `header_attestations`，每个 attestation 用许可 public key 对 `chain_id/block_number/block_hash/receipts_root` 签名，并配置 `min_attestation_quorum`；签名无效、quorum 不足或 signer 被 `disabled_signers` 禁用时 fail-closed，禁用原因由 `disabled_signer_reasons` 持久化并可查询，old signer -> new signer 的 `signer_rotations` 可作为治理 key rotation 记录。

@@ -734,6 +734,12 @@ pub struct NovNativeExecutionModuleStateV1 {
     #[serde(default)]
     pub fee_oracle_allowed_sources: Vec<String>,
     #[serde(default)]
+    pub fee_oracle_disabled_sources: Vec<String>,
+    #[serde(default)]
+    pub fee_oracle_disabled_source_reasons: BTreeMap<String, String>,
+    #[serde(default)]
+    pub fee_oracle_source_rotations: BTreeMap<String, String>,
+    #[serde(default)]
     pub last_fee_quote: Option<NovFeeQuoteV1>,
     #[serde(default)]
     pub last_fee_quote_failure: Option<String>,
@@ -831,6 +837,9 @@ impl Default for NovNativeExecutionModuleStateV1 {
             fee_oracle_updated_unix_ms: 0,
             fee_oracle_source: String::new(),
             fee_oracle_allowed_sources: Vec::new(),
+            fee_oracle_disabled_sources: Vec::new(),
+            fee_oracle_disabled_source_reasons: BTreeMap::new(),
+            fee_oracle_source_rotations: BTreeMap::new(),
             last_fee_quote: None,
             last_fee_quote_failure: None,
             last_execution_trace: None,
@@ -1517,6 +1526,25 @@ fn parse_string_list_from_json_value_v1(value: &serde_json::Value) -> Option<Vec
     Some(out)
 }
 
+fn parse_string_map_from_json_value_v1(
+    value: &serde_json::Value,
+) -> Option<BTreeMap<String, String>> {
+    let mut out = BTreeMap::new();
+    match value {
+        serde_json::Value::Object(map) => {
+            for (key, value) in map {
+                let raw_value = value.as_str()?.trim();
+                let raw_key = key.trim();
+                if !raw_key.is_empty() && !raw_value.is_empty() {
+                    out.insert(raw_key.to_string(), raw_value.to_string());
+                }
+            }
+        }
+        _ => return None,
+    }
+    Some(out)
+}
+
 fn decode_execute_args_json_v1(args: &[u8]) -> Option<serde_json::Value> {
     if args.is_empty() {
         return None;
@@ -1832,8 +1860,84 @@ fn fee_oracle_allowed_sources_v1(store: &NovNativeExecutionStoreV1) -> Vec<Strin
     sources
 }
 
+fn fee_oracle_disabled_sources_v1(store: &NovNativeExecutionStoreV1) -> Vec<String> {
+    let mut sources: Vec<String> = store
+        .module_state
+        .fee_oracle_disabled_sources
+        .iter()
+        .map(|source| normalize_fee_oracle_source_v1(source.as_str()))
+        .filter(|source| !source.trim().is_empty())
+        .collect();
+    sources.sort();
+    sources.dedup();
+    sources
+}
+
+fn fee_oracle_disabled_source_reasons_v1(
+    store: &NovNativeExecutionStoreV1,
+) -> BTreeMap<String, String> {
+    store
+        .module_state
+        .fee_oracle_disabled_source_reasons
+        .iter()
+        .map(|(source, reason)| {
+            (
+                normalize_fee_oracle_source_v1(source.as_str()),
+                reason.trim().to_string(),
+            )
+        })
+        .filter(|(source, reason)| !source.is_empty() && !reason.is_empty())
+        .collect()
+}
+
+fn fee_oracle_source_rotations_v1(store: &NovNativeExecutionStoreV1) -> BTreeMap<String, String> {
+    store
+        .module_state
+        .fee_oracle_source_rotations
+        .iter()
+        .map(|(old_source, new_source)| {
+            (
+                normalize_fee_oracle_source_v1(old_source.as_str()),
+                normalize_fee_oracle_source_v1(new_source.as_str()),
+            )
+        })
+        .filter(|(old_source, new_source)| !old_source.is_empty() && !new_source.is_empty())
+        .collect()
+}
+
+fn fee_oracle_source_disabled_v1(store: &NovNativeExecutionStoreV1) -> bool {
+    let source = fee_oracle_source_v1(store);
+    fee_oracle_disabled_sources_v1(store)
+        .iter()
+        .any(|disabled| disabled == &source)
+}
+
+fn fee_oracle_disabled_reason_v1(store: &NovNativeExecutionStoreV1) -> Option<String> {
+    let source = fee_oracle_source_v1(store);
+    fee_oracle_disabled_source_reasons_v1(store)
+        .get(source.as_str())
+        .cloned()
+        .or_else(|| {
+            if fee_oracle_source_disabled_v1(store) {
+                Some("disabled_by_governance".to_string())
+            } else {
+                None
+            }
+        })
+}
+
+fn fee_oracle_rotation_target_v1(store: &NovNativeExecutionStoreV1) -> Option<String> {
+    let source = fee_oracle_source_v1(store);
+    fee_oracle_source_rotations_v1(store)
+        .get(source.as_str())
+        .cloned()
+}
+
 fn fee_oracle_source_allowed_v1(store: &NovNativeExecutionStoreV1) -> bool {
     let source = fee_oracle_source_v1(store);
+    if fee_oracle_source_disabled_v1(store) {
+        return false;
+    }
     fee_oracle_allowed_sources_v1(store)
         .iter()
         .any(|allowed| allowed == &source)
@@ -3065,10 +3169,19 @@ fn build_protocol_clearing_price_v1(
         .contains_key(&normalized)
         && !fee_oracle_source_allowed_v1(store)
     {
-        rejected.push(format!(
-            "permissioned_oracle_ref:source_not_allowed source={}",
-            fee_oracle_source_v1(store)
-        ));
+        if fee_oracle_source_disabled_v1(store) {
+            rejected.push(format!(
+                "permissioned_oracle_ref:source_disabled source={} reason={} rotation_target={}",
+                fee_oracle_source_v1(store),
+                fee_oracle_disabled_reason_v1(store).unwrap_or_else(|| "disabled".to_string()),
+                fee_oracle_rotation_target_v1(store).unwrap_or_default()
+            ));
+        } else {
+            rejected.push(format!(
+                "permissioned_oracle_ref:source_not_allowed source={}",
+                fee_oracle_source_v1(store)
+            ));
+        }
     }
 
     let anchor = p_nav_ppm.or(p_amm_twap_ppm).or(if p_prev_ppm > 0 {
@@ -5766,6 +5879,92 @@ fn dispatch_native_module_execute_v1(
                 }
                 None => fee_oracle_allowed_sources_v1(store),
             };
+            let fee_oracle_disabled_sources = match args_json
+                .get("fee_oracle_disabled_sources")
+                .or_else(|| args_json.get("oracle_disabled_sources"))
+            {
+                Some(value) => {
+                    let Some(raw_sources) = parse_string_list_from_json_value_v1(value) else {
+                        return build_failed_native_receipt_v1(
+                            request,
+                            settled_fee,
+                            subject_meta,
+                            "governance".to_string(),
+                            "apply_treasury_policy".to_string(),
+                            "governance.policy.invalid_fee_oracle_disabled_sources".to_string(),
+                        );
+                    };
+                    let mut sources: Vec<String> = raw_sources
+                        .iter()
+                        .map(|source| normalize_fee_oracle_source_v1(source.as_str()))
+                        .filter(|source| !source.trim().is_empty())
+                        .collect();
+                    sources.sort();
+                    sources.dedup();
+                    sources
+                }
+                None => fee_oracle_disabled_sources_v1(store),
+            };
+            let fee_oracle_disabled_source_reasons = match args_json
+                .get("fee_oracle_disabled_source_reasons")
+                .or_else(|| args_json.get("oracle_disabled_source_reasons"))
+                .or_else(|| args_json.get("oracle_slashing_reasons"))
+            {
+                Some(value) => {
+                    let Some(raw_reasons) = parse_string_map_from_json_value_v1(value) else {
+                        return build_failed_native_receipt_v1(
+                            request,
+                            settled_fee,
+                            subject_meta,
+                            "governance".to_string(),
+                            "apply_treasury_policy".to_string(),
+                            "governance.policy.invalid_fee_oracle_disabled_source_reasons"
+                                .to_string(),
+                        );
+                    };
+                    raw_reasons
+                        .iter()
+                        .map(|(source, reason)| {
+                            (
+                                normalize_fee_oracle_source_v1(source.as_str()),
+                                reason.trim().to_string(),
+                            )
+                        })
+                        .filter(|(source, reason)| !source.is_empty() && !reason.is_empty())
+                        .collect::<BTreeMap<_, _>>()
+                }
+                None => fee_oracle_disabled_source_reasons_v1(store),
+            };
+            let fee_oracle_source_rotations = match args_json
+                .get("fee_oracle_source_rotations")
+                .or_else(|| args_json.get("oracle_source_rotations"))
+            {
+                Some(value) => {
+                    let Some(raw_rotations) = parse_string_map_from_json_value_v1(value) else {
+                        return build_failed_native_receipt_v1(
+                            request,
+                            settled_fee,
+                            subject_meta,
+                            "governance".to_string(),
+                            "apply_treasury_policy".to_string(),
+                            "governance.policy.invalid_fee_oracle_source_rotations".to_string(),
+                        );
+                    };
+                    raw_rotations
+                        .iter()
+                        .map(|(old_source, new_source)| {
+                            (
+                                normalize_fee_oracle_source_v1(old_source.as_str()),
+                                normalize_fee_oracle_source_v1(new_source.as_str()),
+                            )
+                        })
+                        .filter(|(old_source, new_source)| {
+                            !old_source.is_empty() && !new_source.is_empty()
+                        })
+                        .collect::<BTreeMap<_, _>>()
+                }
+                None => fee_oracle_source_rotations_v1(store),
+            };
             let provided_policy_version = args_json
                 .get("policy_version")
                 .and_then(parse_u128_from_json_value_v1)
@@ -5810,6 +6009,10 @@ fn dispatch_native_module_execute_v1(
             store.module_state.clearing_constrained_strategy =
                 clearing_constrained_strategy.clone();
             store.module_state.fee_oracle_allowed_sources = fee_oracle_allowed_sources.clone();
+            store.module_state.fee_oracle_disabled_sources = fee_oracle_disabled_sources.clone();
+            store.module_state.fee_oracle_disabled_source_reasons =
+                fee_oracle_disabled_source_reasons.clone();
+            store.module_state.fee_oracle_source_rotations = fee_oracle_source_rotations.clone();
             store.module_state.treasury_policy_version = policy_version;
             store.module_state.treasury_policy_source = "governance_path".to_string();
             store.module_state.treasury_policy_last_update_unix_ms = now_unix_millis_v1();
@@ -5841,6 +6044,9 @@ fn dispatch_native_module_execute_v1(
                     "clearing_constrained_daily_usage_bps": clearing_constrained_daily_usage_bps,
                     "clearing_constrained_strategy": clearing_constrained_strategy,
                     "fee_oracle_allowed_sources": fee_oracle_allowed_sources,
+                    "fee_oracle_disabled_sources": fee_oracle_disabled_sources,
+                    "fee_oracle_disabled_source_reasons": fee_oracle_disabled_source_reasons,
+                    "fee_oracle_source_rotations": fee_oracle_source_rotations,
                     "oracle_open_feed_allowed": false,
                 }),
             };
@@ -6404,7 +6610,13 @@ pub fn run_nov_native_call_from_params_with_store_path_v1(
     let oracle_policy = serde_json::json!({
         "oracle_source": fee_oracle_source_v1(&store),
         "oracle_allowed_sources": fee_oracle_allowed_sources_v1(&store),
+        "oracle_disabled_sources": fee_oracle_disabled_sources_v1(&store),
+        "oracle_disabled_source_reasons": fee_oracle_disabled_source_reasons_v1(&store),
+        "oracle_source_rotations": fee_oracle_source_rotations_v1(&store),
         "oracle_source_allowed": fee_oracle_source_allowed_v1(&store),
+        "oracle_source_disabled": fee_oracle_source_disabled_v1(&store),
+        "oracle_disabled_reason": fee_oracle_disabled_reason_v1(&store),
+        "oracle_rotation_target": fee_oracle_rotation_target_v1(&store),
         "oracle_open_feed_allowed": false,
     });
     let reserve_proof_now_ms = now_unix_millis_v1();
@@ -6655,7 +6867,13 @@ pub fn run_nov_native_call_from_params_with_store_path_v1(
                                     "oracle_open_feed_allowed": false,
                                     "oracle_source": fee_oracle_source_v1(&store),
                                     "oracle_allowed_sources": fee_oracle_allowed_sources_v1(&store),
+                                    "oracle_disabled_sources": fee_oracle_disabled_sources_v1(&store),
+                                    "oracle_disabled_source_reasons": fee_oracle_disabled_source_reasons_v1(&store),
+                                    "oracle_source_rotations": fee_oracle_source_rotations_v1(&store),
                                     "oracle_source_allowed": fee_oracle_source_allowed_v1(&store),
+                                    "oracle_source_disabled": fee_oracle_source_disabled_v1(&store),
+                                    "oracle_disabled_reason": fee_oracle_disabled_reason_v1(&store),
+                                    "oracle_rotation_target": fee_oracle_rotation_target_v1(&store),
                                 }
                             },
                         }),
@@ -6971,7 +7189,13 @@ pub fn run_nov_native_call_from_params_with_store_path_v1(
                         "oracle_updated_unix_ms": store.module_state.fee_oracle_updated_unix_ms,
                         "oracle_source": fee_oracle_source_v1(&store),
                         "oracle_allowed_sources": fee_oracle_allowed_sources_v1(&store),
+                        "oracle_disabled_sources": fee_oracle_disabled_sources_v1(&store),
+                        "oracle_disabled_source_reasons": fee_oracle_disabled_source_reasons_v1(&store),
+                        "oracle_source_rotations": fee_oracle_source_rotations_v1(&store),
                         "oracle_source_allowed": fee_oracle_source_allowed_v1(&store),
+                        "oracle_source_disabled": fee_oracle_source_disabled_v1(&store),
+                        "oracle_disabled_reason": fee_oracle_disabled_reason_v1(&store),
+                        "oracle_rotation_target": fee_oracle_rotation_target_v1(&store),
                         "oracle_open_feed_allowed": false,
                         "oracle_max_age_ms": execution_fee_oracle_max_age_ms_v1(),
                     },
@@ -8478,6 +8702,55 @@ mod tests {
     }
 
     #[test]
+    fn protocol_clearing_price_ignores_disabled_oracle_source_with_rotation() {
+        let mut store = NovNativeExecutionStoreV1::default();
+        store
+            .module_state
+            .clearing_rate_ppm
+            .insert("USDT".to_string(), 1_000_000);
+        store
+            .module_state
+            .protocol_clearing_nav_rate_ppm
+            .insert("USDT".to_string(), 1_000_000);
+        store
+            .module_state
+            .fee_oracle_rates_ppm
+            .insert("USDT".to_string(), 5_000_000);
+        store.module_state.fee_oracle_updated_unix_ms = 600_000;
+        store.module_state.fee_oracle_source = "governance_oracle".to_string();
+        store.module_state.fee_oracle_allowed_sources = vec![
+            "runtime_oracle".to_string(),
+            "governance_oracle".to_string(),
+        ];
+        store.module_state.fee_oracle_disabled_sources = vec!["governance_oracle".to_string()];
+        store
+            .module_state
+            .fee_oracle_disabled_source_reasons
+            .insert(
+                "governance_oracle".to_string(),
+                "deviation_slash".to_string(),
+            );
+        store.module_state.fee_oracle_source_rotations.insert(
+            "governance_oracle".to_string(),
+            "governance_oracle_v2".to_string(),
+        );
+
+        let price = build_protocol_clearing_price_v1(&store, "USDT", 600_000)
+            .expect("protocol clearing price should resolve without disabled oracle");
+        assert_eq!(price.p_oracle_ref_ppm, None);
+        assert!(!price
+            .sources_used
+            .iter()
+            .any(|source| source == "permissioned_oracle_ref"));
+        assert!(price.sources_rejected.iter().any(|reason| {
+            reason.contains("permissioned_oracle_ref:source_disabled")
+                && reason.contains("reason=deviation_slash")
+                && reason.contains("rotation_target=governance_oracle_v2")
+        }));
+        assert_eq!(price.p_epoch_ppm, 1_000_000);
+    }
+
+    #[test]
     fn fee_quote_uses_protocol_pay_price_and_persists_price_snapshot() {
         let mut store = NovNativeExecutionStoreV1::default();
         store
@@ -9419,7 +9692,10 @@ mod tests {
                     "clearing_constrained_max_slippage_bps": 25u64,
                     "clearing_constrained_daily_usage_bps": 7500u64,
                     "clearing_constrained_strategy": "treasury_direct_only",
-                    "fee_oracle_allowed_sources": ["runtime_oracle", "governance_oracle"]
+                    "fee_oracle_allowed_sources": ["runtime_oracle", "governance_oracle", "governance_oracle_v2"],
+                    "fee_oracle_disabled_sources": ["governance_oracle"],
+                    "fee_oracle_disabled_source_reasons": {"governance_oracle": "deviation_slash"},
+                    "fee_oracle_source_rotations": {"governance_oracle": "governance_oracle_v2"}
                 }))
                 .expect("encode args"),
                 fee_pay_asset: "NOV".to_string(),
@@ -9521,6 +9797,22 @@ mod tests {
                 out["result"]["oracle_policy"]["oracle_open_feed_allowed"].as_bool(),
                 Some(false)
             );
+            assert!(out["result"]["oracle_policy"]["oracle_disabled_sources"]
+                .as_array()
+                .expect("oracle disabled source list should be present")
+                .iter()
+                .any(|source| source.as_str() == Some("governance_oracle")));
+            assert_eq!(
+                out["result"]["oracle_policy"]["oracle_disabled_source_reasons"]
+                    ["governance_oracle"]
+                    .as_str(),
+                Some("deviation_slash")
+            );
+            assert_eq!(
+                out["result"]["oracle_policy"]["oracle_source_rotations"]["governance_oracle"]
+                    .as_str(),
+                Some("governance_oracle_v2")
+            );
             let oracle = run_nov_native_call_from_params_with_store_path_v1(
                 &serde_json::json!({
                     "target": {"kind": "native_module", "id": "treasury"},
@@ -9547,6 +9839,14 @@ mod tests {
                 .expect("oracle query should expose allowed sources")
                 .iter()
                 .any(|source| source.as_str() == Some("governance_oracle")));
+            assert_eq!(
+                oracle["result"]["oracle_disabled_source_reasons"]["governance_oracle"].as_str(),
+                Some("deviation_slash")
+            );
+            assert_eq!(
+                oracle["result"]["oracle_source_rotations"]["governance_oracle"].as_str(),
+                Some("governance_oracle_v2")
+            );
             let policy_contract_id = out["result"]["policy_contract_id"]
                 .as_str()
                 .unwrap_or_default()
