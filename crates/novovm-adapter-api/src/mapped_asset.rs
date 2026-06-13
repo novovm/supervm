@@ -83,6 +83,22 @@ pub struct MappedAssetRecord {
     pub source_asset_symbol: String,
     pub source_tx_hash: Vec<u8>,
     pub source_lock_ref: Vec<u8>,
+    #[serde(default)]
+    pub source_chain_id: Option<u64>,
+    #[serde(default)]
+    pub source_block_number: Option<u64>,
+    #[serde(default)]
+    pub source_block_hash: Vec<u8>,
+    #[serde(default)]
+    pub source_receipts_root: Vec<u8>,
+    #[serde(default)]
+    pub source_finalized_block_number: Option<u64>,
+    #[serde(default)]
+    pub source_log_index: Option<u64>,
+    #[serde(default)]
+    pub source_receipt_index: Option<u64>,
+    #[serde(default)]
+    pub source_receipt_log_index: Option<u64>,
     pub external_owner_ref: Vec<u8>,
     pub target_asset_symbol: String,
     pub target_account_id: String,

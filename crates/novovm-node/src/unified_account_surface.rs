@@ -596,7 +596,7 @@ fn run_unified_account_surface_rpc(
                     }
                 }
             }
-            verify_mapped_lock_proof(&proof, params, !shadow_mode)?;
+            let eth_lock_evidence = verify_mapped_lock_proof(&proof, params, !shadow_mode)?;
             let lock_key = mapped_asset_hex_id(&proof.lock_id);
             if mapped_asset_state
                 .mapping_id_by_lock_id
@@ -706,6 +706,30 @@ fn run_unified_account_surface_rpc(
                 source_asset_symbol: normalize_asset_view_symbol_v1(&proof.source_asset_symbol),
                 source_tx_hash: proof.source_tx_hash.clone(),
                 source_lock_ref: proof.source_lock_ref.clone(),
+                source_chain_id: eth_lock_evidence.as_ref().map(|evidence| evidence.chain_id),
+                source_block_number: eth_lock_evidence
+                    .as_ref()
+                    .map(|evidence| evidence.block_number),
+                source_block_hash: eth_lock_evidence
+                    .as_ref()
+                    .map(|evidence| evidence.block_hash.to_vec())
+                    .unwrap_or_default(),
+                source_receipts_root: eth_lock_evidence
+                    .as_ref()
+                    .map(|evidence| evidence.receipts_root.to_vec())
+                    .unwrap_or_default(),
+                source_finalized_block_number: eth_lock_evidence
+                    .as_ref()
+                    .map(|evidence| evidence.finalized_block_number),
+                source_log_index: eth_lock_evidence
+                    .as_ref()
+                    .map(|evidence| evidence.log_index),
+                source_receipt_index: eth_lock_evidence
+                    .as_ref()
+                    .map(|evidence| evidence.receipt_index),
+                source_receipt_log_index: eth_lock_evidence
+                    .as_ref()
+                    .map(|evidence| evidence.receipt_log_index),
                 external_owner_ref: proof.external_owner_ref.clone(),
                 target_asset_symbol: "NETH".to_string(),
                 target_account_id: account_id.clone(),
@@ -812,6 +836,7 @@ fn run_unified_account_surface_rpc(
                 .filter(|entry| entry.mapping_id == record.mapping_id)
                 .map(mapped_asset_operation_to_json)
                 .collect::<Vec<_>>();
+            let source_anchor_status = mapped_asset_source_anchor_status_v1(&record);
             let record_account_id = record.target_account_id.clone();
             let record_uca_id = record_account_id.clone();
             Ok((
@@ -821,6 +846,7 @@ fn run_unified_account_surface_rpc(
                     "account_id": record_account_id,
                     "uca_id": record_uca_id,
                     "mapped_asset": mapped_asset_record_to_json(&record),
+                    "source_anchor_status": mapped_asset_anchor_status_to_json_v1(&source_anchor_status),
                     "operation_count": operations.len(),
                     "operations": operations,
                 }),
@@ -853,6 +879,7 @@ fn run_unified_account_surface_rpc(
                     record.status.as_str()
                 );
             }
+            require_mapped_asset_anchor_safe_v1(record, "ua_burnMappedAsset")?;
             let settlement =
                 apply_live_mapped_asset_m2_burn_v1(record, mapping_key.as_str(), params, now)?;
             record.status = MappedAssetStatus::BurnPending;
@@ -920,6 +947,7 @@ fn run_unified_account_surface_rpc(
                     record.status.as_str()
                 );
             }
+            require_mapped_asset_anchor_safe_v1(record, "ua_releaseMappedLock")?;
             let settlement = apply_live_mapped_lock_source_release_v1(
                 record,
                 mapping_key.as_str(),
@@ -1668,6 +1696,159 @@ fn require_mapped_bridge_gate_open_v1(params: &Value, gate: MappedBridgeGateV1) 
         );
     }
     Ok(())
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct MappedAssetAnchorStatusV1 {
+    state: &'static str,
+    reason: Option<String>,
+    source_chain_id: Option<u64>,
+    source_block_number: Option<u64>,
+    canonical: Option<bool>,
+    finalized: Option<bool>,
+    receipts_root_match: Option<bool>,
+}
+
+impl MappedAssetAnchorStatusV1 {
+    fn ok() -> Self {
+        Self {
+            state: "ok",
+            reason: None,
+            source_chain_id: None,
+            source_block_number: None,
+            canonical: Some(true),
+            finalized: Some(true),
+            receipts_root_match: Some(true),
+        }
+    }
+
+    fn not_required() -> Self {
+        Self {
+            state: "not_required",
+            reason: Some(
+                "shadow or non-live mapped asset does not require source anchor recheck"
+                    .to_string(),
+            ),
+            source_chain_id: None,
+            source_block_number: None,
+            canonical: None,
+            finalized: None,
+            receipts_root_match: None,
+        }
+    }
+
+    fn blocked(reason: String, chain_id: Option<u64>, block_number: Option<u64>) -> Self {
+        Self {
+            state: "blocked",
+            reason: Some(reason),
+            source_chain_id: chain_id,
+            source_block_number: block_number,
+            canonical: None,
+            finalized: None,
+            receipts_root_match: None,
+        }
+    }
+}
+
+fn mapped_asset_anchor_status_to_json_v1(status: &MappedAssetAnchorStatusV1) -> Value {
+    json!({
+        "state": status.state,
+        "reason": status.reason,
+        "source_chain_id": status.source_chain_id,
+        "source_block_number": status.source_block_number,
+        "canonical": status.canonical,
+        "finalized": status.finalized,
+        "receipts_root_match": status.receipts_root_match,
+    })
+}
+
+fn mapped_asset_source_anchor_status_v1(record: &MappedAssetRecord) -> MappedAssetAnchorStatusV1 {
+    if mapped_asset_is_shadow_mode_v1(record) {
+        return MappedAssetAnchorStatusV1::not_required();
+    }
+    let chain_id = record.source_chain_id;
+    let block_number = record.source_block_number;
+    let Some(chain_id) = chain_id else {
+        return MappedAssetAnchorStatusV1::blocked(
+            "missing source_chain_id anchor".to_string(),
+            chain_id,
+            block_number,
+        );
+    };
+    let Some(block_number) = block_number else {
+        return MappedAssetAnchorStatusV1::blocked(
+            "missing source_block_number anchor".to_string(),
+            Some(chain_id),
+            block_number,
+        );
+    };
+    let block_hash: [u8; 32] = match record.source_block_hash.clone().try_into() {
+        Ok(value) => value,
+        Err(_) => {
+            return MappedAssetAnchorStatusV1::blocked(
+                "missing or invalid source_block_hash anchor".to_string(),
+                Some(chain_id),
+                Some(block_number),
+            );
+        }
+    };
+    let receipts_root: [u8; 32] = match record.source_receipts_root.clone().try_into() {
+        Ok(value) => value,
+        Err(_) => {
+            return MappedAssetAnchorStatusV1::blocked(
+                "missing or invalid source_receipts_root anchor".to_string(),
+                Some(chain_id),
+                Some(block_number),
+            );
+        }
+    };
+    let blocks = novovm_network::snapshot_network_runtime_native_canonical_blocks_v1(chain_id, 0);
+    let Some(block) = blocks
+        .iter()
+        .find(|block| block.number == block_number && block.hash == block_hash)
+    else {
+        return MappedAssetAnchorStatusV1::blocked(
+            "trusted source block anchor is unavailable".to_string(),
+            Some(chain_id),
+            Some(block_number),
+        );
+    };
+    let receipts_root_match = block.receipts_root == Some(receipts_root);
+    let canonical = block.canonical && block.header_observed;
+    let finalized = block.finalized;
+    if canonical && finalized && receipts_root_match {
+        let mut ok = MappedAssetAnchorStatusV1::ok();
+        ok.source_chain_id = Some(chain_id);
+        ok.source_block_number = Some(block_number);
+        return ok;
+    }
+    MappedAssetAnchorStatusV1 {
+        state: "blocked",
+        reason: Some(format!(
+            "source anchor unsafe: canonical={} finalized={} receipts_root_match={}",
+            canonical, finalized, receipts_root_match
+        )),
+        source_chain_id: Some(chain_id),
+        source_block_number: Some(block_number),
+        canonical: Some(canonical),
+        finalized: Some(finalized),
+        receipts_root_match: Some(receipts_root_match),
+    }
+}
+
+fn require_mapped_asset_anchor_safe_v1(record: &MappedAssetRecord, operation: &str) -> Result<()> {
+    let status = mapped_asset_source_anchor_status_v1(record);
+    if status.state == "ok" || status.state == "not_required" {
+        return Ok(());
+    }
+    bail!(
+        "ERR_MAPPED_ASSET_SOURCE_ANCHOR_UNSAFE: {} blocked for mapping_id={} reason={}",
+        operation,
+        mapped_asset_hex_id(&record.mapping_id),
+        status
+            .reason
+            .unwrap_or_else(|| "source anchor unsafe".to_string())
+    )
 }
 
 fn mapped_asset_live_settlement_journal_v1(
@@ -2623,14 +2804,14 @@ fn verify_ethereum_lock_event_evidence_v1(
     proof: &MappedAssetLockProof,
     params: &Value,
     live_required: bool,
-) -> Result<()> {
+) -> Result<Option<EthereumLockEventEvidenceV1>> {
     let Some(evidence) = parse_ethereum_lock_event_evidence_v1(params)? else {
         if live_required {
             bail!(
                 "ERR_MAPPED_LOCK_PROOF_INVALID: live mapped lock requires structured Ethereum lock event evidence"
             );
         }
-        return Ok(());
+        return Ok(None);
     };
     if proof.source_tx_hash.len() != 32 {
         bail!("ERR_MAPPED_LOCK_PROOF_INVALID: source_tx_hash must decode to 32 bytes");
@@ -2686,14 +2867,14 @@ fn verify_ethereum_lock_event_evidence_v1(
     if proof.source_lock_ref.as_slice() != expected_ref.as_slice() {
         bail!("ERR_MAPPED_LOCK_PROOF_INVALID: source_lock_ref does not match Ethereum lock event evidence");
     }
-    Ok(())
+    Ok(Some(evidence))
 }
 
 fn verify_mapped_lock_proof(
     proof: &MappedAssetLockProof,
     params: &Value,
     live_required: bool,
-) -> Result<()> {
+) -> Result<Option<EthereumLockEventEvidenceV1>> {
     if proof.amount == 0 {
         bail!("ERR_MAPPED_LOCK_PROOF_INVALID: amount must be > 0");
     }
@@ -2716,12 +2897,12 @@ fn verify_mapped_lock_proof(
     match proof.proof_format {
         MappedLockProofFormat::EthereumLockEventV1 => {}
     }
-    verify_ethereum_lock_event_evidence_v1(proof, params, live_required)?;
+    let evidence = verify_ethereum_lock_event_evidence_v1(proof, params, live_required)?;
     let digest = mapped_lock_proof_digest_v1(proof);
     if proof.proof_payload.as_slice() != digest.as_slice() {
         bail!("ERR_MAPPED_LOCK_PROOF_INVALID: proof payload digest mismatch");
     }
-    Ok(())
+    Ok(evidence)
 }
 
 fn derive_mapping_id_from_lock_proof_v1(proof: &MappedAssetLockProof) -> [u8; 32] {
@@ -2804,6 +2985,22 @@ fn mapped_asset_record_to_json(record: &MappedAssetRecord) -> Value {
         "source_asset_symbol": normalize_asset_view_symbol_v1(&record.source_asset_symbol),
         "source_tx_hash": format!("0x{}", to_hex_lower(&record.source_tx_hash)),
         "source_lock_ref": format!("0x{}", to_hex_lower(&record.source_lock_ref)),
+        "source_chain_id": record.source_chain_id,
+        "source_block_number": record.source_block_number,
+        "source_block_hash": if record.source_block_hash.is_empty() {
+            Value::Null
+        } else {
+            json!(format!("0x{}", to_hex_lower(&record.source_block_hash)))
+        },
+        "source_receipts_root": if record.source_receipts_root.is_empty() {
+            Value::Null
+        } else {
+            json!(format!("0x{}", to_hex_lower(&record.source_receipts_root)))
+        },
+        "source_finalized_block_number": record.source_finalized_block_number,
+        "source_log_index": record.source_log_index,
+        "source_receipt_index": record.source_receipt_index,
+        "source_receipt_log_index": record.source_receipt_log_index,
         "external_owner_ref": format!("0x{}", to_hex_lower(&record.external_owner_ref)),
         "target_asset_symbol": target_asset_symbol,
         "asset_id": asset_id,
@@ -4576,6 +4773,32 @@ mod tests {
         seed_mapped_lock_trusted_block(params, finalized, receipts_root);
     }
 
+    fn reorg_mapped_lock_trusted_block_from_params(params: &Value) {
+        let chain_id = mapped_lock_param_u64(params, "source_chain_id");
+        let number = mapped_lock_param_u64(params, "block_number");
+        let original_hash = mapped_lock_param_hash(params, "block_hash");
+        let replacement_hash = original_hash.map(|byte| byte ^ 0xff);
+        novovm_network::set_network_runtime_native_head_snapshot_v1(
+            chain_id,
+            novovm_network::NetworkRuntimeNativeHeadSnapshotV1 {
+                chain_id,
+                phase: novovm_network::NetworkRuntimeNativeSyncPhaseV1::Finalize,
+                peer_count: 1,
+                block_number: number,
+                block_hash: replacement_hash,
+                parent_block_hash: [0xee; 32],
+                state_root: [0x22; 32],
+                canonical: true,
+                safe: true,
+                finalized: true,
+                reorg_depth_hint: Some(1),
+                body_available: true,
+                source_peer_id: Some(2),
+                observed_unix_ms: 2000,
+            },
+        );
+    }
+
     fn ensure_native_store(native_store: &Path) {
         let store = load_nov_native_execution_store_v1(native_store)
             .expect("load native execution store for mapped-asset tests");
@@ -5854,6 +6077,194 @@ mod tests {
             ),
         );
         assert_eq!(release["released"].as_bool(), Some(true));
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn unified_account_live_mapped_asset_reorg_blocks_burn_without_state_advance() {
+        let _env_lock = ENV_TEST_LOCK.lock().expect("env test lock poisoned");
+        let _shadow_guard = EnvVarGuard::set(NOVOVM_UA_PHASE4_SHADOW_MODE_ENFORCE_ENV, "false");
+        let (base, store, audit) = temp_paths("mapped-live-reorg-blocked");
+        let root = base
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .to_path_buf();
+        let native_store = root.join("native-execution-store.json");
+        ensure_native_store(native_store.as_path());
+        ua_create(&base, &store, &audit, "acct-map-live-reorg", 10);
+
+        let mut register_map =
+            match mapped_lock_live_event_proof_params("acct-map-live-reorg", 0x3d, 98u128) {
+                Value::Object(map) => map,
+                other => panic!("expected mapped lock proof params object, got {other:?}"),
+            };
+        seed_mapped_lock_trusted_block_from_params(&Value::Object(register_map.clone()), true);
+        register_map.insert("phase4_mode".to_string(), Value::String("live".to_string()));
+        register_map.insert("now".to_string(), Value::from(11u64));
+        let register_params = Value::Object(register_map.clone());
+        let register = run_query(
+            &base,
+            "ua_registerMappedLock",
+            params_with_paths_and_native_store(
+                &store,
+                &audit,
+                &native_store,
+                register_params.clone(),
+            ),
+        );
+        assert_eq!(register["accepted"].as_bool(), Some(true));
+
+        reorg_mapped_lock_trusted_block_from_params(&register_params);
+        let after_reorg = run_query(
+            &base,
+            "ua_getMappedAsset",
+            params_with_paths(
+                &store,
+                &audit,
+                json!({
+                    "account_id": "acct-map-live-reorg",
+                    "mapping_id": register["mapping_id"],
+                }),
+            ),
+        );
+        assert_eq!(
+            after_reorg["source_anchor_status"]["state"].as_str(),
+            Some("blocked")
+        );
+        assert_eq!(
+            after_reorg["mapped_asset"]["status"].as_str(),
+            Some("active")
+        );
+
+        let burn_err = run_query_err(
+            &base,
+            "ua_burnMappedAsset",
+            params_with_paths_and_native_store(
+                &store,
+                &audit,
+                &native_store,
+                json!({
+                    "account_id": "acct-map-live-reorg",
+                    "mapping_id": register["mapping_id"],
+                    "now": 12u64,
+                }),
+            ),
+        );
+        assert!(
+            burn_err.contains("ERR_MAPPED_ASSET_SOURCE_ANCHOR_UNSAFE"),
+            "reorged source anchor should block burn, got: {burn_err}"
+        );
+        let after_failed_burn = run_query(
+            &base,
+            "ua_getMappedAsset",
+            params_with_paths(
+                &store,
+                &audit,
+                json!({
+                    "account_id": "acct-map-live-reorg",
+                    "mapping_id": register["mapping_id"],
+                }),
+            ),
+        );
+        assert_eq!(
+            after_failed_burn["mapped_asset"]["status"].as_str(),
+            Some("active")
+        );
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn unified_account_live_mapped_asset_reorg_blocks_release_without_state_advance() {
+        let _env_lock = ENV_TEST_LOCK.lock().expect("env test lock poisoned");
+        let _shadow_guard = EnvVarGuard::set(NOVOVM_UA_PHASE4_SHADOW_MODE_ENFORCE_ENV, "false");
+        let (base, store, audit) = temp_paths("mapped-live-reorg-release-blocked");
+        let root = base
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .to_path_buf();
+        let native_store = root.join("native-execution-store.json");
+        ensure_native_store(native_store.as_path());
+        ua_create(&base, &store, &audit, "acct-map-live-reorg-release", 10);
+
+        let mut register_map = match mapped_lock_live_event_proof_params(
+            "acct-map-live-reorg-release",
+            0x3e,
+            99u128,
+        ) {
+            Value::Object(map) => map,
+            other => panic!("expected mapped lock proof params object, got {other:?}"),
+        };
+        seed_mapped_lock_trusted_block_from_params(&Value::Object(register_map.clone()), true);
+        register_map.insert("phase4_mode".to_string(), Value::String("live".to_string()));
+        register_map.insert("now".to_string(), Value::from(11u64));
+        let register_params = Value::Object(register_map.clone());
+        let register = run_query(
+            &base,
+            "ua_registerMappedLock",
+            params_with_paths_and_native_store(
+                &store,
+                &audit,
+                &native_store,
+                register_params.clone(),
+            ),
+        );
+        let burn = run_query(
+            &base,
+            "ua_burnMappedAsset",
+            params_with_paths_and_native_store(
+                &store,
+                &audit,
+                &native_store,
+                json!({
+                    "account_id": "acct-map-live-reorg-release",
+                    "mapping_id": register["mapping_id"],
+                    "now": 12u64,
+                }),
+            ),
+        );
+        assert_eq!(burn["burned"].as_bool(), Some(true));
+
+        reorg_mapped_lock_trusted_block_from_params(&register_params);
+        let release_err = run_query_err(
+            &base,
+            "ua_releaseMappedLock",
+            params_with_paths_and_native_store(
+                &store,
+                &audit,
+                &native_store,
+                json!({
+                    "account_id": "acct-map-live-reorg-release",
+                    "mapping_id": register["mapping_id"],
+                    "now": 13u64,
+                }),
+            ),
+        );
+        assert!(
+            release_err.contains("ERR_MAPPED_ASSET_SOURCE_ANCHOR_UNSAFE"),
+            "reorged source anchor should block release, got: {release_err}"
+        );
+        let after_failed_release = run_query(
+            &base,
+            "ua_getMappedAsset",
+            params_with_paths(
+                &store,
+                &audit,
+                json!({
+                    "account_id": "acct-map-live-reorg-release",
+                    "mapping_id": register["mapping_id"],
+                }),
+            ),
+        );
+        assert_eq!(
+            after_failed_release["mapped_asset"]["status"].as_str(),
+            Some("burn_pending")
+        );
+        assert_eq!(
+            after_failed_release["source_anchor_status"]["state"].as_str(),
+            Some("blocked")
+        );
 
         let _ = fs::remove_dir_all(&root);
     }
