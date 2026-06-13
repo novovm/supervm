@@ -555,6 +555,17 @@ fn run_unified_account_surface_rpc(
                     "ERR_MAPPED_HEADER_SOURCE_POLICY_INVALID: required policy needs at least one allowed source peer"
                 );
             }
+            let min_quorum = param_as_u64(params, "min_source_quorum")
+                .or_else(|| param_as_u64(params, "source_quorum"))
+                .unwrap_or(1)
+                .clamp(1, u64::from(u32::MAX)) as u32;
+            if required && allowed_peer_ids.len() < min_quorum as usize {
+                bail!(
+                    "ERR_MAPPED_HEADER_SOURCE_POLICY_INVALID: allowed source peer count {} is below min_source_quorum {}",
+                    allowed_peer_ids.len(),
+                    min_quorum
+                );
+            }
             let source = param_as_string_any(params, &["source", "policy_source"])
                 .unwrap_or_else(|| "governance_path".to_string());
             let version = param_as_u64(params, "policy_version")
@@ -565,6 +576,7 @@ fn run_unified_account_surface_rpc(
             let mut store = load_nov_native_execution_store_v1(store_path.as_path())?;
             store.module_state.mapped_header_source_required = required;
             store.module_state.mapped_header_source_allowed_peer_ids = allowed_peer_ids;
+            store.module_state.mapped_header_source_min_quorum = min_quorum;
             store.module_state.mapped_header_source_policy_source = source;
             store.module_state.mapped_header_source_policy_version = version;
             store
@@ -1980,6 +1992,7 @@ fn mapped_header_source_policy_to_json_v1(
     json!({
         "required": store.module_state.mapped_header_source_required,
         "allowed_peer_ids": store.module_state.mapped_header_source_allowed_peer_ids,
+        "min_source_quorum": store.module_state.mapped_header_source_min_quorum,
         "policy_source": store.module_state.mapped_header_source_policy_source,
         "policy_version": store.module_state.mapped_header_source_policy_version,
         "updated_unix_ms": store.module_state.mapped_header_source_policy_updated_unix_ms,
@@ -2020,9 +2033,20 @@ fn require_mapped_header_source_policy_v1(
             block_number
         );
     }
+    let observed_source_quorum = 1u32;
+    if observed_source_quorum < store.module_state.mapped_header_source_min_quorum {
+        bail!(
+            "ERR_MAPPED_HEADER_SOURCE_QUORUM_UNMET: observed_source_quorum={} min_source_quorum={} chain_id={} block_number={}",
+            observed_source_quorum,
+            store.module_state.mapped_header_source_min_quorum,
+            chain_id,
+            block_number
+        );
+    }
     Ok(json!({
         "state": "ok",
         "source_peer_id": source_peer_id,
+        "observed_source_quorum": observed_source_quorum,
         "policy": policy,
     }))
 }
@@ -6505,7 +6529,8 @@ mod tests {
                 &native_store,
                 json!({
                     "required": true,
-                    "allowed_peer_ids": [1u64],
+                    "allowed_peer_ids": [1u64, 2u64],
+                    "min_source_quorum": 2u64,
                     "policy_source": "governance_test",
                     "policy_version": 8u64,
                     "now": 13u64,
@@ -6516,7 +6541,47 @@ mod tests {
             updated_policy["policy"]["allowed_peer_ids"][0].as_u64(),
             Some(1)
         );
+        assert_eq!(
+            updated_policy["policy"]["min_source_quorum"].as_u64(),
+            Some(2)
+        );
         accepted_map.insert("phase4_mode".to_string(), Value::String("live".to_string()));
+        let quorum_err = run_query_err(
+            &base,
+            "ua_registerMappedLock",
+            params_with_paths_and_native_store(
+                &store,
+                &audit,
+                &native_store,
+                Value::Object(accepted_map.clone()),
+            ),
+        );
+        assert!(
+            quorum_err.contains("ERR_MAPPED_HEADER_SOURCE_QUORUM_UNMET"),
+            "single observed source should not satisfy quorum=2, got: {quorum_err}"
+        );
+
+        let quorum_one_policy = run_query(
+            &base,
+            "ua_setMappedHeaderSourcePolicy",
+            params_with_paths_and_native_store(
+                &store,
+                &audit,
+                &native_store,
+                json!({
+                    "required": true,
+                    "allowed_peer_ids": [1u64, 2u64],
+                    "min_source_quorum": 1u64,
+                    "policy_source": "governance_test",
+                    "policy_version": 9u64,
+                    "now": 14u64,
+                }),
+            ),
+        );
+        assert_eq!(
+            quorum_one_policy["policy"]["min_source_quorum"].as_u64(),
+            Some(1)
+        );
         let accepted = run_query(
             &base,
             "ua_registerMappedLock",
@@ -6538,7 +6603,7 @@ mod tests {
             "ua_getMappedHeaderSourcePolicy",
             params_with_paths_and_native_store(&store, &audit, &native_store, json!({})),
         );
-        assert_eq!(get_policy["policy"]["policy_version"].as_u64(), Some(8));
+        assert_eq!(get_policy["policy"]["policy_version"].as_u64(), Some(9));
 
         let _ = fs::remove_dir_all(&root);
     }

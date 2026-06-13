@@ -22,10 +22,10 @@ NOVOVM 现在已经具备“统一身份 + EVM 产品入口 + native NOV 经济�
 
 - 当前没有发现 NOVO Wallet 前端/钱包应用代码；仓库里是 RPC/节点/gateway 能力，不是完整用户 App。
 - `crates/novovm-node/src/main.rs` 是 dead/historical source，不是当前 Cargo 产品 binary；不得再向该文件增加主线语义。当前统一账户产品入口以 `crates/novovm-node/src/bin/novovm-node.rs -> mainline_query -> unified_account_surface` 为准。
-- ETH 锁仓合约不是已部署真实 Solidity lock contract 路径；当前 `ua_registerMappedLock` live 模式已要求结构化 Ethereum lock event evidence，并通过 `source_chain_id + block_hash + receipts_root + receipt_index + receipt_proof` 验证 receipt MPT inclusion，且要求 `receipts_root` 匹配本地 `novovm-network` runtime canonical finalized block anchor；治理开启 `ua_setMappedHeaderSourcePolicy(required=true)` 后，该 runtime header 还必须来自许可 `source_peer_id`，再解析 receipt log 的 contract/topic0，目标资产为 `NETH`。
+- ETH 锁仓合约不是已部署真实 Solidity lock contract 路径；当前 `ua_registerMappedLock` live 模式已要求结构化 Ethereum lock event evidence，并通过 `source_chain_id + block_hash + receipts_root + receipt_index + receipt_proof` 验证 receipt MPT inclusion，且要求 `receipts_root` 匹配本地 `novovm-network` runtime canonical finalized block anchor；治理开启 `ua_setMappedHeaderSourcePolicy(required=true)` 后，该 runtime header 还必须来自许可 `source_peer_id`，并满足 `min_source_quorum`。当前 runtime 只提供单 source 证据，quorum > 1 会 fail-closed。通过后再解析 receipt log 的 contract/topic0，目标资产为 `NETH`。
 - `phase4_mode=live` 的内部 MVP 接线已能把 mapped lock 记为 `NETH` M2 credit，写入 native account balance、Treasury reserve 和 settlement journal；`phase4_mode=shadow` 仍只做审计映射，不入账。
 - M2 bridge pause v1 已接入 mainline native execution store / governance policy：live register、burn、release 可分别被 `mapped_lock_bridge_paused`、`mapped_asset_burn_paused`、`mapped_asset_release_paused` fail-closed 阻断，暂停时不推进 mapped asset 生命周期。
-- M2 source anchor reorg gate v1 已接入 mapped asset 生命周期：live register 持久化 source anchor；`ua_getMappedAsset` 暴露 `source_anchor_status`；burn/release 前复查本地 canonical finalized anchor，unsafe 时 fail-closed 阻断。治理化 header source whitelist gate v1 已接入 native execution store：开启后 live lock proof 的 runtime header source peer 必须在许可列表中。
+- M2 source anchor reorg gate v1 已接入 mapped asset 生命周期：live register 持久化 source anchor；`ua_getMappedAsset` 暴露 `source_anchor_status`；burn/release 前复查本地 canonical finalized anchor，unsafe 时 fail-closed 阻断。治理化 header source whitelist/quorum gate v1 已接入 native execution store：开启后 live lock proof 的 runtime header source peer 必须在许可列表中，并满足 `min_source_quorum`。
 - M2 manual freeze/recovery/rollback v1 已接入 `ua_freezeMappedAsset` / `ua_unfreezeMappedAsset` / `ua_rollbackFrozenMappedAsset`：active live NETH 冻结会扣用户 native 可用余额、保留 Treasury reserve，并把 mapped asset 状态置为 `frozen`；source anchor 恢复 canonical finalized 后才能 unfreeze，恢复用户 native 可用余额；source anchor 仍 unsafe 时可 rollback，扣回内部 Treasury NETH reserve 并把 mapped asset 置为 `rejected`，不返还用户余额、不触发外部链上出金、不 mint NOV。
 - 仍没有真实“治理化 Ethereum header source 多签 / finality source 管理 -> 自动 reorg heal / compensation -> Treasury policy -> NOV emission”的完整链上桥接。NOV mint 在 consensus token runtime 中存在，但不能直接接在 ETH lock proof 上。
 - EVM 合约币可以在 EVM 产品面执行/查询 receipt，但和 NOV native account balance/treasury 是两套状态面，当前没有完整 ERC20 -> native asset 自动映射桥。
@@ -260,10 +260,10 @@ native NOV 入口：
 
 关键边界：
 
-- 这不是完整真实外部桥；live 模式的 receipt MPT proof 已要求锚定本地 runtime canonical finalized block，并可通过 `ua_setMappedHeaderSourcePolicy` 约束 header source peer，但还没有 header source 多签、finality source 管理、自动 reorg heal 或链上出金。
+- 这不是完整真实外部桥；live 模式的 receipt MPT proof 已要求锚定本地 runtime canonical finalized block，并可通过 `ua_setMappedHeaderSourcePolicy` 约束 header source peer 和 `min_source_quorum`，但当前 runtime 只提供单 source 证据，还没有真实多 source 观测、多签、finality source 管理、自动 reorg heal 或链上出金。
 - 这不是 NOV 铸造路径；ETH lock 只能先形成 `NETH` M2 凭证。
 - live mapped lock 会写入 native `account_asset_balances[NETH]`、`treasury_reserves[NETH]` 和 `treasury_settlement_journal`，但 `settled_nov=0`、`nov_minted=0`。
-- live 模式已校验 lock contract address、`Locked(address,bytes32,uint256,string)` topic0、source chain id、block number、block hash、finalized block number、`source_lock_ref` 派生一致性、receipt MPT proof、receipt envelope 与 proof value 一致性、receipt status 成功、receipt log address/topic0、`receiptsRoot` 与本地 runtime canonical finalized block anchor 一致，并可在治理开启后校验 header source peer 白名单。
+- live 模式已校验 lock contract address、`Locked(address,bytes32,uint256,string)` topic0、source chain id、block number、block hash、finalized block number、`source_lock_ref` 派生一致性、receipt MPT proof、receipt envelope 与 proof value 一致性、receipt status 成功、receipt log address/topic0、`receiptsRoot` 与本地 runtime canonical finalized block anchor 一致，并可在治理开启后校验 header source peer 白名单和 `min_source_quorum`。
 - live register、burn、release 已有 bridge pause 门禁；暂停由 native store / governance policy 或 env 触发，失败时不推进 active/burn_pending/released 状态。
 - live register 已持久化 source anchor；burn/release 前会复查本地 runtime canonical finalized anchor，reorg out、finality 丢失或 receiptsRoot mismatch 时拒绝推进。
 - `ua_freezeMappedAsset` 可人工冻结 active/burn_pending mapped asset；active live NETH 冻结会从用户 native liquid balance 扣减，但 Treasury reserve 保留用于后续恢复或风险处置。`ua_unfreezeMappedAsset` 会先复查 source anchor，只有 canonical/finalized/receiptsRoot 重新安全时才恢复用户 native liquid balance。`ua_rollbackFrozenMappedAsset` 只允许 source anchor 仍 unsafe 的 frozen asset 执行，扣回内部 Treasury NETH reserve 并把 mapped asset 置为 `rejected`，不返还用户余额、不 mint NOV、不链上出金。
@@ -287,7 +287,7 @@ native NOV 入口：
 
 未完成接线：
 
-- MVP live 模式已有 receipt MPT inclusion + 本地 canonical finalized block anchor + Ethereum lock event evidence -> NETH/M2 credit 的内部账本接线，并已有 mapped bridge pause 门禁、source anchor reorg gate、header source whitelist gate 和 manual freeze/recovery/rollback；但没有 header source 多签、finality source 管理、自动 reorg heal、治理赔付或链上自动出入金。
+- MVP live 模式已有 receipt MPT inclusion + 本地 canonical finalized block anchor + Ethereum lock event evidence -> NETH/M2 credit 的内部账本接线，并已有 mapped bridge pause 门禁、source anchor reorg gate、header source whitelist/quorum gate 和 manual freeze/recovery/rollback；但没有真实多 source 观测、header source 多签、finality source 管理、自动 reorg heal、治理赔付或链上自动出入金。
 - 没有发现真实外部 ETH reserve 与 NOV supply、NETH 负债、M2 credit exposure 的完整约束关系。
 
 状态：NOV mint 能力存在于 consensus runtime；ETH 锁仓 live MVP 只能先形成 NETH/M2 native credit，不能声明直接触发 NOV 铸造。
@@ -327,7 +327,7 @@ native NOV 入口：
 
 证据：
 
-- mapped lock proof live 模式目前已验证 receipt MPT inclusion、receipt status、receipt log address/topic0、结构化 event evidence、本地 runtime canonical finalized block anchor，并可在治理开启后验证 header source peer 白名单。
+- mapped lock proof live 模式目前已验证 receipt MPT inclusion、receipt status、receipt log address/topic0、结构化 event evidence、本地 runtime canonical finalized block anchor，并可在治理开启后验证 header source peer 白名单和 `min_source_quorum`。
 - target asset 是 `NETH`，归属 M2，不是 NOV。
 - live `ua_registerMappedLock` 已能写入 native NETH/M2 credit、Treasury reserve 和 settlement journal，且不 mint NOV。
 - live `ua_burnMappedAsset -> ua_releaseMappedLock` 已能扣减用户 NETH credit 并释放 Treasury NETH reserve。
@@ -340,11 +340,11 @@ native NOV 入口：
 建议：
 
 - 下一步只做最小产品桥：
-  - 把当前 header source whitelist gate 升级为多 source / 多签 / finality source 管理。
+  - 把当前 header source whitelist/quorum gate 升级为真实多 source 观测 / 多签 / finality source 管理。
   - 固定一个 lock contract address 配置已经进入 live proof gate，后续要从可信配置/治理读取。
-  - 当前已验 receipt MPT inclusion、`Locked(address indexed owner, bytes32 lockId, uint256 amount, string targetUca)` 的 receipt log address/topic0、本地 finalized canonical block anchor 和可选治理 header source whitelist；下一步补 header source 多签 / finality source / reorg heal。
+  - 当前已验 receipt MPT inclusion、`Locked(address indexed owner, bytes32 lockId, uint256 amount, string targetUca)` 的 receipt log address/topic0、本地 finalized canonical block anchor 和可选治理 header source whitelist/quorum；下一步补真实多 source 观测 / header source 多签 / finality source / reorg heal。
   - `receipts_root` 已不再只信任用户自报；finalized block number 仍只作为确认数约束字段，最终锚定以本地 canonical finalized block 为准。
-  - bridge pause 已能阻断 live register/burn/release；source anchor reorg gate 已能阻断 unsafe burn/release；header source whitelist gate 已能阻断非许可 source peer；manual freeze/unfreeze/rollback 已能冻结、安全恢复或终止异常 NETH 暴露；下一步补 header source 多签、finality source、治理赔付规则和自动化 reorg heal 调度。
+  - bridge pause 已能阻断 live register/burn/release；source anchor reorg gate 已能阻断 unsafe burn/release；header source whitelist/quorum gate 已能阻断非许可 source peer 或 quorum 不足；manual freeze/unfreeze/rollback 已能冻结、安全恢复或终止异常 NETH 暴露；下一步补真实多 source 观测、header source 多签、finality source、治理赔付规则和自动化 reorg heal 调度。
   - 只把 ETH 映射为 `NETH`，不要直接铸 NOV。
   - NOV mint / 矿工结算必须通过 Treasury policy，并使用 epoch 固定的协议清算价。
 

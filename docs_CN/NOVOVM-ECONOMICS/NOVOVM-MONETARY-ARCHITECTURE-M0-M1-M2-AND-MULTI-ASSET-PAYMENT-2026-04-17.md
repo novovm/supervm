@@ -126,7 +126,7 @@ _2026-04-17_
 3. 多币支付路由、清算、国库 settlement 已有 native execution store v1 主线；`phase4_mode=live` mapped lock 已要求结构化 Ethereum lock event evidence、receipt MPT proof 和本地 `novovm-network` runtime canonical finalized block anchor，并能把通过校验的 ETH lock MVP 映射为 `NETH` M2 credit、写入 native account balance / Treasury reserve / settlement journal，并在 burn/release 时扣减 NETH credit 和 reserve。
 4. 协议清算价 v1 已落代码：`P_epoch/P_pay/P_redeem` 按 epoch 固定，输入为显式 AMM TWAP、Treasury NAV、许可 oracle reference 和上一 epoch 价格；AMM spot 不参与清算。
 5. M2 bridge 风险门禁 v1 已落代码：native execution store / governance policy 可持久化 `mapped_lock_bridge_paused`、`mapped_asset_burn_paused`、`mapped_asset_release_paused`；env 可紧急暂停 live register、burn、release，暂停时 fail-closed 且不推进 mapped asset 生命周期。
-6. M2 source anchor reorg gate v1 已落代码：live register 会持久化 `source_chain_id/block_number/block_hash/receipts_root` 等 anchor；`ua_getMappedAsset` 会暴露 `source_anchor_status`；burn/release 前会复查本地 runtime canonical finalized block，source anchor unsafe 时拒绝推进生命周期。治理化 header source whitelist gate v1 已接入 native execution store：`ua_setMappedHeaderSourcePolicy` 可要求 live lock proof 的 runtime header 必须来自治理许可 `source_peer_id`，不匹配时 fail-closed。
+6. M2 source anchor reorg gate v1 已落代码：live register 会持久化 `source_chain_id/block_number/block_hash/receipts_root` 等 anchor；`ua_getMappedAsset` 会暴露 `source_anchor_status`；burn/release 前会复查本地 runtime canonical finalized block，source anchor unsafe 时拒绝推进生命周期。治理化 header source whitelist/quorum gate v1 已接入 native execution store：`ua_setMappedHeaderSourcePolicy` 可要求 live lock proof 的 runtime header 必须来自治理许可 `source_peer_id`，并配置 `min_source_quorum`；当前 runtime 只提供单 source 证据，`min_source_quorum > 1` 会 fail-closed。
 7. M2 manual freeze/recovery/rollback v1 已落代码：`ua_freezeMappedAsset` 可把 active/burn_pending mapped asset 标记为 `frozen`；对 active live NETH 会扣减用户 native 可用余额，但保留 Treasury reserve，不触发链上出金。`ua_unfreezeMappedAsset` 只允许在 source anchor 重新通过 canonical finalized 校验后，把 frozen NETH 恢复为 active 并返还用户 native 可用余额。`ua_rollbackFrozenMappedAsset` 只允许 frozen 且 source anchor 仍 unsafe 时执行，把内部 NETH/M2 reserve 暴露扣回并把 mapped asset 置为 `rejected`，不返还用户余额、不 mint NOV、不触发外部链释放。
 8. 当前仍不声明真实外部桥、治理化 Ethereum header source 多签、finality source 管理、自动 reorg heal、治理赔付、真实链上出金、治理层 oracle 白名单管理、完整桥接铸造/赎回自动化或多进程高并发账本入口完成。
 
@@ -145,7 +145,7 @@ _2026-04-17_
 
 ## 10. 执行优先级（仅列下一刀）
 
-1. 把当前治理化 header source whitelist gate 升级为多 source / 多签 / finality source 管理，并补 reorg heal；`receipts_root` 已不再只信任用户输入。
+1. 把当前治理化 header source whitelist/quorum gate 升级为真实多 source 观测 / 多签 / finality source 管理，并补 reorg heal；`receipts_root` 已不再只信任用户输入。
 2. 补自动 reorg heal / rollback 执行器：当前已能识别 unsafe anchor、阻断 burn/release，并提供人工 freeze/unfreeze/rollback；后续需要治理赔付规则、自动化回滚调度和外部 finality source 管理。
 3. 升级 native store 写入后端或加单 writer 队列，避免 M2 credit/redeem 在多 writer 下出现 JSON load-modify-write 竞争。
 4. 补治理层 oracle 白名单和 reserve proof 管理面。
