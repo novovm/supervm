@@ -2,8 +2,8 @@
 
 use anyhow::{bail, Result};
 use novovm_exec::{
-    build_log_bloom_v1, AoemEventLogV1, SupervmEvmExecutionLogV1, SupervmEvmExecutionReceiptV1,
-    AOEM_LOG_BLOOM_BYTES_V1,
+    build_log_bloom_v1, AoemCapabilityContract, AoemEventLogV1, SupervmEvmExecutionLogV1,
+    SupervmEvmExecutionReceiptV1, AOEM_LOG_BLOOM_BYTES_V1,
 };
 use novovm_network::{
     default_eth_fullnode_native_worker_runtime_snapshot_path_v1, derive_eth_fullnode_head_view_v1,
@@ -390,6 +390,7 @@ pub fn is_mainline_native_execution_query_method(method: &str) -> bool {
             | "nov_getTreasuryReserveSnapshot"
             | "nov_getProtocolClearingPrice"
             | "nov_getFeeOracleRates"
+            | "nov_getPrivacyCapabilityStatus"
             | "nov_getM2BridgeRiskStatus"
             | "nov_runMappedAssetAutoHeal"
             | "nov_setMappedHeaderSourcePolicy"
@@ -812,6 +813,89 @@ fn run_mainline_nov_m2_bridge_risk_status_v1(params: &Value) -> Result<Value> {
     }))
 }
 
+fn privacy_capabilities_from_params_or_env_v1(params: &Value) -> (AoemCapabilityContract, String) {
+    let raw = params
+        .get("aoem_capabilities")
+        .or_else(|| params.get("capabilities"))
+        .cloned()
+        .or_else(|| {
+            std::env::var("NOVOVM_AOEM_CAPABILITIES_JSON")
+                .ok()
+                .and_then(|raw| serde_json::from_str::<Value>(raw.as_str()).ok())
+        })
+        .unwrap_or_else(|| json!({}));
+    let source =
+        if params.get("aoem_capabilities").is_some() || params.get("capabilities").is_some() {
+            "params"
+        } else if std::env::var("NOVOVM_AOEM_CAPABILITIES_JSON").is_ok() {
+            "env:NOVOVM_AOEM_CAPABILITIES_JSON"
+        } else {
+            "unconfigured"
+        }
+        .to_string();
+    (AoemCapabilityContract::from_capabilities_json(raw), source)
+}
+
+fn run_mainline_privacy_capability_status_v1(params: &Value) -> Result<Value> {
+    let (capabilities, capability_source) = privacy_capabilities_from_params_or_env_v1(params);
+    let zk_query_proof_capable = capabilities.zkvm_verify || capabilities.zkvm_prove;
+    let ringct_query_proof_capable = capabilities.ringct_verify || capabilities.ringct_prove;
+    let mut proof_systems = Vec::new();
+    if ringct_query_proof_capable {
+        proof_systems.push("ringct");
+    }
+    if zk_query_proof_capable {
+        proof_systems.push("zk");
+    }
+    let status = if proof_systems.is_empty() {
+        "read_gate_only"
+    } else {
+        "privacy_proof_capable"
+    };
+    Ok(json!({
+        "method": "nov_getPrivacyCapabilityStatus",
+        "found": true,
+        "status": status,
+        "privacy_query_surface": "mainline_read_gate",
+        "truth_source": "mainline_unified_account_surface/native_execution_store",
+        "m2_asset_read_redaction": true,
+        "m2_fee_privacy_required": true,
+        "user_level_balances_public_by_default": false,
+        "proof_generation_performed": false,
+        "capability_source": capability_source,
+        "privacy_query_proof_systems": proof_systems,
+        "ringct": {
+            "role": "confidential_amounts_and_membership",
+            "prove": capabilities.ringct_prove,
+            "verify": capabilities.ringct_verify,
+            "formal_fields_present": capabilities.ringct_formal_fields_present,
+        },
+        "zk": {
+            "role": "general_statement_and_selective_disclosure_proofs",
+            "prove": capabilities.zkvm_prove,
+            "verify": capabilities.zkvm_verify,
+            "formal_fields_present": capabilities.zk_formal_fields_present,
+            "probe_api_present": capabilities.zkvm_probe_api_present,
+            "symbol_supported": capabilities.zkvm_symbol_supported,
+        },
+        "mldsa": {
+            "role": "pq_signature_only",
+            "verify": capabilities.mldsa_verify,
+            "privacy_transaction_system": false,
+        },
+        "policy": {
+            "public_m2_detail_query": "redacted",
+            "authorized_m2_detail_query": "mainline_read_gate",
+            "proof_backed_private_query": if proof_systems.is_empty() {
+                "unavailable"
+            } else {
+                "available_by_capability"
+            },
+            "no_second_ledger": true,
+        },
+    }))
+}
+
 fn canonical_store_path_from_params_or_env_v1(params: &Value) -> PathBuf {
     param_as_string_any(params, &["canonical_store_path"])
         .map(PathBuf::from)
@@ -1117,6 +1201,7 @@ fn run_mainline_native_execution_query(method: &str, params: &Value) -> Result<V
                 "oracle_rates": out.get("result").cloned().unwrap_or(Value::Null),
             }))
         }
+        "nov_getPrivacyCapabilityStatus" => run_mainline_privacy_capability_status_v1(params),
         "nov_getM2BridgeRiskStatus" => run_mainline_nov_m2_bridge_risk_status_v1(params),
         "nov_runMappedAssetAutoHeal" => run_mainline_nov_mapped_asset_auto_heal_tick_v1(params),
         "nov_setMappedHeaderSourcePolicy" => run_mainline_nov_mapped_policy_delegate_v1(
@@ -10580,6 +10665,7 @@ mod tests {
             "nov_getTreasuryReserveSnapshot",
             "nov_getProtocolClearingPrice",
             "nov_getFeeOracleRates",
+            "nov_getPrivacyCapabilityStatus",
             "nov_getM2BridgeRiskStatus",
             "nov_runMappedAssetAutoHeal",
             "nov_setMappedHeaderSourcePolicy",
@@ -10686,6 +10772,7 @@ mod tests {
             ("nov_getTreasuryReserveSnapshot", json!({})),
             ("nov_getProtocolClearingPrice", json!({"asset": "USDT"})),
             ("nov_getFeeOracleRates", json!({})),
+            ("nov_getPrivacyCapabilityStatus", json!({})),
             ("nov_getM2BridgeRiskStatus", json!({"asset": "NETH"})),
         ] {
             let mut params = extra;
@@ -10700,6 +10787,126 @@ mod tests {
             assert_eq!(out.get("method").and_then(Value::as_str), Some(method));
             assert!(out.get("found").is_some(), "found should exist: {method}");
         }
+    }
+
+    #[test]
+    fn privacy_capability_status_reports_ringct_zk_and_mldsa_boundaries() {
+        let bogus_canonical_store =
+            std::path::Path::new("this-canonical-store-does-not-exist.json");
+        let out = run_mainline_query_from_path(
+            bogus_canonical_store,
+            "nov_getPrivacyCapabilityStatus",
+            &json!({
+                "aoem_capabilities": {
+                    "privacy": {
+                        "ringct": {
+                            "prove": true,
+                            "verify": true,
+                            "formal_fields_present": true
+                        }
+                    },
+                    "zkvm": {
+                        "prove": true,
+                        "verify": false,
+                        "formal_fields_present": true
+                    },
+                    "mldsa": {
+                        "verify": true
+                    }
+                }
+            }),
+        )
+        .expect("privacy capability status should not require stores");
+
+        assert_eq!(
+            out.get("method").and_then(Value::as_str),
+            Some("nov_getPrivacyCapabilityStatus")
+        );
+        assert_eq!(out.get("found").and_then(Value::as_bool), Some(true));
+        assert_eq!(
+            out.get("status").and_then(Value::as_str),
+            Some("privacy_proof_capable")
+        );
+        assert_eq!(
+            out.get("capability_source").and_then(Value::as_str),
+            Some("params")
+        );
+        assert_eq!(
+            out.get("m2_asset_read_redaction").and_then(Value::as_bool),
+            Some(true)
+        );
+        assert_eq!(
+            out.get("m2_fee_privacy_required").and_then(Value::as_bool),
+            Some(true)
+        );
+        assert_eq!(
+            out.pointer("/ringct/prove").and_then(Value::as_bool),
+            Some(true)
+        );
+        assert_eq!(
+            out.pointer("/ringct/verify").and_then(Value::as_bool),
+            Some(true)
+        );
+        assert_eq!(
+            out.pointer("/zk/prove").and_then(Value::as_bool),
+            Some(true)
+        );
+        assert_eq!(
+            out.pointer("/zk/verify").and_then(Value::as_bool),
+            Some(false)
+        );
+        assert_eq!(
+            out.pointer("/mldsa/role").and_then(Value::as_str),
+            Some("pq_signature_only")
+        );
+        assert_eq!(
+            out.pointer("/mldsa/privacy_transaction_system")
+                .and_then(Value::as_bool),
+            Some(false)
+        );
+        let systems = out
+            .get("privacy_query_proof_systems")
+            .and_then(Value::as_array)
+            .expect("proof system list should exist");
+        assert!(systems.iter().any(|v| v.as_str() == Some("ringct")));
+        assert!(systems.iter().any(|v| v.as_str() == Some("zk")));
+    }
+
+    #[test]
+    fn privacy_capability_status_without_capabilities_is_read_gate_only() {
+        let bogus_canonical_store =
+            std::path::Path::new("this-canonical-store-does-not-exist.json");
+        let out = run_mainline_query_from_path(
+            bogus_canonical_store,
+            "nov_getPrivacyCapabilityStatus",
+            &json!({}),
+        )
+        .expect("privacy capability status should work without configured capabilities");
+
+        assert_eq!(
+            out.get("status").and_then(Value::as_str),
+            Some("read_gate_only")
+        );
+        assert_eq!(
+            out.get("capability_source").and_then(Value::as_str),
+            Some("unconfigured")
+        );
+        assert_eq!(
+            out.get("privacy_query_proof_systems")
+                .and_then(Value::as_array)
+                .map(Vec::len),
+            Some(0)
+        );
+        assert_eq!(
+            out.pointer("/policy/public_m2_detail_query")
+                .and_then(Value::as_str),
+            Some("redacted")
+        );
+        assert_eq!(
+            out.pointer("/mldsa/privacy_transaction_system")
+                .and_then(Value::as_bool),
+            Some(false)
+        );
     }
 
     #[test]

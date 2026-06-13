@@ -1397,6 +1397,9 @@ pub struct AoemCapabilityContract {
     pub zkvm_probe_api_present: bool,
     pub zkvm_symbol_supported: Option<bool>,
     pub zk_formal_fields_present: bool,
+    pub ringct_prove: bool,
+    pub ringct_verify: bool,
+    pub ringct_formal_fields_present: bool,
     pub msm_accel: bool,
     pub msm_backend: Option<String>,
     pub mldsa_verify: bool,
@@ -1456,6 +1459,53 @@ impl AoemCapabilityContract {
                 ],
             )
         });
+        let ringct_prove = capability_bool(
+            &raw,
+            &[
+                "ringct_prove",
+                "ringct.prove",
+                "ringct.prove_enabled",
+                "privacy.ringct.prove",
+                "privacy.ringct.prove_enabled",
+            ],
+        )
+        .unwrap_or(false);
+        let ringct_verify = capability_bool(
+            &raw,
+            &[
+                "ringct_verify",
+                "ringct.verify",
+                "ringct.verify_enabled",
+                "privacy.ringct.verify",
+                "privacy.ringct.verify_enabled",
+            ],
+        )
+        .unwrap_or(false);
+        let ringct_formal_fields_present = capability_bool(
+            &raw,
+            &[
+                "ringct_formal_fields_present",
+                "ringct.formal_fields_present",
+                "privacy.ringct.formal_fields_present",
+            ],
+        )
+        .unwrap_or_else(|| {
+            capability_exists(
+                &raw,
+                &[
+                    "ringct_prove",
+                    "ringct_verify",
+                    "ringct.prove",
+                    "ringct.verify",
+                    "ringct.prove_enabled",
+                    "ringct.verify_enabled",
+                    "privacy.ringct.prove",
+                    "privacy.ringct.verify",
+                    "privacy.ringct.prove_enabled",
+                    "privacy.ringct.verify_enabled",
+                ],
+            )
+        });
 
         // Legacy AOEM capability set only exposed backend path fields.
         let msm_accel_direct = capability_bool(&raw, &["msm_accel", "msm.accel"]);
@@ -1510,6 +1560,9 @@ impl AoemCapabilityContract {
             zkvm_probe_api_present: false,
             zkvm_symbol_supported: None,
             zk_formal_fields_present,
+            ringct_prove,
+            ringct_verify,
+            ringct_formal_fields_present,
             msm_accel,
             msm_backend,
             mldsa_verify,
@@ -2191,6 +2244,25 @@ mod tests {
         assert!(c.zkvm_symbol_supported.is_none());
         assert!(c.zk_formal_fields_present);
         assert!(!c.mldsa_verify);
+    }
+
+    #[test]
+    fn capability_contract_reads_ringct_privacy_fields() {
+        let raw = json!({
+            "privacy": {
+                "ringct": {
+                    "prove": true,
+                    "verify": true
+                }
+            }
+        });
+
+        let c = AoemCapabilityContract::from_capabilities_json(raw);
+        assert!(c.ringct_prove);
+        assert!(c.ringct_verify);
+        assert!(c.ringct_formal_fields_present);
+        assert!(!c.zkvm_prove);
+        assert!(!c.zkvm_verify);
     }
 
     #[test]
