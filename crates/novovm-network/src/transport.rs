@@ -75,6 +75,7 @@ use crate::{
     observe_network_runtime_native_pending_tx_propagated_v1,
     observe_network_runtime_native_pending_tx_propagated_with_context_v1,
     observe_network_runtime_native_pending_tx_propagation_failure_v1,
+    observe_network_runtime_native_pending_tx_remote_native_payload_v1,
     observe_network_runtime_peer_head, observe_network_runtime_peer_head_with_local_head_max,
     plan_network_runtime_sync_pull_window, register_network_runtime_peer,
     resolve_eth_chain_config_v1, resolve_eth_fullnode_native_runtime_config_v1,
@@ -97,6 +98,7 @@ use crate::{
     snapshot_network_runtime_native_canonical_blocks_v1,
     snapshot_network_runtime_native_canonical_chain_v1,
     snapshot_network_runtime_native_execution_budget_runtime_summary_v1,
+    snapshot_network_runtime_native_pending_tx_broadcast_candidates_including_native_v1,
     snapshot_network_runtime_native_pending_tx_broadcast_candidates_v1,
     snapshot_network_runtime_native_pending_tx_broadcast_runtime_summary_v1,
     snapshot_network_runtime_native_pending_tx_summary_v1,
@@ -8247,6 +8249,71 @@ fn dispatch_eth_fullnode_native_rlpx_tx_broadcast_v1(
     Ok(())
 }
 
+pub fn dispatch_network_runtime_native_pending_tx_broadcast_to_transport_v1<T: Transport>(
+    transport: &T,
+    chain_id: u64,
+    local_node: NodeId,
+    peer: NodeId,
+    max_per_tick: usize,
+    max_propagation_count: u64,
+) -> Result<u64, NetworkError> {
+    let candidates =
+        snapshot_network_runtime_native_pending_tx_broadcast_candidates_including_native_v1(
+            chain_id,
+            max_per_tick.max(1),
+            max_propagation_count.max(1),
+        );
+    if candidates.is_empty() {
+        return Ok(0);
+    }
+    let candidate_count = candidates.len() as u64;
+    let mut sent = 0u64;
+    for candidate in &candidates {
+        let msg = ProtocolMessage::EvmNative(EvmNativeMessage::Transactions {
+            from: local_node,
+            chain_id,
+            tx_hash: candidate.tx_hash,
+            tx_count: 1,
+            payload: candidate.tx_payload.clone(),
+        });
+        if let Err(err) = transport.send(peer, msg) {
+            observe_network_runtime_native_pending_tx_propagation_failure_v1(
+                chain_id,
+                candidate.tx_hash,
+                Some(peer.0),
+                NetworkRuntimeNativePendingTxPropagationStopReasonV1::IoWriteFailure,
+                "native_pipeline_transport_broadcast",
+            );
+            observe_network_runtime_native_pending_tx_broadcast_dispatch_v1(
+                chain_id,
+                peer.0,
+                candidate_count,
+                sent,
+                false,
+            );
+            return Err(err);
+        }
+        sent = sent.saturating_add(1);
+    }
+    for candidate in candidates {
+        observe_network_runtime_native_pending_tx_propagated_with_context_v1(
+            chain_id,
+            candidate.tx_hash,
+            Some(peer.0),
+            Some("native_pipeline_transport_broadcast"),
+            Some(max_propagation_count.max(1)),
+        );
+    }
+    observe_network_runtime_native_pending_tx_broadcast_dispatch_v1(
+        chain_id,
+        peer.0,
+        candidate_count,
+        sent,
+        sent == candidate_count,
+    );
+    Ok(sent)
+}
+
 fn eth_rlpx_tx_announce_type_from_envelope_v1(envelope: &[u8]) -> u8 {
     if envelope.len() > 1 && envelope[0] <= 0x7f {
         envelope[0]
@@ -9189,12 +9256,21 @@ fn maybe_update_runtime_sync_from_protocol_message_with_context(
                 ..
             } => {
                 let _ = register_network_runtime_peer(chain_id, from.0);
-                observe_network_runtime_native_pending_tx_ingress_with_payload_v1(
-                    chain_id,
-                    from.0,
-                    *tx_hash,
-                    Some(payload.as_slice()),
-                );
+                if payload.starts_with(b"NNX1") {
+                    observe_network_runtime_native_pending_tx_remote_native_payload_v1(
+                        chain_id,
+                        from.0,
+                        *tx_hash,
+                        Some(payload.as_slice()),
+                    );
+                } else {
+                    observe_network_runtime_native_pending_tx_ingress_with_payload_v1(
+                        chain_id,
+                        from.0,
+                        *tx_hash,
+                        Some(payload.as_slice()),
+                    );
+                }
             }
             EvmNativeMessage::GetBlockHeaders { from, .. } => {
                 let _ = register_network_runtime_peer(chain_id, from.0);
@@ -15808,6 +15884,79 @@ mod tests {
             ProtocolMessage::EvmNative(EvmNativeMessage::Status { from, chain_id: c, .. })
                 if from == local && c == chain_id
         ));
+    }
+
+    #[test]
+    fn native_pending_tx_transport_broadcast_delivers_to_peer_inbox() {
+        let chain_id = 9_912_701_u64;
+        let local = NodeId(1_270);
+        let peer = NodeId(1_271);
+        clear_network_runtime_native_snapshots_for_chain_v1(chain_id);
+        let transport = InMemoryTransport::new(8);
+        transport.register(local);
+        transport.register(peer);
+
+        let tx_hash = [0x91; 32];
+        let payload = b"NNX1-native-pipeline-output";
+        crate::observe_network_runtime_native_pending_tx_local_native_payload_v1(
+            chain_id,
+            tx_hash,
+            Some(payload.as_slice()),
+        );
+
+        let sent = dispatch_network_runtime_native_pending_tx_broadcast_to_transport_v1(
+            &transport, chain_id, local, peer, 4, 3,
+        )
+        .expect("native pending tx should broadcast over transport");
+        assert_eq!(sent, 1);
+        let propagated = get_network_runtime_native_pending_tx_v1(chain_id, tx_hash)
+            .expect("locally broadcast tx should be tracked");
+        assert_eq!(
+            propagated.lifecycle_stage,
+            NetworkRuntimeNativePendingTxLifecycleStageV1::Propagated
+        );
+
+        let msg = transport
+            .try_recv(peer)
+            .expect("peer inbox should be readable")
+            .expect("peer should receive native tx broadcast");
+        match &msg {
+            ProtocolMessage::EvmNative(EvmNativeMessage::Transactions {
+                from,
+                chain_id: c,
+                tx_hash: observed_hash,
+                tx_count,
+                payload: observed_payload,
+            }) => {
+                assert_eq!(*from, local);
+                assert_eq!(*c, chain_id);
+                assert_eq!(*observed_hash, tx_hash);
+                assert_eq!(*tx_count, 1);
+                assert_eq!(observed_payload.as_slice(), payload);
+            }
+            other => panic!("unexpected native tx broadcast message: {other:?}"),
+        }
+
+        let ctx = runtime_sync_pull_message_context(&msg);
+        maybe_update_runtime_sync_from_protocol_message_with_context(
+            chain_id,
+            &msg,
+            None,
+            Some(peer.0),
+            &ctx,
+        );
+        let state = get_network_runtime_native_pending_tx_v1(chain_id, tx_hash)
+            .expect("transport-delivered tx should remain tracked");
+        assert_eq!(
+            state.lifecycle_stage,
+            NetworkRuntimeNativePendingTxLifecycleStageV1::Pending
+        );
+        assert_eq!(state.origin, NetworkRuntimeNativePendingTxOriginV1::Remote);
+        assert_eq!(state.source_peer_id, Some(local.0));
+        let summary = snapshot_network_runtime_native_pending_tx_summary_v1(chain_id);
+        assert_eq!(summary.broadcast_dispatch_total, 1);
+        assert_eq!(summary.broadcast_dispatch_success_total, 1);
+        assert_eq!(summary.broadcast_tx_total, 1);
     }
 
     #[test]
