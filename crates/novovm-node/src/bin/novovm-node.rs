@@ -91,11 +91,12 @@ use novovm_node::mainline_query::{
 };
 use novovm_node::tx_ingress::{
     available_ingress_codecs, decode_eth_send_raw_hex_payload_v1,
-    ingest_local_eth_raw_tx_payload_v1, load_exec_batch_from_wire_file, load_ops_wire_v1_file,
-    load_ops_wire_v1_from_tx_wire_file, load_ops_wire_v1_payload_file,
-    load_tx_records_from_wire_file, nov_native_execution_store_path_v1,
-    run_eth_send_raw_transaction_from_params_v1, run_nov_native_execution_tick_from_params_v1,
-    tx_ingress_records_to_adapter_tx_irs, TxIngressRecord, LOCAL_TX_WIRE_CODEC_WRITE_U64LE_V1,
+    ingest_local_eth_raw_tx_payload_v1, ingest_local_nov_raw_tx_payload_v1,
+    load_exec_batch_from_wire_file, load_ops_wire_v1_file, load_ops_wire_v1_from_tx_wire_file,
+    load_ops_wire_v1_payload_file, load_tx_records_from_wire_file,
+    nov_native_execution_store_path_v1, run_eth_send_raw_transaction_from_params_v1,
+    run_nov_native_execution_tick_from_params_v1, tx_ingress_records_to_adapter_tx_irs,
+    TxIngressRecord, LOCAL_TX_WIRE_CODEC_WRITE_U64LE_V1,
 };
 use novovm_node::unified_account_surface::{
     default_mainline_unified_account_store_path, is_mainline_unified_account_query_method,
@@ -168,6 +169,61 @@ fn load_eth_send_raw_tx_payloads_from_env_v1() -> Result<Vec<Vec<u8>>> {
     if let Some(path_raw) = file_raw {
         let path = PathBuf::from(path_raw);
         return load_eth_send_raw_tx_payloads_from_file_v1(&path);
+    }
+    Ok(Vec::new())
+}
+
+fn load_native_execution_pipeline_ingress_payloads_from_file_v1(
+    path: &Path,
+) -> Result<Vec<Vec<u8>>> {
+    let bytes = fs::read(path).with_context(|| {
+        format!(
+            "read NOVOVM_NATIVE_EXECUTION_PIPELINE_INGRESS_RAW_TX_FILE failed: {}",
+            path.display()
+        )
+    })?;
+    if bytes.is_empty() {
+        bail!(
+            "NOVOVM_NATIVE_EXECUTION_PIPELINE_INGRESS_RAW_TX_FILE is empty: {}",
+            path.display()
+        );
+    }
+    if let Ok(text) = std::str::from_utf8(&bytes) {
+        let mut payloads = Vec::new();
+        for (line_idx, line) in text.lines().enumerate() {
+            let trimmed = line.trim();
+            if trimmed.is_empty() || trimmed.starts_with('#') {
+                continue;
+            }
+            let field = format!(
+                "NOVOVM_NATIVE_EXECUTION_PIPELINE_INGRESS_RAW_TX_FILE:{}:{}",
+                path.display(),
+                line_idx + 1
+            );
+            payloads.push(decode_hex_payload_v1(trimmed, &field)?);
+        }
+        if !payloads.is_empty() {
+            return Ok(payloads);
+        }
+    }
+    Ok(vec![bytes])
+}
+
+fn load_native_execution_pipeline_ingress_payloads_from_env_v1() -> Result<Vec<Vec<u8>>> {
+    let inline_raw = string_env_nonempty("NOVOVM_NATIVE_EXECUTION_PIPELINE_INGRESS_RAW_TX");
+    let file_raw = string_env_nonempty("NOVOVM_NATIVE_EXECUTION_PIPELINE_INGRESS_RAW_TX_FILE");
+    if inline_raw.is_some() && file_raw.is_some() {
+        bail!("set only one of NOVOVM_NATIVE_EXECUTION_PIPELINE_INGRESS_RAW_TX or NOVOVM_NATIVE_EXECUTION_PIPELINE_INGRESS_RAW_TX_FILE");
+    }
+    if let Some(raw) = inline_raw {
+        return Ok(vec![decode_hex_payload_v1(
+            &raw,
+            "NOVOVM_NATIVE_EXECUTION_PIPELINE_INGRESS_RAW_TX",
+        )?]);
+    }
+    if let Some(path_raw) = file_raw {
+        let path = PathBuf::from(path_raw);
+        return load_native_execution_pipeline_ingress_payloads_from_file_v1(&path);
     }
     Ok(Vec::new())
 }
@@ -32936,6 +32992,96 @@ struct NativeExecutionPipelineNetworkDriveV1 {
     worker: EthFullnodeNativePeerWorkerV1,
 }
 
+struct NativeExecutionPipelineIngressDriveV1 {
+    chain_id: u64,
+    payloads: Vec<Vec<u8>>,
+    cursor: usize,
+    max_per_tick: usize,
+}
+
+impl NativeExecutionPipelineIngressDriveV1 {
+    fn from_env(chain_id: u64) -> Result<Option<Self>> {
+        let payloads = load_native_execution_pipeline_ingress_payloads_from_env_v1()?;
+        if payloads.is_empty() {
+            return Ok(None);
+        }
+        let max_per_tick = usize_env_allow_zero(
+            "NOVOVM_NATIVE_EXECUTION_PIPELINE_INGRESS_MAX_PER_TICK",
+            payloads.len().max(1),
+        )?
+        .clamp(1, 16_384);
+        Ok(Some(Self {
+            chain_id,
+            payloads,
+            cursor: 0,
+            max_per_tick,
+        }))
+    }
+
+    fn drive_once(&mut self) -> serde_json::Value {
+        if self.cursor >= self.payloads.len() {
+            return serde_json::json!({
+                "enabled": true,
+                "ok": true,
+                "source": "nov_native_raw_tx_env_or_file",
+                "submitted": 0u64,
+                "remaining": 0u64,
+                "exhausted": true,
+                "tx_hashes": [],
+            });
+        }
+
+        let start = self.cursor;
+        let end = self
+            .cursor
+            .saturating_add(self.max_per_tick)
+            .min(self.payloads.len());
+        let mut tx_hashes = Vec::with_capacity(end.saturating_sub(start));
+        for idx in start..end {
+            let (native_tx, _ir, tx_hash) = match ingest_local_nov_raw_tx_payload_v1(
+                &serde_json::json!({ "chain_id": self.chain_id }),
+                self.payloads[idx].as_slice(),
+            ) {
+                Ok(value) => value,
+                Err(err) => {
+                    return serde_json::json!({
+                        "enabled": true,
+                        "ok": false,
+                        "source": "nov_native_raw_tx_env_or_file",
+                        "submitted": tx_hashes.len() as u64,
+                        "failed_index": idx,
+                        "error": err.to_string(),
+                    });
+                }
+            };
+            if native_tx.chain_id != self.chain_id {
+                return serde_json::json!({
+                    "enabled": true,
+                    "ok": false,
+                    "source": "nov_native_raw_tx_env_or_file",
+                    "submitted": tx_hashes.len() as u64,
+                    "failed_index": idx,
+                    "error": format!(
+                        "native tx chain_id {} does not match pipeline chain_id {}",
+                        native_tx.chain_id, self.chain_id
+                    ),
+                });
+            }
+            tx_hashes.push(to_hex_prefixed(&tx_hash));
+        }
+        self.cursor = end;
+        serde_json::json!({
+            "enabled": true,
+            "ok": true,
+            "source": "nov_native_raw_tx_env_or_file",
+            "submitted": tx_hashes.len() as u64,
+            "remaining": self.payloads.len().saturating_sub(self.cursor) as u64,
+            "exhausted": self.cursor >= self.payloads.len(),
+            "tx_hashes": tx_hashes,
+        })
+    }
+}
+
 impl NativeExecutionPipelineNetworkDriveV1 {
     fn drive_once(&mut self) -> serde_json::Value {
         match self.worker.drive_real_network_once() {
@@ -33114,6 +33260,7 @@ fn native_execution_tick_params_from_env_v1() -> Result<serde_json::Value> {
 fn build_native_execution_pipeline_report_v1(
     tick_index: u64,
     network_drive: serde_json::Value,
+    ingress_drive: serde_json::Value,
     tick_out: serde_json::Value,
 ) -> serde_json::Value {
     let chain_id = tick_out
@@ -33140,6 +33287,7 @@ fn build_native_execution_pipeline_report_v1(
         "host_concurrency_policy": "host_drives_lifecycle_only_no_rust_execution_scheduler",
         "lifecycle": {
             "network": network_drive,
+            "ingress_drive": ingress_drive,
             "ingress": {
                 "source": "network_runtime_native_pending",
                 "total": pending_summary.tx_count,
@@ -33204,6 +33352,8 @@ struct NativeExecutionPipelineAggregateV1 {
     network_enabled_ticks: u64,
     network_ok_ticks: u64,
     network_error_ticks: u64,
+    ingress_submitted_total: u64,
+    ingress_error_ticks: u64,
     aoem_executed_total: u64,
     aoem_deferred_total: u64,
     proof_ticks: u64,
@@ -33224,6 +33374,8 @@ impl NativeExecutionPipelineAggregateV1 {
             network_enabled_ticks: 0,
             network_ok_ticks: 0,
             network_error_ticks: 0,
+            ingress_submitted_total: 0,
+            ingress_error_ticks: 0,
             aoem_executed_total: 0,
             aoem_deferred_total: 0,
             proof_ticks: 0,
@@ -33266,6 +33418,9 @@ impl NativeExecutionPipelineAggregateV1 {
         let network = lifecycle
             .get("network")
             .ok_or_else(|| anyhow::anyhow!("native execution pipeline report missing network"))?;
+        let ingress_drive = lifecycle.get("ingress_drive").ok_or_else(|| {
+            anyhow::anyhow!("native execution pipeline report missing ingress_drive")
+        })?;
         let aoem_batch = lifecycle.get("aoem_batch").ok_or_else(|| {
             anyhow::anyhow!("native execution pipeline report missing aoem_batch")
         })?;
@@ -33300,6 +33455,26 @@ impl NativeExecutionPipelineAggregateV1 {
                 self.network_ok_ticks = self.network_ok_ticks.saturating_add(1);
             } else {
                 self.network_error_ticks = self.network_error_ticks.saturating_add(1);
+            }
+        }
+        if ingress_drive
+            .get("enabled")
+            .and_then(|value| value.as_bool())
+            .unwrap_or(false)
+        {
+            if ingress_drive
+                .get("ok")
+                .and_then(|value| value.as_bool())
+                .unwrap_or(false)
+            {
+                self.ingress_submitted_total = self.ingress_submitted_total.saturating_add(
+                    ingress_drive
+                        .get("submitted")
+                        .and_then(|value| value.as_u64())
+                        .unwrap_or_default(),
+                );
+            } else {
+                self.ingress_error_ticks = self.ingress_error_ticks.saturating_add(1);
             }
         }
         self.aoem_executed_total = self.aoem_executed_total.saturating_add(
@@ -33357,6 +33532,7 @@ impl NativeExecutionPipelineAggregateV1 {
 
     fn progress_score(&self) -> u64 {
         self.aoem_executed_total
+            .saturating_add(self.ingress_submitted_total)
             .saturating_add(self.ingress_total_last)
             .saturating_add(self.included_canonical_last)
             .saturating_add(self.broadcast_tx_total_last)
@@ -33379,6 +33555,8 @@ impl NativeExecutionPipelineAggregateV1 {
             "network_enabled_ticks": self.network_enabled_ticks,
             "network_ok_ticks": self.network_ok_ticks,
             "network_error_ticks": self.network_error_ticks,
+            "ingress_submitted_total": self.ingress_submitted_total,
+            "ingress_error_ticks": self.ingress_error_ticks,
             "proof_ticks": self.proof_ticks,
             "commit_ticks": self.commit_ticks,
             "ingress_total_last": self.ingress_total_last,
@@ -33402,6 +33580,8 @@ struct NativeExecutionPipelineSoakGateV1 {
     min_commit_ticks: u64,
     min_network_ok_ticks: u64,
     max_network_error_ticks: u64,
+    min_ingress_submitted_total: u64,
+    max_ingress_error_ticks: u64,
     min_broadcast_tx_total: u64,
     min_broadcast_candidates: u64,
     min_included_canonical: u64,
@@ -33434,6 +33614,14 @@ impl NativeExecutionPipelineSoakGateV1 {
             )?,
             max_network_error_ticks: u64_env_allow_zero(
                 "NOVOVM_NATIVE_EXECUTION_PIPELINE_MAX_NETWORK_ERROR_TICKS",
+                u64::MAX,
+            )?,
+            min_ingress_submitted_total: u64_env_allow_zero(
+                "NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_INGRESS_SUBMITTED",
+                0,
+            )?,
+            max_ingress_error_ticks: u64_env_allow_zero(
+                "NOVOVM_NATIVE_EXECUTION_PIPELINE_MAX_INGRESS_ERROR_TICKS",
                 u64::MAX,
             )?,
             min_broadcast_tx_total: u64_env_allow_zero(
@@ -33470,6 +33658,11 @@ impl NativeExecutionPipelineSoakGateV1 {
         require_summary_min(summary, "network_ok_ticks", self.min_network_ok_ticks)?;
         require_summary_min(
             summary,
+            "ingress_submitted_total",
+            self.min_ingress_submitted_total,
+        )?;
+        require_summary_min(
+            summary,
             "broadcast_tx_total_last",
             self.min_broadcast_tx_total,
         )?;
@@ -33491,6 +33684,14 @@ impl NativeExecutionPipelineSoakGateV1 {
                 "native execution pipeline soak gate failed: network_error_ticks={} exceeds max {}",
                 network_error_ticks,
                 self.max_network_error_ticks
+            );
+        }
+        let ingress_error_ticks = summary_u64(summary, "ingress_error_ticks");
+        if ingress_error_ticks > self.max_ingress_error_ticks {
+            bail!(
+                "native execution pipeline soak gate failed: ingress_error_ticks={} exceeds max {}",
+                ingress_error_ticks,
+                self.max_ingress_error_ticks
             );
         }
         Ok(())
@@ -33527,6 +33728,10 @@ mod native_execution_pipeline_tests {
     fn native_execution_pipeline_report_keeps_aoem_as_concurrency_owner() {
         let report = build_native_execution_pipeline_report_v1(
             1,
+            serde_json::json!({
+                "enabled": false,
+                "ok": true,
+            }),
             serde_json::json!({
                 "enabled": false,
                 "ok": true,
@@ -33587,6 +33792,10 @@ mod native_execution_pipeline_tests {
                 "broadcast_runtime": {"broadcast_tx_total": 1u64}
             }),
             serde_json::json!({
+                "enabled": false,
+                "ok": true,
+            }),
+            serde_json::json!({
                 "method": "nov_runNativeExecutionTick",
                 "chain_id": 9_998_882u64,
                 "executed_count": 0u64,
@@ -33622,6 +33831,11 @@ mod native_execution_pipeline_tests {
                 "ready_peers": 1u64,
             }),
             serde_json::json!({
+                "enabled": true,
+                "ok": true,
+                "submitted": 2u64,
+            }),
+            serde_json::json!({
                 "method": "nov_runNativeExecutionTick",
                 "chain_id": 9_998_883u64,
                 "executed_count": 5u64,
@@ -33642,6 +33856,8 @@ mod native_execution_pipeline_tests {
         assert_eq!(summary["aoem_deferred_total"].as_u64(), Some(1));
         assert_eq!(summary["network_enabled_ticks"].as_u64(), Some(1));
         assert_eq!(summary["network_ok_ticks"].as_u64(), Some(1));
+        assert_eq!(summary["ingress_submitted_total"].as_u64(), Some(2));
+        assert_eq!(summary["ingress_error_ticks"].as_u64(), Some(0));
         assert_eq!(summary["proof_ticks"].as_u64(), Some(1));
         assert_eq!(summary["commit_ticks"].as_u64(), Some(1));
         assert!(summary["progress_score"].as_u64().unwrap_or_default() >= 5);
@@ -33649,6 +33865,107 @@ mod native_execution_pipeline_tests {
             summary["host_concurrency_policy"].as_str(),
             Some("host_drives_lifecycle_only_no_rust_execution_scheduler")
         );
+    }
+
+    #[test]
+    fn native_execution_pipeline_ingress_drive_feeds_aoem_tick_closed_loop() {
+        let chain_id = 9_998_885u64;
+        let native_tx = novovm_protocol::NovNativeTxWireV1 {
+            chain_id,
+            kind: novovm_protocol::NovTxKindV1::Execute(novovm_protocol::NovExecuteTxV1 {
+                caller: vec![0x55; 20],
+                account_id: Some("acct-pipeline-ingress".to_string()),
+                fee_owner_account_id: Some("acct-pipeline-ingress".to_string()),
+                nonce_owner_account_id: Some("acct-pipeline-ingress".to_string()),
+                target: novovm_protocol::NovExecutionTargetV1::NativeModule("treasury".to_string()),
+                method: "deposit_reserve".to_string(),
+                args: serde_json::to_vec(&serde_json::json!({
+                    "asset": "USDT",
+                    "amount": 17u64
+                }))
+                .expect("encode args"),
+                execution_mode: novovm_protocol::NovExecutionModeV1::Batch,
+                execution_policy: novovm_protocol::NovExecutionPolicyV1::Standard,
+                privacy_mode: novovm_protocol::NovPrivacyModeV1::Public,
+                verification_mode: novovm_protocol::NovVerificationModeV1::Standard,
+                fee_policy: novovm_protocol::NovFeePolicyV1 {
+                    pay_asset: "NOV".to_string(),
+                    max_pay_amount: 50,
+                    slippage_bps: 100,
+                },
+                gas_like_limit: Some(90_000),
+                nonce: 71,
+            }),
+            signature: [0x71; 32],
+        };
+        let raw =
+            novovm_protocol::encode_nov_native_tx_wire_v1(&native_tx).expect("encode native tx");
+        let mut ingress_drive = NativeExecutionPipelineIngressDriveV1 {
+            chain_id,
+            payloads: vec![raw],
+            cursor: 0,
+            max_per_tick: 1,
+        };
+        let ingress_drive_out = ingress_drive.drive_once();
+        assert_eq!(ingress_drive_out["ok"].as_bool(), Some(true));
+        assert_eq!(ingress_drive_out["submitted"].as_u64(), Some(1));
+
+        let store_path = std::env::temp_dir().join(format!(
+            "novovm-native-pipeline-ingress-{}-{}.json",
+            chain_id,
+            std::process::id()
+        ));
+        let _ = fs::remove_file(&store_path);
+        let out = run_nov_native_execution_tick_from_params_v1(&serde_json::json!({
+            "chain_id": chain_id,
+            "hard_budget_per_tick": 4u64,
+            "target_budget_per_tick": 4u64,
+            "effective_budget_per_tick": 4u64,
+            "native_execution_store_path": store_path,
+        }))
+        .expect("AOEM tick should consume ingress pending tx");
+        assert_eq!(out["execution_kernel"].as_str(), Some("AOEM"));
+        assert_eq!(out["aoem_concurrency_owner"].as_str(), Some("AOEM_runtime"));
+        assert_eq!(out["executed_count"].as_u64(), Some(1));
+
+        let report = build_native_execution_pipeline_report_v1(
+            1,
+            serde_json::json!({
+                "enabled": false,
+                "ok": true,
+            }),
+            ingress_drive_out,
+            out,
+        );
+        let mut aggregate = NativeExecutionPipelineAggregateV1::new();
+        aggregate
+            .observe(&report)
+            .expect("aggregate closed-loop pipeline report");
+        let summary = aggregate.to_json();
+        assert_eq!(summary["ingress_submitted_total"].as_u64(), Some(1));
+        assert_eq!(summary["aoem_executed_total"].as_u64(), Some(1));
+        assert_eq!(summary["proof_ticks"].as_u64(), Some(1));
+        assert_eq!(summary["commit_ticks"].as_u64(), Some(1));
+        NativeExecutionPipelineSoakGateV1 {
+            emit_tick_reports: false,
+            require_progress: true,
+            min_ticks: 1,
+            min_aoem_executed_total: 1,
+            min_proof_ticks: 1,
+            min_commit_ticks: 1,
+            min_network_ok_ticks: 0,
+            max_network_error_ticks: u64::MAX,
+            min_ingress_submitted_total: 1,
+            max_ingress_error_ticks: 0,
+            min_broadcast_tx_total: 0,
+            min_broadcast_candidates: 0,
+            min_included_canonical: 0,
+            min_ingress_total: 1,
+            min_ticks_per_sec_x1000: 0,
+        }
+        .validate_summary(&summary)
+        .expect("closed-loop summary must satisfy ingress and AOEM gates");
+        let _ = fs::remove_file(&store_path);
     }
 
     #[test]
@@ -33662,6 +33979,8 @@ mod native_execution_pipeline_tests {
             min_commit_ticks: 2,
             min_network_ok_ticks: 1,
             max_network_error_ticks: 0,
+            min_ingress_submitted_total: 2,
+            max_ingress_error_ticks: 0,
             min_broadcast_tx_total: 1,
             min_broadcast_candidates: 1,
             min_included_canonical: 1,
@@ -33675,6 +33994,8 @@ mod native_execution_pipeline_tests {
             "commit_ticks": 2u64,
             "network_ok_ticks": 1u64,
             "network_error_ticks": 0u64,
+            "ingress_submitted_total": 2u64,
+            "ingress_error_ticks": 0u64,
             "broadcast_tx_total_last": 1u64,
             "broadcast_candidates_last": 1u64,
             "included_canonical_last": 1u64,
@@ -33698,6 +34019,8 @@ mod native_execution_pipeline_tests {
             min_commit_ticks: 1,
             min_network_ok_ticks: 0,
             max_network_error_ticks: u64::MAX,
+            min_ingress_submitted_total: 0,
+            max_ingress_error_ticks: u64::MAX,
             min_broadcast_tx_total: 0,
             min_broadcast_candidates: 0,
             min_included_canonical: 0,
@@ -33732,6 +34055,8 @@ mod native_execution_pipeline_tests {
             min_commit_ticks: 0,
             min_network_ok_ticks: 0,
             max_network_error_ticks: 1,
+            min_ingress_submitted_total: 0,
+            max_ingress_error_ticks: u64::MAX,
             min_broadcast_tx_total: 0,
             min_broadcast_candidates: 0,
             min_included_canonical: 0,
@@ -33750,9 +34075,43 @@ mod native_execution_pipeline_tests {
     }
 
     #[test]
+    fn native_execution_pipeline_soak_gate_rejects_ingress_error_budget() {
+        let gate = NativeExecutionPipelineSoakGateV1 {
+            emit_tick_reports: false,
+            require_progress: false,
+            min_ticks: 0,
+            min_aoem_executed_total: 0,
+            min_proof_ticks: 0,
+            min_commit_ticks: 0,
+            min_network_ok_ticks: 0,
+            max_network_error_ticks: u64::MAX,
+            min_ingress_submitted_total: 0,
+            max_ingress_error_ticks: 0,
+            min_broadcast_tx_total: 0,
+            min_broadcast_candidates: 0,
+            min_included_canonical: 0,
+            min_ingress_total: 0,
+            min_ticks_per_sec_x1000: 0,
+        };
+        let summary = serde_json::json!({
+            "ingress_error_ticks": 1u64,
+        });
+
+        let err = gate
+            .validate_summary(&summary)
+            .expect_err("ingress error budget must fail")
+            .to_string();
+        assert!(err.contains("ingress_error_ticks=1 exceeds max 0"));
+    }
+
+    #[test]
     fn native_execution_pipeline_aggregate_rejects_host_scheduler_drift() {
         let mut report = build_native_execution_pipeline_report_v1(
             4,
+            serde_json::json!({
+                "enabled": false,
+                "ok": true,
+            }),
             serde_json::json!({
                 "enabled": false,
                 "ok": true,
@@ -33784,6 +34143,7 @@ fn run_native_execution_tick_node_mode_v1(verbose: bool) -> Result<()> {
     let interval_ms = u64_env_positive("NOVOVM_NATIVE_EXECUTION_TICK_INTERVAL_MS", 250)?;
     let chain_id = u64_env_positive("NOVOVM_NATIVE_EXECUTION_TICK_CHAIN_ID", 1)?;
     let mut network_drive = native_execution_pipeline_network_drive_from_env_v1(chain_id, verbose)?;
+    let mut ingress_drive = NativeExecutionPipelineIngressDriveV1::from_env(chain_id)?;
     let soak_gate = NativeExecutionPipelineSoakGateV1::from_env()?;
     let mut ticks = 0u64;
     let mut aggregate = NativeExecutionPipelineAggregateV1::new();
@@ -33799,11 +34159,20 @@ fn run_native_execution_tick_node_mode_v1(verbose: bool) -> Result<()> {
                 "reason": "NOVOVM_NATIVE_EXECUTION_PIPELINE_NETWORK_DRIVE_ENABLED is not set",
             }),
         };
+        let ingress_drive_out = match ingress_drive.as_mut() {
+            Some(drive) => drive.drive_once(),
+            None => serde_json::json!({
+                "enabled": false,
+                "ok": true,
+                "reason": "NOVOVM_NATIVE_EXECUTION_PIPELINE_INGRESS_RAW_TX(_FILE) is not set",
+            }),
+        };
         let params = native_execution_tick_params_from_env_v1()?;
         let out = run_nov_native_execution_tick_from_params_v1(&params)?;
         let report = build_native_execution_pipeline_report_v1(
             ticks.saturating_add(1),
             network_drive_out,
+            ingress_drive_out,
             out,
         );
         aggregate.observe(&report)?;
