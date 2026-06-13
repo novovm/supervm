@@ -355,6 +355,9 @@ pub fn is_mainline_native_execution_query_method(method: &str) -> bool {
             | "nov_getProtocolClearingPrice"
             | "nov_getFeeOracleRates"
             | "nov_runMappedAssetAutoHeal"
+            | "nov_setMappedHeaderSourcePolicy"
+            | "nov_setMappedHeaderAttestationPolicy"
+            | "nov_getMappedFinalitySourceStatus"
             | "nov_swap"
             | "nov_depositReserve"
             | "nov_redeem"
@@ -489,10 +492,7 @@ fn run_mainline_nov_set_treasury_reserve_proof_v1(params: &Value) -> Result<Valu
 }
 
 fn param_as_bool_v1(params: &Value, key: &str) -> bool {
-    params
-        .get(key)
-        .and_then(Value::as_bool)
-        .unwrap_or(false)
+    params.get(key).and_then(Value::as_bool).unwrap_or(false)
 }
 
 fn run_mainline_nov_mapped_asset_auto_heal_tick_v1(params: &Value) -> Result<Value> {
@@ -522,6 +522,52 @@ fn run_mainline_nov_mapped_asset_auto_heal_tick_v1(params: &Value) -> Result<Val
         "scheduler_mode": "explicit_tick",
         "scheduler_authorized": param_as_bool_v1(params, "scheduler_authorized"),
         "apply_requested": apply,
+        "background_daemon": false,
+        "external_release_triggered": false,
+        "nov_minted": 0,
+        "result": result,
+    }))
+}
+
+fn canonical_store_path_from_params_or_env_v1(params: &Value) -> PathBuf {
+    param_as_string_any(params, &["canonical_store_path"])
+        .map(PathBuf::from)
+        .unwrap_or_else(canonical_store_path_from_env)
+}
+
+fn run_mainline_nov_mapped_policy_delegate_v1(
+    method: &str,
+    module_method: &str,
+    params: &Value,
+    requires_governance: bool,
+) -> Result<Value> {
+    if requires_governance && !param_as_bool_v1(params, "governance_authorized") {
+        bail!("{method}: governance_authorized=true is required");
+    }
+    let canonical_path = canonical_store_path_from_params_or_env_v1(params);
+    let mut delegated_params = params.clone();
+    if let Some(map) = delegated_params.as_object_mut() {
+        map.insert(
+            "mainline_policy_entry".to_string(),
+            Value::String(method.to_string()),
+        );
+        if requires_governance {
+            map.entry("policy_source".to_string())
+                .or_insert_with(|| Value::String("mainline_governance".to_string()));
+        }
+    }
+    let result = run_mainline_unified_account_query(
+        canonical_path.as_path(),
+        module_method,
+        &delegated_params,
+    )?;
+    Ok(json!({
+        "method": method,
+        "module": "unified_account",
+        "module_method": module_method,
+        "governance_authorized": param_as_bool_v1(params, "governance_authorized"),
+        "read_only": !requires_governance,
+        "single_source_of_truth": "novovm-node mainline unified_account_surface",
         "background_daemon": false,
         "external_release_triggered": false,
         "nov_minted": 0,
@@ -768,6 +814,24 @@ fn run_mainline_native_execution_query(method: &str, params: &Value) -> Result<V
             }))
         }
         "nov_runMappedAssetAutoHeal" => run_mainline_nov_mapped_asset_auto_heal_tick_v1(params),
+        "nov_setMappedHeaderSourcePolicy" => run_mainline_nov_mapped_policy_delegate_v1(
+            "nov_setMappedHeaderSourcePolicy",
+            "ua_setMappedHeaderSourcePolicy",
+            params,
+            true,
+        ),
+        "nov_setMappedHeaderAttestationPolicy" => run_mainline_nov_mapped_policy_delegate_v1(
+            "nov_setMappedHeaderAttestationPolicy",
+            "ua_setMappedHeaderAttestationPolicy",
+            params,
+            true,
+        ),
+        "nov_getMappedFinalitySourceStatus" => run_mainline_nov_mapped_policy_delegate_v1(
+            "nov_getMappedFinalitySourceStatus",
+            "ua_getMappedFinalitySourceStatus",
+            params,
+            false,
+        ),
         "nov_swap" => run_mainline_nov_swap_v1(params),
         "nov_depositReserve" => run_mainline_nov_deposit_reserve_v1(params),
         "nov_redeem" => run_mainline_nov_redeem_v1(params),
@@ -10123,6 +10187,9 @@ mod tests {
             "nov_getProtocolClearingPrice",
             "nov_getFeeOracleRates",
             "nov_runMappedAssetAutoHeal",
+            "nov_setMappedHeaderSourcePolicy",
+            "nov_setMappedHeaderAttestationPolicy",
+            "nov_getMappedFinalitySourceStatus",
             "nov_swap",
             "nov_depositReserve",
             "nov_redeem",
@@ -12107,8 +12174,7 @@ mod tests {
             Some(false)
         );
         assert_eq!(
-            proof["reserve_proof"]["reserve_proof"]["claims"]
-                ["external_redemption_authorized"]
+            proof["reserve_proof"]["reserve_proof"]["claims"]["external_redemption_authorized"]
                 .as_bool(),
             Some(false)
         );
@@ -12478,9 +12544,9 @@ mod tests {
         let account_id = "acct-mainline-map-source-policy";
         create_mainline_uca_for_smoke(&base, &store, &audit, &native_store, account_id);
 
-        let policy = run_mainline_query_from_path(
+        let unauthorized = run_mainline_query_from_path(
             base.as_path(),
-            "ua_setMappedHeaderSourcePolicy",
+            "nov_setMappedHeaderSourcePolicy",
             &params_with_ua_and_native_paths(
                 store.as_path(),
                 audit.as_path(),
@@ -12495,14 +12561,50 @@ mod tests {
                 }),
             ),
         )
-        .expect("ua_setMappedHeaderSourcePolicy should succeed through mainline query");
-        assert_eq!(policy["updated"].as_bool(), Some(true));
-        assert_eq!(policy["policy"]["required"].as_bool(), Some(true));
-        assert_eq!(policy["policy"]["min_source_quorum"].as_u64(), Some(2));
+        .expect_err("nov_setMappedHeaderSourcePolicy must require governance authorization");
+        assert!(
+            unauthorized
+                .to_string()
+                .contains("governance_authorized=true is required"),
+            "unexpected error: {unauthorized}"
+        );
+
+        let policy = run_mainline_query_from_path(
+            base.as_path(),
+            "nov_setMappedHeaderSourcePolicy",
+            &params_with_ua_and_native_paths(
+                store.as_path(),
+                audit.as_path(),
+                native_store.as_path(),
+                json!({
+                    "governance_authorized": true,
+                    "required": true,
+                    "allowed_peer_ids": [1u64, 2u64],
+                    "min_source_quorum": 2u64,
+                    "policy_source": "mainline_source_policy_smoke",
+                    "policy_version": 7u64,
+                    "now": 30u64,
+                }),
+            ),
+        )
+        .expect("nov_setMappedHeaderSourcePolicy should succeed through mainline query");
+        assert_eq!(
+            policy["method"].as_str(),
+            Some("nov_setMappedHeaderSourcePolicy")
+        );
+        assert_eq!(policy["governance_authorized"].as_bool(), Some(true));
+        assert_eq!(policy["nov_minted"].as_u64(), Some(0));
+        assert_eq!(policy["external_release_triggered"].as_bool(), Some(false));
+        assert_eq!(policy["result"]["updated"].as_bool(), Some(true));
+        assert_eq!(policy["result"]["policy"]["required"].as_bool(), Some(true));
+        assert_eq!(
+            policy["result"]["policy"]["min_source_quorum"].as_u64(),
+            Some(2)
+        );
 
         let finality_status = run_mainline_query_from_path(
             base.as_path(),
-            "ua_getMappedFinalitySourceStatus",
+            "nov_getMappedFinalitySourceStatus",
             &params_with_ua_and_native_paths(
                 store.as_path(),
                 audit.as_path(),
@@ -12510,13 +12612,18 @@ mod tests {
                 json!({}),
             ),
         )
-        .expect("ua_getMappedFinalitySourceStatus should expose source policy");
+        .expect("nov_getMappedFinalitySourceStatus should expose source policy");
         assert_eq!(
-            finality_status["status"]["source_policy"]["required"].as_bool(),
+            finality_status["method"].as_str(),
+            Some("nov_getMappedFinalitySourceStatus")
+        );
+        assert_eq!(finality_status["read_only"].as_bool(), Some(true));
+        assert_eq!(
+            finality_status["result"]["status"]["source_policy"]["required"].as_bool(),
             Some(true)
         );
         assert_eq!(
-            finality_status["status"]["source_policy"]["min_source_quorum"].as_u64(),
+            finality_status["result"]["status"]["source_policy"]["min_source_quorum"].as_u64(),
             Some(2)
         );
 
@@ -12603,9 +12710,9 @@ mod tests {
             Value::String(format!("0x{}", signer_c_ref)),
         );
 
-        let policy = run_mainline_query_from_path(
+        let unauthorized = run_mainline_query_from_path(
             base.as_path(),
-            "ua_setMappedHeaderAttestationPolicy",
+            "nov_setMappedHeaderAttestationPolicy",
             &params_with_ua_and_native_paths(
                 store.as_path(),
                 audit.as_path(),
@@ -12623,22 +12730,72 @@ mod tests {
                 }),
             ),
         )
-        .expect("ua_setMappedHeaderAttestationPolicy should succeed through mainline query");
-        assert_eq!(policy["updated"].as_bool(), Some(true));
-        assert_eq!(policy["policy"]["required"].as_bool(), Some(true));
-        assert_eq!(policy["policy"]["min_attestation_quorum"].as_u64(), Some(2));
+        .expect_err("nov_setMappedHeaderAttestationPolicy must require governance authorization");
+        assert!(
+            unauthorized
+                .to_string()
+                .contains("governance_authorized=true is required"),
+            "unexpected error: {unauthorized}"
+        );
+
+        let mut disabled_reasons = serde_json::Map::new();
+        disabled_reasons.insert(
+            signer_b_ref.clone(),
+            Value::String("key_rotation".to_string()),
+        );
+        let mut signer_rotations = serde_json::Map::new();
+        signer_rotations.insert(
+            signer_b_ref.clone(),
+            Value::String(format!("0x{}", signer_c_ref)),
+        );
+
+        let policy = run_mainline_query_from_path(
+            base.as_path(),
+            "nov_setMappedHeaderAttestationPolicy",
+            &params_with_ua_and_native_paths(
+                store.as_path(),
+                audit.as_path(),
+                native_store.as_path(),
+                json!({
+                    "governance_authorized": true,
+                    "required": true,
+                    "allowed_signers": [signer_a_ref, signer_c_ref],
+                    "disabled_signers": [signer_b_ref],
+                    "disabled_signer_reasons": Value::Object(disabled_reasons),
+                    "signer_rotations": Value::Object(signer_rotations),
+                    "min_attestation_quorum": 2u64,
+                    "policy_source": "mainline_attestation_policy_smoke",
+                    "policy_version": 8u64,
+                    "now": 31u64,
+                }),
+            ),
+        )
+        .expect("nov_setMappedHeaderAttestationPolicy should succeed through mainline query");
         assert_eq!(
-            policy["policy"]["disabled_signer_reasons"][signer_b_ref.as_str()].as_str(),
+            policy["method"].as_str(),
+            Some("nov_setMappedHeaderAttestationPolicy")
+        );
+        assert_eq!(policy["governance_authorized"].as_bool(), Some(true));
+        assert_eq!(policy["nov_minted"].as_u64(), Some(0));
+        assert_eq!(policy["external_release_triggered"].as_bool(), Some(false));
+        assert_eq!(policy["result"]["updated"].as_bool(), Some(true));
+        assert_eq!(policy["result"]["policy"]["required"].as_bool(), Some(true));
+        assert_eq!(
+            policy["result"]["policy"]["min_attestation_quorum"].as_u64(),
+            Some(2)
+        );
+        assert_eq!(
+            policy["result"]["policy"]["disabled_signer_reasons"][signer_b_ref.as_str()].as_str(),
             Some("key_rotation")
         );
         assert_eq!(
-            policy["policy"]["signer_rotations"][signer_b_ref.as_str()].as_str(),
+            policy["result"]["policy"]["signer_rotations"][signer_b_ref.as_str()].as_str(),
             Some(signer_c_ref.as_str())
         );
 
         let finality_status = run_mainline_query_from_path(
             base.as_path(),
-            "ua_getMappedFinalitySourceStatus",
+            "nov_getMappedFinalitySourceStatus",
             &params_with_ua_and_native_paths(
                 store.as_path(),
                 audit.as_path(),
@@ -12646,13 +12803,19 @@ mod tests {
                 json!({}),
             ),
         )
-        .expect("ua_getMappedFinalitySourceStatus should expose attestation policy");
+        .expect("nov_getMappedFinalitySourceStatus should expose attestation policy");
         assert_eq!(
-            finality_status["status"]["attestation_policy"]["required"].as_bool(),
+            finality_status["method"].as_str(),
+            Some("nov_getMappedFinalitySourceStatus")
+        );
+        assert_eq!(finality_status["read_only"].as_bool(), Some(true));
+        assert_eq!(
+            finality_status["result"]["status"]["attestation_policy"]["required"].as_bool(),
             Some(true)
         );
         assert_eq!(
-            finality_status["status"]["attestation_policy"]["min_attestation_quorum"].as_u64(),
+            finality_status["result"]["status"]["attestation_policy"]["min_attestation_quorum"]
+                .as_u64(),
             Some(2)
         );
 
@@ -12764,13 +12927,33 @@ mod tests {
         let account_id = "acct-mainline-map-min-confirmations";
         create_mainline_uca_for_smoke(&base, &store, &audit, &native_store, account_id);
 
-        let mut strict_policy = load_nov_native_execution_store_v1(native_store.as_path())
+        let governance_caller = format!("0x{}", "78".repeat(20));
+        let mut native_seed = load_nov_native_execution_store_v1(native_store.as_path())
             .expect("load native store before strict min confirmations policy");
-        strict_policy.module_state.mapped_lock_min_confirmations = 18;
-        strict_policy.module_state.treasury_policy_source = "governance_path".to_string();
-        strict_policy.module_state.treasury_policy_version = 18;
-        save_nov_native_execution_store_v1(native_store.as_path(), &strict_policy)
-            .expect("save strict min confirmations policy");
+        native_seed.module_state.account_asset_balances.insert(
+            governance_caller.clone(),
+            std::collections::BTreeMap::from([("NOV".to_string(), 20_000u128)]),
+        );
+        save_nov_native_execution_store_v1(native_store.as_path(), &native_seed)
+            .expect("seed governance account for strict min confirmations policy");
+        let _governance_guard = MainlineEnvVarGuard::set(NOV_NATIVE_GOVERNANCE_ENABLED_ENV, "true");
+        let strict_policy = run_mainline_query_from_path(
+            base.as_path(),
+            "nov_applyTreasuryPolicy",
+            &json!({
+                "from": governance_caller,
+                "governance_authorized": true,
+                "policy_version": 18u64,
+                "mapped_lock_min_confirmations": 18u64,
+                "max_pay_amount": 10_000u64,
+                "native_execution_store_path": native_store.display().to_string(),
+            }),
+        )
+        .expect("nov_applyTreasuryPolicy should set strict min confirmations policy");
+        assert_eq!(
+            strict_policy["native_receipt"]["status"].as_bool(),
+            Some(true)
+        );
 
         let live_params = mapped_lock_live_smoke_params(account_id, 0x77, 630);
         let blocked = run_mainline_query_from_path(
@@ -12793,7 +12976,7 @@ mod tests {
 
         let finality_status = run_mainline_query_from_path(
             base.as_path(),
-            "ua_getMappedFinalitySourceStatus",
+            "nov_getMappedFinalitySourceStatus",
             &params_with_ua_and_native_paths(
                 store.as_path(),
                 audit.as_path(),
@@ -12801,18 +12984,29 @@ mod tests {
                 json!({}),
             ),
         )
-        .expect("ua_getMappedFinalitySourceStatus should expose governed min confirmations");
+        .expect("nov_getMappedFinalitySourceStatus should expose governed min confirmations");
         assert_eq!(
-            finality_status["status"]["mapped_lock_min_confirmations"].as_u64(),
+            finality_status["result"]["status"]["mapped_lock_min_confirmations"].as_u64(),
             Some(18)
         );
 
-        let mut relaxed_policy = load_nov_native_execution_store_v1(native_store.as_path())
-            .expect("load native store before relaxed min confirmations policy");
-        relaxed_policy.module_state.mapped_lock_min_confirmations = 12;
-        relaxed_policy.module_state.treasury_policy_version = 19;
-        save_nov_native_execution_store_v1(native_store.as_path(), &relaxed_policy)
-            .expect("save relaxed min confirmations policy");
+        let relaxed_policy = run_mainline_query_from_path(
+            base.as_path(),
+            "nov_applyTreasuryPolicy",
+            &json!({
+                "from": governance_caller,
+                "governance_authorized": true,
+                "policy_version": 19u64,
+                "mapped_lock_min_confirmations": 12u64,
+                "max_pay_amount": 10_000u64,
+                "native_execution_store_path": native_store.display().to_string(),
+            }),
+        )
+        .expect("nov_applyTreasuryPolicy should relax min confirmations policy");
+        assert_eq!(
+            relaxed_policy["native_receipt"]["status"].as_bool(),
+            Some(true)
+        );
 
         let accepted = run_mainline_query_from_path(
             base.as_path(),
@@ -12928,8 +13122,7 @@ mod tests {
         );
         assert_eq!(dry_run["items"][0]["applied"].as_bool(), Some(false));
 
-        let _governance_guard =
-            MainlineEnvVarGuard::set(NOV_NATIVE_GOVERNANCE_ENABLED_ENV, "true");
+        let _governance_guard = MainlineEnvVarGuard::set(NOV_NATIVE_GOVERNANCE_ENABLED_ENV, "true");
         let freeze_policy = run_mainline_query_from_path(
             base.as_path(),
             "nov_applyTreasuryPolicy",
@@ -12943,7 +13136,10 @@ mod tests {
             }),
         )
         .expect("nov_applyTreasuryPolicy should enable auto-heal freeze policy");
-        assert_eq!(freeze_policy["native_receipt"]["status"].as_bool(), Some(true));
+        assert_eq!(
+            freeze_policy["native_receipt"]["status"].as_bool(),
+            Some(true)
+        );
         assert_eq!(
             freeze_policy["native_receipt"]["logs"][0]["data"]
                 ["mapped_asset_reorg_response_policy"]
@@ -12966,7 +13162,9 @@ mod tests {
                 }),
             ),
         )
-        .expect_err("nov_runMappedAssetAutoHeal apply must fail closed without scheduler authorization");
+        .expect_err(
+            "nov_runMappedAssetAutoHeal apply must fail closed without scheduler authorization",
+        );
         assert!(
             unauthorized
                 .to_string()
