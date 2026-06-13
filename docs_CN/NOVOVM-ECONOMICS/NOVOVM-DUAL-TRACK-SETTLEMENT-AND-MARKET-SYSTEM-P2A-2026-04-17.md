@@ -257,7 +257,7 @@ asset_out[A] = nov_amount / P_redeem[A]
 - `crates/novovm-node/src/tx_ingress.rs` 已新增 `NovProtocolClearingPriceV1`。
 - fee quote 优先使用 `P_pay`，支付资产按保守价折算为 NOV value。
 - Treasury direct clearing route 使用同一协议清算价，不再直接使用 AMM spot。
-- AMM TWAP 进入 `P_ref` 前必须通过最小 NOV 深度门禁；低流动性 AMM 池会被记录为 `amm_twap:low_liquidity` rejected source，并使协议清算价进入 `constrained`，不得直接参与 gas/Execution Fee 清算。
+- AMM TWAP 进入 `P_ref` 前必须通过最小 NOV 深度门禁；低流动性 AMM 池会被记录为 `amm_twap:low_liquidity` rejected source，并使协议清算价进入 `constrained`，不得直接参与 gas/Execution Fee 清算，也不得作为 oracle 偏离检测的锚点。
 - `treasury.redeem` 在 `asset_out + nov_amount` 形态下使用 `P_redeem`，先扣用户 NOV，再按反向保守价从 Treasury reserve 出资产。
 - 只读查询 `nov_call treasury.get_protocol_clearing_price` 与 mainline wrapper `nov_getProtocolClearingPrice` 可返回 `P_epoch/P_pay/P_redeem`、source、rejected source、epoch、attack-resistance 状态和 oracle source allowlist/disabled/rotation 状态；非白名单、已禁用、过期或缺失更新时间的 oracle source 会被记录为 rejected source，不进入 `P_ref`，也不得作为无快照时的 `P_prev` 来源。主线产品 smoke 已覆盖 disabled/stale/missing-timestamp oracle 被拒绝、`epoch_fixed=true`、`amm_spot_allowed=false`、`P_pay < P_epoch < P_redeem`。
 - governance/Treasury policy 可通过 mainline wrapper `nov_applyTreasuryPolicy` 写入 `fee_oracle_allowed_sources`、`fee_oracle_disabled_sources`、禁用原因、source rotations、`mapped_lock_min_confirmations` 和 mapped auto-heal policy；`nov_call treasury.get_fee_oracle_rates` 与 mainline wrapper `nov_getFeeOracleRates` 暴露当前 oracle source、allowlist、disabled list、source 是否允许/禁用和 `oracle_open_feed_allowed=false`。主线产品 smoke 已覆盖治理未启用时 fail-closed、治理启用后写入并可查询。

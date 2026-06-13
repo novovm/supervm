@@ -3294,11 +3294,14 @@ fn build_protocol_clearing_price_v1(
         .copied()
         .filter(|rate| *rate > 0);
     let p_oracle_ref_ppm = protocol_oracle_ref_rate_ppm_v1(store, normalized.as_str(), now_ms);
+    let amm_twap_has_liquidity = p_amm_twap_ppm
+        .map(|_| has_amm_twap_liquidity_v1(store, normalized.as_str()))
+        .unwrap_or(false);
 
     let mut candidates = Vec::<(&'static str, u128)>::new();
     let mut rejected = Vec::<String>::new();
     if let Some(rate) = p_amm_twap_ppm {
-        if has_amm_twap_liquidity_v1(store, normalized.as_str()) {
+        if amm_twap_has_liquidity {
             candidates.push(("amm_twap", rate));
         } else {
             rejected.push("amm_twap:low_liquidity".to_string());
@@ -3364,11 +3367,17 @@ fn build_protocol_clearing_price_v1(
         }
     }
 
-    let anchor = p_nav_ppm.or(p_amm_twap_ppm).or(if p_prev_ppm > 0 {
-        Some(p_prev_ppm)
-    } else {
-        None
-    });
+    let anchor = p_nav_ppm
+        .or(if amm_twap_has_liquidity {
+            p_amm_twap_ppm
+        } else {
+            None
+        })
+        .or(if p_prev_ppm > 0 {
+            Some(p_prev_ppm)
+        } else {
+            None
+        });
     let max_deviation = NOV_PROTOCOL_CLEARING_MAX_SOURCE_DEVIATION_BPS_V1;
     candidates.retain(|(source, rate)| {
         if *source == "treasury_nav" {
@@ -9047,6 +9056,53 @@ mod tests {
             .iter()
             .any(|reason| reason == "amm_twap:low_liquidity"));
         assert_eq!(price.p_epoch_ppm, 1_000_000);
+    }
+
+    #[test]
+    fn protocol_clearing_price_does_not_use_low_liquidity_amm_as_anchor() {
+        let mut store = NovNativeExecutionStoreV1::default();
+        store
+            .module_state
+            .protocol_clearing_amm_twap_rate_ppm
+            .insert("NBAZ".to_string(), 5_000_000);
+        store
+            .module_state
+            .fee_oracle_rates_ppm
+            .insert("NBAZ".to_string(), 1_000_000);
+        store.module_state.fee_oracle_updated_unix_ms = 600_000;
+        store.module_state.fee_oracle_source = "runtime_oracle".to_string();
+        store.module_state.clearing_static_amm_pools.insert(
+            "nbaz_nov_dust_twap_pool".to_string(),
+            NovStaticAmmPoolStateV1 {
+                pool_id: "nbaz_nov_dust_twap_pool".to_string(),
+                asset_x: "NBAZ".to_string(),
+                asset_y: "NOV".to_string(),
+                reserve_x: 1_000_000,
+                reserve_y: 1,
+                swap_fee_ppm: 3_000,
+                enabled: true,
+            },
+        );
+
+        let price = build_protocol_clearing_price_v1(&store, "NBAZ", 600_000)
+            .expect("protocol clearing price should not anchor on low-liquidity AMM");
+        assert_eq!(price.state, "constrained");
+        assert_eq!(price.p_prev_ppm, 1_000_000);
+        assert_eq!(price.p_ref_ppm, 1_000_000);
+        assert_eq!(price.p_epoch_ppm, 1_000_000);
+        assert!(!price.sources_used.iter().any(|source| source == "amm_twap"));
+        assert!(price
+            .sources_used
+            .iter()
+            .any(|source| source == "permissioned_oracle_ref"));
+        assert!(price
+            .sources_rejected
+            .iter()
+            .any(|reason| reason == "amm_twap:low_liquidity"));
+        assert!(!price
+            .sources_rejected
+            .iter()
+            .any(|reason| reason.starts_with("permissioned_oracle_ref:deviation_bps=")));
     }
 
     #[test]
