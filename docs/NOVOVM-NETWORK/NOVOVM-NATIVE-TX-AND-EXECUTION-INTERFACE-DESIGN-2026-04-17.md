@@ -6,7 +6,7 @@ _2026-04-17_
 On top of the frozen monetary boundary (M0/M1/M2, multi-asset payment, NOV internal settlement), freeze "how developers call the NOV mainchain directly" as first-class interfaces, and prevent fallback to "users go through EVM while NOV is background only."
 
 Related prerequisite resolution:
-- `docs/NOVOVM-NETWORK/NOVOVM-MONETARY-ARCHITECTURE-M0-M1-M2-AND-MULTI-ASSET-PAYMENT-2026-04-17.md`
+- `docs/NOVOVM-ECONOMICS/NOVOVM-MONETARY-ARCHITECTURE-M0-M1-M2-AND-MULTI-ASSET-PAYMENT-2026-04-17.md`
 
 ## 2. Design principles (frozen)
 
