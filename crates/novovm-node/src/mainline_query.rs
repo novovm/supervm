@@ -12204,6 +12204,103 @@ mod tests {
     }
 
     #[test]
+    fn mainline_query_mapped_min_confirmations_policy_product_smoke() {
+        let _env_lock = geth_parity_test_lock_v1()
+            .lock()
+            .expect("mainline env test lock poisoned");
+        let _shadow_guard =
+            MainlineEnvVarGuard::set("NOVOVM_UA_PHASE4_SHADOW_MODE_ENFORCE", "false");
+        let (base, store, audit) = unique_unified_account_test_paths("mapped-min-confirmations");
+        let root = base
+            .parent()
+            .unwrap_or_else(|| std::path::Path::new("."))
+            .to_path_buf();
+        let native_store = root.join("native-execution-store.json");
+        save_nov_native_execution_store_v1(
+            native_store.as_path(),
+            &NovNativeExecutionStoreV1::default(),
+        )
+        .expect("seed native execution store for mapped min confirmations smoke");
+        let account_id = "acct-mainline-map-min-confirmations";
+        create_mainline_uca_for_smoke(&base, &store, &audit, &native_store, account_id);
+
+        let mut strict_policy = load_nov_native_execution_store_v1(native_store.as_path())
+            .expect("load native store before strict min confirmations policy");
+        strict_policy.module_state.mapped_lock_min_confirmations = 18;
+        strict_policy.module_state.treasury_policy_source = "governance_path".to_string();
+        strict_policy.module_state.treasury_policy_version = 18;
+        save_nov_native_execution_store_v1(native_store.as_path(), &strict_policy)
+            .expect("save strict min confirmations policy");
+
+        let live_params = mapped_lock_live_smoke_params(account_id, 0x77, 630);
+        let blocked = run_mainline_query_from_path(
+            base.as_path(),
+            "ua_registerMappedLock",
+            &params_with_ua_and_native_paths(
+                store.as_path(),
+                audit.as_path(),
+                native_store.as_path(),
+                live_params.clone(),
+            ),
+        )
+        .expect_err("live register should fail when governed min confirmations are not met");
+        let blocked = blocked.to_string();
+        assert!(
+            blocked.contains("finalized_block_number 112 is below required 118")
+                && blocked.contains("source=governance_native_store"),
+            "governed min confirmations should fail closed, got: {blocked}"
+        );
+
+        let finality_status = run_mainline_query_from_path(
+            base.as_path(),
+            "ua_getMappedFinalitySourceStatus",
+            &params_with_ua_and_native_paths(
+                store.as_path(),
+                audit.as_path(),
+                native_store.as_path(),
+                json!({}),
+            ),
+        )
+        .expect("ua_getMappedFinalitySourceStatus should expose governed min confirmations");
+        assert_eq!(
+            finality_status["status"]["mapped_lock_min_confirmations"].as_u64(),
+            Some(18)
+        );
+
+        let mut relaxed_policy = load_nov_native_execution_store_v1(native_store.as_path())
+            .expect("load native store before relaxed min confirmations policy");
+        relaxed_policy.module_state.mapped_lock_min_confirmations = 12;
+        relaxed_policy.module_state.treasury_policy_version = 19;
+        save_nov_native_execution_store_v1(native_store.as_path(), &relaxed_policy)
+            .expect("save relaxed min confirmations policy");
+
+        let accepted = run_mainline_query_from_path(
+            base.as_path(),
+            "ua_registerMappedLock",
+            &params_with_ua_and_native_paths(
+                store.as_path(),
+                audit.as_path(),
+                native_store.as_path(),
+                live_params,
+            ),
+        )
+        .expect("live register should pass after governed min confirmations are relaxed");
+        assert_eq!(accepted["accepted"].as_bool(), Some(true));
+        assert_eq!(accepted["phase4_mode"].as_str(), Some("live"));
+        assert_eq!(
+            accepted["native_settlement"]["effect"].as_str(),
+            Some("neth_m2_credit")
+        );
+        assert_eq!(
+            accepted["native_settlement"]["nov_minted"].as_u64(),
+            Some(0)
+        );
+
+        novovm_network::clear_network_runtime_native_state_for_host_tests_v1();
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn mainline_query_live_mapped_asset_auto_heal_product_smoke() {
         let _env_lock = geth_parity_test_lock_v1()
             .lock()
