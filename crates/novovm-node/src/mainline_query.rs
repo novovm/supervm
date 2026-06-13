@@ -12809,11 +12809,14 @@ mod tests {
             .unwrap_or_else(|| std::path::Path::new("."))
             .to_path_buf();
         let native_store = root.join("native-execution-store.json");
-        save_nov_native_execution_store_v1(
-            native_store.as_path(),
-            &NovNativeExecutionStoreV1::default(),
-        )
-        .expect("seed native execution store for mapped live auto-heal smoke");
+        let governance_caller = format!("0x{}", "69".repeat(20));
+        let mut native_seed = NovNativeExecutionStoreV1::default();
+        native_seed.module_state.account_asset_balances.insert(
+            governance_caller.clone(),
+            std::collections::BTreeMap::from([("NOV".to_string(), 20_000u128)]),
+        );
+        save_nov_native_execution_store_v1(native_store.as_path(), &native_seed)
+            .expect("seed native execution store for mapped live auto-heal smoke");
         let account_id = "acct-mainline-map-live-heal";
         create_mainline_uca_for_smoke(&base, &store, &audit, &native_store, account_id);
 
@@ -12868,11 +12871,28 @@ mod tests {
         );
         assert_eq!(dry_run["items"][0]["applied"].as_bool(), Some(false));
 
-        let mut freeze_policy = load_nov_native_execution_store_v1(native_store.as_path())
-            .expect("load native store before enabling auto-heal");
-        freeze_policy.module_state.mapped_asset_auto_heal_enabled = true;
-        save_nov_native_execution_store_v1(native_store.as_path(), &freeze_policy)
-            .expect("save auto-heal enabled native store");
+        let _governance_guard =
+            MainlineEnvVarGuard::set(NOV_NATIVE_GOVERNANCE_ENABLED_ENV, "true");
+        let freeze_policy = run_mainline_query_from_path(
+            base.as_path(),
+            "nov_applyTreasuryPolicy",
+            &json!({
+                "from": governance_caller,
+                "governance_authorized": true,
+                "policy_version": 51u64,
+                "mapped_asset_reorg_response_policy": "freeze_only",
+                "max_pay_amount": 10_000u64,
+                "native_execution_store_path": native_store.display().to_string(),
+            }),
+        )
+        .expect("nov_applyTreasuryPolicy should enable auto-heal freeze policy");
+        assert_eq!(freeze_policy["native_receipt"]["status"].as_bool(), Some(true));
+        assert_eq!(
+            freeze_policy["native_receipt"]["logs"][0]["data"]
+                ["mapped_asset_reorg_response_policy"]
+                .as_str(),
+            Some("freeze_only")
+        );
 
         let frozen = run_mainline_query_from_path(
             base.as_path(),
@@ -12922,13 +12942,29 @@ mod tests {
             Some(900)
         );
 
-        let mut rollback_policy = load_nov_native_execution_store_v1(native_store.as_path())
-            .expect("load native store before enabling auto-heal rollback");
-        rollback_policy
-            .module_state
-            .mapped_asset_auto_heal_rollback_enabled = true;
-        save_nov_native_execution_store_v1(native_store.as_path(), &rollback_policy)
-            .expect("save auto-heal rollback enabled native store");
+        let rollback_policy = run_mainline_query_from_path(
+            base.as_path(),
+            "nov_applyTreasuryPolicy",
+            &json!({
+                "from": governance_caller,
+                "governance_authorized": true,
+                "policy_version": 52u64,
+                "mapped_asset_reorg_response_policy": "freeze_and_rollback",
+                "max_pay_amount": 10_000u64,
+                "native_execution_store_path": native_store.display().to_string(),
+            }),
+        )
+        .expect("nov_applyTreasuryPolicy should enable auto-heal rollback policy");
+        assert_eq!(
+            rollback_policy["native_receipt"]["status"].as_bool(),
+            Some(true)
+        );
+        assert_eq!(
+            rollback_policy["native_receipt"]["logs"][0]["data"]
+                ["mapped_asset_reorg_response_policy"]
+                .as_str(),
+            Some("freeze_and_rollback")
+        );
 
         let rolled_back = run_mainline_query_from_path(
             base.as_path(),
