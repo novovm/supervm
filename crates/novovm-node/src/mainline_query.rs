@@ -4446,6 +4446,42 @@ mod tests {
         })
     }
 
+    fn reorg_mapped_lock_live_smoke_anchor(params: &Value) {
+        let chain_id = params
+            .get("source_chain_id")
+            .and_then(Value::as_u64)
+            .expect("source_chain_id should exist");
+        let block_number = params
+            .get("block_number")
+            .and_then(Value::as_u64)
+            .expect("block_number should exist");
+        let original_hash = params
+            .get("block_hash")
+            .and_then(Value::as_str)
+            .and_then(|raw| decode_fixed_32_hex_v1(raw).ok())
+            .expect("block_hash should decode");
+        let replacement_hash = original_hash.map(|byte| byte ^ 0xff);
+        novovm_network::set_network_runtime_native_head_snapshot_v1(
+            chain_id,
+            novovm_network::NetworkRuntimeNativeHeadSnapshotV1 {
+                chain_id,
+                phase: novovm_network::NetworkRuntimeNativeSyncPhaseV1::Finalize,
+                peer_count: 1,
+                block_number,
+                block_hash: replacement_hash,
+                parent_block_hash: [0x09; 32],
+                state_root: [0x21; 32],
+                canonical: true,
+                safe: true,
+                finalized: true,
+                reorg_depth_hint: Some(1),
+                body_available: true,
+                source_peer_id: Some(2),
+                observed_unix_ms: 2001,
+            },
+        );
+    }
+
     struct MainlineEnvVarGuard {
         name: &'static str,
         previous: Option<String>,
@@ -9900,6 +9936,15 @@ mod tests {
             "ua_registerMappedLock",
             "ua_getMappedAsset",
             "ua_burnMappedAsset",
+            "ua_freezeMappedAsset",
+            "ua_unfreezeMappedAsset",
+            "ua_rollbackFrozenMappedAsset",
+            "ua_autoHealMappedAssets",
+            "ua_setMappedHeaderSourcePolicy",
+            "ua_getMappedHeaderSourcePolicy",
+            "ua_setMappedHeaderAttestationPolicy",
+            "ua_getMappedHeaderAttestationPolicy",
+            "ua_getMappedFinalitySourceStatus",
             "ua_releaseMappedLock",
             "account_balance",
             "account_assets",
@@ -11775,6 +11820,191 @@ mod tests {
         assert!(kinds.contains(&"mapped_lock_m2_credit".to_string()));
         assert!(kinds.contains(&"mapped_asset_m2_burn_pending".to_string()));
         assert!(kinds.contains(&"mapped_lock_source_release".to_string()));
+
+        novovm_network::clear_network_runtime_native_state_for_host_tests_v1();
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn mainline_query_live_mapped_asset_auto_heal_product_smoke() {
+        let _env_lock = geth_parity_test_lock_v1()
+            .lock()
+            .expect("mainline env test lock poisoned");
+        let _shadow_guard =
+            MainlineEnvVarGuard::set("NOVOVM_UA_PHASE4_SHADOW_MODE_ENFORCE", "false");
+        let (base, store, audit) = unique_unified_account_test_paths("mapped-live-auto-heal");
+        let root = base
+            .parent()
+            .unwrap_or_else(|| std::path::Path::new("."))
+            .to_path_buf();
+        let native_store = root.join("native-execution-store.json");
+        save_nov_native_execution_store_v1(
+            native_store.as_path(),
+            &NovNativeExecutionStoreV1::default(),
+        )
+        .expect("seed native execution store for mapped live auto-heal smoke");
+        let account_id = "acct-mainline-map-live-heal";
+        create_mainline_uca_for_smoke(&base, &store, &audit, &native_store, account_id);
+
+        let live_params = mapped_lock_live_smoke_params(account_id, 0x73, 900);
+        let register = run_mainline_query_from_path(
+            base.as_path(),
+            "ua_registerMappedLock",
+            &params_with_ua_and_native_paths(
+                store.as_path(),
+                audit.as_path(),
+                native_store.as_path(),
+                live_params.clone(),
+            ),
+        )
+        .expect("live ua_registerMappedLock should succeed before reorg heal");
+        assert_eq!(register["accepted"].as_bool(), Some(true));
+        assert_eq!(
+            register["native_settlement"]["effect"].as_str(),
+            Some("neth_m2_credit")
+        );
+        assert_eq!(
+            register["native_settlement"]["nov_minted"].as_u64(),
+            Some(0)
+        );
+
+        reorg_mapped_lock_live_smoke_anchor(&live_params);
+
+        let dry_run = run_mainline_query_from_path(
+            base.as_path(),
+            "ua_autoHealMappedAssets",
+            &params_with_ua_and_native_paths(
+                store.as_path(),
+                audit.as_path(),
+                native_store.as_path(),
+                json!({
+                    "account_id": account_id,
+                    "apply": false,
+                    "now": 20u64,
+                }),
+            ),
+        )
+        .expect("ua_autoHealMappedAssets dry-run should report unsafe source anchor");
+        assert_eq!(dry_run["dry_run"].as_bool(), Some(true));
+        assert_eq!(dry_run["scanned_candidate_count"].as_u64(), Some(1));
+        assert_eq!(
+            dry_run["items"][0]["action"].as_str(),
+            Some("freeze_unsafe_anchor")
+        );
+        assert_eq!(
+            dry_run["items"][0]["required_policy"].as_str(),
+            Some("mapped_asset_auto_heal_enabled")
+        );
+        assert_eq!(dry_run["items"][0]["applied"].as_bool(), Some(false));
+
+        let mut freeze_policy = load_nov_native_execution_store_v1(native_store.as_path())
+            .expect("load native store before enabling auto-heal");
+        freeze_policy.module_state.mapped_asset_auto_heal_enabled = true;
+        save_nov_native_execution_store_v1(native_store.as_path(), &freeze_policy)
+            .expect("save auto-heal enabled native store");
+
+        let frozen = run_mainline_query_from_path(
+            base.as_path(),
+            "ua_autoHealMappedAssets",
+            &params_with_ua_and_native_paths(
+                store.as_path(),
+                audit.as_path(),
+                native_store.as_path(),
+                json!({
+                    "account_id": account_id,
+                    "apply": true,
+                    "reason": "mainline smoke freeze unsafe source anchor",
+                    "now": 21u64,
+                }),
+            ),
+        )
+        .expect("ua_autoHealMappedAssets apply should freeze unsafe mapped asset");
+        assert_eq!(frozen["applied_count"].as_u64(), Some(1));
+        assert_eq!(frozen["items"][0]["applied"].as_bool(), Some(true));
+        assert_eq!(frozen["items"][0]["status_after"].as_str(), Some("frozen"));
+        assert_eq!(
+            frozen["items"][0]["native_settlement"]["effect"].as_str(),
+            Some("neth_m2_frozen")
+        );
+        let neth_after_freeze = run_mainline_query_from_path(
+            base.as_path(),
+            "account_balance",
+            &params_with_ua_and_native_paths(
+                store.as_path(),
+                audit.as_path(),
+                native_store.as_path(),
+                json!({"account_id": account_id, "asset_id": "NETH"}),
+            ),
+        )
+        .expect("account_balance should show frozen NETH removed from liquid balance");
+        assert_eq!(neth_after_freeze["balance"].as_u64(), Some(0));
+        let reserve_after_freeze = run_mainline_query_from_path(
+            base.as_path(),
+            "nov_getTreasuryReserveSnapshot",
+            &json!({
+                "native_execution_store_path": native_store.display().to_string(),
+            }),
+        )
+        .expect("treasury snapshot should keep reserve after freeze");
+        assert_eq!(
+            reserve_after_freeze["reserve_snapshot"]["reserves"]["NETH"].as_u64(),
+            Some(900)
+        );
+
+        let mut rollback_policy = load_nov_native_execution_store_v1(native_store.as_path())
+            .expect("load native store before enabling auto-heal rollback");
+        rollback_policy
+            .module_state
+            .mapped_asset_auto_heal_rollback_enabled = true;
+        save_nov_native_execution_store_v1(native_store.as_path(), &rollback_policy)
+            .expect("save auto-heal rollback enabled native store");
+
+        let rolled_back = run_mainline_query_from_path(
+            base.as_path(),
+            "ua_autoHealMappedAssets",
+            &params_with_ua_and_native_paths(
+                store.as_path(),
+                audit.as_path(),
+                native_store.as_path(),
+                json!({
+                    "account_id": account_id,
+                    "apply": true,
+                    "reason": "mainline smoke rollback unsafe frozen source anchor",
+                    "now": 22u64,
+                }),
+            ),
+        )
+        .expect("ua_autoHealMappedAssets apply should rollback unsafe frozen mapped asset");
+        assert_eq!(rolled_back["applied_count"].as_u64(), Some(1));
+        assert_eq!(rolled_back["items"][0]["applied"].as_bool(), Some(true));
+        assert_eq!(
+            rolled_back["items"][0]["status_after"].as_str(),
+            Some("rejected")
+        );
+        assert_eq!(
+            rolled_back["items"][0]["native_settlement"]["effect"].as_str(),
+            Some("neth_m2_rolled_back")
+        );
+        assert_eq!(
+            rolled_back["items"][0]["native_settlement"]["nov_minted"].as_u64(),
+            Some(0)
+        );
+        assert_eq!(
+            rolled_back["items"][0]["native_settlement"]["external_release_triggered"].as_bool(),
+            Some(false)
+        );
+        let reserve_after_rollback = run_mainline_query_from_path(
+            base.as_path(),
+            "nov_getTreasuryReserveSnapshot",
+            &json!({
+                "native_execution_store_path": native_store.display().to_string(),
+            }),
+        )
+        .expect("treasury snapshot should remove reserve after rollback");
+        assert_eq!(
+            reserve_after_rollback["reserve_snapshot"]["reserves"]["NETH"].as_u64(),
+            Some(0)
+        );
 
         novovm_network::clear_network_runtime_native_state_for_host_tests_v1();
         let _ = fs::remove_dir_all(root);
