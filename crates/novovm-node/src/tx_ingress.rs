@@ -2034,6 +2034,78 @@ fn reserve_proof_capacity_block_reason_v1(
     ))
 }
 
+fn account_asset_liability_v1(store: &NovNativeExecutionStoreV1, asset: &str) -> u128 {
+    let normalized = normalize_asset_symbol_v1(asset);
+    store
+        .module_state
+        .account_asset_balances
+        .values()
+        .filter_map(|assets| assets.get(normalized.as_str()).copied())
+        .fold(0u128, u128::saturating_add)
+}
+
+fn m2_bridge_risk_block_reason_for_asset_v1(
+    store: &NovNativeExecutionStoreV1,
+    asset: &str,
+    now_ms: u128,
+) -> Option<String> {
+    let normalized = normalize_asset_symbol_v1(asset);
+    if normalized != "NETH" {
+        return None;
+    }
+    if store.module_state.mapped_lock_bridge_paused {
+        return Some("asset=NETH m2_bridge_risk=mapped_lock_bridge_paused".to_string());
+    }
+    if store.module_state.mapped_asset_burn_paused {
+        return Some("asset=NETH m2_bridge_risk=mapped_asset_burn_paused".to_string());
+    }
+    if store.module_state.mapped_asset_release_paused {
+        return Some("asset=NETH m2_bridge_risk=mapped_asset_release_paused".to_string());
+    }
+    if store.module_state.mapped_lock_contract_address.trim().is_empty() {
+        return Some("asset=NETH m2_bridge_risk=mapped_lock_contract_address_unset".to_string());
+    }
+    if store.module_state.mapped_lock_min_confirmations == 0 {
+        return Some("asset=NETH m2_bridge_risk=mapped_lock_min_confirmations_unset".to_string());
+    }
+    let Some(proof) = store.module_state.treasury_reserve_proofs.get("NETH") else {
+        return Some("asset=NETH m2_bridge_risk=reserve_proof_missing".to_string());
+    };
+    let effective_status = reserve_proof_effective_status_v1(proof, now_ms);
+    if effective_status != "active" {
+        return Some(format!(
+            "asset=NETH m2_bridge_risk=reserve_proof_effective_status_{} proof_type={} proof_source={} proof_reference={}",
+            effective_status, proof.proof_type, proof.proof_source, proof.proof_reference
+        ));
+    }
+    let liability = account_asset_liability_v1(store, "NETH");
+    let treasury_reserve = store
+        .module_state
+        .treasury_reserves
+        .get("NETH")
+        .copied()
+        .unwrap_or(0);
+    if liability > treasury_reserve {
+        return Some(format!(
+            "asset=NETH m2_bridge_risk=m2_liability_exceeds_treasury_reserve liability={} treasury_reserve={}",
+            liability, treasury_reserve
+        ));
+    }
+    if liability > proof.reserve_amount {
+        return Some(format!(
+            "asset=NETH m2_bridge_risk=m2_liability_exceeds_reserve_proof liability={} proof_reserve_amount={}",
+            liability, proof.reserve_amount
+        ));
+    }
+    if treasury_reserve > proof.reserve_amount {
+        return Some(format!(
+            "asset=NETH m2_bridge_risk=treasury_reserve_exceeds_reserve_proof treasury_reserve={} proof_reserve_amount={}",
+            treasury_reserve, proof.reserve_amount
+        ));
+    }
+    None
+}
+
 fn fee_quote_reason_v1(code: &str, detail: &str) -> String {
     format!("{}.{}: {}", NOV_FEE_FAILURE_QUOTE_PREFIX_V1, code, detail)
 }
@@ -3963,6 +4035,17 @@ fn settle_fee_quote_into_treasury_v1(
                 now_ms,
             );
         }
+        if let Some(reason) =
+            m2_bridge_risk_block_reason_for_asset_v1(store, quote.pay_asset.as_str(), now_ms)
+        {
+            return clearing_fail_v1(
+                store,
+                quote.pay_asset.as_str(),
+                NovClearingFailureCodeV1::ReserveProofNotActive,
+                reason,
+                now_ms,
+            );
+        }
     }
 
     let (
@@ -4828,6 +4911,19 @@ fn dispatch_treasury_redeem_v1(
                 "treasury".to_string(),
                 method_label.to_string(),
                 fee_settlement_reason_v1("reserve_proof_not_active", reason.as_str()),
+            );
+        }
+        if let Some(reason) =
+            m2_bridge_risk_block_reason_for_asset_v1(store, asset.as_str(), now_unix_millis_v1())
+        {
+            increment_settlement_failure_v1(store, "m2_bridge_risk_blocked");
+            return build_failed_native_receipt_v1(
+                request,
+                settled_fee,
+                subject_meta,
+                "treasury".to_string(),
+                method_label.to_string(),
+                fee_settlement_reason_v1("m2_bridge_risk_blocked", reason.as_str()),
             );
         }
     }

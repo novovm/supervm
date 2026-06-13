@@ -12654,14 +12654,18 @@ mod tests {
             .any(|item| item.as_str() == Some("finality_gap=header_source_policy_not_required")));
 
         let uncovered_store = unique_native_execution_store_path("m2-bridge-risk-status-uncovered");
+        let uncovered_caller = format!("0x{}", "95".repeat(20));
         let mut uncovered = NovNativeExecutionStoreV1::default();
         uncovered
             .module_state
             .treasury_reserves
             .insert("NETH".to_string(), 1_000);
         uncovered.module_state.account_asset_balances.insert(
-            "acct-m2-uncovered".to_string(),
-            std::collections::BTreeMap::from([("NETH".to_string(), 1_200u128)]),
+            uncovered_caller.clone(),
+            std::collections::BTreeMap::from([
+                ("NETH".to_string(), 1_200u128),
+                ("NOV".to_string(), 10_000u128),
+            ]),
         );
         uncovered.module_state.treasury_reserve_proofs.insert(
             "NETH".to_string(),
@@ -12725,6 +12729,30 @@ mod tests {
             .into_iter()
             .flatten()
             .any(|item| item.as_str() == Some("treasury_reserve_exceeds_reserve_proof")));
+        let blocked_redeem = run_mainline_query_from_path(
+            bogus_canonical_store,
+            "nov_redeem",
+            &json!({
+                "from": uncovered_caller,
+                "asset_out": "NETH",
+                "nov_amount": 10u64,
+                "max_pay_amount": 10_000u64,
+                "native_execution_store_path": uncovered_store.display().to_string(),
+            }),
+        )
+        .expect("nov_redeem should return a failed receipt when NETH M2 risk is blocked");
+        assert_eq!(
+            blocked_redeem["native_receipt"]["status"].as_bool(),
+            Some(false)
+        );
+        assert!(blocked_redeem["native_receipt"]["failure_reason"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("m2_bridge_risk_blocked"));
+        assert!(blocked_redeem["native_receipt"]["failure_reason"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("m2_liability_exceeds_treasury_reserve"));
 
         let unset_policy_store =
             unique_native_execution_store_path("m2-bridge-risk-status-policy-unset");
