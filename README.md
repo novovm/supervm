@@ -205,6 +205,7 @@ $env:NOVOVM_NATIVE_EXECUTION_TICK_TARGET_BUDGET="1"
 $env:NOVOVM_NATIVE_EXECUTION_TICK_EFFECTIVE_BUDGET="1"
 $env:NOVOVM_NATIVE_EXECUTION_TICK_STORE_PATH=(Join-Path $env:TEMP ("novovm-native-pipeline-" + [guid]::NewGuid().ToString("N") + ".json"))
 $env:NOVOVM_NATIVE_EXECUTION_STORE_BACKEND="dual"
+$env:NOVOVM_NATIVE_SEND_RAW_TRANSACTION_PIPELINE_ONLY="true"
 $env:NOVOVM_NATIVE_EXECUTION_PIPELINE_INGRESS_FIXTURE_TX_COUNT="3"
 $env:NOVOVM_NATIVE_EXECUTION_PIPELINE_INGRESS_MAX_PER_TICK="1"
 $env:NOVOVM_NATIVE_EXECUTION_PIPELINE_REQUIRE_PROGRESS="true"
@@ -232,7 +233,7 @@ cargo run -p novovm-node --bin novovm-node
 
 Expected summary evidence: `execution_kernel=AOEM`, `aoem_concurrency_owner=AOEM_runtime`, `host_concurrency_policy=host_drives_lifecycle_only_no_rust_execution_scheduler`, non-zero `product_ingress_submitted_total`/ingress/AOEM/proof/commit/broadcast/canonical counts, `max_product_ingress_submitted_per_tick`, `max_queue_admitted_per_tick`, `max_aoem_batch_executed_per_tick`, `max_proof_items_per_tick`, `max_commit_items_per_tick`, and `max_broadcast_tx_per_tick` at or above the configured gates, `nonempty_aoem_batch_ticks`/`nonempty_proof_ticks`/`nonempty_commit_ticks` at or above the configured gates, `native_store_rocksdb_enabled=true`, `native_store_transactional_commit=true`, `native_store_commit_model` containing `dirty_sharded_atomic_batch`, and final `queue_pending_last=0`.
 
-The fixture source only builds valid NOV native raw transactions. Submission still goes through `ingest_local_nov_raw_tx_payload_v1`, which is the product raw transaction ingress used by `nov_sendRawTransaction`, before the pending runtime is drained by the AOEM tick.
+The fixture source only builds valid NOV native raw transactions. Submission still goes through `ingest_local_nov_raw_tx_payload_v1`, which is the product raw transaction ingress used by `nov_sendRawTransaction`, before the pending runtime is drained by the AOEM tick. Production raw transaction entry must run with `NOVOVM_NATIVE_SEND_RAW_TRANSACTION_PIPELINE_ONLY=true` or equivalent `pipeline_only/pending_only` request metadata: it accepts and indexes the tx, but receipt/state projection is produced only by the AOEM tick lifecycle. The legacy immediate dispatch path is compatibility/debug behavior, not the product high-frequency pipeline.
 
 For UDP node-to-node pipeline probes, enable the UDP drive on each node:
 
@@ -296,6 +297,7 @@ $env:NOVOVM_NATIVE_EXECUTION_TICK_EFFECTIVE_BUDGET="32"
 $env:NOVOVM_NATIVE_EXECUTION_TICK_INTERVAL_MS="5"
 $env:NOVOVM_NATIVE_EXECUTION_TICK_STORE_PATH=(Join-Path $env:TEMP ("novovm-native-pipeline-sustained-" + [guid]::NewGuid().ToString("N") + ".json"))
 $env:NOVOVM_NATIVE_EXECUTION_STORE_BACKEND="dual"
+$env:NOVOVM_NATIVE_SEND_RAW_TRANSACTION_PIPELINE_ONLY="true"
 $env:NOVOVM_NATIVE_EXECUTION_PIPELINE_INGRESS_FIXTURE_TX_COUNT="256"
 $env:NOVOVM_NATIVE_EXECUTION_PIPELINE_INGRESS_MAX_PER_TICK="32"
 $env:NOVOVM_NATIVE_EXECUTION_PIPELINE_REQUIRE_PROGRESS="true"

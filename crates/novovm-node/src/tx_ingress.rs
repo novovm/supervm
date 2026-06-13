@@ -87,6 +87,8 @@ pub const NOV_NATIVE_AOEM_SEMANTIC_LEDGER_MIRROR_ENV: &str =
 pub const NOV_NATIVE_AOEM_CONCURRENT_EXECUTION_ENABLED_ENV: &str =
     "NOVOVM_NATIVE_AOEM_CONCURRENT_EXECUTION_ENABLED";
 pub const NOV_NATIVE_AOEM_BATCH_MAX_SIZE_ENV: &str = "NOVOVM_NATIVE_AOEM_BATCH_MAX_SIZE";
+pub const NOV_NATIVE_SEND_RAW_TRANSACTION_PIPELINE_ONLY_ENV: &str =
+    "NOVOVM_NATIVE_SEND_RAW_TRANSACTION_PIPELINE_ONLY";
 pub const NOV_NATIVE_CLEARING_ENABLED_ENV: &str = "NOVOVM_NATIVE_CLEARING_ENABLED";
 const ERR_PQ_REQUIRED_BUT_KEY_NOT_PQ: &str = "ERR_PQ_REQUIRED_BUT_KEY_NOT_PQ";
 const ERR_PRIVACY_REQUIRED_BUT_PATH_NOT_AVAILABLE: &str =
@@ -1193,6 +1195,51 @@ fn native_aoem_semantic_ingress_required_v1() -> bool {
 
 fn native_aoem_concurrent_execution_enabled_v1() -> bool {
     bool_env_default_v1(NOV_NATIVE_AOEM_CONCURRENT_EXECUTION_ENABLED_ENV, true)
+}
+
+fn parse_bool_token_v1(raw: &str) -> Option<bool> {
+    let value = raw.trim();
+    if value == "1"
+        || value.eq_ignore_ascii_case("true")
+        || value.eq_ignore_ascii_case("yes")
+        || value.eq_ignore_ascii_case("on")
+    {
+        return Some(true);
+    }
+    if value == "0"
+        || value.eq_ignore_ascii_case("false")
+        || value.eq_ignore_ascii_case("no")
+        || value.eq_ignore_ascii_case("off")
+    {
+        return Some(false);
+    }
+    None
+}
+
+fn bool_param_any_v1(params: &serde_json::Value, keys: &[&str]) -> Option<bool> {
+    keys.iter()
+        .filter_map(|key| params.get(*key))
+        .find_map(|value| match value {
+            serde_json::Value::Bool(value) => Some(*value),
+            serde_json::Value::Number(number) => number.as_u64().map(|value| value != 0),
+            serde_json::Value::String(raw) => parse_bool_token_v1(raw),
+            _ => None,
+        })
+}
+
+fn native_send_raw_transaction_pipeline_only_v1(params: &serde_json::Value) -> bool {
+    bool_param_any_v1(
+        params,
+        &[
+            "pipeline_only",
+            "pipelineOnly",
+            "pending_only",
+            "pendingOnly",
+        ],
+    )
+    .unwrap_or_else(|| {
+        bool_env_default_v1(NOV_NATIVE_SEND_RAW_TRANSACTION_PIPELINE_ONLY_ENV, false)
+    })
 }
 
 fn usize_env_default_v1(name: &str, default: usize) -> usize {
@@ -10239,26 +10286,36 @@ pub fn run_nov_send_raw_transaction_from_params_v1(
         params,
         effective_native_store_path.as_path(),
     );
-    let execution_receipt = if let Some(request) = execution_request.as_ref() {
-        Some(if let Some(path) = store_path_override.as_deref() {
-            dispatch_and_persist_nov_execution_request_with_subjects_and_store_path_v1(
-                path,
-                request,
-                execution_subject.as_ref(),
-                requested_execution_behavior.as_ref(),
-                unified_account_store_path.as_deref(),
-            )?
+    let pipeline_only = native_send_raw_transaction_pipeline_only_v1(params);
+    let execution_receipt = if !pipeline_only {
+        if let Some(request) = execution_request.as_ref() {
+            Some(if let Some(path) = store_path_override.as_deref() {
+                dispatch_and_persist_nov_execution_request_with_subjects_and_store_path_v1(
+                    path,
+                    request,
+                    execution_subject.as_ref(),
+                    requested_execution_behavior.as_ref(),
+                    unified_account_store_path.as_deref(),
+                )?
+            } else {
+                dispatch_and_persist_nov_execution_request_with_subjects_and_store_path_v1(
+                    effective_native_store_path.as_path(),
+                    request,
+                    execution_subject.as_ref(),
+                    requested_execution_behavior.as_ref(),
+                    unified_account_store_path.as_deref(),
+                )?
+            })
         } else {
-            dispatch_and_persist_nov_execution_request_with_subjects_and_store_path_v1(
-                effective_native_store_path.as_path(),
-                request,
-                execution_subject.as_ref(),
-                requested_execution_behavior.as_ref(),
-                unified_account_store_path.as_deref(),
-            )?
-        })
+            None
+        }
     } else {
         None
+    };
+    let execution_lifecycle = if pipeline_only {
+        "pending_runtime_to_aoem_tick"
+    } else {
+        "compat_immediate_dispatch_after_pending_ingress"
     };
     Ok(serde_json::json!({
         "method": "nov_sendRawTransaction",
@@ -10274,6 +10331,10 @@ pub fn run_nov_send_raw_transaction_from_params_v1(
         "tx_ir_type": format!("{:?}", ir.tx_type),
         "execution_request": execution_request,
         "execution_subject": execution_subject,
+        "pipeline_only": pipeline_only,
+        "immediate_execution": execution_receipt.is_some(),
+        "execution_lifecycle": execution_lifecycle,
+        "aoem_lifecycle": execution_lifecycle,
         "native_receipt": execution_receipt,
     }))
 }
@@ -11351,6 +11412,18 @@ pub fn run_nov_execute_from_params_v1(params: &serde_json::Value) -> Result<serd
                 "unified_account_store_path".to_string(),
                 serde_json::Value::String(path.to_string()),
             );
+        }
+    }
+    for key in [
+        "pipeline_only",
+        "pipelineOnly",
+        "pending_only",
+        "pendingOnly",
+    ] {
+        if let Some(value) = params.get(key) {
+            if let Some(obj) = merged.as_object_mut() {
+                obj.insert(key.to_string(), value.clone());
+            }
         }
     }
     run_nov_send_raw_transaction_from_params_v1(&merged)
@@ -13325,6 +13398,106 @@ mod tests {
             assert_eq!(
                 stored.fee_clearing_contract,
                 NOV_EXECUTION_FEE_CLEARING_CONTRACT_V1
+            );
+        });
+    }
+
+    #[test]
+    fn run_nov_send_raw_transaction_pipeline_only_waits_for_aoem_tick() {
+        with_test_native_execution_store_path_v1(|path| {
+            with_env_override_v1(
+                NOV_NATIVE_SEND_RAW_TRANSACTION_PIPELINE_ONLY_ENV,
+                "true",
+                || {
+                    let native_tx = NovNativeTxWireV1 {
+                        chain_id: 990_778,
+                        kind: NovTxKindV1::Execute(novovm_protocol::NovExecuteTxV1 {
+                            caller: vec![0x21; 20],
+                            account_id: Some("acct-pipeline-only".to_string()),
+                            fee_owner_account_id: Some("acct-pipeline-fee".to_string()),
+                            nonce_owner_account_id: Some("acct-pipeline-nonce".to_string()),
+                            target: novovm_protocol::NovExecutionTargetV1::NativeModule(
+                                "treasury".to_string(),
+                            ),
+                            method: "deposit_reserve".to_string(),
+                            args: serde_json::to_vec(&serde_json::json!({
+                                "asset": "USDT",
+                                "amount": 19u64
+                            }))
+                            .expect("encode args"),
+                            execution_mode: NovExecutionModeV1::Standard,
+                            execution_policy: NovExecutionPolicyV1::Standard,
+                            privacy_mode: NovPrivacyModeV1::Public,
+                            verification_mode: NovVerificationModeV1::Standard,
+                            fee_policy: NovFeePolicyV1 {
+                                pay_asset: "USDT".to_string(),
+                                max_pay_amount: 50,
+                                slippage_bps: 100,
+                            },
+                            gas_like_limit: Some(90_000),
+                            nonce: 7,
+                        }),
+                        signature: [0xcdu8; 32],
+                    };
+                    let raw = encode_nov_native_tx_wire_v1(&native_tx).expect("encode nov tx");
+                    let out = run_nov_send_raw_transaction_from_params_v1(&serde_json::json!({
+                        "raw_tx": to_hex_prefixed_v1(raw.as_slice()),
+                        "native_execution_store_path": path,
+                    }))
+                    .expect("nov_sendRawTransaction should accept pending-only tx");
+                    assert_eq!(out["accepted"].as_bool(), Some(true));
+                    assert_eq!(out["pending_tx_local_ingress"].as_bool(), Some(true));
+                    assert_eq!(out["pipeline_only"].as_bool(), Some(true));
+                    assert_eq!(out["immediate_execution"].as_bool(), Some(false));
+                    assert_eq!(
+                        out["execution_lifecycle"].as_str(),
+                        Some("pending_runtime_to_aoem_tick")
+                    );
+                    assert!(out["execution_request"].is_object());
+                    assert!(out["native_receipt"].is_null());
+
+                    let tx_hash_hex = out["pending_tx_hash"]
+                        .as_str()
+                        .expect("pending tx hash")
+                        .trim_start_matches("0x")
+                        .to_string();
+                    let pre_tick = get_nov_native_execution_receipt_by_hash_with_store_path_v1(
+                        path.as_path(),
+                        tx_hash_hex.as_str(),
+                    )
+                    .expect("pre-tick receipt lookup should not fail");
+                    assert!(pre_tick.is_none());
+
+                    let tick = run_nov_native_execution_tick_from_params_v1(&serde_json::json!({
+                        "chain_id": 990_778,
+                        "limit": 1,
+                        "scan_limit": 8,
+                        "native_execution_store_path": path,
+                    }))
+                    .expect("AOEM tick should execute pending tx");
+                    assert_eq!(tick["execution_kernel"].as_str(), Some("AOEM"));
+                    assert_eq!(tick["executed_count"].as_u64(), Some(1));
+                    assert_eq!(
+                        tick["lifecycle"]["execution"].as_str(),
+                        Some("aoem_batch_precommit")
+                    );
+
+                    let stored = get_nov_native_execution_receipt_by_hash_with_store_path_v1(
+                        path.as_path(),
+                        tx_hash_hex.as_str(),
+                    )
+                    .expect("post-tick receipt lookup should not fail")
+                    .expect("AOEM tick should persist receipt");
+                    assert_eq!(stored.account_id.as_str(), "acct-pipeline-only");
+                    assert!(stored.status);
+                    assert_eq!(
+                        stored
+                            .aoem_semantic_ingress
+                            .as_ref()
+                            .map(|meta| meta.execution_kernel.as_str()),
+                        Some("AOEM")
+                    );
+                },
             );
         });
     }
