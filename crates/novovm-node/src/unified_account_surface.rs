@@ -132,6 +132,7 @@ pub fn is_mainline_unified_account_query_method(method: &str) -> bool {
             | "ua_burnMappedAsset"
             | "ua_freezeMappedAsset"
             | "ua_unfreezeMappedAsset"
+            | "ua_rollbackFrozenMappedAsset"
             | "ua_releaseMappedLock"
             | "account_balance"
             | "account_assets"
@@ -1069,6 +1070,80 @@ fn run_unified_account_surface_rpc(
                 true,
             ))
         }
+        "ua_rollbackFrozenMappedAsset" => {
+            let account_id = parse_account_id(params)?;
+            let mapping_key = resolve_mapped_asset_lookup_key(params, mapped_asset_state)?;
+            let now = param_as_u64(params, "now").unwrap_or_else(now_unix_sec);
+            let rollback_reason = param_as_string_any(params, &["reason", "rollback_reason"])
+                .unwrap_or_else(|| "governance mapped asset rollback".to_string());
+            let record = mapped_asset_state
+                .records_by_mapping_id
+                .get_mut(mapping_key.as_str())
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "ERR_MAPPED_ASSET_NOT_FOUND: mapped asset not found: {}",
+                        mapping_key
+                    )
+                })?;
+            if record.target_account_id != account_id {
+                bail!(
+                    "ERR_MAPPED_ASSET_NOT_OWNED_BY_ACCOUNT: account {} does not own {}",
+                    account_id,
+                    mapping_key
+                );
+            }
+            if record.status != MappedAssetStatus::Frozen {
+                bail!(
+                    "ERR_MAPPED_ROLLBACK_STATUS_INVALID: expected frozen, got {}",
+                    record.status.as_str()
+                );
+            }
+            let source_anchor_status = require_mapped_asset_anchor_rollback_eligible_v1(
+                record,
+                "ua_rollbackFrozenMappedAsset",
+            )?;
+            let settlement = apply_live_mapped_asset_m2_rollback_v1(
+                record,
+                mapping_key.as_str(),
+                params,
+                now,
+                rollback_reason.as_str(),
+            )?;
+            record.status = MappedAssetStatus::Rejected;
+            record.updated_at = now;
+            record.audit_ref =
+                derive_mapped_asset_audit_ref_v1(record.mapping_id, record.status, now);
+            let op = build_mapped_asset_operation_v1(
+                record,
+                MappedAssetOperationKind::RollbackMapped,
+                now,
+                mapped_asset_state.operations.len() as u64 + 1,
+            );
+            mapped_asset_state.operations.push(op);
+            emit_mapped_asset_operation_observed_v1(
+                "rollback_mapped",
+                true,
+                Some(account_id.as_str()),
+                Some(mapping_key.as_str()),
+                None,
+                Some("qualified"),
+            );
+            Ok((
+                json!({
+                    "method": method,
+                    "rolled_back": true,
+                    "account_id": account_id,
+                    "uca_id": account_id,
+                    "mapping_id": mapping_key,
+                    "status": record.status.as_str(),
+                    "phase4_mode": mapped_asset_phase4_mode_v1(record),
+                    "settlement_effect": "neth_m2_rolled_back",
+                    "native_settlement": settlement,
+                    "source_anchor_status": mapped_asset_anchor_status_to_json_v1(&source_anchor_status),
+                }),
+                true,
+            ))
+        }
         "ua_releaseMappedLock" => {
             let account_id = parse_account_id(params)?;
             let mapping_key = resolve_mapped_asset_lookup_key(params, mapped_asset_state)?;
@@ -1999,6 +2074,21 @@ fn require_mapped_asset_anchor_safe_v1(record: &MappedAssetRecord, operation: &s
     )
 }
 
+fn require_mapped_asset_anchor_rollback_eligible_v1(
+    record: &MappedAssetRecord,
+    operation: &str,
+) -> Result<MappedAssetAnchorStatusV1> {
+    let status = mapped_asset_source_anchor_status_v1(record);
+    if status.state == "blocked" || status.state == "not_required" {
+        return Ok(status);
+    }
+    bail!(
+        "ERR_MAPPED_ROLLBACK_ANCHOR_STILL_SAFE: {} requires unsafe source anchor for mapping_id={}",
+        operation,
+        mapped_asset_hex_id(&record.mapping_id)
+    )
+}
+
 fn mapped_asset_live_settlement_journal_v1(
     kind: &str,
     record: &MappedAssetRecord,
@@ -2292,6 +2382,77 @@ fn apply_live_mapped_asset_m2_unfreeze_v1(
         "amount": record.amount,
         "account_balance_after": user_balance_after,
         "treasury_reserve_unchanged": true,
+        "reason": reason,
+        "store_path": store_path.display().to_string(),
+    }))
+}
+
+fn apply_live_mapped_asset_m2_rollback_v1(
+    record: &MappedAssetRecord,
+    mapping_key: &str,
+    params: &Value,
+    now: u64,
+    reason: &str,
+) -> Result<Value> {
+    if mapped_asset_is_shadow_mode_v1(record) {
+        return Ok(json!({
+            "applied": false,
+            "mode": "shadow",
+            "effect": "none",
+            "reason": "shadow mode rollback only updates mapped asset status",
+        }));
+    }
+    let store_path = native_execution_store_path_from_params_or_env_v1(params);
+    let account_key = normalize_account_view_key_v1(&record.target_account_id);
+    let asset_key = normalize_asset_view_symbol_v1(&record.target_asset_symbol);
+    let mut store = load_nov_native_execution_store_v1(store_path.as_path())?;
+    let reserve_after = {
+        let entry = store
+            .module_state
+            .treasury_reserves
+            .entry(asset_key.clone())
+            .or_insert(0);
+        if *entry < record.amount {
+            bail!(
+                "ERR_MAPPED_ROLLBACK_TREASURY_RESERVE_INSUFFICIENT: asset={} requested={} available={}",
+                asset_key,
+                record.amount,
+                *entry
+            );
+        }
+        *entry = entry.saturating_sub(record.amount);
+        *entry
+    };
+    let account_balance_unchanged = store
+        .module_state
+        .account_asset_balances
+        .get(account_key.as_str())
+        .and_then(|assets| assets.get(asset_key.as_str()).copied())
+        .unwrap_or(0);
+    append_ua_treasury_journal_v1(
+        &mut store,
+        mapped_asset_live_settlement_journal_v1(
+            "mapped_asset_m2_rolled_back",
+            record,
+            mapping_key,
+            mapped_asset_hex_id(&record.mapping_id).as_str(),
+            "rejected",
+            reason,
+            now,
+        ),
+    );
+    store.last_updated_unix_ms = u128::from(now).saturating_mul(1000);
+    save_nov_native_execution_store_v1(store_path.as_path(), &store)?;
+    Ok(json!({
+        "applied": true,
+        "mode": "live",
+        "effect": "neth_m2_rolled_back",
+        "asset": asset_key,
+        "amount": record.amount,
+        "account_balance_unchanged": account_balance_unchanged,
+        "treasury_reserve_after": reserve_after,
+        "nov_minted": 0,
+        "external_release_triggered": false,
         "reason": reason,
         "store_path": store_path.display().to_string(),
     }))
@@ -6696,6 +6857,172 @@ mod tests {
                 .last()
                 .map(|entry| entry.kind.as_str()),
             Some("mapped_asset_m2_unfrozen")
+        );
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn unified_account_live_mapped_asset_rollback_requires_unsafe_anchor_and_clears_reserve() {
+        let _env_lock = ENV_TEST_LOCK.lock().expect("env test lock poisoned");
+        let _shadow_guard = EnvVarGuard::set(NOVOVM_UA_PHASE4_SHADOW_MODE_ENFORCE_ENV, "false");
+        let (base, store, audit) = temp_paths("mapped-live-rollback");
+        let root = base
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .to_path_buf();
+        let native_store = root.join("native-execution-store.json");
+        ensure_native_store(native_store.as_path());
+        ua_create(&base, &store, &audit, "acct-map-live-rollback", 10);
+
+        let mut register_map =
+            match mapped_lock_live_event_proof_params("acct-map-live-rollback", 0x41, 111u128) {
+                Value::Object(map) => map,
+                other => panic!("expected mapped lock proof params object, got {other:?}"),
+            };
+        seed_mapped_lock_trusted_block_from_params(&Value::Object(register_map.clone()), true);
+        register_map.insert("phase4_mode".to_string(), Value::String("live".to_string()));
+        register_map.insert("now".to_string(), Value::from(11u64));
+        let register_params = Value::Object(register_map.clone());
+        let register = run_query(
+            &base,
+            "ua_registerMappedLock",
+            params_with_paths_and_native_store(
+                &store,
+                &audit,
+                &native_store,
+                register_params.clone(),
+            ),
+        );
+        let freeze = run_query(
+            &base,
+            "ua_freezeMappedAsset",
+            params_with_paths_and_native_store(
+                &store,
+                &audit,
+                &native_store,
+                json!({
+                    "account_id": "acct-map-live-rollback",
+                    "mapping_id": register["mapping_id"],
+                    "reason": "manual risk hold",
+                    "now": 12u64,
+                }),
+            ),
+        );
+        assert_eq!(freeze["status"].as_str(), Some("frozen"));
+
+        let safe_rollback_err = run_query_err(
+            &base,
+            "ua_rollbackFrozenMappedAsset",
+            params_with_paths_and_native_store(
+                &store,
+                &audit,
+                &native_store,
+                json!({
+                    "account_id": "acct-map-live-rollback",
+                    "mapping_id": register["mapping_id"],
+                    "reason": "safe anchor rollback must fail",
+                    "now": 13u64,
+                }),
+            ),
+        );
+        assert!(
+            safe_rollback_err.contains("ERR_MAPPED_ROLLBACK_ANCHOR_STILL_SAFE"),
+            "safe source anchor should block rollback, got: {safe_rollback_err}"
+        );
+
+        reorg_mapped_lock_trusted_block_from_params(&register_params);
+        let rollback = run_query(
+            &base,
+            "ua_rollbackFrozenMappedAsset",
+            params_with_paths_and_native_store(
+                &store,
+                &audit,
+                &native_store,
+                json!({
+                    "account_id": "acct-map-live-rollback",
+                    "mapping_id": register["mapping_id"],
+                    "reason": "source anchor reorg rollback",
+                    "now": 14u64,
+                }),
+            ),
+        );
+        assert_eq!(rollback["rolled_back"].as_bool(), Some(true));
+        assert_eq!(rollback["status"].as_str(), Some("rejected"));
+        assert_eq!(
+            rollback["native_settlement"]["effect"].as_str(),
+            Some("neth_m2_rolled_back")
+        );
+        assert_eq!(
+            rollback["native_settlement"]["treasury_reserve_after"].as_u64(),
+            Some(0)
+        );
+        assert_eq!(
+            rollback["native_settlement"]["nov_minted"].as_u64(),
+            Some(0)
+        );
+        assert_eq!(
+            rollback["native_settlement"]["external_release_triggered"].as_bool(),
+            Some(false)
+        );
+        assert_eq!(
+            rollback["source_anchor_status"]["state"].as_str(),
+            Some("blocked")
+        );
+
+        let rejected_asset = run_query(
+            &base,
+            "ua_getMappedAsset",
+            params_with_paths(
+                &store,
+                &audit,
+                json!({
+                    "account_id": "acct-map-live-rollback",
+                    "mapping_id": register["mapping_id"],
+                }),
+            ),
+        );
+        assert_eq!(
+            rejected_asset["mapped_asset"]["status"].as_str(),
+            Some("rejected")
+        );
+        let assets = run_query(
+            &base,
+            "account_assets",
+            params_with_paths_and_native_store(
+                &store,
+                &audit,
+                &native_store,
+                json!({"account_id": "acct-map-live-rollback"}),
+            ),
+        );
+        assert_eq!(assets["mapped_asset_count"].as_u64(), Some(0));
+        let native_after_rollback = load_nov_native_execution_store_v1(native_store.as_path())
+            .expect("load native store after rollback");
+        assert_eq!(
+            native_after_rollback
+                .module_state
+                .account_asset_balances
+                .get("acct-map-live-rollback")
+                .and_then(|assets| assets.get("NETH"))
+                .copied(),
+            Some(0)
+        );
+        assert_eq!(
+            native_after_rollback
+                .module_state
+                .treasury_reserves
+                .get("NETH")
+                .copied(),
+            Some(0)
+        );
+        assert_eq!(
+            native_after_rollback
+                .module_state
+                .treasury_settlement_journal
+                .last()
+                .map(|entry| entry.kind.as_str()),
+            Some("mapped_asset_m2_rolled_back")
         );
 
         let _ = fs::remove_dir_all(&root);

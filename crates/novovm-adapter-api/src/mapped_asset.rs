@@ -120,6 +120,7 @@ pub enum MappedAssetOperationKind {
     BurnMapped,
     FreezeMapped,
     UnfreezeMapped,
+    RollbackMapped,
     ReleaseSource,
 }
 
@@ -131,6 +132,7 @@ impl MappedAssetOperationKind {
             Self::BurnMapped => "burn_mapped",
             Self::FreezeMapped => "freeze_mapped",
             Self::UnfreezeMapped => "unfreeze_mapped",
+            Self::RollbackMapped => "rollback_mapped",
             Self::ReleaseSource => "release_source",
         }
     }
