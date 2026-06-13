@@ -632,6 +632,25 @@ fn run_unified_account_surface_rpc(
             for signer in &allowed_signers {
                 validate_mapped_header_attestation_signer_v1(signer)?;
             }
+            let disabled_signers = param_as_string_list_any(
+                params,
+                &[
+                    "disabled_signers",
+                    "revoked_signers",
+                    "disabled_attestation_signers",
+                ],
+            )
+            .unwrap_or_default()
+            .into_iter()
+            .map(|raw| normalize_mapped_header_attestation_signer_v1(raw.as_str()))
+            .filter(|raw| !raw.is_empty())
+            .collect::<Vec<_>>();
+            let mut disabled_signers = disabled_signers;
+            disabled_signers.sort();
+            disabled_signers.dedup();
+            for signer in &disabled_signers {
+                validate_mapped_header_attestation_signer_v1(signer)?;
+            }
             if required && allowed_signers.is_empty() {
                 bail!(
                     "ERR_MAPPED_HEADER_ATTESTATION_POLICY_INVALID: required policy needs at least one allowed attestation signer"
@@ -658,6 +677,9 @@ fn run_unified_account_surface_rpc(
             let mut store = load_nov_native_execution_store_v1(store_path.as_path())?;
             store.module_state.mapped_header_attestation_required = required;
             store.module_state.mapped_header_attestation_allowed_signers = allowed_signers;
+            store
+                .module_state
+                .mapped_header_attestation_disabled_signers = disabled_signers;
             store.module_state.mapped_header_attestation_min_quorum = min_quorum;
             store.module_state.mapped_header_attestation_policy_source = source;
             store.module_state.mapped_header_attestation_policy_version = version;
@@ -2297,9 +2319,23 @@ fn require_mapped_header_source_policy_v1(
 fn mapped_header_attestation_policy_to_json_v1(
     store: &crate::tx_ingress::NovNativeExecutionStoreV1,
 ) -> Value {
+    let active_allowed_signers = store
+        .module_state
+        .mapped_header_attestation_allowed_signers
+        .iter()
+        .filter(|signer| {
+            !store
+                .module_state
+                .mapped_header_attestation_disabled_signers
+                .contains(*signer)
+        })
+        .cloned()
+        .collect::<Vec<_>>();
     json!({
         "required": store.module_state.mapped_header_attestation_required,
         "allowed_signers": store.module_state.mapped_header_attestation_allowed_signers,
+        "disabled_signers": store.module_state.mapped_header_attestation_disabled_signers,
+        "active_allowed_signers": active_allowed_signers,
         "min_attestation_quorum": store.module_state.mapped_header_attestation_min_quorum,
         "policy_source": store.module_state.mapped_header_attestation_policy_source,
         "policy_version": store.module_state.mapped_header_attestation_policy_version,
@@ -2418,6 +2454,10 @@ fn require_mapped_header_attestation_policy_v1(
             .module_state
             .mapped_header_attestation_allowed_signers
             .contains(&signer)
+            || store
+                .module_state
+                .mapped_header_attestation_disabled_signers
+                .contains(&signer)
         {
             continue;
         }
@@ -7132,6 +7172,7 @@ mod tests {
                 json!({
                     "required": true,
                     "allowed_signers": [signer_a_ref, signer_b_ref],
+                    "disabled_signers": [signer_b_ref],
                     "min_attestation_quorum": 2u64,
                     "policy_source": "governance_test",
                     "policy_version": 11u64,
@@ -7142,6 +7183,12 @@ mod tests {
         assert_eq!(policy["updated"].as_bool(), Some(true));
         assert_eq!(policy["policy"]["required"].as_bool(), Some(true));
         assert_eq!(policy["policy"]["min_attestation_quorum"].as_u64(), Some(2));
+        assert_eq!(
+            policy["policy"]["active_allowed_signers"]
+                .as_array()
+                .map(Vec::len),
+            Some(1)
+        );
 
         let mut blocked_map =
             match mapped_lock_live_event_proof_params("acct-map-live-attestation", 0x47, 124u128) {
@@ -7156,13 +7203,20 @@ mod tests {
             mapped_lock_param_hash(&Value::Object(blocked_map.clone()), "receipts_root"),
         );
         let blocked_sig_a = signer_a.sign(blocked_message.as_slice()).to_bytes();
+        let blocked_sig_b = signer_b.sign(blocked_message.as_slice()).to_bytes();
         blocked_map.insert("phase4_mode".to_string(), Value::String("live".to_string()));
         blocked_map.insert(
             "header_attestations".to_string(),
-            json!([{
-                "signer": format!("0x{}", signer_a_ref),
-                "signature": format!("0x{}", to_hex_lower(&blocked_sig_a)),
-            }]),
+            json!([
+                {
+                    "signer": format!("0x{}", signer_a_ref),
+                    "signature": format!("0x{}", to_hex_lower(&blocked_sig_a)),
+                },
+                {
+                    "signer": format!("0x{}", signer_b_ref),
+                    "signature": format!("0x{}", to_hex_lower(&blocked_sig_b)),
+                },
+            ]),
         );
         let blocked_err = run_query_err(
             &base,
@@ -7176,7 +7230,32 @@ mod tests {
         );
         assert!(
             blocked_err.contains("ERR_MAPPED_HEADER_ATTESTATION_QUORUM_UNMET"),
-            "single attestation signer should fail closed, got: {blocked_err}"
+            "disabled signer should not satisfy quorum, got: {blocked_err}"
+        );
+
+        let restored_policy = run_query(
+            &base,
+            "ua_setMappedHeaderAttestationPolicy",
+            params_with_paths_and_native_store(
+                &store,
+                &audit,
+                &native_store,
+                json!({
+                    "required": true,
+                    "allowed_signers": [signer_a_ref, signer_b_ref],
+                    "disabled_signers": [],
+                    "min_attestation_quorum": 2u64,
+                    "policy_source": "governance_test",
+                    "policy_version": 12u64,
+                    "now": 13u64,
+                }),
+            ),
+        );
+        assert_eq!(
+            restored_policy["policy"]["active_allowed_signers"]
+                .as_array()
+                .map(Vec::len),
+            Some(2)
         );
 
         let mut accepted_map =
@@ -7228,7 +7307,7 @@ mod tests {
             "ua_getMappedHeaderAttestationPolicy",
             params_with_paths_and_native_store(&store, &audit, &native_store, json!({})),
         );
-        assert_eq!(get_policy["policy"]["policy_version"].as_u64(), Some(11));
+        assert_eq!(get_policy["policy"]["policy_version"].as_u64(), Some(12));
 
         let _ = fs::remove_dir_all(&root);
     }
