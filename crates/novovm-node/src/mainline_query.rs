@@ -357,6 +357,8 @@ pub fn is_mainline_native_execution_query_method(method: &str) -> bool {
             | "nov_swap"
             | "nov_depositReserve"
             | "nov_redeem"
+            | "nov_applyTreasuryPolicy"
+            | "nov_setTreasuryReserveProof"
             | "nov_openVault"
     )
 }
@@ -424,6 +426,64 @@ fn run_mainline_nov_deposit_reserve_v1(params: &Value) -> Result<Value> {
         params,
         "NOV",
         amount.max(1),
+    )
+}
+
+fn native_governance_args_from_params_v1(params: &Value) -> Value {
+    let mut args = match params {
+        Value::Object(map) => map.clone(),
+        _ => serde_json::Map::new(),
+    };
+    for key in [
+        "from",
+        "caller",
+        "account_id",
+        "uca_id",
+        "fee_owner_account_id",
+        "nonce_owner_account_id",
+        "execution_policy",
+        "privacy_mode",
+        "unified_account_store_path",
+        "ua_store_path",
+        "pay_asset",
+        "fee_pay_asset",
+        "max_pay_amount",
+        "fee_max_pay_amount",
+        "slippage_bps",
+        "fee_slippage_bps",
+        "gas_like_limit",
+        "gas_limit",
+        "gas",
+        "chain_id",
+        "nonce",
+        "native_execution_store_path",
+    ] {
+        args.remove(key);
+    }
+    Value::Object(args)
+}
+
+fn run_mainline_nov_apply_treasury_policy_v1(params: &Value) -> Result<Value> {
+    run_mainline_native_user_execute_v1(
+        "nov_applyTreasuryPolicy",
+        "governance",
+        "apply_treasury_policy",
+        native_governance_args_from_params_v1(params),
+        params,
+        "NOV",
+        10_000,
+    )
+}
+
+fn run_mainline_nov_set_treasury_reserve_proof_v1(params: &Value) -> Result<Value> {
+    run_mainline_native_user_execute_v1(
+        "nov_setTreasuryReserveProof",
+        "governance",
+        "set_reserve_proof",
+        native_governance_args_from_params_v1(params),
+        params,
+        "NOV",
+        10_000,
     )
 }
 
@@ -668,6 +728,8 @@ fn run_mainline_native_execution_query(method: &str, params: &Value) -> Result<V
         "nov_swap" => run_mainline_nov_swap_v1(params),
         "nov_depositReserve" => run_mainline_nov_deposit_reserve_v1(params),
         "nov_redeem" => run_mainline_nov_redeem_v1(params),
+        "nov_applyTreasuryPolicy" => run_mainline_nov_apply_treasury_policy_v1(params),
+        "nov_setTreasuryReserveProof" => run_mainline_nov_set_treasury_reserve_proof_v1(params),
         "nov_openVault" => run_mainline_nov_open_vault_v1(params),
         _ => bail!("unsupported mainline native execution query method: {method}"),
     }
@@ -4084,7 +4146,7 @@ mod tests {
     use crate::tx_ingress::{
         get_nov_native_account_asset_balance_with_store_path_v1,
         load_nov_native_execution_store_v1, save_nov_native_execution_store_v1,
-        NovNativeExecutionStoreV1, NovTreasuryReserveProofV1,
+        NovNativeExecutionStoreV1, NovTreasuryReserveProofV1, NOV_NATIVE_GOVERNANCE_ENABLED_ENV,
     };
     use crate::unified_account_surface::{
         is_mainline_unified_account_query_method, seed_unified_account_key_algo_for_tests_v1,
@@ -10020,6 +10082,8 @@ mod tests {
             "nov_swap",
             "nov_depositReserve",
             "nov_redeem",
+            "nov_applyTreasuryPolicy",
+            "nov_setTreasuryReserveProof",
             "nov_openVault",
         ] {
             assert!(
@@ -11853,6 +11917,178 @@ mod tests {
         .expect("load USDT after protocol redeem");
         assert_eq!(nov_after, 896);
         assert!(usdt_after > 0);
+
+        let _ = fs::remove_file(native_store);
+    }
+
+    #[test]
+    fn mainline_query_treasury_governance_write_product_smoke() {
+        let _lock = geth_parity_test_lock_v1();
+        let bogus_canonical_store =
+            std::path::Path::new("this-canonical-store-does-not-exist.json");
+        let native_store = unique_native_execution_store_path("treasury-governance-write-smoke");
+        let caller = format!("0x{}", "68".repeat(20));
+
+        let mut pre = NovNativeExecutionStoreV1::default();
+        pre.module_state.account_asset_balances.insert(
+            caller.clone(),
+            std::collections::BTreeMap::from([("NOV".to_string(), 10_000u128)]),
+        );
+        save_nov_native_execution_store_v1(native_store.as_path(), &pre)
+            .expect("seed treasury governance write smoke store");
+
+        {
+            let _governance_disabled =
+                MainlineEnvVarGuard::set(NOV_NATIVE_GOVERNANCE_ENABLED_ENV, "false");
+            let blocked = run_mainline_query_from_path(
+                bogus_canonical_store,
+                "nov_applyTreasuryPolicy",
+                &json!({
+                    "from": caller,
+                    "governance_authorized": true,
+                    "policy_version": 31u64,
+                    "reserve_allocation_bps": 6500u64,
+                    "fee_allocation_bps": 2500u64,
+                    "risk_buffer_allocation_bps": 1000u64,
+                    "native_execution_store_path": native_store.display().to_string(),
+                }),
+            )
+            .expect("disabled governance should return failed native receipt");
+            assert_eq!(blocked["method"].as_str(), Some("nov_applyTreasuryPolicy"));
+            assert_eq!(blocked["native_receipt"]["status"].as_bool(), Some(false));
+            assert!(blocked["native_receipt"]["failure_reason"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("governance.policy.authority_denied"));
+        }
+
+        let _governance_enabled =
+            MainlineEnvVarGuard::set(NOV_NATIVE_GOVERNANCE_ENABLED_ENV, "true");
+        let applied = run_mainline_query_from_path(
+            bogus_canonical_store,
+            "nov_applyTreasuryPolicy",
+            &json!({
+                "from": caller,
+                "governance_authorized": true,
+                "policy_version": 32u64,
+                "reserve_allocation_bps": 6500u64,
+                "fee_allocation_bps": 2500u64,
+                "risk_buffer_allocation_bps": 1000u64,
+                "min_reserve_bucket_nov": 120u64,
+                "min_fee_bucket_nov": 80u64,
+                "min_risk_buffer_nov": 400u64,
+                "mapped_lock_min_confirmations": 21u64,
+                "mapped_asset_reorg_response_policy": "freeze_only",
+                "fee_oracle_allowed_sources": ["runtime_oracle", "governance_oracle", "governance_oracle_v2"],
+                "fee_oracle_disabled_sources": ["governance_oracle"],
+                "fee_oracle_disabled_source_reasons": {"governance_oracle": "deviation_slash"},
+                "fee_oracle_source_rotations": {"governance_oracle": "governance_oracle_v2"},
+                "native_execution_store_path": native_store.display().to_string(),
+            }),
+        )
+        .expect("nov_applyTreasuryPolicy should succeed through mainline query");
+        assert_eq!(applied["method"].as_str(), Some("nov_applyTreasuryPolicy"));
+        assert_eq!(applied["module"].as_str(), Some("governance"));
+        assert_eq!(applied["native_receipt"]["status"].as_bool(), Some(true));
+
+        let policy = run_mainline_query_from_path(
+            bogus_canonical_store,
+            "nov_getTreasurySettlementPolicy",
+            &json!({
+                "native_execution_store_path": native_store.display().to_string(),
+            }),
+        )
+        .expect("policy should be queryable after mainline governance write");
+        assert_eq!(policy["policy"]["policy_version"].as_u64(), Some(32));
+        assert_eq!(
+            policy["policy"]["policy"]["mapped_lock_min_confirmations"].as_u64(),
+            Some(21)
+        );
+        assert_eq!(
+            policy["policy"]["policy"]["mapped_asset_reorg_response_policy"].as_str(),
+            Some("freeze_only")
+        );
+        assert_eq!(
+            policy["policy"]["oracle_policy"]["oracle_open_feed_allowed"].as_bool(),
+            Some(false)
+        );
+        assert_eq!(
+            policy["policy"]["oracle_policy"]["oracle_disabled_source_reasons"]
+                ["governance_oracle"]
+                .as_str(),
+            Some("deviation_slash")
+        );
+
+        let proof_set = run_mainline_query_from_path(
+            bogus_canonical_store,
+            "nov_setTreasuryReserveProof",
+            &json!({
+                "from": caller,
+                "governance_authorized": true,
+                "asset": "USDT",
+                "reserve_amount": 1_000u64,
+                "proof_type": "custody_statement_v1",
+                "proof_digest": "0xmainlinegovernanceproof01",
+                "proof_source": "treasury_committee",
+                "proof_reference": "mainline-governance-proof-001",
+                "status": "revoked",
+                "policy_version": 32u64,
+                "native_execution_store_path": native_store.display().to_string(),
+            }),
+        )
+        .expect("nov_setTreasuryReserveProof should succeed through mainline query");
+        assert_eq!(
+            proof_set["method"].as_str(),
+            Some("nov_setTreasuryReserveProof")
+        );
+        assert_eq!(proof_set["module"].as_str(), Some("governance"));
+        assert_eq!(proof_set["native_receipt"]["status"].as_bool(), Some(true));
+
+        let proof = run_mainline_query_from_path(
+            bogus_canonical_store,
+            "nov_getTreasuryReserveProof",
+            &json!({
+                "asset": "USDT",
+                "native_execution_store_path": native_store.display().to_string(),
+            }),
+        )
+        .expect("reserve proof should be queryable after mainline governance write");
+        assert_eq!(proof["found"].as_bool(), Some(true));
+        assert_eq!(
+            proof["reserve_proof"]["reserve_proof"]["effective_status"].as_str(),
+            Some("revoked")
+        );
+        assert_eq!(
+            proof["reserve_proof"]["reserve_proof"]["claims"]["nov_mint_authorized"].as_bool(),
+            Some(false)
+        );
+        assert_eq!(
+            proof["reserve_proof"]["reserve_proof"]["claims"]
+                ["external_redemption_authorized"]
+                .as_bool(),
+            Some(false)
+        );
+
+        let blocked_deposit = run_mainline_query_from_path(
+            bogus_canonical_store,
+            "nov_depositReserve",
+            &json!({
+                "from": caller,
+                "asset": "USDT",
+                "amount": 10u64,
+                "max_pay_amount": 10_000u64,
+                "native_execution_store_path": native_store.display().to_string(),
+            }),
+        )
+        .expect("revoked proof should make deposit return failed receipt");
+        assert_eq!(
+            blocked_deposit["native_receipt"]["status"].as_bool(),
+            Some(false)
+        );
+        assert!(blocked_deposit["native_receipt"]["failure_reason"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("reserve_proof_effective_status=revoked"));
 
         let _ = fs::remove_file(native_store);
     }
