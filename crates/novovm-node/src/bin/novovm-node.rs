@@ -84,7 +84,7 @@ use novovm_network::{
 use novovm_network::{
     dispatch_network_runtime_native_pending_tx_broadcast_to_transport_v1,
     get_network_runtime_native_pending_tx_v1, observe_network_runtime_protocol_message_v1,
-    InMemoryTransport, Transport,
+    InMemoryTransport, Transport, UdpTransport,
 };
 use novovm_node::governance_surface::{
     default_mainline_governance_store_path, is_mainline_governance_query_method,
@@ -34513,6 +34513,94 @@ mod native_execution_pipeline_tests {
             "native_execution_store_path": store_path,
         }))
         .expect("remote pending tx should execute through AOEM tick");
+
+        assert_eq!(out["execution_kernel"].as_str(), Some("AOEM"));
+        assert_eq!(out["aoem_concurrency_owner"].as_str(), Some("AOEM_runtime"));
+        assert_eq!(out["executed_count"].as_u64(), Some(1));
+        assert_eq!(
+            out["batch_result"]["batch_result"]["native_store_commit"]["model"].as_str(),
+            Some("post_aoem_deterministic_dirty_store_commit")
+        );
+        let summary = snapshot_network_runtime_native_pending_tx_summary_v1(chain_id);
+        assert_eq!(summary.included_canonical_count, 1);
+        assert_eq!(summary.pending_count, 0);
+        assert_eq!(summary.broadcast_tx_total, 1);
+        let _ = fs::remove_file(&store_path);
+    }
+
+    #[test]
+    fn native_execution_pipeline_udp_peer_output_reenters_aoem_tick() {
+        let chain_id = 9_998_891u64;
+        let local = NodeId(9_991_891);
+        let remote = NodeId(9_991_892);
+        let local_transport =
+            UdpTransport::bind_for_chain(local, "127.0.0.1:0", chain_id).expect("bind local udp");
+        let remote_transport =
+            UdpTransport::bind_for_chain(remote, "127.0.0.1:0", chain_id).expect("bind remote udp");
+        let local_addr = local_transport.local_addr().expect("local udp addr");
+        let remote_addr = remote_transport.local_addr().expect("remote udp addr");
+        local_transport
+            .register_peer(remote, &remote_addr.to_string())
+            .expect("register remote peer");
+        remote_transport
+            .register_peer(local, &local_addr.to_string())
+            .expect("register local peer");
+
+        let payloads = build_native_execution_pipeline_fixture_payloads_v1(chain_id, 1)
+            .expect("build fixture native payload");
+        let (_, _, tx_hash) = ingest_local_nov_raw_tx_payload_v1(
+            &serde_json::json!({ "chain_id": chain_id }),
+            payloads[0].as_slice(),
+        )
+        .expect("local native tx should enter pending runtime");
+
+        let sent = dispatch_network_runtime_native_pending_tx_broadcast_to_transport_v1(
+            &local_transport,
+            chain_id,
+            local,
+            remote,
+            4,
+            3,
+        )
+        .expect("native pending tx should leave through UDP transport");
+        assert_eq!(sent, 1);
+
+        let started = Instant::now();
+        let mut received = false;
+        while started.elapsed() < Duration::from_millis(500) {
+            if remote_transport
+                .try_recv(remote)
+                .expect("remote udp inbox should be readable")
+                .is_some()
+            {
+                received = true;
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(received, "remote UDP node should receive native tx output");
+
+        let remote_pending = get_network_runtime_native_pending_tx_v1(chain_id, tx_hash)
+            .expect("UDP receive should re-enter native pending runtime");
+        assert_eq!(
+            remote_pending.lifecycle_stage,
+            novovm_network::NetworkRuntimeNativePendingTxLifecycleStageV1::Pending
+        );
+
+        let store_path = std::env::temp_dir().join(format!(
+            "novovm-native-pipeline-udp-{}-{}.json",
+            chain_id,
+            std::process::id()
+        ));
+        let _ = fs::remove_file(&store_path);
+        let out = run_nov_native_execution_tick_from_params_v1(&serde_json::json!({
+            "chain_id": chain_id,
+            "hard_budget_per_tick": 4u64,
+            "target_budget_per_tick": 4u64,
+            "effective_budget_per_tick": 4u64,
+            "native_execution_store_path": store_path,
+        }))
+        .expect("UDP-delivered pending tx should execute through AOEM tick");
 
         assert_eq!(out["execution_kernel"].as_str(), Some("AOEM"));
         assert_eq!(out["aoem_concurrency_owner"].as_str(), Some("AOEM_runtime"));
