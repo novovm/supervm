@@ -3963,6 +3963,16 @@ fn append_nov_native_aoem_semantic_ledger_mirror_record_v1(
     path: &Path,
     record: &NovAoemSemanticLedgerMirrorRecordV1,
 ) -> Result<()> {
+    append_nov_native_aoem_semantic_ledger_mirror_records_v1(path, std::slice::from_ref(record))
+}
+
+fn append_nov_native_aoem_semantic_ledger_mirror_records_v1(
+    path: &Path,
+    records: &[NovAoemSemanticLedgerMirrorRecordV1],
+) -> Result<()> {
+    if records.is_empty() {
+        return Ok(());
+    }
     if let Some(parent) = path.parent() {
         if !parent.as_os_str().is_empty() {
             fs::create_dir_all(parent).with_context(|| {
@@ -3973,21 +3983,25 @@ fn append_nov_native_aoem_semantic_ledger_mirror_record_v1(
             })?;
         }
     }
-    if let Some(last) = load_last_nov_native_aoem_semantic_ledger_mirror_record_v1(path)? {
-        if record.sequence != last.sequence.saturating_add(1) {
-            bail!(
-                "ERR_AOEM_SEMANTIC_LEDGER_MIRROR_SEQUENCE_GAP: expected={} got={}",
-                last.sequence.saturating_add(1),
-                record.sequence
-            );
+    let mut previous = load_last_nov_native_aoem_semantic_ledger_mirror_record_v1(path)?;
+    for record in records {
+        if let Some(last) = previous.as_ref() {
+            if record.sequence != last.sequence.saturating_add(1) {
+                bail!(
+                    "ERR_AOEM_SEMANTIC_LEDGER_MIRROR_SEQUENCE_GAP: expected={} got={}",
+                    last.sequence.saturating_add(1),
+                    record.sequence
+                );
+            }
+            if record.prev_seal != last.commit_seal {
+                bail!(
+                    "ERR_AOEM_SEMANTIC_LEDGER_MIRROR_PREV_SEAL_MISMATCH: expected={} got={}",
+                    last.commit_seal,
+                    record.prev_seal
+                );
+            }
         }
-        if record.prev_seal != last.commit_seal {
-            bail!(
-                "ERR_AOEM_SEMANTIC_LEDGER_MIRROR_PREV_SEAL_MISMATCH: expected={} got={}",
-                last.commit_seal,
-                record.prev_seal
-            );
-        }
+        previous = Some(record.clone());
     }
     let mut writer = OpenOptions::new()
         .create(true)
@@ -3999,20 +4013,22 @@ fn append_nov_native_aoem_semantic_ledger_mirror_record_v1(
                 path.display()
             )
         })?;
-    let bytes = serde_json::to_vec(record)
-        .context("serialize AOEM semantic ledger mirror record failed")?;
-    writer.write_all(bytes.as_slice()).with_context(|| {
-        format!(
-            "append AOEM semantic ledger mirror record failed: {}",
-            path.display()
-        )
-    })?;
-    writer.write_all(b"\n").with_context(|| {
-        format!(
-            "append AOEM semantic ledger mirror newline failed: {}",
-            path.display()
-        )
-    })?;
+    for record in records {
+        let bytes = serde_json::to_vec(record)
+            .context("serialize AOEM semantic ledger mirror record failed")?;
+        writer.write_all(bytes.as_slice()).with_context(|| {
+            format!(
+                "append AOEM semantic ledger mirror record failed: {}",
+                path.display()
+            )
+        })?;
+        writer.write_all(b"\n").with_context(|| {
+            format!(
+                "append AOEM semantic ledger mirror newline failed: {}",
+                path.display()
+            )
+        })?;
+    }
     writer.flush().with_context(|| {
         format!(
             "flush AOEM semantic ledger mirror record failed: {}",
@@ -8783,6 +8799,7 @@ fn dispatch_nov_execution_request_into_loaded_store_v1(
     requested_behavior: Option<&NovRequestedExecutionBehaviorV1>,
     unified_account_store_path: Option<&Path>,
     aoem_semantic_ingress_override: Option<NovAoemSemanticIngressMetaV1>,
+    mirror_records: Option<&mut Vec<NovAoemSemanticLedgerMirrorRecordV1>>,
     now_ms: u128,
 ) -> Result<NovNativeExecutionReceiptV1> {
     let effective_subject_meta = subject_meta
@@ -8940,11 +8957,15 @@ fn dispatch_nov_execution_request_into_loaded_store_v1(
     if let Some(mirror_record) =
         build_native_aoem_semantic_ledger_mirror_record_v1(&receipt, now_ms)
     {
-        let mirror_path = nov_native_aoem_semantic_ledger_mirror_path_v1(mirror_base_path);
-        append_nov_native_aoem_semantic_ledger_mirror_record_v1(
-            mirror_path.as_path(),
-            &mirror_record,
-        )?;
+        if let Some(records) = mirror_records {
+            records.push(mirror_record);
+        } else {
+            let mirror_path = nov_native_aoem_semantic_ledger_mirror_path_v1(mirror_base_path);
+            append_nov_native_aoem_semantic_ledger_mirror_record_v1(
+                mirror_path.as_path(),
+                &mirror_record,
+            )?;
+        }
     }
     Ok(receipt)
 }
@@ -8966,6 +8987,7 @@ fn dispatch_and_persist_nov_execution_request_with_subjects_and_store_path_v1(
         subject_meta,
         requested_behavior,
         unified_account_store_path,
+        None,
         None,
         now_ms,
     )?;
@@ -10448,6 +10470,7 @@ pub fn run_nov_send_raw_transaction_batch_from_params_v1(
         acquire_nov_native_execution_store_write_lock_v1(effective_native_store_path.as_path())?;
     let mut store = load_nov_native_execution_store_v1(effective_native_store_path.as_path())?;
     let mut results = Vec::with_capacity(prepared.len());
+    let mut mirror_records = Vec::new();
     let item_count = prepared.len();
     for (item_index, item) in prepared.into_iter().enumerate() {
         let execution_receipt = if let Some(request) = item.execution_request.as_ref() {
@@ -10463,6 +10486,7 @@ pub fn run_nov_send_raw_transaction_batch_from_params_v1(
                     item_index,
                     item_count,
                 )),
+                Some(&mut mirror_records),
                 now_ms,
             )?)
         } else {
@@ -10485,6 +10509,12 @@ pub fn run_nov_send_raw_transaction_batch_from_params_v1(
             "native_receipt": execution_receipt,
         }));
     }
+    let mirror_path =
+        nov_native_aoem_semantic_ledger_mirror_path_v1(effective_native_store_path.as_path());
+    append_nov_native_aoem_semantic_ledger_mirror_records_v1(
+        mirror_path.as_path(),
+        mirror_records.as_slice(),
+    )?;
     save_nov_native_execution_store_v1(effective_native_store_path.as_path(), &store)?;
 
     Ok(serde_json::json!({
@@ -11909,6 +11939,24 @@ mod tests {
                             >= 60,
                         "batch treasury reserve must include both ordered deposits"
                     );
+                    let mirror_path =
+                        nov_native_aoem_semantic_ledger_mirror_path_v1(path.as_path());
+                    let mirror_body = fs::read_to_string(mirror_path.as_path())
+                        .expect("batch mirror should be written");
+                    assert_eq!(
+                        mirror_body
+                            .lines()
+                            .filter(|line| !line.trim().is_empty())
+                            .count(),
+                        2,
+                        "batch mirror append should persist one record per receipt"
+                    );
+                    let last_mirror = load_last_nov_native_aoem_semantic_ledger_mirror_record_v1(
+                        mirror_path.as_path(),
+                    )
+                    .expect("batch mirror should load")
+                    .expect("batch mirror should have last record");
+                    assert_eq!(last_mirror.sequence, 2);
                 })
             },
         )
