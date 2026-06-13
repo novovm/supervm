@@ -210,6 +210,9 @@ $env:NOVOVM_NATIVE_EXECUTION_PIPELINE_REQUIRE_FULL_LIFECYCLE="true"
 $env:NOVOVM_NATIVE_EXECUTION_PIPELINE_REQUIRE_PRODUCT_INGRESS="true"
 $env:NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_AOEM_EXECUTED="3"
 $env:NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_MAX_AOEM_BATCH_EXECUTED_PER_TICK="1"
+$env:NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_NONEMPTY_AOEM_BATCH_TICKS="3"
+$env:NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_NONEMPTY_PROOF_TICKS="3"
+$env:NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_NONEMPTY_COMMIT_TICKS="3"
 $env:NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_PROOF_TICKS="3"
 $env:NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_COMMIT_TICKS="3"
 $env:NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_BROADCAST_TX="3"
@@ -219,7 +222,7 @@ $env:NOVOVM_NATIVE_EXECUTION_PIPELINE_MAX_QUEUE_PENDING_LAST="0"
 cargo run -p novovm-node --bin novovm-node
 ```
 
-Expected summary evidence: `execution_kernel=AOEM`, `aoem_concurrency_owner=AOEM_runtime`, `host_concurrency_policy=host_drives_lifecycle_only_no_rust_execution_scheduler`, non-zero `product_ingress_submitted_total`/ingress/AOEM/proof/commit/broadcast/canonical counts, `max_aoem_batch_executed_per_tick` at or above the configured gate, and final `queue_pending_last=0`.
+Expected summary evidence: `execution_kernel=AOEM`, `aoem_concurrency_owner=AOEM_runtime`, `host_concurrency_policy=host_drives_lifecycle_only_no_rust_execution_scheduler`, non-zero `product_ingress_submitted_total`/ingress/AOEM/proof/commit/broadcast/canonical counts, `max_aoem_batch_executed_per_tick` at or above the configured gate, `nonempty_aoem_batch_ticks`/`nonempty_proof_ticks`/`nonempty_commit_ticks` at or above the configured gates, and final `queue_pending_last=0`.
 
 The fixture source only builds valid NOV native raw transactions. Submission still goes through `ingest_local_nov_raw_tx_payload_v1`, which is the product raw transaction ingress used by `nov_sendRawTransaction`, before the pending runtime is drained by the AOEM tick.
 
@@ -241,13 +244,16 @@ cargo build -p novovm-node --bins
 cargo run -p novovm-node --bin supervm-native-pipeline-dual-node-gate
 ```
 
-The gate starts two real `novovm-node` child processes: a sender with fixture ingress and UDP broadcast, and a receiver with UDP receive plus AOEM tick/canonical projection. It validates sender broadcast counts and receiver `aoem_executed_total`, `proof_ticks`, `commit_ticks`, `included_canonical_total`, and `queue_pending_last=0`.
+The gate starts two real `novovm-node` child processes: a sender with fixture ingress and UDP broadcast, and a receiver with UDP receive plus AOEM tick/canonical projection. It validates sender broadcast counts and receiver `aoem_executed_total`, `nonempty_aoem_batch_ticks`, `nonempty_proof_ticks`, `nonempty_commit_ticks`, `included_canonical_total`, and `queue_pending_last=0`.
 
 Useful soak knobs:
 
 - `NOVOVM_NATIVE_PIPELINE_DUAL_GATE_TX_COUNT`
 - `NOVOVM_NATIVE_PIPELINE_DUAL_GATE_TICK_BUDGET`
 - `NOVOVM_NATIVE_PIPELINE_DUAL_GATE_MIN_RECEIVER_MAX_AOEM_BATCH_PER_TICK`
+- `NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_NONEMPTY_AOEM_BATCH_TICKS`
+- `NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_NONEMPTY_PROOF_TICKS`
+- `NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_NONEMPTY_COMMIT_TICKS`
 - `NOVOVM_NATIVE_PIPELINE_DUAL_GATE_TICK_INTERVAL_MS`
 - `NOVOVM_NATIVE_PIPELINE_DUAL_GATE_STARTUP_WAIT_MS`
 - `NOVOVM_NATIVE_PIPELINE_DUAL_GATE_RECEIVER_COUNT`
@@ -282,6 +288,9 @@ $env:NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_TICKS="16"
 $env:NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_INGRESS_SUBMITTED="256"
 $env:NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_AOEM_EXECUTED="256"
 $env:NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_MAX_AOEM_BATCH_EXECUTED_PER_TICK="32"
+$env:NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_NONEMPTY_AOEM_BATCH_TICKS="8"
+$env:NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_NONEMPTY_PROOF_TICKS="8"
+$env:NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_NONEMPTY_COMMIT_TICKS="8"
 $env:NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_PROOF_TICKS="16"
 $env:NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_COMMIT_TICKS="16"
 $env:NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_INCLUDED_CANONICAL_TOTAL="256"

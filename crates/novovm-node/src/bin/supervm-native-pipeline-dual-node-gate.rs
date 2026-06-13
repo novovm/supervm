@@ -190,6 +190,18 @@ fn sender_round_aggregate_v1(summaries: &[Value]) -> Value {
         .map(|summary| summary_u64(summary, "max_aoem_batch_executed_per_tick"))
         .max()
         .unwrap_or_default();
+    let nonempty_aoem_batch_ticks = summaries
+        .iter()
+        .map(|summary| summary_u64(summary, "nonempty_aoem_batch_ticks"))
+        .sum::<u64>();
+    let nonempty_proof_ticks = summaries
+        .iter()
+        .map(|summary| summary_u64(summary, "nonempty_proof_ticks"))
+        .sum::<u64>();
+    let nonempty_commit_ticks = summaries
+        .iter()
+        .map(|summary| summary_u64(summary, "nonempty_commit_ticks"))
+        .sum::<u64>();
     let network_enabled_ticks = summaries
         .iter()
         .map(|summary| summary_u64(summary, "network_enabled_ticks"))
@@ -248,6 +260,9 @@ fn sender_round_aggregate_v1(summaries: &[Value]) -> Value {
         "aoem_executed_total": aoem_executed_total,
         "aoem_deferred_total": aoem_deferred_total,
         "max_aoem_batch_executed_per_tick": max_aoem_batch_executed_per_tick,
+        "nonempty_aoem_batch_ticks": nonempty_aoem_batch_ticks,
+        "nonempty_proof_ticks": nonempty_proof_ticks,
+        "nonempty_commit_ticks": nonempty_commit_ticks,
         "network_enabled_ticks": network_enabled_ticks,
         "network_ok_ticks": network_ok_ticks,
         "network_error_ticks": network_error_ticks,
@@ -303,6 +318,7 @@ fn main() -> Result<()> {
     let ingress_ticks = div_ceil_u64_v1(max_sender_round_tx_count, ingress_max_per_tick.max(1));
     let total_ingress_ticks = div_ceil_u64_v1(tx_count, ingress_max_per_tick.max(1));
     let execution_ticks = div_ceil_u64_v1(tx_count, tick_budget);
+    let min_nonempty_batch_ticks = execution_ticks;
     let startup_ticks = div_ceil_u64_v1(startup_wait_ms, tick_interval_ms.max(1));
     let sender_round_interval_ticks =
         div_ceil_u64_v1(sender_round_interval_ms, tick_interval_ms.max(1));
@@ -489,6 +505,18 @@ fn main() -> Result<()> {
                 "NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_AOEM_EXECUTED",
                 "0".to_string(),
             ),
+            (
+                "NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_NONEMPTY_AOEM_BATCH_TICKS",
+                min_nonempty_batch_ticks.to_string(),
+            ),
+            (
+                "NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_NONEMPTY_PROOF_TICKS",
+                min_nonempty_batch_ticks.to_string(),
+            ),
+            (
+                "NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_NONEMPTY_COMMIT_TICKS",
+                min_nonempty_batch_ticks.to_string(),
+            ),
         ]);
         let mut cmd = Command::new(&node_bin);
         cmd.env_clear();
@@ -622,6 +650,24 @@ fn main() -> Result<()> {
                 min_receiver_max_aoem_batch_per_tick,
                 label.as_str(),
             )?;
+            require_min(
+                summary,
+                "nonempty_aoem_batch_ticks",
+                min_nonempty_batch_ticks,
+                label.as_str(),
+            )?;
+            require_min(
+                summary,
+                "nonempty_proof_ticks",
+                min_nonempty_batch_ticks,
+                label.as_str(),
+            )?;
+            require_min(
+                summary,
+                "nonempty_commit_ticks",
+                min_nonempty_batch_ticks,
+                label.as_str(),
+            )?;
             require_min(summary, "proof_ticks", execution_ticks, label.as_str())?;
             require_min(summary, "commit_ticks", execution_ticks, label.as_str())?;
             require_min(
@@ -725,6 +771,7 @@ fn main() -> Result<()> {
             "min_sender_broadcast_tps_x1000": min_sender_broadcast_tps_x1000,
             "min_receiver_canonical_tps_x1000": min_receiver_canonical_tps_x1000,
             "min_receiver_max_aoem_batch_per_tick": min_receiver_max_aoem_batch_per_tick,
+            "min_nonempty_batch_ticks": min_nonempty_batch_ticks,
         },
         "sender_summary": sender_summary,
         "sender_round_summaries": sender_summaries,
