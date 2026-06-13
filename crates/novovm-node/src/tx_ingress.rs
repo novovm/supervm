@@ -3709,12 +3709,25 @@ fn resolve_clearing_rate_ppm_with_source_v1(
     now_ms: u128,
 ) -> Result<(u128, String, u128)> {
     let normalized = normalize_asset_symbol_v1(asset);
-    if let Ok(price) = build_protocol_clearing_price_v1(store, normalized.as_str(), now_ms) {
-        return Ok((
-            price.p_pay_ppm,
-            format!("protocol_clearing_price:{}", price.state),
-            price.updated_unix_ms,
-        ));
+    let protocol_price = build_protocol_clearing_price_v1(store, normalized.as_str(), now_ms);
+    match protocol_price {
+        Ok(price) => {
+            return Ok((
+                price.p_pay_ppm,
+                format!("protocol_clearing_price:{}", price.state),
+                price.updated_unix_ms,
+            ));
+        }
+        Err(err)
+            if store
+                .module_state
+                .fee_oracle_rates_ppm
+                .contains_key(&normalized)
+                && !store.module_state.clearing_rate_ppm.contains_key(&normalized) =>
+        {
+            return Err(err);
+        }
+        Err(_) => {}
     }
     if let Some(rate) = store
         .module_state
@@ -8927,6 +8940,45 @@ mod tests {
             });
             assert!(has_treasury, "treasury_direct route should be present");
             assert!(has_amm, "amm_pool route should be present");
+        });
+    }
+
+    #[test]
+    fn treasury_get_clearing_routes_rejects_oracle_only_treasury_direct() {
+        with_test_native_execution_store_path_v1(|path| {
+            let mut pre = NovNativeExecutionStoreV1::default();
+            pre.module_state
+                .clearing_nov_liquidity
+                .insert("NNEW".to_string(), 1_000_000);
+            pre.module_state
+                .fee_oracle_rates_ppm
+                .insert("NNEW".to_string(), 1_000_000);
+            pre.module_state.fee_oracle_updated_unix_ms = now_unix_millis_v1();
+            pre.module_state.fee_oracle_source = "runtime_oracle".to_string();
+            save_nov_native_execution_store_v1(path.as_path(), &pre)
+                .expect("seed oracle-only clearing route store");
+
+            let out = run_nov_native_call_from_params_with_store_path_v1(
+                &serde_json::json!({
+                    "target": {"kind": "native_module", "id": "treasury"},
+                    "method": "get_clearing_routes",
+                    "args": {"asset": "NNEW"},
+                }),
+                Some(path.as_path()),
+            )
+            .expect("get_clearing_routes should succeed");
+            let routes = out["result"]["routes"]
+                .as_array()
+                .cloned()
+                .unwrap_or_default();
+            assert!(
+                routes.iter().all(|route| {
+                    route["route_source"]
+                        .as_str()
+                        != Some("treasury_direct")
+                }),
+                "oracle-only asset must not expose treasury_direct route: {routes:?}"
+            );
         });
     }
 
