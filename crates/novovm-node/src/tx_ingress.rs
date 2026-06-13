@@ -10659,9 +10659,9 @@ pub fn run_nov_send_raw_transaction_batch_from_params_v1(
             "model": "bounded_ops_wire_chunks_submitted_to_aoem_runtime_no_host_thread_scheduler",
         },
         "aoem_batch_chunks": aoem_batch_chunks,
-        "deterministic_commit": "post_aoem_batch_precommit_single_lock_ordered_dirty_store_commit",
+        "deterministic_commit": "post_aoem_batch_precommit_deterministic_sharded_dirty_atomic_commit",
         "native_store_commit": {
-            "model": "single_lock_ordered_batch_dirty_commit",
+            "model": "post_aoem_deterministic_dirty_store_commit",
             "load_count": 1,
             "save_count": 1,
             "ordered_results": true,
@@ -10910,7 +10910,7 @@ pub fn run_nov_native_execution_tick_from_params_v1(
         "lifecycle": {
             "ingress": "network_runtime_native_pending",
             "execution": "aoem_batch_precommit",
-            "commit": "single_lock_ordered_dirty_store_commit",
+            "commit": "deterministic_sharded_dirty_atomic_commit",
             "egress": "native_receipt_and_state_projection",
         },
         "chain_id": chain_id,
@@ -12319,11 +12319,11 @@ mod tests {
                     assert_eq!(out["batch_size"].as_u64(), Some(2));
                     assert_eq!(
                         out["deterministic_commit"].as_str(),
-                        Some("post_aoem_batch_precommit_single_lock_ordered_dirty_store_commit")
+                        Some("post_aoem_batch_precommit_deterministic_sharded_dirty_atomic_commit")
                     );
                     assert_eq!(
                         out["native_store_commit"]["model"].as_str(),
-                        Some("single_lock_ordered_batch_dirty_commit")
+                        Some("post_aoem_deterministic_dirty_store_commit")
                     );
                     assert_eq!(out["native_store_commit"]["load_count"].as_u64(), Some(1));
                     assert_eq!(out["native_store_commit"]["save_count"].as_u64(), Some(1));
@@ -12514,7 +12514,7 @@ mod tests {
                         assert_eq!(chunks[1]["op_count"].as_u64(), Some(1));
                         assert_eq!(
                             out["native_store_commit"]["model"].as_str(),
-                            Some("single_lock_ordered_batch_dirty_commit")
+                            Some("post_aoem_deterministic_dirty_store_commit")
                         );
                         assert_eq!(out["native_store_commit"]["load_count"].as_u64(), Some(1));
                         assert_eq!(out["native_store_commit"]["save_count"].as_u64(), Some(1));
@@ -12654,7 +12654,7 @@ mod tests {
                     );
                     assert_eq!(
                         out["batch_result"]["native_store_commit"]["model"].as_str(),
-                        Some("single_lock_ordered_batch_dirty_commit")
+                        Some("post_aoem_deterministic_dirty_store_commit")
                     );
                     let store = load_nov_native_execution_store_v1(path.as_path())
                         .expect("pending batch store should load");
@@ -12761,7 +12761,7 @@ mod tests {
                     assert_eq!(
                         out["batch_result"]["batch_result"]["native_store_commit"]["model"]
                             .as_str(),
-                        Some("single_lock_ordered_batch_dirty_commit")
+                        Some("post_aoem_deterministic_dirty_store_commit")
                     );
                     let store = load_nov_native_execution_store_v1(path.as_path())
                         .expect("tick store should load");

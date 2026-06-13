@@ -47,6 +47,8 @@ use novovm_network::{
     set_network_runtime_native_snap_trie_node_snapshot_v1, set_network_runtime_native_sync_status,
     set_network_runtime_sync_status, snapshot_network_runtime_eth_peer_sessions_for_peers_v1,
     snapshot_network_runtime_native_canonical_blocks_v1,
+    snapshot_network_runtime_native_pending_tx_broadcast_candidates_v1,
+    snapshot_network_runtime_native_pending_tx_broadcast_runtime_summary_v1,
     snapshot_network_runtime_native_pending_tx_summary_v1,
     snapshot_network_runtime_native_snap_account_range_progress_v1,
     snapshot_network_runtime_native_snap_account_snapshots_v1,
@@ -92,8 +94,8 @@ use novovm_node::tx_ingress::{
     ingest_local_eth_raw_tx_payload_v1, load_exec_batch_from_wire_file, load_ops_wire_v1_file,
     load_ops_wire_v1_from_tx_wire_file, load_ops_wire_v1_payload_file,
     load_tx_records_from_wire_file, nov_native_execution_store_path_v1,
-    run_eth_send_raw_transaction_from_params_v1, tx_ingress_records_to_adapter_tx_irs,
-    TxIngressRecord, LOCAL_TX_WIRE_CODEC_WRITE_U64LE_V1,
+    run_eth_send_raw_transaction_from_params_v1, run_nov_native_execution_tick_from_params_v1,
+    tx_ingress_records_to_adapter_tx_irs, TxIngressRecord, LOCAL_TX_WIRE_CODEC_WRITE_U64LE_V1,
 };
 use novovm_node::unified_account_surface::{
     default_mainline_unified_account_store_path, is_mainline_unified_account_query_method,
@@ -32930,6 +32932,239 @@ struct PreparedBatch {
     raw_tx_rlps: Vec<Vec<u8>>,
 }
 
+fn u64_env_positive(name: &str, default: u64) -> Result<u64> {
+    let value = u64_env_allow_zero(name, default)?;
+    if value == 0 {
+        bail!("{name} must be > 0");
+    }
+    Ok(value)
+}
+
+fn native_execution_tick_params_from_env_v1() -> Result<serde_json::Value> {
+    let hard_budget = u64_env_positive("NOVOVM_NATIVE_EXECUTION_TICK_HARD_BUDGET", 1024)?;
+    let target_budget =
+        u64_env_positive("NOVOVM_NATIVE_EXECUTION_TICK_TARGET_BUDGET", hard_budget)?;
+    let effective_budget = u64_env_positive(
+        "NOVOVM_NATIVE_EXECUTION_TICK_EFFECTIVE_BUDGET",
+        target_budget,
+    )?;
+    let hard_time_slice_ms =
+        u64_env_positive("NOVOVM_NATIVE_EXECUTION_TICK_HARD_TIME_SLICE_MS", 250)?;
+    let target_time_slice_ms = u64_env_positive(
+        "NOVOVM_NATIVE_EXECUTION_TICK_TARGET_TIME_SLICE_MS",
+        hard_time_slice_ms,
+    )?;
+    let effective_time_slice_ms = u64_env_positive(
+        "NOVOVM_NATIVE_EXECUTION_TICK_EFFECTIVE_TIME_SLICE_MS",
+        target_time_slice_ms,
+    )?;
+    let scan_limit = u64_env_positive(
+        "NOVOVM_NATIVE_EXECUTION_TICK_SCAN_LIMIT",
+        effective_budget.saturating_mul(4).max(effective_budget),
+    )?;
+    let mut params = serde_json::json!({
+        "chain_id": u64_env_positive("NOVOVM_NATIVE_EXECUTION_TICK_CHAIN_ID", 1)?,
+        "hard_budget_per_tick": hard_budget,
+        "target_budget_per_tick": target_budget,
+        "effective_budget_per_tick": effective_budget,
+        "hard_time_slice_ms": hard_time_slice_ms,
+        "target_time_slice_ms": target_time_slice_ms,
+        "effective_time_slice_ms": effective_time_slice_ms,
+        "scan_limit": scan_limit,
+        "scheduler_owner": "novovm-node.native_execution_tick_mode",
+        "execution_kernel": "AOEM",
+        "aoem_concurrency_owner": "AOEM_runtime",
+    });
+    if let (Some(path), Some(obj)) = (
+        string_env_nonempty("NOVOVM_NATIVE_EXECUTION_TICK_STORE_PATH"),
+        params.as_object_mut(),
+    ) {
+        obj.insert(
+            "native_execution_store_path".to_string(),
+            serde_json::Value::String(path),
+        );
+    }
+    Ok(params)
+}
+
+fn build_native_execution_pipeline_report_v1(
+    tick_index: u64,
+    tick_out: serde_json::Value,
+) -> serde_json::Value {
+    let chain_id = tick_out
+        .get("chain_id")
+        .and_then(|value| value.as_u64())
+        .unwrap_or(1);
+    let pending_summary = snapshot_network_runtime_native_pending_tx_summary_v1(chain_id);
+    let broadcast_runtime =
+        snapshot_network_runtime_native_pending_tx_broadcast_runtime_summary_v1(chain_id);
+    let broadcast_candidates =
+        snapshot_network_runtime_native_pending_tx_broadcast_candidates_v1(chain_id, 16, 3);
+    let candidate_hashes: Vec<String> = broadcast_candidates
+        .iter()
+        .map(|candidate| to_hex_prefixed(&candidate.tx_hash))
+        .collect();
+
+    serde_json::json!({
+        "method": "nov_runNativeExecutionPipeline",
+        "accepted": true,
+        "tick": tick_index,
+        "chain_id": chain_id,
+        "execution_kernel": "AOEM",
+        "aoem_concurrency_owner": "AOEM_runtime",
+        "host_concurrency_policy": "host_drives_lifecycle_only_no_rust_execution_scheduler",
+        "lifecycle": {
+            "ingress": {
+                "source": "network_runtime_native_pending",
+                "total": pending_summary.tx_count,
+                "local": pending_summary.local_origin_count,
+                "remote": pending_summary.remote_origin_count,
+            },
+            "queue": {
+                "pending": pending_summary.pending_count,
+                "seen": pending_summary.seen_count,
+                "propagated": pending_summary.propagated_count,
+                "retry_eligible": pending_summary.retry_eligible_count,
+            },
+            "aoem_batch": {
+                "executed": tick_out
+                    .get("executed_count")
+                    .and_then(|value| value.as_u64())
+                    .unwrap_or_default(),
+                "deferred": tick_out
+                    .get("deferred_count")
+                    .and_then(|value| value.as_u64())
+                    .unwrap_or_default(),
+                "budget": tick_out.get("budget").cloned().unwrap_or(serde_json::Value::Null),
+                "budget_runtime": tick_out
+                    .get("budget_runtime")
+                    .cloned()
+                    .unwrap_or(serde_json::Value::Null),
+            },
+            "proof": {
+                "source": "aoem_semantic_ingress_and_receipt_projection",
+                "tick_output_method": tick_out
+                    .get("method")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or("nov_runNativeExecutionTick"),
+            },
+            "commit": {
+                "model": tick_out
+                    .get("lifecycle")
+                    .and_then(|value| value.get("commit"))
+                    .and_then(|value| value.as_str())
+                    .unwrap_or("deterministic_sharded_dirty_atomic_commit"),
+                "atomicity": "deterministic_post_aoem_commit_boundary",
+            },
+            "egress": {
+                "receipt_projection": "native_receipt_and_state_projection",
+                "pending_included_canonical": pending_summary.included_canonical_count,
+                "broadcast_candidates": broadcast_candidates.len(),
+                "broadcast_candidate_hashes": candidate_hashes,
+                "broadcast_dispatch_total": broadcast_runtime.dispatch_total,
+                "broadcast_success_total": broadcast_runtime.dispatch_success_total,
+                "broadcast_failed_total": broadcast_runtime.dispatch_failed_total,
+                "broadcast_tx_total": broadcast_runtime.broadcast_tx_total,
+            },
+        },
+        "tick_result": tick_out,
+    })
+}
+
+#[cfg(test)]
+mod native_execution_pipeline_tests {
+    use super::*;
+
+    #[test]
+    fn native_execution_pipeline_report_keeps_aoem_as_concurrency_owner() {
+        let report = build_native_execution_pipeline_report_v1(
+            1,
+            serde_json::json!({
+                "method": "nov_runNativeExecutionTick",
+                "chain_id": 9_998_881u64,
+                "executed_count": 3u64,
+                "deferred_count": 2u64,
+                "budget": {"effective_budget_per_tick": 3u64},
+                "budget_runtime": {"execution_deferred_count": 2u64},
+                "lifecycle": {
+                    "commit": "deterministic_sharded_dirty_atomic_commit"
+                }
+            }),
+        );
+
+        assert_eq!(
+            report["method"].as_str(),
+            Some("nov_runNativeExecutionPipeline")
+        );
+        assert_eq!(report["execution_kernel"].as_str(), Some("AOEM"));
+        assert_eq!(
+            report["aoem_concurrency_owner"].as_str(),
+            Some("AOEM_runtime")
+        );
+        assert_eq!(
+            report["host_concurrency_policy"].as_str(),
+            Some("host_drives_lifecycle_only_no_rust_execution_scheduler")
+        );
+        assert_eq!(
+            report["lifecycle"]["aoem_batch"]["executed"].as_u64(),
+            Some(3)
+        );
+        assert_eq!(
+            report["lifecycle"]["commit"]["model"].as_str(),
+            Some("deterministic_sharded_dirty_atomic_commit")
+        );
+        assert!(report["lifecycle"]["egress"]["broadcast_candidates"]
+            .as_u64()
+            .is_some());
+    }
+}
+
+fn run_native_execution_tick_node_mode_v1(verbose: bool) -> Result<()> {
+    let max_ticks = u64_env_allow_zero("NOVOVM_NATIVE_EXECUTION_TICK_MAX_TICKS", 1)?;
+    let interval_ms = u64_env_positive("NOVOVM_NATIVE_EXECUTION_TICK_INTERVAL_MS", 250)?;
+    let mut ticks = 0u64;
+    loop {
+        if max_ticks > 0 && ticks >= max_ticks {
+            break;
+        }
+        let params = native_execution_tick_params_from_env_v1()?;
+        let out = run_nov_native_execution_tick_from_params_v1(&params)?;
+        let report = build_native_execution_pipeline_report_v1(ticks.saturating_add(1), out);
+        if verbose {
+            println!(
+                "native_execution_tick_out: tick={} chain_id={} executed={} deferred={} kernel=AOEM owner=AOEM_runtime",
+                ticks.saturating_add(1),
+                report.get("chain_id")
+                    .and_then(|value| value.as_u64())
+                    .unwrap_or_default(),
+                report
+                    .get("lifecycle")
+                    .and_then(|value| value.get("aoem_batch"))
+                    .and_then(|value| value.get("executed"))
+                    .and_then(|value| value.as_u64())
+                    .unwrap_or_default(),
+                report
+                    .get("lifecycle")
+                    .and_then(|value| value.get("aoem_batch"))
+                    .and_then(|value| value.get("deferred"))
+                    .and_then(|value| value.as_u64())
+                    .unwrap_or_default()
+            );
+        }
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&report)
+                .context("encode native execution pipeline output failed")?
+        );
+        ticks = ticks.saturating_add(1);
+        if max_ticks > 0 && ticks >= max_ticks {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(interval_ms));
+    }
+    Ok(())
+}
+
 fn main() -> Result<()> {
     let cli_overrides = parse_node_cli_overrides_v1()?;
     let verbose = bool_env("NOVOVM_NODE_VERBOSE");
@@ -33035,6 +33270,12 @@ fn main() -> Result<()> {
         || node_mode.eq_ignore_ascii_case("ethereum_rlpx_sync")
     {
         return run_eth_rlpx_sync_node_mode_v1(verbose);
+    }
+    if node_mode.eq_ignore_ascii_case("native_execution_pipeline")
+        || node_mode.eq_ignore_ascii_case("native_execution_tick")
+        || bool_env("NOVOVM_NATIVE_EXECUTION_TICK_ENABLED")
+    {
+        return run_native_execution_tick_node_mode_v1(verbose);
     }
     if !node_mode.eq_ignore_ascii_case("full") {
         bail!("non-full node_mode is disabled: novovm-node keeps only production path");
