@@ -24,10 +24,11 @@ use novovm_network::{
     observe_network_runtime_native_pending_tx_local_ingress_with_payload_v1,
     observe_network_runtime_native_pending_tx_local_native_payload_v1,
     observe_network_runtime_native_pending_tx_rejected_v1,
+    set_network_runtime_native_body_snapshot_v1, set_network_runtime_native_head_snapshot_v1,
     snapshot_network_runtime_native_execution_budget_runtime_summary_v1,
-    snapshot_network_runtime_native_pending_txs_v1,
-    NetworkRuntimeNativeExecutionBudgetTargetObservationV1,
-    NetworkRuntimeNativePendingTxLifecycleStageV1,
+    snapshot_network_runtime_native_pending_txs_v1, NetworkRuntimeNativeBodySnapshotV1,
+    NetworkRuntimeNativeExecutionBudgetTargetObservationV1, NetworkRuntimeNativeHeadSnapshotV1,
+    NetworkRuntimeNativePendingTxLifecycleStageV1, NetworkRuntimeNativeSyncPhaseV1,
 };
 use novovm_protocol::{
     decode_local_tx_wire_v1 as decode_tx_wire_v1, decode_nov_native_tx_wire_v1,
@@ -10683,6 +10684,78 @@ fn native_pending_execution_eligible_stage_v1(
     )
 }
 
+fn project_executed_native_pending_batch_to_canonical_v1(
+    chain_id: u64,
+    tx_hashes: &[[u8; 32]],
+    raw_txs: &[Vec<u8>],
+) -> serde_json::Value {
+    if tx_hashes.is_empty() {
+        return serde_json::json!({
+            "enabled": false,
+            "reason": "empty_executed_native_pending_batch",
+        });
+    }
+    let now_ms = now_unix_millis_v1();
+    let block_number = now_ms.min(u64::MAX as u128) as u64;
+    let mut block_hash_parts = Vec::<&[u8]>::with_capacity(tx_hashes.len().saturating_add(3));
+    let chain_id_bytes = chain_id.to_be_bytes();
+    let block_number_bytes = block_number.to_be_bytes();
+    block_hash_parts.push(b"novovm-native-execution-canonical-projection-v1");
+    block_hash_parts.push(&chain_id_bytes);
+    block_hash_parts.push(&block_number_bytes);
+    for tx_hash in tx_hashes {
+        block_hash_parts.push(tx_hash.as_slice());
+    }
+    let block_hash = sha256_bytes_v1(block_hash_parts.as_slice());
+    let state_root = sha256_bytes_v1(&[
+        b"novovm-native-execution-state-root-projection-v1",
+        block_hash.as_slice(),
+    ]);
+    set_network_runtime_native_head_snapshot_v1(
+        chain_id,
+        NetworkRuntimeNativeHeadSnapshotV1 {
+            chain_id,
+            phase: NetworkRuntimeNativeSyncPhaseV1::Finalize,
+            peer_count: 0,
+            block_number,
+            block_hash,
+            parent_block_hash: [0u8; 32],
+            state_root,
+            canonical: true,
+            safe: true,
+            finalized: true,
+            reorg_depth_hint: Some(0),
+            body_available: true,
+            source_peer_id: None,
+            observed_unix_ms: now_ms,
+        },
+    );
+    set_network_runtime_native_body_snapshot_v1(
+        chain_id,
+        NetworkRuntimeNativeBodySnapshotV1 {
+            chain_id,
+            number: block_number,
+            block_hash,
+            tx_hashes: tx_hashes.to_vec(),
+            raw_tx_rlps: raw_txs.to_vec(),
+            ommer_hashes: Vec::new(),
+            withdrawal_rlp_items: None,
+            withdrawal_count: None,
+            body_available: true,
+            txs_materialized: true,
+            observed_unix_ms: now_ms,
+        },
+    );
+    serde_json::json!({
+        "enabled": true,
+        "projection": "native_execution_batch_to_canonical_body_head",
+        "block_number": block_number,
+        "block_hash": to_hex_prefixed_v1(&block_hash),
+        "tx_count": tx_hashes.len(),
+        "included_canonical": true,
+    })
+}
+
 pub fn run_nov_execute_pending_native_tx_batch_from_params_v1(
     params: &serde_json::Value,
 ) -> Result<serde_json::Value> {
@@ -10703,6 +10776,8 @@ pub fn run_nov_execute_pending_native_tx_batch_from_params_v1(
         .clamp(limit as u64, 16_384) as usize;
     let pending = snapshot_network_runtime_native_pending_txs_v1(chain_id, scan_limit);
     let mut raw_txs = Vec::with_capacity(limit);
+    let mut selected_raw_payloads = Vec::with_capacity(limit);
+    let mut selected_hash_bytes = Vec::with_capacity(limit);
     let mut selected_hashes = Vec::with_capacity(limit);
     let mut skipped_missing_payload = 0usize;
     let mut skipped_non_native_payload = 0usize;
@@ -10737,6 +10812,8 @@ pub fn run_nov_execute_pending_native_tx_batch_from_params_v1(
         raw_txs.push(serde_json::Value::String(to_hex_prefixed_v1(
             payload.as_slice(),
         )));
+        selected_raw_payloads.push(payload);
+        selected_hash_bytes.push(pending_tx.tx_hash);
         selected_hashes.push(to_hex_prefixed_v1(&pending_tx.tx_hash));
     }
 
@@ -10769,6 +10846,11 @@ pub fn run_nov_execute_pending_native_tx_batch_from_params_v1(
     })?;
     obj.insert("raw_txs".to_string(), serde_json::Value::Array(raw_txs));
     let batch_result = run_nov_send_raw_transaction_batch_from_params_v1(&batch_params)?;
+    let canonical_projection = project_executed_native_pending_batch_to_canonical_v1(
+        chain_id,
+        selected_hash_bytes.as_slice(),
+        selected_raw_payloads.as_slice(),
+    );
     Ok(serde_json::json!({
         "method": "nov_executePendingNativeTxBatch",
         "accepted": true,
@@ -10782,6 +10864,7 @@ pub fn run_nov_execute_pending_native_tx_batch_from_params_v1(
         "selected_count": selected_hashes.len(),
         "selected_tx_hashes": selected_hashes,
         "executed": true,
+        "canonical_projection": canonical_projection,
         "skipped": {
             "missing_payload": skipped_missing_payload,
             "non_native_payload": skipped_non_native_payload,
@@ -12656,6 +12739,18 @@ mod tests {
                         out["batch_result"]["native_store_commit"]["model"].as_str(),
                         Some("post_aoem_deterministic_dirty_store_commit")
                     );
+                    assert_eq!(
+                        out["canonical_projection"]["included_canonical"].as_bool(),
+                        Some(true)
+                    );
+                    let first_pending = novovm_network::get_network_runtime_native_pending_tx_v1(
+                        chain_id, first_hash,
+                    )
+                    .expect("first pending tx should remain visible after canonical inclusion");
+                    assert_eq!(
+                        first_pending.lifecycle_stage,
+                        novovm_network::NetworkRuntimeNativePendingTxLifecycleStageV1::IncludedCanonical
+                    );
                     let store = load_nov_native_execution_store_v1(path.as_path())
                         .expect("pending batch store should load");
                     assert_eq!(store.receipts.len(), 2);
@@ -12763,6 +12858,15 @@ mod tests {
                             .as_str(),
                         Some("post_aoem_deterministic_dirty_store_commit")
                     );
+                    assert_eq!(
+                        out["batch_result"]["canonical_projection"]["included_canonical"].as_bool(),
+                        Some(true)
+                    );
+                    let pending_summary =
+                        novovm_network::snapshot_network_runtime_native_pending_tx_summary_v1(
+                            chain_id,
+                        );
+                    assert_eq!(pending_summary.included_canonical_count, 2);
                     let store = load_nov_native_execution_store_v1(path.as_path())
                         .expect("tick store should load");
                     assert_eq!(store.receipts.len(), 2);

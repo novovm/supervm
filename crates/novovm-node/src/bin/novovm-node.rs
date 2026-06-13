@@ -33946,6 +33946,7 @@ mod native_execution_pipeline_tests {
         assert_eq!(summary["aoem_executed_total"].as_u64(), Some(1));
         assert_eq!(summary["proof_ticks"].as_u64(), Some(1));
         assert_eq!(summary["commit_ticks"].as_u64(), Some(1));
+        assert_eq!(summary["included_canonical_last"].as_u64(), Some(1));
         NativeExecutionPipelineSoakGateV1 {
             emit_tick_reports: false,
             require_progress: true,
@@ -33959,7 +33960,7 @@ mod native_execution_pipeline_tests {
             max_ingress_error_ticks: 0,
             min_broadcast_tx_total: 0,
             min_broadcast_candidates: 0,
-            min_included_canonical: 0,
+            min_included_canonical: 1,
             min_ingress_total: 1,
             min_ticks_per_sec_x1000: 0,
         }
