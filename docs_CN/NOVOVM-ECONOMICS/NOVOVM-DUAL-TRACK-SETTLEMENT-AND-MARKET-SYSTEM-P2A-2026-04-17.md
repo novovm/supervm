@@ -263,7 +263,8 @@ asset_out[A] = nov_amount / P_redeem[A]
 - M2 bridge pause v1 已接到 native execution store 和 governance policy：`mapped_lock_bridge_paused` 阻断 live register；`mapped_asset_burn_paused` 阻断 burn；`mapped_asset_release_paused` 阻断 release；env 级全局/单项暂停用于紧急 fail-closed。
 - M2 source anchor reorg gate v1 已接入 mapped asset record：live register 持久化 source anchor；`ua_getMappedAsset` 暴露 `source_anchor_status`；burn/release 前复查本地 canonical finalized anchor，unsafe 时 fail-closed，不推进状态。治理化 header source whitelist/quorum gate v1 已接入 native execution store：`ua_setMappedHeaderSourcePolicy` 可要求 live lock proof 的 runtime header 必须来自治理许可 `source_peer_id`，并配置 `min_source_quorum`；runtime 会按同一 `block_hash` 已观测到的许可 source peer 集合计算 quorum，不满足时 fail-closed。
 - M2 manual freeze/recovery/rollback v1 已接入 `ua_freezeMappedAsset` / `ua_unfreezeMappedAsset` / `ua_rollbackFrozenMappedAsset`：active live NETH 冻结会扣用户 native 可用余额、保留 Treasury reserve，并把 mapped asset 状态置为 `frozen`；source anchor 恢复 canonical finalized 后才能 unfreeze，恢复用户 native 可用余额；source anchor 仍 unsafe 时可 rollback，扣回内部 Treasury NETH reserve 并把 mapped asset 置为 `rejected`，不返还用户余额、不 mint NOV、不触发外部链释放。
-- 当前仍不声明治理化 Ethereum block header source 多签、finality source 管理、自动 reorg heal、治理赔付、真实链上出金、跨链自动 mint/redeem、NOV 直接铸造或钱包/DAPP/网站完成。
+- M2 auto heal v1 已接入 `ua_autoHealMappedAssets`：默认 dry-run 报告 unsafe anchor；`apply=true` 时只自动冻结 active/burn_pending live NETH，扣用户 native 可用余额、保留 Treasury reserve，不自动 rollback、不赔付、不链上出金、不 mint NOV。
+- 当前仍不声明治理化 Ethereum block header source 多签、finality source 管理、治理赔付、真实链上出金、跨链自动 mint/redeem、NOV 直接铸造或钱包/DAPP/网站完成。
 
 ## 10. 本稿替换与冲突规则
 

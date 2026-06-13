@@ -133,6 +133,7 @@ pub fn is_mainline_unified_account_query_method(method: &str) -> bool {
             | "ua_freezeMappedAsset"
             | "ua_unfreezeMappedAsset"
             | "ua_rollbackFrozenMappedAsset"
+            | "ua_autoHealMappedAssets"
             | "ua_setMappedHeaderSourcePolicy"
             | "ua_getMappedHeaderSourcePolicy"
             | "ua_releaseMappedLock"
@@ -1061,6 +1062,132 @@ fn run_unified_account_surface_rpc(
                     "source_anchor_status": mapped_asset_anchor_status_to_json_v1(&source_anchor_status),
                 }),
                 true,
+            ))
+        }
+        "ua_autoHealMappedAssets" => {
+            let now = param_as_u64(params, "now").unwrap_or_else(now_unix_sec);
+            let apply = param_as_bool(params, "apply").unwrap_or(false);
+            let max_items = param_as_u64(params, "max_items")
+                .unwrap_or(64)
+                .clamp(1, 500) as usize;
+            let account_filter = param_as_string_any(params, &["account_id", "uca_id"])
+                .map(|raw| validate_uca_id_policy(&raw))
+                .transpose()?;
+            let reason = param_as_string_any(params, &["reason", "heal_reason"])
+                .unwrap_or_else(|| "automatic mapped asset source anchor heal".to_string());
+            let candidate_keys = mapped_asset_state
+                .records_by_mapping_id
+                .iter()
+                .filter(|(_, record)| {
+                    account_filter
+                        .as_ref()
+                        .map(|account_id| account_id == &record.target_account_id)
+                        .unwrap_or(true)
+                })
+                .filter(|(_, record)| {
+                    matches!(
+                        record.status,
+                        MappedAssetStatus::Active
+                            | MappedAssetStatus::BurnPending
+                            | MappedAssetStatus::Frozen
+                    )
+                })
+                .filter_map(|(mapping_key, record)| {
+                    let source_anchor_status = mapped_asset_source_anchor_status_v1(record);
+                    match (record.status, source_anchor_status.state) {
+                        (MappedAssetStatus::Active | MappedAssetStatus::BurnPending, "blocked") => {
+                            Some((
+                                mapping_key.clone(),
+                                "freeze_unsafe_anchor",
+                                source_anchor_status,
+                            ))
+                        }
+                        (MappedAssetStatus::Frozen, "ok" | "not_required") => Some((
+                            mapping_key.clone(),
+                            "unfreeze_candidate_anchor_safe",
+                            source_anchor_status,
+                        )),
+                        (MappedAssetStatus::Frozen, "blocked") => Some((
+                            mapping_key.clone(),
+                            "rollback_candidate_anchor_unsafe",
+                            source_anchor_status,
+                        )),
+                        _ => None,
+                    }
+                })
+                .take(max_items)
+                .collect::<Vec<_>>();
+
+            let mut reports = Vec::with_capacity(candidate_keys.len());
+            let mut applied_count = 0usize;
+            for (mapping_key, action, source_anchor_status) in candidate_keys {
+                let Some(record) = mapped_asset_state
+                    .records_by_mapping_id
+                    .get_mut(mapping_key.as_str())
+                else {
+                    continue;
+                };
+                let before_status = record.status;
+                let mut native_settlement = Value::Null;
+                let mut applied = false;
+                if apply && action == "freeze_unsafe_anchor" {
+                    native_settlement = apply_live_mapped_asset_m2_freeze_v1(
+                        record,
+                        mapping_key.as_str(),
+                        params,
+                        now,
+                        reason.as_str(),
+                    )?;
+                    record.status = MappedAssetStatus::Frozen;
+                    record.updated_at = now;
+                    record.audit_ref =
+                        derive_mapped_asset_audit_ref_v1(record.mapping_id, record.status, now);
+                    let op = build_mapped_asset_operation_v1(
+                        record,
+                        MappedAssetOperationKind::FreezeMapped,
+                        now,
+                        mapped_asset_state.operations.len() as u64 + 1,
+                    );
+                    mapped_asset_state.operations.push(op);
+                    emit_mapped_asset_operation_observed_v1(
+                        "auto_heal_freeze_mapped",
+                        true,
+                        Some(record.target_account_id.as_str()),
+                        Some(mapping_key.as_str()),
+                        None,
+                        Some("qualified"),
+                    );
+                    applied = true;
+                    applied_count = applied_count.saturating_add(1);
+                }
+                reports.push(json!({
+                    "mapping_id": mapping_key,
+                    "account_id": record.target_account_id,
+                    "uca_id": record.target_account_id,
+                    "asset": normalize_asset_view_symbol_v1(&record.target_asset_symbol),
+                    "amount": record.amount,
+                    "action": action,
+                    "applied": applied,
+                    "status_before": before_status.as_str(),
+                    "status_after": record.status.as_str(),
+                    "phase4_mode": mapped_asset_phase4_mode_v1(record),
+                    "source_anchor_status": mapped_asset_anchor_status_to_json_v1(&source_anchor_status),
+                    "native_settlement": native_settlement,
+                }));
+            }
+            Ok((
+                json!({
+                    "method": method,
+                    "apply": apply,
+                    "dry_run": !apply,
+                    "reason": reason,
+                    "account_filter": account_filter,
+                    "scanned_candidate_count": reports.len(),
+                    "applied_count": applied_count,
+                    "items": reports,
+                    "scope": "internal_mapped_asset_reorg_heal_no_external_release_no_nov_mint",
+                }),
+                apply && applied_count > 0,
             ))
         }
         "ua_unfreezeMappedAsset" => {
@@ -6965,6 +7092,154 @@ mod tests {
         assert_eq!(
             after_failed_burn["mapped_asset"]["status"].as_str(),
             Some("active")
+        );
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn unified_account_auto_heal_freezes_unsafe_live_mapped_asset() {
+        let _env_lock = ENV_TEST_LOCK.lock().expect("env test lock poisoned");
+        let _shadow_guard = EnvVarGuard::set(NOVOVM_UA_PHASE4_SHADOW_MODE_ENFORCE_ENV, "false");
+        let (base, store, audit) = temp_paths("mapped-live-auto-heal");
+        let root = base
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .to_path_buf();
+        let native_store = root.join("native-execution-store.json");
+        ensure_native_store(native_store.as_path());
+        ua_create(&base, &store, &audit, "acct-map-live-auto-heal", 10);
+
+        let mut register_map =
+            match mapped_lock_live_event_proof_params("acct-map-live-auto-heal", 0x44, 121u128) {
+                Value::Object(map) => map,
+                other => panic!("expected mapped lock proof params object, got {other:?}"),
+            };
+        seed_mapped_lock_trusted_block_from_params(&Value::Object(register_map.clone()), true);
+        register_map.insert("phase4_mode".to_string(), Value::String("live".to_string()));
+        register_map.insert("now".to_string(), Value::from(11u64));
+        let register_params = Value::Object(register_map.clone());
+        let register = run_query(
+            &base,
+            "ua_registerMappedLock",
+            params_with_paths_and_native_store(
+                &store,
+                &audit,
+                &native_store,
+                register_params.clone(),
+            ),
+        );
+        assert_eq!(register["accepted"].as_bool(), Some(true));
+
+        reorg_mapped_lock_trusted_block_from_params(&register_params);
+        let dry_run = run_query(
+            &base,
+            "ua_autoHealMappedAssets",
+            params_with_paths_and_native_store(
+                &store,
+                &audit,
+                &native_store,
+                json!({
+                    "account_id": "acct-map-live-auto-heal",
+                    "apply": false,
+                    "now": 12u64,
+                }),
+            ),
+        );
+        assert_eq!(dry_run["dry_run"].as_bool(), Some(true));
+        assert_eq!(dry_run["applied_count"].as_u64(), Some(0));
+        assert_eq!(
+            dry_run["items"][0]["action"].as_str(),
+            Some("freeze_unsafe_anchor")
+        );
+        assert_eq!(dry_run["items"][0]["applied"].as_bool(), Some(false));
+
+        let still_active = run_query(
+            &base,
+            "ua_getMappedAsset",
+            params_with_paths(
+                &store,
+                &audit,
+                json!({
+                    "account_id": "acct-map-live-auto-heal",
+                    "mapping_id": register["mapping_id"],
+                }),
+            ),
+        );
+        assert_eq!(
+            still_active["mapped_asset"]["status"].as_str(),
+            Some("active")
+        );
+
+        let applied = run_query(
+            &base,
+            "ua_autoHealMappedAssets",
+            params_with_paths_and_native_store(
+                &store,
+                &audit,
+                &native_store,
+                json!({
+                    "account_id": "acct-map-live-auto-heal",
+                    "apply": true,
+                    "reason": "auto heal unsafe source anchor",
+                    "now": 13u64,
+                }),
+            ),
+        );
+        assert_eq!(applied["dry_run"].as_bool(), Some(false));
+        assert_eq!(applied["applied_count"].as_u64(), Some(1));
+        assert_eq!(applied["items"][0]["applied"].as_bool(), Some(true));
+        assert_eq!(applied["items"][0]["status_after"].as_str(), Some("frozen"));
+        assert_eq!(
+            applied["items"][0]["native_settlement"]["effect"].as_str(),
+            Some("neth_m2_frozen")
+        );
+
+        let frozen = run_query(
+            &base,
+            "ua_getMappedAsset",
+            params_with_paths(
+                &store,
+                &audit,
+                json!({
+                    "account_id": "acct-map-live-auto-heal",
+                    "mapping_id": register["mapping_id"],
+                }),
+            ),
+        );
+        assert_eq!(frozen["mapped_asset"]["status"].as_str(), Some("frozen"));
+
+        let assets = run_query(
+            &base,
+            "account_assets",
+            params_with_paths(
+                &store,
+                &audit,
+                json!({"account_id": "acct-map-live-auto-heal"}),
+            ),
+        );
+        assert_eq!(
+            assets["mapped_asset_active_balance"].as_u64().unwrap_or(0),
+            0
+        );
+        let native_after = load_nov_native_execution_store_v1(native_store.as_path())
+            .expect("load native store after auto heal");
+        assert_eq!(
+            native_after
+                .module_state
+                .account_asset_balances
+                .get("acct-map-live-auto-heal")
+                .and_then(|assets| assets.get("NETH").copied())
+                .unwrap_or(0),
+            0
+        );
+        assert_eq!(
+            native_after
+                .module_state
+                .treasury_reserves
+                .get("NETH")
+                .copied(),
+            Some(121)
         );
 
         let _ = fs::remove_dir_all(&root);
