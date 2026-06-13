@@ -87,11 +87,48 @@ cargo run -p novovm-node --bin supervm-native-pipeline-production-soak
 
 ## 5. 未完成项
 
-本文件只签收 Production Soak v1 的第一刀 report skeleton。以下仍待后续刀完成：
+## 5. 第二刀：RocksDB Recovery Gate
 
-- RocksDB recovery gate：dirty store、semantic head、receipt index、canonical body/head 重启恢复。
+已新增独立 gate：
+
+```text
+cargo run -p novovm-node --bin supervm-native-pipeline-rocksdb-recovery-gate
+```
+
+该 gate 只验证恢复，不修改 lifecycle：
+
+- 第一轮启动 `novovm-node`，使用 `NOVOVM_NATIVE_EXECUTION_STORE_BACKEND=rocksdb`。
+- 交易仍走 pending-only product ingress 和 AOEM tick。
+- dirty sharded atomic commit 写入 RocksDB。
+- 子进程退出后，gate 重新打开同一路径 RocksDB。
+- 验证 `semantic_head/current`。
+- 验证 `semantic_head/by_height/{height}`。
+- 验证 `snapshot_meta/current` 和 `snapshot_meta/{height}`。
+- 验证 `receipt/{tx_hash}` materialized view。
+- 验证 `receipt_by_height/{height}/{index}/{tx_hash}`。
+- 验证 native execution materialized view 可重建。
+- 第二轮同 store 无 ingress 重启 tick，验证 `duplicate_canonical_after_restart=0`。
+
+报告：
+
+```text
+artifacts/native-pipeline/native-pipeline-rocksdb-recovery-report.json
+schema = novovm-native-pipeline-rocksdb-recovery-report/v1
+```
+
+边界说明：
+
+- 本刀签收 native execution RocksDB recovery。
+- canonical body/head persistence 仍未签收；当前 canonical projection 仍是 network runtime state，不在 native execution RocksDB store 内。
+- canonical body/head 持久化恢复需要下一刀单独补，不在本刀伪造 PASS。
+
+## 6. 未完成项
+
+以下仍待后续刀完成：
+
 - Pending queue crash recovery gate。
 - Remote reentry dedup gate。
 - Network fault injection：packet loss、duplicate、delay、reorder。
 - Cross-machine UDP soak：sender host / receiver host / env-config peer address。
+- Persistent canonical body/head recovery gate。
 - Long-run production profile：真实 30min / 2h / overnight 报告归档。

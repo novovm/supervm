@@ -76,3 +76,7 @@ path = "src/bin/supervm-native-pipeline-dual-node-gate.rs"
 [[bin]]
 name = "supervm-native-pipeline-production-soak"
 path = "src/bin/supervm-native-pipeline-production-soak.rs"
+
+[[bin]]
+name = "supervm-native-pipeline-rocksdb-recovery-gate"
+path = "src/bin/supervm-native-pipeline-rocksdb-recovery-gate.rs"

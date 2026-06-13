@@ -228,6 +228,17 @@ fn build_native_execution_pipeline_fixture_payloads_v1(
             .unwrap_or_else(|| "acct-native-pipeline-fixture".to_string());
     let asset = string_env_nonempty("NOVOVM_NATIVE_EXECUTION_PIPELINE_INGRESS_FIXTURE_ASSET")
         .unwrap_or_else(|| "USDT".to_string());
+    let fee_asset =
+        string_env_nonempty("NOVOVM_NATIVE_EXECUTION_PIPELINE_INGRESS_FIXTURE_FEE_ASSET")
+            .unwrap_or_else(|| "NOV".to_string());
+    let fee_max_pay_amount = u64_env_allow_zero(
+        "NOVOVM_NATIVE_EXECUTION_PIPELINE_INGRESS_FIXTURE_MAX_PAY_AMOUNT",
+        50,
+    )?;
+    let fee_slippage_bps = u64_env_allow_zero(
+        "NOVOVM_NATIVE_EXECUTION_PIPELINE_INGRESS_FIXTURE_SLIPPAGE_BPS",
+        100,
+    )?;
     let amount_start = u64_env_allow_zero(
         "NOVOVM_NATIVE_EXECUTION_PIPELINE_INGRESS_FIXTURE_AMOUNT_START",
         1,
@@ -260,9 +271,9 @@ fn build_native_execution_pipeline_fixture_payloads_v1(
                 privacy_mode: novovm_protocol::NovPrivacyModeV1::Public,
                 verification_mode: novovm_protocol::NovVerificationModeV1::Standard,
                 fee_policy: novovm_protocol::NovFeePolicyV1 {
-                    pay_asset: "NOV".to_string(),
-                    max_pay_amount: 50,
-                    slippage_bps: 100,
+                    pay_asset: fee_asset.clone(),
+                    max_pay_amount: u128::from(fee_max_pay_amount),
+                    slippage_bps: fee_slippage_bps as u32,
                 },
                 gas_like_limit: Some(90_000),
                 nonce,

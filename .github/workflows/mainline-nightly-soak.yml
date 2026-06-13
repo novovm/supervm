@@ -170,6 +170,16 @@ jobs:
           $env:NOVOVM_NATIVE_PIPELINE_PRODUCTION_SOAK_REPORT_PATH = "artifacts/native-pipeline/native-pipeline-production-soak-30min.json"
           cargo run -p novovm-node --bin supervm-native-pipeline-production-soak
 
+      - name: Run native pipeline RocksDB recovery gate
+        shell: pwsh
+        run: |
+          Remove-Item Env:CARGO_TARGET_DIR -ErrorAction SilentlyContinue
+          cargo build -p novovm-node --bins
+          $env:NOVOVM_NATIVE_PIPELINE_ROCKSDB_RECOVERY_TX_COUNT = "64"
+          $env:NOVOVM_NATIVE_PIPELINE_ROCKSDB_RECOVERY_BATCH_BUDGET = "16"
+          $env:NOVOVM_NATIVE_PIPELINE_ROCKSDB_RECOVERY_REPORT_PATH = "artifacts/native-pipeline/native-pipeline-rocksdb-recovery-report.json"
+          cargo run -p novovm-node --bin supervm-native-pipeline-rocksdb-recovery-gate
+
       - name: Generate duty report from nightly artifacts
         shell: pwsh
         run: |
@@ -201,4 +211,5 @@ jobs:
             artifacts/native-pipeline/native-pipeline-dual-node-fanout-report.json
             artifacts/native-pipeline/native-pipeline-production-soak-30min.json
             artifacts/native-pipeline/native-pipeline-production-soak-30min-summary.json
+            artifacts/native-pipeline/native-pipeline-rocksdb-recovery-report.json
           if-no-files-found: warn

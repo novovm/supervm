@@ -1686,6 +1686,134 @@ pub fn get_nov_native_execution_store_backend_status_v1(path: Option<&Path>) -> 
     })
 }
 
+pub fn get_nov_native_execution_store_recovery_probe_v1(path: &Path) -> Result<serde_json::Value> {
+    let store = load_nov_native_execution_store_v1(path)?;
+    let sequence = store.module_state.aoem_semantic_ledger_sequence;
+    let head = store.module_state.aoem_semantic_ledger_head.clone();
+    let rocksdb_path = nov_native_execution_store_rocksdb_path_v1(path);
+    let mut semantic_head_current_recovered = false;
+    let mut semantic_head_by_height_recovered = false;
+    let mut snapshot_meta_current_recovered = false;
+    let mut snapshot_meta_by_height_recovered = false;
+    let mut receipt_by_height_count = 0usize;
+    let mut receipt_by_height_hashes = Vec::<String>::new();
+    let mut rocksdb_opened = false;
+
+    if rocksdb_path.exists() {
+        let db = open_nov_native_execution_store_rocksdb_v1(rocksdb_path.as_path())?;
+        rocksdb_opened = true;
+        semantic_head_current_recovered = db
+            .get(NOV_NATIVE_EXECUTION_STORE_ROCKSDB_KEY_SEMANTIC_HEAD_V1)
+            .with_context(|| {
+                format!(
+                    "read nov native execution recovery semantic_head/current failed: {}",
+                    rocksdb_path.display()
+                )
+            })?
+            .as_deref()
+            == Some(head.as_bytes());
+        semantic_head_by_height_recovered = db
+            .get(native_rocksdb_semantic_by_height_key_v1(sequence))
+            .with_context(|| {
+                format!(
+                    "read nov native execution recovery semantic_head/by_height failed: {}",
+                    rocksdb_path.display()
+                )
+            })?
+            .as_deref()
+            == Some(head.as_bytes());
+        snapshot_meta_current_recovered = db
+            .get(NOV_NATIVE_EXECUTION_STORE_ROCKSDB_SNAPSHOT_META_CURRENT_V1)
+            .with_context(|| {
+                format!(
+                    "read nov native execution recovery snapshot_meta/current failed: {}",
+                    rocksdb_path.display()
+                )
+            })?
+            .is_some();
+        snapshot_meta_by_height_recovered = db
+            .get(native_rocksdb_snapshot_meta_by_height_key_v1(sequence))
+            .with_context(|| {
+                format!(
+                    "read nov native execution recovery snapshot_meta/by_height failed: {}",
+                    rocksdb_path.display()
+                )
+            })?
+            .is_some();
+        for item in native_rocksdb_iter_prefix_v1(
+            &db,
+            NOV_NATIVE_EXECUTION_STORE_ROCKSDB_RECEIPT_BY_HEIGHT_PREFIX_V1,
+        ) {
+            let (_key, raw) = item.with_context(|| {
+                format!(
+                    "iterate nov native execution recovery receipt_by_height failed: {}",
+                    rocksdb_path.display()
+                )
+            })?;
+            receipt_by_height_count = receipt_by_height_count.saturating_add(1);
+            if let Ok(tx_hash) = String::from_utf8(raw.as_ref().to_vec()) {
+                receipt_by_height_hashes.push(tx_hash);
+            }
+        }
+    }
+
+    let receipt_count = store.receipts.len();
+    let materialized_account_count = store.module_state.account_asset_balances.len();
+    let materialized_account_asset_count = store
+        .module_state
+        .account_asset_balances
+        .values()
+        .map(BTreeMap::len)
+        .sum::<usize>();
+    let receipt_hashes = store.receipts.keys().cloned().collect::<Vec<_>>();
+    let receipt_index_recovered = receipt_count > 0
+        && receipt_by_height_count >= receipt_count
+        && receipt_hashes
+            .iter()
+            .all(|tx_hash| receipt_by_height_hashes.iter().any(|item| item == tx_hash));
+    let materialized_view_rebuilt = sequence > 0
+        && !head.is_empty()
+        && receipt_count > 0
+        && store
+            .receipts
+            .values()
+            .all(|receipt| receipt.aoem_semantic_ingress.is_some());
+
+    Ok(serde_json::json!({
+        "method": "nov_getNativeExecutionStoreRecoveryProbe",
+        "store_path": path.display().to_string(),
+        "rocksdb_path": rocksdb_path.display().to_string(),
+        "rocksdb_exists": rocksdb_path.exists(),
+        "rocksdb_opened": rocksdb_opened,
+        "semantic_head_current_recovered": semantic_head_current_recovered,
+        "semantic_head_by_height_recovered": semantic_head_by_height_recovered,
+        "snapshot_meta_current_recovered": snapshot_meta_current_recovered,
+        "snapshot_meta_by_height_recovered": snapshot_meta_by_height_recovered,
+        "receipt_index_recovered": receipt_index_recovered,
+        "receipt_by_height_count": receipt_by_height_count,
+        "receipt_count": receipt_count,
+        "receipt_hashes": receipt_hashes,
+        "materialized_view_rebuilt": materialized_view_rebuilt,
+        "materialized_account_count": materialized_account_count,
+        "materialized_account_asset_count": materialized_account_asset_count,
+        "semantic_head": {
+            "sequence": sequence,
+            "head": head,
+        },
+        "canonical_body_head_recovery": {
+            "supported": false,
+            "reason": "native canonical body/head projection is currently network runtime state, not yet persisted in the native execution RocksDB store",
+        },
+        "recovery_ok": rocksdb_opened
+            && semantic_head_current_recovered
+            && semantic_head_by_height_recovered
+            && snapshot_meta_current_recovered
+            && snapshot_meta_by_height_recovered
+            && receipt_index_recovered
+            && materialized_view_rebuilt,
+    }))
+}
+
 fn u128_delta_i128_v1(before: u128, after: u128) -> i128 {
     if after >= before {
         saturating_u128_to_i128_v1(after.saturating_sub(before))
