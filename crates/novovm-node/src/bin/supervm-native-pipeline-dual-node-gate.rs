@@ -2,8 +2,9 @@
 
 use anyhow::{bail, Context, Result};
 use serde_json::Value;
+use std::fs;
 use std::net::UdpSocket;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -59,6 +60,31 @@ fn temp_store_path_v1(name: &str, chain_id: u64) -> PathBuf {
     ))
 }
 
+fn default_report_path_v1() -> PathBuf {
+    PathBuf::from("artifacts/native-pipeline/native-pipeline-dual-node-gate-report.json")
+}
+
+fn report_path_v1() -> PathBuf {
+    string_env_nonempty("NOVOVM_NATIVE_PIPELINE_DUAL_GATE_REPORT_PATH")
+        .map(PathBuf::from)
+        .unwrap_or_else(default_report_path_v1)
+}
+
+fn write_report_v1(path: &Path, report: &Value) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).with_context(|| {
+            format!(
+                "create dual-node gate report dir failed: {}",
+                parent.display()
+            )
+        })?;
+    }
+    let encoded =
+        serde_json::to_string_pretty(report).context("encode dual-node gate report failed")?;
+    fs::write(path, encoded)
+        .with_context(|| format!("write dual-node gate report failed: {}", path.display()))
+}
+
 fn run_node_v1(bin: &PathBuf, envs: &[(&str, String)]) -> Result<Output> {
     let mut cmd = Command::new(bin);
     cmd.env_clear();
@@ -103,6 +129,13 @@ fn summary_u64(summary: &Value, field: &str) -> u64 {
         .unwrap_or_default()
 }
 
+fn tps_x1000(count: u64, elapsed_ms: u64) -> u64 {
+    if elapsed_ms == 0 {
+        return 0;
+    }
+    count.saturating_mul(1_000_000) / elapsed_ms
+}
+
 fn require_min(summary: &Value, field: &str, min: u64, label: &str) -> Result<()> {
     let actual = summary_u64(summary, field);
     if actual < min {
@@ -121,14 +154,37 @@ fn require_eq_str(summary: &Value, field: &str, expected: &str, label: &str) -> 
 
 fn main() -> Result<()> {
     let chain_id = u64_env("NOVOVM_NATIVE_PIPELINE_DUAL_GATE_CHAIN_ID", 9_998_895)?;
-    let tx_count = u64_env("NOVOVM_NATIVE_PIPELINE_DUAL_GATE_TX_COUNT", 3)?;
+    let tx_count = u64_env("NOVOVM_NATIVE_PIPELINE_DUAL_GATE_TX_COUNT", 8)?;
+    let tick_budget = u64_env("NOVOVM_NATIVE_PIPELINE_DUAL_GATE_TICK_BUDGET", 4)?.max(1);
+    let tick_interval_ms = u64_env("NOVOVM_NATIVE_PIPELINE_DUAL_GATE_TICK_INTERVAL_MS", 25)?;
+    let ingress_max_per_tick = u64_env(
+        "NOVOVM_NATIVE_PIPELINE_DUAL_GATE_INGRESS_MAX_PER_TICK",
+        tick_budget,
+    )?;
+    let udp_broadcast_max_per_tick = u64_env(
+        "NOVOVM_NATIVE_PIPELINE_DUAL_GATE_UDP_BROADCAST_MAX_PER_TICK",
+        tick_budget,
+    )?;
+    let min_receiver_canonical_tps_x1000 = u64_env(
+        "NOVOVM_NATIVE_PIPELINE_DUAL_GATE_MIN_RECEIVER_CANONICAL_TPS_X1000",
+        0,
+    )?;
+    let min_sender_broadcast_tps_x1000 = u64_env(
+        "NOVOVM_NATIVE_PIPELINE_DUAL_GATE_MIN_SENDER_BROADCAST_TPS_X1000",
+        0,
+    )?;
+    let ingress_ticks = tx_count
+        .saturating_add(ingress_max_per_tick.max(1))
+        .saturating_sub(1)
+        / ingress_max_per_tick.max(1);
+    let execution_ticks = tx_count.saturating_add(tick_budget).saturating_sub(1) / tick_budget;
     let sender_ticks = u64_env(
         "NOVOVM_NATIVE_PIPELINE_DUAL_GATE_SENDER_TICKS",
-        tx_count.max(3),
+        ingress_ticks.max(3),
     )?;
     let receiver_ticks = u64_env(
         "NOVOVM_NATIVE_PIPELINE_DUAL_GATE_RECEIVER_TICKS",
-        tx_count.max(6) + 12,
+        execution_ticks.max(6) + 12,
     )?;
     let sender_node = u64_env("NOVOVM_NATIVE_PIPELINE_DUAL_GATE_SENDER_NODE", 9_991_895)?;
     let receiver_node = u64_env("NOVOVM_NATIVE_PIPELINE_DUAL_GATE_RECEIVER_NODE", 9_991_896)?;
@@ -158,16 +214,19 @@ fn main() -> Result<()> {
             ("NOVOVM_NATIVE_EXECUTION_TICK_MAX_TICKS", ticks.to_string()),
             (
                 "NOVOVM_NATIVE_EXECUTION_TICK_INTERVAL_MS",
-                "100".to_string(),
+                tick_interval_ms.to_string(),
             ),
-            ("NOVOVM_NATIVE_EXECUTION_TICK_HARD_BUDGET", "1".to_string()),
+            (
+                "NOVOVM_NATIVE_EXECUTION_TICK_HARD_BUDGET",
+                tick_budget.to_string(),
+            ),
             (
                 "NOVOVM_NATIVE_EXECUTION_TICK_TARGET_BUDGET",
-                "1".to_string(),
+                tick_budget.to_string(),
             ),
             (
                 "NOVOVM_NATIVE_EXECUTION_TICK_EFFECTIVE_BUDGET",
-                "1".to_string(),
+                tick_budget.to_string(),
             ),
             (
                 "NOVOVM_NATIVE_EXECUTION_TICK_STORE_PATH",
@@ -191,7 +250,7 @@ fn main() -> Result<()> {
             ),
             (
                 "NOVOVM_NATIVE_EXECUTION_PIPELINE_UDP_BROADCAST_MAX_PER_TICK",
-                "1".to_string(),
+                udp_broadcast_max_per_tick.to_string(),
             ),
             (
                 "NOVOVM_NATIVE_EXECUTION_PIPELINE_REQUIRE_PROGRESS",
@@ -246,7 +305,7 @@ fn main() -> Result<()> {
         ),
         (
             "NOVOVM_NATIVE_EXECUTION_PIPELINE_INGRESS_MAX_PER_TICK",
-            "1".to_string(),
+            ingress_max_per_tick.to_string(),
         ),
         (
             "NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_INGRESS_SUBMITTED",
@@ -258,7 +317,7 @@ fn main() -> Result<()> {
         ),
         (
             "NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_BROADCAST_DISPATCH",
-            tx_count.to_string(),
+            ingress_ticks.to_string(),
         ),
     ]);
 
@@ -282,6 +341,14 @@ fn main() -> Result<()> {
         .context("wait receiver node failed")?;
     let sender_summary = parse_summary_v1(&sender_out, "sender")?;
     let receiver_summary = parse_summary_v1(&receiver_out, "receiver")?;
+    let sender_broadcast_tps_x1000 = tps_x1000(
+        summary_u64(&sender_summary, "broadcast_tx_total_last"),
+        summary_u64(&sender_summary, "elapsed_ms"),
+    );
+    let receiver_canonical_tps_x1000 = tps_x1000(
+        summary_u64(&receiver_summary, "included_canonical_total"),
+        summary_u64(&receiver_summary, "elapsed_ms"),
+    );
 
     let validation = (|| -> Result<()> {
         for (label, summary) in [("sender", &sender_summary), ("receiver", &receiver_summary)] {
@@ -310,7 +377,7 @@ fn main() -> Result<()> {
         require_min(
             &sender_summary,
             "broadcast_dispatch_total_last",
-            tx_count,
+            ingress_ticks,
             "sender",
         )?;
         require_min(
@@ -333,6 +400,20 @@ fn main() -> Result<()> {
                 summary_u64(&receiver_summary, "queue_pending_last")
             );
         }
+        if sender_broadcast_tps_x1000 < min_sender_broadcast_tps_x1000 {
+            bail!(
+                "sender summary gate failed: broadcast_tps_x1000={} below min {}",
+                sender_broadcast_tps_x1000,
+                min_sender_broadcast_tps_x1000
+            );
+        }
+        if receiver_canonical_tps_x1000 < min_receiver_canonical_tps_x1000 {
+            bail!(
+                "receiver summary gate failed: canonical_tps_x1000={} below min {}",
+                receiver_canonical_tps_x1000,
+                min_receiver_canonical_tps_x1000
+            );
+        }
         Ok(())
     })();
     if let Err(err) = validation {
@@ -343,19 +424,31 @@ fn main() -> Result<()> {
         );
     }
 
+    let report = serde_json::json!({
+        "method": "supervm_native_pipeline_dual_node_gate",
+        "accepted": true,
+        "chain_id": chain_id,
+        "tx_count": tx_count,
+        "tick_budget": tick_budget,
+        "tick_interval_ms": tick_interval_ms,
+        "ingress_max_per_tick": ingress_max_per_tick,
+        "udp_broadcast_max_per_tick": udp_broadcast_max_per_tick,
+        "sender_addr": sender_addr,
+        "receiver_addr": receiver_addr,
+        "metrics": {
+            "sender_broadcast_tps_x1000": sender_broadcast_tps_x1000,
+            "receiver_canonical_tps_x1000": receiver_canonical_tps_x1000,
+            "min_sender_broadcast_tps_x1000": min_sender_broadcast_tps_x1000,
+            "min_receiver_canonical_tps_x1000": min_receiver_canonical_tps_x1000,
+        },
+        "sender_summary": sender_summary,
+        "receiver_summary": receiver_summary,
+    });
+    let report_path = report_path_v1();
+    write_report_v1(report_path.as_path(), &report)?;
     println!(
         "{}",
-        serde_json::to_string_pretty(&serde_json::json!({
-            "method": "supervm_native_pipeline_dual_node_gate",
-            "accepted": true,
-            "chain_id": chain_id,
-            "tx_count": tx_count,
-            "sender_addr": sender_addr,
-            "receiver_addr": receiver_addr,
-            "sender_summary": sender_summary,
-            "receiver_summary": receiver_summary,
-        }))
-        .context("encode dual node gate report failed")?
+        serde_json::to_string_pretty(&report).context("encode dual node gate report failed")?
     );
     Ok(())
 }

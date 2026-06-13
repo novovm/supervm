@@ -239,6 +239,16 @@ cargo run -p novovm-node --bin supervm-native-pipeline-dual-node-gate
 
 The gate starts two real `novovm-node` child processes: a sender with fixture ingress and UDP broadcast, and a receiver with UDP receive plus AOEM tick/canonical projection. It validates sender broadcast counts and receiver `aoem_executed_total`, `proof_ticks`, `commit_ticks`, `included_canonical_total`, and `queue_pending_last=0`.
 
+Useful soak knobs:
+
+- `NOVOVM_NATIVE_PIPELINE_DUAL_GATE_TX_COUNT`
+- `NOVOVM_NATIVE_PIPELINE_DUAL_GATE_TICK_BUDGET`
+- `NOVOVM_NATIVE_PIPELINE_DUAL_GATE_INGRESS_MAX_PER_TICK`
+- `NOVOVM_NATIVE_PIPELINE_DUAL_GATE_UDP_BROADCAST_MAX_PER_TICK`
+- `NOVOVM_NATIVE_PIPELINE_DUAL_GATE_MIN_SENDER_BROADCAST_TPS_X1000`
+- `NOVOVM_NATIVE_PIPELINE_DUAL_GATE_MIN_RECEIVER_CANONICAL_TPS_X1000`
+- `NOVOVM_NATIVE_PIPELINE_DUAL_GATE_REPORT_PATH` (default: `artifacts/native-pipeline/native-pipeline-dual-node-gate-report.json`)
+
 EVM protocol-observable equivalence scope (CN):
 
 - `docs_CN/Adapters/EVM/NOVOVM-EVM-PROTOCOL-OBSERVABLE-EQUIVALENCE-V1-2026-06-07.md`
