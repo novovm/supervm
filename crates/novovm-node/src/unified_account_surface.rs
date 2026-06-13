@@ -2003,6 +2003,7 @@ fn require_mapped_header_source_policy_v1(
     params: &Value,
     chain_id: u64,
     block_number: u64,
+    block_hash: [u8; 32],
     source_peer_id: Option<u64>,
 ) -> Result<Value> {
     let store_path = native_execution_store_path_from_params_or_env_v1(params);
@@ -2033,7 +2034,26 @@ fn require_mapped_header_source_policy_v1(
             block_number
         );
     }
-    let observed_source_quorum = 1u32;
+    let mut observed_source_peer_ids =
+        novovm_network::snapshot_network_runtime_native_header_source_peers_v1(
+            chain_id, block_hash,
+        );
+    if !observed_source_peer_ids.contains(&source_peer_id) {
+        observed_source_peer_ids.push(source_peer_id);
+        observed_source_peer_ids.sort_unstable();
+    }
+    observed_source_peer_ids.dedup();
+    let observed_allowed_source_peer_ids = observed_source_peer_ids
+        .iter()
+        .copied()
+        .filter(|peer_id| {
+            store
+                .module_state
+                .mapped_header_source_allowed_peer_ids
+                .contains(peer_id)
+        })
+        .collect::<Vec<_>>();
+    let observed_source_quorum = observed_allowed_source_peer_ids.len() as u32;
     if observed_source_quorum < store.module_state.mapped_header_source_min_quorum {
         bail!(
             "ERR_MAPPED_HEADER_SOURCE_QUORUM_UNMET: observed_source_quorum={} min_source_quorum={} chain_id={} block_number={}",
@@ -2046,6 +2066,8 @@ fn require_mapped_header_source_policy_v1(
     Ok(json!({
         "state": "ok",
         "source_peer_id": source_peer_id,
+        "observed_source_peer_ids": observed_source_peer_ids,
+        "observed_allowed_source_peer_ids": observed_allowed_source_peer_ids,
         "observed_source_quorum": observed_source_quorum,
         "policy": policy,
     }))
@@ -3404,6 +3426,7 @@ fn verify_ethereum_lock_event_trusted_anchor_v1(
         params,
         evidence.chain_id,
         evidence.block_number,
+        evidence.block_hash,
         block.source_peer_id,
     )?;
     Ok(())
@@ -5382,6 +5405,37 @@ mod tests {
         seed_mapped_lock_trusted_block(params, finalized, receipts_root);
     }
 
+    fn observe_mapped_lock_trusted_header_source_peer_from_params(params: &Value, peer_id: u64) {
+        let chain_id = mapped_lock_param_u64(params, "source_chain_id");
+        let number = mapped_lock_param_u64(params, "block_number");
+        let hash = mapped_lock_param_hash(params, "block_hash");
+        let receipts_root = mapped_lock_param_hash(params, "receipts_root");
+        novovm_network::set_network_runtime_native_header_snapshot_v1(
+            chain_id,
+            novovm_network::NetworkRuntimeNativeHeaderSnapshotV1 {
+                chain_id,
+                number,
+                hash,
+                parent_hash: [0x09; 32],
+                state_root: [0x21; 32],
+                transactions_root: [0x31; 32],
+                receipts_root,
+                ommers_hash: [0x51; 32],
+                logs_bloom: vec![0u8; 256],
+                gas_limit: None,
+                gas_used: None,
+                timestamp: Some(1_700_000_000),
+                base_fee_per_gas: None,
+                withdrawals_root: None,
+                blob_gas_used: None,
+                excess_blob_gas: None,
+                block_access_list_hash: None,
+                source_peer_id: Some(peer_id),
+                observed_unix_ms: u128::from(2000u64.saturating_add(peer_id)),
+            },
+        );
+    }
+
     fn reorg_mapped_lock_trusted_block_from_params(params: &Value) {
         let chain_id = mapped_lock_param_u64(params, "source_chain_id");
         let number = mapped_lock_param_u64(params, "block_number");
@@ -6561,26 +6615,9 @@ mod tests {
             "single observed source should not satisfy quorum=2, got: {quorum_err}"
         );
 
-        let quorum_one_policy = run_query(
-            &base,
-            "ua_setMappedHeaderSourcePolicy",
-            params_with_paths_and_native_store(
-                &store,
-                &audit,
-                &native_store,
-                json!({
-                    "required": true,
-                    "allowed_peer_ids": [1u64, 2u64],
-                    "min_source_quorum": 1u64,
-                    "policy_source": "governance_test",
-                    "policy_version": 9u64,
-                    "now": 14u64,
-                }),
-            ),
-        );
-        assert_eq!(
-            quorum_one_policy["policy"]["min_source_quorum"].as_u64(),
-            Some(1)
+        observe_mapped_lock_trusted_header_source_peer_from_params(
+            &Value::Object(accepted_map.clone()),
+            2,
         );
         let accepted = run_query(
             &base,
@@ -6603,7 +6640,7 @@ mod tests {
             "ua_getMappedHeaderSourcePolicy",
             params_with_paths_and_native_store(&store, &audit, &native_store, json!({})),
         );
-        assert_eq!(get_policy["policy"]["policy_version"].as_u64(), Some(9));
+        assert_eq!(get_policy["policy"]["policy_version"].as_u64(), Some(8));
 
         let _ = fs::remove_dir_all(&root);
     }

@@ -105,6 +105,12 @@ static NETWORK_RUNTIME_NATIVE_HEAD_SNAPSHOTS: OnceLock<
 static NETWORK_RUNTIME_NATIVE_CANONICAL_CHAINS: OnceLock<
     Mutex<HashMap<u64, NetworkRuntimeNativeCanonicalChainStateInternalV1>>,
 > = OnceLock::new();
+type NetworkRuntimeNativeHeaderSourcePeersByHashV1 = HashMap<[u8; 32], HashSet<u64>>;
+type NetworkRuntimeNativeHeaderSourcePeersByChainV1 =
+    HashMap<u64, NetworkRuntimeNativeHeaderSourcePeersByHashV1>;
+static NETWORK_RUNTIME_NATIVE_HEADER_SOURCE_PEERS: OnceLock<
+    Mutex<NetworkRuntimeNativeHeaderSourcePeersByChainV1>,
+> = OnceLock::new();
 type NetworkRuntimeNativePendingTxStateByHashV1 =
     HashMap<[u8; 32], NetworkRuntimeNativePendingTxStateV1>;
 type NetworkRuntimeNativePendingTxPayloadByHashV1 = HashMap<[u8; 32], Vec<u8>>;
@@ -204,6 +210,29 @@ fn runtime_native_head_snapshot_map(
 fn runtime_native_canonical_chain_map(
 ) -> &'static Mutex<HashMap<u64, NetworkRuntimeNativeCanonicalChainStateInternalV1>> {
     NETWORK_RUNTIME_NATIVE_CANONICAL_CHAINS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn runtime_native_header_source_peer_map(
+) -> &'static Mutex<NetworkRuntimeNativeHeaderSourcePeersByChainV1> {
+    NETWORK_RUNTIME_NATIVE_HEADER_SOURCE_PEERS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn observe_network_runtime_native_header_source_peer_v1(
+    chain_id: u64,
+    block_hash: [u8; 32],
+    source_peer_id: Option<u64>,
+) {
+    let Some(source_peer_id) = source_peer_id else {
+        return;
+    };
+    if let Ok(mut guard) = runtime_native_header_source_peer_map().lock() {
+        guard
+            .entry(chain_id)
+            .or_default()
+            .entry(block_hash)
+            .or_default()
+            .insert(source_peer_id);
+    }
 }
 
 fn runtime_native_pending_tx_map() -> &'static Mutex<NetworkRuntimeNativePendingTxStateByChainV1> {
@@ -2248,6 +2277,9 @@ pub fn clear_network_runtime_native_state_for_host_tests_v1() {
     if let Ok(mut guard) = runtime_native_canonical_chain_map().lock() {
         guard.clear();
     }
+    if let Ok(mut guard) = runtime_native_header_source_peer_map().lock() {
+        guard.clear();
+    }
     if let Ok(mut guard) = runtime_native_pending_tx_map().lock() {
         guard.clear();
     }
@@ -2675,6 +2707,11 @@ pub fn set_network_runtime_native_header_snapshot_v1(
     snapshot: NetworkRuntimeNativeHeaderSnapshotV1,
 ) {
     let normalized = snapshot.normalized(chain_id);
+    observe_network_runtime_native_header_source_peer_v1(
+        chain_id,
+        normalized.hash,
+        normalized.source_peer_id,
+    );
     if let Ok(mut guard) = runtime_native_header_snapshot_map().lock() {
         let should_replace = guard
             .get(&chain_id)
@@ -2765,6 +2802,11 @@ pub fn set_network_runtime_native_receipt_snapshot_v1(
     snapshot: NetworkRuntimeNativeReceiptSnapshotV1,
 ) {
     let normalized = snapshot.normalized(chain_id);
+    observe_network_runtime_native_header_source_peer_v1(
+        chain_id,
+        normalized.block_hash,
+        normalized.source_peer_id,
+    );
     if let Ok(mut guard) = runtime_native_receipt_snapshot_map().lock() {
         guard
             .entry(chain_id)
@@ -3176,6 +3218,11 @@ pub fn set_network_runtime_native_head_snapshot_v1(
     snapshot: NetworkRuntimeNativeHeadSnapshotV1,
 ) {
     let normalized = snapshot.normalized(chain_id);
+    observe_network_runtime_native_header_source_peer_v1(
+        chain_id,
+        normalized.block_hash,
+        normalized.source_peer_id,
+    );
     let observed_unix_ms = normalized.observed_unix_ms;
     let block_number = normalized.block_number;
     let mut should_replace_head = true;
@@ -4333,6 +4380,23 @@ pub fn get_network_runtime_native_header_rlp_v1(
     guard
         .get(&chain_id)
         .and_then(|headers| headers.get(&block_hash).cloned())
+}
+
+#[must_use]
+pub fn snapshot_network_runtime_native_header_source_peers_v1(
+    chain_id: u64,
+    block_hash: [u8; 32],
+) -> Vec<u64> {
+    let Ok(guard) = runtime_native_header_source_peer_map().lock() else {
+        return Vec::new();
+    };
+    let mut peers = guard
+        .get(&chain_id)
+        .and_then(|by_hash| by_hash.get(&block_hash))
+        .map(|source_peers| source_peers.iter().copied().collect::<Vec<_>>())
+        .unwrap_or_default();
+    peers.sort_unstable();
+    peers
 }
 
 #[must_use]
@@ -6279,6 +6343,52 @@ mod tests {
         assert!(head.safe);
         assert_eq!(runtime.current_block, 88);
         assert_eq!(runtime.highest_block, 88);
+    }
+
+    #[test]
+    fn native_header_source_peer_snapshot_tracks_same_block_observations() {
+        let chain_id = 2042_100_u64;
+        clear_network_runtime_native_state_for_host_tests_v1();
+
+        for (source_peer_id, observed_unix_ms) in [(7_u64, 10_u128), (3_u64, 11_u128), (7, 12)] {
+            set_network_runtime_native_header_snapshot_v1(
+                chain_id,
+                NetworkRuntimeNativeHeaderSnapshotV1 {
+                    chain_id,
+                    number: 88,
+                    hash: [0x11; 32],
+                    parent_hash: [0x10; 32],
+                    state_root: [0x21; 32],
+                    transactions_root: [0x22; 32],
+                    receipts_root: [0x23; 32],
+                    ommers_hash: [0x24; 32],
+                    logs_bloom: vec![0u8; 256],
+                    gas_limit: None,
+                    gas_used: None,
+                    timestamp: Some(7),
+                    base_fee_per_gas: None,
+                    withdrawals_root: None,
+                    blob_gas_used: None,
+                    excess_blob_gas: None,
+                    block_access_list_hash: None,
+                    source_peer_id: Some(source_peer_id),
+                    observed_unix_ms,
+                },
+            );
+        }
+
+        assert_eq!(
+            snapshot_network_runtime_native_header_source_peers_v1(chain_id, [0x11; 32]),
+            vec![3, 7]
+        );
+        assert!(
+            snapshot_network_runtime_native_header_source_peers_v1(chain_id, [0x12; 32]).is_empty()
+        );
+
+        clear_network_runtime_native_state_for_host_tests_v1();
+        assert!(
+            snapshot_network_runtime_native_header_source_peers_v1(chain_id, [0x11; 32]).is_empty()
+        );
     }
 
     #[test]
