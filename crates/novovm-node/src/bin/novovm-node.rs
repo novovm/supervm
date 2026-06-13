@@ -32932,6 +32932,130 @@ struct PreparedBatch {
     raw_tx_rlps: Vec<Vec<u8>>,
 }
 
+struct NativeExecutionPipelineNetworkDriveV1 {
+    worker: EthFullnodeNativePeerWorkerV1,
+}
+
+impl NativeExecutionPipelineNetworkDriveV1 {
+    fn drive_once(&mut self) -> serde_json::Value {
+        match self.worker.drive_real_network_once() {
+            Ok(report) => {
+                let chain_id = self.worker.config().chain_id;
+                serde_json::json!({
+                    "enabled": true,
+                    "ok": true,
+                    "connected_peers": report.connected_peers,
+                    "ready_peers": report.ready_peers,
+                    "status_updates": report.status_updates,
+                    "header_updates": report.header_updates,
+                    "body_updates": report.body_updates,
+                    "receipt_updates": report.receipt_updates,
+                    "sync_requests": report.sync_requests,
+                    "inbound_frames": report.inbound_frames,
+                    "peer_failures": report.peer_failures.len(),
+                    "pending_tx_summary": snapshot_network_runtime_native_pending_tx_summary_v1(chain_id),
+                    "broadcast_runtime": snapshot_network_runtime_native_pending_tx_broadcast_runtime_summary_v1(chain_id),
+                })
+            }
+            Err(err) => serde_json::json!({
+                "enabled": true,
+                "ok": false,
+                "error": err.to_string(),
+            }),
+        }
+    }
+}
+
+fn native_execution_pipeline_network_drive_from_env_v1(
+    chain_id: u64,
+    verbose: bool,
+) -> Result<Option<NativeExecutionPipelineNetworkDriveV1>> {
+    if !bool_env("NOVOVM_NATIVE_EXECUTION_PIPELINE_NETWORK_DRIVE_ENABLED") {
+        return Ok(None);
+    }
+    let max_peers = usize_env_allow_zero(
+        "NOVOVM_NATIVE_EXECUTION_PIPELINE_NETWORK_MAX_PEERS",
+        eth_rlpx_default_max_peers_v1(),
+    )?
+    .clamp(1, 50);
+    let candidate_limit = usize_env_allow_zero(
+        "NOVOVM_NATIVE_EXECUTION_PIPELINE_NETWORK_CANDIDATE_PEERS",
+        max_peers.max(256),
+    )?
+    .clamp(max_peers, 512);
+    let local_node = NodeId(u64_env_allow_zero(
+        "NOVOVM_NATIVE_EXECUTION_PIPELINE_LOCAL_NODE",
+        9_990_001,
+    )?);
+    let mut peer_endpoints = eth_rlpx_explicit_peer_endpoints_v1(candidate_limit);
+    if peer_endpoints.is_empty() {
+        peer_endpoints = eth_rlpx_sync_peer_endpoints_v1(chain_id, candidate_limit, verbose);
+    }
+    if peer_endpoints.is_empty() {
+        bail!(
+            "native execution pipeline network drive enabled but no RLPx peer endpoints resolved"
+        );
+    }
+    let peers = peer_endpoints
+        .iter()
+        .map(|endpoint| NodeId(endpoint.node_hint.max(1)))
+        .collect::<Vec<_>>();
+    let mut budget = resolve_eth_fullnode_budget_hooks_v1(chain_id);
+    budget.active_native_peer_soft_limit = max_peers as u64;
+    budget.active_native_peer_hard_limit = candidate_limit as u64;
+    eth_rlpx_apply_public_sync_runtime_defaults_v1(
+        &mut budget,
+        u64_env_clamped("NOVOVM_NATIVE_EXECUTION_PIPELINE_HEADERS_BATCH", 16, 1, 256),
+        u64_env_clamped("NOVOVM_NATIVE_EXECUTION_PIPELINE_BODIES_BATCH", 4, 1, 64),
+        usize_env_allow_zero(
+            "NOVOVM_NATIVE_EXECUTION_PIPELINE_SYNC_TARGET_FANOUT",
+            eth_rlpx_default_sync_target_fanout_v1(max_peers),
+        )?
+        .clamp(1, max_peers),
+        u64_env_clamped(
+            "NOVOVM_NATIVE_EXECUTION_PIPELINE_REQUEST_TIMEOUT_MS",
+            ETH_RLPX_PUBLIC_SYNC_DEFAULT_REQUEST_TIMEOUT_MS_V1,
+            1_000,
+            120_000,
+        ),
+        u64_env_clamped(
+            "NOVOVM_NATIVE_EXECUTION_PIPELINE_SYNC_REQUEST_INTERVAL_MS",
+            ETH_RLPX_PUBLIC_SYNC_DEFAULT_REQUEST_INTERVAL_MS_V1,
+            10,
+            60_000,
+        ),
+        u64_env_clamped(
+            "NOVOVM_NATIVE_EXECUTION_PIPELINE_RUNTIME_SNAPSHOT_BLOCKS",
+            4,
+            1,
+            128,
+        ),
+        u64_env_clamped(
+            "NOVOVM_NATIVE_EXECUTION_PIPELINE_RUNTIME_PENDING_TXS",
+            128,
+            1,
+            2048,
+        ),
+        u64_env_clamped(
+            "NOVOVM_NATIVE_EXECUTION_PIPELINE_FINALIZE_HEADERS_BATCH",
+            16,
+            1,
+            256,
+        ),
+    );
+    let worker = EthFullnodeNativePeerWorkerV1::new(EthFullnodeNativePeerWorkerConfigV1 {
+        chain_id,
+        local_node,
+        peers,
+        peer_endpoints,
+        recv_budget: usize_env_allow_zero("NOVOVM_NATIVE_EXECUTION_PIPELINE_RECV_BUDGET", 16)?
+            .clamp(1, 1024),
+        sync_target_fanout: budget.sync_target_fanout as usize,
+        budget_hooks: budget,
+    });
+    Ok(Some(NativeExecutionPipelineNetworkDriveV1 { worker }))
+}
+
 fn u64_env_positive(name: &str, default: u64) -> Result<u64> {
     let value = u64_env_allow_zero(name, default)?;
     if value == 0 {
@@ -32989,6 +33113,7 @@ fn native_execution_tick_params_from_env_v1() -> Result<serde_json::Value> {
 
 fn build_native_execution_pipeline_report_v1(
     tick_index: u64,
+    network_drive: serde_json::Value,
     tick_out: serde_json::Value,
 ) -> serde_json::Value {
     let chain_id = tick_out
@@ -33014,6 +33139,7 @@ fn build_native_execution_pipeline_report_v1(
         "aoem_concurrency_owner": "AOEM_runtime",
         "host_concurrency_policy": "host_drives_lifecycle_only_no_rust_execution_scheduler",
         "lifecycle": {
+            "network": network_drive,
             "ingress": {
                 "source": "network_runtime_native_pending",
                 "total": pending_summary.tx_count,
@@ -33080,6 +33206,10 @@ mod native_execution_pipeline_tests {
         let report = build_native_execution_pipeline_report_v1(
             1,
             serde_json::json!({
+                "enabled": false,
+                "ok": true,
+            }),
+            serde_json::json!({
                 "method": "nov_runNativeExecutionTick",
                 "chain_id": 9_998_881u64,
                 "executed_count": 3u64,
@@ -33106,6 +33236,10 @@ mod native_execution_pipeline_tests {
             Some("host_drives_lifecycle_only_no_rust_execution_scheduler")
         );
         assert_eq!(
+            report["lifecycle"]["network"]["enabled"].as_bool(),
+            Some(false)
+        );
+        assert_eq!(
             report["lifecycle"]["aoem_batch"]["executed"].as_u64(),
             Some(3)
         );
@@ -33117,19 +33251,70 @@ mod native_execution_pipeline_tests {
             .as_u64()
             .is_some());
     }
+
+    #[test]
+    fn native_execution_pipeline_report_exposes_network_drive_stage() {
+        let report = build_native_execution_pipeline_report_v1(
+            2,
+            serde_json::json!({
+                "enabled": true,
+                "ok": true,
+                "connected_peers": 1u64,
+                "ready_peers": 1u64,
+                "header_updates": 2u64,
+                "broadcast_runtime": {"broadcast_tx_total": 1u64}
+            }),
+            serde_json::json!({
+                "method": "nov_runNativeExecutionTick",
+                "chain_id": 9_998_882u64,
+                "executed_count": 0u64,
+                "deferred_count": 0u64,
+                "lifecycle": {
+                    "commit": "deterministic_sharded_dirty_atomic_commit"
+                }
+            }),
+        );
+
+        assert_eq!(
+            report["lifecycle"]["network"]["enabled"].as_bool(),
+            Some(true)
+        );
+        assert_eq!(
+            report["lifecycle"]["network"]["ready_peers"].as_u64(),
+            Some(1)
+        );
+        assert_eq!(
+            report["lifecycle"]["network"]["broadcast_runtime"]["broadcast_tx_total"].as_u64(),
+            Some(1)
+        );
+    }
 }
 
 fn run_native_execution_tick_node_mode_v1(verbose: bool) -> Result<()> {
     let max_ticks = u64_env_allow_zero("NOVOVM_NATIVE_EXECUTION_TICK_MAX_TICKS", 1)?;
     let interval_ms = u64_env_positive("NOVOVM_NATIVE_EXECUTION_TICK_INTERVAL_MS", 250)?;
+    let chain_id = u64_env_positive("NOVOVM_NATIVE_EXECUTION_TICK_CHAIN_ID", 1)?;
+    let mut network_drive = native_execution_pipeline_network_drive_from_env_v1(chain_id, verbose)?;
     let mut ticks = 0u64;
     loop {
         if max_ticks > 0 && ticks >= max_ticks {
             break;
         }
+        let network_drive_out = match network_drive.as_mut() {
+            Some(drive) => drive.drive_once(),
+            None => serde_json::json!({
+                "enabled": false,
+                "ok": true,
+                "reason": "NOVOVM_NATIVE_EXECUTION_PIPELINE_NETWORK_DRIVE_ENABLED is not set",
+            }),
+        };
         let params = native_execution_tick_params_from_env_v1()?;
         let out = run_nov_native_execution_tick_from_params_v1(&params)?;
-        let report = build_native_execution_pipeline_report_v1(ticks.saturating_add(1), out);
+        let report = build_native_execution_pipeline_report_v1(
+            ticks.saturating_add(1),
+            network_drive_out,
+            out,
+        );
         if verbose {
             println!(
                 "native_execution_tick_out: tick={} chain_id={} executed={} deferred={} kernel=AOEM owner=AOEM_runtime",
