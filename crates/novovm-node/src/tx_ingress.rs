@@ -3276,9 +3276,6 @@ fn build_protocol_clearing_price_v1(
                 .get(&normalized)
                 .copied()
         })
-        .or_else(|| {
-            protocol_oracle_ref_rate_ppm_v1(store, normalized.as_str(), now_ms)
-        })
         .or_else(|| configured_fee_rate_ppm_v1(normalized.as_str()))
         .unwrap_or_else(|| default_fee_rate_ppm_for_asset_v1(normalized.as_str()));
     let p_amm_twap_ppm = store
@@ -3378,8 +3375,13 @@ fn build_protocol_clearing_price_v1(
         } else {
             None
         });
+    let oracle_has_non_oracle_anchor = anchor.is_some();
     let max_deviation = NOV_PROTOCOL_CLEARING_MAX_SOURCE_DEVIATION_BPS_V1;
     candidates.retain(|(source, rate)| {
+        if *source == "permissioned_oracle_ref" && !oracle_has_non_oracle_anchor {
+            rejected.push("permissioned_oracle_ref:single_source_no_anchor".to_string());
+            return false;
+        }
         if *source == "treasury_nav" {
             return true;
         }
@@ -9063,6 +9065,10 @@ mod tests {
         let mut store = NovNativeExecutionStoreV1::default();
         store
             .module_state
+            .clearing_rate_ppm
+            .insert("NBAZ".to_string(), 1_000_000);
+        store
+            .module_state
             .protocol_clearing_amm_twap_rate_ppm
             .insert("NBAZ".to_string(), 5_000_000);
         store
@@ -9103,6 +9109,23 @@ mod tests {
             .sources_rejected
             .iter()
             .any(|reason| reason.starts_with("permissioned_oracle_ref:deviation_bps=")));
+    }
+
+    #[test]
+    fn protocol_clearing_price_rejects_oracle_only_without_anchor() {
+        let mut store = NovNativeExecutionStoreV1::default();
+        store
+            .module_state
+            .fee_oracle_rates_ppm
+            .insert("NNEW".to_string(), 1_000_000);
+        store.module_state.fee_oracle_updated_unix_ms = 600_000;
+        store.module_state.fee_oracle_source = "runtime_oracle".to_string();
+
+        let err = build_protocol_clearing_price_v1(&store, "NNEW", 600_000)
+            .expect_err("oracle-only new asset price must not resolve");
+        let err = err.to_string();
+        assert!(err.contains("route_unavailable"));
+        assert!(err.contains("asset=NNEW has no protocol clearing source"));
     }
 
     #[test]
