@@ -19,6 +19,7 @@ use rocksdb::{Options as RocksDbOptions, WriteBatch as RocksDbWriteBatch, DB as 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
+use sha3::Keccak256;
 use std::collections::BTreeMap;
 use std::fs::{self, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
@@ -47,6 +48,9 @@ const UNIFIED_ACCOUNT_AUDIT_ROCKSDB_KEY_SEQ: &[u8] = b"ua_audit:seq";
 const UNIFIED_ACCOUNT_AUDIT_ROCKSDB_KEY_EVENT_PREFIX: &[u8] = b"ua_audit:event:";
 const NOVOVM_UA_PHASE4_NOGO_ENFORCE_ENV: &str = "NOVOVM_UA_PHASE4_NOGO_ENFORCE";
 const NOVOVM_UA_PHASE4_SHADOW_MODE_ENFORCE_ENV: &str = "NOVOVM_UA_PHASE4_SHADOW_MODE_ENFORCE";
+const NOVOVM_UA_ETH_LOCK_CONTRACT_ADDRESS_ENV: &str = "NOVOVM_UA_ETH_LOCK_CONTRACT_ADDRESS";
+const NOVOVM_UA_ETH_LOCK_MIN_CONFIRMATIONS_ENV: &str = "NOVOVM_UA_ETH_LOCK_MIN_CONFIRMATIONS";
+const ETH_LOCK_EVENT_SIGNATURE_V1: &str = "Locked(address,bytes32,uint256,string)";
 
 #[derive(Debug)]
 struct UnifiedAccountStoreSnapshot {
@@ -588,7 +592,7 @@ fn run_unified_account_surface_rpc(
                     }
                 }
             }
-            verify_mapped_lock_proof(&proof)?;
+            verify_mapped_lock_proof(&proof, params, !shadow_mode)?;
             let lock_key = mapped_asset_hex_id(&proof.lock_id);
             if mapped_asset_state
                 .mapping_id_by_lock_id
@@ -2109,7 +2113,189 @@ fn mapped_lock_proof_digest_v1(proof: &MappedAssetLockProof) -> [u8; 32] {
     hasher.finalize().into()
 }
 
-fn verify_mapped_lock_proof(proof: &MappedAssetLockProof) -> Result<()> {
+#[derive(Debug, Clone)]
+struct EthereumLockEventEvidenceV1 {
+    contract_address: [u8; 20],
+    topic0: [u8; 32],
+    block_number: u64,
+    finalized_block_number: u64,
+    log_index: u64,
+}
+
+fn decode_hex_fixed_20(raw: &str, field: &str) -> Result<[u8; 20]> {
+    let out = decode_hex_bytes(raw, field)?;
+    out.try_into()
+        .map_err(|_| anyhow::anyhow!("{field} must decode to 20 bytes"))
+}
+
+fn eth_lock_event_topic0_v1() -> [u8; 32] {
+    let mut hasher = Keccak256::new();
+    hasher.update(ETH_LOCK_EVENT_SIGNATURE_V1.as_bytes());
+    hasher.finalize().into()
+}
+
+fn configured_eth_lock_contract_address_v1(params: &Value) -> Result<Option<[u8; 20]>> {
+    if let Ok(raw) = std::env::var(NOVOVM_UA_ETH_LOCK_CONTRACT_ADDRESS_ENV) {
+        let trimmed = raw.trim();
+        if !trimmed.is_empty() {
+            return decode_hex_fixed_20(trimmed, NOVOVM_UA_ETH_LOCK_CONTRACT_ADDRESS_ENV).map(Some);
+        }
+    }
+    param_as_string_any(
+        params,
+        &[
+            "expected_lock_contract_address",
+            "expected_contract_address",
+            "configured_lock_contract_address",
+        ],
+    )
+    .map(|raw| decode_hex_fixed_20(raw.as_str(), "expected_lock_contract_address"))
+    .transpose()
+}
+
+fn eth_lock_min_confirmations_v1() -> u64 {
+    std::env::var(NOVOVM_UA_ETH_LOCK_MIN_CONFIRMATIONS_ENV)
+        .ok()
+        .and_then(|raw| raw.trim().parse::<u64>().ok())
+        .unwrap_or(12)
+}
+
+fn parse_ethereum_lock_event_evidence_v1(
+    params: &Value,
+) -> Result<Option<EthereumLockEventEvidenceV1>> {
+    let has_structured = param_as_string_any(
+        params,
+        &[
+            "lock_contract_address",
+            "contract_address",
+            "eth_lock_contract_address",
+        ],
+    )
+    .is_some()
+        || param_as_string_any(params, &["event_topic0", "topic0"]).is_some()
+        || param_as_u64(params, "block_number").is_some()
+        || param_as_u64(params, "finalized_block_number").is_some()
+        || param_as_u64(params, "log_index").is_some();
+    if !has_structured {
+        return Ok(None);
+    }
+    let contract_raw = param_as_string_any(
+        params,
+        &[
+            "lock_contract_address",
+            "contract_address",
+            "eth_lock_contract_address",
+        ],
+    )
+    .ok_or_else(|| {
+        anyhow::anyhow!("ERR_MAPPED_LOCK_PROOF_INVALID: lock_contract_address is required")
+    })?;
+    let topic0_raw = param_as_string_any(params, &["event_topic0", "topic0"]).ok_or_else(|| {
+        anyhow::anyhow!("ERR_MAPPED_LOCK_PROOF_INVALID: event_topic0 is required")
+    })?;
+    let block_number = param_as_u64(params, "block_number").ok_or_else(|| {
+        anyhow::anyhow!("ERR_MAPPED_LOCK_PROOF_INVALID: block_number is required")
+    })?;
+    let finalized_block_number =
+        param_as_u64(params, "finalized_block_number").ok_or_else(|| {
+            anyhow::anyhow!("ERR_MAPPED_LOCK_PROOF_INVALID: finalized_block_number is required")
+        })?;
+    let log_index = param_as_u64(params, "log_index")
+        .ok_or_else(|| anyhow::anyhow!("ERR_MAPPED_LOCK_PROOF_INVALID: log_index is required"))?;
+    Ok(Some(EthereumLockEventEvidenceV1 {
+        contract_address: decode_hex_fixed_20(contract_raw.as_str(), "lock_contract_address")?,
+        topic0: decode_hex_fixed_32(topic0_raw.as_str(), "event_topic0")?,
+        block_number,
+        finalized_block_number,
+        log_index,
+    }))
+}
+
+fn ethereum_lock_event_ref_digest_v1(
+    proof: &MappedAssetLockProof,
+    evidence: &EthereumLockEventEvidenceV1,
+) -> [u8; 32] {
+    let mut hasher = Sha256::new();
+    hasher.update(b"novovm-ethereum-lock-event-ref-v1");
+    hasher.update([0u8]);
+    hasher.update(evidence.contract_address);
+    hasher.update([0u8]);
+    hasher.update(evidence.topic0);
+    hasher.update([0u8]);
+    hasher.update(evidence.block_number.to_be_bytes());
+    hasher.update([0u8]);
+    hasher.update(evidence.finalized_block_number.to_be_bytes());
+    hasher.update([0u8]);
+    hasher.update(evidence.log_index.to_be_bytes());
+    hasher.update([0u8]);
+    hasher.update(proof.source_tx_hash.as_slice());
+    hasher.update([0u8]);
+    hasher.update(proof.lock_id);
+    hasher.update([0u8]);
+    hasher.update(proof.external_owner_ref.as_slice());
+    hasher.update([0u8]);
+    hasher.update(proof.target_account_id.as_bytes());
+    hasher.update([0u8]);
+    hasher.update(proof.amount.to_be_bytes());
+    hasher.finalize().into()
+}
+
+fn verify_ethereum_lock_event_evidence_v1(
+    proof: &MappedAssetLockProof,
+    params: &Value,
+    live_required: bool,
+) -> Result<()> {
+    let Some(evidence) = parse_ethereum_lock_event_evidence_v1(params)? else {
+        if live_required {
+            bail!(
+                "ERR_MAPPED_LOCK_PROOF_INVALID: live mapped lock requires structured Ethereum lock event evidence"
+            );
+        }
+        return Ok(());
+    };
+    if proof.source_tx_hash.len() != 32 {
+        bail!("ERR_MAPPED_LOCK_PROOF_INVALID: source_tx_hash must decode to 32 bytes");
+    }
+    if proof.external_owner_ref.len() != 20 {
+        bail!("ERR_MAPPED_LOCK_PROOF_INVALID: external_owner_ref must decode to 20 bytes");
+    }
+    let expected_topic0 = eth_lock_event_topic0_v1();
+    if evidence.topic0 != expected_topic0 {
+        bail!(
+            "ERR_MAPPED_LOCK_PROOF_INVALID: event_topic0 must be {} topic",
+            ETH_LOCK_EVENT_SIGNATURE_V1
+        );
+    }
+    let configured_contract = configured_eth_lock_contract_address_v1(params)?.ok_or_else(|| {
+        anyhow::anyhow!(
+            "ERR_MAPPED_LOCK_PROOF_INVALID: live mapped lock requires {} or expected_lock_contract_address",
+            NOVOVM_UA_ETH_LOCK_CONTRACT_ADDRESS_ENV
+        )
+    })?;
+    if evidence.contract_address != configured_contract {
+        bail!("ERR_MAPPED_LOCK_PROOF_INVALID: lock_contract_address does not match configured contract");
+    }
+    let min_confirmations = eth_lock_min_confirmations_v1();
+    let required_finalized = evidence.block_number.saturating_add(min_confirmations);
+    if evidence.finalized_block_number < required_finalized {
+        bail!(
+            "ERR_MAPPED_LOCK_PROOF_INVALID: finalized_block_number {} is below required {}",
+            evidence.finalized_block_number,
+            required_finalized
+        );
+    }
+    let expected_ref = ethereum_lock_event_ref_digest_v1(proof, &evidence);
+    if proof.source_lock_ref.as_slice() != expected_ref.as_slice() {
+        bail!("ERR_MAPPED_LOCK_PROOF_INVALID: source_lock_ref does not match Ethereum lock event evidence");
+    }
+    Ok(())
+}
+
+fn verify_mapped_lock_proof(
+    proof: &MappedAssetLockProof,
+    params: &Value,
+    live_required: bool,
+) -> Result<()> {
     if proof.amount == 0 {
         bail!("ERR_MAPPED_LOCK_PROOF_INVALID: amount must be > 0");
     }
@@ -2132,6 +2318,7 @@ fn verify_mapped_lock_proof(proof: &MappedAssetLockProof) -> Result<()> {
     match proof.proof_format {
         MappedLockProofFormat::EthereumLockEventV1 => {}
     }
+    verify_ethereum_lock_event_evidence_v1(proof, params, live_required)?;
     let digest = mapped_lock_proof_digest_v1(proof);
     if proof.proof_payload.as_slice() != digest.as_slice() {
         bail!("ERR_MAPPED_LOCK_PROOF_INVALID: proof payload digest mismatch");
@@ -3781,6 +3968,51 @@ mod tests {
         })
     }
 
+    fn mapped_lock_live_event_proof_params(account_id: &str, lock_byte: u8, amount: u128) -> Value {
+        let contract_address = [0x11u8; 20];
+        let topic0 = eth_lock_event_topic0_v1();
+        let mut proof_template = MappedAssetLockProof {
+            lock_id: [lock_byte; 32],
+            source_chain: MappedAssetSourceChain::Ethereum,
+            source_asset_symbol: "ETH".to_string(),
+            source_tx_hash: vec![lock_byte.saturating_add(1); 32],
+            source_lock_ref: Vec::new(),
+            external_owner_ref: vec![lock_byte.saturating_add(2); 20],
+            target_account_id: account_id.to_string(),
+            amount,
+            proof_payload: Vec::new(),
+            proof_format: MappedLockProofFormat::EthereumLockEventV1,
+        };
+        let evidence = EthereumLockEventEvidenceV1 {
+            contract_address,
+            topic0,
+            block_number: 100,
+            finalized_block_number: 112,
+            log_index: u64::from(lock_byte),
+        };
+        proof_template.source_lock_ref =
+            ethereum_lock_event_ref_digest_v1(&proof_template, &evidence).to_vec();
+        let proof_digest = mapped_lock_proof_digest_v1(&proof_template);
+        json!({
+            "lock_id": mapped_asset_hex_id(&proof_template.lock_id),
+            "source_chain": "ethereum",
+            "source_asset_symbol": "ETH",
+            "source_tx_hash": format!("0x{}", to_hex_lower(&proof_template.source_tx_hash)),
+            "source_lock_ref": format!("0x{}", to_hex_lower(&proof_template.source_lock_ref)),
+            "external_owner_ref": format!("0x{}", to_hex_lower(&proof_template.external_owner_ref)),
+            "target_account_id": account_id,
+            "amount": amount.to_string(),
+            "proof_format": "ethereum_lock_event_v1",
+            "proof_payload": mapped_asset_hex_id(&proof_digest),
+            "lock_contract_address": format!("0x{}", to_hex_lower(&contract_address)),
+            "expected_lock_contract_address": format!("0x{}", to_hex_lower(&contract_address)),
+            "event_topic0": mapped_asset_hex_id(&topic0),
+            "block_number": evidence.block_number,
+            "finalized_block_number": evidence.finalized_block_number,
+            "log_index": evidence.log_index,
+        })
+    }
+
     fn ensure_native_store(native_store: &Path) {
         let store = load_nov_native_execution_store_v1(native_store)
             .expect("load native execution store for mapped-asset tests");
@@ -4392,10 +4624,11 @@ mod tests {
         ensure_native_store(native_store.as_path());
         ua_create(&base, &store, &audit, "acct-map-shadow", 10);
 
-        let mut register_map = match mapped_lock_proof_params("acct-map-shadow", 0x32, 210u128) {
-            Value::Object(map) => map,
-            other => panic!("expected mapped lock proof params object, got {other:?}"),
-        };
+        let mut register_map =
+            match mapped_lock_live_event_proof_params("acct-map-shadow", 0x32, 210u128) {
+                Value::Object(map) => map,
+                other => panic!("expected mapped lock proof params object, got {other:?}"),
+            };
         register_map.insert("phase4_mode".to_string(), Value::String("live".to_string()));
         register_map.insert("now".to_string(), Value::from(11u64));
         let err = run_query_err(
@@ -4429,10 +4662,11 @@ mod tests {
         ensure_native_store(native_store.as_path());
         ua_create(&base, &store, &audit, "acct-map-live", 10);
 
-        let mut register_map = match mapped_lock_proof_params("acct-map-live", 0x33, 700u128) {
-            Value::Object(map) => map,
-            other => panic!("expected mapped lock proof params object, got {other:?}"),
-        };
+        let mut register_map =
+            match mapped_lock_live_event_proof_params("acct-map-live", 0x33, 700u128) {
+                Value::Object(map) => map,
+                other => panic!("expected mapped lock proof params object, got {other:?}"),
+            };
         register_map.insert("phase4_mode".to_string(), Value::String("live".to_string()));
         register_map.insert("now".to_string(), Value::from(11u64));
         let register = run_query(
@@ -4589,6 +4823,106 @@ mod tests {
                 "mapped_asset_m2_burn_pending",
                 "mapped_lock_source_release"
             ]
+        );
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn unified_account_live_mapped_lock_requires_structured_eth_event_evidence() {
+        let _env_lock = ENV_TEST_LOCK.lock().expect("env test lock poisoned");
+        let _shadow_guard = EnvVarGuard::set(NOVOVM_UA_PHASE4_SHADOW_MODE_ENFORCE_ENV, "false");
+        let (base, store, audit) = temp_paths("mapped-live-proof-required");
+        let root = base
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .to_path_buf();
+        let native_store = root.join("native-execution-store.json");
+        ensure_native_store(native_store.as_path());
+        ua_create(&base, &store, &audit, "acct-map-live-proof", 10);
+
+        let mut register_map = match mapped_lock_proof_params("acct-map-live-proof", 0x34, 80u128) {
+            Value::Object(map) => map,
+            other => panic!("expected mapped lock proof params object, got {other:?}"),
+        };
+        register_map.insert("phase4_mode".to_string(), Value::String("live".to_string()));
+        register_map.insert("now".to_string(), Value::from(11u64));
+        let err = run_query_err(
+            &base,
+            "ua_registerMappedLock",
+            params_with_paths_and_native_store(
+                &store,
+                &audit,
+                &native_store,
+                Value::Object(register_map),
+            ),
+        );
+        assert!(
+            err.contains("live mapped lock requires structured Ethereum lock event evidence"),
+            "live register should reject digest-only proof, got: {err}"
+        );
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn unified_account_live_mapped_lock_rejects_unfinalized_or_wrong_contract_evidence() {
+        let _env_lock = ENV_TEST_LOCK.lock().expect("env test lock poisoned");
+        let _shadow_guard = EnvVarGuard::set(NOVOVM_UA_PHASE4_SHADOW_MODE_ENFORCE_ENV, "false");
+        let (base, store, audit) = temp_paths("mapped-live-proof-invalid");
+        let root = base
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .to_path_buf();
+        let native_store = root.join("native-execution-store.json");
+        ensure_native_store(native_store.as_path());
+        ua_create(&base, &store, &audit, "acct-map-live-invalid", 10);
+
+        let mut unfinalized_map =
+            match mapped_lock_live_event_proof_params("acct-map-live-invalid", 0x35, 90u128) {
+                Value::Object(map) => map,
+                other => panic!("expected mapped lock proof params object, got {other:?}"),
+            };
+        unfinalized_map.insert("phase4_mode".to_string(), Value::String("live".to_string()));
+        unfinalized_map.insert("finalized_block_number".to_string(), Value::from(101u64));
+        let unfinalized_err = run_query_err(
+            &base,
+            "ua_registerMappedLock",
+            params_with_paths_and_native_store(
+                &store,
+                &audit,
+                &native_store,
+                Value::Object(unfinalized_map),
+            ),
+        );
+        assert!(
+            unfinalized_err.contains("finalized_block_number"),
+            "unfinalized proof should fail, got: {unfinalized_err}"
+        );
+
+        let mut wrong_contract_map =
+            match mapped_lock_live_event_proof_params("acct-map-live-invalid", 0x36, 91u128) {
+                Value::Object(map) => map,
+                other => panic!("expected mapped lock proof params object, got {other:?}"),
+            };
+        wrong_contract_map.insert("phase4_mode".to_string(), Value::String("live".to_string()));
+        wrong_contract_map.insert(
+            "expected_lock_contract_address".to_string(),
+            Value::String(ua_hex(0x22, 20)),
+        );
+        let wrong_contract_err = run_query_err(
+            &base,
+            "ua_registerMappedLock",
+            params_with_paths_and_native_store(
+                &store,
+                &audit,
+                &native_store,
+                Value::Object(wrong_contract_map),
+            ),
+        );
+        assert!(
+            wrong_contract_err.contains("lock_contract_address does not match configured contract"),
+            "wrong contract proof should fail, got: {wrong_contract_err}"
         );
 
         let _ = fs::remove_dir_all(&root);

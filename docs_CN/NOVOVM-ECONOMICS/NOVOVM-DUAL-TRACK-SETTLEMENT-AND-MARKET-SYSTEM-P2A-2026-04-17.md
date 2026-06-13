@@ -259,8 +259,8 @@ asset_out[A] = nov_amount / P_redeem[A]
 - Treasury direct clearing route 使用同一协议清算价，不再直接使用 AMM spot。
 - `treasury.redeem` 在 `asset_out + nov_amount` 形态下使用 `P_redeem`，先扣用户 NOV，再按反向保守价从 Treasury reserve 出资产。
 - 只读查询 `nov_call treasury.get_protocol_clearing_price` 可返回 `P_epoch/P_pay/P_redeem`、source、rejected source、epoch 和 attack-resistance 状态。
-- `ua_registerMappedLock(phase4_mode=live)` 已能把 digest-verified ETH lock MVP 映射为 `NETH` M2 credit，写入 native account balance、Treasury reserve 和 settlement journal；`ua_burnMappedAsset -> ua_releaseMappedLock` 已能扣减用户 NETH credit 并释放 Treasury NETH reserve。
-- 当前仍不声明真实 ETH receipt/log proof、真实链上出金、跨链自动 mint/redeem、NOV 直接铸造或钱包/DAPP/网站完成。
+- `ua_registerMappedLock(phase4_mode=live)` 已要求结构化 Ethereum lock event evidence，并能把通过校验的 ETH lock MVP 映射为 `NETH` M2 credit，写入 native account balance、Treasury reserve 和 settlement journal；`ua_burnMappedAsset -> ua_releaseMappedLock` 已能扣减用户 NETH credit 并释放 Treasury NETH reserve。
+- 当前仍不声明真实 ETH receipt/log Merkle proof、真实链上出金、跨链自动 mint/redeem、NOV 直接铸造或钱包/DAPP/网站完成。
 
 ## 10. 本稿替换与冲突规则
 
