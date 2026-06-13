@@ -1297,6 +1297,23 @@ fn run_unified_account_surface_rpc(
                 let mut native_settlement = Value::Null;
                 let mut applied = false;
                 let mut apply_blocked_reason: Option<&'static str> = None;
+                let (required_policy, policy_would_apply) = match action {
+                    "freeze_unsafe_anchor" => (
+                        "mapped_asset_auto_heal_enabled",
+                        native_store.module_state.mapped_asset_auto_heal_enabled,
+                    ),
+                    "rollback_candidate_anchor_unsafe" => (
+                        "mapped_asset_auto_heal_enabled+mapped_asset_auto_heal_rollback_enabled",
+                        native_store.module_state.mapped_asset_auto_heal_enabled
+                            && native_store
+                                .module_state
+                                .mapped_asset_auto_heal_rollback_enabled,
+                    ),
+                    "unfreeze_candidate_anchor_safe" => {
+                        ("manual_unfreeze_required_after_source_anchor_safe", false)
+                    }
+                    _ => ("manual_review_required", false),
+                };
                 if apply && action == "freeze_unsafe_anchor" {
                     native_settlement = apply_live_mapped_asset_m2_freeze_v1(
                         record,
@@ -1372,6 +1389,8 @@ fn run_unified_account_surface_rpc(
                     "action": action,
                     "applied": applied,
                     "apply_blocked_reason": apply_blocked_reason,
+                    "required_policy": required_policy,
+                    "policy_would_apply": policy_would_apply,
                     "status_before": before_status.as_str(),
                     "status_after": record.status.as_str(),
                     "phase4_mode": mapped_asset_phase4_mode_v1(record),
@@ -8245,6 +8264,14 @@ mod tests {
             Some("freeze_unsafe_anchor")
         );
         assert_eq!(dry_run["items"][0]["applied"].as_bool(), Some(false));
+        assert_eq!(
+            dry_run["items"][0]["required_policy"].as_str(),
+            Some("mapped_asset_auto_heal_enabled")
+        );
+        assert_eq!(
+            dry_run["items"][0]["policy_would_apply"].as_bool(),
+            Some(false)
+        );
 
         let still_active = run_query(
             &base,
@@ -8312,6 +8339,10 @@ mod tests {
             Some(true)
         );
         assert_eq!(applied["items"][0]["applied"].as_bool(), Some(true));
+        assert_eq!(
+            applied["items"][0]["policy_would_apply"].as_bool(),
+            Some(true)
+        );
         assert_eq!(applied["items"][0]["status_after"].as_str(), Some("frozen"));
         assert_eq!(
             applied["items"][0]["native_settlement"]["effect"].as_str(),
@@ -8393,6 +8424,14 @@ mod tests {
             Some("mapped_asset_auto_heal_rollback_disabled")
         );
         assert_eq!(
+            rollback_disabled["items"][0]["required_policy"].as_str(),
+            Some("mapped_asset_auto_heal_enabled+mapped_asset_auto_heal_rollback_enabled")
+        );
+        assert_eq!(
+            rollback_disabled["items"][0]["policy_would_apply"].as_bool(),
+            Some(false)
+        );
+        assert_eq!(
             rollback_disabled["policy"]["mapped_asset_auto_heal_rollback_enabled"].as_bool(),
             Some(false)
         );
@@ -8446,6 +8485,10 @@ mod tests {
         assert_eq!(
             rolled_back["items"][0]["status_after"].as_str(),
             Some("rejected")
+        );
+        assert_eq!(
+            rolled_back["items"][0]["policy_would_apply"].as_bool(),
+            Some(true)
         );
         assert_eq!(
             rolled_back["items"][0]["native_settlement"]["effect"].as_str(),
