@@ -2614,6 +2614,7 @@ fn recompute_runtime_sync_status_from_observed(
     statuses: &mut HashMap<u64, NetworkRuntimeSyncStatus>,
     observed: &mut NetworkRuntimeSyncObservedState,
 ) -> NetworkRuntimeSyncStatus {
+    let had_native_remote_best_hint = observed.native_remote_best_by_chain.contains_key(&chain_id);
     prune_stale_runtime_peers(chain_id, observed);
 
     let mut status = statuses
@@ -2637,6 +2638,8 @@ fn recompute_runtime_sync_status_from_observed(
     let local_head = observed.local_head_by_chain.get(&chain_id).copied();
     let observed_peer_count = peer_map.map(|m| m.len() as u64).unwrap_or(0);
     let effective_peer_count = observed_peer_count.max(native_peer_count);
+    let has_observed_runtime =
+        local_head.is_some() || has_peer_observation_history || effective_peer_count > 0;
 
     if has_peer_observation_history || effective_peer_count > 0 {
         status.peer_count = effective_peer_count;
@@ -2647,6 +2650,8 @@ fn recompute_runtime_sync_status_from_observed(
             .highest_block
             .max(status.current_block)
             .max(remote_best)
+    } else if has_observed_runtime && had_native_remote_best_hint {
+        status.current_block
     } else {
         status.highest_block.max(status.current_block)
     };
@@ -3516,6 +3521,74 @@ pub fn observe_network_runtime_native_pending_tx_local_ingress_with_payload_v1(
     }
 }
 
+pub fn observe_network_runtime_native_pending_tx_local_native_payload_v1(
+    chain_id: u64,
+    tx_hash: [u8; 32],
+    tx_payload: Option<&[u8]>,
+) {
+    let now = now_unix_millis();
+    if let Ok(mut guard) = runtime_native_pending_tx_map().lock() {
+        let chain_txs = guard.entry(chain_id).or_default();
+        let tx = chain_txs
+            .entry(tx_hash)
+            .or_insert_with(|| NetworkRuntimeNativePendingTxStateV1 {
+                chain_id,
+                tx_hash,
+                lifecycle_stage: NetworkRuntimeNativePendingTxLifecycleStageV1::Seen,
+                origin: NetworkRuntimeNativePendingTxOriginV1::Local,
+                source_peer_id: None,
+                first_seen_unix_ms: now,
+                last_updated_unix_ms: now,
+                last_block_number: None,
+                last_block_hash: None,
+                canonical_inclusion: None,
+                ingress_count: 0,
+                propagation_count: 0,
+                inclusion_count: 0,
+                reorg_back_count: 0,
+                drop_count: 0,
+                reject_count: 0,
+                propagation_attempt_count: 0,
+                propagation_success_count: 0,
+                propagation_failure_count: 0,
+                propagated_peer_count: 0,
+                last_propagation_unix_ms: None,
+                last_propagation_attempt_unix_ms: None,
+                last_propagation_failure_unix_ms: None,
+                last_propagation_failure_class: None,
+                last_propagation_failure_phase: None,
+                last_propagation_peer_id: None,
+                last_propagated_peer_id: None,
+                propagation_disposition: None,
+                propagation_stop_reason: None,
+                propagation_recoverability: None,
+                retry_eligible: true,
+                retry_after_unix_ms: None,
+                retry_backoff_level: 0,
+                retry_suppressed_reason: None,
+                pending_final_disposition:
+                    NetworkRuntimeNativePendingTxFinalDispositionV1::Retained,
+            });
+        if !matches!(
+            tx.lifecycle_stage,
+            NetworkRuntimeNativePendingTxLifecycleStageV1::IncludedCanonical
+        ) {
+            tx.lifecycle_stage = NetworkRuntimeNativePendingTxLifecycleStageV1::Pending;
+            runtime_native_pending_tx_mark_retry_eligible_v1(tx);
+        }
+        tx.origin = NetworkRuntimeNativePendingTxOriginV1::Local;
+        tx.source_peer_id = None;
+        tx.ingress_count = tx.ingress_count.saturating_add(1);
+        tx.last_updated_unix_ms = now;
+    }
+    if let Ok(mut payloads_guard) = runtime_native_pending_tx_payload_map().lock() {
+        let chain_payloads = payloads_guard.entry(chain_id).or_default();
+        if let Some(payload) = tx_payload.filter(|payload| !payload.is_empty()) {
+            chain_payloads.insert(tx_hash, payload.to_vec());
+        }
+    }
+}
+
 pub fn observe_network_runtime_native_pending_tx_propagated_v1(chain_id: u64, tx_hash: [u8; 32]) {
     observe_network_runtime_native_pending_tx_propagated_with_context_v1(
         chain_id, tx_hash, None, None, None,
@@ -4011,6 +4084,25 @@ pub fn clear_network_runtime_native_snapshots_for_chain_v1(chain_id: u64) {
     if let Ok(mut guard) = runtime_native_budget_hooks_map().lock() {
         guard.remove(&chain_id);
     }
+    if let Ok(mut observed) = runtime_sync_observed_state_map().lock() {
+        observed.local_head_by_chain.remove(&chain_id);
+        observed.peer_height_by_chain.remove(&chain_id);
+        observed.peer_last_seen_millis_by_chain.remove(&chain_id);
+        observed.peer_observed_once_by_chain.remove(&chain_id);
+        observed.native_peer_count_by_chain.remove(&chain_id);
+        observed.native_remote_best_by_chain.remove(&chain_id);
+        observed
+            .native_snapshot_updated_at_by_chain
+            .remove(&chain_id);
+        observed.remote_best_hint_by_chain.remove(&chain_id);
+        observed
+            .remote_best_hint_updated_at_by_chain
+            .remove(&chain_id);
+        observed.next_stale_check_at_by_chain.remove(&chain_id);
+        observed.dirty_chains.remove(&chain_id);
+        observed.sync_anchor_by_chain.remove(&chain_id);
+    }
+    crate::eth_fullnode::clear_eth_fullnode_test_state_for_chain_v1(chain_id);
 }
 
 pub fn set_network_runtime_peer_count(chain_id: u64, peer_count: u64) {

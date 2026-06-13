@@ -18,8 +18,11 @@ use novovm_exec::{
 use novovm_governance_observability::{append_governance_event_auto, GovernanceEvent};
 use novovm_network::{
     eth_rlpx_transaction_hash_v1, eth_rlpx_validate_transaction_envelope_payload_v1,
+    get_network_runtime_native_pending_tx_payload_v1,
     observe_network_runtime_native_pending_tx_local_ingress_with_payload_v1,
+    observe_network_runtime_native_pending_tx_local_native_payload_v1,
     observe_network_runtime_native_pending_tx_rejected_v1,
+    snapshot_network_runtime_native_pending_txs_v1, NetworkRuntimeNativePendingTxLifecycleStageV1,
 };
 use novovm_protocol::{
     decode_local_tx_wire_v1 as decode_tx_wire_v1, decode_nov_native_tx_wire_v1,
@@ -2554,10 +2557,10 @@ pub fn ingest_local_nov_raw_tx_payload_v1(
     }
     let ir = nov_native_tx_to_adapter_tx_ir_v1(&native_tx)?;
     let tx_hash = tx_hash_array_from_ir_v1(&ir);
-    observe_network_runtime_native_pending_tx_local_ingress_with_payload_v1(
+    observe_network_runtime_native_pending_tx_local_native_payload_v1(
         native_tx.chain_id,
         tx_hash,
-        None,
+        Some(payload),
     );
     Ok((native_tx, ir, tx_hash))
 }
@@ -10663,6 +10666,127 @@ pub fn run_nov_send_raw_transaction_batch_from_params_v1(
     }))
 }
 
+fn native_pending_execution_eligible_stage_v1(
+    stage: NetworkRuntimeNativePendingTxLifecycleStageV1,
+) -> bool {
+    matches!(
+        stage,
+        NetworkRuntimeNativePendingTxLifecycleStageV1::Seen
+            | NetworkRuntimeNativePendingTxLifecycleStageV1::Pending
+            | NetworkRuntimeNativePendingTxLifecycleStageV1::Propagated
+            | NetworkRuntimeNativePendingTxLifecycleStageV1::ReorgedBackToPending
+    )
+}
+
+pub fn run_nov_execute_pending_native_tx_batch_from_params_v1(
+    params: &serde_json::Value,
+) -> Result<serde_json::Value> {
+    let chain_id = params
+        .get("chain_id")
+        .and_then(|value| value.as_u64())
+        .unwrap_or(1);
+    let requested_limit = params
+        .get("limit")
+        .or_else(|| params.get("max_txs"))
+        .and_then(|value| value.as_u64())
+        .unwrap_or(native_aoem_batch_max_size_v1() as u64);
+    let limit = requested_limit.clamp(1, native_aoem_batch_max_size_v1().max(1) as u64) as usize;
+    let scan_limit = params
+        .get("scan_limit")
+        .and_then(|value| value.as_u64())
+        .unwrap_or((limit as u64).saturating_mul(4).max(limit as u64))
+        .clamp(limit as u64, 16_384) as usize;
+    let pending = snapshot_network_runtime_native_pending_txs_v1(chain_id, scan_limit);
+    let mut raw_txs = Vec::with_capacity(limit);
+    let mut selected_hashes = Vec::with_capacity(limit);
+    let mut skipped_missing_payload = 0usize;
+    let mut skipped_non_native_payload = 0usize;
+    let mut skipped_chain_mismatch = 0usize;
+    let mut skipped_ineligible_stage = 0usize;
+
+    for pending_tx in pending.iter() {
+        if raw_txs.len() >= limit {
+            break;
+        }
+        if !native_pending_execution_eligible_stage_v1(pending_tx.lifecycle_stage) {
+            skipped_ineligible_stage = skipped_ineligible_stage.saturating_add(1);
+            continue;
+        }
+        let Some(payload) =
+            get_network_runtime_native_pending_tx_payload_v1(chain_id, pending_tx.tx_hash)
+        else {
+            skipped_missing_payload = skipped_missing_payload.saturating_add(1);
+            continue;
+        };
+        let native_tx = match decode_nov_native_tx_wire_v1(payload.as_slice()) {
+            Ok(value) => value,
+            Err(_) => {
+                skipped_non_native_payload = skipped_non_native_payload.saturating_add(1);
+                continue;
+            }
+        };
+        if native_tx.chain_id != chain_id {
+            skipped_chain_mismatch = skipped_chain_mismatch.saturating_add(1);
+            continue;
+        }
+        raw_txs.push(serde_json::Value::String(to_hex_prefixed_v1(
+            payload.as_slice(),
+        )));
+        selected_hashes.push(to_hex_prefixed_v1(&pending_tx.tx_hash));
+    }
+
+    if raw_txs.is_empty() {
+        return Ok(serde_json::json!({
+            "method": "nov_executePendingNativeTxBatch",
+            "accepted": true,
+            "execution_kernel": "AOEM",
+            "source": "network_runtime_native_pending",
+            "chain_id": chain_id,
+            "requested_limit": requested_limit,
+            "effective_limit": limit,
+            "scan_limit": scan_limit,
+            "pending_scanned": pending.len(),
+            "selected_count": 0,
+            "executed": false,
+            "reason": "no_eligible_native_pending_payload",
+            "skipped": {
+                "missing_payload": skipped_missing_payload,
+                "non_native_payload": skipped_non_native_payload,
+                "chain_mismatch": skipped_chain_mismatch,
+                "ineligible_stage": skipped_ineligible_stage,
+            }
+        }));
+    }
+
+    let mut batch_params = params.clone();
+    let obj = batch_params.as_object_mut().ok_or_else(|| {
+        anyhow::anyhow!("nov_executePendingNativeTxBatch params must be an object")
+    })?;
+    obj.insert("raw_txs".to_string(), serde_json::Value::Array(raw_txs));
+    let batch_result = run_nov_send_raw_transaction_batch_from_params_v1(&batch_params)?;
+    Ok(serde_json::json!({
+        "method": "nov_executePendingNativeTxBatch",
+        "accepted": true,
+        "execution_kernel": "AOEM",
+        "source": "network_runtime_native_pending",
+        "chain_id": chain_id,
+        "requested_limit": requested_limit,
+        "effective_limit": limit,
+        "scan_limit": scan_limit,
+        "pending_scanned": pending.len(),
+        "selected_count": selected_hashes.len(),
+        "selected_tx_hashes": selected_hashes,
+        "executed": true,
+        "skipped": {
+            "missing_payload": skipped_missing_payload,
+            "non_native_payload": skipped_non_native_payload,
+            "chain_mismatch": skipped_chain_mismatch,
+            "ineligible_stage": skipped_ineligible_stage,
+        },
+        "batch_result": batch_result,
+    }))
+}
+
 pub fn run_nov_send_transaction_from_params_v1(
     params: &serde_json::Value,
 ) -> Result<serde_json::Value> {
@@ -12270,6 +12394,125 @@ mod tests {
                             "chunked batch treasury reserve must include every ordered deposit"
                         );
                     })
+                })
+            },
+        )
+    }
+
+    #[test]
+    fn run_nov_execute_pending_native_tx_batch_consumes_network_pending_into_aoem_batch() {
+        with_env_override_v1(
+            NOV_NATIVE_AOEM_SEMANTIC_INGRESS_ENABLED_ENV,
+            "false",
+            || {
+                with_test_native_execution_store_path_v1(|path| {
+                    let chain_id = 88_017;
+                    let build_and_ingest_pending = |nonce: u64, account: &str, amount: u64| {
+                        let native_tx = NovNativeTxWireV1 {
+                            chain_id,
+                            kind: NovTxKindV1::Execute(novovm_protocol::NovExecuteTxV1 {
+                                caller: vec![nonce as u8; 20],
+                                account_id: Some(account.to_string()),
+                                fee_owner_account_id: Some(account.to_string()),
+                                nonce_owner_account_id: Some(account.to_string()),
+                                target: novovm_protocol::NovExecutionTargetV1::NativeModule(
+                                    "treasury".to_string(),
+                                ),
+                                method: "deposit_reserve".to_string(),
+                                args: serde_json::to_vec(&serde_json::json!({
+                                    "asset": "USDT",
+                                    "amount": amount
+                                }))
+                                .expect("encode args"),
+                                execution_mode: NovExecutionModeV1::Batch,
+                                execution_policy: NovExecutionPolicyV1::Standard,
+                                privacy_mode: NovPrivacyModeV1::Public,
+                                verification_mode: NovVerificationModeV1::Standard,
+                                fee_policy: NovFeePolicyV1 {
+                                    pay_asset: "USDT".to_string(),
+                                    max_pay_amount: 50,
+                                    slippage_bps: 100,
+                                },
+                                gas_like_limit: Some(90_000),
+                                nonce,
+                            }),
+                            signature: [0xefu8; 32],
+                        };
+                        let raw = encode_nov_native_tx_wire_v1(&native_tx).expect("encode nov tx");
+                        let (_, _, tx_hash) = ingest_local_nov_raw_tx_payload_v1(
+                            &serde_json::json!({}),
+                            raw.as_slice(),
+                        )
+                        .expect("native pending ingress should store payload");
+                        tx_hash
+                    };
+                    let first_hash = build_and_ingest_pending(21, "acct-pending-1", 25);
+                    let second_hash = build_and_ingest_pending(22, "acct-pending-2", 35);
+
+                    assert!(
+                        get_network_runtime_native_pending_tx_payload_v1(chain_id, first_hash)
+                            .is_some(),
+                        "native pending payload must be retained for batch execution"
+                    );
+                    assert!(
+                        get_network_runtime_native_pending_tx_payload_v1(chain_id, second_hash)
+                            .is_some(),
+                        "native pending payload must be retained for batch execution"
+                    );
+
+                    let out = run_nov_execute_pending_native_tx_batch_from_params_v1(
+                        &serde_json::json!({
+                            "chain_id": chain_id,
+                            "limit": 8,
+                            "native_execution_store_path": path,
+                        }),
+                    )
+                    .expect("pending native batch should execute through AOEM batch");
+
+                    assert_eq!(
+                        out["method"].as_str(),
+                        Some("nov_executePendingNativeTxBatch")
+                    );
+                    assert_eq!(out["accepted"].as_bool(), Some(true));
+                    assert_eq!(
+                        out["source"].as_str(),
+                        Some("network_runtime_native_pending")
+                    );
+                    assert_eq!(out["executed"].as_bool(), Some(true));
+                    assert_eq!(out["selected_count"].as_u64(), Some(2));
+                    assert_eq!(
+                        out["batch_result"]["method"].as_str(),
+                        Some("nov_sendRawTransactionBatch")
+                    );
+                    assert_eq!(
+                        out["batch_result"]["aoem_concurrency_owner"].as_str(),
+                        Some("AOEM_runtime")
+                    );
+                    assert_eq!(
+                        out["batch_result"]["native_store_commit"]["load_count"].as_u64(),
+                        Some(1)
+                    );
+                    assert_eq!(
+                        out["batch_result"]["native_store_commit"]["save_count"].as_u64(),
+                        Some(1)
+                    );
+                    assert_eq!(
+                        out["batch_result"]["native_store_commit"]["model"].as_str(),
+                        Some("single_lock_ordered_batch_dirty_commit")
+                    );
+                    let store = load_nov_native_execution_store_v1(path.as_path())
+                        .expect("pending batch store should load");
+                    assert_eq!(store.receipts.len(), 2);
+                    assert!(
+                        store
+                            .module_state
+                            .treasury_reserves
+                            .get("USDT")
+                            .copied()
+                            .unwrap_or_default()
+                            >= 60,
+                        "pending native batch must commit both deposits"
+                    );
                 })
             },
         )

@@ -37,7 +37,8 @@ use crate::tx_ingress::{
     get_nov_native_treasury_clearing_summary_with_store_path_v1,
     get_nov_native_treasury_settlement_summary_with_store_path_v1,
     load_nov_native_execution_store_v1, nov_native_execution_store_path_v1,
-    run_nov_execute_from_params_v1, run_nov_native_call_from_params_with_store_path_v1,
+    run_nov_execute_from_params_v1, run_nov_execute_pending_native_tx_batch_from_params_v1,
+    run_nov_native_call_from_params_with_store_path_v1,
     run_nov_send_raw_transaction_batch_from_params_v1,
 };
 use crate::unified_account_surface::{
@@ -473,6 +474,7 @@ pub fn is_mainline_native_execution_query_method(method: &str) -> bool {
             | "nov_getNativeExecutionStoreBackendStatus"
             | "nov_sendRawTransactionBatch"
             | "nov_executeBatch"
+            | "nov_executePendingNativeTxBatch"
             | "nov_getPrivacyCapabilityStatus"
             | "nov_getPrivacyAuditPolicy"
             | "nov_verifyPrivacyDisclosureReceipt"
@@ -1546,6 +1548,9 @@ fn run_mainline_native_execution_query(method: &str, params: &Value) -> Result<V
         }
         "nov_sendRawTransactionBatch" | "nov_executeBatch" => {
             run_nov_send_raw_transaction_batch_from_params_v1(params)
+        }
+        "nov_executePendingNativeTxBatch" => {
+            run_nov_execute_pending_native_tx_batch_from_params_v1(params)
         }
         "nov_getPrivacyCapabilityStatus" => run_mainline_privacy_capability_status_v1(params),
         "nov_getPrivacyAuditPolicy" => run_mainline_privacy_audit_policy_v1(params),

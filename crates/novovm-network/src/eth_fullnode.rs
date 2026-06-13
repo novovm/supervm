@@ -1746,6 +1746,22 @@ pub fn clear_eth_fullnode_native_worker_runtime_snapshot_for_chain_v1(chain_id: 
         .remove(&chain_id);
 }
 
+#[cfg(test)]
+pub(crate) fn clear_eth_fullnode_test_state_for_chain_v1(chain_id: u64) {
+    eth_peer_sessions()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .remove(&chain_id);
+    eth_fullnode_native_worker_runtime_snapshot_map()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .remove(&chain_id);
+    eth_native_sync_evidence_map()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .remove(&chain_id);
+}
+
 pub fn write_eth_fullnode_native_worker_runtime_snapshot_to_path_v1(
     path: &Path,
     snapshot: &EthFullnodeNativeWorkerRuntimeSnapshotV1,
@@ -4454,6 +4470,8 @@ pub fn select_eth_fullnode_native_sync_targets_v1(
         .filter(|session| eth_peer_has_body_material_history_v1(session))
         .map(|session| session.peer_id)
         .collect::<std::collections::HashSet<_>>();
+    let material_source_peer_ids =
+        eth_native_current_head_available_material_source_peer_ids_v1(chain_id);
     let source_peer_ids = eth_native_current_head_material_source_peer_ids_v1(chain_id);
     let prefer_header_peer = eth_native_forward_header_sync_prefers_header_peer_v1(chain_id);
     let header_peer_ids = snapshots
@@ -4478,6 +4496,10 @@ pub fn select_eth_fullnode_native_sync_targets_v1(
                 score
                     .reasons
                     .push("body_recovery_body_history_peer".to_string());
+            } else if score.eligible && material_source_peer_ids.contains(&score.peer_id) {
+                score
+                    .reasons
+                    .push("body_recovery_material_source_peer".to_string());
             } else if score.eligible && source_peer_ids.contains(&score.peer_id) {
                 score
                     .reasons
@@ -4492,12 +4514,14 @@ pub fn select_eth_fullnode_native_sync_targets_v1(
             let base = eth_peer_selection_sort_key_v1(score);
             let body_rank = if score.eligible && body_peer_ids.contains(&score.peer_id) {
                 0u8
-            } else if score.eligible && source_peer_ids.contains(&score.peer_id) {
+            } else if score.eligible && material_source_peer_ids.contains(&score.peer_id) {
                 1u8
-            } else {
+            } else if score.eligible && source_peer_ids.contains(&score.peer_id) {
                 2u8
+            } else {
+                3u8
             };
-            (base.0, body_rank, base.1, base.2)
+            (body_rank, base.0, base.1, base.2)
         });
     } else if prefer_header_peer && !header_peer_ids.is_empty() {
         for score in &mut ranked {
@@ -4518,7 +4542,7 @@ pub fn select_eth_fullnode_native_sync_targets_v1(
             } else {
                 0u8
             };
-            (base.0, header_rank, base.1, base.2)
+            (header_rank, base.0, base.1, base.2)
         });
     } else if prefer_snap_peer {
         for score in &mut ranked {
@@ -5760,6 +5784,7 @@ mod tests {
         let stale_prefix = NodeId(606);
         let fresh = NodeId(607);
 
+        crate::runtime_status::clear_network_runtime_native_snapshots_for_chain_v1(chain_id);
         observe_network_runtime_eth_peer_timeout_v1(chain_id, stale_prefix.0, "connect_timeout");
         observe_network_runtime_eth_peer_discovered_v1(chain_id, fresh.0);
         {
@@ -6761,6 +6786,7 @@ mod tests {
     #[test]
     fn native_state_phase_with_missing_body_continues_header_pull() {
         let chain_id = 99_160_318_u64;
+        crate::runtime_status::clear_network_runtime_native_snapshots_for_chain_v1(chain_id);
         crate::runtime_status::set_network_runtime_sync_status(
             chain_id,
             NetworkRuntimeSyncStatus {
@@ -6816,6 +6842,7 @@ mod tests {
     #[test]
     fn native_state_phase_without_snap_cursor_keeps_forward_header_pull() {
         let chain_id = 99_160_319_u64;
+        crate::runtime_status::clear_network_runtime_native_snapshots_for_chain_v1(chain_id);
         crate::runtime_status::set_network_runtime_sync_status(
             chain_id,
             NetworkRuntimeSyncStatus {
@@ -6873,6 +6900,7 @@ mod tests {
         let chain_id = 99_160_322_u64;
         let head_hash = [0x68u8; 32];
         let receipts_root = [0x69u8; 32];
+        crate::runtime_status::clear_network_runtime_native_snapshots_for_chain_v1(chain_id);
         let mut budget =
             crate::runtime_status::get_network_runtime_native_budget_hooks_v1(chain_id);
         budget.sync_pull_headers_batch = 64;
@@ -6964,6 +6992,7 @@ mod tests {
     fn native_bodies_phase_keeps_material_window_when_current_head_receipt_missing_v1() {
         let chain_id = 99_160_323_u64;
         let head_hash = [0x78u8; 32];
+        crate::runtime_status::clear_network_runtime_native_snapshots_for_chain_v1(chain_id);
         let mut budget =
             crate::runtime_status::get_network_runtime_native_budget_hooks_v1(chain_id);
         budget.sync_pull_headers_batch = 64;
@@ -7043,6 +7072,7 @@ mod tests {
         let state_root = [0x77u8; 32];
         let mut next_origin = [0u8; 32];
         next_origin[31] = 0x09;
+        crate::runtime_status::clear_network_runtime_native_snapshots_for_chain_v1(chain_id);
         crate::runtime_status::set_network_runtime_sync_status(
             chain_id,
             NetworkRuntimeSyncStatus {
@@ -7111,6 +7141,7 @@ mod tests {
         let state_root = [0x77u8; 32];
         let mut next_origin = [0u8; 32];
         next_origin[31] = 0x09;
+        crate::runtime_status::clear_network_runtime_native_snapshots_for_chain_v1(chain_id);
         crate::runtime_status::set_network_runtime_sync_status(
             chain_id,
             NetworkRuntimeSyncStatus {
@@ -7179,6 +7210,7 @@ mod tests {
     fn native_state_sync_request_does_not_rescan_completed_snap_range() {
         let chain_id = 99_160_320_u64;
         let state_root = [0x77u8; 32];
+        crate::runtime_status::clear_network_runtime_native_snapshots_for_chain_v1(chain_id);
         crate::runtime_status::set_network_runtime_sync_status(
             chain_id,
             NetworkRuntimeSyncStatus {
