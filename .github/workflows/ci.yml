@@ -221,6 +221,18 @@ jobs:
           unset CARGO_TARGET_DIR || true
           cargo run -p novovm-node --bin supervm-mainline-gate
 
+      - name: Native pipeline dual-node lifecycle gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          unset CARGO_TARGET_DIR || true
+          export NOVOVM_NATIVE_PIPELINE_DUAL_GATE_TX_COUNT=8
+          export NOVOVM_NATIVE_PIPELINE_DUAL_GATE_TICK_BUDGET=4
+          export NOVOVM_NATIVE_PIPELINE_DUAL_GATE_INGRESS_MAX_PER_TICK=4
+          export NOVOVM_NATIVE_PIPELINE_DUAL_GATE_UDP_BROADCAST_MAX_PER_TICK=4
+          export NOVOVM_NATIVE_PIPELINE_DUAL_GATE_MIN_RECEIVER_CANONICAL_TPS_X1000=1
+          cargo run -p novovm-node --bin supervm-native-pipeline-dual-node-gate
+
       - name: Upload mainline status artifact
         uses: actions/upload-artifact@v4
         with:
@@ -228,6 +240,13 @@ jobs:
           path: |
             artifacts/mainline-status.json
             artifacts/mainline-delivery-contract.json
+          if-no-files-found: error
+
+      - name: Upload native pipeline artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: supervm-native-pipeline-dual-node-gate
+          path: artifacts/native-pipeline/native-pipeline-dual-node-gate-report.json
           if-no-files-found: error
 
   rust_security:
