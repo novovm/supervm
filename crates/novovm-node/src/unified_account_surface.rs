@@ -138,6 +138,7 @@ pub fn is_mainline_unified_account_query_method(method: &str) -> bool {
             | "ua_getMappedHeaderSourcePolicy"
             | "ua_setMappedHeaderAttestationPolicy"
             | "ua_getMappedHeaderAttestationPolicy"
+            | "ua_getMappedFinalitySourceStatus"
             | "ua_releaseMappedLock"
             | "account_balance"
             | "account_assets"
@@ -748,6 +749,18 @@ fn run_unified_account_surface_rpc(
                 json!({
                     "method": method,
                     "policy": mapped_header_attestation_policy_to_json_v1(&store),
+                    "store_path": store_path.display().to_string(),
+                }),
+                false,
+            ))
+        }
+        "ua_getMappedFinalitySourceStatus" => {
+            let store_path = native_execution_store_path_from_params_or_env_v1(params);
+            let store = load_nov_native_execution_store_v1(store_path.as_path())?;
+            Ok((
+                json!({
+                    "method": method,
+                    "status": mapped_finality_source_status_to_json_v1(&store),
                     "store_path": store_path.display().to_string(),
                 }),
                 false,
@@ -2572,6 +2585,63 @@ fn mapped_header_attestation_policy_to_json_v1(
         "policy_version": store.module_state.mapped_header_attestation_policy_version,
         "updated_unix_ms": store.module_state.mapped_header_attestation_policy_updated_unix_ms,
         "note": "governed ed25519 header attestation quorum",
+    })
+}
+
+fn mapped_finality_source_status_to_json_v1(
+    store: &crate::tx_ingress::NovNativeExecutionStoreV1,
+) -> Value {
+    let source_policy = mapped_header_source_policy_to_json_v1(store);
+    let attestation_policy = mapped_header_attestation_policy_to_json_v1(store);
+    let source_required = store.module_state.mapped_header_source_required;
+    let attestation_required = store.module_state.mapped_header_attestation_required;
+    let active_source_peer_count = source_policy["active_allowed_peer_ids"]
+        .as_array()
+        .map(|items| items.len())
+        .unwrap_or(0);
+    let active_attestation_signer_count = attestation_policy["active_allowed_signers"]
+        .as_array()
+        .map(|items| items.len())
+        .unwrap_or(0);
+    let mut gaps = Vec::new();
+    if !source_required {
+        gaps.push("header_source_policy_not_required");
+    } else if active_source_peer_count < store.module_state.mapped_header_source_min_quorum as usize
+    {
+        gaps.push("active_source_peer_quorum_insufficient");
+    }
+    if !attestation_required {
+        gaps.push("header_attestation_policy_not_required");
+    } else if active_attestation_signer_count
+        < store.module_state.mapped_header_attestation_min_quorum as usize
+    {
+        gaps.push("active_attestation_signer_quorum_insufficient");
+    }
+    let state = if !source_required && !attestation_required {
+        "open_unprotected"
+    } else if gaps.iter().any(|gap| gap.ends_with("_quorum_insufficient")) {
+        "blocked"
+    } else {
+        "governed_minimal"
+    };
+    json!({
+        "state": state,
+        "read_only": true,
+        "scope": "internal_m2_lock_evidence_gating_no_external_release_no_nov_mint",
+        "gaps": gaps,
+        "source_policy": source_policy,
+        "attestation_policy": attestation_policy,
+        "mapped_lock_min_confirmations": store.module_state.mapped_lock_min_confirmations,
+        "auto_heal_policy": {
+            "mapped_asset_auto_heal_enabled": store.module_state.mapped_asset_auto_heal_enabled,
+            "mapped_asset_auto_heal_rollback_enabled": store.module_state.mapped_asset_auto_heal_rollback_enabled,
+        },
+        "non_claims": [
+            "not_complete_external_bridge",
+            "not_external_chain_release",
+            "not_nov_mint",
+            "not_compensation_policy"
+        ],
     })
 }
 
@@ -6345,6 +6415,11 @@ mod tests {
             "ua_getMappedAsset",
             "ua_burnMappedAsset",
             "ua_releaseMappedLock",
+            "ua_setMappedHeaderSourcePolicy",
+            "ua_getMappedHeaderSourcePolicy",
+            "ua_setMappedHeaderAttestationPolicy",
+            "ua_getMappedHeaderAttestationPolicy",
+            "ua_getMappedFinalitySourceStatus",
             "account_balance",
             "account_assets",
         ] {
@@ -7529,6 +7604,23 @@ mod tests {
             params_with_paths_and_native_store(&store, &audit, &native_store, json!({})),
         );
         assert_eq!(get_policy["policy"]["policy_version"].as_u64(), Some(9));
+        let finality_status = run_query(
+            &base,
+            "ua_getMappedFinalitySourceStatus",
+            params_with_paths_and_native_store(&store, &audit, &native_store, json!({})),
+        );
+        assert_eq!(
+            finality_status["status"]["state"].as_str(),
+            Some("governed_minimal")
+        );
+        assert_eq!(
+            finality_status["status"]["source_policy"]["min_source_quorum"].as_u64(),
+            Some(2)
+        );
+        assert_eq!(
+            finality_status["status"]["non_claims"][0].as_str(),
+            Some("not_complete_external_bridge")
+        );
 
         let _ = fs::remove_dir_all(&root);
     }

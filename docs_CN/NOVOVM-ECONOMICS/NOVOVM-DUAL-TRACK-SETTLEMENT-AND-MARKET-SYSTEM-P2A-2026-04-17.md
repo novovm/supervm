@@ -265,7 +265,7 @@ asset_out[A] = nov_amount / P_redeem[A]
 - M2 manual freeze/recovery/rollback v1 已接入 `ua_freezeMappedAsset` / `ua_unfreezeMappedAsset` / `ua_rollbackFrozenMappedAsset`：active live NETH 冻结会扣用户 native 可用余额、保留 Treasury reserve，并把 mapped asset 状态置为 `frozen`；source anchor 恢复 canonical finalized 后才能 unfreeze，恢复用户 native 可用余额；source anchor 仍 unsafe 时可 rollback，扣回内部 Treasury NETH reserve 并把 mapped asset 置为 `rejected`，不返还用户余额、不 mint NOV、不触发外部链释放。
 - M2 auto heal v1 已接入 `ua_autoHealMappedAssets`：默认 dry-run 报告 unsafe anchor；`apply=true` 必须先由 governance/Treasury policy 开启 `mapped_asset_auto_heal_enabled`，否则 fail-closed。开启后可自动冻结 active/burn_pending live NETH，扣用户 native 可用余额、保留 Treasury reserve。对已 frozen 且 source anchor 仍 unsafe 的资产，只有 governance/Treasury policy 额外开启 `mapped_asset_auto_heal_rollback_enabled` 后，才可自动执行内部 rollback，扣回 Treasury NETH reserve 并把 mapped asset 置为 `rejected`。该路径不赔付、不链上出金、不 mint NOV。
 - M2 finality policy v1 已接入 governance/Treasury policy：`mapped_lock_min_confirmations` 可治理设置，live ETH lock proof 优先使用 native store policy，未设置时 fallback 到 env/default。
-- 当前仍不声明完整 external finality source 管理、治理赔付、真实链上出金、跨链自动 mint/redeem、NOV 直接铸造或钱包/DAPP/网站完成；当前 finality source 管理只覆盖 source peer whitelist/quorum、disabled peer slashing reason/fail-closed、source peer rotation 记录、Ed25519 attestation quorum、disabled signer reason/fail-closed、signer rotation 记录和最小 confirmations。
+- 当前仍不声明完整 external finality source 管理、治理赔付、真实链上出金、跨链自动 mint/redeem、NOV 直接铸造或钱包/DAPP/网站完成；当前 finality source 管理只覆盖 source peer whitelist/quorum、disabled peer slashing reason/fail-closed、source peer rotation 记录、Ed25519 attestation quorum、disabled signer reason/fail-closed、signer rotation 记录、最小 confirmations 和 `ua_getMappedFinalitySourceStatus` 只读状态聚合。
 
 ## 10. 本稿替换与冲突规则
 
