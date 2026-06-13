@@ -33703,6 +33703,10 @@ fn build_native_execution_pipeline_report_v1(
                     .and_then(|value| value.as_str())
                     .unwrap_or("deterministic_sharded_dirty_atomic_commit"),
                 "atomicity": "deterministic_post_aoem_commit_boundary",
+                "native_store_backend_status": tick_out
+                    .pointer("/batch_result/batch_result/native_store_backend_status")
+                    .cloned()
+                    .unwrap_or(serde_json::Value::Null),
             },
             "egress": {
                 "receipt_projection": "native_receipt_and_state_projection",
@@ -33735,6 +33739,10 @@ struct NativeExecutionPipelineAggregateV1 {
     nonempty_aoem_batch_ticks: u64,
     nonempty_proof_ticks: u64,
     nonempty_commit_ticks: u64,
+    native_store_backend: String,
+    native_store_commit_model: String,
+    native_store_rocksdb_enabled: bool,
+    native_store_transactional_commit: bool,
     proof_ticks: u64,
     commit_ticks: u64,
     ingress_total_last: u64,
@@ -33770,6 +33778,10 @@ impl NativeExecutionPipelineAggregateV1 {
             nonempty_aoem_batch_ticks: 0,
             nonempty_proof_ticks: 0,
             nonempty_commit_ticks: 0,
+            native_store_backend: String::new(),
+            native_store_commit_model: String::new(),
+            native_store_rocksdb_enabled: false,
+            native_store_transactional_commit: false,
             proof_ticks: 0,
             commit_ticks: 0,
             ingress_total_last: 0,
@@ -33830,6 +33842,7 @@ impl NativeExecutionPipelineAggregateV1 {
         let commit = lifecycle
             .get("commit")
             .ok_or_else(|| anyhow::anyhow!("native execution pipeline report missing commit"))?;
+        let native_store_backend_status = commit.get("native_store_backend_status");
         let ingress = lifecycle
             .get("ingress")
             .ok_or_else(|| anyhow::anyhow!("native execution pipeline report missing ingress"))?;
@@ -33925,6 +33938,28 @@ impl NativeExecutionPipelineAggregateV1 {
                 self.nonempty_commit_ticks = self.nonempty_commit_ticks.saturating_add(1);
             }
         }
+        if let Some(status) = native_store_backend_status {
+            if let Some(backend) = status.get("backend").and_then(|value| value.as_str()) {
+                self.native_store_backend = backend.to_string();
+            }
+            if let Some(model) = status.get("commit_model").and_then(|value| value.as_str()) {
+                self.native_store_commit_model = model.to_string();
+            }
+            if status
+                .get("rocksdb_enabled")
+                .and_then(|value| value.as_bool())
+                .unwrap_or(false)
+            {
+                self.native_store_rocksdb_enabled = true;
+            }
+            if status
+                .get("transactional_commit")
+                .and_then(|value| value.as_bool())
+                .unwrap_or(false)
+            {
+                self.native_store_transactional_commit = true;
+            }
+        }
         self.ingress_total_last = ingress
             .get("total")
             .and_then(|value| value.as_u64())
@@ -34009,6 +34044,10 @@ impl NativeExecutionPipelineAggregateV1 {
             "nonempty_aoem_batch_ticks": self.nonempty_aoem_batch_ticks,
             "nonempty_proof_ticks": self.nonempty_proof_ticks,
             "nonempty_commit_ticks": self.nonempty_commit_ticks,
+            "native_store_backend": self.native_store_backend,
+            "native_store_commit_model": self.native_store_commit_model,
+            "native_store_rocksdb_enabled": self.native_store_rocksdb_enabled,
+            "native_store_transactional_commit": self.native_store_transactional_commit,
             "network_enabled_ticks": self.network_enabled_ticks,
             "network_ok_ticks": self.network_ok_ticks,
             "network_error_ticks": self.network_error_ticks,
@@ -34042,6 +34081,7 @@ struct NativeExecutionPipelineSoakGateV1 {
     require_progress: bool,
     require_full_lifecycle: bool,
     require_product_ingress: bool,
+    require_rocksdb_store: bool,
     min_ticks: u64,
     min_aoem_executed_total: u64,
     min_max_aoem_batch_executed_per_tick: u64,
@@ -34075,6 +34115,9 @@ impl NativeExecutionPipelineSoakGateV1 {
             ),
             require_product_ingress: bool_env(
                 "NOVOVM_NATIVE_EXECUTION_PIPELINE_REQUIRE_PRODUCT_INGRESS",
+            ),
+            require_rocksdb_store: bool_env(
+                "NOVOVM_NATIVE_EXECUTION_PIPELINE_REQUIRE_ROCKSDB_STORE",
             ),
             min_ticks: u64_env_allow_zero("NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_TICKS", 0)?,
             min_aoem_executed_total: u64_env_allow_zero(
@@ -34187,6 +34230,34 @@ impl NativeExecutionPipelineSoakGateV1 {
             && summary_u64(summary, "product_ingress_submitted_total") == 0
         {
             bail!("native execution pipeline product ingress gate failed: no product raw tx ingress observed");
+        }
+        if self.require_rocksdb_store {
+            if !summary
+                .get("native_store_rocksdb_enabled")
+                .and_then(|value| value.as_bool())
+                .unwrap_or(false)
+            {
+                bail!(
+                    "native execution pipeline store gate failed: RocksDB backend is not enabled"
+                );
+            }
+            if !summary
+                .get("native_store_transactional_commit")
+                .and_then(|value| value.as_bool())
+                .unwrap_or(false)
+            {
+                bail!("native execution pipeline store gate failed: transactional commit is not enabled");
+            }
+            let commit_model = summary
+                .get("native_store_commit_model")
+                .and_then(|value| value.as_str())
+                .unwrap_or("-");
+            if !commit_model.contains("dirty_sharded_atomic_batch") {
+                bail!(
+                    "native execution pipeline store gate failed: commit_model={} is not dirty sharded atomic",
+                    commit_model
+                );
+            }
         }
         if self.require_full_lifecycle {
             require_summary_min(summary, "ingress_total_last", 1)?;
@@ -34614,6 +34685,7 @@ mod native_execution_pipeline_tests {
             require_progress: true,
             require_full_lifecycle: true,
             require_product_ingress: true,
+            require_rocksdb_store: false,
             min_ticks: 1,
             min_aoem_executed_total: 1,
             min_max_aoem_batch_executed_per_tick: 1,
@@ -34782,6 +34854,7 @@ mod native_execution_pipeline_tests {
             require_progress: true,
             require_full_lifecycle: true,
             require_product_ingress: true,
+            require_rocksdb_store: false,
             min_ticks: 3,
             min_aoem_executed_total: 5,
             min_max_aoem_batch_executed_per_tick: 2,
@@ -35060,6 +35133,7 @@ mod native_execution_pipeline_tests {
             require_progress: true,
             require_full_lifecycle: true,
             require_product_ingress: false,
+            require_rocksdb_store: false,
             min_ticks: 2,
             min_aoem_executed_total: 4,
             min_max_aoem_batch_executed_per_tick: 2,
@@ -35119,6 +35193,7 @@ mod native_execution_pipeline_tests {
             require_progress: false,
             require_full_lifecycle: false,
             require_product_ingress: false,
+            require_rocksdb_store: false,
             min_ticks: 2,
             min_aoem_executed_total: 64,
             min_max_aoem_batch_executed_per_tick: 32,
@@ -35163,6 +35238,7 @@ mod native_execution_pipeline_tests {
             require_progress: true,
             require_full_lifecycle: true,
             require_product_ingress: false,
+            require_rocksdb_store: false,
             min_ticks: 1,
             min_aoem_executed_total: 1,
             min_max_aoem_batch_executed_per_tick: 0,
@@ -35227,6 +35303,7 @@ mod native_execution_pipeline_tests {
             require_progress: true,
             require_full_lifecycle: false,
             require_product_ingress: false,
+            require_rocksdb_store: false,
             min_ticks: 1,
             min_aoem_executed_total: 1,
             min_max_aoem_batch_executed_per_tick: 0,
@@ -35275,6 +35352,7 @@ mod native_execution_pipeline_tests {
             require_progress: false,
             require_full_lifecycle: false,
             require_product_ingress: false,
+            require_rocksdb_store: false,
             min_ticks: 0,
             min_aoem_executed_total: 0,
             min_max_aoem_batch_executed_per_tick: 0,
@@ -35317,6 +35395,7 @@ mod native_execution_pipeline_tests {
             require_progress: false,
             require_full_lifecycle: false,
             require_product_ingress: false,
+            require_rocksdb_store: false,
             min_ticks: 0,
             min_aoem_executed_total: 0,
             min_max_aoem_batch_executed_per_tick: 0,

@@ -314,6 +314,8 @@ fn main() -> Result<()> {
         "NOVOVM_NATIVE_PIPELINE_DUAL_GATE_MIN_SENDER_BROADCAST_TPS_X1000",
         0,
     )?;
+    let store_backend = string_env_nonempty("NOVOVM_NATIVE_PIPELINE_DUAL_GATE_STORE_BACKEND")
+        .unwrap_or_else(|| "dual".to_string());
     let max_sender_round_tx_count = div_ceil_u64_v1(tx_count, sender_rounds);
     let ingress_ticks = div_ceil_u64_v1(max_sender_round_tx_count, ingress_max_per_tick.max(1));
     let total_ingress_ticks = div_ceil_u64_v1(tx_count, ingress_max_per_tick.max(1));
@@ -411,6 +413,14 @@ fn main() -> Result<()> {
             (
                 "NOVOVM_NATIVE_EXECUTION_TICK_STORE_PATH",
                 store.display().to_string(),
+            ),
+            (
+                "NOVOVM_NATIVE_EXECUTION_STORE_BACKEND",
+                store_backend.clone(),
+            ),
+            (
+                "NOVOVM_NATIVE_EXECUTION_PIPELINE_REQUIRE_ROCKSDB_STORE",
+                "true".to_string(),
             ),
             (
                 "NOVOVM_NATIVE_EXECUTION_PIPELINE_UDP_ENABLED",
@@ -751,6 +761,7 @@ fn main() -> Result<()> {
         "sender_round_process_budget_ms": sender_round_process_budget_ms,
         "sender_ticks": sender_ticks,
         "receiver_ticks": receiver_ticks,
+        "store_backend": store_backend,
         "ingress_max_per_tick": ingress_max_per_tick,
         "total_ingress_ticks": total_ingress_ticks,
         "udp_broadcast_max_per_tick": udp_broadcast_max_per_tick,

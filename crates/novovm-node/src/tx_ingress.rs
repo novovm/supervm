@@ -10644,6 +10644,9 @@ pub fn run_nov_send_raw_transaction_batch_from_params_v1(
         &store,
     )?;
     let aoem_batch_chunk_count = aoem_batch_chunks.len();
+    let native_store_backend_status = get_nov_native_execution_store_backend_status_v1(Some(
+        effective_native_store_path.as_path(),
+    ));
 
     Ok(serde_json::json!({
         "method": "nov_sendRawTransactionBatch",
@@ -10668,6 +10671,7 @@ pub fn run_nov_send_raw_transaction_batch_from_params_v1(
             "ordered_results": true,
             "aoem_precommit_chunk_count": aoem_batch_chunk_count,
         },
+        "native_store_backend_status": native_store_backend_status,
         "results": results,
     }))
 }

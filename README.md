@@ -203,11 +203,13 @@ $env:NOVOVM_NATIVE_EXECUTION_TICK_MAX_TICKS="3"
 $env:NOVOVM_NATIVE_EXECUTION_TICK_HARD_BUDGET="1"
 $env:NOVOVM_NATIVE_EXECUTION_TICK_TARGET_BUDGET="1"
 $env:NOVOVM_NATIVE_EXECUTION_TICK_EFFECTIVE_BUDGET="1"
+$env:NOVOVM_NATIVE_EXECUTION_STORE_BACKEND="dual"
 $env:NOVOVM_NATIVE_EXECUTION_PIPELINE_INGRESS_FIXTURE_TX_COUNT="3"
 $env:NOVOVM_NATIVE_EXECUTION_PIPELINE_INGRESS_MAX_PER_TICK="1"
 $env:NOVOVM_NATIVE_EXECUTION_PIPELINE_REQUIRE_PROGRESS="true"
 $env:NOVOVM_NATIVE_EXECUTION_PIPELINE_REQUIRE_FULL_LIFECYCLE="true"
 $env:NOVOVM_NATIVE_EXECUTION_PIPELINE_REQUIRE_PRODUCT_INGRESS="true"
+$env:NOVOVM_NATIVE_EXECUTION_PIPELINE_REQUIRE_ROCKSDB_STORE="true"
 $env:NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_AOEM_EXECUTED="3"
 $env:NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_MAX_AOEM_BATCH_EXECUTED_PER_TICK="1"
 $env:NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_NONEMPTY_AOEM_BATCH_TICKS="3"
@@ -222,7 +224,7 @@ $env:NOVOVM_NATIVE_EXECUTION_PIPELINE_MAX_QUEUE_PENDING_LAST="0"
 cargo run -p novovm-node --bin novovm-node
 ```
 
-Expected summary evidence: `execution_kernel=AOEM`, `aoem_concurrency_owner=AOEM_runtime`, `host_concurrency_policy=host_drives_lifecycle_only_no_rust_execution_scheduler`, non-zero `product_ingress_submitted_total`/ingress/AOEM/proof/commit/broadcast/canonical counts, `max_aoem_batch_executed_per_tick` at or above the configured gate, `nonempty_aoem_batch_ticks`/`nonempty_proof_ticks`/`nonempty_commit_ticks` at or above the configured gates, and final `queue_pending_last=0`.
+Expected summary evidence: `execution_kernel=AOEM`, `aoem_concurrency_owner=AOEM_runtime`, `host_concurrency_policy=host_drives_lifecycle_only_no_rust_execution_scheduler`, non-zero `product_ingress_submitted_total`/ingress/AOEM/proof/commit/broadcast/canonical counts, `max_aoem_batch_executed_per_tick` at or above the configured gate, `nonempty_aoem_batch_ticks`/`nonempty_proof_ticks`/`nonempty_commit_ticks` at or above the configured gates, `native_store_rocksdb_enabled=true`, `native_store_transactional_commit=true`, `native_store_commit_model` containing `dirty_sharded_atomic_batch`, and final `queue_pending_last=0`.
 
 The fixture source only builds valid NOV native raw transactions. Submission still goes through `ingest_local_nov_raw_tx_payload_v1`, which is the product raw transaction ingress used by `nov_sendRawTransaction`, before the pending runtime is drained by the AOEM tick.
 
@@ -249,6 +251,7 @@ The gate starts two real `novovm-node` child processes: a sender with fixture in
 Useful soak knobs:
 
 - `NOVOVM_NATIVE_PIPELINE_DUAL_GATE_TX_COUNT`
+- `NOVOVM_NATIVE_PIPELINE_DUAL_GATE_STORE_BACKEND`
 - `NOVOVM_NATIVE_PIPELINE_DUAL_GATE_TICK_BUDGET`
 - `NOVOVM_NATIVE_PIPELINE_DUAL_GATE_MIN_RECEIVER_MAX_AOEM_BATCH_PER_TICK`
 - `NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_NONEMPTY_AOEM_BATCH_TICKS`
@@ -279,11 +282,13 @@ $env:NOVOVM_NATIVE_EXECUTION_TICK_HARD_BUDGET="32"
 $env:NOVOVM_NATIVE_EXECUTION_TICK_TARGET_BUDGET="32"
 $env:NOVOVM_NATIVE_EXECUTION_TICK_EFFECTIVE_BUDGET="32"
 $env:NOVOVM_NATIVE_EXECUTION_TICK_INTERVAL_MS="5"
+$env:NOVOVM_NATIVE_EXECUTION_STORE_BACKEND="dual"
 $env:NOVOVM_NATIVE_EXECUTION_PIPELINE_INGRESS_FIXTURE_TX_COUNT="256"
 $env:NOVOVM_NATIVE_EXECUTION_PIPELINE_INGRESS_MAX_PER_TICK="32"
 $env:NOVOVM_NATIVE_EXECUTION_PIPELINE_REQUIRE_PROGRESS="true"
 $env:NOVOVM_NATIVE_EXECUTION_PIPELINE_REQUIRE_FULL_LIFECYCLE="true"
 $env:NOVOVM_NATIVE_EXECUTION_PIPELINE_REQUIRE_PRODUCT_INGRESS="true"
+$env:NOVOVM_NATIVE_EXECUTION_PIPELINE_REQUIRE_ROCKSDB_STORE="true"
 $env:NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_TICKS="16"
 $env:NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_INGRESS_SUBMITTED="256"
 $env:NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_AOEM_EXECUTED="256"
@@ -311,6 +316,7 @@ cargo build -p novovm-node --bins
 $env:NOVOVM_NATIVE_PIPELINE_DUAL_GATE_TX_COUNT="16"
 $env:NOVOVM_NATIVE_PIPELINE_DUAL_GATE_RECEIVER_COUNT="2"
 $env:NOVOVM_NATIVE_PIPELINE_DUAL_GATE_SENDER_ROUNDS="4"
+$env:NOVOVM_NATIVE_PIPELINE_DUAL_GATE_STORE_BACKEND="dual"
 $env:NOVOVM_NATIVE_PIPELINE_DUAL_GATE_TICK_BUDGET="4"
 $env:NOVOVM_NATIVE_PIPELINE_DUAL_GATE_MIN_RECEIVER_MAX_AOEM_BATCH_PER_TICK="4"
 $env:NOVOVM_NATIVE_PIPELINE_DUAL_GATE_INGRESS_MAX_PER_TICK="4"
