@@ -58,6 +58,7 @@ pub enum MappedAssetStatus {
     Registered,
     Active,
     BurnPending,
+    Frozen,
     Released,
     Rejected,
 }
@@ -69,6 +70,7 @@ impl MappedAssetStatus {
             Self::Registered => "registered",
             Self::Active => "active",
             Self::BurnPending => "burn_pending",
+            Self::Frozen => "frozen",
             Self::Released => "released",
             Self::Rejected => "rejected",
         }
@@ -116,6 +118,7 @@ pub struct MappedAssetRecord {
 pub enum MappedAssetOperationKind {
     RegisterLock,
     BurnMapped,
+    FreezeMapped,
     ReleaseSource,
 }
 
@@ -125,6 +128,7 @@ impl MappedAssetOperationKind {
         match self {
             Self::RegisterLock => "register_lock",
             Self::BurnMapped => "burn_mapped",
+            Self::FreezeMapped => "freeze_mapped",
             Self::ReleaseSource => "release_source",
         }
     }

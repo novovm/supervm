@@ -130,6 +130,7 @@ pub fn is_mainline_unified_account_query_method(method: &str) -> bool {
             | "ua_registerMappedLock"
             | "ua_getMappedAsset"
             | "ua_burnMappedAsset"
+            | "ua_freezeMappedAsset"
             | "ua_releaseMappedLock"
             | "account_balance"
             | "account_assets"
@@ -917,6 +918,80 @@ fn run_unified_account_surface_rpc(
                     "phase4_mode": mapped_asset_phase4_mode_v1(record),
                     "settlement_effect": mapped_asset_settlement_effect_for_record_v1(record),
                     "native_settlement": settlement,
+                }),
+                true,
+            ))
+        }
+        "ua_freezeMappedAsset" => {
+            let account_id = parse_account_id(params)?;
+            let mapping_key = resolve_mapped_asset_lookup_key(params, mapped_asset_state)?;
+            let now = param_as_u64(params, "now").unwrap_or_else(now_unix_sec);
+            let freeze_reason = param_as_string_any(params, &["reason", "freeze_reason"])
+                .unwrap_or_else(|| "manual mapped asset freeze".to_string());
+            let record = mapped_asset_state
+                .records_by_mapping_id
+                .get_mut(mapping_key.as_str())
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "ERR_MAPPED_ASSET_NOT_FOUND: mapped asset not found: {}",
+                        mapping_key
+                    )
+                })?;
+            if record.target_account_id != account_id {
+                bail!(
+                    "ERR_MAPPED_ASSET_NOT_OWNED_BY_ACCOUNT: account {} does not own {}",
+                    account_id,
+                    mapping_key
+                );
+            }
+            if !matches!(
+                record.status,
+                MappedAssetStatus::Active | MappedAssetStatus::BurnPending
+            ) {
+                bail!(
+                    "ERR_MAPPED_FREEZE_STATUS_INVALID: expected active or burn_pending, got {}",
+                    record.status.as_str()
+                );
+            }
+            let source_anchor_status = mapped_asset_source_anchor_status_v1(record);
+            let settlement = apply_live_mapped_asset_m2_freeze_v1(
+                record,
+                mapping_key.as_str(),
+                params,
+                now,
+                freeze_reason.as_str(),
+            )?;
+            record.status = MappedAssetStatus::Frozen;
+            record.updated_at = now;
+            record.audit_ref =
+                derive_mapped_asset_audit_ref_v1(record.mapping_id, record.status, now);
+            let op = build_mapped_asset_operation_v1(
+                record,
+                MappedAssetOperationKind::FreezeMapped,
+                now,
+                mapped_asset_state.operations.len() as u64 + 1,
+            );
+            mapped_asset_state.operations.push(op);
+            emit_mapped_asset_operation_observed_v1(
+                "freeze_mapped",
+                true,
+                Some(account_id.as_str()),
+                Some(mapping_key.as_str()),
+                None,
+                Some("qualified"),
+            );
+            Ok((
+                json!({
+                    "method": method,
+                    "frozen": true,
+                    "account_id": account_id,
+                    "uca_id": account_id,
+                    "mapping_id": mapping_key,
+                    "status": record.status.as_str(),
+                    "phase4_mode": mapped_asset_phase4_mode_v1(record),
+                    "settlement_effect": "neth_m2_frozen",
+                    "native_settlement": settlement,
+                    "source_anchor_status": mapped_asset_anchor_status_to_json_v1(&source_anchor_status),
                 }),
                 true,
             ))
@@ -2017,6 +2092,78 @@ fn apply_live_mapped_asset_m2_burn_v1(
         "asset": asset_key,
         "amount": record.amount,
         "account_balance_after": user_balance_after,
+        "store_path": store_path.display().to_string(),
+    }))
+}
+
+fn apply_live_mapped_asset_m2_freeze_v1(
+    record: &MappedAssetRecord,
+    mapping_key: &str,
+    params: &Value,
+    now: u64,
+    reason: &str,
+) -> Result<Value> {
+    if mapped_asset_is_shadow_mode_v1(record) {
+        return Ok(json!({
+            "applied": false,
+            "mode": "shadow",
+            "effect": "none",
+            "reason": "shadow mode freeze only updates mapped asset status",
+        }));
+    }
+    let store_path = native_execution_store_path_from_params_or_env_v1(params);
+    let account_key = normalize_account_view_key_v1(&record.target_account_id);
+    let asset_key = normalize_asset_view_symbol_v1(&record.target_asset_symbol);
+    let mut store = load_nov_native_execution_store_v1(store_path.as_path())?;
+    let user_balance_after = if record.status == MappedAssetStatus::Active {
+        let balances = store
+            .module_state
+            .account_asset_balances
+            .entry(account_key.clone())
+            .or_default();
+        let entry = balances.entry(asset_key.clone()).or_insert(0);
+        if *entry < record.amount {
+            bail!(
+                "ERR_MAPPED_FREEZE_NATIVE_BALANCE_INSUFFICIENT: account={} asset={} requested={} available={}",
+                account_key,
+                asset_key,
+                record.amount,
+                *entry
+            );
+        }
+        *entry = entry.saturating_sub(record.amount);
+        *entry
+    } else {
+        store
+            .module_state
+            .account_asset_balances
+            .get(account_key.as_str())
+            .and_then(|assets| assets.get(asset_key.as_str()).copied())
+            .unwrap_or(0)
+    };
+    append_ua_treasury_journal_v1(
+        &mut store,
+        mapped_asset_live_settlement_journal_v1(
+            "mapped_asset_m2_frozen",
+            record,
+            mapping_key,
+            mapped_asset_hex_id(&record.mapping_id).as_str(),
+            "frozen",
+            reason,
+            now,
+        ),
+    );
+    store.last_updated_unix_ms = u128::from(now).saturating_mul(1000);
+    save_nov_native_execution_store_v1(store_path.as_path(), &store)?;
+    Ok(json!({
+        "applied": true,
+        "mode": "live",
+        "effect": "neth_m2_frozen",
+        "asset": asset_key,
+        "amount": record.amount,
+        "account_balance_after": user_balance_after,
+        "treasury_reserve_unchanged": true,
+        "reason": reason,
         "store_path": store_path.display().to_string(),
     }))
 }
@@ -6170,6 +6317,121 @@ mod tests {
         assert_eq!(
             after_failed_burn["mapped_asset"]["status"].as_str(),
             Some("active")
+        );
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn unified_account_live_mapped_asset_freeze_removes_liquid_neth_without_reserve_release() {
+        let _env_lock = ENV_TEST_LOCK.lock().expect("env test lock poisoned");
+        let _shadow_guard = EnvVarGuard::set(NOVOVM_UA_PHASE4_SHADOW_MODE_ENFORCE_ENV, "false");
+        let (base, store, audit) = temp_paths("mapped-live-freeze");
+        let root = base
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .to_path_buf();
+        let native_store = root.join("native-execution-store.json");
+        ensure_native_store(native_store.as_path());
+        ua_create(&base, &store, &audit, "acct-map-live-freeze", 10);
+
+        let mut register_map =
+            match mapped_lock_live_event_proof_params("acct-map-live-freeze", 0x3f, 100u128) {
+                Value::Object(map) => map,
+                other => panic!("expected mapped lock proof params object, got {other:?}"),
+            };
+        seed_mapped_lock_trusted_block_from_params(&Value::Object(register_map.clone()), true);
+        register_map.insert("phase4_mode".to_string(), Value::String("live".to_string()));
+        register_map.insert("now".to_string(), Value::from(11u64));
+        let register_params = Value::Object(register_map.clone());
+        let register = run_query(
+            &base,
+            "ua_registerMappedLock",
+            params_with_paths_and_native_store(
+                &store,
+                &audit,
+                &native_store,
+                register_params.clone(),
+            ),
+        );
+        assert_eq!(register["accepted"].as_bool(), Some(true));
+
+        reorg_mapped_lock_trusted_block_from_params(&register_params);
+        let freeze = run_query(
+            &base,
+            "ua_freezeMappedAsset",
+            params_with_paths_and_native_store(
+                &store,
+                &audit,
+                &native_store,
+                json!({
+                    "account_id": "acct-map-live-freeze",
+                    "mapping_id": register["mapping_id"],
+                    "reason": "source anchor reorg unsafe",
+                    "now": 12u64,
+                }),
+            ),
+        );
+        assert_eq!(freeze["frozen"].as_bool(), Some(true));
+        assert_eq!(freeze["status"].as_str(), Some("frozen"));
+        assert_eq!(
+            freeze["native_settlement"]["effect"].as_str(),
+            Some("neth_m2_frozen")
+        );
+        assert_eq!(
+            freeze["native_settlement"]["account_balance_after"].as_u64(),
+            Some(0)
+        );
+        assert_eq!(
+            freeze["native_settlement"]["treasury_reserve_unchanged"].as_bool(),
+            Some(true)
+        );
+
+        let frozen_asset = run_query(
+            &base,
+            "ua_getMappedAsset",
+            params_with_paths(
+                &store,
+                &audit,
+                json!({
+                    "account_id": "acct-map-live-freeze",
+                    "mapping_id": register["mapping_id"],
+                }),
+            ),
+        );
+        assert_eq!(
+            frozen_asset["mapped_asset"]["status"].as_str(),
+            Some("frozen")
+        );
+        let balance = run_query(
+            &base,
+            "account_balance",
+            params_with_paths_and_native_store(
+                &store,
+                &audit,
+                &native_store,
+                json!({"account_id": "acct-map-live-freeze", "asset_id": "NETH"}),
+            ),
+        );
+        assert_eq!(balance["balance"].as_u64(), Some(0));
+        assert_eq!(balance["mapped_asset_active_balance"].as_u64(), Some(0));
+        let native_after_freeze = load_nov_native_execution_store_v1(native_store.as_path())
+            .expect("load native store after freeze");
+        assert_eq!(
+            native_after_freeze
+                .module_state
+                .treasury_reserves
+                .get("NETH")
+                .copied(),
+            Some(100)
+        );
+        assert_eq!(
+            native_after_freeze
+                .module_state
+                .treasury_settlement_journal
+                .last()
+                .map(|entry| entry.kind.as_str()),
+            Some("mapped_asset_m2_frozen")
         );
 
         let _ = fs::remove_dir_all(&root);

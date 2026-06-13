@@ -26,6 +26,7 @@ NOVOVM 现在已经具备“统一身份 + EVM 产品入口 + native NOV 经济�
 - `phase4_mode=live` 的内部 MVP 接线已能把 mapped lock 记为 `NETH` M2 credit，写入 native account balance、Treasury reserve 和 settlement journal；`phase4_mode=shadow` 仍只做审计映射，不入账。
 - M2 bridge pause v1 已接入 mainline native execution store / governance policy：live register、burn、release 可分别被 `mapped_lock_bridge_paused`、`mapped_asset_burn_paused`、`mapped_asset_release_paused` fail-closed 阻断，暂停时不推进 mapped asset 生命周期。
 - M2 source anchor reorg gate v1 已接入 mapped asset 生命周期：live register 持久化 source anchor；`ua_getMappedAsset` 暴露 `source_anchor_status`；burn/release 前复查本地 canonical finalized anchor，unsafe 时 fail-closed 阻断。
+- M2 manual freeze v1 已接入 `ua_freezeMappedAsset`：active live NETH 冻结会扣用户 native 可用余额、保留 Treasury reserve，并把 mapped asset 状态置为 `frozen`，不触发外部链上出金。
 - 仍没有真实“治理化 Ethereum header/finality source 管理 -> 自动 reorg heal -> Treasury policy -> NOV emission”的完整链上桥接。NOV mint 在 consensus token runtime 中存在，但不能直接接在 ETH lock proof 上。
 - EVM 合约币可以在 EVM 产品面执行/查询 receipt，但和 NOV native account balance/treasury 是两套状态面，当前没有完整 ERC20 -> native asset 自动映射桥。
 - 并发量不能直接引用 README 的 L0/L1 百万 TPS 来代表钱包/gateway 入口吞吐。gateway 当前是单 HTTP loop，EVM pending consumer 默认 16 笔/250ms；native NOV store 是 JSON load-modify-write，适合单进程顺序产品闭环，不适合多进程高并发账本写入口。
@@ -265,6 +266,7 @@ native NOV 入口：
 - live 模式已校验 lock contract address、`Locked(address,bytes32,uint256,string)` topic0、source chain id、block number、block hash、finalized block number、`source_lock_ref` 派生一致性、receipt MPT proof、receipt envelope 与 proof value 一致性、receipt status 成功、receipt log address/topic0，以及 `receiptsRoot` 与本地 runtime canonical finalized block anchor 一致。
 - live register、burn、release 已有 bridge pause 门禁；暂停由 native store / governance policy 或 env 触发，失败时不推进 active/burn_pending/released 状态。
 - live register 已持久化 source anchor；burn/release 前会复查本地 runtime canonical finalized anchor，reorg out、finality 丢失或 receiptsRoot mismatch 时拒绝推进。
+- `ua_freezeMappedAsset` 可人工冻结 active/burn_pending mapped asset；active live NETH 冻结会从用户 native liquid balance 扣减，但 Treasury reserve 保留用于后续治理恢复/赔付。
 - 仍没有治理化 Ethereum header/finality source 管理、header source 多签/白名单、自动 reorg heal 或链上出金。
 - Phase4 shadow/no-go 环境变量可阻断 live register 路径。
 - `settlement_effect=neth_m2_credit` 只表示内部 NETH/M2 入账，不应直接解释为链上 ETH 已释放。
@@ -285,7 +287,7 @@ native NOV 入口：
 
 未完成接线：
 
-- MVP live 模式已有 receipt MPT inclusion + 本地 canonical finalized block anchor + Ethereum lock event evidence -> NETH/M2 credit 的内部账本接线，并已有 mapped bridge pause 门禁和 source anchor reorg gate；但没有治理化 header/finality source 管理、自动 reorg heal 或链上自动出入金。
+- MVP live 模式已有 receipt MPT inclusion + 本地 canonical finalized block anchor + Ethereum lock event evidence -> NETH/M2 credit 的内部账本接线，并已有 mapped bridge pause 门禁、source anchor reorg gate 和 manual freeze；但没有治理化 header/finality source 管理、自动 reorg heal 或链上自动出入金。
 - 没有发现真实外部 ETH reserve 与 NOV supply、NETH 负债、M2 credit exposure 的完整约束关系。
 
 状态：NOV mint 能力存在于 consensus runtime；ETH 锁仓 live MVP 只能先形成 NETH/M2 native credit，不能声明直接触发 NOV 铸造。
@@ -332,6 +334,7 @@ native NOV 入口：
 - live proof 已固定 lock contract 配置、事件 topic、source_chain_id、block_hash、receipt_index、receipt_log_index、receipt MPT proof、finalized block number、本地 finalized canonical block anchor 和 `source_lock_ref` 派生校验。
 - live bridge pause 已固定 register/burn/release 三个 gate，防止 header/reorg/reserve 异常时继续扩张或释放 NETH M2。
 - live mapped asset record 已持久化 source anchor；`ua_getMappedAsset` 暴露 `source_anchor_status`；burn/release 在 anchor unsafe 时拒绝推进，避免 reorg 后继续释放。
+- `ua_freezeMappedAsset` 已能把异常 mapped asset 置为 `frozen`；active live NETH 冻结会扣减用户 native 可用余额，Treasury reserve 不释放。
 - `TokenRuntime::mint` 没有接到 Treasury policy / emission policy 路径。
 
 建议：
@@ -341,7 +344,7 @@ native NOV 入口：
   - 固定一个 lock contract address 配置已经进入 live proof gate，后续要从可信配置/治理读取。
   - 当前已验 receipt MPT inclusion、`Locked(address indexed owner, bytes32 lockId, uint256 amount, string targetUca)` 的 receipt log address/topic0 和本地 finalized canonical block anchor；下一步补治理化 header source / reorg heal。
   - `receipts_root` 已不再只信任用户自报；finalized block number 仍只作为确认数约束字段，最终锚定以本地 canonical finalized block 为准。
-  - bridge pause 已能阻断 live register/burn/release；source anchor reorg gate 已能阻断 unsafe burn/release；下一步补治理/人工恢复和自动 rollback 操作。
+  - bridge pause 已能阻断 live register/burn/release；source anchor reorg gate 已能阻断 unsafe burn/release；manual freeze 已能冻结异常 NETH；下一步补治理恢复/解冻/赔付和自动 rollback 操作。
   - 只把 ETH 映射为 `NETH`，不要直接铸 NOV。
   - NOV mint / 矿工结算必须通过 Treasury policy，并使用 epoch 固定的协议清算价。
 
