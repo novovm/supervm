@@ -3747,7 +3747,16 @@ fn resolve_fee_quote_rate_ppm_with_source_v1(
     }
     match resolve_protocol_clearing_pay_rate_ppm_v1(store, normalized.as_str(), now_ms) {
         Ok(value) => Ok(value),
-        Err(_) => resolve_fee_rate_ppm_with_source_v1(store, normalized.as_str(), now_ms),
+        Err(err) => {
+            if store
+                .module_state
+                .fee_oracle_rates_ppm
+                .contains_key(&normalized)
+            {
+                return Err(err);
+            }
+            resolve_fee_rate_ppm_with_source_v1(store, normalized.as_str(), now_ms)
+        }
     }
 }
 
@@ -9331,6 +9340,41 @@ mod tests {
     }
 
     #[test]
+    fn fee_quote_rejects_oracle_only_without_protocol_anchor() {
+        let mut store = NovNativeExecutionStoreV1::default();
+        store
+            .module_state
+            .fee_oracle_rates_ppm
+            .insert("NNEW".to_string(), 1_000_000);
+        store.module_state.fee_oracle_updated_unix_ms = 600_000;
+        store.module_state.fee_oracle_source = "runtime_oracle".to_string();
+        let request = NovExecutionRequestV1 {
+            tx_hash: [0x9du8; 32],
+            chain_id: 9002,
+            caller: vec![0x9d; 20],
+            target: NovExecutionRequestTargetV1::NativeModule("treasury".to_string()),
+            method: "deposit_reserve".to_string(),
+            args: Vec::new(),
+            fee_pay_asset: "NNEW".to_string(),
+            fee_max_pay_amount: 10_000,
+            fee_slippage_bps: 0,
+            gas_like_limit: Some(90_000),
+            nonce: 1,
+        };
+
+        let err = quote_fee_policy_from_execution_request_v1(&request, &mut store, 600_000)
+            .expect_err("oracle-only new asset fee quote must fail closed");
+        let err = err.to_string();
+        assert!(err.starts_with("fee.quote.rate_unavailable"));
+        assert!(err.contains("fee.clearing.route_unavailable"));
+        assert!(err.contains("asset=NNEW has no protocol clearing source"));
+        assert!(!store
+            .module_state
+            .protocol_clearing_prices
+            .contains_key("NNEW"));
+    }
+
+    #[test]
     fn fee_clearing_prefers_best_route_by_expected_nov_out() {
         with_test_native_execution_store_path_v1(|path| {
             let mut pre = NovNativeExecutionStoreV1::default();
@@ -9885,15 +9929,13 @@ mod tests {
                 path.as_path(),
                 &request,
             )
-            .expect("dispatch should return route unavailable receipt");
+            .expect("dispatch should return oracle-only quote rejection receipt");
             assert!(!receipt.status);
             assert_eq!(receipt.module, "fee");
-            assert_eq!(receipt.method, "settlement");
-            assert!(receipt
-                .failure_reason
-                .clone()
-                .unwrap_or_default()
-                .starts_with("fee.clearing.route_unavailable"));
+            assert_eq!(receipt.method, "quote");
+            let failure = receipt.failure_reason.clone().unwrap_or_default();
+            assert!(failure.starts_with("fee.quote.rate_unavailable"));
+            assert!(failure.contains("fee.clearing.route_unavailable"));
         });
     }
 
@@ -10705,6 +10747,9 @@ mod tests {
                 .insert("NETH".to_string(), 2_000_000);
             pre.module_state.fee_oracle_updated_unix_ms = now_unix_millis_v1();
             pre.module_state.fee_oracle_source = "runtime_oracle".to_string();
+            pre.module_state
+                .protocol_clearing_nav_rate_ppm
+                .insert("NETH".to_string(), 2_000_000);
             pre.module_state.clearing_enabled = true;
             pre.module_state.clearing_require_healthy_risk_buffer = false;
             pre.module_state
@@ -10781,6 +10826,9 @@ mod tests {
                 .insert("NETH".to_string(), 2_000_000);
             pre.module_state.fee_oracle_updated_unix_ms = now_unix_millis_v1();
             pre.module_state.fee_oracle_source = "runtime_oracle".to_string();
+            pre.module_state
+                .protocol_clearing_nav_rate_ppm
+                .insert("NETH".to_string(), 2_000_000);
             pre.module_state.clearing_enabled = true;
             pre.module_state.clearing_require_healthy_risk_buffer = false;
             pre.module_state
@@ -10836,6 +10884,9 @@ mod tests {
                 .insert("NETH".to_string(), 2_000_000);
             pre.module_state.fee_oracle_updated_unix_ms = now_unix_millis_v1();
             pre.module_state.fee_oracle_source = "runtime_oracle".to_string();
+            pre.module_state
+                .protocol_clearing_nav_rate_ppm
+                .insert("NETH".to_string(), 2_000_000);
             pre.module_state.clearing_enabled = true;
             pre.module_state.clearing_require_healthy_risk_buffer = false;
             pre.module_state
@@ -10908,6 +10959,9 @@ mod tests {
                 .insert("NETH".to_string(), 2_000_000);
             pre.module_state.fee_oracle_updated_unix_ms = now_unix_millis_v1();
             pre.module_state.fee_oracle_source = "runtime_oracle".to_string();
+            pre.module_state
+                .protocol_clearing_nav_rate_ppm
+                .insert("NETH".to_string(), 2_000_000);
             pre.module_state.clearing_enabled = true;
             pre.module_state.clearing_require_healthy_risk_buffer = false;
             pre.module_state
@@ -10980,6 +11034,9 @@ mod tests {
                 .insert("NETH".to_string(), 2_000_000);
             pre.module_state.fee_oracle_updated_unix_ms = now_unix_millis_v1();
             pre.module_state.fee_oracle_source = "runtime_oracle".to_string();
+            pre.module_state
+                .protocol_clearing_nav_rate_ppm
+                .insert("NETH".to_string(), 2_000_000);
             pre.module_state.clearing_enabled = true;
             pre.module_state.clearing_require_healthy_risk_buffer = false;
             pre.module_state
@@ -11054,6 +11111,9 @@ mod tests {
                 .insert("NETH".to_string(), 2_000_000);
             pre.module_state.fee_oracle_updated_unix_ms = now_unix_millis_v1();
             pre.module_state.fee_oracle_source = "runtime_oracle".to_string();
+            pre.module_state
+                .protocol_clearing_nav_rate_ppm
+                .insert("NETH".to_string(), 2_000_000);
             pre.module_state.clearing_enabled = true;
             pre.module_state.clearing_require_healthy_risk_buffer = false;
             pre.module_state
@@ -11539,6 +11599,9 @@ mod tests {
                 .insert("ABC".to_string(), 1_500_000);
             pre.module_state.fee_oracle_updated_unix_ms = now_unix_millis_v1();
             pre.module_state.fee_oracle_source = "runtime_oracle".to_string();
+            pre.module_state
+                .protocol_clearing_nav_rate_ppm
+                .insert("ABC".to_string(), 1_500_000);
             pre.module_state.clearing_enabled = true;
             pre.module_state.clearing_require_healthy_risk_buffer = false;
             pre.module_state.clearing_constrained_strategy = "treasury_direct_only".to_string();
