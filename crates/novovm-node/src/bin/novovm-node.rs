@@ -218,11 +218,78 @@ fn load_native_execution_pipeline_ingress_payloads_from_file_v1(
     Ok(vec![bytes])
 }
 
-fn load_native_execution_pipeline_ingress_payloads_from_env_v1() -> Result<Vec<Vec<u8>>> {
+fn build_native_execution_pipeline_fixture_payloads_v1(
+    chain_id: u64,
+    count: usize,
+) -> Result<Vec<Vec<u8>>> {
+    let account_prefix =
+        string_env_nonempty("NOVOVM_NATIVE_EXECUTION_PIPELINE_INGRESS_FIXTURE_ACCOUNT_PREFIX")
+            .unwrap_or_else(|| "acct-native-pipeline-fixture".to_string());
+    let asset = string_env_nonempty("NOVOVM_NATIVE_EXECUTION_PIPELINE_INGRESS_FIXTURE_ASSET")
+        .unwrap_or_else(|| "USDT".to_string());
+    let amount_start = u64_env_allow_zero(
+        "NOVOVM_NATIVE_EXECUTION_PIPELINE_INGRESS_FIXTURE_AMOUNT_START",
+        1,
+    )?;
+    let nonce_start = u64_env_allow_zero(
+        "NOVOVM_NATIVE_EXECUTION_PIPELINE_INGRESS_FIXTURE_NONCE_START",
+        1,
+    )?;
+    let mut payloads = Vec::with_capacity(count);
+    for idx in 0..count {
+        let nonce = nonce_start.saturating_add(idx as u64);
+        let amount = amount_start.saturating_add(idx as u64);
+        let account_id = format!("{account_prefix}-{nonce}");
+        let native_tx = novovm_protocol::NovNativeTxWireV1 {
+            chain_id,
+            kind: novovm_protocol::NovTxKindV1::Execute(novovm_protocol::NovExecuteTxV1 {
+                caller: vec![(nonce & 0xff) as u8; 20],
+                account_id: Some(account_id.clone()),
+                fee_owner_account_id: Some(account_id.clone()),
+                nonce_owner_account_id: Some(account_id),
+                target: novovm_protocol::NovExecutionTargetV1::NativeModule("treasury".to_string()),
+                method: "deposit_reserve".to_string(),
+                args: serde_json::to_vec(&serde_json::json!({
+                    "asset": asset,
+                    "amount": amount,
+                }))
+                .context("encode native execution pipeline fixture args failed")?,
+                execution_mode: novovm_protocol::NovExecutionModeV1::Batch,
+                execution_policy: novovm_protocol::NovExecutionPolicyV1::Standard,
+                privacy_mode: novovm_protocol::NovPrivacyModeV1::Public,
+                verification_mode: novovm_protocol::NovVerificationModeV1::Standard,
+                fee_policy: novovm_protocol::NovFeePolicyV1 {
+                    pay_asset: "NOV".to_string(),
+                    max_pay_amount: 50,
+                    slippage_bps: 100,
+                },
+                gas_like_limit: Some(90_000),
+                nonce,
+            }),
+            signature: [(nonce & 0xff) as u8; 32],
+        };
+        payloads.push(
+            novovm_protocol::encode_nov_native_tx_wire_v1(&native_tx).map_err(|err| {
+                anyhow::anyhow!("encode native execution pipeline fixture tx failed: {err}")
+            })?,
+        );
+    }
+    Ok(payloads)
+}
+
+fn load_native_execution_pipeline_ingress_payloads_from_env_v1(
+    chain_id: u64,
+) -> Result<Vec<Vec<u8>>> {
     let inline_raw = string_env_nonempty("NOVOVM_NATIVE_EXECUTION_PIPELINE_INGRESS_RAW_TX");
     let file_raw = string_env_nonempty("NOVOVM_NATIVE_EXECUTION_PIPELINE_INGRESS_RAW_TX_FILE");
-    if inline_raw.is_some() && file_raw.is_some() {
-        bail!("set only one of NOVOVM_NATIVE_EXECUTION_PIPELINE_INGRESS_RAW_TX or NOVOVM_NATIVE_EXECUTION_PIPELINE_INGRESS_RAW_TX_FILE");
+    let fixture_count = usize_env_allow_zero(
+        "NOVOVM_NATIVE_EXECUTION_PIPELINE_INGRESS_FIXTURE_TX_COUNT",
+        0,
+    )?;
+    let source_count =
+        inline_raw.is_some() as u8 + file_raw.is_some() as u8 + (fixture_count > 0) as u8;
+    if source_count > 1 {
+        bail!("set only one native pipeline ingress source: NOVOVM_NATIVE_EXECUTION_PIPELINE_INGRESS_RAW_TX, NOVOVM_NATIVE_EXECUTION_PIPELINE_INGRESS_RAW_TX_FILE, or NOVOVM_NATIVE_EXECUTION_PIPELINE_INGRESS_FIXTURE_TX_COUNT");
     }
     if let Some(raw) = inline_raw {
         return Ok(vec![decode_hex_payload_v1(
@@ -233,6 +300,9 @@ fn load_native_execution_pipeline_ingress_payloads_from_env_v1() -> Result<Vec<V
     if let Some(path_raw) = file_raw {
         let path = PathBuf::from(path_raw);
         return load_native_execution_pipeline_ingress_payloads_from_file_v1(&path);
+    }
+    if fixture_count > 0 {
+        return build_native_execution_pipeline_fixture_payloads_v1(chain_id, fixture_count);
     }
     Ok(Vec::new())
 }
@@ -33010,7 +33080,7 @@ struct NativeExecutionPipelineIngressDriveV1 {
 
 impl NativeExecutionPipelineIngressDriveV1 {
     fn from_env(chain_id: u64) -> Result<Option<Self>> {
-        let payloads = load_native_execution_pipeline_ingress_payloads_from_env_v1()?;
+        let payloads = load_native_execution_pipeline_ingress_payloads_from_env_v1(chain_id)?;
         if payloads.is_empty() {
             return Ok(None);
         }
@@ -33897,6 +33967,43 @@ fn require_summary_min(summary: &serde_json::Value, field: &str, min: u64) -> Re
 #[cfg(test)]
 mod native_execution_pipeline_tests {
     use super::*;
+
+    #[test]
+    fn native_execution_pipeline_fixture_ingress_builds_standard_native_payloads() {
+        let chain_id = 9_998_890u64;
+        let payloads = build_native_execution_pipeline_fixture_payloads_v1(chain_id, 2)
+            .expect("fixture payloads should encode");
+        assert_eq!(payloads.len(), 2);
+
+        let first = novovm_protocol::decode_nov_native_tx_wire_v1(&payloads[0])
+            .expect("first fixture payload should decode");
+        assert_eq!(first.chain_id, chain_id);
+        match first.kind {
+            novovm_protocol::NovTxKindV1::Execute(tx) => {
+                assert_eq!(
+                    tx.account_id.as_deref(),
+                    Some("acct-native-pipeline-fixture-1")
+                );
+                assert_eq!(tx.method.as_str(), "deposit_reserve");
+                assert_eq!(tx.nonce, 1);
+            }
+            _ => panic!("fixture payload must be a native execute tx"),
+        }
+
+        let second = novovm_protocol::decode_nov_native_tx_wire_v1(&payloads[1])
+            .expect("second fixture payload should decode");
+        assert_eq!(second.chain_id, chain_id);
+        match second.kind {
+            novovm_protocol::NovTxKindV1::Execute(tx) => {
+                assert_eq!(
+                    tx.account_id.as_deref(),
+                    Some("acct-native-pipeline-fixture-2")
+                );
+                assert_eq!(tx.nonce, 2);
+            }
+            _ => panic!("fixture payload must be a native execute tx"),
+        }
+    }
 
     #[test]
     fn native_execution_pipeline_report_keeps_aoem_as_concurrency_owner() {

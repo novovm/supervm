@@ -190,6 +190,35 @@ Operations SOP (CN):
 - `docs_CN/NOVOVM-NETWORK/NOVOVM-EVM-NIGHTLY-SOAK-SOP-2026-04-17.md`
 - `docs_CN/CURRENT-AUTHORITATIVE-ENTRYPOINT-2026-04-17.md`
 
+## Native execution pipeline lifecycle gate
+
+NOVOVM native execution has a direct node-mode lifecycle gate for high-frequency pipeline validation. The host drives lifecycle only; AOEM remains the execution/concurrency owner.
+
+Minimal fixture-driven gate:
+
+```powershell
+$env:NOVOVM_NODE_MODE="native_execution_pipeline"
+$env:NOVOVM_NATIVE_EXECUTION_TICK_CHAIN_ID="9998890"
+$env:NOVOVM_NATIVE_EXECUTION_TICK_MAX_TICKS="3"
+$env:NOVOVM_NATIVE_EXECUTION_TICK_HARD_BUDGET="1"
+$env:NOVOVM_NATIVE_EXECUTION_TICK_TARGET_BUDGET="1"
+$env:NOVOVM_NATIVE_EXECUTION_TICK_EFFECTIVE_BUDGET="1"
+$env:NOVOVM_NATIVE_EXECUTION_PIPELINE_INGRESS_FIXTURE_TX_COUNT="3"
+$env:NOVOVM_NATIVE_EXECUTION_PIPELINE_INGRESS_MAX_PER_TICK="1"
+$env:NOVOVM_NATIVE_EXECUTION_PIPELINE_REQUIRE_PROGRESS="true"
+$env:NOVOVM_NATIVE_EXECUTION_PIPELINE_REQUIRE_FULL_LIFECYCLE="true"
+$env:NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_AOEM_EXECUTED="3"
+$env:NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_PROOF_TICKS="3"
+$env:NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_COMMIT_TICKS="3"
+$env:NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_BROADCAST_TX="3"
+$env:NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_BROADCAST_DISPATCH="3"
+$env:NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_INCLUDED_CANONICAL_TOTAL="3"
+$env:NOVOVM_NATIVE_EXECUTION_PIPELINE_MAX_QUEUE_PENDING_LAST="0"
+cargo run -p novovm-node --bin novovm-node
+```
+
+Expected summary evidence: `execution_kernel=AOEM`, `aoem_concurrency_owner=AOEM_runtime`, `host_concurrency_policy=host_drives_lifecycle_only_no_rust_execution_scheduler`, non-zero ingress/AOEM/proof/commit/broadcast/canonical counts, and final `queue_pending_last=0`.
+
 EVM protocol-observable equivalence scope (CN):
 
 - `docs_CN/Adapters/EVM/NOVOVM-EVM-PROTOCOL-OBSERVABLE-EQUIVALENCE-V1-2026-06-07.md`
