@@ -553,6 +553,21 @@ fn run_unified_account_surface_rpc(
             let allowed_peer_ids =
                 param_as_u64_list_any(params, &["allowed_peer_ids", "source_peer_ids"])
                     .unwrap_or_default();
+            let disabled_peer_ids = param_as_u64_list_any(
+                params,
+                &[
+                    "disabled_peer_ids",
+                    "disabled_source_peer_ids",
+                    "slashed_peer_ids",
+                    "slashed_source_peer_ids",
+                ],
+            )
+            .unwrap_or_default();
+            let mut disabled_peer_ids = disabled_peer_ids;
+            disabled_peer_ids.sort_unstable();
+            disabled_peer_ids.dedup();
+            let disabled_peer_reasons =
+                parse_mapped_header_source_disabled_reasons_v1(params, &disabled_peer_ids)?;
             if required && allowed_peer_ids.is_empty() {
                 bail!(
                     "ERR_MAPPED_HEADER_SOURCE_POLICY_INVALID: required policy needs at least one allowed source peer"
@@ -562,10 +577,14 @@ fn run_unified_account_surface_rpc(
                 .or_else(|| param_as_u64(params, "source_quorum"))
                 .unwrap_or(1)
                 .clamp(1, u64::from(u32::MAX)) as u32;
-            if required && allowed_peer_ids.len() < min_quorum as usize {
+            let active_allowed_peer_count = allowed_peer_ids
+                .iter()
+                .filter(|peer_id| !disabled_peer_ids.contains(peer_id))
+                .count();
+            if required && active_allowed_peer_count < min_quorum as usize {
                 bail!(
-                    "ERR_MAPPED_HEADER_SOURCE_POLICY_INVALID: allowed source peer count {} is below min_source_quorum {}",
-                    allowed_peer_ids.len(),
+                    "ERR_MAPPED_HEADER_SOURCE_POLICY_INVALID: active allowed source peer count {} is below min_source_quorum {}",
+                    active_allowed_peer_count,
                     min_quorum
                 );
             }
@@ -579,6 +598,10 @@ fn run_unified_account_surface_rpc(
             let mut store = load_nov_native_execution_store_v1(store_path.as_path())?;
             store.module_state.mapped_header_source_required = required;
             store.module_state.mapped_header_source_allowed_peer_ids = allowed_peer_ids;
+            store.module_state.mapped_header_source_disabled_peer_ids = disabled_peer_ids;
+            store
+                .module_state
+                .mapped_header_source_disabled_peer_reasons = disabled_peer_reasons;
             store.module_state.mapped_header_source_min_quorum = min_quorum;
             store.module_state.mapped_header_source_policy_source = source;
             store.module_state.mapped_header_source_policy_version = version;
@@ -2284,14 +2307,83 @@ fn require_mapped_bridge_gate_open_v1(params: &Value, gate: MappedBridgeGateV1) 
 fn mapped_header_source_policy_to_json_v1(
     store: &crate::tx_ingress::NovNativeExecutionStoreV1,
 ) -> Value {
+    let active_allowed_peer_ids = store
+        .module_state
+        .mapped_header_source_allowed_peer_ids
+        .iter()
+        .copied()
+        .filter(|peer_id| {
+            !store
+                .module_state
+                .mapped_header_source_disabled_peer_ids
+                .contains(peer_id)
+        })
+        .collect::<Vec<_>>();
     json!({
         "required": store.module_state.mapped_header_source_required,
         "allowed_peer_ids": store.module_state.mapped_header_source_allowed_peer_ids,
+        "disabled_peer_ids": store.module_state.mapped_header_source_disabled_peer_ids,
+        "disabled_peer_reasons": store.module_state.mapped_header_source_disabled_peer_reasons,
+        "active_allowed_peer_ids": active_allowed_peer_ids,
         "min_source_quorum": store.module_state.mapped_header_source_min_quorum,
         "policy_source": store.module_state.mapped_header_source_policy_source,
         "policy_version": store.module_state.mapped_header_source_policy_version,
         "updated_unix_ms": store.module_state.mapped_header_source_policy_updated_unix_ms,
     })
+}
+
+fn parse_mapped_header_source_disabled_reasons_v1(
+    params: &Value,
+    disabled_peer_ids: &[u64],
+) -> Result<BTreeMap<u64, String>> {
+    let default_reason = param_as_string_any(params, &["disable_reason", "slashing_reason"])
+        .unwrap_or_else(|| "governance_disabled".to_string());
+    let mut out = BTreeMap::new();
+    if let Some(value) = param_value_any(
+        params,
+        &[
+            "disabled_peer_reasons",
+            "disabled_source_peer_reasons",
+            "slashing_reasons",
+        ],
+    ) {
+        let Value::Object(map) = value else {
+            bail!("ERR_MAPPED_HEADER_SOURCE_POLICY_INVALID: disabled_peer_reasons must be object");
+        };
+        for (raw_peer_id, value) in map {
+            let peer_id = raw_peer_id.parse::<u64>().map_err(|_| {
+                anyhow::anyhow!(
+                    "ERR_MAPPED_HEADER_SOURCE_POLICY_INVALID: disabled_peer_reasons key must be u64 peer id: {}",
+                    raw_peer_id
+                )
+            })?;
+            if !disabled_peer_ids.contains(&peer_id) {
+                bail!(
+                    "ERR_MAPPED_HEADER_SOURCE_POLICY_INVALID: disabled_peer_reasons contains non-disabled source peer {}",
+                    peer_id
+                );
+            }
+            let Some(raw_reason) = value.as_str() else {
+                bail!(
+                    "ERR_MAPPED_HEADER_SOURCE_POLICY_INVALID: disabled_peer_reasons[{}] must be string",
+                    peer_id
+                );
+            };
+            let reason = raw_reason.trim();
+            if reason.is_empty() {
+                bail!(
+                    "ERR_MAPPED_HEADER_SOURCE_POLICY_INVALID: disabled_peer_reasons[{}] must not be empty",
+                    peer_id
+                );
+            }
+            out.insert(peer_id, reason.to_string());
+        }
+    }
+    for peer_id in disabled_peer_ids {
+        out.entry(*peer_id)
+            .or_insert_with(|| default_reason.clone());
+    }
+    Ok(out)
 }
 
 fn require_mapped_header_source_policy_v1(
@@ -2329,6 +2421,25 @@ fn require_mapped_header_source_policy_v1(
             block_number
         );
     }
+    if store
+        .module_state
+        .mapped_header_source_disabled_peer_ids
+        .contains(&source_peer_id)
+    {
+        let reason = store
+            .module_state
+            .mapped_header_source_disabled_peer_reasons
+            .get(&source_peer_id)
+            .cloned()
+            .unwrap_or_else(|| "governance_disabled".to_string());
+        bail!(
+            "ERR_MAPPED_HEADER_SOURCE_DISABLED: source_peer_id={} is disabled for chain_id={} block_number={} reason={}",
+            source_peer_id,
+            chain_id,
+            block_number,
+            reason
+        );
+    }
     let mut observed_source_peer_ids =
         novovm_network::snapshot_network_runtime_native_header_source_peers_v1(
             chain_id, block_hash,
@@ -2346,6 +2457,10 @@ fn require_mapped_header_source_policy_v1(
                 .module_state
                 .mapped_header_source_allowed_peer_ids
                 .contains(peer_id)
+                && !store
+                    .module_state
+                    .mapped_header_source_disabled_peer_ids
+                    .contains(peer_id)
         })
         .collect::<Vec<_>>();
     let observed_source_quorum = observed_allowed_source_peer_ids.len() as u32;
@@ -7230,6 +7345,55 @@ mod tests {
                 other => panic!("expected mapped lock proof params object, got {other:?}"),
             };
         seed_mapped_lock_trusted_block_from_params(&Value::Object(accepted_map.clone()), true);
+        let disabled_policy = run_query(
+            &base,
+            "ua_setMappedHeaderSourcePolicy",
+            params_with_paths_and_native_store(
+                &store,
+                &audit,
+                &native_store,
+                json!({
+                    "required": true,
+                    "allowed_peer_ids": [1u64, 2u64],
+                    "disabled_peer_ids": [1u64],
+                    "disabled_peer_reasons": {
+                        "1": "reorg_source_slashing"
+                    },
+                    "min_source_quorum": 1u64,
+                    "policy_source": "governance_test",
+                    "policy_version": 8u64,
+                    "now": 13u64,
+                }),
+            ),
+        );
+        assert_eq!(
+            disabled_policy["policy"]["disabled_peer_ids"][0].as_u64(),
+            Some(1)
+        );
+        assert_eq!(
+            disabled_policy["policy"]["disabled_peer_reasons"]["1"].as_str(),
+            Some("reorg_source_slashing")
+        );
+        assert_eq!(
+            disabled_policy["policy"]["active_allowed_peer_ids"][0].as_u64(),
+            Some(2)
+        );
+        accepted_map.insert("phase4_mode".to_string(), Value::String("live".to_string()));
+        let disabled_err = run_query_err(
+            &base,
+            "ua_registerMappedLock",
+            params_with_paths_and_native_store(
+                &store,
+                &audit,
+                &native_store,
+                Value::Object(accepted_map.clone()),
+            ),
+        );
+        assert!(
+            disabled_err.contains("ERR_MAPPED_HEADER_SOURCE_DISABLED"),
+            "disabled source peer should fail closed, got: {disabled_err}"
+        );
+
         let updated_policy = run_query(
             &base,
             "ua_setMappedHeaderSourcePolicy",
@@ -7242,8 +7406,8 @@ mod tests {
                     "allowed_peer_ids": [1u64, 2u64],
                     "min_source_quorum": 2u64,
                     "policy_source": "governance_test",
-                    "policy_version": 8u64,
-                    "now": 13u64,
+                    "policy_version": 9u64,
+                    "now": 14u64,
                 }),
             ),
         );
@@ -7255,7 +7419,6 @@ mod tests {
             updated_policy["policy"]["min_source_quorum"].as_u64(),
             Some(2)
         );
-        accepted_map.insert("phase4_mode".to_string(), Value::String("live".to_string()));
         let quorum_err = run_query_err(
             &base,
             "ua_registerMappedLock",
@@ -7296,7 +7459,7 @@ mod tests {
             "ua_getMappedHeaderSourcePolicy",
             params_with_paths_and_native_store(&store, &audit, &native_store, json!({})),
         );
-        assert_eq!(get_policy["policy"]["policy_version"].as_u64(), Some(8));
+        assert_eq!(get_policy["policy"]["policy_version"].as_u64(), Some(9));
 
         let _ = fs::remove_dir_all(&root);
     }

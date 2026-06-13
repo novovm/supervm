@@ -570,6 +570,10 @@ pub struct NovNativeExecutionModuleStateV1 {
     #[serde(default)]
     pub mapped_header_source_allowed_peer_ids: Vec<u64>,
     #[serde(default)]
+    pub mapped_header_source_disabled_peer_ids: Vec<u64>,
+    #[serde(default)]
+    pub mapped_header_source_disabled_peer_reasons: BTreeMap<u64, String>,
+    #[serde(default)]
     pub mapped_header_source_min_quorum: u32,
     #[serde(default)]
     pub mapped_header_source_policy_source: String,
@@ -707,6 +711,8 @@ impl Default for NovNativeExecutionModuleStateV1 {
             mapped_asset_auto_heal_rollback_enabled: false,
             mapped_header_source_required: false,
             mapped_header_source_allowed_peer_ids: Vec::new(),
+            mapped_header_source_disabled_peer_ids: Vec::new(),
+            mapped_header_source_disabled_peer_reasons: BTreeMap::new(),
             mapped_header_source_min_quorum: 1,
             mapped_header_source_policy_source: "config_path".to_string(),
             mapped_header_source_policy_version: 1,
