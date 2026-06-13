@@ -212,6 +212,7 @@ $env:NOVOVM_NATIVE_EXECUTION_PIPELINE_REQUIRE_PRODUCT_INGRESS="true"
 $env:NOVOVM_NATIVE_EXECUTION_PIPELINE_REQUIRE_ROCKSDB_STORE="true"
 $env:NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_AOEM_EXECUTED="3"
 $env:NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_MAX_AOEM_BATCH_EXECUTED_PER_TICK="1"
+$env:NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_MAX_BROADCAST_TX_PER_TICK="1"
 $env:NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_NONEMPTY_AOEM_BATCH_TICKS="3"
 $env:NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_NONEMPTY_PROOF_TICKS="3"
 $env:NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_NONEMPTY_COMMIT_TICKS="3"
@@ -224,7 +225,7 @@ $env:NOVOVM_NATIVE_EXECUTION_PIPELINE_MAX_QUEUE_PENDING_LAST="0"
 cargo run -p novovm-node --bin novovm-node
 ```
 
-Expected summary evidence: `execution_kernel=AOEM`, `aoem_concurrency_owner=AOEM_runtime`, `host_concurrency_policy=host_drives_lifecycle_only_no_rust_execution_scheduler`, non-zero `product_ingress_submitted_total`/ingress/AOEM/proof/commit/broadcast/canonical counts, `max_aoem_batch_executed_per_tick` at or above the configured gate, `nonempty_aoem_batch_ticks`/`nonempty_proof_ticks`/`nonempty_commit_ticks` at or above the configured gates, `native_store_rocksdb_enabled=true`, `native_store_transactional_commit=true`, `native_store_commit_model` containing `dirty_sharded_atomic_batch`, and final `queue_pending_last=0`.
+Expected summary evidence: `execution_kernel=AOEM`, `aoem_concurrency_owner=AOEM_runtime`, `host_concurrency_policy=host_drives_lifecycle_only_no_rust_execution_scheduler`, non-zero `product_ingress_submitted_total`/ingress/AOEM/proof/commit/broadcast/canonical counts, `max_aoem_batch_executed_per_tick` and `max_broadcast_tx_per_tick` at or above the configured gates, `nonempty_aoem_batch_ticks`/`nonempty_proof_ticks`/`nonempty_commit_ticks` at or above the configured gates, `native_store_rocksdb_enabled=true`, `native_store_transactional_commit=true`, `native_store_commit_model` containing `dirty_sharded_atomic_batch`, and final `queue_pending_last=0`.
 
 The fixture source only builds valid NOV native raw transactions. Submission still goes through `ingest_local_nov_raw_tx_payload_v1`, which is the product raw transaction ingress used by `nov_sendRawTransaction`, before the pending runtime is drained by the AOEM tick.
 
@@ -254,6 +255,7 @@ Useful soak knobs:
 - `NOVOVM_NATIVE_PIPELINE_DUAL_GATE_STORE_BACKEND`
 - `NOVOVM_NATIVE_PIPELINE_DUAL_GATE_TICK_BUDGET`
 - `NOVOVM_NATIVE_PIPELINE_DUAL_GATE_MIN_RECEIVER_MAX_AOEM_BATCH_PER_TICK`
+- `NOVOVM_NATIVE_PIPELINE_DUAL_GATE_MIN_SENDER_MAX_BROADCAST_TX_PER_TICK`
 - `NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_NONEMPTY_AOEM_BATCH_TICKS`
 - `NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_NONEMPTY_PROOF_TICKS`
 - `NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_NONEMPTY_COMMIT_TICKS`
@@ -293,6 +295,7 @@ $env:NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_TICKS="16"
 $env:NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_INGRESS_SUBMITTED="256"
 $env:NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_AOEM_EXECUTED="256"
 $env:NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_MAX_AOEM_BATCH_EXECUTED_PER_TICK="32"
+$env:NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_MAX_BROADCAST_TX_PER_TICK="32"
 $env:NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_NONEMPTY_AOEM_BATCH_TICKS="8"
 $env:NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_NONEMPTY_PROOF_TICKS="8"
 $env:NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_NONEMPTY_COMMIT_TICKS="8"
@@ -319,6 +322,7 @@ $env:NOVOVM_NATIVE_PIPELINE_DUAL_GATE_SENDER_ROUNDS="4"
 $env:NOVOVM_NATIVE_PIPELINE_DUAL_GATE_STORE_BACKEND="dual"
 $env:NOVOVM_NATIVE_PIPELINE_DUAL_GATE_TICK_BUDGET="4"
 $env:NOVOVM_NATIVE_PIPELINE_DUAL_GATE_MIN_RECEIVER_MAX_AOEM_BATCH_PER_TICK="4"
+$env:NOVOVM_NATIVE_PIPELINE_DUAL_GATE_MIN_SENDER_MAX_BROADCAST_TX_PER_TICK="8"
 $env:NOVOVM_NATIVE_PIPELINE_DUAL_GATE_INGRESS_MAX_PER_TICK="4"
 $env:NOVOVM_NATIVE_PIPELINE_DUAL_GATE_UDP_BROADCAST_MAX_PER_TICK="4"
 $env:NOVOVM_NATIVE_PIPELINE_DUAL_GATE_TICK_INTERVAL_MS="25"
@@ -327,7 +331,7 @@ $env:NOVOVM_NATIVE_PIPELINE_DUAL_GATE_REPORT_PATH="artifacts/native-pipeline/nat
 cargo run -p novovm-node --bin supervm-native-pipeline-dual-node-gate
 ```
 
-This paced fanout gate starts one long-lived receiver set and runs the sender in multiple nonce-separated rounds. The gate disables the local broadcast drive inside the fixture so the only cross-node output path is UDP, then requires every receiver to reach `aoem_executed_total`, `max_aoem_batch_executed_per_tick`, `included_canonical_total`, `queue_pending_last=0`, `queue_dropped_last=0`, and `queue_rejected_last=0`.
+This paced fanout gate starts one long-lived receiver set and runs the sender in multiple nonce-separated rounds. The gate disables the local broadcast drive inside the fixture so the only cross-node output path is UDP, then requires the sender to reach `max_broadcast_tx_per_tick` and every receiver to reach `aoem_executed_total`, `max_aoem_batch_executed_per_tick`, `included_canonical_total`, `queue_pending_last=0`, `queue_dropped_last=0`, and `queue_rejected_last=0`.
 
 EVM protocol-observable equivalence scope (CN):
 

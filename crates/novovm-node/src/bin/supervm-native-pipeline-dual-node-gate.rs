@@ -190,6 +190,11 @@ fn sender_round_aggregate_v1(summaries: &[Value]) -> Value {
         .map(|summary| summary_u64(summary, "max_aoem_batch_executed_per_tick"))
         .max()
         .unwrap_or_default();
+    let max_broadcast_tx_per_tick = summaries
+        .iter()
+        .map(|summary| summary_u64(summary, "max_broadcast_tx_per_tick"))
+        .max()
+        .unwrap_or_default();
     let nonempty_aoem_batch_ticks = summaries
         .iter()
         .map(|summary| summary_u64(summary, "nonempty_aoem_batch_ticks"))
@@ -260,6 +265,7 @@ fn sender_round_aggregate_v1(summaries: &[Value]) -> Value {
         "aoem_executed_total": aoem_executed_total,
         "aoem_deferred_total": aoem_deferred_total,
         "max_aoem_batch_executed_per_tick": max_aoem_batch_executed_per_tick,
+        "max_broadcast_tx_per_tick": max_broadcast_tx_per_tick,
         "nonempty_aoem_batch_ticks": nonempty_aoem_batch_ticks,
         "nonempty_proof_ticks": nonempty_proof_ticks,
         "nonempty_commit_ticks": nonempty_commit_ticks,
@@ -294,6 +300,9 @@ fn main() -> Result<()> {
     let udp_recv_budget = u64_env("NOVOVM_NATIVE_PIPELINE_DUAL_GATE_UDP_RECV_BUDGET", 16)?;
     let startup_wait_ms = u64_env("NOVOVM_NATIVE_PIPELINE_DUAL_GATE_STARTUP_WAIT_MS", 300)?;
     let sender_rounds = u64_env("NOVOVM_NATIVE_PIPELINE_DUAL_GATE_SENDER_ROUNDS", 1)?.max(1);
+    let receiver_count = u64_env("NOVOVM_NATIVE_PIPELINE_DUAL_GATE_RECEIVER_COUNT", 1)?
+        .max(1)
+        .min(8);
     let sender_round_interval_ms = u64_env(
         "NOVOVM_NATIVE_PIPELINE_DUAL_GATE_SENDER_ROUND_INTERVAL_MS",
         tick_interval_ms,
@@ -309,6 +318,13 @@ fn main() -> Result<()> {
     let min_receiver_max_aoem_batch_per_tick = u64_env(
         "NOVOVM_NATIVE_PIPELINE_DUAL_GATE_MIN_RECEIVER_MAX_AOEM_BATCH_PER_TICK",
         tx_count.min(tick_budget).max(1),
+    )?;
+    let min_sender_max_broadcast_tx_per_tick = u64_env(
+        "NOVOVM_NATIVE_PIPELINE_DUAL_GATE_MIN_SENDER_MAX_BROADCAST_TX_PER_TICK",
+        tx_count
+            .min(tick_budget)
+            .saturating_mul(receiver_count)
+            .max(1),
     )?;
     let min_sender_broadcast_tps_x1000 = u64_env(
         "NOVOVM_NATIVE_PIPELINE_DUAL_GATE_MIN_SENDER_BROADCAST_TPS_X1000",
@@ -345,9 +361,6 @@ fn main() -> Result<()> {
     )?;
     let sender_node = u64_env("NOVOVM_NATIVE_PIPELINE_DUAL_GATE_SENDER_NODE", 9_991_895)?;
     let receiver_node = u64_env("NOVOVM_NATIVE_PIPELINE_DUAL_GATE_RECEIVER_NODE", 9_991_896)?;
-    let receiver_count = u64_env("NOVOVM_NATIVE_PIPELINE_DUAL_GATE_RECEIVER_COUNT", 1)?
-        .max(1)
-        .min(8);
     let udp_broadcast_max_propagations = u64_env(
         "NOVOVM_NATIVE_PIPELINE_DUAL_GATE_UDP_BROADCAST_MAX_PROPAGATIONS",
         receiver_count
@@ -723,6 +736,12 @@ fn main() -> Result<()> {
             total_ingress_ticks.saturating_mul(receiver_count),
             "sender",
         )?;
+        require_min(
+            &sender_summary,
+            "max_broadcast_tx_per_tick",
+            min_sender_max_broadcast_tx_per_tick,
+            "sender",
+        )?;
         if sender_broadcast_tps_x1000 < min_sender_broadcast_tps_x1000 {
             bail!(
                 "sender summary gate failed: broadcast_tps_x1000={} below min {}",
@@ -782,6 +801,7 @@ fn main() -> Result<()> {
             "min_sender_broadcast_tps_x1000": min_sender_broadcast_tps_x1000,
             "min_receiver_canonical_tps_x1000": min_receiver_canonical_tps_x1000,
             "min_receiver_max_aoem_batch_per_tick": min_receiver_max_aoem_batch_per_tick,
+            "min_sender_max_broadcast_tx_per_tick": min_sender_max_broadcast_tx_per_tick,
             "min_nonempty_batch_ticks": min_nonempty_batch_ticks,
         },
         "sender_summary": sender_summary,

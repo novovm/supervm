@@ -33736,6 +33736,7 @@ struct NativeExecutionPipelineAggregateV1 {
     aoem_executed_total: u64,
     aoem_deferred_total: u64,
     max_aoem_batch_executed_per_tick: u64,
+    max_broadcast_tx_per_tick: u64,
     nonempty_aoem_batch_ticks: u64,
     nonempty_proof_ticks: u64,
     nonempty_commit_ticks: u64,
@@ -33775,6 +33776,7 @@ impl NativeExecutionPipelineAggregateV1 {
             aoem_executed_total: 0,
             aoem_deferred_total: 0,
             max_aoem_batch_executed_per_tick: 0,
+            max_broadcast_tx_per_tick: 0,
             nonempty_aoem_batch_ticks: 0,
             nonempty_proof_ticks: 0,
             nonempty_commit_ticks: 0,
@@ -33852,6 +33854,9 @@ impl NativeExecutionPipelineAggregateV1 {
         let egress = lifecycle
             .get("egress")
             .ok_or_else(|| anyhow::anyhow!("native execution pipeline report missing egress"))?;
+        let broadcast_drive = lifecycle.get("broadcast_drive").ok_or_else(|| {
+            anyhow::anyhow!("native execution pipeline report missing broadcast_drive")
+        })?;
 
         self.ticks = self.ticks.saturating_add(1);
         if network
@@ -34015,6 +34020,18 @@ impl NativeExecutionPipelineAggregateV1 {
             .get("broadcast_tx_total")
             .and_then(|value| value.as_u64())
             .unwrap_or_default();
+        let local_broadcast_tx_this_tick = broadcast_drive
+            .get("broadcast_tx_count")
+            .and_then(|value| value.as_u64())
+            .unwrap_or_default();
+        let udp_broadcast_tx_this_tick = network
+            .get("udp")
+            .and_then(|value| value.get("broadcast_tx_count"))
+            .and_then(|value| value.as_u64())
+            .unwrap_or_default();
+        self.max_broadcast_tx_per_tick = self
+            .max_broadcast_tx_per_tick
+            .max(local_broadcast_tx_this_tick.saturating_add(udp_broadcast_tx_this_tick));
         Ok(())
     }
 
@@ -34029,49 +34046,169 @@ impl NativeExecutionPipelineAggregateV1 {
 
     fn to_json(&self) -> serde_json::Value {
         let elapsed_ms = self.started_at.elapsed().as_millis().max(1) as u64;
-        serde_json::json!({
-            "method": "nov_runNativeExecutionPipelineSummary",
-            "accepted": true,
-            "execution_kernel": "AOEM",
-            "aoem_concurrency_owner": "AOEM_runtime",
-            "host_concurrency_policy": "host_drives_lifecycle_only_no_rust_execution_scheduler",
-            "ticks": self.ticks,
-            "elapsed_ms": elapsed_ms,
-            "ticks_per_sec_x1000": self.ticks.saturating_mul(1_000_000) / elapsed_ms,
-            "aoem_executed_total": self.aoem_executed_total,
-            "aoem_deferred_total": self.aoem_deferred_total,
-            "max_aoem_batch_executed_per_tick": self.max_aoem_batch_executed_per_tick,
-            "nonempty_aoem_batch_ticks": self.nonempty_aoem_batch_ticks,
-            "nonempty_proof_ticks": self.nonempty_proof_ticks,
-            "nonempty_commit_ticks": self.nonempty_commit_ticks,
-            "native_store_backend": self.native_store_backend,
-            "native_store_commit_model": self.native_store_commit_model,
-            "native_store_rocksdb_enabled": self.native_store_rocksdb_enabled,
-            "native_store_transactional_commit": self.native_store_transactional_commit,
-            "network_enabled_ticks": self.network_enabled_ticks,
-            "network_ok_ticks": self.network_ok_ticks,
-            "network_error_ticks": self.network_error_ticks,
-            "ingress_submitted_total": self.ingress_submitted_total,
-            "product_ingress_submitted_total": self.product_ingress_submitted_total,
-            "ingress_error_ticks": self.ingress_error_ticks,
-            "proof_ticks": self.proof_ticks,
-            "commit_ticks": self.commit_ticks,
-            "ingress_total_last": self.ingress_total_last,
-            "queue_tx_count_last": self.queue_tx_count_last,
-            "queue_seen_last": self.queue_seen_last,
-            "queue_pending_last": self.queue_pending_last,
-            "queue_propagated_last": self.queue_propagated_last,
-            "queue_included_non_canonical_last": self.queue_included_non_canonical_last,
-            "queue_reorged_back_to_pending_last": self.queue_reorged_back_to_pending_last,
-            "queue_dropped_last": self.queue_dropped_last,
-            "queue_rejected_last": self.queue_rejected_last,
-            "included_canonical_last": self.included_canonical_last,
-            "included_canonical_total": self.included_canonical_total,
-            "broadcast_candidates_last": self.broadcast_candidates_last,
-            "broadcast_dispatch_total_last": self.broadcast_dispatch_total_last,
-            "broadcast_tx_total_last": self.broadcast_tx_total_last,
-            "progress_score": self.progress_score(),
-        })
+        let mut out = serde_json::Map::new();
+        out.insert(
+            "method".to_string(),
+            serde_json::Value::String("nov_runNativeExecutionPipelineSummary".to_string()),
+        );
+        out.insert("accepted".to_string(), serde_json::Value::Bool(true));
+        out.insert(
+            "execution_kernel".to_string(),
+            serde_json::Value::String("AOEM".to_string()),
+        );
+        out.insert(
+            "aoem_concurrency_owner".to_string(),
+            serde_json::Value::String("AOEM_runtime".to_string()),
+        );
+        out.insert(
+            "host_concurrency_policy".to_string(),
+            serde_json::Value::String(
+                "host_drives_lifecycle_only_no_rust_execution_scheduler".to_string(),
+            ),
+        );
+        out.insert("ticks".to_string(), serde_json::json!(self.ticks));
+        out.insert("elapsed_ms".to_string(), serde_json::json!(elapsed_ms));
+        out.insert(
+            "ticks_per_sec_x1000".to_string(),
+            serde_json::json!(self.ticks.saturating_mul(1_000_000) / elapsed_ms),
+        );
+        out.insert(
+            "aoem_executed_total".to_string(),
+            serde_json::json!(self.aoem_executed_total),
+        );
+        out.insert(
+            "aoem_deferred_total".to_string(),
+            serde_json::json!(self.aoem_deferred_total),
+        );
+        out.insert(
+            "max_aoem_batch_executed_per_tick".to_string(),
+            serde_json::json!(self.max_aoem_batch_executed_per_tick),
+        );
+        out.insert(
+            "max_broadcast_tx_per_tick".to_string(),
+            serde_json::json!(self.max_broadcast_tx_per_tick),
+        );
+        out.insert(
+            "nonempty_aoem_batch_ticks".to_string(),
+            serde_json::json!(self.nonempty_aoem_batch_ticks),
+        );
+        out.insert(
+            "nonempty_proof_ticks".to_string(),
+            serde_json::json!(self.nonempty_proof_ticks),
+        );
+        out.insert(
+            "nonempty_commit_ticks".to_string(),
+            serde_json::json!(self.nonempty_commit_ticks),
+        );
+        out.insert(
+            "native_store_backend".to_string(),
+            serde_json::json!(self.native_store_backend),
+        );
+        out.insert(
+            "native_store_commit_model".to_string(),
+            serde_json::json!(self.native_store_commit_model),
+        );
+        out.insert(
+            "native_store_rocksdb_enabled".to_string(),
+            serde_json::json!(self.native_store_rocksdb_enabled),
+        );
+        out.insert(
+            "native_store_transactional_commit".to_string(),
+            serde_json::json!(self.native_store_transactional_commit),
+        );
+        out.insert(
+            "network_enabled_ticks".to_string(),
+            serde_json::json!(self.network_enabled_ticks),
+        );
+        out.insert(
+            "network_ok_ticks".to_string(),
+            serde_json::json!(self.network_ok_ticks),
+        );
+        out.insert(
+            "network_error_ticks".to_string(),
+            serde_json::json!(self.network_error_ticks),
+        );
+        out.insert(
+            "ingress_submitted_total".to_string(),
+            serde_json::json!(self.ingress_submitted_total),
+        );
+        out.insert(
+            "product_ingress_submitted_total".to_string(),
+            serde_json::json!(self.product_ingress_submitted_total),
+        );
+        out.insert(
+            "ingress_error_ticks".to_string(),
+            serde_json::json!(self.ingress_error_ticks),
+        );
+        out.insert(
+            "proof_ticks".to_string(),
+            serde_json::json!(self.proof_ticks),
+        );
+        out.insert(
+            "commit_ticks".to_string(),
+            serde_json::json!(self.commit_ticks),
+        );
+        out.insert(
+            "ingress_total_last".to_string(),
+            serde_json::json!(self.ingress_total_last),
+        );
+        out.insert(
+            "queue_tx_count_last".to_string(),
+            serde_json::json!(self.queue_tx_count_last),
+        );
+        out.insert(
+            "queue_seen_last".to_string(),
+            serde_json::json!(self.queue_seen_last),
+        );
+        out.insert(
+            "queue_pending_last".to_string(),
+            serde_json::json!(self.queue_pending_last),
+        );
+        out.insert(
+            "queue_propagated_last".to_string(),
+            serde_json::json!(self.queue_propagated_last),
+        );
+        out.insert(
+            "queue_included_non_canonical_last".to_string(),
+            serde_json::json!(self.queue_included_non_canonical_last),
+        );
+        out.insert(
+            "queue_reorged_back_to_pending_last".to_string(),
+            serde_json::json!(self.queue_reorged_back_to_pending_last),
+        );
+        out.insert(
+            "queue_dropped_last".to_string(),
+            serde_json::json!(self.queue_dropped_last),
+        );
+        out.insert(
+            "queue_rejected_last".to_string(),
+            serde_json::json!(self.queue_rejected_last),
+        );
+        out.insert(
+            "included_canonical_last".to_string(),
+            serde_json::json!(self.included_canonical_last),
+        );
+        out.insert(
+            "included_canonical_total".to_string(),
+            serde_json::json!(self.included_canonical_total),
+        );
+        out.insert(
+            "broadcast_candidates_last".to_string(),
+            serde_json::json!(self.broadcast_candidates_last),
+        );
+        out.insert(
+            "broadcast_dispatch_total_last".to_string(),
+            serde_json::json!(self.broadcast_dispatch_total_last),
+        );
+        out.insert(
+            "broadcast_tx_total_last".to_string(),
+            serde_json::json!(self.broadcast_tx_total_last),
+        );
+        out.insert(
+            "progress_score".to_string(),
+            serde_json::json!(self.progress_score()),
+        );
+        serde_json::Value::Object(out)
     }
 }
 
@@ -34085,6 +34222,7 @@ struct NativeExecutionPipelineSoakGateV1 {
     min_ticks: u64,
     min_aoem_executed_total: u64,
     min_max_aoem_batch_executed_per_tick: u64,
+    min_max_broadcast_tx_per_tick: u64,
     min_nonempty_aoem_batch_ticks: u64,
     min_nonempty_proof_ticks: u64,
     min_nonempty_commit_ticks: u64,
@@ -34126,6 +34264,10 @@ impl NativeExecutionPipelineSoakGateV1 {
             )?,
             min_max_aoem_batch_executed_per_tick: u64_env_allow_zero(
                 "NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_MAX_AOEM_BATCH_EXECUTED_PER_TICK",
+                0,
+            )?,
+            min_max_broadcast_tx_per_tick: u64_env_allow_zero(
+                "NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_MAX_BROADCAST_TX_PER_TICK",
                 0,
             )?,
             min_nonempty_aoem_batch_ticks: u64_env_allow_zero(
@@ -34276,6 +34418,11 @@ impl NativeExecutionPipelineSoakGateV1 {
             summary,
             "max_aoem_batch_executed_per_tick",
             self.min_max_aoem_batch_executed_per_tick,
+        )?;
+        require_summary_min(
+            summary,
+            "max_broadcast_tx_per_tick",
+            self.min_max_broadcast_tx_per_tick,
         )?;
         require_summary_min(
             summary,
@@ -34673,6 +34820,7 @@ mod native_execution_pipeline_tests {
             summary["max_aoem_batch_executed_per_tick"].as_u64(),
             Some(1)
         );
+        assert_eq!(summary["max_broadcast_tx_per_tick"].as_u64(), Some(1));
         assert_eq!(summary["nonempty_aoem_batch_ticks"].as_u64(), Some(1));
         assert_eq!(summary["nonempty_proof_ticks"].as_u64(), Some(1));
         assert_eq!(summary["nonempty_commit_ticks"].as_u64(), Some(1));
@@ -34689,6 +34837,7 @@ mod native_execution_pipeline_tests {
             min_ticks: 1,
             min_aoem_executed_total: 1,
             min_max_aoem_batch_executed_per_tick: 1,
+            min_max_broadcast_tx_per_tick: 1,
             min_nonempty_aoem_batch_ticks: 1,
             min_nonempty_proof_ticks: 1,
             min_nonempty_commit_ticks: 1,
@@ -34832,6 +34981,7 @@ mod native_execution_pipeline_tests {
             summary["max_aoem_batch_executed_per_tick"].as_u64(),
             Some(2)
         );
+        assert_eq!(summary["max_broadcast_tx_per_tick"].as_u64(), Some(2));
         assert_eq!(summary["nonempty_aoem_batch_ticks"].as_u64(), Some(3));
         assert_eq!(summary["nonempty_proof_ticks"].as_u64(), Some(3));
         assert_eq!(summary["nonempty_commit_ticks"].as_u64(), Some(3));
@@ -34858,6 +35008,7 @@ mod native_execution_pipeline_tests {
             min_ticks: 3,
             min_aoem_executed_total: 5,
             min_max_aoem_batch_executed_per_tick: 2,
+            min_max_broadcast_tx_per_tick: 2,
             min_nonempty_aoem_batch_ticks: 3,
             min_nonempty_proof_ticks: 3,
             min_nonempty_commit_ticks: 3,
@@ -35137,6 +35288,7 @@ mod native_execution_pipeline_tests {
             min_ticks: 2,
             min_aoem_executed_total: 4,
             min_max_aoem_batch_executed_per_tick: 2,
+            min_max_broadcast_tx_per_tick: 1,
             min_nonempty_aoem_batch_ticks: 2,
             min_nonempty_proof_ticks: 2,
             min_nonempty_commit_ticks: 2,
@@ -35162,6 +35314,7 @@ mod native_execution_pipeline_tests {
             "ticks": 2u64,
             "aoem_executed_total": 4u64,
             "max_aoem_batch_executed_per_tick": 2u64,
+            "max_broadcast_tx_per_tick": 1u64,
             "nonempty_aoem_batch_ticks": 2u64,
             "nonempty_proof_ticks": 2u64,
             "nonempty_commit_ticks": 2u64,
@@ -35197,6 +35350,7 @@ mod native_execution_pipeline_tests {
             min_ticks: 2,
             min_aoem_executed_total: 64,
             min_max_aoem_batch_executed_per_tick: 32,
+            min_max_broadcast_tx_per_tick: 0,
             min_nonempty_aoem_batch_ticks: 0,
             min_nonempty_proof_ticks: 0,
             min_nonempty_commit_ticks: 0,
@@ -35232,6 +35386,54 @@ mod native_execution_pipeline_tests {
     }
 
     #[test]
+    fn native_execution_pipeline_soak_gate_rejects_too_narrow_broadcast_batch() {
+        let gate = NativeExecutionPipelineSoakGateV1 {
+            emit_tick_reports: false,
+            require_progress: false,
+            require_full_lifecycle: false,
+            require_product_ingress: false,
+            require_rocksdb_store: false,
+            min_ticks: 2,
+            min_aoem_executed_total: 64,
+            min_max_aoem_batch_executed_per_tick: 32,
+            min_max_broadcast_tx_per_tick: 32,
+            min_nonempty_aoem_batch_ticks: 0,
+            min_nonempty_proof_ticks: 0,
+            min_nonempty_commit_ticks: 0,
+            min_proof_ticks: 0,
+            min_commit_ticks: 0,
+            min_network_ok_ticks: 0,
+            max_network_error_ticks: u64::MAX,
+            min_ingress_submitted_total: 0,
+            max_ingress_error_ticks: u64::MAX,
+            min_broadcast_tx_total: 64,
+            min_broadcast_dispatch_total: 0,
+            min_broadcast_candidates: 0,
+            min_included_canonical: 0,
+            min_included_canonical_total: 0,
+            min_ingress_total: 0,
+            max_queue_pending_last: u64::MAX,
+            min_ticks_per_sec_x1000: 0,
+        };
+        let summary = serde_json::json!({
+            "execution_kernel": "AOEM",
+            "aoem_concurrency_owner": "AOEM_runtime",
+            "host_concurrency_policy": "host_drives_lifecycle_only_no_rust_execution_scheduler",
+            "ticks": 64u64,
+            "aoem_executed_total": 64u64,
+            "max_aoem_batch_executed_per_tick": 32u64,
+            "max_broadcast_tx_per_tick": 1u64,
+            "broadcast_tx_total_last": 64u64,
+        });
+
+        let err = gate
+            .validate_summary(&summary)
+            .expect_err("narrow per-tick broadcast batch must fail")
+            .to_string();
+        assert!(err.contains("max_broadcast_tx_per_tick=1 below min 32"));
+    }
+
+    #[test]
     fn native_execution_pipeline_full_lifecycle_gate_rejects_partial_pipeline() {
         let gate = NativeExecutionPipelineSoakGateV1 {
             emit_tick_reports: false,
@@ -35242,6 +35444,7 @@ mod native_execution_pipeline_tests {
             min_ticks: 1,
             min_aoem_executed_total: 1,
             min_max_aoem_batch_executed_per_tick: 0,
+            min_max_broadcast_tx_per_tick: 0,
             min_nonempty_aoem_batch_ticks: 0,
             min_nonempty_proof_ticks: 0,
             min_nonempty_commit_ticks: 0,
@@ -35307,6 +35510,7 @@ mod native_execution_pipeline_tests {
             min_ticks: 1,
             min_aoem_executed_total: 1,
             min_max_aoem_batch_executed_per_tick: 0,
+            min_max_broadcast_tx_per_tick: 0,
             min_nonempty_aoem_batch_ticks: 0,
             min_nonempty_proof_ticks: 0,
             min_nonempty_commit_ticks: 0,
@@ -35356,6 +35560,7 @@ mod native_execution_pipeline_tests {
             min_ticks: 0,
             min_aoem_executed_total: 0,
             min_max_aoem_batch_executed_per_tick: 0,
+            min_max_broadcast_tx_per_tick: 0,
             min_nonempty_aoem_batch_ticks: 0,
             min_nonempty_proof_ticks: 0,
             min_nonempty_commit_ticks: 0,
@@ -35399,6 +35604,7 @@ mod native_execution_pipeline_tests {
             min_ticks: 0,
             min_aoem_executed_total: 0,
             min_max_aoem_batch_executed_per_tick: 0,
+            min_max_broadcast_tx_per_tick: 0,
             min_nonempty_aoem_batch_ticks: 0,
             min_nonempty_proof_ticks: 0,
             min_nonempty_commit_ticks: 0,
