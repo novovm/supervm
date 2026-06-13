@@ -2115,9 +2115,11 @@ fn mapped_lock_proof_digest_v1(proof: &MappedAssetLockProof) -> [u8; 32] {
 
 #[derive(Debug, Clone)]
 struct EthereumLockEventEvidenceV1 {
+    chain_id: u64,
     contract_address: [u8; 20],
     topic0: [u8; 32],
     block_number: u64,
+    block_hash: [u8; 32],
     finalized_block_number: u64,
     log_index: u64,
     receipts_root: [u8; 32],
@@ -2169,6 +2171,12 @@ fn eth_lock_min_confirmations_v1() -> u64 {
         .ok()
         .and_then(|raw| raw.trim().parse::<u64>().ok())
         .unwrap_or(12)
+}
+
+fn ethereum_lock_chain_id_v1(params: &Value) -> u64 {
+    param_value_any(params, &["source_chain_id", "chain_id", "eth_chain_id"])
+        .and_then(value_as_u64)
+        .unwrap_or(1)
 }
 
 fn param_value_any<'a>(params: &'a Value, keys: &[&str]) -> Option<&'a Value> {
@@ -2385,6 +2393,7 @@ fn parse_ethereum_lock_event_evidence_v1(
     .is_some()
         || param_as_string_any(params, &["event_topic0", "topic0"]).is_some()
         || param_as_u64(params, "block_number").is_some()
+        || param_as_string_any(params, &["block_hash", "eth_block_hash"]).is_some()
         || param_as_u64(params, "finalized_block_number").is_some()
         || param_as_u64(params, "log_index").is_some()
         || param_as_string_any(params, &["receipts_root", "receipt_root"]).is_some()
@@ -2409,6 +2418,8 @@ fn parse_ethereum_lock_event_evidence_v1(
     let block_number = param_as_u64(params, "block_number").ok_or_else(|| {
         anyhow::anyhow!("ERR_MAPPED_LOCK_PROOF_INVALID: block_number is required")
     })?;
+    let block_hash_raw = param_as_string_any(params, &["block_hash", "eth_block_hash"])
+        .ok_or_else(|| anyhow::anyhow!("ERR_MAPPED_LOCK_PROOF_INVALID: block_hash is required"))?;
     let finalized_block_number =
         param_as_u64(params, "finalized_block_number").ok_or_else(|| {
             anyhow::anyhow!("ERR_MAPPED_LOCK_PROOF_INVALID: finalized_block_number is required")
@@ -2432,9 +2443,11 @@ fn parse_ethereum_lock_event_evidence_v1(
         .map(|raw| decode_hex_bytes(raw.as_str(), "receipt_envelope"))
         .transpose()?;
     Ok(Some(EthereumLockEventEvidenceV1 {
+        chain_id: ethereum_lock_chain_id_v1(params),
         contract_address: decode_hex_fixed_20(contract_raw.as_str(), "lock_contract_address")?,
         topic0: decode_hex_fixed_32(topic0_raw.as_str(), "event_topic0")?,
         block_number,
+        block_hash: decode_hex_fixed_32(block_hash_raw.as_str(), "block_hash")?,
         finalized_block_number,
         log_index,
         receipts_root: decode_hex_fixed_32(receipts_root_raw.as_str(), "receipts_root")?,
@@ -2452,11 +2465,15 @@ fn ethereum_lock_event_ref_digest_v1(
     let mut hasher = Sha256::new();
     hasher.update(b"novovm-ethereum-lock-event-ref-v1");
     hasher.update([0u8]);
+    hasher.update(evidence.chain_id.to_be_bytes());
+    hasher.update([0u8]);
     hasher.update(evidence.contract_address);
     hasher.update([0u8]);
     hasher.update(evidence.topic0);
     hasher.update([0u8]);
     hasher.update(evidence.block_number.to_be_bytes());
+    hasher.update([0u8]);
+    hasher.update(evidence.block_hash);
     hasher.update([0u8]);
     hasher.update(evidence.finalized_block_number.to_be_bytes());
     hasher.update([0u8]);
@@ -2478,6 +2495,35 @@ fn ethereum_lock_event_ref_digest_v1(
     hasher.update([0u8]);
     hasher.update(proof.amount.to_be_bytes());
     hasher.finalize().into()
+}
+
+fn verify_ethereum_lock_event_trusted_anchor_v1(
+    evidence: &EthereumLockEventEvidenceV1,
+) -> Result<()> {
+    let blocks =
+        novovm_network::snapshot_network_runtime_native_canonical_blocks_v1(evidence.chain_id, 0);
+    let Some(block) = blocks
+        .iter()
+        .find(|block| block.number == evidence.block_number && block.hash == evidence.block_hash)
+    else {
+        bail!(
+            "ERR_MAPPED_LOCK_PROOF_INVALID: trusted Ethereum canonical block is unavailable for chain_id={} block_number={}",
+            evidence.chain_id,
+            evidence.block_number
+        );
+    };
+    if !block.header_observed || !block.canonical {
+        bail!("ERR_MAPPED_LOCK_PROOF_INVALID: trusted Ethereum block is not canonical");
+    }
+    if !block.finalized {
+        bail!("ERR_MAPPED_LOCK_PROOF_INVALID: trusted Ethereum block is not finalized");
+    }
+    if block.receipts_root != Some(evidence.receipts_root) {
+        bail!(
+            "ERR_MAPPED_LOCK_PROOF_INVALID: receipts_root does not match trusted Ethereum header"
+        );
+    }
+    Ok(())
 }
 
 fn verify_ethereum_lock_event_evidence_v1(
@@ -2524,6 +2570,7 @@ fn verify_ethereum_lock_event_evidence_v1(
             required_finalized
         );
     }
+    verify_ethereum_lock_event_trusted_anchor_v1(&evidence)?;
     let proven_receipt = novovm_network::eth_rlpx_mpt_verify_proof_value_v1(
         evidence.receipts_root,
         ua_rlp_encode_u64_v1(evidence.receipt_index).as_slice(),
@@ -4297,6 +4344,8 @@ mod tests {
     fn mapped_lock_live_event_proof_params(account_id: &str, lock_byte: u8, amount: u128) -> Value {
         let contract_address = [0x11u8; 20];
         let topic0 = eth_lock_event_topic0_v1();
+        let chain_id = 100_000u64 + u64::from(lock_byte);
+        let block_hash = [lock_byte.saturating_add(3); 32];
         let mut proof_template = MappedAssetLockProof {
             lock_id: [lock_byte; 32],
             source_chain: MappedAssetSourceChain::Ethereum,
@@ -4310,9 +4359,11 @@ mod tests {
             proof_format: MappedLockProofFormat::EthereumLockEventV1,
         };
         let evidence = EthereumLockEventEvidenceV1 {
+            chain_id,
             contract_address,
             topic0,
             block_number: 100,
+            block_hash,
             finalized_block_number: 112,
             log_index: u64::from(lock_byte),
             receipts_root: [0u8; 32],
@@ -4343,10 +4394,12 @@ mod tests {
             "amount": amount.to_string(),
             "proof_format": "ethereum_lock_event_v1",
             "proof_payload": mapped_asset_hex_id(&proof_digest),
+            "source_chain_id": chain_id,
             "lock_contract_address": format!("0x{}", to_hex_lower(&contract_address)),
             "expected_lock_contract_address": format!("0x{}", to_hex_lower(&contract_address)),
             "event_topic0": mapped_asset_hex_id(&topic0),
             "block_number": evidence.block_number,
+            "block_hash": mapped_asset_hex_id(&block_hash),
             "finalized_block_number": evidence.finalized_block_number,
             "log_index": evidence.log_index,
             "receipt_index": evidence.receipt_index,
@@ -4358,6 +4411,76 @@ mod tests {
                 .map(|node| Value::String(format!("0x{}", to_hex_lower(node))))
                 .collect::<Vec<_>>(),
         })
+    }
+
+    fn mapped_lock_param_u64(params: &Value, key: &str) -> u64 {
+        params
+            .get(key)
+            .and_then(value_as_u64)
+            .unwrap_or_else(|| panic!("missing mapped lock param {key}"))
+    }
+
+    fn mapped_lock_param_hash(params: &Value, key: &str) -> [u8; 32] {
+        let raw = params
+            .get(key)
+            .and_then(Value::as_str)
+            .unwrap_or_else(|| panic!("missing mapped lock hash param {key}"));
+        decode_hex_fixed_32(raw, key).expect("decode mapped lock hash param")
+    }
+
+    fn seed_mapped_lock_trusted_block(params: &Value, finalized: bool, receipts_root: [u8; 32]) {
+        let chain_id = mapped_lock_param_u64(params, "source_chain_id");
+        let number = mapped_lock_param_u64(params, "block_number");
+        let hash = mapped_lock_param_hash(params, "block_hash");
+        novovm_network::clear_network_runtime_native_state_for_host_tests_v1();
+        novovm_network::set_network_runtime_native_header_snapshot_v1(
+            chain_id,
+            novovm_network::NetworkRuntimeNativeHeaderSnapshotV1 {
+                chain_id,
+                number,
+                hash,
+                parent_hash: [0x09; 32],
+                state_root: [0x21; 32],
+                transactions_root: [0x31; 32],
+                receipts_root,
+                ommers_hash: [0x51; 32],
+                logs_bloom: vec![0u8; 256],
+                gas_limit: None,
+                gas_used: None,
+                timestamp: Some(1_700_000_000),
+                base_fee_per_gas: None,
+                withdrawals_root: None,
+                blob_gas_used: None,
+                excess_blob_gas: None,
+                block_access_list_hash: None,
+                source_peer_id: Some(1),
+                observed_unix_ms: 1000,
+            },
+        );
+        novovm_network::set_network_runtime_native_head_snapshot_v1(
+            chain_id,
+            novovm_network::NetworkRuntimeNativeHeadSnapshotV1 {
+                chain_id,
+                phase: novovm_network::NetworkRuntimeNativeSyncPhaseV1::Finalize,
+                peer_count: 1,
+                block_number: number,
+                block_hash: hash,
+                parent_block_hash: [0x09; 32],
+                state_root: [0x21; 32],
+                canonical: true,
+                safe: finalized,
+                finalized,
+                reorg_depth_hint: None,
+                body_available: true,
+                source_peer_id: Some(1),
+                observed_unix_ms: 1001,
+            },
+        );
+    }
+
+    fn seed_mapped_lock_trusted_block_from_params(params: &Value, finalized: bool) {
+        let receipts_root = mapped_lock_param_hash(params, "receipts_root");
+        seed_mapped_lock_trusted_block(params, finalized, receipts_root);
     }
 
     fn ensure_native_store(native_store: &Path) {
@@ -4976,6 +5099,7 @@ mod tests {
                 Value::Object(map) => map,
                 other => panic!("expected mapped lock proof params object, got {other:?}"),
             };
+        seed_mapped_lock_trusted_block_from_params(&Value::Object(register_map.clone()), true);
         register_map.insert("phase4_mode".to_string(), Value::String("live".to_string()));
         register_map.insert("now".to_string(), Value::from(11u64));
         let err = run_query_err(
@@ -5014,6 +5138,7 @@ mod tests {
                 Value::Object(map) => map,
                 other => panic!("expected mapped lock proof params object, got {other:?}"),
             };
+        seed_mapped_lock_trusted_block_from_params(&Value::Object(register_map.clone()), true);
         register_map.insert("phase4_mode".to_string(), Value::String("live".to_string()));
         register_map.insert("now".to_string(), Value::from(11u64));
         let register = run_query(
@@ -5296,6 +5421,7 @@ mod tests {
             Value::Object(map) => map,
             other => panic!("expected mapped lock proof params object, got {other:?}"),
         };
+        seed_mapped_lock_trusted_block_from_params(&Value::Object(bad_envelope_map.clone()), true);
         bad_envelope_map.insert("phase4_mode".to_string(), Value::String("live".to_string()));
         bad_envelope_map.insert(
             "receipt_envelope".to_string(),
@@ -5324,6 +5450,7 @@ mod tests {
             Value::Object(map) => map,
             other => panic!("expected mapped lock proof params object, got {other:?}"),
         };
+        seed_mapped_lock_trusted_block_from_params(&Value::Object(wrong_root_map.clone()), true);
         wrong_root_map.insert("phase4_mode".to_string(), Value::String("live".to_string()));
         wrong_root_map.insert("receipts_root".to_string(), Value::String(ua_hex(0x44, 32)));
         let wrong_root_err = run_query_err(
@@ -5337,9 +5464,71 @@ mod tests {
             ),
         );
         assert!(
-            wrong_root_err.contains("receipt proof invalid")
-                || wrong_root_err.contains("receipt proof missing value"),
-            "wrong receipts root should fail proof verification, got: {wrong_root_err}"
+            wrong_root_err.contains("receipts_root does not match trusted Ethereum header"),
+            "wrong receipts root should fail trusted header anchor, got: {wrong_root_err}"
+        );
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn unified_account_live_mapped_lock_requires_trusted_finalized_header_anchor() {
+        let _env_lock = ENV_TEST_LOCK.lock().expect("env test lock poisoned");
+        let _shadow_guard = EnvVarGuard::set(NOVOVM_UA_PHASE4_SHADOW_MODE_ENFORCE_ENV, "false");
+        let (base, store, audit) = temp_paths("mapped-live-header-anchor");
+        let root = base
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .to_path_buf();
+        let native_store = root.join("native-execution-store.json");
+        ensure_native_store(native_store.as_path());
+        ua_create(&base, &store, &audit, "acct-map-live-anchor", 10);
+
+        let mut missing_header_map =
+            match mapped_lock_live_event_proof_params("acct-map-live-anchor", 0x39, 94u128) {
+                Value::Object(map) => map,
+                other => panic!("expected mapped lock proof params object, got {other:?}"),
+            };
+        novovm_network::clear_network_runtime_native_state_for_host_tests_v1();
+        missing_header_map.insert("phase4_mode".to_string(), Value::String("live".to_string()));
+        let missing_header_err = run_query_err(
+            &base,
+            "ua_registerMappedLock",
+            params_with_paths_and_native_store(
+                &store,
+                &audit,
+                &native_store,
+                Value::Object(missing_header_map),
+            ),
+        );
+        assert!(
+            missing_header_err.contains("trusted Ethereum canonical block is unavailable"),
+            "missing trusted header should fail closed, got: {missing_header_err}"
+        );
+
+        let mut unfinalized_anchor_map =
+            match mapped_lock_live_event_proof_params("acct-map-live-anchor", 0x3a, 95u128) {
+                Value::Object(map) => map,
+                other => panic!("expected mapped lock proof params object, got {other:?}"),
+            };
+        seed_mapped_lock_trusted_block_from_params(
+            &Value::Object(unfinalized_anchor_map.clone()),
+            false,
+        );
+        unfinalized_anchor_map.insert("phase4_mode".to_string(), Value::String("live".to_string()));
+        let unfinalized_anchor_err = run_query_err(
+            &base,
+            "ua_registerMappedLock",
+            params_with_paths_and_native_store(
+                &store,
+                &audit,
+                &native_store,
+                Value::Object(unfinalized_anchor_map),
+            ),
+        );
+        assert!(
+            unfinalized_anchor_err.contains("trusted Ethereum block is not finalized"),
+            "unfinalized trusted block should fail closed, got: {unfinalized_anchor_err}"
         );
 
         let _ = fs::remove_dir_all(&root);
