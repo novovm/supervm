@@ -21,12 +21,12 @@ NOVOVM 现在已经具备“统一身份 + EVM 产品入口 + native NOV 经济�
 不能过度声明的部分：
 
 - 当前没有发现 NOVO Wallet 前端/钱包应用代码；仓库里是 RPC/节点/gateway 能力，不是完整用户 App。
-- `novovm-node/src/main.rs` 仍保留 legacy public RPC UCA 分支（`run_public_rpc -> run_unified_account_rpc`）。它不应作为当前产品口径的统一账户入口；钱包、gateway 和后续产品接入必须走 `mainline_query -> unified_account_surface`。
+- `crates/novovm-node/src/main.rs` 是 dead/historical source，不是当前 Cargo 产品 binary；不得再向该文件增加主线语义。当前统一账户产品入口以 `crates/novovm-node/src/bin/novovm-node.rs -> mainline_query -> unified_account_surface` 为准。
 - ETH 锁仓合约不是已部署真实 Solidity lock contract 路径；当前 `ua_registerMappedLock` 是 MVP 内部 proof digest 校验，目标资产为 `NETH`，不是真实 Ethereum receipt/log Merkle proof。
 - 没有发现“Ethereum lock event -> 自动验证 -> Treasury policy -> NOV emission / M2 credit”的完整接线。NOV mint 在 consensus token runtime 中存在，但不能直接接在 ETH lock proof 上。
 - EVM 合约币可以在 EVM 产品面执行/查询 receipt，但和 NOV native account balance/treasury 是两套状态面，当前没有完整 ERC20 -> native asset 自动映射桥。
 - 并发量不能直接引用 README 的 L0/L1 百万 TPS 来代表钱包/gateway 入口吞吐。gateway 当前是单 HTTP loop，EVM pending consumer 默认 16 笔/250ms；native NOV store 是 JSON load-modify-write，适合单进程顺序产品闭环，不适合多进程高并发账本写入口。
-- 当前不声明 DAPP、网站、钱包进入本轮范围；本轮只冻结上层经济规则和审阅边界。
+- 当前不声明 DAPP、网站、钱包进入本轮范围；本轮已完成上层经济规则、协议清算价 v1 和审阅边界，但不声明真实外部桥接自动闭环。
 
 ## 1.1 主线 `unified_account_surface` 产品闭环审阅
 
@@ -37,10 +37,12 @@ NOVOVM 现在已经具备“统一身份 + EVM 产品入口 + native NOV 经济�
 - `ua_checkRoute` 使用 clone/probe 路径做只读预检，返回 `read_only: true`，不推进 nonce，不写 UCA 状态。
 - `evm-gateway` 的 `eth_sendRawTransaction` / `eth_sendTransaction` 只通过 mainline `ua_checkRoute` 做只读 route/policy 校验；gateway 不再持有本地 UCA store/router。
 
-当前需要收口：
+当前边界锁定：
 
-- `novovm-node/src/main.rs` 的 legacy public RPC UCA runtime 仍可从 public RPC server 分支初始化并调用旧 `run_unified_account_rpc`。该路径缺少当前 mainline surface 的 mapped asset state 口径，容易重新形成主线内部第二 surface。
-- 在完成代码退役或桥接前，产品入口文档只能声明 `mainline_query -> unified_account_surface` 为唯一统一账户入口；legacy public RPC UCA 分支只能视为待收敛兼容残留。
+- 当前 Cargo 产品 binary 是 `crates/novovm-node/src/bin/novovm-node.rs`，不是 dead `crates/novovm-node/src/main.rs`。
+- 产品 binary 通过 `run_mainline_query_from_path` 与 `is_mainline_unified_account_query_method` 接入 mainline 统一账户 surface。
+- 产品 binary 不嵌入 legacy `run_public_rpc` / `run_unified_account_rpc` / `public_unified_account_runtime`。
+- `crates/novovm-node/src/main.rs` 只能作为历史验证残留看待；后续开发不得把它重新定义为产品入口，也不得在其中新增主线统一账户语义。
 
 ## 1.2 上层经济法条与协议清算边界
 
@@ -347,22 +349,23 @@ native NOV 入口：
   - poll receipt
   - query account_assets
 
-### P1：主线内部 legacy public RPC UCA 分支仍需退役或桥接
+### P1：dead `src/main.rs` 历史 UCA 分支不得重新进入产品路径
 
 影响：
 
-- 即使 gateway 已清理，`novovm-node/src/main.rs` 仍存在旧 public RPC UCA surface。后续开发如果误用该路径，可能绕开 `mainline_query -> unified_account_surface` 的 mapped asset state 和新审计口径。
+- `crates/novovm-node/src/main.rs` 仍保留历史 `run_public_rpc -> run_unified_account_rpc` 代码，但该文件不是当前 Cargo 产品 binary。真实风险不是当前产品入口分裂，而是后续开发误把 dead source 当成可继续扩展的主线入口。
 
 证据：
 
-- `run_rpc_server_instance` 的 public role 会初始化 `UnifiedAccountRuntime`。
-- `run_public_rpc` 对 `is_unified_account_method` 调用旧 `run_unified_account_rpc`。
-- 旧路径与 `crates/novovm-node/src/unified_account_surface.rs` 的 `run_mainline_unified_account_query` 并存。
+- `crates/novovm-node/Cargo.toml` 设置 `autobins = false`，产品 bin 显式为 `crates/novovm-node/src/bin/novovm-node.rs`。
+- `docs_CN/NOVOVM-NETWORK/NOVOVM-ACCOUNT-PROTOCOL-PHASE2-IMPLEMENTATION-CHECKLIST-2026-04-20.md` 已明确“禁止再往 dead `crates/novovm-node/src/main.rs` 增加主线语义”。
+- 产品 binary 已有边界锁定测试：不得嵌入 legacy public RPC UCA surface，并必须保留 `mainline_query` 统一账户识别与路由。
 
 建议：
 
-- 最小收敛方案是让 public RPC UCA 方法直接桥接到 `run_mainline_query_from_path`，或明确禁用 legacy public RPC UCA 方法。
-- 不要复制 `unified_account_surface` 到 `main.rs`，也不要新增第三套 UCA runtime。
+- 不修改 dead `src/main.rs` 来“修主线”，避免制造新的死代码语义。
+- 所有统一账户产品接入继续走 `mainline_query -> unified_account_surface`。
+- 后续若要彻底清理，可单独做 dead source 删除/归档任务，并先确认没有外部脚本依赖。
 
 ### P1：native NOV 账本写入后端不适合多 writer
 
@@ -429,15 +432,18 @@ native NOV 入口：
   - “Ethereum mainnet RLPx 同步吞吐”
 - “native treasury/account store 写入吞吐”
 
-### P2：协议清算价实现仍未完整落代码
+### P2：协议清算价 v1 已落地，外部桥接自动化仍未完成
 
 影响：
 
-- 当前制度已明确 AMM spot price 不能直接决定 Execution Fee 清算价，但完整 `P_clear/P_pay/P_redeem` epoch 固定、TWAP/NAV/oracle 偏离检测、constrained/blocked 执行仍需后续实现。
+- 当前代码已实现 `P_epoch/P_pay/P_redeem` 的最小生产语义：按 epoch 固定、使用显式 AMM TWAP / Treasury NAV / 许可 oracle reference / 上一 epoch 价格，AMM spot 不直接进入 Execution Fee 清算。
+- `P_pay` 已接入多资产 Execution Fee quote 和 TreasuryDirect clearing。
+- `P_redeem` 已接入 `treasury.redeem` 的 `asset_out + nov_amount` 形态：先扣用户 NOV，再按反向保守价从 Treasury reserve 出资产。
+- 仍未完成真实 Ethereum lock event 自动验证、真实 reserve proof、NOV emission policy 自动接线、真实外部链出金和高并发事务后端。
 
 建议：
 
-- 实现前继续以制度文档为准，不得在产品面声明“AMM 即时报价自动结算 gas”。
+- 继续禁止在产品面声明“AMM 即时报价自动结算 gas”。
 - 许可 oracle 只能作为治理白名单参考源，不能开放喂价。
 - 低流动性、oracle 偏离、储备不足时必须进入 constrained/blocked 或只允许 NOV 支付。
 

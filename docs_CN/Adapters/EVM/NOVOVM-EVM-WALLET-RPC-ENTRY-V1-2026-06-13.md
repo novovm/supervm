@@ -189,4 +189,4 @@ cargo test -p novovm-evm-gateway json_rpc_eth_send_raw_then_receipt_product_smok
 
 不在本阶段扩展 debug/admin/trace，也不重新打开 geth 全节点追平目标。
 
-注意：`novovm-node/src/main.rs` 仍存在 legacy public RPC UCA 分支。钱包产品接入不得依赖该 legacy 路径；UCA 产品入口以 `mainline_query -> unified_account_surface` 为准。
+注意：`crates/novovm-node/src/main.rs` 是 dead/historical source，不是当前 Cargo 产品 binary。钱包产品接入不得依赖或复活该 legacy 路径；UCA 产品入口以 `crates/novovm-node/src/bin/novovm-node.rs -> mainline_query -> unified_account_surface` 为准。

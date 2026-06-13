@@ -36399,4 +36399,28 @@ mod relay_path_tests_l2_l1_cross_path_lock_contract {
             "tuple length must equal component lengths plus two separators"
         );
     }
+
+    #[test]
+    fn product_binary_excludes_legacy_public_rpc_uca_surface_v1() {
+        let source = include_str!("novovm-node.rs");
+        for forbidden in [
+            concat!("fn ", "run_unified_account_rpc"),
+            concat!("fn ", "run_public_rpc", "("),
+            concat!("public_", "unified_account_runtime"),
+            concat!("Unified", "AccountRuntime"),
+        ] {
+            assert!(
+                !source.contains(forbidden),
+                "product binary must not embed legacy public RPC UCA token: {forbidden}"
+            );
+        }
+        assert!(
+            source.contains("run_mainline_query_from_path"),
+            "product binary must keep mainline query routing available"
+        );
+        assert!(
+            source.contains("is_mainline_unified_account_query_method"),
+            "product binary must classify unified account methods through mainline"
+        );
+    }
 }

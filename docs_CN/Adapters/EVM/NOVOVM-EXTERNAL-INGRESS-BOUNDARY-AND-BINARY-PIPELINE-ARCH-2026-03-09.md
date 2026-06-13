@@ -103,4 +103,6 @@ EVM、SVM、Solana、BTC、BNB 等链能力在 `superVM` 中以“插件/扩展�
 
 审阅提醒：
 
-- `novovm-node/src/main.rs` 中仍保留 legacy public RPC UCA 分支（`run_public_rpc -> run_unified_account_rpc`）。它不是本轮冻结后的统一账户产品入口；产品文档、钱包接入和后续开发应以 `mainline_query -> unified_account_surface` 为准，后续可单独收敛或退役该 legacy 分支。
+- `crates/novovm-node/src/main.rs` 是 dead/historical source，不是当前 Cargo 产品 binary；不得再向该文件增加主线语义。
+- 当前产品入口为 `crates/novovm-node/src/bin/novovm-node.rs` 与 `mainline_query -> unified_account_surface`。
+- 产品 binary 不嵌入 legacy `run_public_rpc -> run_unified_account_rpc` UCA surface；后续钱包、gateway 和外部产品接入必须继续以 mainline surface 为准。

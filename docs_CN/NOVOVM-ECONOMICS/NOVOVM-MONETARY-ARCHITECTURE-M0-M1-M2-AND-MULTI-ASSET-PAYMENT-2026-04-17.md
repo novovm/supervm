@@ -123,8 +123,9 @@ _2026-04-17_
 
 1. 原生 `tx_wire` 仍偏 transfer，需升级为原生执行/治理可表达结构。  
 2. 原生 `nov_*` 入口虽已存在基础能力，但 NOV 原生执行与费用术语仍需进一步“主链优先化”。  
-3. 多币支付路由、自动兑换、国库结算目前还不是统一主线模块（需新增 payment router + quote + clearing + treasury settlement 组合）。
-4. 许可 oracle、协议清算价 epoch 固定、AMM TWAP/NAV 偏离检测和 constrained/blocked 状态仍是制度约束，尚未声明完整代码闭环。
+3. 多币支付路由、清算、国库 settlement 已有 native execution store v1 主线；但仍不声明真实外部桥、真实 Ethereum lock proof 自动验证或多进程高并发账本入口完成。
+4. 协议清算价 v1 已落代码：`P_epoch/P_pay/P_redeem` 按 epoch 固定，输入为显式 AMM TWAP、Treasury NAV、许可 oracle reference 和上一 epoch 价格；AMM spot 不参与清算。
+5. 当前仍缺治理层 oracle 白名单管理、真实外部 reserve proof、完整桥接铸造/赎回自动化和高并发事务后端。
 
 ## 9. 术语冻结
 

@@ -248,9 +248,18 @@ asset_out[A] = nov_amount / P_redeem[A]
 3. 成功回执可见 route 元数据。
 4. clearing result 继续进入 settlement 主线，不绕开 NOV 内部结算。
 5. 文档与实现不得出现“AMM 即时报价直接决定 gas/Execution Fee 清算价”的路径。
-6. `P_clear` 必须按 epoch 固定，不按每笔交易实时波动。
-7. oracle 必须是许可参考源，不是开放喂价系统。
+6. `P_clear` 必须按 epoch 固定，不按每笔交易实时波动；代码 v1 已以 `protocol_clearing_prices` 快照记录 `P_epoch/P_pay/P_redeem`。
+7. oracle 必须是许可参考源，不是开放喂价系统；代码 v1 只读取 governance/runtime 许可参考价，不提供开放喂价入口。
 8. `cargo check / clippy / test / supervm-mainline-gate` 全绿。
+
+## 9.1 2026-06-13 代码落地状态
+
+- `crates/novovm-node/src/tx_ingress.rs` 已新增 `NovProtocolClearingPriceV1`。
+- fee quote 优先使用 `P_pay`，支付资产按保守价折算为 NOV value。
+- Treasury direct clearing route 使用同一协议清算价，不再直接使用 AMM spot。
+- `treasury.redeem` 在 `asset_out + nov_amount` 形态下使用 `P_redeem`，先扣用户 NOV，再按反向保守价从 Treasury reserve 出资产。
+- 只读查询 `nov_call treasury.get_protocol_clearing_price` 可返回 `P_epoch/P_pay/P_redeem`、source、rejected source、epoch 和 attack-resistance 状态。
+- 当前仍不声明真实 ETH lock proof、真实出金、跨链自动 mint/redeem 或钱包/DAPP/网站完成。
 
 ## 10. 本稿替换与冲突规则
 

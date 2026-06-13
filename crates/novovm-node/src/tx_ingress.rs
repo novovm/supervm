@@ -73,6 +73,8 @@ pub const NOV_NATIVE_CLEARING_CONSTRAINED_DAILY_USAGE_BPS_ENV: &str =
     "NOVOVM_NATIVE_CLEARING_CONSTRAINED_DAILY_USAGE_BPS";
 pub const NOV_NATIVE_CLEARING_CONSTRAINED_STRATEGY_ENV: &str =
     "NOVOVM_NATIVE_CLEARING_CONSTRAINED_STRATEGY";
+pub const NOV_NATIVE_PROTOCOL_CLEARING_EPOCH_MS_ENV: &str =
+    "NOVOVM_NATIVE_PROTOCOL_CLEARING_EPOCH_MS";
 const NOV_NATIVE_EXECUTION_STORE_SCHEMA_V1: &str = "novovm-native-execution-runtime/v1";
 const NOV_FEE_RATE_PPM_DENOMINATOR_V1: u128 = 1_000_000;
 const NOV_FEE_RATE_PPM_NOV_V1: u128 = NOV_FEE_RATE_PPM_DENOMINATOR_V1;
@@ -104,6 +106,15 @@ const NOV_CLEARING_CONSTRAINED_DAILY_USAGE_BPS_DEFAULT_V1: u32 = 8_000;
 const NOV_CLEARING_CONSTRAINED_STRATEGY_DAILY_VOLUME_ONLY_V1: &str = "daily_volume_only";
 const NOV_CLEARING_CONSTRAINED_STRATEGY_TREASURY_DIRECT_ONLY_V1: &str = "treasury_direct_only";
 const NOV_CLEARING_CONSTRAINED_STRATEGY_BLOCKED_V1: &str = "blocked";
+const NOV_PROTOCOL_CLEARING_EPOCH_MS_DEFAULT_V1: u128 = 300_000;
+const NOV_PROTOCOL_CLEARING_MAX_EPOCH_UP_BPS_V1: u32 = 500;
+const NOV_PROTOCOL_CLEARING_MAX_EPOCH_DOWN_BPS_V1: u32 = 500;
+const NOV_PROTOCOL_CLEARING_MAX_SOURCE_DEVIATION_BPS_V1: u32 = 2_000;
+const NOV_PROTOCOL_CLEARING_RESERVE_HAIRCUT_BPS_V1: u32 = 100;
+const NOV_PROTOCOL_CLEARING_LIQUIDITY_HAIRCUT_BPS_V1: u32 = 100;
+const NOV_PROTOCOL_CLEARING_VOLATILITY_HAIRCUT_BPS_V1: u32 = 0;
+const NOV_PROTOCOL_CLEARING_REDEMPTION_SPREAD_BPS_V1: u32 = 100;
+const NOV_PROTOCOL_CLEARING_RISK_SURCHARGE_BPS_V1: u32 = 0;
 const NOV_CREDIT_ENGINE_MIN_COLLATERAL_RATIO_BPS_V1: u32 = 15_000;
 const NOV_MILLIS_PER_DAY_V1: u128 = 86_400_000;
 
@@ -218,6 +229,34 @@ pub struct NovFeeQuoteV1 {
     pub route: String,
     pub quote_contract: String,
     pub price_source: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct NovProtocolClearingPriceV1 {
+    pub asset: String,
+    pub epoch: u128,
+    pub epoch_ms: u128,
+    pub p_prev_ppm: u128,
+    pub p_ref_ppm: u128,
+    pub p_epoch_ppm: u128,
+    pub p_pay_ppm: u128,
+    pub p_redeem_ppm: u128,
+    pub p_amm_twap_ppm: Option<u128>,
+    pub p_nav_ppm: Option<u128>,
+    pub p_oracle_ref_ppm: Option<u128>,
+    pub reserve_haircut_bps: u32,
+    pub liquidity_haircut_bps: u32,
+    pub volatility_haircut_bps: u32,
+    pub redemption_spread_bps: u32,
+    pub risk_surcharge_bps: u32,
+    pub max_epoch_up_bps: u32,
+    pub max_epoch_down_bps: u32,
+    pub max_source_deviation_bps: u32,
+    pub state: String,
+    pub sources_used: Vec<String>,
+    pub sources_rejected: Vec<String>,
+    pub reason: Option<String>,
+    pub updated_unix_ms: u128,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -532,6 +571,12 @@ pub struct NovNativeExecutionModuleStateV1 {
     pub clearing_nov_liquidity: BTreeMap<String, u128>,
     #[serde(default)]
     pub clearing_rate_ppm: BTreeMap<String, u128>,
+    #[serde(default)]
+    pub protocol_clearing_prices: BTreeMap<String, NovProtocolClearingPriceV1>,
+    #[serde(default)]
+    pub protocol_clearing_amm_twap_rate_ppm: BTreeMap<String, u128>,
+    #[serde(default)]
+    pub protocol_clearing_nav_rate_ppm: BTreeMap<String, u128>,
     #[serde(default = "default_true_v1")]
     pub clearing_enabled: bool,
     #[serde(default)]
@@ -617,6 +662,9 @@ impl Default for NovNativeExecutionModuleStateV1 {
             treasury_policy_last_update_unix_ms: 0,
             clearing_nov_liquidity: BTreeMap::new(),
             clearing_rate_ppm: BTreeMap::new(),
+            protocol_clearing_prices: BTreeMap::new(),
+            protocol_clearing_amm_twap_rate_ppm: BTreeMap::new(),
+            protocol_clearing_nav_rate_ppm: BTreeMap::new(),
             clearing_enabled: true,
             clearing_require_healthy_risk_buffer: false,
             clearing_constrained_max_slippage_bps:
@@ -2464,6 +2512,310 @@ fn default_clearing_liquidity_v1() -> u128 {
     )
 }
 
+fn protocol_clearing_epoch_ms_v1() -> u128 {
+    env_u128_or_v1(
+        NOV_NATIVE_PROTOCOL_CLEARING_EPOCH_MS_ENV,
+        NOV_PROTOCOL_CLEARING_EPOCH_MS_DEFAULT_V1,
+    )
+    .max(1)
+}
+
+fn clamp_epoch_rate_ppm_v1(rate: u128, prev: u128, max_down_bps: u32, max_up_bps: u32) -> u128 {
+    if prev == 0 {
+        return rate;
+    }
+    let min_rate = prev
+        .saturating_mul(u128::from(
+            10_000u32.saturating_sub(max_down_bps.min(10_000)),
+        ))
+        .saturating_div(10_000);
+    let max_rate = prev
+        .saturating_mul(u128::from(10_000u32.saturating_add(max_up_bps)))
+        .saturating_div(10_000)
+        .max(min_rate);
+    rate.clamp(min_rate, max_rate)
+}
+
+fn apply_down_bps_v1(value: u128, bps: u32) -> u128 {
+    value
+        .saturating_mul(u128::from(10_000u32.saturating_sub(bps.min(10_000))))
+        .saturating_div(10_000)
+}
+
+fn apply_up_bps_v1(value: u128, bps: u32) -> u128 {
+    value
+        .saturating_mul(u128::from(10_000u32.saturating_add(bps)))
+        .saturating_add(9_999)
+        .saturating_div(10_000)
+}
+
+fn rate_deviation_bps_v1(left: u128, right: u128) -> u32 {
+    if left == 0 || right == 0 {
+        return 10_000;
+    }
+    let high = left.max(right);
+    let low = left.min(right);
+    high.saturating_sub(low)
+        .saturating_mul(10_000)
+        .saturating_div(low)
+        .min(10_000) as u32
+}
+
+fn median_rate_ppm_v1(mut rates: Vec<u128>) -> Option<u128> {
+    rates.retain(|rate| *rate > 0);
+    if rates.is_empty() {
+        return None;
+    }
+    rates.sort_unstable();
+    Some(rates[rates.len() / 2])
+}
+
+fn has_amm_twap_liquidity_v1(store: &NovNativeExecutionStoreV1, asset: &str) -> bool {
+    let normalized = normalize_asset_symbol_v1(asset);
+    store
+        .module_state
+        .clearing_static_amm_pools
+        .values()
+        .any(|pool| {
+            pool.enabled
+                && normalize_asset_symbol_v1(pool.asset_x.as_str()) == normalized
+                && normalize_asset_symbol_v1(pool.asset_y.as_str()) == "NOV"
+                && pool.reserve_x > 0
+                && pool.reserve_y > 0
+        })
+}
+
+fn protocol_oracle_ref_rate_ppm_v1(
+    store: &NovNativeExecutionStoreV1,
+    asset: &str,
+    now_ms: u128,
+) -> Option<u128> {
+    let normalized = normalize_asset_symbol_v1(asset);
+    let rate = store
+        .module_state
+        .fee_oracle_rates_ppm
+        .get(&normalized)
+        .copied()?;
+    if rate == 0 {
+        return None;
+    }
+    let updated = store.module_state.fee_oracle_updated_unix_ms;
+    if updated > 0 && now_ms > updated.saturating_add(execution_fee_oracle_max_age_ms_v1().max(1)) {
+        return None;
+    }
+    Some(rate)
+}
+
+fn build_protocol_clearing_price_v1(
+    store: &NovNativeExecutionStoreV1,
+    asset: &str,
+    now_ms: u128,
+) -> Result<NovProtocolClearingPriceV1> {
+    let normalized = normalize_asset_symbol_v1(asset);
+    if normalized == "NOV" {
+        return Ok(NovProtocolClearingPriceV1 {
+            asset: normalized,
+            epoch: now_ms.saturating_div(protocol_clearing_epoch_ms_v1()),
+            epoch_ms: protocol_clearing_epoch_ms_v1(),
+            p_prev_ppm: NOV_FEE_RATE_PPM_NOV_V1,
+            p_ref_ppm: NOV_FEE_RATE_PPM_NOV_V1,
+            p_epoch_ppm: NOV_FEE_RATE_PPM_NOV_V1,
+            p_pay_ppm: NOV_FEE_RATE_PPM_NOV_V1,
+            p_redeem_ppm: NOV_FEE_RATE_PPM_NOV_V1,
+            p_amm_twap_ppm: None,
+            p_nav_ppm: Some(NOV_FEE_RATE_PPM_NOV_V1),
+            p_oracle_ref_ppm: None,
+            reserve_haircut_bps: 0,
+            liquidity_haircut_bps: 0,
+            volatility_haircut_bps: 0,
+            redemption_spread_bps: 0,
+            risk_surcharge_bps: 0,
+            max_epoch_up_bps: 0,
+            max_epoch_down_bps: 0,
+            max_source_deviation_bps: NOV_PROTOCOL_CLEARING_MAX_SOURCE_DEVIATION_BPS_V1,
+            state: "healthy".to_string(),
+            sources_used: vec!["native_nov".to_string()],
+            sources_rejected: Vec::new(),
+            reason: None,
+            updated_unix_ms: now_ms,
+        });
+    }
+
+    let epoch_ms = protocol_clearing_epoch_ms_v1();
+    let epoch = now_ms.saturating_div(epoch_ms);
+    let p_prev_ppm = store
+        .module_state
+        .protocol_clearing_prices
+        .get(&normalized)
+        .map(|price| price.p_epoch_ppm)
+        .or_else(|| {
+            store
+                .module_state
+                .clearing_rate_ppm
+                .get(&normalized)
+                .copied()
+        })
+        .or_else(|| {
+            store
+                .module_state
+                .fee_oracle_rates_ppm
+                .get(&normalized)
+                .copied()
+        })
+        .or_else(|| configured_fee_rate_ppm_v1(normalized.as_str()))
+        .unwrap_or_else(|| default_fee_rate_ppm_for_asset_v1(normalized.as_str()));
+    let p_amm_twap_ppm = store
+        .module_state
+        .protocol_clearing_amm_twap_rate_ppm
+        .get(&normalized)
+        .copied()
+        .filter(|rate| *rate > 0);
+    let p_nav_ppm = store
+        .module_state
+        .protocol_clearing_nav_rate_ppm
+        .get(&normalized)
+        .copied()
+        .filter(|rate| *rate > 0);
+    let p_oracle_ref_ppm = protocol_oracle_ref_rate_ppm_v1(store, normalized.as_str(), now_ms);
+
+    let mut candidates = Vec::<(&'static str, u128)>::new();
+    let mut rejected = Vec::<String>::new();
+    if let Some(rate) = p_amm_twap_ppm {
+        if has_amm_twap_liquidity_v1(store, normalized.as_str()) {
+            candidates.push(("amm_twap", rate));
+        } else {
+            rejected.push("amm_twap:low_liquidity".to_string());
+        }
+    }
+    if let Some(rate) = p_nav_ppm {
+        candidates.push(("treasury_nav", rate));
+    }
+    if let Some(rate) = p_oracle_ref_ppm {
+        candidates.push(("permissioned_oracle_ref", rate));
+    }
+
+    let anchor = p_nav_ppm.or(p_amm_twap_ppm).or(if p_prev_ppm > 0 {
+        Some(p_prev_ppm)
+    } else {
+        None
+    });
+    let max_deviation = NOV_PROTOCOL_CLEARING_MAX_SOURCE_DEVIATION_BPS_V1;
+    candidates.retain(|(source, rate)| {
+        if *source == "treasury_nav" {
+            return true;
+        }
+        if let Some(anchor_rate) = anchor {
+            let deviation = rate_deviation_bps_v1(*rate, anchor_rate);
+            if deviation > max_deviation {
+                rejected.push(format!(
+                    "{}:deviation_bps={} max_deviation_bps={}",
+                    source, deviation, max_deviation
+                ));
+                return false;
+            }
+        }
+        true
+    });
+
+    if candidates.is_empty() && p_prev_ppm == 0 {
+        bail!(
+            "{}",
+            fee_clearing_reason_v1(
+                "route_unavailable",
+                format!("asset={normalized} has no protocol clearing source").as_str(),
+            )
+        );
+    }
+
+    let p_ref_ppm = median_rate_ppm_v1(candidates.iter().map(|(_, rate)| *rate).collect())
+        .unwrap_or(p_prev_ppm);
+    let p_epoch_ppm = clamp_epoch_rate_ppm_v1(
+        p_ref_ppm,
+        p_prev_ppm,
+        NOV_PROTOCOL_CLEARING_MAX_EPOCH_DOWN_BPS_V1,
+        NOV_PROTOCOL_CLEARING_MAX_EPOCH_UP_BPS_V1,
+    );
+    let reserve_haircut_bps = NOV_PROTOCOL_CLEARING_RESERVE_HAIRCUT_BPS_V1;
+    let liquidity_haircut_bps = NOV_PROTOCOL_CLEARING_LIQUIDITY_HAIRCUT_BPS_V1;
+    let volatility_haircut_bps = NOV_PROTOCOL_CLEARING_VOLATILITY_HAIRCUT_BPS_V1;
+    let redemption_spread_bps = NOV_PROTOCOL_CLEARING_REDEMPTION_SPREAD_BPS_V1;
+    let risk_surcharge_bps = NOV_PROTOCOL_CLEARING_RISK_SURCHARGE_BPS_V1;
+    let p_pay_ppm = apply_down_bps_v1(
+        apply_down_bps_v1(
+            apply_down_bps_v1(p_epoch_ppm, reserve_haircut_bps),
+            liquidity_haircut_bps,
+        ),
+        volatility_haircut_bps,
+    )
+    .max(1);
+    let p_redeem_ppm = apply_up_bps_v1(
+        apply_up_bps_v1(p_epoch_ppm, redemption_spread_bps),
+        risk_surcharge_bps,
+    )
+    .max(p_epoch_ppm);
+    let sources_used = candidates
+        .iter()
+        .map(|(source, _)| (*source).to_string())
+        .collect::<Vec<_>>();
+    let state = if sources_used.is_empty() {
+        "constrained"
+    } else if sources_used.len() == 1 || !rejected.is_empty() {
+        "constrained"
+    } else {
+        "healthy"
+    };
+    let reason = if rejected.is_empty() && !sources_used.is_empty() {
+        None
+    } else if sources_used.is_empty() {
+        Some("fallback_to_previous_epoch_price".to_string())
+    } else {
+        Some("one_or_more_sources_rejected".to_string())
+    };
+
+    Ok(NovProtocolClearingPriceV1 {
+        asset: normalized,
+        epoch,
+        epoch_ms,
+        p_prev_ppm,
+        p_ref_ppm,
+        p_epoch_ppm,
+        p_pay_ppm,
+        p_redeem_ppm,
+        p_amm_twap_ppm,
+        p_nav_ppm,
+        p_oracle_ref_ppm,
+        reserve_haircut_bps,
+        liquidity_haircut_bps,
+        volatility_haircut_bps,
+        redemption_spread_bps,
+        risk_surcharge_bps,
+        max_epoch_up_bps: NOV_PROTOCOL_CLEARING_MAX_EPOCH_UP_BPS_V1,
+        max_epoch_down_bps: NOV_PROTOCOL_CLEARING_MAX_EPOCH_DOWN_BPS_V1,
+        max_source_deviation_bps: max_deviation,
+        state: state.to_string(),
+        sources_used,
+        sources_rejected: rejected,
+        reason,
+        updated_unix_ms: now_ms,
+    })
+}
+
+fn resolve_protocol_clearing_pay_rate_ppm_v1(
+    store: &mut NovNativeExecutionStoreV1,
+    asset: &str,
+    now_ms: u128,
+) -> Result<(u128, String, u128)> {
+    let price = build_protocol_clearing_price_v1(store, asset, now_ms)?;
+    let rate = price.p_pay_ppm;
+    let source = format!("protocol_clearing_price:{}", price.state);
+    let updated = price.updated_unix_ms;
+    store
+        .module_state
+        .protocol_clearing_prices
+        .insert(price.asset.clone(), price);
+    Ok((rate, source, updated))
+}
+
 fn build_treasury_direct_source_v1(
     store: &NovNativeExecutionStoreV1,
     pay_asset: &str,
@@ -2676,6 +3028,13 @@ fn resolve_clearing_rate_ppm_with_source_v1(
     now_ms: u128,
 ) -> Result<(u128, String, u128)> {
     let normalized = normalize_asset_symbol_v1(asset);
+    if let Ok(price) = build_protocol_clearing_price_v1(store, normalized.as_str(), now_ms) {
+        return Ok((
+            price.p_pay_ppm,
+            format!("protocol_clearing_price:{}", price.state),
+            price.updated_unix_ms,
+        ));
+    }
     if let Some(rate) = store
         .module_state
         .clearing_rate_ppm
@@ -2694,6 +3053,21 @@ fn resolve_clearing_rate_ppm_with_source_v1(
         return Ok((rate, "clearing_route_rate_ppm".to_string(), 0));
     }
     resolve_fee_rate_ppm_with_source_v1(store, normalized.as_str(), now_ms)
+}
+
+fn resolve_fee_quote_rate_ppm_with_source_v1(
+    store: &mut NovNativeExecutionStoreV1,
+    asset: &str,
+    now_ms: u128,
+) -> Result<(u128, String, u128)> {
+    let normalized = normalize_asset_symbol_v1(asset);
+    if normalized == "NOV" {
+        return Ok((NOV_FEE_RATE_PPM_NOV_V1, "direct_nov".to_string(), now_ms));
+    }
+    match resolve_protocol_clearing_pay_rate_ppm_v1(store, normalized.as_str(), now_ms) {
+        Ok(value) => Ok(value),
+        Err(_) => resolve_fee_rate_ppm_with_source_v1(store, normalized.as_str(), now_ms),
+    }
 }
 
 fn execution_fee_quote_ttl_ms_v1() -> u128 {
@@ -2738,7 +3112,7 @@ fn quote_fee_policy_from_execution_request_v1(
     let pay_asset = normalize_asset_symbol_v1(request.fee_pay_asset.as_str());
     let nov_amount = estimate_execution_fee_nov_v1(request);
     let (rate_ppm, price_source, oracle_updated_at_unix_ms) =
-        match resolve_fee_rate_ppm_with_source_v1(store, pay_asset.as_str(), now_ms) {
+        match resolve_fee_quote_rate_ppm_with_source_v1(store, pay_asset.as_str(), now_ms) {
             Ok(value) => value,
             Err(err) => {
                 let reason_text = format!("{err}");
@@ -3827,11 +4201,13 @@ fn dispatch_treasury_redeem_v1(
         .and_then(|value| value.as_str())
         .map(normalize_asset_symbol_v1)
         .unwrap_or_else(|| "NOV".to_string());
-    let amount = args_json
+    let requested_asset_amount = args_json
         .get("amount")
-        .or_else(|| args_json.get("nov_amount"))
-        .and_then(parse_u128_from_json_value_v1)
-        .unwrap_or(0);
+        .and_then(parse_u128_from_json_value_v1);
+    let requested_nov_amount = args_json
+        .get("nov_amount")
+        .and_then(parse_u128_from_json_value_v1);
+    let amount = requested_asset_amount.or(requested_nov_amount).unwrap_or(0);
     if amount == 0 {
         increment_settlement_failure_v1(store, "invalid_redeem_amount");
         return build_failed_native_receipt_v1(
@@ -3992,14 +4368,63 @@ fn dispatch_treasury_redeem_v1(
         );
     }
 
+    let protocol_redeem_price = if requested_asset_amount.is_none() {
+        requested_nov_amount
+            .filter(|nov_amount| *nov_amount > 0)
+            .and_then(|_| {
+                build_protocol_clearing_price_v1(store, asset.as_str(), now_unix_millis_v1()).ok()
+            })
+    } else {
+        None
+    };
+    let (asset_out_amount, nov_redeem_amount, redeem_rate_ppm, redeem_price_source) =
+        if let Some(price) = protocol_redeem_price {
+            let nov_amount = requested_nov_amount.unwrap_or(0);
+            let asset_out = nov_amount
+                .saturating_mul(NOV_FEE_RATE_PPM_DENOMINATOR_V1)
+                .saturating_div(price.p_redeem_ppm)
+                .max(1);
+            (
+                asset_out,
+                nov_amount,
+                price.p_redeem_ppm,
+                format!("protocol_clearing_redeem:{}", price.state),
+            )
+        } else {
+            (amount, 0, 0, "legacy_asset_amount".to_string())
+        };
+
+    let caller = subject_meta.account_id.as_str();
+    if nov_redeem_amount > 0 {
+        if let Err(err) =
+            debit_native_account_asset_balance_v1(store, caller, "NOV", nov_redeem_amount)
+        {
+            increment_settlement_failure_v1(store, "insufficient_user_nov");
+            return build_failed_native_receipt_v1(
+                request,
+                settled_fee,
+                subject_meta,
+                "treasury".to_string(),
+                method_label.to_string(),
+                fee_settlement_reason_v1(
+                    "insufficient_user_nov",
+                    format!("redeem requires NOV debit: {err}").as_str(),
+                ),
+            );
+        }
+    }
+
     let available = store
         .module_state
         .treasury_reserves
         .get(asset.as_str())
         .copied()
         .unwrap_or(0);
-    if available < amount {
+    if available < asset_out_amount {
         increment_settlement_failure_v1(store, "insufficient_reserve");
+        if nov_redeem_amount > 0 {
+            let _ = credit_native_account_asset_balance_v1(store, caller, "NOV", nov_redeem_amount);
+        }
         return build_failed_native_receipt_v1(
             request,
             settled_fee,
@@ -4010,7 +4435,7 @@ fn dispatch_treasury_redeem_v1(
                 "insufficient_reserve",
                 format!(
                     "asset={} requested={} available={}",
-                    asset, amount, available
+                    asset, asset_out_amount, available
                 )
                 .as_str(),
             ),
@@ -4022,7 +4447,7 @@ fn dispatch_treasury_redeem_v1(
             .treasury_reserves
             .entry(asset.clone())
             .or_insert(0);
-        *entry = entry.saturating_sub(amount);
+        *entry = entry.saturating_sub(asset_out_amount);
         *entry
     };
     let redeemed_entry = store
@@ -4030,7 +4455,13 @@ fn dispatch_treasury_redeem_v1(
         .treasury_redeemed_by_asset
         .entry(asset.clone())
         .or_insert(0);
-    *redeemed_entry = redeemed_entry.saturating_add(amount);
+    *redeemed_entry = redeemed_entry.saturating_add(asset_out_amount);
+    if nov_redeem_amount > 0 {
+        store.module_state.treasury_redeemed_nov_total = store
+            .module_state
+            .treasury_redeemed_nov_total
+            .saturating_add(nov_redeem_amount);
+    }
     append_treasury_settlement_journal_v1(
         store,
         NovTreasurySettlementJournalEntryV1 {
@@ -4046,14 +4477,14 @@ fn dispatch_treasury_redeem_v1(
             policy_enforced: subject_meta.policy_enforced,
             policy_rejection_reason: subject_meta.policy_rejection_reason.clone(),
             source_asset: asset.clone(),
-            source_amount: amount,
-            settled_nov: 0,
+            source_amount: asset_out_amount,
+            settled_nov: nov_redeem_amount,
             reserve_bucket_delta_nov: 0,
             fee_bucket_delta_nov: 0,
             risk_buffer_delta_nov: 0,
             route_ref: "treasury.reserve_redeem".to_string(),
-            clearing_source: "treasury".to_string(),
-            clearing_rate_ppm: 0,
+            clearing_source: redeem_price_source.clone(),
+            clearing_rate_ppm: redeem_rate_ppm,
             policy_version: policy.policy_version,
             policy_source: policy_source.clone(),
             policy_contract_id: policy_contract_id.clone(),
@@ -4064,16 +4495,18 @@ fn dispatch_treasury_redeem_v1(
             reason: None,
         },
     );
-    let caller = subject_meta.account_id.as_str();
     let caller_balance_after =
-        credit_native_account_asset_balance_v1(store, caller, asset.as_str(), amount);
+        credit_native_account_asset_balance_v1(store, caller, asset.as_str(), asset_out_amount);
     let log = NovNativeExecutionLogV1 {
         module: "treasury".to_string(),
         method: method_label.to_string(),
         event: "treasury.reserve_redeemed".to_string(),
         data: serde_json::json!({
             "asset": asset,
-            "amount": amount,
+            "amount": asset_out_amount,
+            "nov_redeem_amount": nov_redeem_amount,
+            "redeem_rate_ppm": redeem_rate_ppm,
+            "redeem_price_source": redeem_price_source,
             "account_id": caller,
             "caller_balance_after": caller_balance_after,
             "reserve_after": reserve_after,
@@ -5496,6 +5929,45 @@ pub fn run_nov_native_call_from_params_with_store_path_v1(
                         "current_risk_buffer_nov": store.module_state.treasury_risk_buffer_nov,
                     },
                 }),
+                ("treasury", "get_protocol_clearing_price") => {
+                    let asset = args
+                        .get("asset")
+                        .and_then(|value| value.as_str())
+                        .map(normalize_asset_symbol_v1)
+                        .unwrap_or_else(|| "USDT".to_string());
+                    let now_ms = now_unix_millis_v1();
+                    match build_protocol_clearing_price_v1(&store, asset.as_str(), now_ms) {
+                        Ok(price) => serde_json::json!({
+                            "method": "nov_call",
+                            "target": "treasury",
+                            "module_method": "get_protocol_clearing_price",
+                            "found": true,
+                            "result": {
+                                "asset": asset,
+                                "price": price,
+                                "semantics": {
+                                    "p_clear": "p_epoch_ppm is NOV per 1 unit of asset in ppm",
+                                    "p_pay": "p_pay_ppm is conservative fee/payment clearing price",
+                                    "p_redeem": "p_redeem_ppm is conservative treasury-out redemption price",
+                                    "epoch_fixed": true,
+                                    "amm_spot_allowed": false,
+                                    "oracle_open_feed_allowed": false,
+                                }
+                            },
+                        }),
+                        Err(err) => serde_json::json!({
+                            "method": "nov_call",
+                            "target": "treasury",
+                            "module_method": "get_protocol_clearing_price",
+                            "found": false,
+                            "result": {
+                                "asset": asset,
+                                "state": "blocked",
+                                "reason": err.to_string(),
+                            },
+                        }),
+                    }
+                }
                 ("treasury", "get_clearing_liquidity") => {
                     let asset = args
                         .get("asset")
@@ -5512,12 +5984,19 @@ pub fn run_nov_native_call_from_params_with_store_path_v1(
                         .get(asset.as_str())
                         .copied()
                         .unwrap_or(default_liquidity);
-                    let clearing_rate_ppm = store
-                        .module_state
-                        .clearing_rate_ppm
-                        .get(asset.as_str())
-                        .copied()
-                        .unwrap_or_else(|| default_fee_rate_ppm_for_asset_v1(asset.as_str()));
+                    let (clearing_rate_ppm, price_source, updated_unix_ms) =
+                        resolve_clearing_rate_ppm_with_source_v1(
+                            &store,
+                            asset.as_str(),
+                            now_unix_millis_v1(),
+                        )
+                        .unwrap_or_else(|_| {
+                            (
+                                default_fee_rate_ppm_for_asset_v1(asset.as_str()),
+                                "default_rate_ppm".to_string(),
+                                0,
+                            )
+                        });
                     serde_json::json!({
                         "method": "nov_call",
                         "target": "treasury",
@@ -5527,6 +6006,8 @@ pub fn run_nov_native_call_from_params_with_store_path_v1(
                             "asset": asset,
                             "available_nov": available_nov,
                             "clearing_rate_ppm": clearing_rate_ppm,
+                            "price_source": price_source,
+                            "price_updated_unix_ms": updated_unix_ms,
                         },
                     })
                 }
@@ -7113,6 +7594,160 @@ mod tests {
     }
 
     #[test]
+    fn protocol_clearing_price_clamps_epoch_and_uses_conservative_pay_redeem() {
+        let mut store = NovNativeExecutionStoreV1::default();
+        store
+            .module_state
+            .clearing_rate_ppm
+            .insert("USDT".to_string(), 1_000_000);
+        store
+            .module_state
+            .protocol_clearing_nav_rate_ppm
+            .insert("USDT".to_string(), 1_300_000);
+        store
+            .module_state
+            .protocol_clearing_amm_twap_rate_ppm
+            .insert("USDT".to_string(), 1_280_000);
+        store
+            .module_state
+            .fee_oracle_rates_ppm
+            .insert("USDT".to_string(), 1_290_000);
+        store.module_state.fee_oracle_updated_unix_ms = 600_000;
+        store.module_state.clearing_static_amm_pools.insert(
+            "usdt_nov_twap_pool".to_string(),
+            NovStaticAmmPoolStateV1 {
+                pool_id: "usdt_nov_twap_pool".to_string(),
+                asset_x: "USDT".to_string(),
+                asset_y: "NOV".to_string(),
+                reserve_x: 1_000_000,
+                reserve_y: 2_000_000,
+                swap_fee_ppm: 3_000,
+                enabled: true,
+            },
+        );
+
+        let price = build_protocol_clearing_price_v1(&store, "USDT", 600_000)
+            .expect("protocol clearing price should resolve");
+        assert_eq!(price.asset, "USDT");
+        assert_eq!(price.p_epoch_ppm, 1_050_000);
+        assert!(price.p_pay_ppm < price.p_epoch_ppm);
+        assert!(price.p_redeem_ppm > price.p_epoch_ppm);
+        assert_eq!(price.state, "healthy");
+        assert!(price.sources_used.iter().any(|source| source == "amm_twap"));
+        assert!(price
+            .sources_used
+            .iter()
+            .any(|source| source == "treasury_nav"));
+        assert!(price
+            .sources_used
+            .iter()
+            .any(|source| source == "permissioned_oracle_ref"));
+    }
+
+    #[test]
+    fn protocol_clearing_price_rejects_deviated_amm_twap() {
+        let mut store = NovNativeExecutionStoreV1::default();
+        store
+            .module_state
+            .clearing_rate_ppm
+            .insert("USDT".to_string(), 1_000_000);
+        store
+            .module_state
+            .protocol_clearing_nav_rate_ppm
+            .insert("USDT".to_string(), 1_000_000);
+        store
+            .module_state
+            .protocol_clearing_amm_twap_rate_ppm
+            .insert("USDT".to_string(), 5_000_000);
+        store
+            .module_state
+            .fee_oracle_rates_ppm
+            .insert("USDT".to_string(), 1_000_000);
+        store.module_state.fee_oracle_updated_unix_ms = 600_000;
+        store.module_state.clearing_static_amm_pools.insert(
+            "usdt_nov_bad_twap_pool".to_string(),
+            NovStaticAmmPoolStateV1 {
+                pool_id: "usdt_nov_bad_twap_pool".to_string(),
+                asset_x: "USDT".to_string(),
+                asset_y: "NOV".to_string(),
+                reserve_x: 1_000_000,
+                reserve_y: 2_000_000,
+                swap_fee_ppm: 3_000,
+                enabled: true,
+            },
+        );
+
+        let price = build_protocol_clearing_price_v1(&store, "USDT", 600_000)
+            .expect("protocol clearing price should resolve without AMM source");
+        assert_eq!(price.state, "constrained");
+        assert!(!price.sources_used.iter().any(|source| source == "amm_twap"));
+        assert!(price
+            .sources_rejected
+            .iter()
+            .any(|reason| reason.starts_with("amm_twap:deviation_bps=")));
+        assert_eq!(price.p_epoch_ppm, 1_000_000);
+    }
+
+    #[test]
+    fn fee_quote_uses_protocol_pay_price_and_persists_price_snapshot() {
+        let mut store = NovNativeExecutionStoreV1::default();
+        store
+            .module_state
+            .clearing_rate_ppm
+            .insert("USDT".to_string(), 1_000_000);
+        store
+            .module_state
+            .protocol_clearing_nav_rate_ppm
+            .insert("USDT".to_string(), 1_000_000);
+        store
+            .module_state
+            .protocol_clearing_amm_twap_rate_ppm
+            .insert("USDT".to_string(), 1_000_000);
+        store
+            .module_state
+            .fee_oracle_rates_ppm
+            .insert("USDT".to_string(), 1_000_000);
+        store.module_state.fee_oracle_updated_unix_ms = 600_000;
+        store.module_state.clearing_static_amm_pools.insert(
+            "usdt_nov_quote_twap_pool".to_string(),
+            NovStaticAmmPoolStateV1 {
+                pool_id: "usdt_nov_quote_twap_pool".to_string(),
+                asset_x: "USDT".to_string(),
+                asset_y: "NOV".to_string(),
+                reserve_x: 1_000_000,
+                reserve_y: 2_000_000,
+                swap_fee_ppm: 3_000,
+                enabled: true,
+            },
+        );
+        let request = NovExecutionRequestV1 {
+            tx_hash: [0x9cu8; 32],
+            chain_id: 9001,
+            caller: vec![0x9c; 20],
+            target: NovExecutionRequestTargetV1::NativeModule("treasury".to_string()),
+            method: "deposit_reserve".to_string(),
+            args: Vec::new(),
+            fee_pay_asset: "USDT".to_string(),
+            fee_max_pay_amount: 10_000,
+            fee_slippage_bps: 0,
+            gas_like_limit: Some(90_000),
+            nonce: 1,
+        };
+
+        let quote = quote_fee_policy_from_execution_request_v1(&request, &mut store, 600_000)
+            .expect("quote should use protocol clearing price");
+        assert_eq!(quote.price_source, "protocol_clearing_price:healthy");
+        assert!(quote.rate_ppm < 1_000_000);
+        let persisted = store
+            .module_state
+            .protocol_clearing_prices
+            .get("USDT")
+            .expect("price snapshot should be persisted");
+        assert_eq!(persisted.p_pay_ppm, quote.rate_ppm);
+        assert!(persisted.p_redeem_ppm > persisted.p_epoch_ppm);
+    }
+
+    #[test]
     fn fee_clearing_prefers_best_route_by_expected_nov_out() {
         with_test_native_execution_store_path_v1(|path| {
             let mut pre = NovNativeExecutionStoreV1::default();
@@ -7624,10 +8259,12 @@ mod tests {
             )
             .expect("dispatch should succeed");
             assert!(receipt.status);
-            assert!(receipt.fee_price_source.contains("quote=runtime_oracle"));
             assert!(receipt
                 .fee_price_source
-                .contains("rate_source=runtime_oracle"));
+                .contains("quote=protocol_clearing_price:constrained"));
+            assert!(receipt
+                .fee_price_source
+                .contains("rate_source=protocol_clearing_price:constrained"));
             assert!(receipt.fee_quote_id.starts_with("q-"));
         });
     }
@@ -7717,12 +8354,12 @@ mod tests {
             .expect("dispatch should return slippage exceeded receipt");
             assert!(!receipt.status);
             assert_eq!(receipt.module, "fee");
-            assert_eq!(receipt.method, "settlement");
+            assert_eq!(receipt.method, "quote");
             assert!(receipt
                 .failure_reason
                 .clone()
                 .unwrap_or_default()
-                .starts_with("fee.clearing.slippage_exceeded"));
+                .starts_with("fee.quote.max_pay_exceeded"));
         });
     }
 
@@ -9269,6 +9906,94 @@ mod tests {
             assert_eq!(
                 journal["result"]["entries"][0]["status"].as_str(),
                 Some("applied")
+            );
+        });
+    }
+
+    #[test]
+    fn treasury_redeem_m2_asset_uses_protocol_redeem_price_and_debits_nov() {
+        with_test_native_execution_store_path_v1(|path| {
+            let caller = format!("0x{}", "49".repeat(20));
+            let mut pre = NovNativeExecutionStoreV1::default();
+            credit_native_account_asset_balance_v1(&mut pre, caller.as_str(), "NOV", 500);
+            pre.module_state
+                .treasury_reserves
+                .insert("USDT".to_string(), 1_000);
+            pre.module_state
+                .clearing_rate_ppm
+                .insert("USDT".to_string(), 1_000_000);
+            pre.module_state
+                .protocol_clearing_nav_rate_ppm
+                .insert("USDT".to_string(), 1_000_000);
+            save_nov_native_execution_store_v1(path.as_path(), &pre)
+                .expect("seed USDT reserve and NOV balance");
+
+            let request = NovExecutionRequestV1 {
+                tx_hash: [0xa9; 32],
+                chain_id: 8029,
+                caller: vec![0x49; 20],
+                target: NovExecutionRequestTargetV1::NativeModule("treasury".to_string()),
+                method: "redeem".to_string(),
+                args: serde_json::to_vec(&serde_json::json!({
+                    "asset_out": "USDT",
+                    "nov_amount": 100u64
+                }))
+                .expect("encode args"),
+                fee_pay_asset: "NOV".to_string(),
+                fee_max_pay_amount: 500,
+                fee_slippage_bps: 0,
+                gas_like_limit: Some(80_000),
+                nonce: 49,
+            };
+            let receipt = dispatch_and_persist_nov_execution_request_with_store_path_v1(
+                path.as_path(),
+                &request,
+            )
+            .expect("dispatch should return successful USDT redeem receipt");
+            assert!(
+                receipt.status,
+                "failure_reason={:?}",
+                receipt.failure_reason
+            );
+            assert_eq!(receipt.module, "treasury");
+            assert_eq!(receipt.method, "redeem");
+
+            let nov_after = get_nov_native_account_asset_balance_with_store_path_v1(
+                path.as_path(),
+                caller.as_str(),
+                "NOV",
+            )
+            .expect("load NOV balance");
+            let usdt_after = get_nov_native_account_asset_balance_with_store_path_v1(
+                path.as_path(),
+                caller.as_str(),
+                "USDT",
+            )
+            .expect("load USDT balance");
+            assert_eq!(nov_after, 400);
+            assert_eq!(usdt_after, 99);
+
+            let journal = run_nov_native_call_from_params_with_store_path_v1(
+                &serde_json::json!({
+                    "target": {"kind": "native_module", "id": "treasury"},
+                    "method": "get_settlement_journal",
+                    "args": {"limit": 1}
+                }),
+                Some(path.as_path()),
+            )
+            .expect("get_settlement_journal should succeed");
+            let entry = &journal["result"]["entries"][0];
+            assert_eq!(entry["kind"].as_str(), Some("reserve_redeem"));
+            assert_eq!(entry["source_asset"].as_str(), Some("USDT"));
+            assert_eq!(entry["source_amount"].as_u64(), Some(99));
+            assert_eq!(entry["settled_nov"].as_u64(), Some(100));
+            assert_eq!(
+                entry["clearing_source"].as_str(),
+                Some("protocol_clearing_redeem:constrained")
+            );
+            assert!(
+                entry["clearing_rate_ppm"].as_u64().unwrap_or_default() > 1_000_000,
+                "redeem must use reverse conservative price"
             );
         });
     }
