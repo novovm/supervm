@@ -465,7 +465,8 @@ native NOV 入口：
 - `P_pay` 已接入多资产 Execution Fee quote 和 TreasuryDirect clearing。
 - `P_redeem` 已接入 `treasury.redeem` 的 `asset_out + nov_amount` 形态：先扣用户 NOV，再按反向保守价从 Treasury reserve 出资产。
 - 许可 oracle source allowlist 已接入最小治理路径：`apply_treasury_policy` 可持久化 `fee_oracle_allowed_sources`；`get_fee_oracle_rates` 和 `get_protocol_clearing_price` 会暴露 `oracle_source_allowed`，非白名单 source 不进入协议清算价。
-- 仍未完成真实外部桥自动化、真实 reserve proof、NOV emission policy 自动接线、真实外部链出金和高并发事务后端。
+- Treasury reserve proof 已接入最小治理登记/查询路径：`governance.set_reserve_proof` 可登记 proof metadata；`treasury.get_reserve_proof` / `treasury.get_reserve_snapshot` 可查询 proof effective status 和 non-claim 标记。
+- 仍未完成真实外部桥自动化、真实自动 reserve proof verification、NOV emission policy 自动接线、真实外部链出金和高并发事务后端。
 
 建议：
 

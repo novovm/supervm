@@ -550,9 +550,37 @@ pub struct NovCreditVaultStateV1 {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct NovTreasuryReserveProofV1 {
+    pub asset: String,
+    pub reserve_amount: u128,
+    pub proof_type: String,
+    pub proof_digest: String,
+    #[serde(default)]
+    pub proof_source: String,
+    #[serde(default)]
+    pub proof_reference: String,
+    #[serde(default)]
+    pub observed_at_unix_ms: u128,
+    #[serde(default)]
+    pub expires_at_unix_ms: u128,
+    #[serde(default)]
+    pub policy_version: u32,
+    #[serde(default)]
+    pub policy_source: String,
+    #[serde(default)]
+    pub status: String,
+    #[serde(default)]
+    pub automated_verification: bool,
+    #[serde(default)]
+    pub verification_mode: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct NovNativeExecutionModuleStateV1 {
     #[serde(default)]
     pub treasury_reserves: BTreeMap<String, u128>,
+    #[serde(default)]
+    pub treasury_reserve_proofs: BTreeMap<String, NovTreasuryReserveProofV1>,
     #[serde(default)]
     pub account_asset_balances: BTreeMap<String, BTreeMap<String, u128>>,
     #[serde(default)]
@@ -721,6 +749,7 @@ impl Default for NovNativeExecutionModuleStateV1 {
     fn default() -> Self {
         Self {
             treasury_reserves: BTreeMap::new(),
+            treasury_reserve_proofs: BTreeMap::new(),
             account_asset_balances: BTreeMap::new(),
             governance_proposals: BTreeMap::new(),
             next_governance_proposal_id: 0,
@@ -1506,6 +1535,7 @@ const NOV_NATIVE_MODULE_REGISTRY_V1: [(&str, &[&str]); 6] = [
             "redeem",
             "redeem_reserve",
             "get_reserve_balance",
+            "get_reserve_proof",
             "get_reserve_snapshot",
             "get_settlement_summary",
             "get_settlement_policy",
@@ -1530,6 +1560,7 @@ const NOV_NATIVE_MODULE_REGISTRY_V1: [(&str, &[&str]); 6] = [
         &[
             "submit_proposal",
             "apply_treasury_policy",
+            "set_reserve_proof",
             "get_proposal",
             "list_proposals",
         ],
@@ -1706,6 +1737,27 @@ fn fee_oracle_source_allowed_v1(store: &NovNativeExecutionStoreV1) -> bool {
     fee_oracle_allowed_sources_v1(store)
         .iter()
         .any(|allowed| allowed == &source)
+}
+
+fn normalize_reserve_proof_status_v1(raw: &str) -> String {
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "active" | "valid" => "active".to_string(),
+        "constrained" | "review" | "under_review" => "constrained".to_string(),
+        "revoked" | "disabled" => "revoked".to_string(),
+        "expired" => "expired".to_string(),
+        _ => "active".to_string(),
+    }
+}
+
+fn reserve_proof_effective_status_v1(proof: &NovTreasuryReserveProofV1, now_ms: u128) -> String {
+    let status = normalize_reserve_proof_status_v1(proof.status.as_str());
+    if status == "revoked" {
+        return status;
+    }
+    if proof.expires_at_unix_ms > 0 && now_ms > proof.expires_at_unix_ms {
+        return "expired".to_string();
+    }
+    status
 }
 
 fn fee_quote_reason_v1(code: &str, detail: &str) -> String {
@@ -5252,6 +5304,159 @@ fn dispatch_native_module_execute_v1(
                 subject_meta,
             )
         }
+        ("governance", "set_reserve_proof") => {
+            if let Err(err) = governance_execute_authorized_v1(request, &args_json) {
+                return build_failed_native_receipt_v1(
+                    request,
+                    settled_fee,
+                    subject_meta,
+                    "governance".to_string(),
+                    "set_reserve_proof".to_string(),
+                    format!("governance.policy.authority_denied: {err}"),
+                );
+            }
+            let asset = args_json
+                .get("asset")
+                .and_then(|value| value.as_str())
+                .map(normalize_asset_symbol_v1)
+                .unwrap_or_default();
+            if asset.is_empty() {
+                return build_failed_native_receipt_v1(
+                    request,
+                    settled_fee,
+                    subject_meta,
+                    "governance".to_string(),
+                    "set_reserve_proof".to_string(),
+                    "governance.reserve_proof.asset_required".to_string(),
+                );
+            }
+            let proof_digest = args_json
+                .get("proof_digest")
+                .or_else(|| args_json.get("digest"))
+                .and_then(|value| value.as_str())
+                .map(|value| value.trim().to_ascii_lowercase())
+                .unwrap_or_default();
+            if proof_digest.is_empty() {
+                return build_failed_native_receipt_v1(
+                    request,
+                    settled_fee,
+                    subject_meta,
+                    "governance".to_string(),
+                    "set_reserve_proof".to_string(),
+                    "governance.reserve_proof.digest_required".to_string(),
+                );
+            }
+            let reserve_amount = args_json
+                .get("reserve_amount")
+                .or_else(|| args_json.get("amount"))
+                .and_then(parse_u128_from_json_value_v1)
+                .unwrap_or_else(|| {
+                    store
+                        .module_state
+                        .treasury_reserves
+                        .get(asset.as_str())
+                        .copied()
+                        .unwrap_or(0)
+                });
+            let proof_type = args_json
+                .get("proof_type")
+                .and_then(|value| value.as_str())
+                .map(|value| value.trim().to_ascii_lowercase())
+                .filter(|value| !value.is_empty())
+                .unwrap_or_else(|| "manual_attestation_v1".to_string());
+            let proof_source = args_json
+                .get("proof_source")
+                .or_else(|| args_json.get("source"))
+                .and_then(|value| value.as_str())
+                .map(normalize_policy_source_v1)
+                .unwrap_or_else(|| "governance_path".to_string());
+            let proof_reference = args_json
+                .get("proof_reference")
+                .or_else(|| args_json.get("reference"))
+                .and_then(|value| value.as_str())
+                .map(|value| value.trim().to_string())
+                .unwrap_or_default();
+            let now_ms = now_unix_millis_v1();
+            let observed_at_unix_ms = args_json
+                .get("observed_at_unix_ms")
+                .and_then(parse_u128_from_json_value_v1)
+                .unwrap_or(now_ms);
+            let expires_at_unix_ms = args_json
+                .get("expires_at_unix_ms")
+                .and_then(parse_u128_from_json_value_v1)
+                .unwrap_or(0);
+            let status = normalize_reserve_proof_status_v1(
+                args_json
+                    .get("status")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or("active"),
+            );
+            let policy_version = args_json
+                .get("policy_version")
+                .and_then(parse_u128_from_json_value_v1)
+                .map(|value| value as u32)
+                .unwrap_or_else(|| {
+                    store
+                        .module_state
+                        .treasury_policy_version
+                        .max(NOV_TREASURY_POLICY_VERSION_DEFAULT_V1)
+                });
+            let proof = NovTreasuryReserveProofV1 {
+                asset: asset.clone(),
+                reserve_amount,
+                proof_type,
+                proof_digest,
+                proof_source,
+                proof_reference,
+                observed_at_unix_ms,
+                expires_at_unix_ms,
+                policy_version,
+                policy_source: "governance_path".to_string(),
+                status: status.clone(),
+                automated_verification: false,
+                verification_mode: "manual_governance_attestation".to_string(),
+            };
+            let effective_status = reserve_proof_effective_status_v1(&proof, now_ms);
+            store
+                .module_state
+                .treasury_reserve_proofs
+                .insert(asset.clone(), proof.clone());
+
+            let log = NovNativeExecutionLogV1 {
+                module: "governance".to_string(),
+                method: "set_reserve_proof".to_string(),
+                event: "governance.treasury_reserve_proof_set".to_string(),
+                data: serde_json::json!({
+                    "asset": asset,
+                    "reserve_amount": reserve_amount,
+                    "proof_type": proof.proof_type,
+                    "proof_digest": proof.proof_digest,
+                    "proof_source": proof.proof_source,
+                    "proof_reference": proof.proof_reference,
+                    "observed_at_unix_ms": proof.observed_at_unix_ms,
+                    "expires_at_unix_ms": proof.expires_at_unix_ms,
+                    "policy_version": proof.policy_version,
+                    "policy_source": proof.policy_source,
+                    "status": status,
+                    "effective_status": effective_status,
+                    "automated_verification": false,
+                    "verification_mode": "manual_governance_attestation",
+                    "claims": {
+                        "real_external_reserve_auto_verified": false,
+                        "nov_mint_authorized": false,
+                        "external_redemption_authorized": false
+                    }
+                }),
+            };
+            build_success_native_receipt_v1(
+                request,
+                settled_fee,
+                subject_meta,
+                "governance",
+                "set_reserve_proof",
+                vec![log],
+            )
+        }
         ("governance", "apply_treasury_policy") => {
             if let Err(err) = governance_execute_authorized_v1(request, &args_json) {
                 return build_failed_native_receipt_v1(
@@ -6101,6 +6306,29 @@ pub fn run_nov_native_call_from_params_with_store_path_v1(
         "oracle_source_allowed": fee_oracle_source_allowed_v1(&store),
         "oracle_open_feed_allowed": false,
     });
+    let reserve_proof_now_ms = now_unix_millis_v1();
+    let reserve_proofs = store
+        .module_state
+        .treasury_reserve_proofs
+        .iter()
+        .map(|(asset, proof)| {
+            (
+                asset.clone(),
+                serde_json::json!({
+                    "proof": proof,
+                    "effective_status": reserve_proof_effective_status_v1(
+                        proof,
+                        reserve_proof_now_ms
+                    ),
+                    "claims": {
+                        "real_external_reserve_auto_verified": proof.automated_verification,
+                        "nov_mint_authorized": false,
+                        "external_redemption_authorized": false
+                    }
+                }),
+            )
+        })
+        .collect::<BTreeMap<String, serde_json::Value>>();
     let journal_total = store.module_state.treasury_settlement_journal.len();
     let journal_next_seq = store.module_state.treasury_settlement_journal_next_seq;
     let journal_last_seq = store
@@ -6133,6 +6361,31 @@ pub fn run_nov_native_call_from_params_with_store_path_v1(
                         "result": {
                             "asset": asset,
                             "reserve_balance": balance,
+                            "reserve_proof": reserve_proofs.get(asset.as_str()).cloned(),
+                        },
+                    })
+                }
+                ("treasury", "get_reserve_proof") => {
+                    let asset = args
+                        .get("asset")
+                        .and_then(|value| value.as_str())
+                        .map(normalize_asset_symbol_v1)
+                        .unwrap_or_else(|| "NOV".to_string());
+                    let proof = reserve_proofs.get(asset.as_str()).cloned();
+                    serde_json::json!({
+                        "method": "nov_call",
+                        "target": "treasury",
+                        "module_method": "get_reserve_proof",
+                        "found": proof.is_some(),
+                        "result": {
+                            "asset": asset,
+                            "reserve_balance": store.module_state.treasury_reserves
+                                .get(asset.as_str())
+                                .copied()
+                                .unwrap_or(0),
+                            "reserve_proof": proof,
+                            "proof_required_for_nov_mint": true,
+                            "automated_external_verification_complete": false,
                         },
                     })
                 }
@@ -6143,6 +6396,7 @@ pub fn run_nov_native_call_from_params_with_store_path_v1(
                     "found": true,
                     "result": {
                         "reserves": store.module_state.treasury_reserves.clone(),
+                        "reserve_proofs": reserve_proofs.clone(),
                         "settled_nov_total": store.module_state.treasury_settled_nov_total,
                         "redeemed_nov_total": store.module_state.treasury_redeemed_nov_total,
                         "settlement_count": store.module_state.treasury_settlements,
@@ -9282,6 +9536,102 @@ mod tests {
             assert_eq!(
                 risk["result"]["last_selected_route_policy_context"]["policy_contract_id"].as_str(),
                 Some(policy_contract_id.as_str())
+            );
+        });
+    }
+
+    #[test]
+    fn governance_set_reserve_proof_exposes_manual_status_without_mint_claims() {
+        with_test_native_execution_store_path_v1(|path| {
+            let request = NovExecutionRequestV1 {
+                tx_hash: [0x91; 32],
+                chain_id: 7011,
+                caller: vec![0x91; 20],
+                target: NovExecutionRequestTargetV1::NativeModule("governance".to_string()),
+                method: "set_reserve_proof".to_string(),
+                args: serde_json::to_vec(&serde_json::json!({
+                    "governance_authorized": true,
+                    "asset": "NETH",
+                    "reserve_amount": 1_000u64,
+                    "proof_type": "custody_statement_v1",
+                    "proof_digest": "0xabc123",
+                    "proof_source": "treasury_committee",
+                    "proof_reference": "reserve-report-001",
+                    "observed_at_unix_ms": 700_000u64,
+                    "expires_at_unix_ms": 0u64,
+                    "policy_version": 11u64,
+                    "status": "active"
+                }))
+                .expect("encode reserve proof args"),
+                fee_pay_asset: "NOV".to_string(),
+                fee_max_pay_amount: 10_000,
+                fee_slippage_bps: 50,
+                gas_like_limit: Some(90_000),
+                nonce: 21,
+            };
+            let receipt = with_env_override_v1(NOV_NATIVE_GOVERNANCE_ENABLED_ENV, "true", || {
+                dispatch_and_persist_nov_execution_request_with_store_path_v1(
+                    path.as_path(),
+                    &request,
+                )
+                .expect("dispatch should set reserve proof")
+            });
+            assert!(receipt.status);
+            assert_eq!(receipt.module, "governance");
+            assert_eq!(receipt.method, "set_reserve_proof");
+            assert_eq!(
+                receipt.logs[0].data["claims"]["nov_mint_authorized"].as_bool(),
+                Some(false)
+            );
+            assert_eq!(
+                receipt.logs[0].data["automated_verification"].as_bool(),
+                Some(false)
+            );
+
+            let proof = run_nov_native_call_from_params_with_store_path_v1(
+                &serde_json::json!({
+                    "target": {"kind": "native_module", "id": "treasury"},
+                    "method": "get_reserve_proof",
+                    "args": {"asset": "NETH"}
+                }),
+                Some(path.as_path()),
+            )
+            .expect("get_reserve_proof should succeed");
+            assert_eq!(proof["found"].as_bool(), Some(true));
+            assert_eq!(
+                proof["result"]["reserve_proof"]["effective_status"].as_str(),
+                Some("active")
+            );
+            assert_eq!(
+                proof["result"]["reserve_proof"]["proof"]["reserve_amount"].as_u64(),
+                Some(1_000)
+            );
+            assert_eq!(
+                proof["result"]["reserve_proof"]["proof"]["automated_verification"].as_bool(),
+                Some(false)
+            );
+            assert_eq!(
+                proof["result"]["reserve_proof"]["claims"]["external_redemption_authorized"]
+                    .as_bool(),
+                Some(false)
+            );
+            assert_eq!(
+                proof["result"]["automated_external_verification_complete"].as_bool(),
+                Some(false)
+            );
+
+            let snapshot = run_nov_native_call_from_params_with_store_path_v1(
+                &serde_json::json!({
+                    "target": {"kind": "native_module", "id": "treasury"},
+                    "method": "get_reserve_snapshot",
+                    "args": {}
+                }),
+                Some(path.as_path()),
+            )
+            .expect("get_reserve_snapshot should succeed");
+            assert_eq!(
+                snapshot["result"]["reserve_proofs"]["NETH"]["proof"]["proof_reference"].as_str(),
+                Some("reserve-report-001")
             );
         });
     }
