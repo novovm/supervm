@@ -350,6 +350,8 @@ pub fn is_mainline_native_execution_query_method(method: &str) -> bool {
             | "nov_getTreasuryPolicyMetricsSummary"
             | "nov_getTreasurySettlementPolicy"
             | "nov_getTreasurySettlementJournal"
+            | "nov_getTreasuryReserveProof"
+            | "nov_getTreasuryReserveSnapshot"
             | "nov_swap"
             | "nov_redeem"
             | "nov_openVault"
@@ -569,6 +571,41 @@ fn run_mainline_native_execution_query(method: &str, params: &Value) -> Result<V
                 "method": "nov_getTreasurySettlementJournal",
                 "found": out.get("found").and_then(Value::as_bool).unwrap_or(false),
                 "journal": out.get("result").cloned().unwrap_or(Value::Null),
+            }))
+        }
+        "nov_getTreasuryReserveProof" => {
+            let asset = param_as_string_any(params, &["asset", "asset_id"])
+                .unwrap_or_else(|| "NOV".to_string())
+                .to_ascii_uppercase();
+            let out = run_nov_native_call_from_params_with_store_path_v1(
+                &json!({
+                    "target": {"kind": "native_module", "id": "treasury"},
+                    "method": "get_reserve_proof",
+                    "args": {
+                        "asset": asset,
+                    },
+                }),
+                Some(store_path.as_path()),
+            )?;
+            Ok(json!({
+                "method": "nov_getTreasuryReserveProof",
+                "found": out.get("found").and_then(Value::as_bool).unwrap_or(false),
+                "reserve_proof": out.get("result").cloned().unwrap_or(Value::Null),
+            }))
+        }
+        "nov_getTreasuryReserveSnapshot" => {
+            let out = run_nov_native_call_from_params_with_store_path_v1(
+                &json!({
+                    "target": {"kind": "native_module", "id": "treasury"},
+                    "method": "get_reserve_snapshot",
+                    "args": {},
+                }),
+                Some(store_path.as_path()),
+            )?;
+            Ok(json!({
+                "method": "nov_getTreasuryReserveSnapshot",
+                "found": out.get("found").and_then(Value::as_bool).unwrap_or(false),
+                "reserve_snapshot": out.get("result").cloned().unwrap_or(Value::Null),
             }))
         }
         "nov_swap" => run_mainline_nov_swap_v1(params),
@@ -3988,7 +4025,8 @@ mod tests {
     use crate::mainline_canonical::MainlineCanonicalBatchRecordV1;
     use crate::tx_ingress::{
         get_nov_native_account_asset_balance_with_store_path_v1,
-        save_nov_native_execution_store_v1, NovNativeExecutionStoreV1,
+        load_nov_native_execution_store_v1, save_nov_native_execution_store_v1,
+        NovNativeExecutionStoreV1, NovTreasuryReserveProofV1,
     };
     use crate::unified_account_surface::{
         is_mainline_unified_account_query_method, seed_unified_account_key_algo_for_tests_v1,
@@ -9418,6 +9456,8 @@ mod tests {
             "nov_getTreasuryPolicyMetricsSummary",
             "nov_getTreasurySettlementPolicy",
             "nov_getTreasurySettlementJournal",
+            "nov_getTreasuryReserveProof",
+            "nov_getTreasuryReserveSnapshot",
             "nov_swap",
             "nov_redeem",
             "nov_openVault",
@@ -9502,6 +9542,8 @@ mod tests {
             ("nov_getTreasuryPolicyMetricsSummary", json!({})),
             ("nov_getTreasurySettlementPolicy", json!({})),
             ("nov_getTreasurySettlementJournal", json!({"limit": 5})),
+            ("nov_getTreasuryReserveProof", json!({"asset": "USDT"})),
+            ("nov_getTreasuryReserveSnapshot", json!({})),
         ] {
             let mut params = extra;
             if let Value::Object(map) = &mut params {
@@ -10670,6 +10712,187 @@ mod tests {
         .expect("nov_getAssetBalance NUSD should succeed");
         assert_eq!(nusd_after["found"].as_bool(), Some(true));
         assert_eq!(nusd_after["balance"].as_u64(), Some(100));
+
+        let _ = fs::remove_file(native_store);
+    }
+
+    #[test]
+    fn mainline_query_treasury_reserve_proof_product_smoke_enforces_cap() {
+        let bogus_canonical_store =
+            std::path::Path::new("this-canonical-store-does-not-exist.json");
+        let native_store = unique_native_execution_store_path("treasury-proof-smoke");
+        let caller = format!("0x{}", "65".repeat(20));
+
+        let mut pre = NovNativeExecutionStoreV1::default();
+        pre.module_state
+            .treasury_reserves
+            .insert("USDT".to_string(), 1_000);
+        pre.module_state
+            .clearing_rate_ppm
+            .insert("USDT".to_string(), 1_000_000);
+        pre.module_state
+            .protocol_clearing_nav_rate_ppm
+            .insert("USDT".to_string(), 1_000_000);
+        pre.module_state.treasury_reserve_proofs.insert(
+            "USDT".to_string(),
+            NovTreasuryReserveProofV1 {
+                asset: "USDT".to_string(),
+                reserve_amount: 2_000,
+                proof_type: "custody_statement_v1".to_string(),
+                proof_digest: "0xmainlinecap01".to_string(),
+                proof_source: "treasury_committee".to_string(),
+                proof_reference: "mainline-proof-smoke-001".to_string(),
+                observed_at_unix_ms: 1,
+                expires_at_unix_ms: 0,
+                policy_version: 1,
+                policy_source: "governance_path".to_string(),
+                status: "active".to_string(),
+                automated_verification: false,
+                verification_mode: "manual_governance_attestation".to_string(),
+            },
+        );
+        pre.module_state.account_asset_balances.insert(
+            caller.clone(),
+            std::collections::BTreeMap::from([("NOV".to_string(), 500u128)]),
+        );
+        save_nov_native_execution_store_v1(native_store.as_path(), &pre)
+            .expect("seed treasury proof smoke store");
+
+        let proof = run_mainline_query_from_path(
+            bogus_canonical_store,
+            "nov_getTreasuryReserveProof",
+            &json!({
+                "asset": "USDT",
+                "native_execution_store_path": native_store.display().to_string(),
+            }),
+        )
+        .expect("nov_getTreasuryReserveProof should succeed");
+        assert_eq!(proof["found"].as_bool(), Some(true));
+        assert_eq!(
+            proof["reserve_proof"]["reserve_proof"]["effective_status"].as_str(),
+            Some("active")
+        );
+        assert_eq!(
+            proof["reserve_proof"]["reserve_proof"]["proof"]["reserve_amount"].as_u64(),
+            Some(2_000)
+        );
+        assert_eq!(
+            proof["reserve_proof"]["reserve_proof"]["claims"]["nov_mint_authorized"].as_bool(),
+            Some(false)
+        );
+
+        let redeem_ok = run_mainline_query_from_path(
+            bogus_canonical_store,
+            "nov_redeem",
+            &json!({
+                "from": caller,
+                "asset_out": "USDT",
+                "nov_amount": 100u64,
+                "max_pay_amount": 500u64,
+                "native_execution_store_path": native_store.display().to_string(),
+            }),
+        )
+        .expect("nov_redeem should succeed while proof cap covers reserve");
+        assert_eq!(redeem_ok["method"].as_str(), Some("nov_redeem"));
+        assert_eq!(redeem_ok["native_receipt"]["status"].as_bool(), Some(true));
+
+        let journal = run_mainline_query_from_path(
+            bogus_canonical_store,
+            "nov_getTreasurySettlementJournal",
+            &json!({
+                "limit": 1,
+                "native_execution_store_path": native_store.display().to_string(),
+            }),
+        )
+        .expect("nov_getTreasurySettlementJournal should succeed");
+        assert_eq!(
+            journal["journal"]["entries"][0]["kind"].as_str(),
+            Some("reserve_redeem")
+        );
+        assert_eq!(
+            journal["journal"]["entries"][0]["source_asset"].as_str(),
+            Some("USDT")
+        );
+
+        let nov_after_success = get_nov_native_account_asset_balance_with_store_path_v1(
+            native_store.as_path(),
+            caller.as_str(),
+            "NOV",
+        )
+        .expect("load NOV after successful redeem");
+        let usdt_after_success = get_nov_native_account_asset_balance_with_store_path_v1(
+            native_store.as_path(),
+            caller.as_str(),
+            "USDT",
+        )
+        .expect("load USDT after successful redeem");
+        assert_eq!(nov_after_success, 400);
+        assert_eq!(usdt_after_success, 99);
+
+        let mut capped = load_nov_native_execution_store_v1(native_store.as_path())
+            .expect("load smoke store before lowering proof cap");
+        let proof_entry = capped
+            .module_state
+            .treasury_reserve_proofs
+            .get_mut("USDT")
+            .expect("USDT proof should exist");
+        proof_entry.reserve_amount = 500;
+        proof_entry.proof_digest = "0xmainlinecap02".to_string();
+        proof_entry.proof_reference = "mainline-proof-smoke-002".to_string();
+        save_nov_native_execution_store_v1(native_store.as_path(), &capped)
+            .expect("save lowered proof cap");
+
+        let snapshot = run_mainline_query_from_path(
+            bogus_canonical_store,
+            "nov_getTreasuryReserveSnapshot",
+            &json!({
+                "native_execution_store_path": native_store.display().to_string(),
+            }),
+        )
+        .expect("nov_getTreasuryReserveSnapshot should succeed");
+        assert_eq!(snapshot["found"].as_bool(), Some(true));
+        assert_eq!(
+            snapshot["reserve_snapshot"]["reserve_proofs"]["USDT"]["proof"]["reserve_amount"]
+                .as_u64(),
+            Some(500)
+        );
+
+        let redeem_blocked = run_mainline_query_from_path(
+            bogus_canonical_store,
+            "nov_redeem",
+            &json!({
+                "from": caller,
+                "asset_out": "USDT",
+                "nov_amount": 100u64,
+                "max_pay_amount": 500u64,
+                "native_execution_store_path": native_store.display().to_string(),
+            }),
+        )
+        .expect("nov_redeem should return failed receipt when proof cap is insufficient");
+        assert_eq!(
+            redeem_blocked["native_receipt"]["status"].as_bool(),
+            Some(false)
+        );
+        let failure = redeem_blocked["native_receipt"]["failure_reason"]
+            .as_str()
+            .unwrap_or_default();
+        assert!(failure.starts_with("fee.settlement.reserve_proof_capacity_exceeded"));
+        assert!(failure.contains("proof_reference=mainline-proof-smoke-002"));
+
+        let nov_after_block = get_nov_native_account_asset_balance_with_store_path_v1(
+            native_store.as_path(),
+            caller.as_str(),
+            "NOV",
+        )
+        .expect("load NOV after blocked redeem");
+        let usdt_after_block = get_nov_native_account_asset_balance_with_store_path_v1(
+            native_store.as_path(),
+            caller.as_str(),
+            "USDT",
+        )
+        .expect("load USDT after blocked redeem");
+        assert_eq!(nov_after_block, nov_after_success);
+        assert_eq!(usdt_after_block, usdt_after_success);
 
         let _ = fs::remove_file(native_store);
     }
