@@ -10384,6 +10384,96 @@ fn execute_native_raw_tx_batch_via_aoem_semantic_ingress_v1(
     }
 }
 
+fn aggregate_native_aoem_raw_tx_batch_chunks_v1(
+    raw_payloads: &[Vec<u8>],
+    chunks: &[NovAoemSemanticIngressMetaV1],
+) -> NovAoemSemanticIngressMetaV1 {
+    let enabled = native_aoem_semantic_ingress_enabled_v1();
+    let required = native_aoem_semantic_ingress_required_v1();
+    let plan_id = native_aoem_raw_tx_batch_plan_id_v1(raw_payloads);
+    let mut digest_parts: Vec<&[u8]> = Vec::with_capacity(chunks.len() + 1);
+    digest_parts.push(b"novovm-native-aoem-raw-tx-batch-chunked-wire-digest-v1");
+    for chunk in chunks {
+        digest_parts.push(chunk.wire_digest.as_bytes());
+    }
+    let mut meta = NovAoemSemanticIngressMetaV1 {
+        execution_kernel: "AOEM".to_string(),
+        semantic_entry: native_aoem_raw_tx_batch_precommit_entry_v1().to_string(),
+        algebraic_semantic_entry: true,
+        ingress_scope: "raw_tx_batch_precommit_chunked".to_string(),
+        batch_plan_id: Some(plan_id),
+        batch_item_index: None,
+        batch_item_count: Some(raw_payloads.len()),
+        concurrent_execution_enabled: false,
+        concurrent_execution_model: String::new(),
+        batch_mode: true,
+        batch_size: raw_payloads.len(),
+        recommended_threads: 1,
+        ingress_workers: 1,
+        host_hw_threads: 1,
+        host_budget_threads: 1,
+        parallelism_reason: String::new(),
+        enabled,
+        required,
+        submitted: enabled && !chunks.is_empty() && chunks.iter().all(|chunk| chunk.submitted),
+        op_count: raw_payloads.len(),
+        plan_id,
+        wire_digest: to_hex(&sha256_bytes_v1(digest_parts.as_slice())),
+        processed_ops: chunks.iter().map(|chunk| chunk.processed_ops).sum::<u32>(),
+        success_ops: chunks.iter().map(|chunk| chunk.success_ops).sum::<u32>(),
+        total_writes: chunks.iter().map(|chunk| chunk.total_writes).sum::<u64>(),
+        semantic_delta_count: 0,
+        semantic_delta_digest: String::new(),
+        semantic_state_before_digest: String::new(),
+        semantic_state_after_digest: String::new(),
+        semantic_ledger_sequence: 0,
+        semantic_ledger_prev_seal: String::new(),
+        semantic_ledger_commit_seal: String::new(),
+        return_code_name: chunks
+            .first()
+            .map(|chunk| chunk.return_code_name.clone())
+            .unwrap_or_default(),
+        fallback_reason: None,
+    };
+    attach_native_aoem_parallelism_meta_v1(&mut meta, None);
+    if chunks.is_empty() {
+        meta.fallback_reason = Some("aoem_batch_chunks_empty".to_string());
+    } else if chunks
+        .iter()
+        .all(|chunk| chunk.fallback_reason == chunks[0].fallback_reason)
+    {
+        meta.fallback_reason = chunks[0].fallback_reason.clone();
+    } else {
+        meta.fallback_reason = Some("aoem_batch_chunk_fallback_mixed".to_string());
+    }
+    meta
+}
+
+fn execute_native_raw_tx_batch_chunks_via_aoem_semantic_ingress_v1(
+    raw_payloads: &[Vec<u8>],
+) -> Result<(
+    NovAoemSemanticIngressMetaV1,
+    Vec<NovAoemSemanticIngressMetaV1>,
+)> {
+    if raw_payloads.is_empty() {
+        bail!("nov raw transaction batch must not be empty");
+    }
+    let max_batch = native_aoem_batch_max_size_v1();
+    let chunk_count = (raw_payloads.len() + max_batch - 1) / max_batch;
+    let mut chunks = Vec::with_capacity(chunk_count);
+    for chunk in raw_payloads.chunks(max_batch) {
+        chunks.push(execute_native_raw_tx_batch_via_aoem_semantic_ingress_v1(
+            chunk,
+        )?);
+    }
+    let aggregate = if chunks.len() == 1 {
+        chunks[0].clone()
+    } else {
+        aggregate_native_aoem_raw_tx_batch_chunks_v1(raw_payloads, chunks.as_slice())
+    };
+    Ok((aggregate, chunks))
+}
+
 fn native_aoem_batch_item_ingress_meta_v1(
     batch_meta: &NovAoemSemanticIngressMetaV1,
     item_index: usize,
@@ -10474,8 +10564,9 @@ pub fn run_nov_send_raw_transaction_batch_from_params_v1(
         });
     }
 
-    let aoem_batch_ingress =
-        execute_native_raw_tx_batch_via_aoem_semantic_ingress_v1(raw_payloads.as_slice())?;
+    let (aoem_batch_ingress, aoem_batch_chunks) =
+        execute_native_raw_tx_batch_chunks_via_aoem_semantic_ingress_v1(raw_payloads.as_slice())?;
+    let aoem_chunk_size = native_aoem_batch_max_size_v1();
     let store_path_override = resolve_native_execution_store_path_from_params_v1(params);
     let effective_native_store_path = store_path_override
         .clone()
@@ -10493,6 +10584,9 @@ pub fn run_nov_send_raw_transaction_batch_from_params_v1(
     let mut mirror_records = Vec::new();
     let item_count = prepared.len();
     for (item_index, item) in prepared.into_iter().enumerate() {
+        let item_batch_ingress = aoem_batch_chunks
+            .get(item_index / aoem_chunk_size)
+            .unwrap_or(&aoem_batch_ingress);
         let execution_receipt = if let Some(request) = item.execution_request.as_ref() {
             Some(dispatch_nov_execution_request_into_loaded_store_v1(
                 effective_native_store_path.as_path(),
@@ -10502,7 +10596,7 @@ pub fn run_nov_send_raw_transaction_batch_from_params_v1(
                 item.requested_execution_behavior.as_ref(),
                 unified_account_store_path.as_deref(),
                 Some(native_aoem_batch_item_ingress_meta_v1(
-                    &aoem_batch_ingress,
+                    item_batch_ingress,
                     item_index,
                     item_count,
                 )),
@@ -10540,6 +10634,7 @@ pub fn run_nov_send_raw_transaction_batch_from_params_v1(
         Some(&previous_store),
         &store,
     )?;
+    let aoem_batch_chunk_count = aoem_batch_chunks.len();
 
     Ok(serde_json::json!({
         "method": "nov_sendRawTransactionBatch",
@@ -10547,13 +10642,22 @@ pub fn run_nov_send_raw_transaction_batch_from_params_v1(
         "execution_kernel": "AOEM",
         "concurrent_execution": aoem_batch_ingress.concurrent_execution_enabled,
         "batch_size": results.len(),
+        "aoem_concurrency_owner": "AOEM_runtime",
         "aoem_batch_ingress": aoem_batch_ingress,
+        "aoem_batch_chunking": {
+            "enabled": aoem_batch_chunk_count > 1,
+            "chunk_count": aoem_batch_chunk_count,
+            "max_chunk_size": aoem_chunk_size,
+            "model": "bounded_ops_wire_chunks_submitted_to_aoem_runtime_no_host_thread_scheduler",
+        },
+        "aoem_batch_chunks": aoem_batch_chunks,
         "deterministic_commit": "post_aoem_batch_precommit_single_lock_ordered_dirty_store_commit",
         "native_store_commit": {
             "model": "single_lock_ordered_batch_dirty_commit",
             "load_count": 1,
             "save_count": 1,
             "ordered_results": true,
+            "aoem_precommit_chunk_count": aoem_batch_chunk_count,
         },
         "results": results,
     }))
@@ -12038,6 +12142,134 @@ mod tests {
                     .expect("batch mirror should load")
                     .expect("batch mirror should have last record");
                     assert_eq!(last_mirror.sequence, 2);
+                })
+            },
+        )
+    }
+
+    #[test]
+    fn run_nov_send_raw_transaction_batch_chunks_aoem_precommit_without_extra_store_commits() {
+        with_env_override_v1(
+            NOV_NATIVE_AOEM_SEMANTIC_INGRESS_ENABLED_ENV,
+            "false",
+            || {
+                with_env_override_v1(NOV_NATIVE_AOEM_BATCH_MAX_SIZE_ENV, "2", || {
+                    with_test_native_execution_store_path_v1(|path| {
+                        let build_raw = |nonce: u64, account: &str, amount: u64| {
+                            let native_tx = NovNativeTxWireV1 {
+                                chain_id: 77,
+                                kind: NovTxKindV1::Execute(novovm_protocol::NovExecuteTxV1 {
+                                    caller: vec![nonce as u8; 20],
+                                    account_id: Some(account.to_string()),
+                                    fee_owner_account_id: Some(account.to_string()),
+                                    nonce_owner_account_id: Some(account.to_string()),
+                                    target: novovm_protocol::NovExecutionTargetV1::NativeModule(
+                                        "treasury".to_string(),
+                                    ),
+                                    method: "deposit_reserve".to_string(),
+                                    args: serde_json::to_vec(&serde_json::json!({
+                                        "asset": "USDT",
+                                        "amount": amount
+                                    }))
+                                    .expect("encode args"),
+                                    execution_mode: NovExecutionModeV1::Batch,
+                                    execution_policy: NovExecutionPolicyV1::Standard,
+                                    privacy_mode: NovPrivacyModeV1::Public,
+                                    verification_mode: NovVerificationModeV1::Standard,
+                                    fee_policy: NovFeePolicyV1 {
+                                        pay_asset: "USDT".to_string(),
+                                        max_pay_amount: 50,
+                                        slippage_bps: 100,
+                                    },
+                                    gas_like_limit: Some(90_000),
+                                    nonce,
+                                }),
+                                signature: [0xcdu8; 32],
+                            };
+                            let raw =
+                                encode_nov_native_tx_wire_v1(&native_tx).expect("encode nov tx");
+                            to_hex_prefixed_v1(raw.as_slice())
+                        };
+                        let out =
+                            run_nov_send_raw_transaction_batch_from_params_v1(&serde_json::json!({
+                                "raw_txs": [
+                                    build_raw(11, "acct-chunk-1", 25),
+                                    build_raw(12, "acct-chunk-2", 35),
+                                    build_raw(13, "acct-chunk-3", 45)
+                                ],
+                                "native_execution_store_path": path,
+                            }))
+                            .expect("chunked batch should precommit through AOEM and commit once");
+
+                        assert_eq!(out["method"].as_str(), Some("nov_sendRawTransactionBatch"));
+                        assert_eq!(out["accepted"].as_bool(), Some(true));
+                        assert_eq!(out["batch_size"].as_u64(), Some(3));
+                        assert_eq!(out["aoem_concurrency_owner"].as_str(), Some("AOEM_runtime"));
+                        assert_eq!(
+                            out["aoem_batch_ingress"]["ingress_scope"].as_str(),
+                            Some("raw_tx_batch_precommit_chunked")
+                        );
+                        assert_eq!(out["aoem_batch_ingress"]["op_count"].as_u64(), Some(3));
+                        assert_eq!(
+                            out["aoem_batch_ingress"]["fallback_reason"].as_str(),
+                            Some("aoem_semantic_ingress_disabled")
+                        );
+                        assert_eq!(
+                            out["aoem_batch_chunking"]["model"].as_str(),
+                            Some(
+                                "bounded_ops_wire_chunks_submitted_to_aoem_runtime_no_host_thread_scheduler"
+                            )
+                        );
+                        assert_eq!(out["aoem_batch_chunking"]["enabled"].as_bool(), Some(true));
+                        assert_eq!(out["aoem_batch_chunking"]["chunk_count"].as_u64(), Some(2));
+                        assert_eq!(
+                            out["aoem_batch_chunking"]["max_chunk_size"].as_u64(),
+                            Some(2)
+                        );
+                        let chunks = out["aoem_batch_chunks"]
+                            .as_array()
+                            .expect("chunk metadata array");
+                        assert_eq!(chunks.len(), 2);
+                        assert_eq!(chunks[0]["op_count"].as_u64(), Some(2));
+                        assert_eq!(chunks[1]["op_count"].as_u64(), Some(1));
+                        assert_eq!(
+                            out["native_store_commit"]["model"].as_str(),
+                            Some("single_lock_ordered_batch_dirty_commit")
+                        );
+                        assert_eq!(out["native_store_commit"]["load_count"].as_u64(), Some(1));
+                        assert_eq!(out["native_store_commit"]["save_count"].as_u64(), Some(1));
+                        assert_eq!(
+                            out["native_store_commit"]["aoem_precommit_chunk_count"].as_u64(),
+                            Some(2)
+                        );
+                        let results = out["results"].as_array().expect("batch results");
+                        assert_eq!(results.len(), 3);
+                        assert_eq!(
+                            results[2]["native_receipt"]["aoem_semantic_ingress"]
+                                ["batch_item_index"]
+                                .as_u64(),
+                            Some(2)
+                        );
+                        assert_eq!(
+                            results[2]["native_receipt"]["aoem_semantic_ingress"]
+                                ["batch_item_count"]
+                                .as_u64(),
+                            Some(3)
+                        );
+                        let store = load_nov_native_execution_store_v1(path.as_path())
+                            .expect("batch store should load");
+                        assert_eq!(store.receipts.len(), 3);
+                        assert!(
+                            store
+                                .module_state
+                                .treasury_reserves
+                                .get("USDT")
+                                .copied()
+                                .unwrap_or_default()
+                                >= 105,
+                            "chunked batch treasury reserve must include every ordered deposit"
+                        );
+                    })
                 })
             },
         )
