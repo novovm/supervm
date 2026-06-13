@@ -352,6 +352,8 @@ pub fn is_mainline_native_execution_query_method(method: &str) -> bool {
             | "nov_getTreasurySettlementJournal"
             | "nov_getTreasuryReserveProof"
             | "nov_getTreasuryReserveSnapshot"
+            | "nov_getProtocolClearingPrice"
+            | "nov_getFeeOracleRates"
             | "nov_swap"
             | "nov_depositReserve"
             | "nov_redeem"
@@ -626,6 +628,41 @@ fn run_mainline_native_execution_query(method: &str, params: &Value) -> Result<V
                 "method": "nov_getTreasuryReserveSnapshot",
                 "found": out.get("found").and_then(Value::as_bool).unwrap_or(false),
                 "reserve_snapshot": out.get("result").cloned().unwrap_or(Value::Null),
+            }))
+        }
+        "nov_getProtocolClearingPrice" => {
+            let asset = param_as_string_any(params, &["asset", "asset_id"])
+                .unwrap_or_else(|| "USDT".to_string())
+                .to_ascii_uppercase();
+            let out = run_nov_native_call_from_params_with_store_path_v1(
+                &json!({
+                    "target": {"kind": "native_module", "id": "treasury"},
+                    "method": "get_protocol_clearing_price",
+                    "args": {
+                        "asset": asset,
+                    },
+                }),
+                Some(store_path.as_path()),
+            )?;
+            Ok(json!({
+                "method": "nov_getProtocolClearingPrice",
+                "found": out.get("found").and_then(Value::as_bool).unwrap_or(false),
+                "clearing_price": out.get("result").cloned().unwrap_or(Value::Null),
+            }))
+        }
+        "nov_getFeeOracleRates" => {
+            let out = run_nov_native_call_from_params_with_store_path_v1(
+                &json!({
+                    "target": {"kind": "native_module", "id": "treasury"},
+                    "method": "get_fee_oracle_rates",
+                    "args": {},
+                }),
+                Some(store_path.as_path()),
+            )?;
+            Ok(json!({
+                "method": "nov_getFeeOracleRates",
+                "found": out.get("found").and_then(Value::as_bool).unwrap_or(false),
+                "oracle_rates": out.get("result").cloned().unwrap_or(Value::Null),
             }))
         }
         "nov_swap" => run_mainline_nov_swap_v1(params),
@@ -9978,6 +10015,8 @@ mod tests {
             "nov_getTreasurySettlementJournal",
             "nov_getTreasuryReserveProof",
             "nov_getTreasuryReserveSnapshot",
+            "nov_getProtocolClearingPrice",
+            "nov_getFeeOracleRates",
             "nov_swap",
             "nov_depositReserve",
             "nov_redeem",
@@ -10074,6 +10113,8 @@ mod tests {
             ("nov_getTreasurySettlementJournal", json!({"limit": 5})),
             ("nov_getTreasuryReserveProof", json!({"asset": "USDT"})),
             ("nov_getTreasuryReserveSnapshot", json!({})),
+            ("nov_getProtocolClearingPrice", json!({"asset": "USDT"})),
+            ("nov_getFeeOracleRates", json!({})),
         ] {
             let mut params = extra;
             if let Value::Object(map) = &mut params {
@@ -11593,6 +11634,225 @@ mod tests {
             .flatten()
             .any(|entry| entry["kind"].as_str() == Some("reserve_redeem")
                 && entry["source_asset"].as_str() == Some("USDT")));
+
+        let _ = fs::remove_file(native_store);
+    }
+
+    #[test]
+    fn mainline_query_protocol_clearing_price_and_redeem_product_smoke() {
+        let bogus_canonical_store =
+            std::path::Path::new("this-canonical-store-does-not-exist.json");
+        let native_store = unique_native_execution_store_path("protocol-clearing-mainline-smoke");
+        let caller = format!("0x{}", "67".repeat(20));
+
+        let mut pre = NovNativeExecutionStoreV1::default();
+        pre.module_state
+            .treasury_reserves
+            .insert("USDT".to_string(), 10_000);
+        pre.module_state
+            .clearing_rate_ppm
+            .insert("USDT".to_string(), 1_000_000);
+        pre.module_state
+            .protocol_clearing_nav_rate_ppm
+            .insert("USDT".to_string(), 1_000_000);
+        pre.module_state
+            .protocol_clearing_amm_twap_rate_ppm
+            .insert("USDT".to_string(), 1_040_000);
+        pre.module_state
+            .fee_oracle_rates_ppm
+            .insert("USDT".to_string(), 3_000_000);
+        pre.module_state.fee_oracle_updated_unix_ms = now_unix_millis_v1();
+        pre.module_state.fee_oracle_source = "governance_oracle".to_string();
+        pre.module_state.fee_oracle_allowed_sources = vec![
+            "runtime_oracle".to_string(),
+            "governance_oracle".to_string(),
+            "governance_oracle_v2".to_string(),
+        ];
+        pre.module_state.fee_oracle_disabled_sources = vec!["governance_oracle".to_string()];
+        pre.module_state.fee_oracle_disabled_source_reasons.insert(
+            "governance_oracle".to_string(),
+            "deviation_slash".to_string(),
+        );
+        pre.module_state.fee_oracle_source_rotations.insert(
+            "governance_oracle".to_string(),
+            "governance_oracle_v2".to_string(),
+        );
+        pre.module_state.clearing_static_amm_pools.insert(
+            "protocol_clearing_usdt_nov_pool".to_string(),
+            crate::clearing_types::NovStaticAmmPoolStateV1 {
+                pool_id: "protocol_clearing_usdt_nov_pool".to_string(),
+                asset_x: "USDT".to_string(),
+                asset_y: "NOV".to_string(),
+                reserve_x: 1_000_000,
+                reserve_y: 1_000_000,
+                swap_fee_ppm: 3_000,
+                enabled: true,
+            },
+        );
+        pre.module_state.treasury_reserve_proofs.insert(
+            "USDT".to_string(),
+            NovTreasuryReserveProofV1 {
+                asset: "USDT".to_string(),
+                reserve_amount: 10_000,
+                proof_type: "custody_statement_v1".to_string(),
+                proof_digest: "0xprotocolclearing01".to_string(),
+                proof_source: "treasury_committee".to_string(),
+                proof_reference: "protocol-clearing-mainline-smoke-001".to_string(),
+                observed_at_unix_ms: 1,
+                expires_at_unix_ms: 0,
+                policy_version: 1,
+                policy_source: "governance_path".to_string(),
+                status: "active".to_string(),
+                automated_verification: false,
+                verification_mode: "manual_governance_attestation".to_string(),
+            },
+        );
+        pre.module_state.account_asset_balances.insert(
+            caller.clone(),
+            std::collections::BTreeMap::from([("NOV".to_string(), 1_000u128)]),
+        );
+        save_nov_native_execution_store_v1(native_store.as_path(), &pre)
+            .expect("seed protocol clearing mainline smoke store");
+
+        let oracle = run_mainline_query_from_path(
+            bogus_canonical_store,
+            "nov_getFeeOracleRates",
+            &json!({
+                "native_execution_store_path": native_store.display().to_string(),
+            }),
+        )
+        .expect("nov_getFeeOracleRates should succeed through mainline query");
+        assert_eq!(oracle["method"].as_str(), Some("nov_getFeeOracleRates"));
+        assert_eq!(
+            oracle["oracle_rates"]["oracle_open_feed_allowed"].as_bool(),
+            Some(false)
+        );
+        assert_eq!(
+            oracle["oracle_rates"]["oracle_source_disabled"].as_bool(),
+            Some(true)
+        );
+        assert_eq!(
+            oracle["oracle_rates"]["oracle_disabled_reason"].as_str(),
+            Some("deviation_slash")
+        );
+
+        let price = run_mainline_query_from_path(
+            bogus_canonical_store,
+            "nov_getProtocolClearingPrice",
+            &json!({
+                "asset": "USDT",
+                "native_execution_store_path": native_store.display().to_string(),
+            }),
+        )
+        .expect("nov_getProtocolClearingPrice should succeed through mainline query");
+        assert_eq!(
+            price["method"].as_str(),
+            Some("nov_getProtocolClearingPrice")
+        );
+        assert_eq!(price["found"].as_bool(), Some(true));
+        assert_eq!(
+            price["clearing_price"]["semantics"]["epoch_fixed"].as_bool(),
+            Some(true)
+        );
+        assert_eq!(
+            price["clearing_price"]["semantics"]["amm_spot_allowed"].as_bool(),
+            Some(false)
+        );
+        assert_eq!(
+            price["clearing_price"]["semantics"]["oracle_open_feed_allowed"].as_bool(),
+            Some(false)
+        );
+        assert_eq!(
+            price["clearing_price"]["semantics"]["oracle_source_disabled"].as_bool(),
+            Some(true)
+        );
+        assert_eq!(
+            price["clearing_price"]["semantics"]["oracle_rotation_target"].as_str(),
+            Some("governance_oracle_v2")
+        );
+        let p_epoch = price["clearing_price"]["price"]["p_epoch_ppm"]
+            .as_u64()
+            .expect("p_epoch_ppm should exist");
+        let p_pay = price["clearing_price"]["price"]["p_pay_ppm"]
+            .as_u64()
+            .expect("p_pay_ppm should exist");
+        let p_redeem = price["clearing_price"]["price"]["p_redeem_ppm"]
+            .as_u64()
+            .expect("p_redeem_ppm should exist");
+        assert!(p_pay < p_epoch);
+        assert!(p_redeem > p_epoch);
+        assert_eq!(
+            price["clearing_price"]["price"]["state"].as_str(),
+            Some("constrained")
+        );
+        assert!(price["clearing_price"]["price"]["sources_rejected"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .any(|reason| reason
+                .as_str()
+                .unwrap_or_default()
+                .starts_with("permissioned_oracle_ref:source_disabled")));
+
+        let redeem = run_mainline_query_from_path(
+            bogus_canonical_store,
+            "nov_redeem",
+            &json!({
+                "from": caller,
+                "asset_out": "USDT",
+                "nov_amount": 104u64,
+                "max_pay_amount": 500u64,
+                "native_execution_store_path": native_store.display().to_string(),
+            }),
+        )
+        .expect("nov_redeem should use protocol P_redeem through mainline query");
+        assert_eq!(redeem["method"].as_str(), Some("nov_redeem"));
+        assert_eq!(redeem["native_receipt"]["status"].as_bool(), Some(true));
+
+        let journal = run_mainline_query_from_path(
+            bogus_canonical_store,
+            "nov_getTreasurySettlementJournal",
+            &json!({
+                "limit": 1,
+                "native_execution_store_path": native_store.display().to_string(),
+            }),
+        )
+        .expect("settlement journal should expose protocol redeem clearing source");
+        assert_eq!(
+            journal["journal"]["entries"][0]["kind"].as_str(),
+            Some("reserve_redeem")
+        );
+        assert_eq!(
+            journal["journal"]["entries"][0]["source_asset"].as_str(),
+            Some("USDT")
+        );
+        assert_eq!(
+            journal["journal"]["entries"][0]["settled_nov"].as_u64(),
+            Some(104)
+        );
+        assert_eq!(
+            journal["journal"]["entries"][0]["clearing_rate_ppm"].as_u64(),
+            Some(p_redeem)
+        );
+        assert!(journal["journal"]["entries"][0]["clearing_source"]
+            .as_str()
+            .unwrap_or_default()
+            .starts_with("protocol_clearing_redeem:"));
+
+        let nov_after = get_nov_native_account_asset_balance_with_store_path_v1(
+            native_store.as_path(),
+            caller.as_str(),
+            "NOV",
+        )
+        .expect("load NOV after protocol redeem");
+        let usdt_after = get_nov_native_account_asset_balance_with_store_path_v1(
+            native_store.as_path(),
+            caller.as_str(),
+            "USDT",
+        )
+        .expect("load USDT after protocol redeem");
+        assert_eq!(nov_after, 896);
+        assert!(usdt_after > 0);
 
         let _ = fs::remove_file(native_store);
     }
