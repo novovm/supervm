@@ -355,6 +355,20 @@ cargo run -p novovm-node --bin supervm-native-pipeline-rocksdb-recovery-gate
 
 The recovery gate writes native txs through the frozen pipeline using the RocksDB-only native execution store, exits the child node, reopens the same RocksDB keyspaces, verifies `semantic_head/current`, `semantic_head/by_height`, `receipt/{tx_hash}`, `receipt_by_height/{height}/{index}/{tx_hash}`, snapshot metadata, and the materialized native execution view, then restarts the node with no ingress to verify no duplicate execution/canonical inclusion. Canonical body/head persistence is reported separately as pending because the current canonical projection still lives in the network runtime, not in the native execution RocksDB store.
 
+Network fault injection gate:
+
+```powershell
+cargo build -p novovm-node --bins
+$env:NOVOVM_NATIVE_PIPELINE_FAULT_PACKET_LOSS_BPS="500"
+$env:NOVOVM_NATIVE_PIPELINE_FAULT_DUPLICATE_BPS="10000"
+$env:NOVOVM_NATIVE_PIPELINE_FAULT_REORDER_BPS="10000"
+$env:NOVOVM_NATIVE_PIPELINE_FAULT_DELAY_MS="1"
+$env:NOVOVM_NATIVE_PIPELINE_FAULT_REPORT_PATH="artifacts/native-pipeline/native-pipeline-network-fault-injection-report.json"
+cargo run -p novovm-node --bin supervm-native-pipeline-network-fault-gate
+```
+
+The fault gate starts a receiver `novovm-node` in `native_execution_pipeline` mode, injects UDP packet loss, duplicate packets, delay, and reorder from the gate process, and verifies receiver AOEM/canonical convergence. It requires `duplicate_canonical_included = 0`, semantic head recovery, receipt index consistency, and a drained pending queue under the configured unique-loss budget.
+
 Paced fanout network ingress gate:
 
 ```powershell

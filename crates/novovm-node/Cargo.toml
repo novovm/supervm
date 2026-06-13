@@ -80,3 +80,7 @@ path = "src/bin/supervm-native-pipeline-production-soak.rs"
 [[bin]]
 name = "supervm-native-pipeline-rocksdb-recovery-gate"
 path = "src/bin/supervm-native-pipeline-rocksdb-recovery-gate.rs"
+
+[[bin]]
+name = "supervm-native-pipeline-network-fault-gate"
+path = "src/bin/supervm-native-pipeline-network-fault-gate.rs"

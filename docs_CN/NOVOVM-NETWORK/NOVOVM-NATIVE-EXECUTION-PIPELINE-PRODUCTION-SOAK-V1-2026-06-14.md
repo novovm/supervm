@@ -122,13 +122,59 @@ schema = novovm-native-pipeline-rocksdb-recovery-report/v1
 - canonical body/head persistence 仍未签收；当前 canonical projection 仍是 network runtime state，不在 native execution RocksDB store 内。
 - canonical body/head 持久化恢复需要下一刀单独补，不在本刀伪造 PASS。
 
-## 6. 未完成项
+## 6. 第三刀：Network Fault Injection Gate
+
+已新增独立 gate：
+
+```text
+cargo run -p novovm-node --bin supervm-native-pipeline-network-fault-gate
+```
+
+该 gate 只验证网络扰动，不修改 lifecycle：
+
+- 启动 receiver `novovm-node`，保持 `NOVOVM_NODE_MODE=native_execution_pipeline`。
+- receiver 仍通过 UDP receive 进入 pending runtime。
+- receiver 仍由 AOEM tick 产出 proof / receipt / dirty sharded commit / canonical included。
+- gate 进程构造 native tx UDP `EvmNative::Transactions` 包。
+- gate 进程注入 packet loss、duplicate、delay、reorder。
+- 验证 duplicate packet 不造成重复 canonical included。
+- 验证 reorder/delay 后 semantic head 仍可恢复。
+- 验证 receipt index 与 canonical included unique tx 一致。
+- 验证 queue pending / dropped / rejected 在预算内。
+
+默认 smoke 配置：
+
+```text
+packet_loss_bps = 500
+duplicate_bps = 10000
+reorder_bps = 10000
+delay_ms = 1
+tx_count = 32
+batch_budget = 8
+max_unique_loss = 4
+```
+
+报告：
+
+```text
+artifacts/native-pipeline/native-pipeline-network-fault-injection-report.json
+schema = novovm-native-pipeline-network-fault-injection-report/v1
+```
+
+本刀边界：
+
+- 不声明 canonical body/head persistence。
+- 不修改 pending-only 产品入口。
+- 不绕过 AOEM tick。
+- 不让 Rust host 成为执行并发调度器。
+- 不新增账户/资产真相源。
+
+## 7. 未完成项
 
 以下仍待后续刀完成：
 
 - Pending queue crash recovery gate。
 - Remote reentry dedup gate。
-- Network fault injection：packet loss、duplicate、delay、reorder。
 - Cross-machine UDP soak：sender host / receiver host / env-config peer address。
 - Persistent canonical body/head recovery gate。
 - Long-run production profile：真实 30min / 2h / overnight 报告归档。
