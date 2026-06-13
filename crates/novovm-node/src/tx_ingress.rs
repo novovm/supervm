@@ -101,6 +101,18 @@ const NOV_NATIVE_EXECUTION_STORE_BACKEND_DUAL_V1: &str = "dual";
 const NOV_NATIVE_EXECUTION_STORE_ROCKSDB_KEY_SNAPSHOT_V1: &[u8] =
     b"nov_native_execution_store:snapshot:v1";
 const NOV_NATIVE_EXECUTION_STORE_ROCKSDB_KEY_MODULE_STATE_CORE_V1: &[u8] = b"module_state/core";
+const NOV_NATIVE_EXECUTION_STORE_ROCKSDB_KEY_MODULE_STATE_TREASURY_V1: &[u8] =
+    b"module_state/treasury/state";
+const NOV_NATIVE_EXECUTION_STORE_ROCKSDB_KEY_MODULE_STATE_CLEARING_V1: &[u8] =
+    b"module_state/clearing/state";
+const NOV_NATIVE_EXECUTION_STORE_ROCKSDB_KEY_MODULE_STATE_VAULT_V1: &[u8] =
+    b"module_state/vault/state";
+const NOV_NATIVE_EXECUTION_STORE_ROCKSDB_KEY_MODULE_STATE_POLICY_V1: &[u8] =
+    b"module_state/policy/state";
+const NOV_NATIVE_EXECUTION_STORE_ROCKSDB_KEY_MODULE_STATE_GOVERNANCE_V1: &[u8] =
+    b"module_state/governance/state";
+const NOV_NATIVE_EXECUTION_STORE_ROCKSDB_KEY_MODULE_STATE_NATIVE_EXECUTION_V1: &[u8] =
+    b"module_state/native_execution/state";
 const NOV_NATIVE_EXECUTION_STORE_ROCKSDB_KEY_SEMANTIC_HEAD_V1: &[u8] = b"semantic_head/current";
 const NOV_NATIVE_EXECUTION_STORE_ROCKSDB_KEY_SEMANTIC_SEQUENCE_V1: &[u8] =
     b"semantic_head/current_sequence";
@@ -1578,9 +1590,9 @@ pub fn get_nov_native_execution_store_backend_status_v1(path: Option<&Path>) -> 
         "transactional_commit": backend == NOV_NATIVE_EXECUTION_STORE_BACKEND_ROCKSDB_V1
             || backend == NOV_NATIVE_EXECUTION_STORE_BACKEND_DUAL_V1,
         "commit_model": if backend == NOV_NATIVE_EXECUTION_STORE_BACKEND_ROCKSDB_V1 {
-            "rocksdb_sharded_atomic_batch_primary"
+            "dirty_sharded_atomic_batch_primary"
         } else if backend == NOV_NATIVE_EXECUTION_STORE_BACKEND_DUAL_V1 {
-            "rocksdb_sharded_atomic_batch_with_json_compat_snapshot"
+            "dirty_sharded_atomic_batch_with_json_compat_snapshot"
         } else {
             "legacy_json_snapshot"
         },
@@ -1588,12 +1600,17 @@ pub fn get_nov_native_execution_store_backend_status_v1(path: Option<&Path>) -> 
             "account/{account_id}/asset/{asset_id}",
             "receipt/{tx_hash}",
             "receipt_by_height/{height}/{index}/{tx_hash}",
-            "module_state/core",
+            "module_state/treasury/{key}",
+            "module_state/clearing/{key}",
+            "module_state/vault/{key}",
+            "module_state/policy/{key}",
+            "module_state/governance/{key}",
+            "module_state/native_execution/{key}",
             "semantic_head/current",
             "semantic_head/by_height/{height}",
             "snapshot_meta/{height}",
         ],
-        "product_boundary": "rocksdb_sharded_backend_removes_single_json_snapshot_as_primary_store_but_ordered_commit_is_still_deterministic",
+        "product_boundary": "rocksdb_dirty_sharded_backend_removes_single_json_snapshot_and_module_state_core_as_primary_store_but_ordered_commit_is_still_deterministic",
     })
 }
 
@@ -3060,6 +3077,362 @@ fn native_rocksdb_snapshot_meta_v1(
     }
 }
 
+fn native_rocksdb_module_state_shard_keys_v1() -> [(&'static [u8], &'static str); 6] {
+    [
+        (
+            NOV_NATIVE_EXECUTION_STORE_ROCKSDB_KEY_MODULE_STATE_TREASURY_V1,
+            "treasury",
+        ),
+        (
+            NOV_NATIVE_EXECUTION_STORE_ROCKSDB_KEY_MODULE_STATE_CLEARING_V1,
+            "clearing",
+        ),
+        (
+            NOV_NATIVE_EXECUTION_STORE_ROCKSDB_KEY_MODULE_STATE_VAULT_V1,
+            "vault",
+        ),
+        (
+            NOV_NATIVE_EXECUTION_STORE_ROCKSDB_KEY_MODULE_STATE_POLICY_V1,
+            "policy",
+        ),
+        (
+            NOV_NATIVE_EXECUTION_STORE_ROCKSDB_KEY_MODULE_STATE_GOVERNANCE_V1,
+            "governance",
+        ),
+        (
+            NOV_NATIVE_EXECUTION_STORE_ROCKSDB_KEY_MODULE_STATE_NATIVE_EXECUTION_V1,
+            "native_execution",
+        ),
+    ]
+}
+
+fn native_module_state_shard_value_v1(
+    module_state: &NovNativeExecutionModuleStateV1,
+    shard: &str,
+) -> Result<Vec<u8>> {
+    let value = match shard {
+        "treasury" => serde_json::json!({
+            "treasury_reserves": module_state.treasury_reserves,
+            "treasury_reserve_proofs": module_state.treasury_reserve_proofs,
+            "treasury_settled_nov_total": module_state.treasury_settled_nov_total,
+            "treasury_settlements": module_state.treasury_settlements,
+            "treasury_settled_by_asset": module_state.treasury_settled_by_asset,
+            "treasury_redeemed_nov_total": module_state.treasury_redeemed_nov_total,
+            "treasury_redeemed_by_asset": module_state.treasury_redeemed_by_asset,
+            "treasury_reserve_bucket_nov": module_state.treasury_reserve_bucket_nov,
+            "treasury_fee_bucket_nov": module_state.treasury_fee_bucket_nov,
+            "treasury_risk_buffer_nov": module_state.treasury_risk_buffer_nov,
+            "treasury_settlement_failure_counts": module_state.treasury_settlement_failure_counts,
+            "treasury_settlement_journal": module_state.treasury_settlement_journal,
+            "treasury_settlement_journal_next_seq": module_state.treasury_settlement_journal_next_seq,
+        }),
+        "clearing" => serde_json::json!({
+            "clearing_nov_liquidity": module_state.clearing_nov_liquidity,
+            "clearing_rate_ppm": module_state.clearing_rate_ppm,
+            "protocol_clearing_prices": module_state.protocol_clearing_prices,
+            "protocol_clearing_amm_twap_rate_ppm": module_state.protocol_clearing_amm_twap_rate_ppm,
+            "protocol_clearing_nav_rate_ppm": module_state.protocol_clearing_nav_rate_ppm,
+            "clearing_enabled": module_state.clearing_enabled,
+            "clearing_require_healthy_risk_buffer": module_state.clearing_require_healthy_risk_buffer,
+            "clearing_constrained_max_slippage_bps": module_state.clearing_constrained_max_slippage_bps,
+            "clearing_constrained_daily_usage_bps": module_state.clearing_constrained_daily_usage_bps,
+            "clearing_constrained_strategy": module_state.clearing_constrained_strategy,
+            "clearing_daily_nov_hard_limit": module_state.clearing_daily_nov_hard_limit,
+            "clearing_daily_window_day": module_state.clearing_daily_window_day,
+            "clearing_daily_nov_used": module_state.clearing_daily_nov_used,
+            "clearing_failure_counts": module_state.clearing_failure_counts,
+            "last_clearing_failure_code": module_state.last_clearing_failure_code,
+            "last_clearing_failure_reason": module_state.last_clearing_failure_reason,
+            "last_clearing_failure_unix_ms": module_state.last_clearing_failure_unix_ms,
+            "clearing_static_amm_pools": module_state.clearing_static_amm_pools,
+            "last_clearing_route": module_state.last_clearing_route,
+            "last_clearing_candidates": module_state.last_clearing_candidates,
+            "fee_quote_failure_counts": module_state.fee_quote_failure_counts,
+            "fee_oracle_rates_ppm": module_state.fee_oracle_rates_ppm,
+            "fee_oracle_updated_unix_ms": module_state.fee_oracle_updated_unix_ms,
+            "fee_oracle_source": module_state.fee_oracle_source,
+            "fee_oracle_allowed_sources": module_state.fee_oracle_allowed_sources,
+            "fee_oracle_disabled_sources": module_state.fee_oracle_disabled_sources,
+            "fee_oracle_disabled_source_reasons": module_state.fee_oracle_disabled_source_reasons,
+            "fee_oracle_source_rotations": module_state.fee_oracle_source_rotations,
+            "last_fee_quote": module_state.last_fee_quote,
+            "last_fee_quote_failure": module_state.last_fee_quote_failure,
+        }),
+        "vault" => serde_json::json!({
+            "credit_vaults": module_state.credit_vaults,
+            "next_credit_vault_id": module_state.next_credit_vault_id,
+        }),
+        "policy" => serde_json::json!({
+            "treasury_settlement_paused": module_state.treasury_settlement_paused,
+            "treasury_redeem_paused": module_state.treasury_redeem_paused,
+            "mapped_lock_bridge_paused": module_state.mapped_lock_bridge_paused,
+            "mapped_lock_min_confirmations": module_state.mapped_lock_min_confirmations,
+            "mapped_lock_contract_address": module_state.mapped_lock_contract_address,
+            "mapped_asset_burn_paused": module_state.mapped_asset_burn_paused,
+            "mapped_asset_release_paused": module_state.mapped_asset_release_paused,
+            "mapped_asset_auto_heal_enabled": module_state.mapped_asset_auto_heal_enabled,
+            "mapped_asset_auto_heal_rollback_enabled": module_state.mapped_asset_auto_heal_rollback_enabled,
+            "mapped_header_source_required": module_state.mapped_header_source_required,
+            "mapped_header_source_allowed_peer_ids": module_state.mapped_header_source_allowed_peer_ids,
+            "mapped_header_source_disabled_peer_ids": module_state.mapped_header_source_disabled_peer_ids,
+            "mapped_header_source_disabled_peer_reasons": module_state.mapped_header_source_disabled_peer_reasons,
+            "mapped_header_source_peer_rotations": module_state.mapped_header_source_peer_rotations,
+            "mapped_header_source_min_quorum": module_state.mapped_header_source_min_quorum,
+            "mapped_header_source_policy_source": module_state.mapped_header_source_policy_source,
+            "mapped_header_source_policy_version": module_state.mapped_header_source_policy_version,
+            "mapped_header_source_policy_updated_unix_ms": module_state.mapped_header_source_policy_updated_unix_ms,
+            "mapped_header_attestation_required": module_state.mapped_header_attestation_required,
+            "mapped_header_attestation_allowed_signers": module_state.mapped_header_attestation_allowed_signers,
+            "mapped_header_attestation_disabled_signers": module_state.mapped_header_attestation_disabled_signers,
+            "mapped_header_attestation_disabled_signer_reasons": module_state.mapped_header_attestation_disabled_signer_reasons,
+            "mapped_header_attestation_signer_rotations": module_state.mapped_header_attestation_signer_rotations,
+            "mapped_header_attestation_min_quorum": module_state.mapped_header_attestation_min_quorum,
+            "mapped_header_attestation_policy_source": module_state.mapped_header_attestation_policy_source,
+            "mapped_header_attestation_policy_version": module_state.mapped_header_attestation_policy_version,
+            "mapped_header_attestation_policy_updated_unix_ms": module_state.mapped_header_attestation_policy_updated_unix_ms,
+            "treasury_reserve_share_bps": module_state.treasury_reserve_share_bps,
+            "treasury_fee_share_bps": module_state.treasury_fee_share_bps,
+            "treasury_risk_buffer_share_bps": module_state.treasury_risk_buffer_share_bps,
+            "treasury_min_reserve_bucket_nov": module_state.treasury_min_reserve_bucket_nov,
+            "treasury_min_fee_bucket_nov": module_state.treasury_min_fee_bucket_nov,
+            "treasury_min_risk_buffer_nov": module_state.treasury_min_risk_buffer_nov,
+            "treasury_policy_version": module_state.treasury_policy_version,
+            "treasury_policy_source": module_state.treasury_policy_source,
+            "treasury_policy_last_update_unix_ms": module_state.treasury_policy_last_update_unix_ms,
+        }),
+        "governance" => serde_json::json!({
+            "governance_proposals": module_state.governance_proposals,
+            "next_governance_proposal_id": module_state.next_governance_proposal_id,
+        }),
+        "native_execution" => serde_json::json!({
+            "last_execution_trace": module_state.last_execution_trace,
+            "execution_traces_by_tx": module_state.execution_traces_by_tx,
+            "execution_trace_order": module_state.execution_trace_order,
+            "aoem_semantic_ledger_sequence": module_state.aoem_semantic_ledger_sequence,
+            "aoem_semantic_ledger_head": module_state.aoem_semantic_ledger_head,
+            "unified_account_semantic_event_count": module_state.unified_account_semantic_event_count,
+            "unified_account_semantic_head": module_state.unified_account_semantic_head,
+            "unified_account_semantic_last_digest": module_state.unified_account_semantic_last_digest,
+            "unified_account_semantic_last_subject": module_state.unified_account_semantic_last_subject,
+            "unified_account_semantic_last_action": module_state.unified_account_semantic_last_action,
+        }),
+        _ => bail!("unknown nov native execution module_state shard: {shard}"),
+    };
+    serde_json::to_vec(&value)
+        .with_context(|| format!("serialize nov native execution module_state/{shard} failed"))
+}
+
+fn native_apply_module_state_shard_v1(
+    module_state: &mut NovNativeExecutionModuleStateV1,
+    shard: &str,
+    raw: &[u8],
+) -> Result<()> {
+    let value: serde_json::Value = serde_json::from_slice(raw)
+        .with_context(|| format!("parse nov native execution module_state/{shard} failed"))?;
+    macro_rules! assign_field {
+        ($field:ident) => {
+            if let Some(raw_field) = value.get(stringify!($field)) {
+                module_state.$field =
+                    serde_json::from_value(raw_field.clone()).with_context(|| {
+                        format!(
+                            "parse nov native execution module_state/{}/{} failed",
+                            shard,
+                            stringify!($field)
+                        )
+                    })?;
+            }
+        };
+    }
+    match shard {
+        "treasury" => {
+            assign_field!(treasury_reserves);
+            assign_field!(treasury_reserve_proofs);
+            assign_field!(treasury_settled_nov_total);
+            assign_field!(treasury_settlements);
+            assign_field!(treasury_settled_by_asset);
+            assign_field!(treasury_redeemed_nov_total);
+            assign_field!(treasury_redeemed_by_asset);
+            assign_field!(treasury_reserve_bucket_nov);
+            assign_field!(treasury_fee_bucket_nov);
+            assign_field!(treasury_risk_buffer_nov);
+            assign_field!(treasury_settlement_failure_counts);
+            assign_field!(treasury_settlement_journal);
+            assign_field!(treasury_settlement_journal_next_seq);
+        }
+        "clearing" => {
+            assign_field!(clearing_nov_liquidity);
+            assign_field!(clearing_rate_ppm);
+            assign_field!(protocol_clearing_prices);
+            assign_field!(protocol_clearing_amm_twap_rate_ppm);
+            assign_field!(protocol_clearing_nav_rate_ppm);
+            assign_field!(clearing_enabled);
+            assign_field!(clearing_require_healthy_risk_buffer);
+            assign_field!(clearing_constrained_max_slippage_bps);
+            assign_field!(clearing_constrained_daily_usage_bps);
+            assign_field!(clearing_constrained_strategy);
+            assign_field!(clearing_daily_nov_hard_limit);
+            assign_field!(clearing_daily_window_day);
+            assign_field!(clearing_daily_nov_used);
+            assign_field!(clearing_failure_counts);
+            assign_field!(last_clearing_failure_code);
+            assign_field!(last_clearing_failure_reason);
+            assign_field!(last_clearing_failure_unix_ms);
+            assign_field!(clearing_static_amm_pools);
+            assign_field!(last_clearing_route);
+            assign_field!(last_clearing_candidates);
+            assign_field!(fee_quote_failure_counts);
+            assign_field!(fee_oracle_rates_ppm);
+            assign_field!(fee_oracle_updated_unix_ms);
+            assign_field!(fee_oracle_source);
+            assign_field!(fee_oracle_allowed_sources);
+            assign_field!(fee_oracle_disabled_sources);
+            assign_field!(fee_oracle_disabled_source_reasons);
+            assign_field!(fee_oracle_source_rotations);
+            assign_field!(last_fee_quote);
+            assign_field!(last_fee_quote_failure);
+        }
+        "vault" => {
+            assign_field!(credit_vaults);
+            assign_field!(next_credit_vault_id);
+        }
+        "policy" => {
+            assign_field!(treasury_settlement_paused);
+            assign_field!(treasury_redeem_paused);
+            assign_field!(mapped_lock_bridge_paused);
+            assign_field!(mapped_lock_min_confirmations);
+            assign_field!(mapped_lock_contract_address);
+            assign_field!(mapped_asset_burn_paused);
+            assign_field!(mapped_asset_release_paused);
+            assign_field!(mapped_asset_auto_heal_enabled);
+            assign_field!(mapped_asset_auto_heal_rollback_enabled);
+            assign_field!(mapped_header_source_required);
+            assign_field!(mapped_header_source_allowed_peer_ids);
+            assign_field!(mapped_header_source_disabled_peer_ids);
+            assign_field!(mapped_header_source_disabled_peer_reasons);
+            assign_field!(mapped_header_source_peer_rotations);
+            assign_field!(mapped_header_source_min_quorum);
+            assign_field!(mapped_header_source_policy_source);
+            assign_field!(mapped_header_source_policy_version);
+            assign_field!(mapped_header_source_policy_updated_unix_ms);
+            assign_field!(mapped_header_attestation_required);
+            assign_field!(mapped_header_attestation_allowed_signers);
+            assign_field!(mapped_header_attestation_disabled_signers);
+            assign_field!(mapped_header_attestation_disabled_signer_reasons);
+            assign_field!(mapped_header_attestation_signer_rotations);
+            assign_field!(mapped_header_attestation_min_quorum);
+            assign_field!(mapped_header_attestation_policy_source);
+            assign_field!(mapped_header_attestation_policy_version);
+            assign_field!(mapped_header_attestation_policy_updated_unix_ms);
+            assign_field!(treasury_reserve_share_bps);
+            assign_field!(treasury_fee_share_bps);
+            assign_field!(treasury_risk_buffer_share_bps);
+            assign_field!(treasury_min_reserve_bucket_nov);
+            assign_field!(treasury_min_fee_bucket_nov);
+            assign_field!(treasury_min_risk_buffer_nov);
+            assign_field!(treasury_policy_version);
+            assign_field!(treasury_policy_source);
+            assign_field!(treasury_policy_last_update_unix_ms);
+        }
+        "governance" => {
+            assign_field!(governance_proposals);
+            assign_field!(next_governance_proposal_id);
+        }
+        "native_execution" => {
+            assign_field!(last_execution_trace);
+            assign_field!(execution_traces_by_tx);
+            assign_field!(execution_trace_order);
+            assign_field!(aoem_semantic_ledger_sequence);
+            assign_field!(aoem_semantic_ledger_head);
+            assign_field!(unified_account_semantic_event_count);
+            assign_field!(unified_account_semantic_head);
+            assign_field!(unified_account_semantic_last_digest);
+            assign_field!(unified_account_semantic_last_subject);
+            assign_field!(unified_account_semantic_last_action);
+        }
+        _ => bail!("unknown nov native execution module_state shard: {shard}"),
+    }
+    Ok(())
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct NovNativeExecutionDirtySetV1 {
+    account_asset_upserts: Vec<(String, String)>,
+    account_asset_deletes: Vec<(String, String)>,
+    receipt_upserts: Vec<String>,
+    receipt_deletes: Vec<String>,
+    module_state_shards: Vec<&'static str>,
+    semantic_head: bool,
+    snapshot_meta: bool,
+}
+
+fn native_execution_store_dirty_set_v1(
+    previous: &NovNativeExecutionStoreV1,
+    next: &NovNativeExecutionStoreV1,
+    force_all_module_shards: bool,
+) -> Result<NovNativeExecutionDirtySetV1> {
+    let mut dirty = NovNativeExecutionDirtySetV1::default();
+    for (key, shard) in native_rocksdb_module_state_shard_keys_v1() {
+        let _ = key;
+        let previous_shard = native_module_state_shard_value_v1(&previous.module_state, shard)?;
+        let next_shard = native_module_state_shard_value_v1(&next.module_state, shard)?;
+        if force_all_module_shards || previous_shard != next_shard {
+            dirty.module_state_shards.push(shard);
+        }
+    }
+    for (account_id, assets) in &next.module_state.account_asset_balances {
+        for (asset, amount) in assets {
+            let previous_amount = previous
+                .module_state
+                .account_asset_balances
+                .get(account_id)
+                .and_then(|items| items.get(asset))
+                .copied();
+            if previous_amount != Some(*amount) {
+                dirty
+                    .account_asset_upserts
+                    .push((account_id.clone(), asset.clone()));
+            }
+        }
+    }
+    for (account_id, assets) in &previous.module_state.account_asset_balances {
+        for asset in assets.keys() {
+            if !next
+                .module_state
+                .account_asset_balances
+                .get(account_id)
+                .is_some_and(|items| items.contains_key(asset))
+            {
+                dirty
+                    .account_asset_deletes
+                    .push((account_id.clone(), asset.clone()));
+            }
+        }
+    }
+    for (tx_hash, receipt) in &next.receipts {
+        if previous.receipts.get(tx_hash) != Some(receipt) {
+            dirty.receipt_upserts.push(tx_hash.clone());
+        }
+    }
+    for tx_hash in previous.receipts.keys() {
+        if !next.receipts.contains_key(tx_hash) {
+            dirty.receipt_deletes.push(tx_hash.clone());
+        }
+    }
+    dirty.semantic_head = previous.module_state.aoem_semantic_ledger_sequence
+        != next.module_state.aoem_semantic_ledger_sequence
+        || previous.module_state.aoem_semantic_ledger_head
+            != next.module_state.aoem_semantic_ledger_head;
+    dirty.snapshot_meta = native_rocksdb_snapshot_meta_v1(previous)
+        != native_rocksdb_snapshot_meta_v1(next)
+        || !dirty.module_state_shards.is_empty()
+        || !dirty.account_asset_upserts.is_empty()
+        || !dirty.account_asset_deletes.is_empty()
+        || !dirty.receipt_upserts.is_empty()
+        || !dirty.receipt_deletes.is_empty()
+        || dirty.semantic_head;
+    Ok(dirty)
+}
+
 fn nov_native_execution_store_lock_path_v1(path: &Path) -> PathBuf {
     let mut raw = path.as_os_str().to_os_string();
     raw.push(".lock");
@@ -3235,23 +3608,38 @@ fn materialize_nov_native_execution_store_from_rocksdb_v1(
     db: &RocksDb,
     path: &Path,
 ) -> Result<NovNativeExecutionStoreV1> {
-    let module_state = match db
-        .get(NOV_NATIVE_EXECUTION_STORE_ROCKSDB_KEY_MODULE_STATE_CORE_V1)
-        .with_context(|| {
+    let mut module_state = NovNativeExecutionModuleStateV1::default();
+    let mut loaded_namespaced_module_state = false;
+    for (key, shard) in native_rocksdb_module_state_shard_keys_v1() {
+        if let Some(raw) = db.get(key).with_context(|| {
             format!(
-                "read nov native execution rocksdb module_state/core failed: {}",
+                "read nov native execution rocksdb module_state/{shard} failed: {}",
                 path.display()
             )
         })? {
-        Some(raw) => serde_json::from_slice::<NovNativeExecutionModuleStateV1>(raw.as_slice())
+            native_apply_module_state_shard_v1(&mut module_state, shard, raw.as_slice())?;
+            loaded_namespaced_module_state = true;
+        }
+    }
+    if !loaded_namespaced_module_state {
+        module_state = match db
+            .get(NOV_NATIVE_EXECUTION_STORE_ROCKSDB_KEY_MODULE_STATE_CORE_V1)
             .with_context(|| {
                 format!(
-                    "parse nov native execution rocksdb module_state/core failed: {}",
+                    "read nov native execution rocksdb module_state/core failed: {}",
                     path.display()
                 )
-            })?,
-        None => NovNativeExecutionModuleStateV1::default(),
-    };
+            })? {
+            Some(raw) => serde_json::from_slice::<NovNativeExecutionModuleStateV1>(raw.as_slice())
+                .with_context(|| {
+                    format!(
+                        "parse nov native execution rocksdb module_state/core failed: {}",
+                        path.display()
+                    )
+                })?,
+            None => module_state,
+        };
+    }
 
     let mut store = NovNativeExecutionStoreV1 {
         schema: NOV_NATIVE_EXECUTION_STORE_SCHEMA_V1.to_string(),
@@ -3389,56 +3777,72 @@ fn save_nov_native_execution_store_rocksdb_v1(
     store: &NovNativeExecutionStoreV1,
 ) -> Result<()> {
     let db = open_nov_native_execution_store_rocksdb_v1(path)?;
+    let legacy_module_state_core_exists = db
+        .get(NOV_NATIVE_EXECUTION_STORE_ROCKSDB_KEY_MODULE_STATE_CORE_V1)
+        .with_context(|| {
+            format!(
+                "read nov native execution rocksdb module_state/core migration marker failed: {}",
+                path.display()
+            )
+        })?
+        .is_some();
     let previous = materialize_nov_native_execution_store_from_rocksdb_v1(&db, path)
         .unwrap_or_else(|_| NovNativeExecutionStoreV1::default());
-    let module_state = serde_json::to_vec(&store.module_state)
-        .context("serialize nov native execution rocksdb module_state/core failed")?;
+    let dirty =
+        native_execution_store_dirty_set_v1(&previous, store, legacy_module_state_core_exists)?;
     let meta = native_rocksdb_snapshot_meta_v1(store);
     let meta_encoded = serde_json::to_vec(&meta)
         .context("serialize nov native execution rocksdb snapshot meta failed")?;
     let mut batch = RocksDbWriteBatch::default();
     batch.delete(NOV_NATIVE_EXECUTION_STORE_ROCKSDB_KEY_SNAPSHOT_V1);
-    batch.put(
-        NOV_NATIVE_EXECUTION_STORE_ROCKSDB_KEY_MODULE_STATE_CORE_V1,
-        module_state.as_slice(),
-    );
-    batch.put(
-        NOV_NATIVE_EXECUTION_STORE_ROCKSDB_KEY_SEMANTIC_HEAD_V1,
-        store.module_state.aoem_semantic_ledger_head.as_bytes(),
-    );
-    batch.put(
-        NOV_NATIVE_EXECUTION_STORE_ROCKSDB_KEY_SEMANTIC_SEQUENCE_V1,
-        store
-            .module_state
-            .aoem_semantic_ledger_sequence
-            .to_be_bytes(),
-    );
-    let by_height_key =
-        native_rocksdb_semantic_by_height_key_v1(store.module_state.aoem_semantic_ledger_sequence);
-    batch.put(
-        by_height_key.as_slice(),
-        store.module_state.aoem_semantic_ledger_head.as_bytes(),
-    );
-    batch.put(
-        NOV_NATIVE_EXECUTION_STORE_ROCKSDB_SNAPSHOT_META_CURRENT_V1,
-        meta_encoded.as_slice(),
-    );
-    let meta_by_height_key = native_rocksdb_snapshot_meta_by_height_key_v1(
-        store.module_state.aoem_semantic_ledger_sequence,
-    );
-    batch.put(meta_by_height_key.as_slice(), meta_encoded.as_slice());
-
-    for (account_id, assets) in &store.module_state.account_asset_balances {
-        for (asset, amount) in assets {
-            let previous_amount = previous
-                .module_state
-                .account_asset_balances
-                .get(account_id)
-                .and_then(|items| items.get(asset))
-                .copied();
-            if previous_amount == Some(*amount) {
+    if !dirty.module_state_shards.is_empty() {
+        for (key, shard) in native_rocksdb_module_state_shard_keys_v1() {
+            if !dirty.module_state_shards.contains(&shard) {
                 continue;
             }
+            let encoded = native_module_state_shard_value_v1(&store.module_state, shard)?;
+            batch.put(key, encoded.as_slice());
+        }
+        batch.delete(NOV_NATIVE_EXECUTION_STORE_ROCKSDB_KEY_MODULE_STATE_CORE_V1);
+    }
+    if dirty.semantic_head || legacy_module_state_core_exists {
+        batch.put(
+            NOV_NATIVE_EXECUTION_STORE_ROCKSDB_KEY_SEMANTIC_HEAD_V1,
+            store.module_state.aoem_semantic_ledger_head.as_bytes(),
+        );
+        batch.put(
+            NOV_NATIVE_EXECUTION_STORE_ROCKSDB_KEY_SEMANTIC_SEQUENCE_V1,
+            store
+                .module_state
+                .aoem_semantic_ledger_sequence
+                .to_be_bytes(),
+        );
+        let by_height_key = native_rocksdb_semantic_by_height_key_v1(
+            store.module_state.aoem_semantic_ledger_sequence,
+        );
+        batch.put(
+            by_height_key.as_slice(),
+            store.module_state.aoem_semantic_ledger_head.as_bytes(),
+        );
+    }
+    if dirty.snapshot_meta || legacy_module_state_core_exists {
+        batch.put(
+            NOV_NATIVE_EXECUTION_STORE_ROCKSDB_SNAPSHOT_META_CURRENT_V1,
+            meta_encoded.as_slice(),
+        );
+        let meta_by_height_key = native_rocksdb_snapshot_meta_by_height_key_v1(
+            store.module_state.aoem_semantic_ledger_sequence,
+        );
+        batch.put(meta_by_height_key.as_slice(), meta_encoded.as_slice());
+    }
+
+    for (account_id, asset) in &dirty.account_asset_upserts {
+        if let Some(amount) = store
+            .module_state
+            .account_asset_balances
+            .get(account_id)
+            .and_then(|items| items.get(asset))
+        {
             let key = native_rocksdb_account_asset_key_v1(account_id, asset);
             let encoded = serde_json::to_vec(amount).with_context(|| {
                 format!(
@@ -3448,28 +3852,24 @@ fn save_nov_native_execution_store_rocksdb_v1(
             batch.put(key.as_slice(), encoded.as_slice());
         }
     }
-    for (account_id, assets) in &previous.module_state.account_asset_balances {
-        for asset in assets.keys() {
-            if !store
-                .module_state
-                .account_asset_balances
-                .get(account_id)
-                .is_some_and(|items| items.contains_key(asset))
-            {
-                let key = native_rocksdb_account_asset_key_v1(account_id, asset);
-                batch.delete(key.as_slice());
-            }
-        }
+    for (account_id, asset) in &dirty.account_asset_deletes {
+        let key = native_rocksdb_account_asset_key_v1(account_id, asset);
+        batch.delete(key.as_slice());
     }
 
-    for (idx, (tx_hash, receipt)) in store.receipts.iter().enumerate() {
-        if previous.receipts.get(tx_hash) == Some(receipt) {
+    for tx_hash in &dirty.receipt_upserts {
+        let Some(receipt) = store.receipts.get(tx_hash) else {
             continue;
-        }
+        };
         let key = native_rocksdb_receipt_key_v1(tx_hash);
         let encoded = serde_json::to_vec(receipt)
             .with_context(|| format!("serialize nov native execution receipt failed: {tx_hash}"))?;
         batch.put(key.as_slice(), encoded.as_slice());
+        let idx = store
+            .receipts
+            .keys()
+            .position(|candidate| candidate == tx_hash)
+            .unwrap_or(0);
         let receipt_height_key = native_rocksdb_receipt_by_height_key_v1(
             store.module_state.aoem_semantic_ledger_sequence,
             idx,
@@ -3477,11 +3877,9 @@ fn save_nov_native_execution_store_rocksdb_v1(
         );
         batch.put(receipt_height_key.as_slice(), tx_hash.as_bytes());
     }
-    for tx_hash in previous.receipts.keys() {
-        if !store.receipts.contains_key(tx_hash) {
-            let key = native_rocksdb_receipt_key_v1(tx_hash);
-            batch.delete(key.as_slice());
-        }
+    for tx_hash in &dirty.receipt_deletes {
+        let key = native_rocksdb_receipt_key_v1(tx_hash);
+        batch.delete(key.as_slice());
     }
     db.write(batch).with_context(|| {
         format!(
@@ -10514,6 +10912,46 @@ mod tests {
         test_fn()
     }
 
+    fn test_native_execution_receipt_v1(
+        tx_hash: &str,
+        account_id: &str,
+    ) -> NovNativeExecutionReceiptV1 {
+        NovNativeExecutionReceiptV1 {
+            tx_hash: tx_hash.to_string(),
+            status: true,
+            target: "native_module:treasury".to_string(),
+            module: "treasury".to_string(),
+            method: "deposit_reserve".to_string(),
+            account_id: account_id.to_string(),
+            fee_owner_account_id: account_id.to_string(),
+            nonce_owner_account_id: account_id.to_string(),
+            key_algo: "ed25519".to_string(),
+            execution_policy: "standard".to_string(),
+            policy_enforced: true,
+            policy_rejection_reason: None,
+            settled_fee_nov: 1,
+            paid_asset: "NOV".to_string(),
+            paid_amount: 1,
+            logs: Vec::new(),
+            failure_reason: None,
+            fee_contract: NOV_EXECUTION_FEE_CLASSIFICATION_CONTRACT_V1.to_string(),
+            fee_route: "native".to_string(),
+            fee_quote_id: "q-test".to_string(),
+            fee_quote_contract: NOV_EXECUTION_FEE_QUOTE_CONTRACT_V1.to_string(),
+            fee_clearing_contract: NOV_EXECUTION_FEE_CLEARING_CONTRACT_V1.to_string(),
+            fee_price_source: "protocol".to_string(),
+            fee_quote_required_pay_amount: 1,
+            fee_quote_expires_at_unix_ms: 9999,
+            fee_clearing_route_ref: "route:test".to_string(),
+            fee_clearing_source: "treasury".to_string(),
+            fee_clearing_rate_ppm: 1_000_000,
+            route_meta: None,
+            policy_meta: None,
+            aoem_semantic_ingress: None,
+            aoem_semantic_commit: None,
+        }
+    }
+
     #[test]
     fn native_policy_state_projection_includes_protocol_clearing_and_oracle_policy() {
         let before = NovNativeExecutionModuleStateV1::default();
@@ -10772,6 +11210,18 @@ mod tests {
                             .is_none(),
                         "new sharded commit must not keep the legacy whole-store snapshot blob"
                     );
+                    assert!(
+                        db.get(NOV_NATIVE_EXECUTION_STORE_ROCKSDB_KEY_MODULE_STATE_CORE_V1)
+                            .expect("read legacy module_state/core key")
+                            .is_none(),
+                        "dirty sharded commit must not keep module_state/core as production state"
+                    );
+                    assert!(db
+                        .get(
+                            NOV_NATIVE_EXECUTION_STORE_ROCKSDB_KEY_MODULE_STATE_NATIVE_EXECUTION_V1
+                        )
+                        .expect("read native execution module shard")
+                        .is_some());
                     assert!(db
                         .get(native_rocksdb_account_asset_key_v1("acct-shard", "NETH"))
                         .expect("read account asset shard")
@@ -10803,6 +11253,142 @@ mod tests {
                     let loaded = load_nov_native_execution_store_v1(path.as_path())
                         .expect("materialized rocksdb load");
                     assert_eq!(loaded, store);
+                })
+            },
+        );
+    }
+
+    #[test]
+    fn native_execution_store_dirty_set_tracks_only_changed_assets_and_module_shards() {
+        let mut previous = NovNativeExecutionStoreV1::default();
+        previous
+            .module_state
+            .account_asset_balances
+            .entry("acct-a".to_string())
+            .or_default()
+            .insert("NETH".to_string(), 10);
+        previous
+            .module_state
+            .account_asset_balances
+            .entry("acct-b".to_string())
+            .or_default()
+            .insert("NUSDT".to_string(), 20);
+
+        let mut next = previous.clone();
+        next.module_state
+            .account_asset_balances
+            .get_mut("acct-a")
+            .expect("acct-a exists")
+            .insert("NETH".to_string(), 11);
+        next.module_state.treasury_reserve_bucket_nov = 100;
+        next.module_state.treasury_settlement_paused = true;
+
+        let dirty = native_execution_store_dirty_set_v1(&previous, &next, false)
+            .expect("dirty set should build");
+        assert_eq!(
+            dirty.account_asset_upserts,
+            vec![("acct-a".to_string(), "NETH".to_string())]
+        );
+        assert!(
+            !dirty
+                .account_asset_upserts
+                .contains(&("acct-b".to_string(), "NUSDT".to_string())),
+            "unchanged account asset must not be marked dirty"
+        );
+        assert!(dirty.module_state_shards.contains(&"treasury"));
+        assert!(dirty.module_state_shards.contains(&"policy"));
+        assert!(!dirty.module_state_shards.contains(&"clearing"));
+        assert!(!dirty.module_state_shards.contains(&"native_execution"));
+    }
+
+    #[test]
+    fn native_execution_store_rocksdb_dirty_module_state_namespaces_materialize() {
+        with_env_override_v1(
+            NOV_NATIVE_EXECUTION_STORE_BACKEND_ENV,
+            NOV_NATIVE_EXECUTION_STORE_BACKEND_ROCKSDB_V1,
+            || {
+                with_test_native_execution_store_path_v1(|path| {
+                    let mut store = NovNativeExecutionStoreV1::default();
+                    store.last_updated_unix_ms = 777;
+                    store.module_state.treasury_reserve_bucket_nov = 123;
+                    store.module_state.treasury_settlement_paused = true;
+                    store.module_state.treasury_policy_source = "test-policy".to_string();
+                    save_nov_native_execution_store_v1(path.as_path(), &store)
+                        .expect("save dirty module namespace store");
+
+                    let rocksdb_path = nov_native_execution_store_rocksdb_path_v1(path.as_path());
+                    let db = open_nov_native_execution_store_rocksdb_v1(rocksdb_path.as_path())
+                        .expect("open rocksdb");
+                    assert!(db
+                        .get(NOV_NATIVE_EXECUTION_STORE_ROCKSDB_KEY_MODULE_STATE_TREASURY_V1)
+                        .expect("read treasury module shard")
+                        .is_some());
+                    assert!(db
+                        .get(NOV_NATIVE_EXECUTION_STORE_ROCKSDB_KEY_MODULE_STATE_POLICY_V1)
+                        .expect("read policy module shard")
+                        .is_some());
+                    assert!(db
+                        .get(NOV_NATIVE_EXECUTION_STORE_ROCKSDB_KEY_MODULE_STATE_CORE_V1)
+                        .expect("read legacy module core")
+                        .is_none());
+                    drop(db);
+
+                    let loaded = load_nov_native_execution_store_v1(path.as_path())
+                        .expect("load materialized dirty module namespace store");
+                    assert_eq!(loaded, store);
+                })
+            },
+        );
+    }
+
+    #[test]
+    fn native_execution_store_rocksdb_receipt_by_height_is_append_only() {
+        with_env_override_v1(
+            NOV_NATIVE_EXECUTION_STORE_BACKEND_ENV,
+            NOV_NATIVE_EXECUTION_STORE_BACKEND_ROCKSDB_V1,
+            || {
+                with_test_native_execution_store_path_v1(|path| {
+                    let mut first = NovNativeExecutionStoreV1::default();
+                    first.module_state.aoem_semantic_ledger_sequence = 1;
+                    first.module_state.aoem_semantic_ledger_head = "head-1".to_string();
+                    let receipt_one =
+                        test_native_execution_receipt_v1("d1".repeat(32).as_str(), "acct-r");
+                    first
+                        .receipts
+                        .insert(receipt_one.tx_hash.clone(), receipt_one.clone());
+                    save_nov_native_execution_store_v1(path.as_path(), &first)
+                        .expect("save first receipt");
+
+                    let mut second = first.clone();
+                    second.module_state.aoem_semantic_ledger_sequence = 2;
+                    second.module_state.aoem_semantic_ledger_head = "head-2".to_string();
+                    let receipt_two =
+                        test_native_execution_receipt_v1("d2".repeat(32).as_str(), "acct-r");
+                    second
+                        .receipts
+                        .insert(receipt_two.tx_hash.clone(), receipt_two.clone());
+                    save_nov_native_execution_store_v1(path.as_path(), &second)
+                        .expect("save second receipt");
+
+                    let rocksdb_path = nov_native_execution_store_rocksdb_path_v1(path.as_path());
+                    let db = open_nov_native_execution_store_rocksdb_v1(rocksdb_path.as_path())
+                        .expect("open rocksdb");
+                    assert!(db
+                        .get(native_rocksdb_receipt_by_height_key_v1(
+                            1,
+                            0,
+                            receipt_one.tx_hash.as_str()
+                        ))
+                        .expect("read first height receipt index")
+                        .is_some());
+                    assert!(db
+                        .get(native_rocksdb_receipt_by_height_key_v1(
+                            2,
+                            1,
+                            receipt_two.tx_hash.as_str()
+                        ))
+                        .expect("read second height receipt index")
+                        .is_some());
                 })
             },
         );

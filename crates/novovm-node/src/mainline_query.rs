@@ -11118,7 +11118,7 @@ mod tests {
         assert_eq!(out["transactional_commit"].as_bool(), Some(true));
         assert_eq!(
             out["commit_model"].as_str(),
-            Some("rocksdb_sharded_atomic_batch_primary")
+            Some("dirty_sharded_atomic_batch_primary")
         );
     }
 
