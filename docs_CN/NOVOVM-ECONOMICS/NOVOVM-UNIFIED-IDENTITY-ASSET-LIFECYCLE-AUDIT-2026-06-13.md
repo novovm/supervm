@@ -119,7 +119,8 @@ P_redeem[A] = P_epoch[A]
 - 对外公开的应是系统级数据：Treasury reserve、M2 liability、reserve proof、协议清算价、风险状态、熔断状态和治理参数。
 - KYC 只应保存为许可 attestation、policy result、hash/reference 或审计凭证，不应把实名资料明文写入公开账本。
 - 钱包、DAPP、网站、gateway 都必须通过 mainline unified account surface 访问受限视图，不能直接读取或公开完整用户资产明细。
-- 当前代码已经有 `privacy_required` / `privacy_mode` 的最小执行策略门禁，但不声明完整 encrypted balance、ZK proof、隐私交易或审计密钥体系已完成。
+- 当前代码已经有 `privacy_required` / `privacy_mode` 的最小执行策略门禁；native M2/nAsset 余额和资产列表也已接入最小 read gate：`account_balance`、`account_assets` 和 `nov_getAssetBalance` 对 `N*` M2 资产默认返回 `privacy_redacted=true`，只有 `viewer_account_id/requester_account_id` 匹配账户或显式 `asset_view_authorized/account_view_authorized` 时才返回明细。
+- 该 read gate 是产品隐私边界，不等于完整 encrypted balance、ZK proof、隐私交易或审计密钥体系已完成。
 
 ## 2. 生命周期现状
 

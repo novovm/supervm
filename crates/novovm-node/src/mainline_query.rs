@@ -149,6 +149,42 @@ fn param_as_string_any(params: &Value, keys: &[&str]) -> Option<String> {
     keys.iter().find_map(|key| param_as_string(params, key))
 }
 
+fn normalize_mainline_account_view_key_v1(raw: &str) -> String {
+    let trimmed = raw.trim();
+    let normalized_hex = trimmed
+        .strip_prefix("0x")
+        .or_else(|| trimmed.strip_prefix("0X"))
+        .filter(|token| !token.is_empty() && token.chars().all(|ch| ch.is_ascii_hexdigit()))
+        .map(|token| format!("0x{}", token.to_ascii_lowercase()));
+    normalized_hex.unwrap_or_else(|| trimmed.to_ascii_lowercase())
+}
+
+fn is_native_m2_asset_symbol_v1(asset_id: &str) -> bool {
+    let normalized = asset_id.trim().to_ascii_uppercase();
+    normalized != "NOV" && normalized.starts_with('N')
+}
+
+fn mainline_asset_view_authorized_v1(params: &Value, account: &str) -> bool {
+    if param_as_bool_v1(params, "asset_view_authorized")
+        || param_as_bool_v1(params, "account_view_authorized")
+        || param_as_bool_v1(params, "owner_authorized")
+    {
+        return true;
+    }
+    let normalized_account = normalize_mainline_account_view_key_v1(account);
+    param_as_string_any(
+        params,
+        &[
+            "viewer_account_id",
+            "requester_account_id",
+            "authorized_account_id",
+            "subject_account_id",
+        ],
+    )
+    .map(|viewer| normalize_mainline_account_view_key_v1(&viewer) == normalized_account)
+    .unwrap_or(false)
+}
+
 fn param_as_u128(params: &Value, key: &str, index: usize) -> Option<u128> {
     match params {
         Value::Object(map) => map.get(key).and_then(value_as_u128),
@@ -855,6 +891,27 @@ fn run_mainline_native_execution_query(method: &str, params: &Value) -> Result<V
             let asset = param_as_string_any(params, &["asset", "asset_id"])
                 .unwrap_or_else(|| "NOV".to_string())
                 .to_ascii_uppercase();
+            if is_native_m2_asset_symbol_v1(&asset)
+                && !mainline_asset_view_authorized_v1(params, &account)
+            {
+                return Ok(json!({
+                    "method": "nov_getAssetBalance",
+                    "account": account,
+                    "asset": asset,
+                    "asset_layer": "M2",
+                    "found": false,
+                    "privacy_redacted": true,
+                    "privacy_policy": "m2_asset_private_by_default",
+                    "authorization_required": true,
+                    "authorization_fields": [
+                        "viewer_account_id",
+                        "requester_account_id",
+                        "asset_view_authorized",
+                        "account_view_authorized"
+                    ],
+                    "redacted_asset_layers": ["M2"],
+                }));
+            }
             let native_balance = get_nov_native_account_asset_balance_with_store_path_v1(
                 store_path.as_path(),
                 account.as_str(),
@@ -11721,12 +11778,26 @@ mod tests {
             &json!({
                 "account": caller,
                 "asset": "NUSD",
+                "viewer_account_id": caller,
                 "native_execution_store_path": native_store.display().to_string(),
             }),
         )
         .expect("nov_getAssetBalance NUSD should succeed");
         assert_eq!(nusd_after["found"].as_bool(), Some(true));
         assert_eq!(nusd_after["balance"].as_u64(), Some(100));
+
+        let nusd_redacted = run_mainline_query_from_path(
+            bogus_canonical_store,
+            "nov_getAssetBalance",
+            &json!({
+                "account": caller,
+                "asset": "NUSD",
+                "native_execution_store_path": native_store.display().to_string(),
+            }),
+        )
+        .expect("nov_getAssetBalance NUSD should return redacted without viewer");
+        assert_eq!(nusd_redacted["privacy_redacted"].as_bool(), Some(true));
+        assert!(nusd_redacted.get("balance").is_none());
 
         let _ = fs::remove_file(native_store);
     }
@@ -12935,7 +13006,10 @@ mod tests {
                 store.as_path(),
                 audit.as_path(),
                 native_store.as_path(),
-                json!({"account_id": account_id}),
+                json!({
+                    "account_id": account_id,
+                    "viewer_account_id": account_id,
+                }),
             ),
         )
         .expect("account_assets should show mapped asset");
@@ -12980,7 +13054,10 @@ mod tests {
                 store.as_path(),
                 audit.as_path(),
                 native_store.as_path(),
-                json!({"account_id": account_id}),
+                json!({
+                    "account_id": account_id,
+                    "viewer_account_id": account_id,
+                }),
             ),
         )
         .expect("account_assets should hide burn_pending from active mapped list");
@@ -13092,7 +13169,11 @@ mod tests {
                 store.as_path(),
                 audit.as_path(),
                 native_store.as_path(),
-                json!({"account_id": account_id, "asset_id": "NETH"}),
+                json!({
+                    "account_id": account_id,
+                    "asset_id": "NETH",
+                    "viewer_account_id": account_id,
+                }),
             ),
         )
         .expect("account_balance should show live NETH credit");
@@ -13144,7 +13225,11 @@ mod tests {
                 store.as_path(),
                 audit.as_path(),
                 native_store.as_path(),
-                json!({"account_id": account_id, "asset_id": "NETH"}),
+                json!({
+                    "account_id": account_id,
+                    "asset_id": "NETH",
+                    "viewer_account_id": account_id,
+                }),
             ),
         )
         .expect("account_balance should show live NETH burned from liquid balance");
@@ -14036,7 +14121,11 @@ mod tests {
                 store.as_path(),
                 audit.as_path(),
                 native_store.as_path(),
-                json!({"account_id": account_id, "asset_id": "NETH"}),
+                json!({
+                    "account_id": account_id,
+                    "asset_id": "NETH",
+                    "viewer_account_id": account_id,
+                }),
             ),
         )
         .expect("account_balance should show frozen NETH removed from liquid balance");

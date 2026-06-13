@@ -1648,6 +1648,14 @@ fn run_unified_account_surface_rpc(
                 &param_as_string_any(params, &["asset_id", "asset"])
                     .unwrap_or_else(|| "NOV".to_string()),
             );
+            if is_native_m2_asset_symbol_v1(&asset_id)
+                && !account_asset_view_authorized_v1(params, &account_id)
+            {
+                return Ok((
+                    redacted_account_asset_view_v1(method, &account_id, Some(&asset_id)),
+                    false,
+                ));
+            }
             let store_path = native_execution_store_path_from_params_or_env_v1(params);
             let store = load_nov_native_execution_store_v1(store_path.as_path())?;
             let normalized_account = normalize_account_view_key_v1(&account_id);
@@ -1858,6 +1866,12 @@ fn run_unified_account_surface_rpc(
         }
         "account_assets" => {
             let account_id = parse_account_id(params)?;
+            if !account_asset_view_authorized_v1(params, &account_id) {
+                return Ok((
+                    redacted_account_asset_view_v1(method, &account_id, None),
+                    false,
+                ));
+            }
             let store_path = native_execution_store_path_from_params_or_env_v1(params);
             let store = load_nov_native_execution_store_v1(store_path.as_path())?;
             let normalized_account = normalize_account_view_key_v1(&account_id);
@@ -4647,6 +4661,58 @@ fn normalize_account_view_key_v1(raw: &str) -> String {
     normalized_hex.unwrap_or_else(|| trimmed.to_ascii_lowercase())
 }
 
+fn is_native_m2_asset_symbol_v1(asset_id: &str) -> bool {
+    let normalized = normalize_asset_view_symbol_v1(asset_id);
+    normalized != "NOV" && normalized.starts_with('N')
+}
+
+fn account_asset_view_authorized_v1(params: &Value, account_id: &str) -> bool {
+    if param_as_bool(params, "asset_view_authorized").unwrap_or(false)
+        || param_as_bool(params, "account_view_authorized").unwrap_or(false)
+        || param_as_bool(params, "owner_authorized").unwrap_or(false)
+    {
+        return true;
+    }
+    let normalized_account = normalize_account_view_key_v1(account_id);
+    param_as_string_any(
+        params,
+        &[
+            "viewer_account_id",
+            "requester_account_id",
+            "authorized_account_id",
+            "subject_account_id",
+        ],
+    )
+    .map(|viewer| normalize_account_view_key_v1(&viewer) == normalized_account)
+    .unwrap_or(false)
+}
+
+fn redacted_account_asset_view_v1(method: &str, account_id: &str, asset_id: Option<&str>) -> Value {
+    let mut out = json!({
+        "method": method,
+        "found": false,
+        "account_id": account_id,
+        "uca_id": account_id,
+        "ownership_subject": "account_id",
+        "privacy_redacted": true,
+        "privacy_policy": "m2_asset_private_by_default",
+        "authorization_required": true,
+        "authorization_fields": [
+            "viewer_account_id",
+            "requester_account_id",
+            "asset_view_authorized",
+            "account_view_authorized"
+        ],
+        "redacted_asset_layers": ["M2"],
+    });
+    if let (Some(map), Some(asset_id)) = (out.as_object_mut(), asset_id) {
+        map.insert("asset_id".to_string(), Value::String(asset_id.to_string()));
+        map.insert("asset".to_string(), Value::String(asset_id.to_string()));
+        map.insert("asset_layer".to_string(), Value::String("M2".to_string()));
+    }
+    out
+}
+
 fn parse_account_id(params: &Value) -> Result<String> {
     let raw = param_as_string_any(params, &["account_id", "uca_id"])
         .ok_or_else(|| anyhow::anyhow!("account_id/uca_id is required"))?;
@@ -6730,6 +6796,7 @@ mod tests {
                 json!({
                     "account_id": "acct-assets-a",
                     "asset_id": "NUSD",
+                    "viewer_account_id": "acct-assets-a",
                 }),
             ),
         );
@@ -6805,6 +6872,7 @@ mod tests {
                 &native_store,
                 json!({
                     "account_id": "acct-assets-a",
+                    "viewer_account_id": "acct-assets-a",
                 }),
             ),
         );
@@ -6847,6 +6915,41 @@ mod tests {
             assets["treasury_exposures"][3]["asset_id"].as_str(),
             Some("NUSD")
         );
+
+        let redacted_nusd = run_query(
+            &base,
+            "account_balance",
+            params_with_paths_and_native_store(
+                &store,
+                &audit,
+                &native_store,
+                json!({
+                    "account_id": "acct-assets-a",
+                    "asset_id": "NUSD",
+                }),
+            ),
+        );
+        assert_eq!(redacted_nusd["privacy_redacted"].as_bool(), Some(true));
+        assert_eq!(
+            redacted_nusd["privacy_policy"].as_str(),
+            Some("m2_asset_private_by_default")
+        );
+        assert!(redacted_nusd.get("balance").is_none());
+
+        let redacted_assets = run_query(
+            &base,
+            "account_assets",
+            params_with_paths_and_native_store(
+                &store,
+                &audit,
+                &native_store,
+                json!({
+                    "account_id": "acct-assets-a",
+                }),
+            ),
+        );
+        assert_eq!(redacted_assets["privacy_redacted"].as_bool(), Some(true));
+        assert!(redacted_assets.get("assets").is_none());
 
         let _ = fs::remove_dir_all(&root);
     }
@@ -6893,7 +6996,10 @@ mod tests {
                 &store,
                 &audit,
                 &native_store,
-                json!({"account_id": "acct-map-a"}),
+                json!({
+                    "account_id": "acct-map-a",
+                    "viewer_account_id": "acct-map-a",
+                }),
             ),
         );
         assert_eq!(assets_before_burn["mapped_asset_count"].as_u64(), Some(1));
@@ -6908,7 +7014,11 @@ mod tests {
                 &store,
                 &audit,
                 &native_store,
-                json!({"account_id": "acct-map-a", "asset_id": "NETH"}),
+                json!({
+                    "account_id": "acct-map-a",
+                    "asset_id": "NETH",
+                    "viewer_account_id": "acct-map-a",
+                }),
             ),
         );
         assert_eq!(
@@ -6940,7 +7050,10 @@ mod tests {
                 &store,
                 &audit,
                 &native_store,
-                json!({"account_id": "acct-map-a"}),
+                json!({
+                    "account_id": "acct-map-a",
+                    "viewer_account_id": "acct-map-a",
+                }),
             ),
         );
         assert_eq!(assets_after_burn["mapped_asset_count"].as_u64(), Some(0));
@@ -6993,7 +7106,11 @@ mod tests {
                 &store,
                 &audit,
                 &native_store,
-                json!({"account_id": "acct-map-a", "asset_id": "NETH"}),
+                json!({
+                    "account_id": "acct-map-a",
+                    "asset_id": "NETH",
+                    "viewer_account_id": "acct-map-a",
+                }),
             ),
         );
         assert_eq!(
@@ -7131,7 +7248,11 @@ mod tests {
                 &store,
                 &audit,
                 &native_store,
-                json!({"account_id": "acct-map-live", "asset_id": "NETH"}),
+                json!({
+                    "account_id": "acct-map-live",
+                    "asset_id": "NETH",
+                    "viewer_account_id": "acct-map-live",
+                }),
             ),
         );
         assert_eq!(balance["balance"].as_u64(), Some(700));
@@ -8389,7 +8510,10 @@ mod tests {
             params_with_paths(
                 &store,
                 &audit,
-                json!({"account_id": "acct-map-live-auto-heal"}),
+                json!({
+                    "account_id": "acct-map-live-auto-heal",
+                    "viewer_account_id": "acct-map-live-auto-heal",
+                }),
             ),
         );
         assert_eq!(
@@ -8650,7 +8774,11 @@ mod tests {
                 &store,
                 &audit,
                 &native_store,
-                json!({"account_id": "acct-map-live-freeze", "asset_id": "NETH"}),
+                json!({
+                    "account_id": "acct-map-live-freeze",
+                    "asset_id": "NETH",
+                    "viewer_account_id": "acct-map-live-freeze",
+                }),
             ),
         );
         assert_eq!(balance["balance"].as_u64(), Some(0));
@@ -8785,7 +8913,11 @@ mod tests {
                 &store,
                 &audit,
                 &native_store,
-                json!({"account_id": "acct-map-live-unfreeze", "asset_id": "NETH"}),
+                json!({
+                    "account_id": "acct-map-live-unfreeze",
+                    "asset_id": "NETH",
+                    "viewer_account_id": "acct-map-live-unfreeze",
+                }),
             ),
         );
         assert_eq!(balance["balance"].as_u64(), Some(101));
@@ -8943,7 +9075,10 @@ mod tests {
                 &store,
                 &audit,
                 &native_store,
-                json!({"account_id": "acct-map-live-rollback"}),
+                json!({
+                    "account_id": "acct-map-live-rollback",
+                    "viewer_account_id": "acct-map-live-rollback",
+                }),
             ),
         );
         assert_eq!(assets["mapped_asset_count"].as_u64(), Some(0));
