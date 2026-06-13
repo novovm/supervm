@@ -13846,6 +13846,44 @@ mod tests {
         .expect("account_assets should show mapped asset");
         assert_eq!(assets_active["mapped_asset_count"].as_u64(), Some(1));
         assert_eq!(
+            assets_active["privacy_disclosure"]["status"].as_str(),
+            Some("authorized")
+        );
+        assert_eq!(
+            assets_active["privacy_disclosure"]["asset"].as_str(),
+            Some("*")
+        );
+        let assets_disclosure_verify = run_mainline_query_from_path(
+            base.as_path(),
+            "nov_verifyPrivacyDisclosureReceipt",
+            &json!({
+                "authorized_response": assets_active.clone(),
+            }),
+        )
+        .expect("account_assets privacy disclosure verification should succeed");
+        assert_eq!(assets_disclosure_verify["verified"].as_bool(), Some(true));
+        assert_eq!(
+            assets_disclosure_verify["result_commitment_verified"].as_bool(),
+            Some(true)
+        );
+        let mut tampered_assets = assets_active.clone();
+        if let Some(map) = tampered_assets.as_object_mut() {
+            map.insert("mapped_asset_count".to_string(), Value::from(2u64));
+        }
+        let tampered_assets_verify = run_mainline_query_from_path(
+            base.as_path(),
+            "nov_verifyPrivacyDisclosureReceipt",
+            &json!({
+                "authorized_response": tampered_assets,
+            }),
+        )
+        .expect("tampered account_assets privacy disclosure verification should return result");
+        assert_eq!(tampered_assets_verify["verified"].as_bool(), Some(false));
+        assert_eq!(
+            tampered_assets_verify["result_commitment_verified"].as_bool(),
+            Some(false)
+        );
+        assert_eq!(
             assets_active["mapped_assets"][0]["status"].as_str(),
             Some("active")
         );
@@ -14012,6 +14050,44 @@ mod tests {
         assert_eq!(
             neth_balance["mapped_asset_active_balance"].as_u64(),
             Some(700)
+        );
+        assert_eq!(
+            neth_balance["privacy_disclosure"]["status"].as_str(),
+            Some("authorized")
+        );
+        assert_eq!(
+            neth_balance["privacy_disclosure"]["asset"].as_str(),
+            Some("NETH")
+        );
+        let balance_disclosure_verify = run_mainline_query_from_path(
+            base.as_path(),
+            "nov_verifyPrivacyDisclosureReceipt",
+            &json!({
+                "authorized_response": neth_balance.clone(),
+            }),
+        )
+        .expect("account_balance privacy disclosure verification should succeed");
+        assert_eq!(balance_disclosure_verify["verified"].as_bool(), Some(true));
+        assert_eq!(
+            balance_disclosure_verify["result_commitment_verified"].as_bool(),
+            Some(true)
+        );
+        let mut tampered_balance = neth_balance.clone();
+        if let Some(map) = tampered_balance.as_object_mut() {
+            map.insert("balance".to_string(), Value::from(701u64));
+        }
+        let tampered_balance_verify = run_mainline_query_from_path(
+            base.as_path(),
+            "nov_verifyPrivacyDisclosureReceipt",
+            &json!({
+                "authorized_response": tampered_balance,
+            }),
+        )
+        .expect("tampered account_balance privacy disclosure verification should return result");
+        assert_eq!(tampered_balance_verify["verified"].as_bool(), Some(false));
+        assert_eq!(
+            tampered_balance_verify["result_commitment_verified"].as_bool(),
+            Some(false)
         );
 
         let snapshot_after_register = run_mainline_query_from_path(
