@@ -21,7 +21,7 @@ NOVOVM 现在已经具备“统一身份 + EVM 产品入口 + native NOV 经济�
 不能过度声明的部分：
 
 - 当前没有发现 NOVO Wallet 前端/钱包应用代码；仓库里是 RPC/节点/gateway 能力，不是完整用户 App。
-- `crates/novovm-node/src/main.rs` 是 dead/historical source，不是当前 Cargo 产品 binary；不得再向该文件增加主线语义。当前统一账户产品入口以 `crates/novovm-node/src/bin/novovm-node.rs -> mainline_query -> unified_account_surface` 为准。
+- `crates/novovm-node/src/main.rs` 是 legacy public RPC/历史验证面，不是当前 Cargo 产品 binary；它只能跟随主线口径做兼容对齐，不得重新成为统一账户或资产账本的权威入口。当前统一账户产品入口以 `crates/novovm-node/src/bin/novovm-node.rs -> mainline_query -> unified_account_surface` 为准。
 - ETH 锁仓合约不是已部署真实 Solidity lock contract 路径；当前 `ua_registerMappedLock` live 模式已要求结构化 Ethereum lock event evidence，并通过 `source_chain_id + block_hash + receipts_root + receipt_index + receipt_proof` 验证 receipt MPT inclusion，且要求 `receipts_root` 匹配本地 `novovm-network` runtime canonical finalized block anchor；ETH lock contract address 已可通过主线 `nov_applyTreasuryPolicy(mapped_lock_contract_address)` 治理写入，live proof 优先采用 native store 治理配置，参数级 expected address 只作为兼容 fallback，不能覆盖治理配置。治理通过主线 `nov_setMappedHeaderSourcePolicy(required=true)` 后，该 runtime header 还必须来自许可 `source_peer_id`，并满足 `min_source_quorum`。runtime 会按同一 `block_hash` 已观测到的许可 source peer 集合计算 quorum，不满足时 fail-closed。通过后再解析 receipt log 的 contract/topic0，目标资产为 `NETH`。
 - `phase4_mode=live` 的内部 MVP 接线已能把 mapped lock 记为 `NETH` M2 credit，写入 native account balance、Treasury reserve 和 settlement journal；`phase4_mode=shadow` 仍只做审计映射，不入账。主线产品 smoke 已覆盖 shadow/internal MVP 的 `ua_registerMappedLock -> account_assets -> ua_burnMappedAsset -> ua_releaseMappedLock -> ua_getMappedAsset` 闭环，并明确 `settlement_effect=none`；也已覆盖 live `Ethereum lock evidence -> NETH/M2 credit -> burn -> Treasury reserve debit/release` 主线入口闭环，且明确 `nov_minted=0`、不触发外部链释放。
 - M2 bridge pause v1 已接入 mainline native execution store / governance policy：live register、burn、release 可分别被 `mapped_lock_bridge_paused`、`mapped_asset_burn_paused`、`mapped_asset_release_paused` fail-closed 阻断，暂停时不推进 mapped asset 生命周期。
@@ -49,7 +49,7 @@ NOVOVM 现在已经具备“统一身份 + EVM 产品入口 + native NOV 经济�
 - 当前 Cargo 产品 binary 是 `crates/novovm-node/src/bin/novovm-node.rs`，不是 dead `crates/novovm-node/src/main.rs`。
 - 产品 binary 通过 `run_mainline_query_from_path` 与 `is_mainline_unified_account_query_method` 接入 mainline 统一账户 surface。
 - 产品 binary 不嵌入 legacy `run_public_rpc` / `run_unified_account_rpc` / `public_unified_account_runtime`。
-- `crates/novovm-node/src/main.rs` 只能作为历史验证残留看待；后续开发不得把它重新定义为产品入口，也不得在其中新增主线统一账户语义。
+- `crates/novovm-node/src/main.rs` 只能作为 legacy public RPC/历史验证面看待；后续开发不得把它重新定义为产品入口，也不得在其中新增第二套统一账户或资产账本语义。
 
 ## 1.2 上层经济法条与协议清算边界
 
@@ -79,7 +79,7 @@ P_pay[A] = P_epoch[A]
          * (1 - volatility_haircut[A])
 ```
 
-赎回时采用反向保守价：
+NOV 购买/兑换 nAsset 或 Treasury 内部付出资产时采用反向保守价：
 
 ```text
 P_redeem[A] = P_epoch[A]
@@ -87,7 +87,39 @@ P_redeem[A] = P_epoch[A]
             * (1 + risk_surcharge[A])
 ```
 
+命名边界：
+
+- `NOV <-> NETH/nAsset` 是内部购买、兑换或 Treasury settlement：`NETH/nAsset -> NOV` 走 `nov_swap`/AMM 市场兑换，`NOV -> NETH/nAsset` 走 `nov_buyAsset`/Treasury 协议清算购买。
+- `NOV -> ETH` 应表达为组合路径：`NOV -> NETH`，再由 `NETH burn -> Ethereum lock contract release ETH`；用户产品面可以理解为 NOV 换 ETH，但账务和协议不能合并成一个直接赎回动作。
+- `NETH -> ETH` 才是外部 redeem/release；`nov_buyAsset` 不触发外部链释放。
+
 当前状态：制度规则已写入审阅口径；完整代码实现仍需后续阶段，不在本轮声明完成。
+
+## 1.3 nAsset 原生账本与隐私边界
+
+本审阅把 `NETH / NUSDT / NDAI / NBTC / NUSDC` 等资产定义为 NOVOVM 原生 M2 资产账本条目，不定义为 ERC20/TRC20 合约币。
+
+账本保存口径：
+
+- 权威状态源是 mainline unified account surface 和 native execution store，不是 EVM gateway，也不是每个资产一个智能合约。
+- 用户余额保存为 `account_id -> account_asset_balances[asset_symbol]`；例如 `account_asset_balances[account_id]["NETH"]`。
+- 国库储备保存为 `treasury_reserves[asset_symbol]`，用于约束系统对该 nAsset 的总负债和可释放储备。
+- 外部映射关系保存为 `mapped_asset_records`，记录 source chain、source asset、lock proof、target asset、status、source anchor 和 lifecycle 状态。
+- 清算、扣款、出库、回滚、冻结、释放等动作写入 `treasury_settlement_journal` 或 mapped asset audit 记录。
+
+与 ERC20/TRC20 的边界：
+
+- ERC20/TRC20 是外部链或 EVM 兼容层的资产表达；进入 NOVOVM 主线后必须映射为 native nAsset。
+- NOVOVM 主线不依赖 `balanceOf(address)` 作为 nAsset 权威余额。
+- EVM 合约币可以继续存在于 EVM 产品面，但只有通过 mapped asset / Treasury policy 映射后，才进入 NOVOVM native M2 账本。
+
+隐私与披露边界：
+
+- 用户具体余额、交易流水、KYC 身份、外部地址绑定关系默认不作为公开全网索引数据暴露。
+- 对外公开的应是系统级数据：Treasury reserve、M2 liability、reserve proof、协议清算价、风险状态、熔断状态和治理参数。
+- KYC 只应保存为许可 attestation、policy result、hash/reference 或审计凭证，不应把实名资料明文写入公开账本。
+- 钱包、DAPP、网站、gateway 都必须通过 mainline unified account surface 访问受限视图，不能直接读取或公开完整用户资产明细。
+- 当前代码已经有 `privacy_required` / `privacy_mode` 的最小执行策略门禁，但不声明完整 encrypted balance、ZK proof、隐私交易或审计密钥体系已完成。
 
 ## 2. 生命周期现状
 
@@ -466,9 +498,9 @@ native NOV 入口：
 
 - 当前代码已实现 `P_epoch/P_pay/P_redeem` 的最小生产语义：按 epoch 固定、使用显式 AMM TWAP / Treasury NAV / 许可 oracle reference / 上一 epoch 价格，AMM spot 不直接进入 Execution Fee 清算。
 - `P_pay` 已接入多资产 Execution Fee quote 和 TreasuryDirect clearing。
-- `P_redeem` 已接入 `treasury.redeem` 的 `asset_out + nov_amount` 形态：先扣用户 NOV，再按反向保守价从 Treasury reserve 出资产；非 NOV `asset_out/asset + amount` legacy 直接出库路径已禁止，避免绕过 NOV 扣款和 `P_redeem`。
+- `P_redeem` 已接入 `treasury.redeem` 的 `asset_out + nov_amount` 内部购买/兑换形态：先扣用户 NOV，再按反向保守价从 Treasury reserve 出 nAsset；非 NOV `asset_out/asset + amount` legacy 直接出库路径已禁止，避免绕过 NOV 扣款和 `P_redeem`。外部赎回仅指 `NETH burn -> ETH lock contract release`。
 - 许可 oracle source allowlist / disabled / rotation 已接入最小治理路径：`nov_applyTreasuryPolicy` / `apply_treasury_policy` 可持久化 `fee_oracle_allowed_sources`、`fee_oracle_disabled_sources`、禁用原因、source rotations、`mapped_lock_min_confirmations` 和 auto-heal policy；`get_fee_oracle_rates` / `get_protocol_clearing_price` 与 mainline wrapper `nov_getFeeOracleRates` / `nov_getProtocolClearingPrice` 会暴露 `oracle_source_allowed`、`oracle_source_disabled`、`oracle_disabled_reason`、`oracle_rotation_target`，非白名单或已禁用 source 不进入协议清算价。
-- 主线产品 smoke 已覆盖 protocol clearing price / oracle 只读包装与 `P_redeem` 赎回闭环：disabled oracle 被拒绝、`epoch_fixed=true`、`amm_spot_allowed=false`、`P_pay < P_epoch < P_redeem`，`nov_redeem` 通过 `protocol_clearing_redeem:*` 的 `P_redeem` 从 Treasury reserve 出资产，以及非 NOV legacy direct amount redeem 被拒绝且 reserve / 用户余额不变。
+- 主线产品 smoke 已覆盖 protocol clearing price / oracle 只读包装与 `P_redeem` 内部购买/兑换闭环：disabled oracle 被拒绝、`epoch_fixed=true`、`amm_spot_allowed=false`、`P_pay < P_epoch < P_redeem`，`nov_buyAsset` 通过 `protocol_clearing_redeem:*` 的 `P_redeem` 从 Treasury reserve 出 nAsset，`nov_swap` 覆盖 `NETH/nAsset -> NOV` 市场兑换入口，`nov_redeem` 仅作为 legacy alias，以及非 NOV legacy direct amount redeem 被拒绝且 reserve / 用户余额不变。
 - Treasury reserve proof 已接入最小治理登记/查询和执行门禁路径：`nov_setTreasuryReserveProof` / `governance.set_reserve_proof` 可登记 proof metadata；`treasury.get_reserve_proof` / `treasury.get_reserve_snapshot` 与主线 `nov_getTreasuryReserveProof` / `nov_getTreasuryReserveSnapshot` 可查询 proof effective status、amount cap 和 non-claim 标记；已登记 proof 且 effective status 非 `active` 的资产会阻断 `nov_depositReserve`、非 NOV fee clearing 与 treasury redeem；active proof 的 `reserve_amount` 会约束 projected Treasury reserve/exposure，防止账面 reserve 继续高于 proof cap。主线产品 smoke 已覆盖治理未启用 fail-closed、revoked proof 写入、non-claim 标记查询和 revoked proof 阻断 reserve deposit。
 - 仍未完成真实外部桥自动化、真实自动 reserve proof verification、NOV emission policy 自动接线、真实外部链出金和高并发事务后端；当前 native store single-writer guard 只是写入互斥，不是事务数据库。
 
@@ -560,6 +592,6 @@ Ethereum lock contract
 
 1. 钱包接入 smoke：用真实 JSON-RPC 顺序跑 `ua_createUca -> ua_bindPersona(Evm) -> eth_sendRawTransaction -> eth_getTransactionReceipt -> account_assets`。
 2. ETH mapped asset smoke：主线查询面已覆盖 `ua_registerMappedLock -> account_assets -> ua_burnMappedAsset -> ua_releaseMappedLock -> ua_getMappedAsset` 的 shadow/internal MVP 闭环，并在输出里明确 `phase4_mode=shadow`、`settlement_effect=none`；也已覆盖 live `Ethereum lock evidence -> NETH/M2 credit -> burn -> Treasury reserve debit/release` 内部主线闭环，明确 `nov_minted=0`、`external release remains bridge responsibility`。真实外部链出金、自动桥调度和治理赔付仍不在该 smoke 范围内。
-3. NOV native treasury smoke：主线查询面已覆盖 `nov_getTreasuryReserveProof -> nov_redeem -> nov_getTreasurySettlementJournal -> nov_getTreasuryReserveSnapshot -> proof cap fail-closed -> account balance unchanged`，并已覆盖 `nov_depositReserve -> nov_getTreasuryReserveSnapshot -> nov_redeem -> nov_getAssetBalance / nov_getTreasurySettlementJournal -> lowered proof cap blocks nov_depositReserve`；该 smoke 仍是内部 Treasury 产品闭环，不等于外部储备自动验真。
+3. NOV native treasury smoke：主线查询面已覆盖 `nov_getTreasuryReserveProof -> nov_buyAsset -> nov_getTreasurySettlementJournal -> nov_getTreasuryReserveSnapshot -> proof cap fail-closed -> account balance unchanged`，并已覆盖 `nov_depositReserve -> nov_getTreasuryReserveSnapshot -> nov_buyAsset -> nov_getAssetBalance / nov_getTreasurySettlementJournal -> lowered proof cap blocks nov_depositReserve`；该 smoke 仍是内部 Treasury 产品闭环，不等于外部储备自动验真或 `NETH -> ETH` 外部 release。
 
 如果这三条 smoke 都稳定，才能进入“真实钱包入口接入”。如果目标是“ETH 锁仓合约 -> NOV 铸造”，应单独开一个小阶段，不要混进 EVM v1。

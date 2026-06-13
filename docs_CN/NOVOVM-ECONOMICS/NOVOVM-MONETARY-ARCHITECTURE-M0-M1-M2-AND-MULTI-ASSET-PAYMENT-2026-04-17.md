@@ -97,9 +97,27 @@ _2026-04-17_
 
 1. `NOV` 是 NOVOVM 唯一基础货币、最终结算货币、矿工/算力结算货币，归属 `M0/M1`。
 2. `NETH`、`NUSDT`、`nAsset` 是外部锁仓、储备或信用生成的 M2 资产，不进入 `M0/M1`。
-3. M2 资产可以支付、抵押、赎回或进入信用扩张，但其风险与负债归属在 M2，不回写为 NOV 基础货币。
+3. M2 资产可以支付、抵押、兑换或进入信用扩张；`NOV <-> NETH/nAsset` 是内部自由兑换/购买，其中 `NETH/nAsset -> NOV` 走 `nov_swap`/AMM 市场兑换，`NOV -> NETH/nAsset` 走 `nov_buyAsset`/Treasury 协议清算购买；`NETH -> ETH` 才是外部锁仓合约赎回/释放，其风险与负债归属在 M2，不回写为 NOV 基础货币。
 4. `NETH` 是锁仓 ETH 的 1:1 储备/存款凭证，不是 NOV，也不是自动铸 NOV 的中间态。
 5. NOV 新增发行或矿工结算额度必须受 `reserve bucket`、`fee bucket`、`risk buffer`、`emission policy` 约束。
+
+### 7.1A nAsset 原生账本法条
+
+1. `NETH / NUSDT / NDAI / NBTC / NUSDC` 等资产在 NOVOVM 内部是 `native M2 asset ledger` 条目，不是 ERC20/TRC20 合约实例。
+2. nAsset 余额保存在主线统一账户的 native asset balance 视图中，权威状态源为 `novovm-node -> mainline_query -> unified_account_surface / native_execution_store`，不得由 EVM gateway 或单独合约维护第二份余额。
+3. nAsset 账本最小结构是 `account_id -> asset_balances[asset_symbol]`、`Treasury reserves[asset_symbol]`、`mapped_asset_records` 和 `treasury_settlement_journal` 的组合，而不是 `contract.balanceOf(address)`。
+4. 外部资产进入 NOVOVM 的会计动作是：外部 lock/proof 通过后生成 `mapped_asset_record`，增加用户 native M2 balance，同时增加 Treasury reserve/liability；该动作不 mint NOV。
+5. 外部资产退出 NOVOVM 的会计动作是：用户 burn 对应 nAsset，扣减用户 native M2 balance 和 Treasury reserve，再由桥/锁仓合约 release 外部资产；该动作不是 `NOV redeem`。
+6. ERC20/TRC20 只属于外部链或 EVM 兼容层的资产表现形式；进入 NOVOVM 主线后必须映射为原生 nAsset 账本资产，接受 Treasury、M2 风险门禁和统一账户策略约束。
+
+### 7.1B 隐私与选择性披露法条
+
+1. 用户的 nAsset 余额、交易流水、KYC 身份和外部地址绑定关系默认不作为公开全网索引数据暴露。
+2. 对外公开的应是系统级汇总：Treasury reserve、M2 liability、reserve proof、协议清算价、风险状态、熔断状态和治理参数。
+3. KYC 不得以明文实名资料写入公开账本；主线只应保存许可 attestations、policy result、hash/reference 或审计凭证。
+4. 钱包、DAPP、网站和 gateway 不得绕过 mainline unified account surface 直接读取或公开用户完整资产明细。
+5. 监管、审计、争议处理和恢复流程应通过治理授权的 selective disclosure 机制完成；当前文档不声明完整 ZK/encrypted balance 已实现。
+6. 后续若实现 encrypted balance、commitment、ZK proof 或审计密钥，必须保持 `mainline unified_account_surface` 为唯一账户/资产真相源，不得引入第二套隐私账本。
 
 ### 7.2 多资产支付与 NOV 结算法条
 
@@ -125,7 +143,7 @@ _2026-04-17_
 1. 原生 `tx_wire` 仍偏 transfer，需升级为原生执行/治理可表达结构。  
 2. 原生 `nov_*` 入口虽已存在基础能力，但 NOV 原生执行与费用术语仍需进一步“主链优先化”。  
 3. 多币支付路由、清算、国库 settlement 已有 native execution store v1 主线；`phase4_mode=live` mapped lock 已要求结构化 Ethereum lock event evidence、receipt MPT proof 和本地 `novovm-network` runtime canonical finalized block anchor，并能把通过校验的 ETH lock MVP 映射为 `NETH` M2 credit、写入 native account balance / Treasury reserve / settlement journal，并在 burn/release 时扣减 NETH credit 和 reserve。
-4. 协议清算价 v1 已落代码：`P_epoch/P_pay/P_redeem` 按 epoch 固定，输入为显式 AMM TWAP、Treasury NAV、许可 oracle reference 和上一 epoch 价格；AMM spot 不参与清算；`fee_oracle_allowed_sources` 已由 governance/Treasury policy 持久化并在清算价构建时执行，非白名单 oracle source 会进入 rejected source，不参与清算；被 `fee_oracle_disabled_sources` 禁用的 source 即使仍在 allowlist 中也不能参与清算，并会暴露 disabled reason / rotation target。主线写入口 `nov_applyTreasuryPolicy` 已可治理写入 oracle allowlist/disabled reason/rotation、`mapped_lock_min_confirmations` 和 auto-heal policy；主线只读查询 `nov_getProtocolClearingPrice` / `nov_getFeeOracleRates` 已覆盖该状态，主线产品 smoke 已验证 disabled oracle 被拒绝、`epoch_fixed=true`、`amm_spot_allowed=false`、`P_pay < P_epoch < P_redeem`，`nov_redeem` 使用 `protocol_clearing_redeem:*` 的 `P_redeem` 从 Treasury reserve 出资产，且非 NOV legacy direct amount redeem 被拒绝，不能绕过 NOV 扣款和 `P_redeem`。
+4. 协议清算价 v1 已落代码：`P_epoch/P_pay/P_redeem` 按 epoch 固定，输入为显式 AMM TWAP、Treasury NAV、许可 oracle reference 和上一 epoch 价格；AMM spot 不参与清算；`fee_oracle_allowed_sources` 已由 governance/Treasury policy 持久化并在清算价构建时执行，非白名单 oracle source 会进入 rejected source，不参与清算；被 `fee_oracle_disabled_sources` 禁用的 source 即使仍在 allowlist 中也不能参与清算，并会暴露 disabled reason / rotation target。主线写入口 `nov_applyTreasuryPolicy` 已可治理写入 oracle allowlist/disabled reason/rotation、`mapped_lock_min_confirmations` 和 auto-heal policy；主线只读查询 `nov_getProtocolClearingPrice` / `nov_getFeeOracleRates` 已覆盖该状态，主线产品 smoke 已验证 disabled oracle 被拒绝、`epoch_fixed=true`、`amm_spot_allowed=false`、`P_pay < P_epoch < P_redeem`，`nov_buyAsset` 使用 `protocol_clearing_redeem:*` 的 `P_redeem` 从 Treasury reserve 出 nAsset，`nov_swap` 覆盖 `NETH/nAsset -> NOV` 市场兑换入口，`nov_redeem` 仅作为 legacy alias，且非 NOV legacy direct amount redeem 被拒绝，不能绕过 NOV 扣款和 `P_redeem`。
 5. M2 bridge 风险门禁 v1 已落代码：native execution store / governance policy 可持久化 `mapped_lock_bridge_paused`、`mapped_asset_burn_paused`、`mapped_asset_release_paused`；env 可紧急暂停 live register、burn、release，暂停时 fail-closed 且不推进 mapped asset 生命周期。
 6. M2 source anchor reorg gate v1 已落代码：live register 会持久化 `source_chain_id/block_number/block_hash/receipts_root` 等 anchor；`ua_getMappedAsset` 会暴露 `source_anchor_status`；burn/release 前会复查本地 runtime canonical finalized block，source anchor unsafe 时拒绝推进生命周期。ETH lock contract address 已可通过主线 `nov_applyTreasuryPolicy(mapped_lock_contract_address)` 治理写入 native store，live proof 优先采用治理配置，参数级 `expected_lock_contract_address` 只作为兼容 fallback，不能覆盖治理配置。治理化 header source whitelist/quorum gate v1 已接入 native execution store：主线治理包装 `nov_setMappedHeaderSourcePolicy` 可要求 live lock proof 的 runtime header 必须来自治理许可 `source_peer_id`，并配置 `min_source_quorum`；runtime 会按同一 `block_hash` 已观测到的许可 source peer 集合计算 quorum，不满足时 fail-closed。该 policy 已支持 `disabled_peer_ids`、`disabled_peer_reasons/slashing_reasons` 和 `peer_rotations`，治理可带原因禁用异常 source peer，并记录 old peer -> new peer 轮换关系；被禁用 peer 即使在 allowed 列表里也不能作为证明来源或计入 quorum。治理化 Ed25519 header attestation quorum v1 已接入 native execution store：主线治理包装 `nov_setMappedHeaderAttestationPolicy` 可要求 live lock proof 携带治理许可 `header_attestations`，每个 attestation 用许可 public key 对 `chain_id/block_number/block_hash/receipts_root` 签名，并配置 `min_attestation_quorum`；签名无效或 quorum 不足时 fail-closed。该 policy 已支持 `disabled_signers`、`disabled_signer_reasons` 和 `signer_rotations`，治理可带原因禁用旧 attestation key，并记录 old signer -> new signer 轮换关系；被禁用 key 即使签名有效也不计入 quorum。`nov_getMappedFinalitySourceStatus` 只读聚合 lock contract/source/attestation/min confirmations/auto-heal 状态；三个 mainline wrapper 都委托统一账户 surface / native store，不新增第二状态源。
 7. M2 manual freeze/recovery/rollback v1 已落代码：`ua_freezeMappedAsset` 可把 active/burn_pending mapped asset 标记为 `frozen`；对 active live NETH 会扣减用户 native 可用余额，但保留 Treasury reserve，不触发链上出金。`ua_unfreezeMappedAsset` 只允许在 source anchor 重新通过 canonical finalized 校验后，把 frozen NETH 恢复为 active 并返还用户 native 可用余额。`ua_rollbackFrozenMappedAsset` 只允许 frozen 且 source anchor 仍 unsafe 时执行，把内部 NETH/M2 reserve 暴露扣回并把 mapped asset 置为 `rejected`，不返还用户余额、不 mint NOV、不触发外部链释放。

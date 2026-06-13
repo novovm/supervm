@@ -361,6 +361,7 @@ pub fn is_mainline_native_execution_query_method(method: &str) -> bool {
             | "nov_getMappedFinalitySourceStatus"
             | "nov_swap"
             | "nov_depositReserve"
+            | "nov_buyAsset"
             | "nov_redeem"
             | "nov_applyTreasuryPolicy"
             | "nov_setTreasuryReserveProof"
@@ -394,14 +395,49 @@ fn run_mainline_nov_swap_v1(params: &Value) -> Result<Value> {
     )
 }
 
-fn run_mainline_nov_redeem_v1(params: &Value) -> Result<Value> {
+fn annotate_treasury_asset_purchase_v1(
+    mut out: Value,
+    public_method: &str,
+    legacy_alias: bool,
+) -> Value {
+    if let Some(map) = out.as_object_mut() {
+        map.insert(
+            "economic_action".to_string(),
+            Value::String("treasury_asset_purchase".to_string()),
+        );
+        map.insert(
+            "settlement_semantics".to_string(),
+            Value::String("NOV_to_nAsset_treasury_settlement".to_string()),
+        );
+        map.insert("external_redeem_triggered".to_string(), Value::Bool(false));
+        map.insert("external_release_triggered".to_string(), Value::Bool(false));
+        map.insert(
+            "external_redeem_semantics".to_string(),
+            Value::String("NETH_burn_then_ETH_lock_contract_release".to_string()),
+        );
+        map.insert(
+            "public_method".to_string(),
+            Value::String(public_method.to_string()),
+        );
+        if legacy_alias {
+            map.insert("legacy_alias".to_string(), Value::Bool(true));
+            map.insert(
+                "legacy_alias_for".to_string(),
+                Value::String("nov_buyAsset".to_string()),
+            );
+        }
+    }
+    out
+}
+
+fn run_mainline_nov_buy_asset_v1(method: &str, params: &Value, legacy_alias: bool) -> Result<Value> {
     let asset_out = param_as_string_any(params, &["asset_out", "asset"])
-        .ok_or_else(|| anyhow::anyhow!("asset_out/asset is required for nov_redeem"))?;
+        .ok_or_else(|| anyhow::anyhow!("asset_out/asset is required for {method}"))?;
     let nov_amount = param_as_u128_any(params, &["nov_amount", "amount"])
-        .ok_or_else(|| anyhow::anyhow!("nov_amount/amount is required for nov_redeem"))?;
+        .ok_or_else(|| anyhow::anyhow!("nov_amount/amount is required for {method}"))?;
     let min_asset_out = param_as_u128_any(params, &["min_asset_out"]).unwrap_or(0);
-    run_mainline_native_user_execute_v1(
-        "nov_redeem",
+    let out = run_mainline_native_user_execute_v1(
+        method,
         "treasury",
         "redeem",
         json!({
@@ -412,7 +448,16 @@ fn run_mainline_nov_redeem_v1(params: &Value) -> Result<Value> {
         params,
         "NOV",
         nov_amount,
-    )
+    )?;
+    Ok(annotate_treasury_asset_purchase_v1(
+        out,
+        method,
+        legacy_alias,
+    ))
+}
+
+fn run_mainline_nov_redeem_v1(params: &Value) -> Result<Value> {
+    run_mainline_nov_buy_asset_v1("nov_redeem", params, true)
 }
 
 fn run_mainline_nov_deposit_reserve_v1(params: &Value) -> Result<Value> {
@@ -1037,6 +1082,7 @@ fn run_mainline_native_execution_query(method: &str, params: &Value) -> Result<V
         ),
         "nov_swap" => run_mainline_nov_swap_v1(params),
         "nov_depositReserve" => run_mainline_nov_deposit_reserve_v1(params),
+        "nov_buyAsset" => run_mainline_nov_buy_asset_v1("nov_buyAsset", params, false),
         "nov_redeem" => run_mainline_nov_redeem_v1(params),
         "nov_applyTreasuryPolicy" => run_mainline_nov_apply_treasury_policy_v1(params),
         "nov_setTreasuryReserveProof" => run_mainline_nov_set_treasury_reserve_proof_v1(params),
@@ -10396,6 +10442,7 @@ mod tests {
             "nov_getMappedFinalitySourceStatus",
             "nov_swap",
             "nov_depositReserve",
+            "nov_buyAsset",
             "nov_redeem",
             "nov_applyTreasuryPolicy",
             "nov_setTreasuryReserveProof",
@@ -11061,22 +11108,25 @@ mod tests {
     }
 
     #[test]
-    fn mainline_query_nov_swap_executes_via_real_product_entry() {
+    fn mainline_query_neth_to_nov_swap_executes_via_real_product_entry() {
         let bogus_canonical_store =
             std::path::Path::new("this-canonical-store-does-not-exist.json");
-        let native_store = unique_native_execution_store_path("native-swap");
+        let native_store = unique_native_execution_store_path("native-neth-nov-swap");
         let caller = format!("0x{}", "61".repeat(20));
 
         let mut pre = NovNativeExecutionStoreV1::default();
         pre.module_state.account_asset_balances.insert(
             caller.clone(),
-            std::collections::BTreeMap::from([("USDT".to_string(), 1_000u128)]),
+            std::collections::BTreeMap::from([
+                ("NETH".to_string(), 1_000u128),
+                ("NOV".to_string(), 500u128),
+            ]),
         );
         pre.module_state.clearing_static_amm_pools.insert(
-            "mainline_usdt_nov_pool".to_string(),
+            "mainline_neth_nov_pool".to_string(),
             crate::clearing_types::NovStaticAmmPoolStateV1 {
-                pool_id: "mainline_usdt_nov_pool".to_string(),
-                asset_x: "USDT".to_string(),
+                pool_id: "mainline_neth_nov_pool".to_string(),
+                asset_x: "NETH".to_string(),
                 asset_y: "NOV".to_string(),
                 reserve_x: 1_000_000,
                 reserve_y: 2_000_000,
@@ -11092,11 +11142,12 @@ mod tests {
             "nov_swap",
             &json!({
                 "from": caller,
-                "asset_in": "USDT",
+                "asset_in": "NETH",
                 "asset_out": "NOV",
                 "amount_in": 100u64,
                 "min_amount_out": 1u64,
                 "slippage_bps": 25u64,
+                "fee_pay_asset": "NOV",
                 "max_pay_amount": 500u64,
                 "native_execution_store_path": native_store.display().to_string(),
             }),
@@ -11123,20 +11174,20 @@ mod tests {
         assert_eq!(trace["found"].as_bool(), Some(true));
         assert_eq!(trace["trace"]["final_status"].as_str(), Some("success"));
 
-        let usdt_after = get_nov_native_account_asset_balance_with_store_path_v1(
+        let neth_after = get_nov_native_account_asset_balance_with_store_path_v1(
             native_store.as_path(),
             caller.as_str(),
-            "USDT",
+            "NETH",
         )
-        .expect("USDT balance should load");
+        .expect("NETH balance should load");
         let nov_after = get_nov_native_account_asset_balance_with_store_path_v1(
             native_store.as_path(),
             caller.as_str(),
             "NOV",
         )
         .expect("NOV balance should load");
-        assert_eq!(usdt_after, 900);
-        assert!(nov_after > 0);
+        assert_eq!(neth_after, 900);
+        assert!(nov_after > 500);
 
         let _ = fs::remove_file(native_store);
     }
@@ -11604,6 +11655,19 @@ mod tests {
         .expect("nov_redeem should succeed through mainline query");
         assert_eq!(redeem_out["method"].as_str(), Some("nov_redeem"));
         assert_eq!(redeem_out["module"].as_str(), Some("treasury"));
+        assert_eq!(redeem_out["legacy_alias"].as_bool(), Some(true));
+        assert_eq!(
+            redeem_out["legacy_alias_for"].as_str(),
+            Some("nov_buyAsset")
+        );
+        assert_eq!(
+            redeem_out["economic_action"].as_str(),
+            Some("treasury_asset_purchase")
+        );
+        assert_eq!(
+            redeem_out["external_redeem_triggered"].as_bool(),
+            Some(false)
+        );
         assert_eq!(redeem_out["native_receipt"]["status"].as_bool(), Some(true));
 
         let journal = run_mainline_query_from_path(
@@ -11734,7 +11798,7 @@ mod tests {
 
         let redeem_ok = run_mainline_query_from_path(
             bogus_canonical_store,
-            "nov_redeem",
+            "nov_buyAsset",
             &json!({
                 "from": caller,
                 "asset_out": "USDT",
@@ -11743,8 +11807,8 @@ mod tests {
                 "native_execution_store_path": native_store.display().to_string(),
             }),
         )
-        .expect("nov_redeem should succeed while proof cap covers reserve");
-        assert_eq!(redeem_ok["method"].as_str(), Some("nov_redeem"));
+        .expect("nov_buyAsset should succeed while proof cap covers reserve");
+        assert_eq!(redeem_ok["method"].as_str(), Some("nov_buyAsset"));
         assert_eq!(redeem_ok["native_receipt"]["status"].as_bool(), Some(true));
 
         let journal = run_mainline_query_from_path(
@@ -11810,7 +11874,7 @@ mod tests {
 
         let redeem_blocked = run_mainline_query_from_path(
             bogus_canonical_store,
-            "nov_redeem",
+            "nov_buyAsset",
             &json!({
                 "from": caller,
                 "asset_out": "USDT",
@@ -11819,7 +11883,7 @@ mod tests {
                 "native_execution_store_path": native_store.display().to_string(),
             }),
         )
-        .expect("nov_redeem should return failed receipt when proof cap is insufficient");
+        .expect("nov_buyAsset should return failed receipt when proof cap is insufficient");
         assert_eq!(
             redeem_blocked["native_receipt"]["status"].as_bool(),
             Some(false)
@@ -11849,10 +11913,10 @@ mod tests {
     }
 
     #[test]
-    fn mainline_query_treasury_deposit_redeem_product_smoke() {
+    fn mainline_query_treasury_deposit_buy_asset_product_smoke() {
         let bogus_canonical_store =
             std::path::Path::new("this-canonical-store-does-not-exist.json");
-        let native_store = unique_native_execution_store_path("treasury-deposit-redeem-smoke");
+        let native_store = unique_native_execution_store_path("treasury-deposit-buy-asset-smoke");
         let caller = format!("0x{}", "66".repeat(20));
 
         let mut pre = NovNativeExecutionStoreV1::default();
@@ -11868,9 +11932,9 @@ mod tests {
                 asset: "USDT".to_string(),
                 reserve_amount: 1_000,
                 proof_type: "custody_statement_v1".to_string(),
-                proof_digest: "0xdepositredeem01".to_string(),
+                proof_digest: "0xdepositbuyasset01".to_string(),
                 proof_source: "treasury_committee".to_string(),
-                proof_reference: "deposit-redeem-smoke-001".to_string(),
+                proof_reference: "deposit-buy-asset-smoke-001".to_string(),
                 observed_at_unix_ms: 1,
                 expires_at_unix_ms: 0,
                 policy_version: 1,
@@ -11885,7 +11949,7 @@ mod tests {
             std::collections::BTreeMap::from([("NOV".to_string(), 500u128)]),
         );
         save_nov_native_execution_store_v1(native_store.as_path(), &pre)
-            .expect("seed treasury deposit/redeem smoke store");
+            .expect("seed treasury deposit/buy-asset smoke store");
 
         let deposit = run_mainline_query_from_path(
             bogus_canonical_store,
@@ -11918,7 +11982,7 @@ mod tests {
 
         let redeem = run_mainline_query_from_path(
             bogus_canonical_store,
-            "nov_redeem",
+            "nov_buyAsset",
             &json!({
                 "from": caller,
                 "asset_out": "USDT",
@@ -11927,8 +11991,8 @@ mod tests {
                 "native_execution_store_path": native_store.display().to_string(),
             }),
         )
-        .expect("nov_redeem should succeed after reserve deposit");
-        assert_eq!(redeem["method"].as_str(), Some("nov_redeem"));
+        .expect("nov_buyAsset should succeed after reserve deposit");
+        assert_eq!(redeem["method"].as_str(), Some("nov_buyAsset"));
         assert_eq!(redeem["native_receipt"]["status"].as_bool(), Some(true));
         let usdt_after_redeem = get_nov_native_account_asset_balance_with_store_path_v1(
             native_store.as_path(),
@@ -11959,8 +12023,8 @@ mod tests {
             .get_mut("USDT")
             .expect("USDT proof should exist");
         proof_entry.reserve_amount = 250;
-        proof_entry.proof_digest = "0xdepositredeem02".to_string();
-        proof_entry.proof_reference = "deposit-redeem-smoke-002".to_string();
+        proof_entry.proof_digest = "0xdepositbuyasset02".to_string();
+        proof_entry.proof_reference = "deposit-buy-asset-smoke-002".to_string();
         save_nov_native_execution_store_v1(native_store.as_path(), &capped)
             .expect("save lowered proof cap");
 
@@ -11984,7 +12048,7 @@ mod tests {
             .as_str()
             .unwrap_or_default();
         assert!(failure.starts_with("fee.settlement.reserve_proof_capacity_exceeded"));
-        assert!(failure.contains("proof_reference=deposit-redeem-smoke-002"));
+        assert!(failure.contains("proof_reference=deposit-buy-asset-smoke-002"));
 
         let final_snapshot = run_mainline_query_from_path(
             bogus_canonical_store,
@@ -12019,7 +12083,7 @@ mod tests {
     }
 
     #[test]
-    fn mainline_query_protocol_clearing_price_and_redeem_product_smoke() {
+    fn mainline_query_protocol_clearing_price_and_asset_purchase_product_smoke() {
         let bogus_canonical_store =
             std::path::Path::new("this-canonical-store-does-not-exist.json");
         let native_store = unique_native_execution_store_path("protocol-clearing-mainline-smoke");
@@ -12174,9 +12238,9 @@ mod tests {
                 .unwrap_or_default()
                 .starts_with("permissioned_oracle_ref:source_disabled")));
 
-        let redeem = run_mainline_query_from_path(
+        let purchase = run_mainline_query_from_path(
             bogus_canonical_store,
-            "nov_redeem",
+            "nov_buyAsset",
             &json!({
                 "from": caller,
                 "asset_out": "USDT",
@@ -12185,9 +12249,25 @@ mod tests {
                 "native_execution_store_path": native_store.display().to_string(),
             }),
         )
-        .expect("nov_redeem should use protocol P_redeem through mainline query");
-        assert_eq!(redeem["method"].as_str(), Some("nov_redeem"));
-        assert_eq!(redeem["native_receipt"]["status"].as_bool(), Some(true));
+        .expect("nov_buyAsset should use protocol P_redeem through mainline query");
+        assert_eq!(purchase["method"].as_str(), Some("nov_buyAsset"));
+        assert_eq!(
+            purchase["economic_action"].as_str(),
+            Some("treasury_asset_purchase")
+        );
+        assert_eq!(
+            purchase["settlement_semantics"].as_str(),
+            Some("NOV_to_nAsset_treasury_settlement")
+        );
+        assert_eq!(
+            purchase["external_redeem_triggered"].as_bool(),
+            Some(false)
+        );
+        assert_eq!(
+            purchase["external_redeem_semantics"].as_str(),
+            Some("NETH_burn_then_ETH_lock_contract_release")
+        );
+        assert_eq!(purchase["native_receipt"]["status"].as_bool(), Some(true));
 
         let journal = run_mainline_query_from_path(
             bogus_canonical_store,
@@ -12731,7 +12811,7 @@ mod tests {
             .any(|item| item.as_str() == Some("treasury_reserve_exceeds_reserve_proof")));
         let blocked_redeem = run_mainline_query_from_path(
             bogus_canonical_store,
-            "nov_redeem",
+            "nov_buyAsset",
             &json!({
                 "from": uncovered_caller,
                 "asset_out": "NETH",
@@ -12740,7 +12820,7 @@ mod tests {
                 "native_execution_store_path": uncovered_store.display().to_string(),
             }),
         )
-        .expect("nov_redeem should return a failed receipt when NETH M2 risk is blocked");
+        .expect("nov_buyAsset should return a failed receipt when NETH M2 risk is blocked");
         assert_eq!(
             blocked_redeem["native_receipt"]["status"].as_bool(),
             Some(false)

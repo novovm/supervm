@@ -4698,6 +4698,7 @@ fn novovm_public_rpc_surface_map_json() -> serde_json::Value {
                     "nov_getTreasuryClearingMetricsSummary",
                     "nov_getTreasuryPolicyMetricsSummary",
                     "nov_swap",
+                    "nov_buyAsset",
                     "nov_redeem",
                     "nov_openVault",
                     "nov_call",
@@ -6078,14 +6079,17 @@ fn run_nov_swap_rpc_v1(params: &serde_json::Value) -> Result<serde_json::Value> 
     )
 }
 
-fn run_nov_redeem_rpc_v1(params: &serde_json::Value) -> Result<serde_json::Value> {
+fn run_nov_buy_asset_rpc_v1(
+    method: &str,
+    params: &serde_json::Value,
+) -> Result<serde_json::Value> {
     let asset_out = param_as_string_any(params, &["asset_out", "asset"])
-        .ok_or_else(|| anyhow::anyhow!("asset_out/asset is required for nov_redeem"))?;
+        .ok_or_else(|| anyhow::anyhow!("asset_out/asset is required for {method}"))?;
     let nov_amount = param_as_u128_any(params, &["nov_amount", "amount"])
-        .ok_or_else(|| anyhow::anyhow!("nov_amount/amount is required for nov_redeem"))?;
+        .ok_or_else(|| anyhow::anyhow!("nov_amount/amount is required for {method}"))?;
     let min_asset_out = param_as_u128_any(params, &["min_asset_out"]).unwrap_or(0);
     run_nov_user_execute_rpc_v1(
-        "nov_redeem",
+        method,
         "treasury",
         "redeem",
         serde_json::json!({
@@ -6099,6 +6103,10 @@ fn run_nov_redeem_rpc_v1(params: &serde_json::Value) -> Result<serde_json::Value
             .as_str(),
         nov_amount,
     )
+}
+
+fn run_nov_redeem_rpc_v1(params: &serde_json::Value) -> Result<serde_json::Value> {
+    run_nov_buy_asset_rpc_v1("nov_redeem", params)
 }
 
 fn run_nov_open_vault_rpc_v1(params: &serde_json::Value) -> Result<serde_json::Value> {
@@ -9831,6 +9839,7 @@ fn run_chain_query(
             })
         }
         "nov_swap" => run_nov_swap_rpc_v1(params)?,
+        "nov_buyAsset" => run_nov_buy_asset_rpc_v1("nov_buyAsset", params)?,
         "nov_redeem" => run_nov_redeem_rpc_v1(params)?,
         "nov_openVault" => run_nov_open_vault_rpc_v1(params)?,
         "nov_getState" => {
@@ -10004,7 +10013,7 @@ fn run_chain_query(
             })
         }
         _ => bail!(
-            "unknown method: {}; valid: novovm_getSurfaceMap|novovm_get_surface_map|novovm_getMethodDomain|novovm_get_method_domain|nov_getBlock|nov_getTransaction|nov_getReceipt|nov_getTransactionReceipt|nov_getBalance|nov_getAssetBalance|nov_getState|nov_getModuleInfo|nov_getTreasurySettlementSummary|nov_getTreasuryClearingSummary|nov_getTreasurySettlementJournal|nov_getTreasurySettlementPolicy|nov_getExecutionTrace|nov_getTreasuryClearingMetricsSummary|nov_getTreasuryPolicyMetricsSummary|nov_swap|nov_redeem|nov_openVault|nov_call|nov_estimate|nov_estimateGas|getBlock|getTransaction|getReceipt|getBalance|eth_chainId|net_version|web3_clientVersion|eth_blockNumber|eth_getBlockByNumber|eth_getBalance|eth_getCode|eth_getStorageAt|eth_call|eth_estimateGas|eth_gasPrice|eth_maxPriorityFeePerGas|eth_feeHistory",
+            "unknown method: {}; valid: novovm_getSurfaceMap|novovm_get_surface_map|novovm_getMethodDomain|novovm_get_method_domain|nov_getBlock|nov_getTransaction|nov_getReceipt|nov_getTransactionReceipt|nov_getBalance|nov_getAssetBalance|nov_getState|nov_getModuleInfo|nov_getTreasurySettlementSummary|nov_getTreasuryClearingSummary|nov_getTreasurySettlementJournal|nov_getTreasurySettlementPolicy|nov_getExecutionTrace|nov_getTreasuryClearingMetricsSummary|nov_getTreasuryPolicyMetricsSummary|nov_swap|nov_buyAsset|nov_redeem|nov_openVault|nov_call|nov_estimate|nov_estimateGas|getBlock|getTransaction|getReceipt|getBalance|eth_chainId|net_version|web3_clientVersion|eth_blockNumber|eth_getBlockByNumber|eth_getBalance|eth_getCode|eth_getStorageAt|eth_call|eth_estimateGas|eth_gasPrice|eth_maxPriorityFeePerGas|eth_feeHistory",
             method
         ),
     };
@@ -11210,7 +11219,7 @@ fn run_chain_query_mode() -> Result<()> {
         .to_string();
     if method.is_empty() {
         bail!(
-            "missing NOVOVM_CHAIN_QUERY_METHOD; valid: novovm_getSurfaceMap|novovm_get_surface_map|novovm_getMethodDomain|novovm_get_method_domain|getBlock|getTransaction|getReceipt|getBalance|nov_getBlock|nov_getTransaction|nov_getReceipt|nov_getTransactionReceipt|nov_getBalance|nov_getAssetBalance|nov_getState|nov_getModuleInfo|nov_getTreasurySettlementSummary|nov_getTreasuryClearingSummary|nov_getTreasurySettlementJournal|nov_getTreasurySettlementPolicy|nov_getExecutionTrace|nov_getTreasuryClearingMetricsSummary|nov_getTreasuryPolicyMetricsSummary|nov_swap|nov_redeem|nov_openVault|nov_call|nov_estimate|nov_estimateGas|eth_chainId|net_version|web3_clientVersion|eth_blockNumber|eth_getBlockByNumber|eth_getBalance|eth_getCode|eth_getStorageAt|eth_call|eth_estimateGas|eth_gasPrice|eth_maxPriorityFeePerGas|eth_feeHistory"
+            "missing NOVOVM_CHAIN_QUERY_METHOD; valid: novovm_getSurfaceMap|novovm_get_surface_map|novovm_getMethodDomain|novovm_get_method_domain|getBlock|getTransaction|getReceipt|getBalance|nov_getBlock|nov_getTransaction|nov_getReceipt|nov_getTransactionReceipt|nov_getBalance|nov_getAssetBalance|nov_getState|nov_getModuleInfo|nov_getTreasurySettlementSummary|nov_getTreasuryClearingSummary|nov_getTreasurySettlementJournal|nov_getTreasurySettlementPolicy|nov_getExecutionTrace|nov_getTreasuryClearingMetricsSummary|nov_getTreasuryPolicyMetricsSummary|nov_swap|nov_buyAsset|nov_redeem|nov_openVault|nov_call|nov_estimate|nov_estimateGas|eth_chainId|net_version|web3_clientVersion|eth_blockNumber|eth_getBlockByNumber|eth_getBalance|eth_getCode|eth_getStorageAt|eth_call|eth_estimateGas|eth_gasPrice|eth_maxPriorityFeePerGas|eth_feeHistory"
         );
     }
 
@@ -15287,7 +15296,7 @@ mod tests {
     }
 
     #[test]
-    fn public_rpc_nov_redeem_and_open_vault_execute_without_unified_account_alias() {
+    fn public_rpc_nov_buy_asset_and_open_vault_execute_without_unified_account_alias() {
         let db = QueryStateDb::default();
         let mut router = UnifiedAccountRouter::new();
         let mut path = std::env::temp_dir();
@@ -15315,7 +15324,7 @@ mod tests {
             &db,
             &mut router,
             None,
-            "nov_redeem",
+            "nov_buyAsset",
             &serde_json::json!({
                 "from": caller,
                 "asset_out": "NOV",
@@ -15324,9 +15333,9 @@ mod tests {
                 "native_execution_store_path": path.display().to_string(),
             }),
         )
-        .expect("nov_redeem should succeed");
+        .expect("nov_buyAsset should succeed");
         assert!(!redeem_changed);
-        assert_eq!(redeem_resp["method"].as_str(), Some("nov_redeem"));
+        assert_eq!(redeem_resp["method"].as_str(), Some("nov_buyAsset"));
         assert_eq!(redeem_resp["native_receipt"]["status"].as_bool(), Some(true));
         assert_eq!(redeem_resp["native_receipt"]["method"].as_str(), Some("redeem"));
 

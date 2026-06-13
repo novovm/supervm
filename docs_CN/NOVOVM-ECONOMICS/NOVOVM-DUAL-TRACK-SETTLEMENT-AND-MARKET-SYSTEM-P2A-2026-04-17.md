@@ -136,7 +136,7 @@ P_pay[A] = P_epoch[A]
 settled_nov = paid_amount[A] * P_pay[A]
 ```
 
-赎回或 Treasury 付出资产时采用反向保守价：
+NOV 购买/兑换 nAsset 或 Treasury 内部付出资产时采用反向保守价：
 
 ```text
 P_redeem[A] = P_epoch[A]
@@ -144,11 +144,17 @@ P_redeem[A] = P_epoch[A]
             * (1 + risk_surcharge[A])
 ```
 
-用户用 NOV 赎回资产 `A` 时：
+用户用 NOV 购买/兑换资产 `A` 时：
 
 ```text
 asset_out[A] = nov_amount / P_redeem[A]
 ```
+
+命名边界：
+
+- `NOV <-> NETH/nAsset` 是内部购买、兑换或 Treasury settlement，不是外部赎回；其中 `NETH/nAsset -> NOV` 可走 `nov_swap`/AMM 市场兑换，`NOV -> NETH/nAsset` 可走 `nov_buyAsset`/Treasury 协议清算购买。
+- `NOV -> ETH` 的完整产品路径是 `NOV -> NETH` 购买/兑换，然后 `NETH burn -> Ethereum lock contract release ETH`；产品上可以表达为“用 NOV 换回 ETH”，但协议执行必须拆成这两个动作。
+- `NETH -> ETH` 才是外部 redeem/release 语义。
 
 制度效果：
 
@@ -166,6 +172,8 @@ asset_out[A] = nov_amount / P_redeem[A]
 ### 5.2 镜像资产
 
 制度命名可使用 `m*` 表示 1:1 托管映射与回滚赎回权；当前 EVM mapped asset 产品口径中 `NETH` / `NUSDT` 也属于此类 M2 资产，不进入 `M0/M1`。
+
+在 NOVOVM 主线内，`NETH / NUSDT / NDAI / NBTC / NUSDC` 等资产是 native M2 asset ledger 条目，不是 ERC20/TRC20 合约实例；权威余额来自 mainline unified account surface / native execution store 的 `account_asset_balances`、`treasury_reserves`、`mapped_asset_records` 和 settlement journal。EVM 合约币只有完成 mapped asset / Treasury policy 映射后，才进入 NOVOVM native M2 账本。
 
 ### 5.3 信用扩张资产
 
@@ -258,14 +266,15 @@ asset_out[A] = nov_amount / P_redeem[A]
 - fee quote 优先使用 `P_pay`，支付资产按保守价折算为 NOV value。
 - Treasury direct clearing route 使用同一协议清算价，不再直接使用 AMM spot。
 - AMM TWAP 进入 `P_ref` 前必须通过最小 NOV 深度门禁；低流动性 AMM 池会被记录为 `amm_twap:low_liquidity` rejected source，并使协议清算价进入 `constrained`，不得直接参与 gas/Execution Fee 清算，也不得作为 oracle 偏离检测的锚点。
-- `treasury.redeem` 在 `asset_out + nov_amount` 形态下使用 `P_redeem`，先扣用户 NOV，再按反向保守价从 Treasury reserve 出资产。
+- `treasury.redeem` 在 `asset_out + nov_amount` 形态下是 `NOV -> nAsset` 内部购买/兑换 settlement，使用 `P_redeem`，先扣用户 NOV，再按反向保守价从 Treasury reserve 出资产；该步骤不触发外部链赎回。
 - 非 NOV reserve redeem 禁止使用 `asset_out/asset + amount` 直接指定外币出库；产品路径必须使用 `asset_out + nov_amount`，经 `P_redeem` 折算并先扣 NOV。
 - 只读查询 `nov_call treasury.get_protocol_clearing_price` 与 mainline wrapper `nov_getProtocolClearingPrice` 可返回 `P_epoch/P_pay/P_redeem`、source、rejected source、epoch、attack-resistance 状态和 oracle source allowlist/disabled/rotation 状态；非白名单、已禁用、过期或缺失更新时间的 oracle source 会被记录为 rejected source，不进入 `P_ref`，也不得作为无快照时的 `P_prev` 来源。许可 oracle 只有在存在 NAV、合格 AMM TWAP 或历史协议价等非 oracle 锚点时才能参与清算价；oracle-only 初始定价会 fail-closed。fee quote / clearing liquidity / clearing route / TreasuryDirect 非 NOV 支付路径在协议清算价拒绝 oracle-only 或 no-anchor 资产时必须 fail-closed，不能回退到直接 oracle rate 或默认价。主线产品 smoke 已覆盖 disabled/stale/missing-timestamp/oracle-only 被拒绝、fee quote oracle-only fallback 被拒绝、oracle-only clearing liquidity 返回 blocked/unavailable、oracle-only clearing route 不暴露 TreasuryDirect、`epoch_fixed=true`、`amm_spot_allowed=false`、`P_pay < P_epoch < P_redeem`。
 - governance/Treasury policy 可通过 mainline wrapper `nov_applyTreasuryPolicy` 写入 `fee_oracle_allowed_sources`、`fee_oracle_disabled_sources`、禁用原因、source rotations、`mapped_lock_min_confirmations` 和 mapped auto-heal policy；`nov_call treasury.get_fee_oracle_rates` 与 mainline wrapper `nov_getFeeOracleRates` 暴露当前 oracle source、allowlist、disabled list、source 是否允许/禁用和 `oracle_open_feed_allowed=false`。主线产品 smoke 已覆盖治理未启用时 fail-closed、治理启用后写入并可查询。
-- 主线 `nov_redeem(asset_out + nov_amount)` 产品 smoke 已覆盖 `P_redeem` 路径：先扣用户 NOV，再按 `protocol_clearing_redeem:*` 的反向保守价从 Treasury reserve 出资产，settlement journal 记录 `clearing_rate_ppm = P_redeem`；非 NOV `asset_out/asset + amount` legacy 直接出库会 fail-closed，不扣 NOV、不出外币。
+- 主线 `nov_buyAsset(asset_out + nov_amount)` 产品 smoke 已覆盖 `P_redeem` 路径：先扣用户 NOV，再按 `protocol_clearing_redeem:*` 的反向保守价从 Treasury reserve 出 nAsset，settlement journal 记录 `clearing_rate_ppm = P_redeem`；`nov_redeem` 仅保留为 legacy alias，语义上不代表 `NETH -> ETH` 外部赎回。非 NOV `asset_out/asset + amount` legacy 直接出库会 fail-closed，不扣 NOV、不出外币。
+- 主线 `nov_swap(asset_in=NETH/nAsset, asset_out=NOV)` 是 M2 资产换回 NOV 的市场兑换入口，仍受 AMM 流动性、滑点、风控和协议约束，不等于开放 spot price 参与 gas/Execution Fee 清算。
 - Treasury reserve proof effective-status 与 amount-cap gate 已接入非 NOV 资产路径：如果某资产已登记 reserve proof 且 effective status 非 `active`，该资产不能继续用于 `nov_depositReserve`、fee clearing，也不能从 Treasury redeem 出库；如果 active proof 的 `reserve_amount` 低于 projected Treasury reserve/exposure，`nov_depositReserve` 和 fee clearing 不得继续扩张，treasury redeem 不得在操作后继续高于 proof cap；缺失 proof 仍保持 non-claim，不被误写成自动外部验真。
-- 主线产品只读查询已暴露 `nov_getTreasuryReserveProof` / `nov_getTreasuryReserveSnapshot`；产品 smoke 已覆盖 active proof cap 足够时 `nov_redeem` 成功、proof cap 调低后同一路径 fail-closed 且用户余额不变。
-- 主线 Treasury native 产品 smoke 已覆盖 `nov_depositReserve -> nov_getTreasuryReserveSnapshot -> nov_redeem -> nov_getAssetBalance / nov_getTreasurySettlementJournal`，并验证 proof cap 调低后 `nov_depositReserve` fail-closed 且 reserve 不变。
+- 主线产品只读查询已暴露 `nov_getTreasuryReserveProof` / `nov_getTreasuryReserveSnapshot`；产品 smoke 已覆盖 active proof cap 足够时 `nov_buyAsset` 成功、proof cap 调低后同一路径 fail-closed 且用户余额不变。
+- 主线 Treasury native 产品 smoke 已覆盖 `nov_depositReserve -> nov_getTreasuryReserveSnapshot -> nov_buyAsset -> nov_getAssetBalance / nov_getTreasurySettlementJournal`，并验证 proof cap 调低后 `nov_depositReserve` fail-closed 且 reserve 不变。
 - 主线统一账户产品 smoke 已覆盖 shadow/internal MVP mapped asset 生命周期：`ua_registerMappedLock -> account_assets -> ua_burnMappedAsset -> ua_releaseMappedLock -> ua_getMappedAsset`，输出固定 `phase4_mode=shadow`、`settlement_effect=none`；也已覆盖 live `Ethereum lock evidence -> NETH/M2 credit -> burn -> Treasury reserve debit/release` 主线入口闭环，固定 `nov_minted=0`，不声明真实外部链释放或自动桥调度。
 - `ua_registerMappedLock(phase4_mode=live)` 已要求结构化 Ethereum lock event evidence、receipt MPT proof 和本地 `novovm-network` runtime canonical finalized block anchor，并能把通过校验的 ETH lock MVP 映射为 `NETH` M2 credit，写入 native account balance、Treasury reserve 和 settlement journal；`ua_burnMappedAsset -> ua_releaseMappedLock` 已能扣减用户 NETH credit 并释放 Treasury NETH reserve。
 - M2 bridge pause v1 已接到 native execution store 和 governance policy：`mapped_lock_bridge_paused` 阻断 live register；`mapped_asset_burn_paused` 阻断 burn；`mapped_asset_release_paused` 阻断 release；env 级全局/单项暂停用于紧急 fail-closed。
