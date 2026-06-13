@@ -354,6 +354,7 @@ pub fn is_mainline_native_execution_query_method(method: &str) -> bool {
             | "nov_getTreasuryReserveSnapshot"
             | "nov_getProtocolClearingPrice"
             | "nov_getFeeOracleRates"
+            | "nov_runMappedAssetAutoHeal"
             | "nov_swap"
             | "nov_depositReserve"
             | "nov_redeem"
@@ -485,6 +486,47 @@ fn run_mainline_nov_set_treasury_reserve_proof_v1(params: &Value) -> Result<Valu
         "NOV",
         10_000,
     )
+}
+
+fn param_as_bool_v1(params: &Value, key: &str) -> bool {
+    params
+        .get(key)
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+}
+
+fn run_mainline_nov_mapped_asset_auto_heal_tick_v1(params: &Value) -> Result<Value> {
+    let apply = param_as_bool_v1(params, "apply");
+    if apply && !param_as_bool_v1(params, "scheduler_authorized") {
+        bail!("ERR_MAPPED_AUTO_HEAL_SCHEDULER_UNAUTHORIZED: apply=true requires scheduler_authorized=true");
+    }
+    let canonical_path = param_as_string_any(params, &["canonical_store_path"])
+        .map(PathBuf::from)
+        .unwrap_or_else(canonical_store_path_from_env);
+    let mut delegated_params = params.clone();
+    if let Some(map) = delegated_params.as_object_mut() {
+        map.insert(
+            "auto_heal_trigger".to_string(),
+            Value::String("mainline_explicit_scheduler_tick".to_string()),
+        );
+    }
+    let result = run_mainline_unified_account_query(
+        canonical_path.as_path(),
+        "ua_autoHealMappedAssets",
+        &delegated_params,
+    )?;
+    Ok(json!({
+        "method": "nov_runMappedAssetAutoHeal",
+        "module": "unified_account",
+        "module_method": "ua_autoHealMappedAssets",
+        "scheduler_mode": "explicit_tick",
+        "scheduler_authorized": param_as_bool_v1(params, "scheduler_authorized"),
+        "apply_requested": apply,
+        "background_daemon": false,
+        "external_release_triggered": false,
+        "nov_minted": 0,
+        "result": result,
+    }))
 }
 
 fn run_mainline_nov_open_vault_v1(params: &Value) -> Result<Value> {
@@ -725,6 +767,7 @@ fn run_mainline_native_execution_query(method: &str, params: &Value) -> Result<V
                 "oracle_rates": out.get("result").cloned().unwrap_or(Value::Null),
             }))
         }
+        "nov_runMappedAssetAutoHeal" => run_mainline_nov_mapped_asset_auto_heal_tick_v1(params),
         "nov_swap" => run_mainline_nov_swap_v1(params),
         "nov_depositReserve" => run_mainline_nov_deposit_reserve_v1(params),
         "nov_redeem" => run_mainline_nov_redeem_v1(params),
@@ -10079,6 +10122,7 @@ mod tests {
             "nov_getTreasuryReserveSnapshot",
             "nov_getProtocolClearingPrice",
             "nov_getFeeOracleRates",
+            "nov_runMappedAssetAutoHeal",
             "nov_swap",
             "nov_depositReserve",
             "nov_redeem",
@@ -12844,9 +12888,9 @@ mod tests {
 
         reorg_mapped_lock_live_smoke_anchor(&live_params);
 
-        let dry_run = run_mainline_query_from_path(
+        let dry_run_tick = run_mainline_query_from_path(
             base.as_path(),
-            "ua_autoHealMappedAssets",
+            "nov_runMappedAssetAutoHeal",
             &params_with_ua_and_native_paths(
                 store.as_path(),
                 audit.as_path(),
@@ -12858,7 +12902,20 @@ mod tests {
                 }),
             ),
         )
-        .expect("ua_autoHealMappedAssets dry-run should report unsafe source anchor");
+        .expect("nov_runMappedAssetAutoHeal dry-run should report unsafe source anchor");
+        assert_eq!(
+            dry_run_tick["method"].as_str(),
+            Some("nov_runMappedAssetAutoHeal")
+        );
+        assert_eq!(
+            dry_run_tick["scheduler_mode"].as_str(),
+            Some("explicit_tick")
+        );
+        assert_eq!(dry_run_tick["apply_requested"].as_bool(), Some(false));
+        assert_eq!(dry_run_tick["background_daemon"].as_bool(), Some(false));
+        let dry_run = dry_run_tick
+            .get("result")
+            .expect("nov_runMappedAssetAutoHeal should wrap ua_autoHealMappedAssets result");
         assert_eq!(dry_run["dry_run"].as_bool(), Some(true));
         assert_eq!(dry_run["scanned_candidate_count"].as_u64(), Some(1));
         assert_eq!(
@@ -12894,9 +12951,9 @@ mod tests {
             Some("freeze_only")
         );
 
-        let frozen = run_mainline_query_from_path(
+        let unauthorized = run_mainline_query_from_path(
             base.as_path(),
-            "ua_autoHealMappedAssets",
+            "nov_runMappedAssetAutoHeal",
             &params_with_ua_and_native_paths(
                 store.as_path(),
                 audit.as_path(),
@@ -12904,12 +12961,43 @@ mod tests {
                 json!({
                     "account_id": account_id,
                     "apply": true,
+                    "reason": "mainline smoke unauthorized scheduler tick",
+                    "now": 20u64,
+                }),
+            ),
+        )
+        .expect_err("nov_runMappedAssetAutoHeal apply must fail closed without scheduler authorization");
+        assert!(
+            unauthorized
+                .to_string()
+                .contains("ERR_MAPPED_AUTO_HEAL_SCHEDULER_UNAUTHORIZED"),
+            "unexpected error: {unauthorized}"
+        );
+
+        let frozen = run_mainline_query_from_path(
+            base.as_path(),
+            "nov_runMappedAssetAutoHeal",
+            &params_with_ua_and_native_paths(
+                store.as_path(),
+                audit.as_path(),
+                native_store.as_path(),
+                json!({
+                    "account_id": account_id,
+                    "apply": true,
+                    "scheduler_authorized": true,
                     "reason": "mainline smoke freeze unsafe source anchor",
                     "now": 21u64,
                 }),
             ),
         )
-        .expect("ua_autoHealMappedAssets apply should freeze unsafe mapped asset");
+        .expect("nov_runMappedAssetAutoHeal apply should freeze unsafe mapped asset");
+        assert_eq!(frozen["apply_requested"].as_bool(), Some(true));
+        assert_eq!(frozen["scheduler_authorized"].as_bool(), Some(true));
+        assert_eq!(frozen["nov_minted"].as_u64(), Some(0));
+        assert_eq!(frozen["external_release_triggered"].as_bool(), Some(false));
+        let frozen = frozen
+            .get("result")
+            .expect("nov_runMappedAssetAutoHeal should wrap frozen result");
         assert_eq!(frozen["applied_count"].as_u64(), Some(1));
         assert_eq!(frozen["items"][0]["applied"].as_bool(), Some(true));
         assert_eq!(frozen["items"][0]["status_after"].as_str(), Some("frozen"));
@@ -12968,7 +13056,7 @@ mod tests {
 
         let rolled_back = run_mainline_query_from_path(
             base.as_path(),
-            "ua_autoHealMappedAssets",
+            "nov_runMappedAssetAutoHeal",
             &params_with_ua_and_native_paths(
                 store.as_path(),
                 audit.as_path(),
@@ -12976,12 +13064,23 @@ mod tests {
                 json!({
                     "account_id": account_id,
                     "apply": true,
+                    "scheduler_authorized": true,
                     "reason": "mainline smoke rollback unsafe frozen source anchor",
                     "now": 22u64,
                 }),
             ),
         )
-        .expect("ua_autoHealMappedAssets apply should rollback unsafe frozen mapped asset");
+        .expect("nov_runMappedAssetAutoHeal apply should rollback unsafe frozen mapped asset");
+        assert_eq!(rolled_back["apply_requested"].as_bool(), Some(true));
+        assert_eq!(rolled_back["scheduler_authorized"].as_bool(), Some(true));
+        assert_eq!(rolled_back["nov_minted"].as_u64(), Some(0));
+        assert_eq!(
+            rolled_back["external_release_triggered"].as_bool(),
+            Some(false)
+        );
+        let rolled_back = rolled_back
+            .get("result")
+            .expect("nov_runMappedAssetAutoHeal should wrap rollback result");
         assert_eq!(rolled_back["applied_count"].as_u64(), Some(1));
         assert_eq!(rolled_back["items"][0]["applied"].as_bool(), Some(true));
         assert_eq!(
