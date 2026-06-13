@@ -33197,6 +33197,201 @@ fn build_native_execution_pipeline_report_v1(
     })
 }
 
+#[derive(Debug)]
+struct NativeExecutionPipelineAggregateV1 {
+    started_at: Instant,
+    ticks: u64,
+    network_enabled_ticks: u64,
+    network_ok_ticks: u64,
+    network_error_ticks: u64,
+    aoem_executed_total: u64,
+    aoem_deferred_total: u64,
+    proof_ticks: u64,
+    commit_ticks: u64,
+    ingress_total_last: u64,
+    queue_pending_last: u64,
+    included_canonical_last: u64,
+    broadcast_candidates_last: u64,
+    broadcast_dispatch_total_last: u64,
+    broadcast_tx_total_last: u64,
+}
+
+impl NativeExecutionPipelineAggregateV1 {
+    fn new() -> Self {
+        Self {
+            started_at: Instant::now(),
+            ticks: 0,
+            network_enabled_ticks: 0,
+            network_ok_ticks: 0,
+            network_error_ticks: 0,
+            aoem_executed_total: 0,
+            aoem_deferred_total: 0,
+            proof_ticks: 0,
+            commit_ticks: 0,
+            ingress_total_last: 0,
+            queue_pending_last: 0,
+            included_canonical_last: 0,
+            broadcast_candidates_last: 0,
+            broadcast_dispatch_total_last: 0,
+            broadcast_tx_total_last: 0,
+        }
+    }
+
+    fn observe(&mut self, report: &serde_json::Value) -> Result<()> {
+        if report
+            .get("execution_kernel")
+            .and_then(|value| value.as_str())
+            != Some("AOEM")
+        {
+            bail!("native execution pipeline report lost AOEM execution kernel");
+        }
+        if report
+            .get("aoem_concurrency_owner")
+            .and_then(|value| value.as_str())
+            != Some("AOEM_runtime")
+        {
+            bail!("native execution pipeline report lost AOEM concurrency owner");
+        }
+        if report
+            .get("host_concurrency_policy")
+            .and_then(|value| value.as_str())
+            != Some("host_drives_lifecycle_only_no_rust_execution_scheduler")
+        {
+            bail!("native execution pipeline host concurrency policy drifted");
+        }
+
+        let lifecycle = report
+            .get("lifecycle")
+            .ok_or_else(|| anyhow::anyhow!("native execution pipeline report missing lifecycle"))?;
+        let network = lifecycle
+            .get("network")
+            .ok_or_else(|| anyhow::anyhow!("native execution pipeline report missing network"))?;
+        let aoem_batch = lifecycle.get("aoem_batch").ok_or_else(|| {
+            anyhow::anyhow!("native execution pipeline report missing aoem_batch")
+        })?;
+        let proof = lifecycle
+            .get("proof")
+            .ok_or_else(|| anyhow::anyhow!("native execution pipeline report missing proof"))?;
+        let commit = lifecycle
+            .get("commit")
+            .ok_or_else(|| anyhow::anyhow!("native execution pipeline report missing commit"))?;
+        let ingress = lifecycle
+            .get("ingress")
+            .ok_or_else(|| anyhow::anyhow!("native execution pipeline report missing ingress"))?;
+        let queue = lifecycle
+            .get("queue")
+            .ok_or_else(|| anyhow::anyhow!("native execution pipeline report missing queue"))?;
+        let egress = lifecycle
+            .get("egress")
+            .ok_or_else(|| anyhow::anyhow!("native execution pipeline report missing egress"))?;
+
+        self.ticks = self.ticks.saturating_add(1);
+        if network
+            .get("enabled")
+            .and_then(|value| value.as_bool())
+            .unwrap_or(false)
+        {
+            self.network_enabled_ticks = self.network_enabled_ticks.saturating_add(1);
+            if network
+                .get("ok")
+                .and_then(|value| value.as_bool())
+                .unwrap_or(false)
+            {
+                self.network_ok_ticks = self.network_ok_ticks.saturating_add(1);
+            } else {
+                self.network_error_ticks = self.network_error_ticks.saturating_add(1);
+            }
+        }
+        self.aoem_executed_total = self.aoem_executed_total.saturating_add(
+            aoem_batch
+                .get("executed")
+                .and_then(|value| value.as_u64())
+                .unwrap_or_default(),
+        );
+        self.aoem_deferred_total = self.aoem_deferred_total.saturating_add(
+            aoem_batch
+                .get("deferred")
+                .and_then(|value| value.as_u64())
+                .unwrap_or_default(),
+        );
+        if proof
+            .get("tick_output_method")
+            .and_then(|value| value.as_str())
+            == Some("nov_runNativeExecutionTick")
+        {
+            self.proof_ticks = self.proof_ticks.saturating_add(1);
+        }
+        if commit
+            .get("model")
+            .and_then(|value| value.as_str())
+            .is_some()
+        {
+            self.commit_ticks = self.commit_ticks.saturating_add(1);
+        }
+        self.ingress_total_last = ingress
+            .get("total")
+            .and_then(|value| value.as_u64())
+            .unwrap_or_default();
+        self.queue_pending_last = queue
+            .get("pending")
+            .and_then(|value| value.as_u64())
+            .unwrap_or_default();
+        self.included_canonical_last = egress
+            .get("pending_included_canonical")
+            .and_then(|value| value.as_u64())
+            .unwrap_or_default();
+        self.broadcast_candidates_last = egress
+            .get("broadcast_candidates")
+            .and_then(|value| value.as_u64())
+            .unwrap_or_default();
+        self.broadcast_dispatch_total_last = egress
+            .get("broadcast_dispatch_total")
+            .and_then(|value| value.as_u64())
+            .unwrap_or_default();
+        self.broadcast_tx_total_last = egress
+            .get("broadcast_tx_total")
+            .and_then(|value| value.as_u64())
+            .unwrap_or_default();
+        Ok(())
+    }
+
+    fn progress_score(&self) -> u64 {
+        self.aoem_executed_total
+            .saturating_add(self.ingress_total_last)
+            .saturating_add(self.included_canonical_last)
+            .saturating_add(self.broadcast_tx_total_last)
+            .saturating_add(self.broadcast_candidates_last)
+    }
+
+    fn to_json(&self) -> serde_json::Value {
+        let elapsed_ms = self.started_at.elapsed().as_millis().max(1) as u64;
+        serde_json::json!({
+            "method": "nov_runNativeExecutionPipelineSummary",
+            "accepted": true,
+            "execution_kernel": "AOEM",
+            "aoem_concurrency_owner": "AOEM_runtime",
+            "host_concurrency_policy": "host_drives_lifecycle_only_no_rust_execution_scheduler",
+            "ticks": self.ticks,
+            "elapsed_ms": elapsed_ms,
+            "ticks_per_sec_x1000": self.ticks.saturating_mul(1_000_000) / elapsed_ms,
+            "aoem_executed_total": self.aoem_executed_total,
+            "aoem_deferred_total": self.aoem_deferred_total,
+            "network_enabled_ticks": self.network_enabled_ticks,
+            "network_ok_ticks": self.network_ok_ticks,
+            "network_error_ticks": self.network_error_ticks,
+            "proof_ticks": self.proof_ticks,
+            "commit_ticks": self.commit_ticks,
+            "ingress_total_last": self.ingress_total_last,
+            "queue_pending_last": self.queue_pending_last,
+            "included_canonical_last": self.included_canonical_last,
+            "broadcast_candidates_last": self.broadcast_candidates_last,
+            "broadcast_dispatch_total_last": self.broadcast_dispatch_total_last,
+            "broadcast_tx_total_last": self.broadcast_tx_total_last,
+            "progress_score": self.progress_score(),
+        })
+    }
+}
+
 #[cfg(test)]
 mod native_execution_pipeline_tests {
     use super::*;
@@ -33288,6 +33483,75 @@ mod native_execution_pipeline_tests {
             Some(1)
         );
     }
+
+    #[test]
+    fn native_execution_pipeline_aggregate_tracks_lifecycle_progress() {
+        let report = build_native_execution_pipeline_report_v1(
+            3,
+            serde_json::json!({
+                "enabled": true,
+                "ok": true,
+                "connected_peers": 1u64,
+                "ready_peers": 1u64,
+            }),
+            serde_json::json!({
+                "method": "nov_runNativeExecutionTick",
+                "chain_id": 9_998_883u64,
+                "executed_count": 5u64,
+                "deferred_count": 1u64,
+                "lifecycle": {
+                    "commit": "deterministic_sharded_dirty_atomic_commit"
+                }
+            }),
+        );
+        let mut aggregate = NativeExecutionPipelineAggregateV1::new();
+        aggregate
+            .observe(&report)
+            .expect("aggregate pipeline report");
+        let summary = aggregate.to_json();
+
+        assert_eq!(summary["ticks"].as_u64(), Some(1));
+        assert_eq!(summary["aoem_executed_total"].as_u64(), Some(5));
+        assert_eq!(summary["aoem_deferred_total"].as_u64(), Some(1));
+        assert_eq!(summary["network_enabled_ticks"].as_u64(), Some(1));
+        assert_eq!(summary["network_ok_ticks"].as_u64(), Some(1));
+        assert_eq!(summary["proof_ticks"].as_u64(), Some(1));
+        assert_eq!(summary["commit_ticks"].as_u64(), Some(1));
+        assert!(summary["progress_score"].as_u64().unwrap_or_default() >= 5);
+        assert_eq!(
+            summary["host_concurrency_policy"].as_str(),
+            Some("host_drives_lifecycle_only_no_rust_execution_scheduler")
+        );
+    }
+
+    #[test]
+    fn native_execution_pipeline_aggregate_rejects_host_scheduler_drift() {
+        let mut report = build_native_execution_pipeline_report_v1(
+            4,
+            serde_json::json!({
+                "enabled": false,
+                "ok": true,
+            }),
+            serde_json::json!({
+                "method": "nov_runNativeExecutionTick",
+                "chain_id": 9_998_884u64,
+                "executed_count": 1u64,
+                "deferred_count": 0u64,
+                "lifecycle": {
+                    "commit": "deterministic_sharded_dirty_atomic_commit"
+                }
+            }),
+        );
+        report["host_concurrency_policy"] =
+            serde_json::Value::String("rust_thread_scheduler".to_string());
+
+        let mut aggregate = NativeExecutionPipelineAggregateV1::new();
+        let err = aggregate
+            .observe(&report)
+            .expect_err("host scheduler drift must be rejected")
+            .to_string();
+        assert!(err.contains("host concurrency policy drifted"));
+    }
 }
 
 fn run_native_execution_tick_node_mode_v1(verbose: bool) -> Result<()> {
@@ -33295,7 +33559,9 @@ fn run_native_execution_tick_node_mode_v1(verbose: bool) -> Result<()> {
     let interval_ms = u64_env_positive("NOVOVM_NATIVE_EXECUTION_TICK_INTERVAL_MS", 250)?;
     let chain_id = u64_env_positive("NOVOVM_NATIVE_EXECUTION_TICK_CHAIN_ID", 1)?;
     let mut network_drive = native_execution_pipeline_network_drive_from_env_v1(chain_id, verbose)?;
+    let require_progress = bool_env("NOVOVM_NATIVE_EXECUTION_PIPELINE_REQUIRE_PROGRESS");
     let mut ticks = 0u64;
+    let mut aggregate = NativeExecutionPipelineAggregateV1::new();
     loop {
         if max_ticks > 0 && ticks >= max_ticks {
             break;
@@ -33315,6 +33581,7 @@ fn run_native_execution_tick_node_mode_v1(verbose: bool) -> Result<()> {
             network_drive_out,
             out,
         );
+        aggregate.observe(&report)?;
         if verbose {
             println!(
                 "native_execution_tick_out: tick={} chain_id={} executed={} deferred={} kernel=AOEM owner=AOEM_runtime",
@@ -33346,6 +33613,21 @@ fn run_native_execution_tick_node_mode_v1(verbose: bool) -> Result<()> {
             break;
         }
         std::thread::sleep(Duration::from_millis(interval_ms));
+    }
+    let summary = aggregate.to_json();
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&summary)
+            .context("encode native execution pipeline summary failed")?
+    );
+    if require_progress
+        && summary
+            .get("progress_score")
+            .and_then(|value| value.as_u64())
+            .unwrap_or_default()
+            == 0
+    {
+        bail!("native execution pipeline progress gate failed: no ingress/execution/egress progress observed");
     }
     Ok(())
 }
