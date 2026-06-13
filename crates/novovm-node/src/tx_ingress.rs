@@ -11943,6 +11943,72 @@ mod tests {
     }
 
     #[test]
+    fn neth_missing_reserve_proof_blocks_treasury_redeem_without_nov_debit() {
+        with_test_native_execution_store_path_v1(|path| {
+            let caller = format!("0x{}", "96".repeat(20));
+            let mut pre = NovNativeExecutionStoreV1::default();
+            credit_native_account_asset_balance_v1(&mut pre, caller.as_str(), "NOV", 500);
+            pre.module_state
+                .treasury_reserves
+                .insert("NETH".to_string(), 1_000);
+            pre.module_state.mapped_lock_contract_address = format!("0x{}", "96".repeat(20));
+            pre.module_state.mapped_lock_min_confirmations = 21;
+            save_nov_native_execution_store_v1(path.as_path(), &pre)
+                .expect("seed missing NETH reserve proof");
+
+            let request = NovExecutionRequestV1 {
+                tx_hash: [0x96; 32],
+                chain_id: 8096,
+                caller: vec![0x96; 20],
+                target: NovExecutionRequestTargetV1::NativeModule("treasury".to_string()),
+                method: "redeem".to_string(),
+                args: serde_json::to_vec(&serde_json::json!({
+                    "asset_out": "NETH",
+                    "nov_amount": 100u64
+                }))
+                .expect("encode args"),
+                fee_pay_asset: "NOV".to_string(),
+                fee_max_pay_amount: 500,
+                fee_slippage_bps: 0,
+                gas_like_limit: Some(80_000),
+                nonce: 96,
+            };
+            let receipt = dispatch_and_persist_nov_execution_request_with_store_path_v1(
+                path.as_path(),
+                &request,
+            )
+            .expect("dispatch should return missing proof NETH M2 risk failure receipt");
+            assert!(!receipt.status);
+            assert_eq!(receipt.module, "treasury");
+            assert_eq!(receipt.method, "redeem");
+            let failure = receipt.failure_reason.clone().unwrap_or_default();
+            assert!(failure.starts_with("fee.settlement.m2_bridge_risk_blocked"));
+            assert!(failure.contains("m2_bridge_risk=reserve_proof_missing"));
+
+            let nov_after = get_nov_native_account_asset_balance_with_store_path_v1(
+                path.as_path(),
+                caller.as_str(),
+                "NOV",
+            )
+            .expect("load NOV balance");
+            let neth_after = get_nov_native_account_asset_balance_with_store_path_v1(
+                path.as_path(),
+                caller.as_str(),
+                "NETH",
+            )
+            .expect("load NETH balance");
+            assert_eq!(nov_after, 500);
+            assert_eq!(neth_after, 0);
+            let state = load_nov_native_execution_store_v1(path.as_path())
+                .expect("load native execution store");
+            assert_eq!(
+                state.module_state.treasury_reserves.get("NETH").copied(),
+                Some(1_000)
+            );
+        });
+    }
+
+    #[test]
     fn reserve_proof_amount_cap_blocks_redeem_that_keeps_reserve_over_cap() {
         with_test_native_execution_store_path_v1(|path| {
             let caller = format!("0x{}", "94".repeat(20));
