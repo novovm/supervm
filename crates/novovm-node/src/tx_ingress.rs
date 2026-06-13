@@ -582,6 +582,8 @@ pub struct NovNativeExecutionModuleStateV1 {
     #[serde(default)]
     pub mapped_header_attestation_disabled_signer_reasons: BTreeMap<String, String>,
     #[serde(default)]
+    pub mapped_header_attestation_signer_rotations: BTreeMap<String, String>,
+    #[serde(default)]
     pub mapped_header_attestation_min_quorum: u32,
     #[serde(default)]
     pub mapped_header_attestation_policy_source: String,
@@ -708,6 +710,7 @@ impl Default for NovNativeExecutionModuleStateV1 {
             mapped_header_attestation_allowed_signers: Vec::new(),
             mapped_header_attestation_disabled_signers: Vec::new(),
             mapped_header_attestation_disabled_signer_reasons: BTreeMap::new(),
+            mapped_header_attestation_signer_rotations: BTreeMap::new(),
             mapped_header_attestation_min_quorum: 1,
             mapped_header_attestation_policy_source: "config_path".to_string(),
             mapped_header_attestation_policy_version: 1,

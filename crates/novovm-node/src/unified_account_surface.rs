@@ -653,6 +653,11 @@ fn run_unified_account_surface_rpc(
             }
             let disabled_signer_reasons =
                 parse_mapped_header_attestation_disabled_reasons_v1(params, &disabled_signers)?;
+            let signer_rotations = parse_mapped_header_attestation_rotations_v1(
+                params,
+                &allowed_signers,
+                &disabled_signers,
+            )?;
             if required && allowed_signers.is_empty() {
                 bail!(
                     "ERR_MAPPED_HEADER_ATTESTATION_POLICY_INVALID: required policy needs at least one allowed attestation signer"
@@ -685,6 +690,9 @@ fn run_unified_account_surface_rpc(
             store
                 .module_state
                 .mapped_header_attestation_disabled_signer_reasons = disabled_signer_reasons;
+            store
+                .module_state
+                .mapped_header_attestation_signer_rotations = signer_rotations;
             store.module_state.mapped_header_attestation_min_quorum = min_quorum;
             store.module_state.mapped_header_attestation_policy_source = source;
             store.module_state.mapped_header_attestation_policy_version = version;
@@ -2341,6 +2349,7 @@ fn mapped_header_attestation_policy_to_json_v1(
         "allowed_signers": store.module_state.mapped_header_attestation_allowed_signers,
         "disabled_signers": store.module_state.mapped_header_attestation_disabled_signers,
         "disabled_signer_reasons": store.module_state.mapped_header_attestation_disabled_signer_reasons,
+        "signer_rotations": store.module_state.mapped_header_attestation_signer_rotations,
         "active_allowed_signers": active_allowed_signers,
         "min_attestation_quorum": store.module_state.mapped_header_attestation_min_quorum,
         "policy_source": store.module_state.mapped_header_attestation_policy_source,
@@ -2440,6 +2449,58 @@ fn parse_mapped_header_attestation_disabled_reasons_v1(
     for signer in disabled_signers {
         out.entry(signer.clone())
             .or_insert_with(|| default_reason.clone());
+    }
+    Ok(out)
+}
+
+fn parse_mapped_header_attestation_rotations_v1(
+    params: &Value,
+    allowed_signers: &[String],
+    disabled_signers: &[String],
+) -> Result<BTreeMap<String, String>> {
+    let Some(value) = param_value_any(
+        params,
+        &[
+            "signer_rotations",
+            "attestation_signer_rotations",
+            "rotated_signers",
+        ],
+    ) else {
+        return Ok(BTreeMap::new());
+    };
+    let Value::Object(map) = value else {
+        bail!("ERR_MAPPED_HEADER_ATTESTATION_POLICY_INVALID: signer_rotations must be object");
+    };
+    let mut out = BTreeMap::new();
+    for (raw_old_signer, raw_new_value) in map {
+        let old_signer = normalize_mapped_header_attestation_signer_v1(raw_old_signer);
+        validate_mapped_header_attestation_signer_v1(old_signer.as_str())?;
+        let Some(raw_new_signer) = raw_new_value.as_str() else {
+            bail!(
+                "ERR_MAPPED_HEADER_ATTESTATION_POLICY_INVALID: signer_rotations[{}] must be string",
+                old_signer
+            );
+        };
+        let new_signer = normalize_mapped_header_attestation_signer_v1(raw_new_signer);
+        validate_mapped_header_attestation_signer_v1(new_signer.as_str())?;
+        if old_signer == new_signer {
+            bail!(
+                "ERR_MAPPED_HEADER_ATTESTATION_POLICY_INVALID: signer rotation old and new signer are identical"
+            );
+        }
+        if !disabled_signers.contains(&old_signer) {
+            bail!(
+                "ERR_MAPPED_HEADER_ATTESTATION_POLICY_INVALID: rotated old signer {} must be disabled",
+                old_signer
+            );
+        }
+        if !allowed_signers.contains(&new_signer) || disabled_signers.contains(&new_signer) {
+            bail!(
+                "ERR_MAPPED_HEADER_ATTESTATION_POLICY_INVALID: rotated new signer {} must be active allowed signer",
+                new_signer
+            );
+        }
+        out.insert(old_signer, new_signer);
     }
     Ok(out)
 }
@@ -7215,14 +7276,22 @@ mod tests {
         ua_create(&base, &store, &audit, "acct-map-live-attestation", 10);
         let signer_a = Ed25519SigningKey::from_bytes(&[0xa1u8; 32]);
         let signer_b = Ed25519SigningKey::from_bytes(&[0xb2u8; 32]);
+        let signer_c = Ed25519SigningKey::from_bytes(&[0xc3u8; 32]);
         let signer_a_pub = signer_a.verifying_key().to_bytes();
         let signer_b_pub = signer_b.verifying_key().to_bytes();
+        let signer_c_pub = signer_c.verifying_key().to_bytes();
         let signer_a_ref = to_hex_lower(&signer_a_pub);
         let signer_b_ref = to_hex_lower(&signer_b_pub);
+        let signer_c_ref = to_hex_lower(&signer_c_pub);
         let mut disabled_reasons = serde_json::Map::new();
         disabled_reasons.insert(
             signer_b_ref.clone(),
-            Value::String("reorg_mismatch".to_string()),
+            Value::String("key_rotation".to_string()),
+        );
+        let mut signer_rotations = serde_json::Map::new();
+        signer_rotations.insert(
+            signer_b_ref.clone(),
+            Value::String(format!("0x{}", signer_c_ref)),
         );
 
         let policy = run_query(
@@ -7234,9 +7303,10 @@ mod tests {
                 &native_store,
                 json!({
                     "required": true,
-                    "allowed_signers": [signer_a_ref, signer_b_ref],
+                    "allowed_signers": [signer_a_ref, signer_c_ref],
                     "disabled_signers": [signer_b_ref],
                     "disabled_signer_reasons": Value::Object(disabled_reasons),
+                    "signer_rotations": Value::Object(signer_rotations),
                     "min_attestation_quorum": 2u64,
                     "policy_source": "governance_test",
                     "policy_version": 11u64,
@@ -7251,11 +7321,15 @@ mod tests {
             policy["policy"]["active_allowed_signers"]
                 .as_array()
                 .map(Vec::len),
-            Some(1)
+            Some(2)
         );
         assert_eq!(
             policy["policy"]["disabled_signer_reasons"][signer_b_ref.as_str()].as_str(),
-            Some("reorg_mismatch")
+            Some("key_rotation")
+        );
+        assert_eq!(
+            policy["policy"]["signer_rotations"][signer_b_ref.as_str()].as_str(),
+            Some(signer_c_ref.as_str())
         );
 
         let mut blocked_map =
@@ -7301,32 +7375,6 @@ mod tests {
             "disabled signer should not satisfy quorum, got: {blocked_err}"
         );
 
-        let restored_policy = run_query(
-            &base,
-            "ua_setMappedHeaderAttestationPolicy",
-            params_with_paths_and_native_store(
-                &store,
-                &audit,
-                &native_store,
-                json!({
-                    "required": true,
-                    "allowed_signers": [signer_a_ref, signer_b_ref],
-                    "disabled_signers": [],
-                    "disabled_signer_reasons": {},
-                    "min_attestation_quorum": 2u64,
-                    "policy_source": "governance_test",
-                    "policy_version": 12u64,
-                    "now": 13u64,
-                }),
-            ),
-        );
-        assert_eq!(
-            restored_policy["policy"]["active_allowed_signers"]
-                .as_array()
-                .map(Vec::len),
-            Some(2)
-        );
-
         let mut accepted_map =
             match mapped_lock_live_event_proof_params("acct-map-live-attestation", 0x48, 125u128) {
                 Value::Object(map) => map,
@@ -7340,7 +7388,7 @@ mod tests {
             mapped_lock_param_hash(&Value::Object(accepted_map.clone()), "receipts_root"),
         );
         let accepted_sig_a = signer_a.sign(accepted_message.as_slice()).to_bytes();
-        let accepted_sig_b = signer_b.sign(accepted_message.as_slice()).to_bytes();
+        let accepted_sig_c = signer_c.sign(accepted_message.as_slice()).to_bytes();
         accepted_map.insert("phase4_mode".to_string(), Value::String("live".to_string()));
         accepted_map.insert(
             "header_attestations".to_string(),
@@ -7350,8 +7398,8 @@ mod tests {
                     "signature": format!("0x{}", to_hex_lower(&accepted_sig_a)),
                 },
                 {
-                    "signer": format!("0x{}", signer_b_ref),
-                    "signature": format!("0x{}", to_hex_lower(&accepted_sig_b)),
+                    "signer": format!("0x{}", signer_c_ref),
+                    "signature": format!("0x{}", to_hex_lower(&accepted_sig_c)),
                 },
             ]),
         );
@@ -7376,7 +7424,7 @@ mod tests {
             "ua_getMappedHeaderAttestationPolicy",
             params_with_paths_and_native_store(&store, &audit, &native_store, json!({})),
         );
-        assert_eq!(get_policy["policy"]["policy_version"].as_u64(), Some(12));
+        assert_eq!(get_policy["policy"]["policy_version"].as_u64(), Some(11));
 
         let _ = fs::remove_dir_all(&root);
     }
