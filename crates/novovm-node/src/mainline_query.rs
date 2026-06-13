@@ -612,6 +612,8 @@ fn run_mainline_nov_m2_bridge_risk_status_v1(params: &Value) -> Result<Value> {
     let blocked = reasons.iter().any(|reason| {
         reason.contains("paused")
             || reason.starts_with("finality_source_state=blocked")
+            || reason == "reserve_proof_missing"
+            || reason.starts_with("reserve_proof_effective_status=unknown")
             || reason.starts_with("reserve_proof_effective_status=revoked")
             || reason.starts_with("reserve_proof_effective_status=expired")
             || reason.starts_with("native_execution_store_unavailable")
@@ -12438,6 +12440,101 @@ mod tests {
             .any(|item| item.as_str() == Some("not_complete_external_bridge")));
 
         let _ = fs::remove_file(native_store);
+    }
+
+    #[test]
+    fn mainline_query_m2_bridge_risk_status_blocks_unsafe_m2() {
+        let bogus_canonical_store =
+            std::path::Path::new("this-canonical-store-does-not-exist.json");
+        let native_store = unique_native_execution_store_path("m2-bridge-risk-status-blocked");
+
+        let mut pre = NovNativeExecutionStoreV1::default();
+        pre.module_state
+            .treasury_reserves
+            .insert("NETH".to_string(), 1_000);
+        pre.module_state.treasury_reserve_proofs.insert(
+            "NETH".to_string(),
+            NovTreasuryReserveProofV1 {
+                asset: "NETH".to_string(),
+                reserve_amount: 1_000,
+                proof_type: "custody_statement_v1".to_string(),
+                proof_digest: "0xm2bridgeriskblocked01".to_string(),
+                proof_source: "treasury_committee".to_string(),
+                proof_reference: "m2-bridge-risk-status-blocked-001".to_string(),
+                observed_at_unix_ms: 1,
+                expires_at_unix_ms: 0,
+                policy_version: 1,
+                policy_source: "governance_path".to_string(),
+                status: "revoked".to_string(),
+                automated_verification: false,
+                verification_mode: "manual_governance_attestation".to_string(),
+            },
+        );
+        pre.module_state.mapped_lock_contract_address = format!("0x{}", "91".repeat(20));
+        pre.module_state.mapped_lock_min_confirmations = 21;
+        pre.module_state.mapped_header_source_required = true;
+        pre.module_state.mapped_header_source_allowed_peer_ids = vec![21, 22];
+        pre.module_state.mapped_header_source_min_quorum = 2;
+        pre.module_state.mapped_lock_bridge_paused = true;
+        save_nov_native_execution_store_v1(native_store.as_path(), &pre)
+            .expect("seed blocked M2 bridge risk status smoke store");
+
+        let blocked = run_mainline_query_from_path(
+            bogus_canonical_store,
+            "nov_getM2BridgeRiskStatus",
+            &json!({
+                "asset": "NETH",
+                "native_execution_store_path": native_store.display().to_string(),
+            }),
+        )
+        .expect("nov_getM2BridgeRiskStatus should report blocked M2 risk");
+        assert_eq!(blocked["risk_state"].as_str(), Some("blocked"));
+        assert_eq!(
+            blocked["reserve"]["reserve_proof_effective_status"].as_str(),
+            Some("revoked")
+        );
+        assert!(blocked["reasons"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .any(|item| item.as_str() == Some("mapped_lock_bridge_paused")));
+        assert!(blocked["reasons"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .any(|item| item.as_str() == Some("reserve_proof_effective_status=revoked")));
+        assert_eq!(
+            blocked["settlement_boundaries"]["eth_lock_direct_nov_mint_allowed"].as_bool(),
+            Some(false)
+        );
+
+        let missing_store = unique_native_execution_store_path("m2-bridge-risk-status-missing");
+        let mut missing = NovNativeExecutionStoreV1::default();
+        missing.module_state.mapped_lock_contract_address = format!("0x{}", "92".repeat(20));
+        missing.module_state.mapped_lock_min_confirmations = 21;
+        missing.module_state.mapped_header_source_required = true;
+        missing.module_state.mapped_header_source_allowed_peer_ids = vec![31, 32];
+        missing.module_state.mapped_header_source_min_quorum = 2;
+        save_nov_native_execution_store_v1(missing_store.as_path(), &missing)
+            .expect("seed missing reserve proof M2 risk status smoke store");
+        let missing_status = run_mainline_query_from_path(
+            bogus_canonical_store,
+            "nov_getM2BridgeRiskStatus",
+            &json!({
+                "asset": "NETH",
+                "native_execution_store_path": missing_store.display().to_string(),
+            }),
+        )
+        .expect("nov_getM2BridgeRiskStatus should fail closed on missing reserve proof");
+        assert_eq!(missing_status["risk_state"].as_str(), Some("blocked"));
+        assert!(missing_status["reasons"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .any(|item| item.as_str() == Some("reserve_proof_missing")));
+
+        let _ = fs::remove_file(native_store);
+        let _ = fs::remove_file(missing_store);
     }
 
     #[test]
