@@ -449,6 +449,8 @@ pub struct NovTreasurySettlementPolicyV1 {
     pub mapped_asset_auto_heal_enabled: bool,
     #[serde(default)]
     pub mapped_asset_auto_heal_rollback_enabled: bool,
+    #[serde(default)]
+    pub mapped_asset_reorg_response_policy: String,
     pub clearing_enabled: bool,
     pub clearing_daily_nov_hard_limit: u128,
     pub clearing_daily_nov_used: u128,
@@ -458,6 +460,32 @@ pub struct NovTreasurySettlementPolicyV1 {
     pub clearing_constrained_daily_usage_bps: u32,
     pub clearing_constrained_strategy: String,
     pub source: String,
+}
+
+pub fn mapped_asset_reorg_response_policy_v1(auto_heal: bool, rollback: bool) -> &'static str {
+    match (auto_heal, rollback) {
+        (false, _) => "report_only",
+        (true, false) => "freeze_only",
+        (true, true) => "freeze_and_rollback",
+    }
+}
+
+fn parse_mapped_asset_reorg_response_policy_v1(raw: &str) -> Option<&'static str> {
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "report_only" | "dry_run_only" | "observe_only" => Some("report_only"),
+        "freeze_only" | "auto_freeze" => Some("freeze_only"),
+        "freeze_and_rollback" | "auto_freeze_and_rollback" => Some("freeze_and_rollback"),
+        _ => None,
+    }
+}
+
+fn mapped_asset_reorg_response_policy_flags_v1(policy: &str) -> Option<(bool, bool)> {
+    match parse_mapped_asset_reorg_response_policy_v1(policy)? {
+        "report_only" => Some((false, false)),
+        "freeze_only" => Some((true, false)),
+        "freeze_and_rollback" => Some((true, true)),
+        _ => None,
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -2137,6 +2165,11 @@ fn resolve_treasury_settlement_policy_v1(
             mapped_asset_auto_heal_rollback_enabled: store
                 .module_state
                 .mapped_asset_auto_heal_rollback_enabled,
+            mapped_asset_reorg_response_policy: mapped_asset_reorg_response_policy_v1(
+                store.module_state.mapped_asset_auto_heal_enabled,
+                store.module_state.mapped_asset_auto_heal_rollback_enabled,
+            )
+            .to_string(),
             clearing_enabled,
             clearing_daily_nov_hard_limit,
             clearing_daily_nov_used,
@@ -2248,6 +2281,11 @@ fn resolve_treasury_settlement_policy_v1(
         mapped_asset_auto_heal_rollback_enabled: store
             .module_state
             .mapped_asset_auto_heal_rollback_enabled,
+        mapped_asset_reorg_response_policy: mapped_asset_reorg_response_policy_v1(
+            store.module_state.mapped_asset_auto_heal_enabled,
+            store.module_state.mapped_asset_auto_heal_rollback_enabled,
+        )
+        .to_string(),
         clearing_enabled,
         clearing_daily_nov_hard_limit,
         clearing_daily_nov_used,
@@ -2408,7 +2446,7 @@ fn allocation_parameters_snapshot_v1(policy: &NovTreasurySettlementPolicyV1) -> 
 
 fn treasury_policy_contract_id_v1(policy: &NovTreasurySettlementPolicyV1) -> String {
     format!(
-        "nov_treasury_policy_v1:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}",
+        "nov_treasury_policy_v1:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}",
         policy.policy_version,
         normalize_policy_source_v1(policy.policy_source.as_str()),
         policy.reserve_share_bps,
@@ -2433,7 +2471,8 @@ fn treasury_policy_contract_id_v1(policy: &NovTreasurySettlementPolicyV1) -> Str
             1
         } else {
             0
-        }
+        },
+        policy.mapped_asset_reorg_response_policy
     )
 }
 
@@ -2455,6 +2494,7 @@ fn treasury_policy_contract_snapshot_v1(
             "redeem_paused": policy.redeem_paused,
             "mapped_asset_auto_heal_enabled": policy.mapped_asset_auto_heal_enabled,
             "mapped_asset_auto_heal_rollback_enabled": policy.mapped_asset_auto_heal_rollback_enabled,
+            "mapped_asset_reorg_response_policy": policy.mapped_asset_reorg_response_policy,
             "clearing_enabled": policy.clearing_enabled,
             "clearing_daily_nov_hard_limit": policy.clearing_daily_nov_hard_limit,
             "clearing_require_healthy_risk_buffer": policy.clearing_require_healthy_risk_buffer,
@@ -5223,17 +5263,44 @@ fn dispatch_native_module_execute_v1(
                 .or_else(|| args_json.get("bridge_release_paused"))
                 .and_then(|value| value.as_bool())
                 .unwrap_or(active_policy.mapped_asset_release_paused);
-            let mapped_asset_auto_heal_enabled = args_json
+            let mut mapped_asset_auto_heal_enabled = args_json
                 .get("mapped_asset_auto_heal_enabled")
                 .or_else(|| args_json.get("auto_heal_mapped_assets_enabled"))
                 .and_then(|value| value.as_bool())
                 .unwrap_or(active_policy.mapped_asset_auto_heal_enabled);
-            let mapped_asset_auto_heal_rollback_enabled = args_json
+            let mut mapped_asset_auto_heal_rollback_enabled = args_json
                 .get("mapped_asset_auto_heal_rollback_enabled")
                 .or_else(|| args_json.get("auto_heal_mapped_asset_rollback_enabled"))
                 .or_else(|| args_json.get("auto_heal_mapped_assets_rollback_enabled"))
                 .and_then(|value| value.as_bool())
                 .unwrap_or(active_policy.mapped_asset_auto_heal_rollback_enabled);
+            if let Some(raw_reorg_policy) = args_json
+                .get("mapped_asset_reorg_response_policy")
+                .or_else(|| args_json.get("reorg_response_policy"))
+                .and_then(|value| value.as_str())
+            {
+                let Some((auto_heal, rollback)) =
+                    mapped_asset_reorg_response_policy_flags_v1(raw_reorg_policy)
+                else {
+                    return build_failed_native_receipt_v1(
+                        request,
+                        settled_fee,
+                        subject_meta,
+                        "governance".to_string(),
+                        "apply_treasury_policy".to_string(),
+                        format!(
+                            "governance.policy.invalid_mapped_asset_reorg_response_policy: {}",
+                            raw_reorg_policy
+                        ),
+                    );
+                };
+                mapped_asset_auto_heal_enabled = auto_heal;
+                mapped_asset_auto_heal_rollback_enabled = rollback;
+            }
+            let mapped_asset_reorg_response_policy = mapped_asset_reorg_response_policy_v1(
+                mapped_asset_auto_heal_enabled,
+                mapped_asset_auto_heal_rollback_enabled,
+            );
             let clearing_require_healthy_risk_buffer = args_json
                 .get("clearing_require_healthy_risk_buffer")
                 .and_then(|value| value.as_bool())
@@ -5343,6 +5410,7 @@ fn dispatch_native_module_execute_v1(
                     "mapped_asset_release_paused": mapped_asset_release_paused,
                     "mapped_asset_auto_heal_enabled": mapped_asset_auto_heal_enabled,
                     "mapped_asset_auto_heal_rollback_enabled": mapped_asset_auto_heal_rollback_enabled,
+                    "mapped_asset_reorg_response_policy": mapped_asset_reorg_response_policy,
                     "clearing_require_healthy_risk_buffer": clearing_require_healthy_risk_buffer,
                     "clearing_daily_nov_hard_limit": clearing_daily_nov_hard_limit,
                     "clearing_constrained_max_slippage_bps": clearing_constrained_max_slippage_bps,
@@ -8774,8 +8842,7 @@ mod tests {
                     "mapped_lock_min_confirmations": 18u64,
                     "mapped_asset_burn_paused": true,
                     "mapped_asset_release_paused": true,
-                    "mapped_asset_auto_heal_enabled": true,
-                    "mapped_asset_auto_heal_rollback_enabled": true,
+                    "mapped_asset_reorg_response_policy": "freeze_and_rollback",
                     "clearing_constrained_max_slippage_bps": 25u64,
                     "clearing_constrained_daily_usage_bps": 7500u64,
                     "clearing_constrained_strategy": "treasury_direct_only"
@@ -8862,6 +8929,10 @@ mod tests {
             assert_eq!(
                 out["result"]["policy"]["mapped_asset_auto_heal_rollback_enabled"].as_bool(),
                 Some(true)
+            );
+            assert_eq!(
+                out["result"]["policy"]["mapped_asset_reorg_response_policy"].as_str(),
+                Some("freeze_and_rollback")
             );
             let policy_contract_id = out["result"]["policy_contract_id"]
                 .as_str()

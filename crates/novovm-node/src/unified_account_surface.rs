@@ -26,8 +26,9 @@ use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 
 use crate::tx_ingress::{
-    load_nov_native_execution_store_v1, nov_native_execution_store_path_v1,
-    save_nov_native_execution_store_v1, NovTreasurySettlementJournalEntryV1,
+    load_nov_native_execution_store_v1, mapped_asset_reorg_response_policy_v1,
+    nov_native_execution_store_path_v1, save_nov_native_execution_store_v1,
+    NovTreasurySettlementJournalEntryV1,
 };
 
 const UNIFIED_ACCOUNT_STORE_ENVELOPE_VERSION_V1: u32 = 1;
@@ -1412,6 +1413,10 @@ fn run_unified_account_surface_rpc(
                     "policy": {
                         "mapped_asset_auto_heal_enabled": native_store.module_state.mapped_asset_auto_heal_enabled,
                         "mapped_asset_auto_heal_rollback_enabled": native_store.module_state.mapped_asset_auto_heal_rollback_enabled,
+                        "mapped_asset_reorg_response_policy": mapped_asset_reorg_response_policy_v1(
+                            native_store.module_state.mapped_asset_auto_heal_enabled,
+                            native_store.module_state.mapped_asset_auto_heal_rollback_enabled,
+                        ),
                         "policy_source": native_store.module_state.treasury_policy_source,
                         "policy_version": native_store.module_state.treasury_policy_version,
                     },
@@ -2654,6 +2659,10 @@ fn mapped_finality_source_status_to_json_v1(
         "auto_heal_policy": {
             "mapped_asset_auto_heal_enabled": store.module_state.mapped_asset_auto_heal_enabled,
             "mapped_asset_auto_heal_rollback_enabled": store.module_state.mapped_asset_auto_heal_rollback_enabled,
+            "mapped_asset_reorg_response_policy": mapped_asset_reorg_response_policy_v1(
+                store.module_state.mapped_asset_auto_heal_enabled,
+                store.module_state.mapped_asset_auto_heal_rollback_enabled,
+            ),
         },
         "non_claims": [
             "not_complete_external_bridge",
@@ -8338,6 +8347,10 @@ mod tests {
             applied["policy"]["mapped_asset_auto_heal_enabled"].as_bool(),
             Some(true)
         );
+        assert_eq!(
+            applied["policy"]["mapped_asset_reorg_response_policy"].as_str(),
+            Some("freeze_only")
+        );
         assert_eq!(applied["items"][0]["applied"].as_bool(), Some(true));
         assert_eq!(
             applied["items"][0]["policy_would_apply"].as_bool(),
@@ -8435,6 +8448,10 @@ mod tests {
             rollback_disabled["policy"]["mapped_asset_auto_heal_rollback_enabled"].as_bool(),
             Some(false)
         );
+        assert_eq!(
+            rollback_disabled["policy"]["mapped_asset_reorg_response_policy"].as_str(),
+            Some("freeze_only")
+        );
         let still_frozen = run_query(
             &base,
             "ua_getMappedAsset",
@@ -8481,6 +8498,10 @@ mod tests {
         assert_eq!(
             rolled_back["policy"]["mapped_asset_auto_heal_rollback_enabled"].as_bool(),
             Some(true)
+        );
+        assert_eq!(
+            rolled_back["policy"]["mapped_asset_reorg_response_policy"].as_str(),
+            Some("freeze_and_rollback")
         );
         assert_eq!(
             rolled_back["items"][0]["status_after"].as_str(),
