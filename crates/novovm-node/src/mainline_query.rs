@@ -873,6 +873,35 @@ fn run_mainline_nov_m2_bridge_risk_status_v1(params: &Value) -> Result<Value> {
             "mapped_asset_auto_heal_enabled": store.as_ref().map(|s| s.module_state.mapped_asset_auto_heal_enabled).unwrap_or(false),
             "mapped_asset_auto_heal_rollback_enabled": store.as_ref().map(|s| s.module_state.mapped_asset_auto_heal_rollback_enabled).unwrap_or(false),
         },
+        "operations_readiness": {
+            "internal_m2_credit_path_present": asset != "NOV",
+            "risk_gate_state": risk_state,
+            "risk_gate_allows_internal_settlement": risk_state == "active",
+            "minimum_public_claim": if asset == "NOV" {
+                "NOV_is_M0_M1_native_settlement_asset"
+            } else {
+                "NETH_nAsset_internal_M2_credit_and_risk_gated_treasury_settlement"
+            },
+            "external_bridge_complete": false,
+            "external_release_ready": false,
+            "external_release_requires_user_burn": true,
+            "external_release_triggered_by_this_query": false,
+            "background_scheduler_ready": false,
+            "explicit_auto_heal_tick_available": true,
+            "compensation_policy_ready": false,
+            "nov_emission_policy_ready": false,
+            "eth_lock_direct_nov_mint_ready": false,
+            "wallet_dapp_site_scope": false,
+            "next_required_before_external_bridge_v1": [
+                "deployed_governed_lock_contract",
+                "external_finality_source_management",
+                "automated_reserve_proof_verification",
+                "chain_release_transaction_path",
+                "governance_compensation_policy",
+                "background_scheduler_or_operator_runbook",
+                "nov_emission_policy_if_any"
+            ],
+        },
         "settlement_boundaries": {
             "nov_is_m0_m1": true,
             "mapped_asset_is_m2": asset != "NOV",
@@ -13467,6 +13496,43 @@ mod tests {
             Some(21)
         );
         assert_eq!(
+            status["operations_readiness"]["internal_m2_credit_path_present"].as_bool(),
+            Some(true)
+        );
+        assert_eq!(
+            status["operations_readiness"]["risk_gate_state"].as_str(),
+            Some("active")
+        );
+        assert_eq!(
+            status["operations_readiness"]["risk_gate_allows_internal_settlement"].as_bool(),
+            Some(true)
+        );
+        assert_eq!(
+            status["operations_readiness"]["external_bridge_complete"].as_bool(),
+            Some(false)
+        );
+        assert_eq!(
+            status["operations_readiness"]["external_release_ready"].as_bool(),
+            Some(false)
+        );
+        assert_eq!(
+            status["operations_readiness"]["background_scheduler_ready"].as_bool(),
+            Some(false)
+        );
+        assert_eq!(
+            status["operations_readiness"]["compensation_policy_ready"].as_bool(),
+            Some(false)
+        );
+        assert_eq!(
+            status["operations_readiness"]["nov_emission_policy_ready"].as_bool(),
+            Some(false)
+        );
+        assert!(status["operations_readiness"]["next_required_before_external_bridge_v1"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .any(|item| item.as_str() == Some("chain_release_transaction_path")));
+        assert_eq!(
             status["settlement_boundaries"]["nov_is_m0_m1"].as_bool(),
             Some(true)
         );
@@ -13554,6 +13620,22 @@ mod tests {
             .any(|item| item.as_str() == Some("reserve_proof_effective_status=revoked")));
         assert_eq!(
             blocked["settlement_boundaries"]["eth_lock_direct_nov_mint_allowed"].as_bool(),
+            Some(false)
+        );
+        assert_eq!(
+            blocked["operations_readiness"]["risk_gate_state"].as_str(),
+            Some("blocked")
+        );
+        assert_eq!(
+            blocked["operations_readiness"]["risk_gate_allows_internal_settlement"].as_bool(),
+            Some(false)
+        );
+        assert_eq!(
+            blocked["operations_readiness"]["external_bridge_complete"].as_bool(),
+            Some(false)
+        );
+        assert_eq!(
+            blocked["operations_readiness"]["external_release_triggered_by_this_query"].as_bool(),
             Some(false)
         );
 
