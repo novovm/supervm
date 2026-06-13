@@ -219,6 +219,17 @@ cargo run -p novovm-node --bin novovm-node
 
 Expected summary evidence: `execution_kernel=AOEM`, `aoem_concurrency_owner=AOEM_runtime`, `host_concurrency_policy=host_drives_lifecycle_only_no_rust_execution_scheduler`, non-zero ingress/AOEM/proof/commit/broadcast/canonical counts, and final `queue_pending_last=0`.
 
+For UDP node-to-node pipeline probes, enable the UDP drive on each node:
+
+```powershell
+$env:NOVOVM_NATIVE_EXECUTION_PIPELINE_UDP_ENABLED="true"
+$env:NOVOVM_NATIVE_EXECUTION_PIPELINE_UDP_LISTEN_ADDR="127.0.0.1:19001"
+$env:NOVOVM_NATIVE_EXECUTION_PIPELINE_LOCAL_NODE="9900001"
+$env:NOVOVM_NATIVE_EXECUTION_PIPELINE_UDP_PEERS="9900002=127.0.0.1:19002"
+```
+
+The UDP drive receives native pipeline messages into the pending runtime before each AOEM tick and broadcasts eligible pending transactions to configured peers. It does not own execution concurrency; AOEM remains the execution kernel and concurrency owner.
+
 EVM protocol-observable equivalence scope (CN):
 
 - `docs_CN/Adapters/EVM/NOVOVM-EVM-PROTOCOL-OBSERVABLE-EQUIVALENCE-V1-2026-06-07.md`

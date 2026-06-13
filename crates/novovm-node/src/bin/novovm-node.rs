@@ -22,6 +22,7 @@ use novovm_network::transport::snapshot_local_observed_peers;
 use novovm_network::{
     assess_read_only_impact, build_reconcile_report_with_replay, capability_state_token,
     decode_relay_membership_message, derive_advisory, detect_capabilities,
+    dispatch_network_runtime_native_pending_tx_broadcast_to_transport_v1,
     drain_runtime_relay_membership, eth_discv4_build_findnode_packet_v1,
     eth_discv4_build_ping_packet_v1, eth_discv4_build_pong_packet_v1,
     eth_discv4_parse_neighbors_packet_v1, eth_discv4_parse_packet_v1,
@@ -74,17 +75,17 @@ use novovm_network::{
     NetworkRuntimeNativeSyncPhaseV1, NetworkRuntimeNativeSyncStatusV1, NetworkRuntimeSyncStatus,
     PluginPeerEndpoint, QueueStore, QueuedRequest, Reachability, RelayCapacityClass, RelayClient,
     RelayHealth, RelayMembership, RelayRef, RelayServer, ReplayResult, RouteSelector,
-    RoutingSource, SelectedPath, ETH_DISCV4_PACKET_HASH_LEN, ETH_DISCV4_PING_PACKET_TYPE,
-    ETH_RLPX_PUB_LEN, L3_BASELINE_FINGERPRINT, L3_BASELINE_LOCK_VERSION, L3_BASELINE_PHASE,
-    L3_POLICY_BASELINE_VERSION, L3_READONLY_EXPORT_BASELINE_VERSION, L3_REGRESSION_LOCKSET,
-    L3_RELAY_RUNTIME_FEEDBACK_SCALE, L3_RELAY_SCORE_SCALE, L3_RELAY_SELECTED_STICKY_MARGIN,
-    L3_RELAY_SOURCE_BONUS_CONFIGURED, L3_RELAY_SOURCE_BONUS_POOL, L3_RELAY_SOURCE_BONUS_SNAPSHOT,
+    RoutingSource, SelectedPath, Transport, UdpTransport, ETH_DISCV4_PACKET_HASH_LEN,
+    ETH_DISCV4_PING_PACKET_TYPE, ETH_RLPX_PUB_LEN, L3_BASELINE_FINGERPRINT,
+    L3_BASELINE_LOCK_VERSION, L3_BASELINE_PHASE, L3_POLICY_BASELINE_VERSION,
+    L3_READONLY_EXPORT_BASELINE_VERSION, L3_REGRESSION_LOCKSET, L3_RELAY_RUNTIME_FEEDBACK_SCALE,
+    L3_RELAY_SCORE_SCALE, L3_RELAY_SELECTED_STICKY_MARGIN, L3_RELAY_SOURCE_BONUS_CONFIGURED,
+    L3_RELAY_SOURCE_BONUS_POOL, L3_RELAY_SOURCE_BONUS_SNAPSHOT,
 };
 #[cfg(test)]
 use novovm_network::{
-    dispatch_network_runtime_native_pending_tx_broadcast_to_transport_v1,
     get_network_runtime_native_pending_tx_v1, observe_network_runtime_protocol_message_v1,
-    InMemoryTransport, Transport, UdpTransport,
+    InMemoryTransport,
 };
 use novovm_node::governance_surface::{
     default_mainline_governance_store_path, is_mainline_governance_query_method,
@@ -33250,6 +33251,164 @@ impl NativeExecutionPipelineBroadcastDriveV1 {
     }
 }
 
+struct NativeExecutionPipelineUdpDriveV1 {
+    chain_id: u64,
+    local_node: NodeId,
+    transport: UdpTransport,
+    peers: Vec<NodeId>,
+    recv_budget: usize,
+    broadcast_max_per_tick: usize,
+    max_propagations: u64,
+}
+
+impl NativeExecutionPipelineUdpDriveV1 {
+    fn from_env(chain_id: u64) -> Result<Option<Self>> {
+        if !bool_env("NOVOVM_NATIVE_EXECUTION_PIPELINE_UDP_ENABLED") {
+            return Ok(None);
+        }
+        let local_node = NodeId(u64_env_allow_zero(
+            "NOVOVM_NATIVE_EXECUTION_PIPELINE_LOCAL_NODE",
+            9_990_001,
+        )?);
+        let listen_addr = string_env_nonempty("NOVOVM_NATIVE_EXECUTION_PIPELINE_UDP_LISTEN_ADDR")
+            .unwrap_or_else(|| "127.0.0.1:0".to_string());
+        let transport = UdpTransport::bind_for_chain(local_node, listen_addr.as_str(), chain_id)
+            .with_context(|| {
+                format!(
+                    "bind native execution pipeline UDP transport failed: local_node={} listen_addr={listen_addr}",
+                    local_node.0
+                )
+            })?;
+        let peers = parse_native_execution_pipeline_udp_peers_v1(
+            &transport,
+            "NOVOVM_NATIVE_EXECUTION_PIPELINE_UDP_PEERS",
+        )?;
+        Ok(Some(Self {
+            chain_id,
+            local_node,
+            transport,
+            peers,
+            recv_budget: usize_env_allow_zero(
+                "NOVOVM_NATIVE_EXECUTION_PIPELINE_UDP_RECV_BUDGET",
+                16,
+            )?
+            .clamp(1, 4096),
+            broadcast_max_per_tick: usize_env_allow_zero(
+                "NOVOVM_NATIVE_EXECUTION_PIPELINE_UDP_BROADCAST_MAX_PER_TICK",
+                1024,
+            )?
+            .clamp(1, 16_384),
+            max_propagations: u64_env_positive(
+                "NOVOVM_NATIVE_EXECUTION_PIPELINE_UDP_BROADCAST_MAX_PROPAGATIONS",
+                3,
+            )?,
+        }))
+    }
+
+    fn drive_once(&self) -> serde_json::Value {
+        let mut received = 0u64;
+        for _ in 0..self.recv_budget {
+            match self.transport.try_recv(self.local_node) {
+                Ok(Some(_msg)) => {
+                    received = received.saturating_add(1);
+                }
+                Ok(None) => break,
+                Err(err) => {
+                    return serde_json::json!({
+                        "enabled": true,
+                        "ok": false,
+                        "transport": "udp",
+                        "local_node": self.local_node.0,
+                        "error": err.to_string(),
+                    });
+                }
+            }
+        }
+
+        let mut broadcast_tx_count = 0u64;
+        let mut broadcast_error_count = 0u64;
+        let mut peer_reports = Vec::with_capacity(self.peers.len());
+        for peer in &self.peers {
+            match dispatch_network_runtime_native_pending_tx_broadcast_to_transport_v1(
+                &self.transport,
+                self.chain_id,
+                self.local_node,
+                *peer,
+                self.broadcast_max_per_tick,
+                self.max_propagations,
+            ) {
+                Ok(sent) => {
+                    broadcast_tx_count = broadcast_tx_count.saturating_add(sent as u64);
+                    peer_reports.push(serde_json::json!({
+                        "peer": peer.0,
+                        "ok": true,
+                        "broadcast_tx_count": sent as u64,
+                    }));
+                }
+                Err(err) => {
+                    broadcast_error_count = broadcast_error_count.saturating_add(1);
+                    peer_reports.push(serde_json::json!({
+                        "peer": peer.0,
+                        "ok": false,
+                        "error": err.to_string(),
+                    }));
+                }
+            }
+        }
+
+        let local_addr = self
+            .transport
+            .local_addr()
+            .map(|addr| addr.to_string())
+            .unwrap_or_else(|err| format!("unavailable:{err}"));
+        serde_json::json!({
+            "enabled": true,
+            "ok": broadcast_error_count == 0,
+            "transport": "udp",
+            "local_node": self.local_node.0,
+            "local_addr": local_addr,
+            "peer_count": self.peers.len() as u64,
+            "received_count": received,
+            "broadcast_tx_count": broadcast_tx_count,
+            "broadcast_error_count": broadcast_error_count,
+            "peers": peer_reports,
+        })
+    }
+}
+
+fn parse_native_execution_pipeline_udp_peers_v1(
+    transport: &UdpTransport,
+    env_name: &str,
+) -> Result<Vec<NodeId>> {
+    let Some(raw) = string_env_nonempty(env_name) else {
+        return Ok(Vec::new());
+    };
+    let mut peers = Vec::new();
+    for entry in raw
+        .split(',')
+        .map(str::trim)
+        .filter(|entry| !entry.is_empty())
+    {
+        let (node_raw, addr_raw) = entry.split_once('=').ok_or_else(|| {
+            anyhow::anyhow!("{env_name} entry must be node_id=host:port: {entry}")
+        })?;
+        let node_id = node_raw
+            .trim()
+            .parse::<u64>()
+            .with_context(|| format!("{env_name} node_id must be u64 in entry: {entry}"))?;
+        let addr = addr_raw.trim();
+        if addr.is_empty() {
+            bail!("{env_name} peer address is empty in entry: {entry}");
+        }
+        let node = NodeId(node_id);
+        transport
+            .register_peer(node, addr)
+            .with_context(|| format!("register UDP pipeline peer failed: {entry}"))?;
+        peers.push(node);
+    }
+    Ok(peers)
+}
+
 impl NativeExecutionPipelineNetworkDriveV1 {
     fn drive_once(&mut self) -> serde_json::Value {
         match self.worker.drive_real_network_once() {
@@ -34617,6 +34776,69 @@ mod native_execution_pipeline_tests {
     }
 
     #[test]
+    fn native_execution_pipeline_udp_drive_broadcasts_pending_to_peer() {
+        let chain_id = 9_998_892u64;
+        let local = NodeId(9_991_893);
+        let remote = NodeId(9_991_894);
+        let local_transport =
+            UdpTransport::bind_for_chain(local, "127.0.0.1:0", chain_id).expect("bind local udp");
+        let remote_transport =
+            UdpTransport::bind_for_chain(remote, "127.0.0.1:0", chain_id).expect("bind remote udp");
+        let local_addr = local_transport.local_addr().expect("local udp addr");
+        let remote_addr = remote_transport.local_addr().expect("remote udp addr");
+        local_transport
+            .register_peer(remote, &remote_addr.to_string())
+            .expect("register remote peer");
+        remote_transport
+            .register_peer(local, &local_addr.to_string())
+            .expect("register local peer");
+
+        let payloads = build_native_execution_pipeline_fixture_payloads_v1(chain_id, 1)
+            .expect("build fixture native payload");
+        let (_, _, tx_hash) = ingest_local_nov_raw_tx_payload_v1(
+            &serde_json::json!({ "chain_id": chain_id }),
+            payloads[0].as_slice(),
+        )
+        .expect("local native tx should enter pending runtime");
+
+        let drive = NativeExecutionPipelineUdpDriveV1 {
+            chain_id,
+            local_node: local,
+            transport: local_transport,
+            peers: vec![remote],
+            recv_budget: 4,
+            broadcast_max_per_tick: 4,
+            max_propagations: 3,
+        };
+        let drive_out = drive.drive_once();
+        assert_eq!(drive_out["enabled"].as_bool(), Some(true));
+        assert_eq!(drive_out["ok"].as_bool(), Some(true));
+        assert_eq!(drive_out["broadcast_tx_count"].as_u64(), Some(1));
+
+        let started = Instant::now();
+        let mut received = false;
+        while started.elapsed() < Duration::from_millis(500) {
+            if remote_transport
+                .try_recv(remote)
+                .expect("remote udp inbox should be readable")
+                .is_some()
+            {
+                received = true;
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(received, "remote UDP node should receive drive output");
+
+        let remote_pending = get_network_runtime_native_pending_tx_v1(chain_id, tx_hash)
+            .expect("UDP drive receive should re-enter native pending runtime");
+        assert_eq!(
+            remote_pending.lifecycle_stage,
+            novovm_network::NetworkRuntimeNativePendingTxLifecycleStageV1::Pending
+        );
+    }
+
+    #[test]
     fn native_execution_pipeline_soak_gate_accepts_summary_thresholds() {
         let gate = NativeExecutionPipelineSoakGateV1 {
             emit_tick_reports: false,
@@ -34883,6 +35105,7 @@ fn run_native_execution_tick_node_mode_v1(verbose: bool) -> Result<()> {
     let chain_id = u64_env_positive("NOVOVM_NATIVE_EXECUTION_TICK_CHAIN_ID", 1)?;
     let mut network_drive = native_execution_pipeline_network_drive_from_env_v1(chain_id, verbose)?;
     let mut ingress_drive = NativeExecutionPipelineIngressDriveV1::from_env(chain_id)?;
+    let udp_drive = NativeExecutionPipelineUdpDriveV1::from_env(chain_id)?;
     let broadcast_drive = NativeExecutionPipelineBroadcastDriveV1::from_env(chain_id)?;
     let soak_gate = NativeExecutionPipelineSoakGateV1::from_env()?;
     let mut ticks = 0u64;
@@ -34907,6 +35130,36 @@ fn run_native_execution_tick_node_mode_v1(verbose: bool) -> Result<()> {
                 "reason": "NOVOVM_NATIVE_EXECUTION_PIPELINE_INGRESS_RAW_TX(_FILE) is not set",
             }),
         };
+        let udp_drive_out = match udp_drive.as_ref() {
+            Some(drive) => drive.drive_once(),
+            None => serde_json::json!({
+                "enabled": false,
+                "ok": true,
+                "reason": "NOVOVM_NATIVE_EXECUTION_PIPELINE_UDP_ENABLED is not set",
+            }),
+        };
+        let network_enabled = network_drive_out
+            .get("enabled")
+            .and_then(|value| value.as_bool())
+            .unwrap_or(false)
+            || udp_drive_out
+                .get("enabled")
+                .and_then(|value| value.as_bool())
+                .unwrap_or(false);
+        let network_ok = network_drive_out
+            .get("ok")
+            .and_then(|value| value.as_bool())
+            .unwrap_or(true)
+            && udp_drive_out
+                .get("ok")
+                .and_then(|value| value.as_bool())
+                .unwrap_or(true);
+        let network_drive_out = serde_json::json!({
+            "enabled": network_enabled,
+            "ok": network_ok,
+            "rlpx": network_drive_out,
+            "udp": udp_drive_out,
+        });
         let broadcast_drive_out = broadcast_drive.drive_once();
         let params = native_execution_tick_params_from_env_v1()?;
         let out = run_nov_native_execution_tick_from_params_v1(&params)?;
