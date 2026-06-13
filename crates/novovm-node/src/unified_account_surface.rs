@@ -1862,6 +1862,7 @@ fn run_unified_account_surface_rpc(
                     "store_path": store_path.display().to_string(),
             });
             if m2_asset {
+                let result_commitment = out.clone();
                 if let (Some(map), Some(reason)) =
                     (out.as_object_mut(), disclosure_authorization.as_deref())
                 {
@@ -1872,6 +1873,7 @@ fn run_unified_account_surface_rpc(
                             &account_id,
                             Some(&asset_id),
                             reason,
+                            &result_commitment,
                         ),
                     );
                 }
@@ -2056,12 +2058,19 @@ fn run_unified_account_surface_rpc(
                     ],
                     "store_path": store_path.display().to_string(),
             });
+            let result_commitment = out.clone();
             if let (Some(map), Some(reason)) =
                 (out.as_object_mut(), disclosure_authorization.as_deref())
             {
                 map.insert(
                     "privacy_disclosure".to_string(),
-                    privacy_disclosure_receipt_v1(method, &account_id, None, reason),
+                    privacy_disclosure_receipt_v1(
+                        method,
+                        &account_id,
+                        None,
+                        reason,
+                        &result_commitment,
+                    ),
                 );
             }
             Ok((out, false))
@@ -4723,13 +4732,20 @@ fn privacy_disclosure_receipt_v1(
     account_id: &str,
     asset_id: Option<&str>,
     authorization_reason: &str,
+    result_commitment: &Value,
 ) -> Value {
     let normalized_account = normalize_account_view_key_v1(account_id);
     let normalized_asset = asset_id
         .map(normalize_asset_view_symbol_v1)
         .unwrap_or_else(|| "*".to_string());
+    let result_commitment_digest = Keccak256::digest(
+        serde_json::to_vec(result_commitment)
+            .unwrap_or_default()
+            .as_slice(),
+    );
+    let result_commitment_digest_hex = format!("0x{}", to_hex_lower(&result_commitment_digest));
     let preimage = format!(
-        "novovm:privacy-disclosure:v1|{method}|{normalized_account}|{normalized_asset}|{authorization_reason}|mainline_read_gate|proof_generation_performed=false"
+        "novovm:privacy-disclosure:v1|{method}|{normalized_account}|{normalized_asset}|{authorization_reason}|mainline_read_gate|proof_generation_performed=false|result_commitment={result_commitment_digest_hex}"
     );
     let digest = Keccak256::digest(preimage.as_bytes());
     json!({
@@ -4743,6 +4759,8 @@ fn privacy_disclosure_receipt_v1(
         "proof_generation_performed": false,
         "proof_system": "none",
         "proof_upgrade_path": ["ringct", "zk"],
+        "result_commitment_scope": "authorized_response_without_privacy_disclosure",
+        "result_commitment_digest": result_commitment_digest_hex,
         "no_second_ledger": true,
         "disclosure_digest": format!("0x{}", to_hex_lower(&digest)),
     })
@@ -6883,6 +6901,16 @@ mod tests {
             nusd["privacy_disclosure"]["proof_system"].as_str(),
             Some("none")
         );
+        assert_eq!(
+            nusd["privacy_disclosure"]["result_commitment_scope"].as_str(),
+            Some("authorized_response_without_privacy_disclosure")
+        );
+        assert!(
+            nusd["privacy_disclosure"]["result_commitment_digest"]
+                .as_str()
+                .unwrap_or_default()
+                .starts_with("0x")
+        );
         assert!(
             nusd["privacy_disclosure"]["disclosure_digest"]
                 .as_str()
@@ -7009,6 +7037,12 @@ mod tests {
         assert_eq!(
             assets["privacy_disclosure"]["proof_generation_performed"].as_bool(),
             Some(false)
+        );
+        assert!(
+            assets["privacy_disclosure"]["result_commitment_digest"]
+                .as_str()
+                .unwrap_or_default()
+                .starts_with("0x")
         );
 
         let redacted_nusd = run_query(

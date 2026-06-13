@@ -207,13 +207,21 @@ fn mainline_privacy_disclosure_receipt_v1(
     account: &str,
     asset: Option<&str>,
     authorization_reason: &str,
+    result_commitment: &Value,
 ) -> Value {
     let normalized_account = normalize_mainline_account_view_key_v1(account);
     let normalized_asset = asset
         .map(|raw| raw.trim().to_ascii_uppercase())
         .unwrap_or_else(|| "*".to_string());
+    let result_commitment_digest = Keccak256::digest(
+        serde_json::to_vec(result_commitment)
+            .unwrap_or_default()
+            .as_slice(),
+    );
+    let result_commitment_digest_hex =
+        format!("0x{}", mainline_to_hex_lower_v1(&result_commitment_digest));
     let preimage = format!(
-        "novovm:privacy-disclosure:v1|{method}|{normalized_account}|{normalized_asset}|{authorization_reason}|mainline_read_gate|proof_generation_performed=false"
+        "novovm:privacy-disclosure:v1|{method}|{normalized_account}|{normalized_asset}|{authorization_reason}|mainline_read_gate|proof_generation_performed=false|result_commitment={result_commitment_digest_hex}"
     );
     let digest = Keccak256::digest(preimage.as_bytes());
     json!({
@@ -227,6 +235,8 @@ fn mainline_privacy_disclosure_receipt_v1(
         "proof_generation_performed": false,
         "proof_system": "none",
         "proof_upgrade_path": ["ringct", "zk"],
+        "result_commitment_scope": "authorized_response_without_privacy_disclosure",
+        "result_commitment_digest": result_commitment_digest_hex,
         "no_second_ledger": true,
         "disclosure_digest": format!("0x{}", mainline_to_hex_lower_v1(&digest)),
     })
@@ -1071,6 +1081,13 @@ fn run_mainline_native_execution_query(method: &str, params: &Value) -> Result<V
                 if let (Some(map), Some(reason)) =
                     (out.as_object_mut(), disclosure_authorization.as_deref())
                 {
+                    let result_commitment = json!({
+                        "method": "nov_getAssetBalance",
+                        "account": account,
+                        "asset": asset,
+                        "found": found,
+                        "balance": native_balance,
+                    });
                     map.insert(
                         "privacy_disclosure".to_string(),
                         mainline_privacy_disclosure_receipt_v1(
@@ -1078,6 +1095,7 @@ fn run_mainline_native_execution_query(method: &str, params: &Value) -> Result<V
                             &account,
                             Some(&asset),
                             reason,
+                            &result_commitment,
                         ),
                     );
                 }
@@ -12259,6 +12277,16 @@ mod tests {
         assert_eq!(
             nusd_after["privacy_disclosure"]["proof_system"].as_str(),
             Some("none")
+        );
+        assert_eq!(
+            nusd_after["privacy_disclosure"]["result_commitment_scope"].as_str(),
+            Some("authorized_response_without_privacy_disclosure")
+        );
+        assert!(
+            nusd_after["privacy_disclosure"]["result_commitment_digest"]
+                .as_str()
+                .unwrap_or_default()
+                .starts_with("0x")
         );
         assert!(
             nusd_after["privacy_disclosure"]["disclosure_digest"]
