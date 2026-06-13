@@ -33736,6 +33736,9 @@ struct NativeExecutionPipelineAggregateV1 {
     network_error_ticks: u64,
     ingress_submitted_total: u64,
     product_ingress_submitted_total: u64,
+    max_product_ingress_submitted_per_tick: u64,
+    max_network_received_per_tick: u64,
+    max_queue_admitted_per_tick: u64,
     ingress_error_ticks: u64,
     aoem_executed_total: u64,
     aoem_deferred_total: u64,
@@ -33778,6 +33781,9 @@ impl NativeExecutionPipelineAggregateV1 {
             network_error_ticks: 0,
             ingress_submitted_total: 0,
             product_ingress_submitted_total: 0,
+            max_product_ingress_submitted_per_tick: 0,
+            max_network_received_per_tick: 0,
+            max_queue_admitted_per_tick: 0,
             ingress_error_ticks: 0,
             aoem_executed_total: 0,
             aoem_deferred_total: 0,
@@ -33883,6 +33889,14 @@ impl NativeExecutionPipelineAggregateV1 {
                 self.network_error_ticks = self.network_error_ticks.saturating_add(1);
             }
         }
+        let network_received_this_tick = network
+            .get("udp")
+            .and_then(|value| value.get("received_count"))
+            .and_then(|value| value.as_u64())
+            .unwrap_or_default();
+        self.max_network_received_per_tick = self
+            .max_network_received_per_tick
+            .max(network_received_this_tick);
         if ingress_drive
             .get("enabled")
             .and_then(|value| value.as_bool())
@@ -33899,6 +33913,8 @@ impl NativeExecutionPipelineAggregateV1 {
                     .unwrap_or_default();
                 self.ingress_submitted_total =
                     self.ingress_submitted_total.saturating_add(submitted);
+                self.max_product_ingress_submitted_per_tick =
+                    self.max_product_ingress_submitted_per_tick.max(submitted);
                 if ingress_drive
                     .get("product_ingress")
                     .and_then(|value| value.as_bool())
@@ -33918,6 +33934,12 @@ impl NativeExecutionPipelineAggregateV1 {
             .get("executed")
             .and_then(|value| value.as_u64())
             .unwrap_or_default();
+        self.max_queue_admitted_per_tick = self.max_queue_admitted_per_tick.max(
+            report
+                .pointer("/tick_result/batch_result/selected_count")
+                .and_then(|value| value.as_u64())
+                .unwrap_or(executed_this_tick),
+        );
         self.aoem_executed_total = self.aoem_executed_total.saturating_add(executed_this_tick);
         self.max_aoem_batch_executed_per_tick = self
             .max_aoem_batch_executed_per_tick
@@ -34161,6 +34183,18 @@ impl NativeExecutionPipelineAggregateV1 {
             serde_json::json!(self.product_ingress_submitted_total),
         );
         out.insert(
+            "max_product_ingress_submitted_per_tick".to_string(),
+            serde_json::json!(self.max_product_ingress_submitted_per_tick),
+        );
+        out.insert(
+            "max_network_received_per_tick".to_string(),
+            serde_json::json!(self.max_network_received_per_tick),
+        );
+        out.insert(
+            "max_queue_admitted_per_tick".to_string(),
+            serde_json::json!(self.max_queue_admitted_per_tick),
+        );
+        out.insert(
             "ingress_error_ticks".to_string(),
             serde_json::json!(self.ingress_error_ticks),
         );
@@ -34257,6 +34291,9 @@ struct NativeExecutionPipelineSoakGateV1 {
     min_network_ok_ticks: u64,
     max_network_error_ticks: u64,
     min_ingress_submitted_total: u64,
+    min_max_product_ingress_submitted_per_tick: u64,
+    min_max_network_received_per_tick: u64,
+    min_max_queue_admitted_per_tick: u64,
     max_ingress_error_ticks: u64,
     min_broadcast_tx_total: u64,
     min_broadcast_dispatch_total: u64,
@@ -34334,6 +34371,18 @@ impl NativeExecutionPipelineSoakGateV1 {
             )?,
             min_ingress_submitted_total: u64_env_allow_zero(
                 "NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_INGRESS_SUBMITTED",
+                0,
+            )?,
+            min_max_product_ingress_submitted_per_tick: u64_env_allow_zero(
+                "NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_MAX_PRODUCT_INGRESS_SUBMITTED_PER_TICK",
+                0,
+            )?,
+            min_max_network_received_per_tick: u64_env_allow_zero(
+                "NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_MAX_NETWORK_RECEIVED_PER_TICK",
+                0,
+            )?,
+            min_max_queue_admitted_per_tick: u64_env_allow_zero(
+                "NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_MAX_QUEUE_ADMITTED_PER_TICK",
                 0,
             )?,
             max_ingress_error_ticks: u64_env_allow_zero(
@@ -34490,6 +34539,21 @@ impl NativeExecutionPipelineSoakGateV1 {
             summary,
             "ingress_submitted_total",
             self.min_ingress_submitted_total,
+        )?;
+        require_summary_min(
+            summary,
+            "max_product_ingress_submitted_per_tick",
+            self.min_max_product_ingress_submitted_per_tick,
+        )?;
+        require_summary_min(
+            summary,
+            "max_network_received_per_tick",
+            self.min_max_network_received_per_tick,
+        )?;
+        require_summary_min(
+            summary,
+            "max_queue_admitted_per_tick",
+            self.min_max_queue_admitted_per_tick,
         )?;
         require_summary_min(
             summary,
@@ -34859,6 +34923,11 @@ mod native_execution_pipeline_tests {
         let summary = aggregate.to_json();
         assert_eq!(summary["ingress_submitted_total"].as_u64(), Some(1));
         assert_eq!(summary["product_ingress_submitted_total"].as_u64(), Some(1));
+        assert_eq!(
+            summary["max_product_ingress_submitted_per_tick"].as_u64(),
+            Some(1)
+        );
+        assert_eq!(summary["max_queue_admitted_per_tick"].as_u64(), Some(1));
         assert_eq!(summary["aoem_executed_total"].as_u64(), Some(1));
         assert_eq!(
             summary["max_aoem_batch_executed_per_tick"].as_u64(),
@@ -34894,6 +34963,9 @@ mod native_execution_pipeline_tests {
             min_network_ok_ticks: 0,
             max_network_error_ticks: u64::MAX,
             min_ingress_submitted_total: 1,
+            min_max_product_ingress_submitted_per_tick: 1,
+            min_max_network_received_per_tick: 0,
+            min_max_queue_admitted_per_tick: 1,
             max_ingress_error_ticks: 0,
             min_broadcast_tx_total: 1,
             min_broadcast_dispatch_total: 1,
@@ -35024,6 +35096,11 @@ mod native_execution_pipeline_tests {
         assert_eq!(summary["ticks"].as_u64(), Some(3));
         assert_eq!(summary["ingress_submitted_total"].as_u64(), Some(5));
         assert_eq!(summary["product_ingress_submitted_total"].as_u64(), Some(5));
+        assert_eq!(
+            summary["max_product_ingress_submitted_per_tick"].as_u64(),
+            Some(2)
+        );
+        assert_eq!(summary["max_queue_admitted_per_tick"].as_u64(), Some(2));
         assert_eq!(summary["aoem_executed_total"].as_u64(), Some(5));
         assert_eq!(
             summary["max_aoem_batch_executed_per_tick"].as_u64(),
@@ -35069,6 +35146,9 @@ mod native_execution_pipeline_tests {
             min_network_ok_ticks: 0,
             max_network_error_ticks: u64::MAX,
             min_ingress_submitted_total: 5,
+            min_max_product_ingress_submitted_per_tick: 2,
+            min_max_network_received_per_tick: 0,
+            min_max_queue_admitted_per_tick: 2,
             max_ingress_error_ticks: 0,
             min_broadcast_tx_total: 5,
             min_broadcast_dispatch_total: 3,
@@ -35351,6 +35431,9 @@ mod native_execution_pipeline_tests {
             min_network_ok_ticks: 1,
             max_network_error_ticks: 0,
             min_ingress_submitted_total: 2,
+            min_max_product_ingress_submitted_per_tick: 2,
+            min_max_network_received_per_tick: 1,
+            min_max_queue_admitted_per_tick: 2,
             max_ingress_error_ticks: 0,
             min_broadcast_tx_total: 1,
             min_broadcast_dispatch_total: 1,
@@ -35379,6 +35462,9 @@ mod native_execution_pipeline_tests {
             "network_ok_ticks": 1u64,
             "network_error_ticks": 0u64,
             "ingress_submitted_total": 2u64,
+            "max_product_ingress_submitted_per_tick": 2u64,
+            "max_network_received_per_tick": 1u64,
+            "max_queue_admitted_per_tick": 2u64,
             "ingress_error_ticks": 0u64,
             "broadcast_tx_total_last": 1u64,
             "broadcast_dispatch_total_last": 1u64,
@@ -35417,6 +35503,9 @@ mod native_execution_pipeline_tests {
             min_network_ok_ticks: 0,
             max_network_error_ticks: u64::MAX,
             min_ingress_submitted_total: 0,
+            min_max_product_ingress_submitted_per_tick: 0,
+            min_max_network_received_per_tick: 0,
+            min_max_queue_admitted_per_tick: 0,
             max_ingress_error_ticks: u64::MAX,
             min_broadcast_tx_total: 0,
             min_broadcast_dispatch_total: 0,
@@ -35465,6 +35554,9 @@ mod native_execution_pipeline_tests {
             min_network_ok_ticks: 0,
             max_network_error_ticks: u64::MAX,
             min_ingress_submitted_total: 0,
+            min_max_product_ingress_submitted_per_tick: 0,
+            min_max_network_received_per_tick: 0,
+            min_max_queue_admitted_per_tick: 0,
             max_ingress_error_ticks: u64::MAX,
             min_broadcast_tx_total: 64,
             min_broadcast_dispatch_total: 0,
@@ -35515,6 +35607,9 @@ mod native_execution_pipeline_tests {
             min_network_ok_ticks: 0,
             max_network_error_ticks: u64::MAX,
             min_ingress_submitted_total: 0,
+            min_max_product_ingress_submitted_per_tick: 0,
+            min_max_network_received_per_tick: 0,
+            min_max_queue_admitted_per_tick: 0,
             max_ingress_error_ticks: u64::MAX,
             min_broadcast_tx_total: 0,
             min_broadcast_dispatch_total: 0,
@@ -35565,6 +35660,9 @@ mod native_execution_pipeline_tests {
             min_network_ok_ticks: 0,
             max_network_error_ticks: u64::MAX,
             min_ingress_submitted_total: 1,
+            min_max_product_ingress_submitted_per_tick: 0,
+            min_max_network_received_per_tick: 0,
+            min_max_queue_admitted_per_tick: 0,
             max_ingress_error_ticks: 0,
             min_broadcast_tx_total: 1,
             min_broadcast_dispatch_total: 1,
@@ -35633,6 +35731,9 @@ mod native_execution_pipeline_tests {
             min_network_ok_ticks: 0,
             max_network_error_ticks: u64::MAX,
             min_ingress_submitted_total: 0,
+            min_max_product_ingress_submitted_per_tick: 0,
+            min_max_network_received_per_tick: 0,
+            min_max_queue_admitted_per_tick: 0,
             max_ingress_error_ticks: u64::MAX,
             min_broadcast_tx_total: 0,
             min_broadcast_dispatch_total: 0,
@@ -35685,6 +35786,9 @@ mod native_execution_pipeline_tests {
             min_network_ok_ticks: 0,
             max_network_error_ticks: 1,
             min_ingress_submitted_total: 0,
+            min_max_product_ingress_submitted_per_tick: 0,
+            min_max_network_received_per_tick: 0,
+            min_max_queue_admitted_per_tick: 0,
             max_ingress_error_ticks: u64::MAX,
             min_broadcast_tx_total: 0,
             min_broadcast_dispatch_total: 0,
@@ -35731,6 +35835,9 @@ mod native_execution_pipeline_tests {
             min_network_ok_ticks: 0,
             max_network_error_ticks: u64::MAX,
             min_ingress_submitted_total: 0,
+            min_max_product_ingress_submitted_per_tick: 0,
+            min_max_network_received_per_tick: 0,
+            min_max_queue_admitted_per_tick: 0,
             max_ingress_error_ticks: 0,
             min_broadcast_tx_total: 0,
             min_broadcast_dispatch_total: 0,

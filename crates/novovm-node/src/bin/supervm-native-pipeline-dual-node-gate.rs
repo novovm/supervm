@@ -233,6 +233,21 @@ fn sender_round_aggregate_v1(summaries: &[Value]) -> Value {
         .iter()
         .map(|summary| summary_u64(summary, "ingress_submitted_total"))
         .sum::<u64>();
+    let max_product_ingress_submitted_per_tick = summaries
+        .iter()
+        .map(|summary| summary_u64(summary, "max_product_ingress_submitted_per_tick"))
+        .max()
+        .unwrap_or_default();
+    let max_network_received_per_tick = summaries
+        .iter()
+        .map(|summary| summary_u64(summary, "max_network_received_per_tick"))
+        .max()
+        .unwrap_or_default();
+    let max_queue_admitted_per_tick = summaries
+        .iter()
+        .map(|summary| summary_u64(summary, "max_queue_admitted_per_tick"))
+        .max()
+        .unwrap_or_default();
     let ingress_error_ticks = summaries
         .iter()
         .map(|summary| summary_u64(summary, "ingress_error_ticks"))
@@ -285,6 +300,9 @@ fn sender_round_aggregate_v1(summaries: &[Value]) -> Value {
         "network_ok_ticks": network_ok_ticks,
         "network_error_ticks": network_error_ticks,
         "ingress_submitted_total": ingress_submitted_total,
+        "max_product_ingress_submitted_per_tick": max_product_ingress_submitted_per_tick,
+        "max_network_received_per_tick": max_network_received_per_tick,
+        "max_queue_admitted_per_tick": max_queue_admitted_per_tick,
         "ingress_error_ticks": ingress_error_ticks,
         "proof_ticks": proof_ticks,
         "commit_ticks": commit_ticks,
@@ -329,6 +347,18 @@ fn main() -> Result<()> {
     )?;
     let min_receiver_max_aoem_batch_per_tick = u64_env(
         "NOVOVM_NATIVE_PIPELINE_DUAL_GATE_MIN_RECEIVER_MAX_AOEM_BATCH_PER_TICK",
+        tx_count.min(tick_budget).max(1),
+    )?;
+    let min_sender_max_product_ingress_per_tick = u64_env(
+        "NOVOVM_NATIVE_PIPELINE_DUAL_GATE_MIN_SENDER_MAX_PRODUCT_INGRESS_PER_TICK",
+        tx_count.min(ingress_max_per_tick).max(1),
+    )?;
+    let min_receiver_max_network_received_per_tick = u64_env(
+        "NOVOVM_NATIVE_PIPELINE_DUAL_GATE_MIN_RECEIVER_MAX_NETWORK_RECEIVED_PER_TICK",
+        tx_count.min(udp_recv_budget).max(1),
+    )?;
+    let min_receiver_max_queue_admitted_per_tick = u64_env(
+        "NOVOVM_NATIVE_PIPELINE_DUAL_GATE_MIN_RECEIVER_MAX_QUEUE_ADMITTED_PER_TICK",
         tx_count.min(tick_budget).max(1),
     )?;
     let min_receiver_max_proof_items_per_tick = u64_env(
@@ -538,6 +568,10 @@ fn main() -> Result<()> {
             "NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_BROADCAST_DISPATCH",
             ingress_ticks.to_string(),
         ),
+        (
+            "NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_MAX_PRODUCT_INGRESS_SUBMITTED_PER_TICK",
+            min_sender_max_product_ingress_per_tick.to_string(),
+        ),
     ]);
 
     let mut receiver_children = Vec::<(u64, String, Child)>::with_capacity(receiver_count as usize);
@@ -567,6 +601,14 @@ fn main() -> Result<()> {
             (
                 "NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_NONEMPTY_COMMIT_TICKS",
                 min_nonempty_batch_ticks.to_string(),
+            ),
+            (
+                "NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_MAX_NETWORK_RECEIVED_PER_TICK",
+                min_receiver_max_network_received_per_tick.to_string(),
+            ),
+            (
+                "NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_MAX_QUEUE_ADMITTED_PER_TICK",
+                min_receiver_max_queue_admitted_per_tick.to_string(),
             ),
         ]);
         let mut cmd = Command::new(&node_bin);
@@ -703,6 +745,18 @@ fn main() -> Result<()> {
             )?;
             require_min(
                 summary,
+                "max_network_received_per_tick",
+                min_receiver_max_network_received_per_tick,
+                label.as_str(),
+            )?;
+            require_min(
+                summary,
+                "max_queue_admitted_per_tick",
+                min_receiver_max_queue_admitted_per_tick,
+                label.as_str(),
+            )?;
+            require_min(
+                summary,
                 "max_proof_items_per_tick",
                 min_receiver_max_proof_items_per_tick,
                 label.as_str(),
@@ -762,6 +816,12 @@ fn main() -> Result<()> {
             &sender_summary,
             "ingress_submitted_total",
             tx_count,
+            "sender",
+        )?;
+        require_min(
+            &sender_summary,
+            "max_product_ingress_submitted_per_tick",
+            min_sender_max_product_ingress_per_tick,
             "sender",
         )?;
         require_min(
@@ -840,6 +900,9 @@ fn main() -> Result<()> {
             "receiver_canonical_tps_x1000": receiver_canonical_tps_x1000,
             "min_sender_broadcast_tps_x1000": min_sender_broadcast_tps_x1000,
             "min_receiver_canonical_tps_x1000": min_receiver_canonical_tps_x1000,
+            "min_sender_max_product_ingress_per_tick": min_sender_max_product_ingress_per_tick,
+            "min_receiver_max_network_received_per_tick": min_receiver_max_network_received_per_tick,
+            "min_receiver_max_queue_admitted_per_tick": min_receiver_max_queue_admitted_per_tick,
             "min_receiver_max_aoem_batch_per_tick": min_receiver_max_aoem_batch_per_tick,
             "min_receiver_max_proof_items_per_tick": min_receiver_max_proof_items_per_tick,
             "min_receiver_max_commit_items_per_tick": min_receiver_max_commit_items_per_tick,
