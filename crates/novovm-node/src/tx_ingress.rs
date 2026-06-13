@@ -325,6 +325,14 @@ pub struct NovAoemSemanticIngressMetaV1 {
     pub semantic_entry: String,
     pub algebraic_semantic_entry: bool,
     #[serde(default)]
+    pub ingress_scope: String,
+    #[serde(default)]
+    pub batch_plan_id: Option<u64>,
+    #[serde(default)]
+    pub batch_item_index: Option<usize>,
+    #[serde(default)]
+    pub batch_item_count: Option<usize>,
+    #[serde(default)]
     pub concurrent_execution_enabled: bool,
     #[serde(default)]
     pub concurrent_execution_model: String,
@@ -1244,6 +1252,10 @@ fn native_aoem_semantic_entry_v1() -> &'static str {
     "aoem.ops_wire_v1.native_asset_semantic_ingress"
 }
 
+fn native_aoem_raw_tx_batch_precommit_entry_v1() -> &'static str {
+    "aoem.ops_wire_v1.native_raw_tx_batch_precommit"
+}
+
 fn native_execution_request_plan_id_v1(
     request: &NovExecutionRequestV1,
     subject_meta: &NovExecutionSubjectMetaV1,
@@ -1365,6 +1377,10 @@ fn base_native_aoem_semantic_ingress_meta_v1(
         execution_kernel: "AOEM".to_string(),
         semantic_entry: native_aoem_semantic_entry_v1().to_string(),
         algebraic_semantic_entry: true,
+        ingress_scope: "single_request".to_string(),
+        batch_plan_id: None,
+        batch_item_index: None,
+        batch_item_count: None,
         concurrent_execution_enabled: false,
         concurrent_execution_model: String::new(),
         batch_mode: wire.op_count > 1,
@@ -10244,6 +10260,10 @@ fn execute_native_raw_tx_batch_via_aoem_semantic_ingress_v1(
     let required = native_aoem_semantic_ingress_required_v1();
     let (wire, plan_id) = build_native_aoem_raw_tx_batch_ops_wire_v1(raw_payloads)?;
     let mut meta = base_native_aoem_semantic_ingress_meta_v1(enabled, required, plan_id, &wire);
+    meta.semantic_entry = native_aoem_raw_tx_batch_precommit_entry_v1().to_string();
+    meta.ingress_scope = "raw_tx_batch_precommit".to_string();
+    meta.batch_plan_id = Some(plan_id);
+    meta.batch_item_count = Some(raw_payloads.len());
     meta.batch_mode = true;
     meta.batch_size = raw_payloads.len();
     if !enabled {
@@ -10321,6 +10341,19 @@ fn execute_native_raw_tx_batch_via_aoem_semantic_ingress_v1(
             Ok(meta)
         }
     }
+}
+
+fn native_aoem_batch_item_ingress_meta_v1(
+    batch_meta: &NovAoemSemanticIngressMetaV1,
+    item_index: usize,
+    item_count: usize,
+) -> NovAoemSemanticIngressMetaV1 {
+    let mut meta = batch_meta.clone();
+    meta.ingress_scope = "raw_tx_batch_precommit_item".to_string();
+    meta.batch_plan_id = Some(batch_meta.batch_plan_id.unwrap_or(batch_meta.plan_id));
+    meta.batch_item_index = Some(item_index);
+    meta.batch_item_count = Some(item_count);
+    meta
 }
 
 pub fn run_nov_send_raw_transaction_batch_from_params_v1(
@@ -10415,7 +10448,8 @@ pub fn run_nov_send_raw_transaction_batch_from_params_v1(
         acquire_nov_native_execution_store_write_lock_v1(effective_native_store_path.as_path())?;
     let mut store = load_nov_native_execution_store_v1(effective_native_store_path.as_path())?;
     let mut results = Vec::with_capacity(prepared.len());
-    for item in prepared {
+    let item_count = prepared.len();
+    for (item_index, item) in prepared.into_iter().enumerate() {
         let execution_receipt = if let Some(request) = item.execution_request.as_ref() {
             Some(dispatch_nov_execution_request_into_loaded_store_v1(
                 effective_native_store_path.as_path(),
@@ -10424,7 +10458,11 @@ pub fn run_nov_send_raw_transaction_batch_from_params_v1(
                 item.execution_subject.as_ref(),
                 item.requested_execution_behavior.as_ref(),
                 unified_account_store_path.as_deref(),
-                Some(aoem_batch_ingress.clone()),
+                Some(native_aoem_batch_item_ingress_meta_v1(
+                    &aoem_batch_ingress,
+                    item_index,
+                    item_count,
+                )),
                 now_ms,
             )?)
         } else {
@@ -11803,6 +11841,18 @@ mod tests {
                         Some("AOEM")
                     );
                     assert_eq!(
+                        out["aoem_batch_ingress"]["semantic_entry"].as_str(),
+                        Some(native_aoem_raw_tx_batch_precommit_entry_v1())
+                    );
+                    assert_eq!(
+                        out["aoem_batch_ingress"]["ingress_scope"].as_str(),
+                        Some("raw_tx_batch_precommit")
+                    );
+                    assert_eq!(
+                        out["aoem_batch_ingress"]["batch_item_count"].as_u64(),
+                        Some(2)
+                    );
+                    assert_eq!(
                         out["aoem_batch_ingress"]["batch_mode"].as_bool(),
                         Some(true)
                     );
@@ -11829,7 +11879,23 @@ mod tests {
                             && item["native_receipt"]["status"].as_bool() == Some(true)
                             && item["native_receipt"]["module"].as_str() == Some("treasury")
                             && item["native_receipt"]["method"].as_str() == Some("deposit_reserve")
+                            && item["native_receipt"]["aoem_semantic_ingress"]["semantic_entry"]
+                                .as_str()
+                                == Some(native_aoem_raw_tx_batch_precommit_entry_v1())
+                            && item["native_receipt"]["aoem_semantic_ingress"]["ingress_scope"]
+                                .as_str()
+                                == Some("raw_tx_batch_precommit_item")
                     }));
+                    assert_eq!(
+                        results[0]["native_receipt"]["aoem_semantic_ingress"]["batch_item_index"]
+                            .as_u64(),
+                        Some(0)
+                    );
+                    assert_eq!(
+                        results[1]["native_receipt"]["aoem_semantic_ingress"]["batch_item_index"]
+                            .as_u64(),
+                        Some(1)
+                    );
                     let store = load_nov_native_execution_store_v1(path.as_path())
                         .expect("batch store should load");
                     assert_eq!(store.receipts.len(), 2);
