@@ -467,7 +467,7 @@ native NOV 入口：
 - `P_pay` 已接入多资产 Execution Fee quote 和 TreasuryDirect clearing。
 - `P_redeem` 已接入 `treasury.redeem` 的 `asset_out + nov_amount` 形态：先扣用户 NOV，再按反向保守价从 Treasury reserve 出资产。
 - 许可 oracle source allowlist / disabled / rotation 已接入最小治理路径：`apply_treasury_policy` 可持久化 `fee_oracle_allowed_sources`、`fee_oracle_disabled_sources`、禁用原因和 source rotations；`get_fee_oracle_rates` 和 `get_protocol_clearing_price` 会暴露 `oracle_source_allowed`、`oracle_source_disabled`、`oracle_disabled_reason`、`oracle_rotation_target`，非白名单或已禁用 source 不进入协议清算价。
-- Treasury reserve proof 已接入最小治理登记/查询和执行门禁路径：`governance.set_reserve_proof` 可登记 proof metadata；`treasury.get_reserve_proof` / `treasury.get_reserve_snapshot` 与主线 `nov_getTreasuryReserveProof` / `nov_getTreasuryReserveSnapshot` 可查询 proof effective status、amount cap 和 non-claim 标记；已登记 proof 且 effective status 非 `active` 的资产会阻断非 NOV fee clearing 与 treasury redeem；active proof 的 `reserve_amount` 会约束 projected Treasury reserve/exposure，防止账面 reserve 继续高于 proof cap。
+- Treasury reserve proof 已接入最小治理登记/查询和执行门禁路径：`governance.set_reserve_proof` 可登记 proof metadata；`treasury.get_reserve_proof` / `treasury.get_reserve_snapshot` 与主线 `nov_getTreasuryReserveProof` / `nov_getTreasuryReserveSnapshot` 可查询 proof effective status、amount cap 和 non-claim 标记；已登记 proof 且 effective status 非 `active` 的资产会阻断 `nov_depositReserve`、非 NOV fee clearing 与 treasury redeem；active proof 的 `reserve_amount` 会约束 projected Treasury reserve/exposure，防止账面 reserve 继续高于 proof cap。
 - 仍未完成真实外部桥自动化、真实自动 reserve proof verification、NOV emission policy 自动接线、真实外部链出金和高并发事务后端；当前 native store single-writer guard 只是写入互斥，不是事务数据库。
 
 建议：
@@ -558,6 +558,6 @@ Ethereum lock contract
 
 1. 钱包接入 smoke：用真实 JSON-RPC 顺序跑 `ua_createUca -> ua_bindPersona(Evm) -> eth_sendRawTransaction -> eth_getTransactionReceipt -> account_assets`。
 2. ETH mapped asset smoke：主线查询面已覆盖 `ua_registerMappedLock -> account_assets -> ua_burnMappedAsset -> ua_releaseMappedLock -> ua_getMappedAsset` 的 shadow/internal MVP 闭环，并在输出里明确 `phase4_mode=shadow`、`settlement_effect=none`；live/真实外部链证明与链上释放仍不在该 smoke 范围内。
-3. NOV native treasury smoke：主线查询面已覆盖 `nov_getTreasuryReserveProof -> nov_redeem -> nov_getTreasurySettlementJournal -> nov_getTreasuryReserveSnapshot -> proof cap fail-closed -> account balance unchanged`；仍可继续补 `treasury.deposit_reserve -> treasury.redeem -> account_balance/account_assets` 的 CLI/API 脚本化 smoke。
+3. NOV native treasury smoke：主线查询面已覆盖 `nov_getTreasuryReserveProof -> nov_redeem -> nov_getTreasurySettlementJournal -> nov_getTreasuryReserveSnapshot -> proof cap fail-closed -> account balance unchanged`，并已覆盖 `nov_depositReserve -> nov_getTreasuryReserveSnapshot -> nov_redeem -> nov_getAssetBalance / nov_getTreasurySettlementJournal -> lowered proof cap blocks nov_depositReserve`；该 smoke 仍是内部 Treasury 产品闭环，不等于外部储备自动验真。
 
 如果这三条 smoke 都稳定，才能进入“真实钱包入口接入”。如果目标是“ETH 锁仓合约 -> NOV 铸造”，应单独开一个小阶段，不要混进 EVM v1。

@@ -5534,6 +5534,48 @@ fn dispatch_native_module_execute_v1(
                 .get("amount")
                 .and_then(parse_u128_from_json_value_v1)
                 .unwrap_or_else(|| request.fee_max_pay_amount.max(1));
+            let now_ms = now_unix_millis_v1();
+            if asset != "NOV" {
+                if let Some(reason) =
+                    reserve_proof_block_reason_for_asset_v1(store, asset.as_str(), now_ms)
+                {
+                    increment_settlement_failure_v1(store, "reserve_proof_not_active");
+                    return build_failed_native_receipt_v1(
+                        request,
+                        settled_fee,
+                        subject_meta,
+                        "treasury".to_string(),
+                        "deposit_reserve".to_string(),
+                        fee_settlement_reason_v1("reserve_proof_not_active", reason.as_str()),
+                    );
+                }
+                let current_reserve = store
+                    .module_state
+                    .treasury_reserves
+                    .get(asset.as_str())
+                    .copied()
+                    .unwrap_or(0);
+                let projected_reserve_after = current_reserve.saturating_add(amount);
+                if let Some(reason) = reserve_proof_capacity_block_reason_v1(
+                    store,
+                    asset.as_str(),
+                    projected_reserve_after,
+                    now_ms,
+                ) {
+                    increment_settlement_failure_v1(store, "reserve_proof_capacity_exceeded");
+                    return build_failed_native_receipt_v1(
+                        request,
+                        settled_fee,
+                        subject_meta,
+                        "treasury".to_string(),
+                        "deposit_reserve".to_string(),
+                        fee_settlement_reason_v1(
+                            "reserve_proof_capacity_exceeded",
+                            reason.as_str(),
+                        ),
+                    );
+                }
+            }
             let reserve_entry = store
                 .module_state
                 .treasury_reserves
