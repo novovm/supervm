@@ -33079,6 +33079,11 @@ struct NativeExecutionPipelineIngressDriveV1 {
     max_per_tick: usize,
 }
 
+const NATIVE_EXECUTION_PIPELINE_PRODUCT_INGRESS_SOURCE_V1: &str =
+    "nov_sendRawTransaction_product_raw_tx_ingress";
+const NATIVE_EXECUTION_PIPELINE_PRODUCT_INGRESS_ENTRY_V1: &str =
+    "ingest_local_nov_raw_tx_payload_v1";
+
 impl NativeExecutionPipelineIngressDriveV1 {
     fn from_env(chain_id: u64) -> Result<Option<Self>> {
         let payloads = load_native_execution_pipeline_ingress_payloads_from_env_v1(chain_id)?;
@@ -33103,7 +33108,10 @@ impl NativeExecutionPipelineIngressDriveV1 {
             return serde_json::json!({
                 "enabled": true,
                 "ok": true,
-                "source": "nov_native_raw_tx_env_or_file",
+                "source": NATIVE_EXECUTION_PIPELINE_PRODUCT_INGRESS_SOURCE_V1,
+                "entry": NATIVE_EXECUTION_PIPELINE_PRODUCT_INGRESS_ENTRY_V1,
+                "product_ingress": true,
+                "aoem_lifecycle": "product_raw_tx_to_pending_runtime_to_aoem_tick",
                 "submitted": 0u64,
                 "remaining": 0u64,
                 "exhausted": true,
@@ -33127,7 +33135,10 @@ impl NativeExecutionPipelineIngressDriveV1 {
                     return serde_json::json!({
                         "enabled": true,
                         "ok": false,
-                        "source": "nov_native_raw_tx_env_or_file",
+                        "source": NATIVE_EXECUTION_PIPELINE_PRODUCT_INGRESS_SOURCE_V1,
+                        "entry": NATIVE_EXECUTION_PIPELINE_PRODUCT_INGRESS_ENTRY_V1,
+                        "product_ingress": true,
+                        "aoem_lifecycle": "product_raw_tx_to_pending_runtime_to_aoem_tick",
                         "submitted": tx_hashes.len() as u64,
                         "failed_index": idx,
                         "error": err.to_string(),
@@ -33138,7 +33149,10 @@ impl NativeExecutionPipelineIngressDriveV1 {
                 return serde_json::json!({
                     "enabled": true,
                     "ok": false,
-                    "source": "nov_native_raw_tx_env_or_file",
+                    "source": NATIVE_EXECUTION_PIPELINE_PRODUCT_INGRESS_SOURCE_V1,
+                    "entry": NATIVE_EXECUTION_PIPELINE_PRODUCT_INGRESS_ENTRY_V1,
+                    "product_ingress": true,
+                    "aoem_lifecycle": "product_raw_tx_to_pending_runtime_to_aoem_tick",
                     "submitted": tx_hashes.len() as u64,
                     "failed_index": idx,
                     "error": format!(
@@ -33153,7 +33167,10 @@ impl NativeExecutionPipelineIngressDriveV1 {
         serde_json::json!({
             "enabled": true,
             "ok": true,
-            "source": "nov_native_raw_tx_env_or_file",
+            "source": NATIVE_EXECUTION_PIPELINE_PRODUCT_INGRESS_SOURCE_V1,
+            "entry": NATIVE_EXECUTION_PIPELINE_PRODUCT_INGRESS_ENTRY_V1,
+            "product_ingress": true,
+            "aoem_lifecycle": "product_raw_tx_to_pending_runtime_to_aoem_tick",
             "submitted": tx_hashes.len() as u64,
             "remaining": self.payloads.len().saturating_sub(self.cursor) as u64,
             "exhausted": self.cursor >= self.payloads.len(),
@@ -33626,6 +33643,18 @@ fn build_native_execution_pipeline_report_v1(
             "broadcast_drive": broadcast_drive,
             "ingress": {
                 "source": "network_runtime_native_pending",
+                "product_entry": ingress_drive
+                    .get("entry")
+                    .cloned()
+                    .unwrap_or(serde_json::Value::Null),
+                "product_ingress": ingress_drive
+                    .get("product_ingress")
+                    .and_then(|value| value.as_bool())
+                    .unwrap_or(false),
+                "aoem_lifecycle": ingress_drive
+                    .get("aoem_lifecycle")
+                    .cloned()
+                    .unwrap_or(serde_json::Value::Null),
                 "total": pending_summary.tx_count,
                 "local": pending_summary.local_origin_count,
                 "remote": pending_summary.remote_origin_count,
@@ -33698,6 +33727,7 @@ struct NativeExecutionPipelineAggregateV1 {
     network_ok_ticks: u64,
     network_error_ticks: u64,
     ingress_submitted_total: u64,
+    product_ingress_submitted_total: u64,
     ingress_error_ticks: u64,
     aoem_executed_total: u64,
     aoem_deferred_total: u64,
@@ -33728,6 +33758,7 @@ impl NativeExecutionPipelineAggregateV1 {
             network_ok_ticks: 0,
             network_error_ticks: 0,
             ingress_submitted_total: 0,
+            product_ingress_submitted_total: 0,
             ingress_error_ticks: 0,
             aoem_executed_total: 0,
             aoem_deferred_total: 0,
@@ -33828,12 +33859,23 @@ impl NativeExecutionPipelineAggregateV1 {
                 .and_then(|value| value.as_bool())
                 .unwrap_or(false)
             {
-                self.ingress_submitted_total = self.ingress_submitted_total.saturating_add(
-                    ingress_drive
-                        .get("submitted")
-                        .and_then(|value| value.as_u64())
-                        .unwrap_or_default(),
-                );
+                let submitted = ingress_drive
+                    .get("submitted")
+                    .and_then(|value| value.as_u64())
+                    .unwrap_or_default();
+                self.ingress_submitted_total =
+                    self.ingress_submitted_total.saturating_add(submitted);
+                if ingress_drive
+                    .get("product_ingress")
+                    .and_then(|value| value.as_bool())
+                    .unwrap_or(false)
+                    && ingress_drive.get("entry").and_then(|value| value.as_str())
+                        == Some(NATIVE_EXECUTION_PIPELINE_PRODUCT_INGRESS_ENTRY_V1)
+                {
+                    self.product_ingress_submitted_total = self
+                        .product_ingress_submitted_total
+                        .saturating_add(submitted);
+                }
             } else {
                 self.ingress_error_ticks = self.ingress_error_ticks.saturating_add(1);
             }
@@ -33948,6 +33990,7 @@ impl NativeExecutionPipelineAggregateV1 {
             "network_ok_ticks": self.network_ok_ticks,
             "network_error_ticks": self.network_error_ticks,
             "ingress_submitted_total": self.ingress_submitted_total,
+            "product_ingress_submitted_total": self.product_ingress_submitted_total,
             "ingress_error_ticks": self.ingress_error_ticks,
             "proof_ticks": self.proof_ticks,
             "commit_ticks": self.commit_ticks,
@@ -33975,6 +34018,7 @@ struct NativeExecutionPipelineSoakGateV1 {
     emit_tick_reports: bool,
     require_progress: bool,
     require_full_lifecycle: bool,
+    require_product_ingress: bool,
     min_ticks: u64,
     min_aoem_executed_total: u64,
     min_proof_ticks: u64,
@@ -34001,6 +34045,9 @@ impl NativeExecutionPipelineSoakGateV1 {
             require_progress: bool_env("NOVOVM_NATIVE_EXECUTION_PIPELINE_REQUIRE_PROGRESS"),
             require_full_lifecycle: bool_env(
                 "NOVOVM_NATIVE_EXECUTION_PIPELINE_REQUIRE_FULL_LIFECYCLE",
+            ),
+            require_product_ingress: bool_env(
+                "NOVOVM_NATIVE_EXECUTION_PIPELINE_REQUIRE_PRODUCT_INGRESS",
             ),
             min_ticks: u64_env_allow_zero("NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_TICKS", 0)?,
             min_aoem_executed_total: u64_env_allow_zero(
@@ -34092,6 +34139,11 @@ impl NativeExecutionPipelineSoakGateV1 {
         }
         if self.require_progress && summary_u64(summary, "progress_score") == 0 {
             bail!("native execution pipeline progress gate failed: no ingress/execution/egress progress observed");
+        }
+        if self.require_product_ingress
+            && summary_u64(summary, "product_ingress_submitted_total") == 0
+        {
+            bail!("native execution pipeline product ingress gate failed: no product raw tx ingress observed");
         }
         if self.require_full_lifecycle {
             require_summary_min(summary, "ingress_total_last", 1)?;
@@ -34428,6 +34480,11 @@ mod native_execution_pipeline_tests {
         let ingress_drive_out = ingress_drive.drive_once();
         assert_eq!(ingress_drive_out["ok"].as_bool(), Some(true));
         assert_eq!(ingress_drive_out["submitted"].as_u64(), Some(1));
+        assert_eq!(ingress_drive_out["product_ingress"].as_bool(), Some(true));
+        assert_eq!(
+            ingress_drive_out["entry"].as_str(),
+            Some(NATIVE_EXECUTION_PIPELINE_PRODUCT_INGRESS_ENTRY_V1)
+        );
         let broadcast_drive = NativeExecutionPipelineBroadcastDriveV1 {
             chain_id,
             peer_id: 9_990_071,
@@ -34473,6 +34530,7 @@ mod native_execution_pipeline_tests {
             .expect("aggregate closed-loop pipeline report");
         let summary = aggregate.to_json();
         assert_eq!(summary["ingress_submitted_total"].as_u64(), Some(1));
+        assert_eq!(summary["product_ingress_submitted_total"].as_u64(), Some(1));
         assert_eq!(summary["aoem_executed_total"].as_u64(), Some(1));
         assert_eq!(summary["proof_ticks"].as_u64(), Some(1));
         assert_eq!(summary["commit_ticks"].as_u64(), Some(1));
@@ -34482,6 +34540,7 @@ mod native_execution_pipeline_tests {
             emit_tick_reports: false,
             require_progress: true,
             require_full_lifecycle: true,
+            require_product_ingress: true,
             min_ticks: 1,
             min_aoem_executed_total: 1,
             min_proof_ticks: 1,
@@ -34618,6 +34677,7 @@ mod native_execution_pipeline_tests {
         let summary = aggregate.to_json();
         assert_eq!(summary["ticks"].as_u64(), Some(3));
         assert_eq!(summary["ingress_submitted_total"].as_u64(), Some(5));
+        assert_eq!(summary["product_ingress_submitted_total"].as_u64(), Some(5));
         assert_eq!(summary["aoem_executed_total"].as_u64(), Some(5));
         assert_eq!(summary["proof_ticks"].as_u64(), Some(3));
         assert_eq!(summary["commit_ticks"].as_u64(), Some(3));
@@ -34637,6 +34697,7 @@ mod native_execution_pipeline_tests {
             emit_tick_reports: false,
             require_progress: true,
             require_full_lifecycle: true,
+            require_product_ingress: true,
             min_ticks: 3,
             min_aoem_executed_total: 5,
             min_proof_ticks: 3,
@@ -34910,6 +34971,7 @@ mod native_execution_pipeline_tests {
             emit_tick_reports: false,
             require_progress: true,
             require_full_lifecycle: true,
+            require_product_ingress: false,
             min_ticks: 2,
             min_aoem_executed_total: 4,
             min_proof_ticks: 2,
@@ -34960,6 +35022,7 @@ mod native_execution_pipeline_tests {
             emit_tick_reports: false,
             require_progress: true,
             require_full_lifecycle: true,
+            require_product_ingress: false,
             min_ticks: 1,
             min_aoem_executed_total: 1,
             min_proof_ticks: 1,
@@ -35016,6 +35079,7 @@ mod native_execution_pipeline_tests {
             emit_tick_reports: false,
             require_progress: true,
             require_full_lifecycle: false,
+            require_product_ingress: false,
             min_ticks: 1,
             min_aoem_executed_total: 1,
             min_proof_ticks: 1,
@@ -35059,6 +35123,7 @@ mod native_execution_pipeline_tests {
             emit_tick_reports: false,
             require_progress: false,
             require_full_lifecycle: false,
+            require_product_ingress: false,
             min_ticks: 0,
             min_aoem_executed_total: 0,
             min_proof_ticks: 0,
@@ -35096,6 +35161,7 @@ mod native_execution_pipeline_tests {
             emit_tick_reports: false,
             require_progress: false,
             require_full_lifecycle: false,
+            require_product_ingress: false,
             min_ticks: 0,
             min_aoem_executed_total: 0,
             min_proof_ticks: 0,
