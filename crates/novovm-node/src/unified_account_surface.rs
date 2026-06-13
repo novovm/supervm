@@ -3210,6 +3210,18 @@ fn eth_lock_min_confirmations_v1() -> u64 {
         .unwrap_or(12)
 }
 
+fn eth_lock_min_confirmations_from_policy_v1(params: &Value) -> Result<(u64, &'static str)> {
+    let store_path = native_execution_store_path_from_params_or_env_v1(params);
+    let store = load_nov_native_execution_store_v1(store_path.as_path())?;
+    if store.module_state.mapped_lock_min_confirmations > 0 {
+        return Ok((
+            store.module_state.mapped_lock_min_confirmations,
+            "governance_native_store",
+        ));
+    }
+    Ok((eth_lock_min_confirmations_v1(), "env_or_default"))
+}
+
 fn ethereum_lock_chain_id_v1(params: &Value) -> u64 {
     param_value_any(params, &["source_chain_id", "chain_id", "eth_chain_id"])
         .and_then(value_as_u64)
@@ -3606,13 +3618,16 @@ fn verify_ethereum_lock_event_evidence_v1(
     if evidence.contract_address != configured_contract {
         bail!("ERR_MAPPED_LOCK_PROOF_INVALID: lock_contract_address does not match configured contract");
     }
-    let min_confirmations = eth_lock_min_confirmations_v1();
+    let (min_confirmations, min_confirmations_source) =
+        eth_lock_min_confirmations_from_policy_v1(params)?;
     let required_finalized = evidence.block_number.saturating_add(min_confirmations);
     if evidence.finalized_block_number < required_finalized {
         bail!(
-            "ERR_MAPPED_LOCK_PROOF_INVALID: finalized_block_number {} is below required {}",
+            "ERR_MAPPED_LOCK_PROOF_INVALID: finalized_block_number {} is below required {} min_confirmations={} source={}",
             evidence.finalized_block_number,
-            required_finalized
+            required_finalized,
+            min_confirmations,
+            min_confirmations_source
         );
     }
     verify_ethereum_lock_event_trusted_anchor_v1(&evidence, params)?;
@@ -6780,6 +6795,78 @@ mod tests {
             params_with_paths_and_native_store(&store, &audit, &native_store, json!({})),
         );
         assert_eq!(get_policy["policy"]["policy_version"].as_u64(), Some(8));
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn unified_account_live_mapped_lock_uses_governed_min_confirmations() {
+        let _env_lock = ENV_TEST_LOCK.lock().expect("env test lock poisoned");
+        let _shadow_guard = EnvVarGuard::set(NOVOVM_UA_PHASE4_SHADOW_MODE_ENFORCE_ENV, "false");
+        let (base, store, audit) = temp_paths("mapped-live-min-confirmations-policy");
+        let root = base
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .to_path_buf();
+        let native_store = root.join("native-execution-store.json");
+        ensure_native_store(native_store.as_path());
+        ua_create(&base, &store, &audit, "acct-map-live-min-conf", 10);
+
+        let mut policy_store = load_nov_native_execution_store_v1(native_store.as_path())
+            .expect("load native store before min confirmations policy");
+        policy_store.module_state.mapped_lock_min_confirmations = 18;
+        policy_store.module_state.treasury_policy_source = "governance_test".to_string();
+        policy_store.module_state.treasury_policy_version = 18;
+        save_nov_native_execution_store_v1(native_store.as_path(), &policy_store)
+            .expect("save min confirmations policy");
+
+        let mut blocked_map =
+            match mapped_lock_live_event_proof_params("acct-map-live-min-conf", 0x45, 122u128) {
+                Value::Object(map) => map,
+                other => panic!("expected mapped lock proof params object, got {other:?}"),
+            };
+        seed_mapped_lock_trusted_block_from_params(&Value::Object(blocked_map.clone()), true);
+        blocked_map.insert("phase4_mode".to_string(), Value::String("live".to_string()));
+        let blocked_err = run_query_err(
+            &base,
+            "ua_registerMappedLock",
+            params_with_paths_and_native_store(
+                &store,
+                &audit,
+                &native_store,
+                Value::Object(blocked_map.clone()),
+            ),
+        );
+        assert!(
+            blocked_err.contains("finalized_block_number 112 is below required 118")
+                && blocked_err.contains("source=governance_native_store"),
+            "governed min confirmations should fail closed, got: {blocked_err}"
+        );
+
+        let mut relaxed_policy_store = load_nov_native_execution_store_v1(native_store.as_path())
+            .expect("load native store before relaxing min confirmations policy");
+        relaxed_policy_store
+            .module_state
+            .mapped_lock_min_confirmations = 12;
+        relaxed_policy_store.module_state.treasury_policy_version = 19;
+        save_nov_native_execution_store_v1(native_store.as_path(), &relaxed_policy_store)
+            .expect("save relaxed min confirmations policy");
+
+        let accepted = run_query(
+            &base,
+            "ua_registerMappedLock",
+            params_with_paths_and_native_store(
+                &store,
+                &audit,
+                &native_store,
+                Value::Object(blocked_map),
+            ),
+        );
+        assert_eq!(accepted["accepted"].as_bool(), Some(true));
+        assert_eq!(
+            accepted["settlement_effect"].as_str(),
+            Some("neth_m2_credit")
+        );
 
         let _ = fs::remove_dir_all(&root);
     }

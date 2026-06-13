@@ -442,6 +442,8 @@ pub struct NovTreasurySettlementPolicyV1 {
     pub settlement_paused: bool,
     pub redeem_paused: bool,
     pub mapped_lock_bridge_paused: bool,
+    #[serde(default)]
+    pub mapped_lock_min_confirmations: u64,
     pub mapped_asset_burn_paused: bool,
     pub mapped_asset_release_paused: bool,
     pub mapped_asset_auto_heal_enabled: bool,
@@ -551,6 +553,8 @@ pub struct NovNativeExecutionModuleStateV1 {
     pub treasury_redeem_paused: bool,
     #[serde(default)]
     pub mapped_lock_bridge_paused: bool,
+    #[serde(default)]
+    pub mapped_lock_min_confirmations: u64,
     #[serde(default)]
     pub mapped_asset_burn_paused: bool,
     #[serde(default)]
@@ -674,6 +678,7 @@ impl Default for NovNativeExecutionModuleStateV1 {
             treasury_settlement_paused: false,
             treasury_redeem_paused: false,
             mapped_lock_bridge_paused: false,
+            mapped_lock_min_confirmations: 0,
             mapped_asset_burn_paused: false,
             mapped_asset_release_paused: false,
             mapped_asset_auto_heal_enabled: false,
@@ -2084,6 +2089,7 @@ fn resolve_treasury_settlement_policy_v1(
             settlement_paused: store.module_state.treasury_settlement_paused,
             redeem_paused: store.module_state.treasury_redeem_paused,
             mapped_lock_bridge_paused: store.module_state.mapped_lock_bridge_paused,
+            mapped_lock_min_confirmations: store.module_state.mapped_lock_min_confirmations,
             mapped_asset_burn_paused: store.module_state.mapped_asset_burn_paused,
             mapped_asset_release_paused: store.module_state.mapped_asset_release_paused,
             mapped_asset_auto_heal_enabled: store.module_state.mapped_asset_auto_heal_enabled,
@@ -2191,6 +2197,7 @@ fn resolve_treasury_settlement_policy_v1(
         settlement_paused,
         redeem_paused,
         mapped_lock_bridge_paused: store.module_state.mapped_lock_bridge_paused,
+        mapped_lock_min_confirmations: store.module_state.mapped_lock_min_confirmations,
         mapped_asset_burn_paused: store.module_state.mapped_asset_burn_paused,
         mapped_asset_release_paused: store.module_state.mapped_asset_release_paused,
         mapped_asset_auto_heal_enabled: store.module_state.mapped_asset_auto_heal_enabled,
@@ -5146,6 +5153,12 @@ fn dispatch_native_module_execute_v1(
                 .or_else(|| args_json.get("bridge_mint_paused"))
                 .and_then(|value| value.as_bool())
                 .unwrap_or(active_policy.mapped_lock_bridge_paused);
+            let mapped_lock_min_confirmations = args_json
+                .get("mapped_lock_min_confirmations")
+                .or_else(|| args_json.get("eth_lock_min_confirmations"))
+                .and_then(parse_u128_from_json_value_v1)
+                .map(|value| value.min(u128::from(u64::MAX)) as u64)
+                .unwrap_or(active_policy.mapped_lock_min_confirmations);
             let mapped_asset_burn_paused = args_json
                 .get("mapped_asset_burn_paused")
                 .or_else(|| args_json.get("bridge_burn_paused"))
@@ -5231,6 +5244,7 @@ fn dispatch_native_module_execute_v1(
             store.module_state.treasury_min_risk_buffer_nov = min_risk_buffer_nov;
             store.module_state.clearing_enabled = clearing_enabled;
             store.module_state.mapped_lock_bridge_paused = mapped_lock_bridge_paused;
+            store.module_state.mapped_lock_min_confirmations = mapped_lock_min_confirmations;
             store.module_state.mapped_asset_burn_paused = mapped_asset_burn_paused;
             store.module_state.mapped_asset_release_paused = mapped_asset_release_paused;
             store.module_state.mapped_asset_auto_heal_enabled = mapped_asset_auto_heal_enabled;
@@ -5262,6 +5276,7 @@ fn dispatch_native_module_execute_v1(
                     "min_risk_buffer_nov": min_risk_buffer_nov,
                     "clearing_enabled": clearing_enabled,
                     "mapped_lock_bridge_paused": mapped_lock_bridge_paused,
+                    "mapped_lock_min_confirmations": mapped_lock_min_confirmations,
                     "mapped_asset_burn_paused": mapped_asset_burn_paused,
                     "mapped_asset_release_paused": mapped_asset_release_paused,
                     "mapped_asset_auto_heal_enabled": mapped_asset_auto_heal_enabled,
@@ -8693,6 +8708,7 @@ mod tests {
                     "min_fee_bucket_nov": 80u64,
                     "min_risk_buffer_nov": 400u64,
                     "mapped_lock_bridge_paused": true,
+                    "mapped_lock_min_confirmations": 18u64,
                     "mapped_asset_burn_paused": true,
                     "mapped_asset_release_paused": true,
                     "mapped_asset_auto_heal_enabled": true,
@@ -8762,6 +8778,10 @@ mod tests {
             assert_eq!(
                 out["result"]["policy"]["mapped_lock_bridge_paused"].as_bool(),
                 Some(true)
+            );
+            assert_eq!(
+                out["result"]["policy"]["mapped_lock_min_confirmations"].as_u64(),
+                Some(18)
             );
             assert_eq!(
                 out["result"]["policy"]["mapped_asset_burn_paused"].as_bool(),
