@@ -247,6 +247,7 @@ Useful soak knobs:
 
 - `NOVOVM_NATIVE_PIPELINE_DUAL_GATE_TX_COUNT`
 - `NOVOVM_NATIVE_PIPELINE_DUAL_GATE_TICK_BUDGET`
+- `NOVOVM_NATIVE_PIPELINE_DUAL_GATE_MIN_RECEIVER_MAX_AOEM_BATCH_PER_TICK`
 - `NOVOVM_NATIVE_PIPELINE_DUAL_GATE_TICK_INTERVAL_MS`
 - `NOVOVM_NATIVE_PIPELINE_DUAL_GATE_STARTUP_WAIT_MS`
 - `NOVOVM_NATIVE_PIPELINE_DUAL_GATE_RECEIVER_COUNT`
@@ -302,6 +303,7 @@ $env:NOVOVM_NATIVE_PIPELINE_DUAL_GATE_TX_COUNT="16"
 $env:NOVOVM_NATIVE_PIPELINE_DUAL_GATE_RECEIVER_COUNT="2"
 $env:NOVOVM_NATIVE_PIPELINE_DUAL_GATE_SENDER_ROUNDS="4"
 $env:NOVOVM_NATIVE_PIPELINE_DUAL_GATE_TICK_BUDGET="4"
+$env:NOVOVM_NATIVE_PIPELINE_DUAL_GATE_MIN_RECEIVER_MAX_AOEM_BATCH_PER_TICK="4"
 $env:NOVOVM_NATIVE_PIPELINE_DUAL_GATE_INGRESS_MAX_PER_TICK="4"
 $env:NOVOVM_NATIVE_PIPELINE_DUAL_GATE_UDP_BROADCAST_MAX_PER_TICK="4"
 $env:NOVOVM_NATIVE_PIPELINE_DUAL_GATE_TICK_INTERVAL_MS="25"
@@ -310,7 +312,7 @@ $env:NOVOVM_NATIVE_PIPELINE_DUAL_GATE_REPORT_PATH="artifacts/native-pipeline/nat
 cargo run -p novovm-node --bin supervm-native-pipeline-dual-node-gate
 ```
 
-This paced fanout gate starts one long-lived receiver set and runs the sender in multiple nonce-separated rounds. The gate disables the local broadcast drive inside the fixture so the only cross-node output path is UDP, then requires every receiver to reach `aoem_executed_total`, `included_canonical_total`, `queue_pending_last=0`, `queue_dropped_last=0`, and `queue_rejected_last=0`.
+This paced fanout gate starts one long-lived receiver set and runs the sender in multiple nonce-separated rounds. The gate disables the local broadcast drive inside the fixture so the only cross-node output path is UDP, then requires every receiver to reach `aoem_executed_total`, `max_aoem_batch_executed_per_tick`, `included_canonical_total`, `queue_pending_last=0`, `queue_dropped_last=0`, and `queue_rejected_last=0`.
 
 EVM protocol-observable equivalence scope (CN):
 

@@ -185,6 +185,11 @@ fn sender_round_aggregate_v1(summaries: &[Value]) -> Value {
         .iter()
         .map(|summary| summary_u64(summary, "aoem_deferred_total"))
         .sum::<u64>();
+    let max_aoem_batch_executed_per_tick = summaries
+        .iter()
+        .map(|summary| summary_u64(summary, "max_aoem_batch_executed_per_tick"))
+        .max()
+        .unwrap_or_default();
     let network_enabled_ticks = summaries
         .iter()
         .map(|summary| summary_u64(summary, "network_enabled_ticks"))
@@ -242,6 +247,7 @@ fn sender_round_aggregate_v1(summaries: &[Value]) -> Value {
         "ticks_per_sec_x1000": ticks.saturating_mul(1_000_000) / elapsed_ms,
         "aoem_executed_total": aoem_executed_total,
         "aoem_deferred_total": aoem_deferred_total,
+        "max_aoem_batch_executed_per_tick": max_aoem_batch_executed_per_tick,
         "network_enabled_ticks": network_enabled_ticks,
         "network_ok_ticks": network_ok_ticks,
         "network_error_ticks": network_error_ticks,
@@ -284,6 +290,10 @@ fn main() -> Result<()> {
     let min_receiver_canonical_tps_x1000 = u64_env(
         "NOVOVM_NATIVE_PIPELINE_DUAL_GATE_MIN_RECEIVER_CANONICAL_TPS_X1000",
         0,
+    )?;
+    let min_receiver_max_aoem_batch_per_tick = u64_env(
+        "NOVOVM_NATIVE_PIPELINE_DUAL_GATE_MIN_RECEIVER_MAX_AOEM_BATCH_PER_TICK",
+        tx_count.min(tick_budget).max(1),
     )?;
     let min_sender_broadcast_tps_x1000 = u64_env(
         "NOVOVM_NATIVE_PIPELINE_DUAL_GATE_MIN_SENDER_BROADCAST_TPS_X1000",
@@ -425,6 +435,10 @@ fn main() -> Result<()> {
             (
                 "NOVOVM_NATIVE_EXECUTION_PIPELINE_QUIET_TICKS",
                 "true".to_string(),
+            ),
+            (
+                "NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_MAX_AOEM_BATCH_EXECUTED_PER_TICK",
+                min_receiver_max_aoem_batch_per_tick.to_string(),
             ),
         ]
     };
@@ -602,6 +616,12 @@ fn main() -> Result<()> {
             )?;
             require_min(summary, "network_ok_ticks", 1, label.as_str())?;
             require_min(summary, "aoem_executed_total", tx_count, label.as_str())?;
+            require_min(
+                summary,
+                "max_aoem_batch_executed_per_tick",
+                min_receiver_max_aoem_batch_per_tick,
+                label.as_str(),
+            )?;
             require_min(summary, "proof_ticks", execution_ticks, label.as_str())?;
             require_min(summary, "commit_ticks", execution_ticks, label.as_str())?;
             require_min(
@@ -704,6 +724,7 @@ fn main() -> Result<()> {
             "receiver_canonical_tps_x1000": receiver_canonical_tps_x1000,
             "min_sender_broadcast_tps_x1000": min_sender_broadcast_tps_x1000,
             "min_receiver_canonical_tps_x1000": min_receiver_canonical_tps_x1000,
+            "min_receiver_max_aoem_batch_per_tick": min_receiver_max_aoem_batch_per_tick,
         },
         "sender_summary": sender_summary,
         "sender_round_summaries": sender_summaries,
