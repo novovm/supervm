@@ -9125,8 +9125,7 @@ impl UdpTransport {
     }
 }
 
-#[cfg(test)]
-fn maybe_update_runtime_sync_from_protocol_message(
+pub fn observe_network_runtime_protocol_message_v1(
     chain_id: u64,
     msg: &ProtocolMessage,
     msg_peer_id: Option<u64>,
@@ -14782,7 +14781,7 @@ mod tests {
             seq: 1,
         });
 
-        maybe_update_runtime_sync_from_protocol_message(chain_id, &shard_state, None, None);
+        observe_network_runtime_protocol_message_v1(chain_id, &shard_state, None, None);
 
         let status =
             get_network_runtime_sync_status(chain_id).expect("runtime sync status should exist");
@@ -23382,12 +23381,7 @@ mod tests {
         assert_eq!(from, local);
         assert_eq!(hashes, vec![[0x61; 32], [0x62; 32]]);
 
-        maybe_update_runtime_sync_from_protocol_message(
-            chain_id,
-            &block_headers,
-            Some(remote.0),
-            None,
-        );
+        observe_network_runtime_protocol_message_v1(chain_id, &block_headers, Some(remote.0), None);
         let retained = snapshot_network_runtime_native_canonical_blocks_v1(chain_id, 8);
         let block_60 = retained
             .iter()

@@ -80,6 +80,12 @@ use novovm_network::{
     L3_RELAY_RUNTIME_FEEDBACK_SCALE, L3_RELAY_SCORE_SCALE, L3_RELAY_SELECTED_STICKY_MARGIN,
     L3_RELAY_SOURCE_BONUS_CONFIGURED, L3_RELAY_SOURCE_BONUS_POOL, L3_RELAY_SOURCE_BONUS_SNAPSHOT,
 };
+#[cfg(test)]
+use novovm_network::{
+    dispatch_network_runtime_native_pending_tx_broadcast_to_transport_v1,
+    get_network_runtime_native_pending_tx_v1, observe_network_runtime_protocol_message_v1,
+    InMemoryTransport, Transport,
+};
 use novovm_node::governance_surface::{
     default_mainline_governance_store_path, is_mainline_governance_query_method,
 };
@@ -34256,6 +34262,98 @@ mod native_execution_pipeline_tests {
         .validate_summary(&summary)
         .expect("multitick summary must satisfy high-frequency lifecycle gates");
 
+        let _ = fs::remove_file(&store_path);
+    }
+
+    #[test]
+    fn native_execution_pipeline_transport_peer_output_reenters_aoem_tick() {
+        let chain_id = 9_998_887u64;
+        let local = NodeId(9_991_887);
+        let remote = NodeId(9_991_888);
+        let transport = InMemoryTransport::new(8);
+        transport.register(local);
+        transport.register(remote);
+
+        let native_tx = novovm_protocol::NovNativeTxWireV1 {
+            chain_id,
+            kind: novovm_protocol::NovTxKindV1::Execute(novovm_protocol::NovExecuteTxV1 {
+                caller: vec![0x87; 20],
+                account_id: Some("acct-pipeline-transport-remote".to_string()),
+                fee_owner_account_id: Some("acct-pipeline-transport-remote".to_string()),
+                nonce_owner_account_id: Some("acct-pipeline-transport-remote".to_string()),
+                target: novovm_protocol::NovExecutionTargetV1::NativeModule("treasury".to_string()),
+                method: "deposit_reserve".to_string(),
+                args: serde_json::to_vec(&serde_json::json!({
+                    "asset": "USDT",
+                    "amount": 29u64
+                }))
+                .expect("encode args"),
+                execution_mode: novovm_protocol::NovExecutionModeV1::Batch,
+                execution_policy: novovm_protocol::NovExecutionPolicyV1::Standard,
+                privacy_mode: novovm_protocol::NovPrivacyModeV1::Public,
+                verification_mode: novovm_protocol::NovVerificationModeV1::Standard,
+                fee_policy: novovm_protocol::NovFeePolicyV1 {
+                    pay_asset: "NOV".to_string(),
+                    max_pay_amount: 50,
+                    slippage_bps: 100,
+                },
+                gas_like_limit: Some(90_000),
+                nonce: 87,
+            }),
+            signature: [0x87; 32],
+        };
+        let raw =
+            novovm_protocol::encode_nov_native_tx_wire_v1(&native_tx).expect("encode native tx");
+        let (_, _, tx_hash) = ingest_local_nov_raw_tx_payload_v1(
+            &serde_json::json!({ "chain_id": chain_id }),
+            raw.as_slice(),
+        )
+        .expect("local native tx should enter pending runtime");
+
+        let sent = dispatch_network_runtime_native_pending_tx_broadcast_to_transport_v1(
+            &transport, chain_id, local, remote, 4, 3,
+        )
+        .expect("native pending tx should leave through transport");
+        assert_eq!(sent, 1);
+
+        let msg = transport
+            .try_recv(remote)
+            .expect("remote transport inbox should be readable")
+            .expect("remote node should receive native tx output");
+        observe_network_runtime_protocol_message_v1(chain_id, &msg, None, Some(local.0));
+        let remote_pending = get_network_runtime_native_pending_tx_v1(chain_id, tx_hash)
+            .expect("remote transport receive should re-enter pending runtime");
+        assert_eq!(
+            remote_pending.lifecycle_stage,
+            novovm_network::NetworkRuntimeNativePendingTxLifecycleStageV1::Pending
+        );
+
+        let store_path = std::env::temp_dir().join(format!(
+            "novovm-native-pipeline-transport-{}-{}.json",
+            chain_id,
+            std::process::id()
+        ));
+        let _ = fs::remove_file(&store_path);
+        let out = run_nov_native_execution_tick_from_params_v1(&serde_json::json!({
+            "chain_id": chain_id,
+            "hard_budget_per_tick": 4u64,
+            "target_budget_per_tick": 4u64,
+            "effective_budget_per_tick": 4u64,
+            "native_execution_store_path": store_path,
+        }))
+        .expect("remote pending tx should execute through AOEM tick");
+
+        assert_eq!(out["execution_kernel"].as_str(), Some("AOEM"));
+        assert_eq!(out["aoem_concurrency_owner"].as_str(), Some("AOEM_runtime"));
+        assert_eq!(out["executed_count"].as_u64(), Some(1));
+        assert_eq!(
+            out["batch_result"]["batch_result"]["native_store_commit"]["model"].as_str(),
+            Some("post_aoem_deterministic_dirty_store_commit")
+        );
+        let summary = snapshot_network_runtime_native_pending_tx_summary_v1(chain_id);
+        assert_eq!(summary.included_canonical_count, 1);
+        assert_eq!(summary.pending_count, 0);
+        assert_eq!(summary.broadcast_tx_total, 1);
         let _ = fs::remove_file(&store_path);
     }
 
