@@ -33392,6 +33392,133 @@ impl NativeExecutionPipelineAggregateV1 {
     }
 }
 
+#[derive(Clone, Debug)]
+struct NativeExecutionPipelineSoakGateV1 {
+    emit_tick_reports: bool,
+    require_progress: bool,
+    min_ticks: u64,
+    min_aoem_executed_total: u64,
+    min_proof_ticks: u64,
+    min_commit_ticks: u64,
+    min_network_ok_ticks: u64,
+    max_network_error_ticks: u64,
+    min_broadcast_tx_total: u64,
+    min_broadcast_candidates: u64,
+    min_included_canonical: u64,
+    min_ingress_total: u64,
+    min_ticks_per_sec_x1000: u64,
+}
+
+impl NativeExecutionPipelineSoakGateV1 {
+    fn from_env() -> Result<Self> {
+        Ok(Self {
+            emit_tick_reports: bool_env_default_true("NOVOVM_NATIVE_EXECUTION_PIPELINE_EMIT_TICKS")
+                && !bool_env("NOVOVM_NATIVE_EXECUTION_PIPELINE_QUIET_TICKS"),
+            require_progress: bool_env("NOVOVM_NATIVE_EXECUTION_PIPELINE_REQUIRE_PROGRESS"),
+            min_ticks: u64_env_allow_zero("NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_TICKS", 0)?,
+            min_aoem_executed_total: u64_env_allow_zero(
+                "NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_AOEM_EXECUTED",
+                0,
+            )?,
+            min_proof_ticks: u64_env_allow_zero(
+                "NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_PROOF_TICKS",
+                0,
+            )?,
+            min_commit_ticks: u64_env_allow_zero(
+                "NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_COMMIT_TICKS",
+                0,
+            )?,
+            min_network_ok_ticks: u64_env_allow_zero(
+                "NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_NETWORK_OK_TICKS",
+                0,
+            )?,
+            max_network_error_ticks: u64_env_allow_zero(
+                "NOVOVM_NATIVE_EXECUTION_PIPELINE_MAX_NETWORK_ERROR_TICKS",
+                u64::MAX,
+            )?,
+            min_broadcast_tx_total: u64_env_allow_zero(
+                "NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_BROADCAST_TX",
+                0,
+            )?,
+            min_broadcast_candidates: u64_env_allow_zero(
+                "NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_BROADCAST_CANDIDATES",
+                0,
+            )?,
+            min_included_canonical: u64_env_allow_zero(
+                "NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_INCLUDED_CANONICAL",
+                0,
+            )?,
+            min_ingress_total: u64_env_allow_zero(
+                "NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_INGRESS_TOTAL",
+                0,
+            )?,
+            min_ticks_per_sec_x1000: u64_env_allow_zero(
+                "NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_TICKS_PER_SEC_X1000",
+                0,
+            )?,
+        })
+    }
+
+    fn validate_summary(&self, summary: &serde_json::Value) -> Result<()> {
+        if self.require_progress && summary_u64(summary, "progress_score") == 0 {
+            bail!("native execution pipeline progress gate failed: no ingress/execution/egress progress observed");
+        }
+        require_summary_min(summary, "ticks", self.min_ticks)?;
+        require_summary_min(summary, "aoem_executed_total", self.min_aoem_executed_total)?;
+        require_summary_min(summary, "proof_ticks", self.min_proof_ticks)?;
+        require_summary_min(summary, "commit_ticks", self.min_commit_ticks)?;
+        require_summary_min(summary, "network_ok_ticks", self.min_network_ok_ticks)?;
+        require_summary_min(
+            summary,
+            "broadcast_tx_total_last",
+            self.min_broadcast_tx_total,
+        )?;
+        require_summary_min(
+            summary,
+            "broadcast_candidates_last",
+            self.min_broadcast_candidates,
+        )?;
+        require_summary_min(
+            summary,
+            "included_canonical_last",
+            self.min_included_canonical,
+        )?;
+        require_summary_min(summary, "ingress_total_last", self.min_ingress_total)?;
+        require_summary_min(summary, "ticks_per_sec_x1000", self.min_ticks_per_sec_x1000)?;
+        let network_error_ticks = summary_u64(summary, "network_error_ticks");
+        if network_error_ticks > self.max_network_error_ticks {
+            bail!(
+                "native execution pipeline soak gate failed: network_error_ticks={} exceeds max {}",
+                network_error_ticks,
+                self.max_network_error_ticks
+            );
+        }
+        Ok(())
+    }
+}
+
+fn summary_u64(summary: &serde_json::Value, field: &str) -> u64 {
+    summary
+        .get(field)
+        .and_then(|value| value.as_u64())
+        .unwrap_or_default()
+}
+
+fn require_summary_min(summary: &serde_json::Value, field: &str, min: u64) -> Result<()> {
+    if min == 0 {
+        return Ok(());
+    }
+    let actual = summary_u64(summary, field);
+    if actual < min {
+        bail!(
+            "native execution pipeline soak gate failed: {field}={} below min {}",
+            actual,
+            min
+        );
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod native_execution_pipeline_tests {
     use super::*;
@@ -33525,6 +33652,104 @@ mod native_execution_pipeline_tests {
     }
 
     #[test]
+    fn native_execution_pipeline_soak_gate_accepts_summary_thresholds() {
+        let gate = NativeExecutionPipelineSoakGateV1 {
+            emit_tick_reports: false,
+            require_progress: true,
+            min_ticks: 2,
+            min_aoem_executed_total: 4,
+            min_proof_ticks: 2,
+            min_commit_ticks: 2,
+            min_network_ok_ticks: 1,
+            max_network_error_ticks: 0,
+            min_broadcast_tx_total: 1,
+            min_broadcast_candidates: 1,
+            min_included_canonical: 1,
+            min_ingress_total: 1,
+            min_ticks_per_sec_x1000: 1,
+        };
+        let summary = serde_json::json!({
+            "ticks": 2u64,
+            "aoem_executed_total": 4u64,
+            "proof_ticks": 2u64,
+            "commit_ticks": 2u64,
+            "network_ok_ticks": 1u64,
+            "network_error_ticks": 0u64,
+            "broadcast_tx_total_last": 1u64,
+            "broadcast_candidates_last": 1u64,
+            "included_canonical_last": 1u64,
+            "ingress_total_last": 1u64,
+            "ticks_per_sec_x1000": 1000u64,
+            "progress_score": 7u64,
+        });
+
+        gate.validate_summary(&summary)
+            .expect("soak gate should accept matching summary");
+    }
+
+    #[test]
+    fn native_execution_pipeline_soak_gate_rejects_missing_aoem_progress() {
+        let gate = NativeExecutionPipelineSoakGateV1 {
+            emit_tick_reports: false,
+            require_progress: true,
+            min_ticks: 1,
+            min_aoem_executed_total: 1,
+            min_proof_ticks: 1,
+            min_commit_ticks: 1,
+            min_network_ok_ticks: 0,
+            max_network_error_ticks: u64::MAX,
+            min_broadcast_tx_total: 0,
+            min_broadcast_candidates: 0,
+            min_included_canonical: 0,
+            min_ingress_total: 0,
+            min_ticks_per_sec_x1000: 0,
+        };
+        let summary = serde_json::json!({
+            "ticks": 1u64,
+            "aoem_executed_total": 0u64,
+            "proof_ticks": 1u64,
+            "commit_ticks": 1u64,
+            "network_ok_ticks": 0u64,
+            "network_error_ticks": 0u64,
+            "progress_score": 0u64,
+        });
+
+        let err = gate
+            .validate_summary(&summary)
+            .expect_err("missing progress must fail")
+            .to_string();
+        assert!(err.contains("progress gate failed"));
+    }
+
+    #[test]
+    fn native_execution_pipeline_soak_gate_rejects_network_error_budget() {
+        let gate = NativeExecutionPipelineSoakGateV1 {
+            emit_tick_reports: false,
+            require_progress: false,
+            min_ticks: 0,
+            min_aoem_executed_total: 0,
+            min_proof_ticks: 0,
+            min_commit_ticks: 0,
+            min_network_ok_ticks: 0,
+            max_network_error_ticks: 1,
+            min_broadcast_tx_total: 0,
+            min_broadcast_candidates: 0,
+            min_included_canonical: 0,
+            min_ingress_total: 0,
+            min_ticks_per_sec_x1000: 0,
+        };
+        let summary = serde_json::json!({
+            "network_error_ticks": 2u64,
+        });
+
+        let err = gate
+            .validate_summary(&summary)
+            .expect_err("network error budget must fail")
+            .to_string();
+        assert!(err.contains("network_error_ticks=2 exceeds max 1"));
+    }
+
+    #[test]
     fn native_execution_pipeline_aggregate_rejects_host_scheduler_drift() {
         let mut report = build_native_execution_pipeline_report_v1(
             4,
@@ -33559,7 +33784,7 @@ fn run_native_execution_tick_node_mode_v1(verbose: bool) -> Result<()> {
     let interval_ms = u64_env_positive("NOVOVM_NATIVE_EXECUTION_TICK_INTERVAL_MS", 250)?;
     let chain_id = u64_env_positive("NOVOVM_NATIVE_EXECUTION_TICK_CHAIN_ID", 1)?;
     let mut network_drive = native_execution_pipeline_network_drive_from_env_v1(chain_id, verbose)?;
-    let require_progress = bool_env("NOVOVM_NATIVE_EXECUTION_PIPELINE_REQUIRE_PROGRESS");
+    let soak_gate = NativeExecutionPipelineSoakGateV1::from_env()?;
     let mut ticks = 0u64;
     let mut aggregate = NativeExecutionPipelineAggregateV1::new();
     loop {
@@ -33603,11 +33828,13 @@ fn run_native_execution_tick_node_mode_v1(verbose: bool) -> Result<()> {
                     .unwrap_or_default()
             );
         }
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&report)
-                .context("encode native execution pipeline output failed")?
-        );
+        if soak_gate.emit_tick_reports {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&report)
+                    .context("encode native execution pipeline output failed")?
+            );
+        }
         ticks = ticks.saturating_add(1);
         if max_ticks > 0 && ticks >= max_ticks {
             break;
@@ -33620,15 +33847,7 @@ fn run_native_execution_tick_node_mode_v1(verbose: bool) -> Result<()> {
         serde_json::to_string_pretty(&summary)
             .context("encode native execution pipeline summary failed")?
     );
-    if require_progress
-        && summary
-            .get("progress_score")
-            .and_then(|value| value.as_u64())
-            .unwrap_or_default()
-            == 0
-    {
-        bail!("native execution pipeline progress gate failed: no ingress/execution/egress progress observed");
-    }
+    soak_gate.validate_summary(&summary)?;
     Ok(())
 }
 
