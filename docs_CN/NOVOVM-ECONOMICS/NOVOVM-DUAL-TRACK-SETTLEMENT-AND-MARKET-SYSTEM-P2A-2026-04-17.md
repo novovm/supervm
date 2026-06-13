@@ -272,7 +272,7 @@ asset_out[A] = nov_amount / P_redeem[A]
 - M2 finality policy v1 已接入 governance/Treasury policy：`mapped_lock_min_confirmations` 可治理设置，live ETH lock proof 优先使用 native store policy，未设置时 fallback 到 env/default。
 - Treasury reserve proof v1 已接入最小治理登记/查询与主线只读产品面：`governance.set_reserve_proof` 登记 proof metadata；`treasury.get_reserve_proof` / `treasury.get_reserve_snapshot` 与 `nov_getTreasuryReserveProof` / `nov_getTreasuryReserveSnapshot` 只读暴露 proof effective status、amount cap 与 non-claim 标记。
 - Native execution store 主写路径已加 lockfile single-writer guard，用于单机/低并发 load-modify-save 互斥；该 guard 不是高并发事务后端。
-- 当前仍不声明完整 external finality source 管理、治理赔付、真实链上出金、真实自动 reserve proof verification、跨链自动 mint/redeem、NOV 直接铸造、高并发账本入口或钱包/DAPP/网站完成；当前 finality source 管理只覆盖 source peer whitelist/quorum、disabled peer slashing reason/fail-closed、source peer rotation 记录、Ed25519 attestation quorum、disabled signer reason/fail-closed、signer rotation 记录、最小 confirmations 和 `ua_getMappedFinalitySourceStatus` 只读状态聚合。
+- 当前仍不声明完整 external finality source 管理、治理赔付、真实链上出金、真实自动 reserve proof verification、跨链自动 mint/redeem、NOV 直接铸造、高并发账本入口或钱包/DAPP/网站完成；当前 finality source 管理只覆盖 source peer whitelist/quorum、disabled peer slashing reason/fail-closed、source peer rotation 记录、Ed25519 attestation quorum、disabled signer reason/fail-closed、signer rotation 记录、最小 confirmations 和 `ua_getMappedFinalitySourceStatus` 只读状态聚合；主线产品 smoke 已覆盖 source quorum 不足 fail-closed 与第二个许可 source peer 观测后通过。
 
 ## 10. 本稿替换与冲突规则
 

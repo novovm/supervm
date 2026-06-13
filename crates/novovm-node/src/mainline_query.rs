@@ -4482,6 +4482,51 @@ mod tests {
         );
     }
 
+    fn observe_mapped_lock_live_smoke_source_peer(params: &Value, peer_id: u64) {
+        let chain_id = params
+            .get("source_chain_id")
+            .and_then(Value::as_u64)
+            .expect("source_chain_id should exist");
+        let block_number = params
+            .get("block_number")
+            .and_then(Value::as_u64)
+            .expect("block_number should exist");
+        let block_hash = params
+            .get("block_hash")
+            .and_then(Value::as_str)
+            .and_then(|raw| decode_fixed_32_hex_v1(raw).ok())
+            .expect("block_hash should decode");
+        let receipts_root = params
+            .get("receipts_root")
+            .and_then(Value::as_str)
+            .and_then(|raw| decode_fixed_32_hex_v1(raw).ok())
+            .expect("receipts_root should decode");
+        novovm_network::set_network_runtime_native_header_snapshot_v1(
+            chain_id,
+            novovm_network::NetworkRuntimeNativeHeaderSnapshotV1 {
+                chain_id,
+                number: block_number,
+                hash: block_hash,
+                parent_hash: [0x09; 32],
+                state_root: [0x21; 32],
+                transactions_root: [0x31; 32],
+                receipts_root,
+                ommers_hash: [0x51; 32],
+                logs_bloom: vec![0u8; 256],
+                gas_limit: None,
+                gas_used: None,
+                timestamp: Some(1_700_000_000),
+                base_fee_per_gas: None,
+                withdrawals_root: None,
+                blob_gas_used: None,
+                excess_blob_gas: None,
+                block_access_list_hash: None,
+                source_peer_id: Some(peer_id),
+                observed_unix_ms: u128::from(2000u64.saturating_add(peer_id)),
+            },
+        );
+    }
+
     struct MainlineEnvVarGuard {
         name: &'static str,
         previous: Option<String>,
@@ -11820,6 +11865,114 @@ mod tests {
         assert!(kinds.contains(&"mapped_lock_m2_credit".to_string()));
         assert!(kinds.contains(&"mapped_asset_m2_burn_pending".to_string()));
         assert!(kinds.contains(&"mapped_lock_source_release".to_string()));
+
+        novovm_network::clear_network_runtime_native_state_for_host_tests_v1();
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn mainline_query_mapped_finality_source_policy_product_smoke() {
+        let _env_lock = geth_parity_test_lock_v1()
+            .lock()
+            .expect("mainline env test lock poisoned");
+        let _shadow_guard =
+            MainlineEnvVarGuard::set("NOVOVM_UA_PHASE4_SHADOW_MODE_ENFORCE", "false");
+        let (base, store, audit) = unique_unified_account_test_paths("mapped-source-policy");
+        let root = base
+            .parent()
+            .unwrap_or_else(|| std::path::Path::new("."))
+            .to_path_buf();
+        let native_store = root.join("native-execution-store.json");
+        save_nov_native_execution_store_v1(
+            native_store.as_path(),
+            &NovNativeExecutionStoreV1::default(),
+        )
+        .expect("seed native execution store for mapped source policy smoke");
+        let account_id = "acct-mainline-map-source-policy";
+        create_mainline_uca_for_smoke(&base, &store, &audit, &native_store, account_id);
+
+        let policy = run_mainline_query_from_path(
+            base.as_path(),
+            "ua_setMappedHeaderSourcePolicy",
+            &params_with_ua_and_native_paths(
+                store.as_path(),
+                audit.as_path(),
+                native_store.as_path(),
+                json!({
+                    "required": true,
+                    "allowed_peer_ids": [1u64, 2u64],
+                    "min_source_quorum": 2u64,
+                    "policy_source": "mainline_source_policy_smoke",
+                    "policy_version": 7u64,
+                    "now": 30u64,
+                }),
+            ),
+        )
+        .expect("ua_setMappedHeaderSourcePolicy should succeed through mainline query");
+        assert_eq!(policy["updated"].as_bool(), Some(true));
+        assert_eq!(policy["policy"]["required"].as_bool(), Some(true));
+        assert_eq!(policy["policy"]["min_source_quorum"].as_u64(), Some(2));
+
+        let finality_status = run_mainline_query_from_path(
+            base.as_path(),
+            "ua_getMappedFinalitySourceStatus",
+            &params_with_ua_and_native_paths(
+                store.as_path(),
+                audit.as_path(),
+                native_store.as_path(),
+                json!({}),
+            ),
+        )
+        .expect("ua_getMappedFinalitySourceStatus should expose source policy");
+        assert_eq!(
+            finality_status["status"]["source_policy"]["required"].as_bool(),
+            Some(true)
+        );
+        assert_eq!(
+            finality_status["status"]["source_policy"]["min_source_quorum"].as_u64(),
+            Some(2)
+        );
+
+        let live_params = mapped_lock_live_smoke_params(account_id, 0x74, 600);
+        let quorum_err = run_mainline_query_from_path(
+            base.as_path(),
+            "ua_registerMappedLock",
+            &params_with_ua_and_native_paths(
+                store.as_path(),
+                audit.as_path(),
+                native_store.as_path(),
+                live_params.clone(),
+            ),
+        )
+        .expect_err("live register should fail closed while source quorum is below policy");
+        let quorum_err = quorum_err.to_string();
+        assert!(
+            quorum_err.contains("ERR_MAPPED_HEADER_SOURCE_QUORUM_UNMET"),
+            "expected source quorum error, got: {quorum_err}"
+        );
+
+        observe_mapped_lock_live_smoke_source_peer(&live_params, 2);
+        let register = run_mainline_query_from_path(
+            base.as_path(),
+            "ua_registerMappedLock",
+            &params_with_ua_and_native_paths(
+                store.as_path(),
+                audit.as_path(),
+                native_store.as_path(),
+                live_params,
+            ),
+        )
+        .expect("live register should pass after second allowed source peer is observed");
+        assert_eq!(register["accepted"].as_bool(), Some(true));
+        assert_eq!(register["phase4_mode"].as_str(), Some("live"));
+        assert_eq!(
+            register["native_settlement"]["effect"].as_str(),
+            Some("neth_m2_credit")
+        );
+        assert_eq!(
+            register["native_settlement"]["nov_minted"].as_u64(),
+            Some(0)
+        );
 
         novovm_network::clear_network_runtime_native_state_for_host_tests_v1();
         let _ = fs::remove_dir_all(root);
