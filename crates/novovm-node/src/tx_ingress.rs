@@ -1964,6 +1964,33 @@ fn reserve_proof_effective_status_v1(proof: &NovTreasuryReserveProofV1, now_ms: 
     status
 }
 
+fn reserve_proof_block_reason_for_asset_v1(
+    store: &NovNativeExecutionStoreV1,
+    asset: &str,
+    now_ms: u128,
+) -> Option<String> {
+    let normalized = normalize_asset_symbol_v1(asset);
+    if normalized == "NOV" {
+        return None;
+    }
+    let proof = store
+        .module_state
+        .treasury_reserve_proofs
+        .get(normalized.as_str())?;
+    let effective_status = reserve_proof_effective_status_v1(proof, now_ms);
+    if effective_status == "active" {
+        return None;
+    }
+    Some(format!(
+        "asset={} reserve_proof_effective_status={} proof_type={} proof_source={} proof_reference={}",
+        normalized,
+        effective_status,
+        proof.proof_type,
+        proof.proof_source,
+        proof.proof_reference
+    ))
+}
+
 fn fee_quote_reason_v1(code: &str, detail: &str) -> String {
     format!("{}.{}: {}", NOV_FEE_FAILURE_QUOTE_PREFIX_V1, code, detail)
 }
@@ -3879,6 +3906,17 @@ fn settle_fee_quote_into_treasury_v1(
                 now_ms,
             );
         }
+        if let Some(reason) =
+            reserve_proof_block_reason_for_asset_v1(store, quote.pay_asset.as_str(), now_ms)
+        {
+            return clearing_fail_v1(
+                store,
+                quote.pay_asset.as_str(),
+                NovClearingFailureCodeV1::ReserveProofNotActive,
+                reason,
+                now_ms,
+            );
+        }
     }
 
     let (
@@ -4708,6 +4746,22 @@ fn dispatch_treasury_redeem_v1(
             method_label.to_string(),
             fee_settlement_reason_v1("invalid_redeem_amount", "amount must be > 0"),
         );
+    }
+
+    if asset != "NOV" {
+        if let Some(reason) =
+            reserve_proof_block_reason_for_asset_v1(store, asset.as_str(), now_unix_millis_v1())
+        {
+            increment_settlement_failure_v1(store, "reserve_proof_not_active");
+            return build_failed_native_receipt_v1(
+                request,
+                settled_fee,
+                subject_meta,
+                "treasury".to_string(),
+                method_label.to_string(),
+                fee_settlement_reason_v1("reserve_proof_not_active", reason.as_str()),
+            );
+        }
     }
 
     if asset == "NOV" {
@@ -10090,6 +10144,90 @@ mod tests {
     }
 
     #[test]
+    fn reserve_proof_revoked_blocks_non_nov_fee_clearing() {
+        with_test_native_execution_store_path_v1(|path| {
+            let mut pre = NovNativeExecutionStoreV1::default();
+            pre.module_state
+                .fee_oracle_rates_ppm
+                .insert("USDT".to_string(), 2_000_000);
+            pre.module_state.fee_oracle_updated_unix_ms = now_unix_millis_v1();
+            pre.module_state.fee_oracle_source = "runtime_oracle".to_string();
+            pre.module_state.clearing_enabled = true;
+            pre.module_state.clearing_require_healthy_risk_buffer = false;
+            pre.module_state.treasury_reserve_proofs.insert(
+                "USDT".to_string(),
+                NovTreasuryReserveProofV1 {
+                    asset: "USDT".to_string(),
+                    reserve_amount: 1_000,
+                    proof_type: "custody_statement_v1".to_string(),
+                    proof_digest: "0xdeadbeef".to_string(),
+                    proof_source: "treasury_committee".to_string(),
+                    proof_reference: "revoked-report-001".to_string(),
+                    observed_at_unix_ms: 1,
+                    expires_at_unix_ms: 0,
+                    policy_version: 1,
+                    policy_source: "governance_path".to_string(),
+                    status: "revoked".to_string(),
+                    automated_verification: false,
+                    verification_mode: "manual_governance_attestation".to_string(),
+                },
+            );
+            save_nov_native_execution_store_v1(path.as_path(), &pre)
+                .expect("seed revoked reserve proof");
+
+            let request = NovExecutionRequestV1 {
+                tx_hash: [0x91; 32],
+                chain_id: 7091,
+                caller: vec![0x91; 20],
+                target: NovExecutionRequestTargetV1::NativeModule("treasury".to_string()),
+                method: "deposit_reserve".to_string(),
+                args: serde_json::to_vec(&serde_json::json!({
+                    "asset": "USDT",
+                    "amount": 10u64
+                }))
+                .expect("encode args"),
+                fee_pay_asset: "USDT".to_string(),
+                fee_max_pay_amount: 1_000,
+                fee_slippage_bps: 50,
+                gas_like_limit: Some(90_000),
+                nonce: 91,
+            };
+            let receipt = dispatch_and_persist_nov_execution_request_with_store_path_v1(
+                path.as_path(),
+                &request,
+            )
+            .expect("dispatch should return reserve proof failure receipt");
+            assert!(!receipt.status);
+            assert_eq!(receipt.module, "fee");
+            assert_eq!(receipt.method, "settlement");
+            let failure = receipt.failure_reason.clone().unwrap_or_default();
+            assert!(failure.starts_with("fee.clearing.reserve_proof_not_active"));
+            assert!(failure.contains("reserve_proof_effective_status=revoked"));
+            assert!(failure.contains("proof_reference=revoked-report-001"));
+
+            let state = load_nov_native_execution_store_v1(path.as_path())
+                .expect("load native execution store");
+            assert_eq!(
+                state
+                    .module_state
+                    .treasury_reserves
+                    .get("USDT")
+                    .copied()
+                    .unwrap_or_default(),
+                0
+            );
+            assert_eq!(
+                state
+                    .module_state
+                    .clearing_failure_counts
+                    .get("USDT:reserve_proof_not_active")
+                    .copied(),
+                Some(1)
+            );
+        });
+    }
+
+    #[test]
     fn constrained_threshold_state_tightens_non_nov_clearing_slippage() {
         with_test_native_execution_store_path_v1(|path| {
             let mut pre = NovNativeExecutionStoreV1::default();
@@ -11252,6 +11390,89 @@ mod tests {
             assert!(
                 entry["clearing_rate_ppm"].as_u64().unwrap_or_default() > 1_000_000,
                 "redeem must use reverse conservative price"
+            );
+        });
+    }
+
+    #[test]
+    fn reserve_proof_revoked_blocks_non_nov_treasury_redeem_without_nov_debit() {
+        with_test_native_execution_store_path_v1(|path| {
+            let caller = format!("0x{}", "92".repeat(20));
+            let mut pre = NovNativeExecutionStoreV1::default();
+            credit_native_account_asset_balance_v1(&mut pre, caller.as_str(), "NOV", 500);
+            pre.module_state
+                .treasury_reserves
+                .insert("USDT".to_string(), 1_000);
+            pre.module_state.treasury_reserve_proofs.insert(
+                "USDT".to_string(),
+                NovTreasuryReserveProofV1 {
+                    asset: "USDT".to_string(),
+                    reserve_amount: 1_000,
+                    proof_type: "custody_statement_v1".to_string(),
+                    proof_digest: "0xdeadbeef02".to_string(),
+                    proof_source: "treasury_committee".to_string(),
+                    proof_reference: "revoked-report-002".to_string(),
+                    observed_at_unix_ms: 1,
+                    expires_at_unix_ms: 0,
+                    policy_version: 1,
+                    policy_source: "governance_path".to_string(),
+                    status: "revoked".to_string(),
+                    automated_verification: false,
+                    verification_mode: "manual_governance_attestation".to_string(),
+                },
+            );
+            save_nov_native_execution_store_v1(path.as_path(), &pre)
+                .expect("seed revoked reserve proof");
+
+            let request = NovExecutionRequestV1 {
+                tx_hash: [0x92; 32],
+                chain_id: 8092,
+                caller: vec![0x92; 20],
+                target: NovExecutionRequestTargetV1::NativeModule("treasury".to_string()),
+                method: "redeem".to_string(),
+                args: serde_json::to_vec(&serde_json::json!({
+                    "asset_out": "USDT",
+                    "nov_amount": 100u64
+                }))
+                .expect("encode args"),
+                fee_pay_asset: "NOV".to_string(),
+                fee_max_pay_amount: 500,
+                fee_slippage_bps: 0,
+                gas_like_limit: Some(80_000),
+                nonce: 92,
+            };
+            let receipt = dispatch_and_persist_nov_execution_request_with_store_path_v1(
+                path.as_path(),
+                &request,
+            )
+            .expect("dispatch should return reserve proof failure receipt");
+            assert!(!receipt.status);
+            assert_eq!(receipt.module, "treasury");
+            assert_eq!(receipt.method, "redeem");
+            let failure = receipt.failure_reason.clone().unwrap_or_default();
+            assert!(failure.starts_with("fee.settlement.reserve_proof_not_active"));
+            assert!(failure.contains("reserve_proof_effective_status=revoked"));
+            assert!(failure.contains("proof_reference=revoked-report-002"));
+
+            let nov_after = get_nov_native_account_asset_balance_with_store_path_v1(
+                path.as_path(),
+                caller.as_str(),
+                "NOV",
+            )
+            .expect("load NOV balance");
+            let usdt_after = get_nov_native_account_asset_balance_with_store_path_v1(
+                path.as_path(),
+                caller.as_str(),
+                "USDT",
+            )
+            .expect("load USDT balance");
+            assert_eq!(nov_after, 500);
+            assert_eq!(usdt_after, 0);
+            let state = load_nov_native_execution_store_v1(path.as_path())
+                .expect("load native execution store");
+            assert_eq!(
+                state.module_state.treasury_reserves.get("USDT").copied(),
+                Some(1_000)
             );
         });
     }

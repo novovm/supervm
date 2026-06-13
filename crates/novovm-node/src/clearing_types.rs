@@ -71,6 +71,7 @@ pub enum NovClearingFailureCodeV1 {
     ClearingDisabled,
     DailyVolumeExceeded,
     RiskBufferBelowMin,
+    ReserveProofNotActive,
 }
 
 impl NovClearingFailureCodeV1 {
@@ -89,6 +90,7 @@ impl NovClearingFailureCodeV1 {
             Self::ClearingDisabled => "fee.clearing.clearing_disabled",
             Self::DailyVolumeExceeded => "fee.clearing.daily_volume_exceeded",
             Self::RiskBufferBelowMin => "fee.clearing.risk_buffer_below_min",
+            Self::ReserveProofNotActive => "fee.clearing.reserve_proof_not_active",
         }
     }
 
@@ -105,6 +107,7 @@ impl NovClearingFailureCodeV1 {
             Self::ClearingDisabled => "clearing_disabled",
             Self::DailyVolumeExceeded => "daily_volume_exceeded",
             Self::RiskBufferBelowMin => "risk_buffer_below_min",
+            Self::ReserveProofNotActive => "reserve_proof_not_active",
         }
     }
 }
