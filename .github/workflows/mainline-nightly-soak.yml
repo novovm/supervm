@@ -158,6 +158,18 @@ jobs:
           $env:NOVOVM_NATIVE_PIPELINE_DUAL_GATE_REPORT_PATH = "artifacts/native-pipeline/native-pipeline-dual-node-fanout-report.json"
           cargo run -p novovm-node --bin supervm-native-pipeline-dual-node-gate
 
+      - name: Run native pipeline production soak skeleton
+        shell: pwsh
+        run: |
+          Remove-Item Env:CARGO_TARGET_DIR -ErrorAction SilentlyContinue
+          cargo build -p novovm-node --bins
+          $env:NOVOVM_NATIVE_PIPELINE_PRODUCTION_SOAK_PROFILE = "30min"
+          $env:NOVOVM_NATIVE_PIPELINE_PRODUCTION_SOAK_DURATION_SECONDS = "2"
+          $env:NOVOVM_NATIVE_PIPELINE_PRODUCTION_SOAK_TX_COUNT = "64"
+          $env:NOVOVM_NATIVE_PIPELINE_PRODUCTION_SOAK_BATCH_BUDGET = "16"
+          $env:NOVOVM_NATIVE_PIPELINE_PRODUCTION_SOAK_REPORT_PATH = "artifacts/native-pipeline/native-pipeline-production-soak-30min.json"
+          cargo run -p novovm-node --bin supervm-native-pipeline-production-soak
+
       - name: Generate duty report from nightly artifacts
         shell: pwsh
         run: |
@@ -187,4 +199,6 @@ jobs:
             artifacts/mainline/mainline-duty-report-nightly.md
             artifacts/native-pipeline/native-pipeline-sustained-report.json
             artifacts/native-pipeline/native-pipeline-dual-node-fanout-report.json
+            artifacts/native-pipeline/native-pipeline-production-soak-30min.json
+            artifacts/native-pipeline/native-pipeline-production-soak-30min-summary.json
           if-no-files-found: warn

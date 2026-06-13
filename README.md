@@ -329,6 +329,20 @@ cargo run -p novovm-node --bin novovm-node
 
 The dual-node gate locks the UDP network re-entry closed loop. The local sustained gate validates product raw tx ingress, higher-volume queue, AOEM batch, proof, dirty sharded commit, canonical projection, and broadcast egress in one node process. `dirty sharded commit` is the final deterministic atomic ledger boundary after AOEM execution/proof; it does not mean the full lifecycle is serial. Both keep the same concurrency boundary: Rust host code drives lifecycle only and does not become a competing execution scheduler.
 
+Production soak wrapper:
+
+```powershell
+cargo build -p novovm-node --bins
+$env:NOVOVM_NATIVE_PIPELINE_PRODUCTION_SOAK_PROFILE="30min"
+$env:NOVOVM_NATIVE_PIPELINE_PRODUCTION_SOAK_DURATION_SECONDS="1800"
+$env:NOVOVM_NATIVE_PIPELINE_PRODUCTION_SOAK_TX_COUNT="256"
+$env:NOVOVM_NATIVE_PIPELINE_PRODUCTION_SOAK_BATCH_BUDGET="32"
+$env:NOVOVM_NATIVE_PIPELINE_PRODUCTION_SOAK_REPORT_PATH="artifacts/native-pipeline/native-pipeline-production-soak-30min.json"
+cargo run -p novovm-node --bin supervm-native-pipeline-production-soak
+```
+
+The wrapper does not change pipeline structure. It runs `novovm-node` in `native_execution_pipeline` mode with pending-only product entry, validates AOEM owner / host policy / dirty sharded RocksDB commit / queue drain / dropped-rejected budgets, and writes `novovm-native-pipeline-production-soak-report/v1`. `30min`, `2h`, and `overnight` are supported profile names; local and CI smoke runs may override `NOVOVM_NATIVE_PIPELINE_PRODUCTION_SOAK_DURATION_SECONDS` to a short value while preserving the same report schema.
+
 Paced fanout network ingress gate:
 
 ```powershell

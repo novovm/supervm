@@ -72,3 +72,7 @@ path = "src/bin/supervm-mainline-p2d-sample-inject.rs"
 [[bin]]
 name = "supervm-native-pipeline-dual-node-gate"
 path = "src/bin/supervm-native-pipeline-dual-node-gate.rs"
+
+[[bin]]
+name = "supervm-native-pipeline-production-soak"
+path = "src/bin/supervm-native-pipeline-production-soak.rs"
