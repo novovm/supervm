@@ -444,6 +444,7 @@ pub struct NovTreasurySettlementPolicyV1 {
     pub mapped_lock_bridge_paused: bool,
     pub mapped_asset_burn_paused: bool,
     pub mapped_asset_release_paused: bool,
+    pub mapped_asset_auto_heal_enabled: bool,
     pub clearing_enabled: bool,
     pub clearing_daily_nov_hard_limit: u128,
     pub clearing_daily_nov_used: u128,
@@ -554,6 +555,8 @@ pub struct NovNativeExecutionModuleStateV1 {
     pub mapped_asset_burn_paused: bool,
     #[serde(default)]
     pub mapped_asset_release_paused: bool,
+    #[serde(default)]
+    pub mapped_asset_auto_heal_enabled: bool,
     #[serde(default)]
     pub mapped_header_source_required: bool,
     #[serde(default)]
@@ -673,6 +676,7 @@ impl Default for NovNativeExecutionModuleStateV1 {
             mapped_lock_bridge_paused: false,
             mapped_asset_burn_paused: false,
             mapped_asset_release_paused: false,
+            mapped_asset_auto_heal_enabled: false,
             mapped_header_source_required: false,
             mapped_header_source_allowed_peer_ids: Vec::new(),
             mapped_header_source_min_quorum: 1,
@@ -2082,6 +2086,7 @@ fn resolve_treasury_settlement_policy_v1(
             mapped_lock_bridge_paused: store.module_state.mapped_lock_bridge_paused,
             mapped_asset_burn_paused: store.module_state.mapped_asset_burn_paused,
             mapped_asset_release_paused: store.module_state.mapped_asset_release_paused,
+            mapped_asset_auto_heal_enabled: store.module_state.mapped_asset_auto_heal_enabled,
             clearing_enabled,
             clearing_daily_nov_hard_limit,
             clearing_daily_nov_used,
@@ -2188,6 +2193,7 @@ fn resolve_treasury_settlement_policy_v1(
         mapped_lock_bridge_paused: store.module_state.mapped_lock_bridge_paused,
         mapped_asset_burn_paused: store.module_state.mapped_asset_burn_paused,
         mapped_asset_release_paused: store.module_state.mapped_asset_release_paused,
+        mapped_asset_auto_heal_enabled: store.module_state.mapped_asset_auto_heal_enabled,
         clearing_enabled,
         clearing_daily_nov_hard_limit,
         clearing_daily_nov_used,
@@ -5150,6 +5156,11 @@ fn dispatch_native_module_execute_v1(
                 .or_else(|| args_json.get("bridge_release_paused"))
                 .and_then(|value| value.as_bool())
                 .unwrap_or(active_policy.mapped_asset_release_paused);
+            let mapped_asset_auto_heal_enabled = args_json
+                .get("mapped_asset_auto_heal_enabled")
+                .or_else(|| args_json.get("auto_heal_mapped_assets_enabled"))
+                .and_then(|value| value.as_bool())
+                .unwrap_or(active_policy.mapped_asset_auto_heal_enabled);
             let clearing_require_healthy_risk_buffer = args_json
                 .get("clearing_require_healthy_risk_buffer")
                 .and_then(|value| value.as_bool())
@@ -5222,6 +5233,7 @@ fn dispatch_native_module_execute_v1(
             store.module_state.mapped_lock_bridge_paused = mapped_lock_bridge_paused;
             store.module_state.mapped_asset_burn_paused = mapped_asset_burn_paused;
             store.module_state.mapped_asset_release_paused = mapped_asset_release_paused;
+            store.module_state.mapped_asset_auto_heal_enabled = mapped_asset_auto_heal_enabled;
             store.module_state.clearing_require_healthy_risk_buffer =
                 clearing_require_healthy_risk_buffer;
             store.module_state.clearing_daily_nov_hard_limit = clearing_daily_nov_hard_limit;
@@ -5252,6 +5264,7 @@ fn dispatch_native_module_execute_v1(
                     "mapped_lock_bridge_paused": mapped_lock_bridge_paused,
                     "mapped_asset_burn_paused": mapped_asset_burn_paused,
                     "mapped_asset_release_paused": mapped_asset_release_paused,
+                    "mapped_asset_auto_heal_enabled": mapped_asset_auto_heal_enabled,
                     "clearing_require_healthy_risk_buffer": clearing_require_healthy_risk_buffer,
                     "clearing_daily_nov_hard_limit": clearing_daily_nov_hard_limit,
                     "clearing_constrained_max_slippage_bps": clearing_constrained_max_slippage_bps,
@@ -8682,6 +8695,7 @@ mod tests {
                     "mapped_lock_bridge_paused": true,
                     "mapped_asset_burn_paused": true,
                     "mapped_asset_release_paused": true,
+                    "mapped_asset_auto_heal_enabled": true,
                     "clearing_constrained_max_slippage_bps": 25u64,
                     "clearing_constrained_daily_usage_bps": 7500u64,
                     "clearing_constrained_strategy": "treasury_direct_only"
@@ -8755,6 +8769,10 @@ mod tests {
             );
             assert_eq!(
                 out["result"]["policy"]["mapped_asset_release_paused"].as_bool(),
+                Some(true)
+            );
+            assert_eq!(
+                out["result"]["policy"]["mapped_asset_auto_heal_enabled"].as_bool(),
                 Some(true)
             );
             let policy_contract_id = out["result"]["policy_contract_id"]

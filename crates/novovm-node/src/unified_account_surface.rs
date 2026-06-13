@@ -1070,6 +1070,13 @@ fn run_unified_account_surface_rpc(
             let max_items = param_as_u64(params, "max_items")
                 .unwrap_or(64)
                 .clamp(1, 500) as usize;
+            let store_path = native_execution_store_path_from_params_or_env_v1(params);
+            let native_store = load_nov_native_execution_store_v1(store_path.as_path())?;
+            if apply && !native_store.module_state.mapped_asset_auto_heal_enabled {
+                bail!(
+                    "ERR_MAPPED_AUTO_HEAL_DISABLED: apply=true requires governance-enabled mapped_asset_auto_heal_enabled"
+                );
+            }
             let account_filter = param_as_string_any(params, &["account_id", "uca_id"])
                 .map(|raw| validate_uca_id_policy(&raw))
                 .transpose()?;
@@ -1186,6 +1193,11 @@ fn run_unified_account_surface_rpc(
                     "applied_count": applied_count,
                     "items": reports,
                     "scope": "internal_mapped_asset_reorg_heal_no_external_release_no_nov_mint",
+                    "policy": {
+                        "mapped_asset_auto_heal_enabled": native_store.module_state.mapped_asset_auto_heal_enabled,
+                        "policy_source": native_store.module_state.treasury_policy_source,
+                        "policy_version": native_store.module_state.treasury_policy_version,
+                    },
                 }),
                 apply && applied_count > 0,
             ))
@@ -7171,6 +7183,33 @@ mod tests {
             Some("active")
         );
 
+        let disabled_apply_err = run_query_err(
+            &base,
+            "ua_autoHealMappedAssets",
+            params_with_paths_and_native_store(
+                &store,
+                &audit,
+                &native_store,
+                json!({
+                    "account_id": "acct-map-live-auto-heal",
+                    "apply": true,
+                    "now": 13u64,
+                }),
+            ),
+        );
+        assert!(
+            disabled_apply_err.contains("ERR_MAPPED_AUTO_HEAL_DISABLED"),
+            "auto heal apply must be governance-enabled, got: {disabled_apply_err}"
+        );
+
+        let mut policy_store = load_nov_native_execution_store_v1(native_store.as_path())
+            .expect("load native store before enabling auto heal");
+        policy_store.module_state.mapped_asset_auto_heal_enabled = true;
+        policy_store.module_state.treasury_policy_source = "governance_test".to_string();
+        policy_store.module_state.treasury_policy_version = 2;
+        save_nov_native_execution_store_v1(native_store.as_path(), &policy_store)
+            .expect("save auto heal enabled native store");
+
         let applied = run_query(
             &base,
             "ua_autoHealMappedAssets",
@@ -7188,6 +7227,10 @@ mod tests {
         );
         assert_eq!(applied["dry_run"].as_bool(), Some(false));
         assert_eq!(applied["applied_count"].as_u64(), Some(1));
+        assert_eq!(
+            applied["policy"]["mapped_asset_auto_heal_enabled"].as_bool(),
+            Some(true)
+        );
         assert_eq!(applied["items"][0]["applied"].as_bool(), Some(true));
         assert_eq!(applied["items"][0]["status_after"].as_str(), Some("frozen"));
         assert_eq!(
