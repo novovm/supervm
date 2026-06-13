@@ -133,6 +133,8 @@ pub fn is_mainline_unified_account_query_method(method: &str) -> bool {
             | "ua_freezeMappedAsset"
             | "ua_unfreezeMappedAsset"
             | "ua_rollbackFrozenMappedAsset"
+            | "ua_setMappedHeaderSourcePolicy"
+            | "ua_getMappedHeaderSourcePolicy"
             | "ua_releaseMappedLock"
             | "account_balance"
             | "account_assets"
@@ -537,6 +539,57 @@ fn run_unified_account_surface_rpc(
                     "kyc_verified": kyc_verified,
                     "session_expires_at": session_expires_at,
                     "read_only": true,
+                }),
+                false,
+            ))
+        }
+        "ua_setMappedHeaderSourcePolicy" => {
+            let required = param_as_bool(params, "required")
+                .or_else(|| param_as_bool(params, "mapped_header_source_required"))
+                .unwrap_or(true);
+            let allowed_peer_ids =
+                param_as_u64_list_any(params, &["allowed_peer_ids", "source_peer_ids"])
+                    .unwrap_or_default();
+            if required && allowed_peer_ids.is_empty() {
+                bail!(
+                    "ERR_MAPPED_HEADER_SOURCE_POLICY_INVALID: required policy needs at least one allowed source peer"
+                );
+            }
+            let source = param_as_string_any(params, &["source", "policy_source"])
+                .unwrap_or_else(|| "governance_path".to_string());
+            let version = param_as_u64(params, "policy_version")
+                .unwrap_or(1)
+                .clamp(1, u64::from(u32::MAX)) as u32;
+            let now = param_as_u64(params, "now").unwrap_or_else(now_unix_sec);
+            let store_path = native_execution_store_path_from_params_or_env_v1(params);
+            let mut store = load_nov_native_execution_store_v1(store_path.as_path())?;
+            store.module_state.mapped_header_source_required = required;
+            store.module_state.mapped_header_source_allowed_peer_ids = allowed_peer_ids;
+            store.module_state.mapped_header_source_policy_source = source;
+            store.module_state.mapped_header_source_policy_version = version;
+            store
+                .module_state
+                .mapped_header_source_policy_updated_unix_ms = u128::from(now).saturating_mul(1000);
+            store.last_updated_unix_ms = u128::from(now).saturating_mul(1000);
+            save_nov_native_execution_store_v1(store_path.as_path(), &store)?;
+            Ok((
+                json!({
+                    "method": method,
+                    "updated": true,
+                    "policy": mapped_header_source_policy_to_json_v1(&store),
+                    "store_path": store_path.display().to_string(),
+                }),
+                true,
+            ))
+        }
+        "ua_getMappedHeaderSourcePolicy" => {
+            let store_path = native_execution_store_path_from_params_or_env_v1(params);
+            let store = load_nov_native_execution_store_v1(store_path.as_path())?;
+            Ok((
+                json!({
+                    "method": method,
+                    "policy": mapped_header_source_policy_to_json_v1(&store),
+                    "store_path": store_path.display().to_string(),
                 }),
                 false,
             ))
@@ -1921,6 +1974,59 @@ fn require_mapped_bridge_gate_open_v1(params: &Value, gate: MappedBridgeGateV1) 
     Ok(())
 }
 
+fn mapped_header_source_policy_to_json_v1(
+    store: &crate::tx_ingress::NovNativeExecutionStoreV1,
+) -> Value {
+    json!({
+        "required": store.module_state.mapped_header_source_required,
+        "allowed_peer_ids": store.module_state.mapped_header_source_allowed_peer_ids,
+        "policy_source": store.module_state.mapped_header_source_policy_source,
+        "policy_version": store.module_state.mapped_header_source_policy_version,
+        "updated_unix_ms": store.module_state.mapped_header_source_policy_updated_unix_ms,
+    })
+}
+
+fn require_mapped_header_source_policy_v1(
+    params: &Value,
+    chain_id: u64,
+    block_number: u64,
+    source_peer_id: Option<u64>,
+) -> Result<Value> {
+    let store_path = native_execution_store_path_from_params_or_env_v1(params);
+    let store = load_nov_native_execution_store_v1(store_path.as_path())?;
+    let policy = mapped_header_source_policy_to_json_v1(&store);
+    if !store.module_state.mapped_header_source_required {
+        return Ok(json!({
+            "state": "not_required",
+            "policy": policy,
+        }));
+    }
+    let Some(source_peer_id) = source_peer_id else {
+        bail!(
+            "ERR_MAPPED_HEADER_SOURCE_UNTRUSTED: required source policy has no source peer for chain_id={} block_number={}",
+            chain_id,
+            block_number
+        );
+    };
+    if !store
+        .module_state
+        .mapped_header_source_allowed_peer_ids
+        .contains(&source_peer_id)
+    {
+        bail!(
+            "ERR_MAPPED_HEADER_SOURCE_UNTRUSTED: source_peer_id={} is not allowed for chain_id={} block_number={}",
+            source_peer_id,
+            chain_id,
+            block_number
+        );
+    }
+    Ok(json!({
+        "state": "ok",
+        "source_peer_id": source_peer_id,
+        "policy": policy,
+    }))
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct MappedAssetAnchorStatusV1 {
     state: &'static str,
@@ -2652,6 +2758,41 @@ fn param_as_bool(params: &Value, key: &str) -> Option<bool> {
     }
 }
 
+fn value_as_u64_list(value: &Value) -> Option<Vec<u64>> {
+    match value {
+        Value::Array(items) => Some(items.iter().filter_map(value_as_u64).collect()),
+        Value::String(raw) => Some(
+            raw.split([',', ';', ' '])
+                .filter_map(|item| {
+                    let trimmed = item.trim();
+                    if trimmed.is_empty() {
+                        None
+                    } else {
+                        parse_hex_u64(trimmed).or_else(|| trimmed.parse::<u64>().ok())
+                    }
+                })
+                .collect(),
+        ),
+        Value::Number(_) => value_as_u64(value).map(|item| vec![item]),
+        _ => None,
+    }
+}
+
+fn param_as_u64_list(params: &Value, key: &str) -> Option<Vec<u64>> {
+    match params {
+        Value::Object(map) => map.get(key).and_then(value_as_u64_list),
+        Value::Array(items) => items
+            .first()
+            .and_then(|value| value.get(key))
+            .and_then(value_as_u64_list),
+        _ => None,
+    }
+}
+
+fn param_as_u64_list_any(params: &Value, keys: &[&str]) -> Option<Vec<u64>> {
+    keys.iter().find_map(|key| param_as_u64_list(params, key))
+}
+
 fn value_as_u128(value: &Value) -> Option<u128> {
     match value {
         Value::Number(number) => number
@@ -3210,6 +3351,7 @@ fn ethereum_lock_event_ref_digest_v1(
 
 fn verify_ethereum_lock_event_trusted_anchor_v1(
     evidence: &EthereumLockEventEvidenceV1,
+    params: &Value,
 ) -> Result<()> {
     let blocks =
         novovm_network::snapshot_network_runtime_native_canonical_blocks_v1(evidence.chain_id, 0);
@@ -3234,6 +3376,12 @@ fn verify_ethereum_lock_event_trusted_anchor_v1(
             "ERR_MAPPED_LOCK_PROOF_INVALID: receipts_root does not match trusted Ethereum header"
         );
     }
+    require_mapped_header_source_policy_v1(
+        params,
+        evidence.chain_id,
+        evidence.block_number,
+        block.source_peer_id,
+    )?;
     Ok(())
 }
 
@@ -3281,7 +3429,7 @@ fn verify_ethereum_lock_event_evidence_v1(
             required_finalized
         );
     }
-    verify_ethereum_lock_event_trusted_anchor_v1(&evidence)?;
+    verify_ethereum_lock_event_trusted_anchor_v1(&evidence, params)?;
     let proven_receipt = novovm_network::eth_rlpx_mpt_verify_proof_value_v1(
         evidence.receipts_root,
         ua_rlp_encode_u64_v1(evidence.receipt_index).as_slice(),
@@ -6283,6 +6431,114 @@ mod tests {
             unfinalized_anchor_err.contains("trusted Ethereum block is not finalized"),
             "unfinalized trusted block should fail closed, got: {unfinalized_anchor_err}"
         );
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn unified_account_live_mapped_lock_enforces_governed_header_source_policy() {
+        let _env_lock = ENV_TEST_LOCK.lock().expect("env test lock poisoned");
+        let _shadow_guard = EnvVarGuard::set(NOVOVM_UA_PHASE4_SHADOW_MODE_ENFORCE_ENV, "false");
+        let (base, store, audit) = temp_paths("mapped-live-header-source-policy");
+        let root = base
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .to_path_buf();
+        let native_store = root.join("native-execution-store.json");
+        ensure_native_store(native_store.as_path());
+        ua_create(&base, &store, &audit, "acct-map-live-source-policy", 10);
+
+        let mut rejected_map =
+            match mapped_lock_live_event_proof_params("acct-map-live-source-policy", 0x42, 112u128)
+            {
+                Value::Object(map) => map,
+                other => panic!("expected mapped lock proof params object, got {other:?}"),
+            };
+        seed_mapped_lock_trusted_block_from_params(&Value::Object(rejected_map.clone()), true);
+        let policy = run_query(
+            &base,
+            "ua_setMappedHeaderSourcePolicy",
+            params_with_paths_and_native_store(
+                &store,
+                &audit,
+                &native_store,
+                json!({
+                    "required": true,
+                    "allowed_peer_ids": [2u64],
+                    "policy_source": "governance_test",
+                    "policy_version": 7u64,
+                    "now": 12u64,
+                }),
+            ),
+        );
+        assert_eq!(policy["updated"].as_bool(), Some(true));
+        assert_eq!(policy["policy"]["required"].as_bool(), Some(true));
+        rejected_map.insert("phase4_mode".to_string(), Value::String("live".to_string()));
+        let rejected_err = run_query_err(
+            &base,
+            "ua_registerMappedLock",
+            params_with_paths_and_native_store(
+                &store,
+                &audit,
+                &native_store,
+                Value::Object(rejected_map),
+            ),
+        );
+        assert!(
+            rejected_err.contains("ERR_MAPPED_HEADER_SOURCE_UNTRUSTED"),
+            "non-whitelisted source peer should fail closed, got: {rejected_err}"
+        );
+
+        let mut accepted_map =
+            match mapped_lock_live_event_proof_params("acct-map-live-source-policy", 0x43, 113u128)
+            {
+                Value::Object(map) => map,
+                other => panic!("expected mapped lock proof params object, got {other:?}"),
+            };
+        seed_mapped_lock_trusted_block_from_params(&Value::Object(accepted_map.clone()), true);
+        let updated_policy = run_query(
+            &base,
+            "ua_setMappedHeaderSourcePolicy",
+            params_with_paths_and_native_store(
+                &store,
+                &audit,
+                &native_store,
+                json!({
+                    "required": true,
+                    "allowed_peer_ids": [1u64],
+                    "policy_source": "governance_test",
+                    "policy_version": 8u64,
+                    "now": 13u64,
+                }),
+            ),
+        );
+        assert_eq!(
+            updated_policy["policy"]["allowed_peer_ids"][0].as_u64(),
+            Some(1)
+        );
+        accepted_map.insert("phase4_mode".to_string(), Value::String("live".to_string()));
+        let accepted = run_query(
+            &base,
+            "ua_registerMappedLock",
+            params_with_paths_and_native_store(
+                &store,
+                &audit,
+                &native_store,
+                Value::Object(accepted_map),
+            ),
+        );
+        assert_eq!(accepted["accepted"].as_bool(), Some(true));
+        assert_eq!(
+            accepted["settlement_effect"].as_str(),
+            Some("neth_m2_credit")
+        );
+
+        let get_policy = run_query(
+            &base,
+            "ua_getMappedHeaderSourcePolicy",
+            params_with_paths_and_native_store(&store, &audit, &native_store, json!({})),
+        );
+        assert_eq!(get_policy["policy"]["policy_version"].as_u64(), Some(8));
 
         let _ = fs::remove_dir_all(&root);
     }

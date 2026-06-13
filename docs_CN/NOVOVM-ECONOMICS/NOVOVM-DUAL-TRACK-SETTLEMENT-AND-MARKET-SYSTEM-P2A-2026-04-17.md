@@ -261,9 +261,9 @@ asset_out[A] = nov_amount / P_redeem[A]
 - 只读查询 `nov_call treasury.get_protocol_clearing_price` 可返回 `P_epoch/P_pay/P_redeem`、source、rejected source、epoch 和 attack-resistance 状态。
 - `ua_registerMappedLock(phase4_mode=live)` 已要求结构化 Ethereum lock event evidence、receipt MPT proof 和本地 `novovm-network` runtime canonical finalized block anchor，并能把通过校验的 ETH lock MVP 映射为 `NETH` M2 credit，写入 native account balance、Treasury reserve 和 settlement journal；`ua_burnMappedAsset -> ua_releaseMappedLock` 已能扣减用户 NETH credit 并释放 Treasury NETH reserve。
 - M2 bridge pause v1 已接到 native execution store 和 governance policy：`mapped_lock_bridge_paused` 阻断 live register；`mapped_asset_burn_paused` 阻断 burn；`mapped_asset_release_paused` 阻断 release；env 级全局/单项暂停用于紧急 fail-closed。
-- M2 source anchor reorg gate v1 已接入 mapped asset record：live register 持久化 source anchor；`ua_getMappedAsset` 暴露 `source_anchor_status`；burn/release 前复查本地 canonical finalized anchor，unsafe 时 fail-closed，不推进状态。
+- M2 source anchor reorg gate v1 已接入 mapped asset record：live register 持久化 source anchor；`ua_getMappedAsset` 暴露 `source_anchor_status`；burn/release 前复查本地 canonical finalized anchor，unsafe 时 fail-closed，不推进状态。治理化 header source whitelist gate v1 已接入 native execution store：`ua_setMappedHeaderSourcePolicy` 可要求 live lock proof 的 runtime header 必须来自治理许可 `source_peer_id`。
 - M2 manual freeze/recovery/rollback v1 已接入 `ua_freezeMappedAsset` / `ua_unfreezeMappedAsset` / `ua_rollbackFrozenMappedAsset`：active live NETH 冻结会扣用户 native 可用余额、保留 Treasury reserve，并把 mapped asset 状态置为 `frozen`；source anchor 恢复 canonical finalized 后才能 unfreeze，恢复用户 native 可用余额；source anchor 仍 unsafe 时可 rollback，扣回内部 Treasury NETH reserve 并把 mapped asset 置为 `rejected`，不返还用户余额、不 mint NOV、不触发外部链释放。
-- 当前仍不声明治理化 Ethereum block header/finality source 管理、自动 reorg heal、治理赔付、真实链上出金、跨链自动 mint/redeem、NOV 直接铸造或钱包/DAPP/网站完成。
+- 当前仍不声明治理化 Ethereum block header source 多签、finality source 管理、自动 reorg heal、治理赔付、真实链上出金、跨链自动 mint/redeem、NOV 直接铸造或钱包/DAPP/网站完成。
 
 ## 10. 本稿替换与冲突规则
 
