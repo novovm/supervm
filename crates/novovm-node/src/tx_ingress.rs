@@ -19,10 +19,15 @@ use novovm_governance_observability::{append_governance_event_auto, GovernanceEv
 use novovm_network::{
     eth_rlpx_transaction_hash_v1, eth_rlpx_validate_transaction_envelope_payload_v1,
     get_network_runtime_native_pending_tx_payload_v1,
+    observe_network_runtime_native_execution_budget_target_v1,
+    observe_network_runtime_native_execution_budget_throttle_v1,
     observe_network_runtime_native_pending_tx_local_ingress_with_payload_v1,
     observe_network_runtime_native_pending_tx_local_native_payload_v1,
     observe_network_runtime_native_pending_tx_rejected_v1,
-    snapshot_network_runtime_native_pending_txs_v1, NetworkRuntimeNativePendingTxLifecycleStageV1,
+    snapshot_network_runtime_native_execution_budget_runtime_summary_v1,
+    snapshot_network_runtime_native_pending_txs_v1,
+    NetworkRuntimeNativeExecutionBudgetTargetObservationV1,
+    NetworkRuntimeNativePendingTxLifecycleStageV1,
 };
 use novovm_protocol::{
     decode_local_tx_wire_v1 as decode_tx_wire_v1, decode_nov_native_tx_wire_v1,
@@ -10787,6 +10792,157 @@ pub fn run_nov_execute_pending_native_tx_batch_from_params_v1(
     }))
 }
 
+pub fn run_nov_native_execution_tick_from_params_v1(
+    params: &serde_json::Value,
+) -> Result<serde_json::Value> {
+    let chain_id = params
+        .get("chain_id")
+        .and_then(|value| value.as_u64())
+        .unwrap_or(1);
+    let max_aoem_batch = native_aoem_batch_max_size_v1().max(1) as u64;
+    let hard_budget = params
+        .get("hard_budget_per_tick")
+        .or_else(|| params.get("hard_max_txs"))
+        .and_then(|value| value.as_u64())
+        .unwrap_or(max_aoem_batch)
+        .clamp(1, max_aoem_batch);
+    let target_budget = params
+        .get("target_budget_per_tick")
+        .or_else(|| params.get("limit"))
+        .or_else(|| params.get("max_txs"))
+        .and_then(|value| value.as_u64())
+        .unwrap_or(hard_budget)
+        .clamp(1, hard_budget);
+    let effective_budget = params
+        .get("effective_budget_per_tick")
+        .and_then(|value| value.as_u64())
+        .unwrap_or(target_budget)
+        .clamp(1, hard_budget);
+    let hard_time_slice_ms = params
+        .get("hard_time_slice_ms")
+        .and_then(|value| value.as_u64())
+        .unwrap_or(250)
+        .max(1);
+    let target_time_slice_ms = params
+        .get("target_time_slice_ms")
+        .and_then(|value| value.as_u64())
+        .unwrap_or(hard_time_slice_ms)
+        .clamp(1, hard_time_slice_ms);
+    let effective_time_slice_ms = params
+        .get("effective_time_slice_ms")
+        .and_then(|value| value.as_u64())
+        .unwrap_or(target_time_slice_ms)
+        .clamp(1, hard_time_slice_ms);
+    let scan_limit = params
+        .get("scan_limit")
+        .and_then(|value| value.as_u64())
+        .unwrap_or(effective_budget.saturating_mul(4).max(effective_budget))
+        .clamp(effective_budget, 16_384);
+    let pending_before =
+        snapshot_network_runtime_native_pending_txs_v1(chain_id, scan_limit as usize);
+    let eligible_before = pending_before
+        .iter()
+        .filter(|pending| native_pending_execution_eligible_stage_v1(pending.lifecycle_stage))
+        .count() as u64;
+    let deferred_count = eligible_before.saturating_sub(effective_budget);
+    let started_at = Instant::now();
+
+    observe_network_runtime_native_execution_budget_target_v1(
+        chain_id,
+        &NetworkRuntimeNativeExecutionBudgetTargetObservationV1 {
+            hard_budget_per_tick: hard_budget,
+            hard_time_slice_ms,
+            target_budget_per_tick: target_budget,
+            target_time_slice_ms,
+            effective_budget_per_tick: effective_budget,
+            effective_time_slice_ms,
+            reason: Some("mainline_native_execution_tick".to_string()),
+        },
+    );
+    if deferred_count > 0 {
+        observe_network_runtime_native_execution_budget_throttle_v1(
+            chain_id,
+            "native_execution_tick_budget_deferred",
+            deferred_count,
+            true,
+            false,
+        );
+    }
+
+    let mut batch_params = params.clone();
+    let obj = batch_params
+        .as_object_mut()
+        .ok_or_else(|| anyhow::anyhow!("nov_runNativeExecutionTick params must be an object"))?;
+    obj.insert(
+        "limit".to_string(),
+        serde_json::Value::Number(serde_json::Number::from(effective_budget)),
+    );
+    obj.insert(
+        "scan_limit".to_string(),
+        serde_json::Value::Number(serde_json::Number::from(scan_limit)),
+    );
+    let batch_result = run_nov_execute_pending_native_tx_batch_from_params_v1(&batch_params)?;
+    let elapsed_ms = started_at.elapsed().as_millis() as u64;
+    let time_slice_exceeded = elapsed_ms > effective_time_slice_ms;
+    if time_slice_exceeded {
+        observe_network_runtime_native_execution_budget_throttle_v1(
+            chain_id,
+            "native_execution_tick_time_slice_exceeded",
+            0,
+            false,
+            true,
+        );
+    }
+    let executed_count = batch_result
+        .get("selected_count")
+        .and_then(|value| value.as_u64())
+        .unwrap_or_default();
+    let budget_runtime =
+        snapshot_network_runtime_native_execution_budget_runtime_summary_v1(chain_id);
+
+    Ok(serde_json::json!({
+        "method": "nov_runNativeExecutionTick",
+        "accepted": true,
+        "scheduler_mode": "mainline_native_execution_tick",
+        "background_daemon": false,
+        "execution_kernel": "AOEM",
+        "aoem_concurrency_owner": "AOEM_runtime",
+        "lifecycle": {
+            "ingress": "network_runtime_native_pending",
+            "execution": "aoem_batch_precommit",
+            "commit": "single_lock_ordered_dirty_store_commit",
+            "egress": "native_receipt_and_state_projection",
+        },
+        "chain_id": chain_id,
+        "pending_before": pending_before.len(),
+        "eligible_before": eligible_before,
+        "executed_count": executed_count,
+        "deferred_count": deferred_count,
+        "elapsed_ms": elapsed_ms,
+        "time_slice_exceeded": time_slice_exceeded,
+        "budget": {
+            "hard_budget_per_tick": hard_budget,
+            "target_budget_per_tick": target_budget,
+            "effective_budget_per_tick": effective_budget,
+            "hard_time_slice_ms": hard_time_slice_ms,
+            "target_time_slice_ms": target_time_slice_ms,
+            "effective_time_slice_ms": effective_time_slice_ms,
+            "scan_limit": scan_limit,
+        },
+        "budget_runtime": {
+            "hard_budget_per_tick": budget_runtime.hard_budget_per_tick,
+            "target_budget_per_tick": budget_runtime.target_budget_per_tick,
+            "effective_budget_per_tick": budget_runtime.effective_budget_per_tick,
+            "execution_budget_hit_count": budget_runtime.execution_budget_hit_count,
+            "execution_deferred_count": budget_runtime.execution_deferred_count,
+            "execution_time_slice_exceeded_count": budget_runtime.execution_time_slice_exceeded_count,
+            "last_execution_target_reason": budget_runtime.last_execution_target_reason,
+            "last_execution_throttle_reason": budget_runtime.last_execution_throttle_reason,
+        },
+        "batch_result": batch_result,
+    }))
+}
+
 pub fn run_nov_send_transaction_from_params_v1(
     params: &serde_json::Value,
 ) -> Result<serde_json::Value> {
@@ -12512,6 +12668,113 @@ mod tests {
                             .unwrap_or_default()
                             >= 60,
                         "pending native batch must commit both deposits"
+                    );
+                })
+            },
+        )
+    }
+
+    #[test]
+    fn run_nov_native_execution_tick_budget_drains_pending_through_aoem_batch() {
+        with_env_override_v1(
+            NOV_NATIVE_AOEM_SEMANTIC_INGRESS_ENABLED_ENV,
+            "false",
+            || {
+                with_test_native_execution_store_path_v1(|path| {
+                    let chain_id = 88_018;
+                    let build_and_ingest_pending = |nonce: u64, account: &str, amount: u64| {
+                        let native_tx = NovNativeTxWireV1 {
+                            chain_id,
+                            kind: NovTxKindV1::Execute(novovm_protocol::NovExecuteTxV1 {
+                                caller: vec![nonce as u8; 20],
+                                account_id: Some(account.to_string()),
+                                fee_owner_account_id: Some(account.to_string()),
+                                nonce_owner_account_id: Some(account.to_string()),
+                                target: novovm_protocol::NovExecutionTargetV1::NativeModule(
+                                    "treasury".to_string(),
+                                ),
+                                method: "deposit_reserve".to_string(),
+                                args: serde_json::to_vec(&serde_json::json!({
+                                    "asset": "USDT",
+                                    "amount": amount
+                                }))
+                                .expect("encode args"),
+                                execution_mode: NovExecutionModeV1::Batch,
+                                execution_policy: NovExecutionPolicyV1::Standard,
+                                privacy_mode: NovPrivacyModeV1::Public,
+                                verification_mode: NovVerificationModeV1::Standard,
+                                fee_policy: NovFeePolicyV1 {
+                                    pay_asset: "USDT".to_string(),
+                                    max_pay_amount: 50,
+                                    slippage_bps: 100,
+                                },
+                                gas_like_limit: Some(90_000),
+                                nonce,
+                            }),
+                            signature: [0xeeu8; 32],
+                        };
+                        let raw = encode_nov_native_tx_wire_v1(&native_tx).expect("encode nov tx");
+                        ingest_local_nov_raw_tx_payload_v1(&serde_json::json!({}), raw.as_slice())
+                            .expect("native pending ingress should store payload");
+                    };
+                    build_and_ingest_pending(31, "acct-tick-1", 25);
+                    build_and_ingest_pending(32, "acct-tick-2", 35);
+                    build_and_ingest_pending(33, "acct-tick-3", 45);
+
+                    let out = run_nov_native_execution_tick_from_params_v1(&serde_json::json!({
+                        "chain_id": chain_id,
+                        "hard_budget_per_tick": 3,
+                        "target_budget_per_tick": 2,
+                        "effective_budget_per_tick": 2,
+                        "native_execution_store_path": path,
+                    }))
+                    .expect("native execution tick should drain pending through AOEM batch");
+
+                    assert_eq!(out["method"].as_str(), Some("nov_runNativeExecutionTick"));
+                    assert_eq!(
+                        out["scheduler_mode"].as_str(),
+                        Some("mainline_native_execution_tick")
+                    );
+                    assert_eq!(out["background_daemon"].as_bool(), Some(false));
+                    assert_eq!(out["execution_kernel"].as_str(), Some("AOEM"));
+                    assert_eq!(out["aoem_concurrency_owner"].as_str(), Some("AOEM_runtime"));
+                    assert_eq!(out["eligible_before"].as_u64(), Some(3));
+                    assert_eq!(out["executed_count"].as_u64(), Some(2));
+                    assert_eq!(out["deferred_count"].as_u64(), Some(1));
+                    assert_eq!(out["budget"]["effective_budget_per_tick"].as_u64(), Some(2));
+                    assert_eq!(
+                        out["budget_runtime"]["execution_budget_hit_count"].as_u64(),
+                        Some(1)
+                    );
+                    assert_eq!(
+                        out["budget_runtime"]["execution_deferred_count"].as_u64(),
+                        Some(1)
+                    );
+                    assert_eq!(
+                        out["batch_result"]["batch_result"]["method"].as_str(),
+                        Some("nov_sendRawTransactionBatch")
+                    );
+                    assert_eq!(
+                        out["batch_result"]["batch_result"]["aoem_concurrency_owner"].as_str(),
+                        Some("AOEM_runtime")
+                    );
+                    assert_eq!(
+                        out["batch_result"]["batch_result"]["native_store_commit"]["model"]
+                            .as_str(),
+                        Some("single_lock_ordered_batch_dirty_commit")
+                    );
+                    let store = load_nov_native_execution_store_v1(path.as_path())
+                        .expect("tick store should load");
+                    assert_eq!(store.receipts.len(), 2);
+                    assert!(
+                        store
+                            .module_state
+                            .treasury_reserves
+                            .get("USDT")
+                            .copied()
+                            .unwrap_or_default()
+                            >= 60,
+                        "tick must commit only the AOEM-executed budgeted batch"
                     );
                 })
             },
