@@ -448,6 +448,8 @@ pub struct NovTreasurySettlementPolicyV1 {
     pub mapped_lock_bridge_paused: bool,
     #[serde(default)]
     pub mapped_lock_min_confirmations: u64,
+    #[serde(default)]
+    pub mapped_lock_contract_address: String,
     pub mapped_asset_burn_paused: bool,
     pub mapped_asset_release_paused: bool,
     pub mapped_asset_auto_heal_enabled: bool,
@@ -618,6 +620,8 @@ pub struct NovNativeExecutionModuleStateV1 {
     #[serde(default)]
     pub mapped_lock_min_confirmations: u64,
     #[serde(default)]
+    pub mapped_lock_contract_address: String,
+    #[serde(default)]
     pub mapped_asset_burn_paused: bool,
     #[serde(default)]
     pub mapped_asset_release_paused: bool,
@@ -776,6 +780,7 @@ impl Default for NovNativeExecutionModuleStateV1 {
             treasury_redeem_paused: false,
             mapped_lock_bridge_paused: false,
             mapped_lock_min_confirmations: 0,
+            mapped_lock_contract_address: String::new(),
             mapped_asset_burn_paused: false,
             mapped_asset_release_paused: false,
             mapped_asset_auto_heal_enabled: false,
@@ -991,6 +996,15 @@ fn normalize_hex_token_v1(raw: &str) -> Option<String> {
         return None;
     }
     Some(token)
+}
+
+fn normalize_eth_address_policy_v1(raw: &str) -> Option<String> {
+    let token = normalize_hex_token_v1(raw)?;
+    if token.len() == 40 {
+        Some(format!("0x{token}"))
+    } else {
+        None
+    }
 }
 
 fn to_hex(bytes: &[u8]) -> String {
@@ -2536,6 +2550,7 @@ fn resolve_treasury_settlement_policy_v1(
             redeem_paused: store.module_state.treasury_redeem_paused,
             mapped_lock_bridge_paused: store.module_state.mapped_lock_bridge_paused,
             mapped_lock_min_confirmations: store.module_state.mapped_lock_min_confirmations,
+            mapped_lock_contract_address: store.module_state.mapped_lock_contract_address.clone(),
             mapped_asset_burn_paused: store.module_state.mapped_asset_burn_paused,
             mapped_asset_release_paused: store.module_state.mapped_asset_release_paused,
             mapped_asset_auto_heal_enabled: store.module_state.mapped_asset_auto_heal_enabled,
@@ -2652,6 +2667,7 @@ fn resolve_treasury_settlement_policy_v1(
         redeem_paused,
         mapped_lock_bridge_paused: store.module_state.mapped_lock_bridge_paused,
         mapped_lock_min_confirmations: store.module_state.mapped_lock_min_confirmations,
+        mapped_lock_contract_address: store.module_state.mapped_lock_contract_address.clone(),
         mapped_asset_burn_paused: store.module_state.mapped_asset_burn_paused,
         mapped_asset_release_paused: store.module_state.mapped_asset_release_paused,
         mapped_asset_auto_heal_enabled: store.module_state.mapped_asset_auto_heal_enabled,
@@ -2872,6 +2888,7 @@ fn treasury_policy_contract_snapshot_v1(
             "mapped_asset_auto_heal_enabled": policy.mapped_asset_auto_heal_enabled,
             "mapped_asset_auto_heal_rollback_enabled": policy.mapped_asset_auto_heal_rollback_enabled,
             "mapped_asset_reorg_response_policy": policy.mapped_asset_reorg_response_policy,
+            "mapped_lock_contract_address": policy.mapped_lock_contract_address,
             "clearing_enabled": policy.clearing_enabled,
             "clearing_daily_nov_hard_limit": policy.clearing_daily_nov_hard_limit,
             "clearing_require_healthy_risk_buffer": policy.clearing_require_healthy_risk_buffer,
@@ -5920,6 +5937,27 @@ fn dispatch_native_module_execute_v1(
                 .and_then(parse_u128_from_json_value_v1)
                 .map(|value| value.min(u128::from(u64::MAX)) as u64)
                 .unwrap_or(active_policy.mapped_lock_min_confirmations);
+            let mapped_lock_contract_address = match args_json
+                .get("mapped_lock_contract_address")
+                .or_else(|| args_json.get("eth_lock_contract_address"))
+                .or_else(|| args_json.get("lock_contract_address"))
+                .and_then(|value| value.as_str())
+            {
+                Some(raw) => match normalize_eth_address_policy_v1(raw) {
+                    Some(address) => address,
+                    None => {
+                        return build_failed_native_receipt_v1(
+                            request,
+                            settled_fee,
+                            subject_meta,
+                            "governance".to_string(),
+                            "apply_treasury_policy".to_string(),
+                            "governance.policy.invalid_mapped_lock_contract_address".to_string(),
+                        );
+                    }
+                },
+                None => active_policy.mapped_lock_contract_address.clone(),
+            };
             let mapped_asset_burn_paused = args_json
                 .get("mapped_asset_burn_paused")
                 .or_else(|| args_json.get("bridge_burn_paused"))
@@ -6161,6 +6199,7 @@ fn dispatch_native_module_execute_v1(
             store.module_state.clearing_enabled = clearing_enabled;
             store.module_state.mapped_lock_bridge_paused = mapped_lock_bridge_paused;
             store.module_state.mapped_lock_min_confirmations = mapped_lock_min_confirmations;
+            store.module_state.mapped_lock_contract_address = mapped_lock_contract_address.clone();
             store.module_state.mapped_asset_burn_paused = mapped_asset_burn_paused;
             store.module_state.mapped_asset_release_paused = mapped_asset_release_paused;
             store.module_state.mapped_asset_auto_heal_enabled = mapped_asset_auto_heal_enabled;
@@ -6200,6 +6239,7 @@ fn dispatch_native_module_execute_v1(
                     "clearing_enabled": clearing_enabled,
                     "mapped_lock_bridge_paused": mapped_lock_bridge_paused,
                     "mapped_lock_min_confirmations": mapped_lock_min_confirmations,
+                    "mapped_lock_contract_address": mapped_lock_contract_address,
                     "mapped_asset_burn_paused": mapped_asset_burn_paused,
                     "mapped_asset_release_paused": mapped_asset_release_paused,
                     "mapped_asset_auto_heal_enabled": mapped_asset_auto_heal_enabled,

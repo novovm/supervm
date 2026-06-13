@@ -12524,6 +12524,143 @@ mod tests {
     }
 
     #[test]
+    fn mainline_query_mapped_lock_contract_policy_product_smoke() {
+        let _env_lock = geth_parity_test_lock_v1()
+            .lock()
+            .expect("mainline env test lock poisoned");
+        let _shadow_guard =
+            MainlineEnvVarGuard::set("NOVOVM_UA_PHASE4_SHADOW_MODE_ENFORCE", "false");
+        let _governance_guard = MainlineEnvVarGuard::set(NOV_NATIVE_GOVERNANCE_ENABLED_ENV, "true");
+        let (base, store, audit) = unique_unified_account_test_paths("mapped-lock-contract-policy");
+        let root = base
+            .parent()
+            .unwrap_or_else(|| std::path::Path::new("."))
+            .to_path_buf();
+        let native_store = root.join("native-execution-store.json");
+        let governance_caller = format!("0x{}", "79".repeat(20));
+        let mut native_seed = NovNativeExecutionStoreV1::default();
+        native_seed.module_state.account_asset_balances.insert(
+            governance_caller.clone(),
+            std::collections::BTreeMap::from([("NOV".to_string(), 20_000u128)]),
+        );
+        save_nov_native_execution_store_v1(native_store.as_path(), &native_seed)
+            .expect("seed native execution store for mapped lock contract policy smoke");
+        let account_id = "acct-mainline-map-lock-contract-policy";
+        create_mainline_uca_for_smoke(&base, &store, &audit, &native_store, account_id);
+
+        let wrong_contract = format!("0x{}", "22".repeat(20));
+        let wrong_policy = run_mainline_query_from_path(
+            base.as_path(),
+            "nov_applyTreasuryPolicy",
+            &json!({
+                "from": governance_caller,
+                "governance_authorized": true,
+                "policy_version": 61u64,
+                "mapped_lock_contract_address": wrong_contract,
+                "max_pay_amount": 10_000u64,
+                "native_execution_store_path": native_store.display().to_string(),
+            }),
+        )
+        .expect("nov_applyTreasuryPolicy should write mapped lock contract policy");
+        assert_eq!(
+            wrong_policy["native_receipt"]["status"].as_bool(),
+            Some(true)
+        );
+        assert_eq!(
+            wrong_policy["native_receipt"]["logs"][0]["data"]["mapped_lock_contract_address"]
+                .as_str(),
+            Some(wrong_contract.as_str())
+        );
+
+        let live_params = mapped_lock_live_smoke_params(account_id, 0x78, 640);
+        let configured_block = run_mainline_query_from_path(
+            base.as_path(),
+            "ua_registerMappedLock",
+            &params_with_ua_and_native_paths(
+                store.as_path(),
+                audit.as_path(),
+                native_store.as_path(),
+                live_params.clone(),
+            ),
+        )
+        .expect_err(
+            "governed mapped lock contract address should override per-tx expected address",
+        );
+        let configured_block = configured_block.to_string();
+        assert!(
+            configured_block.contains("lock_contract_address does not match configured contract"),
+            "expected configured contract mismatch, got: {configured_block}"
+        );
+
+        let correct_contract = live_params["lock_contract_address"]
+            .as_str()
+            .expect("live smoke lock_contract_address should exist")
+            .to_string();
+        let correct_policy = run_mainline_query_from_path(
+            base.as_path(),
+            "nov_applyTreasuryPolicy",
+            &json!({
+                "from": governance_caller,
+                "governance_authorized": true,
+                "policy_version": 62u64,
+                "mapped_lock_contract_address": correct_contract,
+                "max_pay_amount": 10_000u64,
+                "native_execution_store_path": native_store.display().to_string(),
+            }),
+        )
+        .expect("nov_applyTreasuryPolicy should update mapped lock contract policy");
+        assert_eq!(
+            correct_policy["native_receipt"]["status"].as_bool(),
+            Some(true)
+        );
+        assert_eq!(
+            correct_policy["native_receipt"]["logs"][0]["data"]["mapped_lock_contract_address"]
+                .as_str(),
+            Some(correct_contract.as_str())
+        );
+        let finality_status = run_mainline_query_from_path(
+            base.as_path(),
+            "nov_getMappedFinalitySourceStatus",
+            &params_with_ua_and_native_paths(
+                store.as_path(),
+                audit.as_path(),
+                native_store.as_path(),
+                json!({}),
+            ),
+        )
+        .expect("nov_getMappedFinalitySourceStatus should expose governed lock contract");
+        assert_eq!(
+            finality_status["result"]["status"]["mapped_lock_contract_address"].as_str(),
+            Some(correct_contract.as_str())
+        );
+
+        let accepted = run_mainline_query_from_path(
+            base.as_path(),
+            "ua_registerMappedLock",
+            &params_with_ua_and_native_paths(
+                store.as_path(),
+                audit.as_path(),
+                native_store.as_path(),
+                live_params,
+            ),
+        )
+        .expect("live register should pass after governed lock contract matches evidence");
+        assert_eq!(accepted["accepted"].as_bool(), Some(true));
+        assert_eq!(accepted["phase4_mode"].as_str(), Some("live"));
+        assert_eq!(
+            accepted["native_settlement"]["effect"].as_str(),
+            Some("neth_m2_credit")
+        );
+        assert_eq!(
+            accepted["native_settlement"]["nov_minted"].as_u64(),
+            Some(0)
+        );
+
+        novovm_network::clear_network_runtime_native_state_for_host_tests_v1();
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn mainline_query_mapped_finality_source_policy_product_smoke() {
         let _env_lock = geth_parity_test_lock_v1()
             .lock()

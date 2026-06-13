@@ -2656,6 +2656,7 @@ fn mapped_finality_source_status_to_json_v1(
         "source_policy": source_policy,
         "attestation_policy": attestation_policy,
         "mapped_lock_min_confirmations": store.module_state.mapped_lock_min_confirmations,
+        "mapped_lock_contract_address": store.module_state.mapped_lock_contract_address,
         "auto_heal_policy": {
             "mapped_asset_auto_heal_enabled": store.module_state.mapped_asset_auto_heal_enabled,
             "mapped_asset_auto_heal_rollback_enabled": store.module_state.mapped_asset_auto_heal_rollback_enabled,
@@ -3955,6 +3956,12 @@ fn eth_lock_event_topic0_v1() -> [u8; 32] {
 }
 
 fn configured_eth_lock_contract_address_v1(params: &Value) -> Result<Option<[u8; 20]>> {
+    let store_path = native_execution_store_path_from_params_or_env_v1(params);
+    let store = load_nov_native_execution_store_v1(store_path.as_path())?;
+    let policy_address = store.module_state.mapped_lock_contract_address.trim();
+    if !policy_address.is_empty() {
+        return decode_hex_fixed_20(policy_address, "mapped_lock_contract_address").map(Some);
+    }
     if let Ok(raw) = std::env::var(NOVOVM_UA_ETH_LOCK_CONTRACT_ADDRESS_ENV) {
         let trimmed = raw.trim();
         if !trimmed.is_empty() {
