@@ -190,6 +190,16 @@ fn sender_round_aggregate_v1(summaries: &[Value]) -> Value {
         .map(|summary| summary_u64(summary, "max_aoem_batch_executed_per_tick"))
         .max()
         .unwrap_or_default();
+    let max_proof_items_per_tick = summaries
+        .iter()
+        .map(|summary| summary_u64(summary, "max_proof_items_per_tick"))
+        .max()
+        .unwrap_or_default();
+    let max_commit_items_per_tick = summaries
+        .iter()
+        .map(|summary| summary_u64(summary, "max_commit_items_per_tick"))
+        .max()
+        .unwrap_or_default();
     let max_broadcast_tx_per_tick = summaries
         .iter()
         .map(|summary| summary_u64(summary, "max_broadcast_tx_per_tick"))
@@ -265,6 +275,8 @@ fn sender_round_aggregate_v1(summaries: &[Value]) -> Value {
         "aoem_executed_total": aoem_executed_total,
         "aoem_deferred_total": aoem_deferred_total,
         "max_aoem_batch_executed_per_tick": max_aoem_batch_executed_per_tick,
+        "max_proof_items_per_tick": max_proof_items_per_tick,
+        "max_commit_items_per_tick": max_commit_items_per_tick,
         "max_broadcast_tx_per_tick": max_broadcast_tx_per_tick,
         "nonempty_aoem_batch_ticks": nonempty_aoem_batch_ticks,
         "nonempty_proof_ticks": nonempty_proof_ticks,
@@ -318,6 +330,14 @@ fn main() -> Result<()> {
     let min_receiver_max_aoem_batch_per_tick = u64_env(
         "NOVOVM_NATIVE_PIPELINE_DUAL_GATE_MIN_RECEIVER_MAX_AOEM_BATCH_PER_TICK",
         tx_count.min(tick_budget).max(1),
+    )?;
+    let min_receiver_max_proof_items_per_tick = u64_env(
+        "NOVOVM_NATIVE_PIPELINE_DUAL_GATE_MIN_RECEIVER_MAX_PROOF_ITEMS_PER_TICK",
+        min_receiver_max_aoem_batch_per_tick,
+    )?;
+    let min_receiver_max_commit_items_per_tick = u64_env(
+        "NOVOVM_NATIVE_PIPELINE_DUAL_GATE_MIN_RECEIVER_MAX_COMMIT_ITEMS_PER_TICK",
+        min_receiver_max_aoem_batch_per_tick,
     )?;
     let min_sender_max_broadcast_tx_per_tick = u64_env(
         "NOVOVM_NATIVE_PIPELINE_DUAL_GATE_MIN_SENDER_MAX_BROADCAST_TX_PER_TICK",
@@ -478,6 +498,14 @@ fn main() -> Result<()> {
             (
                 "NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_MAX_AOEM_BATCH_EXECUTED_PER_TICK",
                 min_receiver_max_aoem_batch_per_tick.to_string(),
+            ),
+            (
+                "NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_MAX_PROOF_ITEMS_PER_TICK",
+                min_receiver_max_proof_items_per_tick.to_string(),
+            ),
+            (
+                "NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_MAX_COMMIT_ITEMS_PER_TICK",
+                min_receiver_max_commit_items_per_tick.to_string(),
             ),
         ]
     };
@@ -675,6 +703,18 @@ fn main() -> Result<()> {
             )?;
             require_min(
                 summary,
+                "max_proof_items_per_tick",
+                min_receiver_max_proof_items_per_tick,
+                label.as_str(),
+            )?;
+            require_min(
+                summary,
+                "max_commit_items_per_tick",
+                min_receiver_max_commit_items_per_tick,
+                label.as_str(),
+            )?;
+            require_min(
+                summary,
                 "nonempty_aoem_batch_ticks",
                 min_nonempty_batch_ticks,
                 label.as_str(),
@@ -801,6 +841,8 @@ fn main() -> Result<()> {
             "min_sender_broadcast_tps_x1000": min_sender_broadcast_tps_x1000,
             "min_receiver_canonical_tps_x1000": min_receiver_canonical_tps_x1000,
             "min_receiver_max_aoem_batch_per_tick": min_receiver_max_aoem_batch_per_tick,
+            "min_receiver_max_proof_items_per_tick": min_receiver_max_proof_items_per_tick,
+            "min_receiver_max_commit_items_per_tick": min_receiver_max_commit_items_per_tick,
             "min_sender_max_broadcast_tx_per_tick": min_sender_max_broadcast_tx_per_tick,
             "min_nonempty_batch_ticks": min_nonempty_batch_ticks,
         },

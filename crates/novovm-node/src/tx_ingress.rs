@@ -3391,6 +3391,44 @@ struct NovNativeExecutionDirtySetV1 {
     snapshot_meta: bool,
 }
 
+fn native_execution_store_dirty_set_stats_json_v1(
+    dirty: &NovNativeExecutionDirtySetV1,
+) -> serde_json::Value {
+    let semantic_head_writes = if dirty.semantic_head { 2u64 } else { 0 };
+    let snapshot_meta_writes = if dirty.snapshot_meta { 2u64 } else { 0 };
+    let module_state_shard_writes = dirty.module_state_shards.len() as u64;
+    let account_asset_upserts = dirty.account_asset_upserts.len() as u64;
+    let account_asset_deletes = dirty.account_asset_deletes.len() as u64;
+    let receipt_upserts = dirty.receipt_upserts.len() as u64;
+    let receipt_deletes = dirty.receipt_deletes.len() as u64;
+    let receipt_index_writes = receipt_upserts;
+    let dirty_write_count = module_state_shard_writes
+        .saturating_add(account_asset_upserts)
+        .saturating_add(receipt_upserts)
+        .saturating_add(receipt_index_writes)
+        .saturating_add(semantic_head_writes)
+        .saturating_add(snapshot_meta_writes);
+    let dirty_delete_count = account_asset_deletes
+        .saturating_add(receipt_deletes)
+        .saturating_add(1); // legacy snapshot blob delete guard.
+    serde_json::json!({
+        "dirty_account_asset_upserts": account_asset_upserts,
+        "dirty_account_asset_deletes": account_asset_deletes,
+        "dirty_receipt_upserts": receipt_upserts,
+        "dirty_receipt_deletes": receipt_deletes,
+        "dirty_receipt_index_writes": receipt_index_writes,
+        "dirty_module_state_shards": module_state_shard_writes,
+        "dirty_semantic_head": dirty.semantic_head,
+        "dirty_semantic_head_writes": semantic_head_writes,
+        "dirty_snapshot_meta": dirty.snapshot_meta,
+        "dirty_snapshot_meta_writes": snapshot_meta_writes,
+        "dirty_write_count": dirty_write_count,
+        "dirty_delete_count": dirty_delete_count,
+        "dirty_total_count": dirty_write_count.saturating_add(dirty_delete_count),
+        "commit_model": "dirty_sharded_atomic_batch",
+    })
+}
+
 fn native_execution_store_dirty_set_v1(
     previous: &NovNativeExecutionStoreV1,
     next: &NovNativeExecutionStoreV1,
@@ -10638,6 +10676,10 @@ pub fn run_nov_send_raw_transaction_batch_from_params_v1(
         mirror_path.as_path(),
         mirror_records.as_slice(),
     )?;
+    let native_store_dirty_set =
+        native_execution_store_dirty_set_v1(&previous_store, &store, false)?;
+    let native_store_dirty_stats =
+        native_execution_store_dirty_set_stats_json_v1(&native_store_dirty_set);
     save_nov_native_execution_store_with_previous_v1(
         effective_native_store_path.as_path(),
         Some(&previous_store),
@@ -10670,6 +10712,7 @@ pub fn run_nov_send_raw_transaction_batch_from_params_v1(
             "save_count": 1,
             "ordered_results": true,
             "aoem_precommit_chunk_count": aoem_batch_chunk_count,
+            "dirty_set": native_store_dirty_stats,
         },
         "native_store_backend_status": native_store_backend_status,
         "results": results,
