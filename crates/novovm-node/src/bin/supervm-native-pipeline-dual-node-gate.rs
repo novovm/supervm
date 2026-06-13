@@ -23,6 +23,13 @@ fn u64_env(name: &str, default: u64) -> Result<u64> {
         .with_context(|| format!("{name} must be u64"))
 }
 
+fn div_ceil_u64_v1(value: u64, divisor: u64) -> u64 {
+    if divisor == 0 {
+        return 0;
+    }
+    value.saturating_add(divisor).saturating_sub(1) / divisor
+}
+
 fn reserve_udp_addr_v1() -> Result<String> {
     let socket = UdpSocket::bind("127.0.0.1:0").context("reserve udp addr failed")?;
     Ok(socket
@@ -165,6 +172,8 @@ fn main() -> Result<()> {
         "NOVOVM_NATIVE_PIPELINE_DUAL_GATE_UDP_BROADCAST_MAX_PER_TICK",
         tick_budget,
     )?;
+    let udp_recv_budget = u64_env("NOVOVM_NATIVE_PIPELINE_DUAL_GATE_UDP_RECV_BUDGET", 16)?;
+    let startup_wait_ms = u64_env("NOVOVM_NATIVE_PIPELINE_DUAL_GATE_STARTUP_WAIT_MS", 300)?;
     let min_receiver_canonical_tps_x1000 = u64_env(
         "NOVOVM_NATIVE_PIPELINE_DUAL_GATE_MIN_RECEIVER_CANONICAL_TPS_X1000",
         0,
@@ -173,18 +182,18 @@ fn main() -> Result<()> {
         "NOVOVM_NATIVE_PIPELINE_DUAL_GATE_MIN_SENDER_BROADCAST_TPS_X1000",
         0,
     )?;
-    let ingress_ticks = tx_count
-        .saturating_add(ingress_max_per_tick.max(1))
-        .saturating_sub(1)
-        / ingress_max_per_tick.max(1);
-    let execution_ticks = tx_count.saturating_add(tick_budget).saturating_sub(1) / tick_budget;
+    let ingress_ticks = div_ceil_u64_v1(tx_count, ingress_max_per_tick.max(1));
+    let execution_ticks = div_ceil_u64_v1(tx_count, tick_budget);
+    let startup_ticks = div_ceil_u64_v1(startup_wait_ms, tick_interval_ms.max(1));
     let sender_ticks = u64_env(
         "NOVOVM_NATIVE_PIPELINE_DUAL_GATE_SENDER_TICKS",
         ingress_ticks.max(3),
     )?;
     let receiver_ticks = u64_env(
         "NOVOVM_NATIVE_PIPELINE_DUAL_GATE_RECEIVER_TICKS",
-        execution_ticks.max(6) + 12,
+        startup_ticks
+            .saturating_add(execution_ticks.max(6))
+            .saturating_add(12),
     )?;
     let sender_node = u64_env("NOVOVM_NATIVE_PIPELINE_DUAL_GATE_SENDER_NODE", 9_991_895)?;
     let receiver_node = u64_env("NOVOVM_NATIVE_PIPELINE_DUAL_GATE_RECEIVER_NODE", 9_991_896)?;
@@ -251,6 +260,10 @@ fn main() -> Result<()> {
             (
                 "NOVOVM_NATIVE_EXECUTION_PIPELINE_UDP_BROADCAST_MAX_PER_TICK",
                 udp_broadcast_max_per_tick.to_string(),
+            ),
+            (
+                "NOVOVM_NATIVE_EXECUTION_PIPELINE_UDP_RECV_BUDGET",
+                udp_recv_budget.to_string(),
             ),
             (
                 "NOVOVM_NATIVE_EXECUTION_PIPELINE_REQUIRE_PROGRESS",
@@ -334,7 +347,7 @@ fn main() -> Result<()> {
         cmd.spawn()
             .with_context(|| format!("spawn receiver node failed: {}", node_bin.display()))?
     };
-    std::thread::sleep(std::time::Duration::from_millis(300));
+    std::thread::sleep(std::time::Duration::from_millis(startup_wait_ms));
     let sender_out = run_node_v1(&node_bin, sender_env.as_slice())?;
     let receiver_out = receiver
         .wait_with_output()
@@ -431,8 +444,12 @@ fn main() -> Result<()> {
         "tx_count": tx_count,
         "tick_budget": tick_budget,
         "tick_interval_ms": tick_interval_ms,
+        "startup_wait_ms": startup_wait_ms,
+        "sender_ticks": sender_ticks,
+        "receiver_ticks": receiver_ticks,
         "ingress_max_per_tick": ingress_max_per_tick,
         "udp_broadcast_max_per_tick": udp_broadcast_max_per_tick,
+        "udp_recv_budget": udp_recv_budget,
         "sender_addr": sender_addr,
         "receiver_addr": receiver_addr,
         "metrics": {

@@ -35214,6 +35214,28 @@ fn run_native_execution_tick_node_mode_v1(verbose: bool) -> Result<()> {
         std::thread::sleep(Duration::from_millis(interval_ms));
     }
     let summary = aggregate.to_json();
+    if let Some(path) = string_env_nonempty("NOVOVM_NATIVE_EXECUTION_PIPELINE_SUMMARY_REPORT_PATH")
+    {
+        let report_path = PathBuf::from(path);
+        if let Some(parent) = report_path.parent() {
+            if !parent.as_os_str().is_empty() {
+                fs::create_dir_all(parent).with_context(|| {
+                    format!(
+                        "create native execution pipeline summary report dir failed: {}",
+                        parent.display()
+                    )
+                })?;
+            }
+        }
+        let encoded = serde_json::to_string_pretty(&summary)
+            .context("encode native execution pipeline summary report failed")?;
+        fs::write(report_path.as_path(), encoded).with_context(|| {
+            format!(
+                "write native execution pipeline summary report failed: {}",
+                report_path.display()
+            )
+        })?;
+    }
     println!(
         "{}",
         serde_json::to_string_pretty(&summary)
