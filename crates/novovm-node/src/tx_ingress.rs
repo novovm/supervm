@@ -2157,12 +2157,13 @@ where
         execute_native_semantic_mutation_aoem_ingress_v1(source, tx_ref, subject, action)?;
     let _write_lock = acquire_nov_native_execution_store_write_lock_v1(path)?;
     let mut store = load_nov_native_execution_store_v1(path)?;
+    let previous_store = store.clone();
     let before = store.module_state.clone();
     let output = mutate(&mut store)?;
     let after = store.module_state.clone();
     let deltas = build_native_execution_semantic_deltas_v1(&before, &after);
     if deltas.is_empty() {
-        save_nov_native_execution_store_v1(path, &store)?;
+        save_nov_native_execution_store_with_previous_v1(path, Some(&previous_store), &store)?;
         return Ok((output, None));
     }
 
@@ -2217,7 +2218,7 @@ where
     };
     let mirror_path = nov_native_aoem_semantic_ledger_mirror_path_v1(path);
     append_nov_native_aoem_semantic_ledger_mirror_record_v1(mirror_path.as_path(), &mirror_record)?;
-    save_nov_native_execution_store_v1(path, &store)?;
+    save_nov_native_execution_store_with_previous_v1(path, Some(&previous_store), &store)?;
 
     let commit = NovAoemSemanticMutationCommitV1 {
         schema: "novovm-native-aoem-semantic-mutation-commit/v1".to_string(),
@@ -3740,6 +3741,14 @@ pub fn save_nov_native_execution_store_v1(
     path: &Path,
     store: &NovNativeExecutionStoreV1,
 ) -> Result<()> {
+    save_nov_native_execution_store_with_previous_v1(path, None, store)
+}
+
+fn save_nov_native_execution_store_with_previous_v1(
+    path: &Path,
+    previous: Option<&NovNativeExecutionStoreV1>,
+    store: &NovNativeExecutionStoreV1,
+) -> Result<()> {
     let backend = nov_native_execution_store_backend_v1();
     if !matches!(
         backend.as_str(),
@@ -3755,7 +3764,7 @@ pub fn save_nov_native_execution_store_v1(
     }
     if native_execution_store_backend_writes_rocksdb_v1(backend.as_str()) {
         let rocksdb_path = nov_native_execution_store_rocksdb_path_v1(path);
-        save_nov_native_execution_store_rocksdb_v1(rocksdb_path.as_path(), store)?;
+        save_nov_native_execution_store_rocksdb_v1(rocksdb_path.as_path(), previous, store)?;
     }
     if !native_execution_store_backend_writes_json_v1(backend.as_str()) {
         return Ok(());
@@ -3790,6 +3799,7 @@ fn save_nov_native_execution_store_json_v1(
 
 fn save_nov_native_execution_store_rocksdb_v1(
     path: &Path,
+    previous: Option<&NovNativeExecutionStoreV1>,
     store: &NovNativeExecutionStoreV1,
 ) -> Result<()> {
     let db = open_nov_native_execution_store_rocksdb_v1(path)?;
@@ -3802,10 +3812,17 @@ fn save_nov_native_execution_store_rocksdb_v1(
             )
         })?
         .is_some();
-    let previous = materialize_nov_native_execution_store_from_rocksdb_v1(&db, path)
-        .unwrap_or_else(|_| NovNativeExecutionStoreV1::default());
+    let previous_loaded;
+    let previous_ref = match previous {
+        Some(value) => value,
+        None => {
+            previous_loaded = materialize_nov_native_execution_store_from_rocksdb_v1(&db, path)
+                .unwrap_or_else(|_| NovNativeExecutionStoreV1::default());
+            &previous_loaded
+        }
+    };
     let dirty =
-        native_execution_store_dirty_set_v1(&previous, store, legacy_module_state_core_exists)?;
+        native_execution_store_dirty_set_v1(previous_ref, store, legacy_module_state_core_exists)?;
     let meta = native_rocksdb_snapshot_meta_v1(store);
     let meta_encoded = serde_json::to_vec(&meta)
         .context("serialize nov native execution rocksdb snapshot meta failed")?;
@@ -3915,8 +3932,9 @@ where
 {
     let _write_lock = acquire_nov_native_execution_store_write_lock_v1(path)?;
     let mut store = load_nov_native_execution_store_v1(path)?;
+    let previous_store = store.clone();
     let output = mutate(&mut store)?;
-    save_nov_native_execution_store_v1(path, &store)?;
+    save_nov_native_execution_store_with_previous_v1(path, Some(&previous_store), &store)?;
     Ok(output)
 }
 
@@ -8979,6 +8997,7 @@ fn dispatch_and_persist_nov_execution_request_with_subjects_and_store_path_v1(
 ) -> Result<NovNativeExecutionReceiptV1> {
     let _write_lock = acquire_nov_native_execution_store_write_lock_v1(path)?;
     let mut store = load_nov_native_execution_store_v1(path)?;
+    let previous_store = store.clone();
     let now_ms = now_unix_millis_v1();
     let receipt = dispatch_nov_execution_request_into_loaded_store_v1(
         path,
@@ -8991,7 +9010,7 @@ fn dispatch_and_persist_nov_execution_request_with_subjects_and_store_path_v1(
         None,
         now_ms,
     )?;
-    save_nov_native_execution_store_v1(path, &store)?;
+    save_nov_native_execution_store_with_previous_v1(path, Some(&previous_store), &store)?;
     Ok(receipt)
 }
 
@@ -10469,6 +10488,7 @@ pub fn run_nov_send_raw_transaction_batch_from_params_v1(
     let _write_lock =
         acquire_nov_native_execution_store_write_lock_v1(effective_native_store_path.as_path())?;
     let mut store = load_nov_native_execution_store_v1(effective_native_store_path.as_path())?;
+    let previous_store = store.clone();
     let mut results = Vec::with_capacity(prepared.len());
     let mut mirror_records = Vec::new();
     let item_count = prepared.len();
@@ -10515,7 +10535,11 @@ pub fn run_nov_send_raw_transaction_batch_from_params_v1(
         mirror_path.as_path(),
         mirror_records.as_slice(),
     )?;
-    save_nov_native_execution_store_v1(effective_native_store_path.as_path(), &store)?;
+    save_nov_native_execution_store_with_previous_v1(
+        effective_native_store_path.as_path(),
+        Some(&previous_store),
+        &store,
+    )?;
 
     Ok(serde_json::json!({
         "method": "nov_sendRawTransactionBatch",
@@ -11515,6 +11539,63 @@ mod tests {
                     let loaded = load_nov_native_execution_store_v1(path.as_path())
                         .expect("load materialized dirty module namespace store");
                     assert_eq!(loaded, store);
+                })
+            },
+        );
+    }
+
+    #[test]
+    fn native_execution_store_rocksdb_loaded_previous_commit_deletes_removed_asset() {
+        with_env_override_v1(
+            NOV_NATIVE_EXECUTION_STORE_BACKEND_ENV,
+            NOV_NATIVE_EXECUTION_STORE_BACKEND_ROCKSDB_V1,
+            || {
+                with_test_native_execution_store_path_v1(|path| {
+                    let mut first = NovNativeExecutionStoreV1::default();
+                    first
+                        .module_state
+                        .account_asset_balances
+                        .entry("acct-prev".to_string())
+                        .or_default()
+                        .insert("NETH".to_string(), 100);
+                    first
+                        .module_state
+                        .account_asset_balances
+                        .entry("acct-remove".to_string())
+                        .or_default()
+                        .insert("NUSDT".to_string(), 200);
+                    first.module_state.aoem_semantic_ledger_sequence = 1;
+                    first.module_state.aoem_semantic_ledger_head = "head-prev-1".to_string();
+                    save_nov_native_execution_store_v1(path.as_path(), &first)
+                        .expect("seed first rocksdb store");
+
+                    let previous = load_nov_native_execution_store_v1(path.as_path())
+                        .expect("load previous rocksdb materialized store");
+                    let mut next = previous.clone();
+                    next.module_state
+                        .account_asset_balances
+                        .remove("acct-remove");
+                    next.module_state.aoem_semantic_ledger_sequence = 2;
+                    next.module_state.aoem_semantic_ledger_head = "head-prev-2".to_string();
+                    save_nov_native_execution_store_with_previous_v1(
+                        path.as_path(),
+                        Some(&previous),
+                        &next,
+                    )
+                    .expect("save with loaded previous should commit dirty delete");
+
+                    let rocksdb_path = nov_native_execution_store_rocksdb_path_v1(path.as_path());
+                    let db = open_nov_native_execution_store_rocksdb_v1(rocksdb_path.as_path())
+                        .expect("open rocksdb");
+                    assert!(db
+                        .get(native_rocksdb_account_asset_key_v1("acct-remove", "NUSDT"))
+                        .expect("read removed account asset")
+                        .is_none());
+                    drop(db);
+
+                    let loaded = load_nov_native_execution_store_v1(path.as_path())
+                        .expect("load next materialized store");
+                    assert_eq!(loaded, next);
                 })
             },
         );
