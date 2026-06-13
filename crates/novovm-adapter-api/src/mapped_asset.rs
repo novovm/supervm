@@ -119,6 +119,7 @@ pub enum MappedAssetOperationKind {
     RegisterLock,
     BurnMapped,
     FreezeMapped,
+    UnfreezeMapped,
     ReleaseSource,
 }
 
@@ -129,6 +130,7 @@ impl MappedAssetOperationKind {
             Self::RegisterLock => "register_lock",
             Self::BurnMapped => "burn_mapped",
             Self::FreezeMapped => "freeze_mapped",
+            Self::UnfreezeMapped => "unfreeze_mapped",
             Self::ReleaseSource => "release_source",
         }
     }

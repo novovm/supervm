@@ -127,7 +127,7 @@ _2026-04-17_
 4. 协议清算价 v1 已落代码：`P_epoch/P_pay/P_redeem` 按 epoch 固定，输入为显式 AMM TWAP、Treasury NAV、许可 oracle reference 和上一 epoch 价格；AMM spot 不参与清算。
 5. M2 bridge 风险门禁 v1 已落代码：native execution store / governance policy 可持久化 `mapped_lock_bridge_paused`、`mapped_asset_burn_paused`、`mapped_asset_release_paused`；env 可紧急暂停 live register、burn、release，暂停时 fail-closed 且不推进 mapped asset 生命周期。
 6. M2 source anchor reorg gate v1 已落代码：live register 会持久化 `source_chain_id/block_number/block_hash/receipts_root` 等 anchor；`ua_getMappedAsset` 会暴露 `source_anchor_status`；burn/release 前会复查本地 runtime canonical finalized block，source anchor unsafe 时拒绝推进生命周期。
-7. M2 manual freeze v1 已落代码：`ua_freezeMappedAsset` 可把 active/burn_pending mapped asset 标记为 `frozen`；对 active live NETH 会扣减用户 native 可用余额，但保留 Treasury reserve，不触发链上出金。
+7. M2 manual freeze/recovery v1 已落代码：`ua_freezeMappedAsset` 可把 active/burn_pending mapped asset 标记为 `frozen`；对 active live NETH 会扣减用户 native 可用余额，但保留 Treasury reserve，不触发链上出金。`ua_unfreezeMappedAsset` 只允许在 source anchor 重新通过 canonical finalized 校验后，把 frozen NETH 恢复为 active 并返还用户 native 可用余额。
 8. 当前仍不声明真实外部桥、治理化 Ethereum header/finality source 管理、自动 reorg heal、真实链上出金、治理层 oracle 白名单管理、完整桥接铸造/赎回自动化或多进程高并发账本入口完成。
 
 ## 9. 术语冻结
@@ -146,7 +146,7 @@ _2026-04-17_
 ## 10. 执行优先级（仅列下一刀）
 
 1. 把当前本地 runtime canonical finalized block anchor 升级为治理化 Ethereum header/finality source，并补 reorg heal；`receipts_root` 已不再只信任用户输入。
-2. 补自动 reorg heal / rollback 操作：当前已能识别 unsafe anchor、阻断 burn/release，并提供人工 freeze；后续需要治理恢复/解冻/赔付规则。
+2. 补自动 reorg heal / rollback 操作：当前已能识别 unsafe anchor、阻断 burn/release，并提供人工 freeze/unfreeze；后续需要治理赔付规则和自动化回滚执行器。
 3. 升级 native store 写入后端或加单 writer 队列，避免 M2 credit/redeem 在多 writer 下出现 JSON load-modify-write 竞争。
 4. 补治理层 oracle 白名单和 reserve proof 管理面。
 
