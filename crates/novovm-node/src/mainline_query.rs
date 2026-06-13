@@ -580,6 +580,29 @@ fn run_mainline_nov_m2_bridge_risk_status_v1(params: &Value) -> Result<Value> {
     let reserve_proof_status = reserve_proof["result"]["reserve_proof"]["effective_status"]
         .as_str()
         .unwrap_or(if proof_found { "unknown" } else { "missing" });
+    let reserve_proof_amount = reserve_proof["result"]["reserve_proof"]["proof"]["reserve_amount"]
+        .as_u64()
+        .map(u128::from)
+        .or_else(|| {
+            reserve_proof["result"]["reserve_proof"]["proof"]["reserve_amount"]
+                .as_str()
+                .and_then(|raw| raw.trim().parse::<u128>().ok())
+        });
+    let account_m2_liability = store
+        .as_ref()
+        .map(|store| {
+            store
+                .module_state
+                .account_asset_balances
+                .values()
+                .filter_map(|assets| assets.get(asset.as_str()).copied())
+                .fold(0u128, u128::saturating_add)
+        })
+        .unwrap_or(0);
+    let treasury_reserve_balance = store
+        .as_ref()
+        .and_then(|store| store.module_state.treasury_reserves.get(asset.as_str()).copied())
+        .unwrap_or(0);
     let mut reasons = Vec::new();
     if finality_state != "governed_minimal" {
         reasons.push(format!("finality_source_state={finality_state}"));
@@ -612,6 +635,17 @@ fn run_mainline_nov_m2_bridge_risk_status_v1(params: &Value) -> Result<Value> {
         if store.module_state.mapped_lock_min_confirmations == 0 {
             reasons.push("mapped_lock_min_confirmations_unset".to_string());
         }
+        if asset != "NOV" && account_m2_liability > treasury_reserve_balance {
+            reasons.push("m2_liability_exceeds_treasury_reserve".to_string());
+        }
+        if let Some(amount) = reserve_proof_amount {
+            if asset != "NOV" && account_m2_liability > amount {
+                reasons.push("m2_liability_exceeds_reserve_proof".to_string());
+            }
+            if asset != "NOV" && treasury_reserve_balance > amount {
+                reasons.push("treasury_reserve_exceeds_reserve_proof".to_string());
+            }
+        }
     } else {
         reasons.push("native_execution_store_unavailable".to_string());
     }
@@ -625,6 +659,9 @@ fn run_mainline_nov_m2_bridge_risk_status_v1(params: &Value) -> Result<Value> {
             || reason.starts_with("reserve_proof_effective_status=expired")
             || reason == "mapped_lock_contract_address_unset"
             || reason == "mapped_lock_min_confirmations_unset"
+            || reason == "m2_liability_exceeds_treasury_reserve"
+            || reason == "m2_liability_exceeds_reserve_proof"
+            || reason == "treasury_reserve_exceeds_reserve_proof"
             || reason.starts_with("native_execution_store_unavailable")
     });
     let risk_state = if blocked {
@@ -653,6 +690,18 @@ fn run_mainline_nov_m2_bridge_risk_status_v1(params: &Value) -> Result<Value> {
             "reserve_proof": reserve_proof["result"]["reserve_proof"].clone(),
             "automated_external_verification_complete": reserve_proof["result"]["automated_external_verification_complete"]
                 .as_bool()
+                .unwrap_or(false),
+        },
+        "coverage": {
+            "account_m2_liability": account_m2_liability,
+            "treasury_reserve_balance": treasury_reserve_balance,
+            "reserve_proof_amount": reserve_proof_amount,
+            "liability_covered_by_treasury_reserve": account_m2_liability <= treasury_reserve_balance,
+            "liability_covered_by_reserve_proof": reserve_proof_amount
+                .map(|amount| account_m2_liability <= amount)
+                .unwrap_or(false),
+            "treasury_reserve_covered_by_reserve_proof": reserve_proof_amount
+                .map(|amount| treasury_reserve_balance <= amount)
                 .unwrap_or(false),
         },
         "policy": {
@@ -12417,6 +12466,15 @@ mod tests {
             status["reserve"]["reserve_proof_effective_status"].as_str(),
             Some("active")
         );
+        assert_eq!(status["coverage"]["account_m2_liability"].as_u64(), Some(0));
+        assert_eq!(
+            status["coverage"]["liability_covered_by_treasury_reserve"].as_bool(),
+            Some(true)
+        );
+        assert_eq!(
+            status["coverage"]["liability_covered_by_reserve_proof"].as_bool(),
+            Some(true)
+        );
         let expected_contract = format!("0x{}", "90".repeat(20));
         assert_eq!(
             status["policy"]["mapped_lock_contract_address"].as_str(),
@@ -12595,6 +12653,79 @@ mod tests {
             .flatten()
             .any(|item| item.as_str() == Some("finality_gap=header_source_policy_not_required")));
 
+        let uncovered_store = unique_native_execution_store_path("m2-bridge-risk-status-uncovered");
+        let mut uncovered = NovNativeExecutionStoreV1::default();
+        uncovered
+            .module_state
+            .treasury_reserves
+            .insert("NETH".to_string(), 1_000);
+        uncovered.module_state.account_asset_balances.insert(
+            "acct-m2-uncovered".to_string(),
+            std::collections::BTreeMap::from([("NETH".to_string(), 1_200u128)]),
+        );
+        uncovered.module_state.treasury_reserve_proofs.insert(
+            "NETH".to_string(),
+            NovTreasuryReserveProofV1 {
+                asset: "NETH".to_string(),
+                reserve_amount: 900,
+                proof_type: "custody_statement_v1".to_string(),
+                proof_digest: "0xm2bridgeriskuncovered01".to_string(),
+                proof_source: "treasury_committee".to_string(),
+                proof_reference: "m2-bridge-risk-status-uncovered-001".to_string(),
+                observed_at_unix_ms: 1,
+                expires_at_unix_ms: 0,
+                policy_version: 1,
+                policy_source: "governance_path".to_string(),
+                status: "active".to_string(),
+                automated_verification: false,
+                verification_mode: "manual_governance_attestation".to_string(),
+            },
+        );
+        uncovered.module_state.mapped_lock_contract_address = format!("0x{}", "94".repeat(20));
+        uncovered.module_state.mapped_lock_min_confirmations = 21;
+        uncovered.module_state.mapped_header_source_required = true;
+        uncovered.module_state.mapped_header_source_allowed_peer_ids = vec![51, 52];
+        uncovered.module_state.mapped_header_source_min_quorum = 2;
+        save_nov_native_execution_store_v1(uncovered_store.as_path(), &uncovered)
+            .expect("seed uncovered M2 risk status smoke store");
+        let uncovered_status = run_mainline_query_from_path(
+            bogus_canonical_store,
+            "nov_getM2BridgeRiskStatus",
+            &json!({
+                "asset": "NETH",
+                "native_execution_store_path": uncovered_store.display().to_string(),
+            }),
+        )
+        .expect("nov_getM2BridgeRiskStatus should fail closed on uncovered M2 liability");
+        assert_eq!(uncovered_status["risk_state"].as_str(), Some("blocked"));
+        assert_eq!(
+            uncovered_status["coverage"]["account_m2_liability"].as_u64(),
+            Some(1_200)
+        );
+        assert_eq!(
+            uncovered_status["coverage"]["treasury_reserve_balance"].as_u64(),
+            Some(1_000)
+        );
+        assert_eq!(
+            uncovered_status["coverage"]["reserve_proof_amount"].as_u64(),
+            Some(900)
+        );
+        assert!(uncovered_status["reasons"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .any(|item| item.as_str() == Some("m2_liability_exceeds_treasury_reserve")));
+        assert!(uncovered_status["reasons"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .any(|item| item.as_str() == Some("m2_liability_exceeds_reserve_proof")));
+        assert!(uncovered_status["reasons"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .any(|item| item.as_str() == Some("treasury_reserve_exceeds_reserve_proof")));
+
         let unset_policy_store =
             unique_native_execution_store_path("m2-bridge-risk-status-policy-unset");
         let mut unset_policy = NovNativeExecutionStoreV1::default();
@@ -12649,6 +12780,7 @@ mod tests {
         let _ = fs::remove_file(native_store);
         let _ = fs::remove_file(missing_store);
         let _ = fs::remove_file(open_finality_store);
+        let _ = fs::remove_file(uncovered_store);
         let _ = fs::remove_file(unset_policy_store);
     }
 
