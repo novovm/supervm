@@ -21,6 +21,7 @@ use novovm_network::{
     get_network_runtime_native_head_snapshot_v1, get_network_runtime_native_pending_tx_payload_v1,
     observe_network_runtime_native_execution_budget_target_v1,
     observe_network_runtime_native_execution_budget_throttle_v1,
+    observe_network_runtime_native_pending_tx_dropped_v1,
     observe_network_runtime_native_pending_tx_local_ingress_with_payload_v1,
     observe_network_runtime_native_pending_tx_local_native_payload_v1,
     observe_network_runtime_native_pending_tx_rejected_v1,
@@ -40,7 +41,7 @@ use rocksdb::{
     Direction as RocksDbDirection, IteratorMode as RocksDbIteratorMode, Options as RocksDbOptions,
     WriteBatch as RocksDbWriteBatch, DB as RocksDb,
 };
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
@@ -11020,6 +11021,14 @@ pub fn run_nov_execute_pending_native_tx_batch_from_params_v1(
         .and_then(|value| value.as_u64())
         .unwrap_or((limit as u64).saturating_mul(4).max(limit as u64))
         .clamp(limit as u64, 16_384) as usize;
+    let native_store_path = resolve_native_execution_store_path_from_params_v1(params)
+        .unwrap_or_else(nov_native_execution_store_path_v1);
+    let already_receipted_tx_hashes =
+        load_nov_native_execution_store_v1(native_store_path.as_path())?
+            .receipts
+            .keys()
+            .cloned()
+            .collect::<BTreeSet<_>>();
     let pending = snapshot_network_runtime_native_pending_txs_v1(chain_id, scan_limit);
     let mut raw_txs = Vec::with_capacity(limit);
     let mut selected_raw_payloads = Vec::with_capacity(limit);
@@ -11029,6 +11038,7 @@ pub fn run_nov_execute_pending_native_tx_batch_from_params_v1(
     let mut skipped_non_native_payload = 0usize;
     let mut skipped_chain_mismatch = 0usize;
     let mut skipped_ineligible_stage = 0usize;
+    let mut skipped_already_receipted = 0usize;
 
     for pending_tx in pending.iter() {
         if raw_txs.len() >= limit {
@@ -11053,6 +11063,17 @@ pub fn run_nov_execute_pending_native_tx_batch_from_params_v1(
         };
         if native_tx.chain_id != chain_id {
             skipped_chain_mismatch = skipped_chain_mismatch.saturating_add(1);
+            continue;
+        }
+        let pending_tx_hash = to_hex_prefixed_v1(&pending_tx.tx_hash);
+        let pending_tx_hash_noprefix = pending_tx_hash
+            .strip_prefix("0x")
+            .unwrap_or(pending_tx_hash.as_str());
+        if already_receipted_tx_hashes.contains(&pending_tx_hash)
+            || already_receipted_tx_hashes.contains(pending_tx_hash_noprefix)
+        {
+            skipped_already_receipted = skipped_already_receipted.saturating_add(1);
+            observe_network_runtime_native_pending_tx_dropped_v1(chain_id, pending_tx.tx_hash);
             continue;
         }
         raw_txs.push(serde_json::Value::String(to_hex_prefixed_v1(
@@ -11082,6 +11103,7 @@ pub fn run_nov_execute_pending_native_tx_batch_from_params_v1(
                 "non_native_payload": skipped_non_native_payload,
                 "chain_mismatch": skipped_chain_mismatch,
                 "ineligible_stage": skipped_ineligible_stage,
+                "already_receipted": skipped_already_receipted,
             }
         }));
     }
@@ -11116,6 +11138,7 @@ pub fn run_nov_execute_pending_native_tx_batch_from_params_v1(
             "non_native_payload": skipped_non_native_payload,
             "chain_mismatch": skipped_chain_mismatch,
             "ineligible_stage": skipped_ineligible_stage,
+            "already_receipted": skipped_already_receipted,
         },
         "batch_result": batch_result,
     }))

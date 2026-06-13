@@ -379,6 +379,16 @@ cargo run -p novovm-node --bin supervm-native-pipeline-pending-crash-recovery-ga
 
 The pending crash gate signs the current pending queue policy honestly. `pending_policy = volatile`: transactions that crash before AOEM tick / dirty commit are not recovered from RocksDB. Already canonical included transactions are recovered through the native execution store and must not execute again after restart. The gate verifies partial-commit restart protection, duplicate receipt protection, semantic head recovery, receipt index consistency, and keeps canonical body/head recovery out of scope.
 
+Remote reentry dedup gate:
+
+```powershell
+cargo build -p novovm-node --bins
+$env:NOVOVM_NATIVE_PIPELINE_REMOTE_REENTRY_REPORT_PATH="artifacts/native-pipeline/native-pipeline-remote-reentry-dedup-report.json"
+cargo run -p novovm-node --bin supervm-native-pipeline-remote-reentry-dedup-gate
+```
+
+The remote reentry gate sends the same native tx batch repeatedly over UDP, verifies the receiver includes each unique tx once, restarts the receiver against the same RocksDB native execution store, then injects the same tx batch again. Already receipted txs are dropped from volatile pending before AOEM selection, so duplicate remote reentry cannot create duplicate canonical inclusion, duplicate receipt, extra semantic head advance, or duplicate dirty commit. Canonical body/head recovery remains out of scope for this gate.
+
 Paced fanout network ingress gate:
 
 ```powershell

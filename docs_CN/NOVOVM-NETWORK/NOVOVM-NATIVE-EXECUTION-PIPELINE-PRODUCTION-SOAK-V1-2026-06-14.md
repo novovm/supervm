@@ -218,11 +218,59 @@ schema = novovm-native-pipeline-pending-crash-recovery-report/v1
 - 不绕过 AOEM tick。
 - 不新增账户/资产真相源。
 
-## 8. 未完成项
+## 8. 第五刀：Remote Reentry Dedup Gate
+
+已新增独立 gate：
+
+```text
+cargo run -p novovm-node --bin supervm-native-pipeline-remote-reentry-dedup-gate
+```
+
+该 gate 只验证远端重复重入去重，不修改 lifecycle：
+
+- 同一批 native tx 多轮从 UDP transport 进入 receiver。
+- receiver 首次运行必须只 canonical include 唯一 tx。
+- duplicate packet / duplicate broadcast 不得生成重复 receipt。
+- receiver 重启后，同一批已 receipted tx 再次进入 remote pending。
+- pending tick 在 AOEM batch 选择前读取 native execution store receipt index。
+- 已存在 receipt 的 tx 只丢弃 volatile pending，不再进入 AOEM batch。
+- 重启后重复 reentry 不得推进 semantic head，不得新增 dirty commit。
+- `canonical_body_head_recovery = not_claimed_by_this_gate`。
+
+默认门禁指标：
+
+```text
+tx_count = 16
+duplicate_rounds = 3
+duplicate_received > 0
+canonical_unique_included = 16
+duplicate_canonical_included = 0
+duplicate_receipt = 0
+duplicate_dirty_commit = 0
+semantic_head_extra_advance = 0
+duplicate_canonical_after_restart = 0
+duplicate_receipt_after_restart = 0
+```
+
+报告：
+
+```text
+artifacts/native-pipeline/native-pipeline-remote-reentry-dedup-report.json
+schema = novovm-native-pipeline-remote-reentry-dedup-report/v1
+```
+
+本刀边界：
+
+- 不实现 persistent pending queue。
+- 不声明 canonical body/head persistence。
+- 不修改 pending-only 产品入口。
+- 不绕过 AOEM tick。
+- 不新增账户/资产真相源。
+
+## 9. 未完成项
 
 以下仍待后续刀完成：
 
-- Remote reentry dedup gate。
 - Cross-machine UDP soak：sender host / receiver host / env-config peer address。
 - Persistent canonical body/head recovery gate。
 - Long-run production profile：真实 30min / 2h / overnight 报告归档。
