@@ -27,7 +27,7 @@ NOVOVM 现在已经具备“统一身份 + EVM 产品入口 + native NOV 经济�
 - M2 bridge pause v1 已接入 mainline native execution store / governance policy：live register、burn、release 可分别被 `mapped_lock_bridge_paused`、`mapped_asset_burn_paused`、`mapped_asset_release_paused` fail-closed 阻断，暂停时不推进 mapped asset 生命周期。
 - M2 source anchor reorg gate v1 已接入 mapped asset 生命周期：live register 持久化 source anchor；`ua_getMappedAsset` 暴露 `source_anchor_status`；burn/release 前复查本地 canonical finalized anchor，unsafe 时 fail-closed 阻断。治理化 header source whitelist/quorum gate v1 已接入 native execution store：开启后 live lock proof 的 runtime header source peer 必须在许可列表中，并满足 `min_source_quorum`。
 - M2 manual freeze/recovery/rollback v1 已接入 `ua_freezeMappedAsset` / `ua_unfreezeMappedAsset` / `ua_rollbackFrozenMappedAsset`：active live NETH 冻结会扣用户 native 可用余额、保留 Treasury reserve，并把 mapped asset 状态置为 `frozen`；source anchor 恢复 canonical finalized 后才能 unfreeze，恢复用户 native 可用余额；source anchor 仍 unsafe 时可 rollback，扣回内部 Treasury NETH reserve 并把 mapped asset 置为 `rejected`，不返还用户余额、不触发外部链上出金、不 mint NOV。
-- M2 auto heal v1 已接入 `ua_autoHealMappedAssets`：默认 dry-run 只报告 unsafe source anchor；`apply=true` 必须先由 governance/Treasury policy 开启 `mapped_asset_auto_heal_enabled`，否则 fail-closed。开启后只自动冻结 active/burn_pending live NETH，扣减用户 native 可用余额并保留 Treasury reserve；frozen asset 只给出 unfreeze/rollback 建议，不自动处置。
+- M2 auto heal v1 已接入 `ua_autoHealMappedAssets`：默认 dry-run 只报告 unsafe source anchor；`apply=true` 必须先由 governance/Treasury policy 开启 `mapped_asset_auto_heal_enabled`，否则 fail-closed。开启后可自动冻结 active/burn_pending live NETH，扣减用户 native 可用余额并保留 Treasury reserve；frozen asset 的自动 rollback 由独立 `mapped_asset_auto_heal_rollback_enabled` 开关控制，未开启时只报告建议，开启后才把 unsafe frozen NETH 内部回滚为 `rejected` 并扣回 Treasury reserve。
 - M2 finality policy v1 已接入 governance/Treasury policy：`mapped_lock_min_confirmations` 可治理设置，live ETH lock proof 优先使用 native store policy，未设置时 fallback 到 env/default。
 - 仍没有真实“完整 external finality source 管理 -> compensation -> Treasury policy -> NOV emission”的完整链上桥接。治理化 header source peer quorum、Ed25519 header attestation signature quorum、disabled signer reason/fail-closed 和 signer rotation 记录已有，但 NOV mint 在 consensus token runtime 中存在，不能直接接在 ETH lock proof 上。
 - EVM 合约币可以在 EVM 产品面执行/查询 receipt，但和 NOV native account balance/treasury 是两套状态面，当前没有完整 ERC20 -> native asset 自动映射桥。
@@ -262,14 +262,14 @@ native NOV 入口：
 
 关键边界：
 
-- 这不是完整真实外部桥；live 模式的 receipt MPT proof 已要求锚定本地 runtime canonical finalized block，并可通过 `ua_setMappedHeaderSourcePolicy` 约束 header source peer 和 `min_source_quorum`，且 quorum 已按同一 `block_hash` 的多 source 观测计数；`ua_setMappedHeaderAttestationPolicy` 已可约束 Ed25519 header attestation public key、`min_attestation_quorum`、`disabled_signers`、`disabled_signer_reasons` 和 `signer_rotations`，live proof 必须携带对 `chain_id/block_number/block_hash/receipts_root` 的 `header_attestations` 签名；`mapped_lock_min_confirmations` 已可由 governance/Treasury policy 设置；`ua_autoHealMappedAssets` 只提供治理开启后的 unsafe asset 自动冻结执行入口，但还没有完整 finality source 管理、完整自动调度、治理赔付或链上出金。
+- 这不是完整真实外部桥；live 模式的 receipt MPT proof 已要求锚定本地 runtime canonical finalized block，并可通过 `ua_setMappedHeaderSourcePolicy` 约束 header source peer 和 `min_source_quorum`，且 quorum 已按同一 `block_hash` 的多 source 观测计数；`ua_setMappedHeaderAttestationPolicy` 已可约束 Ed25519 header attestation public key、`min_attestation_quorum`、`disabled_signers`、`disabled_signer_reasons` 和 `signer_rotations`，live proof 必须携带对 `chain_id/block_number/block_hash/receipts_root` 的 `header_attestations` 签名；`mapped_lock_min_confirmations` 已可由 governance/Treasury policy 设置；`ua_autoHealMappedAssets` 提供治理开启后的 unsafe asset 自动冻结执行入口，并可在独立 rollback policy 开启后自动终止 unsafe frozen asset，但还没有完整 finality source 管理、完整自动调度、治理赔付或链上出金。
 - 这不是 NOV 铸造路径；ETH lock 只能先形成 `NETH` M2 凭证。
 - live mapped lock 会写入 native `account_asset_balances[NETH]`、`treasury_reserves[NETH]` 和 `treasury_settlement_journal`，但 `settled_nov=0`、`nov_minted=0`。
 - live 模式已校验 lock contract address、`Locked(address,bytes32,uint256,string)` topic0、source chain id、block number、block hash、finalized block number、`source_lock_ref` 派生一致性、receipt MPT proof、receipt envelope 与 proof value 一致性、receipt status 成功、receipt log address/topic0、`receiptsRoot` 与本地 runtime canonical finalized block anchor 一致，并可在治理开启后校验 header source peer 白名单 / `min_source_quorum`、Ed25519 header attestation 签名白名单 / `min_attestation_quorum` 和 disabled signer。
 - live register、burn、release 已有 bridge pause 门禁；暂停由 native store / governance policy 或 env 触发，失败时不推进 active/burn_pending/released 状态。
 - live register 已持久化 source anchor；burn/release 前会复查本地 runtime canonical finalized anchor，reorg out、finality 丢失或 receiptsRoot mismatch 时拒绝推进。
 - `ua_freezeMappedAsset` 可人工冻结 active/burn_pending mapped asset；active live NETH 冻结会从用户 native liquid balance 扣减，但 Treasury reserve 保留用于后续恢复或风险处置。`ua_unfreezeMappedAsset` 会先复查 source anchor，只有 canonical/finalized/receiptsRoot 重新安全时才恢复用户 native liquid balance。`ua_rollbackFrozenMappedAsset` 只允许 source anchor 仍 unsafe 的 frozen asset 执行，扣回内部 Treasury NETH reserve 并把 mapped asset 置为 `rejected`，不返还用户余额、不 mint NOV、不链上出金。
-- `ua_autoHealMappedAssets` 提供最小自动 reorg heal 执行入口：dry-run 报告候选；`apply=true` 必须由 governance/Treasury policy 开启，开启后只冻结 unsafe active/burn_pending live NETH；frozen 后仍需治理选择 unfreeze 或 rollback。
+- `ua_autoHealMappedAssets` 提供最小自动 reorg heal 执行入口：dry-run 报告候选；`apply=true` 必须由 governance/Treasury policy 开启，开启后冻结 unsafe active/burn_pending live NETH；unsafe frozen NETH 的自动 rollback 还必须额外开启 `mapped_asset_auto_heal_rollback_enabled`。无论 freeze 还是 rollback，都不触发外部链释放、NOV mint 或赔付。
 - 仍没有完整 external finality source 管理、治理赔付或链上出金；当前只具备 source peer quorum、Ed25519 attestation quorum、disabled signer reason/fail-closed、signer rotation 记录和最小 confirmations。
 - Phase4 shadow/no-go 环境变量可阻断 live register 路径。
 - `settlement_effect=neth_m2_credit` 只表示内部 NETH/M2 入账，不应直接解释为链上 ETH 已释放。
@@ -290,7 +290,7 @@ native NOV 入口：
 
 未完成接线：
 
-- MVP live 模式已有 receipt MPT inclusion + 本地 canonical finalized block anchor + Ethereum lock event evidence -> NETH/M2 credit 的内部账本接线，并已有 mapped bridge pause 门禁、source anchor reorg gate、按同一 `block_hash` 多 source 观测计数的 header source whitelist/quorum gate、Ed25519 header attestation signature quorum gate、disabled signer reason/fail-closed、signer rotation 记录、governed min confirmations、manual freeze/recovery/rollback 和最小 auto-freeze heal；但没有完整 finality source 管理、治理赔付或链上自动出入金。
+- MVP live 模式已有 receipt MPT inclusion + 本地 canonical finalized block anchor + Ethereum lock event evidence -> NETH/M2 credit 的内部账本接线，并已有 mapped bridge pause 门禁、source anchor reorg gate、按同一 `block_hash` 多 source 观测计数的 header source whitelist/quorum gate、Ed25519 header attestation signature quorum gate、disabled signer reason/fail-closed、signer rotation 记录、governed min confirmations、manual freeze/recovery/rollback，以及 governance/Treasury policy 分别控制的 auto-freeze 和 unsafe frozen auto-rollback heal；但没有完整 finality source 管理、治理赔付或链上自动出入金。
 - 没有发现真实外部 ETH reserve 与 NOV supply、NETH 负债、M2 credit exposure 的完整约束关系。
 
 状态：NOV mint 能力存在于 consensus runtime；ETH 锁仓 live MVP 只能先形成 NETH/M2 native credit，不能声明直接触发 NOV 铸造。
@@ -340,7 +340,7 @@ native NOV 入口：
 - live bridge pause 已固定 register/burn/release 三个 gate，防止 header/reorg/reserve 异常时继续扩张或释放 NETH M2。
 - live mapped asset record 已持久化 source anchor；`ua_getMappedAsset` 暴露 `source_anchor_status`；burn/release 在 anchor unsafe 时拒绝推进，避免 reorg 后继续释放。
 - `ua_freezeMappedAsset` 已能把异常 mapped asset 置为 `frozen`；active live NETH 冻结会扣减用户 native 可用余额，Treasury reserve 不释放。`ua_unfreezeMappedAsset` 只能在 source anchor 恢复安全后把 frozen NETH 返还为 active/liquid。`ua_rollbackFrozenMappedAsset` 只能在 source anchor 仍 unsafe 时扣回内部 Treasury NETH reserve，并把 frozen asset 终止为 `rejected`。
-- `ua_autoHealMappedAssets` 已能扫描 unsafe source anchor，并在 governance/Treasury policy 开启 `mapped_asset_auto_heal_enabled` 后用 `apply=true` 自动冻结 active/burn_pending live mapped asset；默认 dry-run 不改状态，未开启时 fail-closed。
+- `ua_autoHealMappedAssets` 已能扫描 unsafe source anchor，并在 governance/Treasury policy 开启 `mapped_asset_auto_heal_enabled` 后用 `apply=true` 自动冻结 active/burn_pending live mapped asset；对已 frozen 且 source anchor 仍 unsafe 的 asset，只有额外开启 `mapped_asset_auto_heal_rollback_enabled` 才会自动 rollback。默认 dry-run 不改状态，未开启基础 auto-heal 时 fail-closed。
 - `TokenRuntime::mint` 没有接到 Treasury policy / emission policy 路径。
 
 建议：
@@ -350,7 +350,7 @@ native NOV 入口：
   - 固定一个 lock contract address 配置已经进入 live proof gate，后续要从可信配置/治理读取。
   - 当前已验 receipt MPT inclusion、`Locked(address indexed owner, bytes32 lockId, uint256 amount, string targetUca)` 的 receipt log address/topic0、本地 finalized canonical block anchor、可选治理 header source whitelist/quorum、可选治理 Ed25519 header attestation signature quorum、disabled signer、禁用原因和 signer rotation；source quorum 已按同一 `block_hash` 多 source 观测计数，最小 finalized confirmations 已可治理设置，下一步补完整 finality source 管理 / reorg heal。
   - `receipts_root` 已不再只信任用户自报；finalized block number 仍只作为确认数约束字段，最终锚定以本地 canonical finalized block 为准。
-  - bridge pause 已能阻断 live register/burn/release；source anchor reorg gate 已能阻断 unsafe burn/release；header source whitelist/quorum gate 已能阻断非许可 source peer 或 quorum 不足；Ed25519 header attestation quorum gate 已能阻断无效签名、禁用 signer 或许可 signer quorum 不足；manual freeze/unfreeze/rollback 已能冻结、安全恢复或终止异常 NETH 暴露；`ua_autoHealMappedAssets` 已能在治理开启后自动冻结 unsafe active/burn_pending live NETH；下一步补完整 finality source、治理赔付规则和自动化调度。
+  - bridge pause 已能阻断 live register/burn/release；source anchor reorg gate 已能阻断 unsafe burn/release；header source whitelist/quorum gate 已能阻断非许可 source peer 或 quorum 不足；Ed25519 header attestation quorum gate 已能阻断无效签名、禁用 signer 或许可 signer quorum 不足；manual freeze/unfreeze/rollback 已能冻结、安全恢复或终止异常 NETH 暴露；`ua_autoHealMappedAssets` 已能在治理开启后自动冻结 unsafe active/burn_pending live NETH，并在额外开启 rollback policy 后自动终止 unsafe frozen NETH；下一步补完整 finality source、治理赔付规则和自动化调度。
   - 只把 ETH 映射为 `NETH`，不要直接铸 NOV。
   - NOV mint / 矿工结算必须通过 Treasury policy，并使用 epoch 固定的协议清算价。
 

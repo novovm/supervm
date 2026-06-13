@@ -1254,6 +1254,7 @@ fn run_unified_account_surface_rpc(
                 let before_status = record.status;
                 let mut native_settlement = Value::Null;
                 let mut applied = false;
+                let mut apply_blocked_reason: Option<&'static str> = None;
                 if apply && action == "freeze_unsafe_anchor" {
                     native_settlement = apply_live_mapped_asset_m2_freeze_v1(
                         record,
@@ -1283,6 +1284,42 @@ fn run_unified_account_surface_rpc(
                     );
                     applied = true;
                     applied_count = applied_count.saturating_add(1);
+                } else if apply && action == "rollback_candidate_anchor_unsafe" {
+                    if native_store
+                        .module_state
+                        .mapped_asset_auto_heal_rollback_enabled
+                    {
+                        native_settlement = apply_live_mapped_asset_m2_rollback_v1(
+                            record,
+                            mapping_key.as_str(),
+                            params,
+                            now,
+                            reason.as_str(),
+                        )?;
+                        record.status = MappedAssetStatus::Rejected;
+                        record.updated_at = now;
+                        record.audit_ref =
+                            derive_mapped_asset_audit_ref_v1(record.mapping_id, record.status, now);
+                        let op = build_mapped_asset_operation_v1(
+                            record,
+                            MappedAssetOperationKind::RollbackMapped,
+                            now,
+                            mapped_asset_state.operations.len() as u64 + 1,
+                        );
+                        mapped_asset_state.operations.push(op);
+                        emit_mapped_asset_operation_observed_v1(
+                            "auto_heal_rollback_mapped",
+                            true,
+                            Some(record.target_account_id.as_str()),
+                            Some(mapping_key.as_str()),
+                            None,
+                            Some("qualified"),
+                        );
+                        applied = true;
+                        applied_count = applied_count.saturating_add(1);
+                    } else {
+                        apply_blocked_reason = Some("mapped_asset_auto_heal_rollback_disabled");
+                    }
                 }
                 reports.push(json!({
                     "mapping_id": mapping_key,
@@ -1292,6 +1329,7 @@ fn run_unified_account_surface_rpc(
                     "amount": record.amount,
                     "action": action,
                     "applied": applied,
+                    "apply_blocked_reason": apply_blocked_reason,
                     "status_before": before_status.as_str(),
                     "status_after": record.status.as_str(),
                     "phase4_mode": mapped_asset_phase4_mode_v1(record),
@@ -1312,6 +1350,7 @@ fn run_unified_account_surface_rpc(
                     "scope": "internal_mapped_asset_reorg_heal_no_external_release_no_nov_mint",
                     "policy": {
                         "mapped_asset_auto_heal_enabled": native_store.module_state.mapped_asset_auto_heal_enabled,
+                        "mapped_asset_auto_heal_rollback_enabled": native_store.module_state.mapped_asset_auto_heal_rollback_enabled,
                         "policy_source": native_store.module_state.treasury_policy_source,
                         "policy_version": native_store.module_state.treasury_policy_version,
                     },
@@ -8000,6 +8039,129 @@ mod tests {
                 .get("NETH")
                 .copied(),
             Some(121)
+        );
+
+        let rollback_disabled = run_query(
+            &base,
+            "ua_autoHealMappedAssets",
+            params_with_paths_and_native_store(
+                &store,
+                &audit,
+                &native_store,
+                json!({
+                    "account_id": "acct-map-live-auto-heal",
+                    "apply": true,
+                    "reason": "auto heal rollback unsafe frozen source anchor",
+                    "now": 14u64,
+                }),
+            ),
+        );
+        assert_eq!(
+            rollback_disabled["items"][0]["action"].as_str(),
+            Some("rollback_candidate_anchor_unsafe")
+        );
+        assert_eq!(
+            rollback_disabled["items"][0]["applied"].as_bool(),
+            Some(false)
+        );
+        assert_eq!(
+            rollback_disabled["items"][0]["apply_blocked_reason"].as_str(),
+            Some("mapped_asset_auto_heal_rollback_disabled")
+        );
+        assert_eq!(
+            rollback_disabled["policy"]["mapped_asset_auto_heal_rollback_enabled"].as_bool(),
+            Some(false)
+        );
+        let still_frozen = run_query(
+            &base,
+            "ua_getMappedAsset",
+            params_with_paths(
+                &store,
+                &audit,
+                json!({
+                    "account_id": "acct-map-live-auto-heal",
+                    "mapping_id": register["mapping_id"],
+                }),
+            ),
+        );
+        assert_eq!(
+            still_frozen["mapped_asset"]["status"].as_str(),
+            Some("frozen")
+        );
+
+        let mut rollback_policy_store = load_nov_native_execution_store_v1(native_store.as_path())
+            .expect("load native store before enabling rollback auto heal");
+        rollback_policy_store
+            .module_state
+            .mapped_asset_auto_heal_rollback_enabled = true;
+        rollback_policy_store.module_state.treasury_policy_source = "governance_test".to_string();
+        rollback_policy_store.module_state.treasury_policy_version = 3;
+        save_nov_native_execution_store_v1(native_store.as_path(), &rollback_policy_store)
+            .expect("save rollback auto heal enabled native store");
+
+        let rolled_back = run_query(
+            &base,
+            "ua_autoHealMappedAssets",
+            params_with_paths_and_native_store(
+                &store,
+                &audit,
+                &native_store,
+                json!({
+                    "account_id": "acct-map-live-auto-heal",
+                    "apply": true,
+                    "reason": "governed auto heal rollback unsafe frozen source anchor",
+                    "now": 15u64,
+                }),
+            ),
+        );
+        assert_eq!(rolled_back["applied_count"].as_u64(), Some(1));
+        assert_eq!(
+            rolled_back["policy"]["mapped_asset_auto_heal_rollback_enabled"].as_bool(),
+            Some(true)
+        );
+        assert_eq!(
+            rolled_back["items"][0]["status_after"].as_str(),
+            Some("rejected")
+        );
+        assert_eq!(
+            rolled_back["items"][0]["native_settlement"]["effect"].as_str(),
+            Some("neth_m2_rolled_back")
+        );
+        assert_eq!(
+            rolled_back["items"][0]["native_settlement"]["external_release_triggered"].as_bool(),
+            Some(false)
+        );
+        assert_eq!(
+            rolled_back["items"][0]["native_settlement"]["nov_minted"].as_u64(),
+            Some(0)
+        );
+
+        let rejected = run_query(
+            &base,
+            "ua_getMappedAsset",
+            params_with_paths(
+                &store,
+                &audit,
+                json!({
+                    "account_id": "acct-map-live-auto-heal",
+                    "mapping_id": register["mapping_id"],
+                }),
+            ),
+        );
+        assert_eq!(
+            rejected["mapped_asset"]["status"].as_str(),
+            Some("rejected")
+        );
+        let native_after_rollback = load_nov_native_execution_store_v1(native_store.as_path())
+            .expect("load native store after auto heal rollback");
+        assert_eq!(
+            native_after_rollback
+                .module_state
+                .treasury_reserves
+                .get("NETH")
+                .copied()
+                .unwrap_or(0),
+            0
         );
 
         let _ = fs::remove_dir_all(&root);
