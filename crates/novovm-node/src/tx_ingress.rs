@@ -3274,15 +3274,7 @@ fn build_protocol_clearing_price_v1(
                 .copied()
         })
         .or_else(|| {
-            if fee_oracle_source_allowed_v1(store) {
-                store
-                    .module_state
-                    .fee_oracle_rates_ppm
-                    .get(&normalized)
-                    .copied()
-            } else {
-                None
-            }
+            protocol_oracle_ref_rate_ppm_v1(store, normalized.as_str(), now_ms)
         })
         .or_else(|| configured_fee_rate_ppm_v1(normalized.as_str()))
         .unwrap_or_else(|| default_fee_rate_ppm_for_asset_v1(normalized.as_str()));
@@ -3332,6 +3324,35 @@ fn build_protocol_clearing_price_v1(
                 "permissioned_oracle_ref:source_not_allowed source={}",
                 fee_oracle_source_v1(store)
             ));
+        }
+    } else if store
+        .module_state
+        .fee_oracle_rates_ppm
+        .contains_key(&normalized)
+    {
+        let rate = store
+            .module_state
+            .fee_oracle_rates_ppm
+            .get(&normalized)
+            .copied()
+            .unwrap_or_default();
+        if rate == 0 {
+            rejected.push(format!(
+                "permissioned_oracle_ref:rate_zero source={}",
+                fee_oracle_source_v1(store)
+            ));
+        } else {
+            let updated = store.module_state.fee_oracle_updated_unix_ms;
+            let max_age_ms = execution_fee_oracle_max_age_ms_v1().max(1);
+            if updated > 0 && now_ms > updated.saturating_add(max_age_ms) {
+                rejected.push(format!(
+                    "permissioned_oracle_ref:stale source={} now={} oracle_updated={} max_age_ms={}",
+                    fee_oracle_source_v1(store),
+                    now_ms,
+                    updated,
+                    max_age_ms
+                ));
+            }
         }
     }
 
@@ -9052,6 +9073,37 @@ mod tests {
             .iter()
             .any(|reason| reason.starts_with("permissioned_oracle_ref:source_not_allowed")));
         assert_eq!(price.p_epoch_ppm, 1_000_000);
+    }
+
+    #[test]
+    fn protocol_clearing_price_rejects_stale_oracle_without_prev_pollution() {
+        let mut store = NovNativeExecutionStoreV1::default();
+        store
+            .module_state
+            .protocol_clearing_nav_rate_ppm
+            .insert("NFOO".to_string(), 1_000_000);
+        store
+            .module_state
+            .fee_oracle_rates_ppm
+            .insert("NFOO".to_string(), 5_000_000);
+        store.module_state.fee_oracle_updated_unix_ms = 1;
+        store.module_state.fee_oracle_source = "runtime_oracle".to_string();
+
+        let price = build_protocol_clearing_price_v1(&store, "NFOO", 600_000)
+            .expect("protocol clearing price should resolve without stale oracle");
+        assert_eq!(price.state, "constrained");
+        assert_eq!(price.p_prev_ppm, 0);
+        assert_eq!(price.p_ref_ppm, 1_000_000);
+        assert_eq!(price.p_epoch_ppm, 1_000_000);
+        assert_eq!(price.p_oracle_ref_ppm, None);
+        assert!(!price
+            .sources_used
+            .iter()
+            .any(|source| source == "permissioned_oracle_ref"));
+        assert!(price.sources_rejected.iter().any(|reason| {
+            reason.starts_with("permissioned_oracle_ref:stale")
+                && reason.contains("source=runtime_oracle")
+        }));
     }
 
     #[test]
