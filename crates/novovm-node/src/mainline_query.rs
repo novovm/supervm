@@ -175,8 +175,7 @@ fn mainline_to_hex_lower_v1(bytes: &[u8]) -> String {
 }
 
 fn mainline_asset_view_authorization_reason_v1(params: &Value, account: &str) -> Option<String> {
-    if param_as_bool_v1(params, "asset_view_authorized")
-    {
+    if param_as_bool_v1(params, "asset_view_authorized") {
         return Some("asset_view_authorized".to_string());
     }
     if param_as_bool_v1(params, "account_view_authorized") {
@@ -220,10 +219,13 @@ fn mainline_privacy_disclosure_receipt_v1(
     );
     let result_commitment_digest_hex =
         format!("0x{}", mainline_to_hex_lower_v1(&result_commitment_digest));
-    let preimage = format!(
-        "novovm:privacy-disclosure:v1|{method}|{normalized_account}|{normalized_asset}|{authorization_reason}|mainline_read_gate|proof_generation_performed=false|result_commitment={result_commitment_digest_hex}"
+    let disclosure_digest_hex = mainline_privacy_disclosure_digest_hex_v1(
+        method,
+        normalized_account.as_str(),
+        normalized_asset.as_str(),
+        authorization_reason,
+        result_commitment_digest_hex.as_str(),
     );
-    let digest = Keccak256::digest(preimage.as_bytes());
     json!({
         "version": "v1",
         "status": "authorized",
@@ -238,8 +240,25 @@ fn mainline_privacy_disclosure_receipt_v1(
         "result_commitment_scope": "authorized_response_without_privacy_disclosure",
         "result_commitment_digest": result_commitment_digest_hex,
         "no_second_ledger": true,
-        "disclosure_digest": format!("0x{}", mainline_to_hex_lower_v1(&digest)),
+        "disclosure_digest": disclosure_digest_hex,
     })
+}
+
+fn mainline_privacy_disclosure_digest_hex_v1(
+    method: &str,
+    account: &str,
+    asset: &str,
+    authorization_reason: &str,
+    result_commitment_digest_hex: &str,
+) -> String {
+    let normalized_account = normalize_mainline_account_view_key_v1(account);
+    let normalized_asset = asset.trim().to_ascii_uppercase();
+    let normalized_result_commitment = result_commitment_digest_hex.trim().to_ascii_lowercase();
+    let preimage = format!(
+        "novovm:privacy-disclosure:v1|{method}|{normalized_account}|{normalized_asset}|{authorization_reason}|mainline_read_gate|proof_generation_performed=false|result_commitment={normalized_result_commitment}"
+    );
+    let digest = Keccak256::digest(preimage.as_bytes());
+    format!("0x{}", mainline_to_hex_lower_v1(&digest))
 }
 
 fn param_as_u128(params: &Value, key: &str, index: usize) -> Option<u128> {
@@ -448,6 +467,7 @@ pub fn is_mainline_native_execution_query_method(method: &str) -> bool {
             | "nov_getProtocolClearingPrice"
             | "nov_getFeeOracleRates"
             | "nov_getPrivacyCapabilityStatus"
+            | "nov_verifyPrivacyDisclosureReceipt"
             | "nov_getM2BridgeRiskStatus"
             | "nov_runMappedAssetAutoHeal"
             | "nov_setMappedHeaderSourcePolicy"
@@ -953,6 +973,141 @@ fn run_mainline_privacy_capability_status_v1(params: &Value) -> Result<Value> {
     }))
 }
 
+fn mainline_hex_eq_v1(left: &str, right: &str) -> bool {
+    left.trim().eq_ignore_ascii_case(right.trim())
+}
+
+fn run_mainline_verify_privacy_disclosure_receipt_v1(params: &Value) -> Result<Value> {
+    let response = params
+        .get("authorized_response")
+        .or_else(|| params.get("response"))
+        .cloned()
+        .ok_or_else(|| anyhow::anyhow!("authorized_response/response is required"))?;
+    let disclosure = params
+        .get("privacy_disclosure")
+        .cloned()
+        .or_else(|| response.get("privacy_disclosure").cloned())
+        .ok_or_else(|| anyhow::anyhow!("privacy_disclosure is required"))?;
+    let mut result_commitment = response.clone();
+    if let Some(map) = result_commitment.as_object_mut() {
+        map.remove("privacy_disclosure");
+    }
+    let result_commitment_digest = Keccak256::digest(
+        serde_json::to_vec(&result_commitment)
+            .unwrap_or_default()
+            .as_slice(),
+    );
+    let result_commitment_digest_hex =
+        format!("0x{}", mainline_to_hex_lower_v1(&result_commitment_digest));
+    let method = response
+        .get("method")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|raw| !raw.is_empty())
+        .map(ToString::to_string)
+        .or_else(|| param_as_string(params, "response_method"))
+        .unwrap_or_else(|| "unknown".to_string());
+    let account = disclosure
+        .get("subject_account_id")
+        .and_then(value_as_string)
+        .or_else(|| response.get("account_id").and_then(value_as_string))
+        .or_else(|| response.get("account").and_then(value_as_string))
+        .unwrap_or_default();
+    let asset = disclosure
+        .get("asset")
+        .and_then(value_as_string)
+        .or_else(|| response.get("asset").and_then(value_as_string))
+        .or_else(|| response.get("asset_id").and_then(value_as_string))
+        .unwrap_or_else(|| "*".to_string());
+    let authorization_reason = disclosure
+        .get("authorization_reason")
+        .and_then(value_as_string)
+        .unwrap_or_default();
+    let expected_disclosure_digest = mainline_privacy_disclosure_digest_hex_v1(
+        method.as_str(),
+        account.as_str(),
+        asset.as_str(),
+        authorization_reason.as_str(),
+        result_commitment_digest_hex.as_str(),
+    );
+    let claimed_result_commitment = disclosure
+        .get("result_commitment_digest")
+        .and_then(value_as_string)
+        .unwrap_or_default();
+    let claimed_disclosure_digest = disclosure
+        .get("disclosure_digest")
+        .and_then(value_as_string)
+        .unwrap_or_default();
+    let result_commitment_verified =
+        mainline_hex_eq_v1(&claimed_result_commitment, &result_commitment_digest_hex);
+    let disclosure_digest_verified =
+        mainline_hex_eq_v1(&claimed_disclosure_digest, &expected_disclosure_digest);
+    let proof_generation_performed = disclosure
+        .get("proof_generation_performed")
+        .and_then(Value::as_bool)
+        .unwrap_or(true);
+    let proof_system = disclosure
+        .get("proof_system")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let no_second_ledger = disclosure
+        .get("no_second_ledger")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let scope_valid = disclosure
+        .get("result_commitment_scope")
+        .and_then(Value::as_str)
+        == Some("authorized_response_without_privacy_disclosure");
+    let mut reasons = Vec::new();
+    if !result_commitment_verified {
+        reasons.push("result_commitment_digest_mismatch");
+    }
+    if !disclosure_digest_verified {
+        reasons.push("disclosure_digest_mismatch");
+    }
+    if proof_generation_performed {
+        reasons.push("unexpected_proof_generation_claim");
+    }
+    if proof_system != "none" {
+        reasons.push("unexpected_proof_system");
+    }
+    if !no_second_ledger {
+        reasons.push("no_second_ledger_not_asserted");
+    }
+    if !scope_valid {
+        reasons.push("result_commitment_scope_invalid");
+    }
+    let verified = reasons.is_empty();
+    Ok(json!({
+        "method": "nov_verifyPrivacyDisclosureReceipt",
+        "found": true,
+        "verified": verified,
+        "result_commitment_verified": result_commitment_verified,
+        "disclosure_digest_verified": disclosure_digest_verified,
+        "scope_valid": scope_valid,
+        "no_second_ledger": no_second_ledger,
+        "proof_generation_performed": proof_generation_performed,
+        "proof_system": proof_system,
+        "verification_reasons": reasons,
+        "expected": {
+            "result_commitment_digest": result_commitment_digest_hex,
+            "disclosure_digest": expected_disclosure_digest,
+        },
+        "claimed": {
+            "result_commitment_digest": claimed_result_commitment,
+            "disclosure_digest": claimed_disclosure_digest,
+        },
+        "verified_subject": {
+            "response_method": method,
+            "subject_account_id": account,
+            "asset": asset,
+            "authorization_reason": authorization_reason,
+        },
+        "privacy_query_surface": "mainline_read_gate",
+        "truth_source": "mainline_unified_account_surface/native_execution_store",
+    }))
+}
+
 fn canonical_store_path_from_params_or_env_v1(params: &Value) -> PathBuf {
     param_as_string_any(params, &["canonical_store_path"])
         .map(PathBuf::from)
@@ -1078,16 +1233,10 @@ fn run_mainline_native_execution_query(method: &str, params: &Value) -> Result<V
                 "balance": native_balance,
             });
             if m2_asset {
+                let result_commitment = out.clone();
                 if let (Some(map), Some(reason)) =
                     (out.as_object_mut(), disclosure_authorization.as_deref())
                 {
-                    let result_commitment = json!({
-                        "method": "nov_getAssetBalance",
-                        "account": account,
-                        "asset": asset,
-                        "found": found,
-                        "balance": native_balance,
-                    });
                     map.insert(
                         "privacy_disclosure".to_string(),
                         mainline_privacy_disclosure_receipt_v1(
@@ -1284,6 +1433,9 @@ fn run_mainline_native_execution_query(method: &str, params: &Value) -> Result<V
             }))
         }
         "nov_getPrivacyCapabilityStatus" => run_mainline_privacy_capability_status_v1(params),
+        "nov_verifyPrivacyDisclosureReceipt" => {
+            run_mainline_verify_privacy_disclosure_receipt_v1(params)
+        }
         "nov_getM2BridgeRiskStatus" => run_mainline_nov_m2_bridge_risk_status_v1(params),
         "nov_runMappedAssetAutoHeal" => run_mainline_nov_mapped_asset_auto_heal_tick_v1(params),
         "nov_setMappedHeaderSourcePolicy" => run_mainline_nov_mapped_policy_delegate_v1(
@@ -10748,6 +10900,7 @@ mod tests {
             "nov_getProtocolClearingPrice",
             "nov_getFeeOracleRates",
             "nov_getPrivacyCapabilityStatus",
+            "nov_verifyPrivacyDisclosureReceipt",
             "nov_getM2BridgeRiskStatus",
             "nov_runMappedAssetAutoHeal",
             "nov_setMappedHeaderSourcePolicy",
@@ -10855,6 +11008,15 @@ mod tests {
             ("nov_getProtocolClearingPrice", json!({"asset": "USDT"})),
             ("nov_getFeeOracleRates", json!({})),
             ("nov_getPrivacyCapabilityStatus", json!({})),
+            (
+                "nov_verifyPrivacyDisclosureReceipt",
+                json!({
+                    "authorized_response": {
+                        "method": "test",
+                        "privacy_disclosure": {}
+                    }
+                }),
+            ),
             ("nov_getM2BridgeRiskStatus", json!({"asset": "NETH"})),
         ] {
             let mut params = extra;
@@ -12293,6 +12455,41 @@ mod tests {
                 .as_str()
                 .unwrap_or_default()
                 .starts_with("0x")
+        );
+        let disclosure_verify = run_mainline_query_from_path(
+            bogus_canonical_store,
+            "nov_verifyPrivacyDisclosureReceipt",
+            &json!({
+                "authorized_response": nusd_after.clone(),
+            }),
+        )
+        .expect("privacy disclosure verification should succeed");
+        assert_eq!(disclosure_verify["verified"].as_bool(), Some(true));
+        assert_eq!(
+            disclosure_verify["result_commitment_verified"].as_bool(),
+            Some(true)
+        );
+        assert_eq!(
+            disclosure_verify["disclosure_digest_verified"].as_bool(),
+            Some(true)
+        );
+
+        let mut tampered_nusd = nusd_after.clone();
+        if let Some(map) = tampered_nusd.as_object_mut() {
+            map.insert("balance".to_string(), Value::from(101u64));
+        }
+        let tampered_verify = run_mainline_query_from_path(
+            bogus_canonical_store,
+            "nov_verifyPrivacyDisclosureReceipt",
+            &json!({
+                "authorized_response": tampered_nusd,
+            }),
+        )
+        .expect("tampered privacy disclosure verification should return a result");
+        assert_eq!(tampered_verify["verified"].as_bool(), Some(false));
+        assert_eq!(
+            tampered_verify["result_commitment_verified"].as_bool(),
+            Some(false)
         );
 
         let nusd_redacted = run_mainline_query_from_path(
