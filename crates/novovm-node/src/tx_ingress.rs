@@ -10477,6 +10477,82 @@ mod tests {
     }
 
     #[test]
+    fn neth_m2_bridge_risk_blocks_fee_clearing() {
+        with_test_native_execution_store_path_v1(|path| {
+            let caller = vec![0x95; 20];
+            let caller_hex = format!("0x{}", to_hex(caller.as_slice()));
+            let mut pre = NovNativeExecutionStoreV1::default();
+            pre.module_state
+                .fee_oracle_rates_ppm
+                .insert("NETH".to_string(), 2_000_000);
+            pre.module_state.fee_oracle_updated_unix_ms = now_unix_millis_v1();
+            pre.module_state.fee_oracle_source = "runtime_oracle".to_string();
+            pre.module_state.clearing_enabled = true;
+            pre.module_state.clearing_require_healthy_risk_buffer = false;
+            pre.module_state
+                .treasury_reserves
+                .insert("NETH".to_string(), 1_000);
+            pre.module_state.account_asset_balances.insert(
+                caller_hex,
+                BTreeMap::from([("NETH".to_string(), 1_200u128)]),
+            );
+            pre.module_state.treasury_reserve_proofs.insert(
+                "NETH".to_string(),
+                NovTreasuryReserveProofV1 {
+                    asset: "NETH".to_string(),
+                    reserve_amount: 900,
+                    proof_type: "custody_statement_v1".to_string(),
+                    proof_digest: "0xnethfeeclosingrisk01".to_string(),
+                    proof_source: "treasury_committee".to_string(),
+                    proof_reference: "neth-fee-risk-report-001".to_string(),
+                    observed_at_unix_ms: 1,
+                    expires_at_unix_ms: 0,
+                    policy_version: 1,
+                    policy_source: "governance_path".to_string(),
+                    status: "active".to_string(),
+                    automated_verification: false,
+                    verification_mode: "manual_governance_attestation".to_string(),
+                },
+            );
+            pre.module_state.mapped_lock_contract_address = format!("0x{}", "95".repeat(20));
+            pre.module_state.mapped_lock_min_confirmations = 21;
+            save_nov_native_execution_store_v1(path.as_path(), &pre)
+                .expect("seed uncovered NETH M2 fee clearing risk");
+
+            let request = NovExecutionRequestV1 {
+                tx_hash: [0x95; 32],
+                chain_id: 7095,
+                caller,
+                target: NovExecutionRequestTargetV1::NativeModule("treasury".to_string()),
+                method: "deposit_reserve".to_string(),
+                args: serde_json::to_vec(&serde_json::json!({
+                    "asset": "NETH",
+                    "amount": 10u64
+                }))
+                .expect("encode args"),
+                fee_pay_asset: "NETH".to_string(),
+                fee_max_pay_amount: 1_000,
+                fee_slippage_bps: 50,
+                gas_like_limit: Some(90_000),
+                nonce: 95,
+            };
+            let receipt = dispatch_and_persist_nov_execution_request_with_store_path_v1(
+                path.as_path(),
+                &request,
+            )
+            .expect("dispatch should return NETH M2 risk failure receipt");
+            assert!(!receipt.status);
+            assert_eq!(receipt.module, "fee");
+            assert_eq!(receipt.method, "settlement");
+            let failure = receipt.failure_reason.clone().unwrap_or_default();
+            assert!(failure.starts_with("fee.clearing.reserve_proof_not_active"));
+            assert!(failure.contains("m2_bridge_risk=m2_liability_exceeds_treasury_reserve"));
+            assert!(failure.contains("liability=1200"));
+            assert!(failure.contains("treasury_reserve=1000"));
+        });
+    }
+
+    #[test]
     fn reserve_proof_amount_cap_blocks_non_nov_fee_clearing_expansion() {
         with_test_native_execution_store_path_v1(|path| {
             let mut pre = NovNativeExecutionStoreV1::default();
