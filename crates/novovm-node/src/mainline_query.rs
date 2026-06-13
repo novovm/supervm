@@ -354,6 +354,7 @@ pub fn is_mainline_native_execution_query_method(method: &str) -> bool {
             | "nov_getTreasuryReserveSnapshot"
             | "nov_getProtocolClearingPrice"
             | "nov_getFeeOracleRates"
+            | "nov_getM2BridgeRiskStatus"
             | "nov_runMappedAssetAutoHeal"
             | "nov_setMappedHeaderSourcePolicy"
             | "nov_setMappedHeaderAttestationPolicy"
@@ -526,6 +527,147 @@ fn run_mainline_nov_mapped_asset_auto_heal_tick_v1(params: &Value) -> Result<Val
         "external_release_triggered": false,
         "nov_minted": 0,
         "result": result,
+    }))
+}
+
+fn run_mainline_nov_m2_bridge_risk_status_v1(params: &Value) -> Result<Value> {
+    let asset = param_as_string_any(params, &["asset", "asset_id"])
+        .unwrap_or_else(|| "NETH".to_string())
+        .to_ascii_uppercase();
+    let store_path = native_execution_store_path_from_params_or_env_v1(params);
+    let store = load_nov_native_execution_store_v1(store_path.as_path()).ok();
+    let canonical_path = canonical_store_path_from_params_or_env_v1(params);
+    let finality_source = run_mainline_unified_account_query(
+        canonical_path.as_path(),
+        "ua_getMappedFinalitySourceStatus",
+        params,
+    )
+    .unwrap_or_else(|err| {
+        json!({
+            "method": "ua_getMappedFinalitySourceStatus",
+            "available": false,
+            "error": err.to_string(),
+        })
+    });
+    let reserve_proof = run_nov_native_call_from_params_with_store_path_v1(
+        &json!({
+            "target": {"kind": "native_module", "id": "treasury"},
+            "method": "get_reserve_proof",
+            "args": {"asset": asset.clone()},
+        }),
+        Some(store_path.as_path()),
+    )
+    .unwrap_or_else(|err| {
+        json!({
+            "method": "nov_call",
+            "target": "treasury",
+            "module_method": "get_reserve_proof",
+            "found": false,
+            "error": err.to_string(),
+            "result": {
+                "asset": asset.clone(),
+                "reserve_balance": 0,
+                "reserve_proof": null,
+                "automated_external_verification_complete": false,
+            },
+        })
+    });
+
+    let finality_state = finality_source["status"]["state"]
+        .as_str()
+        .unwrap_or("unavailable");
+    let proof_found = reserve_proof["found"].as_bool().unwrap_or(false);
+    let reserve_proof_status = reserve_proof["result"]["reserve_proof"]["effective_status"]
+        .as_str()
+        .unwrap_or(if proof_found { "unknown" } else { "missing" });
+    let mut reasons = Vec::new();
+    if finality_state == "blocked" || finality_state == "unavailable" {
+        reasons.push(format!("finality_source_state={finality_state}"));
+    }
+    if !proof_found {
+        reasons.push("reserve_proof_missing".to_string());
+    } else if reserve_proof_status != "active" {
+        reasons.push(format!("reserve_proof_effective_status={reserve_proof_status}"));
+    }
+    if let Some(store) = &store {
+        if store.module_state.mapped_lock_bridge_paused {
+            reasons.push("mapped_lock_bridge_paused".to_string());
+        }
+        if store.module_state.mapped_asset_burn_paused {
+            reasons.push("mapped_asset_burn_paused".to_string());
+        }
+        if store.module_state.mapped_asset_release_paused {
+            reasons.push("mapped_asset_release_paused".to_string());
+        }
+        if store.module_state.mapped_lock_contract_address.trim().is_empty() {
+            reasons.push("mapped_lock_contract_address_unset".to_string());
+        }
+        if store.module_state.mapped_lock_min_confirmations == 0 {
+            reasons.push("mapped_lock_min_confirmations_unset".to_string());
+        }
+    } else {
+        reasons.push("native_execution_store_unavailable".to_string());
+    }
+
+    let blocked = reasons.iter().any(|reason| {
+        reason.contains("paused")
+            || reason.starts_with("finality_source_state=blocked")
+            || reason.starts_with("reserve_proof_effective_status=revoked")
+            || reason.starts_with("reserve_proof_effective_status=expired")
+            || reason.starts_with("native_execution_store_unavailable")
+    });
+    let risk_state = if blocked {
+        "blocked"
+    } else if reasons.is_empty() && finality_state == "governed_minimal" {
+        "active"
+    } else {
+        "constrained"
+    };
+
+    Ok(json!({
+        "method": "nov_getM2BridgeRiskStatus",
+        "found": true,
+        "asset": asset,
+        "asset_layer": if asset == "NOV" { "M0_M1" } else { "M2" },
+        "risk_state": risk_state,
+        "reasons": reasons,
+        "read_only": true,
+        "single_source_of_truth": "novovm-node mainline unified_account_surface + native treasury store",
+        "gateway_role": "evm_rpc_adapter_only",
+        "finality_source": finality_source,
+        "reserve": {
+            "reserve_balance": reserve_proof["result"]["reserve_balance"].clone(),
+            "reserve_proof_found": proof_found,
+            "reserve_proof_effective_status": reserve_proof_status,
+            "reserve_proof": reserve_proof["result"]["reserve_proof"].clone(),
+            "automated_external_verification_complete": reserve_proof["result"]["automated_external_verification_complete"]
+                .as_bool()
+                .unwrap_or(false),
+        },
+        "policy": {
+            "mapped_lock_bridge_paused": store.as_ref().map(|s| s.module_state.mapped_lock_bridge_paused).unwrap_or(true),
+            "mapped_asset_burn_paused": store.as_ref().map(|s| s.module_state.mapped_asset_burn_paused).unwrap_or(true),
+            "mapped_asset_release_paused": store.as_ref().map(|s| s.module_state.mapped_asset_release_paused).unwrap_or(true),
+            "mapped_lock_min_confirmations": store.as_ref().map(|s| s.module_state.mapped_lock_min_confirmations).unwrap_or(0),
+            "mapped_lock_contract_address": store.as_ref().map(|s| s.module_state.mapped_lock_contract_address.clone()).unwrap_or_default(),
+            "mapped_asset_auto_heal_enabled": store.as_ref().map(|s| s.module_state.mapped_asset_auto_heal_enabled).unwrap_or(false),
+            "mapped_asset_auto_heal_rollback_enabled": store.as_ref().map(|s| s.module_state.mapped_asset_auto_heal_rollback_enabled).unwrap_or(false),
+        },
+        "settlement_boundaries": {
+            "nov_is_m0_m1": true,
+            "mapped_asset_is_m2": asset != "NOV",
+            "eth_lock_direct_nov_mint_allowed": false,
+            "external_release_triggered": false,
+            "background_daemon": false,
+            "wallet_dapp_site_scope": false,
+        },
+        "non_claims": [
+            "not_complete_external_bridge",
+            "not_external_chain_release",
+            "not_nov_mint",
+            "not_compensation_policy",
+            "not_background_scheduler"
+        ],
     }))
 }
 
@@ -813,6 +955,7 @@ fn run_mainline_native_execution_query(method: &str, params: &Value) -> Result<V
                 "oracle_rates": out.get("result").cloned().unwrap_or(Value::Null),
             }))
         }
+        "nov_getM2BridgeRiskStatus" => run_mainline_nov_m2_bridge_risk_status_v1(params),
         "nov_runMappedAssetAutoHeal" => run_mainline_nov_mapped_asset_auto_heal_tick_v1(params),
         "nov_setMappedHeaderSourcePolicy" => run_mainline_nov_mapped_policy_delegate_v1(
             "nov_setMappedHeaderSourcePolicy",
@@ -10186,6 +10329,7 @@ mod tests {
             "nov_getTreasuryReserveSnapshot",
             "nov_getProtocolClearingPrice",
             "nov_getFeeOracleRates",
+            "nov_getM2BridgeRiskStatus",
             "nov_runMappedAssetAutoHeal",
             "nov_setMappedHeaderSourcePolicy",
             "nov_setMappedHeaderAttestationPolicy",
@@ -10290,6 +10434,7 @@ mod tests {
             ("nov_getTreasuryReserveSnapshot", json!({})),
             ("nov_getProtocolClearingPrice", json!({"asset": "USDT"})),
             ("nov_getFeeOracleRates", json!({})),
+            ("nov_getM2BridgeRiskStatus", json!({"asset": "NETH"})),
         ] {
             let mut params = extra;
             if let Value::Object(map) = &mut params {
@@ -12199,6 +12344,98 @@ mod tests {
             .as_str()
             .unwrap_or_default()
             .contains("reserve_proof_effective_status=revoked"));
+
+        let _ = fs::remove_file(native_store);
+    }
+
+    #[test]
+    fn mainline_query_m2_bridge_risk_status_product_smoke() {
+        let bogus_canonical_store =
+            std::path::Path::new("this-canonical-store-does-not-exist.json");
+        let native_store = unique_native_execution_store_path("m2-bridge-risk-status-smoke");
+
+        let mut pre = NovNativeExecutionStoreV1::default();
+        pre.module_state
+            .treasury_reserves
+            .insert("NETH".to_string(), 1_000);
+        pre.module_state.treasury_reserve_proofs.insert(
+            "NETH".to_string(),
+            NovTreasuryReserveProofV1 {
+                asset: "NETH".to_string(),
+                reserve_amount: 1_000,
+                proof_type: "custody_statement_v1".to_string(),
+                proof_digest: "0xm2bridgeriskstatus01".to_string(),
+                proof_source: "treasury_committee".to_string(),
+                proof_reference: "m2-bridge-risk-status-smoke-001".to_string(),
+                observed_at_unix_ms: 1,
+                expires_at_unix_ms: 0,
+                policy_version: 1,
+                policy_source: "governance_path".to_string(),
+                status: "active".to_string(),
+                automated_verification: false,
+                verification_mode: "manual_governance_attestation".to_string(),
+            },
+        );
+        pre.module_state.mapped_lock_contract_address = format!("0x{}", "90".repeat(20));
+        pre.module_state.mapped_lock_min_confirmations = 21;
+        pre.module_state.mapped_header_source_required = true;
+        pre.module_state.mapped_header_source_allowed_peer_ids = vec![11, 12];
+        pre.module_state.mapped_header_source_min_quorum = 2;
+        save_nov_native_execution_store_v1(native_store.as_path(), &pre)
+            .expect("seed M2 bridge risk status smoke store");
+
+        let status = run_mainline_query_from_path(
+            bogus_canonical_store,
+            "nov_getM2BridgeRiskStatus",
+            &json!({
+                "asset": "NETH",
+                "native_execution_store_path": native_store.display().to_string(),
+            }),
+        )
+        .expect("nov_getM2BridgeRiskStatus should aggregate mainline M2 risk status");
+        assert_eq!(status["method"].as_str(), Some("nov_getM2BridgeRiskStatus"));
+        assert_eq!(status["asset"].as_str(), Some("NETH"));
+        assert_eq!(status["asset_layer"].as_str(), Some("M2"));
+        assert_eq!(status["risk_state"].as_str(), Some("active"));
+        assert_eq!(
+            status["finality_source"]["status"]["state"].as_str(),
+            Some("governed_minimal")
+        );
+        assert_eq!(status["reserve"]["reserve_proof_found"].as_bool(), Some(true));
+        assert_eq!(
+            status["reserve"]["reserve_proof_effective_status"].as_str(),
+            Some("active")
+        );
+        let expected_contract = format!("0x{}", "90".repeat(20));
+        assert_eq!(
+            status["policy"]["mapped_lock_contract_address"].as_str(),
+            Some(expected_contract.as_str())
+        );
+        assert_eq!(
+            status["policy"]["mapped_lock_min_confirmations"].as_u64(),
+            Some(21)
+        );
+        assert_eq!(
+            status["settlement_boundaries"]["nov_is_m0_m1"].as_bool(),
+            Some(true)
+        );
+        assert_eq!(
+            status["settlement_boundaries"]["mapped_asset_is_m2"].as_bool(),
+            Some(true)
+        );
+        assert_eq!(
+            status["settlement_boundaries"]["eth_lock_direct_nov_mint_allowed"].as_bool(),
+            Some(false)
+        );
+        assert_eq!(
+            status["settlement_boundaries"]["external_release_triggered"].as_bool(),
+            Some(false)
+        );
+        assert!(status["non_claims"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .any(|item| item.as_str() == Some("not_complete_external_bridge")));
 
         let _ = fs::remove_file(native_store);
     }
