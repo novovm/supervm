@@ -700,6 +700,8 @@ pub struct NovNativeExecutionModuleStateV1 {
     #[serde(default)]
     pub fee_oracle_source: String,
     #[serde(default)]
+    pub fee_oracle_allowed_sources: Vec<String>,
+    #[serde(default)]
     pub last_fee_quote: Option<NovFeeQuoteV1>,
     #[serde(default)]
     pub last_fee_quote_failure: Option<String>,
@@ -795,6 +797,7 @@ impl Default for NovNativeExecutionModuleStateV1 {
             fee_oracle_rates_ppm: BTreeMap::new(),
             fee_oracle_updated_unix_ms: 0,
             fee_oracle_source: String::new(),
+            fee_oracle_allowed_sources: Vec::new(),
             last_fee_quote: None,
             last_fee_quote_failure: None,
             last_execution_trace: None,
@@ -1455,6 +1458,32 @@ fn parse_u128_from_json_value_v1(value: &serde_json::Value) -> Option<u128> {
     }
 }
 
+fn parse_string_list_from_json_value_v1(value: &serde_json::Value) -> Option<Vec<String>> {
+    let mut out = Vec::new();
+    match value {
+        serde_json::Value::Array(items) => {
+            for item in items {
+                let raw = item.as_str()?.trim();
+                if !raw.is_empty() {
+                    out.push(raw.to_string());
+                }
+            }
+        }
+        serde_json::Value::String(raw) => {
+            for item in raw.split(',') {
+                let trimmed = item.trim();
+                if !trimmed.is_empty() {
+                    out.push(trimmed.to_string());
+                }
+            }
+        }
+        _ => return None,
+    }
+    out.sort();
+    out.dedup();
+    Some(out)
+}
+
 fn decode_execute_args_json_v1(args: &[u8]) -> Option<serde_json::Value> {
     if args.is_empty() {
         return None;
@@ -1641,6 +1670,42 @@ fn execution_fee_oracle_max_age_ms_v1() -> u128 {
         NOV_NATIVE_FEE_ORACLE_MAX_AGE_MS_ENV,
         NOV_FEE_ORACLE_DEFAULT_MAX_AGE_MS_V1,
     )
+}
+
+fn normalize_fee_oracle_source_v1(raw: &str) -> String {
+    let normalized = raw.trim().to_ascii_lowercase();
+    if normalized.is_empty() {
+        "runtime_oracle".to_string()
+    } else {
+        normalized
+    }
+}
+
+fn fee_oracle_source_v1(store: &NovNativeExecutionStoreV1) -> String {
+    normalize_fee_oracle_source_v1(store.module_state.fee_oracle_source.as_str())
+}
+
+fn fee_oracle_allowed_sources_v1(store: &NovNativeExecutionStoreV1) -> Vec<String> {
+    let mut sources: Vec<String> = store
+        .module_state
+        .fee_oracle_allowed_sources
+        .iter()
+        .map(|source| normalize_fee_oracle_source_v1(source.as_str()))
+        .filter(|source| !source.trim().is_empty())
+        .collect();
+    if sources.is_empty() {
+        sources.push("runtime_oracle".to_string());
+    }
+    sources.sort();
+    sources.dedup();
+    sources
+}
+
+fn fee_oracle_source_allowed_v1(store: &NovNativeExecutionStoreV1) -> bool {
+    let source = fee_oracle_source_v1(store);
+    fee_oracle_allowed_sources_v1(store)
+        .iter()
+        .any(|allowed| allowed == &source)
 }
 
 fn fee_quote_reason_v1(code: &str, detail: &str) -> String {
@@ -2733,6 +2798,9 @@ fn protocol_oracle_ref_rate_ppm_v1(
     asset: &str,
     now_ms: u128,
 ) -> Option<u128> {
+    if !fee_oracle_source_allowed_v1(store) {
+        return None;
+    }
     let normalized = normalize_asset_symbol_v1(asset);
     let rate = store
         .module_state
@@ -2799,11 +2867,15 @@ fn build_protocol_clearing_price_v1(
                 .copied()
         })
         .or_else(|| {
-            store
-                .module_state
-                .fee_oracle_rates_ppm
-                .get(&normalized)
-                .copied()
+            if fee_oracle_source_allowed_v1(store) {
+                store
+                    .module_state
+                    .fee_oracle_rates_ppm
+                    .get(&normalized)
+                    .copied()
+            } else {
+                None
+            }
         })
         .or_else(|| configured_fee_rate_ppm_v1(normalized.as_str()))
         .unwrap_or_else(|| default_fee_rate_ppm_for_asset_v1(normalized.as_str()));
@@ -2835,6 +2907,16 @@ fn build_protocol_clearing_price_v1(
     }
     if let Some(rate) = p_oracle_ref_ppm {
         candidates.push(("permissioned_oracle_ref", rate));
+    } else if store
+        .module_state
+        .fee_oracle_rates_ppm
+        .contains_key(&normalized)
+        && !fee_oracle_source_allowed_v1(store)
+    {
+        rejected.push(format!(
+            "permissioned_oracle_ref:source_not_allowed source={}",
+            fee_oracle_source_v1(store)
+        ));
     }
 
     let anchor = p_nav_ppm.or(p_amm_twap_ppm).or(if p_prev_ppm > 0 {
@@ -5343,6 +5425,42 @@ fn dispatch_native_module_execute_v1(
                 )
                 .to_string(),
             };
+            let fee_oracle_allowed_sources = match args_json
+                .get("fee_oracle_allowed_sources")
+                .or_else(|| args_json.get("oracle_allowed_sources"))
+            {
+                Some(value) => {
+                    let Some(raw_sources) = parse_string_list_from_json_value_v1(value) else {
+                        return build_failed_native_receipt_v1(
+                            request,
+                            settled_fee,
+                            subject_meta,
+                            "governance".to_string(),
+                            "apply_treasury_policy".to_string(),
+                            "governance.policy.invalid_fee_oracle_allowed_sources".to_string(),
+                        );
+                    };
+                    let mut sources: Vec<String> = raw_sources
+                        .iter()
+                        .map(|source| normalize_fee_oracle_source_v1(source.as_str()))
+                        .filter(|source| !source.trim().is_empty())
+                        .collect();
+                    sources.sort();
+                    sources.dedup();
+                    if sources.is_empty() {
+                        return build_failed_native_receipt_v1(
+                            request,
+                            settled_fee,
+                            subject_meta,
+                            "governance".to_string(),
+                            "apply_treasury_policy".to_string(),
+                            "governance.policy.empty_fee_oracle_allowed_sources".to_string(),
+                        );
+                    }
+                    sources
+                }
+                None => fee_oracle_allowed_sources_v1(store),
+            };
             let provided_policy_version = args_json
                 .get("policy_version")
                 .and_then(parse_u128_from_json_value_v1)
@@ -5386,6 +5504,7 @@ fn dispatch_native_module_execute_v1(
                 clearing_constrained_daily_usage_bps;
             store.module_state.clearing_constrained_strategy =
                 clearing_constrained_strategy.clone();
+            store.module_state.fee_oracle_allowed_sources = fee_oracle_allowed_sources.clone();
             store.module_state.treasury_policy_version = policy_version;
             store.module_state.treasury_policy_source = "governance_path".to_string();
             store.module_state.treasury_policy_last_update_unix_ms = now_unix_millis_v1();
@@ -5416,6 +5535,8 @@ fn dispatch_native_module_execute_v1(
                     "clearing_constrained_max_slippage_bps": clearing_constrained_max_slippage_bps,
                     "clearing_constrained_daily_usage_bps": clearing_constrained_daily_usage_bps,
                     "clearing_constrained_strategy": clearing_constrained_strategy,
+                    "fee_oracle_allowed_sources": fee_oracle_allowed_sources,
+                    "oracle_open_feed_allowed": false,
                 }),
             };
             apply_subject_meta_to_receipt_v1(
@@ -5974,6 +6095,12 @@ pub fn run_nov_native_call_from_params_with_store_path_v1(
         current_threshold_state.as_str(),
     );
     let accounting_snapshot = build_treasury_accounting_snapshot_v1(&store);
+    let oracle_policy = serde_json::json!({
+        "oracle_source": fee_oracle_source_v1(&store),
+        "oracle_allowed_sources": fee_oracle_allowed_sources_v1(&store),
+        "oracle_source_allowed": fee_oracle_source_allowed_v1(&store),
+        "oracle_open_feed_allowed": false,
+    });
     let journal_total = store.module_state.treasury_settlement_journal.len();
     let journal_next_seq = store.module_state.treasury_settlement_journal_next_seq;
     let journal_last_seq = store
@@ -6040,6 +6167,7 @@ pub fn run_nov_native_call_from_params_with_store_path_v1(
                         "policy_source": policy_source.clone(),
                         "policy_context": policy_context.clone(),
                         "policy_paths": policy_paths.clone(),
+                        "oracle_policy": oracle_policy.clone(),
                         "current_threshold_state": current_threshold_state.clone(),
                         "risk_buffer_status": risk_buffer_status,
                         "bucket_boundaries": bucket_boundaries.clone(),
@@ -6078,6 +6206,7 @@ pub fn run_nov_native_call_from_params_with_store_path_v1(
                         "policy_source": policy_source.clone(),
                         "policy_context": policy_context.clone(),
                         "policy_paths": policy_paths.clone(),
+                        "oracle_policy": oracle_policy.clone(),
                         "current_threshold_state": current_threshold_state.clone(),
                         "settlement_failures": store
                             .module_state
@@ -6138,6 +6267,7 @@ pub fn run_nov_native_call_from_params_with_store_path_v1(
                         "policy_source": policy_source.clone(),
                         "policy_context": policy_context.clone(),
                         "policy_paths": policy_paths.clone(),
+                        "oracle_policy": oracle_policy.clone(),
                         "current_threshold_state": current_threshold_state.clone(),
                         "risk_buffer_status": risk_buffer_status,
                         "bucket_boundaries": bucket_boundaries.clone(),
@@ -6168,6 +6298,9 @@ pub fn run_nov_native_call_from_params_with_store_path_v1(
                                     "epoch_fixed": true,
                                     "amm_spot_allowed": false,
                                     "oracle_open_feed_allowed": false,
+                                    "oracle_source": fee_oracle_source_v1(&store),
+                                    "oracle_allowed_sources": fee_oracle_allowed_sources_v1(&store),
+                                    "oracle_source_allowed": fee_oracle_source_allowed_v1(&store),
                                 }
                             },
                         }),
@@ -6481,11 +6614,10 @@ pub fn run_nov_native_call_from_params_with_store_path_v1(
                     "result": {
                         "rates_ppm": store.module_state.fee_oracle_rates_ppm.clone(),
                         "oracle_updated_unix_ms": store.module_state.fee_oracle_updated_unix_ms,
-                        "oracle_source": if store.module_state.fee_oracle_source.trim().is_empty() {
-                            "runtime_oracle".to_string()
-                        } else {
-                            store.module_state.fee_oracle_source.clone()
-                        },
+                        "oracle_source": fee_oracle_source_v1(&store),
+                        "oracle_allowed_sources": fee_oracle_allowed_sources_v1(&store),
+                        "oracle_source_allowed": fee_oracle_source_allowed_v1(&store),
+                        "oracle_open_feed_allowed": false,
                         "oracle_max_age_ms": execution_fee_oracle_max_age_ms_v1(),
                     },
                 }),
@@ -7905,6 +8037,40 @@ mod tests {
     }
 
     #[test]
+    fn protocol_clearing_price_ignores_unpermitted_oracle_source() {
+        let mut store = NovNativeExecutionStoreV1::default();
+        store
+            .module_state
+            .clearing_rate_ppm
+            .insert("USDT".to_string(), 1_000_000);
+        store
+            .module_state
+            .protocol_clearing_nav_rate_ppm
+            .insert("USDT".to_string(), 1_000_000);
+        store
+            .module_state
+            .fee_oracle_rates_ppm
+            .insert("USDT".to_string(), 5_000_000);
+        store.module_state.fee_oracle_updated_unix_ms = 600_000;
+        store.module_state.fee_oracle_source = "untrusted_feed".to_string();
+        store.module_state.fee_oracle_allowed_sources = vec!["runtime_oracle".to_string()];
+
+        let price = build_protocol_clearing_price_v1(&store, "USDT", 600_000)
+            .expect("protocol clearing price should resolve without unpermitted oracle");
+        assert_eq!(price.state, "constrained");
+        assert_eq!(price.p_oracle_ref_ppm, None);
+        assert!(!price
+            .sources_used
+            .iter()
+            .any(|source| source == "permissioned_oracle_ref"));
+        assert!(price
+            .sources_rejected
+            .iter()
+            .any(|reason| reason.starts_with("permissioned_oracle_ref:source_not_allowed")));
+        assert_eq!(price.p_epoch_ppm, 1_000_000);
+    }
+
+    #[test]
     fn fee_quote_uses_protocol_pay_price_and_persists_price_snapshot() {
         let mut store = NovNativeExecutionStoreV1::default();
         store
@@ -8845,7 +9011,8 @@ mod tests {
                     "mapped_asset_reorg_response_policy": "freeze_and_rollback",
                     "clearing_constrained_max_slippage_bps": 25u64,
                     "clearing_constrained_daily_usage_bps": 7500u64,
-                    "clearing_constrained_strategy": "treasury_direct_only"
+                    "clearing_constrained_strategy": "treasury_direct_only",
+                    "fee_oracle_allowed_sources": ["runtime_oracle", "governance_oracle"]
                 }))
                 .expect("encode args"),
                 fee_pay_asset: "NOV".to_string(),
@@ -8934,6 +9101,45 @@ mod tests {
                 out["result"]["policy"]["mapped_asset_reorg_response_policy"].as_str(),
                 Some("freeze_and_rollback")
             );
+            let oracle_sources = out["result"]["oracle_policy"]["oracle_allowed_sources"]
+                .as_array()
+                .expect("oracle allowed source list should be present");
+            assert!(oracle_sources
+                .iter()
+                .any(|source| source.as_str() == Some("runtime_oracle")));
+            assert!(oracle_sources
+                .iter()
+                .any(|source| source.as_str() == Some("governance_oracle")));
+            assert_eq!(
+                out["result"]["oracle_policy"]["oracle_open_feed_allowed"].as_bool(),
+                Some(false)
+            );
+            let oracle = run_nov_native_call_from_params_with_store_path_v1(
+                &serde_json::json!({
+                    "target": {"kind": "native_module", "id": "treasury"},
+                    "method": "get_fee_oracle_rates",
+                    "args": {}
+                }),
+                Some(path.as_path()),
+            )
+            .expect("get_fee_oracle_rates should succeed");
+            assert_eq!(
+                oracle["result"]["oracle_source"].as_str(),
+                Some("runtime_oracle")
+            );
+            assert_eq!(
+                oracle["result"]["oracle_source_allowed"].as_bool(),
+                Some(true)
+            );
+            assert_eq!(
+                oracle["result"]["oracle_open_feed_allowed"].as_bool(),
+                Some(false)
+            );
+            assert!(oracle["result"]["oracle_allowed_sources"]
+                .as_array()
+                .expect("oracle query should expose allowed sources")
+                .iter()
+                .any(|source| source.as_str() == Some("governance_oracle")));
             let policy_contract_id = out["result"]["policy_contract_id"]
                 .as_str()
                 .unwrap_or_default()

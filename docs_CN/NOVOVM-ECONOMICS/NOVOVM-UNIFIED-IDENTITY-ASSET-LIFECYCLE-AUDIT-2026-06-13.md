@@ -464,12 +464,13 @@ native NOV 入口：
 - 当前代码已实现 `P_epoch/P_pay/P_redeem` 的最小生产语义：按 epoch 固定、使用显式 AMM TWAP / Treasury NAV / 许可 oracle reference / 上一 epoch 价格，AMM spot 不直接进入 Execution Fee 清算。
 - `P_pay` 已接入多资产 Execution Fee quote 和 TreasuryDirect clearing。
 - `P_redeem` 已接入 `treasury.redeem` 的 `asset_out + nov_amount` 形态：先扣用户 NOV，再按反向保守价从 Treasury reserve 出资产。
+- 许可 oracle source allowlist 已接入最小治理路径：`apply_treasury_policy` 可持久化 `fee_oracle_allowed_sources`；`get_fee_oracle_rates` 和 `get_protocol_clearing_price` 会暴露 `oracle_source_allowed`，非白名单 source 不进入协议清算价。
 - 仍未完成真实外部桥自动化、真实 reserve proof、NOV emission policy 自动接线、真实外部链出金和高并发事务后端。
 
 建议：
 
 - 继续禁止在产品面声明“AMM 即时报价自动结算 gas”。
-- 许可 oracle 只能作为治理白名单参考源，不能开放喂价。
+- 许可 oracle 只能作为治理白名单参考源，不能开放喂价；`oracle_open_feed_allowed` 必须保持 false。
 - 低流动性、oracle 偏离、储备不足时必须进入 constrained/blocked 或只允许 NOV 支付。
 
 ## 4. 端到端产品流程说明
