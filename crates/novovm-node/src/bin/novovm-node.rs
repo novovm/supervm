@@ -33731,6 +33731,7 @@ struct NativeExecutionPipelineAggregateV1 {
     ingress_error_ticks: u64,
     aoem_executed_total: u64,
     aoem_deferred_total: u64,
+    max_aoem_batch_executed_per_tick: u64,
     proof_ticks: u64,
     commit_ticks: u64,
     ingress_total_last: u64,
@@ -33762,6 +33763,7 @@ impl NativeExecutionPipelineAggregateV1 {
             ingress_error_ticks: 0,
             aoem_executed_total: 0,
             aoem_deferred_total: 0,
+            max_aoem_batch_executed_per_tick: 0,
             proof_ticks: 0,
             commit_ticks: 0,
             ingress_total_last: 0,
@@ -33880,12 +33882,14 @@ impl NativeExecutionPipelineAggregateV1 {
                 self.ingress_error_ticks = self.ingress_error_ticks.saturating_add(1);
             }
         }
-        self.aoem_executed_total = self.aoem_executed_total.saturating_add(
-            aoem_batch
-                .get("executed")
-                .and_then(|value| value.as_u64())
-                .unwrap_or_default(),
-        );
+        let executed_this_tick = aoem_batch
+            .get("executed")
+            .and_then(|value| value.as_u64())
+            .unwrap_or_default();
+        self.aoem_executed_total = self.aoem_executed_total.saturating_add(executed_this_tick);
+        self.max_aoem_batch_executed_per_tick = self
+            .max_aoem_batch_executed_per_tick
+            .max(executed_this_tick);
         self.aoem_deferred_total = self.aoem_deferred_total.saturating_add(
             aoem_batch
                 .get("deferred")
@@ -33986,6 +33990,7 @@ impl NativeExecutionPipelineAggregateV1 {
             "ticks_per_sec_x1000": self.ticks.saturating_mul(1_000_000) / elapsed_ms,
             "aoem_executed_total": self.aoem_executed_total,
             "aoem_deferred_total": self.aoem_deferred_total,
+            "max_aoem_batch_executed_per_tick": self.max_aoem_batch_executed_per_tick,
             "network_enabled_ticks": self.network_enabled_ticks,
             "network_ok_ticks": self.network_ok_ticks,
             "network_error_ticks": self.network_error_ticks,
@@ -34021,6 +34026,7 @@ struct NativeExecutionPipelineSoakGateV1 {
     require_product_ingress: bool,
     min_ticks: u64,
     min_aoem_executed_total: u64,
+    min_max_aoem_batch_executed_per_tick: u64,
     min_proof_ticks: u64,
     min_commit_ticks: u64,
     min_network_ok_ticks: u64,
@@ -34052,6 +34058,10 @@ impl NativeExecutionPipelineSoakGateV1 {
             min_ticks: u64_env_allow_zero("NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_TICKS", 0)?,
             min_aoem_executed_total: u64_env_allow_zero(
                 "NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_AOEM_EXECUTED",
+                0,
+            )?,
+            min_max_aoem_batch_executed_per_tick: u64_env_allow_zero(
+                "NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_MAX_AOEM_BATCH_EXECUTED_PER_TICK",
                 0,
             )?,
             min_proof_ticks: u64_env_allow_zero(
@@ -34155,6 +34165,11 @@ impl NativeExecutionPipelineSoakGateV1 {
         }
         require_summary_min(summary, "ticks", self.min_ticks)?;
         require_summary_min(summary, "aoem_executed_total", self.min_aoem_executed_total)?;
+        require_summary_min(
+            summary,
+            "max_aoem_batch_executed_per_tick",
+            self.min_max_aoem_batch_executed_per_tick,
+        )?;
         require_summary_min(summary, "proof_ticks", self.min_proof_ticks)?;
         require_summary_min(summary, "commit_ticks", self.min_commit_ticks)?;
         require_summary_min(summary, "network_ok_ticks", self.min_network_ok_ticks)?;
@@ -34532,6 +34547,10 @@ mod native_execution_pipeline_tests {
         assert_eq!(summary["ingress_submitted_total"].as_u64(), Some(1));
         assert_eq!(summary["product_ingress_submitted_total"].as_u64(), Some(1));
         assert_eq!(summary["aoem_executed_total"].as_u64(), Some(1));
+        assert_eq!(
+            summary["max_aoem_batch_executed_per_tick"].as_u64(),
+            Some(1)
+        );
         assert_eq!(summary["proof_ticks"].as_u64(), Some(1));
         assert_eq!(summary["commit_ticks"].as_u64(), Some(1));
         assert_eq!(summary["included_canonical_last"].as_u64(), Some(1));
@@ -34543,6 +34562,7 @@ mod native_execution_pipeline_tests {
             require_product_ingress: true,
             min_ticks: 1,
             min_aoem_executed_total: 1,
+            min_max_aoem_batch_executed_per_tick: 1,
             min_proof_ticks: 1,
             min_commit_ticks: 1,
             min_network_ok_ticks: 0,
@@ -34679,6 +34699,10 @@ mod native_execution_pipeline_tests {
         assert_eq!(summary["ingress_submitted_total"].as_u64(), Some(5));
         assert_eq!(summary["product_ingress_submitted_total"].as_u64(), Some(5));
         assert_eq!(summary["aoem_executed_total"].as_u64(), Some(5));
+        assert_eq!(
+            summary["max_aoem_batch_executed_per_tick"].as_u64(),
+            Some(2)
+        );
         assert_eq!(summary["proof_ticks"].as_u64(), Some(3));
         assert_eq!(summary["commit_ticks"].as_u64(), Some(3));
         assert_eq!(summary["queue_pending_last"].as_u64(), Some(0));
@@ -34700,6 +34724,7 @@ mod native_execution_pipeline_tests {
             require_product_ingress: true,
             min_ticks: 3,
             min_aoem_executed_total: 5,
+            min_max_aoem_batch_executed_per_tick: 2,
             min_proof_ticks: 3,
             min_commit_ticks: 3,
             min_network_ok_ticks: 0,
@@ -34974,6 +34999,7 @@ mod native_execution_pipeline_tests {
             require_product_ingress: false,
             min_ticks: 2,
             min_aoem_executed_total: 4,
+            min_max_aoem_batch_executed_per_tick: 2,
             min_proof_ticks: 2,
             min_commit_ticks: 2,
             min_network_ok_ticks: 1,
@@ -34995,6 +35021,7 @@ mod native_execution_pipeline_tests {
             "host_concurrency_policy": "host_drives_lifecycle_only_no_rust_execution_scheduler",
             "ticks": 2u64,
             "aoem_executed_total": 4u64,
+            "max_aoem_batch_executed_per_tick": 2u64,
             "proof_ticks": 2u64,
             "commit_ticks": 2u64,
             "network_ok_ticks": 1u64,
@@ -35017,6 +35044,47 @@ mod native_execution_pipeline_tests {
     }
 
     #[test]
+    fn native_execution_pipeline_soak_gate_rejects_too_narrow_aoem_batch() {
+        let gate = NativeExecutionPipelineSoakGateV1 {
+            emit_tick_reports: false,
+            require_progress: false,
+            require_full_lifecycle: false,
+            require_product_ingress: false,
+            min_ticks: 2,
+            min_aoem_executed_total: 64,
+            min_max_aoem_batch_executed_per_tick: 32,
+            min_proof_ticks: 0,
+            min_commit_ticks: 0,
+            min_network_ok_ticks: 0,
+            max_network_error_ticks: u64::MAX,
+            min_ingress_submitted_total: 0,
+            max_ingress_error_ticks: u64::MAX,
+            min_broadcast_tx_total: 0,
+            min_broadcast_dispatch_total: 0,
+            min_broadcast_candidates: 0,
+            min_included_canonical: 0,
+            min_included_canonical_total: 0,
+            min_ingress_total: 0,
+            max_queue_pending_last: u64::MAX,
+            min_ticks_per_sec_x1000: 0,
+        };
+        let summary = serde_json::json!({
+            "execution_kernel": "AOEM",
+            "aoem_concurrency_owner": "AOEM_runtime",
+            "host_concurrency_policy": "host_drives_lifecycle_only_no_rust_execution_scheduler",
+            "ticks": 64u64,
+            "aoem_executed_total": 64u64,
+            "max_aoem_batch_executed_per_tick": 1u64,
+        });
+
+        let err = gate
+            .validate_summary(&summary)
+            .expect_err("narrow per-tick batch must fail")
+            .to_string();
+        assert!(err.contains("max_aoem_batch_executed_per_tick=1 below min 32"));
+    }
+
+    #[test]
     fn native_execution_pipeline_full_lifecycle_gate_rejects_partial_pipeline() {
         let gate = NativeExecutionPipelineSoakGateV1 {
             emit_tick_reports: false,
@@ -35025,6 +35093,7 @@ mod native_execution_pipeline_tests {
             require_product_ingress: false,
             min_ticks: 1,
             min_aoem_executed_total: 1,
+            min_max_aoem_batch_executed_per_tick: 0,
             min_proof_ticks: 1,
             min_commit_ticks: 1,
             min_network_ok_ticks: 0,
@@ -35082,6 +35151,7 @@ mod native_execution_pipeline_tests {
             require_product_ingress: false,
             min_ticks: 1,
             min_aoem_executed_total: 1,
+            min_max_aoem_batch_executed_per_tick: 0,
             min_proof_ticks: 1,
             min_commit_ticks: 1,
             min_network_ok_ticks: 0,
@@ -35126,6 +35196,7 @@ mod native_execution_pipeline_tests {
             require_product_ingress: false,
             min_ticks: 0,
             min_aoem_executed_total: 0,
+            min_max_aoem_batch_executed_per_tick: 0,
             min_proof_ticks: 0,
             min_commit_ticks: 0,
             min_network_ok_ticks: 0,
@@ -35164,6 +35235,7 @@ mod native_execution_pipeline_tests {
             require_product_ingress: false,
             min_ticks: 0,
             min_aoem_executed_total: 0,
+            min_max_aoem_batch_executed_per_tick: 0,
             min_proof_ticks: 0,
             min_commit_ticks: 0,
             min_network_ok_ticks: 0,
