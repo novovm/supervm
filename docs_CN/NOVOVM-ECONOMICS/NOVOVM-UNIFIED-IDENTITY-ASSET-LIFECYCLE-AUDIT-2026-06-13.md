@@ -466,9 +466,9 @@ native NOV 入口：
 
 - 当前代码已实现 `P_epoch/P_pay/P_redeem` 的最小生产语义：按 epoch 固定、使用显式 AMM TWAP / Treasury NAV / 许可 oracle reference / 上一 epoch 价格，AMM spot 不直接进入 Execution Fee 清算。
 - `P_pay` 已接入多资产 Execution Fee quote 和 TreasuryDirect clearing。
-- `P_redeem` 已接入 `treasury.redeem` 的 `asset_out + nov_amount` 形态：先扣用户 NOV，再按反向保守价从 Treasury reserve 出资产。
+- `P_redeem` 已接入 `treasury.redeem` 的 `asset_out + nov_amount` 形态：先扣用户 NOV，再按反向保守价从 Treasury reserve 出资产；非 NOV `asset_out/asset + amount` legacy 直接出库路径已禁止，避免绕过 NOV 扣款和 `P_redeem`。
 - 许可 oracle source allowlist / disabled / rotation 已接入最小治理路径：`nov_applyTreasuryPolicy` / `apply_treasury_policy` 可持久化 `fee_oracle_allowed_sources`、`fee_oracle_disabled_sources`、禁用原因、source rotations、`mapped_lock_min_confirmations` 和 auto-heal policy；`get_fee_oracle_rates` / `get_protocol_clearing_price` 与 mainline wrapper `nov_getFeeOracleRates` / `nov_getProtocolClearingPrice` 会暴露 `oracle_source_allowed`、`oracle_source_disabled`、`oracle_disabled_reason`、`oracle_rotation_target`，非白名单或已禁用 source 不进入协议清算价。
-- 主线产品 smoke 已覆盖 protocol clearing price / oracle 只读包装与 `P_redeem` 赎回闭环：disabled oracle 被拒绝、`epoch_fixed=true`、`amm_spot_allowed=false`、`P_pay < P_epoch < P_redeem`，以及 `nov_redeem` 通过 `protocol_clearing_redeem:*` 的 `P_redeem` 从 Treasury reserve 出资产。
+- 主线产品 smoke 已覆盖 protocol clearing price / oracle 只读包装与 `P_redeem` 赎回闭环：disabled oracle 被拒绝、`epoch_fixed=true`、`amm_spot_allowed=false`、`P_pay < P_epoch < P_redeem`，`nov_redeem` 通过 `protocol_clearing_redeem:*` 的 `P_redeem` 从 Treasury reserve 出资产，以及非 NOV legacy direct amount redeem 被拒绝且 reserve / 用户余额不变。
 - Treasury reserve proof 已接入最小治理登记/查询和执行门禁路径：`nov_setTreasuryReserveProof` / `governance.set_reserve_proof` 可登记 proof metadata；`treasury.get_reserve_proof` / `treasury.get_reserve_snapshot` 与主线 `nov_getTreasuryReserveProof` / `nov_getTreasuryReserveSnapshot` 可查询 proof effective status、amount cap 和 non-claim 标记；已登记 proof 且 effective status 非 `active` 的资产会阻断 `nov_depositReserve`、非 NOV fee clearing 与 treasury redeem；active proof 的 `reserve_amount` 会约束 projected Treasury reserve/exposure，防止账面 reserve 继续高于 proof cap。主线产品 smoke 已覆盖治理未启用 fail-closed、revoked proof 写入、non-claim 标记查询和 revoked proof 阻断 reserve deposit。
 - 仍未完成真实外部桥自动化、真实自动 reserve proof verification、NOV emission policy 自动接线、真实外部链出金和高并发事务后端；当前 native store single-writer guard 只是写入互斥，不是事务数据库。
 

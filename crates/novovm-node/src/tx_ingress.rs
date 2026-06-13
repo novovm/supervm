@@ -4968,6 +4968,24 @@ fn dispatch_treasury_redeem_v1(
     }
 
     if asset != "NOV" {
+        if requested_asset_amount.is_some() {
+            increment_settlement_failure_v1(store, "redeem_requires_nov_amount");
+            return build_failed_native_receipt_v1(
+                request,
+                settled_fee,
+                subject_meta,
+                "treasury".to_string(),
+                method_label.to_string(),
+                fee_settlement_reason_v1(
+                    "redeem_requires_nov_amount",
+                    format!(
+                        "asset={} non-NOV reserve redeem must use asset_out + nov_amount and P_redeem",
+                        asset
+                    )
+                    .as_str(),
+                ),
+            );
+        }
         if let Some(reason) =
             reserve_proof_block_reason_for_asset_v1(store, asset.as_str(), now_unix_millis_v1())
         {
@@ -12525,6 +12543,78 @@ mod tests {
             assert!(
                 entry["clearing_rate_ppm"].as_u64().unwrap_or_default() > 1_000_000,
                 "redeem must use reverse conservative price"
+            );
+        });
+    }
+
+    #[test]
+    fn treasury_redeem_m2_asset_rejects_legacy_asset_amount_without_nov_debit() {
+        with_test_native_execution_store_path_v1(|path| {
+            let caller = format!("0x{}", "4a".repeat(20));
+            let mut pre = NovNativeExecutionStoreV1::default();
+            credit_native_account_asset_balance_v1(&mut pre, caller.as_str(), "NOV", 500);
+            pre.module_state
+                .treasury_reserves
+                .insert("USDT".to_string(), 1_000);
+            pre.module_state
+                .protocol_clearing_nav_rate_ppm
+                .insert("USDT".to_string(), 1_000_000);
+            save_nov_native_execution_store_v1(path.as_path(), &pre)
+                .expect("seed USDT reserve and NOV balance");
+
+            let request = NovExecutionRequestV1 {
+                tx_hash: [0xaa; 32],
+                chain_id: 8030,
+                caller: vec![0x4a; 20],
+                target: NovExecutionRequestTargetV1::NativeModule("treasury".to_string()),
+                method: "redeem".to_string(),
+                args: serde_json::to_vec(&serde_json::json!({
+                    "asset_out": "USDT",
+                    "amount": 10u64
+                }))
+                .expect("encode args"),
+                fee_pay_asset: "NOV".to_string(),
+                fee_max_pay_amount: 500,
+                fee_slippage_bps: 0,
+                gas_like_limit: Some(80_000),
+                nonce: 50,
+            };
+            let receipt = dispatch_and_persist_nov_execution_request_with_store_path_v1(
+                path.as_path(),
+                &request,
+            )
+            .expect("dispatch should reject legacy direct asset amount redeem");
+            assert!(!receipt.status);
+            assert_eq!(receipt.module, "treasury");
+            assert_eq!(receipt.method, "redeem");
+            let failure = receipt.failure_reason.clone().unwrap_or_default();
+            assert!(failure.starts_with("fee.settlement.redeem_requires_nov_amount"));
+            assert!(failure.contains("asset=USDT"));
+            assert!(failure.contains("P_redeem"));
+
+            let nov_after = get_nov_native_account_asset_balance_with_store_path_v1(
+                path.as_path(),
+                caller.as_str(),
+                "NOV",
+            )
+            .expect("load NOV balance");
+            let usdt_after = get_nov_native_account_asset_balance_with_store_path_v1(
+                path.as_path(),
+                caller.as_str(),
+                "USDT",
+            )
+            .expect("load USDT balance");
+            let state = load_nov_native_execution_store_v1(path.as_path())
+                .expect("load native execution store");
+            assert_eq!(nov_after, 500);
+            assert_eq!(usdt_after, 0);
+            assert_eq!(
+                state
+                    .module_state
+                    .treasury_reserves
+                    .get("USDT")
+                    .copied(),
+                Some(1_000)
             );
         });
     }
