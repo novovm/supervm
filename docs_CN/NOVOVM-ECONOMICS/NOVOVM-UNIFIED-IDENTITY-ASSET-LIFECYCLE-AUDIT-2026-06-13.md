@@ -23,7 +23,8 @@ NOVOVM 现在已经具备“统一身份 + EVM 产品入口 + native NOV 经济�
 - 当前没有发现 NOVO Wallet 前端/钱包应用代码；仓库里是 RPC/节点/gateway 能力，不是完整用户 App。
 - `crates/novovm-node/src/main.rs` 是 dead/historical source，不是当前 Cargo 产品 binary；不得再向该文件增加主线语义。当前统一账户产品入口以 `crates/novovm-node/src/bin/novovm-node.rs -> mainline_query -> unified_account_surface` 为准。
 - ETH 锁仓合约不是已部署真实 Solidity lock contract 路径；当前 `ua_registerMappedLock` 是 MVP 内部 proof digest 校验，目标资产为 `NETH`，不是真实 Ethereum receipt/log Merkle proof。
-- 没有发现“Ethereum lock event -> 自动验证 -> Treasury policy -> NOV emission / M2 credit”的完整接线。NOV mint 在 consensus token runtime 中存在，但不能直接接在 ETH lock proof 上。
+- `phase4_mode=live` 的内部 MVP 接线已能把 mapped lock 记为 `NETH` M2 credit，写入 native account balance、Treasury reserve 和 settlement journal；`phase4_mode=shadow` 仍只做审计映射，不入账。
+- 仍没有真实“Ethereum receipt/log proof -> 自动验证 -> Treasury policy -> NOV emission”的完整链上桥接。NOV mint 在 consensus token runtime 中存在，但不能直接接在 ETH lock proof 上。
 - EVM 合约币可以在 EVM 产品面执行/查询 receipt，但和 NOV native account balance/treasury 是两套状态面，当前没有完整 ERC20 -> native asset 自动映射桥。
 - 并发量不能直接引用 README 的 L0/L1 百万 TPS 来代表钱包/gateway 入口吞吐。gateway 当前是单 HTTP loop，EVM pending consumer 默认 16 笔/250ms；native NOV store 是 JSON load-modify-write，适合单进程顺序产品闭环，不适合多进程高并发账本写入口。
 - 当前不声明 DAPP、网站、钱包进入本轮范围；本轮已完成上层经济规则、协议清算价 v1 和审阅边界，但不声明真实外部桥接自动闭环。
@@ -251,15 +252,16 @@ native NOV 入口：
 7. burn 后进入 `BurnPending`。
 8. release 后进入 `Released`。
 
-状态：内部 MVP 闭环可用。
+状态：内部 MVP 闭环可用；live 模式可形成 NETH/M2 native credit，shadow 模式仍为 non-settlement 审计映射。
 
 关键边界：
 
 - 这不是完整真实 Ethereum lock contract proof。
 - 这不是 NOV 铸造路径；ETH lock 只能先形成 `NETH` M2 凭证。
+- live mapped lock 会写入 native `account_asset_balances[NETH]`、`treasury_reserves[NETH]` 和 `treasury_settlement_journal`，但 `settled_nov=0`、`nov_minted=0`。
 - 没有验证 Ethereum receipt inclusion、log index、contract address、event topic、block finality、reorg。
 - Phase4 shadow/no-go 环境变量可阻断 live register 路径。
-- `settlement_effect` 显示这是 mapped asset 状态效应，不应直接解释为链上 ETH 已释放。
+- `settlement_effect=neth_m2_credit` 只表示内部 NETH/M2 入账，不应直接解释为链上 ETH 已释放。
 
 ### 2.8 NOV 铸造
 
@@ -277,10 +279,10 @@ native NOV 入口：
 
 未完成接线：
 
-- 没有发现 Ethereum lock event 与 Treasury policy / NOV emission / M2 credit 的一体化产品流程。
+- MVP live 模式已有 Ethereum-lock-digest -> NETH/M2 credit 的内部账本接线；但没有真实 Ethereum receipt/log proof、最终性校验或链上自动出入金。
 - 没有发现真实外部 ETH reserve 与 NOV supply、NETH 负债、M2 credit exposure 的完整约束关系。
 
-状态：NOV mint 能力存在于 consensus runtime；ETH 锁仓只能先视为 NETH/M2 目标流程，不能声明直接触发 NOV 铸造。
+状态：NOV mint 能力存在于 consensus runtime；ETH 锁仓 live MVP 只能先形成 NETH/M2 native credit，不能声明直接触发 NOV 铸造。
 
 ### 2.9 余额赎回
 
@@ -297,8 +299,9 @@ native NOV 入口：
 2. NOV 赎回会检查 reserve bucket、min reserve、total reserve。
 3. 成功后 credit 用户 native balance，并写 settlement journal。
 4. mapped asset 赎回分两步：burn mapped asset，再 release source lock。
+5. live mapped asset burn 会先扣用户 native `NETH` M2 credit；release 后扣 Treasury `NETH` reserve。
 
-状态：native reserve 赎回可用；mapped asset burn/release 内部闭环可用。
+状态：native reserve 赎回可用；mapped asset burn/release 内部闭环可用，live 模式已接入 native NETH/M2 扣减和 reserve 释放。
 
 风险：
 
@@ -307,7 +310,7 @@ native NOV 入口：
 
 ## 3. 发现的问题
 
-### P0：真实 ETH lock -> NETH(M2) -> Treasury policy -> NOV/M2 credit 的完整桥接不存在
+### P0：真实 ETH lock proof -> NETH(M2) -> Treasury policy 的外部桥接仍未完成
 
 影响：
 
@@ -318,6 +321,8 @@ native NOV 入口：
 
 - mapped lock proof 目前是本地 digest 校验，不是 Ethereum receipt/log proof。
 - target asset 是 `NETH`，归属 M2，不是 NOV。
+- live `ua_registerMappedLock` 已能写入 native NETH/M2 credit、Treasury reserve 和 settlement journal，且不 mint NOV。
+- live `ua_burnMappedAsset -> ua_releaseMappedLock` 已能扣减用户 NETH credit 并释放 Treasury NETH reserve。
 - `TokenRuntime::mint` 没有接到 Treasury policy / emission policy 路径。
 
 建议：

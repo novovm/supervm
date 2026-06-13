@@ -24,7 +24,10 @@ use std::fs::{self, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 
-use crate::tx_ingress::{load_nov_native_execution_store_v1, nov_native_execution_store_path_v1};
+use crate::tx_ingress::{
+    load_nov_native_execution_store_v1, nov_native_execution_store_path_v1,
+    save_nov_native_execution_store_v1, NovTreasurySettlementJournalEntryV1,
+};
 
 const UNIFIED_ACCOUNT_STORE_ENVELOPE_VERSION_V1: u32 = 1;
 const UNIFIED_ACCOUNT_STORE_ENVELOPE_VERSION_V2: u32 = 2;
@@ -722,6 +725,13 @@ fn run_unified_account_surface_rpc(
                 mapped_asset_state.operations.len() as u64 + 1,
             );
             mapped_asset_state.operations.push(op);
+            let settlement = apply_live_mapped_lock_m2_credit_v1(
+                &record,
+                mapping_key.as_str(),
+                proof.source_tx_hash.as_slice(),
+                params,
+                now,
+            )?;
             emit_mapped_asset_operation_observed_v1(
                 register_operation,
                 true,
@@ -753,7 +763,8 @@ fn run_unified_account_surface_rpc(
                     "amount": record.amount,
                     "status": record.status.as_str(),
                     "phase4_mode": mapped_asset_phase4_mode_v1(&record),
-                    "settlement_effect": mapped_asset_settlement_effect_v1(),
+                    "settlement_effect": mapped_asset_settlement_effect_for_record_v1(&record),
+                    "native_settlement": settlement,
                     "source_tx_hash": format!("0x{}", to_hex_lower(&proof.source_tx_hash)),
                     "proof_format": proof.proof_format.as_str(),
                 }),
@@ -831,6 +842,8 @@ fn run_unified_account_surface_rpc(
                     record.status.as_str()
                 );
             }
+            let settlement =
+                apply_live_mapped_asset_m2_burn_v1(record, mapping_key.as_str(), params, now)?;
             record.status = MappedAssetStatus::BurnPending;
             record.updated_at = now;
             record.audit_ref =
@@ -864,7 +877,8 @@ fn run_unified_account_surface_rpc(
                     "mapping_id": mapping_key,
                     "status": record.status.as_str(),
                     "phase4_mode": mapped_asset_phase4_mode_v1(record),
-                    "settlement_effect": mapped_asset_settlement_effect_v1(),
+                    "settlement_effect": mapped_asset_settlement_effect_for_record_v1(record),
+                    "native_settlement": settlement,
                 }),
                 true,
             ))
@@ -895,6 +909,12 @@ fn run_unified_account_surface_rpc(
                     record.status.as_str()
                 );
             }
+            let settlement = apply_live_mapped_lock_source_release_v1(
+                record,
+                mapping_key.as_str(),
+                params,
+                now,
+            )?;
             record.status = MappedAssetStatus::Released;
             record.updated_at = now;
             record.audit_ref =
@@ -928,7 +948,8 @@ fn run_unified_account_surface_rpc(
                     "mapping_id": mapping_key,
                     "status": record.status.as_str(),
                     "phase4_mode": mapped_asset_phase4_mode_v1(record),
-                    "settlement_effect": mapped_asset_settlement_effect_v1(),
+                    "settlement_effect": mapped_asset_settlement_effect_for_record_v1(record),
+                    "native_settlement": settlement,
                 }),
                 true,
             ))
@@ -1056,7 +1077,7 @@ fn run_unified_account_surface_rpc(
                     "amount": mapped_asset_active_balance,
                     "source": "unified_account_store.mapped_asset_state",
                     "phase4_mode": mapped_phase4_mode,
-                    "settlement_effect": mapped_asset_settlement_effect_v1(),
+                    "settlement_effect": mapped_asset_settlement_effect_for_mode_v1(mapped_phase4_mode),
                     "non_settlement": mapped_phase4_mode == "shadow",
                 }));
             }
@@ -1530,8 +1551,256 @@ fn is_shadow_phase4_mode_v1(mode: &str) -> bool {
     mode == "shadow"
 }
 
-fn mapped_asset_settlement_effect_v1() -> &'static str {
-    "none"
+fn mapped_asset_settlement_effect_for_mode_v1(mode: &str) -> &'static str {
+    if mode == "live" {
+        "neth_m2_credit"
+    } else {
+        "none"
+    }
+}
+
+fn mapped_asset_settlement_effect_for_record_v1(record: &MappedAssetRecord) -> &'static str {
+    mapped_asset_settlement_effect_for_mode_v1(mapped_asset_phase4_mode_v1(record).as_str())
+}
+
+fn append_ua_treasury_journal_v1(
+    store: &mut crate::tx_ingress::NovNativeExecutionStoreV1,
+    mut entry: NovTreasurySettlementJournalEntryV1,
+) {
+    let next_seq = store
+        .module_state
+        .treasury_settlement_journal_next_seq
+        .saturating_add(1);
+    store.module_state.treasury_settlement_journal_next_seq = next_seq;
+    entry.seq = next_seq;
+    store.module_state.treasury_settlement_journal.push(entry);
+}
+
+fn mapped_asset_live_settlement_journal_v1(
+    kind: &str,
+    record: &MappedAssetRecord,
+    mapping_key: &str,
+    source_tx_hash: &str,
+    status: &str,
+    reason: &str,
+    now: u64,
+) -> NovTreasurySettlementJournalEntryV1 {
+    NovTreasurySettlementJournalEntryV1 {
+        seq: 0,
+        unix_ms: u128::from(now).saturating_mul(1000),
+        kind: kind.to_string(),
+        tx_hash: source_tx_hash.to_string(),
+        account_id: normalize_account_view_key_v1(&record.target_account_id),
+        fee_owner_account_id: normalize_account_view_key_v1(&record.target_account_id),
+        nonce_owner_account_id: normalize_account_view_key_v1(&record.target_account_id),
+        key_algo: String::new(),
+        execution_policy: "mapped_lock_m2_credit".to_string(),
+        policy_enforced: true,
+        policy_rejection_reason: None,
+        source_asset: normalize_asset_view_symbol_v1(&record.target_asset_symbol),
+        source_amount: record.amount,
+        settled_nov: 0,
+        reserve_bucket_delta_nov: 0,
+        fee_bucket_delta_nov: 0,
+        risk_buffer_delta_nov: 0,
+        route_ref: mapping_key.to_string(),
+        clearing_source: "mapped_lock:neth_m2_credit:no_nov_mint".to_string(),
+        clearing_rate_ppm: 0,
+        policy_version: 1,
+        policy_source: "unified_account_surface".to_string(),
+        policy_contract_id: "mapped_lock_m2_credit_v1".to_string(),
+        policy_threshold_state: "m2_only_no_nov_mint".to_string(),
+        policy_constrained_strategy: "treasury_policy_required_for_nov_mint".to_string(),
+        policy_event_state: "external_lock_mapped_to_m2".to_string(),
+        status: status.to_string(),
+        reason: Some(reason.to_string()),
+    }
+}
+
+fn apply_live_mapped_lock_m2_credit_v1(
+    record: &MappedAssetRecord,
+    mapping_key: &str,
+    source_tx_hash: &[u8],
+    params: &Value,
+    now: u64,
+) -> Result<Value> {
+    if mapped_asset_is_shadow_mode_v1(record) {
+        return Ok(json!({
+            "applied": false,
+            "mode": "shadow",
+            "effect": "none",
+            "reason": "shadow mode does not mutate native balances or treasury reserves",
+        }));
+    }
+    let store_path = native_execution_store_path_from_params_or_env_v1(params);
+    let account_key = normalize_account_view_key_v1(&record.target_account_id);
+    let asset_key = normalize_asset_view_symbol_v1(&record.target_asset_symbol);
+    let mut store = load_nov_native_execution_store_v1(store_path.as_path())?;
+    let user_balance_after = {
+        let balances = store
+            .module_state
+            .account_asset_balances
+            .entry(account_key.clone())
+            .or_default();
+        let entry = balances.entry(asset_key.clone()).or_insert(0);
+        *entry = entry.saturating_add(record.amount);
+        *entry
+    };
+    let reserve_after = {
+        let entry = store
+            .module_state
+            .treasury_reserves
+            .entry(asset_key.clone())
+            .or_insert(0);
+        *entry = entry.saturating_add(record.amount);
+        *entry
+    };
+    append_ua_treasury_journal_v1(
+        &mut store,
+        mapped_asset_live_settlement_journal_v1(
+            "mapped_lock_m2_credit",
+            record,
+            mapping_key,
+            format!("0x{}", to_hex_lower(source_tx_hash)).as_str(),
+            "success",
+            "ETH lock mapped to NETH M2 credit; NOV mint is not triggered",
+            now,
+        ),
+    );
+    store.last_updated_unix_ms = u128::from(now).saturating_mul(1000);
+    save_nov_native_execution_store_v1(store_path.as_path(), &store)?;
+    Ok(json!({
+        "applied": true,
+        "mode": "live",
+        "effect": "neth_m2_credit",
+        "asset": asset_key,
+        "amount": record.amount,
+        "account_balance_after": user_balance_after,
+        "treasury_reserve_after": reserve_after,
+        "nov_minted": 0,
+        "store_path": store_path.display().to_string(),
+    }))
+}
+
+fn apply_live_mapped_asset_m2_burn_v1(
+    record: &MappedAssetRecord,
+    mapping_key: &str,
+    params: &Value,
+    now: u64,
+) -> Result<Value> {
+    if mapped_asset_is_shadow_mode_v1(record) {
+        return Ok(json!({
+            "applied": false,
+            "mode": "shadow",
+            "effect": "none",
+            "reason": "shadow mode does not mutate native balances",
+        }));
+    }
+    let store_path = native_execution_store_path_from_params_or_env_v1(params);
+    let account_key = normalize_account_view_key_v1(&record.target_account_id);
+    let asset_key = normalize_asset_view_symbol_v1(&record.target_asset_symbol);
+    let mut store = load_nov_native_execution_store_v1(store_path.as_path())?;
+    let user_balance_after = {
+        let balances = store
+            .module_state
+            .account_asset_balances
+            .entry(account_key.clone())
+            .or_default();
+        let entry = balances.entry(asset_key.clone()).or_insert(0);
+        if *entry < record.amount {
+            bail!(
+                "ERR_MAPPED_BURN_NATIVE_BALANCE_INSUFFICIENT: account={} asset={} requested={} available={}",
+                account_key,
+                asset_key,
+                record.amount,
+                *entry
+            );
+        }
+        *entry = entry.saturating_sub(record.amount);
+        *entry
+    };
+    append_ua_treasury_journal_v1(
+        &mut store,
+        mapped_asset_live_settlement_journal_v1(
+            "mapped_asset_m2_burn_pending",
+            record,
+            mapping_key,
+            mapped_asset_hex_id(&record.mapping_id).as_str(),
+            "success",
+            "NETH M2 credit burned before external source release",
+            now,
+        ),
+    );
+    store.last_updated_unix_ms = u128::from(now).saturating_mul(1000);
+    save_nov_native_execution_store_v1(store_path.as_path(), &store)?;
+    Ok(json!({
+        "applied": true,
+        "mode": "live",
+        "effect": "neth_m2_burn_pending",
+        "asset": asset_key,
+        "amount": record.amount,
+        "account_balance_after": user_balance_after,
+        "store_path": store_path.display().to_string(),
+    }))
+}
+
+fn apply_live_mapped_lock_source_release_v1(
+    record: &MappedAssetRecord,
+    mapping_key: &str,
+    params: &Value,
+    now: u64,
+) -> Result<Value> {
+    if mapped_asset_is_shadow_mode_v1(record) {
+        return Ok(json!({
+            "applied": false,
+            "mode": "shadow",
+            "effect": "none",
+            "reason": "shadow mode does not mutate treasury reserves",
+        }));
+    }
+    let store_path = native_execution_store_path_from_params_or_env_v1(params);
+    let asset_key = normalize_asset_view_symbol_v1(&record.target_asset_symbol);
+    let mut store = load_nov_native_execution_store_v1(store_path.as_path())?;
+    let reserve_after = {
+        let entry = store
+            .module_state
+            .treasury_reserves
+            .entry(asset_key.clone())
+            .or_insert(0);
+        if *entry < record.amount {
+            bail!(
+                "ERR_MAPPED_RELEASE_TREASURY_RESERVE_INSUFFICIENT: asset={} requested={} available={}",
+                asset_key,
+                record.amount,
+                *entry
+            );
+        }
+        *entry = entry.saturating_sub(record.amount);
+        *entry
+    };
+    append_ua_treasury_journal_v1(
+        &mut store,
+        mapped_asset_live_settlement_journal_v1(
+            "mapped_lock_source_release",
+            record,
+            mapping_key,
+            mapped_asset_hex_id(&record.mapping_id).as_str(),
+            "success",
+            "Treasury reserve released after mapped M2 burn; external unlock remains bridge responsibility",
+            now,
+        ),
+    );
+    store.last_updated_unix_ms = u128::from(now).saturating_mul(1000);
+    save_nov_native_execution_store_v1(store_path.as_path(), &store)?;
+    Ok(json!({
+        "applied": true,
+        "mode": "live",
+        "effect": "source_release_reserve_debit",
+        "asset": asset_key,
+        "amount": record.amount,
+        "treasury_reserve_after": reserve_after,
+        "store_path": store_path.display().to_string(),
+    }))
 }
 
 fn emit_governance_event_best_effort_v1(event: GovernanceEvent) {
@@ -1962,7 +2231,7 @@ fn mapped_asset_record_to_json(record: &MappedAssetRecord) -> Value {
         "status": record.status.as_str(),
         "classification": classification,
         "phase4_mode": phase4_mode,
-        "settlement_effect": mapped_asset_settlement_effect_v1(),
+        "settlement_effect": mapped_asset_settlement_effect_for_record_v1(record),
         "ownership_subject": "account_id",
         "source": "unified_account_store.mapped_asset_state",
         "audit_ref": mapped_asset_hex_id(&record.audit_ref),
@@ -3294,6 +3563,8 @@ mod tests {
     use k256::ecdsa::SigningKey as Secp256k1SigningKey;
     use std::collections::BTreeMap;
 
+    static ENV_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     fn temp_paths(label: &str) -> (PathBuf, PathBuf, PathBuf) {
         let mut root = std::env::temp_dir();
         let nonce = std::time::SystemTime::now()
@@ -3515,6 +3786,29 @@ mod tests {
             .expect("load native execution store for mapped-asset tests");
         save_nov_native_execution_store_v1(native_store, &store)
             .expect("save native execution store for mapped-asset tests");
+    }
+
+    struct EnvVarGuard {
+        key: &'static str,
+        previous: Option<String>,
+    }
+
+    impl EnvVarGuard {
+        fn set(key: &'static str, value: &str) -> Self {
+            let previous = std::env::var(key).ok();
+            std::env::set_var(key, value);
+            Self { key, previous }
+        }
+    }
+
+    impl Drop for EnvVarGuard {
+        fn drop(&mut self) {
+            if let Some(previous) = &self.previous {
+                std::env::set_var(self.key, previous);
+            } else {
+                std::env::remove_var(self.key);
+            }
+        }
     }
 
     #[test]
@@ -4088,6 +4382,7 @@ mod tests {
 
     #[test]
     fn unified_account_mapped_asset_shadow_mode_rejects_live_register_path() {
+        let _env_lock = ENV_TEST_LOCK.lock().expect("env test lock poisoned");
         let (base, store, audit) = temp_paths("mapped-shadow-enforce");
         let root = base
             .parent()
@@ -4116,6 +4411,184 @@ mod tests {
         assert!(
             err.contains("ERR_PHASE4_SHADOW_MODE_REQUIRED"),
             "live register path should be rejected by shadow mode guard, got: {err}"
+        );
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn unified_account_live_mapped_lock_creates_neth_m2_credit_without_nov_mint() {
+        let _env_lock = ENV_TEST_LOCK.lock().expect("env test lock poisoned");
+        let _shadow_guard = EnvVarGuard::set(NOVOVM_UA_PHASE4_SHADOW_MODE_ENFORCE_ENV, "false");
+        let (base, store, audit) = temp_paths("mapped-live-credit");
+        let root = base
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .to_path_buf();
+        let native_store = root.join("native-execution-store.json");
+        ensure_native_store(native_store.as_path());
+        ua_create(&base, &store, &audit, "acct-map-live", 10);
+
+        let mut register_map = match mapped_lock_proof_params("acct-map-live", 0x33, 700u128) {
+            Value::Object(map) => map,
+            other => panic!("expected mapped lock proof params object, got {other:?}"),
+        };
+        register_map.insert("phase4_mode".to_string(), Value::String("live".to_string()));
+        register_map.insert("now".to_string(), Value::from(11u64));
+        let register = run_query(
+            &base,
+            "ua_registerMappedLock",
+            params_with_paths_and_native_store(
+                &store,
+                &audit,
+                &native_store,
+                Value::Object(register_map),
+            ),
+        );
+        assert_eq!(register["accepted"].as_bool(), Some(true));
+        assert_eq!(register["phase4_mode"].as_str(), Some("live"));
+        assert_eq!(
+            register["settlement_effect"].as_str(),
+            Some("neth_m2_credit")
+        );
+        assert_eq!(
+            register["native_settlement"]["effect"].as_str(),
+            Some("neth_m2_credit")
+        );
+        assert_eq!(
+            register["native_settlement"]["nov_minted"].as_u64(),
+            Some(0)
+        );
+
+        let native_after_register = load_nov_native_execution_store_v1(native_store.as_path())
+            .expect("load native store after live register");
+        assert_eq!(
+            native_after_register
+                .module_state
+                .account_asset_balances
+                .get("acct-map-live")
+                .and_then(|assets| assets.get("NETH"))
+                .copied(),
+            Some(700)
+        );
+        assert_eq!(
+            native_after_register
+                .module_state
+                .treasury_reserves
+                .get("NETH")
+                .copied(),
+            Some(700)
+        );
+        assert_eq!(
+            native_after_register
+                .module_state
+                .treasury_settlement_journal
+                .last()
+                .map(|entry| entry.kind.as_str()),
+            Some("mapped_lock_m2_credit")
+        );
+        assert_eq!(
+            native_after_register
+                .module_state
+                .treasury_settlement_journal
+                .last()
+                .map(|entry| entry.settled_nov),
+            Some(0)
+        );
+
+        let balance = run_query(
+            &base,
+            "account_balance",
+            params_with_paths_and_native_store(
+                &store,
+                &audit,
+                &native_store,
+                json!({"account_id": "acct-map-live", "asset_id": "NETH"}),
+            ),
+        );
+        assert_eq!(balance["balance"].as_u64(), Some(700));
+        assert_eq!(balance["mapped_asset_active_balance"].as_u64(), Some(700));
+
+        let burn = run_query(
+            &base,
+            "ua_burnMappedAsset",
+            params_with_paths_and_native_store(
+                &store,
+                &audit,
+                &native_store,
+                json!({
+                    "account_id": "acct-map-live",
+                    "mapping_id": register["mapping_id"],
+                    "now": 12u64,
+                }),
+            ),
+        );
+        assert_eq!(burn["burned"].as_bool(), Some(true));
+        assert_eq!(
+            burn["native_settlement"]["effect"].as_str(),
+            Some("neth_m2_burn_pending")
+        );
+        let native_after_burn = load_nov_native_execution_store_v1(native_store.as_path())
+            .expect("load native store after live burn");
+        assert_eq!(
+            native_after_burn
+                .module_state
+                .account_asset_balances
+                .get("acct-map-live")
+                .and_then(|assets| assets.get("NETH"))
+                .copied(),
+            Some(0)
+        );
+        assert_eq!(
+            native_after_burn
+                .module_state
+                .treasury_reserves
+                .get("NETH")
+                .copied(),
+            Some(700)
+        );
+
+        let release = run_query(
+            &base,
+            "ua_releaseMappedLock",
+            params_with_paths_and_native_store(
+                &store,
+                &audit,
+                &native_store,
+                json!({
+                    "account_id": "acct-map-live",
+                    "mapping_id": register["mapping_id"],
+                    "now": 13u64,
+                }),
+            ),
+        );
+        assert_eq!(release["released"].as_bool(), Some(true));
+        assert_eq!(
+            release["native_settlement"]["effect"].as_str(),
+            Some("source_release_reserve_debit")
+        );
+        let native_after_release = load_nov_native_execution_store_v1(native_store.as_path())
+            .expect("load native store after live release");
+        assert_eq!(
+            native_after_release
+                .module_state
+                .treasury_reserves
+                .get("NETH")
+                .copied(),
+            Some(0)
+        );
+        assert_eq!(
+            native_after_release
+                .module_state
+                .treasury_settlement_journal
+                .iter()
+                .map(|entry| entry.kind.as_str())
+                .collect::<Vec<_>>(),
+            vec![
+                "mapped_lock_m2_credit",
+                "mapped_asset_m2_burn_pending",
+                "mapped_lock_source_release"
+            ]
         );
 
         let _ = fs::remove_dir_all(&root);
