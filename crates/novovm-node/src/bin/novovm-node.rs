@@ -33631,10 +33631,19 @@ fn build_native_execution_pipeline_report_v1(
                 "remote": pending_summary.remote_origin_count,
             },
             "queue": {
+                "tx_count": pending_summary.tx_count,
                 "pending": pending_summary.pending_count,
                 "seen": pending_summary.seen_count,
                 "propagated": pending_summary.propagated_count,
+                "included_canonical": pending_summary.included_canonical_count,
+                "included_non_canonical": pending_summary.included_non_canonical_count,
+                "reorged_back_to_pending": pending_summary.reorged_back_to_pending_count,
+                "dropped": pending_summary.dropped_count,
+                "rejected": pending_summary.rejected_count,
                 "retry_eligible": pending_summary.retry_eligible_count,
+                "budget_suppressed": pending_summary.budget_suppressed_count,
+                "io_write_failure": pending_summary.io_write_failure_count,
+                "non_recoverable": pending_summary.non_recoverable_count,
             },
             "aoem_batch": {
                 "executed": tick_out
@@ -33695,7 +33704,14 @@ struct NativeExecutionPipelineAggregateV1 {
     proof_ticks: u64,
     commit_ticks: u64,
     ingress_total_last: u64,
+    queue_tx_count_last: u64,
+    queue_seen_last: u64,
     queue_pending_last: u64,
+    queue_propagated_last: u64,
+    queue_included_non_canonical_last: u64,
+    queue_reorged_back_to_pending_last: u64,
+    queue_dropped_last: u64,
+    queue_rejected_last: u64,
     included_canonical_last: u64,
     included_canonical_total: u64,
     broadcast_candidates_last: u64,
@@ -33718,7 +33734,14 @@ impl NativeExecutionPipelineAggregateV1 {
             proof_ticks: 0,
             commit_ticks: 0,
             ingress_total_last: 0,
+            queue_tx_count_last: 0,
+            queue_seen_last: 0,
             queue_pending_last: 0,
+            queue_propagated_last: 0,
+            queue_included_non_canonical_last: 0,
+            queue_reorged_back_to_pending_last: 0,
+            queue_dropped_last: 0,
+            queue_rejected_last: 0,
             included_canonical_last: 0,
             included_canonical_total: 0,
             broadcast_candidates_last: 0,
@@ -33849,6 +33872,34 @@ impl NativeExecutionPipelineAggregateV1 {
             .get("pending")
             .and_then(|value| value.as_u64())
             .unwrap_or_default();
+        self.queue_tx_count_last = queue
+            .get("tx_count")
+            .and_then(|value| value.as_u64())
+            .unwrap_or_default();
+        self.queue_seen_last = queue
+            .get("seen")
+            .and_then(|value| value.as_u64())
+            .unwrap_or_default();
+        self.queue_propagated_last = queue
+            .get("propagated")
+            .and_then(|value| value.as_u64())
+            .unwrap_or_default();
+        self.queue_included_non_canonical_last = queue
+            .get("included_non_canonical")
+            .and_then(|value| value.as_u64())
+            .unwrap_or_default();
+        self.queue_reorged_back_to_pending_last = queue
+            .get("reorged_back_to_pending")
+            .and_then(|value| value.as_u64())
+            .unwrap_or_default();
+        self.queue_dropped_last = queue
+            .get("dropped")
+            .and_then(|value| value.as_u64())
+            .unwrap_or_default();
+        self.queue_rejected_last = queue
+            .get("rejected")
+            .and_then(|value| value.as_u64())
+            .unwrap_or_default();
         self.included_canonical_last = egress
             .get("pending_included_canonical")
             .and_then(|value| value.as_u64())
@@ -33901,7 +33952,14 @@ impl NativeExecutionPipelineAggregateV1 {
             "proof_ticks": self.proof_ticks,
             "commit_ticks": self.commit_ticks,
             "ingress_total_last": self.ingress_total_last,
+            "queue_tx_count_last": self.queue_tx_count_last,
+            "queue_seen_last": self.queue_seen_last,
             "queue_pending_last": self.queue_pending_last,
+            "queue_propagated_last": self.queue_propagated_last,
+            "queue_included_non_canonical_last": self.queue_included_non_canonical_last,
+            "queue_reorged_back_to_pending_last": self.queue_reorged_back_to_pending_last,
+            "queue_dropped_last": self.queue_dropped_last,
+            "queue_rejected_last": self.queue_rejected_last,
             "included_canonical_last": self.included_canonical_last,
             "included_canonical_total": self.included_canonical_total,
             "broadcast_candidates_last": self.broadcast_candidates_last,

@@ -245,6 +245,9 @@ Useful soak knobs:
 - `NOVOVM_NATIVE_PIPELINE_DUAL_GATE_TICK_BUDGET`
 - `NOVOVM_NATIVE_PIPELINE_DUAL_GATE_TICK_INTERVAL_MS`
 - `NOVOVM_NATIVE_PIPELINE_DUAL_GATE_STARTUP_WAIT_MS`
+- `NOVOVM_NATIVE_PIPELINE_DUAL_GATE_SENDER_ROUNDS`
+- `NOVOVM_NATIVE_PIPELINE_DUAL_GATE_SENDER_ROUND_INTERVAL_MS`
+- `NOVOVM_NATIVE_PIPELINE_DUAL_GATE_SENDER_ROUND_PROCESS_BUDGET_MS`
 - `NOVOVM_NATIVE_PIPELINE_DUAL_GATE_SENDER_TICKS`
 - `NOVOVM_NATIVE_PIPELINE_DUAL_GATE_RECEIVER_TICKS`
 - `NOVOVM_NATIVE_PIPELINE_DUAL_GATE_INGRESS_MAX_PER_TICK`
@@ -283,6 +286,23 @@ cargo run -p novovm-node --bin novovm-node
 ```
 
 The dual-node gate locks the UDP network re-entry closed loop. The local sustained gate validates higher-volume queue, AOEM batch, proof, dirty sharded commit, canonical projection, and broadcast egress in one node process. Both keep the same concurrency boundary: Rust host code drives lifecycle only and does not become a competing execution scheduler.
+
+Paced dual-node network ingress gate:
+
+```powershell
+cargo build -p novovm-node --bins
+$env:NOVOVM_NATIVE_PIPELINE_DUAL_GATE_TX_COUNT="16"
+$env:NOVOVM_NATIVE_PIPELINE_DUAL_GATE_SENDER_ROUNDS="4"
+$env:NOVOVM_NATIVE_PIPELINE_DUAL_GATE_TICK_BUDGET="4"
+$env:NOVOVM_NATIVE_PIPELINE_DUAL_GATE_INGRESS_MAX_PER_TICK="4"
+$env:NOVOVM_NATIVE_PIPELINE_DUAL_GATE_UDP_BROADCAST_MAX_PER_TICK="4"
+$env:NOVOVM_NATIVE_PIPELINE_DUAL_GATE_TICK_INTERVAL_MS="25"
+$env:NOVOVM_NATIVE_PIPELINE_DUAL_GATE_SENDER_ROUND_INTERVAL_MS="100"
+$env:NOVOVM_NATIVE_PIPELINE_DUAL_GATE_REPORT_PATH="artifacts/native-pipeline/native-pipeline-dual-node-paced-report.json"
+cargo run -p novovm-node --bin supervm-native-pipeline-dual-node-gate
+```
+
+This paced gate starts one long-lived receiver and runs the sender in multiple nonce-separated rounds. The gate disables the local broadcast drive inside the dual-node fixture so the only cross-node output path is UDP, then requires receiver `aoem_executed_total`, `included_canonical_total`, `queue_pending_last=0`, `queue_dropped_last=0`, and `queue_rejected_last=0`.
 
 EVM protocol-observable equivalence scope (CN):
 

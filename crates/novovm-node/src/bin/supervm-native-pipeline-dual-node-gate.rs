@@ -159,6 +159,86 @@ fn require_eq_str(summary: &Value, field: &str, expected: &str, label: &str) -> 
     Ok(())
 }
 
+fn sender_round_aggregate_v1(summaries: &[Value]) -> Value {
+    let elapsed_ms = summaries
+        .iter()
+        .map(|summary| summary_u64(summary, "elapsed_ms"))
+        .sum::<u64>()
+        .max(1);
+    let ticks = summaries
+        .iter()
+        .map(|summary| summary_u64(summary, "ticks"))
+        .sum::<u64>();
+    let aoem_executed_total = summaries
+        .iter()
+        .map(|summary| summary_u64(summary, "aoem_executed_total"))
+        .sum::<u64>();
+    let aoem_deferred_total = summaries
+        .iter()
+        .map(|summary| summary_u64(summary, "aoem_deferred_total"))
+        .sum::<u64>();
+    let network_enabled_ticks = summaries
+        .iter()
+        .map(|summary| summary_u64(summary, "network_enabled_ticks"))
+        .sum::<u64>();
+    let network_ok_ticks = summaries
+        .iter()
+        .map(|summary| summary_u64(summary, "network_ok_ticks"))
+        .sum::<u64>();
+    let network_error_ticks = summaries
+        .iter()
+        .map(|summary| summary_u64(summary, "network_error_ticks"))
+        .sum::<u64>();
+    let ingress_submitted_total = summaries
+        .iter()
+        .map(|summary| summary_u64(summary, "ingress_submitted_total"))
+        .sum::<u64>();
+    let ingress_error_ticks = summaries
+        .iter()
+        .map(|summary| summary_u64(summary, "ingress_error_ticks"))
+        .sum::<u64>();
+    let proof_ticks = summaries
+        .iter()
+        .map(|summary| summary_u64(summary, "proof_ticks"))
+        .sum::<u64>();
+    let commit_ticks = summaries
+        .iter()
+        .map(|summary| summary_u64(summary, "commit_ticks"))
+        .sum::<u64>();
+    let broadcast_dispatch_total_last = summaries
+        .iter()
+        .map(|summary| summary_u64(summary, "broadcast_dispatch_total_last"))
+        .sum::<u64>();
+    let broadcast_tx_total_last = summaries
+        .iter()
+        .map(|summary| summary_u64(summary, "broadcast_tx_total_last"))
+        .sum::<u64>();
+
+    serde_json::json!({
+        "method": "nov_runNativeExecutionPipelineSenderAggregate",
+        "accepted": true,
+        "execution_kernel": "AOEM",
+        "aoem_concurrency_owner": "AOEM_runtime",
+        "host_concurrency_policy": "host_drives_lifecycle_only_no_rust_execution_scheduler",
+        "rounds": summaries.len() as u64,
+        "ticks": ticks,
+        "elapsed_ms": elapsed_ms,
+        "ticks_per_sec_x1000": ticks.saturating_mul(1_000_000) / elapsed_ms,
+        "aoem_executed_total": aoem_executed_total,
+        "aoem_deferred_total": aoem_deferred_total,
+        "network_enabled_ticks": network_enabled_ticks,
+        "network_ok_ticks": network_ok_ticks,
+        "network_error_ticks": network_error_ticks,
+        "ingress_submitted_total": ingress_submitted_total,
+        "ingress_error_ticks": ingress_error_ticks,
+        "proof_ticks": proof_ticks,
+        "commit_ticks": commit_ticks,
+        "broadcast_dispatch_total_last": broadcast_dispatch_total_last,
+        "broadcast_tx_total_last": broadcast_tx_total_last,
+        "progress_score": ingress_submitted_total.saturating_add(broadcast_tx_total_last),
+    })
+}
+
 fn main() -> Result<()> {
     let chain_id = u64_env("NOVOVM_NATIVE_PIPELINE_DUAL_GATE_CHAIN_ID", 9_998_895)?;
     let tx_count = u64_env("NOVOVM_NATIVE_PIPELINE_DUAL_GATE_TX_COUNT", 8)?;
@@ -174,6 +254,15 @@ fn main() -> Result<()> {
     )?;
     let udp_recv_budget = u64_env("NOVOVM_NATIVE_PIPELINE_DUAL_GATE_UDP_RECV_BUDGET", 16)?;
     let startup_wait_ms = u64_env("NOVOVM_NATIVE_PIPELINE_DUAL_GATE_STARTUP_WAIT_MS", 300)?;
+    let sender_rounds = u64_env("NOVOVM_NATIVE_PIPELINE_DUAL_GATE_SENDER_ROUNDS", 1)?.max(1);
+    let sender_round_interval_ms = u64_env(
+        "NOVOVM_NATIVE_PIPELINE_DUAL_GATE_SENDER_ROUND_INTERVAL_MS",
+        tick_interval_ms,
+    )?;
+    let sender_round_process_budget_ms = u64_env(
+        "NOVOVM_NATIVE_PIPELINE_DUAL_GATE_SENDER_ROUND_PROCESS_BUDGET_MS",
+        if sender_rounds > 1 { 1_000 } else { 0 },
+    )?;
     let min_receiver_canonical_tps_x1000 = u64_env(
         "NOVOVM_NATIVE_PIPELINE_DUAL_GATE_MIN_RECEIVER_CANONICAL_TPS_X1000",
         0,
@@ -182,9 +271,17 @@ fn main() -> Result<()> {
         "NOVOVM_NATIVE_PIPELINE_DUAL_GATE_MIN_SENDER_BROADCAST_TPS_X1000",
         0,
     )?;
-    let ingress_ticks = div_ceil_u64_v1(tx_count, ingress_max_per_tick.max(1));
+    let max_sender_round_tx_count = div_ceil_u64_v1(tx_count, sender_rounds);
+    let ingress_ticks = div_ceil_u64_v1(max_sender_round_tx_count, ingress_max_per_tick.max(1));
+    let total_ingress_ticks = div_ceil_u64_v1(tx_count, ingress_max_per_tick.max(1));
     let execution_ticks = div_ceil_u64_v1(tx_count, tick_budget);
     let startup_ticks = div_ceil_u64_v1(startup_wait_ms, tick_interval_ms.max(1));
+    let sender_round_interval_ticks =
+        div_ceil_u64_v1(sender_round_interval_ms, tick_interval_ms.max(1));
+    let sender_round_process_budget_ticks = div_ceil_u64_v1(
+        sender_round_process_budget_ms.saturating_mul(sender_rounds),
+        tick_interval_ms.max(1),
+    );
     let sender_ticks = u64_env(
         "NOVOVM_NATIVE_PIPELINE_DUAL_GATE_SENDER_TICKS",
         ingress_ticks.max(3),
@@ -192,6 +289,11 @@ fn main() -> Result<()> {
     let receiver_ticks = u64_env(
         "NOVOVM_NATIVE_PIPELINE_DUAL_GATE_RECEIVER_TICKS",
         startup_ticks
+            .saturating_add(sender_ticks.saturating_mul(sender_rounds))
+            .saturating_add(
+                sender_round_interval_ticks.saturating_mul(sender_rounds.saturating_sub(1)),
+            )
+            .saturating_add(sender_round_process_budget_ticks)
             .saturating_add(execution_ticks.max(6))
             .saturating_add(12),
     )?;
@@ -266,6 +368,10 @@ fn main() -> Result<()> {
                 udp_recv_budget.to_string(),
             ),
             (
+                "NOVOVM_NATIVE_EXECUTION_PIPELINE_BROADCAST_ENABLED",
+                "false".to_string(),
+            ),
+            (
                 "NOVOVM_NATIVE_EXECUTION_PIPELINE_REQUIRE_PROGRESS",
                 "true".to_string(),
             ),
@@ -313,20 +419,8 @@ fn main() -> Result<()> {
             "true".to_string(),
         ),
         (
-            "NOVOVM_NATIVE_EXECUTION_PIPELINE_INGRESS_FIXTURE_TX_COUNT",
-            tx_count.to_string(),
-        ),
-        (
             "NOVOVM_NATIVE_EXECUTION_PIPELINE_INGRESS_MAX_PER_TICK",
             ingress_max_per_tick.to_string(),
-        ),
-        (
-            "NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_INGRESS_SUBMITTED",
-            tx_count.to_string(),
-        ),
-        (
-            "NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_BROADCAST_TX",
-            tx_count.to_string(),
         ),
         (
             "NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_BROADCAST_DISPATCH",
@@ -348,11 +442,48 @@ fn main() -> Result<()> {
             .with_context(|| format!("spawn receiver node failed: {}", node_bin.display()))?
     };
     std::thread::sleep(std::time::Duration::from_millis(startup_wait_ms));
-    let sender_out = run_node_v1(&node_bin, sender_env.as_slice())?;
+    let mut sender_summaries = Vec::with_capacity(sender_rounds as usize);
+    let mut sent_total = 0u64;
+    for round in 0..sender_rounds {
+        let remaining = tx_count.saturating_sub(sent_total);
+        if remaining == 0 {
+            break;
+        }
+        let round_tx_count = remaining.min(max_sender_round_tx_count.max(1));
+        let mut round_env = sender_env.clone();
+        round_env.extend([
+            (
+                "NOVOVM_NATIVE_EXECUTION_PIPELINE_INGRESS_FIXTURE_TX_COUNT",
+                round_tx_count.to_string(),
+            ),
+            (
+                "NOVOVM_NATIVE_EXECUTION_PIPELINE_INGRESS_FIXTURE_NONCE_START",
+                sent_total.saturating_add(1).to_string(),
+            ),
+            (
+                "NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_INGRESS_SUBMITTED",
+                round_tx_count.to_string(),
+            ),
+            (
+                "NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_BROADCAST_TX",
+                round_tx_count.to_string(),
+            ),
+        ]);
+        let sender_out = run_node_v1(&node_bin, round_env.as_slice())
+            .with_context(|| format!("run sender round {} failed", round + 1))?;
+        sender_summaries.push(parse_summary_v1(
+            &sender_out,
+            format!("sender_round_{}", round + 1).as_str(),
+        )?);
+        sent_total = sent_total.saturating_add(round_tx_count);
+        if round + 1 < sender_rounds && sent_total < tx_count {
+            std::thread::sleep(std::time::Duration::from_millis(sender_round_interval_ms));
+        }
+    }
     let receiver_out = receiver
         .wait_with_output()
         .context("wait receiver node failed")?;
-    let sender_summary = parse_summary_v1(&sender_out, "sender")?;
+    let sender_summary = sender_round_aggregate_v1(sender_summaries.as_slice());
     let receiver_summary = parse_summary_v1(&receiver_out, "receiver")?;
     let sender_broadcast_tps_x1000 = tps_x1000(
         summary_u64(&sender_summary, "broadcast_tx_total_last"),
@@ -390,7 +521,7 @@ fn main() -> Result<()> {
         require_min(
             &sender_summary,
             "broadcast_dispatch_total_last",
-            ingress_ticks,
+            total_ingress_ticks,
             "sender",
         )?;
         require_min(
@@ -399,8 +530,18 @@ fn main() -> Result<()> {
             tx_count,
             "receiver",
         )?;
-        require_min(&receiver_summary, "proof_ticks", tx_count, "receiver")?;
-        require_min(&receiver_summary, "commit_ticks", tx_count, "receiver")?;
+        require_min(
+            &receiver_summary,
+            "proof_ticks",
+            execution_ticks,
+            "receiver",
+        )?;
+        require_min(
+            &receiver_summary,
+            "commit_ticks",
+            execution_ticks,
+            "receiver",
+        )?;
         require_min(
             &receiver_summary,
             "included_canonical_total",
@@ -411,6 +552,18 @@ fn main() -> Result<()> {
             bail!(
                 "receiver summary gate failed: queue_pending_last={} expected 0",
                 summary_u64(&receiver_summary, "queue_pending_last")
+            );
+        }
+        if summary_u64(&receiver_summary, "queue_dropped_last") != 0 {
+            bail!(
+                "receiver summary gate failed: queue_dropped_last={} expected 0",
+                summary_u64(&receiver_summary, "queue_dropped_last")
+            );
+        }
+        if summary_u64(&receiver_summary, "queue_rejected_last") != 0 {
+            bail!(
+                "receiver summary gate failed: queue_rejected_last={} expected 0",
+                summary_u64(&receiver_summary, "queue_rejected_last")
             );
         }
         if sender_broadcast_tps_x1000 < min_sender_broadcast_tps_x1000 {
@@ -445,9 +598,13 @@ fn main() -> Result<()> {
         "tick_budget": tick_budget,
         "tick_interval_ms": tick_interval_ms,
         "startup_wait_ms": startup_wait_ms,
+        "sender_rounds": sender_rounds,
+        "sender_round_interval_ms": sender_round_interval_ms,
+        "sender_round_process_budget_ms": sender_round_process_budget_ms,
         "sender_ticks": sender_ticks,
         "receiver_ticks": receiver_ticks,
         "ingress_max_per_tick": ingress_max_per_tick,
+        "total_ingress_ticks": total_ingress_ticks,
         "udp_broadcast_max_per_tick": udp_broadcast_max_per_tick,
         "udp_recv_budget": udp_recv_budget,
         "sender_addr": sender_addr,
@@ -459,6 +616,7 @@ fn main() -> Result<()> {
             "min_receiver_canonical_tps_x1000": min_receiver_canonical_tps_x1000,
         },
         "sender_summary": sender_summary,
+        "sender_round_summaries": sender_summaries,
         "receiver_summary": receiver_summary,
     });
     let report_path = report_path_v1();

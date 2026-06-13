@@ -120,6 +120,21 @@ jobs:
           $env:NOVOVM_NATIVE_EXECUTION_PIPELINE_SUMMARY_REPORT_PATH = "artifacts/native-pipeline/native-pipeline-sustained-report.json"
           cargo run -p novovm-node --bin novovm-node
 
+      - name: Run native pipeline paced dual-node gate
+        shell: pwsh
+        run: |
+          Remove-Item Env:CARGO_TARGET_DIR -ErrorAction SilentlyContinue
+          cargo build -p novovm-node --bins
+          $env:NOVOVM_NATIVE_PIPELINE_DUAL_GATE_TX_COUNT = "16"
+          $env:NOVOVM_NATIVE_PIPELINE_DUAL_GATE_SENDER_ROUNDS = "4"
+          $env:NOVOVM_NATIVE_PIPELINE_DUAL_GATE_TICK_BUDGET = "4"
+          $env:NOVOVM_NATIVE_PIPELINE_DUAL_GATE_INGRESS_MAX_PER_TICK = "4"
+          $env:NOVOVM_NATIVE_PIPELINE_DUAL_GATE_UDP_BROADCAST_MAX_PER_TICK = "4"
+          $env:NOVOVM_NATIVE_PIPELINE_DUAL_GATE_TICK_INTERVAL_MS = "25"
+          $env:NOVOVM_NATIVE_PIPELINE_DUAL_GATE_SENDER_ROUND_INTERVAL_MS = "100"
+          $env:NOVOVM_NATIVE_PIPELINE_DUAL_GATE_REPORT_PATH = "artifacts/native-pipeline/native-pipeline-dual-node-paced-report.json"
+          cargo run -p novovm-node --bin supervm-native-pipeline-dual-node-gate
+
       - name: Generate duty report from nightly artifacts
         shell: pwsh
         run: |
@@ -148,4 +163,5 @@ jobs:
             artifacts/mainline/mainline-soak-24h.json
             artifacts/mainline/mainline-duty-report-nightly.md
             artifacts/native-pipeline/native-pipeline-sustained-report.json
+            artifacts/native-pipeline/native-pipeline-dual-node-paced-report.json
           if-no-files-found: warn
