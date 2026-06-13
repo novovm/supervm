@@ -10831,6 +10831,80 @@ mod tests {
     }
 
     #[test]
+    fn neth_burn_pause_blocks_fee_clearing() {
+        with_test_native_execution_store_path_v1(|path| {
+            let caller = vec![0x9b; 20];
+            let caller_hex = format!("0x{}", to_hex(caller.as_slice()));
+            let mut pre = NovNativeExecutionStoreV1::default();
+            pre.module_state
+                .fee_oracle_rates_ppm
+                .insert("NETH".to_string(), 2_000_000);
+            pre.module_state.fee_oracle_updated_unix_ms = now_unix_millis_v1();
+            pre.module_state.fee_oracle_source = "runtime_oracle".to_string();
+            pre.module_state.clearing_enabled = true;
+            pre.module_state.clearing_require_healthy_risk_buffer = false;
+            pre.module_state
+                .treasury_reserves
+                .insert("NETH".to_string(), 1_000);
+            pre.module_state
+                .account_asset_balances
+                .insert(caller_hex, BTreeMap::from([("NETH".to_string(), 100u128)]));
+            pre.module_state.treasury_reserve_proofs.insert(
+                "NETH".to_string(),
+                NovTreasuryReserveProofV1 {
+                    asset: "NETH".to_string(),
+                    reserve_amount: 1_000,
+                    proof_type: "custody_statement_v1".to_string(),
+                    proof_digest: "0xnethburnpausefee01".to_string(),
+                    proof_source: "treasury_committee".to_string(),
+                    proof_reference: "neth-burn-pause-fee-001".to_string(),
+                    observed_at_unix_ms: 1,
+                    expires_at_unix_ms: 0,
+                    policy_version: 1,
+                    policy_source: "governance_path".to_string(),
+                    status: "active".to_string(),
+                    automated_verification: false,
+                    verification_mode: "manual_governance_attestation".to_string(),
+                },
+            );
+            pre.module_state.mapped_lock_contract_address = format!("0x{}", "9b".repeat(20));
+            pre.module_state.mapped_lock_min_confirmations = 21;
+            pre.module_state.mapped_asset_burn_paused = true;
+            save_nov_native_execution_store_v1(path.as_path(), &pre)
+                .expect("seed paused NETH burn fee clearing risk");
+
+            let request = NovExecutionRequestV1 {
+                tx_hash: [0x9b; 32],
+                chain_id: 7100,
+                caller,
+                target: NovExecutionRequestTargetV1::NativeModule("treasury".to_string()),
+                method: "deposit_reserve".to_string(),
+                args: serde_json::to_vec(&serde_json::json!({
+                    "asset": "NETH",
+                    "amount": 10u64
+                }))
+                .expect("encode args"),
+                fee_pay_asset: "NETH".to_string(),
+                fee_max_pay_amount: 1_000,
+                fee_slippage_bps: 50,
+                gas_like_limit: Some(90_000),
+                nonce: 100,
+            };
+            let receipt = dispatch_and_persist_nov_execution_request_with_store_path_v1(
+                path.as_path(),
+                &request,
+            )
+            .expect("dispatch should return paused burn NETH M2 risk failure receipt");
+            assert!(!receipt.status);
+            assert_eq!(receipt.module, "fee");
+            assert_eq!(receipt.method, "settlement");
+            let failure = receipt.failure_reason.clone().unwrap_or_default();
+            assert!(failure.starts_with("fee.clearing.reserve_proof_not_active"));
+            assert!(failure.contains("m2_bridge_risk=mapped_asset_burn_paused"));
+        });
+    }
+
+    #[test]
     fn reserve_proof_amount_cap_blocks_non_nov_fee_clearing_expansion() {
         with_test_native_execution_store_path_v1(|path| {
             let mut pre = NovNativeExecutionStoreV1::default();
@@ -12463,6 +12537,94 @@ mod tests {
             let failure = receipt.failure_reason.clone().unwrap_or_default();
             assert!(failure.starts_with("fee.settlement.m2_bridge_risk_blocked"));
             assert!(failure.contains("m2_bridge_risk=mapped_asset_release_paused"));
+
+            let nov_after = get_nov_native_account_asset_balance_with_store_path_v1(
+                path.as_path(),
+                caller.as_str(),
+                "NOV",
+            )
+            .expect("load NOV balance");
+            let neth_after = get_nov_native_account_asset_balance_with_store_path_v1(
+                path.as_path(),
+                caller.as_str(),
+                "NETH",
+            )
+            .expect("load NETH balance");
+            assert!(
+                nov_after <= 500,
+                "treasury redeem rejection must not mint or increase NOV"
+            );
+            assert_eq!(neth_after, 0);
+            let state = load_nov_native_execution_store_v1(path.as_path())
+                .expect("load native execution store");
+            assert_eq!(
+                state.module_state.treasury_reserves.get("NETH").copied(),
+                Some(1_000)
+            );
+        });
+    }
+
+    #[test]
+    fn neth_burn_pause_blocks_treasury_redeem_without_neth_credit() {
+        with_test_native_execution_store_path_v1(|path| {
+            let caller = format!("0x{}", "9b".repeat(20));
+            let mut pre = NovNativeExecutionStoreV1::default();
+            credit_native_account_asset_balance_v1(&mut pre, caller.as_str(), "NOV", 500);
+            pre.module_state
+                .treasury_reserves
+                .insert("NETH".to_string(), 1_000);
+            pre.module_state.treasury_reserve_proofs.insert(
+                "NETH".to_string(),
+                NovTreasuryReserveProofV1 {
+                    asset: "NETH".to_string(),
+                    reserve_amount: 1_000,
+                    proof_type: "custody_statement_v1".to_string(),
+                    proof_digest: "0xnethburnpauseredeem01".to_string(),
+                    proof_source: "treasury_committee".to_string(),
+                    proof_reference: "neth-burn-pause-redeem-001".to_string(),
+                    observed_at_unix_ms: 1,
+                    expires_at_unix_ms: 0,
+                    policy_version: 1,
+                    policy_source: "governance_path".to_string(),
+                    status: "active".to_string(),
+                    automated_verification: false,
+                    verification_mode: "manual_governance_attestation".to_string(),
+                },
+            );
+            pre.module_state.mapped_lock_contract_address = format!("0x{}", "9b".repeat(20));
+            pre.module_state.mapped_lock_min_confirmations = 21;
+            pre.module_state.mapped_asset_burn_paused = true;
+            save_nov_native_execution_store_v1(path.as_path(), &pre)
+                .expect("seed paused NETH burn redeem risk");
+
+            let request = NovExecutionRequestV1 {
+                tx_hash: [0x9b; 32],
+                chain_id: 8100,
+                caller: vec![0x9b; 20],
+                target: NovExecutionRequestTargetV1::NativeModule("treasury".to_string()),
+                method: "redeem".to_string(),
+                args: serde_json::to_vec(&serde_json::json!({
+                    "asset_out": "NETH",
+                    "nov_amount": 100u64
+                }))
+                .expect("encode args"),
+                fee_pay_asset: "NOV".to_string(),
+                fee_max_pay_amount: 500,
+                fee_slippage_bps: 0,
+                gas_like_limit: Some(80_000),
+                nonce: 100,
+            };
+            let receipt = dispatch_and_persist_nov_execution_request_with_store_path_v1(
+                path.as_path(),
+                &request,
+            )
+            .expect("dispatch should return paused burn NETH M2 risk failure receipt");
+            assert!(!receipt.status);
+            assert_eq!(receipt.module, "treasury");
+            assert_eq!(receipt.method, "redeem");
+            let failure = receipt.failure_reason.clone().unwrap_or_default();
+            assert!(failure.starts_with("fee.settlement.m2_bridge_risk_blocked"));
+            assert!(failure.contains("m2_bridge_risk=mapped_asset_burn_paused"));
 
             let nov_after = get_nov_native_account_asset_balance_with_store_path_v1(
                 path.as_path(),
