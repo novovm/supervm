@@ -3218,6 +3218,9 @@ fn protocol_oracle_ref_rate_ppm_v1(
         return None;
     }
     let updated = store.module_state.fee_oracle_updated_unix_ms;
+    if updated == 0 {
+        return None;
+    }
     if updated > 0 && now_ms > updated.saturating_add(execution_fee_oracle_max_age_ms_v1().max(1)) {
         return None;
     }
@@ -3344,7 +3347,12 @@ fn build_protocol_clearing_price_v1(
         } else {
             let updated = store.module_state.fee_oracle_updated_unix_ms;
             let max_age_ms = execution_fee_oracle_max_age_ms_v1().max(1);
-            if updated > 0 && now_ms > updated.saturating_add(max_age_ms) {
+            if updated == 0 {
+                rejected.push(format!(
+                    "permissioned_oracle_ref:missing_timestamp source={}",
+                    fee_oracle_source_v1(store)
+                ));
+            } else if now_ms > updated.saturating_add(max_age_ms) {
                 rejected.push(format!(
                     "permissioned_oracle_ref:stale source={} now={} oracle_updated={} max_age_ms={}",
                     fee_oracle_source_v1(store),
@@ -9103,6 +9111,35 @@ mod tests {
         assert!(price.sources_rejected.iter().any(|reason| {
             reason.starts_with("permissioned_oracle_ref:stale")
                 && reason.contains("source=runtime_oracle")
+        }));
+    }
+
+    #[test]
+    fn protocol_clearing_price_rejects_oracle_without_timestamp() {
+        let mut store = NovNativeExecutionStoreV1::default();
+        store
+            .module_state
+            .protocol_clearing_nav_rate_ppm
+            .insert("NBAR".to_string(), 1_000_000);
+        store
+            .module_state
+            .fee_oracle_rates_ppm
+            .insert("NBAR".to_string(), 5_000_000);
+        store.module_state.fee_oracle_source = "runtime_oracle".to_string();
+
+        let price = build_protocol_clearing_price_v1(&store, "NBAR", 600_000)
+            .expect("protocol clearing price should resolve without untimestamped oracle");
+        assert_eq!(price.state, "constrained");
+        assert_eq!(price.p_prev_ppm, 0);
+        assert_eq!(price.p_ref_ppm, 1_000_000);
+        assert_eq!(price.p_epoch_ppm, 1_000_000);
+        assert_eq!(price.p_oracle_ref_ppm, None);
+        assert!(!price
+            .sources_used
+            .iter()
+            .any(|source| source == "permissioned_oracle_ref"));
+        assert!(price.sources_rejected.iter().any(|reason| {
+            reason == "permissioned_oracle_ref:missing_timestamp source=runtime_oracle"
         }));
     }
 
