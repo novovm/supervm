@@ -56,12 +56,14 @@ _2026-04-17_
 
 - `M0`：基础货币层，只是 `NOV`。  
 - `M1`：流通货币层，只统计 NOV 体系内可流通货币，不放镜像外币条目。  
-- `M2`：信用扩张层，允许发行新信用货币（`n*` 系列）。
+- `M2`：信用扩张层，包含外部锁仓、储备或信用生成的 `nAsset` / `n*` 系列资产，例如 `NETH`、`NUSDT`、`NUSD`。
 
 ### 5.2 明确禁止
 
 - 禁止把 `pETH / pUSDT / pSOL` 这类镜像资产放在 M1。
 - 禁止绕过 NOV 结算直接把外币当内部结算币。
+- 禁止把 `NETH/NUSDT/nAsset` 写成 NOV 或 M1；它们是 M2 存款/信用/映射资产。
+- 禁止把外部锁仓事件直接解释为 NOV 铸造事件；NOV 铸造必须经过 Treasury policy / emission policy。
 
 ### 5.3 M2 生成主线（冻结）
 
@@ -87,25 +89,62 @@ _2026-04-17_
 - 必须有报价有效期、滑点保护、流动性不足回退。
 - 费用扣收不可直接绕开国库结算链路。
 
-## 7. 当前代码差距（P0 可执行）
+## 7. 上层经济法条（2026-06-13 补充冻结）
+
+本节是 NOVOVM 货币制度的上层边界，优先级高于产品叙事。后续实现、钱包、DAPP、网站、EVM adapter 均不得绕开。
+
+### 7.1 货币层级法条
+
+1. `NOV` 是 NOVOVM 唯一基础货币、最终结算货币、矿工/算力结算货币，归属 `M0/M1`。
+2. `NETH`、`NUSDT`、`nAsset` 是外部锁仓、储备或信用生成的 M2 资产，不进入 `M0/M1`。
+3. M2 资产可以支付、抵押、赎回或进入信用扩张，但其风险与负债归属在 M2，不回写为 NOV 基础货币。
+4. `NETH` 是锁仓 ETH 的 1:1 储备/存款凭证，不是 NOV，也不是自动铸 NOV 的中间态。
+5. NOV 新增发行或矿工结算额度必须受 `reserve bucket`、`fee bucket`、`risk buffer`、`emission policy` 约束。
+
+### 7.2 多资产支付与 NOV 结算法条
+
+1. 用户可用白名单 M2 资产支付 Execution Fee。
+2. 系统按协议清算价把支付资产折算为 `NOV value`。
+3. 支付资产进入 `Treasury Reserve Pool`，中文统一称为“国库储备池 / 外汇储备池”。
+4. 矿工/算力提供者只以 NOV 结算，避免收入碎片化。
+5. 费用扣收、矿工结算、国库分账不得绕开 Treasury settlement。
+6. 当前制度写入不声明真实 ETH lock、NOV mint、M2 credit 全自动闭环已完成。
+
+### 7.3 Treasury / AMM / Oracle 职责
+
+1. `Treasury` 命名保留，中文统一写作“国库”。
+2. Treasury 负责协议清算、储备、风险缓冲、分桶和 NOV 结算。
+3. AMM 负责市场价格发现、用户交易、套利收敛，不直接决定 Execution Fee 清算价。
+4. AMM spot price 禁止进入协议清算。
+5. 外部 oracle 只能作为治理许可参考源，用于偏离检测、熔断和兜底。
+6. 外部 oracle 不能开放给任意第三方喂价，不能单独决定协议清算价。
+
+## 8. 当前代码差距（P0 可执行）
 
 1. 原生 `tx_wire` 仍偏 transfer，需升级为原生执行/治理可表达结构。  
 2. 原生 `nov_*` 入口虽已存在基础能力，但 NOV 原生执行与费用术语仍需进一步“主链优先化”。  
 3. 多币支付路由、自动兑换、国库结算目前还不是统一主线模块（需新增 payment router + quote + clearing + treasury settlement 组合）。
+4. 许可 oracle、协议清算价 epoch 固定、AMM TWAP/NAV 偏离检测和 constrained/blocked 状态仍是制度约束，尚未声明完整代码闭环。
 
-## 8. 术语冻结
+## 9. 术语冻结
 
 - 品牌：`NOVOVM`  
 - 技术简称：`NVM`  
 - 基础货币：`NOV`  
 - 原生收费术语：`Execution Fee`  
 - EVM 层 `gas` 为兼容字段，不代表 NOV 原生经济术语
+- 国库：`Treasury`
+- 国库储备池 / 外汇储备池：`Treasury Reserve Pool`
+- 协议清算价：`Protocol Clearing Price`
+- AMM 市场价：`AMM Market Price`
+- 许可参考源：`Governance-permitted Oracle Reference`
 
-## 9. 执行优先级（仅列下一刀）
+## 10. 执行优先级（仅列下一刀）
 
 1. 落 `NOV` 原生支付/清算路由草案（crate 级接口草图）。  
 2. 升级原生 tx wire（表达 Execute/Governance，不再 transfer-only）。  
 3. 补 M2 风险边界（抵押率、清算线、国库兜底与暂停开关）。  
+4. 补协议清算价 epoch 固定与抗攻击规则的实现计划。
 
 ---
 
