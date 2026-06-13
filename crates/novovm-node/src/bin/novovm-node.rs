@@ -33680,6 +33680,7 @@ impl NativeExecutionPipelineAggregateV1 {
 struct NativeExecutionPipelineSoakGateV1 {
     emit_tick_reports: bool,
     require_progress: bool,
+    require_full_lifecycle: bool,
     min_ticks: u64,
     min_aoem_executed_total: u64,
     min_proof_ticks: u64,
@@ -33689,10 +33690,12 @@ struct NativeExecutionPipelineSoakGateV1 {
     min_ingress_submitted_total: u64,
     max_ingress_error_ticks: u64,
     min_broadcast_tx_total: u64,
+    min_broadcast_dispatch_total: u64,
     min_broadcast_candidates: u64,
     min_included_canonical: u64,
     min_included_canonical_total: u64,
     min_ingress_total: u64,
+    max_queue_pending_last: u64,
     min_ticks_per_sec_x1000: u64,
 }
 
@@ -33702,6 +33705,9 @@ impl NativeExecutionPipelineSoakGateV1 {
             emit_tick_reports: bool_env_default_true("NOVOVM_NATIVE_EXECUTION_PIPELINE_EMIT_TICKS")
                 && !bool_env("NOVOVM_NATIVE_EXECUTION_PIPELINE_QUIET_TICKS"),
             require_progress: bool_env("NOVOVM_NATIVE_EXECUTION_PIPELINE_REQUIRE_PROGRESS"),
+            require_full_lifecycle: bool_env(
+                "NOVOVM_NATIVE_EXECUTION_PIPELINE_REQUIRE_FULL_LIFECYCLE",
+            ),
             min_ticks: u64_env_allow_zero("NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_TICKS", 0)?,
             min_aoem_executed_total: u64_env_allow_zero(
                 "NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_AOEM_EXECUTED",
@@ -33735,6 +33741,10 @@ impl NativeExecutionPipelineSoakGateV1 {
                 "NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_BROADCAST_TX",
                 0,
             )?,
+            min_broadcast_dispatch_total: u64_env_allow_zero(
+                "NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_BROADCAST_DISPATCH",
+                0,
+            )?,
             min_broadcast_candidates: u64_env_allow_zero(
                 "NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_BROADCAST_CANDIDATES",
                 0,
@@ -33751,6 +33761,10 @@ impl NativeExecutionPipelineSoakGateV1 {
                 "NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_INGRESS_TOTAL",
                 0,
             )?,
+            max_queue_pending_last: u64_env_allow_zero(
+                "NOVOVM_NATIVE_EXECUTION_PIPELINE_MAX_QUEUE_PENDING_LAST",
+                u64::MAX,
+            )?,
             min_ticks_per_sec_x1000: u64_env_allow_zero(
                 "NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_TICKS_PER_SEC_X1000",
                 0,
@@ -33759,8 +33773,39 @@ impl NativeExecutionPipelineSoakGateV1 {
     }
 
     fn validate_summary(&self, summary: &serde_json::Value) -> Result<()> {
+        if summary
+            .get("execution_kernel")
+            .and_then(|value| value.as_str())
+            != Some("AOEM")
+        {
+            bail!("native execution pipeline soak gate failed: execution_kernel is not AOEM");
+        }
+        if summary
+            .get("aoem_concurrency_owner")
+            .and_then(|value| value.as_str())
+            != Some("AOEM_runtime")
+        {
+            bail!(
+                "native execution pipeline soak gate failed: aoem_concurrency_owner is not AOEM_runtime"
+            );
+        }
+        if summary
+            .get("host_concurrency_policy")
+            .and_then(|value| value.as_str())
+            != Some("host_drives_lifecycle_only_no_rust_execution_scheduler")
+        {
+            bail!("native execution pipeline soak gate failed: host concurrency policy drifted");
+        }
         if self.require_progress && summary_u64(summary, "progress_score") == 0 {
             bail!("native execution pipeline progress gate failed: no ingress/execution/egress progress observed");
+        }
+        if self.require_full_lifecycle {
+            require_summary_min(summary, "ingress_total_last", 1)?;
+            require_summary_min(summary, "aoem_executed_total", 1)?;
+            require_summary_min(summary, "proof_ticks", 1)?;
+            require_summary_min(summary, "commit_ticks", 1)?;
+            require_summary_min(summary, "included_canonical_total", 1)?;
+            require_summary_min(summary, "broadcast_tx_total_last", 1)?;
         }
         require_summary_min(summary, "ticks", self.min_ticks)?;
         require_summary_min(summary, "aoem_executed_total", self.min_aoem_executed_total)?;
@@ -33779,6 +33824,11 @@ impl NativeExecutionPipelineSoakGateV1 {
         )?;
         require_summary_min(
             summary,
+            "broadcast_dispatch_total_last",
+            self.min_broadcast_dispatch_total,
+        )?;
+        require_summary_min(
+            summary,
             "broadcast_candidates_last",
             self.min_broadcast_candidates,
         )?;
@@ -33794,6 +33844,14 @@ impl NativeExecutionPipelineSoakGateV1 {
         )?;
         require_summary_min(summary, "ingress_total_last", self.min_ingress_total)?;
         require_summary_min(summary, "ticks_per_sec_x1000", self.min_ticks_per_sec_x1000)?;
+        let queue_pending_last = summary_u64(summary, "queue_pending_last");
+        if queue_pending_last > self.max_queue_pending_last {
+            bail!(
+                "native execution pipeline soak gate failed: queue_pending_last={} exceeds max {}",
+                queue_pending_last,
+                self.max_queue_pending_last
+            );
+        }
         let network_error_ticks = summary_u64(summary, "network_error_ticks");
         if network_error_ticks > self.max_network_error_ticks {
             bail!(
@@ -34092,6 +34150,7 @@ mod native_execution_pipeline_tests {
         NativeExecutionPipelineSoakGateV1 {
             emit_tick_reports: false,
             require_progress: true,
+            require_full_lifecycle: true,
             min_ticks: 1,
             min_aoem_executed_total: 1,
             min_proof_ticks: 1,
@@ -34101,10 +34160,12 @@ mod native_execution_pipeline_tests {
             min_ingress_submitted_total: 1,
             max_ingress_error_ticks: 0,
             min_broadcast_tx_total: 1,
+            min_broadcast_dispatch_total: 1,
             min_broadcast_candidates: 0,
             min_included_canonical: 1,
             min_included_canonical_total: 1,
             min_ingress_total: 1,
+            max_queue_pending_last: 0,
             min_ticks_per_sec_x1000: 0,
         }
         .validate_summary(&summary)
@@ -34244,6 +34305,7 @@ mod native_execution_pipeline_tests {
         NativeExecutionPipelineSoakGateV1 {
             emit_tick_reports: false,
             require_progress: true,
+            require_full_lifecycle: true,
             min_ticks: 3,
             min_aoem_executed_total: 5,
             min_proof_ticks: 3,
@@ -34253,10 +34315,12 @@ mod native_execution_pipeline_tests {
             min_ingress_submitted_total: 5,
             max_ingress_error_ticks: 0,
             min_broadcast_tx_total: 5,
+            min_broadcast_dispatch_total: 3,
             min_broadcast_candidates: 0,
             min_included_canonical: 5,
             min_included_canonical_total: 5,
             min_ingress_total: 5,
+            max_queue_pending_last: 0,
             min_ticks_per_sec_x1000: 0,
         }
         .validate_summary(&summary)
@@ -34362,6 +34426,7 @@ mod native_execution_pipeline_tests {
         let gate = NativeExecutionPipelineSoakGateV1 {
             emit_tick_reports: false,
             require_progress: true,
+            require_full_lifecycle: true,
             min_ticks: 2,
             min_aoem_executed_total: 4,
             min_proof_ticks: 2,
@@ -34371,13 +34436,18 @@ mod native_execution_pipeline_tests {
             min_ingress_submitted_total: 2,
             max_ingress_error_ticks: 0,
             min_broadcast_tx_total: 1,
+            min_broadcast_dispatch_total: 1,
             min_broadcast_candidates: 1,
             min_included_canonical: 1,
             min_included_canonical_total: 1,
             min_ingress_total: 1,
+            max_queue_pending_last: 0,
             min_ticks_per_sec_x1000: 1,
         };
         let summary = serde_json::json!({
+            "execution_kernel": "AOEM",
+            "aoem_concurrency_owner": "AOEM_runtime",
+            "host_concurrency_policy": "host_drives_lifecycle_only_no_rust_execution_scheduler",
             "ticks": 2u64,
             "aoem_executed_total": 4u64,
             "proof_ticks": 2u64,
@@ -34387,10 +34457,12 @@ mod native_execution_pipeline_tests {
             "ingress_submitted_total": 2u64,
             "ingress_error_ticks": 0u64,
             "broadcast_tx_total_last": 1u64,
+            "broadcast_dispatch_total_last": 1u64,
             "broadcast_candidates_last": 1u64,
             "included_canonical_last": 1u64,
             "included_canonical_total": 1u64,
             "ingress_total_last": 1u64,
+            "queue_pending_last": 0u64,
             "ticks_per_sec_x1000": 1000u64,
             "progress_score": 7u64,
         });
@@ -34400,10 +34472,67 @@ mod native_execution_pipeline_tests {
     }
 
     #[test]
+    fn native_execution_pipeline_full_lifecycle_gate_rejects_partial_pipeline() {
+        let gate = NativeExecutionPipelineSoakGateV1 {
+            emit_tick_reports: false,
+            require_progress: true,
+            require_full_lifecycle: true,
+            min_ticks: 1,
+            min_aoem_executed_total: 1,
+            min_proof_ticks: 1,
+            min_commit_ticks: 1,
+            min_network_ok_ticks: 0,
+            max_network_error_ticks: u64::MAX,
+            min_ingress_submitted_total: 1,
+            max_ingress_error_ticks: 0,
+            min_broadcast_tx_total: 1,
+            min_broadcast_dispatch_total: 1,
+            min_broadcast_candidates: 0,
+            min_included_canonical: 1,
+            min_included_canonical_total: 1,
+            min_ingress_total: 1,
+            max_queue_pending_last: 0,
+            min_ticks_per_sec_x1000: 0,
+        };
+        let summary = serde_json::json!({
+            "execution_kernel": "AOEM",
+            "aoem_concurrency_owner": "AOEM_runtime",
+            "host_concurrency_policy": "host_drives_lifecycle_only_no_rust_execution_scheduler",
+            "ticks": 1u64,
+            "aoem_executed_total": 1u64,
+            "proof_ticks": 1u64,
+            "commit_ticks": 1u64,
+            "network_ok_ticks": 0u64,
+            "network_error_ticks": 0u64,
+            "ingress_submitted_total": 1u64,
+            "ingress_error_ticks": 0u64,
+            "broadcast_tx_total_last": 0u64,
+            "broadcast_dispatch_total_last": 0u64,
+            "broadcast_candidates_last": 0u64,
+            "included_canonical_last": 0u64,
+            "included_canonical_total": 0u64,
+            "ingress_total_last": 1u64,
+            "queue_pending_last": 1u64,
+            "ticks_per_sec_x1000": 1000u64,
+            "progress_score": 3u64,
+        });
+
+        let err = gate
+            .validate_summary(&summary)
+            .expect_err("full lifecycle gate must reject partial pipeline")
+            .to_string();
+        assert!(
+            err.contains("included_canonical_total=0 below min 1")
+                || err.contains("broadcast_tx_total_last=0 below min 1")
+        );
+    }
+
+    #[test]
     fn native_execution_pipeline_soak_gate_rejects_missing_aoem_progress() {
         let gate = NativeExecutionPipelineSoakGateV1 {
             emit_tick_reports: false,
             require_progress: true,
+            require_full_lifecycle: false,
             min_ticks: 1,
             min_aoem_executed_total: 1,
             min_proof_ticks: 1,
@@ -34413,13 +34542,18 @@ mod native_execution_pipeline_tests {
             min_ingress_submitted_total: 0,
             max_ingress_error_ticks: u64::MAX,
             min_broadcast_tx_total: 0,
+            min_broadcast_dispatch_total: 0,
             min_broadcast_candidates: 0,
             min_included_canonical: 0,
             min_included_canonical_total: 0,
             min_ingress_total: 0,
+            max_queue_pending_last: u64::MAX,
             min_ticks_per_sec_x1000: 0,
         };
         let summary = serde_json::json!({
+            "execution_kernel": "AOEM",
+            "aoem_concurrency_owner": "AOEM_runtime",
+            "host_concurrency_policy": "host_drives_lifecycle_only_no_rust_execution_scheduler",
             "ticks": 1u64,
             "aoem_executed_total": 0u64,
             "proof_ticks": 1u64,
@@ -34441,6 +34575,7 @@ mod native_execution_pipeline_tests {
         let gate = NativeExecutionPipelineSoakGateV1 {
             emit_tick_reports: false,
             require_progress: false,
+            require_full_lifecycle: false,
             min_ticks: 0,
             min_aoem_executed_total: 0,
             min_proof_ticks: 0,
@@ -34450,13 +34585,18 @@ mod native_execution_pipeline_tests {
             min_ingress_submitted_total: 0,
             max_ingress_error_ticks: u64::MAX,
             min_broadcast_tx_total: 0,
+            min_broadcast_dispatch_total: 0,
             min_broadcast_candidates: 0,
             min_included_canonical: 0,
             min_included_canonical_total: 0,
             min_ingress_total: 0,
+            max_queue_pending_last: u64::MAX,
             min_ticks_per_sec_x1000: 0,
         };
         let summary = serde_json::json!({
+            "execution_kernel": "AOEM",
+            "aoem_concurrency_owner": "AOEM_runtime",
+            "host_concurrency_policy": "host_drives_lifecycle_only_no_rust_execution_scheduler",
             "network_error_ticks": 2u64,
         });
 
@@ -34472,6 +34612,7 @@ mod native_execution_pipeline_tests {
         let gate = NativeExecutionPipelineSoakGateV1 {
             emit_tick_reports: false,
             require_progress: false,
+            require_full_lifecycle: false,
             min_ticks: 0,
             min_aoem_executed_total: 0,
             min_proof_ticks: 0,
@@ -34481,13 +34622,18 @@ mod native_execution_pipeline_tests {
             min_ingress_submitted_total: 0,
             max_ingress_error_ticks: 0,
             min_broadcast_tx_total: 0,
+            min_broadcast_dispatch_total: 0,
             min_broadcast_candidates: 0,
             min_included_canonical: 0,
             min_included_canonical_total: 0,
             min_ingress_total: 0,
+            max_queue_pending_last: u64::MAX,
             min_ticks_per_sec_x1000: 0,
         };
         let summary = serde_json::json!({
+            "execution_kernel": "AOEM",
+            "aoem_concurrency_owner": "AOEM_runtime",
+            "host_concurrency_policy": "host_drives_lifecycle_only_no_rust_execution_scheduler",
             "ingress_error_ticks": 1u64,
         });
 
