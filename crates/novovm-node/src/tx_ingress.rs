@@ -114,6 +114,7 @@ const NOV_PROTOCOL_CLEARING_EPOCH_MS_DEFAULT_V1: u128 = 300_000;
 const NOV_PROTOCOL_CLEARING_MAX_EPOCH_UP_BPS_V1: u32 = 500;
 const NOV_PROTOCOL_CLEARING_MAX_EPOCH_DOWN_BPS_V1: u32 = 500;
 const NOV_PROTOCOL_CLEARING_MAX_SOURCE_DEVIATION_BPS_V1: u32 = 2_000;
+const NOV_PROTOCOL_CLEARING_MIN_AMM_TWAP_NOV_LIQUIDITY_V1: u128 = 1_000_000;
 const NOV_PROTOCOL_CLEARING_RESERVE_HAIRCUT_BPS_V1: u32 = 100;
 const NOV_PROTOCOL_CLEARING_LIQUIDITY_HAIRCUT_BPS_V1: u32 = 100;
 const NOV_PROTOCOL_CLEARING_VOLATILITY_HAIRCUT_BPS_V1: u32 = 0;
@@ -3195,7 +3196,7 @@ fn has_amm_twap_liquidity_v1(store: &NovNativeExecutionStoreV1, asset: &str) -> 
                 && normalize_asset_symbol_v1(pool.asset_x.as_str()) == normalized
                 && normalize_asset_symbol_v1(pool.asset_y.as_str()) == "NOV"
                 && pool.reserve_x > 0
-                && pool.reserve_y > 0
+                && pool.reserve_y >= NOV_PROTOCOL_CLEARING_MIN_AMM_TWAP_NOV_LIQUIDITY_V1
         })
 }
 
@@ -8972,6 +8973,50 @@ mod tests {
             .sources_rejected
             .iter()
             .any(|reason| reason.starts_with("amm_twap:deviation_bps=")));
+        assert_eq!(price.p_epoch_ppm, 1_000_000);
+    }
+
+    #[test]
+    fn protocol_clearing_price_rejects_low_liquidity_amm_twap() {
+        let mut store = NovNativeExecutionStoreV1::default();
+        store
+            .module_state
+            .clearing_rate_ppm
+            .insert("USDT".to_string(), 1_000_000);
+        store
+            .module_state
+            .protocol_clearing_nav_rate_ppm
+            .insert("USDT".to_string(), 1_000_000);
+        store
+            .module_state
+            .protocol_clearing_amm_twap_rate_ppm
+            .insert("USDT".to_string(), 1_000_000);
+        store
+            .module_state
+            .fee_oracle_rates_ppm
+            .insert("USDT".to_string(), 1_000_000);
+        store.module_state.fee_oracle_updated_unix_ms = 600_000;
+        store.module_state.clearing_static_amm_pools.insert(
+            "usdt_nov_dust_twap_pool".to_string(),
+            NovStaticAmmPoolStateV1 {
+                pool_id: "usdt_nov_dust_twap_pool".to_string(),
+                asset_x: "USDT".to_string(),
+                asset_y: "NOV".to_string(),
+                reserve_x: 1_000_000,
+                reserve_y: 1,
+                swap_fee_ppm: 3_000,
+                enabled: true,
+            },
+        );
+
+        let price = build_protocol_clearing_price_v1(&store, "USDT", 600_000)
+            .expect("protocol clearing price should resolve without low-liquidity AMM source");
+        assert_eq!(price.state, "constrained");
+        assert!(!price.sources_used.iter().any(|source| source == "amm_twap"));
+        assert!(price
+            .sources_rejected
+            .iter()
+            .any(|reason| reason == "amm_twap:low_liquidity"));
         assert_eq!(price.p_epoch_ppm, 1_000_000);
     }
 
