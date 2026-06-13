@@ -8759,16 +8759,16 @@ pub fn dispatch_and_persist_nov_execution_request_with_store_path_v1(
     )
 }
 
-fn dispatch_and_persist_nov_execution_request_with_subjects_and_store_path_v1(
-    path: &Path,
+fn dispatch_nov_execution_request_into_loaded_store_v1(
+    mirror_base_path: &Path,
+    store: &mut NovNativeExecutionStoreV1,
     request: &NovExecutionRequestV1,
     subject_meta: Option<&NovExecutionSubjectMetaV1>,
     requested_behavior: Option<&NovRequestedExecutionBehaviorV1>,
     unified_account_store_path: Option<&Path>,
+    aoem_semantic_ingress_override: Option<NovAoemSemanticIngressMetaV1>,
+    now_ms: u128,
 ) -> Result<NovNativeExecutionReceiptV1> {
-    let _write_lock = acquire_nov_native_execution_store_write_lock_v1(path)?;
-    let mut store = load_nov_native_execution_store_v1(path)?;
-    let now_ms = now_unix_millis_v1();
     let effective_subject_meta = subject_meta
         .cloned()
         .unwrap_or_else(|| fallback_execution_subject_meta_v1(request));
@@ -8803,18 +8803,18 @@ fn dispatch_and_persist_nov_execution_request_with_subjects_and_store_path_v1(
                 &unresolved_fee,
                 &failed,
                 &rejected_subject_meta,
-                &store,
+                store,
                 now_ms,
             );
-            persist_execution_trace_v1(&mut store, trace);
-            save_nov_native_execution_store_v1(path, &store)?;
+            persist_execution_trace_v1(store, trace);
+            store.last_updated_unix_ms = now_ms;
             return Ok(failed);
         }
     };
     let settled_fee = match settle_fee_policy_from_execution_request_v1(
         request,
         &effective_subject_meta,
-        &mut store,
+        store,
         now_ms,
     ) {
         Ok(value) => value,
@@ -8842,55 +8842,53 @@ fn dispatch_and_persist_nov_execution_request_with_subjects_and_store_path_v1(
                 &unresolved_fee,
                 &failed,
                 &effective_subject_meta,
-                &store,
+                store,
                 now_ms,
             );
-            persist_execution_trace_v1(&mut store, trace);
+            persist_execution_trace_v1(store, trace);
             store.last_updated_unix_ms = now_ms;
-            save_nov_native_execution_store_v1(path, &store)?;
             return Ok(failed);
         }
     };
-    let aoem_semantic_ingress = match execute_native_request_via_aoem_semantic_ingress_v1(
-        request,
-        &settled_fee,
-        &effective_subject_meta,
-    ) {
-        Ok(meta) => Some(meta),
-        Err(err) => {
-            let unresolved_fee = unresolved_settled_fee_v1(request);
-            let failed = build_failed_native_receipt_v1(
-                request,
-                &unresolved_fee,
-                &effective_subject_meta,
-                "aoem".to_string(),
-                "semantic_ingress".to_string(),
-                format!("aoem.semantic_ingress.required_failed: {err}"),
-            );
-            store
-                .receipts
-                .insert(failed.tx_hash.clone(), failed.clone());
-            let trace = build_execution_trace_v1(
-                request,
-                &unresolved_fee,
-                &failed,
-                &effective_subject_meta,
-                &store,
-                now_ms,
-            );
-            persist_execution_trace_v1(&mut store, trace);
-            store.last_updated_unix_ms = now_ms;
-            save_nov_native_execution_store_v1(path, &store)?;
-            return Ok(failed);
+    let aoem_semantic_ingress = if let Some(meta) = aoem_semantic_ingress_override {
+        Some(meta)
+    } else {
+        match execute_native_request_via_aoem_semantic_ingress_v1(
+            request,
+            &settled_fee,
+            &effective_subject_meta,
+        ) {
+            Ok(meta) => Some(meta),
+            Err(err) => {
+                let unresolved_fee = unresolved_settled_fee_v1(request);
+                let failed = build_failed_native_receipt_v1(
+                    request,
+                    &unresolved_fee,
+                    &effective_subject_meta,
+                    "aoem".to_string(),
+                    "semantic_ingress".to_string(),
+                    format!("aoem.semantic_ingress.required_failed: {err}"),
+                );
+                store
+                    .receipts
+                    .insert(failed.tx_hash.clone(), failed.clone());
+                let trace = build_execution_trace_v1(
+                    request,
+                    &unresolved_fee,
+                    &failed,
+                    &effective_subject_meta,
+                    store,
+                    now_ms,
+                );
+                persist_execution_trace_v1(store, trace);
+                store.last_updated_unix_ms = now_ms;
+                return Ok(failed);
+            }
         }
     };
     let module_state_before_execution = store.module_state.clone();
-    let mut receipt = dispatch_native_module_execute_v1(
-        request,
-        &settled_fee,
-        &effective_subject_meta,
-        &mut store,
-    );
+    let mut receipt =
+        dispatch_native_module_execute_v1(request, &settled_fee, &effective_subject_meta, store);
     receipt.aoem_semantic_ingress = aoem_semantic_ingress;
     let semantic_deltas = build_native_execution_semantic_deltas_v1(
         &module_state_before_execution,
@@ -8918,20 +8916,43 @@ fn dispatch_and_persist_nov_execution_request_with_subjects_and_store_path_v1(
         &settled_fee,
         &receipt,
         &effective_subject_meta,
-        &store,
+        store,
         now_ms,
     );
-    persist_execution_trace_v1(&mut store, trace);
+    persist_execution_trace_v1(store, trace);
     store.last_updated_unix_ms = now_ms;
     if let Some(mirror_record) =
         build_native_aoem_semantic_ledger_mirror_record_v1(&receipt, now_ms)
     {
-        let mirror_path = nov_native_aoem_semantic_ledger_mirror_path_v1(path);
+        let mirror_path = nov_native_aoem_semantic_ledger_mirror_path_v1(mirror_base_path);
         append_nov_native_aoem_semantic_ledger_mirror_record_v1(
             mirror_path.as_path(),
             &mirror_record,
         )?;
     }
+    Ok(receipt)
+}
+
+fn dispatch_and_persist_nov_execution_request_with_subjects_and_store_path_v1(
+    path: &Path,
+    request: &NovExecutionRequestV1,
+    subject_meta: Option<&NovExecutionSubjectMetaV1>,
+    requested_behavior: Option<&NovRequestedExecutionBehaviorV1>,
+    unified_account_store_path: Option<&Path>,
+) -> Result<NovNativeExecutionReceiptV1> {
+    let _write_lock = acquire_nov_native_execution_store_write_lock_v1(path)?;
+    let mut store = load_nov_native_execution_store_v1(path)?;
+    let now_ms = now_unix_millis_v1();
+    let receipt = dispatch_nov_execution_request_into_loaded_store_v1(
+        path,
+        &mut store,
+        request,
+        subject_meta,
+        requested_behavior,
+        unified_account_store_path,
+        None,
+        now_ms,
+    )?;
     save_nov_native_execution_store_v1(path, &store)?;
     Ok(receipt)
 }
@@ -10317,32 +10338,116 @@ pub fn run_nov_send_raw_transaction_batch_from_params_v1(
         bail!("raw_txs array must not be empty");
     }
 
-    let mut raw_hexes = Vec::with_capacity(raw_values.len());
+    struct PreparedNovRawBatchItemV1 {
+        native_tx: NovNativeTxWireV1,
+        ir: TxIR,
+        tx_hash: [u8; 32],
+        execution_subject: Option<NovExecutionSubjectMetaV1>,
+        requested_execution_behavior: Option<NovRequestedExecutionBehaviorV1>,
+        execution_request: Option<NovExecutionRequestV1>,
+    }
+
     let mut raw_payloads = Vec::with_capacity(raw_values.len());
+    let mut prepared = Vec::with_capacity(raw_values.len());
+    let requested_execution_policy_override = parse_nov_execution_policy_v1(
+        params
+            .get("execution_policy")
+            .and_then(|value| value.as_str()),
+    );
+    let requested_privacy_mode_override =
+        parse_nov_privacy_mode_v1(params.get("privacy_mode").and_then(|value| value.as_str()));
     for (idx, value) in raw_values.iter().enumerate() {
         let raw = value
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("raw_txs[{idx}] must be a hex string"))?;
         let payload = decode_eth_send_raw_hex_payload_v1(raw, "raw_txs")?;
-        raw_hexes.push(raw.to_string());
+        let (native_tx, ir, tx_hash) =
+            ingest_local_nov_raw_tx_payload_v1(params, payload.as_slice())?;
+        let execution_subject = match &native_tx.kind {
+            NovTxKindV1::Execute(execute) => Some(subject_meta_from_execute_tx_v1(execute)),
+            _ => None,
+        };
+        let requested_execution_behavior = match &native_tx.kind {
+            NovTxKindV1::Execute(execute) => {
+                let requested_policy = if params.get("execution_policy").is_some() {
+                    requested_execution_policy_override
+                } else {
+                    execute.execution_policy
+                };
+                Some(requested_execution_behavior_v1(
+                    effective_execution_policy_for_fee_asset_v1(
+                        requested_policy,
+                        execute.fee_policy.pay_asset.as_str(),
+                    ),
+                    if params.get("privacy_mode").is_some() {
+                        requested_privacy_mode_override
+                    } else {
+                        execute.privacy_mode
+                    },
+                ))
+            }
+            _ => None,
+        };
+        let execution_request = nov_native_tx_to_execution_request_v1(&native_tx)?;
         raw_payloads.push(payload);
+        prepared.push(PreparedNovRawBatchItemV1 {
+            native_tx,
+            ir,
+            tx_hash,
+            execution_subject,
+            requested_execution_behavior,
+            execution_request,
+        });
     }
 
     let aoem_batch_ingress =
         execute_native_raw_tx_batch_via_aoem_semantic_ingress_v1(raw_payloads.as_slice())?;
-    let mut results = Vec::with_capacity(raw_hexes.len());
-    for raw in raw_hexes {
-        let mut item_params = params.clone();
-        if let Some(obj) = item_params.as_object_mut() {
-            obj.insert("raw_tx".to_string(), serde_json::Value::String(raw));
-            obj.remove("raw_txs");
-            obj.remove("raw_transactions");
-            obj.remove("transactions");
+    let store_path_override = resolve_native_execution_store_path_from_params_v1(params);
+    let effective_native_store_path = store_path_override
+        .clone()
+        .unwrap_or_else(nov_native_execution_store_path_v1);
+    let unified_account_store_path = resolve_unified_account_store_path_from_params_v1(
+        params,
+        effective_native_store_path.as_path(),
+    );
+    let now_ms = now_unix_millis_v1();
+    let _write_lock =
+        acquire_nov_native_execution_store_write_lock_v1(effective_native_store_path.as_path())?;
+    let mut store = load_nov_native_execution_store_v1(effective_native_store_path.as_path())?;
+    let mut results = Vec::with_capacity(prepared.len());
+    for item in prepared {
+        let execution_receipt = if let Some(request) = item.execution_request.as_ref() {
+            Some(dispatch_nov_execution_request_into_loaded_store_v1(
+                effective_native_store_path.as_path(),
+                &mut store,
+                request,
+                item.execution_subject.as_ref(),
+                item.requested_execution_behavior.as_ref(),
+                unified_account_store_path.as_deref(),
+                Some(aoem_batch_ingress.clone()),
+                now_ms,
+            )?)
         } else {
-            item_params = serde_json::json!({ "raw_tx": raw });
-        }
-        results.push(run_nov_send_raw_transaction_from_params_v1(&item_params)?);
+            None
+        };
+        results.push(serde_json::json!({
+            "method": "nov_sendRawTransaction",
+            "accepted": true,
+            "pending_tx_local_ingress": true,
+            "pending_tx_hash": to_hex_prefixed_v1(&item.tx_hash),
+            "chain_id": item.native_tx.chain_id,
+            "nov_tx_kind": match item.native_tx.kind {
+                NovTxKindV1::Transfer(_) => "transfer",
+                NovTxKindV1::Execute(_) => "execute",
+                NovTxKindV1::Governance(_) => "governance",
+            },
+            "tx_ir_type": format!("{:?}", item.ir.tx_type),
+            "execution_request": item.execution_request,
+            "execution_subject": item.execution_subject,
+            "native_receipt": execution_receipt,
+        }));
     }
+    save_nov_native_execution_store_v1(effective_native_store_path.as_path(), &store)?;
 
     Ok(serde_json::json!({
         "method": "nov_sendRawTransactionBatch",
@@ -10351,7 +10456,13 @@ pub fn run_nov_send_raw_transaction_batch_from_params_v1(
         "concurrent_execution": aoem_batch_ingress.concurrent_execution_enabled,
         "batch_size": results.len(),
         "aoem_batch_ingress": aoem_batch_ingress,
-        "deterministic_commit": "post_aoem_batch_precommit_ordered_native_store_commit",
+        "deterministic_commit": "post_aoem_batch_precommit_single_lock_ordered_dirty_store_commit",
+        "native_store_commit": {
+            "model": "single_lock_ordered_batch_dirty_commit",
+            "load_count": 1,
+            "save_count": 1,
+            "ordered_results": true,
+        },
         "results": results,
     }))
 }
@@ -11674,6 +11785,20 @@ mod tests {
                     assert_eq!(out["accepted"].as_bool(), Some(true));
                     assert_eq!(out["batch_size"].as_u64(), Some(2));
                     assert_eq!(
+                        out["deterministic_commit"].as_str(),
+                        Some("post_aoem_batch_precommit_single_lock_ordered_dirty_store_commit")
+                    );
+                    assert_eq!(
+                        out["native_store_commit"]["model"].as_str(),
+                        Some("single_lock_ordered_batch_dirty_commit")
+                    );
+                    assert_eq!(out["native_store_commit"]["load_count"].as_u64(), Some(1));
+                    assert_eq!(out["native_store_commit"]["save_count"].as_u64(), Some(1));
+                    assert_eq!(
+                        out["native_store_commit"]["ordered_results"].as_bool(),
+                        Some(true)
+                    );
+                    assert_eq!(
                         out["aoem_batch_ingress"]["execution_kernel"].as_str(),
                         Some("AOEM")
                     );
@@ -11705,6 +11830,19 @@ mod tests {
                             && item["native_receipt"]["module"].as_str() == Some("treasury")
                             && item["native_receipt"]["method"].as_str() == Some("deposit_reserve")
                     }));
+                    let store = load_nov_native_execution_store_v1(path.as_path())
+                        .expect("batch store should load");
+                    assert_eq!(store.receipts.len(), 2);
+                    assert!(
+                        store
+                            .module_state
+                            .treasury_reserves
+                            .get("USDT")
+                            .copied()
+                            .unwrap_or_default()
+                            >= 60,
+                        "batch treasury reserve must include both ordered deposits"
+                    );
                 })
             },
         )
