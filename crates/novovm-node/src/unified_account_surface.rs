@@ -1648,9 +1648,10 @@ fn run_unified_account_surface_rpc(
                 &param_as_string_any(params, &["asset_id", "asset"])
                     .unwrap_or_else(|| "NOV".to_string()),
             );
-            if is_native_m2_asset_symbol_v1(&asset_id)
-                && !account_asset_view_authorized_v1(params, &account_id)
-            {
+            let m2_asset = is_native_m2_asset_symbol_v1(&asset_id);
+            let disclosure_authorization =
+                account_asset_view_authorization_reason_v1(params, &account_id);
+            if m2_asset && disclosure_authorization.is_none() {
                 return Ok((
                     redacted_account_asset_view_v1(method, &account_id, Some(&asset_id)),
                     false,
@@ -1832,8 +1833,7 @@ fn run_unified_account_surface_rpc(
                     .cmp(&right["classification"].as_str())
             });
             let found = !components.is_empty();
-            Ok((
-                json!({
+            let mut out = json!({
                     "method": method,
                     "found": found,
                     "account_id": account_id,
@@ -1860,13 +1860,29 @@ fn run_unified_account_surface_rpc(
                         "unified_account_store.mapped_asset_state",
                     ],
                     "store_path": store_path.display().to_string(),
-                }),
-                false,
-            ))
+            });
+            if m2_asset {
+                if let (Some(map), Some(reason)) =
+                    (out.as_object_mut(), disclosure_authorization.as_deref())
+                {
+                    map.insert(
+                        "privacy_disclosure".to_string(),
+                        privacy_disclosure_receipt_v1(
+                            method,
+                            &account_id,
+                            Some(&asset_id),
+                            reason,
+                        ),
+                    );
+                }
+            }
+            Ok((out, false))
         }
         "account_assets" => {
             let account_id = parse_account_id(params)?;
-            if !account_asset_view_authorized_v1(params, &account_id) {
+            let disclosure_authorization =
+                account_asset_view_authorization_reason_v1(params, &account_id);
+            if disclosure_authorization.is_none() {
                 return Ok((
                     redacted_account_asset_view_v1(method, &account_id, None),
                     false,
@@ -2016,8 +2032,7 @@ fn run_unified_account_surface_rpc(
                     .cmp(&right["classification"].as_str())
                     .then(left["asset_id"].as_str().cmp(&right["asset_id"].as_str()))
             });
-            Ok((
-                json!({
+            let mut out = json!({
                     "method": method,
                     "found": !assets.is_empty() || !vaults.is_empty() || !pledges.is_empty() || !treasury_exposures.is_empty() || !mapped_assets.is_empty(),
                     "account_id": account_id,
@@ -2040,9 +2055,16 @@ fn run_unified_account_surface_rpc(
                         "unified_account_store.mapped_asset_state",
                     ],
                     "store_path": store_path.display().to_string(),
-                }),
-                false,
-            ))
+            });
+            if let (Some(map), Some(reason)) =
+                (out.as_object_mut(), disclosure_authorization.as_deref())
+            {
+                map.insert(
+                    "privacy_disclosure".to_string(),
+                    privacy_disclosure_receipt_v1(method, &account_id, None, reason),
+                );
+            }
+            Ok((out, false))
         }
         "ua_getAuditEvents" => {
             let source = param_as_string_any(params, &["source"])
@@ -4666,15 +4688,21 @@ fn is_native_m2_asset_symbol_v1(asset_id: &str) -> bool {
     normalized != "NOV" && normalized.starts_with('N')
 }
 
-fn account_asset_view_authorized_v1(params: &Value, account_id: &str) -> bool {
-    if param_as_bool(params, "asset_view_authorized").unwrap_or(false)
-        || param_as_bool(params, "account_view_authorized").unwrap_or(false)
-        || param_as_bool(params, "owner_authorized").unwrap_or(false)
-    {
-        return true;
+fn account_asset_view_authorization_reason_v1(
+    params: &Value,
+    account_id: &str,
+) -> Option<String> {
+    if param_as_bool(params, "asset_view_authorized").unwrap_or(false) {
+        return Some("asset_view_authorized".to_string());
+    }
+    if param_as_bool(params, "account_view_authorized").unwrap_or(false) {
+        return Some("account_view_authorized".to_string());
+    }
+    if param_as_bool(params, "owner_authorized").unwrap_or(false) {
+        return Some("owner_authorized".to_string());
     }
     let normalized_account = normalize_account_view_key_v1(account_id);
-    param_as_string_any(
+    let viewer = param_as_string_any(
         params,
         &[
             "viewer_account_id",
@@ -4682,9 +4710,42 @@ fn account_asset_view_authorized_v1(params: &Value, account_id: &str) -> bool {
             "authorized_account_id",
             "subject_account_id",
         ],
-    )
-    .map(|viewer| normalize_account_view_key_v1(&viewer) == normalized_account)
-    .unwrap_or(false)
+    )?;
+    if normalize_account_view_key_v1(&viewer) == normalized_account {
+        Some("subject_self_view".to_string())
+    } else {
+        None
+    }
+}
+
+fn privacy_disclosure_receipt_v1(
+    method: &str,
+    account_id: &str,
+    asset_id: Option<&str>,
+    authorization_reason: &str,
+) -> Value {
+    let normalized_account = normalize_account_view_key_v1(account_id);
+    let normalized_asset = asset_id
+        .map(normalize_asset_view_symbol_v1)
+        .unwrap_or_else(|| "*".to_string());
+    let preimage = format!(
+        "novovm:privacy-disclosure:v1|{method}|{normalized_account}|{normalized_asset}|{authorization_reason}|mainline_read_gate|proof_generation_performed=false"
+    );
+    let digest = Keccak256::digest(preimage.as_bytes());
+    json!({
+        "version": "v1",
+        "status": "authorized",
+        "surface": "mainline_read_gate",
+        "truth_source": "mainline_unified_account_surface/native_execution_store",
+        "subject_account_id": account_id,
+        "asset": normalized_asset,
+        "authorization_reason": authorization_reason,
+        "proof_generation_performed": false,
+        "proof_system": "none",
+        "proof_upgrade_path": ["ringct", "zk"],
+        "no_second_ledger": true,
+        "disclosure_digest": format!("0x{}", to_hex_lower(&digest)),
+    })
 }
 
 fn redacted_account_asset_view_v1(method: &str, account_id: &str, asset_id: Option<&str>) -> Value {
@@ -6807,6 +6868,28 @@ mod tests {
         assert_eq!(nusd["treasury_source_flow"].as_u64(), Some(40));
         assert_eq!(nusd["component_count"].as_u64(), Some(3));
         assert_eq!(
+            nusd["privacy_disclosure"]["status"].as_str(),
+            Some("authorized")
+        );
+        assert_eq!(
+            nusd["privacy_disclosure"]["authorization_reason"].as_str(),
+            Some("subject_self_view")
+        );
+        assert_eq!(
+            nusd["privacy_disclosure"]["proof_generation_performed"].as_bool(),
+            Some(false)
+        );
+        assert_eq!(
+            nusd["privacy_disclosure"]["proof_system"].as_str(),
+            Some("none")
+        );
+        assert!(
+            nusd["privacy_disclosure"]["disclosure_digest"]
+                .as_str()
+                .unwrap_or_default()
+                .starts_with("0x")
+        );
+        assert_eq!(
             nusd["components"][0]["classification"].as_str(),
             Some("debt_outstanding")
         );
@@ -6915,6 +6998,18 @@ mod tests {
             assets["treasury_exposures"][3]["asset_id"].as_str(),
             Some("NUSD")
         );
+        assert_eq!(
+            assets["privacy_disclosure"]["status"].as_str(),
+            Some("authorized")
+        );
+        assert_eq!(
+            assets["privacy_disclosure"]["asset"].as_str(),
+            Some("*")
+        );
+        assert_eq!(
+            assets["privacy_disclosure"]["proof_generation_performed"].as_bool(),
+            Some(false)
+        );
 
         let redacted_nusd = run_query(
             &base,
@@ -6935,6 +7030,7 @@ mod tests {
             Some("m2_asset_private_by_default")
         );
         assert!(redacted_nusd.get("balance").is_none());
+        assert!(redacted_nusd.get("privacy_disclosure").is_none());
 
         let redacted_assets = run_query(
             &base,
@@ -6950,6 +7046,7 @@ mod tests {
         );
         assert_eq!(redacted_assets["privacy_redacted"].as_bool(), Some(true));
         assert!(redacted_assets.get("assets").is_none());
+        assert!(redacted_assets.get("privacy_disclosure").is_none());
 
         let _ = fs::remove_dir_all(&root);
     }

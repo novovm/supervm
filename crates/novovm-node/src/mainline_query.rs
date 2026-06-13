@@ -164,15 +164,29 @@ fn is_native_m2_asset_symbol_v1(asset_id: &str) -> bool {
     normalized != "NOV" && normalized.starts_with('N')
 }
 
-fn mainline_asset_view_authorized_v1(params: &Value, account: &str) -> bool {
+fn mainline_to_hex_lower_v1(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        out.push(HEX[(byte >> 4) as usize] as char);
+        out.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    out
+}
+
+fn mainline_asset_view_authorization_reason_v1(params: &Value, account: &str) -> Option<String> {
     if param_as_bool_v1(params, "asset_view_authorized")
-        || param_as_bool_v1(params, "account_view_authorized")
-        || param_as_bool_v1(params, "owner_authorized")
     {
-        return true;
+        return Some("asset_view_authorized".to_string());
+    }
+    if param_as_bool_v1(params, "account_view_authorized") {
+        return Some("account_view_authorized".to_string());
+    }
+    if param_as_bool_v1(params, "owner_authorized") {
+        return Some("owner_authorized".to_string());
     }
     let normalized_account = normalize_mainline_account_view_key_v1(account);
-    param_as_string_any(
+    let viewer = param_as_string_any(
         params,
         &[
             "viewer_account_id",
@@ -180,9 +194,42 @@ fn mainline_asset_view_authorized_v1(params: &Value, account: &str) -> bool {
             "authorized_account_id",
             "subject_account_id",
         ],
-    )
-    .map(|viewer| normalize_mainline_account_view_key_v1(&viewer) == normalized_account)
-    .unwrap_or(false)
+    )?;
+    if normalize_mainline_account_view_key_v1(&viewer) == normalized_account {
+        Some("subject_self_view".to_string())
+    } else {
+        None
+    }
+}
+
+fn mainline_privacy_disclosure_receipt_v1(
+    method: &str,
+    account: &str,
+    asset: Option<&str>,
+    authorization_reason: &str,
+) -> Value {
+    let normalized_account = normalize_mainline_account_view_key_v1(account);
+    let normalized_asset = asset
+        .map(|raw| raw.trim().to_ascii_uppercase())
+        .unwrap_or_else(|| "*".to_string());
+    let preimage = format!(
+        "novovm:privacy-disclosure:v1|{method}|{normalized_account}|{normalized_asset}|{authorization_reason}|mainline_read_gate|proof_generation_performed=false"
+    );
+    let digest = Keccak256::digest(preimage.as_bytes());
+    json!({
+        "version": "v1",
+        "status": "authorized",
+        "surface": "mainline_read_gate",
+        "truth_source": "mainline_unified_account_surface/native_execution_store",
+        "subject_account_id": account,
+        "asset": normalized_asset,
+        "authorization_reason": authorization_reason,
+        "proof_generation_performed": false,
+        "proof_system": "none",
+        "proof_upgrade_path": ["ringct", "zk"],
+        "no_second_ledger": true,
+        "disclosure_digest": format!("0x{}", mainline_to_hex_lower_v1(&digest)),
+    })
 }
 
 fn param_as_u128(params: &Value, key: &str, index: usize) -> Option<u128> {
@@ -975,9 +1022,10 @@ fn run_mainline_native_execution_query(method: &str, params: &Value) -> Result<V
             let asset = param_as_string_any(params, &["asset", "asset_id"])
                 .unwrap_or_else(|| "NOV".to_string())
                 .to_ascii_uppercase();
-            if is_native_m2_asset_symbol_v1(&asset)
-                && !mainline_asset_view_authorized_v1(params, &account)
-            {
+            let m2_asset = is_native_m2_asset_symbol_v1(&asset);
+            let disclosure_authorization =
+                mainline_asset_view_authorization_reason_v1(params, &account);
+            if m2_asset && disclosure_authorization.is_none() {
                 return Ok(json!({
                     "method": "nov_getAssetBalance",
                     "account": account,
@@ -1012,13 +1060,29 @@ fn run_mainline_native_execution_query(method: &str, params: &Value) -> Result<V
                         .map(|assets| assets.contains_key(asset.as_str()))
                 })
                 .unwrap_or(native_balance > 0);
-            Ok(json!({
+            let mut out = json!({
                 "method": "nov_getAssetBalance",
                 "account": account,
                 "asset": asset,
                 "found": found,
                 "balance": native_balance,
-            }))
+            });
+            if m2_asset {
+                if let (Some(map), Some(reason)) =
+                    (out.as_object_mut(), disclosure_authorization.as_deref())
+                {
+                    map.insert(
+                        "privacy_disclosure".to_string(),
+                        mainline_privacy_disclosure_receipt_v1(
+                            "nov_getAssetBalance",
+                            &account,
+                            Some(&asset),
+                            reason,
+                        ),
+                    );
+                }
+            }
+            Ok(out)
         }
         "nov_getTreasurySettlementSummary" => {
             let summary =
@@ -12180,6 +12244,28 @@ mod tests {
         .expect("nov_getAssetBalance NUSD should succeed");
         assert_eq!(nusd_after["found"].as_bool(), Some(true));
         assert_eq!(nusd_after["balance"].as_u64(), Some(100));
+        assert_eq!(
+            nusd_after["privacy_disclosure"]["status"].as_str(),
+            Some("authorized")
+        );
+        assert_eq!(
+            nusd_after["privacy_disclosure"]["authorization_reason"].as_str(),
+            Some("subject_self_view")
+        );
+        assert_eq!(
+            nusd_after["privacy_disclosure"]["proof_generation_performed"].as_bool(),
+            Some(false)
+        );
+        assert_eq!(
+            nusd_after["privacy_disclosure"]["proof_system"].as_str(),
+            Some("none")
+        );
+        assert!(
+            nusd_after["privacy_disclosure"]["disclosure_digest"]
+                .as_str()
+                .unwrap_or_default()
+                .starts_with("0x")
+        );
 
         let nusd_redacted = run_mainline_query_from_path(
             bogus_canonical_store,
@@ -12193,6 +12279,7 @@ mod tests {
         .expect("nov_getAssetBalance NUSD should return redacted without viewer");
         assert_eq!(nusd_redacted["privacy_redacted"].as_bool(), Some(true));
         assert!(nusd_redacted.get("balance").is_none());
+        assert!(nusd_redacted.get("privacy_disclosure").is_none());
 
         let _ = fs::remove_file(native_store);
     }
