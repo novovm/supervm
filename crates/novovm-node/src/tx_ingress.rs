@@ -7277,32 +7277,43 @@ pub fn run_nov_native_call_from_params_with_store_path_v1(
                         .get(asset.as_str())
                         .copied()
                         .unwrap_or(default_liquidity);
-                    let (clearing_rate_ppm, price_source, updated_unix_ms) =
-                        resolve_clearing_rate_ppm_with_source_v1(
-                            &store,
-                            asset.as_str(),
-                            now_unix_millis_v1(),
-                        )
-                        .unwrap_or_else(|_| {
-                            (
-                                default_fee_rate_ppm_for_asset_v1(asset.as_str()),
-                                "default_rate_ppm".to_string(),
-                                0,
-                            )
-                        });
-                    serde_json::json!({
-                        "method": "nov_call",
-                        "target": "treasury",
-                        "module_method": "get_clearing_liquidity",
-                        "found": true,
-                        "result": {
-                            "asset": asset,
-                            "available_nov": available_nov,
-                            "clearing_rate_ppm": clearing_rate_ppm,
-                            "price_source": price_source,
-                            "price_updated_unix_ms": updated_unix_ms,
-                        },
-                    })
+                    match resolve_clearing_rate_ppm_with_source_v1(
+                        &store,
+                        asset.as_str(),
+                        now_unix_millis_v1(),
+                    ) {
+                        Ok((clearing_rate_ppm, price_source, updated_unix_ms)) => {
+                            serde_json::json!({
+                                "method": "nov_call",
+                                "target": "treasury",
+                                "module_method": "get_clearing_liquidity",
+                                "found": true,
+                                "result": {
+                                    "asset": asset,
+                                    "available_nov": available_nov,
+                                    "clearing_rate_ppm": clearing_rate_ppm,
+                                    "price_source": price_source,
+                                    "price_updated_unix_ms": updated_unix_ms,
+                                    "state": "available",
+                                },
+                            })
+                        }
+                        Err(err) => serde_json::json!({
+                            "method": "nov_call",
+                            "target": "treasury",
+                            "module_method": "get_clearing_liquidity",
+                            "found": false,
+                            "result": {
+                                "asset": asset,
+                                "available_nov": available_nov,
+                                "clearing_rate_ppm": 0,
+                                "price_source": "unavailable",
+                                "price_updated_unix_ms": 0,
+                                "state": "blocked",
+                                "reason": err.to_string(),
+                            },
+                        }),
+                    }
                 }
                 ("treasury", "get_clearing_routes") => {
                     let asset = args
@@ -8979,6 +8990,41 @@ mod tests {
                 }),
                 "oracle-only asset must not expose treasury_direct route: {routes:?}"
             );
+        });
+    }
+
+    #[test]
+    fn treasury_get_clearing_liquidity_blocks_oracle_only_default_price() {
+        with_test_native_execution_store_path_v1(|path| {
+            let mut pre = NovNativeExecutionStoreV1::default();
+            pre.module_state
+                .clearing_nov_liquidity
+                .insert("NNEW".to_string(), 1_000_000);
+            pre.module_state
+                .fee_oracle_rates_ppm
+                .insert("NNEW".to_string(), 1_000_000);
+            pre.module_state.fee_oracle_updated_unix_ms = now_unix_millis_v1();
+            pre.module_state.fee_oracle_source = "runtime_oracle".to_string();
+            save_nov_native_execution_store_v1(path.as_path(), &pre)
+                .expect("seed oracle-only clearing liquidity store");
+
+            let out = run_nov_native_call_from_params_with_store_path_v1(
+                &serde_json::json!({
+                    "target": {"kind": "native_module", "id": "treasury"},
+                    "method": "get_clearing_liquidity",
+                    "args": {"asset": "NNEW"},
+                }),
+                Some(path.as_path()),
+            )
+            .expect("get_clearing_liquidity should return blocked response");
+            assert_eq!(out["found"].as_bool(), Some(false));
+            assert_eq!(out["result"]["asset"].as_str(), Some("NNEW"));
+            assert_eq!(out["result"]["state"].as_str(), Some("blocked"));
+            assert_eq!(out["result"]["clearing_rate_ppm"].as_u64(), Some(0));
+            assert_eq!(out["result"]["price_source"].as_str(), Some("unavailable"));
+            let reason = out["result"]["reason"].as_str().unwrap_or_default();
+            assert!(reason.contains("fee.clearing.route_unavailable"));
+            assert!(reason.contains("asset=NNEW has no protocol clearing source"));
         });
     }
 
