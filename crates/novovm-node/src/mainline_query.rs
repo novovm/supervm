@@ -5152,6 +5152,49 @@ mod tests {
             .expect("seed native execution store");
     }
 
+    fn seed_cut_c_native_m2_fee_store_v1(native_store: &std::path::Path, account_id: &str) {
+        let mut pre = NovNativeExecutionStoreV1::default();
+        pre.module_state.account_asset_balances.insert(
+            account_id.to_string(),
+            std::collections::BTreeMap::from([
+                ("USDT".to_string(), 1_000u128),
+                ("NUSDT".to_string(), 1_000u128),
+            ]),
+        );
+        pre.module_state
+            .fee_oracle_rates_ppm
+            .insert("NUSDT".to_string(), 1_000_000);
+        pre.module_state
+            .clearing_rate_ppm
+            .insert("NUSDT".to_string(), 1_000_000);
+        pre.module_state.clearing_static_amm_pools.insert(
+            "cut_c_mainline_usdt_nov_pool".to_string(),
+            crate::clearing_types::NovStaticAmmPoolStateV1 {
+                pool_id: "cut_c_mainline_usdt_nov_pool".to_string(),
+                asset_x: "USDT".to_string(),
+                asset_y: "NOV".to_string(),
+                reserve_x: 1_000_000,
+                reserve_y: 2_000_000,
+                swap_fee_ppm: 3_000,
+                enabled: true,
+            },
+        );
+        pre.module_state.clearing_static_amm_pools.insert(
+            "cut_c_mainline_nusdt_nov_fee_pool".to_string(),
+            crate::clearing_types::NovStaticAmmPoolStateV1 {
+                pool_id: "cut_c_mainline_nusdt_nov_fee_pool".to_string(),
+                asset_x: "NUSDT".to_string(),
+                asset_y: "NOV".to_string(),
+                reserve_x: 1_000_000,
+                reserve_y: 2_000_000,
+                swap_fee_ppm: 3_000,
+                enabled: true,
+            },
+        );
+        save_nov_native_execution_store_v1(native_store, &pre)
+            .expect("seed native execution store");
+    }
+
     fn run_cut_c_swap_v1(
         query_store: &std::path::Path,
         native_store: &std::path::Path,
@@ -5172,6 +5215,51 @@ mod tests {
         params.insert("amount_in".to_string(), Value::from(100u64));
         params.insert("min_amount_out".to_string(), Value::from(1u64));
         params.insert("slippage_bps".to_string(), Value::from(25u64));
+        params.insert("max_pay_amount".to_string(), Value::from(500u64));
+        params.insert(
+            "native_execution_store_path".to_string(),
+            Value::String(native_store.display().to_string()),
+        );
+        params.insert(
+            "unified_account_store_path".to_string(),
+            Value::String(ua_store.display().to_string()),
+        );
+        params.insert(
+            "execution_policy".to_string(),
+            Value::String(execution_policy.to_string()),
+        );
+        if let Some(privacy_mode) = privacy_mode {
+            params.insert(
+                "privacy_mode".to_string(),
+                Value::String(privacy_mode.to_string()),
+            );
+        }
+        run_mainline_query_from_path(query_store, "nov_swap", &Value::Object(params))
+            .expect("nov_swap should return a product-facing result")
+    }
+
+    fn run_cut_c_swap_with_fee_asset_v1(
+        query_store: &std::path::Path,
+        native_store: &std::path::Path,
+        ua_store: &std::path::Path,
+        account_id: &str,
+        fee_pay_asset: &str,
+        execution_policy: &str,
+        privacy_mode: Option<&str>,
+    ) -> Value {
+        let caller = format!("0x{}", "6b".repeat(20));
+        let mut params = serde_json::Map::new();
+        params.insert(
+            "account_id".to_string(),
+            Value::String(account_id.to_string()),
+        );
+        params.insert("from".to_string(), Value::String(caller));
+        params.insert("asset_in".to_string(), Value::String("USDT".to_string()));
+        params.insert("asset_out".to_string(), Value::String("NOV".to_string()));
+        params.insert("amount_in".to_string(), Value::from(100u64));
+        params.insert("min_amount_out".to_string(), Value::from(1u64));
+        params.insert("slippage_bps".to_string(), Value::from(25u64));
+        params.insert("pay_asset".to_string(), Value::String(fee_pay_asset.to_string()));
         params.insert("max_pay_amount".to_string(), Value::from(500u64));
         params.insert(
             "native_execution_store_path".to_string(),
@@ -11557,7 +11645,7 @@ mod tests {
         let (ua_root, ua_store, _ua_audit) = unique_unified_account_paths("cut-c-privacy-success");
         let account_id = "acct-cut-c-privacy-success";
 
-        create_cut_c_account_v1(ua_store.as_path(), account_id, 34, UcaKeyAlgo::Mldsa87);
+        create_cut_c_account_v1(ua_store.as_path(), account_id, 34, UcaKeyAlgo::Ed25519);
         seed_cut_c_native_swap_store_v1(native_store.as_path(), account_id);
 
         let out = run_cut_c_swap_v1(
@@ -11570,7 +11658,7 @@ mod tests {
         );
         assert_eq!(out["accepted"].as_bool(), Some(true));
         assert_eq!(out["account_id"].as_str(), Some(account_id));
-        assert_eq!(out["key_algo"].as_str(), Some("mldsa87"));
+        assert_eq!(out["key_algo"].as_str(), Some("ed25519"));
         assert_eq!(out["execution_policy"].as_str(), Some("privacy_required"));
         assert_eq!(out["policy_enforced"].as_bool(), Some(true));
         assert_eq!(out["policy_rejection_reason"], Value::Null);
@@ -11588,7 +11676,7 @@ mod tests {
             }),
         )
         .expect("nov_getExecutionTrace should succeed");
-        assert_eq!(trace["trace"]["key_algo"].as_str(), Some("mldsa87"));
+        assert_eq!(trace["trace"]["key_algo"].as_str(), Some("ed25519"));
         assert_eq!(
             trace["trace"]["execution_policy"].as_str(),
             Some("privacy_required")
@@ -11660,6 +11748,106 @@ mod tests {
         )
         .expect("USDT balance should load");
         assert_eq!(usdt_after, 1_000);
+
+        let _ = fs::remove_file(native_store);
+        let _ = fs::remove_dir_all(ua_root);
+    }
+
+    #[test]
+    fn mainline_query_m2_fee_asset_auto_requires_privacy_path() {
+        let bogus_canonical_store =
+            std::path::Path::new("this-canonical-store-does-not-exist.json");
+        let native_store = unique_native_execution_store_path("cut-c-m2-fee-privacy-reject");
+        let (ua_root, ua_store, _ua_audit) =
+            unique_unified_account_paths("cut-c-m2-fee-privacy-reject");
+        let account_id = "acct-cut-c-m2-fee-privacy-reject";
+
+        create_cut_c_account_v1(ua_store.as_path(), account_id, 36, UcaKeyAlgo::Mldsa87);
+        seed_cut_c_native_m2_fee_store_v1(native_store.as_path(), account_id);
+
+        let out = run_cut_c_swap_with_fee_asset_v1(
+            bogus_canonical_store,
+            native_store.as_path(),
+            ua_store.as_path(),
+            account_id,
+            "NUSDT",
+            "standard",
+            None,
+        );
+        assert_eq!(out["accepted"].as_bool(), Some(true));
+        assert_eq!(out["account_id"].as_str(), Some(account_id));
+        assert_eq!(out["key_algo"].as_str(), Some("mldsa87"));
+        assert_eq!(
+            out["execution_policy"].as_str(),
+            Some("privacy_required")
+        );
+        assert_eq!(out["policy_enforced"].as_bool(), Some(false));
+        assert_eq!(
+            out["policy_rejection_reason"].as_str(),
+            Some("ERR_PRIVACY_REQUIRED_BUT_PATH_NOT_AVAILABLE")
+        );
+        assert_eq!(out["native_receipt"]["status"].as_bool(), Some(false));
+        assert_eq!(
+            out["native_receipt"]["policy_rejection_reason"].as_str(),
+            Some("ERR_PRIVACY_REQUIRED_BUT_PATH_NOT_AVAILABLE")
+        );
+
+        let nusdt_after = get_nov_native_account_asset_balance_with_store_path_v1(
+            native_store.as_path(),
+            account_id,
+            "NUSDT",
+        )
+        .expect("NUSDT balance should load");
+        assert_eq!(nusdt_after, 1_000);
+
+        let _ = fs::remove_file(native_store);
+        let _ = fs::remove_dir_all(ua_root);
+    }
+
+    #[test]
+    fn mainline_query_m2_fee_asset_confidential_path_executes() {
+        let bogus_canonical_store =
+            std::path::Path::new("this-canonical-store-does-not-exist.json");
+        let native_store = unique_native_execution_store_path("cut-c-m2-fee-privacy-success");
+        let (ua_root, ua_store, _ua_audit) =
+            unique_unified_account_paths("cut-c-m2-fee-privacy-success");
+        let account_id = "acct-cut-c-m2-fee-privacy-success";
+
+        create_cut_c_account_v1(ua_store.as_path(), account_id, 37, UcaKeyAlgo::Mldsa87);
+        seed_cut_c_native_m2_fee_store_v1(native_store.as_path(), account_id);
+
+        let out = run_cut_c_swap_with_fee_asset_v1(
+            bogus_canonical_store,
+            native_store.as_path(),
+            ua_store.as_path(),
+            account_id,
+            "NUSDT",
+            "standard",
+            Some("confidential"),
+        );
+        assert_eq!(out["accepted"].as_bool(), Some(true));
+        assert_eq!(out["account_id"].as_str(), Some(account_id));
+        assert_eq!(out["key_algo"].as_str(), Some("mldsa87"));
+        assert_eq!(
+            out["execution_policy"].as_str(),
+            Some("privacy_required")
+        );
+        assert_eq!(out["policy_enforced"].as_bool(), Some(true));
+        assert_eq!(out["policy_rejection_reason"], Value::Null);
+        assert_eq!(out["native_receipt"]["status"].as_bool(), Some(true));
+        assert_eq!(out["native_receipt"]["paid_asset"].as_str(), Some("NUSDT"));
+        let paid_amount = out["native_receipt"]["paid_amount"]
+            .as_u64()
+            .expect("NUSDT paid amount should be present");
+        assert!(paid_amount > 0);
+
+        let nusdt_after = get_nov_native_account_asset_balance_with_store_path_v1(
+            native_store.as_path(),
+            account_id,
+            "NUSDT",
+        )
+        .expect("NUSDT balance should load");
+        assert_eq!(nusdt_after, 1_000u128.saturating_sub(u128::from(paid_amount)));
 
         let _ = fs::remove_file(native_store);
         let _ = fs::remove_dir_all(ua_root);

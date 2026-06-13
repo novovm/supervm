@@ -73,6 +73,7 @@ pub enum NovClearingFailureCodeV1 {
     RiskBufferBelowMin,
     ReserveProofNotActive,
     ReserveProofCapacityExceeded,
+    InsufficientUserBalance,
 }
 
 impl NovClearingFailureCodeV1 {
@@ -93,6 +94,7 @@ impl NovClearingFailureCodeV1 {
             Self::RiskBufferBelowMin => "fee.clearing.risk_buffer_below_min",
             Self::ReserveProofNotActive => "fee.clearing.reserve_proof_not_active",
             Self::ReserveProofCapacityExceeded => "fee.clearing.reserve_proof_capacity_exceeded",
+            Self::InsufficientUserBalance => "fee.clearing.insufficient_user_balance",
         }
     }
 
@@ -111,6 +113,7 @@ impl NovClearingFailureCodeV1 {
             Self::RiskBufferBelowMin => "risk_buffer_below_min",
             Self::ReserveProofNotActive => "reserve_proof_not_active",
             Self::ReserveProofCapacityExceeded => "reserve_proof_capacity_exceeded",
+            Self::InsufficientUserBalance => "insufficient_user_balance",
         }
     }
 }

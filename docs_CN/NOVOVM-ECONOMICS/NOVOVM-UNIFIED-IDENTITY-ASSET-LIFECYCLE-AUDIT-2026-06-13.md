@@ -121,6 +121,7 @@ P_redeem[A] = P_epoch[A]
 - 钱包、DAPP、网站、gateway 都必须通过 mainline unified account surface 访问受限视图，不能直接读取或公开完整用户资产明细。
 - 当前代码已经有 `privacy_required` / `privacy_mode` 的最小执行策略门禁；native M2/nAsset 余额和资产列表也已接入最小 read gate：`account_balance`、`account_assets` 和 `nov_getAssetBalance` 对 `N*` M2 资产默认返回 `privacy_redacted=true`，只有 `viewer_account_id/requester_account_id` 匹配账户或显式 `asset_view_authorized/account_view_authorized` 时才返回明细。
 - AOEM 自带 RingCT / ZK 能力，应作为下一层密码学隐私执行/证明能力接入：可承载 encrypted balance、commitment、range proof、membership proof、选择性披露和审计证明，但不得形成第二套账户账本。
+- M2 支付隐私与扣账第一刀已接入用户执行入口：`nov_execute`、`nov_sendTransaction`、`nov_sendRawTransaction` 中，只要 `fee_policy.pay_asset` 是 `N*` M2 资产且不是 `NOV`，执行策略会自动提升为 `privacy_required`；public 路径 fail-closed，`private/confidential` 隐私路径才可继续。`MLDSA` 是账户/治理签名的抗量子能力，只在 `pq_required` 策略下强制，不等同隐私交易。M2 fee clearing 进入 Treasury settlement 前必须先扣 fee owner 的 native M2 balance，余额不足返回 `fee.clearing.insufficient_user_balance`。
 - 该 read gate 是当前已落地的产品隐私边界；AOEM RingCT / ZK 是隐私能力路线和执行底座，不等于完整 encrypted balance、隐私交易、审计密钥体系和公开可验证 ZK 账本已全部完成。
 
 隐私分层口径：

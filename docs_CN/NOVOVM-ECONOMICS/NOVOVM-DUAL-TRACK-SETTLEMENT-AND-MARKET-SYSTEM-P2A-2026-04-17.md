@@ -175,7 +175,7 @@ asset_out[A] = nov_amount / P_redeem[A]
 
 在 NOVOVM 主线内，`NETH / NUSDT / NDAI / NBTC / NUSDC` 等资产是 native M2 asset ledger 条目，不是 ERC20/TRC20 合约实例；权威余额来自 mainline unified account surface / native execution store 的 `account_asset_balances`、`treasury_reserves`、`mapped_asset_records` 和 settlement journal。EVM 合约币只有完成 mapped asset / Treasury policy 映射后，才进入 NOVOVM native M2 账本。
 
-隐私边界：协议清算价、Treasury reserve、M2 liability、reserve proof 和风险状态属于系统级公开数据；用户级 nAsset 余额、交易流水、KYC 身份和外部地址绑定默认不公开。当前最小产品边界由 mainline read gate 返回 `privacy_redacted=true`；AOEM RingCT / ZK 是后续密码学隐私执行/证明层，不能绕过 mainline unified account surface，也不能产生第二套 nAsset 账本。
+隐私边界：协议清算价、Treasury reserve、M2 liability、reserve proof 和风险状态属于系统级公开数据；用户级 nAsset 余额、交易流水、KYC 身份和外部地址绑定默认不公开。当前最小产品边界由 mainline read gate 返回 `privacy_redacted=true`；使用 `N*` M2 资产支付 Execution Fee 的用户执行入口会自动要求 `privacy_required`，public 路径 fail-closed。AOEM RingCT / ZK 是后续密码学隐私执行/证明层，不能绕过 mainline unified account surface，也不能产生第二套 nAsset 账本。
 
 ### 5.3 信用扩张资产
 

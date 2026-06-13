@@ -4430,6 +4430,24 @@ fn settle_fee_quote_into_treasury_v1(
                 now_ms,
             );
         }
+        if is_native_m2_fee_asset_symbol_v1(quote.pay_asset.as_str())
+            && settlement_input.pay_amount > 0
+        {
+            if let Err(err) = debit_native_account_asset_balance_v1(
+                store,
+                subject_meta.fee_owner_account_id.as_str(),
+                quote.pay_asset.as_str(),
+                settlement_input.pay_amount,
+            ) {
+                return clearing_fail_v1(
+                    store,
+                    quote.pay_asset.as_str(),
+                    NovClearingFailureCodeV1::InsufficientUserBalance,
+                    format!("m2_fee_asset_debit_failed: {err}"),
+                    now_ms,
+                );
+            }
+        }
         apply_selected_clearing_result_v1(
             store,
             NovSelectedClearingPersistInputV1 {
@@ -6787,6 +6805,22 @@ fn default_execution_behavior_v1() -> NovRequestedExecutionBehaviorV1 {
     requested_execution_behavior_v1(NovExecutionPolicyV1::Standard, NovPrivacyModeV1::Public)
 }
 
+fn is_native_m2_fee_asset_symbol_v1(asset_id: &str) -> bool {
+    let normalized = asset_id.trim().to_ascii_uppercase();
+    normalized != "NOV" && normalized.starts_with('N')
+}
+
+fn effective_execution_policy_for_fee_asset_v1(
+    requested_policy: NovExecutionPolicyV1,
+    pay_asset: &str,
+) -> NovExecutionPolicyV1 {
+    if is_native_m2_fee_asset_symbol_v1(pay_asset) {
+        NovExecutionPolicyV1::PrivacyRequired
+    } else {
+        requested_policy
+    }
+}
+
 fn is_qualified_runtime_policy_demand_v1(subject_meta: &NovExecutionSubjectMetaV1) -> bool {
     let account_id = subject_meta.account_id.trim();
     let fee_owner = subject_meta.fee_owner_account_id.trim();
@@ -6887,19 +6921,7 @@ fn enforce_requested_execution_behavior_v1(
             }
         }
         NovExecutionPolicyV1::PrivacyRequired => {
-            if resolved_key_algo != Some(UcaKeyAlgo::Mldsa87) {
-                emit_runtime_policy_observability_event_v1(
-                    subject_meta,
-                    requested.execution_policy,
-                    false,
-                    Some(ERR_PQ_REQUIRED_BUT_KEY_NOT_PQ),
-                );
-                Err(NovExecutionPolicyRejectionV1 {
-                    key_algo: resolved_key_algo,
-                    execution_policy: requested.execution_policy,
-                    reason: ERR_PQ_REQUIRED_BUT_KEY_NOT_PQ,
-                })
-            } else if matches!(requested.privacy_mode, NovPrivacyModeV1::Public) {
+            if matches!(requested.privacy_mode, NovPrivacyModeV1::Public) {
                 emit_runtime_policy_observability_event_v1(
                     subject_meta,
                     requested.execution_policy,
@@ -7754,18 +7776,24 @@ pub fn run_nov_send_raw_transaction_from_params_v1(
         _ => None,
     };
     let requested_execution_behavior = match &native_tx.kind {
-        NovTxKindV1::Execute(execute) => Some(requested_execution_behavior_v1(
-            if params.get("execution_policy").is_some() {
+        NovTxKindV1::Execute(execute) => {
+            let requested_policy = if params.get("execution_policy").is_some() {
                 requested_execution_policy_override
             } else {
                 execute.execution_policy
-            },
-            if params.get("privacy_mode").is_some() {
-                requested_privacy_mode_override
-            } else {
-                execute.privacy_mode
-            },
-        )),
+            };
+            Some(requested_execution_behavior_v1(
+                effective_execution_policy_for_fee_asset_v1(
+                    requested_policy,
+                    execute.fee_policy.pay_asset.as_str(),
+                ),
+                if params.get("privacy_mode").is_some() {
+                    requested_privacy_mode_override
+                } else {
+                    execute.privacy_mode
+                },
+            ))
+        }
         _ => None,
     };
     let execution_request = nov_native_tx_to_execution_request_v1(&native_tx)?;
@@ -8029,6 +8057,10 @@ pub fn run_nov_execute_from_params_v1(params: &serde_json::Value) -> Result<serd
                 .unwrap_or(100),
         }
     };
+    let effective_execution_policy = effective_execution_policy_for_fee_asset_v1(
+        execution_policy,
+        fee_policy.pay_asset.as_str(),
+    );
     let tx = NovNativeTxWireV1 {
         chain_id,
         kind: NovTxKindV1::Execute(NovExecuteTxV1 {
@@ -8040,7 +8072,7 @@ pub fn run_nov_execute_from_params_v1(params: &serde_json::Value) -> Result<serd
             method,
             args,
             execution_mode,
-            execution_policy,
+            execution_policy: effective_execution_policy,
             privacy_mode,
             verification_mode,
             fee_policy,
