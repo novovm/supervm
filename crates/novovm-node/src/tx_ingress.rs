@@ -18,7 +18,7 @@ use novovm_exec::{
 use novovm_governance_observability::{append_governance_event_auto, GovernanceEvent};
 use novovm_network::{
     eth_rlpx_transaction_hash_v1, eth_rlpx_validate_transaction_envelope_payload_v1,
-    get_network_runtime_native_pending_tx_payload_v1,
+    get_network_runtime_native_head_snapshot_v1, get_network_runtime_native_pending_tx_payload_v1,
     observe_network_runtime_native_execution_budget_target_v1,
     observe_network_runtime_native_execution_budget_throttle_v1,
     observe_network_runtime_native_pending_tx_local_ingress_with_payload_v1,
@@ -10696,13 +10696,22 @@ fn project_executed_native_pending_batch_to_canonical_v1(
         });
     }
     let now_ms = now_unix_millis_v1();
-    let block_number = now_ms.min(u64::MAX as u128) as u64;
-    let mut block_hash_parts = Vec::<&[u8]>::with_capacity(tx_hashes.len().saturating_add(3));
+    let previous_head = get_network_runtime_native_head_snapshot_v1(chain_id);
+    let block_number = previous_head
+        .as_ref()
+        .map(|head| head.block_number.saturating_add(1))
+        .unwrap_or(1);
+    let parent_block_hash = previous_head
+        .as_ref()
+        .map(|head| head.block_hash)
+        .unwrap_or([0u8; 32]);
+    let mut block_hash_parts = Vec::<&[u8]>::with_capacity(tx_hashes.len().saturating_add(4));
     let chain_id_bytes = chain_id.to_be_bytes();
     let block_number_bytes = block_number.to_be_bytes();
     block_hash_parts.push(b"novovm-native-execution-canonical-projection-v1");
     block_hash_parts.push(&chain_id_bytes);
     block_hash_parts.push(&block_number_bytes);
+    block_hash_parts.push(parent_block_hash.as_slice());
     for tx_hash in tx_hashes {
         block_hash_parts.push(tx_hash.as_slice());
     }
@@ -10719,7 +10728,7 @@ fn project_executed_native_pending_batch_to_canonical_v1(
             peer_count: 0,
             block_number,
             block_hash,
-            parent_block_hash: [0u8; 32],
+            parent_block_hash,
             state_root,
             canonical: true,
             safe: true,
@@ -10751,6 +10760,7 @@ fn project_executed_native_pending_batch_to_canonical_v1(
         "projection": "native_execution_batch_to_canonical_body_head",
         "block_number": block_number,
         "block_hash": to_hex_prefixed_v1(&block_hash),
+        "parent_block_hash": to_hex_prefixed_v1(&parent_block_hash),
         "tx_count": tx_hashes.len(),
         "included_canonical": true,
     })

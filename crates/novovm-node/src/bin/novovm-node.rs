@@ -33455,6 +33455,7 @@ struct NativeExecutionPipelineAggregateV1 {
     ingress_total_last: u64,
     queue_pending_last: u64,
     included_canonical_last: u64,
+    included_canonical_total: u64,
     broadcast_candidates_last: u64,
     broadcast_dispatch_total_last: u64,
     broadcast_tx_total_last: u64,
@@ -33477,6 +33478,7 @@ impl NativeExecutionPipelineAggregateV1 {
             ingress_total_last: 0,
             queue_pending_last: 0,
             included_canonical_last: 0,
+            included_canonical_total: 0,
             broadcast_candidates_last: 0,
             broadcast_dispatch_total_last: 0,
             broadcast_tx_total_last: 0,
@@ -33609,6 +33611,9 @@ impl NativeExecutionPipelineAggregateV1 {
             .get("pending_included_canonical")
             .and_then(|value| value.as_u64())
             .unwrap_or_default();
+        self.included_canonical_total = self
+            .included_canonical_total
+            .max(self.included_canonical_last);
         self.broadcast_candidates_last = egress
             .get("broadcast_candidates")
             .and_then(|value| value.as_u64())
@@ -33628,7 +33633,7 @@ impl NativeExecutionPipelineAggregateV1 {
         self.aoem_executed_total
             .saturating_add(self.ingress_submitted_total)
             .saturating_add(self.ingress_total_last)
-            .saturating_add(self.included_canonical_last)
+            .saturating_add(self.included_canonical_total)
             .saturating_add(self.broadcast_tx_total_last)
             .saturating_add(self.broadcast_candidates_last)
     }
@@ -33656,6 +33661,7 @@ impl NativeExecutionPipelineAggregateV1 {
             "ingress_total_last": self.ingress_total_last,
             "queue_pending_last": self.queue_pending_last,
             "included_canonical_last": self.included_canonical_last,
+            "included_canonical_total": self.included_canonical_total,
             "broadcast_candidates_last": self.broadcast_candidates_last,
             "broadcast_dispatch_total_last": self.broadcast_dispatch_total_last,
             "broadcast_tx_total_last": self.broadcast_tx_total_last,
@@ -33679,6 +33685,7 @@ struct NativeExecutionPipelineSoakGateV1 {
     min_broadcast_tx_total: u64,
     min_broadcast_candidates: u64,
     min_included_canonical: u64,
+    min_included_canonical_total: u64,
     min_ingress_total: u64,
     min_ticks_per_sec_x1000: u64,
 }
@@ -33730,6 +33737,10 @@ impl NativeExecutionPipelineSoakGateV1 {
                 "NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_INCLUDED_CANONICAL",
                 0,
             )?,
+            min_included_canonical_total: u64_env_allow_zero(
+                "NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_INCLUDED_CANONICAL_TOTAL",
+                0,
+            )?,
             min_ingress_total: u64_env_allow_zero(
                 "NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_INGRESS_TOTAL",
                 0,
@@ -33769,6 +33780,11 @@ impl NativeExecutionPipelineSoakGateV1 {
             summary,
             "included_canonical_last",
             self.min_included_canonical,
+        )?;
+        require_summary_min(
+            summary,
+            "included_canonical_total",
+            self.min_included_canonical_total,
         )?;
         require_summary_min(summary, "ingress_total_last", self.min_ingress_total)?;
         require_summary_min(summary, "ticks_per_sec_x1000", self.min_ticks_per_sec_x1000)?;
@@ -34081,11 +34097,165 @@ mod native_execution_pipeline_tests {
             min_broadcast_tx_total: 1,
             min_broadcast_candidates: 0,
             min_included_canonical: 1,
+            min_included_canonical_total: 1,
             min_ingress_total: 1,
             min_ticks_per_sec_x1000: 0,
         }
         .validate_summary(&summary)
         .expect("closed-loop summary must satisfy ingress and AOEM gates");
+        let _ = fs::remove_file(&store_path);
+    }
+
+    #[test]
+    fn native_execution_pipeline_multitick_keeps_aoem_batch_as_concurrency_boundary() {
+        let chain_id = 9_998_886u64;
+        let build_raw = |nonce: u64| {
+            let native_tx = novovm_protocol::NovNativeTxWireV1 {
+                chain_id,
+                kind: novovm_protocol::NovTxKindV1::Execute(novovm_protocol::NovExecuteTxV1 {
+                    caller: vec![nonce as u8; 20],
+                    account_id: Some(format!("acct-pipeline-multitick-{nonce}")),
+                    fee_owner_account_id: Some(format!("acct-pipeline-multitick-{nonce}")),
+                    nonce_owner_account_id: Some(format!("acct-pipeline-multitick-{nonce}")),
+                    target: novovm_protocol::NovExecutionTargetV1::NativeModule(
+                        "treasury".to_string(),
+                    ),
+                    method: "deposit_reserve".to_string(),
+                    args: serde_json::to_vec(&serde_json::json!({
+                        "asset": "USDT",
+                        "amount": nonce
+                    }))
+                    .expect("encode args"),
+                    execution_mode: novovm_protocol::NovExecutionModeV1::Batch,
+                    execution_policy: novovm_protocol::NovExecutionPolicyV1::Standard,
+                    privacy_mode: novovm_protocol::NovPrivacyModeV1::Public,
+                    verification_mode: novovm_protocol::NovVerificationModeV1::Standard,
+                    fee_policy: novovm_protocol::NovFeePolicyV1 {
+                        pay_asset: "NOV".to_string(),
+                        max_pay_amount: 50,
+                        slippage_bps: 100,
+                    },
+                    gas_like_limit: Some(90_000),
+                    nonce,
+                }),
+                signature: [0x86; 32],
+            };
+            novovm_protocol::encode_nov_native_tx_wire_v1(&native_tx).expect("encode native tx")
+        };
+        let mut ingress_drive = NativeExecutionPipelineIngressDriveV1 {
+            chain_id,
+            payloads: (81..=85).map(build_raw).collect(),
+            cursor: 0,
+            max_per_tick: 2,
+        };
+        let broadcast_drive = NativeExecutionPipelineBroadcastDriveV1 {
+            chain_id,
+            peer_id: 9_990_086,
+            max_per_tick: 2,
+            max_propagations: 3,
+            enabled: true,
+        };
+        let store_path = std::env::temp_dir().join(format!(
+            "novovm-native-pipeline-multitick-{}-{}.json",
+            chain_id,
+            std::process::id()
+        ));
+        let _ = fs::remove_file(&store_path);
+        let mut aggregate = NativeExecutionPipelineAggregateV1::new();
+
+        for tick in 1..=3u64 {
+            let ingress_drive_out = ingress_drive.drive_once();
+            assert_eq!(ingress_drive_out["ok"].as_bool(), Some(true));
+            let expected_this_tick = if tick < 3 { 2 } else { 1 };
+            assert_eq!(
+                ingress_drive_out["submitted"].as_u64(),
+                Some(expected_this_tick)
+            );
+
+            let broadcast_drive_out = broadcast_drive.drive_once();
+            assert_eq!(broadcast_drive_out["ok"].as_bool(), Some(true));
+            assert!(
+                broadcast_drive_out["broadcast_tx_count"]
+                    .as_u64()
+                    .unwrap_or_default()
+                    >= expected_this_tick,
+                "broadcast may retry propagated candidates, but must cover new ingress"
+            );
+
+            let out = run_nov_native_execution_tick_from_params_v1(&serde_json::json!({
+                "chain_id": chain_id,
+                "hard_budget_per_tick": 2u64,
+                "target_budget_per_tick": 2u64,
+                "effective_budget_per_tick": 2u64,
+                "native_execution_store_path": store_path,
+            }))
+            .expect("AOEM tick should consume the budgeted native pending slice");
+            assert_eq!(out["execution_kernel"].as_str(), Some("AOEM"));
+            assert_eq!(out["aoem_concurrency_owner"].as_str(), Some("AOEM_runtime"));
+            assert_eq!(out["executed_count"].as_u64(), Some(expected_this_tick));
+            assert_eq!(
+                out["batch_result"]["batch_result"]["aoem_concurrency_owner"].as_str(),
+                Some("AOEM_runtime")
+            );
+            assert_eq!(
+                out["batch_result"]["batch_result"]["native_store_commit"]["model"].as_str(),
+                Some("post_aoem_deterministic_dirty_store_commit")
+            );
+
+            let report = build_native_execution_pipeline_report_v1(
+                tick,
+                serde_json::json!({
+                    "enabled": false,
+                    "ok": true,
+                }),
+                ingress_drive_out,
+                broadcast_drive_out,
+                out,
+            );
+            aggregate
+                .observe(&report)
+                .expect("aggregate multitick pipeline report");
+        }
+
+        let summary = aggregate.to_json();
+        assert_eq!(summary["ticks"].as_u64(), Some(3));
+        assert_eq!(summary["ingress_submitted_total"].as_u64(), Some(5));
+        assert_eq!(summary["aoem_executed_total"].as_u64(), Some(5));
+        assert_eq!(summary["proof_ticks"].as_u64(), Some(3));
+        assert_eq!(summary["commit_ticks"].as_u64(), Some(3));
+        assert_eq!(summary["queue_pending_last"].as_u64(), Some(0));
+        assert_eq!(summary["included_canonical_last"].as_u64(), Some(5));
+        assert_eq!(summary["included_canonical_total"].as_u64(), Some(5));
+        assert_eq!(summary["broadcast_tx_total_last"].as_u64(), Some(5));
+        let pending_summary =
+            novovm_network::snapshot_network_runtime_native_pending_tx_summary_v1(chain_id);
+        assert_eq!(pending_summary.reorged_back_to_pending_count, 0);
+        assert_eq!(pending_summary.included_canonical_count, 5);
+        assert_eq!(
+            summary["host_concurrency_policy"].as_str(),
+            Some("host_drives_lifecycle_only_no_rust_execution_scheduler")
+        );
+        NativeExecutionPipelineSoakGateV1 {
+            emit_tick_reports: false,
+            require_progress: true,
+            min_ticks: 3,
+            min_aoem_executed_total: 5,
+            min_proof_ticks: 3,
+            min_commit_ticks: 3,
+            min_network_ok_ticks: 0,
+            max_network_error_ticks: u64::MAX,
+            min_ingress_submitted_total: 5,
+            max_ingress_error_ticks: 0,
+            min_broadcast_tx_total: 5,
+            min_broadcast_candidates: 0,
+            min_included_canonical: 5,
+            min_included_canonical_total: 5,
+            min_ingress_total: 5,
+            min_ticks_per_sec_x1000: 0,
+        }
+        .validate_summary(&summary)
+        .expect("multitick summary must satisfy high-frequency lifecycle gates");
+
         let _ = fs::remove_file(&store_path);
     }
 
@@ -34105,6 +34275,7 @@ mod native_execution_pipeline_tests {
             min_broadcast_tx_total: 1,
             min_broadcast_candidates: 1,
             min_included_canonical: 1,
+            min_included_canonical_total: 1,
             min_ingress_total: 1,
             min_ticks_per_sec_x1000: 1,
         };
@@ -34120,6 +34291,7 @@ mod native_execution_pipeline_tests {
             "broadcast_tx_total_last": 1u64,
             "broadcast_candidates_last": 1u64,
             "included_canonical_last": 1u64,
+            "included_canonical_total": 1u64,
             "ingress_total_last": 1u64,
             "ticks_per_sec_x1000": 1000u64,
             "progress_score": 7u64,
@@ -34145,6 +34317,7 @@ mod native_execution_pipeline_tests {
             min_broadcast_tx_total: 0,
             min_broadcast_candidates: 0,
             min_included_canonical: 0,
+            min_included_canonical_total: 0,
             min_ingress_total: 0,
             min_ticks_per_sec_x1000: 0,
         };
@@ -34181,6 +34354,7 @@ mod native_execution_pipeline_tests {
             min_broadcast_tx_total: 0,
             min_broadcast_candidates: 0,
             min_included_canonical: 0,
+            min_included_canonical_total: 0,
             min_ingress_total: 0,
             min_ticks_per_sec_x1000: 0,
         };
@@ -34211,6 +34385,7 @@ mod native_execution_pipeline_tests {
             min_broadcast_tx_total: 0,
             min_broadcast_candidates: 0,
             min_included_canonical: 0,
+            min_included_canonical_total: 0,
             min_ingress_total: 0,
             min_ticks_per_sec_x1000: 0,
         };
