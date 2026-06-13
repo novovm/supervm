@@ -568,6 +568,11 @@ fn run_unified_account_surface_rpc(
             disabled_peer_ids.dedup();
             let disabled_peer_reasons =
                 parse_mapped_header_source_disabled_reasons_v1(params, &disabled_peer_ids)?;
+            let peer_rotations = parse_mapped_header_source_peer_rotations_v1(
+                params,
+                &allowed_peer_ids,
+                &disabled_peer_ids,
+            )?;
             if required && allowed_peer_ids.is_empty() {
                 bail!(
                     "ERR_MAPPED_HEADER_SOURCE_POLICY_INVALID: required policy needs at least one allowed source peer"
@@ -602,6 +607,7 @@ fn run_unified_account_surface_rpc(
             store
                 .module_state
                 .mapped_header_source_disabled_peer_reasons = disabled_peer_reasons;
+            store.module_state.mapped_header_source_peer_rotations = peer_rotations;
             store.module_state.mapped_header_source_min_quorum = min_quorum;
             store.module_state.mapped_header_source_policy_source = source;
             store.module_state.mapped_header_source_policy_version = version;
@@ -2324,6 +2330,7 @@ fn mapped_header_source_policy_to_json_v1(
         "allowed_peer_ids": store.module_state.mapped_header_source_allowed_peer_ids,
         "disabled_peer_ids": store.module_state.mapped_header_source_disabled_peer_ids,
         "disabled_peer_reasons": store.module_state.mapped_header_source_disabled_peer_reasons,
+        "peer_rotations": store.module_state.mapped_header_source_peer_rotations,
         "active_allowed_peer_ids": active_allowed_peer_ids,
         "min_source_quorum": store.module_state.mapped_header_source_min_quorum,
         "policy_source": store.module_state.mapped_header_source_policy_source,
@@ -2382,6 +2389,61 @@ fn parse_mapped_header_source_disabled_reasons_v1(
     for peer_id in disabled_peer_ids {
         out.entry(*peer_id)
             .or_insert_with(|| default_reason.clone());
+    }
+    Ok(out)
+}
+
+fn parse_mapped_header_source_peer_rotations_v1(
+    params: &Value,
+    allowed_peer_ids: &[u64],
+    disabled_peer_ids: &[u64],
+) -> Result<BTreeMap<u64, u64>> {
+    let Some(value) = param_value_any(
+        params,
+        &[
+            "peer_rotations",
+            "source_peer_rotations",
+            "rotated_peer_ids",
+            "rotated_source_peer_ids",
+        ],
+    ) else {
+        return Ok(BTreeMap::new());
+    };
+    let Value::Object(map) = value else {
+        bail!("ERR_MAPPED_HEADER_SOURCE_POLICY_INVALID: peer_rotations must be object");
+    };
+    let mut out = BTreeMap::new();
+    for (raw_old_peer_id, raw_new_value) in map {
+        let old_peer_id = raw_old_peer_id.parse::<u64>().map_err(|_| {
+            anyhow::anyhow!(
+                "ERR_MAPPED_HEADER_SOURCE_POLICY_INVALID: peer_rotations key must be u64 peer id: {}",
+                raw_old_peer_id
+            )
+        })?;
+        let Some(new_peer_id) = raw_new_value.as_u64() else {
+            bail!(
+                "ERR_MAPPED_HEADER_SOURCE_POLICY_INVALID: peer_rotations[{}] must be u64",
+                old_peer_id
+            );
+        };
+        if old_peer_id == new_peer_id {
+            bail!(
+                "ERR_MAPPED_HEADER_SOURCE_POLICY_INVALID: source peer rotation old and new peer are identical"
+            );
+        }
+        if !disabled_peer_ids.contains(&old_peer_id) {
+            bail!(
+                "ERR_MAPPED_HEADER_SOURCE_POLICY_INVALID: rotated old source peer {} must be disabled",
+                old_peer_id
+            );
+        }
+        if !allowed_peer_ids.contains(&new_peer_id) || disabled_peer_ids.contains(&new_peer_id) {
+            bail!(
+                "ERR_MAPPED_HEADER_SOURCE_POLICY_INVALID: rotated new source peer {} must be active allowed",
+                new_peer_id
+            );
+        }
+        out.insert(old_peer_id, new_peer_id);
     }
     Ok(out)
 }
@@ -7359,6 +7421,9 @@ mod tests {
                     "disabled_peer_reasons": {
                         "1": "reorg_source_slashing"
                     },
+                    "peer_rotations": {
+                        "1": 2u64
+                    },
                     "min_source_quorum": 1u64,
                     "policy_source": "governance_test",
                     "policy_version": 8u64,
@@ -7376,6 +7441,10 @@ mod tests {
         );
         assert_eq!(
             disabled_policy["policy"]["active_allowed_peer_ids"][0].as_u64(),
+            Some(2)
+        );
+        assert_eq!(
+            disabled_policy["policy"]["peer_rotations"]["1"].as_u64(),
             Some(2)
         );
         accepted_map.insert("phase4_mode".to_string(), Value::String("live".to_string()));
