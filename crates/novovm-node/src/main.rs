@@ -5954,6 +5954,48 @@ fn param_as_bool_any(params: &serde_json::Value, keys: &[&str]) -> Option<bool> 
     None
 }
 
+fn normalize_legacy_account_view_key_v1(raw: &str) -> String {
+    let trimmed = raw.trim();
+    let normalized_hex = trimmed
+        .strip_prefix("0x")
+        .or_else(|| trimmed.strip_prefix("0X"))
+        .filter(|token| !token.is_empty() && token.chars().all(|ch| ch.is_ascii_hexdigit()))
+        .map(|token| format!("0x{}", token.to_ascii_lowercase()));
+    normalized_hex.unwrap_or_else(|| trimmed.to_ascii_lowercase())
+}
+
+fn is_legacy_native_m2_asset_symbol_v1(asset_id: &str) -> bool {
+    let normalized = asset_id.trim().to_ascii_uppercase();
+    normalized != "NOV" && normalized.starts_with('N')
+}
+
+fn legacy_asset_view_authorized_v1(params: &serde_json::Value, account: &str) -> bool {
+    if param_as_bool_any(
+        params,
+        &[
+            "asset_view_authorized",
+            "account_view_authorized",
+            "owner_authorized",
+        ],
+    )
+    .unwrap_or(false)
+    {
+        return true;
+    }
+    let normalized_account = normalize_legacy_account_view_key_v1(account);
+    param_as_string_any(
+        params,
+        &[
+            "viewer_account_id",
+            "requester_account_id",
+            "authorized_account_id",
+            "subject_account_id",
+        ],
+    )
+    .map(|viewer| normalize_legacy_account_view_key_v1(&viewer) == normalized_account)
+    .unwrap_or(false)
+}
+
 fn param_as_u128_any(params: &serde_json::Value, keys: &[&str]) -> Option<u128> {
     for key in keys {
         if let Some(value) = param_as_u128(params, key) {
@@ -9716,6 +9758,27 @@ fn run_chain_query(
                 .or_else(|| param_as_string(params, "asset_id"))
                 .unwrap_or_else(|| "NOV".to_string())
                 .to_ascii_uppercase();
+            if is_legacy_native_m2_asset_symbol_v1(&asset)
+                && !legacy_asset_view_authorized_v1(params, trimmed)
+            {
+                return Ok(serde_json::json!({
+                    "method": "nov_getAssetBalance",
+                    "account": trimmed,
+                    "asset": asset,
+                    "asset_layer": "M2",
+                    "found": false,
+                    "privacy_redacted": true,
+                    "privacy_policy": "m2_asset_private_by_default",
+                    "authorization_required": true,
+                    "authorization_fields": [
+                        "viewer_account_id",
+                        "requester_account_id",
+                        "asset_view_authorized",
+                        "account_view_authorized"
+                    ],
+                    "redacted_asset_layers": ["M2"],
+                }));
+            }
             let raw_balance = db.balances.get(trimmed).copied().unwrap_or(0);
             let native_balance =
                 get_nov_native_account_asset_balance_v1(trimmed, asset.as_str()).unwrap_or(0);

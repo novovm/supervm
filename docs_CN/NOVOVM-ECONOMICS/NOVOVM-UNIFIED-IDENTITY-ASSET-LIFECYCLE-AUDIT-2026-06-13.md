@@ -120,7 +120,30 @@ P_redeem[A] = P_epoch[A]
 - KYC 只应保存为许可 attestation、policy result、hash/reference 或审计凭证，不应把实名资料明文写入公开账本。
 - 钱包、DAPP、网站、gateway 都必须通过 mainline unified account surface 访问受限视图，不能直接读取或公开完整用户资产明细。
 - 当前代码已经有 `privacy_required` / `privacy_mode` 的最小执行策略门禁；native M2/nAsset 余额和资产列表也已接入最小 read gate：`account_balance`、`account_assets` 和 `nov_getAssetBalance` 对 `N*` M2 资产默认返回 `privacy_redacted=true`，只有 `viewer_account_id/requester_account_id` 匹配账户或显式 `asset_view_authorized/account_view_authorized` 时才返回明细。
-- 该 read gate 是产品隐私边界，不等于完整 encrypted balance、ZK proof、隐私交易或审计密钥体系已完成。
+- AOEM 自带 RingCT / ZK 能力，应作为下一层密码学隐私执行/证明能力接入：可承载 encrypted balance、commitment、range proof、membership proof、选择性披露和审计证明，但不得形成第二套账户账本。
+- 该 read gate 是当前已落地的产品隐私边界；AOEM RingCT / ZK 是隐私能力路线和执行底座，不等于完整 encrypted balance、隐私交易、审计密钥体系和公开可验证 ZK 账本已全部完成。
+
+隐私分层口径：
+
+```text
+Layer 0: mainline unified account surface / native_execution_store
+         -> 唯一账户与 nAsset 账本真相源
+
+Layer 1: privacy read gate
+         -> 默认隐藏用户级 N* 余额、资产列表和 mapped asset 明细
+
+Layer 2: AOEM RingCT / ZK
+         -> 对余额、金额、成员关系、合规状态和授权披露提供密码学证明
+
+Layer 3: governance selective disclosure
+         -> 审计、监管、争议处理和恢复流程的许可披露
+```
+
+禁止事项：
+
+- 禁止为了隐私再创建一套与 mainline 不一致的 nAsset 余额表。
+- 禁止把 KYC 明文、完整交易流水或外部地址绑定公开写入全网可索引状态。
+- 禁止让 DAPP、网站、钱包或 gateway 直接绕过 mainline read gate。
 
 ## 2. 生命周期现状
 

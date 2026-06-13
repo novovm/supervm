@@ -116,8 +116,10 @@ _2026-04-17_
 2. 对外公开的应是系统级汇总：Treasury reserve、M2 liability、reserve proof、协议清算价、风险状态、熔断状态和治理参数。
 3. KYC 不得以明文实名资料写入公开账本；主线只应保存许可 attestations、policy result、hash/reference 或审计凭证。
 4. 钱包、DAPP、网站和 gateway 不得绕过 mainline unified account surface 直接读取或公开用户完整资产明细。
-5. 监管、审计、争议处理和恢复流程应通过治理授权的 selective disclosure 机制完成；当前文档不声明完整 ZK/encrypted balance 已实现。
-6. 后续若实现 encrypted balance、commitment、ZK proof 或审计密钥，必须保持 `mainline unified_account_surface` 为唯一账户/资产真相源，不得引入第二套隐私账本。
+5. AOEM 自带的 RingCT / ZK 能力定位为 NOVOVM 的隐私执行与隐私证明层，可用于后续 encrypted balance、commitment、range proof、membership proof、选择性披露和审计证明。
+6. RingCT / ZK 不得被实现成第二套账户或资产账本；隐私 proof 只能证明 mainline native M2 ledger 的状态转移合法性，最终真相源仍是 `mainline unified_account_surface / native_execution_store`。
+7. 监管、审计、争议处理和恢复流程应通过治理授权的 selective disclosure 机制完成；公开链上不得泄露用户实名 KYC、完整余额或完整交易流水。
+8. 当前已落地的是 native M2 read gate：`privacy_redacted=true` 默认隐藏用户级 N* 资产明细；AOEM RingCT / ZK 属于下一层密码学隐私能力，本文档不把 read gate 夸大为完整 encrypted balance 隐私账本已完成。
 
 ### 7.2 多资产支付与 NOV 结算法条
 
@@ -151,7 +153,7 @@ _2026-04-17_
 9. 主线产品 smoke 已覆盖 shadow/internal MVP mapped asset 生命周期：`ua_registerMappedLock -> account_assets -> ua_burnMappedAsset -> ua_releaseMappedLock -> ua_getMappedAsset`，固定 `phase4_mode=shadow`、`settlement_effect=none`；也已覆盖 live `Ethereum lock evidence -> NETH/M2 credit -> burn -> Treasury reserve debit/release` 主线入口闭环，固定 `nov_minted=0`，不声明真实外部桥、自动外部释放或链上出金。
 10. M2 finality policy v1 已落代码：`mapped_lock_min_confirmations` 可由 governance/Treasury policy 设置；live ETH lock proof 会优先使用 native store policy，未设置时才 fallback 到 env/default。主线产品 smoke 已覆盖 governed min confirmations 未达标 fail-closed 与降低确认数后通过。它只管理最小 finalized confirmations，不等于完整 finality source 管理。
 11. Treasury reserve proof v1 已具备最小治理登记/查询与执行门禁面：`nov_setTreasuryReserveProof` / `governance.set_reserve_proof` 可按资产登记 proof type/digest/source/reference/amount/status；`treasury.get_reserve_proof` 和 `treasury.get_reserve_snapshot` 可只读暴露 effective status 与 non-claim 标记；主线查询面 `nov_getTreasuryReserveProof` / `nov_getTreasuryReserveSnapshot` 已可观察该状态。若某资产已登记 proof 且 effective status 非 `active`，该资产的 `nov_depositReserve`、非 NOV fee clearing 和 treasury redeem 会 fail-closed；若 active proof 的 `reserve_amount` 低于 projected Treasury reserve/exposure，`nov_depositReserve` 和非 NOV fee clearing 会拒绝扩张，treasury redeem 也必须在操作后不继续高于 proof cap。主线产品 smoke 已覆盖治理未启用时 fail-closed、治理启用后写入 revoked proof、查询 non-claim 标记，以及 revoked proof 阻断 `nov_depositReserve`。该路径仍不做自动外部验真、不授权 NOV mint、不授权外部赎回。
-12. nAsset 读隐私 v1 已落代码：`account_balance`、`account_assets` 和 `nov_getAssetBalance` 对 `N*` M2 资产默认返回 `privacy_redacted=true`，只有 `viewer_account_id/requester_account_id` 匹配账户或显式 `asset_view_authorized/account_view_authorized` 时才返回余额和资产列表明细。该门禁保护 native M2 余额和 mapped asset 明细，不影响 Treasury reserve、M2 liability、reserve proof、协议清算价和风险状态等系统级公开查询。
+12. nAsset 读隐私 v1 已落代码：`account_balance`、`account_assets` 和 `nov_getAssetBalance` 对 `N*` M2 资产默认返回 `privacy_redacted=true`，只有 `viewer_account_id/requester_account_id` 匹配账户或显式 `asset_view_authorized/account_view_authorized` 时才返回余额和资产列表明细。该门禁保护 native M2 余额和 mapped asset 明细，不影响 Treasury reserve、M2 liability、reserve proof、协议清算价和风险状态等系统级公开查询。AOEM RingCT / ZK 已作为后续密码学隐私执行/证明层纳入制度口径，但不能绕过 mainline 账本真相源。
 13. Native execution store 已具备最小 lockfile single-writer guard：主写路径先获取写锁，再执行 load/modify/save，适合单机/低并发产品闭环；该 guard 不是 RocksDB/事务后端，也不代表高并发账本入口完成。
 14. 当前仍不声明真实外部桥、完整 external finality source 管理、治理赔付、真实链上出金、完整自动 reserve proof verification、完整桥接铸造/赎回自动化、完整 encrypted balance/ZK proof 或多进程高并发账本入口完成；当前 finality source 管理只覆盖 source peer whitelist/quorum、disabled peer slashing reason/fail-closed、source peer rotation 记录、Ed25519 attestation quorum、disabled signer reason/fail-closed、signer rotation 记录、最小 confirmations 和 `nov_getMappedFinalitySourceStatus` 只读状态聚合。主线产品 smoke 已覆盖未授权 finality policy 写入 fail-closed、source quorum 不足 fail-closed 与第二个许可 source peer 观测后通过、attestation quorum 不足/disabled signer fail-closed 与两个 active signer 通过、governed min confirmations 未达标 fail-closed 与降低确认数后通过。治理层 oracle source allowlist / disabled reason / rotation mainline write、reserve proof mainline write、mainline protocol clearing price query、`P_redeem` reserve redeem、reserve proof effective-status gate 和 nAsset 最小 read gate 已具备最小执行约束，但不是开放喂价系统，也不等于完整 oracle 网络、自动 reserve verification 或完整密码学隐私账本。
 
