@@ -68,3 +68,7 @@ path = "src/bin/supervm-mainline-duty-report.rs"
 [[bin]]
 name = "supervm-mainline-p2d-sample-inject"
 path = "src/bin/supervm-mainline-p2d-sample-inject.rs"
+
+[[bin]]
+name = "supervm-native-pipeline-dual-node-gate"
+path = "src/bin/supervm-native-pipeline-dual-node-gate.rs"

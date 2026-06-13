@@ -230,6 +230,15 @@ $env:NOVOVM_NATIVE_EXECUTION_PIPELINE_UDP_PEERS="9900002=127.0.0.1:19002"
 
 The UDP drive receives native pipeline messages into the pending runtime before each AOEM tick and broadcasts eligible pending transactions to configured peers. It does not own execution concurrency; AOEM remains the execution kernel and concurrency owner.
 
+Local dual-process UDP gate:
+
+```powershell
+cargo build -p novovm-node --bins
+cargo run -p novovm-node --bin supervm-native-pipeline-dual-node-gate
+```
+
+The gate starts two real `novovm-node` child processes: a sender with fixture ingress and UDP broadcast, and a receiver with UDP receive plus AOEM tick/canonical projection. It validates sender broadcast counts and receiver `aoem_executed_total`, `proof_ticks`, `commit_ticks`, `included_canonical_total`, and `queue_pending_last=0`.
+
 EVM protocol-observable equivalence scope (CN):
 
 - `docs_CN/Adapters/EVM/NOVOVM-EVM-PROTOCOL-OBSERVABLE-EQUIVALENCE-V1-2026-06-07.md`

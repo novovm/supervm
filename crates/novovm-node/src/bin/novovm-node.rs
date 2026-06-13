@@ -33257,6 +33257,7 @@ struct NativeExecutionPipelineUdpDriveV1 {
     transport: UdpTransport,
     peers: Vec<NodeId>,
     recv_budget: usize,
+    broadcast_enabled: bool,
     broadcast_max_per_tick: usize,
     max_propagations: u64,
 }
@@ -33293,6 +33294,9 @@ impl NativeExecutionPipelineUdpDriveV1 {
                 16,
             )?
             .clamp(1, 4096),
+            broadcast_enabled: bool_env_default_true(
+                "NOVOVM_NATIVE_EXECUTION_PIPELINE_UDP_BROADCAST_ENABLED",
+            ),
             broadcast_max_per_tick: usize_env_allow_zero(
                 "NOVOVM_NATIVE_EXECUTION_PIPELINE_UDP_BROADCAST_MAX_PER_TICK",
                 1024,
@@ -33328,30 +33332,32 @@ impl NativeExecutionPipelineUdpDriveV1 {
         let mut broadcast_tx_count = 0u64;
         let mut broadcast_error_count = 0u64;
         let mut peer_reports = Vec::with_capacity(self.peers.len());
-        for peer in &self.peers {
-            match dispatch_network_runtime_native_pending_tx_broadcast_to_transport_v1(
-                &self.transport,
-                self.chain_id,
-                self.local_node,
-                *peer,
-                self.broadcast_max_per_tick,
-                self.max_propagations,
-            ) {
-                Ok(sent) => {
-                    broadcast_tx_count = broadcast_tx_count.saturating_add(sent as u64);
-                    peer_reports.push(serde_json::json!({
-                        "peer": peer.0,
-                        "ok": true,
-                        "broadcast_tx_count": sent as u64,
-                    }));
-                }
-                Err(err) => {
-                    broadcast_error_count = broadcast_error_count.saturating_add(1);
-                    peer_reports.push(serde_json::json!({
-                        "peer": peer.0,
-                        "ok": false,
-                        "error": err.to_string(),
-                    }));
+        if self.broadcast_enabled {
+            for peer in &self.peers {
+                match dispatch_network_runtime_native_pending_tx_broadcast_to_transport_v1(
+                    &self.transport,
+                    self.chain_id,
+                    self.local_node,
+                    *peer,
+                    self.broadcast_max_per_tick,
+                    self.max_propagations,
+                ) {
+                    Ok(sent) => {
+                        broadcast_tx_count = broadcast_tx_count.saturating_add(sent as u64);
+                        peer_reports.push(serde_json::json!({
+                            "peer": peer.0,
+                            "ok": true,
+                            "broadcast_tx_count": sent as u64,
+                        }));
+                    }
+                    Err(err) => {
+                        broadcast_error_count = broadcast_error_count.saturating_add(1);
+                        peer_reports.push(serde_json::json!({
+                            "peer": peer.0,
+                            "ok": false,
+                            "error": err.to_string(),
+                        }));
+                    }
                 }
             }
         }
@@ -33369,6 +33375,7 @@ impl NativeExecutionPipelineUdpDriveV1 {
             "local_addr": local_addr,
             "peer_count": self.peers.len() as u64,
             "received_count": received,
+            "broadcast_enabled": self.broadcast_enabled,
             "broadcast_tx_count": broadcast_tx_count,
             "broadcast_error_count": broadcast_error_count,
             "peers": peer_reports,
@@ -34807,6 +34814,7 @@ mod native_execution_pipeline_tests {
             transport: local_transport,
             peers: vec![remote],
             recv_budget: 4,
+            broadcast_enabled: true,
             broadcast_max_per_tick: 4,
             max_propagations: 3,
         };
