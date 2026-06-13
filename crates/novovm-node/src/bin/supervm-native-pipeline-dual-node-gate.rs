@@ -5,7 +5,7 @@ use serde_json::Value;
 use std::fs;
 use std::net::UdpSocket;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output, Stdio};
+use std::process::{Child, Command, Output, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 fn string_env_nonempty(name: &str) -> Option<String> {
@@ -143,6 +143,14 @@ fn tps_x1000(count: u64, elapsed_ms: u64) -> u64 {
     count.saturating_mul(1_000_000) / elapsed_ms
 }
 
+fn join_udp_peers_v1(peers: &[(u64, String)]) -> String {
+    peers
+        .iter()
+        .map(|(node, addr)| format!("{node}={addr}"))
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
 fn require_min(summary: &Value, field: &str, min: u64, label: &str) -> Result<()> {
     let actual = summary_u64(summary, field);
     if actual < min {
@@ -213,6 +221,14 @@ fn sender_round_aggregate_v1(summaries: &[Value]) -> Value {
         .iter()
         .map(|summary| summary_u64(summary, "broadcast_tx_total_last"))
         .sum::<u64>();
+    let queue_dropped_last = summaries
+        .iter()
+        .map(|summary| summary_u64(summary, "queue_dropped_last"))
+        .sum::<u64>();
+    let queue_rejected_last = summaries
+        .iter()
+        .map(|summary| summary_u64(summary, "queue_rejected_last"))
+        .sum::<u64>();
 
     serde_json::json!({
         "method": "nov_runNativeExecutionPipelineSenderAggregate",
@@ -235,6 +251,8 @@ fn sender_round_aggregate_v1(summaries: &[Value]) -> Value {
         "commit_ticks": commit_ticks,
         "broadcast_dispatch_total_last": broadcast_dispatch_total_last,
         "broadcast_tx_total_last": broadcast_tx_total_last,
+        "queue_dropped_last": queue_dropped_last,
+        "queue_rejected_last": queue_rejected_last,
         "progress_score": ingress_submitted_total.saturating_add(broadcast_tx_total_last),
     })
 }
@@ -299,14 +317,39 @@ fn main() -> Result<()> {
     )?;
     let sender_node = u64_env("NOVOVM_NATIVE_PIPELINE_DUAL_GATE_SENDER_NODE", 9_991_895)?;
     let receiver_node = u64_env("NOVOVM_NATIVE_PIPELINE_DUAL_GATE_RECEIVER_NODE", 9_991_896)?;
+    let receiver_count = u64_env("NOVOVM_NATIVE_PIPELINE_DUAL_GATE_RECEIVER_COUNT", 1)?
+        .max(1)
+        .min(8);
+    let udp_broadcast_max_propagations = u64_env(
+        "NOVOVM_NATIVE_PIPELINE_DUAL_GATE_UDP_BROADCAST_MAX_PROPAGATIONS",
+        receiver_count
+            .saturating_mul(sender_rounds.max(1))
+            .saturating_mul(2)
+            .max(3),
+    )?;
     let sender_addr = string_env_nonempty("NOVOVM_NATIVE_PIPELINE_DUAL_GATE_SENDER_ADDR")
         .map(Ok)
         .unwrap_or_else(reserve_udp_addr_v1)?;
-    let receiver_addr = string_env_nonempty("NOVOVM_NATIVE_PIPELINE_DUAL_GATE_RECEIVER_ADDR")
-        .map(Ok)
-        .unwrap_or_else(reserve_udp_addr_v1)?;
+    let receiver_addr_override =
+        string_env_nonempty("NOVOVM_NATIVE_PIPELINE_DUAL_GATE_RECEIVER_ADDR");
+    let mut receivers = Vec::<(u64, String, PathBuf)>::with_capacity(receiver_count as usize);
+    for idx in 0..receiver_count {
+        let node = receiver_node.saturating_add(idx);
+        let addr = if idx == 0 {
+            receiver_addr_override
+                .clone()
+                .map(Ok)
+                .unwrap_or_else(reserve_udp_addr_v1)?
+        } else {
+            reserve_udp_addr_v1()?
+        };
+        receivers.push((
+            node,
+            addr,
+            temp_store_path_v1(&format!("receiver-{idx}"), chain_id),
+        ));
+    }
     let sender_store = temp_store_path_v1("sender", chain_id);
-    let receiver_store = temp_store_path_v1("receiver", chain_id);
     let node_bin = novovm_node_bin_v1();
     if !node_bin.exists() {
         bail!(
@@ -364,6 +407,10 @@ fn main() -> Result<()> {
                 udp_broadcast_max_per_tick.to_string(),
             ),
             (
+                "NOVOVM_NATIVE_EXECUTION_PIPELINE_UDP_BROADCAST_MAX_PROPAGATIONS",
+                udp_broadcast_max_propagations.to_string(),
+            ),
+            (
                 "NOVOVM_NATIVE_EXECUTION_PIPELINE_UDP_RECV_BUDGET",
                 udp_recv_budget.to_string(),
             ),
@@ -383,29 +430,13 @@ fn main() -> Result<()> {
     };
 
     let receiver_peer = format!("{sender_node}={sender_addr}");
-    let sender_peer = format!("{receiver_node}={receiver_addr}");
-    let mut receiver_env = common(
-        receiver_ticks,
-        &receiver_store,
-        receiver_node,
-        &receiver_addr,
-        &receiver_peer,
+    let sender_peer = join_udp_peers_v1(
+        receivers
+            .iter()
+            .map(|(node, addr, _)| (*node, addr.clone()))
+            .collect::<Vec<_>>()
+            .as_slice(),
     );
-    receiver_env.extend([
-        (
-            "NOVOVM_NATIVE_EXECUTION_PIPELINE_REQUIRE_PROGRESS",
-            "false".to_string(),
-        ),
-        (
-            "NOVOVM_NATIVE_EXECUTION_PIPELINE_UDP_BROADCAST_ENABLED",
-            "false".to_string(),
-        ),
-        (
-            "NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_AOEM_EXECUTED",
-            "0".to_string(),
-        ),
-    ]);
-
     let mut sender_env = common(
         sender_ticks,
         &sender_store,
@@ -428,7 +459,23 @@ fn main() -> Result<()> {
         ),
     ]);
 
-    let receiver = {
+    let mut receiver_children = Vec::<(u64, String, Child)>::with_capacity(receiver_count as usize);
+    for (node, addr, store) in &receivers {
+        let mut receiver_env = common(receiver_ticks, store, *node, addr, &receiver_peer);
+        receiver_env.extend([
+            (
+                "NOVOVM_NATIVE_EXECUTION_PIPELINE_REQUIRE_PROGRESS",
+                "false".to_string(),
+            ),
+            (
+                "NOVOVM_NATIVE_EXECUTION_PIPELINE_UDP_BROADCAST_ENABLED",
+                "false".to_string(),
+            ),
+            (
+                "NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_AOEM_EXECUTED",
+                "0".to_string(),
+            ),
+        ]);
         let mut cmd = Command::new(&node_bin);
         cmd.env_clear();
         for (key, value) in std::env::vars() {
@@ -438,9 +485,16 @@ fn main() -> Result<()> {
             cmd.env(key, value);
         }
         cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
-        cmd.spawn()
-            .with_context(|| format!("spawn receiver node failed: {}", node_bin.display()))?
-    };
+        let child = cmd.spawn().with_context(|| {
+            format!(
+                "spawn receiver node failed: node={} addr={} bin={}",
+                node,
+                addr,
+                node_bin.display()
+            )
+        })?;
+        receiver_children.push((*node, addr.clone(), child));
+    }
     std::thread::sleep(std::time::Duration::from_millis(startup_wait_ms));
     let mut sender_summaries = Vec::with_capacity(sender_rounds as usize);
     let mut sent_total = 0u64;
@@ -480,11 +534,21 @@ fn main() -> Result<()> {
             std::thread::sleep(std::time::Duration::from_millis(sender_round_interval_ms));
         }
     }
-    let receiver_out = receiver
-        .wait_with_output()
-        .context("wait receiver node failed")?;
     let sender_summary = sender_round_aggregate_v1(sender_summaries.as_slice());
-    let receiver_summary = parse_summary_v1(&receiver_out, "receiver")?;
+    let mut receiver_summaries = Vec::<Value>::with_capacity(receiver_count as usize);
+    for (idx, (node, addr, child)) in receiver_children.into_iter().enumerate() {
+        let receiver_out = child
+            .wait_with_output()
+            .with_context(|| format!("wait receiver node failed: node={node} addr={addr}"))?;
+        receiver_summaries.push(parse_summary_v1(
+            &receiver_out,
+            format!("receiver_{}", idx + 1).as_str(),
+        )?);
+    }
+    let receiver_summary = receiver_summaries
+        .first()
+        .cloned()
+        .ok_or_else(|| anyhow::anyhow!("dual-node gate did not collect receiver summaries"))?;
     let sender_broadcast_tps_x1000 = tps_x1000(
         summary_u64(&sender_summary, "broadcast_tx_total_last"),
         summary_u64(&sender_summary, "elapsed_ms"),
@@ -495,16 +559,75 @@ fn main() -> Result<()> {
     );
 
     let validation = (|| -> Result<()> {
-        for (label, summary) in [("sender", &sender_summary), ("receiver", &receiver_summary)] {
-            require_eq_str(summary, "execution_kernel", "AOEM", label)?;
-            require_eq_str(summary, "aoem_concurrency_owner", "AOEM_runtime", label)?;
+        require_eq_str(&sender_summary, "execution_kernel", "AOEM", "sender")?;
+        require_eq_str(
+            &sender_summary,
+            "aoem_concurrency_owner",
+            "AOEM_runtime",
+            "sender",
+        )?;
+        require_eq_str(
+            &sender_summary,
+            "host_concurrency_policy",
+            "host_drives_lifecycle_only_no_rust_execution_scheduler",
+            "sender",
+        )?;
+        require_min(&sender_summary, "network_ok_ticks", 1, "sender")?;
+        if summary_u64(&sender_summary, "queue_dropped_last") != 0 {
+            bail!(
+                "sender summary gate failed: queue_dropped_last={} expected 0",
+                summary_u64(&sender_summary, "queue_dropped_last")
+            );
+        }
+        if summary_u64(&sender_summary, "queue_rejected_last") != 0 {
+            bail!(
+                "sender summary gate failed: queue_rejected_last={} expected 0",
+                summary_u64(&sender_summary, "queue_rejected_last")
+            );
+        }
+        for (idx, summary) in receiver_summaries.iter().enumerate() {
+            let label = format!("receiver_{}", idx + 1);
+            require_eq_str(summary, "execution_kernel", "AOEM", label.as_str())?;
+            require_eq_str(
+                summary,
+                "aoem_concurrency_owner",
+                "AOEM_runtime",
+                label.as_str(),
+            )?;
             require_eq_str(
                 summary,
                 "host_concurrency_policy",
                 "host_drives_lifecycle_only_no_rust_execution_scheduler",
-                label,
+                label.as_str(),
             )?;
-            require_min(summary, "network_ok_ticks", 1, label)?;
+            require_min(summary, "network_ok_ticks", 1, label.as_str())?;
+            require_min(summary, "aoem_executed_total", tx_count, label.as_str())?;
+            require_min(summary, "proof_ticks", execution_ticks, label.as_str())?;
+            require_min(summary, "commit_ticks", execution_ticks, label.as_str())?;
+            require_min(
+                summary,
+                "included_canonical_total",
+                tx_count,
+                label.as_str(),
+            )?;
+            if summary_u64(summary, "queue_pending_last") != 0 {
+                bail!(
+                    "{label} summary gate failed: queue_pending_last={} expected 0",
+                    summary_u64(summary, "queue_pending_last")
+                );
+            }
+            if summary_u64(summary, "queue_dropped_last") != 0 {
+                bail!(
+                    "{label} summary gate failed: queue_dropped_last={} expected 0",
+                    summary_u64(summary, "queue_dropped_last")
+                );
+            }
+            if summary_u64(summary, "queue_rejected_last") != 0 {
+                bail!(
+                    "{label} summary gate failed: queue_rejected_last={} expected 0",
+                    summary_u64(summary, "queue_rejected_last")
+                );
+            }
         }
         require_min(
             &sender_summary,
@@ -515,57 +638,15 @@ fn main() -> Result<()> {
         require_min(
             &sender_summary,
             "broadcast_tx_total_last",
-            tx_count,
+            tx_count.saturating_mul(receiver_count),
             "sender",
         )?;
         require_min(
             &sender_summary,
             "broadcast_dispatch_total_last",
-            total_ingress_ticks,
+            total_ingress_ticks.saturating_mul(receiver_count),
             "sender",
         )?;
-        require_min(
-            &receiver_summary,
-            "aoem_executed_total",
-            tx_count,
-            "receiver",
-        )?;
-        require_min(
-            &receiver_summary,
-            "proof_ticks",
-            execution_ticks,
-            "receiver",
-        )?;
-        require_min(
-            &receiver_summary,
-            "commit_ticks",
-            execution_ticks,
-            "receiver",
-        )?;
-        require_min(
-            &receiver_summary,
-            "included_canonical_total",
-            tx_count,
-            "receiver",
-        )?;
-        if summary_u64(&receiver_summary, "queue_pending_last") != 0 {
-            bail!(
-                "receiver summary gate failed: queue_pending_last={} expected 0",
-                summary_u64(&receiver_summary, "queue_pending_last")
-            );
-        }
-        if summary_u64(&receiver_summary, "queue_dropped_last") != 0 {
-            bail!(
-                "receiver summary gate failed: queue_dropped_last={} expected 0",
-                summary_u64(&receiver_summary, "queue_dropped_last")
-            );
-        }
-        if summary_u64(&receiver_summary, "queue_rejected_last") != 0 {
-            bail!(
-                "receiver summary gate failed: queue_rejected_last={} expected 0",
-                summary_u64(&receiver_summary, "queue_rejected_last")
-            );
-        }
         if sender_broadcast_tps_x1000 < min_sender_broadcast_tps_x1000 {
             bail!(
                 "sender summary gate failed: broadcast_tps_x1000={} below min {}",
@@ -598,6 +679,7 @@ fn main() -> Result<()> {
         "tick_budget": tick_budget,
         "tick_interval_ms": tick_interval_ms,
         "startup_wait_ms": startup_wait_ms,
+        "receiver_count": receiver_count,
         "sender_rounds": sender_rounds,
         "sender_round_interval_ms": sender_round_interval_ms,
         "sender_round_process_budget_ms": sender_round_process_budget_ms,
@@ -606,9 +688,17 @@ fn main() -> Result<()> {
         "ingress_max_per_tick": ingress_max_per_tick,
         "total_ingress_ticks": total_ingress_ticks,
         "udp_broadcast_max_per_tick": udp_broadcast_max_per_tick,
+        "udp_broadcast_max_propagations": udp_broadcast_max_propagations,
         "udp_recv_budget": udp_recv_budget,
         "sender_addr": sender_addr,
-        "receiver_addr": receiver_addr,
+        "receiver_addr": receivers
+            .first()
+            .map(|(_, addr, _)| addr.clone())
+            .unwrap_or_default(),
+        "receiver_addrs": receivers
+            .iter()
+            .map(|(node, addr, _)| serde_json::json!({"node": node, "addr": addr}))
+            .collect::<Vec<_>>(),
         "metrics": {
             "sender_broadcast_tps_x1000": sender_broadcast_tps_x1000,
             "receiver_canonical_tps_x1000": receiver_canonical_tps_x1000,
@@ -618,6 +708,7 @@ fn main() -> Result<()> {
         "sender_summary": sender_summary,
         "sender_round_summaries": sender_summaries,
         "receiver_summary": receiver_summary,
+        "receiver_summaries": receiver_summaries,
     });
     let report_path = report_path_v1();
     write_report_v1(report_path.as_path(), &report)?;
