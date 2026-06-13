@@ -4054,6 +4054,7 @@ mod tests {
     };
     use anyhow::Context;
     use aoem_bindings::{default_host_dll_path, mldsa_keygen_v1_auto, mldsa_sign_v1_auto};
+    use ed25519_dalek::{Signer as Ed25519Signer, SigningKey as Ed25519SigningKey};
     use novovm_adapter_api::{
         ChainAdapter, ChainConfig, ChainType, StateIR, TxIR, TxType, UcaKeyAlgo,
     };
@@ -4525,6 +4526,52 @@ mod tests {
                 observed_unix_ms: u128::from(2000u64.saturating_add(peer_id)),
             },
         );
+    }
+
+    fn mainline_mapped_header_attestation_message(
+        chain_id: u64,
+        block_number: u64,
+        block_hash: [u8; 32],
+        receipts_root: [u8; 32],
+    ) -> Vec<u8> {
+        let mut out = Vec::new();
+        out.extend_from_slice(b"novovm-mapped-header-attestation-v1");
+        out.push(0);
+        out.extend_from_slice(&chain_id.to_be_bytes());
+        out.push(0);
+        out.extend_from_slice(&block_number.to_be_bytes());
+        out.push(0);
+        out.extend_from_slice(&block_hash);
+        out.push(0);
+        out.extend_from_slice(&receipts_root);
+        out
+    }
+
+    fn mainline_mapped_header_attestation_message_from_params(params: &Value) -> Vec<u8> {
+        let chain_id = params
+            .get("source_chain_id")
+            .and_then(Value::as_u64)
+            .expect("source_chain_id should exist");
+        let block_number = params
+            .get("block_number")
+            .and_then(Value::as_u64)
+            .expect("block_number should exist");
+        let block_hash = params
+            .get("block_hash")
+            .and_then(Value::as_str)
+            .and_then(|raw| decode_fixed_32_hex_v1(raw).ok())
+            .expect("block_hash should decode");
+        let receipts_root = params
+            .get("receipts_root")
+            .and_then(Value::as_str)
+            .and_then(|raw| decode_fixed_32_hex_v1(raw).ok())
+            .expect("receipts_root should decode");
+        mainline_mapped_header_attestation_message(
+            chain_id,
+            block_number,
+            block_hash,
+            receipts_root,
+        )
     }
 
     struct MainlineEnvVarGuard {
@@ -11971,6 +12018,184 @@ mod tests {
         );
         assert_eq!(
             register["native_settlement"]["nov_minted"].as_u64(),
+            Some(0)
+        );
+
+        novovm_network::clear_network_runtime_native_state_for_host_tests_v1();
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn mainline_query_mapped_finality_attestation_policy_product_smoke() {
+        let _env_lock = geth_parity_test_lock_v1()
+            .lock()
+            .expect("mainline env test lock poisoned");
+        let _shadow_guard =
+            MainlineEnvVarGuard::set("NOVOVM_UA_PHASE4_SHADOW_MODE_ENFORCE", "false");
+        let (base, store, audit) = unique_unified_account_test_paths("mapped-attestation-policy");
+        let root = base
+            .parent()
+            .unwrap_or_else(|| std::path::Path::new("."))
+            .to_path_buf();
+        let native_store = root.join("native-execution-store.json");
+        save_nov_native_execution_store_v1(
+            native_store.as_path(),
+            &NovNativeExecutionStoreV1::default(),
+        )
+        .expect("seed native execution store for mapped attestation policy smoke");
+        let account_id = "acct-mainline-map-attestation-policy";
+        create_mainline_uca_for_smoke(&base, &store, &audit, &native_store, account_id);
+
+        let signer_a = Ed25519SigningKey::from_bytes(&[0xa1u8; 32]);
+        let signer_b = Ed25519SigningKey::from_bytes(&[0xb2u8; 32]);
+        let signer_c = Ed25519SigningKey::from_bytes(&[0xc3u8; 32]);
+        let signer_a_ref = mainline_test_hex_lower(&signer_a.verifying_key().to_bytes());
+        let signer_b_ref = mainline_test_hex_lower(&signer_b.verifying_key().to_bytes());
+        let signer_c_ref = mainline_test_hex_lower(&signer_c.verifying_key().to_bytes());
+        let mut disabled_reasons = serde_json::Map::new();
+        disabled_reasons.insert(
+            signer_b_ref.clone(),
+            Value::String("key_rotation".to_string()),
+        );
+        let mut signer_rotations = serde_json::Map::new();
+        signer_rotations.insert(
+            signer_b_ref.clone(),
+            Value::String(format!("0x{}", signer_c_ref)),
+        );
+
+        let policy = run_mainline_query_from_path(
+            base.as_path(),
+            "ua_setMappedHeaderAttestationPolicy",
+            &params_with_ua_and_native_paths(
+                store.as_path(),
+                audit.as_path(),
+                native_store.as_path(),
+                json!({
+                    "required": true,
+                    "allowed_signers": [signer_a_ref, signer_c_ref],
+                    "disabled_signers": [signer_b_ref],
+                    "disabled_signer_reasons": Value::Object(disabled_reasons),
+                    "signer_rotations": Value::Object(signer_rotations),
+                    "min_attestation_quorum": 2u64,
+                    "policy_source": "mainline_attestation_policy_smoke",
+                    "policy_version": 8u64,
+                    "now": 31u64,
+                }),
+            ),
+        )
+        .expect("ua_setMappedHeaderAttestationPolicy should succeed through mainline query");
+        assert_eq!(policy["updated"].as_bool(), Some(true));
+        assert_eq!(policy["policy"]["required"].as_bool(), Some(true));
+        assert_eq!(policy["policy"]["min_attestation_quorum"].as_u64(), Some(2));
+        assert_eq!(
+            policy["policy"]["disabled_signer_reasons"][signer_b_ref.as_str()].as_str(),
+            Some("key_rotation")
+        );
+        assert_eq!(
+            policy["policy"]["signer_rotations"][signer_b_ref.as_str()].as_str(),
+            Some(signer_c_ref.as_str())
+        );
+
+        let finality_status = run_mainline_query_from_path(
+            base.as_path(),
+            "ua_getMappedFinalitySourceStatus",
+            &params_with_ua_and_native_paths(
+                store.as_path(),
+                audit.as_path(),
+                native_store.as_path(),
+                json!({}),
+            ),
+        )
+        .expect("ua_getMappedFinalitySourceStatus should expose attestation policy");
+        assert_eq!(
+            finality_status["status"]["attestation_policy"]["required"].as_bool(),
+            Some(true)
+        );
+        assert_eq!(
+            finality_status["status"]["attestation_policy"]["min_attestation_quorum"].as_u64(),
+            Some(2)
+        );
+
+        let mut blocked_map = match mapped_lock_live_smoke_params(account_id, 0x75, 610) {
+            Value::Object(map) => map,
+            other => panic!("expected live smoke params object, got {other:?}"),
+        };
+        let blocked_params = Value::Object(blocked_map.clone());
+        let blocked_message =
+            mainline_mapped_header_attestation_message_from_params(&blocked_params);
+        let blocked_sig_a = signer_a.sign(blocked_message.as_slice()).to_bytes();
+        let blocked_sig_b = signer_b.sign(blocked_message.as_slice()).to_bytes();
+        blocked_map.insert(
+            "header_attestations".to_string(),
+            json!([
+                {
+                    "signer": format!("0x{}", signer_a_ref),
+                    "signature": format!("0x{}", mainline_test_hex_lower(&blocked_sig_a)),
+                },
+                {
+                    "signer": format!("0x{}", signer_b_ref),
+                    "signature": format!("0x{}", mainline_test_hex_lower(&blocked_sig_b)),
+                },
+            ]),
+        );
+        let attestation_err = run_mainline_query_from_path(
+            base.as_path(),
+            "ua_registerMappedLock",
+            &params_with_ua_and_native_paths(
+                store.as_path(),
+                audit.as_path(),
+                native_store.as_path(),
+                Value::Object(blocked_map),
+            ),
+        )
+        .expect_err("live register should fail closed when active attestation quorum is unmet");
+        let attestation_err = attestation_err.to_string();
+        assert!(
+            attestation_err.contains("ERR_MAPPED_HEADER_ATTESTATION_QUORUM_UNMET"),
+            "expected attestation quorum error, got: {attestation_err}"
+        );
+
+        let mut accepted_map = match mapped_lock_live_smoke_params(account_id, 0x76, 620) {
+            Value::Object(map) => map,
+            other => panic!("expected live smoke params object, got {other:?}"),
+        };
+        let accepted_params = Value::Object(accepted_map.clone());
+        let accepted_message =
+            mainline_mapped_header_attestation_message_from_params(&accepted_params);
+        let accepted_sig_a = signer_a.sign(accepted_message.as_slice()).to_bytes();
+        let accepted_sig_c = signer_c.sign(accepted_message.as_slice()).to_bytes();
+        accepted_map.insert(
+            "header_attestations".to_string(),
+            json!([
+                {
+                    "signer": format!("0x{}", signer_a_ref),
+                    "signature": format!("0x{}", mainline_test_hex_lower(&accepted_sig_a)),
+                },
+                {
+                    "signer": format!("0x{}", signer_c_ref),
+                    "signature": format!("0x{}", mainline_test_hex_lower(&accepted_sig_c)),
+                },
+            ]),
+        );
+        let accepted = run_mainline_query_from_path(
+            base.as_path(),
+            "ua_registerMappedLock",
+            &params_with_ua_and_native_paths(
+                store.as_path(),
+                audit.as_path(),
+                native_store.as_path(),
+                Value::Object(accepted_map),
+            ),
+        )
+        .expect("live register should pass when active attestation quorum is met");
+        assert_eq!(accepted["accepted"].as_bool(), Some(true));
+        assert_eq!(accepted["phase4_mode"].as_str(), Some("live"));
+        assert_eq!(
+            accepted["native_settlement"]["effect"].as_str(),
+            Some("neth_m2_credit")
+        );
+        assert_eq!(
+            accepted["native_settlement"]["nov_minted"].as_u64(),
             Some(0)
         );
 
