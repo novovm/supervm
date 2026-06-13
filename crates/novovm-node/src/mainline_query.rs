@@ -581,8 +581,15 @@ fn run_mainline_nov_m2_bridge_risk_status_v1(params: &Value) -> Result<Value> {
         .as_str()
         .unwrap_or(if proof_found { "unknown" } else { "missing" });
     let mut reasons = Vec::new();
-    if finality_state == "blocked" || finality_state == "unavailable" {
+    if finality_state != "governed_minimal" {
         reasons.push(format!("finality_source_state={finality_state}"));
+        if let Some(gaps) = finality_source["status"]["gaps"].as_array() {
+            for gap in gaps {
+                if let Some(raw) = gap.as_str() {
+                    reasons.push(format!("finality_gap={raw}"));
+                }
+            }
+        }
     }
     if !proof_found {
         reasons.push("reserve_proof_missing".to_string());
@@ -12535,6 +12542,59 @@ mod tests {
             .flatten()
             .any(|item| item.as_str() == Some("reserve_proof_missing")));
 
+        let open_finality_store =
+            unique_native_execution_store_path("m2-bridge-risk-status-open-finality");
+        let mut open_finality = NovNativeExecutionStoreV1::default();
+        open_finality
+            .module_state
+            .treasury_reserves
+            .insert("NETH".to_string(), 1_000);
+        open_finality.module_state.treasury_reserve_proofs.insert(
+            "NETH".to_string(),
+            NovTreasuryReserveProofV1 {
+                asset: "NETH".to_string(),
+                reserve_amount: 1_000,
+                proof_type: "custody_statement_v1".to_string(),
+                proof_digest: "0xm2bridgeriskopenfinality01".to_string(),
+                proof_source: "treasury_committee".to_string(),
+                proof_reference: "m2-bridge-risk-status-open-finality-001".to_string(),
+                observed_at_unix_ms: 1,
+                expires_at_unix_ms: 0,
+                policy_version: 1,
+                policy_source: "governance_path".to_string(),
+                status: "active".to_string(),
+                automated_verification: false,
+                verification_mode: "manual_governance_attestation".to_string(),
+            },
+        );
+        open_finality.module_state.mapped_lock_contract_address = format!("0x{}", "93".repeat(20));
+        open_finality.module_state.mapped_lock_min_confirmations = 21;
+        save_nov_native_execution_store_v1(open_finality_store.as_path(), &open_finality)
+            .expect("seed open finality M2 risk status smoke store");
+        let open_finality_status = run_mainline_query_from_path(
+            bogus_canonical_store,
+            "nov_getM2BridgeRiskStatus",
+            &json!({
+                "asset": "NETH",
+                "native_execution_store_path": open_finality_store.display().to_string(),
+            }),
+        )
+        .expect("nov_getM2BridgeRiskStatus should explain open finality risk");
+        assert_eq!(
+            open_finality_status["risk_state"].as_str(),
+            Some("constrained")
+        );
+        assert!(open_finality_status["reasons"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .any(|item| item.as_str() == Some("finality_source_state=open_unprotected")));
+        assert!(open_finality_status["reasons"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .any(|item| item.as_str() == Some("finality_gap=header_source_policy_not_required")));
+
         let unset_policy_store =
             unique_native_execution_store_path("m2-bridge-risk-status-policy-unset");
         let mut unset_policy = NovNativeExecutionStoreV1::default();
@@ -12588,6 +12648,7 @@ mod tests {
 
         let _ = fs::remove_file(native_store);
         let _ = fs::remove_file(missing_store);
+        let _ = fs::remove_file(open_finality_store);
         let _ = fs::remove_file(unset_policy_store);
     }
 
