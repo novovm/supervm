@@ -32,10 +32,13 @@ use crate::mainline_canonical::{
 };
 use crate::tx_ingress::{
     get_nov_native_account_asset_balance_with_store_path_v1,
+    get_nov_native_aoem_semantic_ingress_status_v1,
+    get_nov_native_execution_store_backend_status_v1,
     get_nov_native_treasury_clearing_summary_with_store_path_v1,
     get_nov_native_treasury_settlement_summary_with_store_path_v1,
     load_nov_native_execution_store_v1, nov_native_execution_store_path_v1,
     run_nov_execute_from_params_v1, run_nov_native_call_from_params_with_store_path_v1,
+    run_nov_send_raw_transaction_batch_from_params_v1,
 };
 use crate::unified_account_surface::{
     is_mainline_unified_account_query_method, run_mainline_unified_account_query,
@@ -466,6 +469,10 @@ pub fn is_mainline_native_execution_query_method(method: &str) -> bool {
             | "nov_getTreasuryReserveSnapshot"
             | "nov_getProtocolClearingPrice"
             | "nov_getFeeOracleRates"
+            | "nov_getAoemSemanticIngressStatus"
+            | "nov_getNativeExecutionStoreBackendStatus"
+            | "nov_sendRawTransactionBatch"
+            | "nov_executeBatch"
             | "nov_getPrivacyCapabilityStatus"
             | "nov_getPrivacyAuditPolicy"
             | "nov_verifyPrivacyDisclosureReceipt"
@@ -545,7 +552,11 @@ fn annotate_treasury_asset_purchase_v1(
     out
 }
 
-fn run_mainline_nov_buy_asset_v1(method: &str, params: &Value, legacy_alias: bool) -> Result<Value> {
+fn run_mainline_nov_buy_asset_v1(
+    method: &str,
+    params: &Value,
+    legacy_alias: bool,
+) -> Result<Value> {
     let asset_out = param_as_string_any(params, &["asset_out", "asset"])
         .ok_or_else(|| anyhow::anyhow!("asset_out/asset is required for {method}"))?;
     let nov_amount = param_as_u128_any(params, &["nov_amount", "amount"])
@@ -761,7 +772,13 @@ fn run_mainline_nov_m2_bridge_risk_status_v1(params: &Value) -> Result<Value> {
         .unwrap_or(0);
     let treasury_reserve_balance = store
         .as_ref()
-        .and_then(|store| store.module_state.treasury_reserves.get(asset.as_str()).copied())
+        .and_then(|store| {
+            store
+                .module_state
+                .treasury_reserves
+                .get(asset.as_str())
+                .copied()
+        })
         .unwrap_or(0);
     let mut reasons = Vec::new();
     if finality_state != "governed_minimal" {
@@ -777,7 +794,9 @@ fn run_mainline_nov_m2_bridge_risk_status_v1(params: &Value) -> Result<Value> {
     if !proof_found {
         reasons.push("reserve_proof_missing".to_string());
     } else if reserve_proof_status != "active" {
-        reasons.push(format!("reserve_proof_effective_status={reserve_proof_status}"));
+        reasons.push(format!(
+            "reserve_proof_effective_status={reserve_proof_status}"
+        ));
     }
     if let Some(store) = &store {
         if store.module_state.mapped_lock_bridge_paused {
@@ -789,7 +808,12 @@ fn run_mainline_nov_m2_bridge_risk_status_v1(params: &Value) -> Result<Value> {
         if store.module_state.mapped_asset_release_paused {
             reasons.push("mapped_asset_release_paused".to_string());
         }
-        if store.module_state.mapped_lock_contract_address.trim().is_empty() {
+        if store
+            .module_state
+            .mapped_lock_contract_address
+            .trim()
+            .is_empty()
+        {
             reasons.push("mapped_lock_contract_address_unset".to_string());
         }
         if store.module_state.mapped_lock_min_confirmations == 0 {
@@ -1512,6 +1536,16 @@ fn run_mainline_native_execution_query(method: &str, params: &Value) -> Result<V
                 "found": out.get("found").and_then(Value::as_bool).unwrap_or(false),
                 "oracle_rates": out.get("result").cloned().unwrap_or(Value::Null),
             }))
+        }
+        "nov_getAoemSemanticIngressStatus" => Ok(get_nov_native_aoem_semantic_ingress_status_v1()),
+        "nov_getNativeExecutionStoreBackendStatus" => {
+            let store_path = native_execution_store_path_from_params_or_env_v1(params);
+            Ok(get_nov_native_execution_store_backend_status_v1(Some(
+                store_path.as_path(),
+            )))
+        }
+        "nov_sendRawTransactionBatch" | "nov_executeBatch" => {
+            run_nov_send_raw_transaction_batch_from_params_v1(params)
         }
         "nov_getPrivacyCapabilityStatus" => run_mainline_privacy_capability_status_v1(params),
         "nov_getPrivacyAuditPolicy" => run_mainline_privacy_audit_policy_v1(params),
@@ -5660,7 +5694,10 @@ mod tests {
         params.insert("amount_in".to_string(), Value::from(100u64));
         params.insert("min_amount_out".to_string(), Value::from(1u64));
         params.insert("slippage_bps".to_string(), Value::from(25u64));
-        params.insert("pay_asset".to_string(), Value::String(fee_pay_asset.to_string()));
+        params.insert(
+            "pay_asset".to_string(),
+            Value::String(fee_pay_asset.to_string()),
+        );
         params.insert("max_pay_amount".to_string(), Value::from(500u64));
         params.insert(
             "native_execution_store_path".to_string(),
@@ -10981,6 +11018,10 @@ mod tests {
             "nov_getTreasuryReserveSnapshot",
             "nov_getProtocolClearingPrice",
             "nov_getFeeOracleRates",
+            "nov_getAoemSemanticIngressStatus",
+            "nov_getNativeExecutionStoreBackendStatus",
+            "nov_sendRawTransactionBatch",
+            "nov_executeBatch",
             "nov_getPrivacyCapabilityStatus",
             "nov_getPrivacyAuditPolicy",
             "nov_verifyPrivacyDisclosureReceipt",
@@ -11002,6 +11043,83 @@ mod tests {
                 "method should be recognized: {method}"
             );
         }
+    }
+
+    #[test]
+    fn mainline_query_aoem_semantic_ingress_status_reports_required_gate() {
+        let _enabled =
+            MainlineEnvVarGuard::set("NOVOVM_NATIVE_AOEM_SEMANTIC_INGRESS_ENABLED", "true");
+        let _required =
+            MainlineEnvVarGuard::set("NOVOVM_NATIVE_AOEM_SEMANTIC_INGRESS_REQUIRED", "true");
+        let bogus_canonical_store =
+            std::path::Path::new("this-canonical-store-does-not-exist.json");
+        let out = run_mainline_query_from_path(
+            bogus_canonical_store,
+            "nov_getAoemSemanticIngressStatus",
+            &json!({}),
+        )
+        .expect("AOEM semantic ingress status should not require canonical store");
+        assert_eq!(
+            out["method"].as_str(),
+            Some("nov_getAoemSemanticIngressStatus")
+        );
+        assert_eq!(out["execution_kernel"].as_str(), Some("AOEM"));
+        assert_eq!(
+            out["semantic_entry"].as_str(),
+            Some("aoem.ops_wire_v1.native_asset_semantic_ingress")
+        );
+        assert_eq!(out["algebraic_semantic_entry"].as_bool(), Some(true));
+        assert_eq!(
+            out["native_batch_entry"].as_str(),
+            Some("nov_sendRawTransactionBatch")
+        );
+        assert_eq!(
+            out["native_execute_batch_alias"].as_str(),
+            Some("nov_executeBatch")
+        );
+        assert!(out["recommended_threads"].as_u64().unwrap_or_default() >= 1);
+        assert_eq!(out["enabled"].as_bool(), Some(true));
+        assert_eq!(out["required"].as_bool(), Some(true));
+        assert_eq!(out["fail_closed"].as_bool(), Some(true));
+        assert_eq!(out["fallback_allowed"].as_bool(), Some(false));
+        assert_eq!(
+            out["fallback_policy"].as_str(),
+            Some("fail_closed_on_unavailable")
+        );
+    }
+
+    #[test]
+    fn mainline_query_native_execution_store_backend_status_reports_rocksdb_mode() {
+        let _backend = MainlineEnvVarGuard::set("NOVOVM_NATIVE_EXECUTION_STORE_BACKEND", "rocksdb");
+        let bogus_canonical_store =
+            std::path::Path::new("this-canonical-store-does-not-exist.json");
+        let temp_store = std::env::temp_dir().join(format!(
+            "novovm-mainline-native-store-status-{}.json",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock should be after epoch")
+                .as_nanos()
+        ));
+        let out = run_mainline_query_from_path(
+            bogus_canonical_store,
+            "nov_getNativeExecutionStoreBackendStatus",
+            &json!({
+                "native_execution_store_path": temp_store,
+            }),
+        )
+        .expect("native execution store backend status should not require canonical store");
+        assert_eq!(
+            out["method"].as_str(),
+            Some("nov_getNativeExecutionStoreBackendStatus")
+        );
+        assert_eq!(out["backend"].as_str(), Some("rocksdb"));
+        assert_eq!(out["rocksdb_enabled"].as_bool(), Some(true));
+        assert_eq!(out["json_snapshot_enabled"].as_bool(), Some(false));
+        assert_eq!(out["transactional_commit"].as_bool(), Some(true));
+        assert_eq!(
+            out["commit_model"].as_str(),
+            Some("rocksdb_sharded_atomic_batch_primary")
+        );
     }
 
     #[test]
@@ -11277,7 +11395,10 @@ mod tests {
                 .and_then(Value::as_bool),
             Some(false)
         );
-        assert_eq!(out.get("proof_system").and_then(Value::as_str), Some("none"));
+        assert_eq!(
+            out.get("proof_system").and_then(Value::as_str),
+            Some("none")
+        );
         assert_eq!(
             out.get("mldsa_role").and_then(Value::as_str),
             Some("pq_signature_only")
@@ -12381,10 +12502,7 @@ mod tests {
         assert_eq!(out["accepted"].as_bool(), Some(true));
         assert_eq!(out["account_id"].as_str(), Some(account_id));
         assert_eq!(out["key_algo"].as_str(), Some("mldsa87"));
-        assert_eq!(
-            out["execution_policy"].as_str(),
-            Some("privacy_required")
-        );
+        assert_eq!(out["execution_policy"].as_str(), Some("privacy_required"));
         assert_eq!(out["policy_enforced"].as_bool(), Some(false));
         assert_eq!(
             out["policy_rejection_reason"].as_str(),
@@ -12432,10 +12550,7 @@ mod tests {
         assert_eq!(out["accepted"].as_bool(), Some(true));
         assert_eq!(out["account_id"].as_str(), Some(account_id));
         assert_eq!(out["key_algo"].as_str(), Some("mldsa87"));
-        assert_eq!(
-            out["execution_policy"].as_str(),
-            Some("privacy_required")
-        );
+        assert_eq!(out["execution_policy"].as_str(), Some("privacy_required"));
         assert_eq!(out["policy_enforced"].as_bool(), Some(true));
         assert_eq!(out["policy_rejection_reason"], Value::Null);
         assert_eq!(out["native_receipt"]["status"].as_bool(), Some(true));
@@ -12451,7 +12566,10 @@ mod tests {
             "NUSDT",
         )
         .expect("NUSDT balance should load");
-        assert_eq!(nusdt_after, 1_000u128.saturating_sub(u128::from(paid_amount)));
+        assert_eq!(
+            nusdt_after,
+            1_000u128.saturating_sub(u128::from(paid_amount))
+        );
 
         let _ = fs::remove_file(native_store);
         let _ = fs::remove_dir_all(ua_root);
@@ -12597,18 +12715,14 @@ mod tests {
             nusd_after["privacy_disclosure"]["result_commitment_scope"].as_str(),
             Some("authorized_response_without_privacy_disclosure")
         );
-        assert!(
-            nusd_after["privacy_disclosure"]["result_commitment_digest"]
-                .as_str()
-                .unwrap_or_default()
-                .starts_with("0x")
-        );
-        assert!(
-            nusd_after["privacy_disclosure"]["disclosure_digest"]
-                .as_str()
-                .unwrap_or_default()
-                .starts_with("0x")
-        );
+        assert!(nusd_after["privacy_disclosure"]["result_commitment_digest"]
+            .as_str()
+            .unwrap_or_default()
+            .starts_with("0x"));
+        assert!(nusd_after["privacy_disclosure"]["disclosure_digest"]
+            .as_str()
+            .unwrap_or_default()
+            .starts_with("0x"));
         let disclosure_verify = run_mainline_query_from_path(
             bogus_canonical_store,
             "nov_verifyPrivacyDisclosureReceipt",
@@ -13190,10 +13304,7 @@ mod tests {
             purchase["settlement_semantics"].as_str(),
             Some("NOV_to_nAsset_treasury_settlement")
         );
-        assert_eq!(
-            purchase["external_redeem_triggered"].as_bool(),
-            Some(false)
-        );
+        assert_eq!(purchase["external_redeem_triggered"].as_bool(), Some(false));
         assert_eq!(
             purchase["external_redeem_semantics"].as_str(),
             Some("NETH_burn_then_ETH_lock_contract_release")
@@ -13472,7 +13583,10 @@ mod tests {
             status["finality_source"]["status"]["state"].as_str(),
             Some("governed_minimal")
         );
-        assert_eq!(status["reserve"]["reserve_proof_found"].as_bool(), Some(true));
+        assert_eq!(
+            status["reserve"]["reserve_proof_found"].as_bool(),
+            Some(true)
+        );
         assert_eq!(
             status["reserve"]["reserve_proof_effective_status"].as_str(),
             Some("active")
@@ -13527,11 +13641,13 @@ mod tests {
             status["operations_readiness"]["nov_emission_policy_ready"].as_bool(),
             Some(false)
         );
-        assert!(status["operations_readiness"]["next_required_before_external_bridge_v1"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .any(|item| item.as_str() == Some("chain_release_transaction_path")));
+        assert!(
+            status["operations_readiness"]["next_required_before_external_bridge_v1"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .any(|item| item.as_str() == Some("chain_release_transaction_path"))
+        );
         assert_eq!(
             status["settlement_boundaries"]["nov_is_m0_m1"].as_bool(),
             Some(true)
@@ -13844,7 +13960,9 @@ mod tests {
             },
         );
         unset_policy.module_state.mapped_header_source_required = true;
-        unset_policy.module_state.mapped_header_source_allowed_peer_ids = vec![41, 42];
+        unset_policy
+            .module_state
+            .mapped_header_source_allowed_peer_ids = vec![41, 42];
         unset_policy.module_state.mapped_header_source_min_quorum = 2;
         save_nov_native_execution_store_v1(unset_policy_store.as_path(), &unset_policy)
             .expect("seed unset lock policy M2 risk status smoke store");
@@ -14501,6 +14619,31 @@ mod tests {
             policy["result"]["policy"]["min_source_quorum"].as_u64(),
             Some(2)
         );
+        assert_eq!(
+            policy["result"]["aoem_semantic_commit"]["execution_kernel"].as_str(),
+            Some("AOEM")
+        );
+        assert_eq!(
+            policy["result"]["aoem_semantic_commit"]["action"].as_str(),
+            Some("set_mapped_header_source_policy")
+        );
+        assert_eq!(
+            policy["result"]["aoem_semantic_commit"]["subject"].as_str(),
+            Some("mapped_header_source_policy")
+        );
+        assert_eq!(
+            policy["result"]["aoem_semantic_commit"]["sequence"].as_u64(),
+            Some(2)
+        );
+        assert_eq!(
+            policy["result"]["aoem_semantic_commit"]["semantic_delta_count"].as_u64(),
+            Some(1)
+        );
+        let source_policy_commit = policy["result"]["aoem_semantic_commit"]["commit_seal"]
+            .as_str()
+            .expect("source policy should expose AOEM semantic commit seal")
+            .to_string();
+        assert_eq!(source_policy_commit.len(), 64);
 
         let finality_status = run_mainline_query_from_path(
             base.as_path(),
@@ -14566,6 +14709,14 @@ mod tests {
         assert_eq!(
             register["native_settlement"]["nov_minted"].as_u64(),
             Some(0)
+        );
+        assert_eq!(
+            register["native_settlement"]["aoem_semantic_commit"]["prev_seal"].as_str(),
+            Some(source_policy_commit.as_str())
+        );
+        assert_eq!(
+            register["native_settlement"]["aoem_semantic_commit"]["sequence"].as_u64(),
+            Some(3)
         );
 
         novovm_network::clear_network_runtime_native_state_for_host_tests_v1();
@@ -14692,6 +14843,31 @@ mod tests {
             policy["result"]["policy"]["signer_rotations"][signer_b_ref.as_str()].as_str(),
             Some(signer_c_ref.as_str())
         );
+        assert_eq!(
+            policy["result"]["aoem_semantic_commit"]["execution_kernel"].as_str(),
+            Some("AOEM")
+        );
+        assert_eq!(
+            policy["result"]["aoem_semantic_commit"]["action"].as_str(),
+            Some("set_mapped_header_attestation_policy")
+        );
+        assert_eq!(
+            policy["result"]["aoem_semantic_commit"]["subject"].as_str(),
+            Some("mapped_header_attestation_policy")
+        );
+        assert_eq!(
+            policy["result"]["aoem_semantic_commit"]["sequence"].as_u64(),
+            Some(2)
+        );
+        assert_eq!(
+            policy["result"]["aoem_semantic_commit"]["semantic_delta_count"].as_u64(),
+            Some(1)
+        );
+        let attestation_policy_commit = policy["result"]["aoem_semantic_commit"]["commit_seal"]
+            .as_str()
+            .expect("attestation policy should expose AOEM semantic commit seal")
+            .to_string();
+        assert_eq!(attestation_policy_commit.len(), 64);
 
         let finality_status = run_mainline_query_from_path(
             base.as_path(),
@@ -14800,6 +14976,14 @@ mod tests {
         assert_eq!(
             accepted["native_settlement"]["nov_minted"].as_u64(),
             Some(0)
+        );
+        assert_eq!(
+            accepted["native_settlement"]["aoem_semantic_commit"]["prev_seal"].as_str(),
+            Some(attestation_policy_commit.as_str())
+        );
+        assert_eq!(
+            accepted["native_settlement"]["aoem_semantic_commit"]["sequence"].as_u64(),
+            Some(3)
         );
 
         novovm_network::clear_network_runtime_native_state_for_host_tests_v1();

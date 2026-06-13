@@ -24,7 +24,18 @@ NOVOVM is a **decentralized infrastructure operator** for the Web3 era. It provi
 
 - **Unified execution kernel (`AOEM`)**
 	- Semantic concurrency with `OCCC` as the primary execution path
-	- `OCC` as a validation baseline and `MVCC + 2PC` as a strict safety fallback
+	- `OCC` remains only a validation baseline for compatibility checks
+	- Legacy `MVCC` references belong to archived/vendor reference material, not the current AOEM product architecture
+	- Product execution ingress must converge on the AOEM unified semantic execution kernel and its algebraic semantic entry, not on storage-level concurrency mechanisms
+	- Native asset execution emits AOEM semantic ingress metadata and semantic ledger commit seals (`prev_seal -> commit_seal`) as the current migration proof toward the AOEM-backed ledger
+	- Native raw transaction batches can enter through `nov_sendRawTransactionBatch` / `nov_executeBatch`: the batch is first submitted as one AOEM ops-wire algebraic semantic batch with adaptive parallelism metadata, then committed to the current native store in deterministic order
+	- Native execution store now supports `NOVOVM_NATIVE_EXECUTION_STORE_BACKEND=rocksdb|dual|json`; `rocksdb` uses a sharded atomic RocksDB write batch for `account/{account}/asset/{asset}`, `receipt/{tx_hash}`, `receipt_by_height/{height}`, `module_state/core`, `semantic_head/current`, `semantic_head/by_height/{height}`, and `snapshot_meta/{height}`, while `dual` keeps a JSON compatibility snapshot for migration comparison
+	- Native asset execution also writes an append-only AOEM semantic ledger mirror for commit proof continuity; this mirror is not a balance store or a second account truth source
+	- Mainline Unified Account live M2 lifecycle writes (`NETH` credit/burn/freeze/unfreeze/rollback/release) now attach AOEM semantic mutation commits and fail closed when AOEM semantic ingress is required but unavailable
+	- Mainline Unified Account identity writes (`ua_createUca`, key rotation, policy update, persona bind/revoke, `ua_route`) also attach AOEM semantic mutation commits as hashed semantic events; this is proof-chain metadata, not a duplicate UCA truth source
+	- Mainline mapped-header governance policy writes also attach AOEM semantic mutation commits so policy changes and later M2 credits share one semantic ledger chain
+	- Protocol clearing prices, AMM TWAP/NAV anchors, AMM pool state, clearing policy, and permissioned oracle policy are included in the AOEM `native_policy_state` projection so economic settlement rules are covered by semantic state digests
+	- Native governance receipts expose top-level AOEM semantic commit summaries for proposal submission, treasury policy updates, and reserve proof attestations
 - **Three‑channel routing layer**
 	- Standard Path / Consensus Path / Privacy Path
 	- Transparent to developers; acts as a QoS routing mechanism

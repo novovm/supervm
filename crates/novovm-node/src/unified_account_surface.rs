@@ -26,8 +26,10 @@ use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 
 use crate::tx_ingress::{
-    load_nov_native_execution_store_v1, mapped_asset_reorg_response_policy_v1,
-    nov_native_execution_store_path_v1, save_nov_native_execution_store_v1,
+    commit_unified_account_semantic_event_v1, load_nov_native_execution_store_v1,
+    mapped_asset_reorg_response_policy_v1,
+    mutate_nov_native_execution_store_with_aoem_semantic_commit_v1,
+    nov_native_execution_store_path_v1, NovAoemSemanticMutationCommitV1,
     NovTreasurySettlementJournalEntryV1,
 };
 
@@ -237,7 +239,7 @@ pub fn run_mainline_unified_account_query(
     let mut snapshot = store.load_snapshot()?;
     let before_event_count = snapshot.router.events().len() as u64;
     let before_flushed_event_count = snapshot.flushed_event_count;
-    let rpc_result = run_unified_account_surface_rpc(
+    let mut rpc_result = run_unified_account_surface_rpc(
         &mut snapshot.router,
         &mut snapshot.mapped_asset_state,
         &audit_sink,
@@ -251,6 +253,34 @@ pub fn run_mainline_unified_account_query(
     };
     if after_event_count != before_event_count {
         router_changed = true;
+    }
+
+    if router_changed && unified_account_aoem_semantic_commit_method_v1(method) {
+        if let Ok((value, _)) = rpc_result.as_mut() {
+            let now = param_as_u64(params, "now").unwrap_or_else(now_unix_sec);
+            let account_id = value
+                .get("account_id")
+                .and_then(Value::as_str)
+                .unwrap_or("unified_account");
+            let event_digest = unified_account_aoem_semantic_event_digest_v1(
+                method,
+                account_id,
+                before_event_count,
+                after_event_count,
+                value,
+            );
+            let tx_ref = format!("uca:{method}:{account_id}:{event_digest}");
+            let native_store_path = native_execution_store_path_from_params_or_env_v1(params);
+            let commit = commit_unified_account_semantic_event_v1(
+                native_store_path.as_path(),
+                tx_ref.as_str(),
+                account_id,
+                method,
+                event_digest.as_str(),
+                u128::from(now).saturating_mul(1000),
+            )?;
+            attach_aoem_semantic_commit_to_json_result_v1(value, commit);
+        }
     }
 
     let (router_events, next_cursor) =
@@ -602,27 +632,41 @@ fn run_unified_account_surface_rpc(
                 .clamp(1, u64::from(u32::MAX)) as u32;
             let now = param_as_u64(params, "now").unwrap_or_else(now_unix_sec);
             let store_path = native_execution_store_path_from_params_or_env_v1(params);
-            let mut store = load_nov_native_execution_store_v1(store_path.as_path())?;
-            store.module_state.mapped_header_source_required = required;
-            store.module_state.mapped_header_source_allowed_peer_ids = allowed_peer_ids;
-            store.module_state.mapped_header_source_disabled_peer_ids = disabled_peer_ids;
-            store
-                .module_state
-                .mapped_header_source_disabled_peer_reasons = disabled_peer_reasons;
-            store.module_state.mapped_header_source_peer_rotations = peer_rotations;
-            store.module_state.mapped_header_source_min_quorum = min_quorum;
-            store.module_state.mapped_header_source_policy_source = source;
-            store.module_state.mapped_header_source_policy_version = version;
-            store
-                .module_state
-                .mapped_header_source_policy_updated_unix_ms = u128::from(now).saturating_mul(1000);
-            store.last_updated_unix_ms = u128::from(now).saturating_mul(1000);
-            save_nov_native_execution_store_v1(store_path.as_path(), &store)?;
+            let tx_ref = format!("mapped_header_source_policy:v{version}:{}", source);
+            let (policy, aoem_commit) =
+                mutate_nov_native_execution_store_with_aoem_semantic_commit_v1(
+                    store_path.as_path(),
+                    "unified_account_surface",
+                    tx_ref.as_str(),
+                    "mapped_header_source_policy",
+                    "set_mapped_header_source_policy",
+                    u128::from(now).saturating_mul(1000),
+                    |store| {
+                        store.module_state.mapped_header_source_required = required;
+                        store.module_state.mapped_header_source_allowed_peer_ids = allowed_peer_ids;
+                        store.module_state.mapped_header_source_disabled_peer_ids =
+                            disabled_peer_ids;
+                        store
+                            .module_state
+                            .mapped_header_source_disabled_peer_reasons = disabled_peer_reasons;
+                        store.module_state.mapped_header_source_peer_rotations = peer_rotations;
+                        store.module_state.mapped_header_source_min_quorum = min_quorum;
+                        store.module_state.mapped_header_source_policy_source = source;
+                        store.module_state.mapped_header_source_policy_version = version;
+                        store
+                            .module_state
+                            .mapped_header_source_policy_updated_unix_ms =
+                            u128::from(now).saturating_mul(1000);
+                        store.last_updated_unix_ms = u128::from(now).saturating_mul(1000);
+                        Ok(mapped_header_source_policy_to_json_v1(store))
+                    },
+                )?;
             Ok((
                 json!({
                     "method": method,
                     "updated": true,
-                    "policy": mapped_header_source_policy_to_json_v1(&store),
+                    "policy": policy,
+                    "aoem_semantic_commit": aoem_semantic_commit_json_v1(aoem_commit),
                     "store_path": store_path.display().to_string(),
                 }),
                 true,
@@ -712,32 +756,46 @@ fn run_unified_account_surface_rpc(
                 .clamp(1, u64::from(u32::MAX)) as u32;
             let now = param_as_u64(params, "now").unwrap_or_else(now_unix_sec);
             let store_path = native_execution_store_path_from_params_or_env_v1(params);
-            let mut store = load_nov_native_execution_store_v1(store_path.as_path())?;
-            store.module_state.mapped_header_attestation_required = required;
-            store.module_state.mapped_header_attestation_allowed_signers = allowed_signers;
-            store
-                .module_state
-                .mapped_header_attestation_disabled_signers = disabled_signers;
-            store
-                .module_state
-                .mapped_header_attestation_disabled_signer_reasons = disabled_signer_reasons;
-            store
-                .module_state
-                .mapped_header_attestation_signer_rotations = signer_rotations;
-            store.module_state.mapped_header_attestation_min_quorum = min_quorum;
-            store.module_state.mapped_header_attestation_policy_source = source;
-            store.module_state.mapped_header_attestation_policy_version = version;
-            store
-                .module_state
-                .mapped_header_attestation_policy_updated_unix_ms =
-                u128::from(now).saturating_mul(1000);
-            store.last_updated_unix_ms = u128::from(now).saturating_mul(1000);
-            save_nov_native_execution_store_v1(store_path.as_path(), &store)?;
+            let tx_ref = format!("mapped_header_attestation_policy:v{version}:{}", source);
+            let (policy, aoem_commit) =
+                mutate_nov_native_execution_store_with_aoem_semantic_commit_v1(
+                    store_path.as_path(),
+                    "unified_account_surface",
+                    tx_ref.as_str(),
+                    "mapped_header_attestation_policy",
+                    "set_mapped_header_attestation_policy",
+                    u128::from(now).saturating_mul(1000),
+                    |store| {
+                        store.module_state.mapped_header_attestation_required = required;
+                        store.module_state.mapped_header_attestation_allowed_signers =
+                            allowed_signers;
+                        store
+                            .module_state
+                            .mapped_header_attestation_disabled_signers = disabled_signers;
+                        store
+                            .module_state
+                            .mapped_header_attestation_disabled_signer_reasons =
+                            disabled_signer_reasons;
+                        store
+                            .module_state
+                            .mapped_header_attestation_signer_rotations = signer_rotations;
+                        store.module_state.mapped_header_attestation_min_quorum = min_quorum;
+                        store.module_state.mapped_header_attestation_policy_source = source;
+                        store.module_state.mapped_header_attestation_policy_version = version;
+                        store
+                            .module_state
+                            .mapped_header_attestation_policy_updated_unix_ms =
+                            u128::from(now).saturating_mul(1000);
+                        store.last_updated_unix_ms = u128::from(now).saturating_mul(1000);
+                        Ok(mapped_header_attestation_policy_to_json_v1(store))
+                    },
+                )?;
             Ok((
                 json!({
                     "method": method,
                     "updated": true,
-                    "policy": mapped_header_attestation_policy_to_json_v1(&store),
+                    "policy": policy,
+                    "aoem_semantic_commit": aoem_semantic_commit_json_v1(aoem_commit),
                     "store_path": store_path.display().to_string(),
                 }),
                 true,
@@ -3199,6 +3257,75 @@ fn mapped_asset_live_settlement_journal_v1(
     }
 }
 
+fn aoem_semantic_commit_json_v1(commit: Option<NovAoemSemanticMutationCommitV1>) -> Value {
+    commit
+        .map(serde_json::to_value)
+        .transpose()
+        .ok()
+        .flatten()
+        .unwrap_or(Value::Null)
+}
+
+fn unified_account_aoem_semantic_commit_method_v1(method: &str) -> bool {
+    matches!(
+        method,
+        "ua_createUca"
+            | "ua_rotatePrimaryKey"
+            | "ua_setPolicy"
+            | "ua_bindPersona"
+            | "ua_revokePersona"
+            | "ua_route"
+    )
+}
+
+fn unified_account_aoem_semantic_event_digest_v1(
+    method: &str,
+    account_id: &str,
+    before_event_count: u64,
+    after_event_count: u64,
+    value: &Value,
+) -> String {
+    let payload = json!({
+        "schema": "novovm-unified-account-aoem-semantic-event/v1",
+        "method": method,
+        "account_id": account_id,
+        "event_cursor_from": before_event_count,
+        "event_cursor_to": after_event_count,
+        "result": {
+            "created": value.get("created").and_then(Value::as_bool),
+            "rotated": value.get("rotated").and_then(Value::as_bool),
+            "updated": value.get("updated").and_then(Value::as_bool),
+            "bound": value.get("bound").and_then(Value::as_bool),
+            "revoked": value.get("revoked").and_then(Value::as_bool),
+            "accepted": value.get("accepted").and_then(Value::as_bool),
+            "key_algo": value.get("key_algo").and_then(Value::as_str),
+            "persona_type": value.get("persona_type").and_then(Value::as_str),
+            "chain_id": value.get("chain_id").and_then(Value::as_u64),
+            "nonce": value.get("nonce").and_then(Value::as_u64),
+            "nonce_scope": value.get("nonce_scope").and_then(Value::as_str),
+            "type4_policy_mode": value.get("type4_policy_mode").and_then(Value::as_str),
+            "kyc_policy_mode": value.get("kyc_policy_mode").and_then(Value::as_str),
+        },
+    });
+    let bytes = serde_json::to_vec(&payload).unwrap_or_default();
+    let mut hasher = Sha256::new();
+    hasher.update(b"novovm-unified-account-aoem-semantic-event-digest-v1");
+    hasher.update(bytes);
+    to_hex_lower(&hasher.finalize())
+}
+
+fn attach_aoem_semantic_commit_to_json_result_v1(
+    value: &mut Value,
+    commit: Option<NovAoemSemanticMutationCommitV1>,
+) {
+    if let Some(object) = value.as_object_mut() {
+        object.insert(
+            "aoem_semantic_commit".to_string(),
+            aoem_semantic_commit_json_v1(commit),
+        );
+    }
+}
+
 fn apply_live_mapped_lock_m2_credit_v1(
     record: &MappedAssetRecord,
     mapping_key: &str,
@@ -3216,42 +3343,54 @@ fn apply_live_mapped_lock_m2_credit_v1(
     }
     require_mapped_bridge_gate_open_v1(params, MappedBridgeGateV1::Register)?;
     let store_path = native_execution_store_path_from_params_or_env_v1(params);
+    let store_path_display = store_path.display().to_string();
     let account_key = normalize_account_view_key_v1(&record.target_account_id);
     let asset_key = normalize_asset_view_symbol_v1(&record.target_asset_symbol);
-    let mut store = load_nov_native_execution_store_v1(store_path.as_path())?;
-    let user_balance_after = {
-        let balances = store
-            .module_state
-            .account_asset_balances
-            .entry(account_key.clone())
-            .or_default();
-        let entry = balances.entry(asset_key.clone()).or_insert(0);
-        *entry = entry.saturating_add(record.amount);
-        *entry
-    };
-    let reserve_after = {
-        let entry = store
-            .module_state
-            .treasury_reserves
-            .entry(asset_key.clone())
-            .or_insert(0);
-        *entry = entry.saturating_add(record.amount);
-        *entry
-    };
-    append_ua_treasury_journal_v1(
-        &mut store,
-        mapped_asset_live_settlement_journal_v1(
+    let tx_ref = format!("0x{}", to_hex_lower(source_tx_hash));
+    let ((user_balance_after, reserve_after), aoem_commit) =
+        mutate_nov_native_execution_store_with_aoem_semantic_commit_v1(
+            store_path.as_path(),
+            "unified_account_surface",
+            tx_ref.as_str(),
+            account_key.as_str(),
             "mapped_lock_m2_credit",
-            record,
-            mapping_key,
-            format!("0x{}", to_hex_lower(source_tx_hash)).as_str(),
-            "success",
-            "ETH lock mapped to NETH M2 credit; NOV mint is not triggered",
-            now,
-        ),
-    );
-    store.last_updated_unix_ms = u128::from(now).saturating_mul(1000);
-    save_nov_native_execution_store_v1(store_path.as_path(), &store)?;
+            u128::from(now).saturating_mul(1000),
+            |store| {
+                let user_balance_after = {
+                    let balances = store
+                        .module_state
+                        .account_asset_balances
+                        .entry(account_key.clone())
+                        .or_default();
+                    let entry = balances.entry(asset_key.clone()).or_insert(0);
+                    *entry = entry.saturating_add(record.amount);
+                    *entry
+                };
+                let reserve_after = {
+                    let entry = store
+                        .module_state
+                        .treasury_reserves
+                        .entry(asset_key.clone())
+                        .or_insert(0);
+                    *entry = entry.saturating_add(record.amount);
+                    *entry
+                };
+                append_ua_treasury_journal_v1(
+                    store,
+                    mapped_asset_live_settlement_journal_v1(
+                        "mapped_lock_m2_credit",
+                        record,
+                        mapping_key,
+                        tx_ref.as_str(),
+                        "success",
+                        "ETH lock mapped to NETH M2 credit; NOV mint is not triggered",
+                        now,
+                    ),
+                );
+                store.last_updated_unix_ms = u128::from(now).saturating_mul(1000);
+                Ok((user_balance_after, reserve_after))
+            },
+        )?;
     Ok(json!({
         "applied": true,
         "mode": "live",
@@ -3261,7 +3400,8 @@ fn apply_live_mapped_lock_m2_credit_v1(
         "account_balance_after": user_balance_after,
         "treasury_reserve_after": reserve_after,
         "nov_minted": 0,
-        "store_path": store_path.display().to_string(),
+        "aoem_semantic_commit": aoem_semantic_commit_json_v1(aoem_commit),
+        "store_path": store_path_display,
     }))
 }
 
@@ -3281,42 +3421,54 @@ fn apply_live_mapped_asset_m2_burn_v1(
     }
     require_mapped_bridge_gate_open_v1(params, MappedBridgeGateV1::Burn)?;
     let store_path = native_execution_store_path_from_params_or_env_v1(params);
+    let store_path_display = store_path.display().to_string();
     let account_key = normalize_account_view_key_v1(&record.target_account_id);
     let asset_key = normalize_asset_view_symbol_v1(&record.target_asset_symbol);
-    let mut store = load_nov_native_execution_store_v1(store_path.as_path())?;
-    let user_balance_after = {
-        let balances = store
-            .module_state
-            .account_asset_balances
-            .entry(account_key.clone())
-            .or_default();
-        let entry = balances.entry(asset_key.clone()).or_insert(0);
-        if *entry < record.amount {
-            bail!(
-                "ERR_MAPPED_BURN_NATIVE_BALANCE_INSUFFICIENT: account={} asset={} requested={} available={}",
-                account_key,
-                asset_key,
-                record.amount,
-                *entry
-            );
-        }
-        *entry = entry.saturating_sub(record.amount);
-        *entry
-    };
-    append_ua_treasury_journal_v1(
-        &mut store,
-        mapped_asset_live_settlement_journal_v1(
+    let tx_ref = mapped_asset_hex_id(&record.mapping_id);
+    let (user_balance_after, aoem_commit) =
+        mutate_nov_native_execution_store_with_aoem_semantic_commit_v1(
+            store_path.as_path(),
+            "unified_account_surface",
+            tx_ref.as_str(),
+            account_key.as_str(),
             "mapped_asset_m2_burn_pending",
-            record,
-            mapping_key,
-            mapped_asset_hex_id(&record.mapping_id).as_str(),
-            "success",
-            "NETH M2 credit burned before external source release",
-            now,
-        ),
-    );
-    store.last_updated_unix_ms = u128::from(now).saturating_mul(1000);
-    save_nov_native_execution_store_v1(store_path.as_path(), &store)?;
+            u128::from(now).saturating_mul(1000),
+            |store| {
+                let user_balance_after = {
+                    let balances = store
+                        .module_state
+                        .account_asset_balances
+                        .entry(account_key.clone())
+                        .or_default();
+                    let entry = balances.entry(asset_key.clone()).or_insert(0);
+                    if *entry < record.amount {
+                        bail!(
+                        "ERR_MAPPED_BURN_NATIVE_BALANCE_INSUFFICIENT: account={} asset={} requested={} available={}",
+                        account_key,
+                        asset_key,
+                        record.amount,
+                        *entry
+                    );
+                    }
+                    *entry = entry.saturating_sub(record.amount);
+                    *entry
+                };
+                append_ua_treasury_journal_v1(
+                    store,
+                    mapped_asset_live_settlement_journal_v1(
+                        "mapped_asset_m2_burn_pending",
+                        record,
+                        mapping_key,
+                        mapped_asset_hex_id(&record.mapping_id).as_str(),
+                        "success",
+                        "NETH M2 credit burned before external source release",
+                        now,
+                    ),
+                );
+                store.last_updated_unix_ms = u128::from(now).saturating_mul(1000);
+                Ok(user_balance_after)
+            },
+        )?;
     Ok(json!({
         "applied": true,
         "mode": "live",
@@ -3324,7 +3476,8 @@ fn apply_live_mapped_asset_m2_burn_v1(
         "asset": asset_key,
         "amount": record.amount,
         "account_balance_after": user_balance_after,
-        "store_path": store_path.display().to_string(),
+        "aoem_semantic_commit": aoem_semantic_commit_json_v1(aoem_commit),
+        "store_path": store_path_display,
     }))
 }
 
@@ -3344,49 +3497,61 @@ fn apply_live_mapped_asset_m2_freeze_v1(
         }));
     }
     let store_path = native_execution_store_path_from_params_or_env_v1(params);
+    let store_path_display = store_path.display().to_string();
     let account_key = normalize_account_view_key_v1(&record.target_account_id);
     let asset_key = normalize_asset_view_symbol_v1(&record.target_asset_symbol);
-    let mut store = load_nov_native_execution_store_v1(store_path.as_path())?;
-    let user_balance_after = if record.status == MappedAssetStatus::Active {
-        let balances = store
-            .module_state
-            .account_asset_balances
-            .entry(account_key.clone())
-            .or_default();
-        let entry = balances.entry(asset_key.clone()).or_insert(0);
-        if *entry < record.amount {
-            bail!(
-                "ERR_MAPPED_FREEZE_NATIVE_BALANCE_INSUFFICIENT: account={} asset={} requested={} available={}",
-                account_key,
-                asset_key,
-                record.amount,
-                *entry
-            );
-        }
-        *entry = entry.saturating_sub(record.amount);
-        *entry
-    } else {
-        store
-            .module_state
-            .account_asset_balances
-            .get(account_key.as_str())
-            .and_then(|assets| assets.get(asset_key.as_str()).copied())
-            .unwrap_or(0)
-    };
-    append_ua_treasury_journal_v1(
-        &mut store,
-        mapped_asset_live_settlement_journal_v1(
+    let tx_ref = mapped_asset_hex_id(&record.mapping_id);
+    let (user_balance_after, aoem_commit) =
+        mutate_nov_native_execution_store_with_aoem_semantic_commit_v1(
+            store_path.as_path(),
+            "unified_account_surface",
+            tx_ref.as_str(),
+            account_key.as_str(),
             "mapped_asset_m2_frozen",
-            record,
-            mapping_key,
-            mapped_asset_hex_id(&record.mapping_id).as_str(),
-            "frozen",
-            reason,
-            now,
-        ),
-    );
-    store.last_updated_unix_ms = u128::from(now).saturating_mul(1000);
-    save_nov_native_execution_store_v1(store_path.as_path(), &store)?;
+            u128::from(now).saturating_mul(1000),
+            |store| {
+                let user_balance_after = if record.status == MappedAssetStatus::Active {
+                    let balances = store
+                        .module_state
+                        .account_asset_balances
+                        .entry(account_key.clone())
+                        .or_default();
+                    let entry = balances.entry(asset_key.clone()).or_insert(0);
+                    if *entry < record.amount {
+                        bail!(
+                        "ERR_MAPPED_FREEZE_NATIVE_BALANCE_INSUFFICIENT: account={} asset={} requested={} available={}",
+                        account_key,
+                        asset_key,
+                        record.amount,
+                        *entry
+                    );
+                    }
+                    *entry = entry.saturating_sub(record.amount);
+                    *entry
+                } else {
+                    store
+                        .module_state
+                        .account_asset_balances
+                        .get(account_key.as_str())
+                        .and_then(|assets| assets.get(asset_key.as_str()).copied())
+                        .unwrap_or(0)
+                };
+                append_ua_treasury_journal_v1(
+                    store,
+                    mapped_asset_live_settlement_journal_v1(
+                        "mapped_asset_m2_frozen",
+                        record,
+                        mapping_key,
+                        mapped_asset_hex_id(&record.mapping_id).as_str(),
+                        "frozen",
+                        reason,
+                        now,
+                    ),
+                );
+                store.last_updated_unix_ms = u128::from(now).saturating_mul(1000);
+                Ok(user_balance_after)
+            },
+        )?;
     Ok(json!({
         "applied": true,
         "mode": "live",
@@ -3396,7 +3561,8 @@ fn apply_live_mapped_asset_m2_freeze_v1(
         "account_balance_after": user_balance_after,
         "treasury_reserve_unchanged": true,
         "reason": reason,
-        "store_path": store_path.display().to_string(),
+        "aoem_semantic_commit": aoem_semantic_commit_json_v1(aoem_commit),
+        "store_path": store_path_display,
     }))
 }
 
@@ -3416,33 +3582,45 @@ fn apply_live_mapped_asset_m2_unfreeze_v1(
         }));
     }
     let store_path = native_execution_store_path_from_params_or_env_v1(params);
+    let store_path_display = store_path.display().to_string();
     let account_key = normalize_account_view_key_v1(&record.target_account_id);
     let asset_key = normalize_asset_view_symbol_v1(&record.target_asset_symbol);
-    let mut store = load_nov_native_execution_store_v1(store_path.as_path())?;
-    let user_balance_after = {
-        let balances = store
-            .module_state
-            .account_asset_balances
-            .entry(account_key.clone())
-            .or_default();
-        let entry = balances.entry(asset_key.clone()).or_insert(0);
-        *entry = entry.saturating_add(record.amount);
-        *entry
-    };
-    append_ua_treasury_journal_v1(
-        &mut store,
-        mapped_asset_live_settlement_journal_v1(
+    let tx_ref = mapped_asset_hex_id(&record.mapping_id);
+    let (user_balance_after, aoem_commit) =
+        mutate_nov_native_execution_store_with_aoem_semantic_commit_v1(
+            store_path.as_path(),
+            "unified_account_surface",
+            tx_ref.as_str(),
+            account_key.as_str(),
             "mapped_asset_m2_unfrozen",
-            record,
-            mapping_key,
-            mapped_asset_hex_id(&record.mapping_id).as_str(),
-            "active",
-            reason,
-            now,
-        ),
-    );
-    store.last_updated_unix_ms = u128::from(now).saturating_mul(1000);
-    save_nov_native_execution_store_v1(store_path.as_path(), &store)?;
+            u128::from(now).saturating_mul(1000),
+            |store| {
+                let user_balance_after = {
+                    let balances = store
+                        .module_state
+                        .account_asset_balances
+                        .entry(account_key.clone())
+                        .or_default();
+                    let entry = balances.entry(asset_key.clone()).or_insert(0);
+                    *entry = entry.saturating_add(record.amount);
+                    *entry
+                };
+                append_ua_treasury_journal_v1(
+                    store,
+                    mapped_asset_live_settlement_journal_v1(
+                        "mapped_asset_m2_unfrozen",
+                        record,
+                        mapping_key,
+                        mapped_asset_hex_id(&record.mapping_id).as_str(),
+                        "active",
+                        reason,
+                        now,
+                    ),
+                );
+                store.last_updated_unix_ms = u128::from(now).saturating_mul(1000);
+                Ok(user_balance_after)
+            },
+        )?;
     Ok(json!({
         "applied": true,
         "mode": "live",
@@ -3452,7 +3630,8 @@ fn apply_live_mapped_asset_m2_unfreeze_v1(
         "account_balance_after": user_balance_after,
         "treasury_reserve_unchanged": true,
         "reason": reason,
-        "store_path": store_path.display().to_string(),
+        "aoem_semantic_commit": aoem_semantic_commit_json_v1(aoem_commit),
+        "store_path": store_path_display,
     }))
 }
 
@@ -3472,46 +3651,58 @@ fn apply_live_mapped_asset_m2_rollback_v1(
         }));
     }
     let store_path = native_execution_store_path_from_params_or_env_v1(params);
+    let store_path_display = store_path.display().to_string();
     let account_key = normalize_account_view_key_v1(&record.target_account_id);
     let asset_key = normalize_asset_view_symbol_v1(&record.target_asset_symbol);
-    let mut store = load_nov_native_execution_store_v1(store_path.as_path())?;
-    let reserve_after = {
-        let entry = store
-            .module_state
-            .treasury_reserves
-            .entry(asset_key.clone())
-            .or_insert(0);
-        if *entry < record.amount {
-            bail!(
-                "ERR_MAPPED_ROLLBACK_TREASURY_RESERVE_INSUFFICIENT: asset={} requested={} available={}",
-                asset_key,
-                record.amount,
-                *entry
-            );
-        }
-        *entry = entry.saturating_sub(record.amount);
-        *entry
-    };
-    let account_balance_unchanged = store
-        .module_state
-        .account_asset_balances
-        .get(account_key.as_str())
-        .and_then(|assets| assets.get(asset_key.as_str()).copied())
-        .unwrap_or(0);
-    append_ua_treasury_journal_v1(
-        &mut store,
-        mapped_asset_live_settlement_journal_v1(
+    let tx_ref = mapped_asset_hex_id(&record.mapping_id);
+    let ((reserve_after, account_balance_unchanged), aoem_commit) =
+        mutate_nov_native_execution_store_with_aoem_semantic_commit_v1(
+            store_path.as_path(),
+            "unified_account_surface",
+            tx_ref.as_str(),
+            account_key.as_str(),
             "mapped_asset_m2_rolled_back",
-            record,
-            mapping_key,
-            mapped_asset_hex_id(&record.mapping_id).as_str(),
-            "rejected",
-            reason,
-            now,
-        ),
-    );
-    store.last_updated_unix_ms = u128::from(now).saturating_mul(1000);
-    save_nov_native_execution_store_v1(store_path.as_path(), &store)?;
+            u128::from(now).saturating_mul(1000),
+            |store| {
+                let reserve_after = {
+                    let entry = store
+                        .module_state
+                        .treasury_reserves
+                        .entry(asset_key.clone())
+                        .or_insert(0);
+                    if *entry < record.amount {
+                        bail!(
+                        "ERR_MAPPED_ROLLBACK_TREASURY_RESERVE_INSUFFICIENT: asset={} requested={} available={}",
+                        asset_key,
+                        record.amount,
+                        *entry
+                    );
+                    }
+                    *entry = entry.saturating_sub(record.amount);
+                    *entry
+                };
+                let account_balance_unchanged = store
+                    .module_state
+                    .account_asset_balances
+                    .get(account_key.as_str())
+                    .and_then(|assets| assets.get(asset_key.as_str()).copied())
+                    .unwrap_or(0);
+                append_ua_treasury_journal_v1(
+                    store,
+                    mapped_asset_live_settlement_journal_v1(
+                        "mapped_asset_m2_rolled_back",
+                        record,
+                        mapping_key,
+                        mapped_asset_hex_id(&record.mapping_id).as_str(),
+                        "rejected",
+                        reason,
+                        now,
+                    ),
+                );
+                store.last_updated_unix_ms = u128::from(now).saturating_mul(1000);
+                Ok((reserve_after, account_balance_unchanged))
+            },
+        )?;
     Ok(json!({
         "applied": true,
         "mode": "live",
@@ -3523,7 +3714,8 @@ fn apply_live_mapped_asset_m2_rollback_v1(
         "nov_minted": 0,
         "external_release_triggered": false,
         "reason": reason,
-        "store_path": store_path.display().to_string(),
+        "aoem_semantic_commit": aoem_semantic_commit_json_v1(aoem_commit),
+        "store_path": store_path_display,
     }))
 }
 
@@ -3543,39 +3735,52 @@ fn apply_live_mapped_lock_source_release_v1(
     }
     require_mapped_bridge_gate_open_v1(params, MappedBridgeGateV1::Release)?;
     let store_path = native_execution_store_path_from_params_or_env_v1(params);
+    let store_path_display = store_path.display().to_string();
+    let account_key = normalize_account_view_key_v1(&record.target_account_id);
     let asset_key = normalize_asset_view_symbol_v1(&record.target_asset_symbol);
-    let mut store = load_nov_native_execution_store_v1(store_path.as_path())?;
-    let reserve_after = {
-        let entry = store
-            .module_state
-            .treasury_reserves
-            .entry(asset_key.clone())
-            .or_insert(0);
-        if *entry < record.amount {
-            bail!(
-                "ERR_MAPPED_RELEASE_TREASURY_RESERVE_INSUFFICIENT: asset={} requested={} available={}",
-                asset_key,
-                record.amount,
-                *entry
-            );
-        }
-        *entry = entry.saturating_sub(record.amount);
-        *entry
-    };
-    append_ua_treasury_journal_v1(
-        &mut store,
-        mapped_asset_live_settlement_journal_v1(
+    let tx_ref = mapped_asset_hex_id(&record.mapping_id);
+    let (reserve_after, aoem_commit) =
+        mutate_nov_native_execution_store_with_aoem_semantic_commit_v1(
+            store_path.as_path(),
+            "unified_account_surface",
+            tx_ref.as_str(),
+            account_key.as_str(),
             "mapped_lock_source_release",
-            record,
-            mapping_key,
-            mapped_asset_hex_id(&record.mapping_id).as_str(),
-            "success",
-            "Treasury reserve released after mapped M2 burn; external unlock remains bridge responsibility",
-            now,
-        ),
-    );
-    store.last_updated_unix_ms = u128::from(now).saturating_mul(1000);
-    save_nov_native_execution_store_v1(store_path.as_path(), &store)?;
+            u128::from(now).saturating_mul(1000),
+            |store| {
+                let reserve_after = {
+                    let entry = store
+                        .module_state
+                        .treasury_reserves
+                        .entry(asset_key.clone())
+                        .or_insert(0);
+                    if *entry < record.amount {
+                        bail!(
+                        "ERR_MAPPED_RELEASE_TREASURY_RESERVE_INSUFFICIENT: asset={} requested={} available={}",
+                        asset_key,
+                        record.amount,
+                        *entry
+                    );
+                    }
+                    *entry = entry.saturating_sub(record.amount);
+                    *entry
+                };
+                append_ua_treasury_journal_v1(
+                store,
+                mapped_asset_live_settlement_journal_v1(
+                    "mapped_lock_source_release",
+                    record,
+                    mapping_key,
+                    mapped_asset_hex_id(&record.mapping_id).as_str(),
+                    "success",
+                    "Treasury reserve released after mapped M2 burn; external unlock remains bridge responsibility",
+                    now,
+                ),
+            );
+                store.last_updated_unix_ms = u128::from(now).saturating_mul(1000);
+                Ok(reserve_after)
+            },
+        )?;
     Ok(json!({
         "applied": true,
         "mode": "live",
@@ -3583,7 +3788,8 @@ fn apply_live_mapped_lock_source_release_v1(
         "asset": asset_key,
         "amount": record.amount,
         "treasury_reserve_after": reserve_after,
-        "store_path": store_path.display().to_string(),
+        "aoem_semantic_commit": aoem_semantic_commit_json_v1(aoem_commit),
+        "store_path": store_path_display,
     }))
 }
 
@@ -4697,10 +4903,7 @@ fn is_native_m2_asset_symbol_v1(asset_id: &str) -> bool {
     normalized != "NOV" && normalized.starts_with('N')
 }
 
-fn account_asset_view_authorization_reason_v1(
-    params: &Value,
-    account_id: &str,
-) -> Option<String> {
+fn account_asset_view_authorization_reason_v1(params: &Value, account_id: &str) -> Option<String> {
     if param_as_bool(params, "asset_view_authorized").unwrap_or(false) {
         return Some("asset_view_authorized".to_string());
     }
@@ -6608,6 +6811,156 @@ mod tests {
     }
 
     #[test]
+    fn unified_account_identity_writes_emit_aoem_semantic_commit_chain() {
+        let _guard = ENV_TEST_LOCK.lock().expect("env test lock");
+        let _aoem_enabled = EnvVarGuard::set("NOVOVM_NATIVE_AOEM_SEMANTIC_INGRESS_ENABLED", "true");
+        let _aoem_required =
+            EnvVarGuard::set("NOVOVM_NATIVE_AOEM_SEMANTIC_INGRESS_REQUIRED", "false");
+        let (base, store, audit) = temp_paths("uca-aoem-identity-chain");
+        let native_store = base.with_file_name("native-execution.json");
+        ensure_native_store(native_store.as_path());
+        let evm_addr = ua_hex(0x31, 20);
+
+        let create = run_query(
+            &base,
+            "ua_createUca",
+            params_with_paths_and_native_store(
+                &store,
+                &audit,
+                &native_store,
+                json!({
+                    "account_id": "acct-aoem-id",
+                    "primary_key_ref": ua_hex(0x66, 32),
+                    "now": 10,
+                }),
+            ),
+        );
+        assert_eq!(
+            create["aoem_semantic_commit"]["execution_kernel"].as_str(),
+            Some("AOEM")
+        );
+        assert_eq!(
+            create["aoem_semantic_commit"]["subject"].as_str(),
+            Some("acct-aoem-id")
+        );
+        assert_eq!(
+            create["aoem_semantic_commit"]["action"].as_str(),
+            Some("ua_createUca")
+        );
+        assert_eq!(create["aoem_semantic_commit"]["sequence"].as_u64(), Some(1));
+        let create_commit = create["aoem_semantic_commit"]["commit_seal"]
+            .as_str()
+            .expect("create commit seal")
+            .to_string();
+
+        let bind = run_query(
+            &base,
+            "ua_bindPersona",
+            params_with_paths_and_native_store(
+                &store,
+                &audit,
+                &native_store,
+                json!({
+                    "account_id": "acct-aoem-id",
+                    "role": "owner",
+                    "persona_type": "evm",
+                    "chain_id": 1,
+                    "external_address": evm_addr,
+                    "now": 11,
+                }),
+            ),
+        );
+        assert_eq!(
+            bind["aoem_semantic_commit"]["action"].as_str(),
+            Some("ua_bindPersona")
+        );
+        assert_eq!(bind["aoem_semantic_commit"]["sequence"].as_u64(), Some(2));
+        assert_eq!(
+            bind["aoem_semantic_commit"]["prev_seal"].as_str(),
+            Some(create_commit.as_str())
+        );
+        let bind_commit = bind["aoem_semantic_commit"]["commit_seal"]
+            .as_str()
+            .expect("bind commit seal")
+            .to_string();
+
+        let check = run_query(
+            &base,
+            "ua_checkRoute",
+            params_with_paths_and_native_store(
+                &store,
+                &audit,
+                &native_store,
+                json!({
+                    "account_id": "acct-aoem-id",
+                    "role": "owner",
+                    "persona_type": "evm",
+                    "chain_id": 1,
+                    "external_address": evm_addr,
+                    "protocol": "eth",
+                    "signature_domain": "evm:1",
+                    "nonce": 0,
+                    "now": 12,
+                }),
+            ),
+        );
+        assert_eq!(check["read_only"].as_bool(), Some(true));
+        assert!(check.get("aoem_semantic_commit").is_none());
+
+        let route = run_query(
+            &base,
+            "ua_route",
+            params_with_paths_and_native_store(
+                &store,
+                &audit,
+                &native_store,
+                json!({
+                    "account_id": "acct-aoem-id",
+                    "role": "owner",
+                    "persona_type": "evm",
+                    "chain_id": 1,
+                    "external_address": evm_addr,
+                    "protocol": "eth",
+                    "signature_domain": "evm:1",
+                    "nonce": 0,
+                    "now": 13,
+                }),
+            ),
+        );
+        assert_eq!(
+            route["aoem_semantic_commit"]["action"].as_str(),
+            Some("ua_route")
+        );
+        assert_eq!(
+            route["aoem_semantic_commit"]["prev_seal"].as_str(),
+            Some(bind_commit.as_str())
+        );
+        assert_eq!(route["aoem_semantic_commit"]["sequence"].as_u64(), Some(3));
+
+        let native_after = load_nov_native_execution_store_v1(native_store.as_path())
+            .expect("load native store after UCA AOEM commits");
+        assert_eq!(
+            native_after
+                .module_state
+                .unified_account_semantic_event_count,
+            3
+        );
+        assert_eq!(
+            native_after
+                .module_state
+                .unified_account_semantic_last_action,
+            "ua_route"
+        );
+        assert_eq!(native_after.module_state.aoem_semantic_ledger_sequence, 3);
+        assert_eq!(
+            native_after.module_state.aoem_semantic_ledger_head,
+            route["aoem_semantic_commit"]["commit_seal"]
+                .as_str()
+                .expect("route commit seal")
+        );
+    }
+
+    #[test]
     fn unified_account_surface_executes_via_real_mainline_entry() {
         let (base, store, audit) = temp_paths("entry");
         let out = run_query(
@@ -6905,18 +7258,14 @@ mod tests {
             nusd["privacy_disclosure"]["result_commitment_scope"].as_str(),
             Some("authorized_response_without_privacy_disclosure")
         );
-        assert!(
-            nusd["privacy_disclosure"]["result_commitment_digest"]
-                .as_str()
-                .unwrap_or_default()
-                .starts_with("0x")
-        );
-        assert!(
-            nusd["privacy_disclosure"]["disclosure_digest"]
-                .as_str()
-                .unwrap_or_default()
-                .starts_with("0x")
-        );
+        assert!(nusd["privacy_disclosure"]["result_commitment_digest"]
+            .as_str()
+            .unwrap_or_default()
+            .starts_with("0x"));
+        assert!(nusd["privacy_disclosure"]["disclosure_digest"]
+            .as_str()
+            .unwrap_or_default()
+            .starts_with("0x"));
         assert_eq!(
             nusd["components"][0]["classification"].as_str(),
             Some("debt_outstanding")
@@ -7030,20 +7379,15 @@ mod tests {
             assets["privacy_disclosure"]["status"].as_str(),
             Some("authorized")
         );
-        assert_eq!(
-            assets["privacy_disclosure"]["asset"].as_str(),
-            Some("*")
-        );
+        assert_eq!(assets["privacy_disclosure"]["asset"].as_str(), Some("*"));
         assert_eq!(
             assets["privacy_disclosure"]["proof_generation_performed"].as_bool(),
             Some(false)
         );
-        assert!(
-            assets["privacy_disclosure"]["result_commitment_digest"]
-                .as_str()
-                .unwrap_or_default()
-                .starts_with("0x")
-        );
+        assert!(assets["privacy_disclosure"]["result_commitment_digest"]
+            .as_str()
+            .unwrap_or_default()
+            .starts_with("0x"));
 
         let redacted_nusd = run_query(
             &base,
@@ -7335,9 +7679,41 @@ mod tests {
             register["native_settlement"]["nov_minted"].as_u64(),
             Some(0)
         );
+        assert_eq!(
+            register["native_settlement"]["aoem_semantic_commit"]["execution_kernel"].as_str(),
+            Some("AOEM")
+        );
+        assert_eq!(
+            register["native_settlement"]["aoem_semantic_commit"]["action"].as_str(),
+            Some("mapped_lock_m2_credit")
+        );
+        assert_eq!(
+            register["native_settlement"]["aoem_semantic_commit"]["sequence"].as_u64(),
+            Some(1)
+        );
+        assert_eq!(
+            register["native_settlement"]["aoem_semantic_commit"]["semantic_delta_count"].as_u64(),
+            Some(2)
+        );
+        let register_commit_seal = register["native_settlement"]["aoem_semantic_commit"]
+            ["commit_seal"]
+            .as_str()
+            .expect("register should expose AOEM semantic commit seal")
+            .to_string();
+        assert_eq!(register_commit_seal.len(), 64);
 
         let native_after_register = load_nov_native_execution_store_v1(native_store.as_path())
             .expect("load native store after live register");
+        assert_eq!(
+            native_after_register
+                .module_state
+                .aoem_semantic_ledger_sequence,
+            1
+        );
+        assert_eq!(
+            native_after_register.module_state.aoem_semantic_ledger_head,
+            register_commit_seal
+        );
         assert_eq!(
             native_after_register
                 .module_state
@@ -7408,8 +7784,33 @@ mod tests {
             burn["native_settlement"]["effect"].as_str(),
             Some("neth_m2_burn_pending")
         );
+        assert_eq!(
+            burn["native_settlement"]["aoem_semantic_commit"]["action"].as_str(),
+            Some("mapped_asset_m2_burn_pending")
+        );
+        assert_eq!(
+            burn["native_settlement"]["aoem_semantic_commit"]["sequence"].as_u64(),
+            Some(2)
+        );
+        assert_eq!(
+            burn["native_settlement"]["aoem_semantic_commit"]["prev_seal"].as_str(),
+            Some(register_commit_seal.as_str())
+        );
+        let burn_commit_seal = burn["native_settlement"]["aoem_semantic_commit"]["commit_seal"]
+            .as_str()
+            .expect("burn should expose AOEM semantic commit seal")
+            .to_string();
+        assert_eq!(burn_commit_seal.len(), 64);
         let native_after_burn = load_nov_native_execution_store_v1(native_store.as_path())
             .expect("load native store after live burn");
+        assert_eq!(
+            native_after_burn.module_state.aoem_semantic_ledger_sequence,
+            2
+        );
+        assert_eq!(
+            native_after_burn.module_state.aoem_semantic_ledger_head,
+            burn_commit_seal
+        );
         assert_eq!(
             native_after_burn
                 .module_state
@@ -7447,8 +7848,36 @@ mod tests {
             release["native_settlement"]["effect"].as_str(),
             Some("source_release_reserve_debit")
         );
+        assert_eq!(
+            release["native_settlement"]["aoem_semantic_commit"]["action"].as_str(),
+            Some("mapped_lock_source_release")
+        );
+        assert_eq!(
+            release["native_settlement"]["aoem_semantic_commit"]["sequence"].as_u64(),
+            Some(3)
+        );
+        assert_eq!(
+            release["native_settlement"]["aoem_semantic_commit"]["prev_seal"].as_str(),
+            Some(burn_commit_seal.as_str())
+        );
+        let release_commit_seal = release["native_settlement"]["aoem_semantic_commit"]
+            ["commit_seal"]
+            .as_str()
+            .expect("release should expose AOEM semantic commit seal")
+            .to_string();
+        assert_eq!(release_commit_seal.len(), 64);
         let native_after_release = load_nov_native_execution_store_v1(native_store.as_path())
             .expect("load native store after live release");
+        assert_eq!(
+            native_after_release
+                .module_state
+                .aoem_semantic_ledger_sequence,
+            3
+        );
+        assert_eq!(
+            native_after_release.module_state.aoem_semantic_ledger_head,
+            release_commit_seal
+        );
         assert_eq!(
             native_after_release
                 .module_state
@@ -7469,6 +7898,86 @@ mod tests {
                 "mapped_asset_m2_burn_pending",
                 "mapped_lock_source_release"
             ]
+        );
+        let mirror_path = crate::tx_ingress::nov_native_aoem_semantic_ledger_mirror_path_v1(
+            native_store.as_path(),
+        );
+        let last_mirror =
+            crate::tx_ingress::load_last_nov_native_aoem_semantic_ledger_mirror_record_v1(
+                mirror_path.as_path(),
+            )
+            .expect("AOEM semantic mirror should be readable")
+            .expect("AOEM semantic mirror should contain mapped asset lifecycle commits");
+        assert_eq!(last_mirror.sequence, 3);
+        assert_eq!(last_mirror.prev_seal, burn_commit_seal);
+        assert_eq!(last_mirror.commit_seal, release_commit_seal);
+        assert_eq!(last_mirror.source, "unified_account_surface");
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn unified_account_live_mapped_lock_fails_closed_when_aoem_required_unavailable() {
+        let _env_lock = ENV_TEST_LOCK.lock().expect("env test lock poisoned");
+        let _shadow_guard = EnvVarGuard::set(NOVOVM_UA_PHASE4_SHADOW_MODE_ENFORCE_ENV, "false");
+        let (base, store, audit) = temp_paths("mapped-live-aoem-required");
+        let root = base
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .to_path_buf();
+        let native_store = root.join("native-execution-store.json");
+        ensure_native_store(native_store.as_path());
+        ua_create(&base, &store, &audit, "acct-map-aoem-required", 10);
+        let _aoem_enabled = EnvVarGuard::set("NOVOVM_NATIVE_AOEM_SEMANTIC_INGRESS_ENABLED", "true");
+        let _aoem_required =
+            EnvVarGuard::set("NOVOVM_NATIVE_AOEM_SEMANTIC_INGRESS_REQUIRED", "true");
+        let _aoem_variant = EnvVarGuard::set("NOVOVM_AOEM_VARIANT", "invalid-required-fail");
+
+        let mut register_map =
+            match mapped_lock_live_event_proof_params("acct-map-aoem-required", 0x55, 77u128) {
+                Value::Object(map) => map,
+                other => panic!("expected mapped lock proof params object, got {other:?}"),
+            };
+        seed_mapped_lock_trusted_block_from_params(&Value::Object(register_map.clone()), true);
+        register_map.insert("phase4_mode".to_string(), Value::String("live".to_string()));
+        register_map.insert("now".to_string(), Value::from(11u64));
+        let err = run_query_err(
+            &base,
+            "ua_registerMappedLock",
+            params_with_paths_and_native_store(
+                &store,
+                &audit,
+                &native_store,
+                Value::Object(register_map),
+            ),
+        );
+        assert!(
+            err.contains("load AOEM semantic mutation runtime config failed")
+                || err.contains("aoem semantic mutation required"),
+            "AOEM required mode should fail closed before M2 credit, got: {err}"
+        );
+
+        let native_after = load_nov_native_execution_store_v1(native_store.as_path())
+            .expect("load native store after required AOEM failure");
+        assert_eq!(native_after.module_state.aoem_semantic_ledger_sequence, 0);
+        assert_eq!(
+            native_after
+                .module_state
+                .account_asset_balances
+                .get("acct-map-aoem-required")
+                .and_then(|assets| assets.get("NETH"))
+                .copied()
+                .unwrap_or(0),
+            0
+        );
+        assert_eq!(
+            native_after
+                .module_state
+                .treasury_reserves
+                .get("NETH")
+                .copied()
+                .unwrap_or(0),
+            0
         );
 
         let _ = fs::remove_dir_all(&root);

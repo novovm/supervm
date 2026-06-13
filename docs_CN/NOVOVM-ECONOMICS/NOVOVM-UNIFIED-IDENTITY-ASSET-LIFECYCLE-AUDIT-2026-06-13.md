@@ -35,7 +35,10 @@ NOVOVM 现在已经具备“统一身份 + EVM 产品入口 + native NOV 经济�
 - 授权披露 receipt v1 已接入主线资产查询：`nov_getAssetBalance`、`account_balance`、`account_assets` 在合法授权返回用户级 M2 明细时附带 `privacy_disclosure`，记录授权原因、truth source、`proof_generation_performed=false`、可升级 proof path（RingCT/ZK）、`result_commitment_digest` 和 disclosure digest；`nov_verifyPrivacyDisclosureReceipt` 可只读验证三类受保护查询的披露票据与授权响应是否匹配，并在响应被篡改时失败；未授权路径仍只返回 redacted，不返回余额或资产列表。
 - 仍没有真实“完整 external finality source 管理 -> compensation -> Treasury policy -> NOV emission”的完整链上桥接。主线治理 wrapper `nov_setMappedHeaderSourcePolicy` / `nov_setMappedHeaderAttestationPolicy` 与只读 `nov_getMappedFinalitySourceStatus` 已覆盖 header source peer quorum、disabled peer slashing reason/fail-closed、source peer rotation 记录、Ed25519 header attestation signature quorum、disabled signer reason/fail-closed、signer rotation 记录和状态聚合；主线产品 smoke 已覆盖未授权 policy 写入 fail-closed、source quorum 不足 fail-closed 与第二个许可 source peer 观测后通过、attestation quorum 不足/disabled signer fail-closed 与两个 active signer 通过、governed min confirmations 未达标 fail-closed 与降低确认数后通过。但 NOV mint 在 consensus token runtime 中存在，不能直接接在 ETH lock proof 上。
 - EVM 合约币可以在 EVM 产品面执行/查询 receipt，但和 NOV native account balance/treasury 是两套状态面，当前没有完整 ERC20 -> native asset 自动映射桥。
-- 并发量不能直接引用 README 的 L0/L1 百万 TPS 来代表钱包/gateway 入口吞吐。gateway 当前是单 HTTP loop，EVM pending consumer 默认 16 笔/250ms；native NOV store 仍是 JSON store，但主写路径已加 lockfile single-writer guard，适合单机/低并发生产闭环，不等同 RocksDB/事务后端或多进程高并发账本入口。
+- 并发量不能直接引用 README 的 L0/L1 百万 TPS 来代表钱包/gateway 入口吞吐。gateway 当前是单 HTTP loop，EVM pending consumer 默认 16 笔/250ms；native NOV 已新增 `nov_sendRawTransactionBatch` / `nov_executeBatch`，多笔 raw tx 会先进入 AOEM ops-wire algebraic semantic batch precommit，并记录 adaptive parallelism / ingress workers 元数据；native execution store 也已新增 `NOVOVM_NATIVE_EXECUTION_STORE_BACKEND=rocksdb|dual|json`，`rocksdb` 模式用 RocksDB sharded atomic write batch 写 `account/{account}/asset/{asset}`、`receipt/{tx_hash}`、`receipt_by_height/{height}`、`module_state/core`、`semantic_head/current`、`semantic_head/by_height/{height}`、`snapshot_meta/{height}`，不再把旧整库 snapshot blob 作为生产唯一写入；`dual` 模式同时保留 JSON 兼容快照并可与 RocksDB materialized view 对拍。该入口解决主线交易进入 AOEM 并发执行面、脱离单 JSON 主存储和减少整库 snapshot 写放大的第一刀，但最终落账仍按确定顺序提交，`module_state/core` 仍待继续拆细，不等同完整 AOEM 并发资产账本或多进程无冲突高并发账本完成。
+- native execution receipt/trace 已新增 AOEM semantic ingress metadata：每笔成功进入 native execution 的请求会生成 `aoem.ops_wire_v1.native_asset_semantic_ingress` 计划、`plan_id`、`wire_digest`、提交状态和 fallback reason；执行前后还会计算账户资产、国库储备和 NOV bucket 的 semantic delta count/digest，并写入 `aoem.native_asset.semantic_deltas` log。这证明产品口径已从“直接写存储”转向 AOEM 代数语义入口的可观测迁移，但不等同完整 AOEM 并发资产账本已完成。
+- 主线只读查询新增 `nov_getAoemSemanticIngressStatus`，用于生产前检查 AOEM 统一语义入口状态：`enabled`、`required`、`fail_closed`、`runtime_dll_exists`、`ops_wire_v1_supported`、`fallback_policy`、`native_batch_entry=nov_sendRawTransactionBatch`、`native_execute_batch_alias=nov_executeBatch`、`recommended_threads`、`ingress_workers`、`max_batch_size`。主线只读查询也新增 `nov_getNativeExecutionStoreBackendStatus`，用于确认 native store backend、RocksDB 路径、JSON 兼容快照、sharded keyspaces 和 commit model（`rocksdb_sharded_atomic_batch_primary` / `rocksdb_sharded_atomic_batch_with_json_compat_snapshot`）。生产口径应设置 `NOVOVM_NATIVE_AOEM_SEMANTIC_INGRESS_REQUIRED=true`，并将 `NOVOVM_NATIVE_EXECUTION_STORE_BACKEND` 切为 `rocksdb` 或 `dual`，使 AOEM semantic ingress 不可用时 fail-closed，并避免把 JSON snapshot 当成主生产账本；开发/迁移阶段可保持 optional 并记录 fallback reason。
+- native execution 已新增 AOEM semantic ledger commit/seal：每笔产生 semantic delta 的 native asset 执行会绑定 `state_before_digest`、`state_after_digest`、`semantic_delta_digest`、`wire_digest`、`plan_id`、`prev_seal`，生成 `semantic_ledger_commit_seal`，并推进 `aoem_semantic_ledger_head` / `aoem_semantic_ledger_sequence`；`get_settlement_summary` / `get_reserve_snapshot` 暴露当前 semantic ledger head。该 seal 是 AOEM 语义级提交证据，不是 MVCC，也不是第二账户账本。
 - 当前不声明 DAPP、网站、钱包进入本轮范围；本轮已完成上层经济规则、协议清算价 v1 和审阅边界，但不声明真实外部桥接自动闭环。
 
 ## 1.1 主线 `unified_account_surface` 产品闭环审阅
@@ -463,17 +466,38 @@ native NOV 入口：
 
 - `novovm-native-execution-store.json` 仍是 JSON store。
 - 主写路径 `dispatch_and_persist_nov_execution_request_*` 已使用 lockfile single-writer guard，把 load-modify-save 包进跨进程临界区，降低覆盖写风险。
-- 该 guard 解决的是单机写入互斥，不提供数据库级事务、批量并发写入、崩溃恢复日志或集群写一致性。
+- mainline unified account surface 的 mapped-asset/M2 余额和国库储备变更路径已收敛到同一 native execution store 写锁，避免 UCA 生命周期写入绕过主写锁。
+- 该 guard 解决的是单机写入互斥，是当前 JSON store 阶段的过渡保护；它不是 NOVOVM 最终并发模型，也不是 AOEM 产品入口。
+- 最终标准应以 `AOEM unified semantic execution kernel` 为准：NOV/NETH/nAsset 的查询、转账、支付、清算和国库变更应进入 AOEM 代数语义级入口，再由确定性提交层落账。
+- native execution 已开始落地该方向：receipt/trace 暴露 `aoem_semantic_ingress`，记录 `execution_kernel=AOEM`、`semantic_entry=aoem.ops_wire_v1.native_asset_semantic_ingress`、`algebraic_semantic_entry=true`、`plan_id`、`wire_digest`、`submitted`、fallback reason、`semantic_delta_count` 和 `semantic_delta_digest`。
+- mainline 产品查询面提供 `nov_getAoemSemanticIngressStatus`，用于区分开发期 optional fallback 与生产期 required fail-closed；该状态入口不依赖 canonical store，可直接用于启动前/运行中门禁审计。
+- 每笔 native asset 状态变化和主线 UCA 身份写入会生成 AOEM semantic ledger commit seal：`semantic_ledger_prev_seal -> semantic_ledger_commit_seal` 形成连续链；`aoem_semantic_ledger_head` 是当前语义账本头，`aoem_semantic_ledger_sequence` 是当前提交序号。该链当前覆盖 native asset 语义投影与哈希化 UCA 语义投影，不覆盖 EVM archive/state DB，也不声明替代完整 AOEM 并发账本后端。
+- native execution 同步写入 AOEM semantic ledger append-only mirror：默认文件为 native store 同路径追加 `.aoem-semantic-ledger.jsonl`，也可用 `NOVOVM_NATIVE_AOEM_SEMANTIC_LEDGER_MIRROR` 指定；mirror 每行只记录 `sequence`、`tx_hash`、`plan_id`、`wire_digest`、`semantic_delta_digest`、`state_before_digest`、`state_after_digest`、`prev_seal`、`commit_seal` 等语义提交证明，并校验 `sequence` 连续和 `prev_seal == last.commit_seal`。它不是余额账本、不是 UCA truth source，也不是替代 AOEM 的并发存储后端。
+- mainline unified account surface 的身份状态写入已开始接入 AOEM semantic mutation commit：`ua_createUca`、`ua_rotatePrimaryKey`、`ua_setPolicy`、`ua_bindPersona`、`ua_revokePersona`、`ua_route` 会在返回值暴露 `aoem_semantic_commit`，并推进同一条 `aoem_semantic_ledger_sequence/head`。native store 只保存哈希化 `unified_account_semantic_projection`，不复制账户明文绑定、KYC 或资产余额，因此不是第二套 UCA truth source；`ua_checkRoute` 仍是只读预检，不生成 commit、不推进 nonce。
+- mainline unified account surface 的 live M2 生命周期写入已开始接入 AOEM semantic mutation commit：`ua_registerMappedLock` 的 NETH credit、`ua_burnMappedAsset`、`ua_releaseMappedLock`、`ua_freezeMappedAsset`、`ua_unfreezeMappedAsset`、`ua_rollbackFrozenMappedAsset` 会在 native settlement 返回 `aoem_semantic_commit`，并推进同一条 `aoem_semantic_ledger_sequence/head` 与 mirror 链。生产设置 `NOVOVM_NATIVE_AOEM_SEMANTIC_INGRESS_REQUIRED=true` 时，AOEM runtime 不可用会 fail closed，不能继续写入 NETH/M2 余额或国库储备。
+- mainline mapped-header governance policy 写入也已进入 AOEM semantic mutation commit：`nov_setMappedHeaderSourcePolicy` / `nov_setMappedHeaderAttestationPolicy` 返回 `aoem_semantic_commit`，其 `native_policy_state` delta 会和后续 `ua_registerMappedLock` 的 NETH credit 串在同一条 `prev_seal -> commit_seal` 链上。
+- 经济清算制度状态已纳入 AOEM `native_policy_state` 投影：协议清算价快照、AMM TWAP/NAV anchors、AMM pool state、clearing policy、许可 oracle rates/source/allowlist/disabled/rotation 都会参与 state digest 和 semantic delta。该投影覆盖的是制度化清算状态，不把 last route、失败计数等临时运行指标升级为经济法条。
+- native governance receipt 顶层已暴露 AOEM semantic commit 摘要：`submit_proposal`、`apply_treasury_policy`、`set_reserve_proof` 的 `NovNativeExecutionReceiptV1` 同时保留完整 `aoem_semantic_ingress` 和简化 `aoem_semantic_commit`，产品/RPC 不需要解析完整 ingress metadata 才能读取 commit seal、sequence、action、subject。
 
 证据：
 
 - `load_nov_native_execution_store_v1` 直接读 JSON。
 - `dispatch_and_persist_nov_execution_request_with_subjects_and_store_path_v1` 会先获取 native execution store write lock，再 load/modify/save。
+- `mutate_nov_native_execution_store_with_write_lock_v1` 为 mainline UCA/mapped-asset 余额和储备变更提供同一写锁封装。
+- `NovNativeExecutionReceiptV1` / `NovExecutionTraceV1` 暴露 `aoem_semantic_ingress`，用于证明 native asset 执行请求是否走过 AOEM 语义入口或明确 fallback；receipt logs 同时携带 `aoem.native_asset.semantic_deltas`，对账户资产余额、国库储备和 NOV bucket 的实际变更做 digest 锁定。
+- `nov_getAoemSemanticIngressStatus` 暴露 AOEM semantic ingress 的 enabled/required/fail-closed/runtime 支持状态，生产部署不得只依赖 README 口径判断 AOEM 是否真正接入。
+- `aoem.native_asset.semantic_ledger_commit` log、receipt/trace 中的 `semantic_ledger_commit_seal`，以及 summary/snapshot 中的 `aoem_semantic_ledger.head` 必须一致；第二笔执行的 `semantic_ledger_prev_seal` 必须等于第一笔的 commit seal，形成可审计链。
+- AOEM semantic ledger mirror 为 JSONL append-only proof mirror，写入时校验最新记录的 sequence 与 prev seal 连续；它只用于审计 native asset 语义提交链，不能作为余额查询、资产赎回、账户绑定或国库清算的状态源。
+- `unified_account_identity_writes_emit_aoem_semantic_commit_chain` 锁定 create -> bind -> route 的 AOEM semantic commit 链连续，并锁定 `ua_checkRoute` 不生成 commit、不推进 nonce。
+- `native_policy_state_projection_includes_protocol_clearing_and_oracle_policy` 锁定协议清算价、AMM anchors、clearing policy 和许可 oracle policy 进入 AOEM `native_policy_state` delta。
+- `unified_account_live_mapped_lock_creates_neth_m2_credit_without_nov_mint` 锁定 live mapped asset 的 credit -> burn -> release 三段 AOEM semantic commit 链；`unified_account_live_mapped_lock_fails_closed_when_aoem_required_unavailable` 锁定 required 模式下 AOEM 不可用时不能写入 M2 状态。
+- `mainline_query_mapped_finality_source_policy_product_smoke` / `mainline_query_mapped_finality_attestation_policy_product_smoke` 锁定 governance policy commit 与后续 M2 credit commit 同链；policy write 是 sequence 1，后续 live register 是 sequence 2。
+- `governance_submit_proposal_exposes_aoem_semantic_commit`、`governance_apply_treasury_policy_updates_version_and_source`、`governance_set_reserve_proof_exposes_manual_status_without_mint_claims` 锁定 native governance receipt 顶层 `aoem_semantic_commit` 与完整 `aoem_semantic_ingress.semantic_ledger_commit_seal` 一致。
 
 建议：
 
 - 产品部署上仍应规定单 gateway writer 或低并发写入口。
-- 如果要公测高并发，最小改法是把 native execution store 切 RocksDB 或加单进程队列，不要把 lockfile guard 误写成高并发账本后端。
+- 如果要公测高并发，下一步不是把 lockfile guard 宣传成并发账本，而是继续把 native asset ledger 和 unified account 写路径收敛到 AOEM semantic ingress；RocksDB/队列只能作为持久化或背压实现，不能替代 AOEM 语义执行入口。
 
 ### P1：余额视图需要前端解释 source/component
 
@@ -509,12 +533,16 @@ native NOV 入口：
 影响：
 
 - 容易把 AOEM/consensus benchmark 的 TPS 当成 wallet/gateway TPS。
+- `AOEM` 是当前并发执行产品口径和统一语义执行内核；历史 `MVCC` 只属于 archived/vendor/reference 资料，不得作为当前 NOVOVM 并发架构、钱包吞吐或资产账本能力声明。
+- 钱包、DAPP、网站和 gateway 后续都不应直接绑定 JSON store 或存储级并发机制；它们应调用 mainline product API，由 mainline 将业务动作转换为 AOEM 代数语义级执行请求。
 
 当前口径：
 
 - AOEM/consensus benchmark：文档内有百万级 TPS seal，但属于内核/consensus plane。
 - EVM gateway 用户入口：`tiny_http` 单 loop；默认 pending execution `16` 笔/`250ms`。
 - native NOV store：JSON store + lockfile single-writer guard，单机/低并发可用，不是高并发存储层。
+- AOEM semantic ledger mirror：append-only proof mirror，只证明 native asset 语义提交连续性，不代表查询/转账/付款吞吐能力。
+- UCA live M2 lifecycle、mapped-header governance policy 与 native governance receipt：当前已具备 AOEM semantic mutation commit 与 required fail-closed 门禁；这仍是 native asset / policy 语义投影的迁移步骤，不等于所有 UCA/治理写入都已变成完整 AOEM 并发账本。
 
 建议：
 
