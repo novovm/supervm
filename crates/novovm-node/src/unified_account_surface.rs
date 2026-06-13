@@ -2120,6 +2120,17 @@ struct EthereumLockEventEvidenceV1 {
     block_number: u64,
     finalized_block_number: u64,
     log_index: u64,
+    receipts_root: [u8; 32],
+    receipt_index: u64,
+    receipt_log_index: u64,
+    receipt_proof: Vec<Vec<u8>>,
+    receipt_envelope: Option<Vec<u8>>,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum UaRlpItemV1<'a> {
+    Bytes(&'a [u8]),
+    List(&'a [u8]),
 }
 
 fn decode_hex_fixed_20(raw: &str, field: &str) -> Result<[u8; 20]> {
@@ -2160,6 +2171,206 @@ fn eth_lock_min_confirmations_v1() -> u64 {
         .unwrap_or(12)
 }
 
+fn param_value_any<'a>(params: &'a Value, keys: &[&str]) -> Option<&'a Value> {
+    match params {
+        Value::Object(map) => keys.iter().find_map(|key| map.get(*key)),
+        Value::Array(items) => items
+            .first()
+            .and_then(|value| keys.iter().find_map(|key| value.get(*key))),
+        _ => None,
+    }
+}
+
+fn parse_hex_vec_list_param_v1(params: &Value, keys: &[&str], field: &str) -> Result<Vec<Vec<u8>>> {
+    let value = param_value_any(params, keys)
+        .ok_or_else(|| anyhow::anyhow!("ERR_MAPPED_LOCK_PROOF_INVALID: {field} is required"))?;
+    let Value::Array(items) = value else {
+        bail!("ERR_MAPPED_LOCK_PROOF_INVALID: {field} must be array");
+    };
+    if items.is_empty() {
+        bail!("ERR_MAPPED_LOCK_PROOF_INVALID: {field} must not be empty");
+    }
+    items
+        .iter()
+        .enumerate()
+        .map(|(idx, item)| {
+            let Some(raw) = item.as_str() else {
+                bail!("ERR_MAPPED_LOCK_PROOF_INVALID: {field}[{idx}] must be hex string");
+            };
+            decode_hex_bytes(raw, &format!("{field}[{idx}]"))
+        })
+        .collect()
+}
+
+fn ua_rlp_encode_u64_v1(value: u64) -> Vec<u8> {
+    if value == 0 {
+        return vec![0x80];
+    }
+    if value < 0x80 {
+        return vec![value as u8];
+    }
+    let mut bytes = Vec::new();
+    let mut cursor = value;
+    while cursor > 0 {
+        bytes.push((cursor & 0xff) as u8);
+        cursor >>= 8;
+    }
+    bytes.reverse();
+    let mut out = Vec::with_capacity(1 + bytes.len());
+    out.push(0x80 + bytes.len() as u8);
+    out.extend(bytes);
+    out
+}
+
+fn ua_rlp_parse_item_v1(input: &[u8]) -> Result<(UaRlpItemV1<'_>, usize)> {
+    if input.is_empty() {
+        bail!("ERR_MAPPED_LOCK_PROOF_INVALID: receipt rlp is empty");
+    }
+    let lead = input[0];
+    match lead {
+        0x00..=0x7f => Ok((UaRlpItemV1::Bytes(&input[..1]), 1)),
+        0x80..=0xb7 => {
+            let len = (lead - 0x80) as usize;
+            if input.len() < 1 + len {
+                bail!("ERR_MAPPED_LOCK_PROOF_INVALID: receipt rlp short bytes");
+            }
+            Ok((UaRlpItemV1::Bytes(&input[1..1 + len]), 1 + len))
+        }
+        0xb8..=0xbf => {
+            let len_of_len = (lead - 0xb7) as usize;
+            if input.len() < 1 + len_of_len {
+                bail!("ERR_MAPPED_LOCK_PROOF_INVALID: receipt rlp short bytes len");
+            }
+            let mut len = 0usize;
+            for byte in &input[1..1 + len_of_len] {
+                len = (len << 8) | (*byte as usize);
+            }
+            if input.len() < 1 + len_of_len + len {
+                bail!("ERR_MAPPED_LOCK_PROOF_INVALID: receipt rlp short bytes payload");
+            }
+            Ok((
+                UaRlpItemV1::Bytes(&input[1 + len_of_len..1 + len_of_len + len]),
+                1 + len_of_len + len,
+            ))
+        }
+        0xc0..=0xf7 => {
+            let len = (lead - 0xc0) as usize;
+            if input.len() < 1 + len {
+                bail!("ERR_MAPPED_LOCK_PROOF_INVALID: receipt rlp short list");
+            }
+            Ok((UaRlpItemV1::List(&input[1..1 + len]), 1 + len))
+        }
+        _ => {
+            let len_of_len = (lead - 0xf7) as usize;
+            if input.len() < 1 + len_of_len {
+                bail!("ERR_MAPPED_LOCK_PROOF_INVALID: receipt rlp short list len");
+            }
+            let mut len = 0usize;
+            for byte in &input[1..1 + len_of_len] {
+                len = (len << 8) | (*byte as usize);
+            }
+            if input.len() < 1 + len_of_len + len {
+                bail!("ERR_MAPPED_LOCK_PROOF_INVALID: receipt rlp short list payload");
+            }
+            Ok((
+                UaRlpItemV1::List(&input[1 + len_of_len..1 + len_of_len + len]),
+                1 + len_of_len + len,
+            ))
+        }
+    }
+}
+
+fn ua_rlp_parse_list_items_v1(payload: &[u8]) -> Result<Vec<UaRlpItemV1<'_>>> {
+    let mut out = Vec::new();
+    let mut cursor = 0usize;
+    while cursor < payload.len() {
+        let (item, consumed) = ua_rlp_parse_item_v1(&payload[cursor..])?;
+        out.push(item);
+        cursor = cursor.saturating_add(consumed);
+    }
+    if cursor != payload.len() {
+        bail!("ERR_MAPPED_LOCK_PROOF_INVALID: receipt rlp list trailing");
+    }
+    Ok(out)
+}
+
+fn verify_receipt_log_matches_lock_event_v1(
+    receipt_envelope: &[u8],
+    receipt_log_index: u64,
+    contract_address: &[u8; 20],
+    topic0: &[u8; 32],
+) -> Result<()> {
+    let receipt_payload = if !receipt_envelope.is_empty()
+        && receipt_envelope[0] <= 0x7f
+        && receipt_envelope.len() > 1
+    {
+        let (item, consumed) = ua_rlp_parse_item_v1(&receipt_envelope[1..])?;
+        if consumed + 1 != receipt_envelope.len() {
+            bail!("ERR_MAPPED_LOCK_PROOF_INVALID: typed receipt rlp trailing");
+        }
+        let UaRlpItemV1::List(payload) = item else {
+            bail!("ERR_MAPPED_LOCK_PROOF_INVALID: typed receipt payload must be list");
+        };
+        payload
+    } else {
+        let (item, consumed) = ua_rlp_parse_item_v1(receipt_envelope)?;
+        if consumed != receipt_envelope.len() {
+            bail!("ERR_MAPPED_LOCK_PROOF_INVALID: receipt rlp trailing");
+        }
+        let UaRlpItemV1::List(payload) = item else {
+            bail!("ERR_MAPPED_LOCK_PROOF_INVALID: receipt payload must be list");
+        };
+        payload
+    };
+    let fields = ua_rlp_parse_list_items_v1(receipt_payload)?;
+    if fields.len() != 4 {
+        bail!("ERR_MAPPED_LOCK_PROOF_INVALID: receipt must have 4 fields");
+    }
+    let UaRlpItemV1::Bytes(status_or_post_state) = fields[0] else {
+        bail!("ERR_MAPPED_LOCK_PROOF_INVALID: receipt status must be bytes");
+    };
+    if status_or_post_state != [1u8] {
+        bail!("ERR_MAPPED_LOCK_PROOF_INVALID: lock receipt status must be success");
+    }
+    let UaRlpItemV1::List(logs_payload) = fields[3] else {
+        bail!("ERR_MAPPED_LOCK_PROOF_INVALID: receipt logs must be list");
+    };
+    let logs = ua_rlp_parse_list_items_v1(logs_payload)?;
+    let idx = usize::try_from(receipt_log_index).map_err(|_| {
+        anyhow::anyhow!("ERR_MAPPED_LOCK_PROOF_INVALID: receipt_log_index too large")
+    })?;
+    let Some(log) = logs.get(idx).copied() else {
+        bail!("ERR_MAPPED_LOCK_PROOF_INVALID: receipt_log_index out of range");
+    };
+    let UaRlpItemV1::List(log_payload) = log else {
+        bail!("ERR_MAPPED_LOCK_PROOF_INVALID: receipt log must be list");
+    };
+    let log_fields = ua_rlp_parse_list_items_v1(log_payload)?;
+    if log_fields.len() < 2 {
+        bail!("ERR_MAPPED_LOCK_PROOF_INVALID: receipt log fields missing");
+    }
+    let UaRlpItemV1::Bytes(address) = log_fields[0] else {
+        bail!("ERR_MAPPED_LOCK_PROOF_INVALID: receipt log address must be bytes");
+    };
+    if address != contract_address {
+        bail!("ERR_MAPPED_LOCK_PROOF_INVALID: receipt log address does not match lock contract");
+    }
+    let UaRlpItemV1::List(topics_payload) = log_fields[1] else {
+        bail!("ERR_MAPPED_LOCK_PROOF_INVALID: receipt log topics must be list");
+    };
+    let topics = ua_rlp_parse_list_items_v1(topics_payload)?;
+    let Some(first_topic) = topics.first().copied() else {
+        bail!("ERR_MAPPED_LOCK_PROOF_INVALID: receipt log topic0 missing");
+    };
+    let UaRlpItemV1::Bytes(found_topic0) = first_topic else {
+        bail!("ERR_MAPPED_LOCK_PROOF_INVALID: receipt log topic0 must be bytes");
+    };
+    if found_topic0 != topic0 {
+        bail!("ERR_MAPPED_LOCK_PROOF_INVALID: receipt log topic0 mismatch");
+    }
+    Ok(())
+}
+
 fn parse_ethereum_lock_event_evidence_v1(
     params: &Value,
 ) -> Result<Option<EthereumLockEventEvidenceV1>> {
@@ -2175,7 +2386,9 @@ fn parse_ethereum_lock_event_evidence_v1(
         || param_as_string_any(params, &["event_topic0", "topic0"]).is_some()
         || param_as_u64(params, "block_number").is_some()
         || param_as_u64(params, "finalized_block_number").is_some()
-        || param_as_u64(params, "log_index").is_some();
+        || param_as_u64(params, "log_index").is_some()
+        || param_as_string_any(params, &["receipts_root", "receipt_root"]).is_some()
+        || param_value_any(params, &["receipt_proof", "receipt_mpt_proof"]).is_some();
     if !has_structured {
         return Ok(None);
     }
@@ -2202,12 +2415,33 @@ fn parse_ethereum_lock_event_evidence_v1(
         })?;
     let log_index = param_as_u64(params, "log_index")
         .ok_or_else(|| anyhow::anyhow!("ERR_MAPPED_LOCK_PROOF_INVALID: log_index is required"))?;
+    let receipts_root_raw = param_as_string_any(params, &["receipts_root", "receipt_root"])
+        .ok_or_else(|| {
+            anyhow::anyhow!("ERR_MAPPED_LOCK_PROOF_INVALID: receipts_root is required")
+        })?;
+    let receipt_index = param_as_u64(params, "receipt_index").ok_or_else(|| {
+        anyhow::anyhow!("ERR_MAPPED_LOCK_PROOF_INVALID: receipt_index is required")
+    })?;
+    let receipt_log_index = param_as_u64(params, "receipt_log_index").unwrap_or(0);
+    let receipt_proof = parse_hex_vec_list_param_v1(
+        params,
+        &["receipt_proof", "receipt_mpt_proof"],
+        "receipt_proof",
+    )?;
+    let receipt_envelope = param_as_string_any(params, &["receipt_envelope", "raw_receipt"])
+        .map(|raw| decode_hex_bytes(raw.as_str(), "receipt_envelope"))
+        .transpose()?;
     Ok(Some(EthereumLockEventEvidenceV1 {
         contract_address: decode_hex_fixed_20(contract_raw.as_str(), "lock_contract_address")?,
         topic0: decode_hex_fixed_32(topic0_raw.as_str(), "event_topic0")?,
         block_number,
         finalized_block_number,
         log_index,
+        receipts_root: decode_hex_fixed_32(receipts_root_raw.as_str(), "receipts_root")?,
+        receipt_index,
+        receipt_log_index,
+        receipt_proof,
+        receipt_envelope,
     }))
 }
 
@@ -2227,6 +2461,12 @@ fn ethereum_lock_event_ref_digest_v1(
     hasher.update(evidence.finalized_block_number.to_be_bytes());
     hasher.update([0u8]);
     hasher.update(evidence.log_index.to_be_bytes());
+    hasher.update([0u8]);
+    hasher.update(evidence.receipts_root);
+    hasher.update([0u8]);
+    hasher.update(evidence.receipt_index.to_be_bytes());
+    hasher.update([0u8]);
+    hasher.update(evidence.receipt_log_index.to_be_bytes());
     hasher.update([0u8]);
     hasher.update(proof.source_tx_hash.as_slice());
     hasher.update([0u8]);
@@ -2284,6 +2524,24 @@ fn verify_ethereum_lock_event_evidence_v1(
             required_finalized
         );
     }
+    let proven_receipt = novovm_network::eth_rlpx_mpt_verify_proof_value_v1(
+        evidence.receipts_root,
+        ua_rlp_encode_u64_v1(evidence.receipt_index).as_slice(),
+        evidence.receipt_proof.as_slice(),
+    )
+    .map_err(|err| anyhow::anyhow!("ERR_MAPPED_LOCK_PROOF_INVALID: receipt proof invalid: {err}"))?
+    .ok_or_else(|| anyhow::anyhow!("ERR_MAPPED_LOCK_PROOF_INVALID: receipt proof missing value"))?;
+    if let Some(expected) = &evidence.receipt_envelope {
+        if expected.as_slice() != proven_receipt.as_slice() {
+            bail!("ERR_MAPPED_LOCK_PROOF_INVALID: receipt_envelope does not match proof value");
+        }
+    }
+    verify_receipt_log_matches_lock_event_v1(
+        proven_receipt.as_slice(),
+        evidence.receipt_log_index,
+        &evidence.contract_address,
+        &evidence.topic0,
+    )?;
     let expected_ref = ethereum_lock_event_ref_digest_v1(proof, &evidence);
     if proof.source_lock_ref.as_slice() != expected_ref.as_slice() {
         bail!("ERR_MAPPED_LOCK_PROOF_INVALID: source_lock_ref does not match Ethereum lock event evidence");
@@ -3968,6 +4226,74 @@ mod tests {
         })
     }
 
+    fn test_rlp_encode_len(prefix_small: u8, prefix_long: u8, len: usize) -> Vec<u8> {
+        if len <= 55 {
+            return vec![prefix_small + len as u8];
+        }
+        let mut len_bytes = Vec::new();
+        let mut cursor = len;
+        while cursor > 0 {
+            len_bytes.push((cursor & 0xff) as u8);
+            cursor >>= 8;
+        }
+        len_bytes.reverse();
+        let mut out = Vec::with_capacity(1 + len_bytes.len());
+        out.push(prefix_long + len_bytes.len() as u8);
+        out.extend(len_bytes);
+        out
+    }
+
+    fn test_rlp_encode_bytes(bytes: &[u8]) -> Vec<u8> {
+        if bytes.len() == 1 && bytes[0] < 0x80 {
+            return vec![bytes[0]];
+        }
+        let mut out = test_rlp_encode_len(0x80, 0xb7, bytes.len());
+        out.extend_from_slice(bytes);
+        out
+    }
+
+    fn test_rlp_encode_list(items: &[Vec<u8>]) -> Vec<u8> {
+        let payload_len = items.iter().map(Vec::len).sum();
+        let mut out = test_rlp_encode_len(0xc0, 0xf7, payload_len);
+        for item in items {
+            out.extend_from_slice(item);
+        }
+        out
+    }
+
+    fn test_keccak32(bytes: &[u8]) -> [u8; 32] {
+        let mut hasher = Keccak256::new();
+        hasher.update(bytes);
+        hasher.finalize().into()
+    }
+
+    fn mapped_lock_receipt_proof_fields(
+        contract_address: &[u8; 20],
+        topic0: &[u8; 32],
+        receipt_index: u64,
+    ) -> (Vec<u8>, [u8; 32], Vec<Vec<u8>>) {
+        let log = test_rlp_encode_list(&[
+            test_rlp_encode_bytes(contract_address),
+            test_rlp_encode_list(&[test_rlp_encode_bytes(topic0)]),
+            test_rlp_encode_bytes(&[]),
+        ]);
+        let receipt = test_rlp_encode_list(&[
+            test_rlp_encode_bytes(&[1]),
+            ua_rlp_encode_u64_v1(21_000),
+            test_rlp_encode_bytes(&[0u8; 256]),
+            test_rlp_encode_list(&[log]),
+        ]);
+        let proof_node = novovm_network::eth_rlpx_mpt_single_leaf_node_rlp_v1(
+            ua_rlp_encode_u64_v1(receipt_index).as_slice(),
+            receipt.as_slice(),
+        );
+        (
+            receipt,
+            test_keccak32(proof_node.as_slice()),
+            vec![proof_node],
+        )
+    }
+
     fn mapped_lock_live_event_proof_params(account_id: &str, lock_byte: u8, amount: u128) -> Value {
         let contract_address = [0x11u8; 20];
         let topic0 = eth_lock_event_topic0_v1();
@@ -3989,6 +4315,19 @@ mod tests {
             block_number: 100,
             finalized_block_number: 112,
             log_index: u64::from(lock_byte),
+            receipts_root: [0u8; 32],
+            receipt_index: 0,
+            receipt_log_index: 0,
+            receipt_proof: Vec::new(),
+            receipt_envelope: None,
+        };
+        let (receipt, receipts_root, receipt_proof) =
+            mapped_lock_receipt_proof_fields(&contract_address, &topic0, evidence.receipt_index);
+        let evidence = EthereumLockEventEvidenceV1 {
+            receipts_root,
+            receipt_proof: receipt_proof.clone(),
+            receipt_envelope: Some(receipt.clone()),
+            ..evidence
         };
         proof_template.source_lock_ref =
             ethereum_lock_event_ref_digest_v1(&proof_template, &evidence).to_vec();
@@ -4010,6 +4349,14 @@ mod tests {
             "block_number": evidence.block_number,
             "finalized_block_number": evidence.finalized_block_number,
             "log_index": evidence.log_index,
+            "receipt_index": evidence.receipt_index,
+            "receipt_log_index": evidence.receipt_log_index,
+            "receipt_envelope": format!("0x{}", to_hex_lower(&receipt)),
+            "receipts_root": mapped_asset_hex_id(&receipts_root),
+            "receipt_proof": receipt_proof
+                .iter()
+                .map(|node| Value::String(format!("0x{}", to_hex_lower(node))))
+                .collect::<Vec<_>>(),
         })
     }
 
@@ -4923,6 +5270,76 @@ mod tests {
         assert!(
             wrong_contract_err.contains("lock_contract_address does not match configured contract"),
             "wrong contract proof should fail, got: {wrong_contract_err}"
+        );
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn unified_account_live_mapped_lock_rejects_invalid_receipt_proof() {
+        let _env_lock = ENV_TEST_LOCK.lock().expect("env test lock poisoned");
+        let _shadow_guard = EnvVarGuard::set(NOVOVM_UA_PHASE4_SHADOW_MODE_ENFORCE_ENV, "false");
+        let (base, store, audit) = temp_paths("mapped-live-receipt-proof-invalid");
+        let root = base
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .to_path_buf();
+        let native_store = root.join("native-execution-store.json");
+        ensure_native_store(native_store.as_path());
+        ua_create(&base, &store, &audit, "acct-map-live-receipt-invalid", 10);
+
+        let mut bad_envelope_map = match mapped_lock_live_event_proof_params(
+            "acct-map-live-receipt-invalid",
+            0x37,
+            92u128,
+        ) {
+            Value::Object(map) => map,
+            other => panic!("expected mapped lock proof params object, got {other:?}"),
+        };
+        bad_envelope_map.insert("phase4_mode".to_string(), Value::String("live".to_string()));
+        bad_envelope_map.insert(
+            "receipt_envelope".to_string(),
+            Value::String("0x01".to_string()),
+        );
+        let bad_envelope_err = run_query_err(
+            &base,
+            "ua_registerMappedLock",
+            params_with_paths_and_native_store(
+                &store,
+                &audit,
+                &native_store,
+                Value::Object(bad_envelope_map),
+            ),
+        );
+        assert!(
+            bad_envelope_err.contains("receipt_envelope does not match proof value"),
+            "receipt envelope mismatch should fail, got: {bad_envelope_err}"
+        );
+
+        let mut wrong_root_map = match mapped_lock_live_event_proof_params(
+            "acct-map-live-receipt-invalid",
+            0x38,
+            93u128,
+        ) {
+            Value::Object(map) => map,
+            other => panic!("expected mapped lock proof params object, got {other:?}"),
+        };
+        wrong_root_map.insert("phase4_mode".to_string(), Value::String("live".to_string()));
+        wrong_root_map.insert("receipts_root".to_string(), Value::String(ua_hex(0x44, 32)));
+        let wrong_root_err = run_query_err(
+            &base,
+            "ua_registerMappedLock",
+            params_with_paths_and_native_store(
+                &store,
+                &audit,
+                &native_store,
+                Value::Object(wrong_root_map),
+            ),
+        );
+        assert!(
+            wrong_root_err.contains("receipt proof invalid")
+                || wrong_root_err.contains("receipt proof missing value"),
+            "wrong receipts root should fail proof verification, got: {wrong_root_err}"
         );
 
         let _ = fs::remove_dir_all(&root);

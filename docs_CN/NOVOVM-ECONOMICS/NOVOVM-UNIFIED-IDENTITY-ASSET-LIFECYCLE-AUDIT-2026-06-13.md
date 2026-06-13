@@ -22,9 +22,9 @@ NOVOVM 现在已经具备“统一身份 + EVM 产品入口 + native NOV 经济�
 
 - 当前没有发现 NOVO Wallet 前端/钱包应用代码；仓库里是 RPC/节点/gateway 能力，不是完整用户 App。
 - `crates/novovm-node/src/main.rs` 是 dead/historical source，不是当前 Cargo 产品 binary；不得再向该文件增加主线语义。当前统一账户产品入口以 `crates/novovm-node/src/bin/novovm-node.rs -> mainline_query -> unified_account_surface` 为准。
-- ETH 锁仓合约不是已部署真实 Solidity lock contract 路径；当前 `ua_registerMappedLock` live 模式已要求结构化 Ethereum lock event evidence（contract、topic0、block、finalized block、log index、source lock ref digest），目标资产为 `NETH`，但仍不是真实 Ethereum receipt/log Merkle proof。
+- ETH 锁仓合约不是已部署真实 Solidity lock contract 路径；当前 `ua_registerMappedLock` live 模式已要求结构化 Ethereum lock event evidence，并通过 `receipts_root + receipt_index + receipt_proof` 验证 receipt MPT inclusion，再解析 receipt log 的 contract/topic0，目标资产为 `NETH`。
 - `phase4_mode=live` 的内部 MVP 接线已能把 mapped lock 记为 `NETH` M2 credit，写入 native account balance、Treasury reserve 和 settlement journal；`phase4_mode=shadow` 仍只做审计映射，不入账。
-- 仍没有真实“Ethereum receipt/log Merkle proof -> 自动验证 -> Treasury policy -> NOV emission”的完整链上桥接。NOV mint 在 consensus token runtime 中存在，但不能直接接在 ETH lock proof 上。
+- 仍没有真实“Ethereum block header/finality source -> receiptsRoot 可信锚定 -> Treasury policy -> NOV emission”的完整链上桥接。NOV mint 在 consensus token runtime 中存在，但不能直接接在 ETH lock proof 上。
 - EVM 合约币可以在 EVM 产品面执行/查询 receipt，但和 NOV native account balance/treasury 是两套状态面，当前没有完整 ERC20 -> native asset 自动映射桥。
 - 并发量不能直接引用 README 的 L0/L1 百万 TPS 来代表钱包/gateway 入口吞吐。gateway 当前是单 HTTP loop，EVM pending consumer 默认 16 笔/250ms；native NOV store 是 JSON load-modify-write，适合单进程顺序产品闭环，不适合多进程高并发账本写入口。
 - 当前不声明 DAPP、网站、钱包进入本轮范围；本轮已完成上层经济规则、协议清算价 v1 和审阅边界，但不声明真实外部桥接自动闭环。
@@ -260,8 +260,8 @@ native NOV 入口：
 - 这不是完整真实 Ethereum receipt/log Merkle proof。
 - 这不是 NOV 铸造路径；ETH lock 只能先形成 `NETH` M2 凭证。
 - live mapped lock 会写入 native `account_asset_balances[NETH]`、`treasury_reserves[NETH]` 和 `treasury_settlement_journal`，但 `settled_nov=0`、`nov_minted=0`。
-- live 模式已校验 lock contract address、`Locked(address,bytes32,uint256,string)` topic0、log index、block number、finalized block number 和 `source_lock_ref` 派生一致性。
-- 仍没有验证 Ethereum receipt inclusion、receipt/log Merkle proof、block header proof 或 reorg heal。
+- live 模式已校验 lock contract address、`Locked(address,bytes32,uint256,string)` topic0、block number、finalized block number、`source_lock_ref` 派生一致性、receipt MPT proof、receipt envelope 与 proof value 一致性、receipt status 成功和 receipt log address/topic0。
+- 仍没有验证 Ethereum block header proof、receiptsRoot 的可信 header 来源或 reorg heal。
 - Phase4 shadow/no-go 环境变量可阻断 live register 路径。
 - `settlement_effect=neth_m2_credit` 只表示内部 NETH/M2 入账，不应直接解释为链上 ETH 已释放。
 
@@ -281,7 +281,7 @@ native NOV 入口：
 
 未完成接线：
 
-- MVP live 模式已有结构化 Ethereum lock event evidence -> NETH/M2 credit 的内部账本接线；但没有真实 Ethereum receipt/log Merkle proof、block header proof、reorg heal 或链上自动出入金。
+- MVP live 模式已有 receipt MPT inclusion + Ethereum lock event evidence -> NETH/M2 credit 的内部账本接线；但没有真实 block header proof、finality source、reorg heal 或链上自动出入金。
 - 没有发现真实外部 ETH reserve 与 NOV supply、NETH 负债、M2 credit exposure 的完整约束关系。
 
 状态：NOV mint 能力存在于 consensus runtime；ETH 锁仓 live MVP 只能先形成 NETH/M2 native credit，不能声明直接触发 NOV 铸造。
@@ -321,20 +321,20 @@ native NOV 入口：
 
 证据：
 
-- mapped lock proof live 模式目前是结构化 event evidence + digest 绑定校验，不是 Ethereum receipt/log Merkle proof。
+- mapped lock proof live 模式目前已验证 receipt MPT inclusion、receipt status、receipt log address/topic0 和结构化 event evidence。
 - target asset 是 `NETH`，归属 M2，不是 NOV。
 - live `ua_registerMappedLock` 已能写入 native NETH/M2 credit、Treasury reserve 和 settlement journal，且不 mint NOV。
 - live `ua_burnMappedAsset -> ua_releaseMappedLock` 已能扣减用户 NETH credit 并释放 Treasury NETH reserve。
-- live proof 已固定 lock contract 配置、事件 topic、log index、finalized block number 和 `source_lock_ref` 派生校验。
+- live proof 已固定 lock contract 配置、事件 topic、receipt_index、receipt_log_index、receipt MPT proof、finalized block number 和 `source_lock_ref` 派生校验。
 - `TokenRuntime::mint` 没有接到 Treasury policy / emission policy 路径。
 
 建议：
 
 - 下一步只做最小产品桥：
-  - 接真实 Ethereum receipt/log Merkle proof 和 block header/finality source。
+  - 接真实 Ethereum block header/finality source，把 `receipts_root` 从用户输入升级为可信 header 锚定。
   - 固定一个 lock contract address 配置已经进入 live proof gate，后续要从可信配置/治理读取。
-  - 当前只验 `Locked(address indexed owner, bytes32 lockId, uint256 amount, string targetUca)` 的结构化 evidence，下一步补 inclusion proof。
-  - finalized block number 已进入 live proof gate，下一步补真实 header/finality/reorg 来源。
+  - 当前已验 receipt MPT inclusion 和 `Locked(address indexed owner, bytes32 lockId, uint256 amount, string targetUca)` 的 receipt log address/topic0，下一步补 header proof / finality / reorg 来源。
+  - finalized block number 已进入 live proof gate，下一步补真实 header/finality/reorg 来源，不能继续信任用户自报。
   - 只把 ETH 映射为 `NETH`，不要直接铸 NOV。
   - NOV mint / 矿工结算必须通过 Treasury policy，并使用 epoch 固定的协议清算价。
 
