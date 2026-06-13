@@ -4685,6 +4685,34 @@ pub fn snapshot_network_runtime_native_pending_tx_broadcast_candidates_v1(
     limit: usize,
     max_propagation_count: u64,
 ) -> Vec<NetworkRuntimeNativePendingTxBroadcastCandidateV1> {
+    snapshot_network_runtime_native_pending_tx_broadcast_candidates_inner_v1(
+        chain_id,
+        limit,
+        max_propagation_count,
+        true,
+    )
+}
+
+#[must_use]
+pub fn snapshot_network_runtime_native_pending_tx_broadcast_candidates_including_native_v1(
+    chain_id: u64,
+    limit: usize,
+    max_propagation_count: u64,
+) -> Vec<NetworkRuntimeNativePendingTxBroadcastCandidateV1> {
+    snapshot_network_runtime_native_pending_tx_broadcast_candidates_inner_v1(
+        chain_id,
+        limit,
+        max_propagation_count,
+        false,
+    )
+}
+
+fn snapshot_network_runtime_native_pending_tx_broadcast_candidates_inner_v1(
+    chain_id: u64,
+    limit: usize,
+    max_propagation_count: u64,
+    require_eth_envelope: bool,
+) -> Vec<NetworkRuntimeNativePendingTxBroadcastCandidateV1> {
     if limit == 0 {
         return Vec::new();
     }
@@ -4721,7 +4749,9 @@ pub fn snapshot_network_runtime_native_pending_tx_broadcast_candidates_v1(
             if payload.is_empty() {
                 return None;
             }
-            if !eth_rlpx_validate_transaction_envelope_payload_v1(payload.as_slice()) {
+            if require_eth_envelope
+                && !eth_rlpx_validate_transaction_envelope_payload_v1(payload.as_slice())
+            {
                 return None;
             }
             Some(NetworkRuntimeNativePendingTxBroadcastCandidateV1 {
@@ -6894,6 +6924,39 @@ mod tests {
             candidates[0].lifecycle_stage,
             NetworkRuntimeNativePendingTxLifecycleStageV1::Propagated
         );
+    }
+
+    #[test]
+    fn native_pending_payload_broadcast_candidates_do_not_pollute_eth_only_candidates() {
+        let chain_id = 2067_u64;
+        clear_runtime_sync_status_for_test(chain_id);
+        clear_network_runtime_native_snapshots_for_chain_v1(chain_id);
+
+        let tx_native = [0x67; 32];
+        observe_network_runtime_native_pending_tx_local_native_payload_v1(
+            chain_id,
+            tx_native,
+            Some(b"NNX1-native-payload"),
+        );
+
+        let eth_only =
+            snapshot_network_runtime_native_pending_tx_broadcast_candidates_v1(chain_id, 10, 3);
+        assert!(
+            eth_only.is_empty(),
+            "native NOV payload must not enter Ethereum RLPx tx broadcast candidates"
+        );
+
+        let native_candidates =
+            snapshot_network_runtime_native_pending_tx_broadcast_candidates_including_native_v1(
+                chain_id, 10, 3,
+            );
+        assert_eq!(native_candidates.len(), 1);
+        assert_eq!(native_candidates[0].tx_hash, tx_native);
+        assert_eq!(
+            native_candidates[0].lifecycle_stage,
+            NetworkRuntimeNativePendingTxLifecycleStageV1::Pending
+        );
+        assert_eq!(native_candidates[0].tx_payload, b"NNX1-native-payload");
     }
 
     #[test]

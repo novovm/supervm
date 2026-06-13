@@ -34,7 +34,9 @@ use novovm_network::{
     is_eth_fullnode_runtime_query_method,
     observe_network_runtime_native_execution_budget_target_v1,
     observe_network_runtime_native_execution_budget_throttle_v1,
-    observe_network_runtime_native_pending_tx_local_ingress_with_payload_v1, parse_enode_endpoint,
+    observe_network_runtime_native_pending_tx_broadcast_dispatch_v1,
+    observe_network_runtime_native_pending_tx_local_ingress_with_payload_v1,
+    observe_network_runtime_native_pending_tx_propagated_with_context_v1, parse_enode_endpoint,
     relay_convergence_policy_view, resolve_eth_fullnode_budget_hooks_v1,
     resolve_eth_fullnode_canonical_query_method, restore_network_runtime_native_material_head_v1,
     run_replay_with, set_network_runtime_native_body_snapshot_v1,
@@ -47,6 +49,7 @@ use novovm_network::{
     set_network_runtime_native_snap_trie_node_snapshot_v1, set_network_runtime_native_sync_status,
     set_network_runtime_sync_status, snapshot_network_runtime_eth_peer_sessions_for_peers_v1,
     snapshot_network_runtime_native_canonical_blocks_v1,
+    snapshot_network_runtime_native_pending_tx_broadcast_candidates_including_native_v1,
     snapshot_network_runtime_native_pending_tx_broadcast_candidates_v1,
     snapshot_network_runtime_native_pending_tx_broadcast_runtime_summary_v1,
     snapshot_network_runtime_native_pending_tx_summary_v1,
@@ -33082,6 +33085,95 @@ impl NativeExecutionPipelineIngressDriveV1 {
     }
 }
 
+struct NativeExecutionPipelineBroadcastDriveV1 {
+    chain_id: u64,
+    peer_id: u64,
+    max_per_tick: usize,
+    max_propagations: u64,
+    enabled: bool,
+}
+
+impl NativeExecutionPipelineBroadcastDriveV1 {
+    fn from_env(chain_id: u64) -> Result<Self> {
+        Ok(Self {
+            chain_id,
+            peer_id: u64_env_allow_zero(
+                "NOVOVM_NATIVE_EXECUTION_PIPELINE_BROADCAST_PEER_ID",
+                9_990_001,
+            )?,
+            max_per_tick: usize_env_allow_zero(
+                "NOVOVM_NATIVE_EXECUTION_PIPELINE_BROADCAST_MAX_PER_TICK",
+                1024,
+            )?
+            .clamp(1, 16_384),
+            max_propagations: u64_env_positive(
+                "NOVOVM_NATIVE_EXECUTION_PIPELINE_BROADCAST_MAX_PROPAGATIONS",
+                3,
+            )?,
+            enabled: bool_env_default_true("NOVOVM_NATIVE_EXECUTION_PIPELINE_BROADCAST_ENABLED"),
+        })
+    }
+
+    fn drive_once(&self) -> serde_json::Value {
+        if !self.enabled {
+            return serde_json::json!({
+                "enabled": false,
+                "ok": true,
+                "reason": "NOVOVM_NATIVE_EXECUTION_PIPELINE_BROADCAST_ENABLED is false",
+            });
+        }
+        let candidates =
+            snapshot_network_runtime_native_pending_tx_broadcast_candidates_including_native_v1(
+                self.chain_id,
+                self.max_per_tick,
+                self.max_propagations,
+            );
+        let candidate_count = candidates.len() as u64;
+        if candidates.is_empty() {
+            return serde_json::json!({
+                "enabled": true,
+                "ok": true,
+                "source": "network_runtime_native_pending",
+                "dispatch": "native_pipeline_local_broadcast",
+                "peer_id": self.peer_id,
+                "candidate_count": 0u64,
+                "broadcast_tx_count": 0u64,
+                "tx_hashes": [],
+            });
+        }
+        let tx_hashes = candidates
+            .iter()
+            .map(|candidate| {
+                observe_network_runtime_native_pending_tx_propagated_with_context_v1(
+                    self.chain_id,
+                    candidate.tx_hash,
+                    Some(self.peer_id),
+                    Some("native_pipeline_local_broadcast"),
+                    Some(self.max_propagations),
+                );
+                to_hex_prefixed(&candidate.tx_hash)
+            })
+            .collect::<Vec<_>>();
+        observe_network_runtime_native_pending_tx_broadcast_dispatch_v1(
+            self.chain_id,
+            self.peer_id,
+            candidate_count,
+            candidate_count,
+            true,
+        );
+        serde_json::json!({
+            "enabled": true,
+            "ok": true,
+            "source": "network_runtime_native_pending",
+            "dispatch": "native_pipeline_local_broadcast",
+            "peer_id": self.peer_id,
+            "candidate_count": candidate_count,
+            "broadcast_tx_count": candidate_count,
+            "tx_hashes": tx_hashes,
+        })
+    }
+}
+
 impl NativeExecutionPipelineNetworkDriveV1 {
     fn drive_once(&mut self) -> serde_json::Value {
         match self.worker.drive_real_network_once() {
@@ -33261,6 +33353,7 @@ fn build_native_execution_pipeline_report_v1(
     tick_index: u64,
     network_drive: serde_json::Value,
     ingress_drive: serde_json::Value,
+    broadcast_drive: serde_json::Value,
     tick_out: serde_json::Value,
 ) -> serde_json::Value {
     let chain_id = tick_out
@@ -33288,6 +33381,7 @@ fn build_native_execution_pipeline_report_v1(
         "lifecycle": {
             "network": network_drive,
             "ingress_drive": ingress_drive,
+            "broadcast_drive": broadcast_drive,
             "ingress": {
                 "source": "network_runtime_native_pending",
                 "total": pending_summary.tx_count,
@@ -33737,6 +33831,10 @@ mod native_execution_pipeline_tests {
                 "ok": true,
             }),
             serde_json::json!({
+                "enabled": false,
+                "ok": true,
+            }),
+            serde_json::json!({
                 "method": "nov_runNativeExecutionTick",
                 "chain_id": 9_998_881u64,
                 "executed_count": 3u64,
@@ -33796,6 +33894,10 @@ mod native_execution_pipeline_tests {
                 "ok": true,
             }),
             serde_json::json!({
+                "enabled": false,
+                "ok": true,
+            }),
+            serde_json::json!({
                 "method": "nov_runNativeExecutionTick",
                 "chain_id": 9_998_882u64,
                 "executed_count": 0u64,
@@ -33834,6 +33936,12 @@ mod native_execution_pipeline_tests {
                 "enabled": true,
                 "ok": true,
                 "submitted": 2u64,
+            }),
+            serde_json::json!({
+                "enabled": true,
+                "ok": true,
+                "candidate_count": 1u64,
+                "broadcast_tx_count": 1u64,
             }),
             serde_json::json!({
                 "method": "nov_runNativeExecutionTick",
@@ -33909,6 +34017,16 @@ mod native_execution_pipeline_tests {
         let ingress_drive_out = ingress_drive.drive_once();
         assert_eq!(ingress_drive_out["ok"].as_bool(), Some(true));
         assert_eq!(ingress_drive_out["submitted"].as_u64(), Some(1));
+        let broadcast_drive = NativeExecutionPipelineBroadcastDriveV1 {
+            chain_id,
+            peer_id: 9_990_071,
+            max_per_tick: 4,
+            max_propagations: 3,
+            enabled: true,
+        };
+        let broadcast_drive_out = broadcast_drive.drive_once();
+        assert_eq!(broadcast_drive_out["ok"].as_bool(), Some(true));
+        assert_eq!(broadcast_drive_out["broadcast_tx_count"].as_u64(), Some(1));
 
         let store_path = std::env::temp_dir().join(format!(
             "novovm-native-pipeline-ingress-{}-{}.json",
@@ -33935,6 +34053,7 @@ mod native_execution_pipeline_tests {
                 "ok": true,
             }),
             ingress_drive_out,
+            broadcast_drive_out,
             out,
         );
         let mut aggregate = NativeExecutionPipelineAggregateV1::new();
@@ -33947,6 +34066,7 @@ mod native_execution_pipeline_tests {
         assert_eq!(summary["proof_ticks"].as_u64(), Some(1));
         assert_eq!(summary["commit_ticks"].as_u64(), Some(1));
         assert_eq!(summary["included_canonical_last"].as_u64(), Some(1));
+        assert_eq!(summary["broadcast_tx_total_last"].as_u64(), Some(1));
         NativeExecutionPipelineSoakGateV1 {
             emit_tick_reports: false,
             require_progress: true,
@@ -33958,7 +34078,7 @@ mod native_execution_pipeline_tests {
             max_network_error_ticks: u64::MAX,
             min_ingress_submitted_total: 1,
             max_ingress_error_ticks: 0,
-            min_broadcast_tx_total: 0,
+            min_broadcast_tx_total: 1,
             min_broadcast_candidates: 0,
             min_included_canonical: 1,
             min_ingress_total: 1,
@@ -34118,6 +34238,10 @@ mod native_execution_pipeline_tests {
                 "ok": true,
             }),
             serde_json::json!({
+                "enabled": false,
+                "ok": true,
+            }),
+            serde_json::json!({
                 "method": "nov_runNativeExecutionTick",
                 "chain_id": 9_998_884u64,
                 "executed_count": 1u64,
@@ -34145,6 +34269,7 @@ fn run_native_execution_tick_node_mode_v1(verbose: bool) -> Result<()> {
     let chain_id = u64_env_positive("NOVOVM_NATIVE_EXECUTION_TICK_CHAIN_ID", 1)?;
     let mut network_drive = native_execution_pipeline_network_drive_from_env_v1(chain_id, verbose)?;
     let mut ingress_drive = NativeExecutionPipelineIngressDriveV1::from_env(chain_id)?;
+    let broadcast_drive = NativeExecutionPipelineBroadcastDriveV1::from_env(chain_id)?;
     let soak_gate = NativeExecutionPipelineSoakGateV1::from_env()?;
     let mut ticks = 0u64;
     let mut aggregate = NativeExecutionPipelineAggregateV1::new();
@@ -34168,12 +34293,14 @@ fn run_native_execution_tick_node_mode_v1(verbose: bool) -> Result<()> {
                 "reason": "NOVOVM_NATIVE_EXECUTION_PIPELINE_INGRESS_RAW_TX(_FILE) is not set",
             }),
         };
+        let broadcast_drive_out = broadcast_drive.drive_once();
         let params = native_execution_tick_params_from_env_v1()?;
         let out = run_nov_native_execution_tick_from_params_v1(&params)?;
         let report = build_native_execution_pipeline_report_v1(
             ticks.saturating_add(1),
             network_drive_out,
             ingress_drive_out,
+            broadcast_drive_out,
             out,
         );
         aggregate.observe(&report)?;
