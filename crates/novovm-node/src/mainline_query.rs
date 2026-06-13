@@ -4077,6 +4077,116 @@ mod tests {
         std::env::temp_dir().join(format!("novovm-governance-{label}-{nonce}.json"))
     }
 
+    fn unique_unified_account_test_paths(label: &str) -> (PathBuf, PathBuf, PathBuf) {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system time should be after unix epoch")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("novovm-mainline-ua-{label}-{nonce}"));
+        let canonical = root.join("canonical.json");
+        let store = root.join("ua-store.rocksdb");
+        let audit = root.join("ua-audit.rocksdb");
+        (canonical, store, audit)
+    }
+
+    fn params_with_ua_and_native_paths(
+        store: &std::path::Path,
+        audit: &std::path::Path,
+        native_store: &std::path::Path,
+        extra: Value,
+    ) -> Value {
+        let mut map = match extra {
+            Value::Object(map) => map,
+            _ => serde_json::Map::new(),
+        };
+        map.insert(
+            "unified_account_store_path".to_string(),
+            Value::String(store.display().to_string()),
+        );
+        map.insert(
+            "unified_account_audit_path".to_string(),
+            Value::String(audit.display().to_string()),
+        );
+        map.insert(
+            "native_execution_store_path".to_string(),
+            Value::String(native_store.display().to_string()),
+        );
+        Value::Object(map)
+    }
+
+    fn create_mainline_uca_for_smoke(
+        base: &std::path::Path,
+        store: &std::path::Path,
+        audit: &std::path::Path,
+        native_store: &std::path::Path,
+        account_id: &str,
+    ) {
+        let out = run_mainline_query_from_path(
+            base,
+            "ua_createUca",
+            &params_with_ua_and_native_paths(
+                store,
+                audit,
+                native_store,
+                json!({
+                    "account_id": account_id,
+                    "primary_key_ref": format!("0x{}", "66".repeat(32)),
+                    "now": 10u64,
+                }),
+            ),
+        )
+        .expect("ua_createUca should succeed for mainline smoke");
+        assert_eq!(out["created"].as_bool(), Some(true));
+    }
+
+    fn mainline_test_hex_lower(bytes: &[u8]) -> String {
+        let mut out = String::with_capacity(bytes.len().saturating_mul(2));
+        for byte in bytes {
+            out.push_str(format!("{byte:02x}").as_str());
+        }
+        out
+    }
+
+    fn mapped_lock_smoke_params(account_id: &str, lock_byte: u8, amount: u128) -> Value {
+        let lock_id = [lock_byte; 32];
+        let source_tx_hash = vec![lock_byte.saturating_add(1); 32];
+        let source_lock_ref = vec![0xaa, lock_byte];
+        let external_owner_ref = vec![lock_byte.saturating_add(2); 20];
+        let mut hasher = Sha256::new();
+        hasher.update(b"novovm-mapped-lock-proof-v1");
+        hasher.update([0u8]);
+        hasher.update(lock_id);
+        hasher.update([0u8]);
+        hasher.update(b"ethereum");
+        hasher.update([0u8]);
+        hasher.update(b"ETH");
+        hasher.update([0u8]);
+        hasher.update(source_tx_hash.as_slice());
+        hasher.update([0u8]);
+        hasher.update(source_lock_ref.as_slice());
+        hasher.update([0u8]);
+        hasher.update(external_owner_ref.as_slice());
+        hasher.update([0u8]);
+        hasher.update(account_id.as_bytes());
+        hasher.update([0u8]);
+        hasher.update(amount.to_be_bytes());
+        let digest: [u8; 32] = hasher.finalize().into();
+        json!({
+            "lock_id": format!("0x{}", mainline_test_hex_lower(&lock_id)),
+            "source_chain": "ethereum",
+            "source_asset_symbol": "ETH",
+            "source_tx_hash": format!("0x{}", mainline_test_hex_lower(&source_tx_hash)),
+            "source_lock_ref": format!("0x{}", mainline_test_hex_lower(&source_lock_ref)),
+            "external_owner_ref": format!("0x{}", mainline_test_hex_lower(&external_owner_ref)),
+            "target_account_id": account_id,
+            "amount": amount.to_string(),
+            "proof_format": "ethereum_lock_event_v1",
+            "proof_payload": format!("0x{}", mainline_test_hex_lower(&digest)),
+            "phase4_mode": "shadow",
+            "now": 11u64,
+        })
+    }
+
     fn unique_unified_account_paths(label: &str) -> (PathBuf, PathBuf, PathBuf) {
         let nonce = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -10895,6 +11005,147 @@ mod tests {
         assert_eq!(usdt_after_block, usdt_after_success);
 
         let _ = fs::remove_file(native_store);
+    }
+
+    #[test]
+    fn mainline_query_mapped_asset_shadow_lifecycle_product_smoke() {
+        let (base, store, audit) = unique_unified_account_test_paths("mapped-shadow-smoke");
+        let root = base
+            .parent()
+            .unwrap_or_else(|| std::path::Path::new("."))
+            .to_path_buf();
+        let native_store = root.join("native-execution-store.json");
+        save_nov_native_execution_store_v1(
+            native_store.as_path(),
+            &NovNativeExecutionStoreV1::default(),
+        )
+        .expect("seed native execution store for mapped shadow smoke");
+        let account_id = "acct-mainline-map-shadow";
+        create_mainline_uca_for_smoke(&base, &store, &audit, &native_store, account_id);
+
+        let register = run_mainline_query_from_path(
+            base.as_path(),
+            "ua_registerMappedLock",
+            &params_with_ua_and_native_paths(
+                store.as_path(),
+                audit.as_path(),
+                native_store.as_path(),
+                mapped_lock_smoke_params(account_id, 0x71, 500),
+            ),
+        )
+        .expect("ua_registerMappedLock should succeed through mainline query");
+        assert_eq!(register["accepted"].as_bool(), Some(true));
+        assert_eq!(register["status"].as_str(), Some("active"));
+        assert_eq!(register["phase4_mode"].as_str(), Some("shadow"));
+        assert_eq!(register["settlement_effect"].as_str(), Some("none"));
+        let mapping_id = register["mapping_id"]
+            .as_str()
+            .expect("mapping_id should exist")
+            .to_string();
+
+        let assets_active = run_mainline_query_from_path(
+            base.as_path(),
+            "account_assets",
+            &params_with_ua_and_native_paths(
+                store.as_path(),
+                audit.as_path(),
+                native_store.as_path(),
+                json!({"account_id": account_id}),
+            ),
+        )
+        .expect("account_assets should show mapped asset");
+        assert_eq!(assets_active["mapped_asset_count"].as_u64(), Some(1));
+        assert_eq!(
+            assets_active["mapped_assets"][0]["status"].as_str(),
+            Some("active")
+        );
+        assert_eq!(
+            assets_active["mapped_assets"][0]["phase4_mode"].as_str(),
+            Some("shadow")
+        );
+        assert_eq!(
+            assets_active["mapped_assets"][0]["settlement_effect"].as_str(),
+            Some("none")
+        );
+
+        let burn = run_mainline_query_from_path(
+            base.as_path(),
+            "ua_burnMappedAsset",
+            &params_with_ua_and_native_paths(
+                store.as_path(),
+                audit.as_path(),
+                native_store.as_path(),
+                json!({
+                    "account_id": account_id,
+                    "mapping_id": mapping_id,
+                    "now": 12u64,
+                }),
+            ),
+        )
+        .expect("ua_burnMappedAsset should succeed through mainline query");
+        assert_eq!(burn["burned"].as_bool(), Some(true));
+        assert_eq!(burn["status"].as_str(), Some("burn_pending"));
+        assert_eq!(burn["phase4_mode"].as_str(), Some("shadow"));
+        assert_eq!(burn["settlement_effect"].as_str(), Some("none"));
+
+        let assets_after_burn = run_mainline_query_from_path(
+            base.as_path(),
+            "account_assets",
+            &params_with_ua_and_native_paths(
+                store.as_path(),
+                audit.as_path(),
+                native_store.as_path(),
+                json!({"account_id": account_id}),
+            ),
+        )
+        .expect("account_assets should hide burn_pending from active mapped list");
+        assert_eq!(assets_after_burn["mapped_asset_count"].as_u64(), Some(0));
+
+        let release = run_mainline_query_from_path(
+            base.as_path(),
+            "ua_releaseMappedLock",
+            &params_with_ua_and_native_paths(
+                store.as_path(),
+                audit.as_path(),
+                native_store.as_path(),
+                json!({
+                    "account_id": account_id,
+                    "mapping_id": register["mapping_id"],
+                    "now": 13u64,
+                }),
+            ),
+        )
+        .expect("ua_releaseMappedLock should succeed through mainline query");
+        assert_eq!(release["released"].as_bool(), Some(true));
+        assert_eq!(release["status"].as_str(), Some("released"));
+        assert_eq!(release["phase4_mode"].as_str(), Some("shadow"));
+        assert_eq!(release["settlement_effect"].as_str(), Some("none"));
+
+        let mapped = run_mainline_query_from_path(
+            base.as_path(),
+            "ua_getMappedAsset",
+            &params_with_ua_and_native_paths(
+                store.as_path(),
+                audit.as_path(),
+                native_store.as_path(),
+                json!({
+                    "account_id": account_id,
+                    "mapping_id": register["mapping_id"],
+                }),
+            ),
+        )
+        .expect("ua_getMappedAsset should return released mapped asset");
+        assert_eq!(mapped["mapped_asset"]["status"].as_str(), Some("released"));
+        assert_eq!(
+            mapped["mapped_asset"]["phase4_mode"].as_str(),
+            Some("shadow")
+        );
+        assert_eq!(
+            mapped["mapped_asset"]["settlement_effect"].as_str(),
+            Some("none")
+        );
+
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
