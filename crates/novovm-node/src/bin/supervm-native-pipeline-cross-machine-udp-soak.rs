@@ -309,6 +309,7 @@ fn spawn_receiver_node(
     receiver_node: u64,
     listen_addr: &str,
     store_path: &Path,
+    expected_tx_count: u64,
     max_ticks: u64,
     tick_interval_ms: u64,
     batch_budget: u64,
@@ -402,7 +403,23 @@ fn spawn_receiver_node(
         ),
         (
             "NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_AOEM_EXECUTED",
+            expected_tx_count.to_string(),
+        ),
+        (
+            "NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_INGRESS_TOTAL",
+            expected_tx_count.to_string(),
+        ),
+        (
+            "NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_INCLUDED_CANONICAL_TOTAL",
+            expected_tx_count.to_string(),
+        ),
+        (
+            "NOVOVM_NATIVE_EXECUTION_PIPELINE_MAX_QUEUE_PENDING_LAST",
             "0".to_string(),
+        ),
+        (
+            "NOVOVM_NATIVE_EXECUTION_PIPELINE_EXIT_WHEN_SUMMARY_VALID",
+            "true".to_string(),
         ),
     ];
     for (key, value) in envs {
@@ -445,6 +462,7 @@ fn run_receiver_node(
     receiver_node: u64,
     listen_addr: &str,
     store_path: &Path,
+    expected_tx_count: u64,
     max_ticks: u64,
     tick_interval_ms: u64,
     batch_budget: u64,
@@ -456,6 +474,7 @@ fn run_receiver_node(
         receiver_node,
         listen_addr,
         store_path,
+        expected_tx_count,
         max_ticks,
         tick_interval_ms,
         batch_budget,
@@ -783,6 +802,7 @@ fn run_receiver(
         receiver_node,
         listen_addr,
         store_path,
+        tx_count,
         max_ticks,
         tick_interval_ms,
         batch_budget,
@@ -855,6 +875,7 @@ fn run_local_smoke(
         receiver_node,
         receiver_addr.as_str(),
         store_path,
+        tx_count,
         max_ticks,
         tick_interval_ms,
         batch_budget,

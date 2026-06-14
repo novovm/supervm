@@ -36077,6 +36077,12 @@ fn run_native_execution_tick_node_mode_v1(verbose: bool) -> Result<()> {
             );
         }
         ticks = ticks.saturating_add(1);
+        if bool_env("NOVOVM_NATIVE_EXECUTION_PIPELINE_EXIT_WHEN_SUMMARY_VALID") {
+            let summary = aggregate.to_json();
+            if soak_gate.validate_summary(&summary).is_ok() {
+                break;
+            }
+        }
         if max_ticks > 0 && ticks >= max_ticks {
             break;
         }
