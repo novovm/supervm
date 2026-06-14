@@ -869,7 +869,11 @@ fn main() -> Result<()> {
             "NOVOVM_NATIVE_PIPELINE_MAX_TICKS",
             "NOVOVM_NATIVE_PIPELINE_CROSS_MACHINE_MAX_TICKS",
         ],
-        div_ceil_u64(tx_count, batch_budget).saturating_add(180),
+        if role == "receiver" {
+            3600
+        } else {
+            div_ceil_u64(tx_count, batch_budget).saturating_add(180)
+        },
     )?
     .max(1);
     let startup_wait_ms = u64_env("NOVOVM_NATIVE_PIPELINE_STARTUP_WAIT_MS", 500)?;

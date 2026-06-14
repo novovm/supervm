@@ -396,6 +396,7 @@ Machine B receiver:
 ```powershell
 $env:NOVOVM_NATIVE_PIPELINE_ROLE="receiver"
 $env:NOVOVM_NATIVE_PIPELINE_LISTEN_ADDR="0.0.0.0:39001"
+$env:NOVOVM_NATIVE_PIPELINE_MAX_TICKS="3600"
 $env:NOVOVM_NATIVE_PIPELINE_REPORT_PATH="artifacts/native-pipeline/receiver-cross-machine-report.json"
 cargo run -p novovm-node --bin supervm-native-pipeline-cross-machine-udp-soak
 ```
@@ -418,6 +419,7 @@ Machine B receiver:
 ```powershell
 $env:NOVOVM_NATIVE_PIPELINE_ROLE="receiver"
 $env:NOVOVM_NATIVE_PIPELINE_LISTEN_ADDR="0.0.0.0:39001"
+$env:NOVOVM_NATIVE_PIPELINE_MAX_TICKS="3600"
 $env:NOVOVM_NATIVE_PIPELINE_REPORT_PATH="artifacts/native-pipeline/receiver-cross-machine-fault-report.json"
 cargo run -p novovm-node --bin supervm-native-pipeline-cross-machine-fault-udp-soak
 ```
