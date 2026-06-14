@@ -33753,6 +33753,11 @@ struct NativeExecutionPipelineAggregateV1 {
     ingress_error_ticks: u64,
     aoem_executed_total: u64,
     aoem_deferred_total: u64,
+    skipped_missing_payload_total: u64,
+    skipped_non_native_payload_total: u64,
+    skipped_chain_mismatch_total: u64,
+    skipped_ineligible_stage_total: u64,
+    skipped_already_receipted_total: u64,
     max_aoem_batch_executed_per_tick: u64,
     max_proof_items_per_tick: u64,
     max_commit_items_per_tick: u64,
@@ -33798,6 +33803,11 @@ impl NativeExecutionPipelineAggregateV1 {
             ingress_error_ticks: 0,
             aoem_executed_total: 0,
             aoem_deferred_total: 0,
+            skipped_missing_payload_total: 0,
+            skipped_non_native_payload_total: 0,
+            skipped_chain_mismatch_total: 0,
+            skipped_ineligible_stage_total: 0,
+            skipped_already_receipted_total: 0,
             max_aoem_batch_executed_per_tick: 0,
             max_proof_items_per_tick: 0,
             max_commit_items_per_tick: 0,
@@ -33964,6 +33974,41 @@ impl NativeExecutionPipelineAggregateV1 {
                 .and_then(|value| value.as_u64())
                 .unwrap_or_default(),
         );
+        if let Some(skipped) = report.pointer("/tick_result/batch_result/skipped") {
+            self.skipped_missing_payload_total = self.skipped_missing_payload_total.saturating_add(
+                skipped
+                    .get("missing_payload")
+                    .and_then(|value| value.as_u64())
+                    .unwrap_or_default(),
+            );
+            self.skipped_non_native_payload_total =
+                self.skipped_non_native_payload_total.saturating_add(
+                    skipped
+                        .get("non_native_payload")
+                        .and_then(|value| value.as_u64())
+                        .unwrap_or_default(),
+                );
+            self.skipped_chain_mismatch_total = self.skipped_chain_mismatch_total.saturating_add(
+                skipped
+                    .get("chain_mismatch")
+                    .and_then(|value| value.as_u64())
+                    .unwrap_or_default(),
+            );
+            self.skipped_ineligible_stage_total =
+                self.skipped_ineligible_stage_total.saturating_add(
+                    skipped
+                        .get("ineligible_stage")
+                        .and_then(|value| value.as_u64())
+                        .unwrap_or_default(),
+                );
+            self.skipped_already_receipted_total =
+                self.skipped_already_receipted_total.saturating_add(
+                    skipped
+                        .get("already_receipted")
+                        .and_then(|value| value.as_u64())
+                        .unwrap_or_default(),
+                );
+        }
         let proof_tick = proof
             .get("tick_output_method")
             .and_then(|value| value.as_str())
@@ -34128,6 +34173,26 @@ impl NativeExecutionPipelineAggregateV1 {
         out.insert(
             "aoem_deferred_total".to_string(),
             serde_json::json!(self.aoem_deferred_total),
+        );
+        out.insert(
+            "skipped_missing_payload_total".to_string(),
+            serde_json::json!(self.skipped_missing_payload_total),
+        );
+        out.insert(
+            "skipped_non_native_payload_total".to_string(),
+            serde_json::json!(self.skipped_non_native_payload_total),
+        );
+        out.insert(
+            "skipped_chain_mismatch_total".to_string(),
+            serde_json::json!(self.skipped_chain_mismatch_total),
+        );
+        out.insert(
+            "skipped_ineligible_stage_total".to_string(),
+            serde_json::json!(self.skipped_ineligible_stage_total),
+        );
+        out.insert(
+            "skipped_already_receipted_total".to_string(),
+            serde_json::json!(self.skipped_already_receipted_total),
         );
         out.insert(
             "max_aoem_batch_executed_per_tick".to_string(),
