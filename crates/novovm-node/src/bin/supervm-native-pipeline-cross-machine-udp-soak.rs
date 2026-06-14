@@ -11,7 +11,7 @@ use novovm_protocol::{
     NovPrivacyModeV1, NovTxKindV1, NovVerificationModeV1, ProtocolMessage,
 };
 use serde_json::Value;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::net::UdpSocket;
 use std::path::{Path, PathBuf};
@@ -23,8 +23,32 @@ const REPORT_SCHEMA_V1: &str = "novovm-native-pipeline-cross-machine-udp-soak-re
 #[derive(Debug, Clone)]
 struct NativeFixtureTxV1 {
     index: u64,
+    copy_index: u64,
     tx_hash: [u8; 32],
     payload: Vec<u8>,
+    dropped: bool,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct FaultConfigV1 {
+    enabled: bool,
+    loss_bps: u64,
+    duplicate_bps: u64,
+    delay_ms: u64,
+    reorder_bps: u64,
+    seed: u64,
+}
+
+#[derive(Debug, Clone)]
+struct SendScheduleStatsV1 {
+    scheduled_packets: u64,
+    sent_packets: u64,
+    dropped_packets: u64,
+    duplicated_packets: u64,
+    delayed_packets: u64,
+    reordered_packets: u64,
+    sent_unique: u64,
+    sent_by_hash: BTreeMap<String, u64>,
 }
 
 fn string_env_nonempty(name: &str) -> Option<String> {
@@ -55,6 +79,21 @@ fn u64_env_alias(names: &[&str], default: u64) -> Result<u64> {
         }
     }
     Ok(default)
+}
+
+fn env_any(names: &[&str]) -> bool {
+    names.iter().any(|name| string_env_nonempty(name).is_some())
+}
+
+fn current_bin_name_contains(pattern: &str) -> bool {
+    std::env::current_exe()
+        .ok()
+        .and_then(|path| {
+            path.file_name()
+                .map(|name| name.to_string_lossy().to_string())
+        })
+        .map(|name| name.to_ascii_lowercase().contains(pattern))
+        .unwrap_or(false)
 }
 
 fn unix_ms_now() -> u128 {
@@ -170,11 +209,61 @@ fn build_native_payloads(chain_id: u64, count: u64) -> Result<Vec<NativeFixtureT
             .map_err(|err| anyhow::anyhow!("encode cross-machine native tx failed: {err}"))?;
         out.push(NativeFixtureTxV1 {
             index,
+            copy_index: 0,
             tx_hash,
             payload,
+            dropped: false,
         });
     }
     Ok(out)
+}
+
+fn loss_roll_bps(seed: u64, index: u64, copy_index: u64) -> u64 {
+    let mut x = seed
+        ^ index.wrapping_mul(0x9e37_79b9_7f4a_7c15)
+        ^ copy_index.wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    x ^= x >> 30;
+    x = x.wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    x ^= x >> 27;
+    x = x.wrapping_mul(0x94d0_49bb_1331_11eb);
+    x ^= x >> 31;
+    x % 10_000
+}
+
+fn apply_fault_schedule(
+    base: &[NativeFixtureTxV1],
+    fault: FaultConfigV1,
+) -> Vec<NativeFixtureTxV1> {
+    if !fault.enabled {
+        return base.to_vec();
+    }
+    let duplicate_all = fault.duplicate_bps >= 10_000;
+    let mut scheduled = Vec::with_capacity(base.len().saturating_mul(2));
+    for tx in base {
+        let mut first = tx.clone();
+        first.copy_index = 0;
+        first.dropped =
+            loss_roll_bps(fault.seed, first.index, first.copy_index) < fault.loss_bps.min(10_000);
+        scheduled.push(first);
+
+        let duplicate_this = duplicate_all
+            || loss_roll_bps(fault.seed ^ 0xa11c_e55d, tx.index, 1)
+                < fault.duplicate_bps.min(10_000);
+        if duplicate_this {
+            let mut dup = tx.clone();
+            dup.copy_index = 1;
+            dup.dropped =
+                loss_roll_bps(fault.seed, dup.index, dup.copy_index) < fault.loss_bps.min(10_000);
+            scheduled.push(dup);
+        }
+    }
+    if fault.reorder_bps > 0 {
+        let chunk = if fault.reorder_bps >= 10_000 { 4 } else { 8 };
+        for part in scheduled.chunks_mut(chunk) {
+            part.reverse();
+        }
+    }
+    scheduled
 }
 
 fn spawn_receiver_node(
@@ -380,7 +469,7 @@ fn write_report(path: &Path, report: &Value) -> Result<()> {
         .with_context(|| format!("write cross-machine report failed: {}", path.display()))
 }
 
-fn send_clean_batch(
+fn send_scheduled_batch(
     chain_id: u64,
     sender_node: u64,
     receiver_node: u64,
@@ -388,14 +477,33 @@ fn send_clean_batch(
     receiver_addr: &str,
     txs: &[NativeFixtureTxV1],
     delay_ms: u64,
-) -> Result<BTreeMap<String, u64>> {
+) -> Result<SendScheduleStatsV1> {
     let sender = UdpTransport::bind_for_chain(NodeId(sender_node), sender_addr, chain_id)
         .with_context(|| format!("bind cross-machine sender UDP failed: {sender_addr}"))?;
     sender
         .register_peer(NodeId(receiver_node), receiver_addr)
         .with_context(|| format!("register cross-machine receiver peer failed: {receiver_addr}"))?;
     let mut sent_by_hash = BTreeMap::<String, u64>::new();
+    let mut sent_unique = BTreeSet::<String>::new();
+    let mut sent_packets = 0u64;
+    let mut dropped_packets = 0u64;
+    let duplicated_packets = txs
+        .iter()
+        .filter(|tx| tx.copy_index > 0)
+        .count()
+        .try_into()
+        .unwrap_or(u64::MAX);
+    let reordered_packets = txs
+        .windows(2)
+        .filter(|pair| pair[0].index > pair[1].index)
+        .count()
+        .try_into()
+        .unwrap_or(u64::MAX);
     for tx in txs {
+        if tx.dropped {
+            dropped_packets = dropped_packets.saturating_add(1);
+            continue;
+        }
         let msg = ProtocolMessage::EvmNative(EvmNativeMessage::Transactions {
             from: NodeId(sender_node),
             chain_id,
@@ -403,15 +511,30 @@ fn send_clean_batch(
             tx_count: 1,
             payload: tx.payload.clone(),
         });
-        sender
-            .send(NodeId(receiver_node), msg)
-            .with_context(|| format!("send cross-machine tx index={} failed", tx.index))?;
-        *sent_by_hash.entry(hex_lower(&tx.tx_hash)).or_default() += 1;
+        sender.send(NodeId(receiver_node), msg).with_context(|| {
+            format!(
+                "send cross-machine tx index={} copy={} failed",
+                tx.index, tx.copy_index
+            )
+        })?;
+        let hash = hex_lower(&tx.tx_hash);
+        sent_unique.insert(hash.clone());
+        *sent_by_hash.entry(hash).or_default() += 1;
+        sent_packets = sent_packets.saturating_add(1);
         if delay_ms > 0 {
             std::thread::sleep(std::time::Duration::from_millis(delay_ms));
         }
     }
-    Ok(sent_by_hash)
+    Ok(SendScheduleStatsV1 {
+        scheduled_packets: txs.len().try_into().unwrap_or(u64::MAX),
+        sent_packets,
+        dropped_packets,
+        duplicated_packets,
+        delayed_packets: if delay_ms > 0 { sent_packets } else { 0 },
+        reordered_packets,
+        sent_unique: sent_unique.len().try_into().unwrap_or(u64::MAX),
+        sent_by_hash,
+    })
 }
 
 fn validate_boundaries(summary: &Value, violations: &mut Vec<String>) {
@@ -512,20 +635,20 @@ fn run_sender(
     receiver_node: u64,
     sender_addr: &str,
     receiver_addr: &str,
-    delay_ms: u64,
+    fault: FaultConfigV1,
 ) -> Result<Value> {
     let txs = build_native_payloads(chain_id, tx_count)?;
-    let sent_by_hash = send_clean_batch(
+    let scheduled = apply_fault_schedule(txs.as_slice(), fault);
+    let stats = send_scheduled_batch(
         chain_id,
         sender_node,
         receiver_node,
         sender_addr,
         receiver_addr,
-        txs.as_slice(),
-        delay_ms,
+        scheduled.as_slice(),
+        fault.delay_ms,
     )?;
-    let sent_count = sent_by_hash.values().copied().sum::<u64>();
-    let accepted = sent_count == tx_count && sent_by_hash.len() as u64 == tx_count;
+    let accepted = stats.sent_unique == tx_count;
     Ok(serde_json::json!({
         "schema": REPORT_SCHEMA_V1,
         "role": "sender",
@@ -537,14 +660,29 @@ fn run_sender(
         "sender_addr": sender_addr,
         "receiver_addr": receiver_addr,
         "clean_network": {
-            "packet_loss": 0,
-            "duplicate": 0,
-            "delay_ms": delay_ms,
-            "reorder": 0,
-            "sent_count": sent_count,
-            "sent_unique": sent_by_hash.len() as u64,
+            "packet_loss": fault.loss_bps,
+            "duplicate": fault.duplicate_bps,
+            "delay_ms": fault.delay_ms,
+            "reorder": fault.reorder_bps,
+            "sent_count": stats.sent_packets,
+            "sent_unique": stats.sent_unique,
         },
-        "sent_by_hash": sent_by_hash,
+        "fault_injection": {
+            "enabled": fault.enabled,
+            "packet_loss_bps": fault.loss_bps,
+            "duplicate_bps": fault.duplicate_bps,
+            "delay_ms": fault.delay_ms,
+            "reorder_bps": fault.reorder_bps,
+            "seed": fault.seed,
+            "scheduled_packets": stats.scheduled_packets,
+            "sent_packets": stats.sent_packets,
+            "dropped_packets": stats.dropped_packets,
+            "duplicated_packets": stats.duplicated_packets,
+            "delayed_packets": stats.delayed_packets,
+            "reordered_packets": stats.reordered_packets,
+            "sent_unique": stats.sent_unique,
+        },
+        "sent_by_hash": stats.sent_by_hash,
         "violations": if accepted { Vec::<String>::new() } else { vec!["sender did not send expected unique tx count".to_string()] },
     }))
 }
@@ -621,6 +759,7 @@ fn run_local_smoke(
     batch_budget: u64,
     recv_budget: u64,
     startup_wait_ms: u64,
+    fault: FaultConfigV1,
 ) -> Result<Value> {
     let sender_addr = reserve_udp_addr()?;
     let receiver_addr = reserve_udp_addr()?;
@@ -643,7 +782,10 @@ fn run_local_smoke(
         receiver_node,
         sender_addr.as_str(),
         receiver_addr.as_str(),
-        1,
+        FaultConfigV1 {
+            delay_ms: if fault.enabled { fault.delay_ms } else { 1 },
+            ..fault
+        },
     )?;
     let receiver_summary = parse_summary(
         child
@@ -731,6 +873,41 @@ fn main() -> Result<()> {
     )?
     .max(1);
     let startup_wait_ms = u64_env("NOVOVM_NATIVE_PIPELINE_STARTUP_WAIT_MS", 500)?;
+    let fault_binary = current_bin_name_contains("fault");
+    let fault_env = env_any(&[
+        "NOVOVM_NATIVE_PIPELINE_FAULT_PACKET_LOSS_BPS",
+        "NOVOVM_NATIVE_PIPELINE_FAULT_DUPLICATE_BPS",
+        "NOVOVM_NATIVE_PIPELINE_FAULT_DELAY_MS",
+        "NOVOVM_NATIVE_PIPELINE_FAULT_REORDER_BPS",
+        "NOVOVM_NATIVE_PIPELINE_FAULT_SEED",
+    ]);
+    let fault_enabled = fault_binary || fault_env;
+    let fault = FaultConfigV1 {
+        enabled: fault_enabled,
+        loss_bps: u64_env(
+            "NOVOVM_NATIVE_PIPELINE_FAULT_PACKET_LOSS_BPS",
+            if fault_enabled { 200 } else { 0 },
+        )?
+        .min(10_000),
+        duplicate_bps: u64_env(
+            "NOVOVM_NATIVE_PIPELINE_FAULT_DUPLICATE_BPS",
+            if fault_enabled { 3000 } else { 0 },
+        )?
+        .min(10_000),
+        delay_ms: u64_env(
+            "NOVOVM_NATIVE_PIPELINE_FAULT_DELAY_MS",
+            if fault_enabled { 20 } else { 0 },
+        )?,
+        reorder_bps: u64_env(
+            "NOVOVM_NATIVE_PIPELINE_FAULT_REORDER_BPS",
+            if fault_enabled { 1000 } else { 0 },
+        )?
+        .min(10_000),
+        seed: u64_env(
+            "NOVOVM_NATIVE_PIPELINE_FAULT_SEED",
+            if fault_enabled { 123 } else { 0 },
+        )?,
+    };
     let sender_node = u64_env_alias(
         &[
             "NOVOVM_NATIVE_PIPELINE_SENDER_NODE",
@@ -797,7 +974,7 @@ fn main() -> Result<()> {
                 receiver_node,
                 sender_addr.as_str(),
                 receiver_addr.as_str(),
-                0,
+                fault,
             )?
         }
         "local-smoke" | "local_smoke" => run_local_smoke(
@@ -812,6 +989,7 @@ fn main() -> Result<()> {
             batch_budget,
             recv_budget,
             startup_wait_ms,
+            fault,
         )?,
         other => bail!("unknown NOVOVM_NATIVE_PIPELINE_ROLE: {other}"),
     };

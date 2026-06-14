@@ -411,6 +411,34 @@ cargo run -p novovm-node --bin supervm-native-pipeline-cross-machine-udp-soak
 
 The first cross-machine profile is clean network only: no loss, no duplicate, no artificial delay, and no reorder. The receiver validates `received_unique == tx_count`, `canonical_unique_included == tx_count`, `duplicate_canonical_included == 0`, drained pending queue, semantic head recovery, receipt index consistency, and AOEM runtime ownership.
 
+Cross-machine fault UDP soak:
+
+Machine B receiver:
+
+```powershell
+$env:NOVOVM_NATIVE_PIPELINE_ROLE="receiver"
+$env:NOVOVM_NATIVE_PIPELINE_LISTEN_ADDR="0.0.0.0:39001"
+$env:NOVOVM_NATIVE_PIPELINE_REPORT_PATH="artifacts/native-pipeline/receiver-cross-machine-fault-report.json"
+cargo run -p novovm-node --bin supervm-native-pipeline-cross-machine-fault-udp-soak
+```
+
+Machine A sender:
+
+```powershell
+$env:NOVOVM_NATIVE_PIPELINE_ROLE="sender"
+$env:NOVOVM_NATIVE_PIPELINE_RECEIVER_ADDR="<machine-b-lan-ip>:39001"
+$env:NOVOVM_NATIVE_PIPELINE_TX_COUNT="32"
+$env:NOVOVM_NATIVE_PIPELINE_FAULT_PACKET_LOSS_BPS="200"
+$env:NOVOVM_NATIVE_PIPELINE_FAULT_DUPLICATE_BPS="3000"
+$env:NOVOVM_NATIVE_PIPELINE_FAULT_DELAY_MS="20"
+$env:NOVOVM_NATIVE_PIPELINE_FAULT_REORDER_BPS="1000"
+$env:NOVOVM_NATIVE_PIPELINE_FAULT_SEED="123"
+$env:NOVOVM_NATIVE_PIPELINE_REPORT_PATH="artifacts/native-pipeline/sender-cross-machine-fault-report.json"
+cargo run -p novovm-node --bin supervm-native-pipeline-cross-machine-fault-udp-soak
+```
+
+The cross-machine fault profile only injects packet loss, duplicate packets, delay, and reorder before sender UDP transmit. It does not modify the frozen receiver lifecycle, does not bypass AOEM tick execution, and does not claim canonical body/head recovery. The first profile expects all 32 unique native txs to arrive and be canonically included exactly once under light packet-level disruption.
+
 Paced fanout network ingress gate:
 
 ```powershell

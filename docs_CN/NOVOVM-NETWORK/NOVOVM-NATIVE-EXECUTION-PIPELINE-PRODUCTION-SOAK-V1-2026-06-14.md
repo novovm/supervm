@@ -391,3 +391,88 @@ skipped_chain_mismatch_total = 0
 - 不修改 frozen lifecycle。
 - 不改变 AOEM_runtime 作为执行并发 owner。
 - 不允许 Rust host 自建执行调度器。
+
+## 11. 第七刀：Cross-machine Fault UDP Soak
+
+新增 fault 入口：
+
+```text
+cargo run -p novovm-node --bin supervm-native-pipeline-cross-machine-fault-udp-soak
+```
+
+实现边界：
+
+- 不修改 frozen lifecycle。
+- 不扩展 pipeline 功能。
+- 只在 sender UDP 发包前注入 fault schedule。
+- receiver 仍走 `UDP receive -> pending queue -> AOEM batch -> proof -> dirty commit -> canonical included`。
+- 不声明 canonical body/head persistence。
+
+默认 fault 参数：
+
+```text
+tx_count = 32
+packet_loss_bps = 200
+duplicate_bps = 3000
+delay_ms = 20
+reorder_bps = 1000
+seed = 123
+```
+
+机器 B receiver：
+
+```powershell
+$env:NOVOVM_NATIVE_PIPELINE_ROLE="receiver"
+$env:NOVOVM_NATIVE_PIPELINE_LISTEN_ADDR="0.0.0.0:39001"
+$env:NOVOVM_NATIVE_PIPELINE_REPORT_PATH="artifacts/native-pipeline/receiver-cross-machine-fault-report.json"
+cargo run -p novovm-node --bin supervm-native-pipeline-cross-machine-fault-udp-soak
+```
+
+机器 A sender：
+
+```powershell
+$env:NOVOVM_NATIVE_PIPELINE_ROLE="sender"
+$env:NOVOVM_NATIVE_PIPELINE_RECEIVER_ADDR="<machine-b-lan-ip>:39001"
+$env:NOVOVM_NATIVE_PIPELINE_TX_COUNT="32"
+$env:NOVOVM_NATIVE_PIPELINE_FAULT_PACKET_LOSS_BPS="200"
+$env:NOVOVM_NATIVE_PIPELINE_FAULT_DUPLICATE_BPS="3000"
+$env:NOVOVM_NATIVE_PIPELINE_FAULT_DELAY_MS="20"
+$env:NOVOVM_NATIVE_PIPELINE_FAULT_REORDER_BPS="1000"
+$env:NOVOVM_NATIVE_PIPELINE_FAULT_SEED="123"
+$env:NOVOVM_NATIVE_PIPELINE_REPORT_PATH="artifacts/native-pipeline/sender-cross-machine-fault-report.json"
+cargo run -p novovm-node --bin supervm-native-pipeline-cross-machine-fault-udp-soak
+```
+
+sender report 必须包含：
+
+```text
+scheduled_packets
+sent_packets
+dropped_packets
+duplicated_packets
+delayed_packets
+reordered_packets
+sent_unique
+```
+
+receiver 验收：
+
+```text
+received_unique == tx_count
+canonical_unique_included == tx_count
+duplicate_canonical_included == 0
+duplicate_receipt == 0
+queue_pending_last == 0
+semantic_head_monotonic == true
+receipt_index_consistent == true
+aoem_concurrency_owner == AOEM_runtime
+host_concurrency_policy == host_drives_lifecycle_only_no_rust_execution_scheduler
+```
+
+本刀边界：
+
+- 只签收轻量 cross-machine UDP fault。
+- 不签收高丢包或长时间 hostile network。
+- 不恢复 pending 持久化假设。
+- 不把 canonical body/head recovery 混入本 gate。
+- 不引入第二账本或第二资产真相源。
