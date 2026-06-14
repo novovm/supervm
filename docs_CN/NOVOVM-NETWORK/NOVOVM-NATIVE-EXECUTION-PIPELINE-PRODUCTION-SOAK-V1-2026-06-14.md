@@ -478,3 +478,77 @@ host_concurrency_policy == host_drives_lifecycle_only_no_rust_execution_schedule
 - 不恢复 pending 持久化假设。
 - 不把 canonical body/head recovery 混入本 gate。
 - 不引入第二账本或第二资产真相源。
+
+### 11.1 Cross-machine Fault UDP Soak Signoff
+
+状态：
+
+```text
+Production Soak v1 / Cross-machine Fault UDP Soak: PASS
+commit: c3c745a
+workspace: clean
+```
+
+实测拓扑：
+
+```text
+machine A sender:   192.168.71.118
+machine B receiver: 192.168.71.117:39001
+transport: UDP LAN
+profile: light packet fault
+tx_count: 32
+```
+
+fault 参数：
+
+```text
+packet_loss_bps = 200
+duplicate_bps = 3000
+delay_ms = 20
+reorder_bps = 1000
+seed = 123
+```
+
+B receiver 实测指标：
+
+```text
+accepted = true
+received_unique = 32
+aoem_executed_total = 32
+canonical_unique_included = 32
+duplicate_canonical_included = 0
+duplicate_receipt = 0
+queue_pending_last = 0
+semantic_head_monotonic = true
+receipt_index_consistent = true
+recovery_ok = true
+max_network_received_per_tick = 34
+max_queue_admitted_per_tick = 8
+ticks = 1200
+elapsed_ms = 177050
+```
+
+skipped 诊断：
+
+```text
+skipped_missing_payload_total = 0
+skipped_non_native_payload_total = 0
+skipped_chain_mismatch_total = 0
+```
+
+结论：
+
+- 两台真实机器之间的轻量 UDP fault 链路已经完成 receiver 侧接收、AOEM 执行、落账、canonical included 和 receipt index 闭环。
+- B 端 `max_network_received_per_tick = 34`，确认 receiver 侧观察到了超过 32 个 unique tx 的网络接收压力，且未产生重复 canonical included 或重复 receipt。
+- skipped 统计确认本次没有 payload 缺失、非 native payload 或 chain mismatch。
+- A 端 sender report 保存在机器 A 的 `artifacts/native-pipeline/sender-cross-machine-fault-report.json`，B 端签收只记录 receiver 侧最终账本一致性与网络接收结果。
+
+本签收边界：
+
+- 只签收轻量 cross-machine UDP fault。
+- 不签收高丢包、长时间 hostile network 或 overnight soak。
+- 不签收 canonical body/head recovery。
+- 不恢复 pending 持久化假设。
+- 不修改 frozen lifecycle。
+- 不改变 AOEM_runtime 作为执行并发 owner。
+- 不允许 Rust host 自建执行调度器。
