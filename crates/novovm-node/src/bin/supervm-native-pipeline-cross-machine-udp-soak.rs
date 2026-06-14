@@ -418,6 +418,10 @@ fn spawn_receiver_node(
             "0".to_string(),
         ),
         (
+            "NOVOVM_NATIVE_EXECUTION_TICK_SCAN_LIMIT",
+            expected_tx_count.clamp(recv_budget.max(1), 65_536).to_string(),
+        ),
+        (
             "NOVOVM_NATIVE_EXECUTION_PIPELINE_EXIT_WHEN_SUMMARY_VALID",
             "true".to_string(),
         ),
