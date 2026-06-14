@@ -319,3 +319,75 @@ semantic_head_monotonic == true
 receipt_index_consistent == true
 aoem_concurrency_owner == AOEM_runtime
 ```
+
+### 10.1 Cross-machine Clean UDP Soak Signoff
+
+状态：
+
+```text
+Production Soak v1 / Cross-machine Clean UDP Soak: PASS
+commit: f81d4c4
+workspace: clean
+```
+
+实测拓扑：
+
+```text
+machine A sender:   192.168.71.118
+machine B receiver: 192.168.71.117:39001
+transport: UDP LAN
+profile: clean network
+tx_count: 32
+```
+
+实测链路：
+
+```text
+A sender
+-> UDP LAN
+-> B receiver
+-> pending queue
+-> AOEM batch
+-> dirty sharded atomic commit
+-> canonical included
+-> receipt index
+```
+
+关键指标：
+
+```text
+received_unique = 32
+aoem_executed_total = 32
+canonical_unique_included = 32
+queue_pending_last = 0
+duplicate_canonical_included = 0
+duplicate_receipt = 0
+receipt_index_consistent = true
+semantic_head_monotonic = true
+recovery_ok = true
+max_network_received_per_tick = 32
+max_queue_admitted_per_tick = 8
+```
+
+skipped 诊断：
+
+```text
+skipped_missing_payload_total = 0
+skipped_non_native_payload_total = 0
+skipped_chain_mismatch_total = 0
+```
+
+结论：
+
+- 两台真实机器之间的 clean UDP native payload 已经完成接收、AOEM 执行、落账、canonical included 和 receipt index 闭环。
+- 本次不是本机双进程验证，而是真实 LAN sender/receiver 验证。
+- skipped 统计确认本次没有 payload 缺失、非 native payload 或 chain mismatch。
+
+本签收边界：
+
+- 只签收 clean cross-machine UDP。
+- 不签收 cross-machine packet loss / duplicate / delay / reorder。
+- 不签收 canonical body/head recovery。
+- 不修改 frozen lifecycle。
+- 不改变 AOEM_runtime 作为执行并发 owner。
+- 不允许 Rust host 自建执行调度器。
