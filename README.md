@@ -389,6 +389,28 @@ cargo run -p novovm-node --bin supervm-native-pipeline-remote-reentry-dedup-gate
 
 The remote reentry gate sends the same native tx batch repeatedly over UDP, verifies the receiver includes each unique tx once, restarts the receiver against the same RocksDB native execution store, then injects the same tx batch again. Already receipted txs are dropped from volatile pending before AOEM selection, so duplicate remote reentry cannot create duplicate canonical inclusion, duplicate receipt, extra semantic head advance, or duplicate dirty commit. Canonical body/head recovery remains out of scope for this gate.
 
+Cross-machine UDP soak:
+
+Machine B receiver:
+
+```powershell
+$env:NOVOVM_NATIVE_PIPELINE_ROLE="receiver"
+$env:NOVOVM_NATIVE_PIPELINE_LISTEN_ADDR="0.0.0.0:39001"
+$env:NOVOVM_NATIVE_PIPELINE_REPORT_PATH="artifacts/native-pipeline/receiver-cross-machine-report.json"
+cargo run -p novovm-node --bin supervm-native-pipeline-cross-machine-udp-soak
+```
+
+Machine A sender:
+
+```powershell
+$env:NOVOVM_NATIVE_PIPELINE_ROLE="sender"
+$env:NOVOVM_NATIVE_PIPELINE_RECEIVER_ADDR="<machine-b-lan-ip>:39001"
+$env:NOVOVM_NATIVE_PIPELINE_REPORT_PATH="artifacts/native-pipeline/sender-cross-machine-report.json"
+cargo run -p novovm-node --bin supervm-native-pipeline-cross-machine-udp-soak
+```
+
+The first cross-machine profile is clean network only: no loss, no duplicate, no artificial delay, and no reorder. The receiver validates `received_unique == tx_count`, `canonical_unique_included == tx_count`, `duplicate_canonical_included == 0`, drained pending queue, semantic head recovery, receipt index consistency, and AOEM runtime ownership.
+
 Paced fanout network ingress gate:
 
 ```powershell

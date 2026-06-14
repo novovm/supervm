@@ -92,3 +92,7 @@ path = "src/bin/supervm-native-pipeline-pending-crash-recovery-gate.rs"
 [[bin]]
 name = "supervm-native-pipeline-remote-reentry-dedup-gate"
 path = "src/bin/supervm-native-pipeline-remote-reentry-dedup-gate.rs"
+
+[[bin]]
+name = "supervm-native-pipeline-cross-machine-udp-soak"
+path = "src/bin/supervm-native-pipeline-cross-machine-udp-soak.rs"

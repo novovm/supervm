@@ -271,6 +271,51 @@ schema = novovm-native-pipeline-remote-reentry-dedup-report/v1
 
 以下仍待后续刀完成：
 
-- Cross-machine UDP soak：sender host / receiver host / env-config peer address。
 - Persistent canonical body/head recovery gate。
 - Long-run production profile：真实 30min / 2h / overnight 报告归档。
+
+## 10. 第六刀：Cross-machine UDP Soak
+
+新增双角色工具：
+
+```text
+cargo run -p novovm-node --bin supervm-native-pipeline-cross-machine-udp-soak
+```
+
+机器 B receiver：
+
+```powershell
+$env:NOVOVM_NATIVE_PIPELINE_ROLE="receiver"
+$env:NOVOVM_NATIVE_PIPELINE_LISTEN_ADDR="0.0.0.0:39001"
+$env:NOVOVM_NATIVE_PIPELINE_REPORT_PATH="artifacts/native-pipeline/receiver-cross-machine-report.json"
+cargo run -p novovm-node --bin supervm-native-pipeline-cross-machine-udp-soak
+```
+
+机器 A sender：
+
+```powershell
+$env:NOVOVM_NATIVE_PIPELINE_ROLE="sender"
+$env:NOVOVM_NATIVE_PIPELINE_RECEIVER_ADDR="<machine-b-lan-ip>:39001"
+$env:NOVOVM_NATIVE_PIPELINE_REPORT_PATH="artifacts/native-pipeline/sender-cross-machine-report.json"
+cargo run -p novovm-node --bin supervm-native-pipeline-cross-machine-udp-soak
+```
+
+第一版边界：
+
+- 不修改 lifecycle 主结构。
+- 不扩展 pipeline 功能。
+- 不做 fault injection。
+- 不声明 canonical body/head persistence。
+- 只验证两台真实机器 clean UDP 链路。
+
+receiver 验收：
+
+```text
+received_unique == tx_count
+canonical_unique_included == tx_count
+duplicate_canonical_included == 0
+queue_pending_last == 0
+semantic_head_monotonic == true
+receipt_index_consistent == true
+aoem_concurrency_owner == AOEM_runtime
+```
