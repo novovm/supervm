@@ -393,6 +393,104 @@ skipped_chain_mismatch_total = 0
 - 不改变 AOEM_runtime 作为执行并发 owner。
 - 不允许 Rust host 自建执行调度器。
 
+## 12. 第八刀：Cross-machine Sustained Soak Gate
+
+新增 sustained 入口：
+
+```text
+cargo run -p novovm-node --bin supervm-native-pipeline-cross-machine-sustained-soak
+```
+
+目标：
+
+- 两台真实机器持续运行。
+- sender 按多轮持续发送唯一 native tx。
+- receiver 继续走 frozen lifecycle：`UDP receive -> pending queue -> AOEM batch -> proof -> dirty commit -> canonical included`。
+- 第一版只做 clean sustained，不叠加 hostile network。
+- 不声明 canonical body/head persistence。
+
+30min profile 建议参数：
+
+```text
+duration_seconds = 1800
+tx_count = 14400
+tx_per_round = 8
+round_interval_ms = 1000
+```
+
+机器 B receiver：
+
+```powershell
+$env:NOVOVM_NATIVE_PIPELINE_ROLE="receiver"
+$env:NOVOVM_NATIVE_PIPELINE_LISTEN_ADDR="0.0.0.0:39001"
+$env:NOVOVM_NATIVE_PIPELINE_TX_COUNT="14400"
+$env:NOVOVM_NATIVE_PIPELINE_MAX_TICKS="24000"
+$env:NOVOVM_NATIVE_PIPELINE_SUSTAINED_DURATION_SECONDS="1800"
+$env:NOVOVM_NATIVE_PIPELINE_SUSTAINED_TX_PER_ROUND="8"
+$env:NOVOVM_NATIVE_PIPELINE_SUSTAINED_ROUND_INTERVAL_MS="1000"
+$env:NOVOVM_NATIVE_PIPELINE_REPORT_PATH="artifacts/native-pipeline/receiver-cross-machine-sustained-30m-report.json"
+cargo run -p novovm-node --bin supervm-native-pipeline-cross-machine-sustained-soak
+```
+
+机器 A sender：
+
+```powershell
+$env:NOVOVM_NATIVE_PIPELINE_ROLE="sender"
+$env:NOVOVM_NATIVE_PIPELINE_RECEIVER_ADDR="<machine-b-lan-ip>:39001"
+$env:NOVOVM_NATIVE_PIPELINE_TX_COUNT="14400"
+$env:NOVOVM_NATIVE_PIPELINE_SUSTAINED_DURATION_SECONDS="1800"
+$env:NOVOVM_NATIVE_PIPELINE_SUSTAINED_TX_PER_ROUND="8"
+$env:NOVOVM_NATIVE_PIPELINE_SUSTAINED_ROUND_INTERVAL_MS="1000"
+$env:NOVOVM_NATIVE_PIPELINE_REPORT_PATH="artifacts/native-pipeline/sender-cross-machine-sustained-30m-report.json"
+cargo run -p novovm-node --bin supervm-native-pipeline-cross-machine-sustained-soak
+```
+
+report 关键字段：
+
+```text
+duration_seconds
+tx_submitted_total
+received_unique
+aoem_executed_total
+canonical_unique_included
+queue_pending_last
+queue_dropped_last
+queue_rejected_last
+duplicate_canonical_included
+duplicate_receipt
+semantic_head_monotonic
+receipt_index_consistent
+max_network_received_per_tick
+max_queue_admitted_per_tick
+max_aoem_batch_executed_per_tick
+max_proof_items_per_tick
+max_commit_items_per_tick
+max_broadcast_tx_per_tick
+```
+
+receiver 验收：
+
+```text
+received_unique == expected_tx_total
+canonical_unique_included == expected_tx_total
+queue_pending_last == 0
+duplicate_canonical_included == 0
+duplicate_receipt == 0
+semantic_head_monotonic == true
+receipt_index_consistent == true
+aoem_concurrency_owner == AOEM_runtime
+host_concurrency_policy == host_drives_lifecycle_only_no_rust_execution_scheduler
+```
+
+本刀边界：
+
+- 只签收持续运行稳定性。
+- 不签收 hostile network。
+- 不签收 canonical body/head recovery。
+- 不改变 frozen lifecycle。
+- 不改变 AOEM_runtime 作为执行并发 owner。
+- 不允许 Rust host 自建执行调度器。
+
 ## 11. 第七刀：Cross-machine Fault UDP Soak
 
 新增 fault 入口：

@@ -100,3 +100,7 @@ path = "src/bin/supervm-native-pipeline-cross-machine-udp-soak.rs"
 [[bin]]
 name = "supervm-native-pipeline-cross-machine-fault-udp-soak"
 path = "src/bin/supervm-native-pipeline-cross-machine-udp-soak.rs"
+
+[[bin]]
+name = "supervm-native-pipeline-cross-machine-sustained-soak"
+path = "src/bin/supervm-native-pipeline-cross-machine-udp-soak.rs"

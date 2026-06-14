@@ -51,6 +51,14 @@ struct SendScheduleStatsV1 {
     sent_by_hash: BTreeMap<String, u64>,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct SustainedConfigV1 {
+    enabled: bool,
+    duration_seconds: u64,
+    tx_per_round: u64,
+    round_interval_ms: u64,
+}
+
 fn string_env_nonempty(name: &str) -> Option<String> {
     std::env::var(name)
         .ok()
@@ -168,9 +176,14 @@ fn novovm_node_bin() -> PathBuf {
     dir.join(exe)
 }
 
-fn build_native_payloads(chain_id: u64, count: u64) -> Result<Vec<NativeFixtureTxV1>> {
+fn build_native_payloads_from_index(
+    chain_id: u64,
+    start_index: u64,
+    count: u64,
+) -> Result<Vec<NativeFixtureTxV1>> {
     let mut out = Vec::with_capacity(count as usize);
-    for index in 0..count {
+    for local_index in 0..count {
+        let index = start_index.saturating_add(local_index);
         let nonce = index.saturating_add(1);
         let account_id = format!("acct-native-cross-machine-{nonce}");
         let tx = NovNativeTxWireV1 {
@@ -216,6 +229,30 @@ fn build_native_payloads(chain_id: u64, count: u64) -> Result<Vec<NativeFixtureT
         });
     }
     Ok(out)
+}
+
+fn merge_send_stats(target: &mut SendScheduleStatsV1, next: SendScheduleStatsV1) {
+    target.scheduled_packets = target
+        .scheduled_packets
+        .saturating_add(next.scheduled_packets);
+    target.sent_packets = target.sent_packets.saturating_add(next.sent_packets);
+    target.dropped_packets = target.dropped_packets.saturating_add(next.dropped_packets);
+    target.duplicated_packets = target
+        .duplicated_packets
+        .saturating_add(next.duplicated_packets);
+    target.delayed_packets = target.delayed_packets.saturating_add(next.delayed_packets);
+    target.reordered_packets = target
+        .reordered_packets
+        .saturating_add(next.reordered_packets);
+    for (hash, count) in next.sent_by_hash {
+        *target.sent_by_hash.entry(hash).or_default() += count;
+    }
+    target.sent_unique = target
+        .sent_by_hash
+        .keys()
+        .count()
+        .try_into()
+        .unwrap_or(u64::MAX);
 }
 
 fn loss_roll_bps(seed: u64, index: u64, copy_index: u64) -> u64 {
@@ -636,18 +673,50 @@ fn run_sender(
     sender_addr: &str,
     receiver_addr: &str,
     fault: FaultConfigV1,
+    sustained: SustainedConfigV1,
 ) -> Result<Value> {
-    let txs = build_native_payloads(chain_id, tx_count)?;
-    let scheduled = apply_fault_schedule(txs.as_slice(), fault);
-    let stats = send_scheduled_batch(
-        chain_id,
-        sender_node,
-        receiver_node,
-        sender_addr,
-        receiver_addr,
-        scheduled.as_slice(),
-        fault.delay_ms,
-    )?;
+    let mut stats = SendScheduleStatsV1 {
+        scheduled_packets: 0,
+        sent_packets: 0,
+        dropped_packets: 0,
+        duplicated_packets: 0,
+        delayed_packets: 0,
+        reordered_packets: 0,
+        sent_unique: 0,
+        sent_by_hash: BTreeMap::new(),
+    };
+    let tx_per_round = if sustained.enabled {
+        sustained.tx_per_round.max(1)
+    } else {
+        tx_count
+    };
+    let rounds = div_ceil_u64(tx_count, tx_per_round).max(1);
+    let mut sent_unique_target = 0u64;
+    for round in 0..rounds {
+        let remaining = tx_count.saturating_sub(sent_unique_target);
+        if remaining == 0 {
+            break;
+        }
+        let round_tx_count = remaining.min(tx_per_round);
+        let txs = build_native_payloads_from_index(chain_id, sent_unique_target, round_tx_count)?;
+        let scheduled = apply_fault_schedule(txs.as_slice(), fault);
+        let round_stats = send_scheduled_batch(
+            chain_id,
+            sender_node,
+            receiver_node,
+            sender_addr,
+            receiver_addr,
+            scheduled.as_slice(),
+            fault.delay_ms,
+        )?;
+        sent_unique_target = sent_unique_target.saturating_add(round_tx_count);
+        merge_send_stats(&mut stats, round_stats);
+        if sustained.enabled && round + 1 < rounds && sustained.round_interval_ms > 0 {
+            std::thread::sleep(std::time::Duration::from_millis(
+                sustained.round_interval_ms,
+            ));
+        }
+    }
     let accepted = stats.sent_unique == tx_count;
     Ok(serde_json::json!({
         "schema": REPORT_SCHEMA_V1,
@@ -682,6 +751,14 @@ fn run_sender(
             "reordered_packets": stats.reordered_packets,
             "sent_unique": stats.sent_unique,
         },
+        "sustained": {
+            "enabled": sustained.enabled,
+            "duration_seconds": sustained.duration_seconds,
+            "rounds": rounds,
+            "tx_per_round": tx_per_round,
+            "round_interval_ms": sustained.round_interval_ms,
+            "tx_submitted_total": stats.sent_unique,
+        },
         "sent_by_hash": stats.sent_by_hash,
         "violations": if accepted { Vec::<String>::new() } else { vec!["sender did not send expected unique tx count".to_string()] },
     }))
@@ -698,6 +775,7 @@ fn run_receiver(
     tick_interval_ms: u64,
     batch_budget: u64,
     recv_budget: u64,
+    sustained: SustainedConfigV1,
 ) -> Result<Value> {
     let receiver_summary = run_receiver_node(
         node_bin,
@@ -730,6 +808,13 @@ fn run_receiver(
             "delay": 0,
             "reorder": 0
         },
+        "sustained": {
+            "enabled": sustained.enabled,
+            "duration_seconds": sustained.duration_seconds,
+            "tx_per_round": sustained.tx_per_round,
+            "round_interval_ms": sustained.round_interval_ms,
+            "expected_tx_total": tx_count,
+        },
         "boundaries": {
             "lifecycle_structure": "frozen",
             "execution_kernel": "AOEM",
@@ -760,6 +845,7 @@ fn run_local_smoke(
     recv_budget: u64,
     startup_wait_ms: u64,
     fault: FaultConfigV1,
+    sustained: SustainedConfigV1,
 ) -> Result<Value> {
     let sender_addr = reserve_udp_addr()?;
     let receiver_addr = reserve_udp_addr()?;
@@ -786,6 +872,7 @@ fn run_local_smoke(
             delay_ms: if fault.enabled { fault.delay_ms } else { 1 },
             ..fault
         },
+        sustained,
     )?;
     let receiver_summary = parse_summary(
         child
@@ -825,6 +912,14 @@ fn main() -> Result<()> {
     ])
     .unwrap_or_else(|| "local-smoke".to_string())
     .to_ascii_lowercase();
+    let sustained_binary = current_bin_name_contains("sustained");
+    let sustained_env = env_any(&[
+        "NOVOVM_NATIVE_PIPELINE_SUSTAINED_ENABLED",
+        "NOVOVM_NATIVE_PIPELINE_SUSTAINED_DURATION_SECONDS",
+        "NOVOVM_NATIVE_PIPELINE_SUSTAINED_TX_PER_ROUND",
+        "NOVOVM_NATIVE_PIPELINE_SUSTAINED_ROUND_INTERVAL_MS",
+    ]);
+    let sustained_enabled = sustained_binary || sustained_env;
     let chain_id = u64_env_alias(
         &[
             "NOVOVM_NATIVE_PIPELINE_CHAIN_ID",
@@ -837,7 +932,7 @@ fn main() -> Result<()> {
             "NOVOVM_NATIVE_PIPELINE_TX_COUNT",
             "NOVOVM_NATIVE_PIPELINE_CROSS_MACHINE_TX_COUNT",
         ],
-        32,
+        if sustained_enabled { 256 } else { 32 },
     )?
     .max(1);
     let batch_budget = u64_env_alias(
@@ -912,6 +1007,29 @@ fn main() -> Result<()> {
             if fault_enabled { 123 } else { 0 },
         )?,
     };
+    let tx_per_round = u64_env("NOVOVM_NATIVE_PIPELINE_SUSTAINED_TX_PER_ROUND", 32)?.max(1);
+    let sustained_rounds = div_ceil_u64(tx_count, tx_per_round).max(1);
+    let duration_seconds = u64_env(
+        "NOVOVM_NATIVE_PIPELINE_SUSTAINED_DURATION_SECONDS",
+        if sustained_enabled { 1800 } else { 0 },
+    )?;
+    let default_round_interval_ms = if sustained_enabled && sustained_rounds > 1 {
+        duration_seconds
+            .saturating_mul(1_000)
+            .checked_div(sustained_rounds.saturating_sub(1))
+            .unwrap_or(0)
+    } else {
+        0
+    };
+    let sustained = SustainedConfigV1 {
+        enabled: sustained_enabled,
+        duration_seconds,
+        tx_per_round,
+        round_interval_ms: u64_env(
+            "NOVOVM_NATIVE_PIPELINE_SUSTAINED_ROUND_INTERVAL_MS",
+            default_round_interval_ms,
+        )?,
+    };
     let sender_node = u64_env_alias(
         &[
             "NOVOVM_NATIVE_PIPELINE_SENDER_NODE",
@@ -954,6 +1072,7 @@ fn main() -> Result<()> {
                 tick_interval_ms,
                 batch_budget,
                 recv_budget,
+                sustained,
             )?
         }
         "sender" => {
@@ -979,6 +1098,7 @@ fn main() -> Result<()> {
                 sender_addr.as_str(),
                 receiver_addr.as_str(),
                 fault,
+                sustained,
             )?
         }
         "local-smoke" | "local_smoke" => run_local_smoke(
@@ -994,6 +1114,7 @@ fn main() -> Result<()> {
             recv_budget,
             startup_wait_ms,
             fault,
+            sustained,
         )?,
         other => bail!("unknown NOVOVM_NATIVE_PIPELINE_ROLE: {other}"),
     };

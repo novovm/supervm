@@ -441,6 +441,37 @@ cargo run -p novovm-node --bin supervm-native-pipeline-cross-machine-fault-udp-s
 
 The cross-machine fault profile only injects packet loss, duplicate packets, delay, and reorder before sender UDP transmit. It does not modify the frozen receiver lifecycle, does not bypass AOEM tick execution, and does not claim canonical body/head recovery. The first profile expects all 32 unique native txs to arrive and be canonically included exactly once under light packet-level disruption.
 
+Cross-machine sustained soak:
+
+Machine B receiver:
+
+```powershell
+$env:NOVOVM_NATIVE_PIPELINE_ROLE="receiver"
+$env:NOVOVM_NATIVE_PIPELINE_LISTEN_ADDR="0.0.0.0:39001"
+$env:NOVOVM_NATIVE_PIPELINE_TX_COUNT="14400"
+$env:NOVOVM_NATIVE_PIPELINE_MAX_TICKS="24000"
+$env:NOVOVM_NATIVE_PIPELINE_SUSTAINED_DURATION_SECONDS="1800"
+$env:NOVOVM_NATIVE_PIPELINE_SUSTAINED_TX_PER_ROUND="8"
+$env:NOVOVM_NATIVE_PIPELINE_SUSTAINED_ROUND_INTERVAL_MS="1000"
+$env:NOVOVM_NATIVE_PIPELINE_REPORT_PATH="artifacts/native-pipeline/receiver-cross-machine-sustained-30m-report.json"
+cargo run -p novovm-node --bin supervm-native-pipeline-cross-machine-sustained-soak
+```
+
+Machine A sender:
+
+```powershell
+$env:NOVOVM_NATIVE_PIPELINE_ROLE="sender"
+$env:NOVOVM_NATIVE_PIPELINE_RECEIVER_ADDR="<machine-b-lan-ip>:39001"
+$env:NOVOVM_NATIVE_PIPELINE_TX_COUNT="14400"
+$env:NOVOVM_NATIVE_PIPELINE_SUSTAINED_DURATION_SECONDS="1800"
+$env:NOVOVM_NATIVE_PIPELINE_SUSTAINED_TX_PER_ROUND="8"
+$env:NOVOVM_NATIVE_PIPELINE_SUSTAINED_ROUND_INTERVAL_MS="1000"
+$env:NOVOVM_NATIVE_PIPELINE_REPORT_PATH="artifacts/native-pipeline/sender-cross-machine-sustained-30m-report.json"
+cargo run -p novovm-node --bin supervm-native-pipeline-cross-machine-sustained-soak
+```
+
+The first sustained profile is clean cross-machine UDP. It validates long-running stability only: no hostile network, no canonical body/head recovery claim, and no lifecycle structure change. The sender submits unique native txs in repeated rounds; the receiver still owns the normal `UDP receive -> pending -> AOEM batch -> proof -> dirty commit -> canonical included` lifecycle.
+
 Paced fanout network ingress gate:
 
 ```powershell
