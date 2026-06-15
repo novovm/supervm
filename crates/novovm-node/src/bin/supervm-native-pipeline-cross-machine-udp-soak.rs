@@ -207,6 +207,12 @@ fn semantic_ledger_mirror_path(store_path: &Path) -> PathBuf {
     PathBuf::from(raw)
 }
 
+fn pipeline_progress_report_path(store_path: &Path) -> PathBuf {
+    let mut raw = store_path.as_os_str().to_os_string();
+    raw.push(".pipeline-progress.json");
+    PathBuf::from(raw)
+}
+
 fn receiver_diagnostics_config() -> Result<ReceiverDiagnosticsConfigV1> {
     let enabled = bool_env("NOVOVM_NATIVE_PIPELINE_PROGRESS_WATCHDOG_ENABLED")
         || bool_env("NOVOVM_NATIVE_PIPELINE_DIAGNOSTICS_ENABLED");
@@ -501,6 +507,15 @@ fn spawn_receiver_node(
             expected_tx_count.clamp(recv_budget.max(1), 65_536).to_string(),
         ),
         (
+            "NOVOVM_NATIVE_EXECUTION_PIPELINE_PROGRESS_REPORT_PATH",
+            pipeline_progress_report_path(store_path).display().to_string(),
+        ),
+        (
+            "NOVOVM_NATIVE_EXECUTION_PIPELINE_PROGRESS_REPORT_INTERVAL_MS",
+            string_env_nonempty("NOVOVM_NATIVE_PIPELINE_PROGRESS_SAMPLE_INTERVAL_MS")
+                .unwrap_or_else(|| "5000".to_string()),
+        ),
+        (
             "NOVOVM_NATIVE_EXECUTION_PIPELINE_EXIT_WHEN_SUMMARY_VALID",
             "true".to_string(),
         ),
@@ -580,6 +595,7 @@ fn run_receiver_node(
         .unwrap_or_else(Instant::now);
     let mut state = ReceiverDiagnosticsStateV1::default();
     let ledger_path = semantic_ledger_mirror_path(store_path);
+    let progress_path = pipeline_progress_report_path(store_path);
     loop {
         if child
             .try_wait()
@@ -610,17 +626,32 @@ fn run_receiver_node(
 
         if last_sample_at.elapsed() >= Duration::from_millis(diagnostics.sample_interval_ms) {
             let ledger_stats = semantic_ledger_stats(ledger_path.as_path());
-            let canonical = ledger_stats
-                .get("line_count")
-                .and_then(Value::as_u64)
-                .unwrap_or_default();
             let memory_sample = if diagnostics.memory_sample_enabled {
                 process_memory_sample(child_pid)
             } else {
                 serde_json::json!({})
             };
+            let progress_summary = read_pipeline_progress_summary(progress_path.as_path());
+            let canonical = progress_summary
+                .as_ref()
+                .map(|summary| summary_u64(summary, "included_canonical_total"))
+                .unwrap_or_else(|| {
+                    ledger_stats
+                        .get("line_count")
+                        .and_then(Value::as_u64)
+                        .unwrap_or_default()
+                });
             let delta = canonical.saturating_sub(state.last_canonical);
-            let mut sample = serde_json::json!({
+            let mut sample = if let Some(summary) = progress_summary.as_ref() {
+                diagnostics_summary_sample(
+                    started_at,
+                    summary,
+                    ledger_stats,
+                    memory_sample,
+                    state.last_canonical,
+                )
+            } else {
+                serde_json::json!({
                 "elapsed_ms": started_at.elapsed().as_millis() as u64,
                 "received_unique_total": null,
                 "canonical_unique_included_total": canonical,
@@ -653,7 +684,10 @@ fn run_receiver_node(
                 "queue_pending_last": null,
                 "queue_dropped_total": null,
                 "queue_rejected_total": null,
-            });
+                })
+            };
+            sample["pipeline_progress_report_path"] =
+                serde_json::json!(progress_path.display().to_string());
             if delta == 0 && canonical < expected_tx_count {
                 state.stall_windows = state.stall_windows.saturating_add(1);
             } else {
@@ -765,6 +799,12 @@ fn semantic_ledger_stats(path: &Path) -> Value {
         "line_count": line_count,
         "bytes": metadata.len(),
     })
+}
+
+fn read_pipeline_progress_summary(path: &Path) -> Option<Value> {
+    let raw = fs::read_to_string(path).ok()?;
+    let value = serde_json::from_str::<Value>(raw.as_str()).ok()?;
+    value.get("summary").cloned()
 }
 
 #[cfg(windows)]

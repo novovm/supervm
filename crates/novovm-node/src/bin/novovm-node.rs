@@ -35985,6 +35985,16 @@ fn run_native_execution_tick_node_mode_v1(verbose: bool) -> Result<()> {
     let udp_drive = NativeExecutionPipelineUdpDriveV1::from_env(chain_id)?;
     let broadcast_drive = NativeExecutionPipelineBroadcastDriveV1::from_env(chain_id)?;
     let soak_gate = NativeExecutionPipelineSoakGateV1::from_env()?;
+    let progress_report_path =
+        string_env_nonempty("NOVOVM_NATIVE_EXECUTION_PIPELINE_PROGRESS_REPORT_PATH")
+            .map(PathBuf::from);
+    let progress_report_interval_ms = u64_env_positive(
+        "NOVOVM_NATIVE_EXECUTION_PIPELINE_PROGRESS_REPORT_INTERVAL_MS",
+        5_000,
+    )?;
+    let mut last_progress_report_at = Instant::now()
+        .checked_sub(Duration::from_millis(progress_report_interval_ms))
+        .unwrap_or_else(Instant::now);
     let mut ticks = 0u64;
     let mut aggregate = NativeExecutionPipelineAggregateV1::new();
     loop {
@@ -36048,6 +36058,36 @@ fn run_native_execution_tick_node_mode_v1(verbose: bool) -> Result<()> {
             out,
         );
         aggregate.observe(&report)?;
+        if let Some(report_path) = progress_report_path.as_ref() {
+            if last_progress_report_at.elapsed()
+                >= Duration::from_millis(progress_report_interval_ms)
+            {
+                if let Some(parent) = report_path.parent() {
+                    if !parent.as_os_str().is_empty() {
+                        fs::create_dir_all(parent).with_context(|| {
+                            format!(
+                                "create native execution pipeline progress report dir failed: {}",
+                                parent.display()
+                            )
+                        })?;
+                    }
+                }
+                let progress_report = serde_json::json!({
+                    "schema": "novovm-native-execution-pipeline-progress-report/v1",
+                    "summary": aggregate.to_json(),
+                    "last_tick_report": report,
+                });
+                let encoded = serde_json::to_string_pretty(&progress_report)
+                    .context("encode native execution pipeline progress report failed")?;
+                fs::write(report_path.as_path(), encoded).with_context(|| {
+                    format!(
+                        "write native execution pipeline progress report failed: {}",
+                        report_path.display()
+                    )
+                })?;
+                last_progress_report_at = Instant::now();
+            }
+        }
         if verbose {
             println!(
                 "native_execution_tick_out: tick={} chain_id={} executed={} deferred={} kernel=AOEM owner=AOEM_runtime",
