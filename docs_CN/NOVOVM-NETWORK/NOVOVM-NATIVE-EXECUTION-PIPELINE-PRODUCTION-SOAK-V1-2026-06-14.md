@@ -1084,3 +1084,72 @@ max_elapsed_ms
 - 不绕过 AOEM tick 生成 receipt/state。
 - 不把 canonical body/head recovery 混入本 gate。
 - 不签收 5min / 10min sustained，必须由下一轮 A/B 实测重新证明。
+
+### 13.5 Cross-machine 5min Sustained after Tail Repair Signoff
+
+状态：
+
+```text
+Production Soak v1 / Cross-machine 5min Sustained after Tail Repair: PASS
+Memory Plateau: NOT SIGNED
+code baseline: 556e361
+profile: 2400 tx / 300s / 8 tx per round / 1000ms round interval
+tail_repair_rounds = 3
+tail_repair_interval_ms = 1000
+```
+
+B receiver final report：
+
+```text
+accepted = true
+tx_count = 2400
+received_unique = 2400
+canonical_unique_included = 2400
+aoem_executed_total = 2400
+receipt_count = 2400
+semantic_sequence = 2400
+queue_pending_last = 0
+duplicate_canonical_included = 0
+duplicate_receipt = 0
+semantic_head_monotonic = true
+receipt_index_consistent = true
+recovery_ok = true
+violations = none
+receiver_clean_exit = true
+```
+
+Diagnostics：
+
+```text
+diagnostics_accepted = true
+fail_reason = None
+diagnostics_samples_retained = 75
+diagnostics_samples_dropped = 0
+first_working_set_bytes = 11,251,712
+last_working_set_bytes = 1,705,390,080
+working_set_delta_total_bytes = 1,694,138,368
+ledger_lines = 2400
+ledger_bytes = 2,241,349
+```
+
+结论：
+
+- cross-machine 5min sustained 功能闭环 PASS。
+- tail repair 解决裸 UDP 缺包；pending drain 修复解决 repair 后 pending 未清空就 timeout。
+- 本签收只覆盖 5min 功能闭环。
+- 内存仍从约 11MB 增长到约 1.7GB，memory plateau 不签。
+
+下一步：
+
+```text
+Cross-machine 10min / 4800 tx
+目的：继续验证功能闭环，同时观察 working set slope 是否趋缓。
+```
+
+签收边界：
+
+- 不签收 30min sustained。
+- 不签收 2h / overnight。
+- 不签收 hostile network。
+- 不签收 canonical body/head recovery。
+- 不签收 memory plateau。
