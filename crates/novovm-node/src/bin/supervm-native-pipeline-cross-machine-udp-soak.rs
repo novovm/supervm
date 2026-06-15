@@ -60,6 +60,13 @@ struct SustainedConfigV1 {
     round_interval_ms: u64,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct TailRepairConfigV1 {
+    enabled: bool,
+    rounds: u64,
+    interval_ms: u64,
+}
+
 #[derive(Debug, Clone)]
 struct ReceiverDiagnosticsConfigV1 {
     enabled: bool,
@@ -68,6 +75,7 @@ struct ReceiverDiagnosticsConfigV1 {
     memory_sample_enabled: bool,
     max_working_set_bytes: u64,
     min_canonical_delta: u64,
+    max_elapsed_ms: u64,
     report_path: PathBuf,
 }
 
@@ -228,6 +236,17 @@ fn receiver_diagnostics_config() -> Result<ReceiverDiagnosticsConfigV1> {
     } else {
         0
     };
+    let sustained_duration_ms =
+        u64_env("NOVOVM_NATIVE_PIPELINE_SUSTAINED_DURATION_SECONDS", 0)?.saturating_mul(1_000);
+    let tail_repair_rounds = u64_env("NOVOVM_NATIVE_PIPELINE_TAIL_REPAIR_ROUNDS", 3)?;
+    let tail_repair_interval_ms = u64_env("NOVOVM_NATIVE_PIPELINE_TAIL_REPAIR_INTERVAL_MS", 1_000)?;
+    let default_max_elapsed_ms = if sustained_duration_ms > 0 {
+        sustained_duration_ms
+            .saturating_add(tail_repair_rounds.saturating_mul(tail_repair_interval_ms))
+            .saturating_add(60_000)
+    } else {
+        0
+    };
     Ok(ReceiverDiagnosticsConfigV1 {
         enabled,
         sample_interval_ms,
@@ -238,6 +257,10 @@ fn receiver_diagnostics_config() -> Result<ReceiverDiagnosticsConfigV1> {
             default_max_working_set,
         )?,
         min_canonical_delta: u64_env("NOVOVM_NATIVE_PIPELINE_PROGRESS_MIN_CANONICAL_DELTA", 0)?,
+        max_elapsed_ms: u64_env(
+            "NOVOVM_NATIVE_PIPELINE_RECEIVER_MAX_ELAPSED_MS",
+            default_max_elapsed_ms,
+        )?,
         report_path: diagnostics_report_path(),
     })
 }
@@ -337,6 +360,33 @@ fn merge_send_stats(target: &mut SendScheduleStatsV1, next: SendScheduleStatsV1)
         .count()
         .try_into()
         .unwrap_or(u64::MAX);
+}
+
+fn empty_send_stats() -> SendScheduleStatsV1 {
+    SendScheduleStatsV1 {
+        scheduled_packets: 0,
+        sent_packets: 0,
+        dropped_packets: 0,
+        duplicated_packets: 0,
+        delayed_packets: 0,
+        reordered_packets: 0,
+        sent_unique: 0,
+        sent_by_hash: BTreeMap::new(),
+    }
+}
+
+fn build_tail_repair_payloads(
+    chain_id: u64,
+    tx_count: u64,
+    repair_round: u64,
+) -> Result<Vec<NativeFixtureTxV1>> {
+    let mut txs = build_native_payloads_from_index(chain_id, 0, tx_count)?;
+    let copy_index = repair_round.saturating_add(1);
+    for tx in &mut txs {
+        tx.copy_index = copy_index;
+        tx.dropped = false;
+    }
+    Ok(txs)
 }
 
 fn loss_roll_bps(seed: u64, index: u64, copy_index: u64) -> u64 {
@@ -748,6 +798,18 @@ fn run_receiver_node(
                     working_set, diagnostics.max_working_set_bytes
                 ));
             }
+            if diagnostics.max_elapsed_ms > 0
+                && started_at.elapsed() >= Duration::from_millis(diagnostics.max_elapsed_ms)
+                && stable_progress < expected_tx_count
+            {
+                fail_reason = Some(format!(
+                    "receiver_expected_tx_timeout: progress={} expected={} elapsed_ms={} max_elapsed_ms={}",
+                    stable_progress,
+                    expected_tx_count,
+                    started_at.elapsed().as_millis(),
+                    diagnostics.max_elapsed_ms
+                ));
+            }
             state.last_canonical = stable_progress;
             state.samples.push(sample);
             if state.samples.len() > 256 {
@@ -983,6 +1045,7 @@ fn write_diagnostics_report(
         "memory_sample_enabled": config.memory_sample_enabled,
         "max_working_set_bytes": config.max_working_set_bytes,
         "min_canonical_delta": config.min_canonical_delta,
+        "max_elapsed_ms": config.max_elapsed_ms,
         "fail_reason": state.fail_reason,
         "diagnostics_samples_retained": state.samples.len(),
         "diagnostics_samples_dropped": state.samples_dropped,
@@ -1170,17 +1233,10 @@ fn run_sender(
     receiver_addr: &str,
     fault: FaultConfigV1,
     sustained: SustainedConfigV1,
+    tail_repair: TailRepairConfigV1,
 ) -> Result<Value> {
-    let mut stats = SendScheduleStatsV1 {
-        scheduled_packets: 0,
-        sent_packets: 0,
-        dropped_packets: 0,
-        duplicated_packets: 0,
-        delayed_packets: 0,
-        reordered_packets: 0,
-        sent_unique: 0,
-        sent_by_hash: BTreeMap::new(),
-    };
+    let mut stats = empty_send_stats();
+    let mut repair_stats = empty_send_stats();
     let tx_per_round = if sustained.enabled {
         sustained.tx_per_round.max(1)
     } else {
@@ -1212,6 +1268,27 @@ fn run_sender(
                 sustained.round_interval_ms,
             ));
         }
+    }
+    let mut repair_rounds_used = 0u64;
+    if tail_repair.enabled && tail_repair.rounds > 0 {
+        for repair_round in 0..tail_repair.rounds {
+            if tail_repair.interval_ms > 0 {
+                std::thread::sleep(std::time::Duration::from_millis(tail_repair.interval_ms));
+            }
+            let txs = build_tail_repair_payloads(chain_id, tx_count, repair_round)?;
+            let round_stats = send_scheduled_batch(
+                chain_id,
+                sender_node,
+                receiver_node,
+                sender_addr,
+                receiver_addr,
+                txs.as_slice(),
+                0,
+            )?;
+            merge_send_stats(&mut repair_stats, round_stats);
+            repair_rounds_used = repair_rounds_used.saturating_add(1);
+        }
+        merge_send_stats(&mut stats, repair_stats.clone());
     }
     let accepted = stats.sent_unique == tx_count;
     let report = serde_json::json!({
@@ -1254,6 +1331,16 @@ fn run_sender(
             "tx_per_round": tx_per_round,
             "round_interval_ms": sustained.round_interval_ms,
             "tx_submitted_total": stats.sent_unique,
+        },
+        "tail_repair": {
+            "enabled": tail_repair.enabled,
+            "rounds_configured": tail_repair.rounds,
+            "interval_ms": tail_repair.interval_ms,
+            "repair_rounds_used": repair_rounds_used,
+            "initial_sent_total": stats.sent_packets.saturating_sub(repair_stats.sent_packets),
+            "repair_sent_total": repair_stats.sent_packets,
+            "repair_scheduled_total": repair_stats.scheduled_packets,
+            "tail_repair_success": accepted,
         },
         "sent_by_hash": stats.sent_by_hash,
         "violations": if accepted { Vec::<String>::new() } else { vec!["sender did not send expected unique tx count".to_string()] },
@@ -1344,6 +1431,7 @@ fn run_local_smoke(
     startup_wait_ms: u64,
     fault: FaultConfigV1,
     sustained: SustainedConfigV1,
+    tail_repair: TailRepairConfigV1,
 ) -> Result<Value> {
     let sender_addr = reserve_udp_addr()?;
     let receiver_addr = reserve_udp_addr()?;
@@ -1372,6 +1460,7 @@ fn run_local_smoke(
             ..fault
         },
         sustained,
+        tail_repair,
     )?;
     let receiver_summary = parse_summary(
         child
@@ -1529,6 +1618,20 @@ fn main() -> Result<()> {
             default_round_interval_ms,
         )?,
     };
+    let tail_repair_enabled = bool_env("NOVOVM_NATIVE_PIPELINE_TAIL_REPAIR_ENABLED")
+        || (sustained.enabled
+            && string_env_nonempty("NOVOVM_NATIVE_PIPELINE_TAIL_REPAIR_ENABLED").is_none());
+    let tail_repair = TailRepairConfigV1 {
+        enabled: tail_repair_enabled,
+        rounds: u64_env(
+            "NOVOVM_NATIVE_PIPELINE_TAIL_REPAIR_ROUNDS",
+            if tail_repair_enabled { 3 } else { 0 },
+        )?,
+        interval_ms: u64_env(
+            "NOVOVM_NATIVE_PIPELINE_TAIL_REPAIR_INTERVAL_MS",
+            if tail_repair_enabled { 1000 } else { 0 },
+        )?,
+    };
     let sender_node = u64_env_alias(
         &[
             "NOVOVM_NATIVE_PIPELINE_SENDER_NODE",
@@ -1598,6 +1701,7 @@ fn main() -> Result<()> {
                 receiver_addr.as_str(),
                 fault,
                 sustained,
+                tail_repair,
             )?
         }
         "local-smoke" | "local_smoke" => run_local_smoke(
@@ -1614,6 +1718,7 @@ fn main() -> Result<()> {
             startup_wait_ms,
             fault,
             sustained,
+            tail_repair,
         )?,
         other => bail!("unknown NOVOVM_NATIVE_PIPELINE_ROLE: {other}"),
     };

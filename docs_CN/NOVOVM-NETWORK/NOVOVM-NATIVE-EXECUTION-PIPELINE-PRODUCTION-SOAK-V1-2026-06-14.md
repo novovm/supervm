@@ -1003,3 +1003,64 @@ receipt_index_missing_count
 - 不签收 30min sustained。
 - 不签收 memory plateau，必须由下一轮 10min 数据证明。
 - 不签收 hostile network、2h / overnight、canonical body/head recovery。
+
+### 13.4 Cross-machine Sustained Tail Repair Gate
+
+触发背景：
+
+```text
+Production Soak v1 / Cross-machine 5min Sustained after ac66259: FAIL
+expected = 2400
+received_unique = 2399
+canonical_unique_included = 2399
+aoem_executed_total = 2399
+ledger_lines = 2399
+queue_pending_last = 0
+receiver_state = waiting_for_sender
+```
+
+结论：
+
+- AOEM、dirty commit、receipt index 和 semantic ledger 对已收到交易处理正确。
+- 失败点不是执行链路，而是裸 UDP 一次发送存在交付缺口。
+- sustained gate 不能建立在 `UDP send once == reliable delivery` 的假设上。
+
+本轮修复：
+
+- cross-machine sustained sender 增加 tail repair 阶段。
+- 正常发送结束后，sender 按稳定 tx hash / sequence 重新发送全量 fixture tx 若干轮。
+- receiver 继续依赖既有 remote reentry dedup / receipt dedup，确保重复补发不重复 AOEM execution、不重复 receipt、不重复 dirty commit。
+- receiver diagnostics 不再在 `pending_count = 0` 且等待 sender 后续轮次时误判 `canonical_progress_stall`。
+- receiver 增加最大等待窗口：`duration + tail_repair_budget + 60s`，超过预算仍未达标则明确 FAIL，不无限等待。
+
+新增 sender 参数：
+
+```text
+NOVOVM_NATIVE_PIPELINE_TAIL_REPAIR_ENABLED=1
+NOVOVM_NATIVE_PIPELINE_TAIL_REPAIR_ROUNDS=3
+NOVOVM_NATIVE_PIPELINE_TAIL_REPAIR_INTERVAL_MS=1000
+```
+
+新增/更新报告字段：
+
+```text
+tail_repair.enabled
+tail_repair.rounds_configured
+tail_repair.interval_ms
+tail_repair.repair_rounds_used
+tail_repair.initial_sent_total
+tail_repair.repair_sent_total
+tail_repair.repair_scheduled_total
+tail_repair.tail_repair_success
+waiting_for_sender
+max_elapsed_ms
+```
+
+签收边界：
+
+- 本节只修 sustained gate 网络交付尾部缺口。
+- 不修改 frozen lifecycle。
+- 不改变 AOEM_runtime 并发 owner。
+- 不绕过 AOEM tick 生成 receipt/state。
+- 不把 canonical body/head recovery 混入本 gate。
+- 不签收 5min / 10min sustained，必须由下一轮 A/B 实测重新证明。
