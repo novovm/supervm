@@ -41,7 +41,7 @@ use rocksdb::{
     Direction as RocksDbDirection, IteratorMode as RocksDbIteratorMode, Options as RocksDbOptions,
     WriteBatch as RocksDbWriteBatch, DB as RocksDb,
 };
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::fs::{self, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
@@ -3842,6 +3842,53 @@ fn load_nov_native_execution_store_rocksdb_v1(path: &Path) -> Result<NovNativeEx
         return Ok(store);
     }
     Ok(NovNativeExecutionStoreV1::default())
+}
+
+enum NovNativeExecutionReceiptLookupV1 {
+    RocksDb { db: RocksDb, path: PathBuf },
+    Materialized { store: NovNativeExecutionStoreV1 },
+}
+
+impl NovNativeExecutionReceiptLookupV1 {
+    fn open(path: &Path) -> Result<Self> {
+        let backend = nov_native_execution_store_backend_v1();
+        if native_execution_store_backend_reads_rocksdb_v1(backend.as_str()) {
+            let rocksdb_path = nov_native_execution_store_rocksdb_path_v1(path);
+            if rocksdb_path.exists() {
+                return Ok(Self::RocksDb {
+                    db: open_nov_native_execution_store_rocksdb_v1(rocksdb_path.as_path())?,
+                    path: rocksdb_path,
+                });
+            }
+            if backend == NOV_NATIVE_EXECUTION_STORE_BACKEND_ROCKSDB_V1 {
+                return Ok(Self::Materialized {
+                    store: NovNativeExecutionStoreV1::default(),
+                });
+            }
+        }
+        Ok(Self::Materialized {
+            store: load_nov_native_execution_store_json_v1(path)?,
+        })
+    }
+
+    fn contains(&self, tx_hash: &str) -> Result<bool> {
+        let key = normalize_tx_hash_hex_v1(tx_hash);
+        match self {
+            Self::RocksDb { db, path } => {
+                let receipt_key = native_rocksdb_receipt_key_v1(key.as_str());
+                Ok(db
+                    .get(receipt_key.as_slice())
+                    .with_context(|| {
+                        format!(
+                            "read nov native execution rocksdb receipt failed: store={} tx_hash={key}",
+                            path.display()
+                        )
+                    })?
+                    .is_some())
+            }
+            Self::Materialized { store } => Ok(store.receipts.contains_key(key.as_str())),
+        }
+    }
 }
 
 fn materialize_nov_native_execution_store_from_rocksdb_v1(
@@ -11023,12 +11070,8 @@ pub fn run_nov_execute_pending_native_tx_batch_from_params_v1(
         .clamp(limit as u64, 16_384) as usize;
     let native_store_path = resolve_native_execution_store_path_from_params_v1(params)
         .unwrap_or_else(nov_native_execution_store_path_v1);
-    let already_receipted_tx_hashes =
-        load_nov_native_execution_store_v1(native_store_path.as_path())?
-            .receipts
-            .keys()
-            .cloned()
-            .collect::<BTreeSet<_>>();
+    let receipt_lookup =
+        NovNativeExecutionReceiptLookupV1::open(native_store_path.as_path())?;
     let pending = snapshot_network_runtime_native_pending_txs_v1(chain_id, scan_limit);
     let mut raw_txs = Vec::with_capacity(limit);
     let mut selected_raw_payloads = Vec::with_capacity(limit);
@@ -11069,8 +11112,8 @@ pub fn run_nov_execute_pending_native_tx_batch_from_params_v1(
         let pending_tx_hash_noprefix = pending_tx_hash
             .strip_prefix("0x")
             .unwrap_or(pending_tx_hash.as_str());
-        if already_receipted_tx_hashes.contains(&pending_tx_hash)
-            || already_receipted_tx_hashes.contains(pending_tx_hash_noprefix)
+        if receipt_lookup.contains(pending_tx_hash.as_str())?
+            || receipt_lookup.contains(pending_tx_hash_noprefix)?
         {
             skipped_already_receipted = skipped_already_receipted.saturating_add(1);
             observe_network_runtime_native_pending_tx_dropped_v1(chain_id, pending_tx.tx_hash);
@@ -11107,6 +11150,7 @@ pub fn run_nov_execute_pending_native_tx_batch_from_params_v1(
             }
         }));
     }
+    drop(receipt_lookup);
 
     let mut batch_params = params.clone();
     let obj = batch_params.as_object_mut().ok_or_else(|| {
