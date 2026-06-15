@@ -801,6 +801,7 @@ fn run_receiver_node(
             if diagnostics.max_elapsed_ms > 0
                 && started_at.elapsed() >= Duration::from_millis(diagnostics.max_elapsed_ms)
                 && stable_progress < expected_tx_count
+                && pending_count == 0
             {
                 fail_reason = Some(format!(
                     "receiver_expected_tx_timeout: progress={} expected={} elapsed_ms={} max_elapsed_ms={}",

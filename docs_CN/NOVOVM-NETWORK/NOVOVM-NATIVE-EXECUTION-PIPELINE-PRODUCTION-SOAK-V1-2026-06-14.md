@@ -1032,6 +1032,26 @@ receiver_state = waiting_for_sender
 - receiver 继续依赖既有 remote reentry dedup / receipt dedup，确保重复补发不重复 AOEM execution、不重复 receipt、不重复 dirty commit。
 - receiver diagnostics 不再在 `pending_count = 0` 且等待 sender 后续轮次时误判 `canonical_progress_stall`。
 - receiver 增加最大等待窗口：`duration + tail_repair_budget + 60s`，超过预算仍未达标则明确 FAIL，不无限等待。
+- receiver 最大等待窗口只在 `pending_count = 0` 且仍缺交易时触发；如果 tail repair 已把包交付到 receiver 且本地还有 pending，需要继续 drain，由 stall watchdog 判断是否真正卡死。
+
+尾部修复后新增观察：
+
+```text
+Production Soak v1 / Cross-machine 5min after tail repair: FAIL
+expected = 2400
+received_unique = 2400
+canonical_unique_included = 2312
+aoem_executed_total = 2312
+ledger_lines = 2312
+queue_pending_last = 88
+fail_reason = receiver_expected_tx_timeout
+```
+
+结论：
+
+- tail repair 已解决裸 UDP 少包问题，receiver 收到 2400/2400。
+- 新失败点是 repair 尾部进入 receiver 后，pending drain grace 不足，receiver 在仍有 `pending=88` 时被 timeout 杀掉。
+- 修复口径是不把 `pending_count > 0` 的本地 drain 阶段当成缺包 timeout；如果 drain 真卡住，应由 `canonical_progress_stall` 判断。
 
 新增 sender 参数：
 
