@@ -701,7 +701,13 @@ fn run_receiver_node(
             };
             sample["pipeline_progress_report_path"] =
                 serde_json::json!(progress_path.display().to_string());
-            if delta == 0 && stable_progress < expected_tx_count {
+            let pending_count = sample
+                .get("pending_count")
+                .and_then(Value::as_u64)
+                .unwrap_or_default();
+            let waiting_for_sender = pending_count == 0 && stable_progress < expected_tx_count;
+            sample["waiting_for_sender"] = serde_json::json!(waiting_for_sender);
+            if delta == 0 && pending_count > 0 && stable_progress < expected_tx_count {
                 state.stall_windows = state.stall_windows.saturating_add(1);
             } else {
                 state.stall_windows = 0;
@@ -726,6 +732,7 @@ fn run_receiver_node(
             }
             if diagnostics.min_canonical_delta > 0
                 && delta < diagnostics.min_canonical_delta
+                && pending_count > 0
                 && stable_progress < expected_tx_count
             {
                 fail_reason = Some(format!(
