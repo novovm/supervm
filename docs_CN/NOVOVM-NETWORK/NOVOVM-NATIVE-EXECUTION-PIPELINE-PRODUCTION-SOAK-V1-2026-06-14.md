@@ -830,3 +830,176 @@ queue_rejected_total = 0
 - 不签收 2h / overnight。
 - 不签收 hostile network。
 - 不签收 canonical body/head recovery。
+
+### 13.1 Cross-machine 5min Sustained after `ef41432`
+
+状态：
+
+```text
+Production Soak v1 / Cross-machine 5min Sustained after ef41432: PASS
+code baseline: ef41432
+profile: 2400 tx / 300s / 8 tx per round / 1000ms round interval
+```
+
+稳定累计口径：
+
+```text
+accepted = true
+received_unique = 2400
+canonical_unique_included = 2400
+aoem_executed_total = 2400
+receipt_count = 2400
+ledger_lines = 2400
+queue_pending_last = 0
+duplicate_canonical_included = 0
+duplicate_receipt = 0
+semantic_head_monotonic = true
+receipt_index_consistent = true
+recovery_ok = true
+```
+
+内存诊断：
+
+```text
+diagnostics_accepted = true
+fail_reason = None
+diagnostics_samples_retained = 70
+diagnostics_samples_dropped = 0
+first_working_set_bytes = 11,231,232
+last_working_set_bytes = 1,653,182,464
+working_set_delta_total_bytes = 1,641,951,232
+```
+
+结论：
+
+- 5min 功能闭环 PASS。
+- 5min 内存平台化未证明。
+- `ef41432` 修复了 payload retention 和 snapshot clone 放大后的短程运行稳定性，但 working set 仍从约 11MB 增长到约 1.65GB。
+- 下一步必须先跑 10min diagnostics，不得直接跳 30min。
+
+下一轮 10min diagnostics 参数：
+
+```text
+TX_COUNT = 4800
+DURATION = 600s
+TX_PER_ROUND = 8
+ROUND_INTERVAL_MS = 1000
+```
+
+10min 重点观察：
+
+- `working_set_delta_per_minute` 是否下降。
+- `working_set` 是否趋于平台。
+- `queue_pending_last` 是否最终清空。
+- `diagnostics_samples_retained / diagnostics_samples_dropped` 是否受控。
+- `semantic_ledger_mirror_bytes` 是否只作为磁盘 mirror 增长，而非全量内存驻留。
+
+### 13.2 Cross-machine 10min Sustained after `ef41432`
+
+状态：
+
+```text
+Production Soak v1 / Cross-machine 10min Sustained after ef41432: FUNCTIONAL PASS
+Production Soak v1 / Cross-machine 10min Memory Plateau: FAIL / NOT PROVEN
+code baseline: ef41432
+profile: 4800 tx / 600s / 8 tx per round / 1000ms round interval
+```
+
+稳定累计口径：
+
+```text
+accepted = true
+received_unique = 4800
+canonical_unique_included = 4800
+aoem_executed_total = 4800
+receipt_count = 4800
+semantic_sequence = 4800
+queue_pending_last = 0
+duplicate_canonical_included = 0
+duplicate_receipt = 0
+semantic_head_monotonic = true
+receipt_index_consistent = true
+recovery_ok = true
+```
+
+runtime retention 观察项：
+
+```text
+receiver_summary.included_canonical_total = 4128
+receiver_summary.ingress_total_last = 4120
+```
+
+说明：
+
+- `included_canonical_total / ingress_total_last` 属于 runtime retention 当前视图，会受 cleanup / retention 影响。
+- sustained 主签收口径继续以 AOEM executed、RocksDB receipt/index、semantic ledger sequence 和 `queue_pending_last` 为准。
+
+内存诊断：
+
+```text
+diagnostics_accepted = true
+fail_reason = None
+diagnostics_samples_retained = 144
+diagnostics_samples_dropped = 0
+first_working_set_bytes = 11,235,328
+last_working_set_bytes = 3,191,017,472
+working_set_delta_total_bytes = 3,179,782,144
+
+~3min  = ~913MB
+~6min  = ~1.71GB
+~9min  = ~2.48GB
+~10min = ~3.19GB
+```
+
+结论：
+
+- 10min 功能闭环 PASS。
+- 10min 内存平台化 FAIL / NOT PROVEN。
+- working set 基本呈线性增长，不能进入 30min / 14400 tx sustained。
+- 下一刀必须收敛 sustained receiver/report/probe/runtime-view 的内存保留，不修改 frozen lifecycle，不修改 AOEM owner，不修改 UDP 行为。
+
+### 13.3 Sustained Report / Probe Memory Retention Fix
+
+目标：
+
+```text
+Production Soak v1 / Sustained Report-Probe Memory Retention Fix
+scope: report / recovery probe / runtime-view retention only
+```
+
+修复边界：
+
+- final report 不得保留全量 `tx_hash`、receipt key、included list。
+- recovery probe 不得把全量 receipt key 列表写入 report；默认只输出 count、digest、少量 sample。
+- receiver summary report 只输出 aggregate 字段，不输出全量 tick detail / tx detail。
+- sender report 不输出全量 `sent_by_hash` map，改为 count、digest、sample。
+- sustained diagnostics 继续保留 bounded samples，不允许嵌入全量 pending / receipt / tx list。
+
+新增/固定诊断字段：
+
+```text
+report_tx_hash_list_len
+report_receipt_key_list_len
+recovery_probe_materialized_key_count
+receipt_hash_digest
+receipt_hash_samples
+receipt_hashes_omitted
+receipt_index_missing_count
+```
+
+下一轮验证顺序：
+
+```text
+1. 本地 sustained 256 tx
+2. 本地 sustained 2400 tx
+3. Cross-machine 5min / 2400 tx
+4. Cross-machine 10min / 4800 tx，观察 working set slope
+5. 只有 10min 后半程内存增长趋缓，才允许进入 30min / 14400 tx
+```
+
+签收边界：
+
+- 本节只记录 report/probe retention 修复。
+- 不签收 30min sustained。
+- 不签收 memory plateau，必须由下一轮 10min 数据证明。
+- 不签收 hostile network、2h / overnight、canonical body/head recovery。

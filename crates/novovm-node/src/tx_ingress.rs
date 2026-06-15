@@ -41,7 +41,7 @@ use rocksdb::{
     Direction as RocksDbDirection, IteratorMode as RocksDbIteratorMode, Options as RocksDbOptions,
     WriteBatch as RocksDbWriteBatch, DB as RocksDb,
 };
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
@@ -1687,17 +1687,52 @@ pub fn get_nov_native_execution_store_backend_status_v1(path: Option<&Path>) -> 
     })
 }
 
+#[derive(Debug, Default)]
+struct RollingDigestV1 {
+    state: u64,
+    count: u64,
+}
+
+impl RollingDigestV1 {
+    fn update(&mut self, bytes: &[u8]) {
+        const FNV_OFFSET: u64 = 0xcbf29ce484222325;
+        const FNV_PRIME: u64 = 0x100000001b3;
+        if self.count == 0 && self.state == 0 {
+            self.state = FNV_OFFSET;
+        }
+        for byte in bytes {
+            self.state ^= u64::from(*byte);
+            self.state = self.state.wrapping_mul(FNV_PRIME);
+        }
+        self.count = self.count.saturating_add(1);
+    }
+
+    fn finish_hex(&self) -> String {
+        format!("{:016x}:{}", self.state, self.count)
+    }
+}
+
 pub fn get_nov_native_execution_store_recovery_probe_v1(path: &Path) -> Result<serde_json::Value> {
     let store = load_nov_native_execution_store_v1(path)?;
     let sequence = store.module_state.aoem_semantic_ledger_sequence;
     let head = store.module_state.aoem_semantic_ledger_head.clone();
     let rocksdb_path = nov_native_execution_store_rocksdb_path_v1(path);
+    let include_full_receipt_hashes = bool_env_default_v1(
+        "NOVOVM_NATIVE_EXECUTION_RECOVERY_PROBE_INCLUDE_FULL_RECEIPT_HASHES",
+        false,
+    );
+    let receipt_hash_sample_limit = usize_env_default_v1(
+        "NOVOVM_NATIVE_EXECUTION_RECOVERY_PROBE_RECEIPT_HASH_SAMPLE_LIMIT",
+        8,
+    );
     let mut semantic_head_current_recovered = false;
     let mut semantic_head_by_height_recovered = false;
     let mut snapshot_meta_current_recovered = false;
     let mut snapshot_meta_by_height_recovered = false;
     let mut receipt_by_height_count = 0usize;
-    let mut receipt_by_height_hashes = Vec::<String>::new();
+    let mut receipt_by_height_hashes = BTreeSet::<String>::new();
+    let mut receipt_by_height_digest = RollingDigestV1::default();
+    let mut receipt_by_height_hash_samples = Vec::<String>::new();
     let mut rocksdb_opened = false;
 
     if rocksdb_path.exists() {
@@ -1753,7 +1788,11 @@ pub fn get_nov_native_execution_store_recovery_probe_v1(path: &Path) -> Result<s
             })?;
             receipt_by_height_count = receipt_by_height_count.saturating_add(1);
             if let Ok(tx_hash) = String::from_utf8(raw.as_ref().to_vec()) {
-                receipt_by_height_hashes.push(tx_hash);
+                receipt_by_height_digest.update(tx_hash.as_bytes());
+                if receipt_by_height_hash_samples.len() < receipt_hash_sample_limit {
+                    receipt_by_height_hash_samples.push(tx_hash.clone());
+                }
+                receipt_by_height_hashes.insert(tx_hash);
             }
         }
     }
@@ -1766,12 +1805,29 @@ pub fn get_nov_native_execution_store_recovery_probe_v1(path: &Path) -> Result<s
         .values()
         .map(BTreeMap::len)
         .sum::<usize>();
-    let receipt_hashes = store.receipts.keys().cloned().collect::<Vec<_>>();
+    let mut receipt_hash_digest = RollingDigestV1::default();
+    let mut receipt_hash_samples = Vec::<String>::new();
+    let mut receipt_index_missing_count = 0usize;
+    let mut receipt_hashes_full = if include_full_receipt_hashes {
+        Some(Vec::<String>::with_capacity(receipt_count))
+    } else {
+        None
+    };
+    for tx_hash in store.receipts.keys() {
+        receipt_hash_digest.update(tx_hash.as_bytes());
+        if receipt_hash_samples.len() < receipt_hash_sample_limit {
+            receipt_hash_samples.push(tx_hash.clone());
+        }
+        if !receipt_by_height_hashes.contains(tx_hash) {
+            receipt_index_missing_count = receipt_index_missing_count.saturating_add(1);
+        }
+        if let Some(full) = receipt_hashes_full.as_mut() {
+            full.push(tx_hash.clone());
+        }
+    }
     let receipt_index_recovered = receipt_count > 0
         && receipt_by_height_count >= receipt_count
-        && receipt_hashes
-            .iter()
-            .all(|tx_hash| receipt_by_height_hashes.iter().any(|item| item == tx_hash));
+        && receipt_index_missing_count == 0;
     let materialized_view_rebuilt = sequence > 0
         && !head.is_empty()
         && receipt_count > 0
@@ -1792,8 +1848,31 @@ pub fn get_nov_native_execution_store_recovery_probe_v1(path: &Path) -> Result<s
         "snapshot_meta_by_height_recovered": snapshot_meta_by_height_recovered,
         "receipt_index_recovered": receipt_index_recovered,
         "receipt_by_height_count": receipt_by_height_count,
+        "receipt_by_height_hash_digest": receipt_by_height_digest.finish_hex(),
+        "receipt_by_height_hash_samples": receipt_by_height_hash_samples,
         "receipt_count": receipt_count,
-        "receipt_hashes": receipt_hashes,
+        "receipt_hash_digest": receipt_hash_digest.finish_hex(),
+        "receipt_hash_samples": receipt_hash_samples.clone(),
+        "receipt_hashes_omitted": !include_full_receipt_hashes,
+        "receipt_hashes_full_count": if include_full_receipt_hashes { receipt_count } else { 0 },
+        "receipt_index_missing_count": receipt_index_missing_count,
+        "recovery_probe_materialized_key_count": receipt_hash_sample_limit.min(receipt_count),
+        "receipt_hashes": if let Some(full) = receipt_hashes_full {
+            serde_json::json!({
+                "omitted": false,
+                "count": receipt_count,
+                "digest": receipt_hash_digest.finish_hex(),
+                "samples": receipt_hash_samples.clone(),
+                "items": full,
+            })
+        } else {
+            serde_json::json!({
+                "omitted": true,
+                "count": receipt_count,
+                "digest": receipt_hash_digest.finish_hex(),
+                "samples": receipt_hash_samples.clone(),
+            })
+        },
         "materialized_view_rebuilt": materialized_view_rebuilt,
         "materialized_account_count": materialized_account_count,
         "materialized_account_asset_count": materialized_account_asset_count,
@@ -11070,8 +11149,7 @@ pub fn run_nov_execute_pending_native_tx_batch_from_params_v1(
         .clamp(limit as u64, 16_384) as usize;
     let native_store_path = resolve_native_execution_store_path_from_params_v1(params)
         .unwrap_or_else(nov_native_execution_store_path_v1);
-    let receipt_lookup =
-        NovNativeExecutionReceiptLookupV1::open(native_store_path.as_path())?;
+    let receipt_lookup = NovNativeExecutionReceiptLookupV1::open(native_store_path.as_path())?;
     let pending = snapshot_network_runtime_native_pending_txs_v1(chain_id, scan_limit);
     let mut raw_txs = Vec::with_capacity(limit);
     let mut selected_raw_payloads = Vec::with_capacity(limit);

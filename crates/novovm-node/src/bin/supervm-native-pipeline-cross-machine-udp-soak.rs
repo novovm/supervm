@@ -222,8 +222,7 @@ fn receiver_diagnostics_config() -> Result<ReceiverDiagnosticsConfigV1> {
     let sample_interval_ms =
         u64_env("NOVOVM_NATIVE_PIPELINE_PROGRESS_SAMPLE_INTERVAL_MS", 5_000)?.max(250);
     let stall_windows = u64_env("NOVOVM_NATIVE_PIPELINE_PROGRESS_STALL_WINDOWS", 3)?.max(1);
-    let memory_sample_enabled = bool_env("NOVOVM_NATIVE_PIPELINE_MEMORY_SAMPLE_ENABLED")
-        || enabled;
+    let memory_sample_enabled = bool_env("NOVOVM_NATIVE_PIPELINE_MEMORY_SAMPLE_ENABLED") || enabled;
     let default_max_working_set = if memory_sample_enabled {
         8 * 1024 * 1024 * 1024u64
     } else {
@@ -238,10 +237,7 @@ fn receiver_diagnostics_config() -> Result<ReceiverDiagnosticsConfigV1> {
             "NOVOVM_NATIVE_PIPELINE_MEMORY_MAX_WORKING_SET_BYTES",
             default_max_working_set,
         )?,
-        min_canonical_delta: u64_env(
-            "NOVOVM_NATIVE_PIPELINE_PROGRESS_MIN_CANONICAL_DELTA",
-            0,
-        )?,
+        min_canonical_delta: u64_env("NOVOVM_NATIVE_PIPELINE_PROGRESS_MIN_CANONICAL_DELTA", 0)?,
         report_path: diagnostics_report_path(),
     })
 }
@@ -507,11 +503,15 @@ fn spawn_receiver_node(
         ),
         (
             "NOVOVM_NATIVE_EXECUTION_TICK_SCAN_LIMIT",
-            expected_tx_count.clamp(recv_budget.max(1), 65_536).to_string(),
+            expected_tx_count
+                .clamp(recv_budget.max(1), 65_536)
+                .to_string(),
         ),
         (
             "NOVOVM_NATIVE_EXECUTION_PIPELINE_PROGRESS_REPORT_PATH",
-            pipeline_progress_report_path(store_path).display().to_string(),
+            pipeline_progress_report_path(store_path)
+                .display()
+                .to_string(),
         ),
         (
             "NOVOVM_NATIVE_EXECUTION_PIPELINE_PROGRESS_REPORT_INTERVAL_MS",
@@ -754,7 +754,13 @@ fn run_receiver_node(
                 state.fail_reason = Some(reason.clone());
                 let _ = child.kill();
                 let _ = child.wait();
-                write_diagnostics_report(&diagnostics, &state, false, child_pid, expected_tx_count)?;
+                write_diagnostics_report(
+                    &diagnostics,
+                    &state,
+                    false,
+                    child_pid,
+                    expected_tx_count,
+                )?;
                 bail!("cross-machine receiver diagnostics failed: {reason}");
             }
             write_diagnostics_report(&diagnostics, &state, false, child_pid, expected_tx_count)?;
@@ -843,14 +849,13 @@ fn process_memory_sample(pid: u32) -> Value {
         .args(["-NoProfile", "-Command", script.as_str()])
         .output()
     {
-        Ok(output) if output.status.success() => {
-            serde_json::from_slice::<Value>(&output.stdout).unwrap_or_else(|_| {
+        Ok(output) if output.status.success() => serde_json::from_slice::<Value>(&output.stdout)
+            .unwrap_or_else(|_| {
                 serde_json::json!({
                     "sample_ok": false,
                     "error": "parse_windows_process_memory_sample_failed",
                 })
-            })
-        }
+            }),
         Ok(output) => serde_json::json!({
             "sample_ok": false,
             "error": "windows_process_memory_sample_failed",
@@ -1202,7 +1207,7 @@ fn run_sender(
         }
     }
     let accepted = stats.sent_unique == tx_count;
-    Ok(serde_json::json!({
+    let report = serde_json::json!({
         "schema": REPORT_SCHEMA_V1,
         "role": "sender",
         "accepted": accepted,
@@ -1245,7 +1250,8 @@ fn run_sender(
         },
         "sent_by_hash": stats.sent_by_hash,
         "violations": if accepted { Vec::<String>::new() } else { vec!["sender did not send expected unique tx count".to_string()] },
-    }))
+    });
+    Ok(compact_sender_report_for_report(report))
 }
 
 fn run_receiver(
@@ -1311,8 +1317,8 @@ fn run_receiver(
             "canonical_body_head_recovery": "not_claimed_by_this_gate"
         },
         "validation": validation,
-        "receiver_summary": receiver_summary,
-        "recovery_probe": recovery_probe,
+        "receiver_summary": compact_receiver_summary_for_report(receiver_summary),
+        "recovery_probe": compact_probe_for_report(recovery_probe),
         "violations": violations
     }))
 }
@@ -1383,10 +1389,10 @@ fn run_local_smoke(
         "tx_count": tx_count,
         "sender_addr": sender_addr,
         "receiver_addr": receiver_addr,
-        "sender_report": sender_report,
+        "sender_report": compact_sender_report_for_report(sender_report),
         "validation": validation,
-        "receiver_summary": receiver_summary,
-        "recovery_probe": recovery_probe,
+        "receiver_summary": compact_receiver_summary_for_report(receiver_summary),
+        "recovery_probe": compact_probe_for_report(recovery_probe),
         "violations": violations
     }))
 }
@@ -1617,6 +1623,153 @@ fn main() -> Result<()> {
         bail!("cross-machine UDP soak failed: {}", path.display());
     }
     Ok(())
+}
+
+fn compact_tx_hash_array_value(value: &Value) -> Value {
+    let Some(items) = value.as_array() else {
+        return value.clone();
+    };
+    let mut digest = RollingDigestV1::default();
+    let mut first = Vec::<Value>::new();
+    let mut last = Vec::<Value>::new();
+    for item in items {
+        if let Some(raw) = item.as_str() {
+            digest.update(raw.as_bytes());
+        }
+        if first.len() < 8 {
+            first.push(item.clone());
+        }
+    }
+    let start = items.len().saturating_sub(8);
+    for item in items.iter().skip(start) {
+        last.push(item.clone());
+    }
+    serde_json::json!({
+        "omitted": true,
+        "count": items.len(),
+        "digest": digest.finish_hex(),
+        "first_samples": first,
+        "last_samples": last,
+    })
+}
+
+fn report_array_len_recursive(value: &Value) -> usize {
+    match value {
+        Value::Array(items) => {
+            items.len() + items.iter().map(report_array_len_recursive).sum::<usize>()
+        }
+        Value::Object(map) => map.values().map(report_array_len_recursive).sum(),
+        _ => 0,
+    }
+}
+
+#[derive(Debug, Default)]
+struct RollingDigestV1 {
+    state: u64,
+    count: u64,
+}
+
+impl RollingDigestV1 {
+    fn update(&mut self, bytes: &[u8]) {
+        const FNV_OFFSET: u64 = 0xcbf29ce484222325;
+        const FNV_PRIME: u64 = 0x100000001b3;
+        if self.count == 0 && self.state == 0 {
+            self.state = FNV_OFFSET;
+        }
+        for byte in bytes {
+            self.state ^= u64::from(*byte);
+            self.state = self.state.wrapping_mul(FNV_PRIME);
+        }
+        self.count = self.count.saturating_add(1);
+    }
+
+    fn finish_hex(&self) -> String {
+        format!("{:016x}:{}", self.state, self.count)
+    }
+}
+
+fn compact_probe_for_report(mut probe: Value) -> Value {
+    if let Some(map) = probe.as_object_mut() {
+        if let Some(value) = map.get("receipt_hashes").cloned() {
+            map.insert(
+                "receipt_hashes".to_string(),
+                compact_tx_hash_array_value(&value),
+            );
+        }
+    }
+    probe
+}
+
+fn compact_receiver_summary_for_report(summary: Value) -> Value {
+    serde_json::json!({
+        "accepted": summary.get("accepted").cloned().unwrap_or(Value::Null),
+        "execution_kernel": summary.get("execution_kernel").cloned().unwrap_or(Value::Null),
+        "aoem_concurrency_owner": summary.get("aoem_concurrency_owner").cloned().unwrap_or(Value::Null),
+        "host_concurrency_policy": summary.get("host_concurrency_policy").cloned().unwrap_or(Value::Null),
+        "ticks": summary_u64(&summary, "ticks"),
+        "elapsed_ms": summary_u64(&summary, "elapsed_ms"),
+        "ticks_per_sec_x1000": summary_u64(&summary, "ticks_per_sec_x1000"),
+        "progress_score": summary_u64(&summary, "progress_score"),
+        "aoem_executed_total": summary_u64(&summary, "aoem_executed_total"),
+        "aoem_deferred_total": summary_u64(&summary, "aoem_deferred_total"),
+        "included_canonical_total": summary_u64(&summary, "included_canonical_total"),
+        "included_canonical_last": summary_u64(&summary, "included_canonical_last"),
+        "ingress_total_last": summary_u64(&summary, "ingress_total_last"),
+        "queue_tx_count_last": summary_u64(&summary, "queue_tx_count_last"),
+        "queue_seen_last": summary_u64(&summary, "queue_seen_last"),
+        "queue_pending_last": summary_u64(&summary, "queue_pending_last"),
+        "queue_dropped_last": summary_u64(&summary, "queue_dropped_last"),
+        "queue_rejected_last": summary_u64(&summary, "queue_rejected_last"),
+        "broadcast_tx_last": summary_u64(&summary, "broadcast_tx_last"),
+        "broadcast_candidates_last": summary_u64(&summary, "broadcast_candidates_last"),
+        "skipped_ineligible_stage_total": summary_u64(&summary, "skipped_ineligible_stage_total"),
+        "skipped_missing_payload_total": summary_u64(&summary, "skipped_missing_payload_total"),
+        "skipped_non_native_payload_total": summary_u64(&summary, "skipped_non_native_payload_total"),
+        "skipped_chain_mismatch_total": summary_u64(&summary, "skipped_chain_mismatch_total"),
+        "skipped_already_receipted_total": summary_u64(&summary, "skipped_already_receipted_total"),
+        "max_network_received_per_tick": summary_u64(&summary, "max_network_received_per_tick"),
+        "max_queue_admitted_per_tick": summary_u64(&summary, "max_queue_admitted_per_tick"),
+        "max_aoem_batch_executed_per_tick": summary_u64(&summary, "max_aoem_batch_executed_per_tick"),
+        "max_proof_items_per_tick": summary_u64(&summary, "max_proof_items_per_tick"),
+        "max_commit_items_per_tick": summary_u64(&summary, "max_commit_items_per_tick"),
+        "max_broadcast_tx_per_tick": summary_u64(&summary, "max_broadcast_tx_per_tick"),
+        "native_store_backend": summary.get("native_store_backend").cloned().unwrap_or(Value::Null),
+        "native_store_commit_model": summary.get("native_store_commit_model").cloned().unwrap_or(Value::Null),
+        "native_store_backend_path": summary.get("native_store_backend_path").cloned().unwrap_or(Value::Null),
+        "report_tx_hash_list_len": report_array_len_recursive(&summary),
+        "report_receipt_key_list_len": 0,
+        "tick_result_omitted": summary.get("tick_result").is_some(),
+        "lifecycle_omitted": summary.get("lifecycle").is_some(),
+        "raw_runtime_summary_omitted": true,
+    })
+}
+
+fn compact_sender_report_for_report(mut report: Value) -> Value {
+    if let Some(map) = report.as_object_mut() {
+        if let Some(sent_by_hash) = map.remove("sent_by_hash") {
+            let count = sent_by_hash.as_object().map_or(0, serde_json::Map::len);
+            let mut digest = RollingDigestV1::default();
+            let mut first = Vec::<Value>::new();
+            if let Some(obj) = sent_by_hash.as_object() {
+                for (key, value) in obj {
+                    digest.update(key.as_bytes());
+                    if first.len() < 8 {
+                        first.push(serde_json::json!({"tx_hash": key, "count": value}));
+                    }
+                }
+            }
+            map.insert(
+                "sent_by_hash".to_string(),
+                serde_json::json!({
+                    "omitted": true,
+                    "count": count,
+                    "digest": digest.finish_hex(),
+                    "samples": first,
+                }),
+            );
+        }
+    }
+    report
 }
 
 fn hex_lower(bytes: &[u8]) -> String {
