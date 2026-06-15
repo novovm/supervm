@@ -1153,3 +1153,82 @@ Cross-machine 10min / 4800 tx
 - 不签收 hostile network。
 - 不签收 canonical body/head recovery。
 - 不签收 memory plateau。
+
+### 13.6 Cross-machine 10min Sustained after Tail Repair Signoff
+
+状态：
+
+```text
+Production Soak v1 / Cross-machine 10min Sustained after Tail Repair: FUNCTIONAL PASS
+Memory Plateau: FAIL / NOT SIGNED
+profile: 4800 tx / 600s / 8 tx per round / 1000ms round interval
+tail_repair_rounds = 3
+tail_repair_interval_ms = 1000
+```
+
+B receiver final report：
+
+```text
+accepted = true
+tx_count = 4800
+received_unique = 4800
+canonical_unique_included = 4800
+aoem_executed_total = 4800
+receipt_count = 4800
+semantic_sequence = 4800
+queue_pending_last = 0
+duplicate_canonical_included = 0
+duplicate_receipt = 0
+semantic_head_monotonic = true
+receipt_index_consistent = true
+recovery_ok = true
+violations = none
+receiver_clean_exit = true
+```
+
+Diagnostics：
+
+```text
+diagnostics_accepted = true
+fail_reason = None
+diagnostics_samples_retained = 145
+diagnostics_samples_dropped = 0
+first_working_set_bytes = 11,243,520
+last_working_set_bytes = 3,206,868,992
+working_set_delta_total_bytes = 3,195,625,472
+ledger_lines = 4800
+ledger_bytes = 4,484,117
+```
+
+内存采样趋势：
+
+```text
+~0s    stable=0     working_set=10.7MB
+~186s  stable=1112  working_set=848.0MB   delta=270.1MB/min
+~373s  stable=2392  working_set=1613.8MB  delta=258.6MB/min
+~560s  stable=3640  working_set=2359.8MB  delta=252.1MB/min
+~742s  stable=4760  working_set=3058.3MB  delta=246.8MB/min
+```
+
+结论：
+
+- cross-machine 10min sustained 功能闭环 PASS。
+- tail repair + pending drain 已经满足 4800/4800 功能口径。
+- 内存仍近似线性增长，working set slope 只轻微下降，没有平台化。
+- 不能进入 30min / 14400 tx sustained。
+
+下一步：
+
+```text
+Sustained Receiver Memory Retention Fix Round 2
+目标：继续定位 pending/runtime/progress/ledger/report/probe 中仍然随 tx 数增长的内存保留源。
+```
+
+签收边界：
+
+- 只签 10min 功能闭环。
+- 不签 memory plateau。
+- 不签 30min sustained。
+- 不签 2h / overnight。
+- 不签 hostile network。
+- 不签 canonical body/head recovery。
