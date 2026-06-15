@@ -393,6 +393,126 @@ skipped_chain_mismatch_total = 0
 - 不改变 AOEM_runtime 作为执行并发 owner。
 - 不允许 Rust host 自建执行调度器。
 
+## 12. 第八刀：Cross-machine 5min Sustained Diagnostics
+
+状态：
+
+```text
+Production Soak v1 / Cross-machine 5min Sustained Diagnostics: PASS
+code baseline: 1e16291
+workspace: clean
+```
+
+实测拓扑：
+
+```text
+machine A sender:   192.168.71.118
+machine B receiver: 192.168.71.117:39001
+transport: UDP LAN
+profile: 5min sustained diagnostics
+tx_count: 2400
+duration_seconds: 300
+tx_per_round: 8
+round_interval_ms: 1000
+```
+
+本轮使用 diagnostics watchdog：
+
+```text
+NOVOVM_NATIVE_PIPELINE_PROGRESS_WATCHDOG_ENABLED = 1
+NOVOVM_NATIVE_PIPELINE_PROGRESS_SAMPLE_INTERVAL_MS = 5000
+NOVOVM_NATIVE_PIPELINE_PROGRESS_STALL_WINDOWS = 24
+NOVOVM_NATIVE_PIPELINE_MEMORY_SAMPLE_ENABLED = 1
+```
+
+B receiver 最终验收：
+
+```text
+receiver_accepted = true
+diagnostics_accepted = true
+received_unique = 2400
+canonical_unique_included = 2400
+aoem_executed_total = 2400
+ledger_lines = 2400
+queue_pending_last = 0
+duplicate_canonical_included = 0
+duplicate_receipt = 0
+semantic_head_monotonic = true
+receipt_index_consistent = true
+receiver exited cleanly = true
+udp_39001_residual_process = false
+```
+
+诊断末尾样本：
+
+```text
+stable_progress_total = 2400
+aoem_executed_total = 2400
+semantic_ledger_mirror.line_count = 2400
+semantic_ledger_mirror.bytes = 2241397
+queue_pending_last = 0
+queue_dropped_total = 0
+queue_rejected_total = 0
+ticks = 440
+ticks_per_sec_x1000 = 693
+diagnostics_sample_count = 124
+```
+
+本轮修正并固定的 sustained 主口径：
+
+```text
+primary:
+  AOEM executed total
+  RocksDB receipt_count / receipt index
+  semantic ledger sequence / ledger lines
+  queue_pending_last
+
+observability-only:
+  received_unique_total
+  included_canonical_total
+```
+
+`received_unique_total` 和 `included_canonical_total` 来自 runtime pending 的当前保留视图，会受到 retention / cleanup 影响；它们继续作为观察项保留，但不再作为 sustained 主签收口径。长跑最终签收必须以 AOEM、RocksDB receipt/index、semantic ledger、queue drain 这些稳定累计事实为准。
+
+本签收边界：
+
+- 只签收 cross-machine 5min sustained diagnostics。
+- 不签收 30min sustained。
+- 不签收 2h / overnight soak。
+- 不签收 hostile network。
+- 不签收 canonical body/head recovery。
+- 不改变 frozen lifecycle。
+- 不改变 pending-only 产品入口。
+- 不绕过 AOEM tick 生成 receipt/state。
+- 不引入第二账本或第二资产真相源。
+
+下一阶段：
+
+```text
+Production Soak v1 / Cross-machine 30min Sustained Diagnostics
+
+tx_count = 14400
+duration_seconds = 1800
+tx_per_round = 8
+round_interval_ms = 1000
+```
+
+30min 签收继续使用稳定累计口径：
+
+```text
+aoem_executed_total >= 14400
+receipt_count >= 14400
+semantic_sequence >= 14400
+ledger_lines >= 14400
+queue_pending_last = 0
+duplicate_receipt = 0
+duplicate_canonical_included = 0
+semantic_head_monotonic = true
+receipt_index_consistent = true
+receiver exited cleanly = true
+diagnostics_accepted = true
+```
+
 ## 12. 第八刀：Cross-machine Sustained Soak Gate
 
 新增 sustained 入口：
