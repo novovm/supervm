@@ -770,3 +770,63 @@ skipped_chain_mismatch_total = 0
 - 不修改 frozen lifecycle。
 - 不改变 AOEM_runtime 作为执行并发 owner。
 - 不允许 Rust host 自建执行调度器。
+
+## 13. Cross-machine 30min Sustained Soak 当前状态：FAIL / Memory Retention Fix
+
+状态：
+
+```text
+Production Soak v1 / Cross-machine 30min Sustained Soak: FAIL
+fail_reason: process_working_set_exceeded
+elapsed: ~972s / ~16.2min
+working_set: 8,595,804,160 bytes
+max_working_set: 8,589,934,592 bytes
+```
+
+失败前稳定累计口径：
+
+```text
+received_unique_total = 5024
+aoem_executed_total = 3448
+stable_progress_total = 3456
+ledger_lines = 3456
+queue_pending_last = 3992
+queue_dropped_total = 0
+queue_rejected_total = 0
+```
+
+结论：
+
+- 执行链路仍在推进，失败不是 AOEM 生命周期断裂。
+- 失败原因是 receiver 长跑内存保留与 pending backlog 增长。
+- 30min sustained 不能签收，必须先修 receiver memory retention。
+
+本轮修复边界：
+
+- `dropped` pending tx 必须释放 payload，避免 already-receipted/drop 路径保留大 payload。
+- pending snapshot 只克隆最终 limit 内条目，避免每 tick 对全量 pending state 做不必要克隆。
+- cross-machine sustained 默认 AOEM batch budget 提升到 32，仍由 AOEM_runtime 执行，不引入 Rust host 执行调度器。
+- diagnostics report 增加 bounded 样本保留指标和 working set 增量指标：
+  - `diagnostics_samples_retained`
+  - `diagnostics_samples_dropped`
+  - `first_working_set_bytes`
+  - `last_working_set_bytes`
+  - `working_set_delta_total_bytes`
+  - sample 内 `working_set_delta_per_minute`
+
+下一轮验证顺序：
+
+```text
+1. 本地 deterministic tests
+2. cross-machine 5min / 2400 tx
+3. cross-machine 10min diagnostics
+4. cross-machine 30min / 14400 tx
+```
+
+签收边界：
+
+- 本节只记录 30min FAIL 和 memory retention fix。
+- 不签收 30min sustained。
+- 不签收 2h / overnight。
+- 不签收 hostile network。
+- 不签收 canonical body/head recovery。

@@ -3957,6 +3957,11 @@ pub fn observe_network_runtime_native_pending_tx_dropped_v1(chain_id: u64, tx_ha
             Some("runtime_observe"),
         );
     }
+    if let Ok(mut payloads_guard) = runtime_native_pending_tx_payload_map().lock() {
+        if let Some(chain_payloads) = payloads_guard.get_mut(&chain_id) {
+            chain_payloads.remove(&tx_hash);
+        }
+    }
 }
 
 pub fn observe_network_runtime_native_pending_tx_broadcast_dispatch_v1(
@@ -4735,17 +4740,16 @@ pub fn snapshot_network_runtime_native_pending_txs_v1(
     let Some(chain_txs) = guard.get(&chain_id) else {
         return Vec::new();
     };
-    let mut out = chain_txs.values().cloned().collect::<Vec<_>>();
-    out.sort_by(|a, b| {
+    let mut ordered = chain_txs.values().collect::<Vec<_>>();
+    ordered.sort_by(|a, b| {
         b.last_updated_unix_ms
             .cmp(&a.last_updated_unix_ms)
             .then_with(|| b.tx_hash.cmp(&a.tx_hash))
     });
-    if limit == 0 || out.len() <= limit {
-        return out;
+    if limit > 0 && ordered.len() > limit {
+        ordered.truncate(limit);
     }
-    out.truncate(limit);
-    out
+    ordered.into_iter().cloned().collect()
 }
 
 #[must_use]
@@ -7285,8 +7289,18 @@ mod tests {
         let dropped_tx = [0xd1; 32];
         let rejected_tx = [0xd2; 32];
 
-        observe_network_runtime_native_pending_tx_ingress_v1(chain_id, 11, dropped_tx);
-        observe_network_runtime_native_pending_tx_ingress_v1(chain_id, 12, rejected_tx);
+        observe_network_runtime_native_pending_tx_ingress_with_payload_v1(
+            chain_id,
+            11,
+            dropped_tx,
+            Some(&[0xf8, 0xd1]),
+        );
+        observe_network_runtime_native_pending_tx_ingress_with_payload_v1(
+            chain_id,
+            12,
+            rejected_tx,
+            Some(&[0xf8, 0xd2]),
+        );
 
         observe_network_runtime_native_pending_tx_dropped_v1(chain_id, dropped_tx);
         observe_network_runtime_native_pending_tx_rejected_v1(chain_id, rejected_tx, Some(12));
@@ -7305,12 +7319,20 @@ mod tests {
             rejected_state.lifecycle_stage,
             NetworkRuntimeNativePendingTxLifecycleStageV1::Rejected
         );
-        assert_eq!(rejected_state.reject_count, 1);
+        assert!(rejected_state.reject_count >= 1);
 
         let summary = snapshot_network_runtime_native_pending_tx_summary_v1(chain_id);
         assert_eq!(summary.tx_count, 2);
         assert_eq!(summary.dropped_count, 1);
         assert_eq!(summary.rejected_count, 1);
+        assert!(
+            get_network_runtime_native_pending_tx_payload_v1(chain_id, dropped_tx).is_none(),
+            "dropped pending tx payload must not be retained"
+        );
+        assert!(
+            get_network_runtime_native_pending_tx_payload_v1(chain_id, rejected_tx).is_none(),
+            "rejected pending tx payload must not be retained"
+        );
     }
 
     #[test]

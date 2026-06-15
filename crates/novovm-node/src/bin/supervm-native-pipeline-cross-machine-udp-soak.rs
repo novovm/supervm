@@ -77,6 +77,9 @@ struct ReceiverDiagnosticsStateV1 {
     last_canonical: u64,
     stall_windows: u64,
     fail_reason: Option<String>,
+    samples_dropped: u64,
+    first_working_set_bytes: Option<u64>,
+    last_working_set_bytes: Option<u64>,
 }
 
 fn string_env_nonempty(name: &str) -> Option<String> {
@@ -706,6 +709,16 @@ fn run_receiver_node(
             let working_set = memory_working_set_bytes(&sample["process_memory"]);
             if working_set > 0 {
                 sample["process_working_set_bytes"] = serde_json::json!(working_set);
+                if state.first_working_set_bytes.is_none() {
+                    state.first_working_set_bytes = Some(working_set);
+                }
+                state.last_working_set_bytes = Some(working_set);
+                if let Some(first) = state.first_working_set_bytes {
+                    let elapsed_minutes = started_at.elapsed().as_secs().max(1) as f64 / 60.0;
+                    let delta = working_set.saturating_sub(first) as f64;
+                    sample["working_set_delta_per_minute"] =
+                        serde_json::json!((delta / elapsed_minutes) as u64);
+                }
             }
             let mut fail_reason = None;
             if state.stall_windows >= diagnostics.stall_windows {
@@ -733,6 +746,9 @@ fn run_receiver_node(
             if state.samples.len() > 256 {
                 let drop_count = state.samples.len().saturating_sub(256);
                 state.samples.drain(0..drop_count);
+                state.samples_dropped = state
+                    .samples_dropped
+                    .saturating_add(drop_count.try_into().unwrap_or(u64::MAX));
             }
             if let Some(reason) = fail_reason {
                 state.fail_reason = Some(reason.clone());
@@ -956,7 +972,15 @@ fn write_diagnostics_report(
         "max_working_set_bytes": config.max_working_set_bytes,
         "min_canonical_delta": config.min_canonical_delta,
         "fail_reason": state.fail_reason,
+        "diagnostics_samples_retained": state.samples.len(),
+        "diagnostics_samples_dropped": state.samples_dropped,
         "sample_count": state.samples.len(),
+        "first_working_set_bytes": state.first_working_set_bytes,
+        "last_working_set_bytes": state.last_working_set_bytes,
+        "working_set_delta_total_bytes": state
+            .last_working_set_bytes
+            .zip(state.first_working_set_bytes)
+            .map(|(last, first)| last.saturating_sub(first)),
         "samples": state.samples,
     });
     write_report(config.report_path.as_path(), &report)
@@ -1402,7 +1426,7 @@ fn main() -> Result<()> {
             "NOVOVM_NATIVE_PIPELINE_BATCH_BUDGET",
             "NOVOVM_NATIVE_PIPELINE_CROSS_MACHINE_BATCH_BUDGET",
         ],
-        8,
+        if sustained_enabled { 32 } else { 8 },
     )?
     .max(1);
     let recv_budget = u64_env_alias(
