@@ -26,10 +26,11 @@ use novovm_network::{
     observe_network_runtime_native_pending_tx_local_native_payload_v1,
     observe_network_runtime_native_pending_tx_rejected_v1,
     set_network_runtime_native_body_snapshot_v1, set_network_runtime_native_head_snapshot_v1,
+    snapshot_network_runtime_native_active_pending_txs_v1,
     snapshot_network_runtime_native_execution_budget_runtime_summary_v1,
-    snapshot_network_runtime_native_pending_txs_v1, NetworkRuntimeNativeBodySnapshotV1,
-    NetworkRuntimeNativeExecutionBudgetTargetObservationV1, NetworkRuntimeNativeHeadSnapshotV1,
-    NetworkRuntimeNativePendingTxLifecycleStageV1, NetworkRuntimeNativeSyncPhaseV1,
+    NetworkRuntimeNativeBodySnapshotV1, NetworkRuntimeNativeExecutionBudgetTargetObservationV1,
+    NetworkRuntimeNativeHeadSnapshotV1, NetworkRuntimeNativePendingTxLifecycleStageV1,
+    NetworkRuntimeNativeSyncPhaseV1,
 };
 use novovm_protocol::{
     decode_local_tx_wire_v1 as decode_tx_wire_v1, decode_nov_native_tx_wire_v1,
@@ -11150,7 +11151,7 @@ pub fn run_nov_execute_pending_native_tx_batch_from_params_v1(
     let native_store_path = resolve_native_execution_store_path_from_params_v1(params)
         .unwrap_or_else(nov_native_execution_store_path_v1);
     let receipt_lookup = NovNativeExecutionReceiptLookupV1::open(native_store_path.as_path())?;
-    let pending = snapshot_network_runtime_native_pending_txs_v1(chain_id, scan_limit);
+    let pending = snapshot_network_runtime_native_active_pending_txs_v1(chain_id, scan_limit);
     let mut raw_txs = Vec::with_capacity(limit);
     let mut selected_raw_payloads = Vec::with_capacity(limit);
     let mut selected_hash_bytes = Vec::with_capacity(limit);
@@ -11313,7 +11314,7 @@ pub fn run_nov_native_execution_tick_from_params_v1(
         .unwrap_or(effective_budget.saturating_mul(4).max(effective_budget))
         .clamp(effective_budget, 16_384);
     let pending_before =
-        snapshot_network_runtime_native_pending_txs_v1(chain_id, scan_limit as usize);
+        snapshot_network_runtime_native_active_pending_txs_v1(chain_id, scan_limit as usize);
     let eligible_before = pending_before
         .iter()
         .filter(|pending| native_pending_execution_eligible_stage_v1(pending.lifecycle_stage))

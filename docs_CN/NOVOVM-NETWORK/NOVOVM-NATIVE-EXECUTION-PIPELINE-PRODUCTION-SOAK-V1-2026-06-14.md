@@ -1292,3 +1292,93 @@ canonical body/head recovery 仍不由本 gate 签收。
 ```
 
 本节不是 memory plateau 签收；它只是记录 Round 2 内存保留修复已经写入。
+
+### 13.8 Sustained Receiver Pending Scan Retention Fix
+
+状态：
+
+```text
+Production Soak v1 / Sustained Receiver Pending Scan Retention Fix: DONE
+Cross-machine 5min function: remains PASS
+Memory Plateau: NOT SIGNED
+30min sustained: still blocked until 5min/10min memory slope improves
+```
+
+触发原因：
+
+```text
+上一轮 2400 tx 功能 PASS，但 receiver 出现异常扫描：
+- skipped_ineligible_stage_total = 161244
+- skipped_already_receipted_total = 631
+- queue_dropped_last = 631
+
+判断：report/probe 不再是主要问题；pending/runtime current view 中的 historical entries
+仍被 AOEM admission 每 tick 反复扫描。
+```
+
+本轮修复：
+
+```text
+1. 新增 network runtime active pending snapshot：
+   snapshot_network_runtime_native_active_pending_txs_v1
+
+2. AOEM pending batch admission 改为只读取 active execution stages：
+   - Seen
+   - Pending
+   - Propagated
+   - ReorgedBackToPending
+
+3. Dropped / Rejected / IncludedCanonical 不再进入 AOEM candidate scan。
+
+4. duplicate remote/native reentry 如果命中 IncludedCanonical：
+   - 不重新进入 Pending
+   - 不重新保留 payload
+   - payload map 中对应 entry 被移除
+
+5. diagnostics / summary 增加 active/historical 区分：
+   - queue_active_pending_last
+   - queue_historical_pending_last
+   - active_pending_count
+   - historical_pending_count
+   - current_view_received_retained
+   - current_view_included_retained
+   - current_view_dropped_retained
+   - queue_dropped_last_active
+   - queue_dropped_total_cumulative
+```
+
+保持不变的边界：
+
+```text
+AOEM_runtime 仍是执行并发 owner。
+Rust host 仍只驱动生命周期。
+pending-only 产品入口不变。
+AOEM tick / proof / dirty commit / canonical lifecycle 不变。
+不改变 Ethereum mainnet long-sync 默认 retention 语义。
+canonical body/head recovery 仍不由本 gate 签收。
+```
+
+验证状态：
+
+```text
+cargo check -q -p novovm-node --bins: PASS
+cargo check -q -p novovm-network: PASS
+cargo test -q -p novovm-node native_execution_pipeline_ --bin novovm-node -- --test-threads=1: PASS
+cargo test -q -p novovm-network --lib -- --test-threads=1: PASS
+cargo test -q -p novovm-node --lib -- --test-threads=1: PASS
+git diff --check: only CRLF warnings
+```
+
+下一轮验证顺序：
+
+```text
+1. Cross-machine 5min / 2400 tx
+   目标：功能 PASS，skipped_ineligible_stage_total 不再出现 16 万级重复扫描。
+
+2. Cross-machine 10min / 4800 tx
+   目标：观察 working_set slope 是否明显下降。
+
+3. 只有 10min 后半程 working_set slope 明显下降，才允许重新进入 30min / 14400 tx。
+```
+
+本节不是 memory plateau 签收；它只是记录 pending scan / cleanup / retention 修复已经写入。

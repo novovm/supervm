@@ -990,7 +990,7 @@ fn diagnostics_summary_sample(
     let stable_progress_total = canonical.max(aoem).max(ledger_lines);
     let proof = summary_u64(summary, "max_proof_items_per_tick");
     let commit = summary_u64(summary, "max_commit_items_per_tick");
-    serde_json::json!({
+    let mut out = serde_json::json!({
         "elapsed_ms": started_at.elapsed().as_millis() as u64,
         "received_unique_total": summary_u64(summary, "ingress_total_last"),
         "canonical_unique_included_total": canonical,
@@ -1026,7 +1026,21 @@ fn diagnostics_summary_sample(
         "queue_rejected_total": summary_u64(summary, "queue_rejected_last"),
         "ticks": summary_u64(summary, "ticks"),
         "ticks_per_sec_x1000": summary_u64(summary, "ticks_per_sec_x1000"),
-    })
+    });
+    out["active_pending_count"] =
+        serde_json::json!(summary_u64(summary, "queue_active_pending_last"));
+    out["historical_pending_count"] =
+        serde_json::json!(summary_u64(summary, "queue_historical_pending_last"));
+    out["current_view_received_retained"] =
+        serde_json::json!(summary_u64(summary, "ingress_total_last"));
+    out["current_view_included_retained"] =
+        serde_json::json!(summary_u64(summary, "included_canonical_last"));
+    out["current_view_dropped_retained"] =
+        serde_json::json!(summary_u64(summary, "queue_dropped_last"));
+    out["queue_dropped_last_active"] = serde_json::json!(0u64);
+    out["queue_dropped_total_cumulative"] =
+        serde_json::json!(summary_u64(summary, "queue_dropped_last"));
+    out
 }
 
 fn write_diagnostics_report(
@@ -1829,6 +1843,8 @@ fn compact_receiver_summary_for_report(summary: Value) -> Value {
         "included_canonical_last": summary_u64(&summary, "included_canonical_last"),
         "ingress_total_last": summary_u64(&summary, "ingress_total_last"),
         "queue_tx_count_last": summary_u64(&summary, "queue_tx_count_last"),
+        "queue_active_pending_last": summary_u64(&summary, "queue_active_pending_last"),
+        "queue_historical_pending_last": summary_u64(&summary, "queue_historical_pending_last"),
         "queue_seen_last": summary_u64(&summary, "queue_seen_last"),
         "queue_pending_last": summary_u64(&summary, "queue_pending_last"),
         "queue_dropped_last": summary_u64(&summary, "queue_dropped_last"),

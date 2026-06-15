@@ -49,6 +49,7 @@ use novovm_network::{
     set_network_runtime_native_snap_code_snapshot_v1,
     set_network_runtime_native_snap_trie_node_snapshot_v1, set_network_runtime_native_sync_status,
     set_network_runtime_sync_status, snapshot_network_runtime_eth_peer_sessions_for_peers_v1,
+    snapshot_network_runtime_native_active_pending_txs_v1,
     snapshot_network_runtime_native_canonical_blocks_v1,
     snapshot_network_runtime_native_pending_tx_broadcast_candidates_including_native_v1,
     snapshot_network_runtime_native_pending_tx_broadcast_candidates_v1,
@@ -33657,6 +33658,11 @@ fn build_native_execution_pipeline_report_v1(
         .and_then(|value| value.as_u64())
         .unwrap_or(1);
     let pending_summary = snapshot_network_runtime_native_pending_tx_summary_v1(chain_id);
+    let active_pending_count =
+        snapshot_network_runtime_native_active_pending_txs_v1(chain_id, 0).len();
+    let historical_pending_count = pending_summary
+        .tx_count
+        .saturating_sub(active_pending_count);
     let broadcast_runtime =
         snapshot_network_runtime_native_pending_tx_broadcast_runtime_summary_v1(chain_id);
     let broadcast_candidates =
@@ -33700,6 +33706,8 @@ fn build_native_execution_pipeline_report_v1(
             },
             "queue": {
                 "tx_count": pending_summary.tx_count,
+                "active_pending_count": active_pending_count,
+                "historical_pending_count": historical_pending_count,
                 "pending": pending_summary.pending_count,
                 "seen": pending_summary.seen_count,
                 "propagated": pending_summary.propagated_count,
@@ -33886,6 +33894,8 @@ struct NativeExecutionPipelineAggregateV1 {
     commit_ticks: u64,
     ingress_total_last: u64,
     queue_tx_count_last: u64,
+    queue_active_pending_last: u64,
+    queue_historical_pending_last: u64,
     queue_seen_last: u64,
     queue_pending_last: u64,
     queue_propagated_last: u64,
@@ -33936,6 +33946,8 @@ impl NativeExecutionPipelineAggregateV1 {
             commit_ticks: 0,
             ingress_total_last: 0,
             queue_tx_count_last: 0,
+            queue_active_pending_last: 0,
+            queue_historical_pending_last: 0,
             queue_seen_last: 0,
             queue_pending_last: 0,
             queue_propagated_last: 0,
@@ -34184,6 +34196,14 @@ impl NativeExecutionPipelineAggregateV1 {
             .get("tx_count")
             .and_then(|value| value.as_u64())
             .unwrap_or_default();
+        self.queue_active_pending_last = queue
+            .get("active_pending_count")
+            .and_then(|value| value.as_u64())
+            .unwrap_or_default();
+        self.queue_historical_pending_last = queue
+            .get("historical_pending_count")
+            .and_then(|value| value.as_u64())
+            .unwrap_or_default();
         self.queue_seen_last = queue
             .get("seen")
             .and_then(|value| value.as_u64())
@@ -34402,6 +34422,14 @@ impl NativeExecutionPipelineAggregateV1 {
         out.insert(
             "queue_tx_count_last".to_string(),
             serde_json::json!(self.queue_tx_count_last),
+        );
+        out.insert(
+            "queue_active_pending_last".to_string(),
+            serde_json::json!(self.queue_active_pending_last),
+        );
+        out.insert(
+            "queue_historical_pending_last".to_string(),
+            serde_json::json!(self.queue_historical_pending_last),
         );
         out.insert(
             "queue_seen_last".to_string(),

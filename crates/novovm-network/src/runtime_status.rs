@@ -3527,6 +3527,7 @@ pub fn observe_network_runtime_native_pending_tx_local_native_payload_v1(
     tx_payload: Option<&[u8]>,
 ) {
     let now = now_unix_millis();
+    let mut retain_payload = false;
     if let Ok(mut guard) = runtime_native_pending_tx_map().lock() {
         let chain_txs = guard.entry(chain_id).or_default();
         let tx = chain_txs
@@ -3575,6 +3576,7 @@ pub fn observe_network_runtime_native_pending_tx_local_native_payload_v1(
         ) {
             tx.lifecycle_stage = NetworkRuntimeNativePendingTxLifecycleStageV1::Pending;
             runtime_native_pending_tx_mark_retry_eligible_v1(tx);
+            retain_payload = true;
         }
         tx.origin = NetworkRuntimeNativePendingTxOriginV1::Local;
         tx.source_peer_id = None;
@@ -3583,8 +3585,12 @@ pub fn observe_network_runtime_native_pending_tx_local_native_payload_v1(
     }
     if let Ok(mut payloads_guard) = runtime_native_pending_tx_payload_map().lock() {
         let chain_payloads = payloads_guard.entry(chain_id).or_default();
-        if let Some(payload) = tx_payload.filter(|payload| !payload.is_empty()) {
-            chain_payloads.insert(tx_hash, payload.to_vec());
+        if retain_payload {
+            if let Some(payload) = tx_payload.filter(|payload| !payload.is_empty()) {
+                chain_payloads.insert(tx_hash, payload.to_vec());
+            }
+        } else {
+            chain_payloads.remove(&tx_hash);
         }
     }
 }
@@ -3596,6 +3602,7 @@ pub fn observe_network_runtime_native_pending_tx_remote_native_payload_v1(
     tx_payload: Option<&[u8]>,
 ) {
     let now = now_unix_millis();
+    let mut retain_payload = false;
     if let Ok(mut guard) = runtime_native_pending_tx_map().lock() {
         let chain_txs = guard.entry(chain_id).or_default();
         let tx = chain_txs
@@ -3644,6 +3651,7 @@ pub fn observe_network_runtime_native_pending_tx_remote_native_payload_v1(
         ) {
             tx.lifecycle_stage = NetworkRuntimeNativePendingTxLifecycleStageV1::Pending;
             runtime_native_pending_tx_mark_retry_eligible_v1(tx);
+            retain_payload = true;
         }
         tx.origin = NetworkRuntimeNativePendingTxOriginV1::Remote;
         tx.source_peer_id = Some(source_peer_id);
@@ -3652,8 +3660,12 @@ pub fn observe_network_runtime_native_pending_tx_remote_native_payload_v1(
     }
     if let Ok(mut payloads_guard) = runtime_native_pending_tx_payload_map().lock() {
         let chain_payloads = payloads_guard.entry(chain_id).or_default();
-        if let Some(payload) = tx_payload.filter(|payload| !payload.is_empty()) {
-            chain_payloads.insert(tx_hash, payload.to_vec());
+        if retain_payload {
+            if let Some(payload) = tx_payload.filter(|payload| !payload.is_empty()) {
+                chain_payloads.insert(tx_hash, payload.to_vec());
+            }
+        } else {
+            chain_payloads.remove(&tx_hash);
         }
     }
 }
@@ -4741,6 +4753,42 @@ pub fn snapshot_network_runtime_native_pending_txs_v1(
         return Vec::new();
     };
     let mut ordered = chain_txs.values().collect::<Vec<_>>();
+    ordered.sort_by(|a, b| {
+        b.last_updated_unix_ms
+            .cmp(&a.last_updated_unix_ms)
+            .then_with(|| b.tx_hash.cmp(&a.tx_hash))
+    });
+    if limit > 0 && ordered.len() > limit {
+        ordered.truncate(limit);
+    }
+    ordered.into_iter().cloned().collect()
+}
+
+#[must_use]
+pub fn snapshot_network_runtime_native_active_pending_txs_v1(
+    chain_id: u64,
+    limit: usize,
+) -> Vec<NetworkRuntimeNativePendingTxStateV1> {
+    runtime_native_pending_tx_cleanup_v1(chain_id, now_unix_millis());
+    let guard = match runtime_native_pending_tx_map().lock() {
+        Ok(guard) => guard,
+        Err(_) => return Vec::new(),
+    };
+    let Some(chain_txs) = guard.get(&chain_id) else {
+        return Vec::new();
+    };
+    let mut ordered = chain_txs
+        .values()
+        .filter(|tx| {
+            matches!(
+                tx.lifecycle_stage,
+                NetworkRuntimeNativePendingTxLifecycleStageV1::Seen
+                    | NetworkRuntimeNativePendingTxLifecycleStageV1::Pending
+                    | NetworkRuntimeNativePendingTxLifecycleStageV1::Propagated
+                    | NetworkRuntimeNativePendingTxLifecycleStageV1::ReorgedBackToPending
+            )
+        })
+        .collect::<Vec<_>>();
     ordered.sort_by(|a, b| {
         b.last_updated_unix_ms
             .cmp(&a.last_updated_unix_ms)
@@ -7332,6 +7380,92 @@ mod tests {
         assert!(
             get_network_runtime_native_pending_tx_payload_v1(chain_id, rejected_tx).is_none(),
             "rejected pending tx payload must not be retained"
+        );
+    }
+
+    #[test]
+    fn active_pending_snapshot_excludes_historical_and_reentry_payloads() {
+        let chain_id = 20620_u64;
+        clear_runtime_sync_status_for_test(chain_id);
+        clear_network_runtime_native_snapshots_for_chain_v1(chain_id);
+        let active_tx = [0xa1; 32];
+        let dropped_tx = [0xa2; 32];
+        let included_tx = [0xa3; 32];
+        let canonical_hash = [0xb3; 32];
+
+        observe_network_runtime_native_pending_tx_remote_native_payload_v1(
+            chain_id,
+            31,
+            active_tx,
+            Some(b"active-native-payload"),
+        );
+        observe_network_runtime_native_pending_tx_remote_native_payload_v1(
+            chain_id,
+            31,
+            dropped_tx,
+            Some(b"dropped-native-payload"),
+        );
+        observe_network_runtime_native_pending_tx_remote_native_payload_v1(
+            chain_id,
+            31,
+            included_tx,
+            Some(b"included-native-payload"),
+        );
+        observe_network_runtime_native_pending_tx_dropped_v1(chain_id, dropped_tx);
+
+        set_network_runtime_native_body_snapshot_v1(
+            chain_id,
+            NetworkRuntimeNativeBodySnapshotV1 {
+                chain_id,
+                number: 7,
+                block_hash: canonical_hash,
+                tx_hashes: vec![included_tx],
+                raw_tx_rlps: Vec::new(),
+                ommer_hashes: Vec::new(),
+                withdrawal_rlp_items: None,
+                withdrawal_count: Some(0),
+                body_available: true,
+                txs_materialized: true,
+                observed_unix_ms: 10,
+            },
+        );
+        set_network_runtime_native_head_snapshot_v1(
+            chain_id,
+            NetworkRuntimeNativeHeadSnapshotV1 {
+                chain_id,
+                phase: NetworkRuntimeNativeSyncPhaseV1::Bodies,
+                peer_count: 1,
+                block_number: 7,
+                block_hash: canonical_hash,
+                parent_block_hash: [0x11; 32],
+                state_root: [0x22; 32],
+                canonical: true,
+                safe: true,
+                finalized: true,
+                reorg_depth_hint: Some(0),
+                body_available: true,
+                source_peer_id: Some(31),
+                observed_unix_ms: 11,
+            },
+        );
+
+        observe_network_runtime_native_pending_tx_remote_native_payload_v1(
+            chain_id,
+            31,
+            included_tx,
+            Some(b"tail-repair-duplicate-after-included"),
+        );
+
+        let active = snapshot_network_runtime_native_active_pending_txs_v1(chain_id, 16);
+        assert_eq!(active.len(), 1);
+        assert_eq!(active[0].tx_hash, active_tx);
+        assert!(
+            get_network_runtime_native_pending_tx_payload_v1(chain_id, dropped_tx).is_none(),
+            "dropped payload must not remain in active retention"
+        );
+        assert!(
+            get_network_runtime_native_pending_tx_payload_v1(chain_id, included_tx).is_none(),
+            "duplicate reentry after canonical inclusion must not retain payload"
         );
     }
 
