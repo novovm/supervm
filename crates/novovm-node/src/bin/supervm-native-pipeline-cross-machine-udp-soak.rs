@@ -13,10 +13,11 @@ use novovm_protocol::{
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
+use std::io::BufRead;
 use std::net::UdpSocket;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output, Stdio};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 const REPORT_SCHEMA_V1: &str = "novovm-native-pipeline-cross-machine-udp-soak-report/v1";
 
@@ -59,6 +60,25 @@ struct SustainedConfigV1 {
     round_interval_ms: u64,
 }
 
+#[derive(Debug, Clone)]
+struct ReceiverDiagnosticsConfigV1 {
+    enabled: bool,
+    sample_interval_ms: u64,
+    stall_windows: u64,
+    memory_sample_enabled: bool,
+    max_working_set_bytes: u64,
+    min_canonical_delta: u64,
+    report_path: PathBuf,
+}
+
+#[derive(Debug, Clone, Default)]
+struct ReceiverDiagnosticsStateV1 {
+    samples: Vec<Value>,
+    last_canonical: u64,
+    stall_windows: u64,
+    fail_reason: Option<String>,
+}
+
 fn string_env_nonempty(name: &str) -> Option<String> {
     std::env::var(name)
         .ok()
@@ -91,6 +111,15 @@ fn u64_env_alias(names: &[&str], default: u64) -> Result<u64> {
 
 fn env_any(names: &[&str]) -> bool {
     names.iter().any(|name| string_env_nonempty(name).is_some())
+}
+
+fn bool_env(name: &str) -> bool {
+    string_env_nonempty(name)
+        .map(|value| {
+            let lower = value.to_ascii_lowercase();
+            lower == "1" || lower == "true" || lower == "yes" || lower == "on"
+        })
+        .unwrap_or(false)
 }
 
 fn current_bin_name_contains(pattern: &str) -> bool {
@@ -149,6 +178,17 @@ fn report_path(role: &str) -> PathBuf {
     .unwrap_or_else(|| default_report_path(role))
 }
 
+fn diagnostics_report_path() -> PathBuf {
+    first_string_env_nonempty(&[
+        "NOVOVM_NATIVE_PIPELINE_DIAGNOSTICS_REPORT_PATH",
+        "NOVOVM_NATIVE_PIPELINE_PROGRESS_REPORT_PATH",
+    ])
+    .map(PathBuf::from)
+    .unwrap_or_else(|| {
+        PathBuf::from("artifacts/native-pipeline/receiver-sustained-diagnostics-report.json")
+    })
+}
+
 fn store_path(chain_id: u64, role: &str) -> PathBuf {
     first_string_env_nonempty(&[
         "NOVOVM_NATIVE_PIPELINE_STORE_PATH",
@@ -156,6 +196,45 @@ fn store_path(chain_id: u64, role: &str) -> PathBuf {
     ])
     .map(PathBuf::from)
     .unwrap_or_else(|| temp_store_path(chain_id, role))
+}
+
+fn semantic_ledger_mirror_path(store_path: &Path) -> PathBuf {
+    if let Some(path) = string_env_nonempty("NOVOVM_NATIVE_AOEM_SEMANTIC_LEDGER_MIRROR") {
+        return PathBuf::from(path);
+    }
+    let mut raw = store_path.as_os_str().to_os_string();
+    raw.push(".aoem-semantic-ledger.jsonl");
+    PathBuf::from(raw)
+}
+
+fn receiver_diagnostics_config() -> Result<ReceiverDiagnosticsConfigV1> {
+    let enabled = bool_env("NOVOVM_NATIVE_PIPELINE_PROGRESS_WATCHDOG_ENABLED")
+        || bool_env("NOVOVM_NATIVE_PIPELINE_DIAGNOSTICS_ENABLED");
+    let sample_interval_ms =
+        u64_env("NOVOVM_NATIVE_PIPELINE_PROGRESS_SAMPLE_INTERVAL_MS", 5_000)?.max(250);
+    let stall_windows = u64_env("NOVOVM_NATIVE_PIPELINE_PROGRESS_STALL_WINDOWS", 3)?.max(1);
+    let memory_sample_enabled = bool_env("NOVOVM_NATIVE_PIPELINE_MEMORY_SAMPLE_ENABLED")
+        || enabled;
+    let default_max_working_set = if memory_sample_enabled {
+        8 * 1024 * 1024 * 1024u64
+    } else {
+        0
+    };
+    Ok(ReceiverDiagnosticsConfigV1 {
+        enabled,
+        sample_interval_ms,
+        stall_windows,
+        memory_sample_enabled,
+        max_working_set_bytes: u64_env(
+            "NOVOVM_NATIVE_PIPELINE_MEMORY_MAX_WORKING_SET_BYTES",
+            default_max_working_set,
+        )?,
+        min_canonical_delta: u64_env(
+            "NOVOVM_NATIVE_PIPELINE_PROGRESS_MIN_CANONICAL_DELTA",
+            0,
+        )?,
+        report_path: diagnostics_report_path(),
+    })
 }
 
 fn novovm_node_bin() -> PathBuf {
@@ -472,7 +551,8 @@ fn run_receiver_node(
     batch_budget: u64,
     recv_budget: u64,
 ) -> Result<Value> {
-    let child = spawn_receiver_node(
+    let diagnostics = receiver_diagnostics_config()?;
+    let mut child = spawn_receiver_node(
         node_bin,
         chain_id,
         receiver_node,
@@ -484,12 +564,144 @@ fn run_receiver_node(
         batch_budget,
         recv_budget,
     )?;
-    parse_summary(
-        child
-            .wait_with_output()
-            .context("wait cross-machine receiver failed")?,
-        "cross-machine receiver",
-    )
+    if !diagnostics.enabled {
+        return parse_summary(
+            child
+                .wait_with_output()
+                .context("wait cross-machine receiver failed")?,
+            "cross-machine receiver",
+        );
+    }
+
+    let child_pid = child.id();
+    let started_at = Instant::now();
+    let mut last_sample_at = Instant::now()
+        .checked_sub(Duration::from_millis(diagnostics.sample_interval_ms))
+        .unwrap_or_else(Instant::now);
+    let mut state = ReceiverDiagnosticsStateV1::default();
+    let ledger_path = semantic_ledger_mirror_path(store_path);
+    loop {
+        if child
+            .try_wait()
+            .context("poll cross-machine receiver failed")?
+            .is_some()
+        {
+            let output = child
+                .wait_with_output()
+                .context("wait cross-machine receiver failed")?;
+            let summary = parse_summary(output, "cross-machine receiver")?;
+            let ledger_stats = semantic_ledger_stats(ledger_path.as_path());
+            let memory_sample = if diagnostics.memory_sample_enabled {
+                process_memory_sample(child_pid)
+            } else {
+                serde_json::json!({})
+            };
+            let sample = diagnostics_summary_sample(
+                started_at,
+                &summary,
+                ledger_stats,
+                memory_sample,
+                state.last_canonical,
+            );
+            state.samples.push(sample);
+            write_diagnostics_report(&diagnostics, &state, true, child_pid, expected_tx_count)?;
+            return Ok(summary);
+        }
+
+        if last_sample_at.elapsed() >= Duration::from_millis(diagnostics.sample_interval_ms) {
+            let ledger_stats = semantic_ledger_stats(ledger_path.as_path());
+            let canonical = ledger_stats
+                .get("line_count")
+                .and_then(Value::as_u64)
+                .unwrap_or_default();
+            let memory_sample = if diagnostics.memory_sample_enabled {
+                process_memory_sample(child_pid)
+            } else {
+                serde_json::json!({})
+            };
+            let delta = canonical.saturating_sub(state.last_canonical);
+            let mut sample = serde_json::json!({
+                "elapsed_ms": started_at.elapsed().as_millis() as u64,
+                "received_unique_total": null,
+                "canonical_unique_included_total": canonical,
+                "canonical_delta_since_last_sample": delta,
+                "pending_count": null,
+                "eligible_count": null,
+                "skipped_ineligible_count": null,
+                "skipped_already_receipted_count": null,
+                "skipped_missing_payload_total": null,
+                "skipped_non_native_payload_total": null,
+                "skipped_chain_mismatch_total": null,
+                "receipt_lookup_count": null,
+                "receipt_lookup_hit_count": null,
+                "receipt_lookup_miss_count": null,
+                "receipt_lookup_elapsed_ms": null,
+                "aoem_executed_total": canonical,
+                "aoem_executed_delta": delta,
+                "aoem_batch_elapsed_ms": null,
+                "proof_items_total": null,
+                "proof_delta": null,
+                "proof_elapsed_ms": null,
+                "commit_items_total": null,
+                "commit_delta": null,
+                "rocksdb_read_elapsed_ms": null,
+                "rocksdb_write_elapsed_ms": null,
+                "semantic_head_height": canonical,
+                "semantic_head_monotonic": true,
+                "semantic_ledger_mirror": ledger_stats,
+                "process_memory": memory_sample,
+                "queue_pending_last": null,
+                "queue_dropped_total": null,
+                "queue_rejected_total": null,
+            });
+            if delta == 0 && canonical < expected_tx_count {
+                state.stall_windows = state.stall_windows.saturating_add(1);
+            } else {
+                state.stall_windows = 0;
+            }
+            let working_set = memory_working_set_bytes(&sample["process_memory"]);
+            if working_set > 0 {
+                sample["process_working_set_bytes"] = serde_json::json!(working_set);
+            }
+            let mut fail_reason = None;
+            if state.stall_windows >= diagnostics.stall_windows {
+                fail_reason = Some("canonical_progress_stall".to_string());
+            }
+            if diagnostics.min_canonical_delta > 0
+                && delta < diagnostics.min_canonical_delta
+                && canonical < expected_tx_count
+            {
+                fail_reason = Some(format!(
+                    "canonical_progress_below_min_delta: delta={} min={}",
+                    delta, diagnostics.min_canonical_delta
+                ));
+            }
+            if diagnostics.max_working_set_bytes > 0
+                && working_set > diagnostics.max_working_set_bytes
+            {
+                fail_reason = Some(format!(
+                    "process_working_set_exceeded: working_set={} max={}",
+                    working_set, diagnostics.max_working_set_bytes
+                ));
+            }
+            state.last_canonical = canonical;
+            state.samples.push(sample);
+            if state.samples.len() > 256 {
+                let drop_count = state.samples.len().saturating_sub(256);
+                state.samples.drain(0..drop_count);
+            }
+            if let Some(reason) = fail_reason {
+                state.fail_reason = Some(reason.clone());
+                let _ = child.kill();
+                let _ = child.wait();
+                write_diagnostics_report(&diagnostics, &state, false, child_pid, expected_tx_count)?;
+                bail!("cross-machine receiver diagnostics failed: {reason}");
+            }
+            write_diagnostics_report(&diagnostics, &state, false, child_pid, expected_tx_count)?;
+            last_sample_at = Instant::now();
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
 }
 
 fn summary_u64(summary: &Value, field: &str) -> u64 {
@@ -527,6 +739,171 @@ fn write_report(path: &Path, report: &Value) -> Result<()> {
         serde_json::to_string_pretty(report).context("encode cross-machine report failed")?;
     fs::write(path, encoded)
         .with_context(|| format!("write cross-machine report failed: {}", path.display()))
+}
+
+fn semantic_ledger_stats(path: &Path) -> Value {
+    let Ok(metadata) = fs::metadata(path) else {
+        return serde_json::json!({
+            "path": path,
+            "exists": false,
+            "line_count": 0u64,
+            "bytes": 0u64,
+        });
+    };
+    let line_count = fs::File::open(path)
+        .ok()
+        .map(|file| {
+            std::io::BufReader::new(file)
+                .lines()
+                .filter(|line| line.as_ref().is_ok_and(|item| !item.trim().is_empty()))
+                .count() as u64
+        })
+        .unwrap_or_default();
+    serde_json::json!({
+        "path": path,
+        "exists": true,
+        "line_count": line_count,
+        "bytes": metadata.len(),
+    })
+}
+
+#[cfg(windows)]
+fn process_memory_sample(pid: u32) -> Value {
+    let script = format!(
+        "$p=Get-Process -Id {pid} -ErrorAction Stop; \
+         [pscustomobject]@{{WorkingSet64=$p.WorkingSet64;PrivateMemorySize64=$p.PrivateMemorySize64;CPU=$p.CPU}} | ConvertTo-Json -Compress"
+    );
+    match Command::new("powershell")
+        .args(["-NoProfile", "-Command", script.as_str()])
+        .output()
+    {
+        Ok(output) if output.status.success() => {
+            serde_json::from_slice::<Value>(&output.stdout).unwrap_or_else(|_| {
+                serde_json::json!({
+                    "sample_ok": false,
+                    "error": "parse_windows_process_memory_sample_failed",
+                })
+            })
+        }
+        Ok(output) => serde_json::json!({
+            "sample_ok": false,
+            "error": "windows_process_memory_sample_failed",
+            "stderr": String::from_utf8_lossy(&output.stderr),
+        }),
+        Err(err) => serde_json::json!({
+            "sample_ok": false,
+            "error": format!("spawn_windows_process_memory_sample_failed: {err}"),
+        }),
+    }
+}
+
+#[cfg(not(windows))]
+fn process_memory_sample(pid: u32) -> Value {
+    let status_path = PathBuf::from(format!("/proc/{pid}/status"));
+    let raw = fs::read_to_string(status_path.as_path()).unwrap_or_default();
+    let mut vm_rss_kb = 0u64;
+    let mut vm_data_kb = 0u64;
+    for line in raw.lines() {
+        if let Some(rest) = line.strip_prefix("VmRSS:") {
+            vm_rss_kb = rest
+                .split_whitespace()
+                .next()
+                .and_then(|value| value.parse::<u64>().ok())
+                .unwrap_or_default();
+        }
+        if let Some(rest) = line.strip_prefix("VmData:") {
+            vm_data_kb = rest
+                .split_whitespace()
+                .next()
+                .and_then(|value| value.parse::<u64>().ok())
+                .unwrap_or_default();
+        }
+    }
+    serde_json::json!({
+        "WorkingSet64": vm_rss_kb.saturating_mul(1024),
+        "PrivateMemorySize64": vm_data_kb.saturating_mul(1024),
+    })
+}
+
+fn memory_working_set_bytes(sample: &Value) -> u64 {
+    sample
+        .get("WorkingSet64")
+        .or_else(|| sample.get("working_set_bytes"))
+        .and_then(Value::as_u64)
+        .unwrap_or_default()
+}
+
+fn diagnostics_summary_sample(
+    started_at: Instant,
+    summary: &Value,
+    ledger_stats: Value,
+    memory_sample: Value,
+    previous_canonical: u64,
+) -> Value {
+    let canonical = summary_u64(summary, "included_canonical_total");
+    let aoem = summary_u64(summary, "aoem_executed_total");
+    let proof = summary_u64(summary, "max_proof_items_per_tick");
+    let commit = summary_u64(summary, "max_commit_items_per_tick");
+    serde_json::json!({
+        "elapsed_ms": started_at.elapsed().as_millis() as u64,
+        "received_unique_total": summary_u64(summary, "ingress_total_last"),
+        "canonical_unique_included_total": canonical,
+        "canonical_delta_since_last_sample": canonical.saturating_sub(previous_canonical),
+        "pending_count": summary_u64(summary, "queue_pending_last"),
+        "eligible_count": null,
+        "skipped_ineligible_count": summary_u64(summary, "skipped_ineligible_stage_total"),
+        "skipped_already_receipted_count": summary_u64(summary, "skipped_already_receipted_total"),
+        "skipped_missing_payload_total": summary_u64(summary, "skipped_missing_payload_total"),
+        "skipped_non_native_payload_total": summary_u64(summary, "skipped_non_native_payload_total"),
+        "skipped_chain_mismatch_total": summary_u64(summary, "skipped_chain_mismatch_total"),
+        "receipt_lookup_count": null,
+        "receipt_lookup_hit_count": summary_u64(summary, "skipped_already_receipted_total"),
+        "receipt_lookup_miss_count": null,
+        "receipt_lookup_elapsed_ms": null,
+        "aoem_executed_total": aoem,
+        "aoem_executed_delta": aoem.saturating_sub(previous_canonical),
+        "aoem_batch_elapsed_ms": null,
+        "proof_items_total": proof,
+        "proof_delta": null,
+        "proof_elapsed_ms": null,
+        "commit_items_total": commit,
+        "commit_delta": null,
+        "rocksdb_read_elapsed_ms": null,
+        "rocksdb_write_elapsed_ms": null,
+        "semantic_head_height": canonical,
+        "semantic_head_monotonic": true,
+        "semantic_ledger_mirror": ledger_stats,
+        "process_memory": memory_sample,
+        "queue_pending_last": summary_u64(summary, "queue_pending_last"),
+        "queue_dropped_total": summary_u64(summary, "queue_dropped_last"),
+        "queue_rejected_total": summary_u64(summary, "queue_rejected_last"),
+        "ticks": summary_u64(summary, "ticks"),
+        "ticks_per_sec_x1000": summary_u64(summary, "ticks_per_sec_x1000"),
+    })
+}
+
+fn write_diagnostics_report(
+    config: &ReceiverDiagnosticsConfigV1,
+    state: &ReceiverDiagnosticsStateV1,
+    accepted: bool,
+    child_pid: u32,
+    tx_count: u64,
+) -> Result<()> {
+    let report = serde_json::json!({
+        "schema": "novovm-native-pipeline-cross-machine-sustained-diagnostics/v1",
+        "accepted": accepted,
+        "child_pid": child_pid,
+        "expected_tx_count": tx_count,
+        "sample_interval_ms": config.sample_interval_ms,
+        "stall_windows": config.stall_windows,
+        "memory_sample_enabled": config.memory_sample_enabled,
+        "max_working_set_bytes": config.max_working_set_bytes,
+        "min_canonical_delta": config.min_canonical_delta,
+        "fail_reason": state.fail_reason,
+        "sample_count": state.samples.len(),
+        "samples": state.samples,
+    });
+    write_report(config.report_path.as_path(), &report)
 }
 
 fn send_scheduled_batch(
