@@ -21,8 +21,8 @@ use novovm_exec::{
 use novovm_network::transport::snapshot_local_observed_peers;
 use novovm_network::{
     assess_read_only_impact, build_reconcile_report_with_replay, capability_state_token,
-    decode_relay_membership_message, derive_advisory, detect_capabilities,
-    dispatch_network_runtime_native_pending_tx_broadcast_to_transport_v1,
+    decode_relay_membership_message, default_eth_fullnode_budget_hooks_v1, derive_advisory,
+    detect_capabilities, dispatch_network_runtime_native_pending_tx_broadcast_to_transport_v1,
     drain_runtime_relay_membership, eth_discv4_build_findnode_packet_v1,
     eth_discv4_build_ping_packet_v1, eth_discv4_build_pong_packet_v1,
     eth_discv4_parse_neighbors_packet_v1, eth_discv4_parse_packet_v1,
@@ -41,8 +41,8 @@ use novovm_network::{
     relay_convergence_policy_view, resolve_eth_fullnode_budget_hooks_v1,
     resolve_eth_fullnode_canonical_query_method, restore_network_runtime_native_material_head_v1,
     run_replay_with, set_network_runtime_native_body_snapshot_v1,
-    set_network_runtime_native_head_snapshot_v1, set_network_runtime_native_header_snapshot_v1,
-    set_network_runtime_native_receipt_snapshot_v1,
+    set_network_runtime_native_budget_hooks_v1, set_network_runtime_native_head_snapshot_v1,
+    set_network_runtime_native_header_snapshot_v1, set_network_runtime_native_receipt_snapshot_v1,
     set_network_runtime_native_snap_account_range_progress_v1,
     set_network_runtime_native_snap_account_snapshot_v1,
     set_network_runtime_native_snap_account_storage_snapshot_v1,
@@ -33619,6 +33619,32 @@ fn native_execution_tick_params_from_env_v1() -> Result<serde_json::Value> {
     Ok(params)
 }
 
+fn apply_native_execution_pipeline_retention_budget_v1(chain_id: u64) -> Result<()> {
+    let mut budget = default_eth_fullnode_budget_hooks_v1();
+    budget.pending_tx_canonical_retain_depth = u64_env_positive(
+        "NOVOVM_NATIVE_EXECUTION_PIPELINE_PENDING_CANONICAL_RETAIN_DEPTH",
+        4,
+    )?;
+    budget.pending_tx_tombstone_retention_max = u64_env_positive(
+        "NOVOVM_NATIVE_EXECUTION_PIPELINE_PENDING_TOMBSTONE_RETENTION_MAX",
+        256,
+    )?;
+    budget.runtime_pending_tx_snapshot_limit = u64_env_positive(
+        "NOVOVM_NATIVE_EXECUTION_PIPELINE_PENDING_SNAPSHOT_LIMIT",
+        512,
+    )?;
+    budget.tx_broadcast_max_propagations = u64_env_positive(
+        "NOVOVM_NATIVE_EXECUTION_PIPELINE_BUDGET_BROADCAST_MAX_PROPAGATIONS",
+        3,
+    )?;
+    budget.tx_broadcast_max_per_tick = u64_env_positive(
+        "NOVOVM_NATIVE_EXECUTION_PIPELINE_BUDGET_BROADCAST_MAX_PER_TICK",
+        1024,
+    )?;
+    set_network_runtime_native_budget_hooks_v1(chain_id, budget);
+    Ok(())
+}
+
 fn build_native_execution_pipeline_report_v1(
     tick_index: u64,
     network_drive: serde_json::Value,
@@ -33635,10 +33661,21 @@ fn build_native_execution_pipeline_report_v1(
         snapshot_network_runtime_native_pending_tx_broadcast_runtime_summary_v1(chain_id);
     let broadcast_candidates =
         snapshot_network_runtime_native_pending_tx_broadcast_candidates_v1(chain_id, 16, 3);
-    let candidate_hashes: Vec<String> = broadcast_candidates
-        .iter()
-        .map(|candidate| to_hex_prefixed(&candidate.tx_hash))
-        .collect();
+    let compact_tick_out = compact_native_execution_tick_out_for_pipeline_report_v1(&tick_out);
+    let product_entry = ingress_drive
+        .get("entry")
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
+    let product_ingress = ingress_drive
+        .get("product_ingress")
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false);
+    let ingress_aoem_lifecycle = ingress_drive
+        .get("aoem_lifecycle")
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
+    let ingress_drive = compact_native_execution_pipeline_drive_report_v1(ingress_drive);
+    let broadcast_drive = compact_native_execution_pipeline_drive_report_v1(broadcast_drive);
 
     serde_json::json!({
         "method": "nov_runNativeExecutionPipeline",
@@ -33654,18 +33691,9 @@ fn build_native_execution_pipeline_report_v1(
             "broadcast_drive": broadcast_drive,
             "ingress": {
                 "source": "network_runtime_native_pending",
-                "product_entry": ingress_drive
-                    .get("entry")
-                    .cloned()
-                    .unwrap_or(serde_json::Value::Null),
-                "product_ingress": ingress_drive
-                    .get("product_ingress")
-                    .and_then(|value| value.as_bool())
-                    .unwrap_or(false),
-                "aoem_lifecycle": ingress_drive
-                    .get("aoem_lifecycle")
-                    .cloned()
-                    .unwrap_or(serde_json::Value::Null),
+                "product_entry": product_entry,
+                "product_ingress": product_ingress,
+                "aoem_lifecycle": ingress_aoem_lifecycle,
                 "total": pending_summary.tx_count,
                 "local": pending_summary.local_origin_count,
                 "remote": pending_summary.remote_origin_count,
@@ -33727,14 +33755,99 @@ fn build_native_execution_pipeline_report_v1(
                 "receipt_projection": "native_receipt_and_state_projection",
                 "pending_included_canonical": pending_summary.included_canonical_count,
                 "broadcast_candidates": broadcast_candidates.len(),
-                "broadcast_candidate_hashes": candidate_hashes,
+                "broadcast_candidate_hashes": {
+                    "omitted": true,
+                    "count": broadcast_candidates.len(),
+                    "reason": "bounded_sustained_report_memory",
+                },
                 "broadcast_dispatch_total": broadcast_runtime.dispatch_total,
                 "broadcast_success_total": broadcast_runtime.dispatch_success_total,
                 "broadcast_failed_total": broadcast_runtime.dispatch_failed_total,
                 "broadcast_tx_total": broadcast_runtime.broadcast_tx_total,
             },
         },
-        "tick_result": tick_out,
+        "tick_result": compact_tick_out,
+    })
+}
+
+fn compact_native_execution_pipeline_drive_report_v1(
+    mut drive: serde_json::Value,
+) -> serde_json::Value {
+    if let Some(map) = drive.as_object_mut() {
+        if let Some(tx_hashes) = map.remove("tx_hashes") {
+            map.insert(
+                "tx_hashes".to_string(),
+                serde_json::json!({
+                    "omitted": true,
+                    "count": tx_hashes.as_array().map_or(0, Vec::len),
+                    "reason": "bounded_sustained_report_memory",
+                }),
+            );
+        }
+    }
+    drive
+}
+
+fn compact_native_execution_tick_out_for_pipeline_report_v1(
+    tick_out: &serde_json::Value,
+) -> serde_json::Value {
+    let selected_count = tick_out
+        .pointer("/batch_result/selected_count")
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
+    let skipped = tick_out
+        .pointer("/batch_result/skipped")
+        .cloned()
+        .unwrap_or_else(|| serde_json::json!({}));
+    let native_store_dirty_set = tick_out
+        .pointer("/batch_result/batch_result/native_store_commit/dirty_set")
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
+    let native_store_backend_status = tick_out
+        .pointer("/batch_result/batch_result/native_store_backend_status")
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
+
+    serde_json::json!({
+        "method": tick_out.get("method").cloned().unwrap_or(serde_json::Value::Null),
+        "accepted": tick_out.get("accepted").cloned().unwrap_or(serde_json::Value::Null),
+        "execution_kernel": tick_out
+            .get("execution_kernel")
+            .cloned()
+            .unwrap_or(serde_json::Value::Null),
+        "aoem_concurrency_owner": tick_out
+            .get("aoem_concurrency_owner")
+            .cloned()
+            .unwrap_or(serde_json::Value::Null),
+        "chain_id": tick_out.get("chain_id").cloned().unwrap_or(serde_json::Value::Null),
+        "executed_count": tick_out
+            .get("executed_count")
+            .cloned()
+            .unwrap_or(serde_json::Value::Null),
+        "deferred_count": tick_out
+            .get("deferred_count")
+            .cloned()
+            .unwrap_or(serde_json::Value::Null),
+        "budget": tick_out.get("budget").cloned().unwrap_or(serde_json::Value::Null),
+        "budget_runtime": tick_out
+            .get("budget_runtime")
+            .cloned()
+            .unwrap_or(serde_json::Value::Null),
+        "batch_result": {
+            "selected_count": selected_count,
+            "skipped": skipped,
+            "batch_result": {
+                "native_store_commit": {
+                    "dirty_set": native_store_dirty_set,
+                },
+                "native_store_backend_status": native_store_backend_status,
+            },
+        },
+        "raw_txs_omitted": true,
+        "selected_tx_hashes_omitted": true,
+        "canonical_projection_omitted": true,
+        "receipt_detail_omitted": true,
+        "omission_reason": "bounded_sustained_report_memory",
     })
 }
 
@@ -35980,6 +36093,7 @@ fn run_native_execution_tick_node_mode_v1(verbose: bool) -> Result<()> {
     let max_ticks = u64_env_allow_zero("NOVOVM_NATIVE_EXECUTION_TICK_MAX_TICKS", 1)?;
     let interval_ms = u64_env_positive("NOVOVM_NATIVE_EXECUTION_TICK_INTERVAL_MS", 250)?;
     let chain_id = u64_env_positive("NOVOVM_NATIVE_EXECUTION_TICK_CHAIN_ID", 1)?;
+    apply_native_execution_pipeline_retention_budget_v1(chain_id)?;
     let mut network_drive = native_execution_pipeline_network_drive_from_env_v1(chain_id, verbose)?;
     let mut ingress_drive = NativeExecutionPipelineIngressDriveV1::from_env(chain_id)?;
     let udp_drive = NativeExecutionPipelineUdpDriveV1::from_env(chain_id)?;

@@ -1232,3 +1232,63 @@ Sustained Receiver Memory Retention Fix Round 2
 - 不签 2h / overnight。
 - 不签 hostile network。
 - 不签 canonical body/head recovery。
+
+### 13.7 Sustained Receiver Memory Retention Fix Round 2
+
+状态：
+
+```text
+Production Soak v1 / Sustained Receiver Memory Retention Fix Round 2: DONE
+Cross-machine 10min Sustained: FUNCTIONAL PASS remains valid
+Memory Plateau: NOT SIGNED
+30min sustained: still blocked until 10min memory slope improves
+```
+
+背景：
+
+```text
+4800 tx / 10min 后 receiver working set 从约 10.7MB 增长到约 3.06GB。
+功能口径已经 4800/4800 PASS，但内存接近线性增长，不能进入 30min。
+```
+
+本轮修复：
+
+```text
+1. pipeline tick report 不再嵌入完整 tick_result。
+   - raw_txs omitted
+   - selected_tx_hashes omitted
+   - canonical_projection omitted
+   - receipt detail omitted
+   - aggregate 仍保留 selected_count / skipped / dirty_set / backend_status
+
+2. ingress_drive / broadcast_drive 中 tx_hashes 改为 count + omitted 标记。
+
+3. egress broadcast_candidate_hashes 改为 count + omitted 标记。
+
+4. native execution pipeline 模式启用专用 runtime retention budget：
+   - pending_tx_canonical_retain_depth 默认 4
+   - pending_tx_tombstone_retention_max 默认 256
+   - runtime_pending_tx_snapshot_limit 默认 512
+   - 只影响 native_execution_pipeline 模式
+   - 不改变 Ethereum mainnet long-sync 默认预算
+```
+
+保持不变的边界：
+
+```text
+AOEM_runtime 仍是执行并发 owner。
+Rust host 仍只驱动生命周期。
+pending-only 产品入口不变。
+AOEM tick / proof / dirty commit / canonical lifecycle 不变。
+canonical body/head recovery 仍不由本 gate 签收。
+```
+
+下一轮验证顺序：
+
+```text
+1. Cross-machine 5min / 2400 tx
+2. Cross-machine 10min / 4800 tx
+3. 只有 10min 后半程 working_set slope 明显下降，才允许重新进入 30min / 14400 tx
+```
+
+本节不是 memory plateau 签收；它只是记录 Round 2 内存保留修复已经写入。
