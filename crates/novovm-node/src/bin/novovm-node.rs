@@ -33781,6 +33781,17 @@ fn build_native_execution_pipeline_report_v1(
                     .and_then(|value| value.as_str())
                     .unwrap_or("deterministic_sharded_dirty_atomic_commit"),
                 "atomicity": "deterministic_post_aoem_commit_boundary",
+                "native_store_materialization": compact_tick_out
+                    .pointer("/batch_result/batch_result/native_store_commit")
+                    .map(|value| serde_json::json!({
+                        "precommit_store_materialized": value.get("precommit_store_materialized").cloned().unwrap_or(serde_json::Value::Null),
+                        "precommit_store_materialized_receipts": value.get("precommit_store_materialized_receipts").cloned().unwrap_or(serde_json::Value::Null),
+                        "precommit_store_materialized_estimated_bytes": value.get("precommit_store_materialized_estimated_bytes").cloned().unwrap_or(serde_json::Value::Null),
+                        "previous_store_clone_receipts": value.get("previous_store_clone_receipts").cloned().unwrap_or(serde_json::Value::Null),
+                        "previous_store_clone_estimated_bytes": value.get("previous_store_clone_estimated_bytes").cloned().unwrap_or(serde_json::Value::Null),
+                        "materialization_risk": value.get("materialization_risk").cloned().unwrap_or(serde_json::Value::Null),
+                    }))
+                    .unwrap_or(serde_json::Value::Null),
                 "native_store_dirty_set": tick_out
                     .pointer("/batch_result/batch_result/native_store_commit/dirty_set")
                     .cloned()
@@ -33842,6 +33853,10 @@ fn compact_native_execution_tick_out_for_pipeline_report_v1(
         .pointer("/batch_result/batch_result/native_store_commit/dirty_set")
         .cloned()
         .unwrap_or(serde_json::Value::Null);
+    let native_store_commit = tick_out
+        .pointer("/batch_result/batch_result/native_store_commit")
+        .cloned()
+        .unwrap_or_else(|| serde_json::json!({}));
     let native_store_backend_status = tick_out
         .pointer("/batch_result/batch_result/native_store_backend_status")
         .cloned()
@@ -33877,6 +33892,13 @@ fn compact_native_execution_tick_out_for_pipeline_report_v1(
             "skipped": skipped,
             "batch_result": {
                 "native_store_commit": {
+                    "model": native_store_commit.get("model").cloned().unwrap_or(serde_json::Value::Null),
+                    "precommit_store_materialized": native_store_commit.get("precommit_store_materialized").cloned().unwrap_or(serde_json::Value::Null),
+                    "precommit_store_materialized_receipts": native_store_commit.get("precommit_store_materialized_receipts").cloned().unwrap_or(serde_json::Value::Null),
+                    "precommit_store_materialized_estimated_bytes": native_store_commit.get("precommit_store_materialized_estimated_bytes").cloned().unwrap_or(serde_json::Value::Null),
+                    "previous_store_clone_receipts": native_store_commit.get("previous_store_clone_receipts").cloned().unwrap_or(serde_json::Value::Null),
+                    "previous_store_clone_estimated_bytes": native_store_commit.get("previous_store_clone_estimated_bytes").cloned().unwrap_or(serde_json::Value::Null),
+                    "materialization_risk": native_store_commit.get("materialization_risk").cloned().unwrap_or(serde_json::Value::Null),
                     "dirty_set": native_store_dirty_set,
                 },
                 "native_store_backend_status": native_store_backend_status,
@@ -33921,6 +33943,12 @@ struct NativeExecutionPipelineAggregateV1 {
     native_store_commit_model: String,
     native_store_rocksdb_enabled: bool,
     native_store_transactional_commit: bool,
+    native_store_precommit_materialized_ticks: u64,
+    native_store_materialized_receipts_max: u64,
+    native_store_materialized_estimated_bytes_max: u64,
+    native_store_previous_clone_receipts_max: u64,
+    native_store_previous_clone_estimated_bytes_max: u64,
+    native_store_materialization_risk_last: String,
     proof_ticks: u64,
     commit_ticks: u64,
     ingress_total_last: u64,
@@ -33980,6 +34008,12 @@ impl NativeExecutionPipelineAggregateV1 {
             native_store_commit_model: String::new(),
             native_store_rocksdb_enabled: false,
             native_store_transactional_commit: false,
+            native_store_precommit_materialized_ticks: 0,
+            native_store_materialized_receipts_max: 0,
+            native_store_materialized_estimated_bytes_max: 0,
+            native_store_previous_clone_receipts_max: 0,
+            native_store_previous_clone_estimated_bytes_max: 0,
+            native_store_materialization_risk_last: String::new(),
             proof_ticks: 0,
             commit_ticks: 0,
             ingress_total_last: 0,
@@ -34229,6 +34263,52 @@ impl NativeExecutionPipelineAggregateV1 {
                 self.native_store_transactional_commit = true;
             }
         }
+        if let Some(materialization) = commit.get("native_store_materialization") {
+            if materialization
+                .get("precommit_store_materialized")
+                .and_then(|value| value.as_bool())
+                .unwrap_or(false)
+            {
+                self.native_store_precommit_materialized_ticks =
+                    self.native_store_precommit_materialized_ticks.saturating_add(1);
+            }
+            self.native_store_materialized_receipts_max =
+                self.native_store_materialized_receipts_max.max(
+                    materialization
+                        .get("precommit_store_materialized_receipts")
+                        .and_then(|value| value.as_u64())
+                        .unwrap_or_default(),
+                );
+            self.native_store_materialized_estimated_bytes_max = self
+                .native_store_materialized_estimated_bytes_max
+                .max(
+                    materialization
+                        .get("precommit_store_materialized_estimated_bytes")
+                        .and_then(|value| value.as_u64())
+                        .unwrap_or_default(),
+                );
+            self.native_store_previous_clone_receipts_max =
+                self.native_store_previous_clone_receipts_max.max(
+                    materialization
+                        .get("previous_store_clone_receipts")
+                        .and_then(|value| value.as_u64())
+                        .unwrap_or_default(),
+                );
+            self.native_store_previous_clone_estimated_bytes_max = self
+                .native_store_previous_clone_estimated_bytes_max
+                .max(
+                    materialization
+                        .get("previous_store_clone_estimated_bytes")
+                        .and_then(|value| value.as_u64())
+                        .unwrap_or_default(),
+                );
+            if let Some(risk) = materialization
+                .get("materialization_risk")
+                .and_then(|value| value.as_str())
+            {
+                self.native_store_materialization_risk_last = risk.to_string();
+            }
+        }
         self.ingress_total_last = ingress
             .get("total")
             .and_then(|value| value.as_u64())
@@ -34452,6 +34532,30 @@ impl NativeExecutionPipelineAggregateV1 {
         out.insert(
             "native_store_transactional_commit".to_string(),
             serde_json::json!(self.native_store_transactional_commit),
+        );
+        out.insert(
+            "native_store_precommit_materialized_ticks".to_string(),
+            serde_json::json!(self.native_store_precommit_materialized_ticks),
+        );
+        out.insert(
+            "native_store_materialized_receipts_max".to_string(),
+            serde_json::json!(self.native_store_materialized_receipts_max),
+        );
+        out.insert(
+            "native_store_materialized_estimated_bytes_max".to_string(),
+            serde_json::json!(self.native_store_materialized_estimated_bytes_max),
+        );
+        out.insert(
+            "native_store_previous_clone_receipts_max".to_string(),
+            serde_json::json!(self.native_store_previous_clone_receipts_max),
+        );
+        out.insert(
+            "native_store_previous_clone_estimated_bytes_max".to_string(),
+            serde_json::json!(self.native_store_previous_clone_estimated_bytes_max),
+        );
+        out.insert(
+            "native_store_materialization_risk_last".to_string(),
+            serde_json::json!(self.native_store_materialization_risk_last),
         );
         out.insert(
             "network_enabled_ticks".to_string(),

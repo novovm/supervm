@@ -4,7 +4,8 @@
 use anyhow::{bail, Context, Result};
 use novovm_network::{Transport, UdpTransport};
 use novovm_node::tx_ingress::{
-    get_nov_native_execution_store_recovery_probe_v1, nov_native_tx_to_adapter_tx_ir_v1,
+    get_nov_native_execution_store_recovery_probe_v1,
+    get_nov_native_execution_store_rocksdb_memory_probe_v1, nov_native_tx_to_adapter_tx_ir_v1,
 };
 use novovm_protocol::{
     encode_nov_native_tx_wire_v1, EvmNativeMessage, NodeId, NovExecuteTxV1, NovExecutionModeV1,
@@ -661,6 +662,7 @@ fn run_receiver_node(
                 .context("wait cross-machine receiver failed")?;
             let summary = parse_summary(output, "cross-machine receiver")?;
             let ledger_stats = semantic_ledger_stats(ledger_path.as_path());
+            let rocksdb_probe = get_nov_native_execution_store_rocksdb_memory_probe_v1(store_path);
             let memory_sample = if diagnostics.memory_sample_enabled {
                 process_memory_sample(child_pid)
             } else {
@@ -670,6 +672,7 @@ fn run_receiver_node(
                 started_at,
                 &summary,
                 ledger_stats,
+                rocksdb_probe,
                 memory_sample,
                 state.last_canonical,
             );
@@ -680,6 +683,7 @@ fn run_receiver_node(
 
         if last_sample_at.elapsed() >= Duration::from_millis(diagnostics.sample_interval_ms) {
             let ledger_stats = semantic_ledger_stats(ledger_path.as_path());
+            let rocksdb_probe = get_nov_native_execution_store_rocksdb_memory_probe_v1(store_path);
             let memory_sample = if diagnostics.memory_sample_enabled {
                 process_memory_sample(child_pid)
             } else {
@@ -710,6 +714,7 @@ fn run_receiver_node(
                     started_at,
                     summary,
                     ledger_stats,
+                    rocksdb_probe,
                     memory_sample,
                     state.last_canonical,
                 )
@@ -744,6 +749,7 @@ fn run_receiver_node(
                 "semantic_head_height": stable_progress,
                 "semantic_head_monotonic": true,
                 "semantic_ledger_mirror": ledger_stats,
+                "rocksdb_memory_probe": rocksdb_probe,
                 "process_memory": memory_sample,
                 "queue_pending_last": null,
                 "queue_dropped_total": null,
@@ -975,10 +981,19 @@ fn memory_working_set_bytes(sample: &Value) -> u64 {
         .unwrap_or_default()
 }
 
+fn memory_private_bytes(sample: &Value) -> u64 {
+    sample
+        .get("PrivateMemorySize64")
+        .or_else(|| sample.get("private_bytes"))
+        .and_then(Value::as_u64)
+        .unwrap_or_default()
+}
+
 fn diagnostics_summary_sample(
     started_at: Instant,
     summary: &Value,
     ledger_stats: Value,
+    rocksdb_probe: Value,
     memory_sample: Value,
     previous_canonical: u64,
 ) -> Value {
@@ -991,6 +1006,46 @@ fn diagnostics_summary_sample(
     let stable_progress_total = canonical.max(aoem).max(ledger_lines);
     let proof = summary_u64(summary, "max_proof_items_per_tick");
     let commit = summary_u64(summary, "max_commit_items_per_tick");
+    let working_set_bytes = memory_working_set_bytes(&memory_sample);
+    let private_bytes = memory_private_bytes(&memory_sample);
+    let runtime_current_view_bytes = summary_u64(summary, "queue_tx_count_last").saturating_mul(256);
+    let diagnostics_report_estimated_bytes =
+        summary_u64(summary, "ticks").saturating_mul(0).saturating_add(0);
+    let semantic_ledger_mirror_bytes = ledger_stats
+        .get("bytes")
+        .and_then(Value::as_u64)
+        .unwrap_or_default();
+    let rocksdb_total_estimated_memory_bytes = rocksdb_probe
+        .get("rocksdb_total_estimated_memory_bytes")
+        .and_then(Value::as_u64)
+        .unwrap_or_default();
+    let rocksdb_block_cache_estimated_bytes = rocksdb_probe
+        .get("rocksdb_block_cache_estimated_bytes")
+        .and_then(Value::as_u64)
+        .unwrap_or_default();
+    let rocksdb_memtable_estimated_bytes = rocksdb_probe
+        .get("rocksdb_memtable_estimated_bytes")
+        .and_then(Value::as_u64)
+        .unwrap_or_default();
+    let rocksdb_index_filter_estimated_bytes = rocksdb_probe
+        .get("rocksdb_index_filter_estimated_bytes")
+        .and_then(Value::as_u64)
+        .unwrap_or_default();
+    let native_store_materialized_bytes = summary_u64(
+        summary,
+        "native_store_materialized_estimated_bytes_max",
+    );
+    let native_store_clone_bytes = summary_u64(
+        summary,
+        "native_store_previous_clone_estimated_bytes_max",
+    );
+    let rust_estimated_retained_bytes = runtime_current_view_bytes
+        .saturating_add(semantic_ledger_mirror_bytes)
+        .saturating_add(native_store_materialized_bytes)
+        .saturating_add(native_store_clone_bytes);
+    let attributed_bytes = rust_estimated_retained_bytes
+        .saturating_add(rocksdb_total_estimated_memory_bytes);
+    let unattributed_working_set_bytes = working_set_bytes.saturating_sub(attributed_bytes);
     let mut out = serde_json::json!({
         "elapsed_ms": started_at.elapsed().as_millis() as u64,
         "received_unique_total": summary_u64(summary, "ingress_total_last"),
@@ -1021,7 +1076,27 @@ fn diagnostics_summary_sample(
         "semantic_head_height": canonical,
         "semantic_head_monotonic": true,
         "semantic_ledger_mirror": ledger_stats,
+        "rocksdb_memory_probe": rocksdb_probe,
         "process_memory": memory_sample,
+        "process_working_set_bytes": working_set_bytes,
+        "process_private_bytes": private_bytes,
+        "rust_estimated_retained_bytes": rust_estimated_retained_bytes,
+        "pending_runtime_estimated_bytes": runtime_current_view_bytes,
+        "runtime_current_view_bytes_estimate": runtime_current_view_bytes,
+        "diagnostics_report_estimated_bytes": diagnostics_report_estimated_bytes,
+        "semantic_ledger_mirror_bytes": semantic_ledger_mirror_bytes,
+        "jsonl_writer_buffer_bytes": 0u64,
+        "aoem_projection_estimated_bytes": 0u64,
+        "receipt_projection_estimated_bytes": native_store_materialized_bytes.saturating_add(native_store_clone_bytes),
+        "native_store_materialized_estimated_bytes": native_store_materialized_bytes,
+        "native_store_previous_clone_estimated_bytes": native_store_clone_bytes,
+        "rocksdb_total_estimated_memory_bytes": rocksdb_total_estimated_memory_bytes,
+        "rocksdb_block_cache_estimated_bytes": rocksdb_block_cache_estimated_bytes,
+        "rocksdb_memtable_estimated_bytes": rocksdb_memtable_estimated_bytes,
+        "rocksdb_index_filter_estimated_bytes": rocksdb_index_filter_estimated_bytes,
+        "allocator_fragmentation_suspected": unattributed_working_set_bytes > attributed_bytes.max(64 * 1024 * 1024),
+        "working_set_not_returned_suspected": working_set_bytes > private_bytes.saturating_add(256 * 1024 * 1024) && private_bytes > 0,
+        "unattributed_working_set_bytes": unattributed_working_set_bytes,
         "queue_pending_last": summary_u64(summary, "queue_pending_last"),
         "queue_dropped_total": summary_u64(summary, "queue_dropped_last"),
         "queue_rejected_total": summary_u64(summary, "queue_rejected_last"),
@@ -1890,6 +1965,12 @@ fn compact_receiver_summary_for_report(summary: Value) -> Value {
         "native_store_backend": summary.get("native_store_backend").cloned().unwrap_or(Value::Null),
         "native_store_commit_model": summary.get("native_store_commit_model").cloned().unwrap_or(Value::Null),
         "native_store_backend_path": summary.get("native_store_backend_path").cloned().unwrap_or(Value::Null),
+        "native_store_precommit_materialized_ticks": summary_u64(&summary, "native_store_precommit_materialized_ticks"),
+        "native_store_materialized_receipts_max": summary_u64(&summary, "native_store_materialized_receipts_max"),
+        "native_store_materialized_estimated_bytes_max": summary_u64(&summary, "native_store_materialized_estimated_bytes_max"),
+        "native_store_previous_clone_receipts_max": summary_u64(&summary, "native_store_previous_clone_receipts_max"),
+        "native_store_previous_clone_estimated_bytes_max": summary_u64(&summary, "native_store_previous_clone_estimated_bytes_max"),
+        "native_store_materialization_risk_last": summary.get("native_store_materialization_risk_last").cloned().unwrap_or(Value::Null),
         "report_tx_hash_list_len": report_array_len_recursive(&summary),
         "report_receipt_key_list_len": 0,
         "tick_result_omitted": summary.get("tick_result").is_some(),

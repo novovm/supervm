@@ -1087,6 +1087,25 @@ impl Default for NovNativeExecutionStoreV1 {
     }
 }
 
+fn estimate_native_execution_store_retained_bytes_v1(store: &NovNativeExecutionStoreV1) -> u64 {
+    // This is intentionally a low-cost estimate for soak diagnostics. It avoids serializing the
+    // full store during the hot path and is only used to attribute likely memory growth sources.
+    let receipt_count = store.receipts.len() as u64;
+    let trace_count = store.module_state.execution_traces_by_tx.len() as u64;
+    let trace_order_count = store.module_state.execution_trace_order.len() as u64;
+    let account_asset_count = store
+        .module_state
+        .account_asset_balances
+        .values()
+        .map(BTreeMap::len)
+        .sum::<usize>() as u64;
+    receipt_count
+        .saturating_mul(1024)
+        .saturating_add(trace_count.saturating_mul(2048))
+        .saturating_add(trace_order_count.saturating_mul(96))
+        .saturating_add(account_asset_count.saturating_mul(128))
+}
+
 #[derive(Debug)]
 pub struct ExecBatchBuffer {
     // Keep key/value payloads alive so ExecOpV2 raw pointers remain valid.
@@ -3276,6 +3295,66 @@ fn open_nov_native_execution_store_rocksdb_v1(path: &Path) -> Result<RocksDb> {
             "open nov native execution rocksdb failed: {}",
             path.display()
         )
+    })
+}
+
+fn rocksdb_property_u64_v1(db: &RocksDb, property: &str) -> Option<u64> {
+    db.property_int_value(property).ok().flatten()
+}
+
+pub fn get_nov_native_execution_store_rocksdb_memory_probe_v1(path: &Path) -> serde_json::Value {
+    let rocksdb_path = nov_native_execution_store_rocksdb_path_v1(path);
+    if !rocksdb_path.exists() {
+        return serde_json::json!({
+            "method": "nov_getNativeExecutionStoreRocksDbMemoryProbe",
+            "rocksdb_path": rocksdb_path.display().to_string(),
+            "rocksdb_exists": false,
+            "rocksdb_opened": false,
+            "rocksdb_total_estimated_memory_bytes": 0u64,
+            "rocksdb_memory_probe_supported": true,
+        });
+    }
+    let db = match open_nov_native_execution_store_rocksdb_v1(rocksdb_path.as_path()) {
+        Ok(db) => db,
+        Err(err) => {
+            return serde_json::json!({
+                "method": "nov_getNativeExecutionStoreRocksDbMemoryProbe",
+                "rocksdb_path": rocksdb_path.display().to_string(),
+                "rocksdb_exists": true,
+                "rocksdb_opened": false,
+                "rocksdb_open_error": err.to_string(),
+                "rocksdb_total_estimated_memory_bytes": 0u64,
+                "rocksdb_memory_probe_supported": false,
+            });
+        }
+    };
+    let block_cache = rocksdb_property_u64_v1(&db, "rocksdb.block-cache-usage").unwrap_or(0);
+    let block_cache_pinned =
+        rocksdb_property_u64_v1(&db, "rocksdb.block-cache-pinned-usage").unwrap_or(0);
+    let memtable_current =
+        rocksdb_property_u64_v1(&db, "rocksdb.cur-size-all-mem-tables").unwrap_or(0);
+    let memtable_total =
+        rocksdb_property_u64_v1(&db, "rocksdb.size-all-mem-tables").unwrap_or(memtable_current);
+    let table_readers =
+        rocksdb_property_u64_v1(&db, "rocksdb.estimate-table-readers-mem").unwrap_or(0);
+    let estimate_num_keys = rocksdb_property_u64_v1(&db, "rocksdb.estimate-num-keys").unwrap_or(0);
+    let total = block_cache
+        .saturating_add(block_cache_pinned)
+        .saturating_add(memtable_total)
+        .saturating_add(table_readers);
+    serde_json::json!({
+        "method": "nov_getNativeExecutionStoreRocksDbMemoryProbe",
+        "rocksdb_path": rocksdb_path.display().to_string(),
+        "rocksdb_exists": true,
+        "rocksdb_opened": true,
+        "rocksdb_block_cache_estimated_bytes": block_cache,
+        "rocksdb_block_cache_pinned_estimated_bytes": block_cache_pinned,
+        "rocksdb_memtable_estimated_bytes": memtable_total,
+        "rocksdb_current_memtable_estimated_bytes": memtable_current,
+        "rocksdb_index_filter_estimated_bytes": table_readers,
+        "rocksdb_estimate_num_keys": estimate_num_keys,
+        "rocksdb_total_estimated_memory_bytes": total,
+        "rocksdb_memory_probe_supported": true,
     })
 }
 
@@ -10943,7 +11022,13 @@ pub fn run_nov_send_raw_transaction_batch_from_params_v1(
     let _write_lock =
         acquire_nov_native_execution_store_write_lock_v1(effective_native_store_path.as_path())?;
     let mut store = load_nov_native_execution_store_v1(effective_native_store_path.as_path())?;
+    let precommit_store_materialized_receipts = store.receipts.len();
+    let precommit_store_materialized_estimated_bytes =
+        estimate_native_execution_store_retained_bytes_v1(&store);
     let previous_store = store.clone();
+    let previous_store_clone_receipts = previous_store.receipts.len();
+    let previous_store_clone_estimated_bytes =
+        estimate_native_execution_store_retained_bytes_v1(&previous_store);
     let mut results = Vec::with_capacity(prepared.len());
     let mut mirror_records = Vec::new();
     let item_count = prepared.len();
@@ -11029,6 +11114,16 @@ pub fn run_nov_send_raw_transaction_batch_from_params_v1(
             "save_count": 1,
             "ordered_results": true,
             "aoem_precommit_chunk_count": aoem_batch_chunk_count,
+            "precommit_store_materialized": true,
+            "precommit_store_materialized_receipts": precommit_store_materialized_receipts,
+            "precommit_store_materialized_estimated_bytes": precommit_store_materialized_estimated_bytes,
+            "previous_store_clone_receipts": previous_store_clone_receipts,
+            "previous_store_clone_estimated_bytes": previous_store_clone_estimated_bytes,
+            "materialization_risk": if precommit_store_materialized_receipts > 0 {
+                "rocksdb_full_receipt_materialization_before_dirty_commit"
+            } else {
+                "empty_store_or_first_batch"
+            },
             "dirty_set": native_store_dirty_stats,
         },
         "native_store_backend_status": native_store_backend_status,
