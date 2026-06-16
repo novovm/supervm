@@ -1265,7 +1265,17 @@ fn read_pipeline_progress_summary(path: &Path) -> Option<Value> {
 fn process_memory_sample(pid: u32) -> Value {
     let script = format!(
         "$p=Get-Process -Id {pid} -ErrorAction Stop; \
-         [pscustomobject]@{{WorkingSet64=$p.WorkingSet64;PrivateMemorySize64=$p.PrivateMemorySize64;CPU=$p.CPU}} | ConvertTo-Json -Compress"
+         [pscustomobject]@{{\
+            WorkingSet64=$p.WorkingSet64;\
+            PrivateMemorySize64=$p.PrivateMemorySize64;\
+            VirtualMemorySize64=$p.VirtualMemorySize64;\
+            PagedMemorySize64=$p.PagedMemorySize64;\
+            PagedSystemMemorySize64=$p.PagedSystemMemorySize64;\
+            NonpagedSystemMemorySize64=$p.NonpagedSystemMemorySize64;\
+            HandleCount=$p.HandleCount;\
+            ThreadCount=$p.Threads.Count;\
+            CPU=$p.CPU\
+         }} | ConvertTo-Json -Compress"
     );
     match Command::new("powershell")
         .args(["-NoProfile", "-Command", script.as_str()])
@@ -1296,6 +1306,7 @@ fn process_memory_sample(pid: u32) -> Value {
     let raw = fs::read_to_string(status_path.as_path()).unwrap_or_default();
     let mut vm_rss_kb = 0u64;
     let mut vm_data_kb = 0u64;
+    let mut vm_size_kb = 0u64;
     for line in raw.lines() {
         if let Some(rest) = line.strip_prefix("VmRSS:") {
             vm_rss_kb = rest
@@ -1311,10 +1322,18 @@ fn process_memory_sample(pid: u32) -> Value {
                 .and_then(|value| value.parse::<u64>().ok())
                 .unwrap_or_default();
         }
+        if let Some(rest) = line.strip_prefix("VmSize:") {
+            vm_size_kb = rest
+                .split_whitespace()
+                .next()
+                .and_then(|value| value.parse::<u64>().ok())
+                .unwrap_or_default();
+        }
     }
     serde_json::json!({
         "WorkingSet64": vm_rss_kb.saturating_mul(1024),
         "PrivateMemorySize64": vm_data_kb.saturating_mul(1024),
+        "VirtualMemorySize64": vm_size_kb.saturating_mul(1024),
     })
 }
 
@@ -1332,6 +1351,61 @@ fn memory_private_bytes(sample: &Value) -> u64 {
         .or_else(|| sample.get("private_bytes"))
         .and_then(Value::as_u64)
         .unwrap_or_default()
+}
+
+fn memory_virtual_bytes(sample: &Value) -> u64 {
+    sample
+        .get("VirtualMemorySize64")
+        .or_else(|| sample.get("virtual_bytes"))
+        .and_then(Value::as_u64)
+        .unwrap_or_default()
+}
+
+fn memory_paged_bytes(sample: &Value) -> u64 {
+    sample
+        .get("PagedMemorySize64")
+        .or_else(|| sample.get("paged_bytes"))
+        .and_then(Value::as_u64)
+        .unwrap_or_default()
+}
+
+fn memory_paged_system_bytes(sample: &Value) -> u64 {
+    sample
+        .get("PagedSystemMemorySize64")
+        .or_else(|| sample.get("paged_system_bytes"))
+        .and_then(Value::as_u64)
+        .unwrap_or_default()
+}
+
+fn memory_nonpaged_system_bytes(sample: &Value) -> u64 {
+    sample
+        .get("NonpagedSystemMemorySize64")
+        .or_else(|| sample.get("nonpaged_system_bytes"))
+        .and_then(Value::as_u64)
+        .unwrap_or_default()
+}
+
+fn memory_handle_count(sample: &Value) -> u64 {
+    sample
+        .get("HandleCount")
+        .or_else(|| sample.get("handle_count"))
+        .and_then(Value::as_u64)
+        .unwrap_or_default()
+}
+
+fn memory_thread_count(sample: &Value) -> u64 {
+    sample
+        .get("ThreadCount")
+        .or_else(|| sample.get("thread_count"))
+        .and_then(Value::as_u64)
+        .unwrap_or_default()
+}
+
+fn bytes_per_1000_tx(bytes: u64, tx_count: u64) -> u64 {
+    if tx_count == 0 {
+        return 0;
+    }
+    bytes.saturating_mul(1000) / tx_count
 }
 
 fn diagnostics_summary_sample(
@@ -1353,6 +1427,12 @@ fn diagnostics_summary_sample(
     let commit = summary_u64(summary, "max_commit_items_per_tick");
     let working_set_bytes = memory_working_set_bytes(&memory_sample);
     let private_bytes = memory_private_bytes(&memory_sample);
+    let virtual_bytes = memory_virtual_bytes(&memory_sample);
+    let paged_bytes = memory_paged_bytes(&memory_sample);
+    let paged_system_bytes = memory_paged_system_bytes(&memory_sample);
+    let nonpaged_system_bytes = memory_nonpaged_system_bytes(&memory_sample);
+    let process_handle_count = memory_handle_count(&memory_sample);
+    let process_thread_count = memory_thread_count(&memory_sample);
     let runtime_current_view_bytes =
         summary_u64(summary, "queue_tx_count_last").saturating_mul(256);
     let diagnostics_report_estimated_bytes = summary_u64(summary, "ticks")
@@ -1389,6 +1469,19 @@ fn diagnostics_summary_sample(
     let attributed_bytes =
         rust_estimated_retained_bytes.saturating_add(rocksdb_total_estimated_memory_bytes);
     let unattributed_working_set_bytes = working_set_bytes.saturating_sub(attributed_bytes);
+    let unattributed_private_bytes = private_bytes.saturating_sub(attributed_bytes);
+    let native_heap_unattributed_bytes = unattributed_private_bytes;
+    let working_set_minus_private_bytes = working_set_bytes.saturating_sub(private_bytes);
+    let private_minus_working_set_bytes = private_bytes.saturating_sub(working_set_bytes);
+    let working_set_bytes_per_1000_tx = bytes_per_1000_tx(working_set_bytes, stable_progress_total);
+    let private_bytes_per_1000_tx = bytes_per_1000_tx(private_bytes, stable_progress_total);
+    let native_heap_unattributed_bytes_per_1000_tx =
+        bytes_per_1000_tx(native_heap_unattributed_bytes, stable_progress_total);
+    let attributed_bytes_per_1000_tx = bytes_per_1000_tx(attributed_bytes, stable_progress_total);
+    let allocator_fragmentation_suspected =
+        unattributed_private_bytes > attributed_bytes.max(64 * 1024 * 1024);
+    let working_set_not_returned_suspected =
+        working_set_bytes > private_bytes.saturating_add(256 * 1024 * 1024) && private_bytes > 0;
     let mut out = serde_json::json!({
         "elapsed_ms": started_at.elapsed().as_millis() as u64,
         "received_unique_total": summary_u64(summary, "ingress_total_last"),
@@ -1423,6 +1516,13 @@ fn diagnostics_summary_sample(
         "process_memory": memory_sample,
         "process_working_set_bytes": working_set_bytes,
         "process_private_bytes": private_bytes,
+        "virtual_bytes": virtual_bytes,
+        "process_virtual_bytes": virtual_bytes,
+        "process_paged_bytes": paged_bytes,
+        "process_paged_system_bytes": paged_system_bytes,
+        "process_nonpaged_system_bytes": nonpaged_system_bytes,
+        "process_handle_count": process_handle_count,
+        "process_thread_count": process_thread_count,
         "rust_estimated_retained_bytes": rust_estimated_retained_bytes,
         "pending_runtime_estimated_bytes": runtime_current_view_bytes,
         "runtime_current_view_bytes_estimate": runtime_current_view_bytes,
@@ -1437,9 +1537,17 @@ fn diagnostics_summary_sample(
         "rocksdb_block_cache_estimated_bytes": rocksdb_block_cache_estimated_bytes,
         "rocksdb_memtable_estimated_bytes": rocksdb_memtable_estimated_bytes,
         "rocksdb_index_filter_estimated_bytes": rocksdb_index_filter_estimated_bytes,
-        "allocator_fragmentation_suspected": unattributed_working_set_bytes > attributed_bytes.max(64 * 1024 * 1024),
-        "working_set_not_returned_suspected": working_set_bytes > private_bytes.saturating_add(256 * 1024 * 1024) && private_bytes > 0,
+        "native_heap_unattributed_bytes": native_heap_unattributed_bytes,
+        "unattributed_private_bytes": unattributed_private_bytes,
         "unattributed_working_set_bytes": unattributed_working_set_bytes,
+        "working_set_minus_private_bytes": working_set_minus_private_bytes,
+        "private_minus_working_set_bytes": private_minus_working_set_bytes,
+        "allocator_fragmentation_suspected": allocator_fragmentation_suspected,
+        "working_set_not_returned_suspected": working_set_not_returned_suspected,
+        "working_set_bytes_per_1000_tx": working_set_bytes_per_1000_tx,
+        "private_bytes_per_1000_tx": private_bytes_per_1000_tx,
+        "native_heap_unattributed_bytes_per_1000_tx": native_heap_unattributed_bytes_per_1000_tx,
+        "attributed_bytes_per_1000_tx": attributed_bytes_per_1000_tx,
         "queue_pending_last": summary_u64(summary, "queue_pending_last"),
         "queue_dropped_total": summary_u64(summary, "queue_dropped_last"),
         "queue_rejected_total": summary_u64(summary, "queue_rejected_last"),
@@ -1485,6 +1593,7 @@ fn write_diagnostics_report(
     child_pid: u32,
     tx_count: u64,
 ) -> Result<()> {
+    let last_sample = state.samples.last();
     let report = serde_json::json!({
         "schema": "novovm-native-pipeline-cross-machine-sustained-diagnostics/v1",
         "accepted": accepted,
@@ -1506,6 +1615,42 @@ fn write_diagnostics_report(
             .last_working_set_bytes
             .zip(state.first_working_set_bytes)
             .map(|(last, first)| last.saturating_sub(first)),
+        "last_process_working_set_bytes": last_sample
+            .and_then(|sample| sample.get("process_working_set_bytes"))
+            .and_then(Value::as_u64),
+        "last_process_private_bytes": last_sample
+            .and_then(|sample| sample.get("process_private_bytes"))
+            .and_then(Value::as_u64),
+        "last_process_virtual_bytes": last_sample
+            .and_then(|sample| sample.get("process_virtual_bytes"))
+            .and_then(Value::as_u64),
+        "last_rust_estimated_retained_bytes": last_sample
+            .and_then(|sample| sample.get("rust_estimated_retained_bytes"))
+            .and_then(Value::as_u64),
+        "last_native_heap_unattributed_bytes": last_sample
+            .and_then(|sample| sample.get("native_heap_unattributed_bytes"))
+            .and_then(Value::as_u64),
+        "last_unattributed_working_set_bytes": last_sample
+            .and_then(|sample| sample.get("unattributed_working_set_bytes"))
+            .and_then(Value::as_u64),
+        "last_rocksdb_total_estimated_memory_bytes": last_sample
+            .and_then(|sample| sample.get("rocksdb_total_estimated_memory_bytes"))
+            .and_then(Value::as_u64),
+        "last_working_set_bytes_per_1000_tx": last_sample
+            .and_then(|sample| sample.get("working_set_bytes_per_1000_tx"))
+            .and_then(Value::as_u64),
+        "last_private_bytes_per_1000_tx": last_sample
+            .and_then(|sample| sample.get("private_bytes_per_1000_tx"))
+            .and_then(Value::as_u64),
+        "last_native_heap_unattributed_bytes_per_1000_tx": last_sample
+            .and_then(|sample| sample.get("native_heap_unattributed_bytes_per_1000_tx"))
+            .and_then(Value::as_u64),
+        "allocator_fragmentation_suspected": last_sample
+            .and_then(|sample| sample.get("allocator_fragmentation_suspected"))
+            .and_then(Value::as_bool),
+        "working_set_not_returned_suspected": last_sample
+            .and_then(|sample| sample.get("working_set_not_returned_suspected"))
+            .and_then(Value::as_bool),
         "samples": state.samples,
     });
     write_report(config.report_path.as_path(), &report)
