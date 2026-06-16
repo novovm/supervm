@@ -1408,6 +1408,42 @@ fn bytes_per_1000_tx(bytes: u64, tx_count: u64) -> u64 {
     bytes.saturating_mul(1000) / tx_count
 }
 
+fn sample_u64(sample: &Value, key: &str) -> u64 {
+    sample.get(key).and_then(Value::as_u64).unwrap_or_default()
+}
+
+fn sample_bool(sample: &Value, key: &str) -> Option<bool> {
+    sample.get(key).and_then(Value::as_bool)
+}
+
+fn is_live_child_memory_sample(sample: &Value) -> bool {
+    sample_u64(sample, "process_working_set_bytes") > 0
+        || sample_u64(sample, "process_private_bytes") > 0
+}
+
+fn last_live_child_sample(samples: &[Value]) -> Option<&Value> {
+    samples
+        .iter()
+        .rev()
+        .find(|sample| is_live_child_memory_sample(sample))
+}
+
+fn peak_live_child_sample(samples: &[Value]) -> Option<&Value> {
+    samples
+        .iter()
+        .filter(|sample| is_live_child_memory_sample(sample))
+        .max_by_key(|sample| sample_u64(sample, "process_working_set_bytes"))
+}
+
+fn post_exit_sample_count(samples: &[Value]) -> u64 {
+    samples
+        .iter()
+        .filter(|sample| !is_live_child_memory_sample(sample))
+        .count()
+        .try_into()
+        .unwrap_or(u64::MAX)
+}
+
 fn diagnostics_summary_sample(
     started_at: Instant,
     summary: &Value,
@@ -1593,7 +1629,26 @@ fn write_diagnostics_report(
     child_pid: u32,
     tx_count: u64,
 ) -> Result<()> {
-    let last_sample = state.samples.last();
+    let last_sample_any = state.samples.last();
+    let last_live_sample = last_live_child_sample(state.samples.as_slice());
+    let peak_live_sample = peak_live_child_sample(state.samples.as_slice());
+    let memory_summary_sample = peak_live_sample.or(last_live_sample);
+    let post_exit_samples = post_exit_sample_count(state.samples.as_slice());
+    let post_exit_working_set_zeroed = last_sample_any
+        .map(|sample| {
+            !is_live_child_memory_sample(sample)
+                && sample.get("process_working_set_bytes").is_some()
+        })
+        .unwrap_or(false);
+    let memory_summary_source = if peak_live_sample.is_some() {
+        "live_peak"
+    } else if last_live_sample.is_some() {
+        "live_last"
+    } else if post_exit_samples > 0 {
+        "post_exit_invalid"
+    } else {
+        "none"
+    };
     let report = serde_json::json!({
         "schema": "novovm-native-pipeline-cross-machine-sustained-diagnostics/v1",
         "accepted": accepted,
@@ -1615,42 +1670,54 @@ fn write_diagnostics_report(
             .last_working_set_bytes
             .zip(state.first_working_set_bytes)
             .map(|(last, first)| last.saturating_sub(first)),
-        "last_process_working_set_bytes": last_sample
-            .and_then(|sample| sample.get("process_working_set_bytes"))
-            .and_then(Value::as_u64),
-        "last_process_private_bytes": last_sample
-            .and_then(|sample| sample.get("process_private_bytes"))
-            .and_then(Value::as_u64),
-        "last_process_virtual_bytes": last_sample
-            .and_then(|sample| sample.get("process_virtual_bytes"))
-            .and_then(Value::as_u64),
-        "last_rust_estimated_retained_bytes": last_sample
-            .and_then(|sample| sample.get("rust_estimated_retained_bytes"))
-            .and_then(Value::as_u64),
-        "last_native_heap_unattributed_bytes": last_sample
-            .and_then(|sample| sample.get("native_heap_unattributed_bytes"))
-            .and_then(Value::as_u64),
-        "last_unattributed_working_set_bytes": last_sample
-            .and_then(|sample| sample.get("unattributed_working_set_bytes"))
-            .and_then(Value::as_u64),
-        "last_rocksdb_total_estimated_memory_bytes": last_sample
-            .and_then(|sample| sample.get("rocksdb_total_estimated_memory_bytes"))
-            .and_then(Value::as_u64),
-        "last_working_set_bytes_per_1000_tx": last_sample
-            .and_then(|sample| sample.get("working_set_bytes_per_1000_tx"))
-            .and_then(Value::as_u64),
-        "last_private_bytes_per_1000_tx": last_sample
-            .and_then(|sample| sample.get("private_bytes_per_1000_tx"))
-            .and_then(Value::as_u64),
-        "last_native_heap_unattributed_bytes_per_1000_tx": last_sample
-            .and_then(|sample| sample.get("native_heap_unattributed_bytes_per_1000_tx"))
-            .and_then(Value::as_u64),
-        "allocator_fragmentation_suspected": last_sample
-            .and_then(|sample| sample.get("allocator_fragmentation_suspected"))
-            .and_then(Value::as_bool),
-        "working_set_not_returned_suspected": last_sample
-            .and_then(|sample| sample.get("working_set_not_returned_suspected"))
-            .and_then(Value::as_bool),
+        "last_sample_any": last_sample_any.cloned(),
+        "last_live_child_sample": last_live_sample.cloned(),
+        "peak_live_child_sample": peak_live_sample.cloned(),
+        "post_exit_sample_present": post_exit_samples > 0,
+        "post_exit_sample_count": post_exit_samples,
+        "live_sample_count": state.samples.len().saturating_sub(post_exit_samples as usize),
+        "post_exit_working_set_zeroed": post_exit_working_set_zeroed,
+        "memory_summary_source": memory_summary_source,
+        "last_sample_any_process_working_set_bytes": last_sample_any
+            .map(|sample| sample_u64(sample, "process_working_set_bytes")),
+        "last_sample_any_process_private_bytes": last_sample_any
+            .map(|sample| sample_u64(sample, "process_private_bytes")),
+        "last_process_working_set_bytes": last_live_sample
+            .map(|sample| sample_u64(sample, "process_working_set_bytes")),
+        "last_process_private_bytes": last_live_sample
+            .map(|sample| sample_u64(sample, "process_private_bytes")),
+        "last_process_virtual_bytes": last_live_sample
+            .map(|sample| sample_u64(sample, "process_virtual_bytes")),
+        "last_rust_estimated_retained_bytes": last_live_sample
+            .map(|sample| sample_u64(sample, "rust_estimated_retained_bytes")),
+        "last_native_heap_unattributed_bytes": last_live_sample
+            .map(|sample| sample_u64(sample, "native_heap_unattributed_bytes")),
+        "last_unattributed_working_set_bytes": last_live_sample
+            .map(|sample| sample_u64(sample, "unattributed_working_set_bytes")),
+        "last_rocksdb_total_estimated_memory_bytes": last_live_sample
+            .map(|sample| sample_u64(sample, "rocksdb_total_estimated_memory_bytes")),
+        "last_working_set_bytes_per_1000_tx": last_live_sample
+            .map(|sample| sample_u64(sample, "working_set_bytes_per_1000_tx")),
+        "last_private_bytes_per_1000_tx": last_live_sample
+            .map(|sample| sample_u64(sample, "private_bytes_per_1000_tx")),
+        "last_native_heap_unattributed_bytes_per_1000_tx": last_live_sample
+            .map(|sample| sample_u64(sample, "native_heap_unattributed_bytes_per_1000_tx")),
+        "peak_live_working_set_bytes": peak_live_sample
+            .map(|sample| sample_u64(sample, "process_working_set_bytes")),
+        "peak_live_private_bytes": peak_live_sample
+            .map(|sample| sample_u64(sample, "process_private_bytes")),
+        "peak_live_native_heap_unattributed_bytes": peak_live_sample
+            .map(|sample| sample_u64(sample, "native_heap_unattributed_bytes")),
+        "peak_live_process_virtual_bytes": peak_live_sample
+            .map(|sample| sample_u64(sample, "process_virtual_bytes")),
+        "peak_live_allocator_fragmentation_suspected": peak_live_sample
+            .and_then(|sample| sample_bool(sample, "allocator_fragmentation_suspected")),
+        "peak_live_working_set_not_returned_suspected": peak_live_sample
+            .and_then(|sample| sample_bool(sample, "working_set_not_returned_suspected")),
+        "allocator_fragmentation_suspected": memory_summary_sample
+            .and_then(|sample| sample_bool(sample, "allocator_fragmentation_suspected")),
+        "working_set_not_returned_suspected": memory_summary_sample
+            .and_then(|sample| sample_bool(sample, "working_set_not_returned_suspected")),
         "samples": state.samples,
     });
     write_report(config.report_path.as_path(), &report)
