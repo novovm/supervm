@@ -1493,3 +1493,120 @@ git diff --check: pending
 ```
 
 本节不是 memory plateau 签收；它只是记录 historical current view retention 修复已经写入。
+
+### 13.10 Receiver RocksDB LOCK Conflict Fix and 5min Functional Re-run
+
+状态：
+
+```text
+Receiver RocksDB LOCK Conflict Fix: PASS
+Cross-machine 5min Sustained Functional: PASS
+Commit: 374bdac
+Memory Plateau: NOT SIGNED
+10min / 30min sustained: NOT SIGNED
+```
+
+触发原因：
+
+```text
+上一轮 cross-machine 5min attribution run 失败时，receiver 子进程以 exit code 1
+退出，外层 exit forensics 捕获到 stderr：
+
+open nov native execution rocksdb failed
+Failed to create lock file ... rocksdb/LOCK
+
+判断：父进程 diagnostics 在 receiver child 运行期间打开同一个 RocksDB
+路径做 memory probe，抢占了 child 正在使用的 RocksDB LOCK，导致 receiver
+被诊断系统自身打死。
+```
+
+修复内容：
+
+```text
+1. receiver child 运行期间，父进程不再打开 child 持有的 RocksDB path。
+
+2. live receiver diagnostics 使用 skipped probe 记录：
+   rocksdb_probe_skipped_reason = live_receiver_child_holds_lock
+
+3. child 退出后，final / recovery probe 才允许重新打开 RocksDB。
+
+4. exit forensics 增加 stderr tail：
+   child_stderr_tail
+
+5. stderr 中出现 RocksDB LOCK 冲突时，fail_reason 细化为：
+   rocksdb_lock_conflict
+
+6. 不改变 frozen lifecycle，不改变 AOEM_runtime owner，不改变 pending-only 入口。
+```
+
+验证结果：
+
+```text
+profile: cross-machine 5min sustained functional re-run
+sender: 192.168.71.118
+receiver: 192.168.71.117:39001
+tx_count = 2400
+duration_seconds = 300
+tx_per_round = 8
+round_interval_ms = 1000
+
+accepted = true
+received_unique = 2400
+aoem_executed_total = 2400
+receipt_count = 2400
+semantic_sequence = 2400
+queue_pending_last = 0
+duplicate_canonical_included = 0
+duplicate_receipt = 0
+receipt_index_consistent = true
+semantic_head_monotonic = true
+receiver clean exit = true
+
+child_exit_code = 0
+fail_reason = normal_pass
+stderr_tail = empty
+final_report_written = true
+diagnostics_report_written = true
+```
+
+保持不变的边界：
+
+```text
+AOEM_runtime 仍是执行并发 owner。
+Rust host 仍只驱动生命周期。
+pending-only 产品入口不变。
+AOEM tick / proof / dirty commit / canonical lifecycle 不变。
+canonical body/head recovery 仍不由本 gate 签收。
+```
+
+本节签收范围：
+
+```text
+签收：
+- Receiver RocksDB LOCK Conflict Fix
+- Cross-machine 5min sustained functional pass
+- Receiver final report / diagnostics / exit forensics 正常写出
+
+不签收：
+- Memory plateau
+- Cross-machine 10min sustained
+- Cross-machine 30min sustained
+- 2h / overnight sustained
+- hostile network
+- canonical body/head recovery
+```
+
+下一步：
+
+```text
+进入 Allocator / Native Heap Working Set Attribution。
+
+目标：解释 remaining working set / unattributed working set 的来源，区分：
+- Rust retained objects
+- AOEM/native heap
+- RocksDB native allocation / cache
+- allocator fragmentation
+- Windows working set not returned
+
+在 memory plateau 未签收前，不进入 30min sustained 签收。
+```
