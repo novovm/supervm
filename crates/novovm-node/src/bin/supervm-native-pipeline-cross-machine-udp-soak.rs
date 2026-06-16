@@ -105,6 +105,12 @@ struct SendScheduleStatsV1 {
     delayed_packets: u64,
     reordered_packets: u64,
     sent_unique: u64,
+    send_retry_count: u64,
+    send_would_block_count: u64,
+    send_failed_count: u64,
+    send_failure_first_index: Option<u64>,
+    send_failure_first_copy_index: Option<u64>,
+    send_failure_first_error: Option<String>,
     sent_by_hash: BTreeMap<String, u64>,
 }
 
@@ -121,6 +127,19 @@ struct TailRepairConfigV1 {
     enabled: bool,
     rounds: u64,
     interval_ms: u64,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct UdpSendRetryConfigV1 {
+    max_retries: u64,
+    backoff_ms: u64,
+    backoff_max_ms: u64,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct UdpSendRetryStatsV1 {
+    retry_count: u64,
+    would_block_count: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -445,6 +464,18 @@ fn merge_send_stats(target: &mut SendScheduleStatsV1, next: SendScheduleStatsV1)
     target.reordered_packets = target
         .reordered_packets
         .saturating_add(next.reordered_packets);
+    target.send_retry_count = target.send_retry_count.saturating_add(next.send_retry_count);
+    target.send_would_block_count = target
+        .send_would_block_count
+        .saturating_add(next.send_would_block_count);
+    target.send_failed_count = target
+        .send_failed_count
+        .saturating_add(next.send_failed_count);
+    if target.send_failure_first_error.is_none() {
+        target.send_failure_first_index = next.send_failure_first_index;
+        target.send_failure_first_copy_index = next.send_failure_first_copy_index;
+        target.send_failure_first_error = next.send_failure_first_error;
+    }
     for (hash, count) in next.sent_by_hash {
         *target.sent_by_hash.entry(hash).or_default() += count;
     }
@@ -465,7 +496,64 @@ fn empty_send_stats() -> SendScheduleStatsV1 {
         delayed_packets: 0,
         reordered_packets: 0,
         sent_unique: 0,
+        send_retry_count: 0,
+        send_would_block_count: 0,
+        send_failed_count: 0,
+        send_failure_first_index: None,
+        send_failure_first_copy_index: None,
+        send_failure_first_error: None,
         sent_by_hash: BTreeMap::new(),
+    }
+}
+
+fn default_udp_send_retry_config() -> UdpSendRetryConfigV1 {
+    UdpSendRetryConfigV1 {
+        max_retries: 10,
+        backoff_ms: 5,
+        backoff_max_ms: 100,
+    }
+}
+
+fn is_retryable_udp_send_error(error: &str) -> bool {
+    let lower = error.to_ascii_lowercase();
+    lower.contains("wouldblock")
+        || lower.contains("would block")
+        || lower.contains("resource temporarily unavailable")
+        || lower.contains("os error 11")
+        || lower.contains("os error 10035")
+        || lower.contains("temporarily unavailable")
+}
+
+fn safe_send_with_retry(
+    sender: &UdpTransport,
+    receiver_node: NodeId,
+    msg: ProtocolMessage,
+    retry: UdpSendRetryConfigV1,
+) -> std::result::Result<UdpSendRetryStatsV1, String> {
+    let mut stats = UdpSendRetryStatsV1::default();
+    let mut retry_attempt = 0u64;
+    loop {
+        match sender.send(receiver_node, msg.clone()) {
+            Ok(()) => return Ok(stats),
+            Err(err) => {
+                let error = err.to_string();
+                if !is_retryable_udp_send_error(error.as_str())
+                    || retry_attempt >= retry.max_retries
+                {
+                    return Err(error);
+                }
+                stats.would_block_count = stats.would_block_count.saturating_add(1);
+                stats.retry_count = stats.retry_count.saturating_add(1);
+                let backoff_ms = retry
+                    .backoff_ms
+                    .saturating_mul(retry_attempt.saturating_add(1))
+                    .min(retry.backoff_max_ms);
+                if backoff_ms > 0 {
+                    std::thread::sleep(Duration::from_millis(backoff_ms));
+                }
+                retry_attempt = retry_attempt.saturating_add(1);
+            }
+        }
     }
 }
 
@@ -2068,6 +2156,7 @@ fn send_scheduled_batch(
     receiver_addr: &str,
     txs: &[NativeFixtureTxV1],
     delay_ms: u64,
+    retry: UdpSendRetryConfigV1,
 ) -> Result<SendScheduleStatsV1> {
     let sender = UdpTransport::bind_for_chain(NodeId(sender_node), sender_addr, chain_id)
         .with_context(|| format!("bind cross-machine sender UDP failed: {sender_addr}"))?;
@@ -2078,6 +2167,8 @@ fn send_scheduled_batch(
     let mut sent_unique = BTreeSet::<String>::new();
     let mut sent_packets = 0u64;
     let mut dropped_packets = 0u64;
+    let mut send_retry_count = 0u64;
+    let mut send_would_block_count = 0u64;
     let duplicated_packets = txs
         .iter()
         .filter(|tx| tx.copy_index > 0)
@@ -2102,18 +2193,44 @@ fn send_scheduled_batch(
             tx_count: 1,
             payload: tx.payload.clone(),
         });
-        sender.send(NodeId(receiver_node), msg).with_context(|| {
-            format!(
-                "send cross-machine tx index={} copy={} failed",
-                tx.index, tx.copy_index
-            )
-        })?;
-        let hash = hex_lower(&tx.tx_hash);
-        sent_unique.insert(hash.clone());
-        *sent_by_hash.entry(hash).or_default() += 1;
-        sent_packets = sent_packets.saturating_add(1);
-        if delay_ms > 0 {
-            std::thread::sleep(std::time::Duration::from_millis(delay_ms));
+        match safe_send_with_retry(&sender, NodeId(receiver_node), msg, retry) {
+            Ok(retry_stats) => {
+                send_retry_count =
+                    send_retry_count.saturating_add(retry_stats.retry_count);
+                send_would_block_count = send_would_block_count
+                    .saturating_add(retry_stats.would_block_count);
+                sent_packets = sent_packets.saturating_add(1);
+                let hash = hex_lower(&tx.tx_hash);
+                sent_unique.insert(hash.clone());
+                *sent_by_hash.entry(hash).or_default() += 1;
+                if delay_ms > 0 {
+                    std::thread::sleep(std::time::Duration::from_millis(delay_ms));
+                }
+                continue;
+            }
+            Err(error) => {
+                if is_retryable_udp_send_error(error.as_str()) {
+                    send_would_block_count =
+                        send_would_block_count.saturating_add(retry.max_retries.saturating_add(1));
+                    send_retry_count = send_retry_count.saturating_add(retry.max_retries);
+                }
+                return Ok(SendScheduleStatsV1 {
+                    scheduled_packets: txs.len().try_into().unwrap_or(u64::MAX),
+                    sent_packets,
+                    dropped_packets,
+                    duplicated_packets,
+                    delayed_packets: if delay_ms > 0 { sent_packets } else { 0 },
+                    reordered_packets,
+                    sent_unique: sent_unique.len().try_into().unwrap_or(u64::MAX),
+                    send_retry_count,
+                    send_would_block_count,
+                    send_failed_count: 1,
+                    send_failure_first_index: Some(tx.index),
+                    send_failure_first_copy_index: Some(tx.copy_index),
+                    send_failure_first_error: Some(error),
+                    sent_by_hash,
+                });
+            }
         }
     }
     Ok(SendScheduleStatsV1 {
@@ -2124,6 +2241,12 @@ fn send_scheduled_batch(
         delayed_packets: if delay_ms > 0 { sent_packets } else { 0 },
         reordered_packets,
         sent_unique: sent_unique.len().try_into().unwrap_or(u64::MAX),
+        send_retry_count,
+        send_would_block_count,
+        send_failed_count: 0,
+        send_failure_first_index: None,
+        send_failure_first_copy_index: None,
+        send_failure_first_error: None,
         sent_by_hash,
     })
 }
@@ -2233,6 +2356,7 @@ fn run_sender(
     fault: FaultConfigV1,
     sustained: SustainedConfigV1,
     tail_repair: TailRepairConfigV1,
+    udp_send_retry: UdpSendRetryConfigV1,
 ) -> Result<Value> {
     let mut stats = empty_send_stats();
     let mut repair_stats = empty_send_stats();
@@ -2259,9 +2383,13 @@ fn run_sender(
             receiver_addr,
             scheduled.as_slice(),
             fault.delay_ms,
+            udp_send_retry,
         )?;
         sent_unique_target = sent_unique_target.saturating_add(round_tx_count);
         merge_send_stats(&mut stats, round_stats);
+        if stats.send_failed_count > 0 {
+            break;
+        }
         if sustained.enabled && round + 1 < rounds && sustained.round_interval_ms > 0 {
             std::thread::sleep(std::time::Duration::from_millis(
                 sustained.round_interval_ms,
@@ -2269,7 +2397,7 @@ fn run_sender(
         }
     }
     let mut repair_rounds_used = 0u64;
-    if tail_repair.enabled && tail_repair.rounds > 0 {
+    if stats.send_failed_count == 0 && tail_repair.enabled && tail_repair.rounds > 0 {
         for repair_round in 0..tail_repair.rounds {
             if tail_repair.interval_ms > 0 {
                 std::thread::sleep(std::time::Duration::from_millis(tail_repair.interval_ms));
@@ -2283,23 +2411,49 @@ fn run_sender(
                 receiver_addr,
                 txs.as_slice(),
                 0,
+                udp_send_retry,
             )?;
             merge_send_stats(&mut repair_stats, round_stats);
             repair_rounds_used = repair_rounds_used.saturating_add(1);
+            if repair_stats.send_failed_count > 0 {
+                break;
+            }
         }
         merge_send_stats(&mut stats, repair_stats.clone());
     }
-    let accepted = stats.sent_unique == tx_count;
+    let sender_completed = stats.sent_unique == tx_count && stats.send_failed_count == 0;
+    let accepted = sender_completed;
+    let fail_reason = if accepted {
+        None
+    } else {
+        Some("sender_send_incomplete")
+    };
     let report = serde_json::json!({
         "schema": REPORT_SCHEMA_V1,
         "role": "sender",
         "accepted": accepted,
+        "fail_reason": fail_reason,
         "chain_id": chain_id,
         "tx_count": tx_count,
+        "tx_target_total": tx_count,
         "sender_node": sender_node,
         "receiver_node": receiver_node,
         "sender_addr": sender_addr,
         "receiver_addr": receiver_addr,
+        "sender_completed": sender_completed,
+        "sent_packets": stats.sent_packets,
+        "send_retry_count": stats.send_retry_count,
+        "send_would_block_count": stats.send_would_block_count,
+        "send_failed_count": stats.send_failed_count,
+        "send_failure_first_index": stats.send_failure_first_index,
+        "send_failure_first_copy_index": stats.send_failure_first_copy_index,
+        "send_failure_first_error": stats.send_failure_first_error,
+        "send_failure_type": if stats.send_failed_count > 0 { Some("udp_send_retry_exhausted") } else { None },
+        "udp_send_retry": {
+            "max_retries": udp_send_retry.max_retries,
+            "backoff_ms": udp_send_retry.backoff_ms,
+            "backoff_max_ms": udp_send_retry.backoff_max_ms,
+        },
         "clean_network": {
             "packet_loss": fault.loss_bps,
             "duplicate": fault.duplicate_bps,
@@ -2322,6 +2476,9 @@ fn run_sender(
             "delayed_packets": stats.delayed_packets,
             "reordered_packets": stats.reordered_packets,
             "sent_unique": stats.sent_unique,
+            "send_retry_count": stats.send_retry_count,
+            "send_would_block_count": stats.send_would_block_count,
+            "send_failed_count": stats.send_failed_count,
         },
         "sustained": {
             "enabled": sustained.enabled,
@@ -2330,6 +2487,8 @@ fn run_sender(
             "tx_per_round": tx_per_round,
             "round_interval_ms": sustained.round_interval_ms,
             "tx_submitted_total": stats.sent_unique,
+            "tx_target_total": tx_count,
+            "sender_completed": sender_completed,
         },
         "tail_repair": {
             "enabled": tail_repair.enabled,
@@ -2339,10 +2498,22 @@ fn run_sender(
             "initial_sent_total": stats.sent_packets.saturating_sub(repair_stats.sent_packets),
             "repair_sent_total": repair_stats.sent_packets,
             "repair_scheduled_total": repair_stats.scheduled_packets,
+            "repair_send_retry_count": repair_stats.send_retry_count,
+            "repair_send_would_block_count": repair_stats.send_would_block_count,
+            "repair_send_failed_count": repair_stats.send_failed_count,
             "tail_repair_success": accepted,
         },
         "sent_by_hash": stats.sent_by_hash,
-        "violations": if accepted { Vec::<String>::new() } else { vec!["sender did not send expected unique tx count".to_string()] },
+        "violations": if accepted { Vec::<String>::new() } else { vec![format!(
+            "{}: tx_submitted_total={} expected={} send_failed_count={} first_failure_index={:?} first_failure_copy={:?} first_failure_error={:?}",
+            fail_reason.unwrap_or("sender_send_incomplete"),
+            stats.sent_unique,
+            tx_count,
+            stats.send_failed_count,
+            stats.send_failure_first_index,
+            stats.send_failure_first_copy_index,
+            stats.send_failure_first_error,
+        )] },
     });
     Ok(compact_sender_report_for_report(report))
 }
@@ -2460,6 +2631,7 @@ fn run_local_smoke(
         },
         sustained,
         tail_repair,
+        default_udp_send_retry_config(),
     )?;
     let receiver_summary = parse_summary(
         child
@@ -2672,6 +2844,7 @@ fn run_memory_bisect_variant(
             rounds: 1,
             interval_ms: 200,
         },
+        default_udp_send_retry_config(),
     );
     let receiver_result = match handle.join() {
         Ok(result) => result,
@@ -2958,6 +3131,12 @@ fn main() -> Result<()> {
             if tail_repair_enabled { 1000 } else { 0 },
         )?,
     };
+    let udp_send_retry = UdpSendRetryConfigV1 {
+        max_retries: u64_env("NOVOVM_NATIVE_PIPELINE_UDP_SEND_RETRY_MAX", 10)?,
+        backoff_ms: u64_env("NOVOVM_NATIVE_PIPELINE_UDP_SEND_RETRY_BACKOFF_MS", 5)?,
+        backoff_max_ms: u64_env("NOVOVM_NATIVE_PIPELINE_UDP_SEND_RETRY_BACKOFF_MAX_MS", 100)?
+            .max(1),
+    };
     let sender_node = u64_env_alias(
         &[
             "NOVOVM_NATIVE_PIPELINE_SENDER_NODE",
@@ -3061,6 +3240,7 @@ fn main() -> Result<()> {
                 fault,
                 sustained,
                 tail_repair,
+                udp_send_retry,
             )?
         }
         "local-smoke" | "local_smoke" => run_local_smoke(
