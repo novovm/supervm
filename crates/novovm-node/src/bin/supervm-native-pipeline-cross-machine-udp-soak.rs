@@ -23,6 +23,59 @@ use std::process::{Child, Command, Output, Stdio};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 const REPORT_SCHEMA_V1: &str = "novovm-native-pipeline-cross-machine-udp-soak-report/v1";
+const MEMORY_BISECT_SCHEMA_V1: &str = "novovm-native-pipeline-memory-bisect-report/v1";
+const MEMORY_PROBE_TOGGLES_V1: &[(&str, &str, bool)] = &[
+    (
+        "disable_proof_projection",
+        "NOVOVM_NATIVE_PIPELINE_MEMORY_PROBE_DISABLE_PROOF_PROJECTION",
+        true,
+    ),
+    (
+        "disable_receipt_projection",
+        "NOVOVM_NATIVE_PIPELINE_MEMORY_PROBE_DISABLE_RECEIPT_PROJECTION",
+        true,
+    ),
+    (
+        "disable_canonical_projection",
+        "NOVOVM_NATIVE_PIPELINE_MEMORY_PROBE_DISABLE_CANONICAL_PROJECTION",
+        true,
+    ),
+    (
+        "disable_broadcast_reporting",
+        "NOVOVM_NATIVE_PIPELINE_MEMORY_PROBE_DISABLE_BROADCAST_REPORTING",
+        false,
+    ),
+    (
+        "disable_recovery_probe",
+        "NOVOVM_NATIVE_PIPELINE_MEMORY_PROBE_DISABLE_RECOVERY_PROBE",
+        false,
+    ),
+    (
+        "disable_diagnostics_samples",
+        "NOVOVM_NATIVE_PIPELINE_MEMORY_PROBE_DISABLE_DIAGNOSTICS_SAMPLES",
+        false,
+    ),
+    (
+        "disable_json_report_serialization",
+        "NOVOVM_NATIVE_PIPELINE_MEMORY_PROBE_DISABLE_JSON_REPORT_SERIALIZATION",
+        false,
+    ),
+    (
+        "disable_semantic_ledger_mirror",
+        "NOVOVM_NATIVE_PIPELINE_MEMORY_PROBE_DISABLE_SEMANTIC_LEDGER_MIRROR",
+        true,
+    ),
+    (
+        "minimal_aoem_result",
+        "NOVOVM_NATIVE_PIPELINE_MEMORY_PROBE_MINIMAL_AOEM_RESULT",
+        true,
+    ),
+    (
+        "no_receipt_body_cache",
+        "NOVOVM_NATIVE_PIPELINE_MEMORY_PROBE_NO_RECEIPT_BODY_CACHE",
+        true,
+    ),
+];
 
 #[derive(Debug, Clone)]
 struct NativeFixtureTxV1 {
@@ -230,6 +283,14 @@ fn receiver_exit_report_path() -> PathBuf {
             PathBuf::from(
                 "artifacts/native-pipeline/receiver-cross-machine-sustained-5min-exit.json",
             )
+        })
+}
+
+fn memory_bisect_report_path() -> PathBuf {
+    first_string_env_nonempty(&["NOVOVM_NATIVE_PIPELINE_MEMORY_BISECT_REPORT_PATH"])
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            PathBuf::from("artifacts/native-pipeline/native-pipeline-memory-bisect-report.json")
         })
 }
 
@@ -608,6 +669,21 @@ fn spawn_receiver_node(
     ];
     for (key, value) in envs {
         cmd.env(key, value);
+    }
+    for (_, env_name, _) in MEMORY_PROBE_TOGGLES_V1 {
+        if let Some(value) = string_env_nonempty(env_name) {
+            cmd.env(env_name, value);
+        }
+    }
+    for legacy_env in [
+        "NOVOVM_NATIVE_PIPELINE_DISABLE_PROOF_PROJECTION_FOR_MEMORY_PROBE",
+        "NOVOVM_NATIVE_PIPELINE_DISABLE_CANONICAL_PROJECTION_FOR_MEMORY_PROBE",
+        "NOVOVM_NATIVE_PIPELINE_DISABLE_REPORT_SERIALIZATION_FOR_MEMORY_PROBE",
+        "NOVOVM_NATIVE_PIPELINE_DISABLE_RECOVERY_PROBE_FOR_MEMORY_PROBE",
+    ] {
+        if let Some(value) = string_env_nonempty(legacy_env) {
+            cmd.env(legacy_env, value);
+        }
     }
     if let Some(peers) = string_env_nonempty("NOVOVM_NATIVE_PIPELINE_PEERS")
         .or_else(|| string_env_nonempty("NOVOVM_NATIVE_EXECUTION_PIPELINE_UDP_PEERS"))
@@ -1419,6 +1495,61 @@ fn probe_bool_env(name: &str) -> bool {
         .unwrap_or(false)
 }
 
+fn memory_probe_switches_report() -> Value {
+    let mut map = serde_json::Map::new();
+    for (name, env_name, probe_only_not_functional) in MEMORY_PROBE_TOGGLES_V1 {
+        map.insert(
+            (*name).to_string(),
+            serde_json::json!(probe_bool_env(env_name)),
+        );
+        map.insert(
+            format!("{name}_probe_only_not_functional"),
+            serde_json::json!(*probe_only_not_functional && probe_bool_env(env_name)),
+        );
+    }
+    map.insert(
+        "disable_proof_projection_for_memory_probe".to_string(),
+        serde_json::json!(
+            probe_bool_env("NOVOVM_NATIVE_PIPELINE_DISABLE_PROOF_PROJECTION_FOR_MEMORY_PROBE")
+                || probe_bool_env("NOVOVM_NATIVE_PIPELINE_MEMORY_PROBE_DISABLE_PROOF_PROJECTION")
+        ),
+    );
+    map.insert(
+        "disable_canonical_projection_for_memory_probe".to_string(),
+        serde_json::json!(
+            probe_bool_env("NOVOVM_NATIVE_PIPELINE_DISABLE_CANONICAL_PROJECTION_FOR_MEMORY_PROBE")
+                || probe_bool_env(
+                    "NOVOVM_NATIVE_PIPELINE_MEMORY_PROBE_DISABLE_CANONICAL_PROJECTION"
+                )
+        ),
+    );
+    map.insert(
+        "disable_report_serialization_for_memory_probe".to_string(),
+        serde_json::json!(
+            probe_bool_env("NOVOVM_NATIVE_PIPELINE_DISABLE_REPORT_SERIALIZATION_FOR_MEMORY_PROBE")
+                || probe_bool_env(
+                    "NOVOVM_NATIVE_PIPELINE_MEMORY_PROBE_DISABLE_JSON_REPORT_SERIALIZATION"
+                )
+        ),
+    );
+    map.insert(
+        "disable_recovery_probe_for_memory_probe".to_string(),
+        serde_json::json!(
+            probe_bool_env("NOVOVM_NATIVE_PIPELINE_DISABLE_RECOVERY_PROBE_FOR_MEMORY_PROBE")
+                || probe_bool_env("NOVOVM_NATIVE_PIPELINE_MEMORY_PROBE_DISABLE_RECOVERY_PROBE")
+        ),
+    );
+    map.insert(
+        "applies_to_production_default".to_string(),
+        serde_json::json!(false),
+    );
+    map.insert(
+        "lifecycle_structure_changed".to_string(),
+        serde_json::json!(false),
+    );
+    Value::Object(map)
+}
+
 fn sample_u64(sample: &Value, key: &str) -> u64 {
     sample.get(key).and_then(Value::as_u64).unwrap_or_default()
 }
@@ -1681,14 +1812,7 @@ fn diagnostics_summary_sample(
         } else {
             "estimated_stage_attribution"
         });
-    out["memory_probe_stage_switches"] = serde_json::json!({
-        "disable_proof_projection_for_memory_probe": probe_bool_env("NOVOVM_NATIVE_PIPELINE_DISABLE_PROOF_PROJECTION_FOR_MEMORY_PROBE"),
-        "disable_canonical_projection_for_memory_probe": probe_bool_env("NOVOVM_NATIVE_PIPELINE_DISABLE_CANONICAL_PROJECTION_FOR_MEMORY_PROBE"),
-        "disable_report_serialization_for_memory_probe": probe_bool_env("NOVOVM_NATIVE_PIPELINE_DISABLE_REPORT_SERIALIZATION_FOR_MEMORY_PROBE"),
-        "disable_recovery_probe_for_memory_probe": probe_bool_env("NOVOVM_NATIVE_PIPELINE_DISABLE_RECOVERY_PROBE_FOR_MEMORY_PROBE"),
-        "applies_to_production_default": false,
-        "lifecycle_structure_changed": false,
-    });
+    out["memory_probe_stage_switches"] = memory_probe_switches_report();
     out["active_pending_count"] =
         serde_json::json!(summary_u64(summary, "queue_active_pending_last"));
     out["historical_pending_count"] =
@@ -2286,6 +2410,326 @@ fn run_local_smoke(
     }))
 }
 
+fn clear_memory_probe_toggle_envs() {
+    for (_, env_name, _) in MEMORY_PROBE_TOGGLES_V1 {
+        std::env::remove_var(env_name);
+    }
+}
+
+fn read_json_file(path: &Path) -> Option<Value> {
+    let raw = fs::read_to_string(path).ok()?;
+    serde_json::from_str(raw.as_str()).ok()
+}
+
+fn memory_bisect_variant_report(
+    name: &str,
+    toggle_env: Option<&str>,
+    probe_only_not_functional: bool,
+    diagnostics_report: Option<&Value>,
+    receiver_summary: Option<&Value>,
+    error: Option<&str>,
+) -> Value {
+    let peak_private = diagnostics_report
+        .map(|report| sample_u64(report, "peak_live_private_bytes"))
+        .unwrap_or_default();
+    let peak_native_heap = diagnostics_report
+        .map(|report| sample_u64(report, "peak_live_native_heap_unattributed_bytes"))
+        .unwrap_or_default();
+    serde_json::json!({
+        "toggle_name": name,
+        "toggle_env": toggle_env,
+        "toggle_enabled": toggle_env.is_some(),
+        "toggle_applied_to_execution": false,
+        "probe_only_not_functional": probe_only_not_functional && toggle_env.is_some(),
+        "accepted": receiver_summary
+            .and_then(|summary| summary.get("accepted"))
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        "aoem_executed_total": receiver_summary
+            .map(|summary| summary_u64(summary, "aoem_executed_total"))
+            .unwrap_or_default(),
+        "queue_pending_last": receiver_summary
+            .map(|summary| summary_u64(summary, "queue_pending_last"))
+            .unwrap_or_default(),
+        "peak_private_bytes": peak_private,
+        "peak_native_heap_unattributed_bytes": peak_native_heap,
+        "memory_summary_source": diagnostics_report
+            .and_then(|report| report.get("memory_summary_source"))
+            .and_then(Value::as_str),
+        "summary_unknown_native_heap_source": diagnostics_report
+            .and_then(|report| report.get("summary_unknown_native_heap_source"))
+            .and_then(Value::as_bool),
+        "summary_large_allocation_suspected_stage": diagnostics_report
+            .and_then(|report| report.get("summary_large_allocation_suspected_stage"))
+            .and_then(Value::as_str),
+        "error": error,
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_memory_bisect_variant(
+    variant_name: &str,
+    toggle_env: Option<&str>,
+    probe_only_not_functional: bool,
+    chain_id: u64,
+    tx_count: u64,
+    sender_node: u64,
+    receiver_node: u64,
+    node_bin: &Path,
+    tick_interval_ms: u64,
+    batch_budget: u64,
+    recv_budget: u64,
+    startup_wait_ms: u64,
+) -> Value {
+    clear_memory_probe_toggle_envs();
+    if let Some(env_name) = toggle_env {
+        std::env::set_var(env_name, "1");
+    }
+    let sender_addr = match reserve_udp_addr() {
+        Ok(addr) => addr,
+        Err(err) => {
+            let error = err.to_string();
+            return memory_bisect_variant_report(
+                variant_name,
+                toggle_env,
+                probe_only_not_functional,
+                None,
+                None,
+                Some(error.as_str()),
+            );
+        }
+    };
+    let receiver_addr = match reserve_udp_addr() {
+        Ok(addr) => addr,
+        Err(err) => {
+            let error = err.to_string();
+            return memory_bisect_variant_report(
+                variant_name,
+                toggle_env,
+                probe_only_not_functional,
+                None,
+                None,
+                Some(error.as_str()),
+            );
+        }
+    };
+    let safe_variant = variant_name.replace(['\\', '/', ':', ' '], "_");
+    let store = temp_store_path(chain_id, safe_variant.as_str());
+    let diagnostics_path = PathBuf::from(format!(
+        "artifacts/native-pipeline/memory-bisect-{safe_variant}-diagnostics.json"
+    ));
+    let stdout_path = PathBuf::from(format!(
+        "artifacts/native-pipeline/memory-bisect-{safe_variant}-stdout.log"
+    ));
+    let stderr_path = PathBuf::from(format!(
+        "artifacts/native-pipeline/memory-bisect-{safe_variant}-stderr.log"
+    ));
+    let exit_path = PathBuf::from(format!(
+        "artifacts/native-pipeline/memory-bisect-{safe_variant}-exit.json"
+    ));
+    std::env::set_var(
+        "NOVOVM_NATIVE_PIPELINE_DIAGNOSTICS_REPORT_PATH",
+        diagnostics_path.as_os_str(),
+    );
+    std::env::set_var(
+        "NOVOVM_NATIVE_PIPELINE_RECEIVER_STDOUT_LOG_PATH",
+        stdout_path.as_os_str(),
+    );
+    std::env::set_var(
+        "NOVOVM_NATIVE_PIPELINE_RECEIVER_STDERR_LOG_PATH",
+        stderr_path.as_os_str(),
+    );
+    std::env::set_var(
+        "NOVOVM_NATIVE_PIPELINE_RECEIVER_EXIT_REPORT_PATH",
+        exit_path.as_os_str(),
+    );
+    std::env::set_var("NOVOVM_NATIVE_PIPELINE_PROGRESS_WATCHDOG_ENABLED", "1");
+    std::env::set_var("NOVOVM_NATIVE_PIPELINE_PROGRESS_SAMPLE_INTERVAL_MS", "500");
+    std::env::set_var("NOVOVM_NATIVE_PIPELINE_MEMORY_SAMPLE_ENABLED", "1");
+    let node_bin = node_bin.to_path_buf();
+    let store_for_thread = store.clone();
+    let receiver_addr_for_thread = receiver_addr.clone();
+    let handle = std::thread::spawn(move || {
+        run_receiver_node(
+            node_bin.as_path(),
+            chain_id,
+            receiver_node,
+            receiver_addr_for_thread.as_str(),
+            store_for_thread.as_path(),
+            tx_count,
+            div_ceil_u64(tx_count, batch_budget).saturating_add(180),
+            tick_interval_ms,
+            batch_budget,
+            recv_budget,
+        )
+    });
+    std::thread::sleep(Duration::from_millis(startup_wait_ms));
+    let sender_result = run_sender(
+        chain_id,
+        tx_count,
+        sender_node,
+        receiver_node,
+        sender_addr.as_str(),
+        receiver_addr.as_str(),
+        FaultConfigV1 {
+            enabled: false,
+            loss_bps: 0,
+            duplicate_bps: 0,
+            delay_ms: 0,
+            reorder_bps: 0,
+            seed: 0,
+        },
+        SustainedConfigV1 {
+            enabled: false,
+            duration_seconds: 0,
+            tx_per_round: tx_count,
+            round_interval_ms: 0,
+        },
+        TailRepairConfigV1 {
+            enabled: true,
+            rounds: 1,
+            interval_ms: 200,
+        },
+    );
+    let receiver_result = match handle.join() {
+        Ok(result) => result,
+        Err(_) => Err(anyhow::anyhow!("memory bisect receiver thread panicked")),
+    };
+    let diagnostics_report = read_json_file(diagnostics_path.as_path());
+    let mut error_parts = Vec::<String>::new();
+    if let Err(err) = sender_result.as_ref() {
+        error_parts.push(format!("sender: {err}"));
+    }
+    if let Err(err) = receiver_result.as_ref() {
+        error_parts.push(format!("receiver: {err}"));
+    }
+    let error = if error_parts.is_empty() {
+        None
+    } else {
+        Some(error_parts.join("; "))
+    };
+    memory_bisect_variant_report(
+        variant_name,
+        toggle_env,
+        probe_only_not_functional,
+        diagnostics_report.as_ref(),
+        receiver_result.as_ref().ok(),
+        error.as_deref(),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_memory_bisect_gate(
+    chain_id: u64,
+    tx_count: u64,
+    sender_node: u64,
+    receiver_node: u64,
+    node_bin: &Path,
+    tick_interval_ms: u64,
+    batch_budget: u64,
+    recv_budget: u64,
+    startup_wait_ms: u64,
+) -> Result<Value> {
+    let mut variants = Vec::<Value>::new();
+    variants.push(run_memory_bisect_variant(
+        "baseline",
+        None,
+        false,
+        chain_id,
+        tx_count,
+        sender_node,
+        receiver_node,
+        node_bin,
+        tick_interval_ms,
+        batch_budget,
+        recv_budget,
+        startup_wait_ms,
+    ));
+    for (toggle_name, env_name, probe_only_not_functional) in MEMORY_PROBE_TOGGLES_V1 {
+        variants.push(run_memory_bisect_variant(
+            toggle_name,
+            Some(env_name),
+            *probe_only_not_functional,
+            chain_id,
+            tx_count,
+            sender_node,
+            receiver_node,
+            node_bin,
+            tick_interval_ms,
+            batch_budget,
+            recv_budget,
+            startup_wait_ms,
+        ));
+    }
+    clear_memory_probe_toggle_envs();
+    let baseline_private = variants
+        .first()
+        .map(|variant| sample_u64(variant, "peak_private_bytes"))
+        .unwrap_or_default();
+    let baseline_native = variants
+        .first()
+        .map(|variant| sample_u64(variant, "peak_native_heap_unattributed_bytes"))
+        .unwrap_or_default();
+    let mut best_stage = "allocator_or_external_native_heap_suspected".to_string();
+    let mut best_reduction_percent = 0u64;
+    for variant in variants.iter_mut().skip(1) {
+        let private = sample_u64(variant, "peak_private_bytes");
+        let native = sample_u64(variant, "peak_native_heap_unattributed_bytes");
+        let delta_private = baseline_private.saturating_sub(private);
+        let delta_native = baseline_native.saturating_sub(native);
+        let reduction_percent = if baseline_private == 0 {
+            0
+        } else {
+            delta_private.saturating_mul(100) / baseline_private
+        };
+        variant["baseline_peak_private_bytes"] = serde_json::json!(baseline_private);
+        variant["baseline_peak_native_heap_unattributed_bytes"] =
+            serde_json::json!(baseline_native);
+        variant["delta_private_bytes"] = serde_json::json!(delta_private);
+        variant["delta_native_heap_unattributed_bytes"] = serde_json::json!(delta_native);
+        variant["reduction_percent"] = serde_json::json!(reduction_percent);
+        if reduction_percent > best_reduction_percent {
+            best_reduction_percent = reduction_percent;
+            best_stage = variant
+                .get("toggle_name")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown")
+                .to_string();
+        }
+    }
+    let suspected_stage = if best_reduction_percent >= 30 {
+        best_stage
+    } else {
+        "allocator_or_external_native_heap_suspected".to_string()
+    };
+    let accepted = variants
+        .first()
+        .and_then(|variant| variant.get("accepted"))
+        .and_then(Value::as_bool)
+        == Some(true);
+    Ok(serde_json::json!({
+        "schema": MEMORY_BISECT_SCHEMA_V1,
+        "accepted": accepted,
+        "tx_count": tx_count,
+        "chain_id": chain_id,
+        "baseline_peak_private_bytes": baseline_private,
+        "baseline_peak_native_heap_unattributed_bytes": baseline_native,
+        "suspected_stage": suspected_stage,
+        "confidence": if best_reduction_percent >= 30 { "toggle_delta_over_30_percent" } else { "low_no_toggle_reduction_over_30_percent" },
+        "best_reduction_percent": best_reduction_percent,
+        "memory_plateau_signed": false,
+        "pipeline_lifecycle_changed": false,
+        "aoem_concurrency_owner": "AOEM_runtime",
+        "product_entry": "pending_only",
+        "notes": [
+            "probe toggles are memory attribution controls only",
+            "probe_only_not_functional toggles must not be used to sign functional production behavior",
+            "if no toggle reduces private/native heap materially, use external heap profiler attribution"
+        ],
+        "variants": variants,
+    }))
+}
+
 fn main() -> Result<()> {
     let role = first_string_env_nonempty(&[
         "NOVOVM_NATIVE_PIPELINE_ROLE",
@@ -2293,6 +2737,7 @@ fn main() -> Result<()> {
     ])
     .unwrap_or_else(|| "local-smoke".to_string())
     .to_ascii_lowercase();
+    let memory_bisect_binary = current_bin_name_contains("memory-bisect");
     let sustained_binary = current_bin_name_contains("sustained");
     let sustained_env = env_any(&[
         "NOVOVM_NATIVE_PIPELINE_SUSTAINED_ENABLED",
@@ -2313,7 +2758,13 @@ fn main() -> Result<()> {
             "NOVOVM_NATIVE_PIPELINE_TX_COUNT",
             "NOVOVM_NATIVE_PIPELINE_CROSS_MACHINE_TX_COUNT",
         ],
-        if sustained_enabled { 256 } else { 32 },
+        if memory_bisect_binary {
+            512
+        } else if sustained_enabled {
+            256
+        } else {
+            32
+        },
     )?
     .max(1);
     let batch_budget = u64_env_alias(
@@ -2442,6 +2893,39 @@ fn main() -> Result<()> {
     let path = report_path(role.as_str());
     let node_bin = novovm_node_bin();
     let store = store_path(chain_id, role.as_str());
+    if memory_bisect_binary {
+        if !node_bin.exists() {
+            bail!(
+                "novovm-node binary not found: {}; build with `cargo build -p novovm-node --bins` or set NOVOVM_NATIVE_PIPELINE_NODE_BIN",
+                node_bin.display()
+            );
+        }
+        let report = run_memory_bisect_gate(
+            chain_id,
+            tx_count,
+            sender_node,
+            receiver_node,
+            node_bin.as_path(),
+            tick_interval_ms.min(20),
+            batch_budget.max(64),
+            recv_budget.max(256),
+            startup_wait_ms.min(100),
+        )?;
+        let path = memory_bisect_report_path();
+        write_report(path.as_path(), &report)?;
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&report).context("encode memory bisect report failed")?
+        );
+        if !report
+            .get("accepted")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+        {
+            bail!("native pipeline memory bisect failed: {}", path.display());
+        }
+        return Ok(());
+    }
     if matches!(role.as_str(), "receiver" | "local-smoke" | "local_smoke") && !node_bin.exists() {
         bail!(
             "novovm-node binary not found: {}; build with `cargo build -p novovm-node --bins` or set NOVOVM_NATIVE_PIPELINE_NODE_BIN",
