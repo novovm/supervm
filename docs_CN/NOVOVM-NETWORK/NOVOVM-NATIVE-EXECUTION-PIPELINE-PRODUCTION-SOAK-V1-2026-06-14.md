@@ -1928,3 +1928,179 @@ VMMap 先确认大类。
 不进入 30min sustained。
 不把 canonical body/head recovery 混入本轮。
 ```
+
+### 13.16 Receiver Thread Pool / AOEM FFI Worker Reuse Fix
+
+状态：
+
+```text
+Receiver Thread Pool / AOEM FFI Worker Reuse Fix: PASS
+Cross-machine 5min / 2400 after cecab2e: FUNCTIONAL PASS
+Cross-machine 10min / 4800 after cecab2e: PASS
+Memory slope: PASS / initially stable
+Commit: cecab2e
+Workspace: clean
+30min / 14400 sustained: NOT SIGNED
+```
+
+背景：
+
+```text
+External profiler snapshot 暴露 receiver 线程数随交易数异常增长：
+- 1000tx: threads = 628
+- 2000tx: threads = 1141
+
+随后 cross-machine 5min 诊断确认：
+- first_live_thread_count = 70
+- last_live_thread_count = 1270
+- peak_live_thread_count = 1270
+- thread_count_delta = 1200
+- thread_count_per_1000_tx = 536
+- peak_live_private_bytes ≈ 1.67GB
+```
+
+根因判断：
+
+```text
+问题不在 UDP、pending scan、historical retention、RocksDB LOCK、report summary 或 post-exit sample。
+
+P0 根因是 NOVOVM host 侧在 native receiver 长跑路径中反复打开 AOEM FFI runtime / handle / session / worker pool。
+这导致线程、native heap、private bytes 随交易数线性增长。
+
+AOEM_runtime 仍是执行 owner。
+修复不把并发执行权转移给 Rust。
+```
+
+修复内容：
+
+```text
+不再每笔 / 每 batch 重新 open AOEM DLL。
+不再反复 create AOEM handle/session。
+AOEM FFI session 在 receiver 生命周期内长生命周期复用。
+新增 AOEM runtime/session reuse counters：
+- aoem_runtime_open_count
+- aoem_handle_created_count
+- aoem_session_created_count
+- aoem_session_reused_count
+- aoem_worker_pool_created_count
+- tokio_runtime_created_count
+- std_thread_spawn_count
+- spawn_blocking_count
+```
+
+本地 smoke：
+
+```text
+local-smoke tx_count = 64
+accepted = true
+aoem_executed_total = 64
+queue_pending_last = 0
+
+aoem_runtime_open_count = 1
+aoem_handle_created_count = 1
+aoem_session_created_count = 1
+aoem_worker_pool_created_count = 1
+aoem_session_reused_count = 2
+tokio_runtime_created_count = 0
+std_thread_spawn_count = 0
+spawn_blocking_count = 0
+```
+
+Cross-machine 5min / 2400 after `cecab2e`：
+
+```text
+received_unique = 2400
+canonical_unique_included = 2400
+aoem_executed_total = 2400
+queue_pending_last = 0
+duplicate_canonical_included = 0
+duplicate_receipt = 0
+semantic_head_monotonic = true
+receipt_index_consistent = true
+child_exit_code = 0
+fail_reason = normal_pass
+
+aoem_runtime_open_count = 1
+aoem_handle_created_count = 1
+aoem_session_created_count = 1
+aoem_worker_pool_created_count = 1
+aoem_session_reused_count = 93
+tokio_runtime_created_count = 0
+std_thread_spawn_count = 0
+spawn_blocking_count = 0
+
+first_live_thread_count = 33
+last_live_thread_count = 19
+peak_live_thread_count = 33
+thread_count_delta = 0
+thread_count_per_1000_tx = 7
+thread_growth_suspected = false
+thread_growth_stage_suspected = none
+
+peak_live_working_set_bytes = 146,939,904
+peak_live_private_bytes = 130,166,784
+peak_live_native_heap_unattributed_bytes = 120,893,995
+```
+
+Cross-machine 10min / 4800 after `cecab2e`：
+
+```text
+received_unique = 4800
+canonical_unique_included = 4800
+aoem_executed_total = 4800
+queue_pending_last = 0
+duplicate_canonical_included = 0
+duplicate_receipt = 0
+semantic_head_monotonic = true
+receipt_index_consistent = true
+recovery_ok = true
+accepted = true
+
+aoem_runtime_open_count = 1
+aoem_handle_created_count = 1
+aoem_session_created_count = 1
+aoem_worker_pool_created_count = 1
+aoem_session_reused_count = 172
+tokio_runtime_created_count = 0
+std_thread_spawn_count = 0
+spawn_blocking_count = 0
+
+first_live_thread_count = 4
+last_live_thread_count = 19
+peak_live_thread_count = 30
+thread_count_delta = 15
+thread_count_per_1000_tx = 4
+thread_growth_suspected = false
+thread_growth_stage_suspected = none
+
+peak_live_working_set_bytes = 219,119,616
+peak_live_private_bytes = 205,807,616
+peak_live_native_heap_unattributed_bytes = 189,595,427
+```
+
+签收结论：
+
+```text
+Cross-machine 10min / 4800 after cecab2e: PASS
+Receiver Thread Pool / AOEM FFI Worker Reuse Fix: PASS
+Memory slope: PASS / initially stable
+```
+
+边界：
+
+```text
+本签收覆盖：
+- cross-machine 5min / 2400 functional pass
+- cross-machine 10min / 4800 functional pass
+- AOEM FFI runtime/handle/session/worker pool reuse
+- receiver thread growth fix
+- 10min memory slope 初步稳定
+
+本签收不覆盖：
+- 30min / 14400 sustained
+- 2h / overnight sustained
+- hostile network
+- canonical body/head recovery
+
+30min / 14400 可以进入下一轮验证，但尚未签收。
+```
