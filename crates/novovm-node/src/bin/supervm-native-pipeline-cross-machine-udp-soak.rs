@@ -1408,12 +1408,27 @@ fn bytes_per_1000_tx(bytes: u64, tx_count: u64) -> u64 {
     bytes.saturating_mul(1000) / tx_count
 }
 
+fn probe_bool_env(name: &str) -> bool {
+    string_env_nonempty(name)
+        .map(|value| {
+            matches!(
+                value.to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
+        .unwrap_or(false)
+}
+
 fn sample_u64(sample: &Value, key: &str) -> u64 {
     sample.get(key).and_then(Value::as_u64).unwrap_or_default()
 }
 
 fn sample_bool(sample: &Value, key: &str) -> Option<bool> {
     sample.get(key).and_then(Value::as_bool)
+}
+
+fn sample_string(sample: &Value, key: &str) -> Option<String> {
+    sample.get(key).and_then(Value::as_str).map(str::to_owned)
 }
 
 fn is_live_child_memory_sample(sample: &Value) -> bool {
@@ -1461,6 +1476,10 @@ fn diagnostics_summary_sample(
     let stable_progress_total = canonical.max(aoem).max(ledger_lines);
     let proof = summary_u64(summary, "max_proof_items_per_tick");
     let commit = summary_u64(summary, "max_commit_items_per_tick");
+    let max_queue_admitted = summary_u64(summary, "max_queue_admitted_per_tick");
+    let max_network_received = summary_u64(summary, "max_network_received_per_tick");
+    let max_broadcast_tx = summary_u64(summary, "max_broadcast_tx_per_tick");
+    let ticks = summary_u64(summary, "ticks");
     let working_set_bytes = memory_working_set_bytes(&memory_sample);
     let private_bytes = memory_private_bytes(&memory_sample);
     let virtual_bytes = memory_virtual_bytes(&memory_sample);
@@ -1514,6 +1533,57 @@ fn diagnostics_summary_sample(
     let native_heap_unattributed_bytes_per_1000_tx =
         bytes_per_1000_tx(native_heap_unattributed_bytes, stable_progress_total);
     let attributed_bytes_per_1000_tx = bytes_per_1000_tx(attributed_bytes, stable_progress_total);
+    let aoem_batch_input_bytes = max_queue_admitted.saturating_mul(1024);
+    let aoem_batch_output_bytes =
+        summary_u64(summary, "max_aoem_batch_executed_per_tick").saturating_mul(2048);
+    let aoem_runtime_estimated_bytes =
+        aoem_batch_input_bytes.saturating_add(aoem_batch_output_bytes);
+    let proof_projection_bytes = proof.saturating_mul(1024);
+    let receipt_projection_bytes = native_store_materialized_bytes
+        .saturating_add(native_store_clone_bytes)
+        .saturating_add(commit.saturating_mul(1024));
+    let canonical_projection_bytes = summary_u64(summary, "included_canonical_last")
+        .saturating_add(summary_u64(summary, "included_canonical_total"))
+        .saturating_mul(256);
+    let udp_receive_buffer_bytes = max_network_received.saturating_mul(4096);
+    let decode_buffer_bytes = max_network_received.saturating_mul(2048);
+    let json_serialization_buffer_bytes = ticks.min(256).saturating_mul(2048);
+    let tick_vec_capacity_bytes = max_queue_admitted
+        .saturating_add(proof)
+        .saturating_add(commit)
+        .saturating_add(max_broadcast_tx)
+        .saturating_mul(256);
+    let batch_vec_capacity_bytes = max_queue_admitted
+        .max(summary_u64(summary, "max_aoem_batch_executed_per_tick"))
+        .saturating_mul(1024);
+    let stage_estimated_bytes_total = aoem_runtime_estimated_bytes
+        .saturating_add(proof_projection_bytes)
+        .saturating_add(receipt_projection_bytes)
+        .saturating_add(canonical_projection_bytes)
+        .saturating_add(udp_receive_buffer_bytes)
+        .saturating_add(decode_buffer_bytes)
+        .saturating_add(json_serialization_buffer_bytes)
+        .saturating_add(tick_vec_capacity_bytes)
+        .saturating_add(batch_vec_capacity_bytes);
+    let unknown_native_heap_source = native_heap_unattributed_bytes
+        > stage_estimated_bytes_total.saturating_add(64 * 1024 * 1024);
+    let native_heap_unattributed_bytes_per_tick = if ticks == 0 {
+        0
+    } else {
+        native_heap_unattributed_bytes / ticks
+    };
+    let large_allocation_suspected_stage = if native_store_materialized_bytes
+        .saturating_add(native_store_clone_bytes)
+        > 64 * 1024 * 1024
+    {
+        "native_store_materialization"
+    } else if unknown_native_heap_source {
+        "unknown_native_heap_source"
+    } else if aoem_runtime_estimated_bytes > stage_estimated_bytes_total / 2 {
+        "aoem_batch_buffers"
+    } else {
+        "none"
+    };
     let allocator_fragmentation_suspected =
         unattributed_private_bytes > attributed_bytes.max(64 * 1024 * 1024);
     let working_set_not_returned_suspected =
@@ -1565,8 +1635,6 @@ fn diagnostics_summary_sample(
         "diagnostics_report_estimated_bytes": diagnostics_report_estimated_bytes,
         "semantic_ledger_mirror_bytes": semantic_ledger_mirror_bytes,
         "jsonl_writer_buffer_bytes": 0u64,
-        "aoem_projection_estimated_bytes": 0u64,
-        "receipt_projection_estimated_bytes": native_store_materialized_bytes.saturating_add(native_store_clone_bytes),
         "native_store_materialized_estimated_bytes": native_store_materialized_bytes,
         "native_store_previous_clone_estimated_bytes": native_store_clone_bytes,
         "rocksdb_total_estimated_memory_bytes": rocksdb_total_estimated_memory_bytes,
@@ -1589,6 +1657,37 @@ fn diagnostics_summary_sample(
         "queue_rejected_total": summary_u64(summary, "queue_rejected_last"),
         "ticks": summary_u64(summary, "ticks"),
         "ticks_per_sec_x1000": summary_u64(summary, "ticks_per_sec_x1000"),
+    });
+    out["aoem_runtime_estimated_bytes"] = serde_json::json!(aoem_runtime_estimated_bytes);
+    out["aoem_batch_input_bytes"] = serde_json::json!(aoem_batch_input_bytes);
+    out["aoem_batch_output_bytes"] = serde_json::json!(aoem_batch_output_bytes);
+    out["aoem_projection_estimated_bytes"] = serde_json::json!(aoem_runtime_estimated_bytes);
+    out["proof_projection_bytes"] = serde_json::json!(proof_projection_bytes);
+    out["receipt_projection_bytes"] = serde_json::json!(receipt_projection_bytes);
+    out["canonical_projection_bytes"] = serde_json::json!(canonical_projection_bytes);
+    out["udp_receive_buffer_bytes"] = serde_json::json!(udp_receive_buffer_bytes);
+    out["decode_buffer_bytes"] = serde_json::json!(decode_buffer_bytes);
+    out["json_serialization_buffer_bytes"] = serde_json::json!(json_serialization_buffer_bytes);
+    out["tick_vec_capacity_bytes"] = serde_json::json!(tick_vec_capacity_bytes);
+    out["batch_vec_capacity_bytes"] = serde_json::json!(batch_vec_capacity_bytes);
+    out["stage_estimated_bytes_total"] = serde_json::json!(stage_estimated_bytes_total);
+    out["native_heap_unattributed_bytes_per_tick"] =
+        serde_json::json!(native_heap_unattributed_bytes_per_tick);
+    out["unknown_native_heap_source"] = serde_json::json!(unknown_native_heap_source);
+    out["large_allocation_suspected_stage"] = serde_json::json!(large_allocation_suspected_stage);
+    out["native_heap_source_isolation_confidence"] =
+        serde_json::json!(if unknown_native_heap_source {
+            "low_unknown_dominates"
+        } else {
+            "estimated_stage_attribution"
+        });
+    out["memory_probe_stage_switches"] = serde_json::json!({
+        "disable_proof_projection_for_memory_probe": probe_bool_env("NOVOVM_NATIVE_PIPELINE_DISABLE_PROOF_PROJECTION_FOR_MEMORY_PROBE"),
+        "disable_canonical_projection_for_memory_probe": probe_bool_env("NOVOVM_NATIVE_PIPELINE_DISABLE_CANONICAL_PROJECTION_FOR_MEMORY_PROBE"),
+        "disable_report_serialization_for_memory_probe": probe_bool_env("NOVOVM_NATIVE_PIPELINE_DISABLE_REPORT_SERIALIZATION_FOR_MEMORY_PROBE"),
+        "disable_recovery_probe_for_memory_probe": probe_bool_env("NOVOVM_NATIVE_PIPELINE_DISABLE_RECOVERY_PROBE_FOR_MEMORY_PROBE"),
+        "applies_to_production_default": false,
+        "lifecycle_structure_changed": false,
     });
     out["active_pending_count"] =
         serde_json::json!(summary_u64(summary, "queue_active_pending_last"));
@@ -1718,6 +1817,38 @@ fn write_diagnostics_report(
             .and_then(|sample| sample_bool(sample, "allocator_fragmentation_suspected")),
         "working_set_not_returned_suspected": memory_summary_sample
             .and_then(|sample| sample_bool(sample, "working_set_not_returned_suspected")),
+        "summary_aoem_runtime_estimated_bytes": memory_summary_sample
+            .map(|sample| sample_u64(sample, "aoem_runtime_estimated_bytes")),
+        "summary_aoem_batch_input_bytes": memory_summary_sample
+            .map(|sample| sample_u64(sample, "aoem_batch_input_bytes")),
+        "summary_aoem_batch_output_bytes": memory_summary_sample
+            .map(|sample| sample_u64(sample, "aoem_batch_output_bytes")),
+        "summary_proof_projection_bytes": memory_summary_sample
+            .map(|sample| sample_u64(sample, "proof_projection_bytes")),
+        "summary_receipt_projection_bytes": memory_summary_sample
+            .map(|sample| sample_u64(sample, "receipt_projection_bytes")),
+        "summary_canonical_projection_bytes": memory_summary_sample
+            .map(|sample| sample_u64(sample, "canonical_projection_bytes")),
+        "summary_udp_receive_buffer_bytes": memory_summary_sample
+            .map(|sample| sample_u64(sample, "udp_receive_buffer_bytes")),
+        "summary_decode_buffer_bytes": memory_summary_sample
+            .map(|sample| sample_u64(sample, "decode_buffer_bytes")),
+        "summary_json_serialization_buffer_bytes": memory_summary_sample
+            .map(|sample| sample_u64(sample, "json_serialization_buffer_bytes")),
+        "summary_tick_vec_capacity_bytes": memory_summary_sample
+            .map(|sample| sample_u64(sample, "tick_vec_capacity_bytes")),
+        "summary_batch_vec_capacity_bytes": memory_summary_sample
+            .map(|sample| sample_u64(sample, "batch_vec_capacity_bytes")),
+        "summary_stage_estimated_bytes_total": memory_summary_sample
+            .map(|sample| sample_u64(sample, "stage_estimated_bytes_total")),
+        "summary_native_heap_unattributed_bytes_per_tick": memory_summary_sample
+            .map(|sample| sample_u64(sample, "native_heap_unattributed_bytes_per_tick")),
+        "summary_unknown_native_heap_source": memory_summary_sample
+            .and_then(|sample| sample_bool(sample, "unknown_native_heap_source")),
+        "summary_large_allocation_suspected_stage": memory_summary_sample
+            .and_then(|sample| sample_string(sample, "large_allocation_suspected_stage")),
+        "summary_native_heap_source_isolation_confidence": memory_summary_sample
+            .and_then(|sample| sample_string(sample, "native_heap_source_isolation_confidence")),
         "samples": state.samples,
     });
     write_report(config.report_path.as_path(), &report)
