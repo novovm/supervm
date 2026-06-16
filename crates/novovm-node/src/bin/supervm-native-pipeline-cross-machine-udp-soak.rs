@@ -2687,6 +2687,8 @@ fn run_sender(
     let mut tail_repair_file_ack_used_count = 0u64;
     let mut tail_repair_udp_ack_used_count = 0u64;
     let mut final_missing_count = tx_count;
+    let mut latest_ack_missing_count: Option<u64> = None;
+    let mut latest_ack_receiver_done = false;
     let mut tail_repair_latest_ack_epoch = 0u64;
     let ack_socket = if udp_ack.enabled {
         let socket = UdpSocket::bind(udp_ack.bind_addr.as_str())
@@ -2753,6 +2755,8 @@ fn run_sender(
                         .saturating_add(state.received_count);
                     tail_repair_latest_ack_epoch =
                         tail_repair_latest_ack_epoch.max(state.latest_epoch);
+                    latest_ack_missing_count = Some(state.latest_missing_count);
+                    latest_ack_receiver_done = state.receiver_done;
                     final_missing_count = state.latest_missing_count;
                     if state.receiver_done || state.latest_missing_count == 0 {
                         repair_rounds_used = repair_rounds_used.saturating_add(1);
@@ -2840,6 +2844,25 @@ fn run_sender(
     if tail_repair_ack_received_count == 0 {
         final_missing_count = tx_count.saturating_sub(stats.sent_unique);
     }
+    let receiver_final_done = if latest_ack_receiver_done || latest_ack_missing_count == Some(0) {
+        Some(true)
+    } else {
+        None
+    };
+    let receiver_final_missing_count = if receiver_final_done == Some(true) {
+        Some(0u64)
+    } else {
+        None
+    };
+    let final_missing_count_source = if receiver_final_missing_count.is_some() {
+        "receiver_done_ack"
+    } else if latest_ack_missing_count.is_some() {
+        "latest_ack_snapshot"
+    } else if tail_repair_ack_received_count == 0 {
+        "sender_sent_unique_delta"
+    } else {
+        "unknown"
+    };
     let sender_completed = stats.sent_unique == tx_count && stats.send_failed_count == 0;
     let accepted = sender_completed;
     let fail_reason = if accepted {
@@ -2917,6 +2940,11 @@ fn run_sender(
             "tail_repair_ack_received_count": tail_repair_ack_received_count,
             "tail_repair_udp_ack_received_count": tail_repair_udp_ack_received_count,
             "tail_repair_latest_ack_epoch": tail_repair_latest_ack_epoch,
+            "latest_ack_epoch": tail_repair_latest_ack_epoch,
+            "latest_ack_missing_count": latest_ack_missing_count,
+            "latest_ack_receiver_done": latest_ack_receiver_done,
+            "receiver_final_missing_count": receiver_final_missing_count,
+            "receiver_final_done": receiver_final_done,
             "tail_repair_missing_ranges_seen": tail_repair_missing_ranges_seen,
             "tail_repair_fallback_used_count": tail_repair_fallback_used_count,
             "tail_repair_file_ack_used_count": tail_repair_file_ack_used_count,
@@ -2933,6 +2961,7 @@ fn run_sender(
             "repair_send_retry_count": repair_stats.send_retry_count,
             "repair_send_would_block_count": repair_stats.send_would_block_count,
             "repair_send_failed_count": repair_stats.send_failed_count,
+            "final_missing_count_source": final_missing_count_source,
             "final_missing_count": final_missing_count,
             "tail_repair_success": accepted,
         },
