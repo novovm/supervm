@@ -5,7 +5,8 @@ use anyhow::{bail, Context, Result};
 use novovm_network::{Transport, UdpTransport};
 use novovm_node::tx_ingress::{
     get_nov_native_execution_store_recovery_probe_v1,
-    get_nov_native_execution_store_rocksdb_memory_probe_v1, nov_native_tx_to_adapter_tx_ir_v1,
+    get_nov_native_execution_store_rocksdb_memory_probe_v1,
+    nov_native_execution_store_rocksdb_path_v1, nov_native_tx_to_adapter_tx_ir_v1,
 };
 use novovm_protocol::{
     encode_nov_native_tx_wire_v1, EvmNativeMessage, NodeId, NovExecuteTxV1, NovExecutionModeV1,
@@ -743,7 +744,13 @@ fn run_receiver_node(
                     }
                     let reason = classify_child_exit_failure(&output, Some(&err));
                     state.fail_reason = Some(reason.clone());
-                    write_diagnostics_report(&diagnostics, &state, false, child_pid, expected_tx_count)?;
+                    write_diagnostics_report(
+                        &diagnostics,
+                        &state,
+                        false,
+                        child_pid,
+                        expected_tx_count,
+                    )?;
                     write_synthetic_receiver_failure_report(
                         expected_tx_count,
                         reason.as_str(),
@@ -802,7 +809,7 @@ fn run_receiver_node(
 
         if last_sample_at.elapsed() >= Duration::from_millis(diagnostics.sample_interval_ms) {
             let ledger_stats = semantic_ledger_stats(ledger_path.as_path());
-            let rocksdb_probe = get_nov_native_execution_store_rocksdb_memory_probe_v1(store_path);
+            let rocksdb_probe = live_receiver_child_rocksdb_memory_probe_v1(store_path);
             let memory_sample = if diagnostics.memory_sample_enabled {
                 process_memory_sample(child_pid)
             } else {
@@ -966,7 +973,11 @@ fn run_receiver_node(
                     child_pid,
                     expected_tx_count,
                 )?;
-                write_synthetic_receiver_failure_report(expected_tx_count, reason.as_str(), &state)?;
+                write_synthetic_receiver_failure_report(
+                    expected_tx_count,
+                    reason.as_str(),
+                    &state,
+                )?;
                 write_receiver_exit_report(
                     child_pid,
                     Some(&output),
@@ -1064,6 +1075,15 @@ fn classify_child_exit_failure(output: &Output, parse_error: Option<&anyhow::Err
     if stderr.contains("panicked") || stderr.contains("panic") {
         return "child_panic".to_string();
     }
+    if stderr.contains("failed to create lock file")
+        && stderr.contains("rocksdb")
+        && stderr.contains("lock")
+    {
+        return "rocksdb_lock_conflict".to_string();
+    }
+    if stderr.contains("open nov native execution rocksdb failed") && stderr.contains("lock") {
+        return "rocksdb_lock_conflict".to_string();
+    }
     if !output.status.success() {
         return "child_nonzero_exit".to_string();
     }
@@ -1071,6 +1091,32 @@ fn classify_child_exit_failure(output: &Output, parse_error: Option<&anyhow::Err
         return "child_early_exit_no_report".to_string();
     }
     "child_early_exit_no_report".to_string()
+}
+
+fn output_stderr_tail(output: Option<&Output>, max_chars: usize) -> Option<String> {
+    output.map(|out| {
+        let stderr = String::from_utf8_lossy(out.stderr.as_slice());
+        let chars: Vec<char> = stderr.chars().collect();
+        let start = chars.len().saturating_sub(max_chars);
+        chars[start..].iter().collect::<String>()
+    })
+}
+
+fn live_receiver_child_rocksdb_memory_probe_v1(store_path: &Path) -> Value {
+    let rocksdb_path = nov_native_execution_store_rocksdb_path_v1(store_path);
+    serde_json::json!({
+        "method": "nov_getNativeExecutionStoreRocksDbMemoryProbe",
+        "rocksdb_path": rocksdb_path.display().to_string(),
+        "rocksdb_exists": rocksdb_path.exists(),
+        "rocksdb_opened": false,
+        "rocksdb_probe_skipped": true,
+        "rocksdb_probe_skipped_reason": "live_receiver_child_holds_lock",
+        "rocksdb_total_estimated_memory_bytes": 0u64,
+        "rocksdb_block_cache_estimated_bytes": 0u64,
+        "rocksdb_memtable_estimated_bytes": 0u64,
+        "rocksdb_index_filter_estimated_bytes": 0u64,
+        "rocksdb_memory_probe_supported": false,
+    })
 }
 
 fn write_receiver_exit_report(
@@ -1117,6 +1163,7 @@ fn write_receiver_exit_report(
         "child_exit_status": output.map(|out| out.status.to_string()),
         "child_was_killed": child_was_killed,
         "child_panicked_detected": child_panicked_detected,
+        "child_stderr_tail": output_stderr_tail(output, 4096),
         "stdout_path": stdout_path.display().to_string(),
         "stderr_path": stderr_path.display().to_string(),
         "diagnostics_path": diagnostics_path.display().to_string(),
@@ -1306,9 +1353,11 @@ fn diagnostics_summary_sample(
     let commit = summary_u64(summary, "max_commit_items_per_tick");
     let working_set_bytes = memory_working_set_bytes(&memory_sample);
     let private_bytes = memory_private_bytes(&memory_sample);
-    let runtime_current_view_bytes = summary_u64(summary, "queue_tx_count_last").saturating_mul(256);
-    let diagnostics_report_estimated_bytes =
-        summary_u64(summary, "ticks").saturating_mul(0).saturating_add(0);
+    let runtime_current_view_bytes =
+        summary_u64(summary, "queue_tx_count_last").saturating_mul(256);
+    let diagnostics_report_estimated_bytes = summary_u64(summary, "ticks")
+        .saturating_mul(0)
+        .saturating_add(0);
     let semantic_ledger_mirror_bytes = ledger_stats
         .get("bytes")
         .and_then(Value::as_u64)
@@ -1329,20 +1378,16 @@ fn diagnostics_summary_sample(
         .get("rocksdb_index_filter_estimated_bytes")
         .and_then(Value::as_u64)
         .unwrap_or_default();
-    let native_store_materialized_bytes = summary_u64(
-        summary,
-        "native_store_materialized_estimated_bytes_max",
-    );
-    let native_store_clone_bytes = summary_u64(
-        summary,
-        "native_store_previous_clone_estimated_bytes_max",
-    );
+    let native_store_materialized_bytes =
+        summary_u64(summary, "native_store_materialized_estimated_bytes_max");
+    let native_store_clone_bytes =
+        summary_u64(summary, "native_store_previous_clone_estimated_bytes_max");
     let rust_estimated_retained_bytes = runtime_current_view_bytes
         .saturating_add(semantic_ledger_mirror_bytes)
         .saturating_add(native_store_materialized_bytes)
         .saturating_add(native_store_clone_bytes);
-    let attributed_bytes = rust_estimated_retained_bytes
-        .saturating_add(rocksdb_total_estimated_memory_bytes);
+    let attributed_bytes =
+        rust_estimated_retained_bytes.saturating_add(rocksdb_total_estimated_memory_bytes);
     let unattributed_working_set_bytes = working_set_bytes.saturating_sub(attributed_bytes);
     let mut out = serde_json::json!({
         "elapsed_ms": started_at.elapsed().as_millis() as u64,
