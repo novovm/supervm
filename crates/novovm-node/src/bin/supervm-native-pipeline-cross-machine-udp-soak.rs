@@ -202,6 +202,36 @@ fn diagnostics_report_path() -> PathBuf {
     })
 }
 
+fn receiver_stdout_log_path() -> PathBuf {
+    first_string_env_nonempty(&["NOVOVM_NATIVE_PIPELINE_RECEIVER_STDOUT_LOG_PATH"])
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            PathBuf::from(
+                "artifacts/native-pipeline/receiver-cross-machine-sustained-5min-stdout.log",
+            )
+        })
+}
+
+fn receiver_stderr_log_path() -> PathBuf {
+    first_string_env_nonempty(&["NOVOVM_NATIVE_PIPELINE_RECEIVER_STDERR_LOG_PATH"])
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            PathBuf::from(
+                "artifacts/native-pipeline/receiver-cross-machine-sustained-5min-stderr.log",
+            )
+        })
+}
+
+fn receiver_exit_report_path() -> PathBuf {
+    first_string_env_nonempty(&["NOVOVM_NATIVE_PIPELINE_RECEIVER_EXIT_REPORT_PATH"])
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            PathBuf::from(
+                "artifacts/native-pipeline/receiver-cross-machine-sustained-5min-exit.json",
+            )
+        })
+}
+
 fn store_path(chain_id: u64, role: &str) -> PathBuf {
     first_string_env_nonempty(&[
         "NOVOVM_NATIVE_PIPELINE_STORE_PATH",
@@ -593,6 +623,10 @@ fn spawn_receiver_node(
 }
 
 fn parse_summary(output: Output, label: &str) -> Result<Value> {
+    parse_summary_ref(&output, label)
+}
+
+fn parse_summary_ref(output: &Output, label: &str) -> Result<Value> {
     if !output.status.success() {
         bail!(
             "{label} failed: status={} stderr={}",
@@ -600,7 +634,7 @@ fn parse_summary(output: Output, label: &str) -> Result<Value> {
             String::from_utf8_lossy(&output.stderr)
         );
     }
-    serde_json::from_slice::<Value>(&output.stdout).with_context(|| {
+    serde_json::from_slice::<Value>(output.stdout.as_slice()).with_context(|| {
         format!(
             "{label} did not return JSON summary: stdout={} stderr={}",
             String::from_utf8_lossy(&output.stdout),
@@ -660,7 +694,78 @@ fn run_receiver_node(
             let output = child
                 .wait_with_output()
                 .context("wait cross-machine receiver failed")?;
-            let summary = parse_summary(output, "cross-machine receiver")?;
+            let (stdout_path, stderr_path, output_artifact_error) =
+                persist_child_output_artifacts(&output);
+            let summary_result = parse_summary_ref(&output, "cross-machine receiver");
+            let summary = match summary_result {
+                Ok(summary) => summary,
+                Err(err) => {
+                    let ledger_stats = semantic_ledger_stats(ledger_path.as_path());
+                    let rocksdb_probe =
+                        get_nov_native_execution_store_rocksdb_memory_probe_v1(store_path);
+                    let memory_sample = if diagnostics.memory_sample_enabled {
+                        process_memory_sample(child_pid)
+                    } else {
+                        serde_json::json!({})
+                    };
+                    let progress_summary = read_pipeline_progress_summary(progress_path.as_path());
+                    let mut sample = if let Some(progress) = progress_summary.as_ref() {
+                        diagnostics_summary_sample(
+                            started_at,
+                            progress,
+                            ledger_stats,
+                            rocksdb_probe,
+                            memory_sample,
+                            state.last_canonical,
+                        )
+                    } else {
+                        serde_json::json!({
+                            "elapsed_ms": started_at.elapsed().as_millis() as u64,
+                            "stable_progress_total": state.last_canonical,
+                            "aoem_executed_total": 0u64,
+                            "queue_pending_last": 0u64,
+                            "semantic_ledger_mirror": ledger_stats,
+                            "rocksdb_memory_probe": rocksdb_probe,
+                            "process_memory": memory_sample,
+                        })
+                    };
+                    sample["child_exit_parse_error"] = serde_json::json!(err.to_string());
+                    if let Some(error) = output_artifact_error.as_ref() {
+                        sample["output_artifact_error"] = serde_json::json!(error);
+                    }
+                    state.samples.push(sample);
+                    if state.samples.len() > 256 {
+                        let drop_count = state.samples.len().saturating_sub(256);
+                        state.samples.drain(0..drop_count);
+                        state.samples_dropped = state
+                            .samples_dropped
+                            .saturating_add(drop_count.try_into().unwrap_or(u64::MAX));
+                    }
+                    let reason = classify_child_exit_failure(&output, Some(&err));
+                    state.fail_reason = Some(reason.clone());
+                    write_diagnostics_report(&diagnostics, &state, false, child_pid, expected_tx_count)?;
+                    write_synthetic_receiver_failure_report(
+                        expected_tx_count,
+                        reason.as_str(),
+                        &state,
+                    )?;
+                    write_receiver_exit_report(
+                        child_pid,
+                        Some(&output),
+                        stdout_path.as_path(),
+                        stderr_path.as_path(),
+                        diagnostics.report_path.as_path(),
+                        expected_tx_count,
+                        None,
+                        &state,
+                        reason.as_str(),
+                        false,
+                        true,
+                        false,
+                    )?;
+                    return Err(err);
+                }
+            };
             let ledger_stats = semantic_ledger_stats(ledger_path.as_path());
             let rocksdb_probe = get_nov_native_execution_store_rocksdb_memory_probe_v1(store_path);
             let memory_sample = if diagnostics.memory_sample_enabled {
@@ -678,6 +783,20 @@ fn run_receiver_node(
             );
             state.samples.push(sample);
             write_diagnostics_report(&diagnostics, &state, true, child_pid, expected_tx_count)?;
+            write_receiver_exit_report(
+                child_pid,
+                Some(&output),
+                stdout_path.as_path(),
+                stderr_path.as_path(),
+                diagnostics.report_path.as_path(),
+                expected_tx_count,
+                Some(&summary),
+                &state,
+                "normal_pass",
+                true,
+                true,
+                false,
+            )?;
             return Ok(summary);
         }
 
@@ -830,13 +949,37 @@ fn run_receiver_node(
             if let Some(reason) = fail_reason {
                 state.fail_reason = Some(reason.clone());
                 let _ = child.kill();
-                let _ = child.wait();
+                let output = child
+                    .wait_with_output()
+                    .context("wait killed cross-machine receiver failed")?;
+                let (stdout_path, stderr_path, output_artifact_error) =
+                    persist_child_output_artifacts(&output);
+                if let Some(error) = output_artifact_error {
+                    if let Some(last) = state.samples.last_mut() {
+                        last["output_artifact_error"] = serde_json::json!(error);
+                    }
+                }
                 write_diagnostics_report(
                     &diagnostics,
                     &state,
                     false,
                     child_pid,
                     expected_tx_count,
+                )?;
+                write_synthetic_receiver_failure_report(expected_tx_count, reason.as_str(), &state)?;
+                write_receiver_exit_report(
+                    child_pid,
+                    Some(&output),
+                    stdout_path.as_path(),
+                    stderr_path.as_path(),
+                    diagnostics.report_path.as_path(),
+                    expected_tx_count,
+                    None,
+                    &state,
+                    reason.as_str(),
+                    false,
+                    true,
+                    true,
                 )?;
                 bail!("cross-machine receiver diagnostics failed: {reason}");
             }
@@ -882,6 +1025,161 @@ fn write_report(path: &Path, report: &Value) -> Result<()> {
         serde_json::to_string_pretty(report).context("encode cross-machine report failed")?;
     fs::write(path, encoded)
         .with_context(|| format!("write cross-machine report failed: {}", path.display()))
+}
+
+fn write_artifact_bytes(path: &Path, bytes: &[u8]) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        if !parent.as_os_str().is_empty() {
+            fs::create_dir_all(parent)
+                .with_context(|| format!("create artifact dir failed: {}", parent.display()))?;
+        }
+    }
+    fs::write(path, bytes).with_context(|| format!("write artifact failed: {}", path.display()))
+}
+
+fn persist_child_output_artifacts(output: &Output) -> (PathBuf, PathBuf, Option<String>) {
+    let stdout_path = receiver_stdout_log_path();
+    let stderr_path = receiver_stderr_log_path();
+    let mut error = None;
+    if let Err(err) = write_artifact_bytes(stdout_path.as_path(), output.stdout.as_slice()) {
+        error = Some(format!("stdout_log_write_failed: {err}"));
+    }
+    if let Err(err) = write_artifact_bytes(stderr_path.as_path(), output.stderr.as_slice()) {
+        let item = format!("stderr_log_write_failed: {err}");
+        error = Some(error.map_or(item.clone(), |prev| format!("{prev}; {item}")));
+    }
+    (stdout_path, stderr_path, error)
+}
+
+fn child_exit_status_json(output: &Output) -> Value {
+    serde_json::json!({
+        "success": output.status.success(),
+        "code": output.status.code(),
+        "status": output.status.to_string(),
+    })
+}
+
+fn classify_child_exit_failure(output: &Output, parse_error: Option<&anyhow::Error>) -> String {
+    let stderr = String::from_utf8_lossy(output.stderr.as_slice()).to_ascii_lowercase();
+    if stderr.contains("panicked") || stderr.contains("panic") {
+        return "child_panic".to_string();
+    }
+    if !output.status.success() {
+        return "child_nonzero_exit".to_string();
+    }
+    if parse_error.is_some() {
+        return "child_early_exit_no_report".to_string();
+    }
+    "child_early_exit_no_report".to_string()
+}
+
+fn write_receiver_exit_report(
+    child_pid: u32,
+    output: Option<&Output>,
+    stdout_path: &Path,
+    stderr_path: &Path,
+    diagnostics_path: &Path,
+    expected_tx_count: u64,
+    summary: Option<&Value>,
+    state: &ReceiverDiagnosticsStateV1,
+    fail_reason: &str,
+    final_report_written: bool,
+    diagnostics_report_written: bool,
+    child_was_killed: bool,
+) -> Result<()> {
+    let last_sample = state.samples.last();
+    let stable_progress_total = last_sample
+        .and_then(|sample| sample.get("stable_progress_total"))
+        .and_then(Value::as_u64)
+        .or_else(|| summary.map(|value| summary_u64(value, "aoem_executed_total")))
+        .unwrap_or_default();
+    let aoem_executed_total = last_sample
+        .and_then(|sample| sample.get("aoem_executed_total"))
+        .and_then(Value::as_u64)
+        .or_else(|| summary.map(|value| summary_u64(value, "aoem_executed_total")))
+        .unwrap_or_default();
+    let queue_pending_last = last_sample
+        .and_then(|sample| sample.get("queue_pending_last"))
+        .and_then(Value::as_u64)
+        .or_else(|| summary.map(|value| summary_u64(value, "queue_pending_last")))
+        .unwrap_or_default();
+    let child_panicked_detected = output
+        .map(|out| {
+            let stderr = String::from_utf8_lossy(out.stderr.as_slice()).to_ascii_lowercase();
+            stderr.contains("panic") || stderr.contains("panicked")
+        })
+        .unwrap_or(false);
+    let report = serde_json::json!({
+        "schema": "novovm-native-pipeline-receiver-exit-forensics/v1",
+        "child_pid": child_pid,
+        "child_exit": output.map(child_exit_status_json).unwrap_or(serde_json::Value::Null),
+        "child_exit_code": output.and_then(|out| out.status.code()),
+        "child_exit_status": output.map(|out| out.status.to_string()),
+        "child_was_killed": child_was_killed,
+        "child_panicked_detected": child_panicked_detected,
+        "stdout_path": stdout_path.display().to_string(),
+        "stderr_path": stderr_path.display().to_string(),
+        "diagnostics_path": diagnostics_path.display().to_string(),
+        "final_report_written": final_report_written,
+        "diagnostics_report_written": diagnostics_report_written,
+        "stable_progress_total": stable_progress_total,
+        "expected_tx_total": expected_tx_count,
+        "aoem_executed_total": aoem_executed_total,
+        "queue_pending_last": queue_pending_last,
+        "last_sample_elapsed_ms": last_sample
+            .and_then(|sample| sample.get("elapsed_ms"))
+            .and_then(Value::as_u64),
+        "fail_reason": fail_reason,
+    });
+    write_report(receiver_exit_report_path().as_path(), &report)
+}
+
+fn write_synthetic_receiver_failure_report(
+    expected_tx_count: u64,
+    fail_reason: &str,
+    state: &ReceiverDiagnosticsStateV1,
+) -> Result<()> {
+    let last_sample = state.samples.last();
+    let stable_progress_total = last_sample
+        .and_then(|sample| sample.get("stable_progress_total"))
+        .and_then(Value::as_u64)
+        .unwrap_or_default();
+    let aoem_executed_total = last_sample
+        .and_then(|sample| sample.get("aoem_executed_total"))
+        .and_then(Value::as_u64)
+        .unwrap_or_default();
+    let queue_pending_last = last_sample
+        .and_then(|sample| sample.get("queue_pending_last"))
+        .and_then(Value::as_u64)
+        .unwrap_or_default();
+    let report = serde_json::json!({
+        "schema": REPORT_SCHEMA_V1,
+        "role": "receiver",
+        "accepted": false,
+        "synthetic_failure_report": true,
+        "fail_reason": fail_reason,
+        "tx_count": expected_tx_count,
+        "validation": {
+            "received_unique": stable_progress_total,
+            "canonical_unique_included": stable_progress_total,
+            "duplicate_canonical_included": 0u64,
+            "duplicate_receipt": 0u64,
+            "queue_pending_last": queue_pending_last,
+            "semantic_head_monotonic": true,
+            "receipt_index_consistent": false,
+            "aoem_concurrency_owner": "AOEM_runtime",
+        },
+        "receiver_summary": {
+            "accepted": false,
+            "aoem_executed_total": aoem_executed_total,
+            "queue_pending_last": queue_pending_last,
+            "progress_score": stable_progress_total,
+        },
+        "violations": [
+            format!("receiver exited before expected_tx_total: progress={stable_progress_total} expected={expected_tx_count}"),
+        ],
+    });
+    write_report(report_path("receiver").as_path(), &report)
 }
 
 fn semantic_ledger_stats(path: &Path) -> Value {
