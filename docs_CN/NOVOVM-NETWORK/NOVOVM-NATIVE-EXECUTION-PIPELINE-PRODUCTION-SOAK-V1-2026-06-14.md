@@ -1382,3 +1382,114 @@ git diff --check: only CRLF warnings
 ```
 
 本节不是 memory plateau 签收；它只是记录 pending scan / cleanup / retention 修复已经写入。
+
+### 13.9 Sustained Receiver Historical Retention Fix
+
+状态：
+
+```text
+Production Soak v1 / Sustained Receiver Historical Retention Fix: DONE
+Cross-machine 5min function: remains PASS from previous run
+Memory Plateau: NOT SIGNED
+30min sustained: still blocked until 5min/10min memory slope improves
+```
+
+触发原因：
+
+```text
+Pending active scan 已收干净：
+- skipped_ineligible_stage_total = 0
+- queue_dropped_last_active = 0
+
+但 receiver runtime current view 仍保留 historical entries：
+- historical_pending = 327
+- included_retained = 160
+- dropped_retained = 167
+
+判断：AOEM admission 不再是问题；剩余问题在 historical current view /
+tombstone / included+dropped retention。
+```
+
+本轮修复：
+
+```text
+1. 新增 network runtime historical pending compaction：
+   compact_network_runtime_native_pending_tx_history_v1
+
+2. native_execution_pipeline report 构建时执行 bounded historical compaction。
+
+3. IncludedCanonical / IncludedNonCanonical / Dropped / Rejected historical entries：
+   - 移出 runtime current view
+   - 写入 bounded tombstone
+   - 释放 payload map 中对应 payload
+
+4. 新增 summary / diagnostics 字段：
+   - historical_compacted_total
+   - historical_payload_bytes_freed
+   - tombstone_retained_count
+   - tombstone_evicted_count
+   - historical_pending_after_compaction
+   - included_retained_after_compaction
+   - dropped_retained_after_compaction
+   - runtime_current_view_bytes_estimate
+
+5. 新增回归测试：
+   native_pending_history_compaction_evicts_final_state_and_payloads
+```
+
+本地 smoke 验证：
+
+```text
+profile: local sustained smoke
+tx_count = 256
+accepted = true
+aoem_executed_total = 256
+receipt_count = 256
+queue_pending_last = 0
+skipped_ineligible_stage_total = 0
+historical_compacted_total = 253
+historical_payload_bytes_freed = 58321
+queue_historical_pending_last = 32
+historical_pending_after_compaction = 32
+runtime_current_view_bytes_estimate = 8192
+duplicate_canonical_included = 0
+duplicate_receipt = 0
+```
+
+保持不变的边界：
+
+```text
+AOEM_runtime 仍是执行并发 owner。
+Rust host 仍只驱动生命周期。
+pending-only 产品入口不变。
+AOEM tick / proof / dirty commit / canonical lifecycle 不变。
+不改变 Ethereum mainnet long-sync 默认 retention 语义。
+canonical body/head recovery 仍不由本 gate 签收。
+```
+
+验证状态：
+
+```text
+cargo check -q -p novovm-node --bins: PASS
+cargo check -q -p novovm-network: PASS
+cargo test -q -p novovm-node native_execution_pipeline_ --bin novovm-node -- --test-threads=1: PASS
+cargo test -q -p novovm-network --lib -- --test-threads=1: PASS
+cargo test -q -p novovm-node --lib -- --test-threads=1: PASS
+local sustained 256 tx smoke: PASS
+git diff --check: pending
+```
+
+下一轮验证顺序：
+
+```text
+1. Cross-machine 5min / 2400 tx
+   目标：功能 PASS，skipped_ineligible_stage_total 继续保持低值，
+   queue_historical_pending_last 应被 bounded cap 控制。
+
+2. Cross-machine 10min / 4800 tx
+   目标：观察 working_set slope 是否明显下降。
+
+3. 只有 10min 后半程 working_set slope 明显下降，才允许重新进入 30min / 14400 tx。
+```
+
+本节不是 memory plateau 签收；它只是记录 historical current view retention 修复已经写入。

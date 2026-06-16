@@ -21,8 +21,9 @@ use novovm_exec::{
 use novovm_network::transport::snapshot_local_observed_peers;
 use novovm_network::{
     assess_read_only_impact, build_reconcile_report_with_replay, capability_state_token,
-    decode_relay_membership_message, default_eth_fullnode_budget_hooks_v1, derive_advisory,
-    detect_capabilities, dispatch_network_runtime_native_pending_tx_broadcast_to_transport_v1,
+    compact_network_runtime_native_pending_tx_history_v1, decode_relay_membership_message,
+    default_eth_fullnode_budget_hooks_v1, derive_advisory, detect_capabilities,
+    dispatch_network_runtime_native_pending_tx_broadcast_to_transport_v1,
     drain_runtime_relay_membership, eth_discv4_build_findnode_packet_v1,
     eth_discv4_build_ping_packet_v1, eth_discv4_build_pong_packet_v1,
     eth_discv4_parse_neighbors_packet_v1, eth_discv4_parse_packet_v1,
@@ -33657,6 +33658,13 @@ fn build_native_execution_pipeline_report_v1(
         .get("chain_id")
         .and_then(|value| value.as_u64())
         .unwrap_or(1);
+    let history_retain_max =
+        std::env::var("NOVOVM_NATIVE_EXECUTION_PIPELINE_PENDING_HISTORY_RETAIN_MAX")
+            .ok()
+            .and_then(|value| value.parse::<usize>().ok())
+            .unwrap_or(32);
+    let history_compaction =
+        compact_network_runtime_native_pending_tx_history_v1(chain_id, history_retain_max);
     let pending_summary = snapshot_network_runtime_native_pending_tx_summary_v1(chain_id);
     let active_pending_count =
         snapshot_network_runtime_native_active_pending_txs_v1(chain_id, 0).len();
@@ -33708,6 +33716,29 @@ fn build_native_execution_pipeline_report_v1(
                 "tx_count": pending_summary.tx_count,
                 "active_pending_count": active_pending_count,
                 "historical_pending_count": historical_pending_count,
+                "historical_compaction": {
+                    "retain_recent": history_compaction.retain_recent,
+                    "historical_before": history_compaction.historical_before,
+                    "historical_after": history_compaction.historical_after,
+                    "included_before": history_compaction.included_before,
+                    "included_after": history_compaction.included_after,
+                    "dropped_before": history_compaction.dropped_before,
+                    "dropped_after": history_compaction.dropped_after,
+                    "rejected_before": history_compaction.rejected_before,
+                    "rejected_after": history_compaction.rejected_after,
+                    "historical_compacted_total": history_compaction.historical_compacted_total,
+                    "included_compacted_total": history_compaction.included_compacted_total,
+                    "dropped_compacted_total": history_compaction.dropped_compacted_total,
+                    "rejected_compacted_total": history_compaction.rejected_compacted_total,
+                    "tombstones_inserted": history_compaction.tombstones_inserted,
+                    "tombstone_retained_count": history_compaction.tombstone_retained_count,
+                    "tombstone_evicted_count": history_compaction.tombstone_evicted_count,
+                    "historical_payload_bytes_freed": history_compaction.historical_payload_bytes_freed,
+                    "included_payload_bytes_retained": history_compaction.included_payload_bytes_retained,
+                    "dropped_payload_bytes_retained": history_compaction.dropped_payload_bytes_retained,
+                    "historical_payload_bytes_retained": history_compaction.historical_payload_bytes_retained,
+                    "receipt_index_backed_dedup_count": history_compaction.receipt_index_backed_dedup_count,
+                },
                 "pending": pending_summary.pending_count,
                 "seen": pending_summary.seen_count,
                 "propagated": pending_summary.propagated_count,
@@ -33903,6 +33934,13 @@ struct NativeExecutionPipelineAggregateV1 {
     queue_reorged_back_to_pending_last: u64,
     queue_dropped_last: u64,
     queue_rejected_last: u64,
+    historical_compacted_total: u64,
+    historical_payload_bytes_freed: u64,
+    tombstone_retained_count: u64,
+    tombstone_evicted_count: u64,
+    historical_compaction_after_last: u64,
+    included_retained_after_compaction: u64,
+    dropped_retained_after_compaction: u64,
     included_canonical_last: u64,
     included_canonical_total: u64,
     broadcast_candidates_last: u64,
@@ -33955,6 +33993,13 @@ impl NativeExecutionPipelineAggregateV1 {
             queue_reorged_back_to_pending_last: 0,
             queue_dropped_last: 0,
             queue_rejected_last: 0,
+            historical_compacted_total: 0,
+            historical_payload_bytes_freed: 0,
+            tombstone_retained_count: 0,
+            tombstone_evicted_count: 0,
+            historical_compaction_after_last: 0,
+            included_retained_after_compaction: 0,
+            dropped_retained_after_compaction: 0,
             included_canonical_last: 0,
             included_canonical_total: 0,
             broadcast_candidates_last: 0,
@@ -34228,6 +34273,43 @@ impl NativeExecutionPipelineAggregateV1 {
             .get("rejected")
             .and_then(|value| value.as_u64())
             .unwrap_or_default();
+        if let Some(compaction) = queue.get("historical_compaction") {
+            self.historical_compacted_total = self.historical_compacted_total.saturating_add(
+                compaction
+                    .get("historical_compacted_total")
+                    .and_then(|value| value.as_u64())
+                    .unwrap_or_default(),
+            );
+            self.historical_payload_bytes_freed =
+                self.historical_payload_bytes_freed.saturating_add(
+                    compaction
+                        .get("historical_payload_bytes_freed")
+                        .and_then(|value| value.as_u64())
+                        .unwrap_or_default(),
+                );
+            self.tombstone_evicted_count = self.tombstone_evicted_count.saturating_add(
+                compaction
+                    .get("tombstone_evicted_count")
+                    .and_then(|value| value.as_u64())
+                    .unwrap_or_default(),
+            );
+            self.tombstone_retained_count = compaction
+                .get("tombstone_retained_count")
+                .and_then(|value| value.as_u64())
+                .unwrap_or_default();
+            self.historical_compaction_after_last = compaction
+                .get("historical_after")
+                .and_then(|value| value.as_u64())
+                .unwrap_or_default();
+            self.included_retained_after_compaction = compaction
+                .get("included_after")
+                .and_then(|value| value.as_u64())
+                .unwrap_or_default();
+            self.dropped_retained_after_compaction = compaction
+                .get("dropped_after")
+                .and_then(|value| value.as_u64())
+                .unwrap_or_default();
+        }
         self.included_canonical_last = egress
             .get("pending_included_canonical")
             .and_then(|value| value.as_u64())
@@ -34458,6 +34540,34 @@ impl NativeExecutionPipelineAggregateV1 {
         out.insert(
             "queue_rejected_last".to_string(),
             serde_json::json!(self.queue_rejected_last),
+        );
+        out.insert(
+            "historical_compacted_total".to_string(),
+            serde_json::json!(self.historical_compacted_total),
+        );
+        out.insert(
+            "historical_payload_bytes_freed".to_string(),
+            serde_json::json!(self.historical_payload_bytes_freed),
+        );
+        out.insert(
+            "tombstone_retained_count".to_string(),
+            serde_json::json!(self.tombstone_retained_count),
+        );
+        out.insert(
+            "tombstone_evicted_count".to_string(),
+            serde_json::json!(self.tombstone_evicted_count),
+        );
+        out.insert(
+            "historical_pending_after_compaction".to_string(),
+            serde_json::json!(self.historical_compaction_after_last),
+        );
+        out.insert(
+            "included_retained_after_compaction".to_string(),
+            serde_json::json!(self.included_retained_after_compaction),
+        );
+        out.insert(
+            "dropped_retained_after_compaction".to_string(),
+            serde_json::json!(self.dropped_retained_after_compaction),
         );
         out.insert(
             "included_canonical_last".to_string(),

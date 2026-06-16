@@ -1,4 +1,5 @@
 #![forbid(unsafe_code)]
+#![recursion_limit = "256"]
 
 use anyhow::{bail, Context, Result};
 use novovm_network::{Transport, UdpTransport};
@@ -1040,6 +1041,22 @@ fn diagnostics_summary_sample(
     out["queue_dropped_last_active"] = serde_json::json!(0u64);
     out["queue_dropped_total_cumulative"] =
         serde_json::json!(summary_u64(summary, "queue_dropped_last"));
+    out["historical_compacted_total"] =
+        serde_json::json!(summary_u64(summary, "historical_compacted_total"));
+    out["historical_payload_bytes_freed"] =
+        serde_json::json!(summary_u64(summary, "historical_payload_bytes_freed"));
+    out["tombstone_retained_count"] =
+        serde_json::json!(summary_u64(summary, "tombstone_retained_count"));
+    out["tombstone_evicted_count"] =
+        serde_json::json!(summary_u64(summary, "tombstone_evicted_count"));
+    out["historical_pending_after_compaction"] =
+        serde_json::json!(summary_u64(summary, "historical_pending_after_compaction"));
+    out["included_retained_after_compaction"] =
+        serde_json::json!(summary_u64(summary, "included_retained_after_compaction"));
+    out["dropped_retained_after_compaction"] =
+        serde_json::json!(summary_u64(summary, "dropped_retained_after_compaction"));
+    out["runtime_current_view_bytes_estimate"] =
+        serde_json::json!(summary_u64(summary, "queue_tx_count_last").saturating_mul(256));
     out
 }
 
@@ -1849,6 +1866,14 @@ fn compact_receiver_summary_for_report(summary: Value) -> Value {
         "queue_pending_last": summary_u64(&summary, "queue_pending_last"),
         "queue_dropped_last": summary_u64(&summary, "queue_dropped_last"),
         "queue_rejected_last": summary_u64(&summary, "queue_rejected_last"),
+        "historical_compacted_total": summary_u64(&summary, "historical_compacted_total"),
+        "historical_payload_bytes_freed": summary_u64(&summary, "historical_payload_bytes_freed"),
+        "tombstone_retained_count": summary_u64(&summary, "tombstone_retained_count"),
+        "tombstone_evicted_count": summary_u64(&summary, "tombstone_evicted_count"),
+        "historical_pending_after_compaction": summary_u64(&summary, "historical_pending_after_compaction"),
+        "included_retained_after_compaction": summary_u64(&summary, "included_retained_after_compaction"),
+        "dropped_retained_after_compaction": summary_u64(&summary, "dropped_retained_after_compaction"),
+        "runtime_current_view_bytes_estimate": summary_u64(&summary, "queue_tx_count_last").saturating_mul(256),
         "broadcast_tx_last": summary_u64(&summary, "broadcast_tx_last"),
         "broadcast_candidates_last": summary_u64(&summary, "broadcast_candidates_last"),
         "skipped_ineligible_stage_total": summary_u64(&summary, "skipped_ineligible_stage_total"),

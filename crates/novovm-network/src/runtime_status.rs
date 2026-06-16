@@ -970,6 +970,33 @@ pub struct NetworkRuntimeNativePendingTxSummaryV1 {
     pub last_broadcast_unix_ms: Option<u128>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct NetworkRuntimeNativePendingTxHistoryCompactionSummaryV1 {
+    pub chain_id: u64,
+    pub retain_recent: usize,
+    pub historical_before: usize,
+    pub historical_after: usize,
+    pub included_before: usize,
+    pub included_after: usize,
+    pub dropped_before: usize,
+    pub dropped_after: usize,
+    pub rejected_before: usize,
+    pub rejected_after: usize,
+    pub historical_compacted_total: usize,
+    pub included_compacted_total: usize,
+    pub dropped_compacted_total: usize,
+    pub rejected_compacted_total: usize,
+    pub tombstones_inserted: usize,
+    pub tombstone_retained_count: usize,
+    pub tombstone_evicted_count: usize,
+    pub historical_payload_bytes_freed: usize,
+    pub included_payload_bytes_retained: usize,
+    pub dropped_payload_bytes_retained: usize,
+    pub historical_payload_bytes_retained: usize,
+    pub receipt_index_backed_dedup_count: usize,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NetworkRuntimeNativePendingTxBroadcastCandidateV1 {
     pub chain_id: u64,
@@ -1469,6 +1496,161 @@ fn runtime_native_pending_tx_cleanup_v1(chain_id: u64, now: u128) {
             }
         }
     }
+}
+
+#[inline]
+fn runtime_native_pending_tx_is_historical_stage_v1(
+    stage: NetworkRuntimeNativePendingTxLifecycleStageV1,
+) -> bool {
+    matches!(
+        stage,
+        NetworkRuntimeNativePendingTxLifecycleStageV1::IncludedCanonical
+            | NetworkRuntimeNativePendingTxLifecycleStageV1::IncludedNonCanonical
+            | NetworkRuntimeNativePendingTxLifecycleStageV1::Dropped
+            | NetworkRuntimeNativePendingTxLifecycleStageV1::Rejected
+    )
+}
+
+pub fn compact_network_runtime_native_pending_tx_history_v1(
+    chain_id: u64,
+    retain_recent: usize,
+) -> NetworkRuntimeNativePendingTxHistoryCompactionSummaryV1 {
+    runtime_native_pending_tx_cleanup_v1(chain_id, now_unix_millis());
+    let budget = get_network_runtime_native_budget_hooks_v1(chain_id);
+    let tombstone_retention_max = budget.pending_tx_tombstone_retention_max.max(1) as usize;
+    let retain_recent = retain_recent.min(tombstone_retention_max);
+    let mut summary = NetworkRuntimeNativePendingTxHistoryCompactionSummaryV1 {
+        chain_id,
+        retain_recent,
+        ..Default::default()
+    };
+
+    let mut removed_tombstones = Vec::<NetworkRuntimeNativePendingTxTombstoneV1>::new();
+    let mut removed_hashes = Vec::<[u8; 32]>::new();
+    let mut final_hashes = Vec::<[u8; 32]>::new();
+
+    if let Ok(mut guard) = runtime_native_pending_tx_map().lock() {
+        if let Some(chain_txs) = guard.get_mut(&chain_id) {
+            for tx in chain_txs.values() {
+                if runtime_native_pending_tx_is_historical_stage_v1(tx.lifecycle_stage) {
+                    summary.historical_before = summary.historical_before.saturating_add(1);
+                }
+                match tx.lifecycle_stage {
+                    NetworkRuntimeNativePendingTxLifecycleStageV1::IncludedCanonical => {
+                        summary.included_before = summary.included_before.saturating_add(1);
+                        final_hashes.push(tx.tx_hash);
+                    }
+                    NetworkRuntimeNativePendingTxLifecycleStageV1::Dropped => {
+                        summary.dropped_before = summary.dropped_before.saturating_add(1);
+                        final_hashes.push(tx.tx_hash);
+                    }
+                    NetworkRuntimeNativePendingTxLifecycleStageV1::Rejected => {
+                        summary.rejected_before = summary.rejected_before.saturating_add(1);
+                        final_hashes.push(tx.tx_hash);
+                    }
+                    _ => {}
+                }
+            }
+
+            let mut final_entries = chain_txs
+                .values()
+                .filter(|tx| runtime_native_pending_tx_is_historical_stage_v1(tx.lifecycle_stage))
+                .map(|tx| (tx.tx_hash, tx.last_updated_unix_ms, tx.lifecycle_stage))
+                .collect::<Vec<_>>();
+            final_entries.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| b.0.cmp(&a.0)));
+
+            for (tx_hash, _, _) in final_entries.into_iter().skip(retain_recent) {
+                if let Some(mut tx) = chain_txs.remove(&tx_hash) {
+                    tx.pending_final_disposition =
+                        NetworkRuntimeNativePendingTxFinalDispositionV1::Evicted;
+                    match tx.lifecycle_stage {
+                        NetworkRuntimeNativePendingTxLifecycleStageV1::IncludedCanonical => {
+                            summary.included_compacted_total =
+                                summary.included_compacted_total.saturating_add(1);
+                        }
+                        NetworkRuntimeNativePendingTxLifecycleStageV1::Dropped => {
+                            summary.dropped_compacted_total =
+                                summary.dropped_compacted_total.saturating_add(1);
+                        }
+                        NetworkRuntimeNativePendingTxLifecycleStageV1::Rejected => {
+                            summary.rejected_compacted_total =
+                                summary.rejected_compacted_total.saturating_add(1);
+                        }
+                        _ => {}
+                    }
+                    removed_tombstones.push(runtime_native_pending_tx_tombstone_from_state_v1(&tx));
+                    removed_hashes.push(tx_hash);
+                }
+            }
+
+            summary.historical_compacted_total = removed_hashes.len();
+            for tx in chain_txs.values() {
+                if runtime_native_pending_tx_is_historical_stage_v1(tx.lifecycle_stage) {
+                    summary.historical_after = summary.historical_after.saturating_add(1);
+                }
+                match tx.lifecycle_stage {
+                    NetworkRuntimeNativePendingTxLifecycleStageV1::IncludedCanonical => {
+                        summary.included_after = summary.included_after.saturating_add(1);
+                    }
+                    NetworkRuntimeNativePendingTxLifecycleStageV1::Dropped => {
+                        summary.dropped_after = summary.dropped_after.saturating_add(1);
+                    }
+                    NetworkRuntimeNativePendingTxLifecycleStageV1::Rejected => {
+                        summary.rejected_after = summary.rejected_after.saturating_add(1);
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    let final_hash_set = final_hashes.into_iter().collect::<HashSet<_>>();
+    if let Ok(mut payloads_guard) = runtime_native_pending_tx_payload_map().lock() {
+        if let Some(chain_payloads) = payloads_guard.get_mut(&chain_id) {
+            let payload_hashes = chain_payloads.keys().copied().collect::<Vec<_>>();
+            for tx_hash in payload_hashes {
+                if final_hash_set.contains(&tx_hash) || removed_hashes.contains(&tx_hash) {
+                    if let Some(payload) = chain_payloads.remove(&tx_hash) {
+                        summary.historical_payload_bytes_freed = summary
+                            .historical_payload_bytes_freed
+                            .saturating_add(payload.len());
+                    }
+                }
+            }
+            summary.historical_payload_bytes_retained = chain_payloads
+                .iter()
+                .filter(|(tx_hash, _)| final_hash_set.contains(*tx_hash))
+                .map(|(_, payload)| payload.len())
+                .sum();
+        }
+    }
+
+    if let Ok(mut tombstones_guard) = runtime_native_pending_tx_tombstone_map().lock() {
+        let chain_tombstones = tombstones_guard.entry(chain_id).or_default();
+        for tombstone in removed_tombstones {
+            chain_tombstones.insert(tombstone.tx_hash, tombstone);
+            summary.tombstones_inserted = summary.tombstones_inserted.saturating_add(1);
+        }
+        if chain_tombstones.len() > tombstone_retention_max {
+            let before = chain_tombstones.len();
+            let mut ordered = chain_tombstones
+                .values()
+                .map(|value| (value.tx_hash, value.last_updated_unix_ms))
+                .collect::<Vec<_>>();
+            ordered.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| b.0.cmp(&a.0)));
+            for (tx_hash, _) in ordered.into_iter().skip(tombstone_retention_max) {
+                chain_tombstones.remove(&tx_hash);
+            }
+            summary.tombstone_evicted_count = before.saturating_sub(chain_tombstones.len());
+        }
+        summary.tombstone_retained_count = chain_tombstones.len();
+    }
+
+    summary.receipt_index_backed_dedup_count = summary
+        .included_compacted_total
+        .saturating_add(summary.dropped_compacted_total)
+        .saturating_add(summary.rejected_compacted_total);
+    summary
 }
 
 #[inline]
@@ -7466,6 +7648,91 @@ mod tests {
         assert!(
             get_network_runtime_native_pending_tx_payload_v1(chain_id, included_tx).is_none(),
             "duplicate reentry after canonical inclusion must not retain payload"
+        );
+    }
+
+    #[test]
+    fn native_pending_history_compaction_evicts_final_state_and_payloads() {
+        let chain_id = 20621_u64;
+        clear_runtime_sync_status_for_test(chain_id);
+        clear_network_runtime_native_snapshots_for_chain_v1(chain_id);
+        let active_tx = [0xc1; 32];
+        let dropped_tx = [0xc2; 32];
+        let included_tx = [0xc3; 32];
+        let canonical_hash = [0xd3; 32];
+
+        observe_network_runtime_native_pending_tx_remote_native_payload_v1(
+            chain_id,
+            41,
+            active_tx,
+            Some(b"active-native-payload"),
+        );
+        observe_network_runtime_native_pending_tx_remote_native_payload_v1(
+            chain_id,
+            41,
+            dropped_tx,
+            Some(b"dropped-native-payload"),
+        );
+        observe_network_runtime_native_pending_tx_remote_native_payload_v1(
+            chain_id,
+            41,
+            included_tx,
+            Some(b"included-native-payload"),
+        );
+        observe_network_runtime_native_pending_tx_dropped_v1(chain_id, dropped_tx);
+        set_network_runtime_native_body_snapshot_v1(
+            chain_id,
+            NetworkRuntimeNativeBodySnapshotV1 {
+                chain_id,
+                number: 9,
+                block_hash: canonical_hash,
+                tx_hashes: vec![included_tx],
+                raw_tx_rlps: Vec::new(),
+                ommer_hashes: Vec::new(),
+                withdrawal_rlp_items: None,
+                withdrawal_count: Some(0),
+                body_available: true,
+                txs_materialized: true,
+                observed_unix_ms: 20,
+            },
+        );
+        set_network_runtime_native_head_snapshot_v1(
+            chain_id,
+            NetworkRuntimeNativeHeadSnapshotV1 {
+                chain_id,
+                phase: NetworkRuntimeNativeSyncPhaseV1::Bodies,
+                peer_count: 1,
+                block_number: 9,
+                block_hash: canonical_hash,
+                parent_block_hash: [0x11; 32],
+                state_root: [0x22; 32],
+                canonical: true,
+                safe: true,
+                finalized: true,
+                reorg_depth_hint: Some(0),
+                body_available: true,
+                source_peer_id: Some(41),
+                observed_unix_ms: 21,
+            },
+        );
+
+        let summary = compact_network_runtime_native_pending_tx_history_v1(chain_id, 0);
+        assert_eq!(summary.included_before, 1);
+        assert_eq!(summary.dropped_before, 1);
+        assert_eq!(summary.historical_compacted_total, 2);
+        assert_eq!(summary.historical_after, 0);
+        assert!(summary.historical_payload_bytes_freed > 0);
+
+        let active = snapshot_network_runtime_native_active_pending_txs_v1(chain_id, 16);
+        assert_eq!(active.len(), 1);
+        assert_eq!(active[0].tx_hash, active_tx);
+        assert!(get_network_runtime_native_pending_tx_v1(chain_id, dropped_tx).is_none());
+        assert!(get_network_runtime_native_pending_tx_v1(chain_id, included_tx).is_none());
+        assert!(get_network_runtime_native_pending_tx_payload_v1(chain_id, dropped_tx).is_none());
+        assert!(get_network_runtime_native_pending_tx_payload_v1(chain_id, included_tx).is_none());
+        assert!(get_network_runtime_native_pending_tx_tombstone_v1(chain_id, dropped_tx).is_some());
+        assert!(
+            get_network_runtime_native_pending_tx_tombstone_v1(chain_id, included_tx).is_some()
         );
     }
 
