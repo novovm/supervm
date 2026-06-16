@@ -106,9 +106,9 @@ use novovm_node::tx_ingress::{
     ingest_local_eth_raw_tx_payload_v1, ingest_local_nov_raw_tx_payload_v1,
     load_exec_batch_from_wire_file, load_ops_wire_v1_file, load_ops_wire_v1_from_tx_wire_file,
     load_ops_wire_v1_payload_file, load_tx_records_from_wire_file,
-    nov_native_execution_store_path_v1, run_eth_send_raw_transaction_from_params_v1,
-    run_nov_native_execution_tick_from_params_v1, tx_ingress_records_to_adapter_tx_irs,
-    TxIngressRecord, LOCAL_TX_WIRE_CODEC_WRITE_U64LE_V1,
+    native_aoem_semantic_ingress_runtime_reuse_counters_v1, nov_native_execution_store_path_v1,
+    run_eth_send_raw_transaction_from_params_v1, run_nov_native_execution_tick_from_params_v1,
+    tx_ingress_records_to_adapter_tx_irs, TxIngressRecord, LOCAL_TX_WIRE_CODEC_WRITE_U64LE_V1,
 };
 use novovm_node::unified_account_surface::{
     default_mainline_unified_account_store_path, is_mainline_unified_account_query_method,
@@ -33675,6 +33675,7 @@ fn build_native_execution_pipeline_report_v1(
         snapshot_network_runtime_native_pending_tx_broadcast_runtime_summary_v1(chain_id);
     let broadcast_candidates =
         snapshot_network_runtime_native_pending_tx_broadcast_candidates_v1(chain_id, 16, 3);
+    let aoem_runtime_reuse = native_aoem_semantic_ingress_runtime_reuse_counters_v1();
     let compact_tick_out = compact_native_execution_tick_out_for_pipeline_report_v1(&tick_out);
     let product_entry = ingress_drive
         .get("entry")
@@ -33753,6 +33754,7 @@ fn build_native_execution_pipeline_report_v1(
                 "non_recoverable": pending_summary.non_recoverable_count,
             },
             "aoem_batch": {
+                "runtime_reuse": aoem_runtime_reuse,
                 "executed": tick_out
                     .get("executed_count")
                     .and_then(|value| value.as_u64())
@@ -33933,6 +33935,7 @@ struct NativeExecutionPipelineAggregateV1 {
     skipped_ineligible_stage_total: u64,
     skipped_already_receipted_total: u64,
     max_aoem_batch_executed_per_tick: u64,
+    aoem_runtime_reuse_last: serde_json::Value,
     max_proof_items_per_tick: u64,
     max_commit_items_per_tick: u64,
     max_broadcast_tx_per_tick: u64,
@@ -33998,6 +34001,7 @@ impl NativeExecutionPipelineAggregateV1 {
             skipped_ineligible_stage_total: 0,
             skipped_already_receipted_total: 0,
             max_aoem_batch_executed_per_tick: 0,
+            aoem_runtime_reuse_last: serde_json::json!({}),
             max_proof_items_per_tick: 0,
             max_commit_items_per_tick: 0,
             max_broadcast_tx_per_tick: 0,
@@ -34172,6 +34176,10 @@ impl NativeExecutionPipelineAggregateV1 {
         if executed_this_tick > 0 {
             self.nonempty_aoem_batch_ticks = self.nonempty_aoem_batch_ticks.saturating_add(1);
         }
+        self.aoem_runtime_reuse_last = aoem_batch
+            .get("runtime_reuse")
+            .cloned()
+            .unwrap_or_else(|| serde_json::json!({}));
         self.aoem_deferred_total = self.aoem_deferred_total.saturating_add(
             aoem_batch
                 .get("deferred")
@@ -34493,6 +34501,28 @@ impl NativeExecutionPipelineAggregateV1 {
             "max_aoem_batch_executed_per_tick".to_string(),
             serde_json::json!(self.max_aoem_batch_executed_per_tick),
         );
+        out.insert(
+            "aoem_runtime_reuse".to_string(),
+            self.aoem_runtime_reuse_last.clone(),
+        );
+        for key in [
+            "aoem_runtime_open_count",
+            "aoem_handle_created_count",
+            "aoem_session_created_count",
+            "aoem_session_reused_count",
+            "aoem_worker_pool_created_count",
+            "tokio_runtime_created_count",
+            "std_thread_spawn_count",
+            "spawn_blocking_count",
+        ] {
+            out.insert(
+                key.to_string(),
+                self.aoem_runtime_reuse_last
+                    .get(key)
+                    .cloned()
+                    .unwrap_or_else(|| serde_json::json!(0u64)),
+            );
+        }
         out.insert(
             "max_proof_items_per_tick".to_string(),
             serde_json::json!(self.max_proof_items_per_tick),

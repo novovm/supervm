@@ -1,11 +1,12 @@
 use anyhow::{bail, Result};
-use aoem_bindings::{AoemCreateOptionsV1, AoemDyn, AoemExecV2Result, AoemHandle, AoemOpV2};
+use aoem_bindings::{AoemCreateOptionsV1, AoemDyn, AoemExecV2Result, AoemOpV2, AoemSharedHandle};
 use novovm_adapter_api::{ChainType, TxType};
 use novovm_protocol::{evm_block_access_list_hash_v1, EvmBlockAccessListV1};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as Sha2Digest, Sha256};
 use sha3::Keccak256;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Instant;
 
 mod ingress_codec;
@@ -339,12 +340,12 @@ impl AoemRuntimeConfig {
 }
 
 pub struct AoemExecFacade {
-    dynlib: AoemDyn,
+    dynlib: Arc<AoemDyn>,
     options: AoemExecOpenOptions,
 }
 
-pub struct AoemExecSession<'a> {
-    handle: AoemHandle<'a>,
+pub struct AoemExecSession {
+    handle: AoemSharedHandle,
 }
 
 #[repr(u32)]
@@ -1589,7 +1590,7 @@ impl AoemExecFacade {
 
     /// Loads AOEM FFI DLL and validates startup contract (ABI + manifest + capabilities).
     pub fn open(dll_path: impl AsRef<Path>, options: AoemExecOpenOptions) -> Result<Self> {
-        let dynlib = unsafe { AoemDyn::load(dll_path.as_ref()) }?;
+        let dynlib = Arc::new(unsafe { AoemDyn::load(dll_path.as_ref()) }?);
         Ok(Self { dynlib, options })
     }
 
@@ -1637,10 +1638,11 @@ impl AoemExecFacade {
     }
 
     /// Creates one execution session. Host can keep one session per worker thread.
-    pub fn create_session(&self) -> Result<AoemExecSession<'_>> {
-        let handle = self
-            .dynlib
-            .create_handle_with_ingress_workers(self.options.ingress_workers)?;
+    pub fn create_session(&self) -> Result<AoemExecSession> {
+        let handle = AoemDyn::create_shared_handle_with_ingress_workers(
+            self.dynlib.clone(),
+            self.options.ingress_workers,
+        )?;
         Ok(AoemExecSession { handle })
     }
 
@@ -1649,7 +1651,7 @@ impl AoemExecFacade {
     }
 }
 
-impl<'a> AoemExecSession<'a> {
+impl AoemExecSession {
     pub fn execute_ops_v2(&self, ops: &[AoemOpV2]) -> Result<AoemExecV2Result> {
         self.handle.execute_ops_v2(ops)
     }

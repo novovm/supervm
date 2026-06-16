@@ -11,9 +11,9 @@ use crate::unified_account_surface::get_unified_account_key_algo_with_store_path
 use anyhow::{bail, Context, Result};
 use novovm_adapter_api::{TxExecutionPolicyV1, TxIR, TxType, UcaKeyAlgo};
 use novovm_exec::{
-    recommend_threads_auto, AoemExecFacade, AoemHostHint, AoemRuntimeConfig, EncodedOpsWire,
-    ExecOpV2, OpsWireOp, OpsWireV1Builder, RawIngressCodecRegistry, AOEM_OPS_WIRE_V1_MAGIC,
-    AOEM_OPS_WIRE_V1_VERSION,
+    recommend_threads_auto, AoemExecFacade, AoemExecSession, AoemHostHint, AoemRuntimeConfig,
+    EncodedOpsWire, ExecOpV2, OpsWireOp, OpsWireV1Builder, RawIngressCodecRegistry,
+    AOEM_OPS_WIRE_V1_MAGIC, AOEM_OPS_WIRE_V1_VERSION,
 };
 use novovm_governance_observability::{append_governance_event_auto, GovernanceEvent};
 use novovm_network::{
@@ -42,10 +42,12 @@ use rocksdb::{
     Direction as RocksDbDirection, IteratorMode as RocksDbIteratorMode, Options as RocksDbOptions,
     WriteBatch as RocksDbWriteBatch, DB as RocksDb,
 };
+use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
@@ -1444,6 +1446,92 @@ fn attach_native_aoem_parallelism_meta_v1(
     meta.parallelism_reason = reason;
 }
 
+struct CachedNativeAoemSemanticIngressRuntimeV1 {
+    key: String,
+    session: AoemExecSession,
+}
+
+static NATIVE_AOEM_SEMANTIC_RUNTIME_OPEN_COUNT_V1: AtomicU64 = AtomicU64::new(0);
+static NATIVE_AOEM_SEMANTIC_SESSION_CREATED_COUNT_V1: AtomicU64 = AtomicU64::new(0);
+static NATIVE_AOEM_SEMANTIC_SESSION_REUSED_COUNT_V1: AtomicU64 = AtomicU64::new(0);
+
+thread_local! {
+    static NATIVE_AOEM_SEMANTIC_INGRESS_RUNTIME_V1: RefCell<Option<CachedNativeAoemSemanticIngressRuntimeV1>> = const { RefCell::new(None) };
+}
+
+pub fn native_aoem_semantic_ingress_runtime_reuse_counters_v1() -> serde_json::Value {
+    serde_json::json!({
+        "aoem_runtime_open_count": NATIVE_AOEM_SEMANTIC_RUNTIME_OPEN_COUNT_V1.load(Ordering::Relaxed),
+        "aoem_handle_created_count": NATIVE_AOEM_SEMANTIC_SESSION_CREATED_COUNT_V1.load(Ordering::Relaxed),
+        "aoem_session_created_count": NATIVE_AOEM_SEMANTIC_SESSION_CREATED_COUNT_V1.load(Ordering::Relaxed),
+        "aoem_session_reused_count": NATIVE_AOEM_SEMANTIC_SESSION_REUSED_COUNT_V1.load(Ordering::Relaxed),
+        "aoem_worker_pool_created_count": NATIVE_AOEM_SEMANTIC_SESSION_CREATED_COUNT_V1.load(Ordering::Relaxed),
+        "tokio_runtime_created_count": 0u64,
+        "std_thread_spawn_count": 0u64,
+        "spawn_blocking_count": 0u64,
+    })
+}
+
+fn native_aoem_semantic_ingress_runtime_key_v1(runtime: &AoemRuntimeConfig) -> String {
+    format!(
+        "{}|variant={}|ingress_workers={}",
+        runtime.dll_path.display(),
+        runtime.variant.as_str(),
+        runtime.ingress_workers.unwrap_or(0)
+    )
+}
+
+fn with_native_aoem_semantic_ingress_session_v1<T>(
+    runtime: &AoemRuntimeConfig,
+    f: impl FnOnce(&AoemExecSession) -> Result<T>,
+) -> Result<T> {
+    let key = native_aoem_semantic_ingress_runtime_key_v1(runtime);
+    NATIVE_AOEM_SEMANTIC_INGRESS_RUNTIME_V1.with(|slot| {
+        let mut slot = slot.borrow_mut();
+        let needs_open = slot
+            .as_ref()
+            .map(|cached| cached.key != key)
+            .unwrap_or(true);
+        if needs_open {
+            let facade = AoemExecFacade::open_with_runtime(runtime)?;
+            if !facade.supports_ops_wire_v1() {
+                bail!("ops_wire_v1_unsupported");
+            }
+            let session = facade.create_session()?;
+            NATIVE_AOEM_SEMANTIC_RUNTIME_OPEN_COUNT_V1.fetch_add(1, Ordering::Relaxed);
+            NATIVE_AOEM_SEMANTIC_SESSION_CREATED_COUNT_V1.fetch_add(1, Ordering::Relaxed);
+            *slot = Some(CachedNativeAoemSemanticIngressRuntimeV1 {
+                key: key.clone(),
+                session,
+            });
+        } else {
+            NATIVE_AOEM_SEMANTIC_SESSION_REUSED_COUNT_V1.fetch_add(1, Ordering::Relaxed);
+        }
+        let cached = slot
+            .as_ref()
+            .context("AOEM semantic ingress runtime cache missing after initialization")?;
+        f(&cached.session)
+    })
+}
+
+fn native_aoem_semantic_ingress_error_reason_v1(err: &anyhow::Error) -> String {
+    let err_text = err.to_string();
+    if err_text.contains("ops_wire_v1_unsupported") {
+        "ops_wire_v1_unsupported".to_string()
+    } else if err_text.contains("AOEM semantic ingress runtime cache missing") {
+        format!("runtime_cache_failed: {err_text}")
+    } else if err_text.contains("AOEM handle create failed") {
+        format!("session_create_failed: {err_text}")
+    } else if err_text.contains("AOEM startup")
+        || err_text.contains("load")
+        || err_text.contains("DLL")
+    {
+        format!("runtime_open_failed: {err_text}")
+    } else {
+        format!("submit_failed: {err_text}")
+    }
+}
+
 fn base_native_aoem_semantic_ingress_meta_v1(
     enabled: bool,
     required: bool,
@@ -1532,34 +1620,10 @@ fn execute_native_request_via_aoem_semantic_ingress_v1(
         ));
         return Ok(meta);
     }
-    let facade = match AoemExecFacade::open_with_runtime(&runtime) {
-        Ok(facade) => facade,
-        Err(err) => {
-            if required {
-                return Err(err).context("open AOEM semantic ingress runtime failed");
-            }
-            meta.fallback_reason = Some(format!("runtime_open_failed: {err}"));
-            return Ok(meta);
-        }
-    };
-    if !facade.supports_ops_wire_v1() {
-        if required {
-            bail!("aoem semantic ingress required but ops_wire_v1 is unsupported");
-        }
-        meta.fallback_reason = Some("ops_wire_v1_unsupported".to_string());
-        return Ok(meta);
-    }
-    let session = match facade.create_session() {
-        Ok(session) => session,
-        Err(err) => {
-            if required {
-                return Err(err).context("create AOEM semantic ingress session failed");
-            }
-            meta.fallback_reason = Some(format!("session_create_failed: {err}"));
-            return Ok(meta);
-        }
-    };
-    match session.submit_ops_wire(wire.bytes.as_slice()) {
+    let submit_result = with_native_aoem_semantic_ingress_session_v1(&runtime, |session| {
+        session.submit_ops_wire(wire.bytes.as_slice())
+    });
+    match submit_result {
         Ok(output) => {
             meta.submitted = true;
             meta.processed_ops = output.metrics.processed_ops;
@@ -1572,7 +1636,7 @@ fn execute_native_request_via_aoem_semantic_ingress_v1(
             if required {
                 return Err(err).context("submit AOEM semantic ingress ops-wire failed");
             }
-            meta.fallback_reason = Some(format!("submit_failed: {err}"));
+            meta.fallback_reason = Some(native_aoem_semantic_ingress_error_reason_v1(&err));
             Ok(meta)
         }
     }
@@ -2379,34 +2443,10 @@ fn execute_native_semantic_mutation_aoem_ingress_v1(
         }
     };
     attach_native_aoem_parallelism_meta_v1(&mut meta, Some(&runtime));
-    let facade = match AoemExecFacade::open_with_runtime(&runtime) {
-        Ok(facade) => facade,
-        Err(err) => {
-            if required {
-                return Err(err).context("open AOEM semantic mutation runtime failed");
-            }
-            meta.fallback_reason = Some(format!("runtime_open_failed: {err}"));
-            return Ok(meta);
-        }
-    };
-    if !facade.supports_ops_wire_v1() {
-        if required {
-            bail!("aoem semantic mutation required but ops_wire_v1 is unsupported");
-        }
-        meta.fallback_reason = Some("ops_wire_v1_unsupported".to_string());
-        return Ok(meta);
-    }
-    let session = match facade.create_session() {
-        Ok(session) => session,
-        Err(err) => {
-            if required {
-                return Err(err).context("create AOEM semantic mutation session failed");
-            }
-            meta.fallback_reason = Some(format!("session_create_failed: {err}"));
-            return Ok(meta);
-        }
-    };
-    match session.submit_ops_wire(wire.bytes.as_slice()) {
+    let submit_result = with_native_aoem_semantic_ingress_session_v1(&runtime, |session| {
+        session.submit_ops_wire(wire.bytes.as_slice())
+    });
+    match submit_result {
         Ok(output) => {
             meta.submitted = true;
             meta.processed_ops = output.metrics.processed_ops;
@@ -2419,7 +2459,7 @@ fn execute_native_semantic_mutation_aoem_ingress_v1(
             if required {
                 return Err(err).context("submit AOEM semantic mutation ops-wire failed");
             }
-            meta.fallback_reason = Some(format!("submit_failed: {err}"));
+            meta.fallback_reason = Some(native_aoem_semantic_ingress_error_reason_v1(&err));
             Ok(meta)
         }
     }
@@ -10781,34 +10821,10 @@ fn execute_native_raw_tx_batch_via_aoem_semantic_ingress_v1(
         ));
         return Ok(meta);
     }
-    let facade = match AoemExecFacade::open_with_runtime(&runtime) {
-        Ok(facade) => facade,
-        Err(err) => {
-            if required {
-                return Err(err).context("open AOEM raw transaction batch runtime failed");
-            }
-            meta.fallback_reason = Some(format!("runtime_open_failed: {err}"));
-            return Ok(meta);
-        }
-    };
-    if !facade.supports_ops_wire_v1() {
-        if required {
-            bail!("aoem raw transaction batch required but ops_wire_v1 is unsupported");
-        }
-        meta.fallback_reason = Some("ops_wire_v1_unsupported".to_string());
-        return Ok(meta);
-    }
-    let session = match facade.create_session() {
-        Ok(session) => session,
-        Err(err) => {
-            if required {
-                return Err(err).context("create AOEM raw transaction batch session failed");
-            }
-            meta.fallback_reason = Some(format!("session_create_failed: {err}"));
-            return Ok(meta);
-        }
-    };
-    match session.submit_ops_wire(wire.bytes.as_slice()) {
+    let submit_result = with_native_aoem_semantic_ingress_session_v1(&runtime, |session| {
+        session.submit_ops_wire(wire.bytes.as_slice())
+    });
+    match submit_result {
         Ok(output) => {
             meta.submitted = true;
             meta.processed_ops = output.metrics.processed_ops;
@@ -10821,7 +10837,7 @@ fn execute_native_raw_tx_batch_via_aoem_semantic_ingress_v1(
             if required {
                 return Err(err).context("submit AOEM raw transaction batch ops-wire failed");
             }
-            meta.fallback_reason = Some(format!("submit_failed: {err}"));
+            meta.fallback_reason = Some(native_aoem_semantic_ingress_error_reason_v1(&err));
             Ok(meta)
         }
     }

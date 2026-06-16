@@ -10,7 +10,7 @@ use std::mem::ManuallyDrop;
 use std::path::{Path, PathBuf};
 use std::ptr;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Condvar, Mutex, OnceLock};
+use std::sync::{Arc, Condvar, Mutex, OnceLock};
 
 pub type AoemAbiVersion = unsafe extern "C" fn() -> u32;
 pub type AoemVersionString = unsafe extern "C" fn() -> *const c_char;
@@ -291,6 +291,11 @@ pub struct AoemHandle<'a> {
     raw: *mut c_void,
 }
 
+pub struct AoemSharedHandle {
+    dynlib: Arc<AoemDyn>,
+    raw: *mut c_void,
+}
+
 pub struct AoemHostHint {
     pub txs: u64,
     pub batch: u32,
@@ -345,6 +350,17 @@ thread_local! {
 const MAX_AOEM_OWNED_BUFFER_BYTES: usize = 64 * 1024 * 1024;
 
 impl<'a> Drop for AoemHandle<'a> {
+    fn drop(&mut self) {
+        if !self.raw.is_null() {
+            unsafe {
+                (self.dynlib.destroy)(self.raw);
+            }
+            self.raw = ptr::null_mut();
+        }
+    }
+}
+
+impl Drop for AoemSharedHandle {
     fn drop(&mut self) {
         if !self.raw.is_null() {
             unsafe {
@@ -781,6 +797,31 @@ impl AoemDyn {
             bail!("aoem_create returned null");
         }
         Ok(AoemHandle { dynlib: self, raw })
+    }
+
+    pub fn create_shared_handle_with_ingress_workers(
+        dynlib: Arc<Self>,
+        ingress_workers: Option<u32>,
+    ) -> Result<AoemSharedHandle> {
+        let raw = if let (Some(create_with_options), Some(workers)) =
+            (dynlib.create_with_options, ingress_workers)
+        {
+            let opts = AoemCreateOptionsV1 {
+                abi_version: 1,
+                struct_size: std::mem::size_of::<AoemCreateOptionsV1>() as u32,
+                ingress_workers: workers.max(1),
+                flags: 0,
+            };
+            unsafe { create_with_options(&opts as *const AoemCreateOptionsV1) }
+        } else {
+            unsafe { (dynlib.create)() }
+        };
+        if raw.is_null() {
+            let err = unsafe { cstr_to_string((dynlib.last_error)(ptr::null_mut())) }
+                .unwrap_or_else(|| "aoem_create returned null".to_string());
+            bail!("AOEM handle create failed: {err}");
+        }
+        Ok(AoemSharedHandle { dynlib, raw })
     }
 
     pub fn library_path(&self) -> &Path {
@@ -2943,6 +2984,65 @@ impl<'a> AoemHandle<'a> {
         Ok((result, output))
     }
 
+    pub fn execute_ops_v2(&self, ops: &[AoemOpV2]) -> Result<AoemExecV2Result> {
+        let Some(exec_v2) = self.dynlib.execute_ops_v2 else {
+            bail!("aoem_execute_ops_v2 not found in loaded DLL (requires AOEM FFI V2 build)");
+        };
+        if ops.len() > u32::MAX as usize {
+            bail!("aoem_execute_ops_v2 input too large: {} ops", ops.len());
+        }
+        let mut result = AoemExecV2Result {
+            failed_index: u32::MAX,
+            ..AoemExecV2Result::default()
+        };
+        let rc = unsafe {
+            exec_v2(
+                self.raw,
+                ops.as_ptr(),
+                ops.len() as u32,
+                &mut result as *mut AoemExecV2Result,
+            )
+        };
+        if rc != 0 {
+            let err = unsafe { cstr_to_string((self.dynlib.last_error)(self.raw)) }
+                .unwrap_or_else(|| format!("aoem_execute_ops_v2 failed rc={rc} and no last_error"));
+            bail!("aoem_execute_ops_v2 failed: rc={rc}, err={err}");
+        }
+        Ok(result)
+    }
+
+    pub fn execute_ops_wire_v1(&self, input: &[u8]) -> Result<AoemExecV2Result> {
+        let Some(exec_wire_v1) = self.dynlib.execute_ops_wire_v1 else {
+            bail!(
+                "aoem_execute_ops_wire_v1 not found in loaded DLL (requires AOEM FFI wire ABI build)"
+            );
+        };
+        if input.is_empty() {
+            bail!("aoem_execute_ops_wire_v1 input must not be empty");
+        }
+        let mut result = AoemExecV2Result {
+            failed_index: u32::MAX,
+            ..AoemExecV2Result::default()
+        };
+        let rc = unsafe {
+            exec_wire_v1(
+                self.raw,
+                input.as_ptr(),
+                input.len(),
+                &mut result as *mut AoemExecV2Result,
+            )
+        };
+        if rc != 0 {
+            let err = unsafe { cstr_to_string((self.dynlib.last_error)(self.raw)) }.unwrap_or_else(
+                || format!("aoem_execute_ops_wire_v1 failed rc={rc} and no last_error"),
+            );
+            bail!("aoem_execute_ops_wire_v1 failed: rc={rc}, err={err}");
+        }
+        Ok(result)
+    }
+}
+
+impl AoemSharedHandle {
     pub fn execute_ops_v2(&self, ops: &[AoemOpV2]) -> Result<AoemExecV2Result> {
         let Some(exec_v2) = self.dynlib.execute_ops_v2 else {
             bail!("aoem_execute_ops_v2 not found in loaded DLL (requires AOEM FFI V2 build)");
