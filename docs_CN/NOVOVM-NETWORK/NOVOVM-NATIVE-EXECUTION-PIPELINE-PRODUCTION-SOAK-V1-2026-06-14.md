@@ -1610,3 +1610,321 @@ canonical body/head recovery 仍不由本 gate 签收。
 
 在 memory plateau 未签收前，不进入 30min sustained 签收。
 ```
+
+### 13.11 Allocator / Native Heap Working Set Attribution
+
+状态：
+
+```text
+Allocator / Native Heap Working Set Attribution: READY
+Commit: 67dc254
+Workspace: clean
+Memory Plateau: NOT SIGNED
+```
+
+目的：
+
+```text
+继续解释 cross-machine 5min / 2400 functional PASS 后 receiver
+仍出现的高 private / working set。
+
+本阶段不修改 frozen lifecycle，不改变 AOEM_runtime 并发 owner，
+不改变 pending-only 产品入口，不把 memory plateau 伪签为 PASS。
+```
+
+新增归因字段：
+
+```text
+process_working_set_bytes
+process_private_bytes
+process_virtual_bytes
+process_handle_count
+process_thread_count
+rust_estimated_retained_bytes
+rocksdb_total_estimated_memory_bytes
+native_heap_unattributed_bytes
+working_set_bytes_per_1000_tx
+private_bytes_per_1000_tx
+native_heap_unattributed_bytes_per_1000_tx
+allocator_fragmentation_suspected
+working_set_not_returned_suspected
+```
+
+cross-machine 5min 归因结果：
+
+```text
+accepted = true
+received_unique = 2400
+aoem_executed_total = 2400
+receipt_count = 2400
+semantic_sequence = 2400
+queue_pending_last = 0
+child_exit_code = 0
+fail_reason = normal_pass
+
+peak_live_working_set ≈ 1.65GB
+peak_live_private ≈ 1.69GB
+peak_live_native_heap_unattributed ≈ 1.68GB
+allocator_fragmentation_suspected = true
+working_set_not_returned_suspected = false
+```
+
+判断：
+
+```text
+post-exit 0 sample 已排除。
+pending/history retention 已收敛。
+RocksDB live probe LOCK conflict 已排除。
+working set not returned 不是主因，因为 private bytes 同步偏高。
+
+剩余大头为 private/native heap unattributed。
+```
+
+### 13.12 Diagnostics Live Memory Summary Fix
+
+状态：
+
+```text
+Diagnostics Live Memory Summary Fix: PASS
+Commit: ec6a416
+Workspace: clean
+Memory Plateau: NOT SIGNED
+```
+
+修复内容：
+
+```text
+final diagnostics report 区分：
+- last_sample_any
+- last_live_child_sample
+- peak_live_child_sample
+- post_exit_sample
+
+内存 summary 以 live child sample 为准，不允许 child 退出后的 0
+覆盖运行中的真实峰值。
+```
+
+验证结果：
+
+```text
+memory_summary_source = live_peak
+post_exit_sample_present = true/false
+post_exit_working_set_zeroed 不再影响 live peak 判断
+
+Cross-machine 5min / 2400 functional: PASS
+Receiver clean exit: PASS
+Diagnostics live summary: PASS
+Memory Plateau: NOT SIGNED
+```
+
+边界：
+
+```text
+本节只签 diagnostics summary 可信度。
+不签 memory plateau。
+不进入 30min。
+```
+
+### 13.13 Native Heap Source Isolation
+
+状态：
+
+```text
+Native Heap Source Isolation: READY
+Commit: 747bbe8
+Workspace: clean
+Memory Plateau: NOT SIGNED
+```
+
+目的：
+
+```text
+把 private/native heap unattributed 继续拆到 AOEM / proof /
+receipt / canonical / UDP / decode / JSON / Vec capacity 等阶段估算。
+```
+
+新增字段：
+
+```text
+summary_stage_estimated_bytes_total
+summary_unknown_native_heap_source
+summary_large_allocation_suspected_stage
+summary_native_heap_source_isolation_confidence
+
+aoem_runtime_estimated_bytes
+aoem_batch_input_bytes
+aoem_batch_output_bytes
+proof_projection_bytes
+receipt_projection_bytes
+canonical_projection_bytes
+udp_receive_buffer_bytes
+decode_buffer_bytes
+json_serialization_buffer_bytes
+tick_vec_capacity_bytes
+batch_vec_capacity_bytes
+```
+
+cross-machine 5min 结果：
+
+```text
+functional = PASS
+peak_live_working_set_bytes = 1,641,803,776
+peak_live_private_bytes = 1,682,796,544
+peak_live_native_heap_unattributed_bytes = 1,673,638,539
+summary_stage_estimated_bytes_total = 8,445,952
+summary_unknown_native_heap_source = true
+summary_large_allocation_suspected_stage = unknown_native_heap_source
+summary_native_heap_source_isolation_confidence = low_unknown_dominates
+allocator_fragmentation_suspected = true
+working_set_not_returned_suspected = false
+```
+
+判断：
+
+```text
+显式阶段估算只能解释约 8.4MB。
+约 1.67GB private/native heap 仍在诊断盲区。
+不能签 memory plateau。
+不能进入 30min sustained。
+```
+
+### 13.14 Native Heap Stage Toggle Bisect Gate
+
+状态：
+
+```text
+Native Heap Stage Toggle Bisect Gate: READY / DIAGNOSTIC PASS
+Commit: c72fbe4
+Workspace: clean
+Memory Plateau: NOT SIGNED
+```
+
+新增 gate：
+
+```text
+bin: supervm-native-pipeline-memory-bisect-gate
+artifact: artifacts/native-pipeline/native-pipeline-memory-bisect-report.json
+```
+
+probe-only toggles：
+
+```text
+NOVOVM_NATIVE_PIPELINE_MEMORY_PROBE_DISABLE_PROOF_PROJECTION
+NOVOVM_NATIVE_PIPELINE_MEMORY_PROBE_DISABLE_RECEIPT_PROJECTION
+NOVOVM_NATIVE_PIPELINE_MEMORY_PROBE_DISABLE_CANONICAL_PROJECTION
+NOVOVM_NATIVE_PIPELINE_MEMORY_PROBE_DISABLE_BROADCAST_REPORTING
+NOVOVM_NATIVE_PIPELINE_MEMORY_PROBE_DISABLE_RECOVERY_PROBE
+NOVOVM_NATIVE_PIPELINE_MEMORY_PROBE_DISABLE_DIAGNOSTICS_SAMPLES
+NOVOVM_NATIVE_PIPELINE_MEMORY_PROBE_DISABLE_JSON_REPORT_SERIALIZATION
+NOVOVM_NATIVE_PIPELINE_MEMORY_PROBE_DISABLE_SEMANTIC_LEDGER_MIRROR
+NOVOVM_NATIVE_PIPELINE_MEMORY_PROBE_MINIMAL_AOEM_RESULT
+NOVOVM_NATIVE_PIPELINE_MEMORY_PROBE_NO_RECEIPT_BODY_CACHE
+```
+
+边界：
+
+```text
+toggle 仅用于 memory attribution gate。
+报告显式标记 toggle_applied_to_execution = false。
+probe_only_not_functional toggle 不能用于签 production functional。
+不修改 frozen lifecycle。
+不改变 AOEM_runtime owner。
+不改变 pending-only 产品入口。
+不签 memory plateau。
+```
+
+本地 smoke：
+
+```text
+tx_count = 32
+accepted = true
+baseline_peak_private_bytes = 27,590,656
+suspected_stage = allocator_or_external_native_heap_suspected
+best_reduction_percent = 1
+confidence = low_no_toggle_reduction_over_30_percent
+```
+
+结论：
+
+```text
+上层可开关阶段没有明显降低 private/native heap。
+
+当前更可能方向：
+1. Windows/MSVC allocator heap fragmentation / arena retention
+2. RocksDB/native library 内部未被现有 probe 捕捉的 allocation
+3. AOEM FFI / runtime 内部 native heap
+4. 底层 buffer/arena 每 batch 分配后释放给 allocator，但 allocator 保留高水位
+5. child process runtime cache / global cache 未被诊断覆盖
+
+下一步进入 External Memory Profiler Capture。
+```
+
+### 13.15 External Memory Profiler Capture Guide
+
+状态：
+
+```text
+External Memory Profiler Capture Guide: READY
+Memory Plateau: NOT SIGNED
+30min sustained: BLOCKED
+```
+
+目的：
+
+```text
+代码内估算和 stage toggle 已经无法解释约 1.6GB private/native heap。
+下一步必须使用进程级外部工具确认内存大类和分配路径。
+```
+
+Artifact 目录：
+
+```text
+artifacts/native-pipeline/memory-profiler/
+```
+
+采样窗口：
+
+```text
+cross-machine 5min / 2400 receiver 运行中采样：
+- 约 1000 tx
+- 约 2000 tx
+- 约 2400 tx / receiver 退出前
+```
+
+VMMap 判读规则：
+
+```text
+Heap / Private Data 大：
+  优先查 allocator/native heap、AOEM FFI、Rust/native buffer arena。
+
+Mapped File 大：
+  优先查 RocksDB mmap、block cache、file mapping。
+
+Stack 大：
+  优先查 thread_count / 线程泄漏。
+
+Handle/thread 增长：
+  优先查 socket、file handle、child process、runtime resource leak。
+
+Image / Shareable 大：
+  通常不是本轮 private heap 主因，记录即可。
+```
+
+WPR/WPA 使用边界：
+
+```text
+VMMap 先确认大类。
+如果大头在 Heap / Private Data，再用 WPR/WPA 抓 heap allocation stack。
+不要把 allocator_or_external_native_heap_suspected 当最终结论。
+```
+
+保持不变的边界：
+
+```text
+不修改 frozen lifecycle。
+不改变 AOEM_runtime owner。
+不改变 pending-only 产品入口。
+不签 memory plateau。
+不进入 30min sustained。
+不把 canonical body/head recovery 混入本轮。
+```
