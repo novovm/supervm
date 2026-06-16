@@ -127,6 +127,9 @@ struct TailRepairConfigV1 {
     enabled: bool,
     rounds: u64,
     interval_ms: u64,
+    require_ack: bool,
+    missing_sample_limit: u64,
+    fallback_tail_window: u64,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -140,6 +143,12 @@ struct UdpSendRetryConfigV1 {
 struct UdpSendRetryStatsV1 {
     retry_count: u64,
     would_block_count: u64,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct MissingRangeV1 {
+    start: u64,
+    end_inclusive: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -273,6 +282,15 @@ fn diagnostics_report_path() -> PathBuf {
     .unwrap_or_else(|| {
         PathBuf::from("artifacts/native-pipeline/receiver-sustained-diagnostics-report.json")
     })
+}
+
+fn ack_report_path() -> PathBuf {
+    first_string_env_nonempty(&[
+        "NOVOVM_NATIVE_PIPELINE_ACK_REPORT_PATH",
+        "NOVOVM_NATIVE_PIPELINE_RECEIVER_ACK_REPORT_PATH",
+    ])
+    .map(PathBuf::from)
+    .unwrap_or_else(|| PathBuf::from("artifacts/native-pipeline/receiver-sustained-ack.json"))
 }
 
 fn receiver_stdout_log_path() -> PathBuf {
@@ -569,6 +587,89 @@ fn build_tail_repair_payloads(
         tx.dropped = false;
     }
     Ok(txs)
+}
+
+fn missing_ranges_from_progress(progress: u64, expected: u64, limit: u64) -> Vec<MissingRangeV1> {
+    if progress >= expected || limit == 0 {
+        return Vec::new();
+    }
+    vec![MissingRangeV1 {
+        start: progress,
+        end_inclusive: expected.saturating_sub(1),
+    }]
+}
+
+fn missing_ranges_to_json(ranges: &[MissingRangeV1], limit: u64) -> Value {
+    let limited = ranges.iter().take(limit as usize).map(|range| {
+        serde_json::json!({
+            "start": range.start,
+            "end_inclusive": range.end_inclusive,
+            "count": range.end_inclusive.saturating_sub(range.start).saturating_add(1),
+        })
+    });
+    serde_json::Value::Array(limited.collect())
+}
+
+fn read_missing_ranges_from_ack(path: &Path, limit: u64) -> Option<Vec<MissingRangeV1>> {
+    let raw = fs::read_to_string(path).ok()?;
+    let value = serde_json::from_str::<Value>(raw.as_str()).ok()?;
+    let ranges = value
+        .get("missing_ranges_sample")
+        .and_then(Value::as_array)?
+        .iter()
+        .filter_map(|item| {
+            let start = item.get("start").and_then(Value::as_u64)?;
+            let end_inclusive = item.get("end_inclusive").and_then(Value::as_u64)?;
+            if end_inclusive < start {
+                return None;
+            }
+            Some(MissingRangeV1 {
+                start,
+                end_inclusive,
+            })
+        })
+        .take(limit as usize)
+        .collect::<Vec<_>>();
+    Some(ranges)
+}
+
+fn build_tail_repair_payloads_from_ranges(
+    chain_id: u64,
+    ranges: &[MissingRangeV1],
+    repair_round: u64,
+) -> Result<Vec<NativeFixtureTxV1>> {
+    let mut out = Vec::<NativeFixtureTxV1>::new();
+    let copy_index = repair_round.saturating_add(1);
+    for range in ranges {
+        let count = range
+            .end_inclusive
+            .saturating_sub(range.start)
+            .saturating_add(1);
+        let mut txs = build_native_payloads_from_index(chain_id, range.start, count)?;
+        for tx in &mut txs {
+            tx.copy_index = copy_index;
+            tx.dropped = false;
+        }
+        out.extend(txs);
+    }
+    Ok(out)
+}
+
+fn build_tail_repair_fallback_payloads(
+    chain_id: u64,
+    tx_count: u64,
+    repair_round: u64,
+    tail_window: u64,
+) -> Result<Vec<NativeFixtureTxV1>> {
+    if tail_window == 0 || tail_window >= tx_count {
+        return build_tail_repair_payloads(chain_id, tx_count, repair_round);
+    }
+    let start = tx_count.saturating_sub(tail_window);
+    let range = MissingRangeV1 {
+        start,
+        end_inclusive: tx_count.saturating_sub(1),
+    };
+    build_tail_repair_payloads_from_ranges(chain_id, &[range], repair_round)
 }
 
 fn loss_roll_bps(seed: u64, index: u64, copy_index: u64) -> u64 {
@@ -952,6 +1053,21 @@ fn run_receiver_node(
                 memory_sample,
                 state.last_canonical,
             );
+            let final_progress = summary_u64(&summary, "aoem_executed_total")
+                .max(summary_u64(&summary, "included_canonical_total"))
+                .max(
+                    sample
+                        .get("semantic_ledger_mirror")
+                        .and_then(|value| value.get("line_count"))
+                        .and_then(Value::as_u64)
+                        .unwrap_or_default(),
+                );
+            let _ = write_receiver_ack_report(
+                expected_tx_count,
+                final_progress,
+                u64_env("NOVOVM_NATIVE_PIPELINE_MISSING_SAMPLE_LIMIT", 256).unwrap_or(256),
+                state.samples_dropped.saturating_add(state.samples.len() as u64),
+            );
             state.samples.push(sample);
             write_diagnostics_report(&diagnostics, &state, true, child_pid, expected_tx_count)?;
             write_receiver_exit_report(
@@ -1109,6 +1225,12 @@ fn run_receiver_node(
                 ));
             }
             state.last_canonical = stable_progress;
+            let _ = write_receiver_ack_report(
+                expected_tx_count,
+                stable_progress,
+                u64_env("NOVOVM_NATIVE_PIPELINE_MISSING_SAMPLE_LIMIT", 256).unwrap_or(256),
+                state.samples_dropped.saturating_add(state.samples.len() as u64),
+            );
             state.samples.push(sample);
             if state.samples.len() > 256 {
                 let drop_count = state.samples.len().saturating_sub(256);
@@ -1200,6 +1322,29 @@ fn write_report(path: &Path, report: &Value) -> Result<()> {
         serde_json::to_string_pretty(report).context("encode cross-machine report failed")?;
     fs::write(path, encoded)
         .with_context(|| format!("write cross-machine report failed: {}", path.display()))
+}
+
+fn write_receiver_ack_report(
+    expected_tx_count: u64,
+    stable_progress: u64,
+    sample_limit: u64,
+    ack_epoch: u64,
+) -> Result<()> {
+    let missing_count = expected_tx_count.saturating_sub(stable_progress);
+    let ranges = missing_ranges_from_progress(stable_progress, expected_tx_count, sample_limit);
+    let report = serde_json::json!({
+        "schema": "novovm-native-pipeline-cross-machine-sustained-ack/v1",
+        "expected_tx_total": expected_tx_count,
+        "received_unique_count": stable_progress,
+        "canonical_unique_included": stable_progress,
+        "receipt_count": stable_progress,
+        "highest_sequence_seen": stable_progress.saturating_sub(1),
+        "missing_count": missing_count,
+        "missing_ranges_sample": missing_ranges_to_json(ranges.as_slice(), sample_limit),
+        "ack_epoch": ack_epoch,
+        "receiver_done": stable_progress >= expected_tx_count,
+    });
+    write_report(ack_report_path().as_path(), &report)
 }
 
 fn write_artifact_bytes(path: &Path, bytes: &[u8]) -> Result<()> {
@@ -2360,6 +2505,10 @@ fn run_sender(
 ) -> Result<Value> {
     let mut stats = empty_send_stats();
     let mut repair_stats = empty_send_stats();
+    let mut tail_repair_ack_received_count = 0u64;
+    let mut tail_repair_missing_ranges_seen = 0u64;
+    let mut tail_repair_fallback_used_count = 0u64;
+    let mut final_missing_count = tx_count;
     let tx_per_round = if sustained.enabled {
         sustained.tx_per_round.max(1)
     } else {
@@ -2402,7 +2551,42 @@ fn run_sender(
             if tail_repair.interval_ms > 0 {
                 std::thread::sleep(std::time::Duration::from_millis(tail_repair.interval_ms));
             }
-            let txs = build_tail_repair_payloads(chain_id, tx_count, repair_round)?;
+            let ack_path = ack_report_path();
+            let ack_ranges =
+                read_missing_ranges_from_ack(ack_path.as_path(), tail_repair.missing_sample_limit);
+            let txs = if let Some(ranges) = ack_ranges.as_ref().filter(|ranges| !ranges.is_empty())
+            {
+                tail_repair_ack_received_count =
+                    tail_repair_ack_received_count.saturating_add(1);
+                tail_repair_missing_ranges_seen = tail_repair_missing_ranges_seen
+                    .saturating_add(ranges.len().try_into().unwrap_or(u64::MAX));
+                final_missing_count = ranges
+                    .iter()
+                    .map(|range| {
+                        range
+                            .end_inclusive
+                            .saturating_sub(range.start)
+                            .saturating_add(1)
+                    })
+                    .sum();
+                build_tail_repair_payloads_from_ranges(chain_id, ranges.as_slice(), repair_round)?
+            } else if tail_repair.require_ack {
+                final_missing_count = tx_count.saturating_sub(stats.sent_unique);
+                Vec::new()
+            } else {
+                tail_repair_fallback_used_count =
+                    tail_repair_fallback_used_count.saturating_add(1);
+                build_tail_repair_fallback_payloads(
+                    chain_id,
+                    tx_count,
+                    repair_round,
+                    tail_repair.fallback_tail_window,
+                )?
+            };
+            if txs.is_empty() {
+                repair_rounds_used = repair_rounds_used.saturating_add(1);
+                continue;
+            }
             let round_stats = send_scheduled_batch(
                 chain_id,
                 sender_node,
@@ -2420,6 +2604,9 @@ fn run_sender(
             }
         }
         merge_send_stats(&mut stats, repair_stats.clone());
+    }
+    if tail_repair_ack_received_count == 0 {
+        final_missing_count = tx_count.saturating_sub(stats.sent_unique);
     }
     let sender_completed = stats.sent_unique == tx_count && stats.send_failed_count == 0;
     let accepted = sender_completed;
@@ -2495,12 +2682,19 @@ fn run_sender(
             "rounds_configured": tail_repair.rounds,
             "interval_ms": tail_repair.interval_ms,
             "repair_rounds_used": repair_rounds_used,
+            "tail_repair_ack_received_count": tail_repair_ack_received_count,
+            "tail_repair_missing_ranges_seen": tail_repair_missing_ranges_seen,
+            "tail_repair_fallback_used_count": tail_repair_fallback_used_count,
+            "tail_repair_require_ack": tail_repair.require_ack,
+            "missing_sample_limit": tail_repair.missing_sample_limit,
+            "fallback_tail_window": tail_repair.fallback_tail_window,
             "initial_sent_total": stats.sent_packets.saturating_sub(repair_stats.sent_packets),
             "repair_sent_total": repair_stats.sent_packets,
             "repair_scheduled_total": repair_stats.scheduled_packets,
             "repair_send_retry_count": repair_stats.send_retry_count,
             "repair_send_would_block_count": repair_stats.send_would_block_count,
             "repair_send_failed_count": repair_stats.send_failed_count,
+            "final_missing_count": final_missing_count,
             "tail_repair_success": accepted,
         },
         "sent_by_hash": stats.sent_by_hash,
@@ -2843,6 +3037,9 @@ fn run_memory_bisect_variant(
             enabled: true,
             rounds: 1,
             interval_ms: 200,
+            require_ack: false,
+            missing_sample_limit: 256,
+            fallback_tail_window: tx_count.min(2048),
         },
         default_udp_send_retry_config(),
     );
@@ -3129,6 +3326,12 @@ fn main() -> Result<()> {
         interval_ms: u64_env(
             "NOVOVM_NATIVE_PIPELINE_TAIL_REPAIR_INTERVAL_MS",
             if tail_repair_enabled { 1000 } else { 0 },
+        )?,
+        require_ack: bool_env("NOVOVM_NATIVE_PIPELINE_TAIL_REPAIR_REQUIRE_ACK"),
+        missing_sample_limit: u64_env("NOVOVM_NATIVE_PIPELINE_MISSING_SAMPLE_LIMIT", 256)?,
+        fallback_tail_window: u64_env(
+            "NOVOVM_NATIVE_PIPELINE_TAIL_REPAIR_FALLBACK_TAIL_WINDOW",
+            tx_count.min(2048),
         )?,
     };
     let udp_send_retry = UdpSendRetryConfigV1 {
