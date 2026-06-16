@@ -1340,7 +1340,21 @@ fn read_pipeline_progress_summary(path: &Path) -> Option<Value> {
 #[cfg(windows)]
 fn process_memory_sample(pid: u32) -> Value {
     let script = format!(
-        "$p=Get-Process -Id {pid} -ErrorAction Stop; \
+        "$c=Get-CimInstance Win32_PerfFormattedData_PerfProc_Process -Filter \"IDProcess={pid}\" -ErrorAction SilentlyContinue; \
+         if ($c) {{ \
+         [pscustomobject]@{{\
+            WorkingSet64=[int64]$c.WorkingSet;\
+            PrivateMemorySize64=[int64]$c.PrivateBytes;\
+            VirtualMemorySize64=[int64]$c.VirtualBytes;\
+            PagedMemorySize64=0;\
+            PagedSystemMemorySize64=0;\
+            NonpagedSystemMemorySize64=0;\
+            HandleCount=[int64]$c.HandleCount;\
+            ThreadCount=[int64]$c.ThreadCount;\
+            CPU=0;\
+            SampleMethod='cim_perfproc'\
+         }} | ConvertTo-Json -Compress; exit 0 }}; \
+         $p=Get-Process -Id {pid} -ErrorAction Stop; \
          [pscustomobject]@{{\
             WorkingSet64=$p.WorkingSet64;\
             PrivateMemorySize64=$p.PrivateMemorySize64;\
@@ -1350,7 +1364,8 @@ fn process_memory_sample(pid: u32) -> Value {
             NonpagedSystemMemorySize64=$p.NonpagedSystemMemorySize64;\
             HandleCount=$p.HandleCount;\
             ThreadCount=$p.Threads.Count;\
-            CPU=$p.CPU\
+            CPU=$p.CPU;\
+            SampleMethod='get_process_threads_count_fallback'\
          }} | ConvertTo-Json -Compress"
     );
     match Command::new("powershell")
@@ -1574,6 +1589,12 @@ fn last_live_child_sample(samples: &[Value]) -> Option<&Value> {
         .find(|sample| is_live_child_memory_sample(sample))
 }
 
+fn first_live_child_sample(samples: &[Value]) -> Option<&Value> {
+    samples
+        .iter()
+        .find(|sample| is_live_child_memory_sample(sample))
+}
+
 fn peak_live_child_sample(samples: &[Value]) -> Option<&Value> {
     samples
         .iter()
@@ -1619,6 +1640,17 @@ fn diagnostics_summary_sample(
     let nonpaged_system_bytes = memory_nonpaged_system_bytes(&memory_sample);
     let process_handle_count = memory_handle_count(&memory_sample);
     let process_thread_count = memory_thread_count(&memory_sample);
+    let thread_count_per_1000_tx = if stable_progress_total == 0 {
+        0
+    } else {
+        process_thread_count.saturating_mul(1000) / stable_progress_total
+    };
+    let handle_count_per_1000_tx = if stable_progress_total == 0 {
+        0
+    } else {
+        process_handle_count.saturating_mul(1000) / stable_progress_total
+    };
+    let thread_growth_suspected = stable_progress_total >= 256 && thread_count_per_1000_tx > 128;
     let runtime_current_view_bytes =
         summary_u64(summary, "queue_tx_count_last").saturating_mul(256);
     let diagnostics_report_estimated_bytes = summary_u64(summary, "ticks")
@@ -1715,6 +1747,16 @@ fn diagnostics_summary_sample(
     } else {
         "none"
     };
+    let thread_growth_stage_suspected = if thread_growth_suspected
+        && unknown_native_heap_source
+        && private_bytes > working_set_bytes.saturating_sub(256 * 1024 * 1024)
+    {
+        "child_runtime_or_aoem_ffi_worker_pool"
+    } else if thread_growth_suspected {
+        "receiver_child_thread_growth"
+    } else {
+        "none"
+    };
     let allocator_fragmentation_suspected =
         unattributed_private_bytes > attributed_bytes.max(64 * 1024 * 1024);
     let working_set_not_returned_suspected =
@@ -1760,6 +1802,20 @@ fn diagnostics_summary_sample(
         "process_nonpaged_system_bytes": nonpaged_system_bytes,
         "process_handle_count": process_handle_count,
         "process_thread_count": process_thread_count,
+        "thread_count": process_thread_count,
+        "thread_count_per_1000_tx": thread_count_per_1000_tx,
+        "handle_count": process_handle_count,
+        "handle_count_per_1000_tx": handle_count_per_1000_tx,
+        "thread_growth_suspected": thread_growth_suspected,
+        "thread_growth_stage_suspected": thread_growth_stage_suspected,
+        "runtime_created_count": 0u64,
+        "tokio_runtime_created_count": 0u64,
+        "blocking_task_spawn_count": 0u64,
+        "std_thread_spawn_count": 0u64,
+        "aoem_worker_pool_created_count": 0u64,
+        "rocksdb_probe_thread_count": 0u64,
+        "diagnostics_thread_count": 0u64,
+        "report_writer_thread_count": 0u64,
         "rust_estimated_retained_bytes": rust_estimated_retained_bytes,
         "pending_runtime_estimated_bytes": runtime_current_view_bytes,
         "runtime_current_view_bytes_estimate": runtime_current_view_bytes,
@@ -1853,6 +1909,7 @@ fn write_diagnostics_report(
     tx_count: u64,
 ) -> Result<()> {
     let last_sample_any = state.samples.last();
+    let first_live_sample = first_live_child_sample(state.samples.as_slice());
     let last_live_sample = last_live_child_sample(state.samples.as_slice());
     let peak_live_sample = peak_live_child_sample(state.samples.as_slice());
     let memory_summary_sample = peak_live_sample.or(last_live_sample);
@@ -1894,6 +1951,7 @@ fn write_diagnostics_report(
             .zip(state.first_working_set_bytes)
             .map(|(last, first)| last.saturating_sub(first)),
         "last_sample_any": last_sample_any.cloned(),
+        "first_live_child_sample": first_live_sample.cloned(),
         "last_live_child_sample": last_live_sample.cloned(),
         "peak_live_child_sample": peak_live_sample.cloned(),
         "post_exit_sample_present": post_exit_samples > 0,
@@ -1911,6 +1969,30 @@ fn write_diagnostics_report(
             .map(|sample| sample_u64(sample, "process_private_bytes")),
         "last_process_virtual_bytes": last_live_sample
             .map(|sample| sample_u64(sample, "process_virtual_bytes")),
+        "first_live_thread_count": first_live_sample
+            .map(|sample| sample_u64(sample, "process_thread_count")),
+        "last_live_thread_count": last_live_sample
+            .map(|sample| sample_u64(sample, "process_thread_count")),
+        "peak_live_thread_count": state
+            .samples
+            .iter()
+            .filter(|sample| is_live_child_memory_sample(sample))
+            .map(|sample| sample_u64(sample, "process_thread_count"))
+            .max(),
+        "thread_count_delta": first_live_sample
+            .zip(last_live_sample)
+            .map(|(first, last)| sample_u64(last, "process_thread_count").saturating_sub(sample_u64(first, "process_thread_count"))),
+        "thread_count_per_1000_tx": memory_summary_sample
+            .map(|sample| sample_u64(sample, "thread_count_per_1000_tx")),
+        "handle_count_delta": first_live_sample
+            .zip(last_live_sample)
+            .map(|(first, last)| sample_u64(last, "process_handle_count").saturating_sub(sample_u64(first, "process_handle_count"))),
+        "handle_count_per_1000_tx": memory_summary_sample
+            .map(|sample| sample_u64(sample, "handle_count_per_1000_tx")),
+        "thread_growth_suspected": memory_summary_sample
+            .and_then(|sample| sample_bool(sample, "thread_growth_suspected")),
+        "thread_growth_stage_suspected": memory_summary_sample
+            .and_then(|sample| sample_string(sample, "thread_growth_stage_suspected")),
         "last_rust_estimated_retained_bytes": last_live_sample
             .map(|sample| sample_u64(sample, "rust_estimated_retained_bytes")),
         "last_native_heap_unattributed_bytes": last_live_sample
