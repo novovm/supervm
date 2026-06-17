@@ -5364,7 +5364,7 @@ pub fn snapshot_network_runtime_native_active_pending_txs_v1(
         b_repair
             .cmp(&a_repair)
             .then_with(|| match (a_sequence, b_sequence) {
-                (Some(a_sequence), Some(b_sequence)) => a_sequence.cmp(&b_sequence),
+                (Some(a_sequence), Some(b_sequence)) => b_sequence.cmp(&a_sequence),
                 (Some(_), None) => std::cmp::Ordering::Less,
                 (None, Some(_)) => std::cmp::Ordering::Greater,
                 (None, None) => std::cmp::Ordering::Equal,
@@ -8086,7 +8086,7 @@ mod tests {
     }
 
     #[test]
-    fn active_pending_snapshot_orders_repair_pending_by_sequence() {
+    fn active_pending_snapshot_orders_repair_pending_by_descending_sequence() {
         let chain_id = 20624_u64;
         clear_runtime_sync_status_for_test(chain_id);
         clear_network_runtime_native_snapshots_for_chain_v1(chain_id);
@@ -8128,8 +8128,8 @@ mod tests {
         let active = snapshot_network_runtime_native_active_pending_txs_v1(chain_id, 1);
         assert_eq!(active.len(), 1);
         assert_eq!(
-            active[0].tx_hash, low_repair_tx,
-            "lowest missing repair sequence must enter the AOEM scan window first"
+            active[0].tx_hash, high_repair_tx,
+            "highest repair sequence must enter the AOEM scan window first for tail repair"
         );
     }
 
