@@ -36699,7 +36699,16 @@ fn run_native_execution_tick_node_mode_v1(verbose: bool) -> Result<()> {
             "udp": udp_drive_out,
         });
         let broadcast_drive_out = broadcast_drive.drive_once();
-        let params = native_execution_tick_params_from_env_v1()?;
+        let mut params = native_execution_tick_params_from_env_v1()?;
+        if let Some(obj) = params.as_object_mut() {
+            let repair_final_missing_sequence_start = aggregate
+                .aoem_executed_total
+                .max(aggregate.included_canonical_total);
+            obj.insert(
+                "repair_final_missing_sequence_start".to_string(),
+                serde_json::json!(repair_final_missing_sequence_start),
+            );
+        }
         let out = run_nov_native_execution_tick_from_params_v1(&params)?;
         let report = build_native_execution_pipeline_report_v1(
             ticks.saturating_add(1),

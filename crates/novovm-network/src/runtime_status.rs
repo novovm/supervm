@@ -5351,6 +5351,15 @@ pub fn snapshot_network_runtime_native_active_pending_txs_v1(
     chain_id: u64,
     limit: usize,
 ) -> Vec<NetworkRuntimeNativePendingTxStateV1> {
+    snapshot_network_runtime_native_active_pending_txs_for_repair_window_v1(chain_id, limit, None)
+}
+
+#[must_use]
+pub fn snapshot_network_runtime_native_active_pending_txs_for_repair_window_v1(
+    chain_id: u64,
+    limit: usize,
+    final_missing_sequence_start: Option<u64>,
+) -> Vec<NetworkRuntimeNativePendingTxStateV1> {
     runtime_native_pending_tx_cleanup_v1(chain_id, now_unix_millis());
     let repair_tx_hashes = network_runtime_native_repair_probe_tx_hashes_v1(chain_id);
     let repair_sequence_by_tx_hash =
@@ -5379,8 +5388,17 @@ pub fn snapshot_network_runtime_native_active_pending_txs_v1(
         let b_repair = repair_tx_hashes.contains(&b.tx_hash);
         let a_sequence = repair_sequence_by_tx_hash.get(&a.tx_hash).copied();
         let b_sequence = repair_sequence_by_tx_hash.get(&b.tx_hash).copied();
-        b_repair
-            .cmp(&a_repair)
+        let a_final_missing_repair = a_repair
+            && final_missing_sequence_start
+                .zip(a_sequence)
+                .is_some_and(|(start, sequence)| sequence >= start);
+        let b_final_missing_repair = b_repair
+            && final_missing_sequence_start
+                .zip(b_sequence)
+                .is_some_and(|(start, sequence)| sequence >= start);
+        b_final_missing_repair
+            .cmp(&a_final_missing_repair)
+            .then_with(|| b_repair.cmp(&a_repair))
             .then_with(|| match (a_sequence, b_sequence) {
                 (Some(a_sequence), Some(b_sequence)) => b_sequence.cmp(&a_sequence),
                 (Some(_), None) => std::cmp::Ordering::Less,
@@ -8224,6 +8242,60 @@ mod tests {
         assert_eq!(
             active[0].tx_hash, high_repair_tx,
             "highest repair sequence must enter the AOEM scan window first for tail repair"
+        );
+    }
+
+    #[test]
+    fn active_pending_snapshot_prioritizes_final_missing_repair_window() {
+        let chain_id = 20625_u64;
+        clear_runtime_sync_status_for_test(chain_id);
+        clear_network_runtime_native_snapshots_for_chain_v1(chain_id);
+        let normal_tx = [0xe1; 32];
+        let old_repair_tx = [0xe2; 32];
+        let final_missing_repair_tx = [0xe3; 32];
+
+        observe_network_runtime_native_pending_tx_remote_native_payload_v1(
+            chain_id,
+            31,
+            normal_tx,
+            Some(b"normal-native-payload"),
+        );
+        observe_network_runtime_native_pending_tx_remote_native_payload_v1(
+            chain_id,
+            31,
+            old_repair_tx,
+            Some(b"old-repair-native-payload"),
+        );
+        observe_network_runtime_native_pending_tx_remote_native_payload_v1(
+            chain_id,
+            31,
+            final_missing_repair_tx,
+            Some(b"final-missing-repair-native-payload"),
+        );
+        {
+            let mut guard = runtime_native_repair_probe_map()
+                .lock()
+                .expect("repair probe lock");
+            let state = guard.entry(chain_id).or_default();
+            state.tx_hash_seen.insert(old_repair_tx);
+            state.tx_hash_seen.insert(final_missing_repair_tx);
+            state.tx_hash_to_sequence.insert(old_repair_tx, 11_999);
+            state
+                .tx_hash_to_sequence
+                .insert(final_missing_repair_tx, 13_600);
+            state.sequence_seen.insert(11_999);
+            state.sequence_seen.insert(13_600);
+        }
+
+        let active = snapshot_network_runtime_native_active_pending_txs_for_repair_window_v1(
+            chain_id,
+            1,
+            Some(13_600),
+        );
+        assert_eq!(active.len(), 1);
+        assert_eq!(
+            active[0].tx_hash, final_missing_repair_tx,
+            "final-missing repair pending must not be truncated by normal or old repair pending"
         );
     }
 

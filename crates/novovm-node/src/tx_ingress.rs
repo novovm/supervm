@@ -24,10 +24,10 @@ use novovm_network::{
     observe_network_runtime_native_pending_tx_dropped_v1,
     observe_network_runtime_native_pending_tx_local_ingress_with_payload_v1,
     observe_network_runtime_native_pending_tx_local_native_payload_v1,
-    observe_network_runtime_native_pending_tx_repair_aoem_admission_v1,
     observe_network_runtime_native_pending_tx_rejected_v1,
+    observe_network_runtime_native_pending_tx_repair_aoem_admission_v1,
     set_network_runtime_native_body_snapshot_v1, set_network_runtime_native_head_snapshot_v1,
-    snapshot_network_runtime_native_active_pending_txs_v1,
+    snapshot_network_runtime_native_active_pending_txs_for_repair_window_v1,
     snapshot_network_runtime_native_execution_budget_runtime_summary_v1,
     NetworkRuntimeNativeBodySnapshotV1, NetworkRuntimeNativeExecutionBudgetTargetObservationV1,
     NetworkRuntimeNativeHeadSnapshotV1, NetworkRuntimeNativePendingTxLifecycleStageV1,
@@ -11260,10 +11260,17 @@ pub fn run_nov_execute_pending_native_tx_batch_from_params_v1(
         .and_then(|value| value.as_u64())
         .unwrap_or((limit as u64).saturating_mul(4).max(limit as u64))
         .clamp(limit as u64, 16_384) as usize;
+    let repair_final_missing_sequence_start = params
+        .get("repair_final_missing_sequence_start")
+        .and_then(|value| value.as_u64());
     let native_store_path = resolve_native_execution_store_path_from_params_v1(params)
         .unwrap_or_else(nov_native_execution_store_path_v1);
     let receipt_lookup = NovNativeExecutionReceiptLookupV1::open(native_store_path.as_path())?;
-    let pending = snapshot_network_runtime_native_active_pending_txs_v1(chain_id, scan_limit);
+    let pending = snapshot_network_runtime_native_active_pending_txs_for_repair_window_v1(
+        chain_id,
+        scan_limit,
+        repair_final_missing_sequence_start,
+    );
     let mut raw_txs = Vec::with_capacity(limit);
     let mut selected_raw_payloads = Vec::with_capacity(limit);
     let mut selected_hash_bytes = Vec::with_capacity(limit);
@@ -11332,6 +11339,7 @@ pub fn run_nov_execute_pending_native_tx_batch_from_params_v1(
             "requested_limit": requested_limit,
             "effective_limit": limit,
             "scan_limit": scan_limit,
+            "repair_final_missing_sequence_start": repair_final_missing_sequence_start,
             "pending_scanned": pending.len(),
             "selected_count": 0,
             "executed": false,
@@ -11367,6 +11375,7 @@ pub fn run_nov_execute_pending_native_tx_batch_from_params_v1(
         "requested_limit": requested_limit,
         "effective_limit": limit,
         "scan_limit": scan_limit,
+        "repair_final_missing_sequence_start": repair_final_missing_sequence_start,
         "pending_scanned": pending.len(),
         "selected_count": selected_hashes.len(),
         "selected_tx_hashes": selected_hashes,
@@ -11429,8 +11438,14 @@ pub fn run_nov_native_execution_tick_from_params_v1(
         .and_then(|value| value.as_u64())
         .unwrap_or(effective_budget.saturating_mul(4).max(effective_budget))
         .clamp(effective_budget, 16_384);
-    let pending_before =
-        snapshot_network_runtime_native_active_pending_txs_v1(chain_id, scan_limit as usize);
+    let repair_final_missing_sequence_start = params
+        .get("repair_final_missing_sequence_start")
+        .and_then(|value| value.as_u64());
+    let pending_before = snapshot_network_runtime_native_active_pending_txs_for_repair_window_v1(
+        chain_id,
+        scan_limit as usize,
+        repair_final_missing_sequence_start,
+    );
     let eligible_before = pending_before
         .iter()
         .filter(|pending| native_pending_execution_eligible_stage_v1(pending.lifecycle_stage))
@@ -11509,6 +11524,7 @@ pub fn run_nov_native_execution_tick_from_params_v1(
         "eligible_before": eligible_before,
         "executed_count": executed_count,
         "deferred_count": deferred_count,
+        "repair_final_missing_sequence_start": repair_final_missing_sequence_start,
         "elapsed_ms": elapsed_ms,
         "time_slice_exceeded": time_slice_exceeded,
         "budget": {
@@ -13297,53 +13313,54 @@ mod tests {
             || {
                 with_test_native_execution_store_path_v1(|path| {
                     let chain_id = 88_019;
-                    let build_and_ingest_repair =
-                        |nonce: u64, account: &str, amount: u64| -> ([u8; 32], Vec<u8>) {
-                            let native_tx = NovNativeTxWireV1 {
-                                chain_id,
-                                kind: NovTxKindV1::Execute(novovm_protocol::NovExecuteTxV1 {
-                                    caller: vec![nonce as u8; 20],
-                                    account_id: Some(account.to_string()),
-                                    fee_owner_account_id: Some(account.to_string()),
-                                    nonce_owner_account_id: Some(account.to_string()),
-                                    target: novovm_protocol::NovExecutionTargetV1::NativeModule(
-                                        "treasury".to_string(),
-                                    ),
-                                    method: "deposit_reserve".to_string(),
-                                    args: serde_json::to_vec(&serde_json::json!({
-                                        "asset": "USDT",
-                                        "amount": amount
-                                    }))
-                                    .expect("encode args"),
-                                    execution_mode: NovExecutionModeV1::Batch,
-                                    execution_policy: NovExecutionPolicyV1::Standard,
-                                    privacy_mode: NovPrivacyModeV1::Public,
-                                    verification_mode: NovVerificationModeV1::Standard,
-                                    fee_policy: NovFeePolicyV1 {
-                                        pay_asset: "USDT".to_string(),
-                                        max_pay_amount: 50,
-                                        slippage_bps: 100,
-                                    },
-                                    gas_like_limit: Some(90_000),
-                                    nonce,
-                                }),
-                                signature: [0xeeu8; 32],
-                            };
-                            let raw =
-                                encode_nov_native_tx_wire_v1(&native_tx).expect("encode nov tx");
-                            let (_, _, tx_hash) = ingest_local_nov_raw_tx_payload_v1(
-                                &serde_json::json!({}),
-                                raw.as_slice(),
-                            )
-                            .expect("native pending ingress should store payload");
-                            novovm_network::observe_network_runtime_native_pending_tx_repair_probe_v1(
-                                chain_id,
-                                tx_hash,
-                                1,
-                                Some(raw.as_slice()),
-                            );
-                            (tx_hash, raw)
+                    let build_and_ingest_repair = |nonce: u64,
+                                                   account: &str,
+                                                   amount: u64|
+                     -> ([u8; 32], Vec<u8>) {
+                        let native_tx = NovNativeTxWireV1 {
+                            chain_id,
+                            kind: NovTxKindV1::Execute(novovm_protocol::NovExecuteTxV1 {
+                                caller: vec![nonce as u8; 20],
+                                account_id: Some(account.to_string()),
+                                fee_owner_account_id: Some(account.to_string()),
+                                nonce_owner_account_id: Some(account.to_string()),
+                                target: novovm_protocol::NovExecutionTargetV1::NativeModule(
+                                    "treasury".to_string(),
+                                ),
+                                method: "deposit_reserve".to_string(),
+                                args: serde_json::to_vec(&serde_json::json!({
+                                    "asset": "USDT",
+                                    "amount": amount
+                                }))
+                                .expect("encode args"),
+                                execution_mode: NovExecutionModeV1::Batch,
+                                execution_policy: NovExecutionPolicyV1::Standard,
+                                privacy_mode: NovPrivacyModeV1::Public,
+                                verification_mode: NovVerificationModeV1::Standard,
+                                fee_policy: NovFeePolicyV1 {
+                                    pay_asset: "USDT".to_string(),
+                                    max_pay_amount: 50,
+                                    slippage_bps: 100,
+                                },
+                                gas_like_limit: Some(90_000),
+                                nonce,
+                            }),
+                            signature: [0xeeu8; 32],
                         };
+                        let raw = encode_nov_native_tx_wire_v1(&native_tx).expect("encode nov tx");
+                        let (_, _, tx_hash) = ingest_local_nov_raw_tx_payload_v1(
+                            &serde_json::json!({}),
+                            raw.as_slice(),
+                        )
+                        .expect("native pending ingress should store payload");
+                        novovm_network::observe_network_runtime_native_pending_tx_repair_probe_v1(
+                            chain_id,
+                            tx_hash,
+                            1,
+                            Some(raw.as_slice()),
+                        );
+                        (tx_hash, raw)
+                    };
 
                     let low_hash = build_and_ingest_repair(3_737, "acct-low-repair", 25).0;
                     let high_hash = build_and_ingest_repair(14_400, "acct-tail-repair", 35).0;
@@ -13379,6 +13396,119 @@ mod tests {
                         selected,
                         to_hex_prefixed_v1(&high_hash),
                         "AOEM admission must select tail repair pending before stale lower repair pending"
+                    );
+                })
+            },
+        )
+    }
+
+    #[test]
+    fn aoem_admission_prioritizes_final_missing_repair_pending_over_all_other_pending() {
+        with_env_override_v1(
+            NOV_NATIVE_AOEM_SEMANTIC_INGRESS_ENABLED_ENV,
+            "false",
+            || {
+                with_test_native_execution_store_path_v1(|path| {
+                    let chain_id = 88_020;
+                    let build_native =
+                        |nonce: u64, account: &str, amount: u64| -> (Vec<u8>, [u8; 32]) {
+                            let native_tx = NovNativeTxWireV1 {
+                                chain_id,
+                                kind: NovTxKindV1::Execute(novovm_protocol::NovExecuteTxV1 {
+                                    caller: vec![(nonce % 251) as u8; 20],
+                                    account_id: Some(account.to_string()),
+                                    fee_owner_account_id: Some(account.to_string()),
+                                    nonce_owner_account_id: Some(account.to_string()),
+                                    target: novovm_protocol::NovExecutionTargetV1::NativeModule(
+                                        "treasury".to_string(),
+                                    ),
+                                    method: "deposit_reserve".to_string(),
+                                    args: serde_json::to_vec(&serde_json::json!({
+                                        "asset": "USDT",
+                                        "amount": amount
+                                    }))
+                                    .expect("encode args"),
+                                    execution_mode: NovExecutionModeV1::Batch,
+                                    execution_policy: NovExecutionPolicyV1::Standard,
+                                    privacy_mode: NovPrivacyModeV1::Public,
+                                    verification_mode: NovVerificationModeV1::Standard,
+                                    fee_policy: NovFeePolicyV1 {
+                                        pay_asset: "USDT".to_string(),
+                                        max_pay_amount: 50,
+                                        slippage_bps: 100,
+                                    },
+                                    gas_like_limit: Some(90_000),
+                                    nonce,
+                                }),
+                                signature: [0xeeu8; 32],
+                            };
+                            let raw =
+                                encode_nov_native_tx_wire_v1(&native_tx).expect("encode nov tx");
+                            let (_, _, tx_hash) = ingest_local_nov_raw_tx_payload_v1(
+                                &serde_json::json!({}),
+                                raw.as_slice(),
+                            )
+                            .expect("native pending ingress should store payload");
+                            (raw, tx_hash)
+                        };
+                    let build_repair = |nonce: u64, account: &str, amount: u64| -> [u8; 32] {
+                        let (raw, tx_hash) = build_native(nonce, account, amount);
+                        novovm_network::observe_network_runtime_native_pending_tx_repair_probe_v1(
+                            chain_id,
+                            tx_hash,
+                            1,
+                            Some(raw.as_slice()),
+                        );
+                        tx_hash
+                    };
+
+                    for idx in 0..64 {
+                        build_native(400 + idx, &format!("acct-normal-{idx}"), 1);
+                    }
+                    let old_repair_hash = build_repair(12_000, "acct-old-repair", 25);
+                    let final_missing_hash = build_repair(13_601, "acct-final-missing", 35);
+
+                    let out = run_nov_execute_pending_native_tx_batch_from_params_v1(
+                        &serde_json::json!({
+                            "chain_id": chain_id,
+                            "limit": 1,
+                            "scan_limit": 1,
+                            "repair_final_missing_sequence_start": 13_600,
+                            "native_execution_store_path": path,
+                        }),
+                    )
+                    .expect("final-missing repair pending should enter AOEM admission first");
+
+                    assert_eq!(out["accepted"].as_bool(), Some(true));
+                    assert_eq!(out["executed"].as_bool(), Some(true));
+                    assert_eq!(out["selected_count"].as_u64(), Some(1));
+                    assert_eq!(
+                        out["repair_final_missing_sequence_start"].as_u64(),
+                        Some(13_600)
+                    );
+                    let selected = out["selected_tx_hashes"]
+                        .as_array()
+                        .expect("selected hashes")
+                        .first()
+                        .and_then(|value| value.as_str())
+                        .expect("selected hash");
+                    assert_eq!(
+                        selected,
+                        to_hex_prefixed_v1(&final_missing_hash),
+                        "final-missing repair pending must not be truncated by normal or old repair pending"
+                    );
+                    assert_ne!(
+                        selected,
+                        to_hex_prefixed_v1(&old_repair_hash),
+                        "old repair pending must not outrank final-missing repair pending"
+                    );
+
+                    let store = load_nov_native_execution_store_v1(path.as_path())
+                        .expect("admission store should load");
+                    assert_eq!(
+                        store.receipts.len(),
+                        1,
+                        "single tail repair item must execute without waiting for a full batch"
                     );
                 })
             },
