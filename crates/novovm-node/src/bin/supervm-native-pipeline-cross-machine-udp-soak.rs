@@ -643,6 +643,18 @@ fn missing_ranges_to_json(ranges: &[MissingRangeV1], limit: u64) -> Value {
     serde_json::Value::Array(limited.collect())
 }
 
+fn missing_ranges_count(ranges: &[MissingRangeV1]) -> u64 {
+    ranges
+        .iter()
+        .map(|range| {
+            range
+                .end_inclusive
+                .saturating_sub(range.start)
+                .saturating_add(1)
+        })
+        .sum()
+}
+
 fn read_missing_ranges_from_ack(path: &Path, limit: u64) -> Option<Vec<MissingRangeV1>> {
     let raw = fs::read_to_string(path).ok()?;
     let value = serde_json::from_str::<Value>(raw.as_str()).ok()?;
@@ -2690,6 +2702,10 @@ fn run_sender(
     let mut latest_ack_missing_count: Option<u64> = None;
     let mut latest_ack_receiver_done = false;
     let mut tail_repair_latest_ack_epoch = 0u64;
+    let mut repair_sequence_sent_ranges = Vec::<MissingRangeV1>::new();
+    let mut repair_sequence_sent_count = 0u64;
+    let mut repair_sequence_sent_min: Option<u64> = None;
+    let mut repair_sequence_sent_max: Option<u64> = None;
     let ack_socket = if udp_ack.enabled {
         let socket = UdpSocket::bind(udp_ack.bind_addr.as_str())
             .with_context(|| format!("bind sender UDP ack socket failed: {}", udp_ack.bind_addr))?;
@@ -2751,6 +2767,8 @@ fn run_sender(
             });
             if let Some(state) = udp_ack_state.as_ref() {
                 if state.received_count > 0 {
+                    tail_repair_ack_received_count = tail_repair_ack_received_count
+                        .saturating_add(state.received_count);
                     tail_repair_udp_ack_received_count = tail_repair_udp_ack_received_count
                         .saturating_add(state.received_count);
                     tail_repair_latest_ack_epoch =
@@ -2758,7 +2776,7 @@ fn run_sender(
                     latest_ack_missing_count = Some(state.latest_missing_count);
                     latest_ack_receiver_done = state.receiver_done;
                     final_missing_count = state.latest_missing_count;
-                    if state.receiver_done || state.latest_missing_count == 0 {
+                    if state.receiver_done && state.latest_missing_count == 0 {
                         repair_rounds_used = repair_rounds_used.saturating_add(1);
                         break;
                     }
@@ -2774,19 +2792,24 @@ fn run_sender(
             let txs = if let Some(ranges) = udp_ranges.as_ref() {
                 tail_repair_udp_ack_used_count =
                     tail_repair_udp_ack_used_count.saturating_add(1);
-                tail_repair_ack_received_count =
-                    tail_repair_ack_received_count.saturating_add(1);
                 tail_repair_missing_ranges_seen = tail_repair_missing_ranges_seen
                     .saturating_add(ranges.len().try_into().unwrap_or(u64::MAX));
-                final_missing_count = ranges
-                    .iter()
-                    .map(|range| {
-                        range
-                            .end_inclusive
-                            .saturating_sub(range.start)
-                            .saturating_add(1)
-                    })
-                    .sum();
+                final_missing_count = missing_ranges_count(ranges.as_slice());
+                repair_sequence_sent_count =
+                    repair_sequence_sent_count.saturating_add(final_missing_count);
+                repair_sequence_sent_ranges.extend(ranges.iter().copied());
+                for range in ranges {
+                    repair_sequence_sent_min = Some(
+                        repair_sequence_sent_min
+                            .map(|current| current.min(range.start))
+                            .unwrap_or(range.start),
+                    );
+                    repair_sequence_sent_max = Some(
+                        repair_sequence_sent_max
+                            .map(|current| current.max(range.end_inclusive))
+                            .unwrap_or(range.end_inclusive),
+                    );
+                }
                 build_tail_repair_payloads_from_ranges(chain_id, ranges.as_slice(), repair_round)?
             } else if let Some(ranges) = file_ack_ranges.as_ref().filter(|ranges| !ranges.is_empty())
             {
@@ -2796,15 +2819,22 @@ fn run_sender(
                     tail_repair_ack_received_count.saturating_add(1);
                 tail_repair_missing_ranges_seen = tail_repair_missing_ranges_seen
                     .saturating_add(ranges.len().try_into().unwrap_or(u64::MAX));
-                final_missing_count = ranges
-                    .iter()
-                    .map(|range| {
-                        range
-                            .end_inclusive
-                            .saturating_sub(range.start)
-                            .saturating_add(1)
-                    })
-                    .sum();
+                final_missing_count = missing_ranges_count(ranges.as_slice());
+                repair_sequence_sent_count =
+                    repair_sequence_sent_count.saturating_add(final_missing_count);
+                repair_sequence_sent_ranges.extend(ranges.iter().copied());
+                for range in ranges {
+                    repair_sequence_sent_min = Some(
+                        repair_sequence_sent_min
+                            .map(|current| current.min(range.start))
+                            .unwrap_or(range.start),
+                    );
+                    repair_sequence_sent_max = Some(
+                        repair_sequence_sent_max
+                            .map(|current| current.max(range.end_inclusive))
+                            .unwrap_or(range.end_inclusive),
+                    );
+                }
                 build_tail_repair_payloads_from_ranges(chain_id, ranges.as_slice(), repair_round)?
             } else if tail_repair.require_ack {
                 final_missing_count = tx_count.saturating_sub(stats.sent_unique);
@@ -2812,6 +2842,31 @@ fn run_sender(
             } else {
                 tail_repair_fallback_used_count =
                     tail_repair_fallback_used_count.saturating_add(1);
+                let start = if tail_repair.fallback_tail_window == 0
+                    || tail_repair.fallback_tail_window >= tx_count
+                {
+                    0
+                } else {
+                    tx_count.saturating_sub(tail_repair.fallback_tail_window)
+                };
+                let fallback_range = MissingRangeV1 {
+                    start,
+                    end_inclusive: tx_count.saturating_sub(1),
+                };
+                let fallback_count = missing_ranges_count(&[fallback_range]);
+                repair_sequence_sent_count =
+                    repair_sequence_sent_count.saturating_add(fallback_count);
+                repair_sequence_sent_ranges.push(fallback_range);
+                repair_sequence_sent_min = Some(
+                    repair_sequence_sent_min
+                        .map(|current| current.min(fallback_range.start))
+                        .unwrap_or(fallback_range.start),
+                );
+                repair_sequence_sent_max = Some(
+                    repair_sequence_sent_max
+                        .map(|current| current.max(fallback_range.end_inclusive))
+                        .unwrap_or(fallback_range.end_inclusive),
+                );
                 build_tail_repair_fallback_payloads(
                     chain_id,
                     tx_count,
@@ -2844,31 +2899,65 @@ fn run_sender(
     if tail_repair_ack_received_count == 0 {
         final_missing_count = tx_count.saturating_sub(stats.sent_unique);
     }
-    let receiver_final_done = if latest_ack_receiver_done || latest_ack_missing_count == Some(0) {
+    let receiver_final_done = if latest_ack_receiver_done && latest_ack_missing_count == Some(0) {
         Some(true)
+    } else if latest_ack_missing_count.is_some() {
+        Some(false)
     } else {
         None
     };
     let receiver_final_missing_count = if receiver_final_done == Some(true) {
         Some(0u64)
+    } else if latest_ack_missing_count.is_some() {
+        latest_ack_missing_count
     } else {
         None
     };
     let final_missing_count_source = if receiver_final_missing_count.is_some() {
-        "receiver_done_ack"
+        if receiver_final_done == Some(true) {
+            "receiver_done_ack"
+        } else {
+            "latest_ack_snapshot"
+        }
     } else if latest_ack_missing_count.is_some() {
         "latest_ack_snapshot"
     } else if tail_repair_ack_received_count == 0 {
-        "sender_sent_unique_delta"
+        "no_ack"
     } else {
         "unknown"
     };
     let sender_completed = stats.sent_unique == tx_count && stats.send_failed_count == 0;
-    let accepted = sender_completed;
+    let tail_repair_success = if tail_repair.enabled {
+        receiver_final_done == Some(true) && receiver_final_missing_count == Some(0)
+    } else {
+        true
+    };
+    let repair_budget_exhausted =
+        tail_repair.enabled && repair_rounds_used >= tail_repair.rounds && !tail_repair_success;
+    let repair_waited_for_receiver_done = tail_repair.enabled;
+    if receiver_final_missing_count.is_some() {
+        final_missing_count = receiver_final_missing_count.unwrap_or(final_missing_count);
+    }
+    let tail_repair_completion_reason = if !tail_repair.enabled {
+        "tail_repair_disabled"
+    } else if tail_repair_success {
+        "receiver_done_ack"
+    } else if tail_repair_ack_received_count == 0 {
+        "no_ack"
+    } else if repair_budget_exhausted {
+        "repair_budget_exhausted_latest_ack_missing"
+    } else {
+        "latest_ack_missing"
+    };
+    let accepted = sender_completed && tail_repair_success;
     let fail_reason = if accepted {
         None
-    } else {
+    } else if !sender_completed {
         Some("sender_send_incomplete")
+    } else if tail_repair_ack_received_count == 0 {
+        Some("receiver_repair_no_ack")
+    } else {
+        Some("receiver_repair_incomplete")
     };
     let report = serde_json::json!({
         "schema": REPORT_SCHEMA_V1,
@@ -2945,6 +3034,9 @@ fn run_sender(
             "latest_ack_receiver_done": latest_ack_receiver_done,
             "receiver_final_missing_count": receiver_final_missing_count,
             "receiver_final_done": receiver_final_done,
+            "tail_repair_completion_reason": tail_repair_completion_reason,
+            "repair_budget_exhausted": repair_budget_exhausted,
+            "repair_waited_for_receiver_done": repair_waited_for_receiver_done,
             "tail_repair_missing_ranges_seen": tail_repair_missing_ranges_seen,
             "tail_repair_fallback_used_count": tail_repair_fallback_used_count,
             "tail_repair_file_ack_used_count": tail_repair_file_ack_used_count,
@@ -2961,9 +3053,22 @@ fn run_sender(
             "repair_send_retry_count": repair_stats.send_retry_count,
             "repair_send_would_block_count": repair_stats.send_would_block_count,
             "repair_send_failed_count": repair_stats.send_failed_count,
+            "repair_sequence_sent_count": repair_sequence_sent_count,
+            "repair_sequence_sent_ranges": missing_ranges_to_json(
+                repair_sequence_sent_ranges.as_slice(),
+                tail_repair.missing_sample_limit,
+            ),
+            "repair_sequence_sent_ranges_sample": missing_ranges_to_json(
+                repair_sequence_sent_ranges.as_slice(),
+                tail_repair.missing_sample_limit,
+            ),
+            "repair_sequence_sent_ranges_total": repair_sequence_sent_ranges.len(),
+            "repair_sequence_sent_min": repair_sequence_sent_min,
+            "repair_sequence_sent_max": repair_sequence_sent_max,
+            "repair_packet_sent_count": repair_stats.sent_packets,
             "final_missing_count_source": final_missing_count_source,
             "final_missing_count": final_missing_count,
-            "tail_repair_success": accepted,
+            "tail_repair_success": tail_repair_success,
         },
         "udp_ack": {
             "enabled": udp_ack.enabled,
@@ -2974,11 +3079,15 @@ fn run_sender(
         },
         "sent_by_hash": stats.sent_by_hash,
         "violations": if accepted { Vec::<String>::new() } else { vec![format!(
-            "{}: tx_submitted_total={} expected={} send_failed_count={} first_failure_index={:?} first_failure_copy={:?} first_failure_error={:?}",
+            "{}: tx_submitted_total={} expected={} send_failed_count={} latest_ack_missing_count={:?} latest_ack_receiver_done={} receiver_final_done={:?} final_missing_count={} first_failure_index={:?} first_failure_copy={:?} first_failure_error={:?}",
             fail_reason.unwrap_or("sender_send_incomplete"),
             stats.sent_unique,
             tx_count,
             stats.send_failed_count,
+            latest_ack_missing_count,
+            latest_ack_receiver_done,
+            receiver_final_done,
+            final_missing_count,
             stats.send_failure_first_index,
             stats.send_failure_first_copy_index,
             stats.send_failure_first_error,
