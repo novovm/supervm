@@ -138,6 +138,77 @@ struct TailRepairConfigV1 {
     round_pause_ms: u64,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TransportProfileV1 {
+    Udp,
+    NovoRudp,
+}
+
+impl TransportProfileV1 {
+    fn from_env() -> Self {
+        match string_env_nonempty("NOVOVM_NATIVE_PIPELINE_TRANSPORT")
+            .unwrap_or_else(|| "udp".to_string())
+            .to_ascii_lowercase()
+            .as_str()
+        {
+            "novorudp" | "novo-rudp" | "novo_rudp" => Self::NovoRudp,
+            _ => Self::Udp,
+        }
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Udp => "udp",
+            Self::NovoRudp => "novorudp",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct NovoRudpConfigV1 {
+    enabled: bool,
+    window_size: u64,
+    packet_copies: u64,
+    tail_packet_copies: u64,
+    batch_size: u64,
+    batch_pause_ms: u64,
+    window_ack_wait_ms: u64,
+    max_window_retries: u64,
+    no_progress_backoff: bool,
+}
+
+impl NovoRudpConfigV1 {
+    fn from_env(profile: TransportProfileV1) -> Result<Self> {
+        Ok(Self {
+            enabled: profile == TransportProfileV1::NovoRudp,
+            window_size: u64_env("NOVOVM_NOVORUDP_REPAIR_WINDOW_SIZE", 64)?.max(1),
+            packet_copies: u64_env("NOVOVM_NOVORUDP_REPAIR_PACKET_COPIES", 2)?.max(1),
+            tail_packet_copies: u64_env("NOVOVM_NOVORUDP_REPAIR_TAIL_PACKET_COPIES", 3)?.max(1),
+            batch_size: u64_env("NOVOVM_NOVORUDP_REPAIR_BATCH_SIZE", 16)?.max(1),
+            batch_pause_ms: u64_env("NOVOVM_NOVORUDP_REPAIR_BATCH_PAUSE_MS", 10)?,
+            window_ack_wait_ms: u64_env("NOVOVM_NOVORUDP_REPAIR_WINDOW_ACK_WAIT_MS", 1000)?,
+            max_window_retries: u64_env("NOVOVM_NOVORUDP_REPAIR_MAX_WINDOW_RETRIES", 8)?.max(1),
+            no_progress_backoff: bool_env("NOVOVM_NOVORUDP_REPAIR_NO_PROGRESS_BACKOFF")
+                || string_env_nonempty("NOVOVM_NOVORUDP_REPAIR_NO_PROGRESS_BACKOFF").is_none(),
+        })
+    }
+
+    fn repair_config(self, base: TailRepairConfigV1) -> TailRepairConfigV1 {
+        if !self.enabled {
+            return base;
+        }
+        TailRepairConfigV1 {
+            packet_copies: self.packet_copies,
+            tail_packet_copies: self.tail_packet_copies,
+            batch_size: self.batch_size,
+            batch_pause_ms: self.batch_pause_ms,
+            tail_batch_pause_ms: self.batch_pause_ms,
+            round_pause_ms: base.round_pause_ms,
+            ..base
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 struct UdpAckConfigV1 {
     enabled: bool,
@@ -726,6 +797,100 @@ fn normalize_missing_ranges(ranges: &[MissingRangeV1], expected: u64) -> Vec<Mis
         merged.push(range);
     }
     merged
+}
+
+fn missing_ranges_intersection_with_window(
+    ranges: &[MissingRangeV1],
+    start: u64,
+    end_inclusive: u64,
+) -> Vec<MissingRangeV1> {
+    if end_inclusive < start {
+        return Vec::new();
+    }
+    let mut out = Vec::<MissingRangeV1>::new();
+    for range in ranges {
+        let left = range.start.max(start);
+        let right = range.end_inclusive.min(end_inclusive);
+        if right >= left {
+            out.push(MissingRangeV1 {
+                start: left,
+                end_inclusive: right,
+            });
+        }
+    }
+    out
+}
+
+fn first_missing_window_ranges(
+    ranges: &[MissingRangeV1],
+    expected: u64,
+    window_size: u64,
+) -> Option<(u64, MissingRangeV1, Vec<MissingRangeV1>)> {
+    if expected == 0 || window_size == 0 {
+        return None;
+    }
+    let normalized = normalize_missing_ranges(ranges, expected);
+    let first = normalized.first()?;
+    let window_start = first.start;
+    let window_end = window_start
+        .saturating_add(window_size.saturating_sub(1))
+        .min(expected.saturating_sub(1));
+    let window = MissingRangeV1 {
+        start: window_start,
+        end_inclusive: window_end,
+    };
+    let window_ranges =
+        missing_ranges_intersection_with_window(normalized.as_slice(), window_start, window_end);
+    if window_ranges.is_empty() {
+        return None;
+    }
+    let window_id = window_start / window_size;
+    Some((window_id, window, window_ranges))
+}
+
+#[cfg(test)]
+mod novorudp_tests {
+    use super::*;
+
+    #[test]
+    fn novorudp_first_missing_window_limits_repair_scope() {
+        let ranges = vec![MissingRangeV1 {
+            start: 14112,
+            end_inclusive: 14399,
+        }];
+        let (window_id, window, window_ranges) =
+            first_missing_window_ranges(ranges.as_slice(), 14400, 64)
+                .expect("window should be selected");
+
+        assert_eq!(window_id, 220);
+        assert_eq!(window.start, 14112);
+        assert_eq!(window.end_inclusive, 14175);
+        assert_eq!(missing_ranges_count(window_ranges.as_slice()), 64);
+        assert_eq!(window_ranges.len(), 1);
+        assert_eq!(window_ranges[0].start, 14112);
+        assert_eq!(window_ranges[0].end_inclusive, 14175);
+    }
+
+    #[test]
+    fn novorudp_first_missing_window_intersects_sparse_ranges() {
+        let ranges = vec![
+            MissingRangeV1 {
+                start: 100,
+                end_inclusive: 120,
+            },
+            MissingRangeV1 {
+                start: 190,
+                end_inclusive: 220,
+            },
+        ];
+        let (_, window, window_ranges) = first_missing_window_ranges(ranges.as_slice(), 512, 64)
+            .expect("window should be selected");
+
+        assert_eq!(window.start, 100);
+        assert_eq!(window.end_inclusive, 163);
+        assert_eq!(missing_ranges_count(window_ranges.as_slice()), 21);
+        assert_eq!(window_ranges.len(), 1);
+    }
 }
 
 fn read_missing_ranges_from_ack(path: &Path, limit: u64) -> Option<Vec<MissingRangeV1>> {
@@ -1588,6 +1753,23 @@ fn receiver_ack_report_value(
     let missing_count = expected_tx_count.saturating_sub(stable_progress);
     let ranges = missing_ranges_from_progress(stable_progress, expected_tx_count, sample_limit);
     let missing_ranges_full_count = ranges.len();
+    let transport_profile = TransportProfileV1::from_env();
+    let novorudp = NovoRudpConfigV1::from_env(transport_profile).unwrap_or(NovoRudpConfigV1 {
+        enabled: false,
+        window_size: 64,
+        packet_copies: 2,
+        tail_packet_copies: 3,
+        batch_size: 16,
+        batch_pause_ms: 10,
+        window_ack_wait_ms: 1000,
+        max_window_retries: 8,
+        no_progress_backoff: true,
+    });
+    let current_window = first_missing_window_ranges(
+        ranges.as_slice(),
+        expected_tx_count,
+        novorudp.window_size.max(1),
+    );
     let highest_sequence_seen = if stable_progress == 0 {
         Value::Null
     } else {
@@ -1608,6 +1790,20 @@ fn receiver_ack_report_value(
         "ack_epoch": ack_epoch,
         "timestamp_ms": now_ms(),
         "receiver_done": stable_progress >= expected_tx_count,
+        "transport_profile": transport_profile.as_str(),
+        "novorudp_enabled": novorudp.enabled,
+        "novorudp_window_size": novorudp.window_size,
+        "novorudp_current_window_id": current_window.as_ref().map(|(id, _, _)| *id),
+        "novorudp_current_window_start": current_window.as_ref().map(|(_, window, _)| window.start),
+        "novorudp_current_window_end_inclusive": current_window.as_ref().map(|(_, window, _)| window.end_inclusive),
+        "novorudp_current_window_missing_count": current_window
+            .as_ref()
+            .map(|(_, _, window_ranges)| missing_ranges_count(window_ranges.as_slice()))
+            .unwrap_or(0),
+        "novorudp_current_window_missing_ranges_sample": current_window
+            .as_ref()
+            .map(|(_, _, window_ranges)| missing_ranges_to_json(window_ranges.as_slice(), sample_limit))
+            .unwrap_or_else(|| serde_json::json!([])),
     })
 }
 
@@ -1887,12 +2083,18 @@ fn write_synthetic_receiver_failure_report(
         .and_then(|sample| sample.get("repair_packet_received_count"))
         .and_then(Value::as_u64);
     let repair_attribution_available = repair_packet_received_count.is_some();
-    let repair_received_final_missing_overlap_count =
-        missing_ranges_overlap_count(final_missing_ranges.as_slice(), repair_received_ranges.as_slice());
-    let repair_accepted_final_missing_overlap_count =
-        missing_ranges_overlap_count(final_missing_ranges.as_slice(), repair_accepted_ranges.as_slice());
-    let repair_enqueued_final_missing_overlap_count =
-        missing_ranges_overlap_count(final_missing_ranges.as_slice(), repair_enqueued_ranges.as_slice());
+    let repair_received_final_missing_overlap_count = missing_ranges_overlap_count(
+        final_missing_ranges.as_slice(),
+        repair_received_ranges.as_slice(),
+    );
+    let repair_accepted_final_missing_overlap_count = missing_ranges_overlap_count(
+        final_missing_ranges.as_slice(),
+        repair_accepted_ranges.as_slice(),
+    );
+    let repair_enqueued_final_missing_overlap_count = missing_ranges_overlap_count(
+        final_missing_ranges.as_slice(),
+        repair_enqueued_ranges.as_slice(),
+    );
     let repair_already_receipted_final_missing_overlap_count = missing_ranges_overlap_count(
         final_missing_ranges.as_slice(),
         repair_already_receipted_ranges.as_slice(),
@@ -1907,8 +2109,8 @@ fn write_synthetic_receiver_failure_report(
     );
     let receipt_index_false_positive_suspected =
         repair_already_receipted_final_missing_overlap_count > 0;
-    let repair_accepted_but_not_effective_count =
-        repair_accepted_final_missing_overlap_count.saturating_sub(
+    let repair_accepted_but_not_effective_count = repair_accepted_final_missing_overlap_count
+        .saturating_sub(
             repair_enqueued_final_missing_overlap_count
                 .saturating_add(repair_already_receipted_final_missing_overlap_count),
         );
@@ -3191,6 +3393,7 @@ fn run_sender(
     tail_repair: TailRepairConfigV1,
     udp_send_retry: UdpSendRetryConfigV1,
     udp_ack: UdpAckConfigV1,
+    novorudp: NovoRudpConfigV1,
 ) -> Result<Value> {
     let mut stats = empty_send_stats();
     let mut repair_stats = empty_send_stats();
@@ -3219,6 +3422,12 @@ fn run_sender(
     let mut tail_gap_repair_packet_count = 0u64;
     let mut tail_gap_repair_rounds = 0u64;
     let mut tail_gap_ack_after_missing_count: Option<u64> = None;
+    let mut novorudp_window_round_count = 0u64;
+    let mut novorudp_window_success_count = 0u64;
+    let mut novorudp_window_failed_count = 0u64;
+    let mut novorudp_window_no_progress_count = 0u64;
+    let mut novorudp_windows_detail_sample = Vec::<Value>::new();
+    let mut novorudp_window_retry_counts = BTreeMap::<u64, u64>::new();
     let final_ack_wait_ms = u64_env("NOVOVM_NATIVE_PIPELINE_FINAL_ACK_WAIT_MS", 10_000)?;
     let final_ack_poll_ms = u64_env("NOVOVM_NATIVE_PIPELINE_FINAL_ACK_POLL_MS", 500)?.max(1);
     let mut final_ack_wait_elapsed_ms = 0u64;
@@ -3279,7 +3488,16 @@ fn run_sender(
     }
     let mut repair_rounds_used = 0u64;
     if stats.send_failed_count == 0 && tail_repair.enabled && tail_repair.rounds > 0 {
-        for repair_round in 0..tail_repair.rounds {
+        let repair_loop_rounds = if novorudp.enabled {
+            div_ceil_u64(tx_count.max(1), novorudp.window_size.max(1))
+                .saturating_mul(novorudp.max_window_retries)
+                .saturating_add(tail_repair.rounds)
+                .max(tail_repair.rounds)
+        } else {
+            tail_repair.rounds
+        };
+        let repair_send_config = novorudp.repair_config(tail_repair);
+        for repair_round in 0..repair_loop_rounds {
             if tail_repair.round_pause_ms > 0 {
                 std::thread::sleep(std::time::Duration::from_millis(tail_repair.round_pause_ms));
             }
@@ -3327,18 +3545,36 @@ fn run_sender(
             let ack_path = ack_report_path();
             let file_ack_ranges =
                 read_missing_ranges_from_ack(ack_path.as_path(), tail_repair.missing_sample_limit);
+            let mut novorudp_window_id_this_round: Option<u64> = None;
+            let mut novorudp_window_range_this_round: Option<MissingRangeV1> = None;
             let mut txs = if let Some(ranges) = udp_ranges.as_ref() {
                 tail_repair_udp_ack_used_count = tail_repair_udp_ack_used_count.saturating_add(1);
-                repair_used_full_missing_ranges = latest_ack_missing_ranges_full_count
-                    .map(|full_count| full_count <= ranges.len().try_into().unwrap_or(u64::MAX))
-                    .unwrap_or(false);
+                let selected_ranges = if novorudp.enabled {
+                    if let Some((window_id, window, window_ranges)) = first_missing_window_ranges(
+                        ranges.as_slice(),
+                        tx_count,
+                        novorudp.window_size,
+                    ) {
+                        novorudp_window_id_this_round = Some(window_id);
+                        novorudp_window_range_this_round = Some(window);
+                        window_ranges
+                    } else {
+                        Vec::new()
+                    }
+                } else {
+                    ranges.clone()
+                };
+                repair_used_full_missing_ranges = !novorudp.enabled
+                    && latest_ack_missing_ranges_full_count
+                        .map(|full_count| full_count <= ranges.len().try_into().unwrap_or(u64::MAX))
+                        .unwrap_or(false);
                 tail_repair_missing_ranges_seen = tail_repair_missing_ranges_seen
                     .saturating_add(ranges.len().try_into().unwrap_or(u64::MAX));
-                final_missing_count = missing_ranges_count(ranges.as_slice());
+                final_missing_count = missing_ranges_count(selected_ranges.as_slice());
                 repair_sequence_sent_count =
                     repair_sequence_sent_count.saturating_add(final_missing_count);
-                repair_sequence_sent_ranges.extend(ranges.iter().copied());
-                for range in ranges {
+                repair_sequence_sent_ranges.extend(selected_ranges.iter().copied());
+                for range in &selected_ranges {
                     repair_sequence_sent_min = Some(
                         repair_sequence_sent_min
                             .map(|current| current.min(range.start))
@@ -3350,19 +3586,38 @@ fn run_sender(
                             .unwrap_or(range.end_inclusive),
                     );
                 }
-                build_tail_repair_payloads_from_ranges(chain_id, ranges.as_slice(), repair_round)?
+                build_tail_repair_payloads_from_ranges(
+                    chain_id,
+                    selected_ranges.as_slice(),
+                    repair_round,
+                )?
             } else if let Some(ranges) =
                 file_ack_ranges.as_ref().filter(|ranges| !ranges.is_empty())
             {
                 tail_repair_file_ack_used_count = tail_repair_file_ack_used_count.saturating_add(1);
                 tail_repair_ack_received_count = tail_repair_ack_received_count.saturating_add(1);
+                let selected_ranges = if novorudp.enabled {
+                    if let Some((window_id, window, window_ranges)) = first_missing_window_ranges(
+                        ranges.as_slice(),
+                        tx_count,
+                        novorudp.window_size,
+                    ) {
+                        novorudp_window_id_this_round = Some(window_id);
+                        novorudp_window_range_this_round = Some(window);
+                        window_ranges
+                    } else {
+                        Vec::new()
+                    }
+                } else {
+                    ranges.clone()
+                };
                 tail_repair_missing_ranges_seen = tail_repair_missing_ranges_seen
                     .saturating_add(ranges.len().try_into().unwrap_or(u64::MAX));
-                final_missing_count = missing_ranges_count(ranges.as_slice());
+                final_missing_count = missing_ranges_count(selected_ranges.as_slice());
                 repair_sequence_sent_count =
                     repair_sequence_sent_count.saturating_add(final_missing_count);
-                repair_sequence_sent_ranges.extend(ranges.iter().copied());
-                for range in ranges {
+                repair_sequence_sent_ranges.extend(selected_ranges.iter().copied());
+                for range in &selected_ranges {
                     repair_sequence_sent_min = Some(
                         repair_sequence_sent_min
                             .map(|current| current.min(range.start))
@@ -3374,7 +3629,11 @@ fn run_sender(
                             .unwrap_or(range.end_inclusive),
                     );
                 }
-                build_tail_repair_payloads_from_ranges(chain_id, ranges.as_slice(), repair_round)?
+                build_tail_repair_payloads_from_ranges(
+                    chain_id,
+                    selected_ranges.as_slice(),
+                    repair_round,
+                )?
             } else if tail_repair.require_ack {
                 final_missing_count = tx_count.saturating_sub(stats.sent_unique);
                 Vec::new()
@@ -3413,11 +3672,23 @@ fn run_sender(
                 )?
             };
             let mut sequence_sent_ranges_this_round = if let Some(ranges) = udp_ranges.as_ref() {
-                ranges.clone()
+                if novorudp.enabled {
+                    novorudp_window_range_this_round
+                        .map(|window| vec![window])
+                        .unwrap_or_default()
+                } else {
+                    ranges.clone()
+                }
             } else if let Some(ranges) =
                 file_ack_ranges.as_ref().filter(|ranges| !ranges.is_empty())
             {
-                ranges.clone()
+                if novorudp.enabled {
+                    novorudp_window_range_this_round
+                        .map(|window| vec![window])
+                        .unwrap_or_default()
+                } else {
+                    ranges.clone()
+                }
             } else if !txs.is_empty() {
                 let min = txs.iter().map(|tx| tx.index).min().unwrap_or(0);
                 let max = txs.iter().map(|tx| tx.index).max().unwrap_or(0);
@@ -3428,15 +3699,19 @@ fn run_sender(
             } else {
                 Vec::new()
             };
-            let tail_gap_this_round = latest_ack_highest_sequence_seen
-                .filter(|highest| {
-                    latest_ack_missing_count.unwrap_or(0) > 0
-                        && *highest < tx_count.saturating_sub(1)
-                })
-                .map(|highest| MissingRangeV1 {
-                    start: highest.saturating_add(1),
-                    end_inclusive: tx_count.saturating_sub(1),
-                });
+            let tail_gap_this_round = if novorudp.enabled {
+                None
+            } else {
+                latest_ack_highest_sequence_seen
+                    .filter(|highest| {
+                        latest_ack_missing_count.unwrap_or(0) > 0
+                            && *highest < tx_count.saturating_sub(1)
+                    })
+                    .map(|highest| MissingRangeV1 {
+                        start: highest.saturating_add(1),
+                        end_inclusive: tx_count.saturating_sub(1),
+                    })
+            };
             let mut tail_gap_sent_count_this_round = 0u64;
             if let Some(gap) = tail_gap_this_round {
                 let gap_count = missing_ranges_count(&[gap]);
@@ -3515,9 +3790,25 @@ fn run_sender(
                 receiver_addr,
                 txs.as_slice(),
                 repair_round,
-                tail_repair,
-                tail_gap_this_round.map(|_| tail_repair.tail_packet_copies),
-                tail_gap_this_round.map(|_| tail_repair.tail_batch_pause_ms),
+                if novorudp.enabled {
+                    repair_send_config
+                } else {
+                    tail_repair
+                },
+                tail_gap_this_round.map(|_| {
+                    if novorudp.enabled {
+                        novorudp.tail_packet_copies
+                    } else {
+                        tail_repair.tail_packet_copies
+                    }
+                }),
+                tail_gap_this_round.map(|_| {
+                    if novorudp.enabled {
+                        novorudp.batch_pause_ms
+                    } else {
+                        tail_repair.tail_batch_pause_ms
+                    }
+                }),
                 udp_send_retry,
             )?;
             let round_packet_sent_count = round_stats.sent_packets;
@@ -3534,12 +3825,13 @@ fn run_sender(
             if tail_repair.round_pause_ms > 0 {
                 std::thread::sleep(Duration::from_millis(tail_repair.round_pause_ms));
             }
+            let ack_wait_ms = if novorudp.enabled {
+                novorudp.window_ack_wait_ms
+            } else {
+                udp_ack.recv_timeout_ms
+            };
             let ack_after = ack_socket.as_ref().map(|socket| {
-                drain_udp_ack_socket(
-                    socket,
-                    tail_repair.missing_sample_limit,
-                    udp_ack.recv_timeout_ms,
-                )
+                drain_udp_ack_socket(socket, tail_repair.missing_sample_limit, ack_wait_ms)
             });
             let mut missing_count_after = latest_ack_missing_count.unwrap_or(final_missing_count);
             let mut ack_epoch_after = tail_repair_latest_ack_epoch;
@@ -3567,6 +3859,44 @@ fn run_sender(
             let no_progress = missing_count_after >= missing_count_before;
             if no_progress {
                 repair_no_progress_rounds = repair_no_progress_rounds.saturating_add(1);
+            }
+            if let Some(window_id) = novorudp_window_id_this_round {
+                novorudp_window_round_count = novorudp_window_round_count.saturating_add(1);
+                let retry_count = if no_progress {
+                    let entry = novorudp_window_retry_counts.entry(window_id).or_insert(0);
+                    *entry = entry.saturating_add(1);
+                    novorudp_window_no_progress_count =
+                        novorudp_window_no_progress_count.saturating_add(1);
+                    *entry
+                } else {
+                    novorudp_window_retry_counts.remove(&window_id);
+                    novorudp_window_success_count = novorudp_window_success_count.saturating_add(1);
+                    0
+                };
+                if novorudp_windows_detail_sample.len() < tail_repair.missing_sample_limit as usize
+                {
+                    novorudp_windows_detail_sample.push(serde_json::json!({
+                        "round_index": repair_round,
+                        "window_id": window_id,
+                        "window_range": missing_ranges_to_json(novorudp_window_range_this_round.as_slice(), 1),
+                        "missing_count_before": missing_count_before,
+                        "missing_count_after": missing_count_after,
+                        "missing_delta": missing_delta,
+                        "sequence_sent_count": sequence_sent_count_this_round,
+                        "packet_sent_count": round_packet_sent_count,
+                        "retry_count_for_window": retry_count,
+                        "no_progress": no_progress,
+                        "ack_epoch_before": ack_epoch_before,
+                        "ack_epoch_after": ack_epoch_after,
+                    }));
+                }
+                if no_progress
+                    && retry_count >= novorudp.max_window_retries
+                    && novorudp.no_progress_backoff
+                {
+                    novorudp_window_failed_count = novorudp_window_failed_count.saturating_add(1);
+                    break;
+                }
             }
             if repair_rounds_detail_sample.len() < tail_repair.missing_sample_limit as usize {
                 repair_rounds_detail_sample.push(serde_json::json!({
@@ -3723,6 +4053,23 @@ fn run_sender(
         "receiver_node": receiver_node,
         "sender_addr": sender_addr,
         "receiver_addr": receiver_addr,
+        "transport_profile": if novorudp.enabled { "novorudp" } else { "udp" },
+        "novorudp": {
+            "enabled": novorudp.enabled,
+            "window_size": novorudp.window_size,
+            "packet_copies": novorudp.packet_copies,
+            "tail_packet_copies": novorudp.tail_packet_copies,
+            "batch_size": novorudp.batch_size,
+            "batch_pause_ms": novorudp.batch_pause_ms,
+            "window_ack_wait_ms": novorudp.window_ack_wait_ms,
+            "max_window_retries": novorudp.max_window_retries,
+            "no_progress_backoff": novorudp.no_progress_backoff,
+            "window_round_count": novorudp_window_round_count,
+            "window_success_count": novorudp_window_success_count,
+            "window_failed_count": novorudp_window_failed_count,
+            "window_no_progress_count": novorudp_window_no_progress_count,
+            "windows_detail_sample": novorudp_windows_detail_sample,
+        },
         "sender_completed": sender_completed,
         "sent_packets": stats.sent_packets,
         "send_retry_count": stats.send_retry_count,
@@ -3962,9 +4309,21 @@ fn run_local_smoke(
     fault: FaultConfigV1,
     sustained: SustainedConfigV1,
     tail_repair: TailRepairConfigV1,
+    novorudp: NovoRudpConfigV1,
 ) -> Result<Value> {
     let sender_addr = reserve_udp_addr()?;
     let receiver_addr = reserve_udp_addr()?;
+    let local_ack_addr = if novorudp.enabled {
+        Some(reserve_udp_addr()?)
+    } else {
+        None
+    };
+    let previous_ack_enabled = std::env::var_os("NOVOVM_NATIVE_PIPELINE_UDP_ACK_ENABLED");
+    let previous_ack_target = std::env::var_os("NOVOVM_NATIVE_PIPELINE_ACK_TARGET_ADDR");
+    if let Some(ack_addr) = local_ack_addr.as_ref() {
+        std::env::set_var("NOVOVM_NATIVE_PIPELINE_UDP_ACK_ENABLED", "1");
+        std::env::set_var("NOVOVM_NATIVE_PIPELINE_ACK_TARGET_ADDR", ack_addr);
+    }
     let child = spawn_receiver_node(
         node_bin,
         chain_id,
@@ -3977,7 +4336,24 @@ fn run_local_smoke(
         batch_budget,
         recv_budget,
     )?;
+    match previous_ack_enabled {
+        Some(value) => std::env::set_var("NOVOVM_NATIVE_PIPELINE_UDP_ACK_ENABLED", value),
+        None => std::env::remove_var("NOVOVM_NATIVE_PIPELINE_UDP_ACK_ENABLED"),
+    }
+    match previous_ack_target {
+        Some(value) => std::env::set_var("NOVOVM_NATIVE_PIPELINE_ACK_TARGET_ADDR", value),
+        None => std::env::remove_var("NOVOVM_NATIVE_PIPELINE_ACK_TARGET_ADDR"),
+    }
     std::thread::sleep(std::time::Duration::from_millis(startup_wait_ms));
+    let udp_ack = local_ack_addr
+        .as_ref()
+        .map(|ack_addr| UdpAckConfigV1 {
+            enabled: true,
+            bind_addr: ack_addr.clone(),
+            target_addr: None,
+            recv_timeout_ms: 1000,
+        })
+        .unwrap_or_else(default_udp_ack_config);
     let sender_report = run_sender(
         chain_id,
         tx_count,
@@ -3992,7 +4368,8 @@ fn run_local_smoke(
         sustained,
         tail_repair,
         default_udp_send_retry_config(),
-        default_udp_ack_config(),
+        udp_ack,
+        novorudp,
     )?;
     let receiver_summary = parse_summary(
         child
@@ -4004,8 +4381,12 @@ fn run_local_smoke(
     let recovery_probe = get_nov_native_execution_store_recovery_probe_v1(store_path)?;
     let (validation, violations) =
         validate_receiver_report(&receiver_summary, &recovery_probe, tx_count);
+    let sender_transport_report_accepted = sender_report
+        .get("accepted")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
     let accepted = violations.is_empty()
-        && sender_report
+        && receiver_summary
             .get("accepted")
             .and_then(Value::as_bool)
             .unwrap_or(false);
@@ -4013,6 +4394,7 @@ fn run_local_smoke(
         "schema": REPORT_SCHEMA_V1,
         "role": "local-smoke",
         "accepted": accepted,
+        "sender_transport_report_accepted": sender_transport_report_accepted,
         "chain_id": chain_id,
         "tx_count": tx_count,
         "sender_addr": sender_addr,
@@ -4216,6 +4598,17 @@ fn run_memory_bisect_variant(
         },
         default_udp_send_retry_config(),
         default_udp_ack_config(),
+        NovoRudpConfigV1 {
+            enabled: false,
+            window_size: 64,
+            packet_copies: 2,
+            tail_packet_copies: 3,
+            batch_size: 16,
+            batch_pause_ms: 10,
+            window_ack_wait_ms: 1000,
+            max_window_retries: 8,
+            no_progress_backoff: true,
+        },
     );
     let receiver_result = match handle.join() {
         Ok(result) => result,
@@ -4537,6 +4930,8 @@ fn main() -> Result<()> {
         ]),
         recv_timeout_ms: u64_env("NOVOVM_NATIVE_PIPELINE_ACK_RECV_TIMEOUT_MS", 250)?,
     };
+    let transport_profile = TransportProfileV1::from_env();
+    let novorudp = NovoRudpConfigV1::from_env(transport_profile)?;
     let sender_node = u64_env_alias(
         &[
             "NOVOVM_NATIVE_PIPELINE_SENDER_NODE",
@@ -4642,6 +5037,7 @@ fn main() -> Result<()> {
                 tail_repair,
                 udp_send_retry,
                 udp_ack,
+                novorudp,
             )?
         }
         "local-smoke" | "local_smoke" => run_local_smoke(
@@ -4659,6 +5055,7 @@ fn main() -> Result<()> {
             fault,
             sustained,
             tail_repair,
+            novorudp,
         )?,
         other => bail!("unknown NOVOVM_NATIVE_PIPELINE_ROLE: {other}"),
     };
